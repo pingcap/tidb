@@ -607,13 +607,6 @@ func (is *infoschemaV2) TableByID(ctx context.Context, id int64) (val table.Tabl
 		return
 	}
 
-	// Get from the cache.
-	key := tableCacheKey{id, is.infoSchema.schemaMetaVersion}
-	tbl, found := is.tableCache.Get(key)
-	if found && tbl != nil {
-		return tbl, true
-	}
-
 	itm, ok := is.searchTableItemByID(id)
 	if !ok {
 		return nil, false
@@ -635,11 +628,8 @@ func (is *infoschemaV2) TableByID(ctx context.Context, id int64) (val table.Tabl
 
 	// get cache with old key
 	oldKey := tableCacheKey{itm.tableID, itm.schemaVersion}
-	tbl, found = is.tableCache.Get(oldKey)
+	tbl, found := is.tableCache.Get(oldKey)
 	if found && tbl != nil {
-		if refill {
-			is.tableCache.Set(key, tbl)
-		}
 		return tbl, true
 	}
 

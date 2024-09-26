@@ -81,11 +81,11 @@ func (*PartitionProcessor) Name() string {
 func (s *PartitionProcessor) rewriteDataSource(lp base.LogicalPlan, opt *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, error) {
 	// Assert there will not be sel -> sel in the ast.
 	switch p := lp.(type) {
-	case *DataSource:
+	case *logicalop.DataSource:
 		return s.prune(p, opt)
 	case *logicalop.LogicalUnionScan:
 		ds := p.Children()[0]
-		ds, err := s.prune(ds.(*DataSource), opt)
+		ds, err := s.prune(ds.(*logicalop.DataSource), opt)
 		if err != nil {
 			return nil, err
 		}
@@ -461,10 +461,10 @@ func (s *PartitionProcessor) pruneHashOrKeyPartition(ctx base.PlanContext, tbl t
 // reconstructTableColNames reconstructs FieldsNames according to ds.TblCols.
 // ds.names may not match ds.TblCols since ds.names is pruned while ds.TblCols contains all original columns.
 // please see https://github.com/pingcap/tidb/issues/22635 for more details.
-func (*PartitionProcessor) reconstructTableColNames(ds *DataSource) ([]*types.FieldName, error) {
+func (*PartitionProcessor) reconstructTableColNames(ds *logicalop.DataSource) ([]*types.FieldName, error) {
 	names := make([]*types.FieldName, 0, len(ds.TblCols))
 	// Use DeletableCols to get all the columns.
-	colsInfo := ds.table.DeletableCols()
+	colsInfo := ds.Table.DeletableCols()
 	colsInfoMap := make(map[int64]*table.Column, len(colsInfo))
 	for _, c := range colsInfo {
 		colsInfoMap[c.ID] = c
@@ -505,13 +505,13 @@ func (*PartitionProcessor) reconstructTableColNames(ds *DataSource) ([]*types.Fi
 	return names, nil
 }
 
-func (s *PartitionProcessor) processHashOrKeyPartition(ds *DataSource, pi *model.PartitionInfo, opt *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, error) {
+func (s *PartitionProcessor) processHashOrKeyPartition(ds *logicalop.DataSource, pi *model.PartitionInfo, opt *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, error) {
 	names, err := s.reconstructTableColNames(ds)
 	if err != nil {
 		return nil, err
 	}
 
-	used, err := s.pruneHashOrKeyPartition(ds.SCtx(), ds.table, ds.PartitionNames, ds.AllConds, ds.TblCols, names)
+	used, err := s.pruneHashOrKeyPartition(ds.SCtx(), ds.Table, ds.PartitionNames, ds.AllConds, ds.TblCols, names)
 	if err != nil {
 		return nil, err
 	}
@@ -827,7 +827,7 @@ func (s *PartitionProcessor) pruneListPartition(ctx base.PlanContext, tbl table.
 	return used, nil
 }
 
-func (s *PartitionProcessor) prune(ds *DataSource, opt *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, error) {
+func (s *PartitionProcessor) prune(ds *logicalop.DataSource, opt *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, error) {
 	pi := ds.TableInfo.GetPartitionInfo()
 	if pi == nil {
 		return ds, nil
@@ -1036,16 +1036,16 @@ func (s *PartitionProcessor) pruneRangePartition(ctx base.PlanContext, pi *model
 	return result, nil
 }
 
-func (s *PartitionProcessor) processRangePartition(ds *DataSource, pi *model.PartitionInfo, opt *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, error) {
-	used, err := s.pruneRangePartition(ds.SCtx(), pi, ds.table.(table.PartitionedTable), ds.AllConds, ds.TblCols, ds.OutputNames())
+func (s *PartitionProcessor) processRangePartition(ds *logicalop.DataSource, pi *model.PartitionInfo, opt *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, error) {
+	used, err := s.pruneRangePartition(ds.SCtx(), pi, ds.Table.(table.PartitionedTable), ds.AllConds, ds.TblCols, ds.OutputNames())
 	if err != nil {
 		return nil, err
 	}
 	return s.makeUnionAllChildren(ds, pi, used, opt)
 }
 
-func (s *PartitionProcessor) processListPartition(ds *DataSource, pi *model.PartitionInfo, opt *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, error) {
-	used, err := s.pruneListPartition(ds.SCtx(), ds.table, ds.PartitionNames, ds.AllConds, ds.TblCols)
+func (s *PartitionProcessor) processListPartition(ds *logicalop.DataSource, pi *model.PartitionInfo, opt *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, error) {
+	used, err := s.pruneListPartition(ds.SCtx(), ds.Table, ds.PartitionNames, ds.AllConds, ds.TblCols)
 	if err != nil {
 		return nil, err
 	}
@@ -1707,10 +1707,10 @@ func pruneUseBinarySearch(lessThan lessThanDataInt, data dataForPrune) (start in
 	return start, end
 }
 
-func (*PartitionProcessor) resolveAccessPaths(ds *DataSource) error {
+func (*PartitionProcessor) resolveAccessPaths(ds *logicalop.DataSource) error {
 	possiblePaths, err := getPossibleAccessPaths(
 		ds.SCtx(), &h.PlanHints{IndexMergeHintList: ds.IndexMergeHints, IndexHintList: ds.IndexHints},
-		ds.AstIndexHints, ds.table, ds.DBName, ds.TableInfo.Name, ds.IsForUpdateRead, true)
+		ds.AstIndexHints, ds.Table, ds.DBName, ds.TableInfo.Name, ds.IsForUpdateRead, true)
 	if err != nil {
 		return err
 	}
@@ -1722,7 +1722,7 @@ func (*PartitionProcessor) resolveAccessPaths(ds *DataSource) error {
 	return nil
 }
 
-func (s *PartitionProcessor) resolveOptimizeHint(ds *DataSource, partitionName pmodel.CIStr) error {
+func (s *PartitionProcessor) resolveOptimizeHint(ds *logicalop.DataSource, partitionName pmodel.CIStr) error {
 	// index hint
 	if len(ds.IndexHints) > 0 {
 		newIndexHint := make([]h.HintedIndex, 0, len(ds.IndexHints))
@@ -1807,7 +1807,7 @@ func appendWarnForUnknownPartitions(ctx base.PlanContext, hintName string, unkno
 	ctx.GetSessionVars().StmtCtx.SetHintWarningFromError(warning)
 }
 
-func (*PartitionProcessor) checkHintsApplicable(ds *DataSource, partitionSet set.StringSet) {
+func (*PartitionProcessor) checkHintsApplicable(ds *logicalop.DataSource, partitionSet set.StringSet) {
 	for _, idxHint := range ds.IndexHints {
 		unknownPartitions := checkTableHintsApplicableForPartition(idxHint.Partitions, partitionSet)
 		appendWarnForUnknownPartitions(ds.SCtx(), h.Restore2IndexHint(idxHint.HintTypeString(), idxHint), unknownPartitions)
@@ -1822,7 +1822,7 @@ func (*PartitionProcessor) checkHintsApplicable(ds *DataSource, partitionSet set
 	appendWarnForUnknownPartitions(ds.SCtx(), h.HintReadFromStorage, unknownPartitions)
 }
 
-func (s *PartitionProcessor) makeUnionAllChildren(ds *DataSource, pi *model.PartitionInfo, or partitionRangeOR, opt *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, error) {
+func (s *PartitionProcessor) makeUnionAllChildren(ds *logicalop.DataSource, pi *model.PartitionInfo, or partitionRangeOR, opt *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, error) {
 	children := make([]base.LogicalPlan, 0, len(pi.Definitions))
 	partitionNameSet := make(set.StringSet)
 	usedDefinition := make(map[int64]model.PartitionDefinition)
@@ -2058,7 +2058,7 @@ func (p *rangeColumnsPruner) pruneUseBinarySearch(sctx base.PlanContext, op stri
 	return start, end
 }
 
-func appendMakeUnionAllChildrenTranceStep(origin *DataSource, usedMap map[int64]model.PartitionDefinition, plan base.LogicalPlan, children []base.LogicalPlan, opt *optimizetrace.LogicalOptimizeOp) {
+func appendMakeUnionAllChildrenTranceStep(origin *logicalop.DataSource, usedMap map[int64]model.PartitionDefinition, plan base.LogicalPlan, children []base.LogicalPlan, opt *optimizetrace.LogicalOptimizeOp) {
 	if opt.TracerIsNil() {
 		return
 	}
@@ -2075,7 +2075,7 @@ func appendMakeUnionAllChildrenTranceStep(origin *DataSource, usedMap map[int64]
 		return cmp.Compare(i.ID, j.ID)
 	})
 	if len(children) == 1 {
-		newDS := plan.(*DataSource)
+		newDS := plan.(*logicalop.DataSource)
 		newDS.SetID(origin.SCtx().GetSessionVars().AllocNewPlanID())
 		action = func() string {
 			return fmt.Sprintf("%v_%v becomes %s_%v", origin.TP(), origin.ID(), newDS.TP(), newDS.ID())
@@ -2091,7 +2091,7 @@ func appendMakeUnionAllChildrenTranceStep(origin *DataSource, usedMap map[int64]
 				if i > 0 {
 					buffer.WriteString(",")
 				}
-				newDS := child.(*DataSource)
+				newDS := child.(*logicalop.DataSource)
 				newDS.SetID(origin.SCtx().GetSessionVars().AllocNewPlanID())
 				fmt.Fprintf(buffer, "%s_%v", child.TP(), newDS.ID())
 			}
@@ -2114,7 +2114,7 @@ func appendMakeUnionAllChildrenTranceStep(origin *DataSource, usedMap map[int64]
 	opt.AppendStepToCurrent(origin.ID(), origin.TP(), reason, action)
 }
 
-func appendNoPartitionChildTraceStep(ds *DataSource, dual base.LogicalPlan, opt *optimizetrace.LogicalOptimizeOp) {
+func appendNoPartitionChildTraceStep(ds *logicalop.DataSource, dual base.LogicalPlan, opt *optimizetrace.LogicalOptimizeOp) {
 	action := func() string {
 		return fmt.Sprintf("%v_%v becomes %v_%v", ds.TP(), ds.ID(), dual.TP(), dual.ID())
 	}

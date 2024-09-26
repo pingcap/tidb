@@ -141,6 +141,20 @@ func TestIndexAdvisorFixControl43817(t *testing.T) {
 	check(nil, t, tk, "err", "select * from t1 where a=(select max(a) from t2)")
 	check(nil, t, tk, "err",
 		"select * from t1 where a=(select max(a) from t2); select * from t1 where b=1")
+	check(nil, t, tk, "err",
+		"select * from t1 where a=(select max(a) from t2);select a from t1 where a=1")
+
+	querySet := s.NewSet[indexadvisor.Query]()
+	querySet.Add(indexadvisor.Query{SchemaName: "test",
+		Text: "select * from t1 where a=(select max(a) from t2)", Frequency: 1})
+	ctx := context.WithValue(context.Background(), indexadvisor.TestKey("query_set"), querySet)
+	check(ctx, t, tk, "err", "") // empty query set after filtering invalid queries
+	querySet.Add(indexadvisor.Query{SchemaName: "test",
+		Text: "select * from t1 where a=(select max(a) from t2); select * from t1 where b=1", Frequency: 1})
+	check(ctx, t, tk, "err", "") // empty query set after filtering invalid queries
+	querySet.Add(indexadvisor.Query{SchemaName: "test",
+		Text: "select a from t1 where a=1", Frequency: 1})
+	check(ctx, t, tk, "test.t1.a", "") // invalid queries would be ignored
 }
 
 func TestIndexAdvisorView(t *testing.T) {
@@ -374,6 +388,25 @@ FROM (SELECT block_number AS block_receipts
 	r, err := indexadvisor.AdviseIndexes(ctx, tk.Session(), nil, nil)
 	require.NoError(t, err)
 	require.True(t, len(r) > 0)
+}
+
+func TestIndexAdvisorRunFor(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`use test`)
+	tk.MustExec(`create table t1 (a int, b int, c int)`)
+	tk.MustExec(`create table t2 (a int, b int, c int)`)
+
+	r := tk.MustQuery(`recommend index run for "select * from t1 where a=1"`)
+	require.True(t, len(r.Rows()) == 1)
+	r = tk.MustQuery(`recommend index run for "select * from t1 where a=1;select * from t2 where b=1"`)
+	require.True(t, len(r.Rows()) == 2)
+	tk.MustQueryToErr(`recommend index run for ";"`)
+	tk.MustQueryToErr(`recommend index run for "xxx"`)
+	tk.MustQueryToErr(`recommend index run for ";;;"`)
+	tk.MustQueryToErr(`recommend index run for ";;xx;"`)
+	r = tk.MustQuery(`recommend index run for ";;select * from t1 where a=1;; ;;  ;"`)
+	require.True(t, len(r.Rows()) == 1)
 }
 
 func TestIndexAdvisorStorage(t *testing.T) {
