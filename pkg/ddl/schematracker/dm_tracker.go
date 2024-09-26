@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/infoschema"
+	"github.com/pingcap/tidb/pkg/meta/metabuild"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/charset"
@@ -73,11 +74,11 @@ func (d *SchemaTracker) CreateSchema(ctx sessionctx.Context, stmt *ast.CreateDat
 		}
 	}
 
-	var sessVars *variable.SessionVars
+	utf8MB4DefaultColl := ""
 	if ctx != nil {
-		sessVars = ctx.GetSessionVars()
+		utf8MB4DefaultColl = ctx.GetSessionVars().DefaultCollationForUTF8MB4
 	}
-	chs, coll, err := ddl.ResolveCharsetCollation(sessVars, charsetOpt)
+	chs, coll, err := ddl.ResolveCharsetCollation([]ast.CharsetOpt{charsetOpt}, utf8MB4DefaultColl)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -152,7 +153,7 @@ func (d *SchemaTracker) AlterSchema(ctx sessionctx.Context, stmt *ast.AlterDatab
 		}
 	}
 	if toCollate == "" {
-		if toCollate, err = ddl.GetDefaultCollation(ctx.GetSessionVars(), toCharset); err != nil {
+		if toCollate, err = ddl.GetDefaultCollation(toCharset, ctx.GetSessionVars().DefaultCollationForUTF8MB4); err != nil {
 			return errors.Trace(err)
 		}
 	}
@@ -182,15 +183,6 @@ func (d *SchemaTracker) CreateTable(ctx sessionctx.Context, s *ast.CreateTableSt
 	if schema == nil {
 		return infoschema.ErrDatabaseNotExists.GenWithStackByArgs(ident.Schema)
 	}
-	// suppress ErrTooLongKey
-	ctx.SetValue(ddl.SuppressErrorTooLongKeyKey, true)
-	// support drop PK
-	enableClusteredIndexBackup := ctx.GetSessionVars().EnableClusteredIndex
-	ctx.GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeOff
-	defer func() {
-		ctx.ClearValue(ddl.SuppressErrorTooLongKeyKey)
-		ctx.GetSessionVars().EnableClusteredIndex = enableClusteredIndexBackup
-	}()
 
 	var (
 		referTbl *model.TableInfo
@@ -203,14 +195,21 @@ func (d *SchemaTracker) CreateTable(ctx sessionctx.Context, s *ast.CreateTableSt
 		}
 	}
 
+	metaBuildCtx := ddl.NewMetaBuildContextWithSctx(
+		ctx,
+		// suppress ErrTooLongKey
+		metabuild.WithSuppressTooLongIndexErr(true),
+		// support drop PK
+		metabuild.WithClusteredIndexDefMode(variable.ClusteredIndexDefModeOff),
+	)
 	// build tableInfo
 	var (
 		tbInfo *model.TableInfo
 	)
 	if s.ReferTable != nil {
-		tbInfo, err = ddl.BuildTableInfoWithLike(ctx, ident, referTbl, s)
+		tbInfo, err = ddl.BuildTableInfoWithLike(ident, referTbl, s)
 	} else {
-		tbInfo, err = ddl.BuildTableInfoWithStmt(ctx, s, schema.Charset, schema.Collate, nil)
+		tbInfo, err = ddl.BuildTableInfoWithStmt(metaBuildCtx, s, schema.Charset, schema.Collate, nil)
 	}
 	if err != nil {
 		return errors.Trace(err)
@@ -218,7 +217,7 @@ func (d *SchemaTracker) CreateTable(ctx sessionctx.Context, s *ast.CreateTableSt
 
 	// TODO: to reuse the constant fold of expression in partition range definition we use CheckTableInfoValidWithStmt,
 	// but it may also introduce unwanted limit check in DM's use case. Should check it later.
-	if err = ddl.CheckTableInfoValidWithStmt(ctx, tbInfo, s); err != nil {
+	if err = ddl.CheckTableInfoValidWithStmt(metaBuildCtx, tbInfo, s); err != nil {
 		return err
 	}
 
@@ -277,7 +276,7 @@ func (d *SchemaTracker) CreateView(ctx sessionctx.Context, s *ast.CreateViewStmt
 		})
 	}
 
-	tbInfo, err := ddl.BuildTableInfo(ctx, s.ViewName.Name, cols, nil, "", "")
+	tbInfo, err := ddl.BuildTableInfo(ddl.NewMetaBuildContextWithSctx(ctx), s.ViewName.Name, cols, nil, "", "")
 	if err != nil {
 		return err
 	}
@@ -320,7 +319,7 @@ func (d *SchemaTracker) DropTable(_ sessionctx.Context, stmt *ast.DropTableStmt)
 }
 
 // RecoverTable implements the DDL interface, which is no-op in DM's case.
-func (*SchemaTracker) RecoverTable(_ sessionctx.Context, _ *ddl.RecoverInfo) (err error) {
+func (*SchemaTracker) RecoverTable(_ sessionctx.Context, _ *model.RecoverTableInfo) (err error) {
 	return nil
 }
 
@@ -330,7 +329,7 @@ func (*SchemaTracker) FlashbackCluster(_ sessionctx.Context, _ uint64) (err erro
 }
 
 // RecoverSchema implements the DDL interface, which is no-op in DM's case.
-func (*SchemaTracker) RecoverSchema(_ sessionctx.Context, _ *ddl.RecoverSchemaInfo) (err error) {
+func (*SchemaTracker) RecoverSchema(_ sessionctx.Context, _ *model.RecoverSchemaInfo) (err error) {
 	return nil
 }
 
@@ -413,7 +412,7 @@ func (d *SchemaTracker) createIndex(
 		return dbterror.ErrDupKeyName.GenWithStack("index already exist %s", indexName)
 	}
 
-	hiddenCols, err := ddl.BuildHiddenColumnInfo(ctx, indexPartSpecifications, indexName, t.Meta(), t.Cols())
+	hiddenCols, err := ddl.BuildHiddenColumnInfo(ddl.NewMetaBuildContextWithSctx(ctx), indexPartSpecifications, indexName, t.Meta(), t.Cols())
 	if err != nil {
 		return err
 	}
@@ -426,7 +425,7 @@ func (d *SchemaTracker) createIndex(
 	}
 
 	indexInfo, err := ddl.BuildIndexInfo(
-		ctx,
+		ddl.NewMetaBuildContextWithSctx(ctx),
 		finalColumns,
 		indexName,
 		false,
@@ -653,7 +652,7 @@ func (d *SchemaTracker) alterColumn(ctx sessionctx.Context, ident ast.Ident, spe
 		}
 		oldCol.AddFlag(mysql.NoDefaultValueFlag)
 	} else {
-		_, err := ddl.SetDefaultValue(ctx, oldCol, specNewColumn.Options[0])
+		_, err := ddl.SetDefaultValue(ctx.GetExprCtx(), oldCol, specNewColumn.Options[0])
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -870,7 +869,7 @@ func (d *SchemaTracker) createPrimaryKey(
 	}
 
 	indexInfo, err := ddl.BuildIndexInfo(
-		ctx,
+		ddl.NewMetaBuildContextWithSctx(ctx),
 		tblInfo.Columns,
 		indexName,
 		true,
@@ -979,7 +978,7 @@ func (d *SchemaTracker) AlterTable(ctx context.Context, sctx sessionctx.Context,
 						continue
 					}
 					var toCharset, toCollate string
-					toCharset, toCollate, err = ddl.GetCharsetAndCollateInTableOption(sctx.GetSessionVars(), i, spec.Options)
+					toCharset, toCollate, err = ddl.GetCharsetAndCollateInTableOption(i, spec.Options, sctx.GetSessionVars().DefaultCollationForUTF8MB4)
 					if err != nil {
 						return err
 					}

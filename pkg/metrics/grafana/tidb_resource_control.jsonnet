@@ -785,7 +785,7 @@ local RunawayEventPanel = graphPanel.new(
 //*  ==============Panel (Background Task Control)==================
 //*  Row Title: Background Task Control
 //*  Description: The metrics about Background Task Control resource control
-//*  Panels: 6
+//*  Panels: 7
 //*  ==============Panel (Background Task Control)==================
 
 local backgroundTaskRow = row.new(collapse=true, title="Background Task Control");
@@ -816,6 +816,28 @@ local BackgroundTaskRUPanel = graphPanel.new(
   )
 );
 
+// Background Task Resource Utilization
+
+local BackgroundTaskResourceUtilizationPanel = graphPanel.new(
+  title="Background Task Resource Utilization",
+  datasource=myDS,
+  legend_rightSide=true,
+  legend_min=true,
+  legend_max=true,
+  legend_avg=true,
+  legend_current=true,
+  legend_alignAsTable=true,
+  legend_values=true,
+  format="percent",
+  logBase1Y=1,
+  description="The resource(CPU, IO) utilization percentage and limit of background tasks.",
+).addTarget(
+  prometheus.target(
+    'tikv_resource_control_bg_resource_utilization{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$tikv_instance"}',
+    legendFormat="{{instance}}-{{type}}",
+  )
+);
+
 // Background Task CPU Limit
 local BackgroundTaskCPULimitPanel = graphPanel.new(
   title="Background Task CPU Limit",
@@ -826,7 +848,7 @@ local BackgroundTaskCPULimitPanel = graphPanel.new(
   legend_current=true,
   legend_alignAsTable=true,
   legend_values=true,
-  format="us",
+  format="µs",
   logBase1Y=1,
   description="The total background task's cpu limit for all resource groups.",
 ).addTarget(
@@ -1111,8 +1133,9 @@ TiDBResourceControlDash
 ).addPanel(
   backgroundTaskRow/* Background Task Control */
   .addPanel(BackgroundTaskRUPanel, gridPos=leftPanelPos)
-  .addPanel(BackgroundTaskCPULimitPanel, gridPos=rightPanelPos)
+  .addPanel(BackgroundTaskResourceUtilizationPanel, gridPos=rightPanelPos)
   .addPanel(BackgroundTaskIOLimitPanel, gridPos=leftPanelPos)
+  .addPanel(BackgroundTaskCPULimitPanel, gridPos=rightPanelPos)
   .addPanel(BackgroundTaskCPUConsumptionPanel, gridPos=rightPanelPos)
   .addPanel(BackgroundTaskIOConsumptionPanel, gridPos=leftPanelPos)
   .addPanel(BackgroundTaskTotalWaitDurationPanel, gridPos=rightPanelPos)
