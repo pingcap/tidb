@@ -1460,7 +1460,7 @@ var (
 )
 
 func (m *Meta) enQueueDDLJob(key []byte, job *model.Job) error {
-	b, err := job.Encode(true)
+	b, err := job.Encode()
 	if err == nil {
 		err = m.txn.RPush(key, b)
 	}
@@ -1533,8 +1533,8 @@ func (*Meta) jobIDKey(id int64) []byte {
 	return b
 }
 
-func (m *Meta) addHistoryDDLJob(key []byte, job *model.Job, updateRawArgs bool) error {
-	b, err := job.Encode(updateRawArgs)
+func (m *Meta) addHistoryDDLJob(key []byte, job *model.Job) error {
+	b, err := job.Encode()
 	if err == nil {
 		err = m.txn.HSet(key, m.jobIDKey(job.ID), b)
 	}
@@ -1542,8 +1542,8 @@ func (m *Meta) addHistoryDDLJob(key []byte, job *model.Job, updateRawArgs bool) 
 }
 
 // AddHistoryDDLJob adds DDL job to history.
-func (m *Meta) AddHistoryDDLJob(job *model.Job, updateRawArgs bool) error {
-	return m.addHistoryDDLJob(mDDLJobHistoryKey, job, updateRawArgs)
+func (m *Meta) AddHistoryDDLJob(job *model.Job) error {
+	return m.addHistoryDDLJob(mDDLJobHistoryKey, job)
 }
 
 func (m *Meta) getHistoryDDLJob(key []byte, id int64) (*model.Job, error) {

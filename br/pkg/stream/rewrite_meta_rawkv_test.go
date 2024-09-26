@@ -726,7 +726,7 @@ var (
 
 func genFinishedJob(job *model.Job, args model.FinishedJobArgs) *model.Job {
 	job.FillFinishedArgs(args)
-	bytes, _ := job.Encode(true)
+	bytes, _ := job.Encode()
 	resJob := &model.Job{}
 	_ = resJob.Decode(bytes)
 	return resJob

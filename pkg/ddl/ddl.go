@@ -1362,7 +1362,7 @@ func processJobs(
 				continue
 			}
 
-			err = updateDDLJob2Table(ns, job, false)
+			err = updateDDLJob2Table(ns, job)
 			if err != nil {
 				jobErrs[i] = err
 				continue
@@ -1453,7 +1453,7 @@ func processAllJobs(process func(*sess.Session, *model.Job, model.AdminCommandOp
 				continue
 			}
 
-			err = updateDDLJob2Table(ns, job, false)
+			err = updateDDLJob2Table(ns, job)
 			if err != nil {
 				jobErrs[job.ID] = err
 				continue

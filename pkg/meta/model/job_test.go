@@ -66,6 +66,7 @@ func TestJobCodec(t *testing.T) {
 		ReorgMeta: &DDLReorgMeta{
 			Location: &TimeZoneLocation{Name: tzName, Offset: tzOffset},
 		},
+		UpdateRawArgs: true,
 	}
 	job.BinlogInfo.AddDBInfo(123, &DBInfo{ID: 1, Name: model.NewCIStr("test_history_db")})
 	job.BinlogInfo.AddTableInfo(123, &TableInfo{ID: 1, Name: model.NewCIStr("test_history_tbl")})
@@ -302,7 +303,7 @@ func TestJobCodec(t *testing.T) {
 	require.True(t, isDependent)
 
 	require.Equal(t, false, job.IsCancelled())
-	b, err := job.Encode(false)
+	b, err := job.Encode()
 	require.NoError(t, err)
 	newJob := &Job{}
 	err = newJob.Decode(b)
@@ -319,7 +320,7 @@ func TestJobCodec(t *testing.T) {
 	require.Equal(t, newJob.ReorgMeta.Location.Offset, tzOffset)
 
 	job.BinlogInfo.Clean()
-	b1, err := job.Encode(true)
+	b1, err := job.Encode()
 	require.NoError(t, err)
 	newJob = &Job{}
 	err = newJob.Decode(b1)
@@ -333,7 +334,7 @@ func TestJobCodec(t *testing.T) {
 	require.Equal(t, A{Name: "abc"}, a)
 	require.Greater(t, len(newJob.String()), 0)
 
-	b2, err := job.Encode(true)
+	b2, err := job.Encode()
 	require.NoError(t, err)
 	newJob = &Job{}
 	err = newJob.Decode(b2)
@@ -535,10 +536,11 @@ func TestJobEncodeV2(t *testing.T) {
 			FKCheck: true,
 		}},
 	}
-	_, err := j.Encode(false)
+	_, err := j.Encode()
 	require.NoError(t, err)
 	require.Nil(t, j.RawArgs)
-	_, err = j.Encode(true)
+	j.UpdateRawArgs = true
+	_, err = j.Encode()
 	require.NoError(t, err)
 	require.NotNil(t, j.RawArgs)
 	args := &TruncateTableArgs{}

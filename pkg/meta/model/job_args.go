@@ -250,6 +250,8 @@ func (a *CreateTableArgs) fillJob(job *Job) {
 
 // GetCreateTableArgs gets the create-table args.
 func GetCreateTableArgs(job *Job) (*CreateTableArgs, error) {
+	job.UpdateRawArgs = true
+
 	if job.Version == JobVersion1 {
 		var (
 			tableInfo      = &TableInfo{}
@@ -1245,6 +1247,8 @@ func GetAlterTTLInfoArgs(job *Job) (*AlterTTLInfoArgs, error) {
 
 // GetCheckConstraintArgs gets the AlterCheckConstraint args.
 func GetCheckConstraintArgs(job *Job) (*CheckConstraintArgs, error) {
+	job.UpdateRawArgs = true
+
 	if job.Version == JobVersion1 {
 		var (
 			constraintName pmodel.CIStr
@@ -1278,6 +1282,9 @@ func (a *AddCheckConstraintArgs) fillJob(job *Job) {
 
 // GetAddCheckConstraintArgs gets the AddCheckConstraint args.
 func GetAddCheckConstraintArgs(job *Job) (*AddCheckConstraintArgs, error) {
+	// returned arguments will be modified outside.
+	job.UpdateRawArgs = true
+
 	if job.Version == JobVersion1 {
 		var constraintInfo ConstraintInfo
 		err := job.DecodeArgs(&constraintInfo)

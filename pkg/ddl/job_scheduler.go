@@ -675,8 +675,10 @@ func insertDDLJobs2Table(ctx context.Context, se *sess.Session, jobWs ...*JobWra
 		if jobW.JobArgs != nil {
 			jobW.FillArgs(jobW.JobArgs)
 		}
+		// TODO(joechenrh): remove this after refactor done.
+		jobW.UpdateRawArgs = true
 		injectModifyJobArgFailPoint(jobWs)
-		b, err := jobW.Encode(true)
+		b, err := jobW.Encode()
 		if err != nil {
 			return err
 		}
@@ -750,8 +752,8 @@ func job2TableIDs(jobW *JobWrapper) string {
 	}
 }
 
-func updateDDLJob2Table(se *sess.Session, job *model.Job, updateRawArgs bool) error {
-	b, err := job.Encode(updateRawArgs)
+func updateDDLJob2Table(se *sess.Session, job *model.Job) error {
+	b, err := job.Encode()
 	if err != nil {
 		return err
 	}

@@ -36,7 +36,7 @@ func onMultiSchemaChange(w *worker, jobCtx *jobContext, t *meta.Meta, job *model
 					continue
 				}
 				proxyJob := sub.ToProxyJob(job, i)
-				ver, _, err = w.runOneJobStep(jobCtx, t, &proxyJob)
+				ver, err = w.runOneJobStep(jobCtx, t, &proxyJob)
 				err = handleRollbackException(err, proxyJob.Error)
 				if err != nil {
 					return ver, err
@@ -59,7 +59,7 @@ func onMultiSchemaChange(w *worker, jobCtx *jobContext, t *meta.Meta, job *model
 				continue
 			}
 			proxyJob := sub.ToProxyJob(job, i)
-			ver, _, err = w.runOneJobStep(jobCtx, t, &proxyJob)
+			ver, err = w.runOneJobStep(jobCtx, t, &proxyJob)
 			sub.FromProxyJob(&proxyJob, ver)
 			handleRevertibleException(job, sub, proxyJob.Error)
 			return ver, err
@@ -85,7 +85,7 @@ func onMultiSchemaChange(w *worker, jobCtx *jobContext, t *meta.Meta, job *model
 			if schemaVersionGenerated {
 				proxyJob.MultiSchemaInfo.SkipVersion = true
 			}
-			proxyJobVer, _, err := w.runOneJobStep(jobCtx, t, &proxyJob)
+			proxyJobVer, err := w.runOneJobStep(jobCtx, t, &proxyJob)
 			if !schemaVersionGenerated && proxyJobVer != 0 {
 				schemaVersionGenerated = true
 				ver = proxyJobVer
@@ -134,7 +134,7 @@ func onMultiSchemaChange(w *worker, jobCtx *jobContext, t *meta.Meta, job *model
 			continue
 		}
 		proxyJob := sub.ToProxyJob(job, i)
-		ver, _, err = w.runOneJobStep(jobCtx, t, &proxyJob)
+		ver, err = w.runOneJobStep(jobCtx, t, &proxyJob)
 		sub.FromProxyJob(&proxyJob, ver)
 		return ver, err
 	}

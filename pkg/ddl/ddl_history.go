@@ -44,18 +44,18 @@ const (
 )
 
 // AddHistoryDDLJob record the history job.
-func AddHistoryDDLJob(ctx context.Context, sess *sess.Session, t *meta.Meta, job *model.Job, updateRawArgs bool) error {
-	err := addHistoryDDLJob2Table(ctx, sess, job, updateRawArgs)
+func AddHistoryDDLJob(ctx context.Context, sess *sess.Session, t *meta.Meta, job *model.Job) error {
+	err := addHistoryDDLJob2Table(ctx, sess, job)
 	if err != nil {
 		logutil.DDLLogger().Info("failed to add DDL job to history table", zap.Error(err))
 	}
 	// we always add history DDL job to job list at this moment.
-	return t.AddHistoryDDLJob(job, updateRawArgs)
+	return t.AddHistoryDDLJob(job)
 }
 
 // addHistoryDDLJob2Table adds DDL job to history table.
-func addHistoryDDLJob2Table(ctx context.Context, sess *sess.Session, job *model.Job, updateRawArgs bool) error {
-	b, err := job.Encode(updateRawArgs)
+func addHistoryDDLJob2Table(ctx context.Context, sess *sess.Session, job *model.Job) error {
+	b, err := job.Encode()
 	if err != nil {
 		return err
 	}

@@ -806,7 +806,7 @@ func TestNameExtractFromJob(t *testing.T) {
 		job.SchemaName = tc.schemaName
 		job.TableName = tc.tableName
 
-		b, err := job.Encode(true)
+		b, err := job.Encode()
 		require.NoError(t, err)
 
 		schemaName, tableName, err := meta.ExtractSchemaAndTableNameFromJob(b)

@@ -318,6 +318,11 @@ type Job struct {
 	// we use json raw message to delay parsing special args.
 	// the args are cleared out unless Job.FillFinishedArgs is called.
 	RawArgs json.RawMessage `json:"raw_args"`
+	// UpdateArgs indicate whether Args have been updated.
+	// This flag is set when FillArgs/FillFinishedArgs is called
+	// and consumed when Encode is called.
+	// TODO(joechen): remove all `job.UpdateRawArgs = true` after refactor done.
+	UpdateRawArgs bool `json:"-"`
 
 	SchemaState SchemaState `json:"schema_state"`
 	// SnapshotVer means snapshot version for this job.
@@ -426,7 +431,9 @@ func (job *Job) MarkNonRevertible() {
 
 // Clone returns a copy of the job.
 func (job *Job) Clone() *Job {
-	encode, err := job.Encode(true)
+	// Force update raw args
+	job.UpdateRawArgs = true
+	encode, err := job.Encode()
 	if err != nil {
 		return nil
 	}
@@ -484,11 +491,13 @@ func (job *Job) GetWarnings() (map[errors.ErrorID]*terror.Error, map[errors.Erro
 func (job *Job) FillArgs(args JobArgs) {
 	intest.Assert(job.Version == JobVersion1 || job.Version == JobVersion2, "job version is invalid")
 	args.fillJob(job)
+	job.UpdateRawArgs = true
 }
 
 // FillFinishedArgs fills args for finished job.
 func (job *Job) FillFinishedArgs(args FinishedJobArgs) {
 	args.fillFinishedJob(job)
+	job.UpdateRawArgs = true
 }
 
 func marshalArgs(jobVer JobVersion, args []any) (json.RawMessage, error) {
@@ -510,9 +519,10 @@ func marshalArgs(jobVer JobVersion, args []any) (json.RawMessage, error) {
 
 // Encode encodes job with json format.
 // updateRawArgs is used to determine whether to update the raw args.
-func (job *Job) Encode(updateRawArgs bool) ([]byte, error) {
+func (job *Job) Encode() ([]byte, error) {
 	var err error
-	if updateRawArgs {
+	// TODO(joechenrh): remove this
+	if job.UpdateRawArgs || job.Type == ActionMultiSchemaChange {
 		job.RawArgs, err = marshalArgs(job.Version, job.Args)
 		if err != nil {
 			return nil, errors.Trace(err)
@@ -531,6 +541,7 @@ func (job *Job) Encode(updateRawArgs bool) ([]byte, error) {
 				}
 			}
 		}
+		job.UpdateRawArgs = false
 	}
 
 	var b []byte
