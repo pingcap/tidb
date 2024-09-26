@@ -19,6 +19,7 @@ SELECT FORMAT(12345678.9,4,'ar_SA');
 SELECT FORMAT(12345678.9,4,'es_MX');
 SELECT FORMAT(12345678.9,4,'ps_AF');
 SELECT FORMAT(12345678.9,4,'kv_RU');
+SELECT FORMAT(12345678.9,4,'bn');
 
 # The first two should work fine, the third should give a warning.
 --enable_warnings
