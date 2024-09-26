@@ -512,20 +512,23 @@ func doRequest(
 			if res.StatusCode != http.StatusOK {
 				var (
 					leaderAddr string
+					errMsgMap  = map[string]string{}
 				)
 				for _, addr2 := range addrs {
 					status, err2 := etcdCli.Status(ctx, addr2)
 					if err2 != nil {
-						logutil.BgLogger().Warn(
-							"failed to get leader by checking endpoint status",
-							zap.String("endpoint", addr2),
-							zap.Error(err2))
+						errMsgMap[addr2] = err2.Error()
 						continue
 					}
 					if status.Leader == status.Header.MemberId {
 						leaderAddr = addr2
 						break
 					}
+				}
+
+				errMsgField := zap.Skip()
+				if len(errMsgMap) > 0 {
+					errMsgField = zap.Any("errors when find leader", errMsgMap)
 				}
 
 				logutil.BgLogger().Warn("response not 200, will retry sending to etcd leader",
@@ -535,8 +538,9 @@ func doRequest(
 					zap.Int("http status", res.StatusCode),
 					zap.Int("address order", idx),
 					zap.String("leader", leaderAddr),
+					errMsgField,
 				)
-				if leaderAddr != "" {
+				if leaderAddr != "" && leaderAddr != addr {
 					req2, err2 := http.NewRequestWithContext(ctx, method, url, bytes.NewReader(body))
 					if err2 != nil {
 						return nil, err2
