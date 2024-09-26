@@ -594,17 +594,23 @@ func removeVAndHash(v string) string {
 }
 
 func doRequestWithFailpoint(req *http.Request) (resp *http.Response, err error) {
-	fpEnabled := false
 	failpoint.Inject("FailPlacement", func(val failpoint.Value) {
 		if val.(bool) {
-			fpEnabled = true
 			resp = &http.Response{StatusCode: http.StatusNotFound, Body: http.NoBody}
-			err = nil
+			failpoint.Return(resp, nil)
 		}
 	})
-	if fpEnabled {
-		return
-	}
+	failpoint.Inject("SuccOnlyURLContains", func(val failpoint.Value) {
+		url := val.(string)
+		if strings.Contains(req.URL.String(), url) {
+			body := strings.NewReader("SuccOnlyURLMatch")
+			body2 := io.NopCloser(body)
+			resp = &http.Response{StatusCode: http.StatusOK, Body: body2}
+			failpoint.Return(resp, nil)
+		}
+		resp = &http.Response{StatusCode: http.StatusNotFound, Body: http.NoBody}
+		failpoint.Return(resp, nil)
+	})
 	return util2.InternalHTTPClient().Do(req)
 }
 
