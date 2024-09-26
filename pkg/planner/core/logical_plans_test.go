@@ -221,9 +221,9 @@ func TestJoinPredicatePushDown(t *testing.T) {
 		require.True(t, ok, comment)
 		join, ok := proj.Children()[0].(*logicalop.LogicalJoin)
 		require.True(t, ok, comment)
-		leftPlan, ok := join.Children()[0].(*DataSource)
+		leftPlan, ok := join.Children()[0].(*logicalop.DataSource)
 		require.True(t, ok, comment)
-		rightPlan, ok := join.Children()[1].(*DataSource)
+		rightPlan, ok := join.Children()[1].(*logicalop.DataSource)
 		require.True(t, ok, comment)
 		leftCond := expression.StringifyExpressionsWithCtx(ectx, leftPlan.PushedDownConds)
 		rightCond := expression.StringifyExpressionsWithCtx(ectx, rightPlan.PushedDownConds)
@@ -270,9 +270,9 @@ func TestOuterWherePredicatePushDown(t *testing.T) {
 		require.Equal(t, output[i].Sel, selCond, comment)
 		join, ok := selection.Children()[0].(*logicalop.LogicalJoin)
 		require.True(t, ok, comment)
-		leftPlan, ok := join.Children()[0].(*DataSource)
+		leftPlan, ok := join.Children()[0].(*logicalop.DataSource)
 		require.True(t, ok, comment)
-		rightPlan, ok := join.Children()[1].(*DataSource)
+		rightPlan, ok := join.Children()[1].(*logicalop.DataSource)
 		require.True(t, ok, comment)
 		leftCond := expression.StringifyExpressionsWithCtx(ectx, leftPlan.PushedDownConds)
 		rightCond := expression.StringifyExpressionsWithCtx(ectx, rightPlan.PushedDownConds)
@@ -383,8 +383,8 @@ func TestDeriveNotNullConds(t *testing.T) {
 		})
 		require.Equal(t, output[i].Plan, ToString(p), comment)
 		join := p.(base.LogicalPlan).Children()[0].(*logicalop.LogicalJoin)
-		left := join.Children()[0].(*DataSource)
-		right := join.Children()[1].(*DataSource)
+		left := join.Children()[0].(*logicalop.DataSource)
+		right := join.Children()[1].(*logicalop.DataSource)
 		leftConds := expression.StringifyExpressionsWithCtx(ectx, left.PushedDownConds)
 		rightConds := expression.StringifyExpressionsWithCtx(ectx, right.PushedDownConds)
 		testdata.OnRecord(func() {
@@ -406,7 +406,7 @@ func TestExtraPKNotNullFlag(t *testing.T) {
 	nodeW := resolve.NewNodeW(stmt)
 	p, err := BuildLogicalPlanForTest(ctx, s.sctx, nodeW, s.is)
 	require.NoError(t, err, comment)
-	ds := p.(*logicalop.LogicalProjection).Children()[0].(*logicalop.LogicalAggregation).Children()[0].(*DataSource)
+	ds := p.(*logicalop.LogicalProjection).Children()[0].(*logicalop.LogicalAggregation).Children()[0].(*logicalop.DataSource)
 	require.Equal(t, "_tidb_rowid", ds.Columns[2].Name.L)
 	require.Equal(t, mysql.PriKeyFlag|mysql.NotNullFlag, ds.Columns[2].GetFlag())
 	require.Equal(t, mysql.PriKeyFlag|mysql.NotNullFlag, ds.Schema().Columns[2].RetType.GetFlag())
@@ -801,15 +801,15 @@ func TestAllocID(t *testing.T) {
 	defer func() {
 		domain.GetDomain(ctx).StatsHandle().Close()
 	}()
-	pA := DataSource{}.Init(ctx, 0)
-	pB := DataSource{}.Init(ctx, 0)
+	pA := logicalop.DataSource{}.Init(ctx, 0)
+	pB := logicalop.DataSource{}.Init(ctx, 0)
 	require.Equal(t, pB.ID(), pA.ID()+1)
 }
 
 func checkDataSourceCols(p base.LogicalPlan, t *testing.T, ans map[int][]string, comment string) {
 	ectx := p.SCtx().GetExprCtx().GetEvalCtx()
 	switch v := p.(type) {
-	case *DataSource, *logicalop.LogicalUnionAll, *logicalop.LogicalLimit:
+	case *logicalop.DataSource, *logicalop.LogicalUnionAll, *logicalop.LogicalLimit:
 		testdata.OnRecord(func() {
 			ans[p.ID()] = make([]string, p.Schema().Len())
 		})
@@ -2070,11 +2070,11 @@ func TestSkylinePruning(t *testing.T) {
 		lp := p.(base.LogicalPlan)
 		_, err = lp.RecursiveDeriveStats(nil)
 		require.NoError(t, err, comment)
-		var ds *DataSource
+		var ds *logicalop.DataSource
 		var byItems []*util.ByItems
 		for ds == nil {
 			switch v := lp.(type) {
-			case *DataSource:
+			case *logicalop.DataSource:
 				ds = v
 			case *logicalop.LogicalSort:
 				byItems = v.ByItems

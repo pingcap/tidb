@@ -266,7 +266,7 @@ func setMppOrBatchCopForTableScan(curPlan base.PhysicalPlan) {
 }
 
 // GetPhysicalIndexReader returns PhysicalIndexReader for logical TiKVSingleGather.
-func GetPhysicalIndexReader(sg *TiKVSingleGather, schema *expression.Schema, stats *property.StatsInfo, props ...*property.PhysicalProperty) *PhysicalIndexReader {
+func GetPhysicalIndexReader(sg *logicalop.TiKVSingleGather, schema *expression.Schema, stats *property.StatsInfo, props ...*property.PhysicalProperty) *PhysicalIndexReader {
 	reader := PhysicalIndexReader{}.Init(sg.SCtx(), sg.QueryBlockOffset())
 	reader.SetStats(stats)
 	reader.SetSchema(schema)
@@ -275,7 +275,7 @@ func GetPhysicalIndexReader(sg *TiKVSingleGather, schema *expression.Schema, sta
 }
 
 // GetPhysicalTableReader returns PhysicalTableReader for logical TiKVSingleGather.
-func GetPhysicalTableReader(sg *TiKVSingleGather, schema *expression.Schema, stats *property.StatsInfo, props ...*property.PhysicalProperty) *PhysicalTableReader {
+func GetPhysicalTableReader(sg *logicalop.TiKVSingleGather, schema *expression.Schema, stats *property.StatsInfo, props ...*property.PhysicalProperty) *PhysicalTableReader {
 	reader := PhysicalTableReader{}.Init(sg.SCtx(), sg.QueryBlockOffset())
 	reader.PlanPartInfo = &PhysPlanPartInfo{
 		PruningConds:   sg.Source.AllConds,

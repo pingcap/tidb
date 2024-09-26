@@ -19,7 +19,6 @@ import (
 	"slices"
 
 	"github.com/pingcap/tidb/pkg/expression"
-	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
@@ -99,29 +98,4 @@ func pruneByItems(p base.LogicalPlan, old []*util.ByItems, opt *optimizetrace.Lo
 // Name implements base.LogicalOptRule.<1st> interface.
 func (*ColumnPruner) Name() string {
 	return "column_prune"
-}
-
-func preferKeyColumnFromTable(dataSource *DataSource, originColumns []*expression.Column,
-	originSchemaColumns []*model.ColumnInfo) (*expression.Column, *model.ColumnInfo) {
-	var resultColumnInfo *model.ColumnInfo
-	var resultColumn *expression.Column
-	if dataSource.table.Type().IsClusterTable() && len(originColumns) > 0 {
-		// use the first column.
-		resultColumnInfo = originSchemaColumns[0]
-		resultColumn = originColumns[0]
-	} else {
-		if dataSource.HandleCols != nil {
-			resultColumn = dataSource.HandleCols.GetCol(0)
-			resultColumnInfo = resultColumn.ToInfo()
-		} else if dataSource.table.Meta().PKIsHandle {
-			// dataSource.HandleCols = nil doesn't mean datasource doesn't have a intPk handle.
-			// since datasource.HandleCols will be cleared in the first columnPruner.
-			resultColumn = dataSource.UnMutableHandleCols.GetCol(0)
-			resultColumnInfo = resultColumn.ToInfo()
-		} else {
-			resultColumn = dataSource.newExtraHandleSchemaCol()
-			resultColumnInfo = model.NewExtraHandleColInfo()
-		}
-	}
-	return resultColumn, resultColumnInfo
 }
