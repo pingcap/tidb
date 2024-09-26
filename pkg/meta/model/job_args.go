@@ -1121,3 +1121,42 @@ func GetSetDefaultValueArgs(job *Job) (*SetDefaultValueArgs, error) {
 
 	return getOrDecodeArgsV2[*SetDefaultValueArgs](job)
 }
+
+// AddColumnArgs is the arguments for adding column ddl.
+type AddColumnArgs struct {
+	Col         *ColumnInfo         `json:"column_info,omitempty"`
+	Pos         *ast.ColumnPosition `json:"position,omitempty"`
+	Offset      int                 `json:"offset,omitempty"`
+	IfNotExists bool                `json:"if_not_exists,omitempty"`
+}
+
+func (a *AddColumnArgs) fillJob(job *Job) {
+	if job.Version == JobVersion1 {
+		job.Args = []any{a.Col, a.Pos, a.Offset, a.IfNotExists}
+	} else {
+		job.Args = []any{a}
+	}
+}
+
+// GetAddColumnArgs gets the args for adding column ddl.
+func GetAddColumnArgs(job *Job) (*AddColumnArgs, error) {
+	if job.Version == JobVersion1 {
+		var (
+			col         = &ColumnInfo{}
+			pos         = &ast.ColumnPosition{}
+			offset      = 0
+			ifNotExists = false
+		)
+		if err := job.DecodeArgs(col, pos, &offset, &ifNotExists); err != nil {
+			return nil, errors.Trace(err)
+		}
+		return &AddColumnArgs{
+			Col:         col,
+			Pos:         pos,
+			Offset:      offset,
+			IfNotExists: ifNotExists,
+		}, nil
+	}
+
+	return getOrDecodeArgsV2[*AddColumnArgs](job)
+}

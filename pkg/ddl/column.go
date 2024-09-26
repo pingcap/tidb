@@ -72,15 +72,13 @@ func checkAddColumn(t *meta.Meta, job *model.Job) (*model.TableInfo, *model.Colu
 	if err != nil {
 		return nil, nil, nil, nil, false, errors.Trace(err)
 	}
-	col := &model.ColumnInfo{}
-	pos := &ast.ColumnPosition{}
-	offset := 0
-	ifNotExists := false
-	err = job.DecodeArgs(col, pos, &offset, &ifNotExists)
+
+	args, err := model.GetAddColumnArgs(job)
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return nil, nil, nil, nil, false, errors.Trace(err)
 	}
+	col, pos, ifNotExists := args.Col, args.Pos, args.IfNotExists
 
 	columnInfo := model.FindColumnInfo(tblInfo.Columns, col.Name.L)
 	if columnInfo != nil {

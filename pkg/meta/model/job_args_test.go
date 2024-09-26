@@ -657,3 +657,24 @@ func TestGetSetDefaultValueArgs(t *testing.T) {
 		require.Equal(t, inArgs, args)
 	}
 }
+
+func TestGetAddColumnArgs(t *testing.T) {
+	inArgs := &AddColumnArgs{
+		Col: &ColumnInfo{
+			ID: 7527,
+		},
+		Pos: &ast.ColumnPosition{
+			Tp: ast.ColumnPositionFirst,
+		},
+		Offset:      1001,
+		IfNotExists: true,
+	}
+
+	for _, v := range []JobVersion{JobVersion1, JobVersion2} {
+		j2 := &Job{}
+		require.NoError(t, j2.Decode(getJobBytes(t, inArgs, v, ActionAddColumn)))
+		args, err := GetAddColumnArgs(j2)
+		require.NoError(t, err)
+		require.Equal(t, inArgs, args)
+	}
+}
