@@ -102,7 +102,7 @@ func (pq *AnalysisPriorityQueueV2) Initialize() error {
 func (pq *AnalysisPriorityQueueV2) init() error {
 	return statsutil.CallWithSCtx(pq.statsHandle.SPool(), func(sctx sessionctx.Context) error {
 		parameters := exec.GetAutoAnalyzeParameters(sctx)
-		err := pq.setAutoAnalysisTimeWindow(parameters)
+		err := pq.SetAutoAnalysisTimeWindow(parameters)
 		if err != nil {
 			return err
 		}
@@ -126,19 +126,20 @@ func (pq *AnalysisPriorityQueueV2) run() {
 			return
 		case <-timeRefreshInterval.C:
 			statslogutil.StatsLogger().Info("start to refresh last analysis durations of jobs")
-			pq.refreshLastAnalysisDuration()
+			pq.RefreshLastAnalysisDuration()
 		}
 	}
 }
 
-// refreshLastAnalysisDuration refreshes the last analysis duration of all jobs in the priority queue.
-func (pq *AnalysisPriorityQueueV2) refreshLastAnalysisDuration() {
+// RefreshLastAnalysisDuration refreshes the last analysis duration of all jobs in the priority queue.
+func (pq *AnalysisPriorityQueueV2) RefreshLastAnalysisDuration() {
 	if !pq.IsWithinTimeWindow() {
 		return
 	}
+
 	start := time.Now()
 	defer func() {
-		statslogutil.StatsLogger().Info("time refreshed", zap.Duration("duration", time.Since(start)))
+		statslogutil.StatsLogger().Info("Last analysis duration refreshed", zap.Duration("duration", time.Since(start)))
 	}()
 	if err := statsutil.CallWithSCtx(pq.statsHandle.SPool(), func(sctx sessionctx.Context) error {
 		jobs := pq.inner.List()
@@ -152,19 +153,22 @@ func (pq *AnalysisPriorityQueueV2) refreshLastAnalysisDuration() {
 			jobFactory := NewAnalysisJobFactory(sctx, 0, currentTs)
 			tableStats, ok := pq.statsHandle.Get(job.GetTableID())
 			if !ok {
-				// TODO: Handle this case.
+				statslogutil.StatsLogger().Warn("Table stats not found during refreshing last analysis duration",
+					zap.Int64("tableID", job.GetTableID()),
+					zap.String("job", job.String()),
+				)
 				continue
 			}
 			indicators.LastAnalysisDuration = jobFactory.GetTableLastAnalyzeDuration(tableStats)
 			job.SetIndicators(indicators)
 			job.SetWeight(pq.calculator.CalculateWeight(job))
 			if err := pq.inner.Add(job); err != nil {
-				statslogutil.StatsLogger().Error("failed to add job to priority queue", zap.Error(err))
+				statslogutil.StatsLogger().Error("Failed to add job to priority queue", zap.Error(err))
 			}
 		}
 		return nil
 	}, statsutil.FlagWrapTxn); err != nil {
-		statslogutil.StatsLogger().Error("failed to refresh time", zap.Error(err))
+		statslogutil.StatsLogger().Error("Failed to refresh last analysis duration", zap.Error(err))
 	}
 }
 
@@ -188,7 +192,7 @@ func (pq *AnalysisPriorityQueueV2) IsEmpty() bool {
 	return pq.inner.IsEmpty()
 }
 
-func (pq *AnalysisPriorityQueueV2) setAutoAnalysisTimeWindow(
+func (pq *AnalysisPriorityQueueV2) SetAutoAnalysisTimeWindow(
 	parameters map[string]string,
 ) error {
 	start, end, err := exec.ParseAutoAnalysisWindow(
