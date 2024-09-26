@@ -60,7 +60,6 @@ func TestBackfillOperators(t *testing.T) {
 	{
 		ctx := context.Background()
 		opCtx, cancel := ddl.NewDistTaskOperatorCtx(ctx, 1, 1)
-		defer cancel()
 		pTbl := tbl.(table.PhysicalTable)
 		src := ddl.NewTableScanTaskSource(opCtx, store, pTbl, startKey, endKey, nil)
 		sink := testutil.NewOperatorTestSink[ddl.TableScanTask]()
@@ -96,7 +95,6 @@ func TestBackfillOperators(t *testing.T) {
 
 		ctx := context.Background()
 		opCtx, cancel := ddl.NewDistTaskOperatorCtx(ctx, 1, 1)
-		defer cancel()
 		src := testutil.NewOperatorTestSource(opTasks...)
 		scanOp := ddl.NewTableScanOperator(opCtx, sessPool, copCtx, srcChkPool, 3, nil, 0)
 		sink := testutil.NewOperatorTestSink[ddl.IndexRecordChunk]()
@@ -130,7 +128,6 @@ func TestBackfillOperators(t *testing.T) {
 	{
 		ctx := context.Background()
 		opCtx, cancel := ddl.NewDistTaskOperatorCtx(ctx, 1, 1)
-		defer cancel()
 		var keys, values [][]byte
 		onWrite := func(key, val []byte) {
 			keys = append(keys, key)
