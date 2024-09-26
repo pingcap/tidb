@@ -553,17 +553,17 @@ func TestAvoidColumnEvaluatorForProjBelowUnion(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 
-	getPhysicalPlan := func(sql string) base.Plan {
+	getPhysicalPlan := func(sql string) core.Plan {
 		tk.MustExec(sql)
 		info := tk.Session().ShowProcess()
 		require.NotNil(t, info)
-		p, ok := info.Plan.(base.Plan)
+		p, ok := info.Plan.(core.Plan)
 		require.True(t, ok)
 		return p
 	}
 
-	var findProjBelowUnion func(p base.Plan) (projsBelowUnion, normalProjs []*core.PhysicalProjection)
-	findProjBelowUnion = func(p base.Plan) (projsBelowUnion, normalProjs []*core.PhysicalProjection) {
+	var findProjBelowUnion func(p core.Plan) (projsBelowUnion, normalProjs []*core.PhysicalProjection)
+	findProjBelowUnion = func(p core.Plan) (projsBelowUnion, normalProjs []*core.PhysicalProjection) {
 		if p == nil {
 			return projsBelowUnion, normalProjs
 		}
@@ -575,7 +575,7 @@ func TestAvoidColumnEvaluatorForProjBelowUnion(t *testing.T) {
 				}
 			}
 		default:
-			for _, child := range p.(base.PhysicalPlan).Children() {
+			for _, child := range p.(core.PhysicalPlan).Children() {
 				if proj, ok := child.(*core.PhysicalProjection); ok {
 					normalProjs = append(normalProjs, proj)
 				}
