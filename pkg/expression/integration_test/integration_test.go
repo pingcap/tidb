@@ -60,6 +60,215 @@ import (
 	"github.com/tikv/client-go/v2/oracle"
 )
 
+func TestVectorDefaultValue(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	// ============================
+	// NULLABLE, NO DEFAULT, Non-Strict Mode
+
+	tk.MustExec("set @@session.sql_mode=''")
+	tk.MustExec("create table t(embedding VECTOR)")
+	tk.MustExec("insert into t values ('[1,2,3]')")
+	tk.MustExec("insert into t values ('[4]')")
+	tk.MustExec("insert into t values (DEFAULT)")
+	tk.MustExec("insert into t values (NULL)")
+	tk.MustQuery("select *, vec_dims(embedding) from t").Check(testkit.Rows(
+		"[1,2,3] 3",
+		"[4] 1",
+		"<nil> <nil>",
+		"<nil> <nil>",
+	))
+	tk.MustExec("drop table t")
+
+	tk.MustExec("create table t(embedding VECTOR(3))")
+	tk.MustExec("insert into t values ('[1,2,3]')")
+	tk.MustExecToErr("insert into t values ('[4]')")
+	tk.MustExec("insert into t values (DEFAULT)")
+	tk.MustExec("insert into t values (NULL)")
+	tk.MustQuery("select *, vec_dims(embedding) from t").Check(testkit.Rows(
+		"[1,2,3] 3",
+		"<nil> <nil>",
+		"<nil> <nil>",
+	))
+	tk.MustExec("drop table t")
+
+	// ============================
+	// NULLABLE, NO DEFAULT, Strict Mode
+
+	tk.MustExec("set @@session.sql_mode='STRICT_ALL_TABLES'")
+	tk.MustExec("create table t(embedding VECTOR)")
+	tk.MustExec("insert into t values ('[1,2,3]')")
+	tk.MustExec("insert into t values ('[4]')")
+	tk.MustExec("insert into t values (DEFAULT)")
+	tk.MustExec("insert into t values (NULL)")
+	tk.MustQuery("select *, vec_dims(embedding) from t").Check(testkit.Rows(
+		"[1,2,3] 3",
+		"[4] 1",
+		"<nil> <nil>",
+		"<nil> <nil>",
+	))
+	tk.MustExec("drop table t")
+
+	tk.MustExec("create table t(embedding VECTOR(3))")
+	tk.MustExec("insert into t values ('[1,2,3]')")
+	tk.MustExecToErr("insert into t values ('[4]')")
+	tk.MustExec("insert into t values (DEFAULT)")
+	tk.MustExec("insert into t values (NULL)")
+	tk.MustQuery("select *, vec_dims(embedding) from t").Check(testkit.Rows(
+		"[1,2,3] 3",
+		"<nil> <nil>",
+		"<nil> <nil>",
+	))
+	tk.MustExec("drop table t")
+
+	// ============================
+	// NULLABLE, DEFAULT
+
+	tk.MustGetErrMsg("create table t(embedding VECTOR DEFAULT '[1,2,3]')", `VECTOR column 'embedding' can't have a literal default. Use expression default instead: ((VEC_FROM_TEXT('...')))`)
+	tk.MustExec("create table t(embedding VECTOR DEFAULT (VEC_FROM_TEXT('[1,2,3]')))")
+	tk.MustExec("insert into t values ()")
+	tk.MustExec("insert into t values ('[4]')")
+	tk.MustExec("insert into t values (DEFAULT)")
+	tk.MustExec("insert into t values (NULL)")
+	tk.MustExec("insert into t values (DEFAULT(embedding))")
+	tk.MustQuery("select *, vec_dims(embedding) from t").Check(testkit.Rows(
+		"[1,2,3] 3",
+		"[4] 1",
+		"[1,2,3] 3",
+		"<nil> <nil>",
+		"[1,2,3] 3",
+	))
+	tk.MustExec("drop table t")
+
+	// Allow. Error happens when inserting.
+	tk.MustExec("create table t(embedding VECTOR(5) DEFAULT (VEC_FROM_TEXT('[1,2,3]')))")
+	tk.MustGetErrMsg("insert into t values ()", "vector has 3 dimensions, does not fit VECTOR(5)")
+	tk.MustGetErrMsg("insert into t values (DEFAULT)", "vector has 3 dimensions, does not fit VECTOR(5)")
+	tk.MustExec("insert into t values ('[1,2,3,4,5]')")
+	tk.MustExec("insert into t values (NULL)")
+	tk.MustQuery("select *, vec_dims(embedding) from t").Check(testkit.Rows("[1,2,3,4,5] 5", "<nil> <nil>"))
+	tk.MustExec("drop table t")
+
+	// Allow. Error happens when inserting.
+	tk.MustExec("create table t(embedding VECTOR(5) DEFAULT (UUID()))")
+	tk.MustContainErrMsg("insert into t values ()", "Invalid vector text: ")
+	tk.MustExec("insert into t values ('[1,2,3,4,5]')")
+	tk.MustExec("insert into t values (NULL)")
+	tk.MustQuery("select *, vec_dims(embedding) from t").Check(testkit.Rows("[1,2,3,4,5] 5", "<nil> <nil>"))
+	tk.MustExec("drop table t")
+
+	// ============================
+	// NOT NULL, NO DEFAULT, Non-Strict Mode
+
+	tk.MustExec("set @@session.sql_mode=''")
+	tk.MustExec("create table t(embedding VECTOR NOT NULL)")
+	tk.MustExec("insert into t values ('[1,2,3]')")
+	tk.MustExec("insert into t values ('[4]')")
+	tk.MustExec("insert into t values (DEFAULT)")
+	tk.MustExecToErr("insert into t values (NULL)")
+	tk.MustQuery("select *, vec_dims(embedding) from t").Check(testkit.Rows(
+		"[1,2,3] 3",
+		"[4] 1",
+		"[] 0",
+	))
+	tk.MustExec("drop table t")
+
+	tk.MustExec("create table t(embedding VECTOR(3) NOT NULL)")
+	tk.MustExec("insert into t values ('[1,2,3]')")
+	tk.MustExecToErr("insert into t values ('[4]')")
+	tk.MustExecToErr("insert into t values (DEFAULT)")
+	tk.MustExecToErr("insert into t values (NULL)")
+	tk.MustQuery("select *, vec_dims(embedding) from t").Check(testkit.Rows(
+		"[1,2,3] 3",
+	))
+	tk.MustExec("drop table t")
+
+	// ============================
+	// NOT NULL, NO DEFAULT, Strict Mode
+
+	tk.MustExec("set @@session.sql_mode='STRICT_ALL_TABLES'")
+	tk.MustExec("create table t(embedding VECTOR NOT NULL)")
+	tk.MustExec("insert into t values ('[1,2,3]')")
+	tk.MustExec("insert into t values ('[4]')")
+	tk.MustExecToErr("insert into t values (DEFAULT)")
+	tk.MustExecToErr("insert into t values (NULL)")
+	tk.MustQuery("select *, vec_dims(embedding) from t").Check(testkit.Rows(
+		"[1,2,3] 3",
+		"[4] 1",
+	))
+	tk.MustExec("drop table t")
+
+	tk.MustExec("create table t(embedding VECTOR(3) NOT NULL)")
+	tk.MustExec("insert into t values ('[1,2,3]')")
+	tk.MustExecToErr("insert into t values ('[4]')")
+	tk.MustExecToErr("insert into t values (DEFAULT)")
+	tk.MustExecToErr("insert into t values (NULL)")
+	tk.MustQuery("select *, vec_dims(embedding) from t").Check(testkit.Rows(
+		"[1,2,3] 3",
+	))
+	tk.MustExec("drop table t")
+
+	// ============================
+	// NOT NULL, DEFAULT, Non-Strict Mode
+
+	tk.MustExec("set @@session.sql_mode=''")
+	tk.MustExec("create table t(embedding VECTOR NOT NULL DEFAULT (VEC_FROM_TEXT('[1,2,3]')))")
+	tk.MustExec("insert into t values ()")
+	tk.MustExec("insert into t values ('[4]')")
+	tk.MustExec("insert into t values (DEFAULT)")
+	tk.MustExecToErr("insert into t values (NULL)")
+	tk.MustExec("insert into t values (DEFAULT(embedding))")
+	tk.MustQuery("select *, vec_dims(embedding) from t").Check(testkit.Rows(
+		"[1,2,3] 3",
+		"[4] 1",
+		"[1,2,3] 3",
+		"[1,2,3] 3",
+	))
+	tk.MustExec("drop table t")
+
+	tk.MustExec("create table t(embedding VECTOR(1) NOT NULL DEFAULT (VEC_FROM_TEXT('[1,2,3]')))")
+	tk.MustExecToErr("insert into t values ()")
+	tk.MustExec("insert into t values ('[4]')")
+	tk.MustExecToErr("insert into t values (DEFAULT)")
+	tk.MustExecToErr("insert into t values (NULL)")
+	tk.MustExecToErr("insert into t values (DEFAULT(embedding))")
+	tk.MustQuery("select *, vec_dims(embedding) from t").Check(testkit.Rows(
+		"[4] 1",
+	))
+	tk.MustExec("drop table t")
+
+	// ============================
+	// NOT NULL, DEFAULT, Strict Mode
+
+	tk.MustExec("set @@session.sql_mode='STRICT_ALL_TABLES'")
+	tk.MustExec("create table t(embedding VECTOR NOT NULL DEFAULT (VEC_FROM_TEXT('[1,2,3]')))")
+	tk.MustExec("insert into t values ()")
+	tk.MustExec("insert into t values ('[4]')")
+	tk.MustExec("insert into t values (DEFAULT)")
+	tk.MustExecToErr("insert into t values (NULL)")
+	tk.MustExec("insert into t values (DEFAULT(embedding))")
+	tk.MustQuery("select *, vec_dims(embedding) from t").Check(testkit.Rows(
+		"[1,2,3] 3",
+		"[4] 1",
+		"[1,2,3] 3",
+		"[1,2,3] 3",
+	))
+	tk.MustExec("drop table t")
+
+	tk.MustExec("create table t(embedding VECTOR(1) NOT NULL DEFAULT (VEC_FROM_TEXT('[1,2,3]')))")
+	tk.MustExecToErr("insert into t values ()")
+	tk.MustExec("insert into t values ('[4]')")
+	tk.MustExecToErr("insert into t values (DEFAULT)")
+	tk.MustExecToErr("insert into t values (NULL)")
+	tk.MustExecToErr("insert into t values (DEFAULT(embedding))")
+	tk.MustQuery("select *, vec_dims(embedding) from t").Check(testkit.Rows(
+		"[4] 1",
+	))
+	tk.MustExec("drop table t")
+}
+
 func TestVectorColumnInfo(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
