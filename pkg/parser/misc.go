@@ -880,6 +880,7 @@ var tokenMap = map[string]int{
 	"UTC_DATE":                 utcDate,
 	"UTC_TIME":                 utcTime,
 	"UTC_TIMESTAMP":            utcTimestamp,
+	"UTILIZATION_LIMIT":        utilizationLimit,
 	"VALIDATION":               validation,
 	"VALUE":                    value,
 	"VALUES":                   values,

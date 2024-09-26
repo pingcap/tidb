@@ -210,7 +210,7 @@ func TestSplitRegionTimeout(t *testing.T) {
 
 	// Test pre-split with timeout.
 	tk.MustExec("drop table if exists t")
-	tk.MustExec("set @@global.tidb_scatter_region=1;")
+	tk.MustExec("set @@session.tidb_scatter_region='table';")
 	require.NoError(t, failpoint.Enable("tikvclient/mockScatterRegionTimeout", `return(true)`))
 	atomic.StoreUint32(&ddl.EnableSplitTableRegion, 1)
 	start := time.Now()

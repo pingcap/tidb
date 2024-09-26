@@ -660,3 +660,22 @@ func TestIssue55016(t *testing.T) {
 		tk.MustQuery("select count(*) from t t1 join t t2 on t1.a = t2.b and t2.a = t1.b").Check(testkit.Rows("0"))
 	}
 }
+
+func TestIssue56214(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1;")
+	tk.MustExec("drop table if exists t2;")
+	tk.MustExec("drop table if exists t3;")
+	tk.MustExec("create table t1(id int, value int)")
+	tk.MustExec("create table t2(id int, value int)")
+	tk.MustExec("create table t3(id int, value int)")
+	tk.MustExec("insert into t1 values(1,2),(2,3),(3,4)")
+	tk.MustExec("insert into t2 values(1,10),(1,1),(2,10),(2,10)")
+	tk.MustExec("insert into t3 values(1,10),(1,20)")
+	for _, hashJoinV2 := range join.HashJoinV2Strings {
+		tk.MustExec(hashJoinV2)
+		tk.MustQuery("select value, (select t1.id from t1 join t2 on t1.id = t2.id and t1.value < t2.value - t3.value + 3) d from t3 order by value").Check(testkit.Rows("10 1", "20 <nil>"))
+	}
+}

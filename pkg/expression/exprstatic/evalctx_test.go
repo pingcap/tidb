@@ -310,9 +310,10 @@ func TestStaticEvalCtxWarnings(t *testing.T) {
 	tc, ec := ctx.TypeCtx(), ctx.ErrCtx()
 	h.AppendWarning(errors.NewNoStackError("warn0"))
 	ctx.AppendWarning(errors.NewNoStackError("warn1"))
+	ctx.AppendNote(errors.NewNoStackError("note1"))
 	tc.AppendWarning(errors.NewNoStackError("warn2"))
 	ec.AppendWarning(errors.NewNoStackError("warn3"))
-	require.Equal(t, 4, h.WarningCount())
+	require.Equal(t, 5, h.WarningCount())
 	require.Equal(t, h.WarningCount(), ctx.WarningCount())
 
 	// ctx.CopyWarnings
@@ -320,15 +321,17 @@ func TestStaticEvalCtxWarnings(t *testing.T) {
 	require.Equal(t, []contextutil.SQLWarn{
 		{Level: contextutil.WarnLevelWarning, Err: errors.NewNoStackError("warn0")},
 		{Level: contextutil.WarnLevelWarning, Err: errors.NewNoStackError("warn1")},
+		{Level: contextutil.WarnLevelNote, Err: errors.NewNoStackError("note1")},
 		{Level: contextutil.WarnLevelWarning, Err: errors.NewNoStackError("warn2")},
 		{Level: contextutil.WarnLevelWarning, Err: errors.NewNoStackError("warn3")},
 	}, warnings)
-	require.Equal(t, 4, h.WarningCount())
+	require.Equal(t, 5, h.WarningCount())
 	require.Equal(t, h.WarningCount(), ctx.WarningCount())
 
 	// ctx.TruncateWarnings
 	warnings = ctx.TruncateWarnings(2)
 	require.Equal(t, []contextutil.SQLWarn{
+		{Level: contextutil.WarnLevelNote, Err: errors.NewNoStackError("note1")},
 		{Level: contextutil.WarnLevelWarning, Err: errors.NewNoStackError("warn2")},
 		{Level: contextutil.WarnLevelWarning, Err: errors.NewNoStackError("warn3")},
 	}, warnings)

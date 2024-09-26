@@ -16,6 +16,7 @@ package local
 
 import (
 	"context"
+	"math/rand"
 	"sync"
 	"testing"
 	"time"
@@ -187,9 +188,14 @@ func TestRegionJobRetryer(t *testing.T) {
 		putBackCh   = make(chan *regionJob, 10)
 		jobWg       sync.WaitGroup
 		ctx, cancel = context.WithCancel(context.Background())
+		done        = make(chan struct{})
 	)
-	retryer := startRegionJobRetryer(ctx, putBackCh, &jobWg)
+	retryer := newRegionJobRetryer(ctx, putBackCh, &jobWg)
 	require.Len(t, putBackCh, 0)
+	go func() {
+		defer close(done)
+		retryer.run()
+	}()
 
 	for i := 0; i < 8; i++ {
 		go func() {
@@ -226,6 +232,7 @@ func TestRegionJobRetryer(t *testing.T) {
 
 	cancel()
 	jobWg.Wait()
+	<-done
 	ok = retryer.push(job)
 	require.False(t, ok)
 
@@ -234,7 +241,12 @@ func TestRegionJobRetryer(t *testing.T) {
 
 	ctx, cancel = context.WithCancel(context.Background())
 	putBackCh = make(chan *regionJob)
-	retryer = startRegionJobRetryer(ctx, putBackCh, &jobWg)
+	retryer = newRegionJobRetryer(ctx, putBackCh, &jobWg)
+	done = make(chan struct{})
+	go func() {
+		defer close(done)
+		retryer.run()
+	}()
 
 	job = &regionJob{
 		keyRange: common.Range{
@@ -258,6 +270,29 @@ func TestRegionJobRetryer(t *testing.T) {
 	require.True(t, ok)
 	cancel()
 	jobWg.Wait()
+	<-done
+
+	// test when close successfully, regionJobRetryer should close the putBackCh
+	ctx = context.Background()
+	putBackCh = make(chan *regionJob)
+	retryer = newRegionJobRetryer(ctx, putBackCh, &jobWg)
+	done = make(chan struct{})
+	go func() {
+		defer close(done)
+		retryer.run()
+	}()
+
+	job = &regionJob{
+		keyRange: common.Range{
+			Start: []byte("123"),
+		},
+		waitUntil: time.Now().Add(-time.Second),
+	}
+	ok = retryer.push(job)
+	require.True(t, ok)
+	<-putBackCh
+	retryer.close()
+	<-putBackCh
 }
 
 func TestNewRegionJobs(t *testing.T) {
@@ -338,4 +373,210 @@ func TestNewRegionJobs(t *testing.T) {
 			require.Equal(t, c.jobKeys[i+1], j.keyRange.End, "case %d", caseIdx)
 		}
 	}
+}
+
+func mockWorkerReadJob(
+	t *testing.T,
+	b *storeBalancer,
+	jobs []*regionJob,
+	jobToWorkerCh chan<- *regionJob,
+) []*regionJob {
+	ret := make([]*regionJob, len(jobs))
+	jobToWorkerCh <- jobs[0]
+	require.Eventually(t, func() bool {
+		// wait runSendToWorker goroutine is blocked at sending
+		return b.jobLen() == 0
+	}, time.Second, 10*time.Millisecond)
+
+	for _, job := range jobs[1:] {
+		jobToWorkerCh <- job
+	}
+	require.Eventually(t, func() bool {
+		// rest are waiting to be picked
+		return b.jobLen() == len(jobs)-1
+	}, time.Second, 10*time.Millisecond)
+	for i := range ret {
+		got := <-b.innerJobToWorkerCh
+		ret[i] = got
+	}
+	return ret
+}
+
+func checkStoreScoreZero(t *testing.T, b *storeBalancer) {
+	b.storeLoadMap.Range(func(_, value any) bool {
+		require.Equal(t, 0, value.(int))
+		return true
+	})
+}
+
+func TestStoreBalancerPick(t *testing.T) {
+	jobToWorkerCh := make(chan *regionJob)
+	jobWg := sync.WaitGroup{}
+	ctx := context.Background()
+
+	b := newStoreBalancer(jobToWorkerCh, &jobWg)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		err := b.run(ctx)
+		require.NoError(t, err)
+	}()
+
+	job := &regionJob{
+		region: &split.RegionInfo{
+			Region: &metapb.Region{
+				Peers: []*metapb.Peer{
+					{Id: 1, StoreId: 1},
+					{Id: 2, StoreId: 2},
+				},
+			},
+		},
+	}
+
+	// the worker can get the job just sent to storeBalancer
+	got := mockWorkerReadJob(t, b, []*regionJob{job}, jobToWorkerCh)
+	require.Equal(t, []*regionJob{job}, got)
+
+	// mimic the worker is handled the job and storeBalancer release it
+	b.releaseStoreLoad(job.region.Region.GetPeers())
+	checkStoreScoreZero(t, b)
+
+	busyStoreJob := &regionJob{
+		region: &split.RegionInfo{
+			Region: &metapb.Region{
+				Peers: []*metapb.Peer{
+					{Id: 3, StoreId: 2},
+					{Id: 4, StoreId: 2},
+				},
+			},
+		},
+	}
+	idleStoreJob := &regionJob{
+		region: &split.RegionInfo{
+			Region: &metapb.Region{
+				Peers: []*metapb.Peer{
+					{Id: 5, StoreId: 3},
+					{Id: 6, StoreId: 4},
+				},
+			},
+		},
+	}
+
+	// now the worker should get the job in specific order. The first job is already
+	// picked and can't be dynamically changed by design, so the order is job,
+	// idleStoreJob, busyStoreJob
+	got = mockWorkerReadJob(t, b, []*regionJob{job, busyStoreJob, idleStoreJob}, jobToWorkerCh)
+	require.Equal(t, []*regionJob{job, idleStoreJob, busyStoreJob}, got)
+	// mimic the worker finished the job in different order
+	jonDone := make(chan struct{}, 3)
+	go func() {
+		b.releaseStoreLoad(idleStoreJob.region.Region.GetPeers())
+		jonDone <- struct{}{}
+	}()
+	go func() {
+		b.releaseStoreLoad(job.region.Region.GetPeers())
+		jonDone <- struct{}{}
+	}()
+	go func() {
+		b.releaseStoreLoad(busyStoreJob.region.Region.GetPeers())
+		jonDone <- struct{}{}
+	}()
+
+	for i := 0; i < 3; i++ {
+		<-jonDone
+	}
+	checkStoreScoreZero(t, b)
+
+	close(jobToWorkerCh)
+	<-done
+}
+
+func mockRegionJob4Balance(t *testing.T, cnt int) []*regionJob {
+	seed := time.Now().UnixNano()
+	t.Logf("seed: %d", seed)
+	r := rand.New(rand.NewSource(seed))
+	ret := make([]*regionJob, cnt)
+	for i := range ret {
+		ret[i] = &regionJob{
+			region: &split.RegionInfo{
+				Region: &metapb.Region{
+					Peers: []*metapb.Peer{
+						{StoreId: uint64(r.Intn(10))},
+						{StoreId: uint64(r.Intn(10))},
+					},
+				},
+			},
+		}
+	}
+
+	return ret
+}
+
+func TestCancelBalancer(t *testing.T) {
+	jobToWorkerCh := make(chan *regionJob)
+	jobWg := sync.WaitGroup{}
+	ctx, cancel := context.WithCancel(context.Background())
+
+	b := newStoreBalancer(jobToWorkerCh, &jobWg)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		err := b.run(ctx)
+		require.NoError(t, err)
+	}()
+
+	jobs := mockRegionJob4Balance(t, 20)
+	for _, job := range jobs {
+		jobWg.Add(1)
+		jobToWorkerCh <- job
+	}
+
+	cancel()
+	<-done
+	jobWg.Wait()
+}
+
+func TestStoreBalancerNoRace(t *testing.T) {
+	jobToWorkerCh := make(chan *regionJob)
+	jobFromWorkerCh := make(chan *regionJob)
+	jobWg := sync.WaitGroup{}
+	ctx, cancel := context.WithCancel(context.Background())
+
+	b := newStoreBalancer(jobToWorkerCh, &jobWg)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		err := b.run(ctx)
+		require.NoError(t, err)
+	}()
+
+	cnt := 200
+	done2 := make(chan struct{})
+
+	jobs := mockRegionJob4Balance(t, cnt)
+	for _, job := range jobs {
+		jobWg.Add(1)
+		jobToWorkerCh <- job
+	}
+
+	go func() {
+		// mimic that worker handles the job and send back to storeBalancer concurrently
+		for j := range b.innerJobToWorkerCh {
+			j := j
+			go func() {
+				b.releaseStoreLoad(j.region.Region.GetPeers())
+				j.done(&jobWg)
+			}()
+		}
+		close(done2)
+	}()
+
+	jobWg.Wait()
+	checkStoreScoreZero(t, b)
+
+	cancel()
+	<-done
+	close(b.innerJobToWorkerCh)
+	<-done2
+	require.Len(t, jobFromWorkerCh, 0)
 }

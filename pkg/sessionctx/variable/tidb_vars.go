@@ -190,6 +190,7 @@ const (
 	TiDBEnableTablePartition = "tidb_enable_table_partition"
 
 	// TiDBEnableListTablePartition is used to control list table partition feature.
+	// Deprecated: This variable is deprecated, please do not use this variable.
 	TiDBEnableListTablePartition = "tidb_enable_list_partition"
 
 	// TiDBSkipIsolationLevelCheck is used to control whether to return error when set unsupported transaction
@@ -535,7 +536,7 @@ const (
 	// deltaSchemaInfos is a queue that maintains the history of schema changes.
 	TiDBMaxDeltaSchemaCount = "tidb_max_delta_schema_count"
 
-	// TiDBScatterRegion will scatter the regions for DDLs when it is ON.
+	// TiDBScatterRegion will scatter the regions for DDLs when it is "table" or "global", "" indicates not trigger scatter.
 	TiDBScatterRegion = "tidb_scatter_region"
 
 	// TiDBWaitSplitRegionFinish defines the split region behaviour is sync or async.
@@ -652,6 +653,7 @@ const (
 	TiDBEnableClusteredIndex = "tidb_enable_clustered_index"
 
 	// TiDBEnableGlobalIndex means if we could create an global index on a partition table or not.
+	// Deprecated, will always be ON
 	TiDBEnableGlobalIndex = "tidb_enable_global_index"
 
 	// TiDBPartitionPruneMode indicates the partition prune mode used.
@@ -1338,7 +1340,7 @@ const (
 	DefTiDBSkipIsolationLevelCheck          = false
 	DefTiDBExpensiveQueryTimeThreshold      = 60      // 60s
 	DefTiDBExpensiveTxnTimeThreshold        = 60 * 10 // 10 minutes
-	DefTiDBScatterRegion                    = false
+	DefTiDBScatterRegion                    = ScatterOff
 	DefTiDBWaitSplitRegionFinish            = true
 	DefWaitSplitRegionTimeout               = 300 // 300s
 	DefTiDBEnableNoopFuncs                  = Off
@@ -1358,7 +1360,6 @@ const (
 	DefTiDBEnableCollectExecutionInfo       = true
 	DefTiDBAllowAutoRandExplicitInsert      = false
 	DefTiDBEnableClusteredIndex             = ClusteredIndexDefModeOn
-	DefTiDBEnableGlobalIndex                = false
 	DefTiDBRedactLog                        = Off
 	DefTiDBRestrictedReadOnly               = false
 	DefTiDBSuperReadOnly                    = false
@@ -1514,6 +1515,7 @@ const (
 	DefTiDBResourceControlStrictMode                  = true
 	DefTiDBPessimisticTransactionFairLocking          = false
 	DefTiDBEnablePlanCacheForParamLimit               = true
+	DefTiDBEnableINLJoinMultiPattern                  = true
 	DefTiFlashComputeDispatchPolicy                   = tiflashcompute.DispatchPolicyConsistentHashStr
 	DefTiDBEnablePlanCacheForSubquery                 = true
 	DefTiDBLoadBasedReplicaReadThreshold              = time.Second

@@ -559,7 +559,6 @@ select table1.`col_int` as field1, table1.`col_int` as field2 from V as table1 l
 
 # TestIssue30382
 set tidb_cost_model_version=2;
-set @@session.tidb_enable_list_partition = ON;
 drop table if exists t1, t2;
 create table t1  (c_int int, c_str varchar(40), c_decimal decimal(12, 6), primary key (c_int) , key(c_str(2)) , key(c_decimal) ) partition by list (c_int) ( partition p0 values IN (1, 5, 9, 13, 17, 21, 25, 29, 33, 37), partition p1 values IN (2, 6, 10, 14, 18, 22, 26, 30, 34, 38), partition p2 values IN (3, 7, 11, 15, 19, 23, 27, 31, 35, 39), partition p3 values IN (4, 8, 12, 16, 20, 24, 28, 32, 36, 40)) ;
 create table t2  (c_int int, c_str varchar(40), c_decimal decimal(12, 6), primary key (c_int) , key(c_str) , key(c_decimal) ) partition by hash (c_int) partitions 4;
@@ -573,7 +572,6 @@ select * from t1 where c_str <> any (select c_str from t2 where c_decimal < 5) f
 explain format = 'brief' select * from t1 where c_str <> any (select c_str from t2 where c_decimal < 5) for update;
 commit;
 set tidb_cost_model_version=default;
-set @@session.tidb_enable_list_partition = default;
 
 # TestFix31537
 drop table if exists trade, trade_history, status_type;
