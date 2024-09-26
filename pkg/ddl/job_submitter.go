@@ -510,7 +510,7 @@ func getRequiredGIDCount(jobWs []*JobWrapper) int {
 			// all the data with this table id.
 			count += 1 + len(args.PartInfo.Definitions)
 		case model.ActionTruncateTablePartition:
-			count += len(jobW.Args[0].([]int64))
+			count += len(jobW.JobArgs.(*model.TruncateTableArgs).OldPartitionIDs)
 		case model.ActionAddTablePartition, model.ActionReorganizePartition, model.ActionRemovePartitioning:
 			args := jobW.JobArgs.(*model.TablePartitionArgs)
 			count += len(args.PartInfo.Definitions)
@@ -562,14 +562,6 @@ func assignGIDsForJobs(jobWs []*JobWrapper, ids []int64) {
 				alloc.assignIDsForPartitionInfo(args.PartInfo)
 				args.PartInfo.NewTableID = alloc.next()
 			}
-		case model.ActionTruncateTablePartition:
-			if !jobW.IDAllocated {
-				newIDs := make([]int64, len(jobW.Args[0].([]int64)))
-				for i := range newIDs {
-					newIDs[i] = alloc.next()
-				}
-				jobW.Args[1] = newIDs
-			}
 		case model.ActionAddTablePartition, model.ActionReorganizePartition:
 			if !jobW.IDAllocated {
 				pInfo := jobW.JobArgs.(*model.TablePartitionArgs).PartInfo
@@ -583,10 +575,12 @@ func assignGIDsForJobs(jobWs []*JobWrapper, ids []int64) {
 				alloc.assignIDsForPartitionInfo(pInfo)
 			}
 			pInfo.NewTableID = pInfo.Definitions[0].ID
-		case model.ActionTruncateTable:
+		case model.ActionTruncateTable, model.ActionTruncateTablePartition:
 			if !jobW.IDAllocated {
 				args := jobW.JobArgs.(*model.TruncateTableArgs)
-				args.NewTableID = alloc.next()
+				if jobW.Type == model.ActionTruncateTable {
+					args.NewTableID = alloc.next()
+				}
 				partIDs := make([]int64, len(args.OldPartitionIDs))
 				for i := range partIDs {
 					partIDs[i] = alloc.next()

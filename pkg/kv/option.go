@@ -218,6 +218,8 @@ const (
 	InternalDistTask = "DistTask"
 	// InternalTimer is the type of internal timer
 	InternalTimer = "Timer"
+	// InternalDDLNotifier is the type of DDL notifier
+	InternalDDLNotifier = "DDLNotifier"
 )
 
 // The bitmap:

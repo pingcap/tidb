@@ -222,7 +222,7 @@ func TestTiDBClusterInfo(t *testing.T) {
 	tidbStatusAddr := fmt.Sprintf(":%d", config.GetGlobalConfig().Status.StatusPort)
 	row := func(cols ...string) string { return strings.Join(cols, " ") }
 	tk.MustQuery("select type, instance, status_address, version, git_hash from information_schema.cluster_info").Check(testkit.Rows(
-		row("tidb", ":4000", tidbStatusAddr, "None", "None"),
+		row("tidb", ":4000", tidbStatusAddr, "8.4.0-this-is-a-placeholder", "None"),
 		row("pd", mockAddr, mockAddr, "4.0.0-alpha", "mock-pd-githash"),
 		row("tikv", "store1", "", "", ""),
 	))
@@ -307,10 +307,6 @@ func TestTikvRegionStatus(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 
 	tk.MustExec("use test")
-	tk.MustExec("set tidb_enable_global_index=true")
-	defer func() {
-		tk.MustExec("set tidb_enable_global_index=default")
-	}()
 	tk.MustExec("drop table if exists test_t1")
 	tk.MustExec(`CREATE TABLE test_t1 ( a int(11) DEFAULT NULL, b int(11) DEFAULT NULL, c int(11) DEFAULT NULL)`)
 	tk.MustQuery("select REGION_ID, DB_NAME, TABLE_NAME, IS_INDEX, INDEX_ID, INDEX_NAME, IS_PARTITION, PARTITION_NAME from information_schema.TIKV_REGION_STATUS where DB_NAME = 'test' and TABLE_NAME = 'test_t1'").Check(testkit.Rows(

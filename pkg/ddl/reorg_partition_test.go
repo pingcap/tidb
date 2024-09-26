@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
+	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/mathutil"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
@@ -557,4 +558,89 @@ func TestReorgPartitionRollback(t *testing.T) {
 	tbl, err = is.TableByName(context.Background(), pmodel.NewCIStr(schemaName), pmodel.NewCIStr("t"))
 	require.NoError(t, err)
 	noNewTablesAfter(t, tk, ctx, tbl)
+}
+
+func TestPartitionByColumnChecks(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	cols := "(i int, f float, c char(20), b bit(2), b32 bit(32), b64 bit(64), d date, dt datetime, dt6 datetime(6), ts timestamp, ts6 timestamp(6), j json)"
+	vals := `(1, 2.2, "A and c", b'10', b'10001000100010001000100010001000', b'1000100010001000100010001000100010001000100010001000100010001000', '2024-09-24', '2024-09-24 13:01:02', '2024-09-24 13:01:02.123456', '2024-09-24 13:01:02', '2024-09-24 13:01:02.123456', '{"key1": "value1", "key2": "value2"}')`
+	tk.MustExec(`create table t ` + cols)
+	testCases := []struct {
+		partClause string
+		err        error
+	}{
+		{"key (c) partitions 2", nil},
+		{"key (j) partitions 2", dbterror.ErrNotAllowedTypeInPartition},
+		{"list (c) (partition pDef default)", dbterror.ErrNotAllowedTypeInPartition},
+		{"list (b) (partition pDef default)", nil},
+		{"list (f) (partition pDef default)", dbterror.ErrNotAllowedTypeInPartition},
+		{"list (j) (partition pDef default)", dbterror.ErrNotAllowedTypeInPartition},
+		{"list columns (b) (partition pDef default)", dbterror.ErrNotAllowedTypeInPartition},
+		{"list columns (f) (partition pDef default)", dbterror.ErrNotAllowedTypeInPartition},
+		{"list columns (ts) (partition pDef default)", dbterror.ErrNotAllowedTypeInPartition},
+		{"list columns (j) (partition pDef default)", dbterror.ErrNotAllowedTypeInPartition},
+		{"hash (year(ts)) partitions 2", dbterror.ErrWrongExprInPartitionFunc},
+		{"hash (ts) partitions 2", dbterror.ErrNotAllowedTypeInPartition},
+		{"hash (ts6) partitions 2", dbterror.ErrNotAllowedTypeInPartition},
+		{"hash (d) partitions 2", dbterror.ErrNotAllowedTypeInPartition},
+		{"hash (f) partitions 2", dbterror.ErrNotAllowedTypeInPartition},
+		{"range (c) (partition pMax values less than (maxvalue))", dbterror.ErrNotAllowedTypeInPartition},
+		{"range (f) (partition pMax values less than (maxvalue))", dbterror.ErrNotAllowedTypeInPartition},
+		{"range (d) (partition pMax values less than (maxvalue))", dbterror.ErrNotAllowedTypeInPartition},
+		{"range (dt) (partition pMax values less than (maxvalue))", dbterror.ErrNotAllowedTypeInPartition},
+		{"range (dt6) (partition pMax values less than (maxvalue))", dbterror.ErrNotAllowedTypeInPartition},
+		{"range (ts) (partition pMax values less than (maxvalue))", dbterror.ErrNotAllowedTypeInPartition},
+		{"range (ts6) (partition pMax values less than (maxvalue))", dbterror.ErrNotAllowedTypeInPartition},
+		{"range (j) (partition pMax values less than (maxvalue))", dbterror.ErrNotAllowedTypeInPartition},
+		{"range columns (b) (partition pMax values less than (maxvalue))", dbterror.ErrNotAllowedTypeInPartition},
+		{"range columns (b64) (partition pMax values less than (maxvalue))", dbterror.ErrNotAllowedTypeInPartition},
+		{"range columns (c) (partition pMax values less than (maxvalue))", nil},
+		{"range columns (f) (partition pMax values less than (maxvalue))", dbterror.ErrNotAllowedTypeInPartition},
+		{"range columns (d) (partition pMax values less than (maxvalue))", nil},
+		{"range columns (dt) (partition pMax values less than (maxvalue))", nil},
+		{"range columns (dt6) (partition pMax values less than (maxvalue))", nil},
+		{"range columns (ts) (partition pMax values less than (maxvalue))", dbterror.ErrNotAllowedTypeInPartition},
+		{"range columns (ts6) (partition pMax values less than (maxvalue))", dbterror.ErrNotAllowedTypeInPartition},
+		{"range columns (j) (partition pMax values less than (maxvalue))", dbterror.ErrNotAllowedTypeInPartition},
+	}
+	for _, testCase := range testCases {
+		err := tk.ExecToErr(`create table tt ` + cols + ` partition by ` + testCase.partClause)
+		require.ErrorIs(t, err, testCase.err, testCase.partClause)
+		if testCase.err == nil {
+			tk.MustExec(`drop table tt`)
+		}
+		err = tk.ExecToErr(`alter table t partition by ` + testCase.partClause)
+		require.ErrorIs(t, err, testCase.err)
+	}
+
+	// Not documented or tested!!
+	// KEY - Allows more types than documented, should be OK!
+	tk.MustExec(`create table kb ` + cols + ` partition by key(b) partitions 2`)
+	tk.MustExec(`create table kf ` + cols + ` partition by key(f) partitions 2`)
+	tk.MustExec(`create table kts ` + cols + ` partition by key(ts) partitions 2`)
+	// HASH/LIST/RANGE - Treats bit values as int, BIT(>=32) for HASH fails due to overflow...
+	tk.MustExec(`create table hb ` + cols + ` partition by hash(b) partitions 2`)
+	tk.MustExec(`insert into hb values ` + vals)
+	tk.MustQuery(`select count(*) from hb where b = b'10'`).Check(testkit.Rows("1"))
+	tk.MustExec(`alter table hb partition by hash(b) partitions 3`)
+	tk.MustExec(`insert into hb values ` + vals)
+	tk.MustQuery(`select count(*) from hb where b = b'10'`).Check(testkit.Rows("2"))
+	tk.MustExec(`create table hb32 ` + cols + ` partition by hash(b32) partitions 2`)
+	tk.MustContainErrMsg(`insert into hb32 values `+vals, "[types:1690]constant 2290649224 overflows int")
+	tk.MustExec(`alter table hb32 partition by hash(b32) partitions 3`)
+	tk.MustContainErrMsg(`insert into hb32 values `+vals, "[types:1690]constant 2290649224 overflows int")
+	tk.MustExec(`create table rb ` + cols + ` partition by range (b) (partition pMax values less than (MAXVALUE))`)
+	tk.MustExec(`insert into rb values ` + vals)
+	tk.MustExec(`alter table rb partition by range(b) (partition pMax values less than (MAXVALUE))`)
+	tk.MustExec(`insert into rb values ` + vals)
+	tk.MustExec(`create table rb32 ` + cols + ` partition by range (b32) (partition pMax values less than (MAXVALUE))`)
+	tk.MustExec(`insert into rb32 values ` + vals)
+	tk.MustExec(`alter table rb32 partition by range(b32) (partition pMax values less than (MAXVALUE))`)
+	tk.MustExec(`insert into rb32 values ` + vals)
+	tk.MustExec(`create table rb64 ` + cols + ` partition by range (b64) (partition pMax values less than (MAXVALUE))`)
+	tk.MustExec(`insert into rb64 values ` + vals)
+	tk.MustExec(`alter table rb64 partition by range(b64) (partition pMax values less than (MAXVALUE))`)
+	tk.MustExec(`insert into rb64 values ` + vals)
 }

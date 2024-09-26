@@ -269,7 +269,8 @@ func TestParseExecArgs(t *testing.T) {
 	}
 	for _, tt := range tests {
 		var warn error
-		typectx := types.NewContext(types.DefaultStmtFlags.WithTruncateAsWarning(true), time.UTC, contextutil.NewFuncWarnAppenderForTest(func(err error) {
+		typectx := types.NewContext(types.DefaultStmtFlags.WithTruncateAsWarning(true), time.UTC, contextutil.NewFuncWarnAppenderForTest(func(l string, err error) {
+			require.Equal(t, contextutil.WarnLevelWarning, l)
 			warn = err
 		}))
 		err := decodeAndParse(typectx, tt.args.args, tt.args.boundParams, tt.args.nullBitmap, tt.args.paramTypes, tt.args.paramValues, nil)

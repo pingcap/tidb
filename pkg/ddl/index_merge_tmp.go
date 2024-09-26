@@ -75,7 +75,7 @@ func (w *mergeIndexWorker) batchCheckTemporaryUniqueKey(
 // checkTempIndexKey determines whether there is a duplicated index key entry according to value of temp index.
 // For non-delete temp record, if the index values mismatch, it is duplicated.
 // For delete temp record, we decode the handle from the origin index value and temp index value.
-//   - if the handles matche, we can delete the index key.
+//   - if the handles match, we can delete the index key.
 //   - otherwise, we further check if the row exists in the table.
 func checkTempIndexKey(txn kv.Transaction, tmpRec *temporaryIndexRecord, originIdxVal []byte, tblInfo table.Table) (matchDelete bool, err error) {
 	if !tmpRec.delete {

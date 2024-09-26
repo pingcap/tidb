@@ -1031,9 +1031,9 @@ Projection	100.00	root		tpch50.customer.c_name, tpch50.customer.c_custkey, tpch5
     └─IndexHashJoin	243550009.54	root		inner join, inner:IndexLookUp, outer key:tpch50.orders.o_orderkey, inner key:tpch50.lineitem.l_orderkey, equal cond:eq(tpch50.orders.o_orderkey, tpch50.lineitem.l_orderkey)
       ├─HashJoin(Build)	60000000.00	root		inner join, equal:[eq(tpch50.orders.o_orderkey, tpch50.lineitem.l_orderkey)]
       │ ├─Selection(Build)	59126579.20	root		gt(Column#52, 314)
-      │ │ └─HashAgg	73908224.00	root		group by:tpch50.lineitem.l_orderkey, funcs:sum(Column#66)->Column#52, funcs:firstrow(tpch50.lineitem.l_orderkey)->tpch50.lineitem.l_orderkey
+      │ │ └─HashAgg	73908224.00	root		group by:tpch50.lineitem.l_orderkey, funcs:sum(Column#84)->Column#52, funcs:firstrow(tpch50.lineitem.l_orderkey)->tpch50.lineitem.l_orderkey
       │ │   └─TableReader	73908224.00	root		data:HashAgg
-      │ │     └─HashAgg	73908224.00	cop[tikv]		group by:tpch50.lineitem.l_orderkey, funcs:sum(tpch50.lineitem.l_quantity)->Column#66
+      │ │     └─HashAgg	73908224.00	cop[tikv]		group by:tpch50.lineitem.l_orderkey, funcs:sum(tpch50.lineitem.l_quantity)->Column#84
       │ │       └─TableFullScan	300005811.00	cop[tikv]	table:lineitem	keep order:false
       │ └─HashJoin(Probe)	75000000.00	root		inner join, equal:[eq(tpch50.customer.c_custkey, tpch50.orders.o_custkey)]
       │   ├─TableReader(Build)	7500000.00	root		data:TableFullScan

@@ -393,15 +393,11 @@ func (w *worker) deleteDDLJob(job *model.Job) error {
 }
 
 func finishRecoverTable(w *worker, job *model.Job) error {
-	var (
-		recoverInfo           *RecoverInfo
-		recoverTableCheckFlag int64
-	)
-	err := job.DecodeArgs(&recoverInfo, &recoverTableCheckFlag)
+	args, err := model.GetRecoverArgs(job)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	if recoverTableCheckFlag == recoverCheckFlagEnableGC {
+	if args.CheckFlag == recoverCheckFlagEnableGC {
 		err = enableGC(w)
 		if err != nil {
 			return errors.Trace(err)
@@ -411,15 +407,11 @@ func finishRecoverTable(w *worker, job *model.Job) error {
 }
 
 func finishRecoverSchema(w *worker, job *model.Job) error {
-	var (
-		recoverSchemaInfo      *RecoverSchemaInfo
-		recoverSchemaCheckFlag int64
-	)
-	err := job.DecodeArgs(&recoverSchemaInfo, &recoverSchemaCheckFlag)
+	args, err := model.GetRecoverArgs(job)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	if recoverSchemaCheckFlag == recoverCheckFlagEnableGC {
+	if args.CheckFlag == recoverCheckFlagEnableGC {
 		err = enableGC(w)
 		if err != nil {
 			return errors.Trace(err)
@@ -876,7 +868,7 @@ func (w *worker) runOneJobStep(
 	case model.ActionSetTiFlashReplica:
 		ver, err = w.onSetTableFlashReplica(jobCtx, t, job)
 	case model.ActionUpdateTiFlashReplicaStatus:
-		ver, err = onUpdateFlashReplicaStatus(jobCtx, t, job)
+		ver, err = onUpdateTiFlashReplicaStatus(jobCtx, t, job)
 	case model.ActionCreateSequence:
 		ver, err = onCreateSequence(jobCtx, t, job)
 	case model.ActionAlterIndexVisibility:

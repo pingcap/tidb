@@ -34,12 +34,13 @@ import (
 )
 
 func onCreatePlacementPolicy(jobCtx *jobContext, t *meta.Meta, job *model.Job) (ver int64, _ error) {
-	policyInfo := &model.PolicyInfo{}
-	var orReplace bool
-	if err := job.DecodeArgs(policyInfo, &orReplace); err != nil {
+	args, err := model.GetPlacementPolicyArgs(job)
+	if err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
+	policyInfo, orReplace := args.Policy, args.ReplaceOnExist
+
 	policyInfo.State = model.StateNone
 
 	if err := checkPolicyValidation(policyInfo.PlacementSettings); err != nil {
@@ -183,7 +184,11 @@ func checkAllTablePlacementPoliciesExistAndCancelNonExistJob(t *meta.Meta, job *
 }
 
 func onDropPlacementPolicy(jobCtx *jobContext, t *meta.Meta, job *model.Job) (ver int64, _ error) {
-	policyInfo, err := checkPlacementPolicyExistAndCancelNonExistJob(t, job, job.SchemaID)
+	args, err := model.GetPlacementPolicyArgs(job)
+	if err != nil {
+		return ver, errors.Trace(err)
+	}
+	policyInfo, err := checkPlacementPolicyExistAndCancelNonExistJob(t, job, args.PolicyID)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
@@ -241,19 +246,19 @@ func onDropPlacementPolicy(jobCtx *jobContext, t *meta.Meta, job *model.Job) (ve
 }
 
 func onAlterPlacementPolicy(jobCtx *jobContext, t *meta.Meta, job *model.Job) (ver int64, _ error) {
-	alterPolicy := &model.PolicyInfo{}
-	if err := job.DecodeArgs(alterPolicy); err != nil {
+	args, err := model.GetPlacementPolicyArgs(job)
+	if err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
 
-	oldPolicy, err := checkPlacementPolicyExistAndCancelNonExistJob(t, job, job.SchemaID)
+	oldPolicy, err := checkPlacementPolicyExistAndCancelNonExistJob(t, job, args.PolicyID)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
 
 	newPolicyInfo := *oldPolicy
-	newPolicyInfo.PlacementSettings = alterPolicy.PlacementSettings
+	newPolicyInfo.PlacementSettings = args.Policy.PlacementSettings
 
 	err = checkPolicyValidation(newPolicyInfo.PlacementSettings)
 	if err != nil {

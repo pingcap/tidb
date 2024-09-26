@@ -1712,7 +1712,7 @@ func TestTableShardIndex(t *testing.T) {
 
 	// test delete statement
 	t.Run("", func(t *testing.T) {
-		sql := "delete from test6 where a = 45 and b = 45;"
+		sql := "delete from test6 where a = 45 and b = 46;"
 		sctx := testKit.Session()
 		stmts, err := session.Parse(sctx, sql)
 		require.NoError(t, err)
@@ -1723,10 +1723,11 @@ func TestTableShardIndex(t *testing.T) {
 		require.NoError(t, err)
 		p, err := plannercore.BuildLogicalPlanForTest(ctx, sctx, nodeW, ret.InfoSchema)
 		require.NoError(t, err)
-		selection, ok := p.(*plannercore.Delete).SelectPlan.(*plannercore.PhysicalSelection)
-		require.True(t, ok)
-		_, ok = selection.Children()[0].(*plannercore.PointGetPlan)
-		require.True(t, ok)
+		del := p.(*plannercore.Delete)
+		require.Equal(t, "PointGet(Index(test6.uk_expr)[KindUint64 32 KindInt64 45])->Sel([eq(test.test6.b, 46)])->Projection", plannercore.ToString(del.SelectPlan))
+		proj := del.SelectPlan.(*plannercore.PhysicalProjection)
+		//nolint: printexpression
+		require.Equal(t, "[test.test6.id test.test6.a tidb_shard(test.test6.a)]", fmt.Sprintf("%v", proj.Exprs))
 	})
 }
 
