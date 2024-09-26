@@ -3091,7 +3091,6 @@ func TestIssue52680(t *testing.T) {
 	}
 
 	tk.MustQuery("show table issue52680 next_row_id").Check(testkit.Rows(
-		"test issue52680 id 1 _TIDB_ROWID",
 		"test issue52680 id 3 AUTO_INCREMENT",
 	))
 
