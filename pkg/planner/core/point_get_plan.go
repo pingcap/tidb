@@ -41,6 +41,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/costusage"
+	"github.com/pingcap/tidb/pkg/planner/util/domainmisc"
 	"github.com/pingcap/tidb/pkg/planner/util/fixcontrol"
 	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
 	"github.com/pingcap/tidb/pkg/privilege"
@@ -1411,7 +1412,7 @@ func checkTblIndexForPointPlan(ctx base.PlanContext, tblName *resolve.TableNameW
 		}
 		if isTableDual {
 			if check && latestIndexes == nil {
-				latestIndexes, check, err = getLatestIndexInfo(ctx, tbl.ID, 0)
+				latestIndexes, check, err = domainmisc.GetLatestIndexInfo(ctx, tbl.ID, 0)
 				if err != nil {
 					logutil.BgLogger().Warn("get information schema failed", zap.Error(err))
 					return nil
@@ -1431,7 +1432,7 @@ func checkTblIndexForPointPlan(ctx base.PlanContext, tblName *resolve.TableNameW
 			continue
 		}
 		if check && latestIndexes == nil {
-			latestIndexes, check, err = getLatestIndexInfo(ctx, tbl.ID, 0)
+			latestIndexes, check, err = domainmisc.GetLatestIndexInfo(ctx, tbl.ID, 0)
 			if err != nil {
 				logutil.BgLogger().Warn("get information schema failed", zap.Error(err))
 				return nil

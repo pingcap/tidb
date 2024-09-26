@@ -2046,7 +2046,7 @@ func TestDoImport(t *testing.T) {
 				{
 					keyRange:   common.Range{Start: []byte{'a'}, End: []byte{'b'}},
 					ingestData: &Engine{},
-					retryCount: maxWriteAndIngestRetryTimes - 1,
+					retryCount: MaxWriteAndIngestRetryTimes - 1,
 					injected:   getSuccessInjectedBehaviour(),
 				},
 			},
@@ -2056,7 +2056,7 @@ func TestDoImport(t *testing.T) {
 				{
 					keyRange:   common.Range{Start: []byte{'b'}, End: []byte{'c'}},
 					ingestData: &Engine{},
-					retryCount: maxWriteAndIngestRetryTimes - 1,
+					retryCount: MaxWriteAndIngestRetryTimes - 1,
 					injected:   getSuccessInjectedBehaviour(),
 				},
 			},
@@ -2066,7 +2066,7 @@ func TestDoImport(t *testing.T) {
 				{
 					keyRange:   common.Range{Start: []byte{'c'}, End: []byte{'d'}},
 					ingestData: &Engine{},
-					retryCount: maxWriteAndIngestRetryTimes - 2,
+					retryCount: MaxWriteAndIngestRetryTimes - 2,
 					injected: []injectedBehaviour{
 						{
 							write: injectedWriteBehaviour{
@@ -2115,7 +2115,7 @@ func TestRegionJobResetRetryCounter(t *testing.T) {
 					keyRange:   common.Range{Start: []byte{'c'}, End: []byte{'c', '2'}},
 					ingestData: &Engine{},
 					injected:   getNeedRescanWhenIngestBehaviour(),
-					retryCount: maxWriteAndIngestRetryTimes,
+					retryCount: MaxWriteAndIngestRetryTimes,
 					region: &split.RegionInfo{
 						Region: &metapb.Region{
 							Peers: []*metapb.Peer{
@@ -2130,7 +2130,7 @@ func TestRegionJobResetRetryCounter(t *testing.T) {
 					keyRange:   common.Range{Start: []byte{'c', '2'}, End: []byte{'d'}},
 					ingestData: &Engine{},
 					injected:   getSuccessInjectedBehaviour(),
-					retryCount: maxWriteAndIngestRetryTimes,
+					retryCount: MaxWriteAndIngestRetryTimes,
 					region: &split.RegionInfo{
 						Region: &metapb.Region{
 							Peers: []*metapb.Peer{

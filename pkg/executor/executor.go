@@ -2756,7 +2756,16 @@ func (e *RecommendIndexExec) Next(ctx context.Context, req *chunk.Chunk) error {
 
 	var sqls []string
 	if e.SQL != "" {
-		sqls = strings.Split(e.SQL, ";")
+		tmp := strings.Split(e.SQL, ";")
+		for _, s := range tmp {
+			s = strings.TrimSpace(s)
+			if s != "" {
+				sqls = append(sqls, s)
+			}
+		}
+		if len(sqls) == 0 {
+			return errors.New("empty SQLs")
+		}
 	}
 	results, err := indexadvisor.AdviseIndexes(ctx, e.Ctx(), sqls, e.Options)
 

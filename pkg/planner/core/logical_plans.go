@@ -27,10 +27,10 @@ var (
 	_ base.LogicalPlan = &logicalop.LogicalApply{}
 	_ base.LogicalPlan = &logicalop.LogicalMaxOneRow{}
 	_ base.LogicalPlan = &logicalop.LogicalTableDual{}
-	_ base.LogicalPlan = &DataSource{}
-	_ base.LogicalPlan = &TiKVSingleGather{}
-	_ base.LogicalPlan = &LogicalTableScan{}
-	_ base.LogicalPlan = &LogicalIndexScan{}
+	_ base.LogicalPlan = &logicalop.DataSource{}
+	_ base.LogicalPlan = &logicalop.TiKVSingleGather{}
+	_ base.LogicalPlan = &logicalop.LogicalTableScan{}
+	_ base.LogicalPlan = &logicalop.LogicalIndexScan{}
 	_ base.LogicalPlan = &logicalop.LogicalUnionAll{}
 	_ base.LogicalPlan = &logicalop.LogicalPartitionUnionAll{}
 	_ base.LogicalPlan = &logicalop.LogicalSort{}
