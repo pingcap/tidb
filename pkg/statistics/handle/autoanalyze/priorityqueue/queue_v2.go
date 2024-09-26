@@ -110,8 +110,18 @@ func (pq *AnalysisPriorityQueueV2) init() error {
 		if !pq.IsWithinTimeWindow() {
 			return nil
 		}
+		timeWindow := pq.autoAnalysisTimeWindow.Load().(*AutoAnalysisTimeWindow)
 
-		// TODO: Add the jobs to the priority queue.
+		err = FetchAllTablesAndBuildAnalysisJobs(
+			sctx,
+			parameters,
+			*timeWindow,
+			pq.statsHandle,
+			pq.Push,
+		)
+		if err != nil {
+			return errors.Trace(err)
+		}
 		return nil
 	}, statsutil.FlagWrapTxn)
 }
@@ -234,12 +244,4 @@ func (pq *AnalysisPriorityQueueV2) Close() {
 	pq.cancel()
 	pq.wg.Wait()
 	pq.inner.Close()
-}
-
-func getStartTs(sctx sessionctx.Context) (uint64, error) {
-	txn, err := sctx.Txn(true)
-	if err != nil {
-		return 0, err
-	}
-	return txn.StartTS(), nil
 }

@@ -17,8 +17,10 @@ package priorityqueue_test
 import (
 	"context"
 	"testing"
+	"time"
 
 	pmodel "github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/statistics/handle/autoanalyze/priorityqueue"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/stretchr/testify/require"
@@ -28,8 +30,20 @@ func TestAnalysisPriorityQueueV2(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
+	tk.MustExec("create table t1 (a int)")
+	tk.MustExec("create table t2 (a int)")
+	tk.MustExec("insert into t1 values (1)")
+	tk.MustExec("insert into t2 values (1)")
+	statistics.AutoAnalyzeMinCnt = 0
+	defer func() {
+		statistics.AutoAnalyzeMinCnt = 1000
+	}()
 
+	ctx := context.Background()
 	handle := dom.StatsHandle()
+	require.NoError(t, handle.DumpStatsDeltaToKV(true))
+	require.NoError(t, handle.Update(ctx, dom.InfoSchema()))
+
 	pq := priorityqueue.NewAnalysisPriorityQueueV2(handle)
 	defer pq.Close()
 
@@ -43,32 +57,16 @@ func TestAnalysisPriorityQueueV2(t *testing.T) {
 		require.NoError(t, err)
 	})
 
-	t.Run("Push and Pop", func(t *testing.T) {
-		// TODO: avoid manually inserting jobs after the queue has been initialized.
-		// This is a temporary solution to test the Push and Pop methods.
-		job1 := &priorityqueue.NonPartitionedTableAnalysisJob{
-			TableID: 1,
-			Weight:  10,
-		}
-		job2 := &priorityqueue.NonPartitionedTableAnalysisJob{
-			TableID: 2,
-			Weight:  20,
-		}
-
-		err := pq.Push(job1)
-		require.NoError(t, err)
-		err = pq.Push(job2)
-		require.NoError(t, err)
-
+	t.Run("IsEmpty And Pop", func(t *testing.T) {
 		require.False(t, pq.IsEmpty())
 
 		poppedJob, err := pq.Pop()
 		require.NoError(t, err)
-		require.Equal(t, job2, poppedJob)
+		require.NotNil(t, poppedJob)
 
 		poppedJob, err = pq.Pop()
 		require.NoError(t, err)
-		require.Equal(t, job1, poppedJob)
+		require.NotNil(t, poppedJob)
 
 		require.True(t, pq.IsEmpty())
 	})
@@ -104,6 +102,10 @@ func TestRefreshLastAnalysisDuration(t *testing.T) {
 	tk.MustExec("create table t2 (a int)")
 	tk.MustExec("insert into t1 values (1)")
 	tk.MustExec("insert into t2 values (1)")
+	statistics.AutoAnalyzeMinCnt = 0
+	defer func() {
+		statistics.AutoAnalyzeMinCnt = 1000
+	}()
 
 	ctx := context.Background()
 	require.NoError(t, handle.DumpStatsDeltaToKV(true))
@@ -118,23 +120,21 @@ func TestRefreshLastAnalysisDuration(t *testing.T) {
 	defer pq.Close()
 	require.NoError(t, pq.Initialize())
 
-	// Add some jobs to the queue
-	// TODO: avoid manually inserting jobs after the queue has been initialized.
-	// This is a temporary solution to test the RefreshLastAnalysisDuration method.
-	job1 := &priorityqueue.NonPartitionedTableAnalysisJob{
-		TableID:     tbl1.Meta().ID,
-		TableSchema: schema.O,
-		TableName:   tbl1.Meta().Name.O,
-	}
-	err = pq.Push(job1)
+	// Check current jobs.
+	job1, err := pq.Pop()
 	require.NoError(t, err)
-	job2 := &priorityqueue.NonPartitionedTableAnalysisJob{
-		TableID:     tbl2.Meta().ID,
-		TableSchema: schema.O,
-		TableName:   tbl2.Meta().Name.O,
-	}
-	err = pq.Push(job2)
+	require.Equal(t, tbl1.Meta().ID, job1.GetTableID())
+	oldLastAnalysisDuration1 := job1.GetIndicators().LastAnalysisDuration
+	require.Equal(t, time.Minute*30, oldLastAnalysisDuration1)
+	job2, err := pq.Pop()
 	require.NoError(t, err)
+	require.Equal(t, tbl2.Meta().ID, job2.GetTableID())
+	oldLastAnalysisDuration2 := job2.GetIndicators().LastAnalysisDuration
+	require.Equal(t, time.Minute*30, oldLastAnalysisDuration2)
+
+	// Push the jobs back to the queue
+	require.NoError(t, pq.Push(job1))
+	require.NoError(t, pq.Push(job2))
 
 	// Analyze the tables
 	tk.MustExec("analyze table t1")
@@ -149,9 +149,11 @@ func TestRefreshLastAnalysisDuration(t *testing.T) {
 	require.NoError(t, err)
 	require.NotZero(t, updatedJob1.GetWeight())
 	require.NotZero(t, updatedJob1.GetIndicators().LastAnalysisDuration)
+	require.NotEqual(t, oldLastAnalysisDuration1, updatedJob1.GetIndicators().LastAnalysisDuration)
 
 	updatedJob2, err := pq.Pop()
 	require.NoError(t, err)
 	require.NotZero(t, updatedJob2.GetWeight())
 	require.NotZero(t, updatedJob2.GetIndicators().LastAnalysisDuration)
+	require.NotEqual(t, oldLastAnalysisDuration2, updatedJob2.GetIndicators().LastAnalysisDuration)
 }
