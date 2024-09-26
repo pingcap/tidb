@@ -33,7 +33,7 @@ type Store interface {
 		multiSchemaChangeID int64,
 		processedBy uint64,
 	) error
-	Delete(ctx context.Context, se *sess.Session, ddlJobID int64, multiSchemaChangeID int) error
+	DeleteAndCommit(ctx context.Context, se *sess.Session, ddlJobID int64, multiSchemaChangeID int) error
 	List(ctx context.Context, se *sess.Session) ([]*schemaChange, error)
 }
 
@@ -82,14 +82,30 @@ func (t *tableStore) UpdateProcessed(
 	return err
 }
 
-//revive:disable
-
-func (t *tableStore) Delete(ctx context.Context, se *sess.Session, ddlJobID int64, multiSchemaChangeID int) error {
-	//TODO implement me
-	panic("implement me")
+func (t *tableStore) DeleteAndCommit(
+	ctx context.Context,
+	se *sess.Session,
+	ddlJobID int64,
+	multiSchemaChangeID int,
+) (err error) {
+	if err = se.Begin(ctx); err != nil {
+		return errors.Trace(err)
+	}
+	defer func() {
+		if err == nil {
+			err = errors.Trace(se.Commit(ctx))
+		} else {
+			se.Rollback()
+		}
+	}()
+	sql := fmt.Sprintf(`
+		DELETE FROM %s.%s
+		WHERE ddl_job_id = %d AND multi_schema_change_seq = %d`,
+		t.db, t.table,
+		ddlJobID, multiSchemaChangeID)
+	_, err = se.Execute(ctx, sql, "ddl_notifier")
+	return errors.Trace(err)
 }
-
-//revive:enable
 
 func (t *tableStore) List(ctx context.Context, se *sess.Session) ([]*schemaChange, error) {
 	sql := fmt.Sprintf(`

@@ -29,17 +29,19 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl/notifier"
 	"github.com/pingcap/tidb/pkg/ddl/placement"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
+	"github.com/pingcap/tidb/pkg/errctx"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/infoschema"
+	infoschemactx "github.com/pingcap/tidb/pkg/infoschema/context"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
+	"github.com/pingcap/tidb/pkg/meta/metabuild"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/format"
 	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	field_types "github.com/pingcap/tidb/pkg/parser/types"
-	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/table/tables"
@@ -389,12 +391,12 @@ func findTableIDFromStore(t *meta.Meta, schemaID int64, tableName string) (int64
 // BuildTableInfoFromAST builds model.TableInfo from a SQL statement.
 // Note: TableID and PartitionID are left as uninitialized value.
 func BuildTableInfoFromAST(s *ast.CreateTableStmt) (*model.TableInfo, error) {
-	return buildTableInfoWithCheck(mock.NewContext(), s, mysql.DefaultCharset, "", nil)
+	return buildTableInfoWithCheck(NewMetaBuildContextWithSctx(mock.NewContext()), s, mysql.DefaultCharset, "", nil)
 }
 
 // buildTableInfoWithCheck builds model.TableInfo from a SQL statement.
 // Note: TableID and PartitionIDs are left as uninitialized value.
-func buildTableInfoWithCheck(ctx sessionctx.Context, s *ast.CreateTableStmt, dbCharset, dbCollate string, placementPolicyRef *model.PolicyRefInfo) (*model.TableInfo, error) {
+func buildTableInfoWithCheck(ctx *metabuild.Context, s *ast.CreateTableStmt, dbCharset, dbCollate string, placementPolicyRef *model.PolicyRefInfo) (*model.TableInfo, error) {
 	tbInfo, err := BuildTableInfoWithStmt(ctx, s, dbCharset, dbCollate, placementPolicyRef)
 	if err != nil {
 		return nil, err
@@ -405,18 +407,18 @@ func buildTableInfoWithCheck(ctx sessionctx.Context, s *ast.CreateTableStmt, dbC
 	if err = checkTableInfoValidWithStmt(ctx, tbInfo, s); err != nil {
 		return nil, err
 	}
-	if err = checkTableInfoValidExtra(tbInfo); err != nil {
+	if err = checkTableInfoValidExtra(ctx.GetExprCtx().GetEvalCtx().ErrCtx(), tbInfo); err != nil {
 		return nil, err
 	}
 	return tbInfo, nil
 }
 
 // CheckTableInfoValidWithStmt exposes checkTableInfoValidWithStmt to SchemaTracker. Maybe one day we can delete it.
-func CheckTableInfoValidWithStmt(ctx sessionctx.Context, tbInfo *model.TableInfo, s *ast.CreateTableStmt) (err error) {
+func CheckTableInfoValidWithStmt(ctx *metabuild.Context, tbInfo *model.TableInfo, s *ast.CreateTableStmt) (err error) {
 	return checkTableInfoValidWithStmt(ctx, tbInfo, s)
 }
 
-func checkTableInfoValidWithStmt(ctx sessionctx.Context, tbInfo *model.TableInfo, s *ast.CreateTableStmt) (err error) {
+func checkTableInfoValidWithStmt(ctx *metabuild.Context, tbInfo *model.TableInfo, s *ast.CreateTableStmt) (err error) {
 	// All of these rely on the AST structure of expressions, which were
 	// lost in the model (got serialized into strings).
 	if err := checkGeneratedColumn(ctx, s.Table.Schema, tbInfo.Name, s.Cols); err != nil {
@@ -424,15 +426,15 @@ func checkTableInfoValidWithStmt(ctx sessionctx.Context, tbInfo *model.TableInfo
 	}
 
 	// Check if table has a primary key if required.
-	if !ctx.GetSessionVars().InRestrictedSQL && ctx.GetSessionVars().PrimaryKeyRequired && len(tbInfo.GetPkName().String()) == 0 {
+	if ctx.PrimaryKeyRequired() && len(tbInfo.GetPkName().String()) == 0 {
 		return infoschema.ErrTableWithoutPrimaryKey
 	}
 	if tbInfo.Partition != nil {
-		if err := checkPartitionDefinitionConstraints(ctx, tbInfo); err != nil {
+		if err := checkPartitionDefinitionConstraints(ctx.GetExprCtx(), tbInfo); err != nil {
 			return errors.Trace(err)
 		}
 		if s.Partition != nil {
-			if err := checkPartitionFuncType(ctx, s.Partition.Expr, s.Table.Schema.O, tbInfo); err != nil {
+			if err := checkPartitionFuncType(ctx.GetExprCtx(), s.Partition.Expr, s.Table.Schema.O, tbInfo); err != nil {
 				return errors.Trace(err)
 			}
 			if err := checkPartitioningKeysConstraints(ctx, s, tbInfo); err != nil {
@@ -441,15 +443,19 @@ func checkTableInfoValidWithStmt(ctx sessionctx.Context, tbInfo *model.TableInfo
 		}
 	}
 	if tbInfo.TTLInfo != nil {
-		if err := checkTTLInfoValid(ctx, s.Table.Schema, tbInfo); err != nil {
-			return errors.Trace(err)
+		var foreignKeyCheckIs infoschemactx.MetaOnlyInfoSchema
+		if is, ok := ctx.GetInfoSchema(); ok {
+			foreignKeyCheckIs = is
+		}
+		if err = checkTTLInfoValid(s.Table.Schema, tbInfo, foreignKeyCheckIs); err != nil {
+			return err
 		}
 	}
 
 	return nil
 }
 
-func checkGeneratedColumn(ctx sessionctx.Context, schemaName pmodel.CIStr, tableName pmodel.CIStr, colDefs []*ast.ColumnDef) error {
+func checkGeneratedColumn(ctx *metabuild.Context, schemaName pmodel.CIStr, tableName pmodel.CIStr, colDefs []*ast.ColumnDef) error {
 	var colName2Generation = make(map[string]columnGenerationInDDL, len(colDefs))
 	var exists bool
 	var autoIncrementColumn string
@@ -484,7 +490,7 @@ func checkGeneratedColumn(ctx sessionctx.Context, schemaName pmodel.CIStr, table
 
 	// Check whether the generated column refers to any auto-increment columns
 	if exists {
-		if !ctx.GetSessionVars().EnableAutoIncrementInGenerated {
+		if !ctx.EnableAutoIncrementInGenerated() {
 			for colName, generated := range colName2Generation {
 				if _, found := generated.dependences[autoIncrementColumn]; found {
 					return dbterror.ErrGeneratedColumnRefAutoInc.GenWithStackByArgs(colName)
@@ -507,7 +513,7 @@ func checkGeneratedColumn(ctx sessionctx.Context, schemaName pmodel.CIStr, table
 // name length and column count.
 // (checkTableInfoValid is also used in repairing objects which don't perform
 // these checks. Perhaps the two functions should be merged together regardless?)
-func checkTableInfoValidExtra(tbInfo *model.TableInfo) error {
+func checkTableInfoValidExtra(ec errctx.Context, tbInfo *model.TableInfo) error {
 	if err := checkTooLongTable(tbInfo.Name); err != nil {
 		return err
 	}
@@ -527,7 +533,7 @@ func checkTableInfoValidExtra(tbInfo *model.TableInfo) error {
 	if err := checkColumnsAttributes(tbInfo.Columns); err != nil {
 		return errors.Trace(err)
 	}
-	if err := checkGlobalIndexes(tbInfo); err != nil {
+	if err := checkGlobalIndexes(ec, tbInfo); err != nil {
 		return errors.Trace(err)
 	}
 
@@ -613,7 +619,7 @@ func checkColumnAttributes(colName string, tp *types.FieldType) error {
 }
 
 // BuildSessionTemporaryTableInfo builds model.TableInfo from a SQL statement.
-func BuildSessionTemporaryTableInfo(ctx sessionctx.Context, is infoschema.InfoSchema, s *ast.CreateTableStmt, dbCharset, dbCollate string, placementPolicyRef *model.PolicyRefInfo) (*model.TableInfo, error) {
+func BuildSessionTemporaryTableInfo(ctx *metabuild.Context, is infoschema.InfoSchema, s *ast.CreateTableStmt, dbCharset, dbCollate string, placementPolicyRef *model.PolicyRefInfo) (*model.TableInfo, error) {
 	ident := ast.Ident{Schema: s.Table.Schema, Name: s.Table.Name}
 	//build tableInfo
 	var tbInfo *model.TableInfo
@@ -629,7 +635,7 @@ func BuildSessionTemporaryTableInfo(ctx sessionctx.Context, is infoschema.InfoSc
 		if err != nil {
 			return nil, infoschema.ErrTableNotExists.GenWithStackByArgs(referIdent.Schema, referIdent.Name)
 		}
-		tbInfo, err = BuildTableInfoWithLike(ctx, ident, referTbl.Meta(), s)
+		tbInfo, err = BuildTableInfoWithLike(ident, referTbl.Meta(), s)
 	} else {
 		tbInfo, err = buildTableInfoWithCheck(ctx, s, dbCharset, dbCollate, placementPolicyRef)
 	}
@@ -637,16 +643,16 @@ func BuildSessionTemporaryTableInfo(ctx sessionctx.Context, is infoschema.InfoSc
 }
 
 // BuildTableInfoWithStmt builds model.TableInfo from a SQL statement without validity check
-func BuildTableInfoWithStmt(ctx sessionctx.Context, s *ast.CreateTableStmt, dbCharset, dbCollate string, placementPolicyRef *model.PolicyRefInfo) (*model.TableInfo, error) {
+func BuildTableInfoWithStmt(ctx *metabuild.Context, s *ast.CreateTableStmt, dbCharset, dbCollate string, placementPolicyRef *model.PolicyRefInfo) (*model.TableInfo, error) {
 	colDefs := s.Cols
-	tableCharset, tableCollate, err := GetCharsetAndCollateInTableOption(ctx.GetSessionVars(), 0, s.Options)
+	tableCharset, tableCollate, err := GetCharsetAndCollateInTableOption(0, s.Options, ctx.GetDefaultCollationForUTF8MB4())
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	tableCharset, tableCollate, err = ResolveCharsetCollation(ctx.GetSessionVars(),
-		ast.CharsetOpt{Chs: tableCharset, Col: tableCollate},
-		ast.CharsetOpt{Chs: dbCharset, Col: dbCollate},
-	)
+	tableCharset, tableCollate, err = ResolveCharsetCollation([]ast.CharsetOpt{
+		{Chs: tableCharset, Col: tableCollate},
+		{Chs: dbCharset, Col: dbCollate},
+	}, ctx.GetDefaultCollationForUTF8MB4())
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -666,7 +672,7 @@ func BuildTableInfoWithStmt(ctx sessionctx.Context, s *ast.CreateTableStmt, dbCh
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	if err = setTemporaryType(ctx, tbInfo, s); err != nil {
+	if err = setTemporaryType(tbInfo, s); err != nil {
 		return nil, errors.Trace(err)
 	}
 
@@ -676,16 +682,15 @@ func BuildTableInfoWithStmt(ctx sessionctx.Context, s *ast.CreateTableStmt, dbCh
 
 	// set default shard row id bits and pre-split regions for table.
 	if !tbInfo.HasClusteredIndex() && tbInfo.TempTableType == model.TempTableNone {
-		tbInfo.ShardRowIDBits = ctx.GetSessionVars().ShardRowIDBits
-		tbInfo.PreSplitRegions = ctx.GetSessionVars().PreSplitRegions
+		tbInfo.ShardRowIDBits = ctx.GetShardRowIDBits()
+		tbInfo.PreSplitRegions = ctx.GetPreSplitRegions()
 	}
 
 	if err = handleTableOptions(s.Options, tbInfo); err != nil {
 		return nil, errors.Trace(err)
 	}
 
-	sessionVars := ctx.GetSessionVars()
-	if _, err = validateCommentLength(sessionVars.StmtCtx.ErrCtx(), sessionVars.SQLMode, tbInfo.Name.L, &tbInfo.Comment, dbterror.ErrTooLongTableComment); err != nil {
+	if _, err = validateCommentLength(ctx.GetExprCtx().GetEvalCtx().ErrCtx(), ctx.GetSQLMode(), tbInfo.Name.L, &tbInfo.Comment, dbterror.ErrTooLongTableComment); err != nil {
 		return nil, errors.Trace(err)
 	}
 
@@ -703,7 +708,7 @@ func BuildTableInfoWithStmt(ctx sessionctx.Context, s *ast.CreateTableStmt, dbCh
 	return tbInfo, nil
 }
 
-func setTableAutoRandomBits(ctx sessionctx.Context, tbInfo *model.TableInfo, colDefs []*ast.ColumnDef) error {
+func setTableAutoRandomBits(ctx *metabuild.Context, tbInfo *model.TableInfo, colDefs []*ast.ColumnDef) error {
 	for _, col := range colDefs {
 		if containsColumnOption(col, ast.ColumnOptionAutoRandom) {
 			if col.Tp.GetType() != mysql.TypeLonglong {
@@ -748,7 +753,7 @@ func setTableAutoRandomBits(ctx sessionctx.Context, tbInfo *model.TableInfo, col
 				return dbterror.ErrInvalidAutoRandom.FastGenByArgs(autoid.AutoRandomIncrementalBitsTooSmall)
 			}
 			msg := fmt.Sprintf(autoid.AutoRandomAvailableAllocTimesNote, shardFmt.IncrementalBitsCapacity())
-			ctx.GetSessionVars().StmtCtx.AppendNote(errors.NewNoStackError(msg))
+			ctx.AppendNote(errors.NewNoStackError(msg))
 		}
 	}
 	return nil
@@ -851,7 +856,7 @@ func handleTableOptions(options []*ast.TableOption, tbInfo *model.TableInfo) err
 	return nil
 }
 
-func setTemporaryType(_ sessionctx.Context, tbInfo *model.TableInfo, s *ast.CreateTableStmt) error {
+func setTemporaryType(tbInfo *model.TableInfo, s *ast.CreateTableStmt) error {
 	switch s.TemporaryKeyword {
 	case ast.TemporaryGlobal:
 		tbInfo.TempTableType = model.TempTableGlobal
@@ -868,7 +873,7 @@ func setTemporaryType(_ sessionctx.Context, tbInfo *model.TableInfo, s *ast.Crea
 }
 
 func buildColumnsAndConstraints(
-	ctx sessionctx.Context,
+	ctx *metabuild.Context,
 	colDefs []*ast.ColumnDef,
 	constraints []*ast.Constraint,
 	tblCharset string,
@@ -891,13 +896,13 @@ func buildColumnsAndConstraints(
 			case mysql.TypeTiny:
 				// No warning for BOOL-like tinyint(1)
 				if colDef.Tp.GetFlen() != types.UnspecifiedLength && colDef.Tp.GetFlen() != 1 {
-					ctx.GetSessionVars().StmtCtx.AppendWarning(
+					ctx.AppendWarning(
 						dbterror.ErrWarnDeprecatedIntegerDisplayWidth.FastGenByArgs(),
 					)
 				}
 			case mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong:
 				if colDef.Tp.GetFlen() != types.UnspecifiedLength {
-					ctx.GetSessionVars().StmtCtx.AppendWarning(
+					ctx.AppendWarning(
 						dbterror.ErrWarnDeprecatedIntegerDisplayWidth.FastGenByArgs(),
 					)
 				}
@@ -909,7 +914,7 @@ func buildColumnsAndConstraints(
 		}
 		col.State = model.StatePublic
 		if mysql.HasZerofillFlag(col.GetFlag()) {
-			ctx.GetSessionVars().StmtCtx.AppendWarning(
+			ctx.AppendWarning(
 				dbterror.ErrWarnDeprecatedZerofill.FastGenByArgs(),
 			)
 		}
@@ -1081,13 +1086,13 @@ func setColumnFlagWithConstraint(colMap map[string]*table.Column, v *ast.Constra
 }
 
 // BuildTableInfoWithLike builds a new table info according to CREATE TABLE ... LIKE statement.
-func BuildTableInfoWithLike(ctx sessionctx.Context, ident ast.Ident, referTblInfo *model.TableInfo, s *ast.CreateTableStmt) (*model.TableInfo, error) {
+func BuildTableInfoWithLike(ident ast.Ident, referTblInfo *model.TableInfo, s *ast.CreateTableStmt) (*model.TableInfo, error) {
 	// Check the referred table is a real table object.
 	if referTblInfo.IsSequence() || referTblInfo.IsView() {
 		return nil, dbterror.ErrWrongObject.GenWithStackByArgs(ident.Schema, referTblInfo.Name, "BASE TABLE")
 	}
 	tblInfo := *referTblInfo
-	if err := setTemporaryType(ctx, &tblInfo, s); err != nil {
+	if err := setTemporaryType(&tblInfo, s); err != nil {
 		return nil, errors.Trace(err)
 	}
 	// Check non-public column and adjust column offset.
@@ -1138,7 +1143,7 @@ func renameCheckConstraint(tblInfo *model.TableInfo) {
 
 // BuildTableInfo creates a TableInfo.
 func BuildTableInfo(
-	ctx sessionctx.Context,
+	ctx *metabuild.Context,
 	tableName pmodel.CIStr,
 	cols []*table.Column,
 	constraints []*ast.Constraint,
@@ -1204,7 +1209,7 @@ func BuildTableInfo(
 				return nil, err
 			}
 			isSingleIntPK := isSingleIntPK(constr, lastCol)
-			if ShouldBuildClusteredIndex(ctx, constr.Option, isSingleIntPK) {
+			if ShouldBuildClusteredIndex(ctx.GetClusteredIndexDefMode(), constr.Option, isSingleIntPK) {
 				if isSingleIntPK {
 					tbInfo.PKIsHandle = true
 				} else {
@@ -1224,7 +1229,7 @@ func BuildTableInfo(
 		}
 
 		if constr.Tp == ast.ConstraintFulltext {
-			ctx.GetSessionVars().StmtCtx.AppendWarning(dbterror.ErrTableCantHandleFt.FastGenByArgs())
+			ctx.AppendWarning(dbterror.ErrTableCantHandleFt.FastGenByArgs())
 			continue
 		}
 
@@ -1246,7 +1251,7 @@ func BuildTableInfo(
 		// check constraint
 		if constr.Tp == ast.ConstraintCheck {
 			if !variable.EnableCheckConstraint.Load() {
-				ctx.GetSessionVars().StmtCtx.AppendWarning(errCheckConstraintIsOff)
+				ctx.AppendWarning(errCheckConstraintIsOff)
 				continue
 			}
 			// Since column check constraint dependency has been done in columnDefToCol.
@@ -1324,8 +1329,7 @@ func BuildTableInfo(
 		if len(hiddenCols) > 0 {
 			AddIndexColumnFlag(tbInfo, idxInfo)
 		}
-		sessionVars := ctx.GetSessionVars()
-		_, err = validateCommentLength(sessionVars.StmtCtx.ErrCtx(), sessionVars.SQLMode, idxInfo.Name.String(), &idxInfo.Comment, dbterror.ErrTooLongIndexComment)
+		_, err = validateCommentLength(ctx.GetExprCtx().GetEvalCtx().ErrCtx(), ctx.GetSQLMode(), idxInfo.Name.String(), &idxInfo.Comment, dbterror.ErrTooLongIndexComment)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -1358,7 +1362,7 @@ func precheckBuildHiddenColumnInfo(
 	return nil
 }
 
-func buildHiddenColumnInfoWithCheck(ctx sessionctx.Context, indexPartSpecifications []*ast.IndexPartSpecification, indexName pmodel.CIStr, tblInfo *model.TableInfo, existCols []*table.Column) ([]*model.ColumnInfo, error) {
+func buildHiddenColumnInfoWithCheck(ctx *metabuild.Context, indexPartSpecifications []*ast.IndexPartSpecification, indexName pmodel.CIStr, tblInfo *model.TableInfo, existCols []*table.Column) ([]*model.ColumnInfo, error) {
 	if err := precheckBuildHiddenColumnInfo(indexPartSpecifications, indexName); err != nil {
 		return nil, err
 	}
@@ -1366,7 +1370,7 @@ func buildHiddenColumnInfoWithCheck(ctx sessionctx.Context, indexPartSpecificati
 }
 
 // BuildHiddenColumnInfo builds hidden column info.
-func BuildHiddenColumnInfo(ctx sessionctx.Context, indexPartSpecifications []*ast.IndexPartSpecification, indexName pmodel.CIStr, tblInfo *model.TableInfo, existCols []*table.Column) ([]*model.ColumnInfo, error) {
+func BuildHiddenColumnInfo(ctx *metabuild.Context, indexPartSpecifications []*ast.IndexPartSpecification, indexName pmodel.CIStr, tblInfo *model.TableInfo, existCols []*table.Column) ([]*model.ColumnInfo, error) {
 	hiddenCols := make([]*model.ColumnInfo, 0, len(indexPartSpecifications))
 	for i, idxPart := range indexPartSpecifications {
 		if idxPart.Expr == nil {
@@ -1391,8 +1395,10 @@ func BuildHiddenColumnInfo(ctx sessionctx.Context, indexPartSpecifications []*as
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		expr, err := expression.BuildSimpleExpr(ctx.GetExprCtx(), idxPart.Expr,
-			expression.WithTableInfo(ctx.GetSessionVars().CurrentDB, tblInfo),
+
+		exprCtx := ctx.GetExprCtx()
+		expr, err := expression.BuildSimpleExpr(exprCtx, idxPart.Expr,
+			expression.WithTableInfo(exprCtx.GetEvalCtx().CurrentDB(), tblInfo),
 			expression.WithAllowCastArray(true),
 		)
 		if err != nil {
@@ -1434,7 +1440,7 @@ func BuildHiddenColumnInfo(ctx sessionctx.Context, indexPartSpecifications []*as
 		if err = checkDependedColExist(checkDependencies, existCols); err != nil {
 			return nil, errors.Trace(err)
 		}
-		if !ctx.GetSessionVars().EnableAutoIncrementInGenerated {
+		if !ctx.EnableAutoIncrementInGenerated() {
 			if err = checkExpressionIndexAutoIncrement(indexName.O, colInfo.Dependences, tblInfo); err != nil {
 				return nil, errors.Trace(err)
 			}
@@ -1447,7 +1453,7 @@ func BuildHiddenColumnInfo(ctx sessionctx.Context, indexPartSpecifications []*as
 
 // addIndexForForeignKey uses to auto create an index for the foreign key if the table doesn't have any index cover the
 // foreign key columns.
-func addIndexForForeignKey(ctx sessionctx.Context, tbInfo *model.TableInfo) error {
+func addIndexForForeignKey(ctx *metabuild.Context, tbInfo *model.TableInfo) error {
 	if len(tbInfo.ForeignKeys) == 0 {
 		return nil
 	}
@@ -1499,9 +1505,9 @@ func isSingleIntPK(constr *ast.Constraint, lastCol *model.ColumnInfo) bool {
 }
 
 // ShouldBuildClusteredIndex is used to determine whether the CREATE TABLE statement should build a clustered index table.
-func ShouldBuildClusteredIndex(ctx sessionctx.Context, opt *ast.IndexOption, isSingleIntPK bool) bool {
+func ShouldBuildClusteredIndex(mode variable.ClusteredIndexDefMode, opt *ast.IndexOption, isSingleIntPK bool) bool {
 	if opt == nil || opt.PrimaryKeyTp == pmodel.PrimaryKeyTypeDefault {
-		switch ctx.GetSessionVars().EnableClusteredIndex {
+		switch mode {
 		case variable.ClusteredIndexDefModeOn:
 			return true
 		case variable.ClusteredIndexDefModeIntOnly:

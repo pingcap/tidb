@@ -285,6 +285,13 @@ func TestResourceGroupBasic(t *testing.T) {
 	tk.MustContainErrMsg("create resource group bg ru_per_sec = 1000 background = (task_types = 'lightning')", "unsupported operation")
 	tk.MustContainErrMsg("alter resource group x background=(task_types='')", "unsupported operation")
 	tk.MustGetErrCode("alter resource group default background=(task_types='a,b,c')", mysql.ErrResourceGroupInvalidBackgroundTaskName)
+
+	tk.MustExec("alter resource group `default` BACKGROUND=(task_types='br,ddl')")
+	tk.MustQuery("select * from information_schema.resource_groups where name = 'default'").Check(testkit.Rows("default 1000 MEDIUM YES <nil> TASK_TYPES='br,ddl'"))
+	tk.MustExec("alter resource group `default` BACKGROUND=(utilization_limit=30)")
+	tk.MustQuery("select * from information_schema.resource_groups where name = 'default'").Check(testkit.Rows("default 1000 MEDIUM YES <nil> UTILIZATION_LIMIT=30"))
+	tk.MustExec("alter resource group `default` BACKGROUND=(task_types='br,ddl',utilization_limit=30)")
+	tk.MustQuery("select * from information_schema.resource_groups where name = 'default'").Check(testkit.Rows("default 1000 MEDIUM YES <nil> TASK_TYPES='br,ddl', UTILIZATION_LIMIT=30"))
 }
 
 func testResourceGroupNameFromIS(t *testing.T, ctx sessionctx.Context, name string) *model.ResourceGroupInfo {

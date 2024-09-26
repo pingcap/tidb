@@ -31,7 +31,7 @@ go_test(
     ],
     embed = [":notifier"],
     flaky = True,
-    shard_count = 3,
+    shard_count = 4,
     deps = [
         "//pkg/ddl/session",
         "//pkg/meta/model",

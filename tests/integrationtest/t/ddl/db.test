@@ -83,7 +83,6 @@ alter table issue9100t2 add unique index p_col1 (col1);
 alter table issue9100t2 add primary key p_col1 (col1);
 
 # TestIssue22207
-set @@session.tidb_enable_list_partition = ON;
 set @@session.tidb_enable_exchange_partition = 1;
 drop table if exists t1;
 drop table if exists t2;
@@ -104,7 +103,6 @@ ALTER TABLE t1 EXCHANGE PARTITION p0 WITH TABLE t2;
 select * from t2;
 select * from t1;
 set @@session.tidb_enable_exchange_partition = default;
-set @@session.tidb_enable_list_partition = default;
 
 # TestAlterOrderBy
 drop table if exists ob;

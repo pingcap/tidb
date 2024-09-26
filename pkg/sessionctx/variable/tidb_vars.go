@@ -190,6 +190,7 @@ const (
 	TiDBEnableTablePartition = "tidb_enable_table_partition"
 
 	// TiDBEnableListTablePartition is used to control list table partition feature.
+	// Deprecated: This variable is deprecated, please do not use this variable.
 	TiDBEnableListTablePartition = "tidb_enable_list_partition"
 
 	// TiDBSkipIsolationLevelCheck is used to control whether to return error when set unsupported transaction
@@ -535,7 +536,7 @@ const (
 	// deltaSchemaInfos is a queue that maintains the history of schema changes.
 	TiDBMaxDeltaSchemaCount = "tidb_max_delta_schema_count"
 
-	// TiDBScatterRegion will scatter the regions for DDLs when it is ON.
+	// TiDBScatterRegion will scatter the regions for DDLs when it is "table" or "global", "" indicates not trigger scatter.
 	TiDBScatterRegion = "tidb_scatter_region"
 
 	// TiDBWaitSplitRegionFinish defines the split region behaviour is sync or async.
@@ -1211,6 +1212,9 @@ const (
 	// TiDBEnableLazyCursorFetch defines whether to enable the lazy cursor fetch. If it's `OFF`, all results of
 	// of a cursor will be stored in the tidb node in `EXECUTE` command.
 	TiDBEnableLazyCursorFetch = "tidb_enable_lazy_cursor_fetch"
+	// TiDBTSOClientRPCMode controls how the TSO client performs the TSO RPC requests. It internally controls the
+	// concurrency of the RPC. This variable provides an approach to tune the latency of getting timestamps from PD.
+	TiDBTSOClientRPCMode = "tidb_tso_client_rpc_mode"
 )
 
 // TiDB intentional limits
@@ -1339,7 +1343,7 @@ const (
 	DefTiDBSkipIsolationLevelCheck          = false
 	DefTiDBExpensiveQueryTimeThreshold      = 60      // 60s
 	DefTiDBExpensiveTxnTimeThreshold        = 60 * 10 // 10 minutes
-	DefTiDBScatterRegion                    = false
+	DefTiDBScatterRegion                    = ScatterOff
 	DefTiDBWaitSplitRegionFinish            = true
 	DefWaitSplitRegionTimeout               = 300 // 300s
 	DefTiDBEnableNoopFuncs                  = Off
@@ -1559,6 +1563,7 @@ const (
 	DefTiDBEnableLazyCursorFetch                      = false
 	DefOptEnableProjectionPushDown                    = true
 	DefTiDBEnableSharedLockPromotion                  = false
+	DefTiDBTSOClientRPCMode                           = TSOClientRPCModeDefault
 )
 
 // Process global variables.

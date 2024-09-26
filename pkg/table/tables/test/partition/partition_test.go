@@ -154,8 +154,6 @@ func TestHashPartitionAddRecord(t *testing.T) {
 	require.NoError(t, err)
 	_, err = tk.Session().Execute(context.Background(), "drop table if exists t1;")
 	require.NoError(t, err)
-	_, err = tk.Session().Execute(context.Background(), "set @@session.tidb_enable_table_partition = '1';")
-	require.NoError(t, err)
 	_, err = tk.Session().Execute(context.Background(), `CREATE TABLE test.t1 (id int(11), index(id)) PARTITION BY HASH (id) partitions 4;`)
 	require.NoError(t, err)
 	tb, err := dom.InfoSchema().TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t1"))
@@ -318,7 +316,6 @@ func TestLocatePartition(t *testing.T) {
 func TestIssue31629(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("set @@tidb_enable_list_partition = 1")
 	tk.MustExec("create database Issue31629")
 	defer tk.MustExec("drop database Issue31629")
 	tk.MustExec("use Issue31629")

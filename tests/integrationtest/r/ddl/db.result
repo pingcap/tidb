@@ -85,7 +85,6 @@ alter table issue9100t2 add unique index p_col1 (col1);
 Error 8264 (HY000): Global Index is needed for index 'p_col1', since the unique index is not including all partitioning columns, and GLOBAL is not given as IndexOption
 alter table issue9100t2 add primary key p_col1 (col1);
 Error 8264 (HY000): Global Index is needed for index 'PRIMARY', since the unique index is not including all partitioning columns, and GLOBAL is not given as IndexOption
-set @@session.tidb_enable_list_partition = ON;
 set @@session.tidb_enable_exchange_partition = 1;
 drop table if exists t1;
 drop table if exists t2;
@@ -114,7 +113,6 @@ id
 select * from t1;
 id
 set @@session.tidb_enable_exchange_partition = default;
-set @@session.tidb_enable_list_partition = default;
 drop table if exists ob;
 create table ob (pk int primary key, c int default 1, c1 int default 1, KEY cl(c1));
 alter table ob order by c;

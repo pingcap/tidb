@@ -866,7 +866,7 @@ func TestApplyKVFilesWithSingelMethod(t *testing.T) {
 		}
 	}
 
-	logclient.ApplyKVFilesWithSingelMethod(
+	logclient.ApplyKVFilesWithSingleMethod(
 		context.TODO(),
 		toLogDataFileInfoIter(iter.FromSlice(ds)),
 		applyFunc,
@@ -1293,7 +1293,7 @@ func TestApplyKVFilesWithBatchMethod5(t *testing.T) {
 	require.Equal(t, backuppb.FileType_Delete, types[len(types)-1])
 
 	types = make([]backuppb.FileType, 0)
-	logclient.ApplyKVFilesWithSingelMethod(
+	logclient.ApplyKVFilesWithSingleMethod(
 		context.TODO(),
 		toLogDataFileInfoIter(iter.FromSlice(ds)),
 		applyFunc,
@@ -1377,7 +1377,7 @@ func TestInitSchemasReplaceForDDL(t *testing.T) {
 	{
 		client := logclient.TEST_NewLogClient(123, 1, 2, 1, domain.NewMockDomain(), fakeSession{})
 		cfg := &logclient.InitSchemaConfig{IsNewTask: false}
-		_, err := client.InitSchemasReplaceForDDL(ctx, cfg)
+		_, err := client.InitSchemasReplaceForDDL(ctx, cfg, nil)
 		require.Error(t, err)
 		require.Regexp(t, "failed to get pitr id map from mysql.tidb_pitr_id_map.* [2, 1]", err.Error())
 	}
@@ -1385,7 +1385,7 @@ func TestInitSchemasReplaceForDDL(t *testing.T) {
 	{
 		client := logclient.TEST_NewLogClient(123, 1, 2, 1, domain.NewMockDomain(), fakeSession{})
 		cfg := &logclient.InitSchemaConfig{IsNewTask: true}
-		_, err := client.InitSchemasReplaceForDDL(ctx, cfg)
+		_, err := client.InitSchemasReplaceForDDL(ctx, cfg, nil)
 		require.Error(t, err)
 		require.Regexp(t, "failed to get pitr id map from mysql.tidb_pitr_id_map.* [1, 1]", err.Error())
 	}
@@ -1399,7 +1399,7 @@ func TestInitSchemasReplaceForDDL(t *testing.T) {
 		require.NoError(t, err)
 		client := logclient.TEST_NewLogClient(123, 1, 2, 1, domain.NewMockDomain(), se)
 		cfg := &logclient.InitSchemaConfig{IsNewTask: true}
-		_, err = client.InitSchemasReplaceForDDL(ctx, cfg)
+		_, err = client.InitSchemasReplaceForDDL(ctx, cfg, nil)
 		require.Error(t, err)
 		require.Contains(t, err.Error(), "miss upstream table information at `start-ts`(1) but the full backup path is not specified")
 	}

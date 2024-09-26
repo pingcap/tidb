@@ -2321,9 +2321,19 @@ func tryToGetMppWindows(lw *logicalop.LogicalWindow, prop *property.PhysicalProp
 					"MPP mode may be blocked because window function frame can't be pushed down, because " + err.Error())
 				return nil
 			}
+			if !expression.CanExprsPushDown(util.GetPushDownCtx(sctx), lw.Frame.Start.CalcFuncs, kv.TiFlash) {
+				lw.SCtx().GetSessionVars().RaiseWarningWhenMPPEnforced(
+					"MPP mode may be blocked because window function frame can't be pushed down")
+				return nil
+			}
 			if _, err := expression.ExpressionsToPBList(ctx.GetEvalCtx(), lw.Frame.End.CalcFuncs, lw.SCtx().GetClient()); err != nil {
 				lw.SCtx().GetSessionVars().RaiseWarningWhenMPPEnforced(
 					"MPP mode may be blocked because window function frame can't be pushed down, because " + err.Error())
+				return nil
+			}
+			if !expression.CanExprsPushDown(util.GetPushDownCtx(sctx), lw.Frame.End.CalcFuncs, kv.TiFlash) {
+				lw.SCtx().GetSessionVars().RaiseWarningWhenMPPEnforced(
+					"MPP mode may be blocked because window function frame can't be pushed down")
 				return nil
 			}
 
