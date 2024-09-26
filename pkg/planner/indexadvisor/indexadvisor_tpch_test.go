@@ -785,11 +785,37 @@ func TestIndexAdvisorTPCH2(t *testing.T) {
 	querySet.Add(indexadvisor.Query{SchemaName: "test", Text: tpchQ10, Frequency: 1})
 	querySet.Add(indexadvisor.Query{SchemaName: "test", Text: tpchQ11, Frequency: 1})
 	querySet.Add(indexadvisor.Query{SchemaName: "test", Text: tpchQ12, Frequency: 1})
+
+	ctx := context.WithValue(context.Background(), indexadvisor.TestKey("query_set"), querySet)
+	r, err := indexadvisor.AdviseIndexes(ctx, tk.Session(), nil, nil)
+	require.NoError(t, err) // no error and can get some recommendations
+	require.True(t, len(r) > 0)
+}
+
+func TestIndexAdvisorTPCH3(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	createTPCHTables(tk)
+
+	querySet := s.NewSet[indexadvisor.Query]()
 	querySet.Add(indexadvisor.Query{SchemaName: "test", Text: tpchQ13, Frequency: 1})
 	querySet.Add(indexadvisor.Query{SchemaName: "test", Text: tpchQ14, Frequency: 1})
 	querySet.Add(indexadvisor.Query{SchemaName: "test", Text: tpchQ16, Frequency: 1})
 	querySet.Add(indexadvisor.Query{SchemaName: "test", Text: tpchQ17, Frequency: 1})
 	querySet.Add(indexadvisor.Query{SchemaName: "test", Text: tpchQ18, Frequency: 1})
+
+	ctx := context.WithValue(context.Background(), indexadvisor.TestKey("query_set"), querySet)
+	r, err := indexadvisor.AdviseIndexes(ctx, tk.Session(), nil, nil)
+	require.NoError(t, err) // no error and can get some recommendations
+	require.True(t, len(r) > 0)
+}
+
+func TestIndexAdvisorTPCH4(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	createTPCHTables(tk)
+
+	querySet := s.NewSet[indexadvisor.Query]()
 	querySet.Add(indexadvisor.Query{SchemaName: "test", Text: tpchQ19, Frequency: 1})
 	querySet.Add(indexadvisor.Query{SchemaName: "test", Text: tpchQ20, Frequency: 1})
 	querySet.Add(indexadvisor.Query{SchemaName: "test", Text: tpchQ21, Frequency: 1})
