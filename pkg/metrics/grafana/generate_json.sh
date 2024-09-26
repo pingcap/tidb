@@ -18,5 +18,6 @@ git clone https://github.com/grafana/grafonnet-lib.git
 
 export JSONNET_PATH=grafonnet-lib
 jsonnet tidb_summary.jsonnet > tidb_summary.json
+jsonnet tidb_resource_control.jsonnet > tidb_resource_control.json
 rm -rf $JSONNET_PATH
 
