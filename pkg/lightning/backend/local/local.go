@@ -1472,7 +1472,18 @@ func (local *Backend) doImport(
 				job.retryCount++
 				if job.retryCount > MaxWriteAndIngestRetryTimes {
 					job.done(&jobWg)
-					return job.lastRetryableErr
+					lastErr := job.lastRetryableErr
+					intest.Assert(lastErr != nil, "lastRetryableErr should not be nil")
+					if lastErr == nil {
+						lastErr = errors.New("retry limit exceeded")
+						log.FromContext(ctx).Error(
+							"lastRetryableErr should not be nil",
+							logutil.Key("startKey", job.keyRange.Start),
+							logutil.Key("endKey", job.keyRange.End),
+							zap.Stringer("stage", job.stage),
+							zap.Error(lastErr))
+					}
+					return lastErr
 				}
 				// max retry backoff time: 2+4+8+16+30*26=810s
 				sleepSecond := math.Pow(2, float64(job.retryCount))
