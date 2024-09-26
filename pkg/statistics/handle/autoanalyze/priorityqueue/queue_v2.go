@@ -71,25 +71,26 @@ func (pq *AnalysisPriorityQueueV2) IsInitialized() bool {
 // Initialize initializes the priority queue.
 func (pq *AnalysisPriorityQueueV2) Initialize() error {
 	if pq.initialized.Load() {
-		statslogutil.StatsLogger().Warn("priority queue already initialized")
+		statslogutil.StatsLogger().Warn("Priority queue already initialized")
 		return nil
 	}
 
 	start := time.Now()
 	defer func() {
-		statslogutil.StatsLogger().Info("priority queue initialized", zap.Duration("duration", time.Since(start)))
+		statslogutil.StatsLogger().Info("Priority queue initialized", zap.Duration("duration", time.Since(start)))
 	}()
 
 	keyFunc := func(job AnalysisJob) (int64, error) {
 		return job.GetTableID(), nil
 	}
+	// We want the job with the highest weight to be at the top of the priority queue.
 	lessFunc := func(a, b AnalysisJob) bool {
 		return a.GetWeight() > b.GetWeight()
 	}
 	pq.inner = heap.NewHeap(keyFunc, lessFunc)
 	if err := pq.init(); err != nil {
 		pq.Close()
-		return err
+		return errors.Trace(err)
 	}
 
 	// Start a goroutine to maintain the priority queue.
@@ -102,7 +103,7 @@ func (pq *AnalysisPriorityQueueV2) Initialize() error {
 func (pq *AnalysisPriorityQueueV2) init() error {
 	return statsutil.CallWithSCtx(pq.statsHandle.SPool(), func(sctx sessionctx.Context) error {
 		parameters := exec.GetAutoAnalyzeParameters(sctx)
-		err := pq.SetAutoAnalysisTimeWindow(parameters)
+		err := pq.setAutoAnalysisTimeWindow(parameters)
 		if err != nil {
 			return err
 		}
@@ -123,9 +124,10 @@ func (pq *AnalysisPriorityQueueV2) run() {
 	for {
 		select {
 		case <-pq.ctx.Done():
+			statslogutil.StatsLogger().Info("Priority queue stopped")
 			return
 		case <-timeRefreshInterval.C:
-			statslogutil.StatsLogger().Info("start to refresh last analysis durations of jobs")
+			statslogutil.StatsLogger().Info("Start to refresh last analysis durations of jobs")
 			pq.RefreshLastAnalysisDuration()
 		}
 	}
@@ -134,6 +136,7 @@ func (pq *AnalysisPriorityQueueV2) run() {
 // RefreshLastAnalysisDuration refreshes the last analysis duration of all jobs in the priority queue.
 func (pq *AnalysisPriorityQueueV2) RefreshLastAnalysisDuration() {
 	if !pq.IsWithinTimeWindow() {
+		statslogutil.StatsLogger().Debug("Not within the auto analyze time window, skip refreshing last analysis duration")
 		return
 	}
 
@@ -147,7 +150,7 @@ func (pq *AnalysisPriorityQueueV2) RefreshLastAnalysisDuration() {
 			indicators := job.GetIndicators()
 			currentTs, err := getStartTs(sctx)
 			if err != nil {
-				return err
+				return errors.Trace(err)
 			}
 
 			jobFactory := NewAnalysisJobFactory(sctx, 0, currentTs)
@@ -163,7 +166,10 @@ func (pq *AnalysisPriorityQueueV2) RefreshLastAnalysisDuration() {
 			job.SetIndicators(indicators)
 			job.SetWeight(pq.calculator.CalculateWeight(job))
 			if err := pq.inner.Add(job); err != nil {
-				statslogutil.StatsLogger().Error("Failed to add job to priority queue", zap.Error(err))
+				statslogutil.StatsLogger().Error("Failed to add job to priority queue",
+					zap.Error(err),
+					zap.String("job", job.String()),
+				)
 			}
 		}
 		return nil
@@ -192,7 +198,7 @@ func (pq *AnalysisPriorityQueueV2) IsEmpty() bool {
 	return pq.inner.IsEmpty()
 }
 
-func (pq *AnalysisPriorityQueueV2) SetAutoAnalysisTimeWindow(
+func (pq *AnalysisPriorityQueueV2) setAutoAnalysisTimeWindow(
 	parameters map[string]string,
 ) error {
 	start, end, err := exec.ParseAutoAnalysisWindow(
