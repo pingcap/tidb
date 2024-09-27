@@ -80,7 +80,7 @@ require (
 	github.com/phayes/freeport v0.0.0-20180830031419-95f893ade6f2
 	github.com/pingcap/badger v1.5.1-0.20230103063557-828f39b09b6d
 	github.com/pingcap/errors v0.11.5-0.20240318064555-6bd07397691f
-	github.com/pingcap/failpoint v0.0.0-20220801062533-2eaa32854a6c
+	github.com/pingcap/failpoint v0.0.0-20240527053858-9b3b6e34194a
 	github.com/pingcap/fn v1.0.0
 	github.com/pingcap/kvproto v0.0.0-20240208102409-a554af8ee11f
 	github.com/pingcap/log v1.1.1-0.20230317032135-a0d097d16e22
@@ -128,12 +128,12 @@ require (
 	golang.org/x/exp v0.0.0-20230711005742-c3f37128e5a4
 	golang.org/x/net v0.20.0
 	golang.org/x/oauth2 v0.16.0
-	golang.org/x/sync v0.3.0
-	golang.org/x/sys v0.19.0
+	golang.org/x/sync v0.5.0
+	golang.org/x/sys v0.25.0
 	golang.org/x/term v0.16.0
 	golang.org/x/text v0.14.0
 	golang.org/x/time v0.3.0
-	golang.org/x/tools v0.10.0
+	golang.org/x/tools v0.15.0
 	google.golang.org/api v0.128.0
 	google.golang.org/grpc v1.59.0
 	gopkg.in/yaml.v2 v2.4.0
@@ -200,7 +200,7 @@ require (
 	github.com/go-kit/kit v0.9.0 // indirect
 	github.com/go-logfmt/logfmt v0.5.1 // indirect
 	github.com/go-logr/logr v1.2.3 // indirect
-	github.com/go-ole/go-ole v1.2.6 // indirect
+	github.com/go-ole/go-ole v1.3.0 // indirect
 	github.com/goccy/go-json v0.10.2 // indirect
 	github.com/golang-jwt/jwt v3.2.1+incompatible // indirect
 	github.com/golang/glog v1.1.2 // indirect
@@ -290,7 +290,7 @@ require (
 	go.opentelemetry.io/proto/otlp v0.9.0 // indirect
 	golang.org/x/crypto v0.18.0 // indirect
 	golang.org/x/exp/typeparams v0.0.0-20230224173230-c95f2b4c22f2 // indirect
-	golang.org/x/mod v0.11.0 // indirect
+	golang.org/x/mod v0.17.0 // indirect
 	golang.org/x/xerrors v0.0.0-20220907171357-04be3eba64a2 // indirect
 	gonum.org/v1/gonum v0.8.2 // indirect
 	google.golang.org/appengine v1.6.7 // indirect

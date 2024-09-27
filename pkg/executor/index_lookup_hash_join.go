@@ -597,6 +597,7 @@ func (iw *indexHashJoinInnerWorker) getNewJoinResult(ctx context.Context) (*inde
 	select {
 	case joinResult.chk, ok = <-iw.joinChkResourceCh:
 	case <-ctx.Done():
+		joinResult.err = ctx.Err()
 		return joinResult, false
 	}
 	return joinResult, ok
@@ -818,7 +819,10 @@ func (iw *indexHashJoinInnerWorker) joinMatchedInnerRow2Chunk(ctx context.Contex
 			select {
 			case iw.resultCh <- joinResult:
 			case <-ctx.Done():
+				joinResult.err = ctx.Err()
+				return false, joinResult
 			}
+			failpoint.InjectCall("joinMatchedInnerRow2Chunk")
 			joinResult, ok = iw.getNewJoinResult(ctx)
 			if !ok {
 				return false, joinResult
