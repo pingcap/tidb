@@ -25,7 +25,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 )
 
-func onMultiSchemaChange(w *worker, jobCtx *jobContext, t *meta.Meta, job *model.Job) (ver int64, err error) {
+func onMultiSchemaChange(w *worker, jobCtx *jobContext, t *meta.Mutator, job *model.Job) (ver int64, err error) {
 	if job.MultiSchemaInfo.Revertible {
 		// Handle the rolling back job.
 		if job.IsRollingback() {
@@ -251,11 +251,11 @@ func fillMultiSchemaInfo(info *model.MultiSchemaInfo, job *JobWrapper) error {
 		col := job.Args[0].(*table.Column)
 		info.ModifyColumns = append(info.ModifyColumns, col.Name)
 	case model.ActionAlterIndexVisibility:
-		idxName := job.Args[0].(pmodel.CIStr)
+		idxName := job.JobArgs.(*model.AlterIndexVisibilityArgs).IndexName
 		info.AlterIndexes = append(info.AlterIndexes, idxName)
 	case model.ActionRebaseAutoID, model.ActionModifyTableComment, model.ActionModifyTableCharsetAndCollate:
 	case model.ActionAddForeignKey:
-		fkInfo := job.Args[0].(*model.FKInfo)
+		fkInfo := job.JobArgs.(*model.AddForeignKeyArgs).FkInfo
 		info.AddForeignKeys = append(info.AddForeignKeys, model.AddForeignKeyInfo{
 			Name: fkInfo.Name,
 			Cols: fkInfo.Cols,
@@ -448,7 +448,7 @@ func rollingBackMultiSchemaChange(job *model.Job) error {
 	return dbterror.ErrCancelledDDLJob
 }
 
-func finishMultiSchemaJob(job *model.Job, t *meta.Meta) (ver int64, err error) {
+func finishMultiSchemaJob(job *model.Job, t *meta.Mutator) (ver int64, err error) {
 	for _, sub := range job.MultiSchemaInfo.SubJobs {
 		if ver < sub.SchemaVer {
 			ver = sub.SchemaVer

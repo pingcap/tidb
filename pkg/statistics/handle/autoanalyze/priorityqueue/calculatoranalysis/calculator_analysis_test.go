@@ -272,6 +272,10 @@ func (j *TestJob) GetIndicators() priorityqueue.Indicators {
 	}
 }
 
+func (j *TestJob) SetIndicators(indicators priorityqueue.Indicators) {
+	panic("unimplemented")
+}
+
 func (j *TestJob) HasNewlyAddedIndex() bool {
 	return false
 }

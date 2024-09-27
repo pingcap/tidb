@@ -16,6 +16,7 @@
 // 1. Use the `errors` package from PingCAP.
 // 2. Use generics to define the `heapData` struct.
 // 3. Add a peak API.
+// 4. Add an IsEmpty API.
 
 package heap
 
@@ -289,6 +290,13 @@ func (h *Heap[K, V]) IsClosed() bool {
 	h.lock.RLock()
 	defer h.lock.RUnlock()
 	return h.closed
+}
+
+// IsEmpty returns true if the heap is empty.
+func (h *Heap[K, V]) IsEmpty() bool {
+	h.lock.RLock()
+	defer h.lock.RUnlock()
+	return len(h.data.queue) == 0
 }
 
 // NewHeap returns a Heap which can be used to queue up items to process.

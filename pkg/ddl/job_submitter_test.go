@@ -39,7 +39,7 @@ import (
 func getGlobalID(ctx context.Context, t *testing.T, store kv.Storage) int64 {
 	res := int64(0)
 	require.NoError(t, kv.RunInNewTxn(ctx, store, true, func(_ context.Context, txn kv.Transaction) error {
-		m := meta.NewMeta(txn)
+		m := meta.NewMutator(txn)
 		id, err := m.GetGlobalID()
 		require.NoError(t, err)
 		res = id
@@ -93,7 +93,7 @@ func TestGenIDAndInsertJobsWithRetry(t *testing.T) {
 	wg.Wait()
 
 	jobCount := threads * iterations
-	gotJobs, err := ddl.GetAllDDLJobs(tk.Session())
+	gotJobs, err := ddl.GetAllDDLJobs(ctx, tk.Session())
 	require.NoError(t, err)
 	require.Len(t, gotJobs, jobCount)
 	currGID := getGlobalID(ctx, t, store)
@@ -199,13 +199,12 @@ func TestCombinedIDAllocation(t *testing.T) {
 			idAllocated)
 	}
 
-	genTruncPartitionJob := func(partCnt int) *model.Job {
+	genTruncPartitionJob := func(partCnt int, idAllocated bool) *ddl.JobWrapper {
 		oldIDs := make([]int64, partCnt)
-		return &model.Job{
-			Version: model.JobVersion1,
+		return ddl.NewJobWrapperWithArgs(&model.Job{
+			Version: model.GetJobVerInUse(),
 			Type:    model.ActionTruncateTablePartition,
-			Args:    []any{oldIDs, []int64{}},
-		}
+		}, &model.TruncateTableArgs{OldPartitionIDs: oldIDs}, idAllocated)
 	}
 
 	genAddPartitionJob := func(partCnt int, idAllocated bool) *ddl.JobWrapper {
@@ -304,11 +303,11 @@ func TestCombinedIDAllocation(t *testing.T) {
 			requiredIDCount: 1,
 		},
 		{
-			jobW:            ddl.NewJobWrapper(genTruncPartitionJob(33), false),
+			jobW:            genTruncPartitionJob(33, false),
 			requiredIDCount: 34,
 		},
 		{
-			jobW:            ddl.NewJobWrapper(genTruncPartitionJob(2), true),
+			jobW:            genTruncPartitionJob(2, true),
 			requiredIDCount: 1,
 		},
 		{
@@ -353,7 +352,7 @@ func TestCombinedIDAllocation(t *testing.T) {
 			require.NoError(t, submitter.GenGIDAndInsertJobsWithRetry(ctx, sess.NewSession(tk.Session()), []*ddl.JobWrapper{c.jobW}))
 			require.Equal(t, currentGlobalID+int64(c.requiredIDCount), getGlobalID(ctx, t, store), fmt.Sprintf("case-%d", i))
 		}
-		gotJobs, err := ddl.GetAllDDLJobs(tk.Session())
+		gotJobs, err := ddl.GetAllDDLJobs(ctx, tk.Session())
 		require.NoError(t, err)
 		require.Len(t, gotJobs, len(cases))
 	})
@@ -371,7 +370,7 @@ func TestCombinedIDAllocation(t *testing.T) {
 		require.NoError(t, submitter.GenGIDAndInsertJobsWithRetry(ctx, sess.NewSession(tk.Session()), jobWs))
 		require.Equal(t, currentGlobalID+int64(totalRequiredCnt), getGlobalID(ctx, t, store))
 
-		gotJobs, err := ddl.GetAllDDLJobs(tk.Session())
+		gotJobs, err := ddl.GetAllDDLJobs(ctx, tk.Session())
 		require.NoError(t, err)
 		require.Len(t, gotJobs, len(cases))
 	})
@@ -407,7 +406,7 @@ func TestCombinedIDAllocation(t *testing.T) {
 				checkPartitionInfo(pInfo)
 			}
 		}
-		gotJobs, err := ddl.GetAllDDLJobs(tk.Session())
+		gotJobs, err := ddl.GetAllDDLJobs(ctx, tk.Session())
 		require.NoError(t, err)
 		require.Len(t, gotJobs, allocIDCaseCount)
 		for _, j := range gotJobs {
@@ -441,12 +440,6 @@ func TestCombinedIDAllocation(t *testing.T) {
 				info := args.PartInfo
 				checkPartitionInfo(info)
 				checkID(info.NewTableID)
-			case model.ActionTruncateTablePartition:
-				var oldIDs, newIDs []int64
-				require.NoError(t, j.DecodeArgs(&oldIDs, &newIDs))
-				for _, id := range newIDs {
-					checkID(id)
-				}
 			case model.ActionAddTablePartition, model.ActionReorganizePartition:
 				args, err := model.GetTablePartitionArgs(j)
 				require.NoError(t, err)
@@ -458,10 +451,12 @@ func TestCombinedIDAllocation(t *testing.T) {
 				info := args.PartInfo
 				checkPartitionInfo(info)
 				checkID(info.NewTableID)
-			case model.ActionTruncateTable:
+			case model.ActionTruncateTable, model.ActionTruncateTablePartition:
 				args, err := model.GetTruncateTableArgs(j)
 				require.NoError(t, err)
-				checkID(args.NewTableID)
+				if j.Type == model.ActionTruncateTable {
+					checkID(args.NewTableID)
+				}
 				for _, id := range args.NewPartitionIDs {
 					checkID(id)
 				}
@@ -570,7 +565,7 @@ func TestGenGIDAndInsertJobsWithRetryOnErr(t *testing.T) {
 		require.True(t, ok)
 		counter++
 		require.NoError(t, kv.RunInNewTxn(ctx, store, true, func(_ context.Context, txn kv.Transaction) error {
-			m := meta.NewMeta(txn)
+			m := meta.NewMutator(txn)
 			_, err := m.GenGlobalIDs(100)
 			require.NoError(t, err)
 			return nil

@@ -3655,6 +3655,7 @@ func (e *memtableRetriever) setDataFromRunawayWatches(sctx sessionctx.Context) e
 			watch.WatchText,
 			watch.Source,
 			watch.GetActionString(),
+			watch.GetExceedCause(),
 		)
 		if watch.EndTime.Equal(runaway.NullTime) {
 			row[3].SetString("UNLIMITED", mysql.DefaultCollationName)
@@ -3694,8 +3695,27 @@ func (e *memtableRetriever) setDataFromResourceGroups() error {
 			if setting.Rule == nil {
 				return errors.Errorf("unexpected runaway config in resource group")
 			}
-			dur := time.Duration(setting.Rule.ExecElapsedTimeMs) * time.Millisecond
-			fmt.Fprintf(limitBuilder, "EXEC_ELAPSED='%s'", dur.String())
+			// rule settings
+			firstParam := true
+			if setting.Rule.ExecElapsedTimeMs > 0 {
+				dur := time.Duration(setting.Rule.ExecElapsedTimeMs) * time.Millisecond
+				fmt.Fprintf(limitBuilder, "EXEC_ELAPSED='%s'", dur.String())
+				firstParam = false
+			}
+			if setting.Rule.ProcessedKeys > 0 {
+				if !firstParam {
+					fmt.Fprintf(limitBuilder, ", ")
+				}
+				fmt.Fprintf(limitBuilder, "PROCESSED_KEYS=%d", setting.Rule.ProcessedKeys)
+				firstParam = false
+			}
+			if setting.Rule.RequestUnit > 0 {
+				if !firstParam {
+					fmt.Fprintf(limitBuilder, ", ")
+				}
+				fmt.Fprintf(limitBuilder, "RU=%d", setting.Rule.RequestUnit)
+			}
+			// action settings
 			actionType := pmodel.RunawayActionType(setting.Action)
 			switch actionType {
 			case pmodel.RunawayActionDryRun, pmodel.RunawayActionCooldown, pmodel.RunawayActionKill:
@@ -3717,7 +3737,17 @@ func (e *memtableRetriever) setDataFromResourceGroups() error {
 		// convert background settings
 		bgBuilder := new(strings.Builder)
 		if setting := group.BackgroundSettings; setting != nil {
-			fmt.Fprintf(bgBuilder, "TASK_TYPES='%s'", strings.Join(setting.JobTypes, ","))
+			first := true
+			if len(setting.JobTypes) > 0 {
+				fmt.Fprintf(bgBuilder, "TASK_TYPES='%s'", strings.Join(setting.JobTypes, ","))
+				first = false
+			}
+			if setting.UtilizationLimit > 0 {
+				if !first {
+					bgBuilder.WriteString(", ")
+				}
+				fmt.Fprintf(bgBuilder, "UTILIZATION_LIMIT=%d", setting.UtilizationLimit)
+			}
 		}
 		background := bgBuilder.String()
 

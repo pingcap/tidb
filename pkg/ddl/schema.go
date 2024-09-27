@@ -27,7 +27,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 )
 
-func onCreateSchema(jobCtx *jobContext, t *meta.Meta, job *model.Job) (ver int64, _ error) {
+func onCreateSchema(jobCtx *jobContext, t *meta.Mutator, job *model.Job) (ver int64, _ error) {
 	schemaID := job.SchemaID
 	args, err := model.GetCreateSchemaArgs(job)
 	if err != nil {
@@ -85,7 +85,7 @@ func checkSchemaNotExists(infoCache *infoschema.InfoCache, schemaID int64, dbInf
 	return nil
 }
 
-func onModifySchemaCharsetAndCollate(jobCtx *jobContext, t *meta.Meta, job *model.Job) (ver int64, _ error) {
+func onModifySchemaCharsetAndCollate(jobCtx *jobContext, t *meta.Mutator, job *model.Job) (ver int64, _ error) {
 	args, err := model.GetModifySchemaArgs(job)
 	if err != nil {
 		job.State = model.JobStateCancelled
@@ -115,7 +115,7 @@ func onModifySchemaCharsetAndCollate(jobCtx *jobContext, t *meta.Meta, job *mode
 	return ver, nil
 }
 
-func onModifySchemaDefaultPlacement(jobCtx *jobContext, t *meta.Meta, job *model.Job) (ver int64, _ error) {
+func onModifySchemaDefaultPlacement(jobCtx *jobContext, t *meta.Mutator, job *model.Job) (ver int64, _ error) {
 	args, err := model.GetModifySchemaArgs(job)
 	if err != nil {
 		job.State = model.JobStateCancelled
@@ -152,7 +152,7 @@ func onModifySchemaDefaultPlacement(jobCtx *jobContext, t *meta.Meta, job *model
 	return ver, nil
 }
 
-func onDropSchema(jobCtx *jobContext, t *meta.Meta, job *model.Job) (ver int64, _ error) {
+func onDropSchema(jobCtx *jobContext, t *meta.Mutator, job *model.Job) (ver int64, _ error) {
 	dbInfo, err := checkSchemaExistAndCancelNotExistJob(t, job)
 	if err != nil {
 		return ver, errors.Trace(err)
@@ -229,16 +229,15 @@ func onDropSchema(jobCtx *jobContext, t *meta.Meta, job *model.Job) (ver int64, 
 	return ver, errors.Trace(err)
 }
 
-func (w *worker) onRecoverSchema(jobCtx *jobContext, t *meta.Meta, job *model.Job) (ver int64, _ error) {
-	var (
-		recoverSchemaInfo      *RecoverSchemaInfo
-		recoverSchemaCheckFlag int64
-	)
-	if err := job.DecodeArgs(&recoverSchemaInfo, &recoverSchemaCheckFlag); err != nil {
+func (w *worker) onRecoverSchema(jobCtx *jobContext, t *meta.Mutator, job *model.Job) (ver int64, _ error) {
+	args, err := model.GetRecoverArgs(job)
+	if err != nil {
 		// Invalid arguments, cancel this job.
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
+	recoverSchemaInfo := args.RecoverInfo
+
 	schemaInfo := recoverSchemaInfo.DBInfo
 	// check GC and safe point
 	gcEnable, err := checkGCEnable(w)
@@ -251,10 +250,12 @@ func (w *worker) onRecoverSchema(jobCtx *jobContext, t *meta.Meta, job *model.Jo
 		// none -> write only
 		// check GC enable and update flag.
 		if gcEnable {
-			job.Args[checkFlagIndexInJobArgs] = recoverCheckFlagEnableGC
+			args.CheckFlag = recoverCheckFlagEnableGC
 		} else {
-			job.Args[checkFlagIndexInJobArgs] = recoverCheckFlagDisableGC
+			args.CheckFlag = recoverCheckFlagDisableGC
 		}
+		job.FillArgs(args)
+
 		schemaInfo.State = model.StateWriteOnly
 		job.SchemaState = model.StateWriteOnly
 	case model.StateWriteOnly:
@@ -268,24 +269,24 @@ func (w *worker) onRecoverSchema(jobCtx *jobContext, t *meta.Meta, job *model.Jo
 			}
 		}
 
-		recoverTbls := recoverSchemaInfo.RecoverTabsInfo
+		recoverTbls := recoverSchemaInfo.RecoverTableInfos
 		if recoverSchemaInfo.LoadTablesOnExecute {
 			sid := recoverSchemaInfo.DBInfo.ID
 			snap := w.store.GetSnapshot(kv.NewVersion(recoverSchemaInfo.SnapshotTS))
-			snapMeta := meta.NewSnapshotMeta(snap)
+			snapMeta := meta.NewReader(snap)
 			tables, err2 := snapMeta.ListTables(sid)
 			if err2 != nil {
 				job.State = model.JobStateCancelled
 				return ver, errors.Trace(err2)
 			}
-			recoverTbls = make([]*RecoverInfo, 0, len(tables))
+			recoverTbls = make([]*model.RecoverTableInfo, 0, len(tables))
 			for _, tblInfo := range tables {
 				autoIDs, err3 := snapMeta.GetAutoIDAccessors(sid, tblInfo.ID).Get()
 				if err3 != nil {
 					job.State = model.JobStateCancelled
 					return ver, errors.Trace(err3)
 				}
-				recoverTbls = append(recoverTbls, &RecoverInfo{
+				recoverTbls = append(recoverTbls, &model.RecoverTableInfo{
 					SchemaID:      sid,
 					TableInfo:     tblInfo,
 					DropJobID:     recoverSchemaInfo.DropJobID,
@@ -337,7 +338,7 @@ func (w *worker) onRecoverSchema(jobCtx *jobContext, t *meta.Meta, job *model.Jo
 	return ver, errors.Trace(err)
 }
 
-func checkSchemaExistAndCancelNotExistJob(t *meta.Meta, job *model.Job) (*model.DBInfo, error) {
+func checkSchemaExistAndCancelNotExistJob(t *meta.Mutator, job *model.Job) (*model.DBInfo, error) {
 	dbInfo, err := t.GetDatabase(job.SchemaID)
 	if err != nil {
 		return nil, errors.Trace(err)

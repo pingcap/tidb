@@ -41,6 +41,7 @@ func TestMain(m *testing.M) {
 		goleak.IgnoreTopFunction("github.com/bazelbuild/rules_go/go/tools/bzltestutil.RegisterTimeoutHandler.func1"),
 		goleak.IgnoreTopFunction("github.com/lestrrat-go/httprc.runFetchWorker"),
 		goleak.IgnoreTopFunction("go.etcd.io/etcd/client/pkg/v3/logutil.(*MergeLogger).outputLoop"),
+		goleak.IgnoreTopFunction("go.opencensus.io/stats/view.(*worker).start"),
 	}
 	goleak.VerifyTestMain(m, opts...)
 }
@@ -156,8 +157,8 @@ func TestMemTracker4DeleteExec(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("set tidb_cost_model_version=1")
-	tk.MustExec("create table MemTracker4DeleteExec1 (id int, a int, b int, index idx_a(`a`))")
-	tk.MustExec("create table MemTracker4DeleteExec2 (id int, a int, b int, index idx_a(`a`))")
+	tk.MustExec("create table MemTracker4DeleteExec1 (id int, a int, b int, index idx_a(a), index idx_b(b))")
+	tk.MustExec("create table MemTracker4DeleteExec2 (id int, a int, b int, index idx_a(a), index idx_b(b))")
 
 	// delete from single table
 	log.SetLevel(zap.InfoLevel)

@@ -1,4 +1,4 @@
-// Copyright 2019 PingCAP, Inc.
+// Copyright 2024 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -12,4 +12,20 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package core
+package joinversion
+
+import (
+	"strings"
+)
+
+const (
+	// HashJoinVersionLegacy means hash join v1
+	HashJoinVersionLegacy = "legacy"
+	// HashJoinVersionOptimized means hash join v2
+	HashJoinVersionOptimized = "optimized"
+)
+
+// IsOptimizedVersion returns true if hashJoinVersion equals to HashJoinVersionOptimized
+func IsOptimizedVersion(hashJoinVersion string) bool {
+	return strings.ToLower(hashJoinVersion) == HashJoinVersionOptimized
+}

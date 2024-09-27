@@ -43,7 +43,7 @@ const (
 	alreadyExists = "already exists"
 )
 
-func onCreateResourceGroup(jobCtx *jobContext, t *meta.Meta, job *model.Job) (ver int64, _ error) {
+func onCreateResourceGroup(jobCtx *jobContext, t *meta.Mutator, job *model.Job) (ver int64, _ error) {
 	args, err := model.GetResourceGroupArgs(job)
 	if err != nil {
 		job.State = model.JobStateCancelled
@@ -93,7 +93,7 @@ func onCreateResourceGroup(jobCtx *jobContext, t *meta.Meta, job *model.Job) (ve
 	}
 }
 
-func onAlterResourceGroup(jobCtx *jobContext, t *meta.Meta, job *model.Job) (ver int64, _ error) {
+func onAlterResourceGroup(jobCtx *jobContext, t *meta.Mutator, job *model.Job) (ver int64, _ error) {
 	args, err := model.GetResourceGroupArgs(job)
 	if err != nil {
 		job.State = model.JobStateCancelled
@@ -138,7 +138,7 @@ func onAlterResourceGroup(jobCtx *jobContext, t *meta.Meta, job *model.Job) (ver
 	return ver, nil
 }
 
-func checkResourceGroupExist(t *meta.Meta, job *model.Job, groupID int64) (*model.ResourceGroupInfo, error) {
+func checkResourceGroupExist(t *meta.Mutator, job *model.Job, groupID int64) (*model.ResourceGroupInfo, error) {
 	groupInfo, err := t.GetResourceGroup(groupID)
 	if err == nil {
 		return groupInfo, nil
@@ -149,7 +149,7 @@ func checkResourceGroupExist(t *meta.Meta, job *model.Job, groupID int64) (*mode
 	return nil, err
 }
 
-func onDropResourceGroup(jobCtx *jobContext, t *meta.Meta, job *model.Job) (ver int64, _ error) {
+func onDropResourceGroup(jobCtx *jobContext, t *meta.Mutator, job *model.Job) (ver int64, _ error) {
 	groupInfo, err := checkResourceGroupExist(t, job, job.SchemaID)
 	if err != nil {
 		return ver, errors.Trace(err)
@@ -222,6 +222,8 @@ func SetDirectResourceGroupSettings(groupInfo *model.ResourceGroupInfo, opt *ast
 	case ast.ResourceGroupRunaway:
 		if len(opt.RunawayOptionList) == 0 {
 			resourceGroupSettings.Runaway = nil
+		} else {
+			resourceGroupSettings.Runaway = &model.ResourceGroupRunawaySettings{}
 		}
 		for _, opt := range opt.RunawayOptionList {
 			if err := SetDirectResourceGroupRunawayOption(resourceGroupSettings, opt); err != nil {
@@ -236,6 +238,8 @@ func SetDirectResourceGroupSettings(groupInfo *model.ResourceGroupInfo, opt *ast
 		if len(opt.BackgroundOptions) == 0 {
 			resourceGroupSettings.Background = nil
 		}
+		resourceGroupSettings.Background = &model.ResourceGroupBackgroundSettings{}
+
 		for _, opt := range opt.BackgroundOptions {
 			if err := SetDirectResourceGroupBackgroundOption(resourceGroupSettings, opt); err != nil {
 				return err
@@ -260,18 +264,22 @@ func SetDirectResourceGroupRUSecondOption(resourceGroupSettings *model.ResourceG
 
 // SetDirectResourceGroupRunawayOption tries to set runaway part of the ResourceGroupSettings.
 func SetDirectResourceGroupRunawayOption(resourceGroupSettings *model.ResourceGroupSettings, opt *ast.ResourceGroupRunawayOption) error {
-	if resourceGroupSettings.Runaway == nil {
-		resourceGroupSettings.Runaway = &model.ResourceGroupRunawaySettings{}
-	}
 	settings := resourceGroupSettings.Runaway
 	switch opt.Tp {
 	case pmodel.RunawayRule:
-		// because execute time won't be too long, we use `time` pkg which does not support to parse unit 'd'.
-		dur, err := time.ParseDuration(opt.RuleOption.ExecElapsed)
-		if err != nil {
-			return err
+		switch opt.RuleOption.Tp {
+		case ast.RunawayRuleExecElapsed:
+			// because execute time won't be too long, we use `time` pkg which does not support to parse unit 'd'.
+			dur, err := time.ParseDuration(opt.RuleOption.ExecElapsed)
+			if err != nil {
+				return err
+			}
+			settings.ExecElapsedTimeMs = uint64(dur.Milliseconds())
+		case ast.RunawayRuleProcessedKeys:
+			settings.ProcessedKeys = opt.RuleOption.ProcessedKeys
+		case ast.RunawayRuleRequestUnit:
+			settings.RequestUnit = opt.RuleOption.RequestUnit
 		}
-		settings.ExecElapsedTimeMs = uint64(dur.Milliseconds())
 	case pmodel.RunawayAction:
 		settings.Action = opt.ActionOption.Type
 		settings.SwitchGroupName = opt.ActionOption.SwitchGroupName.String()
@@ -294,9 +302,6 @@ func SetDirectResourceGroupRunawayOption(resourceGroupSettings *model.ResourceGr
 
 // SetDirectResourceGroupBackgroundOption set background configs of the ResourceGroupSettings.
 func SetDirectResourceGroupBackgroundOption(resourceGroupSettings *model.ResourceGroupSettings, opt *ast.ResourceGroupBackgroundOption) error {
-	if resourceGroupSettings.Background == nil {
-		resourceGroupSettings.Background = &model.ResourceGroupBackgroundSettings{}
-	}
 	switch opt.Type {
 	case ast.BackgroundOptionTaskNames:
 		jobTypes, err := parseBackgroundJobTypes(opt.StrValue)
@@ -304,6 +309,11 @@ func SetDirectResourceGroupBackgroundOption(resourceGroupSettings *model.Resourc
 			return err
 		}
 		resourceGroupSettings.Background.JobTypes = jobTypes
+	case ast.BackgroundUtilizationLimit:
+		if opt.UintValue == 0 || opt.UintValue > 100 {
+			return errors.Trace(errors.New("invalid background resource utilization limit, the valid range is (0, 100]"))
+		}
+		resourceGroupSettings.Background.ResourceUtilLimit = opt.UintValue
 	default:
 		return errors.Trace(errors.New("unknown background option type"))
 	}

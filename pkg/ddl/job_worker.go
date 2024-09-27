@@ -233,7 +233,7 @@ func injectFailPointForGetJob(job *model.Job) {
 }
 
 // handleUpdateJobError handles the too large DDL job.
-func (w *worker) handleUpdateJobError(t *meta.Meta, job *model.Job, err error) error {
+func (w *worker) handleUpdateJobError(t *meta.Mutator, job *model.Job, err error) error {
 	if err == nil {
 		return nil
 	}
@@ -267,7 +267,7 @@ func (w *worker) updateDDLJob(job *model.Job, updateRawArgs bool) error {
 		w.jobLogger(job).Info("meet something wrong before update DDL job, shouldn't update raw args",
 			zap.String("job", job.String()))
 	}
-	return errors.Trace(updateDDLJob2Table(w.sess, job, updateRawArgs))
+	return errors.Trace(updateDDLJob2Table(w.ctx, w.sess, job, updateRawArgs))
 }
 
 // registerMDLInfo registers metadata lock info.
@@ -336,7 +336,7 @@ func JobNeedGC(job *model.Job) bool {
 
 // finishDDLJob deletes the finished DDL job in the ddl queue and puts it to history queue.
 // If the DDL job need to handle in background, it will prepare a background job.
-func (w *worker) finishDDLJob(t *meta.Meta, job *model.Job) (err error) {
+func (w *worker) finishDDLJob(t *meta.Mutator, job *model.Job) (err error) {
 	startTime := time.Now()
 	defer func() {
 		metrics.DDLWorkerHistogram.WithLabelValues(metrics.WorkerFinishDDLJob, job.Type.String(), metrics.RetLabel(err)).Observe(time.Since(startTime).Seconds())
@@ -393,15 +393,11 @@ func (w *worker) deleteDDLJob(job *model.Job) error {
 }
 
 func finishRecoverTable(w *worker, job *model.Job) error {
-	var (
-		recoverInfo           *RecoverInfo
-		recoverTableCheckFlag int64
-	)
-	err := job.DecodeArgs(&recoverInfo, &recoverTableCheckFlag)
+	args, err := model.GetRecoverArgs(job)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	if recoverTableCheckFlag == recoverCheckFlagEnableGC {
+	if args.CheckFlag == recoverCheckFlagEnableGC {
 		err = enableGC(w)
 		if err != nil {
 			return errors.Trace(err)
@@ -411,15 +407,11 @@ func finishRecoverTable(w *worker, job *model.Job) error {
 }
 
 func finishRecoverSchema(w *worker, job *model.Job) error {
-	var (
-		recoverSchemaInfo      *RecoverSchemaInfo
-		recoverSchemaCheckFlag int64
-	)
-	err := job.DecodeArgs(&recoverSchemaInfo, &recoverSchemaCheckFlag)
+	args, err := model.GetRecoverArgs(job)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	if recoverSchemaCheckFlag == recoverCheckFlagEnableGC {
+	if args.CheckFlag == recoverCheckFlagEnableGC {
 		err = enableGC(w)
 		if err != nil {
 			return errors.Trace(err)
@@ -465,7 +457,7 @@ func (w *ReorgContext) setDDLLabelForDiagnosis(jobType model.ActionType) {
 	w.ddlJobCtx = kv.WithInternalSourceAndTaskType(w.ddlJobCtx, w.ddlJobSourceType(), kvutil.ExplicitTypeDDL)
 }
 
-func (w *worker) handleJobDone(jobCtx *jobContext, job *model.Job, t *meta.Meta) error {
+func (w *worker) handleJobDone(jobCtx *jobContext, job *model.Job, t *meta.Mutator) error {
 	if err := w.checkBeforeCommit(); err != nil {
 		return err
 	}
@@ -529,7 +521,7 @@ func (w *worker) transitOneJobStep(jobCtx *jobContext, job *model.Job) (int64, e
 	if err != nil {
 		return 0, err
 	}
-	t := meta.NewMeta(txn)
+	t := meta.NewMutator(txn)
 
 	if job.IsDone() || job.IsRollbackDone() || job.IsCancelled() {
 		if job.IsDone() {
@@ -754,7 +746,7 @@ func (w *worker) processJobPausingRequest(d *ddlCtx, job *model.Job) (isRunnable
 // updateGlobalVersionAndWaitSynced to wait for all nodes to catch up JobStateDone.
 func (w *worker) runOneJobStep(
 	jobCtx *jobContext,
-	t *meta.Meta,
+	t *meta.Mutator,
 	job *model.Job,
 ) (ver int64, updateRawArgs bool, err error) {
 	defer tidbutil.Recover(metrics.LabelDDLWorker, fmt.Sprintf("%s runOneJobStep", w),
@@ -876,7 +868,7 @@ func (w *worker) runOneJobStep(
 	case model.ActionSetTiFlashReplica:
 		ver, err = w.onSetTableFlashReplica(jobCtx, t, job)
 	case model.ActionUpdateTiFlashReplicaStatus:
-		ver, err = onUpdateFlashReplicaStatus(jobCtx, t, job)
+		ver, err = onUpdateTiFlashReplicaStatus(jobCtx, t, job)
 	case model.ActionCreateSequence:
 		ver, err = onCreateSequence(jobCtx, t, job)
 	case model.ActionAlterIndexVisibility:

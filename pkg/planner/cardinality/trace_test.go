@@ -215,7 +215,7 @@ func TestTraceDebugSelectivity(t *testing.T) {
 		require.NoError(t, err)
 
 		sel := p.(base.LogicalPlan).Children()[0].(*logicalop.LogicalSelection)
-		ds := sel.Children()[0].(*plannercore.DataSource)
+		ds := sel.Children()[0].(*logicalop.DataSource)
 
 		dsSchemaCols = append(dsSchemaCols, ds.Schema().Columns)
 		selConditions = append(selConditions, sel.Conditions)

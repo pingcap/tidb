@@ -101,6 +101,7 @@ func getRunawayWatchRecord(sysSessionPool util.SessionPool, reader *systemTableR
 			Source:            r.GetString(6),
 			Action:            rmpb.RunawayAction(r.GetInt64(7)),
 			SwitchGroupName:   r.GetString(8),
+			ExceedCause:       r.GetString(9),
 		}
 		// If a TiDB write record slow, it will occur that the record which has earlier start time is inserted later than others.
 		// So we start the scan a little earlier.
@@ -143,6 +144,7 @@ func getRunawayWatchDoneRecord(sysSessionPool util.SessionPool, reader *systemTa
 			Source:            r.GetString(7),
 			Action:            rmpb.RunawayAction(r.GetInt64(8)),
 			SwitchGroupName:   r.GetString(9),
+			ExceedCause:       r.GetString(10),
 		}
 		// Ditto as getRunawayWatchRecord.
 		if push {
