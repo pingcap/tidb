@@ -159,7 +159,7 @@ func (bc *litBackendCtx) collectRemoteDuplicateRows(indexID int64, tbl table.Tab
 }
 
 // Flush implements FlushController.
-func (bc *litBackendCtx) Flush(mode FlushMode) (flushed, imported bool, err error) {
+func (bc *litBackendCtx) Flush(ctx context.Context, mode FlushMode) (flushed, imported bool, err error) {
 	shouldFlush, shouldImport := bc.checkFlush(mode)
 	if !shouldFlush {
 		return false, false, nil
@@ -202,7 +202,7 @@ func (bc *litBackendCtx) Flush(mode FlushMode) (flushed, imported bool, err erro
 	})
 
 	for indexID, ei := range bc.engines {
-		if err = bc.unsafeImportAndReset(ei); err != nil {
+		if err = bc.unsafeImportAndReset(ctx, ei); err != nil {
 			if common.ErrFoundDuplicateKeys.Equal(err) {
 				idxInfo := model.FindIndexInfoByID(bc.tbl.Meta().Indices, indexID)
 				if idxInfo == nil {
@@ -239,7 +239,7 @@ func (bc *litBackendCtx) Flush(mode FlushMode) (flushed, imported bool, err erro
 
 const distributedLockLease = 10 // Seconds
 
-func (bc *litBackendCtx) unsafeImportAndReset(ei *engineInfo) error {
+func (bc *litBackendCtx) unsafeImportAndReset(ctx context.Context, ei *engineInfo) error {
 	logger := log.FromContext(bc.ctx).With(
 		zap.Stringer("engineUUID", ei.uuid),
 	)
@@ -251,8 +251,8 @@ func (bc *litBackendCtx) unsafeImportAndReset(ei *engineInfo) error {
 
 	regionSplitSize := int64(lightning.SplitRegionSize) * int64(lightning.MaxSplitRegionSizeRatio)
 	regionSplitKeys := int64(lightning.SplitRegionKeys)
-	if err := closedEngine.Import(bc.ctx, regionSplitSize, regionSplitKeys); err != nil {
-		logutil.Logger(bc.ctx).Error(LitErrIngestDataErr, zap.Int64("index ID", ei.indexID),
+	if err := closedEngine.Import(ctx, regionSplitSize, regionSplitKeys); err != nil {
+		logger.Error(LitErrIngestDataErr, zap.Int64("index ID", ei.indexID),
 			zap.String("usage info", bc.diskRoot.UsageInfo()))
 		return err
 	}
@@ -267,12 +267,12 @@ func (bc *litBackendCtx) unsafeImportAndReset(ei *engineInfo) error {
 		resetFn = bc.backend.ResetEngine
 	}
 
-	err := resetFn(bc.ctx, ei.uuid)
+	err := resetFn(ctx, ei.uuid)
 	failpoint.Inject("mockResetEngineFailed", func() {
 		err = fmt.Errorf("mock reset engine failed")
 	})
 	if err != nil {
-		logutil.Logger(bc.ctx).Error(LitErrResetEngineFail, zap.Int64("index ID", ei.indexID))
+		logger.Error(LitErrResetEngineFail, zap.Int64("index ID", ei.indexID))
 		err1 := closedEngine.Cleanup(bc.ctx)
 		if err1 != nil {
 			logutil.Logger(ei.ctx).Error(LitErrCleanEngineErr, zap.Error(err1),

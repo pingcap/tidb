@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl/copr"
 	"github.com/pingcap/tidb/pkg/ddl/ingest"
 	"github.com/pingcap/tidb/pkg/ddl/logutil"
+	"github.com/pingcap/tidb/pkg/ddl/notifier"
 	sess "github.com/pingcap/tidb/pkg/ddl/session"
 	ddlutil "github.com/pingcap/tidb/pkg/ddl/util"
 	"github.com/pingcap/tidb/pkg/disttask/framework/handle"
@@ -816,6 +817,9 @@ SwitchIndexState:
 		if !job.ReorgMeta.IsDistReorg && job.ReorgMeta.ReorgTp == model.ReorgTypeLitMerge {
 			ingest.LitBackCtxMgr.Unregister(job.ID)
 		}
+		// TODO: store this event to the notifier.
+		// For now, it is not used and just for placeholder.
+		_ = notifier.NewAddIndexEvent(tblInfo, allIndexInfos)
 		logutil.DDLLogger().Info("run add index job done",
 			zap.String("charset", job.Charset),
 			zap.String("collation", job.Collate))
