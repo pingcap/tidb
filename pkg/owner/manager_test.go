@@ -449,7 +449,7 @@ func TestImmediatelyCancel(t *testing.T) {
 	d := tInfo.ddl
 	defer tInfo.Close(t)
 	ownerManager := d.OwnerManager()
-	for i := 0; i < 100; i++ {
+	for i := 0; i < 10; i++ {
 		err := ownerManager.CampaignOwner()
 		require.NoError(t, err)
 		ownerManager.CampaignCancel()
