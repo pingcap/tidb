@@ -181,7 +181,7 @@ func (pq *AnalysisPriorityQueueV2) RefreshLastAnalysisDuration() {
 			indicators.LastAnalysisDuration = jobFactory.GetTableLastAnalyzeDuration(tableStats)
 			job.SetIndicators(indicators)
 			job.SetWeight(pq.calculator.CalculateWeight(job))
-			if err := pq.inner.Add(job); err != nil {
+			if err := pq.inner.Update(job); err != nil {
 				statslogutil.StatsLogger().Error("Failed to add job to priority queue",
 					zap.Error(err),
 					zap.String("job", job.String()),
