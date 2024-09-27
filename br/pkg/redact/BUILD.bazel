@@ -5,11 +5,6 @@ go_library(
     srcs = ["redact.go"],
     importpath = "github.com/pingcap/tidb/br/pkg/redact",
     visibility = ["//visibility:public"],
-    deps = [
-        "//pkg/util/intest",
-        "@com_github_pingcap_errors//:errors",
-        "@com_github_pingcap_kvproto//pkg/brpb",
-    ],
     deps = ["@com_github_pingcap_errors//:errors"],
 )
 
