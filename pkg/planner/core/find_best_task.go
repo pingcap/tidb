@@ -2253,7 +2253,11 @@ func (is *PhysicalIndexScan) addSelectionConditionForGlobalIndex(p *logicalop.Da
 	}
 	needNot := false
 	pInfo := p.TableInfo.GetPartitionInfo()
-	if len(idxArr) == 1 && idxArr[0] == FullRange {
+	if len(idxArr) == 0 {
+		// TODO: Can we change to Table Dual somehow?
+		// Add an invalid pid as param for `IN` function
+		args = append(args, expression.NewInt64Const(-1))
+	} else if len(idxArr) == 1 && idxArr[0] == FullRange {
 		// Filter away partitions that may exists in Global Index,
 		// but should not be seen.
 		needNot = true
