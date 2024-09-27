@@ -451,7 +451,6 @@ func TestImmediatelyCancel(t *testing.T) {
 	ownerManager := d.OwnerManager()
 	for i := 0; i < 100; i++ {
 		err := ownerManager.CampaignOwner()
-		//time.Sleep(100 * time.Millisecond)
 		require.NoError(t, err)
 		ownerManager.CampaignCancel()
 	}
