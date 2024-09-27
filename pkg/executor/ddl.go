@@ -289,7 +289,7 @@ func (e *DDLExec) createSessionTemporaryTable(s *ast.CreateTableStmt) error {
 		return errors.Trace(err)
 	}
 
-	tbInfo, err := ddl.BuildSessionTemporaryTableInfo(e.Ctx(), is, s, dbInfo.Charset, dbInfo.Collate, dbInfo.PlacementPolicyRef)
+	tbInfo, err := ddl.BuildSessionTemporaryTableInfo(ddl.NewMetaBuildContextWithSctx(e.Ctx()), is, s, dbInfo.Charset, dbInfo.Collate, dbInfo.PlacementPolicyRef)
 	if err != nil {
 		return err
 	}
@@ -422,7 +422,7 @@ func (e *DDLExec) executeRecoverTable(s *ast.RecoverTableStmt) error {
 		return err
 	}
 
-	recoverInfo := &ddl.RecoverInfo{
+	recoverInfo := &model.RecoverTableInfo{
 		SchemaID:      job.SchemaID,
 		TableInfo:     tblInfo,
 		DropJobID:     job.ID,
@@ -473,9 +473,11 @@ func (e *DDLExec) getRecoverTableByJobID(s *ast.RecoverTableStmt, dom *domain.Do
 			fmt.Sprintf("(Table ID %d)", job.TableID),
 		)
 	}
-	// Return the cloned meta here, since meta will be modified later.
-	// This may corrupt the infocache.
-	return job, table.Meta().Clone(), nil
+	// We can't return the meta directly since it will be modified outside, which may corrupt the infocache.
+	// Since only State field is changed, return a shallow copy is enough.
+	// see https://github.com/pingcap/tidb/issues/55462
+	tblInfo := *table.Meta()
+	return job, &tblInfo, nil
 }
 
 // GetDropOrTruncateTableInfoFromJobs gets the dropped/truncated table information from DDL jobs,
@@ -540,7 +542,12 @@ func (e *DDLExec) getRecoverTableByTableName(tableName *ast.TableName) (*model.J
 	if tableInfo.TempTableType == model.TempTableGlobal {
 		return nil, nil, exeerrors.ErrUnsupportedFlashbackTmpTable
 	}
-	return jobInfo, tableInfo, nil
+
+	// We can't return the meta directly since it will be modified outside, which may corrupt the infocache.
+	// Since only State field is changed, return a shallow copy is enough.
+	// see https://github.com/pingcap/tidb/issues/55462
+	tblInfo := *tableInfo
+	return jobInfo, &tblInfo, nil
 }
 
 func (e *DDLExec) executeFlashBackCluster(s *ast.FlashBackToTimestampStmt) error {
@@ -579,7 +586,7 @@ func (e *DDLExec) executeFlashbackTable(s *ast.FlashBackTableStmt) error {
 		return err
 	}
 
-	recoverInfo := &ddl.RecoverInfo{
+	recoverInfo := &model.RecoverTableInfo{
 		SchemaID:      job.SchemaID,
 		TableInfo:     tblInfo,
 		DropJobID:     job.ID,
@@ -620,7 +627,7 @@ func (e *DDLExec) executeFlashbackDatabase(s *ast.FlashBackDatabaseStmt) error {
 	return err
 }
 
-func (e *DDLExec) getRecoverDBByName(schemaName pmodel.CIStr) (recoverSchemaInfo *ddl.RecoverSchemaInfo, err error) {
+func (e *DDLExec) getRecoverDBByName(schemaName pmodel.CIStr) (recoverSchemaInfo *model.RecoverSchemaInfo, err error) {
 	txn, err := e.Ctx().Txn(true)
 	if err != nil {
 		return nil, err
@@ -654,7 +661,7 @@ func (e *DDLExec) getRecoverDBByName(schemaName pmodel.CIStr) (recoverSchemaInfo
 			if schemaInfo.Name.L != schemaName.L {
 				continue
 			}
-			recoverSchemaInfo = &ddl.RecoverSchemaInfo{
+			recoverSchemaInfo = &model.RecoverSchemaInfo{
 				DBInfo:              schemaInfo,
 				LoadTablesOnExecute: true,
 				DropJobID:           job.ID,

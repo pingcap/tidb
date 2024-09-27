@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package core
+package logicalop
 
 import (
 	"bytes"
@@ -20,14 +20,13 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
-	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
 )
 
 // TiKVSingleGather is a leaf logical operator of TiDB layer to gather
 // tuples from TiKV regions.
 type TiKVSingleGather struct {
-	logicalop.LogicalSchemaProducer
+	LogicalSchemaProducer
 	Source *DataSource
 	// IsIndexGather marks if this TiKVSingleGather gathers tuples from an IndexScan.
 	// in implementation phase, we need this flag to determine whether to generate
@@ -38,7 +37,7 @@ type TiKVSingleGather struct {
 
 // Init initializes TiKVSingleGather.
 func (sg TiKVSingleGather) Init(ctx base.PlanContext, offset int) *TiKVSingleGather {
-	sg.BaseLogicalPlan = logicalop.NewBaseLogicalPlan(ctx, plancodec.TypeTiKVSingleGather, &sg, offset)
+	sg.BaseLogicalPlan = NewBaseLogicalPlan(ctx, plancodec.TypeTiKVSingleGather, &sg, offset)
 	return &sg
 }
 

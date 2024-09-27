@@ -17,6 +17,7 @@ package indexadvisor
 import (
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 	s "github.com/pingcap/tidb/pkg/util/set"
@@ -33,11 +34,11 @@ import (
 
 // adviseIndexes implements the auto-admin algorithm.
 func adviseIndexes(querySet s.Set[Query], indexableColSet s.Set[Column],
-	maxIndexes, maxIndexWidth int, optimizer Optimizer) (s.Set[Index], error) {
+	optimizer Optimizer, option *Option) (s.Set[Index], error) {
 	aa := &autoAdmin{
-		optimizer:     optimizer,
-		maxIndexes:    maxIndexes,
-		maxIndexWidth: maxIndexWidth,
+		optimizer: optimizer,
+		option:    option,
+		startAt:   time.Now(),
 	}
 
 	bestIndexes, err := aa.calculateBestIndexes(querySet, indexableColSet)
@@ -48,13 +49,13 @@ func adviseIndexes(querySet s.Set[Query], indexableColSet s.Set[Column],
 }
 
 type autoAdmin struct {
-	optimizer     Optimizer
-	maxIndexes    int // The algorithm stops as soon as it has selected #max_indexes indexes
-	maxIndexWidth int // The number of columns an index can contain at maximum.
+	optimizer Optimizer
+	option    *Option
+	startAt   time.Time
 }
 
 func (aa *autoAdmin) calculateBestIndexes(querySet s.Set[Query], indexableColSet s.Set[Column]) (s.Set[Index], error) {
-	if aa.maxIndexes == 0 {
+	if aa.option.MaxNumIndexes == 0 {
 		return nil, nil
 	}
 
@@ -62,25 +63,31 @@ func (aa *autoAdmin) calculateBestIndexes(querySet s.Set[Query], indexableColSet
 	for _, col := range indexableColSet.ToList() {
 		potentialIndexes.Add(NewIndex(col.SchemaName, col.TableName, aa.tempIndexName(col), col.ColumnName))
 	}
+	if err := aa.timeout(); err != nil {
+		return nil, err
+	}
 
 	currentBestIndexes := s.NewSet[Index]()
-	for currentMaxIndexWidth := 1; currentMaxIndexWidth <= aa.maxIndexWidth; currentMaxIndexWidth++ {
+	for currentMaxIndexWidth := 1; currentMaxIndexWidth <= aa.option.MaxIndexWidth; currentMaxIndexWidth++ {
 		candidates, err := aa.selectIndexCandidates(querySet, potentialIndexes)
 		if err != nil {
 			return nil, err
 		}
 
-		//maxIndexes := aa.maxIndexes * (aa.maxIndexWidth - currentMaxIndexWidth + 1)
-		maxIndexes := aa.maxIndexes
+		//maxIndexes := aa.option.MaxNumIndexes * (aa.option.MaxIndexWidth - currentMaxIndexWidth + 1)
+		maxIndexes := aa.option.MaxNumIndexes
 		currentBestIndexes, err = aa.enumerateCombinations(querySet, candidates, maxIndexes)
 		if err != nil {
 			return nil, err
 		}
 
-		if currentMaxIndexWidth < aa.maxIndexWidth {
+		if currentMaxIndexWidth < aa.option.MaxIndexWidth {
 			// Update potential indexes for the next iteration
 			potentialIndexes = currentBestIndexes
 			potentialIndexes.Add(aa.createMultiColumnIndexes(indexableColSet, currentBestIndexes).ToList()...)
+		}
+		if err := aa.timeout(); err != nil {
+			return nil, err
 		}
 	}
 
@@ -98,26 +105,33 @@ func (aa *autoAdmin) calculateBestIndexes(querySet s.Set[Query], indexableColSet
 		return nil, err
 	}
 
-	currentBestIndexes, err = aa.cutDown(currentBestIndexes, querySet, aa.optimizer, aa.maxIndexes)
+	currentBestIndexes, err = aa.cutDown(currentBestIndexes, querySet, aa.optimizer, aa.option.MaxNumIndexes)
 	if err != nil {
 		return nil, err
 	}
 
+	if err := aa.timeout(); err != nil {
+		return nil, err
+	}
+
 	// try to add more indexes if the number of indexes is less than maxIndexes
-	for limit := 0; limit < 3 && currentBestIndexes.Size() < aa.maxIndexes; limit++ {
+	for limit := 0; limit < 3 && currentBestIndexes.Size() < aa.option.MaxNumIndexes; limit++ {
 		potentialIndexes = s.DiffSet(potentialIndexes, currentBestIndexes)
 		currentCost, err := evaluateIndexSetCost(querySet, aa.optimizer, currentBestIndexes)
 		if err != nil {
 			return nil, err
 		}
 		currentBestIndexes, _, err = aa.enumerateGreedy(querySet, currentBestIndexes,
-			currentCost, potentialIndexes, aa.maxIndexes)
+			currentCost, potentialIndexes, aa.option.MaxNumIndexes)
 		if err != nil {
 			return nil, err
 		}
 
 		currentBestIndexes, err = aa.filterIndexes(querySet, currentBestIndexes)
 		if err != nil {
+			return nil, err
+		}
+		if err := aa.timeout(); err != nil {
 			return nil, err
 		}
 	}
@@ -167,7 +181,7 @@ func (aa *autoAdmin) heuristicCoveredIndexes(
 		if err != nil {
 			return nil, err
 		}
-		if selectCols == nil || selectCols.Size() == 0 || selectCols.Size() > aa.maxIndexWidth {
+		if selectCols == nil || selectCols.Size() == 0 || selectCols.Size() > aa.option.MaxIndexWidth {
 			continue
 		}
 		schemaName, tableName := selectCols.ToList()[0].SchemaName, selectCols.ToList()[0].TableName
@@ -178,7 +192,7 @@ func (aa *autoAdmin) heuristicCoveredIndexes(
 			if idx.SchemaName != schemaName || idx.TableName != tableName {
 				continue // not for the same table
 			}
-			if len(idx.Columns)+selectCols.Size() > aa.maxIndexWidth {
+			if len(idx.Columns)+selectCols.Size() > aa.option.MaxIndexWidth {
 				continue // exceed the max-index-width limitation
 			}
 			// try this cover-index: idx-cols + select-cols
@@ -279,8 +293,8 @@ func (aa *autoAdmin) heuristicMergeIndexes(
 			}
 			cols := []Column{col}
 			cols = append(cols, orderByCols...)
-			if len(cols) > aa.maxIndexWidth {
-				cols = cols[:aa.maxIndexWidth]
+			if len(cols) > aa.option.MaxIndexWidth {
+				cols = cols[:aa.option.MaxIndexWidth]
 			}
 			idx = NewIndexWithColumns(aa.tempIndexName(cols...), cols...)
 			contained = false
@@ -532,4 +546,11 @@ func (*autoAdmin) tempIndexName(cols ...Column) string {
 	}
 
 	return fmt.Sprintf("idx_%v", uuid.New().String())
+}
+
+func (aa *autoAdmin) timeout() error {
+	if time.Since(aa.startAt) > aa.option.Timeout {
+		return fmt.Errorf("index advisor timeout after %v", aa.option.Timeout)
+	}
+	return nil
 }

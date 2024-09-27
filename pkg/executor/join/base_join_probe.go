@@ -70,6 +70,8 @@ type ProbeV2 interface {
 	GetProbeCollision() uint64
 	// Reset probe collsion
 	ResetProbeCollision()
+	// Clear probe state
+	ClearProbeState()
 }
 
 type offsetAndLength struct {
@@ -256,6 +258,15 @@ func (j *baseJoinProbe) SetChunkForProbe(chk *chunk.Chunk) (err error) {
 	return
 }
 
+func (j *baseJoinProbe) ClearProbeState() {
+	for i := 0; i < len(j.cachedBuildRows); i++ {
+		j.cachedBuildRows[i] = matchedRowInfo{}
+	}
+	if j.ctx.OtherCondition != nil {
+		j.rowIndexInfos = nil
+	}
+}
+
 func (j *baseJoinProbe) finishLookupCurrentProbeRow() {
 	if j.matchedRowsForCurrentProbeRow > 0 {
 		j.offsetAndLengthArray = append(j.offsetAndLengthArray, offsetAndLength{offset: j.usedRows[j.currentProbeRow], length: j.matchedRowsForCurrentProbeRow})
@@ -294,7 +305,7 @@ func (j *baseJoinProbe) appendBuildRowToCachedBuildRowsV1(probeRowIndex int, bui
 func (j *baseJoinProbe) batchConstructBuildRows(chk *chunk.Chunk, currentColumnIndexInRow int, forOtherCondition bool) {
 	j.appendBuildRowToChunk(chk, currentColumnIndexInRow, forOtherCondition)
 	if forOtherCondition {
-		j.rowIndexInfos = append(j.rowIndexInfos, j.cachedBuildRows...)
+		j.rowIndexInfos = append(j.rowIndexInfos, j.cachedBuildRows[0:j.nextCachedBuildRowIndex]...)
 	}
 	j.nextCachedBuildRowIndex = 0
 }

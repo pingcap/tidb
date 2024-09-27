@@ -41,6 +41,7 @@ var totalRowNum = 10000
 var noSpillCaseHardLimit = hardLimit2
 var spillCase1HardLimit = hardLimit1
 var spillCase2HardLimit = hardLimit1
+var fallBackHardLimit = hardLimit1
 var inMemoryThenSpillHardLimit = hardLimit1 * 2
 
 // Test is successful if there is no hang
@@ -434,9 +435,13 @@ func TestTopNSpillDiskFailpoint(t *testing.T) {
 	topNCase := &testutil.SortCase{Rows: totalRowNum, OrderByIdx: []int{0, 1}, Ndvs: []int{0, 0}, Ctx: ctx}
 
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/executor/sortexec/SlowSomeWorkers", `return(true)`))
+	defer failpoint.Disable("github.com/pingcap/tidb/pkg/executor/sortexec/SlowSomeWorkers")
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/executor/sortexec/TopNRandomFail", `return(true)`))
+	defer failpoint.Disable("github.com/pingcap/tidb/pkg/executor/sortexec/TopNRandomFail")
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/executor/sortexec/ParallelSortRandomFail", `return(true)`))
+	defer failpoint.Disable("github.com/pingcap/tidb/pkg/executor/sortexec/ParallelSortRandomFail")
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/util/chunk/ChunkInDiskError", `return(true)`))
+	defer failpoint.Disable("github.com/pingcap/tidb/pkg/util/chunk/ChunkInDiskError")
 
 	ctx.GetSessionVars().InitChunkSize = 32
 	ctx.GetSessionVars().MaxChunkSize = 32
@@ -473,11 +478,6 @@ func TestTopNSpillDiskFailpoint(t *testing.T) {
 		topNFailPointTest(t, nil, topNCase, dataSource, 0, count, inMemoryThenSpillHardLimit, ctx.GetSessionVars().MemTracker)
 		topNFailPointTest(t, exe, topNCase, dataSource, offset, count, inMemoryThenSpillHardLimit, ctx.GetSessionVars().MemTracker)
 	}
-
-	failpoint.Disable("github.com/pingcap/tidb/pkg/executor/sortexec/SlowSomeWorkers")
-	failpoint.Disable("github.com/pingcap/tidb/pkg/executor/sortexec/TopNRandomFail")
-	failpoint.Disable("github.com/pingcap/tidb/pkg/executor/sortexec/ParallelSortRandomFail")
-	failpoint.Disable("github.com/pingcap/tidb/pkg/util/chunk/ChunkInDiskError")
 }
 
 func TestIssue54206(t *testing.T) {
@@ -499,8 +499,6 @@ func TestIssue54541(t *testing.T) {
 	ctx := mock.NewContext()
 	topNCase := &testutil.SortCase{Rows: totalRowNum, OrderByIdx: []int{0, 1}, Ndvs: []int{0, 0}, Ctx: ctx}
 
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/executor/sortexec/SlowSomeWorkers", `return(true)`))
-
 	ctx.GetSessionVars().InitChunkSize = 32
 	ctx.GetSessionVars().MaxChunkSize = 32
 	ctx.GetSessionVars().MemTracker = memory.NewTracker(memory.LabelForSQLText, hardLimit2)
@@ -515,4 +513,33 @@ func TestIssue54541(t *testing.T) {
 	exe := buildTopNExec(topNCase, dataSource, offset, count)
 
 	sortexec.TestKillSignalInTopN(t, exe)
+}
+
+func TestTopNFallBackAction(t *testing.T) {
+	sortexec.SetSmallSpillChunkSizeForTest()
+	ctx := mock.NewContext()
+	topNCase := &testutil.SortCase{Rows: totalRowNum, OrderByIdx: []int{0, 1}, Ndvs: []int{0, 0}, Ctx: ctx}
+	newRootExceedAction := new(testutil.MockActionOnExceed)
+
+	ctx.GetSessionVars().InitChunkSize = 32
+	ctx.GetSessionVars().MaxChunkSize = 32
+	ctx.GetSessionVars().MemTracker = memory.NewTracker(memory.LabelForSQLText, fallBackHardLimit)
+	ctx.GetSessionVars().StmtCtx.MemTracker.AttachTo(ctx.GetSessionVars().MemTracker)
+	ctx.GetSessionVars().MemTracker.SetActionOnExceed(newRootExceedAction)
+	ctx.GetSessionVars().MemTracker.Consume(int64(float64(fallBackHardLimit) * 0.99999))
+
+	schema := expression.NewSchema(topNCase.Columns()...)
+	dataSource := buildDataSource(topNCase, schema)
+
+	count := uint64(totalRowNum / 5)
+	offset := count / 5
+
+	exe := buildTopNExec(topNCase, dataSource, offset, count)
+
+	dataSource.PrepareChunks()
+	_ = executeTopNExecutor(t, exe)
+	err := exe.Close()
+	require.NoError(t, err)
+
+	require.Less(t, 0, newRootExceedAction.GetTriggeredNum())
 }

@@ -249,7 +249,6 @@ go_library(
         "@com_github_docker_go_units//:go-units",
         "@com_github_gogo_protobuf//proto",
         "@com_github_google_uuid//:uuid",
-        "@com_github_ngaut_pools//:pools",
         "@com_github_opentracing_basictracer_go//:basictracer-go",
         "@com_github_opentracing_opentracing_go//:opentracing-go",
         "@com_github_pingcap_errors//:errors",

@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/types"
@@ -905,34 +906,70 @@ func getSignatureByPB(ctx BuildContext, sigCode tipb.ScalarFuncSig, tp *tipb.Fie
 		f = &builtinExtractDatetimeSig{base}
 	case tipb.ScalarFuncSig_ExtractDuration:
 		f = &builtinExtractDurationSig{base}
-	// case tipb.ScalarFuncSig_AddDateStringString:
-	// 	f = &builtinAddDateStringStringSig{base}
-	// case tipb.ScalarFuncSig_AddDateStringInt:
-	// 	f = &builtinAddDateStringIntSig{base}
-	// case tipb.ScalarFuncSig_AddDateStringDecimal:
-	// 	f = &builtinAddDateStringDecimalSig{base}
-	// case tipb.ScalarFuncSig_AddDateIntString:
-	// 	f = &builtinAddDateIntStringSig{base}
-	// case tipb.ScalarFuncSig_AddDateIntInt:
-	// 	f = &builtinAddDateIntIntSig{base}
-	// case tipb.ScalarFuncSig_AddDateDatetimeString:
-	// 	f = &builtinAddDateDatetimeStringSig{base}
-	// case tipb.ScalarFuncSig_AddDateDatetimeInt:
-	// 	f = &builtinAddDateDatetimeIntSig{base}
-	// case tipb.ScalarFuncSig_SubDateStringString:
-	// 	f = &builtinSubDateStringStringSig{base}
-	// case tipb.ScalarFuncSig_SubDateStringInt:
-	// 	f = &builtinSubDateStringIntSig{base}
-	// case tipb.ScalarFuncSig_SubDateStringDecimal:
-	// 	f = &builtinSubDateStringDecimalSig{base}
-	// case tipb.ScalarFuncSig_SubDateIntString:
-	// 	f = &builtinSubDateIntStringSig{base}
-	// case tipb.ScalarFuncSig_SubDateIntInt:
-	// 	f = &builtinSubDateIntIntSig{base}
-	// case tipb.ScalarFuncSig_SubDateDatetimeString:
-	// 	f = &builtinSubDateDatetimeStringSig{base}
-	// case tipb.ScalarFuncSig_SubDateDatetimeInt:
-	// 	f = &builtinSubDateDatetimeIntSig{base}
+	case tipb.ScalarFuncSig_AddDateStringString,
+		tipb.ScalarFuncSig_AddDateStringInt,
+		tipb.ScalarFuncSig_AddDateStringReal,
+		tipb.ScalarFuncSig_AddDateStringDecimal,
+		tipb.ScalarFuncSig_AddDateIntString,
+		tipb.ScalarFuncSig_AddDateIntInt,
+		tipb.ScalarFuncSig_AddDateIntReal,
+		tipb.ScalarFuncSig_AddDateIntDecimal,
+		tipb.ScalarFuncSig_AddDateRealString,
+		tipb.ScalarFuncSig_AddDateRealInt,
+		tipb.ScalarFuncSig_AddDateRealReal,
+		tipb.ScalarFuncSig_AddDateRealDecimal,
+		tipb.ScalarFuncSig_AddDateDecimalString,
+		tipb.ScalarFuncSig_AddDateDecimalInt,
+		tipb.ScalarFuncSig_AddDateDecimalReal,
+		tipb.ScalarFuncSig_AddDateDecimalDecimal,
+		tipb.ScalarFuncSig_AddDateDatetimeString,
+		tipb.ScalarFuncSig_AddDateDatetimeInt,
+		tipb.ScalarFuncSig_AddDateDatetimeReal,
+		tipb.ScalarFuncSig_AddDateDatetimeDecimal,
+		tipb.ScalarFuncSig_AddDateDurationString,
+		tipb.ScalarFuncSig_AddDateDurationInt,
+		tipb.ScalarFuncSig_AddDateDurationReal,
+		tipb.ScalarFuncSig_AddDateDurationDecimal,
+		tipb.ScalarFuncSig_AddDateDurationStringDatetime,
+		tipb.ScalarFuncSig_AddDateDurationIntDatetime,
+		tipb.ScalarFuncSig_AddDateDurationRealDatetime,
+		tipb.ScalarFuncSig_AddDateDurationDecimalDatetime:
+		f, e = (&addSubDateFunctionClass{baseFunctionClass{ast.AddDate, 3, 3}, addTime, addDuration, setAdd}).getFunction(ctx, args)
+		if e != nil {
+			return f, e
+		}
+	case tipb.ScalarFuncSig_SubDateStringString,
+		tipb.ScalarFuncSig_SubDateStringInt,
+		tipb.ScalarFuncSig_SubDateStringReal,
+		tipb.ScalarFuncSig_SubDateStringDecimal,
+		tipb.ScalarFuncSig_SubDateIntString,
+		tipb.ScalarFuncSig_SubDateIntInt,
+		tipb.ScalarFuncSig_SubDateIntReal,
+		tipb.ScalarFuncSig_SubDateIntDecimal,
+		tipb.ScalarFuncSig_SubDateRealString,
+		tipb.ScalarFuncSig_SubDateRealInt,
+		tipb.ScalarFuncSig_SubDateRealReal,
+		tipb.ScalarFuncSig_SubDateRealDecimal,
+		tipb.ScalarFuncSig_SubDateDecimalString,
+		tipb.ScalarFuncSig_SubDateDecimalInt,
+		tipb.ScalarFuncSig_SubDateDecimalReal,
+		tipb.ScalarFuncSig_SubDateDecimalDecimal,
+		tipb.ScalarFuncSig_SubDateDatetimeString,
+		tipb.ScalarFuncSig_SubDateDatetimeInt,
+		tipb.ScalarFuncSig_SubDateDatetimeReal,
+		tipb.ScalarFuncSig_SubDateDatetimeDecimal,
+		tipb.ScalarFuncSig_SubDateDurationString,
+		tipb.ScalarFuncSig_SubDateDurationInt,
+		tipb.ScalarFuncSig_SubDateDurationReal,
+		tipb.ScalarFuncSig_SubDateDurationDecimal,
+		tipb.ScalarFuncSig_SubDateDurationStringDatetime,
+		tipb.ScalarFuncSig_SubDateDurationIntDatetime,
+		tipb.ScalarFuncSig_SubDateDurationRealDatetime,
+		tipb.ScalarFuncSig_SubDateDurationDecimalDatetime:
+		f, e = (&addSubDateFunctionClass{baseFunctionClass{ast.SubDate, 3, 3}, subTime, subDuration, setSub}).getFunction(ctx, args)
+		if e != nil {
+			return f, e
+		}
 	case tipb.ScalarFuncSig_FromDays:
 		f = &builtinFromDaysSig{base}
 	case tipb.ScalarFuncSig_TimeFormat:
@@ -1112,7 +1149,6 @@ func getSignatureByPB(ctx BuildContext, sigCode tipb.ScalarFuncSig, tp *tipb.Fie
 		f = &builtinVecCosineDistanceSig{base}
 	case tipb.ScalarFuncSig_VecL2NormSig:
 		f = &builtinVecL2NormSig{base}
-
 	default:
 		e = ErrFunctionNotExists.GenWithStackByArgs("FUNCTION", sigCode)
 		return nil, e

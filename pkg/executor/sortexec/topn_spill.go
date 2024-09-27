@@ -272,6 +272,6 @@ func (t *topNSpillAction) Action(tracker *memory.Tracker) {
 	}
 
 	if tracker.CheckExceed() && !hasEnoughData {
-		t.GetFallback()
+		t.TriggerFallBackAction(tracker)
 	}
 }

@@ -138,7 +138,7 @@ func (op *PlanCostOption) WithCostFlag(flag uint64) *PlanCostOption {
 }
 
 // CostFlagTrace is a mirror of costusage.CostFlagTrace, leveraging
-// initialization assigment to avoid import cycle.
+// initialization assignment to avoid import cycle.
 var CostFlagTrace uint64
 
 // WithOptimizeTracer set tracer
