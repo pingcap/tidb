@@ -17,9 +17,9 @@ package memo
 import (
 	"container/list"
 	"fmt"
-	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 
 	"github.com/pingcap/tidb/pkg/expression"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	// import core pkg first to call its init func.
 	_ "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
