@@ -1586,10 +1586,10 @@ func visitInfoCmp(a, b visitInfo) int {
 func checkVisitInfo(t *testing.T, v1, v2 []visitInfo, comment string) {
 	slices.SortFunc(v1, visitInfoCmp)
 	slices.SortFunc(v2, visitInfoCmp)
-	slices.CompactFunc(v1, func(x, y visitInfo) bool {
+	v1 = slices.CompactFunc(v1, func(x, y visitInfo) bool {
 		return x.Equals(&y)
 	})
-	slices.CompactFunc(v1, func(x, y visitInfo) bool {
+	v2 = slices.CompactFunc(v2, func(x, y visitInfo) bool {
 		return x.Equals(&y)
 	})
 
