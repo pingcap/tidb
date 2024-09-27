@@ -10,6 +10,7 @@ go_library(
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_kvproto//pkg/brpb",
     ],
+    deps = ["@com_github_pingcap_errors//:errors"],
 )
 
 go_test(
