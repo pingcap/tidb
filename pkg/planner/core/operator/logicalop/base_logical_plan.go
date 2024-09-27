@@ -151,7 +151,7 @@ func (p *BaseLogicalPlan) BuildKeyInfo(_ *expression.Schema, _ []*expression.Sch
 	for i := range p.children {
 		childMaxOneRow[i] = p.children[i].MaxOneRow()
 	}
-	p.maxOneRow = utilfuncp.HasMaxOneRowUtil(p.self, childMaxOneRow)
+	p.maxOneRow = HasMaxOneRow(p.self, childMaxOneRow)
 }
 
 // PushDownTopN implements the LogicalPlan.<5th> interface.
