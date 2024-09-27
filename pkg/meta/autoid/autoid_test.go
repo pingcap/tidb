@@ -63,7 +63,7 @@ func TestSignedAutoid(t *testing.T) {
 
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnMeta)
 	err = kv.RunInNewTxn(ctx, store, false, func(ctx context.Context, txn kv.Transaction) error {
-		m := meta.NewMeta(txn)
+		m := meta.NewMutator(txn)
 		err = m.CreateDatabase(&model.DBInfo{ID: 1, Name: pmodel.NewCIStr("a")})
 		require.NoError(t, err)
 		err = m.CreateTableOrView(1, &model.TableInfo{ID: 1, Name: pmodel.NewCIStr("t")})
@@ -268,7 +268,7 @@ func TestUnsignedAutoid(t *testing.T) {
 
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnMeta)
 	err = kv.RunInNewTxn(ctx, store, false, func(ctx context.Context, txn kv.Transaction) error {
-		m := meta.NewMeta(txn)
+		m := meta.NewMutator(txn)
 		err = m.CreateDatabase(&model.DBInfo{ID: 1, Name: pmodel.NewCIStr("a")})
 		require.NoError(t, err)
 		err = m.CreateTableOrView(1, &model.TableInfo{ID: 1, Name: pmodel.NewCIStr("t")})
@@ -432,7 +432,7 @@ func TestConcurrentAlloc(t *testing.T) {
 	tblID := int64(100)
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnMeta)
 	err = kv.RunInNewTxn(ctx, store, false, func(ctx context.Context, txn kv.Transaction) error {
-		m := meta.NewMeta(txn)
+		m := meta.NewMutator(txn)
 		err = m.CreateDatabase(&model.DBInfo{ID: dbID, Name: pmodel.NewCIStr("a")})
 		require.NoError(t, err)
 		err = m.CreateTableOrView(dbID, &model.TableInfo{ID: tblID, Name: pmodel.NewCIStr("t")})
@@ -518,7 +518,7 @@ func TestRollbackAlloc(t *testing.T) {
 	tblID := int64(2)
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnMeta)
 	err = kv.RunInNewTxn(ctx, store, false, func(ctx context.Context, txn kv.Transaction) error {
-		m := meta.NewMeta(txn)
+		m := meta.NewMutator(txn)
 		err = m.CreateDatabase(&model.DBInfo{ID: dbID, Name: pmodel.NewCIStr("a")})
 		require.NoError(t, err)
 		err = m.CreateTableOrView(dbID, &model.TableInfo{ID: tblID, Name: pmodel.NewCIStr("t")})
@@ -568,7 +568,7 @@ func TestAllocComputationIssue(t *testing.T) {
 
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnMeta)
 	err = kv.RunInNewTxn(ctx, store, false, func(ctx context.Context, txn kv.Transaction) error {
-		m := meta.NewMeta(txn)
+		m := meta.NewMutator(txn)
 		err = m.CreateDatabase(&model.DBInfo{ID: 1, Name: pmodel.NewCIStr("a")})
 		require.NoError(t, err)
 		err = m.CreateTableOrView(1, &model.TableInfo{ID: 1, Name: pmodel.NewCIStr("t")})
@@ -619,7 +619,7 @@ func TestIssue40584(t *testing.T) {
 
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnMeta)
 	err = kv.RunInNewTxn(ctx, store, false, func(ctx context.Context, txn kv.Transaction) error {
-		m := meta.NewMeta(txn)
+		m := meta.NewMutator(txn)
 		err = m.CreateDatabase(&model.DBInfo{ID: 1, Name: pmodel.NewCIStr("a")})
 		require.NoError(t, err)
 		err = m.CreateTableOrView(1, &model.TableInfo{ID: 1, Name: pmodel.NewCIStr("t")})

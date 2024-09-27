@@ -456,7 +456,7 @@ func (e *DDLJobRetriever) initial(txn kv.Transaction, sess sessionctx.Context) e
 
 	if !skipHistoryJobs {
 		// For the similar reason, we can only use schema_name and table_name to do filtering here.
-		m := meta.NewMeta(txn)
+		m := meta.NewMutator(txn)
 		e.historyJobIter, err = m.GetLastHistoryDDLJobsIteratorWithFilter(schemaNames, tableNames)
 		if err != nil {
 			return err
@@ -639,7 +639,7 @@ func (e *ShowDDLJobQueriesExec) Open(ctx context.Context) error {
 	}
 	session.GetSessionVars().SetInTxn(true)
 
-	m := meta.NewMeta(txn)
+	m := meta.NewMutator(txn)
 	jobs, err = ddl.GetAllDDLJobs(session)
 	if err != nil {
 		return err
@@ -727,7 +727,7 @@ func (e *ShowDDLJobQueriesWithRangeExec) Open(ctx context.Context) error {
 	}
 	session.GetSessionVars().SetInTxn(true)
 
-	m := meta.NewMeta(txn)
+	m := meta.NewMutator(txn)
 	jobs, err = ddl.GetAllDDLJobs(session)
 	if err != nil {
 		return err
@@ -2713,7 +2713,7 @@ func (e *AdminShowBDRRoleExec) Next(ctx context.Context, req *chunk.Chunk) error
 	}
 
 	return kv.RunInNewTxn(kv.WithInternalSourceType(ctx, kv.InternalTxnAdmin), e.Ctx().GetStore(), true, func(_ context.Context, txn kv.Transaction) error {
-		role, err := meta.NewMeta(txn).GetBDRRole()
+		role, err := meta.NewMutator(txn).GetBDRRole()
 		if err != nil {
 			return err
 		}

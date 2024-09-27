@@ -39,7 +39,7 @@ import (
 func getGlobalID(ctx context.Context, t *testing.T, store kv.Storage) int64 {
 	res := int64(0)
 	require.NoError(t, kv.RunInNewTxn(ctx, store, true, func(_ context.Context, txn kv.Transaction) error {
-		m := meta.NewMeta(txn)
+		m := meta.NewMutator(txn)
 		id, err := m.GetGlobalID()
 		require.NoError(t, err)
 		res = id
@@ -565,7 +565,7 @@ func TestGenGIDAndInsertJobsWithRetryOnErr(t *testing.T) {
 		require.True(t, ok)
 		counter++
 		require.NoError(t, kv.RunInNewTxn(ctx, store, true, func(_ context.Context, txn kv.Transaction) error {
-			m := meta.NewMeta(txn)
+			m := meta.NewMutator(txn)
 			_, err := m.GenGlobalIDs(100)
 			require.NoError(t, err)
 			return nil

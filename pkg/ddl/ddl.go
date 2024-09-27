@@ -377,7 +377,7 @@ func (sv *schemaVersionManager) setSchemaVersion(job *model.Job) (schemaVersion 
 	//  without differ.
 	err = kv.RunInNewTxn(kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL), sv.store, true, func(_ context.Context, txn kv.Transaction) error {
 		var err error
-		m := meta.NewMeta(txn)
+		m := meta.NewMutator(txn)
 		schemaVersion, err = m.GenSchemaVersion()
 		return err
 	})
@@ -1078,7 +1078,7 @@ func (d *ddl) SwitchMDL(enable bool) error {
 
 	variable.EnableMDL.Store(enable)
 	err = kv.RunInNewTxn(kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL), d.store, true, func(_ context.Context, txn kv.Transaction) error {
-		m := meta.NewMeta(txn)
+		m := meta.NewMutator(txn)
 		oldEnable, _, err := m.GetMetadataLock()
 		if err != nil {
 			return err
@@ -1192,7 +1192,7 @@ func GetDDLInfo(s sessionctx.Context) (*Info, error) {
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	t := meta.NewMeta(txn)
+	t := meta.NewMutator(txn)
 	info.Jobs = make([]*model.Job, 0, 2)
 	var generalJob, reorgJob *model.Job
 	generalJob, reorgJob, err = get2JobsFromTable(se)
