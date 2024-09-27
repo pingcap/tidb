@@ -28,7 +28,6 @@ import (
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
-	"github.com/pingcap/tidb/pkg/parser/ast"
 	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
@@ -532,24 +531,14 @@ func TestColumnTypeChangeGenUniqueChangingName(t *testing.T) {
 	assertChangingIdxName := "_idx$_idx_0"
 	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobUpdated", func(job *model.Job) {
 		if job.SchemaState == model.StateDeleteOnly && job.Type == model.ActionModifyColumn {
-			var (
-				_newCol                *model.ColumnInfo
-				_oldColName            *pmodel.CIStr
-				_pos                   = &ast.ColumnPosition{}
-				_modifyColumnTp        byte
-				_updatedAutoRandomBits uint64
-				changingCol            *model.ColumnInfo
-				changingIdxs           []*model.IndexInfo
-			)
-
-			err := job.DecodeArgs(&_newCol, &_oldColName, _pos, &_modifyColumnTp, &_updatedAutoRandomBits, &changingCol, &changingIdxs)
+			args, err := model.GetModifyColumnArgs(job)
 			if err != nil {
 				checkErr = err
 				return
 			}
-			if changingCol.Name.L != assertChangingColName {
+			if args.ChangingColumn.Name.L != assertChangingColName {
 				checkErr = errors.New("changing column name is incorrect")
-			} else if changingIdxs[0].Name.L != assertChangingIdxName {
+			} else if args.ChangingIdxs[0].Name.L != assertChangingIdxName {
 				checkErr = errors.New("changing index name is incorrect")
 			}
 		}
@@ -586,24 +575,15 @@ func TestColumnTypeChangeGenUniqueChangingName(t *testing.T) {
 	query2 := "alter table t modify column _col$__col$_c1_0 tinyint"
 	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobUpdated", func(job *model.Job) {
 		if (job.Query == query1 || job.Query == query2) && job.SchemaState == model.StateDeleteOnly && job.Type == model.ActionModifyColumn {
-			var (
-				_newCol                *model.ColumnInfo
-				_oldColName            *pmodel.CIStr
-				_pos                   = &ast.ColumnPosition{}
-				_modifyColumnTp        byte
-				_updatedAutoRandomBits uint64
-				changingCol            *model.ColumnInfo
-				changingIdxs           []*model.IndexInfo
-			)
-			err := job.DecodeArgs(&_newCol, &_oldColName, _pos, &_modifyColumnTp, &_updatedAutoRandomBits, &changingCol, &changingIdxs)
+			args, err := model.GetModifyColumnArgs(job)
 			if err != nil {
 				checkErr = err
 				return
 			}
-			if job.Query == query1 && changingCol.Name.L != assertChangingColName1 {
+			if job.Query == query1 && args.ChangingColumn.Name.L != assertChangingColName1 {
 				checkErr = errors.New("changing column name is incorrect")
 			}
-			if job.Query == query2 && changingCol.Name.L != assertChangingColName2 {
+			if job.Query == query2 && args.ChangingColumn.Name.L != assertChangingColName2 {
 				checkErr = errors.New("changing column name is incorrect")
 			}
 		}

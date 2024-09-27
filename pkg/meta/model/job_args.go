@@ -1546,8 +1546,45 @@ type ModifyColumnArgs struct {
 	Position              *ast.ColumnPosition
 	ModifyColumnType      byte
 	UpdatedAutoRandomBits uint64
+	ChangingColumn        *ColumnInfo
+
+	// Finished args
+	ChangingIdxs []*IndexInfo
+	RemovedIdxs  []int64
+
+	IndexIDs     []int64
+	PartitionIDs []int64
 }
 
 func (a *ModifyColumnArgs) fillJob(job *Job) {
 
+}
+
+func GetModifyColumnArgs(job *Job) (*ModifyColumnArgs, error) {
+	return nil, nil
+}
+
+func (a *ModifyColumnArgs) fillFinishedJob(job *Job) {
+	if job.Version == JobVersion1 {
+		job.Args = []any{a.IndexIDs, a.PartitionIDs}
+		return
+	}
+	job.Args = []any{a}
+}
+
+func GetFinishedModifyColumnArgs(job *Job) (*ModifyColumnArgs, error) {
+	if job.Version == JobVersion1 {
+		var (
+			indexIDs     []int64
+			partitionIDs []int64
+		)
+		if err := job.DecodeArgs(&indexIDs, &partitionIDs); err != nil {
+			return nil, errors.Trace(err)
+		}
+		return &ModifyColumnArgs{
+			IndexIDs:     indexIDs,
+			PartitionIDs: partitionIDs,
+		}, nil
+	}
+	return getOrDecodeArgsV2[*ModifyColumnArgs](job)
 }

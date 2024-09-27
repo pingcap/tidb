@@ -51,61 +51,50 @@ import (
 	"go.uber.org/zap"
 )
 
-type modifyingColInfo struct {
-	newCol                *model.ColumnInfo
-	oldColName            *pmodel.CIStr
-	modifyColumnTp        byte
-	updatedAutoRandomBits uint64
-	changingCol           *model.ColumnInfo
-	changingIdxs          []*model.IndexInfo
-	pos                   *ast.ColumnPosition
-	removedIdxs           []int64
-}
-
 func (w *worker) onModifyColumn(jobCtx *jobContext, t *meta.Meta, job *model.Job) (ver int64, _ error) {
-	dbInfo, tblInfo, oldCol, modifyInfo, err := getModifyColumnInfo(t, job)
+	dbInfo, tblInfo, oldCol, args, err := getModifyColumnInfo(t, job)
 	if err != nil {
 		return ver, err
 	}
 
 	if job.IsRollingback() {
 		// For those column-type-change jobs which don't reorg the data.
-		if !needChangeColumnData(oldCol, modifyInfo.newCol) {
-			return rollbackModifyColumnJob(jobCtx, t, tblInfo, job, modifyInfo.newCol, oldCol, modifyInfo.modifyColumnTp)
+		if !needChangeColumnData(oldCol, args.Column) {
+			return rollbackModifyColumnJob(jobCtx, t, tblInfo, job, args.Column, oldCol, args.ModifyColumnType)
 		}
 		// For those column-type-change jobs which reorg the data.
-		return rollbackModifyColumnJobWithData(jobCtx, t, tblInfo, job, oldCol, modifyInfo)
+		return rollbackModifyColumnJobWithData(jobCtx, t, tblInfo, job, oldCol, args)
 	}
 
 	// If we want to rename the column name, we need to check whether it already exists.
-	if modifyInfo.newCol.Name.L != modifyInfo.oldColName.L {
-		c := model.FindColumnInfo(tblInfo.Columns, modifyInfo.newCol.Name.L)
+	if args.Column.Name.L != args.OldColumnName.L {
+		c := model.FindColumnInfo(tblInfo.Columns, args.Column.Name.L)
 		if c != nil {
 			job.State = model.JobStateCancelled
-			return ver, errors.Trace(infoschema.ErrColumnExists.GenWithStackByArgs(modifyInfo.newCol.Name))
+			return ver, errors.Trace(infoschema.ErrColumnExists.GenWithStackByArgs(args.Column.Name))
 		}
 	}
 
 	failpoint.Inject("uninitializedOffsetAndState", func(val failpoint.Value) {
 		//nolint:forcetypeassert
 		if val.(bool) {
-			if modifyInfo.newCol.State != model.StatePublic {
+			if args.Column.State != model.StatePublic {
 				failpoint.Return(ver, errors.New("the column state is wrong"))
 			}
 		}
 	})
 
-	err = checkAndApplyAutoRandomBits(jobCtx, t, dbInfo, tblInfo, oldCol, modifyInfo.newCol, modifyInfo.updatedAutoRandomBits)
+	err = checkAndApplyAutoRandomBits(jobCtx, t, dbInfo, tblInfo, oldCol, args.Column, args.UpdatedAutoRandomBits)
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
 
-	if !needChangeColumnData(oldCol, modifyInfo.newCol) {
-		return w.doModifyColumn(jobCtx, t, job, dbInfo, tblInfo, modifyInfo.newCol, oldCol, modifyInfo.pos)
+	if !needChangeColumnData(oldCol, args.Column) {
+		return w.doModifyColumn(jobCtx, t, job, dbInfo, tblInfo, args.Column, oldCol, args.Position)
 	}
 
-	if err = isGeneratedRelatedColumn(tblInfo, modifyInfo.newCol, oldCol); err != nil {
+	if err = isGeneratedRelatedColumn(tblInfo, args.Column, oldCol); err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
@@ -114,7 +103,7 @@ func (w *worker) onModifyColumn(jobCtx *jobContext, t *meta.Meta, job *model.Job
 		return ver, errors.Trace(dbterror.ErrUnsupportedModifyColumn.GenWithStackByArgs("table is partition table"))
 	}
 
-	changingCol := modifyInfo.changingCol
+	changingCol := args.ChangingColumn
 	if changingCol == nil {
 		newColName := pmodel.NewCIStr(genChangingColumnUniqueName(tblInfo, oldCol))
 		if mysql.HasPriKeyFlag(oldCol.GetFlag()) {
@@ -123,7 +112,7 @@ func (w *worker) onModifyColumn(jobCtx *jobContext, t *meta.Meta, job *model.Job
 			return ver, dbterror.ErrUnsupportedModifyColumn.GenWithStackByArgs(msg)
 		}
 
-		changingCol = modifyInfo.newCol.Clone()
+		changingCol = args.Column.Clone()
 		changingCol.Name = newColName
 		changingCol.ChangeStateInfo = &model.ChangeStateInfo{DependencyColumnOffset: oldCol.Offset}
 
@@ -153,11 +142,11 @@ func (w *worker) onModifyColumn(jobCtx *jobContext, t *meta.Meta, job *model.Job
 				oldTempIdxID := tmpIdx.ID
 				setIdxIDName(tmpIdx, newIdxID, tmpIdx.Name /* unchanged */)
 				SetIdxColNameOffset(tmpIdx.Columns[info.Offset], changingCol)
-				modifyInfo.removedIdxs = append(modifyInfo.removedIdxs, oldTempIdxID)
+				args.RemovedIdxs = append(args.RemovedIdxs, oldTempIdxID)
 			}
 		}
 	} else {
-		changingCol = model.FindColumnInfoByID(tblInfo.Columns, modifyInfo.changingCol.ID)
+		changingCol = model.FindColumnInfoByID(tblInfo.Columns, args.ChangingColumn.ID)
 		if changingCol == nil {
 			logutil.DDLLogger().Error("the changing column has been removed", zap.Error(err))
 			job.State = model.JobStateCancelled
@@ -165,7 +154,9 @@ func (w *worker) onModifyColumn(jobCtx *jobContext, t *meta.Meta, job *model.Job
 		}
 	}
 
-	return w.doModifyColumnTypeWithData(jobCtx, t, job, dbInfo, tblInfo, changingCol, oldCol, modifyInfo.newCol.Name, modifyInfo.pos, modifyInfo.removedIdxs)
+	return w.doModifyColumnTypeWithData(
+		jobCtx, t, job, dbInfo, tblInfo,
+		changingCol, oldCol, args)
 }
 
 // rollbackModifyColumnJob rollbacks the job when an error occurs.
@@ -183,36 +174,35 @@ func rollbackModifyColumnJob(jobCtx *jobContext, t *meta.Meta, tblInfo *model.Ta
 	}
 	job.FinishTableJob(model.JobStateRollbackDone, model.StateNone, ver, tblInfo)
 	// For those column-type-change type which doesn't need reorg data, we should also mock the job args for delete range.
-	job.Args = []any{[]int64{}, []int64{}}
+	job.FillFinishedArgs(&model.ModifyColumnArgs{})
 	return ver, nil
 }
 
-func getModifyColumnInfo(t *meta.Meta, job *model.Job) (*model.DBInfo, *model.TableInfo, *model.ColumnInfo, *modifyingColInfo, error) {
-	modifyInfo := &modifyingColInfo{pos: &ast.ColumnPosition{}}
-	err := job.DecodeArgs(&modifyInfo.newCol, &modifyInfo.oldColName, modifyInfo.pos, &modifyInfo.modifyColumnTp,
-		&modifyInfo.updatedAutoRandomBits, &modifyInfo.changingCol, &modifyInfo.changingIdxs, &modifyInfo.removedIdxs)
+func getModifyColumnInfo(t *meta.Meta, job *model.Job) (
+	*model.DBInfo, *model.TableInfo, *model.ColumnInfo, *model.ModifyColumnArgs, error) {
+	args, err := model.GetModifyColumnArgs(job)
 	if err != nil {
 		job.State = model.JobStateCancelled
-		return nil, nil, nil, modifyInfo, errors.Trace(err)
+		return nil, nil, nil, args, errors.Trace(err)
 	}
 
 	dbInfo, err := checkSchemaExistAndCancelNotExistJob(t, job)
 	if err != nil {
-		return nil, nil, nil, modifyInfo, errors.Trace(err)
+		return nil, nil, nil, args, errors.Trace(err)
 	}
 
 	tblInfo, err := GetTableInfoAndCancelFaultJob(t, job, job.SchemaID)
 	if err != nil {
-		return nil, nil, nil, modifyInfo, errors.Trace(err)
+		return nil, nil, nil, args, errors.Trace(err)
 	}
 
-	oldCol := model.FindColumnInfo(tblInfo.Columns, modifyInfo.oldColName.L)
+	oldCol := model.FindColumnInfo(tblInfo.Columns, args.OldColumnName.L)
 	if oldCol == nil || oldCol.State != model.StatePublic {
 		job.State = model.JobStateCancelled
-		return nil, nil, nil, modifyInfo, errors.Trace(infoschema.ErrColumnNotExists.GenWithStackByArgs(*(modifyInfo.oldColName), tblInfo.Name))
+		return nil, nil, nil, args, errors.Trace(infoschema.ErrColumnNotExists.GenWithStackByArgs(*(&args.OldColumnName), tblInfo.Name))
 	}
 
-	return dbInfo, tblInfo, oldCol, modifyInfo, errors.Trace(err)
+	return dbInfo, tblInfo, oldCol, args, errors.Trace(err)
 }
 
 // GetOriginDefaultValueForModifyColumn gets the original default value for modifying column.
@@ -248,20 +238,22 @@ func GetOriginDefaultValueForModifyColumn(ctx exprctx.BuildContext, changingCol,
 }
 
 // rollbackModifyColumnJobWithData is used to rollback modify-column job which need to reorg the data.
-func rollbackModifyColumnJobWithData(jobCtx *jobContext, t *meta.Meta, tblInfo *model.TableInfo, job *model.Job, oldCol *model.ColumnInfo, modifyInfo *modifyingColInfo) (ver int64, err error) {
+func rollbackModifyColumnJobWithData(
+	jobCtx *jobContext, t *meta.Meta, tblInfo *model.TableInfo,
+	job *model.Job, oldCol *model.ColumnInfo, modifyInfo *model.ModifyColumnArgs) (ver int64, err error) {
 	// If the not-null change is included, we should clean the flag info in oldCol.
-	if modifyInfo.modifyColumnTp == mysql.TypeNull {
+	if modifyInfo.ModifyColumnType == mysql.TypeNull {
 		// Reset NotNullFlag flag.
 		tblInfo.Columns[oldCol.Offset].SetFlag(oldCol.GetFlag() &^ mysql.NotNullFlag)
 		// Reset PreventNullInsertFlag flag.
 		tblInfo.Columns[oldCol.Offset].SetFlag(oldCol.GetFlag() &^ mysql.PreventNullInsertFlag)
 	}
 	var changingIdxIDs []int64
-	if modifyInfo.changingCol != nil {
-		changingIdxIDs = buildRelatedIndexIDs(tblInfo, modifyInfo.changingCol.ID)
+	if modifyInfo.ChangingColumn != nil {
+		changingIdxIDs = buildRelatedIndexIDs(tblInfo, modifyInfo.ChangingColumn.ID)
 		// The job is in the middle state. The appended changingCol and changingIndex should
 		// be removed from the tableInfo as well.
-		removeChangingColAndIdxs(tblInfo, modifyInfo.changingCol.ID)
+		removeChangingColAndIdxs(tblInfo, modifyInfo.ChangingColumn.ID)
 	}
 	ver, err = updateVersionAndTableInfoWithCheck(jobCtx, t, job, tblInfo, true)
 	if err != nil {
@@ -269,7 +261,10 @@ func rollbackModifyColumnJobWithData(jobCtx *jobContext, t *meta.Meta, tblInfo *
 	}
 	job.FinishTableJob(model.JobStateRollbackDone, model.StateNone, ver, tblInfo)
 	// Reconstruct the job args to add the temporary index ids into delete range table.
-	job.Args = []any{changingIdxIDs, getPartitionIDs(tblInfo)}
+	job.FillFinishedArgs(&model.ModifyColumnArgs{
+		IndexIDs:     changingIdxIDs,
+		PartitionIDs: getPartitionIDs(tblInfo),
+	})
 	return ver, nil
 }
 
@@ -328,7 +323,7 @@ func (w *worker) doModifyColumn(
 
 	job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
 	// For those column-type-change type which doesn't need reorg data, we should also mock the job args for delete range.
-	job.Args = []any{[]int64{}, []int64{}}
+	job.FillFinishedArgs(&model.ModifyColumnArgs{})
 	return ver, nil
 }
 
@@ -419,7 +414,9 @@ func adjustForeignKeyChildTableInfoAfterModifyColumn(infoCache *infoschema.InfoC
 func (w *worker) doModifyColumnTypeWithData(
 	jobCtx *jobContext, t *meta.Meta, job *model.Job,
 	dbInfo *model.DBInfo, tblInfo *model.TableInfo, changingCol, oldCol *model.ColumnInfo,
-	colName pmodel.CIStr, pos *ast.ColumnPosition, rmIdxIDs []int64) (ver int64, _ error) {
+	args *model.ModifyColumnArgs) (ver int64, _ error) {
+	colName, pos, rmIdxIDs := args.Column.Name, args.Position, args.RemovedIdxs
+
 	var err error
 	originalState := changingCol.State
 	targetCol := changingCol.Clone()
@@ -466,7 +463,10 @@ func (w *worker) doModifyColumnTypeWithData(
 		// be updated in `updateDDLJob` even if it meets an error in `updateVersionAndTableInfoWithCheck`.
 		job.SchemaState = model.StateDeleteOnly
 		metrics.GetBackfillProgressByLabel(metrics.LblModifyColumn, job.SchemaName, tblInfo.Name.String()).Set(0)
-		job.Args = append(job.Args, changingCol, changingIdxs, rmIdxIDs)
+		args.ChangingColumn = changingCol
+		args.ChangingIdxs = changingIdxs
+		args.RemovedIdxs = rmIdxIDs
+		job.FillArgs(args)
 	case model.StateDeleteOnly:
 		// Column from null to not null.
 		if !mysql.HasNotNullFlag(oldCol.GetFlag()) && mysql.HasNotNullFlag(changingCol.GetFlag()) {
@@ -530,7 +530,10 @@ func (w *worker) doModifyColumnTypeWithData(
 		// Finish this job.
 		job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
 		// Refactor the job args to add the old index ids into delete range table.
-		job.Args = []any{rmIdxIDs, getPartitionIDs(tblInfo)}
+		job.FillFinishedArgs(&model.ModifyColumnArgs{
+			IndexIDs:     rmIdxIDs,
+			PartitionIDs: getPartitionIDs(tblInfo),
+		})
 		modifyColumnEvent := notifier.NewModifyColumnEvent(tblInfo, []*model.ColumnInfo{changingCol})
 		asyncNotifyEvent(jobCtx, modifyColumnEvent, job)
 	default:

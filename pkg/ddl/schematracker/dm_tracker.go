@@ -715,36 +715,38 @@ func (d *SchemaTracker) handleModifyColumn(
 		return errors.Trace(err)
 	}
 
-	newColInfo := *job.Args[0].(**model.ColumnInfo)
-	updatedAutoRandomBits := job.Args[4].(uint64)
-
-	tblInfo.AutoRandomBits = updatedAutoRandomBits
-	oldCol := table.FindCol(t.Cols(), originalColName.L).ColumnInfo
-
-	originDefVal, err := ddl.GetOriginDefaultValueForModifyColumn(sctx.GetExprCtx(), newColInfo, oldCol)
+	args, err := model.GetModifyColumnArgs(job)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	if err = newColInfo.SetOriginDefaultValue(originDefVal); err != nil {
+
+	tblInfo.AutoRandomBits = args.UpdatedAutoRandomBits
+	oldCol := table.FindCol(t.Cols(), originalColName.L).ColumnInfo
+
+	originDefVal, err := ddl.GetOriginDefaultValueForModifyColumn(sctx.GetExprCtx(), args.Column, oldCol)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if err = args.Column.SetOriginDefaultValue(originDefVal); err != nil {
 		return errors.Trace(err)
 	}
 
 	// replace old column and its related index column in-place.
-	newColInfo.ID = ddl.AllocateColumnID(tblInfo)
-	newColInfo.Offset = oldCol.Offset
-	tblInfo.Columns[oldCol.Offset] = newColInfo
+	args.Column.ID = ddl.AllocateColumnID(tblInfo)
+	args.Column.Offset = oldCol.Offset
+	tblInfo.Columns[oldCol.Offset] = args.Column
 	indexesToChange := ddl.FindRelatedIndexesToChange(tblInfo, oldCol.Name)
 	for _, info := range indexesToChange {
-		ddl.SetIdxColNameOffset(info.IndexInfo.Columns[info.Offset], newColInfo)
+		ddl.SetIdxColNameOffset(info.IndexInfo.Columns[info.Offset], args.Column)
 	}
 
-	destOffset, err := ddl.LocateOffsetToMove(newColInfo.Offset, spec.Position, tblInfo)
+	destOffset, err := ddl.LocateOffsetToMove(args.Column.Offset, spec.Position, tblInfo)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	tblInfo.MoveColumnInfo(newColInfo.Offset, destOffset)
+	tblInfo.MoveColumnInfo(args.Column.Offset, destOffset)
 
-	newColInfo.State = model.StatePublic
+	args.Column.State = model.StatePublic
 	return nil
 }
 

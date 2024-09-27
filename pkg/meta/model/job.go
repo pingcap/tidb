@@ -779,6 +779,7 @@ func (job *Job) MayNeedReorg() bool {
 		ActionRemovePartitioning, ActionAlterTablePartitioning:
 		return true
 	case ActionModifyColumn:
+		// TODO(joechenrh): remove CtxVars here
 		if len(job.CtxVars) > 0 {
 			needReorg, ok := job.CtxVars[0].(bool)
 			return ok && needReorg
