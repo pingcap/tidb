@@ -42,6 +42,9 @@ func (m *mockAnalysisJob) Analyze(h statstypes.StatsHandle, t sysproctrack.Track
 	time.Sleep(50 * time.Millisecond) // Simulate some work
 	return nil
 }
+func (m *mockAnalysisJob) RegisterJobCompletionHook(priorityqueue.JobCompletionHook) {
+	panic("not implemented")
+}
 func (m *mockAnalysisJob) String() string { return "mockAnalysisJob" }
 
 func (m *mockAnalysisJob) IsValidToAnalyze(sessionctx.Context) (bool, string) {
