@@ -15,18 +15,19 @@
 package util
 
 import (
+	"cmp"
 	"slices"
 
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/util/size"
 )
 
-// TblColPosInfo represents an mapper from column index to handle index.
+// TblColPosInfo represents a mapper from column index to handle index.
 // This struct is used for our write APIs like INSERT/UPDATE/DELETE.
 // Sometimes we need it because what planner output is a mixed row from multiple tables.
-// We need tell the executor which part of the mixed row belongs to which table.
+// We need to tell the executor which part of the mixed row belongs to which table.
 // Sometimes we need it because we prune some columns, just leave the primary key and other indexed columns.
-// At this time, we need totell the write API how to get the one index's key value from the pruned and mixed row.
+// At this time, we need to tell the write API how to get the one index's key value from the pruned and mixed row.
 type TblColPosInfo struct {
 	TblID int64
 	// Start and End represent the ordinal range [Start, End) of the consecutive columns.
@@ -47,9 +48,6 @@ func (t *TblColPosInfo) MemoryUsage() (sum int64) {
 	if t.HandleCols != nil {
 		sum += t.HandleCols.MemoryUsage()
 	}
-	if t.ExtraPartialRowOption != nil {
-		sum += t.ExtraPartialRowOption.MemoryUsage()
-	}
 	return
 }
 
@@ -59,13 +57,7 @@ type TblColPosInfoSlice []TblColPosInfo
 // SortByStart sorts the slice by the start pos
 func (c TblColPosInfoSlice) SortByStart() {
 	slices.SortFunc(c, func(x, y TblColPosInfo) int {
-		if x.Start == y.Start {
-			return 0
-		}
-		if x.Start < y.Start {
-			return -1
-		}
-		return 1
+		return cmp.Compare(x.Start, y.Start)
 	})
 }
 

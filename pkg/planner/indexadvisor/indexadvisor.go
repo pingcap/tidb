@@ -15,6 +15,7 @@
 package indexadvisor
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -244,13 +245,7 @@ func prepareRecommendation(indexes s.Set[Index], queries s.Set[Query], optimizer
 		}
 
 		slices.SortFunc(impacts, func(x, y *ImpactedQuery) int {
-			if x.Improvement == y.Improvement {
-				return 0
-			}
-			if x.Improvement < y.Improvement {
-				return -1
-			}
-			return 1
+			return cmp.Compare(x.Improvement, y.Improvement)
 		})
 
 		topN := 3

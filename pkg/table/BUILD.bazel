@@ -35,7 +35,6 @@ go_library(
         "//pkg/util/intest",
         "//pkg/util/logutil",
         "//pkg/util/mock",
-        "//pkg/util/size",
         "//pkg/util/sqlexec",
         "//pkg/util/timeutil",
         "//pkg/util/tracing",

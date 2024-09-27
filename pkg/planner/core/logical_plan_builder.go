@@ -5227,7 +5227,7 @@ func pruneAndBuildColPositionInfoForDelete(
 			cols2PosInfos = append(cols2PosInfos, curColPosInfo)
 		}
 	}
-	// TODO: `sort`` package has a rather worse performance. We should replace it with the new `slice` package.
+	// Sort by start position. To do the later column pruning.
 	cols2PosInfos.SortByStart()
 	prunedColCnt := 0
 	var err error
