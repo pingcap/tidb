@@ -308,7 +308,11 @@ func (m *ownerManager) CampaignOwner(withTTL ...int) error {
 	m.wg.Add(1)
 	var campaignContext context.Context
 	campaignContext, m.campaignCancel = context.WithCancel(m.ctx)
+<<<<<<< HEAD
 	go m.campaignLoop(campaignContext, campaignSession)
+=======
+	go m.campaignLoop(campaignContext, session)
+>>>>>>> afdd5c2ecd5 (owner: fix data race on ownerManager.campaignCancel (#56362))
 	return nil
 }
 
