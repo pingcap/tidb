@@ -2729,7 +2729,7 @@ func (w *worker) onExchangeTablePartition(jobCtx *jobContext, t *meta.Meta, job 
 			args.PartitionID = partDef.ID
 			job.FillArgs(args)
 			defID = partDef.ID
-			err = updateDDLJob2Table(w.ctx, w.sess, job, true)
+			err = updateDDLJob2Table(jobCtx.ctx, w.sess, job, true)
 			if err != nil {
 				return ver, errors.Trace(err)
 			}
@@ -2773,7 +2773,7 @@ func (w *worker) onExchangeTablePartition(jobCtx *jobContext, t *meta.Meta, job 
 		// might be used later, ignore the lint warning.
 		//nolint: ineffassign
 		defID = partDef.ID
-		err = updateDDLJob2Table(w.ctx, w.sess, job, true)
+		err = updateDDLJob2Table(jobCtx.ctx, w.sess, job, true)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
