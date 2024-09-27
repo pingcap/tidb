@@ -42,11 +42,7 @@ go_test(
     timeout = "short",
     srcs = ["sort_test.go"],
     flaky = True,
-<<<<<<< HEAD
-    shard_count = 14,
-=======
     shard_count = 16,
->>>>>>> 7202c3825b6 (executor: fix the fail of triggering topn fallback action (#56187))
     deps = [
         "//pkg/config",
         "//pkg/sessionctx/variable",
