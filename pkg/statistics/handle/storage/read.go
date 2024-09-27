@@ -15,6 +15,7 @@
 package storage
 
 import (
+	"context"
 	"encoding/json"
 	"strconv"
 	"time"
@@ -42,21 +43,34 @@ import (
 )
 
 // StatsMetaCountAndModifyCount reads count and modify_count for the given table from mysql.stats_meta.
-func StatsMetaCountAndModifyCount(sctx sessionctx.Context, tableID int64) (count, modifyCount int64, isNull bool, err error) {
-	return statsMetaCountAndModifyCount(sctx, tableID, false)
+func StatsMetaCountAndModifyCount(
+	ctx context.Context,
+	sctx sessionctx.Context,
+	tableID int64,
+) (count, modifyCount int64, isNull bool, err error) {
+	return statsMetaCountAndModifyCount(ctx, sctx, tableID, false)
 }
 
 // StatsMetaCountAndModifyCountForUpdate reads count and modify_count for the given table from mysql.stats_meta with lock.
-func StatsMetaCountAndModifyCountForUpdate(sctx sessionctx.Context, tableID int64) (count, modifyCount int64, isNull bool, err error) {
-	return statsMetaCountAndModifyCount(sctx, tableID, true)
+func StatsMetaCountAndModifyCountForUpdate(
+	ctx context.Context,
+	sctx sessionctx.Context,
+	tableID int64,
+) (count, modifyCount int64, isNull bool, err error) {
+	return statsMetaCountAndModifyCount(ctx, sctx, tableID, true)
 }
 
-func statsMetaCountAndModifyCount(sctx sessionctx.Context, tableID int64, forUpdate bool) (count, modifyCount int64, isNull bool, err error) {
+func statsMetaCountAndModifyCount(
+	ctx context.Context,
+	sctx sessionctx.Context,
+	tableID int64,
+	forUpdate bool,
+) (count, modifyCount int64, isNull bool, err error) {
 	sql := "select count, modify_count from mysql.stats_meta where table_id = %?"
 	if forUpdate {
 		sql += " for update"
 	}
-	rows, _, err := util.ExecRows(sctx, sql, tableID)
+	rows, _, err := util.ExecRowsWithCtx(ctx, sctx, sql, tableID)
 	if err != nil {
 		return 0, 0, false, err
 	}
@@ -517,7 +531,7 @@ func TableStatsFromStorage(sctx sessionctx.Context, snapshot uint64, tableInfo *
 	}
 	table.Pseudo = false
 
-	realtimeCount, modidyCount, isNull, err := StatsMetaCountAndModifyCount(sctx, tableID)
+	realtimeCount, modidyCount, isNull, err := StatsMetaCountAndModifyCount(util.StatsCtx, sctx, tableID)
 	if err != nil || isNull {
 		return nil, err
 	}
