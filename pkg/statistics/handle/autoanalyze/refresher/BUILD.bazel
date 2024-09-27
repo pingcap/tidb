@@ -19,6 +19,7 @@ go_library(
         "//pkg/statistics/handle/util",
         "//pkg/util",
         "//pkg/util/intest",
+        "@com_github_pingcap_errors//:errors",
         "@org_uber_go_zap//:zap",
     ],
 )

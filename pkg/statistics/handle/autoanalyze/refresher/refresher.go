@@ -17,6 +17,7 @@ package refresher
 import (
 	"time"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/sysproctrack"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
@@ -69,10 +70,6 @@ func (r *Refresher) UpdateConcurrency() {
 
 // AnalyzeHighestPriorityTables picks tables with the highest priority and analyzes them.
 func (r *Refresher) AnalyzeHighestPriorityTables() bool {
-	if !r.autoAnalysisTimeWindow.IsWithinTimeWindow(time.Now()) {
-		return false
-	}
-
 	se, err := r.statsHandle.SPool().Get()
 	if err != nil {
 		statslogutil.StatsLogger().Error("Failed to get session context", zap.Error(err))
@@ -81,6 +78,16 @@ func (r *Refresher) AnalyzeHighestPriorityTables() bool {
 	defer r.statsHandle.SPool().Put(se)
 
 	sctx := se.(sessionctx.Context)
+	parameters := exec.GetAutoAnalyzeParameters(sctx)
+	err = r.setAutoAnalysisTimeWindow(parameters)
+	if err != nil {
+		statslogutil.StatsLogger().Error("Set auto analyze time window failed", zap.Error(err))
+		return false
+	}
+	if !r.isWithinTimeWindow() {
+		return false
+	}
+
 	// Update the concurrency to the latest value.
 	r.UpdateConcurrency()
 	// Check remaining concurrency.
@@ -148,36 +155,41 @@ func (r *Refresher) RebuildTableAnalysisJobQueue() error {
 	// Reset the priority queue.
 	r.Jobs = priorityqueue.NewAnalysisPriorityQueue()
 
-	if err := statsutil.CallWithSCtx(
+	return statsutil.CallWithSCtx(
 		r.statsHandle.SPool(),
 		func(sctx sessionctx.Context) error {
 			parameters := exec.GetAutoAnalyzeParameters(sctx)
-			// Get the available time period for auto analyze and check if the current time is in the period.
-			start, end, err := exec.ParseAutoAnalysisWindow(
-				parameters[variable.TiDBAutoAnalyzeStartTime],
-				parameters[variable.TiDBAutoAnalyzeEndTime],
-			)
+			err := r.setAutoAnalysisTimeWindow(parameters)
 			if err != nil {
-				statslogutil.StatsLogger().Error(
-					"parse auto analyze period failed",
-					zap.Error(err),
-				)
-				return err
+				return errors.Wrap(err, "set auto analyze time window failed")
 			}
-			// We will check it again when we try to execute the job.
-			// So store the time window for later use.
-			r.autoAnalysisTimeWindow = priorityqueue.NewAutoAnalysisTimeWindow(start, end)
-			if !r.autoAnalysisTimeWindow.IsWithinTimeWindow(time.Now()) {
+			if !r.isWithinTimeWindow() {
 				return nil
 			}
-			return priorityqueue.FetchAllTablesAndBuildAnalysisJobs(sctx, parameters, r.autoAnalysisTimeWindow, r.statsHandle, r.Jobs.Push)
+
+			return priorityqueue.FetchAllTablesAndBuildAnalysisJobs(sctx, parameters, r.statsHandle, r.Jobs.Push)
 		},
 		statsutil.FlagWrapTxn,
-	); err != nil {
-		return err
-	}
+	)
+}
 
+func (r *Refresher) setAutoAnalysisTimeWindow(
+	parameters map[string]string,
+) error {
+	start, end, err := exec.ParseAutoAnalysisWindow(
+		parameters[variable.TiDBAutoAnalyzeStartTime],
+		parameters[variable.TiDBAutoAnalyzeEndTime],
+	)
+	if err != nil {
+		return errors.Wrap(err, "parse auto analyze period failed")
+	}
+	r.autoAnalysisTimeWindow = priorityqueue.NewAutoAnalysisTimeWindow(start, end)
 	return nil
+}
+
+// isWithinTimeWindow checks if the current time is within the auto analyze time window.
+func (r *Refresher) isWithinTimeWindow() bool {
+	return r.autoAnalysisTimeWindow.IsWithinTimeWindow(time.Now())
 }
 
 // WaitAutoAnalyzeFinishedForTest waits for the auto analyze job to be finished.
