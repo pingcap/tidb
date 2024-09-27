@@ -5,6 +5,7 @@ go_library(
     srcs = [
         "meta.go",
         "meta_autoid.go",
+        "reader.go",
     ],
     importpath = "github.com/pingcap/tidb/pkg/meta",
     visibility = ["//visibility:public"],

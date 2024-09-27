@@ -32,7 +32,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 )
 
-func (w *worker) onAddCheckConstraint(jobCtx *jobContext, t *meta.Meta, job *model.Job) (ver int64, err error) {
+func (w *worker) onAddCheckConstraint(jobCtx *jobContext, t *meta.Mutator, job *model.Job) (ver int64, err error) {
 	// Handle the rolling back job.
 	if job.IsRollingback() {
 		return rollingBackAddConstraint(jobCtx, t, job)
@@ -121,7 +121,7 @@ func (w *worker) onAddCheckConstraint(jobCtx *jobContext, t *meta.Meta, job *mod
 	return ver, errors.Trace(err)
 }
 
-func checkAddCheckConstraint(t *meta.Meta, job *model.Job) (*model.DBInfo, *model.TableInfo, *model.ConstraintInfo, *model.ConstraintInfo, error) {
+func checkAddCheckConstraint(t *meta.Mutator, job *model.Job) (*model.DBInfo, *model.TableInfo, *model.ConstraintInfo, *model.ConstraintInfo, error) {
 	schemaID := job.SchemaID
 	dbInfo, err := t.GetDatabase(job.SchemaID)
 	if err != nil {
@@ -162,7 +162,7 @@ func checkAddCheckConstraint(t *meta.Meta, job *model.Job) (*model.DBInfo, *mode
 // onDropCheckConstraint can be called from two case:
 // 1: rollback in add constraint.(in rollback function the job.args will be changed)
 // 2: user drop constraint ddl.
-func onDropCheckConstraint(jobCtx *jobContext, t *meta.Meta, job *model.Job) (ver int64, _ error) {
+func onDropCheckConstraint(jobCtx *jobContext, t *meta.Mutator, job *model.Job) (ver int64, _ error) {
 	tblInfo, constraintInfo, err := checkDropCheckConstraint(t, job)
 	if err != nil {
 		return ver, errors.Trace(err)
@@ -194,7 +194,7 @@ func onDropCheckConstraint(jobCtx *jobContext, t *meta.Meta, job *model.Job) (ve
 	return ver, errors.Trace(err)
 }
 
-func checkDropCheckConstraint(t *meta.Meta, job *model.Job) (*model.TableInfo, *model.ConstraintInfo, error) {
+func checkDropCheckConstraint(t *meta.Mutator, job *model.Job) (*model.TableInfo, *model.ConstraintInfo, error) {
 	schemaID := job.SchemaID
 	tblInfo, err := GetTableInfoAndCancelFaultJob(t, job, schemaID)
 	if err != nil {
@@ -216,7 +216,7 @@ func checkDropCheckConstraint(t *meta.Meta, job *model.Job) (*model.TableInfo, *
 	return tblInfo, constraintInfo, nil
 }
 
-func (w *worker) onAlterCheckConstraint(jobCtx *jobContext, t *meta.Meta, job *model.Job) (ver int64, err error) {
+func (w *worker) onAlterCheckConstraint(jobCtx *jobContext, t *meta.Mutator, job *model.Job) (ver int64, err error) {
 	dbInfo, tblInfo, constraintInfo, enforced, err := checkAlterCheckConstraint(t, job)
 	if err != nil {
 		return ver, errors.Trace(err)
@@ -271,7 +271,7 @@ func (w *worker) onAlterCheckConstraint(jobCtx *jobContext, t *meta.Meta, job *m
 	return ver, err
 }
 
-func checkAlterCheckConstraint(t *meta.Meta, job *model.Job) (*model.DBInfo, *model.TableInfo, *model.ConstraintInfo, bool, error) {
+func checkAlterCheckConstraint(t *meta.Mutator, job *model.Job) (*model.DBInfo, *model.TableInfo, *model.ConstraintInfo, bool, error) {
 	schemaID := job.SchemaID
 	dbInfo, err := t.GetDatabase(job.SchemaID)
 	if err != nil {
