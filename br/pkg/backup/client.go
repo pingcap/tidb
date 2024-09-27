@@ -1005,7 +1005,7 @@ func WriteBackupDDLJobs(metaWriter *metautil.MetaWriter, g glue.Glue, store kv.S
 	newestMeta := meta.NewReader(store.GetSnapshot(kv.NewVersion(version.Ver)))
 	var allJobs []*model.Job
 	err = g.UseOneShotSession(store, !needDomain, func(se glue.Session) error {
-		allJobs, err = ddl.GetAllDDLJobs(se.GetSessionCtx())
+		allJobs, err = ddl.GetAllDDLJobs(context.Background(), se.GetSessionCtx())
 		if err != nil {
 			return errors.Trace(err)
 		}

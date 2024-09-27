@@ -30,7 +30,6 @@ func init() {
 	utilfuncp.AddSelection = addSelection
 	utilfuncp.FindBestTask = findBestTask
 	utilfuncp.PruneByItems = pruneByItems
-	utilfuncp.HasMaxOneRowUtil = HasMaxOneRow
 	utilfuncp.GetTaskPlanCost = getTaskPlanCost
 	utilfuncp.CanPushToCopImpl = canPushToCopImpl
 	utilfuncp.PushDownTopNForBaseLogicalPlan = pushDownTopNForBaseLogicalPlan

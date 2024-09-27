@@ -297,7 +297,7 @@ func checkAndSetFlashbackClusterInfo(ctx context.Context, se sessionctx.Context,
 		}
 	}
 
-	jobs, err := GetAllDDLJobs(se)
+	jobs, err := GetAllDDLJobs(ctx, se)
 	if err != nil {
 		return errors.Trace(err)
 	}

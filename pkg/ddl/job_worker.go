@@ -267,7 +267,7 @@ func (w *worker) updateDDLJob(job *model.Job, updateRawArgs bool) error {
 		w.jobLogger(job).Info("meet something wrong before update DDL job, shouldn't update raw args",
 			zap.String("job", job.String()))
 	}
-	return errors.Trace(updateDDLJob2Table(w.sess, job, updateRawArgs))
+	return errors.Trace(updateDDLJob2Table(w.ctx, w.sess, job, updateRawArgs))
 }
 
 // registerMDLInfo registers metadata lock info.
