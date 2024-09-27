@@ -2265,6 +2265,8 @@ func (is *PhysicalIndexScan) addSelectionConditionForGlobalIndex(p *logicalop.Da
 		// Add an invalid pid as param for `IN` function
 		args = append(args, expression.NewInt64Const(-1))
 	} else {
+		// TODO: When PartitionPruning is guaranteed to not
+		// return old/blocked partition ids then this can be removed.
 		ignoreMap := make(map[int64]struct{})
 		for _, id := range pInfo.IDsInDDLToIgnore() {
 			ignoreMap[id] = struct{}{}
