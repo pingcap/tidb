@@ -171,45 +171,6 @@ func (ver DDLTableVersion) Bytes() []byte {
 	return []byte(strconv.Itoa(int(ver)))
 }
 
-// Reader is the meta reader
-type Reader interface {
-	GetDatabase(dbID int64) (*model.DBInfo, error)
-	ListDatabases() ([]*model.DBInfo, error)
-	GetTable(dbID int64, tableID int64) (*model.TableInfo, error)
-	ListTables(dbID int64) ([]*model.TableInfo, error)
-	ListSimpleTables(dbID int64) ([]*model.TableNameInfo, error)
-	IterTables(dbID int64, fn func(info *model.TableInfo) error) error
-	GetAutoIDAccessors(dbID, tableID int64) AutoIDAccessors
-	GetAllNameToIDAndTheMustLoadedTableInfo(dbID int64) (map[string]int64, []*model.TableInfo, error)
-
-	GetMetadataLock() (enable bool, isNull bool, err error)
-	GetAllDDLJobsInQueue(jobListKeys ...JobListKeyType) ([]*model.Job, error)
-	GetHistoryDDLJob(id int64) (*model.Job, error)
-	GetHistoryDDLCount() (uint64, error)
-	GetLastHistoryDDLJobsIterator() (LastJobIterator, error)
-	GetHistoryDDLJobsIterator(startJobID int64) (LastJobIterator, error)
-
-	GetSchemaVersion() (int64, error)
-	EncodeSchemaDiffKey(schemaVersion int64) kv.Key
-	GetSchemaDiff(schemaVersion int64) (*model.SchemaDiff, error)
-	GetSchemaVersionWithNonEmptyDiff() (int64, error)
-
-	GetPolicyID() (int64, error)
-	GetPolicy(policyID int64) (*model.PolicyInfo, error)
-	ListPolicies() ([]*model.PolicyInfo, error)
-
-	GetRUStats() (*RUStats, error)
-	GetResourceGroup(groupID int64) (*model.ResourceGroupInfo, error)
-	ListResourceGroups() ([]*model.ResourceGroupInfo, error)
-
-	GetMetasByDBID(dbID int64) ([]structure.HashPair, error)
-	GetGlobalID() (int64, error)
-	GetBDRRole() (string, error)
-	GetSystemDBID() (int64, error)
-	GetSchemaCacheSize() (size uint64, isNull bool, err error)
-	GetBootstrapVersion() (int64, error)
-}
-
 // Option is for Mutator option.
 type Option func(m *Mutator)
 
@@ -236,14 +197,6 @@ func NewMutator(txn kv.Transaction, options ...Option) *Mutator {
 		opt(m)
 	}
 	return m
-}
-
-// NewReader creates a meta Reader in snapshot.
-func NewReader(snapshot kv.Snapshot) Reader {
-	snapshot.SetOption(kv.RequestSourceInternal, true)
-	snapshot.SetOption(kv.RequestSourceType, kv.InternalTxnMeta)
-	t := structure.NewStructure(snapshot, nil, mMetaPrefix)
-	return &Mutator{txn: t}
 }
 
 // GenGlobalID generates next id globally.
