@@ -1290,7 +1290,7 @@ func (er *expressionRewriter) Leave(originInNode ast.Node) (retNode ast.Node, ok
 			return retNode, false
 		}
 
-		castFunction, err := expression.BuildCastFunctionWithCheck(er.sctx, arg, v.Tp)
+		castFunction, err := expression.BuildCastFunctionWithCheck(er.sctx, arg, v.Tp, v.ExplicitCharSet)
 		if err != nil {
 			er.err = err
 			return retNode, false
@@ -1668,7 +1668,7 @@ func (er *expressionRewriter) inToExpression(lLen int, not bool, tp *types.Field
 					if c.GetType().EvalType() == types.ETInt {
 						continue // no need to refine it
 					}
-					er.sctx.GetSessionVars().StmtCtx.SetSkipPlanCache(errors.Errorf("'%v' may be converted to INT", c.String()))
+					er.sctx.GetSessionVars().StmtCtx.SetSkipPlanCache(errors.Errorf("'%v' may be converted to INT", c.StringWithCtx(false)))
 					if err := expression.RemoveMutableConst(er.sctx, []expression.Expression{c}); err != nil {
 						er.err = err
 						return

@@ -460,11 +460,12 @@ func (e *AnalyzeExec) handleResultsErrorWithConcurrency(ctx context.Context, sta
 	var wg util.WaitGroupWrapper
 	saveResultsCh := make(chan *statistics.AnalyzeResults, partitionStatsConcurrency)
 	errCh := make(chan error, partitionStatsConcurrency)
+	enableAnalyzeSnapshot := e.Ctx().GetSessionVars().EnableAnalyzeSnapshot
 	for i := 0; i < partitionStatsConcurrency; i++ {
 		worker := newAnalyzeSaveStatsWorker(saveResultsCh, subSctxs[i], errCh, &e.Ctx().GetSessionVars().Killed)
 		ctx1 := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
 		wg.Run(func() {
-			worker.run(ctx1, e.Ctx().GetSessionVars().EnableAnalyzeSnapshot)
+			worker.run(ctx1, enableAnalyzeSnapshot)
 		})
 	}
 	tableIDs := map[int64]struct{}{}

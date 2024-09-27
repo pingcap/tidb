@@ -186,13 +186,12 @@ func (d SchemaTracker) CreateTable(ctx sessionctx.Context, s *ast.CreateTableStm
 		return infoschema.ErrDatabaseNotExists.GenWithStackByArgs(ident.Schema)
 	}
 	// suppress ErrTooLongKey
-	strictSQLModeBackup := ctx.GetSessionVars().StrictSQLMode
-	ctx.GetSessionVars().StrictSQLMode = false
+	ctx.SetValue(ddl.SuppressErrorTooLongKeyKey, true)
 	// support drop PK
 	enableClusteredIndexBackup := ctx.GetSessionVars().EnableClusteredIndex
 	ctx.GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeOff
 	defer func() {
-		ctx.GetSessionVars().StrictSQLMode = strictSQLModeBackup
+		ctx.ClearValue(ddl.SuppressErrorTooLongKeyKey)
 		ctx.GetSessionVars().EnableClusteredIndex = enableClusteredIndexBackup
 	}()
 

@@ -20,7 +20,6 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/util/intset"
 	"github.com/pingcap/tidb/pkg/util/size"
 	"github.com/pingcap/tipb/go-tipb"
@@ -263,15 +262,15 @@ func (gs GroupingSet) Clone() GroupingSet {
 	return gc
 }
 
-// String is used to output a string which simply described current grouping set.
-func (gs GroupingSet) String() string {
+// StringWithCtx is used to output a string which simply described current grouping set.
+func (gs GroupingSet) StringWithCtx(redact bool) string {
 	var str strings.Builder
 	str.WriteString("{")
 	for i, one := range gs {
 		if i != 0 {
 			str.WriteString(",")
 		}
-		str.WriteString(one.String())
+		str.WriteString(one.StringWithCtx(redact))
 	}
 	str.WriteString("}")
 	return str.String()
@@ -287,7 +286,7 @@ func (gs GroupingSet) MemoryUsage() int64 {
 }
 
 // ToPB is used to convert current grouping set to pb constructor.
-func (gs GroupingSet) ToPB(sc *stmtctx.StatementContext, client kv.Client) (*tipb.GroupingSet, error) {
+func (gs GroupingSet) ToPB(sc sessionctx.Context, client kv.Client) (*tipb.GroupingSet, error) {
 	res := &tipb.GroupingSet{}
 	for _, gExprs := range gs {
 		gExprsPB, err := ExpressionsToPBList(sc, gExprs, client)
@@ -323,20 +322,25 @@ func (gss GroupingSets) AllSetsColIDs() *intset.FastIntSet {
 
 // String is used to output a string which simply described current grouping sets.
 func (gss GroupingSets) String() string {
+	return gss.StringWithCtx(false)
+}
+
+// StringWithCtx is used to output a string which simply described current grouping sets.
+func (gss GroupingSets) StringWithCtx(redact bool) string {
 	var str strings.Builder
 	str.WriteString("[")
 	for i, gs := range gss {
 		if i != 0 {
 			str.WriteString(",")
 		}
-		str.WriteString(gs.String())
+		str.WriteString(gs.StringWithCtx(redact))
 	}
 	str.WriteString("]")
 	return str.String()
 }
 
 // ToPB is used to convert current grouping sets to pb constructor.
-func (gss GroupingSets) ToPB(sc *stmtctx.StatementContext, client kv.Client) ([]*tipb.GroupingSet, error) {
+func (gss GroupingSets) ToPB(sc sessionctx.Context, client kv.Client) ([]*tipb.GroupingSet, error) {
 	res := make([]*tipb.GroupingSet, 0, len(gss))
 	for _, gs := range gss {
 		one, err := gs.ToPB(sc, client)
@@ -392,13 +396,18 @@ func (g GroupingExprs) Clone() GroupingExprs {
 
 // String is used to output a string which simply described current grouping expressions.
 func (g GroupingExprs) String() string {
+	return g.StringWithCtx(false)
+}
+
+// StringWithCtx is used to output a string which simply described current grouping expressions.
+func (g GroupingExprs) StringWithCtx(redact bool) string {
 	var str strings.Builder
 	str.WriteString("<")
 	for i, one := range g {
 		if i != 0 {
 			str.WriteString(",")
 		}
-		str.WriteString(one.String())
+		str.WriteString(one.StringWithCtx(redact))
 	}
 	str.WriteString(">")
 	return str.String()

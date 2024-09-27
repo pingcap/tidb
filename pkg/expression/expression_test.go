@@ -49,7 +49,8 @@ func TestEvaluateExprWithNull(t *testing.T) {
 	require.NoError(t, err)
 
 	res := EvaluateExprWithNull(ctx, schema, outerIfNull)
-	require.Equal(t, "ifnull(Column#1, 1)", res.String())
+	require.Equal(t, "ifnull(Column#1, 1)", res.StringWithCtx(false))
+	require.Equal(t, "ifnull(Column#1, ?)", res.StringWithCtx(true))
 	schema.Columns = append(schema.Columns, col1)
 	// ifnull(null, ifnull(null, 1))
 	res = EvaluateExprWithNull(ctx, schema, outerIfNull)

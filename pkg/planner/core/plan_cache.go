@@ -444,7 +444,7 @@ func rebuildRange(p Plan) error {
 		}
 		if mutableRange, ok := x.Ranges.(*mutableIndexJoinRange); ok {
 			helper := mutableRange.buildHelper
-			rangeInfo := helper.buildRangeDecidedByInformation(helper.chosenPath.IdxCols, mutableRange.outerJoinKeys)
+			rangeInfo := helper.buildRangeDecidedByInformation(p.SCtx(), helper.chosenPath.IdxCols, mutableRange.outerJoinKeys)
 			innerPlan := x.Children()[x.InnerChildIdx]
 			updateRange(innerPlan, x.Ranges.Range(), rangeInfo)
 		}

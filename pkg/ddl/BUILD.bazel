@@ -201,6 +201,7 @@ go_test(
         "ddl_algorithm_test.go",
         "ddl_api_test.go",
         "ddl_error_test.go",
+        "ddl_history_test.go",
         "ddl_running_jobs_test.go",
         "ddl_test.go",
         "ddl_worker_test.go",

@@ -263,14 +263,14 @@ func appendOuterJoinEliminateTraceStep(join *LogicalJoin, outerPlan LogicalPlan,
 			if i > 0 {
 				buffer.WriteString(",")
 			}
-			buffer.WriteString(col.String())
+			buffer.WriteString(col.StringWithCtx(false))
 		}
 		buffer.WriteString("] are from outer table, and the inner join keys[")
 		for i, key := range innerJoinKeys.Columns {
 			if i > 0 {
 				buffer.WriteString(",")
 			}
-			buffer.WriteString(key.String())
+			buffer.WriteString(key.StringWithCtx(false))
 		}
 		buffer.WriteString("] are unique")
 		return buffer.String()
@@ -288,7 +288,7 @@ func appendOuterJoinEliminateAggregationTraceStep(join *LogicalJoin, outerPlan L
 			if i > 0 {
 				buffer.WriteString(",")
 			}
-			buffer.WriteString(col.String())
+			buffer.WriteString(col.StringWithCtx(false))
 		}
 		buffer.WriteString("] in agg are from outer table, and the agg functions are duplicate agnostic")
 		return buffer.String()

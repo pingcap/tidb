@@ -246,9 +246,16 @@ func getIndexRowCountForStatsV2(sctx sessionctx.Context, idx *statistics.Index, 
 			if fullLen {
 				// At most 1 in this case.
 				if idx.Info.Unique {
-					totalCount++
+					if !indexRange.IsOnlyNull() {
+						totalCount++
+						if debugTrace {
+							debugTraceEndEstimateRange(sctx, 1, debugTraceUniquePoint)
+						}
+						continue
+					}
+					totalCount = max(1, float64(idx.NullCount))
 					if debugTrace {
-						debugTraceEndEstimateRange(sctx, 1, debugTraceUniquePoint)
+						debugTraceEndEstimateRange(sctx, totalCount, debugTraceUniquePoint)
 					}
 					continue
 				}

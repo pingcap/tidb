@@ -272,14 +272,15 @@ func (c *castAsDecimalFunctionClass) getFunction(ctx sessionctx.Context, args []
 type castAsStringFunctionClass struct {
 	baseFunctionClass
 
-	tp *types.FieldType
+	tp                *types.FieldType
+	isExplicitCharset bool
 }
 
 func (c *castAsStringFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (sig builtinFunc, err error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	bf, err := newBaseBuiltinFunc(ctx, c.funcName, args, c.tp)
+	bf, err := newBaseBuiltinCastFunc4String(ctx, c.funcName, args, c.tp, c.isExplicitCharset)
 	if err != nil {
 		return nil, err
 	}
@@ -1008,7 +1009,7 @@ func (b *builtinCastRealAsDecimalSig) evalDecimal(row chunk.Row) (res *types.MyD
 	if !b.inUnion || val >= 0 {
 		err = res.FromFloat64(val)
 		if types.ErrOverflow.Equal(err) {
-			warnErr := types.ErrTruncatedWrongVal.GenWithStackByArgs("DECIMAL", b.args[0])
+			warnErr := types.ErrTruncatedWrongVal.GenWithStackByArgs("DECIMAL", b.args[0].StringWithCtx(false))
 			err = b.ctx.GetSessionVars().StmtCtx.HandleOverflow(err, warnErr)
 		} else if types.ErrTruncated.Equal(err) {
 			// This behavior is consistent with MySQL.
@@ -2089,13 +2090,13 @@ func BuildCastCollationFunction(ctx sessionctx.Context, expr Expression, ec *Exp
 
 // BuildCastFunction builds a CAST ScalarFunction from the Expression.
 func BuildCastFunction(ctx sessionctx.Context, expr Expression, tp *types.FieldType) (res Expression) {
-	res, err := BuildCastFunctionWithCheck(ctx, expr, tp)
+	res, err := BuildCastFunctionWithCheck(ctx, expr, tp, false)
 	terror.Log(err)
 	return
 }
 
 // BuildCastFunctionWithCheck builds a CAST ScalarFunction from the Expression and return error if any.
-func BuildCastFunctionWithCheck(ctx sessionctx.Context, expr Expression, tp *types.FieldType) (res Expression, err error) {
+func BuildCastFunctionWithCheck(ctx sessionctx.Context, expr Expression, tp *types.FieldType, isExplicitCharset bool) (res Expression, err error) {
 	argType := expr.GetType()
 	// If source argument's nullable, then target type should be nullable
 	if !mysql.HasNotNullFlag(argType.GetFlag()) {
@@ -2121,7 +2122,7 @@ func BuildCastFunctionWithCheck(ctx sessionctx.Context, expr Expression, tp *typ
 			fc = &castAsJSONFunctionClass{baseFunctionClass{ast.Cast, 1, 1}, tp}
 		}
 	case types.ETString:
-		fc = &castAsStringFunctionClass{baseFunctionClass{ast.Cast, 1, 1}, tp}
+		fc = &castAsStringFunctionClass{baseFunctionClass{ast.Cast, 1, 1}, tp, isExplicitCharset}
 		if expr.GetType().GetType() == mysql.TypeBit {
 			tp.SetFlen((expr.GetType().GetFlen() + 7) / 8)
 		}
@@ -2136,7 +2137,7 @@ func BuildCastFunctionWithCheck(ctx sessionctx.Context, expr Expression, tp *typ
 	// since we may reset the flag of the field type of CastAsJson later which
 	// would affect the evaluation of it.
 	if tp.EvalType() != types.ETJson && err == nil {
-		res = FoldConstant(res)
+		res = FoldConstant(ctx, res)
 	}
 	return res, err
 }

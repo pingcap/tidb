@@ -32,7 +32,6 @@ import (
 
 var (
 	_ fmt.Stringer = redactStringer{}
-
 	reAccessKey       = regexp.MustCompile(`access_key:\"[^\"]*\"`)
 	reSecretAccessKey = regexp.MustCompile(`secret_access_key:\"[^\"]*\"`)
 	reSharedKey       = regexp.MustCompile(`shared_key:\"[^\"]*\"`)
@@ -220,13 +219,8 @@ func Key(key []byte) string {
 }
 
 // WriteRedact is to write string with redact into `strings.Builder`
-func WriteRedact(build *strings.Builder, v string, redact string) {
-	if redact == errors.RedactLogMarker {
-		build.WriteString("‹")
-		build.WriteString(v)
-		build.WriteString("›")
-		return
-	} else if redact == errors.RedactLogEnable {
+func WriteRedact(build *strings.Builder, v string, redact bool) {
+	if redact {
 		build.WriteString("?")
 		return
 	}
