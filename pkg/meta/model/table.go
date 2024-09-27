@@ -730,6 +730,9 @@ type PartitionInfo struct {
 	DDLColumns []model.CIStr       `json:"ddl_columns"`
 	// For ActionAlterTablePartitioning, UPDATE INDEXES
 	DDLUpdateIndexes []UpdateIndexInfo `json:"ddl_update_indexes"`
+	// To know which DDL is ongoing. Together with DDLState one can know
+	// how to handle Global Index visible entries
+	DDLAction ActionType `json:"ddl_action"`
 }
 
 // Clone clones itself.
@@ -832,6 +835,8 @@ func (pi *PartitionInfo) ClearReorgIntermediateInfo() {
 	pi.DDLExpr = ""
 	pi.DDLColumns = nil
 	pi.NewTableID = 0
+	pi.DDLState = StateNone
+	pi.DDLAction = ActionNone
 }
 
 // FindPartitionDefinitionByName finds PartitionDefinition by name.
@@ -867,6 +872,67 @@ func (pi *PartitionInfo) SetOriginalPartitionIDs() {
 	pi.OriginalPartitionIDsOrder = ids
 }
 
+// IDsInDDLToIgnore returns a list of IDs that the current
+// session should not see (may be duplicate errors on insert/update though)
+// For example during truncate or drop partition.
+func (pi *PartitionInfo) IDsInDDLToIgnore() []int64 {
+	// TODO:
+	// Truncate partition:
+	// write only => should not see NewPartitionIDs
+	// delete only => should not see DroppingPartitions
+	// Drop partition:
+	// TODO: Make similar changes as in Truncate Partition:
+	// Add a state blocking read and write in the partitions to be dropped,
+	// to avoid situations like https://github.com/pingcap/tidb/issues/55888
+	// Add partition:
+	// TODO: Add tests!
+	// Exchange Partition:
+	// Currently blocked for GlobalIndex
+	// Reorganize Partition:
+	// Nothing, since it will create a new copy of the global index.
+	// This is due to the global index needs to have two partitions for the same index key
+	// TODO: Should we extend the GlobalIndex to have multiple partitions?
+	// Maybe from PK/_tidb_rowid + Partition ID
+	// to PK/_tidb_rowid + Partition ID + Valid from Schema Version,
+	// with support for two entries?
+	// If so, could we then replace this?
+	switch pi.DDLAction {
+	case ActionTruncateTablePartition:
+		switch pi.DDLState {
+		case StateWriteOnly:
+			return pi.NewPartitionIDs
+		case StateDeleteOnly, StateDeleteReorganization:
+			if len(pi.DroppingDefinitions) == 0 {
+				return nil
+			}
+			ids := make([]int64, 0, len(pi.DroppingDefinitions))
+			for _, definition := range pi.DroppingDefinitions {
+				ids = append(ids, definition.ID)
+			}
+			return ids
+		}
+	case ActionDropTablePartition:
+		if len(pi.DroppingDefinitions) > 0 && pi.DDLState == StateDeleteOnly {
+			ids := make([]int64, 0, len(pi.DroppingDefinitions))
+			for _, def := range pi.DroppingDefinitions {
+				ids = append(ids, def.ID)
+			}
+			return ids
+		}
+	case ActionAddTablePartition:
+		// TODO: Add tests for ADD PARTITION multi-domain with Global Index!
+		if len(pi.AddingDefinitions) > 0 {
+			ids := make([]int64, 0, len(pi.DroppingDefinitions))
+			for _, def := range pi.AddingDefinitions {
+				ids = append(ids, def.ID)
+			}
+			return ids
+		}
+		// Not supporting Global Indexes: case ActionExchangeTablePartition
+	}
+	return nil
+}
+
 // PartitionState is the state of the partition.
 type PartitionState struct {
 	ID    int64       `json:"id"`
@@ -883,7 +949,7 @@ type PartitionDefinition struct {
 	Comment            string         `json:"comment,omitempty"`
 }
 
-// Clone clones ConstraintInfo.
+// Clone clones PartitionDefinition.
 func (ci *PartitionDefinition) Clone() PartitionDefinition {
 	nci := *ci
 	nci.LessThan = make([]string, len(ci.LessThan))
