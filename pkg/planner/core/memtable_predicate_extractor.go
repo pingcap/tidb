@@ -1305,6 +1305,9 @@ func (e *SlowQueryExtractor) Extract(ctx base.PlanContext,
 }
 
 func (e *SlowQueryExtractor) setTimeRange(start, end int64) {
+	if start == 0 && end == 0 {
+		return
+	}
 	var startTime, endTime time.Time
 	if start != 0 {
 		startTime = e.convertToTime(start)
