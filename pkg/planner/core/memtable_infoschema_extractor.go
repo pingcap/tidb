@@ -670,6 +670,7 @@ func findTableAndSchemaByName(
 	tableSlice := make([]*model.TableInfo, 0, len(tableMap))
 	for _, st := range tableMap {
 		schemaSlice = append(schemaSlice, st.schema)
+		tableSlice = append(tableSlice, st.table)
 	}
 	sort.Slice(schemaSlice, func(i, j int) bool {
 		iSchema, jSchema := schemaSlice[i].L, schemaSlice[j].L
