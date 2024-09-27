@@ -526,9 +526,9 @@ func (f *fakeCluster) advanceClusterTimeBy(duration time.Duration) uint64 {
 
 func createFakeCluster(t *testing.T, n int, simEnabled bool) *fakeCluster {
 	c := &fakeCluster{
-		stores:  map[uint64]*fakeStore{},
-		regions: []*region{},
-		testCtx: t,
+		stores:             map[uint64]*fakeStore{},
+		regions:            []*region{},
+		testCtx:            t,
 		serviceGCSafePoint: 0,
 	}
 	stores := make([]*fakeStore, 0, n)
@@ -667,7 +667,7 @@ func newTestEnv(c *fakeCluster, t *testing.T) *testEnv {
 		Type: streamhelper.EventAdd,
 		Name: "whole",
 		Info: &backup.StreamBackupTaskInfo{
-			Name: "whole",
+			Name:    "whole",
 			StartTs: 5,
 		},
 		Ranges: rngs,
