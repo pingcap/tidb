@@ -1392,11 +1392,11 @@ func onAlterTableAttributes(jobCtx *jobContext, t *meta.Meta, job *model.Job) (v
 		return 0, err
 	}
 
-	if len(args.Rule.Labels) == 0 {
-		patch := label.NewRulePatch([]*label.Rule{}, []string{args.Rule.ID})
+	if len(args.LabelRule.Labels) == 0 {
+		patch := label.NewRulePatch([]*label.Rule{}, []string{args.LabelRule.ID})
 		err = infosync.UpdateLabelRules(jobCtx.ctx, patch)
 	} else {
-		labelRule := label.Rule(*args.Rule)
+		labelRule := label.Rule(*args.LabelRule)
 		err = infosync.PutLabelRule(jobCtx.ctx, &labelRule)
 	}
 	if err != nil {

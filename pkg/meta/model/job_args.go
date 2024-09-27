@@ -1292,15 +1292,10 @@ func GetAddCheckConstraintArgs(job *Job) (*AddCheckConstraintArgs, error) {
 }
 
 // KeyRange is copied from kv.KeyRange to avoid cycle import.
+// Unused fields are removed.
 type KeyRange struct {
-	StartKey []byte `json:"start_key,omitempty"`
-	EndKey   []byte `json:"end_key,omitempty"`
-
-	// Unused fields
-	// They are reserved to ensure the consistent result after marshalling.
-	UnusedStruct struct{} `json:"-"`
-	UnusedSlice  []byte   `json:"-"`
-	UnusedInt    int32    `json:"-"`
+	StartKey []byte
+	EndKey   []byte
 }
 
 // LockTablesArgs is the argument for LockTables.
@@ -1380,12 +1375,12 @@ func (a *RecoverArgs) fillJob(job *Job) {
 
 // AlterTableAttributesArgs is the argument for alter table attributes
 type AlterTableAttributesArgs struct {
-	Rule *pdhttp.LabelRule `json:"rule,omitempty"`
+	LabelRule *pdhttp.LabelRule `json:"label_rule,omitempty"`
 }
 
 func (a *AlterTableAttributesArgs) fillJob(job *Job) {
 	if job.Version == JobVersion1 {
-		job.Args = []any{a.Rule}
+		job.Args = []any{a.LabelRule}
 		return
 	}
 
@@ -1395,12 +1390,12 @@ func (a *AlterTableAttributesArgs) fillJob(job *Job) {
 // GetAlterTableAttributesArgs get alter table attribute args from job.
 func GetAlterTableAttributesArgs(job *Job) (*AlterTableAttributesArgs, error) {
 	if job.Version == JobVersion1 {
-		rule := &pdhttp.LabelRule{}
-		if err := job.DecodeArgs(rule); err != nil {
+		labelRule := &pdhttp.LabelRule{}
+		if err := job.DecodeArgs(labelRule); err != nil {
 			return nil, errors.Trace(err)
 		}
 		return &AlterTableAttributesArgs{
-			Rule: rule,
+			LabelRule: labelRule,
 		}, nil
 	}
 
@@ -1501,7 +1496,7 @@ type FlashbackClusterArgs struct {
 	EnableAutoAnalyze  bool           `json:"enable_auto_analyze,omitempty"`
 	EnableTTLJob       bool           `json:"enable_ttl_job,omitempty"`
 	SuperReadOnly      bool           `json:"super_read_only,omitempty"`
-	LockedRegions      uint64         `json:"locked_regions,omitempty"`
+	LockedRegionCnt    uint64         `json:"locked_region_cnt,omitempty"`
 	StartTS            uint64         `json:"start_ts,omitempty"`
 	CommitTS           uint64         `json:"commit_ts,omitempty"`
 	FlashbackKeyRanges []KeyRange     `json:"key_ranges,omitempty"`
@@ -1509,18 +1504,22 @@ type FlashbackClusterArgs struct {
 
 func (a *FlashbackClusterArgs) fillJob(job *Job) {
 	if job.Version == JobVersion1 {
-		job.Args = []any{
-			a.FlashbackTS, a.PDScheduleValue, a.EnableGC, "ON", "ON",
-			a.LockedRegions, a.StartTS, a.CommitTS, "ON", a.FlashbackKeyRanges,
-		}
+		enableAutoAnalyze := "ON"
+		superReadOnly := "ON"
+		enableTTLJob := "ON"
 		if !a.EnableAutoAnalyze {
-			job.Args[3] = "OFF"
+			enableAutoAnalyze = "OFF"
 		}
 		if !a.SuperReadOnly {
-			job.Args[4] = "OFF"
+			superReadOnly = "OFF"
 		}
 		if !a.EnableTTLJob {
-			job.Args[8] = "OFF"
+			enableTTLJob = "OFF"
+		}
+
+		job.Args = []any{
+			a.FlashbackTS, a.PDScheduleValue, a.EnableGC, enableAutoAnalyze, superReadOnly,
+			a.LockedRegionCnt, a.StartTS, a.CommitTS, enableTTLJob, a.FlashbackKeyRanges,
 		}
 		return
 	}
@@ -1535,7 +1534,7 @@ func GetFlashbackClusterArgs(job *Job) (*FlashbackClusterArgs, error) {
 
 		if err := job.DecodeArgs(
 			&args.FlashbackTS, &args.PDScheduleValue, &args.EnableGC,
-			&autoAnalyzeValue, &readOnlyValue, &args.LockedRegions,
+			&autoAnalyzeValue, &readOnlyValue, &args.LockedRegionCnt,
 			&args.StartTS, &args.CommitTS, &ttlJobEnableValue, &args.FlashbackKeyRanges); err != nil {
 			return nil, errors.Trace(err)
 		}

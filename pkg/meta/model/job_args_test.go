@@ -839,7 +839,7 @@ func TestFlashbackClusterArgs(t *testing.T) {
 		EnableAutoAnalyze: true,
 		EnableTTLJob:      true,
 		SuperReadOnly:     true,
-		LockedRegions:     444,
+		LockedRegionCnt:   444,
 		PDScheduleValue:   map[string]any{"t1": 123.0},
 		FlashbackKeyRanges: []KeyRange{
 			{StartKey: []byte("db1"), EndKey: []byte("db2")},
@@ -855,7 +855,7 @@ func TestFlashbackClusterArgs(t *testing.T) {
 		require.Equal(t, inArgs.FlashbackTS, args.FlashbackTS)
 		require.Equal(t, inArgs.StartTS, args.StartTS)
 		require.Equal(t, inArgs.CommitTS, args.CommitTS)
-		require.Equal(t, inArgs.LockedRegions, args.LockedRegions)
+		require.Equal(t, inArgs.LockedRegionCnt, args.LockedRegionCnt)
 		require.Equal(t, inArgs.FlashbackKeyRanges, args.FlashbackKeyRanges)
 		require.Equal(t, inArgs.PDScheduleValue, args.PDScheduleValue)
 
@@ -868,7 +868,7 @@ func TestFlashbackClusterArgs(t *testing.T) {
 
 func TestAlterTableAttributesArgs(t *testing.T) {
 	inArgs := &AlterTableAttributesArgs{
-		Rule: &pdhttp.LabelRule{
+		LabelRule: &pdhttp.LabelRule{
 			ID:       "id",
 			Index:    2,
 			RuleType: "rule",
@@ -881,6 +881,6 @@ func TestAlterTableAttributesArgs(t *testing.T) {
 		args, err := GetAlterTableAttributesArgs(j2)
 		require.NoError(t, err)
 
-		require.Equal(t, *inArgs.Rule, *args.Rule)
+		require.Equal(t, *inArgs.LabelRule, *args.LabelRule)
 	}
 }

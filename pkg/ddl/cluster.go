@@ -699,7 +699,7 @@ func (w *worker) onFlashbackCluster(jobCtx *jobContext, t *meta.Meta, job *model
 	}
 
 	var totalRegions, completedRegions atomic.Uint64
-	totalRegions.Store(args.LockedRegions)
+	totalRegions.Store(args.LockedRegionCnt)
 
 	sess, err := w.sessPool.Get()
 	if err != nil {
@@ -791,7 +791,7 @@ func (w *worker) onFlashbackCluster(jobCtx *jobContext, t *meta.Meta, job *model
 				return ver, err
 			}
 		}
-		args.LockedRegions = totalRegions.Load()
+		args.LockedRegionCnt = totalRegions.Load()
 
 		// We should get commitTS here to avoid lost commitTS when TiDB crashed during send flashback RPC.
 		args.CommitTS, err = jobCtx.store.GetOracle().GetTimestamp(w.ctx, &oracle.Option{TxnScope: oracle.GlobalTxnScope})

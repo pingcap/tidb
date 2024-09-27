@@ -5678,7 +5678,7 @@ func (e *executor) AlterTableAttributes(ctx sessionctx.Context, ident ast.Ident,
 	}
 
 	pdLabelRule := pdhttp.LabelRule(*rule)
-	args := &model.AlterTableAttributesArgs{Rule: &pdLabelRule}
+	args := &model.AlterTableAttributesArgs{LabelRule: &pdLabelRule}
 	err = e.doDDLJob2(ctx, job, args)
 	if err != nil {
 		return errors.Trace(err)
