@@ -895,6 +895,8 @@ func (pi *PartitionInfo) IDsInDDLToIgnore() []int64 {
 	// Maybe from PK/_tidb_rowid + Partition ID
 	// to PK/_tidb_rowid + Partition ID + Valid from Schema Version,
 	// with support for two entries?
+	// Then we could avoid having two copies of the same Global Index
+	// just for handling a single SchemaState.
 	// If so, could we then replace this?
 	switch pi.DDLAction {
 	case ActionTruncateTablePartition:
