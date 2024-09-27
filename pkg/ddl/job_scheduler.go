@@ -675,7 +675,7 @@ func insertDDLJobs2Table(ctx context.Context, se *sess.Session, jobWs ...*JobWra
 		if jobW.JobArgs != nil {
 			jobW.FillArgs(jobW.JobArgs)
 		}
-		// TODO(joechenrh): remove this after refactor done.
+		// TODO(joechenrh): remove this after argument refactor done.
 		jobW.UpdateRawArgs = true
 		injectModifyJobArgFailPoint(jobWs)
 		b, err := jobW.Encode()

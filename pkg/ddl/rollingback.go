@@ -84,6 +84,7 @@ func convertAddIdxJob2RollbackJob(
 
 	// the second and the third args will be used in onDropIndex.
 	job.Args = []any{idxNames, ifExists, getPartitionIDs(tblInfo)}
+	// TODO(joechenrh): remove this after argument refactor done.
 	job.UpdateRawArgs = true
 	job.SchemaState = model.StateDeleteOnly
 	ver, err1 := updateVersionAndTableInfo(jobCtx, t, job, tblInfo, originalState != model.StateDeleteOnly)
@@ -200,6 +201,7 @@ func rollingbackAddColumn(jobCtx *jobContext, t *meta.Meta, job *model.Job) (ver
 	job.SchemaState = model.StateDeleteOnly
 
 	job.Args = []any{col.Name}
+	// TODO(joechenrh): remove this after refactor done.
 	job.UpdateRawArgs = true
 	ver, err = updateVersionAndTableInfo(jobCtx, t, job, tblInfo, originalState != columnInfo.State)
 	if err != nil {
@@ -263,7 +265,7 @@ func rollingbackDropIndex(jobCtx *jobContext, t *meta.Meta, job *model.Job) (ver
 }
 
 func rollingbackAddIndex(w *worker, jobCtx *jobContext, t *meta.Meta, job *model.Job, isPK bool) (ver int64, err error) {
-	//TODO(joechenrh): remove this after refactor add/drop index
+	// TODO(joechenrh): remove this after refactor done.
 	job.UpdateRawArgs = true
 
 	if needNotifyAndStopReorgWorker(job) {

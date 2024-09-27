@@ -184,15 +184,16 @@ func appendToSubJobs(m *model.MultiSchemaInfo, jobW *JobWrapper) error {
 		reorgTp = jobW.ReorgMeta.ReorgTp
 	}
 	m.SubJobs = append(m.SubJobs, &model.SubJob{
-		Type:        jobW.Type,
-		Args:        jobW.Args,
-		RawArgs:     jobW.RawArgs,
-		SchemaState: jobW.SchemaState,
-		SnapshotVer: jobW.SnapshotVer,
-		Revertible:  true,
-		CtxVars:     jobW.CtxVars,
-		ReorgTp:     reorgTp,
-		UseCloud:    false,
+		Type:          jobW.Type,
+		Args:          jobW.Args,
+		UpdateRawArgs: true,
+		RawArgs:       jobW.RawArgs,
+		SchemaState:   jobW.SchemaState,
+		SnapshotVer:   jobW.SnapshotVer,
+		Revertible:    true,
+		CtxVars:       jobW.CtxVars,
+		ReorgTp:       reorgTp,
+		UseCloud:      false,
 	})
 	return nil
 }

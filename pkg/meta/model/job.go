@@ -521,27 +521,27 @@ func marshalArgs(jobVer JobVersion, args []any) (json.RawMessage, error) {
 // updateRawArgs is used to determine whether to update the raw args.
 func (job *Job) Encode() ([]byte, error) {
 	var err error
-	// TODO(joechenrh): remove this
-	if job.UpdateRawArgs || job.Type == ActionMultiSchemaChange {
+	if job.UpdateRawArgs {
 		job.RawArgs, err = marshalArgs(job.Version, job.Args)
+		job.UpdateRawArgs = false
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
+	}
 
-		if job.MultiSchemaInfo != nil {
-			for _, sub := range job.MultiSchemaInfo.SubJobs {
-				// Only update the args of executing sub-jobs.
-				if sub.Args == nil {
-					continue
-				}
+	if job.MultiSchemaInfo != nil {
+		for _, sub := range job.MultiSchemaInfo.SubJobs {
+			// Only update the args of executing sub-jobs.
+			if sub.Args == nil || !sub.UpdateRawArgs {
+				continue
+			}
 
-				sub.RawArgs, err = marshalArgs(job.Version, sub.Args)
-				if err != nil {
-					return nil, errors.Trace(err)
-				}
+			sub.RawArgs, err = marshalArgs(job.Version, sub.Args)
+			sub.UpdateRawArgs = false
+			if err != nil {
+				return nil, errors.Trace(err)
 			}
 		}
-		job.UpdateRawArgs = false
 	}
 
 	var b []byte
@@ -863,20 +863,21 @@ func (job *Job) GetInvolvingSchemaInfo() []InvolvingSchemaInfo {
 // SubJob is a representation of one DDL schema change. A Job may contain zero
 // (when multi-schema change is not applicable) or more SubJobs.
 type SubJob struct {
-	Type        ActionType      `json:"type"`
-	Args        []any           `json:"-"`
-	RawArgs     json.RawMessage `json:"raw_args"`
-	SchemaState SchemaState     `json:"schema_state"`
-	SnapshotVer uint64          `json:"snapshot_ver"`
-	RealStartTS uint64          `json:"real_start_ts"`
-	Revertible  bool            `json:"revertible"`
-	State       JobState        `json:"state"`
-	RowCount    int64           `json:"row_count"`
-	Warning     *terror.Error   `json:"warning"`
-	CtxVars     []any           `json:"-"`
-	SchemaVer   int64           `json:"schema_version"`
-	ReorgTp     ReorgType       `json:"reorg_tp"`
-	UseCloud    bool            `json:"use_cloud"`
+	Type          ActionType      `json:"type"`
+	Args          []any           `json:"-"`
+	UpdateRawArgs bool            `json:"-"`
+	RawArgs       json.RawMessage `json:"raw_args"`
+	SchemaState   SchemaState     `json:"schema_state"`
+	SnapshotVer   uint64          `json:"snapshot_ver"`
+	RealStartTS   uint64          `json:"real_start_ts"`
+	Revertible    bool            `json:"revertible"`
+	State         JobState        `json:"state"`
+	RowCount      int64           `json:"row_count"`
+	Warning       *terror.Error   `json:"warning"`
+	CtxVars       []any           `json:"-"`
+	SchemaVer     int64           `json:"schema_version"`
+	ReorgTp       ReorgType       `json:"reorg_tp"`
+	UseCloud      bool            `json:"use_cloud"`
 }
 
 // IsNormal returns true if the sub-job is normally running.
@@ -940,6 +941,7 @@ func (sub *SubJob) FromProxyJob(proxyJob *Job, ver int64) {
 	sub.SnapshotVer = proxyJob.SnapshotVer
 	sub.RealStartTS = proxyJob.RealStartTS
 	sub.Args = proxyJob.Args
+	sub.UpdateRawArgs = proxyJob.UpdateRawArgs
 	sub.State = proxyJob.State
 	sub.Warning = proxyJob.Warning
 	sub.RowCount = proxyJob.RowCount

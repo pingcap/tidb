@@ -764,6 +764,7 @@ func (w *worker) onFlashbackCluster(jobCtx *jobContext, t *meta.Meta, job *model
 			return ver, errors.Trace(err)
 		}
 		job.Args[ttlJobEnableOffSet] = &ttlJobEnableValue
+		// TODO(joechenrh): remove this after argument refactor done.
 		job.UpdateRawArgs = true
 		job.SchemaState = model.StateDeleteOnly
 		return ver, nil
@@ -785,6 +786,7 @@ func (w *worker) onFlashbackCluster(jobCtx *jobContext, t *meta.Meta, job *model
 			return ver, errors.Trace(err)
 		}
 		job.Args[keyRangesOffset] = keyRanges
+		// TODO(joechenrh): remove this after argument refactor done.
 		job.UpdateRawArgs = true
 		job.SchemaState = model.StateWriteOnly
 		return updateSchemaVersion(jobCtx, t, job)
@@ -817,6 +819,7 @@ func (w *worker) onFlashbackCluster(jobCtx *jobContext, t *meta.Meta, job *model
 			return ver, errors.Trace(err)
 		}
 		job.Args[commitTSOffset] = commitTS
+		// TODO(joechenrh): remove this after argument refactor done.
 		job.UpdateRawArgs = true
 		job.SchemaState = model.StateWriteReorganization
 		return ver, nil
