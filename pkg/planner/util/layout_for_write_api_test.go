@@ -65,6 +65,6 @@ func TestBinarySearchOfColPosInfoSlice(t *testing.T) {
 	require.True(t, ok)
 	require.Equal(t, 2, idx)
 
-	idx, ok = tblColPosInfos.FindTblIdx(-1)
+	_, ok = tblColPosInfos.FindTblIdx(-1)
 	require.False(t, ok)
 }
