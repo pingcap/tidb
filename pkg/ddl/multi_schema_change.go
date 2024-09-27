@@ -200,7 +200,7 @@ func appendToSubJobs(m *model.MultiSchemaInfo, jobW *JobWrapper) error {
 func fillMultiSchemaInfo(info *model.MultiSchemaInfo, job *JobWrapper) error {
 	switch job.Type {
 	case model.ActionAddColumn:
-		args := job.JobArgs.(*model.AddColumnArgs)
+		args := job.JobArgs.(*model.TableColumnArgs)
 		col, pos := args.Col, args.Pos
 		info.AddColumns = append(info.AddColumns, col.Name)
 		for colName := range col.Dependences {
@@ -210,7 +210,7 @@ func fillMultiSchemaInfo(info *model.MultiSchemaInfo, job *JobWrapper) error {
 			info.PositionColumns = append(info.PositionColumns, pos.RelativeColumn.Name)
 		}
 	case model.ActionDropColumn:
-		colName := job.JobArgs.(*model.DropColumnArgs).ColName
+		colName := job.JobArgs.(*model.TableColumnArgs).ColName
 		info.DropColumns = append(info.DropColumns, colName)
 	case model.ActionDropIndex, model.ActionDropPrimaryKey:
 		indexName := job.Args[0].(pmodel.CIStr)

@@ -881,38 +881,57 @@ type DropColumnArgs struct {
 	PartitionIDs []int64 `json:"partition_ids,omitempty"`
 }
 
-func (a *DropColumnArgs) fillJob(job *Job) {
-	if job.Version <= JobVersion1 {
-		job.Args = []any{a.ColName, a.IfExists, a.IndexIDs, a.PartitionIDs}
-	} else {
-		job.Args = []any{a}
-	}
+// AddColumnArgs is the arguments for adding column ddl.
+type AddColumnArgs struct {
+	Col         *ColumnInfo         `json:"column_info,omitempty"`
+	Pos         *ast.ColumnPosition `json:"position,omitempty"`
+	Offset      int                 `json:"offset,omitempty"`
+	IfNotExists bool                `json:"if_not_exists,omitempty"`
 }
 
-// GetDropColumnArgs gets the args for drop column ddl.
-func GetDropColumnArgs(job *Job) (*DropColumnArgs, error) {
-	var (
-		colName      pmodel.CIStr
-		ifExists     bool
-		indexIDs     []int64
-		partitionIDs []int64
-	)
+// TableColumnArgs is the arguments for dropping column ddl or Adding column ddl.
+type TableColumnArgs struct {
+	*DropColumnArgs `json:"drop_column_args,omitempty"`
+	*AddColumnArgs  `json:"add_column_args,omitempty"`
+}
 
-	if job.Version <= JobVersion1 {
-		err := job.DecodeArgs(&colName, &ifExists, &indexIDs, &partitionIDs)
-		if err != nil {
-			return nil, errors.Trace(err)
+func (a *TableColumnArgs) fillJob(job *Job) {
+	if job.Version == JobVersion1 {
+		// fill DropColumn args if job.Type is ActionAddColumn and state is JobStateRollingback
+		if job.Type == ActionDropColumn || job.State == JobStateRollingback {
+			dropArgs := a.DropColumnArgs
+			job.Args = []any{dropArgs.ColName, dropArgs.IfExists, dropArgs.IndexIDs, dropArgs.PartitionIDs}
+		} else {
+			addArgs := a.AddColumnArgs
+			job.Args = []any{addArgs.Col, addArgs.Pos, addArgs.Offset, addArgs.IfNotExists}
 		}
-
-		return &DropColumnArgs{
-			ColName:      colName,
-			IfExists:     ifExists,
-			IndexIDs:     indexIDs,
-			PartitionIDs: partitionIDs,
-		}, nil
+		return
 	}
+	job.Args = []any{a}
+}
 
-	return getOrDecodeArgsV2[*DropColumnArgs](job)
+// GetTableColumnArgs gets the args for dropping column ddl or Adding column ddl.
+func GetTableColumnArgs(job *Job) (*TableColumnArgs, error) {
+	if job.Version == JobVersion1 {
+		if job.Type == ActionDropColumn || job.State == JobStateRollingback {
+			dropArgs := &DropColumnArgs{}
+			err := job.DecodeArgs(&dropArgs.ColName, &dropArgs.IfExists, &dropArgs.IndexIDs, &dropArgs.PartitionIDs)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			return &TableColumnArgs{DropColumnArgs: dropArgs}, nil
+		} else {
+			addArgs := &AddColumnArgs{
+				Col: &ColumnInfo{},
+				Pos: &ast.ColumnPosition{},
+			}
+			if err := job.DecodeArgs(addArgs.Col, addArgs.Pos, &addArgs.Offset, &addArgs.IfNotExists); err != nil {
+				return nil, errors.Trace(err)
+			}
+			return &TableColumnArgs{AddColumnArgs: addArgs}, nil
+		}
+	}
+	return getOrDecodeArgsV2[*TableColumnArgs](job)
 }
 
 // RenameTablesArgs is the arguments for rename tables job.
@@ -1120,43 +1139,4 @@ func GetSetDefaultValueArgs(job *Job) (*SetDefaultValueArgs, error) {
 	}
 
 	return getOrDecodeArgsV2[*SetDefaultValueArgs](job)
-}
-
-// AddColumnArgs is the arguments for adding column ddl.
-type AddColumnArgs struct {
-	Col         *ColumnInfo         `json:"column_info,omitempty"`
-	Pos         *ast.ColumnPosition `json:"position,omitempty"`
-	Offset      int                 `json:"offset,omitempty"`
-	IfNotExists bool                `json:"if_not_exists,omitempty"`
-}
-
-func (a *AddColumnArgs) fillJob(job *Job) {
-	if job.Version == JobVersion1 {
-		job.Args = []any{a.Col, a.Pos, a.Offset, a.IfNotExists}
-	} else {
-		job.Args = []any{a}
-	}
-}
-
-// GetAddColumnArgs gets the args for adding column ddl.
-func GetAddColumnArgs(job *Job) (*AddColumnArgs, error) {
-	if job.Version == JobVersion1 {
-		var (
-			col         = &ColumnInfo{}
-			pos         = &ast.ColumnPosition{}
-			offset      = 0
-			ifNotExists = false
-		)
-		if err := job.DecodeArgs(col, pos, &offset, &ifNotExists); err != nil {
-			return nil, errors.Trace(err)
-		}
-		return &AddColumnArgs{
-			Col:         col,
-			Pos:         pos,
-			Offset:      offset,
-			IfNotExists: ifNotExists,
-		}, nil
-	}
-
-	return getOrDecodeArgsV2[*AddColumnArgs](job)
 }

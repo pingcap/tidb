@@ -482,23 +482,6 @@ func TestResourceGroupArgs(t *testing.T) {
 	}
 }
 
-func TestDropColumnArgs(t *testing.T) {
-	inArgs := &DropColumnArgs{
-		ColName:      model.NewCIStr("col_name"),
-		IfExists:     true,
-		IndexIDs:     []int64{1, 2, 3},
-		PartitionIDs: []int64{4, 5, 6},
-	}
-
-	for _, v := range []JobVersion{JobVersion1, JobVersion2} {
-		j2 := &Job{}
-		require.NoError(t, j2.Decode(getJobBytes(t, inArgs, v, ActionDropColumn)))
-		args, err := GetDropColumnArgs(j2)
-		require.NoError(t, err)
-		require.Equal(t, inArgs, args)
-	}
-}
-
 func TestGetRebaseAutoIDArgs(t *testing.T) {
 	inArgs := &RebaseAutoIDArgs{
 		NewBase: 9527,
@@ -658,8 +641,27 @@ func TestGetSetDefaultValueArgs(t *testing.T) {
 	}
 }
 
+func TestDropColumnArgs(t *testing.T) {
+	inArgs := &TableColumnArgs{
+		DropColumnArgs: &DropColumnArgs{
+			ColName:      model.NewCIStr("col_name"),
+			IfExists:     true,
+			IndexIDs:     []int64{1, 2, 3},
+			PartitionIDs: []int64{4, 5, 6},
+		},
+	}
+
+	for _, v := range []JobVersion{JobVersion1, JobVersion2} {
+		j2 := &Job{}
+		require.NoError(t, j2.Decode(getJobBytes(t, inArgs, v, ActionDropColumn)))
+		args, err := GetTableColumnArgs(j2)
+		require.NoError(t, err)
+		require.Equal(t, inArgs, args)
+	}
+}
+
 func TestGetAddColumnArgs(t *testing.T) {
-	inArgs := &AddColumnArgs{
+	addArgs := &AddColumnArgs{
 		Col: &ColumnInfo{
 			ID: 7527,
 		},
@@ -669,12 +671,25 @@ func TestGetAddColumnArgs(t *testing.T) {
 		Offset:      1001,
 		IfNotExists: true,
 	}
+	dropArgs := &DropColumnArgs{
+		ColName: model.NewCIStr("col_name"),
+	}
 
 	for _, v := range []JobVersion{JobVersion1, JobVersion2} {
 		j2 := &Job{}
-		require.NoError(t, j2.Decode(getJobBytes(t, inArgs, v, ActionAddColumn)))
-		args, err := GetAddColumnArgs(j2)
+		require.NoError(t, j2.Decode(getJobBytes(t, &TableColumnArgs{AddColumnArgs: addArgs}, v, ActionAddColumn)))
+		args, err := GetTableColumnArgs(j2)
 		require.NoError(t, err)
-		require.Equal(t, inArgs, args)
+		require.Equal(t, &TableColumnArgs{AddColumnArgs: addArgs}, args)
+
+		j2.State = JobStateRollingback
+		j2.FillArgs(&TableColumnArgs{DropColumnArgs: dropArgs})
+		jobBytes, err := j2.Encode(true)
+		require.NoError(t, err)
+		j3 := &Job{}
+		require.NoError(t, j3.Decode(jobBytes))
+		args, err = GetTableColumnArgs(j3)
+		require.NoError(t, err)
+		require.Equal(t, &TableColumnArgs{DropColumnArgs: dropArgs}, args)
 	}
 }

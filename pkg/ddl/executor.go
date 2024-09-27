@@ -2271,11 +2271,13 @@ func (e *executor) AddColumn(ctx sessionctx.Context, ti ast.Ident, spec *ast.Alt
 		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
 		SQLMode:        ctx.GetSessionVars().SQLMode,
 	}
-	args := &model.AddColumnArgs{
-		Col:         col.ColumnInfo,
-		Pos:         spec.Position,
-		Offset:      0,
-		IfNotExists: spec.IfNotExists,
+	args := &model.TableColumnArgs{
+		AddColumnArgs: &model.AddColumnArgs{
+			Col:         col.ColumnInfo,
+			Pos:         spec.Position,
+			Offset:      0,
+			IfNotExists: spec.IfNotExists,
+		},
 	}
 	job.FillArgs(args)
 	err = e.doDDLJob2(ctx, job, args)
@@ -3207,9 +3209,11 @@ func (e *executor) DropColumn(ctx sessionctx.Context, ti ast.Ident, spec *ast.Al
 		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
 		SQLMode:        ctx.GetSessionVars().SQLMode,
 	}
-	args := &model.DropColumnArgs{
-		ColName:  colName,
-		IfExists: spec.IfExists,
+	args := &model.TableColumnArgs{
+		DropColumnArgs: &model.DropColumnArgs{
+			ColName:  colName,
+			IfExists: spec.IfExists,
+		},
 	}
 	// we need fill args here, because it will be added subjob which contains args and rawArgs from job.
 	job.FillArgs(args)

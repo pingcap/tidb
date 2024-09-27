@@ -73,7 +73,7 @@ func checkAddColumn(t *meta.Meta, job *model.Job) (*model.TableInfo, *model.Colu
 		return nil, nil, nil, nil, false, errors.Trace(err)
 	}
 
-	args, err := model.GetAddColumnArgs(job)
+	args, err := model.GetTableColumnArgs(job)
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return nil, nil, nil, nil, false, errors.Trace(err)
@@ -187,7 +187,7 @@ func onDropColumn(jobCtx *jobContext, t *meta.Meta, job *model.Job) (ver int64, 
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
-		dropColumnArgs, err := model.GetDropColumnArgs(job)
+		dropColumnArgs, err := model.GetTableColumnArgs(job)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
@@ -218,7 +218,7 @@ func onDropColumn(jobCtx *jobContext, t *meta.Meta, job *model.Job) (ver int64, 
 		} else {
 			// We should set related index IDs for job
 			job.FinishTableJob(model.JobStateDone, model.StateNone, ver, tblInfo)
-			dropColumnArgs, err := model.GetDropColumnArgs(job)
+			dropColumnArgs, err := model.GetTableColumnArgs(job)
 			if err != nil {
 				return ver, errors.Trace(err)
 			}
@@ -239,7 +239,7 @@ func checkDropColumn(jobCtx *jobContext, t *meta.Meta, job *model.Job) (*model.T
 		return nil, nil, nil, false, errors.Trace(err)
 	}
 
-	dropColumnArgs, err := model.GetDropColumnArgs(job)
+	dropColumnArgs, err := model.GetTableColumnArgs(job)
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return nil, nil, nil, false, errors.Trace(err)
