@@ -2496,7 +2496,7 @@ func (w *worker) onExchangeTablePartition(d *ddlCtx, t *meta.Meta, job *model.Jo
 				zap.String("job", job.String()), zap.Int64("defID", defID), zap.Int64("partDef.ID", partDef.ID))
 			job.Args[0] = partDef.ID
 			defID = partDef.ID
-			err = updateDDLJob2Table(w.sess, job, true)
+			err = updateDDLJob2Table(jobCtx.ctx, w.sess, job, true)
 			if err != nil {
 				return ver, errors.Trace(err)
 			}
@@ -2539,7 +2539,7 @@ func (w *worker) onExchangeTablePartition(d *ddlCtx, t *meta.Meta, job *model.Jo
 			zap.String("job", job.String()), zap.Int64("defID", defID), zap.Int64("partDef.ID", partDef.ID))
 		job.Args[0] = partDef.ID
 		defID = partDef.ID
-		err = updateDDLJob2Table(w.sess, job, true)
+		err = updateDDLJob2Table(jobCtx.ctx, w.sess, job, true)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}

@@ -89,7 +89,13 @@ type taskCheckpoint struct {
 
 // FlushController is an interface to control the flush of the checkpoint.
 type FlushController interface {
+<<<<<<< HEAD
 	Flush(indexID int64, mode FlushMode) (flushed, imported bool, err error)
+=======
+	// Flush checks if al engines need to be flushed and imported based on given
+	// FlushMode. It's concurrent safe.
+	Flush(ctx context.Context, mode FlushMode) (flushed, imported bool, err error)
+>>>>>>> bad2ecd6b08 (ddl: refine some context usage (#56243))
 }
 
 // NewCheckpointManager creates a new checkpoint manager.

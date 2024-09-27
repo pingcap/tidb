@@ -130,16 +130,21 @@ func TestConcurrentLockTables(t *testing.T) {
 func testParallelExecSQL(t *testing.T, store kv.Storage, dom *domain.Domain, sql1, sql2 string, se1, se2 session.Session, f func(t *testing.T, err1, err2 error)) {
 	callback := &callback.TestDDLCallback{}
 	times := 0
+<<<<<<< HEAD
 	callback.OnJobRunBeforeExported = func(job *model.Job) {
+=======
+	ctx := context.Background()
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunBefore", func(job *model.Job) {
+>>>>>>> bad2ecd6b08 (ddl: refine some context usage (#56243))
 		if times != 0 {
 			return
 		}
 		var qLen int
 		for {
 			sess := testkit.NewTestKit(t, store).Session()
-			err := sessiontxn.NewTxn(context.Background(), sess)
+			err := sessiontxn.NewTxn(ctx, sess)
 			require.NoError(t, err)
-			jobs, err := ddl.GetAllDDLJobs(sess)
+			jobs, err := ddl.GetAllDDLJobs(ctx, sess)
 			require.NoError(t, err)
 			qLen = len(jobs)
 			if qLen == 2 {
@@ -163,9 +168,9 @@ func testParallelExecSQL(t *testing.T, store kv.Storage, dom *domain.Domain, sql
 		var qLen int
 		for {
 			sess := testkit.NewTestKit(t, store).Session()
-			err := sessiontxn.NewTxn(context.Background(), sess)
+			err := sessiontxn.NewTxn(ctx, sess)
 			require.NoError(t, err)
-			jobs, err := ddl.GetAllDDLJobs(sess)
+			jobs, err := ddl.GetAllDDLJobs(ctx, sess)
 			require.NoError(t, err)
 			qLen = len(jobs)
 			if qLen == 1 {

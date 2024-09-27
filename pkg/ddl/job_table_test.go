@@ -37,7 +37,12 @@ import (
 // This test checks the chosen job records to see if there are wrong scheduling, if job A and job B cannot run concurrently,
 // then all the records of job A must before or after job B, no cross record between these 2 jobs.
 func TestDDLScheduling(t *testing.T) {
+<<<<<<< HEAD:pkg/ddl/job_table_test.go
 	store, dom := testkit.CreateMockStoreAndDomain(t)
+=======
+	store, _ := testkit.CreateMockStoreAndDomain(t)
+	ctx := context.Background()
+>>>>>>> bad2ecd6b08 (ddl: refine some context usage (#56243)):pkg/ddl/job_scheduler_testkit_test.go
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -78,7 +83,7 @@ func TestDDLScheduling(t *testing.T) {
 				})
 				for {
 					time.Sleep(time.Millisecond * 100)
-					jobs, err := ddl.GetAllDDLJobs(testkit.NewTestKit(t, store).Session())
+					jobs, err := ddl.GetAllDDLJobs(ctx, testkit.NewTestKit(t, store).Session())
 					require.NoError(t, err)
 					if len(jobs) == i+1 {
 						break

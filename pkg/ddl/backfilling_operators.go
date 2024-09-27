@@ -82,23 +82,40 @@ type OperatorCtx struct {
 	err    atomic.Pointer[error]
 }
 
+<<<<<<< HEAD
 // NewOperatorCtx creates a new OperatorCtx.
 func NewOperatorCtx(ctx context.Context) *OperatorCtx {
 	opCtx, cancel := context.WithCancel(ctx)
+=======
+// NewDistTaskOperatorCtx is used for adding index with dist framework.
+func NewDistTaskOperatorCtx(
+	ctx context.Context,
+	taskID, subtaskID int64,
+) (*OperatorCtx, context.CancelFunc) {
+	opCtx, cancel := context.WithCancel(ctx)
+	opCtx = logutil.WithFields(opCtx,
+		zap.Int64("task-id", taskID),
+		zap.Int64("subtask-id", subtaskID))
 	return &OperatorCtx{
 		Context: opCtx,
 		cancel:  cancel,
-	}
+	}, cancel
+}
+
+// NewLocalOperatorCtx is used for adding index with local ingest mode.
+func NewLocalOperatorCtx(ctx context.Context, jobID int64) (*OperatorCtx, context.CancelFunc) {
+	opCtx, cancel := context.WithCancel(ctx)
+	opCtx = logutil.WithFields(opCtx, zap.Int64("jobID", jobID))
+>>>>>>> bad2ecd6b08 (ddl: refine some context usage (#56243))
+	return &OperatorCtx{
+		Context: opCtx,
+		cancel:  cancel,
+	}, cancel
 }
 
 func (ctx *OperatorCtx) onError(err error) {
 	tracedErr := errors.Trace(err)
-	ctx.cancel()
 	ctx.err.CompareAndSwap(nil, &tracedErr)
-}
-
-// Cancel cancels the pipeline.
-func (ctx *OperatorCtx) Cancel() {
 	ctx.cancel()
 }
 
@@ -645,6 +662,26 @@ func (w *indexIngestLocalWorker) HandleTask(rs IndexRecordChunk, send func(Index
 		w.ctx.onError(err)
 		return
 	}
+<<<<<<< HEAD
+=======
+	if rs.Added == 0 {
+		return
+	}
+	w.rowCntListener.Written(rs.Added)
+	flushed, imported, err := w.backendCtx.Flush(w.ctx, ingest.FlushModeAuto)
+	if err != nil {
+		w.ctx.onError(err)
+		return
+	}
+	if w.cpMgr != nil {
+		totalCnt, nextKey := w.cpMgr.Status()
+		rs.Total = totalCnt
+		rs.Next = nextKey
+		w.cpMgr.UpdateWrittenKeys(ck.ID, rs.Added)
+		w.cpMgr.AdvanceWatermark(flushed, imported)
+	}
+	send(rs)
+>>>>>>> bad2ecd6b08 (ddl: refine some context usage (#56243))
 }
 
 type indexIngestBaseWorker struct {
@@ -813,6 +850,7 @@ func (s *indexWriteResultSink) flush() error {
 	failpoint.Inject("mockFlushError", func(_ failpoint.Value) {
 		failpoint.Return(errors.New("mock flush error"))
 	})
+<<<<<<< HEAD
 	for _, index := range s.indexes {
 		idxInfo := index.Meta()
 		_, _, err := s.backendCtx.Flush(idxInfo.ID, ingest.FlushModeForceFlushAndImport)
@@ -824,6 +862,17 @@ func (s *indexWriteResultSink) flush() error {
 			logutil.BgLogger().Error("flush error",
 				zap.String("category", "ddl"), zap.Error(err))
 			return err
+=======
+	flushed, imported, err := s.backendCtx.Flush(s.ctx, ingest.FlushModeForceFlushAndImport)
+	if s.cpMgr != nil {
+		// Try to advance watermark even if there is an error.
+		s.cpMgr.AdvanceWatermark(flushed, imported)
+	}
+	if err != nil {
+		msg := "flush error"
+		if flushed {
+			msg = "import error"
+>>>>>>> bad2ecd6b08 (ddl: refine some context usage (#56243))
 		}
 	}
 	return nil

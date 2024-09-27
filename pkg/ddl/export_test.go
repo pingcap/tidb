@@ -45,6 +45,7 @@ func FetchChunk4Test(copCtx copr.CopContext, tbl table.PhysicalTable, startKey, 
 		endKey:        endKey,
 		physicalTable: tbl,
 	}
+<<<<<<< HEAD
 	taskCh := make(chan *reorgBackfillTask, 5)
 	resultCh := make(chan IndexRecordChunk, 5)
 	sessPool := session.NewSessionPool(nil, store)
@@ -56,6 +57,29 @@ func FetchChunk4Test(copCtx copr.CopContext, tbl table.PhysicalTable, startKey, 
 	close(taskCh)
 	pool.close(false)
 	return rs.Chunk
+=======
+	opCtx, cancel := ddl.NewLocalOperatorCtx(context.Background(), 1)
+	defer cancel()
+	src := testutil.NewOperatorTestSource(ddl.TableScanTask{ID: 1, Start: startKey, End: endKey})
+	scanOp := ddl.NewTableScanOperator(opCtx, sessPool, copCtx, srcChkPool, 1, nil, 0)
+	sink := testutil.NewOperatorTestSink[ddl.IndexRecordChunk]()
+
+	operator.Compose[ddl.TableScanTask](src, scanOp)
+	operator.Compose[ddl.IndexRecordChunk](scanOp, sink)
+
+	pipeline := operator.NewAsyncPipeline(src, scanOp, sink)
+	err := pipeline.Execute()
+	if err != nil {
+		return nil, err
+	}
+	err = pipeline.Close()
+	if err != nil {
+		return nil, err
+	}
+
+	results := sink.Collect()
+	return results[0].Chunk, nil
+>>>>>>> bad2ecd6b08 (ddl: refine some context usage (#56243))
 }
 
 func ConvertRowToHandleAndIndexDatum(

@@ -109,6 +109,7 @@ func (r *readIndexExecutor) RunSubtask(ctx context.Context, subtask *proto.Subta
 		return err
 	}
 
+<<<<<<< HEAD
 	sessCtx, err := newSessCtx(
 		r.d.store, r.job.ReorgMeta.SQLMode, r.job.ReorgMeta.Location, r.job.ReorgMeta.ResourceGroupName)
 	if err != nil {
@@ -118,6 +119,11 @@ func (r *readIndexExecutor) RunSubtask(ctx context.Context, subtask *proto.Subta
 	opCtx := NewOperatorCtx(ctx)
 	defer opCtx.Cancel()
 	totalRowCount := &atomic.Int64{}
+=======
+	opCtx, cancel := NewDistTaskOperatorCtx(ctx, subtask.TaskID, subtask.ID)
+	defer cancel()
+	r.curRowCount.Store(0)
+>>>>>>> bad2ecd6b08 (ddl: refine some context usage (#56243))
 
 	var pipe *operator.AsyncPipeline
 	if len(r.cloudStorageURI) > 0 {
