@@ -69,11 +69,6 @@ func TestJobCodec(t *testing.T) {
 	}
 	job.BinlogInfo.AddDBInfo(123, &DBInfo{ID: 1, Name: model.NewCIStr("test_history_db")})
 	job.BinlogInfo.AddTableInfo(123, &TableInfo{ID: 1, Name: model.NewCIStr("test_history_tbl")})
-
-	// Test IsDependentOn.
-	// job: table ID is 2
-	// job1: table ID is 2
-	var err error
 	job1 := &Job{
 		Version:    GetJobVerInUse(),
 		ID:         2,
@@ -82,18 +77,7 @@ func TestJobCodec(t *testing.T) {
 		Type:       ActionRenameTable,
 		BinlogInfo: &HistoryInfo{},
 	}
-	job1.FillArgs(&RenameTableArgs{
-		OldSchemaID:  3,
-		NewTableName: model.NewCIStr("new_table_name"),
-	})
-
-	job1.RawArgs, err = json.Marshal(job1.Args)
-	require.NoError(t, err)
-	isDependent, err := job.IsDependentOn(job1)
-	require.NoError(t, err)
-	require.True(t, isDependent)
-	// job1: rename table, old schema ID is 3
-	// job2: create schema, schema ID is 3
+	job1.FillArgs(&RenameTableArgs{OldSchemaID: 3, NewTableName: model.NewCIStr("new_table_name")})
 	job2 := &Job{
 		Version:    JobVersion1,
 		ID:         3,
@@ -102,12 +86,6 @@ func TestJobCodec(t *testing.T) {
 		Type:       ActionCreateSchema,
 		BinlogInfo: &HistoryInfo{},
 	}
-	isDependent, err = job2.IsDependentOn(job1)
-	require.NoError(t, err)
-	require.True(t, isDependent)
-
-	// Test IsDependentOn for exchange partition with table.
-	// test ActionCreateSchema and ActionExchangeTablePartition is dependent.
 	job3 := &Job{
 		Version:    JobVersion1,
 		ID:         4,
@@ -115,15 +93,8 @@ func TestJobCodec(t *testing.T) {
 		SchemaID:   4,
 		Type:       ActionExchangeTablePartition,
 		BinlogInfo: &HistoryInfo{},
-		Args:       []any{int64(6), int64(3), int64(5), "pt", true},
 	}
-	job3.RawArgs, err = json.Marshal(job3.Args)
-	require.NoError(t, err)
-	isDependent, err = job3.IsDependentOn(job2)
-	require.NoError(t, err)
-	require.True(t, isDependent)
-
-	// test random and ActionExchangeTablePartition is dependent because TableID is same.
+	job3.FillArgs(&ExchangeTablePartitionArgs{PartitionID: 6, PTSchemaID: 3, PTTableID: 5, PartitionName: "pt", WithValidation: true})
 	job4 := &Job{
 		Version:    JobVersion1,
 		ID:         5,
@@ -131,15 +102,8 @@ func TestJobCodec(t *testing.T) {
 		SchemaID:   3,
 		Type:       ActionExchangeTablePartition,
 		BinlogInfo: &HistoryInfo{},
-		Args:       []any{6, 4, 2, "pt", true},
 	}
-	job4.RawArgs, err = json.Marshal(job4.Args)
-	require.NoError(t, err)
-	isDependent, err = job4.IsDependentOn(job)
-	require.NoError(t, err)
-	require.True(t, isDependent)
-
-	// test ActionExchangeTablePartition and ActionExchangeTablePartition is dependent.
+	job4.FillArgs(&ExchangeTablePartitionArgs{PartitionID: 6, PTSchemaID: 4, PTTableID: 2, PartitionName: "pt", WithValidation: true})
 	job5 := &Job{
 		Version:    JobVersion1,
 		ID:         6,
@@ -147,14 +111,8 @@ func TestJobCodec(t *testing.T) {
 		SchemaID:   6,
 		Type:       ActionExchangeTablePartition,
 		BinlogInfo: &HistoryInfo{},
-		Args:       []any{2, 6, 5, "pt", true},
 	}
-	job5.RawArgs, err = json.Marshal(job5.Args)
-	require.NoError(t, err)
-	isDependent, err = job5.IsDependentOn(job4)
-	require.NoError(t, err)
-	require.True(t, isDependent)
-
+	job5.FillArgs(&ExchangeTablePartitionArgs{PartitionID: 2, PTSchemaID: 6, PTTableID: 5, PartitionName: "pt", WithValidation: true})
 	job6 := &Job{
 		Version:    JobVersion1,
 		ID:         7,
@@ -162,14 +120,8 @@ func TestJobCodec(t *testing.T) {
 		SchemaID:   7,
 		Type:       ActionExchangeTablePartition,
 		BinlogInfo: &HistoryInfo{},
-		Args:       []any{6, 4, 2, "pt", true},
 	}
-	job6.RawArgs, err = json.Marshal(job6.Args)
-	require.NoError(t, err)
-	isDependent, err = job6.IsDependentOn(job5)
-	require.NoError(t, err)
-	require.True(t, isDependent)
-
+	job6.FillArgs(&ExchangeTablePartitionArgs{PartitionID: 6, PTSchemaID: 4, PTTableID: 2, PartitionName: "pt", WithValidation: true})
 	job7 := &Job{
 		Version:    JobVersion1,
 		ID:         8,
@@ -177,14 +129,8 @@ func TestJobCodec(t *testing.T) {
 		SchemaID:   8,
 		Type:       ActionExchangeTablePartition,
 		BinlogInfo: &HistoryInfo{},
-		Args:       []any{8, 4, 6, "pt", true},
 	}
-	job7.RawArgs, err = json.Marshal(job7.Args)
-	require.NoError(t, err)
-	isDependent, err = job7.IsDependentOn(job6)
-	require.NoError(t, err)
-	require.True(t, isDependent)
-
+	job7.FillArgs(&ExchangeTablePartitionArgs{PartitionID: 8, PTSchemaID: 4, PTTableID: 6, PartitionName: "pt", WithValidation: true})
 	job8 := &Job{
 		Version:    JobVersion1,
 		ID:         9,
@@ -192,14 +138,8 @@ func TestJobCodec(t *testing.T) {
 		SchemaID:   9,
 		Type:       ActionExchangeTablePartition,
 		BinlogInfo: &HistoryInfo{},
-		Args:       []any{8, 9, 9, "pt", true},
 	}
-	job8.RawArgs, err = json.Marshal(job8.Args)
-	require.NoError(t, err)
-	isDependent, err = job8.IsDependentOn(job7)
-	require.NoError(t, err)
-	require.True(t, isDependent)
-
+	job8.FillArgs(&ExchangeTablePartitionArgs{PartitionID: 8, PTSchemaID: 9, PTTableID: 9, PartitionName: "pt", WithValidation: true})
 	job9 := &Job{
 		Version:    JobVersion1,
 		ID:         10,
@@ -207,15 +147,8 @@ func TestJobCodec(t *testing.T) {
 		SchemaID:   10,
 		Type:       ActionExchangeTablePartition,
 		BinlogInfo: &HistoryInfo{},
-		Args:       []any{10, 10, 8, "pt", true},
 	}
-	job9.RawArgs, err = json.Marshal(job9.Args)
-	require.NoError(t, err)
-	isDependent, err = job9.IsDependentOn(job8)
-	require.NoError(t, err)
-	require.True(t, isDependent)
-
-	// test ActionDropSchema and ActionExchangeTablePartition is dependent.
+	job9.FillArgs(&ExchangeTablePartitionArgs{PartitionID: 10, PTSchemaID: 10, PTTableID: 8, PartitionName: "pt", WithValidation: true})
 	job10 := &Job{
 		Version:    JobVersion1,
 		ID:         11,
@@ -224,9 +157,6 @@ func TestJobCodec(t *testing.T) {
 		Type:       ActionDropSchema,
 		BinlogInfo: &HistoryInfo{},
 	}
-	job10.RawArgs, err = json.Marshal(job10.Args)
-	require.NoError(t, err)
-
 	job11 := &Job{
 		Version:    JobVersion1,
 		ID:         12,
@@ -234,15 +164,8 @@ func TestJobCodec(t *testing.T) {
 		SchemaID:   11,
 		Type:       ActionExchangeTablePartition,
 		BinlogInfo: &HistoryInfo{},
-		Args:       []any{10, 10, 8, "pt", true},
 	}
-	job11.RawArgs, err = json.Marshal(job11.Args)
-	require.NoError(t, err)
-	isDependent, err = job11.IsDependentOn(job10)
-	require.NoError(t, err)
-	require.True(t, isDependent)
-
-	// test ActionDropTable and ActionExchangeTablePartition is dependent.
+	job11.FillArgs(&ExchangeTablePartitionArgs{PartitionID: 10, PTSchemaID: 10, PTTableID: 8, PartitionName: "pt", WithValidation: true})
 	job12 := &Job{
 		Version:    JobVersion1,
 		ID:         13,
@@ -251,12 +174,6 @@ func TestJobCodec(t *testing.T) {
 		Type:       ActionDropTable,
 		BinlogInfo: &HistoryInfo{},
 	}
-	job12.RawArgs, err = json.Marshal(job12.Args)
-	require.NoError(t, err)
-	isDependent, err = job11.IsDependentOn(job12)
-	require.NoError(t, err)
-	require.False(t, isDependent)
-
 	job13 := &Job{
 		Version:    JobVersion1,
 		ID:         14,
@@ -265,13 +182,6 @@ func TestJobCodec(t *testing.T) {
 		Type:       ActionDropTable,
 		BinlogInfo: &HistoryInfo{},
 	}
-	job13.RawArgs, err = json.Marshal(job13.Args)
-	require.NoError(t, err)
-	isDependent, err = job11.IsDependentOn(job13)
-	require.NoError(t, err)
-	require.True(t, isDependent)
-
-	// test ActionDropTable and ActionExchangeTablePartition is dependent.
 	job14 := &Job{
 		Version:    JobVersion1,
 		ID:         15,
@@ -279,15 +189,8 @@ func TestJobCodec(t *testing.T) {
 		SchemaID:   15,
 		Type:       ActionExchangeTablePartition,
 		BinlogInfo: &HistoryInfo{},
-		Args:       []any{16, 17, 12, "pt", true},
 	}
-	job14.RawArgs, err = json.Marshal(job14.Args)
-	require.NoError(t, err)
-	isDependent, err = job13.IsDependentOn(job14)
-	require.NoError(t, err)
-	require.True(t, isDependent)
-
-	// test ActionFlashbackCluster with other ddl jobs are dependent.
+	job14.FillArgs(&ExchangeTablePartitionArgs{PartitionID: 16, PTSchemaID: 17, PTTableID: 12, PartitionName: "pt", WithValidation: true})
 	job15 := &Job{
 		Version:    JobVersion1,
 		ID:         16,
@@ -295,11 +198,44 @@ func TestJobCodec(t *testing.T) {
 		BinlogInfo: &HistoryInfo{},
 		Args:       []any{0, map[string]any{}, "ON", true},
 	}
-	job15.RawArgs, err = json.Marshal(job15.Args)
-	require.NoError(t, err)
-	isDependent, err = job.IsDependentOn(job15)
-	require.NoError(t, err)
-	require.True(t, isDependent)
+
+	for _, j := range []*Job{job1, job2, job3, job4, job5, job6, job7, job8, job9, job10, job11, job12, job13, job14, job15} {
+		_, err := j.Encode(true)
+		require.NoError(t, err)
+	}
+
+	cases := []struct {
+		name        string
+		left, right *Job
+		dependent   bool
+	}{
+		{"same table id", job, job1, true},
+		{"related to same schema", job2, job1, true},
+		{"test ActionCreateSchema and ActionExchangeTablePartition is dependent.", job3, job2, true},
+		{"test random and ActionExchangeTablePartition is dependent because TableID is same.", job4, job, true},
+		{"test ActionExchangeTablePartition and ActionExchangeTablePartition is dependent.", job5, job4, true},
+		// this case is invalid, actually.
+		{"PT partition ID same as other job's NT table ID", job6, job5, true},
+		// invalid too
+		{"PT table ID same as other job's partition ID", job7, job6, true},
+		// invalid too
+		{"2 PT table has same partition ID", job8, job7, true},
+		// invalid too
+		{"PT table ID same as other job's partition ID", job9, job8, true},
+		{"test ActionDropSchema and ActionExchangeTablePartition is dependent.", job11, job10, true},
+		{"test ActionDropTable and ActionExchangeTablePartition is dependent.", job11, job12, false},
+		{"NT table ID same as other job's table ID", job11, job13, true},
+		{"test ActionDropTable and ActionExchangeTablePartition is dependent.", job13, job14, true},
+		{"test ActionFlashbackCluster with other ddl jobs are dependent.", job, job15, true},
+	}
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			isDependent, err := c.left.IsDependentOn(c.right)
+			require.NoError(t, err)
+			require.Equal(t, c.dependent, isDependent)
+		})
+	}
 
 	require.Equal(t, false, job.IsCancelled())
 	b, err := job.Encode(false)
@@ -531,10 +467,10 @@ func TestJobEncodeV2(t *testing.T) {
 	j := &Job{
 		Version: JobVersion2,
 		Type:    ActionTruncateTable,
-		Args: []any{&TruncateTableArgs{
-			FKCheck: true,
-		}},
 	}
+	j.FillArgs(&TruncateTableArgs{
+		FKCheck: true,
+	})
 	_, err := j.Encode(false)
 	require.NoError(t, err)
 	require.Nil(t, j.RawArgs)

@@ -1297,11 +1297,12 @@ func prepareTestControlParallelExecSQL(t *testing.T, store kv.Storage) (*testkit
 			return
 		}
 		var qLen int
+		ctx := context.Background()
 		for {
 			sess := testkit.NewTestKit(t, store).Session()
-			err := sessiontxn.NewTxn(context.Background(), sess)
+			err := sessiontxn.NewTxn(ctx, sess)
 			require.NoError(t, err)
-			jobs, err := ddl.GetAllDDLJobs(sess)
+			jobs, err := ddl.GetAllDDLJobs(ctx, sess)
 			require.NoError(t, err)
 			qLen = len(jobs)
 			if qLen == 2 {
@@ -1321,11 +1322,12 @@ func prepareTestControlParallelExecSQL(t *testing.T, store kv.Storage) (*testkit
 	// Make sure the sql1 is put into the DDLJobQueue.
 	go func() {
 		var qLen int
+		ctx := context.Background()
 		for {
 			sess := testkit.NewTestKit(t, store).Session()
-			err := sessiontxn.NewTxn(context.Background(), sess)
+			err := sessiontxn.NewTxn(ctx, sess)
 			require.NoError(t, err)
-			jobs, err := ddl.GetAllDDLJobs(sess)
+			jobs, err := ddl.GetAllDDLJobs(ctx, sess)
 			require.NoError(t, err)
 			qLen = len(jobs)
 			if qLen == 1 {
