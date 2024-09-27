@@ -53,7 +53,7 @@ func TestDDLHistoryBasic(t *testing.T) {
 		t := meta.NewMeta(txn)
 		return ddl.AddHistoryDDLJob(context.Background(), sess, t, &model.Job{
 			ID: 1,
-		}, false)
+		})
 	})
 
 	require.NoError(t, err)
@@ -62,7 +62,7 @@ func TestDDLHistoryBasic(t *testing.T) {
 		t := meta.NewMeta(txn)
 		return ddl.AddHistoryDDLJob(context.Background(), sess, t, &model.Job{
 			ID: 2,
-		}, false)
+		})
 	})
 
 	require.NoError(t, err)

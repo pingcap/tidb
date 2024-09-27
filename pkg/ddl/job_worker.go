@@ -256,18 +256,14 @@ func (w *worker) handleUpdateJobError(t *meta.Meta, job *model.Job, err error) e
 }
 
 // updateDDLJob updates the DDL job information.
-func (w *worker) updateDDLJob(job *model.Job, updateRawArgs bool) error {
+func (w *worker) updateDDLJob(job *model.Job) error {
 	failpoint.Inject("mockErrEntrySizeTooLarge", func(val failpoint.Value) {
 		if val.(bool) {
 			failpoint.Return(kv.ErrEntryTooLarge)
 		}
 	})
 
-	if !updateRawArgs {
-		w.jobLogger(job).Info("meet something wrong before update DDL job, shouldn't update raw args",
-			zap.String("job", job.String()))
-	}
-	return errors.Trace(updateDDLJob2Table(w.sess, job, updateRawArgs))
+	return errors.Trace(updateDDLJob2Table(w.sess, job))
 }
 
 // registerMDLInfo registers metadata lock info.
@@ -361,6 +357,7 @@ func (w *worker) finishDDLJob(t *meta.Meta, job *model.Job) (err error) {
 			// it may be too large that it can not be added to the history queue, so
 			// delete its arguments
 			job.Args = nil
+			job.UpdateRawArgs = true
 		}
 	}
 	if err != nil {
@@ -373,16 +370,11 @@ func (w *worker) finishDDLJob(t *meta.Meta, job *model.Job) (err error) {
 
 	job.BinlogInfo.FinishedTS = t.StartTS
 	w.jobLogger(job).Info("finish DDL job", zap.String("job", job.String()))
-	updateRawArgs := true
-	if job.Type == model.ActionAddPrimaryKey && !job.IsCancelled() {
-		// ActionAddPrimaryKey needs to check the warnings information in job.Args.
-		// Notice: warnings is used to support non-strict mode.
-		updateRawArgs = false
-	}
+
 	job.SeqNum = w.seqAllocator.Add(1)
 	w.removeJobCtx(job)
 	failpoint.InjectCall("afterFinishDDLJob", job)
-	err = AddHistoryDDLJob(w.ctx, w.sess, t, job, updateRawArgs)
+	err = AddHistoryDDLJob(w.ctx, w.sess, t, job)
 	return errors.Trace(err)
 }
 
@@ -548,7 +540,7 @@ func (w *worker) transitOneJobStep(jobCtx *jobContext, job *model.Job) (int64, e
 
 	// If running job meets error, we will save this error in job Error and retry
 	// later if the job is not cancelled.
-	schemaVer, updateRawArgs, runJobErr := w.runOneJobStep(jobCtx, t, job)
+	schemaVer, runJobErr := w.runOneJobStep(jobCtx, t, job)
 
 	failpoint.InjectCall("onJobRunAfter", job)
 
@@ -582,7 +574,7 @@ func (w *worker) transitOneJobStep(jobCtx *jobContext, job *model.Job) (int64, e
 		jobCtx.unlockSchemaVersion(job.ID)
 		return 0, err
 	}
-	err = w.updateDDLJob(job, updateRawArgs)
+	err = w.updateDDLJob(job)
 	if err = w.handleUpdateJobError(t, job, err); err != nil {
 		w.sess.Rollback()
 		jobCtx.unlockSchemaVersion(job.ID)
@@ -748,7 +740,7 @@ func (w *worker) runOneJobStep(
 	jobCtx *jobContext,
 	t *meta.Meta,
 	job *model.Job,
-) (ver int64, updateRawArgs bool, err error) {
+) (ver int64, err error) {
 	defer tidbutil.Recover(metrics.LabelDDLWorker, fmt.Sprintf("%s runOneJobStep", w),
 		func() {
 			w.countForPanic(job)
@@ -770,24 +762,18 @@ func (w *worker) runOneJobStep(
 
 	if job.IsCancelling() {
 		w.jobLogger(job).Debug("cancel DDL job", zap.String("job", job.String()))
-		ver, err = convertJob2RollbackJob(w, jobCtx, t, job)
-		// if job is converted to rollback job, the job.Args may be changed for the
-		// rollback logic, so we let caller persist the new arguments.
-		updateRawArgs = job.IsRollingback()
-		return
+		return convertJob2RollbackJob(w, jobCtx, t, job)
 	}
 
 	isRunnable, err := w.processJobPausingRequest(jobCtx.oldDDLCtx, job)
 	if !isRunnable {
-		return ver, false, err
+		return ver, err
 	}
 
 	// It would be better to do the positive check, but no idea to list all valid states here now.
 	if !job.IsRollingback() {
 		job.State = model.JobStateRunning
 	}
-
-	prevState := job.State
 
 	// For every type, `schema/table` modification and `job` modification are conducted
 	// in the one kv transaction. The `schema/table` modification can be always discarded
@@ -924,22 +910,11 @@ func (w *worker) runOneJobStep(
 		err = dbterror.ErrInvalidDDLJob.GenWithStack("invalid ddl job type: %v", job.Type)
 	}
 
-	// there are too many job types, instead let every job type output its own
-	// updateRawArgs, we try to use these rules as a generalization:
-	//
-	// if job has no error, some arguments may be changed, there's no harm to update
-	// it.
-	updateRawArgs = err == nil
-	// if job changed from running to rolling back, arguments may be changed
-	if prevState == model.JobStateRunning && job.IsRollingback() {
-		updateRawArgs = true
-	}
-
 	// Save errors in job if any, so that others can know errors happened.
 	if err != nil {
 		err = w.countForError(err, job)
 	}
-	return ver, updateRawArgs, err
+	return ver, err
 }
 
 func loadDDLVars(w *worker) error {

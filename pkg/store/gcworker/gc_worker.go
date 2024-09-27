@@ -1577,7 +1577,7 @@ func doGCPlacementRules(se sessiontypes.Session, _ uint64,
 		mockJ.FillFinishedArgs(&model.DropTableArgs{
 			OldPartitionIDs: []int64{int64(v.(int))},
 		})
-		bytes, err1 := mockJ.Encode(true)
+		bytes, err1 := mockJ.Encode()
 		if err1 != nil {
 			return
 		}
@@ -1676,7 +1676,7 @@ func (w *GCWorker) doGCLabelRules(dr util.DelRangeTask) (err error) {
 		mockJ.FillFinishedArgs(&model.DropTableArgs{
 			OldRuleIDs: []string{v.(string)},
 		})
-		bytes, err1 := mockJ.Encode(true)
+		bytes, err1 := mockJ.Encode()
 		if err1 != nil {
 			return
 		}

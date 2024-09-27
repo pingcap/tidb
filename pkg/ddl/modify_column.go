@@ -184,6 +184,8 @@ func rollbackModifyColumnJob(jobCtx *jobContext, t *meta.Meta, tblInfo *model.Ta
 	job.FinishTableJob(model.JobStateRollbackDone, model.StateNone, ver, tblInfo)
 	// For those column-type-change type which doesn't need reorg data, we should also mock the job args for delete range.
 	job.Args = []any{[]int64{}, []int64{}}
+	// TODO(joechenrh): remove this after refactor done.
+	job.UpdateRawArgs = true
 	return ver, nil
 }
 
@@ -270,6 +272,8 @@ func rollbackModifyColumnJobWithData(jobCtx *jobContext, t *meta.Meta, tblInfo *
 	job.FinishTableJob(model.JobStateRollbackDone, model.StateNone, ver, tblInfo)
 	// Reconstruct the job args to add the temporary index ids into delete range table.
 	job.Args = []any{changingIdxIDs, getPartitionIDs(tblInfo)}
+	// TODO(joechenrh): remove this after refactor done.
+	job.UpdateRawArgs = true
 	return ver, nil
 }
 
@@ -329,6 +333,8 @@ func (w *worker) doModifyColumn(
 	job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
 	// For those column-type-change type which doesn't need reorg data, we should also mock the job args for delete range.
 	job.Args = []any{[]int64{}, []int64{}}
+	// TODO(joechenrh): remove this after refactor done.
+	job.UpdateRawArgs = true
 	return ver, nil
 }
 
@@ -467,6 +473,8 @@ func (w *worker) doModifyColumnTypeWithData(
 		job.SchemaState = model.StateDeleteOnly
 		metrics.GetBackfillProgressByLabel(metrics.LblModifyColumn, job.SchemaName, tblInfo.Name.String()).Set(0)
 		job.Args = append(job.Args, changingCol, changingIdxs, rmIdxIDs)
+		// TODO(joechenrh): remove this after refactor done.
+		job.UpdateRawArgs = true
 	case model.StateDeleteOnly:
 		// Column from null to not null.
 		if !mysql.HasNotNullFlag(oldCol.GetFlag()) && mysql.HasNotNullFlag(changingCol.GetFlag()) {
@@ -531,6 +539,8 @@ func (w *worker) doModifyColumnTypeWithData(
 		job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
 		// Refactor the job args to add the old index ids into delete range table.
 		job.Args = []any{rmIdxIDs, getPartitionIDs(tblInfo)}
+		// TODO(joechenrh): remove this after refactor done.
+		job.UpdateRawArgs = true
 		modifyColumnEvent := notifier.NewModifyColumnEvent(tblInfo, []*model.ColumnInfo{changingCol})
 		asyncNotifyEvent(jobCtx, modifyColumnEvent, job)
 	default:

@@ -1536,7 +1536,7 @@ func TestAdminShowDDLJobs(t *testing.T) {
 	require.NoError(t, err)
 	txn, err := tk.Session().Txn(true)
 	require.NoError(t, err)
-	err = meta.NewMeta(txn).AddHistoryDDLJob(job, true)
+	err = meta.NewMeta(txn).AddHistoryDDLJob(job)
 	require.NoError(t, err)
 	tk.Session().StmtCommit(context.Background())
 

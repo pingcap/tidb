@@ -696,6 +696,7 @@ func injectModifyJobArgFailPoint(jobWs []*JobWrapper) {
 					}
 				} else if len(job.Args) > 0 {
 					job.Args[0] = 1
+					job.UpdateRawArgs = true
 				}
 			}
 		}

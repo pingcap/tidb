@@ -623,6 +623,9 @@ func (w *worker) onCreateIndex(jobCtx *jobContext, t *meta.Meta, job *model.Job,
 		return ver, errors.Trace(err)
 	}
 
+	// TODO(joechenrh): remove this after argument refactor done.
+	job.UpdateRawArgs = true
+
 	allIndexInfos := make([]*model.IndexInfo, 0, len(indexNames))
 	for i, indexName := range indexNames {
 		indexInfo := tblInfo.FindIndexByName(indexName.L)
@@ -812,6 +815,8 @@ SwitchIndexState:
 			isGlobal = append(isGlobal, indexInfo.Global)
 		}
 		job.Args = []any{allIndexIDs, ifExists, getPartitionIDs(tbl.Meta()), isGlobal}
+		// TODO(joechenrh): remove this after argument refactor done.
+		job.UpdateRawArgs = true
 		// Finish this job.
 		job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
 		if !job.ReorgMeta.IsDistReorg && job.ReorgMeta.ReorgTp == model.ReorgTypeLitMerge {
@@ -1172,6 +1177,8 @@ func onDropIndex(jobCtx *jobContext, t *meta.Meta, job *model.Job) (ver int64, _
 				job.Args = append(job.Args, idxIDs[0], getPartitionIDs(tblInfo))
 			}
 		}
+		// TODO(joechenrh): remove this after argument refactor done.
+		job.UpdateRawArgs = true
 	default:
 		return ver, errors.Trace(dbterror.ErrInvalidDDLState.GenWithStackByArgs("index", allIndexInfos[0].State))
 	}
@@ -1230,6 +1237,9 @@ func checkDropIndex(infoCache *infoschema.InfoCache, t *meta.Meta, job *model.Jo
 			return nil, nil, false, errors.Trace(err)
 		}
 	}
+
+	// TODO(joechenrh): remove this after argument refactor done.
+	job.UpdateRawArgs = true
 
 	indexInfos := make([]*model.IndexInfo, 0, len(indexNames))
 	for i, idxName := range indexNames {
