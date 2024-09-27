@@ -151,16 +151,19 @@ func (pq *AnalysisPriorityQueueV2) run() {
 
 // RefreshLastAnalysisDuration refreshes the last analysis duration of all jobs in the priority queue.
 func (pq *AnalysisPriorityQueueV2) RefreshLastAnalysisDuration() {
-	if !pq.IsWithinTimeWindow() {
-		statslogutil.StatsLogger().Debug("Not within the auto analyze time window, skip refreshing last analysis duration")
-		return
-	}
-
-	start := time.Now()
-	defer func() {
-		statslogutil.StatsLogger().Info("Last analysis duration refreshed", zap.Duration("duration", time.Since(start)))
-	}()
 	if err := statsutil.CallWithSCtx(pq.statsHandle.SPool(), func(sctx sessionctx.Context) error {
+		parameters := exec.GetAutoAnalyzeParameters(sctx)
+		if err := pq.setAutoAnalysisTimeWindow(parameters); err != nil {
+			return errors.Trace(err)
+		}
+		if !pq.IsWithinTimeWindow() {
+			statslogutil.StatsLogger().Debug("Not within the auto analyze time window, skip refreshing last analysis duration")
+			return nil
+		}
+		start := time.Now()
+		defer func() {
+			statslogutil.StatsLogger().Info("Last analysis duration refreshed", zap.Duration("duration", time.Since(start)))
+		}()
 		jobs := pq.inner.List()
 		for _, job := range jobs {
 			indicators := job.GetIndicators()
