@@ -1435,7 +1435,7 @@ func acquireLock(s sessiontypes.Session) (func(), bool) {
 			// do nothing
 		}, true
 	}
-	releaseFn, err := owner.AcquireDistributedLock(context.Background(), cli, ddl.DDLOwnerKey, 10)
+	releaseFn, err := owner.AcquireDistributedLock(context.Background(), cli, bootstrapOwnerKey, 10)
 	if err != nil {
 		return nil, false
 	}
