@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package core
+package logicalop
 
 import (
 	"bytes"
@@ -20,11 +20,10 @@ import (
 
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/meta/model"
-	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
-	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	ruleutil "github.com/pingcap/tidb/pkg/planner/core/rule/util"
 	"github.com/pingcap/tidb/pkg/planner/property"
+	"github.com/pingcap/tidb/pkg/planner/util/utilfuncp"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
 	"github.com/pingcap/tidb/pkg/util/ranger"
@@ -32,7 +31,7 @@ import (
 
 // LogicalIndexScan is the logical index scan operator for TiKV.
 type LogicalIndexScan struct {
-	logicalop.LogicalSchemaProducer
+	LogicalSchemaProducer
 	// DataSource should be read-only here.
 	Source       *DataSource
 	IsDoubleRead bool
@@ -51,7 +50,7 @@ type LogicalIndexScan struct {
 
 // Init initializes LogicalIndexScan.
 func (is LogicalIndexScan) Init(ctx base.PlanContext, offset int) *LogicalIndexScan {
-	is.BaseLogicalPlan = logicalop.NewBaseLogicalPlan(ctx, plancodec.TypeIdxScan, &is, offset)
+	is.BaseLogicalPlan = NewBaseLogicalPlan(ctx, plancodec.TypeIdxScan, &is, offset)
 	return &is
 }
 
@@ -105,7 +104,7 @@ func (is *LogicalIndexScan) BuildKeyInfo(selfSchema *expression.Schema, _ []*exp
 			selfSchema.UniqueKeys = append(selfSchema.UniqueKeys, uniqueKey)
 		}
 	}
-	handle := is.getPKIsHandleCol(selfSchema)
+	handle := is.GetPKIsHandleCol(selfSchema)
 	if handle != nil {
 		selfSchema.Keys = append(selfSchema.Keys, []*expression.Column{handle})
 	}
@@ -125,25 +124,7 @@ func (is *LogicalIndexScan) BuildKeyInfo(selfSchema *expression.Schema, _ []*exp
 
 // DeriveStats implements base.LogicalPlan.<11th> interface.
 func (is *LogicalIndexScan) DeriveStats(_ []*property.StatsInfo, selfSchema *expression.Schema, _ []*expression.Schema, _ [][]*expression.Column) (*property.StatsInfo, error) {
-	is.Source.initStats(nil)
-	exprCtx := is.SCtx().GetExprCtx()
-	for i, expr := range is.AccessConds {
-		is.AccessConds[i] = expression.PushDownNot(exprCtx, expr)
-	}
-	is.SetStats(is.Source.deriveStatsByFilter(is.AccessConds, nil))
-	if len(is.AccessConds) == 0 {
-		is.Ranges = ranger.FullRange()
-	}
-	is.IdxCols, is.IdxColLens = expression.IndexInfo2PrefixCols(is.Columns, selfSchema.Columns, is.Index)
-	is.FullIdxCols, is.FullIdxColLens = expression.IndexInfo2Cols(is.Columns, selfSchema.Columns, is.Index)
-	if !is.Index.Unique && !is.Index.Primary && len(is.Index.Columns) == len(is.IdxCols) {
-		handleCol := is.getPKIsHandleCol(selfSchema)
-		if handleCol != nil && !mysql.HasUnsignedFlag(handleCol.RetType.GetFlag()) {
-			is.IdxCols = append(is.IdxCols, handleCol)
-			is.IdxColLens = append(is.IdxColLens, types.UnspecifiedLength)
-		}
-	}
-	return is.StatsInfo(), nil
+	return utilfuncp.DeriveStats4LogicalIndexScan(is, selfSchema)
 }
 
 // ExtractColGroups inherits BaseLogicalPlan.LogicalPlan.<12th> implementation.
@@ -205,9 +186,22 @@ func (is *LogicalIndexScan) MatchIndexProp(prop *property.PhysicalProperty) (mat
 	return false
 }
 
-func (is *LogicalIndexScan) getPKIsHandleCol(schema *expression.Schema) *expression.Column {
-	// We cannot use p.Source.getPKIsHandleCol() here,
+// GetPKIsHandleCol gets the handle column if PKIsHandle.
+func (is *LogicalIndexScan) GetPKIsHandleCol(schema *expression.Schema) *expression.Column {
+	// We cannot use p.Source.GetPKIsHandleCol() here,
 	// Because we may re-prune p.Columns and p.schema during the transformation.
 	// That will make p.Columns different from p.Source.Columns.
 	return getPKIsHandleColFromSchema(is.Columns, schema, is.Source.TableInfo.PKIsHandle)
+}
+
+func matchIndicesProp(sctx base.PlanContext, idxCols []*expression.Column, colLens []int, propItems []property.SortItem) bool {
+	if len(idxCols) < len(propItems) {
+		return false
+	}
+	for i, item := range propItems {
+		if colLens[i] != types.UnspecifiedLength || !item.Col.EqualByExprAndID(sctx.GetExprCtx().GetEvalCtx(), idxCols[i]) {
+			return false
+		}
+	}
+	return true
 }

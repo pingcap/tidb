@@ -605,10 +605,10 @@ func ParseAnalyzeSkipColumnTypes(val string) map[string]struct{} {
 var (
 	// SchemaCacheSizeLowerBound will adjust the schema cache size to this value if
 	// it is lower than this value.
-	SchemaCacheSizeLowerBound uint64 = 512 * units.MiB
+	SchemaCacheSizeLowerBound uint64 = 64 * units.MiB
 	// SchemaCacheSizeLowerBoundStr is the string representation of
 	// SchemaCacheSizeLowerBound.
-	SchemaCacheSizeLowerBoundStr = "512MB"
+	SchemaCacheSizeLowerBoundStr = "64MB"
 )
 
 func parseSchemaCacheSize(s *SessionVars, normalizedValue string, originalValue string) (byteSize uint64, normalizedStr string, err error) {

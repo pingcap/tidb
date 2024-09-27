@@ -647,7 +647,7 @@ func (rc *SnapClient) CreateDatabases(ctx context.Context, dbs []*metautil.Datab
 		return nil
 	}
 
-	log.Info("create databases in db pool", zap.Int("pool size", len(rc.dbPool)))
+	log.Info("create databases in db pool", zap.Int("pool size", len(rc.dbPool)), zap.Int("number of db", len(dbs)))
 	eg, ectx := errgroup.WithContext(ctx)
 	workers := tidbutil.NewWorkerPool(uint(len(rc.dbPool)), "DB DDL workers")
 	for _, db_ := range dbs {

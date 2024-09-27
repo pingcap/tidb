@@ -39,6 +39,7 @@ func init() {
 	utilfuncp.FindBestTask4LogicalCTETable = findBestTask4LogicalCTETable
 	utilfuncp.FindBestTask4LogicalMemTable = findBestTask4LogicalMemTable
 	utilfuncp.FindBestTask4LogicalTableDual = findBestTask4LogicalTableDual
+	utilfuncp.FindBestTask4LogicalDataSource = findBestTask4LogicalDataSource
 	utilfuncp.FindBestTask4LogicalShowDDLJobs = findBestTask4LogicalShowDDLJobs
 	utilfuncp.ExhaustPhysicalPlans4LogicalCTE = exhaustPhysicalPlans4LogicalCTE
 	utilfuncp.ExhaustPhysicalPlans4LogicalSort = exhaustPhysicalPlans4LogicalSort
@@ -62,10 +63,16 @@ func init() {
 	utilfuncp.GetEstimatedProbeCntFromProbeParents = getEstimatedProbeCntFromProbeParents
 	utilfuncp.AppendCandidate4PhysicalOptimizeOp = appendCandidate4PhysicalOptimizeOp
 
-	utilfuncp.PushDownTopNForBaseLogicalPlan = pushDownTopNForBaseLogicalPlan
-	utilfuncp.AttachPlan2Task = attachPlan2Task
-	utilfuncp.WindowIsTopN = windowIsTopN
 	utilfuncp.DoOptimize = doOptimize
+	utilfuncp.IsSingleScan = isSingleScan
+	utilfuncp.WindowIsTopN = windowIsTopN
+	utilfuncp.AttachPlan2Task = attachPlan2Task
+	utilfuncp.AddPrefix4ShardIndexes = addPrefix4ShardIndexes
+	utilfuncp.DeriveStats4DataSource = deriveStats4DataSource
+	utilfuncp.ApplyPredicateSimplification = applyPredicateSimplification
+	utilfuncp.DeriveStats4LogicalIndexScan = deriveStats4LogicalIndexScan
+	utilfuncp.DeriveStats4LogicalTableScan = deriveStats4LogicalTableScan
+	utilfuncp.PushDownTopNForBaseLogicalPlan = pushDownTopNForBaseLogicalPlan
 
 	// For mv index init.
 	cardinality.GetTblInfoForUsedStatsByPhysicalID = getTblInfoForUsedStatsByPhysicalID

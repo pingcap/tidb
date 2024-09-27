@@ -111,6 +111,10 @@ var FindBestTask4LogicalCTE func(lp base.LogicalPlan, prop *property.PhysicalPro
 var FindBestTask4LogicalTableDual func(lp base.LogicalPlan, prop *property.PhysicalProperty,
 	planCounter *base.PlanCounterTp, opt *optimizetrace.PhysicalOptimizeOp) (base.Task, int64, error)
 
+// FindBestTask4LogicalDataSource will be called by LogicalDataSource in logicalOp pkg.
+var FindBestTask4LogicalDataSource func(lp base.LogicalPlan, prop *property.PhysicalProperty,
+	planCounter *base.PlanCounterTp, opt *optimizetrace.PhysicalOptimizeOp) (t base.Task, cntPlan int64, err error)
+
 // ExhaustPhysicalPlans4LogicalSequence will be called by LogicalSequence in logicalOp pkg.
 var ExhaustPhysicalPlans4LogicalSequence func(lp base.LogicalPlan, prop *property.PhysicalProperty) (
 	[]base.PhysicalPlan, bool, error)
@@ -174,6 +178,27 @@ var ExhaustPhysicalPlans4LogicalExpand func(lp base.LogicalPlan, prop *property.
 // ExhaustPhysicalPlans4LogicalCTE will be called by LogicalCTE in logicalOp pkg.
 var ExhaustPhysicalPlans4LogicalCTE func(lp base.LogicalPlan, prop *property.PhysicalProperty) (
 	[]base.PhysicalPlan, bool, error)
+
+// ****************************************** stats related **********************************************
+
+// DeriveStats4DataSource will be called by LogicalDataSource in logicalOp pkg.
+var DeriveStats4DataSource func(lp base.LogicalPlan, colGroups [][]*expression.Column) (*property.StatsInfo, error)
+
+// DeriveStats4LogicalIndexScan will be called by LogicalIndexScan in logicalOp pkg.
+var DeriveStats4LogicalIndexScan func(lp base.LogicalPlan, selfSchema *expression.Schema) (*property.StatsInfo, error)
+
+// DeriveStats4LogicalTableScan will be called by LogicalTableScan in logicalOp pkg.
+var DeriveStats4LogicalTableScan func(lp base.LogicalPlan) (_ *property.StatsInfo, err error)
+
+// AddPrefix4ShardIndexes will be called by LogicalSelection in logicalOp pkg.
+var AddPrefix4ShardIndexes func(lp base.LogicalPlan, sc base.PlanContext,
+	conds []expression.Expression) []expression.Expression
+
+// ApplyPredicateSimplification will be called by LogicalSelection in logicalOp pkg.
+var ApplyPredicateSimplification func(base.PlanContext, []expression.Expression) []expression.Expression
+
+// IsSingleScan check whether the data source is a single scan.
+var IsSingleScan func(ds base.LogicalPlan, indexColumns []*expression.Column, idxColLens []int) bool
 
 // *************************************** physical op related *******************************************
 

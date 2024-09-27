@@ -1,0 +1,35 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "metabuild",
+    srcs = ["context.go"],
+    importpath = "github.com/pingcap/tidb/pkg/meta/metabuild",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/expression/exprctx",
+        "//pkg/expression/exprstatic",
+        "//pkg/infoschema/context",
+        "//pkg/parser/mysql",
+        "//pkg/sessionctx/variable",
+        "//pkg/util/intest",
+    ],
+)
+
+go_test(
+    name = "metabuild_test",
+    timeout = "short",
+    srcs = ["context_test.go"],
+    flaky = True,
+    deps = [
+        ":metabuild",
+        "//pkg/expression/exprctx",
+        "//pkg/expression/exprstatic",
+        "//pkg/infoschema",
+        "//pkg/infoschema/context",
+        "//pkg/parser/charset",
+        "//pkg/parser/mysql",
+        "//pkg/sessionctx/variable",
+        "//pkg/util/deeptest",
+        "@com_github_stretchr_testify//require",
+    ],
+)
