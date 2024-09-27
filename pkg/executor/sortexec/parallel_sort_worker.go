@@ -22,9 +22,9 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/memory"
+	"github.com/pingcap/tidb/pkg/util/sqlkiller"
 )
 
 // SignalCheckpointForSort indicates the times of row comparation that a signal detection will be triggered.
@@ -53,7 +53,7 @@ type parallelSortWorker struct {
 	rowNumInChunkIters int
 	merger             *multiWayMerger
 
-	sessCtx sessionctx.Context
+	sqlKiller *sqlkiller.SQLKiller
 }
 
 func newParallelSortWorker(
@@ -67,7 +67,8 @@ func newParallelSortWorker(
 	sortedRowsIter *chunk.Iterator4Slice,
 	maxChunkSize int,
 	spillHelper *parallelSortSpillHelper,
-	sessCtx sessionctx.Context) *parallelSortWorker {
+	sqlKiller *sqlkiller.SQLKiller,
+) *parallelSortWorker {
 	return &parallelSortWorker{
 		workerIDForTest:        workerIDForTest,
 		lessRowFunc:            lessRowFunc,
@@ -80,7 +81,7 @@ func newParallelSortWorker(
 		sortedRowsIter:         sortedRowsIter,
 		maxSortedRowsLimit:     maxChunkSize * 30,
 		spillHelper:            spillHelper,
-		sessCtx:                sessCtx,
+		sqlKiller:              sqlKiller,
 	}
 }
 
@@ -135,8 +136,8 @@ func (p *parallelSortWorker) multiWayMergeLocalSortedRows() ([]chunk.Row, error)
 			return nil, err
 		}
 
-		if loopCnt%100 == 0 && p.sessCtx != nil {
-			err := p.sessCtx.GetSessionVars().SQLKiller.HandleSignal()
+		if loopCnt%100 == 0 && p.sqlKiller != nil {
+			err := p.sqlKiller.HandleSignal()
 			if err != nil {
 				return nil, err
 			}
@@ -233,8 +234,8 @@ func (p *parallelSortWorker) fetchChunksAndSortImpl() bool {
 }
 
 func (p *parallelSortWorker) keyColumnsLess(i, j chunk.Row) int {
-	if p.timesOfRowCompare >= SignalCheckpointForSort && p.sessCtx != nil {
-		err := p.sessCtx.GetSessionVars().SQLKiller.HandleSignal()
+	if p.timesOfRowCompare >= SignalCheckpointForSort && p.sqlKiller != nil {
+		err := p.sqlKiller.HandleSignal()
 		if err != nil {
 			panic(err)
 		}
