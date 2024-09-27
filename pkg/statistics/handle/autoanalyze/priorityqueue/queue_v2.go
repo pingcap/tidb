@@ -179,7 +179,13 @@ func (pq *AnalysisPriorityQueueV2) RefreshLastAnalysisDuration() {
 					zap.Int64("tableID", job.GetTableID()),
 					zap.String("job", job.String()),
 				)
-				continue
+				err := pq.inner.Delete(job)
+				if err != nil {
+					statslogutil.StatsLogger().Error("Failed to delete job from priority queue",
+						zap.Error(err),
+						zap.String("job", job.String()),
+					)
+				}
 			}
 			indicators.LastAnalysisDuration = jobFactory.GetTableLastAnalyzeDuration(tableStats)
 			job.SetIndicators(indicators)
