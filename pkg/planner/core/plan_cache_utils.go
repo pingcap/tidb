@@ -294,11 +294,24 @@ func NewPlanCacheKey(sctx sessionctx.Context, stmt *PlanCacheStmt) (key, binding
 	}
 	_, connCollation := vars.GetCharsetInfo()
 
+	// not allow to share the same plan among different users for safety.
+	var userName, hostName string
+	if sctx.GetSessionVars().User != nil { // might be nil if in test
+		userName = sctx.GetSessionVars().User.AuthUsername
+		hostName = sctx.GetSessionVars().User.AuthHostname
+	}
+
+	// the user might switch the prune mode dynamically
+	pruneMode := sctx.GetSessionVars().PartitionPruneMode.Load()
+
 	hash := make([]byte, 0, len(stmt.StmtText)*2) // TODO: a Pool for this
+	hash = append(hash, hack.Slice(userName)...)
+	hash = append(hash, hack.Slice(hostName)...)
 	hash = append(hash, hack.Slice(stmtDB)...)
 	hash = append(hash, hack.Slice(stmt.StmtText)...)
 	hash = codec.EncodeInt(hash, stmt.SchemaVersion)
 	hash = hashInt64Uint64Map(hash, stmt.RelateVersion)
+	hash = append(hash, pruneMode...)
 	// Only be set in rc or for update read and leave it default otherwise.
 	// In Rc or ForUpdateRead, we should check whether the information schema has been changed when using plan cache.
 	// If it changed, we should rebuild the plan. lastUpdatedSchemaVersion help us to decide whether we should rebuild
