@@ -215,6 +215,7 @@ type Domain struct {
 
 	instancePlanCache sessionctx.InstancePlanCache // the instance level plan cache
 
+	statsOwner owner.Manager
 	// deferFn is used to release infoschema object lazily during v1 and v2 switch
 	deferFn
 }
@@ -2313,20 +2314,22 @@ func (do *Domain) UpdateTableStatsLoop(ctx, initStatsCtx sessionctx.Context) err
 	if do.statsLease >= 0 {
 		do.wg.Run(do.loadStatsWorker, "loadStatsWorker")
 	}
-	owner := do.newOwnerManager(handle.StatsPrompt, handle.StatsOwnerKey)
+	variable.EnableStatsOwner = do.enableStatsOwner
+	variable.DisableStatsOwner = do.disableStatsOwner
+	do.statsOwner = do.newOwnerManager(handle.StatsPrompt, handle.StatsOwnerKey)
 	do.wg.Run(func() {
 		do.indexUsageWorker()
 	}, "indexUsageWorker")
 	if do.statsLease <= 0 {
 		// For statsLease > 0, `updateStatsWorker` handles the quit of stats owner.
-		do.wg.Run(func() { quitStatsOwner(do, owner) }, "quitStatsOwner")
+		do.wg.Run(func() { quitStatsOwner(do, do.statsOwner) }, "quitStatsOwner")
 		return nil
 	}
 	do.SetStatsUpdating(true)
 	// The stats updated worker doesn't require the stats initialization to be completed.
 	// This is because the updated worker's primary responsibilities are to update the change delta and handle DDL operations.
 	// These tasks do not interfere with or depend on the initialization process.
-	do.wg.Run(func() { do.updateStatsWorker(ctx, owner) }, "updateStatsWorker")
+	do.wg.Run(func() { do.updateStatsWorker(ctx) }, "updateStatsWorker")
 	do.wg.Run(func() {
 		do.handleDDLEvent()
 	}, "handleDDLEvent")
@@ -2339,7 +2342,7 @@ func (do *Domain) UpdateTableStatsLoop(ctx, initStatsCtx sessionctx.Context) err
 			case <-do.exit: // It may happen that before initStatsDone, tidb receive Ctrl+C
 				return
 			}
-			do.autoAnalyzeWorker(owner)
+			do.autoAnalyzeWorker()
 		},
 		"autoAnalyzeWorker",
 	)
@@ -2350,7 +2353,7 @@ func (do *Domain) UpdateTableStatsLoop(ctx, initStatsCtx sessionctx.Context) err
 			case <-do.exit: // It may happen that before initStatsDone, tidb receive Ctrl+C
 				return
 			}
-			do.analyzeJobsCleanupWorker(owner)
+			do.analyzeJobsCleanupWorker()
 		},
 		"analyzeJobsCleanupWorker",
 	)
@@ -2380,6 +2383,25 @@ func (do *Domain) UpdateTableStatsLoop(ctx, initStatsCtx sessionctx.Context) err
 	return nil
 }
 
+// enableStatsOwner enables this node to execute stats owner jobs.
+// Since ownerManager.CampaignOwner will start a new goroutine to run ownerManager.campaignLoop,
+// we should make sure that before invoking enableStatsOwner(), stats owner is DISABLE.
+func (do *Domain) enableStatsOwner() error {
+	if !do.statsOwner.IsOwner() {
+		err := do.statsOwner.CampaignOwner()
+		return errors.Trace(err)
+	}
+	return nil
+}
+
+// disableStatsOwner disable this node to execute stats owner.
+// We should make sure that before invoking disableStatsOwner(), stats owner is ENABLE.
+func (do *Domain) disableStatsOwner() error {
+	// disable campaign by interrupting campaignLoop
+	do.statsOwner.CampaignCancel()
+	return nil
+}
+
 func quitStatsOwner(do *Domain, mgr owner.Manager) {
 	<-do.exit
 	mgr.Cancel()
@@ -2404,9 +2426,11 @@ func (do *Domain) newOwnerManager(prompt, ownerKey string) owner.Manager {
 		statsOwner = owner.NewOwnerManager(context.Background(), do.etcdClient, prompt, id, ownerKey)
 	}
 	// TODO: Need to do something when err is not nil.
-	err := statsOwner.CampaignOwner()
-	if err != nil {
-		logutil.BgLogger().Warn("campaign owner failed", zap.Error(err))
+	if ownerKey == handle.StatsOwnerKey && config.GetGlobalConfig().Instance.TiDBEnableStatsOwner.Load() {
+		err := statsOwner.CampaignOwner()
+		if err != nil {
+			logutil.BgLogger().Warn("campaign owner failed", zap.Error(err))
+		}
 	}
 	return statsOwner
 }
@@ -2493,7 +2517,7 @@ func (do *Domain) indexUsageWorker() {
 	}
 }
 
-func (*Domain) updateStatsWorkerExitPreprocessing(statsHandle *handle.Handle, owner owner.Manager) {
+func (do *Domain) updateStatsWorkerExitPreprocessing(statsHandle *handle.Handle) {
 	ch := make(chan struct{}, 1)
 	timeout, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
@@ -2501,7 +2525,7 @@ func (*Domain) updateStatsWorkerExitPreprocessing(statsHandle *handle.Handle, ow
 		logutil.BgLogger().Info("updateStatsWorker is going to exit, start to flush stats")
 		statsHandle.FlushStats()
 		logutil.BgLogger().Info("updateStatsWorker ready to release owner")
-		owner.Cancel()
+		do.statsOwner.Cancel()
 		ch <- struct{}{}
 	}()
 	select {
@@ -2532,7 +2556,7 @@ func (do *Domain) handleDDLEvent() {
 	}
 }
 
-func (do *Domain) updateStatsWorker(_ sessionctx.Context, owner owner.Manager) {
+func (do *Domain) updateStatsWorker(_ sessionctx.Context) {
 	defer util.Recover(metrics.LabelDomain, "updateStatsWorker", nil, false)
 	logutil.BgLogger().Info("updateStatsWorker started.")
 	lease := do.statsLease
@@ -2558,7 +2582,7 @@ func (do *Domain) updateStatsWorker(_ sessionctx.Context, owner owner.Manager) {
 	for {
 		select {
 		case <-do.exit:
-			do.updateStatsWorkerExitPreprocessing(statsHandle, owner)
+			do.updateStatsWorkerExitPreprocessing(statsHandle)
 			return
 		case <-deltaUpdateTicker.C:
 			err := statsHandle.DumpStatsDeltaToKV(false)
@@ -2566,7 +2590,7 @@ func (do *Domain) updateStatsWorker(_ sessionctx.Context, owner owner.Manager) {
 				logutil.BgLogger().Debug("dump stats delta failed", zap.Error(err))
 			}
 		case <-gcStatsTicker.C:
-			if !owner.IsOwner() {
+			if !do.statsOwner.IsOwner() {
 				continue
 			}
 			err := statsHandle.GCStats(do.InfoSchema(), do.GetSchemaLease())
@@ -2587,7 +2611,7 @@ func (do *Domain) updateStatsWorker(_ sessionctx.Context, owner owner.Manager) {
 	}
 }
 
-func (do *Domain) autoAnalyzeWorker(owner owner.Manager) {
+func (do *Domain) autoAnalyzeWorker() {
 	defer util.Recover(metrics.LabelDomain, "autoAnalyzeWorker", nil, false)
 	statsHandle := do.StatsHandle()
 	analyzeTicker := time.NewTicker(do.statsLease)
@@ -2598,7 +2622,7 @@ func (do *Domain) autoAnalyzeWorker(owner owner.Manager) {
 	for {
 		select {
 		case <-analyzeTicker.C:
-			if variable.RunAutoAnalyze.Load() && !do.stopAutoAnalyze.Load() && owner.IsOwner() {
+			if variable.RunAutoAnalyze.Load() && !do.stopAutoAnalyze.Load() && do.statsOwner.IsOwner() {
 				statsHandle.HandleAutoAnalyze()
 			}
 		case <-do.exit:
@@ -2621,7 +2645,7 @@ func (do *Domain) autoAnalyzeWorker(owner owner.Manager) {
 //     It first retrieves the list of current analyze processes, then removes any analyze job
 //     that is not associated with a current process. Additionally, if the current instance is the owner,
 //     it also cleans up corrupted analyze jobs on dead instances.
-func (do *Domain) analyzeJobsCleanupWorker(owner owner.Manager) {
+func (do *Domain) analyzeJobsCleanupWorker() {
 	defer util.Recover(metrics.LabelDomain, "analyzeJobsCleanupWorker", nil, false)
 	// For GC.
 	const gcInterval = time.Hour
@@ -2642,7 +2666,7 @@ func (do *Domain) analyzeJobsCleanupWorker(owner owner.Manager) {
 		select {
 		case <-gcTicker.C:
 			// Only the owner should perform this operation.
-			if owner.IsOwner() {
+			if do.statsOwner.IsOwner() {
 				updateTime := time.Now().AddDate(0, 0, -daysToKeep)
 				err := statsHandle.DeleteAnalyzeJobs(updateTime)
 				if err != nil {
@@ -2666,7 +2690,7 @@ func (do *Domain) analyzeJobsCleanupWorker(owner owner.Manager) {
 				logutil.BgLogger().Warn("cleanup analyze jobs on current instance failed", zap.Error(err))
 			}
 
-			if owner.IsOwner() {
+			if do.statsOwner.IsOwner() {
 				err = statsHandle.CleanupCorruptedAnalyzeJobsOnDeadInstances()
 				if err != nil {
 					logutil.BgLogger().Warn("cleanup analyze jobs on dead instances failed", zap.Error(err))

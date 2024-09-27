@@ -1716,6 +1716,10 @@ var (
 	SetLowResolutionTSOUpdateInterval func(interval time.Duration) error = nil
 	// ChangeSchemaCacheSize is called when tidb_schema_cache_size is changed.
 	ChangeSchemaCacheSize func(ctx context.Context, size uint64) error
+	// EnableStatsOwner is the func registered by stats to enable running stats in this instance.
+	EnableStatsOwner func() error = nil
+	// DisableStatsOwner is the func registered by stats to disable running stats in this instance.
+	DisableStatsOwner func() error = nil
 )
 
 // Hooks functions for Cluster Resource Control.
