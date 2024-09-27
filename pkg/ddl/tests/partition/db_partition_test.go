@@ -3734,3 +3734,48 @@ func checkGlobalAndPK(t *testing.T, tk *testkit.TestKit, name string, indexes in
 		require.True(t, idxInfo.Primary)
 	}
 }
+
+func TestGlobalIndexAllPartCols(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set tidb_enable_global_index=1")
+	tk.MustExec("use test")
+	tk.MustExec("CREATE table t (\n" +
+		" id bigint NOT NULL AUTO_INCREMENT,\n" +
+		" `updated_at` timestamp(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),\n" +
+		" user_id bigint DEFAULT NULL,\n" +
+		" data varchar(255) DEFAULT 'FILLER',\n" +
+		" PRIMARY KEY (id),\n" +
+		" UNIQUE KEY idx_user_id (user_id, id) global,\n" +
+		" KEY idx_updated_at (updated_at)\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=latin1\n" +
+		"PARTITION BY KEY(id)\n" +
+		"PARTITIONS 64")
+
+	tk.MustExec(`insert into t (user_id) values (1),(2),(3),(4),(5),(6),(7),(8),(9),(10)`)
+	tt := external.GetTableByName(t, tk, "test", "t")
+	idxInfo := tt.Meta().FindIndexByName("idx_user_id")
+	require.NotNil(t, idxInfo)
+	tk.MustExec(`insert into t (user_id) select t.user_id + 10 from t`)
+	tk.MustExec(`insert into t (user_id) select t.user_id + 20 from t`)
+	tk.MustExec(`insert into t (user_id) select t.user_id + 40 from t`)
+	tk.MustExec(`insert into t (user_id) select t.user_id + 80 from t`)
+	tk.MustExec(`insert into t (user_id) select t.user_id + 160 from t`)
+	tk.MustExec(`insert into t (user_id) select t.user_id + 320 from t`)
+	tk.MustExec(`insert into t (user_id) select t.user_id + 640 from t`)
+	tk.MustExec(`insert into t (user_id) select t.user_id + 1280 from t`)
+	res := tk.MustQuery(`select * from t where user_id = 111`)
+	tk.MustExec(`update t set data = 'Hi!' where user_id = 111 order by id limit 1`)
+	tk.MustExec(`analyze table t`)
+	// This will also test prepared statement!
+	res2 := tk.MustQuery(`select * from t where id = ?`, res.Rows()[0][0])
+	require.Greater(t, res2.Rows()[0][1], res.Rows()[0][1])
+	tk.MustQuery(`explain format='brief' select * from t where user_id = 111`).Check(testkit.Rows(""+
+		"IndexLookUp 1.00 root partition:all ",
+		"├─IndexRangeScan(Build) 1.00 cop[tikv] table:t, index:idx_user_id(user_id, id) range:[111,111], keep order:false",
+		"└─TableRowIDScan(Probe) 1.00 cop[tikv] table:t keep order:false"))
+	tk.MustQuery(`select * from t where user_id = 111 and id = ` + res.Rows()[0][0].(string)).Check(testkit.Rows(res.Rows()[0][0].(string) + ` ` + res2.Rows()[0][1].(string) + ` 111 Hi!`))
+	tk.MustQuery(`explain format='brief' select * from t where user_id = 111 and id = ` + res.Rows()[0][0].(string)).Check(testkit.Rows(""+
+		"Selection 1.00 root  eq(test.t.user_id, 111)",
+		"└─Point_Get 1.00 root table:t, partition:p61 handle:111"))
+}

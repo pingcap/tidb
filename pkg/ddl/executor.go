@@ -968,15 +968,6 @@ func checkGlobalIndex(ctx sessionctx.Context, tblInfo *model.TableInfo, indexInf
 		if !indexInfo.Unique {
 			return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("GLOBAL IndexOption on non-unique index")
 		}
-		// TODO: remove limitation
-		// check that not all partitioned columns are included.
-		inAllPartitionColumns, err := checkPartitionKeysConstraint(pi, indexInfo.Columns, tblInfo)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		if inAllPartitionColumns {
-			return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("Global Index including all columns in the partitioning expression")
-		}
 	}
 	return nil
 }
