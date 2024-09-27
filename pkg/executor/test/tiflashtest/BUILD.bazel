@@ -9,11 +9,7 @@ go_test(
     ],
     flaky = True,
     race = "on",
-<<<<<<< HEAD
-    shard_count = 39,
-=======
-    shard_count = 45,
->>>>>>> 8df006280e9 (planner: make converge index merge path feel the prefer tiflash hint (#56227))
+    shard_count = 40,
     deps = [
         "//pkg/config",
         "//pkg/domain",

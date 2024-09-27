@@ -1137,15 +1137,11 @@ func (ds *DataSource) findBestTask(prop *property.PhysicalProperty, planCounter 
 	for _, candidate := range candidates {
 		path := candidate.path
 		if path.PartialIndexPaths != nil {
-<<<<<<< HEAD
-			idxMergeTask, err := ds.convertToIndexMergeScan(prop, candidate, opt)
-=======
 			// prefer tiflash, while current table path is tikv, skip it.
-			if ds.PreferStoreType&h.PreferTiFlash != 0 && path.StoreType == kv.TiKV {
+			if ds.preferStoreType&preferTiFlash != 0 && path.StoreType == kv.TiKV {
 				continue
 			}
-			idxMergeTask, err := convertToIndexMergeScan(ds, prop, candidate, opt)
->>>>>>> 8df006280e9 (planner: make converge index merge path feel the prefer tiflash hint (#56227))
+			idxMergeTask, err := ds.convertToIndexMergeScan(prop, candidate, opt)
 			if err != nil {
 				return nil, 0, err
 			}
@@ -1271,19 +1267,10 @@ func (ds *DataSource) findBestTask(prop *property.PhysicalProperty, planCounter 
 			}
 		}
 		if path.IsTablePath() {
-<<<<<<< HEAD
 			if ds.preferStoreType&preferTiFlash != 0 && path.StoreType == kv.TiKV {
 				continue
 			}
 			if ds.preferStoreType&preferTiKV != 0 && path.StoreType == kv.TiFlash {
-=======
-			// prefer tiflash, while current table path is tikv, skip it.
-			if ds.PreferStoreType&h.PreferTiFlash != 0 && path.StoreType == kv.TiKV {
-				continue
-			}
-			// prefer tikv, while current table path is tiflash, skip it.
-			if ds.PreferStoreType&h.PreferTiKV != 0 && path.StoreType == kv.TiFlash {
->>>>>>> 8df006280e9 (planner: make converge index merge path feel the prefer tiflash hint (#56227))
 				continue
 			}
 			var tblTask task
