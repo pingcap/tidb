@@ -6359,19 +6359,19 @@ func restoreByItemText(item *ast.ByItem) string {
 	return sb.String()
 }
 
-func compareItemsDesc(lItems []*ast.ByItem, rItems []*ast.ByItem) int {
+func compareItems(lItems []*ast.ByItem, rItems []*ast.ByItem) int {
 	minLen := min(len(lItems), len(rItems))
 	for i := 0; i < minLen; i++ {
-		res := strings.Compare(restoreByItemText(rItems[i]), restoreByItemText(lItems[i]))
+		res := strings.Compare(restoreByItemText(lItems[i]), restoreByItemText(rItems[i]))
 		if res != 0 {
 			return res
 		}
-		res = compareBool(rItems[i].Desc, lItems[i].Desc)
+		res = compareBool(lItems[i].Desc, rItems[i].Desc)
 		if res != 0 {
 			return res
 		}
 	}
-	return cmp.Compare(len(rItems), len(lItems))
+	return cmp.Compare(len(lItems), len(rItems))
 }
 
 type windowFuncs struct {
@@ -6391,8 +6391,9 @@ func sortWindowSpecs(groupedFuncs map[*ast.WindowSpec][]*ast.WindowFuncExpr, ord
 	slices.SortStableFunc(windows, func(x, y windowFuncs) int {
 		lItemsBuf = getAllByItems(lItemsBuf, x.spec)
 		rItemsBuf = getAllByItems(rItemsBuf, y.spec)
-		return compareItemsDesc(lItemsBuf, rItemsBuf)
+		return compareItems(lItemsBuf, rItemsBuf)
 	})
+	slices.Reverse(windows)
 	return windows
 }
 
