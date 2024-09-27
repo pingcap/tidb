@@ -1060,7 +1060,6 @@ func GetTableColumnArgs(job *Job) (*TableColumnArgs, error) {
 			return nil, errors.Trace(err)
 		}
 		return &TableColumnArgs{AddColumnArgs: addArgs}, nil
-
 	}
 	return getOrDecodeArgsV2[*TableColumnArgs](job)
 }
