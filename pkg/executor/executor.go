@@ -225,19 +225,19 @@ type CommandDDLJobsExec struct {
 	jobIDs []int64
 	errs   []error
 
-	execute func(se sessionctx.Context, ids []int64) (errs []error, err error)
+	execute func(ctx context.Context, se sessionctx.Context, ids []int64) (errs []error, err error)
 }
 
 // Open implements the Executor for all Cancel/Pause/Resume command on DDL jobs
 // just with different processes. And, it should not be called directly by the
 // Executor.
-func (e *CommandDDLJobsExec) Open(context.Context) error {
+func (e *CommandDDLJobsExec) Open(ctx context.Context) error {
 	// We want to use a global transaction to execute the admin command, so we don't use e.Ctx() here.
 	newSess, err := e.GetSysSession()
 	if err != nil {
 		return err
 	}
-	e.errs, err = e.execute(newSess, e.jobIDs)
+	e.errs, err = e.execute(ctx, newSess, e.jobIDs)
 	e.ReleaseSysSession(kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL), newSess)
 	return err
 }
@@ -448,7 +448,7 @@ func (e *DDLJobRetriever) initial(txn kv.Transaction, sess sessionctx.Context) e
 		// For instance, in the case of the SQL like `create table t(id int)`,
 		// the tableInfo for 't' will not be available in the infoschema until the job is completed.
 		// As a result, we cannot retrieve its table_id.
-		e.runningJobs, err = ddl.GetAllDDLJobs(sess)
+		e.runningJobs, err = ddl.GetAllDDLJobs(context.Background(), sess)
 		if err != nil {
 			return err
 		}
@@ -640,7 +640,7 @@ func (e *ShowDDLJobQueriesExec) Open(ctx context.Context) error {
 	session.GetSessionVars().SetInTxn(true)
 
 	m := meta.NewMeta(txn)
-	jobs, err = ddl.GetAllDDLJobs(session)
+	jobs, err = ddl.GetAllDDLJobs(ctx, session)
 	if err != nil {
 		return err
 	}
@@ -728,7 +728,7 @@ func (e *ShowDDLJobQueriesWithRangeExec) Open(ctx context.Context) error {
 	session.GetSessionVars().SetInTxn(true)
 
 	m := meta.NewMeta(txn)
-	jobs, err = ddl.GetAllDDLJobs(session)
+	jobs, err = ddl.GetAllDDLJobs(ctx, session)
 	if err != nil {
 		return err
 	}
