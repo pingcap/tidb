@@ -354,7 +354,7 @@ func checkRowForExchangePartition(sctx sessionctx.Context, row []types.Datum, tb
 		return err
 	}
 	if variable.EnableCheckConstraint.Load() {
-		if err = table.CheckRowConstraintWithDatum(evalCtx, pt.WritableConstraint(), row); err != nil {
+		if err = table.CheckRowConstraintWithDatum(sctx.GetExprCtx(), pt.WritableConstraint(), row, tbl); err != nil {
 			// TODO: make error include ExchangePartition info.
 			return err
 		}

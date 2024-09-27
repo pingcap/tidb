@@ -1593,8 +1593,7 @@ func checkConstraintForExchangePartition(ctx table.MutateContext, row []types.Da
 		}
 	}
 
-	evalCtx := ctx.GetExprCtx().GetEvalCtx()
-	if err := table.CheckRowConstraintWithDatum(evalCtx, nt.WritableConstraint(), row); err != nil {
+	if err := table.CheckRowConstraintWithDatum(ctx.GetExprCtx(), nt.WritableConstraint(), row, nt.Meta()); err != nil {
 		// TODO: make error include ExchangePartition info.
 		return err
 	}
