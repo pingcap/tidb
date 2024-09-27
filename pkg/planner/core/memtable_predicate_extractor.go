@@ -1308,13 +1308,12 @@ func (e *SlowQueryExtractor) setTimeRange(start, end int64) {
 	if start != 0 {
 		startTime = e.convertToTime(start)
 	} else {
-		startTime = time.Time{}
+		startTime, _ = types.MinDatetime.GoTime(time.UTC)
 	}
 	if end != 0 {
 		endTime = e.convertToTime(end)
 	} else {
-		// 253402300799 is the unix timestamp of UTC 9999-12-31 23:59:59, and it's the max value of DATETIME in TiDB. see types.MaxDatetime.
-		endTime = time.Unix(253402300799, 999999)
+		endTime, _ = types.MaxDatetime.GoTime(time.UTC)
 	}
 	timeRange := &TimeRange{
 		StartTime: startTime,

@@ -143,6 +143,10 @@ select 7;`
 			result: []string{"1"},
 		},
 		{
+			sql:    "select count(*) from %s where time < '2020-05-15 20:00:00'",
+			result: []string{"7"},
+		},
+		{
 			sql:    "select query from %s where time > '2019-01-26 21:51:00' and time < now()",
 			result: []string{"select 1;", "select 2;", "select 3;", "select 4;", "select 5;", "select 6;", "select 7;"},
 		},
