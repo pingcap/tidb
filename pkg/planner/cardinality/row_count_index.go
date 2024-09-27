@@ -257,7 +257,7 @@ func getIndexRowCountForStatsV2(sctx context.PlanContext, idx *statistics.Index,
 						}
 						continue
 					}
-					totalCount = float64(idx.NullCount)
+					totalCount = max(1, float64(idx.NullCount))
 					if debugTrace {
 						debugTraceEndEstimateRange(sctx, float64(idx.NullCount), debugTraceUniquePoint)
 					}
