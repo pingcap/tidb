@@ -16,11 +16,13 @@ package cache
 
 import (
 	"sync/atomic"
+	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/infoschema"
+	tidbmetrics "github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/statistics/handle/cache/internal/metrics"
@@ -59,6 +61,7 @@ func NewStatsCacheImplForTest() (util.StatsCache, error) {
 
 // Update reads stats meta from store and updates the stats map.
 func (s *StatsCacheImpl) Update(is infoschema.InfoSchema) error {
+	start := time.Now()
 	lastVersion := s.MaxTableStatsVersion()
 	// We need this because for two tables, the smaller version may write later than the one with larger version.
 	// Consider the case that there are two tables A and B, their version and commit time is (A0, A1) and (B0, B1),
@@ -115,6 +118,8 @@ func (s *StatsCacheImpl) Update(is infoschema.InfoSchema) error {
 		tables = append(tables, tbl)
 	}
 	s.UpdateStatsCache(tables, deletedTableIDs)
+	dur := time.Since(start)
+	tidbmetrics.StatsDeltaLoadHistogram.Observe(dur.Seconds())
 	return nil
 }
 
