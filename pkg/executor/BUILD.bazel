@@ -320,7 +320,6 @@ go_test(
         "executor_pkg_test.go",
         "executor_required_rows_test.go",
         "executor_test.go",
-        "executor_txn_test.go",
         "explain_test.go",
         "explain_unit_test.go",
         "explainfor_test.go",
