@@ -673,11 +673,13 @@ func findTableAndSchemaByName(
 		tableSlice = append(tableSlice, st.table)
 	}
 	sort.Slice(schemaSlice, func(i, j int) bool {
-		cmp := schemaSlice[i].L < schemaSlice[j].L
-		if cmp {
+		iSchema, jSchema := schemaSlice[i].L, schemaSlice[j].L
+		less := iSchema < jSchema ||
+			(iSchema == jSchema && tableSlice[i].Name.L < tableSlice[j].Name.L)
+		if less {
 			tableSlice[i], tableSlice[j] = tableSlice[j], tableSlice[i]
 		}
-		return cmp
+		return less
 	})
 	return schemaSlice, tableSlice, nil
 }
@@ -705,6 +707,9 @@ func listTablesForEachSchema(
 	return schemaSlice, tableSlice, nil
 }
 
+// findSchemasForTables finds a schema for each tableInfo, and it
+// returns a schema slice and a table slice that has the same length.
+// Note that input arg "tableSlice" will be changed in place.
 func findSchemasForTables(
 	ctx context.Context,
 	is infoschema.InfoSchema,
@@ -740,11 +745,13 @@ func findSchemasForTables(
 		}
 	}
 	sort.Slice(schemaSlice, func(i, j int) bool {
-		cmp := schemaSlice[i].L < schemaSlice[j].L
-		if cmp {
+		iSchema, jSchema := schemaSlice[i].L, schemaSlice[j].L
+		less := iSchema < jSchema ||
+			(iSchema == jSchema && remains[i].Name.L < remains[j].Name.L)
+		if less {
 			remains[i], remains[j] = remains[j], remains[i]
 		}
-		return cmp
+		return less
 	})
 	return schemaSlice, remains, nil
 }
