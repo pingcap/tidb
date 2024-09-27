@@ -122,7 +122,6 @@ go_library(
         "//pkg/planner/cardinality",
         "//pkg/planner/cascades/base",
         "//pkg/planner/core/base",
-        "//pkg/planner/core/constraint",
         "//pkg/planner/core/cost",
         "//pkg/planner/core/metrics",
         "//pkg/planner/core/operator/baseimpl",
