@@ -450,7 +450,6 @@ func TestImmediatelyCancel(t *testing.T) {
 	defer tInfo.Close(t)
 	ownerManager := d.OwnerManager()
 	for i := 0; i < 100; i++ {
-		//fmt.Printf("TestImmediatelyCancleLoop %d\n", i)
 		err := ownerManager.CampaignOwner()
 		//time.Sleep(100 * time.Millisecond)
 		require.NoError(t, err)
