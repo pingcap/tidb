@@ -16,12 +16,12 @@ package instanceplancache
 
 import (
 	"fmt"
-	"github.com/pingcap/tidb/pkg/parser/auth"
-	"github.com/stretchr/testify/require"
 	"testing"
 	"time"
 
+	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/stretchr/testify/require"
 )
 
 func TestInstancePlanCacheVars(t *testing.T) {
