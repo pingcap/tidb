@@ -60,6 +60,12 @@ explain select engine, DATA_LENGTH from information_schema.tables where table_na
 select engine, DATA_LENGTH from information_schema.tables where table_name ='t4' and upper(table_name) ='T4' and table_schema = 'infoschema__infoschema';
 drop table infoschema__infoschema.t4;
 drop table infoschema__infoschema.t5;
+create table caseSensitive (a int);
+create table unrelatedTable (a int);
+select table_schema, table_name from information_schema.tables where table_schema = 'infoschema__infoschema' and table_name like '%aseSensitive';
+select table_schema, table_name, tidb_pk_type from information_schema.tables where table_schema = 'infoschema__infoschema' and table_name like '%aseSensitive';
+drop table caseSensitive;
+drop table unrelatedTable;
 
 # TestPartitionsColumn
 create table pt1(a int primary key, b int) partition by hash(a) partitions 4;
