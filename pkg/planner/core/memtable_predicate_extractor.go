@@ -1301,22 +1301,17 @@ func (e *SlowQueryExtractor) Extract(ctx PlanContext,
 }
 
 func (e *SlowQueryExtractor) setTimeRange(start, end int64) {
-	const defaultSlowQueryDuration = 24 * time.Hour
 	var startTime, endTime time.Time
-	if start == 0 && end == 0 {
-		return
-	}
 	if start != 0 {
 		startTime = e.convertToTime(start)
+	} else {
+		startTime = time.Time{}
 	}
 	if end != 0 {
 		endTime = e.convertToTime(end)
-	}
-	if start == 0 {
-		startTime = endTime.Add(-defaultSlowQueryDuration)
-	}
-	if end == 0 {
-		endTime = startTime.Add(defaultSlowQueryDuration)
+	} else {
+		// The maximum time in Go, see https://stackoverflow.com/questions/25065055/what-is-the-maximum-time-time-in-go
+		endTime = time.Unix(1<<63-62135596801, 999999999)
 	}
 	timeRange := &TimeRange{
 		StartTime: startTime,
