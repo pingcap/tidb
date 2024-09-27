@@ -143,7 +143,11 @@ select 7;`
 			result: []string{"1"},
 		},
 		{
-			sql:    "select count(*) from %s where time < '2020-05-15 20:00:00'",
+			sql:    "select count(*) from %s where time > '1980-01-11 00:00:00'",
+			result: []string{"7"},
+		},
+		{
+			sql:    "select count(*) from %s where time < '2024-01-01 00:00:00'",
 			result: []string{"7"},
 		},
 		{
