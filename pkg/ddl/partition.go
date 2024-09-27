@@ -2168,9 +2168,6 @@ func (w *worker) rollbackLikeDropPartition(jobCtx *jobContext, t *meta.Meta, job
 			tblInfo.Partition = nil
 		}
 	}
-	if tblInfo.Partition != nil {
-		tblInfo.Partition.ClearReorgIntermediateInfo()
-	}
 
 	var dropIndices []*model.IndexInfo
 	for _, indexInfo := range tblInfo.Indices {
@@ -2184,6 +2181,9 @@ func (w *worker) rollbackLikeDropPartition(jobCtx *jobContext, t *meta.Meta, job
 		DropIndexColumnFlag(tblInfo, indexInfo)
 		RemoveDependentHiddenColumns(tblInfo, indexInfo)
 		removeIndexInfo(tblInfo, indexInfo)
+	}
+	if tblInfo.Partition != nil {
+		tblInfo.Partition.ClearReorgIntermediateInfo()
 	}
 
 	ver, err = updateVersionAndTableInfo(jobCtx, t, job, tblInfo, true)
