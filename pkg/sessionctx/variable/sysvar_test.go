@@ -1437,3 +1437,14 @@ func TestSetTiDBCloudStorageURI(t *testing.T) {
 	require.Len(t, val, 0)
 	cancel()
 }
+
+func TestEnableWindowFunction(t *testing.T) {
+	vars := NewSessionVars(nil)
+	require.Equal(t, vars.EnableWindowFunction, DefEnableWindowFunction)
+	require.NoError(t, vars.SetSystemVar(TiDBEnableWindowFunction, "on"))
+	require.Equal(t, vars.EnableWindowFunction, true)
+	require.NoError(t, vars.SetSystemVar(TiDBEnableWindowFunction, "0"))
+	require.Equal(t, vars.EnableWindowFunction, false)
+	require.NoError(t, vars.SetSystemVar(TiDBEnableWindowFunction, "1"))
+	require.Equal(t, vars.EnableWindowFunction, true)
+}

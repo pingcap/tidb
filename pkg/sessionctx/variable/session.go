@@ -2022,6 +2022,7 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		TiFlashComputeDispatchPolicy:  tiflashcompute.DispatchPolicyConsistentHash,
 		ResourceGroupName:             resourcegroup.DefaultResourceGroupName,
 		DefaultCollationForUTF8MB4:    mysql.DefaultCollationName,
+		EnableWindowFunction:          DefEnableWindowFunction,
 	}
 	vars.KVVars = tikvstore.NewVariables(&vars.Killed)
 	vars.StmtCtx.ResourceGroupName = resourcegroup.DefaultResourceGroupName
