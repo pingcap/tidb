@@ -1269,6 +1269,10 @@ var (
 	SetExternalTimestamp func(ctx context.Context, ts uint64) error
 	// GetExternalTimestamp is the func registered by staleread to get externaltimestamp from pd
 	GetExternalTimestamp func(ctx context.Context) (uint64, error)
+	// EnableStatsOwner is the func registered by stats to enable running stats in this instance.
+	EnableStatsOwner func() error = nil
+	// DisableStatsOwner is the func registered by stats to disable running stats in this instance.
+	DisableStatsOwner func() error = nil
 )
 
 func serverMemoryLimitDefaultValue() string {
