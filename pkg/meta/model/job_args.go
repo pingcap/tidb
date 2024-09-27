@@ -1539,3 +1539,15 @@ func GetPlacementPolicyArgs(job *Job) (*PlacementPolicyArgs, error) {
 
 	return getOrDecodeArgsV2[*PlacementPolicyArgs](job)
 }
+
+type ModifyColumnArgs struct {
+	Column                *ColumnInfo
+	OldColumnName         pmodel.CIStr
+	Position              *ast.ColumnPosition
+	ModifyColumnType      byte
+	UpdatedAutoRandomBits uint64
+}
+
+func (a *ModifyColumnArgs) fillJob(job *Job) {
+
+}

@@ -912,6 +912,7 @@ func GetModifiableColumnJob(
 	}
 
 	job := &model.Job{
+		Version:        model.JobVersion1,
 		SchemaID:       schema.ID,
 		TableID:        t.Meta().ID,
 		SchemaName:     schema.Name.L,
@@ -920,10 +921,19 @@ func GetModifiableColumnJob(
 		BinlogInfo:     &model.HistoryInfo{},
 		ReorgMeta:      NewDDLReorgMeta(sctx),
 		CtxVars:        []any{needChangeColData},
-		Args:           []any{&newCol.ColumnInfo, originalColName, spec.Position, modifyColumnTp, newAutoRandBits},
 		CDCWriteSource: sctx.GetSessionVars().CDCWriteSource,
 		SQLMode:        sctx.GetSessionVars().SQLMode,
 	}
+
+	args := &model.ModifyColumnArgs{
+		Column:                newCol.ColumnInfo,
+		OldColumnName:         originalColName,
+		Position:              spec.Position,
+		ModifyColumnType:      modifyColumnTp,
+		UpdatedAutoRandomBits: newAutoRandBits,
+	}
+	job.FillArgs(args)
+
 	return job, nil
 }
 
