@@ -1049,16 +1049,18 @@ func GetTableColumnArgs(job *Job) (*TableColumnArgs, error) {
 				return nil, errors.Trace(err)
 			}
 			return &TableColumnArgs{DropColumnArgs: dropArgs}, nil
-		} else {
-			addArgs := &AddColumnArgs{
-				Col: &ColumnInfo{},
-				Pos: &ast.ColumnPosition{},
-			}
-			if err := job.DecodeArgs(addArgs.Col, addArgs.Pos, &addArgs.Offset, &addArgs.IfNotExists); err != nil {
-				return nil, errors.Trace(err)
-			}
-			return &TableColumnArgs{AddColumnArgs: addArgs}, nil
 		}
+
+		// for add column ddl.
+		addArgs := &AddColumnArgs{
+			Col: &ColumnInfo{},
+			Pos: &ast.ColumnPosition{},
+		}
+		if err := job.DecodeArgs(addArgs.Col, addArgs.Pos, &addArgs.Offset, &addArgs.IfNotExists); err != nil {
+			return nil, errors.Trace(err)
+		}
+		return &TableColumnArgs{AddColumnArgs: addArgs}, nil
+
 	}
 	return getOrDecodeArgsV2[*TableColumnArgs](job)
 }
