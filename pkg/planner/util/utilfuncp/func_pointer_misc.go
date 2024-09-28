@@ -28,12 +28,6 @@ import (
 
 // this file is used for passing function pointer at init(){} to avoid some import cycles.
 
-// HasMaxOneRowUtil is used in baseLogicalPlan implementation of LogicalPlan interface, while
-// the original HasMaxOneRowUtil has some dependency of original core pkg: like Datasource which
-// hasn't been moved out of core pkg, so associative func pointer is introduced.
-// todo: (1) arenatlx, remove this func pointer when concrete Logical Operators moved out of core.
-var HasMaxOneRowUtil func(p base.LogicalPlan, childMaxOneRow []bool) bool
-
 // AppendCandidate4PhysicalOptimizeOp is used in all logicalOp's findBestTask to trace the physical
 // optimizing steps. Since we try to move baseLogicalPlan out of core, then other concrete logical
 // operators, this appendCandidate4PhysicalOptimizeOp will make logicalOp/pkg back import core/pkg;

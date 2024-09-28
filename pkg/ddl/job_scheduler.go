@@ -638,7 +638,7 @@ func (d *ddl) getTableByTxn(r autoid.Requirement, schemaID, tableID int64) (*mod
 	var tbl table.Table
 	var dbInfo *model.DBInfo
 	err := kv.RunInNewTxn(d.ctx, r.Store(), false, func(_ context.Context, txn kv.Transaction) error {
-		t := meta.NewMeta(txn)
+		t := meta.NewMutator(txn)
 		var err1 error
 		dbInfo, err1 = t.GetDatabase(schemaID)
 		if err1 != nil {
@@ -750,13 +750,18 @@ func job2TableIDs(jobW *JobWrapper) string {
 	}
 }
 
-func updateDDLJob2Table(se *sess.Session, job *model.Job, updateRawArgs bool) error {
+func updateDDLJob2Table(
+	ctx context.Context,
+	se *sess.Session,
+	job *model.Job,
+	updateRawArgs bool,
+) error {
 	b, err := job.Encode(updateRawArgs)
 	if err != nil {
 		return err
 	}
 	sql := fmt.Sprintf(updateDDLJobSQL, util.WrapKey2String(b), job.ID)
-	_, err = se.Execute(context.Background(), sql, "update_job")
+	_, err = se.Execute(ctx, sql, "update_job")
 	return errors.Trace(err)
 }
 
@@ -874,8 +879,12 @@ func cleanDDLReorgHandles(se *sess.Session, job *model.Job) error {
 	})
 }
 
-func getJobsBySQL(se *sess.Session, tbl, condition string) ([]*model.Job, error) {
-	rows, err := se.Execute(context.Background(), fmt.Sprintf("select job_meta from mysql.%s where %s", tbl, condition), "get_job")
+func getJobsBySQL(
+	ctx context.Context,
+	se *sess.Session,
+	tbl, condition string,
+) ([]*model.Job, error) {
+	rows, err := se.Execute(ctx, fmt.Sprintf("select job_meta from mysql.%s where %s", tbl, condition), "get_job")
 	if err != nil {
 		return nil, errors.Trace(err)
 	}

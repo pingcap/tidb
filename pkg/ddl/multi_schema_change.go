@@ -25,7 +25,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 )
 
-func onMultiSchemaChange(w *worker, jobCtx *jobContext, t *meta.Meta, job *model.Job) (ver int64, err error) {
+func onMultiSchemaChange(w *worker, jobCtx *jobContext, t *meta.Mutator, job *model.Job) (ver int64, err error) {
 	if job.MultiSchemaInfo.Revertible {
 		// Handle the rolling back job.
 		if job.IsRollingback() {
@@ -448,7 +448,7 @@ func rollingBackMultiSchemaChange(job *model.Job) error {
 	return dbterror.ErrCancelledDDLJob
 }
 
-func finishMultiSchemaJob(job *model.Job, t *meta.Meta) (ver int64, err error) {
+func finishMultiSchemaJob(job *model.Job, t *meta.Mutator) (ver int64, err error) {
 	for _, sub := range job.MultiSchemaInfo.SubJobs {
 		if ver < sub.SchemaVer {
 			ver = sub.SchemaVer

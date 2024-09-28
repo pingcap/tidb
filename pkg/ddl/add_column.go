@@ -52,7 +52,7 @@ import (
 	"go.uber.org/zap"
 )
 
-func onAddColumn(jobCtx *jobContext, t *meta.Meta, job *model.Job) (ver int64, err error) {
+func onAddColumn(jobCtx *jobContext, t *meta.Mutator, job *model.Job) (ver int64, err error) {
 	// Handle the rolling back job.
 	if job.IsRollingback() {
 		ver, err = onDropColumn(jobCtx, t, job)

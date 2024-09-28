@@ -90,7 +90,7 @@ type taskCheckpoint struct {
 type FlushController interface {
 	// Flush checks if al engines need to be flushed and imported based on given
 	// FlushMode. It's concurrent safe.
-	Flush(mode FlushMode) (flushed, imported bool, err error)
+	Flush(ctx context.Context, mode FlushMode) (flushed, imported bool, err error)
 }
 
 // NewCheckpointManager creates a new checkpoint manager.

@@ -196,7 +196,9 @@ func (m *ownerManager) CampaignOwner(withTTL ...int) error {
 	}
 	m.sessionLease.Store(int64(session.Lease()))
 	m.wg.Add(1)
-	go m.campaignLoop(session)
+	var campaignContext context.Context
+	campaignContext, m.campaignCancel = context.WithCancel(m.ctx)
+	go m.campaignLoop(campaignContext, session)
 	return nil
 }
 
@@ -241,9 +243,7 @@ func (m *ownerManager) CampaignCancel() {
 	m.wg.Wait()
 }
 
-func (m *ownerManager) campaignLoop(etcdSession *concurrency.Session) {
-	var campaignContext context.Context
-	campaignContext, m.campaignCancel = context.WithCancel(m.ctx)
+func (m *ownerManager) campaignLoop(campaignContext context.Context, etcdSession *concurrency.Session) {
 	defer func() {
 		m.campaignCancel()
 		if r := recover(); r != nil {

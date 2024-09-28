@@ -2215,7 +2215,7 @@ func (e *executor) AddColumn(ctx sessionctx.Context, ti ast.Ident, spec *ast.Alt
 	if err != nil {
 		return errors.Trace(err)
 	}
-	bdrRole, err := meta.NewMeta(txn).GetBDRRole()
+	bdrRole, err := meta.NewMutator(txn).GetBDRRole()
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -6320,7 +6320,7 @@ func (e *executor) genPlacementPolicyID() (int64, error) {
 	var ret int64
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
 	err := kv.RunInNewTxn(ctx, e.store, true, func(_ context.Context, txn kv.Transaction) error {
-		m := meta.NewMeta(txn)
+		m := meta.NewMutator(txn)
 		var err error
 		ret, err = m.GenPlacementPolicyID()
 		return err

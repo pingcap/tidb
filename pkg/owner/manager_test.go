@@ -439,6 +439,23 @@ func deleteLeader(cli *clientv3.Client, prefixKey string) error {
 	return errors.Trace(err)
 }
 
+func TestImmediatelyCancel(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("integration.NewClusterV3 will create file contains a colon which is not allowed on Windows")
+	}
+	integration.BeforeTestExternal(t)
+
+	tInfo := newTestInfo(t)
+	d := tInfo.ddl
+	defer tInfo.Close(t)
+	ownerManager := d.OwnerManager()
+	for i := 0; i < 10; i++ {
+		err := ownerManager.CampaignOwner()
+		require.NoError(t, err)
+		ownerManager.CampaignCancel()
+	}
+}
+
 func TestAcquireDistributedLock(t *testing.T) {
 	const addrFmt = "http://127.0.0.1:%d"
 	cfg := embed.NewConfig()

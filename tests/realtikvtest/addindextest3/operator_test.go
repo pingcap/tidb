@@ -59,7 +59,7 @@ func TestBackfillOperators(t *testing.T) {
 	var opTasks []ddl.TableScanTask
 	{
 		ctx := context.Background()
-		opCtx := ddl.NewDistTaskOperatorCtx(ctx, 1, 1)
+		opCtx, cancel := ddl.NewDistTaskOperatorCtx(ctx, 1, 1)
 		pTbl := tbl.(table.PhysicalTable)
 		src := ddl.NewTableScanTaskSource(opCtx, store, pTbl, startKey, endKey, nil)
 		sink := testutil.NewOperatorTestSink[ddl.TableScanTask]()
@@ -78,7 +78,7 @@ func TestBackfillOperators(t *testing.T) {
 		require.Equal(t, startKey, tasks[0].Start)
 		require.Equal(t, endKey, tasks[9].End)
 
-		opCtx.Cancel()
+		cancel()
 		require.NoError(t, opCtx.OperatorErr())
 
 		opTasks = tasks
@@ -94,7 +94,7 @@ func TestBackfillOperators(t *testing.T) {
 		}
 
 		ctx := context.Background()
-		opCtx := ddl.NewDistTaskOperatorCtx(ctx, 1, 1)
+		opCtx, cancel := ddl.NewDistTaskOperatorCtx(ctx, 1, 1)
 		src := testutil.NewOperatorTestSource(opTasks...)
 		scanOp := ddl.NewTableScanOperator(opCtx, sessPool, copCtx, srcChkPool, 3, nil, 0)
 		sink := testutil.NewOperatorTestSink[ddl.IndexRecordChunk]()
@@ -120,14 +120,14 @@ func TestBackfillOperators(t *testing.T) {
 		}
 		require.Equal(t, 10, cnt)
 
-		opCtx.Cancel()
+		cancel()
 		require.NoError(t, opCtx.OperatorErr())
 	}
 
 	// Test IndexIngestOperator.
 	{
 		ctx := context.Background()
-		opCtx := ddl.NewDistTaskOperatorCtx(ctx, 1, 1)
+		opCtx, cancel := ddl.NewDistTaskOperatorCtx(ctx, 1, 1)
 		var keys, values [][]byte
 		onWrite := func(key, val []byte) {
 			keys = append(keys, key)
@@ -166,7 +166,7 @@ func TestBackfillOperators(t *testing.T) {
 		require.Len(t, values, 10)
 		require.Equal(t, 10, cnt)
 
-		opCtx.Cancel()
+		cancel()
 		require.NoError(t, opCtx.OperatorErr())
 	}
 }
@@ -179,7 +179,8 @@ func TestBackfillOperatorPipeline(t *testing.T) {
 	sessPool := newSessPoolForTest(t, store)
 
 	ctx := context.Background()
-	opCtx := ddl.NewDistTaskOperatorCtx(ctx, 1, 1)
+	opCtx, cancel := ddl.NewDistTaskOperatorCtx(ctx, 1, 1)
+	defer cancel()
 	mockBackendCtx := &ingest.MockBackendCtx{}
 	mockEngine := ingest.NewMockEngineInfo(nil)
 	mockEngine.SetHook(func(key, val []byte) {})
@@ -206,7 +207,6 @@ func TestBackfillOperatorPipeline(t *testing.T) {
 	err = pipeline.Close()
 	require.NoError(t, err)
 
-	opCtx.Cancel()
 	require.NoError(t, opCtx.OperatorErr())
 }
 
@@ -278,7 +278,8 @@ func TestBackfillOperatorPipelineException(t *testing.T) {
 			} else {
 				require.NoError(t, failpoint.Enable(tc.failPointPath, `return`))
 			}
-			opCtx := ddl.NewDistTaskOperatorCtx(ctx, 1, 1)
+			opCtx, cancel := ddl.NewDistTaskOperatorCtx(ctx, 1, 1)
+			defer cancel()
 			pipeline, err := ddl.NewAddIndexIngestPipeline(
 				opCtx, store,
 				sessPool,
@@ -301,14 +302,12 @@ func TestBackfillOperatorPipelineException(t *testing.T) {
 			err = pipeline.Close()
 			comment := fmt.Sprintf("case: %s", tc.failPointPath)
 			require.ErrorContains(t, err, tc.closeErrMsg, comment)
-			opCtx.Cancel()
 			if tc.operatorErrMsg == "" {
 				require.NoError(t, opCtx.OperatorErr())
 			} else {
 				require.Error(t, opCtx.OperatorErr())
 				require.Equal(t, tc.operatorErrMsg, opCtx.OperatorErr().Error())
 			}
-			cancel()
 		})
 	}
 }
