@@ -204,7 +204,7 @@ func rollingbackAddColumn(jobCtx *jobContext, t *meta.Mutator, job *model.Job) (
 			ColName: col.Name,
 		},
 	}
-	job.FillArgs(args)
+	model.FillRollBackArgsForAddColumn(job, args)
 	ver, err = updateVersionAndTableInfo(jobCtx, t, job, tblInfo, originalState != columnInfo.State)
 	if err != nil {
 		return ver, errors.Trace(err)

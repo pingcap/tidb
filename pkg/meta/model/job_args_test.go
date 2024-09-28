@@ -928,8 +928,8 @@ func TestAddColumnArgs(t *testing.T) {
 		require.NoError(t, err)
 		require.Equal(t, &TableColumnArgs{AddColumnArgs: addArgs}, args)
 
+		FillRollBackArgsForAddColumn(j2, &TableColumnArgs{DropColumnArgs: dropArgs})
 		j2.State = JobStateRollingback
-		j2.FillArgs(&TableColumnArgs{DropColumnArgs: dropArgs})
 		jobBytes, err := j2.Encode(true)
 		require.NoError(t, err)
 		j3 := &Job{}

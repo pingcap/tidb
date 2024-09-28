@@ -935,12 +935,22 @@ type TableColumnArgs struct {
 
 func (a *TableColumnArgs) fillJobV1(job *Job) {
 	// fill DropColumn args if job.Type is ActionAddColumn and state is JobStateRollingback
-	if job.Type == ActionDropColumn || job.State == JobStateRollingback {
+	if job.Type == ActionDropColumn {
 		dropArgs := a.DropColumnArgs
 		job.Args = []any{dropArgs.ColName, dropArgs.IfExists, dropArgs.IndexIDs, dropArgs.PartitionIDs}
 	} else {
 		addArgs := a.AddColumnArgs
 		job.Args = []any{addArgs.Col, addArgs.Pos, addArgs.Offset, addArgs.IfNotExists}
+	}
+}
+
+// FillRollBackArgsForAddColumn fills the args for rollback add column ddl.
+func FillRollBackArgsForAddColumn(job *Job, args *TableColumnArgs) {
+	intest.Assert(job.Type == ActionAddColumn, "only for add column job")
+	if job.Version == JobVersion1 {
+		job.Args = []any{args.ColName, args.IfExists, args.IndexIDs, args.PartitionIDs}
+	} else {
+		job.Args = []any{args}
 	}
 }
 
