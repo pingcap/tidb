@@ -181,7 +181,8 @@
           "└─ExchangeSender_16 0.10 mpp[tiflash]  ExchangeType: PassThrough",
           "  └─Projection_14 0.10 mpp[tiflash]  test.s.a",
           "    └─Selection_11 0.10 mpp[tiflash]  isnull(test.s.b)",
-          "      └─TableFullScan_10 10.00 mpp[tiflash] table:s pushed down filter:eq(test.s.a, 10), keep order:false, stats:pseudo" ],
+          "      └─TableFullScan_10 10.00 mpp[tiflash] table:s pushed down filter:eq(test.s.a, 10), keep order:false, stats:pseudo"
+        ],
         "Warn": null
       },
       {
