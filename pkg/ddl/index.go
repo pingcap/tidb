@@ -419,7 +419,7 @@ func ValidateRenameIndex(from, to pmodel.CIStr, tbl *model.TableInfo) (ignore bo
 	return false, nil
 }
 
-func onRenameIndex(jobCtx *jobContext, t *meta.Meta, job *model.Job) (ver int64, _ error) {
+func onRenameIndex(jobCtx *jobContext, t *meta.Mutator, job *model.Job) (ver int64, _ error) {
 	tblInfo, from, to, err := checkRenameIndex(t, job)
 	if err != nil || tblInfo == nil {
 		return ver, errors.Trace(err)
@@ -459,7 +459,7 @@ func validateAlterIndexVisibility(ctx sessionctx.Context, indexName pmodel.CIStr
 	return false, nil
 }
 
-func onAlterIndexVisibility(jobCtx *jobContext, t *meta.Meta, job *model.Job) (ver int64, _ error) {
+func onAlterIndexVisibility(jobCtx *jobContext, t *meta.Mutator, job *model.Job) (ver int64, _ error) {
 	tblInfo, from, invisible, err := checkAlterIndexVisibility(t, job)
 	if err != nil || tblInfo == nil {
 		return ver, errors.Trace(err)
@@ -498,7 +498,7 @@ func getNullColInfos(tblInfo *model.TableInfo, indexInfo *model.IndexInfo) ([]*m
 	return nullCols, nil
 }
 
-func checkPrimaryKeyNotNull(jobCtx *jobContext, w *worker, t *meta.Meta, job *model.Job,
+func checkPrimaryKeyNotNull(jobCtx *jobContext, w *worker, t *meta.Mutator, job *model.Job,
 	tblInfo *model.TableInfo, indexInfo *model.IndexInfo) (warnings []string, err error) {
 	if !indexInfo.Primary {
 		return nil, nil
@@ -584,7 +584,7 @@ func decodeAddIndexArgs(job *model.Job) (
 	return
 }
 
-func (w *worker) onCreateIndex(jobCtx *jobContext, t *meta.Meta, job *model.Job, isPK bool) (ver int64, err error) {
+func (w *worker) onCreateIndex(jobCtx *jobContext, t *meta.Mutator, job *model.Job, isPK bool) (ver int64, err error) {
 	// Handle the rolling back job.
 	if job.IsRollingback() {
 		ver, err = onDropIndex(jobCtx, t, job)
@@ -869,7 +869,7 @@ func loadCloudStorageURI(w *worker, job *model.Job) {
 	job.ReorgMeta.UseCloudStorage = len(jc.cloudStorageURI) > 0
 }
 
-func doReorgWorkForCreateIndexMultiSchema(w *worker, jobCtx *jobContext, t *meta.Meta, job *model.Job,
+func doReorgWorkForCreateIndexMultiSchema(w *worker, jobCtx *jobContext, t *meta.Mutator, job *model.Job,
 	tbl table.Table, allIndexInfos []*model.IndexInfo) (done bool, ver int64, err error) {
 	if job.MultiSchemaInfo.Revertible {
 		done, ver, err = doReorgWorkForCreateIndex(w, jobCtx, t, job, tbl, allIndexInfos)
@@ -888,7 +888,7 @@ func doReorgWorkForCreateIndexMultiSchema(w *worker, jobCtx *jobContext, t *meta
 func doReorgWorkForCreateIndex(
 	w *worker,
 	jobCtx *jobContext,
-	t *meta.Meta,
+	t *meta.Mutator,
 	job *model.Job,
 	tbl table.Table,
 	allIndexInfos []*model.IndexInfo,
@@ -958,7 +958,7 @@ func doReorgWorkForCreateIndex(
 	}
 }
 
-func runIngestReorgJobDist(w *worker, jobCtx *jobContext, t *meta.Meta, job *model.Job,
+func runIngestReorgJobDist(w *worker, jobCtx *jobContext, t *meta.Mutator, job *model.Job,
 	tbl table.Table, allIndexInfos []*model.IndexInfo) (done bool, ver int64, err error) {
 	done, ver, err = runReorgJobAndHandleErr(w, jobCtx, t, job, tbl, allIndexInfos, false)
 	if err != nil {
@@ -972,7 +972,7 @@ func runIngestReorgJobDist(w *worker, jobCtx *jobContext, t *meta.Meta, job *mod
 	return true, ver, nil
 }
 
-func runIngestReorgJob(w *worker, jobCtx *jobContext, t *meta.Meta, job *model.Job,
+func runIngestReorgJob(w *worker, jobCtx *jobContext, t *meta.Mutator, job *model.Job,
 	tbl table.Table, allIndexInfos []*model.IndexInfo) (done bool, ver int64, err error) {
 	done, ver, err = runReorgJobAndHandleErr(w, jobCtx, t, job, tbl, allIndexInfos, false)
 	if err != nil {
@@ -1009,7 +1009,7 @@ func errorIsRetryable(err error, job *model.Job) bool {
 func runReorgJobAndHandleErr(
 	w *worker,
 	jobCtx *jobContext,
-	t *meta.Meta,
+	t *meta.Mutator,
 	job *model.Job,
 	tbl table.Table,
 	allIndexInfos []*model.IndexInfo,
@@ -1083,7 +1083,7 @@ func runReorgJobAndHandleErr(
 	return true, ver, nil
 }
 
-func onDropIndex(jobCtx *jobContext, t *meta.Meta, job *model.Job) (ver int64, _ error) {
+func onDropIndex(jobCtx *jobContext, t *meta.Mutator, job *model.Job) (ver int64, _ error) {
 	tblInfo, allIndexInfos, ifExists, err := checkDropIndex(jobCtx.infoCache, t, job)
 	if err != nil {
 		if ifExists && dbterror.ErrCantDropFieldOrKey.Equal(err) {
@@ -1215,7 +1215,7 @@ func removeIndexInfo(tblInfo *model.TableInfo, idxInfo *model.IndexInfo) {
 	tblInfo.Indices = append(tblInfo.Indices[:offset], tblInfo.Indices[offset+1:]...)
 }
 
-func checkDropIndex(infoCache *infoschema.InfoCache, t *meta.Meta, job *model.Job) (*model.TableInfo, []*model.IndexInfo, bool /* ifExists */, error) {
+func checkDropIndex(infoCache *infoschema.InfoCache, t *meta.Mutator, job *model.Job) (*model.TableInfo, []*model.IndexInfo, bool /* ifExists */, error) {
 	schemaID := job.SchemaID
 	tblInfo, err := GetTableInfoAndCancelFaultJob(t, job, schemaID)
 	if err != nil {
@@ -1278,7 +1278,7 @@ func checkInvisibleIndexesOnPK(tblInfo *model.TableInfo, indexInfos []*model.Ind
 	return nil
 }
 
-func checkRenameIndex(t *meta.Meta, job *model.Job) (*model.TableInfo, pmodel.CIStr, pmodel.CIStr, error) {
+func checkRenameIndex(t *meta.Mutator, job *model.Job) (*model.TableInfo, pmodel.CIStr, pmodel.CIStr, error) {
 	var from, to pmodel.CIStr
 	schemaID := job.SchemaID
 	tblInfo, err := GetTableInfoAndCancelFaultJob(t, job, schemaID)
@@ -1303,7 +1303,7 @@ func checkRenameIndex(t *meta.Meta, job *model.Job) (*model.TableInfo, pmodel.CI
 	return tblInfo, from, to, errors.Trace(err)
 }
 
-func checkAlterIndexVisibility(t *meta.Meta, job *model.Job) (*model.TableInfo, pmodel.CIStr, bool, error) {
+func checkAlterIndexVisibility(t *meta.Mutator, job *model.Job) (*model.TableInfo, pmodel.CIStr, bool, error) {
 	var (
 		indexName pmodel.CIStr
 		invisible bool
