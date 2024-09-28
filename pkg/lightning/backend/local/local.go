@@ -1098,6 +1098,7 @@ func (local *Backend) startWorker(
 			if job.region != nil && job.region.Region != nil {
 				peers = job.region.Region.GetPeers()
 			}
+			failpoint.InjectCall("beforeExecuteRegionJob", ctx)
 			metrics.GlobalSortIngestWorkerCnt.WithLabelValues("execute job").Inc()
 			err := local.executeJob(ctx, job)
 			metrics.GlobalSortIngestWorkerCnt.WithLabelValues("execute job").Dec()

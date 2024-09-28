@@ -50,7 +50,7 @@ func TestDDLHistoryBasic(t *testing.T) {
 
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnLightning)
 	err = kv.RunInNewTxn(ctx, store, false, func(ctx context.Context, txn kv.Transaction) error {
-		t := meta.NewMeta(txn)
+		t := meta.NewMutator(txn)
 		return ddl.AddHistoryDDLJob(context.Background(), sess, t, &model.Job{
 			ID: 1,
 		}, false)
@@ -59,7 +59,7 @@ func TestDDLHistoryBasic(t *testing.T) {
 	require.NoError(t, err)
 
 	err = kv.RunInNewTxn(ctx, store, false, func(ctx context.Context, txn kv.Transaction) error {
-		t := meta.NewMeta(txn)
+		t := meta.NewMutator(txn)
 		return ddl.AddHistoryDDLJob(context.Background(), sess, t, &model.Job{
 			ID: 2,
 		}, false)
@@ -72,7 +72,7 @@ func TestDDLHistoryBasic(t *testing.T) {
 	require.Equal(t, int64(1), job.ID)
 
 	err = kv.RunInNewTxn(ctx, store, false, func(ctx context.Context, txn kv.Transaction) error {
-		m := meta.NewMeta(txn)
+		m := meta.NewMutator(txn)
 		jobs, err := ddl.GetLastNHistoryDDLJobs(m, 2)
 		require.NoError(t, err)
 		require.Equal(t, 2, len(jobs))
@@ -82,7 +82,7 @@ func TestDDLHistoryBasic(t *testing.T) {
 	require.NoError(t, err)
 
 	err = kv.RunInNewTxn(ctx, store, false, func(ctx context.Context, txn kv.Transaction) error {
-		m := meta.NewMeta(txn)
+		m := meta.NewMutator(txn)
 		jobs, err := ddl.GetAllHistoryDDLJobs(m)
 		require.NoError(t, err)
 		ddlHistoryJobCount = len(jobs)
@@ -92,7 +92,7 @@ func TestDDLHistoryBasic(t *testing.T) {
 	require.NoError(t, err)
 
 	err = kv.RunInNewTxn(ctx, store, false, func(ctx context.Context, txn kv.Transaction) error {
-		m := meta.NewMeta(txn)
+		m := meta.NewMutator(txn)
 		jobs, err := ddl.ScanHistoryDDLJobs(m, 2, 2)
 		require.NoError(t, err)
 		require.Equal(t, 2, len(jobs))
@@ -109,7 +109,7 @@ func TestDDLHistoryBasic(t *testing.T) {
 	}()
 
 	err = kv.RunInNewTxn(ctx, store, false, func(ctx context.Context, txn kv.Transaction) error {
-		m := meta.NewMeta(txn)
+		m := meta.NewMutator(txn)
 		jobs, err := ddl.ScanHistoryDDLJobs(m, 0, 0)
 		require.NoError(t, err)
 		if ddlHistoryJobCount <= 128 {
@@ -128,7 +128,7 @@ func TestDDLHistoryBasic(t *testing.T) {
 
 func TestScanHistoryDDLJobsWithErrorLimit(t *testing.T) {
 	var (
-		m                = &meta.Meta{}
+		m                = &meta.Mutator{}
 		startJobID int64 = 10
 		limit            = 0
 	)

@@ -377,7 +377,7 @@ func (sv *schemaVersionManager) setSchemaVersion(job *model.Job) (schemaVersion 
 	//  without differ.
 	err = kv.RunInNewTxn(kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL), sv.store, true, func(_ context.Context, txn kv.Transaction) error {
 		var err error
-		m := meta.NewMeta(txn)
+		m := meta.NewMutator(txn)
 		schemaVersion, err = m.GenSchemaVersion()
 		return err
 	})
@@ -1078,7 +1078,7 @@ func (d *ddl) SwitchMDL(enable bool) error {
 
 	variable.EnableMDL.Store(enable)
 	err = kv.RunInNewTxn(kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL), d.store, true, func(_ context.Context, txn kv.Transaction) error {
-		m := meta.NewMeta(txn)
+		m := meta.NewMutator(txn)
 		oldEnable, _, err := m.GetMetadataLock()
 		if err != nil {
 			return err
@@ -1192,7 +1192,7 @@ func GetDDLInfo(s sessionctx.Context) (*Info, error) {
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	t := meta.NewMeta(txn)
+	t := meta.NewMutator(txn)
 	info.Jobs = make([]*model.Job, 0, 2)
 	var generalJob, reorgJob *model.Job
 	generalJob, reorgJob, err = get2JobsFromTable(se)
@@ -1229,7 +1229,8 @@ func GetDDLInfo(s sessionctx.Context) (*Info, error) {
 
 func get2JobsFromTable(sess *sess.Session) (*model.Job, *model.Job, error) {
 	var generalJob, reorgJob *model.Job
-	jobs, err := getJobsBySQL(sess, JobTable, "not reorg order by job_id limit 1")
+	ctx := context.Background()
+	jobs, err := getJobsBySQL(ctx, sess, JobTable, "not reorg order by job_id limit 1")
 	if err != nil {
 		return nil, nil, errors.Trace(err)
 	}
@@ -1237,7 +1238,7 @@ func get2JobsFromTable(sess *sess.Session) (*model.Job, *model.Job, error) {
 	if len(jobs) != 0 {
 		generalJob = jobs[0]
 	}
-	jobs, err = getJobsBySQL(sess, JobTable, "reorg order by job_id limit 1")
+	jobs, err = getJobsBySQL(ctx, sess, JobTable, "reorg order by job_id limit 1")
 	if err != nil {
 		return nil, nil, errors.Trace(err)
 	}
@@ -1309,6 +1310,7 @@ func resumePausedJob(_ *sess.Session, job *model.Job,
 
 // processJobs command on the Job according to the process
 func processJobs(
+	ctx context.Context,
 	process func(*sess.Session, *model.Job, model.AdminCommandOperator) (err error),
 	sessCtx sessionctx.Context,
 	ids []int64,
@@ -1336,11 +1338,11 @@ func processJobs(
 			idsStr = append(idsStr, strconv.FormatInt(id, 10))
 		}
 
-		err = ns.Begin(context.Background())
+		err = ns.Begin(ctx)
 		if err != nil {
 			return nil, err
 		}
-		jobs, err := getJobsBySQL(ns, JobTable, fmt.Sprintf("job_id in (%s) order by job_id", strings.Join(idsStr, ", ")))
+		jobs, err := getJobsBySQL(ctx, ns, JobTable, fmt.Sprintf("job_id in (%s) order by job_id", strings.Join(idsStr, ", ")))
 		if err != nil {
 			ns.Rollback()
 			return nil, err
@@ -1362,7 +1364,7 @@ func processJobs(
 				continue
 			}
 
-			err = updateDDLJob2Table(ns, job, false)
+			err = updateDDLJob2Table(ctx, ns, job, false)
 			if err != nil {
 				jobErrs[i] = err
 				continue
@@ -1376,7 +1378,7 @@ func processJobs(
 		})
 
 		// There may be some conflict during the update, try it again
-		if err = ns.Commit(context.Background()); err != nil {
+		if err = ns.Commit(ctx); err != nil {
 			continue
 		}
 
@@ -1391,43 +1393,50 @@ func processJobs(
 }
 
 // CancelJobs cancels the DDL jobs according to user command.
-func CancelJobs(se sessionctx.Context, ids []int64) (errs []error, err error) {
-	return processJobs(cancelRunningJob, se, ids, model.AdminCommandByEndUser)
+func CancelJobs(ctx context.Context, se sessionctx.Context, ids []int64) (errs []error, err error) {
+	return processJobs(ctx, cancelRunningJob, se, ids, model.AdminCommandByEndUser)
 }
 
 // PauseJobs pause all the DDL jobs according to user command.
-func PauseJobs(se sessionctx.Context, ids []int64) ([]error, error) {
-	return processJobs(pauseRunningJob, se, ids, model.AdminCommandByEndUser)
+func PauseJobs(ctx context.Context, se sessionctx.Context, ids []int64) ([]error, error) {
+	return processJobs(ctx, pauseRunningJob, se, ids, model.AdminCommandByEndUser)
 }
 
 // ResumeJobs resume all the DDL jobs according to user command.
-func ResumeJobs(se sessionctx.Context, ids []int64) ([]error, error) {
-	return processJobs(resumePausedJob, se, ids, model.AdminCommandByEndUser)
+func ResumeJobs(ctx context.Context, se sessionctx.Context, ids []int64) ([]error, error) {
+	return processJobs(ctx, resumePausedJob, se, ids, model.AdminCommandByEndUser)
 }
 
 // CancelJobsBySystem cancels Jobs because of internal reasons.
 func CancelJobsBySystem(se sessionctx.Context, ids []int64) (errs []error, err error) {
-	return processJobs(cancelRunningJob, se, ids, model.AdminCommandBySystem)
+	ctx := context.Background()
+	return processJobs(ctx, cancelRunningJob, se, ids, model.AdminCommandBySystem)
 }
 
 // PauseJobsBySystem pauses Jobs because of internal reasons.
 func PauseJobsBySystem(se sessionctx.Context, ids []int64) (errs []error, err error) {
-	return processJobs(pauseRunningJob, se, ids, model.AdminCommandBySystem)
+	ctx := context.Background()
+	return processJobs(ctx, pauseRunningJob, se, ids, model.AdminCommandBySystem)
 }
 
 // ResumeJobsBySystem resumes Jobs that are paused by TiDB itself.
 func ResumeJobsBySystem(se sessionctx.Context, ids []int64) (errs []error, err error) {
-	return processJobs(resumePausedJob, se, ids, model.AdminCommandBySystem)
+	ctx := context.Background()
+	return processJobs(ctx, resumePausedJob, se, ids, model.AdminCommandBySystem)
 }
 
 // pprocessAllJobs processes all the jobs in the job table, 100 jobs at a time in case of high memory usage.
-func processAllJobs(process func(*sess.Session, *model.Job, model.AdminCommandOperator) (err error),
-	se sessionctx.Context, byWho model.AdminCommandOperator) (map[int64]error, error) {
+func processAllJobs(
+	ctx context.Context,
+	process func(*sess.Session, *model.Job, model.AdminCommandOperator) (err error),
+	se sessionctx.Context,
+	byWho model.AdminCommandOperator,
+) (map[int64]error, error) {
 	var err error
 	var jobErrs = make(map[int64]error)
 
 	ns := sess.NewSession(se)
-	err = ns.Begin(context.Background())
+	err = ns.Begin(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -1437,7 +1446,7 @@ func processAllJobs(process func(*sess.Session, *model.Job, model.AdminCommandOp
 	var limit = 100
 	for {
 		var jobs []*model.Job
-		jobs, err = getJobsBySQL(ns, JobTable,
+		jobs, err = getJobsBySQL(ctx, ns, JobTable,
 			fmt.Sprintf("job_id >= %s order by job_id asc limit %s",
 				strconv.FormatInt(jobID, 10),
 				strconv.FormatInt(int64(limit), 10)))
@@ -1453,7 +1462,7 @@ func processAllJobs(process func(*sess.Session, *model.Job, model.AdminCommandOp
 				continue
 			}
 
-			err = updateDDLJob2Table(ns, job, false)
+			err = updateDDLJob2Table(ctx, ns, job, false)
 			if err != nil {
 				jobErrs[job.ID] = err
 				continue
@@ -1473,7 +1482,7 @@ func processAllJobs(process func(*sess.Session, *model.Job, model.AdminCommandOp
 		jobID = jobIDMax + 1
 	}
 
-	err = ns.Commit(context.Background())
+	err = ns.Commit(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -1482,23 +1491,23 @@ func processAllJobs(process func(*sess.Session, *model.Job, model.AdminCommandOp
 
 // PauseAllJobsBySystem pauses all running Jobs because of internal reasons.
 func PauseAllJobsBySystem(se sessionctx.Context) (map[int64]error, error) {
-	return processAllJobs(pauseRunningJob, se, model.AdminCommandBySystem)
+	return processAllJobs(context.Background(), pauseRunningJob, se, model.AdminCommandBySystem)
 }
 
 // ResumeAllJobsBySystem resumes all paused Jobs because of internal reasons.
 func ResumeAllJobsBySystem(se sessionctx.Context) (map[int64]error, error) {
-	return processAllJobs(resumePausedJob, se, model.AdminCommandBySystem)
+	return processAllJobs(context.Background(), resumePausedJob, se, model.AdminCommandBySystem)
 }
 
 // GetAllDDLJobs get all DDL jobs and sorts jobs by job.ID.
-func GetAllDDLJobs(se sessionctx.Context) ([]*model.Job, error) {
-	return getJobsBySQL(sess.NewSession(se), JobTable, "1 order by job_id")
+func GetAllDDLJobs(ctx context.Context, se sessionctx.Context) ([]*model.Job, error) {
+	return getJobsBySQL(ctx, sess.NewSession(se), JobTable, "1 order by job_id")
 }
 
 // IterAllDDLJobs will iterates running DDL jobs first, return directly if `finishFn` return true or error,
 // then iterates history DDL jobs until the `finishFn` return true or error.
 func IterAllDDLJobs(ctx sessionctx.Context, txn kv.Transaction, finishFn func([]*model.Job) (bool, error)) error {
-	jobs, err := GetAllDDLJobs(ctx)
+	jobs, err := GetAllDDLJobs(context.Background(), ctx)
 	if err != nil {
 		return err
 	}

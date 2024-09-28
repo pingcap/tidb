@@ -17,6 +17,7 @@ go_library(
         "logical_max_one_row.go",
         "logical_mem_table.go",
         "logical_partition_union_all.go",
+        "logical_plans_misc.go",
         "logical_projection.go",
         "logical_schema_producer.go",
         "logical_selection.go",

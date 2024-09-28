@@ -139,7 +139,7 @@ func TestPlacementPolicyInUse(t *testing.T) {
 	for _, policy := range []*model.PolicyInfo{p1, p2, p4, p5} {
 		require.True(t, dbterror.ErrPlacementPolicyInUse.Equal(ddl.CheckPlacementPolicyNotInUseFromInfoSchema(is, policy)))
 		require.NoError(t, kv.RunInNewTxn(ctx, sctx.GetStore(), false, func(ctx context.Context, txn kv.Transaction) error {
-			m := meta.NewMeta(txn)
+			m := meta.NewMutator(txn)
 			require.True(t, dbterror.ErrPlacementPolicyInUse.Equal(ddl.CheckPlacementPolicyNotInUseFromMeta(m, policy)))
 			return nil
 		}))
@@ -147,7 +147,7 @@ func TestPlacementPolicyInUse(t *testing.T) {
 
 	require.NoError(t, ddl.CheckPlacementPolicyNotInUseFromInfoSchema(is, p3))
 	require.NoError(t, kv.RunInNewTxn(ctx, sctx.GetStore(), false, func(ctx context.Context, txn kv.Transaction) error {
-		m := meta.NewMeta(txn)
+		m := meta.NewMutator(txn)
 		require.NoError(t, ddl.CheckPlacementPolicyNotInUseFromMeta(m, p3))
 		return nil
 	}))
