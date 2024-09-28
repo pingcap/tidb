@@ -186,7 +186,7 @@ func (c *index) create(sctx table.MutateContext, txn kv.Transaction, indexedValu
 		// during Delete Reorganization, since it may take long time to delete
 		// all old entries.
 		if c.tblInfo.Partition.DDLState == model.StateDeleteReorganization {
-			oldIDs := c.tblInfo.Partition.GlobalIndexPartitionIDsToIgnore()
+			oldIDs := c.tblInfo.Partition.IDsInDDLToIgnore()
 			if len(oldIDs) != 0 {
 				skipCheck = false
 				for _, id := range oldIDs {

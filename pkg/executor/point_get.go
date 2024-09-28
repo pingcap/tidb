@@ -375,7 +375,7 @@ func (e *PointGetExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 				if !matchPartitionNames(tblID, e.partitionNames, pi) {
 					return nil
 				}
-				for _, id := range pi.GlobalIndexPartitionIDsToIgnore() {
+				for _, id := range pi.IDsInDDLToIgnore() {
 					if id == pid {
 						return nil
 					}

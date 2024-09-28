@@ -1443,8 +1443,6 @@ func TestTruncatePartitionWithGlobalIndex(t *testing.T) {
 	tk3.MustExec(`begin`)
 	tk3.MustExec(`use test`)
 	tk3.MustQuery(`explain format='brief' select b from test_global use index(idx_b) where b = 15`).CheckContain("Point_Get")
-	tk3.MustQuery(`explain format='brief' select b from test_global use index(idx_b) where b = 15`).CheckContain("Point_Get")
-	tk3.MustQuery(`explain format='brief' select c from test_global use index(idx_c) where c = 15`).CheckContain("Point_Get")
 	tk3.MustQuery(`explain format='brief' select c from test_global use index(idx_c) where c = 15`).CheckContain("Point_Get")
 	tk3.MustQuery(`select b from test_global use index(idx_b) where b = 15`).Check(testkit.Rows())
 	tk3.MustQuery(`select c from test_global use index(idx_c) where c = 15`).Check(testkit.Rows())

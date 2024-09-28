@@ -2254,19 +2254,32 @@ func (is *PhysicalIndexScan) addSelectionConditionForGlobalIndex(p *logicalop.Da
 	needNot := false
 	pInfo := p.TableInfo.GetPartitionInfo()
 	if len(idxArr) == 1 && idxArr[0] == FullRange {
-		// Only filter adding and dropping partitions.
+		// Filter away partitions that may exists in Global Index,
+		// but should not be seen.
 		needNot = true
-		for _, id := range pInfo.GlobalIndexPartitionIDsToIgnore() {
+		for _, id := range pInfo.IDsInDDLToIgnore() {
 			args = append(args, expression.NewInt64Const(id))
 		}
 	} else if len(idxArr) == 0 {
-		// add an invalid pid as param for `IN` function
+		// TODO: Can we change to Table Dual somehow?
+		// Add an invalid pid as param for `IN` function
 		args = append(args, expression.NewInt64Const(-1))
 	} else {
-		// `PartitionPruning`` func does not return adding and dropping partitions
-		for _, idx := range idxArr {
-			args = append(args, expression.NewInt64Const(pInfo.Definitions[idx].ID))
+		// TODO: When PartitionPruning is guaranteed to not
+		// return old/blocked partition ids then ignoreMap can be removed.
+		ignoreMap := make(map[int64]struct{})
+		for _, id := range pInfo.IDsInDDLToIgnore() {
+			ignoreMap[id] = struct{}{}
 		}
+		for _, idx := range idxArr {
+			id := pInfo.Definitions[idx].ID
+			if _, ok := ignoreMap[id]; !ok {
+				args = append(args, expression.NewInt64Const(id))
+			}
+		}
+	}
+	if len(args) == 1 {
+		return conditions, nil
 	}
 	if len(args) == 1 {
 		return conditions, nil

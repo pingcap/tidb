@@ -709,7 +709,10 @@ type PartitionInfo struct {
 	// DroppingDefinitions is filled when dropping/truncating partitions that is in the mid state.
 	DroppingDefinitions []PartitionDefinition `json:"dropping_definitions"`
 	// NewPartitionIDs is filled when truncating partitions that is in the mid state.
-	NewPartitionIDs []int64
+	NewPartitionIDs []int64 `json:"new_partition_ids,omitempty"`
+	// OriginalPartitionIDsOrder is only needed for rollback of Reorganize Partition for
+	// LIST partitions, since in StateDeleteReorganize we don't know the old order any longer.
+	OriginalPartitionIDsOrder []int64 `json:"original_partition_ids_order,omitempty"`
 
 	States []PartitionState `json:"states"`
 	Num    uint64           `json:"num"`
@@ -859,9 +862,20 @@ func (pi *PartitionInfo) GetPartitionIDByName(partitionDefinitionName string) in
 	return -1
 }
 
-// GlobalIndexPartitionIDsToIgnore returns a list of IDs that the current
+// SetOriginalPartitionIDs sets the order of the original partition IDs
+// in case it needs to be rolled back. LIST Partitioning would not know otherwise.
+func (pi *PartitionInfo) SetOriginalPartitionIDs() {
+	ids := make([]int64, 0, len(pi.Definitions))
+	for _, def := range pi.Definitions {
+		ids = append(ids, def.ID)
+	}
+	pi.OriginalPartitionIDsOrder = ids
+}
+
+// IDsInDDLToIgnore returns a list of IDs that the current
 // session should not see (may be duplicate errors on insert/update though)
-func (pi *PartitionInfo) GlobalIndexPartitionIDsToIgnore() []int64 {
+// For example during truncate or drop partition.
+func (pi *PartitionInfo) IDsInDDLToIgnore() []int64 {
 	// Truncate partition:
 	// write only => should not see NewPartitionIDs
 	// delete only => should not see DroppingPartitions
@@ -880,6 +894,8 @@ func (pi *PartitionInfo) GlobalIndexPartitionIDsToIgnore() []int64 {
 	// Maybe from PK/_tidb_rowid + Partition ID
 	// to PK/_tidb_rowid + Partition ID + Valid from Schema Version,
 	// with support for two entries?
+	// Then we could avoid having two copies of the same Global Index
+	// just for handling a single SchemaState.
 	// If so, could we then replace this?
 	switch pi.DDLAction {
 	case ActionTruncateTablePartition:
