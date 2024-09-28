@@ -2575,6 +2575,10 @@ func (w *worker) onTruncateTablePartition(jobCtx *jobContext, t *meta.Meta, job 
 		&model.PartitionInfo{Definitions: oldDefinitions},
 	)
 	asyncNotifyEvent(jobCtx, truncatePartitionEvent, job)
+	// A background job will be created to delete old partition data.
+	job.FillFinishedArgs(&model.TruncateTableArgs{
+		OldPartitionIDs: oldIDs,
+	})
 	return ver, errors.Trace(err)
 }
 
