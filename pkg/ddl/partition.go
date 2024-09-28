@@ -2449,24 +2449,36 @@ func (w *worker) cleanGlobalIndexEntriesFromDroppedPartitions(jobCtx *jobContext
 // StatePublic - DDL done
 func (w *worker) onTruncateTablePartition(jobCtx *jobContext, t *meta.Meta, job *model.Job) (int64, error) {
 	var ver int64
+	canCancel := false
+	if job.SchemaState == model.StatePublic {
+		canCancel = true
+	}
 	args, err := model.GetTruncateTableArgs(job)
 	if err != nil {
-		job.State = model.JobStateCancelled
+		if canCancel {
+			job.State = model.JobStateCancelled
+		}
 		return ver, errors.Trace(err)
 	}
 	oldIDs, newIDs := args.OldPartitionIDs, args.NewPartitionIDs
 	if len(oldIDs) != len(newIDs) {
-		job.State = model.JobStateCancelled
+		if canCancel {
+			job.State = model.JobStateCancelled
+		}
 		return ver, errors.Trace(errors.New("len(oldIDs) must be the same as len(newIDs)"))
 	}
 	tblInfo, err := GetTableInfoAndCancelFaultJob(t, job, job.SchemaID)
 	if err != nil {
-		job.State = model.JobStateCancelled
+		if canCancel {
+			job.State = model.JobStateCancelled
+		}
 		return ver, errors.Trace(err)
 	}
 	pi := tblInfo.GetPartitionInfo()
 	if pi == nil {
-		job.State = model.JobStateCancelled
+		if canCancel {
+			job.State = model.JobStateCancelled
+		}
 		return ver, errors.Trace(dbterror.ErrPartitionMgmtOnNonpartitioned)
 	}
 
@@ -2563,8 +2575,6 @@ func (w *worker) onTruncateTablePartition(jobCtx *jobContext, t *meta.Meta, job 
 		&model.PartitionInfo{Definitions: oldDefinitions},
 	)
 	asyncNotifyEvent(jobCtx, truncatePartitionEvent, job)
-	// A background job will be created to delete old partition data.
-	job.Args = []any{oldIDs}
 	return ver, errors.Trace(err)
 }
 
