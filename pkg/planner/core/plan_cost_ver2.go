@@ -820,7 +820,7 @@ func scanCostVer2(option *optimizetrace.PlanCostOption, rows, rowSize float64, s
 	}
 	return costusage.NewCostVer2(option, scanFactor,
 		// rows * log(row-size) * scanFactor, log2 from experiments
-		rows*math.Log2(max(rowSize, 0))*scanFactor.Value,
+		rows*max(math.Log2(rowSize), 0)*scanFactor.Value,
 		func() string { return fmt.Sprintf("scan(%v*logrowsize(%v)*%v)", rows, rowSize, scanFactor) })
 }
 
