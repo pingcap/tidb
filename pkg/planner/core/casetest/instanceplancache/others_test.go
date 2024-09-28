@@ -19,7 +19,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/stretchr/testify/require"
 )
 
 func TestInstancePlanCacheVars(t *testing.T) {
@@ -230,4 +232,101 @@ func TestInstancePlanCacheSchemaChange(t *testing.T) {
 	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0")) // due to DDL
 	tk.MustExec(`execute st`)
 	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
+}
+
+func TestInstancePlanCachePrivilegeChanges(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`use test`)
+	tk.MustExec(`set global tidb_enable_instance_plan_cache=1`)
+
+	tk.MustExec(`create table t (a int, primary key(a))`)
+	tk.MustExec(`CREATE USER 'u1'`)
+	tk.MustExec(`grant select on test.t to 'u1'`)
+
+	u1 := testkit.NewTestKit(t, store)
+	require.NoError(t, u1.Session().Auth(&auth.UserIdentity{Username: "u1", Hostname: "%"}, nil, nil, nil))
+
+	u1.MustExec(`prepare st from 'select a from test.t where a<1'`)
+	u1.MustExec(`execute st`)
+	u1.MustExec(`execute st`)
+	u1.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
+
+	tk.MustExec(`revoke select on test.t from 'u1'`)
+	u1.MustExecToErr(`execute st`) // no privilege
+
+	tk.MustExec(`grant select on test.t to 'u1'`)
+	u1.MustExec(`execute st`)
+	u1.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1")) // hit the cache again
+}
+
+func TestInstancePlanCacheDifferentUsers(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`use test`)
+	tk.MustExec(`set global tidb_enable_instance_plan_cache=1`)
+
+	tk.MustExec(`create table t (a int, primary key(a))`)
+	tk.MustExec(`CREATE USER 'u1'`)
+	tk.MustExec(`grant select on test.t to 'u1'`)
+	tk.MustExec(`CREATE USER 'u1'@'localhost'`)
+	tk.MustExec(`grant select on test.t to 'u1'@'localhost'`)
+	tk.MustExec(`CREATE USER 'u2'`)
+	tk.MustExec(`grant select on test.t to 'u2'`)
+
+	u1 := testkit.NewTestKit(t, store)
+	require.NoError(t, u1.Session().Auth(&auth.UserIdentity{Username: "u1", Hostname: "%"}, nil, nil, nil))
+	u1Local := testkit.NewTestKit(t, store)
+	require.NoError(t, u1Local.Session().Auth(&auth.UserIdentity{Username: "u1", Hostname: "localhost"}, nil, nil, nil))
+	u2 := testkit.NewTestKit(t, store)
+	require.NoError(t, u2.Session().Auth(&auth.UserIdentity{Username: "u2", Hostname: "%"}, nil, nil, nil))
+	u1Dup := testkit.NewTestKit(t, store)
+	require.NoError(t, u1Dup.Session().Auth(&auth.UserIdentity{Username: "u1", Hostname: "%"}, nil, nil, nil))
+
+	u1.MustExec(`prepare st from 'select a from test.t where a=1'`)
+	u1.MustExec(`execute st`)
+	u1.MustExec(`execute st`)
+	u1.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
+
+	u1Local.MustExec(`prepare st from 'select a from test.t where a=1'`)
+	u1Local.MustExec(`execute st`)
+	u1Local.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0")) // can't hit, different localhost
+	u1Local.MustExec(`execute st`)
+	u1Local.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
+
+	u2.MustExec(`prepare st from 'select a from test.t where a=1'`)
+	u2.MustExec(`execute st`)
+	u2.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0")) // can't hit, different user
+	u2.MustExec(`execute st`)
+	u2.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
+
+	u1Dup.MustExec(`prepare st from 'select a from test.t where a=1'`)
+	u1Dup.MustExec(`execute st`)
+	u1Dup.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1")) // can hit, same user and localhost
+	u1Dup.MustExec(`execute st`)
+	u1Dup.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
+}
+
+func TestInstancePlanCachePartitioning(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(`set global tidb_enable_instance_plan_cache=1`)
+	tk.MustExec(`set @@tidb_partition_prune_mode='dynamic'`)
+
+	tk.MustExec(`create table t (a int, b varchar(255)) partition by hash(a) partitions 3`)
+	tk.MustExec(`insert into t values (1,"a"),(2,"b"),(3,"c"),(4,"d"),(5,"e"),(6,"f")`)
+	tk.MustExec(`prepare stmt from 'select a,b from t where a = ?;'`)
+	tk.MustExec(`set @a=1`)
+	tk.MustQuery(`execute stmt using @a`).Check(testkit.Rows("1 a"))
+	// Same partition works, due to pruning is not affected
+	tk.MustExec(`set @a=4`)
+	tk.MustQuery(`execute stmt using @a`).Check(testkit.Rows("4 d"))
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
+
+	tk.MustExec(`set @@tidb_partition_prune_mode='static'`)
+	tk.MustQuery(`execute stmt using @a`).Check(testkit.Rows("4 d"))
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0"))
+	tk.MustQuery(`execute stmt using @a`).Check(testkit.Rows("4 d"))
+	tk.MustQuery(`show warnings`).Check(testkit.Rows("Warning 1105 skip prepared plan-cache: Static partition pruning mode"))
 }

@@ -246,8 +246,7 @@ type RecommendIndexPlan struct {
 	Action   string
 	SQL      string
 	AdviseID int64
-	Option   string
-	Value    ast.ValueExpr
+	Options  []ast.RecommendIndexOption
 }
 
 // SQLBindOpType repreents the SQL bind type

@@ -650,9 +650,9 @@ Level	Code	Message
 Note	1105	handle of t1 is selected since the path only has point ranges
 explain format = 'verbose' delete from t1 where f = 2 and g in (3, 4);
 id	estRows	estCost	task	access object	operator info
-Delete_4	N/A	N/A	root		N/A
-└─Selection_7	2.00	493.42	root		in(planner__core__casetest__index__index.t1.g, 3, 4)
-  └─Point_Get_6	1.00	443.52	root	table:t1, index:f(f)	
+Delete_3	N/A	N/A	root		N/A
+└─Selection_7	2.00	430.06	root		in(planner__core__casetest__index__index.t1.g, 3, 4)
+  └─Point_Get_6	1.00	380.16	root	table:t1, index:f(f)	
 show warnings;
 Level	Code	Message
 Note	1105	unique index f of t1 is selected since the path only has point ranges with double scan

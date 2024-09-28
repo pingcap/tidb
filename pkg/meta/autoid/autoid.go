@@ -459,7 +459,7 @@ func (alloc *allocator) rebase4Sequence(requiredBase int64) (int64, bool, error)
 	alreadySatisfied := false
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnMeta)
 	err := kv.RunInNewTxn(ctx, alloc.store, true, func(_ context.Context, txn kv.Transaction) error {
-		acc := meta.NewMeta(txn).GetAutoIDAccessors(alloc.dbID, alloc.tbID)
+		acc := meta.NewMutator(txn).GetAutoIDAccessors(alloc.dbID, alloc.tbID)
 		currentEnd, err := acc.SequenceValue().Get()
 		if err != nil {
 			return err
@@ -1086,7 +1086,7 @@ func (alloc *allocator) alloc4Sequence() (min int64, max int64, round int64, err
 	startTime := time.Now()
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnMeta)
 	err = kv.RunInNewTxn(ctx, alloc.store, true, func(_ context.Context, txn kv.Transaction) error {
-		acc := meta.NewMeta(txn).GetAutoIDAccessors(alloc.dbID, alloc.tbID)
+		acc := meta.NewMutator(txn).GetAutoIDAccessors(alloc.dbID, alloc.tbID)
 		var (
 			err1    error
 			seqStep int64
@@ -1174,7 +1174,7 @@ func (alloc *allocator) alloc4Sequence() (min int64, max int64, round int64, err
 }
 
 func (alloc *allocator) getIDAccessor(txn kv.Transaction) meta.AutoIDAccessor {
-	acc := meta.NewMeta(txn).GetAutoIDAccessors(alloc.dbID, alloc.tbID)
+	acc := meta.NewMutator(txn).GetAutoIDAccessors(alloc.dbID, alloc.tbID)
 	switch alloc.allocType {
 	case RowIDAllocType:
 		return acc.RowID()
