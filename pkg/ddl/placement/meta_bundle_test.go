@@ -132,7 +132,7 @@ func createMetaBundleSuite() *metaBundleSuite {
 func (s *metaBundleSuite) prepareMeta(t *testing.T, store kv.Storage) {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
 	err := kv.RunInNewTxn(ctx, store, false, func(ctx context.Context, txn kv.Transaction) error {
-		m := meta.NewMeta(txn)
+		m := meta.NewMutator(txn)
 		require.NoError(t, m.CreatePolicy(s.policy1))
 		require.NoError(t, m.CreatePolicy(s.policy2))
 		require.NoError(t, m.CreatePolicy(s.policy3))
@@ -150,7 +150,7 @@ func TestNewTableBundle(t *testing.T) {
 	s.prepareMeta(t, store)
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
 	require.NoError(t, kv.RunInNewTxn(ctx, store, false, func(ctx context.Context, txn kv.Transaction) error {
-		m := meta.NewMeta(txn)
+		m := meta.NewMutator(txn)
 
 		// tbl1
 		bundle, err := placement.NewTableBundle(m, s.tbl1)
@@ -186,7 +186,7 @@ func TestNewPartitionBundle(t *testing.T) {
 
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
 	require.NoError(t, kv.RunInNewTxn(ctx, store, false, func(ctx context.Context, txn kv.Transaction) error {
-		m := meta.NewMeta(txn)
+		m := meta.NewMutator(txn)
 
 		// tbl1.par0
 		bundle, err := placement.NewPartitionBundle(m, s.tbl1.Partition.Definitions[0])
@@ -212,7 +212,7 @@ func TestNewPartitionListBundles(t *testing.T) {
 
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
 	require.NoError(t, kv.RunInNewTxn(ctx, store, false, func(ctx context.Context, txn kv.Transaction) error {
-		m := meta.NewMeta(txn)
+		m := meta.NewMutator(txn)
 
 		bundles, err := placement.NewPartitionListBundles(m, s.tbl1.Partition.Definitions)
 		require.NoError(t, err)
@@ -244,7 +244,7 @@ func TestNewFullTableBundles(t *testing.T) {
 
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
 	require.NoError(t, kv.RunInNewTxn(ctx, store, false, func(ctx context.Context, txn kv.Transaction) error {
-		m := meta.NewMeta(txn)
+		m := meta.NewMutator(txn)
 
 		bundles, err := placement.NewFullTableBundles(m, s.tbl1)
 		require.NoError(t, err)

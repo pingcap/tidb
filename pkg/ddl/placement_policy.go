@@ -33,7 +33,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 )
 
-func onCreatePlacementPolicy(jobCtx *jobContext, t *meta.Meta, job *model.Job) (ver int64, _ error) {
+func onCreatePlacementPolicy(jobCtx *jobContext, t *meta.Mutator, job *model.Job) (ver int64, _ error) {
 	args, err := model.GetPlacementPolicyArgs(job)
 	if err != nil {
 		job.State = model.JobStateCancelled
@@ -105,7 +105,7 @@ func checkPolicyValidation(info *model.PlacementSettings) error {
 	return err
 }
 
-func getPolicyInfo(t *meta.Meta, policyID int64) (*model.PolicyInfo, error) {
+func getPolicyInfo(t *meta.Mutator, policyID int64) (*model.PolicyInfo, error) {
 	policy, err := t.GetPolicy(policyID)
 	if err != nil {
 		if meta.ErrPolicyNotExists.Equal(err) {
@@ -118,7 +118,7 @@ func getPolicyInfo(t *meta.Meta, policyID int64) (*model.PolicyInfo, error) {
 	return policy, nil
 }
 
-func getPlacementPolicyByName(infoCache *infoschema.InfoCache, t *meta.Meta, policyName pmodel.CIStr) (*model.PolicyInfo, error) {
+func getPlacementPolicyByName(infoCache *infoschema.InfoCache, t *meta.Mutator, policyName pmodel.CIStr) (*model.PolicyInfo, error) {
 	currVer, err := t.GetSchemaVersion()
 	if err != nil {
 		return nil, err
@@ -146,7 +146,7 @@ func getPlacementPolicyByName(infoCache *infoschema.InfoCache, t *meta.Meta, pol
 	return nil, nil
 }
 
-func checkPlacementPolicyExistAndCancelNonExistJob(t *meta.Meta, job *model.Job, policyID int64) (*model.PolicyInfo, error) {
+func checkPlacementPolicyExistAndCancelNonExistJob(t *meta.Mutator, job *model.Job, policyID int64) (*model.PolicyInfo, error) {
 	policy, err := getPolicyInfo(t, policyID)
 	if err == nil {
 		return policy, nil
@@ -157,7 +157,7 @@ func checkPlacementPolicyExistAndCancelNonExistJob(t *meta.Meta, job *model.Job,
 	return nil, err
 }
 
-func checkPlacementPolicyRefValidAndCanNonValidJob(t *meta.Meta, job *model.Job, ref *model.PolicyRefInfo) (*model.PolicyInfo, error) {
+func checkPlacementPolicyRefValidAndCanNonValidJob(t *meta.Mutator, job *model.Job, ref *model.PolicyRefInfo) (*model.PolicyInfo, error) {
 	if ref == nil {
 		return nil, nil
 	}
@@ -165,7 +165,7 @@ func checkPlacementPolicyRefValidAndCanNonValidJob(t *meta.Meta, job *model.Job,
 	return checkPlacementPolicyExistAndCancelNonExistJob(t, job, ref.ID)
 }
 
-func checkAllTablePlacementPoliciesExistAndCancelNonExistJob(t *meta.Meta, job *model.Job, tblInfo *model.TableInfo) error {
+func checkAllTablePlacementPoliciesExistAndCancelNonExistJob(t *meta.Mutator, job *model.Job, tblInfo *model.TableInfo) error {
 	if _, err := checkPlacementPolicyRefValidAndCanNonValidJob(t, job, tblInfo.PlacementPolicyRef); err != nil {
 		return errors.Trace(err)
 	}
@@ -183,7 +183,7 @@ func checkAllTablePlacementPoliciesExistAndCancelNonExistJob(t *meta.Meta, job *
 	return nil
 }
 
-func onDropPlacementPolicy(jobCtx *jobContext, t *meta.Meta, job *model.Job) (ver int64, _ error) {
+func onDropPlacementPolicy(jobCtx *jobContext, t *meta.Mutator, job *model.Job) (ver int64, _ error) {
 	args, err := model.GetPlacementPolicyArgs(job)
 	if err != nil {
 		return ver, errors.Trace(err)
@@ -245,7 +245,7 @@ func onDropPlacementPolicy(jobCtx *jobContext, t *meta.Meta, job *model.Job) (ve
 	return ver, errors.Trace(err)
 }
 
-func onAlterPlacementPolicy(jobCtx *jobContext, t *meta.Meta, job *model.Job) (ver int64, _ error) {
+func onAlterPlacementPolicy(jobCtx *jobContext, t *meta.Mutator, job *model.Job) (ver int64, _ error) {
 	args, err := model.GetPlacementPolicyArgs(job)
 	if err != nil {
 		job.State = model.JobStateCancelled
@@ -280,7 +280,7 @@ func onAlterPlacementPolicy(jobCtx *jobContext, t *meta.Meta, job *model.Job) (v
 	return ver, nil
 }
 
-func updateExistPlacementPolicy(t *meta.Meta, policy *model.PolicyInfo) error {
+func updateExistPlacementPolicy(t *meta.Mutator, policy *model.PolicyInfo) error {
 	err := t.UpdatePolicy(policy)
 	if err != nil {
 		return errors.Trace(err)
@@ -350,7 +350,7 @@ func updateExistPlacementPolicy(t *meta.Meta, policy *model.PolicyInfo) error {
 	return nil
 }
 
-func checkPlacementPolicyNotInUse(infoCache *infoschema.InfoCache, t *meta.Meta, policy *model.PolicyInfo) error {
+func checkPlacementPolicyNotInUse(infoCache *infoschema.InfoCache, t *meta.Mutator, policy *model.PolicyInfo) error {
 	currVer, err := t.GetSchemaVersion()
 	if err != nil {
 		return err
@@ -407,7 +407,7 @@ func checkPlacementPolicyNotInUseFromRange(policy *model.PolicyInfo) error {
 	return checkFn(placement.TiDBBundleRangePrefixForMeta)
 }
 
-func getPlacementPolicyDependedObjectsIDs(t *meta.Meta, policy *model.PolicyInfo) (dbIDs, partIDs []int64, tblInfos []*model.TableInfo, err error) {
+func getPlacementPolicyDependedObjectsIDs(t *meta.Mutator, policy *model.PolicyInfo) (dbIDs, partIDs []int64, tblInfos []*model.TableInfo, err error) {
 	schemas, err := t.ListDatabases()
 	if err != nil {
 		return nil, nil, nil, err
@@ -444,7 +444,7 @@ func getPlacementPolicyDependedObjectsIDs(t *meta.Meta, policy *model.PolicyInfo
 }
 
 // CheckPlacementPolicyNotInUseFromMeta export for test.
-func CheckPlacementPolicyNotInUseFromMeta(t *meta.Meta, policy *model.PolicyInfo) error {
+func CheckPlacementPolicyNotInUseFromMeta(t *meta.Mutator, policy *model.PolicyInfo) error {
 	schemas, err := t.ListDatabases()
 	if err != nil {
 		return err

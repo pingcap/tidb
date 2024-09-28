@@ -85,7 +85,7 @@ func checkExistTableBundlesInPD(t *testing.T, do *domain.Domain, dbName string, 
 
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
 	require.NoError(t, kv.RunInNewTxn(ctx, do.Store(), false, func(ctx context.Context, txn kv.Transaction) error {
-		tt := meta.NewMeta(txn)
+		tt := meta.NewMutator(txn)
 		checkTableBundlesInPD(t, do, tt, tblInfo.Meta(), false)
 		return nil
 	}))
@@ -94,7 +94,7 @@ func checkExistTableBundlesInPD(t *testing.T, do *domain.Domain, dbName string, 
 func checkWaitingGCTableBundlesInPD(t *testing.T, do *domain.Domain, tblInfo *model.TableInfo) {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
 	require.NoError(t, kv.RunInNewTxn(ctx, do.Store(), false, func(ctx context.Context, txn kv.Transaction) error {
-		tt := meta.NewMeta(txn)
+		tt := meta.NewMutator(txn)
 		checkTableBundlesInPD(t, do, tt, tblInfo, true)
 		return nil
 	}))
@@ -103,7 +103,7 @@ func checkWaitingGCTableBundlesInPD(t *testing.T, do *domain.Domain, tblInfo *mo
 func checkWaitingGCPartitionBundlesInPD(t *testing.T, do *domain.Domain, partitions []model.PartitionDefinition) {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
 	require.NoError(t, kv.RunInNewTxn(ctx, do.Store(), false, func(ctx context.Context, txn kv.Transaction) error {
-		tt := meta.NewMeta(txn)
+		tt := meta.NewMutator(txn)
 		checkPartitionBundlesInPD(t, do.InfoSchema(), tt, partitions, true)
 		return nil
 	}))
@@ -133,7 +133,7 @@ func checkAllBundlesNotChange(t *testing.T, bundles []*placement.Bundle) {
 	}
 }
 
-func checkPartitionBundlesInPD(t *testing.T, is infoschema.InfoSchema, tt *meta.Meta, partitions []model.PartitionDefinition, waitingGC bool) {
+func checkPartitionBundlesInPD(t *testing.T, is infoschema.InfoSchema, tt *meta.Mutator, partitions []model.PartitionDefinition, waitingGC bool) {
 	checks := make([]*bundleCheck, 0)
 	for _, def := range partitions {
 		bundle, err := placement.NewPartitionBundle(tt, def)
@@ -151,7 +151,7 @@ func checkPartitionBundlesInPD(t *testing.T, is infoschema.InfoSchema, tt *meta.
 	}
 }
 
-func checkTableBundlesInPD(t *testing.T, do *domain.Domain, tt *meta.Meta, tblInfo *model.TableInfo, waitingGC bool) {
+func checkTableBundlesInPD(t *testing.T, do *domain.Domain, tt *meta.Mutator, tblInfo *model.TableInfo, waitingGC bool) {
 	is := do.InfoSchema()
 	bundle, err := placement.NewTableBundle(tt, tblInfo)
 	require.NoError(t, err)
@@ -373,7 +373,7 @@ func testGetPolicyByIDFromMeta(t *testing.T, store kv.Storage, policyID int64) *
 	)
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
 	err1 := kv.RunInNewTxn(ctx, store, false, func(ctx context.Context, txn kv.Transaction) error {
-		t := meta.NewMeta(txn)
+		t := meta.NewMutator(txn)
 		policyInfo, err = t.GetPolicy(policyID)
 		if err != nil {
 			return err
@@ -977,7 +977,7 @@ func testGetPolicyDependency(storage kv.Storage, name string) []int64 {
 	ids := make([]int64, 0, 32)
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
 	err1 := kv.RunInNewTxn(ctx, storage, false, func(ctx context.Context, txn kv.Transaction) error {
-		t := meta.NewMeta(txn)
+		t := meta.NewMutator(txn)
 		dbs, err := t.ListDatabases()
 		if err != nil {
 			return err
