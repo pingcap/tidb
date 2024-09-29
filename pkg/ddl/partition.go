@@ -94,10 +94,10 @@ func checkAddPartition(t *meta.Mutator, job *model.Job) (*model.TableInfo, *mode
 }
 
 // TODO: Move this into reorganize partition!
-func (w *worker) onAddTablePartition(jobCtx *jobContext, t *meta.Mutator, job *model.Job) (ver int64, _ error) {
+func (w *worker) onAddTablePartition(jobCtx *jobContext, job *model.Job) (ver int64, _ error) {
 	// Handle the rolling back job
 	if job.IsRollingback() {
-		ver, err := w.rollbackLikeDropPartition(jobCtx, t, job)
+		ver, err := w.rollbackLikeDropPartition(jobCtx, job)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
@@ -105,7 +105,7 @@ func (w *worker) onAddTablePartition(jobCtx *jobContext, t *meta.Mutator, job *m
 	}
 
 	// notice: addingDefinitions is empty when job is in state model.StateNone
-	tblInfo, partInfo, addingDefinitions, err := checkAddPartition(t, job)
+	tblInfo, partInfo, addingDefinitions, err := checkAddPartition(jobCtx.metaMut, job)
 	if err != nil {
 		return ver, err
 	}
@@ -136,14 +136,14 @@ func (w *worker) onAddTablePartition(jobCtx *jobContext, t *meta.Mutator, job *m
 
 		// move the adding definition into tableInfo.
 		updateAddingPartitionInfo(partInfo, tblInfo)
-		ver, err = updateVersionAndTableInfoWithCheck(jobCtx, t, job, tblInfo, true)
+		ver, err = updateVersionAndTableInfoWithCheck(jobCtx, job, tblInfo, true)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
 
 		// modify placement settings
 		for _, def := range tblInfo.Partition.AddingDefinitions {
-			if _, err = checkPlacementPolicyRefValidAndCanNonValidJob(t, job, def.PlacementPolicyRef); err != nil {
+			if _, err = checkPlacementPolicyRefValidAndCanNonValidJob(jobCtx.metaMut, job, def.PlacementPolicyRef); err != nil {
 				return ver, errors.Trace(err)
 			}
 		}
@@ -156,7 +156,7 @@ func (w *worker) onAddTablePartition(jobCtx *jobContext, t *meta.Mutator, job *m
 			}
 		}
 
-		bundles, err := alterTablePartitionBundles(t, tblInfo, tblInfo.Partition.AddingDefinitions)
+		bundles, err := alterTablePartitionBundles(jobCtx.metaMut, tblInfo, tblInfo.Partition.AddingDefinitions)
 		if err != nil {
 			job.State = model.JobStateCancelled
 			return ver, errors.Trace(err)
@@ -191,7 +191,7 @@ func (w *worker) onAddTablePartition(jobCtx *jobContext, t *meta.Mutator, job *m
 			// be finished. Otherwise the query to this partition will be blocked.
 			needRetry, err := checkPartitionReplica(tblInfo.TiFlashReplica.Count, addingDefinitions, jobCtx)
 			if err != nil {
-				return convertAddTablePartitionJob2RollbackJob(jobCtx, t, job, err, tblInfo)
+				return convertAddTablePartitionJob2RollbackJob(jobCtx, job, err, tblInfo)
 			}
 			if needRetry {
 				// The new added partition hasn't been replicated.
@@ -222,7 +222,7 @@ func (w *worker) onAddTablePartition(jobCtx *jobContext, t *meta.Mutator, job *m
 
 		preSplitAndScatter(w.sess.Context, jobCtx.store, tblInfo, addingDefinitions)
 
-		ver, err = updateVersionAndTableInfo(jobCtx, t, job, tblInfo, true)
+		ver, err = updateVersionAndTableInfo(jobCtx, job, tblInfo, true)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
@@ -2129,14 +2129,15 @@ func dropLabelRules(ctx context.Context, schemaName, tableName string, partNames
 	return infosync.UpdateLabelRules(ctx, patch)
 }
 
-func (w *worker) rollbackLikeDropPartition(jobCtx *jobContext, t *meta.Mutator, job *model.Job) (ver int64, _ error) {
+func (w *worker) rollbackLikeDropPartition(jobCtx *jobContext, job *model.Job) (ver int64, _ error) {
 	args, err := model.GetTablePartitionArgs(job)
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
 	partInfo := args.PartInfo
-	tblInfo, err := GetTableInfoAndCancelFaultJob(t, job, job.SchemaID)
+	metaMut := jobCtx.metaMut
+	tblInfo, err := GetTableInfoAndCancelFaultJob(metaMut, job, job.SchemaID)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
@@ -2186,7 +2187,7 @@ func (w *worker) rollbackLikeDropPartition(jobCtx *jobContext, t *meta.Mutator, 
 		tblInfo.Partition.ClearReorgIntermediateInfo()
 	}
 
-	ver, err = updateVersionAndTableInfo(jobCtx, t, job, tblInfo, true)
+	ver, err = updateVersionAndTableInfo(jobCtx, job, tblInfo, true)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
@@ -2226,14 +2227,15 @@ func (w *worker) rollbackLikeDropPartition(jobCtx *jobContext, t *meta.Mutator, 
 // StatePublic
 //
 //	Original state, unaware of DDL
-func (w *worker) onDropTablePartition(jobCtx *jobContext, t *meta.Mutator, job *model.Job) (ver int64, _ error) {
+func (w *worker) onDropTablePartition(jobCtx *jobContext, job *model.Job) (ver int64, _ error) {
 	args, err := model.GetTablePartitionArgs(job)
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
 	partNames := args.PartNames
-	tblInfo, err := GetTableInfoAndCancelFaultJob(t, job, job.SchemaID)
+	metaMut := jobCtx.metaMut
+	tblInfo, err := GetTableInfoAndCancelFaultJob(metaMut, job, job.SchemaID)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
@@ -2259,7 +2261,7 @@ func (w *worker) onDropTablePartition(jobCtx *jobContext, t *meta.Mutator, job *
 		tblInfo.Partition.DDLAction = model.ActionDropTablePartition
 
 		job.SchemaState = model.StateWriteOnly
-		ver, err = updateVersionAndTableInfo(jobCtx, t, job, tblInfo, originalState != job.SchemaState)
+		ver, err = updateVersionAndTableInfo(jobCtx, job, tblInfo, originalState != job.SchemaState)
 	case model.StateWriteOnly:
 		// Since the previous state do not use the dropping partitions,
 		// we can now actually remove them, allowing to write into the overlapping range
@@ -2280,7 +2282,7 @@ func (w *worker) onDropTablePartition(jobCtx *jobContext, t *meta.Mutator, job *
 		var bundles []*placement.Bundle
 		// create placement groups for each dropped partition to keep the data's placement before GC
 		// These placements groups will be deleted after GC
-		bundles, err = droppedPartitionBundles(t, tblInfo, tblInfo.Partition.DroppingDefinitions)
+		bundles, err = droppedPartitionBundles(metaMut, tblInfo, tblInfo.Partition.DroppingDefinitions)
 		if err != nil {
 			job.State = model.JobStateCancelled
 			return ver, err
@@ -2288,7 +2290,7 @@ func (w *worker) onDropTablePartition(jobCtx *jobContext, t *meta.Mutator, job *
 
 		var tableBundle *placement.Bundle
 		// Recompute table bundle to remove dropped partitions rules from its group
-		tableBundle, err = placement.NewTableBundle(t, tblInfo)
+		tableBundle, err = placement.NewTableBundle(metaMut, tblInfo)
 		if err != nil {
 			job.State = model.JobStateCancelled
 			return ver, errors.Trace(err)
@@ -2305,14 +2307,14 @@ func (w *worker) onDropTablePartition(jobCtx *jobContext, t *meta.Mutator, job *
 
 		tblInfo.Partition.DDLState = model.StateDeleteOnly
 		job.SchemaState = model.StateDeleteOnly
-		ver, err = updateVersionAndTableInfo(jobCtx, t, job, tblInfo, originalState != job.SchemaState)
+		ver, err = updateVersionAndTableInfo(jobCtx, job, tblInfo, originalState != job.SchemaState)
 	case model.StateDeleteOnly:
 		// This state is not a real 'DeleteOnly' state, because tidb does not maintain the state check in partitionDefinition.
 		// Insert this state to confirm all servers can not see the old partitions when reorg is running,
 		// so that no new data will be inserted into old partitions when reorganizing.
 		tblInfo.Partition.DDLState = model.StateDeleteReorganization
 		job.SchemaState = model.StateDeleteReorganization
-		ver, err = updateVersionAndTableInfo(jobCtx, t, job, tblInfo, originalState != job.SchemaState)
+		ver, err = updateVersionAndTableInfo(jobCtx, job, tblInfo, originalState != job.SchemaState)
 	case model.StateDeleteReorganization:
 		oldTblInfo := getTableInfoWithDroppingPartitions(tblInfo)
 		physicalTableIDs = getPartitionIDsFromDefinitions(tblInfo.Partition.DroppingDefinitions)
@@ -2320,7 +2322,7 @@ func (w *worker) onDropTablePartition(jobCtx *jobContext, t *meta.Mutator, job *
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
-		dbInfo, err := t.GetDatabase(job.SchemaID)
+		dbInfo, err := metaMut.GetDatabase(job.SchemaID)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
@@ -2374,7 +2376,7 @@ func (w *worker) onDropTablePartition(jobCtx *jobContext, t *meta.Mutator, job *
 		tblInfo.Partition.DDLAction = model.ActionNone
 		// used by ApplyDiff in updateSchemaVersion
 		job.CtxVars = []any{physicalTableIDs} // TODO remove it.
-		ver, err = updateVersionAndTableInfo(jobCtx, t, job, tblInfo, true)
+		ver, err = updateVersionAndTableInfo(jobCtx, job, tblInfo, true)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
@@ -2412,7 +2414,7 @@ func removeTiFlashAvailablePartitionIDs(tblInfo *model.TableInfo, pids []int64) 
 }
 
 // onTruncateTablePartition truncates old partition meta.
-func (w *worker) onTruncateTablePartition(jobCtx *jobContext, t *meta.Mutator, job *model.Job) (int64, error) {
+func (w *worker) onTruncateTablePartition(jobCtx *jobContext, job *model.Job) (int64, error) {
 	var ver int64
 	args, err := model.GetTruncateTableArgs(job)
 	if err != nil {
@@ -2424,7 +2426,8 @@ func (w *worker) onTruncateTablePartition(jobCtx *jobContext, t *meta.Mutator, j
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(errors.New("len(oldIDs) must be the same as len(newIDs)"))
 	}
-	tblInfo, err := GetTableInfoAndCancelFaultJob(t, job, job.SchemaID)
+	metaMut := jobCtx.metaMut
+	tblInfo, err := GetTableInfoAndCancelFaultJob(metaMut, job, job.SchemaID)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
@@ -2458,7 +2461,7 @@ func (w *worker) onTruncateTablePartition(jobCtx *jobContext, t *meta.Mutator, j
 			return ver, err
 		}
 
-		if err = updateTruncatePartitionLabelRules(job, t, oldPartitions, newPartitions, tblInfo, oldIDs); err != nil {
+		if err = updateTruncatePartitionLabelRules(job, jobCtx.metaMut, oldPartitions, newPartitions, tblInfo, oldIDs); err != nil {
 			job.State = model.JobStateCancelled
 			return ver, err
 		}
@@ -2466,7 +2469,7 @@ func (w *worker) onTruncateTablePartition(jobCtx *jobContext, t *meta.Mutator, j
 		preSplitAndScatter(w.sess.Context, jobCtx.store, tblInfo, newPartitions)
 
 		job.CtxVars = []any{oldIDs, newIDs}
-		ver, err = updateVersionAndTableInfo(jobCtx, t, job, tblInfo, true)
+		ver, err = updateVersionAndTableInfo(jobCtx, job, tblInfo, true)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
@@ -2507,13 +2510,13 @@ func (w *worker) onTruncateTablePartition(jobCtx *jobContext, t *meta.Mutator, j
 
 		tblInfo.Partition.DDLAction = model.ActionTruncateTablePartition
 		job.SchemaState = model.StateDeleteOnly
-		ver, err = updateVersionAndTableInfo(jobCtx, t, job, tblInfo, true)
+		ver, err = updateVersionAndTableInfo(jobCtx, job, tblInfo, true)
 	case model.StateDeleteOnly:
 		// This state is not a real 'DeleteOnly' state, because tidb does not maintaining the state check in partitionDefinition.
 		// Insert this state to confirm all servers can not see the old partitions when reorg is running,
 		// so that no new data will be inserted into old partitions when reorganizing.
 		job.SchemaState = model.StateDeleteReorganization
-		ver, err = updateVersionAndTableInfo(jobCtx, t, job, tblInfo, true)
+		ver, err = updateVersionAndTableInfo(jobCtx, job, tblInfo, true)
 	case model.StateDeleteReorganization:
 		// Step2: clear global index rows.
 		physicalTableIDs := oldIDs
@@ -2523,7 +2526,7 @@ func (w *worker) onTruncateTablePartition(jobCtx *jobContext, t *meta.Mutator, j
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
-		dbInfo, err := t.GetDatabase(job.SchemaID)
+		dbInfo, err := metaMut.GetDatabase(job.SchemaID)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
@@ -2595,7 +2598,7 @@ func (w *worker) onTruncateTablePartition(jobCtx *jobContext, t *meta.Mutator, j
 			return ver, err
 		}
 
-		if err = updateTruncatePartitionLabelRules(job, t, oldPartitions, newPartitions, tblInfo, oldIDs); err != nil {
+		if err = updateTruncatePartitionLabelRules(job, jobCtx.metaMut, oldPartitions, newPartitions, tblInfo, oldIDs); err != nil {
 			job.State = model.JobStateCancelled
 			return ver, err
 		}
@@ -2608,7 +2611,7 @@ func (w *worker) onTruncateTablePartition(jobCtx *jobContext, t *meta.Mutator, j
 
 		// used by ApplyDiff in updateSchemaVersion
 		job.CtxVars = []any{oldIDs, newIDs}
-		ver, err = updateVersionAndTableInfo(jobCtx, t, job, tblInfo, true)
+		ver, err = updateVersionAndTableInfo(jobCtx, job, tblInfo, true)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
@@ -2713,7 +2716,7 @@ func updateTruncatePartitionLabelRules(job *model.Job, t *meta.Mutator, oldParti
 }
 
 // onExchangeTablePartition exchange partition data
-func (w *worker) onExchangeTablePartition(jobCtx *jobContext, t *meta.Mutator, job *model.Job) (ver int64, _ error) {
+func (w *worker) onExchangeTablePartition(jobCtx *jobContext, job *model.Job) (ver int64, _ error) {
 	args, err := model.GetExchangeTablePartitionArgs(job)
 	if err != nil {
 		job.State = model.JobStateCancelled
@@ -2722,28 +2725,29 @@ func (w *worker) onExchangeTablePartition(jobCtx *jobContext, t *meta.Mutator, j
 
 	defID, ptSchemaID, ptID, partName :=
 		args.PartitionID, args.PTSchemaID, args.PTTableID, args.PartitionName
+	metaMut := jobCtx.metaMut
 
-	ntDbInfo, err := checkSchemaExistAndCancelNotExistJob(t, job)
+	ntDbInfo, err := checkSchemaExistAndCancelNotExistJob(metaMut, job)
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
 
-	ptDbInfo, err := t.GetDatabase(ptSchemaID)
+	ptDbInfo, err := metaMut.GetDatabase(ptSchemaID)
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
 
-	nt, err := GetTableInfoAndCancelFaultJob(t, job, job.SchemaID)
+	nt, err := GetTableInfoAndCancelFaultJob(metaMut, job, job.SchemaID)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
 
 	if job.IsRollingback() {
-		return rollbackExchangeTablePartition(jobCtx, t, job, nt)
+		return rollbackExchangeTablePartition(jobCtx, job, nt)
 	}
-	pt, err := getTableInfo(t, ptID, ptSchemaID)
+	pt, err := getTableInfo(metaMut, ptID, ptSchemaID)
 	if err != nil {
 		if infoschema.ErrDatabaseNotExists.Equal(err) || infoschema.ErrTableNotExists.Equal(err) {
 			job.State = model.JobStateCancelled
@@ -2772,7 +2776,7 @@ func (w *worker) onExchangeTablePartition(jobCtx *jobContext, t *meta.Mutator, j
 			return ver, errors.Trace(err)
 		}
 
-		err = checkExchangePartitionPlacementPolicy(t, nt.PlacementPolicyRef, pt.PlacementPolicyRef, partDef.PlacementPolicyRef)
+		err = checkExchangePartitionPlacementPolicy(metaMut, nt.PlacementPolicyRef, pt.PlacementPolicyRef, partDef.PlacementPolicyRef)
 		if err != nil {
 			job.State = model.JobStateCancelled
 			return ver, errors.Trace(err)
@@ -2809,7 +2813,7 @@ func (w *worker) onExchangeTablePartition(jobCtx *jobContext, t *meta.Mutator, j
 		// into the table using the schema version
 		// before the exchange is made.
 		job.SchemaState = model.StateWriteOnly
-		return updateVersionAndTableInfoWithCheck(jobCtx, t, job, nt, true, ptInfo...)
+		return updateVersionAndTableInfoWithCheck(jobCtx, job, nt, true, ptInfo...)
 	}
 	// From now on, nt (the non-partitioned table) has
 	// ExchangePartitionInfo set, meaning it is restricted
@@ -2851,12 +2855,12 @@ func (w *worker) onExchangeTablePartition(jobCtx *jobContext, t *meta.Mutator, j
 	}
 
 	// partition table auto IDs.
-	ptAutoIDs, err := t.GetAutoIDAccessors(ptSchemaID, ptID).Get()
+	ptAutoIDs, err := metaMut.GetAutoIDAccessors(ptSchemaID, ptID).Get()
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
 	// non-partition table auto IDs.
-	ntAutoIDs, err := t.GetAutoIDAccessors(job.SchemaID, nt.ID).Get()
+	ntAutoIDs, err := metaMut.GetAutoIDAccessors(job.SchemaID, nt.ID).Get()
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
@@ -2872,7 +2876,7 @@ func (w *worker) onExchangeTablePartition(jobCtx *jobContext, t *meta.Mutator, j
 
 	// Recreate non-partition table meta info,
 	// by first delete it with the old table id
-	err = t.DropTableOrView(job.SchemaID, nt.ID)
+	err = metaMut.DropTableOrView(job.SchemaID, nt.ID)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
@@ -2884,12 +2888,12 @@ func (w *worker) onExchangeTablePartition(jobCtx *jobContext, t *meta.Mutator, j
 	originalNt := nt.Clone()
 	partDef.ID, nt.ID = nt.ID, partDef.ID
 
-	err = t.UpdateTable(ptSchemaID, pt)
+	err = metaMut.UpdateTable(ptSchemaID, pt)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
 
-	err = t.CreateTableOrView(job.SchemaID, nt)
+	err = metaMut.CreateTableOrView(job.SchemaID, nt)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
@@ -2908,11 +2912,11 @@ func (w *worker) onExchangeTablePartition(jobCtx *jobContext, t *meta.Mutator, j
 		IncrementID: mathutil.Max(ptAutoIDs.IncrementID, ntAutoIDs.IncrementID),
 		RandomID:    mathutil.Max(ptAutoIDs.RandomID, ntAutoIDs.RandomID),
 	}
-	err = t.GetAutoIDAccessors(ptSchemaID, pt.ID).Put(newAutoIDs)
+	err = metaMut.GetAutoIDAccessors(ptSchemaID, pt.ID).Put(newAutoIDs)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
-	err = t.GetAutoIDAccessors(job.SchemaID, nt.ID).Put(newAutoIDs)
+	err = metaMut.GetAutoIDAccessors(job.SchemaID, nt.ID).Put(newAutoIDs)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
@@ -2935,7 +2939,7 @@ func (w *worker) onExchangeTablePartition(jobCtx *jobContext, t *meta.Mutator, j
 	// the follow code is a swap function for rules of two partitions
 	// though partitions has exchanged their ID, swap still take effect
 
-	bundles, err := bundlesForExchangeTablePartition(t, pt, partDef, nt)
+	bundles, err := bundlesForExchangeTablePartition(metaMut, pt, partDef, nt)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
@@ -2981,7 +2985,7 @@ func (w *worker) onExchangeTablePartition(jobCtx *jobContext, t *meta.Mutator, j
 
 	job.SchemaState = model.StatePublic
 	nt.ExchangePartitionInfo = nil
-	ver, err = updateVersionAndTableInfoWithCheck(jobCtx, t, job, nt, true)
+	ver, err = updateVersionAndTableInfoWithCheck(jobCtx, job, nt, true)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
@@ -3110,21 +3114,22 @@ func getReorgPartitionInfo(t *meta.Mutator, job *model.Job) (*model.TableInfo, [
 //
 //	Everything now looks as it should, no memory of old partitions/indexes,
 //	and no more double writing, since the previous state is only reading the new partitions/indexes.
-func (w *worker) onReorganizePartition(jobCtx *jobContext, t *meta.Mutator, job *model.Job) (ver int64, _ error) {
+func (w *worker) onReorganizePartition(jobCtx *jobContext, job *model.Job) (ver int64, _ error) {
 	// Handle the rolling back job
 	if job.IsRollingback() {
-		ver, err := w.rollbackLikeDropPartition(jobCtx, t, job)
+		ver, err := w.rollbackLikeDropPartition(jobCtx, job)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
 		return ver, nil
 	}
 
-	tblInfo, partNames, partInfo, _, addingDefinitions, err := getReorgPartitionInfo(t, job)
+	tblInfo, partNames, partInfo, _, addingDefinitions, err := getReorgPartitionInfo(jobCtx.metaMut, job)
 	if err != nil {
 		return ver, err
 	}
 
+	metaMut := jobCtx.metaMut
 	switch job.SchemaState {
 	case model.StateNone:
 		// job.SchemaState == model.StateNone means the job is in the initial state of reorg partition.
@@ -3185,7 +3190,7 @@ func (w *worker) onReorganizePartition(jobCtx *jobContext, t *meta.Mutator, job 
 
 		// modify placement settings
 		for _, def := range tblInfo.Partition.AddingDefinitions {
-			if _, err = checkPlacementPolicyRefValidAndCanNonValidJob(t, job, def.PlacementPolicyRef); err != nil {
+			if _, err = checkPlacementPolicyRefValidAndCanNonValidJob(metaMut, job, def.PlacementPolicyRef); err != nil {
 				// job.State = model.JobStateCancelled may be set depending on error in function above.
 				return ver, errors.Trace(err)
 			}
@@ -3267,13 +3272,13 @@ func (w *worker) onReorganizePartition(jobCtx *jobContext, t *meta.Mutator, job 
 			// In the next step, StateDeleteOnly, wait to verify the TiFlash replicas are OK
 		}
 
-		bundles, err := alterTablePartitionBundles(t, tblInfo, tblInfo.Partition.AddingDefinitions)
+		bundles, err := alterTablePartitionBundles(metaMut, tblInfo, tblInfo.Partition.AddingDefinitions)
 		if err != nil {
 			if !changesMade {
 				job.State = model.JobStateCancelled
 				return ver, errors.Trace(err)
 			}
-			return rollbackReorganizePartitionWithErr(jobCtx, t, job, err)
+			return rollbackReorganizePartitionWithErr(jobCtx, job, err)
 		}
 
 		if len(bundles) > 0 {
@@ -3282,7 +3287,7 @@ func (w *worker) onReorganizePartition(jobCtx *jobContext, t *meta.Mutator, job 
 					job.State = model.JobStateCancelled
 					return ver, errors.Wrapf(err, "failed to notify PD the placement rules")
 				}
-				return rollbackReorganizePartitionWithErr(jobCtx, t, job, err)
+				return rollbackReorganizePartitionWithErr(jobCtx, job, err)
 			}
 			changesMade = true
 		}
@@ -3298,7 +3303,7 @@ func (w *worker) onReorganizePartition(jobCtx *jobContext, t *meta.Mutator, job 
 				job.State = model.JobStateCancelled
 				return ver, err
 			}
-			return rollbackReorganizePartitionWithErr(jobCtx, t, job, err)
+			return rollbackReorganizePartitionWithErr(jobCtx, job, err)
 		}
 
 		// Doing the preSplitAndScatter here, since all checks are completed,
@@ -3318,14 +3323,14 @@ func (w *worker) onReorganizePartition(jobCtx *jobContext, t *meta.Mutator, job 
 		job.SchemaState = model.StateDeleteOnly
 		tblInfo.Partition.DDLState = model.StateDeleteOnly
 		tblInfo.Partition.DDLAction = job.Type
-		ver, err = updateVersionAndTableInfoWithCheck(jobCtx, t, job, tblInfo, true)
+		ver, err = updateVersionAndTableInfoWithCheck(jobCtx, job, tblInfo, true)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
 		failpoint.Inject("reorgPartRollback1", func(val failpoint.Value) {
 			if val.(bool) {
 				err = errors.New("Injected error by reorgPartRollback1")
-				failpoint.Return(rollbackReorganizePartitionWithErr(jobCtx, t, job, err))
+				failpoint.Return(rollbackReorganizePartitionWithErr(jobCtx, job, err))
 			}
 		})
 
@@ -3356,7 +3361,7 @@ func (w *worker) onReorganizePartition(jobCtx *jobContext, t *meta.Mutator, job 
 			count := tblInfo.TiFlashReplica.Count
 			needRetry, err := checkPartitionReplica(count, addingDefinitions, jobCtx)
 			if err != nil {
-				return rollbackReorganizePartitionWithErr(jobCtx, t, job, err)
+				return rollbackReorganizePartitionWithErr(jobCtx, job, err)
 			}
 			if needRetry {
 				// The new added partition hasn't been replicated.
@@ -3383,10 +3388,10 @@ func (w *worker) onReorganizePartition(jobCtx *jobContext, t *meta.Mutator, job 
 		failpoint.Inject("reorgPartRollback2", func(val failpoint.Value) {
 			if val.(bool) {
 				err = errors.New("Injected error by reorgPartRollback2")
-				failpoint.Return(rollbackReorganizePartitionWithErr(jobCtx, t, job, err))
+				failpoint.Return(rollbackReorganizePartitionWithErr(jobCtx, job, err))
 			}
 		})
-		ver, err = updateVersionAndTableInfo(jobCtx, t, job, tblInfo, true)
+		ver, err = updateVersionAndTableInfo(jobCtx, job, tblInfo, true)
 		job.SchemaState = model.StateWriteOnly
 	case model.StateWriteOnly:
 		// Insert this state to confirm all servers can see the new partitions when reorg is running,
@@ -3399,7 +3404,7 @@ func (w *worker) onReorganizePartition(jobCtx *jobContext, t *meta.Mutator, job 
 		}
 		tblInfo.Partition.DDLState = model.StateWriteReorganization
 		metrics.GetBackfillProgressByLabel(metrics.LblReorgPartition, job.SchemaName, tblInfo.Name.String()).Set(0.3 / float64(math.MaxUint64))
-		ver, err = updateVersionAndTableInfo(jobCtx, t, job, tblInfo, true)
+		ver, err = updateVersionAndTableInfo(jobCtx, job, tblInfo, true)
 		job.SchemaState = model.StateWriteReorganization
 	case model.StateWriteReorganization:
 		physicalTableIDs := getPartitionIDsFromDefinitions(tblInfo.Partition.DroppingDefinitions)
@@ -3417,11 +3422,11 @@ func (w *worker) onReorganizePartition(jobCtx *jobContext, t *meta.Mutator, job 
 		failpoint.Inject("reorgPartRollback3", func(val failpoint.Value) {
 			if val.(bool) {
 				err = errors.New("Injected error by reorgPartRollback3")
-				failpoint.Return(rollbackReorganizePartitionWithErr(jobCtx, t, job, err))
+				failpoint.Return(rollbackReorganizePartitionWithErr(jobCtx, job, err))
 			}
 		})
 		var done bool
-		done, ver, err = doPartitionReorgWork(w, jobCtx, t, job, tbl, physicalTableIDs)
+		done, ver, err = doPartitionReorgWork(w, jobCtx, job, tbl, physicalTableIDs)
 
 		if !done {
 			return ver, err
@@ -3430,7 +3435,7 @@ func (w *worker) onReorganizePartition(jobCtx *jobContext, t *meta.Mutator, job 
 		failpoint.Inject("reorgPartRollback4", func(val failpoint.Value) {
 			if val.(bool) {
 				err = errors.New("Injected error by reorgPartRollback4")
-				failpoint.Return(rollbackReorganizePartitionWithErr(jobCtx, t, job, err))
+				failpoint.Return(rollbackReorganizePartitionWithErr(jobCtx, job, err))
 			}
 		})
 
@@ -3449,7 +3454,7 @@ func (w *worker) onReorganizePartition(jobCtx *jobContext, t *meta.Mutator, job 
 				} else {
 					inAllPartitionColumns, err := checkPartitionKeysConstraint(partInfo, index.Columns, tblInfo)
 					if err != nil {
-						return rollbackReorganizePartitionWithErr(jobCtx, t, job, err)
+						return rollbackReorganizePartitionWithErr(jobCtx, job, err)
 					}
 					if !inAllPartitionColumns {
 						// Mark the old unique index as non-readable, and to be dropped,
@@ -3486,7 +3491,7 @@ func (w *worker) onReorganizePartition(jobCtx *jobContext, t *meta.Mutator, job 
 		// since they are a part of the normal Definitions that other nodes with
 		// the current schema version. So we need to double write for one more schema version
 		tblInfo.Partition.DDLState = model.StateDeleteReorganization
-		ver, err = updateVersionAndTableInfo(jobCtx, t, job, tblInfo, true)
+		ver, err = updateVersionAndTableInfo(jobCtx, job, tblInfo, true)
 		job.SchemaState = model.StateDeleteReorganization
 
 	case model.StateDeleteReorganization:
@@ -3541,11 +3546,11 @@ func (w *worker) onReorganizePartition(jobCtx *jobContext, t *meta.Mutator, job 
 			// TODO: Will this result in big gaps?
 			// TODO: How to carrie over AUTO_INCREMENT etc.?
 			// Check if they are carried over in ApplyDiff?!?
-			autoIDs, err := t.GetAutoIDAccessors(job.SchemaID, tblInfo.ID).Get()
+			autoIDs, err := metaMut.GetAutoIDAccessors(job.SchemaID, tblInfo.ID).Get()
 			if err != nil {
 				return ver, errors.Trace(err)
 			}
-			err = t.DropTableOrView(job.SchemaID, tblInfo.ID)
+			err = metaMut.DropTableOrView(job.SchemaID, tblInfo.ID)
 			if err != nil {
 				return ver, errors.Trace(err)
 			}
@@ -3567,11 +3572,11 @@ func (w *worker) onReorganizePartition(jobCtx *jobContext, t *meta.Mutator, job 
 					failpoint.Return(ver, errors.New("Injected error by reorgPartFail4"))
 				}
 			})
-			err = t.GetAutoIDAccessors(job.SchemaID, tblInfo.ID).Put(autoIDs)
+			err = metaMut.GetAutoIDAccessors(job.SchemaID, tblInfo.ID).Put(autoIDs)
 			if err != nil {
 				return ver, errors.Trace(err)
 			}
-			err = t.CreateTableOrView(job.SchemaID, tblInfo)
+			err = metaMut.CreateTableOrView(job.SchemaID, tblInfo)
 			if err != nil {
 				return ver, errors.Trace(err)
 			}
@@ -3583,7 +3588,7 @@ func (w *worker) onReorganizePartition(jobCtx *jobContext, t *meta.Mutator, job 
 			}
 		})
 		job.CtxVars = []any{physicalTableIDs, newIDs}
-		ver, err = updateVersionAndTableInfo(jobCtx, t, job, tblInfo, true)
+		ver, err = updateVersionAndTableInfo(jobCtx, job, tblInfo, true)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
@@ -3648,7 +3653,7 @@ func newStatsDDLEventForJob(
 	return event, nil
 }
 
-func doPartitionReorgWork(w *worker, jobCtx *jobContext, t *meta.Mutator, job *model.Job, tbl table.Table, physTblIDs []int64) (done bool, ver int64, err error) {
+func doPartitionReorgWork(w *worker, jobCtx *jobContext, job *model.Job, tbl table.Table, physTblIDs []int64) (done bool, ver int64, err error) {
 	job.ReorgMeta.ReorgTp = model.ReorgTypeTxn
 	sctx, err1 := w.sessPool.Get()
 	if err1 != nil {
@@ -3669,7 +3674,7 @@ func doPartitionReorgWork(w *worker, jobCtx *jobContext, t *meta.Mutator, job *m
 	if !ok {
 		return false, ver, dbterror.ErrUnsupportedReorganizePartition.GenWithStackByArgs()
 	}
-	dbInfo, err := t.GetDatabase(job.SchemaID)
+	dbInfo, err := jobCtx.metaMut.GetDatabase(job.SchemaID)
 	if err != nil {
 		return false, ver, errors.Trace(err)
 	}
@@ -3698,7 +3703,7 @@ func doPartitionReorgWork(w *worker, jobCtx *jobContext, t *meta.Mutator, job *m
 				zap.Stringer("job", job), zap.Error(err1))
 		}
 		logutil.DDLLogger().Warn("reorg partition job failed, convert job to rollback", zap.Stringer("job", job), zap.Error(err))
-		ver, err = rollbackReorganizePartitionWithErr(jobCtx, t, job, err)
+		ver, err = rollbackReorganizePartitionWithErr(jobCtx, job, err)
 		return false, ver, errors.Trace(err)
 	}
 	return true, ver, err
