@@ -704,7 +704,7 @@ func (w *worker) countForError(jobCtx *jobContext, job *model.Job, err error) er
 	return err
 }
 
-func (w *worker) processJobPausingRequest(jobCtx *jobContext, job *model.Job) (isRunnable bool, err error) {
+func (*worker) processJobPausingRequest(jobCtx *jobContext, job *model.Job) (isRunnable bool, err error) {
 	if job.IsPaused() {
 		jobCtx.logger.Debug("paused DDL job ", zap.String("job", job.String()))
 		return false, err
