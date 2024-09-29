@@ -847,8 +847,14 @@ func checkIfTableIsEmpty(
 	store kv.Storage,
 	tbl table.Table,
 ) bool {
-	if partitionedTbl, ok := tbl.(table.PartitionedTable); ok {
-		return areAllPartitionsEmpty(ctx, store, partitionedTbl, checkIfPhysicalTableIsEmpty)
+	if pTbl, ok := tbl.(table.PartitionedTable); ok {
+		for _, pid := range pTbl.GetAllPartitionIDs() {
+			pTbl := pTbl.GetPartition(pid)
+			if !checkIfPhysicalTableIsEmpty(ctx, store, pTbl) {
+				return false
+			}
+		}
+		return true
 	}
 	plainTbl := tbl.(table.PhysicalTable)
 	return checkIfPhysicalTableIsEmpty(ctx, store, plainTbl)
@@ -887,10 +893,14 @@ func checkIfTempIndexIsEmpty(
 	tbl table.Table,
 	firstIdxID, lastIdxID int64,
 ) bool {
-	if partitionedTbl, ok := tbl.(table.PartitionedTable); ok {
-		return areAllPartitionsEmpty(ctx, store, partitionedTbl, func(store kv.Storage, tbl table.PhysicalTable, resGroupName string) bool {
-			return checkIfTempIndexIsEmptyForPhysicalTable(ctx, store, tbl, firstIdxID, lastIdxID)
-		})
+	if pTbl, ok := tbl.(table.PartitionedTable); ok {
+		for _, pid := range pTbl.GetAllPartitionIDs() {
+			pTbl := pTbl.GetPartition(pid)
+			if !checkIfTempIndexIsEmptyForPhysicalTable(ctx, store, pTbl, firstIdxID, lastIdxID) {
+				return false
+			}
+		}
+		return true
 	}
 	plainTbl := tbl.(table.PhysicalTable)
 	return checkIfTempIndexIsEmptyForPhysicalTable(ctx, store, plainTbl, firstIdxID, lastIdxID)
@@ -904,34 +914,16 @@ func checkIfTempIndexIsEmptyForPhysicalTable(
 ) bool {
 	start, end := encodeTempIndexRange(tbl.Meta().ID, firstIdxID, lastIdxID)
 	foundKey := false
-	err := iterateSnapshotKeys(ctx, store, kv.PriorityLow, tbl.IndexPrefix(), math.MaxUint64, start, end, func(_ kv.Handle, indexKey kv.Key, rawValue []byte) (more bool, err error) {
-		foundKey = true
-		return false, nil
-	})
+	err := iterateSnapshotKeys(ctx, store, kv.PriorityLow, tbl.IndexPrefix(), math.MaxUint64, start, end,
+		func(_ kv.Handle, _ kv.Key, _ []byte) (more bool, err error) {
+			foundKey = true
+			return false, nil
+		})
 	if err != nil {
 		logutil.DDLLogger().Info("check if temp index is empty failed", zap.Error(err))
 		return false
 	}
-	return foundKey
-}
-
-func areAllPartitionsEmpty(
-	ctx *ReorgContext,
-	store kv.Storage,
-	tbl table.PartitionedTable,
-	checkFunc func(
-		ctx *ReorgContext,
-		store kv.Storage,
-		tbl table.PhysicalTable,
-	) bool,
-) bool {
-	for _, pid := range tbl.GetAllPartitionIDs() {
-		pTbl := tbl.GetPartition(pid)
-		if !checkFunc(ctx, store, pTbl) {
-			return false
-		}
-	}
-	return true
+	return !foundKey
 }
 
 // pickBackfillType determines which backfill process will be used. The result is
