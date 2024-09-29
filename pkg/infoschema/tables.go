@@ -2174,14 +2174,14 @@ func FormatStoreServerVersion(version string) string {
 }
 
 // GetTiFlashStoreCount returns the count of tiflash server.
-func GetTiFlashStoreCount(ctx sessionctx.Context) (cnt uint64, err error) {
+func GetTiFlashStoreCount(store kv.Storage) (cnt uint64, err error) {
 	failpoint.Inject("mockTiFlashStoreCount", func(val failpoint.Value) {
 		if val.(bool) {
 			failpoint.Return(uint64(10), nil)
 		}
 	})
 
-	stores, err := GetStoreServerInfo(ctx.GetStore())
+	stores, err := GetStoreServerInfo(store)
 	if err != nil {
 		return cnt, err
 	}
