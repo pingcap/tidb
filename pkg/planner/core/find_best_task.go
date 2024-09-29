@@ -1256,13 +1256,6 @@ func isPointGetConvertableSchema(ds *logicalop.DataSource) bool {
 	return true
 }
 
-// exploreEnforcedPlan determines whether to explore enforced plans for this DataSource if it has already found an unenforced plan.
-// See #46177 for more information.
-func exploreEnforcedPlan(ds *logicalop.DataSource) bool {
-	// default value is false to keep it compatible with previous versions.
-	return fixcontrol.GetBoolWithDefault(ds.SCtx().GetSessionVars().GetOptimizerFixControlMap(), fixcontrol.Fix46177, false)
-}
-
 func findBestTask4LogicalDataSource(lp base.LogicalPlan, prop *property.PhysicalProperty, planCounter *base.PlanCounterTp, opt *optimizetrace.PhysicalOptimizeOp) (t base.Task, cntPlan int64, err error) {
 	ds := lp.(*logicalop.DataSource)
 	// If ds is an inner plan in an IndexJoin, the IndexJoin will generate an inner plan by itself,
@@ -1312,10 +1305,6 @@ func findBestTask4LogicalDataSource(lp base.LogicalPlan, prop *property.Physical
 		unenforcedTask, cnt, err = ds.FindBestTask(prop, planCounter, opt)
 		if err != nil {
 			return nil, 0, err
-		}
-		if !unenforcedTask.Invalid() && !exploreEnforcedPlan(ds) {
-			ds.StoreTask(prop, unenforcedTask)
-			return unenforcedTask, cnt, nil
 		}
 
 		// Then, explore the bestTask with enforced prop
