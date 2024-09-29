@@ -55,7 +55,7 @@ import (
 // DANGER: it is an internal function used by onCreateTable and onCreateTables, for reusing code. Be careful.
 // 1. it expects the argument of job has been deserialized.
 // 2. it won't call updateSchemaVersion, FinishTableJob and asyncNotifyEvent.
-func createTable(jobCtx *jobContext, t *meta.Mutator, job *model.Job, args *model.CreateTableArgs) (*model.TableInfo, error) {
+func createTable(jobCtx *jobContext, job *model.Job, args *model.CreateTableArgs) (*model.TableInfo, error) {
 	schemaID := job.SchemaID
 	tbInfo, fkCheck := args.TableInfo, args.FKCheck
 
@@ -68,7 +68,8 @@ func createTable(jobCtx *jobContext, t *meta.Mutator, job *model.Job, args *mode
 		return tbInfo, errors.Trace(err)
 	}
 
-	err = checkConstraintNamesNotExists(t, schemaID, tbInfo.Constraints)
+	metaMut := jobCtx.metaMut
+	err = checkConstraintNamesNotExists(metaMut, schemaID, tbInfo.Constraints)
 	if err != nil {
 		if infoschema.ErrCheckConstraintDupName.Equal(err) {
 			job.State = model.JobStateCancelled
@@ -92,8 +93,8 @@ func createTable(jobCtx *jobContext, t *meta.Mutator, job *model.Job, args *mode
 	case model.StateNone:
 		// none -> public
 		tbInfo.State = model.StatePublic
-		tbInfo.UpdateTS = t.StartTS
-		err = createTableOrViewWithCheck(t, job, schemaID, tbInfo)
+		tbInfo.UpdateTS = metaMut.StartTS
+		err = createTableOrViewWithCheck(metaMut, job, schemaID, tbInfo)
 		if err != nil {
 			return tbInfo, errors.Trace(err)
 		}
@@ -105,7 +106,7 @@ func createTable(jobCtx *jobContext, t *meta.Mutator, job *model.Job, args *mode
 		})
 
 		// build table & partition bundles if any.
-		if err = checkAllTablePlacementPoliciesExistAndCancelNonExistJob(t, job, tbInfo); err != nil {
+		if err = checkAllTablePlacementPoliciesExistAndCancelNonExistJob(jobCtx.metaMut, job, tbInfo); err != nil {
 			return tbInfo, errors.Trace(err)
 		}
 
@@ -131,7 +132,7 @@ func createTable(jobCtx *jobContext, t *meta.Mutator, job *model.Job, args *mode
 			}
 		}
 
-		bundles, err := placement.NewFullTableBundles(t, tbInfo)
+		bundles, err := placement.NewFullTableBundles(metaMut, tbInfo)
 		if err != nil {
 			job.State = model.JobStateCancelled
 			return tbInfo, errors.Trace(err)
@@ -150,7 +151,7 @@ func createTable(jobCtx *jobContext, t *meta.Mutator, job *model.Job, args *mode
 	}
 }
 
-func onCreateTable(jobCtx *jobContext, t *meta.Mutator, job *model.Job) (ver int64, _ error) {
+func onCreateTable(jobCtx *jobContext, job *model.Job) (ver int64, _ error) {
 	failpoint.Inject("mockExceedErrorLimit", func(val failpoint.Value) {
 		if val.(bool) {
 			failpoint.Return(ver, errors.New("mock do job error"))
@@ -166,15 +167,15 @@ func onCreateTable(jobCtx *jobContext, t *meta.Mutator, job *model.Job) (ver int
 	tbInfo := args.TableInfo
 
 	if len(tbInfo.ForeignKeys) > 0 {
-		return createTableWithForeignKeys(jobCtx, t, job, args)
+		return createTableWithForeignKeys(jobCtx, job, args)
 	}
 
-	tbInfo, err = createTable(jobCtx, t, job, args)
+	tbInfo, err = createTable(jobCtx, job, args)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
 
-	ver, err = updateSchemaVersion(jobCtx, t, job)
+	ver, err = updateSchemaVersion(jobCtx, job)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
@@ -186,7 +187,7 @@ func onCreateTable(jobCtx *jobContext, t *meta.Mutator, job *model.Job) (ver int
 	return ver, errors.Trace(err)
 }
 
-func createTableWithForeignKeys(jobCtx *jobContext, t *meta.Mutator, job *model.Job, args *model.CreateTableArgs) (ver int64, err error) {
+func createTableWithForeignKeys(jobCtx *jobContext, job *model.Job, args *model.CreateTableArgs) (ver int64, err error) {
 	tbInfo := args.TableInfo
 	switch tbInfo.State {
 	case model.StateNone, model.StatePublic:
@@ -194,19 +195,19 @@ func createTableWithForeignKeys(jobCtx *jobContext, t *meta.Mutator, job *model.
 		// the `tbInfo.State` with `model.StateNone`, so it's fine to just call the `createTable` with
 		// public state.
 		// when `br` restores table, the state of `tbInfo` will be public.
-		tbInfo, err = createTable(jobCtx, t, job, args)
+		tbInfo, err = createTable(jobCtx, job, args)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
 		tbInfo.State = model.StateWriteOnly
-		ver, err = updateVersionAndTableInfo(jobCtx, t, job, tbInfo, true)
+		ver, err = updateVersionAndTableInfo(jobCtx, job, tbInfo, true)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
 		job.SchemaState = model.StateWriteOnly
 	case model.StateWriteOnly:
 		tbInfo.State = model.StatePublic
-		ver, err = updateVersionAndTableInfo(jobCtx, t, job, tbInfo, true)
+		ver, err = updateVersionAndTableInfo(jobCtx, job, tbInfo, true)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
@@ -220,7 +221,7 @@ func createTableWithForeignKeys(jobCtx *jobContext, t *meta.Mutator, job *model.
 	return ver, errors.Trace(err)
 }
 
-func onCreateTables(jobCtx *jobContext, t *meta.Mutator, job *model.Job) (int64, error) {
+func onCreateTables(jobCtx *jobContext, job *model.Job) (int64, error) {
 	var ver int64
 
 	args, err := model.GetBatchCreateTableArgs(job)
@@ -242,14 +243,14 @@ func onCreateTables(jobCtx *jobContext, t *meta.Mutator, job *model.Job) (int64,
 		tableInfo := tblArgs.TableInfo
 		stubJob.TableID = tableInfo.ID
 		if tableInfo.Sequence != nil {
-			err := createSequenceWithCheck(t, stubJob, tableInfo)
+			err := createSequenceWithCheck(jobCtx.metaMut, stubJob, tableInfo)
 			if err != nil {
 				job.State = model.JobStateCancelled
 				return ver, errors.Trace(err)
 			}
 			tableInfos = append(tableInfos, tableInfo)
 		} else {
-			tbInfo, err := createTable(jobCtx, t, stubJob, tblArgs)
+			tbInfo, err := createTable(jobCtx, stubJob, tblArgs)
 			if err != nil {
 				job.State = model.JobStateCancelled
 				return ver, errors.Trace(err)
@@ -258,7 +259,7 @@ func onCreateTables(jobCtx *jobContext, t *meta.Mutator, job *model.Job) (int64,
 		}
 	}
 
-	ver, err = updateSchemaVersion(jobCtx, t, job)
+	ver, err = updateSchemaVersion(jobCtx, job)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
@@ -283,7 +284,7 @@ func createTableOrViewWithCheck(t *meta.Mutator, job *model.Job, schemaID int64,
 	return t.CreateTableOrView(schemaID, tbInfo)
 }
 
-func onCreateView(jobCtx *jobContext, t *meta.Mutator, job *model.Job) (ver int64, _ error) {
+func onCreateView(jobCtx *jobContext, job *model.Job) (ver int64, _ error) {
 	schemaID := job.SchemaID
 	args, err := model.GetCreateTableArgs(job)
 	if err != nil {
@@ -294,7 +295,8 @@ func onCreateView(jobCtx *jobContext, t *meta.Mutator, job *model.Job) (ver int6
 	tbInfo, orReplace := args.TableInfo, args.OnExistReplace
 	tbInfo.State = model.StateNone
 
-	oldTableID, err := findTableIDByName(jobCtx.infoCache, t, schemaID, tbInfo.Name.L)
+	metaMut := jobCtx.metaMut
+	oldTableID, err := findTableIDByName(jobCtx.infoCache, metaMut, schemaID, tbInfo.Name.L)
 	if infoschema.ErrTableNotExists.Equal(err) {
 		err = nil
 	}
@@ -311,7 +313,7 @@ func onCreateView(jobCtx *jobContext, t *meta.Mutator, job *model.Job) (ver int6
 			return ver, errors.Trace(err)
 		}
 	}
-	ver, err = updateSchemaVersion(jobCtx, t, job)
+	ver, err = updateSchemaVersion(jobCtx, job)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
@@ -319,20 +321,20 @@ func onCreateView(jobCtx *jobContext, t *meta.Mutator, job *model.Job) (ver int6
 	case model.StateNone:
 		// none -> public
 		tbInfo.State = model.StatePublic
-		tbInfo.UpdateTS = t.StartTS
+		tbInfo.UpdateTS = metaMut.StartTS
 		if oldTableID > 0 && orReplace {
-			err = t.DropTableOrView(schemaID, oldTableID)
+			err = metaMut.DropTableOrView(schemaID, oldTableID)
 			if err != nil {
 				job.State = model.JobStateCancelled
 				return ver, errors.Trace(err)
 			}
-			err = t.GetAutoIDAccessors(schemaID, oldTableID).Del()
+			err = metaMut.GetAutoIDAccessors(schemaID, oldTableID).Del()
 			if err != nil {
 				job.State = model.JobStateCancelled
 				return ver, errors.Trace(err)
 			}
 		}
-		err = createTableOrViewWithCheck(t, job, schemaID, tbInfo)
+		err = createTableOrViewWithCheck(metaMut, job, schemaID, tbInfo)
 		if err != nil {
 			job.State = model.JobStateCancelled
 			return ver, errors.Trace(err)
