@@ -680,7 +680,7 @@ func splitRegionsByKeyRanges(ctx context.Context, store kv.Storage, keyRanges []
 // 2. before flashback start, check timestamp, disable GC and close PD schedule, get flashback key ranges.
 // 3. phase 1, lock flashback key ranges.
 // 4. phase 2, send flashback RPC, do flashback jobs.
-func (w *worker) onFlashbackCluster(jobCtx *jobContext, t *meta.Mutator, job *model.Job) (ver int64, err error) {
+func (w *worker) onFlashbackCluster(jobCtx *jobContext, job *model.Job) (ver int64, err error) {
 	inFlashbackTest := false
 	failpoint.Inject("mockFlashbackTest", func(val failpoint.Value) {
 		if val.(bool) {
@@ -746,7 +746,7 @@ func (w *worker) onFlashbackCluster(jobCtx *jobContext, t *meta.Mutator, job *mo
 		return ver, nil
 	// Stage 2, check flashbackTS, close GC and PD schedule, get flashback key ranges.
 	case model.StateDeleteOnly:
-		if err = checkAndSetFlashbackClusterInfo(w.ctx, sess, jobCtx.store, t, job, args.FlashbackTS); err != nil {
+		if err = checkAndSetFlashbackClusterInfo(w.ctx, sess, jobCtx.store, jobCtx.metaMut, job, args.FlashbackTS); err != nil {
 			job.State = model.JobStateCancelled
 			return ver, errors.Trace(err)
 		}
@@ -770,13 +770,13 @@ func (w *worker) onFlashbackCluster(jobCtx *jobContext, t *meta.Mutator, job *mo
 
 		job.FillArgs(args)
 		job.SchemaState = model.StateWriteOnly
-		return updateSchemaVersion(jobCtx, t, job)
+		return updateSchemaVersion(jobCtx, job)
 	// Stage 3, lock related key ranges.
 	case model.StateWriteOnly:
 		// TODO: Support flashback in unistore.
 		if inFlashbackTest {
 			job.SchemaState = model.StateWriteReorganization
-			return updateSchemaVersion(jobCtx, t, job)
+			return updateSchemaVersion(jobCtx, job)
 		}
 		// Split region by keyRanges, make sure no unrelated key ranges be locked.
 		splitRegionsByKeyRanges(w.ctx, jobCtx.store, args.FlashbackKeyRanges)
@@ -832,7 +832,7 @@ func (w *worker) onFlashbackCluster(jobCtx *jobContext, t *meta.Mutator, job *mo
 		asyncNotifyEvent(jobCtx, notifier.NewFlashbackClusterEvent(), job)
 		job.State = model.JobStateDone
 		job.SchemaState = model.StatePublic
-		return updateSchemaVersion(jobCtx, t, job)
+		return updateSchemaVersion(jobCtx, job)
 	}
 	return ver, nil
 }
