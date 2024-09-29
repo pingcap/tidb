@@ -843,7 +843,6 @@ func checkIfReorgTableWorkCanSkip(
 	ctx := NewReorgContext()
 	ctx.resourceGroupName = job.ReorgMeta.ResourceGroupName
 	return checkIfTableIsEmpty(ctx, store, tbl)
-
 }
 
 func checkIfTableIsEmpty(
@@ -860,6 +859,7 @@ func checkIfTableIsEmpty(
 		}
 		return true
 	}
+	//nolint:forcetypeassert
 	plainTbl := tbl.(table.PhysicalTable)
 	return checkIfPhysicalTableIsEmpty(ctx, store, plainTbl)
 }
@@ -909,6 +909,7 @@ func checkIfTempIndexIsEmpty(
 		}
 		return true
 	}
+	//nolint:forcetypeassert
 	plainTbl := tbl.(table.PhysicalTable)
 	return checkIfTempIndexIsEmptyForPhysicalTable(ctx, store, plainTbl, firstIdxID, lastIdxID)
 }
