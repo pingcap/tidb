@@ -836,10 +836,14 @@ func checkIfReorgTableWorkCanSkip(
 	tbl table.Table,
 	job *model.Job,
 ) bool {
+	if job.SnapshotVer != 0 {
+		// Reorg work has begun.
+		return false
+	}
 	ctx := NewReorgContext()
 	ctx.resourceGroupName = job.ReorgMeta.ResourceGroupName
-	return job.SnapshotVer == 0 && // reorg work doesn't begin
-		checkIfTableIsEmpty(ctx, store, tbl)
+	return checkIfTableIsEmpty(ctx, store, tbl)
+
 }
 
 func checkIfTableIsEmpty(
@@ -879,12 +883,15 @@ func checkIfTempIndexReorgWorkCanSkip(
 	allIndexInfos []*model.IndexInfo,
 	job *model.Job,
 ) bool {
+	if job.SnapshotVer != 0 {
+		// Reorg work has begun.
+		return false
+	}
 	ctx := NewReorgContext()
 	ctx.resourceGroupName = job.ReorgMeta.ResourceGroupName
 	firstIdxID := allIndexInfos[0].ID
 	lastIdxID := allIndexInfos[len(allIndexInfos)-1].ID
-	return job.SnapshotVer == 0 &&
-		checkIfTempIndexIsEmpty(ctx, store, tbl, firstIdxID, lastIdxID)
+	return checkIfTempIndexIsEmpty(ctx, store, tbl, firstIdxID, lastIdxID)
 }
 
 func checkIfTempIndexIsEmpty(
