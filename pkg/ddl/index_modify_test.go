@@ -1130,7 +1130,7 @@ func TestCreateTableWithVectorIndex(t *testing.T) {
 	}
 
 	// test TiFlash store count is 0
-	replicas, err := infoschema.GetTiFlashStoreCount(tk.Session())
+	replicas, err := infoschema.GetTiFlashStoreCount(tk.Session().GetStore())
 	require.NoError(t, err)
 	require.Equal(t, uint64(0), replicas)
 	tk.MustContainErrMsg("create table t(a int, b vector(3), vector index((VEC_COSINE_DISTANCE(b))) USING HNSW);",
