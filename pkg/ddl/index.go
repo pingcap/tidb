@@ -831,25 +831,34 @@ SwitchIndexState:
 	return ver, errors.Trace(err)
 }
 
-func isTableEmpty(store kv.Storage, tbl table.Table, resGroupName string) bool {
-	if tbl, ok := tbl.(table.PartitionedTable); ok {
-		for _, pid := range tbl.GetAllPartitionIDs() {
-			pTbl := tbl.GetPartition(pid)
-			oneEmpty := isTableEmptyOnePhyscialTable(store, pTbl, resGroupName)
-			if !oneEmpty {
-				return false
-			}
-		}
-		return true
-	}
-	//nolint:forcetypeassert
-	plainTbl := tbl.(table.PhysicalTable)
-	return isTableEmptyOnePhyscialTable(store, plainTbl, resGroupName)
+func checkIfReorgTableWorkCanSkip(
+	store kv.Storage,
+	tbl table.Table,
+	job *model.Job,
+) bool {
+	ctx := NewReorgContext()
+	ctx.resourceGroupName = job.ReorgMeta.ResourceGroupName
+	return job.SnapshotVer == 0 && // reorg work doesn't begin
+		checkIfTableIsEmpty(ctx, store, tbl)
 }
 
-func isTableEmptyOnePhyscialTable(store kv.Storage, tbl table.PhysicalTable, resGroupName string) bool {
-	ctx := NewReorgContext()
-	ctx.resourceGroupName = resGroupName
+func checkIfTableIsEmpty(
+	ctx *ReorgContext,
+	store kv.Storage,
+	tbl table.Table,
+) bool {
+	if partitionedTbl, ok := tbl.(table.PartitionedTable); ok {
+		return areAllPartitionsEmpty(ctx, store, partitionedTbl, checkIfPhysicalTableIsEmpty)
+	}
+	plainTbl := tbl.(table.PhysicalTable)
+	return checkIfPhysicalTableIsEmpty(ctx, store, plainTbl)
+}
+
+func checkIfPhysicalTableIsEmpty(
+	ctx *ReorgContext,
+	store kv.Storage,
+	tbl table.PhysicalTable,
+) bool {
 	_, isEmpty, err := GetTableMaxHandle(ctx, store, math.MaxInt64, tbl)
 	if err != nil {
 		logutil.DDLLogger().Info("check if table is empty failed", zap.Error(err))
@@ -858,38 +867,71 @@ func isTableEmptyOnePhyscialTable(store kv.Storage, tbl table.PhysicalTable, res
 	return isEmpty
 }
 
-func isTempIndexEmpty(store kv.Storage, tbl table.Table, allIndexInfos []*model.IndexInfo, resGroupName string) bool {
-	if tbl, ok := tbl.(table.PartitionedTable); ok {
-		for _, pid := range tbl.GetAllPartitionIDs() {
-			pTbl := tbl.GetPartition(pid)
-			oneEmpty := isTempIndexEmptyOnePhysicalTable(store, pTbl, allIndexInfos, resGroupName)
-			if !oneEmpty {
-				return false
-			}
-		}
-		return true
-	}
-	//nolint:forcetypeassert
-	plainTbl := tbl.(table.PhysicalTable)
-	return isTempIndexEmptyOnePhysicalTable(store, plainTbl, allIndexInfos, resGroupName)
+func checkIfTempIndexReorgWorkCanSkip(
+	store kv.Storage,
+	tbl table.Table,
+	allIndexInfos []*model.IndexInfo,
+	job *model.Job,
+) bool {
+	ctx := NewReorgContext()
+	ctx.resourceGroupName = job.ReorgMeta.ResourceGroupName
+	firstIdxID := allIndexInfos[0].ID
+	lastIdxID := allIndexInfos[len(allIndexInfos)-1].ID
+	return job.SnapshotVer == 0 &&
+		checkIfTempIndexIsEmpty(ctx, store, tbl, firstIdxID, lastIdxID)
 }
 
-func isTempIndexEmptyOnePhysicalTable(store kv.Storage, tbl table.PhysicalTable, allIndexInfos []*model.IndexInfo, resGroupName string) bool {
-	rgCtx := NewReorgContext()
-	rgCtx.resourceGroupName = resGroupName
-	start, end := encodeTempIndexRange(tbl.Meta().ID,
-		allIndexInfos[0].ID, allIndexInfos[len(allIndexInfos)-1].ID)
-	foundKey := false
-	err := iterateSnapshotKeys(rgCtx, store, kv.PriorityLow, tbl.IndexPrefix(), math.MaxUint64,
-		start, end, func(_ kv.Handle, indexKey kv.Key, rawValue []byte) (more bool, err error) {
-			foundKey = true
-			return false, nil
+func checkIfTempIndexIsEmpty(
+	ctx *ReorgContext,
+	store kv.Storage,
+	tbl table.Table,
+	firstIdxID, lastIdxID int64,
+) bool {
+	if partitionedTbl, ok := tbl.(table.PartitionedTable); ok {
+		return areAllPartitionsEmpty(ctx, store, partitionedTbl, func(store kv.Storage, tbl table.PhysicalTable, resGroupName string) bool {
+			return checkIfTempIndexIsEmptyForPhysicalTable(ctx, store, tbl, firstIdxID, lastIdxID)
 		})
+	}
+	plainTbl := tbl.(table.PhysicalTable)
+	return checkIfTempIndexIsEmptyForPhysicalTable(ctx, store, plainTbl, firstIdxID, lastIdxID)
+}
+
+func checkIfTempIndexIsEmptyForPhysicalTable(
+	ctx *ReorgContext,
+	store kv.Storage,
+	tbl table.PhysicalTable,
+	firstIdxID, lastIdxID int64,
+) bool {
+	start, end := encodeTempIndexRange(tbl.Meta().ID, firstIdxID, lastIdxID)
+	foundKey := false
+	err := iterateSnapshotKeys(ctx, store, kv.PriorityLow, tbl.IndexPrefix(), math.MaxUint64, start, end, func(_ kv.Handle, indexKey kv.Key, rawValue []byte) (more bool, err error) {
+		foundKey = true
+		return false, nil
+	})
 	if err != nil {
 		logutil.DDLLogger().Info("check if temp index is empty failed", zap.Error(err))
 		return false
 	}
 	return foundKey
+}
+
+func areAllPartitionsEmpty(
+	ctx *ReorgContext,
+	store kv.Storage,
+	tbl table.PartitionedTable,
+	checkFunc func(
+		ctx *ReorgContext,
+		store kv.Storage,
+		tbl table.PhysicalTable,
+	) bool,
+) bool {
+	for _, pid := range tbl.GetAllPartitionIDs() {
+		pTbl := tbl.GetPartition(pid)
+		if !checkFunc(ctx, store, pTbl) {
+			return false
+		}
+	}
+	return true
 }
 
 // pickBackfillType determines which backfill process will be used. The result is
@@ -960,9 +1002,8 @@ func doReorgWorkForCreateIndex(
 		return false, ver, err
 	}
 	if !reorgTp.NeedMergeProcess() {
-		skipReorgWork := job.SnapshotVer == 0 &&
-			isTableEmpty(w.store, tbl, job.ReorgMeta.ResourceGroupName)
-		if skipReorgWork {
+		skipReorg := checkIfReorgTableWorkCanSkip(w.store, tbl, job)
+		if skipReorg {
 			logutil.DDLLogger().Info("table is empty, skipping reorg work",
 				zap.Int64("jobID", job.ID),
 				zap.String("table", tbl.Meta().Name.O))
@@ -972,8 +1013,7 @@ func doReorgWorkForCreateIndex(
 	}
 	switch allIndexInfos[0].BackfillState {
 	case model.BackfillStateRunning:
-		skipReorgWork := job.SnapshotVer == 0 &&
-			isTableEmpty(w.store, tbl, job.ReorgMeta.ResourceGroupName)
+		skipReorgWork := checkIfReorgTableWorkCanSkip(w.store, tbl, job)
 		if !skipReorgWork {
 			logutil.DDLLogger().Info("index backfill state running",
 				zap.Int64("job ID", job.ID), zap.String("table", tbl.Meta().Name.O),
@@ -1022,13 +1062,16 @@ func doReorgWorkForCreateIndex(
 		ver, err = updateVersionAndTableInfo(jobCtx, job, tbl.Meta(), true)
 		return false, ver, errors.Trace(err)
 	case model.BackfillStateMerging:
-		skipReorgWork := job.SnapshotVer == 0 &&
-			isTempIndexEmpty(w.store, tbl, allIndexInfos, job.ReorgMeta.ResourceGroupName)
-		if !skipReorgWork {
+		skipReorg := checkIfTempIndexReorgWorkCanSkip(w.store, tbl, allIndexInfos, job)
+		if !skipReorg {
 			done, ver, err = runReorgJobAndHandleErr(w, jobCtx, job, tbl, allIndexInfos, true)
 			if !done {
 				return false, ver, err
 			}
+		} else {
+			logutil.DDLLogger().Info("temp index is empty, skipping reorg work",
+				zap.Int64("jobID", job.ID),
+				zap.String("table", tbl.Meta().Name.O))
 		}
 		for _, indexInfo := range allIndexInfos {
 			indexInfo.BackfillState = model.BackfillStateInapplicable // Prevent double-write on this index.
