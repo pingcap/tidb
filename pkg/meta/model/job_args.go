@@ -1397,18 +1397,20 @@ func GetPlacementPolicyArgs(job *Job) (*PlacementPolicyArgs, error) {
 }
 
 type ModifyColumnArgs struct {
-	Column           *ColumnInfo
-	OldColumnName    pmodel.CIStr
-	Position         *ast.ColumnPosition
-	ModifyColumnType byte
-	NewShardBits     uint64
-	ChangingColumn   *ColumnInfo
-	ChangingIdxs     []*IndexInfo
-	RemovedIdxs      []int64
+	Column           *ColumnInfo         `json:"column,omitempty"`
+	OldColumnName    pmodel.CIStr        `json:"old_column_name,omitempty"`
+	Position         *ast.ColumnPosition `json:"position,omitempty"`
+	ModifyColumnType byte                `json:"modify_column_type,omitempty"`
+	NewShardBits     uint64              `json:"new_shard_bits,omitempty"`
+	// ChangingColumn is the temporary column derived from OldColumn
+	ChangingColumn *ColumnInfo `json:"changing_column,omitempty"`
+	ChangingIdxs   []*IndexInfo
+	// RemoveIdxs stores newly-created indexes that will be removed after the job
+	RemovedIdxs []int64 `json:"removed_idxs,omitempty"`
 
 	// Finished args
-	IndexIDs     []int64
-	PartitionIDs []int64
+	IndexIDs     []int64 `json:"index_ids,omitempty"`
+	PartitionIDs []int64 `json:"partition_ids,omitempty"`
 
 	// Non-persisted fields
 	DBInfo    *DBInfo     `json:"-"`
@@ -1427,8 +1429,8 @@ func GetModifyColumnArgs(job *Job) (*ModifyColumnArgs, error) {
 	if job.Version == JobVersion1 {
 		args := &ModifyColumnArgs{}
 		if err := job.DecodeArgs(
-			args.Column, &args.OldColumnName, args.Position, &args.ModifyColumnType,
-			&args.NewShardBits, args.ChangingColumn, &args.ChangingIdxs, &args.RemovedIdxs,
+			&args.Column, &args.OldColumnName, &args.Position, &args.ModifyColumnType,
+			&args.NewShardBits, &args.ChangingColumn, &args.ChangingIdxs, &args.RemovedIdxs,
 		); err != nil {
 			return nil, errors.Trace(err)
 		}

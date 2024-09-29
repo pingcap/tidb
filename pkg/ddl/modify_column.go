@@ -153,6 +153,7 @@ func (w *worker) onModifyColumn(jobCtx *jobContext, t *meta.Mutator, job *model.
 		}
 	}
 
+	args.ChangingColumn = changingCol
 	return w.doModifyColumnTypeWithData(jobCtx, t, job, args)
 }
 
