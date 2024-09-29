@@ -145,7 +145,7 @@ func convertNotReorgAddIdxJob2RollbackJob(jobCtx *jobContext, job *model.Job, oc
 func rollingbackModifyColumn(w *worker, jobCtx *jobContext, job *model.Job) (ver int64, err error) {
 	if needNotifyAndStopReorgWorker(job) {
 		// column type change workers are started. we have to ask them to exit.
-		w.jobLogger(job).Info("run the cancelling DDL job", zap.String("job", job.String()))
+		jobCtx.logger.Info("run the cancelling DDL job", zap.String("job", job.String()))
 		jobCtx.oldDDLCtx.notifyReorgWorkerJobStateChange(job)
 		// Give the this kind of ddl one more round to run, the dbterror.ErrCancelledDDLJob should be fetched from the bottom up.
 		return w.onModifyColumn(jobCtx, job)
@@ -261,7 +261,7 @@ func rollingbackDropIndex(jobCtx *jobContext, job *model.Job) (ver int64, err er
 func rollingbackAddIndex(w *worker, jobCtx *jobContext, job *model.Job, isPK bool) (ver int64, err error) {
 	if needNotifyAndStopReorgWorker(job) {
 		// add index workers are started. need to ask them to exit.
-		w.jobLogger(job).Info("run the cancelling DDL job", zap.String("job", job.String()))
+		jobCtx.logger.Info("run the cancelling DDL job", zap.String("job", job.String()))
 		jobCtx.oldDDLCtx.notifyReorgWorkerJobStateChange(job)
 		ver, err = w.onCreateIndex(jobCtx, job, isPK)
 	} else {
@@ -588,10 +588,10 @@ func rollingbackTruncateTable(jobCtx *jobContext, job *model.Job) (ver int64, er
 	return cancelOnlyNotHandledJob(job, model.StateNone)
 }
 
-func pauseReorgWorkers(w *worker, d *ddlCtx, job *model.Job) (err error) {
+func pauseReorgWorkers(jobCtx *jobContext, job *model.Job) (err error) {
 	if needNotifyAndStopReorgWorker(job) {
-		w.jobLogger(job).Info("pausing the DDL job", zap.String("job", job.String()))
-		d.notifyReorgWorkerJobStateChange(job)
+		jobCtx.logger.Info("pausing the DDL job", zap.String("job", job.String()))
+		jobCtx.oldDDLCtx.notifyReorgWorkerJobStateChange(job)
 	}
 
 	return dbterror.ErrPausedDDLJob.GenWithStackByArgs(job.ID)
@@ -650,7 +650,7 @@ func convertJob2RollbackJob(w *worker, jobCtx *jobContext, job *model.Job) (ver 
 		err = dbterror.ErrCancelledDDLJob
 	}
 
-	logger := w.jobLogger(job)
+	logger := jobCtx.logger
 	if err != nil {
 		if job.Error == nil {
 			job.Error = toTError(err)

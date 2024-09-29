@@ -43,7 +43,6 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
-	tidblogutil "github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/topsql"
 	topsqlstate "github.com/pingcap/tidb/pkg/util/topsql/state"
 	kvutil "github.com/tikv/client-go/v2/util"
@@ -87,6 +86,7 @@ type jobContext struct {
 
 	// per job fields
 	notifyCh chan struct{}
+	logger   *zap.Logger
 
 	// per job step fields
 	metaMut *meta.Mutator
@@ -133,7 +133,6 @@ type worker struct {
 	sessPool        *sess.Pool    // sessPool is used to new sessions to execute SQL in ddl package.
 	sess            *sess.Session // sess is used and only used in running DDL job.
 	delRangeManager delRangeManager
-	logCtx          context.Context
 	seqAllocator    *atomic.Uint64
 
 	*ddlCtx
@@ -175,19 +174,7 @@ func newWorker(ctx context.Context, tp workerType, sessPool *sess.Pool, delRange
 		delRangeManager: delRangeMgr,
 	}
 	worker.addingDDLJobKey = addingDDLJobPrefix + worker.typeStr()
-	worker.logCtx = tidblogutil.WithFields(context.Background(), zap.String("worker", worker.String()), zap.String("category", "ddl"))
 	return worker
-}
-
-func (w *worker) jobLogger(job *model.Job) *zap.Logger {
-	logger := tidblogutil.Logger(w.logCtx)
-	if job != nil {
-		logger = tidblogutil.LoggerWithTraceInfo(
-			logger.With(zap.Int64("jobID", job.ID)),
-			job.TraceInfo,
-		)
-	}
-	return logger
 }
 
 func (w *worker) typeStr() string {
@@ -213,7 +200,8 @@ func (w *worker) Close() {
 		w.sessPool.Put(w.sess.Session())
 	}
 	w.wg.Wait()
-	tidblogutil.Logger(w.logCtx).Info("DDL worker closed", zap.Duration("take time", time.Since(startTime)))
+	logutil.DDLLogger().Info("DDL worker closed", zap.Stringer("worker", w),
+		zap.Duration("take time", time.Since(startTime)))
 }
 
 func asyncNotify(ch chan struct{}) {
@@ -236,12 +224,12 @@ func injectFailPointForGetJob(job *model.Job) {
 }
 
 // handleUpdateJobError handles the too large DDL job.
-func (w *worker) handleUpdateJobError(t *meta.Mutator, job *model.Job, err error) error {
+func (w *worker) handleUpdateJobError(jobCtx *jobContext, job *model.Job, err error) error {
 	if err == nil {
 		return nil
 	}
 	if kv.ErrEntryTooLarge.Equal(err) {
-		w.jobLogger(job).Warn("update DDL job failed", zap.String("job", job.String()), zap.Error(err))
+		jobCtx.logger.Warn("update DDL job failed", zap.String("job", job.String()), zap.Error(err))
 		w.sess.Rollback()
 		err1 := w.sess.Begin(w.ctx)
 		if err1 != nil {
@@ -253,13 +241,13 @@ func (w *worker) handleUpdateJobError(t *meta.Mutator, job *model.Job, err error
 		job.ErrorCount++
 		job.SchemaState = model.StateNone
 		job.State = model.JobStateCancelled
-		err = w.finishDDLJob(t, job)
+		err = w.finishDDLJob(jobCtx, job)
 	}
 	return errors.Trace(err)
 }
 
 // updateDDLJob updates the DDL job information.
-func (w *worker) updateDDLJob(job *model.Job, updateRawArgs bool) error {
+func (w *worker) updateDDLJob(jobCtx *jobContext, job *model.Job, updateRawArgs bool) error {
 	failpoint.Inject("mockErrEntrySizeTooLarge", func(val failpoint.Value) {
 		if val.(bool) {
 			failpoint.Return(kv.ErrEntryTooLarge)
@@ -267,7 +255,7 @@ func (w *worker) updateDDLJob(job *model.Job, updateRawArgs bool) error {
 	})
 
 	if !updateRawArgs {
-		w.jobLogger(job).Info("meet something wrong before update DDL job, shouldn't update raw args",
+		jobCtx.logger.Info("meet something wrong before update DDL job, shouldn't update raw args",
 			zap.String("job", job.String()))
 	}
 	return errors.Trace(updateDDLJob2Table(w.ctx, w.sess, job, updateRawArgs))
@@ -339,7 +327,7 @@ func JobNeedGC(job *model.Job) bool {
 
 // finishDDLJob deletes the finished DDL job in the ddl queue and puts it to history queue.
 // If the DDL job need to handle in background, it will prepare a background job.
-func (w *worker) finishDDLJob(t *meta.Mutator, job *model.Job) (err error) {
+func (w *worker) finishDDLJob(jobCtx *jobContext, job *model.Job) (err error) {
 	startTime := time.Now()
 	defer func() {
 		metrics.DDLWorkerHistogram.WithLabelValues(metrics.WorkerFinishDDLJob, job.Type.String(), metrics.RetLabel(err)).Observe(time.Since(startTime).Seconds())
@@ -374,8 +362,9 @@ func (w *worker) finishDDLJob(t *meta.Mutator, job *model.Job) (err error) {
 		return errors.Trace(err)
 	}
 
-	job.BinlogInfo.FinishedTS = t.StartTS
-	w.jobLogger(job).Info("finish DDL job", zap.String("job", job.String()))
+	metaMut := jobCtx.metaMut
+	job.BinlogInfo.FinishedTS = metaMut.StartTS
+	jobCtx.logger.Info("finish DDL job", zap.String("job", job.String()))
 	updateRawArgs := true
 	if job.Type == model.ActionAddPrimaryKey && !job.IsCancelled() {
 		// ActionAddPrimaryKey needs to check the warnings information in job.Args.
@@ -385,7 +374,7 @@ func (w *worker) finishDDLJob(t *meta.Mutator, job *model.Job) (err error) {
 	job.SeqNum = w.seqAllocator.Add(1)
 	w.removeJobCtx(job)
 	failpoint.InjectCall("afterFinishDDLJob", job)
-	err = AddHistoryDDLJob(w.ctx, w.sess, t, job, updateRawArgs)
+	err = AddHistoryDDLJob(w.ctx, w.sess, metaMut, job, updateRawArgs)
 	return errors.Trace(err)
 }
 
@@ -464,7 +453,7 @@ func (w *worker) handleJobDone(jobCtx *jobContext, job *model.Job) error {
 	if err := w.checkBeforeCommit(); err != nil {
 		return err
 	}
-	err := w.finishDDLJob(jobCtx.metaMut, job)
+	err := w.finishDDLJob(jobCtx, job)
 	if err != nil {
 		w.sess.Rollback()
 		return err
@@ -585,8 +574,8 @@ func (w *worker) transitOneJobStep(jobCtx *jobContext, job *model.Job) (int64, e
 		jobCtx.unlockSchemaVersion(job.ID)
 		return 0, err
 	}
-	err = w.updateDDLJob(job, updateRawArgs)
-	if err = w.handleUpdateJobError(jobCtx.metaMut, job, err); err != nil {
+	err = w.updateDDLJob(jobCtx, job, updateRawArgs)
+	if err = w.handleUpdateJobError(jobCtx, job, err); err != nil {
 		w.sess.Rollback()
 		jobCtx.unlockSchemaVersion(job.ID)
 		return 0, err
@@ -602,7 +591,7 @@ func (w *worker) transitOneJobStep(jobCtx *jobContext, job *model.Job) (int64, e
 
 	// If error is non-retryable, we can ignore the sleep.
 	if runJobErr != nil && errorIsRetryable(runJobErr, job) {
-		w.jobLogger(job).Info("run DDL job failed, sleeps a while then retries it.",
+		jobCtx.logger.Info("run DDL job failed, sleeps a while then retries it.",
 			zap.Duration("waitTime", GetWaitTimeWhenErrorOccurred()), zap.Error(runJobErr))
 		// wait a while to retry again. If we don't wait here, DDL will retry this job immediately,
 		// which may act like a deadlock.
@@ -666,7 +655,7 @@ func chooseLeaseTime(t, max time.Duration) time.Duration {
 }
 
 // countForPanic records the error count for DDL job.
-func (w *worker) countForPanic(job *model.Job) {
+func (w *worker) countForPanic(jobCtx *jobContext, job *model.Job) {
 	// If run DDL job panic, just cancel the DDL jobs.
 	if job.State == model.JobStateRollingback {
 		job.State = model.JobStateCancelled
@@ -675,7 +664,7 @@ func (w *worker) countForPanic(job *model.Job) {
 	}
 	job.ErrorCount++
 
-	logger := w.jobLogger(job)
+	logger := jobCtx.logger
 	// Load global DDL variables.
 	if err1 := loadDDLVars(w); err1 != nil {
 		logger.Error("load DDL global variable failed", zap.Error(err1))
@@ -691,11 +680,11 @@ func (w *worker) countForPanic(job *model.Job) {
 }
 
 // countForError records the error count for DDL job.
-func (w *worker) countForError(err error, job *model.Job) error {
+func (w *worker) countForError(jobCtx *jobContext, job *model.Job, err error) error {
 	job.Error = toTError(err)
 	job.ErrorCount++
 
-	logger := w.jobLogger(job)
+	logger := jobCtx.logger
 	// If job is cancelled, we shouldn't return an error and shouldn't load DDL variables.
 	if job.State == model.JobStateCancelled {
 		logger.Info("DDL job is cancelled normally", zap.Error(err))
@@ -715,15 +704,15 @@ func (w *worker) countForError(err error, job *model.Job) error {
 	return err
 }
 
-func (w *worker) processJobPausingRequest(d *ddlCtx, job *model.Job) (isRunnable bool, err error) {
+func (w *worker) processJobPausingRequest(jobCtx *jobContext, job *model.Job) (isRunnable bool, err error) {
 	if job.IsPaused() {
-		w.jobLogger(job).Debug("paused DDL job ", zap.String("job", job.String()))
+		jobCtx.logger.Debug("paused DDL job ", zap.String("job", job.String()))
 		return false, err
 	}
 	if job.IsPausing() {
-		w.jobLogger(job).Debug("pausing DDL job ", zap.String("job", job.String()))
+		jobCtx.logger.Debug("pausing DDL job ", zap.String("job", job.String()))
 		job.State = model.JobStatePaused
-		return false, pauseReorgWorkers(w, d, job)
+		return false, pauseReorgWorkers(jobCtx, job)
 	}
 	return true, nil
 }
@@ -753,14 +742,14 @@ func (w *worker) runOneJobStep(
 ) (ver int64, updateRawArgs bool, err error) {
 	defer tidbutil.Recover(metrics.LabelDDLWorker, fmt.Sprintf("%s runOneJobStep", w),
 		func() {
-			w.countForPanic(job)
+			w.countForPanic(jobCtx, job)
 		}, false)
 
 	// Mock for run ddl job panic.
 	failpoint.Inject("mockPanicInRunDDLJob", func(failpoint.Value) {})
 
 	if job.Type != model.ActionMultiSchemaChange {
-		w.jobLogger(job).Info("run DDL job", zap.String("category", "ddl"), zap.String("job", job.String()))
+		jobCtx.logger.Info("run DDL job", zap.String("job", job.String()))
 	}
 	timeStart := time.Now()
 	if job.RealStartTS == 0 {
@@ -771,7 +760,7 @@ func (w *worker) runOneJobStep(
 	}()
 
 	if job.IsCancelling() {
-		w.jobLogger(job).Debug("cancel DDL job", zap.String("job", job.String()))
+		jobCtx.logger.Debug("cancel DDL job", zap.String("job", job.String()))
 		ver, err = convertJob2RollbackJob(w, jobCtx, job)
 		// if job is converted to rollback job, the job.Args may be changed for the
 		// rollback logic, so we let caller persist the new arguments.
@@ -779,7 +768,7 @@ func (w *worker) runOneJobStep(
 		return
 	}
 
-	isRunnable, err := w.processJobPausingRequest(jobCtx.oldDDLCtx, job)
+	isRunnable, err := w.processJobPausingRequest(jobCtx, job)
 	if !isRunnable {
 		return ver, false, err
 	}
@@ -939,7 +928,7 @@ func (w *worker) runOneJobStep(
 
 	// Save errors in job if any, so that others can know errors happened.
 	if err != nil {
-		err = w.countForError(err, job)
+		err = w.countForError(jobCtx, job, err)
 	}
 	return ver, updateRawArgs, err
 }
