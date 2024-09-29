@@ -46,7 +46,6 @@ import (
 	"github.com/pingcap/tidb/pkg/owner"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/table"
-	pumpcli "github.com/pingcap/tidb/pkg/tidb-binlog/pump_client"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/generic"
@@ -111,7 +110,6 @@ func (l *ownerListener) OnBecomeOwner() {
 		unSyncedTracker:   newUnSyncedJobTracker(),
 		schemaVerMgr:      newSchemaVersionManager(l.ddl.store),
 		schemaVerSyncer:   l.ddl.schemaVerSyncer,
-		binlogCli:         l.ddl.binlogCli,
 
 		ddlCtx:         l.ddl.ddlCtx,
 		ddlJobNotifyCh: l.jobSubmitter.ddlJobNotifyCh,
@@ -144,7 +142,6 @@ type jobScheduler struct {
 	unSyncedTracker   *unSyncedJobTracker
 	schemaVerMgr      *schemaVersionManager
 	schemaVerSyncer   schemaver.Syncer
-	binlogCli         *pumpcli.PumpsClient
 
 	// those fields are created or initialized on start
 	reorgWorkerPool      *workerPool
@@ -474,7 +471,7 @@ func (s *jobScheduler) deliveryJob(wk *worker, pool *workerPool, job *model.Job)
 	jobID, involvedSchemaInfos := job.ID, job.GetInvolvingSchemaInfo()
 	s.runningJobs.addRunning(jobID, involvedSchemaInfos)
 	metrics.DDLRunningJobCount.WithLabelValues(pool.tp().String()).Inc()
-	jobCtx := s.getJobRunCtx(job.ID)
+	jobCtx := s.getJobRunCtx(job.ID, job.TraceInfo)
 	s.wg.Run(func() {
 		defer func() {
 			r := recover()
@@ -527,7 +524,7 @@ func (s *jobScheduler) deliveryJob(wk *worker, pool *workerPool, job *model.Job)
 	})
 }
 
-func (s *jobScheduler) getJobRunCtx(jobID int64) *jobContext {
+func (s *jobScheduler) getJobRunCtx(jobID int64, traceInfo *model.TraceInfo) *jobContext {
 	ch, _ := s.ddlJobDoneChMap.Load(jobID)
 	return &jobContext{
 		ctx:                  s.schCtx,
@@ -537,9 +534,12 @@ func (s *jobScheduler) getJobRunCtx(jobID int64) *jobContext {
 		autoidCli:            s.autoidCli,
 		store:                s.store,
 		schemaVerSyncer:      s.schemaVerSyncer,
-		binlogCli:            s.binlogCli,
 
 		notifyCh: ch,
+		logger: tidblogutil.LoggerWithTraceInfo(
+			logutil.DDLLogger().With(zap.Int64("jobID", jobID)),
+			traceInfo,
+		),
 
 		oldDDLCtx: s.ddlCtx,
 	}
@@ -565,7 +565,7 @@ func (s *jobScheduler) transitOneJobStepAndWaitSync(wk *worker, jobCtx *jobConte
 				}
 				s.cleanMDLInfo(job, ownerID)
 			} else if err != systable.ErrNotFound {
-				wk.jobLogger(job).Warn("check MDL info failed", zap.Error(err))
+				jobCtx.logger.Warn("check MDL info failed", zap.Error(err))
 				return err
 			}
 		} else {
@@ -580,7 +580,7 @@ func (s *jobScheduler) transitOneJobStepAndWaitSync(wk *worker, jobCtx *jobConte
 
 	schemaVer, err := wk.transitOneJobStep(jobCtx, job)
 	if err != nil {
-		tidblogutil.Logger(wk.logCtx).Info("handle ddl job failed", zap.Error(err), zap.Stringer("job", job))
+		jobCtx.logger.Info("handle ddl job failed", zap.Error(err), zap.Stringer("job", job))
 		return err
 	}
 	failpoint.Inject("mockDownBeforeUpdateGlobalVersion", func(val failpoint.Value) {
@@ -642,7 +642,7 @@ func (d *ddl) getTableByTxn(r autoid.Requirement, schemaID, tableID int64) (*mod
 	var tbl table.Table
 	var dbInfo *model.DBInfo
 	err := kv.RunInNewTxn(d.ctx, r.Store(), false, func(_ context.Context, txn kv.Transaction) error {
-		t := meta.NewMeta(txn)
+		t := meta.NewMutator(txn)
 		var err1 error
 		dbInfo, err1 = t.GetDatabase(schemaID)
 		if err1 != nil {
@@ -726,8 +726,8 @@ func job2SchemaIDs(jobW *JobWrapper) string {
 		ids := []int64{oldSchemaID, jobW.SchemaID}
 		return makeStringForIDs(ids)
 	case model.ActionExchangeTablePartition:
-		ids := jobW.CtxVars[0].([]int64)
-		return makeStringForIDs(ids)
+		args := jobW.JobArgs.(*model.ExchangeTablePartitionArgs)
+		return makeStringForIDs([]int64{jobW.SchemaID, args.PTSchemaID})
 	default:
 		return strconv.FormatInt(jobW.SchemaID, 10)
 	}
@@ -744,8 +744,8 @@ func job2TableIDs(jobW *JobWrapper) string {
 		}
 		return makeStringForIDs(ids)
 	case model.ActionExchangeTablePartition:
-		ids := jobW.CtxVars[1].([]int64)
-		return makeStringForIDs(ids)
+		args := jobW.JobArgs.(*model.ExchangeTablePartitionArgs)
+		return makeStringForIDs([]int64{jobW.TableID, args.PTTableID})
 	case model.ActionTruncateTable:
 		newTableID := jobW.JobArgs.(*model.TruncateTableArgs).NewTableID
 		return strconv.FormatInt(jobW.TableID, 10) + "," + strconv.FormatInt(newTableID, 10)
@@ -754,13 +754,18 @@ func job2TableIDs(jobW *JobWrapper) string {
 	}
 }
 
-func updateDDLJob2Table(se *sess.Session, job *model.Job, updateRawArgs bool) error {
+func updateDDLJob2Table(
+	ctx context.Context,
+	se *sess.Session,
+	job *model.Job,
+	updateRawArgs bool,
+) error {
 	b, err := job.Encode(updateRawArgs)
 	if err != nil {
 		return err
 	}
 	sql := fmt.Sprintf(updateDDLJobSQL, util.WrapKey2String(b), job.ID)
-	_, err = se.Execute(context.Background(), sql, "update_job")
+	_, err = se.Execute(ctx, sql, "update_job")
 	return errors.Trace(err)
 }
 
@@ -878,8 +883,12 @@ func cleanDDLReorgHandles(se *sess.Session, job *model.Job) error {
 	})
 }
 
-func getJobsBySQL(se *sess.Session, tbl, condition string) ([]*model.Job, error) {
-	rows, err := se.Execute(context.Background(), fmt.Sprintf("select job_meta from mysql.%s where %s", tbl, condition), "get_job")
+func getJobsBySQL(
+	ctx context.Context,
+	se *sess.Session,
+	tbl, condition string,
+) ([]*model.Job, error) {
+	rows, err := se.Execute(ctx, fmt.Sprintf("select job_meta from mysql.%s where %s", tbl, condition), "get_job")
 	if err != nil {
 		return nil, errors.Trace(err)
 	}

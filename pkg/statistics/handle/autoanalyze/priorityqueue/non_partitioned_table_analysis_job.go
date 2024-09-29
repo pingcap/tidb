@@ -126,6 +126,11 @@ func (j *NonPartitionedTableAnalysisJob) GetIndicators() Indicators {
 	return j.Indicators
 }
 
+// SetIndicators sets the indicators of the table.
+func (j *NonPartitionedTableAnalysisJob) SetIndicators(indicators Indicators) {
+	j.Indicators = indicators
+}
+
 // String implements fmt.Stringer interface.
 func (j *NonPartitionedTableAnalysisJob) String() string {
 	return fmt.Sprintf(

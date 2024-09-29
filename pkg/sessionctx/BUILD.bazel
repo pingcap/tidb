@@ -28,7 +28,6 @@ go_library(
         "//pkg/util/sqlexec",
         "//pkg/util/topsql/stmtstats",
         "@com_github_pingcap_errors//:errors",
-        "@com_github_pingcap_tipb//go-binlog",
         "@com_github_tikv_client_go_v2//oracle",
     ],
 )

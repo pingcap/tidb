@@ -290,7 +290,7 @@ func (s *JobSubmitter) addBatchDDLJobs2Table(jobWs []*JobWrapper) error {
 	)
 
 	err = kv.RunInNewTxn(ctx, s.store, true, func(_ context.Context, txn kv.Transaction) error {
-		t := meta.NewMeta(txn)
+		t := meta.NewMutator(txn)
 
 		bdrRole, err = t.GetBDRRole()
 		if err != nil {
@@ -357,7 +357,7 @@ func (s *JobSubmitter) addBatchDDLJobs2Table(jobWs []*JobWrapper) error {
 func (s *JobSubmitter) addBatchDDLJobs2Queue(jobWs []*JobWrapper) error {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
 	return kv.RunInNewTxn(ctx, s.store, true, func(_ context.Context, txn kv.Transaction) error {
-		t := meta.NewMeta(txn)
+		t := meta.NewMutator(txn)
 
 		for _, jobW := range jobWs {
 			if jobW.Version == 0 {
@@ -406,7 +406,7 @@ func (s *JobSubmitter) addBatchDDLJobs2Queue(jobWs []*JobWrapper) error {
 	})
 }
 
-func (*JobSubmitter) checkFlashbackJobInQueue(t *meta.Meta) error {
+func (*JobSubmitter) checkFlashbackJobInQueue(t *meta.Mutator) error {
 	jobs, err := t.GetAllDDLJobsInQueue(meta.DefaultJobListKey)
 	if err != nil {
 		return errors.Trace(err)
@@ -503,20 +503,17 @@ func getRequiredGIDCount(jobWs []*JobWrapper) int {
 		case model.ActionCreateSchema, model.ActionCreateResourceGroup:
 			count++
 		case model.ActionAlterTablePartitioning:
-			pInfo := jobW.Args[1].(*model.PartitionInfo)
+			args := jobW.JobArgs.(*model.TablePartitionArgs)
 			// A new table ID would be needed for
 			// the global table, which cannot be the same as the current table id,
 			// since this table id will be removed in the final state when removing
 			// all the data with this table id.
-			count += 1 + len(pInfo.Definitions)
+			count += 1 + len(args.PartInfo.Definitions)
 		case model.ActionTruncateTablePartition:
-			count += len(jobW.Args[0].([]int64))
-		case model.ActionAddTablePartition:
-			pInfo := jobW.Args[0].(*model.PartitionInfo)
-			count += len(pInfo.Definitions)
-		case model.ActionReorganizePartition, model.ActionRemovePartitioning:
-			pInfo := jobW.Args[1].(*model.PartitionInfo)
-			count += len(pInfo.Definitions)
+			count += len(jobW.JobArgs.(*model.TruncateTableArgs).OldPartitionIDs)
+		case model.ActionAddTablePartition, model.ActionReorganizePartition, model.ActionRemovePartitioning:
+			args := jobW.JobArgs.(*model.TablePartitionArgs)
+			count += len(args.PartInfo.Definitions)
 		case model.ActionTruncateTable:
 			count += 1 + len(jobW.JobArgs.(*model.TruncateTableArgs).OldPartitionIDs)
 		}
@@ -561,40 +558,29 @@ func assignGIDsForJobs(jobWs []*JobWrapper, ids []int64) {
 			}
 		case model.ActionAlterTablePartitioning:
 			if !jobW.IDAllocated {
-				pInfo := jobW.Args[1].(*model.PartitionInfo)
-				alloc.assignIDsForPartitionInfo(pInfo)
-				pInfo.NewTableID = alloc.next()
+				args := jobW.JobArgs.(*model.TablePartitionArgs)
+				alloc.assignIDsForPartitionInfo(args.PartInfo)
+				args.PartInfo.NewTableID = alloc.next()
 			}
-		case model.ActionTruncateTablePartition:
+		case model.ActionAddTablePartition, model.ActionReorganizePartition:
 			if !jobW.IDAllocated {
-				newIDs := make([]int64, len(jobW.Args[0].([]int64)))
-				for i := range newIDs {
-					newIDs[i] = alloc.next()
-				}
-				jobW.Args[1] = newIDs
-			}
-		case model.ActionAddTablePartition:
-			if !jobW.IDAllocated {
-				pInfo := jobW.Args[0].(*model.PartitionInfo)
-				alloc.assignIDsForPartitionInfo(pInfo)
-			}
-		case model.ActionReorganizePartition:
-			if !jobW.IDAllocated {
-				pInfo := jobW.Args[1].(*model.PartitionInfo)
+				pInfo := jobW.JobArgs.(*model.TablePartitionArgs).PartInfo
 				alloc.assignIDsForPartitionInfo(pInfo)
 			}
 		case model.ActionRemovePartitioning:
 			// a special partition is used in this case, and we will use the ID
 			// of the partition as the new table ID.
-			pInfo := jobW.Args[1].(*model.PartitionInfo)
+			pInfo := jobW.JobArgs.(*model.TablePartitionArgs).PartInfo
 			if !jobW.IDAllocated {
 				alloc.assignIDsForPartitionInfo(pInfo)
 			}
 			pInfo.NewTableID = pInfo.Definitions[0].ID
-		case model.ActionTruncateTable:
+		case model.ActionTruncateTable, model.ActionTruncateTablePartition:
 			if !jobW.IDAllocated {
 				args := jobW.JobArgs.(*model.TruncateTableArgs)
-				args.NewTableID = alloc.next()
+				if jobW.Type == model.ActionTruncateTable {
+					args.NewTableID = alloc.next()
+				}
 				partIDs := make([]int64, len(args.OldPartitionIDs))
 				for i := range partIDs {
 					partIDs[i] = alloc.next()
@@ -631,7 +617,7 @@ func genGIDAndCallWithRetry(ctx context.Context, ddlSe *sess.Session, count int,
 			}
 			txn.GetSnapshot().SetOption(kv.SnapshotTS, forUpdateTS)
 
-			m := meta.NewMeta(txn)
+			m := meta.NewMutator(txn)
 			ids, err := m.GenGlobalIDs(count)
 			if err != nil {
 				return errors.Trace(err)
@@ -673,7 +659,7 @@ func lockGlobalIDKey(ctx context.Context, ddlSe *sess.Session, txn kv.Transactio
 		err         error
 	)
 	waitTime := ddlSe.GetSessionVars().LockWaitTimeout
-	m := meta.NewMeta(txn)
+	m := meta.NewMutator(txn)
 	idKey := m.GlobalIDKey()
 	for {
 		lockCtx := tikv.NewLockCtx(forUpdateTs, waitTime, time.Now())
@@ -727,7 +713,7 @@ func setJobStateToQueueing(job *model.Job) {
 
 // buildJobDependence sets the curjob's dependency-ID.
 // The dependency-job's ID must less than the current job's ID, and we need the largest one in the list.
-func buildJobDependence(t *meta.Meta, curJob *model.Job) error {
+func buildJobDependence(t *meta.Mutator, curJob *model.Job) error {
 	// Jobs in the same queue are ordered. If we want to find a job's dependency-job, we need to look for
 	// it from the other queue. So if the job is "ActionAddIndex" job, we need find its dependency-job from DefaultJobList.
 	jobListKey := meta.DefaultJobListKey
