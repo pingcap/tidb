@@ -20,7 +20,6 @@ import (
 
 	"github.com/pingcap/errors"
 	infoschemactx "github.com/pingcap/tidb/pkg/infoschema/context"
-	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/format"
@@ -34,14 +33,14 @@ import (
 // DefaultTTLJobInterval is the default value for ttl job interval.
 const DefaultTTLJobInterval = "1h"
 
-func onTTLInfoRemove(jobCtx *jobContext, t *meta.Mutator, job *model.Job) (ver int64, err error) {
-	tblInfo, err := GetTableInfoAndCancelFaultJob(t, job, job.SchemaID)
+func onTTLInfoRemove(jobCtx *jobContext, job *model.Job) (ver int64, err error) {
+	tblInfo, err := GetTableInfoAndCancelFaultJob(jobCtx.metaMut, job, job.SchemaID)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
 
 	tblInfo.TTLInfo = nil
-	ver, err = updateVersionAndTableInfo(jobCtx, t, job, tblInfo, true)
+	ver, err = updateVersionAndTableInfo(jobCtx, job, tblInfo, true)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
@@ -49,7 +48,7 @@ func onTTLInfoRemove(jobCtx *jobContext, t *meta.Mutator, job *model.Job) (ver i
 	return ver, nil
 }
 
-func onTTLInfoChange(jobCtx *jobContext, t *meta.Mutator, job *model.Job) (ver int64, err error) {
+func onTTLInfoChange(jobCtx *jobContext, job *model.Job) (ver int64, err error) {
 	// at least one for them is not nil
 	args, err := model.GetAlterTTLInfoArgs(job)
 	if err != nil {
@@ -58,7 +57,7 @@ func onTTLInfoChange(jobCtx *jobContext, t *meta.Mutator, job *model.Job) (ver i
 	}
 	ttlInfo, ttlInfoEnable, ttlInfoJobInterval := args.TTLInfo, args.TTLEnable, args.TTLCronJobSchedule
 
-	tblInfo, err := GetTableInfoAndCancelFaultJob(t, job, job.SchemaID)
+	tblInfo, err := GetTableInfoAndCancelFaultJob(jobCtx.metaMut, job, job.SchemaID)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
@@ -88,7 +87,7 @@ func onTTLInfoChange(jobCtx *jobContext, t *meta.Mutator, job *model.Job) (ver i
 		tblInfo.TTLInfo.JobInterval = *ttlInfoJobInterval
 	}
 
-	ver, err = updateVersionAndTableInfo(jobCtx, t, job, tblInfo, true)
+	ver, err = updateVersionAndTableInfo(jobCtx, job, tblInfo, true)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
