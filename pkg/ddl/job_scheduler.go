@@ -472,8 +472,8 @@ func (s *jobScheduler) deliveryJob(wk *worker, pool *workerPool, job *model.Job)
 	jobID, involvedSchemaInfos := job.ID, job.GetInvolvingSchemaInfo()
 	s.runningJobs.addRunning(jobID, involvedSchemaInfos)
 	metrics.DDLRunningJobCount.WithLabelValues(pool.tp().String()).Inc()
-	jobCtx, cancel := s.getJobRunCtx(job.ID, job.TraceInfo)
-	defer cancel()
+	jobCtx := s.getJobRunCtx(job.ID, job.TraceInfo)
+	// TODO(lance6716): how to make sure no context leak?
 	done := make(chan struct{})
 
 	s.wg.Run(func() {
@@ -498,7 +498,9 @@ func (s *jobScheduler) deliveryJob(wk *worker, pool *workerPool, job *model.Job)
 				switch latestJob.State {
 				case model.JobStateCancelling, model.JobStateCancelled,
 					model.JobStatePausing, model.JobStatePaused:
-					cancel()
+					logutil.DDLLogger().Info("job will stop running by user",
+						zap.Int64("job_id", jobID), zap.Stringer("state", latestJob.State))
+					jobCtx.cancel()
 					return
 				case model.JobStateDone, model.JobStateSynced:
 					return
@@ -560,7 +562,7 @@ func (s *jobScheduler) deliveryJob(wk *worker, pool *workerPool, job *model.Job)
 	})
 }
 
-func (s *jobScheduler) getJobRunCtx(jobID int64, traceInfo *model.TraceInfo) (*jobContext, context.CancelFunc) {
+func (s *jobScheduler) getJobRunCtx(jobID int64, traceInfo *model.TraceInfo) *jobContext {
 	ch, _ := s.ddlJobDoneChMap.Load(jobID)
 	jobCtx, cancel := context.WithCancel(s.schCtx)
 	return &jobContext{
@@ -580,7 +582,7 @@ func (s *jobScheduler) getJobRunCtx(jobID int64, traceInfo *model.TraceInfo) (*j
 		),
 
 		oldDDLCtx: s.ddlCtx,
-	}, cancel
+	}
 }
 
 // transitOneJobStepAndWaitSync runs one step of the DDL job, persist it and
@@ -597,7 +599,7 @@ func (s *jobScheduler) transitOneJobStepAndWaitSync(wk *worker, jobCtx *jobConte
 		if variable.EnableMDL.Load() {
 			version, err := s.sysTblMgr.GetMDLVer(s.schCtx, job.ID)
 			if err == nil {
-				err = waitVersionSynced(jobCtx, job, version)
+				err = waitVersionSynced(s.schCtx, jobCtx, job, version)
 				if err != nil {
 					return err
 				}
@@ -607,7 +609,7 @@ func (s *jobScheduler) transitOneJobStepAndWaitSync(wk *worker, jobCtx *jobConte
 				return err
 			}
 		} else {
-			err := waitVersionSyncedWithoutMDL(jobCtx, job)
+			err := waitVersionSyncedWithoutMDL(s.schCtx, jobCtx, job)
 			if err != nil {
 				time.Sleep(time.Second)
 				return err
@@ -634,7 +636,7 @@ func (s *jobScheduler) transitOneJobStepAndWaitSync(wk *worker, jobCtx *jobConte
 	// Here means the job enters another state (delete only, write only, public, etc...) or is cancelled.
 	// If the job is done or still running or rolling back, we will wait 2 * lease time or util MDL synced to guarantee other servers to update
 	// the newest schema.
-	if err = updateGlobalVersionAndWaitSynced(jobCtx, schemaVer, job); err != nil {
+	if err = updateGlobalVersionAndWaitSynced(s.schCtx, jobCtx, schemaVer, job); err != nil {
 		return err
 	}
 	s.cleanMDLInfo(job, ownerID)

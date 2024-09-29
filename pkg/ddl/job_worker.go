@@ -960,7 +960,12 @@ func toTError(err error) *terror.Error {
 
 // updateGlobalVersionAndWaitSynced update global schema version to notify all TiDBs
 // to reload info schema, and waits for all servers' schema or MDL synced.
-func updateGlobalVersionAndWaitSynced(jobCtx *jobContext, latestSchemaVersion int64, job *model.Job) error {
+func updateGlobalVersionAndWaitSynced(
+	ctx context.Context,
+	jobCtx *jobContext,
+	latestSchemaVersion int64,
+	job *model.Job,
+) error {
 	if !job.IsRunning() && !job.IsRollingback() && !job.IsDone() && !job.IsRollbackDone() {
 		return nil
 	}
@@ -985,7 +990,7 @@ func updateGlobalVersionAndWaitSynced(jobCtx *jobContext, latestSchemaVersion in
 		}
 	}
 
-	return waitVersionSynced(jobCtx, job, latestSchemaVersion)
+	return waitVersionSynced(ctx, jobCtx, job, latestSchemaVersion)
 }
 
 func buildPlacementAffects(oldIDs []int64, newIDs []int64) []*model.AffectedOption {

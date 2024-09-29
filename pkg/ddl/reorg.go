@@ -276,6 +276,7 @@ func reorgTimeZoneWithTzLoc(tzLoc *model.TimeZoneLocation) (*time.Location, erro
 
 // ReorgWaitTimeout is the timeout that wait ddl in write reorganization stage.
 // make it a var for testing.
+// TODO(lance6716): check usage
 var ReorgWaitTimeout = 5 * time.Second
 
 func (rc *reorgCtx) notifyJobState(state model.JobState) {
@@ -400,61 +401,54 @@ func (w *worker) runReorgJob(
 		}()
 	}
 
-	waitTimeout := ReorgWaitTimeout
-	// wait reorganization job done or timeout
-	select {
-	case res := <-rc.doneCh:
-		err := res.err
-		curTS := w.ddlCtx.reorgCtx.getOwnerTS()
-		if res.ownerTS != curTS {
+	updateProcessTicker := time.NewTicker(5 * time.Second)
+	defer updateProcessTicker.Stop()
+	for {
+		select {
+		case res := <-rc.doneCh:
+			err := res.err
+			curTS := w.ddlCtx.reorgCtx.getOwnerTS()
+			if res.ownerTS != curTS {
+				d.removeReorgCtx(job.ID)
+				logutil.DDLLogger().Warn("owner ts mismatch, return timeout error and retry",
+					zap.Int64("prevTS", res.ownerTS),
+					zap.Int64("curTS", curTS))
+				return dbterror.ErrWaitReorgTimeout
+			}
+			// Since job is cancelled，we don't care about its partial counts.
+			if rc.isReorgCanceled() || terror.ErrorEqual(err, dbterror.ErrCancelledDDLJob) {
+				d.removeReorgCtx(job.ID)
+				return dbterror.ErrCancelledDDLJob
+			}
+			rowCount := rc.getRowCount()
+			job.SetRowCount(rowCount)
+			if err != nil {
+				logutil.DDLLogger().Warn("run reorg job done", zap.Int64("handled rows", rowCount), zap.Error(err))
+			} else {
+				logutil.DDLLogger().Info("run reorg job done", zap.Int64("handled rows", rowCount))
+			}
+
+			// Update a job's warnings.
+			w.mergeWarningsIntoJob(job)
+
 			d.removeReorgCtx(job.ID)
-			logutil.DDLLogger().Warn("owner ts mismatch, return timeout error and retry",
-				zap.Int64("prevTS", res.ownerTS),
-				zap.Int64("curTS", curTS))
-			return dbterror.ErrWaitReorgTimeout
-		}
-		// Since job is cancelled，we don't care about its partial counts.
-		if rc.isReorgCanceled() || terror.ErrorEqual(err, dbterror.ErrCancelledDDLJob) {
-			d.removeReorgCtx(job.ID)
-			return dbterror.ErrCancelledDDLJob
-		}
-		rowCount := rc.getRowCount()
-		job.SetRowCount(rowCount)
-		if err != nil {
-			logutil.DDLLogger().Warn("run reorg job done", zap.Int64("handled rows", rowCount), zap.Error(err))
-		} else {
-			logutil.DDLLogger().Info("run reorg job done", zap.Int64("handled rows", rowCount))
-		}
 
-		// Update a job's warnings.
-		w.mergeWarningsIntoJob(job)
+			updateBackfillProgress(w, reorgInfo, tblInfo, rowCount)
 
-		d.removeReorgCtx(job.ID)
-
-		updateBackfillProgress(w, reorgInfo, tblInfo, rowCount)
-
-		// For other errors, even err is not nil here, we still wait the partial counts to be collected.
-		// since in the next round, the startKey is brand new which is stored by last time.
-		if err != nil {
+			// For other errors, even err is not nil here, we still wait the partial counts to be collected.
+			// since in the next round, the startKey is brand new which is stored by last time.
 			return errors.Trace(err)
+		case <-updateProcessTicker.C:
+			rowCount := rc.getRowCount()
+			job.SetRowCount(rowCount)
+			updateBackfillProgress(w, reorgInfo, tblInfo, rowCount)
+
+			// Update a job's warnings.
+			w.mergeWarningsIntoJob(job)
+
+			rc.resetWarnings()
 		}
-	case <-time.After(waitTimeout):
-		rowCount := rc.getRowCount()
-		job.SetRowCount(rowCount)
-		updateBackfillProgress(w, reorgInfo, tblInfo, rowCount)
-
-		// Update a job's warnings.
-		w.mergeWarningsIntoJob(job)
-
-		rc.resetWarnings()
-
-		logutil.DDLLogger().Info("run reorg job wait timeout",
-			zap.Duration("wait time", waitTimeout),
-			zap.Int64("total added row count", rowCount))
-		// If timeout, we will return, check the owner and retry to wait job done again.
-		return dbterror.ErrWaitReorgTimeout
 	}
-	return nil
 }
 
 func overwriteReorgInfoFromGlobalCheckpoint(w *worker, sess *sess.Session, job *model.Job, reorgInfo *reorgInfo) error {

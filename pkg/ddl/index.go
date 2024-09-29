@@ -1894,14 +1894,18 @@ var MockDMLExecutionStateBeforeImport func()
 // MockDMLExecutionStateBeforeMerge is only used for test.
 var MockDMLExecutionStateBeforeMerge func()
 
-func (w *worker) addPhysicalTableIndex(t table.PhysicalTable, reorgInfo *reorgInfo) error {
+func (w *worker) addPhysicalTableIndex(
+	ctx context.Context,
+	t table.PhysicalTable,
+	reorgInfo *reorgInfo,
+) error {
 	if reorgInfo.mergingTmpIdx {
 		logutil.DDLLogger().Info("start to merge temp index", zap.Stringer("job", reorgInfo.Job), zap.Stringer("reorgInfo", reorgInfo))
-		return w.writePhysicalTableRecord(w.workCtx, w.sessPool, t, typeAddIndexMergeTmpWorker, reorgInfo)
+		return w.writePhysicalTableRecord(ctx, w.sessPool, t, typeAddIndexMergeTmpWorker, reorgInfo)
 	}
 	logutil.DDLLogger().Info("start to add table index", zap.Stringer("job", reorgInfo.Job), zap.Stringer("reorgInfo", reorgInfo))
 	// TODO(lance6716): use job context?
-	return w.writePhysicalTableRecord(w.workCtx, w.sessPool, t, typeAddIndexWorker, reorgInfo)
+	return w.writePhysicalTableRecord(ctx, w.sessPool, t, typeAddIndexWorker, reorgInfo)
 }
 
 // addTableIndex handles the add index reorganization state for a table.
@@ -1931,7 +1935,7 @@ func (w *worker) addTableIndex(
 			if p == nil {
 				return dbterror.ErrCancelledDDLJob.GenWithStack("Can not find partition id %d for table %d", reorgInfo.PhysicalTableID, t.Meta().ID)
 			}
-			err = w.addPhysicalTableIndex(p, reorgInfo)
+			err = w.addPhysicalTableIndex(ctx, p, reorgInfo)
 			if err != nil {
 				break
 			}
@@ -1949,7 +1953,7 @@ func (w *worker) addTableIndex(
 	} else {
 		//nolint:forcetypeassert
 		phyTbl := t.(table.PhysicalTable)
-		err = w.addPhysicalTableIndex(phyTbl, reorgInfo)
+		err = w.addPhysicalTableIndex(ctx, phyTbl, reorgInfo)
 	}
 	return errors.Trace(err)
 }

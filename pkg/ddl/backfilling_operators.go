@@ -949,6 +949,7 @@ func (s *indexWriteResultSink) flush() error {
 	failpoint.Inject("mockFlushError", func(_ failpoint.Value) {
 		failpoint.Return(errors.New("mock flush error"))
 	})
+	// TODO(lance6716): 1
 	flushed, imported, err := s.backendCtx.Flush(s.ctx, ingest.FlushModeForceFlushAndImport)
 	if s.cpMgr != nil {
 		// Try to advance watermark even if there is an error.

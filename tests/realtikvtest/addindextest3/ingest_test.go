@@ -120,7 +120,7 @@ func TestAddIndexIngestLimitOneBackend(t *testing.T) {
 		func(ctx context.Context) {
 			close(enter)
 			select {
-			case <-time.After(time.Second * 50):
+			case <-time.After(time.Second * 20):
 			case <-ctx.Done():
 			}
 		})
@@ -136,7 +136,7 @@ func TestAddIndexIngestLimitOneBackend(t *testing.T) {
 	tk.MustExec("admin cancel ddl jobs " + jobID)
 	wg.Wait()
 	// cancel should be timely
-	require.Less(t, time.Since(now).Seconds(), 30.0)
+	require.Less(t, time.Since(now).Seconds(), 10.0)
 }
 
 func TestAddIndexIngestWriterCountOnPartitionTable(t *testing.T) {
