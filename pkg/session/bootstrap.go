@@ -1435,7 +1435,7 @@ func acquireLock(s sessiontypes.Session) (func(), bool) {
 			// do nothing
 		}, true
 	}
-	releaseFn, err := owner.AcquireDistributedLock(context.Background(), cli, ddl.DDLOwnerKey, 10)
+	releaseFn, err := owner.AcquireDistributedLock(context.Background(), cli, bootstrapOwnerKey, 10)
 	if err != nil {
 		return nil, false
 	}
@@ -1447,6 +1447,7 @@ func forceToLeader(ctx context.Context, s sessiontypes.Session) error {
 	for !dom.DDL().OwnerManager().IsOwner() {
 		ownerID, err := dom.DDL().OwnerManager().GetOwnerID(ctx)
 		if err != nil && (errors.ErrorEqual(err, concurrency.ErrElectionNoLeader) || strings.Contains(err.Error(), "no owner")) {
+			logutil.BgLogger().Info("ddl owner not found", zap.Error(err))
 			time.Sleep(50 * time.Millisecond)
 			continue
 		} else if err != nil {
