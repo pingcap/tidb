@@ -128,8 +128,8 @@ id	estRows	task	access object	operator info
 Projection	12487.50	root		planner__core__casetest__physicalplantest__physical_plan.t.a, planner__core__casetest__physicalplantest__physical_plan.t.b
 └─HashJoin	12487.50	root		inner join, equal:[eq(planner__core__casetest__physicalplantest__physical_plan.t.b, planner__core__casetest__physicalplantest__physical_plan.t.a)]
   ├─UnionScan(Build)	10000.00	root		
-  │ └─TableReader	10000.00	root		data:TableFullScan
-  │   └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+  │ └─IndexReader	10000.00	root		index:IndexFullScan
+  │   └─IndexFullScan	10000.00	cop[tikv]	table:t1, index:idx(a)	keep order:false, stats:pseudo
   └─UnionScan(Probe)	9990.00	root		not(isnull(planner__core__casetest__physicalplantest__physical_plan.t.b))
     └─TableReader	9990.00	root		data:Selection
       └─Selection	9990.00	cop[tikv]		not(isnull(planner__core__casetest__physicalplantest__physical_plan.t.b))
@@ -598,8 +598,8 @@ id	estRows	task	access object	operator info
 Limit	1.00	root		offset:0, count:1
 └─HashAgg	1.00	root		group by:Column#18, funcs:firstrow(Column#18)->Column#18
   └─Union	20000.00	root		
-    ├─TableReader	10000.00	root		data:TableFullScan
-    │ └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+    ├─IndexReader	10000.00	root		index:IndexFullScan
+    │ └─IndexFullScan	10000.00	cop[tikv]	table:t1, index:c2(c2)	keep order:false, stats:pseudo
     └─IndexReader	10000.00	root		index:IndexFullScan
       └─IndexFullScan	10000.00	cop[tikv]	table:t2, index:c1(c1)	keep order:false, stats:pseudo
 explain format='brief' with recursive cte1(c1) as (select c1 from t1 union select c1 from t2 limit 100 offset 100) select * from cte1; -- non-recursive limit, inline cte1;
@@ -607,8 +607,8 @@ id	estRows	task	access object	operator info
 Limit	100.00	root		offset:100, count:100
 └─HashAgg	200.00	root		group by:Column#18, funcs:firstrow(Column#18)->Column#18
   └─Union	20000.00	root		
-    ├─TableReader	10000.00	root		data:TableFullScan
-    │ └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+    ├─IndexReader	10000.00	root		index:IndexFullScan
+    │ └─IndexFullScan	10000.00	cop[tikv]	table:t1, index:c2(c2)	keep order:false, stats:pseudo
     └─IndexReader	10000.00	root		index:IndexFullScan
       └─IndexFullScan	10000.00	cop[tikv]	table:t2, index:c1(c1)	keep order:false, stats:pseudo
 explain format='brief' with recursive cte1(c1) as (select c1 from t1 union select c1 from t2 limit 0 offset 0) select * from cte1; -- non-recursive limit, inline cte1;
@@ -741,8 +741,8 @@ id	estRows	task	access object	operator info
 CTEFullScan	20000.00	root	CTE:tmp	data:CTE_4
 CTE_4	20000.00	root		Recursive CTE
 ├─Projection(Seed Part)	10000.00	root		1->Column#26
-│ └─TableReader	10000.00	root		data:TableFullScan
-│   └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+│ └─IndexReader	10000.00	root		index:IndexFullScan
+│   └─IndexFullScan	10000.00	cop[tikv]	table:t1, index:c2(c2)	keep order:false, stats:pseudo
 └─Projection(Recursive Part)	10000.00	root		cast(plus(Column#27, 1), bigint(1) BINARY)->Column#30
   └─HashJoin	10000.00	root		CARTESIAN inner join, other cond:lt(plus(Column#27, 1), Column#28)
     ├─CTEFullScan(Build)	1.00	root	CTE:b	data:CTE_1
@@ -750,18 +750,18 @@ CTE_4	20000.00	root		Recursive CTE
 CTE_1	1.00	root		Non-Recursive CTE
 └─Projection(Seed Part)	1.00	root		2->Column#8
   └─HashAgg	1.00	root		funcs:count(Column#37)->Column#35
-    └─TableReader	1.00	root		data:HashAgg
+    └─IndexReader	1.00	root		index:HashAgg
       └─HashAgg	1.00	cop[tikv]		funcs:count(1)->Column#37
-        └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+        └─IndexFullScan	10000.00	cop[tikv]	table:t1, index:c2(c2)	keep order:false, stats:pseudo
 explain format='brief' with a as (select count(*) from t1), b as (select 2 as bb from a), c as (with recursive tmp as (select bb as res from b union all select res+1 from tmp where res +1 < 10) select * from tmp) select * from c; -- inline a, b, cannot be inline tmp, c;
 id	estRows	task	access object	operator info
 CTEFullScan	1.80	root	CTE:tmp	data:CTE_4
 CTE_4	1.80	root		Recursive CTE
 ├─Projection(Seed Part)	1.00	root		2->Column#37
 │ └─HashAgg	1.00	root		funcs:count(Column#46)->Column#44
-│   └─TableReader	1.00	root		data:HashAgg
+│   └─IndexReader	1.00	root		index:HashAgg
 │     └─HashAgg	1.00	cop[tikv]		funcs:count(1)->Column#46
-│       └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+│       └─IndexFullScan	10000.00	cop[tikv]	table:t1, index:c2(c2)	keep order:false, stats:pseudo
 └─Projection(Recursive Part)	0.80	root		cast(plus(Column#38, 1), bigint(1) BINARY)->Column#40
   └─Selection	0.80	root		lt(plus(Column#38, 1), 10)
     └─CTETable	1.00	root		Scan on CTE_4

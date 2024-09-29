@@ -221,7 +221,7 @@ func TestBuildJobDependence(t *testing.T) {
 	job9 := &model.Job{ID: 9, SchemaID: 111, Version: model.JobVersion1, Type: model.ActionDropSchema}
 	job11 := &model.Job{ID: 11, TableID: 2, Version: model.JobVersion1, Type: model.ActionRenameTable, Args: []any{int64(111), "old db name"}}
 	err := kv.RunInNewTxn(ctx, store, false, func(ctx context.Context, txn kv.Transaction) error {
-		m := meta.NewMeta(txn)
+		m := meta.NewMutator(txn)
 		require.NoError(t, m.EnQueueDDLJob(job1))
 		require.NoError(t, m.EnQueueDDLJob(job2))
 		require.NoError(t, m.EnQueueDDLJob(job3))
@@ -234,7 +234,7 @@ func TestBuildJobDependence(t *testing.T) {
 	require.NoError(t, err)
 	job4 := &model.Job{ID: 4, TableID: 1, Type: model.ActionAddIndex}
 	err = kv.RunInNewTxn(ctx, store, false, func(ctx context.Context, txn kv.Transaction) error {
-		m := meta.NewMeta(txn)
+		m := meta.NewMutator(txn)
 		err := buildJobDependence(m, job4)
 		require.NoError(t, err)
 		require.Equal(t, job4.DependencyID, int64(2))
@@ -243,7 +243,7 @@ func TestBuildJobDependence(t *testing.T) {
 	require.NoError(t, err)
 	job5 := &model.Job{ID: 5, TableID: 2, Type: model.ActionAddIndex}
 	err = kv.RunInNewTxn(ctx, store, false, func(ctx context.Context, txn kv.Transaction) error {
-		m := meta.NewMeta(txn)
+		m := meta.NewMutator(txn)
 		err := buildJobDependence(m, job5)
 		require.NoError(t, err)
 		require.Equal(t, job5.DependencyID, int64(3))
@@ -252,7 +252,7 @@ func TestBuildJobDependence(t *testing.T) {
 	require.NoError(t, err)
 	job8 := &model.Job{ID: 8, TableID: 3, Type: model.ActionAddIndex}
 	err = kv.RunInNewTxn(ctx, store, false, func(ctx context.Context, txn kv.Transaction) error {
-		m := meta.NewMeta(txn)
+		m := meta.NewMutator(txn)
 		err := buildJobDependence(m, job8)
 		require.NoError(t, err)
 		require.Equal(t, job8.DependencyID, int64(0))
@@ -261,7 +261,7 @@ func TestBuildJobDependence(t *testing.T) {
 	require.NoError(t, err)
 	job10 := &model.Job{ID: 10, SchemaID: 111, TableID: 3, Type: model.ActionAddIndex}
 	err = kv.RunInNewTxn(ctx, store, false, func(ctx context.Context, txn kv.Transaction) error {
-		m := meta.NewMeta(txn)
+		m := meta.NewMutator(txn)
 		err := buildJobDependence(m, job10)
 		require.NoError(t, err)
 		require.Equal(t, job10.DependencyID, int64(9))
@@ -270,7 +270,7 @@ func TestBuildJobDependence(t *testing.T) {
 	require.NoError(t, err)
 	job12 := &model.Job{ID: 12, SchemaID: 112, TableID: 2, Type: model.ActionAddIndex}
 	err = kv.RunInNewTxn(ctx, store, false, func(ctx context.Context, txn kv.Transaction) error {
-		m := meta.NewMeta(txn)
+		m := meta.NewMutator(txn)
 		err := buildJobDependence(m, job12)
 		require.NoError(t, err)
 		require.Equal(t, job12.DependencyID, int64(11))

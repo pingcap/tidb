@@ -63,7 +63,7 @@ func testCreateTable(t *testing.T, ctx sessionctx.Context, d ddl.ExecutorForTest
 func testCheckTableState(t *testing.T, store kv.Storage, dbInfo *model.DBInfo, tblInfo *model.TableInfo, state model.SchemaState) {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
 	require.NoError(t, kv.RunInNewTxn(ctx, store, false, func(ctx context.Context, txn kv.Transaction) error {
-		m := meta.NewMeta(txn)
+		m := meta.NewMutator(txn)
 		info, err := m.GetTable(dbInfo.ID, tblInfo.ID)
 		require.NoError(t, err)
 
@@ -114,7 +114,7 @@ func genGlobalIDs(store kv.Storage, count int) ([]int64, error) {
 	var ret []int64
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
 	err := kv.RunInNewTxn(ctx, store, false, func(ctx context.Context, txn kv.Transaction) error {
-		m := meta.NewMeta(txn)
+		m := meta.NewMutator(txn)
 		var err error
 		ret, err = m.GenGlobalIDs(count)
 		return err
@@ -181,7 +181,7 @@ func testDropSchema(t *testing.T, ctx sessionctx.Context, d ddl.ExecutorForTest,
 	return job, ver
 }
 
-func isDDLJobDone(test *testing.T, t *meta.Meta, store kv.Storage) bool {
+func isDDLJobDone(test *testing.T, t *meta.Mutator, store kv.Storage) bool {
 	tk := testkit.NewTestKit(test, store)
 	rows := tk.MustQuery("select * from mysql.tidb_ddl_job").Rows()
 
@@ -198,7 +198,7 @@ func testCheckSchemaState(test *testing.T, store kv.Storage, dbInfo *model.DBInf
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
 	for {
 		err := kv.RunInNewTxn(ctx, store, false, func(ctx context.Context, txn kv.Transaction) error {
-			t := meta.NewMeta(txn)
+			t := meta.NewMutator(txn)
 			info, err := t.GetDatabase(dbInfo.ID)
 			require.NoError(test, err)
 
@@ -387,6 +387,7 @@ func TestRenameTableAutoIDs(t *testing.T) {
 	tk1 := testkit.NewTestKit(t, store)
 	tk2 := testkit.NewTestKit(t, store)
 	tk3 := testkit.NewTestKit(t, store)
+	tk4 := testkit.NewTestKit(t, store)
 	dbName := "RenameTableAutoIDs"
 	tk1.MustExec(`create schema ` + dbName)
 	tk1.MustExec(`create schema ` + dbName + "2")
@@ -400,8 +401,6 @@ func TestRenameTableAutoIDs(t *testing.T) {
 
 	waitFor := func(col int, tableName, s string) {
 		for {
-			tk4 := testkit.NewTestKit(t, store)
-			tk4.MustExec(`use test`)
 			sql := `admin show ddl jobs where db_name like '` + strings.ToLower(dbName) + `%' and table_name like '` + tableName + `%' and job_type = 'rename table'`
 			res := tk4.MustQuery(sql).Rows()
 			if len(res) == 1 && res[0][col] == s {

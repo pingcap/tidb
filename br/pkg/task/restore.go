@@ -247,7 +247,8 @@ type RestoreConfig struct {
 	AllowPITRFromIncremental bool `json:"allow-pitr-from-incremental" toml:"allow-pitr-from-incremental"`
 
 	// [startTs, RestoreTS] is used to `restore log` from StartTS to RestoreTS.
-	StartTS         uint64                      `json:"start-ts" toml:"start-ts"`
+	StartTS uint64 `json:"start-ts" toml:"start-ts"`
+	// if not specified system will restore to the max TS available
 	RestoreTS       uint64                      `json:"restore-ts" toml:"restore-ts"`
 	tiflashRecorder *tiflashrec.TiFlashRecorder `json:"-" toml:"-"`
 	PitrBatchCount  uint32                      `json:"pitr-batch-count" toml:"pitr-batch-count"`
@@ -695,12 +696,12 @@ func RunRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 		if err := version.CheckClusterVersion(c, mgr.GetPDClient(), version.CheckVersionForBRPiTR); err != nil {
 			return errors.Trace(err)
 		}
-		restoreError = RunStreamRestore(c, mgr, g, cmdName, cfg)
+		restoreError = RunStreamRestore(c, mgr, g, cfg)
 	} else {
 		if err := version.CheckClusterVersion(c, mgr.GetPDClient(), version.CheckVersionForBR); err != nil {
 			return errors.Trace(err)
 		}
-		restoreError = runRestore(c, mgr, g, cmdName, cfg, nil)
+		restoreError = runSnapshotRestore(c, mgr, g, cmdName, cfg, nil)
 	}
 	if restoreError != nil {
 		return errors.Trace(restoreError)
@@ -733,12 +734,13 @@ func RunRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 	return nil
 }
 
-func runRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName string, cfg *RestoreConfig, checkInfo *PiTRTaskInfo) error {
+func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName string, cfg *RestoreConfig, checkInfo *PiTRTaskInfo) error {
 	cfg.Adjust()
 	defer summary.Summary(cmdName)
 	ctx, cancel := context.WithCancel(c)
 	defer cancel()
 
+	log.Info("starting snapshot restore")
 	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
 		span1 := span.Tracer().StartSpan("task.RunRestore", opentracing.ChildOf(span.Context()))
 		defer span1.Finish()
@@ -836,7 +838,7 @@ func runRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName string, c
 
 	if client.IsIncremental() {
 		// don't support checkpoint for the ddl restore
-		log.Info("the incremental snapshot restore doesn't support checkpoint mode, so unuse checkpoint.")
+		log.Info("the incremental snapshot restore doesn't support checkpoint mode, disable checkpoint.")
 		cfg.UseCheckpoint = false
 	}
 
@@ -860,7 +862,7 @@ func runRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName string, c
 		log.Info("finish removing pd scheduler")
 	}()
 
-	var checkpointFirstRun bool = true
+	var checkpointFirstRun = true
 	if cfg.UseCheckpoint {
 		// if the checkpoint metadata exists in the checkpoint storage, the restore is not
 		// for the first time.

@@ -36,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/backup"
 	"github.com/pingcap/tidb/br/pkg/checkpoint"
 	"github.com/pingcap/tidb/br/pkg/conn"
+	"github.com/pingcap/tidb/br/pkg/encryption"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/glue"
 	"github.com/pingcap/tidb/br/pkg/httputil"
@@ -302,8 +303,8 @@ func NewStreamMgr(ctx context.Context, cfg *StreamConfig, g glue.Glue, isStreamS
 		}
 	}()
 
-	// just stream start need Storage
-	s := &streamMgr{
+	// only stream start command needs Storage
+	streamManager := &streamMgr{
 		cfg: cfg,
 		mgr: mgr,
 	}
@@ -323,12 +324,12 @@ func NewStreamMgr(ctx context.Context, cfg *StreamConfig, g glue.Glue, isStreamS
 		if err = client.SetStorage(ctx, backend, &opts); err != nil {
 			return nil, errors.Trace(err)
 		}
-		s.bc = client
+		streamManager.bc = client
 
 		// create http client to do some requirements check.
-		s.httpCli = httputil.NewClient(mgr.GetTLSConfig())
+		streamManager.httpCli = httputil.NewClient(mgr.GetTLSConfig())
 	}
-	return s, nil
+	return streamManager, nil
 }
 
 func (s *streamMgr) close() {
@@ -346,7 +347,7 @@ func (s *streamMgr) setLock(ctx context.Context) error {
 // adjustAndCheckStartTS checks that startTS should be smaller than currentTS,
 // and endTS is larger than currentTS.
 func (s *streamMgr) adjustAndCheckStartTS(ctx context.Context) error {
-	currentTS, err := s.mgr.GetTS(ctx)
+	currentTS, err := s.mgr.GetCurrentTsFromPD(ctx)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -499,7 +500,7 @@ func RunStreamCommand(
 	}
 
 	if err := commandFn(ctx, g, cmdName, cfg); err != nil {
-		log.Error("failed to stream", zap.String("command", cmdName), zap.Error(err))
+		log.Error("failed to run stream command", zap.String("command", cmdName), zap.Error(err))
 		summary.SetSuccessStatus(false)
 		summary.CollectFailureUnit(cmdName, err)
 		return err
@@ -547,22 +548,28 @@ func RunStreamStart(
 			log.Warn("failed to close etcd client", zap.Error(closeErr))
 		}
 	}()
+
+	// check if any import/restore task is running, it's not allowed to start log backup
+	// while restore is ongoing.
 	if err = streamMgr.checkImportTaskRunning(ctx, cli.Client); err != nil {
 		return errors.Trace(err)
 	}
+
 	// It supports single stream log task currently.
 	if count, err := cli.GetTaskCount(ctx); err != nil {
 		return errors.Trace(err)
 	} else if count > 0 {
-		return errors.Annotate(berrors.ErrStreamLogTaskExist, "It supports single stream log task currently")
+		return errors.Annotate(berrors.ErrStreamLogTaskExist, "failed to start the log backup, allow only one running task")
 	}
 
-	exist, err := streamMgr.checkLock(ctx)
+	// make sure external file lock is available
+	locked, err := streamMgr.checkLock(ctx)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	// exist is true, which represents restart a stream task. Or create a new stream task.
-	if exist {
+
+	// locked means this is a stream task restart. Or create a new stream task.
+	if locked {
 		logInfo, err := getLogRange(ctx, &cfg.Config)
 		if err != nil {
 			return errors.Trace(err)
@@ -614,6 +621,7 @@ func RunStreamStart(
 		return errors.Annotate(berrors.ErrInvalidArgument, "nothing need to observe")
 	}
 
+	securityConfig := generateSecurityConfig(cfg)
 	ti := streamhelper.TaskInfo{
 		PBInfo: backuppb.StreamBackupTaskInfo{
 			Storage:         streamMgr.bc.GetStorageBackend(),
@@ -622,6 +630,7 @@ func RunStreamStart(
 			Name:            cfg.TaskName,
 			TableFilter:     cfg.FilterStr,
 			CompressionType: backuppb.CompressionType_ZSTD,
+			SecurityConfig:  &securityConfig,
 		},
 		Ranges:  ranges,
 		Pausing: false,
@@ -631,6 +640,30 @@ func RunStreamStart(
 	}
 	summary.Log(cmdName, ti.ZapTaskInfo()...)
 	return nil
+}
+
+func generateSecurityConfig(cfg *StreamConfig) backuppb.StreamBackupTaskSecurityConfig {
+	if len(cfg.LogBackupCipherInfo.CipherKey) > 0 && utils.IsEffectiveEncryptionMethod(cfg.LogBackupCipherInfo.CipherType) {
+		return backuppb.StreamBackupTaskSecurityConfig{
+			Encryption: &backuppb.StreamBackupTaskSecurityConfig_PlaintextDataKey{
+				PlaintextDataKey: &backuppb.CipherInfo{
+					CipherType: cfg.LogBackupCipherInfo.CipherType,
+					CipherKey:  cfg.LogBackupCipherInfo.CipherKey,
+				},
+			},
+		}
+	}
+	if len(cfg.MasterKeyConfig.MasterKeys) > 0 && utils.IsEffectiveEncryptionMethod(cfg.MasterKeyConfig.EncryptionType) {
+		return backuppb.StreamBackupTaskSecurityConfig{
+			Encryption: &backuppb.StreamBackupTaskSecurityConfig_MasterKeyConfig{
+				MasterKeyConfig: &backuppb.MasterKeyConfig{
+					EncryptionType: cfg.MasterKeyConfig.EncryptionType,
+					MasterKeys:     cfg.MasterKeyConfig.MasterKeys,
+				},
+			},
+		}
+	}
+	return backuppb.StreamBackupTaskSecurityConfig{}
 }
 
 func RunStreamMetadata(
@@ -995,13 +1028,13 @@ func RunStreamTruncate(c context.Context, g glue.Glue, cmdName string, cfg *Stre
 	}
 
 	if cfg.Until < sp {
-		console.Println("According to the log, you have truncated backup data before", em(formatTS(sp)))
+		console.Println("According to the log, you have truncated log backup data before", em(formatTS(sp)))
 		if !cfg.SkipPrompt && !console.PromptBool("Continue? ") {
 			return nil
 		}
 	}
 
-	readMetaDone := console.ShowTask("Reading Metadata... ", glue.WithTimeCost())
+	readMetaDone := console.ShowTask("Reading log backup metadata... ", glue.WithTimeCost())
 	metas := stream.StreamMetadataSet{
 		MetadataDownloadBatchSize: cfg.MetadataDownloadBatchSize,
 		Helper:                    stream.NewMetadataHelper(),
@@ -1025,11 +1058,11 @@ func RunStreamTruncate(c context.Context, g glue.Glue, cmdName string, cfg *Stre
 		kvCount += d.KVCount
 		return
 	})
-	console.Printf("We are going to remove %s files, until %s.\n",
+	console.Printf("We are going to truncate %s files, up to TS %s.\n",
 		em(fileCount),
 		em(formatTS(cfg.Until)),
 	)
-	if !cfg.SkipPrompt && !console.PromptBool(warn("Sure? ")) {
+	if !cfg.SkipPrompt && !console.PromptBool(warn("Are you sure?")) {
 		return nil
 	}
 
@@ -1042,7 +1075,7 @@ func RunStreamTruncate(c context.Context, g glue.Glue, cmdName string, cfg *Stre
 
 	// begin to remove
 	p := console.StartProgressBar(
-		"Clearing Data Files and Metadata", fileCount,
+		"Truncating Data Files and Metadata", fileCount,
 		glue.WithTimeCost(),
 		glue.WithConstExtraField("kv-count", kvCount),
 		glue.WithConstExtraField("kv-size", fmt.Sprintf("%d(%s)", totalSize, units.HumanSize(float64(totalSize)))),
@@ -1113,7 +1146,6 @@ func RunStreamRestore(
 	c context.Context,
 	mgr *conn.Mgr,
 	g glue.Glue,
-	cmdName string,
 	cfg *RestoreConfig,
 ) (err error) {
 	ctx, cancelFn := context.WithCancel(c)
@@ -1132,6 +1164,8 @@ func RunStreamRestore(
 	if err != nil {
 		return errors.Trace(err)
 	}
+
+	// if not set by user, restore to the max TS available
 	if cfg.RestoreTS == 0 {
 		cfg.RestoreTS = logInfo.logMaxTS
 	}
@@ -1157,7 +1191,7 @@ func RunStreamRestore(
 		}
 	}
 
-	log.Info("start restore on point",
+	log.Info("start point in time restore",
 		zap.Uint64("restore-from", cfg.StartTS), zap.Uint64("restore-to", cfg.RestoreTS),
 		zap.Uint64("log-min-ts", logInfo.logMinTS), zap.Uint64("log-max-ts", logInfo.logMaxTS))
 	if err := checkLogRange(cfg.StartTS, cfg.RestoreTS, logInfo.logMinTS, logInfo.logMaxTS); err != nil {
@@ -1180,7 +1214,7 @@ func RunStreamRestore(
 		logStorage := cfg.Config.Storage
 		cfg.Config.Storage = cfg.FullBackupStorage
 		// TiFlash replica is restored to down-stream on 'pitr' currently.
-		if err = runRestore(ctx, mgr, g, FullRestoreCmd, cfg, checkInfo); err != nil {
+		if err = runSnapshotRestore(ctx, mgr, g, FullRestoreCmd, cfg, checkInfo); err != nil {
 			return errors.Trace(err)
 		}
 		cfg.Config.Storage = logStorage
@@ -1191,9 +1225,6 @@ func RunStreamRestore(
 		}
 		if checkInfo.CheckpointInfo != nil && checkInfo.CheckpointInfo.Metadata != nil && checkInfo.CheckpointInfo.Metadata.TiFlashItems != nil {
 			log.Info("load tiflash records of snapshot restore from checkpoint")
-			if err != nil {
-				return errors.Trace(err)
-			}
 			cfg.tiflashRecorder.Load(checkInfo.CheckpointInfo.Metadata.TiFlashItems)
 		}
 	}
@@ -1329,7 +1360,12 @@ func restoreStream(
 		}()
 	}
 
-	err = client.InstallLogFileManager(ctx, cfg.StartTS, cfg.RestoreTS, cfg.MetadataDownloadBatchSize)
+	encryptionManager, err := encryption.NewManager(&cfg.LogBackupCipherInfo, &cfg.MasterKeyConfig)
+	if err != nil {
+		return errors.Annotate(err, "failed to create encryption manager for log restore")
+	}
+	defer encryptionManager.Close()
+	err = client.InstallLogFileManager(ctx, cfg.StartTS, cfg.RestoreTS, cfg.MetadataDownloadBatchSize, encryptionManager)
 	if err != nil {
 		return err
 	}
@@ -1345,12 +1381,13 @@ func restoreStream(
 		newTask = false
 	}
 	// get the schemas ID replace information.
+	// since targeted full backup storage, need to use the full backup cipher
 	schemasReplace, err := client.InitSchemasReplaceForDDL(ctx, &logclient.InitSchemaConfig{
 		IsNewTask:         newTask,
 		TableFilter:       cfg.TableFilter,
 		TiFlashRecorder:   cfg.tiflashRecorder,
 		FullBackupStorage: fullBackupStorage,
-	})
+	}, &cfg.Config.CipherInfo)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -1431,7 +1468,8 @@ func restoreStream(
 			return errors.Trace(err)
 		}
 
-		return client.RestoreKVFiles(ctx, rewriteRules, idrules, logFilesIterWithSplit, checkpointRunner, cfg.PitrBatchCount, cfg.PitrBatchSize, updateStats, p.IncBy)
+		return client.RestoreKVFiles(ctx, rewriteRules, idrules, logFilesIterWithSplit, checkpointRunner,
+			cfg.PitrBatchCount, cfg.PitrBatchSize, updateStats, p.IncBy, &cfg.LogBackupCipherInfo, cfg.MasterKeyConfig.MasterKeys)
 	})
 	if err != nil {
 		return errors.Annotate(err, "failed to restore kv files")
@@ -1547,15 +1585,15 @@ func getExternalStorageOptions(cfg *Config, u *backuppb.StorageBackend) storage.
 	}
 }
 
-func checkLogRange(restoreFrom, restoreTo, logMinTS, logMaxTS uint64) error {
-	// serveral ts constraint：
-	// logMinTS <= restoreFrom <= restoreTo <= logMaxTS
-	if logMinTS > restoreFrom || restoreFrom > restoreTo || restoreTo > logMaxTS {
+func checkLogRange(restoreFromTS, restoreToTS, logMinTS, logMaxTS uint64) error {
+	// several ts constraint：
+	// logMinTS <= restoreFromTS <= restoreToTS <= logMaxTS
+	if logMinTS > restoreFromTS || restoreFromTS > restoreToTS || restoreToTS > logMaxTS {
 		return errors.Annotatef(berrors.ErrInvalidArgument,
 			"restore log from %d(%s) to %d(%s), "+
 				" but the current existed log from %d(%s) to %d(%s)",
-			restoreFrom, oracle.GetTimeFromTS(restoreFrom),
-			restoreTo, oracle.GetTimeFromTS(restoreTo),
+			restoreFromTS, oracle.GetTimeFromTS(restoreFromTS),
+			restoreToTS, oracle.GetTimeFromTS(restoreToTS),
 			logMinTS, oracle.GetTimeFromTS(logMinTS),
 			logMaxTS, oracle.GetTimeFromTS(logMaxTS),
 		)
@@ -1648,7 +1686,7 @@ func getGlobalCheckpointFromStorage(ctx context.Context, s storage.ExternalStora
 	return globalCheckPointTS, errors.Trace(err)
 }
 
-// getFullBackupTS gets the snapshot-ts of full bakcup
+// getFullBackupTS gets the snapshot-ts of full backup
 func getFullBackupTS(
 	ctx context.Context,
 	cfg *RestoreConfig,
@@ -1663,11 +1701,17 @@ func getFullBackupTS(
 		return 0, 0, errors.Trace(err)
 	}
 
-	backupmeta := &backuppb.BackupMeta{}
-	if err = backupmeta.Unmarshal(metaData); err != nil {
+	decryptedMetaData, err := metautil.DecryptFullBackupMetaIfNeeded(metaData, &cfg.CipherInfo)
+	if err != nil {
 		return 0, 0, errors.Trace(err)
 	}
 
+	backupmeta := &backuppb.BackupMeta{}
+	if err = backupmeta.Unmarshal(decryptedMetaData); err != nil {
+		return 0, 0, errors.Trace(err)
+	}
+
+	// start and end are identical in full backup, pick random one
 	return backupmeta.GetEndVersion(), backupmeta.GetClusterId(), nil
 }
 
@@ -1757,7 +1801,7 @@ func checkPiTRTaskInfo(
 	cfg *RestoreConfig,
 ) (*PiTRTaskInfo, error) {
 	var (
-		doFullRestore = (len(cfg.FullBackupStorage) > 0)
+		doFullRestore = len(cfg.FullBackupStorage) > 0
 		curTaskInfo   *checkpoint.CheckpointTaskInfoForLogRestore
 	)
 	checkInfo := &PiTRTaskInfo{}

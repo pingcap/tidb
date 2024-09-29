@@ -1212,6 +1212,9 @@ const (
 	// TiDBEnableLazyCursorFetch defines whether to enable the lazy cursor fetch. If it's `OFF`, all results of
 	// of a cursor will be stored in the tidb node in `EXECUTE` command.
 	TiDBEnableLazyCursorFetch = "tidb_enable_lazy_cursor_fetch"
+	// TiDBTSOClientRPCMode controls how the TSO client performs the TSO RPC requests. It internally controls the
+	// concurrency of the RPC. This variable provides an approach to tune the latency of getting timestamps from PD.
+	TiDBTSOClientRPCMode = "tidb_tso_client_rpc_mode"
 )
 
 // TiDB intentional limits
@@ -1560,6 +1563,7 @@ const (
 	DefTiDBEnableLazyCursorFetch                      = false
 	DefOptEnableProjectionPushDown                    = true
 	DefTiDBEnableSharedLockPromotion                  = false
+	DefTiDBTSOClientRPCMode                           = TSOClientRPCModeDefault
 )
 
 // Process global variables.
@@ -1712,6 +1716,10 @@ var (
 	SetLowResolutionTSOUpdateInterval func(interval time.Duration) error = nil
 	// ChangeSchemaCacheSize is called when tidb_schema_cache_size is changed.
 	ChangeSchemaCacheSize func(ctx context.Context, size uint64) error
+	// EnableStatsOwner is the func registered by stats to enable running stats in this instance.
+	EnableStatsOwner func() error = nil
+	// DisableStatsOwner is the func registered by stats to disable running stats in this instance.
+	DisableStatsOwner func() error = nil
 )
 
 // Hooks functions for Cluster Resource Control.

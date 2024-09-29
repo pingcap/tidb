@@ -187,7 +187,7 @@ func isFlashbackSupportedDDLAction(action model.ActionType) bool {
 	}
 }
 
-func checkSystemSchemaID(t *meta.Meta, schemaID int64, flashbackTSString string) error {
+func checkSystemSchemaID(t meta.Reader, schemaID int64, flashbackTSString string) error {
 	if schemaID <= 0 {
 		return nil
 	}
@@ -201,7 +201,7 @@ func checkSystemSchemaID(t *meta.Meta, schemaID int64, flashbackTSString string)
 	return nil
 }
 
-func checkAndSetFlashbackClusterInfo(ctx context.Context, se sessionctx.Context, store kv.Storage, t *meta.Meta, job *model.Job, flashbackTS uint64) (err error) {
+func checkAndSetFlashbackClusterInfo(ctx context.Context, se sessionctx.Context, store kv.Storage, t *meta.Mutator, job *model.Job, flashbackTS uint64) (err error) {
 	if err = ValidateFlashbackTS(ctx, se, flashbackTS); err != nil {
 		return err
 	}
@@ -227,7 +227,7 @@ func checkAndSetFlashbackClusterInfo(ctx context.Context, se sessionctx.Context,
 		return errors.Trace(err)
 	}
 
-	flashbackSnapshotMeta := meta.NewSnapshotMeta(store.GetSnapshot(kv.NewVersion(flashbackTS)))
+	flashbackSnapshotMeta := meta.NewReader(store.GetSnapshot(kv.NewVersion(flashbackTS)))
 	flashbackSchemaVersion, err := flashbackSnapshotMeta.GetSchemaVersion()
 	if err != nil {
 		return errors.Trace(err)
@@ -278,7 +278,7 @@ func checkAndSetFlashbackClusterInfo(ctx context.Context, se sessionctx.Context,
 		}
 	}
 
-	jobs, err := GetAllDDLJobs(se)
+	jobs, err := GetAllDDLJobs(ctx, se)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -382,7 +382,7 @@ func getFlashbackKeyRanges(ctx context.Context, sess sessionctx.Context, flashba
 	schemas := is.AllSchemas()
 
 	// get snapshot schema IDs.
-	flashbackSnapshotMeta := meta.NewSnapshotMeta(sess.GetStore().GetSnapshot(kv.NewVersion(flashbackTS)))
+	flashbackSnapshotMeta := meta.NewReader(sess.GetStore().GetSnapshot(kv.NewVersion(flashbackTS)))
 	snapshotSchemas, err := flashbackSnapshotMeta.ListDatabases()
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -680,7 +680,7 @@ func splitRegionsByKeyRanges(ctx context.Context, store kv.Storage, keyRanges []
 // 2. before flashback start, check timestamp, disable GC and close PD schedule, get flashback key ranges.
 // 3. phase 1, lock flashback key ranges.
 // 4. phase 2, send flashback RPC, do flashback jobs.
-func (w *worker) onFlashbackCluster(jobCtx *jobContext, t *meta.Meta, job *model.Job) (ver int64, err error) {
+func (w *worker) onFlashbackCluster(jobCtx *jobContext, t *meta.Mutator, job *model.Job) (ver int64, err error) {
 	inFlashbackTest := false
 	failpoint.Inject("mockFlashbackTest", func(val failpoint.Value) {
 		if val.(bool) {

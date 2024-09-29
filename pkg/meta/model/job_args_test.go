@@ -28,10 +28,10 @@ func TestGetOrDecodeArgsV2(t *testing.T) {
 	j := &Job{
 		Version: JobVersion2,
 		Type:    ActionTruncateTable,
-		Args: []any{&TruncateTableArgs{
-			FKCheck: true,
-		}},
 	}
+	j.FillArgs(&TruncateTableArgs{
+		FKCheck: true,
+	})
 	_, err := j.Encode(true)
 	require.NoError(t, err)
 	require.NotNil(t, j.RawArgs)
@@ -736,6 +736,64 @@ func TestCheckConstraintArgs(t *testing.T) {
 	}
 }
 
+func TestGetAlterTablePlacementArgs(t *testing.T) {
+	inArgs := &AlterTablePlacementArgs{
+		PlacementPolicyRef: &PolicyRefInfo{
+			ID:   7527,
+			Name: model.NewCIStr("placement-policy"),
+		},
+	}
+	for _, v := range []JobVersion{JobVersion1, JobVersion2} {
+		j2 := &Job{}
+		require.NoError(t, j2.Decode(getJobBytes(t, inArgs, v, ActionAlterTablePlacement)))
+		args, err := GetAlterTablePlacementArgs(j2)
+		require.NoError(t, err)
+		require.Equal(t, inArgs, args)
+	}
+
+	// test PlacementPolicyRef is nil
+	inArgs = &AlterTablePlacementArgs{
+		PlacementPolicyRef: nil,
+	}
+	for _, v := range []JobVersion{JobVersion1, JobVersion2} {
+		j2 := &Job{}
+		require.NoError(t, j2.Decode(getJobBytes(t, inArgs, v, ActionAlterTablePlacement)))
+		args, err := GetAlterTablePlacementArgs(j2)
+		require.NoError(t, err)
+		require.Equal(t, inArgs, args)
+	}
+}
+
+func TestGetSetTiFlashReplicaArgs(t *testing.T) {
+	inArgs := &SetTiFlashReplicaArgs{
+		TiflashReplica: ast.TiFlashReplicaSpec{
+			Count:  3,
+			Labels: []string{"TiFlash1", "TiFlash2", "TiFlash3"},
+			Hypo:   true,
+		},
+	}
+	for _, v := range []JobVersion{JobVersion1, JobVersion2} {
+		j2 := &Job{}
+		require.NoError(t, j2.Decode(getJobBytes(t, inArgs, v, ActionSetTiFlashReplica)))
+		args, err := GetSetTiFlashReplicaArgs(j2)
+		require.NoError(t, err)
+		require.Equal(t, inArgs, args)
+	}
+}
+
+func TestGetUpdateTiFlashReplicaStatusArgs(t *testing.T) {
+	inArgs := &UpdateTiFlashReplicaStatusArgs{
+		Available:  true,
+		PhysicalID: 1001,
+	}
+	for _, v := range []JobVersion{JobVersion1, JobVersion2} {
+		j2 := &Job{}
+		require.NoError(t, j2.Decode(getJobBytes(t, inArgs, v, ActionUpdateTiFlashReplicaStatus)))
+		args, err := GetUpdateTiFlashReplicaStatusArgs(j2)
+		require.NoError(t, err)
+		require.Equal(t, inArgs, args)
+	}
+}
 func TestLockTableArgs(t *testing.T) {
 	inArgs := &LockTablesArgs{
 		LockTables:    []TableLockTpInfo{{1, 1, model.TableLockNone}},

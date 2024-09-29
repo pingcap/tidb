@@ -27,7 +27,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/mathutil"
 )
 
-func onCreateSequence(jobCtx *jobContext, t *meta.Meta, job *model.Job) (ver int64, _ error) {
+func onCreateSequence(jobCtx *jobContext, t *meta.Mutator, job *model.Job) (ver int64, _ error) {
 	schemaID := job.SchemaID
 	args, err := model.GetCreateTableArgs(job)
 	if err != nil {
@@ -59,7 +59,7 @@ func onCreateSequence(jobCtx *jobContext, t *meta.Meta, job *model.Job) (ver int
 	return ver, nil
 }
 
-func createSequenceWithCheck(t *meta.Meta, job *model.Job, tbInfo *model.TableInfo) error {
+func createSequenceWithCheck(t *meta.Mutator, job *model.Job, tbInfo *model.TableInfo) error {
 	switch tbInfo.State {
 	case model.StateNone, model.StatePublic:
 		// none -> public
@@ -232,7 +232,7 @@ func alterSequenceOptions(sequenceOptions []*ast.SequenceOption, ident ast.Ident
 	return false, 0, nil
 }
 
-func onAlterSequence(jobCtx *jobContext, t *meta.Meta, job *model.Job) (ver int64, _ error) {
+func onAlterSequence(jobCtx *jobContext, t *meta.Mutator, job *model.Job) (ver int64, _ error) {
 	schemaID := job.SchemaID
 	args, err := model.GetAlterSequenceArgs(job)
 	if err != nil {
@@ -289,7 +289,7 @@ func onAlterSequence(jobCtx *jobContext, t *meta.Meta, job *model.Job) (ver int6
 
 // Like setval does, restart sequence value won't affect current the step frequency. It will look backward for
 // the first valid sequence valid rather than return the restart value directly.
-func restartSequenceValue(t *meta.Meta, dbID int64, tblInfo *model.TableInfo, seqValue int64) error {
+func restartSequenceValue(t *meta.Mutator, dbID int64, tblInfo *model.TableInfo, seqValue int64) error {
 	var sequenceBase int64
 	if tblInfo.Sequence.Increment >= 0 {
 		sequenceBase = seqValue - 1

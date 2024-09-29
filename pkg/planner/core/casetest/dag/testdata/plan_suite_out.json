@@ -165,7 +165,7 @@
       },
       {
         "SQL": "select * from t t1 join t t2 on t1.b = t2.a order by t1.a",
-        "Best": "IndexJoin{TableReader(Table(t))->TableReader(Table(t))}(test.t.b,test.t.a)"
+        "Best": "LeftHashJoin{TableReader(Table(t))->TableReader(Table(t))}(test.t.b,test.t.a)->Sort"
       },
       {
         "SQL": "select * from t t1 join t t2 on t1.b = t2.a order by t1.a limit 1",
@@ -366,7 +366,7 @@
       },
       {
         "SQL": "select t.c in (select count(*) from t s, t t1 where s.a = t.a and s.a = t1.a) from t",
-        "Best": "Apply{IndexReader(Index(t.c_d_e)[[NULL,+inf]])->MergeInnerJoin{TableReader(Table(t))->TableReader(Table(t))}(test.t.a,test.t.a)->StreamAgg}->Projection"
+        "Best": "Apply{IndexReader(Index(t.c_d_e)[[NULL,+inf]])->IndexJoin{TableReader(Table(t))->TableReader(Table(t)->Sel([eq(test.t.a, test.t.a)]))}(test.t.a,test.t.a)->StreamAgg}->Projection"
       },
       {
         "SQL": "select (select count(*) from t s, t t1 where s.a = t.a and s.a = t1.a) from t",
