@@ -21,6 +21,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"math"
 	"os"
 	"slices"
 	"strings"
@@ -761,14 +762,20 @@ SwitchIndexState:
 			return ver, errors.Trace(err)
 		}
 
-		var done bool
-		if job.MultiSchemaInfo != nil {
-			done, ver, err = doReorgWorkForCreateIndexMultiSchema(w, jobCtx, t, job, tbl, allIndexInfos)
+		if job.SnapshotVer == 0 && tableIsEmpty(w.store, tbl, job.ReorgMeta.ResourceGroupName) {
+			logutil.DDLLogger().Info("table is empty, skipping reorg work",
+				zap.Int64("jobID", job.ID),
+				zap.String("table", tblInfo.Name.O))
 		} else {
-			done, ver, err = doReorgWorkForCreateIndex(w, jobCtx, t, job, tbl, allIndexInfos)
-		}
-		if !done {
-			return ver, err
+			var done bool
+			if job.MultiSchemaInfo != nil {
+				done, ver, err = doReorgWorkForCreateIndexMultiSchema(w, jobCtx, t, job, tbl, allIndexInfos)
+			} else {
+				done, ver, err = doReorgWorkForCreateIndex(w, jobCtx, t, job, tbl, allIndexInfos)
+			}
+			if !done {
+				return ver, err
+			}
 		}
 
 		// Set column index flag.
@@ -828,6 +835,32 @@ SwitchIndexState:
 	}
 
 	return ver, errors.Trace(err)
+}
+
+func tableIsEmpty(store kv.Storage, tbl table.Table, resGroupName string) bool {
+	rgCtx := NewReorgContext()
+	rgCtx.resourceGroupName = resGroupName
+	if tbl, ok := tbl.(table.PartitionedTable); ok {
+		for _, pid := range tbl.GetAllPartitionIDs() {
+			pTbl := tbl.GetPartition(pid)
+			_, isEmpty, err := GetTableMaxHandle(rgCtx, store, math.MaxInt64, pTbl)
+			if err != nil {
+				logutil.DDLLogger().Info("check if table is empty failed", zap.Error(err))
+				return false
+			}
+			if !isEmpty {
+				return false
+			}
+		}
+		return true
+	}
+	plainTbl := tbl.(table.PhysicalTable)
+	_, isEmpty, err := GetTableMaxHandle(rgCtx, store, math.MaxInt64, plainTbl)
+	if err != nil {
+		logutil.DDLLogger().Info("check if table is empty failed", zap.Error(err))
+		return false
+	}
+	return isEmpty
 }
 
 // pickBackfillType determines which backfill process will be used. The result is
