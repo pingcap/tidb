@@ -852,17 +852,7 @@ func TestFlashbackClusterArgs(t *testing.T) {
 		args, err := GetFlashbackClusterArgs(j2)
 		require.NoError(t, err)
 
-		require.Equal(t, inArgs.FlashbackTS, args.FlashbackTS)
-		require.Equal(t, inArgs.StartTS, args.StartTS)
-		require.Equal(t, inArgs.CommitTS, args.CommitTS)
-		require.Equal(t, inArgs.LockedRegionCnt, args.LockedRegionCnt)
-		require.Equal(t, inArgs.FlashbackKeyRanges, args.FlashbackKeyRanges)
-		require.Equal(t, inArgs.PDScheduleValue, args.PDScheduleValue)
-
-		require.True(t, args.EnableAutoAnalyze)
-		require.True(t, args.EnableGC)
-		require.True(t, args.EnableTTLJob)
-		require.True(t, args.SuperReadOnly)
+		require.Equal(t, inArgs, args)
 	}
 }
 

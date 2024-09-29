@@ -5677,8 +5677,8 @@ func (e *executor) AlterTableAttributes(ctx sessionctx.Context, ident ast.Ident,
 		SQLMode:        ctx.GetSessionVars().SQLMode,
 	}
 
-	pdLabelRule := pdhttp.LabelRule(*rule)
-	args := &model.AlterTableAttributesArgs{LabelRule: &pdLabelRule}
+	pdLabelRule := (*pdhttp.LabelRule)(rule)
+	args := &model.AlterTableAttributesArgs{LabelRule: pdLabelRule}
 	err = e.doDDLJob2(ctx, job, args)
 	if err != nil {
 		return errors.Trace(err)
@@ -5710,7 +5710,7 @@ func (e *executor) AlterTablePartitionAttributes(ctx sessionctx.Context, ident a
 	}
 	rule.Reset(schema.Name.L, meta.Name.L, spec.PartitionNames[0].L, partitionID)
 
-	pdLabelRule := pdhttp.LabelRule(*rule)
+	pdLabelRule := (*pdhttp.LabelRule)(rule)
 	job := &model.Job{
 		Version:        model.GetJobVerInUse(),
 		SchemaID:       schema.ID,
@@ -5724,7 +5724,7 @@ func (e *executor) AlterTablePartitionAttributes(ctx sessionctx.Context, ident a
 	}
 	args := &model.AlterTablePartitionArgs{
 		PartitionID: partitionID,
-		LabelRule:   &pdLabelRule,
+		LabelRule:   pdLabelRule,
 	}
 
 	err = e.doDDLJob2(ctx, job, args)
