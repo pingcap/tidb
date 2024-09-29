@@ -274,11 +274,6 @@ func reorgTimeZoneWithTzLoc(tzLoc *model.TimeZoneLocation) (*time.Location, erro
 	return tzLoc.GetLocation()
 }
 
-// ReorgWaitTimeout is the timeout that wait ddl in write reorganization stage.
-// make it a var for testing.
-// TODO(lance6716): check usage
-var ReorgWaitTimeout = 5 * time.Second
-
 func (rc *reorgCtx) notifyJobState(state model.JobState) {
 	atomic.StoreInt32((*int32)(&rc.jobState), int32(state))
 }
