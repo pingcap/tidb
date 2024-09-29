@@ -309,11 +309,19 @@ func (p *PhysicalIndexJoin) attach2Task(tasks ...task) task {
 
 func getAvgRowSize(stats *property.StatsInfo, cols []*expression.Column) (size float64) {
 	if stats.HistColl != nil {
+<<<<<<< HEAD:planner/core/task.go
 		size = stats.HistColl.GetAvgRowSizeListInDisk(cols)
 	} else {
 		// Estimate using just the type info.
 		for _, col := range cols {
 			size += float64(chunk.EstimateTypeWidth(col.GetType()))
+=======
+		size = max(cardinality.GetAvgRowSizeDataInDiskByRows(stats.HistColl, cols), 0)
+	} else {
+		// Estimate using just the type info.
+		for _, col := range cols {
+			size += max(float64(chunk.EstimateTypeWidth(col.GetStaticType())), 0)
+>>>>>>> 4df3389c263 (planner: Set minimum cost to avoid parent multiplication cost discrepancies (#56387)):pkg/planner/core/task.go
 		}
 	}
 	return
