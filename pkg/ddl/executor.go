@@ -310,9 +310,9 @@ func (e *executor) CreateSchemaWithInfo(
 		}},
 		SQLMode: ctx.GetSessionVars().SQLMode,
 	}
-	job.FillArgs(&model.CreateSchemaArgs{
+	args := &model.CreateSchemaArgs{
 		DBInfo: dbInfo,
-	})
+	}
 	if ref := dbInfo.PlacementPolicyRef; ref != nil {
 		job.InvolvingSchemaInfo = append(job.InvolvingSchemaInfo, model.InvolvingSchemaInfo{
 			Policy: ref.Name.L,
@@ -320,7 +320,7 @@ func (e *executor) CreateSchemaWithInfo(
 		})
 	}
 
-	err := e.DoDDLJob(ctx, job)
+	err := e.doDDLJob2(ctx, job, args)
 
 	if infoschema.ErrDatabaseExists.Equal(err) && onExist == OnExistIgnore {
 		ctx.GetSessionVars().StmtCtx.AppendNote(err)
@@ -361,11 +361,11 @@ func (e *executor) ModifySchemaCharsetAndCollate(ctx sessionctx.Context, stmt *a
 		}},
 		SQLMode: ctx.GetSessionVars().SQLMode,
 	}
-	job.FillArgs(&model.ModifySchemaArgs{
+	args := &model.ModifySchemaArgs{
 		ToCharset: toCharset,
 		ToCollate: toCollate,
-	})
-	err = e.DoDDLJob(ctx, job)
+	}
+	err = e.doDDLJob2(ctx, job, args)
 	return errors.Trace(err)
 }
 
@@ -400,7 +400,7 @@ func (e *executor) ModifySchemaDefaultPlacement(ctx sessionctx.Context, stmt *as
 		}},
 		SQLMode: ctx.GetSessionVars().SQLMode,
 	}
-	job.FillArgs(&model.ModifySchemaArgs{PolicyRef: placementPolicyRef})
+	args := &model.ModifySchemaArgs{PolicyRef: placementPolicyRef}
 
 	if placementPolicyRef != nil {
 		job.InvolvingSchemaInfo = append(job.InvolvingSchemaInfo, model.InvolvingSchemaInfo{
@@ -408,7 +408,7 @@ func (e *executor) ModifySchemaDefaultPlacement(ctx sessionctx.Context, stmt *as
 			Mode:   model.SharedInvolving,
 		})
 	}
-	err = e.DoDDLJob(ctx, job)
+	err = e.doDDLJob2(ctx, job, args)
 	return errors.Trace(err)
 }
 
@@ -764,11 +764,11 @@ func (e *executor) DropSchema(ctx sessionctx.Context, stmt *ast.DropDatabaseStmt
 		}},
 		SQLMode: ctx.GetSessionVars().SQLMode,
 	}
-	job.FillArgs(&model.DropSchemaArgs{
+	args := &model.DropSchemaArgs{
 		FKCheck: fkCheck,
-	})
+	}
 
-	err = e.DoDDLJob(ctx, job)
+	err = e.doDDLJob2(ctx, job, args)
 	if err != nil {
 		if infoschema.ErrDatabaseNotExists.Equal(err) {
 			if stmt.IfExists {
