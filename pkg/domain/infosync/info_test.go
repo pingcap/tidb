@@ -319,3 +319,43 @@ func TestRuleOp(t *testing.T) {
 		require.Equal(t, *ruleOps[i].TiFlashRule, *ruleOpsExpect[i].TiFlashRule)
 	}
 }
+
+func TestDoRequestRetryLeader(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("integration.NewClusterV3 will create file contains a colon which is not allowed on Windows")
+	}
+
+	ctx := context.Background()
+
+	integration.BeforeTestExternal(t)
+	cluster := integration.NewClusterV3(t, &integration.ClusterConfig{Size: 3})
+	defer cluster.Terminate(t)
+
+	client := cluster.RandClient()
+	var (
+		leader string
+	)
+	require.Eventually(t, func() bool {
+		for _, addr := range client.Endpoints() {
+			status, err := client.Status(ctx, addr)
+			require.NoError(t, err)
+			if status.Leader == status.Header.MemberId {
+				leader = addr[len("unix://"):]
+				return true
+			}
+		}
+		return false
+	}, 5*time.Second, 100*time.Millisecond)
+
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/domain/infosync/FailPlacement", `1*return(true)`))
+	require.NoError(t, failpoint.Enable(
+		"github.com/pingcap/tidb/pkg/domain/infosync/SuccOnlyURLContains",
+		fmt.Sprintf(`return("%s")`, leader),
+	))
+	body, err := doRequest(ctx, "test", client, "test", "GET", nil)
+	require.NoError(t, err)
+	require.Equal(t, "SuccOnlyURLMatch", string(body))
+
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/domain/infosync/FailPlacement"))
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/domain/infosync/SuccOnlyURLContains"))
+}

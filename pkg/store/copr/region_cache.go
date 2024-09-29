@@ -18,15 +18,18 @@ import (
 	"bytes"
 	"math"
 	"strconv"
+	"sync/atomic"
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/coprocessor"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/kv"
 	derr "github.com/pingcap/tidb/pkg/store/driver/error"
 	"github.com/pingcap/tidb/pkg/store/driver/options"
+	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/mathutil"
 	"github.com/tikv/client-go/v2/metrics"
@@ -169,7 +172,7 @@ const UnspecifiedLimit = -1
 
 // SplitKeyRangesByLocationsWithBuckets splits the KeyRanges by logical info in the cache.
 // The buckets in the returned LocationKeyRanges are not empty if the region is split by bucket.
-func (c *RegionCache) SplitKeyRangesByLocationsWithBuckets(bo *Backoffer, ranges *KeyRanges, limit int) ([]*LocationKeyRanges, error) {
+func (c *RegionCache) SplitKeyRangesByLocationsWithBuckets(bo *Backoffer, ranges *KeyRanges, limit int, killed *uint32) ([]*LocationKeyRanges, error) {
 	res := make([]*LocationKeyRanges, 0)
 	for ranges.Len() > 0 {
 		if limit != UnspecifiedLimit && len(res) >= limit {
@@ -178,6 +181,18 @@ func (c *RegionCache) SplitKeyRangesByLocationsWithBuckets(bo *Backoffer, ranges
 		loc, err := c.LocateKey(bo.TiKVBackoffer(), ranges.At(0).StartKey)
 		if err != nil {
 			return res, derr.ToTiDBErr(err)
+		}
+		failpoint.Inject("SplitRangesHangCausedKill", func(val failpoint.Value) {
+			if val.(bool) {
+				if killed != nil {
+					atomic.StoreUint32(killed, 1)
+				}
+			}
+		})
+		if killed != nil {
+			if atomic.LoadUint32(killed) == 1 {
+				return nil, errors.Trace(exeerrors.ErrQueryInterrupted)
+			}
 		}
 
 		isBreak := false
@@ -282,8 +297,8 @@ func (c *RegionCache) SplitKeyRangesByLocationsWithoutBuckets(bo *Backoffer, ran
 // it's equal to SplitKeyRangesByLocations.
 //
 // TODO(youjiali1995): Try to do it in one round and reduce allocations if bucket is not enabled.
-func (c *RegionCache) SplitKeyRangesByBuckets(bo *Backoffer, ranges *KeyRanges) ([]*LocationKeyRanges, error) {
-	locs, err := c.SplitKeyRangesByLocationsWithBuckets(bo, ranges, UnspecifiedLimit)
+func (c *RegionCache) SplitKeyRangesByBuckets(bo *Backoffer, ranges *KeyRanges, killed *uint32) ([]*LocationKeyRanges, error) {
+	locs, err := c.SplitKeyRangesByLocationsWithBuckets(bo, ranges, UnspecifiedLimit, killed)
 	if err != nil {
 		return nil, derr.ToTiDBErr(err)
 	}

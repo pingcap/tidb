@@ -44,6 +44,8 @@ type collationInfo struct {
 
 	charset   string
 	collation string
+
+	isExplicitCharset bool
 }
 
 func (c *collationInfo) HasCoercibility() bool {
@@ -76,6 +78,14 @@ func (c *collationInfo) CharsetAndCollation() (string, string) {
 	return c.charset, c.collation
 }
 
+func (c *collationInfo) IsExplicitCharset() bool {
+	return c.isExplicitCharset
+}
+
+func (c *collationInfo) SetExplicitCharset(explicit bool) {
+	c.isExplicitCharset = explicit
+}
+
 // CollationInfo contains all interfaces about dealing with collation.
 type CollationInfo interface {
 	// HasCoercibility returns if the Coercibility value is initialized.
@@ -98,6 +108,12 @@ type CollationInfo interface {
 
 	// SetCharsetAndCollation sets charset and collation.
 	SetCharsetAndCollation(chs, coll string)
+
+	// IsExplicitCharset return the charset is explicit set or not.
+	IsExplicitCharset() bool
+
+	// SetExplicitCharset set the charset is explicit or not.
+	SetExplicitCharset(bool)
 }
 
 // Coercibility values are used to check whether the collation of one item can be coerced to
@@ -246,9 +262,8 @@ func deriveCollation(ctx sessionctx.Context, funcName string, args []Expression,
 	case ast.Cast:
 		// We assume all the cast are implicit.
 		ec = &ExprCollation{args[0].Coercibility(), args[0].Repertoire(), args[0].GetType().GetCharset(), args[0].GetType().GetCollate()}
-		// Non-string type cast to string type should use @@character_set_connection and @@collation_connection.
-		// String type cast to string type should keep its original charset and collation. It should not happen.
-		if retType == types.ETString && argTps[0] != types.ETString {
+		// Cast to string type should use @@character_set_connection and @@collation_connection.
+		if retType == types.ETString {
 			ec.Charset, ec.Collation = ctx.GetSessionVars().GetCharsetInfo()
 		}
 		return ec, nil

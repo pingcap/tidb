@@ -176,7 +176,7 @@ func (e *SortExec) externalSorting(req *chunk.Chunk) (err error) {
 	return nil
 }
 
-func (e *SortExec) fetchRowChunks(ctx context.Context) error {
+func (e *SortExec) fetchRowChunks(ctx context.Context) (err error) {
 	fields := exec.RetTypes(e)
 	byItemsDesc := make([]bool, len(e.ByItems))
 	for i, byItem := range e.ByItems {
@@ -197,9 +197,24 @@ func (e *SortExec) fetchRowChunks(ctx context.Context) error {
 		e.rowChunks.GetDiskTracker().AttachTo(e.diskTracker)
 		e.rowChunks.GetDiskTracker().SetLabel(memory.LabelForRowChunks)
 	}
+	defer func() {
+		if e.rowChunks.NumRow() > 0 {
+			if err == nil {
+				err = e.rowChunks.Sort()
+			}
+			e.partitionList = append(e.partitionList, e.rowChunks)
+		}
+	}()
 	for {
 		chk := exec.TryNewCacheChunk(e.Children(0))
 		err := exec.Next(ctx, e.Children(0), chk)
+		failpoint.Inject("errInSortExecFetchRowChunks", func(val failpoint.Value) {
+			switch val.(int) {
+			case 1:
+				err = errors.New("mockError")
+			default:
+			}
+		})
 		if err != nil {
 			return err
 		}
@@ -237,13 +252,6 @@ func (e *SortExec) fetchRowChunks(ctx context.Context) error {
 			}
 		}
 	})
-	if e.rowChunks.NumRow() > 0 {
-		err := e.rowChunks.Sort()
-		if err != nil {
-			return err
-		}
-		e.partitionList = append(e.partitionList, e.rowChunks)
-	}
 	return nil
 }
 

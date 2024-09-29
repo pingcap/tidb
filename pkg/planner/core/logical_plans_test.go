@@ -779,9 +779,9 @@ func checkDataSourceCols(p LogicalPlan, t *testing.T, ans map[int][]string, comm
 		require.Equal(t, len(colList), len(p.Schema().Columns), comment)
 		for i, col := range p.Schema().Columns {
 			testdata.OnRecord(func() {
-				colList[i] = col.String()
+				colList[i] = col.StringWithCtx(false)
 			})
-			require.Equal(t, colList[i], col.String(), comment)
+			require.Equal(t, colList[i], col.StringWithCtx(false), comment)
 		}
 	}
 	for _, child := range p.Children() {
@@ -797,9 +797,9 @@ func checkOrderByItems(p LogicalPlan, t *testing.T, colList *[]string, comment s
 		})
 		for i, col := range p.ByItems {
 			testdata.OnRecord(func() {
-				(*colList)[i] = col.String()
+				(*colList)[i] = col.StringWithCtx(false)
 			})
-			s := col.String()
+			s := col.StringWithCtx(false)
 			require.Equal(t, (*colList)[i], s, comment)
 		}
 	}
@@ -1018,9 +1018,9 @@ func checkUniqueKeys(p LogicalPlan, t *testing.T, ans map[int][][]string, sql st
 		require.Equal(t, len(keyList[i]), len(p.Schema().Keys[i]), fmt.Sprintf("for %s, %v %v, the number of column doesn't match", sql, p.ID(), keyList[i]))
 		for j := range keyList[i] {
 			testdata.OnRecord(func() {
-				keyList[i][j] = p.Schema().Keys[i][j].String()
+				keyList[i][j] = p.Schema().Keys[i][j].StringWithCtx(false)
 			})
-			require.Equal(t, keyList[i][j], p.Schema().Keys[i][j].String(), fmt.Sprintf("for %s, %v %v, column dosen't match", sql, p.ID(), keyList[i]))
+			require.Equal(t, keyList[i][j], p.Schema().Keys[i][j].StringWithCtx(false), fmt.Sprintf("for %s, %v %v, column dosen't match", sql, p.ID(), keyList[i]))
 		}
 	}
 	testdata.OnRecord(func() {
@@ -2341,11 +2341,11 @@ func TestRollupExpand(t *testing.T) {
 	require.Equal(t, builder.currentBlockExpand.LevelExprs != nil, true)
 	require.Equal(t, len(builder.currentBlockExpand.LevelExprs), 3)
 	// for grouping set {}: gid = '00' = 0
-	require.Equal(t, expression.ExplainExpressionList(expand.LevelExprs[0], expand.schema), "test.t.a, <nil>->Column#13, <nil>->Column#14, 0->gid")
+	require.Equal(t, expression.ExplainExpressionList(s.ctx, expand.LevelExprs[0], expand.schema), "test.t.a, <nil>->Column#13, <nil>->Column#14, 0->gid")
 	// for grouping set {a}: gid = '01' = 1
-	require.Equal(t, expression.ExplainExpressionList(expand.LevelExprs[1], expand.schema), "test.t.a, Column#13, <nil>->Column#14, 1->gid")
+	require.Equal(t, expression.ExplainExpressionList(s.ctx, expand.LevelExprs[1], expand.schema), "test.t.a, Column#13, <nil>->Column#14, 1->gid")
 	// for grouping set {a,b}: gid = '11' = 3
-	require.Equal(t, expression.ExplainExpressionList(expand.LevelExprs[2], expand.schema), "test.t.a, Column#13, Column#14, 3->gid")
+	require.Equal(t, expression.ExplainExpressionList(s.ctx, expand.LevelExprs[2], expand.schema), "test.t.a, Column#13, Column#14, 3->gid")
 
 	require.Equal(t, expand.Schema().Len(), 4)
 	// source column a should be kept as real.

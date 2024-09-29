@@ -132,11 +132,19 @@ func (d *ParamMarker) GetUserVar() types.Datum {
 
 // String implements fmt.Stringer interface.
 func (c *Constant) String() string {
+	return c.StringWithCtx(false)
+}
+
+// StringWithCtx implements Expression interface.
+func (c *Constant) StringWithCtx(redact bool) string {
 	if c.ParamMarker != nil {
 		dt := c.ParamMarker.GetUserVar()
 		c.Value.SetValue(dt.GetValue(), c.RetType)
 	} else if c.DeferredExpr != nil {
-		return c.DeferredExpr.String()
+		return c.DeferredExpr.StringWithCtx(redact)
+	}
+	if redact {
+		return "?"
 	}
 	return fmt.Sprintf("%v", c.Value.GetValue())
 }

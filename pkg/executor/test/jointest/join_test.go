@@ -1367,6 +1367,24 @@ func TestIssue30211(t *testing.T) {
 		err = tk.QueryToErr("select /*+ inl_hash_join(t1) */ * from t1 join t2 on t1.a = t2.a;")
 		require.EqualError(t, err, "failpoint panic: TestIssue30211 IndexJoinPanic")
 	}()
+
+	func() {
+		fpName := "github.com/pingcap/tidb/pkg/executor/TestIssue30211"
+		require.NoError(t, failpoint.Enable(fpName, `panic("TestIssue30211 IndexJoinPanic")`))
+		fpName2 := "github.com/pingcap/tidb/pkg/executor/TestIssue49692"
+		require.NoError(t, failpoint.Enable(fpName2, `return`))
+
+		defer func() {
+			require.NoError(t, failpoint.Disable(fpName))
+			require.NoError(t, failpoint.Disable(fpName2))
+		}()
+		err := tk.QueryToErr("select /*+ inl_join(t1) */ * from t1 join t2 on t1.a = t2.a;")
+		require.EqualError(t, err, "failpoint panic: TestIssue30211 IndexJoinPanic")
+
+		err = tk.QueryToErr("select /*+ inl_hash_join(t1) */ * from t1 join t2 on t1.a = t2.a;")
+		require.EqualError(t, err, "failpoint panic: TestIssue30211 IndexJoinPanic")
+	}()
+
 	tk.MustExec("insert into t1 values(1),(2);")
 	tk.MustExec("insert into t2 values(1),(1),(2),(2);")
 	tk.MustExec("set @@tidb_mem_quota_query=8000;")
@@ -1377,6 +1395,18 @@ func TestIssue30211(t *testing.T) {
 	require.True(t, strings.Contains(err, memory.PanicMemoryExceedWarnMsg+memory.WarnMsgSuffixForSingleQuery))
 	err = tk.QueryToErr("select /*+ inl_hash_join(t1) */ * from t1 join t2 on t1.a = t2.a;").Error()
 	require.True(t, strings.Contains(err, memory.PanicMemoryExceedWarnMsg+memory.WarnMsgSuffixForSingleQuery))
+
+	func() {
+		fpName2 := "github.com/pingcap/tidb/pkg/executor/TestIssue49692"
+		require.NoError(t, failpoint.Enable(fpName2, `return`))
+		defer func() {
+			require.NoError(t, failpoint.Disable(fpName2))
+		}()
+		err := tk.QueryToErr("select /*+ inl_join(t1) */ * from t1 join t2 on t1.a = t2.a order by t2.a;").Error()
+		require.True(t, strings.Contains(err, memory.PanicMemoryExceedWarnMsg+memory.WarnMsgSuffixForSingleQuery))
+		err = tk.QueryToErr("select /*+ inl_hash_join(t1) */ * from t1 join t2 on t1.a = t2.a order by t2.a;").Error()
+		require.True(t, strings.Contains(err, memory.PanicMemoryExceedWarnMsg+memory.WarnMsgSuffixForSingleQuery))
+	}()
 }
 
 func TestIssue37932(t *testing.T) {

@@ -209,7 +209,7 @@ func (m *TiFlashReplicaManagerCtx) CleanTiFlashProgressCache() {
 func (m *TiFlashReplicaManagerCtx) SetTiFlashGroupConfig(ctx context.Context) error {
 	res, err := doRequest(ctx,
 		"GetRuleGroupConfig",
-		m.etcdCli.Endpoints(),
+		m.etcdCli,
 		path.Join(pdapi.Config, "rule_group", placement.TiFlashRuleGroupID),
 		"GET",
 		nil,
@@ -243,10 +243,10 @@ func (m *TiFlashReplicaManagerCtx) SetTiFlashGroupConfig(ctx context.Context) er
 
 		_, err = doRequest(ctx,
 			"SetRuleGroupConfig",
-			m.etcdCli.Endpoints(),
+			m.etcdCli,
 			path.Join(pdapi.Config, "rule_group"),
 			"POST",
-			bytes.NewBuffer(body),
+			body,
 		)
 
 		if err != nil {
@@ -275,8 +275,7 @@ func (m *TiFlashReplicaManagerCtx) doSetPlacementRule(ctx context.Context, rule 
 	if err != nil {
 		return errors.Trace(err)
 	}
-	buf := bytes.NewBuffer(j)
-	res, err := doRequest(ctx, "SetPlacementRule", m.etcdCli.Endpoints(), path.Join(pdapi.Config, "rule"), "POST", buf)
+	res, err := doRequest(ctx, "SetPlacementRule", m.etcdCli, path.Join(pdapi.Config, "rule"), "POST", j)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -415,8 +414,7 @@ func (m *TiFlashReplicaManagerCtx) doSetPlacementRuleBatch(ctx context.Context, 
 	if err != nil {
 		return errors.Trace(err)
 	}
-	buf := bytes.NewBuffer(j)
-	res, err := doRequest(ctx, "SetPlacementRuleBatch", m.etcdCli.Endpoints(), path.Join(pdapi.Config, "rules", "batch"), "POST", buf)
+	res, err := doRequest(ctx, "SetPlacementRuleBatch", m.etcdCli, path.Join(pdapi.Config, "rules", "batch"), "POST", j)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -433,7 +431,7 @@ func (m *TiFlashReplicaManagerCtx) DeletePlacementRule(ctx context.Context, grou
 }
 
 func (m *TiFlashReplicaManagerCtx) doDeletePlacementRule(ctx context.Context, group string, ruleID string) error {
-	res, err := doRequest(ctx, "DeletePlacementRule", m.etcdCli.Endpoints(), path.Join(pdapi.Config, "rule", group, ruleID), "DELETE", nil)
+	res, err := doRequest(ctx, "DeletePlacementRule", m.etcdCli, path.Join(pdapi.Config, "rule", group, ruleID), "DELETE", nil)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -445,7 +443,7 @@ func (m *TiFlashReplicaManagerCtx) doDeletePlacementRule(ctx context.Context, gr
 
 // GetGroupRules to get all placement rule in a certain group.
 func (m *TiFlashReplicaManagerCtx) GetGroupRules(ctx context.Context, group string) ([]placement.TiFlashRule, error) {
-	res, err := doRequest(ctx, "GetGroupRules", m.etcdCli.Endpoints(), path.Join(pdapi.Config, "rules", "group", group), "GET", nil)
+	res, err := doRequest(ctx, "GetGroupRules", m.etcdCli, path.Join(pdapi.Config, "rules", "group", group), "GET", nil)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -481,8 +479,7 @@ func (m *TiFlashReplicaManagerCtx) PostAccelerateScheduleBatch(ctx context.Conte
 	if err != nil {
 		return errors.Trace(err)
 	}
-	buf := bytes.NewBuffer(j)
-	res, err := doRequest(ctx, "PostAccelerateScheduleBatch", m.etcdCli.Endpoints(), path.Join(pdapi.Regions, "accelerate-schedule", "batch"), "POST", buf)
+	res, err := doRequest(ctx, "PostAccelerateScheduleBatch", m.etcdCli, path.Join(pdapi.Regions, "accelerate-schedule", "batch"), "POST", j)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -501,7 +498,7 @@ func (m *TiFlashReplicaManagerCtx) GetRegionCountFromPD(ctx context.Context, tab
 	p := fmt.Sprintf("/pd/api/v1/stats/region?start_key=%s&end_key=%s&count",
 		url.QueryEscape(string(startKey)),
 		url.QueryEscape(string(endKey)))
-	res, err := doRequest(ctx, "GetPDRegionStats", m.etcdCli.Endpoints(), p, "GET", nil)
+	res, err := doRequest(ctx, "GetPDRegionStats", m.etcdCli, p, "GET", nil)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -520,7 +517,7 @@ func (m *TiFlashReplicaManagerCtx) GetRegionCountFromPD(ctx context.Context, tab
 // GetStoresStat gets the TiKV store information by accessing PD's api.
 func (m *TiFlashReplicaManagerCtx) GetStoresStat(ctx context.Context) (*helper.StoresStat, error) {
 	var storesStat helper.StoresStat
-	res, err := doRequest(ctx, "GetStoresStat", m.etcdCli.Endpoints(), pdapi.Stores, "GET", nil)
+	res, err := doRequest(ctx, "GetStoresStat", m.etcdCli, pdapi.Stores, "GET", nil)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}

@@ -1737,7 +1737,7 @@ func (b *builtinExpSig) evalReal(row chunk.Row) (float64, bool, error) {
 	}
 	exp := math.Exp(val)
 	if math.IsInf(exp, 0) || math.IsNaN(exp) {
-		s := fmt.Sprintf("exp(%s)", b.args[0].String())
+		s := fmt.Sprintf("exp(%s)", b.args[0].StringWithCtx(false))
 		return 0, false, types.ErrOverflow.GenWithStackByArgs("DOUBLE", s)
 	}
 	return exp, false, nil

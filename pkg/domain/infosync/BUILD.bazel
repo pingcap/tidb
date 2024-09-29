@@ -35,6 +35,7 @@ go_library(
         "//pkg/util/codec",
         "//pkg/util/dbterror",
         "//pkg/util/hack",
+        "//pkg/util/intest",
         "//pkg/util/logutil",
         "//pkg/util/pdapi",
         "//pkg/util/syncutil",
@@ -62,7 +63,7 @@ go_test(
     srcs = ["info_test.go"],
     embed = [":infosync"],
     flaky = True,
-    shard_count = 4,
+    shard_count = 5,
     deps = [
         "//pkg/ddl/placement",
         "//pkg/ddl/util",

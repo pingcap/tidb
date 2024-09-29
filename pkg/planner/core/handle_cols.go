@@ -50,6 +50,8 @@ type HandleCols interface {
 	IsInt() bool
 	// String implements the fmt.Stringer interface.
 	String() string
+	// StringWithCtx implements the fmt.Stringer interface.
+	StringWithCtx(redact bool) string
 	// GetCol gets the column by idx.
 	GetCol(idx int) *expression.Column
 	// NumCols returns the number of columns.
@@ -157,13 +159,18 @@ func (cb *CommonHandleCols) NumCols() int {
 
 // String implements the kv.HandleCols interface.
 func (cb *CommonHandleCols) String() string {
+	return cb.StringWithCtx(false)
+}
+
+// StringWithCtx implements the kv.HandleCols interface.
+func (cb *CommonHandleCols) StringWithCtx(redact bool) string {
 	b := new(strings.Builder)
 	b.WriteByte('[')
 	for i, col := range cb.columns {
 		if i != 0 {
 			b.WriteByte(',')
 		}
-		b.WriteString(col.ExplainInfo())
+		b.WriteString(col.ColumnExplainInfo(redact, false))
 	}
 	b.WriteByte(']')
 	return b.String()
@@ -268,7 +275,12 @@ func (*IntHandleCols) IsInt() bool {
 
 // String implements the kv.HandleCols interface.
 func (ib *IntHandleCols) String() string {
-	return ib.col.ExplainInfo()
+	return ib.col.StringWithCtx(false)
+}
+
+// StringWithCtx implements the kv.HandleCols interface.
+func (ib *IntHandleCols) StringWithCtx(redact bool) string {
+	return ib.col.ColumnExplainInfo(redact, false)
 }
 
 // GetCol implements the kv.HandleCols interface.

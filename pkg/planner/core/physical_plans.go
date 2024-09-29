@@ -948,7 +948,7 @@ func (ts *PhysicalTableScan) ResolveCorrelatedColumns() ([]*ranger.Range, error)
 		pkIdx := tables.FindPrimaryIndex(ts.Table)
 		idxCols, idxColLens := expression.IndexInfo2PrefixCols(ts.Columns, ts.Schema().Columns, pkIdx)
 		for _, cond := range access {
-			newCond, err := expression.SubstituteCorCol2Constant(cond)
+			newCond, err := expression.SubstituteCorCol2Constant(ts.SCtx(), cond)
 			if err != nil {
 				return nil, err
 			}
@@ -1053,8 +1053,12 @@ func (ts *PhysicalTableScan) MemoryUsage() (sum int64) {
 type PhysicalProjection struct {
 	physicalSchemaProducer
 
-	Exprs                []expression.Expression
-	CalculateNoDelay     bool
+	Exprs            []expression.Expression
+	CalculateNoDelay bool
+
+	// AvoidColumnEvaluator is ONLY used to avoid building columnEvaluator
+	// for the expressions of Projection which is child of Union operator.
+	// Related issue: TiDB#8141(https://github.com/pingcap/tidb/issues/8141)
 	AvoidColumnEvaluator bool
 }
 
@@ -2673,7 +2677,12 @@ func (p *CTEDefinition) ExplainInfo() string {
 		res = "Non-Recursive CTE"
 	}
 	if p.CTE.HasLimit {
-		res += fmt.Sprintf(", limit(offset:%v, count:%v)", p.CTE.LimitBeg, p.CTE.LimitEnd-p.CTE.LimitBeg)
+		offset, count := p.CTE.LimitBeg, p.CTE.LimitEnd-p.CTE.LimitBeg
+		if p.SCtx().GetSessionVars().EnableRedactLog {
+			res += ", limit(offset:?, count:?)"
+		} else {
+			res += fmt.Sprintf(", limit(offset:%v, count:%v)", offset, count)
+		}
 	}
 	return res
 }

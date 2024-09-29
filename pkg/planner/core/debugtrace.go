@@ -106,7 +106,7 @@ func DebugTraceReceivedCommand(s sessionctx.Context, cmd byte, stmtNode ast.Stmt
 		execInfo.BinaryParamsInfo = make([]binaryParamInfo, len(binaryParams))
 		for i, param := range binaryParams {
 			execInfo.BinaryParamsInfo[i].Type = param.GetType().String()
-			execInfo.BinaryParamsInfo[i].Value = param.String()
+			execInfo.BinaryParamsInfo[i].Value = param.StringWithCtx(false)
 		}
 	}
 }
