@@ -762,8 +762,8 @@ SwitchIndexState:
 			return ver, errors.Trace(err)
 		}
 
-		if reorgWorkNotStarted(job, allIndexInfos) &&
-			tableIsEmpty(w.store, tbl, job.ReorgMeta.ResourceGroupName) {
+		if isReorgWorkPending(job, allIndexInfos) &&
+			isTableEmpty(w.store, tbl, job.ReorgMeta.ResourceGroupName) {
 			logutil.DDLLogger().Info("table is empty, skipping reorg work",
 				zap.Int64("jobID", job.ID),
 				zap.String("table", tblInfo.Name.O))
@@ -838,16 +838,16 @@ SwitchIndexState:
 	return ver, errors.Trace(err)
 }
 
-func reorgWorkNotStarted(job *model.Job, idxInfos []*model.IndexInfo) bool {
+func isReorgWorkPending(job *model.Job, idxInfos []*model.IndexInfo) bool {
 	// Snapshot version is unset before the merging temp index stage,
 	// we should exclude this case.
 	idxBfState := idxInfos[0].BackfillState
 	return job.SnapshotVer == 0 &&
-		(idxBfState == model.BackfillStateInapplicable || // txn-reorg
-			idxBfState == model.BackfillStateRunning) // fast-reorg
+		(idxBfState == model.BackfillStateInapplicable || // txn
+			idxBfState == model.BackfillStateRunning) // ingest or txn-merge
 }
 
-func tableIsEmpty(store kv.Storage, tbl table.Table, resGroupName string) bool {
+func isTableEmpty(store kv.Storage, tbl table.Table, resGroupName string) bool {
 	rgCtx := NewReorgContext()
 	rgCtx.resourceGroupName = resGroupName
 	if tbl, ok := tbl.(table.PartitionedTable); ok {
