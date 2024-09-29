@@ -55,6 +55,7 @@ func AutoAnalyze(
 	_, _, err := RunAnalyzeStmt(sctx, statsHandle, sysProcTracker, statsVer, sql, params...)
 	dur := time.Since(startTime)
 	metrics.AutoAnalyzeHistogram.Observe(dur.Seconds())
+	metrics.AutoAnalyzeCurrentDuartion.Set(float64(dur.Milliseconds()))
 	if err != nil {
 		escaped, err1 := sqlescape.EscapeSQL(sql, params...)
 		if err1 != nil {
