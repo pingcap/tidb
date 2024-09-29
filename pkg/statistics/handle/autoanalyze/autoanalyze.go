@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/sysproctrack"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/statistics/handle/autoanalyze/exec"
 	"github.com/pingcap/tidb/pkg/statistics/handle/autoanalyze/refresher"
@@ -280,6 +281,18 @@ func CleanupCorruptedAnalyzeJobsOnDeadInstances(
 // HandleAutoAnalyze analyzes the outdated tables. (The change percent of the table exceeds the threshold)
 // It also analyzes newly created tables and newly added indexes.
 func (sa *statsAnalyze) HandleAutoAnalyze() (analyzed bool) {
+	se, err := sa.statsHandle.SPool().Get()
+	if err != nil {
+		statslogutil.StatsLogger().Error("Failed to get session context", zap.Error(err))
+		return false
+	}
+	defer sa.statsHandle.SPool().Put(se)
+	sctx := se.(sessionctx.Context)
+	if err := sa.statsHandle.SyncStats(context.Background(), sessiontxn.GetTxnManager(sctx).GetTxnInfoSchema()); err != nil {
+		statslogutil.StatsLogger().Error("Failed to handle auto analyze", zap.Error(err))
+		return
+	}
+
 	if err := statsutil.CallWithSCtx(sa.statsHandle.SPool(), func(sctx sessionctx.Context) error {
 		analyzed = sa.handleAutoAnalyze(sctx)
 		// During the test, we need to wait for the auto analyze job to be finished.
