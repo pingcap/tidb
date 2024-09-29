@@ -482,7 +482,9 @@ func TestFix56408(t *testing.T) {
 	ctx := tk.Session().(sessionctx.Context)
 	tests := []testCase{
 		{[]byte("1|aa|beijing\n1|aa|beijing\n1|aa|beijing\n1|aa|beijing\n2|bb|shanghai\n2|bb|shanghai\n2|bb|shanghai\n3|cc|guangzhou\n"),
+			//[]string{"1 aa beijing", "1 aa beijing", "1 aa beijing", "1 aa beijing", "2 bb shanghai", "2 bb shanghai", "2 bb shanghai", "3 cc guangzhou"},
 			[]string{"1 aa beijing", "2 bb shanghai", "3 cc guangzhou"},
+			//"Records: 8  Deleted: 0  Skipped: 0  Warnings: 0"},
 			"Records: 8  Deleted: 0  Skipped: 5  Warnings: 0"},
 	}
 	deleteSQL := "DO 1"
