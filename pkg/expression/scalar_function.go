@@ -21,7 +21,7 @@ import (
 	"unsafe"
 
 	"github.com/pingcap/errors"
-	exprctx "github.com/pingcap/tidb/pkg/expression/context"
+	"github.com/pingcap/tidb/pkg/expression/exprctx"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -891,6 +891,16 @@ func (sf *ScalarFunction) Repertoire() Repertoire {
 // SetRepertoire sets a specified repertoire for this expression.
 func (sf *ScalarFunction) SetRepertoire(r Repertoire) {
 	sf.Function.SetRepertoire(r)
+}
+
+// IsExplicitCharset return the charset is explicit set or not.
+func (sf *ScalarFunction) IsExplicitCharset() bool {
+	return sf.Function.IsExplicitCharset()
+}
+
+// SetExplicitCharset set the charset is explicit or not.
+func (sf *ScalarFunction) SetExplicitCharset(explicit bool) {
+	sf.Function.SetExplicitCharset(explicit)
 }
 
 const emptyScalarFunctionSize = int64(unsafe.Sizeof(ScalarFunction{}))

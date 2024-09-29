@@ -47,6 +47,7 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/backend"
 	litconfig "github.com/pingcap/tidb/pkg/lightning/config"
 	"github.com/pingcap/tidb/pkg/meta"
+	"github.com/pingcap/tidb/pkg/meta/metabuild"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -71,7 +72,6 @@ import (
 	decoder "github.com/pingcap/tidb/pkg/util/rowDecoder"
 	"github.com/pingcap/tidb/pkg/util/size"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
-	"github.com/pingcap/tidb/pkg/util/stringutil"
 	"github.com/tikv/client-go/v2/oracle"
 	"github.com/tikv/client-go/v2/tikv"
 	kvutil "github.com/tikv/client-go/v2/util"
@@ -86,22 +86,7 @@ const (
 	MaxCommentLength = 1024
 )
 
-var (
-	// SuppressErrorTooLongKeyKey is used by SchemaTracker to suppress err too long key error
-	SuppressErrorTooLongKeyKey stringutil.StringerStr = "suppressErrorTooLongKeyKey"
-)
-
-func suppressErrorTooLongKeyForSchemaTracker(sctx sessionctx.Context) bool {
-	if sctx == nil {
-		return false
-	}
-	if suppress, ok := sctx.Value(SuppressErrorTooLongKeyKey).(bool); ok && suppress {
-		return true
-	}
-	return false
-}
-
-func buildIndexColumns(ctx sessionctx.Context, columns []*model.ColumnInfo, indexPartSpecifications []*ast.IndexPartSpecification, isVector bool) ([]*model.IndexColumn, bool, error) {
+func buildIndexColumns(ctx *metabuild.Context, columns []*model.ColumnInfo, indexPartSpecifications []*ast.IndexPartSpecification, isVector bool) ([]*model.IndexColumn, bool, error) {
 	// Build offsets.
 	idxParts := make([]*model.IndexColumn, 0, len(indexPartSpecifications))
 	var col *model.ColumnInfo
@@ -119,7 +104,8 @@ func buildIndexColumns(ctx sessionctx.Context, columns []*model.ColumnInfo, inde
 			return nil, false, dbterror.ErrUnsupportedAddVectorIndex.FastGenByArgs(fmt.Sprintf("only support vector type, but this is type: %s", col.FieldType.String()))
 		}
 
-		if err := checkIndexColumn(ctx, col, ip.Length, isVector); err != nil {
+		// return error in strict sql mode
+		if err := checkIndexColumn(col, ip.Length, ctx != nil && (!ctx.GetSQLMode().HasStrictMode() || ctx.SuppressTooLongIndexErr()), isVector); err != nil {
 			return nil, false, err
 		}
 		if col.FieldType.IsArray() {
@@ -140,12 +126,12 @@ func buildIndexColumns(ctx sessionctx.Context, columns []*model.ColumnInfo, inde
 		}
 		sumLength += indexColumnLength
 
-		if !suppressErrorTooLongKeyForSchemaTracker(ctx) && sumLength > maxIndexLength {
+		if (ctx == nil || !ctx.SuppressTooLongIndexErr()) && sumLength > maxIndexLength {
 			// The sum of all lengths must be shorter than the max length for prefix.
 
 			// The multiple column index and the unique index in which the length sum exceeds the maximum size
 			// will return an error instead produce a warning.
-			if ctx == nil || ctx.GetSessionVars().SQLMode.HasStrictMode() || mysql.HasUniKeyFlag(col.GetFlag()) || len(indexPartSpecifications) > 1 {
+			if ctx == nil || ctx.GetSQLMode().HasStrictMode() || mysql.HasUniKeyFlag(col.GetFlag()) || len(indexPartSpecifications) > 1 {
 				return nil, false, dbterror.ErrTooLongKey.GenWithStackByArgs(sumLength, maxIndexLength)
 			}
 			// truncate index length and produce warning message in non-restrict sql mode.
@@ -155,7 +141,7 @@ func buildIndexColumns(ctx sessionctx.Context, columns []*model.ColumnInfo, inde
 			}
 			indexColLen = maxIndexLength / colLenPerUint
 			// produce warning message
-			ctx.GetSessionVars().StmtCtx.AppendWarning(dbterror.ErrTooLongKey.FastGenByArgs(sumLength, maxIndexLength))
+			ctx.AppendWarning(dbterror.ErrTooLongKey.FastGenByArgs(sumLength, maxIndexLength))
 		}
 
 		idxParts = append(idxParts, &model.IndexColumn{
@@ -216,7 +202,7 @@ func indexColumnsLen(cols []*model.ColumnInfo, idxCols []*model.IndexColumn) (co
 	return
 }
 
-func checkIndexColumn(ctx sessionctx.Context, col *model.ColumnInfo, indexColumnLen int, isVectorIndex bool) error {
+func checkIndexColumn(col *model.ColumnInfo, indexColumnLen int, suppressTooLongKeyErr, isVectorIndex bool) error {
 	if col.GetFlen() == 0 && (types.IsTypeChar(col.FieldType.GetType()) || types.IsTypeVarchar(col.FieldType.GetType())) {
 		if col.Hidden {
 			return errors.Trace(dbterror.ErrWrongKeyColumnFunctionalIndex.GenWithStackByArgs(col.GeneratedExprString))
@@ -282,8 +268,7 @@ func checkIndexColumn(ctx sessionctx.Context, col *model.ColumnInfo, indexColumn
 	// Specified length must be shorter than the max length for prefix.
 	maxIndexLength := config.GetGlobalConfig().MaxIndexLength
 	if indexColumnLen > maxIndexLength {
-		if ctx == nil || (ctx.GetSessionVars().SQLMode.HasStrictMode() && !suppressErrorTooLongKeyForSchemaTracker(ctx)) {
-			// return error in strict sql mode
+		if !suppressTooLongKeyErr {
 			return dbterror.ErrTooLongKey.GenWithStackByArgs(indexColumnLen, maxIndexLength)
 		}
 	}
@@ -332,7 +317,7 @@ func calcBytesLengthForDecimal(m int) int {
 
 // BuildIndexInfo builds a new IndexInfo according to the index information.
 func BuildIndexInfo(
-	ctx sessionctx.Context,
+	ctx *metabuild.Context,
 	tblInfo *model.TableInfo,
 	indexName pmodel.CIStr,
 	isPrimary, isUnique, isVector bool,
@@ -1633,10 +1618,12 @@ func checkAlterIndexVisibility(t *meta.Meta, job *model.Job) (*model.TableInfo, 
 		return nil, indexName, invisible, errors.Trace(err)
 	}
 
-	if err := job.DecodeArgs(&indexName, &invisible); err != nil {
+	args, err := model.GetAlterIndexVisibilityArgs(job)
+	if err != nil {
 		job.State = model.JobStateCancelled
 		return nil, indexName, invisible, errors.Trace(err)
 	}
+	indexName, invisible = args.IndexName, args.Invisible
 
 	skip, err := validateAlterIndexVisibility(nil, indexName, invisible, tblInfo)
 	if err != nil {
@@ -1879,6 +1866,14 @@ func (w *addIndexTxnWorker) checkHandleExists(idxInfo *model.IndexInfo, key kv.K
 	hasBeenBackFilled := h.Equal(handle)
 	if hasBeenBackFilled {
 		return nil
+	}
+	if idxInfo.Global {
+		// 'handle' comes from reading directly from a partition, without partition id,
+		// so we can only compare the handle part of the key.
+		if ph, ok := h.(kv.PartitionHandle); ok && ph.Handle.Equal(handle) {
+			// table row has been back-filled already, OK to add the index entry
+			return nil
+		}
 	}
 	return ddlutil.GenKeyExistsErr(key, value, idxInfo, tblInfo)
 }
@@ -2917,12 +2912,19 @@ func renameIndexes(tblInfo *model.TableInfo, from, to pmodel.CIStr) {
 			idx.Name.L = strings.Replace(idx.Name.L, from.L, to.L, 1)
 			idx.Name.O = strings.Replace(idx.Name.O, from.O, to.O, 1)
 		}
+		for _, col := range idx.Columns {
+			originalCol := tblInfo.Columns[col.Offset]
+			if originalCol.Hidden && getExpressionIndexOriginName(col.Name) == from.O {
+				col.Name.L = strings.Replace(col.Name.L, from.L, to.L, 1)
+				col.Name.O = strings.Replace(col.Name.O, from.O, to.O, 1)
+			}
+		}
 	}
 }
 
 func renameHiddenColumns(tblInfo *model.TableInfo, from, to pmodel.CIStr) {
 	for _, col := range tblInfo.Columns {
-		if col.Hidden && getExpressionIndexOriginName(col) == from.O {
+		if col.Hidden && getExpressionIndexOriginName(col.Name) == from.O {
 			col.Name.L = strings.Replace(col.Name.L, from.L, to.L, 1)
 			col.Name.O = strings.Replace(col.Name.O, from.O, to.O, 1)
 		}

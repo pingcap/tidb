@@ -40,16 +40,17 @@ import (
 
 func testCreateTable(t *testing.T, ctx sessionctx.Context, d ddl.ExecutorForTest, dbInfo *model.DBInfo, tblInfo *model.TableInfo) *model.Job {
 	job := &model.Job{
+		Version:    model.GetJobVerInUse(),
 		SchemaID:   dbInfo.ID,
 		SchemaName: dbInfo.Name.L,
 		TableID:    tblInfo.ID,
 		TableName:  tblInfo.Name.L,
 		Type:       model.ActionCreateTable,
 		BinlogInfo: &model.HistoryInfo{},
-		Args:       []any{tblInfo},
 	}
+	args := &model.CreateTableArgs{TableInfo: tblInfo}
 	ctx.SetValue(sessionctx.QueryString, "skip")
-	err := d.DoDDLJobWrapper(ctx, ddl.NewJobWrapper(job, true))
+	err := d.DoDDLJobWrapper(ctx, ddl.NewJobWrapperWithArgs(job, args, true))
 	require.NoError(t, err)
 
 	v := getSchemaVer(t, ctx)
@@ -337,8 +338,9 @@ func TestSchemaWaitJob(t *testing.T) {
 	require.NoError(t, err)
 	schemaID := genIDs[0]
 	doDDLJobErr(t, schemaID, 0, "test_schema", "", model.ActionCreateSchema,
-		testkit.NewTestKit(t, store).Session(), det2, store, func(job *model.Job) {
+		testkit.NewTestKit(t, store).Session(), det2, store, func(job *model.Job) model.JobArgs {
 			job.FillArgs(&model.CreateSchemaArgs{DBInfo: dbInfo})
+			return nil
 		})
 }
 
@@ -350,7 +352,7 @@ func doDDLJobErr(
 	ctx sessionctx.Context,
 	d ddl.ExecutorForTest,
 	store kv.Storage,
-	handler func(job *model.Job),
+	handler func(job *model.Job) model.JobArgs,
 ) *model.Job {
 	job := &model.Job{
 		Version:    model.GetJobVerInUse(),
@@ -361,10 +363,10 @@ func doDDLJobErr(
 		Type:       tp,
 		BinlogInfo: &model.HistoryInfo{},
 	}
-	handler(job)
+	args := handler(job)
 	// TODO: check error detail
 	ctx.SetValue(sessionctx.QueryString, "skip")
-	require.Error(t, d.DoDDLJobWrapper(ctx, ddl.NewJobWrapper(job, true)))
+	require.Error(t, d.DoDDLJobWrapper(ctx, ddl.NewJobWrapperWithArgs(job, args, true)))
 	testCheckJobCancelled(t, store, job, nil)
 
 	return job
@@ -385,6 +387,7 @@ func TestRenameTableAutoIDs(t *testing.T) {
 	tk1 := testkit.NewTestKit(t, store)
 	tk2 := testkit.NewTestKit(t, store)
 	tk3 := testkit.NewTestKit(t, store)
+	tk4 := testkit.NewTestKit(t, store)
 	dbName := "RenameTableAutoIDs"
 	tk1.MustExec(`create schema ` + dbName)
 	tk1.MustExec(`create schema ` + dbName + "2")
@@ -398,8 +401,6 @@ func TestRenameTableAutoIDs(t *testing.T) {
 
 	waitFor := func(col int, tableName, s string) {
 		for {
-			tk4 := testkit.NewTestKit(t, store)
-			tk4.MustExec(`use test`)
 			sql := `admin show ddl jobs where db_name like '` + strings.ToLower(dbName) + `%' and table_name like '` + tableName + `%' and job_type = 'rename table'`
 			res := tk4.MustQuery(sql).Rows()
 			if len(res) == 1 && res[0][col] == s {

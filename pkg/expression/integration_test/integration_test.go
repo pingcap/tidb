@@ -60,6 +60,215 @@ import (
 	"github.com/tikv/client-go/v2/oracle"
 )
 
+func TestVectorDefaultValue(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	// ============================
+	// NULLABLE, NO DEFAULT, Non-Strict Mode
+
+	tk.MustExec("set @@session.sql_mode=''")
+	tk.MustExec("create table t(embedding VECTOR)")
+	tk.MustExec("insert into t values ('[1,2,3]')")
+	tk.MustExec("insert into t values ('[4]')")
+	tk.MustExec("insert into t values (DEFAULT)")
+	tk.MustExec("insert into t values (NULL)")
+	tk.MustQuery("select *, vec_dims(embedding) from t").Check(testkit.Rows(
+		"[1,2,3] 3",
+		"[4] 1",
+		"<nil> <nil>",
+		"<nil> <nil>",
+	))
+	tk.MustExec("drop table t")
+
+	tk.MustExec("create table t(embedding VECTOR(3))")
+	tk.MustExec("insert into t values ('[1,2,3]')")
+	tk.MustExecToErr("insert into t values ('[4]')")
+	tk.MustExec("insert into t values (DEFAULT)")
+	tk.MustExec("insert into t values (NULL)")
+	tk.MustQuery("select *, vec_dims(embedding) from t").Check(testkit.Rows(
+		"[1,2,3] 3",
+		"<nil> <nil>",
+		"<nil> <nil>",
+	))
+	tk.MustExec("drop table t")
+
+	// ============================
+	// NULLABLE, NO DEFAULT, Strict Mode
+
+	tk.MustExec("set @@session.sql_mode='STRICT_ALL_TABLES'")
+	tk.MustExec("create table t(embedding VECTOR)")
+	tk.MustExec("insert into t values ('[1,2,3]')")
+	tk.MustExec("insert into t values ('[4]')")
+	tk.MustExec("insert into t values (DEFAULT)")
+	tk.MustExec("insert into t values (NULL)")
+	tk.MustQuery("select *, vec_dims(embedding) from t").Check(testkit.Rows(
+		"[1,2,3] 3",
+		"[4] 1",
+		"<nil> <nil>",
+		"<nil> <nil>",
+	))
+	tk.MustExec("drop table t")
+
+	tk.MustExec("create table t(embedding VECTOR(3))")
+	tk.MustExec("insert into t values ('[1,2,3]')")
+	tk.MustExecToErr("insert into t values ('[4]')")
+	tk.MustExec("insert into t values (DEFAULT)")
+	tk.MustExec("insert into t values (NULL)")
+	tk.MustQuery("select *, vec_dims(embedding) from t").Check(testkit.Rows(
+		"[1,2,3] 3",
+		"<nil> <nil>",
+		"<nil> <nil>",
+	))
+	tk.MustExec("drop table t")
+
+	// ============================
+	// NULLABLE, DEFAULT
+
+	tk.MustGetErrMsg("create table t(embedding VECTOR DEFAULT '[1,2,3]')", `VECTOR column 'embedding' can't have a literal default. Use expression default instead: ((VEC_FROM_TEXT('...')))`)
+	tk.MustExec("create table t(embedding VECTOR DEFAULT (VEC_FROM_TEXT('[1,2,3]')))")
+	tk.MustExec("insert into t values ()")
+	tk.MustExec("insert into t values ('[4]')")
+	tk.MustExec("insert into t values (DEFAULT)")
+	tk.MustExec("insert into t values (NULL)")
+	tk.MustExec("insert into t values (DEFAULT(embedding))")
+	tk.MustQuery("select *, vec_dims(embedding) from t").Check(testkit.Rows(
+		"[1,2,3] 3",
+		"[4] 1",
+		"[1,2,3] 3",
+		"<nil> <nil>",
+		"[1,2,3] 3",
+	))
+	tk.MustExec("drop table t")
+
+	// Allow. Error happens when inserting.
+	tk.MustExec("create table t(embedding VECTOR(5) DEFAULT (VEC_FROM_TEXT('[1,2,3]')))")
+	tk.MustGetErrMsg("insert into t values ()", "vector has 3 dimensions, does not fit VECTOR(5)")
+	tk.MustGetErrMsg("insert into t values (DEFAULT)", "vector has 3 dimensions, does not fit VECTOR(5)")
+	tk.MustExec("insert into t values ('[1,2,3,4,5]')")
+	tk.MustExec("insert into t values (NULL)")
+	tk.MustQuery("select *, vec_dims(embedding) from t").Check(testkit.Rows("[1,2,3,4,5] 5", "<nil> <nil>"))
+	tk.MustExec("drop table t")
+
+	// Allow. Error happens when inserting.
+	tk.MustExec("create table t(embedding VECTOR(5) DEFAULT (UUID()))")
+	tk.MustContainErrMsg("insert into t values ()", "Invalid vector text: ")
+	tk.MustExec("insert into t values ('[1,2,3,4,5]')")
+	tk.MustExec("insert into t values (NULL)")
+	tk.MustQuery("select *, vec_dims(embedding) from t").Check(testkit.Rows("[1,2,3,4,5] 5", "<nil> <nil>"))
+	tk.MustExec("drop table t")
+
+	// ============================
+	// NOT NULL, NO DEFAULT, Non-Strict Mode
+
+	tk.MustExec("set @@session.sql_mode=''")
+	tk.MustExec("create table t(embedding VECTOR NOT NULL)")
+	tk.MustExec("insert into t values ('[1,2,3]')")
+	tk.MustExec("insert into t values ('[4]')")
+	tk.MustExec("insert into t values (DEFAULT)")
+	tk.MustExecToErr("insert into t values (NULL)")
+	tk.MustQuery("select *, vec_dims(embedding) from t").Check(testkit.Rows(
+		"[1,2,3] 3",
+		"[4] 1",
+		"[] 0",
+	))
+	tk.MustExec("drop table t")
+
+	tk.MustExec("create table t(embedding VECTOR(3) NOT NULL)")
+	tk.MustExec("insert into t values ('[1,2,3]')")
+	tk.MustExecToErr("insert into t values ('[4]')")
+	tk.MustExecToErr("insert into t values (DEFAULT)")
+	tk.MustExecToErr("insert into t values (NULL)")
+	tk.MustQuery("select *, vec_dims(embedding) from t").Check(testkit.Rows(
+		"[1,2,3] 3",
+	))
+	tk.MustExec("drop table t")
+
+	// ============================
+	// NOT NULL, NO DEFAULT, Strict Mode
+
+	tk.MustExec("set @@session.sql_mode='STRICT_ALL_TABLES'")
+	tk.MustExec("create table t(embedding VECTOR NOT NULL)")
+	tk.MustExec("insert into t values ('[1,2,3]')")
+	tk.MustExec("insert into t values ('[4]')")
+	tk.MustExecToErr("insert into t values (DEFAULT)")
+	tk.MustExecToErr("insert into t values (NULL)")
+	tk.MustQuery("select *, vec_dims(embedding) from t").Check(testkit.Rows(
+		"[1,2,3] 3",
+		"[4] 1",
+	))
+	tk.MustExec("drop table t")
+
+	tk.MustExec("create table t(embedding VECTOR(3) NOT NULL)")
+	tk.MustExec("insert into t values ('[1,2,3]')")
+	tk.MustExecToErr("insert into t values ('[4]')")
+	tk.MustExecToErr("insert into t values (DEFAULT)")
+	tk.MustExecToErr("insert into t values (NULL)")
+	tk.MustQuery("select *, vec_dims(embedding) from t").Check(testkit.Rows(
+		"[1,2,3] 3",
+	))
+	tk.MustExec("drop table t")
+
+	// ============================
+	// NOT NULL, DEFAULT, Non-Strict Mode
+
+	tk.MustExec("set @@session.sql_mode=''")
+	tk.MustExec("create table t(embedding VECTOR NOT NULL DEFAULT (VEC_FROM_TEXT('[1,2,3]')))")
+	tk.MustExec("insert into t values ()")
+	tk.MustExec("insert into t values ('[4]')")
+	tk.MustExec("insert into t values (DEFAULT)")
+	tk.MustExecToErr("insert into t values (NULL)")
+	tk.MustExec("insert into t values (DEFAULT(embedding))")
+	tk.MustQuery("select *, vec_dims(embedding) from t").Check(testkit.Rows(
+		"[1,2,3] 3",
+		"[4] 1",
+		"[1,2,3] 3",
+		"[1,2,3] 3",
+	))
+	tk.MustExec("drop table t")
+
+	tk.MustExec("create table t(embedding VECTOR(1) NOT NULL DEFAULT (VEC_FROM_TEXT('[1,2,3]')))")
+	tk.MustExecToErr("insert into t values ()")
+	tk.MustExec("insert into t values ('[4]')")
+	tk.MustExecToErr("insert into t values (DEFAULT)")
+	tk.MustExecToErr("insert into t values (NULL)")
+	tk.MustExecToErr("insert into t values (DEFAULT(embedding))")
+	tk.MustQuery("select *, vec_dims(embedding) from t").Check(testkit.Rows(
+		"[4] 1",
+	))
+	tk.MustExec("drop table t")
+
+	// ============================
+	// NOT NULL, DEFAULT, Strict Mode
+
+	tk.MustExec("set @@session.sql_mode='STRICT_ALL_TABLES'")
+	tk.MustExec("create table t(embedding VECTOR NOT NULL DEFAULT (VEC_FROM_TEXT('[1,2,3]')))")
+	tk.MustExec("insert into t values ()")
+	tk.MustExec("insert into t values ('[4]')")
+	tk.MustExec("insert into t values (DEFAULT)")
+	tk.MustExecToErr("insert into t values (NULL)")
+	tk.MustExec("insert into t values (DEFAULT(embedding))")
+	tk.MustQuery("select *, vec_dims(embedding) from t").Check(testkit.Rows(
+		"[1,2,3] 3",
+		"[4] 1",
+		"[1,2,3] 3",
+		"[1,2,3] 3",
+	))
+	tk.MustExec("drop table t")
+
+	tk.MustExec("create table t(embedding VECTOR(1) NOT NULL DEFAULT (VEC_FROM_TEXT('[1,2,3]')))")
+	tk.MustExecToErr("insert into t values ()")
+	tk.MustExec("insert into t values ('[4]')")
+	tk.MustExecToErr("insert into t values (DEFAULT)")
+	tk.MustExecToErr("insert into t values (NULL)")
+	tk.MustExecToErr("insert into t values (DEFAULT(embedding))")
+	tk.MustQuery("select *, vec_dims(embedding) from t").Check(testkit.Rows(
+		"[4] 1",
+	))
+	tk.MustExec("drop table t")
+}
+
 func TestVectorColumnInfo(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -1116,18 +1325,18 @@ func TestTiDBEncodeKey(t *testing.T) {
 	err := tk.QueryToErr("select tidb_encode_record_key('test', 't1', 0);")
 	require.ErrorContains(t, err, "doesn't exist")
 	tk.MustQuery("select tidb_encode_record_key('test', 't', 1);").
-		Check(testkit.Rows("7480000000000000685f728000000000000001"))
+		Check(testkit.Rows("74800000000000006e5f728000000000000001"))
 
 	tk.MustExec("alter table t add index i(b);")
 	err = tk.QueryToErr("select tidb_encode_index_key('test', 't', 'i1', 1);")
 	require.ErrorContains(t, err, "index not found")
 	tk.MustQuery("select tidb_encode_index_key('test', 't', 'i', 1, 1);").
-		Check(testkit.Rows("7480000000000000685f698000000000000001038000000000000001038000000000000001"))
+		Check(testkit.Rows("74800000000000006e5f698000000000000001038000000000000001038000000000000001"))
 
 	tk.MustExec("create table t1 (a int primary key, b int) partition by hash(a) partitions 4;")
 	tk.MustExec("insert into t1 values (1, 1);")
-	tk.MustQuery("select tidb_encode_record_key('test', 't1(p1)', 1);").Check(testkit.Rows("74800000000000006d5f728000000000000001"))
-	rs := tk.MustQuery("select tidb_mvcc_info('74800000000000006d5f728000000000000001');")
+	tk.MustQuery("select tidb_encode_record_key('test', 't1(p1)', 1);").Check(testkit.Rows("7480000000000000735f728000000000000001"))
+	rs := tk.MustQuery("select tidb_mvcc_info('74800000000000006f5f728000000000000001');")
 	mvccInfo := rs.Rows()[0][0].(string)
 	require.NotEqual(t, mvccInfo, `{"info":{}}`)
 
@@ -1136,14 +1345,14 @@ func TestTiDBEncodeKey(t *testing.T) {
 	tk2 := testkit.NewTestKit(t, store)
 	err = tk2.Session().Auth(&auth.UserIdentity{Username: "alice", Hostname: "localhost"}, nil, nil, nil)
 	require.NoError(t, err)
-	err = tk2.QueryToErr("select tidb_mvcc_info('74800000000000006d5f728000000000000001');")
+	err = tk2.QueryToErr("select tidb_mvcc_info('74800000000000006f5f728000000000000001');")
 	require.ErrorContains(t, err, "Access denied")
 	err = tk2.QueryToErr("select tidb_encode_record_key('test', 't1(p1)', 1);")
 	require.ErrorContains(t, err, "SELECT command denied")
 	err = tk2.QueryToErr("select tidb_encode_index_key('test', 't', 'i1', 1);")
 	require.ErrorContains(t, err, "SELECT command denied")
 	tk.MustExec("grant select on test.t1 to 'alice'@'%';")
-	tk2.MustQuery("select tidb_encode_record_key('test', 't1(p1)', 1);").Check(testkit.Rows("74800000000000006d5f728000000000000001"))
+	tk2.MustQuery("select tidb_encode_record_key('test', 't1(p1)', 1);").Check(testkit.Rows("7480000000000000735f728000000000000001"))
 }
 
 func TestIssue9710(t *testing.T) {

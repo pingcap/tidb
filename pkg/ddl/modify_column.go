@@ -23,15 +23,16 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/ddl/logutil"
+	"github.com/pingcap/tidb/pkg/ddl/notifier"
 	sess "github.com/pingcap/tidb/pkg/ddl/session"
-	ddlutil "github.com/pingcap/tidb/pkg/ddl/util"
 	"github.com/pingcap/tidb/pkg/errctx"
 	"github.com/pingcap/tidb/pkg/expression"
-	exprctx "github.com/pingcap/tidb/pkg/expression/context"
+	"github.com/pingcap/tidb/pkg/expression/exprctx"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
+	"github.com/pingcap/tidb/pkg/meta/metabuild"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser"
@@ -42,7 +43,6 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
-	statsutil "github.com/pingcap/tidb/pkg/statistics/handle/util"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/types"
@@ -544,9 +544,7 @@ func (w *worker) doModifyColumnTypeWithData(
 		job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
 		// Refactor the job args to add the old index ids into delete range table.
 		job.Args = []any{rmIdxIDs, getPartitionIDs(tblInfo)}
-		modifyColumnEvent := &statsutil.DDLEvent{
-			SchemaChangeEvent: ddlutil.NewModifyColumnEvent(tblInfo, []*model.ColumnInfo{changingCol}),
-		}
+		modifyColumnEvent := notifier.NewModifyColumnEvent(tblInfo, []*model.ColumnInfo{changingCol})
 		asyncNotifyEvent(jobCtx, modifyColumnEvent, job)
 	default:
 		err = dbterror.ErrInvalidDDLState.GenWithStackByArgs("column", changingCol.State)
@@ -740,7 +738,7 @@ func GetModifiableColumnJob(
 		Version:               col.Version,
 	})
 
-	if err = ProcessColumnCharsetAndCollation(sctx, col, newCol, t.Meta(), specNewColumn, schema); err != nil {
+	if err = ProcessColumnCharsetAndCollation(NewMetaBuildContextWithSctx(sctx), col, newCol, t.Meta(), specNewColumn, schema); err != nil {
 		return nil, err
 	}
 
@@ -1025,7 +1023,7 @@ func IsElemsChangedToModifyColumn(oldElems, newElems []string) bool {
 }
 
 // ProcessColumnCharsetAndCollation process column charset and collation
-func ProcessColumnCharsetAndCollation(sctx sessionctx.Context, col *table.Column, newCol *table.Column, meta *model.TableInfo, specNewColumn *ast.ColumnDef, schema *model.DBInfo) error {
+func ProcessColumnCharsetAndCollation(ctx *metabuild.Context, col *table.Column, newCol *table.Column, meta *model.TableInfo, specNewColumn *ast.ColumnDef, schema *model.DBInfo) error {
 	var chs, coll string
 	var err error
 	// TODO: Remove it when all table versions are greater than or equal to TableInfoVersion1.
@@ -1035,22 +1033,22 @@ func ProcessColumnCharsetAndCollation(sctx sessionctx.Context, col *table.Column
 		chs = col.FieldType.GetCharset()
 		coll = col.FieldType.GetCollate()
 	} else {
-		chs, coll, err = getCharsetAndCollateInColumnDef(sctx.GetSessionVars(), specNewColumn)
+		chs, coll, err = getCharsetAndCollateInColumnDef(specNewColumn, ctx.GetDefaultCollationForUTF8MB4())
 		if err != nil {
 			return errors.Trace(err)
 		}
-		chs, coll, err = ResolveCharsetCollation(sctx.GetSessionVars(),
-			ast.CharsetOpt{Chs: chs, Col: coll},
-			ast.CharsetOpt{Chs: meta.Charset, Col: meta.Collate},
-			ast.CharsetOpt{Chs: schema.Charset, Col: schema.Collate},
-		)
-		chs, coll = OverwriteCollationWithBinaryFlag(sctx.GetSessionVars(), specNewColumn, chs, coll)
+		chs, coll, err = ResolveCharsetCollation([]ast.CharsetOpt{
+			{Chs: chs, Col: coll},
+			{Chs: meta.Charset, Col: meta.Collate},
+			{Chs: schema.Charset, Col: schema.Collate},
+		}, ctx.GetDefaultCollationForUTF8MB4())
+		chs, coll = OverwriteCollationWithBinaryFlag(specNewColumn, chs, coll, ctx.GetDefaultCollationForUTF8MB4())
 		if err != nil {
 			return errors.Trace(err)
 		}
 	}
 
-	if err = setCharsetCollationFlenDecimal(&newCol.FieldType, newCol.Name.O, chs, coll, sctx.GetSessionVars()); err != nil {
+	if err = setCharsetCollationFlenDecimal(ctx, &newCol.FieldType, newCol.Name.O, chs, coll); err != nil {
 		return errors.Trace(err)
 	}
 	decodeEnumSetBinaryLiteralToUTF8(&newCol.FieldType, chs)
@@ -1132,7 +1130,7 @@ func checkIndexInModifiableColumns(columns []*model.ColumnInfo, idxColumns []*mo
 			// if the type is still prefixable and larger than old prefix length.
 			prefixLength = ic.Length
 		}
-		if err := checkIndexColumn(nil, col, prefixLength, isVectorIndex); err != nil {
+		if err := checkIndexColumn(col, prefixLength, false, isVectorIndex); err != nil {
 			return err
 		}
 	}
@@ -1181,12 +1179,12 @@ func ProcessModifyColumnOptions(ctx sessionctx.Context, col *table.Column, optio
 	for _, opt := range options {
 		switch opt.Tp {
 		case ast.ColumnOptionDefaultValue:
-			hasDefaultValue, err = SetDefaultValue(ctx, col, opt)
+			hasDefaultValue, err = SetDefaultValue(ctx.GetExprCtx(), col, opt)
 			if err != nil {
 				return errors.Trace(err)
 			}
 		case ast.ColumnOptionComment:
-			err := setColumnComment(ctx, col, opt)
+			err := setColumnComment(ctx.GetExprCtx(), col, opt)
 			if err != nil {
 				return errors.Trace(err)
 			}
@@ -1240,7 +1238,7 @@ func ProcessModifyColumnOptions(ctx sessionctx.Context, col *table.Column, optio
 		}
 	}
 
-	if err = processAndCheckDefaultValueAndColumn(ctx, col, nil, hasDefaultValue, setOnUpdateNow, hasNullFlag); err != nil {
+	if err = processAndCheckDefaultValueAndColumn(ctx.GetExprCtx(), col, nil, hasDefaultValue, setOnUpdateNow, hasNullFlag); err != nil {
 		return errors.Trace(err)
 	}
 

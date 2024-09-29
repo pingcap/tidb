@@ -153,8 +153,8 @@ func mergeCreateTableJobs(jobWs []*JobWrapper) ([]*JobWrapper, error) {
 			continue
 		}
 		// ActionCreateTables doesn't support foreign key now.
-		tbInfo, ok := jobW.Args[0].(*model.TableInfo)
-		if !ok || len(tbInfo.ForeignKeys) > 0 {
+		args := jobW.JobArgs.(*model.CreateTableArgs)
+		if len(args.TableInfo.ForeignKeys) > 0 {
 			resJobWs = append(resJobWs, jobW)
 			continue
 		}
@@ -173,22 +173,13 @@ func mergeCreateTableJobs(jobWs []*JobWrapper) ([]*JobWrapper, error) {
 		start := 0
 		for _, batchSize := range mathutil.Divide2Batches(total, batchCount) {
 			batch := jobs[start : start+batchSize]
-			job, err := mergeCreateTableJobsOfSameSchema(batch)
+			newJobW, err := mergeCreateTableJobsOfSameSchema(batch)
 			if err != nil {
 				return nil, err
 			}
 			start += batchSize
 			logutil.DDLLogger().Info("merge create table jobs", zap.String("schema", schema),
 				zap.Int("total", total), zap.Int("batch_size", batchSize))
-
-			newJobW := &JobWrapper{
-				Job:      job,
-				ResultCh: make([]chan jobSubmitResult, 0, batchSize),
-			}
-			// merge the result channels.
-			for _, j := range batch {
-				newJobW.ResultCh = append(newJobW.ResultCh, j.ResultCh...)
-			}
 			resJobWs = append(resJobWs, newJobW)
 		}
 	}
@@ -217,16 +208,18 @@ func buildQueryStringFromJobs(jobs []*JobWrapper) string {
 }
 
 // mergeCreateTableJobsOfSameSchema combine CreateTableJobs to BatchCreateTableJob.
-func mergeCreateTableJobsOfSameSchema(jobWs []*JobWrapper) (*model.Job, error) {
+func mergeCreateTableJobsOfSameSchema(jobWs []*JobWrapper) (*JobWrapper, error) {
 	if len(jobWs) == 0 {
 		return nil, errors.Trace(fmt.Errorf("expect non-empty jobs"))
 	}
 
-	var combinedJob *model.Job
-
-	args := make([]*model.TableInfo, 0, len(jobWs))
-	involvingSchemaInfo := make([]model.InvolvingSchemaInfo, 0, len(jobWs))
-	var foreignKeyChecks bool
+	var (
+		combinedJob *model.Job
+		args        = &model.BatchCreateTableArgs{
+			Tables: make([]*model.CreateTableArgs, 0, len(jobWs)),
+		}
+		involvingSchemaInfo = make([]model.InvolvingSchemaInfo, 0, len(jobWs))
+	)
 
 	// if there is any duplicated table name
 	duplication := make(map[string]struct{})
@@ -234,16 +227,11 @@ func mergeCreateTableJobsOfSameSchema(jobWs []*JobWrapper) (*model.Job, error) {
 		if combinedJob == nil {
 			combinedJob = job.Clone()
 			combinedJob.Type = model.ActionCreateTables
-			combinedJob.Args = combinedJob.Args[:0]
-			foreignKeyChecks = job.Args[1].(bool)
 		}
-		// append table job args
-		info, ok := job.Args[0].(*model.TableInfo)
-		if !ok {
-			return nil, errors.Trace(fmt.Errorf("expect model.TableInfo, but got %T", job.Args[0]))
-		}
-		args = append(args, info)
+		jobArgs := job.JobArgs.(*model.CreateTableArgs)
+		args.Tables = append(args.Tables, jobArgs)
 
+		info := jobArgs.TableInfo
 		if _, ok := duplication[info.Name.L]; ok {
 			// return err even if create table if not exists
 			return nil, infoschema.ErrTableExists.FastGenByArgs("can not batch create tables with same name")
@@ -258,12 +246,20 @@ func mergeCreateTableJobsOfSameSchema(jobWs []*JobWrapper) (*model.Job, error) {
 			})
 	}
 
-	combinedJob.Args = append(combinedJob.Args, args)
-	combinedJob.Args = append(combinedJob.Args, foreignKeyChecks)
 	combinedJob.InvolvingSchemaInfo = involvingSchemaInfo
 	combinedJob.Query = buildQueryStringFromJobs(jobWs)
 
-	return combinedJob, nil
+	newJobW := &JobWrapper{
+		Job:      combinedJob,
+		JobArgs:  args,
+		ResultCh: make([]chan jobSubmitResult, 0, len(jobWs)),
+	}
+	// merge the result channels.
+	for _, j := range jobWs {
+		newJobW.ResultCh = append(newJobW.ResultCh, j.ResultCh...)
+	}
+
+	return newJobW, nil
 }
 
 // addBatchDDLJobs2Table gets global job IDs and puts the DDL jobs in the DDL job table.
@@ -383,6 +379,10 @@ func (s *JobSubmitter) addBatchDDLJobs2Queue(jobWs []*JobWrapper) error {
 		}
 
 		for _, jobW := range jobWs {
+			// TODO remove this check when all job type pass args in this way.
+			if jobW.JobArgs != nil {
+				jobW.FillArgs(jobW.JobArgs)
+			}
 			job := jobW.Job
 			job.StartTS = txn.StartTS()
 			setJobStateToQueueing(job)
@@ -434,7 +434,6 @@ func (s *JobSubmitter) GenGIDAndInsertJobsWithRetry(ctx context.Context, ddlSe *
 			}
 		})
 		assignGIDsForJobs(jobWs, ids)
-		injectModifyJobArgFailPoint(jobWs)
 		// job scheduler will start run them after txn commit, we want to make sure
 		// the channel exists before the jobs are submitted.
 		for i, jobW := range jobWs {
@@ -494,37 +493,29 @@ func getRequiredGIDCount(jobWs []*JobWrapper) int {
 		}
 		switch jobW.Type {
 		case model.ActionCreateView, model.ActionCreateSequence, model.ActionCreateTable:
-			info := jobW.Args[0].(*model.TableInfo)
-			count += idCountForTable(info)
+			args := jobW.JobArgs.(*model.CreateTableArgs)
+			count += idCountForTable(args.TableInfo)
 		case model.ActionCreateTables:
-			infos := jobW.Args[0].([]*model.TableInfo)
-			for _, info := range infos {
-				count += idCountForTable(info)
+			args := jobW.JobArgs.(*model.BatchCreateTableArgs)
+			for _, tblArgs := range args.Tables {
+				count += idCountForTable(tblArgs.TableInfo)
 			}
 		case model.ActionCreateSchema, model.ActionCreateResourceGroup:
 			count++
 		case model.ActionAlterTablePartitioning:
-			pInfo := jobW.Args[1].(*model.PartitionInfo)
+			args := jobW.JobArgs.(*model.TablePartitionArgs)
 			// A new table ID would be needed for
 			// the global table, which cannot be the same as the current table id,
 			// since this table id will be removed in the final state when removing
 			// all the data with this table id.
-			count += 1 + len(pInfo.Definitions)
+			count += 1 + len(args.PartInfo.Definitions)
 		case model.ActionTruncateTablePartition:
-			count += len(jobW.Args[0].([]int64))
-		case model.ActionAddTablePartition:
-			pInfo := jobW.Args[0].(*model.PartitionInfo)
-			count += len(pInfo.Definitions)
-		case model.ActionReorganizePartition, model.ActionRemovePartitioning:
-			pInfo := jobW.Args[1].(*model.PartitionInfo)
-			count += len(pInfo.Definitions)
+			count += len(jobW.JobArgs.(*model.TruncateTableArgs).OldPartitionIDs)
+		case model.ActionAddTablePartition, model.ActionReorganizePartition, model.ActionRemovePartitioning:
+			args := jobW.JobArgs.(*model.TablePartitionArgs)
+			count += len(args.PartInfo.Definitions)
 		case model.ActionTruncateTable:
-			if jobW.Version == model.JobVersion1 {
-				partCount := jobW.Args[3].(int)
-				count += 1 + partCount
-			} else {
-				count += 1 + len(jobW.Args[0].(*model.TruncateTableArgs).OldPartitionIDs)
-			}
+			count += 1 + len(jobW.JobArgs.(*model.TruncateTableArgs).OldPartitionIDs)
 		}
 	}
 	return count
@@ -537,16 +528,16 @@ func assignGIDsForJobs(jobWs []*JobWrapper, ids []int64) {
 	for _, jobW := range jobWs {
 		switch jobW.Type {
 		case model.ActionCreateView, model.ActionCreateSequence, model.ActionCreateTable:
-			info := jobW.Args[0].(*model.TableInfo)
+			args := jobW.JobArgs.(*model.CreateTableArgs)
 			if !jobW.IDAllocated {
-				alloc.assignIDsForTable(info)
+				alloc.assignIDsForTable(args.TableInfo)
 			}
-			jobW.TableID = info.ID
+			jobW.TableID = args.TableInfo.ID
 		case model.ActionCreateTables:
 			if !jobW.IDAllocated {
-				infos := jobW.Args[0].([]*model.TableInfo)
-				for _, info := range infos {
-					alloc.assignIDsForTable(info)
+				args := jobW.JobArgs.(*model.BatchCreateTableArgs)
+				for _, tblArgs := range args.Tables {
+					alloc.assignIDsForTable(tblArgs.TableInfo)
 				}
 			}
 		case model.ActionCreateSchema:
@@ -562,60 +553,39 @@ func assignGIDsForJobs(jobWs []*JobWrapper, ids []int64) {
 			jobW.SchemaID = dbInfo.ID
 		case model.ActionCreateResourceGroup:
 			if !jobW.IDAllocated {
-				rgInfo := jobW.Args[0].(*model.ResourceGroupInfo)
-				rgInfo.ID = alloc.next()
+				args := jobW.JobArgs.(*model.ResourceGroupArgs)
+				args.RGInfo.ID = alloc.next()
 			}
 		case model.ActionAlterTablePartitioning:
 			if !jobW.IDAllocated {
-				pInfo := jobW.Args[1].(*model.PartitionInfo)
-				alloc.assignIDsForPartitionInfo(pInfo)
-				pInfo.NewTableID = alloc.next()
+				args := jobW.JobArgs.(*model.TablePartitionArgs)
+				alloc.assignIDsForPartitionInfo(args.PartInfo)
+				args.PartInfo.NewTableID = alloc.next()
 			}
-		case model.ActionTruncateTablePartition:
+		case model.ActionAddTablePartition, model.ActionReorganizePartition:
 			if !jobW.IDAllocated {
-				newIDs := make([]int64, len(jobW.Args[0].([]int64)))
-				for i := range newIDs {
-					newIDs[i] = alloc.next()
-				}
-				jobW.Args[1] = newIDs
-			}
-		case model.ActionAddTablePartition:
-			if !jobW.IDAllocated {
-				pInfo := jobW.Args[0].(*model.PartitionInfo)
-				alloc.assignIDsForPartitionInfo(pInfo)
-			}
-		case model.ActionReorganizePartition:
-			if !jobW.IDAllocated {
-				pInfo := jobW.Args[1].(*model.PartitionInfo)
+				pInfo := jobW.JobArgs.(*model.TablePartitionArgs).PartInfo
 				alloc.assignIDsForPartitionInfo(pInfo)
 			}
 		case model.ActionRemovePartitioning:
 			// a special partition is used in this case, and we will use the ID
 			// of the partition as the new table ID.
-			pInfo := jobW.Args[1].(*model.PartitionInfo)
+			pInfo := jobW.JobArgs.(*model.TablePartitionArgs).PartInfo
 			if !jobW.IDAllocated {
 				alloc.assignIDsForPartitionInfo(pInfo)
 			}
 			pInfo.NewTableID = pInfo.Definitions[0].ID
-		case model.ActionTruncateTable:
+		case model.ActionTruncateTable, model.ActionTruncateTablePartition:
 			if !jobW.IDAllocated {
-				if jobW.Version == model.JobVersion1 {
-					jobW.Args[0] = alloc.next()
-					partCount := jobW.Args[3].(int)
-					partIDs := make([]int64, partCount)
-					for i := range partIDs {
-						partIDs[i] = alloc.next()
-					}
-					jobW.Args[2] = partIDs
-				} else {
-					args := jobW.Args[0].(*model.TruncateTableArgs)
+				args := jobW.JobArgs.(*model.TruncateTableArgs)
+				if jobW.Type == model.ActionTruncateTable {
 					args.NewTableID = alloc.next()
-					partIDs := make([]int64, len(args.OldPartitionIDs))
-					for i := range partIDs {
-						partIDs[i] = alloc.next()
-					}
-					args.NewPartitionIDs = partIDs
 				}
+				partIDs := make([]int64, len(args.OldPartitionIDs))
+				for i := range partIDs {
+					partIDs[i] = alloc.next()
+				}
+				args.NewPartitionIDs = partIDs
 			}
 		}
 		jobW.ID = alloc.next()

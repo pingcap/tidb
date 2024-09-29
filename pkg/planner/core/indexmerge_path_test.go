@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/planner/util/coretestsdk"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
@@ -72,10 +73,10 @@ func TestCollectFilters4MVIndexMutations(t *testing.T) {
 	logicalP, err := core.LogicalOptimizeTest(context.TODO(), builder.GetOptFlag(), p.(base.LogicalPlan))
 	require.NoError(t, err)
 
-	ds, ok := logicalP.(*core.DataSource)
+	ds, ok := logicalP.(*logicalop.DataSource)
 	for !ok {
 		p := logicalP.Children()[0]
-		ds, ok = p.(*core.DataSource)
+		ds, ok = p.(*logicalop.DataSource)
 	}
 	cnfs := ds.AllConds
 	tbl, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
