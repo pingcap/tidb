@@ -1005,8 +1005,8 @@ func doReorgWorkForCreateIndex(
 	}
 	switch allIndexInfos[0].BackfillState {
 	case model.BackfillStateRunning:
-		skipReorgWork := checkIfReorgTableWorkCanSkip(w.store, tbl, job)
-		if !skipReorgWork {
+		skipReorg := checkIfReorgTableWorkCanSkip(w.store, tbl, job)
+		if !skipReorg {
 			logutil.DDLLogger().Info("index backfill state running",
 				zap.Int64("job ID", job.ID), zap.String("table", tbl.Meta().Name.O),
 				zap.Bool("ingest mode", reorgTp == model.ReorgTypeLitMerge),
