@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl/copr"
 	"github.com/pingcap/tidb/pkg/ddl/ingest"
 	"github.com/pingcap/tidb/pkg/ddl/logutil"
+	"github.com/pingcap/tidb/pkg/ddl/notifier"
 	sess "github.com/pingcap/tidb/pkg/ddl/session"
 	ddlutil "github.com/pingcap/tidb/pkg/ddl/util"
 	"github.com/pingcap/tidb/pkg/disttask/framework/handle"
@@ -46,10 +47,12 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/backend"
 	litconfig "github.com/pingcap/tidb/pkg/lightning/config"
 	"github.com/pingcap/tidb/pkg/meta"
+	"github.com/pingcap/tidb/pkg/meta/metabuild"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/charset"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -68,7 +71,6 @@ import (
 	decoder "github.com/pingcap/tidb/pkg/util/rowDecoder"
 	"github.com/pingcap/tidb/pkg/util/size"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
-	"github.com/pingcap/tidb/pkg/util/stringutil"
 	"github.com/tikv/client-go/v2/oracle"
 	"github.com/tikv/client-go/v2/tikv"
 	kvutil "github.com/tikv/client-go/v2/util"
@@ -83,22 +85,7 @@ const (
 	MaxCommentLength = 1024
 )
 
-var (
-	// SuppressErrorTooLongKeyKey is used by SchemaTracker to suppress err too long key error
-	SuppressErrorTooLongKeyKey stringutil.StringerStr = "suppressErrorTooLongKeyKey"
-)
-
-func suppressErrorTooLongKeyForSchemaTracker(sctx sessionctx.Context) bool {
-	if sctx == nil {
-		return false
-	}
-	if suppress, ok := sctx.Value(SuppressErrorTooLongKeyKey).(bool); ok && suppress {
-		return true
-	}
-	return false
-}
-
-func buildIndexColumns(ctx sessionctx.Context, columns []*model.ColumnInfo, indexPartSpecifications []*ast.IndexPartSpecification) ([]*model.IndexColumn, bool, error) {
+func buildIndexColumns(ctx *metabuild.Context, columns []*model.ColumnInfo, indexPartSpecifications []*ast.IndexPartSpecification) ([]*model.IndexColumn, bool, error) {
 	// Build offsets.
 	idxParts := make([]*model.IndexColumn, 0, len(indexPartSpecifications))
 	var col *model.ColumnInfo
@@ -111,8 +98,8 @@ func buildIndexColumns(ctx sessionctx.Context, columns []*model.ColumnInfo, inde
 		if col == nil {
 			return nil, false, dbterror.ErrKeyColumnDoesNotExits.GenWithStack("column does not exist: %s", ip.Column.Name)
 		}
-
-		if err := checkIndexColumn(ctx, col, ip.Length); err != nil {
+		// return error in strict sql mode
+		if err := checkIndexColumn(col, ip.Length, ctx != nil && (!ctx.GetSQLMode().HasStrictMode() || ctx.SuppressTooLongIndexErr())); err != nil {
 			return nil, false, err
 		}
 		if col.FieldType.IsArray() {
@@ -133,12 +120,12 @@ func buildIndexColumns(ctx sessionctx.Context, columns []*model.ColumnInfo, inde
 		}
 		sumLength += indexColumnLength
 
-		if !suppressErrorTooLongKeyForSchemaTracker(ctx) && sumLength > maxIndexLength {
+		if (ctx == nil || !ctx.SuppressTooLongIndexErr()) && sumLength > maxIndexLength {
 			// The sum of all lengths must be shorter than the max length for prefix.
 
 			// The multiple column index and the unique index in which the length sum exceeds the maximum size
 			// will return an error instead produce a warning.
-			if ctx == nil || ctx.GetSessionVars().SQLMode.HasStrictMode() || mysql.HasUniKeyFlag(col.GetFlag()) || len(indexPartSpecifications) > 1 {
+			if ctx == nil || ctx.GetSQLMode().HasStrictMode() || mysql.HasUniKeyFlag(col.GetFlag()) || len(indexPartSpecifications) > 1 {
 				return nil, false, dbterror.ErrTooLongKey.GenWithStackByArgs(sumLength, maxIndexLength)
 			}
 			// truncate index length and produce warning message in non-restrict sql mode.
@@ -148,7 +135,7 @@ func buildIndexColumns(ctx sessionctx.Context, columns []*model.ColumnInfo, inde
 			}
 			indexColLen = maxIndexLength / colLenPerUint
 			// produce warning message
-			ctx.GetSessionVars().StmtCtx.AppendWarning(dbterror.ErrTooLongKey.FastGenByArgs(sumLength, maxIndexLength))
+			ctx.AppendWarning(dbterror.ErrTooLongKey.FastGenByArgs(sumLength, maxIndexLength))
 		}
 
 		idxParts = append(idxParts, &model.IndexColumn{
@@ -209,7 +196,7 @@ func indexColumnsLen(cols []*model.ColumnInfo, idxCols []*model.IndexColumn) (co
 	return
 }
 
-func checkIndexColumn(ctx sessionctx.Context, col *model.ColumnInfo, indexColumnLen int) error {
+func checkIndexColumn(col *model.ColumnInfo, indexColumnLen int, suppressTooLongKeyErr bool) error {
 	if col.GetFlen() == 0 && (types.IsTypeChar(col.FieldType.GetType()) || types.IsTypeVarchar(col.FieldType.GetType())) {
 		if col.Hidden {
 			return errors.Trace(dbterror.ErrWrongKeyColumnFunctionalIndex.GenWithStackByArgs(col.GeneratedExprString))
@@ -273,8 +260,7 @@ func checkIndexColumn(ctx sessionctx.Context, col *model.ColumnInfo, indexColumn
 	// Specified length must be shorter than the max length for prefix.
 	maxIndexLength := config.GetGlobalConfig().MaxIndexLength
 	if indexColumnLen > maxIndexLength {
-		if ctx == nil || (ctx.GetSessionVars().SQLMode.HasStrictMode() && !suppressErrorTooLongKeyForSchemaTracker(ctx)) {
-			// return error in strict sql mode
+		if !suppressTooLongKeyErr {
 			return dbterror.ErrTooLongKey.GenWithStackByArgs(indexColumnLen, maxIndexLength)
 		}
 	}
@@ -323,9 +309,9 @@ func calcBytesLengthForDecimal(m int) int {
 
 // BuildIndexInfo builds a new IndexInfo according to the index information.
 func BuildIndexInfo(
-	ctx sessionctx.Context,
+	ctx *metabuild.Context,
 	allTableColumns []*model.ColumnInfo,
-	indexName model.CIStr,
+	indexName pmodel.CIStr,
 	isPrimary bool,
 	isUnique bool,
 	indexPartSpecifications []*ast.IndexPartSpecification,
@@ -356,16 +342,16 @@ func BuildIndexInfo(
 		if indexOption.Visibility == ast.IndexVisibilityInvisible {
 			idxInfo.Invisible = true
 		}
-		if indexOption.Tp == model.IndexTypeInvalid {
+		if indexOption.Tp == pmodel.IndexTypeInvalid {
 			// Use btree as default index type.
-			idxInfo.Tp = model.IndexTypeBtree
+			idxInfo.Tp = pmodel.IndexTypeBtree
 		} else {
 			idxInfo.Tp = indexOption.Tp
 		}
 		idxInfo.Global = indexOption.Global
 	} else {
 		// Use btree as default index type.
-		idxInfo.Tp = model.IndexTypeBtree
+		idxInfo.Tp = pmodel.IndexTypeBtree
 	}
 
 	return idxInfo, nil
@@ -416,7 +402,7 @@ func DropIndexColumnFlag(tblInfo *model.TableInfo, indexInfo *model.IndexInfo) {
 }
 
 // ValidateRenameIndex checks if index name is ok to be renamed.
-func ValidateRenameIndex(from, to model.CIStr, tbl *model.TableInfo) (ignore bool, err error) {
+func ValidateRenameIndex(from, to pmodel.CIStr, tbl *model.TableInfo) (ignore bool, err error) {
 	if fromIdx := tbl.FindIndexByName(from.L); fromIdx == nil {
 		return false, errors.Trace(infoschema.ErrKeyNotExists.GenWithStackByArgs(from.O, tbl.Name))
 	}
@@ -433,7 +419,7 @@ func ValidateRenameIndex(from, to model.CIStr, tbl *model.TableInfo) (ignore boo
 	return false, nil
 }
 
-func onRenameIndex(jobCtx *jobContext, t *meta.Meta, job *model.Job) (ver int64, _ error) {
+func onRenameIndex(jobCtx *jobContext, t *meta.Mutator, job *model.Job) (ver int64, _ error) {
 	tblInfo, from, to, err := checkRenameIndex(t, job)
 	if err != nil || tblInfo == nil {
 		return ver, errors.Trace(err)
@@ -459,7 +445,7 @@ func onRenameIndex(jobCtx *jobContext, t *meta.Meta, job *model.Job) (ver int64,
 	return ver, nil
 }
 
-func validateAlterIndexVisibility(ctx sessionctx.Context, indexName model.CIStr, invisible bool, tbl *model.TableInfo) (bool, error) {
+func validateAlterIndexVisibility(ctx sessionctx.Context, indexName pmodel.CIStr, invisible bool, tbl *model.TableInfo) (bool, error) {
 	var idx *model.IndexInfo
 	if idx = tbl.FindIndexByName(indexName.L); idx == nil || idx.State != model.StatePublic {
 		return false, errors.Trace(infoschema.ErrKeyNotExists.GenWithStackByArgs(indexName.O, tbl.Name))
@@ -473,7 +459,7 @@ func validateAlterIndexVisibility(ctx sessionctx.Context, indexName model.CIStr,
 	return false, nil
 }
 
-func onAlterIndexVisibility(jobCtx *jobContext, t *meta.Meta, job *model.Job) (ver int64, _ error) {
+func onAlterIndexVisibility(jobCtx *jobContext, t *meta.Mutator, job *model.Job) (ver int64, _ error) {
 	tblInfo, from, invisible, err := checkAlterIndexVisibility(t, job)
 	if err != nil || tblInfo == nil {
 		return ver, errors.Trace(err)
@@ -493,7 +479,7 @@ func onAlterIndexVisibility(jobCtx *jobContext, t *meta.Meta, job *model.Job) (v
 	return ver, nil
 }
 
-func setIndexVisibility(tblInfo *model.TableInfo, name model.CIStr, invisible bool) {
+func setIndexVisibility(tblInfo *model.TableInfo, name pmodel.CIStr, invisible bool) {
 	for _, idx := range tblInfo.Indices {
 		if idx.Name.L == name.L || (isTempIdxInfo(idx, tblInfo) && getChangingIndexOriginName(idx) == name.O) {
 			idx.Invisible = invisible
@@ -512,7 +498,7 @@ func getNullColInfos(tblInfo *model.TableInfo, indexInfo *model.IndexInfo) ([]*m
 	return nullCols, nil
 }
 
-func checkPrimaryKeyNotNull(jobCtx *jobContext, w *worker, t *meta.Meta, job *model.Job,
+func checkPrimaryKeyNotNull(jobCtx *jobContext, w *worker, t *meta.Mutator, job *model.Job,
 	tblInfo *model.TableInfo, indexInfo *model.IndexInfo) (warnings []string, err error) {
 	if !indexInfo.Primary {
 		return nil, nil
@@ -530,7 +516,7 @@ func checkPrimaryKeyNotNull(jobCtx *jobContext, w *worker, t *meta.Meta, job *mo
 		return nil, nil
 	}
 
-	err = modifyColsFromNull2NotNull(w, dbInfo, tblInfo, nullCols, &model.ColumnInfo{Name: model.NewCIStr("")}, false)
+	err = modifyColsFromNull2NotNull(w, dbInfo, tblInfo, nullCols, &model.ColumnInfo{Name: pmodel.NewCIStr("")}, false)
 	if err == nil {
 		return nil, nil
 	}
@@ -571,7 +557,7 @@ func moveAndUpdateHiddenColumnsToPublic(tblInfo *model.TableInfo, idxInfo *model
 
 func decodeAddIndexArgs(job *model.Job) (
 	uniques []bool,
-	indexNames []model.CIStr,
+	indexNames []pmodel.CIStr,
 	indexPartSpecifications [][]*ast.IndexPartSpecification,
 	indexOptions []*ast.IndexOption,
 	hiddenCols [][]*model.ColumnInfo,
@@ -579,7 +565,7 @@ func decodeAddIndexArgs(job *model.Job) (
 ) {
 	var (
 		unique                 bool
-		indexName              model.CIStr
+		indexName              pmodel.CIStr
 		indexPartSpecification []*ast.IndexPartSpecification
 		indexOption            *ast.IndexOption
 		hiddenCol              []*model.ColumnInfo
@@ -587,7 +573,7 @@ func decodeAddIndexArgs(job *model.Job) (
 	err = job.DecodeArgs(&unique, &indexName, &indexPartSpecification, &indexOption, &hiddenCol)
 	if err == nil {
 		return []bool{unique},
-			[]model.CIStr{indexName},
+			[]pmodel.CIStr{indexName},
 			[][]*ast.IndexPartSpecification{indexPartSpecification},
 			[]*ast.IndexOption{indexOption},
 			[][]*model.ColumnInfo{hiddenCol},
@@ -598,7 +584,7 @@ func decodeAddIndexArgs(job *model.Job) (
 	return
 }
 
-func (w *worker) onCreateIndex(jobCtx *jobContext, t *meta.Meta, job *model.Job, isPK bool) (ver int64, err error) {
+func (w *worker) onCreateIndex(jobCtx *jobContext, t *meta.Mutator, job *model.Job, isPK bool) (ver int64, err error) {
 	// Handle the rolling back job.
 	if job.IsRollingback() {
 		ver, err = onDropIndex(jobCtx, t, job)
@@ -619,7 +605,7 @@ func (w *worker) onCreateIndex(jobCtx *jobContext, t *meta.Meta, job *model.Job,
 	}
 
 	uniques := make([]bool, 1)
-	indexNames := make([]model.CIStr, 1)
+	indexNames := make([]pmodel.CIStr, 1)
 	indexPartSpecifications := make([][]*ast.IndexPartSpecification, 1)
 	indexOption := make([]*ast.IndexOption, 1)
 	var sqlMode mysql.SQLMode
@@ -831,6 +817,9 @@ SwitchIndexState:
 		if !job.ReorgMeta.IsDistReorg && job.ReorgMeta.ReorgTp == model.ReorgTypeLitMerge {
 			ingest.LitBackCtxMgr.Unregister(job.ID)
 		}
+		// TODO: store this event to the notifier.
+		// For now, it is not used and just for placeholder.
+		_ = notifier.NewAddIndexEvent(tblInfo, allIndexInfos)
 		logutil.DDLLogger().Info("run add index job done",
 			zap.String("charset", job.Charset),
 			zap.String("collation", job.Collate))
@@ -880,7 +869,7 @@ func loadCloudStorageURI(w *worker, job *model.Job) {
 	job.ReorgMeta.UseCloudStorage = len(jc.cloudStorageURI) > 0
 }
 
-func doReorgWorkForCreateIndexMultiSchema(w *worker, jobCtx *jobContext, t *meta.Meta, job *model.Job,
+func doReorgWorkForCreateIndexMultiSchema(w *worker, jobCtx *jobContext, t *meta.Mutator, job *model.Job,
 	tbl table.Table, allIndexInfos []*model.IndexInfo) (done bool, ver int64, err error) {
 	if job.MultiSchemaInfo.Revertible {
 		done, ver, err = doReorgWorkForCreateIndex(w, jobCtx, t, job, tbl, allIndexInfos)
@@ -899,7 +888,7 @@ func doReorgWorkForCreateIndexMultiSchema(w *worker, jobCtx *jobContext, t *meta
 func doReorgWorkForCreateIndex(
 	w *worker,
 	jobCtx *jobContext,
-	t *meta.Meta,
+	t *meta.Mutator,
 	job *model.Job,
 	tbl table.Table,
 	allIndexInfos []*model.IndexInfo,
@@ -969,7 +958,7 @@ func doReorgWorkForCreateIndex(
 	}
 }
 
-func runIngestReorgJobDist(w *worker, jobCtx *jobContext, t *meta.Meta, job *model.Job,
+func runIngestReorgJobDist(w *worker, jobCtx *jobContext, t *meta.Mutator, job *model.Job,
 	tbl table.Table, allIndexInfos []*model.IndexInfo) (done bool, ver int64, err error) {
 	done, ver, err = runReorgJobAndHandleErr(w, jobCtx, t, job, tbl, allIndexInfos, false)
 	if err != nil {
@@ -983,7 +972,7 @@ func runIngestReorgJobDist(w *worker, jobCtx *jobContext, t *meta.Meta, job *mod
 	return true, ver, nil
 }
 
-func runIngestReorgJob(w *worker, jobCtx *jobContext, t *meta.Meta, job *model.Job,
+func runIngestReorgJob(w *worker, jobCtx *jobContext, t *meta.Mutator, job *model.Job,
 	tbl table.Table, allIndexInfos []*model.IndexInfo) (done bool, ver int64, err error) {
 	done, ver, err = runReorgJobAndHandleErr(w, jobCtx, t, job, tbl, allIndexInfos, false)
 	if err != nil {
@@ -1020,7 +1009,7 @@ func errorIsRetryable(err error, job *model.Job) bool {
 func runReorgJobAndHandleErr(
 	w *worker,
 	jobCtx *jobContext,
-	t *meta.Meta,
+	t *meta.Mutator,
 	job *model.Job,
 	tbl table.Table,
 	allIndexInfos []*model.IndexInfo,
@@ -1094,7 +1083,7 @@ func runReorgJobAndHandleErr(
 	return true, ver, nil
 }
 
-func onDropIndex(jobCtx *jobContext, t *meta.Meta, job *model.Job) (ver int64, _ error) {
+func onDropIndex(jobCtx *jobContext, t *meta.Mutator, job *model.Job) (ver int64, _ error) {
 	tblInfo, allIndexInfos, ifExists, err := checkDropIndex(jobCtx.infoCache, t, job)
 	if err != nil {
 		if ifExists && dbterror.ErrCantDropFieldOrKey.Equal(err) {
@@ -1226,14 +1215,14 @@ func removeIndexInfo(tblInfo *model.TableInfo, idxInfo *model.IndexInfo) {
 	tblInfo.Indices = append(tblInfo.Indices[:offset], tblInfo.Indices[offset+1:]...)
 }
 
-func checkDropIndex(infoCache *infoschema.InfoCache, t *meta.Meta, job *model.Job) (*model.TableInfo, []*model.IndexInfo, bool /* ifExists */, error) {
+func checkDropIndex(infoCache *infoschema.InfoCache, t *meta.Mutator, job *model.Job) (*model.TableInfo, []*model.IndexInfo, bool /* ifExists */, error) {
 	schemaID := job.SchemaID
 	tblInfo, err := GetTableInfoAndCancelFaultJob(t, job, schemaID)
 	if err != nil {
 		return nil, nil, false, errors.Trace(err)
 	}
 
-	indexNames := make([]model.CIStr, 1)
+	indexNames := make([]pmodel.CIStr, 1)
 	ifExists := make([]bool, 1)
 	if err = job.DecodeArgs(&indexNames[0], &ifExists[0]); err != nil {
 		if err = job.DecodeArgs(&indexNames, &ifExists); err != nil {
@@ -1289,8 +1278,8 @@ func checkInvisibleIndexesOnPK(tblInfo *model.TableInfo, indexInfos []*model.Ind
 	return nil
 }
 
-func checkRenameIndex(t *meta.Meta, job *model.Job) (*model.TableInfo, model.CIStr, model.CIStr, error) {
-	var from, to model.CIStr
+func checkRenameIndex(t *meta.Mutator, job *model.Job) (*model.TableInfo, pmodel.CIStr, pmodel.CIStr, error) {
+	var from, to pmodel.CIStr
 	schemaID := job.SchemaID
 	tblInfo, err := GetTableInfoAndCancelFaultJob(t, job, schemaID)
 	if err != nil {
@@ -1314,9 +1303,9 @@ func checkRenameIndex(t *meta.Meta, job *model.Job) (*model.TableInfo, model.CIS
 	return tblInfo, from, to, errors.Trace(err)
 }
 
-func checkAlterIndexVisibility(t *meta.Meta, job *model.Job) (*model.TableInfo, model.CIStr, bool, error) {
+func checkAlterIndexVisibility(t *meta.Mutator, job *model.Job) (*model.TableInfo, pmodel.CIStr, bool, error) {
 	var (
-		indexName model.CIStr
+		indexName pmodel.CIStr
 		invisible bool
 	)
 
@@ -1326,10 +1315,12 @@ func checkAlterIndexVisibility(t *meta.Meta, job *model.Job) (*model.TableInfo, 
 		return nil, indexName, invisible, errors.Trace(err)
 	}
 
-	if err := job.DecodeArgs(&indexName, &invisible); err != nil {
+	args, err := model.GetAlterIndexVisibilityArgs(job)
+	if err != nil {
 		job.State = model.JobStateCancelled
 		return nil, indexName, invisible, errors.Trace(err)
 	}
+	indexName, invisible = args.IndexName, args.Invisible
 
 	skip, err := validateAlterIndexVisibility(nil, indexName, invisible, tblInfo)
 	if err != nil {
@@ -1572,6 +1563,14 @@ func (w *addIndexTxnWorker) checkHandleExists(idxInfo *model.IndexInfo, key kv.K
 	hasBeenBackFilled := h.Equal(handle)
 	if hasBeenBackFilled {
 		return nil
+	}
+	if idxInfo.Global {
+		// 'handle' comes from reading directly from a partition, without partition id,
+		// so we can only compare the handle part of the key.
+		if ph, ok := h.(kv.PartitionHandle); ok && ph.Handle.Equal(handle) {
+			// table row has been back-filled already, OK to add the index entry
+			return nil
+		}
 	}
 	return ddlutil.GenKeyExistsErr(key, value, idxInfo, tblInfo)
 }
@@ -1960,7 +1959,8 @@ func checkDuplicateForUniqueIndex(ctx context.Context, t table.Table, reorgInfo 
 		if indexInfo.Unique {
 			ctx := tidblogutil.WithCategory(ctx, "ddl-ingest")
 			if bc == nil {
-				bc, err = ingest.LitBackCtxMgr.Register(ctx, reorgInfo.ID, indexInfo.Unique, nil, discovery, reorgInfo.ReorgMeta.ResourceGroupName, 1)
+				bc, err = ingest.LitBackCtxMgr.Register(
+					ctx, reorgInfo.ID, indexInfo.Unique, nil, discovery, reorgInfo.ReorgMeta.ResourceGroupName, 1, reorgInfo.RealStartTS)
 				if err != nil {
 					return err
 				}
@@ -2396,7 +2396,7 @@ type cleanUpIndexWorker struct {
 }
 
 func newCleanUpIndexWorker(id int, t table.PhysicalTable, decodeColMap map[int64]decoder.Column, reorgInfo *reorgInfo, jc *ReorgContext) (*cleanUpIndexWorker, error) {
-	bCtx, err := newBackfillCtx(id, reorgInfo, reorgInfo.SchemaName, t, jc, "cleanup_idx_rate", false)
+	bCtx, err := newBackfillCtx(id, reorgInfo, reorgInfo.SchemaName, t, jc, "cleanup_idx_rate", false, false)
 	if err != nil {
 		return nil, err
 	}
@@ -2552,7 +2552,7 @@ type changingIndex struct {
 
 // FindRelatedIndexesToChange finds the indexes that covering the given column.
 // The normal one will be overridden by the temp one.
-func FindRelatedIndexesToChange(tblInfo *model.TableInfo, colName model.CIStr) []changingIndex {
+func FindRelatedIndexesToChange(tblInfo *model.TableInfo, colName pmodel.CIStr) []changingIndex {
 	// In multi-schema change jobs that contains several "modify column" sub-jobs, there may be temp indexes for another temp index.
 	// To prevent reorganizing too many indexes, we should create the temp indexes that are really necessary.
 	var normalIdxInfos, tempIdxInfos []changingIndex
@@ -2592,7 +2592,7 @@ func isTempIdxInfo(idxInfo *model.IndexInfo, tblInfo *model.TableInfo) bool {
 	return false
 }
 
-func findIdxCol(idxInfo *model.IndexInfo, colName model.CIStr) int {
+func findIdxCol(idxInfo *model.IndexInfo, colName pmodel.CIStr) int {
 	for offset, idxCol := range idxInfo.Columns {
 		if idxCol.Name.L == colName.L {
 			return offset
@@ -2601,7 +2601,7 @@ func findIdxCol(idxInfo *model.IndexInfo, colName model.CIStr) int {
 	return -1
 }
 
-func renameIndexes(tblInfo *model.TableInfo, from, to model.CIStr) {
+func renameIndexes(tblInfo *model.TableInfo, from, to pmodel.CIStr) {
 	for _, idx := range tblInfo.Indices {
 		if idx.Name.L == from.L {
 			idx.Name = to
@@ -2609,12 +2609,19 @@ func renameIndexes(tblInfo *model.TableInfo, from, to model.CIStr) {
 			idx.Name.L = strings.Replace(idx.Name.L, from.L, to.L, 1)
 			idx.Name.O = strings.Replace(idx.Name.O, from.O, to.O, 1)
 		}
+		for _, col := range idx.Columns {
+			originalCol := tblInfo.Columns[col.Offset]
+			if originalCol.Hidden && getExpressionIndexOriginName(col.Name) == from.O {
+				col.Name.L = strings.Replace(col.Name.L, from.L, to.L, 1)
+				col.Name.O = strings.Replace(col.Name.O, from.O, to.O, 1)
+			}
+		}
 	}
 }
 
-func renameHiddenColumns(tblInfo *model.TableInfo, from, to model.CIStr) {
+func renameHiddenColumns(tblInfo *model.TableInfo, from, to pmodel.CIStr) {
 	for _, col := range tblInfo.Columns {
-		if col.Hidden && getExpressionIndexOriginName(col) == from.O {
+		if col.Hidden && getExpressionIndexOriginName(col.Name) == from.O {
 			col.Name.L = strings.Replace(col.Name.L, from.L, to.L, 1)
 			col.Name.O = strings.Replace(col.Name.O, from.O, to.O, 1)
 		}

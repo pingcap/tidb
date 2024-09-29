@@ -8,6 +8,7 @@ go_library(
     deps = [
         "//pkg/domain/infosync",
         "//pkg/infoschema",
+        "//pkg/meta/model",
         "//pkg/parser/model",
         "//pkg/parser/terror",
         "//pkg/sessionctx",
@@ -22,6 +23,7 @@ go_library(
         "//pkg/statistics/handle/util",
         "//pkg/types",
         "//pkg/util",
+        "//pkg/util/intest",
         "//pkg/util/logutil",
         "//pkg/util/sqlescape",
         "//pkg/util/timeutil",

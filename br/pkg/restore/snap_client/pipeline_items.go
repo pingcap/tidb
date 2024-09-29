@@ -22,18 +22,19 @@ import (
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/glue"
+	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/metautil"
 	restoreutils "github.com/pingcap/tidb/br/pkg/restore/utils"
-	"github.com/pingcap/tidb/br/pkg/rtree"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/summary"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/engine"
 	pdhttp "github.com/tikv/pd/client/http"
 	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
 	"golang.org/x/sync/errgroup"
 )
 
@@ -51,16 +52,10 @@ type CreatedTable struct {
 	OldTable    *metautil.Table
 }
 
-func defaultOutputTableChan() chan *CreatedTable {
-	return make(chan *CreatedTable, defaultChannelSize)
-}
-
-// TableWithRange is a CreatedTable that has been bind to some of key ranges.
-type TableWithRange struct {
-	CreatedTable
-
-	// Range has been rewrited by rewrite rules.
-	Range []rtree.RangeStats
+type PhysicalTable struct {
+	NewPhysicalID int64
+	OldPhysicalID int64
+	RewriteRules  *restoreutils.RewriteRules
 }
 
 type TableIDWithFiles struct {
@@ -71,6 +66,44 @@ type TableIDWithFiles struct {
 	// because these rules belongs to the *one table*.
 	// we can hold them here.
 	RewriteRules *restoreutils.RewriteRules
+}
+
+type zapFilesGroupMarshaler []TableIDWithFiles
+
+// MarshalLogObjectForFiles is an internal util function to zap something having `Files` field.
+func MarshalLogObjectForFiles(files []TableIDWithFiles, encoder zapcore.ObjectEncoder) error {
+	return zapFilesGroupMarshaler(files).MarshalLogObject(encoder)
+}
+
+func (fgs zapFilesGroupMarshaler) MarshalLogObject(encoder zapcore.ObjectEncoder) error {
+	elements := make([]string, 0)
+	total := 0
+	totalKVs := uint64(0)
+	totalBytes := uint64(0)
+	totalSize := uint64(0)
+	for _, fg := range fgs {
+		for _, f := range fg.Files {
+			total += 1
+			elements = append(elements, f.GetName())
+			totalKVs += f.GetTotalKvs()
+			totalBytes += f.GetTotalBytes()
+			totalSize += f.GetSize_()
+		}
+	}
+	encoder.AddInt("total", total)
+	_ = encoder.AddArray("files", logutil.AbbreviatedArrayMarshaler(elements))
+	encoder.AddUint64("totalKVs", totalKVs)
+	encoder.AddUint64("totalBytes", totalBytes)
+	encoder.AddUint64("totalSize", totalSize)
+	return nil
+}
+
+func zapFilesGroup(filesGroup []TableIDWithFiles) zap.Field {
+	return zap.Object("files", zapFilesGroupMarshaler(filesGroup))
+}
+
+func defaultOutputTableChan() chan *CreatedTable {
+	return make(chan *CreatedTable, defaultChannelSize)
 }
 
 func concurrentHandleTablesCh(

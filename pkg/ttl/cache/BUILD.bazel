@@ -13,9 +13,10 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//pkg/expression",
-        "//pkg/expression/contextstatic",
+        "//pkg/expression/exprstatic",
         "//pkg/infoschema",
         "//pkg/kv",
+        "//pkg/meta/model",
         "//pkg/parser/ast",
         "//pkg/parser/charset",
         "//pkg/parser/model",
@@ -55,6 +56,7 @@ go_test(
     deps = [
         "//pkg/infoschema",
         "//pkg/kv",
+        "//pkg/meta/model",
         "//pkg/parser/ast",
         "//pkg/parser/model",
         "//pkg/parser/mysql",

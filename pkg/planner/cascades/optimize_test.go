@@ -22,8 +22,8 @@ import (
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/infoschema"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser"
-	"github.com/pingcap/tidb/pkg/parser/model"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
@@ -145,7 +145,7 @@ func TestPreparePossibleProperties(t *testing.T) {
 	require.NoError(t, err)
 
 	// collect the target columns: f, a
-	ds, ok := logic.Children()[0].Children()[0].(*plannercore.DataSource)
+	ds, ok := logic.Children()[0].Children()[0].(*logicalop.DataSource)
 	require.True(t, ok)
 
 	var columnF, columnA *expression.Column

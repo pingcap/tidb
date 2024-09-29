@@ -26,9 +26,10 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/charset"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/opcode"
 	"github.com/pingcap/tidb/pkg/parser/terror"
@@ -40,6 +41,8 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/costusage"
+	"github.com/pingcap/tidb/pkg/planner/util/domainmisc"
+	"github.com/pingcap/tidb/pkg/planner/util/fixcontrol"
 	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
 	"github.com/pingcap/tidb/pkg/privilege"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -79,7 +82,7 @@ type PointGetPlan struct {
 	// Please see comments in PhysicalPlan for details.
 	probeParents []base.PhysicalPlan
 	// explicit partition selection
-	PartitionNames []model.CIStr
+	PartitionNames []pmodel.CIStr
 
 	dbName           string
 	schema           *expression.Schema
@@ -431,7 +434,7 @@ type BatchPointGetPlan struct {
 	// Please see comments in PhysicalPlan for details.
 	probeParents []base.PhysicalPlan
 	// explicit partition selection
-	PartitionNames []model.CIStr
+	PartitionNames []pmodel.CIStr
 
 	ctx              base.PlanContext
 	dbName           string
@@ -652,7 +655,7 @@ func (p *BatchPointGetPlan) LoadTableStats(ctx sessionctx.Context) {
 	loadTableStats(ctx, p.TblInfo, p.TblInfo.ID)
 }
 
-func isInExplicitPartitions(pi *model.PartitionInfo, idx int, names []model.CIStr) bool {
+func isInExplicitPartitions(pi *model.PartitionInfo, idx int, names []pmodel.CIStr) bool {
 	if len(names) == 0 {
 		return true
 	}
@@ -882,8 +885,9 @@ type PointPlanVal struct {
 
 // TryFastPlan tries to use the PointGetPlan for the query.
 func TryFastPlan(ctx base.PlanContext, node *resolve.NodeW) (p base.Plan) {
-	if checkStableResultMode(ctx) {
+	if checkStableResultMode(ctx) || fixcontrol.GetBoolWithDefault(ctx.GetSessionVars().OptimizerFixControl, fixcontrol.Fix52592, false) {
 		// the rule of stabilizing results has not taken effect yet, so cannot generate a plan here in this mode
+		// or Fix52592 is turn on to disable fast path for select, update and delete
 		return nil
 	}
 
@@ -1408,7 +1412,7 @@ func checkTblIndexForPointPlan(ctx base.PlanContext, tblName *resolve.TableNameW
 		}
 		if isTableDual {
 			if check && latestIndexes == nil {
-				latestIndexes, check, err = getLatestIndexInfo(ctx, tbl.ID, 0)
+				latestIndexes, check, err = domainmisc.GetLatestIndexInfo(ctx, tbl.ID, 0)
 				if err != nil {
 					logutil.BgLogger().Warn("get information schema failed", zap.Error(err))
 					return nil
@@ -1428,7 +1432,7 @@ func checkTblIndexForPointPlan(ctx base.PlanContext, tblName *resolve.TableNameW
 			continue
 		}
 		if check && latestIndexes == nil {
-			latestIndexes, check, err = getLatestIndexInfo(ctx, tbl.ID, 0)
+			latestIndexes, check, err = domainmisc.GetLatestIndexInfo(ctx, tbl.ID, 0)
 			if err != nil {
 				logutil.BgLogger().Warn("get information schema failed", zap.Error(err))
 				return nil
@@ -1456,7 +1460,7 @@ func indexIsAvailableByHints(idxInfo *model.IndexInfo, idxHints []*ast.IndexHint
 	if len(idxHints) == 0 {
 		return true
 	}
-	match := func(name model.CIStr) bool {
+	match := func(name pmodel.CIStr) bool {
 		if idxInfo == nil {
 			return name.L == "primary"
 		}
@@ -1525,9 +1529,9 @@ func checkFastPlanPrivilege(ctx base.PlanContext, dbName, tableName string, chec
 }
 
 func buildSchemaFromFields(
-	dbName model.CIStr,
+	dbName pmodel.CIStr,
 	tbl *model.TableInfo,
-	tblName model.CIStr,
+	tblName pmodel.CIStr,
 	fields []*ast.SelectField,
 ) (
 	*expression.Schema,
@@ -1633,7 +1637,7 @@ func tryExtractRowChecksumColumn(field *ast.SelectField, idx int) (*types.FieldN
 // getSingleTableNameAndAlias return the ast node of queried table name and the alias string.
 // `tblName` is `nil` if there are multiple tables in the query.
 // `tblAlias` will be the real table name if there is no table alias in the query.
-func getSingleTableNameAndAlias(tableRefs *ast.TableRefsClause) (tblName *ast.TableName, tblAlias model.CIStr) {
+func getSingleTableNameAndAlias(tableRefs *ast.TableRefsClause) (tblName *ast.TableName, tblAlias pmodel.CIStr) {
 	if tableRefs == nil || tableRefs.TableRefs == nil || tableRefs.TableRefs.Right != nil {
 		return nil, tblAlias
 	}
@@ -1653,7 +1657,7 @@ func getSingleTableNameAndAlias(tableRefs *ast.TableRefsClause) (tblName *ast.Ta
 }
 
 // getNameValuePairs extracts `column = constant/paramMarker` conditions from expr as name value pairs.
-func getNameValuePairs(ctx expression.BuildContext, tbl *model.TableInfo, tblName model.CIStr, nvPairs []nameValuePair, expr ast.ExprNode) (
+func getNameValuePairs(ctx expression.BuildContext, tbl *model.TableInfo, tblName pmodel.CIStr, nvPairs []nameValuePair, expr ast.ExprNode) (
 	pairs []nameValuePair, isTableDual bool) {
 	evalCtx := ctx.GetEvalCtx()
 	binOp, ok := expr.(*ast.BinaryOperationExpr)
@@ -1942,7 +1946,7 @@ func buildPointUpdatePlan(ctx base.PlanContext, pointPlan base.PhysicalPlan, dbN
 	if orderedList == nil {
 		return nil
 	}
-	handleCols := buildHandleCols(ctx, tbl, pointPlan.Schema())
+	handleCols := buildHandleCols(ctx, dbName, tbl, pointPlan)
 	updatePlan := Update{
 		SelectPlan:  pointPlan,
 		OrderedList: orderedList,
@@ -2063,27 +2067,27 @@ func buildPointDeletePlan(ctx base.PlanContext, pointPlan base.PhysicalPlan, dbN
 	if checkFastPlanPrivilege(ctx, dbName, tbl.Name.L, mysql.SelectPriv, mysql.DeletePriv) != nil {
 		return nil
 	}
-	handleCols := buildHandleCols(ctx, tbl, pointPlan.Schema())
-	delPlan := Delete{
-		SelectPlan: pointPlan,
-		TblColPosInfos: TblColPosInfoSlice{
-			TblColPosInfo{
-				TblID:      tbl.ID,
-				Start:      0,
-				End:        pointPlan.Schema().Len(),
-				HandleCols: handleCols,
-			},
-		},
-	}.Init(ctx)
+	handleCols := buildHandleCols(ctx, dbName, tbl, pointPlan)
 	var err error
 	is := ctx.GetInfoSchema().(infoschema.InfoSchema)
 	t, _ := is.TableByID(context.Background(), tbl.ID)
-	if t != nil {
-		tblID2Table := map[int64]table.Table{tbl.ID: t}
-		err = delPlan.buildOnDeleteFKTriggers(ctx, is, tblID2Table)
-		if err != nil {
-			return nil
-		}
+	intest.Assert(t != nil, "The point get executor is accessing a table without meta info.")
+	colPosInfo, err := initColPosInfo(tbl.ID, pointPlan.OutputNames(), handleCols)
+	if err != nil {
+		return nil
+	}
+	err = buildSingleTableColPosInfoForDelete(t, &colPosInfo)
+	if err != nil {
+		return nil
+	}
+	delPlan := Delete{
+		SelectPlan:     pointPlan,
+		TblColPosInfos: []TblColPosInfo{colPosInfo},
+	}.Init(ctx)
+	tblID2Table := map[int64]table.Table{tbl.ID: t}
+	err = delPlan.buildOnDeleteFKTriggers(ctx, is, tblID2Table)
+	if err != nil {
+		return nil
 	}
 	return delPlan
 }
@@ -2112,7 +2116,8 @@ func colInfoToColumn(col *model.ColumnInfo, idx int) *expression.Column {
 	}
 }
 
-func buildHandleCols(ctx base.PlanContext, tbl *model.TableInfo, schema *expression.Schema) util.HandleCols {
+func buildHandleCols(ctx base.PlanContext, dbName string, tbl *model.TableInfo, pointget base.PhysicalPlan) util.HandleCols {
+	schema := pointget.Schema()
 	// fields len is 0 for update and delete.
 	if tbl.PKIsHandle {
 		for i, col := range tbl.Columns {
@@ -2129,17 +2134,29 @@ func buildHandleCols(ctx base.PlanContext, tbl *model.TableInfo, schema *express
 
 	handleCol := colInfoToColumn(model.NewExtraHandleColInfo(), schema.Len())
 	schema.Append(handleCol)
+	newOutputNames := pointget.OutputNames().Shallow()
+	tableAliasName := tbl.Name
+	if schema.Len() > 0 {
+		tableAliasName = pointget.OutputNames()[0].TblName
+	}
+	newOutputNames = append(newOutputNames, &types.FieldName{
+		DBName:      pmodel.NewCIStr(dbName),
+		TblName:     tableAliasName,
+		OrigTblName: tbl.Name,
+		ColName:     model.ExtraHandleName,
+	})
+	pointget.SetOutputNames(newOutputNames)
 	return util.NewIntHandleCols(handleCol)
 }
 
 // TODO: Remove this, by enabling all types of partitioning
 // and update/add tests
-func getHashOrKeyPartitionColumnName(ctx base.PlanContext, tbl *model.TableInfo) *model.CIStr {
+func getHashOrKeyPartitionColumnName(ctx base.PlanContext, tbl *model.TableInfo) *pmodel.CIStr {
 	pi := tbl.GetPartitionInfo()
 	if pi == nil {
 		return nil
 	}
-	if pi.Type != model.PartitionTypeHash && pi.Type != model.PartitionTypeKey {
+	if pi.Type != pmodel.PartitionTypeHash && pi.Type != pmodel.PartitionTypeKey {
 		return nil
 	}
 	is := ctx.GetInfoSchema().(infoschema.InfoSchema)
@@ -2149,7 +2166,7 @@ func getHashOrKeyPartitionColumnName(ctx base.PlanContext, tbl *model.TableInfo)
 	}
 	// PartitionExpr don't need columns and names for hash partition.
 	partitionExpr := table.(partitionTable).PartitionExpr()
-	if pi.Type == model.PartitionTypeKey {
+	if pi.Type == pmodel.PartitionTypeKey {
 		// used to judge whether the key partition contains only one field
 		if len(pi.Columns) != 1 {
 			return nil

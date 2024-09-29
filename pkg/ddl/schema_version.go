@@ -22,26 +22,26 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl/logutil"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/metrics"
-	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/util/mathutil"
 	"go.uber.org/zap"
 )
 
 // SetSchemaDiffForCreateTables set SchemaDiff for ActionCreateTables.
 func SetSchemaDiffForCreateTables(diff *model.SchemaDiff, job *model.Job) error {
-	var tableInfos []*model.TableInfo
-	err := job.DecodeArgs(&tableInfos)
+	args, err := model.GetBatchCreateTableArgs(job)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	diff.AffectedOpts = make([]*model.AffectedOption, len(tableInfos))
-	for i := range tableInfos {
+	diff.AffectedOpts = make([]*model.AffectedOption, len(args.Tables))
+	for i := range args.Tables {
+		tblInfo := args.Tables[i].TableInfo
 		diff.AffectedOpts[i] = &model.AffectedOption{
 			SchemaID:    job.SchemaID,
 			OldSchemaID: job.SchemaID,
-			TableID:     tableInfos[i].ID,
-			OldTableID:  tableInfos[i].ID,
+			TableID:     tblInfo.ID,
+			OldTableID:  tblInfo.ID,
 		}
 	}
 	return nil
@@ -50,29 +50,35 @@ func SetSchemaDiffForCreateTables(diff *model.SchemaDiff, job *model.Job) error 
 // SetSchemaDiffForTruncateTable set SchemaDiff for ActionTruncateTable.
 func SetSchemaDiffForTruncateTable(diff *model.SchemaDiff, job *model.Job) error {
 	// Truncate table has two table ID, should be handled differently.
-	err := job.DecodeArgs(&diff.TableID)
+	args, err := model.GetTruncateTableArgs(job)
 	if err != nil {
 		return errors.Trace(err)
 	}
+	diff.TableID = args.NewTableID
 	diff.OldTableID = job.TableID
 
 	// affects are used to update placement rule cache
-	if len(job.CtxVars) > 0 {
-		oldIDs := job.CtxVars[0].([]int64)
-		newIDs := job.CtxVars[1].([]int64)
-		diff.AffectedOpts = buildPlacementAffects(oldIDs, newIDs)
+	if job.Version == model.JobVersion1 {
+		if len(job.CtxVars) > 0 {
+			oldIDs := job.CtxVars[0].([]int64)
+			newIDs := job.CtxVars[1].([]int64)
+			diff.AffectedOpts = buildPlacementAffects(oldIDs, newIDs)
+		}
+	} else {
+		if len(args.OldPartIDsWithPolicy) > 0 {
+			diff.AffectedOpts = buildPlacementAffects(args.OldPartIDsWithPolicy, args.NewPartIDsWithPolicy)
+		}
 	}
 	return nil
 }
 
 // SetSchemaDiffForCreateView set SchemaDiff for ActionCreateView.
 func SetSchemaDiffForCreateView(diff *model.SchemaDiff, job *model.Job) error {
-	tbInfo := &model.TableInfo{}
-	var orReplace bool
-	var oldTbInfoID int64
-	if err := job.DecodeArgs(tbInfo, &orReplace, &oldTbInfoID); err != nil {
+	args, err := model.GetCreateTableArgs(job)
+	if err != nil {
 		return errors.Trace(err)
 	}
+	tbInfo, orReplace, oldTbInfoID := args.TableInfo, args.OnExistReplace, args.OldViewTblID
 	// When the statement is "create or replace view " and we need to drop the old view,
 	// it has two table IDs and should be handled differently.
 	if oldTbInfoID > 0 && orReplace {
@@ -84,40 +90,38 @@ func SetSchemaDiffForCreateView(diff *model.SchemaDiff, job *model.Job) error {
 
 // SetSchemaDiffForRenameTable set SchemaDiff for ActionRenameTable.
 func SetSchemaDiffForRenameTable(diff *model.SchemaDiff, job *model.Job) error {
-	err := job.DecodeArgs(&diff.OldSchemaID)
+	args, err := model.GetRenameTableArgs(job)
 	if err != nil {
 		return errors.Trace(err)
 	}
+
+	diff.OldSchemaID = args.OldSchemaID
 	diff.TableID = job.TableID
 	return nil
 }
 
 // SetSchemaDiffForRenameTables set SchemaDiff for ActionRenameTables.
 func SetSchemaDiffForRenameTables(diff *model.SchemaDiff, job *model.Job) error {
-	var (
-		oldSchemaIDs, newSchemaIDs, tableIDs []int64
-		tableNames, oldSchemaNames           []*model.CIStr
-	)
-	err := job.DecodeArgs(&oldSchemaIDs, &newSchemaIDs, &tableNames, &tableIDs, &oldSchemaNames)
+	args, err := model.GetRenameTablesArgs(job)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	affects := make([]*model.AffectedOption, len(newSchemaIDs)-1)
-	for i, newSchemaID := range newSchemaIDs {
+	affects := make([]*model.AffectedOption, len(args.RenameTableInfos)-1)
+	for i, info := range args.RenameTableInfos {
 		// Do not add the first table to AffectedOpts. Related issue tidb#47064.
 		if i == 0 {
 			continue
 		}
 		affects[i-1] = &model.AffectedOption{
-			SchemaID:    newSchemaID,
-			TableID:     tableIDs[i],
-			OldTableID:  tableIDs[i],
-			OldSchemaID: oldSchemaIDs[i],
+			SchemaID:    info.NewSchemaID,
+			TableID:     info.TableID,
+			OldTableID:  info.TableID,
+			OldSchemaID: info.OldSchemaID,
 		}
 	}
-	diff.TableID = tableIDs[0]
-	diff.SchemaID = newSchemaIDs[0]
-	diff.OldSchemaID = oldSchemaIDs[0]
+	diff.TableID = args.RenameTableInfos[0].TableID
+	diff.SchemaID = args.RenameTableInfos[0].NewSchemaID
+	diff.OldSchemaID = args.RenameTableInfos[0].OldSchemaID
 	diff.AffectedOpts = affects
 	return nil
 }
@@ -129,22 +133,15 @@ func SetSchemaDiffForExchangeTablePartition(diff *model.SchemaDiff, job *model.J
 	diff.OldTableID = job.TableID
 	diff.OldSchemaID = job.SchemaID
 	// Update the partitioned table (it is only done in the last state)
-	var (
-		ptSchemaID     int64
-		ptTableID      int64
-		ptDefID        int64
-		partName       string // Not used
-		withValidation bool   // Not used
-	)
 	// See ddl.ExchangeTablePartition
-	err := job.DecodeArgs(&ptDefID, &ptSchemaID, &ptTableID, &partName, &withValidation)
+	args, err := model.GetExchangeTablePartitionArgs(job)
 	if err != nil {
 		return errors.Trace(err)
 	}
 	// This is needed for not crashing TiFlash!
 	// TODO: Update TiFlash, to handle StateWriteOnly
 	diff.AffectedOpts = []*model.AffectedOption{{
-		TableID: ptTableID,
+		TableID: args.PTTableID,
 	}}
 	if job.SchemaState != model.StatePublic {
 		// No change, just to refresh the non-partitioned table
@@ -155,13 +152,13 @@ func SetSchemaDiffForExchangeTablePartition(diff *model.SchemaDiff, job *model.J
 		diff.AffectedOpts[0].SchemaID = job.SchemaID
 		// Need reload partition table, use diff.AffectedOpts[0].OldSchemaID to mark it.
 		if len(multiInfos) > 0 {
-			diff.AffectedOpts[0].OldSchemaID = ptSchemaID
+			diff.AffectedOpts[0].OldSchemaID = args.PTSchemaID
 		}
 	} else {
 		// Swap
-		diff.TableID = ptDefID
+		diff.TableID = args.PartitionID
 		// Also add correct SchemaID in case different schemas
-		diff.AffectedOpts[0].SchemaID = ptSchemaID
+		diff.AffectedOpts[0].SchemaID = args.PTSchemaID
 	}
 	return nil
 }
@@ -212,15 +209,14 @@ func SetSchemaDiffForPartitionModify(diff *model.SchemaDiff, job *model.Job) err
 	diff.TableID = job.TableID
 	diff.OldTableID = job.TableID
 	if job.SchemaState == model.StateDeleteReorganization {
-		partInfo := &model.PartitionInfo{}
-		var partNames []string
-		err := job.DecodeArgs(&partNames, &partInfo)
+		args, err := model.GetTablePartitionArgs(job)
 		if err != nil {
 			return errors.Trace(err)
 		}
+		partInfo := args.PartInfo
 		// Final part, new table id is assigned
 		diff.TableID = partInfo.NewTableID
-		if len(job.CtxVars) > 0 {
+		if len(job.CtxVars) > 0 { // TODO remove it.
 			if droppedIDs, ok := job.CtxVars[0].([]int64); ok {
 				if addedIDs, ok := job.CtxVars[1].([]int64); ok {
 					// to use AffectedOpts we need both new and old to have the same length
@@ -239,34 +235,35 @@ func SetSchemaDiffForPartitionModify(diff *model.SchemaDiff, job *model.Job) err
 }
 
 // SetSchemaDiffForCreateTable set SchemaDiff for ActionCreateTable.
-func SetSchemaDiffForCreateTable(diff *model.SchemaDiff, job *model.Job) {
+func SetSchemaDiffForCreateTable(diff *model.SchemaDiff, job *model.Job) error {
 	diff.TableID = job.TableID
-	if len(job.Args) > 0 {
-		tbInfo, _ := job.Args[0].(*model.TableInfo)
-		// When create table with foreign key, there are two schema status change:
-		// 1. none -> write-only
-		// 2. write-only -> public
-		// In the second status change write-only -> public, infoschema loader should apply drop old table first, then
-		// apply create new table. So need to set diff.OldTableID here to make sure it.
-		if tbInfo != nil && tbInfo.State == model.StatePublic && len(tbInfo.ForeignKeys) > 0 {
-			diff.OldTableID = job.TableID
-		}
+	var tbInfo *model.TableInfo
+	// create table with foreign key will update tableInfo in the job args, so we
+	// must reuse already decoded ones.
+	// TODO make DecodeArgs can reuse already decoded args, so we can use GetCreateTableArgs.
+	if job.Version == model.JobVersion1 {
+		tbInfo, _ = job.Args[0].(*model.TableInfo)
+	} else {
+		tbInfo = job.Args[0].(*model.CreateTableArgs).TableInfo
 	}
+	// When create table with foreign key, there are two schema status change:
+	// 1. none -> write-only
+	// 2. write-only -> public
+	// In the second status change write-only -> public, infoschema loader should apply drop old table first, then
+	// apply create new table. So need to set diff.OldTableID here to make sure it.
+	if tbInfo.State == model.StatePublic && len(tbInfo.ForeignKeys) > 0 {
+		diff.OldTableID = job.TableID
+	}
+	return nil
 }
 
 // SetSchemaDiffForRecoverSchema set SchemaDiff for ActionRecoverSchema.
 func SetSchemaDiffForRecoverSchema(diff *model.SchemaDiff, job *model.Job) error {
-	var (
-		recoverSchemaInfo      *RecoverSchemaInfo
-		recoverSchemaCheckFlag int64
-	)
-	err := job.DecodeArgs(&recoverSchemaInfo, &recoverSchemaCheckFlag)
+	args, err := model.GetRecoverArgs(job)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	// Reserved recoverSchemaCheckFlag value for gc work judgment.
-	job.Args[checkFlagIndexInJobArgs] = recoverSchemaCheckFlag
-	recoverTabsInfo := recoverSchemaInfo.RecoverTabsInfo
+	recoverTabsInfo := args.RecoverTableInfos()
 	diff.AffectedOpts = make([]*model.AffectedOption, len(recoverTabsInfo))
 	for i := range recoverTabsInfo {
 		diff.AffectedOpts[i] = &model.AffectedOption{
@@ -313,7 +310,7 @@ func SetSchemaDiffForMultiInfos(diff *model.SchemaDiff, multiInfos ...schemaIDAn
 }
 
 // updateSchemaVersion increments the schema version by 1 and sets SchemaDiff.
-func updateSchemaVersion(jobCtx *jobContext, t *meta.Meta, job *model.Job, multiInfos ...schemaIDAndTableInfo) (int64, error) {
+func updateSchemaVersion(jobCtx *jobContext, t *meta.Mutator, job *model.Job, multiInfos ...schemaIDAndTableInfo) (int64, error) {
 	schemaVersion, err := jobCtx.setSchemaVersion(job)
 	if err != nil {
 		return 0, errors.Trace(err)
@@ -345,7 +342,7 @@ func updateSchemaVersion(jobCtx *jobContext, t *meta.Meta, job *model.Job, multi
 	case model.ActionRemovePartitioning, model.ActionAlterTablePartitioning:
 		err = SetSchemaDiffForPartitionModify(diff, job)
 	case model.ActionCreateTable:
-		SetSchemaDiffForCreateTable(diff, job)
+		err = SetSchemaDiffForCreateTable(diff, job)
 	case model.ActionRecoverSchema:
 		err = SetSchemaDiffForRecoverSchema(diff, job)
 	case model.ActionFlashbackCluster:
@@ -401,7 +398,7 @@ func waitVersionSyncedWithoutMDL(jobCtx *jobContext, job *model.Job) error {
 
 	ver, _ := jobCtx.store.CurrentVersion(kv.GlobalTxnScope)
 	snapshot := jobCtx.store.GetSnapshot(ver)
-	m := meta.NewSnapshotMeta(snapshot)
+	m := meta.NewReader(snapshot)
 	latestSchemaVersion, err := m.GetSchemaVersionWithNonEmptyDiff()
 	if err != nil {
 		logutil.DDLLogger().Warn("get global version failed", zap.Int64("jobID", job.ID), zap.Error(err))

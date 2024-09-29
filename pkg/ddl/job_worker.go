@@ -35,21 +35,17 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser"
-	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/sessionctx/binloginfo"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
-	pumpcli "github.com/pingcap/tidb/pkg/tidb-binlog/pump_client"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	tidblogutil "github.com/pingcap/tidb/pkg/util/logutil"
-	"github.com/pingcap/tidb/pkg/util/resourcegrouptag"
 	"github.com/pingcap/tidb/pkg/util/topsql"
 	topsqlstate "github.com/pingcap/tidb/pkg/util/topsql/state"
-	"github.com/tikv/client-go/v2/tikvrpc"
 	kvutil "github.com/tikv/client-go/v2/util"
 	atomicutil "go.uber.org/atomic"
 	"go.uber.org/zap"
@@ -88,7 +84,6 @@ type jobContext struct {
 	autoidCli       *autoid.ClientDiscover
 	store           kv.Storage
 	schemaVerSyncer schemaver.Syncer
-	binlogCli       *pumpcli.PumpsClient
 
 	// per job fields
 	notifyCh chan struct{}
@@ -238,7 +233,7 @@ func injectFailPointForGetJob(job *model.Job) {
 }
 
 // handleUpdateJobError handles the too large DDL job.
-func (w *worker) handleUpdateJobError(t *meta.Meta, job *model.Job, err error) error {
+func (w *worker) handleUpdateJobError(t *meta.Mutator, job *model.Job, err error) error {
 	if err == nil {
 		return nil
 	}
@@ -272,7 +267,7 @@ func (w *worker) updateDDLJob(job *model.Job, updateRawArgs bool) error {
 		w.jobLogger(job).Info("meet something wrong before update DDL job, shouldn't update raw args",
 			zap.String("job", job.String()))
 	}
-	return errors.Trace(updateDDLJob2Table(w.sess, job, updateRawArgs))
+	return errors.Trace(updateDDLJob2Table(w.ctx, w.sess, job, updateRawArgs))
 }
 
 // registerMDLInfo registers metadata lock info.
@@ -341,7 +336,7 @@ func JobNeedGC(job *model.Job) bool {
 
 // finishDDLJob deletes the finished DDL job in the ddl queue and puts it to history queue.
 // If the DDL job need to handle in background, it will prepare a background job.
-func (w *worker) finishDDLJob(t *meta.Meta, job *model.Job) (err error) {
+func (w *worker) finishDDLJob(t *meta.Mutator, job *model.Job) (err error) {
 	startTime := time.Now()
 	defer func() {
 		metrics.DDLWorkerHistogram.WithLabelValues(metrics.WorkerFinishDDLJob, job.Type.String(), metrics.RetLabel(err)).Observe(time.Since(startTime).Seconds())
@@ -398,15 +393,11 @@ func (w *worker) deleteDDLJob(job *model.Job) error {
 }
 
 func finishRecoverTable(w *worker, job *model.Job) error {
-	var (
-		recoverInfo           *RecoverInfo
-		recoverTableCheckFlag int64
-	)
-	err := job.DecodeArgs(&recoverInfo, &recoverTableCheckFlag)
+	args, err := model.GetRecoverArgs(job)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	if recoverTableCheckFlag == recoverCheckFlagEnableGC {
+	if args.CheckFlag == recoverCheckFlagEnableGC {
 		err = enableGC(w)
 		if err != nil {
 			return errors.Trace(err)
@@ -416,15 +407,11 @@ func finishRecoverTable(w *worker, job *model.Job) error {
 }
 
 func finishRecoverSchema(w *worker, job *model.Job) error {
-	var (
-		recoverSchemaInfo      *RecoverSchemaInfo
-		recoverSchemaCheckFlag int64
-	)
-	err := job.DecodeArgs(&recoverSchemaInfo, &recoverSchemaCheckFlag)
+	args, err := model.GetRecoverArgs(job)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	if recoverSchemaCheckFlag == recoverCheckFlagEnableGC {
+	if args.CheckFlag == recoverCheckFlagEnableGC {
 		err = enableGC(w)
 		if err != nil {
 			return errors.Trace(err)
@@ -470,7 +457,7 @@ func (w *ReorgContext) setDDLLabelForDiagnosis(jobType model.ActionType) {
 	w.ddlJobCtx = kv.WithInternalSourceAndTaskType(w.ddlJobCtx, w.ddlJobSourceType(), kvutil.ExplicitTypeDDL)
 }
 
-func (w *worker) handleJobDone(jobCtx *jobContext, job *model.Job, t *meta.Meta) error {
+func (w *worker) handleJobDone(jobCtx *jobContext, job *model.Job, t *meta.Mutator) error {
 	if err := w.checkBeforeCommit(); err != nil {
 		return err
 	}
@@ -534,7 +521,7 @@ func (w *worker) transitOneJobStep(jobCtx *jobContext, job *model.Job) (int64, e
 	if err != nil {
 		return 0, err
 	}
-	t := meta.NewMeta(txn)
+	t := meta.NewMutator(txn)
 
 	if job.IsDone() || job.IsRollbackDone() || job.IsCancelled() {
 		if job.IsDone() {
@@ -601,7 +588,6 @@ func (w *worker) transitOneJobStep(jobCtx *jobContext, job *model.Job) (int64, e
 		jobCtx.unlockSchemaVersion(job.ID)
 		return 0, err
 	}
-	writeBinlog(jobCtx.binlogCli, txn, job)
 	// reset the SQL digest to make topsql work right.
 	w.sess.GetSessionVars().StmtCtx.ResetSQLDigest(job.Query)
 	err = w.sess.Commit(w.ctx)
@@ -641,17 +627,13 @@ func (w *worker) checkBeforeCommit() error {
 	return nil
 }
 
-func (w *ReorgContext) getResourceGroupTaggerForTopSQL() tikvrpc.ResourceGroupTagger {
+func (w *ReorgContext) getResourceGroupTaggerForTopSQL() *kv.ResourceGroupTagBuilder {
 	if !topsqlstate.TopSQLEnabled() || w.cacheDigest == nil {
 		return nil
 	}
 
 	digest := w.cacheDigest
-	tagger := func(req *tikvrpc.Request) {
-		req.ResourceGroupTag = resourcegrouptag.EncodeResourceGroupTag(digest, nil,
-			resourcegrouptag.GetResourceGroupLabelByKey(resourcegrouptag.GetFirstKeyFromRequest(req)))
-	}
-	return tagger
+	return kv.NewResourceGroupTagBuilder().SetSQLDigest(digest)
 }
 
 func (w *ReorgContext) ddlJobSourceType() string {
@@ -671,19 +653,6 @@ func skipWriteBinlog(job *model.Job) bool {
 	}
 
 	return false
-}
-
-func writeBinlog(binlogCli *pumpcli.PumpsClient, txn kv.Transaction, job *model.Job) {
-	if job.IsDone() || job.IsRollbackDone() ||
-		// When this column is in the "delete only" and "delete reorg" states, the binlog of "drop column" has not been written yet,
-		// but the column has been removed from the binlog of the write operation.
-		// So we add this binlog to enable downstream components to handle DML correctly in this schema state.
-		(job.Type == model.ActionDropColumn && job.SchemaState == model.StateDeleteOnly) {
-		if skipWriteBinlog(job) {
-			return
-		}
-		binloginfo.SetDDLBinlog(binlogCli, txn, job.ID, int32(job.SchemaState), job.Query)
-	}
 }
 
 func chooseLeaseTime(t, max time.Duration) time.Duration {
@@ -777,7 +746,7 @@ func (w *worker) processJobPausingRequest(d *ddlCtx, job *model.Job) (isRunnable
 // updateGlobalVersionAndWaitSynced to wait for all nodes to catch up JobStateDone.
 func (w *worker) runOneJobStep(
 	jobCtx *jobContext,
-	t *meta.Meta,
+	t *meta.Mutator,
 	job *model.Job,
 ) (ver int64, updateRawArgs bool, err error) {
 	defer tidbutil.Recover(metrics.LabelDDLWorker, fmt.Sprintf("%s runOneJobStep", w),
@@ -884,7 +853,7 @@ func (w *worker) runOneJobStep(
 		ver, err = w.onShardRowID(jobCtx, t, job)
 	case model.ActionModifyTableComment:
 		ver, err = onModifyTableComment(jobCtx, t, job)
-	case model.ActionModifyTableAutoIdCache:
+	case model.ActionModifyTableAutoIDCache:
 		ver, err = onModifyTableAutoIDCache(jobCtx, t, job)
 	case model.ActionAddTablePartition:
 		ver, err = w.onAddTablePartition(jobCtx, t, job)
@@ -899,7 +868,7 @@ func (w *worker) runOneJobStep(
 	case model.ActionSetTiFlashReplica:
 		ver, err = w.onSetTableFlashReplica(jobCtx, t, job)
 	case model.ActionUpdateTiFlashReplicaStatus:
-		ver, err = onUpdateFlashReplicaStatus(jobCtx, t, job)
+		ver, err = onUpdateTiFlashReplicaStatus(jobCtx, t, job)
 	case model.ActionCreateSequence:
 		ver, err = onCreateSequence(jobCtx, t, job)
 	case model.ActionAlterIndexVisibility:

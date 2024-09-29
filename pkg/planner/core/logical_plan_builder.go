@@ -25,20 +25,22 @@ import (
 	"time"
 	"unicode"
 
+	"github.com/bits-and-blooms/bitset"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/errctx"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/expression/aggregation"
-	exprctx "github.com/pingcap/tidb/pkg/expression/context"
+	"github.com/pingcap/tidb/pkg/expression/exprctx"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/parser/format"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/opcode"
 	"github.com/pingcap/tidb/pkg/parser/terror"
@@ -493,7 +495,7 @@ func (b *PlanBuilder) buildResultSetNode(ctx context.Context, node ast.ResultSet
 	}
 }
 
-func (ds *DataSource) setPreferredStoreType(hintInfo *h.PlanHints) {
+func setPreferredStoreType(ds *logicalop.DataSource, hintInfo *h.PlanHints) {
 	if hintInfo == nil {
 		return
 	}
@@ -515,7 +517,7 @@ func (ds *DataSource) setPreferredStoreType(hintInfo *h.PlanHints) {
 		if ds.PreferStoreType&h.PreferTiKV == 0 {
 			errMsg := fmt.Sprintf("No available path for table %s.%s with the store type %s of the hint /*+ read_from_storage */, "+
 				"please check the status of the table replica and variable value of tidb_isolation_read_engines(%v)",
-				ds.DBName.O, ds.table.Meta().Name.O, kv.TiKV.Name(), ds.SCtx().GetSessionVars().GetIsolationReadEngines())
+				ds.DBName.O, ds.Table.Meta().Name.O, kv.TiKV.Name(), ds.SCtx().GetSessionVars().GetIsolationReadEngines())
 			ds.SCtx().GetSessionVars().StmtCtx.SetHintWarning(errMsg)
 		} else {
 			ds.SCtx().GetSessionVars().RaiseWarningWhenMPPEnforced("MPP mode may be blocked because you have set a hint to read table `" + hintTbl.TblName.O + "` from TiKV.")
@@ -541,7 +543,7 @@ func (ds *DataSource) setPreferredStoreType(hintInfo *h.PlanHints) {
 		if ds.PreferStoreType&h.PreferTiFlash == 0 {
 			errMsg := fmt.Sprintf("No available path for table %s.%s with the store type %s of the hint /*+ read_from_storage */, "+
 				"please check the status of the table replica and variable value of tidb_isolation_read_engines(%v)",
-				ds.DBName.O, ds.table.Meta().Name.O, kv.TiFlash.Name(), ds.SCtx().GetSessionVars().GetIsolationReadEngines())
+				ds.DBName.O, ds.Table.Meta().Name.O, kv.TiFlash.Name(), ds.SCtx().GetSessionVars().GetIsolationReadEngines())
 			ds.SCtx().GetSessionVars().StmtCtx.SetHintWarning(errMsg)
 		}
 	}
@@ -981,7 +983,7 @@ func (b *PlanBuilder) buildSelection(ctx context.Context, p base.LogicalPlan, wh
 }
 
 // buildProjectionFieldNameFromColumns builds the field name, table name and database name when field expression is a column reference.
-func (*PlanBuilder) buildProjectionFieldNameFromColumns(origField *ast.SelectField, colNameField *ast.ColumnNameExpr, name *types.FieldName) (colName, origColName, tblName, origTblName, dbName model.CIStr) {
+func (*PlanBuilder) buildProjectionFieldNameFromColumns(origField *ast.SelectField, colNameField *ast.ColumnNameExpr, name *types.FieldName) (colName, origColName, tblName, origTblName, dbName pmodel.CIStr) {
 	origTblName, origColName, dbName = name.OrigTblName, name.OrigColName, name.DBName
 	if origField.AsName.L == "" {
 		colName = colNameField.Name.Name
@@ -997,7 +999,7 @@ func (*PlanBuilder) buildProjectionFieldNameFromColumns(origField *ast.SelectFie
 }
 
 // buildProjectionFieldNameFromExpressions builds the field name when field expression is a normal expression.
-func (b *PlanBuilder) buildProjectionFieldNameFromExpressions(_ context.Context, field *ast.SelectField) (model.CIStr, error) {
+func (b *PlanBuilder) buildProjectionFieldNameFromExpressions(_ context.Context, field *ast.SelectField) (pmodel.CIStr, error) {
 	if agg, ok := field.Expr.(*ast.AggregateFuncExpr); ok && agg.F == ast.AggFuncFirstRow {
 		// When the query is select t.a from t group by a; The Column Name should be a but not t.a;
 		return agg.Args[0].(*ast.ColumnNameExpr).Name.Name, nil
@@ -1010,16 +1012,16 @@ func (b *PlanBuilder) buildProjectionFieldNameFromExpressions(_ context.Context,
 	if isFuncCall && funcCall.FnName.L == ast.NameConst {
 		if v, err := evalAstExpr(b.ctx.GetExprCtx(), funcCall.Args[0]); err == nil {
 			if s, err := v.ToString(); err == nil {
-				return model.NewCIStr(s), nil
+				return pmodel.NewCIStr(s), nil
 			}
 		}
-		return model.NewCIStr(""), plannererrors.ErrWrongArguments.GenWithStackByArgs("NAME_CONST")
+		return pmodel.NewCIStr(""), plannererrors.ErrWrongArguments.GenWithStackByArgs("NAME_CONST")
 	}
 	valueExpr, isValueExpr := innerExpr.(*driver.ValueExpr)
 
 	// Non-literal: Output as inputed, except that comments need to be removed.
 	if !isValueExpr {
-		return model.NewCIStr(parser.SpecFieldPattern.ReplaceAllStringFunc(field.Text(), parser.TrimComment)), nil
+		return pmodel.NewCIStr(parser.SpecFieldPattern.ReplaceAllStringFunc(field.Text(), parser.TrimComment)), nil
 	}
 
 	// Literal: Need special processing
@@ -1035,21 +1037,21 @@ func (b *PlanBuilder) buildProjectionFieldNameFromExpressions(_ context.Context,
 		fieldName := strings.TrimLeftFunc(projName, func(r rune) bool {
 			return !unicode.IsOneOf(mysql.RangeGraph, r)
 		})
-		return model.NewCIStr(fieldName), nil
+		return pmodel.NewCIStr(fieldName), nil
 	case types.KindNull:
 		// See #4053, #3685
-		return model.NewCIStr("NULL"), nil
+		return pmodel.NewCIStr("NULL"), nil
 	case types.KindBinaryLiteral:
 		// Don't rewrite BIT literal or HEX literals
-		return model.NewCIStr(field.Text()), nil
+		return pmodel.NewCIStr(field.Text()), nil
 	case types.KindInt64:
 		// See #9683
 		// TRUE or FALSE can be a int64
 		if mysql.HasIsBooleanFlag(valueExpr.Type.GetFlag()) {
 			if i := valueExpr.GetValue().(int64); i == 0 {
-				return model.NewCIStr("FALSE"), nil
+				return pmodel.NewCIStr("FALSE"), nil
 			}
-			return model.NewCIStr("TRUE"), nil
+			return pmodel.NewCIStr("TRUE"), nil
 		}
 		fallthrough
 
@@ -1057,24 +1059,24 @@ func (b *PlanBuilder) buildProjectionFieldNameFromExpressions(_ context.Context,
 		fieldName := field.Text()
 		fieldName = strings.TrimLeft(fieldName, "\t\n +(")
 		fieldName = strings.TrimRight(fieldName, "\t\n )")
-		return model.NewCIStr(fieldName), nil
+		return pmodel.NewCIStr(fieldName), nil
 	}
 }
 
 func buildExpandFieldName(ctx expression.EvalContext, expr expression.Expression, name *types.FieldName, genName string) *types.FieldName {
 	_, isCol := expr.(*expression.Column)
-	var origTblName, origColName, dbName, colName, tblName model.CIStr
+	var origTblName, origColName, dbName, colName, tblName pmodel.CIStr
 	if genName != "" {
 		// for case like: gid_, gpos_
-		colName = model.NewCIStr(expr.StringWithCtx(ctx, errors.RedactLogDisable))
+		colName = pmodel.NewCIStr(expr.StringWithCtx(ctx, errors.RedactLogDisable))
 	} else if isCol {
 		// col ref to original col, while its nullability may be changed.
 		origTblName, origColName, dbName = name.OrigTblName, name.OrigColName, name.DBName
-		colName = model.NewCIStr("ex_" + name.ColName.O)
-		tblName = model.NewCIStr("ex_" + name.TblName.O)
+		colName = pmodel.NewCIStr("ex_" + name.ColName.O)
+		tblName = pmodel.NewCIStr("ex_" + name.TblName.O)
 	} else {
 		// Other: complicated expression.
-		colName = model.NewCIStr("ex_" + expr.StringWithCtx(ctx, errors.RedactLogDisable))
+		colName = pmodel.NewCIStr("ex_" + expr.StringWithCtx(ctx, errors.RedactLogDisable))
 	}
 	newName := &types.FieldName{
 		TblName:     tblName,
@@ -1088,7 +1090,7 @@ func buildExpandFieldName(ctx expression.EvalContext, expr expression.Expression
 
 // buildProjectionField builds the field object according to SelectField in projection.
 func (b *PlanBuilder) buildProjectionField(ctx context.Context, p base.LogicalPlan, field *ast.SelectField, expr expression.Expression) (*expression.Column, *types.FieldName, error) {
-	var origTblName, tblName, origColName, colName, dbName model.CIStr
+	var origTblName, tblName, origColName, colName, dbName pmodel.CIStr
 	innerNode := getInnerFromParenthesesAndUnaryPlus(field.Expr)
 	col, isCol := expr.(*expression.Column)
 	// Correlated column won't affect the final output names. So we can put it in any of the three logic block.
@@ -2277,7 +2279,7 @@ func (a *havingWindowAndOrderbyExprResolver) Leave(n ast.Node) (node ast.Node, o
 		a.selectFields = append(a.selectFields, &ast.SelectField{
 			Auxiliary: true,
 			Expr:      v,
-			AsName:    model.NewCIStr(fmt.Sprintf("sel_agg_%d", len(a.selectFields))),
+			AsName:    pmodel.NewCIStr(fmt.Sprintf("sel_agg_%d", len(a.selectFields))),
 		})
 	case *ast.WindowFuncExpr:
 		a.inWindowFunc = false
@@ -2289,7 +2291,7 @@ func (a *havingWindowAndOrderbyExprResolver) Leave(n ast.Node) (node ast.Node, o
 			a.selectFields = append(a.selectFields, &ast.SelectField{
 				Auxiliary: true,
 				Expr:      v,
-				AsName:    model.NewCIStr(fmt.Sprintf("sel_window_%d", len(a.selectFields))),
+				AsName:    pmodel.NewCIStr(fmt.Sprintf("sel_window_%d", len(a.selectFields))),
 			})
 		}
 	case *ast.WindowSpec:
@@ -2818,7 +2820,7 @@ func (b *PlanBuilder) resolveCorrelatedAggregates(ctx context.Context, sel *ast.
 		sel.Fields.Fields = append(sel.Fields.Fields, &ast.SelectField{
 			Auxiliary: true,
 			Expr:      aggFunc,
-			AsName:    model.NewCIStr(fmt.Sprintf("sel_subq_agg_%d", len(sel.Fields.Fields))),
+			AsName:    pmodel.NewCIStr(fmt.Sprintf("sel_subq_agg_%d", len(sel.Fields.Fields))),
 		})
 	}
 	return correlatedAggMap, nil
@@ -3597,9 +3599,9 @@ func (b *PlanBuilder) addAliasName(ctx context.Context, selectStmt *ast.SelectSt
 			oldName := field.AsName
 			if dup, ok := dedupMap[field.AsName.L]; ok {
 				if dup == 0 {
-					field.AsName = model.NewCIStr(fmt.Sprintf("Name_exp_%s", field.AsName.O))
+					field.AsName = pmodel.NewCIStr(fmt.Sprintf("Name_exp_%s", field.AsName.O))
 				} else {
-					field.AsName = model.NewCIStr(fmt.Sprintf("Name_exp_%d_%s", dup, field.AsName.O))
+					field.AsName = pmodel.NewCIStr(fmt.Sprintf("Name_exp_%d_%s", dup, field.AsName.O))
 				}
 				dedupMap[oldName.L] = dup + 1
 			} else {
@@ -3997,22 +3999,11 @@ func (b *PlanBuilder) buildTableDual() *logicalop.LogicalTableDual {
 	return logicalop.LogicalTableDual{RowCount: 1}.Init(b.ctx, b.getSelectOffset())
 }
 
-func (ds *DataSource) newExtraHandleSchemaCol() *expression.Column {
-	tp := types.NewFieldType(mysql.TypeLonglong)
-	tp.SetFlag(mysql.NotNullFlag | mysql.PriKeyFlag)
-	return &expression.Column{
-		RetType:  tp,
-		UniqueID: ds.SCtx().GetSessionVars().AllocPlanColumnID(),
-		ID:       model.ExtraHandleID,
-		OrigName: fmt.Sprintf("%v.%v.%v", ds.DBName, ds.TableInfo.Name, model.ExtraHandleName),
-	}
-}
-
-// AddExtraPhysTblIDColumn for partition table.
+// addExtraPhysTblIDColumn4DS for partition table.
 // 'select ... for update' on a partition table need to know the partition ID
 // to construct the lock key, so this column is added to the chunk row.
 // Also needed for checking against the sessions transaction buffer
-func (ds *DataSource) AddExtraPhysTblIDColumn() *expression.Column {
+func addExtraPhysTblIDColumn4DS(ds *logicalop.DataSource) *expression.Column {
 	// Avoid adding multiple times (should never happen!)
 	cols := ds.TblCols
 	for i := len(cols) - 1; i >= 0; i-- {
@@ -4024,7 +4015,7 @@ func (ds *DataSource) AddExtraPhysTblIDColumn() *expression.Column {
 		RetType:  types.NewFieldType(mysql.TypeLonglong),
 		UniqueID: ds.SCtx().GetSessionVars().AllocPlanColumnID(),
 		ID:       model.ExtraPhysTblID,
-		OrigName: fmt.Sprintf("%v.%v.%v", ds.DBName, ds.TableInfo.Name, model.ExtraPhysTblIdName),
+		OrigName: fmt.Sprintf("%v.%v.%v", ds.DBName, ds.TableInfo.Name, model.ExtraPhysTblIDName),
 	}
 
 	ds.Columns = append(ds.Columns, model.NewExtraPhysTblIDColInfo())
@@ -4033,8 +4024,8 @@ func (ds *DataSource) AddExtraPhysTblIDColumn() *expression.Column {
 	ds.SetOutputNames(append(ds.OutputNames(), &types.FieldName{
 		DBName:      ds.DBName,
 		TblName:     ds.TableInfo.Name,
-		ColName:     model.ExtraPhysTblIdName,
-		OrigColName: model.ExtraPhysTblIdName,
+		ColName:     model.ExtraPhysTblIDName,
+		OrigColName: model.ExtraPhysTblIDName,
 	}))
 	ds.TblCols = append(ds.TblCols, pidCol)
 	return pidCol
@@ -4168,7 +4159,10 @@ func getLatestVersionFromStatsTable(ctx sessionctx.Context, tblInfo *model.Table
 	return version
 }
 
-func (b *PlanBuilder) tryBuildCTE(ctx context.Context, tn *ast.TableName, asName *model.CIStr) (base.LogicalPlan, error) {
+// tryBuildCTE considers the input tn as a reference to a CTE and tries to build the logical plan for it like building
+// DataSource for normal tables.
+// tryBuildCTE will push an entry into handleHelper when successful.
+func (b *PlanBuilder) tryBuildCTE(ctx context.Context, tn *ast.TableName, asName *pmodel.CIStr) (base.LogicalPlan, error) {
 	for i := len(b.outerCTEs) - 1; i >= 0; i-- {
 		cte := b.outerCTEs[i]
 		if cte.def.Name.L == tn.Name.L {
@@ -4192,6 +4186,7 @@ func (b *PlanBuilder) tryBuildCTE(ctx context.Context, tn *ast.TableName, asName
 				p := logicalop.LogicalCTETable{Name: cte.def.Name.String(), IDForStorage: cte.storageID, SeedStat: cte.seedStat, SeedSchema: cte.seedLP.Schema()}.Init(b.ctx, b.getSelectOffset())
 				p.SetSchema(getResultCTESchema(cte.seedLP.Schema(), b.ctx.GetSessionVars()))
 				p.SetOutputNames(cte.seedLP.OutputNames())
+				b.handleHelper.pushMap(nil)
 				return p, nil
 			}
 
@@ -4314,7 +4309,7 @@ func (b *PlanBuilder) buildDataSourceFromCTEMerge(ctx context.Context, cte *ast.
 	outPutNames := p.OutputNames()
 	for _, name := range outPutNames {
 		name.TblName = cte.Name
-		name.DBName = model.NewCIStr(b.ctx.GetSessionVars().CurrentDB)
+		name.DBName = pmodel.NewCIStr(b.ctx.GetSessionVars().CurrentDB)
 	}
 
 	if len(cte.ColNameList) > 0 {
@@ -4329,7 +4324,7 @@ func (b *PlanBuilder) buildDataSourceFromCTEMerge(ctx context.Context, cte *ast.
 	return p, nil
 }
 
-func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, asName *model.CIStr) (base.LogicalPlan, error) {
+func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, asName *pmodel.CIStr) (base.LogicalPlan, error) {
 	b.optFlag |= rule.FlagPredicateSimplification
 	dbName := tn.Schema
 	sessionVars := b.ctx.GetSessionVars()
@@ -4340,7 +4335,7 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 		if err != nil || p != nil {
 			return p, err
 		}
-		dbName = model.NewCIStr(sessionVars.CurrentDB)
+		dbName = pmodel.NewCIStr(sessionVars.CurrentDB)
 	}
 
 	is := b.is
@@ -4569,10 +4564,10 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 			}
 		}
 	}
-	ds := DataSource{
+	ds := logicalop.DataSource{
 		DBName:              dbName,
 		TableAsName:         asName,
-		table:               tbl,
+		Table:               tbl,
 		TableInfo:           tableInfo,
 		PhysicalTableID:     tableInfo.ID,
 		AstIndexHints:       tn.IndexHints,
@@ -4582,7 +4577,7 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 		Columns:             make([]*model.ColumnInfo, 0, len(columns)),
 		PartitionNames:      tn.PartitionNames,
 		TblCols:             make([]*expression.Column, 0, len(columns)),
-		PreferPartitions:    make(map[int][]model.CIStr),
+		PreferPartitions:    make(map[int][]pmodel.CIStr),
 		IS:                  b.is,
 		IsForUpdateRead:     b.isForUpdateRead,
 	}.Init(b.ctx, b.getSelectOffset())
@@ -4620,7 +4615,7 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 			primaryIdx := tables.FindPrimaryIndex(tableInfo)
 			handleCols = util.NewCommonHandleCols(b.ctx.GetSessionVars().StmtCtx, tableInfo, primaryIdx, ds.TblCols)
 		} else {
-			extraCol := ds.newExtraHandleSchemaCol()
+			extraCol := ds.NewExtraHandleSchemaCol()
 			handleCols = util.NewIntHandleCols(extraCol)
 			ds.Columns = append(ds.Columns, model.NewExtraHandleColInfo())
 			schema.Append(extraCol)
@@ -4640,7 +4635,7 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 	b.handleHelper.pushMap(handleMap)
 	ds.SetSchema(schema)
 	ds.SetOutputNames(names)
-	ds.setPreferredStoreType(b.TableHints())
+	setPreferredStoreType(ds, b.TableHints())
 	ds.SampleInfo = tablesampler.NewTableSampleInfo(tn.TableSample, schema, b.partitionedTable)
 	b.isSampling = ds.SampleInfo != nil
 
@@ -4696,7 +4691,7 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 			// Adding ExtraPhysTblIDCol for UnionScan (transaction buffer handling)
 			// Not using old static prune mode
 			// Single TableReader for all partitions, needs the PhysTblID from storage
-			_ = ds.AddExtraPhysTblIDColumn()
+			_ = addExtraPhysTblIDColumn4DS(ds)
 		}
 		result = us
 	}
@@ -4744,7 +4739,7 @@ func (b *PlanBuilder) timeRangeForSummaryTable() util.QueryTimeRange {
 	return util.QueryTimeRange{From: from, To: to}
 }
 
-func (b *PlanBuilder) buildMemTable(_ context.Context, dbName model.CIStr, tableInfo *model.TableInfo) (base.LogicalPlan, error) {
+func (b *PlanBuilder) buildMemTable(_ context.Context, dbName pmodel.CIStr, tableInfo *model.TableInfo) (base.LogicalPlan, error) {
 	// We can use the `TableInfo.Columns` directly because the memory table has
 	// a stable schema and there is no online DDL on the memory table.
 	schema := expression.NewSchema(make([]*expression.Column, 0, len(tableInfo.Columns))...)
@@ -4835,6 +4830,8 @@ func (b *PlanBuilder) buildMemTable(_ context.Context, dbName model.CIStr, table
 			p.Extractor = NewInfoSchemaSequenceExtractor()
 		case infoschema.TableTiDBIndexUsage:
 			p.Extractor = NewInfoSchemaTiDBIndexUsageExtractor()
+		case infoschema.TableDDLJobs:
+			p.Extractor = NewInfoSchemaDDLExtractor()
 		case infoschema.TableCheckConstraints:
 			p.Extractor = NewInfoSchemaCheckConstraintsExtractor()
 		case infoschema.TableTiDBCheckConstraints:
@@ -4857,7 +4854,7 @@ func (b *PlanBuilder) buildMemTable(_ context.Context, dbName model.CIStr, table
 }
 
 // checkRecursiveView checks whether this view is recursively defined.
-func (b *PlanBuilder) checkRecursiveView(dbName model.CIStr, tableName model.CIStr) (func(), error) {
+func (b *PlanBuilder) checkRecursiveView(dbName pmodel.CIStr, tableName pmodel.CIStr) (func(), error) {
 	viewFullName := dbName.L + "." + tableName.L
 	if b.buildingViewStack == nil {
 		b.buildingViewStack = set.NewStringSet()
@@ -4879,7 +4876,7 @@ func (b *PlanBuilder) checkRecursiveView(dbName model.CIStr, tableName model.CIS
 // qbNameMap4View and viewHints are used for the view's hint.
 // qbNameMap4View maps the query block name to the view table lists.
 // viewHints group the view hints based on the view's query block name.
-func (b *PlanBuilder) BuildDataSourceFromView(ctx context.Context, dbName model.CIStr, tableInfo *model.TableInfo, qbNameMap4View map[string][]ast.HintTable, viewHints map[string][]*ast.TableOptimizerHint) (base.LogicalPlan, error) {
+func (b *PlanBuilder) BuildDataSourceFromView(ctx context.Context, dbName pmodel.CIStr, tableInfo *model.TableInfo, qbNameMap4View map[string][]ast.HintTable, viewHints map[string][]*ast.TableOptimizerHint) (base.LogicalPlan, error) {
 	viewDepth := b.ctx.GetSessionVars().StmtCtx.ViewDepth
 	b.ctx.GetSessionVars().StmtCtx.ViewDepth++
 	deferFunc, err := b.checkRecursiveView(dbName, tableInfo.Name)
@@ -4982,7 +4979,7 @@ func (b *PlanBuilder) BuildDataSourceFromView(ctx context.Context, dbName model.
 		!pm.RequestVerification(b.ctx.GetSessionVars().ActiveRoles, dbName.L, tableInfo.Name.L, "", mysql.SelectPriv) {
 		return nil, plannererrors.ErrViewNoExplain
 	}
-	if tableInfo.View.Security == model.SecurityDefiner {
+	if tableInfo.View.Security == pmodel.SecurityDefiner {
 		if pm != nil {
 			for _, v := range b.visitInfo {
 				if !pm.RequestVerificationWithUser(v.db, v.table, v.column, v.privilege, tableInfo.View.Definer) {
@@ -5005,7 +5002,7 @@ func (b *PlanBuilder) BuildDataSourceFromView(ctx context.Context, dbName model.
 	return b.buildProjUponView(ctx, dbName, tableInfo, selectLogicalPlan)
 }
 
-func (b *PlanBuilder) buildProjUponView(_ context.Context, dbName model.CIStr, tableInfo *model.TableInfo, selectLogicalPlan base.Plan) (base.LogicalPlan, error) {
+func (b *PlanBuilder) buildProjUponView(_ context.Context, dbName pmodel.CIStr, tableInfo *model.TableInfo, selectLogicalPlan base.Plan) (base.LogicalPlan, error) {
 	columnInfo := tableInfo.Cols()
 	cols := selectLogicalPlan.Schema().Clone().Columns
 	outputNamesOfUnderlyingSelect := selectLogicalPlan.OutputNames().Shallow()
@@ -5176,6 +5173,8 @@ type TblColPosInfo struct {
 	Start, End int
 	// HandleOrdinal represents the ordinal of the handle column.
 	HandleCols util.HandleCols
+
+	*table.ExtraPartialRowOption
 }
 
 // MemoryUsage return the memory usage of TblColPosInfo
@@ -5223,33 +5222,219 @@ func (c TblColPosInfoSlice) FindTblIdx(colOrdinal int) (int, bool) {
 	return rangeBehindOrdinal - 1, true
 }
 
-// buildColumns2Handle builds columns to handle mapping.
-func buildColumns2Handle(
+// buildColumns2HandleWithWrtiableColumns builds columns to handle mapping.
+// This func is called by Update and can only see writable columns.
+func buildColumns2HandleWithWrtiableColumns(
 	names []*types.FieldName,
 	tblID2Handle map[int64][]util.HandleCols,
 	tblID2Table map[int64]table.Table,
-	onlyWritableCol bool,
 ) (TblColPosInfoSlice, error) {
 	var cols2Handles TblColPosInfoSlice
 	for tblID, handleCols := range tblID2Handle {
 		tbl := tblID2Table[tblID]
-		var tblLen int
-		if onlyWritableCol {
-			tblLen = len(tbl.WritableCols())
-		} else {
-			tblLen = len(tbl.Cols())
-		}
+		tblLen := len(tbl.WritableCols())
 		for _, handleCol := range handleCols {
 			offset, err := getTableOffset(names, names[handleCol.GetCol(0).Index])
 			if err != nil {
 				return nil, err
 			}
 			end := offset + tblLen
-			cols2Handles = append(cols2Handles, TblColPosInfo{tblID, offset, end, handleCol})
+			cols2Handles = append(cols2Handles, TblColPosInfo{TblID: tblID, Start: offset, End: end, HandleCols: handleCol})
 		}
 	}
 	sort.Sort(cols2Handles)
 	return cols2Handles, nil
+}
+
+// pruneAndBuildColPositionInfoForDelete prune unneeded columns and construct the column position information.
+// We'll have two kinds of columns seen by DELETE:
+//  1. The columns that are public. They are the columns that not affected by any DDL.
+//  2. The columns that are not public. They are the columns that are affected by DDL.
+//     But we need them because the non-public indexes may rely on them.
+//
+// The two kind of columns forms the whole columns of the table. Public part first.
+//
+// This function returns the following things:
+//  1. TblColPosInfoSlice stores the each table's column's position information in the final mixed row.
+//  2. The bitset records which column in the original mixed row is not pruned..
+//  3. The error we meet during the algorithm.
+func pruneAndBuildColPositionInfoForDelete(
+	names []*types.FieldName,
+	tblID2Handle map[int64][]util.HandleCols,
+	tblID2Table map[int64]table.Table,
+	hasFK bool,
+) (TblColPosInfoSlice, *bitset.BitSet, error) {
+	var nonPruned *bitset.BitSet
+	// If there is foreign key, we can't prune the columns.
+	// Use a very relax check for foreign key cascades and checks.
+	// If there's one table containing foreign keys, all of the tables would not do pruning.
+	// It should be strict in the future or just support pruning column when there is foreign key.
+	if !hasFK {
+		nonPruned = bitset.New(uint(len(names)))
+		nonPruned.SetAll()
+	}
+	cols2PosInfos := make(TblColPosInfoSlice, 0, len(tblID2Handle))
+	for tid, handleCols := range tblID2Handle {
+		for _, handleCol := range handleCols {
+			curColPosInfo, err := initColPosInfo(tid, names, handleCol)
+			if err != nil {
+				return nil, nil, err
+			}
+			cols2PosInfos = append(cols2PosInfos, curColPosInfo)
+		}
+	}
+	// Sort by start position. To do the later column pruning.
+	// TODO: `sort`` package has a rather worse performance. We should replace it with the new `slice` package.
+	sort.Sort(cols2PosInfos)
+	prunedColCnt := 0
+	var err error
+	for i := range cols2PosInfos {
+		cols2PosInfo := &cols2PosInfos[i]
+		tbl := tblID2Table[cols2PosInfo.TblID]
+		tblInfo := tbl.Meta()
+		// If it's partitioned table, or has foreign keys, or is point get plan, we can't prune the columns, currently.
+		// nonPrunedSet will be nil if it's a point get or has foreign keys.
+		if tblInfo.GetPartitionInfo() != nil || hasFK || nonPruned == nil {
+			err = buildSingleTableColPosInfoForDelete(tbl, cols2PosInfo)
+			if err != nil {
+				return nil, nil, err
+			}
+			continue
+		}
+		prunedColCnt, err = pruneAndBuildSingleTableColPosInfoForDelete(tbl, tblInfo.Name.O, names, cols2PosInfo, prunedColCnt, nonPruned)
+		if err != nil {
+			return nil, nil, err
+		}
+	}
+	return cols2PosInfos, nonPruned, nil
+}
+
+// initColPosInfo initializes the column position information.
+// It's used before we call pruneAndBuildSingleTableColPosInfoForDelete or buildSingleTableColPosInfoForDelete.
+// It initializes the needed information for the following pruning: the tid, starting position and the handle column.
+func initColPosInfo(tid int64, names []*types.FieldName, handleCol util.HandleCols) (TblColPosInfo, error) {
+	offset, err := getTableOffset(names, names[handleCol.GetCol(0).Index])
+	if err != nil {
+		return TblColPosInfo{}, err
+	}
+	return TblColPosInfo{
+		TblID:                 tid,
+		Start:                 offset,
+		HandleCols:            handleCol,
+		ExtraPartialRowOption: &table.ExtraPartialRowOption{},
+	}, nil
+}
+
+// buildSingleTableColPosInfoForDelete builds columns mapping for delete without pruning any columns.
+// It's temp code path for partition table, foreign key and point get plan.
+func buildSingleTableColPosInfoForDelete(
+	tbl table.Table,
+	colPosInfo *TblColPosInfo,
+) error {
+	tblLen := len(tbl.DeletableCols())
+	colPosInfo.End = colPosInfo.Start + tblLen
+	return nil
+}
+
+// pruneAndBuildSingleTableColPosInfoForDelete builds columns mapping for delete.
+// And it will try to prune columns that not used in pk or indexes.
+func pruneAndBuildSingleTableColPosInfoForDelete(
+	t table.Table,
+	tableName string,
+	names []*types.FieldName,
+	colPosInfo *TblColPosInfo,
+	prePrunedCount int,
+	nonPrunedSet *bitset.BitSet,
+) (int, error) {
+	// Columns can be seen by DELETE are the deletable columns.
+	deletableCols := t.DeletableCols()
+	deletableIdxs := t.DeletableIndices()
+	publicCols := t.Cols()
+	tblLen := len(deletableCols)
+
+	// Fix the start position of the columns.
+	originalStart := colPosInfo.Start
+	colPosInfo.Start -= prePrunedCount
+
+	// Mark the columns in handle.
+	fixedPos := make(map[int]int, len(deletableCols))
+	for i := 0; i < colPosInfo.HandleCols.NumCols(); i++ {
+		col := colPosInfo.HandleCols.GetCol(i)
+		fixedPos[col.Index-originalStart] = 0
+	}
+
+	// Mark the columns in indexes.
+	for _, idx := range deletableIdxs {
+		for _, col := range idx.Meta().Columns {
+			if col.Offset+originalStart >= len(names) || deletableCols[col.Offset].Name.L != names[col.Offset+originalStart].ColName.L {
+				return 0, plannererrors.ErrDeleteNotFoundColumn.GenWithStackByArgs(col.Name.O, tableName)
+			}
+			fixedPos[col.Offset] = 0
+		}
+	}
+
+	// Fix the column offsets.
+	pruned := 0
+	for i := 0; i < tblLen; i++ {
+		if _, ok := fixedPos[i]; !ok {
+			nonPrunedSet.Clear(uint(i + originalStart))
+			pruned++
+			continue
+		}
+		fixedPos[i] = i - pruned
+	}
+
+	// Fill in the ColumnSizes.
+	colPosInfo.ColumnsSizeHelper = &table.ColumnsSizeHelper{
+		NotPruned:        bitset.New(uint(len(publicCols))),
+		AvgSizes:         make([]float64, 0, len(publicCols)),
+		PublicColsLayout: make([]int, 0, len(publicCols)),
+	}
+	colPosInfo.ColumnsSizeHelper.NotPruned.SetAll()
+	for i, col := range publicCols {
+		// If the column is not pruned, we can use the column data to get a more accurate size.
+		// We just need to record its position info.
+		if _, ok := fixedPos[col.Offset]; ok {
+			colPosInfo.ColumnsSizeHelper.PublicColsLayout = append(colPosInfo.ColumnsSizeHelper.PublicColsLayout, fixedPos[col.Offset])
+			continue
+		}
+		// Otherwise we need to get the average size of the column by its field type.
+		// TODO: use statistics to get a maybe more accurate size.
+		colPosInfo.ColumnsSizeHelper.NotPruned.Clear(uint(i))
+		colPosInfo.ColumnsSizeHelper.AvgSizes = append(colPosInfo.ColumnsSizeHelper.AvgSizes, float64(chunk.EstimateTypeWidth(&col.FieldType)))
+	}
+	// Fix the index layout and fill in table.IndexRowLayoutOption.
+	indexColMap := make(map[int64]table.IndexRowLayoutOption, len(deletableIdxs))
+	for _, idx := range deletableIdxs {
+		idxCols := idx.Meta().Columns
+		colPos := make([]int, 0, len(idxCols))
+		for _, col := range idxCols {
+			colPos = append(colPos, fixedPos[col.Offset])
+		}
+		indexColMap[idx.Meta().ID] = colPos
+	}
+
+	// Fix the column offset of handle columns.
+	newStart := originalStart - prePrunedCount
+	for i := 0; i < colPosInfo.HandleCols.NumCols(); i++ {
+		col := colPosInfo.HandleCols.GetCol(i)
+		// If the row id the hidden extra row id, it can not be in deletableCols.
+		// It will be appended to the end of the row.
+		// So we use newStart + tblLen to get the tail, then minus the pruned to the its new offset of the whole mixed row.
+		if col.Index-originalStart >= tblLen {
+			col.Index = newStart + tblLen - pruned
+			continue
+		}
+		// Its index is the offset in the original mixed row.
+		// col.Index-originalStart is the offset in the table.
+		// Then we use its offset in the table to find the new offset in the pruned row by fixedPos[col.Index-originalStart].
+		// Finally, we plus the newStart to get new offset in the mixed row.
+		col.Index = fixedPos[col.Index-originalStart] + newStart
+	}
+	colPosInfo.End = colPosInfo.Start + tblLen - pruned
+	colPosInfo.IndexesRowLayout = indexColMap
+
+	return prePrunedCount + pruned, nil
 }
 
 func (b *PlanBuilder) buildUpdate(ctx context.Context, update *ast.UpdateStmt) (base.Plan, error) {
@@ -5368,7 +5553,7 @@ func (b *PlanBuilder) buildUpdate(ctx context.Context, update *ast.UpdateStmt) (
 	for id := range tblID2Handle {
 		tblID2table[id], _ = b.is.TableByID(ctx, id)
 	}
-	updt.TblColPosInfos, err = buildColumns2Handle(updt.OutputNames(), tblID2Handle, tblID2table, true)
+	updt.TblColPosInfos, err = buildColumns2HandleWithWrtiableColumns(updt.OutputNames(), tblID2Handle, tblID2table)
 	if err != nil {
 		return nil, err
 	}
@@ -5403,7 +5588,7 @@ func CheckUpdateList(assignFlags []int, updt *Update, newTblID2Table map[int64]t
 		tbl := newTblID2Table[content.TblID]
 		flags := assignFlags[content.Start:content.End]
 		var update, updatePK, updatePartitionCol bool
-		var partitionColumnNames []model.CIStr
+		var partitionColumnNames []pmodel.CIStr
 		if pt, ok := tbl.(table.PartitionedTable); ok && pt != nil {
 			partitionColumnNames = pt.GetPartitionColumnNames()
 		}
@@ -5613,6 +5798,9 @@ func (b *PlanBuilder) buildUpdateLists(ctx context.Context, tableList []*ast.Tab
 					break
 				}
 			}
+			if isModified {
+				dependentColumnsModified[col.UniqueID] = true
+			}
 			// skip unmodified generated columns
 			if !isModified {
 				continue
@@ -5734,17 +5922,10 @@ func (b *PlanBuilder) buildDelete(ctx context.Context, ds *ast.DeleteStmt) (base
 	var authErr error
 	sessionVars := b.ctx.GetSessionVars()
 
-	proj := logicalop.LogicalProjection{Exprs: expression.Column2Exprs(p.Schema().Columns[:oldLen])}.Init(b.ctx, b.getSelectOffset())
-	proj.SetChildren(p)
-	proj.SetSchema(oldSchema.Clone())
-	proj.SetOutputNames(p.OutputNames()[:oldLen])
-	p = proj
-
 	del := Delete{
 		IsMultiTable: ds.IsMultiTable,
 	}.Init(b.ctx)
 
-	del.names = p.OutputNames()
 	localResolveCtx := resolve.NewContext()
 	// Collect visitInfo.
 	if ds.Tables != nil {
@@ -5761,7 +5942,7 @@ func (b *PlanBuilder) buildDelete(ctx context.Context, ds *ast.DeleteStmt) (base
 
 			if !foundMatch {
 				if tn.Schema.L == "" {
-					name = model.NewCIStr(b.ctx.GetSessionVars().CurrentDB).L + "." + tn.Name.L
+					name = pmodel.NewCIStr(b.ctx.GetSessionVars().CurrentDB).L + "." + tn.Name.L
 				} else {
 					name = tn.Schema.L + "." + tn.Name.L
 				}
@@ -5824,6 +6005,7 @@ func (b *PlanBuilder) buildDelete(ctx context.Context, ds *ast.DeleteStmt) (base
 	if err != nil {
 		return nil, err
 	}
+	preProjNames := p.OutputNames()[:oldLen]
 	if del.IsMultiTable {
 		// tblID2TableName is the table map value is an array which contains table aliases.
 		// Table ID may not be unique for deleting multiple tables, for statements like
@@ -5834,23 +6016,49 @@ func (b *PlanBuilder) buildDelete(ctx context.Context, ds *ast.DeleteStmt) (base
 			tnW := localResolveCtx.GetTableName(tn)
 			tblID2TableName[tnW.TableInfo.ID] = append(tblID2TableName[tnW.TableInfo.ID], tnW)
 		}
-		tblID2Handle = del.cleanTblID2HandleMap(tblID2TableName, tblID2Handle, del.names)
+		tblID2Handle = del.cleanTblID2HandleMap(tblID2TableName, tblID2Handle, preProjNames)
 	}
 	tblID2table := make(map[int64]table.Table, len(tblID2Handle))
 	for id := range tblID2Handle {
 		tblID2table[id], _ = b.is.TableByID(ctx, id)
 	}
-	del.TblColPosInfos, err = buildColumns2Handle(del.names, tblID2Handle, tblID2table, false)
-	if err != nil {
-		return nil, err
-	}
-
-	del.SelectPlan, _, err = DoOptimize(ctx, b.ctx, b.optFlag, p)
-	if err != nil {
-		return nil, err
-	}
 
 	err = del.buildOnDeleteFKTriggers(b.ctx, b.is, tblID2table)
+	if err != nil {
+		return nil, err
+	}
+
+	var nonPruned *bitset.BitSet
+	del.TblColPosInfos, nonPruned, err = pruneAndBuildColPositionInfoForDelete(preProjNames, tblID2Handle, tblID2table, len(del.FKCascades) > 0 || len(del.FKChecks) > 0)
+	if err != nil {
+		return nil, err
+	}
+	var (
+		finalProjCols  []*expression.Column
+		finalProjNames types.NameSlice
+	)
+	if nonPruned != nil {
+		// If the pruning happens, we project the columns not pruned as the final output of the below plan.
+		finalProjCols = make([]*expression.Column, 0, oldLen/2)
+		finalProjNames = make(types.NameSlice, 0, oldLen/2)
+		for i, found := nonPruned.NextSet(0); found; i, found = nonPruned.NextSet(i + 1) {
+			finalProjCols = append(finalProjCols, p.Schema().Columns[i])
+			finalProjNames = append(finalProjNames, p.OutputNames()[i])
+		}
+	} else {
+		// Otherwise, we just use the original schema.
+		finalProjCols = make([]*expression.Column, oldLen)
+		copy(finalProjCols, p.Schema().Columns[:oldLen])
+		finalProjNames = preProjNames.Shallow()
+	}
+	proj := logicalop.LogicalProjection{Exprs: expression.Column2Exprs(finalProjCols)}.Init(b.ctx, b.getSelectOffset())
+	proj.SetChildren(p)
+	proj.SetSchema(expression.NewSchema(finalProjCols...))
+	proj.SetOutputNames(finalProjNames)
+	p = proj
+	del.names = p.OutputNames()
+	del.SelectPlan, _, err = DoOptimize(ctx, b.ctx, b.optFlag, p)
+
 	return del, err
 }
 
@@ -6605,7 +6813,7 @@ func mergeWindowSpec(spec, ref *ast.WindowSpec) error {
 		spec.OrderBy = ref.OrderBy
 	}
 	spec.PartitionBy = ref.PartitionBy
-	spec.Ref = model.NewCIStr("")
+	spec.Ref = pmodel.NewCIStr("")
 	return nil
 }
 
@@ -6647,7 +6855,7 @@ func (u *updatableTableListResolver) Leave(inNode ast.Node) (ast.Node, bool) {
 			if v.AsName.L != "" {
 				newTableName := *s
 				newTableName.Name = v.AsName
-				newTableName.Schema = model.NewCIStr("")
+				newTableName.Schema = pmodel.NewCIStr("")
 				u.updatableTableList = append(u.updatableTableList, &newTableName)
 				if tnW := u.resolveCtx.GetTableName(s); tnW != nil {
 					u.resolveCtx.AddTableName(&resolve.TableNameW{
@@ -6727,7 +6935,7 @@ func (e *tableListExtractor) Enter(n ast.Node) (_ ast.Node, skipChildren bool) {
 			if x.AsName.L != "" && e.asName {
 				newTableName := *s
 				newTableName.Name = x.AsName
-				newTableName.Schema = model.NewCIStr("")
+				newTableName.Schema = pmodel.NewCIStr("")
 				e.tableNames = append(e.tableNames, &newTableName)
 				if tnW := e.resolveCtx.GetTableName(s); tnW != nil {
 					e.resolveCtx.AddTableName(&resolve.TableNameW{
@@ -6747,7 +6955,7 @@ func (e *tableListExtractor) Enter(n ast.Node) (_ ast.Node, skipChildren bool) {
 					if x.AsName.L != "" && e.asName {
 						newTableName := *innerList[0]
 						newTableName.Name = x.AsName
-						newTableName.Schema = model.NewCIStr("")
+						newTableName.Schema = pmodel.NewCIStr("")
 						innerTableName = &newTableName
 						if tnW := e.resolveCtx.GetTableName(innerList[0]); tnW != nil {
 							e.resolveCtx.AddTableName(&resolve.TableNameW{
@@ -6766,7 +6974,7 @@ func (e *tableListExtractor) Enter(n ast.Node) (_ ast.Node, skipChildren bool) {
 
 	case *ast.ShowStmt:
 		if x.DBName != "" {
-			e.tableNames = append(e.tableNames, &ast.TableName{Schema: model.NewCIStr(x.DBName)})
+			e.tableNames = append(e.tableNames, &ast.TableName{Schema: pmodel.NewCIStr(x.DBName)})
 		}
 	case *ast.CreateDatabaseStmt:
 		e.tableNames = append(e.tableNames, &ast.TableName{Schema: x.Name})
@@ -6777,7 +6985,7 @@ func (e *tableListExtractor) Enter(n ast.Node) (_ ast.Node, skipChildren bool) {
 
 	case *ast.FlashBackDatabaseStmt:
 		e.tableNames = append(e.tableNames, &ast.TableName{Schema: x.DBName})
-		e.tableNames = append(e.tableNames, &ast.TableName{Schema: model.NewCIStr(x.NewName)})
+		e.tableNames = append(e.tableNames, &ast.TableName{Schema: pmodel.NewCIStr(x.NewName)})
 	case *ast.FlashBackToTimestampStmt:
 		if x.DBName.L != "" {
 			e.tableNames = append(e.tableNames, &ast.TableName{Schema: x.DBName})
@@ -6786,15 +6994,15 @@ func (e *tableListExtractor) Enter(n ast.Node) (_ ast.Node, skipChildren bool) {
 		if newName := x.NewName; newName != "" {
 			e.tableNames = append(e.tableNames, &ast.TableName{
 				Schema: x.Table.Schema,
-				Name:   model.NewCIStr(newName)})
+				Name:   pmodel.NewCIStr(newName)})
 		}
 
 	case *ast.GrantStmt:
 		if x.ObjectType == ast.ObjectTypeTable || x.ObjectType == ast.ObjectTypeNone {
 			if x.Level.Level == ast.GrantLevelDB || x.Level.Level == ast.GrantLevelTable {
 				e.tableNames = append(e.tableNames, &ast.TableName{
-					Schema: model.NewCIStr(x.Level.DBName),
-					Name:   model.NewCIStr(x.Level.TableName),
+					Schema: pmodel.NewCIStr(x.Level.DBName),
+					Name:   pmodel.NewCIStr(x.Level.TableName),
 				})
 			}
 		}
@@ -6802,19 +7010,19 @@ func (e *tableListExtractor) Enter(n ast.Node) (_ ast.Node, skipChildren bool) {
 		if x.ObjectType == ast.ObjectTypeTable || x.ObjectType == ast.ObjectTypeNone {
 			if x.Level.Level == ast.GrantLevelDB || x.Level.Level == ast.GrantLevelTable {
 				e.tableNames = append(e.tableNames, &ast.TableName{
-					Schema: model.NewCIStr(x.Level.DBName),
-					Name:   model.NewCIStr(x.Level.TableName),
+					Schema: pmodel.NewCIStr(x.Level.DBName),
+					Name:   pmodel.NewCIStr(x.Level.TableName),
 				})
 			}
 		}
 	case *ast.BRIEStmt:
 		if x.Kind == ast.BRIEKindBackup || x.Kind == ast.BRIEKindRestore {
 			for _, v := range x.Schemas {
-				e.tableNames = append(e.tableNames, &ast.TableName{Schema: model.NewCIStr(v)})
+				e.tableNames = append(e.tableNames, &ast.TableName{Schema: pmodel.NewCIStr(v)})
 			}
 		}
 	case *ast.UseStmt:
-		e.tableNames = append(e.tableNames, &ast.TableName{Schema: model.NewCIStr(x.DBName)})
+		e.tableNames = append(e.tableNames, &ast.TableName{Schema: pmodel.NewCIStr(x.DBName)})
 	case *ast.ExecuteStmt:
 		if v, ok := x.PrepStmt.(*PlanCacheStmt); ok {
 			e.tableNames = append(e.tableNames, innerExtract(v.PreparedAst.Stmt, v.ResolveCtx)...)
@@ -6895,6 +7103,8 @@ func isJoinHintSupportedInMPPMode(preferJoinType uint) bool {
 	return onesCount < 1
 }
 
+// buildCte prepares for a CTE. It works together with buildWith().
+// It will push one entry into b.handleHelper.
 func (b *PlanBuilder) buildCte(ctx context.Context, cte *ast.CommonTableExpression, isRecursive bool) (p base.LogicalPlan, err error) {
 	saveBuildingCTE := b.buildingCTE
 	b.buildingCTE = true
@@ -6930,6 +7140,7 @@ func (b *PlanBuilder) buildCte(ctx context.Context, cte *ast.CommonTableExpressi
 }
 
 // buildRecursiveCTE handles the with clause `with recursive xxx as xx`.
+// It will push one entry into b.handleHelper.
 func (b *PlanBuilder) buildRecursiveCTE(ctx context.Context, cte ast.ResultSetNode) error {
 	b.isCTE = true
 	cInfo := b.outerCTEs[len(b.outerCTEs)-1]
@@ -6959,6 +7170,7 @@ func (b *PlanBuilder) buildRecursiveCTE(ctx context.Context, cte ast.ResultSetNo
 		for i := 0; i < len(x.SelectList.Selects); i++ {
 			var p base.LogicalPlan
 			var err error
+			originalLen := b.handleHelper.stackTail
 
 			var afterOpr *ast.SetOprType
 			switch y := x.SelectList.Selects[i].(type) {
@@ -6968,6 +7180,22 @@ func (b *PlanBuilder) buildRecursiveCTE(ctx context.Context, cte ast.ResultSetNo
 			case *ast.SetOprSelectList:
 				p, err = b.buildSetOpr(ctx, &ast.SetOprStmt{SelectList: y, With: y.With})
 				afterOpr = y.AfterSetOperator
+			}
+
+			// This is for maintain b.handleHelper instead of normal error handling. Since one error is expected if
+			// expectSeed && cInfo.useRecursive, error handling is in the "if expectSeed" block below.
+			if err == nil {
+				b.handleHelper.popMap()
+			} else {
+				// Be careful with this tricky case. One error is expected here when building the first recursive
+				// part, however, the b.handleHelper won't be restored if error occurs, which means there could be
+				// more than one entry pushed into b.handleHelper without being poped.
+				// For example: with recursive cte1 as (select ... union all select ... from tbl join cte1 ...) ...
+				// This violates the semantic of buildSelect() and buildSetOpr(), which should only push exactly one
+				// entry into b.handleHelper. So we use a special logic to restore the b.handleHelper here.
+				for b.handleHelper.stackTail > originalLen {
+					b.handleHelper.popMap()
+				}
 			}
 
 			if expectSeed {
@@ -7000,14 +7228,11 @@ func (b *PlanBuilder) buildRecursiveCTE(ctx context.Context, cte ast.ResultSetNo
 					// Build seed part plan.
 					saveSelect := x.SelectList.Selects
 					x.SelectList.Selects = x.SelectList.Selects[:i]
-					// We're rebuilding the seed part, so we pop the result we built previously.
-					for _i := 0; _i < i; _i++ {
-						b.handleHelper.popMap()
-					}
 					p, err = b.buildSetOpr(ctx, x)
 					if err != nil {
 						return err
 					}
+					b.handleHelper.popMap()
 					x.SelectList.Selects = saveSelect
 					p, err = b.adjustCTEPlanOutputName(p, cInfo.def)
 					if err != nil {
@@ -7076,6 +7301,7 @@ func (b *PlanBuilder) buildRecursiveCTE(ctx context.Context, cte ast.ResultSetNo
 			limit.SetChildren(limit.Children()[:0]...)
 			cInfo.limitLP = limit
 		}
+		b.handleHelper.pushMap(nil)
 		return nil
 	default:
 		p, err := b.buildResultSetNode(ctx, x, true)
@@ -7099,7 +7325,7 @@ func (b *PlanBuilder) adjustCTEPlanOutputName(p base.LogicalPlan, def *ast.Commo
 	outPutNames := p.OutputNames()
 	for _, name := range outPutNames {
 		name.TblName = def.Name
-		name.DBName = model.NewCIStr(b.ctx.GetSessionVars().CurrentDB)
+		name.DBName = pmodel.NewCIStr(b.ctx.GetSessionVars().CurrentDB)
 	}
 	if len(def.ColNameList) > 0 {
 		if len(def.ColNameList) != len(p.OutputNames()) {
@@ -7171,7 +7397,9 @@ func (b *PlanBuilder) buildWith(ctx context.Context, w *ast.WithClause) ([]*cteI
 		b.outerCTEs[len(b.outerCTEs)-1].optFlag = b.optFlag
 		b.outerCTEs[len(b.outerCTEs)-1].isBuilding = false
 		b.optFlag = saveFlag
-		// each cte (select statement) will generate a handle map, pop it out here.
+		// buildCte() will push one entry into handleHelper. As said in comments for b.handleHelper, building CTE
+		// should not affect the handleColHelper, so we pop it out here, then buildWith() as a whole will not modify
+		// the handleColHelper.
 		b.handleHelper.popMap()
 		ctes = append(ctes, b.outerCTEs[len(b.outerCTEs)-1])
 	}

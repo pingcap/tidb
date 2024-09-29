@@ -39,14 +39,14 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/config"
 	litlog "github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/lightning/mydump"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	pformat "github.com/pingcap/tidb/pkg/parser/format"
-	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
-	planctx "github.com/pingcap/tidb/pkg/planner/context"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
+	"github.com/pingcap/tidb/pkg/planner/planctx"
 	plannerutil "github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
@@ -1297,20 +1297,11 @@ func (e *LoadDataController) CreateColAssignExprs(planCtx planctx.PlanContext) (
 	_ []contextutil.SQLWarn,
 	retErr error,
 ) {
-	var (
-		i      int
-		assign *ast.Assignment
-	)
-	// TODO(lance6716): indeterministic function should also return error
-	defer tidbutil.Recover("load-data/import-into", "CreateColAssignExprs", func() {
-		retErr = errors.Errorf("can't use function at SET index %d", i)
-	}, false)
-
 	e.colAssignMu.Lock()
 	defer e.colAssignMu.Unlock()
 	res := make([]expression.Expression, 0, len(e.ColumnAssignments))
 	allWarnings := []contextutil.SQLWarn{}
-	for i, assign = range e.ColumnAssignments {
+	for _, assign := range e.ColumnAssignments {
 		newExpr, err := plannerutil.RewriteAstExprWithPlanCtx(planCtx, assign.Expr, nil, nil, false)
 		// col assign expr warnings is static, we should generate it for each row processed.
 		// so we save it and clear it here.
@@ -1332,21 +1323,11 @@ func (e *LoadDataController) CreateColAssignExprs(planCtx planctx.PlanContext) (
 //   - Aggregate functions
 //   - Other special functions used in some specified queries such as `GROUPING`, `VALUES` ...
 func (e *LoadDataController) CreateColAssignSimpleExprs(ctx expression.BuildContext) (_ []expression.Expression, _ []contextutil.SQLWarn, retErr error) {
-	var (
-		i      int
-		assign *ast.Assignment
-	)
-
-	// TODO(lance6716): indeterministic function should also return error
-	defer tidbutil.Recover("load-data/import-into", "CreateColAssignExprs", func() {
-		retErr = errors.Errorf("can't use function at SET index %d", i)
-	}, false)
-
 	e.colAssignMu.Lock()
 	defer e.colAssignMu.Unlock()
 	res := make([]expression.Expression, 0, len(e.ColumnAssignments))
 	var allWarnings []contextutil.SQLWarn
-	for i, assign = range e.ColumnAssignments {
+	for _, assign := range e.ColumnAssignments {
 		newExpr, err := expression.BuildSimpleExpr(ctx, assign.Expr)
 		// col assign expr warnings is static, we should generate it for each row processed.
 		// so we save it and clear it here.

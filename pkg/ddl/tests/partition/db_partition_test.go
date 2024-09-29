@@ -33,8 +33,9 @@ import (
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/session"
@@ -98,11 +99,11 @@ func TestCreateTableWithPartition(t *testing.T) {
 	);`)
 	ctx := tk.Session()
 	is := domain.GetDomain(ctx).InfoSchema()
-	tbl, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("tp"))
+	tbl, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("tp"))
 	require.NoError(t, err)
 	require.NotNil(t, tbl.Meta().Partition)
 	part := tbl.Meta().Partition
-	require.Equal(t, model.PartitionTypeRange, part.Type)
+	require.Equal(t, pmodel.PartitionTypeRange, part.Type)
 	require.Equal(t, "`a`", part.Expr)
 	for _, pdef := range part.Definitions {
 		require.Greater(t, pdef.ID, int64(0))
@@ -274,7 +275,6 @@ func TestCreateTableWithPartition(t *testing.T) {
 		  partition p4 values less than (18446744073709551000 + 10)
 		);`)
 
-	tk.MustExec("set @@tidb_enable_table_partition = 1")
 	tk.MustExec(`create table t30 (
 		  a int,
 		  b varchar(20),
@@ -348,7 +348,6 @@ func TestCreateTableWithHashPartition(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
 	tk.MustExec("drop table if exists employees;")
-	tk.MustExec("set @@session.tidb_enable_table_partition = 1")
 	tk.MustExec(`
 	create table employees (
 		id int not null,
@@ -779,7 +778,6 @@ func TestCreateTableWithListPartition(t *testing.T) {
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
-	tk.MustExec("set @@session.tidb_enable_list_partition = ON")
 	tk.MustExec("drop table if exists t")
 	type errorCase struct {
 		sql string
@@ -873,7 +871,7 @@ func TestCreateTableWithListPartition(t *testing.T) {
 				    partition p2 values in (4,12,13,14,18),
 				    partition p3 values in (7,8,15,16)
 				);`,
-			dbterror.ErrUniqueKeyNeedAllFieldsInPf,
+			dbterror.ErrGlobalIndexNotExplicitlySet,
 		},
 		{
 			generatePartitionTableByNum(mysql.PartitionCountLimit + 1),
@@ -932,7 +930,7 @@ func TestCreateTableWithListPartition(t *testing.T) {
 		tblInfo := tbl.Meta()
 		require.NotNil(t, tblInfo.Partition)
 		require.True(t, tblInfo.Partition.Enable)
-		require.Equal(t, model.PartitionTypeList, tblInfo.Partition.Type)
+		require.Equal(t, pmodel.PartitionTypeList, tblInfo.Partition.Type)
 	}
 }
 
@@ -941,7 +939,6 @@ func TestCreateTableWithListColumnsPartition(t *testing.T) {
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
-	tk.MustExec("set @@session.tidb_enable_list_partition = ON")
 	tk.MustExec("drop table if exists t")
 	type errorCase struct {
 		sql string
@@ -1075,7 +1072,7 @@ func TestCreateTableWithListColumnsPartition(t *testing.T) {
 				    partition p2 values in (4,12,13,14,18),
 				    partition p3 values in (7,8,15,16)
 				);`,
-			dbterror.ErrUniqueKeyNeedAllFieldsInPf,
+			dbterror.ErrGlobalIndexNotExplicitlySet,
 		},
 		{
 			"create table t (a date) partition by list columns (a) (partition p0 values in ('2020-02-02'), partition p1 values in ('20200202'));",
@@ -1143,7 +1140,7 @@ func TestCreateTableWithListColumnsPartition(t *testing.T) {
 		tblInfo := tbl.Meta()
 		require.NotNil(t, tblInfo.Partition)
 		require.Equal(t, true, tblInfo.Partition.Enable)
-		require.True(t, tblInfo.Partition.Type == model.PartitionTypeList)
+		require.True(t, tblInfo.Partition.Type == pmodel.PartitionTypeList)
 	}
 }
 
@@ -1152,7 +1149,6 @@ func TestAlterTableTruncatePartitionByList(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
 	tk.MustExec("drop table if exists t;")
-	tk.MustExec("set @@session.tidb_enable_list_partition = ON")
 	tk.MustExec(`create table t (id int) partition by list  (id) (
 	    partition p0 values in (1,2),
 	    partition p1 values in (3,4),
@@ -1165,10 +1161,10 @@ func TestAlterTableTruncatePartitionByList(t *testing.T) {
 	tbl := external.GetTableByName(t, tk, "test", "t")
 	require.NotNil(t, tbl.Meta().Partition)
 	part := tbl.Meta().Partition
-	require.True(t, part.Type == model.PartitionTypeList)
+	require.True(t, part.Type == pmodel.PartitionTypeList)
 	require.Len(t, part.Definitions, 3)
 	require.Equal(t, [][]string{{"3"}, {"4"}}, part.Definitions[1].InValues)
-	require.Equal(t, model.NewCIStr("p1"), part.Definitions[1].Name)
+	require.Equal(t, pmodel.NewCIStr("p1"), part.Definitions[1].Name)
 	require.False(t, part.Definitions[1].ID == oldTbl.Meta().Partition.Definitions[1].ID)
 
 	sql := "alter table t truncate partition p10;"
@@ -1184,7 +1180,6 @@ func TestAlterTableTruncatePartitionByListColumns(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
 	tk.MustExec("drop table if exists t;")
-	tk.MustExec("set @@session.tidb_enable_list_partition = ON")
 	tk.MustExec(`create table t (id int, name varchar(10)) partition by list columns (id,name) (
 	    partition p0 values in ((1,'a'),(2,'b')),
 	    partition p1 values in ((3,'a'),(4,'b')),
@@ -1197,10 +1192,10 @@ func TestAlterTableTruncatePartitionByListColumns(t *testing.T) {
 	tbl := external.GetTableByName(t, tk, "test", "t")
 	require.NotNil(t, tbl.Meta().Partition)
 	part := tbl.Meta().Partition
-	require.True(t, part.Type == model.PartitionTypeList)
+	require.True(t, part.Type == pmodel.PartitionTypeList)
 	require.Len(t, part.Definitions, 3)
 	require.Equal(t, [][]string{{"3", `'a'`}, {"4", `'b'`}}, part.Definitions[1].InValues)
-	require.Equal(t, model.NewCIStr("p1"), part.Definitions[1].Name)
+	require.Equal(t, pmodel.NewCIStr("p1"), part.Definitions[1].Name)
 	require.False(t, part.Definitions[1].ID == oldTbl.Meta().Partition.Definitions[1].ID)
 
 	sql := "alter table t truncate partition p10;"
@@ -1215,7 +1210,7 @@ func TestAlterTableTruncatePartitionPreSplitRegion(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	atomic.StoreUint32(&ddl.EnableSplitTableRegion, 1)
-	tk.MustExec("set @@global.tidb_scatter_region=1;")
+	tk.MustExec("set @@session.tidb_scatter_region='table';")
 	tk.MustExec("use test;")
 
 	tk.MustExec("drop table if exists t1;")
@@ -1266,10 +1261,6 @@ func TestDropPartitionWithGlobalIndex(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	tk.MustExec("set tidb_enable_global_index=true")
-	defer func() {
-		tk.MustExec("set tidb_enable_global_index=default")
-	}()
 	tk.MustExec("drop table if exists test_global")
 	tk.MustExec(`create table test_global ( a int, b int, c int)
 	partition by range( a ) (
@@ -1303,10 +1294,6 @@ func TestDropMultiPartitionWithGlobalIndex(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	tk.MustExec("set tidb_enable_global_index=true")
-	defer func() {
-		tk.MustExec("set tidb_enable_global_index=default")
-	}()
 	tk.MustExec("drop table if exists test_global")
 	tk.MustExec(`create table test_global ( a int, b int, c int)
 	partition by range( a ) (
@@ -1341,10 +1328,6 @@ func TestGlobalIndexInsertInDropPartition(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	tk.MustExec("set tidb_enable_global_index=true")
-	defer func() {
-		tk.MustExec("set tidb_enable_global_index=default")
-	}()
 	tk.MustExec("drop table if exists test_global")
 	tk.MustExec(`create table test_global ( a int, b int, c int)
 	partition by range( a ) (
@@ -1376,10 +1359,6 @@ func TestGlobalIndexUpdateInDropPartition(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	tk.MustExec("set tidb_enable_global_index=true")
-	defer func() {
-		tk.MustExec("set tidb_enable_global_index=default")
-	}()
 	tk.MustExec("drop table if exists test_global")
 	tk.MustExec(`create table test_global ( a int, b int, c int)
 	partition by range( a ) (
@@ -1411,10 +1390,6 @@ func TestTruncatePartitionWithGlobalIndex(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	tk.MustExec("set tidb_enable_global_index=true")
-	defer func() {
-		tk.MustExec("set tidb_enable_global_index=default")
-	}()
 	tk.MustExec("drop table if exists test_global")
 	tk.MustExec(`create table test_global ( a int, b int, c int)
 	partition by range( a ) (
@@ -1495,10 +1470,6 @@ func TestGlobalIndexUpdateInTruncatePartition(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	tk.MustExec("set tidb_enable_global_index=true")
-	defer func() {
-		tk.MustExec("set tidb_enable_global_index=default")
-	}()
 	tk.MustExec("set @@tidb_partition_prune_mode='dynamic'")
 	tk.MustExec("set @@session.tidb_analyze_version=2")
 	tk.MustExec("drop table if exists test_global")
@@ -1530,10 +1501,6 @@ func TestGlobalIndexUpdateInTruncatePartition4Hash(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	tk.MustExec("set tidb_enable_global_index=true")
-	defer func() {
-		tk.MustExec("set tidb_enable_global_index=default")
-	}()
 	tk.MustExec("set @@tidb_partition_prune_mode='dynamic'")
 	tk.MustExec("set @@session.tidb_analyze_version=2")
 	tk.MustExec("drop table if exists test_global")
@@ -1561,10 +1528,6 @@ func TestGlobalIndexReaderAndIndexLookUpInTruncatePartition(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	tk.MustExec("set tidb_enable_global_index=true")
-	defer func() {
-		tk.MustExec("set tidb_enable_global_index=default")
-	}()
 	tk.MustExec("drop table if exists test_global")
 	tk.MustExec(`create table test_global ( a int, b int, c int)
 	partition by range( a ) (
@@ -1596,10 +1559,6 @@ func TestGlobalIndexInsertInTruncatePartition(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	tk.MustExec("set tidb_enable_global_index=true")
-	defer func() {
-		tk.MustExec("set tidb_enable_global_index=default")
-	}()
 	tk.MustExec("set @@tidb_partition_prune_mode='dynamic'")
 	tk.MustExec("set @@session.tidb_analyze_version=2")
 	tk.MustExec("drop table if exists test_global")
@@ -1631,10 +1590,6 @@ func TestGlobalIndexReaderInDropPartition(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	tk.MustExec("set tidb_enable_global_index=true")
-	defer func() {
-		tk.MustExec("set tidb_enable_global_index=default")
-	}()
 	tk.MustExec("drop table if exists test_global")
 	tk.MustExec(`create table test_global ( a int, b int, c int)
 	partition by range( a ) (
@@ -1665,10 +1620,6 @@ func TestGlobalIndexLookUpInDropPartition(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	tk.MustExec("set tidb_enable_global_index=true")
-	defer func() {
-		tk.MustExec("set tidb_enable_global_index=default")
-	}()
 	tk.MustExec("drop table if exists test_global")
 	tk.MustExec(`create table test_global ( a int, b int, c int)
 	partition by range( a ) (
@@ -1701,12 +1652,8 @@ func TestGlobalIndexShowTableRegions(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	tk.MustExec("set tidb_enable_global_index=true")
-	defer func() {
-		tk.MustExec("set tidb_enable_global_index=default")
-	}()
 	tk.MustExec("drop table if exists p")
-	tk.MustExec("set @@global.tidb_scatter_region = on")
+	tk.MustExec("set @@session.tidb_scatter_region = 'table'")
 	tk.MustExec(`create table p (id int, c int, d int, unique key uidx(c)) partition by range (c) (
 partition p0 values less than (4),
 partition p1 values less than (7),
@@ -1841,7 +1788,6 @@ func TestAlterTableExchangePartition(t *testing.T) {
 	tk.MustGetErrCode("alter table e6 exchange partition p1 with table e7", errno.ErrRowDoesNotMatchPartition)
 
 	// validation test for list partition
-	tk.MustExec("set @@tidb_enable_list_partition=true")
 	tk.MustExec(`CREATE TABLE t1 (store_id int)
 	PARTITION BY LIST (store_id) (
 		PARTITION pNorth VALUES IN (1, 2, 3, 4, 5),
@@ -2258,7 +2204,7 @@ func TestTruncatePartitionAndDropTable(t *testing.T) {
 	result.Check(testkit.Rows("10"))
 	ctx := tk.Session()
 	is := domain.GetDomain(ctx).InfoSchema()
-	oldTblInfo, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t3"))
+	oldTblInfo, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t3"))
 	require.NoError(t, err)
 	// Only one partition id test is taken here.
 	tk.MustExec("truncate table t3;")
@@ -2293,7 +2239,7 @@ func TestTruncatePartitionAndDropTable(t *testing.T) {
 	result = tk.MustQuery("select count(*) from t4; ")
 	result.Check(testkit.Rows("10"))
 	is = domain.GetDomain(ctx).InfoSchema()
-	oldTblInfo, err = is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t4"))
+	oldTblInfo, err = is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t4"))
 	require.NoError(t, err)
 	// Only one partition id test is taken here.
 	oldPID = oldTblInfo.Meta().Partition.Definitions[1].ID
@@ -2303,7 +2249,6 @@ func TestTruncatePartitionAndDropTable(t *testing.T) {
 
 	// Test truncate table partition reassigns new partitionIDs.
 	tk.MustExec("drop table if exists t5;")
-	tk.MustExec("set @@session.tidb_enable_table_partition=1;")
 	tk.MustExec(`create table t5(
 		id int, name varchar(50),
 		purchased date
@@ -2317,18 +2262,17 @@ func TestTruncatePartitionAndDropTable(t *testing.T) {
     	partition p5 values less than (2015)
    	);`)
 	is = domain.GetDomain(ctx).InfoSchema()
-	oldTblInfo, err = is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t5"))
+	oldTblInfo, err = is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t5"))
 	require.NoError(t, err)
 	oldPID = oldTblInfo.Meta().Partition.Definitions[0].ID
 
 	tk.MustExec("truncate table t5;")
 	is = domain.GetDomain(ctx).InfoSchema()
-	newTblInfo, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t5"))
+	newTblInfo, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t5"))
 	require.NoError(t, err)
 	newPID := newTblInfo.Meta().Partition.Definitions[0].ID
 	require.True(t, oldPID != newPID)
 
-	tk.MustExec("set @@session.tidb_enable_table_partition = 1;")
 	tk.MustExec("drop table if exists clients;")
 	tk.MustExec(`create table clients (
 		id int,
@@ -2339,14 +2283,14 @@ func TestTruncatePartitionAndDropTable(t *testing.T) {
 	partition by hash( month(signed) )
 	partitions 12;`)
 	is = domain.GetDomain(ctx).InfoSchema()
-	oldTblInfo, err = is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("clients"))
+	oldTblInfo, err = is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("clients"))
 	require.NoError(t, err)
 	oldDefs := oldTblInfo.Meta().Partition.Definitions
 
 	// Test truncate `hash partitioned table` reassigns new partitionIDs.
 	tk.MustExec("truncate table clients;")
 	is = domain.GetDomain(ctx).InfoSchema()
-	newTblInfo, err = is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("clients"))
+	newTblInfo, err = is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("clients"))
 	require.NoError(t, err)
 	newDefs := newTblInfo.Meta().Partition.Definitions
 	for i := 0; i < len(oldDefs); i++ {
@@ -2444,7 +2388,6 @@ func testPartitionAddIndexOrPK(t *testing.T, tk *testkit.TestKit, key string) {
 	testPartitionAddIndex(tk, t, key)
 
 	// test hash partition table.
-	tk.MustExec("set @@session.tidb_enable_table_partition = '1';")
 	tk.MustExec("drop table if exists partition_add_idx")
 	tk.MustExec(`create table partition_add_idx (
 	id int not null,
@@ -2455,7 +2398,6 @@ func testPartitionAddIndexOrPK(t *testing.T, tk *testkit.TestKit, key string) {
 	// Test hash partition for pr 10475.
 	tk.MustExec("drop table if exists t1")
 	defer tk.MustExec("drop table if exists t1")
-	tk.MustExec("set @@session.tidb_enable_table_partition = '1';")
 	tk.MustExec("create table t1 (a int, b int, unique key(a)) partition by hash(a) partitions 5;")
 	tk.MustExec("insert into t1 values (0,0),(1,1),(2,2),(3,3);")
 	tk.MustExec(fmt.Sprintf("alter table t1 add %s idx(a)", key))
@@ -2500,7 +2442,7 @@ func testPartitionAddIndex(tk *testkit.TestKit, t *testing.T, key string) {
 	tk.MustExec("alter table partition_add_idx add index idx2 (id, hired)")
 	ctx := tk.Session()
 	is := domain.GetDomain(ctx).InfoSchema()
-	tt, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("partition_add_idx"))
+	tt, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("partition_add_idx"))
 	require.NoError(t, err)
 	var idx1 table.Index
 	for _, idx := range tt.Indices() {
@@ -2548,11 +2490,11 @@ func TestDropSchemaWithPartitionTable(t *testing.T) {
 	require.Equal(t, "drop schema", row.GetString(3))
 	jobID := row.GetInt64(0)
 
-	var tableIDs []int64
 	historyJob, err := ddl.GetHistoryJobByID(tk.Session(), jobID)
 	require.NoError(t, err)
-	err = historyJob.DecodeArgs(&tableIDs)
+	args, err := model.GetFinishedDropSchemaArgs(historyJob)
 	require.NoError(t, err)
+	tableIDs := args.AllDroppedTableIDs
 	// There is 2 partitions.
 	require.Equal(t, 3, len(tableIDs))
 
@@ -2601,7 +2543,6 @@ func TestPartitionErrorCode(t *testing.T) {
 	tk1 := testkit.NewTestKit(t, store)
 
 	// add partition
-	tk.MustExec("set @@session.tidb_enable_table_partition = 1")
 	tk.MustExec("drop database if exists test_db_with_partition")
 	tk.MustExec("create database test_db_with_partition")
 	tk.MustExec("use test_db_with_partition")
@@ -3263,7 +3204,7 @@ func TestAlterLastIntervalPartition(t *testing.T) {
 		first partition less than ('2023-01-01')
 		last partition less than ('2023-01-03');`)
 	ctx := tk.Session()
-	tbl, err := domain.GetDomain(ctx).InfoSchema().TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
+	tbl, err := domain.GetDomain(ctx).InfoSchema().TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
 	require.NoError(t, err)
 	pd := tbl.Meta().Partition.Definitions
 	require.Equal(t, 3, len(pd))
@@ -3272,7 +3213,7 @@ func TestAlterLastIntervalPartition(t *testing.T) {
 	require.Equal(t, "'2023-01-03 00:00:00'", pd[2].LessThan[0])
 	tk.MustExec("alter table t last partition less than ('2024-01-04')")
 	tk.MustExec("alter table t last partition less than ('2025-01-01 00:00:00')")
-	tbl, err = domain.GetDomain(ctx).InfoSchema().TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
+	tbl, err = domain.GetDomain(ctx).InfoSchema().TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
 	require.NoError(t, err)
 	pd = tbl.Meta().Partition.Definitions
 	require.Equal(t, 732, len(pd))
@@ -3288,7 +3229,7 @@ func TestAlterLastIntervalPartition(t *testing.T) {
 		interval (2 day)
 		first partition less than ('2023-01-01')
 		last partition less than ('2023-01-05');`)
-	tbl, err = domain.GetDomain(ctx).InfoSchema().TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t2"))
+	tbl, err = domain.GetDomain(ctx).InfoSchema().TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t2"))
 	require.NoError(t, err)
 	pd = tbl.Meta().Partition.Definitions
 	require.Equal(t, 3, len(pd))
@@ -3297,7 +3238,7 @@ func TestAlterLastIntervalPartition(t *testing.T) {
 	require.Equal(t, "'2023-01-05 00:00:00'", pd[2].LessThan[0])
 	tk.MustExec("alter table t2 last partition less than ('2023-01-09')")
 	tk.MustExec("alter table t2 last partition less than ('2023-01-11 00:00:00')")
-	tbl, err = domain.GetDomain(ctx).InfoSchema().TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t2"))
+	tbl, err = domain.GetDomain(ctx).InfoSchema().TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t2"))
 	require.NoError(t, err)
 	pd = tbl.Meta().Partition.Definitions
 	require.Equal(t, 6, len(pd))
@@ -3314,7 +3255,7 @@ func TestAlterLastIntervalPartition(t *testing.T) {
 		interval (2 day)
 		first partition less than ('2023-01-01 12:01:02')
 		last partition less than ('2023-01-05 12:01:02');`)
-	tbl, err = domain.GetDomain(ctx).InfoSchema().TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t3"))
+	tbl, err = domain.GetDomain(ctx).InfoSchema().TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t3"))
 	require.NoError(t, err)
 	pd = tbl.Meta().Partition.Definitions
 	require.Equal(t, 3, len(pd))
@@ -3322,7 +3263,7 @@ func TestAlterLastIntervalPartition(t *testing.T) {
 	require.Equal(t, "'2023-01-03 12:01:02'", pd[1].LessThan[0])
 	require.Equal(t, "'2023-01-05 12:01:02'", pd[2].LessThan[0])
 	tk.MustExec("alter table t3 last partition less than ('2023-01-09 12:01:02')")
-	tbl, err = domain.GetDomain(ctx).InfoSchema().TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t3"))
+	tbl, err = domain.GetDomain(ctx).InfoSchema().TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t3"))
 	require.NoError(t, err)
 	pd = tbl.Meta().Partition.Definitions
 	require.Equal(t, 5, len(pd))
@@ -3338,7 +3279,7 @@ func TestAlterLastIntervalPartition(t *testing.T) {
 		interval (48 hour)
 		first partition less than ('2023-01-01')
 		last partition less than ('2023-01-05');`)
-	tbl, err = domain.GetDomain(ctx).InfoSchema().TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t4"))
+	tbl, err = domain.GetDomain(ctx).InfoSchema().TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t4"))
 	require.NoError(t, err)
 	pd = tbl.Meta().Partition.Definitions
 	require.Equal(t, 3, len(pd))
@@ -3346,7 +3287,7 @@ func TestAlterLastIntervalPartition(t *testing.T) {
 	require.Equal(t, "'2023-01-03 00:00:00'", pd[1].LessThan[0])
 	require.Equal(t, "'2023-01-05 00:00:00'", pd[2].LessThan[0])
 	tk.MustExec("alter table t4 last partition less than ('2023-01-09 00:00:00')")
-	tbl, err = domain.GetDomain(ctx).InfoSchema().TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t4"))
+	tbl, err = domain.GetDomain(ctx).InfoSchema().TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t4"))
 	require.NoError(t, err)
 	pd = tbl.Meta().Partition.Definitions
 	require.Equal(t, 5, len(pd))
@@ -3446,10 +3387,6 @@ func TestReorgPartitionGlobalIndex(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	tk.MustExec("set tidb_enable_global_index=true")
-	defer func() {
-		tk.MustExec("set tidb_enable_global_index=default")
-	}()
 	tk.MustExec("drop table if exists t")
 	// TODO: Also test with extended primary key!
 	tk.MustExec(`create table t (a int, b int, c int)
@@ -3533,10 +3470,6 @@ func TestRemovePartitioningGlobalIndex(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	tk.MustExec("set tidb_enable_global_index=true")
-	defer func() {
-		tk.MustExec("set tidb_enable_global_index=default")
-	}()
 	tk.MustExec(`create table t (a int unsigned not null, b varchar(255), unique key idx_b(b), unique key idx_a(a) global) partition by key(b) partitions 3`)
 	tk.MustExec(`create table t2 (a int unsigned not null, b varchar(255), unique key idx_b(b), unique key idx_a(a))`)
 	tk.MustExec(`INSERT INTO t VALUES (1,1),(2,2),(3,"Hello, World!")`)
@@ -3588,10 +3521,6 @@ func TestPrimaryGlobalIndex(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	tk.MustExec("set tidb_enable_global_index=true")
-	defer func() {
-		tk.MustExec("set tidb_enable_global_index=default")
-	}()
 
 	// First, clustered indexes cannot be global!
 	// Reasoning is that it breaks the assumption that a clustered table can
@@ -3666,10 +3595,6 @@ func TestPrimaryNoGlobalIndex(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	tk.MustExec("set tidb_enable_global_index=false")
-	defer func() {
-		tk.MustExec("set tidb_enable_global_index=default")
-	}()
 
 	// First, clustered indexes cannot be global!
 	// Reasoning is that it breaks the assumption that a clustered table can
@@ -3702,17 +3627,17 @@ func TestPrimaryNoGlobalIndex(t *testing.T) {
 	tk.MustExec(`drop table t`)
 
 	// NONCLUSTERED tables can have PK as global index.
-	tk.MustContainErrMsg(`create table t (a int primary key nonclustered, b varchar(255)) partition by key(b) partitions 3`, "A PRIMARY KEY must include all columns in the table's partitioning function")
+	tk.MustContainErrMsg(`create table t (a int primary key nonclustered, b varchar(255)) partition by key(b) partitions 3`, "[ddl:8264]Global Index is needed for index 'PRIMARY', since the unique index is not including all partitioning columns, and GLOBAL is not given as IndexOption")
 	tk.MustExec(`create table t (a int primary key nonclustered, b varchar(255))`)
 	checkGlobalAndPK(t, tk, "t", 1, false, false, false)
-	tk.MustContainErrMsg(`alter table t partition by key(b) partitions 3`, "A PRIMARY KEY must include all columns in the table's partitioning function")
+	tk.MustContainErrMsg(`alter table t partition by key(b) partitions 3`, "[ddl:8264]Global Index is needed for index 'PRIMARY', since the unique index is not including all partitioning columns, and GLOBAL is not given as IndexOption")
 	checkGlobalAndPK(t, tk, "t", 1, false, false, false)
 	tk.MustExec(`alter table t partition by hash(a) partitions 3`)
 	checkGlobalAndPK(t, tk, "t", 1, false, false, false)
 	tk.MustExec(`drop table t`)
 	tk.MustExec(`create table t (a varchar(255), b varchar(255), primary key (a) nonclustered)`)
 	checkGlobalAndPK(t, tk, "t", 1, false, false, false)
-	tk.MustContainErrMsg(`alter table t partition by key(b) partitions 3`, "A PRIMARY KEY must include all columns in the table's partitioning function")
+	tk.MustContainErrMsg(`alter table t partition by key(b) partitions 3`, "[ddl:8264]Global Index is needed for index 'PRIMARY', since the unique index is not including all partitioning columns, and GLOBAL is not given as IndexOption")
 	checkGlobalAndPK(t, tk, "t", 1, false, false, false)
 	tk.MustExec(`drop table t`)
 	tk.MustExec(`create table t (a varchar(255), b varchar(255), primary key (a, b) nonclustered)`)

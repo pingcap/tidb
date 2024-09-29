@@ -17,12 +17,14 @@ package checkpoint
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"time"
 
-	backuppb "github.com/pingcap/kvproto/pkg/brpb"
+	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/br/pkg/glue"
 	"github.com/pingcap/tidb/br/pkg/pdutil"
-	"github.com/pingcap/tidb/br/pkg/storage"
+	"github.com/pingcap/tidb/pkg/domain"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/util/sqlexec"
 )
 
 type RestoreKeyType = int64
@@ -35,32 +37,6 @@ func (rv RestoreValueType) IdentKey() []byte {
 	return []byte(rv.RangeKey)
 }
 
-const (
-	CheckpointRestoreDirFormat            = CheckpointDir + "/restore-%s"
-	CheckpointDataDirForRestoreFormat     = CheckpointRestoreDirFormat + "/data"
-	CheckpointChecksumDirForRestoreFormat = CheckpointRestoreDirFormat + "/checksum"
-	CheckpointMetaPathForRestoreFormat    = CheckpointRestoreDirFormat + "/checkpoint.meta"
-)
-
-func getCheckpointMetaPathByName(taskName string) string {
-	return fmt.Sprintf(CheckpointMetaPathForRestoreFormat, taskName)
-}
-
-func getCheckpointDataDirByName(taskName string) string {
-	return fmt.Sprintf(CheckpointDataDirForRestoreFormat, taskName)
-}
-
-func getCheckpointChecksumDirByName(taskName string) string {
-	return fmt.Sprintf(CheckpointChecksumDirForRestoreFormat, taskName)
-}
-
-func flushPositionForRestore(taskName string) flushPosition {
-	return flushPosition{
-		CheckpointDataDir:     getCheckpointDataDirByName(taskName),
-		CheckpointChecksumDir: getCheckpointChecksumDirByName(taskName),
-	}
-}
-
 func valueMarshalerForRestore(group *RangeGroup[RestoreKeyType, RestoreValueType]) ([]byte, error) {
 	return json.Marshal(group)
 }
@@ -68,13 +44,12 @@ func valueMarshalerForRestore(group *RangeGroup[RestoreKeyType, RestoreValueType
 // only for test
 func StartCheckpointRestoreRunnerForTest(
 	ctx context.Context,
-	storage storage.ExternalStorage,
-	cipher *backuppb.CipherInfo,
+	se glue.Session,
 	tick time.Duration,
-	taskName string,
 ) (*CheckpointRunner[RestoreKeyType, RestoreValueType], error) {
 	runner := newCheckpointRunner[RestoreKeyType, RestoreValueType](
-		ctx, storage, cipher, nil, flushPositionForRestore(taskName), valueMarshalerForRestore)
+		newTableCheckpointStorage(se, SnapshotRestoreCheckpointDatabaseName),
+		nil, valueMarshalerForRestore)
 
 	runner.startCheckpointMainLoop(ctx, tick, tick, 0)
 	return runner, nil
@@ -82,12 +57,11 @@ func StartCheckpointRestoreRunnerForTest(
 
 func StartCheckpointRunnerForRestore(
 	ctx context.Context,
-	storage storage.ExternalStorage,
-	cipher *backuppb.CipherInfo,
-	taskName string,
+	se glue.Session,
 ) (*CheckpointRunner[RestoreKeyType, RestoreValueType], error) {
 	runner := newCheckpointRunner[RestoreKeyType, RestoreValueType](
-		ctx, storage, cipher, nil, flushPositionForRestore(taskName), valueMarshalerForRestore)
+		newTableCheckpointStorage(se, SnapshotRestoreCheckpointDatabaseName),
+		nil, valueMarshalerForRestore)
 
 	// for restore, no need to set lock
 	runner.startCheckpointMainLoop(ctx, defaultTickDurationForFlush, defaultTckDurationForChecksum, 0)
@@ -108,59 +82,60 @@ func AppendRangesForRestore(
 	})
 }
 
-// walk the whole checkpoint range files and retrieve the metadata of restored ranges
+// load the whole checkpoint range data and retrieve the metadata of restored ranges
 // and return the total time cost in the past executions
-func WalkCheckpointFileForRestore[K KeyType, V ValueType](
+func LoadCheckpointDataForSnapshotRestore[K KeyType, V ValueType](
 	ctx context.Context,
-	s storage.ExternalStorage,
-	cipher *backuppb.CipherInfo,
-	taskName string,
+	execCtx sqlexec.RestrictedSQLExecutor,
 	fn func(K, V),
 ) (time.Duration, error) {
-	return walkCheckpointFile(ctx, s, cipher, getCheckpointDataDirByName(taskName), fn)
+	return selectCheckpointData(ctx, execCtx, SnapshotRestoreCheckpointDatabaseName, fn)
 }
 
 func LoadCheckpointChecksumForRestore(
 	ctx context.Context,
-	s storage.ExternalStorage,
-	taskName string,
+	execCtx sqlexec.RestrictedSQLExecutor,
 ) (map[int64]*ChecksumItem, time.Duration, error) {
-	return loadCheckpointChecksum(ctx, s, getCheckpointChecksumDirByName(taskName))
+	return selectCheckpointChecksum(ctx, execCtx, SnapshotRestoreCheckpointDatabaseName)
 }
 
-type CheckpointMetadataForRestore struct {
-	SchedulersConfig *pdutil.ClusterConfig `json:"schedulers-config,omitempty"`
-	GcRatio          string                `json:"gc-ratio,omitempty"`
+type CheckpointMetadataForSnapshotRestore struct {
+	UpstreamClusterID uint64                `json:"upstream-cluster-id"`
+	RestoredTS        uint64                `json:"restored-ts"`
+	SchedulersConfig  *pdutil.ClusterConfig `json:"schedulers-config"`
 }
 
-func LoadCheckpointMetadataForRestore(
+func LoadCheckpointMetadataForSnapshotRestore(
 	ctx context.Context,
-	s storage.ExternalStorage,
-	taskName string,
-) (*CheckpointMetadataForRestore, error) {
-	m := &CheckpointMetadataForRestore{}
-	err := loadCheckpointMeta(ctx, s, getCheckpointMetaPathByName(taskName), m)
+	execCtx sqlexec.RestrictedSQLExecutor,
+) (*CheckpointMetadataForSnapshotRestore, error) {
+	m := &CheckpointMetadataForSnapshotRestore{}
+	err := selectCheckpointMeta(ctx, execCtx, SnapshotRestoreCheckpointDatabaseName, checkpointMetaTableName, m)
 	return m, err
 }
 
-func SaveCheckpointMetadataForRestore(
+func SaveCheckpointMetadataForSnapshotRestore(
 	ctx context.Context,
-	s storage.ExternalStorage,
-	meta *CheckpointMetadataForRestore,
-	taskName string,
+	se glue.Session,
+	meta *CheckpointMetadataForSnapshotRestore,
 ) error {
-	return saveCheckpointMetadata(ctx, s, meta, getCheckpointMetaPathByName(taskName))
+	err := initCheckpointTable(ctx, se, SnapshotRestoreCheckpointDatabaseName,
+		[]string{checkpointDataTableName, checkpointChecksumTableName})
+	if err != nil {
+		return errors.Trace(err)
+	}
+	return insertCheckpointMeta(ctx, se, SnapshotRestoreCheckpointDatabaseName, checkpointMetaTableName, meta)
 }
 
-func ExistsRestoreCheckpoint(
+func ExistsSnapshotRestoreCheckpoint(
 	ctx context.Context,
-	s storage.ExternalStorage,
-	taskName string,
-) (bool, error) {
-	return s.FileExists(ctx, getCheckpointMetaPathByName(taskName))
+	dom *domain.Domain,
+) bool {
+	return dom.InfoSchema().
+		TableExists(pmodel.NewCIStr(SnapshotRestoreCheckpointDatabaseName), pmodel.NewCIStr(checkpointMetaTableName))
 }
 
-func RemoveCheckpointDataForRestore(ctx context.Context, s storage.ExternalStorage, taskName string) error {
-	prefix := fmt.Sprintf(CheckpointRestoreDirFormat, taskName)
-	return removeCheckpointData(ctx, s, prefix)
+func RemoveCheckpointDataForSnapshotRestore(ctx context.Context, dom *domain.Domain, se glue.Session) error {
+	return dropCheckpointTables(ctx, dom, se, SnapshotRestoreCheckpointDatabaseName,
+		[]string{checkpointDataTableName, checkpointChecksumTableName, checkpointMetaTableName})
 }

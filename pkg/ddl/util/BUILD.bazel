@@ -5,7 +5,6 @@ go_library(
     srcs = [
         "dead_table_lock_checker.go",
         "mock.go",
-        "schema_change_notifier.go",
         "util.go",
         "watcher.go",
     ],
@@ -15,8 +14,8 @@ go_library(
         "//pkg/ddl/logutil",
         "//pkg/infoschema/context",
         "//pkg/kv",
+        "//pkg/meta/model",
         "//pkg/metrics",
-        "//pkg/parser/model",
         "//pkg/parser/terror",
         "//pkg/sessionctx",
         "//pkg/sessionctx/variable",

@@ -30,7 +30,6 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/pkg/bindinfo"
-	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/ddl"
 	fstorage "github.com/pingcap/tidb/pkg/disttask/framework/storage"
 	"github.com/pingcap/tidb/pkg/disttask/importinto"
@@ -42,12 +41,13 @@ import (
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/charset"
 	parserformat "github.com/pingcap/tidb/pkg/parser/format"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/parser/tidb"
@@ -59,14 +59,12 @@ import (
 	"github.com/pingcap/tidb/pkg/privilege"
 	"github.com/pingcap/tidb/pkg/privilege/privileges"
 	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/sessionctx/binloginfo"
 	"github.com/pingcap/tidb/pkg/sessionctx/sessionstates"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/store/helper"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/table/tables"
-	"github.com/pingcap/tidb/pkg/tidb-binlog/node"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
@@ -74,7 +72,6 @@ import (
 	contextutil "github.com/pingcap/tidb/pkg/util/context"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
-	"github.com/pingcap/tidb/pkg/util/etcd"
 	"github.com/pingcap/tidb/pkg/util/filter"
 	"github.com/pingcap/tidb/pkg/util/format"
 	"github.com/pingcap/tidb/pkg/util/hack"
@@ -84,7 +81,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/set"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/pingcap/tidb/pkg/util/stringutil"
-	"github.com/tikv/client-go/v2/oracle"
 )
 
 var etcdDialTimeout = 5 * time.Second
@@ -94,12 +90,12 @@ type ShowExec struct {
 	exec.BaseExecutor
 
 	Tp                ast.ShowStmtType // Databases/Tables/Columns/....
-	DBName            model.CIStr
+	DBName            pmodel.CIStr
 	Table             *resolve.TableNameW  // Used for showing columns.
-	Partition         model.CIStr          // Used for showing partition
+	Partition         pmodel.CIStr         // Used for showing partition
 	Column            *ast.ColumnName      // Used for `desc table column`.
-	IndexName         model.CIStr          // Used for show table regions.
-	ResourceGroupName model.CIStr          // Used for showing resource group
+	IndexName         pmodel.CIStr         // Used for show table regions.
+	ResourceGroupName pmodel.CIStr         // Used for showing resource group
 	Flag              int                  // Some flag parsed from sql, such as FULL.
 	Roles             []*auth.RoleIdentity // Used for show grants.
 	User              *auth.UserIdentity   // Used by show grants, show create user.
@@ -201,8 +197,6 @@ func (e *ShowExec) fetchAll(ctx context.Context) error {
 		return e.fetchShowCreateResourceGroup()
 	case ast.ShowDatabases:
 		return e.fetchShowDatabases()
-	case ast.ShowDrainerStatus:
-		return e.fetchShowPumpOrDrainerStatus(node.DrainerNode)
 	case ast.ShowEngines:
 		return e.fetchShowEngines(ctx)
 	case ast.ShowGrants:
@@ -211,8 +205,6 @@ func (e *ShowExec) fetchAll(ctx context.Context) error {
 		return e.fetchShowIndex()
 	case ast.ShowProcedureStatus:
 		return e.fetchShowProcedureStatus()
-	case ast.ShowPumpStatus:
-		return e.fetchShowPumpOrDrainerStatus(node.PumpNode)
 	case ast.ShowStatus:
 		return e.fetchShowStatus()
 	case ast.ShowTables:
@@ -308,7 +300,7 @@ func (v *visibleChecker) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 		if schema == "" {
 			schema = v.defaultDB
 		}
-		if !v.is.TableExists(model.NewCIStr(schema), x.Name) {
+		if !v.is.TableExists(pmodel.NewCIStr(schema), x.Name) {
 			return in, true
 		}
 		activeRoles := v.ctx.GetSessionVars().ActiveRoles
@@ -497,7 +489,7 @@ func (*ShowExec) fetchShowOpenTables() error {
 
 // showInfo represents the result of `SHOW TABLES`.
 type showInfo struct {
-	Name model.CIStr
+	Name pmodel.CIStr
 	// only used for show full tables
 	TableType string
 }
@@ -518,7 +510,7 @@ func (e *ShowExec) getTableType(tb *model.TableInfo) string {
 
 // fetchShowInfoByName fetches the show info for `SHOW <FULL> TABLES like 'xxx'`
 func (e *ShowExec) fetchShowInfoByName(ctx context.Context, name string) ([]*showInfo, error) {
-	tb, err := e.is.TableByName(ctx, e.DBName, model.NewCIStr(name))
+	tb, err := e.is.TableByName(ctx, e.DBName, pmodel.NewCIStr(name))
 	if err != nil {
 		// do nothing if table not exists
 		if infoschema.ErrTableNotExists.Equal(err) {
@@ -821,6 +813,7 @@ func (e *ShowExec) fetchShowIndex() error {
 			"YES",            // Index_visible
 			nil,              // Expression
 			"YES",            // Clustered
+			"NO",             // Global_index
 		})
 	}
 	for _, idx := range tb.Indices() {
@@ -832,6 +825,12 @@ func (e *ShowExec) fetchShowIndex() error {
 		if tb.Meta().IsCommonHandle && idxInfo.Primary {
 			isClustered = "YES"
 		}
+
+		isGlobalIndex := "NO"
+		if idxInfo.Global {
+			isGlobalIndex = "YES"
+		}
+
 		for i, col := range idxInfo.Columns {
 			nonUniq := 1
 			if idx.Meta().Unique {
@@ -884,6 +883,7 @@ func (e *ShowExec) fetchShowIndex() error {
 				visible,                // Index_visible
 				expression,             // Expression
 				isClustered,            // Clustered
+				isGlobalIndex,          // Global_index
 			})
 		}
 	}
@@ -1030,7 +1030,7 @@ func ConstructResultOfShowCreateTable(ctx sessionctx.Context, tableInfo *model.T
 	return constructResultOfShowCreateTable(ctx, nil, tableInfo, allocators, buf)
 }
 
-func constructResultOfShowCreateTable(ctx sessionctx.Context, dbName *model.CIStr, tableInfo *model.TableInfo, allocators autoid.Allocators, buf *bytes.Buffer) (err error) {
+func constructResultOfShowCreateTable(ctx sessionctx.Context, dbName *pmodel.CIStr, tableInfo *model.TableInfo, allocators autoid.Allocators, buf *bytes.Buffer) (err error) {
 	if tableInfo.IsView() {
 		fetchShowCreateTable4View(ctx, tableInfo, buf)
 		return nil
@@ -1234,7 +1234,7 @@ func constructResultOfShowCreateTable(ctx sessionctx.Context, dbName *model.CISt
 		if idxInfo.Comment != "" {
 			fmt.Fprintf(buf, ` COMMENT '%s'`, format.OutputFormat(idxInfo.Comment))
 		}
-		if idxInfo.Tp == model.IndexTypeHypo {
+		if idxInfo.Tp == pmodel.IndexTypeHypo {
 			fmt.Fprintf(buf, ` /* HYPO INDEX */`)
 		}
 		if idxInfo.Primary {
@@ -1271,11 +1271,11 @@ func constructResultOfShowCreateTable(ctx sessionctx.Context, dbName *model.CISt
 			refColNames = append(refColNames, stringutil.Escape(refCol.O, sqlMode))
 		}
 		fmt.Fprintf(buf, "(%s)", strings.Join(refColNames, ","))
-		if model.ReferOptionType(fk.OnDelete) != 0 {
-			fmt.Fprintf(buf, " ON DELETE %s", model.ReferOptionType(fk.OnDelete).String())
+		if pmodel.ReferOptionType(fk.OnDelete) != 0 {
+			fmt.Fprintf(buf, " ON DELETE %s", pmodel.ReferOptionType(fk.OnDelete).String())
 		}
-		if model.ReferOptionType(fk.OnUpdate) != 0 {
-			fmt.Fprintf(buf, " ON UPDATE %s", model.ReferOptionType(fk.OnUpdate).String())
+		if pmodel.ReferOptionType(fk.OnUpdate) != 0 {
+			fmt.Fprintf(buf, " ON UPDATE %s", pmodel.ReferOptionType(fk.OnUpdate).String())
 		}
 		if fk.Version < model.FKVersion1 {
 			buf.WriteString(" /* FOREIGN KEY INVALID */")
@@ -1333,8 +1333,8 @@ func constructResultOfShowCreateTable(ctx sessionctx.Context, dbName *model.CISt
 		}
 	}
 
-	if tableInfo.AutoIdCache != 0 {
-		fmt.Fprintf(buf, " /*T![auto_id_cache] AUTO_ID_CACHE=%d */", tableInfo.AutoIdCache)
+	if tableInfo.AutoIDCache != 0 {
+		fmt.Fprintf(buf, " /*T![auto_id_cache] AUTO_ID_CACHE=%d */", tableInfo.AutoIDCache)
 	}
 
 	randomAllocator := allocators.Get(autoid.AutoRandomType)
@@ -1979,51 +1979,6 @@ func (e *ShowExec) fetchShowWarnings(errOnly bool) error {
 	return nil
 }
 
-// fetchShowPumpOrDrainerStatus gets status of all pumps or drainers and fill them into e.rows.
-func (e *ShowExec) fetchShowPumpOrDrainerStatus(kind string) error {
-	registry, needToClose, err := getOrCreateBinlogRegistry(config.GetGlobalConfig().Path)
-	if err != nil {
-		return errors.Trace(err)
-	}
-
-	if needToClose {
-		defer func() {
-			_ = registry.Close()
-		}()
-	}
-
-	nodes, _, err := registry.Nodes(context.Background(), node.NodePrefix[kind])
-	if err != nil {
-		return errors.Trace(err)
-	}
-
-	for _, n := range nodes {
-		if n.State == node.Offline {
-			continue
-		}
-		e.appendRow([]any{n.NodeID, n.Addr, n.State, n.MaxCommitTS, oracle.GetTimeFromTS(uint64(n.UpdateTS)).Format(types.TimeFormat)})
-	}
-
-	return nil
-}
-
-// getOrCreateBinlogRegistry returns an etcd registry for binlog, need to close, and error
-func getOrCreateBinlogRegistry(urls string) (*node.EtcdRegistry, bool, error) {
-	if pumpClient := binloginfo.GetPumpsClient(); pumpClient != nil && pumpClient.EtcdRegistry != nil {
-		return pumpClient.EtcdRegistry, false, nil
-	}
-	ectdEndpoints, err := util.ParseHostPortAddr(urls)
-	if err != nil {
-		return nil, false, errors.Trace(err)
-	}
-	cli, err := etcd.NewClientFromCfg(ectdEndpoints, etcdDialTimeout, node.DefaultRootPath, nil)
-	if err != nil {
-		return nil, false, errors.Trace(err)
-	}
-
-	return node.NewEtcdRegistry(cli, etcdDialTimeout), true, nil
-}
-
 func (e *ShowExec) getTable() (table.Table, error) {
 	if e.Table == nil {
 		return nil, errors.New("table not found")
@@ -2423,7 +2378,7 @@ func (e *ShowExec) fetchShowImportJobs(ctx context.Context) error {
 // tryFillViewColumnType fill the columns type info of a view.
 // Because view's underlying table's column could change or recreate, so view's column type may change over time.
 // To avoid this situation we need to generate a logical plan and extract current column types from Schema.
-func tryFillViewColumnType(ctx context.Context, sctx sessionctx.Context, is infoschema.InfoSchema, dbName model.CIStr, tbl *model.TableInfo) error {
+func tryFillViewColumnType(ctx context.Context, sctx sessionctx.Context, is infoschema.InfoSchema, dbName pmodel.CIStr, tbl *model.TableInfo) error {
 	if !tbl.IsView() {
 		return nil
 	}

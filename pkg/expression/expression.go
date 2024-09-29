@@ -20,12 +20,14 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/errctx"
-	exprctx "github.com/pingcap/tidb/pkg/expression/context"
+	"github.com/pingcap/tidb/pkg/expression/exprctx"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/opcode"
 	"github.com/pingcap/tidb/pkg/parser/terror"
+	"github.com/pingcap/tidb/pkg/planner/cascades/base"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/generatedexpr"
@@ -41,6 +43,7 @@ const (
 	scalarFunctionFlag byte = 3
 	parameterFlag      byte = 4
 	ScalarSubQFlag     byte = 5
+	correlatedColumn   byte = 6
 )
 
 // EvalSimpleAst evaluates a simple ast expression directly.
@@ -55,7 +58,7 @@ type BuildOptions struct {
 	// InputNames is the input names for expression to build
 	InputNames types.NameSlice
 	// SourceTableDB is the database that the source table located
-	SourceTableDB model.CIStr
+	SourceTableDB pmodel.CIStr
 	// SourceTable is used to provide some extra column info.
 	SourceTable *model.TableInfo
 	// AllowCastArray specifies whether to allow casting to an array type.
@@ -71,7 +74,7 @@ type BuildOption func(*BuildOptions)
 // When this option is specified, it will use the table meta to resolve column names.
 func WithTableInfo(db string, tblInfo *model.TableInfo) BuildOption {
 	return func(options *BuildOptions) {
-		options.SourceTableDB = model.NewCIStr(db)
+		options.SourceTableDB = pmodel.NewCIStr(db)
 		options.SourceTable = tblInfo
 	}
 }
@@ -169,6 +172,7 @@ const (
 type Expression interface {
 	VecExpr
 	CollationInfo
+	base.HashEquals
 
 	Traverse(TraverseAction) Expression
 
@@ -838,7 +842,7 @@ func FlattenCNFConditions(CNFCondition *ScalarFunction) []Expression {
 type Assignment struct {
 	Col *Column
 	// ColName indicates its original column name in table schema. It's used for outputting helping message when executing meets some errors.
-	ColName model.CIStr
+	ColName pmodel.CIStr
 	Expr    Expression
 	// LazyErr is used in statement like `INSERT INTO t1 (a) VALUES (1) ON DUPLICATE KEY UPDATE a= (SELECT b FROM source);`, ErrSubqueryMoreThan1Row
 	// should be evaluated after the duplicate situation is detected in the executing procedure.
@@ -1006,7 +1010,7 @@ func evaluateExprWithNullInNullRejectCheck(ctx BuildContext, schema *Schema, exp
 }
 
 // TableInfo2SchemaAndNames converts the TableInfo to the schema and name slice.
-func TableInfo2SchemaAndNames(ctx BuildContext, dbName model.CIStr, tbl *model.TableInfo) (*Schema, []*types.FieldName, error) {
+func TableInfo2SchemaAndNames(ctx BuildContext, dbName pmodel.CIStr, tbl *model.TableInfo) (*Schema, []*types.FieldName, error) {
 	cols, names, err := ColumnInfos2ColumnsAndNames(ctx, dbName, tbl.Name, tbl.Cols(), tbl)
 	if err != nil {
 		return nil, nil, err
@@ -1053,7 +1057,7 @@ func TableInfo2SchemaAndNames(ctx BuildContext, dbName model.CIStr, tbl *model.T
 }
 
 // ColumnInfos2ColumnsAndNames converts the ColumnInfo to the *Column and NameSlice.
-func ColumnInfos2ColumnsAndNames(ctx BuildContext, dbName, tblName model.CIStr, colInfos []*model.ColumnInfo, tblInfo *model.TableInfo) ([]*Column, types.NameSlice, error) {
+func ColumnInfos2ColumnsAndNames(ctx BuildContext, dbName, tblName pmodel.CIStr, colInfos []*model.ColumnInfo, tblInfo *model.TableInfo) ([]*Column, types.NameSlice, error) {
 	columns := make([]*Column, 0, len(colInfos))
 	names := make([]*types.FieldName, 0, len(colInfos))
 	for i, col := range colInfos {
@@ -1116,7 +1120,7 @@ func NewValuesFunc(ctx BuildContext, offset int, retTp *types.FieldType) *Scalar
 	bt, err := fc.getFunction(ctx, nil)
 	terror.Log(err)
 	return &ScalarFunction{
-		FuncName: model.NewCIStr(ast.Values),
+		FuncName: pmodel.NewCIStr(ast.Values),
 		RetType:  retTp,
 		Function: bt,
 	}
@@ -1157,12 +1161,12 @@ func wrapWithIsTrue(ctx BuildContext, keepNull bool, arg Expression, wrapForInt 
 		return nil, err
 	}
 	sf := &ScalarFunction{
-		FuncName: model.NewCIStr(ast.IsTruthWithoutNull),
+		FuncName: pmodel.NewCIStr(ast.IsTruthWithoutNull),
 		Function: f,
 		RetType:  f.getRetTp(),
 	}
 	if keepNull {
-		sf.FuncName = model.NewCIStr(ast.IsTruthWithNull)
+		sf.FuncName = pmodel.NewCIStr(ast.IsTruthWithNull)
 	}
 	return FoldConstant(ctx, sf), nil
 }

@@ -31,11 +31,14 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/planner/cascades"
-	pctx "github.com/pingcap/tidb/pkg/planner/context"
 	"github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
+	"github.com/pingcap/tidb/pkg/planner/indexadvisor"
+	"github.com/pingcap/tidb/pkg/planner/planctx"
+	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util/debugtrace"
+	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
 	"github.com/pingcap/tidb/pkg/privilege"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
@@ -395,7 +398,7 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node *resolve.NodeW,
 // OptimizeForForeignKeyCascade does optimization and creates a Plan for foreign key cascade.
 // Compare to Optimize, OptimizeForForeignKeyCascade only build plan by StmtNode,
 // doesn't consider plan cache and plan binding, also doesn't do privilege check.
-func OptimizeForForeignKeyCascade(ctx context.Context, sctx pctx.PlanContext, node *resolve.NodeW, is infoschema.InfoSchema) (base.Plan, error) {
+func OptimizeForForeignKeyCascade(ctx context.Context, sctx planctx.PlanContext, node *resolve.NodeW, is infoschema.InfoSchema) (base.Plan, error) {
 	builder := planBuilderPool.Get().(*core.PlanBuilder)
 	defer planBuilderPool.Put(builder.ResetForReuse())
 	hintProcessor := hint.NewQBHintHandler(sctx.GetSessionVars().StmtCtx)
@@ -410,7 +413,7 @@ func OptimizeForForeignKeyCascade(ctx context.Context, sctx pctx.PlanContext, no
 	return p, nil
 }
 
-func allowInReadOnlyMode(sctx pctx.PlanContext, node ast.Node) (bool, error) {
+func allowInReadOnlyMode(sctx planctx.PlanContext, node ast.Node) (bool, error) {
 	pm := privilege.GetPrivilegeManager(sctx)
 	if pm == nil {
 		return true, nil
@@ -459,7 +462,7 @@ var planBuilderPool = sync.Pool{
 // optimizeCnt is a global variable only used for test.
 var optimizeCnt int
 
-func optimize(ctx context.Context, sctx pctx.PlanContext, node *resolve.NodeW, is infoschema.InfoSchema) (base.Plan, types.NameSlice, float64, error) {
+func optimize(ctx context.Context, sctx planctx.PlanContext, node *resolve.NodeW, is infoschema.InfoSchema) (base.Plan, types.NameSlice, float64, error) {
 	failpoint.Inject("checkOptimizeCountOne", func(val failpoint.Value) {
 		// only count the optimization for SQL with specified text
 		if testSQL, ok := val.(string); ok && testSQL == node.Node.OriginalText() {
@@ -556,7 +559,7 @@ func OptimizeExecStmt(ctx context.Context, sctx sessionctx.Context,
 	return exec, names, nil
 }
 
-func buildLogicalPlan(ctx context.Context, sctx pctx.PlanContext, node *resolve.NodeW, builder *core.PlanBuilder) (base.Plan, error) {
+func buildLogicalPlan(ctx context.Context, sctx planctx.PlanContext, node *resolve.NodeW, builder *core.PlanBuilder) (base.Plan, error) {
 	sctx.GetSessionVars().PlanID.Store(0)
 	sctx.GetSessionVars().PlanColumnID.Store(0)
 	sctx.GetSessionVars().MapScalarSubQ = nil
@@ -582,7 +585,7 @@ func buildLogicalPlan(ctx context.Context, sctx pctx.PlanContext, node *resolve.
 	return p, nil
 }
 
-func handleInvalidBinding(ctx context.Context, sctx pctx.PlanContext, level string, binding bindinfo.Binding) {
+func handleInvalidBinding(ctx context.Context, sctx planctx.PlanContext, level string, binding bindinfo.Binding) {
 	sessionHandle := sctx.Value(bindinfo.SessionBindInfoKeyType).(bindinfo.SessionBindingHandle)
 	err := sessionHandle.DropSessionBinding([]string{binding.SQLDigest})
 	if err != nil {
@@ -623,9 +626,24 @@ func hypoIndexChecker(ctx context.Context, is infoschema.InfoSchema) func(db, tb
 	}
 }
 
+// queryPlanCost returns the plan cost of this node, which is mainly for the Index Advisor.
+func queryPlanCost(sctx sessionctx.Context, stmt ast.StmtNode) (float64, error) {
+	nodeW := resolve.NewNodeW(stmt)
+	plan, _, err := Optimize(context.Background(), sctx, nodeW, sctx.GetDomainInfoSchema().(infoschema.InfoSchema))
+	if err != nil {
+		return 0, err
+	}
+	pp, ok := plan.(base.PhysicalPlan)
+	if !ok {
+		return 0, errors.Errorf("plan is not a physical plan: %T", plan)
+	}
+	return core.GetPlanCost(pp, property.RootTaskType, optimizetrace.NewDefaultPlanCostOption())
+}
+
 func init() {
 	core.OptimizeAstNode = Optimize
 	core.IsReadOnly = IsReadOnly
+	indexadvisor.QueryPlanCostHook = queryPlanCost
 	bindinfo.GetGlobalBindingHandle = func(sctx sessionctx.Context) bindinfo.GlobalBindingHandle {
 		return domain.GetDomain(sctx).BindHandle()
 	}

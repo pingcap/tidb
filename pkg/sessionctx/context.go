@@ -20,27 +20,26 @@ import (
 
 	"github.com/pingcap/errors"
 	distsqlctx "github.com/pingcap/tidb/pkg/distsql/context"
-	exprctx "github.com/pingcap/tidb/pkg/expression/context"
+	"github.com/pingcap/tidb/pkg/expression/exprctx"
 	"github.com/pingcap/tidb/pkg/extension"
 	infoschema "github.com/pingcap/tidb/pkg/infoschema/context"
 	"github.com/pingcap/tidb/pkg/kv"
 	tablelock "github.com/pingcap/tidb/pkg/lock/context"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/metrics"
-	"github.com/pingcap/tidb/pkg/parser/model"
-	planctx "github.com/pingcap/tidb/pkg/planner/context"
+	"github.com/pingcap/tidb/pkg/planner/planctx"
 	"github.com/pingcap/tidb/pkg/session/cursor"
 	"github.com/pingcap/tidb/pkg/sessionctx/sessionstates"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/statistics/handle/usage/indexusage"
-	tbctx "github.com/pingcap/tidb/pkg/table/context"
+	"github.com/pingcap/tidb/pkg/table/tblctx"
 	"github.com/pingcap/tidb/pkg/util"
 	contextutil "github.com/pingcap/tidb/pkg/util/context"
 	rangerctx "github.com/pingcap/tidb/pkg/util/ranger/context"
 	"github.com/pingcap/tidb/pkg/util/sli"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/pingcap/tidb/pkg/util/topsql/stmtstats"
-	"github.com/pingcap/tipb/go-binlog"
 	"github.com/tikv/client-go/v2/oracle"
 )
 
@@ -126,7 +125,7 @@ type Context interface {
 	GetExprCtx() exprctx.ExprContext
 
 	// GetTableCtx returns the table.MutateContext
-	GetTableCtx() tbctx.MutateContext
+	GetTableCtx() tblctx.MutateContext
 
 	// GetPlanCtx gets the plan context of the current session.
 	GetPlanCtx() planctx.PlanContext
@@ -172,8 +171,6 @@ type Context interface {
 	// before you start another batch, otherwise, the previous changes might be committed
 	// unexpectedly.
 	StmtRollback(ctx context.Context, isForPessimisticRetry bool)
-	// StmtGetMutation gets the binlog mutation for current statement.
-	StmtGetMutation(int64) *binlog.TableMutation
 	// IsDDLOwner checks whether this session is DDL owner.
 	IsDDLOwner() bool
 	// PrepareTSFuture uses to prepare timestamp by future.
