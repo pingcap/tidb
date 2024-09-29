@@ -424,7 +424,7 @@ var (
 	ErrUnsupportedTiFlashOperationForUnsupportedCharsetTable = ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, parser_mysql.Message(fmt.Sprintf(mysql.MySQLErrName[mysql.ErrUnsupportedDDLOperation].Raw, "ALTER TiFlash settings for tables not supported by TiFlash: table contains %s charset"), nil))
 	// ErrTiFlashBackfillIndex is the error that tiflash backfill the index failed.
 	ErrTiFlashBackfillIndex = ClassDDL.NewStdErr(mysql.ErrTiFlashBackfillIndex,
-		parser_mysql.Message(fmt.Sprintf(mysql.MySQLErrName[mysql.ErrTiFlashBackfillIndex].Raw, "TiFlash backfill index failed: %s"), nil))
+		parser_mysql.Message(mysql.MySQLErrName[mysql.ErrTiFlashBackfillIndex].Raw, nil))
 
 	// ErrDropIndexNeededInForeignKey returns when drop index which is needed in foreign key.
 	ErrDropIndexNeededInForeignKey = ClassDDL.NewStd(mysql.ErrDropIndexNeededInForeignKey)

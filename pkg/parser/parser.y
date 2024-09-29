@@ -1135,7 +1135,7 @@ import (
 	ConnectionOption                       "single connection options"
 	ConnectionOptionList                   "connection options for CREATE USER statement"
 	ConnectionOptions                      "optional connection options for CREATE USER statement"
-	Constraint                             "table constraint outwith vector index"
+	Constraint                             "table constraint"
 	ConstraintElem                         "table constraint element"
 	ConstraintKeywordOpt                   "Constraint Keyword or empty"
 	ConstraintVectorIndex                  "vector index"

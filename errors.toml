@@ -1568,7 +1568,7 @@ Auto analyze is not effective for index '%-.192s', need analyze manually
 
 ["ddl:9014"]
 error = '''
-TiFlash backfill index failed: TiFlash backfill index failed: %s
+TiFlash backfill index failed: %s
 '''
 
 ["domain:8027"]
