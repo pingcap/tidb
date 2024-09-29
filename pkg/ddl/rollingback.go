@@ -591,6 +591,7 @@ func rollingbackTruncateTable(t *meta.Mutator, job *model.Job) (ver int64, err e
 }
 
 func pauseReorgWorkers(w *worker, d *ddlCtx, job *model.Job) (err error) {
+	// TODO(lance6716): delete now?
 	if needNotifyAndStopReorgWorker(job) {
 		w.jobLogger(job).Info("pausing the DDL job", zap.String("job", job.String()))
 		d.notifyReorgWorkerJobStateChange(job)

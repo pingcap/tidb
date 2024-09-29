@@ -131,7 +131,8 @@ func (l *ownerListener) OnRetireOwner() {
 
 // jobScheduler is used to schedule the DDL jobs, it's only run on the DDL owner.
 type jobScheduler struct {
-	// *ddlCtx already have context named as "ctx", so we use "schCtx" here to avoid confusion.
+	// schCtx is valid only when this node is DDL owner. *ddlCtx already have context
+	// named as "ctx", so we use "schCtx" here to avoid confusion.
 	schCtx            context.Context
 	cancel            context.CancelFunc
 	wg                tidbutil.WaitGroupWrapper
@@ -472,6 +473,7 @@ func (s *jobScheduler) deliveryJob(wk *worker, pool *workerPool, job *model.Job)
 	s.runningJobs.addRunning(jobID, involvedSchemaInfos)
 	metrics.DDLRunningJobCount.WithLabelValues(pool.tp().String()).Inc()
 	jobCtx := s.getJobRunCtx(job.ID)
+	// TODO(lance6716): spawn a goroutine to check job state
 	s.wg.Run(func() {
 		defer func() {
 			r := recover()
@@ -526,8 +528,10 @@ func (s *jobScheduler) deliveryJob(wk *worker, pool *workerPool, job *model.Job)
 
 func (s *jobScheduler) getJobRunCtx(jobID int64) *jobContext {
 	ch, _ := s.ddlJobDoneChMap.Load(jobID)
+	jobCtx, cancel := context.WithCancel(s.schCtx)
 	return &jobContext{
-		ctx:                  s.schCtx,
+		ctx:                  jobCtx,
+		cancel:               cancel,
 		unSyncedJobTracker:   s.unSyncedTracker,
 		schemaVersionManager: s.schemaVerMgr,
 		infoCache:            s.infoCache,

@@ -76,8 +76,9 @@ func SetWaitTimeWhenErrorOccurred(dur time.Duration) {
 
 // jobContext is the context for execution of a DDL job.
 type jobContext struct {
+	ctx    context.Context
+	cancel context.CancelFunc
 	// below fields are shared by all DDL jobs
-	ctx context.Context
 	*unSyncedJobTracker
 	*schemaVersionManager
 	infoCache       *infoschema.InfoCache
@@ -123,7 +124,8 @@ type worker struct {
 	tp              workerType
 	addingDDLJobKey string
 	ddlJobCh        chan struct{}
-	// it's the ctx of 'job scheduler'.
+	// workCtx is valid only when this node is DDL owner. *ddlCtx already have
+	// context named as "ctx", so we use "workCtx" here to avoid confusion.
 	ctx context.Context
 	wg  sync.WaitGroup
 
