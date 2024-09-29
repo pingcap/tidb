@@ -411,10 +411,10 @@ func (w *worker) runReorgJob(
 				return dbterror.ErrWaitReorgTimeout
 			}
 			// Since job is cancelled，we don't care about its partial counts.
-			// TODO(lance6716): use WithCancelCause?
-			if rc.isReorgCanceled() || terror.ErrorEqual(err, dbterror.ErrCancelledDDLJob) {
+			// TODO(lance6716): should we also do for paused job?
+			if terror.ErrorEqual(err, dbterror.ErrCancelledDDLJob) {
 				d.removeReorgCtx(job.ID)
-				return dbterror.ErrCancelledDDLJob
+				return err
 			}
 			rowCount := rc.getRowCount()
 			job.SetRowCount(rowCount)
@@ -586,6 +586,7 @@ func (dc *ddlCtx) isReorgRunnable(jobID int64, isDistReorg bool) error {
 		return dbterror.ErrInvalidWorker.GenWithStack("worker is closed")
 	}
 
+	// TODO(lance6716): check ctx.Err?
 	if dc.isReorgCancelled(jobID) {
 		// Job is cancelled. So it can't be done.
 		return dbterror.ErrCancelledDDLJob

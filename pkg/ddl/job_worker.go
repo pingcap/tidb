@@ -77,7 +77,7 @@ func SetWaitTimeWhenErrorOccurred(dur time.Duration) {
 type jobContext struct {
 	// ctx becomes invalid when the job is cancelled or paused.
 	ctx    context.Context
-	cancel context.CancelFunc
+	cancel context.CancelCauseFunc
 	// below fields are shared by all DDL jobs
 	*unSyncedJobTracker
 	*schemaVersionManager

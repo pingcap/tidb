@@ -496,11 +496,16 @@ func (s *jobScheduler) deliveryJob(wk *worker, pool *workerPool, job *model.Job)
 					continue
 				}
 				switch latestJob.State {
-				case model.JobStateCancelling, model.JobStateCancelled,
-					model.JobStatePausing, model.JobStatePaused:
-					logutil.DDLLogger().Info("job will stop running by user",
-						zap.Int64("job_id", jobID), zap.Stringer("state", latestJob.State))
-					jobCtx.cancel()
+				case model.JobStateCancelling, model.JobStateCancelled:
+					logutil.DDLLogger().Info("job is cancelled",
+						zap.Int64("job_id", jobID),
+						zap.Stringer("state", latestJob.State))
+					jobCtx.cancel(dbterror.ErrCancelledDDLJob)
+				case model.JobStatePausing, model.JobStatePaused:
+					logutil.DDLLogger().Info("job is paused",
+						zap.Int64("job_id", jobID),
+						zap.Stringer("state", latestJob.State))
+					jobCtx.cancel(dbterror.ErrPausedDDLJob)
 					return
 				case model.JobStateDone, model.JobStateSynced:
 					return
@@ -564,7 +569,7 @@ func (s *jobScheduler) deliveryJob(wk *worker, pool *workerPool, job *model.Job)
 
 func (s *jobScheduler) getJobRunCtx(jobID int64, traceInfo *model.TraceInfo) *jobContext {
 	ch, _ := s.ddlJobDoneChMap.Load(jobID)
-	jobCtx, cancel := context.WithCancel(s.schCtx)
+	jobCtx, cancel := context.WithCancelCause(s.schCtx)
 	return &jobContext{
 		ctx:                  jobCtx,
 		cancel:               cancel,
