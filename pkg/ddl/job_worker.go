@@ -76,6 +76,7 @@ func SetWaitTimeWhenErrorOccurred(dur time.Duration) {
 
 // jobContext is the context for execution of a DDL job.
 type jobContext struct {
+	// ctx becomes invalid when the job is cancelled or paused.
 	ctx    context.Context
 	cancel context.CancelFunc
 	// below fields are shared by all DDL jobs
@@ -126,8 +127,8 @@ type worker struct {
 	ddlJobCh        chan struct{}
 	// workCtx is valid only when this node is DDL owner. *ddlCtx already have
 	// context named as "ctx", so we use "workCtx" here to avoid confusion.
-	ctx context.Context
-	wg  sync.WaitGroup
+	workCtx context.Context
+	wg      sync.WaitGroup
 
 	sessPool        *sess.Pool    // sessPool is used to new sessions to execute SQL in ddl package.
 	sess            *sess.Session // sess is used and only used in running DDL job.
@@ -168,7 +169,7 @@ func newWorker(ctx context.Context, tp workerType, sessPool *sess.Pool, delRange
 		id:              ddlWorkerID.Add(1),
 		tp:              tp,
 		ddlJobCh:        make(chan struct{}, 1),
-		ctx:             ctx,
+		workCtx:         ctx,
 		ddlCtx:          dCtx,
 		sessPool:        sessPool,
 		delRangeManager: delRangeMgr,
@@ -242,7 +243,7 @@ func (w *worker) handleUpdateJobError(t *meta.Mutator, job *model.Job, err error
 	if kv.ErrEntryTooLarge.Equal(err) {
 		w.jobLogger(job).Warn("update DDL job failed", zap.String("job", job.String()), zap.Error(err))
 		w.sess.Rollback()
-		err1 := w.sess.Begin(w.ctx)
+		err1 := w.sess.Begin(w.workCtx)
 		if err1 != nil {
 			return errors.Trace(err1)
 		}
@@ -269,7 +270,7 @@ func (w *worker) updateDDLJob(job *model.Job, updateRawArgs bool) error {
 		w.jobLogger(job).Info("meet something wrong before update DDL job, shouldn't update raw args",
 			zap.String("job", job.String()))
 	}
-	return errors.Trace(updateDDLJob2Table(w.ctx, w.sess, job, updateRawArgs))
+	return errors.Trace(updateDDLJob2Table(w.workCtx, w.sess, job, updateRawArgs))
 }
 
 // registerMDLInfo registers metadata lock info.
@@ -280,7 +281,7 @@ func (w *worker) registerMDLInfo(job *model.Job, ver int64) error {
 	if ver == 0 {
 		return nil
 	}
-	rows, err := w.sess.Execute(w.ctx, fmt.Sprintf("select table_ids from mysql.tidb_ddl_job where job_id = %d", job.ID), "register-mdl-info")
+	rows, err := w.sess.Execute(w.workCtx, fmt.Sprintf("select table_ids from mysql.tidb_ddl_job where job_id = %d", job.ID), "register-mdl-info")
 	if err != nil {
 		return err
 	}
@@ -297,7 +298,7 @@ func (w *worker) registerMDLInfo(job *model.Job, ver int64) error {
 	} else {
 		sql = fmt.Sprintf("replace into mysql.tidb_mdl_info (job_id, version, table_ids, owner_id) values (%d, %d, '%s', '%s')", job.ID, ver, ids, ownerID)
 	}
-	_, err = w.sess.Execute(w.ctx, sql, "register-mdl-info")
+	_, err = w.sess.Execute(w.workCtx, sql, "register-mdl-info")
 	return err
 }
 
@@ -345,7 +346,7 @@ func (w *worker) finishDDLJob(t *meta.Mutator, job *model.Job) (err error) {
 	}()
 
 	if JobNeedGC(job) {
-		err = w.delRangeManager.addDelRangeJob(w.ctx, job)
+		err = w.delRangeManager.addDelRangeJob(w.workCtx, job)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -384,7 +385,7 @@ func (w *worker) finishDDLJob(t *meta.Mutator, job *model.Job) (err error) {
 	job.SeqNum = w.seqAllocator.Add(1)
 	w.removeJobCtx(job)
 	failpoint.InjectCall("afterFinishDDLJob", job)
-	err = AddHistoryDDLJob(w.ctx, w.sess, t, job, updateRawArgs)
+	err = AddHistoryDDLJob(w.workCtx, w.sess, t, job, updateRawArgs)
 	return errors.Trace(err)
 }
 
@@ -469,7 +470,7 @@ func (w *worker) handleJobDone(jobCtx *jobContext, job *model.Job, t *meta.Mutat
 		return err
 	}
 
-	err = w.sess.Commit(w.ctx)
+	err = w.sess.Commit(w.workCtx)
 	if err != nil {
 		return err
 	}
@@ -479,7 +480,7 @@ func (w *worker) handleJobDone(jobCtx *jobContext, job *model.Job, t *meta.Mutat
 }
 
 func (w *worker) prepareTxn(job *model.Job) (kv.Transaction, error) {
-	err := w.sess.Begin(w.ctx)
+	err := w.sess.Begin(w.workCtx)
 	if err != nil {
 		return nil, err
 	}
@@ -592,7 +593,7 @@ func (w *worker) transitOneJobStep(jobCtx *jobContext, job *model.Job) (int64, e
 	}
 	// reset the SQL digest to make topsql work right.
 	w.sess.GetSessionVars().StmtCtx.ResetSQLDigest(job.Query)
-	err = w.sess.Commit(w.ctx)
+	err = w.sess.Commit(w.workCtx)
 	jobCtx.unlockSchemaVersion(job.ID)
 	if err != nil {
 		return 0, err
@@ -607,7 +608,7 @@ func (w *worker) transitOneJobStep(jobCtx *jobContext, job *model.Job) (int64, e
 		// which may act like a deadlock.
 		select {
 		case <-time.After(GetWaitTimeWhenErrorOccurred()):
-		case <-w.ctx.Done():
+		case <-w.workCtx.Done():
 		}
 	}
 
@@ -622,7 +623,7 @@ func (w *worker) checkBeforeCommit() error {
 		return dbterror.ErrNotOwner
 	}
 
-	if err := w.ctx.Err(); err != nil {
+	if err := w.workCtx.Err(); err != nil {
 		// The worker context is canceled, it should not commit any transaction.
 		return err
 	}

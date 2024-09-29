@@ -275,8 +275,14 @@ func rollbackModifyColumnJobWithData(jobCtx *jobContext, t *meta.Mutator, tblInf
 
 // doModifyColumn updates the column information and reorders all columns. It does not support modifying column data.
 func (w *worker) doModifyColumn(
-	jobCtx *jobContext, t *meta.Mutator, job *model.Job, dbInfo *model.DBInfo, tblInfo *model.TableInfo,
-	newCol, oldCol *model.ColumnInfo, pos *ast.ColumnPosition) (ver int64, _ error) {
+	jobCtx *jobContext,
+	t *meta.Mutator,
+	job *model.Job,
+	dbInfo *model.DBInfo,
+	tblInfo *model.TableInfo,
+	newCol, oldCol *model.ColumnInfo,
+	pos *ast.ColumnPosition,
+) (ver int64, _ error) {
 	if oldCol.ID != newCol.ID {
 		job.State = model.JobStateRollingback
 		return ver, dbterror.ErrColumnInChange.GenWithStackByArgs(oldCol.Name, newCol.ID)
@@ -291,7 +297,15 @@ func (w *worker) doModifyColumn(
 		}
 
 		// Introduce the `mysql.PreventNullInsertFlag` flag to prevent users from inserting or updating null values.
-		err := modifyColsFromNull2NotNull(w, dbInfo, tblInfo, []*model.ColumnInfo{oldCol}, newCol, oldCol.GetType() != newCol.GetType())
+		err := modifyColsFromNull2NotNull(
+			jobCtx.ctx,
+			w,
+			dbInfo,
+			tblInfo,
+			[]*model.ColumnInfo{oldCol},
+			newCol,
+			oldCol.GetType() != newCol.GetType(),
+		)
 		if err != nil {
 			if dbterror.ErrWarnDataTruncated.Equal(err) || dbterror.ErrInvalidUseOfNull.Equal(err) {
 				job.State = model.JobStateRollingback
@@ -417,9 +431,16 @@ func adjustForeignKeyChildTableInfoAfterModifyColumn(infoCache *infoschema.InfoC
 }
 
 func (w *worker) doModifyColumnTypeWithData(
-	jobCtx *jobContext, t *meta.Mutator, job *model.Job,
-	dbInfo *model.DBInfo, tblInfo *model.TableInfo, changingCol, oldCol *model.ColumnInfo,
-	colName pmodel.CIStr, pos *ast.ColumnPosition, rmIdxIDs []int64) (ver int64, _ error) {
+	jobCtx *jobContext,
+	t *meta.Mutator,
+	job *model.Job,
+	dbInfo *model.DBInfo,
+	tblInfo *model.TableInfo,
+	changingCol, oldCol *model.ColumnInfo,
+	colName pmodel.CIStr,
+	pos *ast.ColumnPosition,
+	rmIdxIDs []int64,
+) (ver int64, _ error) {
 	var err error
 	originalState := changingCol.State
 	targetCol := changingCol.Clone()
@@ -430,7 +451,15 @@ func (w *worker) doModifyColumnTypeWithData(
 		// Column from null to not null.
 		if !mysql.HasNotNullFlag(oldCol.GetFlag()) && mysql.HasNotNullFlag(changingCol.GetFlag()) {
 			// Introduce the `mysql.PreventNullInsertFlag` flag to prevent users from inserting or updating null values.
-			err := modifyColsFromNull2NotNull(w, dbInfo, tblInfo, []*model.ColumnInfo{oldCol}, targetCol, oldCol.GetType() != changingCol.GetType())
+			err := modifyColsFromNull2NotNull(
+				jobCtx.ctx,
+				w,
+				dbInfo,
+				tblInfo,
+				[]*model.ColumnInfo{oldCol},
+				targetCol,
+				oldCol.GetType() != changingCol.GetType(),
+			)
 			if err != nil {
 				if dbterror.ErrWarnDataTruncated.Equal(err) || dbterror.ErrInvalidUseOfNull.Equal(err) {
 					job.State = model.JobStateRollingback
@@ -471,7 +500,15 @@ func (w *worker) doModifyColumnTypeWithData(
 		// Column from null to not null.
 		if !mysql.HasNotNullFlag(oldCol.GetFlag()) && mysql.HasNotNullFlag(changingCol.GetFlag()) {
 			// Introduce the `mysql.PreventNullInsertFlag` flag to prevent users from inserting or updating null values.
-			err := modifyColsFromNull2NotNull(w, dbInfo, tblInfo, []*model.ColumnInfo{oldCol}, targetCol, oldCol.GetType() != changingCol.GetType())
+			err := modifyColsFromNull2NotNull(
+				jobCtx.ctx,
+				w,
+				dbInfo,
+				tblInfo,
+				[]*model.ColumnInfo{oldCol},
+				targetCol,
+				oldCol.GetType() != changingCol.GetType(),
+			)
 			if err != nil {
 				if dbterror.ErrWarnDataTruncated.Equal(err) || dbterror.ErrInvalidUseOfNull.Equal(err) {
 					job.State = model.JobStateRollingback
@@ -590,7 +627,7 @@ func doReorgWorkForModifyColumn(w *worker, jobCtx *jobContext, t *meta.Mutator, 
 		// Use old column name to generate less confusing error messages.
 		changingColCpy := changingCol.Clone()
 		changingColCpy.Name = oldCol.Name
-		return w.updateCurrentElement(tbl, reorgInfo)
+		return w.updateCurrentElement(jobCtx.ctx, tbl, reorgInfo)
 	})
 	if err != nil {
 		if dbterror.ErrPausedDDLJob.Equal(err) {

@@ -67,7 +67,7 @@ func (w *worker) onCreateForeignKey(jobCtx *jobContext, t *meta.Mutator, job *mo
 		job.SchemaState = model.StateWriteOnly
 		return ver, nil
 	case model.StateWriteOnly:
-		err = checkForeignKeyConstrain(w, job.SchemaName, tblInfo.Name.L, fkInfo, fkCheck)
+		err = checkForeignKeyConstrain(jobCtx.ctx, w, job.SchemaName, tblInfo.Name.L, fkInfo, fkCheck)
 		if err != nil {
 			job.State = model.JobStateRollingback
 			return ver, err
@@ -672,7 +672,13 @@ func checkAddForeignKeyValidInOwner(infoCache *infoschema.InfoCache, schema stri
 	return nil
 }
 
-func checkForeignKeyConstrain(w *worker, schema, table string, fkInfo *model.FKInfo, fkCheck bool) error {
+func checkForeignKeyConstrain(
+	ctx context.Context,
+	w *worker,
+	schema, table string,
+	fkInfo *model.FKInfo,
+	fkCheck bool,
+) error {
 	if !fkCheck {
 		return nil
 	}
@@ -720,7 +726,12 @@ func checkForeignKeyConstrain(w *worker, schema, table string, fkInfo *model.FKI
 	}
 	buf.WriteString(" from %n.%n ) limit 1")
 	paramsList = append(paramsList, fkInfo.RefSchema.L, fkInfo.RefTable.L)
-	rows, _, err := sctx.GetRestrictedSQLExecutor().ExecRestrictedSQL(w.ctx, []sqlexec.OptionFuncAlias{sqlexec.ExecOptionUseCurSession}, buf.String(), paramsList...)
+	rows, _, err := sctx.GetRestrictedSQLExecutor().ExecRestrictedSQL(
+		ctx,
+		[]sqlexec.OptionFuncAlias{sqlexec.ExecOptionUseCurSession},
+		buf.String(),
+		paramsList...,
+	)
 	if err != nil {
 		return errors.Trace(err)
 	}

@@ -736,7 +736,7 @@ func (w *worker) onFlashbackCluster(jobCtx *jobContext, t *meta.Mutator, job *mo
 	switch job.SchemaState {
 	// Stage 1, check and set FlashbackClusterJobID, and update job args.
 	case model.StateNone:
-		if err = savePDSchedule(w.ctx, job); err != nil {
+		if err = savePDSchedule(w.workCtx, job); err != nil {
 			job.State = model.JobStateCancelled
 			return ver, errors.Trace(err)
 		}
@@ -768,18 +768,18 @@ func (w *worker) onFlashbackCluster(jobCtx *jobContext, t *meta.Mutator, job *mo
 		return ver, nil
 	// Stage 2, check flashbackTS, close GC and PD schedule, get flashback key ranges.
 	case model.StateDeleteOnly:
-		if err = checkAndSetFlashbackClusterInfo(w.ctx, sess, jobCtx.store, t, job, flashbackTS); err != nil {
+		if err = checkAndSetFlashbackClusterInfo(w.workCtx, sess, jobCtx.store, t, job, flashbackTS); err != nil {
 			job.State = model.JobStateCancelled
 			return ver, errors.Trace(err)
 		}
 		// We should get startTS here to avoid lost startTS when TiDB crashed during send prepare flashback RPC.
-		startTS, err = jobCtx.store.GetOracle().GetTimestamp(w.ctx, &oracle.Option{TxnScope: oracle.GlobalTxnScope})
+		startTS, err = jobCtx.store.GetOracle().GetTimestamp(w.workCtx, &oracle.Option{TxnScope: oracle.GlobalTxnScope})
 		if err != nil {
 			job.State = model.JobStateCancelled
 			return ver, errors.Trace(err)
 		}
 		job.Args[startTSOffset] = startTS
-		keyRanges, err = getFlashbackKeyRanges(w.ctx, sess, flashbackTS)
+		keyRanges, err = getFlashbackKeyRanges(w.workCtx, sess, flashbackTS)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
@@ -794,10 +794,10 @@ func (w *worker) onFlashbackCluster(jobCtx *jobContext, t *meta.Mutator, job *mo
 			return updateSchemaVersion(jobCtx, t, job)
 		}
 		// Split region by keyRanges, make sure no unrelated key ranges be locked.
-		splitRegionsByKeyRanges(w.ctx, jobCtx.store, keyRanges)
+		splitRegionsByKeyRanges(w.workCtx, jobCtx.store, keyRanges)
 		totalRegions.Store(0)
 		for _, r := range keyRanges {
-			if err = flashbackToVersion(w.ctx, jobCtx.store,
+			if err = flashbackToVersion(w.workCtx, jobCtx.store,
 				func(ctx context.Context, r tikvstore.KeyRange) (rangetask.TaskStat, error) {
 					stats, err := SendPrepareFlashbackToVersionRPC(ctx, jobCtx.store.(tikv.Storage), flashbackTS, startTS, r)
 					totalRegions.Add(uint64(stats.CompletedRegions))
@@ -810,7 +810,7 @@ func (w *worker) onFlashbackCluster(jobCtx *jobContext, t *meta.Mutator, job *mo
 		job.Args[totalLockedRegionsOffset] = totalRegions.Load()
 
 		// We should get commitTS here to avoid lost commitTS when TiDB crashed during send flashback RPC.
-		commitTS, err = jobCtx.store.GetOracle().GetTimestamp(w.ctx, &oracle.Option{TxnScope: oracle.GlobalTxnScope})
+		commitTS, err = jobCtx.store.GetOracle().GetTimestamp(w.workCtx, &oracle.Option{TxnScope: oracle.GlobalTxnScope})
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
@@ -828,7 +828,7 @@ func (w *worker) onFlashbackCluster(jobCtx *jobContext, t *meta.Mutator, job *mo
 		}
 
 		for _, r := range keyRanges {
-			if err = flashbackToVersion(w.ctx, jobCtx.store,
+			if err = flashbackToVersion(w.workCtx, jobCtx.store,
 				func(ctx context.Context, r tikvstore.KeyRange) (rangetask.TaskStat, error) {
 					// Use same startTS as prepare phase to simulate 1PC txn.
 					stats, err := SendFlashbackToVersionRPC(ctx, jobCtx.store.(tikv.Storage), flashbackTS, startTS, commitTS, r)
@@ -872,8 +872,8 @@ func finishFlashbackCluster(w *worker, job *model.Job) error {
 	}
 	defer w.sessPool.Put(sess)
 
-	err = kv.RunInNewTxn(w.ctx, w.store, true, func(context.Context, kv.Transaction) error {
-		if err = recoverPDSchedule(w.ctx, pdScheduleValue); err != nil {
+	err = kv.RunInNewTxn(w.workCtx, w.store, true, func(context.Context, kv.Transaction) error {
+		if err = recoverPDSchedule(w.workCtx, pdScheduleValue); err != nil {
 			return err
 		}
 		if gcEnabled {
@@ -881,18 +881,18 @@ func finishFlashbackCluster(w *worker, job *model.Job) error {
 				return err
 			}
 		}
-		if err = setTiDBSuperReadOnly(w.ctx, sess, readOnlyValue); err != nil {
+		if err = setTiDBSuperReadOnly(w.workCtx, sess, readOnlyValue); err != nil {
 			return err
 		}
 
 		if job.IsCancelled() {
 			// only restore `tidb_ttl_job_enable` when flashback failed
-			if err = setTiDBTTLJobEnable(w.ctx, sess, ttlJobEnableValue); err != nil {
+			if err = setTiDBTTLJobEnable(w.workCtx, sess, ttlJobEnableValue); err != nil {
 				return err
 			}
 		}
 
-		return setTiDBEnableAutoAnalyze(w.ctx, sess, autoAnalyzeValue)
+		return setTiDBEnableAutoAnalyze(w.workCtx, sess, autoAnalyzeValue)
 	})
 	if err != nil {
 		return err

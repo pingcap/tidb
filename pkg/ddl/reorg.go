@@ -569,10 +569,10 @@ func getTableTotalCount(w *worker, tblInfo *model.TableInfo) int64 {
 			partIDs = append(partIDs, strconv.FormatInt(def.ID, 10))
 		}
 		sql := "select sum(table_rows) from information_schema.partitions where tidb_partition_id in (%?);"
-		rows, _, err = executor.ExecRestrictedSQL(w.ctx, nil, sql, strings.Join(partIDs, ","))
+		rows, _, err = executor.ExecRestrictedSQL(w.workCtx, nil, sql, strings.Join(partIDs, ","))
 	} else {
 		sql := "select table_rows from information_schema.tables where tidb_table_id=%?;"
-		rows, _, err = executor.ExecRestrictedSQL(w.ctx, nil, sql, tblInfo.ID)
+		rows, _, err = executor.ExecRestrictedSQL(w.workCtx, nil, sql, tblInfo.ID)
 	}
 	if err != nil {
 		return statistics.PseudoRowCount
