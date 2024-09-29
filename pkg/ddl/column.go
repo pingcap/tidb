@@ -56,11 +56,11 @@ func InitAndAddColumnToTable(tblInfo *model.TableInfo, colInfo *model.ColumnInfo
 	cols := tblInfo.Columns
 	colInfo.ID = AllocateColumnID(tblInfo)
 	colInfo.State = model.StateNone
-	// To support add column asynchronous, we should mark its offset as the last column.
+	// To support add column asynchronously, we should mark its offset as the last column.
 	// So that we can use origin column offset to get value from row.
 	colInfo.Offset = len(cols)
 	// Append the column info to the end of the tblInfo.Columns.
-	// It will reorder to the right offset in "Columns" when it state change to public.
+	// It will be reordered to the right offset in "Columns" when its state is changed to public.
 	tblInfo.Columns = append(cols, colInfo)
 	return colInfo
 }
@@ -897,7 +897,7 @@ func updateChangingObjState(changingCol *model.ColumnInfo, changingIdxs []*model
 }
 
 func checkAndApplyAutoRandomBits(jobCtx *jobContext, m *meta.Mutator, args *model.ModifyColumnArgs) error {
-	if args.UpdatedAutoRandomBits == 0 {
+	if args.NewShardBits == 0 {
 		return nil
 	}
 	if err := checkNewAutoRandomBits(m, args); err != nil {
@@ -908,7 +908,7 @@ func checkAndApplyAutoRandomBits(jobCtx *jobContext, m *meta.Mutator, args *mode
 
 // checkNewAutoRandomBits checks whether the new auto_random bits number can cause overflow.
 func checkNewAutoRandomBits(m *meta.Mutator, args *model.ModifyColumnArgs) error {
-	newShardBits := args.UpdatedAutoRandomBits
+	newShardBits := args.NewShardBits
 	shardFmt := autoid.NewShardIDFormat(&args.Column.FieldType, newShardBits, args.TblInfo.AutoRandomRangeBits)
 
 	idAccessors := m.GetAutoIDAccessors(args.DBInfo.ID, args.TblInfo.ID)
@@ -923,14 +923,14 @@ func checkNewAutoRandomBits(m *meta.Mutator, args *model.ModifyColumnArgs) error
 	}
 
 	// Generate a new auto ID first to prevent concurrent update in DML.
-	_, err := idAcc.Inc(1)
-	if err != nil {
-		return err
+	if _, err := idAcc.Inc(1); err != nil {
+		return errors.Trace(err)
 	}
 	currentIncBitsVal, err := idAcc.Get()
 	if err != nil {
-		return err
+		return errors.Trace(err)
 	}
+
 	// Find the max number of available shard bits by
 	// counting leading zeros in current inc part of auto_random ID.
 	usedBits := uint64(64 - bits.LeadingZeros64(uint64(currentIncBitsVal)))
@@ -967,9 +967,9 @@ func (r *asAutoIDRequirement) AutoIDClient() *autoid.ClientDiscover {
 // applyNewAutoRandomBits set auto_random bits to TableInfo and
 // migrate auto_increment ID to auto_random ID if possible.
 func applyNewAutoRandomBits(jobCtx *jobContext, m *meta.Mutator, args *model.ModifyColumnArgs) error {
-	oldCol, tblInfo, dbInfo := args.OldColumn, args.TblInfo, args.DBInfo
-	tblInfo.AutoRandomBits = args.UpdatedAutoRandomBits
-	needMigrateFromAutoIncToAutoRand := mysql.HasAutoIncrementFlag(oldCol.GetFlag())
+	tblInfo, dbInfo := args.TblInfo, args.DBInfo
+	tblInfo.AutoRandomBits = args.NewShardBits
+	needMigrateFromAutoIncToAutoRand := mysql.HasAutoIncrementFlag(args.OldColumn.GetFlag())
 	if !needMigrateFromAutoIncToAutoRand {
 		return nil
 	}
@@ -983,8 +983,7 @@ func applyNewAutoRandomBits(jobCtx *jobContext, m *meta.Mutator, args *model.Mod
 	if err != nil {
 		return errors.Trace(err)
 	}
-	err = autoRandAlloc.Rebase(context.Background(), nextAutoIncID, false)
-	if err != nil {
+	if err := autoRandAlloc.Rebase(context.Background(), nextAutoIncID, false); err != nil {
 		return errors.Trace(err)
 	}
 	if err := idAcc.Del(); err != nil {
@@ -1014,12 +1013,11 @@ func checkForNullValue(
 	paramsList := make([]any, 0, 2+len(oldCols))
 	paramsList = append(paramsList, schema.L, table.L)
 	for i, col := range oldCols {
+		paramsList = append(paramsList, col.Name.L)
 		if i == 0 {
 			buf.WriteString("%n is null")
-			paramsList = append(paramsList, col.Name.L)
 		} else {
 			buf.WriteString(" or %n is null")
-			paramsList = append(paramsList, col.Name.L)
 		}
 	}
 	buf.WriteString(" limit 1")
@@ -1149,7 +1147,7 @@ func checkAddColumnTooManyColumns(colNum int) error {
 }
 
 // modifyColsFromNull2NotNull modifies the type definitions of 'null' to 'not null'.
-// Introduce the `mysql.PreventNullInsertFlag` flag to prevent users from inserting or updating null values.
+// The `mysql.PreventNullInsertFlag` flag is set to prevent users from inserting or updating null values.
 func modifyColsFromNull2NotNull(
 	w *worker, dbInfo *model.DBInfo, tblInfo *model.TableInfo, isDataTruncated bool,
 	newCol *model.ColumnInfo, cols ...*model.ColumnInfo) error {

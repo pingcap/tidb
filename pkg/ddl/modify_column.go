@@ -66,46 +66,44 @@ func (w *worker) onModifyColumn(jobCtx *jobContext, t *meta.Mutator, job *model.
 		return rollbackModifyColumnJobWithData(jobCtx, t, job, args)
 	}
 
-	tblInfo := args.TblInfo
+	oldCol, newCol, changingCol, tblInfo := args.OldColumn, args.Column, args.ChangingColumn, args.TblInfo
 
 	// If we want to rename the column name, we need to check whether it already exists.
-	if args.Column.Name.L != args.OldColumnName.L {
-		c := model.FindColumnInfo(tblInfo.Columns, args.Column.Name.L)
-		if c != nil {
+	if newCol.Name.L != oldCol.Name.L {
+		if c := model.FindColumnInfo(tblInfo.Columns, newCol.Name.L); c != nil {
 			job.State = model.JobStateCancelled
-			return ver, errors.Trace(infoschema.ErrColumnExists.GenWithStackByArgs(args.Column.Name))
+			return ver, errors.Trace(infoschema.ErrColumnExists.GenWithStackByArgs(newCol.Name))
 		}
 	}
 
 	failpoint.Inject("uninitializedOffsetAndState", func(val failpoint.Value) {
 		//nolint:forcetypeassert
 		if val.(bool) {
-			if args.Column.State != model.StatePublic {
+			if newCol.State != model.StatePublic {
 				failpoint.Return(ver, errors.New("the column state is wrong"))
 			}
 		}
 	})
 
-	err = checkAndApplyAutoRandomBits(jobCtx, t, args)
-	if err != nil {
+	if err = checkAndApplyAutoRandomBits(jobCtx, t, args); err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
 
-	if !needChangeColumnData(args.OldColumn, args.Column) {
+	if !needChangeColumnData(oldCol, newCol) {
 		return w.doModifyColumn(jobCtx, t, job, args)
 	}
 
-	if err = isGeneratedRelatedColumn(tblInfo, args.Column, args.OldColumn); err != nil {
+	if err = checkGeneratedRelatedColumn(tblInfo, newCol, oldCol); err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
+
 	if tblInfo.Partition != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(dbterror.ErrUnsupportedModifyColumn.GenWithStackByArgs("table is partition table"))
 	}
 
-	oldCol, changingCol := args.OldColumn, args.ChangingColumn
 	if changingCol == nil {
 		if mysql.HasPriKeyFlag(oldCol.GetFlag()) {
 			job.State = model.JobStateCancelled
@@ -113,7 +111,7 @@ func (w *worker) onModifyColumn(jobCtx *jobContext, t *meta.Mutator, job *model.
 			return ver, dbterror.ErrUnsupportedModifyColumn.GenWithStackByArgs(msg)
 		}
 
-		changingCol = args.Column.Clone()
+		changingCol = newCol.Clone()
 		changingCol.Name = pmodel.NewCIStr(genChangingColumnUniqueName(tblInfo, oldCol))
 		changingCol.ChangeStateInfo = &model.ChangeStateInfo{DependencyColumnOffset: oldCol.Offset}
 
@@ -178,8 +176,7 @@ func rollbackModifyColumnJob(jobCtx *jobContext, t *meta.Mutator, job *model.Job
 	return ver, nil
 }
 
-// getModifyColumnArgs get arguments from job.Args,
-// as well as other infos needed for this job.
+// getModifyColumnArgs get arguments from job.Args as well as other infos needed for this job.
 func getModifyColumnArgs(t *meta.Mutator, job *model.Job) (*model.ModifyColumnArgs, error) {
 	args, err := model.GetModifyColumnArgs(job)
 	if err != nil {
@@ -187,23 +184,21 @@ func getModifyColumnArgs(t *meta.Mutator, job *model.Job) (*model.ModifyColumnAr
 		return nil, errors.Trace(err)
 	}
 
-	args.DBInfo, err = checkSchemaExistAndCancelNotExistJob(t, job)
-	if err != nil {
+	if args.DBInfo, err = checkSchemaExistAndCancelNotExistJob(t, job); err != nil {
 		return nil, errors.Trace(err)
 	}
 
-	args.TblInfo, err = GetTableInfoAndCancelFaultJob(t, job, job.SchemaID)
-	if err != nil {
+	if args.TblInfo, err = GetTableInfoAndCancelFaultJob(t, job, job.SchemaID); err != nil {
 		return nil, errors.Trace(err)
 	}
 
 	args.OldColumn = model.FindColumnInfo(args.TblInfo.Columns, args.OldColumnName.L)
 	if args.OldColumn == nil || args.OldColumn.State != model.StatePublic {
 		job.State = model.JobStateCancelled
-		return nil, errors.Trace(infoschema.ErrColumnNotExists.GenWithStackByArgs(*(&args.OldColumnName), args.TblInfo.Name))
+		return nil, errors.Trace(infoschema.ErrColumnNotExists.GenWithStackByArgs(args.OldColumnName, args.TblInfo.Name))
 	}
 
-	return args, errors.Trace(err)
+	return args, nil
 }
 
 // GetOriginDefaultValueForModifyColumn gets the original default value for modifying column.
@@ -289,9 +284,8 @@ func (w *worker) doModifyColumn(
 			delayForAsyncCommit()
 		}
 
-		// Introduce the `mysql.PreventNullInsertFlag` flag to prevent users from inserting or updating null values.
-		err := modifyColsFromNull2NotNull(w, dbInfo, tblInfo, oldCol.GetType() != newCol.GetType(), newCol, oldCol)
-		if err != nil {
+		// Set the `mysql.PreventNullInsertFlag` flag to prevent from inserting or updating null values.
+		if err := modifyColsFromNull2NotNull(w, dbInfo, tblInfo, oldCol.GetType() != newCol.GetType(), newCol, oldCol); err != nil {
 			if dbterror.ErrWarnDataTruncated.Equal(err) || dbterror.ErrInvalidUseOfNull.Equal(err) {
 				job.State = model.JobStateRollingback
 			}
@@ -764,7 +758,7 @@ func GetModifiableColumnJob(
 	}
 	needChangeColData := needChangeColumnData(col.ColumnInfo, newCol.ColumnInfo)
 	if needChangeColData {
-		if err = isGeneratedRelatedColumn(t.Meta(), newCol.ColumnInfo, col.ColumnInfo); err != nil {
+		if err = checkGeneratedRelatedColumn(t.Meta(), newCol.ColumnInfo, col.ColumnInfo); err != nil {
 			return nil, errors.Trace(err)
 		}
 		if t.Meta().Partition != nil {
@@ -936,11 +930,11 @@ func GetModifiableColumnJob(
 	}
 
 	args := &model.ModifyColumnArgs{
-		Column:                newCol.ColumnInfo,
-		OldColumnName:         originalColName,
-		Position:              spec.Position,
-		ModifyColumnType:      modifyColumnTp,
-		UpdatedAutoRandomBits: newAutoRandBits,
+		Column:           newCol.ColumnInfo,
+		OldColumnName:    originalColName,
+		Position:         spec.Position,
+		ModifyColumnType: modifyColumnTp,
+		NewShardBits:     newAutoRandBits,
 	}
 	job.FillArgs(args)
 
@@ -948,17 +942,18 @@ func GetModifiableColumnJob(
 }
 
 func needChangeColumnData(oldCol, newCol *model.ColumnInfo) bool {
-	toUnsigned := mysql.HasUnsignedFlag(newCol.GetFlag())
-	originUnsigned := mysql.HasUnsignedFlag(oldCol.GetFlag())
+	unsignedChanged := mysql.HasUnsignedFlag(newCol.GetFlag()) != mysql.HasUnsignedFlag(oldCol.GetFlag())
+	flenChanged := oldCol.GetFlen() != newCol.GetFlen()
+
 	needTruncationOrToggleSign := func() bool {
 		return (newCol.GetFlen() > 0 && (newCol.GetFlen() < oldCol.GetFlen() || newCol.GetDecimal() < oldCol.GetDecimal())) ||
-			(toUnsigned != originUnsigned)
+			unsignedChanged
 	}
 	// Ignore the potential max display length represented by integer's flen, use default flen instead.
 	defaultOldColFlen, _ := mysql.GetDefaultFieldLengthAndDecimal(oldCol.GetType())
 	defaultNewColFlen, _ := mysql.GetDefaultFieldLengthAndDecimal(newCol.GetType())
 	needTruncationOrToggleSignForInteger := func() bool {
-		return (defaultNewColFlen > 0 && defaultNewColFlen < defaultOldColFlen) || (toUnsigned != originUnsigned)
+		return (defaultNewColFlen > 0 && defaultNewColFlen < defaultOldColFlen) || unsignedChanged
 	}
 
 	// Deal with the same type.
@@ -967,18 +962,18 @@ func needChangeColumnData(oldCol, newCol *model.ColumnInfo) bool {
 		case mysql.TypeNewDecimal:
 			// Since type decimal will encode the precision, frac, negative(signed) and wordBuf into storage together, there is no short
 			// cut to eliminate data reorg change for column type change between decimal.
-			return oldCol.GetFlen() != newCol.GetFlen() || oldCol.GetDecimal() != newCol.GetDecimal() || toUnsigned != originUnsigned
+			return flenChanged || oldCol.GetDecimal() != newCol.GetDecimal() || unsignedChanged
 		case mysql.TypeEnum, mysql.TypeSet:
 			return IsElemsChangedToModifyColumn(oldCol.GetElems(), newCol.GetElems())
 		case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong:
-			return toUnsigned != originUnsigned
+			return unsignedChanged
 		case mysql.TypeString:
 			// Due to the behavior of padding \x00 at binary type, always change column data when binary length changed
 			if types.IsBinaryStr(&oldCol.FieldType) {
-				return newCol.GetFlen() != oldCol.GetFlen()
+				return flenChanged
 			}
 		case mysql.TypeTiDBVectorFloat32:
-			return newCol.GetFlen() != types.UnspecifiedLength && oldCol.GetFlen() != newCol.GetFlen()
+			return newCol.GetFlen() != types.UnspecifiedLength && flenChanged
 		}
 
 		return needTruncationOrToggleSign()

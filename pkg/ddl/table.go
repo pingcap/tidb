@@ -1273,7 +1273,9 @@ func checkTableNotExistsFromInfoSchema(is infoschema.InfoSchema, schemaID int64,
 }
 
 // updateVersionAndTableInfoWithCheck checks table info validate and updates the schema version and the table information
-func updateVersionAndTableInfoWithCheck(jobCtx *jobContext, t *meta.Mutator, job *model.Job, tblInfo *model.TableInfo, shouldUpdateVer bool, multiInfos ...schemaIDAndTableInfo) (
+func updateVersionAndTableInfoWithCheck(
+	jobCtx *jobContext, t *meta.Mutator, job *model.Job,
+	tblInfo *model.TableInfo, shouldUpdateVer bool, multiInfos ...schemaIDAndTableInfo) (
 	ver int64, err error) {
 	err = checkTableInfoValid(tblInfo)
 	if err != nil {
@@ -1291,7 +1293,9 @@ func updateVersionAndTableInfoWithCheck(jobCtx *jobContext, t *meta.Mutator, job
 }
 
 // updateVersionAndTableInfo updates the schema version and the table information.
-func updateVersionAndTableInfo(jobCtx *jobContext, t *meta.Mutator, job *model.Job, tblInfo *model.TableInfo, shouldUpdateVer bool, multiInfos ...schemaIDAndTableInfo) (
+func updateVersionAndTableInfo(
+	jobCtx *jobContext, t *meta.Mutator, job *model.Job,
+	tblInfo *model.TableInfo, shouldUpdateVer bool, multiInfos ...schemaIDAndTableInfo) (
 	ver int64, err error) {
 	failpoint.Inject("mockUpdateVersionAndTableInfoErr", func(val failpoint.Value) {
 		switch val.(int) {

@@ -1397,14 +1397,14 @@ func GetPlacementPolicyArgs(job *Job) (*PlacementPolicyArgs, error) {
 }
 
 type ModifyColumnArgs struct {
-	Column                *ColumnInfo
-	OldColumnName         pmodel.CIStr
-	Position              *ast.ColumnPosition
-	ModifyColumnType      byte
-	UpdatedAutoRandomBits uint64
-	ChangingColumn        *ColumnInfo
-	ChangingIdxs          []*IndexInfo
-	RemovedIdxs           []int64
+	Column           *ColumnInfo
+	OldColumnName    pmodel.CIStr
+	Position         *ast.ColumnPosition
+	ModifyColumnType byte
+	NewShardBits     uint64
+	ChangingColumn   *ColumnInfo
+	ChangingIdxs     []*IndexInfo
+	RemovedIdxs      []int64
 
 	// Finished args
 	IndexIDs     []int64
@@ -1419,7 +1419,7 @@ type ModifyColumnArgs struct {
 func (a *ModifyColumnArgs) fillJobV1(job *Job) {
 	job.Args = []any{
 		a.Column, a.OldColumnName, a.Position, a.ModifyColumnType,
-		a.UpdatedAutoRandomBits, a.ChangingColumn, a.ChangingIdxs, a.RemovedIdxs,
+		a.NewShardBits, a.ChangingColumn, a.ChangingIdxs, a.RemovedIdxs,
 	}
 }
 
@@ -1428,7 +1428,7 @@ func GetModifyColumnArgs(job *Job) (*ModifyColumnArgs, error) {
 		args := &ModifyColumnArgs{}
 		if err := job.DecodeArgs(
 			args.Column, &args.OldColumnName, args.Position, &args.ModifyColumnType,
-			&args.UpdatedAutoRandomBits, args.ChangingColumn, &args.ChangingIdxs, &args.RemovedIdxs,
+			&args.NewShardBits, args.ChangingColumn, &args.ChangingIdxs, &args.RemovedIdxs,
 		); err != nil {
 			return nil, errors.Trace(err)
 		}

@@ -720,7 +720,7 @@ func (d *SchemaTracker) handleModifyColumn(
 		return errors.Trace(err)
 	}
 
-	tblInfo.AutoRandomBits = args.UpdatedAutoRandomBits
+	tblInfo.AutoRandomBits = args.NewShardBits
 	oldCol := table.FindCol(t.Cols(), originalColName.L).ColumnInfo
 
 	originDefVal, err := ddl.GetOriginDefaultValueForModifyColumn(sctx.GetExprCtx(), args.Column, oldCol)

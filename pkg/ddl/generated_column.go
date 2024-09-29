@@ -163,7 +163,7 @@ func hasDependentByGeneratedColumn(tblInfo *model.TableInfo, colName pmodel.CISt
 	return false, "", false
 }
 
-func isGeneratedRelatedColumn(tblInfo *model.TableInfo, newCol, col *model.ColumnInfo) error {
+func checkGeneratedRelatedColumn(tblInfo *model.TableInfo, newCol, col *model.ColumnInfo) error {
 	if newCol.IsGenerated() || col.IsGenerated() {
 		// TODO: Make it compatible with MySQL error.
 		msg := fmt.Sprintf("newCol IsGenerated %v, oldCol IsGenerated %v", newCol.IsGenerated(), col.IsGenerated())
