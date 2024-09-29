@@ -762,7 +762,8 @@ SwitchIndexState:
 			return ver, errors.Trace(err)
 		}
 
-		if job.SnapshotVer == 0 && tableIsEmpty(w.store, tbl, job.ReorgMeta.ResourceGroupName) {
+		if reorgWorkNotStarted(job, allIndexInfos) &&
+			tableIsEmpty(w.store, tbl, job.ReorgMeta.ResourceGroupName) {
 			logutil.DDLLogger().Info("table is empty, skipping reorg work",
 				zap.Int64("jobID", job.ID),
 				zap.String("table", tblInfo.Name.O))
@@ -835,6 +836,15 @@ SwitchIndexState:
 	}
 
 	return ver, errors.Trace(err)
+}
+
+func reorgWorkNotStarted(job *model.Job, idxInfos []*model.IndexInfo) bool {
+	// Snapshot version is unset before the merging temp index stage,
+	// we should exclude this case.
+	idxBfState := idxInfos[0].BackfillState
+	return job.SnapshotVer == 0 &&
+		(idxBfState == model.BackfillStateInapplicable || // txn-reorg
+			idxBfState == model.BackfillStateRunning) // fast-reorg
 }
 
 func tableIsEmpty(store kv.Storage, tbl table.Table, resGroupName string) bool {

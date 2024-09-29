@@ -3561,7 +3561,7 @@ func oldPasswordUpgrade(pass string) (string, error) {
 }
 
 // rebuildAllPartitionValueMapAndSorted rebuilds all value map and sorted info for list column partitions with InfoSchema.
-func rebuildAllPartitionValueMapAndSorted(s *session) {
+func rebuildAllPartitionValueMapAndSorted(ctx context.Context, s *session) {
 	type partitionExpr interface {
 		PartitionExpr() *tables.PartitionExpr
 	}
@@ -3575,7 +3575,7 @@ func rebuildAllPartitionValueMapAndSorted(s *session) {
 			if pi == nil || pi.Type != model.PartitionTypeList {
 				continue
 			}
-			tbl, ok := is.TableByID(context.Background(), t.ID)
+			tbl, ok := is.TableByID(ctx, t.ID)
 			intest.Assert(ok, "table not found in infoschema")
 			pe := tbl.(partitionExpr).PartitionExpr()
 			for _, cp := range pe.ColPrunes {
