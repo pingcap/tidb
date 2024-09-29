@@ -472,7 +472,7 @@ func (s *jobScheduler) deliveryJob(wk *worker, pool *workerPool, job *model.Job)
 	jobID, involvedSchemaInfos := job.ID, job.GetInvolvingSchemaInfo()
 	s.runningJobs.addRunning(jobID, involvedSchemaInfos)
 	metrics.DDLRunningJobCount.WithLabelValues(pool.tp().String()).Inc()
-	jobCtx, cancel := s.getJobRunCtx(job.ID)
+	jobCtx, cancel := s.getJobRunCtx(job.ID, job.TraceInfo)
 	defer cancel()
 	done := make(chan struct{})
 
@@ -560,7 +560,7 @@ func (s *jobScheduler) deliveryJob(wk *worker, pool *workerPool, job *model.Job)
 	})
 }
 
-func (s *jobScheduler) getJobRunCtx(jobID int64) (*jobContext, context.CancelFunc) {
+func (s *jobScheduler) getJobRunCtx(jobID int64, traceInfo *model.TraceInfo) (*jobContext, context.CancelFunc) {
 	ch, _ := s.ddlJobDoneChMap.Load(jobID)
 	jobCtx, cancel := context.WithCancel(s.schCtx)
 	return &jobContext{
@@ -574,6 +574,10 @@ func (s *jobScheduler) getJobRunCtx(jobID int64) (*jobContext, context.CancelFun
 		schemaVerSyncer:      s.schemaVerSyncer,
 
 		notifyCh: ch,
+		logger: tidblogutil.LoggerWithTraceInfo(
+			logutil.DDLLogger().With(zap.Int64("jobID", jobID)),
+			traceInfo,
+		),
 
 		oldDDLCtx: s.ddlCtx,
 	}, cancel
@@ -599,7 +603,7 @@ func (s *jobScheduler) transitOneJobStepAndWaitSync(wk *worker, jobCtx *jobConte
 				}
 				s.cleanMDLInfo(job, ownerID)
 			} else if err != systable.ErrNotFound {
-				wk.jobLogger(job).Warn("check MDL info failed", zap.Error(err))
+				jobCtx.logger.Warn("check MDL info failed", zap.Error(err))
 				return err
 			}
 		} else {
@@ -614,7 +618,7 @@ func (s *jobScheduler) transitOneJobStepAndWaitSync(wk *worker, jobCtx *jobConte
 
 	schemaVer, err := wk.transitOneJobStep(jobCtx, job)
 	if err != nil {
-		tidblogutil.Logger(wk.logCtx).Info("handle ddl job failed", zap.Error(err), zap.Stringer("job", job))
+		jobCtx.logger.Info("handle ddl job failed", zap.Error(err), zap.Stringer("job", job))
 		return err
 	}
 	failpoint.Inject("mockDownBeforeUpdateGlobalVersion", func(val failpoint.Value) {

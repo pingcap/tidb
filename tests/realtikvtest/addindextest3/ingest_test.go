@@ -108,7 +108,7 @@ func TestAddIndexIngestLimitOneBackend(t *testing.T) {
 	require.True(t, strings.Contains(rows[1][3].(string) /* job_type */, "ingest"))
 	require.Equal(t, rows[0][7].(string) /* row_count */, "3")
 	require.Equal(t, rows[1][7].(string) /* row_count */, "3")
-	
+
 	tk.MustExec("set @@global.tidb_enable_dist_task = 0;")
 	// TODO(lance6716): dist_task also need this
 

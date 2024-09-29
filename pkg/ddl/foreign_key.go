@@ -33,9 +33,9 @@ import (
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 )
 
-func (w *worker) onCreateForeignKey(jobCtx *jobContext, t *meta.Mutator, job *model.Job) (ver int64, _ error) {
+func (w *worker) onCreateForeignKey(jobCtx *jobContext, job *model.Job) (ver int64, _ error) {
 	schemaID := job.SchemaID
-	tblInfo, err := GetTableInfoAndCancelFaultJob(t, job, schemaID)
+	tblInfo, err := GetTableInfoAndCancelFaultJob(jobCtx.metaMut, job, schemaID)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
@@ -48,7 +48,7 @@ func (w *worker) onCreateForeignKey(jobCtx *jobContext, t *meta.Mutator, job *mo
 	fkInfo, fkCheck := args.FkInfo, args.FkCheck
 
 	if job.IsRollingback() {
-		return dropForeignKey(jobCtx, t, job, tblInfo, fkInfo.Name)
+		return dropForeignKey(jobCtx, job, tblInfo, fkInfo.Name)
 	}
 	switch job.SchemaState {
 	case model.StateNone:
@@ -60,7 +60,7 @@ func (w *worker) onCreateForeignKey(jobCtx *jobContext, t *meta.Mutator, job *mo
 		fkInfo.State = model.StateWriteOnly
 		fkInfo.ID = allocateFKIndexID(tblInfo)
 		tblInfo.ForeignKeys = append(tblInfo.ForeignKeys, fkInfo)
-		ver, err = updateVersionAndTableInfo(jobCtx, t, job, tblInfo, true)
+		ver, err = updateVersionAndTableInfo(jobCtx, job, tblInfo, true)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
@@ -73,14 +73,14 @@ func (w *worker) onCreateForeignKey(jobCtx *jobContext, t *meta.Mutator, job *mo
 			return ver, err
 		}
 		tblInfo.ForeignKeys[len(tblInfo.ForeignKeys)-1].State = model.StateWriteReorganization
-		ver, err = updateVersionAndTableInfo(jobCtx, t, job, tblInfo, true)
+		ver, err = updateVersionAndTableInfo(jobCtx, job, tblInfo, true)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
 		job.SchemaState = model.StateWriteReorganization
 	case model.StateWriteReorganization:
 		tblInfo.ForeignKeys[len(tblInfo.ForeignKeys)-1].State = model.StatePublic
-		ver, err = updateVersionAndTableInfo(jobCtx, t, job, tblInfo, true)
+		ver, err = updateVersionAndTableInfo(jobCtx, job, tblInfo, true)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
@@ -93,9 +93,9 @@ func (w *worker) onCreateForeignKey(jobCtx *jobContext, t *meta.Mutator, job *mo
 	return ver, nil
 }
 
-func onDropForeignKey(jobCtx *jobContext, t *meta.Mutator, job *model.Job) (ver int64, _ error) {
+func onDropForeignKey(jobCtx *jobContext, job *model.Job) (ver int64, _ error) {
 	schemaID := job.SchemaID
-	tblInfo, err := GetTableInfoAndCancelFaultJob(t, job, schemaID)
+	tblInfo, err := GetTableInfoAndCancelFaultJob(jobCtx.metaMut, job, schemaID)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
@@ -105,10 +105,10 @@ func onDropForeignKey(jobCtx *jobContext, t *meta.Mutator, job *model.Job) (ver 
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
-	return dropForeignKey(jobCtx, t, job, tblInfo, args.FkName)
+	return dropForeignKey(jobCtx, job, tblInfo, args.FkName)
 }
 
-func dropForeignKey(jobCtx *jobContext, t *meta.Mutator, job *model.Job, tblInfo *model.TableInfo, fkName pmodel.CIStr) (ver int64, err error) {
+func dropForeignKey(jobCtx *jobContext, job *model.Job, tblInfo *model.TableInfo, fkName pmodel.CIStr) (ver int64, err error) {
 	var fkInfo *model.FKInfo
 	for _, fk := range tblInfo.ForeignKeys {
 		if fk.Name.L == fkName.L {
@@ -127,7 +127,7 @@ func dropForeignKey(jobCtx *jobContext, t *meta.Mutator, job *model.Job, tblInfo
 		}
 	}
 	tblInfo.ForeignKeys = nfks
-	ver, err = updateVersionAndTableInfo(jobCtx, t, job, tblInfo, true)
+	ver, err = updateVersionAndTableInfo(jobCtx, job, tblInfo, true)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
