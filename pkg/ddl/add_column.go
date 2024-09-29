@@ -30,7 +30,6 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/expression/exprctx"
 	"github.com/pingcap/tidb/pkg/infoschema"
-	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/meta/metabuild"
 	"github.com/pingcap/tidb/pkg/meta/model"
@@ -52,10 +51,10 @@ import (
 	"go.uber.org/zap"
 )
 
-func onAddColumn(jobCtx *jobContext, t *meta.Mutator, job *model.Job) (ver int64, err error) {
+func onAddColumn(jobCtx *jobContext, job *model.Job) (ver int64, err error) {
 	// Handle the rolling back job.
 	if job.IsRollingback() {
-		ver, err = onDropColumn(jobCtx, t, job)
+		ver, err = onDropColumn(jobCtx, job)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
@@ -69,7 +68,7 @@ func onAddColumn(jobCtx *jobContext, t *meta.Mutator, job *model.Job) (ver int64
 		}
 	})
 
-	tblInfo, columnInfo, colFromArgs, pos, ifNotExists, err := checkAddColumn(t, job)
+	tblInfo, columnInfo, colFromArgs, pos, ifNotExists, err := checkAddColumn(jobCtx.metaMut, job)
 	if err != nil {
 		if ifNotExists && infoschema.ErrColumnExists.Equal(err) {
 			job.Warning = toTError(err)
@@ -92,7 +91,7 @@ func onAddColumn(jobCtx *jobContext, t *meta.Mutator, job *model.Job) (ver int64
 	case model.StateNone:
 		// none -> delete only
 		columnInfo.State = model.StateDeleteOnly
-		ver, err = updateVersionAndTableInfoWithCheck(jobCtx, t, job, tblInfo, originalState != columnInfo.State)
+		ver, err = updateVersionAndTableInfoWithCheck(jobCtx, job, tblInfo, originalState != columnInfo.State)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
@@ -100,7 +99,7 @@ func onAddColumn(jobCtx *jobContext, t *meta.Mutator, job *model.Job) (ver int64
 	case model.StateDeleteOnly:
 		// delete only -> write only
 		columnInfo.State = model.StateWriteOnly
-		ver, err = updateVersionAndTableInfo(jobCtx, t, job, tblInfo, originalState != columnInfo.State)
+		ver, err = updateVersionAndTableInfo(jobCtx, job, tblInfo, originalState != columnInfo.State)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
@@ -109,7 +108,7 @@ func onAddColumn(jobCtx *jobContext, t *meta.Mutator, job *model.Job) (ver int64
 	case model.StateWriteOnly:
 		// write only -> reorganization
 		columnInfo.State = model.StateWriteReorganization
-		ver, err = updateVersionAndTableInfo(jobCtx, t, job, tblInfo, originalState != columnInfo.State)
+		ver, err = updateVersionAndTableInfo(jobCtx, job, tblInfo, originalState != columnInfo.State)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
@@ -126,7 +125,7 @@ func onAddColumn(jobCtx *jobContext, t *meta.Mutator, job *model.Job) (ver int64
 		}
 		tblInfo.MoveColumnInfo(columnInfo.Offset, offset)
 		columnInfo.State = model.StatePublic
-		ver, err = updateVersionAndTableInfo(jobCtx, t, job, tblInfo, originalState != columnInfo.State)
+		ver, err = updateVersionAndTableInfo(jobCtx, job, tblInfo, originalState != columnInfo.State)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
