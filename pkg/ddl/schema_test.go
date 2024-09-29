@@ -337,8 +337,7 @@ func TestSchemaWaitJob(t *testing.T) {
 	schemaID := genIDs[0]
 	doDDLJobErr(t, schemaID, 0, "test_schema", "", model.ActionCreateSchema,
 		testkit.NewTestKit(t, store).Session(), det2, store, func(job *model.Job) model.JobArgs {
-			job.FillArgs(&model.CreateSchemaArgs{DBInfo: dbInfo})
-			return nil
+			return &model.CreateSchemaArgs{DBInfo: dbInfo}
 		})
 }
 
