@@ -523,6 +523,7 @@ func (dc *ddlCtx) removeReorgCtx(jobID int64) {
 	}
 }
 
+// TODO(lance6716): delete now?
 func (dc *ddlCtx) notifyReorgWorkerJobStateChange(job *model.Job) {
 	rc := dc.getReorgCtx(job.ID)
 	if rc == nil {
