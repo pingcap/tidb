@@ -1403,29 +1403,42 @@ type ModifyColumnArgs struct {
 	ModifyColumnType      byte
 	UpdatedAutoRandomBits uint64
 	ChangingColumn        *ColumnInfo
+	ChangingIdxs          []*IndexInfo
+	RemovedIdxs           []int64
 
 	// Finished args
-	ChangingIdxs []*IndexInfo
-	RemovedIdxs  []int64
-
 	IndexIDs     []int64
 	PartitionIDs []int64
+
+	// Non-persisted fields
+	DBInfo    *DBInfo     `json:"-"`
+	TblInfo   *TableInfo  `json:"-"`
+	OldColumn *ColumnInfo `json:"-"`
 }
 
-func (a *ModifyColumnArgs) fillJob(job *Job) {
-
+func (a *ModifyColumnArgs) fillJobV1(job *Job) {
+	job.Args = []any{
+		a.Column, a.OldColumnName, a.Position, a.ModifyColumnType,
+		a.UpdatedAutoRandomBits, a.ChangingColumn, a.ChangingIdxs, a.RemovedIdxs,
+	}
 }
 
 func GetModifyColumnArgs(job *Job) (*ModifyColumnArgs, error) {
-	return nil, nil
+	if job.Version == JobVersion1 {
+		args := &ModifyColumnArgs{}
+		if err := job.DecodeArgs(
+			args.Column, &args.OldColumnName, args.Position, &args.ModifyColumnType,
+			&args.UpdatedAutoRandomBits, args.ChangingColumn, &args.ChangingIdxs, &args.RemovedIdxs,
+		); err != nil {
+			return nil, errors.Trace(err)
+		}
+		return args, nil
+	}
+	return getOrDecodeArgsV2[*ModifyColumnArgs](job)
 }
 
-func (a *ModifyColumnArgs) fillFinishedJob(job *Job) {
-	if job.Version == JobVersion1 {
-		job.Args = []any{a.IndexIDs, a.PartitionIDs}
-		return
-	}
-	job.Args = []any{a}
+func (a *ModifyColumnArgs) fillFinishedJobV1(job *Job) {
+	job.Args = []any{a.IndexIDs, a.PartitionIDs}
 }
 
 func GetFinishedModifyColumnArgs(job *Job) (*ModifyColumnArgs, error) {

@@ -152,16 +152,18 @@ func rollingbackModifyColumn(w *worker, jobCtx *jobContext, t *meta.Mutator, job
 		// Give the this kind of ddl one more round to run, the dbterror.ErrCancelledDDLJob should be fetched from the bottom up.
 		return w.onModifyColumn(jobCtx, t, job)
 	}
-	_, tblInfo, oldCol, args, err := getModifyColumnInfo(t, job)
+
+	args, err := getModifyColumnArgs(t, job)
 	if err != nil {
-		return ver, err
+		return ver, errors.Trace(err)
 	}
-	if !needChangeColumnData(oldCol, args.Column) {
+
+	if !needChangeColumnData(args.OldColumn, args.Column) {
 		// Normal-type rolling back
 		if job.SchemaState == model.StateNone {
 			// When change null to not null, although state is unchanged with none, the oldCol flag's has been changed to preNullInsertFlag.
 			// To roll back this kind of normal job, it is necessary to mark the state as JobStateRollingback to restore the old col's flag.
-			if args.ModifyColumnType == mysql.TypeNull && tblInfo.Columns[oldCol.Offset].GetFlag()|mysql.PreventNullInsertFlag != 0 {
+			if args.ModifyColumnType == mysql.TypeNull && args.TblInfo.Columns[args.OldColumn.Offset].GetFlag()|mysql.PreventNullInsertFlag != 0 {
 				job.State = model.JobStateRollingback
 				return ver, dbterror.ErrCancelledDDLJob
 			}

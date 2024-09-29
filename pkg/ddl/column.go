@@ -896,33 +896,32 @@ func updateChangingObjState(changingCol *model.ColumnInfo, changingIdxs []*model
 	}
 }
 
-func checkAndApplyAutoRandomBits(jobCtx *jobContext, m *meta.Mutator, dbInfo *model.DBInfo, tblInfo *model.TableInfo,
-	oldCol *model.ColumnInfo, newCol *model.ColumnInfo, newAutoRandBits uint64) error {
-	if newAutoRandBits == 0 {
+func checkAndApplyAutoRandomBits(jobCtx *jobContext, m *meta.Mutator, args *model.ModifyColumnArgs) error {
+	if args.UpdatedAutoRandomBits == 0 {
 		return nil
 	}
-	idAcc := m.GetAutoIDAccessors(dbInfo.ID, tblInfo.ID)
-	err := checkNewAutoRandomBits(idAcc, oldCol, newCol, newAutoRandBits, tblInfo.AutoRandomRangeBits, tblInfo.SepAutoInc())
-	if err != nil {
-		return err
+	if err := checkNewAutoRandomBits(m, args); err != nil {
+		return errors.Trace(err)
 	}
-	return applyNewAutoRandomBits(jobCtx, m, dbInfo, tblInfo, oldCol, newAutoRandBits)
+	return applyNewAutoRandomBits(jobCtx, m, args)
 }
 
 // checkNewAutoRandomBits checks whether the new auto_random bits number can cause overflow.
-func checkNewAutoRandomBits(idAccessors meta.AutoIDAccessors, oldCol *model.ColumnInfo,
-	newCol *model.ColumnInfo, newShardBits, newRangeBits uint64, sepAutoInc bool) error {
-	shardFmt := autoid.NewShardIDFormat(&newCol.FieldType, newShardBits, newRangeBits)
+func checkNewAutoRandomBits(m *meta.Mutator, args *model.ModifyColumnArgs) error {
+	newShardBits := args.UpdatedAutoRandomBits
+	shardFmt := autoid.NewShardIDFormat(&args.Column.FieldType, newShardBits, args.TblInfo.AutoRandomRangeBits)
 
+	idAccessors := m.GetAutoIDAccessors(args.DBInfo.ID, args.TblInfo.ID)
 	idAcc := idAccessors.RandomID()
-	convertedFromAutoInc := mysql.HasAutoIncrementFlag(oldCol.GetFlag())
+	convertedFromAutoInc := mysql.HasAutoIncrementFlag(args.OldColumn.GetFlag())
 	if convertedFromAutoInc {
-		if sepAutoInc {
+		if args.TblInfo.SepAutoInc() {
 			idAcc = idAccessors.IncrementID(model.TableInfoVersion5)
 		} else {
 			idAcc = idAccessors.RowID()
 		}
 	}
+
 	// Generate a new auto ID first to prevent concurrent update in DML.
 	_, err := idAcc.Inc(1)
 	if err != nil {
@@ -937,7 +936,7 @@ func checkNewAutoRandomBits(idAccessors meta.AutoIDAccessors, oldCol *model.Colu
 	usedBits := uint64(64 - bits.LeadingZeros64(uint64(currentIncBitsVal)))
 	if usedBits > shardFmt.IncrementalBits {
 		overflowCnt := usedBits - shardFmt.IncrementalBits
-		errMsg := fmt.Sprintf(autoid.AutoRandomOverflowErrMsg, newShardBits-overflowCnt, newShardBits, oldCol.Name.O)
+		errMsg := fmt.Sprintf(autoid.AutoRandomOverflowErrMsg, newShardBits-overflowCnt, newShardBits, args.OldColumn.Name.O)
 		return dbterror.ErrInvalidAutoRandom.GenWithStackByArgs(errMsg)
 	}
 	return nil
@@ -967,9 +966,9 @@ func (r *asAutoIDRequirement) AutoIDClient() *autoid.ClientDiscover {
 
 // applyNewAutoRandomBits set auto_random bits to TableInfo and
 // migrate auto_increment ID to auto_random ID if possible.
-func applyNewAutoRandomBits(jobCtx *jobContext, m *meta.Mutator, dbInfo *model.DBInfo,
-	tblInfo *model.TableInfo, oldCol *model.ColumnInfo, newAutoRandBits uint64) error {
-	tblInfo.AutoRandomBits = newAutoRandBits
+func applyNewAutoRandomBits(jobCtx *jobContext, m *meta.Mutator, args *model.ModifyColumnArgs) error {
+	oldCol, tblInfo, dbInfo := args.OldColumn, args.TblInfo, args.DBInfo
+	tblInfo.AutoRandomBits = args.UpdatedAutoRandomBits
 	needMigrateFromAutoIncToAutoRand := mysql.HasAutoIncrementFlag(oldCol.GetFlag())
 	if !needMigrateFromAutoIncToAutoRand {
 		return nil
@@ -996,7 +995,9 @@ func applyNewAutoRandomBits(jobCtx *jobContext, m *meta.Mutator, dbInfo *model.D
 
 // checkForNullValue ensure there are no null values of the column of this table.
 // `isDataTruncated` indicates whether the new field and the old field type are the same, in order to be compatible with mysql.
-func checkForNullValue(ctx context.Context, sctx sessionctx.Context, isDataTruncated bool, schema, table pmodel.CIStr, newCol *model.ColumnInfo, oldCols ...*model.ColumnInfo) error {
+func checkForNullValue(
+	ctx context.Context, sctx sessionctx.Context, isDataTruncated bool,
+	schema, table pmodel.CIStr, newCol *model.ColumnInfo, oldCols ...*model.ColumnInfo) error {
 	needCheckNullValue := false
 	for _, oldCol := range oldCols {
 		if oldCol.GetType() != mysql.TypeTimestamp && newCol.GetType() == mysql.TypeTimestamp {
@@ -1149,7 +1150,9 @@ func checkAddColumnTooManyColumns(colNum int) error {
 
 // modifyColsFromNull2NotNull modifies the type definitions of 'null' to 'not null'.
 // Introduce the `mysql.PreventNullInsertFlag` flag to prevent users from inserting or updating null values.
-func modifyColsFromNull2NotNull(w *worker, dbInfo *model.DBInfo, tblInfo *model.TableInfo, cols []*model.ColumnInfo, newCol *model.ColumnInfo, isDataTruncated bool) error {
+func modifyColsFromNull2NotNull(
+	w *worker, dbInfo *model.DBInfo, tblInfo *model.TableInfo, isDataTruncated bool,
+	newCol *model.ColumnInfo, cols ...*model.ColumnInfo) error {
 	// Get sessionctx from context resource pool.
 	var sctx sessionctx.Context
 	sctx, err := w.sessPool.Get()

@@ -516,7 +516,7 @@ func checkPrimaryKeyNotNull(jobCtx *jobContext, w *worker, t *meta.Mutator, job 
 		return nil, nil
 	}
 
-	err = modifyColsFromNull2NotNull(w, dbInfo, tblInfo, nullCols, &model.ColumnInfo{Name: pmodel.NewCIStr("")}, false)
+	err = modifyColsFromNull2NotNull(w, dbInfo, tblInfo, false, &model.ColumnInfo{Name: pmodel.NewCIStr("")}, nullCols...)
 	if err == nil {
 		return nil, nil
 	}
