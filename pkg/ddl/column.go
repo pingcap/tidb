@@ -519,7 +519,7 @@ func (w *worker) updatePhysicalTableRow(
 }
 
 // TestReorgGoroutineRunning is only used in test to indicate the reorg goroutine has been started.
-var TestReorgGoroutineRunning = make(chan any)
+var TestReorgGoroutineRunning = make(chan struct{})
 
 // updateCurrentElement update the current element for reorgInfo.
 func (w *worker) updateCurrentElement(
@@ -527,19 +527,11 @@ func (w *worker) updateCurrentElement(
 	t table.Table,
 	reorgInfo *reorgInfo,
 ) error {
-	failpoint.Inject("mockInfiniteReorgLogic", func(val failpoint.Value) {
-		//nolint:forcetypeassert
-		if val.(bool) {
-			a := new(any)
-			TestReorgGoroutineRunning <- a
-			for {
-				time.Sleep(30 * time.Millisecond)
-				if w.isReorgCancelled(reorgInfo.Job.ID) {
-					// Job is cancelled. So it can't be done.
-					failpoint.Return(dbterror.ErrCancelledDDLJob)
-				}
-			}
-		}
+	failpoint.Inject("mockInfiniteReorgLogic", func() {
+		TestReorgGoroutineRunning <- struct{}{}
+		<-ctx.Done()
+		// Job is cancelled. So it can't be done.
+		failpoint.Return(dbterror.ErrCancelledDDLJob)
 	})
 	// TODO: Support partition tables.
 	if bytes.Equal(reorgInfo.currElement.TypeKey, meta.ColumnElementKey) {

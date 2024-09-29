@@ -411,6 +411,7 @@ func (w *worker) runReorgJob(
 				return dbterror.ErrWaitReorgTimeout
 			}
 			// Since job is cancelled，we don't care about its partial counts.
+			// TODO(lance6716): use WithCancelCause?
 			if rc.isReorgCanceled() || terror.ErrorEqual(err, dbterror.ErrCancelledDDLJob) {
 				d.removeReorgCtx(job.ID)
 				return dbterror.ErrCancelledDDLJob
