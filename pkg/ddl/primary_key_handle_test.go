@@ -35,7 +35,7 @@ import (
 	"github.com/tikv/client-go/v2/testutils"
 )
 
-func getTableMaxHandle(t *testing.T, d ddl.DDL, tbl table.Table, store kv.Storage) (kv.Handle, bool) {
+func getTableMaxHandle(t *testing.T, tbl table.Table, store kv.Storage) (kv.Handle, bool) {
 	ver, err := store.CurrentVersion(kv.GlobalTxnScope)
 	require.NoError(t, err)
 	maxHandle, emptyTable, err := ddl.GetTableMaxHandle(ddl.NewReorgContext(), store, ver.Ver, tbl.(table.PhysicalTable))
@@ -43,8 +43,8 @@ func getTableMaxHandle(t *testing.T, d ddl.DDL, tbl table.Table, store kv.Storag
 	return maxHandle, emptyTable
 }
 
-func checkTableMaxHandle(t *testing.T, d ddl.DDL, tbl table.Table, store kv.Storage, expectedEmpty bool, expectedMaxHandle kv.Handle) {
-	maxHandle, emptyHandle := getTableMaxHandle(t, d, tbl, store)
+func checkTableMaxHandle(t *testing.T, tbl table.Table, store kv.Storage, expectedEmpty bool, expectedMaxHandle kv.Handle) {
+	maxHandle, emptyHandle := getTableMaxHandle(t, tbl, store)
 	require.Equal(t, expectedEmpty, emptyHandle)
 	if expectedEmpty {
 		require.True(t, emptyHandle)
@@ -78,18 +78,16 @@ func TestMultiRegionGetTableEndHandle(t *testing.T) {
 	tbl, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
 
-	d := dom.DDL()
-
 	// Split the table.
 	tableStart := tablecodec.GenTableRecordPrefix(tbl.Meta().ID)
 	cluster.SplitKeys(tableStart, tableStart.PrefixNext(), 100)
-	checkTableMaxHandle(t, d, tbl, store, false, kv.IntHandle(999))
+	checkTableMaxHandle(t, tbl, store, false, kv.IntHandle(999))
 
 	tk.MustExec("insert into t values(10000, 1000)")
-	checkTableMaxHandle(t, d, tbl, store, false, kv.IntHandle(10000))
+	checkTableMaxHandle(t, tbl, store, false, kv.IntHandle(10000))
 
 	tk.MustExec("insert into t values(-1, 1000)")
-	checkTableMaxHandle(t, d, tbl, store, false, kv.IntHandle(10000))
+	checkTableMaxHandle(t, tbl, store, false, kv.IntHandle(10000))
 }
 
 func TestGetTableEndHandle(t *testing.T) {
@@ -102,25 +100,24 @@ func TestGetTableEndHandle(t *testing.T) {
 	tk.MustExec("create table t(a bigint PRIMARY KEY, b int)")
 
 	is := dom.InfoSchema()
-	d := dom.DDL()
 	tbl, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
 
 	// test empty table
-	checkTableMaxHandle(t, d, tbl, store, true, nil)
+	checkTableMaxHandle(t, tbl, store, true, nil)
 
 	tk.MustExec("insert into t values(-1, 1)")
-	checkTableMaxHandle(t, d, tbl, store, false, kv.IntHandle(-1))
+	checkTableMaxHandle(t, tbl, store, false, kv.IntHandle(-1))
 
 	tk.MustExec("insert into t values(9223372036854775806, 1)")
-	checkTableMaxHandle(t, d, tbl, store, false, kv.IntHandle(9223372036854775806))
+	checkTableMaxHandle(t, tbl, store, false, kv.IntHandle(9223372036854775806))
 
 	tk.MustExec("insert into t values(9223372036854775807, 1)")
-	checkTableMaxHandle(t, d, tbl, store, false, kv.IntHandle(9223372036854775807))
+	checkTableMaxHandle(t, tbl, store, false, kv.IntHandle(9223372036854775807))
 
 	tk.MustExec("insert into t values(10, 1)")
 	tk.MustExec("insert into t values(102149142, 1)")
-	checkTableMaxHandle(t, d, tbl, store, false, kv.IntHandle(9223372036854775807))
+	checkTableMaxHandle(t, tbl, store, false, kv.IntHandle(9223372036854775807))
 
 	tk.MustExec("create table t1(a bigint PRIMARY KEY, b int)")
 
@@ -135,7 +132,7 @@ func TestGetTableEndHandle(t *testing.T) {
 	is = dom.InfoSchema()
 	tbl, err = is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t1"))
 	require.NoError(t, err)
-	checkTableMaxHandle(t, d, tbl, store, false, kv.IntHandle(999))
+	checkTableMaxHandle(t, tbl, store, false, kv.IntHandle(999))
 
 	// Test PK is not handle
 	tk.MustExec("create table t2(a varchar(255))")
@@ -143,7 +140,7 @@ func TestGetTableEndHandle(t *testing.T) {
 	is = dom.InfoSchema()
 	tbl, err = is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t2"))
 	require.NoError(t, err)
-	checkTableMaxHandle(t, d, tbl, store, true, nil)
+	checkTableMaxHandle(t, tbl, store, true, nil)
 
 	builder.Reset()
 	_, _ = fmt.Fprintf(&builder, "insert into t2 values ")
@@ -154,31 +151,31 @@ func TestGetTableEndHandle(t *testing.T) {
 	tk.MustExec(sql[:len(sql)-1])
 
 	result := tk.MustQuery("select MAX(_tidb_rowid) from t2")
-	maxHandle, emptyTable := getTableMaxHandle(t, d, tbl, store)
+	maxHandle, emptyTable := getTableMaxHandle(t, tbl, store)
 	result.Check(testkit.Rows(fmt.Sprintf("%v", maxHandle.IntValue())))
 	require.False(t, emptyTable)
 
 	tk.MustExec("insert into t2 values(100000)")
 	result = tk.MustQuery("select MAX(_tidb_rowid) from t2")
-	maxHandle, emptyTable = getTableMaxHandle(t, d, tbl, store)
+	maxHandle, emptyTable = getTableMaxHandle(t, tbl, store)
 	result.Check(testkit.Rows(fmt.Sprintf("%v", maxHandle.IntValue())))
 	require.False(t, emptyTable)
 
 	tk.MustExec(fmt.Sprintf("insert into t2 values(%v)", math.MaxInt64-1))
 	result = tk.MustQuery("select MAX(_tidb_rowid) from t2")
-	maxHandle, emptyTable = getTableMaxHandle(t, d, tbl, store)
+	maxHandle, emptyTable = getTableMaxHandle(t, tbl, store)
 	result.Check(testkit.Rows(fmt.Sprintf("%v", maxHandle.IntValue())))
 	require.False(t, emptyTable)
 
 	tk.MustExec(fmt.Sprintf("insert into t2 values(%v)", math.MaxInt64))
 	result = tk.MustQuery("select MAX(_tidb_rowid) from t2")
-	maxHandle, emptyTable = getTableMaxHandle(t, d, tbl, store)
+	maxHandle, emptyTable = getTableMaxHandle(t, tbl, store)
 	result.Check(testkit.Rows(fmt.Sprintf("%v", maxHandle.IntValue())))
 	require.False(t, emptyTable)
 
 	tk.MustExec("insert into t2 values(100)")
 	result = tk.MustQuery("select MAX(_tidb_rowid) from t2")
-	maxHandle, emptyTable = getTableMaxHandle(t, d, tbl, store)
+	maxHandle, emptyTable = getTableMaxHandle(t, tbl, store)
 	result.Check(testkit.Rows(fmt.Sprintf("%v", maxHandle.IntValue())))
 	require.False(t, emptyTable)
 }
@@ -208,18 +205,16 @@ func TestMultiRegionGetTableEndCommonHandle(t *testing.T) {
 	tbl, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
 
-	d := dom.DDL()
-
 	// Split the table.
 	tableStart := tablecodec.GenTableRecordPrefix(tbl.Meta().ID)
 	cluster.SplitKeys(tableStart, tableStart.PrefixNext(), 100)
-	checkTableMaxHandle(t, d, tbl, store, false, testutil.MustNewCommonHandle(t, "999", 999, 999))
+	checkTableMaxHandle(t, tbl, store, false, testutil.MustNewCommonHandle(t, "999", 999, 999))
 
 	tk.MustExec("insert into t values('a', 1, 1, 1)")
-	checkTableMaxHandle(t, d, tbl, store, false, testutil.MustNewCommonHandle(t, "a", 1, 1))
+	checkTableMaxHandle(t, tbl, store, false, testutil.MustNewCommonHandle(t, "a", 1, 1))
 
 	tk.MustExec("insert into t values('0000', 1, 1, 1)")
-	checkTableMaxHandle(t, d, tbl, store, false, testutil.MustNewCommonHandle(t, "a", 1, 1))
+	checkTableMaxHandle(t, tbl, store, false, testutil.MustNewCommonHandle(t, "a", 1, 1))
 }
 
 func TestGetTableEndCommonHandle(t *testing.T) {
@@ -232,31 +227,29 @@ func TestGetTableEndCommonHandle(t *testing.T) {
 	tk.MustExec("create table t1(a varchar(15), b bigint, c int, primary key (a(2), b))")
 
 	is := dom.InfoSchema()
-	d := dom.DDL()
 	tbl, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
 
 	// test empty table
-	checkTableMaxHandle(t, d, tbl, store, true, nil)
+	checkTableMaxHandle(t, tbl, store, true, nil)
 
 	tk.MustExec("insert into t values('abc', 1, 10)")
-	checkTableMaxHandle(t, d, tbl, store, false, testutil.MustNewCommonHandle(t, "abc", 1))
+	checkTableMaxHandle(t, tbl, store, false, testutil.MustNewCommonHandle(t, "abc", 1))
 
 	tk.MustExec("insert into t values('abchzzzzzzzz', 1, 10)")
-	checkTableMaxHandle(t, d, tbl, store, false, testutil.MustNewCommonHandle(t, "abchzzzzzzzz", 1))
+	checkTableMaxHandle(t, tbl, store, false, testutil.MustNewCommonHandle(t, "abchzzzzzzzz", 1))
 	tk.MustExec("insert into t values('a', 1, 10)")
 	tk.MustExec("insert into t values('ab', 1, 10)")
-	checkTableMaxHandle(t, d, tbl, store, false, testutil.MustNewCommonHandle(t, "abchzzzzzzzz", 1))
+	checkTableMaxHandle(t, tbl, store, false, testutil.MustNewCommonHandle(t, "abchzzzzzzzz", 1))
 
 	// Test MaxTableRowID with prefixed primary key.
 	tbl, err = is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t1"))
 	require.NoError(t, err)
-	d = dom.DDL()
-	checkTableMaxHandle(t, d, tbl, store, true, nil)
+	checkTableMaxHandle(t, tbl, store, true, nil)
 	tk.MustExec("insert into t1 values('abccccc', 1, 10)")
-	checkTableMaxHandle(t, d, tbl, store, false, testutil.MustNewCommonHandle(t, "ab", 1))
+	checkTableMaxHandle(t, tbl, store, false, testutil.MustNewCommonHandle(t, "ab", 1))
 	tk.MustExec("insert into t1 values('azzzz', 1, 10)")
-	checkTableMaxHandle(t, d, tbl, store, false, testutil.MustNewCommonHandle(t, "az", 1))
+	checkTableMaxHandle(t, tbl, store, false, testutil.MustNewCommonHandle(t, "az", 1))
 }
 
 func TestCreateClusteredIndex(t *testing.T) {

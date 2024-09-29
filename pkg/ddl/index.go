@@ -843,7 +843,7 @@ func tableIsEmpty(store kv.Storage, tbl table.Table, resGroupName string) bool {
 	if tbl, ok := tbl.(table.PartitionedTable); ok {
 		for _, pid := range tbl.GetAllPartitionIDs() {
 			pTbl := tbl.GetPartition(pid)
-			_, isEmpty, err := GetTableMaxHandle(rgCtx, store, math.MaxInt64, pTbl)
+			_, isEmpty, err := GetTableMaxHandle(rgCtx, store, math.MaxUint64, pTbl)
 			if err != nil {
 				logutil.DDLLogger().Info("check if table is empty failed", zap.Error(err))
 				return false
