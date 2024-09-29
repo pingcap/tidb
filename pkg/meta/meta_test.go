@@ -33,10 +33,12 @@ import (
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	pmodel "github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/terror"
 	_ "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/util"
+	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/stretchr/testify/require"
@@ -55,7 +57,7 @@ func TestPlacementPolicy(t *testing.T) {
 	require.NoError(t, err)
 
 	// test the independent policy ID allocation.
-	m := meta.NewMeta(txn)
+	m := meta.NewMutator(txn)
 
 	// test the meta storage of placemnt policy.
 	policy := &model.PolicyInfo{
@@ -105,7 +107,7 @@ func TestPlacementPolicy(t *testing.T) {
 	txn, err = store.Begin()
 	require.NoError(t, err)
 
-	m = meta.NewMeta(txn)
+	m = meta.NewMutator(txn)
 	val, err = m.GetPolicy(1)
 	require.NoError(t, err)
 	require.Equal(t, policy, val)
@@ -125,7 +127,7 @@ func TestResourceGroup(t *testing.T) {
 	require.NoError(t, err)
 
 	// test the independent policy ID allocation.
-	m := meta.NewMeta(txn)
+	m := meta.NewMutator(txn)
 	groups, err := m.ListResourceGroups()
 	require.NoError(t, err)
 	require.Equal(t, len(groups), 1)
@@ -173,7 +175,7 @@ func TestMeta(t *testing.T) {
 	txn, err := store.Begin()
 	require.NoError(t, err)
 
-	m := meta.NewMeta(txn)
+	m := meta.NewMutator(txn)
 
 	n, err := m.GenGlobalID()
 	require.NoError(t, err)
@@ -371,7 +373,7 @@ func TestMeta(t *testing.T) {
 		ID:   3,
 		Name: pmodel.NewCIStr("tbl3"),
 	}
-	err = m.CreateTableAndSetAutoID(1, tbInfo3, meta.AutoIDGroup{RowID: 123, IncrementID: 0})
+	err = m.CreateTableAndSetAutoID(1, tbInfo3, model.AutoIDGroup{RowID: 123, IncrementID: 0})
 	require.NoError(t, err)
 	id, err := m.GetAutoIDAccessors(1, tbInfo3.ID).RowID().Get()
 	require.NoError(t, err)
@@ -453,7 +455,7 @@ func TestSnapshot(t *testing.T) {
 	}()
 
 	txn, _ := store.Begin()
-	m := meta.NewMeta(txn)
+	m := meta.NewMutator(txn)
 	_, err = m.GenGlobalID()
 	require.NoError(t, err)
 	n, _ := m.GetGlobalID()
@@ -464,7 +466,7 @@ func TestSnapshot(t *testing.T) {
 	ver1, _ := store.CurrentVersion(kv.GlobalTxnScope)
 	time.Sleep(time.Millisecond)
 	txn, _ = store.Begin()
-	m = meta.NewMeta(txn)
+	m = meta.NewMutator(txn)
 	_, err = m.GenGlobalID()
 	require.NoError(t, err)
 	n, _ = m.GetGlobalID()
@@ -473,12 +475,9 @@ func TestSnapshot(t *testing.T) {
 	require.NoError(t, err)
 
 	snapshot := store.GetSnapshot(ver1)
-	snapMeta := meta.NewSnapshotMeta(snapshot)
+	snapMeta := meta.NewReader(snapshot)
 	n, _ = snapMeta.GetGlobalID()
 	require.Equal(t, int64(1), n)
-	_, err = snapMeta.GenGlobalID()
-	require.NotNil(t, err)
-	require.Equal(t, "[structure:8220]write on snapshot", err.Error())
 }
 
 func TestElement(t *testing.T) {
@@ -521,7 +520,7 @@ func BenchmarkGenGlobalIDs(b *testing.B) {
 		require.NoError(b, err)
 	}()
 
-	m := meta.NewMeta(txn)
+	m := meta.NewMutator(txn)
 
 	b.ResetTimer()
 	var ids []int64
@@ -547,7 +546,7 @@ func BenchmarkGenGlobalIDOneByOne(b *testing.B) {
 		require.NoError(b, err)
 	}()
 
-	m := meta.NewMeta(txn)
+	m := meta.NewMutator(txn)
 
 	b.ResetTimer()
 	var id int64
@@ -645,7 +644,7 @@ func TestCreateMySQLDatabase(t *testing.T) {
 	txn, err := store.Begin()
 	require.NoError(t, err)
 
-	m := meta.NewMeta(txn)
+	m := meta.NewMutator(txn)
 
 	dbID, err := m.CreateMySQLDatabaseIfNotExists()
 	require.NoError(t, err)
@@ -767,6 +766,52 @@ func TestTableNameExtract(t *testing.T) {
 	nameLMatch = nameLRegex.FindStringSubmatch(string(b))
 	require.Len(t, nameLMatch, 2)
 	require.Equal(t, `"\"啊"`, meta.Unescape(nameLMatch[1]))
+}
+
+func TestNameExtractFromJob(t *testing.T) {
+	type extractTestCase struct {
+		schemaName string
+		tableName  string
+	}
+
+	var job model.Job
+	// Inject some table_name and schema_name into other fields of json
+	job.Error = dbterror.ClassDDL.Synthesize(terror.CodeUnknown, `test error, "table_name":"aaa", "schema_name":"bbb"`)
+	job.Warning = dbterror.ClassDDL.Synthesize(terror.CodeUnknown, `test warning, "table_name":"ccc", "schema_name":"ddd"`)
+	job.Query = `create table test.t1(id int) comment 'create table, table_name:"eee", schema_name:"fff"'`
+
+	var testCases = []extractTestCase{
+		// Normal string
+		{"", "schema_name"},
+		{"table_name", ""},
+		// String with quota
+		{`"quota_schema_name"`, `"quota_table_name"`},
+		{`"single_quota`, `""triple_quota"`},
+		{"\"schema_name\"", "\"table_name\""},
+		// String with slash
+		{"\\", "\\\\"},
+		// Unicode
+		{"中文1", "中文2"},
+		{"😋", "😭"},
+		// Other interpunction
+		{"comma,1", "dot.3"},
+		// Put it together
+		{`"combine:\\\",你好\\`, `"schema_name:1️⃣","table_name:2️⃣"`},
+	}
+
+	for _, tc := range testCases {
+		job.SchemaName = tc.schemaName
+		job.TableName = tc.tableName
+
+		b, err := job.Encode(true)
+		require.NoError(t, err)
+
+		schemaName, tableName, err := meta.ExtractSchemaAndTableNameFromJob(b)
+		require.NoError(t, err)
+
+		require.Equal(t, tc.schemaName, schemaName)
+		require.Equal(t, tc.tableName, tableName)
+	}
 }
 
 var benchCases = [][2]string{
@@ -918,9 +963,9 @@ func TestInfoSchemaV2SpecialAttributeCorrectnessAfterBootstrap(t *testing.T) {
 
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
 	err = kv.RunInNewTxn(ctx, store, true, func(ctx context.Context, txn kv.Transaction) error {
-		err := meta.NewMeta(txn).CreateDatabase(dbInfo)
+		err := meta.NewMutator(txn).CreateDatabase(dbInfo)
 		require.NoError(t, err)
-		err = meta.NewMeta(txn).CreateTableOrView(dbInfo.ID, tblInfo)
+		err = meta.NewMutator(txn).CreateTableOrView(dbInfo.ID, tblInfo)
 		require.NoError(t, err)
 		return errors.Trace(err)
 	})
@@ -990,9 +1035,9 @@ func TestInfoSchemaV2DataFieldsCorrectnessAfterBootstrap(t *testing.T) {
 
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
 	err = kv.RunInNewTxn(ctx, store, true, func(ctx context.Context, txn kv.Transaction) error {
-		err := meta.NewMeta(txn).CreateDatabase(dbInfo)
+		err := meta.NewMutator(txn).CreateDatabase(dbInfo)
 		require.NoError(t, err)
-		err = meta.NewMeta(txn).CreateTableOrView(dbInfo.ID, tblInfo)
+		err = meta.NewMutator(txn).CreateTableOrView(dbInfo.ID, tblInfo)
 		require.NoError(t, err)
 		return errors.Trace(err)
 	})
@@ -1088,7 +1133,7 @@ func TestInfoSchemaMiscFieldsCorrectnessAfterBootstrap(t *testing.T) {
 	}
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
 	err = kv.RunInNewTxn(ctx, store, true, func(ctx context.Context, txn kv.Transaction) error {
-		m := meta.NewMeta(txn)
+		m := meta.NewMutator(txn)
 		err := m.CreatePolicy(policy)
 		require.NoError(t, err)
 		err = m.AddResourceGroup(group)

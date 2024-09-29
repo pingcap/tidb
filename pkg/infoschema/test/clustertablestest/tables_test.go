@@ -170,8 +170,8 @@ func TestInfoSchemaFieldValue(t *testing.T) {
 			"  `RESOURCE_GROUP` varchar(32) NOT NULL DEFAULT '',\n" +
 			"  `SESSION_ALIAS` varchar(64) NOT NULL DEFAULT '',\n" +
 			"  `ROWS_AFFECTED` bigint(21) unsigned DEFAULT NULL,\n" +
-			"  `TIDB_CPU` double NOT NULL DEFAULT '0',\n" +
-			"  `TIKV_CPU` double NOT NULL DEFAULT '0'\n" +
+			"  `TIDB_CPU` bigint(21) NOT NULL DEFAULT '0',\n" +
+			"  `TIKV_CPU` bigint(21) NOT NULL DEFAULT '0'\n" +
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
 	tk.MustQuery("show create table information_schema.cluster_log").Check(
 		testkit.Rows("" +
@@ -658,7 +658,7 @@ func checkSystemSchemaTableID(t *testing.T, dom *domain.Domain, dbName string, d
 func updateTableMeta(t *testing.T, store kv.Storage, dbID int64, tableInfo *model.TableInfo) {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
 	err := kv.RunInNewTxn(ctx, store, true, func(ctx context.Context, txn kv.Transaction) error {
-		m := meta.NewMeta(txn)
+		m := meta.NewMutator(txn)
 		return m.UpdateTable(dbID, tableInfo)
 	})
 	require.NoError(t, err)
@@ -827,9 +827,9 @@ func TestStmtSummaryTable(t *testing.T) {
 		"from information_schema.statements_summary " +
 		"where digest_text like 'select * from `t`%'"
 	tk.MustQuery(sql).Check(testkit.Rows("Select test test.t t:k 1 0 0 0 0 0 0 0 0 0 0 select * from t where a=2 \tid                       \ttask     \testRows\toperator info\n" +
-		"\tIndexLookUp_10           \troot     \t100    \t\n" +
-		"\t├─IndexRangeScan_8(Build)\tcop[tikv]\t100    \ttable:t, index:k(a), range:[2,2], keep order:false, stats:pseudo\n" +
-		"\t└─TableRowIDScan_9(Probe)\tcop[tikv]\t100    \ttable:t, keep order:false, stats:pseudo"))
+		"\tIndexLookUp_7            \troot     \t100    \t\n" +
+		"\t├─IndexRangeScan_5(Build)\tcop[tikv]\t100    \ttable:t, index:k(a), range:[2,2], keep order:false, stats:pseudo\n" +
+		"\t└─TableRowIDScan_6(Probe)\tcop[tikv]\t100    \ttable:t, keep order:false, stats:pseudo"))
 
 	// select ... order by
 	tk.MustQuery(`select stmt_type, schema_name, table_names, index_names, exec_count, sum_cop_task_num, avg_total_keys,
@@ -849,9 +849,9 @@ func TestStmtSummaryTable(t *testing.T) {
 		"where digest_text like 'select * from `t`%'"
 	tk.MustQuery(sql).Check(testkit.Rows(
 		"Select test test.t t:k 2 0 0 0 0 0 0 0 0 0 0 select * from t where a=2 \tid                       \ttask     \testRows\toperator info\n" +
-			"\tIndexLookUp_10           \troot     \t100    \t\n" +
-			"\t├─IndexRangeScan_8(Build)\tcop[tikv]\t100    \ttable:t, index:k(a), range:[2,2], keep order:false, stats:pseudo\n" +
-			"\t└─TableRowIDScan_9(Probe)\tcop[tikv]\t100    \ttable:t, keep order:false, stats:pseudo"))
+			"\tIndexLookUp_7            \troot     \t100    \t\n" +
+			"\t├─IndexRangeScan_5(Build)\tcop[tikv]\t100    \ttable:t, index:k(a), range:[2,2], keep order:false, stats:pseudo\n" +
+			"\t└─TableRowIDScan_6(Probe)\tcop[tikv]\t100    \ttable:t, keep order:false, stats:pseudo"))
 
 	// Disable it again.
 	tk.MustExec("set global tidb_enable_stmt_summary = false")
@@ -897,9 +897,9 @@ func TestStmtSummaryTable(t *testing.T) {
 		"from information_schema.statements_summary " +
 		"where digest_text like 'select * from `t`%'"
 	tk.MustQuery(sql).Check(testkit.Rows("Select test test.t t:k 1 0 0 0 0 0 0 0 0 0 0 select * from t where a=2 \tid                       \ttask     \testRows\toperator info\n" +
-		"\tIndexLookUp_10           \troot     \t1000   \t\n" +
-		"\t├─IndexRangeScan_8(Build)\tcop[tikv]\t1000   \ttable:t, index:k(a), range:[2,2], keep order:false, stats:pseudo\n" +
-		"\t└─TableRowIDScan_9(Probe)\tcop[tikv]\t1000   \ttable:t, keep order:false, stats:pseudo"))
+		"\tIndexLookUp_7            \troot     \t1000   \t\n" +
+		"\t├─IndexRangeScan_5(Build)\tcop[tikv]\t1000   \ttable:t, index:k(a), range:[2,2], keep order:false, stats:pseudo\n" +
+		"\t└─TableRowIDScan_6(Probe)\tcop[tikv]\t1000   \ttable:t, keep order:false, stats:pseudo"))
 
 	// Disable it in global scope.
 	tk.MustExec("set global tidb_enable_stmt_summary = false")

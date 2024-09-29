@@ -8,5 +8,6 @@ go_library(
     deps = [
         "@com_github_pingcap_kvproto//pkg/resource_manager",
         "@com_github_tikv_client_go_v2//tikvrpc",
+        "@com_github_tikv_client_go_v2//util",
     ],
 )

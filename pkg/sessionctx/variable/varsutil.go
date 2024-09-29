@@ -512,6 +512,16 @@ func switchDDL(on bool) error {
 	return nil
 }
 
+// switchStats turns on/off stats owner in an instance
+func switchStats(on bool) error {
+	if on && EnableStatsOwner != nil {
+		return EnableStatsOwner()
+	} else if !on && DisableStatsOwner != nil {
+		return DisableStatsOwner()
+	}
+	return nil
+}
+
 func collectAllowFuncName4ExpressionIndex() string {
 	str := make([]string, 0, len(GAFunction4ExpressionIndex))
 	for funcName := range GAFunction4ExpressionIndex {
@@ -606,10 +616,10 @@ func ParseAnalyzeSkipColumnTypes(val string) map[string]struct{} {
 var (
 	// SchemaCacheSizeLowerBound will adjust the schema cache size to this value if
 	// it is lower than this value.
-	SchemaCacheSizeLowerBound uint64 = 512 * units.MiB
+	SchemaCacheSizeLowerBound uint64 = 64 * units.MiB
 	// SchemaCacheSizeLowerBoundStr is the string representation of
 	// SchemaCacheSizeLowerBound.
-	SchemaCacheSizeLowerBoundStr = "512MB"
+	SchemaCacheSizeLowerBoundStr = "64MB"
 )
 
 func parseSchemaCacheSize(s *SessionVars, normalizedValue string, originalValue string) (byteSize uint64, normalizedStr string, err error) {

@@ -23,8 +23,8 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/expression/aggregation"
-	exprctx "github.com/pingcap/tidb/pkg/expression/context"
-	"github.com/pingcap/tidb/pkg/expression/contextopt"
+	"github.com/pingcap/tidb/pkg/expression/exprctx"
+	"github.com/pingcap/tidb/pkg/expression/expropt"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -1507,7 +1507,7 @@ func (er *expressionRewriter) Leave(originInNode ast.Node) (retNode ast.Node, ok
 			return retNode, false
 		}
 
-		castFunction, err := expression.BuildCastFunctionWithCheck(er.sctx, arg, v.Tp, false)
+		castFunction, err := expression.BuildCastFunctionWithCheck(er.sctx, arg, v.Tp, false, v.ExplicitCharSet)
 		if err != nil {
 			er.err = err
 			return retNode, false
@@ -1664,7 +1664,7 @@ func (er *expressionRewriter) rewriteUserVariable(v *ast.VariableExpr) {
 			return
 		}
 
-		sessionVars, err := contextopt.SessionVarsPropReader{}.GetSessionVars(evalCtx)
+		sessionVars, err := expropt.SessionVarsPropReader{}.GetSessionVars(evalCtx)
 		if err != nil {
 			er.err = err
 			return

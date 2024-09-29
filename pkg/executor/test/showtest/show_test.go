@@ -74,9 +74,6 @@ func TestShowCreateTablePlacement(t *testing.T) {
 
 	// Partitioned tables
 	tk.MustExec(`DROP TABLE IF EXISTS t`)
-	tk.MustExec("set @old_list_part = @@tidb_enable_list_partition")
-	defer tk.MustExec("set @@tidb_enable_list_partition = @old_list_part")
-	tk.MustExec("set tidb_enable_list_partition = 1")
 	tk.MustExec("create table t(a int, b varchar(255))" +
 		"/*T![placement] PLACEMENT POLICY=\"x\" */" +
 		"PARTITION BY LIST (a)\n" +
@@ -807,7 +804,7 @@ func TestAutoRandomWithLargeSignedShowTableRegions(t *testing.T) {
 	tk.MustExec("drop table if exists t;")
 
 	tk.MustExec("create table t (a bigint unsigned auto_random primary key clustered);")
-	tk.MustExec("set @@global.tidb_scatter_region=1;")
+	tk.MustExec("set @@session.tidb_scatter_region='table';")
 	// 18446744073709541615 is MaxUint64 - 10000.
 	// 18446744073709551615 is the MaxUint64.
 	tk.MustQuery("split table t between (18446744073709541615) and (18446744073709551615) regions 2;").

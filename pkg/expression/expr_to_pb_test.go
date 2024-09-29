@@ -505,7 +505,7 @@ func TestOtherFunc2Pb(t *testing.T) {
 	}
 }
 
-func TestExprPushDownToFlash(t *testing.T) {
+func TestJsonPushDownToFlash(t *testing.T) {
 	ctx := mock.NewContext()
 	client := new(mock.Client)
 	pushDownCtx := NewPushDownContextFromSessionVars(ctx, ctx.GetSessionVars(), client)
@@ -514,22 +514,10 @@ func TestExprPushDownToFlash(t *testing.T) {
 
 	jsonColumn := genColumn(mysql.TypeJSON, 1)
 	intColumn := genColumn(mysql.TypeLonglong, 2)
-	realColumn := genColumn(mysql.TypeDouble, 3)
-	decimalColumn := genColumn(mysql.TypeNewDecimal, 4)
-	decimalColumn.RetType.SetDecimal(mysql.MaxDecimalScale)
-	decimalColumn.RetType.SetFlen(mysql.MaxDecimalWidth)
 	stringColumn := genColumn(mysql.TypeString, 5)
-	datetimeColumn := genColumn(mysql.TypeDatetime, 6)
-	binaryStringColumn := genColumn(mysql.TypeString, 7)
-	binaryStringColumn.RetType.SetCollate(charset.CollationBin)
-	int32Column := genColumn(mysql.TypeLong, 8)
-	float32Column := genColumn(mysql.TypeFloat, 9)
-	enumColumn := genColumn(mysql.TypeEnum, 10)
-	durationColumn := genColumn(mysql.TypeDuration, 11)
-	// uint64 col
-	uintColumn := genColumn(mysql.TypeLonglong, 12)
-	uintColumn.RetType.AddFlag(mysql.UnsignedFlag)
 
+	// functions that can be pushdown to tiflash
+	// json_length
 	function, err := NewFunction(mock.NewContext(), ast.JSONLength, types.NewFieldType(mysql.TypeLonglong), jsonColumn)
 	require.NoError(t, err)
 	exprs = append(exprs, function)
@@ -590,8 +578,112 @@ func TestExprPushDownToFlash(t *testing.T) {
 	require.NoError(t, err)
 	exprs = append(exprs, function)
 
-	// lpad
-	function, err = NewFunction(mock.NewContext(), ast.Lpad, types.NewFieldType(mysql.TypeString), stringColumn, int32Column, stringColumn)
+	// CastJsonAsString
+	function, err = NewFunction(mock.NewContext(), ast.Cast, types.NewFieldType(mysql.TypeString), jsonColumn)
+	require.NoError(t, err)
+	exprs = append(exprs, function)
+
+	// CastJsonAsJson
+	function, err = NewFunction(mock.NewContext(), ast.Cast, types.NewFieldType(mysql.TypeJSON), jsonColumn)
+	require.NoError(t, err)
+	exprs = append(exprs, function)
+
+	// IfNullJson
+	function, err = NewFunction(mock.NewContext(), ast.Ifnull, types.NewFieldType(mysql.TypeJSON), jsonColumn, jsonColumn)
+	require.NoError(t, err)
+	exprs = append(exprs, function)
+
+	// IfJson
+	function, err = NewFunction(mock.NewContext(), ast.If, types.NewFieldType(mysql.TypeJSON), intColumn, jsonColumn, jsonColumn)
+	require.NoError(t, err)
+	exprs = append(exprs, function)
+
+	// JsonIsNull is not implement, for function json_col is null, it will be converted to cast(json as string) is null
+	function, err = NewFunction(mock.NewContext(), ast.IsNull, types.NewFieldType(mysql.TypeLonglong), jsonColumn)
+	require.NoError(t, err)
+	exprs = append(exprs, function)
+
+	// CaseWhenJson
+	function, err = NewFunction(mock.NewContext(), ast.Case, types.NewFieldType(mysql.TypeJSON), intColumn, jsonColumn, intColumn, jsonColumn, jsonColumn)
+	require.NoError(t, err)
+	exprs = append(exprs, function)
+
+	// CoalesceJson
+	function, err = NewFunction(mock.NewContext(), ast.Coalesce, types.NewFieldType(mysql.TypeJSON), jsonColumn, jsonColumn, jsonColumn)
+	require.NoError(t, err)
+	exprs = append(exprs, function)
+
+	pushed, remained := PushDownExprs(pushDownCtx, exprs, kv.TiFlash)
+	require.Len(t, pushed, len(exprs))
+	require.Len(t, remained, 0)
+
+	// functions that can not be pushed to tiflash
+	exprs = exprs[:0]
+	// LTJson
+	function, err = NewFunction(mock.NewContext(), ast.LT, types.NewFieldType(mysql.TypeLonglong), jsonColumn, jsonColumn)
+	require.NoError(t, err)
+	exprs = append(exprs, function)
+
+	// LEJson
+	function, err = NewFunction(mock.NewContext(), ast.LE, types.NewFieldType(mysql.TypeLonglong), jsonColumn, jsonColumn)
+	require.NoError(t, err)
+	exprs = append(exprs, function)
+
+	// GTJson
+	function, err = NewFunction(mock.NewContext(), ast.GT, types.NewFieldType(mysql.TypeLonglong), jsonColumn, jsonColumn)
+	require.NoError(t, err)
+	exprs = append(exprs, function)
+
+	// GEJson
+	function, err = NewFunction(mock.NewContext(), ast.GE, types.NewFieldType(mysql.TypeLonglong), jsonColumn, jsonColumn)
+	require.NoError(t, err)
+	exprs = append(exprs, function)
+
+	// EQJson
+	function, err = NewFunction(mock.NewContext(), ast.EQ, types.NewFieldType(mysql.TypeLonglong), jsonColumn, jsonColumn)
+	require.NoError(t, err)
+	exprs = append(exprs, function)
+
+	// NEJson
+	function, err = NewFunction(mock.NewContext(), ast.NE, types.NewFieldType(mysql.TypeLonglong), jsonColumn, jsonColumn)
+	require.NoError(t, err)
+	exprs = append(exprs, function)
+
+	// InJson
+	function, err = NewFunction(mock.NewContext(), ast.In, types.NewFieldType(mysql.TypeLonglong), jsonColumn, jsonColumn, jsonColumn)
+	require.NoError(t, err)
+	exprs = append(exprs, function)
+
+	pushed, remained = PushDownExprs(pushDownCtx, exprs, kv.TiFlash)
+	require.Len(t, pushed, 0)
+	require.Len(t, remained, len(exprs))
+}
+
+func TestExprPushDownToFlash(t *testing.T) {
+	ctx := mock.NewContext()
+	client := new(mock.Client)
+	pushDownCtx := NewPushDownContextFromSessionVars(ctx, ctx.GetSessionVars(), client)
+
+	exprs := make([]Expression, 0)
+
+	intColumn := genColumn(mysql.TypeLonglong, 2)
+	realColumn := genColumn(mysql.TypeDouble, 3)
+	decimalColumn := genColumn(mysql.TypeNewDecimal, 4)
+	decimalColumn.RetType.SetDecimal(mysql.MaxDecimalScale)
+	decimalColumn.RetType.SetFlen(mysql.MaxDecimalWidth)
+	stringColumn := genColumn(mysql.TypeString, 5)
+	datetimeColumn := genColumn(mysql.TypeDatetime, 6)
+	binaryStringColumn := genColumn(mysql.TypeString, 7)
+	binaryStringColumn.RetType.SetCollate(charset.CollationBin)
+	int32Column := genColumn(mysql.TypeLong, 8)
+	float32Column := genColumn(mysql.TypeFloat, 9)
+	enumColumn := genColumn(mysql.TypeEnum, 10)
+	durationColumn := genColumn(mysql.TypeDuration, 11)
+	// uint64 col
+	uintColumn := genColumn(mysql.TypeLonglong, 12)
+	uintColumn.RetType.AddFlag(mysql.UnsignedFlag)
+
+	function, err := NewFunction(mock.NewContext(), ast.Lpad, types.NewFieldType(mysql.TypeString), stringColumn, int32Column, stringColumn)
 	require.NoError(t, err)
 	exprs = append(exprs, function)
 
@@ -703,11 +795,6 @@ func TestExprPushDownToFlash(t *testing.T) {
 
 	// CastStringAsString
 	function, err = NewFunction(mock.NewContext(), ast.Cast, types.NewFieldType(mysql.TypeString), stringColumn)
-	require.NoError(t, err)
-	exprs = append(exprs, function)
-
-	// CastJsonAsString
-	function, err = NewFunction(mock.NewContext(), ast.Cast, types.NewFieldType(mysql.TypeString), jsonColumn)
 	require.NoError(t, err)
 	exprs = append(exprs, function)
 
@@ -1370,11 +1457,6 @@ func TestExprPushDownToFlash(t *testing.T) {
 	require.NoError(t, err)
 	exprs = append(exprs, function)
 
-	// CastJsonAsJson
-	function, err = NewFunction(mock.NewContext(), ast.Cast, types.NewFieldType(mysql.TypeJSON), jsonColumn)
-	require.NoError(t, err)
-	exprs = append(exprs, function)
-
 	pushed, remained = PushDownExprs(pushDownCtx, exprs, kv.TiFlash)
 	require.Len(t, pushed, len(exprs))
 	require.Len(t, remained, 0)
@@ -1451,12 +1533,13 @@ func TestExprPushDownToTiKV(t *testing.T) {
 	jsonColumn := genColumn(mysql.TypeJSON, 1)
 	intColumn := genColumn(mysql.TypeLonglong, 2)
 	realColumn := genColumn(mysql.TypeDouble, 3)
-	//decimalColumn := genColumn(mysql.TypeNewDecimal, 4)
+	decimalColumn := genColumn(mysql.TypeNewDecimal, 4)
 	stringColumn := genColumn(mysql.TypeString, 5)
-	//datetimeColumn := genColumn(mysql.TypeDatetime, 6)
+	datetimeColumn := genColumn(mysql.TypeDatetime, 6)
 	binaryStringColumn := genColumn(mysql.TypeString, 7)
 	dateColumn := genColumn(mysql.TypeDate, 8)
 	byteColumn := genColumn(mysql.TypeBit, 9)
+	durationColumn := genColumn(mysql.TypeDuration, 10)
 	binaryStringColumn.RetType.SetCollate(charset.CollationBin)
 
 	// Test exprs that cannot be pushed.
@@ -1672,6 +1755,66 @@ func TestExprPushDownToTiKV(t *testing.T) {
 			functionName: ast.JSONMergePatch,
 			retType:      types.NewFieldType(mysql.TypeJSON),
 			args:         []Expression{jsonColumn, jsonColumn, jsonColumn},
+		},
+		{
+			functionName: ast.DateAdd,
+			retType:      types.NewFieldType(mysql.TypeString),
+			args:         []Expression{stringColumn, stringColumn, NewStrConst("second")},
+		},
+		{
+			functionName: ast.DateAdd,
+			retType:      types.NewFieldType(mysql.TypeString),
+			args:         []Expression{decimalColumn, realColumn, NewStrConst("day")},
+		},
+		{
+			functionName: ast.DateAdd,
+			retType:      types.NewFieldType(mysql.TypeDatetime),
+			args:         []Expression{datetimeColumn, intColumn, NewStrConst("year")},
+		},
+		{
+			functionName: ast.DateAdd,
+			retType:      types.NewFieldType(mysql.TypeDuration),
+			args:         []Expression{durationColumn, stringColumn, NewStrConst("minute")},
+		},
+		{
+			functionName: ast.DateAdd,
+			retType:      types.NewFieldType(mysql.TypeDatetime),
+			args:         []Expression{durationColumn, stringColumn, NewStrConst("year_month")},
+		},
+		{
+			functionName: ast.DateSub,
+			retType:      types.NewFieldType(mysql.TypeString),
+			args:         []Expression{stringColumn, intColumn, NewStrConst("microsecond")},
+		},
+		{
+			functionName: ast.DateSub,
+			retType:      types.NewFieldType(mysql.TypeString),
+			args:         []Expression{intColumn, realColumn, NewStrConst("day")},
+		},
+		{
+			functionName: ast.DateSub,
+			retType:      types.NewFieldType(mysql.TypeDatetime),
+			args:         []Expression{datetimeColumn, intColumn, NewStrConst("quarter")},
+		},
+		{
+			functionName: ast.DateSub,
+			retType:      types.NewFieldType(mysql.TypeDuration),
+			args:         []Expression{durationColumn, stringColumn, NewStrConst("hour")},
+		},
+		{
+			functionName: ast.DateSub,
+			retType:      types.NewFieldType(mysql.TypeDatetime),
+			args:         []Expression{durationColumn, stringColumn, NewStrConst("year_month")},
+		},
+		{
+			functionName: ast.AddDate,
+			retType:      types.NewFieldType(mysql.TypeDatetime),
+			args:         []Expression{durationColumn, stringColumn, NewStrConst("WEEK")},
+		},
+		{
+			functionName: ast.SubDate,
+			retType:      types.NewFieldType(mysql.TypeString),
+			args:         []Expression{stringColumn, intColumn, NewStrConst("hour")},
 		},
 	}
 

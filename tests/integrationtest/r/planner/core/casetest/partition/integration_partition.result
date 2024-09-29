@@ -2,7 +2,6 @@ create database list_push_down;
 use list_push_down;
 set tidb_cost_model_version=2;
 drop table if exists tlist;
-set tidb_enable_list_partition = 1;
 create table tlist (a int) partition by list (a) (
 partition p0 values in (0, 1, 2),
 partition p1 values in (3, 4, 5));
@@ -103,7 +102,6 @@ TopN	10.00	root		list_push_down.tcollist.a, offset:0, count:10
 create database list_col_partition_types;
 use list_col_partition_types;
 drop table if exists tlist;
-set tidb_enable_list_partition = 1;
 create table tint (a int) partition by list columns(a) (partition p0 values in (0, 1), partition p1 values in (2, 3));
 create table tdate (a date) partition by list columns(a) (partition p0 values in ('2000-01-01', '2000-01-02'), partition p1 values in ('2000-01-03', '2000-01-04'));
 create table tstring (a varchar(32)) partition by list columns(a) (partition p0 values in ('a', 'b'), partition p1 values in ('c', 'd'));
@@ -172,7 +170,6 @@ a
 b
 create database list_partition_pruning;
 use list_partition_pruning;
-set tidb_enable_list_partition = 1;
 set @@tidb_partition_prune_mode = 'static';
 create table tabs (a int, b int) partition by list (ABS(a - b)) (partition p0 values in (0, 1, 2, 3), partition p1 values in (4, 5, 6, 7));
 insert into tabs values (1, 1), (2, 2), (2, 1), (1, 2), (4, 8), (8, 4), (5, 10), (10, 5);
@@ -339,7 +336,6 @@ a	b
 2019-11-11	2019-12-31 12:00:00
 set tidb_cost_model_version=2;
 drop table if exists tlist;
-set tidb_enable_list_partition = 1;
 create table trange (a int, b int, c int, index ia(a), primary key (b) clustered)
 partition by range(b) (
 partition p1 values less than(100),
