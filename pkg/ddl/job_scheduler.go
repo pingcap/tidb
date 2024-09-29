@@ -472,8 +472,41 @@ func (s *jobScheduler) deliveryJob(wk *worker, pool *workerPool, job *model.Job)
 	jobID, involvedSchemaInfos := job.ID, job.GetInvolvingSchemaInfo()
 	s.runningJobs.addRunning(jobID, involvedSchemaInfos)
 	metrics.DDLRunningJobCount.WithLabelValues(pool.tp().String()).Inc()
-	jobCtx := s.getJobRunCtx(job.ID)
-	// TODO(lance6716): spawn a goroutine to check job state
+	jobCtx, cancel := s.getJobRunCtx(job.ID)
+	defer cancel()
+	done := make(chan struct{})
+
+	s.wg.Run(func() {
+		ticker := time.NewTicker(2 * time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-done:
+				return
+			case <-ticker.C:
+				latestJob, err := s.sysTblMgr.GetJobByID(s.schCtx, jobID)
+				if err == systable.ErrNotFound {
+					logutil.DDLLogger().Info("job not found, might already finished",
+						zap.Int64("job_id", jobID))
+					return
+				}
+				if err != nil {
+					logutil.DDLLogger().Error("get job failed, will retry later",
+						zap.Int64("job_id", jobID), zap.Error(err))
+					continue
+				}
+				switch latestJob.State {
+				case model.JobStateCancelling, model.JobStateCancelled,
+					model.JobStatePausing, model.JobStatePaused:
+					cancel()
+					return
+				case model.JobStateDone, model.JobStateSynced:
+					return
+				}
+			}
+		}
+	})
+
 	s.wg.Run(func() {
 		defer func() {
 			r := recover()
@@ -489,6 +522,7 @@ func (s *jobScheduler) deliveryJob(wk *worker, pool *workerPool, job *model.Job)
 			asyncNotify(s.ddlJobNotifyCh)
 			metrics.DDLRunningJobCount.WithLabelValues(pool.tp().String()).Dec()
 			pool.put(wk)
+			close(done)
 		}()
 		for {
 			err := s.transitOneJobStepAndWaitSync(wk, jobCtx, job)
@@ -526,7 +560,7 @@ func (s *jobScheduler) deliveryJob(wk *worker, pool *workerPool, job *model.Job)
 	})
 }
 
-func (s *jobScheduler) getJobRunCtx(jobID int64) *jobContext {
+func (s *jobScheduler) getJobRunCtx(jobID int64) (*jobContext, context.CancelFunc) {
 	ch, _ := s.ddlJobDoneChMap.Load(jobID)
 	jobCtx, cancel := context.WithCancel(s.schCtx)
 	return &jobContext{
@@ -542,7 +576,7 @@ func (s *jobScheduler) getJobRunCtx(jobID int64) *jobContext {
 		notifyCh: ch,
 
 		oldDDLCtx: s.ddlCtx,
-	}
+	}, cancel
 }
 
 // transitOneJobStepAndWaitSync runs one step of the DDL job, persist it and

@@ -653,6 +653,11 @@ func convertJob2RollbackJob(w *worker, jobCtx *jobContext, t *meta.Mutator, job 
 		err = dbterror.ErrCancelledDDLJob
 	}
 
+	if job.State == model.JobStateRollingback {
+		// try the best effort to rollback, ignore the cancellation.
+		jobCtx.ctx = w.workCtx
+	}
+
 	logger := w.jobLogger(job)
 	if err != nil {
 		if job.Error == nil {
