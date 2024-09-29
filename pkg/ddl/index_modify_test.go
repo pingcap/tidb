@@ -1420,7 +1420,7 @@ func TestAddVectorIndexRollback(t *testing.T) {
 	// Case3: test get error message from tiflash
 	testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/onJobUpdated")
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/MockCheckVectorIndexProcess", `return(-1)`)
-	tk.MustContainErrMsg(addIdxSQL, "[ddl:9014]TiFlash backfill index failed: TiFlash backfill index failed: mock a check error")
+	tk.MustContainErrMsg(addIdxSQL, "[ddl:9014]TiFlash backfill index failed: mock a check error")
 	checkRollbackInfo(model.JobStateRollbackDone)
 
 	// Case4: add a vector index normally.

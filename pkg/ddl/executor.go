@@ -4641,7 +4641,7 @@ func checkIndexNameAndColumns(ctx *metabuild.Context, t table.Table, indexName p
 
 func checkTableTypeForVectorIndex(tblInfo *model.TableInfo) error {
 	if tblInfo.TableCacheStatusType != model.TableCacheStatusDisable {
-		return errors.Trace(dbterror.ErrOptOnCacheTable.GenWithStackByArgs("Create Vector Index"))
+		return dbterror.ErrOptOnCacheTable.GenWithStackByArgs("Create Vector Index")
 	}
 	if tblInfo.TempTableType != model.TempTableNone {
 		return dbterror.ErrOptOnTemporaryTable.FastGenByArgs("vector index")

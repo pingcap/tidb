@@ -4236,17 +4236,17 @@ CreateIndexStmt:
 		}
 
 		keyType := $2.(ast.IndexKeyType)
-     	if (keyType == ast.IndexKeyTypeVector && indexOption.Tp != model.IndexTypeHNSW) || (keyType != ast.IndexKeyTypeVector && indexOption.Tp == model.IndexTypeHNSW) {
-     		yylex.AppendError(ErrSyntax)
-     		return 1
-     	}
-     	partSpecs := $10.([]*ast.IndexPartSpecification)
-     	if keyType == ast.IndexKeyTypeVector {
-     		if len(partSpecs) != 1 || partSpecs[0].Expr == nil {
-     			yylex.AppendError(ErrSyntax)
-     			return 1
-     		}
-     	}
+		if (keyType == ast.IndexKeyTypeVector && indexOption.Tp != model.IndexTypeHNSW) || (keyType != ast.IndexKeyTypeVector && indexOption.Tp == model.IndexTypeHNSW) {
+			yylex.AppendError(ErrSyntax)
+			return 1
+		}
+		partSpecs := $10.([]*ast.IndexPartSpecification)
+		if keyType == ast.IndexKeyTypeVector {
+			if len(partSpecs) != 1 || partSpecs[0].Expr == nil {
+				yylex.AppendError(ErrSyntax)
+				return 1
+			}
+		}
 
 		$$ = &ast.CreateIndexStmt{
 			IfNotExists:             $4.(bool),
