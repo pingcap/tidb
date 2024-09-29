@@ -27,7 +27,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 )
 
-func onCreateSchema(jobCtx *jobContext, t *meta.Mutator, job *model.Job) (ver int64, _ error) {
+func onCreateSchema(jobCtx *jobContext, job *model.Job) (ver int64, _ error) {
 	schemaID := job.SchemaID
 	args, err := model.GetCreateSchemaArgs(job)
 	if err != nil {
@@ -48,7 +48,7 @@ func onCreateSchema(jobCtx *jobContext, t *meta.Mutator, job *model.Job) (ver in
 		return ver, errors.Trace(err)
 	}
 
-	ver, err = updateSchemaVersion(jobCtx, t, job)
+	ver, err = updateSchemaVersion(jobCtx, job)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
@@ -57,7 +57,7 @@ func onCreateSchema(jobCtx *jobContext, t *meta.Mutator, job *model.Job) (ver in
 	case model.StateNone:
 		// none -> public
 		dbInfo.State = model.StatePublic
-		err = t.CreateDatabase(dbInfo)
+		err = jobCtx.metaMut.CreateDatabase(dbInfo)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
@@ -85,14 +85,14 @@ func checkSchemaNotExists(infoCache *infoschema.InfoCache, schemaID int64, dbInf
 	return nil
 }
 
-func onModifySchemaCharsetAndCollate(jobCtx *jobContext, t *meta.Mutator, job *model.Job) (ver int64, _ error) {
+func onModifySchemaCharsetAndCollate(jobCtx *jobContext, job *model.Job) (ver int64, _ error) {
 	args, err := model.GetModifySchemaArgs(job)
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
 
-	dbInfo, err := checkSchemaExistAndCancelNotExistJob(t, job)
+	dbInfo, err := checkSchemaExistAndCancelNotExistJob(jobCtx.metaMut, job)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
@@ -105,17 +105,17 @@ func onModifySchemaCharsetAndCollate(jobCtx *jobContext, t *meta.Mutator, job *m
 	dbInfo.Charset = args.ToCharset
 	dbInfo.Collate = args.ToCollate
 
-	if err = t.UpdateDatabase(dbInfo); err != nil {
+	if err = jobCtx.metaMut.UpdateDatabase(dbInfo); err != nil {
 		return ver, errors.Trace(err)
 	}
-	if ver, err = updateSchemaVersion(jobCtx, t, job); err != nil {
+	if ver, err = updateSchemaVersion(jobCtx, job); err != nil {
 		return ver, errors.Trace(err)
 	}
 	job.FinishDBJob(model.JobStateDone, model.StatePublic, ver, dbInfo)
 	return ver, nil
 }
 
-func onModifySchemaDefaultPlacement(jobCtx *jobContext, t *meta.Mutator, job *model.Job) (ver int64, _ error) {
+func onModifySchemaDefaultPlacement(jobCtx *jobContext, job *model.Job) (ver int64, _ error) {
 	args, err := model.GetModifySchemaArgs(job)
 	if err != nil {
 		job.State = model.JobStateCancelled
@@ -123,12 +123,13 @@ func onModifySchemaDefaultPlacement(jobCtx *jobContext, t *meta.Mutator, job *mo
 	}
 
 	placementPolicyRef := args.PolicyRef
-	dbInfo, err := checkSchemaExistAndCancelNotExistJob(t, job)
+	metaMut := jobCtx.metaMut
+	dbInfo, err := checkSchemaExistAndCancelNotExistJob(metaMut, job)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
 	// Double Check if policy exits while ddl executing
-	if _, err = checkPlacementPolicyRefValidAndCanNonValidJob(t, job, placementPolicyRef); err != nil {
+	if _, err = checkPlacementPolicyRefValidAndCanNonValidJob(metaMut, job, placementPolicyRef); err != nil {
 		return ver, errors.Trace(err)
 	}
 
@@ -142,18 +143,19 @@ func onModifySchemaDefaultPlacement(jobCtx *jobContext, t *meta.Mutator, job *mo
 	// If placementPolicyRef and directPlacementOpts are both nil, And placement of dbInfo is not nil, it will remove all placement options.
 	dbInfo.PlacementPolicyRef = placementPolicyRef
 
-	if err = t.UpdateDatabase(dbInfo); err != nil {
+	if err = metaMut.UpdateDatabase(dbInfo); err != nil {
 		return ver, errors.Trace(err)
 	}
-	if ver, err = updateSchemaVersion(jobCtx, t, job); err != nil {
+	if ver, err = updateSchemaVersion(jobCtx, job); err != nil {
 		return ver, errors.Trace(err)
 	}
 	job.FinishDBJob(model.JobStateDone, model.StatePublic, ver, dbInfo)
 	return ver, nil
 }
 
-func onDropSchema(jobCtx *jobContext, t *meta.Mutator, job *model.Job) (ver int64, _ error) {
-	dbInfo, err := checkSchemaExistAndCancelNotExistJob(t, job)
+func onDropSchema(jobCtx *jobContext, job *model.Job) (ver int64, _ error) {
+	metaMut := jobCtx.metaMut
+	dbInfo, err := checkSchemaExistAndCancelNotExistJob(metaMut, job)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
@@ -164,7 +166,7 @@ func onDropSchema(jobCtx *jobContext, t *meta.Mutator, job *model.Job) (ver int6
 		}
 	}
 
-	ver, err = updateSchemaVersion(jobCtx, t, job)
+	ver, err = updateSchemaVersion(jobCtx, job)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
@@ -172,12 +174,12 @@ func onDropSchema(jobCtx *jobContext, t *meta.Mutator, job *model.Job) (ver int6
 	case model.StatePublic:
 		// public -> write only
 		dbInfo.State = model.StateWriteOnly
-		err = t.UpdateDatabase(dbInfo)
+		err = metaMut.UpdateDatabase(dbInfo)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
 		var tables []*model.TableInfo
-		tables, err = t.ListTables(job.SchemaID)
+		tables, err = metaMut.ListTables(job.SchemaID)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
@@ -195,24 +197,24 @@ func onDropSchema(jobCtx *jobContext, t *meta.Mutator, job *model.Job) (ver int6
 	case model.StateWriteOnly:
 		// write only -> delete only
 		dbInfo.State = model.StateDeleteOnly
-		err = t.UpdateDatabase(dbInfo)
+		err = metaMut.UpdateDatabase(dbInfo)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
 	case model.StateDeleteOnly:
 		dbInfo.State = model.StateNone
 		var tables []*model.TableInfo
-		tables, err = t.ListTables(job.SchemaID)
+		tables, err = metaMut.ListTables(job.SchemaID)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
 
-		err = t.UpdateDatabase(dbInfo)
+		err = metaMut.UpdateDatabase(dbInfo)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
 		// we only drop meta key of database, but not drop tables' meta keys.
-		if err = t.DropDatabase(dbInfo.ID); err != nil {
+		if err = metaMut.DropDatabase(dbInfo.ID); err != nil {
 			break
 		}
 
@@ -229,7 +231,7 @@ func onDropSchema(jobCtx *jobContext, t *meta.Mutator, job *model.Job) (ver int6
 	return ver, errors.Trace(err)
 }
 
-func (w *worker) onRecoverSchema(jobCtx *jobContext, t *meta.Mutator, job *model.Job) (ver int64, _ error) {
+func (w *worker) onRecoverSchema(jobCtx *jobContext, job *model.Job) (ver int64, _ error) {
 	args, err := model.GetRecoverArgs(job)
 	if err != nil {
 		// Invalid arguments, cancel this job.
@@ -300,7 +302,7 @@ func (w *worker) onRecoverSchema(jobCtx *jobContext, t *meta.Mutator, job *model
 
 		dbInfo := schemaInfo.Clone()
 		dbInfo.State = model.StatePublic
-		err = t.CreateDatabase(dbInfo)
+		err = jobCtx.metaMut.CreateDatabase(dbInfo)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
@@ -316,7 +318,7 @@ func (w *worker) onRecoverSchema(jobCtx *jobContext, t *meta.Mutator, job *model
 				// force disable TTL job schedule for recovered table
 				recoverInfo.TableInfo.TTLInfo.Enable = false
 			}
-			ver, err = w.recoverTable(t, job, recoverInfo)
+			ver, err = w.recoverTable(jobCtx.metaMut, job, recoverInfo)
 			if err != nil {
 				return ver, errors.Trace(err)
 			}
@@ -324,7 +326,7 @@ func (w *worker) onRecoverSchema(jobCtx *jobContext, t *meta.Mutator, job *model
 		schemaInfo.State = model.StatePublic
 		// use to update InfoSchema
 		job.SchemaID = schemaInfo.ID
-		ver, err = updateSchemaVersion(jobCtx, t, job)
+		ver, err = updateSchemaVersion(jobCtx, job)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}

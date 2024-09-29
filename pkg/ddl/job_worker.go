@@ -88,6 +88,9 @@ type jobContext struct {
 	// per job fields
 	notifyCh chan struct{}
 
+	// per job step fields
+	metaMut *meta.Mutator
+
 	// TODO reorg part of code couple this struct so much, remove it later.
 	oldDDLCtx *ddlCtx
 }
@@ -457,11 +460,11 @@ func (w *ReorgContext) setDDLLabelForDiagnosis(jobType model.ActionType) {
 	w.ddlJobCtx = kv.WithInternalSourceAndTaskType(w.ddlJobCtx, w.ddlJobSourceType(), kvutil.ExplicitTypeDDL)
 }
 
-func (w *worker) handleJobDone(jobCtx *jobContext, job *model.Job, t *meta.Mutator) error {
+func (w *worker) handleJobDone(jobCtx *jobContext, job *model.Job) error {
 	if err := w.checkBeforeCommit(); err != nil {
 		return err
 	}
-	err := w.finishDDLJob(t, job)
+	err := w.finishDDLJob(jobCtx.metaMut, job)
 	if err != nil {
 		w.sess.Rollback()
 		return err
@@ -521,7 +524,7 @@ func (w *worker) transitOneJobStep(jobCtx *jobContext, job *model.Job) (int64, e
 	if err != nil {
 		return 0, err
 	}
-	t := meta.NewMutator(txn)
+	jobCtx.metaMut = meta.NewMutator(txn)
 
 	if job.IsDone() || job.IsRollbackDone() || job.IsCancelled() {
 		if job.IsDone() {
@@ -542,20 +545,20 @@ func (w *worker) transitOneJobStep(jobCtx *jobContext, job *model.Job) (int64, e
 				}
 			}
 		})
-		return 0, w.handleJobDone(jobCtx, job, t)
+		return 0, w.handleJobDone(jobCtx, job)
 	}
 	failpoint.InjectCall("onJobRunBefore", job)
 
 	// If running job meets error, we will save this error in job Error and retry
 	// later if the job is not cancelled.
-	schemaVer, updateRawArgs, runJobErr := w.runOneJobStep(jobCtx, t, job)
+	schemaVer, updateRawArgs, runJobErr := w.runOneJobStep(jobCtx, job)
 
 	failpoint.InjectCall("onJobRunAfter", job)
 
 	if job.IsCancelled() {
 		defer jobCtx.unlockSchemaVersion(job.ID)
 		w.sess.Reset()
-		return 0, w.handleJobDone(jobCtx, job, t)
+		return 0, w.handleJobDone(jobCtx, job)
 	}
 
 	if err = w.checkBeforeCommit(); err != nil {
@@ -583,7 +586,7 @@ func (w *worker) transitOneJobStep(jobCtx *jobContext, job *model.Job) (int64, e
 		return 0, err
 	}
 	err = w.updateDDLJob(job, updateRawArgs)
-	if err = w.handleUpdateJobError(t, job, err); err != nil {
+	if err = w.handleUpdateJobError(jobCtx.metaMut, job, err); err != nil {
 		w.sess.Rollback()
 		jobCtx.unlockSchemaVersion(job.ID)
 		return 0, err
@@ -746,7 +749,6 @@ func (w *worker) processJobPausingRequest(d *ddlCtx, job *model.Job) (isRunnable
 // updateGlobalVersionAndWaitSynced to wait for all nodes to catch up JobStateDone.
 func (w *worker) runOneJobStep(
 	jobCtx *jobContext,
-	t *meta.Mutator,
 	job *model.Job,
 ) (ver int64, updateRawArgs bool, err error) {
 	defer tidbutil.Recover(metrics.LabelDDLWorker, fmt.Sprintf("%s runOneJobStep", w),
@@ -762,7 +764,7 @@ func (w *worker) runOneJobStep(
 	}
 	timeStart := time.Now()
 	if job.RealStartTS == 0 {
-		job.RealStartTS = t.StartTS
+		job.RealStartTS = jobCtx.metaMut.StartTS
 	}
 	defer func() {
 		metrics.DDLWorkerHistogram.WithLabelValues(metrics.WorkerRunDDLJob, job.Type.String(), metrics.RetLabel(err)).Observe(time.Since(timeStart).Seconds())
@@ -770,7 +772,7 @@ func (w *worker) runOneJobStep(
 
 	if job.IsCancelling() {
 		w.jobLogger(job).Debug("cancel DDL job", zap.String("job", job.String()))
-		ver, err = convertJob2RollbackJob(w, jobCtx, t, job)
+		ver, err = convertJob2RollbackJob(w, jobCtx, job)
 		// if job is converted to rollback job, the job.Args may be changed for the
 		// rollback logic, so we let caller persist the new arguments.
 		updateRawArgs = job.IsRollingback()
@@ -796,128 +798,128 @@ func (w *worker) runOneJobStep(
 	// change has no effect when retrying it.
 	switch job.Type {
 	case model.ActionCreateSchema:
-		ver, err = onCreateSchema(jobCtx, t, job)
+		ver, err = onCreateSchema(jobCtx, job)
 	case model.ActionModifySchemaCharsetAndCollate:
-		ver, err = onModifySchemaCharsetAndCollate(jobCtx, t, job)
+		ver, err = onModifySchemaCharsetAndCollate(jobCtx, job)
 	case model.ActionDropSchema:
-		ver, err = onDropSchema(jobCtx, t, job)
+		ver, err = onDropSchema(jobCtx, job)
 	case model.ActionRecoverSchema:
-		ver, err = w.onRecoverSchema(jobCtx, t, job)
+		ver, err = w.onRecoverSchema(jobCtx, job)
 	case model.ActionModifySchemaDefaultPlacement:
-		ver, err = onModifySchemaDefaultPlacement(jobCtx, t, job)
+		ver, err = onModifySchemaDefaultPlacement(jobCtx, job)
 	case model.ActionCreateTable:
-		ver, err = onCreateTable(jobCtx, t, job)
+		ver, err = onCreateTable(jobCtx, job)
 	case model.ActionCreateTables:
-		ver, err = onCreateTables(jobCtx, t, job)
+		ver, err = onCreateTables(jobCtx, job)
 	case model.ActionRepairTable:
-		ver, err = onRepairTable(jobCtx, t, job)
+		ver, err = onRepairTable(jobCtx, job)
 	case model.ActionCreateView:
-		ver, err = onCreateView(jobCtx, t, job)
+		ver, err = onCreateView(jobCtx, job)
 	case model.ActionDropTable, model.ActionDropView, model.ActionDropSequence:
-		ver, err = onDropTableOrView(jobCtx, t, job)
+		ver, err = onDropTableOrView(jobCtx, job)
 	case model.ActionDropTablePartition:
-		ver, err = w.onDropTablePartition(jobCtx, t, job)
+		ver, err = w.onDropTablePartition(jobCtx, job)
 	case model.ActionTruncateTablePartition:
-		ver, err = w.onTruncateTablePartition(jobCtx, t, job)
+		ver, err = w.onTruncateTablePartition(jobCtx, job)
 	case model.ActionExchangeTablePartition:
-		ver, err = w.onExchangeTablePartition(jobCtx, t, job)
+		ver, err = w.onExchangeTablePartition(jobCtx, job)
 	case model.ActionAddColumn:
-		ver, err = onAddColumn(jobCtx, t, job)
+		ver, err = onAddColumn(jobCtx, job)
 	case model.ActionDropColumn:
-		ver, err = onDropColumn(jobCtx, t, job)
+		ver, err = onDropColumn(jobCtx, job)
 	case model.ActionModifyColumn:
-		ver, err = w.onModifyColumn(jobCtx, t, job)
+		ver, err = w.onModifyColumn(jobCtx, job)
 	case model.ActionSetDefaultValue:
-		ver, err = onSetDefaultValue(jobCtx, t, job)
+		ver, err = onSetDefaultValue(jobCtx, job)
 	case model.ActionAddIndex:
-		ver, err = w.onCreateIndex(jobCtx, t, job, false)
+		ver, err = w.onCreateIndex(jobCtx, job, false)
 	case model.ActionAddPrimaryKey:
-		ver, err = w.onCreateIndex(jobCtx, t, job, true)
+		ver, err = w.onCreateIndex(jobCtx, job, true)
 	case model.ActionDropIndex, model.ActionDropPrimaryKey:
-		ver, err = onDropIndex(jobCtx, t, job)
+		ver, err = onDropIndex(jobCtx, job)
 	case model.ActionRenameIndex:
-		ver, err = onRenameIndex(jobCtx, t, job)
+		ver, err = onRenameIndex(jobCtx, job)
 	case model.ActionAddForeignKey:
-		ver, err = w.onCreateForeignKey(jobCtx, t, job)
+		ver, err = w.onCreateForeignKey(jobCtx, job)
 	case model.ActionDropForeignKey:
-		ver, err = onDropForeignKey(jobCtx, t, job)
+		ver, err = onDropForeignKey(jobCtx, job)
 	case model.ActionTruncateTable:
-		ver, err = w.onTruncateTable(jobCtx, t, job)
+		ver, err = w.onTruncateTable(jobCtx, job)
 	case model.ActionRebaseAutoID:
-		ver, err = onRebaseAutoIncrementIDType(jobCtx, t, job)
+		ver, err = onRebaseAutoIncrementIDType(jobCtx, job)
 	case model.ActionRebaseAutoRandomBase:
-		ver, err = onRebaseAutoRandomType(jobCtx, t, job)
+		ver, err = onRebaseAutoRandomType(jobCtx, job)
 	case model.ActionRenameTable:
-		ver, err = onRenameTable(jobCtx, t, job)
+		ver, err = onRenameTable(jobCtx, job)
 	case model.ActionShardRowID:
-		ver, err = w.onShardRowID(jobCtx, t, job)
+		ver, err = w.onShardRowID(jobCtx, job)
 	case model.ActionModifyTableComment:
-		ver, err = onModifyTableComment(jobCtx, t, job)
+		ver, err = onModifyTableComment(jobCtx, job)
 	case model.ActionModifyTableAutoIDCache:
-		ver, err = onModifyTableAutoIDCache(jobCtx, t, job)
+		ver, err = onModifyTableAutoIDCache(jobCtx, job)
 	case model.ActionAddTablePartition:
-		ver, err = w.onAddTablePartition(jobCtx, t, job)
+		ver, err = w.onAddTablePartition(jobCtx, job)
 	case model.ActionModifyTableCharsetAndCollate:
-		ver, err = onModifyTableCharsetAndCollate(jobCtx, t, job)
+		ver, err = onModifyTableCharsetAndCollate(jobCtx, job)
 	case model.ActionRecoverTable:
-		ver, err = w.onRecoverTable(jobCtx, t, job)
+		ver, err = w.onRecoverTable(jobCtx, job)
 	case model.ActionLockTable:
-		ver, err = onLockTables(jobCtx, t, job)
+		ver, err = onLockTables(jobCtx, job)
 	case model.ActionUnlockTable:
-		ver, err = onUnlockTables(jobCtx, t, job)
+		ver, err = onUnlockTables(jobCtx, job)
 	case model.ActionSetTiFlashReplica:
-		ver, err = w.onSetTableFlashReplica(jobCtx, t, job)
+		ver, err = w.onSetTableFlashReplica(jobCtx, job)
 	case model.ActionUpdateTiFlashReplicaStatus:
-		ver, err = onUpdateTiFlashReplicaStatus(jobCtx, t, job)
+		ver, err = onUpdateTiFlashReplicaStatus(jobCtx, job)
 	case model.ActionCreateSequence:
-		ver, err = onCreateSequence(jobCtx, t, job)
+		ver, err = onCreateSequence(jobCtx, job)
 	case model.ActionAlterIndexVisibility:
-		ver, err = onAlterIndexVisibility(jobCtx, t, job)
+		ver, err = onAlterIndexVisibility(jobCtx, job)
 	case model.ActionAlterSequence:
-		ver, err = onAlterSequence(jobCtx, t, job)
+		ver, err = onAlterSequence(jobCtx, job)
 	case model.ActionRenameTables:
-		ver, err = onRenameTables(jobCtx, t, job)
+		ver, err = onRenameTables(jobCtx, job)
 	case model.ActionAlterTableAttributes:
-		ver, err = onAlterTableAttributes(jobCtx, t, job)
+		ver, err = onAlterTableAttributes(jobCtx, job)
 	case model.ActionAlterTablePartitionAttributes:
-		ver, err = onAlterTablePartitionAttributes(jobCtx, t, job)
+		ver, err = onAlterTablePartitionAttributes(jobCtx, job)
 	case model.ActionCreatePlacementPolicy:
-		ver, err = onCreatePlacementPolicy(jobCtx, t, job)
+		ver, err = onCreatePlacementPolicy(jobCtx, job)
 	case model.ActionDropPlacementPolicy:
-		ver, err = onDropPlacementPolicy(jobCtx, t, job)
+		ver, err = onDropPlacementPolicy(jobCtx, job)
 	case model.ActionAlterPlacementPolicy:
-		ver, err = onAlterPlacementPolicy(jobCtx, t, job)
+		ver, err = onAlterPlacementPolicy(jobCtx, job)
 	case model.ActionAlterTablePartitionPlacement:
-		ver, err = onAlterTablePartitionPlacement(jobCtx, t, job)
+		ver, err = onAlterTablePartitionPlacement(jobCtx, job)
 	case model.ActionAlterTablePlacement:
-		ver, err = onAlterTablePlacement(jobCtx, t, job)
+		ver, err = onAlterTablePlacement(jobCtx, job)
 	case model.ActionCreateResourceGroup:
-		ver, err = onCreateResourceGroup(jobCtx, t, job)
+		ver, err = onCreateResourceGroup(jobCtx, job)
 	case model.ActionAlterResourceGroup:
-		ver, err = onAlterResourceGroup(jobCtx, t, job)
+		ver, err = onAlterResourceGroup(jobCtx, job)
 	case model.ActionDropResourceGroup:
-		ver, err = onDropResourceGroup(jobCtx, t, job)
+		ver, err = onDropResourceGroup(jobCtx, job)
 	case model.ActionAlterCacheTable:
-		ver, err = onAlterCacheTable(jobCtx, t, job)
+		ver, err = onAlterCacheTable(jobCtx, job)
 	case model.ActionAlterNoCacheTable:
-		ver, err = onAlterNoCacheTable(jobCtx, t, job)
+		ver, err = onAlterNoCacheTable(jobCtx, job)
 	case model.ActionFlashbackCluster:
-		ver, err = w.onFlashbackCluster(jobCtx, t, job)
+		ver, err = w.onFlashbackCluster(jobCtx, job)
 	case model.ActionMultiSchemaChange:
-		ver, err = onMultiSchemaChange(w, jobCtx, t, job)
+		ver, err = onMultiSchemaChange(w, jobCtx, job)
 	case model.ActionReorganizePartition, model.ActionRemovePartitioning,
 		model.ActionAlterTablePartitioning:
-		ver, err = w.onReorganizePartition(jobCtx, t, job)
+		ver, err = w.onReorganizePartition(jobCtx, job)
 	case model.ActionAlterTTLInfo:
-		ver, err = onTTLInfoChange(jobCtx, t, job)
+		ver, err = onTTLInfoChange(jobCtx, job)
 	case model.ActionAlterTTLRemove:
-		ver, err = onTTLInfoRemove(jobCtx, t, job)
+		ver, err = onTTLInfoRemove(jobCtx, job)
 	case model.ActionAddCheckConstraint:
-		ver, err = w.onAddCheckConstraint(jobCtx, t, job)
+		ver, err = w.onAddCheckConstraint(jobCtx, job)
 	case model.ActionDropCheckConstraint:
-		ver, err = onDropCheckConstraint(jobCtx, t, job)
+		ver, err = onDropCheckConstraint(jobCtx, job)
 	case model.ActionAlterCheckConstraint:
-		ver, err = w.onAlterCheckConstraint(jobCtx, t, job)
+		ver, err = w.onAlterCheckConstraint(jobCtx, job)
 	default:
 		// Invalid job, cancel it.
 		job.State = model.JobStateCancelled
