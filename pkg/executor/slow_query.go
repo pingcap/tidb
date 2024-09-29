@@ -1045,7 +1045,7 @@ func (e *slowQueryRetriever) getAllFiles(ctx context.Context, sctx sessionctx.Co
 	// Assume no time range overlap in log files and remove unnecessary log files for compressed files.
 	var ret []logFile
 	for i, file := range logFiles {
-		if i == len(logFiles)-1 || !file.compressed {
+		if i == len(logFiles)-1 || !file.compressed || !e.checker.enableTimeCheck {
 			ret = append(ret, file)
 			continue
 		}
