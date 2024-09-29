@@ -417,8 +417,8 @@
           " TableReader           root         ",
           " └─ExchangeSender      cop[tiflash] ",
           "   └─Projection        cop[tiflash] test.t1.a",
-          "     └─Selection       cop[tiflash] gt(test.t1.b, ?)",
-          "       └─TableFullScan cop[tiflash] table:t1, range:[?,?], pushed down filter:gt(test.t1.a, ?), keep order:false"
+          "     └─Selection       cop[tiflash] gt(test.t1.a, ?)",
+          "       └─TableFullScan cop[tiflash] table:t1, range:[?,?], pushed down filter:gt(test.t1.b, ?), keep order:false"
         ]
       },
       {
@@ -426,8 +426,13 @@
         "Plan": [
           " TableReader         root         ",
           " └─ExchangeSender    cop[tiflash] ",
+<<<<<<< HEAD
           "   └─Selection       cop[tiflash] gt(test.t1.a, ?)",
           "     └─TableFullScan cop[tiflash] table:t1, range:[?,?], pushed down filter:gt(test.t1.b, ?), gt(test.t1.c, ?), keep order:false"
+=======
+          "   └─Selection       cop[tiflash] gt(test.t1.c, ?)",
+          "     └─TableFullScan cop[tiflash] table:t1, range:[?,?], pushed down filter:gt(test.t1.a, ?), gt(test.t1.b, ?), keep order:false"
+>>>>>>> 4df3389c263 (planner: Set minimum cost to avoid parent multiplication cost discrepancies (#56387))
         ]
       },
       {
