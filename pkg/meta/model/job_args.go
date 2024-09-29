@@ -1314,6 +1314,30 @@ func (a *RecoverArgs) fillJobV1(job *Job) {
 	}
 }
 
+// AlterTableAttributesArgs is the argument for alter table attributes
+type AlterTableAttributesArgs struct {
+	LabelRule *pdhttp.LabelRule `json:"label_rule,omitempty"`
+}
+
+func (a *AlterTableAttributesArgs) fillJobV1(job *Job) {
+	job.Args = []any{a.LabelRule}
+}
+
+// GetAlterTableAttributesArgs get alter table attribute args from job.
+func GetAlterTableAttributesArgs(job *Job) (*AlterTableAttributesArgs, error) {
+	if job.Version == JobVersion1 {
+		labelRule := &pdhttp.LabelRule{}
+		if err := job.DecodeArgs(labelRule); err != nil {
+			return nil, errors.Trace(err)
+		}
+		return &AlterTableAttributesArgs{
+			LabelRule: labelRule,
+		}, nil
+	}
+
+	return getOrDecodeArgsV2[*AlterTableAttributesArgs](job)
+}
+
 // RecoverTableInfos get all the recover infos.
 func (a *RecoverArgs) RecoverTableInfos() []*RecoverTableInfo {
 	return a.RecoverInfo.RecoverTableInfos
@@ -1394,4 +1418,74 @@ func GetPlacementPolicyArgs(job *Job) (*PlacementPolicyArgs, error) {
 	}
 
 	return getOrDecodeArgsV2[*PlacementPolicyArgs](job)
+}
+
+// KeyRange is copied from kv.KeyRange to avoid cycle import.
+// Unused fields are removed.
+type KeyRange struct {
+	StartKey []byte
+	EndKey   []byte
+}
+
+// FlashbackClusterArgs is the argument for flashback cluster.
+type FlashbackClusterArgs struct {
+	FlashbackTS        uint64         `json:"flashback_ts,omitempty"`
+	PDScheduleValue    map[string]any `json:"pd_schedule_value,omitempty"`
+	EnableGC           bool           `json:"enable_gc,omitempty"`
+	EnableAutoAnalyze  bool           `json:"enable_auto_analyze,omitempty"`
+	EnableTTLJob       bool           `json:"enable_ttl_job,omitempty"`
+	SuperReadOnly      bool           `json:"super_read_only,omitempty"`
+	LockedRegionCnt    uint64         `json:"locked_region_cnt,omitempty"`
+	StartTS            uint64         `json:"start_ts,omitempty"`
+	CommitTS           uint64         `json:"commit_ts,omitempty"`
+	FlashbackKeyRanges []KeyRange     `json:"key_ranges,omitempty"`
+}
+
+func (a *FlashbackClusterArgs) fillJobV1(job *Job) {
+	enableAutoAnalyze := "ON"
+	superReadOnly := "ON"
+	enableTTLJob := "ON"
+	if !a.EnableAutoAnalyze {
+		enableAutoAnalyze = "OFF"
+	}
+	if !a.SuperReadOnly {
+		superReadOnly = "OFF"
+	}
+	if !a.EnableTTLJob {
+		enableTTLJob = "OFF"
+	}
+
+	job.Args = []any{
+		a.FlashbackTS, a.PDScheduleValue, a.EnableGC, enableAutoAnalyze, superReadOnly,
+		a.LockedRegionCnt, a.StartTS, a.CommitTS, enableTTLJob, a.FlashbackKeyRanges,
+	}
+}
+
+// GetFlashbackClusterArgs get the flashback cluster argument from job.
+func GetFlashbackClusterArgs(job *Job) (*FlashbackClusterArgs, error) {
+	if job.Version == JobVersion1 {
+		args := &FlashbackClusterArgs{}
+		var autoAnalyzeValue, readOnlyValue, ttlJobEnableValue string
+
+		if err := job.DecodeArgs(
+			&args.FlashbackTS, &args.PDScheduleValue, &args.EnableGC,
+			&autoAnalyzeValue, &readOnlyValue, &args.LockedRegionCnt,
+			&args.StartTS, &args.CommitTS, &ttlJobEnableValue, &args.FlashbackKeyRanges); err != nil {
+			return nil, errors.Trace(err)
+		}
+
+		if autoAnalyzeValue == "ON" {
+			args.EnableAutoAnalyze = true
+		}
+		if readOnlyValue == "ON" {
+			args.SuperReadOnly = true
+		}
+		if ttlJobEnableValue == "ON" {
+			args.EnableTTLJob = true
+		}
+
+		return args, nil
+	}
+
+	return getOrDecodeArgsV2[*FlashbackClusterArgs](job)
 }

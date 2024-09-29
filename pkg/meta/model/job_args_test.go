@@ -887,3 +887,48 @@ func TestPlacementPolicyArgs(t *testing.T) {
 		}
 	}
 }
+
+func TestFlashbackClusterArgs(t *testing.T) {
+	inArgs := &FlashbackClusterArgs{
+		FlashbackTS:       111,
+		StartTS:           222,
+		CommitTS:          333,
+		EnableGC:          true,
+		EnableAutoAnalyze: true,
+		EnableTTLJob:      true,
+		SuperReadOnly:     true,
+		LockedRegionCnt:   444,
+		PDScheduleValue:   map[string]any{"t1": 123.0},
+		FlashbackKeyRanges: []KeyRange{
+			{StartKey: []byte("db1"), EndKey: []byte("db2")},
+			{StartKey: []byte("db2"), EndKey: []byte("db3")},
+		},
+	}
+	for _, v := range []JobVersion{JobVersion1, JobVersion2} {
+		j2 := &Job{}
+		require.NoError(t, j2.Decode(getJobBytes(t, inArgs, v, ActionFlashbackCluster)))
+		args, err := GetFlashbackClusterArgs(j2)
+		require.NoError(t, err)
+
+		require.Equal(t, inArgs, args)
+	}
+}
+
+func TestAlterTableAttributesArgs(t *testing.T) {
+	inArgs := &AlterTableAttributesArgs{
+		LabelRule: &pdhttp.LabelRule{
+			ID:       "id",
+			Index:    2,
+			RuleType: "rule",
+			Labels:   []pdhttp.RegionLabel{{Key: "key", Value: "value"}},
+		},
+	}
+	for _, v := range []JobVersion{JobVersion1, JobVersion2} {
+		j2 := &Job{}
+		require.NoError(t, j2.Decode(getJobBytes(t, inArgs, v, ActionAlterTableAttributes)))
+		args, err := GetAlterTableAttributesArgs(j2)
+		require.NoError(t, err)
+
+		require.Equal(t, *inArgs.LabelRule, *args.LabelRule)
+	}
+}

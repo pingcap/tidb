@@ -1414,20 +1414,10 @@ func (e *executor) FlashbackCluster(ctx sessionctx.Context, flashbackTS uint64) 
 		ctx.GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackErrorf("Gap between local time and PD TSO is %s, please check PD/system time", gap))
 	}
 	job := &model.Job{
+		Version:    model.GetJobVerInUse(),
 		Type:       model.ActionFlashbackCluster,
 		BinlogInfo: &model.HistoryInfo{},
 		// The value for global variables is meaningless, it will cover during flashback cluster.
-		Args: []any{
-			flashbackTS,
-			map[string]any{},
-			true,         /* tidb_gc_enable */
-			variable.On,  /* tidb_enable_auto_analyze */
-			variable.Off, /* tidb_super_read_only */
-			0,            /* totalRegions */
-			0,            /* startTS */
-			0,            /* commitTS */
-			variable.On,  /* tidb_ttl_job_enable */
-			[]kv.KeyRange{} /* flashback key_ranges */},
 		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
 		// FLASHBACK CLUSTER affects all schemas and tables.
 		InvolvingSchemaInfo: []model.InvolvingSchemaInfo{{
@@ -1436,7 +1426,15 @@ func (e *executor) FlashbackCluster(ctx sessionctx.Context, flashbackTS uint64) 
 		}},
 		SQLMode: ctx.GetSessionVars().SQLMode,
 	}
-	err = e.DoDDLJob(ctx, job)
+
+	args := &model.FlashbackClusterArgs{
+		FlashbackTS:       flashbackTS,
+		PDScheduleValue:   map[string]any{},
+		EnableGC:          true,
+		EnableAutoAnalyze: true,
+		EnableTTLJob:      true,
+	}
+	err = e.doDDLJob2(ctx, job, args)
 	return errors.Trace(err)
 }
 
@@ -5660,18 +5658,20 @@ func (e *executor) AlterTableAttributes(ctx sessionctx.Context, ident ast.Ident,
 	rule.Reset(schema.Name.L, meta.Name.L, "", ids...)
 
 	job := &model.Job{
+		Version:        model.GetJobVerInUse(),
 		SchemaID:       schema.ID,
 		TableID:        meta.ID,
 		SchemaName:     schema.Name.L,
 		TableName:      meta.Name.L,
 		Type:           model.ActionAlterTableAttributes,
 		BinlogInfo:     &model.HistoryInfo{},
-		Args:           []any{rule},
 		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
 		SQLMode:        ctx.GetSessionVars().SQLMode,
 	}
 
-	err = e.DoDDLJob(ctx, job)
+	pdLabelRule := (*pdhttp.LabelRule)(rule)
+	args := &model.AlterTableAttributesArgs{LabelRule: pdLabelRule}
+	err = e.doDDLJob2(ctx, job, args)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -5702,7 +5702,7 @@ func (e *executor) AlterTablePartitionAttributes(ctx sessionctx.Context, ident a
 	}
 	rule.Reset(schema.Name.L, meta.Name.L, spec.PartitionNames[0].L, partitionID)
 
-	pdLabelRule := pdhttp.LabelRule(*rule)
+	pdLabelRule := (*pdhttp.LabelRule)(rule)
 	job := &model.Job{
 		Version:        model.GetJobVerInUse(),
 		SchemaID:       schema.ID,
@@ -5716,7 +5716,7 @@ func (e *executor) AlterTablePartitionAttributes(ctx sessionctx.Context, ident a
 	}
 	args := &model.AlterTablePartitionArgs{
 		PartitionID: partitionID,
-		LabelRule:   &pdLabelRule,
+		LabelRule:   pdLabelRule,
 	}
 
 	err = e.doDDLJob2(ctx, job, args)
