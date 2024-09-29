@@ -1303,7 +1303,7 @@ func BuildTableInfo(
 				return nil, errors.Trace(err)
 			}
 			// check if the expression is bool type
-			if err := table.IfCheckConstraintExprBoolType(ctx.GetExprCtx().GetEvalCtx(), constraintInfo, tbInfo); err != nil {
+			if err := table.IfCheckConstraintExprBoolType(ctx.GetExprCtx(), constraintInfo, tbInfo); err != nil {
 				return nil, err
 			}
 			constraintInfo.ID = allocateConstraintID(tbInfo)

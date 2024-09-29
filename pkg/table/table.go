@@ -578,8 +578,11 @@ func CheckRowConstraint(expCtx exprctx.BuildContext, constraints []*Constraint,
 	rowToCheck chunk.Row, tbl *model.TableInfo) error {
 	evalCtx := expCtx.GetEvalCtx()
 	for _, constraint := range constraints {
-		c, err := ToConstraintWithCtx(expCtx, constraint.ConstraintInfo, tbl, evalCtx.CurrentDB())
-		ok, isNull, err := c.ConstraintExpr.EvalInt(evalCtx, rowToCheck)
+		c, err := BuildConstraintExprWithCtx(expCtx, constraint.ConstraintInfo, tbl, evalCtx.CurrentDB())
+		if err != nil {
+			return err
+		}
+		ok, isNull, err := c.EvalInt(evalCtx, rowToCheck)
 		if err != nil {
 			return err
 		}

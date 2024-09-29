@@ -6220,7 +6220,7 @@ func (e *executor) CreateCheckConstraint(ctx sessionctx.Context, ti ast.Ident, c
 		return errors.Trace(err)
 	}
 	// check if the expression is bool type
-	if err := table.IfCheckConstraintExprBoolType(ctx.GetExprCtx().GetEvalCtx(), constraintInfo, tblInfo); err != nil {
+	if err := table.IfCheckConstraintExprBoolType(ctx.GetExprCtx(), constraintInfo, tblInfo); err != nil {
 		return err
 	}
 	job := &model.Job{
