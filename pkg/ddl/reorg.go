@@ -882,10 +882,7 @@ func getReorgInfo(ctx *ReorgContext, jobCtx *jobContext, rh *reorgHandler, job *
 			tb = tbl.(table.PhysicalTable)
 		}
 		if mergingTmpIdx {
-			firstElemTempID := tablecodec.TempIndexPrefix | elements[0].ID
-			lastElemTempID := tablecodec.TempIndexPrefix | elements[len(elements)-1].ID
-			start = tablecodec.EncodeIndexSeekKey(pid, firstElemTempID, nil)
-			end = tablecodec.EncodeIndexSeekKey(pid, lastElemTempID, []byte{255})
+			start, end = encodeTempIndexRange(pid, elements[0].ID, elements[len(elements)-1].ID)
 		} else {
 			start, end, err = getTableRange(ctx, jobCtx.store, tb, ver.Ver, job.Priority)
 			if err != nil {
@@ -946,6 +943,14 @@ func getReorgInfo(ctx *ReorgContext, jobCtx *jobContext, rh *reorgHandler, job *
 	info.dbInfo = dbInfo
 
 	return &info, nil
+}
+
+func encodeTempIndexRange(physicalID, firstIdxID, lastIdxID int64) (start kv.Key, end kv.Key) {
+	firstElemTempID := tablecodec.TempIndexPrefix | firstIdxID
+	lastElemTempID := tablecodec.TempIndexPrefix | lastIdxID
+	start = tablecodec.EncodeIndexSeekKey(physicalID, firstElemTempID, nil)
+	end = tablecodec.EncodeIndexSeekKey(physicalID, lastElemTempID, []byte{255})
+	return start, end
 }
 
 func getReorgInfoFromPartitions(ctx *ReorgContext, jobCtx *jobContext, rh *reorgHandler, job *model.Job, dbInfo *model.DBInfo, tbl table.PartitionedTable, partitionIDs []int64, elements []*meta.Element) (*reorgInfo, error) {

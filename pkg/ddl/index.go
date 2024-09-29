@@ -762,21 +762,14 @@ SwitchIndexState:
 			return ver, errors.Trace(err)
 		}
 
-		if isReorgWorkPending(job, allIndexInfos) &&
-			isTableEmpty(w.store, tbl, job.ReorgMeta.ResourceGroupName) {
-			logutil.DDLLogger().Info("table is empty, skipping reorg work",
-				zap.Int64("jobID", job.ID),
-				zap.String("table", tblInfo.Name.O))
+		var done bool
+		if job.MultiSchemaInfo != nil {
+			done, ver, err = doReorgWorkForCreateIndexMultiSchema(w, jobCtx, job, tbl, allIndexInfos)
 		} else {
-			var done bool
-			if job.MultiSchemaInfo != nil {
-				done, ver, err = doReorgWorkForCreateIndexMultiSchema(w, jobCtx, job, tbl, allIndexInfos)
-			} else {
-				done, ver, err = doReorgWorkForCreateIndex(w, jobCtx, job, tbl, allIndexInfos)
-			}
-			if !done {
-				return ver, err
-			}
+			done, ver, err = doReorgWorkForCreateIndex(w, jobCtx, job, tbl, allIndexInfos)
+		}
+		if !done {
+			return ver, err
 		}
 
 		// Set column index flag.
@@ -838,27 +831,12 @@ SwitchIndexState:
 	return ver, errors.Trace(err)
 }
 
-func isReorgWorkPending(job *model.Job, idxInfos []*model.IndexInfo) bool {
-	// Snapshot version is unset before the merging temp index stage,
-	// we should exclude this case.
-	idxBfState := idxInfos[0].BackfillState
-	return job.SnapshotVer == 0 &&
-		(idxBfState == model.BackfillStateInapplicable || // txn
-			idxBfState == model.BackfillStateRunning) // ingest or txn-merge
-}
-
 func isTableEmpty(store kv.Storage, tbl table.Table, resGroupName string) bool {
-	rgCtx := NewReorgContext()
-	rgCtx.resourceGroupName = resGroupName
 	if tbl, ok := tbl.(table.PartitionedTable); ok {
 		for _, pid := range tbl.GetAllPartitionIDs() {
 			pTbl := tbl.GetPartition(pid)
-			_, isEmpty, err := GetTableMaxHandle(rgCtx, store, math.MaxUint64, pTbl)
-			if err != nil {
-				logutil.DDLLogger().Info("check if table is empty failed", zap.Error(err))
-				return false
-			}
-			if !isEmpty {
+			oneEmpty := isTableEmptyOnePhyscialTable(store, pTbl, resGroupName)
+			if !oneEmpty {
 				return false
 			}
 		}
@@ -866,12 +844,52 @@ func isTableEmpty(store kv.Storage, tbl table.Table, resGroupName string) bool {
 	}
 	//nolint:forcetypeassert
 	plainTbl := tbl.(table.PhysicalTable)
-	_, isEmpty, err := GetTableMaxHandle(rgCtx, store, math.MaxInt64, plainTbl)
+	return isTableEmptyOnePhyscialTable(store, plainTbl, resGroupName)
+}
+
+func isTableEmptyOnePhyscialTable(store kv.Storage, tbl table.PhysicalTable, resGroupName string) bool {
+	ctx := NewReorgContext()
+	ctx.resourceGroupName = resGroupName
+	_, isEmpty, err := GetTableMaxHandle(ctx, store, math.MaxInt64, tbl)
 	if err != nil {
 		logutil.DDLLogger().Info("check if table is empty failed", zap.Error(err))
 		return false
 	}
 	return isEmpty
+}
+
+func isTempIndexEmpty(store kv.Storage, tbl table.Table, allIndexInfos []*model.IndexInfo, resGroupName string) bool {
+	if tbl, ok := tbl.(table.PartitionedTable); ok {
+		for _, pid := range tbl.GetAllPartitionIDs() {
+			pTbl := tbl.GetPartition(pid)
+			oneEmpty := isTempIndexEmptyOnePhysicalTable(store, pTbl, allIndexInfos, resGroupName)
+			if !oneEmpty {
+				return false
+			}
+		}
+		return true
+	}
+	//nolint:forcetypeassert
+	plainTbl := tbl.(table.PhysicalTable)
+	return isTempIndexEmptyOnePhysicalTable(store, plainTbl, allIndexInfos, resGroupName)
+}
+
+func isTempIndexEmptyOnePhysicalTable(store kv.Storage, tbl table.PhysicalTable, allIndexInfos []*model.IndexInfo, resGroupName string) bool {
+	rgCtx := NewReorgContext()
+	rgCtx.resourceGroupName = resGroupName
+	start, end := encodeTempIndexRange(tbl.Meta().ID,
+		allIndexInfos[0].ID, allIndexInfos[len(allIndexInfos)-1].ID)
+	foundKey := false
+	err := iterateSnapshotKeys(rgCtx, store, kv.PriorityLow, tbl.IndexPrefix(), math.MaxUint64,
+		start, end, func(_ kv.Handle, indexKey kv.Key, rawValue []byte) (more bool, err error) {
+			foundKey = true
+			return false, nil
+		})
+	if err != nil {
+		logutil.DDLLogger().Info("check if temp index is empty failed", zap.Error(err))
+		return false
+	}
+	return foundKey
 }
 
 // pickBackfillType determines which backfill process will be used. The result is
@@ -942,26 +960,42 @@ func doReorgWorkForCreateIndex(
 		return false, ver, err
 	}
 	if !reorgTp.NeedMergeProcess() {
+		skipReorgWork := job.SnapshotVer == 0 &&
+			isTableEmpty(w.store, tbl, job.ReorgMeta.ResourceGroupName)
+		if skipReorgWork {
+			logutil.DDLLogger().Info("table is empty, skipping reorg work",
+				zap.Int64("jobID", job.ID),
+				zap.String("table", tbl.Meta().Name.O))
+			return true, ver, nil
+		}
 		return runReorgJobAndHandleErr(w, jobCtx, job, tbl, allIndexInfos, false)
 	}
 	switch allIndexInfos[0].BackfillState {
 	case model.BackfillStateRunning:
-		logutil.DDLLogger().Info("index backfill state running",
-			zap.Int64("job ID", job.ID), zap.String("table", tbl.Meta().Name.O),
-			zap.Bool("ingest mode", reorgTp == model.ReorgTypeLitMerge),
-			zap.String("index", allIndexInfos[0].Name.O))
-		switch reorgTp {
-		case model.ReorgTypeLitMerge:
-			if job.ReorgMeta.IsDistReorg {
-				done, ver, err = runIngestReorgJobDist(w, jobCtx, job, tbl, allIndexInfos)
-			} else {
-				done, ver, err = runIngestReorgJob(w, jobCtx, job, tbl, allIndexInfos)
+		skipReorgWork := job.SnapshotVer == 0 &&
+			isTableEmpty(w.store, tbl, job.ReorgMeta.ResourceGroupName)
+		if !skipReorgWork {
+			logutil.DDLLogger().Info("index backfill state running",
+				zap.Int64("job ID", job.ID), zap.String("table", tbl.Meta().Name.O),
+				zap.Bool("ingest mode", reorgTp == model.ReorgTypeLitMerge),
+				zap.String("index", allIndexInfos[0].Name.O))
+			switch reorgTp {
+			case model.ReorgTypeLitMerge:
+				if job.ReorgMeta.IsDistReorg {
+					done, ver, err = runIngestReorgJobDist(w, jobCtx, job, tbl, allIndexInfos)
+				} else {
+					done, ver, err = runIngestReorgJob(w, jobCtx, job, tbl, allIndexInfos)
+				}
+			case model.ReorgTypeTxnMerge:
+				done, ver, err = runReorgJobAndHandleErr(w, jobCtx, job, tbl, allIndexInfos, false)
 			}
-		case model.ReorgTypeTxnMerge:
-			done, ver, err = runReorgJobAndHandleErr(w, jobCtx, job, tbl, allIndexInfos, false)
-		}
-		if err != nil || !done {
-			return false, ver, errors.Trace(err)
+			if err != nil || !done {
+				return false, ver, errors.Trace(err)
+			}
+		} else {
+			logutil.DDLLogger().Info("table is empty, skipping reorg work",
+				zap.Int64("jobID", job.ID),
+				zap.String("table", tbl.Meta().Name.O))
 		}
 		for _, indexInfo := range allIndexInfos {
 			indexInfo.BackfillState = model.BackfillStateReadyToMerge
@@ -988,9 +1022,13 @@ func doReorgWorkForCreateIndex(
 		ver, err = updateVersionAndTableInfo(jobCtx, job, tbl.Meta(), true)
 		return false, ver, errors.Trace(err)
 	case model.BackfillStateMerging:
-		done, ver, err = runReorgJobAndHandleErr(w, jobCtx, job, tbl, allIndexInfos, true)
-		if !done {
-			return false, ver, err
+		skipReorgWork := job.SnapshotVer == 0 &&
+			isTempIndexEmpty(w.store, tbl, allIndexInfos, job.ReorgMeta.ResourceGroupName)
+		if !skipReorgWork {
+			done, ver, err = runReorgJobAndHandleErr(w, jobCtx, job, tbl, allIndexInfos, true)
+			if !done {
+				return false, ver, err
+			}
 		}
 		for _, indexInfo := range allIndexInfos {
 			indexInfo.BackfillState = model.BackfillStateInapplicable // Prevent double-write on this index.
