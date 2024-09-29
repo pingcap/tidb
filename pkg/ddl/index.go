@@ -854,6 +854,7 @@ func tableIsEmpty(store kv.Storage, tbl table.Table, resGroupName string) bool {
 		}
 		return true
 	}
+	//nolint:forcetypeassert
 	plainTbl := tbl.(table.PhysicalTable)
 	_, isEmpty, err := GetTableMaxHandle(rgCtx, store, math.MaxInt64, plainTbl)
 	if err != nil {
