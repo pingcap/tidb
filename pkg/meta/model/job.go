@@ -483,12 +483,21 @@ func (job *Job) GetWarnings() (map[errors.ErrorID]*terror.Error, map[errors.Erro
 // FillArgs fills args for new job.
 func (job *Job) FillArgs(args JobArgs) {
 	intest.Assert(job.Version == JobVersion1 || job.Version == JobVersion2, "job version is invalid")
-	args.fillJob(job)
+	if job.Version == JobVersion1 {
+		args.fillJobV1(job)
+		return
+	}
+	job.Args = []any{args}
 }
 
 // FillFinishedArgs fills args for finished job.
 func (job *Job) FillFinishedArgs(args FinishedJobArgs) {
-	args.fillFinishedJob(job)
+	intest.Assert(job.Version == JobVersion1 || job.Version == JobVersion2, "job version is invalid")
+	if job.Version == JobVersion1 {
+		args.fillFinishedJobV1(job)
+		return
+	}
+	job.Args = []any{args}
 }
 
 func marshalArgs(jobVer JobVersion, args []any) (json.RawMessage, error) {

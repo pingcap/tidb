@@ -511,6 +511,16 @@ func switchDDL(on bool) error {
 	return nil
 }
 
+// switchStats turns on/off stats owner in an instance
+func switchStats(on bool) error {
+	if on && EnableStatsOwner != nil {
+		return EnableStatsOwner()
+	} else if !on && DisableStatsOwner != nil {
+		return DisableStatsOwner()
+	}
+	return nil
+}
+
 func collectAllowFuncName4ExpressionIndex() string {
 	str := make([]string, 0, len(GAFunction4ExpressionIndex))
 	for funcName := range GAFunction4ExpressionIndex {

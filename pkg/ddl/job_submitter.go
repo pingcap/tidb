@@ -290,7 +290,7 @@ func (s *JobSubmitter) addBatchDDLJobs2Table(jobWs []*JobWrapper) error {
 	)
 
 	err = kv.RunInNewTxn(ctx, s.store, true, func(_ context.Context, txn kv.Transaction) error {
-		t := meta.NewMeta(txn)
+		t := meta.NewMutator(txn)
 
 		bdrRole, err = t.GetBDRRole()
 		if err != nil {
@@ -357,7 +357,7 @@ func (s *JobSubmitter) addBatchDDLJobs2Table(jobWs []*JobWrapper) error {
 func (s *JobSubmitter) addBatchDDLJobs2Queue(jobWs []*JobWrapper) error {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
 	return kv.RunInNewTxn(ctx, s.store, true, func(_ context.Context, txn kv.Transaction) error {
-		t := meta.NewMeta(txn)
+		t := meta.NewMutator(txn)
 
 		for _, jobW := range jobWs {
 			if jobW.Version == 0 {
@@ -406,7 +406,7 @@ func (s *JobSubmitter) addBatchDDLJobs2Queue(jobWs []*JobWrapper) error {
 	})
 }
 
-func (*JobSubmitter) checkFlashbackJobInQueue(t *meta.Meta) error {
+func (*JobSubmitter) checkFlashbackJobInQueue(t *meta.Mutator) error {
 	jobs, err := t.GetAllDDLJobsInQueue(meta.DefaultJobListKey)
 	if err != nil {
 		return errors.Trace(err)
@@ -617,7 +617,7 @@ func genGIDAndCallWithRetry(ctx context.Context, ddlSe *sess.Session, count int,
 			}
 			txn.GetSnapshot().SetOption(kv.SnapshotTS, forUpdateTS)
 
-			m := meta.NewMeta(txn)
+			m := meta.NewMutator(txn)
 			ids, err := m.GenGlobalIDs(count)
 			if err != nil {
 				return errors.Trace(err)
@@ -659,7 +659,7 @@ func lockGlobalIDKey(ctx context.Context, ddlSe *sess.Session, txn kv.Transactio
 		err         error
 	)
 	waitTime := ddlSe.GetSessionVars().LockWaitTimeout
-	m := meta.NewMeta(txn)
+	m := meta.NewMutator(txn)
 	idKey := m.GlobalIDKey()
 	for {
 		lockCtx := tikv.NewLockCtx(forUpdateTs, waitTime, time.Now())
@@ -713,7 +713,7 @@ func setJobStateToQueueing(job *model.Job) {
 
 // buildJobDependence sets the curjob's dependency-ID.
 // The dependency-job's ID must less than the current job's ID, and we need the largest one in the list.
-func buildJobDependence(t *meta.Meta, curJob *model.Job) error {
+func buildJobDependence(t *meta.Mutator, curJob *model.Job) error {
 	// Jobs in the same queue are ordered. If we want to find a job's dependency-job, we need to look for
 	// it from the other queue. So if the job is "ActionAddIndex" job, we need find its dependency-job from DefaultJobList.
 	jobListKey := meta.DefaultJobListKey

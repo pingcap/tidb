@@ -75,7 +75,7 @@ const (
 	partitionMaxValue = "MAXVALUE"
 )
 
-func checkAddPartition(t *meta.Meta, job *model.Job) (*model.TableInfo, *model.PartitionInfo, []model.PartitionDefinition, error) {
+func checkAddPartition(t *meta.Mutator, job *model.Job) (*model.TableInfo, *model.PartitionInfo, []model.PartitionDefinition, error) {
 	schemaID := job.SchemaID
 	tblInfo, err := GetTableInfoAndCancelFaultJob(t, job, schemaID)
 	if err != nil {
@@ -94,7 +94,7 @@ func checkAddPartition(t *meta.Meta, job *model.Job) (*model.TableInfo, *model.P
 }
 
 // TODO: Move this into reorganize partition!
-func (w *worker) onAddTablePartition(jobCtx *jobContext, t *meta.Meta, job *model.Job) (ver int64, _ error) {
+func (w *worker) onAddTablePartition(jobCtx *jobContext, t *meta.Mutator, job *model.Job) (ver int64, _ error) {
 	// Handle the rolling back job
 	if job.IsRollingback() {
 		ver, err := w.onDropTablePartition(jobCtx, t, job)
@@ -262,7 +262,7 @@ func alterTableLabelRule(schemaName string, meta *model.TableInfo, ids []int64) 
 	return false, nil
 }
 
-func alterTablePartitionBundles(t *meta.Meta, tblInfo *model.TableInfo, addingDefinitions []model.PartitionDefinition) ([]*placement.Bundle, error) {
+func alterTablePartitionBundles(t *meta.Mutator, tblInfo *model.TableInfo, addingDefinitions []model.PartitionDefinition) ([]*placement.Bundle, error) {
 	var bundles []*placement.Bundle
 
 	// tblInfo do not include added partitions, so we should add them first
@@ -294,7 +294,7 @@ func alterTablePartitionBundles(t *meta.Meta, tblInfo *model.TableInfo, addingDe
 // When drop/truncate a partition, we should still keep the dropped partition's placement settings to avoid unnecessary region schedules.
 // When a partition is not configured with a placement policy directly, its rule is in the table's placement group which will be deleted after
 // partition truncated/dropped. So it is necessary to create a standalone placement group with partition id after it.
-func droppedPartitionBundles(t *meta.Meta, tblInfo *model.TableInfo, dropPartitions []model.PartitionDefinition) ([]*placement.Bundle, error) {
+func droppedPartitionBundles(t *meta.Mutator, tblInfo *model.TableInfo, dropPartitions []model.PartitionDefinition) ([]*placement.Bundle, error) {
 	partitions := make([]model.PartitionDefinition, 0, len(dropPartitions))
 	for _, def := range dropPartitions {
 		def = def.Clone()
@@ -2145,7 +2145,7 @@ func dropLabelRules(ctx context.Context, schemaName, tableName string, partNames
 }
 
 // onDropTablePartition deletes old partition meta.
-func (w *worker) onDropTablePartition(jobCtx *jobContext, t *meta.Meta, job *model.Job) (ver int64, _ error) {
+func (w *worker) onDropTablePartition(jobCtx *jobContext, t *meta.Mutator, job *model.Job) (ver int64, _ error) {
 	args, err := model.GetTablePartitionArgs(job)
 	if err != nil {
 		job.State = model.JobStateCancelled
@@ -2369,7 +2369,7 @@ func removeTiFlashAvailablePartitionIDs(tblInfo *model.TableInfo, pids []int64) 
 }
 
 // onTruncateTablePartition truncates old partition meta.
-func (w *worker) onTruncateTablePartition(jobCtx *jobContext, t *meta.Meta, job *model.Job) (int64, error) {
+func (w *worker) onTruncateTablePartition(jobCtx *jobContext, t *meta.Mutator, job *model.Job) (int64, error) {
 	var ver int64
 	args, err := model.GetTruncateTableArgs(job)
 	if err != nil {
@@ -2605,7 +2605,7 @@ func clearTruncatePartitionTiflashStatus(tblInfo *model.TableInfo, newPartitions
 	return nil
 }
 
-func updateTruncatePartitionLabelRules(job *model.Job, t *meta.Meta, oldPartitions, newPartitions []model.PartitionDefinition, tblInfo *model.TableInfo, oldIDs []int64) error {
+func updateTruncatePartitionLabelRules(job *model.Job, t *meta.Mutator, oldPartitions, newPartitions []model.PartitionDefinition, tblInfo *model.TableInfo, oldIDs []int64) error {
 	bundles, err := placement.NewPartitionListBundles(t, newPartitions)
 	if err != nil {
 		return errors.Trace(err)
@@ -2669,7 +2669,7 @@ func updateTruncatePartitionLabelRules(job *model.Job, t *meta.Meta, oldPartitio
 }
 
 // onExchangeTablePartition exchange partition data
-func (w *worker) onExchangeTablePartition(jobCtx *jobContext, t *meta.Meta, job *model.Job) (ver int64, _ error) {
+func (w *worker) onExchangeTablePartition(jobCtx *jobContext, t *meta.Mutator, job *model.Job) (ver int64, _ error) {
 	args, err := model.GetExchangeTablePartitionArgs(job)
 	if err != nil {
 		job.State = model.JobStateCancelled
@@ -2740,7 +2740,7 @@ func (w *worker) onExchangeTablePartition(jobCtx *jobContext, t *meta.Meta, job 
 			args.PartitionID = partDef.ID
 			job.FillArgs(args)
 			defID = partDef.ID
-			err = updateDDLJob2Table(w.sess, job, true)
+			err = updateDDLJob2Table(jobCtx.ctx, w.sess, job, true)
 			if err != nil {
 				return ver, errors.Trace(err)
 			}
@@ -2784,7 +2784,7 @@ func (w *worker) onExchangeTablePartition(jobCtx *jobContext, t *meta.Meta, job 
 		// might be used later, ignore the lint warning.
 		//nolint: ineffassign
 		defID = partDef.ID
-		err = updateDDLJob2Table(w.sess, job, true)
+		err = updateDDLJob2Table(jobCtx.ctx, w.sess, job, true)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
@@ -2964,7 +2964,7 @@ func getNewGlobal(partInfo *model.PartitionInfo, idx *model.IndexInfo) bool {
 	return idx.Global
 }
 
-func getReorgPartitionInfo(t *meta.Meta, job *model.Job) (*model.TableInfo, []string, *model.PartitionInfo, []model.PartitionDefinition, []model.PartitionDefinition, error) {
+func getReorgPartitionInfo(t *meta.Mutator, job *model.Job) (*model.TableInfo, []string, *model.PartitionInfo, []model.PartitionDefinition, []model.PartitionDefinition, error) {
 	schemaID := job.SchemaID
 	tblInfo, err := GetTableInfoAndCancelFaultJob(t, job, schemaID)
 	if err != nil {
@@ -3066,7 +3066,7 @@ func getReorgPartitionInfo(t *meta.Meta, job *model.Job) (*model.TableInfo, []st
 //
 //	Everything now looks as it should, no memory of old partitions/indexes,
 //	and no more double writing, since the previous state is only reading the new partitions/indexes.
-func (w *worker) onReorganizePartition(jobCtx *jobContext, t *meta.Meta, job *model.Job) (ver int64, _ error) {
+func (w *worker) onReorganizePartition(jobCtx *jobContext, t *meta.Mutator, job *model.Job) (ver int64, _ error) {
 	// Handle the rolling back job
 	if job.IsRollingback() {
 		ver, err := w.onDropTablePartition(jobCtx, t, job)
@@ -3603,7 +3603,7 @@ func newStatsDDLEventForJob(
 	return event, nil
 }
 
-func doPartitionReorgWork(w *worker, jobCtx *jobContext, t *meta.Meta, job *model.Job, tbl table.Table, physTblIDs []int64) (done bool, ver int64, err error) {
+func doPartitionReorgWork(w *worker, jobCtx *jobContext, t *meta.Mutator, job *model.Job, tbl table.Table, physTblIDs []int64) (done bool, ver int64, err error) {
 	job.ReorgMeta.ReorgTp = model.ReorgTypeTxn
 	sctx, err1 := w.sessPool.Get()
 	if err1 != nil {
@@ -4022,7 +4022,7 @@ func (w *worker) reorgPartitionDataAndIndex(t table.Table, reorgInfo *reorgInfo)
 	return nil
 }
 
-func bundlesForExchangeTablePartition(t *meta.Meta, pt *model.TableInfo, newPar *model.PartitionDefinition, nt *model.TableInfo) ([]*placement.Bundle, error) {
+func bundlesForExchangeTablePartition(t *meta.Mutator, pt *model.TableInfo, newPar *model.PartitionDefinition, nt *model.TableInfo) ([]*placement.Bundle, error) {
 	bundles := make([]*placement.Bundle, 0, 3)
 
 	ptBundle, err := placement.NewTableBundle(t, pt)
@@ -4204,7 +4204,7 @@ func checkExchangePartitionRecordValidation(w *worker, ptbl, ntbl table.Table, p
 	return nil
 }
 
-func checkExchangePartitionPlacementPolicy(t *meta.Meta, ntPPRef, ptPPRef, partPPRef *model.PolicyRefInfo) error {
+func checkExchangePartitionPlacementPolicy(t *meta.Mutator, ntPPRef, ptPPRef, partPPRef *model.PolicyRefInfo) error {
 	partitionPPRef := partPPRef
 	if partitionPPRef == nil {
 		partitionPPRef = ptPPRef
@@ -4564,7 +4564,7 @@ func isPartExprUnsigned(ectx expression.EvalContext, tbInfo *model.TableInfo) bo
 
 // truncateTableByReassignPartitionIDs reassigns new partition ids.
 // it also returns the new partition IDs for cases described below.
-func truncateTableByReassignPartitionIDs(t *meta.Meta, tblInfo *model.TableInfo, pids []int64) ([]int64, error) {
+func truncateTableByReassignPartitionIDs(t *meta.Mutator, tblInfo *model.TableInfo, pids []int64) ([]int64, error) {
 	if len(pids) < len(tblInfo.Partition.Definitions) {
 		// To make it compatible with older versions when pids was not given
 		// and if there has been any add/reorganize partition increasing the number of partitions

@@ -39,7 +39,7 @@ import (
 func getGlobalID(ctx context.Context, t *testing.T, store kv.Storage) int64 {
 	res := int64(0)
 	require.NoError(t, kv.RunInNewTxn(ctx, store, true, func(_ context.Context, txn kv.Transaction) error {
-		m := meta.NewMeta(txn)
+		m := meta.NewMutator(txn)
 		id, err := m.GetGlobalID()
 		require.NoError(t, err)
 		res = id
@@ -93,7 +93,7 @@ func TestGenIDAndInsertJobsWithRetry(t *testing.T) {
 	wg.Wait()
 
 	jobCount := threads * iterations
-	gotJobs, err := ddl.GetAllDDLJobs(tk.Session())
+	gotJobs, err := ddl.GetAllDDLJobs(ctx, tk.Session())
 	require.NoError(t, err)
 	require.Len(t, gotJobs, jobCount)
 	currGID := getGlobalID(ctx, t, store)
@@ -352,7 +352,7 @@ func TestCombinedIDAllocation(t *testing.T) {
 			require.NoError(t, submitter.GenGIDAndInsertJobsWithRetry(ctx, sess.NewSession(tk.Session()), []*ddl.JobWrapper{c.jobW}))
 			require.Equal(t, currentGlobalID+int64(c.requiredIDCount), getGlobalID(ctx, t, store), fmt.Sprintf("case-%d", i))
 		}
-		gotJobs, err := ddl.GetAllDDLJobs(tk.Session())
+		gotJobs, err := ddl.GetAllDDLJobs(ctx, tk.Session())
 		require.NoError(t, err)
 		require.Len(t, gotJobs, len(cases))
 	})
@@ -370,7 +370,7 @@ func TestCombinedIDAllocation(t *testing.T) {
 		require.NoError(t, submitter.GenGIDAndInsertJobsWithRetry(ctx, sess.NewSession(tk.Session()), jobWs))
 		require.Equal(t, currentGlobalID+int64(totalRequiredCnt), getGlobalID(ctx, t, store))
 
-		gotJobs, err := ddl.GetAllDDLJobs(tk.Session())
+		gotJobs, err := ddl.GetAllDDLJobs(ctx, tk.Session())
 		require.NoError(t, err)
 		require.Len(t, gotJobs, len(cases))
 	})
@@ -406,7 +406,7 @@ func TestCombinedIDAllocation(t *testing.T) {
 				checkPartitionInfo(pInfo)
 			}
 		}
-		gotJobs, err := ddl.GetAllDDLJobs(tk.Session())
+		gotJobs, err := ddl.GetAllDDLJobs(ctx, tk.Session())
 		require.NoError(t, err)
 		require.Len(t, gotJobs, allocIDCaseCount)
 		for _, j := range gotJobs {
@@ -565,7 +565,7 @@ func TestGenGIDAndInsertJobsWithRetryOnErr(t *testing.T) {
 		require.True(t, ok)
 		counter++
 		require.NoError(t, kv.RunInNewTxn(ctx, store, true, func(_ context.Context, txn kv.Transaction) error {
-			m := meta.NewMeta(txn)
+			m := meta.NewMutator(txn)
 			_, err := m.GenGlobalIDs(100)
 			require.NoError(t, err)
 			return nil

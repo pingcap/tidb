@@ -85,7 +85,7 @@ func buildObserveTableRanges(
 	backupTS uint64,
 ) ([]kv.KeyRange, error) {
 	snapshot := storage.GetSnapshot(kv.NewVersion(backupTS))
-	m := meta.NewSnapshotMeta(snapshot)
+	m := meta.NewReader(snapshot)
 
 	dbs, err := m.ListDatabases()
 	if err != nil {
