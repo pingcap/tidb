@@ -28,10 +28,10 @@ func TestGetOrDecodeArgsV2(t *testing.T) {
 	j := &Job{
 		Version: JobVersion2,
 		Type:    ActionTruncateTable,
-		Args: []any{&TruncateTableArgs{
-			FKCheck: true,
-		}},
 	}
+	j.FillArgs(&TruncateTableArgs{
+		FKCheck: true,
+	})
 	_, err := j.Encode(true)
 	require.NoError(t, err)
 	require.NotNil(t, j.RawArgs)
