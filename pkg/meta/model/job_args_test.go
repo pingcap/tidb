@@ -918,10 +918,10 @@ func TestDropColumnArgs(t *testing.T) {
 		Col: &ColumnInfo{
 			Name: model.NewCIStr("col_name"),
 		},
-		IfExistsOrNot: true,
-		IndexIDs:      []int64{1, 2, 3},
-		PartitionIDs:  []int64{4, 5, 6},
-		Pos:           &ast.ColumnPosition{},
+		IgnoreExistenceErr: true,
+		IndexIDs:           []int64{1, 2, 3},
+		PartitionIDs:       []int64{4, 5, 6},
+		Pos:                &ast.ColumnPosition{},
 	}
 
 	for _, v := range []JobVersion{JobVersion1, JobVersion2} {
@@ -942,8 +942,8 @@ func TestAddColumnArgs(t *testing.T) {
 		Pos: &ast.ColumnPosition{
 			Tp: ast.ColumnPositionFirst,
 		},
-		Offset:        1001,
-		IfExistsOrNot: true,
+		Offset:             1001,
+		IgnoreExistenceErr: true,
 	}
 	dropArgs := &TableColumnArgs{
 		Col: &ColumnInfo{

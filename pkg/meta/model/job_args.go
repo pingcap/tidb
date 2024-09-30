@@ -913,10 +913,11 @@ func GetDropForeignKeyArgs(job *Job) (*DropForeignKeyArgs, error) {
 // TableColumnArgs is the arguments for dropping column ddl or Adding column ddl.
 type TableColumnArgs struct {
 	// follow items for add column.
-	Col           *ColumnInfo         `json:"column_info,omitempty"`
-	Pos           *ast.ColumnPosition `json:"position,omitempty"`
-	Offset        int                 `json:"offset,omitempty"`
-	IfExistsOrNot bool                `json:"if_exists_or_not,omitempty"`
+	Col    *ColumnInfo         `json:"column_info,omitempty"`
+	Pos    *ast.ColumnPosition `json:"position,omitempty"`
+	Offset int                 `json:"offset,omitempty"`
+	// it's shared by add/drop column.
+	IgnoreExistenceErr bool `json:"ignore_existence_err,omitempty"`
 
 	// for drop column.
 	// below 2 fields are filled during running.
@@ -925,11 +926,10 @@ type TableColumnArgs struct {
 }
 
 func (a *TableColumnArgs) fillJobV1(job *Job) {
-	// fill DropColumn args if job.Type is ActionAddColumn and state is JobStateRollingback
 	if job.Type == ActionDropColumn {
-		job.Args = []any{a.Col.Name, a.IfExistsOrNot, a.IndexIDs, a.PartitionIDs}
+		job.Args = []any{a.Col.Name, a.IgnoreExistenceErr, a.IndexIDs, a.PartitionIDs}
 	} else {
-		job.Args = []any{a.Col, a.Pos, a.Offset, a.IfExistsOrNot}
+		job.Args = []any{a.Col, a.Pos, a.Offset, a.IgnoreExistenceErr}
 	}
 }
 
@@ -952,15 +952,15 @@ func GetTableColumnArgs(job *Job) (*TableColumnArgs, error) {
 			Pos: &ast.ColumnPosition{},
 		}
 
+		// when rollbacking add-columm, it's arguments is same as drop-column
 		if job.Type == ActionDropColumn || job.State == JobStateRollingback {
-			err := job.DecodeArgs(&args.Col.Name, &args.IfExistsOrNot, &args.IndexIDs, &args.PartitionIDs)
+			err := job.DecodeArgs(&args.Col.Name, &args.IgnoreExistenceErr, &args.IndexIDs, &args.PartitionIDs)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
-			return args, nil
 		} else {
 			// for add column ddl.
-			if err := job.DecodeArgs(args.Col, args.Pos, &args.Offset, &args.IfExistsOrNot); err != nil {
+			if err := job.DecodeArgs(args.Col, args.Pos, &args.Offset, &args.IgnoreExistenceErr); err != nil {
 				return nil, errors.Trace(err)
 			}
 		}

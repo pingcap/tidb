@@ -2236,9 +2236,9 @@ func (e *executor) AddColumn(ctx sessionctx.Context, ti ast.Ident, spec *ast.Alt
 		SQLMode:        ctx.GetSessionVars().SQLMode,
 	}
 	args := &model.TableColumnArgs{
-		Col:           col.ColumnInfo,
-		Pos:           spec.Position,
-		IfExistsOrNot: spec.IfNotExists,
+		Col:                col.ColumnInfo,
+		Pos:                spec.Position,
+		IgnoreExistenceErr: spec.IfNotExists,
 	}
 	job.FillArgs(args)
 	err = e.doDDLJob2(ctx, job, args)
@@ -3179,8 +3179,8 @@ func (e *executor) DropColumn(ctx sessionctx.Context, ti ast.Ident, spec *ast.Al
 		SQLMode:        ctx.GetSessionVars().SQLMode,
 	}
 	args := &model.TableColumnArgs{
-		Col:           &model.ColumnInfo{Name: colName},
-		IfExistsOrNot: spec.IfExists,
+		Col:                &model.ColumnInfo{Name: colName},
+		IgnoreExistenceErr: spec.IfExists,
 	}
 	// we need fill args here, because it will be added subjob which contains args and rawArgs from job.
 	job.FillArgs(args)
