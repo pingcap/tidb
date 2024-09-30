@@ -39,7 +39,7 @@ type handler struct {
 // notifier.
 func NewHandlerAndRegister(statsCache types.StatsCache) {
 	h := handler{statsCache: statsCache}
-	notifier.RegisterHandler(notifier.StatsHandlerID, h.handle)
+	notifier.RegisterHandler(notifier.StatsMetaHandlerID, h.handle)
 }
 
 func (h handler) handle(
