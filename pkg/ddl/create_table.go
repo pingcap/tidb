@@ -575,7 +575,6 @@ func checkTableInfoValidExtra(ec errctx.Context, store kv.Storage, tbInfo *model
 	if err := checkGlobalIndexes(ec, tbInfo); err != nil {
 		return errors.Trace(err)
 	}
-	// A special rule on Serverless is to add TiFlash replica by default if there is a vector index.
 	if err := checkVectorIndexIfNeedTiFlashReplica(store, tbInfo); err != nil {
 		return errors.Trace(err)
 	}
