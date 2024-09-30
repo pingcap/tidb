@@ -869,12 +869,12 @@ func checkIfPhysicalTableIsEmpty(
 	store kv.Storage,
 	tbl table.PhysicalTable,
 ) bool {
-	_, isEmpty, err := GetTableMaxHandle(ctx, store, math.MaxInt64, tbl)
+	hasRecord, err := ExistsTableRow(ctx, store, math.MaxInt64, tbl)
 	if err != nil {
 		logutil.DDLLogger().Info("check if table is empty failed", zap.Error(err))
 		return false
 	}
-	return isEmpty
+	return !hasRecord
 }
 
 func checkIfTempIndexReorgWorkCanSkip(
