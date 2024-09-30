@@ -12392,7 +12392,7 @@ ConstraintVectorIndex:
 		}
 		if c.Option == nil {
 			c.Option = &ast.IndexOption{Tp: model.IndexTypeHNSW}
-		}else if c.Option.Tp == model.IndexTypeInvalid {
+		} else if c.Option.Tp == model.IndexTypeInvalid {
 			c.Option.Tp = model.IndexTypeHNSW
 		}
 		if c.Option.Tp != model.IndexTypeHNSW {
