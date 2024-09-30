@@ -40,6 +40,7 @@ SELECT FORMAT(NULL, 4), FORMAT(12332.2, NULL);
 SELECT FORMAT(1.04, 1);
 SELECT FORMAT(1.05, 1);
 SELECT FORMAT(1.06, 1);
+SELECT FORMAT(2.5, 0);
 
 # Handling of precision that isn't simple integer
 SELECT FORMAT(1.06, 1.4);

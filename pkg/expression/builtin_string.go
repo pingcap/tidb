@@ -3301,6 +3301,12 @@ func evalNumDecArgsForFormat(ctx EvalContext, f builtinFunc, row chunk.Row) (str
 	return xStr, dStr, false, nil
 }
 
+// roundFormatArgs does rounding for FORMAT()
+//
+//  1. It takes a string instead of a float and avoids float related rounding issues.
+//  2. It rounds up, so (2.5, 0) rounds to 3.
+//  3. Note that golang.org/x/text/{message,number,language} also does rounding
+//     but not in the way needed for FORMAT()
 func roundFormatArgs(xStr string, maxNumDecimals int) string {
 	if !strings.Contains(xStr, ".") {
 		return xStr
@@ -3349,7 +3355,11 @@ func roundFormatArgs(xStr string, maxNumDecimals int) string {
 		}
 	}
 
-	xStr = integerPart + "." + decimalPart
+	if len(decimalPart) > maxNumDecimals {
+		xStr = integerPart + "." + decimalPart[:maxNumDecimals]
+	} else {
+		xStr = integerPart + "." + decimalPart
+	}
 	if sign {
 		xStr = "-" + xStr
 	}
