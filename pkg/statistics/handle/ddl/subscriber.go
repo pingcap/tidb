@@ -50,7 +50,7 @@ func (h handler) handle(
 	switch change.GetType() {
 	case model.ActionCreateTable:
 		info := change.GetCreateTableInfo()
-		ids, err := h.getPhysicalIDs(sctx, info)
+		ids, err := getPhysicalIDs(sctx, info)
 		if err != nil {
 			return err
 		}
@@ -62,7 +62,7 @@ func (h handler) handle(
 		}
 	case model.ActionTruncateTable:
 		newTableInfo, droppedTableInfo := change.GetTruncateTableInfo()
-		ids, err := h.getPhysicalIDs(sctx, newTableInfo)
+		ids, err := getPhysicalIDs(sctx, newTableInfo)
 		if err != nil {
 			return err
 		}
@@ -74,7 +74,7 @@ func (h handler) handle(
 		}
 
 		// Remove the old table stats.
-		droppedIDs, err2 := h.getPhysicalIDs(sctx, droppedTableInfo)
+		droppedIDs, err2 := getPhysicalIDs(sctx, droppedTableInfo)
 		if err2 != nil {
 			return err2
 		}
@@ -86,7 +86,7 @@ func (h handler) handle(
 		}
 	case model.ActionDropTable:
 		droppedTableInfo := change.GetDropTableInfo()
-		ids, err := h.getPhysicalIDs(sctx, droppedTableInfo)
+		ids, err := getPhysicalIDs(sctx, droppedTableInfo)
 		if err != nil {
 			return err
 		}
@@ -146,7 +146,7 @@ func (h handler) recordHistoricalStatsMeta(
 	if startTS == 0 {
 		return nil
 	}
-	enableHistoricalStats, err2 := h.getEnableHistoricalStats(sctx)
+	enableHistoricalStats, err2 := getEnableHistoricalStats(sctx)
 	if err2 != nil {
 		return err2
 	}
@@ -180,7 +180,7 @@ func (h handler) delayedDeleteStats4PhysicalID(
 	return errors.Trace(h.recordHistoricalStatsMeta(ctx, sctx, id, startTS))
 }
 
-func (h handler) getPhysicalIDs(
+func getPhysicalIDs(
 	sctx sessionctx.Context,
 	tblInfo *model.TableInfo,
 ) (ids []int64, err error) {
@@ -192,7 +192,7 @@ func (h handler) getPhysicalIDs(
 	for _, def := range pi.Definitions {
 		ids = append(ids, def.ID)
 	}
-	pruneMode, err := h.getCurrentPruneMode(sctx)
+	pruneMode, err := getCurrentPruneMode(sctx)
 	if err != nil {
 		return nil, err
 	}
@@ -202,7 +202,7 @@ func (h handler) getPhysicalIDs(
 	return ids, nil
 }
 
-func (h handler) getCurrentPruneMode(
+func getCurrentPruneMode(
 	sctx sessionctx.Context,
 ) (variable.PartitionPruneMode, error) {
 	pruneMode, err := sctx.GetSessionVars().
@@ -211,7 +211,7 @@ func (h handler) getCurrentPruneMode(
 	return variable.PartitionPruneMode(pruneMode), errors.Trace(err)
 }
 
-func (h handler) getEnableHistoricalStats(
+func getEnableHistoricalStats(
 	sctx sessionctx.Context,
 ) (bool, error) {
 	val, err := sctx.GetSessionVars().
