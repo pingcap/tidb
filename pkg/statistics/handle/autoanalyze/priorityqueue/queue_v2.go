@@ -20,7 +20,6 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/pkg/ddl/notifier"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -475,11 +474,6 @@ func (pq *AnalysisPriorityQueueV2) GetRunningJobs() map[int64]struct{} {
 		runningJobs[id] = struct{}{}
 	}
 	return runningJobs
-}
-
-func (*AnalysisPriorityQueueV2) handleDDLEvent(_ context.Context, _ sessionctx.Context, _ notifier.SchemaChangeEvent) {
-	// TODO: Handle the ddl event.
-	// Only care about the add index event.
 }
 
 // Push pushes a job into the priority queue.
