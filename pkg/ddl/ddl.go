@@ -39,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl/serverstate"
 	sess "github.com/pingcap/tidb/pkg/ddl/session"
 	"github.com/pingcap/tidb/pkg/ddl/systable"
+	"github.com/pingcap/tidb/pkg/ddl/testargsv1"
 	"github.com/pingcap/tidb/pkg/ddl/util"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/scheduler"
@@ -87,14 +88,8 @@ const (
 )
 
 var (
-	// ForceDDLJobVersionToV1InTest is a flag to force using ddl job V1 in test.
-	// Since 8.4.0, we have a new version of DDL args, but we have to keep logics of
-	// old version for compatibility. We change this to run unit-test another round
-	// in V1 to make sure both code are working correctly.
-	// Don't use it in unit-test. It's set in Makefile.
-	ForceDDLJobVersionToV1InTest = "false"
-	jobV2FirstVer                = *semver.New("8.4.0")
-	detectJobVerInterval         = 10 * time.Second
+	jobV2FirstVer        = *semver.New("8.4.0")
+	detectJobVerInterval = 10 * time.Second
 )
 
 // OnExist specifies what to do when a new object has a name collision.
@@ -805,7 +800,7 @@ func (d *ddl) Start(ctxPool *pools.ResourcePool) error {
 // to the new TiDB instance which cannot not handle existing submitted jobs of V2.
 func (d *ddl) detectAndUpdateJobVersion() {
 	if d.etcdCli == nil {
-		if ForceDDLJobVersionToV1InTest != "false" {
+		if testargsv1.ForceV1 {
 			model.SetJobVerInUse(model.JobVersion1)
 			return
 		}
