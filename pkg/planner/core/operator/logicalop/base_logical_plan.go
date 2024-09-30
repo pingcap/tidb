@@ -122,7 +122,7 @@ func (p *BaseLogicalPlan) PredicatePushDown(predicates []expression.Expression, 
 	}
 	child := p.children[0]
 	rest, newChild := child.PredicatePushDown(predicates, opt)
-	utilfuncp.AddSelection(p.self, newChild, rest, 0, opt)
+	addSelection(p.self, newChild, rest, 0, opt)
 	return nil, p.self
 }
 
@@ -151,7 +151,7 @@ func (p *BaseLogicalPlan) BuildKeyInfo(_ *expression.Schema, _ []*expression.Sch
 	for i := range p.children {
 		childMaxOneRow[i] = p.children[i].MaxOneRow()
 	}
-	p.maxOneRow = utilfuncp.HasMaxOneRowUtil(p.self, childMaxOneRow)
+	p.maxOneRow = HasMaxOneRow(p.self, childMaxOneRow)
 }
 
 // PushDownTopN implements the LogicalPlan.<5th> interface.

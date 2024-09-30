@@ -70,7 +70,7 @@ func TestTraceCE(t *testing.T) {
 		tk.MustExec(sql)
 	}
 	statsHandle := dom.StatsHandle()
-	err := statsHandle.LoadNeededHistograms()
+	err := statsHandle.LoadNeededHistograms(dom.InfoSchema())
 	require.NoError(t, err)
 
 	sctx := tk.Session().(sessionctx.Context)
@@ -188,7 +188,7 @@ func TestTraceDebugSelectivity(t *testing.T) {
 		sql := "explain " + tt
 		tk.MustExec(sql)
 	}
-	err := statsHandle.LoadNeededHistograms()
+	err := statsHandle.LoadNeededHistograms(dom.InfoSchema())
 	require.NoError(t, err)
 
 	sctx := tk.Session().(sessionctx.Context)
@@ -215,7 +215,7 @@ func TestTraceDebugSelectivity(t *testing.T) {
 		require.NoError(t, err)
 
 		sel := p.(base.LogicalPlan).Children()[0].(*logicalop.LogicalSelection)
-		ds := sel.Children()[0].(*plannercore.DataSource)
+		ds := sel.Children()[0].(*logicalop.DataSource)
 
 		dsSchemaCols = append(dsSchemaCols, ds.Schema().Columns)
 		selConditions = append(selConditions, sel.Conditions)

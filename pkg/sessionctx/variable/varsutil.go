@@ -27,6 +27,7 @@ import (
 
 	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -511,6 +512,16 @@ func switchDDL(on bool) error {
 	return nil
 }
 
+// switchStats turns on/off stats owner in an instance
+func switchStats(on bool) error {
+	if on && EnableStatsOwner != nil {
+		return EnableStatsOwner()
+	} else if !on && DisableStatsOwner != nil {
+		return DisableStatsOwner()
+	}
+	return nil
+}
+
 func collectAllowFuncName4ExpressionIndex() string {
 	str := make([]string, 0, len(GAFunction4ExpressionIndex))
 	for funcName := range GAFunction4ExpressionIndex {
@@ -605,10 +616,10 @@ func ParseAnalyzeSkipColumnTypes(val string) map[string]struct{} {
 var (
 	// SchemaCacheSizeLowerBound will adjust the schema cache size to this value if
 	// it is lower than this value.
-	SchemaCacheSizeLowerBound uint64 = 512 * units.MiB
+	SchemaCacheSizeLowerBound uint64 = 64 * units.MiB
 	// SchemaCacheSizeLowerBoundStr is the string representation of
 	// SchemaCacheSizeLowerBound.
-	SchemaCacheSizeLowerBoundStr = "512MB"
+	SchemaCacheSizeLowerBoundStr = "64MB"
 )
 
 func parseSchemaCacheSize(s *SessionVars, normalizedValue string, originalValue string) (byteSize uint64, normalizedStr string, err error) {
@@ -631,4 +642,16 @@ func parseSchemaCacheSize(s *SessionVars, normalizedValue string, originalValue 
 	}
 
 	return 0, "", ErrTruncatedWrongValue.GenWithStackByArgs(TiDBSchemaCacheSize, originalValue)
+}
+
+// DistanceMetric4VectorIndex stores distance metrics for the vector index.
+var DistanceMetric4VectorIndex = map[string]model.DistanceMetric{
+	ast.VecCosineDistance: model.DistanceMetricCosine,
+	ast.VecL2Distance:     model.DistanceMetricL2,
+}
+
+// Function4VectorIndex stores functions for the vector index.
+var Function4VectorIndex = map[model.DistanceMetric]string{
+	model.DistanceMetricCosine: ast.VecCosineDistance,
+	model.DistanceMetricL2:     ast.VecL2Distance,
 }

@@ -64,8 +64,11 @@ func (s *SchemaChangeEvent) String() string {
 			_, _ = fmt.Fprintf(&sb, ", Dropped Partition ID: %d", partDef.ID)
 		}
 	}
-	for _, columnInfo := range s.inner.ColumnInfos {
+	for _, columnInfo := range s.inner.Columns {
 		_, _ = fmt.Fprintf(&sb, ", Column ID: %d, Column Name: %s", columnInfo.ID, columnInfo.Name)
+	}
+	for _, indexInfo := range s.inner.Indexes {
+		_, _ = fmt.Fprintf(&sb, ", Index ID: %d, Index Name: %s", indexInfo.ID, indexInfo.Name)
 	}
 	sb.WriteString(")")
 
@@ -147,13 +150,13 @@ func (s *SchemaChangeEvent) GetDropTableInfo() (droppedTableInfo *model.TableInf
 // NewAddColumnEvent creates a SchemaChangeEvent whose type is ActionAddColumn.
 func NewAddColumnEvent(
 	tableInfo *model.TableInfo,
-	newColumnInfos []*model.ColumnInfo,
+	newColumns []*model.ColumnInfo,
 ) *SchemaChangeEvent {
 	return &SchemaChangeEvent{
 		inner: &jsonSchemaChangeEvent{
-			Tp:          model.ActionAddColumn,
-			TableInfo:   tableInfo,
-			ColumnInfos: newColumnInfos,
+			Tp:        model.ActionAddColumn,
+			TableInfo: tableInfo,
+			Columns:   newColumns,
 		},
 	}
 }
@@ -165,20 +168,20 @@ func (s *SchemaChangeEvent) GetAddColumnInfo() (
 	columnInfos []*model.ColumnInfo,
 ) {
 	intest.Assert(s.inner.Tp == model.ActionAddColumn)
-	return s.inner.TableInfo, s.inner.ColumnInfos
+	return s.inner.TableInfo, s.inner.Columns
 }
 
 // NewModifyColumnEvent creates a SchemaChangeEvent whose type is
 // ActionModifyColumn.
 func NewModifyColumnEvent(
 	tableInfo *model.TableInfo,
-	modifiedColumnInfo []*model.ColumnInfo,
+	modifiedColumns []*model.ColumnInfo,
 ) *SchemaChangeEvent {
 	return &SchemaChangeEvent{
 		inner: &jsonSchemaChangeEvent{
-			Tp:          model.ActionModifyColumn,
-			TableInfo:   tableInfo,
-			ColumnInfos: modifiedColumnInfo,
+			Tp:        model.ActionModifyColumn,
+			TableInfo: tableInfo,
+			Columns:   modifiedColumns,
 		},
 	}
 }
@@ -187,10 +190,10 @@ func NewModifyColumnEvent(
 // SchemaChangeEvent whose type is ActionModifyColumn.
 func (s *SchemaChangeEvent) GetModifyColumnInfo() (
 	newTableInfo *model.TableInfo,
-	modifiedColumnInfo []*model.ColumnInfo,
+	modifiedColumns []*model.ColumnInfo,
 ) {
 	intest.Assert(s.inner.Tp == model.ActionModifyColumn)
-	return s.inner.TableInfo, s.inner.ColumnInfos
+	return s.inner.TableInfo, s.inner.Columns
 }
 
 // NewAddPartitionEvent creates a SchemaChangeEvent whose type is
@@ -389,6 +392,30 @@ func (s *SchemaChangeEvent) GetRemovePartitioningInfo() (
 	return s.inner.OldTableID4Partition, s.inner.TableInfo, s.inner.DroppedPartInfo
 }
 
+// NewAddIndexEvent creates a schema change event whose type is ActionAddIndex.
+func NewAddIndexEvent(
+	tableInfo *model.TableInfo,
+	newIndexes []*model.IndexInfo,
+) *SchemaChangeEvent {
+	return &SchemaChangeEvent{
+		inner: &jsonSchemaChangeEvent{
+			Tp:        model.ActionAddIndex,
+			TableInfo: tableInfo,
+			Indexes:   newIndexes,
+		},
+	}
+}
+
+// GetAddIndexInfo returns the table info and added index info of the
+// SchemaChangeEvent whose type is ActionAddIndex.
+func (s *SchemaChangeEvent) GetAddIndexInfo() (
+	tableInfo *model.TableInfo,
+	indexes []*model.IndexInfo,
+) {
+	intest.Assert(s.inner.Tp == model.ActionAddIndex)
+	return s.inner.TableInfo, s.inner.Indexes
+}
+
 // NewFlashbackClusterEvent creates a schema change event whose type is
 // ActionFlashbackCluster.
 func NewFlashbackClusterEvent() *SchemaChangeEvent {
@@ -406,7 +433,8 @@ type jsonSchemaChangeEvent struct {
 	OldTableInfo    *model.TableInfo     `json:"old_table_info,omitempty"`
 	AddedPartInfo   *model.PartitionInfo `json:"added_partition_info,omitempty"`
 	DroppedPartInfo *model.PartitionInfo `json:"dropped_partition_info,omitempty"`
-	ColumnInfos     []*model.ColumnInfo  `json:"column_infos,omitempty"`
+	Columns         []*model.ColumnInfo  `json:"columns,omitempty"`
+	Indexes         []*model.IndexInfo   `json:"indexes,omitempty"`
 	// OldTableID4Partition is used to store the table ID when a table transitions from being partitioned to non-partitioned,
 	// or vice versa.
 	OldTableID4Partition int64 `json:"old_table_id_for_partition,omitempty"`

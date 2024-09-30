@@ -12,25 +12,24 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package core
+package logicalop
 
 import (
 	"bytes"
 	"fmt"
 
 	"github.com/pingcap/tidb/pkg/expression"
-	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
-	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
+	"github.com/pingcap/tidb/pkg/planner/util/utilfuncp"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
 	"github.com/pingcap/tidb/pkg/util/ranger"
 )
 
 // LogicalTableScan is the logical table scan operator for TiKV.
 type LogicalTableScan struct {
-	logicalop.LogicalSchemaProducer
+	LogicalSchemaProducer
 	Source      *DataSource
 	HandleCols  util.HandleCols
 	AccessConds expression.CNFExprs
@@ -39,7 +38,7 @@ type LogicalTableScan struct {
 
 // Init initializes LogicalTableScan.
 func (ts LogicalTableScan) Init(ctx base.PlanContext, offset int) *LogicalTableScan {
-	ts.BaseLogicalPlan = logicalop.NewBaseLogicalPlan(ctx, plancodec.TypeTableScan, &ts, offset)
+	ts.BaseLogicalPlan = NewBaseLogicalPlan(ctx, plancodec.TypeTableScan, &ts, offset)
 	return &ts
 }
 
@@ -89,33 +88,7 @@ func (ts *LogicalTableScan) BuildKeyInfo(selfSchema *expression.Schema, childSch
 
 // DeriveStats implements base.LogicalPlan.<11th> interface.
 func (ts *LogicalTableScan) DeriveStats(_ []*property.StatsInfo, _ *expression.Schema, _ []*expression.Schema, _ [][]*expression.Column) (_ *property.StatsInfo, err error) {
-	ts.Source.initStats(nil)
-	// PushDownNot here can convert query 'not (a != 1)' to 'a = 1'.
-	exprCtx := ts.SCtx().GetExprCtx()
-	for i, expr := range ts.AccessConds {
-		// TODO The expressions may be shared by TableScan and several IndexScans, there would be redundant
-		// `PushDownNot` function call in multiple `DeriveStats` then.
-		ts.AccessConds[i] = expression.PushDownNot(exprCtx, expr)
-	}
-	ts.SetStats(ts.Source.deriveStatsByFilter(ts.AccessConds, nil))
-	// ts.Handle could be nil if PK is Handle, and PK column has been pruned.
-	// TODO: support clustered index.
-	if ts.HandleCols != nil {
-		// TODO: restrict mem usage of table ranges.
-		ts.Ranges, _, _, err = ranger.BuildTableRange(ts.AccessConds, ts.SCtx().GetRangerCtx(), ts.HandleCols.GetCol(0).RetType, 0)
-	} else {
-		isUnsigned := false
-		if ts.Source.TableInfo.PKIsHandle {
-			if pkColInfo := ts.Source.TableInfo.GetPkColInfo(); pkColInfo != nil {
-				isUnsigned = mysql.HasUnsignedFlag(pkColInfo.GetFlag())
-			}
-		}
-		ts.Ranges = ranger.FullIntRange(isUnsigned)
-	}
-	if err != nil {
-		return nil, err
-	}
-	return ts.StatsInfo(), nil
+	return utilfuncp.DeriveStats4LogicalTableScan(ts)
 }
 
 // ExtractColGroups inherits BaseLogicalPlan.<12th> implementation.

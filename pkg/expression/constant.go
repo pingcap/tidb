@@ -156,9 +156,9 @@ func (c *Constant) StringWithCtx(ctx ParamValues, redact string) string {
 		return c.DeferredExpr.StringWithCtx(ctx, redact)
 	}
 	if redact == perrors.RedactLogDisable {
-		return fmt.Sprintf("%v", c.Value.GetValue())
+		return c.Value.TruncatedStringify()
 	} else if redact == perrors.RedactLogMarker {
-		return fmt.Sprintf("‹%v›", c.Value.GetValue())
+		return fmt.Sprintf("‹%s›", c.Value.TruncatedStringify())
 	}
 	return "?"
 }

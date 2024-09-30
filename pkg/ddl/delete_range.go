@@ -256,7 +256,7 @@ func (dr *delRange) doTask(sctx sessionctx.Context, r util.DelRangeTask) error {
 				return errors.Trace(err)
 			}
 			startKey, endKey := r.Range()
-			logutil.DDLLogger().Info("delRange emulator complete task", zap.String("category", "ddl"),
+			logutil.DDLLogger().Info("delRange emulator complete task",
 				zap.Int64("jobID", r.JobID),
 				zap.Int64("elementID", r.ElementID),
 				zap.Stringer("startKey", startKey),
@@ -379,14 +379,9 @@ func insertJobIntoDeleteRangeTable(ctx context.Context, wrapper DelRangeExecWrap
 		}
 	case model.ActionDropIndex, model.ActionDropPrimaryKey:
 		tableID := job.TableID
-		var indexName any
-		var partitionIDs []int64
-		ifExists := make([]bool, 1)
-		allIndexIDs := make([]int64, 1)
-		if err := job.DecodeArgs(&indexName, &ifExists[0], &allIndexIDs[0], &partitionIDs); err != nil {
-			if err = job.DecodeArgs(&indexName, &ifExists, &allIndexIDs, &partitionIDs); err != nil {
-				return errors.Trace(err)
-			}
+		_, _, allIndexIDs, partitionIDs, _, err := job.DecodeDropIndexFinishedArgs()
+		if err != nil {
+			return errors.Trace(err)
 		}
 		// partitionIDs len is 0 if the dropped index is a global index, even if it is a partitioned table.
 		if len(partitionIDs) == 0 {

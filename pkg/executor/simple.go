@@ -2892,7 +2892,7 @@ func (e *SimpleExec) executeAdminSetBDRRole(s *ast.AdminStmt) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	return errors.Trace(meta.NewMeta(txn).SetBDRRole(string(s.BDRRole)))
+	return errors.Trace(meta.NewMutator(txn).SetBDRRole(string(s.BDRRole)))
 }
 
 func (e *SimpleExec) executeAdminUnsetBDRRole() error {
@@ -2900,7 +2900,7 @@ func (e *SimpleExec) executeAdminUnsetBDRRole() error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	return errors.Trace(meta.NewMeta(txn).ClearBDRRole())
+	return errors.Trace(meta.NewMutator(txn).ClearBDRRole())
 }
 
 func (e *SimpleExec) executeSetResourceGroupName(s *ast.SetResourceGroupStmt) error {
