@@ -26,24 +26,37 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/pkg/ddl"
 	testddlutil "github.com/pingcap/tidb/pkg/ddl/testutil"
+	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/errno"
+	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/terror"
+	sessiontypes "github.com/pingcap/tidb/pkg/session/types"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
+	"github.com/pingcap/tidb/pkg/store/mockstore/unistore"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/external"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/codec"
+	contextutil "github.com/pingcap/tidb/pkg/util/context"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
+	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/stretchr/testify/require"
+	"github.com/tikv/client-go/v2/testutils"
 )
 
 const indexModifyLease = 600 * time.Millisecond
@@ -1051,4 +1064,371 @@ func TestAddIndexUniqueFailOnDuplicate(t *testing.T) {
 	tk.MustGetErrCode("alter table t add unique index idx (b);", errno.ErrDupEntry)
 	require.Less(t, int(ddl.ResultCounterForTest.Load()), 6)
 	ddl.ResultCounterForTest = nil
+}
+
+// withMockTiFlash sets the mockStore to have N TiFlash stores (naming as tiflash0, tiflash1, ...).
+func withMockTiFlash(nodes int) mockstore.MockTiKVStoreOption {
+	return mockstore.WithMultipleOptions(
+		mockstore.WithClusterInspector(func(c testutils.Cluster) {
+			mockCluster := c.(*unistore.Cluster)
+			_, _, region1 := mockstore.BootstrapWithSingleStore(c)
+			tiflashIdx := 0
+			for tiflashIdx < nodes {
+				store2 := c.AllocID()
+				peer2 := c.AllocID()
+				addr2 := fmt.Sprintf("tiflash%d", tiflashIdx)
+				mockCluster.AddStore(store2, addr2, &metapb.StoreLabel{Key: "engine", Value: "tiflash"})
+				mockCluster.AddPeer(region1, store2, peer2)
+				tiflashIdx++
+			}
+		}),
+		mockstore.WithStoreType(mockstore.EmbedUnistore),
+	)
+}
+
+func getJobsBySQL(se sessiontypes.Session, tbl, condition string) ([]*model.Job, error) {
+	rs, err := se.Execute(context.Background(), fmt.Sprintf("select job_meta from mysql.%s %s", tbl, condition))
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	if len(rs) != 1 {
+		return nil, errors.New("row cnt is wrong")
+	}
+	var rows []chunk.Row
+	defer terror.Call(rs[0].Close)
+	if rows, err = sqlexec.DrainRecordSet(context.Background(), rs[0], 8); err != nil {
+		return nil, errors.Trace(err)
+	}
+	jobs := make([]*model.Job, 0, 16)
+	for _, row := range rows {
+		jobBinary := row.GetBytes(0)
+		job := model.Job{}
+		err := job.Decode(jobBinary)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		jobs = append(jobs, &job)
+	}
+	return jobs, nil
+}
+
+func TestCreateTableWithVectorIndex(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	checkCreateTableWithVectorIdx := func(replicaCnt uint64) {
+		tk.MustExec("create table t(a int, b vector(3), vector index((VEC_COSINE_DISTANCE(b))) USING HNSW);")
+		tbl, err := dom.InfoSchema().TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
+		require.NoError(t, err)
+		require.Equal(t, replicaCnt, tbl.Meta().TiFlashReplica.Count)
+		indexes := tbl.Meta().Indices
+		require.Equal(t, 1, len(indexes))
+		require.Equal(t, pmodel.IndexTypeHNSW, indexes[0].Tp)
+		require.Equal(t, model.DistanceMetricCosine, indexes[0].VectorInfo.DistanceMetric)
+		tk.MustExec(`DROP TABLE t`)
+	}
+
+	// test TiFlash store count is 0
+	replicas, err := infoschema.GetTiFlashStoreCount(tk.Session().GetStore())
+	require.NoError(t, err)
+	require.Equal(t, uint64(0), replicas)
+	tk.MustContainErrMsg("create table t(a int, b vector(3), vector index((VEC_COSINE_DISTANCE(b))) USING HNSW);",
+		"Unsupported add vector index: unsupported TiFlash store count is 0")
+
+	// test TiFlash store count is 2
+	mockTiflashStoreCnt := uint64(2)
+	store, dom = testkit.CreateMockStoreAndDomainWithSchemaLease(t, tiflashReplicaLease, withMockTiFlash(int(mockTiflashStoreCnt)), mockstore.WithDDLChecker())
+	tk = testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	checkCreateTableWithVectorIdx(1)
+
+	// test unsupported table types
+	tk.MustContainErrMsg("create temporary table t(a int, b vector(3), vector index((VEC_COSINE_DISTANCE(b))) USING HNSW)",
+		"`vector index` is unsupported on temporary tables.")
+	// global and local temporary table using different way to handle, so we have two test cases.
+	tk.MustContainErrMsg("create global temporary table t(a int, b vector(3), vector index((VEC_COSINE_DISTANCE(b))) USING HNSW) on commit delete rows;",
+		"`vector index` is unsupported on temporary tables.")
+	tk.MustContainErrMsg("create table pt(id bigint, b vector(3), vector index((VEC_COSINE_DISTANCE(b))) USING HNSW) "+
+		"partition by range(id) (partition p0 values less than (20), partition p1 values less than (100));",
+		"Unsupported add vector index: unsupported partition table")
+	// a vector index with invisible
+	tk.MustContainErrMsg("create table t(a int, b vector(3), vector index((VEC_COSINE_DISTANCE(b))) USING HNSW INVISIBLE)",
+		"Unsupported set vector index invisible")
+}
+
+func TestAddVectorIndexSimple(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomainWithSchemaLease(t, tiflashReplicaLease, withMockTiFlash(2))
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t, pt;")
+
+	tiflash := infosync.NewMockTiFlash()
+	infosync.SetMockTiFlash(tiflash)
+	defer func() {
+		tiflash.Lock()
+		tiflash.StatusServer.Close()
+		tiflash.Unlock()
+	}()
+
+	// test for errors
+	// for partition table
+	tk.MustExec(`create table pt(
+	 a int,
+	 b vector,
+	 c int)
+	 PARTITION BY RANGE ( a ) (
+	 PARTITION p0 VALUES LESS THAN (6),
+		PARTITION p1 VALUES LESS THAN (11),
+		PARTITION p2 VALUES LESS THAN (21)
+	 );`)
+	tk.MustContainErrMsg("alter table pt add vector index idx((vec_cosine_distance(b))) USING HNSW;",
+		"Unsupported add vector index: unsupported partition table")
+	// for TiFlash replica
+	tk.MustExec("create table t (a int, b vector, c vector(3), d vector(4));")
+	tk.MustContainErrMsg("alter table t add vector index idx((VEC_COSINE_DISTANCE(b))) USING HNSW COMMENT 'b comment';",
+		"unsupported empty TiFlash replica, the replica is nil")
+	tk.MustExec("alter table t set tiflash replica 2 location labels 'a','b';")
+	tk.MustContainErrMsg("alter table t add key idx(a) USING HNSW;",
+		"Only support vector index with HNSW type, but it's non-vector index")
+	// for a wrong column
+	tk.MustContainErrMsg("alter table t add vector index ((vec_cosine_distance(n))) USING HNSW;", "[schema:1054]Unknown column 'n' in 't'")
+	// for wrong functions
+	tk.MustGetErrCode("alter table t add vector index ((vec_cosine_distance(a))) USING HNSW;", errno.ErrUnsupportedDDLOperation)
+	tk.MustContainErrMsg("alter table t add vector index ((vec_cosine_distance(a,'[1,2.1,3.3]'))) USING HNSW;",
+		"Unsupported add vector index: only support vector type, but this is type: int(11)")
+	tk.MustGetErrCode("alter table t add vector index ((vec_l1_distance(b))) USING HNSW;", errno.ErrUnsupportedDDLOperation)
+	tk.MustGetErrCode("alter table t add vector index ((vec_negative_inner_product(b))) USING HNSW;", errno.ErrUnsupportedDDLOperation)
+	tk.MustGetErrCode("alter table t add vector index ((lower(b))) USING HNSW;", errno.ErrUnsupportedDDLOperation)
+
+	// for duplicated index name
+	tk.MustExec("alter table t add key idx(a);")
+	tk.MustGetErrCode("alter table t add vector index idx((vec_cosine_distance(c))) USING HNSW;", errno.ErrDupKeyName)
+	// for duplicated function
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/MockCheckVectorIndexProcess", `return(1)`)
+	tk.MustContainErrMsg("alter table t add vector index vecIdx((vec_cosine_distance(b))) USING HNSW;",
+		"add vector index can only be defined on fixed-dimension vector columns")
+	tk.MustExec("alter table t add vector index vecIdx((vec_cosine_distance(c))) USING HNSW;")
+	tk.MustGetErrCode("alter table t add vector index vecIdx1((vec_cosine_distance(c))) USING HNSW;", errno.ErrDupKeyName)
+	tk.MustExec("alter table t add vector index vecIdx1((vec_cosine_distance(d))) USING HNSW;")
+	tk.MustExec("alter table t add vector index vecIdx2((vec_l2_distance(c))) USING HNSW;")
+	// for "if not exists"
+	tk.MustExec("alter table t drop index vecIdx2")
+	tk.MustExec("alter table t add vector index if not exists idx((vec_l2_distance(c))) USING HNSW;")
+	warnings := tk.Session().GetSessionVars().StmtCtx.GetWarnings()
+	require.GreaterOrEqual(t, len(warnings), 1)
+	lastWarn := warnings[len(warnings)-1]
+	require.Truef(t, terror.ErrorEqual(dbterror.ErrDupKeyName, lastWarn.Err), "err %v", lastWarn.Err)
+	require.Equal(t, contextutil.WarnLevelNote, lastWarn.Level)
+	tk.MustContainErrMsg("alter table t add vector index if not exists idx((vec_cosine_distance(c))) USING HNSW;",
+		"[ddl:1061]vector index vecIdx function vec_cosine_distance already exist on column c")
+
+	// normal test cases
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t (a int, b vector(3));")
+	tk.MustExec("alter table t set tiflash replica 2 location labels 'a','b';")
+	tk.MustExec("insert into t values (1, '[1,2.1,3.3]');")
+	tk.MustQuery("SELECT * FROM INFORMATION_SCHEMA.KEY_COLUMN_USAGE WHERE table_name = 't'").Check(testkit.Rows())
+
+	tbl, err := dom.InfoSchema().TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
+	require.NoError(t, err)
+	indexes := tbl.Meta().Indices
+	require.Equal(t, 0, len(indexes))
+	tk.MustExec("alter table t add vector index idx((VEC_COSINE_DISTANCE(b))) USING HNSW COMMENT 'b comment';")
+	tbl, err = dom.InfoSchema().TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
+	require.NoError(t, err)
+	indexes = tbl.Meta().Indices
+	require.Equal(t, 1, len(indexes))
+	require.Equal(t, pmodel.IndexTypeHNSW, indexes[0].Tp)
+	require.Equal(t, model.DistanceMetricCosine, indexes[0].VectorInfo.DistanceMetric)
+	// test row count
+	jobs, err := getJobsBySQL(tk.Session(), "tidb_ddl_history", "order by job_id desc limit 1")
+	require.NoError(t, err)
+	require.Equal(t, 1, len(jobs))
+	require.Equal(t, model.ActionAddVectorIndex, jobs[0].Type)
+	require.Equal(t, int64(1), jobs[0].RowCount)
+
+	tk.MustQuery("select * from t;").Check(testkit.Rows("1 [1,2.1,3.3]"))
+	tk.MustExec("admin check table t")
+	tk.MustExec("admin check index t idx")
+	tk.MustContainErrMsg("admin cleanup index t idx", "vector index `idx` is not supported for cleanup index")
+	tk.MustQuery("show create table t").Check(testkit.Rows("t CREATE TABLE `t` (\n" +
+		"  `a` int(11) DEFAULT NULL,\n" +
+		"  `b` vector(3) DEFAULT NULL,\n" +
+		"  VECTOR INDEX `idx`((VEC_COSINE_DISTANCE(`b`))) COMMENT 'b comment'\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+
+	// test multi-schema change for unsupported operations
+	tk.MustContainErrMsg("alter table t drop column b;",
+		"can't drop column b with Vector Key covered now")
+	tk.MustContainErrMsg("alter table t add index idx2(a), add vector index idx3((vec_l2_distance(b))) USING HNSW COMMENT 'b comment'",
+		"Unsupported multi schema change for add vector index")
+
+	// test alter index visibility
+	tk.MustContainErrMsg("alter table t alter index idx invisible", "Unsupported set vector index invisible")
+	query := "select distinct index_name, is_visible from information_schema.statistics where table_schema = 'test' and table_name = 't' order by index_name"
+	tk.MustQuery(query).Check(testkit.Rows("idx YES"))
+	tk.MustExec("alter table t alter index idx visible")
+
+	// test modify/change column with a vector index
+	tk.MustContainErrMsg("alter table t modify column b vector(2)", "[ddl:8200]Unsupported modify column: vector indexes on the column")
+	tk.MustExec("alter table t modify column b vector(3) not null")
+
+	// test rename index
+	tk.MustExec("alter table t rename index idx to vecIdx")
+	tbl, err = dom.InfoSchema().TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
+	require.NoError(t, err)
+	indexes1 := tbl.Meta().Indices
+	require.Equal(t, 1, len(indexes1))
+	require.Equal(t, indexes[0].Tp, indexes1[0].Tp)
+	require.Equal(t, indexes[0].VectorInfo.DistanceMetric, indexes1[0].VectorInfo.DistanceMetric)
+
+	// test drop a vector index
+	tk.MustExec("alter table t drop index vecIdx;")
+	tbl, err = dom.InfoSchema().TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
+	require.NoError(t, err)
+	indexes = tbl.Meta().Indices
+	require.Equal(t, 0, len(indexes))
+	gcCnt := tk.MustQuery("select count(*) from mysql.gc_delete_range").Rows()[0][0]
+	require.Equal(t, "0", gcCnt)
+	tk.MustQuery("select * from t;").Check(testkit.Rows("1 [1,2.1,3.3]"))
+	tk.MustQuery("show create table t").Check(testkit.Rows("t CREATE TABLE `t` (\n" +
+		"  `a` int(11) DEFAULT NULL,\n" +
+		"  `b` vector(3) NOT NULL\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+
+	// test create a vector index with same name
+	tk.MustExec("create vector index idx on t ((VEC_COSINE_DISTANCE(b))) USING HNSW COMMENT 'b comment';")
+	tbl, err = dom.InfoSchema().TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
+	require.NoError(t, err)
+	indexes = tbl.Meta().Indices
+	require.Equal(t, 1, len(indexes))
+	require.Equal(t, pmodel.IndexTypeHNSW, indexes[0].Tp)
+	require.Equal(t, model.DistanceMetricCosine, indexes[0].VectorInfo.DistanceMetric)
+	tk.MustQuery("select * from t;").Check(testkit.Rows("1 [1,2.1,3.3]"))
+	tk.MustQuery("show create table t").Check(testkit.Rows("t CREATE TABLE `t` (\n" +
+		"  `a` int(11) DEFAULT NULL,\n" +
+		"  `b` vector(3) NOT NULL,\n" +
+		"  VECTOR INDEX `idx`((VEC_COSINE_DISTANCE(`b`))) COMMENT 'b comment'\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+
+	// test multi-schema change for dropping indexes
+	tk.MustExec("alter table t add index idx2(a)")
+	tk.MustExec("alter table t drop index idx, drop index idx2")
+	tk.MustQuery("show create table t").Check(testkit.Rows("t CREATE TABLE `t` (\n" +
+		"  `a` int(11) DEFAULT NULL,\n" +
+		"  `b` vector(3) NOT NULL\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+	tk.MustQuery("select * from t;").Check(testkit.Rows("1 [1,2.1,3.3]"))
+	tk.MustExec("admin check table t")
+
+	// test anonymous index
+	tk.MustExec("alter table t add vector index ((vec_l2_distance(b))) USING HNSW;")
+	tbl, err = dom.InfoSchema().TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
+	require.NoError(t, err)
+	require.Equal(t, 1, len(tbl.Meta().Indices))
+	idx := tbl.Meta().Indices[0]
+	require.Equal(t, "vector_index", idx.Name.O)
+	require.Equal(t, pmodel.IndexTypeHNSW, idx.Tp)
+	require.Equal(t, model.DistanceMetricL2, idx.VectorInfo.DistanceMetric)
+	tk.MustExec("alter table t add key vector_index_2(a);")
+	tk.MustExec("alter table t add vector index ((VEC_COSINE_DISTANCE(b))) USING HNSW;")
+	tbl, err = dom.InfoSchema().TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
+	require.NoError(t, err)
+	require.Equal(t, 3, len(tbl.Meta().Indices))
+	require.Equal(t, "vector_index_2", tbl.Meta().Indices[1].Name.O)
+	require.Equal(t, true, tbl.Meta().Indices[1].VectorInfo == nil)
+	require.Equal(t, "vector_index_3", tbl.Meta().Indices[2].Name.O)
+	require.Equal(t, false, tbl.Meta().Indices[2].VectorInfo == nil)
+}
+
+func TestAddVectorIndexRollback(t *testing.T) {
+	store, _ := testkit.CreateMockStoreAndDomainWithSchemaLease(t, tiflashReplicaLease, withMockTiFlash(2))
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t;")
+	limit := variable.GetDDLErrorCountLimit()
+	variable.SetDDLErrorCountLimit(5)
+	defer func() {
+		variable.SetDDLErrorCountLimit(limit)
+	}()
+
+	// mock TiFlash replicas
+	tk.MustExec("create table t1 (c1 int, b vector, c vector(3), unique key(c1));")
+	tk.MustExec("alter table t1 set tiflash replica 2 location labels 'a','b';")
+
+	tk.MustExec("insert into t1 values (1, '[1,6.6]', '[1,8.88,9.99]'), (2, '[2,6.6]', '[2,8.88,9.99]'), (3, '[3,6.6]', '[3,8.88,9.99]'), (4, '[4,6.6]', '[4,8.88,9.99]')")
+	ddl.SetWaitTimeWhenErrorOccurred(100 * time.Millisecond)
+	addIdxSQL := "alter table t1 add vector index v_idx((VEC_COSINE_DISTANCE(c))) USING HNSW COMMENT 'b comment';"
+
+	// Check whether the reorg information is cleaned up, and check the rollback info.
+	checkRollbackInfo := func(expectState model.JobState) {
+		jobs, err := getJobsBySQL(tk.Session(), "tidb_ddl_history", "order by job_id desc limit 1")
+		require.NoError(t, err)
+		currJob := jobs[0]
+		require.Equal(t, model.ActionAddVectorIndex, currJob.Type)
+		require.Equal(t, expectState, currJob.State)
+		// check reorg meta
+		element, start, end, physicalID, err := ddl.NewReorgHandlerForTest(testkit.NewTestKit(t, store).Session()).GetDDLReorgHandle(currJob)
+		require.True(t, meta.ErrDDLReorgElementNotExist.Equal(err))
+		require.Nil(t, element)
+		require.Nil(t, start)
+		require.Nil(t, end)
+		require.Equal(t, int64(0), physicalID)
+	}
+
+	// Case1: call SyncTiFlashTableSchema failed to rollback job.
+	tk.MustGetErrMsg(addIdxSQL, "[ddl:-1]DDL job rollback, error msg: MockTiFlash is not accessible")
+	checkRollbackInfo(model.JobStateRollbackDone)
+
+	// Case2: do 'admin cancel ddl job to rollback job.
+	tiflash := infosync.NewMockTiFlash()
+	infosync.SetMockTiFlash(tiflash)
+	defer func() {
+		tiflash.Lock()
+		tiflash.StatusServer.Close()
+		tiflash.Unlock()
+	}()
+
+	times := 1
+	var checkErr error
+	tk1 := testkit.NewTestKit(t, store)
+	tk1.MustExec("use test")
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/MockCheckVectorIndexProcess", `return(0)`)
+	onJobUpdatedExportedFunc := func(job *model.Job) {
+		if checkErr != nil {
+			return
+		}
+		if job.SchemaState == model.StateWriteReorganization {
+			if times == 2 {
+				time.Sleep(10 * time.Millisecond)
+				rs := tk1.MustQuery(fmt.Sprintf("admin cancel ddl jobs %d", job.ID))
+				if !strings.Contains(rs.Rows()[0][1].(string), "success") {
+					checkErr = errors.New("admin cancel ddl job failed")
+				}
+			}
+			times++
+		}
+	}
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobUpdated", onJobUpdatedExportedFunc)
+
+	tk.MustGetErrMsg(addIdxSQL, "[ddl:8214]Cancelled DDL job")
+	require.NoError(t, checkErr)
+	tk.MustQuery("select count(1) from t1;").Check(testkit.Rows("4"))
+	checkRollbackInfo(model.JobStateRollbackDone)
+
+	// Case3: test get error message from tiflash
+	testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/onJobUpdated")
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/MockCheckVectorIndexProcess", `return(-1)`)
+	tk.MustContainErrMsg(addIdxSQL, "[ddl:9014]TiFlash backfill index failed: mock a check error")
+	checkRollbackInfo(model.JobStateRollbackDone)
+
+	// Case4: add a vector index normally.
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/MockCheckVectorIndexProcess", `return(4)`)
+	tk.MustExec(addIdxSQL)
+	checkRollbackInfo(model.JobStateSynced)
+	// TODO: add mock TiFlash to make sure the vector index count is equal to row count.
+	// tk.MustQuery("select count(1) from t1 use index(v_idx);").Check(testkit.Rows("4"))
+
+	testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/MockCheckVectorIndexProcess")
 }

@@ -19,23 +19,45 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/types"
 )
 
+// DistanceMetric is the distance metric used by the vector index.
+// `DistanceMetric` is actually vector functions in ast package. Use `DistanceMetric` to avoid cycle dependency
+type DistanceMetric string
+
+// Note: tipb.VectorDistanceMetric's enum names must be aligned with these constant values.
+const (
+	DistanceMetricL2 DistanceMetric = "L2"
+	// DistanceMetricCosine is cosine distance.
+	DistanceMetricCosine DistanceMetric = "COSINE"
+	// DistanceMetricInnerProduct is inner product.
+	DistanceMetricInnerProduct DistanceMetric = "INNER_PRODUCT"
+)
+
+// VectorIndexInfo is the information of vector index of a column.
+type VectorIndexInfo struct {
+	// Dimension is the dimension of the vector.
+	Dimension uint64 `json:"dimension"` // Set to 0 when initially parsed from comment. Will be assigned to flen later.
+	// DistanceMetric is the distance metric used by the index.
+	DistanceMetric DistanceMetric `json:"distance_metric"`
+}
+
 // IndexInfo provides meta data describing a DB index.
 // It corresponds to the statement `CREATE INDEX Name ON Table (Column);`
 // See https://dev.mysql.com/doc/refman/5.7/en/create-index.html
 type IndexInfo struct {
-	ID            int64           `json:"id"`
-	Name          model.CIStr     `json:"idx_name"` // Index name.
-	Table         model.CIStr     `json:"tbl_name"` // Table name.
-	Columns       []*IndexColumn  `json:"idx_cols"` // Index columns.
-	State         SchemaState     `json:"state"`
-	BackfillState BackfillState   `json:"backfill_state"`
-	Comment       string          `json:"comment"`      // Comment
-	Tp            model.IndexType `json:"index_type"`   // Index type: Btree, Hash or Rtree
-	Unique        bool            `json:"is_unique"`    // Whether the index is unique.
-	Primary       bool            `json:"is_primary"`   // Whether the index is primary key.
-	Invisible     bool            `json:"is_invisible"` // Whether the index is invisible.
-	Global        bool            `json:"is_global"`    // Whether the index is global.
-	MVIndex       bool            `json:"mv_index"`     // Whether the index is multivalued index.
+	ID            int64            `json:"id"`
+	Name          model.CIStr      `json:"idx_name"` // Index name.
+	Table         model.CIStr      `json:"tbl_name"` // Table name.
+	Columns       []*IndexColumn   `json:"idx_cols"` // Index columns.
+	State         SchemaState      `json:"state"`
+	BackfillState BackfillState    `json:"backfill_state"`
+	Comment       string           `json:"comment"`      // Comment
+	Tp            model.IndexType  `json:"index_type"`   // Index type: Btree, Hash or Rtree
+	Unique        bool             `json:"is_unique"`    // Whether the index is unique.
+	Primary       bool             `json:"is_primary"`   // Whether the index is primary key.
+	Invisible     bool             `json:"is_invisible"` // Whether the index is invisible.
+	Global        bool             `json:"is_global"`    // Whether the index is global.
+	MVIndex       bool             `json:"mv_index"`     // Whether the index is multivalued index.
+	VectorInfo    *VectorIndexInfo `json:"vector_index"` // VectorInfo is the vector index information.
 }
 
 // Clone clones IndexInfo.

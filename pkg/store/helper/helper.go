@@ -907,3 +907,26 @@ func CollectTiFlashStatus(statusAddress string, keyspaceID tikv.KeyspaceID, tabl
 	}
 	return nil
 }
+
+// SyncTableSchemaToTiFlash query sync schema of one table to TiFlash store.
+func SyncTableSchemaToTiFlash(statusAddress string, keyspaceID tikv.KeyspaceID, tableID int64) error {
+	// The new query schema is like: http://<host>/tiflash/sync-schema/keyspace/<keyspaceID>/table/<tableID>.
+	// For TiDB forward compatibility, we define the Nullspace as the "keyspace" of the old table.
+	// The query URL is like: http://<host>/sync-schema/keyspace/<NullspaceID>/table/<tableID>
+	statURL := fmt.Sprintf("%s://%s/tiflash/sync-schema/keyspace/%d/table/%d",
+		util.InternalHTTPSchema(),
+		statusAddress,
+		keyspaceID,
+		tableID,
+	)
+	resp, err := util.InternalHTTPClient().Get(statURL)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	err = resp.Body.Close()
+	if err != nil {
+		logutil.BgLogger().Error("close body failed", zap.Error(err))
+	}
+	return nil
+}
