@@ -851,13 +851,8 @@ func orderCostVer2(option *PlanCostOption, rows, n float64, byItems []*util.ByIt
 	exprCost := newCostVer2(option, cpuFactor,
 		rows*float64(numFuncs)*cpuFactor.Value,
 		func() string { return fmt.Sprintf("exprCPU(%v*%v*%v)", rows, numFuncs, cpuFactor) })
-<<<<<<< HEAD
 	orderCost := newCostVer2(option, cpuFactor,
-		rows*math.Log2(n)*cpuFactor.Value,
-=======
-	orderCost := costusage.NewCostVer2(option, cpuFactor,
 		max(rows*math.Log2(n), 0)*cpuFactor.Value,
->>>>>>> 4df3389c263 (planner: Set minimum cost to avoid parent multiplication cost discrepancies (#56387))
 		func() string { return fmt.Sprintf("orderCPU(%v*log(%v)*%v)", rows, n, cpuFactor) })
 	return sumCostVer2(exprCost, orderCost)
 }
