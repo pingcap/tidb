@@ -423,9 +423,8 @@ func (a *TablePartitionArgs) getArgsV1(job *Job) []any {
 		return []any{a.PartInfo}
 	} else if job.Type == ActionDropTablePartition {
 		return []any{a.PartNames}
-	} else {
-		return []any{a.PartNames, a.PartInfo}
 	}
+	return []any{a.PartNames, a.PartInfo}
 }
 
 func (a *TablePartitionArgs) getFinishedArgsV1(job *Job) []any {
@@ -1159,10 +1158,9 @@ func (a *PlacementPolicyArgs) getArgsV1(job *Job) []any {
 		return []any{a.Policy, a.ReplaceOnExist}
 	} else if job.Type == ActionAlterPlacementPolicy {
 		return []any{a.Policy}
-	} else {
-		intest.Assert(job.Type == ActionDropPlacementPolicy, "Invalid job type for PlacementPolicyArgs")
-		return []any{a.PolicyName}
 	}
+	intest.Assert(job.Type == ActionDropPlacementPolicy, "Invalid job type for PlacementPolicyArgs")
+	return []any{a.PolicyName}
 }
 
 func (a *PlacementPolicyArgs) decodeV1(job *Job) error {
