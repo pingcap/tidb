@@ -570,8 +570,6 @@ type RenameTableArgs struct {
 	OldTableName pmodel.CIStr `json:"old_table_name,omitempty"`
 	NewSchemaID  int64        `json:"new_schema_id,omitempty"`
 	TableID      int64        `json:"table_id,omitempty"`
-
-	SchemaIDForSchemaDiff int64 `json:"-"`
 }
 
 func (rt *RenameTableArgs) getArgsV1(*Job) []any {

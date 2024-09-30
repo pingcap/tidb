@@ -497,8 +497,12 @@ func TestUpdateRenameTableArgs(t *testing.T) {
 func TestGetRenameTablesArgs(t *testing.T) {
 	inArgs := &RenameTablesArgs{
 		RenameTableInfos: []*RenameTableArgs{
-			{1, model.CIStr{O: "db1", L: "db1"}, model.CIStr{O: "tb3", L: "tb3"}, model.CIStr{O: "tb1", L: "tb1"}, 3, 100},
-			{2, model.CIStr{O: "db2", L: "db2"}, model.CIStr{O: "tb2", L: "tb2"}, model.CIStr{O: "tb4", L: "tb4"}, 3, 101},
+			{OldSchemaID: 1, OldSchemaName: model.CIStr{O: "db1", L: "db1"},
+				NewTableName: model.CIStr{O: "tb3", L: "tb3"}, OldTableName: model.CIStr{O: "tb1", L: "tb1"},
+				NewSchemaID: 3, TableID: 100},
+			{OldSchemaID: 2, OldSchemaName: model.CIStr{O: "db2", L: "db2"},
+				NewTableName: model.CIStr{O: "tb2", L: "tb2"}, OldTableName: model.CIStr{O: "tb4", L: "tb4"},
+				NewSchemaID: 3, TableID: 101},
 		},
 	}
 	for _, v := range []JobVersion{JobVersion1, JobVersion2} {
