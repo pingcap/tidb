@@ -206,3 +206,60 @@ func TestDeliverOrderAndCleanup(t *testing.T) {
 	cancel()
 	<-done
 }
+
+func TestPublishToStoreBySQL(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("USE test")
+	tk.MustExec("DROP TABLE IF EXISTS ddl_notifier")
+	tk.MustExec(tableStructure)
+	notifier.DefaultStore = notifier.OpenTableStore("test", "ddl_notifier")
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a int)")                                                                                                // ActionCreateTable
+	tk.MustExec("alter table t partition by range(a) (partition p1 values less than (20))")                                              // ActionAlterTablePartitioning
+	tk.MustExec("alter table t reorganize partition p1 into (partition p11 values less than (10), partition p12 values less than (20))") // ActionReorganizePartition
+	tk.MustExec("alter table t truncate partition p11")                                                                                  // ActionTruncateTablePartition
+	tk.MustExec("alter table t drop partition p11")                                                                                      // ActionDropTablePartition
+	tk.MustExec("alter table t add partition(partition p13 values less than (30))")                                                      // ActionAddTablePartition
+	tk.MustExec("create table t1 (a int)")                                                                                               // ActionCreateTable
+	tk.MustExec("ALTER TABLE t EXCHANGE PARTITION p12 WITH TABLE t1")                                                                    // ActionExchangeTablePartition
+	tk.MustExec("alter table t remove partitioning")                                                                                     // ActionRemovePartitioning
+	tk.MustExec("truncate table t")                                                                                                      // ActionTruncateTable
+	tk.MustExec("drop table t1")                                                                                                         // ActionDropTable
+	tk.MustExec("alter table t modify column a varchar(15)")                                                                             // ActionModifyColumn
+	tk.MustExec("alter table t add column b int")                                                                                        // ActionAddColumn
+	tk.MustExec("alter table t add index(b)")
+	tk.MustExec("create table t1(b int key, FOREIGN KEY (b) REFERENCES t(b) ON DELETE CASCADE);") // ActionCreateTable with foreign key
+
+	ctx := context.Background()
+	s := notifier.OpenTableStore("test", "ddl_notifier")
+	se := sess.NewSession(tk.Session())
+	got, err := s.List(ctx, se)
+	require.NoError(t, err)
+	require.Len(t, got, 14)
+	rows := tk.MustQuery("select schema_change from test.ddl_notifier").Rows()
+	tps := make([]model.ActionType, len(rows))
+	for i, row := range rows {
+		event := &notifier.SchemaChangeEvent{}
+		err = event.UnmarshalJSON([]byte(row[0].(string)))
+		require.NoError(t, err)
+		tps[i] = event.GetType()
+	}
+	require.Equal(t, tps, []model.ActionType{
+		model.ActionCreateTable,
+		model.ActionAlterTablePartitioning,
+		model.ActionReorganizePartition,
+		model.ActionTruncateTablePartition,
+		model.ActionDropTablePartition,
+		model.ActionAddTablePartition,
+		model.ActionCreateTable,
+		model.ActionExchangeTablePartition,
+		model.ActionRemovePartitioning,
+		model.ActionTruncateTable,
+		model.ActionDropTable,
+		model.ActionModifyColumn,
+		model.ActionAddColumn,
+		model.ActionCreateTable,
+	})
+}
