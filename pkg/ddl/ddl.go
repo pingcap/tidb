@@ -568,7 +568,7 @@ func (d *ddl) RegisterStatsHandle(h *handle.Handle) {
 // give up notify and log it.
 func asyncNotifyEvent(jobCtx *jobContext, e *notifier.SchemaChangeEvent, job *model.Job, sessPool *sess.Pool) {
 	if intest.InTest {
-		if sessPool == nil {
+		if sessPool == nil || notifier.DefaultStore == nil {
 			return
 		}
 		sessCtx, err := sessPool.Get()
