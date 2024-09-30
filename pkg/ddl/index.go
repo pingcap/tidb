@@ -920,7 +920,7 @@ func checkIfTempIndexIsEmptyForPhysicalTable(
 	tbl table.PhysicalTable,
 	firstIdxID, lastIdxID int64,
 ) bool {
-	start, end := encodeTempIndexRange(tbl.Meta().ID, firstIdxID, lastIdxID)
+	start, end := encodeTempIndexRange(tbl.GetPhysicalID(), firstIdxID, lastIdxID)
 	foundKey := false
 	err := iterateSnapshotKeys(ctx, store, kv.PriorityLow, tbl.IndexPrefix(), math.MaxUint64, start, end,
 		func(_ kv.Handle, _ kv.Key, _ []byte) (more bool, err error) {
