@@ -798,7 +798,7 @@ func scanCostVer2(option *PlanCostOption, rows, rowSize float64, scanFactor cost
 	}
 	return newCostVer2(option, scanFactor,
 		// rows * log(row-size) * scanFactor, log2 from experiments
-		rows*math.Log2(rowSize)*scanFactor.Value,
+		rows*max(math.Log2(rowSize), 0)*scanFactor.Value,
 		func() string { return fmt.Sprintf("scan(%v*logrowsize(%v)*%v)", rows, rowSize, scanFactor) })
 }
 
@@ -852,7 +852,7 @@ func orderCostVer2(option *PlanCostOption, rows, n float64, byItems []*util.ByIt
 		rows*float64(numFuncs)*cpuFactor.Value,
 		func() string { return fmt.Sprintf("exprCPU(%v*%v*%v)", rows, numFuncs, cpuFactor) })
 	orderCost := newCostVer2(option, cpuFactor,
-		rows*math.Log2(n)*cpuFactor.Value,
+		max(rows*math.Log2(n), 0)*cpuFactor.Value,
 		func() string { return fmt.Sprintf("orderCPU(%v*log(%v)*%v)", rows, n, cpuFactor) })
 	return sumCostVer2(exprCost, orderCost)
 }

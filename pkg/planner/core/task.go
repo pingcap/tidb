@@ -310,11 +310,11 @@ func (p *PhysicalIndexJoin) attach2Task(tasks ...task) task {
 // RowSize for cost model ver2 is simplified, always use this function to calculate row size.
 func getAvgRowSize(stats *property.StatsInfo, cols []*expression.Column) (size float64) {
 	if stats.HistColl != nil {
-		size = cardinality.GetAvgRowSizeListInDisk(stats.HistColl, cols)
+		size = max(cardinality.GetAvgRowSizeListInDisk(stats.HistColl, cols), 0)
 	} else {
 		// Estimate using just the type info.
 		for _, col := range cols {
-			size += float64(chunk.EstimateTypeWidth(col.GetType()))
+			size += max(float64(chunk.EstimateTypeWidth(col.GetType())), 0)
 		}
 	}
 	return
