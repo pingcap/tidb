@@ -483,7 +483,8 @@ func TestFix56408(t *testing.T) {
 	tests := []testCase{
 		{[]byte("1|aa|beijing\n1|aa|beijing\n1|aa|beijing\n1|aa|beijing\n2|bb|shanghai\n2|bb|shanghai\n2|bb|shanghai\n3|cc|guangzhou\n"),
 			[]string{"1 aa beijing", "2 bb shanghai", "3 cc guangzhou"},
-			"Records: 8  Deleted: 0  Skipped: 5  Warnings: 0"},
+			"Records: 8  Deleted: 0  Skipped: 5  Warnings: 0",
+		},
 	}
 	deleteSQL := "DO 1"
 	selectSQL := "TABLE a;"
