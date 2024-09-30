@@ -596,6 +596,8 @@ func TestAddIndexMergeReplaceDelete(t *testing.T) {
 
 	tk1 := testkit.NewTestKit(t, store)
 	tk1.MustExec("use test")
+	// Don't skip merging temp index, otherwise MockDMLExecutionMerging will not execute.
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/skipReorgWorkForTempIndex", "return(false)")
 
 	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobUpdated", func(job *model.Job) {
 		if t.Failed() {

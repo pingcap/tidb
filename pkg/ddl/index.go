@@ -883,6 +883,11 @@ func checkIfTempIndexReorgWorkCanSkip(
 	allIndexInfos []*model.IndexInfo,
 	job *model.Job,
 ) bool {
+	failpoint.Inject("skipReorgWorkForTempIndex", func(val failpoint.Value) {
+		if v, ok := val.(bool); ok {
+			failpoint.Return(v)
+		}
+	})
 	if job.SnapshotVer != 0 {
 		// Reorg work has begun.
 		return false
