@@ -1021,6 +1021,17 @@ func (s *Server) DrainClients(drainWait time.Duration, cancelWait time.Duration)
 		for _, conn := range conns {
 			// Wait for the connections with explicit transaction or an executing auto-commit query.
 			if conn.getStatus() == connStatusReading && !conn.getCtx().GetSessionVars().InTxn() {
+				// The waitgroup is not protected by the `quitWaitingForConns`. However, the implementation
+				// of `client-go` will guarantee this `Wait` will return at least after killing the
+				// connections. We also wait for a similar `WaitGroup` on the store after killing the connections.
+				//
+				// Therefore, it'll not cause goroutine leak. Even if, it's not a big issue when the TiDB is
+				// going to shutdown.
+				//
+				// It should be waited for connections in all status, even if it's not in transactions and is reading
+				// from the client. Because it may run background commit goroutines at any time.
+				conn.getCtx().Session.GetCommitWaitGroup().Wait()
+
 				continue
 			}
 			select {
@@ -1028,6 +1039,11 @@ func (s *Server) DrainClients(drainWait time.Duration, cancelWait time.Duration)
 			case <-quitWaitingForConns:
 				return
 			}
+
+			// Wait for the commit wait group after waiting for the `conn.quit` channel to make sure the foreground
+			// process has finished to avoid the situation that after waiting for the wait group, the transaction starts
+			// a new background goroutine and increase the wait group.
+			conn.getCtx().Session.GetCommitWaitGroup().Wait()
 		}
 	}()
 
