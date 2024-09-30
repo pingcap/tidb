@@ -910,43 +910,63 @@ func GetDropForeignKeyArgs(job *Job) (*DropForeignKeyArgs, error) {
 	return getOrDecodeArgsV2[*DropForeignKeyArgs](job)
 }
 
-// DropColumnArgs is the arguments of dropping column job.
-type DropColumnArgs struct {
-	ColName  pmodel.CIStr `json:"column_name,omitempty"`
-	IfExists bool         `json:"if_exists,omitempty"`
+// TableColumnArgs is the arguments for dropping column ddl or Adding column ddl.
+type TableColumnArgs struct {
+	// follow items for add column.
+	Col    *ColumnInfo         `json:"column_info,omitempty"`
+	Pos    *ast.ColumnPosition `json:"position,omitempty"`
+	Offset int                 `json:"offset,omitempty"`
+	// it's shared by add/drop column.
+	IgnoreExistenceErr bool `json:"ignore_existence_err,omitempty"`
+
+	// for drop column.
 	// below 2 fields are filled during running.
 	IndexIDs     []int64 `json:"index_ids,omitempty"`
 	PartitionIDs []int64 `json:"partition_ids,omitempty"`
 }
 
-func (a *DropColumnArgs) fillJobV1(job *Job) {
-	job.Args = []any{a.ColName, a.IfExists, a.IndexIDs, a.PartitionIDs}
+func (a *TableColumnArgs) fillJobV1(job *Job) {
+	if job.Type == ActionDropColumn {
+		job.Args = []any{a.Col.Name, a.IgnoreExistenceErr, a.IndexIDs, a.PartitionIDs}
+	} else {
+		job.Args = []any{a.Col, a.Pos, a.Offset, a.IgnoreExistenceErr}
+	}
 }
 
-// GetDropColumnArgs gets the args for drop column ddl.
-func GetDropColumnArgs(job *Job) (*DropColumnArgs, error) {
-	var (
-		colName      pmodel.CIStr
-		ifExists     bool
-		indexIDs     []int64
-		partitionIDs []int64
-	)
+// FillRollBackArgsForAddColumn fills the args for rollback add column ddl.
+func FillRollBackArgsForAddColumn(job *Job, args *TableColumnArgs) {
+	intest.Assert(job.Type == ActionAddColumn, "only for add column job")
+	fakeJob := &Job{
+		Version: job.Version,
+		Type:    ActionDropColumn,
+	}
+	fakeJob.FillArgs(args)
+	job.Args = fakeJob.Args
+}
 
-	if job.Version <= JobVersion1 {
-		err := job.DecodeArgs(&colName, &ifExists, &indexIDs, &partitionIDs)
-		if err != nil {
-			return nil, errors.Trace(err)
+// GetTableColumnArgs gets the args for dropping column ddl or Adding column ddl.
+func GetTableColumnArgs(job *Job) (*TableColumnArgs, error) {
+	if job.Version == JobVersion1 {
+		args := &TableColumnArgs{
+			Col: &ColumnInfo{},
+			Pos: &ast.ColumnPosition{},
 		}
 
-		return &DropColumnArgs{
-			ColName:      colName,
-			IfExists:     ifExists,
-			IndexIDs:     indexIDs,
-			PartitionIDs: partitionIDs,
-		}, nil
+		// when rollbacking add-columm, it's arguments is same as drop-column
+		if job.Type == ActionDropColumn || job.State == JobStateRollingback {
+			err := job.DecodeArgs(&args.Col.Name, &args.IgnoreExistenceErr, &args.IndexIDs, &args.PartitionIDs)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+		} else {
+			// for add column ddl.
+			if err := job.DecodeArgs(args.Col, args.Pos, &args.Offset, &args.IgnoreExistenceErr); err != nil {
+				return nil, errors.Trace(err)
+			}
+		}
+		return args, nil
 	}
-
-	return getOrDecodeArgsV2[*DropColumnArgs](job)
+	return getOrDecodeArgsV2[*TableColumnArgs](job)
 }
 
 // RenameTablesArgs is the arguments for rename tables job.
@@ -1418,6 +1438,29 @@ func GetPlacementPolicyArgs(job *Job) (*PlacementPolicyArgs, error) {
 	}
 
 	return getOrDecodeArgsV2[*PlacementPolicyArgs](job)
+}
+
+// SetDefaultValueArgs is the argument for setting default value ddl.
+type SetDefaultValueArgs struct {
+	Col *ColumnInfo `json:"column_info,omitempty"`
+}
+
+func (a *SetDefaultValueArgs) fillJobV1(job *Job) {
+	job.Args = []any{a.Col}
+}
+
+// GetSetDefaultValueArgs get the args for setting default value ddl.
+func GetSetDefaultValueArgs(job *Job) (*SetDefaultValueArgs, error) {
+	if job.Version == JobVersion1 {
+		col := &ColumnInfo{}
+		err := job.DecodeArgs(col)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		return &SetDefaultValueArgs{Col: col}, nil
+	}
+
+	return getOrDecodeArgsV2[*SetDefaultValueArgs](job)
 }
 
 // KeyRange is copied from kv.KeyRange to avoid cycle import.
