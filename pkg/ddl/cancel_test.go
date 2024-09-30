@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/ddl/testutil"
+	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -68,6 +69,15 @@ var allTestCase = []testCancelJob{
 	{"alter table t add index idx_c2(c2)", true, model.StateDeleteOnly, true, true, nil},
 	{"alter table t add index idx_c2(c2)", true, model.StateWriteOnly, true, true, nil},
 	{"alter table t add index idx_cx2(c2)", false, model.StatePublic, false, true, nil},
+	// Drop vector index
+	{"alter table t drop index v_idx_1", true, model.StatePublic, true, false, []string{"alter table t add vector index v_idx_1((VEC_L2_DISTANCE(v2))) USING HNSW"}},
+	{"alter table t drop index v_idx_2", false, model.StateWriteOnly, true, false, []string{"alter table t add vector index v_idx_2((VEC_COSINE_DISTANCE(v2))) USING HNSW"}},
+	{"alter table t drop index v_idx_3", false, model.StateDeleteOnly, false, true, []string{"alter table t add vector index v_idx_3((VEC_COSINE_DISTANCE(v2))) USING HNSW"}},
+	{"alter table t drop index v_idx_4", false, model.StateDeleteReorganization, false, true, []string{"alter table t add vector index v_idx_4((VEC_COSINE_DISTANCE(v2))) USING HNSW"}},
+	// Add vector key
+	{"alter table t add vector index v_idx((VEC_COSINE_DISTANCE(v2))) USING HNSW", true, model.StateNone, true, false, nil},
+	{"alter table t add vector index v_idx((VEC_COSINE_DISTANCE(v2))) USING HNSW", true, model.StateDeleteOnly, true, true, nil},
+	{"alter table t add vector index v_idx((VEC_COSINE_DISTANCE(v2))) USING HNSW", true, model.StateWriteOnly, true, true, nil},
 	// Add column.
 	{"alter table t add column c4 bigint", true, model.StateNone, true, false, nil},
 	{"alter table t add column c4 bigint", true, model.StateDeleteOnly, true, true, nil},
@@ -204,7 +214,7 @@ func cancelSuccess(rs *testkit.Result) bool {
 	return strings.Contains(rs.Rows()[0][1].(string), "success")
 }
 
-func TestCancel(t *testing.T) {
+func TestCancelVariousJobs(t *testing.T) {
 	var enterCnt, exitCnt atomic.Int32
 	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeDeliveryJob", func(job *model.Job) { enterCnt.Add(1) })
 	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterDeliveryJob", func(job *model.Job) { exitCnt.Add(1) })
@@ -213,9 +223,17 @@ func TestCancel(t *testing.T) {
 			return enterCnt.Load() == exitCnt.Load()
 		}, 10*time.Second, 10*time.Millisecond)
 	}
-	store := testkit.CreateMockStoreWithSchemaLease(t, 100*time.Millisecond)
+	store := testkit.CreateMockStoreWithSchemaLease(t, 100*time.Millisecond, withMockTiFlash(2))
 	tk := testkit.NewTestKit(t, store)
 	tkCancel := testkit.NewTestKit(t, store)
+
+	tiflash := infosync.NewMockTiFlash()
+	infosync.SetMockTiFlash(tiflash)
+	defer func() {
+		tiflash.Lock()
+		tiflash.StatusServer.Close()
+		tiflash.Unlock()
+	}()
 
 	// Prepare schema.
 	tk.MustExec("use test")
@@ -231,14 +249,16 @@ func TestCancel(t *testing.T) {
 		partition p4 values less than (7096)
    	);`)
 	tk.MustExec(`create table t (
-		c1 int, c2 int, c3 int, c11 tinyint, index fk_c1(c1)
+		c1 int, c2 int, c3 int, c11 tinyint, v2 vector(3), index fk_c1(c1)
 	);`)
+	tk.MustExec("alter table t set tiflash replica 2 location labels 'a','b';")
 
 	// Prepare data.
 	for i := 0; i <= 2048; i++ {
 		tk.MustExec(fmt.Sprintf("insert into t_partition values(%d, %d, %d)", i*3, i*2, i))
 		tk.MustExec(fmt.Sprintf("insert into t(c1, c2, c3) values(%d, %d, %d)", i*3, i*2, i))
 	}
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/MockCheckVectorIndexProcess", `return(2048)`)
 
 	// Change some configurations.
 	ddl.ReorgWaitTimeout = 10 * time.Millisecond

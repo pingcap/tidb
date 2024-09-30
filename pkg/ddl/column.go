@@ -136,8 +136,8 @@ func checkDropColumnForStatePublic(colInfo *model.ColumnInfo) (err error) {
 	return nil
 }
 
-func onDropColumn(jobCtx *jobContext, t *meta.Mutator, job *model.Job) (ver int64, _ error) {
-	tblInfo, colInfo, idxInfos, ifExists, err := checkDropColumn(jobCtx, t, job)
+func onDropColumn(jobCtx *jobContext, job *model.Job) (ver int64, _ error) {
+	tblInfo, colInfo, idxInfos, ifExists, err := checkDropColumn(jobCtx, job)
 	if err != nil {
 		if ifExists && dbterror.ErrCantDropFieldOrKey.Equal(err) {
 			// Convert the "not exists" error to a warning.
@@ -151,7 +151,7 @@ func onDropColumn(jobCtx *jobContext, t *meta.Mutator, job *model.Job) (ver int6
 		job.MarkNonRevertible()
 		job.SchemaState = colInfo.State
 		// Store the mark and enter the next DDL handling loop.
-		return updateVersionAndTableInfoWithCheck(jobCtx, t, job, tblInfo, false)
+		return updateVersionAndTableInfoWithCheck(jobCtx, job, tblInfo, false)
 	}
 
 	originalState := colInfo.State
@@ -165,7 +165,7 @@ func onDropColumn(jobCtx *jobContext, t *meta.Mutator, job *model.Job) (ver int6
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
-		ver, err = updateVersionAndTableInfoWithCheck(jobCtx, t, job, tblInfo, originalState != colInfo.State)
+		ver, err = updateVersionAndTableInfoWithCheck(jobCtx, job, tblInfo, originalState != colInfo.State)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
@@ -183,7 +183,7 @@ func onDropColumn(jobCtx *jobContext, t *meta.Mutator, job *model.Job) (ver int6
 			}
 			tblInfo.Indices = newIndices
 		}
-		ver, err = updateVersionAndTableInfo(jobCtx, t, job, tblInfo, originalState != colInfo.State)
+		ver, err = updateVersionAndTableInfo(jobCtx, job, tblInfo, originalState != colInfo.State)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
@@ -197,7 +197,7 @@ func onDropColumn(jobCtx *jobContext, t *meta.Mutator, job *model.Job) (ver int6
 		// delete only -> reorganization
 		colInfo.State = model.StateDeleteReorganization
 		tblInfo.MoveColumnInfo(colInfo.Offset, len(tblInfo.Columns)-1)
-		ver, err = updateVersionAndTableInfo(jobCtx, t, job, tblInfo, originalState != colInfo.State)
+		ver, err = updateVersionAndTableInfo(jobCtx, job, tblInfo, originalState != colInfo.State)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
@@ -207,7 +207,7 @@ func onDropColumn(jobCtx *jobContext, t *meta.Mutator, job *model.Job) (ver int6
 		tblInfo.MoveColumnInfo(colInfo.Offset, len(tblInfo.Columns)-1)
 		tblInfo.Columns = tblInfo.Columns[:len(tblInfo.Columns)-1]
 		colInfo.State = model.StateNone
-		ver, err = updateVersionAndTableInfo(jobCtx, t, job, tblInfo, originalState != colInfo.State)
+		ver, err = updateVersionAndTableInfo(jobCtx, job, tblInfo, originalState != colInfo.State)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
@@ -232,9 +232,9 @@ func onDropColumn(jobCtx *jobContext, t *meta.Mutator, job *model.Job) (ver int6
 	return ver, errors.Trace(err)
 }
 
-func checkDropColumn(jobCtx *jobContext, t *meta.Mutator, job *model.Job) (*model.TableInfo, *model.ColumnInfo, []*model.IndexInfo, bool /* ifExists */, error) {
+func checkDropColumn(jobCtx *jobContext, job *model.Job) (*model.TableInfo, *model.ColumnInfo, []*model.IndexInfo, bool /* ifExists */, error) {
 	schemaID := job.SchemaID
-	tblInfo, err := GetTableInfoAndCancelFaultJob(t, job, schemaID)
+	tblInfo, err := GetTableInfoAndCancelFaultJob(jobCtx.metaMut, job, schemaID)
 	if err != nil {
 		return nil, nil, nil, false, errors.Trace(err)
 	}
@@ -289,14 +289,14 @@ func isDroppableColumn(tblInfo *model.TableInfo, colName pmodel.CIStr) error {
 	return nil
 }
 
-func onSetDefaultValue(jobCtx *jobContext, t *meta.Mutator, job *model.Job) (ver int64, _ error) {
+func onSetDefaultValue(jobCtx *jobContext, job *model.Job) (ver int64, _ error) {
 	args, err := model.GetSetDefaultValueArgs(job)
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
 	newCol := args.Col
-	return updateColumnDefaultValue(jobCtx, t, job, newCol, &newCol.Name)
+	return updateColumnDefaultValue(jobCtx, job, newCol, &newCol.Name)
 }
 
 func setIdxIDName(idxInfo *model.IndexInfo, newID int64, newName pmodel.CIStr) {
@@ -893,17 +893,18 @@ func updateChangingObjState(changingCol *model.ColumnInfo, changingIdxs []*model
 	}
 }
 
-func checkAndApplyAutoRandomBits(jobCtx *jobContext, m *meta.Mutator, dbInfo *model.DBInfo, tblInfo *model.TableInfo,
+func checkAndApplyAutoRandomBits(jobCtx *jobContext, dbInfo *model.DBInfo, tblInfo *model.TableInfo,
 	oldCol *model.ColumnInfo, newCol *model.ColumnInfo, newAutoRandBits uint64) error {
 	if newAutoRandBits == 0 {
 		return nil
 	}
-	idAcc := m.GetAutoIDAccessors(dbInfo.ID, tblInfo.ID)
+	metaMut := jobCtx.metaMut
+	idAcc := metaMut.GetAutoIDAccessors(dbInfo.ID, tblInfo.ID)
 	err := checkNewAutoRandomBits(idAcc, oldCol, newCol, newAutoRandBits, tblInfo.AutoRandomRangeBits, tblInfo.SepAutoInc())
 	if err != nil {
 		return err
 	}
-	return applyNewAutoRandomBits(jobCtx, m, dbInfo, tblInfo, oldCol, newAutoRandBits)
+	return applyNewAutoRandomBits(jobCtx, dbInfo, tblInfo, oldCol, newAutoRandBits)
 }
 
 // checkNewAutoRandomBits checks whether the new auto_random bits number can cause overflow.
@@ -964,7 +965,7 @@ func (r *asAutoIDRequirement) AutoIDClient() *autoid.ClientDiscover {
 
 // applyNewAutoRandomBits set auto_random bits to TableInfo and
 // migrate auto_increment ID to auto_random ID if possible.
-func applyNewAutoRandomBits(jobCtx *jobContext, m *meta.Mutator, dbInfo *model.DBInfo,
+func applyNewAutoRandomBits(jobCtx *jobContext, dbInfo *model.DBInfo,
 	tblInfo *model.TableInfo, oldCol *model.ColumnInfo, newAutoRandBits uint64) error {
 	tblInfo.AutoRandomBits = newAutoRandBits
 	needMigrateFromAutoIncToAutoRand := mysql.HasAutoIncrementFlag(oldCol.GetFlag())
@@ -976,7 +977,7 @@ func applyNewAutoRandomBits(jobCtx *jobContext, m *meta.Mutator, dbInfo *model.D
 		errMsg := fmt.Sprintf(autoid.AutoRandomAllocatorNotFound, dbInfo.Name.O, tblInfo.Name.O)
 		return dbterror.ErrInvalidAutoRandom.GenWithStackByArgs(errMsg)
 	}
-	idAcc := m.GetAutoIDAccessors(dbInfo.ID, tblInfo.ID).RowID()
+	idAcc := jobCtx.metaMut.GetAutoIDAccessors(dbInfo.ID, tblInfo.ID).RowID()
 	nextAutoIncID, err := idAcc.Get()
 	if err != nil {
 		return errors.Trace(err)
@@ -1034,8 +1035,8 @@ func checkForNullValue(ctx context.Context, sctx sessionctx.Context, isDataTrunc
 	return nil
 }
 
-func updateColumnDefaultValue(jobCtx *jobContext, t *meta.Mutator, job *model.Job, newCol *model.ColumnInfo, oldColName *pmodel.CIStr) (ver int64, _ error) {
-	tblInfo, err := GetTableInfoAndCancelFaultJob(t, job, job.SchemaID)
+func updateColumnDefaultValue(jobCtx *jobContext, job *model.Job, newCol *model.ColumnInfo, oldColName *pmodel.CIStr) (ver int64, _ error) {
+	tblInfo, err := GetTableInfoAndCancelFaultJob(jobCtx.metaMut, job, job.SchemaID)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
@@ -1043,7 +1044,7 @@ func updateColumnDefaultValue(jobCtx *jobContext, t *meta.Mutator, job *model.Jo
 	if job.MultiSchemaInfo != nil && job.MultiSchemaInfo.Revertible {
 		job.MarkNonRevertible()
 		// Store the mark and enter the next DDL handling loop.
-		return updateVersionAndTableInfoWithCheck(jobCtx, t, job, tblInfo, false)
+		return updateVersionAndTableInfoWithCheck(jobCtx, job, tblInfo, false)
 	}
 
 	oldCol := model.FindColumnInfo(tblInfo.Columns, oldColName.L)
@@ -1075,7 +1076,7 @@ func updateColumnDefaultValue(jobCtx *jobContext, t *meta.Mutator, job *model.Jo
 		}
 	}
 
-	ver, err = updateVersionAndTableInfo(jobCtx, t, job, tblInfo, true)
+	ver, err = updateVersionAndTableInfo(jobCtx, job, tblInfo, true)
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
@@ -1098,10 +1099,14 @@ func isColumnWithIndex(colName string, indices []*model.IndexInfo) bool {
 
 func isColumnCanDropWithIndex(colName string, indices []*model.IndexInfo) error {
 	for _, indexInfo := range indices {
-		if indexInfo.Primary || len(indexInfo.Columns) > 1 {
+		if indexInfo.Primary || len(indexInfo.Columns) > 1 || indexInfo.VectorInfo != nil {
 			for _, col := range indexInfo.Columns {
 				if col.Name.L == colName {
-					return dbterror.ErrCantDropColWithIndex.GenWithStack("can't drop column %s with composite index covered or Primary Key covered now", colName)
+					errMsg := "with composite index covered or Primary Key covered now"
+					if indexInfo.VectorInfo != nil {
+						errMsg = "with Vector Key covered now"
+					}
+					return dbterror.ErrCantDropColWithIndex.GenWithStack("can't drop column %s "+errMsg, colName)
 				}
 			}
 		}

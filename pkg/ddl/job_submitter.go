@@ -541,12 +541,7 @@ func assignGIDsForJobs(jobWs []*JobWrapper, ids []int64) {
 				}
 			}
 		case model.ActionCreateSchema:
-			var dbInfo *model.DBInfo
-			if jobW.Version == model.JobVersion1 {
-				dbInfo = jobW.Args[0].(*model.DBInfo)
-			} else {
-				dbInfo = jobW.Args[0].(*model.CreateSchemaArgs).DBInfo
-			}
+			dbInfo := jobW.JobArgs.(*model.CreateSchemaArgs).DBInfo
 			if !jobW.IDAllocated {
 				dbInfo.ID = alloc.next()
 			}

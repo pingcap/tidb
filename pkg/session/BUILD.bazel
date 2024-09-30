@@ -44,6 +44,7 @@ go_library(
         "//pkg/infoschema/context",
         "//pkg/kv",
         "//pkg/meta",
+        "//pkg/meta/metabuild",
         "//pkg/meta/model",
         "//pkg/metrics",
         "//pkg/owner",

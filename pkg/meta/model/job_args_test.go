@@ -887,14 +887,41 @@ func TestGetSetDefaultValueArgs(t *testing.T) {
 	}
 }
 
+func TestFlashbackClusterArgs(t *testing.T) {
+	inArgs := &FlashbackClusterArgs{
+		FlashbackTS:       111,
+		StartTS:           222,
+		CommitTS:          333,
+		EnableGC:          true,
+		EnableAutoAnalyze: true,
+		EnableTTLJob:      true,
+		SuperReadOnly:     true,
+		LockedRegionCnt:   444,
+		PDScheduleValue:   map[string]any{"t1": 123.0},
+		FlashbackKeyRanges: []KeyRange{
+			{StartKey: []byte("db1"), EndKey: []byte("db2")},
+			{StartKey: []byte("db2"), EndKey: []byte("db3")},
+		},
+	}
+	for _, v := range []JobVersion{JobVersion1, JobVersion2} {
+		j2 := &Job{}
+		require.NoError(t, j2.Decode(getJobBytes(t, inArgs, v, ActionFlashbackCluster)))
+		args, err := GetFlashbackClusterArgs(j2)
+		require.NoError(t, err)
+
+		require.Equal(t, inArgs, args)
+	}
+}
+
 func TestDropColumnArgs(t *testing.T) {
 	inArgs := &TableColumnArgs{
-		DropColumnArgs: &DropColumnArgs{
-			ColName:      model.NewCIStr("col_name"),
-			IfExists:     true,
-			IndexIDs:     []int64{1, 2, 3},
-			PartitionIDs: []int64{4, 5, 6},
+		Col: &ColumnInfo{
+			Name: model.NewCIStr("col_name"),
 		},
+		IfExistsOrNot: true,
+		IndexIDs:      []int64{1, 2, 3},
+		PartitionIDs:  []int64{4, 5, 6},
+		Pos:           &ast.ColumnPosition{},
 	}
 
 	for _, v := range []JobVersion{JobVersion1, JobVersion2} {
@@ -907,28 +934,32 @@ func TestDropColumnArgs(t *testing.T) {
 }
 
 func TestAddColumnArgs(t *testing.T) {
-	addArgs := &AddColumnArgs{
+	inArgs := &TableColumnArgs{
 		Col: &ColumnInfo{
-			ID: 7527,
+			ID:   7527,
+			Name: model.NewCIStr("col_name"),
 		},
 		Pos: &ast.ColumnPosition{
 			Tp: ast.ColumnPositionFirst,
 		},
-		Offset:      1001,
-		IfNotExists: true,
+		Offset:        1001,
+		IfExistsOrNot: true,
 	}
-	dropArgs := &DropColumnArgs{
-		ColName: model.NewCIStr("col_name"),
+	dropArgs := &TableColumnArgs{
+		Col: &ColumnInfo{
+			Name: model.NewCIStr("drop_column"),
+		},
+		Pos: &ast.ColumnPosition{},
 	}
 
 	for _, v := range []JobVersion{JobVersion1, JobVersion2} {
 		j2 := &Job{}
-		require.NoError(t, j2.Decode(getJobBytes(t, &TableColumnArgs{AddColumnArgs: addArgs}, v, ActionAddColumn)))
+		require.NoError(t, j2.Decode(getJobBytes(t, inArgs, v, ActionAddColumn)))
 		args, err := GetTableColumnArgs(j2)
 		require.NoError(t, err)
-		require.Equal(t, &TableColumnArgs{AddColumnArgs: addArgs}, args)
+		require.Equal(t, inArgs, args)
 
-		FillRollBackArgsForAddColumn(j2, &TableColumnArgs{DropColumnArgs: dropArgs})
+		FillRollBackArgsForAddColumn(j2, dropArgs)
 		j2.State = JobStateRollingback
 		jobBytes, err := j2.Encode(true)
 		require.NoError(t, err)
@@ -936,6 +967,24 @@ func TestAddColumnArgs(t *testing.T) {
 		require.NoError(t, j3.Decode(jobBytes))
 		args, err = GetTableColumnArgs(j3)
 		require.NoError(t, err)
-		require.Equal(t, &TableColumnArgs{DropColumnArgs: dropArgs}, args)
+		require.Equal(t, dropArgs, args)
+	}
+}
+func TestAlterTableAttributesArgs(t *testing.T) {
+	inArgs := &AlterTableAttributesArgs{
+		LabelRule: &pdhttp.LabelRule{
+			ID:       "id",
+			Index:    2,
+			RuleType: "rule",
+			Labels:   []pdhttp.RegionLabel{{Key: "key", Value: "value"}},
+		},
+	}
+	for _, v := range []JobVersion{JobVersion1, JobVersion2} {
+		j2 := &Job{}
+		require.NoError(t, j2.Decode(getJobBytes(t, inArgs, v, ActionAlterTableAttributes)))
+		args, err := GetAlterTableAttributesArgs(j2)
+		require.NoError(t, err)
+
+		require.Equal(t, *inArgs.LabelRule, *args.LabelRule)
 	}
 }
