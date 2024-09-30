@@ -10105,13 +10105,13 @@ def go_deps():
         name = "org_golang_x_exp",
         build_file_proto_mode = "disable_global",
         importpath = "golang.org/x/exp",
-        sha256 = "f9837e3d39cfcd0167b1c18efd5b9771a651cfd3e3c1cdba468c0373be1d49ac",
-        strip_prefix = "golang.org/x/exp@v0.0.0-20240904232852-e7e105dedf7e",
+        sha256 = "447a436882177a2a9fc281116f1858d6e0533c790a90f55cf3a64f1cafb752c6",
+        strip_prefix = "golang.org/x/exp@v0.0.0-20240909161429-701f63a606c0",
         urls = [
-            "http://bazel-cache.pingcap.net:8080/gomod/golang.org/x/exp/org_golang_x_exp-v0.0.0-20240904232852-e7e105dedf7e.zip",
-            "http://ats.apps.svc/gomod/golang.org/x/exp/org_golang_x_exp-v0.0.0-20240904232852-e7e105dedf7e.zip",
-            "https://cache.hawkingrei.com/gomod/golang.org/x/exp/org_golang_x_exp-v0.0.0-20240904232852-e7e105dedf7e.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/golang.org/x/exp/org_golang_x_exp-v0.0.0-20240904232852-e7e105dedf7e.zip",
+            "http://bazel-cache.pingcap.net:8080/gomod/golang.org/x/exp/org_golang_x_exp-v0.0.0-20240909161429-701f63a606c0.zip",
+            "http://ats.apps.svc/gomod/golang.org/x/exp/org_golang_x_exp-v0.0.0-20240909161429-701f63a606c0.zip",
+            "https://cache.hawkingrei.com/gomod/golang.org/x/exp/org_golang_x_exp-v0.0.0-20240909161429-701f63a606c0.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/golang.org/x/exp/org_golang_x_exp-v0.0.0-20240909161429-701f63a606c0.zip",
         ],
     )
     go_repository(
