@@ -831,7 +831,7 @@ SwitchIndexState:
 	return ver, errors.Trace(err)
 }
 
-func checkIfReorgTableWorkCanSkip(
+func checkIfTableReorgWorkCanSkip(
 	store kv.Storage,
 	tbl table.Table,
 	job *model.Job,
@@ -1007,7 +1007,7 @@ func doReorgWorkForCreateIndex(
 		return false, ver, err
 	}
 	if !reorgTp.NeedMergeProcess() {
-		skipReorg := checkIfReorgTableWorkCanSkip(w.store, tbl, job)
+		skipReorg := checkIfTableReorgWorkCanSkip(w.store, tbl, job)
 		if skipReorg {
 			logutil.DDLLogger().Info("table is empty, skipping reorg work",
 				zap.Int64("jobID", job.ID),
@@ -1018,7 +1018,7 @@ func doReorgWorkForCreateIndex(
 	}
 	switch allIndexInfos[0].BackfillState {
 	case model.BackfillStateRunning:
-		skipReorg := checkIfReorgTableWorkCanSkip(w.store, tbl, job)
+		skipReorg := checkIfTableReorgWorkCanSkip(w.store, tbl, job)
 		if !skipReorg {
 			logutil.DDLLogger().Info("index backfill state running",
 				zap.Int64("job ID", job.ID), zap.String("table", tbl.Meta().Name.O),
