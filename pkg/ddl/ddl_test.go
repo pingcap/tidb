@@ -21,6 +21,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/tidb/pkg/ddl/testargsv1"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -475,24 +476,12 @@ func TestDetectAndUpdateJobVersion(t *testing.T) {
 
 	t.Run("in ut", func(t *testing.T) {
 		reset()
-		forceV1Bak := ForceDDLJobVersionToV1InTest
-		t.Cleanup(func() {
-			ForceDDLJobVersionToV1InTest = forceV1Bak
-		})
-		ForceDDLJobVersionToV1InTest = "false"
 		d.detectAndUpdateJobVersion()
-		require.Equal(t, model.JobVersion2, model.GetJobVerInUse())
-	})
-
-	t.Run("force v1", func(t *testing.T) {
-		reset()
-		forceV1Bak := ForceDDLJobVersionToV1InTest
-		t.Cleanup(func() {
-			ForceDDLJobVersionToV1InTest = forceV1Bak
-		})
-		ForceDDLJobVersionToV1InTest = "true"
-		d.detectAndUpdateJobVersion()
-		require.Equal(t, model.JobVersion1, model.GetJobVerInUse())
+		if testargsv1.ForceV1 {
+			require.Equal(t, model.JobVersion1, model.GetJobVerInUse())
+		} else {
+			require.Equal(t, model.JobVersion2, model.GetJobVerInUse())
+		}
 	})
 
 	d.etcdCli = &clientv3.Client{}
