@@ -93,6 +93,13 @@ func TestAlterTableCache(t *testing.T) {
 		"(id int not null primary key, code int not null, value int default null, unique key code(code))" +
 		"on commit delete rows")
 	tk.MustGetErrMsg("alter table tmp1 cache", dbterror.ErrOptOnTemporaryTable.GenWithStackByArgs("alter temporary table cache").Error())
+	// create table like
+	tk.MustExec("drop table t")
+	tk.MustExec("create table t (a int)")
+	tk.MustExec("alter table t cache")
+	tk.MustExec("create table t3 like t")
+	checkTableCacheStatus(t, tk, "test", "t", model.TableCacheStatusEnable)
+	checkTableCacheStatus(t, tk, "test", "t3", model.TableCacheStatusDisable)
 }
 
 func TestCacheTableSizeLimit(t *testing.T) {

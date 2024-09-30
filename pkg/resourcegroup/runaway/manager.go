@@ -247,7 +247,7 @@ func (rm *Manager) RunawayWatchSyncLoop() {
 func (rm *Manager) markQuarantine(
 	resourceGroupName, convict string,
 	watchType rmpb.RunawayWatchType, action rmpb.RunawayAction, switchGroupName string,
-	ttl time.Duration, now *time.Time,
+	ttl time.Duration, now *time.Time, exceedCause string,
 ) {
 	var endTime time.Time
 	if ttl > 0 {
@@ -262,6 +262,7 @@ func (rm *Manager) markQuarantine(
 		Source:            rm.serverID,
 		Action:            action,
 		SwitchGroupName:   switchGroupName,
+		ExceedCause:       exceedCause,
 	}
 	// Add record without ID into watch list in this TiDB right now.
 	rm.addWatchList(record, ttl, false)
@@ -333,7 +334,7 @@ func (rm *Manager) getWatchFromWatchList(key string) *QuarantineRecord {
 	return nil
 }
 
-func (rm *Manager) markRunaway(checker *Checker, action, matchType string, now *time.Time) {
+func (rm *Manager) markRunaway(checker *Checker, action, matchType string, now *time.Time, exceedCause string) {
 	source := rm.serverID
 	if !rm.syncerInitialized.Load() {
 		rm.logOnce.Do(func() {
@@ -351,6 +352,7 @@ func (rm *Manager) markRunaway(checker *Checker, action, matchType string, now *
 		SQLDigest:         checker.sqlDigest,
 		PlanDigest:        checker.planDigest,
 		Source:            source,
+		ExceedCause:       exceedCause,
 		// default value for Repeats
 		Repeats: 1,
 	}:
@@ -375,12 +377,12 @@ func (rm *Manager) staleQuarantineRecordChan() <-chan *QuarantineRecord {
 }
 
 // examineWatchList check whether the query is in watch list.
-func (rm *Manager) examineWatchList(resourceGroupName string, convict string) (bool, rmpb.RunawayAction, string) {
+func (rm *Manager) examineWatchList(resourceGroupName string, convict string) (bool, rmpb.RunawayAction, string, string) {
 	item := rm.getWatchFromWatchList(resourceGroupName + "/" + convict)
 	if item == nil {
-		return false, 0, ""
+		return false, 0, "", ""
 	}
-	return true, item.Action, item.getSwitchGroupName()
+	return true, item.Action, item.getSwitchGroupName(), item.GetExceedCause()
 }
 
 // Stop stops the watchList which is a ttlCache.

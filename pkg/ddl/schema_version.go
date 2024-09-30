@@ -133,22 +133,15 @@ func SetSchemaDiffForExchangeTablePartition(diff *model.SchemaDiff, job *model.J
 	diff.OldTableID = job.TableID
 	diff.OldSchemaID = job.SchemaID
 	// Update the partitioned table (it is only done in the last state)
-	var (
-		ptSchemaID     int64
-		ptTableID      int64
-		ptDefID        int64
-		partName       string // Not used
-		withValidation bool   // Not used
-	)
 	// See ddl.ExchangeTablePartition
-	err := job.DecodeArgs(&ptDefID, &ptSchemaID, &ptTableID, &partName, &withValidation)
+	args, err := model.GetExchangeTablePartitionArgs(job)
 	if err != nil {
 		return errors.Trace(err)
 	}
 	// This is needed for not crashing TiFlash!
 	// TODO: Update TiFlash, to handle StateWriteOnly
 	diff.AffectedOpts = []*model.AffectedOption{{
-		TableID: ptTableID,
+		TableID: args.PTTableID,
 	}}
 	if job.SchemaState != model.StatePublic {
 		// No change, just to refresh the non-partitioned table
@@ -159,13 +152,13 @@ func SetSchemaDiffForExchangeTablePartition(diff *model.SchemaDiff, job *model.J
 		diff.AffectedOpts[0].SchemaID = job.SchemaID
 		// Need reload partition table, use diff.AffectedOpts[0].OldSchemaID to mark it.
 		if len(multiInfos) > 0 {
-			diff.AffectedOpts[0].OldSchemaID = ptSchemaID
+			diff.AffectedOpts[0].OldSchemaID = args.PTSchemaID
 		}
 	} else {
 		// Swap
-		diff.TableID = ptDefID
+		diff.TableID = args.PartitionID
 		// Also add correct SchemaID in case different schemas
-		diff.AffectedOpts[0].SchemaID = ptSchemaID
+		diff.AffectedOpts[0].SchemaID = args.PTSchemaID
 	}
 	return nil
 }
@@ -266,17 +259,11 @@ func SetSchemaDiffForCreateTable(diff *model.SchemaDiff, job *model.Job) error {
 
 // SetSchemaDiffForRecoverSchema set SchemaDiff for ActionRecoverSchema.
 func SetSchemaDiffForRecoverSchema(diff *model.SchemaDiff, job *model.Job) error {
-	var (
-		recoverSchemaInfo      *RecoverSchemaInfo
-		recoverSchemaCheckFlag int64
-	)
-	err := job.DecodeArgs(&recoverSchemaInfo, &recoverSchemaCheckFlag)
+	args, err := model.GetRecoverArgs(job)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	// Reserved recoverSchemaCheckFlag value for gc work judgment.
-	job.Args[checkFlagIndexInJobArgs] = recoverSchemaCheckFlag
-	recoverTabsInfo := recoverSchemaInfo.RecoverTabsInfo
+	recoverTabsInfo := args.RecoverTableInfos()
 	diff.AffectedOpts = make([]*model.AffectedOption, len(recoverTabsInfo))
 	for i := range recoverTabsInfo {
 		diff.AffectedOpts[i] = &model.AffectedOption{
@@ -323,7 +310,7 @@ func SetSchemaDiffForMultiInfos(diff *model.SchemaDiff, multiInfos ...schemaIDAn
 }
 
 // updateSchemaVersion increments the schema version by 1 and sets SchemaDiff.
-func updateSchemaVersion(jobCtx *jobContext, t *meta.Meta, job *model.Job, multiInfos ...schemaIDAndTableInfo) (int64, error) {
+func updateSchemaVersion(jobCtx *jobContext, job *model.Job, multiInfos ...schemaIDAndTableInfo) (int64, error) {
 	schemaVersion, err := jobCtx.setSchemaVersion(job)
 	if err != nil {
 		return 0, errors.Trace(err)
@@ -367,7 +354,7 @@ func updateSchemaVersion(jobCtx *jobContext, t *meta.Meta, job *model.Job, multi
 		return 0, err
 	}
 	SetSchemaDiffForMultiInfos(diff, multiInfos...)
-	err = t.SetSchemaDiff(diff)
+	err = jobCtx.metaMut.SetSchemaDiff(diff)
 	return schemaVersion, errors.Trace(err)
 }
 
@@ -411,7 +398,7 @@ func waitVersionSyncedWithoutMDL(jobCtx *jobContext, job *model.Job) error {
 
 	ver, _ := jobCtx.store.CurrentVersion(kv.GlobalTxnScope)
 	snapshot := jobCtx.store.GetSnapshot(ver)
-	m := meta.NewSnapshotMeta(snapshot)
+	m := meta.NewReader(snapshot)
 	latestSchemaVersion, err := m.GetSchemaVersionWithNonEmptyDiff()
 	if err != nil {
 		logutil.DDLLogger().Warn("get global version failed", zap.Int64("jobID", job.ID), zap.Error(err))

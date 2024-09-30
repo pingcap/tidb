@@ -3875,7 +3875,7 @@ func (c *addSubDateFunctionClass) getFunction(ctx BuildContext, args []Expressio
 			timeOp:               c.timeOp,
 		}
 		c.setPbCodeOp(sig, tipb.ScalarFuncSig_AddDateDatetimeDecimal, tipb.ScalarFuncSig_SubDateDatetimeDecimal)
-	case dateEvalTp == types.ETDuration && intervalEvalTp == types.ETString:
+	case dateEvalTp == types.ETDuration && intervalEvalTp == types.ETString && resultTp == mysql.TypeDuration:
 		sig = &builtinAddSubDateDurationAnySig{
 			baseBuiltinFunc:      bf,
 			baseDateArithmetical: newDateArithmeticalUtil(),
@@ -3885,7 +3885,7 @@ func (c *addSubDateFunctionClass) getFunction(ctx BuildContext, args []Expressio
 			durationOp:           c.durationOp,
 		}
 		c.setPbCodeOp(sig, tipb.ScalarFuncSig_AddDateDurationString, tipb.ScalarFuncSig_SubDateDurationString)
-	case dateEvalTp == types.ETDuration && intervalEvalTp == types.ETInt:
+	case dateEvalTp == types.ETDuration && intervalEvalTp == types.ETInt && resultTp == mysql.TypeDuration:
 		sig = &builtinAddSubDateDurationAnySig{
 			baseBuiltinFunc:      bf,
 			baseDateArithmetical: newDateArithmeticalUtil(),
@@ -3895,7 +3895,7 @@ func (c *addSubDateFunctionClass) getFunction(ctx BuildContext, args []Expressio
 			durationOp:           c.durationOp,
 		}
 		c.setPbCodeOp(sig, tipb.ScalarFuncSig_AddDateDurationInt, tipb.ScalarFuncSig_SubDateDurationInt)
-	case dateEvalTp == types.ETDuration && intervalEvalTp == types.ETReal:
+	case dateEvalTp == types.ETDuration && intervalEvalTp == types.ETReal && resultTp == mysql.TypeDuration:
 		sig = &builtinAddSubDateDurationAnySig{
 			baseBuiltinFunc:      bf,
 			baseDateArithmetical: newDateArithmeticalUtil(),
@@ -3905,7 +3905,7 @@ func (c *addSubDateFunctionClass) getFunction(ctx BuildContext, args []Expressio
 			durationOp:           c.durationOp,
 		}
 		c.setPbCodeOp(sig, tipb.ScalarFuncSig_AddDateDurationReal, tipb.ScalarFuncSig_SubDateDurationReal)
-	case dateEvalTp == types.ETDuration && intervalEvalTp == types.ETDecimal:
+	case dateEvalTp == types.ETDuration && intervalEvalTp == types.ETDecimal && resultTp == mysql.TypeDuration:
 		sig = &builtinAddSubDateDurationAnySig{
 			baseBuiltinFunc:      bf,
 			baseDateArithmetical: newDateArithmeticalUtil(),
@@ -3915,6 +3915,46 @@ func (c *addSubDateFunctionClass) getFunction(ctx BuildContext, args []Expressio
 			durationOp:           c.durationOp,
 		}
 		c.setPbCodeOp(sig, tipb.ScalarFuncSig_AddDateDurationDecimal, tipb.ScalarFuncSig_SubDateDurationDecimal)
+	case dateEvalTp == types.ETDuration && intervalEvalTp == types.ETString && resultTp == mysql.TypeDatetime:
+		sig = &builtinAddSubDateDurationAnySig{
+			baseBuiltinFunc:      bf,
+			baseDateArithmetical: newDateArithmeticalUtil(),
+			getInterval:          getIntervalFromString,
+			vecGetInterval:       vecGetIntervalFromString,
+			timeOp:               c.timeOp,
+			durationOp:           c.durationOp,
+		}
+		c.setPbCodeOp(sig, tipb.ScalarFuncSig_AddDateDurationStringDatetime, tipb.ScalarFuncSig_SubDateDurationStringDatetime)
+	case dateEvalTp == types.ETDuration && intervalEvalTp == types.ETInt && resultTp == mysql.TypeDatetime:
+		sig = &builtinAddSubDateDurationAnySig{
+			baseBuiltinFunc:      bf,
+			baseDateArithmetical: newDateArithmeticalUtil(),
+			getInterval:          getIntervalFromInt,
+			vecGetInterval:       vecGetIntervalFromInt,
+			timeOp:               c.timeOp,
+			durationOp:           c.durationOp,
+		}
+		c.setPbCodeOp(sig, tipb.ScalarFuncSig_AddDateDurationIntDatetime, tipb.ScalarFuncSig_SubDateDurationIntDatetime)
+	case dateEvalTp == types.ETDuration && intervalEvalTp == types.ETReal && resultTp == mysql.TypeDatetime:
+		sig = &builtinAddSubDateDurationAnySig{
+			baseBuiltinFunc:      bf,
+			baseDateArithmetical: newDateArithmeticalUtil(),
+			getInterval:          getIntervalFromReal,
+			vecGetInterval:       vecGetIntervalFromReal,
+			timeOp:               c.timeOp,
+			durationOp:           c.durationOp,
+		}
+		c.setPbCodeOp(sig, tipb.ScalarFuncSig_AddDateDurationRealDatetime, tipb.ScalarFuncSig_SubDateDurationRealDatetime)
+	case dateEvalTp == types.ETDuration && intervalEvalTp == types.ETDecimal && resultTp == mysql.TypeDatetime:
+		sig = &builtinAddSubDateDurationAnySig{
+			baseBuiltinFunc:      bf,
+			baseDateArithmetical: newDateArithmeticalUtil(),
+			getInterval:          getIntervalFromDecimal,
+			vecGetInterval:       vecGetIntervalFromDecimal,
+			timeOp:               c.timeOp,
+			durationOp:           c.durationOp,
+		}
+		c.setPbCodeOp(sig, tipb.ScalarFuncSig_AddDateDurationDecimalDatetime, tipb.ScalarFuncSig_SubDateDurationDecimalDatetime)
 	}
 	return sig, nil
 }

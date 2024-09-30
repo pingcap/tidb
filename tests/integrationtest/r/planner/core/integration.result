@@ -312,16 +312,16 @@ drop table if exists t;
 create table t(a int);
 explain format='verbose' select /*+ stream_agg() */ count(*) from t;
 id	estRows	estCost	task	access object	operator info
-StreamAgg_14	1.00	168985.35	root		funcs:count(Column#4)->Column#3
-└─TableReader_15	1.00	168935.45	root		data:StreamAgg_8
-  └─StreamAgg_8	1.00	2534000.00	cop[tikv]		funcs:count(1)->Column#4
-    └─TableFullScan_13	10000.00	2035000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+StreamAgg_14	1.00	182552.01	root		funcs:count(Column#4)->Column#3
+└─TableReader_15	1.00	182502.11	root		data:StreamAgg_8
+  └─StreamAgg_8	1.00	2737500.00	cop[tikv]		funcs:count(1)->Column#4
+    └─TableFullScan_13	10000.00	2238500.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 explain format='verbose' select /*+ hash_agg() */ count(*) from t;
 id	estRows	estCost	task	access object	operator info
-HashAgg_9	1.00	150603.19	root		funcs:count(Column#4)->Column#3
-└─TableReader_10	1.00	149075.93	root		data:HashAgg_5
-  └─HashAgg_5	1.00	2236107.30	cop[tikv]		funcs:count(1)->Column#4
-    └─TableFullScan_8	10000.00	2035000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+HashAgg_9	1.00	164169.86	root		funcs:count(Column#4)->Column#3
+└─TableReader_10	1.00	162642.60	root		data:HashAgg_5
+  └─HashAgg_5	1.00	2439607.30	cop[tikv]		funcs:count(1)->Column#4
+    └─TableFullScan_8	10000.00	2238500.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 drop table if exists t, pt, vt;
 create table t(a int, b int);
 insert into t values(1, 1);

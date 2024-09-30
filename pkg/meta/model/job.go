@@ -110,6 +110,7 @@ const (
 	ActionDropResourceGroup      ActionType = 70
 	ActionAlterTablePartitioning ActionType = 71
 	ActionRemovePartitioning     ActionType = 72
+	ActionAddVectorIndex         ActionType = 73
 )
 
 // ActionMap is the map of DDL ActionType to string.
@@ -181,6 +182,7 @@ var ActionMap = map[ActionType]string{
 	ActionDropResourceGroup:             "drop resource group",
 	ActionAlterTablePartitioning:        "alter table partition by",
 	ActionRemovePartitioning:            "alter table remove partitioning",
+	ActionAddVectorIndex:                "add vector index",
 
 	// `ActionAlterTableAlterPartition` is removed and will never be used.
 	// Just left a tombstone here for compatibility.
@@ -482,12 +484,22 @@ func (job *Job) GetWarnings() (map[errors.ErrorID]*terror.Error, map[errors.Erro
 
 // FillArgs fills args for new job.
 func (job *Job) FillArgs(args JobArgs) {
-	args.fillJob(job)
+	intest.Assert(job.Version == JobVersion1 || job.Version == JobVersion2, "job version is invalid")
+	if job.Version == JobVersion1 {
+		args.fillJobV1(job)
+		return
+	}
+	job.Args = []any{args}
 }
 
 // FillFinishedArgs fills args for finished job.
 func (job *Job) FillFinishedArgs(args FinishedJobArgs) {
-	args.fillFinishedJob(job)
+	intest.Assert(job.Version == JobVersion1 || job.Version == JobVersion2, "job version is invalid")
+	if job.Version == JobVersion1 {
+		args.fillFinishedJobV1(job)
+		return
+	}
+	job.Args = []any{args}
 }
 
 func marshalArgs(jobVer JobVersion, args []any) (json.RawMessage, error) {
@@ -574,6 +586,20 @@ func (job *Job) DecodeArgs(args ...any) error {
 	return nil
 }
 
+// DecodeDropIndexFinishedArgs decodes the drop index job's args when it's finished.
+func (job *Job) DecodeDropIndexFinishedArgs() (
+	indexName any, ifExists []bool, indexIDs []int64, partitionIDs []int64, hasVectors []bool, err error) {
+	ifExists = make([]bool, 1)
+	indexIDs = make([]int64, 1)
+	hasVectors = make([]bool, 1)
+	if err := job.DecodeArgs(&indexName, &ifExists[0], &indexIDs[0], &partitionIDs, &hasVectors[0]); err != nil {
+		if err := job.DecodeArgs(&indexName, &ifExists, &indexIDs, &partitionIDs, &hasVectors); err != nil {
+			return nil, []bool{false}, []int64{-1}, nil, []bool{false}, errors.Trace(err)
+		}
+	}
+	return
+}
+
 // String implements fmt.Stringer interface.
 func (job *Job) String() string {
 	rowCount := job.GetRowCount()
@@ -605,17 +631,11 @@ func (job *Job) hasDependentSchema(other *Job) (bool, error) {
 			}
 		}
 		if job.Type == ActionExchangeTablePartition {
-			var (
-				defID          int64
-				ptSchemaID     int64
-				ptID           int64
-				partName       string
-				withValidation bool
-			)
-			if err := job.DecodeArgs(&defID, &ptSchemaID, &ptID, &partName, &withValidation); err != nil {
+			args, err := GetExchangeTablePartitionArgs(job)
+			if err != nil {
 				return false, errors.Trace(err)
 			}
-			if other.SchemaID == ptSchemaID {
+			if other.SchemaID == args.PTSchemaID {
 				return true, nil
 			}
 		}
@@ -625,39 +645,28 @@ func (job *Job) hasDependentSchema(other *Job) (bool, error) {
 
 func (job *Job) hasDependentTableForExchangePartition(other *Job) (bool, error) {
 	if job.Type == ActionExchangeTablePartition {
-		var (
-			defID          int64
-			ptSchemaID     int64
-			ptID           int64
-			partName       string
-			withValidation bool
-		)
-
-		if err := job.DecodeArgs(&defID, &ptSchemaID, &ptID, &partName, &withValidation); err != nil {
+		// TODO this code seems buggy, we haven't encode Args into RawArgs yet, so cannot decode.
+		// but it's very old code for previous job queue, will be removed later anyway.
+		args, err := GetExchangeTablePartitionArgs(job)
+		if err != nil {
 			return false, errors.Trace(err)
 		}
-		if ptID == other.TableID || defID == other.TableID {
+		if args.PTTableID == other.TableID || args.PartitionID == other.TableID {
 			return true, nil
 		}
 
 		if other.Type == ActionExchangeTablePartition {
-			var (
-				otherDefID          int64
-				otherPtSchemaID     int64
-				otherPtID           int64
-				otherPartName       string
-				otherWithValidation bool
-			)
-			if err := other.DecodeArgs(&otherDefID, &otherPtSchemaID, &otherPtID, &otherPartName, &otherWithValidation); err != nil {
+			otherArgs, err := GetExchangeTablePartitionArgs(other)
+			if err != nil {
 				return false, errors.Trace(err)
 			}
-			if job.TableID == other.TableID || job.TableID == otherPtID || job.TableID == otherDefID {
+			if job.TableID == other.TableID || job.TableID == otherArgs.PTTableID || job.TableID == otherArgs.PartitionID {
 				return true, nil
 			}
-			if ptID == other.TableID || ptID == otherPtID || ptID == otherDefID {
+			if args.PTTableID == other.TableID || args.PTTableID == otherArgs.PTTableID || args.PTTableID == otherArgs.PartitionID {
 				return true, nil
 			}
-			if defID == other.TableID || defID == otherPtID || defID == otherDefID {
+			if args.PartitionID == other.TableID || args.PartitionID == otherArgs.PTTableID || args.PartitionID == otherArgs.PartitionID {
 				return true, nil
 			}
 		}
@@ -742,6 +751,10 @@ func (job *Job) IsPausing() bool {
 
 // IsPausable checks whether we can pause the job.
 func (job *Job) IsPausable() bool {
+	// TODO: We can remove it after TiFlash supports the pause operation.
+	if job.Type == ActionAddVectorIndex && job.SchemaState == StateWriteReorganization {
+		return false
+	}
 	return job.NotStarted() || (job.IsRunning() && job.IsRollbackable())
 }
 

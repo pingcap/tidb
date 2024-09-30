@@ -384,7 +384,6 @@ select * from t;
 
 ## test issue21965
 drop table if exists t;
-set @@session.tidb_enable_list_partition = ON;
 create table t (a int) partition by list (a) (partition p0 values in (0,1));
 analyze table t;
 insert ignore into t values (1);
@@ -397,7 +396,6 @@ insert ignore into t values (1);
 --enable_info
 update ignore t set a=2 where a=1;
 --disable_info
-set @@session.tidb_enable_list_partition = default;
 
 drop table if exists t;
 create table t(id integer auto_increment, t1 datetime, t2 datetime, primary key (id));

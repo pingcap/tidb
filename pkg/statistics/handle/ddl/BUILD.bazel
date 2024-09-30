@@ -41,6 +41,7 @@ go_test(
         "//pkg/parser/model",
         "//pkg/planner/cardinality",
         "//pkg/statistics/handle/storage",
+        "//pkg/statistics/handle/util",
         "//pkg/testkit",
         "//pkg/types",
         "//pkg/util",

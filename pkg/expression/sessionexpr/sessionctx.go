@@ -212,6 +212,11 @@ func (ctx *EvalContext) AppendWarning(err error) {
 	ctx.sctx.GetSessionVars().StmtCtx.AppendWarning(err)
 }
 
+// AppendNote appends notes to the context.
+func (ctx *EvalContext) AppendNote(err error) {
+	ctx.sctx.GetSessionVars().StmtCtx.AppendNote(err)
+}
+
 // WarningCount gets warning count.
 func (ctx *EvalContext) WarningCount() int {
 	return int(ctx.sctx.GetSessionVars().StmtCtx.WarningCount())

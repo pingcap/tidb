@@ -750,6 +750,7 @@ import (
 	medium                "MEDIUM"
 	metadata              "METADATA"
 	min                   "MIN"
+	hnsw                  "HNSW"
 	next_row_id           "NEXT_ROW_ID"
 	now                   "NOW"
 	optRuleBlacklist      "OPT_RULE_BLACKLIST"
@@ -760,10 +761,12 @@ import (
 	predicate             "PREDICATE"
 	primaryRegion         "PRIMARY_REGION"
 	priority              "PRIORITY"
+	processedKeys         "PROCESSED_KEYS"
 	queryLimit            "QUERY_LIMIT"
 	recent                "RECENT"
 	replayer              "REPLAYER"
 	restoredTS            "RESTORED_TS"
+	ru                    "RU"
 	running               "RUNNING"
 	ruRate                "RU_PER_SEC"
 	s3                    "S3"
@@ -805,6 +808,7 @@ import (
 	trueCardCost          "TRUE_CARD_COST"
 	unlimited             "UNLIMITED"
 	untilTS               "UNTIL_TS"
+	utilizationLimit      "UTILIZATION_LIMIT"
 	variance              "VARIANCE"
 	varPop                "VAR_POP"
 	varSamp               "VAR_SAMP"
@@ -1134,6 +1138,8 @@ import (
 	Constraint                             "table constraint"
 	ConstraintElem                         "table constraint element"
 	ConstraintKeywordOpt                   "Constraint Keyword or empty"
+	ConstraintVectorIndex                  "vector index"
+	ConstraintWithVectorIndex              "table constraint with vector index"
 	CreateSequenceOptionListOpt            "create sequence list opt"
 	CreateTableOptionListOpt               "create table option list opt"
 	CreateTableSelectOpt                   "Select/Union statement in CREATE TABLE ... SELECT"
@@ -1275,6 +1281,9 @@ import (
 	OnUpdate                               "ON UPDATE clause"
 	OnDeleteUpdateOpt                      "optional ON DELETE and UPDATE clause"
 	OptGConcatSeparator                    "optional GROUP_CONCAT SEPARATOR"
+	RecommendIndexOptionListOpt            "Optional recommend index option list"
+	RecommendIndexOptionList               "Recommend index option list"
+	RecommendIndexOption                   "Recommend index option"
 	ReferOpt                               "reference option"
 	ReorganizePartitionRuleOpt             "optional reorganize partition partition list and definitions"
 	RequireList                            "require list for tls options"
@@ -1632,6 +1641,8 @@ import (
 %precedence order
 %precedence lowerThanFunction
 %precedence function
+%precedence constraint
+%precedence vectorType
 
 /* A dummy token to force the priority of TableRef production in a join. */
 %left tableRefPriority
@@ -1837,10 +1848,22 @@ DirectResourceGroupRunawayOption:
 			return 1
 		}
 		$$ = &ast.ResourceGroupRunawayOption{
-			Tp: model.RunawayRule,
-			RuleOption: &ast.ResourceGroupRunawayRuleOption{
-				ExecElapsed: $3,
-			},
+			Tp:         model.RunawayRule,
+			RuleOption: &ast.ResourceGroupRunawayRuleOption{Tp: ast.RunawayRuleExecElapsed, ExecElapsed: $3},
+		}
+	}
+|	"PROCESSED_KEYS" EqOpt intLit
+	{
+		$$ = &ast.ResourceGroupRunawayOption{
+			Tp:         model.RunawayRule,
+			RuleOption: &ast.ResourceGroupRunawayRuleOption{Tp: ast.RunawayRuleProcessedKeys, ProcessedKeys: $3.(int64)},
+		}
+	}
+|	"RU" EqOpt intLit
+	{
+		$$ = &ast.ResourceGroupRunawayOption{
+			Tp:         model.RunawayRule,
+			RuleOption: &ast.ResourceGroupRunawayRuleOption{Tp: ast.RunawayRuleRequestUnit, RequestUnit: $3.(int64)},
 		}
 	}
 |	"ACTION" EqOpt ResourceGroupRunawayActionOption
@@ -1957,6 +1980,10 @@ DirectResourceGroupBackgroundOption:
 	"TASK_TYPES" EqOpt stringLit
 	{
 		$$ = &ast.ResourceGroupBackgroundOption{Type: ast.BackgroundOptionTaskNames, StrValue: $3}
+	}
+|	"UTILIZATION_LIMIT" EqOpt LengthNum
+	{
+		$$ = &ast.ResourceGroupBackgroundOption{Type: ast.BackgroundUtilizationLimit, UintValue: $3.(uint64)}
 	}
 
 PlacementOptionList:
@@ -2233,6 +2260,14 @@ AlterTableSpec:
 		}
 	}
 |	"ADD" Constraint
+	{
+		constraint := $2.(*ast.Constraint)
+		$$ = &ast.AlterTableSpec{
+			Tp:         ast.AlterTableAddConstraint,
+			Constraint: constraint,
+		}
+	}
+|	"ADD" ConstraintVectorIndex
 	{
 		constraint := $2.(*ast.Constraint)
 		$$ = &ast.AlterTableSpec{
@@ -4199,11 +4234,25 @@ CreateIndexStmt:
 				indexLockAndAlgorithm = nil
 			}
 		}
+
+		keyType := $2.(ast.IndexKeyType)
+		if (keyType == ast.IndexKeyTypeVector && indexOption.Tp != model.IndexTypeHNSW) || (keyType != ast.IndexKeyTypeVector && indexOption.Tp == model.IndexTypeHNSW) {
+			yylex.AppendError(ErrSyntax)
+			return 1
+		}
+		partSpecs := $10.([]*ast.IndexPartSpecification)
+		if keyType == ast.IndexKeyTypeVector {
+			if len(partSpecs) != 1 || partSpecs[0].Expr == nil {
+				yylex.AppendError(ErrSyntax)
+				return 1
+			}
+		}
+
 		$$ = &ast.CreateIndexStmt{
 			IfNotExists:             $4.(bool),
 			IndexName:               $5,
 			Table:                   $8.(*ast.TableName),
-			IndexPartSpecifications: $10.([]*ast.IndexPartSpecification),
+			IndexPartSpecifications: partSpecs,
 			IndexOption:             indexOption,
 			KeyType:                 $2.(ast.IndexKeyType),
 			LockAlg:                 indexLockAndAlgorithm,
@@ -4287,6 +4336,10 @@ IndexKeyTypeOpt:
 |	"FULLTEXT"
 	{
 		$$ = ast.IndexKeyTypeFullText
+	}
+|	"VECTOR"
+	{
+		$$ = ast.IndexKeyTypeVector
 	}
 
 /**************************************AlterDatabaseStmt***************************************
@@ -6661,6 +6714,10 @@ IndexTypeName:
 	{
 		$$ = model.IndexTypeHypo
 	}
+|	"HNSW"
+	{
+		$$ = model.IndexTypeHNSW
+	}
 
 IndexInvisible:
 	"VISIBLE"
@@ -7127,6 +7184,7 @@ NotKeywordToken:
 |	"END_TIME"
 |	"GET_FORMAT"
 |	"GROUP_CONCAT"
+|	"HNSW"
 |	"INPLACE"
 |	"INSTANT"
 |	"INTERNAL"
@@ -7215,6 +7273,8 @@ NotKeywordToken:
 |	"RESTORED_TS"
 |	"FULL_BACKUP_STORAGE"
 |	"EXEC_ELAPSED"
+|	"PROCESSED_KEYS"
+|	"RU"
 |	"DRYRUN"
 |	"COOLDOWN"
 |	"SWITCH_GROUP"
@@ -7224,6 +7284,7 @@ NotKeywordToken:
 |	"BACKGROUND"
 |	"TASK_TYPES"
 |	"UNLIMITED"
+|	"UTILIZATION_LIMIT"
 
 /************************************************************************************
  *
@@ -12304,13 +12365,61 @@ Constraint:
 		$$ = cst
 	}
 
+// ConstraintVectorIndex does not put in Constraint to resolve syntax conflicts.
+ConstraintVectorIndex:
+	"VECTOR" "INDEX" IfNotExists IndexNameAndTypeOpt '(' IndexPartSpecificationList ')' IndexOptionList
+	{
+		c := &ast.Constraint{
+			IfNotExists:  $3.(bool),
+			Tp:           ast.ConstraintVector,
+			Keys:         $6.([]*ast.IndexPartSpecification),
+			Name:         $4.([]interface{})[0].(*ast.NullString).String,
+			IsEmptyIndex: $4.([]interface{})[0].(*ast.NullString).Empty,
+		}
+		if $8 != nil {
+			c.Option = $8.(*ast.IndexOption)
+		}
+
+		if indexType := $4.([]interface{})[1]; indexType != nil {
+			if c.Option == nil {
+				c.Option = &ast.IndexOption{}
+			}
+			c.Option.Tp = indexType.(model.IndexType)
+		}
+		if c.Option == nil || c.Option.Tp != model.IndexTypeHNSW {
+			yylex.AppendError(ErrSyntax)
+			return 1
+		}
+
+		if len(c.Keys) != 1 || c.Keys[0].Expr == nil {
+			yylex.AppendError(ErrSyntax)
+			return 1
+		}
+		$$ = c
+	}
+
+ConstraintWithVectorIndex:
+	ConstraintKeywordOpt ConstraintElem
+	{
+		cst := $2.(*ast.Constraint)
+		if $1 != nil {
+			cst.Name = $1.(string)
+			cst.IsEmptyIndex = len(cst.Name) == 0
+		}
+		$$ = cst
+	}
+|	ConstraintVectorIndex
+	{
+		$$ = $1.(*ast.Constraint)
+	}
+
 CheckConstraintKeyword:
 	"CHECK"
 |	"CONSTRAINT"
 
 TableElement:
 	ColumnDef
-|	Constraint
+|	ConstraintWithVectorIndex
 
 TableElementList:
 	TableElement
@@ -14125,19 +14234,21 @@ SetBindingStmt:
 	}
 
 RecommendIndexStmt:
-	"RECOMMEND" "INDEX" "RUN" "FOR" stringLit
+	"RECOMMEND" "INDEX" "RUN" "FOR" stringLit RecommendIndexOptionListOpt
 	{
 		x := &ast.RecommendIndexStmt{
-			Action: "run",
-			SQL:    $5,
+			Action:  "run",
+			SQL:     $5,
+			Options: $6.([]ast.RecommendIndexOption),
 		}
 
 		$$ = x
 	}
-|	"RECOMMEND" "INDEX" "RUN"
+|	"RECOMMEND" "INDEX" "RUN" RecommendIndexOptionListOpt
 	{
 		x := &ast.RecommendIndexStmt{
-			Action: "run",
+			Action:  "run",
+			Options: $4.([]ast.RecommendIndexOption),
 		}
 
 		$$ = x
@@ -14168,15 +14279,42 @@ RecommendIndexStmt:
 
 		$$ = x
 	}
-|	"RECOMMEND" "INDEX" "SET" Identifier "=" Literal
+|	"RECOMMEND" "INDEX" "SET" RecommendIndexOptionList
 	{
 		x := &ast.RecommendIndexStmt{
-			Action: "set",
-			Option: $4,
-			Value:  ast.NewValueExpr($6, parser.charset, parser.collation),
+			Action:  "set",
+			Options: $4.([]ast.RecommendIndexOption),
 		}
 
 		$$ = x
+	}
+
+RecommendIndexOptionListOpt:
+	{
+		$$ = []ast.RecommendIndexOption{}
+	}
+|	"WITH" RecommendIndexOptionList
+	{
+		$$ = $2.([]ast.RecommendIndexOption)
+	}
+
+RecommendIndexOptionList:
+	RecommendIndexOption
+	{
+		$$ = []ast.RecommendIndexOption{$1.(ast.RecommendIndexOption)}
+	}
+|	RecommendIndexOptionList ',' RecommendIndexOption
+	{
+		$$ = append($1.([]ast.RecommendIndexOption), $3.(ast.RecommendIndexOption))
+	}
+
+RecommendIndexOption:
+	Identifier "=" Literal
+	{
+		$$ = ast.RecommendIndexOption{
+			Option: $1,
+			Value:  ast.NewValueExpr($3, parser.charset, parser.collation),
+		}
 	}
 
 /*************************************************************************************

@@ -124,7 +124,7 @@ func (c *columnStatsUsageCollector) updateColMapFromExpressions(col *expression.
 	c.updateColMap(col, expression.ExtractColumnsAndCorColumnsFromExpressions(c.cols[:0], list))
 }
 
-func (c *columnStatsUsageCollector) collectPredicateColumnsForDataSource(ds *DataSource) {
+func (c *columnStatsUsageCollector) collectPredicateColumnsForDataSource(ds *logicalop.DataSource) {
 	// Skip all system tables.
 	if filter.IsSystemSchema(ds.DBName.L) {
 		return
@@ -178,7 +178,7 @@ func (c *columnStatsUsageCollector) collectPredicateColumnsForUnionAll(p *logica
 	}
 }
 
-func (c *columnStatsUsageCollector) addHistNeededColumns(ds *DataSource) {
+func (c *columnStatsUsageCollector) addHistNeededColumns(ds *logicalop.DataSource) {
 	c.visitedPhysTblIDs.Insert(int(ds.PhysicalTableID))
 	if c.collectMode&collectHistNeededColumns == 0 {
 		return
@@ -232,12 +232,12 @@ func (c *columnStatsUsageCollector) collectFromPlan(lp base.LogicalPlan) {
 	}
 	if c.collectMode&collectPredicateColumns != 0 {
 		switch x := lp.(type) {
-		case *DataSource:
+		case *logicalop.DataSource:
 			c.collectPredicateColumnsForDataSource(x)
-		case *LogicalIndexScan:
+		case *logicalop.LogicalIndexScan:
 			c.collectPredicateColumnsForDataSource(x.Source)
 			c.addPredicateColumnsFromExpressions(x.AccessConds)
-		case *LogicalTableScan:
+		case *logicalop.LogicalTableScan:
 			c.collectPredicateColumnsForDataSource(x.Source)
 			c.addPredicateColumnsFromExpressions(x.AccessConds)
 		case *logicalop.LogicalProjection:
@@ -336,11 +336,11 @@ func (c *columnStatsUsageCollector) collectFromPlan(lp base.LogicalPlan) {
 	// Since c.visitedPhysTblIDs is also collected here and needs to be collected even collectHistNeededColumns is not set,
 	// so we do the c.collectMode check in addHistNeededColumns() after collecting c.visitedPhysTblIDs.
 	switch x := lp.(type) {
-	case *DataSource:
+	case *logicalop.DataSource:
 		c.addHistNeededColumns(x)
-	case *LogicalIndexScan:
+	case *logicalop.LogicalIndexScan:
 		c.addHistNeededColumns(x.Source)
-	case *LogicalTableScan:
+	case *logicalop.LogicalTableScan:
 		c.addHistNeededColumns(x.Source)
 	}
 }
