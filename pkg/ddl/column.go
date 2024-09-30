@@ -78,7 +78,7 @@ func checkAddColumn(t *meta.Mutator, job *model.Job) (*model.TableInfo, *model.C
 		job.State = model.JobStateCancelled
 		return nil, nil, nil, nil, false, errors.Trace(err)
 	}
-	col, pos, ifNotExists := args.Col, args.Pos, args.IfNotExists
+	col, pos, ifNotExists := args.Col, args.Pos, args.IfExistsOrNot
 
 	columnInfo := model.FindColumnInfo(tblInfo.Columns, col.Name.L)
 	if columnInfo != nil {
@@ -239,13 +239,13 @@ func checkDropColumn(jobCtx *jobContext, t *meta.Mutator, job *model.Job) (*mode
 		return nil, nil, nil, false, errors.Trace(err)
 	}
 
-	dropColumnArgs, err := model.GetTableColumnArgs(job)
+	args, err := model.GetTableColumnArgs(job)
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return nil, nil, nil, false, errors.Trace(err)
 	}
 
-	colName, ifExists := dropColumnArgs.ColName, dropColumnArgs.IfExists
+	colName, ifExists := args.Col.Name, args.IfExistsOrNot
 	colInfo := model.FindColumnInfo(tblInfo.Columns, colName.L)
 	if colInfo == nil || colInfo.Hidden {
 		job.State = model.JobStateCancelled

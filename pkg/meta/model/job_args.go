@@ -910,71 +910,61 @@ func GetDropForeignKeyArgs(job *Job) (*DropForeignKeyArgs, error) {
 	return getOrDecodeArgsV2[*DropForeignKeyArgs](job)
 }
 
-// DropColumnArgs is the arguments of dropping column job.
-type DropColumnArgs struct {
-	ColName  pmodel.CIStr `json:"column_name,omitempty"`
-	IfExists bool         `json:"if_exists,omitempty"`
+// TableColumnArgs is the arguments for dropping column ddl or Adding column ddl.
+type TableColumnArgs struct {
+	// follow items for add column.
+	Col           *ColumnInfo         `json:"column_info,omitempty"`
+	Pos           *ast.ColumnPosition `json:"position,omitempty"`
+	Offset        int                 `json:"offset,omitempty"`
+	IfExistsOrNot bool                `json:"if_exists_or_not,omitempty"`
+
+	// for drop column.
 	// below 2 fields are filled during running.
 	IndexIDs     []int64 `json:"index_ids,omitempty"`
 	PartitionIDs []int64 `json:"partition_ids,omitempty"`
 }
 
-// AddColumnArgs is the arguments for adding column ddl.
-type AddColumnArgs struct {
-	Col         *ColumnInfo         `json:"column_info,omitempty"`
-	Pos         *ast.ColumnPosition `json:"position,omitempty"`
-	Offset      int                 `json:"offset,omitempty"`
-	IfNotExists bool                `json:"if_not_exists,omitempty"`
-}
-
-// TableColumnArgs is the arguments for dropping column ddl or Adding column ddl.
-type TableColumnArgs struct {
-	*DropColumnArgs `json:"drop_column_args,omitempty"`
-	*AddColumnArgs  `json:"add_column_args,omitempty"`
-}
-
 func (a *TableColumnArgs) fillJobV1(job *Job) {
 	// fill DropColumn args if job.Type is ActionAddColumn and state is JobStateRollingback
 	if job.Type == ActionDropColumn {
-		dropArgs := a.DropColumnArgs
-		job.Args = []any{dropArgs.ColName, dropArgs.IfExists, dropArgs.IndexIDs, dropArgs.PartitionIDs}
+		job.Args = []any{a.Col.Name, a.IfExistsOrNot, a.IndexIDs, a.PartitionIDs}
 	} else {
-		addArgs := a.AddColumnArgs
-		job.Args = []any{addArgs.Col, addArgs.Pos, addArgs.Offset, addArgs.IfNotExists}
+		job.Args = []any{a.Col, a.Pos, a.Offset, a.IfExistsOrNot}
 	}
 }
 
 // FillRollBackArgsForAddColumn fills the args for rollback add column ddl.
 func FillRollBackArgsForAddColumn(job *Job, args *TableColumnArgs) {
 	intest.Assert(job.Type == ActionAddColumn, "only for add column job")
-	if job.Version == JobVersion1 {
-		job.Args = []any{args.ColName, args.IfExists, args.IndexIDs, args.PartitionIDs}
-	} else {
-		job.Args = []any{args}
+	fakeJob := &Job{
+		Version: job.Version,
+		Type:    ActionDropColumn,
 	}
+	fakeJob.FillArgs(args)
+	job.Args = fakeJob.Args
 }
 
 // GetTableColumnArgs gets the args for dropping column ddl or Adding column ddl.
 func GetTableColumnArgs(job *Job) (*TableColumnArgs, error) {
 	if job.Version == JobVersion1 {
-		if job.Type == ActionDropColumn || job.State == JobStateRollingback {
-			dropArgs := &DropColumnArgs{}
-			err := job.DecodeArgs(&dropArgs.ColName, &dropArgs.IfExists, &dropArgs.IndexIDs, &dropArgs.PartitionIDs)
-			if err != nil {
-				return nil, errors.Trace(err)
-			}
-			return &TableColumnArgs{DropColumnArgs: dropArgs}, nil
-		}
-
-		// for add column ddl.
-		addArgs := &AddColumnArgs{
+		args := &TableColumnArgs{
 			Col: &ColumnInfo{},
 			Pos: &ast.ColumnPosition{},
 		}
-		if err := job.DecodeArgs(addArgs.Col, addArgs.Pos, &addArgs.Offset, &addArgs.IfNotExists); err != nil {
-			return nil, errors.Trace(err)
+
+		if job.Type == ActionDropColumn || job.State == JobStateRollingback {
+			err := job.DecodeArgs(&args.Col.Name, &args.IfExistsOrNot, &args.IndexIDs, &args.PartitionIDs)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			return args, nil
+		} else {
+			// for add column ddl.
+			if err := job.DecodeArgs(args.Col, args.Pos, &args.Offset, &args.IfExistsOrNot); err != nil {
+				return nil, errors.Trace(err)
+			}
 		}
-		return &TableColumnArgs{AddColumnArgs: addArgs}, nil
+		return args, nil
 	}
 	return getOrDecodeArgsV2[*TableColumnArgs](job)
 }

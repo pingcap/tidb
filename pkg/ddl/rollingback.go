@@ -200,9 +200,7 @@ func rollingbackAddColumn(jobCtx *jobContext, t *meta.Mutator, job *model.Job) (
 
 	// rollback the AddColumn ddl. fill the DropColumn args into job.
 	args := &model.TableColumnArgs{
-		DropColumnArgs: &model.DropColumnArgs{
-			ColName: col.Name,
-		},
+		Col: &model.ColumnInfo{Name: col.Name},
 	}
 	model.FillRollBackArgsForAddColumn(job, args)
 	ver, err = updateVersionAndTableInfo(jobCtx, t, job, tblInfo, originalState != columnInfo.State)
