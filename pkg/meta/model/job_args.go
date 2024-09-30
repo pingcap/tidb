@@ -93,9 +93,9 @@ func getOrDecodeArgs[T JobArgs](args T, job *Job) (T, error) {
 
 // JobArgs is the interface for job arguments.
 type JobArgs interface {
-	// fillJobV1 fills the job args v1 for submitting job. we make it private to
+	// getArgsV1 fills the job args v1 for submitting job. we make it private to
 	// avoid calling it directly, use Job.FillArgs to fill the job args.
-	fillJobV1(job *Job)
+	getArgsV1(job *Job) []any
 	decodeV1(job *Job) error
 }
 
@@ -104,23 +104,29 @@ type JobArgs interface {
 // will write some args back to the job for other components.
 type FinishedJobArgs interface {
 	JobArgs
-	// fillFinishedJobV1 fills the job args for finished job. we make it private
+	// getFinishedArgsV1 fills the job args for finished job. we make it private
 	// to avoid calling it directly, use Job.FillFinishedArgs to fill the job args.
-	fillFinishedJobV1(job *Job)
+	getFinishedArgsV1(job *Job) []any
 }
 
 // EmptyArgs is the args for ddl job with no args.
 type EmptyArgs struct{}
 
-func (*EmptyArgs) fillJobV1(*Job) {}
+func (*EmptyArgs) getArgsV1(*Job) []any {
+	return nil
+}
+
+func (*EmptyArgs) decodeV1(*Job) error {
+	return nil
+}
 
 // CreateSchemaArgs is the arguments for create schema job.
 type CreateSchemaArgs struct {
 	DBInfo *DBInfo `json:"db_info,omitempty"`
 }
 
-func (a *CreateSchemaArgs) fillJobV1(job *Job) {
-	job.Args = []any{a.DBInfo}
+func (a *CreateSchemaArgs) getArgsV1(*Job) []any {
+	return []any{a.DBInfo}
 }
 
 func (a *CreateSchemaArgs) decodeV1(job *Job) error {
@@ -141,12 +147,12 @@ type DropSchemaArgs struct {
 	AllDroppedTableIDs []int64 `json:"all_dropped_table_ids,omitempty"`
 }
 
-func (a *DropSchemaArgs) fillJobV1(job *Job) {
-	job.Args = []any{a.FKCheck}
+func (a *DropSchemaArgs) getArgsV1(*Job) []any {
+	return []any{a.FKCheck}
 }
 
-func (a *DropSchemaArgs) fillFinishedJobV1(job *Job) {
-	job.Args = []any{a.AllDroppedTableIDs}
+func (a *DropSchemaArgs) getFinishedArgsV1(*Job) []any {
+	return []any{a.AllDroppedTableIDs}
 }
 
 func (a *DropSchemaArgs) decodeV1(job *Job) error {
@@ -180,21 +186,18 @@ type ModifySchemaArgs struct {
 	PolicyRef *PolicyRefInfo `json:"policy_ref,omitempty"`
 }
 
-func (a *ModifySchemaArgs) fillJobV1(job *Job) {
+func (a *ModifySchemaArgs) getArgsV1(job *Job) []any {
 	if job.Type == ActionModifySchemaCharsetAndCollate {
-		job.Args = []any{a.ToCharset, a.ToCollate}
-	} else if job.Type == ActionModifySchemaDefaultPlacement {
-		job.Args = []any{a.PolicyRef}
+		return []any{a.ToCharset, a.ToCollate}
 	}
+	return []any{a.PolicyRef}
 }
 
 func (a *ModifySchemaArgs) decodeV1(job *Job) error {
 	if job.Type == ActionModifySchemaCharsetAndCollate {
 		return errors.Trace(job.DecodeArgs(&a.ToCharset, &a.ToCollate))
-	} else if job.Type == ActionModifySchemaDefaultPlacement {
-		return errors.Trace(job.DecodeArgs(&a.PolicyRef))
 	}
-	return nil
+	return errors.Trace(job.DecodeArgs(&a.PolicyRef))
 }
 
 // GetModifySchemaArgs gets the modify schema args.
@@ -212,15 +215,16 @@ type CreateTableArgs struct {
 	FKCheck bool `json:"fk_check,omitempty"`
 }
 
-func (a *CreateTableArgs) fillJobV1(job *Job) {
+func (a *CreateTableArgs) getArgsV1(job *Job) []any {
 	switch job.Type {
 	case ActionCreateTable:
-		job.Args = []any{a.TableInfo, a.FKCheck}
+		return []any{a.TableInfo, a.FKCheck}
 	case ActionCreateView:
-		job.Args = []any{a.TableInfo, a.OnExistReplace, a.OldViewTblID}
+		return []any{a.TableInfo, a.OnExistReplace, a.OldViewTblID}
 	case ActionCreateSequence:
-		job.Args = []any{a.TableInfo}
+		return []any{a.TableInfo}
 	}
+	return nil
 }
 
 func (a *CreateTableArgs) decodeV1(job *Job) error {
@@ -246,12 +250,12 @@ type BatchCreateTableArgs struct {
 	Tables []*CreateTableArgs `json:"tables,omitempty"`
 }
 
-func (a *BatchCreateTableArgs) fillJobV1(job *Job) {
+func (a *BatchCreateTableArgs) getArgsV1(*Job) []any {
 	infos := make([]*TableInfo, 0, len(a.Tables))
 	for _, info := range a.Tables {
 		infos = append(infos, info.TableInfo)
 	}
-	job.Args = []any{infos, a.Tables[0].FKCheck}
+	return []any{infos, a.Tables[0].FKCheck}
 }
 
 func (a *BatchCreateTableArgs) decodeV1(job *Job) error {
@@ -288,15 +292,16 @@ type DropTableArgs struct {
 	OldRuleIDs      []string `json:"old_rule_ids,omitempty"`
 }
 
-func (a *DropTableArgs) fillJobV1(job *Job) {
-	// only drop table job has in args.
+func (a *DropTableArgs) getArgsV1(job *Job) []any {
+	// only drop-table job has in args, drop view/sequence job has no args.
 	if job.Type == ActionDropTable {
-		job.Args = []any{a.Identifiers, a.FKCheck}
+		return []any{a.Identifiers, a.FKCheck}
 	}
+	return nil
 }
 
-func (a *DropTableArgs) fillFinishedJobV1(job *Job) {
-	job.Args = []any{a.StartKey, a.OldPartitionIDs, a.OldRuleIDs}
+func (a *DropTableArgs) getFinishedArgsV1(*Job) []any {
+	return []any{a.StartKey, a.OldPartitionIDs, a.OldRuleIDs}
 }
 
 func (a *DropTableArgs) decodeV1(job *Job) error {
@@ -341,37 +346,32 @@ type TruncateTableArgs struct {
 	OldPartIDsWithPolicy []int64 `json:"-"`
 }
 
-func (a *TruncateTableArgs) fillJobV1(job *Job) {
+func (a *TruncateTableArgs) getArgsV1(job *Job) []any {
 	if job.Type == ActionTruncateTable {
 		// Args[0] is the new table ID, args[2] is the ids for table partitions, we
 		// add a placeholder here, they will be filled by job submitter.
 		// the last param is not required for execution, we need it to calculate
 		// number of new IDs to generate.
-		job.Args = []any{a.NewTableID, a.FKCheck, a.NewPartitionIDs, len(a.OldPartitionIDs)}
-	} else {
-		job.Args = []any{a.OldPartitionIDs, a.NewPartitionIDs}
+		return []any{a.NewTableID, a.FKCheck, a.NewPartitionIDs, len(a.OldPartitionIDs)}
 	}
+	return []any{a.OldPartitionIDs, a.NewPartitionIDs}
 }
 
 func (a *TruncateTableArgs) decodeV1(job *Job) error {
-	var err error
 	if job.Type == ActionTruncateTable {
-		err = job.DecodeArgs(&a.NewTableID, &a.FKCheck, &a.NewPartitionIDs)
-	} else {
-		err = job.DecodeArgs(&a.OldPartitionIDs, &a.NewPartitionIDs)
+		return errors.Trace(job.DecodeArgs(&a.NewTableID, &a.FKCheck, &a.NewPartitionIDs))
 	}
-	return err
+	return errors.Trace(job.DecodeArgs(&a.OldPartitionIDs, &a.NewPartitionIDs))
 }
 
-func (a *TruncateTableArgs) fillFinishedJobV1(job *Job) {
+func (a *TruncateTableArgs) getFinishedArgsV1(job *Job) []any {
 	if job.Type == ActionTruncateTable {
 		// the first param is the start key of the old table, it's not used anywhere
 		// now, so we fill an empty byte slice here.
 		// we can call tablecodec.EncodeTablePrefix(tableID) to get it.
-		job.Args = []any{[]byte{}, a.OldPartitionIDs}
-	} else {
-		job.Args = []any{a.OldPartitionIDs}
+		return []any{[]byte{}, a.OldPartitionIDs}
 	}
+	return []any{a.OldPartitionIDs}
 }
 
 // GetTruncateTableArgs gets the truncate table args.
@@ -418,20 +418,20 @@ type TablePartitionArgs struct {
 	OldPhysicalTblIDs []int64 `json:"old_physical_tbl_ids,omitempty"`
 }
 
-func (a *TablePartitionArgs) fillJobV1(job *Job) {
+func (a *TablePartitionArgs) getArgsV1(job *Job) []any {
 	if job.Type == ActionAddTablePartition {
-		job.Args = []any{a.PartInfo}
+		return []any{a.PartInfo}
 	} else if job.Type == ActionDropTablePartition {
-		job.Args = []any{a.PartNames}
+		return []any{a.PartNames}
 	} else {
-		job.Args = []any{a.PartNames, a.PartInfo}
+		return []any{a.PartNames, a.PartInfo}
 	}
 }
 
-func (a *TablePartitionArgs) fillFinishedJobV1(job *Job) {
+func (a *TablePartitionArgs) getFinishedArgsV1(job *Job) []any {
 	intest.Assert(job.Type != ActionAddTablePartition || job.State == JobStateRollbackDone,
-		"add table partition job should not call fillFinishedJobV1 if not rollback")
-	job.Args = []any{a.OldPhysicalTblIDs}
+		"add table partition job should not call getFinishedArgsV1 if not rollback")
+	return []any{a.OldPhysicalTblIDs}
 }
 
 func (a *TablePartitionArgs) decodeV1(job *Job) error {
@@ -516,8 +516,8 @@ type ExchangeTablePartitionArgs struct {
 	WithValidation bool   `json:"with_validation,omitempty"`
 }
 
-func (a *ExchangeTablePartitionArgs) fillJobV1(job *Job) {
-	job.Args = []any{a.PartitionID, a.PTSchemaID, a.PTTableID, a.PartitionName, a.WithValidation}
+func (a *ExchangeTablePartitionArgs) getArgsV1(*Job) []any {
+	return []any{a.PartitionID, a.PTSchemaID, a.PTTableID, a.PartitionName, a.WithValidation}
 }
 
 func (a *ExchangeTablePartitionArgs) decodeV1(job *Job) error {
@@ -539,12 +539,11 @@ type AlterTablePartitionArgs struct {
 	PolicyRefInfo *PolicyRefInfo    `json:"policy_ref_info,omitempty"`
 }
 
-func (a *AlterTablePartitionArgs) fillJobV1(job *Job) {
+func (a *AlterTablePartitionArgs) getArgsV1(job *Job) []any {
 	if job.Type == ActionAlterTablePartitionAttributes {
-		job.Args = []any{a.PartitionID, a.LabelRule}
-	} else {
-		job.Args = []any{a.PartitionID, a.PolicyRefInfo}
+		return []any{a.PartitionID, a.LabelRule}
 	}
+	return []any{a.PartitionID, a.PolicyRefInfo}
 }
 
 func (a *AlterTablePartitionArgs) decodeV1(job *Job) error {
@@ -575,8 +574,8 @@ type RenameTableArgs struct {
 	SchemaIDForSchemaDiff int64 `json:"-"`
 }
 
-func (rt *RenameTableArgs) fillJobV1(job *Job) {
-	job.Args = []any{rt.OldSchemaID, rt.NewTableName, rt.OldSchemaName}
+func (rt *RenameTableArgs) getArgsV1(*Job) []any {
+	return []any{rt.OldSchemaID, rt.NewTableName, rt.OldSchemaName}
 }
 
 func (rt *RenameTableArgs) decodeV1(job *Job) error {
@@ -630,16 +629,17 @@ type ResourceGroupArgs struct {
 	RGInfo *ResourceGroupInfo `json:"rg_info,omitempty"`
 }
 
-func (a *ResourceGroupArgs) fillJobV1(job *Job) {
+func (a *ResourceGroupArgs) getArgsV1(job *Job) []any {
 	if job.Type == ActionCreateResourceGroup {
 		// what's the second parameter for? we keep it for compatibility.
-		job.Args = []any{a.RGInfo, false}
+		return []any{a.RGInfo, false}
 	} else if job.Type == ActionAlterResourceGroup {
-		job.Args = []any{a.RGInfo}
+		return []any{a.RGInfo}
 	} else if job.Type == ActionDropResourceGroup {
 		// it's not used anywhere.
-		job.Args = []any{a.RGInfo.Name}
+		return []any{a.RGInfo.Name}
 	}
+	return nil
 }
 
 func (a *ResourceGroupArgs) decodeV1(job *Job) error {
@@ -664,8 +664,8 @@ type RebaseAutoIDArgs struct {
 	Force   bool  `json:"force,omitempty"`
 }
 
-func (a *RebaseAutoIDArgs) fillJobV1(job *Job) {
-	job.Args = []any{a.NewBase, a.Force}
+func (a *RebaseAutoIDArgs) getArgsV1(*Job) []any {
+	return []any{a.NewBase, a.Force}
 }
 
 func (a *RebaseAutoIDArgs) decodeV1(job *Job) error {
@@ -682,8 +682,8 @@ type ModifyTableCommentArgs struct {
 	Comment string `json:"comment,omitempty"`
 }
 
-func (a *ModifyTableCommentArgs) fillJobV1(job *Job) {
-	job.Args = []any{a.Comment}
+func (a *ModifyTableCommentArgs) getArgsV1(*Job) []any {
+	return []any{a.Comment}
 }
 
 func (a *ModifyTableCommentArgs) decodeV1(job *Job) error {
@@ -702,8 +702,8 @@ type ModifyTableCharsetAndCollateArgs struct {
 	NeedsOverwriteCols bool   `json:"needs_overwrite_cols,omitempty"`
 }
 
-func (a *ModifyTableCharsetAndCollateArgs) fillJobV1(job *Job) {
-	job.Args = []any{a.ToCharset, a.ToCollate, a.NeedsOverwriteCols}
+func (a *ModifyTableCharsetAndCollateArgs) getArgsV1(*Job) []any {
+	return []any{a.ToCharset, a.ToCollate, a.NeedsOverwriteCols}
 }
 
 func (a *ModifyTableCharsetAndCollateArgs) decodeV1(job *Job) error {
@@ -721,8 +721,8 @@ type AlterIndexVisibilityArgs struct {
 	Invisible bool         `json:"invisible,omitempty"`
 }
 
-func (a *AlterIndexVisibilityArgs) fillJobV1(job *Job) {
-	job.Args = []any{a.IndexName, a.Invisible}
+func (a *AlterIndexVisibilityArgs) getArgsV1(*Job) []any {
+	return []any{a.IndexName, a.Invisible}
 }
 
 func (a *AlterIndexVisibilityArgs) decodeV1(job *Job) error {
@@ -740,8 +740,8 @@ type AddForeignKeyArgs struct {
 	FkCheck bool    `json:"fk_check,omitempty"`
 }
 
-func (a *AddForeignKeyArgs) fillJobV1(job *Job) {
-	job.Args = []any{a.FkInfo, a.FkCheck}
+func (a *AddForeignKeyArgs) getArgsV1(*Job) []any {
+	return []any{a.FkInfo, a.FkCheck}
 }
 
 func (a *AddForeignKeyArgs) decodeV1(job *Job) error {
@@ -758,8 +758,8 @@ type DropForeignKeyArgs struct {
 	FkName pmodel.CIStr `json:"fk_name,omitempty"`
 }
 
-func (a *DropForeignKeyArgs) fillJobV1(job *Job) {
-	job.Args = []any{a.FkName}
+func (a *DropForeignKeyArgs) getArgsV1(*Job) []any {
+	return []any{a.FkName}
 }
 
 func (a *DropForeignKeyArgs) decodeV1(job *Job) error {
@@ -780,8 +780,8 @@ type DropColumnArgs struct {
 	PartitionIDs []int64 `json:"partition_ids,omitempty"`
 }
 
-func (a *DropColumnArgs) fillJobV1(job *Job) {
-	job.Args = []any{a.ColName, a.IfExists, a.IndexIDs, a.PartitionIDs}
+func (a *DropColumnArgs) getArgsV1(*Job) []any {
+	return []any{a.ColName, a.IfExists, a.IndexIDs, a.PartitionIDs}
 }
 
 func (a *DropColumnArgs) decodeV1(job *Job) error {
@@ -798,7 +798,7 @@ type RenameTablesArgs struct {
 	RenameTableInfos []*RenameTableArgs `json:"rename_table_infos,omitempty"`
 }
 
-func (a *RenameTablesArgs) fillJobV1(job *Job) {
+func (a *RenameTablesArgs) getArgsV1(*Job) []any {
 	n := len(a.RenameTableInfos)
 	oldSchemaIDs := make([]int64, n)
 	oldSchemaNames := make([]pmodel.CIStr, n)
@@ -817,7 +817,7 @@ func (a *RenameTablesArgs) fillJobV1(job *Job) {
 	}
 
 	// To make it compatible with previous create metas
-	job.Args = []any{oldSchemaIDs, newSchemaIDs, newTableNames, tableIDs, oldSchemaNames, oldTableNames}
+	return []any{oldSchemaIDs, newSchemaIDs, newTableNames, tableIDs, oldSchemaNames, oldTableNames}
 }
 
 func (a *RenameTablesArgs) decodeV1(job *Job) error {
@@ -877,8 +877,8 @@ type AlterSequenceArgs struct {
 	SeqOptions []*ast.SequenceOption `json:"seq_options,omitempty"`
 }
 
-func (a *AlterSequenceArgs) fillJobV1(job *Job) {
-	job.Args = []any{a.Ident, a.SeqOptions}
+func (a *AlterSequenceArgs) getArgsV1(*Job) []any {
+	return []any{a.Ident, a.SeqOptions}
 }
 
 func (a *AlterSequenceArgs) decodeV1(job *Job) error {
@@ -895,8 +895,8 @@ type ModifyTableAutoIDCacheArgs struct {
 	NewCache int64 `json:"new_cache,omitempty"`
 }
 
-func (a *ModifyTableAutoIDCacheArgs) fillJobV1(job *Job) {
-	job.Args = []any{a.NewCache}
+func (a *ModifyTableAutoIDCacheArgs) getArgsV1(*Job) []any {
+	return []any{a.NewCache}
 }
 
 func (a *ModifyTableAutoIDCacheArgs) decodeV1(job *Job) error {
@@ -913,8 +913,8 @@ type ShardRowIDArgs struct {
 	ShardRowIDBits uint64 `json:"shard_row_id_bits,omitempty"`
 }
 
-func (a *ShardRowIDArgs) fillJobV1(job *Job) {
-	job.Args = []any{a.ShardRowIDBits}
+func (a *ShardRowIDArgs) getArgsV1(*Job) []any {
+	return []any{a.ShardRowIDBits}
 }
 
 func (a *ShardRowIDArgs) decodeV1(job *Job) error {
@@ -933,8 +933,8 @@ type AlterTTLInfoArgs struct {
 	TTLCronJobSchedule *string  `json:"ttl_cron_job_schedule,omitempty"`
 }
 
-func (a *AlterTTLInfoArgs) fillJobV1(job *Job) {
-	job.Args = []any{a.TTLInfo, a.TTLEnable, a.TTLCronJobSchedule}
+func (a *AlterTTLInfoArgs) getArgsV1(*Job) []any {
+	return []any{a.TTLInfo, a.TTLEnable, a.TTLCronJobSchedule}
 }
 
 func (a *AlterTTLInfoArgs) decodeV1(job *Job) error {
@@ -952,8 +952,8 @@ type CheckConstraintArgs struct {
 	Enforced       bool         `json:"enforced,omitempty"`
 }
 
-func (a *CheckConstraintArgs) fillJobV1(job *Job) {
-	job.Args = []any{a.ConstraintName, a.Enforced}
+func (a *CheckConstraintArgs) getArgsV1(*Job) []any {
+	return []any{a.ConstraintName, a.Enforced}
 }
 
 func (a *CheckConstraintArgs) decodeV1(job *Job) error {
@@ -965,13 +965,13 @@ func GetCheckConstraintArgs(job *Job) (*CheckConstraintArgs, error) {
 	return getOrDecodeArgs[*CheckConstraintArgs](&CheckConstraintArgs{}, job)
 }
 
-// AddCheckConstraintArgs is the arguemnt for add check constraint
+// AddCheckConstraintArgs is the args for add check constraint
 type AddCheckConstraintArgs struct {
 	Constraint *ConstraintInfo `json:"constraint_info"`
 }
 
-func (a *AddCheckConstraintArgs) fillJobV1(job *Job) {
-	job.Args = []any{a.Constraint}
+func (a *AddCheckConstraintArgs) getArgsV1(*Job) []any {
+	return []any{a.Constraint}
 }
 
 func (a *AddCheckConstraintArgs) decodeV1(job *Job) error {
@@ -989,8 +989,8 @@ type AlterTablePlacementArgs struct {
 	PlacementPolicyRef *PolicyRefInfo `json:"placement_policy_ref,omitempty"`
 }
 
-func (a *AlterTablePlacementArgs) fillJobV1(job *Job) {
-	job.Args = []any{a.PlacementPolicyRef}
+func (a *AlterTablePlacementArgs) getArgsV1(*Job) []any {
+	return []any{a.PlacementPolicyRef}
 }
 
 func (a *AlterTablePlacementArgs) decodeV1(job *Job) error {
@@ -1008,8 +1008,8 @@ type SetTiFlashReplicaArgs struct {
 	TiflashReplica ast.TiFlashReplicaSpec `json:"tiflash_replica,omitempty"`
 }
 
-func (a *SetTiFlashReplicaArgs) fillJobV1(job *Job) {
-	job.Args = []any{a.TiflashReplica}
+func (a *SetTiFlashReplicaArgs) getArgsV1(*Job) []any {
+	return []any{a.TiflashReplica}
 }
 
 func (a *SetTiFlashReplicaArgs) decodeV1(job *Job) error {
@@ -1027,8 +1027,8 @@ type UpdateTiFlashReplicaStatusArgs struct {
 	PhysicalID int64 `json:"physical_id,omitempty"`
 }
 
-func (a *UpdateTiFlashReplicaStatusArgs) fillJobV1(job *Job) {
-	job.Args = []any{a.Available, a.PhysicalID}
+func (a *UpdateTiFlashReplicaStatusArgs) getArgsV1(*Job) []any {
+	return []any{a.Available, a.PhysicalID}
 }
 
 func (a *UpdateTiFlashReplicaStatusArgs) decodeV1(job *Job) error {
@@ -1050,8 +1050,8 @@ type LockTablesArgs struct {
 	IsCleanup     bool              `json:"is_cleanup:omitempty"`
 }
 
-func (a *LockTablesArgs) fillJobV1(job *Job) {
-	job.Args = []any{a}
+func (a *LockTablesArgs) getArgsV1(*Job) []any {
+	return []any{a}
 }
 
 func (a *LockTablesArgs) decodeV1(job *Job) error {
@@ -1068,8 +1068,8 @@ type RepairTableArgs struct {
 	TableInfo *TableInfo `json:"table_info"`
 }
 
-func (a *RepairTableArgs) fillJobV1(job *Job) {
-	job.Args = []any{a.TableInfo}
+func (a *RepairTableArgs) getArgsV1(*Job) []any {
+	return []any{a.TableInfo}
 }
 
 func (a *RepairTableArgs) decodeV1(job *Job) error {
@@ -1086,8 +1086,8 @@ type AlterTableAttributesArgs struct {
 	LabelRule *pdhttp.LabelRule `json:"label_rule,omitempty"`
 }
 
-func (a *AlterTableAttributesArgs) fillJobV1(job *Job) {
-	job.Args = []any{a.LabelRule}
+func (a *AlterTableAttributesArgs) getArgsV1(*Job) []any {
+	return []any{a.LabelRule}
 }
 
 func (a *AlterTableAttributesArgs) decodeV1(job *Job) error {
@@ -1106,12 +1106,11 @@ type RecoverArgs struct {
 	CheckFlag   int64              `json:"check_flag,omitempty"`
 }
 
-func (a *RecoverArgs) fillJobV1(job *Job) {
+func (a *RecoverArgs) getArgsV1(job *Job) []any {
 	if job.Type == ActionRecoverTable {
-		job.Args = []any{a.RecoverTableInfos()[0], a.CheckFlag}
-	} else {
-		job.Args = []any{a.RecoverInfo, a.CheckFlag}
+		return []any{a.RecoverTableInfos()[0], a.CheckFlag}
 	}
+	return []any{a.RecoverInfo, a.CheckFlag}
 }
 
 func (a *RecoverArgs) decodeV1(job *Job) error {
@@ -1157,14 +1156,14 @@ type PlacementPolicyArgs struct {
 	PolicyID int64 `json:"policy_id"`
 }
 
-func (a *PlacementPolicyArgs) fillJobV1(job *Job) {
+func (a *PlacementPolicyArgs) getArgsV1(job *Job) []any {
 	if job.Type == ActionCreatePlacementPolicy {
-		job.Args = []any{a.Policy, a.ReplaceOnExist}
+		return []any{a.Policy, a.ReplaceOnExist}
 	} else if job.Type == ActionAlterPlacementPolicy {
-		job.Args = []any{a.Policy}
+		return []any{a.Policy}
 	} else {
 		intest.Assert(job.Type == ActionDropPlacementPolicy, "Invalid job type for PlacementPolicyArgs")
-		job.Args = []any{a.PolicyName}
+		return []any{a.PolicyName}
 	}
 }
 
@@ -1206,7 +1205,7 @@ type FlashbackClusterArgs struct {
 	FlashbackKeyRanges []KeyRange     `json:"key_ranges,omitempty"`
 }
 
-func (a *FlashbackClusterArgs) fillJobV1(job *Job) {
+func (a *FlashbackClusterArgs) getArgsV1(*Job) []any {
 	enableAutoAnalyze := "ON"
 	superReadOnly := "ON"
 	enableTTLJob := "ON"
@@ -1220,7 +1219,7 @@ func (a *FlashbackClusterArgs) fillJobV1(job *Job) {
 		enableTTLJob = "OFF"
 	}
 
-	job.Args = []any{
+	return []any{
 		a.FlashbackTS, a.PDScheduleValue, a.EnableGC,
 		enableAutoAnalyze, superReadOnly, a.LockedRegionCnt,
 		a.StartTS, a.CommitTS, enableTTLJob, a.FlashbackKeyRanges,
