@@ -141,7 +141,6 @@ func NewHandle(
 	handle.DDL = ddl.NewDDLHandler(
 		handle.StatsReadWriter,
 		handle,
-		handle.StatsGlobal,
 	)
 	return handle, nil
 }
