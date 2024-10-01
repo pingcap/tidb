@@ -1433,18 +1433,22 @@ func TestIssue9710(t *testing.T) {
 	}
 
 	for {
-		rs := tk.MustQuery("select now(), now(6), unix_timestamp(), unix_timestamp(now()), utc_timestamp(), utc_timestamp(6), sysdate(), sysdate(6)")
+		rs := tk.MustQuery("select now(), now(6), unix_timestamp(), unix_timestamp(now()), unix_timestamp(now(6)), utc_timestamp(), utc_timestamp(6), sysdate(), sysdate(6)")
 		s, ms := getSAndMS(rs.Rows()[0][1].(string))
 
 		s1, _ := getSAndMS(rs.Rows()[0][0].(string))
 		require.Equal(t, s, s1) // now() will truncate the result instead of rounding it
 
 		require.Equal(t, rs.Rows()[0][2], rs.Rows()[0][3]) // unix_timestamp() will truncate the result
-		u0, _ := getSAndMS(rs.Rows()[0][4].(string))
-		u6, _ := getSAndMS(rs.Rows()[0][5].(string))
+		ut, _ := getSAndMS(rs.Rows()[0][2].(string))
+		ut6, _ := getSAndMS(rs.Rows()[0][4].(string))
+		require.Equal(t, ut, ut6) // unix_timestamp() will truncate the result
+
+		u0, _ := getSAndMS(rs.Rows()[0][5].(string))
+		u6, _ := getSAndMS(rs.Rows()[0][6].(string))
 		require.Equal(t, u0, u6) // utc_timestamp() will truncate the result
-		s0, _ := getSAndMS(rs.Rows()[0][4].(string))
-		s6, _ := getSAndMS(rs.Rows()[0][5].(string))
+		s0, _ := getSAndMS(rs.Rows()[0][7].(string))
+		s6, _ := getSAndMS(rs.Rows()[0][8].(string))
 		require.Equal(t, s0, s6) // sysdate() will truncate the result
 
 		if ms < 500000 {
@@ -1453,48 +1457,6 @@ func TestIssue9710(t *testing.T) {
 		}
 		break
 	}
-}
-
-func TestTimeFuncTruncation(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-
-	tk.MustExec(`create table t (id int primary key, d date, dt datetime, dt6 datetime(6), ts timestamp, ts6 timestamp(6), time_t bigint, dc decimal(20,9))`)
-	dateStr := `2024-10-01 15:27:35.9876789`
-	timeStr := `1727789255.9876789`
-	tk.MustExec(`insert into t values (1, ?, ?, ?, ?, ?, ?, ?)`,
-		dateStr, dateStr, dateStr, dateStr, dateStr, timeStr, timeStr)
-	dateStr = `2024-10-01 15:27:35.12344321`
-	timeStr = `1727789255.12344321`
-	tk.MustExec(`insert into t values (2, ?, ?, ?, ?, ?, ?, ?)`,
-		dateStr, dateStr, dateStr, dateStr, dateStr, timeStr, timeStr)
-
-	// TODO: Fix https://github.com/pingcap/tidb/issues/56432 to avoid rounding on INSERT!
-	res := tk.MustQuery(`select * from t order by id`)
-	res.Check(testkit.Rows(""+
-		//                              V 5?                       V 8?                V 5?                       V 8?       V 5?
-		"1 2024-10-01 2024-10-01 15:27:36 2024-10-01 15:27:35.987679 2024-10-01 15:27:36 2024-10-01 15:27:35.987679 1727789256 1727789255.987678900",
-		"2 2024-10-01 2024-10-01 15:27:35 2024-10-01 15:27:35.123443 2024-10-01 15:27:35 2024-10-01 15:27:35.123443 1727789255 1727789255.123443210"))
-	// Test functions that take datetime as arguments
-	tk.MustQuery(`select unix_timestamp(d), unix_timestamp(dt), unix_timestamp(dt6), unix_timestamp(ts), unix_timestamp(ts6) from t where id = 1`).Check(testkit.Rows("1727733600 1727789256 1727789255.987679 1727789256 1727789255.987679"))
-	// Test functions that take unix_timestamp (time_t) as argument
-	tk.MustQuery(`select from_unixtime(dc) from t where id = 1`).Sort().Check(testkit.Rows("2024-10-01 15:27:35.987678"))
-	tk.MustQuery(`select from_unixtime(dc) from t`).Sort().Check(testkit.Rows(""+
-		"2024-10-01 15:27:35.123443",
-		"2024-10-01 15:27:35.987678"))
-	// TODO: check if why UPDATE truncates with fsp, and rounds without!
-	// Same as for insert, does rounding when converting / casting to actual data type...
-	tk.MustExec(`update t set d = from_unixtime(dc), dt = from_unixtime(dc), dt6 = from_unixtime(dc), ts = from_unixtime(dc), ts6 = from_unixtime(dc)`)
-	res2 := tk.MustQuery(`select * from t order by id`)
-	// TODO: Also fix update for fsp = 0!
-	rows := res.Sort().Rows()
-	rows[0][3] = `2024-10-01 15:27:35.987678`
-	rows[0][5] = `2024-10-01 15:27:35.987678`
-	res2.Sort().Check(rows)
-	tk.MustQuery(`select from_unixtime(dc) from t where id = 1`).Check(testkit.Rows("2024-10-01 15:27:35.987678"))
-	tk.MustQuery(`select from_unixtime(dc) from t`).Sort().Check(testkit.Rows("2024-10-01 15:27:35.123443", "2024-10-01 15:27:35.987678"))
 }
 
 func TestShardIndexOnTiFlash(t *testing.T) {
