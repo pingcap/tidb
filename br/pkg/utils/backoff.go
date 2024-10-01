@@ -148,7 +148,7 @@ type backoffStrategyImpl struct {
 }
 
 func NewBackoffRetryAllErrorStrategy(remainingAttempts int, delayTime, maxDelayTime time.Duration) BackoffStrategy {
-	errContext := NewZeroRetryContext("retry all")
+	errContext := NewZeroRetryContext("retry all errors")
 	return &backoffStrategyImpl{
 		remainingAttempts: remainingAttempts,
 		delayTime:         delayTime,
@@ -160,7 +160,7 @@ func NewBackoffRetryAllErrorStrategy(remainingAttempts int, delayTime, maxDelayT
 }
 
 func NewBackoffRetryAllExceptStrategy(remainingAttempts int, delayTime, maxDelayTime time.Duration, isNonRetryFunc func(error) bool) BackoffStrategy {
-	errContext := NewZeroRetryContext("retry all")
+	errContext := NewZeroRetryContext("retry all except")
 	return &backoffStrategyImpl{
 		remainingAttempts: remainingAttempts,
 		delayTime:         delayTime,
