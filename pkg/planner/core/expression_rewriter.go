@@ -652,12 +652,42 @@ func (er *expressionRewriter) Enter(inNode ast.Node) (ast.Node, bool) {
 		if v.Op == opcode.LogicAnd || v.Op == opcode.LogicOr {
 			er.tryFoldCounter++
 		}
+		er.handleInformationSchemaBinaryOperationExpr(v)
 	case *ast.SetCollationExpr:
 		// Do nothing
 	default:
 		er.asScalar = true
 	}
 	return inNode, false
+}
+
+func (er *expressionRewriter) handleInformationSchemaBinaryOperationExpr(v *ast.BinaryOperationExpr) {
+	switch cn := v.L.(type) {
+	case *ast.ColumnNameExpr:
+		switch x := v.R.(type) {
+		case *driver.ValueExpr:
+			if x.Datum.Kind() == types.KindString {
+				var name *types.FieldName
+				for i := len(er.planCtx.builder.allNames) - 1; i >= 0; i-- {
+					idx, err := expression.FindFieldName(er.planCtx.builder.allNames[i], cn.Name)
+					if err != nil {
+						er.err = err
+						return
+					}
+					if idx >= 0 {
+						name = er.planCtx.builder.allNames[i][idx]
+						break
+					}
+				}
+				if name != nil {
+					if name.DBName.L == "information_schema" && (name.OrigTblName.L == "columns" || name.OrigTblName.L == "tables") {
+						x.Datum.SetString(strings.ToLower(x.Datum.GetString()), x.Datum.Collation())
+					}
+				}
+			}
+		}
+	default:
+	}
 }
 
 func (er *expressionRewriter) buildSemiApplyFromEqualSubq(np base.LogicalPlan, planCtx *exprRewriterPlanCtx, l, r expression.Expression, not, markNoDecorrelate bool) {
