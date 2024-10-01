@@ -44,6 +44,10 @@ for script in "$CUR"/*/run.sh; do
 	fi
 done
 
+# enable local encryption for all tests
+ENABLE_ENCRYPTION=true
+export ENABLE_ENCRYPTION
+
 if [[ "$group" == "others" ]]; then
 	if [[ -z $others ]]; then
 		echo "All br integration test cases have been added to groups"

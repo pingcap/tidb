@@ -14,6 +14,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+# disable global ENABLE_ENCRYPTION for this script
+ENABLE_ENCRYPTION=false
+export ENABLE_ENCRYPTION
+
 set -eu
 DB="$TEST_NAME"
 TABLE="usertable"

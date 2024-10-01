@@ -14,6 +14,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+# disable global ENABLE_ENCRYPTION for this script
+ENABLE_ENCRYPTION=false
+export ENABLE_ENCRYPTION
+
 set -eu
 . run_services
 CUR=$(cd "$(dirname "$0")" && pwd)
@@ -418,8 +422,9 @@ test_backup_encrypted_restore_unencrypted
 test_plaintext
 test_plaintext_data_key
 test_local_master_key
-test_aws_kms
-test_aws_kms_with_iam
+# localstack not working with older glibc version in our centos7 base image...
+#test_aws_kms
+#test_aws_kms_with_iam
 test_mixed_full_encrypted_log_plain
 test_mixed_full_plain_log_encrypted
 
