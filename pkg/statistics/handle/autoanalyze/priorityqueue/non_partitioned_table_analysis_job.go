@@ -35,8 +35,9 @@ const (
 
 // NonPartitionedTableAnalysisJob is a TableAnalysisJob for analyzing the physical table.
 type NonPartitionedTableAnalysisJob struct {
-	TableSchema string
-	TableName   string
+	completionHook JobCompletionHook
+	TableSchema    string
+	TableName      string
 	// This is only for newly added indexes.
 	Indexes []string
 	Indicators
@@ -79,6 +80,12 @@ func (j *NonPartitionedTableAnalysisJob) Analyze(
 	statsHandle statstypes.StatsHandle,
 	sysProcTracker sysproctrack.Tracker,
 ) error {
+	defer func() {
+		if j.completionHook != nil {
+			j.completionHook(j)
+		}
+	}()
+
 	return statsutil.CallWithSCtx(statsHandle.SPool(), func(sctx sessionctx.Context) error {
 		switch j.getAnalyzeType() {
 		case analyzeTable:
@@ -88,6 +95,12 @@ func (j *NonPartitionedTableAnalysisJob) Analyze(
 		}
 		return nil
 	})
+}
+
+// RegisterJobCompletionHook registers a completionHook function that will be called after the job can be marked as completed.
+// It can be used to update the job status in the job queue.
+func (j *NonPartitionedTableAnalysisJob) RegisterJobCompletionHook(hook JobCompletionHook) {
+	j.completionHook = hook
 }
 
 // HasNewlyAddedIndex checks whether the table has newly added indexes.
@@ -105,6 +118,10 @@ func (j *NonPartitionedTableAnalysisJob) IsValidToAnalyze(
 		j.TableSchema,
 		j.TableName,
 	); !valid {
+		if j.completionHook != nil {
+			j.completionHook(j)
+		}
+
 		return false, failReason
 	}
 

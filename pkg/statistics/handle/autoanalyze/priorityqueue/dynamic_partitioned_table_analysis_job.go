@@ -44,6 +44,9 @@ type DynamicPartitionedTableAnalysisJob struct {
 	// For example, the user may analyze some partitions manually, and we don't want to analyze them again.
 	PartitionIndexes map[string][]string
 
+	// completionHook is the completionHook function that will be called after the job is completed.
+	completionHook JobCompletionHook
+
 	TableSchema     string
 	GlobalTableName string
 	// This will analyze all indexes and columns of the specified partitions.
@@ -94,6 +97,12 @@ func (j *DynamicPartitionedTableAnalysisJob) Analyze(
 	statsHandle statstypes.StatsHandle,
 	sysProcTracker sysproctrack.Tracker,
 ) error {
+	defer func() {
+		if j.completionHook != nil {
+			j.completionHook(j)
+		}
+	}()
+
 	return statsutil.CallWithSCtx(statsHandle.SPool(), func(sctx sessionctx.Context) error {
 		switch j.getAnalyzeType() {
 		case analyzeDynamicPartition:
@@ -103,6 +112,12 @@ func (j *DynamicPartitionedTableAnalysisJob) Analyze(
 		}
 		return nil
 	})
+}
+
+// RegisterJobCompletionHook registers a completionHook function that will be called after the job can be marked as completed.
+// It can be used to update the job status in the job queue.
+func (j *DynamicPartitionedTableAnalysisJob) RegisterJobCompletionHook(hook JobCompletionHook) {
+	j.completionHook = hook
 }
 
 // GetIndicators returns the indicators of the table.
@@ -136,6 +151,9 @@ func (j *DynamicPartitionedTableAnalysisJob) IsValidToAnalyze(
 			j.GlobalTableName,
 			partitions...,
 		); !valid {
+			if j.completionHook != nil {
+				j.completionHook(j)
+			}
 			return false, failReason
 		}
 	}

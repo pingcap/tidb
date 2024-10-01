@@ -465,6 +465,7 @@ func (pq *AnalysisPriorityQueueV2) RefreshLastAnalysisDuration() {
 
 // GetRunningJobs returns the running jobs.
 // Note: This function is thread-safe.
+// Exported for testing.
 func (pq *AnalysisPriorityQueueV2) GetRunningJobs() map[int64]struct{} {
 	pq.syncFields.mu.RLock()
 	defer pq.syncFields.mu.RUnlock()
@@ -474,33 +475,6 @@ func (pq *AnalysisPriorityQueueV2) GetRunningJobs() map[int64]struct{} {
 		runningJobs[id] = struct{}{}
 	}
 	return runningJobs
-}
-
-// AddRunningJob adds a running job.
-// Note: This function is thread-safe.
-// Exported for testing. You should consider PopJobAndMarkRunning instead.
-func (pq *AnalysisPriorityQueueV2) AddRunningJob(tableID int64) error {
-	pq.syncFields.mu.Lock()
-	defer pq.syncFields.mu.Unlock()
-	if !pq.syncFields.initialized {
-		return errors.New(notInitializedErrMsg)
-	}
-
-	pq.syncFields.runningJobs[tableID] = struct{}{}
-	return nil
-}
-
-// RemoveRunningJob removes a running job.
-// Note: This function is thread-safe.
-func (pq *AnalysisPriorityQueueV2) RemoveRunningJob(tableID int64) error {
-	pq.syncFields.mu.Lock()
-	defer pq.syncFields.mu.Unlock()
-	if !pq.syncFields.initialized {
-		return errors.New(notInitializedErrMsg)
-	}
-
-	delete(pq.syncFields.runningJobs, tableID)
-	return nil
 }
 
 func (*AnalysisPriorityQueueV2) handleDDLEvent(_ context.Context, _ sessionctx.Context, _ notifier.SchemaChangeEvent) {
@@ -539,9 +513,9 @@ func (pq *AnalysisPriorityQueueV2) pushWithoutLock(job AnalysisJob) error {
 	return pq.syncFields.inner.Add(job)
 }
 
-// PopJobAndMarkRunning pops a job from the priority queue and marks it as running.
+// Pop pops a job from the priority queue and marks it as running.
 // Note: This function is thread-safe.
-func (pq *AnalysisPriorityQueueV2) PopJobAndMarkRunning() (AnalysisJob, error) {
+func (pq *AnalysisPriorityQueueV2) Pop() (AnalysisJob, error) {
 	pq.syncFields.mu.Lock()
 	defer pq.syncFields.mu.Unlock()
 	if !pq.syncFields.initialized {
@@ -553,7 +527,24 @@ func (pq *AnalysisPriorityQueueV2) PopJobAndMarkRunning() (AnalysisJob, error) {
 		return nil, errors.Trace(err)
 	}
 	pq.syncFields.runningJobs[job.GetTableID()] = struct{}{}
+
+	job.RegisterJobCompletionHook(func(j AnalysisJob) {
+		pq.syncFields.mu.Lock()
+		defer pq.syncFields.mu.Unlock()
+		delete(pq.syncFields.runningJobs, j.GetTableID())
+	})
 	return job, nil
+}
+
+// Peek peeks the top job from the priority queue.
+func (pq *AnalysisPriorityQueueV2) Peek() (AnalysisJob, error) {
+	pq.syncFields.mu.Lock()
+	defer pq.syncFields.mu.Unlock()
+	if !pq.syncFields.initialized {
+		return nil, errors.New(notInitializedErrMsg)
+	}
+
+	return pq.syncFields.inner.Peek()
 }
 
 // IsEmpty checks whether the priority queue is empty.

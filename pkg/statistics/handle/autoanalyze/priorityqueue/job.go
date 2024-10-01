@@ -43,6 +43,9 @@ type Indicators struct {
 	LastAnalysisDuration time.Duration
 }
 
+// JobCompletionHook is the completionHook function that will be called after the job is completed.
+type JobCompletionHook func(job AnalysisJob)
+
 // AnalysisJob is the interface for the analysis job.
 type AnalysisJob interface {
 	// IsValidToAnalyze checks whether the table is valid to analyze.
@@ -76,6 +79,10 @@ type AnalysisJob interface {
 
 	// GetTableID gets the table ID of the job.
 	GetTableID() int64
+
+	// RegisterJobCompletionHook registers a completionHook function that will be called after the job can be marked as completed.
+	// It can be used to update the job status in the job queue.
+	RegisterJobCompletionHook(hook JobCompletionHook)
 
 	fmt.Stringer
 }

@@ -239,6 +239,11 @@ func (j *TestJob) Analyze(statsHandle types.StatsHandle, sysProcTracker sysproct
 	panic("unimplemented")
 }
 
+// RegisterJobCompletionHook implements AnalysisJob.
+func (j *TestJob) RegisterJobCompletionHook(hook priorityqueue.JobCompletionHook) {
+	panic("unimplemented")
+}
+
 // GetWeight implements AnalysisJob.
 func (j *TestJob) GetWeight() float64 {
 	panic("unimplemented")

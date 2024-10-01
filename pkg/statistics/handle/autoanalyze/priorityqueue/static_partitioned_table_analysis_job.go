@@ -35,6 +35,7 @@ const (
 
 // StaticPartitionedTableAnalysisJob is a job for analyzing a static partitioned table.
 type StaticPartitionedTableAnalysisJob struct {
+	completionHook      JobCompletionHook
 	TableSchema         string
 	GlobalTableName     string
 	StaticPartitionName string
@@ -88,6 +89,12 @@ func (j *StaticPartitionedTableAnalysisJob) Analyze(
 	statsHandle statstypes.StatsHandle,
 	sysProcTracker sysproctrack.Tracker,
 ) error {
+	defer func() {
+		if j.completionHook != nil {
+			j.completionHook(j)
+		}
+	}()
+
 	return statsutil.CallWithSCtx(statsHandle.SPool(), func(sctx sessionctx.Context) error {
 		switch j.getAnalyzeType() {
 		case analyzeStaticPartition:
@@ -97,6 +104,12 @@ func (j *StaticPartitionedTableAnalysisJob) Analyze(
 		}
 		return nil
 	})
+}
+
+// RegisterJobCompletionHook registers a completionHook function that will be called after the job can be marked as completed.
+// It can be used to update the job status in the job queue.
+func (j *StaticPartitionedTableAnalysisJob) RegisterJobCompletionHook(hook JobCompletionHook) {
+	j.completionHook = hook
 }
 
 // GetIndicators implements AnalysisJob.
@@ -129,6 +142,9 @@ func (j *StaticPartitionedTableAnalysisJob) IsValidToAnalyze(
 			j.GlobalTableName,
 			partitionNames...,
 		); !valid {
+			if j.completionHook != nil {
+				j.completionHook(j)
+			}
 			return false, failReason
 		}
 	}
