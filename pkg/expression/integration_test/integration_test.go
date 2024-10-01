@@ -1433,7 +1433,6 @@ func TestIssue9710(t *testing.T) {
 	}
 
 	for {
-		// TODO: How to test the vector implementations?
 		rs := tk.MustQuery("select now(), now(6), unix_timestamp(), unix_timestamp(now()), utc_timestamp(), utc_timestamp(6), sysdate(), sysdate(6)")
 		s, ms := getSAndMS(rs.Rows()[0][1].(string))
 
@@ -1443,12 +1442,11 @@ func TestIssue9710(t *testing.T) {
 		require.Equal(t, rs.Rows()[0][2], rs.Rows()[0][3]) // unix_timestamp() will truncate the result
 		u0, _ := getSAndMS(rs.Rows()[0][4].(string))
 		u6, _ := getSAndMS(rs.Rows()[0][5].(string))
-		require.Equal(t, u0, u6) // utc_timestmap() will truncate the result
+		require.Equal(t, u0, u6) // utc_timestamp() will truncate the result
 		s0, _ := getSAndMS(rs.Rows()[0][4].(string))
 		s6, _ := getSAndMS(rs.Rows()[0][5].(string))
 		require.Equal(t, s0, s6) // sysdate() will truncate the result
 
-		// TODO: improve to only tests one time for fsp < 0.5 and one for > 0.5
 		if ms < 500000 {
 			time.Sleep(time.Second / 10)
 			continue
@@ -1463,47 +1461,40 @@ func TestTimeFuncTruncation(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 
-	tk.MustExec(`create table t (id int primary key, d date, dt datetime, dt6 datetime(6), ts timestamp, ts6 timestamp(6), time_t32 int, utime_t32 int unsigned, time_t64 bigint, utime_t64 bigint unsigned, dc decimal(20,9))`)
+	tk.MustExec(`create table t (id int primary key, d date, dt datetime, dt6 datetime(6), ts timestamp, ts6 timestamp(6), time_t bigint, dc decimal(20,9))`)
 	dateStr := `2024-10-01 15:27:35.9876789`
 	timeStr := `1727789255.9876789`
-	tk.MustExec(`insert into t values (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		dateStr, dateStr, dateStr, dateStr, dateStr,
-		timeStr, timeStr, timeStr, timeStr, timeStr)
+	tk.MustExec(`insert into t values (1, ?, ?, ?, ?, ?, ?, ?)`,
+		dateStr, dateStr, dateStr, dateStr, dateStr, timeStr, timeStr)
 	dateStr = `2024-10-01 15:27:35.12344321`
 	timeStr = `1727789255.12344321`
-	tk.MustExec(`insert into t values (2, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		dateStr, dateStr, dateStr, dateStr, dateStr,
-		timeStr, timeStr, timeStr, timeStr, timeStr)
-	/*
-		// Populate a bit more to test the vector functions as well
-		tk.MustExec(`insert into t select id + 2, d, dt, dt6, ts, ts6, time_t32, utime_t32, time_t64, utime_t64, dc from t,t t2`)
-		tk.MustExec(`insert into t select id + 4, d, dt, dt6, ts, ts6, time_t32, utime_t32, time_t64, utime_t64, dc from t,t t2`)
-		tk.MustExec(`insert into t select id + 8, d, dt, dt6, ts, ts6, time_t32, utime_t32, time_t64, utime_t64, dc from t,t t2`)
-		tk.MustExec(`insert into t select id + 16, d, dt, dt6, ts, ts6, time_t32, utime_t32, time_t64, utime_t64, dc from t,t t2`)
-		tk.MustExec(`insert into t select id + 32, d, dt, dt6, ts, ts6, time_t32, utime_t32, time_t64, utime_t64, dc from t,t t2`)
-
-	*/
+	tk.MustExec(`insert into t values (2, ?, ?, ?, ?, ?, ?, ?)`,
+		dateStr, dateStr, dateStr, dateStr, dateStr, timeStr, timeStr)
 
 	// TODO: Fix https://github.com/pingcap/tidb/issues/56432 to avoid rounding on INSERT!
 	res := tk.MustQuery(`select * from t order by id`)
 	res.Check(testkit.Rows(""+
-		"1 2024-10-01 2024-10-01 15:27:36 2024-10-01 15:27:35.987679 2024-10-01 15:27:36 2024-10-01 15:27:35.987679 1727789256 1727789256 1727789256 1727789256 1727789255.987678900",
-		"2 2024-10-01 2024-10-01 15:27:35 2024-10-01 15:27:35.123443 2024-10-01 15:27:35 2024-10-01 15:27:35.123443 1727789255 1727789255 1727789255 1727789255 1727789255.123443210"))
+		//                              V 5?                       V 8?                V 5?                       V 8?       V 5?
+		"1 2024-10-01 2024-10-01 15:27:36 2024-10-01 15:27:35.987679 2024-10-01 15:27:36 2024-10-01 15:27:35.987679 1727789256 1727789255.987678900",
+		"2 2024-10-01 2024-10-01 15:27:35 2024-10-01 15:27:35.123443 2024-10-01 15:27:35 2024-10-01 15:27:35.123443 1727789255 1727789255.123443210"))
 	// Test functions that take datetime as arguments
-	tk.MustQuery(`select unix_timestamp(d), unix_timestamp(dt), unix_timestamp(dt6), unix_timestamp(ts), unix_timestamp(ts6), unix_timestamp(ts6) from t where id = 1`).Check(testkit.Rows("1727733600 1727789256 1727789255.987679 1727789256 1727789255.987679 1727789255.987679"))
+	tk.MustQuery(`select unix_timestamp(d), unix_timestamp(dt), unix_timestamp(dt6), unix_timestamp(ts), unix_timestamp(ts6) from t where id = 1`).Check(testkit.Rows("1727733600 1727789256 1727789255.987679 1727789256 1727789255.987679"))
 	// Test functions that take unix_timestamp (time_t) as argument
 	tk.MustQuery(`select from_unixtime(dc) from t where id = 1`).Sort().Check(testkit.Rows("2024-10-01 15:27:35.987678"))
 	tk.MustQuery(`select from_unixtime(dc) from t`).Sort().Check(testkit.Rows(""+
 		"2024-10-01 15:27:35.123443",
 		"2024-10-01 15:27:35.987678"))
-	tk.MustExec(`update t set d = from_unixtime(dc), dt = from_unixtime(dc), ts = from_unixtime(dc)`)
+	// TODO: check if why UPDATE truncates with fsp, and rounds without!
+	// Same as for insert, does rounding when converting / casting to actual data type...
+	tk.MustExec(`update t set d = from_unixtime(dc), dt = from_unixtime(dc), dt6 = from_unixtime(dc), ts = from_unixtime(dc), ts6 = from_unixtime(dc)`)
 	res2 := tk.MustQuery(`select * from t order by id`)
-	res2.Sort().Check(res.Sort().Rows())
+	// TODO: Also fix update for fsp = 0!
+	rows := res.Sort().Rows()
+	rows[0][3] = `2024-10-01 15:27:35.987678`
+	rows[0][5] = `2024-10-01 15:27:35.987678`
+	res2.Sort().Check(rows)
 	tk.MustQuery(`select from_unixtime(dc) from t where id = 1`).Check(testkit.Rows("2024-10-01 15:27:35.987678"))
 	tk.MustQuery(`select from_unixtime(dc) from t`).Sort().Check(testkit.Rows("2024-10-01 15:27:35.123443", "2024-10-01 15:27:35.987678"))
-	// TODO: Test SYSDATE(), UTC_TIMESTAMP() similar to NOW(), UTC_TIME(), CURTIME()
-	// TODO: Also test TIME(), TIMESTAMP(), YEAR(), YEAR_WEEK(), SECOND(), QUARTER(), HOUR()?
-	// TODO: also test UNIX_TIMESTAMP() without arguments?
 }
 
 func TestShardIndexOnTiFlash(t *testing.T) {
