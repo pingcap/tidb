@@ -2323,16 +2323,12 @@ func SetPBColumnsDefaultValue(ctx sessionctx.Context, pbColumns []*tipb.ColumnIn
 			continue
 		}
 
-		sessVars := ctx.GetSessionVars()
-		originStrict := sessVars.StrictSQLMode
-		sessVars.StrictSQLMode = false
-		d, err := table.GetColOriginDefaultValue(ctx, c)
-		sessVars.StrictSQLMode = originStrict
+		d, err := table.GetColOriginDefaultValueWithoutStrictSQLMode(ctx, c)
 		if err != nil {
 			return err
 		}
 
-		pbColumns[i].DefaultVal, err = tablecodec.EncodeValue(sessVars.StmtCtx, nil, d)
+		pbColumns[i].DefaultVal, err = tablecodec.EncodeValue(ctx.GetSessionVars().StmtCtx, nil, d)
 		if err != nil {
 			return err
 		}
