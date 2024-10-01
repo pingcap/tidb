@@ -5,6 +5,7 @@ package encryption
 import (
 	"context"
 	"sync"
+	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/encryptionpb"
@@ -55,10 +56,8 @@ func (k *KmsBackend) Decrypt(ctx context.Context, content *encryptionpb.Encrypte
 		return k.state.cached.encryptionBackend.DecryptContent(ctx, content)
 	}
 
-	// piggyback on NewDownloadSSTBackoffer, a refactor is ongoing to remove all the backoffers
-	// so user don't need to write a backoffer for every type
 	decryptedKey, err :=
-		utils.WithRetryV2(ctx, utils.NewDownloadSSTBackoffer(), func(ctx context.Context) ([]byte, error) {
+		utils.WithRetryV2(ctx, utils.NewBackoffRetryAllErrorStrategy(10, 500*time.Millisecond, 5*time.Second), func(ctx context.Context) ([]byte, error) {
 			return k.kmsProvider.DecryptDataKey(ctx, ciphertextKey)
 		})
 	if err != nil {
