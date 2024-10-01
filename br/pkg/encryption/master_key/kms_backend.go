@@ -57,9 +57,10 @@ func (k *KmsBackend) Decrypt(ctx context.Context, content *encryptionpb.Encrypte
 	}
 
 	decryptedKey, err :=
-		utils.WithRetryV2(ctx, utils.NewBackoffRetryAllErrorStrategy(10, 500*time.Millisecond, 5*time.Second), func(ctx context.Context) ([]byte, error) {
-			return k.kmsProvider.DecryptDataKey(ctx, ciphertextKey)
-		})
+		utils.WithRetryV2(ctx, utils.NewBackoffRetryAllErrorStrategy(10, 500*time.Millisecond, 5*time.Second),
+			func(ctx context.Context) ([]byte, error) {
+				return k.kmsProvider.DecryptDataKey(ctx, ciphertextKey)
+			})
 	if err != nil {
 		return nil, errors.Annotate(err, "decrypt encrypted key failed")
 	}
