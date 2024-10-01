@@ -1433,7 +1433,7 @@ func TestIssue9710(t *testing.T) {
 	}
 
 	for {
-		rs := tk.MustQuery("select now(), now(6), unix_timestamp(), unix_timestamp(now())")
+		rs := tk.MustQuery("select now(), now(6), unix_timestamp(), unix_timestamp(now()), utc_timestamp(), utc_timestamp(6)")
 		s, ms := getSAndMS(rs.Rows()[0][1].(string))
 		if ms < 500000 {
 			time.Sleep(time.Second / 10)
@@ -1442,6 +1442,9 @@ func TestIssue9710(t *testing.T) {
 
 		s1, _ := getSAndMS(rs.Rows()[0][0].(string))
 		require.Equal(t, s, s1) // now() will truncate the result instead of rounding it
+		u, _ := getSAndMS(rs.Rows()[0][4].(string))
+		u6, _ := getSAndMS(rs.Rows()[0][5].(string))
+		require.Equal(t, u, u6) // utc_timestmap() will truncate the result instead of rounding it
 
 		require.Equal(t, rs.Rows()[0][2], rs.Rows()[0][3]) // unix_timestamp() will truncate the result
 		break

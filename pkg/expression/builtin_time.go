@@ -2404,7 +2404,7 @@ func evalUTCTimestampWithFsp(ctx EvalContext, fsp int) (types.Time, bool, error)
 	if err != nil {
 		return types.ZeroTime, true, err
 	}
-	result, err := convertTimeToMysqlTime(nowTs.UTC(), fsp, types.ModeHalfUp)
+	result, err := convertTimeToMysqlTime(nowTs.UTC(), fsp, types.ModeTruncate)
 	if err != nil {
 		return types.ZeroTime, true, err
 	}
