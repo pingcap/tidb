@@ -418,9 +418,8 @@ test_backup_encrypted_restore_unencrypted
 test_plaintext
 test_plaintext_data_key
 test_local_master_key
-# some issue running in CI, will fix later
-#test_aws_kms
-#test_aws_kms_with_iam
+test_aws_kms
+test_aws_kms_with_iam
 test_mixed_full_encrypted_log_plain
 test_mixed_full_plain_log_encrypted
 
