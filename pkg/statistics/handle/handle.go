@@ -17,6 +17,7 @@ package handle
 import (
 	"time"
 
+	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/sysproctrack"
@@ -111,6 +112,7 @@ func NewHandle(
 	_, /* ctx, keep it for feature usage */
 	initStatsCtx sessionctx.Context,
 	lease time.Duration,
+	is infoschema.InfoSchema,
 	pool pkgutil.SessionPool,
 	tracker sysproctrack.Tracker,
 	autoAnalyzeProcIDGetter func() uint64,
@@ -136,12 +138,11 @@ func NewHandle(
 	handle.StatsHistory = history.NewStatsHistory(handle)
 	handle.StatsUsage = usage.NewStatsUsageImpl(handle)
 	handle.StatsAnalyze = autoanalyze.NewStatsAnalyze(handle, tracker)
-	handle.StatsSyncLoad = syncload.NewStatsSyncLoad(handle)
+	handle.StatsSyncLoad = syncload.NewStatsSyncLoad(is, handle)
 	handle.StatsGlobal = globalstats.NewStatsGlobal(handle)
 	handle.DDL = ddl.NewDDLHandler(
 		handle.StatsReadWriter,
 		handle,
-		handle.StatsGlobal,
 	)
 	return handle, nil
 }

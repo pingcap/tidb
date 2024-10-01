@@ -183,7 +183,7 @@ func prepareBenchCtx(createTable string, partitionExpr string) *testCtx {
 		return nil
 	}
 	sctx := mock.NewContext()
-	tblInfo, err := ddlhelper.BuildTableInfoFromAST(stmt.(*ast.CreateTableStmt))
+	tblInfo, err := ddlhelper.BuildTableInfoFromASTForTest(stmt.(*ast.CreateTableStmt))
 	if err != nil {
 		return nil
 	}
@@ -213,7 +213,7 @@ func prepareTestCtx(t *testing.T, createTable string, partitionExpr string) *tes
 	stmt, err := p.ParseOneStmt(createTable, "", "")
 	require.NoError(t, err)
 	sctx := mock.NewContext()
-	tblInfo, err := ddlhelper.BuildTableInfoFromAST(stmt.(*ast.CreateTableStmt))
+	tblInfo, err := ddlhelper.BuildTableInfoFromASTForTest(stmt.(*ast.CreateTableStmt))
 	require.NoError(t, err)
 	columns, names, err := expression.ColumnInfos2ColumnsAndNames(sctx, model.NewCIStr("t"), tblInfo.Name, tblInfo.Cols(), tblInfo)
 	require.NoError(t, err)
