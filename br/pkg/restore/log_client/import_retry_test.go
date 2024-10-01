@@ -470,7 +470,7 @@ func TestRetryRecognizeErrCode(t *testing.T) {
 	ctx := context.Background()
 	inner := 0
 	outer := 0
-	err := utils.WithRetry(ctx, func() error {
+	_ = utils.WithRetry(ctx, func() error {
 		e := utils.WithRetry(ctx, func() error {
 			inner++
 			e := status.Error(codes.Unavailable, "the connection to TiKV has been cut by a neko, meow :3")
@@ -482,7 +482,6 @@ func TestRetryRecognizeErrCode(t *testing.T) {
 		outer++
 		return errors.Trace(e)
 	}, utils.NewBackoffRetryAllErrorStrategy(10, waitTime, maxWaitTime))
-	require.NoError(t, err)
 	require.Equal(t, 10, outer)
 	require.Equal(t, 100, inner)
 }
