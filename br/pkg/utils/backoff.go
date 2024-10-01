@@ -207,6 +207,11 @@ func (bo *importerBackoffer) NextBackoff(err error) time.Duration {
 			}
 		}
 	}
+	failpoint.Inject("set-import-attempt-to-one", func(_ failpoint.Value) {
+		if bo.attempt > 1 {
+			bo.attempt = 1
+		}
+	})
 	if bo.delayTime > bo.maxDelayTime {
 		return bo.maxDelayTime
 	}
