@@ -16,8 +16,18 @@
 
 set -eux
 
+# Add a new environment variable to control encryption
+ENABLE_ENCRYPTION=${ENABLE_ENCRYPTION:-false}
+
+# Prepare encryption arguments
+ENCRYPTION_ARGS=""
+if [ "$ENABLE_ENCRYPTION" = "true" ]; then
+    ENCRYPTION_ARGS="--crypter.method aes128-ctr --crypter.key 0123456789abcdef0123456789abcdef --log.crypter.method AES256-CTR --log.crypter.key 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+fi
+
 br.test -test.coverprofile="$COV_DIR/cov.$TEST_NAME.$$.out.log" DEVEL "$@" \
     -L "info" \
     --ca "$TEST_DIR/certs/ca.pem" \
     --cert "$TEST_DIR/certs/br.pem" \
-    --key "$TEST_DIR/certs/br.key"
+    --key "$TEST_DIR/certs/br.key" \
+    $ENCRYPTION_ARGS
