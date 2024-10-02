@@ -269,7 +269,7 @@ WHERE
 		"  └─IndexReader(Probe) 9990.00 root  index:Selection_57",
 		"    └─Selection 9990.00 cop[tikv]  not(isnull(test.g.groupid))",
 		"      └─IndexRangeScan 10000.00 cop[tikv] table:g, index:k2(groupid, parentid) range: decided by [eq(test.g.groupid, test.p.groupid)], keep order:false, stats:pseudo",
-		"CTE16000.00 root  Recursive CTE",
+		"CTE_0 16000.00 root  Recursive CTE",
 		"├─IndexReader(Seed Part) 10000.00 root  index:IndexFullScan_23",
 		"│ └─IndexFullScan 10000.00 cop[tikv] table:p, index:k1(groupid) keep order:false, stats:pseudo",
 		"└─IndexHashJoin(Recursive Part) 10000.00 root  inner join, inner:IndexLookUp_31, outer key:test.p.groupid, inner key:test.g.parentid, equal cond:eq(test.p.groupid, test.g.parentid)",
