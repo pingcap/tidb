@@ -14,6 +14,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+# disable encryption as not working in this backward compatible test
+ENABLE_ENCRYPTION=false
+export ENABLE_ENCRYPTION
+
 set -eu
 DB="$TEST_NAME"
 
