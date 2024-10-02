@@ -1,0 +1,11 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "testargsv1",
+    srcs = [
+        "force_v1.go",  # keep
+        "normal.go",
+    ],
+    importpath = "github.com/pingcap/tidb/pkg/ddl/testargsv1",
+    visibility = ["//visibility:public"],
+)

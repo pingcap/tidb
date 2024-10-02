@@ -29,7 +29,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/errctx"
 	"github.com/pingcap/tidb/pkg/expression"
-	"github.com/pingcap/tidb/pkg/expression/contextstatic"
+	"github.com/pingcap/tidb/pkg/expression/exprstatic"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser"
@@ -241,19 +241,19 @@ func initPartition(t *partitionedTable, def model.PartitionDefinition) (*partiti
 
 // NewPartitionExprBuildCtx returns a context to build partition expression.
 func NewPartitionExprBuildCtx() expression.BuildContext {
-	return contextstatic.NewStaticExprContext(
-		contextstatic.WithEvalCtx(contextstatic.NewStaticEvalContext(
+	return exprstatic.NewExprContext(
+		exprstatic.WithEvalCtx(exprstatic.NewEvalContext(
 			// Set a non-strict SQL mode and allow all date values if possible to make sure constant fold can work to
 			// estimate some undetermined result when locating a row to a partition.
 			// See issue: https://github.com/pingcap/tidb/issues/54271 for details.
-			contextstatic.WithSQLMode(mysql.ModeAllowInvalidDates),
-			contextstatic.WithTypeFlags(types.StrictFlags.
+			exprstatic.WithSQLMode(mysql.ModeAllowInvalidDates),
+			exprstatic.WithTypeFlags(types.StrictFlags.
 				WithIgnoreTruncateErr(true).
 				WithIgnoreZeroDateErr(true).
 				WithIgnoreZeroInDate(true).
 				WithIgnoreInvalidDateErr(true),
 			),
-			contextstatic.WithErrLevelMap(errctx.LevelMap{
+			exprstatic.WithErrLevelMap(errctx.LevelMap{
 				errctx.ErrGroupTruncate: errctx.LevelIgnore,
 			}),
 		)),
@@ -1685,15 +1685,16 @@ func (t *partitionTableWithGivenSets) GetAllPartitionIDs() []int64 {
 }
 
 // RemoveRecord implements table.Table RemoveRecord interface.
-func (t *partitionedTable) RemoveRecord(ctx table.MutateContext, txn kv.Transaction, h kv.Handle, r []types.Datum) error {
+func (t *partitionedTable) RemoveRecord(ctx table.MutateContext, txn kv.Transaction, h kv.Handle, r []types.Datum, opts ...table.RemoveRecordOption) error {
+	opt := table.NewRemoveRecordOpt(opts...)
 	ectx := ctx.GetExprCtx()
 	pid, err := t.locatePartition(ectx.GetEvalCtx(), r)
 	if err != nil {
 		return errors.Trace(err)
 	}
 
-	tbl := t.GetPartition(pid)
-	err = tbl.RemoveRecord(ctx, txn, h, r)
+	tbl := t.getPartition(pid)
+	err = tbl.removeRecord(ctx, txn, h, r, opt)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -1703,8 +1704,8 @@ func (t *partitionedTable) RemoveRecord(ctx table.MutateContext, txn kv.Transact
 		if err != nil {
 			return errors.Trace(err)
 		}
-		tbl = t.GetPartition(pid)
-		err = tbl.RemoveRecord(ctx, txn, h, r)
+		tbl = t.getPartition(pid)
+		err = tbl.removeRecord(ctx, txn, h, r, opt)
 		if err != nil {
 			return errors.Trace(err)
 		}

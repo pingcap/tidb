@@ -361,19 +361,16 @@ func (e *ShowExec) fetchAllTablePlacements(ctx context.Context, scheduleState ma
 	dbs := e.is.AllSchemaNames()
 	slices.SortFunc(dbs, func(i, j pmodel.CIStr) int { return cmp.Compare(i.O, j.O) })
 
-	for _, dbName := range dbs {
+	tbls := e.is.ListTablesWithSpecialAttribute(infoschema.AllSpecialAttribute)
+	for _, db := range tbls {
 		tableRowSets := make([]tableRowSet, 0)
-		tblInfos, err := e.is.SchemaTableInfos(ctx, dbName)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		for _, tblInfo := range tblInfos {
-			if checker != nil && !checker.RequestVerification(activeRoles, dbName.O, tblInfo.Name.O, "", mysql.AllPrivMask) {
+		for _, tblInfo := range db.TableInfos {
+			if checker != nil && !checker.RequestVerification(activeRoles, db.DBName.O, tblInfo.Name.O, "", mysql.AllPrivMask) {
 				continue
 			}
 
 			var rows [][]any
-			ident := ast.Ident{Schema: dbName, Name: tblInfo.Name}
+			ident := ast.Ident{Schema: db.DBName, Name: tblInfo.Name}
 			tblPlacement, err := e.getTablePlacement(tblInfo)
 			if err != nil {
 				return err
@@ -503,13 +500,9 @@ func fetchPartitionScheduleState(ctx context.Context, scheduleState map[int64]in
 }
 
 func fetchTablePartitionScheduleState(ctx context.Context, scheduleState map[int64]infosync.PlacementScheduleState, table *model.TableInfo, state infosync.PlacementScheduleState) (infosync.PlacementScheduleState, error) {
-	var (
-		schedule infosync.PlacementScheduleState
-		err      error
-	)
 	if table.GetPartitionInfo() != nil {
 		for _, part := range table.GetPartitionInfo().Definitions {
-			schedule, err = fetchScheduleState(ctx, scheduleState, part.ID)
+			schedule, err := fetchScheduleState(ctx, scheduleState, part.ID)
 			if err != nil {
 				return infosync.PlacementScheduleStatePending, err
 			}
@@ -520,7 +513,7 @@ func fetchTablePartitionScheduleState(ctx context.Context, scheduleState map[int
 		}
 	}
 
-	return schedule, nil
+	return state, nil
 }
 
 func fetchTableScheduleState(ctx context.Context, scheduleState map[int64]infosync.PlacementScheduleState, table *model.TableInfo) (infosync.PlacementScheduleState, error) {

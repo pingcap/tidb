@@ -18,12 +18,14 @@ import (
 	"encoding/json"
 	"fmt"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
+	"github.com/pingcap/tidb/pkg/util/intest"
 )
 
 // ActionType is the type for DDL action.
@@ -83,7 +85,7 @@ const (
 	_DEPRECATEDActionAlterTableAlterPartition ActionType = 46
 
 	ActionRenameTables                  ActionType = 47
-	ActionDropIndexes                   ActionType = 48 // Deprecated, we use ActionMultiSchemaChange instead.
+	_DEPRECATEDActionDropIndexes        ActionType = 48 // Deprecated, we use ActionMultiSchemaChange instead.
 	ActionAlterTableAttributes          ActionType = 49
 	ActionAlterTablePartitionAttributes ActionType = 50
 	ActionCreatePlacementPolicy         ActionType = 51
@@ -108,6 +110,7 @@ const (
 	ActionDropResourceGroup      ActionType = 70
 	ActionAlterTablePartitioning ActionType = 71
 	ActionRemovePartitioning     ActionType = 72
+	ActionAddVectorIndex         ActionType = 73
 )
 
 // ActionMap is the map of DDL ActionType to string.
@@ -179,6 +182,7 @@ var ActionMap = map[ActionType]string{
 	ActionDropResourceGroup:             "drop resource group",
 	ActionAlterTablePartitioning:        "alter table partition by",
 	ActionRemovePartitioning:            "alter table remove partitioning",
+	ActionAddVectorIndex:                "add vector index",
 
 	// `ActionAlterTableAlterPartition` is removed and will never be used.
 	// Just left a tombstone here for compatibility.
@@ -241,6 +245,44 @@ func (s SchemaState) String() string {
 	}
 }
 
+// JobVersion is the version of DDL job.
+type JobVersion int64
+
+const (
+	// JobVersion1 is the first version of DDL job where job args are stored as un-typed
+	// array. Before v8.4.0, all DDL jobs are in this version.
+	JobVersion1 JobVersion = 1
+	// JobVersion2 is the second version of DDL job where job args are stored as
+	// typed structs, we start to use this version from v8.4.0.
+	// Note: this version is not enabled right now except in some test cases, will
+	// enable it after we have CI to run both versions.
+	JobVersion2 JobVersion = 2
+)
+
+// String implements fmt.Stringer interface.
+func (v JobVersion) String() string {
+	if v == JobVersion1 {
+		return "v1"
+	} else if v == JobVersion2 {
+		return "v2"
+	}
+	return fmt.Sprintf("unknown(%d)", v)
+}
+
+// JobVerInUse is the job version for new DDL jobs in the node.
+// it's for test now.
+var jobVerInUse atomic.Int64
+
+// SetJobVerInUse sets the version of DDL job used in the node.
+func SetJobVerInUse(ver JobVersion) {
+	jobVerInUse.Store(int64(ver))
+}
+
+// GetJobVerInUse returns the version of DDL job used in the node.
+func GetJobVerInUse() JobVersion {
+	return JobVersion(jobVerInUse.Load())
+}
+
 // Job is for a DDL operation.
 type Job struct {
 	ID   int64      `json:"id"`
@@ -261,6 +303,7 @@ type Job struct {
 	// RowCount means the number of rows that are processed.
 	RowCount int64      `json:"row_count"`
 	Mu       sync.Mutex `json:"-"`
+
 	// CtxVars are variables attached to the job. It is for internal usage.
 	// E.g. passing arguments between functions by one single *Job pointer.
 	// for ExchangeTablePartition, RenameTables, RenameTable, it's [slice-of-db-id, slice-of-table-id]
@@ -271,10 +314,14 @@ type Job struct {
 	// - TruncateTable: [new-table-id, foreignKeyCheck, ...
 	// - RenameTable: [old-db-id, new-table-name, old-db-name]
 	// - ExchangeTablePartition: [partition-id, pt-db-id, pt-id, partition-name, with-validation]
+	// when Version is JobVersion2, Args contains a single element of type JobArgs.
+	// TODO make it private after we finish the migration to JobVersion2.
 	Args []any `json:"-"`
-	// RawArgs : We must use json raw message to delay parsing special args.
-	RawArgs     json.RawMessage `json:"raw_args"`
-	SchemaState SchemaState     `json:"schema_state"`
+	// we use json raw message to delay parsing special args.
+	// the args are cleared out unless Job.FillFinishedArgs is called.
+	RawArgs json.RawMessage `json:"raw_args"`
+
+	SchemaState SchemaState `json:"schema_state"`
 	// SnapshotVer means snapshot version for this job.
 	SnapshotVer uint64 `json:"snapshot_ver"`
 	// RealStartTS uses timestamp allocated by TSO.
@@ -289,8 +336,8 @@ type Job struct {
 	Query      string       `json:"query"`
 	BinlogInfo *HistoryInfo `json:"binlog"`
 
-	// Version indicates the DDL job version. For old jobs, it will be 0.
-	Version int64 `json:"version"`
+	// Version indicates the DDL job version.
+	Version JobVersion `json:"version"`
 
 	// ReorgMeta is meta info of ddl reorganization.
 	ReorgMeta *DDLReorgMeta `json:"reorg_meta"`
@@ -435,22 +482,61 @@ func (job *Job) GetWarnings() (map[errors.ErrorID]*terror.Error, map[errors.Erro
 	return w, wc
 }
 
+// FillArgs fills args for new job.
+func (job *Job) FillArgs(args JobArgs) {
+	intest.Assert(job.Version == JobVersion1 || job.Version == JobVersion2, "job version is invalid")
+	if job.Version == JobVersion1 {
+		args.fillJobV1(job)
+		return
+	}
+	job.Args = []any{args}
+}
+
+// FillFinishedArgs fills args for finished job.
+func (job *Job) FillFinishedArgs(args FinishedJobArgs) {
+	intest.Assert(job.Version == JobVersion1 || job.Version == JobVersion2, "job version is invalid")
+	if job.Version == JobVersion1 {
+		args.fillFinishedJobV1(job)
+		return
+	}
+	job.Args = []any{args}
+}
+
+func marshalArgs(jobVer JobVersion, args []any) (json.RawMessage, error) {
+	if jobVer <= JobVersion1 {
+		rawArgs, err := json.Marshal(args)
+		return rawArgs, errors.Trace(err)
+	}
+
+	intest.Assert(jobVer == JobVersion2, "job version is not v2")
+	var arg any
+	if len(args) > 0 {
+		intest.Assert(len(args) == 1, "Job.Args should have only one element")
+		arg = args[0]
+	}
+
+	rawArgs, err := json.Marshal(arg)
+	return rawArgs, errors.Trace(err)
+}
+
 // Encode encodes job with json format.
 // updateRawArgs is used to determine whether to update the raw args.
 func (job *Job) Encode(updateRawArgs bool) ([]byte, error) {
 	var err error
 	if updateRawArgs {
-		job.RawArgs, err = json.Marshal(job.Args)
+		job.RawArgs, err = marshalArgs(job.Version, job.Args)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
+
 		if job.MultiSchemaInfo != nil {
 			for _, sub := range job.MultiSchemaInfo.SubJobs {
 				// Only update the args of executing sub-jobs.
 				if sub.Args == nil {
 					continue
 				}
-				sub.RawArgs, err = json.Marshal(sub.Args)
+
+				sub.RawArgs, err = marshalArgs(job.Version, sub.Args)
 				if err != nil {
 					return nil, errors.Trace(err)
 				}
@@ -474,8 +560,10 @@ func (job *Job) Decode(b []byte) error {
 }
 
 // DecodeArgs decodes serialized job arguments from job.RawArgs into the given
-// variables, and also save the result in job.Args.
+// variables, and also save the result in job.Args. It's for JobVersion1.
+// TODO make it un-exported after we finish the migration to JobVersion2.
 func (job *Job) DecodeArgs(args ...any) error {
+	intest.Assert(job.Version == JobVersion1, "Job.DecodeArgs is only used for JobVersion1")
 	var rawArgs []json.RawMessage
 	if err := json.Unmarshal(job.RawArgs, &rawArgs); err != nil {
 		return errors.Trace(err)
@@ -498,11 +586,25 @@ func (job *Job) DecodeArgs(args ...any) error {
 	return nil
 }
 
+// DecodeDropIndexFinishedArgs decodes the drop index job's args when it's finished.
+func (job *Job) DecodeDropIndexFinishedArgs() (
+	indexName any, ifExists []bool, indexIDs []int64, partitionIDs []int64, hasVectors []bool, err error) {
+	ifExists = make([]bool, 1)
+	indexIDs = make([]int64, 1)
+	hasVectors = make([]bool, 1)
+	if err := job.DecodeArgs(&indexName, &ifExists[0], &indexIDs[0], &partitionIDs, &hasVectors[0]); err != nil {
+		if err := job.DecodeArgs(&indexName, &ifExists, &indexIDs, &partitionIDs, &hasVectors); err != nil {
+			return nil, []bool{false}, []int64{-1}, nil, []bool{false}, errors.Trace(err)
+		}
+	}
+	return
+}
+
 // String implements fmt.Stringer interface.
 func (job *Job) String() string {
 	rowCount := job.GetRowCount()
-	ret := fmt.Sprintf("ID:%d, Type:%s, State:%s, SchemaState:%s, SchemaID:%d, TableID:%d, RowCount:%d, ArgLen:%d, start time: %v, Err:%v, ErrCount:%d, SnapshotVersion:%v, LocalMode: %t",
-		job.ID, job.Type, job.State, job.SchemaState, job.SchemaID, job.TableID, rowCount, len(job.Args), TSConvert2Time(job.StartTS), job.Error, job.ErrorCount, job.SnapshotVer, job.LocalMode)
+	ret := fmt.Sprintf("ID:%d, Type:%s, State:%s, SchemaState:%s, SchemaID:%d, TableID:%d, RowCount:%d, ArgLen:%d, start time: %v, Err:%v, ErrCount:%d, SnapshotVersion:%v, Version: %s",
+		job.ID, job.Type, job.State, job.SchemaState, job.SchemaID, job.TableID, rowCount, len(job.Args), TSConvert2Time(job.StartTS), job.Error, job.ErrorCount, job.SnapshotVer, job.Version)
 	if job.ReorgMeta != nil {
 		warnings, _ := job.GetWarnings()
 		ret += fmt.Sprintf(", UniqueWarnings:%d", len(warnings))
@@ -519,26 +621,21 @@ func (job *Job) hasDependentSchema(other *Job) (bool, error) {
 			return true, nil
 		}
 		if job.Type == ActionRenameTable {
-			var oldSchemaID int64
-			if err := job.DecodeArgs(&oldSchemaID); err != nil {
+			args, err := GetRenameTableArgs(job)
+			if err != nil {
 				return false, errors.Trace(err)
 			}
-			if other.SchemaID == oldSchemaID {
+
+			if other.SchemaID == args.OldSchemaID {
 				return true, nil
 			}
 		}
 		if job.Type == ActionExchangeTablePartition {
-			var (
-				defID          int64
-				ptSchemaID     int64
-				ptID           int64
-				partName       string
-				withValidation bool
-			)
-			if err := job.DecodeArgs(&defID, &ptSchemaID, &ptID, &partName, &withValidation); err != nil {
+			args, err := GetExchangeTablePartitionArgs(job)
+			if err != nil {
 				return false, errors.Trace(err)
 			}
-			if other.SchemaID == ptSchemaID {
+			if other.SchemaID == args.PTSchemaID {
 				return true, nil
 			}
 		}
@@ -548,39 +645,28 @@ func (job *Job) hasDependentSchema(other *Job) (bool, error) {
 
 func (job *Job) hasDependentTableForExchangePartition(other *Job) (bool, error) {
 	if job.Type == ActionExchangeTablePartition {
-		var (
-			defID          int64
-			ptSchemaID     int64
-			ptID           int64
-			partName       string
-			withValidation bool
-		)
-
-		if err := job.DecodeArgs(&defID, &ptSchemaID, &ptID, &partName, &withValidation); err != nil {
+		// TODO this code seems buggy, we haven't encode Args into RawArgs yet, so cannot decode.
+		// but it's very old code for previous job queue, will be removed later anyway.
+		args, err := GetExchangeTablePartitionArgs(job)
+		if err != nil {
 			return false, errors.Trace(err)
 		}
-		if ptID == other.TableID || defID == other.TableID {
+		if args.PTTableID == other.TableID || args.PartitionID == other.TableID {
 			return true, nil
 		}
 
 		if other.Type == ActionExchangeTablePartition {
-			var (
-				otherDefID          int64
-				otherPtSchemaID     int64
-				otherPtID           int64
-				otherPartName       string
-				otherWithValidation bool
-			)
-			if err := other.DecodeArgs(&otherDefID, &otherPtSchemaID, &otherPtID, &otherPartName, &otherWithValidation); err != nil {
+			otherArgs, err := GetExchangeTablePartitionArgs(other)
+			if err != nil {
 				return false, errors.Trace(err)
 			}
-			if job.TableID == other.TableID || job.TableID == otherPtID || job.TableID == otherDefID {
+			if job.TableID == other.TableID || job.TableID == otherArgs.PTTableID || job.TableID == otherArgs.PartitionID {
 				return true, nil
 			}
-			if ptID == other.TableID || ptID == otherPtID || ptID == otherDefID {
+			if args.PTTableID == other.TableID || args.PTTableID == otherArgs.PTTableID || args.PTTableID == otherArgs.PartitionID {
 				return true, nil
 			}
-			if defID == other.TableID || defID == otherPtID || defID == otherDefID {
+			if args.PartitionID == other.TableID || args.PartitionID == otherArgs.PTTableID || args.PartitionID == otherArgs.PartitionID {
 				return true, nil
 			}
 		}
@@ -665,6 +751,10 @@ func (job *Job) IsPausing() bool {
 
 // IsPausable checks whether we can pause the job.
 func (job *Job) IsPausable() bool {
+	// TODO: We can remove it after TiFlash supports the pause operation.
+	if job.Type == ActionAddVectorIndex && job.SchemaState == StateWriteReorganization {
+		return false
+	}
 	return job.NotStarted() || (job.IsRunning() && job.IsRollbackable())
 }
 
@@ -1180,4 +1270,8 @@ type TraceInfo struct {
 	ConnectionID uint64 `json:"connection_id"`
 	// SessionAlias is the alias of session
 	SessionAlias string `json:"session_alias"`
+}
+
+func init() {
+	SetJobVerInUse(JobVersion1)
 }

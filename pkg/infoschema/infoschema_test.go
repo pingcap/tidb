@@ -228,7 +228,7 @@ func TestBasic(t *testing.T) {
 	require.NoError(t, err)
 	txn, err = re.Store().Begin()
 	require.NoError(t, err)
-	_, err = builder.ApplyDiff(meta.NewMeta(txn), &model.SchemaDiff{
+	_, err = builder.ApplyDiff(meta.NewMutator(txn), &model.SchemaDiff{
 		Type:        model.ActionRenameTable,
 		SchemaID:    dbID,
 		TableID:     tbID,
@@ -244,6 +244,41 @@ func TestBasic(t *testing.T) {
 	tbls, err := is.SchemaTableInfos(context.Background(), schema.Name)
 	require.NoError(t, err)
 	require.Equal(t, 1, len(tbls))
+
+	// Test SchemaNameByTableID
+	tests := []struct {
+		name       string
+		tableID    int64
+		wantSchema pmodel.CIStr
+		wantOK     bool
+	}{
+		{
+			name:       "valid table ID",
+			tableID:    tbID,
+			wantSchema: dbName,
+			wantOK:     true,
+		},
+		{
+			name:       "non-existent table ID",
+			tableID:    tbID + 1,
+			wantSchema: pmodel.CIStr{},
+			wantOK:     false,
+		},
+		{
+			name:       "invalid table ID (negative)",
+			tableID:    -1,
+			wantSchema: pmodel.CIStr{},
+			wantOK:     false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			gotSchema, gotOK := is.SchemaNameByTableID(tt.tableID)
+			require.Equal(t, tt.wantOK, gotOK)
+			require.Equal(t, tt.wantSchema, gotSchema)
+		})
+	}
 }
 
 func TestMockInfoSchema(t *testing.T) {
@@ -270,13 +305,13 @@ func TestMockInfoSchema(t *testing.T) {
 }
 
 func checkApplyCreateNonExistsSchemaDoesNotPanic(t *testing.T, txn kv.Transaction, builder *infoschema.Builder) {
-	m := meta.NewMeta(txn)
+	m := meta.NewMutator(txn)
 	_, err := builder.ApplyDiff(m, &model.SchemaDiff{Type: model.ActionCreateSchema, SchemaID: 999, Version: 1})
 	require.True(t, infoschema.ErrDatabaseNotExists.Equal(err))
 }
 
 func checkApplyCreateNonExistsTableDoesNotPanic(t *testing.T, txn kv.Transaction, builder *infoschema.Builder, dbID int64) {
-	m := meta.NewMeta(txn)
+	m := meta.NewMutator(txn)
 	_, err := builder.ApplyDiff(m, &model.SchemaDiff{Type: model.ActionCreateTable, SchemaID: dbID, TableID: 999, Version: 1})
 	require.True(t, infoschema.ErrTableNotExists.Equal(err))
 }
@@ -364,17 +399,17 @@ func TestBuildSchemaWithGlobalTemporaryTable(t *testing.T) {
 	require.True(t, ok)
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
 	err = kv.RunInNewTxn(ctx, re.Store(), true, func(ctx context.Context, txn kv.Transaction) error {
-		err := meta.NewMeta(txn).CreateDatabase(dbInfo)
+		err := meta.NewMutator(txn).CreateDatabase(dbInfo)
 		require.NoError(t, err)
 		return errors.Trace(err)
 	})
 	require.NoError(t, err)
 
-	doChange := func(changes ...func(m *meta.Meta, builder *infoschema.Builder)) infoschema.InfoSchema {
+	doChange := func(changes ...func(m *meta.Mutator, builder *infoschema.Builder)) infoschema.InfoSchema {
 		ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
 		curIs := is
 		err := kv.RunInNewTxn(ctx, re.Store(), true, func(ctx context.Context, txn kv.Transaction) error {
-			m := meta.NewMeta(txn)
+			m := meta.NewMutator(txn)
 			for _, change := range changes {
 				builder = infoschema.NewBuilder(re, nil, data, variable.SchemaCacheSize.Load() > 0)
 				err := builder.InitWithOldInfoSchema(curIs)
@@ -388,8 +423,8 @@ func TestBuildSchemaWithGlobalTemporaryTable(t *testing.T) {
 		return curIs
 	}
 
-	createGlobalTemporaryTableChange := func(tblID int64) func(m *meta.Meta, builder *infoschema.Builder) {
-		return func(m *meta.Meta, builder *infoschema.Builder) {
+	createGlobalTemporaryTableChange := func(tblID int64) func(m *meta.Mutator, builder *infoschema.Builder) {
+		return func(m *meta.Mutator, builder *infoschema.Builder) {
 			err := m.CreateTableOrView(db.ID, &model.TableInfo{
 				ID:            tblID,
 				TempTableType: model.TempTableGlobal,
@@ -401,8 +436,8 @@ func TestBuildSchemaWithGlobalTemporaryTable(t *testing.T) {
 		}
 	}
 
-	createNormalTableChange := func(tblID int64) func(m *meta.Meta, builder *infoschema.Builder) {
-		return func(m *meta.Meta, builder *infoschema.Builder) {
+	createNormalTableChange := func(tblID int64) func(m *meta.Mutator, builder *infoschema.Builder) {
+		return func(m *meta.Mutator, builder *infoschema.Builder) {
 			err := m.CreateTableOrView(db.ID, &model.TableInfo{
 				ID:    tblID,
 				State: model.StatePublic,
@@ -413,8 +448,8 @@ func TestBuildSchemaWithGlobalTemporaryTable(t *testing.T) {
 		}
 	}
 
-	dropTableChange := func(tblID int64) func(m *meta.Meta, builder *infoschema.Builder) {
-		return func(m *meta.Meta, builder *infoschema.Builder) {
+	dropTableChange := func(tblID int64) func(m *meta.Mutator, builder *infoschema.Builder) {
+		return func(m *meta.Mutator, builder *infoschema.Builder) {
 			err := m.DropTableOrView(db.ID, tblID)
 			require.NoError(t, err)
 			_, err = builder.ApplyDiff(m, &model.SchemaDiff{Type: model.ActionDropTable, SchemaID: db.ID, TableID: tblID, Version: 1})
@@ -422,8 +457,8 @@ func TestBuildSchemaWithGlobalTemporaryTable(t *testing.T) {
 		}
 	}
 
-	truncateGlobalTemporaryTableChange := func(tblID, newTblID int64) func(m *meta.Meta, builder *infoschema.Builder) {
-		return func(m *meta.Meta, builder *infoschema.Builder) {
+	truncateGlobalTemporaryTableChange := func(tblID, newTblID int64) func(m *meta.Mutator, builder *infoschema.Builder) {
+		return func(m *meta.Mutator, builder *infoschema.Builder) {
 			err := m.DropTableOrView(db.ID, tblID)
 			require.NoError(t, err)
 
@@ -438,8 +473,8 @@ func TestBuildSchemaWithGlobalTemporaryTable(t *testing.T) {
 		}
 	}
 
-	alterTableChange := func(tblID int64) func(m *meta.Meta, builder *infoschema.Builder) {
-		return func(m *meta.Meta, builder *infoschema.Builder) {
+	alterTableChange := func(tblID int64) func(m *meta.Mutator, builder *infoschema.Builder) {
+		return func(m *meta.Mutator, builder *infoschema.Builder) {
 			_, err := builder.ApplyDiff(m, &model.SchemaDiff{Type: model.ActionAddColumn, SchemaID: db.ID, TableID: tblID, Version: 1})
 			require.NoError(t, err)
 		}
@@ -557,7 +592,7 @@ func TestBuildBundle(t *testing.T) {
 
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
 	require.NoError(t, kv.RunInNewTxn(ctx, store, false, func(ctx context.Context, txn kv.Transaction) (err error) {
-		m := meta.NewMeta(txn)
+		m := meta.NewMutator(txn)
 		tb1Bundle, err = placement.NewTableBundle(m, tbl1.Meta())
 		require.NoError(t, err)
 		require.NotNil(t, tb1Bundle)
@@ -1192,7 +1227,7 @@ func (tc *infoschemaTestContext) addColumn(tblInfo *model.TableInfo) {
 
 	tblInfo.Columns = append(tblInfo.Columns, colInfo)
 	err = kv.RunInNewTxn(tc.ctx, tc.re.Store(), true, func(ctx context.Context, txn kv.Transaction) error {
-		err := meta.NewMeta(txn).UpdateTable(tc.dbInfo.ID, tblInfo)
+		err := meta.NewMutator(txn).UpdateTable(tc.dbInfo.ID, tblInfo)
 		require.NoError(tc.t, err)
 		return errors.Trace(err)
 	})
@@ -1216,7 +1251,7 @@ func (tc *infoschemaTestContext) modifyColumn(tblInfo *model.TableInfo) {
 	columnInfo[0].Comment = "test"
 
 	err := kv.RunInNewTxn(tc.ctx, tc.re.Store(), true, func(ctx context.Context, txn kv.Transaction) error {
-		err := meta.NewMeta(txn).UpdateTable(tc.dbInfo.ID, tblInfo)
+		err := meta.NewMutator(txn).UpdateTable(tc.dbInfo.ID, tblInfo)
 		require.NoError(tc.t, err)
 		return errors.Trace(err)
 	})
@@ -1253,7 +1288,7 @@ func (tc *infoschemaTestContext) applyDiffAndCheck(diff *model.SchemaDiff, check
 	err = builder.InitWithOldInfoSchema(tc.is)
 	require.NoError(tc.t, err)
 	// applyDiff
-	_, err = builder.ApplyDiff(meta.NewMeta(txn), diff)
+	_, err = builder.ApplyDiff(meta.NewMutator(txn), diff)
 	require.NoError(tc.t, err)
 	tc.is = builder.Build(math.MaxUint64)
 	checkFn(tc)

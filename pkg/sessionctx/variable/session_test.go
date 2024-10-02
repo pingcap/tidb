@@ -627,3 +627,27 @@ func TestRowIDShardGenerator(t *testing.T) {
 	g.SetShardStep(5)
 	require.NotEqual(t, shard, g.GetCurrentShard(1))
 }
+
+func TestUserVars(t *testing.T) {
+	vars := variable.NewUserVars()
+	vars.SetUserVarVal("a", types.NewIntDatum(1))
+	vars.SetUserVarVal("b", types.NewStringDatum("v2"))
+	dt, ok := vars.GetUserVarVal("a")
+	require.True(t, ok)
+	require.Equal(t, types.NewIntDatum(1), dt)
+
+	vars.SetUserVarType("a", types.NewFieldType(mysql.TypeLonglong))
+	tp, ok := vars.GetUserVarType("a")
+	require.True(t, ok)
+	require.Equal(t, types.NewFieldType(mysql.TypeLonglong), tp)
+
+	vars.UnsetUserVar("a")
+	_, ok = vars.GetUserVarVal("a")
+	require.False(t, ok)
+	_, ok = vars.GetUserVarType("a")
+	require.False(t, ok)
+
+	dt, ok = vars.GetUserVarVal("b")
+	require.True(t, ok)
+	require.Equal(t, types.NewStringDatum("v2"), dt)
+}
