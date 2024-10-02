@@ -240,7 +240,6 @@ func (r *RPCResult) StrategyForRetryStoreError() RetryStrategy {
 }
 
 func (r *RPCResult) StrategyForRetryGoError() RetryStrategy {
-
 	// we should unwrap the error or we cannot get the write gRPC status.
 	if gRPCErr, ok := status.FromError(errors.Cause(r.Err)); ok {
 		switch gRPCErr.Code() {
