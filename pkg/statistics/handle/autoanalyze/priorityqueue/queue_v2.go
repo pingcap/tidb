@@ -40,6 +40,7 @@ const notInitializedErrMsg = "priority queue not initialized"
 const (
 	lastAnalysisDurationRefreshInterval = time.Minute * 10
 	dmlChangesFetchInterval             = time.Minute * 2
+	failedJobRequeueInterval            = time.Minute * 5
 )
 
 // AnalysisPriorityQueueV2 is a priority queue for TableAnalysisJobs.
@@ -59,13 +60,14 @@ type AnalysisPriorityQueueV2 struct {
 	// syncFields is a substructure to hold fields protected by mu.
 	syncFields struct {
 		// mu is used to protect the following fields.
-		mu sync.RWMutex
-		// TODO: no need to keep the inner heap thread-safe since we already have a lock in the outer struct.
+		mu    sync.RWMutex
 		inner *heap.Heap[int64, AnalysisJob]
 		// runningJobs is a map to store the running jobs. Used to avoid duplicate jobs.
 		runningJobs map[int64]struct{}
 		// lastDMLUpdateFetchTimestamp is the timestamp of the last DML update fetch.
 		lastDMLUpdateFetchTimestamp uint64
+		// failedJobs is a slice to store the failed jobs.
+		failedJobs []int64
 		// initialized is a flag to check if the queue is initialized.
 		initialized bool
 	}
@@ -135,6 +137,19 @@ func (pq *AnalysisPriorityQueueV2) Initialize() error {
 	return nil
 }
 
+// Rebuild rebuilds the priority queue.
+// Note: This function is thread-safe.
+func (pq *AnalysisPriorityQueueV2) Rebuild() error {
+	pq.syncFields.mu.Lock()
+	defer pq.syncFields.mu.Unlock()
+
+	if !pq.syncFields.initialized {
+		return errors.New(notInitializedErrMsg)
+	}
+
+	return pq.rebuildWithoutLock()
+}
+
 // rebuildWithoutLock rebuilds the priority queue without holding the lock.
 // Note: Please hold the lock before calling this function.
 func (pq *AnalysisPriorityQueueV2) rebuildWithoutLock() error {
@@ -175,6 +190,8 @@ func (pq *AnalysisPriorityQueueV2) run() {
 	defer dmlChangesFetchInterval.Stop()
 	timeRefreshInterval := time.NewTicker(lastAnalysisDurationRefreshInterval)
 	defer timeRefreshInterval.Stop()
+	failedJobRequeueInterval := time.NewTicker(failedJobRequeueInterval)
+	defer failedJobRequeueInterval.Stop()
 
 	for {
 		select {
@@ -187,6 +204,9 @@ func (pq *AnalysisPriorityQueueV2) run() {
 		case <-timeRefreshInterval.C:
 			statslogutil.StatsLogger().Info("Start to refresh last analysis durations of jobs")
 			pq.RefreshLastAnalysisDuration()
+		case <-failedJobRequeueInterval.C:
+			statslogutil.StatsLogger().Info("Start to request failed jobs")
+			pq.RequeueFailedJobs()
 		}
 	}
 }
@@ -248,8 +268,6 @@ func (pq *AnalysisPriorityQueueV2) processTableStats(
 		return nil
 	}
 
-	// FIXME: What if this value changes after we fetch the table stats and process the DML changes?
-	// We may accidentally ignore some tables that need to be analyzed.
 	autoAnalyzeRatio := exec.ParseAutoAnalyzeRatio(parameters[variable.TiDBAutoAnalyzeRatio])
 	// Get current timestamp from the session context.
 	currentTs, err := getStartTs(sctx)
@@ -413,6 +431,38 @@ func (pq *AnalysisPriorityQueueV2) GetLastFetchTimestamp() uint64 {
 	return pq.syncFields.lastDMLUpdateFetchTimestamp
 }
 
+// RequeueFailedJobs requeues the failed jobs.
+func (pq *AnalysisPriorityQueueV2) RequeueFailedJobs() {
+	pq.syncFields.mu.Lock()
+	defer pq.syncFields.mu.Unlock()
+
+	if err := statsutil.CallWithSCtx(pq.statsHandle.SPool(), func(sctx sessionctx.Context) error {
+		start := time.Now()
+		defer func() {
+			statslogutil.StatsLogger().Info("Failed jobs requeued", zap.Duration("duration", time.Since(start)))
+		}()
+
+		is := sctx.GetDomainInfoSchema().(infoschema.InfoSchema)
+		for _, tableID := range pq.syncFields.failedJobs {
+			tblInfo, ok := pq.statsHandle.TableInfoByID(is, tableID)
+			if !ok {
+				statslogutil.StatsLogger().Warn("Table info not found during requeueing failed jobs", zap.Int64("tableID", tableID))
+				continue
+			}
+			err := pq.recreateAndPushJobForTable(sctx, tblInfo.Meta())
+			if err != nil {
+				statslogutil.StatsLogger().Error("Failed to recreate and push job for table", zap.Error(err), zap.Int64("tableID", tableID))
+				continue
+			}
+		}
+		// Clear the failed jobs.
+		pq.syncFields.failedJobs = pq.syncFields.failedJobs[:0]
+		return nil
+	}, statsutil.FlagWrapTxn); err != nil {
+		statslogutil.StatsLogger().Error("Failed to requeue failed jobs", zap.Error(err))
+	}
+}
+
 // RefreshLastAnalysisDuration refreshes the last analysis duration of all jobs in the priority queue.
 // Note: This function is thread-safe.
 func (pq *AnalysisPriorityQueueV2) RefreshLastAnalysisDuration() {
@@ -534,13 +584,7 @@ func (pq *AnalysisPriorityQueueV2) Pop() (AnalysisJob, error) {
 		defer pq.syncFields.mu.Unlock()
 		// Mark the job as failed and remove it from the running jobs.
 		delete(pq.syncFields.runningJobs, j.GetTableID())
-		// Add the job back to the priority queue.
-		if err := pq.syncFields.inner.Add(j); err != nil {
-			statslogutil.StatsLogger().Error("Failed to add job back to priority queue",
-				zap.Error(err),
-				zap.String("job", j.String()),
-			)
-		}
+		pq.syncFields.failedJobs = append(pq.syncFields.failedJobs, j.GetTableID())
 	})
 	return job, nil
 }
@@ -568,6 +612,18 @@ func (pq *AnalysisPriorityQueueV2) IsEmpty() (bool, error) {
 	return pq.syncFields.inner.IsEmpty(), nil
 }
 
+// Len returns the number of jobs in the priority queue.
+// Note: This function is thread-safe.
+func (pq *AnalysisPriorityQueueV2) Len() (int, error) {
+	pq.syncFields.mu.RLock()
+	defer pq.syncFields.mu.RUnlock()
+	if !pq.syncFields.initialized {
+		return 0, errors.New(notInitializedErrMsg)
+	}
+
+	return pq.syncFields.inner.Len(), nil
+}
+
 // Close closes the priority queue.
 // Note: This function is thread-safe.
 func (pq *AnalysisPriorityQueueV2) Close() {
@@ -579,5 +635,4 @@ func (pq *AnalysisPriorityQueueV2) Close() {
 
 	pq.cancel()
 	pq.wg.Wait()
-	pq.syncFields.inner.Close()
 }

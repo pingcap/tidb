@@ -16,7 +16,6 @@ go_library(
         "//pkg/statistics/handle/autoanalyze/priorityqueue",
         "//pkg/statistics/handle/logutil",
         "//pkg/statistics/handle/types",
-        "//pkg/statistics/handle/util",
         "//pkg/util",
         "//pkg/util/intest",
         "@com_github_pingcap_errors//:errors",
@@ -33,7 +32,7 @@ go_test(
         "worker_test.go",
     ],
     flaky = True,
-    shard_count = 9,
+    shard_count = 8,
     deps = [
         ":refresher",
         "//pkg/parser/model",

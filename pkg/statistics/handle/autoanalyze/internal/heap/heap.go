@@ -17,18 +17,15 @@
 // 2. Use generics to define the `heapData` struct.
 // 3. Add a peak API.
 // 4. Add an IsEmpty API.
+// 5. Remove the thread-safe and blocking properties.
+// 6. Add a Len API.
 
 package heap
 
 import (
 	"container/heap"
-	"sync"
 
 	"github.com/pingcap/errors"
-)
-
-const (
-	closedMsg = "heap is closed"
 )
 
 // LessFunc is used to compare two objects in the heap.
@@ -110,18 +107,7 @@ func (h *heapData[K, V]) Pop() any {
 
 // Heap is a thread-safe producer/consumer queue that implements a heap data structure.
 type Heap[K comparable, V any] struct {
-	data   *heapData[K, V]
-	cond   sync.Cond
-	lock   sync.RWMutex
-	closed bool
-}
-
-// Close closes the heap.
-func (h *Heap[K, V]) Close() {
-	h.lock.Lock()
-	defer h.lock.Unlock()
-	h.closed = true
-	h.cond.Broadcast()
+	data *heapData[K, V]
 }
 
 // Add adds an object or updates it if it already exists.
@@ -130,28 +116,17 @@ func (h *Heap[K, V]) Add(obj V) error {
 	if err != nil {
 		return errors.Errorf("key error: %v", err)
 	}
-	h.lock.Lock()
-	defer h.lock.Unlock()
-	if h.closed {
-		return errors.New(closedMsg)
-	}
 	if _, exists := h.data.items[key]; exists {
 		h.data.items[key].obj = obj
 		heap.Fix(h.data, h.data.items[key].index)
 	} else {
 		h.addIfNotPresentLocked(key, obj)
 	}
-	h.cond.Broadcast()
 	return nil
 }
 
 // BulkAdd adds a list of objects to the heap.
 func (h *Heap[K, V]) BulkAdd(list []V) error {
-	h.lock.Lock()
-	defer h.lock.Unlock()
-	if h.closed {
-		return errors.New(closedMsg)
-	}
 	for _, obj := range list {
 		key, err := h.data.keyFunc(obj)
 		if err != nil {
@@ -164,7 +139,6 @@ func (h *Heap[K, V]) BulkAdd(list []V) error {
 			h.addIfNotPresentLocked(key, obj)
 		}
 	}
-	h.cond.Broadcast()
 	return nil
 }
 
@@ -174,13 +148,7 @@ func (h *Heap[K, V]) AddIfNotPresent(obj V) error {
 	if err != nil {
 		return errors.Errorf("key error: %v", err)
 	}
-	h.lock.Lock()
-	defer h.lock.Unlock()
-	if h.closed {
-		return errors.New(closedMsg)
-	}
 	h.addIfNotPresentLocked(id, obj)
-	h.cond.Broadcast()
 	return nil
 }
 
@@ -202,8 +170,6 @@ func (h *Heap[K, V]) Delete(obj V) error {
 	if err != nil {
 		return errors.Errorf("key error: %v", err)
 	}
-	h.lock.Lock()
-	defer h.lock.Unlock()
 	if item, ok := h.data.items[key]; ok {
 		heap.Remove(h.data, item.index)
 		return nil
@@ -213,8 +179,6 @@ func (h *Heap[K, V]) Delete(obj V) error {
 
 // Peek returns the top object from the heap without removing it.
 func (h *Heap[K, V]) Peek() (V, error) {
-	h.lock.RLock()
-	defer h.lock.RUnlock()
 	if len(h.data.queue) == 0 {
 		var zero V
 		return zero, errors.New("heap is empty")
@@ -224,14 +188,9 @@ func (h *Heap[K, V]) Peek() (V, error) {
 
 // Pop removes the top object from the heap and returns it.
 func (h *Heap[K, V]) Pop() (V, error) {
-	h.lock.Lock()
-	defer h.lock.Unlock()
-	for len(h.data.queue) == 0 {
-		if h.closed {
-			var zero V
-			return zero, errors.New("heap is closed")
-		}
-		h.cond.Wait()
+	if len(h.data.queue) == 0 {
+		var zero V
+		return zero, errors.New("heap is empty")
 	}
 	obj := heap.Pop(h.data)
 	if obj == nil {
@@ -243,8 +202,6 @@ func (h *Heap[K, V]) Pop() (V, error) {
 
 // List returns a list of all objects in the heap.
 func (h *Heap[K, V]) List() []V {
-	h.lock.RLock()
-	defer h.lock.RUnlock()
 	list := make([]V, 0, len(h.data.items))
 	for _, item := range h.data.items {
 		list = append(list, item.obj)
@@ -252,10 +209,13 @@ func (h *Heap[K, V]) List() []V {
 	return list
 }
 
+// Len returns the number of objects in the heap.
+func (h *Heap[K, V]) Len() int {
+	return h.data.Len()
+}
+
 // ListKeys returns a list of all keys in the heap.
 func (h *Heap[K, V]) ListKeys() []K {
-	h.lock.RLock()
-	defer h.lock.RUnlock()
 	list := make([]K, 0, len(h.data.items))
 	for key := range h.data.items {
 		list = append(list, key)
@@ -275,8 +235,6 @@ func (h *Heap[K, V]) Get(obj V) (V, bool, error) {
 
 // GetByKey returns an object from the heap by key.
 func (h *Heap[K, V]) GetByKey(key K) (V, bool, error) {
-	h.lock.RLock()
-	defer h.lock.RUnlock()
 	item, exists := h.data.items[key]
 	if !exists {
 		var zero V
@@ -285,17 +243,8 @@ func (h *Heap[K, V]) GetByKey(key K) (V, bool, error) {
 	return item.obj, true, nil
 }
 
-// IsClosed returns true if the heap is closed.
-func (h *Heap[K, V]) IsClosed() bool {
-	h.lock.RLock()
-	defer h.lock.RUnlock()
-	return h.closed
-}
-
 // IsEmpty returns true if the heap is empty.
 func (h *Heap[K, V]) IsEmpty() bool {
-	h.lock.RLock()
-	defer h.lock.RUnlock()
 	return len(h.data.queue) == 0
 }
 
@@ -309,6 +258,5 @@ func NewHeap[K comparable, V any](keyFn KeyFunc[K, V], lessFn LessFunc[V]) *Heap
 			lessFunc: lessFn,
 		},
 	}
-	h.cond.L = &h.lock
 	return h
 }
