@@ -135,6 +135,19 @@ func (pq *AnalysisPriorityQueueV2) Initialize() error {
 	return nil
 }
 
+// Rebuild rebuilds the priority queue.
+// Note: This function is thread-safe.
+func (pq *AnalysisPriorityQueueV2) Rebuild() error {
+	pq.syncFields.mu.Lock()
+	defer pq.syncFields.mu.Unlock()
+
+	if !pq.syncFields.initialized {
+		return errors.New(notInitializedErrMsg)
+	}
+
+	return pq.rebuildWithoutLock()
+}
+
 // rebuildWithoutLock rebuilds the priority queue without holding the lock.
 // Note: Please hold the lock before calling this function.
 func (pq *AnalysisPriorityQueueV2) rebuildWithoutLock() error {
@@ -551,6 +564,18 @@ func (pq *AnalysisPriorityQueueV2) IsEmpty() (bool, error) {
 	}
 
 	return pq.syncFields.inner.IsEmpty(), nil
+}
+
+// Len returns the number of jobs in the priority queue.
+// Note: This function is thread-safe.
+func (pq *AnalysisPriorityQueueV2) Len() (int, error) {
+	pq.syncFields.mu.RLock()
+	defer pq.syncFields.mu.RUnlock()
+	if !pq.syncFields.initialized {
+		return 0, errors.New(notInitializedErrMsg)
+	}
+
+	return len(pq.syncFields.inner.List()), nil
 }
 
 // Close closes the priority queue.

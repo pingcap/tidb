@@ -25,7 +25,6 @@ import (
 	"github.com/pingcap/tidb/pkg/statistics/handle/autoanalyze/priorityqueue"
 	statslogutil "github.com/pingcap/tidb/pkg/statistics/handle/logutil"
 	statstypes "github.com/pingcap/tidb/pkg/statistics/handle/types"
-	statsutil "github.com/pingcap/tidb/pkg/statistics/handle/util"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"go.uber.org/zap"
 )
@@ -38,9 +37,9 @@ type Refresher struct {
 	// This will be refreshed every time we rebuild the priority queue.
 	autoAnalysisTimeWindow priorityqueue.AutoAnalysisTimeWindow
 
-	// Jobs is the priority queue of analysis jobs.
+	// jobs is the priority queue of analysis jobs.
 	// Exported for testing purposes.
-	Jobs *priorityqueue.AnalysisPriorityQueue
+	jobs *priorityqueue.AnalysisPriorityQueueV2
 
 	// worker is the worker that runs the analysis jobs.
 	worker *worker
@@ -55,7 +54,7 @@ func NewRefresher(
 	r := &Refresher{
 		statsHandle:    statsHandle,
 		sysProcTracker: sysProcTracker,
-		Jobs:           priorityqueue.NewAnalysisPriorityQueue(),
+		jobs:           priorityqueue.NewAnalysisPriorityQueueV2(statsHandle),
 		worker:         NewWorker(statsHandle, sysProcTracker, maxConcurrency),
 	}
 
@@ -87,6 +86,12 @@ func (r *Refresher) AnalyzeHighestPriorityTables() bool {
 	if !r.isWithinTimeWindow() {
 		return false
 	}
+	if !r.jobs.IsInitialized() {
+		if err := r.jobs.Initialize(); err != nil {
+			statslogutil.StatsLogger().Error("Failed to initialize AnalysisPriorityQueueV2", zap.Error(err))
+			return false
+		}
+	}
 
 	// Update the concurrency to the latest value.
 	r.UpdateConcurrency()
@@ -100,8 +105,13 @@ func (r *Refresher) AnalyzeHighestPriorityTables() bool {
 	}
 
 	analyzedCount := 0
-	for r.Jobs.Len() > 0 && analyzedCount < remainConcurrency {
-		job := r.Jobs.Pop()
+	for (func() bool { empty, err := r.jobs.IsEmpty(); return err == nil && !empty }()) && analyzedCount < remainConcurrency {
+		job, err := r.jobs.Pop()
+		if err != nil {
+			statslogutil.StatsLogger().Error("Failed to pop job from AnalysisPriorityQueueV2", zap.Error(err))
+			continue
+		}
+
 		if _, isRunning := currentRunningJobs[job.GetTableID()]; isRunning {
 			statslogutil.StatsLogger().Debug("Job already running, skipping", zap.Int64("tableID", job.GetTableID()))
 			continue
@@ -152,25 +162,7 @@ func (r *Refresher) AnalyzeHighestPriorityTables() bool {
 
 // RebuildTableAnalysisJobQueue rebuilds the priority queue of analysis jobs.
 func (r *Refresher) RebuildTableAnalysisJobQueue() error {
-	// Reset the priority queue.
-	r.Jobs = priorityqueue.NewAnalysisPriorityQueue()
-
-	return statsutil.CallWithSCtx(
-		r.statsHandle.SPool(),
-		func(sctx sessionctx.Context) error {
-			parameters := exec.GetAutoAnalyzeParameters(sctx)
-			err := r.setAutoAnalysisTimeWindow(parameters)
-			if err != nil {
-				return errors.Wrap(err, "set auto analyze time window failed")
-			}
-			if !r.isWithinTimeWindow() {
-				return nil
-			}
-
-			return priorityqueue.FetchAllTablesAndBuildAnalysisJobs(sctx, parameters, r.statsHandle, r.Jobs.Push)
-		},
-		statsutil.FlagWrapTxn,
-	)
+	return r.jobs.Rebuild()
 }
 
 func (r *Refresher) setAutoAnalysisTimeWindow(
@@ -204,7 +196,25 @@ func (r *Refresher) GetRunningJobs() map[int64]struct{} {
 	return r.worker.GetRunningJobs()
 }
 
+// ProcessDMLChangesForTest processes DML changes for the test.
+// Only used in the test.
+func (r *Refresher) ProcessDMLChangesForTest() {
+	if r.jobs.IsInitialized() {
+		r.jobs.ProcessDMLChanges()
+	}
+}
+
+// GetQueueLength returns the length of the analysis job queue.
+func (r *Refresher) GetQueueLength() int {
+	l, err := r.jobs.Len()
+	intest.Assert(err == nil, "Failed to get AnalysisPriorityQueueV2 length")
+	return l
+}
+
 // Close stops all running jobs and releases resources.
 func (r *Refresher) Close() {
 	r.worker.Stop()
+	if r.jobs != nil {
+		r.jobs.Close()
+	}
 }
