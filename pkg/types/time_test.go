@@ -1961,6 +1961,30 @@ func TestTruncateFrac(t *testing.T) {
 		require.Equal(t, col.output.Second(), res.Second())
 		require.NoError(t, err)
 	}
+
+	// Copied from TestRoundFrac and adjusted!
+	tbl := []struct {
+		Input  string
+		Fsp    int
+		Except string
+	}{
+		{"11:30:45.123456", 4, "11:30:45.1234"},
+		{"11:30:45.123456", 6, "11:30:45.123456"},
+		{"11:30:45.123456", 0, "11:30:45"},
+		{"1 11:30:45.123456", 1, "35:30:45.1"},
+		{"1 11:30:45.999999", 4, "35:30:45.9999"},
+		{"-1 11:30:45.999999", 0, "-35:30:45"},
+	}
+
+	typeCtx := types.NewContext(types.StrictFlags.WithIgnoreZeroInDate(true), time.UTC, contextutil.IgnoreWarn)
+	for _, tt := range tbl {
+		v, _, err := types.ParseDuration(typeCtx, tt.Input, types.MaxFsp)
+		require.NoError(t, err)
+		nv, err := v.TruncateFrac(tt.Fsp)
+		require.NoError(t, err)
+		require.Equal(t, tt.Except, nv.String())
+	}
+
 }
 
 func TestTimeSub(t *testing.T) {
