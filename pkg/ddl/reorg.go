@@ -252,7 +252,8 @@ func reorgTypeFlagsWithSQLMode(mode mysql.SQLMode) types.Flags {
 		WithTruncateAsWarning(!mode.HasStrictMode()).
 		WithIgnoreInvalidDateErr(mode.HasAllowInvalidDatesMode()).
 		WithIgnoreZeroInDate(!mode.HasStrictMode() || mode.HasAllowInvalidDatesMode()).
-		WithCastTimeToYearThroughConcat(true)
+		WithCastTimeToYearThroughConcat(true).
+		WithTimeTruncateFractional(mode.HasTimeTruncateFractional())
 }
 
 func reorgErrLevelsWithSQLMode(mode mysql.SQLMode) errctx.LevelMap {

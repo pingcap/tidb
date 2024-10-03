@@ -326,3 +326,49 @@ insert into t2 values('18446744073709551616',  "1000-01-01 00:00:00" + INTERVAL 
 insert into t2 values('-9223372036854775809', "1000-01-01 00:00:00" + INTERVAL -9223372036854775809 YEAR);
 select a, d from t2 order by a ASC;
 drop table if exists t1;
+
+# Test TIME_TRUNCATE_FRACTIONAL
+set @@time_zone = 'UTC';
+set @@sql_mode = default;
+drop table if exists t;
+create table t (id int primary key, d date, dt datetime, dt2 datetime(2), dt6 datetime(6), ts timestamp, ts2 timestamp(2), ts6 timestamp(6), time_t bigint, dc decimal(20,9));
+insert into t values
+(1, '2023-12-31 23:59:59.9876789', '2023-12-31 23:59:59.9876789', '2023-12-31 23:59:59.9876789', '2023-12-31 23:59:59.9876789',
+    '2023-12-31 23:59:59.9876789', '2023-12-31 23:59:59.9876789', '2023-12-31 23:59:59.9876789',
+1704067199.9876789, 1704067199.9876789),
+(2, '2023-12-31 23:59:59.1234321', '2023-12-31 23:59:59.1234321', '2023-12-31 23:59:59.1234321', '2023-12-31 23:59:59.1234321',
+    '2023-12-31 23:59:59.1234321', '2023-12-31 23:59:59.1234321', '2023-12-31 23:59:59.1234321',
+1704067199.1234321, 1704067199.1234321),
+(3, '2023-12-31 23:59:59.499999', '2023-12-31 23:59:59.499999', '2023-12-31 23:59:59.499999', '2023-12-31 23:59:59.499999',
+    '2023-12-31 23:59:59.499999', '2023-12-31 23:59:59.499999', '2023-12-31 23:59:59.499999',
+1704067199.499999, 1704067199.499999),
+(4, '2023-12-31 23:59:59.4999996', '2023-12-31 23:59:59.4999996', '2023-12-31 23:59:59.4999996', '2023-12-31 23:59:59.4999996',
+    '2023-12-31 23:59:59.4999996', '2023-12-31 23:59:59.4999996', '2023-12-31 23:59:59.4999996',
+1704067199.4999996, 1704067199.4999996);
+select * from t order by id;
+select unix_timestamp(d), unix_timestamp(dt), unix_timestamp(dt2), unix_timestamp(dt6), unix_timestamp(ts), unix_timestamp(ts2), unix_timestamp(ts6) from t order by id;
+select from_unixtime(dc) from t order by id;
+update t set d = from_unixtime(dc), dt = from_unixtime(dc), dt2 = from_unixtime(dc), dt6 = from_unixtime(dc), ts = from_unixtime(dc), ts2 = from_unixtime(dc), ts6 = from_unixtime(dc);
+select * from t order by id;
+truncate table t;
+
+set sql_mode=concat(@@sql_mode,",TIME_TRUNCATE_FRACTIONAL");
+insert into t values
+(1, '2023-12-31 23:59:59.9876789', '2023-12-31 23:59:59.9876789', '2023-12-31 23:59:59.9876789', '2023-12-31 23:59:59.9876789',
+    '2023-12-31 23:59:59.9876789', '2023-12-31 23:59:59.9876789', '2023-12-31 23:59:59.9876789',
+1704067199.9876789, 1704067199.9876789),
+(2, '2023-12-31 23:59:59.1234321', '2023-12-31 23:59:59.1234321', '2023-12-31 23:59:59.1234321', '2023-12-31 23:59:59.1234321',
+    '2023-12-31 23:59:59.1234321', '2023-12-31 23:59:59.1234321', '2023-12-31 23:59:59.1234321',
+1704067199.1234321, 1704067199.1234321),
+(3, '2023-12-31 23:59:59.499999', '2023-12-31 23:59:59.499999', '2023-12-31 23:59:59.499999', '2023-12-31 23:59:59.499999',
+    '2023-12-31 23:59:59.499999', '2023-12-31 23:59:59.499999', '2023-12-31 23:59:59.499999',
+1704067199.499999, 1704067199.499999),
+(4, '2023-12-31 23:59:59.4999996', '2023-12-31 23:59:59.4999996', '2023-12-31 23:59:59.4999996', '2023-12-31 23:59:59.4999996',
+    '2023-12-31 23:59:59.4999996', '2023-12-31 23:59:59.4999996', '2023-12-31 23:59:59.4999996',
+1704067199.4999996, 1704067199.4999996);
+select * from t order by id;
+select unix_timestamp(d), unix_timestamp(dt), unix_timestamp(dt2), unix_timestamp(dt6), unix_timestamp(ts), unix_timestamp(ts2), unix_timestamp(ts6) from t order by id;
+select from_unixtime(dc) from t order by id;
+update t set d = from_unixtime(dc), dt = from_unixtime(dc), dt2 = from_unixtime(dc), dt6 = from_unixtime(dc), ts = from_unixtime(dc), ts2 = from_unixtime(dc), ts6 = from_unixtime(dc);
+select * from t order by id;
+set @@sql_mode = default;

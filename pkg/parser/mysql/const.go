@@ -362,6 +362,11 @@ var DefaultAuthPlugins = []string{
 // See https://dev.mysql.com/doc/refman/5.7/en/sql-mode.html
 type SQLMode int64
 
+// HasTimeTruncateFractional detects if 'TIME_TRUNCATE_FRACTIONAL' mode is set in SQLMode
+func (m SQLMode) HasTimeTruncateFractional() bool {
+	return m&ModeTimeTruncateFractional == ModeTimeTruncateFractional
+}
+
 // HasNoZeroDateMode detects if 'NO_ZERO_DATE' mode is set in SQLMode
 func (m SQLMode) HasNoZeroDateMode() bool {
 	return m&ModeNoZeroDate == ModeNoZeroDate
@@ -483,6 +488,7 @@ const (
 	ModeNoEngineSubstitution
 	ModePadCharToFullLength
 	ModeAllowInvalidDates
+	ModeTimeTruncateFractional
 	ModeNone = 0
 )
 
@@ -562,6 +568,7 @@ var Str2SQLMode = map[string]SQLMode{
 	"NO_ENGINE_SUBSTITUTION":     ModeNoEngineSubstitution,
 	"PAD_CHAR_TO_FULL_LENGTH":    ModePadCharToFullLength,
 	"ALLOW_INVALID_DATES":        ModeAllowInvalidDates,
+	"TIME_TRUNCATE_FRACTIONAL":   ModeTimeTruncateFractional,
 }
 
 // CombinationSQLMode is the special modes that provided as shorthand for combinations of mode values.

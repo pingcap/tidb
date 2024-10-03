@@ -524,13 +524,24 @@ func (t Time) RoundFrac(ctx Context, fsp int) (Time, error) {
 
 	var nt CoreTime
 	if t1, err := t.GoTime(ctx.Location()); err == nil {
-		t1 = roundTime(t1, fsp)
+		if ctx.Flags().TimeTruncateFractional() {
+			t1, err = TruncateFrac(t1, fsp)
+			return t, errors.Trace(err)
+		} else {
+			t1 = roundTime(t1, fsp)
+		}
 		nt = FromGoTime(t1)
 	} else {
 		// Take the hh:mm:ss part out to avoid handle month or day = 0.
 		hour, minute, second, microsecond := t.Hour(), t.Minute(), t.Second(), t.Microsecond()
 		t1 := gotime.Date(1, 1, 1, hour, minute, second, microsecond*1000, ctx.Location())
-		t2 := roundTime(t1, fsp)
+		var t2 gotime.Time
+		if ctx.Flags().TimeTruncateFractional() {
+			t2, err = TruncateFrac(t1, fsp)
+			return t, errors.Trace(err)
+		} else {
+			t2 = roundTime(t1, fsp)
+		}
 		hour, minute, second = t2.Clock()
 		microsecond = t2.Nanosecond() / 1000
 
@@ -1168,7 +1179,11 @@ func parseDatetime(ctx Context, str string, fsp int, isFloat bool) (Time, error)
 	if hhmmss {
 		// If input string is "20170118.999", without hhmmss, fsp is meaningless.
 		// TODO: this case is not only meaningless, but erroneous, please confirm.
-		microsecond, overflow, err = ParseFrac(fracStr, fsp)
+		truncate := false
+		if ctx.Flags().TimeTruncateFractional() {
+			truncate = true
+		}
+		microsecond, overflow, err = ParseTimeFrac(fracStr, fsp, truncate)
 		if err != nil {
 			return ZeroDatetime, errors.Trace(err)
 		}
@@ -1695,7 +1710,7 @@ func checkHHMMSS(hms [3]int) bool {
 }
 
 // matchFrac returns overflow, fraction, rest, error
-func matchFrac(str string, fsp int) (bool, int, string, error) {
+func matchFrac(str string, fsp int, truncate bool) (bool, int, string, error) {
 	rest, err := parser.Char(str, '.')
 	if err != nil {
 		return false, 0, str, nil
@@ -1706,7 +1721,7 @@ func matchFrac(str string, fsp int) (bool, int, string, error) {
 		return false, 0, str, err
 	}
 
-	frac, overflow, err := ParseFrac(digits, fsp)
+	frac, overflow, err := ParseTimeFrac(digits, fsp, truncate)
 	if err != nil {
 		return false, 0, str, err
 	}
@@ -1714,7 +1729,7 @@ func matchFrac(str string, fsp int) (bool, int, string, error) {
 	return overflow, frac, rest, nil
 }
 
-func matchDuration(str string, fsp int) (Duration, bool, error) {
+func matchDuration(str string, fsp int, truncate bool) (Duration, bool, error) {
 	fsp, err := CheckFsp(fsp)
 	if err != nil {
 		return ZeroDuration, true, errors.Trace(err)
@@ -1742,7 +1757,7 @@ func matchDuration(str string, fsp int) (Duration, bool, error) {
 	}
 
 	rest = parser.Space0(rest)
-	overflow, frac, rest, err := matchFrac(rest, fsp)
+	overflow, frac, rest, err := matchFrac(rest, fsp, truncate)
 	if err != nil || (len(rest) > 0 && charsLen >= 12) {
 		return ZeroDuration, true, ErrTruncatedWrongVal.GenWithStackByArgs("time", str)
 	}
@@ -1818,7 +1833,11 @@ func canFallbackToDateTime(str string) bool {
 // See http://dev.mysql.com/doc/refman/5.7/en/fractional-seconds.html
 func ParseDuration(ctx Context, str string, fsp int) (Duration, bool, error) {
 	rest := strings.TrimSpace(str)
-	d, isNull, err := matchDuration(rest, fsp)
+	truncate := false
+	if ctx.Flags().TimeTruncateFractional() {
+		truncate = true
+	}
+	d, isNull, err := matchDuration(rest, fsp, truncate)
 	if err == nil {
 		return d, isNull, nil
 	}

@@ -61,58 +61,58 @@ func TestCheckFsp(t *testing.T) {
 }
 
 func TestParseFrac(t *testing.T) {
-	obtained, overflow, err := ParseFrac("", 5)
+	obtained, overflow, err := ParseTimeFrac("", 5)
 	require.Equal(t, 0, obtained)
 	require.False(t, overflow)
 	require.NoError(t, err)
 
 	a := 200
-	obtained, overflow, err = ParseFrac("999", int(int8(a)))
+	obtained, overflow, err = ParseTimeFrac("999", int(int8(a)))
 	require.Equal(t, 0, obtained)
 	require.False(t, overflow)
 	require.Error(t, err)
 	require.Regexp(t, "^Invalid fsp ", err.Error())
 
-	obtained, overflow, err = ParseFrac("NotNum", MaxFsp)
+	obtained, overflow, err = ParseTimeFrac("NotNum", MaxFsp)
 	require.Equal(t, 0, obtained)
 	require.False(t, overflow)
 	require.Error(t, err)
 	require.Regexp(t, "^strconv.ParseInt:", err.Error())
 
-	obtained, overflow, err = ParseFrac("1235", 6)
+	obtained, overflow, err = ParseTimeFrac("1235", 6)
 	require.Equal(t, 123500, obtained)
 	require.False(t, overflow)
 	require.NoError(t, err)
 
-	obtained, overflow, err = ParseFrac("123456", 4)
+	obtained, overflow, err = ParseTimeFrac("123456", 4)
 	require.Equal(t, 123500, obtained)
 	require.False(t, overflow)
 	require.NoError(t, err)
 
-	obtained, overflow, err = ParseFrac("1234567", 6)
+	obtained, overflow, err = ParseTimeFrac("1234567", 6)
 	require.Equal(t, 123457, obtained)
 	require.False(t, overflow)
 	require.NoError(t, err)
 
-	obtained, overflow, err = ParseFrac("1234567", 4)
+	obtained, overflow, err = ParseTimeFrac("1234567", 4)
 	require.Equal(t, 123500, obtained)
 	require.False(t, overflow)
 	require.NoError(t, err)
 
 	// 1236 round 3 -> 124 -> 124000
-	obtained, overflow, err = ParseFrac("1236", 3)
+	obtained, overflow, err = ParseTimeFrac("1236", 3)
 	require.Equal(t, 124000, obtained)
 	require.False(t, overflow)
 	require.NoError(t, err)
 
 	// 03123 round 2 -> 3 -> 30000
-	obtained, overflow, err = ParseFrac("0312", 2)
+	obtained, overflow, err = ParseTimeFrac("0312", 2)
 	require.Equal(t, 30000, obtained)
 	require.False(t, overflow)
 	require.NoError(t, err)
 
 	// 999 round 2 -> 100 -> overflow
-	obtained, overflow, err = ParseFrac("999", 2)
+	obtained, overflow, err = ParseTimeFrac("999", 2)
 	require.Equal(t, 0, obtained)
 	require.True(t, overflow)
 	require.NoError(t, err)

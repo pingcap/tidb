@@ -836,7 +836,7 @@ func TestParseFrac(t *testing.T) {
 	}
 
 	for _, tt := range tbl {
-		v, overflow, err := types.ParseFrac(tt.S, tt.Fsp)
+		v, overflow, err := types.ParseTimeFrac(tt.S, tt.Fsp)
 		require.NoError(t, err)
 		require.Equal(t, tt.Ret, v)
 		require.Equal(t, tt.Overflow, overflow)

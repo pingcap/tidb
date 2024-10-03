@@ -1459,6 +1459,99 @@ func TestIssue9710(t *testing.T) {
 	}
 }
 
+func TestTimeFuncTruncation(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(`set @@time_zone = 'UTC'`)
+	var res *testkit.Result
+	// TODO: test .499999 vs .4999996 (fails on MySQL)
+	// TODO: test fsp2
+	// TODO: test ALTER TABLE t MODIFY COLUMN for 'TIME_TRUNCATE_FRACTIONAL' sql_mode
+	dateStr := `2023-12-31 23:59:59.9876789`
+	timeStr := "1704067199.9876789"
+	dateStrLow := `2023-12-31 23:59:59.12344321`
+	timeStrLow := "1704067199.12344321"
+	dateStrMid := `2023-12-31 23:59:59.4999996`
+	timeStrMid := "1704067199.4999996"
+	timeT9H := "1704067199.987678900"
+	timeT9M := "1704067199.499999600"
+	timeT9L := "1704067199.123443210"
+	//for _, sqlMode := range []string{""} {
+	for _, sqlMode := range []string{"TIME_TRUNCATE_FRACTIONAL", ""} {
+		tk.MustExec(`set @@sql_mode = DEFAULT`)
+		frac6H := "2023-12-31 23:59:59.987679"
+		frac6L := "2023-12-31 23:59:59.123443"
+		frac6M := "2023-12-31 23:59:59.500000"
+		frac0H := "2024-01-01 00:00:00"
+		frac0L := "2023-12-31 23:59:59"
+		dateRoundH := "2024-01-01"
+		dateRoundL := "2023-12-31"
+		// Y - Year, D - Day, H - High, L - Low
+		// timeT/unix_timestamp for '2024-01-01'
+		timeTY := "1704067200"
+		timeTH := timeTY
+		timeTL := "1704067199"
+		// timeT/unix_timestamp for '2023-12-31'
+		timeTDL := "1703980800"
+		timeTDH := timeTY
+		timeT6H := "1704067199.987679"
+		timeT6M := "1704067199.500000"
+		timeT6L := "1704067199.123443"
+		if sqlMode != "" {
+			res = tk.MustQuery(`select @@sql_mode`)
+			tk.MustExec(`set sql_mode = 'time_truncate_fractional,` + res.Rows()[0][0].(string) + `'`)
+			tk.MustQuery(`select @@sql_mode`).CheckContain("TIME_TRUNCATE_FRACTIONAL")
+			frac6H = "2023-12-31 23:59:59.987678"
+			frac0H = "2023-12-31 23:59:59"
+			frac6M = "2023-12-31 23:59:59.499999"
+			dateRoundH = "2023-12-31"
+			timeT6H = "1704067199.987678"
+			timeT6M = "1704067199.499999"
+			timeTH = timeTL
+			timeTDH = timeTDL
+		}
+
+		tk.MustExec(`drop table if exists t`)
+		// time_t not treated as time, but just normal int, so rounded!
+		tk.MustExec(`create table t (id int primary key, d date, dt datetime, dt6 datetime(6), ts timestamp, ts6 timestamp(6), time_t bigint, dc decimal(20,9))`)
+		tk.MustExec(`insert into t values (1, ?, ?, ?, ?, ?, ?, ?)`,
+			dateStr, dateStr, dateStr, dateStr, dateStr, timeStr, timeStr)
+		tk.MustExec(`insert into t values (2, ?, ?, ?, ?, ?, ?, ?)`,
+			dateStrLow, dateStrLow, dateStrLow, dateStrLow, dateStrLow, timeStrLow, timeStrLow)
+		tk.MustExec(`insert into t values (3, ?, ?, ?, ?, ?, ?, ?)`,
+			dateStrMid, dateStrMid, dateStrMid, dateStrMid, dateStrMid, timeStrMid, timeStrMid)
+
+		// TODO: Fix https://github.com/pingcap/tidb/issues/56432 to avoid rounding on INSERT!
+		res = tk.MustQuery(`select * from t order by id /* ` + sqlMode + ` */`)
+		res.Check(testkit.Rows(""+
+			strings.Join([]string{"1", dateRoundH, frac0H, frac6H, frac0H, frac6H, timeTY, timeT9H}, " "),
+			strings.Join([]string{"2", dateRoundL, frac0L, frac6L, frac0L, frac6L, timeTL, timeT9L}, " "),
+			strings.Join([]string{"3", dateRoundL, frac0L, frac6M, frac0L, frac6M, timeTL, timeT9M}, " ")))
+		// Test functions that take datetime as arguments
+		tk.MustQuery(`select unix_timestamp(d), unix_timestamp(dt), unix_timestamp(dt6), unix_timestamp(ts), unix_timestamp(ts6) from t order by id /* ` + sqlMode + ` */`).Check(testkit.Rows(
+			// dt/ts is already truncated, so second will be the low one.
+			strings.Join([]string{timeTDH, timeTH, timeT6H, timeTH, timeT6H}, " "),
+			strings.Join([]string{timeTDL, timeTL, timeT6L, timeTL, timeT6L}, " "),
+			strings.Join([]string{timeTDL, timeTL, timeT6M, timeTL, timeT6M}, " ")))
+		// Test functions that take unix_timestamp (time_t) as argument
+		tk.MustQuery(`select from_unixtime(dc) from t order by id /* ` + sqlMode + ` */`).Check(testkit.Rows(frac6H, frac6L, frac6M))
+		//tk.MustExec(`update t set d = from_unixtime(dc), dt = from_unixtime(dc), dt6 = from_unixtime(dc), ts = from_unixtime(dc), ts6 = from_unixtime(dc) where id = 3`)
+		tk.MustExec(`update t set d = from_unixtime(dc), dt = from_unixtime(dc), dt6 = from_unixtime(dc), ts = from_unixtime(dc), ts6 = from_unixtime(dc)`)
+		res2 := tk.MustQuery(`select * from t order by id /* ` + sqlMode + ` */`)
+		rows := res.Sort().Rows()
+		if sqlMode == "" {
+			// TODO: Fix so that UPDATE and INSERT behaves the same!
+			rows[0][1] = dateRoundL
+			rows[2][2] = frac0H
+			rows[2][4] = frac0H
+		}
+		res2.Sort().Check(rows)
+		tk.MustQuery(`select from_unixtime(dc) from t order by id /* ` + sqlMode + ` */`).Check(testkit.Rows(frac6H, frac6L, frac6M))
+	}
+}
+
 func TestShardIndexOnTiFlash(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 

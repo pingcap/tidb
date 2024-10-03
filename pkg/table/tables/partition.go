@@ -247,6 +247,7 @@ func NewPartitionExprBuildCtx() expression.BuildContext {
 			// estimate some undetermined result when locating a row to a partition.
 			// See issue: https://github.com/pingcap/tidb/issues/54271 for details.
 			exprstatic.WithSQLMode(mysql.ModeAllowInvalidDates),
+			// TIME will round FSP, TIME_TRUNCATE_FRACTIONAL is not considered!
 			exprstatic.WithTypeFlags(types.StrictFlags.
 				WithIgnoreTruncateErr(true).
 				WithIgnoreZeroDateErr(true).
