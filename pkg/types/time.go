@@ -1847,6 +1847,10 @@ func ParseDuration(ctx Context, str string, fsp int) (Duration, bool, error) {
 	return d, false, err
 }
 
+// ParseDurationTruncateFsp parses the time form a formatted string with a
+// fractional seconds part, returns the duration type Time value and bool to indicate
+// whether the result is null. It also truncates FSP part instead of rounding it as
+// ParseDuration above does.
 func ParseDurationTruncateFsp(ctx Context, str string, fsp int) (Duration, bool, error) {
 	d, isNull, err := parseDurationNoRound(ctx, str, fsp)
 	if err != nil {
