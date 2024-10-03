@@ -912,7 +912,7 @@ func TestRoundFrac(t *testing.T) {
 	for _, tt := range tbl {
 		v, _, err := types.ParseDuration(typeCtx, tt.Input, types.MaxFsp)
 		require.NoError(t, err)
-		nv, err := v.RoundFrac(tt.Fsp, typeCtx.Location())
+		nv, err := v.RoundFrac(tt.Fsp)
 		require.NoError(t, err)
 		require.Equal(t, tt.Except, nv.String())
 	}

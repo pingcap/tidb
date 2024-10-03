@@ -1545,7 +1545,7 @@ func (d Duration) RoundFrac(fsp int) (Duration, error) {
 	if err != nil {
 		return d, errors.Trace(err)
 	}
-	return Duration{Duration: d.Truncate(gotime.Duration(math.Pow10(9-fsp)) * gotime.Nanosecond), Fsp: fsp}, nil
+	return Duration{Duration: d.Round(gotime.Duration(math.Pow10(9-fsp)) * gotime.Nanosecond), Fsp: fsp}, nil
 }
 
 // Compare returns an integer comparing the Duration instant t to o.
