@@ -151,9 +151,6 @@ func (j *DynamicPartitionedTableAnalysisJob) IsValidToAnalyze(
 			j.GlobalTableName,
 			partitions...,
 		); !valid {
-			if j.completionHook != nil {
-				j.completionHook(j)
-			}
 			return false, failReason
 		}
 	}

@@ -82,6 +82,7 @@ type AnalysisJob interface {
 
 	// RegisterJobCompletionHook registers a completionHook function that will be called after the job can be marked as completed.
 	// It can be used to update the job status in the job queue.
+	// TODO: Only call it when the job is successfully analyzed.
 	RegisterJobCompletionHook(hook JobCompletionHook)
 
 	fmt.Stringer

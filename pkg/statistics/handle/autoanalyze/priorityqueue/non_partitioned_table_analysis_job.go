@@ -118,10 +118,6 @@ func (j *NonPartitionedTableAnalysisJob) IsValidToAnalyze(
 		j.TableSchema,
 		j.TableName,
 	); !valid {
-		if j.completionHook != nil {
-			j.completionHook(j)
-		}
-
 		return false, failReason
 	}
 

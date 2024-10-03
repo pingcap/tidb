@@ -105,13 +105,11 @@ func (r *Refresher) AnalyzeHighestPriorityTables() bool {
 	}
 
 	analyzedCount := 0
-	for (func() bool { empty, err := r.jobs.IsEmpty(); return err == nil && !empty }()) && analyzedCount < remainConcurrency {
-		job, err := r.jobs.Pop()
-		if err != nil {
-			statslogutil.StatsLogger().Error("Failed to pop job from AnalysisPriorityQueueV2", zap.Error(err))
-			continue
-		}
-
+	jobs, err := r.jobs.TopN(remainConcurrency * 10)
+	if err != nil {
+		return false
+	}
+	for _, job := range jobs {
 		if _, isRunning := currentRunningJobs[job.GetTableID()]; isRunning {
 			statslogutil.StatsLogger().Debug("Job already running, skipping", zap.Int64("tableID", job.GetTableID()))
 			continue
@@ -148,6 +146,10 @@ func (r *Refresher) AnalyzeHighestPriorityTables() bool {
 				zap.Int("maxConcurrency", maxConcurrency),
 				zap.Int("analyzedCount", analyzedCount),
 			)
+		}
+
+		if analyzedCount >= remainConcurrency {
+			break
 		}
 	}
 

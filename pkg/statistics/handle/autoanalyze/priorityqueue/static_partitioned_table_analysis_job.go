@@ -142,9 +142,6 @@ func (j *StaticPartitionedTableAnalysisJob) IsValidToAnalyze(
 			j.GlobalTableName,
 			partitionNames...,
 		); !valid {
-			if j.completionHook != nil {
-				j.completionHook(j)
-			}
 			return false, failReason
 		}
 	}
