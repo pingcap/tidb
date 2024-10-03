@@ -231,7 +231,7 @@ func TestCTEIterationMemTracker(t *testing.T) {
 	tk.MustQuery(fmt.Sprintf("explain analyze with recursive cte1 as (select c1 from t1 union all select c1 + 1 c1 from cte1 where c1 < %d) select * from cte1", maxIter))
 }
 
-func TestCTETableInvaildTask(t *testing.T) {
+func TestCTETableInvalidTask(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -262,17 +262,17 @@ WHERE
       w
   );`).Check(testkit.Rows(
 		"Projection 9990.00 root  1->Column#17",
-		"└─IndexJoin 9990.00 root  inner join, inner:IndexReader_58, outer key:test.p.groupid, inner key:test.g.groupid, equal cond:eq(test.p.groupid, test.g.groupid)",
+		"└─IndexJoin 9990.00 root  inner join, inner:IndexReader, outer key:test.p.groupid, inner key:test.g.groupid, equal cond:eq(test.p.groupid, test.g.groupid)",
 		"  ├─HashAgg(Build) 12800.00 root  group by:test.p.groupid, funcs:firstrow(test.p.groupid)->test.p.groupid",
 		"  │ └─Selection 12800.00 root  not(isnull(test.p.groupid))",
 		"  │   └─CTEFullScan 16000.00 root CTE:w data:CTE_0",
-		"  └─IndexReader(Probe) 9990.00 root  index:Selection_57",
+		"  └─IndexReader(Probe) 9990.00 root  index:Selection",
 		"    └─Selection 9990.00 cop[tikv]  not(isnull(test.g.groupid))",
 		"      └─IndexRangeScan 10000.00 cop[tikv] table:g, index:k2(groupid, parentid) range: decided by [eq(test.g.groupid, test.p.groupid)], keep order:false, stats:pseudo",
 		"CTE_0 16000.00 root  Recursive CTE",
-		"├─IndexReader(Seed Part) 10000.00 root  index:IndexFullScan_23",
+		"├─IndexReader(Seed Part) 10000.00 root  index:IndexFullScan",
 		"│ └─IndexFullScan 10000.00 cop[tikv] table:p, index:k1(groupid) keep order:false, stats:pseudo",
-		"└─IndexHashJoin(Recursive Part) 10000.00 root  inner join, inner:IndexLookUp_31, outer key:test.p.groupid, inner key:test.g.parentid, equal cond:eq(test.p.groupid, test.g.parentid)",
+		"└─IndexHashJoin(Recursive Part) 10000.00 root  inner join, inner:IndexLookUp, outer key:test.p.groupid, inner key:test.g.parentid, equal cond:eq(test.p.groupid, test.g.parentid)",
 		"  ├─Selection(Build) 8000.00 root  not(isnull(test.p.groupid))",
 		"  │ └─CTETable 10000.00 root  Scan on CTE_0",
 		"  └─IndexLookUp(Probe) 10000.00 root  ",
