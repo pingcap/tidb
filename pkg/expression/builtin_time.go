@@ -1733,11 +1733,12 @@ func evalFromUnixTime(ctx EvalContext, fsp int, unixTimeStamp *types.MyDecimal) 
 
 	tc := typeCtx(ctx)
 	tmp := time.Unix(integralPart, fractionalPart).In(tc.Location())
-	roundMode := types.ModeHalfUp
-	if sqlMode(ctx).HasTimeTruncateFractional() {
-		roundMode = types.ModeTruncate
+	var t types.Time
+	truncateMode := types.ModeHalfUp
+	if ctx.SQLMode().HasTimeTruncateFractional() {
+		truncateMode = types.ModeTruncate
 	}
-	t, err := convertTimeToMysqlTime(tmp, fsp, roundMode)
+	t, err = convertTimeToMysqlTime(tmp, fsp, truncateMode)
 	if err != nil {
 		return res, true, err
 	}
@@ -2064,7 +2065,7 @@ func (b *builtinSysDateWithFspSig) evalTime(ctx EvalContext, row chunk.Row) (val
 
 	loc := location(ctx)
 	now := time.Now().In(loc)
-	result, err := convertTimeToMysqlTime(now, int(fsp), types.ModeTruncate)
+	result, err := convertTimeToMysqlTime(now, int(fsp), types.ModeHalfUp)
 	if err != nil {
 		return types.ZeroTime, true, err
 	}
@@ -2086,7 +2087,7 @@ func (b *builtinSysDateWithoutFspSig) Clone() builtinFunc {
 func (b *builtinSysDateWithoutFspSig) evalTime(ctx EvalContext, row chunk.Row) (val types.Time, isNull bool, err error) {
 	tz := location(ctx)
 	now := time.Now().In(tz)
-	result, err := convertTimeToMysqlTime(now, 0, types.ModeTruncate)
+	result, err := convertTimeToMysqlTime(now, 0, types.ModeHalfUp)
 	if err != nil {
 		return types.ZeroTime, true, err
 	}
@@ -2408,7 +2409,7 @@ func evalUTCTimestampWithFsp(ctx EvalContext, fsp int) (types.Time, bool, error)
 	if err != nil {
 		return types.ZeroTime, true, err
 	}
-	result, err := convertTimeToMysqlTime(nowTs.UTC(), fsp, types.ModeTruncate)
+	result, err := convertTimeToMysqlTime(nowTs.UTC(), fsp, types.ModeHalfUp)
 	if err != nil {
 		return types.ZeroTime, true, err
 	}

@@ -1433,28 +1433,17 @@ func TestIssue9710(t *testing.T) {
 	}
 
 	for {
-		rs := tk.MustQuery("select now(), now(6), unix_timestamp(), unix_timestamp(now()), unix_timestamp(now(6)), utc_timestamp(), utc_timestamp(6), sysdate(), sysdate(6)")
+		rs := tk.MustQuery("select now(), now(6), unix_timestamp(), unix_timestamp(now())")
 		s, ms := getSAndMS(rs.Rows()[0][1].(string))
+		if ms < 500000 {
+			time.Sleep(time.Second / 10)
+			continue
+		}
 
 		s1, _ := getSAndMS(rs.Rows()[0][0].(string))
 		require.Equal(t, s, s1) // now() will truncate the result instead of rounding it
 
 		require.Equal(t, rs.Rows()[0][2], rs.Rows()[0][3]) // unix_timestamp() will truncate the result
-		ut, _ := getSAndMS(rs.Rows()[0][2].(string))
-		ut6, _ := getSAndMS(rs.Rows()[0][4].(string))
-		require.Equal(t, ut, ut6) // unix_timestamp() will truncate the result
-
-		u0, _ := getSAndMS(rs.Rows()[0][5].(string))
-		u6, _ := getSAndMS(rs.Rows()[0][6].(string))
-		require.Equal(t, u0, u6) // utc_timestamp() will truncate the result
-		s0, _ := getSAndMS(rs.Rows()[0][7].(string))
-		s6, _ := getSAndMS(rs.Rows()[0][8].(string))
-		require.Equal(t, s0, s6) // sysdate() will truncate the result
-
-		if ms < 500000 {
-			time.Sleep(time.Second / 10)
-			continue
-		}
 		break
 	}
 }
