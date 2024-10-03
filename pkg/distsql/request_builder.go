@@ -778,6 +778,9 @@ func indexRangesToKVWithoutSplit(dctx *distsqlctx.DistSQLContext, tids []int64, 
 			if interruptSignal != nil && interruptSignal.Load().(bool) {
 				return kv.NewPartitionedKeyRanges(nil), nil
 			}
+			if memTracker != nil {
+				memTracker.HandleKillSignal()
+			}
 		}
 	}
 	return kv.NewPartitionedKeyRanges(krs), nil
