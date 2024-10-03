@@ -2181,7 +2181,7 @@ func (b *builtinCurrentTime0ArgSig) evalDuration(ctx EvalContext, row chunk.Row)
 		return types.Duration{}, true, err
 	}
 	dur := nowTs.In(tz).Format(types.TimeFormat)
-	res, _, err := types.ParseDuration(typeCtx(ctx), dur, types.MinFsp)
+	res, _, err := types.ParseDurationTruncateFsp(typeCtx(ctx), dur, types.MinFsp)
 	if err != nil {
 		return types.Duration{}, true, err
 	}

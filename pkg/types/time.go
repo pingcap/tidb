@@ -1510,7 +1510,7 @@ func (d Duration) ConvertToYear(ctx Context) (int64, error) {
 func (d Duration) ConvertToYearFromNow(ctx Context, now gotime.Time) (int64, error) {
 	if ctx.Flags().CastTimeToYearThroughConcat() {
 		// this error will never happen, because we always give a valid FSP
-		dur, _ := d.RoundFrac(DefaultFsp, ctx.Location())
+		dur, _ := d.RoundFrac(DefaultFsp)
 		// the range of a duration will never exceed the range of `mysql.TypeLonglong`
 		ival, _ := dur.ToNumber().ToInt()
 
@@ -1524,29 +1524,28 @@ func (d Duration) ConvertToYearFromNow(ctx Context, now gotime.Time) (int64, err
 	return AdjustYear(int64(datePart.Year()), false)
 }
 
-// RoundFrac rounds fractional seconds precision with new fsp and returns a new one.
-// We will use the “round half up” rule, e.g, >= 0.5 -> 1, < 0.5 -> 0,
-// so 10:10:10.999999 round 0 -> 10:10:11
-// and 10:10:10.000000 round 0 -> 10:10:10
-func (d Duration) RoundFrac(fsp int, loc *gotime.Location) (Duration, error) {
-	tz := loc
-	if tz == nil {
-		logutil.BgLogger().Warn("use gotime.local because sc.timezone is nil")
-		tz = gotime.Local
-	}
-
+// TruncateFrac truncates the fractional second precision
+// and returns a new Duration.
+// so 10:10:10.999999 truncate 0 -> 10:10:10
+// and 10:10:10.66666 truncate 3 -> 10:10:10.666
+func (d Duration) TruncateFrac(fsp int) (Duration, error) {
 	fsp, err := CheckFsp(fsp)
 	if err != nil {
 		return d, errors.Trace(err)
 	}
+	return Duration{Duration: d.Truncate(gotime.Duration(math.Pow10(9-fsp)) * gotime.Nanosecond), Fsp: fsp}, nil
+}
 
-	if fsp == d.Fsp {
-		return d, nil
+// RoundFrac rounds fractional seconds precision with new fsp and returns a new one.
+// We will use the “round half up” rule, e.g, >= 0.5 -> 1, < 0.5 -> 0,
+// so 10:10:10.999999 round 0 -> 10:10:11
+// and 10:10:10.000000 round 0 -> 10:10:10
+func (d Duration) RoundFrac(fsp int) (Duration, error) {
+	fsp, err := CheckFsp(fsp)
+	if err != nil {
+		return d, errors.Trace(err)
 	}
-
-	n := gotime.Date(0, 0, 0, 0, 0, 0, 0, tz)
-	nd := n.Add(d.Duration).Round(gotime.Duration(math.Pow10(9-fsp)) * gotime.Nanosecond).Sub(n) //nolint:durationcheck
-	return Duration{Duration: nd, Fsp: fsp}, nil
+	return Duration{Duration: d.Truncate(gotime.Duration(math.Pow10(9-fsp)) * gotime.Nanosecond), Fsp: fsp}, nil
 }
 
 // Compare returns an integer comparing the Duration instant t to o.
@@ -1813,10 +1812,7 @@ func canFallbackToDateTime(str string) bool {
 	return len(rest) > 0 && (rest[0] == ' ' || rest[0] == 'T')
 }
 
-// ParseDuration parses the time form a formatted string with a fractional seconds part,
-// returns the duration type Time value and bool to indicate whether the result is null.
-// See http://dev.mysql.com/doc/refman/5.7/en/fractional-seconds.html
-func ParseDuration(ctx Context, str string, fsp int) (Duration, bool, error) {
+func parseDurationNoRound(ctx Context, str string, fsp int) (Duration, bool, error) {
 	rest := strings.TrimSpace(str)
 	d, isNull, err := matchDuration(rest, fsp)
 	if err == nil {
@@ -1836,8 +1832,29 @@ func ParseDuration(ctx Context, str string, fsp int) (Duration, bool, error) {
 		return ZeroDuration, true, ErrTruncatedWrongVal.GenWithStackByArgs("time", str)
 	}
 
-	d, err = d.RoundFrac(fsp, ctx.Location())
+	return d, false, nil
+}
+
+// ParseDuration parses the time form a formatted string with a fractional seconds part,
+// returns the duration type Time value and bool to indicate whether the result is null.
+// See http://dev.mysql.com/doc/refman/5.7/en/fractional-seconds.html
+func ParseDuration(ctx Context, str string, fsp int) (Duration, bool, error) {
+	d, isNull, err := parseDurationNoRound(ctx, str, fsp)
+	if err != nil {
+		return d, isNull, err
+	}
+	d, err = d.RoundFrac(fsp)
 	return d, false, err
+}
+
+func ParseDurationTruncateFsp(ctx Context, str string, fsp int) (Duration, bool, error) {
+	d, isNull, err := parseDurationNoRound(ctx, str, fsp)
+	if err != nil {
+		return d, isNull, err
+	}
+
+	d, err = d.TruncateFrac(fsp)
+	return d, false, nil
 }
 
 // TruncateOverflowMySQLTime truncates d when it overflows, and returns ErrTruncatedWrongVal.
