@@ -540,6 +540,14 @@ func (e *IndexLookUpExecutor) Open(ctx context.Context) error {
 			return err
 		}
 	}
+
+	if e.memTracker != nil {
+		e.memTracker.Reset()
+	} else {
+		e.memTracker = memory.NewTracker(e.ID(), -1)
+	}
+	e.memTracker.AttachTo(e.stmtMemTracker)
+
 	err = e.buildTableKeyRanges()
 	if err != nil {
 		return err
@@ -921,6 +929,10 @@ func (e *IndexLookUpExecutor) Close() error {
 	e.finished = nil
 	e.workerStarted = false
 	e.resultCurr = nil
+
+	if e.memTracker != nil {
+		e.memTracker.Reset()
+	}
 	return nil
 }
 
