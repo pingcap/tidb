@@ -930,9 +930,6 @@ func (e *IndexLookUpExecutor) Close() error {
 	e.workerStarted = false
 	e.resultCurr = nil
 
-	if e.memTracker != nil {
-		e.memTracker.Reset()
-	}
 	return nil
 }
 
