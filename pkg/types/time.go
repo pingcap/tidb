@@ -1856,7 +1856,6 @@ func ParseDurationTruncateFsp(ctx Context, str string, fsp int) (Duration, bool,
 	if err != nil {
 		return d, isNull, err
 	}
-
 	d, err = d.TruncateFrac(fsp)
 	return d, false, err
 }
