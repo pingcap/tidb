@@ -540,7 +540,9 @@ func (t Time) RoundFrac(ctx Context, fsp int) (Time, error) {
 		var t2 gotime.Time
 		if ctx.Flags().TimeTruncateFractional() {
 			t2, err = TruncateFrac(t1, fsp)
-			return t, errors.Trace(err)
+			if err != nil {
+				return t, errors.Trace(err)
+			}
 		} else {
 			t2 = roundTime(t1, fsp)
 		}
