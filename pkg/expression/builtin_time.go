@@ -6522,7 +6522,7 @@ func (b *builtinUTCTimeWithArgSig) evalDuration(ctx EvalContext, row chunk.Row) 
 	if err != nil {
 		return types.Duration{}, true, err
 	}
-	v, _, err := types.ParseDurationTruncateFsp(typeCtx(ctx), nowTs.UTC().Format(types.TimeFormat), int(fsp))
+	v, _, err := types.ParseDurationTruncateFsp(typeCtx(ctx), nowTs.UTC().Format(types.TimeFSPFormat), int(fsp))
 	return v, false, err
 }
 
