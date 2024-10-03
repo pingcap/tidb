@@ -1984,7 +1984,6 @@ func TestTruncateFrac(t *testing.T) {
 		require.NoError(t, err)
 		require.Equal(t, tt.Except, nv.String())
 	}
-
 }
 
 func TestTimeSub(t *testing.T) {
