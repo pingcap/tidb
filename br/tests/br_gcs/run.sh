@@ -14,6 +14,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+# disable encryption as not working with brv4.0.8
+ENABLE_ENCRYPTION=false
+export ENABLE_ENCRYPTION
+
 set -eux
 DB="$TEST_NAME"
 TABLE="usertable"
