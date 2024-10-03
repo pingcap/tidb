@@ -1533,7 +1533,7 @@ func (d Duration) TruncateFrac(fsp int) (Duration, error) {
 	if err != nil {
 		return d, errors.Trace(err)
 	}
-	return Duration{Duration: d.Truncate(gotime.Duration(math.Pow10(9-fsp)) * gotime.Nanosecond), Fsp: fsp}, nil
+	return Duration{Duration: d.Truncate(gotime.Duration(math.Pow10(9 - fsp))), Fsp: fsp}, nil
 }
 
 // RoundFrac rounds fractional seconds precision with new fsp and returns a new one.
@@ -1545,7 +1545,7 @@ func (d Duration) RoundFrac(fsp int) (Duration, error) {
 	if err != nil {
 		return d, errors.Trace(err)
 	}
-	return Duration{Duration: d.Round(gotime.Duration(math.Pow10(9-fsp)) * gotime.Nanosecond), Fsp: fsp}, nil
+	return Duration{Duration: d.Round(gotime.Duration(math.Pow10(9 - fsp))), Fsp: fsp}, nil
 }
 
 // Compare returns an integer comparing the Duration instant t to o.
@@ -1854,7 +1854,7 @@ func ParseDurationTruncateFsp(ctx Context, str string, fsp int) (Duration, bool,
 	}
 
 	d, err = d.TruncateFrac(fsp)
-	return d, false, nil
+	return d, false, err
 }
 
 // TruncateOverflowMySQLTime truncates d when it overflows, and returns ErrTruncatedWrongVal.
