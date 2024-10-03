@@ -526,7 +526,9 @@ func (t Time) RoundFrac(ctx Context, fsp int) (Time, error) {
 	if t1, err := t.GoTime(ctx.Location()); err == nil {
 		if ctx.Flags().TimeTruncateFractional() {
 			t1, err = TruncateFrac(t1, fsp)
-			return t, errors.Trace(err)
+			if err != nil {
+				return t, errors.Trace(err)
+			}
 		} else {
 			t1 = roundTime(t1, fsp)
 		}
