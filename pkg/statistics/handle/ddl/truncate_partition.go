@@ -45,7 +45,7 @@ func (h *ddlHandlerImpl) onTruncatePartitions(t *notifier.SchemaChangeEvent) err
 		partitionNames := make([]string, 0, len(droppedPartInfo.Definitions))
 		for _, def := range droppedPartInfo.Definitions {
 			// Get the count and modify count of the partition.
-			tableCount, _, _, err := storage.StatsMetaCountAndModifyCount(sctx, def.ID)
+			tableCount, _, _, err := storage.StatsMetaCountAndModifyCount(util.StatsCtx, sctx, def.ID)
 			if err != nil {
 				return err
 			}
@@ -83,6 +83,7 @@ func (h *ddlHandlerImpl) onTruncatePartitions(t *notifier.SchemaChangeEvent) err
 			// 5. The global stats should not be `count` and 0 modify count. We need to keep the modify count.
 			delta := -count
 			err = storage.UpdateStatsMeta(
+				util.StatsCtx,
 				sctx,
 				startTS,
 				variable.TableDelta{Count: count, Delta: delta},

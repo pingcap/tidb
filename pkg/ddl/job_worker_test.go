@@ -50,13 +50,12 @@ func TestInvalidDDLJob(t *testing.T) {
 		TableID:             0,
 		Type:                model.ActionNone,
 		BinlogInfo:          &model.HistoryInfo{},
-		Args:                []any{},
 		InvolvingSchemaInfo: []model.InvolvingSchemaInfo{{}},
 	}
 	ctx := testNewContext(store)
 	ctx.SetValue(sessionctx.QueryString, "skip")
 	de := dom.DDLExecutor().(ddl.ExecutorForTest)
-	err := de.DoDDLJobWrapper(ctx, ddl.NewJobWrapper(job, true))
+	err := de.DoDDLJobWrapper(ctx, ddl.NewJobWrapperWithArgs(job, &model.EmptyArgs{}, true))
 	require.ErrorContains(t, err, "[ddl:8204]invalid ddl job type: none")
 }
 

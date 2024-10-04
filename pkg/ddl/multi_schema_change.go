@@ -201,8 +201,8 @@ func appendToSubJobs(m *model.MultiSchemaInfo, jobW *JobWrapper) error {
 func fillMultiSchemaInfo(info *model.MultiSchemaInfo, job *JobWrapper) error {
 	switch job.Type {
 	case model.ActionAddColumn:
-		col := job.Args[0].(*table.Column)
-		pos := job.Args[1].(*ast.ColumnPosition)
+		args := job.JobArgs.(*model.TableColumnArgs)
+		col, pos := args.Col, args.Pos
 		info.AddColumns = append(info.AddColumns, col.Name)
 		for colName := range col.Dependences {
 			info.RelativeColumns = append(info.RelativeColumns, pmodel.CIStr{L: colName, O: colName})
@@ -211,7 +211,7 @@ func fillMultiSchemaInfo(info *model.MultiSchemaInfo, job *JobWrapper) error {
 			info.PositionColumns = append(info.PositionColumns, pos.RelativeColumn.Name)
 		}
 	case model.ActionDropColumn:
-		colName := job.JobArgs.(*model.DropColumnArgs).ColName
+		colName := job.JobArgs.(*model.TableColumnArgs).Col.Name
 		info.DropColumns = append(info.DropColumns, colName)
 	case model.ActionDropIndex, model.ActionDropPrimaryKey:
 		indexName := job.Args[0].(pmodel.CIStr)
@@ -249,7 +249,8 @@ func fillMultiSchemaInfo(info *model.MultiSchemaInfo, job *JobWrapper) error {
 			info.PositionColumns = append(info.PositionColumns, pos.RelativeColumn.Name)
 		}
 	case model.ActionSetDefaultValue:
-		col := job.Args[0].(*table.Column)
+		args := job.JobArgs.(*model.SetDefaultValueArgs)
+		col := args.Col
 		info.ModifyColumns = append(info.ModifyColumns, col.Name)
 	case model.ActionAlterIndexVisibility:
 		idxName := job.JobArgs.(*model.AlterIndexVisibilityArgs).IndexName

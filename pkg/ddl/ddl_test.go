@@ -21,6 +21,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/tidb/pkg/ddl/testargsv1"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -219,7 +220,12 @@ func TestBuildJobDependence(t *testing.T) {
 	job6 := &model.Job{ID: 6, TableID: 1, Version: model.JobVersion1, Type: model.ActionDropTable}
 	job7 := &model.Job{ID: 7, TableID: 2, Version: model.JobVersion1, Type: model.ActionModifyColumn}
 	job9 := &model.Job{ID: 9, SchemaID: 111, Version: model.JobVersion1, Type: model.ActionDropSchema}
-	job11 := &model.Job{ID: 11, TableID: 2, Version: model.JobVersion1, Type: model.ActionRenameTable, Args: []any{int64(111), "old db name"}}
+	job11 := &model.Job{ID: 11, TableID: 2, Version: model.JobVersion1, Type: model.ActionRenameTable}
+	job11.FillArgs(&model.RenameTableArgs{
+		OldSchemaID:   111,
+		NewTableName:  pmodel.NewCIStr("new table name"),
+		OldSchemaName: pmodel.NewCIStr("old db name"),
+	})
 	err := kv.RunInNewTxn(ctx, store, false, func(ctx context.Context, txn kv.Transaction) error {
 		m := meta.NewMutator(txn)
 		require.NoError(t, m.EnQueueDDLJob(job1))
@@ -342,7 +348,7 @@ func TestGetTableDataKeyRanges(t *testing.T) {
 	require.Equal(t, keyRanges[3].EndKey, tablecodec.EncodeTablePrefix(meta.MaxGlobalID))
 }
 
-func TestAppendContinuousKeyRanges(t *testing.T) {
+func TestMergeContinuousKeyRanges(t *testing.T) {
 	cases := []struct {
 		input  []keyRangeMayExclude
 		expect []kv.KeyRange
@@ -452,7 +458,7 @@ func TestAppendContinuousKeyRanges(t *testing.T) {
 	}
 
 	for i, ca := range cases {
-		ranges := appendContinuousKeyRanges([]kv.KeyRange{}, ca.input)
+		ranges := mergeContinuousKeyRanges(ca.input)
 		require.Equal(t, ca.expect, ranges, "case %d", i)
 	}
 }
@@ -470,24 +476,12 @@ func TestDetectAndUpdateJobVersion(t *testing.T) {
 
 	t.Run("in ut", func(t *testing.T) {
 		reset()
-		forceV1Bak := ForceDDLJobVersionToV1InTest
-		t.Cleanup(func() {
-			ForceDDLJobVersionToV1InTest = forceV1Bak
-		})
-		ForceDDLJobVersionToV1InTest = "false"
 		d.detectAndUpdateJobVersion()
-		require.Equal(t, model.JobVersion2, model.GetJobVerInUse())
-	})
-
-	t.Run("force v1", func(t *testing.T) {
-		reset()
-		forceV1Bak := ForceDDLJobVersionToV1InTest
-		t.Cleanup(func() {
-			ForceDDLJobVersionToV1InTest = forceV1Bak
-		})
-		ForceDDLJobVersionToV1InTest = "true"
-		d.detectAndUpdateJobVersion()
-		require.Equal(t, model.JobVersion1, model.GetJobVerInUse())
+		if testargsv1.ForceV1 {
+			require.Equal(t, model.JobVersion1, model.GetJobVerInUse())
+		} else {
+			require.Equal(t, model.JobVersion2, model.GetJobVerInUse())
+		}
 	})
 
 	d.etcdCli = &clientv3.Client{}
