@@ -58,8 +58,8 @@ func repairTableOrViewWithCheck(t *meta.Mutator, job *model.Job, schemaID int64,
 	return t.UpdateTable(schemaID, tbInfo)
 }
 
-func onDropTableOrView(jobCtx *jobContext, t *meta.Mutator, job *model.Job) (ver int64, _ error) {
-	tblInfo, err := checkTableExistAndCancelNonExistJob(t, job, job.SchemaID)
+func onDropTableOrView(jobCtx *jobContext, job *model.Job) (ver int64, _ error) {
+	tblInfo, err := checkTableExistAndCancelNonExistJob(jobCtx.metaMut, job, job.SchemaID)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
@@ -75,14 +75,14 @@ func onDropTableOrView(jobCtx *jobContext, t *meta.Mutator, job *model.Job) (ver
 			}
 		}
 		tblInfo.State = model.StateWriteOnly
-		ver, err = updateVersionAndTableInfo(jobCtx, t, job, tblInfo, originalState != tblInfo.State)
+		ver, err = updateVersionAndTableInfo(jobCtx, job, tblInfo, originalState != tblInfo.State)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
 	case model.StateWriteOnly:
 		// write only -> delete only
 		tblInfo.State = model.StateDeleteOnly
-		ver, err = updateVersionAndTableInfo(jobCtx, t, job, tblInfo, originalState != tblInfo.State)
+		ver, err = updateVersionAndTableInfo(jobCtx, job, tblInfo, originalState != tblInfo.State)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
@@ -92,19 +92,20 @@ func onDropTableOrView(jobCtx *jobContext, t *meta.Mutator, job *model.Job) (ver
 		ruleIDs := append(getPartitionRuleIDs(job.SchemaName, tblInfo), fmt.Sprintf(label.TableIDFormat, label.IDPrefix, job.SchemaName, tblInfo.Name.L))
 		job.CtxVars = []any{oldIDs}
 
-		ver, err = updateVersionAndTableInfo(jobCtx, t, job, tblInfo, originalState != tblInfo.State)
+		ver, err = updateVersionAndTableInfo(jobCtx, job, tblInfo, originalState != tblInfo.State)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
+		metaMut := jobCtx.metaMut
 		if tblInfo.IsSequence() {
-			if err = t.DropSequence(job.SchemaID, job.TableID); err != nil {
+			if err = metaMut.DropSequence(job.SchemaID, job.TableID); err != nil {
 				return ver, errors.Trace(err)
 			}
 		} else {
-			if err = t.DropTableOrView(job.SchemaID, job.TableID); err != nil {
+			if err = metaMut.DropTableOrView(job.SchemaID, job.TableID); err != nil {
 				return ver, errors.Trace(err)
 			}
-			if err = t.GetAutoIDAccessors(job.SchemaID, job.TableID).Del(); err != nil {
+			if err = metaMut.GetAutoIDAccessors(job.SchemaID, job.TableID).Del(); err != nil {
 				return ver, errors.Trace(err)
 			}
 		}
@@ -136,7 +137,7 @@ func onDropTableOrView(jobCtx *jobContext, t *meta.Mutator, job *model.Job) (ver
 	return ver, errors.Trace(err)
 }
 
-func (w *worker) onRecoverTable(jobCtx *jobContext, t *meta.Mutator, job *model.Job) (ver int64, err error) {
+func (w *worker) onRecoverTable(jobCtx *jobContext, job *model.Job) (ver int64, err error) {
 	args, err := model.GetRecoverArgs(job)
 	if err != nil {
 		// Invalid arguments, cancel this job.
@@ -167,7 +168,8 @@ func (w *worker) onRecoverTable(jobCtx *jobContext, t *meta.Mutator, job *model.
 		return ver, errors.Trace(err)
 	}
 
-	err = checkTableIDNotExists(t, schemaID, tblInfo.ID)
+	metaMut := jobCtx.metaMut
+	err = checkTableIDNotExists(metaMut, schemaID, tblInfo.ID)
 	if err != nil {
 		if infoschema.ErrDatabaseNotExists.Equal(err) || infoschema.ErrTableExists.Equal(err) {
 			job.State = model.JobStateCancelled
@@ -220,19 +222,19 @@ func (w *worker) onRecoverTable(jobCtx *jobContext, t *meta.Mutator, job *model.
 			job.State = model.JobStateCancelled
 			return ver, errors.Trace(err)
 		}
-		ver, err = w.recoverTable(t, job, recoverInfo)
+		ver, err = w.recoverTable(metaMut, job, recoverInfo)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
 		tableInfo := tblInfo.Clone()
 		tableInfo.State = model.StatePublic
-		tableInfo.UpdateTS = t.StartTS
-		ver, err = updateVersionAndTableInfo(jobCtx, t, job, tableInfo, true)
+		tableInfo.UpdateTS = metaMut.StartTS
+		ver, err = updateVersionAndTableInfo(jobCtx, job, tableInfo, true)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
 		tblInfo.State = model.StatePublic
-		tblInfo.UpdateTS = t.StartTS
+		tblInfo.UpdateTS = metaMut.StartTS
 		// Finish this job.
 		job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
 	default:
@@ -425,14 +427,15 @@ func getTableInfo(t *meta.Mutator, tableID, schemaID int64) (*model.TableInfo, e
 // onTruncateTable delete old table meta, and creates a new table identical to old table except for table ID.
 // As all the old data is encoded with old table ID, it can not be accessed anymore.
 // A background job will be created to delete old data.
-func (w *worker) onTruncateTable(jobCtx *jobContext, t *meta.Mutator, job *model.Job) (ver int64, _ error) {
+func (w *worker) onTruncateTable(jobCtx *jobContext, job *model.Job) (ver int64, _ error) {
 	schemaID := job.SchemaID
 	args, err := model.GetTruncateTableArgs(job)
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
-	tblInfo, err := GetTableInfoAndCancelFaultJob(t, job, schemaID)
+	metaMut := jobCtx.metaMut
+	tblInfo, err := GetTableInfoAndCancelFaultJob(metaMut, job, schemaID)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
@@ -446,12 +449,12 @@ func (w *worker) onTruncateTable(jobCtx *jobContext, t *meta.Mutator, job *model
 	if err != nil {
 		return ver, err
 	}
-	err = t.DropTableOrView(schemaID, tblInfo.ID)
+	err = metaMut.DropTableOrView(schemaID, tblInfo.ID)
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
-	err = t.GetAutoIDAccessors(schemaID, tblInfo.ID).Del()
+	err = metaMut.GetAutoIDAccessors(schemaID, tblInfo.ID).Del()
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
@@ -478,7 +481,7 @@ func (w *worker) onTruncateTable(jobCtx *jobContext, t *meta.Mutator, job *model
 	if tblInfo.GetPartitionInfo() != nil {
 		oldPartitionIDs = getPartitionIDs(tblInfo)
 		// We use the new partition ID because all the old data is encoded with the old partition ID, it can not be accessed anymore.
-		newPartitionIDs, err = truncateTableByReassignPartitionIDs(t, tblInfo, newPartitionIDs)
+		newPartitionIDs, err = truncateTableByReassignPartitionIDs(metaMut, tblInfo, newPartitionIDs)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
@@ -539,7 +542,7 @@ func (w *worker) onTruncateTable(jobCtx *jobContext, t *meta.Mutator, job *model
 	tblInfo.ID = args.NewTableID
 
 	// build table & partition bundles if any.
-	bundles, err := placement.NewFullTableBundles(t, tblInfo)
+	bundles, err := placement.NewFullTableBundles(metaMut, tblInfo)
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
@@ -551,7 +554,7 @@ func (w *worker) onTruncateTable(jobCtx *jobContext, t *meta.Mutator, job *model
 		return 0, errors.Wrapf(err, "failed to notify PD the placement rules")
 	}
 
-	err = t.CreateTableOrView(schemaID, tblInfo)
+	err = metaMut.CreateTableOrView(schemaID, tblInfo)
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
@@ -569,7 +572,7 @@ func (w *worker) onTruncateTable(jobCtx *jobContext, t *meta.Mutator, job *model
 	}
 	preSplitAndScatter(w.sess.Context, jobCtx.store, tblInfo, partitions)
 
-	ver, err = updateSchemaVersion(jobCtx, t, job)
+	ver, err = updateSchemaVersion(jobCtx, job)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
@@ -583,15 +586,15 @@ func (w *worker) onTruncateTable(jobCtx *jobContext, t *meta.Mutator, job *model
 	return ver, nil
 }
 
-func onRebaseAutoIncrementIDType(jobCtx *jobContext, t *meta.Mutator, job *model.Job) (ver int64, _ error) {
-	return onRebaseAutoID(jobCtx, t, job, autoid.AutoIncrementType)
+func onRebaseAutoIncrementIDType(jobCtx *jobContext, job *model.Job) (ver int64, _ error) {
+	return onRebaseAutoID(jobCtx, job, autoid.AutoIncrementType)
 }
 
-func onRebaseAutoRandomType(jobCtx *jobContext, t *meta.Mutator, job *model.Job) (ver int64, _ error) {
-	return onRebaseAutoID(jobCtx, t, job, autoid.AutoRandomType)
+func onRebaseAutoRandomType(jobCtx *jobContext, job *model.Job) (ver int64, _ error) {
+	return onRebaseAutoID(jobCtx, job, autoid.AutoRandomType)
 }
 
-func onRebaseAutoID(jobCtx *jobContext, t *meta.Mutator, job *model.Job, tp autoid.AllocatorType) (ver int64, _ error) {
+func onRebaseAutoID(jobCtx *jobContext, job *model.Job, tp autoid.AllocatorType) (ver int64, _ error) {
 	args, err := model.GetRebaseAutoIDArgs(job)
 	if err != nil {
 		job.State = model.JobStateCancelled
@@ -606,7 +609,7 @@ func onRebaseAutoID(jobCtx *jobContext, t *meta.Mutator, job *model.Job, tp auto
 		return ver, nil
 	}
 
-	tblInfo, err := GetTableInfoAndCancelFaultJob(t, job, schemaID)
+	tblInfo, err := GetTableInfoAndCancelFaultJob(jobCtx.metaMut, job, schemaID)
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
@@ -650,7 +653,7 @@ func onRebaseAutoID(jobCtx *jobContext, t *meta.Mutator, job *model.Job, tp auto
 			return ver, errors.Trace(err)
 		}
 	}
-	ver, err = updateVersionAndTableInfo(jobCtx, t, job, tblInfo, true)
+	ver, err = updateVersionAndTableInfo(jobCtx, job, tblInfo, true)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
@@ -658,20 +661,20 @@ func onRebaseAutoID(jobCtx *jobContext, t *meta.Mutator, job *model.Job, tp auto
 	return ver, nil
 }
 
-func onModifyTableAutoIDCache(jobCtx *jobContext, t *meta.Mutator, job *model.Job) (int64, error) {
+func onModifyTableAutoIDCache(jobCtx *jobContext, job *model.Job) (int64, error) {
 	args, err := model.GetModifyTableAutoIDCacheArgs(job)
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return 0, errors.Trace(err)
 	}
 
-	tblInfo, err := GetTableInfoAndCancelFaultJob(t, job, job.SchemaID)
+	tblInfo, err := GetTableInfoAndCancelFaultJob(jobCtx.metaMut, job, job.SchemaID)
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
 
 	tblInfo.AutoIDCache = args.NewCache
-	ver, err := updateVersionAndTableInfo(jobCtx, t, job, tblInfo, true)
+	ver, err := updateVersionAndTableInfo(jobCtx, job, tblInfo, true)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
@@ -679,7 +682,7 @@ func onModifyTableAutoIDCache(jobCtx *jobContext, t *meta.Mutator, job *model.Jo
 	return ver, nil
 }
 
-func (w *worker) onShardRowID(jobCtx *jobContext, t *meta.Mutator, job *model.Job) (ver int64, _ error) {
+func (w *worker) onShardRowID(jobCtx *jobContext, job *model.Job) (ver int64, _ error) {
 	args, err := model.GetShardRowIDArgs(job)
 	if err != nil {
 		job.State = model.JobStateCancelled
@@ -687,7 +690,7 @@ func (w *worker) onShardRowID(jobCtx *jobContext, t *meta.Mutator, job *model.Jo
 	}
 
 	shardRowIDBits := args.ShardRowIDBits
-	tblInfo, err := GetTableInfoAndCancelFaultJob(t, job, job.SchemaID)
+	tblInfo, err := GetTableInfoAndCancelFaultJob(jobCtx.metaMut, job, job.SchemaID)
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
@@ -708,7 +711,7 @@ func (w *worker) onShardRowID(jobCtx *jobContext, t *meta.Mutator, job *model.Jo
 		// MaxShardRowIDBits use to check the overflow of auto ID.
 		tblInfo.MaxShardRowIDBits = shardRowIDBits
 	}
-	ver, err = updateVersionAndTableInfo(jobCtx, t, job, tblInfo, true)
+	ver, err = updateVersionAndTableInfo(jobCtx, job, tblInfo, true)
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
@@ -737,7 +740,7 @@ func verifyNoOverflowShardBits(s *sess.Pool, tbl table.Table, shardRowIDBits uin
 	return nil
 }
 
-func onRenameTable(jobCtx *jobContext, t *meta.Mutator, job *model.Job) (ver int64, _ error) {
+func onRenameTable(jobCtx *jobContext, job *model.Job) (ver int64, _ error) {
 	args, err := model.GetRenameTableArgs(job)
 	if err != nil {
 		// Invalid arguments, cancel this job.
@@ -747,7 +750,7 @@ func onRenameTable(jobCtx *jobContext, t *meta.Mutator, job *model.Job) (ver int
 
 	oldSchemaID, oldSchemaName, tableName := args.OldSchemaID, args.OldSchemaName, args.NewTableName
 	if job.SchemaState == model.StatePublic {
-		return finishJobRenameTable(jobCtx, t, job)
+		return finishJobRenameTable(jobCtx, job)
 	}
 	newSchemaID := job.SchemaID
 	err = checkTableNotExists(jobCtx.infoCache, newSchemaID, tableName.L)
@@ -758,22 +761,23 @@ func onRenameTable(jobCtx *jobContext, t *meta.Mutator, job *model.Job) (ver int
 		return ver, errors.Trace(err)
 	}
 
-	tblInfo, err := GetTableInfoAndCancelFaultJob(t, job, oldSchemaID)
+	metaMut := jobCtx.metaMut
+	tblInfo, err := GetTableInfoAndCancelFaultJob(metaMut, job, oldSchemaID)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
 	oldTableName := tblInfo.Name
-	ver, err = checkAndRenameTables(t, job, tblInfo, args)
+	ver, err = checkAndRenameTables(metaMut, job, tblInfo, args)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
 	fkh := newForeignKeyHelper()
-	err = adjustForeignKeyChildTableInfoAfterRenameTable(jobCtx.infoCache, t,
+	err = adjustForeignKeyChildTableInfoAfterRenameTable(jobCtx.infoCache, metaMut,
 		job, &fkh, tblInfo, oldSchemaName, oldTableName, tableName, newSchemaID)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
-	ver, err = updateSchemaVersion(jobCtx, t, job, fkh.getLoadedTables()...)
+	ver, err = updateSchemaVersion(jobCtx, job, fkh.getLoadedTables()...)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
@@ -781,7 +785,7 @@ func onRenameTable(jobCtx *jobContext, t *meta.Mutator, job *model.Job) (ver int
 	return ver, nil
 }
 
-func onRenameTables(jobCtx *jobContext, t *meta.Mutator, job *model.Job) (ver int64, _ error) {
+func onRenameTables(jobCtx *jobContext, job *model.Job) (ver int64, _ error) {
 	args, err := model.GetRenameTablesArgs(job)
 	if err != nil {
 		job.State = model.JobStateCancelled
@@ -789,30 +793,31 @@ func onRenameTables(jobCtx *jobContext, t *meta.Mutator, job *model.Job) (ver in
 	}
 
 	if job.SchemaState == model.StatePublic {
-		return finishJobRenameTables(jobCtx, t, job, args)
+		return finishJobRenameTables(jobCtx, job, args)
 	}
 
 	fkh := newForeignKeyHelper()
+	metaMut := jobCtx.metaMut
 	for _, info := range args.RenameTableInfos {
 		job.TableID = info.TableID
 		job.TableName = info.OldTableName.L
-		tblInfo, err := GetTableInfoAndCancelFaultJob(t, job, info.OldSchemaID)
+		tblInfo, err := GetTableInfoAndCancelFaultJob(metaMut, job, info.OldSchemaID)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
-		ver, err := checkAndRenameTables(t, job, tblInfo, info)
+		ver, err := checkAndRenameTables(metaMut, job, tblInfo, info)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
 		err = adjustForeignKeyChildTableInfoAfterRenameTable(
-			jobCtx.infoCache, t, job, &fkh, tblInfo,
+			jobCtx.infoCache, metaMut, job, &fkh, tblInfo,
 			info.OldSchemaName, info.OldTableName, info.NewTableName, info.NewSchemaID)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
 	}
 
-	ver, err = updateSchemaVersion(jobCtx, t, job, fkh.getLoadedTables()...)
+	ver, err = updateSchemaVersion(jobCtx, job, fkh.getLoadedTables()...)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
@@ -923,8 +928,8 @@ func adjustForeignKeyChildTableInfoAfterRenameTable(
 //     there may be DMLs that use the old schema.
 //   - TiCDC cannot handle the DMLs that use the old schema, because
 //     the commit TS of the DMLs are greater than the job state updating TS.
-func finishJobRenameTable(jobCtx *jobContext, t *meta.Mutator, job *model.Job) (int64, error) {
-	tblInfo, err := getTableInfo(t, job.TableID, job.SchemaID)
+func finishJobRenameTable(jobCtx *jobContext, job *model.Job) (int64, error) {
+	tblInfo, err := getTableInfo(jobCtx.metaMut, job.TableID, job.SchemaID)
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return 0, errors.Trace(err)
@@ -937,7 +942,7 @@ func finishJobRenameTable(jobCtx *jobContext, t *meta.Mutator, job *model.Job) (
 		return 0, errors.Trace(err)
 	}
 
-	ver, err := updateSchemaVersion(jobCtx, t, job)
+	ver, err := updateSchemaVersion(jobCtx, job)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
@@ -946,7 +951,7 @@ func finishJobRenameTable(jobCtx *jobContext, t *meta.Mutator, job *model.Job) (
 	return ver, nil
 }
 
-func finishJobRenameTables(jobCtx *jobContext, t *meta.Mutator, job *model.Job, args *model.RenameTablesArgs) (int64, error) {
+func finishJobRenameTables(jobCtx *jobContext, job *model.Job, args *model.RenameTablesArgs) (int64, error) {
 	infos := args.RenameTableInfos
 	tblSchemaIDs := make(map[int64]int64, len(infos))
 	for _, info := range infos {
@@ -955,7 +960,7 @@ func finishJobRenameTables(jobCtx *jobContext, t *meta.Mutator, job *model.Job, 
 	tblInfos := make([]*model.TableInfo, 0, len(infos))
 	for _, info := range infos {
 		tblID := info.TableID
-		tblInfo, err := getTableInfo(t, tblID, tblSchemaIDs[tblID])
+		tblInfo, err := getTableInfo(jobCtx.metaMut, tblID, tblSchemaIDs[tblID])
 		if err != nil {
 			job.State = model.JobStateCancelled
 			return 0, errors.Trace(err)
@@ -976,7 +981,7 @@ func finishJobRenameTables(jobCtx *jobContext, t *meta.Mutator, job *model.Job, 
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
-	ver, err := updateSchemaVersion(jobCtx, t, job)
+	ver, err := updateSchemaVersion(jobCtx, job)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
@@ -985,14 +990,14 @@ func finishJobRenameTables(jobCtx *jobContext, t *meta.Mutator, job *model.Job, 
 	return ver, nil
 }
 
-func onModifyTableComment(jobCtx *jobContext, t *meta.Mutator, job *model.Job) (ver int64, _ error) {
+func onModifyTableComment(jobCtx *jobContext, job *model.Job) (ver int64, _ error) {
 	args, err := model.GetModifyTableCommentArgs(job)
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
 
-	tblInfo, err := GetTableInfoAndCancelFaultJob(t, job, job.SchemaID)
+	tblInfo, err := GetTableInfoAndCancelFaultJob(jobCtx.metaMut, job, job.SchemaID)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
@@ -1003,7 +1008,7 @@ func onModifyTableComment(jobCtx *jobContext, t *meta.Mutator, job *model.Job) (
 	}
 
 	tblInfo.Comment = args.Comment
-	ver, err = updateVersionAndTableInfo(jobCtx, t, job, tblInfo, true)
+	ver, err = updateVersionAndTableInfo(jobCtx, job, tblInfo, true)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
@@ -1011,20 +1016,20 @@ func onModifyTableComment(jobCtx *jobContext, t *meta.Mutator, job *model.Job) (
 	return ver, nil
 }
 
-func onModifyTableCharsetAndCollate(jobCtx *jobContext, t *meta.Mutator, job *model.Job) (ver int64, _ error) {
+func onModifyTableCharsetAndCollate(jobCtx *jobContext, job *model.Job) (ver int64, _ error) {
 	args, err := model.GetModifyTableCharsetAndCollateArgs(job)
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
 	toCharset, toCollate, needsOverwriteCols := args.ToCharset, args.ToCollate, args.NeedsOverwriteCols
-
-	dbInfo, err := checkSchemaExistAndCancelNotExistJob(t, job)
+	metaMut := jobCtx.metaMut
+	dbInfo, err := checkSchemaExistAndCancelNotExistJob(metaMut, job)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
 
-	tblInfo, err := GetTableInfoAndCancelFaultJob(t, job, job.SchemaID)
+	tblInfo, err := GetTableInfoAndCancelFaultJob(metaMut, job, job.SchemaID)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
@@ -1057,7 +1062,7 @@ func onModifyTableCharsetAndCollate(jobCtx *jobContext, t *meta.Mutator, job *mo
 		}
 	}
 
-	ver, err = updateVersionAndTableInfo(jobCtx, t, job, tblInfo, true)
+	ver, err = updateVersionAndTableInfo(jobCtx, job, tblInfo, true)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
@@ -1065,7 +1070,7 @@ func onModifyTableCharsetAndCollate(jobCtx *jobContext, t *meta.Mutator, job *mo
 	return ver, nil
 }
 
-func (w *worker) onSetTableFlashReplica(jobCtx *jobContext, t *meta.Mutator, job *model.Job) (ver int64, _ error) {
+func (w *worker) onSetTableFlashReplica(jobCtx *jobContext, job *model.Job) (ver int64, _ error) {
 	args, err := model.GetSetTiFlashReplicaArgs(job)
 	if err != nil {
 		job.State = model.JobStateCancelled
@@ -1073,7 +1078,7 @@ func (w *worker) onSetTableFlashReplica(jobCtx *jobContext, t *meta.Mutator, job
 	}
 	replicaInfo := args.TiflashReplica
 
-	tblInfo, err := GetTableInfoAndCancelFaultJob(t, job, job.SchemaID)
+	tblInfo, err := GetTableInfoAndCancelFaultJob(jobCtx.metaMut, job, job.SchemaID)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
@@ -1128,7 +1133,7 @@ func (w *worker) onSetTableFlashReplica(jobCtx *jobContext, t *meta.Mutator, job
 		tblInfo.TiFlashReplica = nil
 	}
 
-	ver, err = updateVersionAndTableInfo(jobCtx, t, job, tblInfo, true)
+	ver, err = updateVersionAndTableInfo(jobCtx, job, tblInfo, true)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
@@ -1146,7 +1151,7 @@ func (w *worker) checkTiFlashReplicaCount(replicaCount uint64) error {
 	return checkTiFlashReplicaCount(ctx, replicaCount)
 }
 
-func onUpdateTiFlashReplicaStatus(jobCtx *jobContext, t *meta.Mutator, job *model.Job) (ver int64, _ error) {
+func onUpdateTiFlashReplicaStatus(jobCtx *jobContext, job *model.Job) (ver int64, _ error) {
 	args, err := model.GetUpdateTiFlashReplicaStatusArgs(job)
 	if err != nil {
 		job.State = model.JobStateCancelled
@@ -1154,7 +1159,7 @@ func onUpdateTiFlashReplicaStatus(jobCtx *jobContext, t *meta.Mutator, job *mode
 	}
 	available, physicalID := args.Available, args.PhysicalID
 
-	tblInfo, err := GetTableInfoAndCancelFaultJob(t, job, job.SchemaID)
+	tblInfo, err := GetTableInfoAndCancelFaultJob(jobCtx.metaMut, job, job.SchemaID)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
@@ -1198,7 +1203,7 @@ func onUpdateTiFlashReplicaStatus(jobCtx *jobContext, t *meta.Mutator, job *mode
 	if tblInfo.TiFlashReplica.Available {
 		logutil.DDLLogger().Info("TiFlash replica available", zap.Int64("tableID", tblInfo.ID))
 	}
-	ver, err = updateVersionAndTableInfo(jobCtx, t, job, tblInfo, true)
+	ver, err = updateVersionAndTableInfo(jobCtx, job, tblInfo, true)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
@@ -1273,7 +1278,7 @@ func checkTableNotExistsFromInfoSchema(is infoschema.InfoSchema, schemaID int64,
 }
 
 // updateVersionAndTableInfoWithCheck checks table info validate and updates the schema version and the table information
-func updateVersionAndTableInfoWithCheck(jobCtx *jobContext, t *meta.Mutator, job *model.Job, tblInfo *model.TableInfo, shouldUpdateVer bool, multiInfos ...schemaIDAndTableInfo) (
+func updateVersionAndTableInfoWithCheck(jobCtx *jobContext, job *model.Job, tblInfo *model.TableInfo, shouldUpdateVer bool, multiInfos ...schemaIDAndTableInfo) (
 	ver int64, err error) {
 	err = checkTableInfoValid(tblInfo)
 	if err != nil {
@@ -1287,11 +1292,11 @@ func updateVersionAndTableInfoWithCheck(jobCtx *jobContext, t *meta.Mutator, job
 			return ver, errors.Trace(err)
 		}
 	}
-	return updateVersionAndTableInfo(jobCtx, t, job, tblInfo, shouldUpdateVer, multiInfos...)
+	return updateVersionAndTableInfo(jobCtx, job, tblInfo, shouldUpdateVer, multiInfos...)
 }
 
 // updateVersionAndTableInfo updates the schema version and the table information.
-func updateVersionAndTableInfo(jobCtx *jobContext, t *meta.Mutator, job *model.Job, tblInfo *model.TableInfo, shouldUpdateVer bool, multiInfos ...schemaIDAndTableInfo) (
+func updateVersionAndTableInfo(jobCtx *jobContext, job *model.Job, tblInfo *model.TableInfo, shouldUpdateVer bool, multiInfos ...schemaIDAndTableInfo) (
 	ver int64, err error) {
 	failpoint.Inject("mockUpdateVersionAndTableInfoErr", func(val failpoint.Value) {
 		switch val.(int) {
@@ -1306,18 +1311,18 @@ func updateVersionAndTableInfo(jobCtx *jobContext, t *meta.Mutator, job *model.J
 		}
 	})
 	if shouldUpdateVer && (job.MultiSchemaInfo == nil || !job.MultiSchemaInfo.SkipVersion) {
-		ver, err = updateSchemaVersion(jobCtx, t, job, multiInfos...)
+		ver, err = updateSchemaVersion(jobCtx, job, multiInfos...)
 		if err != nil {
 			return 0, errors.Trace(err)
 		}
 	}
 
-	err = updateTable(t, job.SchemaID, tblInfo)
+	err = updateTable(jobCtx.metaMut, job.SchemaID, tblInfo)
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
 	for _, info := range multiInfos {
-		err = updateTable(t, info.schemaID, info.tblInfo)
+		err = updateTable(jobCtx.metaMut, info.schemaID, info.tblInfo)
 		if err != nil {
 			return 0, errors.Trace(err)
 		}
@@ -1337,9 +1342,9 @@ type schemaIDAndTableInfo struct {
 	tblInfo  *model.TableInfo
 }
 
-func onRepairTable(jobCtx *jobContext, t *meta.Mutator, job *model.Job) (ver int64, _ error) {
+func onRepairTable(jobCtx *jobContext, job *model.Job) (ver int64, _ error) {
 	schemaID := job.SchemaID
-
+	metaMut := jobCtx.metaMut
 	args, err := model.GetRepairTableArgs(job)
 	if err != nil {
 		// Invalid arguments, cancel this job.
@@ -1351,7 +1356,7 @@ func onRepairTable(jobCtx *jobContext, t *meta.Mutator, job *model.Job) (ver int
 	tblInfo.State = model.StateNone
 
 	// Check the old DB and old table exist.
-	_, err = GetTableInfoAndCancelFaultJob(t, job, schemaID)
+	_, err = GetTableInfoAndCancelFaultJob(metaMut, job, schemaID)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
@@ -1359,7 +1364,7 @@ func onRepairTable(jobCtx *jobContext, t *meta.Mutator, job *model.Job) (ver int
 	// When in repair mode, the repaired table in a server is not access to user,
 	// the table after repairing will be removed from repair list. Other server left
 	// behind alive may need to restart to get the latest schema version.
-	ver, err = updateSchemaVersion(jobCtx, t, job)
+	ver, err = updateSchemaVersion(jobCtx, job)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
@@ -1367,8 +1372,8 @@ func onRepairTable(jobCtx *jobContext, t *meta.Mutator, job *model.Job) (ver int
 	case model.StateNone:
 		// none -> public
 		tblInfo.State = model.StatePublic
-		tblInfo.UpdateTS = t.StartTS
-		err = repairTableOrViewWithCheck(t, job, schemaID, tblInfo)
+		tblInfo.UpdateTS = metaMut.StartTS
+		err = repairTableOrViewWithCheck(metaMut, job, schemaID, tblInfo)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
@@ -1380,30 +1385,30 @@ func onRepairTable(jobCtx *jobContext, t *meta.Mutator, job *model.Job) (ver int
 	}
 }
 
-func onAlterTableAttributes(jobCtx *jobContext, t *meta.Mutator, job *model.Job) (ver int64, err error) {
-	rule := label.NewRule()
-	err = job.DecodeArgs(rule)
+func onAlterTableAttributes(jobCtx *jobContext, job *model.Job) (ver int64, err error) {
+	args, err := model.GetAlterTableAttributesArgs(job)
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return 0, errors.Trace(err)
 	}
 
-	tblInfo, err := GetTableInfoAndCancelFaultJob(t, job, job.SchemaID)
+	tblInfo, err := GetTableInfoAndCancelFaultJob(jobCtx.metaMut, job, job.SchemaID)
 	if err != nil {
 		return 0, err
 	}
 
-	if len(rule.Labels) == 0 {
-		patch := label.NewRulePatch([]*label.Rule{}, []string{rule.ID})
-		err = infosync.UpdateLabelRules(context.TODO(), patch)
+	if len(args.LabelRule.Labels) == 0 {
+		patch := label.NewRulePatch([]*label.Rule{}, []string{args.LabelRule.ID})
+		err = infosync.UpdateLabelRules(jobCtx.ctx, patch)
 	} else {
-		err = infosync.PutLabelRule(context.TODO(), rule)
+		labelRule := label.Rule(*args.LabelRule)
+		err = infosync.PutLabelRule(jobCtx.ctx, &labelRule)
 	}
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return 0, errors.Wrapf(err, "failed to notify PD the label rules")
 	}
-	ver, err = updateVersionAndTableInfo(jobCtx, t, job, tblInfo, true)
+	ver, err = updateVersionAndTableInfo(jobCtx, job, tblInfo, true)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
@@ -1412,14 +1417,14 @@ func onAlterTableAttributes(jobCtx *jobContext, t *meta.Mutator, job *model.Job)
 	return ver, nil
 }
 
-func onAlterTablePartitionAttributes(jobCtx *jobContext, t *meta.Mutator, job *model.Job) (ver int64, err error) {
+func onAlterTablePartitionAttributes(jobCtx *jobContext, job *model.Job) (ver int64, err error) {
 	args, err := model.GetAlterTablePartitionArgs(job)
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return 0, errors.Trace(err)
 	}
 	partitionID, rule := args.PartitionID, args.LabelRule
-	tblInfo, err := GetTableInfoAndCancelFaultJob(t, job, job.SchemaID)
+	tblInfo, err := GetTableInfoAndCancelFaultJob(jobCtx.metaMut, job, job.SchemaID)
 	if err != nil {
 		return 0, err
 	}
@@ -1441,7 +1446,7 @@ func onAlterTablePartitionAttributes(jobCtx *jobContext, t *meta.Mutator, job *m
 		job.State = model.JobStateCancelled
 		return 0, errors.Wrapf(err, "failed to notify PD the label rules")
 	}
-	ver, err = updateVersionAndTableInfo(jobCtx, t, job, tblInfo, true)
+	ver, err = updateVersionAndTableInfo(jobCtx, job, tblInfo, true)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
@@ -1450,14 +1455,15 @@ func onAlterTablePartitionAttributes(jobCtx *jobContext, t *meta.Mutator, job *m
 	return ver, nil
 }
 
-func onAlterTablePartitionPlacement(jobCtx *jobContext, t *meta.Mutator, job *model.Job) (ver int64, err error) {
+func onAlterTablePartitionPlacement(jobCtx *jobContext, job *model.Job) (ver int64, err error) {
 	args, err := model.GetAlterTablePartitionArgs(job)
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return 0, errors.Trace(err)
 	}
 	partitionID, policyRefInfo := args.PartitionID, args.PolicyRefInfo
-	tblInfo, err := GetTableInfoAndCancelFaultJob(t, job, job.SchemaID)
+	metaMut := jobCtx.metaMut
+	tblInfo, err := GetTableInfoAndCancelFaultJob(metaMut, job, job.SchemaID)
 	if err != nil {
 		return 0, err
 	}
@@ -1481,16 +1487,16 @@ func onAlterTablePartitionPlacement(jobCtx *jobContext, t *meta.Mutator, job *mo
 		return 0, errors.Trace(table.ErrUnknownPartition.GenWithStackByArgs("drop?", tblInfo.Name.O))
 	}
 
-	ver, err = updateVersionAndTableInfo(jobCtx, t, job, tblInfo, true)
+	ver, err = updateVersionAndTableInfo(jobCtx, job, tblInfo, true)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
 
-	if _, err = checkPlacementPolicyRefValidAndCanNonValidJob(t, job, partitionDef.PlacementPolicyRef); err != nil {
+	if _, err = checkPlacementPolicyRefValidAndCanNonValidJob(metaMut, job, partitionDef.PlacementPolicyRef); err != nil {
 		return ver, errors.Trace(err)
 	}
 
-	bundle, err := placement.NewPartitionBundle(t, *partitionDef)
+	bundle, err := placement.NewPartitionBundle(metaMut, *partitionDef)
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
@@ -1514,31 +1520,31 @@ func onAlterTablePartitionPlacement(jobCtx *jobContext, t *meta.Mutator, job *mo
 	return ver, nil
 }
 
-func onAlterTablePlacement(jobCtx *jobContext, t *meta.Mutator, job *model.Job) (ver int64, err error) {
+func onAlterTablePlacement(jobCtx *jobContext, job *model.Job) (ver int64, err error) {
 	args, err := model.GetAlterTablePlacementArgs(job)
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return 0, errors.Trace(err)
 	}
 	policyRefInfo := args.PlacementPolicyRef
-
-	tblInfo, err := GetTableInfoAndCancelFaultJob(t, job, job.SchemaID)
+	metaMut := jobCtx.metaMut
+	tblInfo, err := GetTableInfoAndCancelFaultJob(metaMut, job, job.SchemaID)
 	if err != nil {
 		return 0, err
 	}
 
-	if _, err = checkPlacementPolicyRefValidAndCanNonValidJob(t, job, policyRefInfo); err != nil {
+	if _, err = checkPlacementPolicyRefValidAndCanNonValidJob(metaMut, job, policyRefInfo); err != nil {
 		return 0, errors.Trace(err)
 	}
 
 	oldTableEnablesPlacement := tblInfo.PlacementPolicyRef != nil
 	tblInfo.PlacementPolicyRef = policyRefInfo
-	ver, err = updateVersionAndTableInfo(jobCtx, t, job, tblInfo, true)
+	ver, err = updateVersionAndTableInfo(jobCtx, job, tblInfo, true)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
 
-	bundle, err := placement.NewTableBundle(t, tblInfo)
+	bundle, err := placement.NewTableBundle(metaMut, tblInfo)
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
@@ -1604,8 +1610,8 @@ func updateLabelRules(job *model.Job, tblInfo *model.TableInfo, oldRules map[str
 	return infosync.UpdateLabelRules(context.TODO(), patch)
 }
 
-func onAlterCacheTable(jobCtx *jobContext, t *meta.Mutator, job *model.Job) (ver int64, err error) {
-	tbInfo, err := GetTableInfoAndCancelFaultJob(t, job, job.SchemaID)
+func onAlterCacheTable(jobCtx *jobContext, job *model.Job) (ver int64, err error) {
+	tbInfo, err := GetTableInfoAndCancelFaultJob(jobCtx.metaMut, job, job.SchemaID)
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
@@ -1627,14 +1633,14 @@ func onAlterCacheTable(jobCtx *jobContext, t *meta.Mutator, job *model.Job) (ver
 	case model.TableCacheStatusDisable:
 		// disable -> switching
 		tbInfo.TableCacheStatusType = model.TableCacheStatusSwitching
-		ver, err = updateVersionAndTableInfoWithCheck(jobCtx, t, job, tbInfo, true)
+		ver, err = updateVersionAndTableInfoWithCheck(jobCtx, job, tbInfo, true)
 		if err != nil {
 			return ver, err
 		}
 	case model.TableCacheStatusSwitching:
 		// switching -> enable
 		tbInfo.TableCacheStatusType = model.TableCacheStatusEnable
-		ver, err = updateVersionAndTableInfoWithCheck(jobCtx, t, job, tbInfo, true)
+		ver, err = updateVersionAndTableInfoWithCheck(jobCtx, job, tbInfo, true)
 		if err != nil {
 			return ver, err
 		}
@@ -1647,8 +1653,8 @@ func onAlterCacheTable(jobCtx *jobContext, t *meta.Mutator, job *model.Job) (ver
 	return ver, err
 }
 
-func onAlterNoCacheTable(jobCtx *jobContext, t *meta.Mutator, job *model.Job) (ver int64, err error) {
-	tbInfo, err := GetTableInfoAndCancelFaultJob(t, job, job.SchemaID)
+func onAlterNoCacheTable(jobCtx *jobContext, job *model.Job) (ver int64, err error) {
+	tbInfo, err := GetTableInfoAndCancelFaultJob(jobCtx.metaMut, job, job.SchemaID)
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
@@ -1662,14 +1668,14 @@ func onAlterNoCacheTable(jobCtx *jobContext, t *meta.Mutator, job *model.Job) (v
 	case model.TableCacheStatusEnable:
 		//  enable ->  switching
 		tbInfo.TableCacheStatusType = model.TableCacheStatusSwitching
-		ver, err = updateVersionAndTableInfoWithCheck(jobCtx, t, job, tbInfo, true)
+		ver, err = updateVersionAndTableInfoWithCheck(jobCtx, job, tbInfo, true)
 		if err != nil {
 			return ver, err
 		}
 	case model.TableCacheStatusSwitching:
 		// switching -> disable
 		tbInfo.TableCacheStatusType = model.TableCacheStatusDisable
-		ver, err = updateVersionAndTableInfoWithCheck(jobCtx, t, job, tbInfo, true)
+		ver, err = updateVersionAndTableInfoWithCheck(jobCtx, job, tbInfo, true)
 		if err != nil {
 			return ver, err
 		}

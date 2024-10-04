@@ -27,10 +27,8 @@ import (
 
 func init() {
 	// For code refactor init.
-	utilfuncp.AddSelection = addSelection
 	utilfuncp.FindBestTask = findBestTask
 	utilfuncp.PruneByItems = pruneByItems
-	utilfuncp.GetTaskPlanCost = getTaskPlanCost
 	utilfuncp.CanPushToCopImpl = canPushToCopImpl
 	utilfuncp.PushDownTopNForBaseLogicalPlan = pushDownTopNForBaseLogicalPlan
 	utilfuncp.FindBestTask4LogicalCTE = findBestTask4LogicalCTE
@@ -60,7 +58,6 @@ func init() {
 
 	utilfuncp.GetActualProbeCntFromProbeParents = getActualProbeCntFromProbeParents
 	utilfuncp.GetEstimatedProbeCntFromProbeParents = getEstimatedProbeCntFromProbeParents
-	utilfuncp.AppendCandidate4PhysicalOptimizeOp = appendCandidate4PhysicalOptimizeOp
 
 	utilfuncp.DoOptimize = doOptimize
 	utilfuncp.IsSingleScan = isSingleScan

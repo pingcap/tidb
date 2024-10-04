@@ -28,7 +28,6 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/statistics"
@@ -62,59 +61,11 @@ func (s *statsReadWriter) InsertColStats2KV(physicalID int64, colInfos []*model.
 	}()
 
 	return util.CallWithSCtx(s.statsHandler.SPool(), func(sctx sessionctx.Context) error {
-		startTS, err := util.GetStartTS(sctx)
+		startTS, err := InsertColStats2KV(util.StatsCtx, sctx, physicalID, colInfos)
 		if err != nil {
 			return errors.Trace(err)
 		}
-
-		// First of all, we update the version.
-		_, err = util.Exec(sctx, "update mysql.stats_meta set version = %? where table_id = %?", startTS, physicalID)
-		if err != nil {
-			return err
-		}
 		statsVer = startTS
-		// If we didn't update anything by last SQL, it means the stats of this table does not exist.
-		if sctx.GetSessionVars().StmtCtx.AffectedRows() > 0 {
-			// By this step we can get the count of this table, then we can sure the count and repeats of bucket.
-			var rs sqlexec.RecordSet
-			rs, err = util.Exec(sctx, "select count from mysql.stats_meta where table_id = %?", physicalID)
-			if err != nil {
-				return err
-			}
-			defer terror.Call(rs.Close)
-			req := rs.NewChunk(nil)
-			err = rs.Next(context.Background(), req)
-			if err != nil {
-				return err
-			}
-			count := req.GetRow(0).GetInt64(0)
-			for _, colInfo := range colInfos {
-				value := types.NewDatum(colInfo.GetOriginDefaultValue())
-				value, err = value.ConvertTo(sctx.GetSessionVars().StmtCtx.TypeCtx(), &colInfo.FieldType)
-				if err != nil {
-					return err
-				}
-				if value.IsNull() {
-					// If the adding column has default value null, all the existing rows have null value on the newly added column.
-					if _, err := util.Exec(sctx, "insert into mysql.stats_histograms (version, table_id, is_index, hist_id, distinct_count, null_count) values (%?, %?, 0, %?, 0, %?)", startTS, physicalID, colInfo.ID, count); err != nil {
-						return err
-					}
-				} else {
-					// If this stats exists, we insert histogram meta first, the distinct_count will always be one.
-					if _, err := util.Exec(sctx, "insert into mysql.stats_histograms (version, table_id, is_index, hist_id, distinct_count, tot_col_size) values (%?, %?, 0, %?, 1, GREATEST(%?, 0))", startTS, physicalID, colInfo.ID, int64(len(value.GetBytes()))*count); err != nil {
-						return err
-					}
-					value, err = value.ConvertTo(sctx.GetSessionVars().StmtCtx.TypeCtx(), types.NewFieldType(mysql.TypeBlob))
-					if err != nil {
-						return err
-					}
-					// There must be only one bucket for this new column and the value is the default value.
-					if _, err := util.Exec(sctx, "insert into mysql.stats_buckets (table_id, is_index, hist_id, bucket_id, repeats, count, lower_bound, upper_bound) values (%?, 0, %?, 0, %?, %?, %?, %?)", physicalID, colInfo.ID, count, count, value.GetBytes(), value.GetBytes()); err != nil {
-						return err
-					}
-				}
-			}
-		}
 		return nil
 	}, util.FlagWrapTxn)
 }
@@ -130,24 +81,11 @@ func (s *statsReadWriter) InsertTableStats2KV(info *model.TableInfo, physicalID 
 	}()
 
 	return util.CallWithSCtx(s.statsHandler.SPool(), func(sctx sessionctx.Context) error {
-		startTS, err := util.GetStartTS(sctx)
+		startTS, err := InsertTableStats2KV(util.StatsCtx, sctx, info, physicalID)
 		if err != nil {
 			return errors.Trace(err)
 		}
-		if _, err := util.Exec(sctx, "insert into mysql.stats_meta (version, table_id) values(%?, %?)", startTS, physicalID); err != nil {
-			return err
-		}
 		statsVer = startTS
-		for _, col := range info.Columns {
-			if _, err := util.Exec(sctx, "insert into mysql.stats_histograms (table_id, is_index, hist_id, distinct_count, version) values(%?, 0, %?, 0, %?)", physicalID, col.ID, startTS); err != nil {
-				return err
-			}
-		}
-		for _, idx := range info.Indices {
-			if _, err := util.Exec(sctx, "insert into mysql.stats_histograms (table_id, is_index, hist_id, distinct_count, version) values(%?, 1, %?, 0, %?)", physicalID, idx.ID, startTS); err != nil {
-				return err
-			}
-		}
 		return nil
 	}, util.FlagWrapTxn)
 }
@@ -155,18 +93,12 @@ func (s *statsReadWriter) InsertTableStats2KV(info *model.TableInfo, physicalID 
 // ChangeGlobalStatsID changes the table ID in global-stats to the new table ID.
 func (s *statsReadWriter) ChangeGlobalStatsID(from, to int64) (err error) {
 	return util.CallWithSCtx(s.statsHandler.SPool(), func(sctx sessionctx.Context) error {
-		for _, table := range []string{"stats_meta", "stats_top_n", "stats_fm_sketch", "stats_buckets", "stats_histograms", "column_stats_usage"} {
-			_, err = util.Exec(sctx, "update mysql."+table+" set table_id = %? where table_id = %?", to, from)
-			if err != nil {
-				return err
-			}
-		}
-		return nil
+		return errors.Trace(ChangeGlobalStatsID(util.StatsCtx, sctx, from, to))
 	}, util.FlagWrapTxn)
 }
 
-// UpdateStatsMetaVersionForGC update the version of mysql.stats_meta.
-// See more details in the interface definition.
+// UpdateStatsMetaVersionForGC update the version of mysql.stats_meta. See more
+// details in the interface definition.
 func (s *statsReadWriter) UpdateStatsMetaVersionForGC(physicalID int64) (err error) {
 	statsVer := uint64(0)
 	defer func() {
@@ -176,16 +108,9 @@ func (s *statsReadWriter) UpdateStatsMetaVersionForGC(physicalID int64) (err err
 	}()
 
 	return util.CallWithSCtx(s.statsHandler.SPool(), func(sctx sessionctx.Context) error {
-		startTS, err := util.GetStartTS(sctx)
+		startTS, err := UpdateStatsMetaVersionForGC(util.StatsCtx, sctx, physicalID)
 		if err != nil {
 			return errors.Trace(err)
-		}
-		if _, err := util.Exec(
-			sctx,
-			"update mysql.stats_meta set version=%? where table_id =%?",
-			startTS, physicalID,
-		); err != nil {
-			return err
 		}
 		statsVer = startTS
 		return nil
@@ -196,7 +121,7 @@ func (s *statsReadWriter) UpdateStatsMetaVersionForGC(physicalID int64) (err err
 // then tidb-server will reload automatic.
 func (s *statsReadWriter) UpdateStatsVersion() error {
 	return util.CallWithSCtx(s.statsHandler.SPool(), func(sctx sessionctx.Context) error {
-		return UpdateStatsVersion(sctx)
+		return UpdateStatsVersion(util.StatsCtx, sctx)
 	}, util.FlagWrapTxn)
 }
 
@@ -217,7 +142,7 @@ func (s *statsReadWriter) SaveTableStatsToStorage(results *statistics.AnalyzeRes
 // StatsMetaCountAndModifyCount reads count and modify_count for the given table from mysql.stats_meta.
 func (s *statsReadWriter) StatsMetaCountAndModifyCount(tableID int64) (count, modifyCount int64, err error) {
 	err = util.CallWithSCtx(s.statsHandler.SPool(), func(sctx sessionctx.Context) error {
-		count, modifyCount, _, err = StatsMetaCountAndModifyCount(sctx, tableID)
+		count, modifyCount, _, err = StatsMetaCountAndModifyCount(util.StatsCtx, sctx, tableID)
 		return err
 	}, util.FlagWrapTxn)
 	return
@@ -333,10 +258,10 @@ func (s *statsReadWriter) LoadTablePartitionStats(tableInfo *model.TableInfo, pa
 }
 
 // LoadNeededHistograms will load histograms for those needed columns/indices.
-func (s *statsReadWriter) LoadNeededHistograms() (err error) {
+func (s *statsReadWriter) LoadNeededHistograms(is infoschema.InfoSchema) (err error) {
 	err = util.CallWithSCtx(s.statsHandler.SPool(), func(sctx sessionctx.Context) error {
 		loadFMSketch := config.GetGlobalConfig().Performance.EnableLoadFMSketch
-		return LoadNeededHistograms(sctx, s.statsHandler, loadFMSketch)
+		return LoadNeededHistograms(sctx, is, s.statsHandler, loadFMSketch)
 	}, util.FlagWrapTxn)
 	return err
 }

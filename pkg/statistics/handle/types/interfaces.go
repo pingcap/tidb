@@ -278,7 +278,7 @@ type StatsReadWriter interface {
 	StatsMetaCountAndModifyCount(tableID int64) (count, modifyCount int64, err error)
 
 	// LoadNeededHistograms will load histograms for those needed columns/indices and put them into the cache.
-	LoadNeededHistograms() (err error)
+	LoadNeededHistograms(is infoschema.InfoSchema) (err error)
 
 	// ReloadExtendedStatistics drops the cache for extended statistics and reload data from mysql.stats_extended.
 	ReloadExtendedStatistics() error

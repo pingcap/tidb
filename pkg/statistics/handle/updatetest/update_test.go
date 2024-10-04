@@ -450,7 +450,7 @@ func TestAutoUpdate(t *testing.T) {
 		h.HandleAutoAnalyze()
 		require.NoError(t, h.Update(context.Background(), is))
 		testKit.MustExec("explain select * from t where a > 'a'")
-		require.NoError(t, h.LoadNeededHistograms())
+		require.NoError(t, h.LoadNeededHistograms(dom.InfoSchema()))
 		stats = h.GetTableStats(tableInfo)
 		require.Equal(t, int64(8), stats.RealtimeCount)
 		require.Equal(t, int64(0), stats.ModifyCount)
@@ -637,7 +637,7 @@ func TestLoadHistCorrelation(t *testing.T) {
 	result := testKit.MustQuery("show stats_histograms where Table_name = 't'")
 	require.Len(t, result.Rows(), 0)
 	testKit.MustExec("explain select * from t where c = 1")
-	require.NoError(t, h.LoadNeededHistograms())
+	require.NoError(t, h.LoadNeededHistograms(dom.InfoSchema()))
 	result = testKit.MustQuery("show stats_histograms where Table_name = 't'")
 	require.Len(t, result.Rows(), 2)
 	require.Equal(t, "1", result.Rows()[0][9])
@@ -868,7 +868,7 @@ func TestAutoAnalyzeRatio(t *testing.T) {
 	// To pass the stats.Pseudo check in autoAnalyzeTable
 	tk.MustExec("analyze table t")
 	tk.MustExec("explain select * from t where a = 1")
-	require.NoError(t, h.LoadNeededHistograms())
+	require.NoError(t, h.LoadNeededHistograms(dom.InfoSchema()))
 	tk.MustExec("set global tidb_auto_analyze_start_time='00:00 +0000'")
 	tk.MustExec("set global tidb_auto_analyze_end_time='23:59 +0000'")
 
@@ -1070,7 +1070,7 @@ func TestStatsLockUnlockForAutoAnalyze(t *testing.T) {
 	// To pass the stats.Pseudo check in autoAnalyzeTable
 	tk.MustExec("analyze table t")
 	tk.MustExec("explain select * from t where a = 1")
-	require.NoError(t, h.LoadNeededHistograms())
+	require.NoError(t, h.LoadNeededHistograms(dom.InfoSchema()))
 	tk.MustExec("set global tidb_auto_analyze_start_time='00:00 +0000'")
 	tk.MustExec("set global tidb_auto_analyze_end_time='23:59 +0000'")
 
