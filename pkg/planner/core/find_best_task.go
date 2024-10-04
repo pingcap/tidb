@@ -17,7 +17,6 @@ package core
 import (
 	"cmp"
 	"fmt"
-	"github.com/pingcap/tidb/pkg/util/intest"
 	"math"
 	"slices"
 	"strings"
@@ -44,6 +43,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/collate"
 	h "github.com/pingcap/tidb/pkg/util/hint"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/ranger"
 	"github.com/pingcap/tidb/pkg/util/tracing"
