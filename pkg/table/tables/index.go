@@ -296,14 +296,14 @@ func (c *index) create(sctx table.MutateContext, txn kv.Transaction, indexedValu
 			continue
 		}
 
-		var foundValue []byte
+		var value []byte
 		if len(oldPartIDs) > 0 {
 			// In DeleteReorganization, overwrite Global Index keys pointing to
 			// old dropped/truncated partitions.
 			// Note that a partitioned table cannot be temporary table
-			foundValue, err = txn.Get(ctx, key)
-			if err == nil && len(foundValue) != 0 {
-				partHandle, errPart := GetPartitionHandleFromVal(foundValue)
+			value, err = txn.Get(ctx, key)
+			if err == nil && len(value) != 0 {
+				partHandle, errPart := GetPartitionHandleFromVal(value)
 				if errPart != nil {
 					return nil, errPart
 				}
@@ -313,36 +313,36 @@ func (c *index) create(sctx table.MutateContext, txn kv.Transaction, indexedValu
 					if err != nil {
 						return nil, err
 					}
-					foundValue = nil
+					value = nil
 				}
 			}
 		} else if c.tblInfo.TempTableType != model.TempTableNone {
 			// Always check key for temporary table because it does not write to TiKV
-			foundValue, err = txn.Get(ctx, key)
+			value, err = txn.Get(ctx, key)
 		} else if opt.DupKeyCheck() == table.DupKeyCheckLazy && !keyIsTempIdxKey {
 			// For temp index keys, we can't get the temp value from memory buffer, even if the lazy check is enabled.
 			// Otherwise, it may cause the temp index value to be overwritten, leading to data inconsistency.
-			foundValue, err = txn.GetMemBuffer().GetLocal(ctx, key)
+			value, err = txn.GetMemBuffer().GetLocal(ctx, key)
 		} else {
-			foundValue, err = txn.Get(ctx, key)
+			value, err = txn.Get(ctx, key)
 		}
 		if err != nil && !kv.IsErrNotFound(err) {
 			return nil, err
 		}
 		var tempIdxVal tablecodec.TempIndexValue
-		if len(foundValue) > 0 && keyIsTempIdxKey {
-			tempIdxVal, err = tablecodec.DecodeTempIndexValue(foundValue)
+		if len(value) > 0 && keyIsTempIdxKey {
+			tempIdxVal, err = tablecodec.DecodeTempIndexValue(value)
 			if err != nil {
 				return nil, err
 			}
 		}
 		// The index key value is not found or deleted.
-		if err != nil || len(foundValue) == 0 || (!tempIdxVal.IsEmpty() && tempIdxVal.Current().Delete) {
+		if err != nil || len(value) == 0 || (!tempIdxVal.IsEmpty() && tempIdxVal.Current().Delete) {
 			val := idxVal
 			lazyCheck := opt.DupKeyCheck() == table.DupKeyCheckLazy && err != nil
 			if keyIsTempIdxKey {
 				tempVal := tablecodec.TempIndexValueElem{Value: idxVal, KeyVer: keyVer, Distinct: true}
-				val = tempVal.Encode(foundValue)
+				val = tempVal.Encode(value)
 			}
 			needPresumeNotExists, err := needPresumeKeyNotExistsFlag(ctx, txn, key, tempKey, h,
 				keyIsTempIdxKey, c.tblInfo.ID)
@@ -366,7 +366,7 @@ func (c *index) create(sctx table.MutateContext, txn kv.Transaction, indexedValu
 			}
 			if len(tempKey) > 0 {
 				tempVal := tablecodec.TempIndexValueElem{Value: idxVal, KeyVer: keyVer, Distinct: true}
-				val = tempVal.Encode(foundValue)
+				val = tempVal.Encode(value)
 				if lazyCheck && needPresumeNotExists {
 					err = txn.GetMemBuffer().SetWithFlags(tempKey, val, kv.SetPresumeKeyNotExists)
 				} else {
@@ -390,9 +390,9 @@ func (c *index) create(sctx table.MutateContext, txn kv.Transaction, indexedValu
 			continue
 		}
 		if keyIsTempIdxKey && !tempIdxVal.IsEmpty() {
-			foundValue = tempIdxVal.Current().Value
+			value = tempIdxVal.Current().Value
 		}
-		handle, err := tablecodec.DecodeHandleInIndexValue(foundValue)
+		handle, err := tablecodec.DecodeHandleInIndexValue(value)
 		if err != nil {
 			return nil, err
 		}

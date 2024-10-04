@@ -1466,6 +1466,16 @@ func findBestTask4LogicalDataSource(lp base.LogicalPlan, prop *property.Physical
 			if canConvertPointGet && path.IsIntHandlePath && !ds.Table.Meta().PKIsHandle && len(ds.PartitionNames) != 1 {
 				canConvertPointGet = false
 			}
+			if canConvertPointGet {
+				if path != nil && path.Index != nil && path.Index.Global {
+					// Don't convert to point get during ddl
+					// TODO: Revisit truncate partition and global index
+					if len(ds.TableInfo.GetPartitionInfo().DroppingDefinitions) > 0 ||
+						len(ds.TableInfo.GetPartitionInfo().AddingDefinitions) > 0 {
+						canConvertPointGet = false
+					}
+				}
+			}
 		}
 		if canConvertPointGet {
 			allRangeIsPoint := true
@@ -2252,6 +2262,7 @@ func (is *PhysicalIndexScan) addSelectionConditionForGlobalIndex(p *logicalop.Da
 		return nil, err
 	}
 	needNot := false
+	// TODO: Move all this into PartitionPruning or the PartitionProcessor!
 	pInfo := p.TableInfo.GetPartitionInfo()
 	if len(idxArr) == 1 && idxArr[0] == FullRange {
 		// Filter away partitions that may exists in Global Index,
@@ -2277,9 +2288,6 @@ func (is *PhysicalIndexScan) addSelectionConditionForGlobalIndex(p *logicalop.Da
 				args = append(args, expression.NewInt64Const(id))
 			}
 		}
-	}
-	if len(args) == 1 {
-		return conditions, nil
 	}
 	if len(args) == 1 {
 		return conditions, nil
