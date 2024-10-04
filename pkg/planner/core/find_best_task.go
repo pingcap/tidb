@@ -17,6 +17,7 @@ package core
 import (
 	"cmp"
 	"fmt"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"math"
 	"slices"
 	"strings"
@@ -2275,6 +2276,8 @@ func (is *PhysicalIndexScan) addSelectionConditionForGlobalIndex(p *logicalop.Da
 			id := pInfo.Definitions[idx].ID
 			if _, ok := ignoreMap[id]; !ok {
 				args = append(args, expression.NewInt64Const(id))
+			} else if intest.InTest {
+				panic("PartitionPruning returns partitions which should be ignored!")
 			}
 		}
 	}
