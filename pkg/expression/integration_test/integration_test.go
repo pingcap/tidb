@@ -1455,7 +1455,6 @@ func TestTimeFuncTruncation(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec(`set @@time_zone = 'UTC'`)
 	var res *testkit.Result
-	// TODO: test ALTER TABLE t MODIFY COLUMN for 'TIME_TRUNCATE_FRACTIONAL' sql_mode
 	dateStr := `2023-12-31 23:59:59.9876789`
 	timeStr := "1704067199.9876789"
 	dateStrLow := `2023-12-31 23:59:59.12344321`
@@ -1510,7 +1509,6 @@ func TestTimeFuncTruncation(t *testing.T) {
 		tk.MustExec(`insert into t values (3, ?, ?, ?, ?, ?, ?, ?)`,
 			dateStrMid, dateStrMid, dateStrMid, dateStrMid, dateStrMid, timeStrMid, timeStrMid)
 
-		// TODO: Fix https://github.com/pingcap/tidb/issues/56432 to avoid rounding on INSERT!
 		res = tk.MustQuery(`select * from t order by id /* ` + sqlMode + ` */`)
 		res.Check(testkit.Rows(""+
 			strings.Join([]string{"1", dateRoundH, frac0H, frac6H, frac0H, frac6H, timeTY, timeT9H}, " "),
@@ -1565,6 +1563,30 @@ func TestDatetimeStringUnixTime(t *testing.T) {
 		// which is then rounded UP when Casting from DATETIME(6) to DATETIME(0)
 		`from_unixtime(1704067199.4999996))`)
 	tk.MustQuery(`select * from t`).Check(testkit.Rows("2024-01-01 2023-12-31 2023-12-31 23:59:59 2024-01-01 00:00:00"))
+}
+
+func TestDatetimeModifyTruncate(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set time_zone = 'UTC'")
+	tk.MustExec("create table t (d datetime(6))")
+	tk.MustExec(`insert into t values ('2023-12-31 23:59:59.9876789')`)
+	tk.MustExec(`insert into t values ('2023-12-31 23:59:59.4321234')`)
+	tk.MustExec(`alter table t modify column d datetime(3)`)
+	tk.MustQuery(`select * from t`).Sort().Check(testkit.Rows("2023-12-31 23:59:59.432", "2023-12-31 23:59:59.988"))
+	tk.MustExec(`alter table t modify column d datetime(0)`)
+	tk.MustQuery(`select * from t`).Sort().Check(testkit.Rows("2023-12-31 23:59:59", "2024-01-01 00:00:00"))
+	tk.MustExec(`drop table t`)
+	tk.MustExec(`set sql_mode=concat(@@sql_mode, ',time_truncate_fractional')`)
+	tk.MustExec("create table t (d datetime(6))")
+	tk.MustExec(`insert into t values ('2023-12-31 23:59:59.9876789')`)
+	tk.MustExec(`insert into t values ('2023-12-31 23:59:59.4321234')`)
+	tk.MustExec(`alter table t modify column d datetime(3)`)
+	tk.MustQuery(`select * from t`).Sort().Check(testkit.Rows("2023-12-31 23:59:59.432", "2023-12-31 23:59:59.987"))
+	tk.MustExec(`alter table t modify column d datetime(0)`)
+	tk.MustQuery(`select * from t`).Sort().Check(testkit.Rows("2023-12-31 23:59:59", "2023-12-31 23:59:59"))
 }
 
 func TestShardIndexOnTiFlash(t *testing.T) {
