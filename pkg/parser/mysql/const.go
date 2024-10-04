@@ -362,7 +362,7 @@ var DefaultAuthPlugins = []string{
 // See https://dev.mysql.com/doc/refman/5.7/en/sql-mode.html
 type SQLMode int64
 
-// HasTimeTruncateFractional detects if 'TIME_TRUNCATE_FRACTIONAL' mode is set in SQLMode
+// HasTimeTruncateFractional returns true if the 'TIME_TRUNCATE_FRACTIONAL' SQLMode is set
 func (m SQLMode) HasTimeTruncateFractional() bool {
 	return m&ModeTimeTruncateFractional == ModeTimeTruncateFractional
 }
