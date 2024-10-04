@@ -1455,8 +1455,6 @@ func TestTimeFuncTruncation(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec(`set @@time_zone = 'UTC'`)
 	var res *testkit.Result
-	// TODO: test .499999 vs .4999996 (fails on MySQL)
-	// TODO: test fsp2
 	// TODO: test ALTER TABLE t MODIFY COLUMN for 'TIME_TRUNCATE_FRACTIONAL' sql_mode
 	dateStr := `2023-12-31 23:59:59.9876789`
 	timeStr := "1704067199.9876789"
@@ -1531,7 +1529,7 @@ func TestTimeFuncTruncation(t *testing.T) {
 		res2 := tk.MustQuery(`select * from t order by id /* ` + sqlMode + ` */`)
 		rows := res.Sort().Rows()
 		if sqlMode == "" {
-			// TODO: Fix so that UPDATE and INSERT behaves the same!
+			// See below, TestDatetimeStringUnixTime!
 			rows[0][1] = dateRoundL
 			rows[2][2] = frac0H
 			rows[2][4] = frac0H
@@ -1539,6 +1537,34 @@ func TestTimeFuncTruncation(t *testing.T) {
 		res2.Sort().Check(rows)
 		tk.MustQuery(`select from_unixtime(dc) from t order by id /* ` + sqlMode + ` */`).Check(testkit.Rows(frac6H, frac6L, frac6M))
 	}
+}
+
+func TestDatetimeStringUnixTime(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set time_zone = 'UTC'")
+	tk.MustExec("create table t (dS date, dU date, dtS datetime, dtU datetime)")
+	tk.MustExec(`insert into t values (` +
+		// convertToMysqlTime will round a datetime string to correct FSP (including FSP+1 digit),
+		// including overflow. It will set the type as DATE,
+		// and truncate the time portion, so date will be 2024-01-01.
+		`'2023-12-31 23:59:59.9876789',` +
+		// from_unixtime() will round the 6th FSP => 2023-12-31 23:59:59.987679,
+		// and returned as DATETIME(6) internally.
+		// It will then be CASTed to DATE, by just changing the type from TypeDateTime to TypeDate,
+		// and not doing any other rounding, since Date has no fsp, see RoundFrac().
+		// And lastly it will rewrite the date to only use the year,month and day.
+		// effectively truncate it.
+		`from_unixtime(1704067199.9876789),` +
+		// This will be parsed and rounded as a string with fsp = 0, (taking fsp+1 into account)
+		// -> rounded DOWN to datetime(0).
+		`'2023-12-31 23:59:59.4999996',` +
+		// from_unixtime() will round to FSP 6, so round UP here => .500000 as fraction part
+		// which is then rounded UP when Casting from DATETIME(6) to DATETIME(0)
+		`from_unixtime(1704067199.4999996))`)
+	tk.MustQuery(`select * from t`).Check(testkit.Rows("2024-01-01 2023-12-31 2023-12-31 23:59:59 2024-01-01 00:00:00"))
 }
 
 func TestShardIndexOnTiFlash(t *testing.T) {
