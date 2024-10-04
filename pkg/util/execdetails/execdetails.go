@@ -236,10 +236,10 @@ func (d ExecDetails) String() string {
 				", "+commitDetails.Mu.SlowestPrewrite.ExecDetails.String()+"}")
 		}
 		if commitDetails.Mu.CommitPrimary.ReqTotalTime > 0 {
-			parts = append(parts, CommitPrimaryRPCDetailStr+": {total:"+strconv.FormatFloat(commitDetails.Mu.SlowestPrewrite.ReqTotalTime.Seconds(), 'f', 3, 64)+
-				"s, region_id: "+strconv.FormatUint(commitDetails.Mu.SlowestPrewrite.Region, 10)+
-				", store: "+commitDetails.Mu.SlowestPrewrite.StoreAddr+
-				", "+commitDetails.Mu.SlowestPrewrite.ExecDetails.String()+"}")
+			parts = append(parts, CommitPrimaryRPCDetailStr+": {total:"+strconv.FormatFloat(commitDetails.Mu.CommitPrimary.ReqTotalTime.Seconds(), 'f', 3, 64)+
+				"s, region_id: "+strconv.FormatUint(commitDetails.Mu.CommitPrimary.Region, 10)+
+				", store: "+commitDetails.Mu.CommitPrimary.StoreAddr+
+				", "+commitDetails.Mu.CommitPrimary.ExecDetails.String()+"}")
 		}
 		commitDetails.Mu.Unlock()
 		resolveLockTime := atomic.LoadInt64(&commitDetails.ResolveLock.ResolveLockTime)
@@ -349,10 +349,10 @@ func (d ExecDetails) ToZapFields() (fields []zap.Field) {
 				", "+commitDetails.Mu.SlowestPrewrite.ExecDetails.String()+"}"))
 		}
 		if commitDetails.Mu.CommitPrimary.ReqTotalTime > 0 {
-			fields = append(fields, zap.String(CommitPrimaryRPCDetailStr, "{total:"+strconv.FormatFloat(commitDetails.Mu.SlowestPrewrite.ReqTotalTime.Seconds(), 'f', 3, 64)+
-				"s, region_id: "+strconv.FormatUint(commitDetails.Mu.SlowestPrewrite.Region, 10)+
-				", store: "+commitDetails.Mu.SlowestPrewrite.StoreAddr+
-				", "+commitDetails.Mu.SlowestPrewrite.ExecDetails.String()+"}"))
+			fields = append(fields, zap.String(CommitPrimaryRPCDetailStr, "{total:"+strconv.FormatFloat(commitDetails.Mu.CommitPrimary.ReqTotalTime.Seconds(), 'f', 3, 64)+
+				"s, region_id: "+strconv.FormatUint(commitDetails.Mu.CommitPrimary.Region, 10)+
+				", store: "+commitDetails.Mu.CommitPrimary.StoreAddr+
+				", "+commitDetails.Mu.CommitPrimary.ExecDetails.String()+"}"))
 		}
 		commitDetails.Mu.Unlock()
 		resolveLockTime := atomic.LoadInt64(&commitDetails.ResolveLock.ResolveLockTime)
