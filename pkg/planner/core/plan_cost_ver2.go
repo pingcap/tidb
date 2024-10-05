@@ -881,6 +881,8 @@ func orderCostVer2(option *optimizetrace.PlanCostOption, rows, n float64, byItem
 
 func hashBuildCostVer2(option *optimizetrace.PlanCostOption, buildRows, buildRowSize, nKeys float64, cpuFactor, memFactor costusage.CostVer2Factor) costusage.CostVer2 {
 	// TODO: 1) consider types of keys, 2) dedicated factor for build-probe hash table
+	buildRows = max(2, buildRows)
+	buildRowSize = max(2, buildRowSize)
 	hashKeyCost := costusage.NewCostVer2(option, cpuFactor,
 		buildRows*nKeys*cpuFactor.Value,
 		func() string { return fmt.Sprintf("hashkey(%v*%v*%v)", buildRows, nKeys, cpuFactor) })
