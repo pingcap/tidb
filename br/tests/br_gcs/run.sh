@@ -15,8 +15,8 @@
 # limitations under the License.
 
 # disable encryption as not working with brv4.0.8
-ENABLE_ENCRYPTION=false
-export ENABLE_ENCRYPTION
+ENCRYPTION_ARGS=""
+export ENCRYPTION_ARGS
 
 set -eux
 DB="$TEST_NAME"
