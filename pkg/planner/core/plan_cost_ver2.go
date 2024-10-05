@@ -121,7 +121,9 @@ func (p *PhysicalIndexScan) GetPlanCostVer2(taskType property.TaskType, option *
 }
 
 const (
-	// MinRowSize provides a minimum to avoid underestimation
+	// MinNumRows provides a minimum number of rows to avoid underestimation
+	MinNumRows = 1.0
+	// MinRowSize provides a minimum row length to avoid underestimation
 	MinRowSize = 2.0
 	// TiFlashStartupRowPenalty applies a startup penalty for TiFlash scan to encourage TiKV usage for small scans
 	TiFlashStartupRowPenalty = 10000
@@ -137,7 +139,8 @@ func (p *PhysicalTableScan) GetPlanCostVer2(taskType property.TaskType, option *
 		return p.PlanCostVer2, nil
 	}
 
-	rows := getCardinality(p, option.CostFlag)
+	// Ensure rows has a reasonable minimum value to avoid underestimation
+	rows := math.Max(MinNumRows, getCardinality(p, option.CostFlag))
 
 	var columns []*expression.Column
 	if p.StoreType == kv.TiKV { // Assume all columns for TiKV
@@ -145,9 +148,8 @@ func (p *PhysicalTableScan) GetPlanCostVer2(taskType property.TaskType, option *
 	} else { // TiFlash
 		columns = p.schema.Columns
 	}
-	rowSize := getAvgRowSize(p.StatsInfo(), columns)
 	// Ensure rowSize has a reasonable minimum value to avoid underestimation
-	rowSize = math.Max(rowSize, MinRowSize)
+	rowSize := math.Max(getAvgRowSize(p.StatsInfo(), columns), MinRowSize)
 
 	scanFactor := getTaskScanFactorVer2(p, p.StoreType, taskType)
 	p.PlanCostVer2 = scanCostVer2(option, rows, rowSize, scanFactor)
@@ -496,7 +498,7 @@ func (p *PhysicalHashAgg) GetPlanCostVer2(taskType property.TaskType, option *op
 	hashBuildCost := hashBuildCostVer2(option, outputRows, outputRowSize, float64(len(p.GroupByItems)), cpuFactor, memFactor)
 	hashProbeCost := hashProbeCostVer2(option, inputRows, float64(len(p.GroupByItems)), cpuFactor)
 	startCost := costusage.NewCostVer2(option, cpuFactor,
-		10*3*cpuFactor.Value, // 10rows * 3func * cpuFactor
+		100*3*cpuFactor.Value, // 100rows * 3func * cpuFactor
 		func() string { return fmt.Sprintf("cpu(10*3*%v)", cpuFactor) })
 
 	childCost, err := p.Children()[0].GetPlanCostVer2(taskType, option)
@@ -881,8 +883,8 @@ func orderCostVer2(option *optimizetrace.PlanCostOption, rows, n float64, byItem
 
 func hashBuildCostVer2(option *optimizetrace.PlanCostOption, buildRows, buildRowSize, nKeys float64, cpuFactor, memFactor costusage.CostVer2Factor) costusage.CostVer2 {
 	// TODO: 1) consider types of keys, 2) dedicated factor for build-probe hash table
-	buildRows = max(2, buildRows)
-	buildRowSize = max(2, buildRowSize)
+	buildRows = max(MinNumRows, buildRows)
+	buildRowSize = max(MinRowSize, buildRowSize)
 	hashKeyCost := costusage.NewCostVer2(option, cpuFactor,
 		buildRows*nKeys*cpuFactor.Value,
 		func() string { return fmt.Sprintf("hashkey(%v*%v*%v)", buildRows, nKeys, cpuFactor) })
