@@ -2013,7 +2013,7 @@ func (c *sysDateFunctionClass) getFunction(ctx BuildContext, args []Expression) 
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	fsp, err := getFspByIntArg(ctx, args)
+	fsp, err := getFspByIntArg(ctx, args, c.funcName)
 	if err != nil {
 		return nil, err
 	}
@@ -2138,7 +2138,7 @@ func (c *currentTimeFunctionClass) getFunction(ctx BuildContext, args []Expressi
 		return nil, err
 	}
 
-	fsp, err := getFspByIntArg(ctx, args)
+	fsp, err := getFspByIntArg(ctx, args, c.funcName)
 	if err != nil {
 		return nil, err
 	}
@@ -2383,7 +2383,7 @@ func (c *utcTimestampFunctionClass) getFunction(ctx BuildContext, args []Express
 		return nil, err
 	}
 
-	fsp, err := getFspByIntArg(ctx, args)
+	fsp, err := getFspByIntArg(ctx, args, c.funcName)
 	if err != nil {
 		return nil, err
 	}
@@ -2429,14 +2429,14 @@ func (b *builtinUTCTimestampWithArgSig) evalTime(ctx EvalContext, row chunk.Row)
 		return types.ZeroTime, true, err
 	}
 
-	if !isNull && num > int64(types.MaxFsp) {
-		return types.ZeroTime, true, errors.Errorf("Too-big precision %v specified for 'utc_timestamp'. Maximum is %v", num, types.MaxFsp)
-	}
-	if !isNull && num < int64(types.MinFsp) {
-		return types.ZeroTime, true, errors.Errorf("Invalid negative %d specified, must in [0, 6]", num)
+	// Here fsp must be greater than or equal to zero, there is a bug of parser for negetive precision now.
+	// There is a bug of MySQL, but not fixed now, so we keep it be compatible with MySQL. (#56453)
+	fspu8 := uint8(num)
+	if !isNull && fspu8 > uint8(types.MaxFsp) {
+		return types.ZeroTime, true, types.ErrTooBigPrecision.GenWithStackByArgs(fspu8, "utc_timestamp", types.MaxFsp)
 	}
 
-	result, isNull, err := evalUTCTimestampWithFsp(ctx, int(num))
+	result, isNull, err := evalUTCTimestampWithFsp(ctx, int(fspu8))
 	return result, isNull, err
 }
 
@@ -2474,7 +2474,7 @@ func (c *nowFunctionClass) getFunction(ctx BuildContext, args []Expression) (bui
 		return nil, err
 	}
 
-	fsp, err := getFspByIntArg(ctx, args)
+	fsp, err := getFspByIntArg(ctx, args, c.funcName)
 	if err != nil {
 		return nil, err
 	}
@@ -2551,15 +2551,16 @@ func (b *builtinNowWithArgSig) evalTime(ctx EvalContext, row chunk.Row) (types.T
 		return types.ZeroTime, true, err
 	}
 
+	// Here fsp must be greater than or equal to zero, there is a bug of parser for negetive precision now.
+	// There is a bug of MySQL, but not fixed now, so we keep it be compatible with MySQL. (#56453)
+	fspu8 := uint8(fsp)
 	if isNull {
-		fsp = 0
-	} else if fsp > int64(types.MaxFsp) {
-		return types.ZeroTime, true, errors.Errorf("Too-big precision %v specified for 'now'. Maximum is %v", fsp, types.MaxFsp)
-	} else if fsp < int64(types.MinFsp) {
-		return types.ZeroTime, true, errors.Errorf("Invalid negative %d specified, must in [0, 6]", fsp)
+		fspu8 = 0
+	} else if fspu8 > uint8(types.MaxFsp) {
+		return types.ZeroTime, true, types.ErrTooBigPrecision.GenWithStackByArgs(fspu8, "now", types.MaxFsp)
 	}
 
-	result, isNull, err := evalNowWithFsp(ctx, int(fsp))
+	result, isNull, err := evalNowWithFsp(ctx, int(fspu8))
 	return result, isNull, err
 }
 
@@ -6455,7 +6456,7 @@ func (c *utcTimeFunctionClass) getFunction(ctx BuildContext, args []Expression) 
 	if err != nil {
 		return nil, err
 	}
-	fsp, err := getFspByIntArg(ctx, args)
+	fsp, err := getFspByIntArg(ctx, args, c.funcName)
 	if err != nil {
 		return nil, err
 	}
@@ -6513,17 +6514,18 @@ func (b *builtinUTCTimeWithArgSig) evalDuration(ctx EvalContext, row chunk.Row) 
 	if isNull || err != nil {
 		return types.Duration{}, isNull, err
 	}
-	if fsp > int64(types.MaxFsp) {
-		return types.Duration{}, true, errors.Errorf("Too-big precision %v specified for 'utc_time'. Maximum is %v", fsp, types.MaxFsp)
+	// Here fsp must be greater than or equal to zero, there is a bug of parser for negetive precision now.
+	// There is a bug of MySQL, but not fixed now, so we keep it be compatible with MySQL. (#56453)
+	fspu8 := uint8(fsp)
+	if fspu8 > uint8(types.MaxFsp) {
+		return types.Duration{}, true, types.ErrTooBigPrecision.GenWithStackByArgs(fspu8, "utc_time", types.MaxFsp)
 	}
-	if fsp < int64(types.MinFsp) {
-		return types.Duration{}, true, errors.Errorf("Invalid negative %d specified, must in [0, 6]", fsp)
-	}
+
 	nowTs, err := getStmtTimestamp(ctx)
 	if err != nil {
 		return types.Duration{}, true, err
 	}
-	v, _, err := types.ParseDuration(typeCtx(ctx), nowTs.UTC().Format(types.TimeFSPFormat), int(fsp))
+	v, _, err := types.ParseDuration(typeCtx(ctx), nowTs.UTC().Format(types.TimeFSPFormat), int(fspu8))
 	return v, false, err
 }
 
@@ -6804,7 +6806,7 @@ func calAppropriateTime(minTime, maxTime, minSafeTime time.Time) time.Time {
 }
 
 // getFspByIntArg is used by some time functions to get the result fsp. If len(expr) == 0, then the fsp is not explicit set, use 0 as default.
-func getFspByIntArg(ctx BuildContext, exps []Expression) (int, error) {
+func getFspByIntArg(ctx BuildContext, exps []Expression, funcName string) (int, error) {
 	if len(exps) == 0 {
 		return 0, nil
 	}
@@ -6818,12 +6820,13 @@ func getFspByIntArg(ctx BuildContext, exps []Expression) (int, error) {
 			// If isNULL, it may be a bug of parser. Return 0 to be compatible with old version.
 			return 0, err
 		}
-		if fsp > int64(types.MaxFsp) {
-			return 0, errors.Errorf("Too-big precision %v specified for 'curtime'. Maximum is %v", fsp, types.MaxFsp)
-		} else if fsp < int64(types.MinFsp) {
-			return 0, errors.Errorf("Invalid negative %d specified, must in [0, 6]", fsp)
+
+		// Here fsp must be greater than or equal to zero, there is a bug of parser for negetive precision now.
+		// There is a bug of MySQL, but not fixed now, so we keep it be compatible with MySQL. (#56453)
+		fspu8 := uint8(fsp)
+		if fspu8 > uint8(types.MaxFsp) {
+			return 0, types.ErrTooBigPrecision.GenWithStackByArgs(fspu8, funcName, types.MaxFsp)
 		}
-		return int(fsp), nil
 	}
 	// Should no happen. But our tests may generate non-constant input.
 	return 0, nil

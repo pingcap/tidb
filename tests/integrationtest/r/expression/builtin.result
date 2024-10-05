@@ -1181,7 +1181,7 @@ Error 1264 (22003): Out of range value for column 'a' at row 1
 select cast(12.1 as decimal(3, 4));
 Error 1427 (42000): For float(M,D), double(M,D) or decimal(M,D), M must be >= D (column '12.1').
 SELECT CAST(1 AS DATETIME(7));
-Error 1426 (42000): Too big precision 7 specified for column 'CAST'. Maximum is 6.
+Error 1426 (42000): Too-big precision 7 specified for 'CAST'. Maximum is 6.
 select unhex('4D7953514C');
 unhex('4D7953514C')
 MySQL
@@ -3339,3 +3339,21 @@ b
 SELECT MID('abc',2);
 MID('abc',2)
 bc
+SELECT CURRENT_TIME(7);
+Error 1426 (42000): Too-big precision 7 specified for 'current_time'. Maximum is 6.
+SELECT CURRENT_TIMESTAMP(7);
+Error 1426 (42000): Too-big precision 7 specified for 'current_timestamp'. Maximum is 6.
+SELECT CURTIME(7);
+Error 1426 (42000): Too-big precision 7 specified for 'curtime'. Maximum is 6.
+SELECT LOCALTIME(7);
+Error 1426 (42000): Too-big precision 7 specified for 'localtime'. Maximum is 6.
+SELECT LOCALTIMESTAMP(7);
+Error 1426 (42000): Too-big precision 7 specified for 'localtimestamp'. Maximum is 6.
+SELECT NOW(7);
+Error 1426 (42000): Too-big precision 7 specified for 'now'. Maximum is 6.
+SELECT SYSDATE(7);
+Error 1426 (42000): Too-big precision 7 specified for 'sysdate'. Maximum is 6.
+SELECT UTC_TIME(7);
+Error 1426 (42000): Too-big precision 7 specified for 'utc_time'. Maximum is 6.
+SELECT UTC_TIMESTAMP(7);
+Error 1426 (42000): Too-big precision 7 specified for 'utc_timestamp'. Maximum is 6.
