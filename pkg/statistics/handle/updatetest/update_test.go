@@ -1097,7 +1097,7 @@ func TestStatsLockUnlockForAutoAnalyze(t *testing.T) {
 	require.False(t, h.HandleAutoAnalyze())
 
 	tblStats1 := h.GetTableStats(tbl.Meta())
-	require.Equal(t, tblStats, tblStats1)
+	require.Equal(t, tblStats.ModifyCount, tblStats1.ModifyCount)
 
 	tk.MustExec("unlock stats t")
 

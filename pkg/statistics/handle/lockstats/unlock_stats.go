@@ -16,6 +16,7 @@ package lockstats
 
 import (
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/statistics/handle/cache"
 	statslogutil "github.com/pingcap/tidb/pkg/statistics/handle/logutil"
@@ -25,7 +26,7 @@ import (
 )
 
 const (
-	selectDeltaSQL = "SELECT count, modify_count, version FROM mysql.stats_table_locked WHERE table_id = %?"
+	selectDeltaSQL = "SELECT count, modify_count FROM mysql.stats_table_locked WHERE table_id = %?"
 	// Make sure the count won't be negative.
 	updateDeltaSQL = "UPDATE mysql.stats_meta SET version = %?, count = IF(count + %? > 0, count + %?, 0), modify_count = modify_count + %? WHERE table_id = %?"
 	// DeleteLockSQL is used to delete the locked table record.
@@ -207,6 +208,15 @@ func getStatsDeltaFromTableLocked(sctx sessionctx.Context, tableID int64) (count
 
 	count = rows[0].GetInt64(0)
 	modifyCount = rows[0].GetInt64(1)
-	version = rows[0].GetUint64(2)
+	txn, err := sctx.Txn(true)
+	if err != nil {
+		return 0, 0, 0, errors.Trace(err)
+	}
+	version = txn.StartTS()
+	failpoint.Inject("mockStatsVersion", func(val failpoint.Value) {
+		if val.(bool) {
+			version = 1000
+		}
+	})
 	return count, modifyCount, version, nil
 }
