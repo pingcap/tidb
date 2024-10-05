@@ -454,7 +454,7 @@ var MySQLErrName = map[uint16]*ErrMessage{
 	ErrNoDefaultForViewField:                    Message("Field of view '%-.192s.%-.192s' underlying table doesn't have a default value", nil),
 	ErrSpNoRecursion:                            Message("Recursive stored functions and triggers are not allowed.", nil),
 	ErrTooBigScale:                              Message("Too big scale %d specified for column '%-.192s'. Maximum is %d.", nil),
-	ErrTooBigPrecision:                          Message("Too big precision %d specified for column '%-.192s'. Maximum is %d.", nil),
+	ErrTooBigPrecision:                          Message("Too-big precision %d specified for '%-.192s'. Maximum is %d.", nil),
 	ErrMBiggerThanD:                             Message("For float(M,D), double(M,D) or decimal(M,D), M must be >= D (column '%-.192s').", nil),
 	ErrWrongLockOfSystemTable:                   Message("You can't combine write-locking of system tables with other tables or lock types", nil),
 	ErrConnectToForeignDataSource:               Message("Unable to connect to foreign data source: %.64s", nil),
