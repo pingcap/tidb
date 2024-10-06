@@ -487,7 +487,7 @@ func (p *PhysicalHashAgg) GetPlanCostVer2(taskType property.TaskType, option *op
 	}
 
 	inputRows := getCardinality(p.Children()[0], option.CostFlag)
-	outputRows := getCardinality(p, option.CostFlag)
+	outputRows := math.Max(MinNumRows, getCardinality(p, option.CostFlag))
 	outputRowSize := getAvgRowSize(p.StatsInfo(), p.Schema().Columns)
 	cpuFactor := getTaskCPUFactorVer2(p, taskType)
 	memFactor := getTaskMemFactorVer2(p, taskType)
@@ -499,7 +499,7 @@ func (p *PhysicalHashAgg) GetPlanCostVer2(taskType property.TaskType, option *op
 	hashProbeCost := hashProbeCostVer2(option, inputRows, float64(len(p.GroupByItems)), cpuFactor)
 	startCost := costusage.NewCostVer2(option, cpuFactor,
 		100*3*cpuFactor.Value, // 100rows * 3func * cpuFactor
-		func() string { return fmt.Sprintf("cpu(10*3*%v)", cpuFactor) })
+		func() string { return fmt.Sprintf("cpu(100*3*%v)", cpuFactor) })
 
 	childCost, err := p.Children()[0].GetPlanCostVer2(taskType, option)
 	if err != nil {
@@ -518,8 +518,8 @@ func (p *PhysicalMergeJoin) GetPlanCostVer2(taskType property.TaskType, option *
 		return p.PlanCostVer2, nil
 	}
 
-	leftRows := getCardinality(p.Children()[0], option.CostFlag)
-	rightRows := getCardinality(p.Children()[1], option.CostFlag)
+	leftRows := math.Max(MinNumRows, getCardinality(p.Children()[0], option.CostFlag))
+	rightRows := math.Max(MinNumRows, getCardinality(p.Children()[1], option.CostFlag))
 	cpuFactor := getTaskCPUFactorVer2(p, taskType)
 
 	filterCost := costusage.SumCostVer2(filterCostVer2(option, leftRows, p.LeftConditions, cpuFactor),
@@ -557,7 +557,7 @@ func (p *PhysicalHashJoin) GetPlanCostVer2(taskType property.TaskType, option *o
 		build, probe = probe, build
 		buildFilters, probeFilters = probeFilters, buildFilters
 	}
-	buildRows := getCardinality(build, option.CostFlag)
+	buildRows := math.Max(MinNumRows, getCardinality(build, option.CostFlag))
 	probeRows := getCardinality(probe, option.CostFlag)
 	buildRowSize := getAvgRowSize(build.StatsInfo(), build.Schema().Columns)
 	tidbConcurrency := float64(p.Concurrency)
@@ -632,7 +632,6 @@ func (p *PhysicalIndexJoin) getIndexJoinCostVer2(taskType property.TaskType, opt
 	var hashTableCost costusage.CostVer2
 	switch indexJoinType {
 	case 1: // IndexHashJoin
-		buildRows = math.Max(MinNumRows, buildRows)
 		hashTableCost = hashBuildCostVer2(option, buildRows, buildRowSize, float64(len(p.RightJoinKeys)), cpuFactor, memFactor)
 	case 2: // IndexMergeJoin
 		hashTableCost = costusage.NewZeroCostVer2(costusage.TraceCost(option))
@@ -884,7 +883,6 @@ func orderCostVer2(option *optimizetrace.PlanCostOption, rows, n float64, byItem
 
 func hashBuildCostVer2(option *optimizetrace.PlanCostOption, buildRows, buildRowSize, nKeys float64, cpuFactor, memFactor costusage.CostVer2Factor) costusage.CostVer2 {
 	// TODO: 1) consider types of keys, 2) dedicated factor for build-probe hash table
-	buildRows = max(MinNumRows, buildRows)
 	buildRowSize = max(MinRowSize, buildRowSize)
 	hashKeyCost := costusage.NewCostVer2(option, cpuFactor,
 		buildRows*nKeys*cpuFactor.Value,
