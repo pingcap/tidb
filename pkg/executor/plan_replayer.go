@@ -17,10 +17,12 @@ package executor
 import (
 	"archive/zip"
 	"bytes"
+	"cmp"
 	"context"
 	"encoding/json"
 	"fmt"
 	"os"
+	"slices"
 	"strings"
 
 	"github.com/BurntSushi/toml"
@@ -467,6 +469,69 @@ func loadStats(ctx sessionctx.Context, f *zip.File) error {
 	return h.LoadStatsFromJSON(context.Background(), ctx.GetInfoSchema().(infoschema.InfoSchema), jsonTbl, 0)
 }
 
+func unzip(z *zip.File) (string, error) {
+	ra, err := z.Open()
+	if err != nil {
+		return "", err
+	}
+	//nolint: errcheck
+	defer ra.Close()
+	bufa := new(bytes.Buffer)
+	_, err = bufa.ReadFrom(ra)
+	if err != nil {
+		return "", err
+	}
+	return bufa.String(), err
+}
+
+func compareTable(a, b *zip.File) int {
+	originTexta, err := unzip(a)
+	if err == nil {
+		return 0
+	}
+	originTextb, err := unzip(b)
+	if err == nil {
+		return 0
+	}
+	af := strings.Contains(originTexta, "FOREIGN KEY")
+	bf := strings.Contains(originTextb, "FOREIGN KEY")
+	if af && !bf {
+		return 1
+	} else if !af && bf {
+		return -1
+	} else if af && bf {
+		astmt, _, err := parser.New().ParseSQL(originTexta)
+		if err != nil {
+			return 0
+		}
+		bstmt, _, err := parser.New().ParseSQL(originTextb)
+		if err != nil {
+			return 0
+		}
+		at := astmt[len(astmt)-1].(*ast.CreateTableStmt)
+		bt := bstmt[len(bstmt)-1].(*ast.CreateTableStmt)
+		afc, bfc := 0, 0
+		for _, c := range at.Constraints {
+			if c.Tp == ast.ConstraintForeignKey {
+				afc++
+				if c.Refer.Table.Name.L == bt.Table.Name.L {
+					return 1
+				}
+			}
+		}
+		for _, c := range bt.Constraints {
+			if c.Tp == ast.ConstraintForeignKey {
+				bfc++
+				if c.Refer.Table.Name.L == at.Table.Name.L {
+					return -1
+				}
+			}
+		}
+		return cmp.Compare(afc, bfc)
+	}
+	return 0
+}
+
 // Update updates the data of the corresponding table.
 func (e *PlanReplayerLoadInfo) Update(data []byte) error {
 	b := bytes.NewReader(data)
@@ -482,16 +547,21 @@ func (e *PlanReplayerLoadInfo) Update(data []byte) error {
 	}
 
 	// build schema and table first
+	var fss []*zip.File
 	for _, zipFile := range z.File {
 		if zipFile.Name == fmt.Sprintf("schema/%v", domain.PlanReplayerSchemaMetaFile) {
 			continue
 		}
 		path := strings.Split(zipFile.Name, "/")
 		if len(path) == 2 && strings.Compare(path[0], "schema") == 0 && zipFile.Mode().IsRegular() {
-			err = createSchemaAndItems(e.Ctx, zipFile)
-			if err != nil {
-				return err
-			}
+			fss = append(fss, zipFile)
+		}
+	}
+	slices.SortStableFunc(fss, compareTable)
+	for _, f := range fss {
+		err = createSchemaAndItems(e.Ctx, f)
+		if err != nil {
+			return err
 		}
 	}
 
