@@ -601,7 +601,7 @@ func (p *PhysicalIndexJoin) getIndexJoinCostVer2(taskType property.TaskType, opt
 
 	build, probe := p.Children()[1-p.InnerChildIdx], p.Children()[p.InnerChildIdx]
 	buildRows := getCardinality(build, option.CostFlag)
-	buildRowSize := getAvgRowSize(build.StatsInfo(), build.Schema().Columns)
+	buildRowSize := math.Max(MinRowSize, getAvgRowSize(build.StatsInfo(), build.Schema().Columns))
 	probeRowsOne := getCardinality(probe, option.CostFlag)
 	probeRowsTot := probeRowsOne * buildRows
 	probeRowSize := getAvgRowSize(probe.StatsInfo(), probe.Schema().Columns)
@@ -632,6 +632,7 @@ func (p *PhysicalIndexJoin) getIndexJoinCostVer2(taskType property.TaskType, opt
 	var hashTableCost costusage.CostVer2
 	switch indexJoinType {
 	case 1: // IndexHashJoin
+		buildRows = math.Max(MinNumRows, buildRows)
 		hashTableCost = hashBuildCostVer2(option, buildRows, buildRowSize, float64(len(p.RightJoinKeys)), cpuFactor, memFactor)
 	case 2: // IndexMergeJoin
 		hashTableCost = costusage.NewZeroCostVer2(costusage.TraceCost(option))
