@@ -45,10 +45,9 @@
       {
         "SQL": "explain format = 'brief' select count(*) from t group by a",
         "Plan": [
-          "HashAgg 2.00 root  group by:test.t.a, funcs:count(Column#4)->Column#3",
-          "└─TableReader 2.00 root  data:HashAgg",
-          "  └─HashAgg 2.00 cop[tikv]  group by:test.t.a, funcs:count(1)->Column#4",
-          "    └─TableFullScan 8.00 cop[tikv] table:t keep order:false"
+          "HashAgg 2.00 root  group by:test.t.a, funcs:count(1)->Column#3",
+          "└─TableReader 8.00 root  data:TableFullScan",
+          "  └─TableFullScan 8.00 cop[tikv] table:t keep order:false"
         ]
       }
     ]
@@ -439,10 +438,10 @@
       "IndexReader(Index(t.b_c)[[NULL,+inf]]->Sel([gt(test.t.c, 1)])->StreamAgg)->StreamAgg",
       "IndexLookUp(Index(t.e)[[1,1]], Table(t))->HashAgg",
       "TableReader(Table(t)->Sel([gt(test.t.e, 1)])->HashAgg)->HashAgg",
-      "TableReader(Table(t)->Sel([le(test.t.b, 20)])->HashAgg)->HashAgg",
-      "TableReader(Table(t)->Sel([le(test.t.b, 30)])->HashAgg)->HashAgg",
-      "TableReader(Table(t)->Sel([le(test.t.b, 40)])->HashAgg)->HashAgg",
-      "TableReader(Table(t)->Sel([le(test.t.b, 50)])->HashAgg)->HashAgg",
+      "TableReader(Table(t)->Sel([le(test.t.b, 20)])->StreamAgg)->StreamAgg",
+      "TableReader(Table(t)->Sel([le(test.t.b, 30)])->StreamAgg)->StreamAgg",
+      "TableReader(Table(t)->Sel([le(test.t.b, 40)])->StreamAgg)->StreamAgg",
+      "TableReader(Table(t)->Sel([le(test.t.b, 50)])->StreamAgg)->StreamAgg",
       "TableReader(Table(t)->Sel([le(test.t.b, 100000000000)])->HashAgg)->HashAgg",
       "TableReader(Table(t)->Sel([le(test.t.b, 40)]))",
       "TableReader(Table(t)->Sel([le(test.t.b, 50)]))",
