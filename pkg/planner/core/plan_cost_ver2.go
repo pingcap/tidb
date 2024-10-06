@@ -498,8 +498,8 @@ func (p *PhysicalHashAgg) GetPlanCostVer2(taskType property.TaskType, option *op
 	hashBuildCost := hashBuildCostVer2(option, outputRows, outputRowSize, float64(len(p.GroupByItems)), cpuFactor, memFactor)
 	hashProbeCost := hashProbeCostVer2(option, inputRows, float64(len(p.GroupByItems)), cpuFactor)
 	startCost := costusage.NewCostVer2(option, cpuFactor,
-		100*3*cpuFactor.Value, // 100rows * 3func * cpuFactor
-		func() string { return fmt.Sprintf("cpu(100*3*%v)", cpuFactor) })
+		10*10*cpuFactor.Value, // 10rows * 10func * cpuFactor
+		func() string { return fmt.Sprintf("cpu(10*10*%v)", cpuFactor) })
 
 	childCost, err := p.Children()[0].GetPlanCostVer2(taskType, option)
 	if err != nil {
