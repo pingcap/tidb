@@ -574,7 +574,7 @@
       },
       {
         "SQL": "select sum(e), avg(e + c) from t where c = 1 group by (c + d)",
-        "Best": "IndexReader(Index(t.c_d_e)[[1,1]]->HashAgg)->HashAgg"
+        "Best": "IndexReader(Index(t.c_d_e)[[1,1]])->Projection->HashAgg"
       },
       {
         "SQL": "select sum(e), avg(e + c) from t where c = 1 group by c",
