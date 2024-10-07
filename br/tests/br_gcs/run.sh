@@ -16,7 +16,9 @@
 
 # disable encryption as not working with brv4.0.8
 ENCRYPTION_ARGS=""
+ENABLE_ENCRYPTION_CHECK=false
 export ENCRYPTION_ARGS
+export ENABLE_ENCRYPTION_CHECK
 
 set -eux
 DB="$TEST_NAME"
