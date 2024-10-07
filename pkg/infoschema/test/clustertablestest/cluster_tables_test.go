@@ -1049,7 +1049,7 @@ func TestQuickBinding(t *testing.T) {
 		},
 
 		{`update /*+ leading(t2,t1,t4@sel_2) */ t1 join t2 set t1.a = 1 where t1.a = t2.a and t2.b in (select a from t3 where t3.b = 1) and t1.b in (select b from t4 where t4.b = 1) and t1.c = ?`,
-			"leading(`test`.`t2`, `test`.`t1`, `test`.`t4`@`sel_2`, `test`.`t3`@`sel_1`), inl_hash_join(`test`.`t2`), use_index(@`upd_1` `test`.`t2` `k_a`), no_order_index(@`upd_1` `test`.`t2` `k_a`), use_index(@`upd_1` `test`.`t1` `k_bc`), order_index(@`upd_1` `test`.`t1` `k_bc`), stream_agg(@`sel_2`), use_index(@`sel_2` `test`.`t4` `k_bc`), order_index(@`sel_2` `test`.`t4` `k_bc`), agg_to_cop(@`sel_2`), hash_agg(@`sel_1`), use_index(@`sel_1` `test`.`t3` `k_bc`), no_order_index(@`sel_1` `test`.`t3` `k_bc`), agg_to_cop(@`sel_1`)",
+			"leading(`test`.`t2`, `test`.`t1`, `test`.`t4`@`sel_2`, `test`.`t3`@`sel_1`), inl_hash_join(`test`.`t2`), use_index(@`upd_1` `test`.`t2` `k_a`), no_order_index(@`upd_1` `test`.`t2` `k_a`), use_index(@`upd_1` `test`.`t1` `k_bc`), order_index(@`upd_1` `test`.`t1` `k_bc`), stream_agg(@`sel_2`), use_index(@`sel_2` `test`.`t4` `k_bc`), order_index(@`sel_2` `test`.`t4` `k_bc`), agg_to_cop(@`sel_2`), hash_agg(@`sel_1`), use_index(@`sel_1` `test`.`t3` `k_bc`), no_order_index(@`sel_1` `test`.`t3` `k_bc`)",
 			nil,
 		},
 
@@ -1064,7 +1064,7 @@ func TestQuickBinding(t *testing.T) {
 		},
 
 		{`update /*+ hash_join(t1),leading(t1,t2@sel_2) */ t1 set b = 1 where c in (select a from t2 where c = 1) and c in (select a from t2 where c = ?)`,
-			"leading(`test`.`t1`, `test`.`t2`@`sel_2`, `test`.`t2`@`sel_1`), use_index(@`upd_1` `test`.`t1` ), no_order_index(@`upd_1` `test`.`t1` `primary`), hash_agg(@`sel_2`), use_index(@`sel_2` `test`.`t2` ), agg_to_cop(@`sel_2`), hash_agg(@`sel_1`), use_index(@`sel_1` `test`.`t2` ), agg_to_cop(@`sel_1`)",
+			"leading(`test`.`t1`, `test`.`t2`@`sel_2`, `test`.`t2`@`sel_1`), use_index(@`upd_1` `test`.`t1` ), no_order_index(@`upd_1` `test`.`t1` `primary`), hash_agg(@`sel_2`), use_index(@`sel_2` `test`.`t2` ), hash_agg(@`sel_1`), use_index(@`sel_1` `test`.`t2` )",
 			nil,
 		},
 	}
