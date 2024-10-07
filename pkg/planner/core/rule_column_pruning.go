@@ -18,9 +18,7 @@ import (
 	"context"
 	"slices"
 
-	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/expression"
-	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
@@ -41,27 +39,29 @@ func (*ColumnPruner) Optimize(_ context.Context, lp base.LogicalPlan, opt *optim
 	if err != nil {
 		return nil, planChanged, err
 	}
-	intest.AssertNoError(noZeroColumnLayOut(lp), "After column pruning, some operator got zero row output. Please fix it.")
+	intest.AssertFunc(func() bool {
+		return noZeroColumnLayOut(lp)
+	}, "After column pruning, some operator got zero row output. Please fix it.")
 	return lp, planChanged, nil
 }
 
-func noZeroColumnLayOut(p base.LogicalPlan) error {
+func noZeroColumnLayOut(p base.LogicalPlan) bool {
 	for _, child := range p.Children() {
-		if err := noZeroColumnLayOut(child); err != nil {
-			return err
+		if success := noZeroColumnLayOut(child); !success {
+			return false
 		}
 	}
 	if p.Schema().Len() == 0 {
 		// The p don't hold its schema. So we don't need check itself.
 		if len(p.Children()) > 0 && p.Schema() == p.Children()[0].Schema() {
-			return nil
+			return true
 		}
 		_, ok := p.(*logicalop.LogicalTableDual)
 		if !ok {
-			return errors.Errorf("Operator %s has zero row output", p.ExplainID().String())
+			return false
 		}
 	}
-	return nil
+	return true
 }
 
 func pruneByItems(p base.LogicalPlan, old []*util.ByItems, opt *optimizetrace.LogicalOptimizeOp) (byItems []*util.ByItems,
@@ -98,29 +98,4 @@ func pruneByItems(p base.LogicalPlan, old []*util.ByItems, opt *optimizetrace.Lo
 // Name implements base.LogicalOptRule.<1st> interface.
 func (*ColumnPruner) Name() string {
 	return "column_prune"
-}
-
-func preferKeyColumnFromTable(dataSource *DataSource, originColumns []*expression.Column,
-	originSchemaColumns []*model.ColumnInfo) (*expression.Column, *model.ColumnInfo) {
-	var resultColumnInfo *model.ColumnInfo
-	var resultColumn *expression.Column
-	if dataSource.table.Type().IsClusterTable() && len(originColumns) > 0 {
-		// use the first column.
-		resultColumnInfo = originSchemaColumns[0]
-		resultColumn = originColumns[0]
-	} else {
-		if dataSource.HandleCols != nil {
-			resultColumn = dataSource.HandleCols.GetCol(0)
-			resultColumnInfo = resultColumn.ToInfo()
-		} else if dataSource.table.Meta().PKIsHandle {
-			// dataSource.HandleCols = nil doesn't mean datasource doesn't have a intPk handle.
-			// since datasource.HandleCols will be cleared in the first columnPruner.
-			resultColumn = dataSource.UnMutableHandleCols.GetCol(0)
-			resultColumnInfo = resultColumn.ToInfo()
-		} else {
-			resultColumn = dataSource.newExtraHandleSchemaCol()
-			resultColumnInfo = model.NewExtraHandleColInfo()
-		}
-	}
-	return resultColumn, resultColumnInfo
 }

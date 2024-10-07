@@ -25,7 +25,7 @@ import (
 	ingesttestutil "github.com/pingcap/tidb/pkg/ddl/ingest/testutil"
 	"github.com/pingcap/tidb/pkg/ddl/testutil"
 	"github.com/pingcap/tidb/pkg/errno"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/tests/realtikvtest"
@@ -404,17 +404,20 @@ func TestAddIndexIngestPartitionCheckpoint(t *testing.T) {
 		jobID = job.ID
 	})
 	rowCnt := atomic.Int32{}
-	failpoint.EnableCall("github.com/pingcap/tidb/pkg/ddl/ingest/onMockWriterWriteRow", func() {
-		rowCnt.Add(1)
-		if rowCnt.Load() == 10 {
-			tk2 := testkit.NewTestKit(t, store)
-			tk2.MustExec("use test")
-			updateSQL := fmt.Sprintf("update mysql.tidb_ddl_job set processing = 0 where job_id = %d", jobID)
-			tk2.MustExec(updateSQL)
-			updateSQL = fmt.Sprintf("update mysql.tidb_ddl_job set processing = 1 where job_id = %d", jobID)
-			tk2.MustExec(updateSQL)
-		}
-	})
+	testfailpoint.EnableCall(
+		t,
+		"github.com/pingcap/tidb/pkg/ddl/ingest/onMockWriterWriteRow",
+		func() {
+			rowCnt.Add(1)
+			if rowCnt.Load() == 10 {
+				tk2 := testkit.NewTestKit(t, store)
+				tk2.MustExec("use test")
+				updateSQL := fmt.Sprintf("update mysql.tidb_ddl_job set processing = 0 where job_id = %d", jobID)
+				tk2.MustExec(updateSQL)
+				updateSQL = fmt.Sprintf("update mysql.tidb_ddl_job set processing = 1 where job_id = %d", jobID)
+				tk2.MustExec(updateSQL)
+			}
+		})
 
 	tk.MustExec("alter table t add index idx(b);")
 	// It should resume to correct partition.

@@ -82,12 +82,13 @@ type ttlScanTask struct {
 }
 
 type ttlScanTaskExecResult struct {
+	time time.Time
 	task *ttlScanTask
 	err  error
 }
 
 func (t *ttlScanTask) result(err error) *ttlScanTaskExecResult {
-	return &ttlScanTaskExecResult{task: t, err: err}
+	return &ttlScanTaskExecResult{time: time.Now(), task: t, err: err}
 }
 
 func (t *ttlScanTask) getDatumRows(rows []chunk.Row) [][]types.Datum {

@@ -24,8 +24,9 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/expression/aggregation"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/cardinality"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
@@ -154,10 +155,16 @@ type PhysicalTableReader struct {
 	TableScanAndPartitionInfos []tableScanAndPartitionInfo `plan-cache-clone:"must-nil"`
 }
 
+// LoadTableStats loads the stats of the table read by this plan.
+func (p *PhysicalTableReader) LoadTableStats(ctx sessionctx.Context) {
+	ts := p.TablePlans[0].(*PhysicalTableScan)
+	loadTableStats(ctx, ts.Table, ts.physicalTableID)
+}
+
 // PhysPlanPartInfo indicates partition helper info in physical plan.
 type PhysPlanPartInfo struct {
 	PruningConds   []expression.Expression
-	PartitionNames []model.CIStr
+	PartitionNames []pmodel.CIStr
 	Columns        []*expression.Column
 	ColumnNames    types.NameSlice
 }
@@ -259,7 +266,7 @@ func setMppOrBatchCopForTableScan(curPlan base.PhysicalPlan) {
 }
 
 // GetPhysicalIndexReader returns PhysicalIndexReader for logical TiKVSingleGather.
-func GetPhysicalIndexReader(sg *TiKVSingleGather, schema *expression.Schema, stats *property.StatsInfo, props ...*property.PhysicalProperty) *PhysicalIndexReader {
+func GetPhysicalIndexReader(sg *logicalop.TiKVSingleGather, schema *expression.Schema, stats *property.StatsInfo, props ...*property.PhysicalProperty) *PhysicalIndexReader {
 	reader := PhysicalIndexReader{}.Init(sg.SCtx(), sg.QueryBlockOffset())
 	reader.SetStats(stats)
 	reader.SetSchema(schema)
@@ -268,7 +275,7 @@ func GetPhysicalIndexReader(sg *TiKVSingleGather, schema *expression.Schema, sta
 }
 
 // GetPhysicalTableReader returns PhysicalTableReader for logical TiKVSingleGather.
-func GetPhysicalTableReader(sg *TiKVSingleGather, schema *expression.Schema, stats *property.StatsInfo, props ...*property.PhysicalProperty) *PhysicalTableReader {
+func GetPhysicalTableReader(sg *logicalop.TiKVSingleGather, schema *expression.Schema, stats *property.StatsInfo, props ...*property.PhysicalProperty) *PhysicalTableReader {
 	reader := PhysicalTableReader{}.Init(sg.SCtx(), sg.QueryBlockOffset())
 	reader.PlanPartInfo = &PhysPlanPartInfo{
 		PruningConds:   sg.Source.AllConds,
@@ -724,9 +731,9 @@ type PhysicalIndexScan struct {
 	IdxColLens []int
 	Ranges     []*ranger.Range
 	Columns    []*model.ColumnInfo `plan-cache-clone:"shallow"`
-	DBName     model.CIStr         `plan-cache-clone:"shallow"`
+	DBName     pmodel.CIStr        `plan-cache-clone:"shallow"`
 
-	TableAsName *model.CIStr `plan-cache-clone:"shallow"`
+	TableAsName *pmodel.CIStr `plan-cache-clone:"shallow"`
 
 	// dataSourceSchema is the original schema of DataSource. The schema of index scan in KV and index reader in TiDB
 	// will be different. The schema of index scan will decode all columns of index but the TiDB only need some of them.
@@ -865,7 +872,7 @@ func AddExtraPhysTblIDColumn(sctx base.PlanContext, columns []*model.ColumnInfo,
 type PhysicalMemTable struct {
 	physicalSchemaProducer
 
-	DBName         model.CIStr
+	DBName         pmodel.CIStr
 	Table          *model.TableInfo
 	Columns        []*model.ColumnInfo
 	Extractor      base.MemTablePredicateExtractor
@@ -897,10 +904,10 @@ type PhysicalTableScan struct {
 
 	Table   *model.TableInfo    `plan-cache-clone:"shallow"`
 	Columns []*model.ColumnInfo `plan-cache-clone:"shallow"`
-	DBName  model.CIStr         `plan-cache-clone:"shallow"`
+	DBName  pmodel.CIStr        `plan-cache-clone:"shallow"`
 	Ranges  []*ranger.Range
 
-	TableAsName *model.CIStr `plan-cache-clone:"shallow"`
+	TableAsName *pmodel.CIStr `plan-cache-clone:"shallow"`
 
 	physicalTableID int64
 
@@ -2680,8 +2687,8 @@ type PhysicalCTE struct {
 	SeedPlan  base.PhysicalPlan
 	RecurPlan base.PhysicalPlan
 	CTE       *logicalop.CTEClass
-	cteAsName model.CIStr
-	cteName   model.CIStr
+	cteAsName pmodel.CIStr
+	cteName   pmodel.CIStr
 
 	readerReceiver *PhysicalExchangeReceiver
 	storageSender  *PhysicalExchangeSender

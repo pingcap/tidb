@@ -25,7 +25,7 @@ import (
 	ddlutil "github.com/pingcap/tidb/pkg/ddl/util"
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/meta"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/types"
@@ -560,7 +560,7 @@ func TestFlashbackInProcessErrorMsg(t *testing.T) {
 			if job.Type == model.ActionFlashbackCluster && job.SchemaState == model.StateWriteReorganization {
 				txn, err := store.Begin()
 				assert.NoError(t, err)
-				_, err = meta.NewMeta(txn).ListDatabases()
+				_, err = meta.NewMutator(txn).ListDatabases()
 				errorMsg := err.Error()
 				assert.Contains(t, errorMsg, "is in flashback progress, FlashbackStartTS is ")
 				slices := strings.Split(errorMsg, "is in flashback progress, FlashbackStartTS is ")
