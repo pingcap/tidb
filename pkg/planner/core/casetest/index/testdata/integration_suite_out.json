@@ -28,9 +28,9 @@
       {
         "SQL": "select count(1) from t1 where c1 >= '0xfff' and c2 is not null",
         "Plan": [
-          "HashAgg 1.00 root  funcs:count(Column#6)->Column#5",
-          "└─IndexReader 1.00 root  index:HashAgg",
-          "  └─HashAgg 1.00 cop[tikv]  funcs:count(1)->Column#6",
+          "StreamAgg 1.00 root  funcs:count(Column#7)->Column#5",
+          "└─IndexReader 1.00 root  index:StreamAgg",
+          "  └─StreamAgg 1.00 cop[tikv]  funcs:count(1)->Column#7",
           "    └─Selection 3330.00 cop[tikv]  not(isnull(test.t1.c2))",
           "      └─IndexRangeScan 3333.33 cop[tikv] table:t1, index:idx2(c1, c2) range:[\"0xfff\",+inf], keep order:false, stats:pseudo"
         ],
