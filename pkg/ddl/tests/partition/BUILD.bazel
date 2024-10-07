@@ -8,6 +8,7 @@ go_test(
         "error_injection_test.go",
         "main_test.go",
         "multi_domain_test.go",
+        "placement_test.go",
         "reorg_partition_test.go",
     ],
     flaky = True,

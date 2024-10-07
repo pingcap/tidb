@@ -7,13 +7,13 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//pkg/ddl",
+        "//pkg/meta/metabuild",
         "//pkg/meta/model",
         "//pkg/parser",
         "//pkg/parser/ast",
         "//pkg/parser/model",
         "//pkg/planner/core",
         "//pkg/types",
-        "//pkg/util/dbutil",
         "@com_github_pingcap_errors//:errors",
     ],
 )

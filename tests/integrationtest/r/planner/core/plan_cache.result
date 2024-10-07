@@ -2303,9 +2303,9 @@ select @@last_plan_from_cache;
 0
 explain format=verbose select * from t where a=2;
 id	estRows	estCost	task	access object	operator info
-TableReader_7	10.00	168975.57	root		data:Selection_6
-└─Selection_6	10.00	2534000.00	cop[tikv]		eq(planner__core__plan_cache.t.a, 2)
-  └─TableFullScan_5	10000.00	2035000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+TableReader_7	10.00	182542.24	root		data:Selection_6
+└─Selection_6	10.00	2737500.00	cop[tikv]		eq(planner__core__plan_cache.t.a, 2)
+  └─TableFullScan_5	10000.00	2238500.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 select @@last_plan_from_cache;
 @@last_plan_from_cache
 0

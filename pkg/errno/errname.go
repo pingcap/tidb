@@ -1149,7 +1149,7 @@ var MySQLErrName = map[uint16]*mysql.ErrMessage{
 	ErrResourceGroupSupportDisabled:           mysql.Message("Resource control feature is disabled. Run `SET GLOBAL tidb_enable_resource_control='on'` to enable the feature", nil),
 	ErrResourceGroupConfigUnavailable:         mysql.Message("Resource group configuration is unavailable", nil),
 	ErrResourceGroupThrottled:                 mysql.Message("Exceeded resource group quota limitation", nil),
-	ErrResourceGroupQueryRunawayInterrupted:   mysql.Message("Query execution was interrupted, identified as runaway query", nil),
+	ErrResourceGroupQueryRunawayInterrupted:   mysql.Message("Query execution was interrupted, identified as runaway query [%s]", nil),
 	ErrResourceGroupQueryRunawayQuarantine:    mysql.Message("Quarantined and interrupted because of being in runaway watch list", nil),
 	ErrResourceGroupInvalidBackgroundTaskName: mysql.Message("Unknown background task name '%-.192s'", nil),
 
@@ -1159,6 +1159,7 @@ var MySQLErrName = map[uint16]*mysql.ErrMessage{
 	ErrTiKVServerBusy:            mysql.Message("TiKV server is busy", nil),
 	ErrTiFlashServerTimeout:      mysql.Message("TiFlash server timeout", nil),
 	ErrTiFlashServerBusy:         mysql.Message("TiFlash server is busy", nil),
+	ErrTiFlashBackfillIndex:      mysql.Message("TiFlash backfill index failed: %s", nil),
 	ErrResolveLockTimeout:        mysql.Message("Resolve lock timeout", nil),
 	ErrRegionUnavailable:         mysql.Message("Region is unavailable", nil),
 	ErrGCTooEarly:                mysql.Message("GC life time is shorter than transaction duration, transaction starts at %v, GC safe point is %v", nil),
@@ -1174,4 +1175,6 @@ var MySQLErrName = map[uint16]*mysql.ErrMessage{
 	ErrBDRRestrictedDDL:   mysql.Message("The operation is not allowed while the bdr role of this cluster is set to %s.", nil),
 
 	ErrGlobalIndexNotExplicitlySet: mysql.Message("Global Index is needed for index '%-.192s', since the unique index is not including all partitioning columns, and GLOBAL is not given as IndexOption", nil),
+
+	ErrWarnGlobalIndexNeedManuallyAnalyze: mysql.Message("Auto analyze is not effective for index '%-.192s', need analyze manually", nil),
 }

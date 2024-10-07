@@ -91,7 +91,7 @@ func TestTruncatePartitionListFailuresWithGlobalIndex(t *testing.T) {
 	}
 	afterResult := testkit.Rows("1 1 1", "2 2 2", "6 6 9", "7 7 7", "8 8 8")
 	afterRecover := testkit.Rows("1 1 1", "2 2 2", "8 8 8")
-	testReorganizePartitionFailures(t, truncateTests, create, alter, beforeDML, beforeResult, afterDML, afterResult, afterRecover, "Cancel2")
+	testDDLWithInjectedErrors(t, truncateTests, create, alter, beforeDML, beforeResult, afterDML, afterResult, afterRecover, "Cancel2")
 }
 
 func TestTruncatePartitionListFailures(t *testing.T) {
@@ -118,10 +118,10 @@ func TestTruncatePartitionListFailures(t *testing.T) {
 	}
 	afterResult := testkit.Rows("1 1 1", "2 2 2", "6 6 6", "7 7 7", "8 8 8")
 	afterRecover := testkit.Rows("1 1 1", "2 2 2", "8 8 8")
-	testReorganizePartitionFailures(t, truncateTests, create, alter, beforeDML, beforeResult, afterDML, afterResult, afterRecover, "Fail1", "Fail2", "Fail3")
+	testDDLWithInjectedErrors(t, truncateTests, create, alter, beforeDML, beforeResult, afterDML, afterResult, afterRecover, "Fail1", "Fail2", "Fail3")
 }
 
-func testReorganizePartitionFailures(t *testing.T, tests FailureTest, createSQL, alterSQL string, beforeDML []string, beforeResult [][]any, afterDML []string, afterRollback, afterRecover [][]any, skipTests ...string) {
+func testDDLWithInjectedErrors(t *testing.T, tests FailureTest, createSQL, alterSQL string, beforeDML []string, beforeResult [][]any, afterDML []string, afterRollback, afterRecover [][]any, skipTests ...string) {
 TEST:
 	for _, test := range tests.Tests {
 		for _, skip := range skipTests {
@@ -140,7 +140,6 @@ TEST:
 
 func runOneTest(t *testing.T, test InjectedTest, recoverable bool, failpointName, createSQL, alterSQL string, beforeDML []string, beforeResult [][]any, afterDML []string, afterResult [][]any) {
 	name := failpointName + test.Name
-	testkit.SkipIfFailpointDisabled(t)
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")

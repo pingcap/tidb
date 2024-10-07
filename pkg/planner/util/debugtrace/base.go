@@ -19,7 +19,7 @@ import (
 	"encoding/json"
 	"runtime"
 
-	"github.com/pingcap/tidb/pkg/planner/context"
+	"github.com/pingcap/tidb/pkg/planner/planctx"
 )
 
 // OptimizerDebugTraceRoot is for recording the optimizer debug trace.
@@ -94,7 +94,7 @@ func (root *OptimizerDebugTraceRoot) AppendStepWithNameToCurrentContext(step any
 
 // GetOrInitDebugTraceRoot returns the debug trace root.
 // If it's not initialized, it will initialize it first.
-func GetOrInitDebugTraceRoot(sctx context.PlanContext) *OptimizerDebugTraceRoot {
+func GetOrInitDebugTraceRoot(sctx planctx.PlanContext) *OptimizerDebugTraceRoot {
 	stmtCtx := sctx.GetSessionVars().StmtCtx
 	res, ok := stmtCtx.OptimizerDebugTrace.(*OptimizerDebugTraceRoot)
 	if !ok || res == nil {
@@ -123,7 +123,7 @@ func EncodeJSONCommon(input any) ([]byte, error) {
 
 // EnterContextCommon records the function name of the caller,
 // then creates and enter a new context for this debug trace structure.
-func EnterContextCommon(sctx context.PlanContext) {
+func EnterContextCommon(sctx planctx.PlanContext) {
 	root := GetOrInitDebugTraceRoot(sctx)
 	funcName := "Fail to get function name."
 	pc, _, _, ok := runtime.Caller(1)
@@ -139,7 +139,7 @@ func EnterContextCommon(sctx context.PlanContext) {
 }
 
 // LeaveContextCommon makes the debug trace goes to its parent context.
-func LeaveContextCommon(sctx context.PlanContext) {
+func LeaveContextCommon(sctx planctx.PlanContext) {
 	root := GetOrInitDebugTraceRoot(sctx)
 	root.currentCtx = root.currentCtx.parentCtx
 }
@@ -148,7 +148,7 @@ func LeaveContextCommon(sctx context.PlanContext) {
 // The vals arguments should be a slice like ["name1", value1, "name2", value2].
 // The names must be string, the values can be any type.
 func RecordAnyValuesWithNames(
-	s context.PlanContext,
+	s planctx.PlanContext,
 	vals ...any,
 ) {
 	root := GetOrInitDebugTraceRoot(s)

@@ -22,7 +22,6 @@ go_library(
         "//pkg/session/txninfo",
         "//pkg/session/types",
         "//pkg/sessionctx",
-        "//pkg/sessionctx/binloginfo",
         "//pkg/sessionctx/variable",
         "//pkg/store/gcworker",
         "//pkg/store/helper",

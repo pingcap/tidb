@@ -1,5 +1,3 @@
-set tidb_enable_global_index=true;
-
 --echo # Prepare data
 drop table if exists p;
 create table p (id int, c int, unique index idx(id) global) partition by range (c) (
