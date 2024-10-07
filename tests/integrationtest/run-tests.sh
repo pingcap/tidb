@@ -13,12 +13,49 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+set -x
+
 TIDB_TEST_STORE_NAME=$TIDB_TEST_STORE_NAME
 TIKV_PATH=$TIKV_PATH
+START_TIDB_CLUSTER=$START_TIDB_CLUSTER
+
+# Variables to set paths for each server binary
+TIDB_BIN="./third_bin/tidb-server"
+TIKV_BIN="./third_bin/tikv-server"
+PD_BIN="./third_bin/pd-server"
+DUMPLING_BIN="./third_bin/dumpling"
+TICDC_BIN="./third_bin/cdc"
+TIFLASH_BIN="./third_bin/tiflash-server"
+
+# Variables to set data directories
+PD_DATA_DIR="./data/pd_data"
+PD_DATA_DIR2="./data/pd_data2"
+TIKV_DATA_DIR="./data/tikv_data"
+TIKV_DATA_DIR2="./data/tikv_data2"
+TIFLASH_DATA_DIR="./data/tiflash_data"
+TIFLASH_DATA_DIR2="./data/tiflash_data2"
+TICDC_DATA_DIR="./data/ticdc_data"
+
+rm -rf ./data
+mkdir ./data
+
+TIDB_LOG_FILE="./logs/tidb.log"
+TIDB_LOG_FILE2="./logs/tidb2.log"
+TIKV_LOG_FILE="./logs/tikv.log"
+TIKV_LOG_FILE2="./logs/tikv2.log"
+TIFLASH_LOG_FILE="./logs/tiflash.log"
+TIFLASH_LOG_FILE2="./logs/tiflash2.log"
+PD_LOG_FILE="./logs/pd.log"
+PD_LOG_FILE2="./logs/pd2.log"
+TICDC_LOG_FILE="./logs/ticdc.log"
+
+rm -rf ./logs
+mkdir ./logs
 
 build=1
 mysql_tester="./mysql_tester"
 tidb_server=""
+ticdc_server=$TICDC_BIN
 portgenerator=""
 mysql_tester_log="./integration-test.out"
 tests=""
@@ -212,22 +249,155 @@ rm -rf $mysql_tester_log
 ports=($(find_multiple_available_ports 4000 2))
 port=${ports[0]}
 status=${ports[1]}
+# PD Server Configuration
+start_pd_server() {
+    client_port=${1:-2379}
+    peer_port=${2:-2380}
+    data_dir=${3:-$PD_DATA_DIR}
+    log_dir=${4:-$PD_LOG_FILE}
+
+	echo "Starting PD server..."
+    mkdir -p $data_dir
+
+	$PD_BIN --name="pd" --data-dir="$data_dir" --log-file="$log_dir" \
+          --client-urls="http://127.0.0.1:$client_port" \
+          --peer-urls="http://127.0.0.1:$peer_port" \
+          --advertise-client-urls="http://127.0.0.1:$client_port" \
+          --advertise-peer-urls="http://127.0.0.1:$peer_port" &
+#          --config="config/pd.toml"
+	sleep 5  # Wait for PD to sart
+}
+
+# TiKV Server Configuration
+start_tikv_server() {
+    pd_client_port=${1:-2379}
+    tikv_port=${2:-20160}
+    tikv_status_port=${3:-20180}
+    data_dir=${4:-$TIKV_DATA_DIR}
+    log_dir=${5:-$TIKV_LOG_FILE}
+
+	echo "Starting TiKV server..."
+    mkdir -p $data_dir
+
+	$TIKV_BIN --pd="http://127.0.0.1:$pd_client_port" \
+        --addr="127.0.0.1:$tikv_port" \
+        --advertise-addr="127.0.0.1:$tikv_port" \
+        --status-addr="127.0.0.1:$tikv_status_port" \
+		--data-dir="$data_dir" \
+		--log-file="$log_dir" &
+    sleep 5  # Wait for TiKV to connect to PD
+}
+
+# TiFlash Server Configuration
+start_tiflash_server() {
+    echo "Starting TiFlash server..."
+    mkdir -p $TIFLASH_DATA_DIR
+    $TIFLASH_BIN --data-dir=$TIFLASH_DATA_DIR --log-file=tiflash.log &
+
+    sleep 5  # Wait for TiFlash to connect
+}
 
 function start_tidb_server()
 {
+    pd_client_addr=${1:-127.0.0.1:2379}
+    tidb_port=${2:-4000}
+    tidb_status_port=${3:-10080}
+    log_file=${4:-$TIDB_LOG_FILE}
+
     config_file="config.toml"
     if [[ $enabled_new_collation = 0 ]]; then
         config_file="disable_new_collation.toml"
     fi
-    echo "start tidb-server, log file: $mysql_tester_log"
+    echo "start tidb-server, log file: $log_file"
     if [ "${TIDB_TEST_STORE_NAME}" = "tikv" ]; then
-        $tidb_server -P "$port" -status "$status" -config $config_file -store tikv -path "${TIKV_PATH}" > $mysql_tester_log 2>&1 &
+        $tidb_server -P "$tidb_port" \
+            -status "$tidb_status_port" \
+            -config $config_file \
+            -store tikv \
+            -path "${pd_client_addr}" > $log_file 2>&1 &
         SERVER_PID=$!
     else
-        $tidb_server -P "$port" -status "$status" -config $config_file -store unistore -path "" > $mysql_tester_log 2>&1 &
+        $tidb_server -P "$tidb_port" \
+            -status "$tidb_status_port" \
+            -config $config_file \
+            -store unistore \
+            -path "" > $log_file 2>&1 &
         SERVER_PID=$!
     fi
-    echo "tidb-server(PID: $SERVER_PID) started"
+    echo "tidb-server(PID: $SERVER_PID) started, port: $tidb_port"
+}
+
+function start_ticdc_server() {
+    pd_client_addr=${1:-http://127.0.0.1:2379}
+    ticdc_port=${2:-8300}
+    downstream_port=${3:-4100}
+
+    echo "Starting TiCDC server..."
+    mkdir -p $TICDC_DATA_DIR
+    $TICDC_BIN server --pd=$pd_client_addr --addr=127.0.0.1:$ticdc_port --data-dir=$TICDC_DATA_DIR --log-file=$TICDC_LOG_FILE &
+    sleep 5  # Wait for TiCDC to connect
+
+    $TICDC_BIN cli changefeed create --server=127.0.0.1:$ticdc_port --sink-uri="mysql://root:@127.0.0.1:$downstream_port/" --changefeed-id="simple-replication-task"
+    sleep 5  # Wait for changefeed to connect
+}
+
+function start_tidb_cluster()
+{
+    local ports=($(find_multiple_available_ports 2379 2))
+    if [ $? -ne 0 ]; then
+        echo "Error: Could not find multiple available ports." >&2
+        exit 1
+    fi
+    pd_client_port=${ports[0]}
+	pd_peer_port=${ports[1]}
+    upstream_pd_client_port=$pd_client_port
+	start_pd_server $pd_client_port $pd_peer_port $PD_DATA_DIR $PD_LOG_FILE
+
+    local ports=($(find_multiple_available_ports 20160 2))
+    if [ $? -ne 0 ]; then
+        echo "Error: Could not find multiple available ports." >&2
+        exit 1
+    fi
+	tikv_port=${ports[0]}
+	tikv_status_port=${ports[1]}
+	start_tikv_server $pd_client_port $tikv_port $tikv_status_port $TIKV_DATA_DIR $TIKV_LOG_FILE
+
+    tidb_port=$(find_available_port 4000)
+    # Tricky: update `port` here.
+    port=$tidb_port
+	tidb_status_port=$(find_available_port 10080)
+	start_tidb_server "127.0.0.1:$pd_client_port" $tidb_port $tidb_status_port $TIDB_LOG_FILE
+
+    local ports=($(find_multiple_available_ports 2379 2))
+    if [ $? -ne 0 ]; then
+        echo "Error: Could not find multiple available ports." >&2
+        exit 1
+    fi
+    pd_client_port=${ports[0]}
+	pd_peer_port=${ports[1]}
+    start_pd_server $pd_client_port $pd_peer_port $PD_DATA_DIR2 $PD_LOG_FILE2
+
+    local ports=($(find_multiple_available_ports 20160 2))
+    if [ $? -ne 0 ]; then
+        echo "Error: Could not find multiple available ports." >&2
+        exit 1
+    fi
+	tikv_port=${ports[0]}
+	tikv_status_port=${ports[1]}
+    start_tikv_server $pd_client_port $tikv_port $tikv_status_port $TIKV_DATA_DIR2 $TIKV_LOG_FILE2
+
+    tidb_port=$(find_available_port 4000)
+	tidb_status_port=$(find_available_port 10080)
+    start_tidb_server "127.0.0.1:$pd_client_port" $tidb_port $tidb_status_port $TIDB_LOG_FILE2
+
+    echo "TiDB cluster started successfully!"
+    read -p "Press [Enter] key to go on..."
+
+    ticdc_port=$(find_available_port 8300)
+    start_ticdc_server "http://127.0.0.1:$upstream_pd_client_port" $ticdc_port $tidb_port
+
+    echo "TiCDC started successfully!"
+    read -p "Press [Enter] key to go on..."
 }
 
 function run_mysql_tester()
@@ -304,24 +474,21 @@ function check_case_name() {
 check_case_name
 if [[ $collation_opt = 0 || $collation_opt = 2 ]]; then
     enabled_new_collation=0
-    start_tidb_server
-    run_mysql_tester
-    kill -15 $SERVER_PID
-    while ps -p $SERVER_PID > /dev/null; do
-        sleep 1
-    done
-    check_data_race
+else
+    enabled_new_collation=1
 fi
 
-if [[ $collation_opt = 1 || $collation_opt = 2 ]]; then
-    enabled_new_collation=1
+if [ -z "$START_TIDB_CLUSTER" ]; then
     start_tidb_server
-    run_mysql_tester
-    kill -15 $SERVER_PID
-    while ps -p $SERVER_PID > /dev/null; do
-        sleep 1
-    done
-    check_data_race
+else
+    start_tidb_cluster
 fi
+
+run_mysql_tester
+kill -15 $SERVER_PID
+while ps -p $SERVER_PID > /dev/null; do
+    sleep 1
+done
+check_data_race
 
 echo "integrationtest passed!"
