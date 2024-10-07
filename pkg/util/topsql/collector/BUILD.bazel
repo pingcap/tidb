@@ -6,6 +6,7 @@ go_library(
     importpath = "github.com/pingcap/tidb/pkg/util/topsql/collector",
     visibility = ["//visibility:public"],
     deps = [
+        "//pkg/util",
         "//pkg/util/cpuprofile",
         "//pkg/util/logutil",
         "//pkg/util/topsql/state",

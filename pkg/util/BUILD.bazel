@@ -36,12 +36,9 @@ go_library(
         "//pkg/parser/model",
         "//pkg/parser/mysql",
         "//pkg/parser/terror",
-<<<<<<< HEAD
         "//pkg/resourcegroup",
-        "//pkg/session/cursor",
-=======
         "//pkg/resourcemanager/gpool",
->>>>>>> 8f4f0f2176 (add global pool interface)
+        "//pkg/session/cursor",
         "//pkg/session/txninfo",
         "//pkg/sessionctx/stmtctx",
         "//pkg/util/collate",

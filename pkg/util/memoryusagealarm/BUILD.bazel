@@ -8,6 +8,7 @@ go_library(
     deps = [
         "//pkg/config",
         "//pkg/sessionctx/variable",
+        "//pkg/util",
         "//pkg/util/disk",
         "//pkg/util/logutil",
         "//pkg/util/memory",
@@ -26,6 +27,7 @@ go_test(
     deps = [
         "//pkg/sessionctx/stmtctx",
         "//pkg/sessionctx/variable",
+        "//pkg/util",
         "//pkg/util/memory",
         "@com_github_stretchr_testify//assert",
     ],

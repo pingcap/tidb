@@ -12,6 +12,7 @@ go_test(
         "//pkg/config",
         "//pkg/meta/autoid",
         "//pkg/testkit",
+        "//pkg/util",
         "//pkg/util/dbterror/exeerrors",
         "//pkg/util/memory",
         "//pkg/util/skip",

@@ -30,6 +30,7 @@ go_library(
         "//pkg/store/driver/backoff",
         "//pkg/store/driver/error",
         "//pkg/store/driver/options",
+        "//pkg/util",
         "//pkg/util/execdetails",
         "//pkg/util/intest",
         "//pkg/util/logutil",

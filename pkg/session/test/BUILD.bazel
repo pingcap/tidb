@@ -31,6 +31,7 @@ go_test(
         "//pkg/testkit/testsetup",
         "//pkg/testkit/testutil",
         "//pkg/types",
+        "//pkg/util",
         "//pkg/util/sqlescape",
         "@com_github_pingcap_failpoint//:failpoint",
         "@com_github_pingcap_kvproto//pkg/coprocessor",

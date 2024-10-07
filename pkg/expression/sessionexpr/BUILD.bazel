@@ -18,6 +18,7 @@ go_library(
         "//pkg/sessionctx",
         "//pkg/sessionctx/variable",
         "//pkg/types",
+        "//pkg/util",
         "//pkg/util/context",
         "//pkg/util/intest",
         "//pkg/util/logutil",

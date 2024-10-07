@@ -35,6 +35,7 @@ go_library(
         "//pkg/store/mockstore",
         "//pkg/testkit/testenv",
         "//pkg/types",
+        "//pkg/util",
         "//pkg/util/breakpoint",
         "//pkg/util/chunk",
         "//pkg/util/gctuner",

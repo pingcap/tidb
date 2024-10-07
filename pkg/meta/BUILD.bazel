@@ -51,6 +51,7 @@ go_test(
         "//pkg/session",
         "//pkg/store/mockstore",
         "//pkg/testkit/testsetup",
+        "//pkg/util",
         "//pkg/util/dbterror",
         "//pkg/util/intest",
         "//pkg/util/mock",

@@ -32,6 +32,7 @@ go_test(
         "//pkg/testkit/testfailpoint",
         "//pkg/testkit/testsetup",
         "//pkg/types",
+        "//pkg/util",
         "//pkg/util/sqlkiller",
         "@com_github_pingcap_failpoint//:failpoint",
         "@com_github_pingcap_kvproto//pkg/metapb",

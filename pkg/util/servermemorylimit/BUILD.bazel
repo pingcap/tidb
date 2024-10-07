@@ -8,6 +8,7 @@ go_library(
     deps = [
         "//pkg/parser/mysql",
         "//pkg/types",
+        "//pkg/util",
         "//pkg/util/logutil",
         "//pkg/util/memory",
         "//pkg/util/sqlkiller",
@@ -26,6 +27,7 @@ go_test(
     race = "on",
     deps = [
         "//pkg/types",
+        "//pkg/util",
         "@com_github_stretchr_testify//require",
     ],
 )

@@ -41,6 +41,7 @@ go_test(
         "//pkg/testkit",
         "//pkg/testkit/testdata",
         "//pkg/types",
+        "//pkg/util",
         "//pkg/util/dbterror/exeerrors",
         "//pkg/util/dbterror/plannererrors",
         "//pkg/util/memory",

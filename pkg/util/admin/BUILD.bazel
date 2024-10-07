@@ -15,6 +15,7 @@ go_library(
         "//pkg/table",
         "//pkg/tablecodec",
         "//pkg/types",
+        "//pkg/util",
         "//pkg/util/dbterror",
         "//pkg/util/logutil",
         "//pkg/util/logutil/consistency",

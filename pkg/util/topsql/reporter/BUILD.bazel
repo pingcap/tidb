@@ -13,6 +13,7 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//pkg/config",
+        "//pkg/util",
         "//pkg/util/hack",
         "//pkg/util/logutil",
         "//pkg/util/topsql/collector",

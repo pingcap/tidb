@@ -35,6 +35,7 @@ go_library(
         "//pkg/parser/terror",
         "//pkg/parser/types",
         "//pkg/sessionctx",
+        "//pkg/util",
         "//pkg/util/encrypt",
         "//pkg/util/logutil",
         "//pkg/util/sqlexec",

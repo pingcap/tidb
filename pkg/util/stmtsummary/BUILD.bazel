@@ -49,6 +49,7 @@ go_test(
         "//pkg/sessionctx/stmtctx",
         "//pkg/testkit/testsetup",
         "//pkg/types",
+        "//pkg/util",
         "//pkg/util/execdetails",
         "//pkg/util/plancodec",
         "//pkg/util/ppcpuusage",

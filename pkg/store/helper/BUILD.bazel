@@ -12,6 +12,7 @@ go_library(
         "//pkg/resourcemanager/gpool",
         "//pkg/store/driver/error",
         "//pkg/tablecodec",
+        "//pkg/util",
         "//pkg/util/codec",
         "//pkg/util/logutil",
         "@com_github_pingcap_errors//:errors",

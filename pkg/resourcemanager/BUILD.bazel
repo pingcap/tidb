@@ -11,6 +11,7 @@ go_library(
     deps = [
         "//pkg/resourcemanager/scheduler",
         "//pkg/resourcemanager/util",
+        "//pkg/util",
         "//pkg/util/cpu",
         "@com_github_google_uuid//:uuid",
         "@com_github_pingcap_log//:log",

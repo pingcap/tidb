@@ -26,6 +26,7 @@ go_library(
         "//pkg/kv",
         "//pkg/metrics",
         "//pkg/owner",
+        "//pkg/util",
         "//pkg/util/codec",
         "//pkg/util/engine",
         "//pkg/util/redact",

@@ -15,6 +15,7 @@ go_test(
         "//pkg/testkit/testdata",
         "//pkg/testkit/testmain",
         "//pkg/testkit/testsetup",
+        "//pkg/util",
         "@org_uber_go_goleak//:goleak",
     ],
 )

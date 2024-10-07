@@ -12,6 +12,7 @@ go_library(
     deps = [
         "//pkg/timer/api",
         "//pkg/timer/metrics",
+        "//pkg/util",
         "//pkg/util/logutil",
         "//pkg/util/timeutil",
         "@com_github_google_uuid//:uuid",
@@ -37,6 +38,7 @@ go_test(
     deps = [
         "//pkg/testkit/testsetup",
         "//pkg/timer/api",
+        "//pkg/util",
         "//pkg/util/mock",
         "//pkg/util/timeutil",
         "@com_github_google_uuid//:uuid",

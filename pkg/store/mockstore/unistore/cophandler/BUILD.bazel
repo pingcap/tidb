@@ -32,6 +32,7 @@ go_library(
         "//pkg/store/mockstore/unistore/tikv/mvcc",
         "//pkg/tablecodec",
         "//pkg/types",
+        "//pkg/util",
         "//pkg/util/chunk",
         "//pkg/util/codec",
         "//pkg/util/collate",

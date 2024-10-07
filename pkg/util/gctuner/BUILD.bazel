@@ -11,6 +11,7 @@ go_library(
     importpath = "github.com/pingcap/tidb/pkg/util/gctuner",
     visibility = ["//visibility:public"],
     deps = [
+        "//pkg/util",
         "//pkg/util/intest",
         "//pkg/util/memory",
         "@com_github_pingcap_failpoint//:failpoint",

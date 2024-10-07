@@ -73,6 +73,7 @@ go_test(
         "//pkg/testkit",
         "//pkg/testkit/analyzehelper",
         "//pkg/types",
+        "//pkg/util",
         "@com_github_stretchr_testify//require",
     ],
 )

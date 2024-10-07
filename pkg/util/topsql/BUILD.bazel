@@ -33,6 +33,7 @@ go_test(
         "//pkg/config",
         "//pkg/parser",
         "//pkg/testkit/testsetup",
+        "//pkg/util",
         "//pkg/util/cpuprofile",
         "//pkg/util/topsql/collector",
         "//pkg/util/topsql/collector/mock",

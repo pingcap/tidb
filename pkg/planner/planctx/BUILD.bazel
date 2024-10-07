@@ -12,6 +12,7 @@ go_library(
         "//pkg/lock/context",
         "//pkg/meta/model",
         "//pkg/sessionctx/variable",
+        "//pkg/util",
         "//pkg/util/context",
         "//pkg/util/ranger/context",
         "//pkg/util/sqlexec",

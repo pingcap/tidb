@@ -24,6 +24,7 @@ go_library(
         "//pkg/parser/mysql",
         "//pkg/types",
         "//pkg/types/parser_driver",
+        "//pkg/util",
         "//pkg/util/dbterror",
         "@com_github_go_sql_driver_mysql//:mysql",
         "@com_github_pingcap_errors//:errors",

@@ -21,6 +21,7 @@ go_library(
         "//pkg/sessionctx/variable",
         "//pkg/statistics/handle/usage/indexusage",
         "//pkg/table/tblctx",
+        "//pkg/util",
         "//pkg/util/context",
         "//pkg/util/ranger/context",
         "//pkg/util/sli",

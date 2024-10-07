@@ -18,6 +18,7 @@ go_library(
         "//br/pkg/utils",
         "//br/pkg/utils/storewatch",
         "//pkg/ddl",
+        "//pkg/util",
         "@com_github_emirpasic_gods//maps/treemap",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_kvproto//pkg/metapb",

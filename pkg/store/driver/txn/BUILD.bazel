@@ -22,6 +22,7 @@ go_library(
         "//pkg/table/tables",
         "//pkg/tablecodec",
         "//pkg/types",
+        "//pkg/util",
         "//pkg/util/intest",
         "//pkg/util/logutil",
         "//pkg/util/tracing",

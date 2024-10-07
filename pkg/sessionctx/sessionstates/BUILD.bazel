@@ -42,6 +42,7 @@ go_test(
         "//pkg/server",
         "//pkg/sessionctx/variable",
         "//pkg/testkit",
+        "//pkg/util",
         "//pkg/util/sem",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_failpoint//:failpoint",
