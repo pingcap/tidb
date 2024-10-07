@@ -910,43 +910,63 @@ func GetDropForeignKeyArgs(job *Job) (*DropForeignKeyArgs, error) {
 	return getOrDecodeArgsV2[*DropForeignKeyArgs](job)
 }
 
-// DropColumnArgs is the arguments of dropping column job.
-type DropColumnArgs struct {
-	ColName  pmodel.CIStr `json:"column_name,omitempty"`
-	IfExists bool         `json:"if_exists,omitempty"`
+// TableColumnArgs is the arguments for dropping column ddl or Adding column ddl.
+type TableColumnArgs struct {
+	// follow items for add column.
+	Col    *ColumnInfo         `json:"column_info,omitempty"`
+	Pos    *ast.ColumnPosition `json:"position,omitempty"`
+	Offset int                 `json:"offset,omitempty"`
+	// it's shared by add/drop column.
+	IgnoreExistenceErr bool `json:"ignore_existence_err,omitempty"`
+
+	// for drop column.
 	// below 2 fields are filled during running.
 	IndexIDs     []int64 `json:"index_ids,omitempty"`
 	PartitionIDs []int64 `json:"partition_ids,omitempty"`
 }
 
-func (a *DropColumnArgs) fillJobV1(job *Job) {
-	job.Args = []any{a.ColName, a.IfExists, a.IndexIDs, a.PartitionIDs}
+func (a *TableColumnArgs) fillJobV1(job *Job) {
+	if job.Type == ActionDropColumn {
+		job.Args = []any{a.Col.Name, a.IgnoreExistenceErr, a.IndexIDs, a.PartitionIDs}
+	} else {
+		job.Args = []any{a.Col, a.Pos, a.Offset, a.IgnoreExistenceErr}
+	}
 }
 
-// GetDropColumnArgs gets the args for drop column ddl.
-func GetDropColumnArgs(job *Job) (*DropColumnArgs, error) {
-	var (
-		colName      pmodel.CIStr
-		ifExists     bool
-		indexIDs     []int64
-		partitionIDs []int64
-	)
+// FillRollBackArgsForAddColumn fills the args for rollback add column ddl.
+func FillRollBackArgsForAddColumn(job *Job, args *TableColumnArgs) {
+	intest.Assert(job.Type == ActionAddColumn, "only for add column job")
+	fakeJob := &Job{
+		Version: job.Version,
+		Type:    ActionDropColumn,
+	}
+	fakeJob.FillArgs(args)
+	job.Args = fakeJob.Args
+}
 
-	if job.Version <= JobVersion1 {
-		err := job.DecodeArgs(&colName, &ifExists, &indexIDs, &partitionIDs)
-		if err != nil {
-			return nil, errors.Trace(err)
+// GetTableColumnArgs gets the args for dropping column ddl or Adding column ddl.
+func GetTableColumnArgs(job *Job) (*TableColumnArgs, error) {
+	if job.Version == JobVersion1 {
+		args := &TableColumnArgs{
+			Col: &ColumnInfo{},
+			Pos: &ast.ColumnPosition{},
 		}
 
-		return &DropColumnArgs{
-			ColName:      colName,
-			IfExists:     ifExists,
-			IndexIDs:     indexIDs,
-			PartitionIDs: partitionIDs,
-		}, nil
+		// when rollbacking add-columm, it's arguments is same as drop-column
+		if job.Type == ActionDropColumn || job.State == JobStateRollingback {
+			err := job.DecodeArgs(&args.Col.Name, &args.IgnoreExistenceErr, &args.IndexIDs, &args.PartitionIDs)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+		} else {
+			// for add column ddl.
+			if err := job.DecodeArgs(args.Col, args.Pos, &args.Offset, &args.IgnoreExistenceErr); err != nil {
+				return nil, errors.Trace(err)
+			}
+		}
+		return args, nil
 	}
-
-	return getOrDecodeArgsV2[*DropColumnArgs](job)
+	return getOrDecodeArgsV2[*TableColumnArgs](job)
 }
 
 // RenameTablesArgs is the arguments for rename tables job.
@@ -1314,6 +1334,30 @@ func (a *RecoverArgs) fillJobV1(job *Job) {
 	}
 }
 
+// AlterTableAttributesArgs is the argument for alter table attributes
+type AlterTableAttributesArgs struct {
+	LabelRule *pdhttp.LabelRule `json:"label_rule,omitempty"`
+}
+
+func (a *AlterTableAttributesArgs) fillJobV1(job *Job) {
+	job.Args = []any{a.LabelRule}
+}
+
+// GetAlterTableAttributesArgs get alter table attribute args from job.
+func GetAlterTableAttributesArgs(job *Job) (*AlterTableAttributesArgs, error) {
+	if job.Version == JobVersion1 {
+		labelRule := &pdhttp.LabelRule{}
+		if err := job.DecodeArgs(labelRule); err != nil {
+			return nil, errors.Trace(err)
+		}
+		return &AlterTableAttributesArgs{
+			LabelRule: labelRule,
+		}, nil
+	}
+
+	return getOrDecodeArgsV2[*AlterTableAttributesArgs](job)
+}
+
 // RecoverTableInfos get all the recover infos.
 func (a *RecoverArgs) RecoverTableInfos() []*RecoverTableInfo {
 	return a.RecoverInfo.RecoverTableInfos
@@ -1394,4 +1438,97 @@ func GetPlacementPolicyArgs(job *Job) (*PlacementPolicyArgs, error) {
 	}
 
 	return getOrDecodeArgsV2[*PlacementPolicyArgs](job)
+}
+
+// SetDefaultValueArgs is the argument for setting default value ddl.
+type SetDefaultValueArgs struct {
+	Col *ColumnInfo `json:"column_info,omitempty"`
+}
+
+func (a *SetDefaultValueArgs) fillJobV1(job *Job) {
+	job.Args = []any{a.Col}
+}
+
+// GetSetDefaultValueArgs get the args for setting default value ddl.
+func GetSetDefaultValueArgs(job *Job) (*SetDefaultValueArgs, error) {
+	if job.Version == JobVersion1 {
+		col := &ColumnInfo{}
+		err := job.DecodeArgs(col)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		return &SetDefaultValueArgs{Col: col}, nil
+	}
+
+	return getOrDecodeArgsV2[*SetDefaultValueArgs](job)
+}
+
+// KeyRange is copied from kv.KeyRange to avoid cycle import.
+// Unused fields are removed.
+type KeyRange struct {
+	StartKey []byte
+	EndKey   []byte
+}
+
+// FlashbackClusterArgs is the argument for flashback cluster.
+type FlashbackClusterArgs struct {
+	FlashbackTS        uint64         `json:"flashback_ts,omitempty"`
+	PDScheduleValue    map[string]any `json:"pd_schedule_value,omitempty"`
+	EnableGC           bool           `json:"enable_gc,omitempty"`
+	EnableAutoAnalyze  bool           `json:"enable_auto_analyze,omitempty"`
+	EnableTTLJob       bool           `json:"enable_ttl_job,omitempty"`
+	SuperReadOnly      bool           `json:"super_read_only,omitempty"`
+	LockedRegionCnt    uint64         `json:"locked_region_cnt,omitempty"`
+	StartTS            uint64         `json:"start_ts,omitempty"`
+	CommitTS           uint64         `json:"commit_ts,omitempty"`
+	FlashbackKeyRanges []KeyRange     `json:"key_ranges,omitempty"`
+}
+
+func (a *FlashbackClusterArgs) fillJobV1(job *Job) {
+	enableAutoAnalyze := "ON"
+	superReadOnly := "ON"
+	enableTTLJob := "ON"
+	if !a.EnableAutoAnalyze {
+		enableAutoAnalyze = "OFF"
+	}
+	if !a.SuperReadOnly {
+		superReadOnly = "OFF"
+	}
+	if !a.EnableTTLJob {
+		enableTTLJob = "OFF"
+	}
+
+	job.Args = []any{
+		a.FlashbackTS, a.PDScheduleValue, a.EnableGC, enableAutoAnalyze, superReadOnly,
+		a.LockedRegionCnt, a.StartTS, a.CommitTS, enableTTLJob, a.FlashbackKeyRanges,
+	}
+}
+
+// GetFlashbackClusterArgs get the flashback cluster argument from job.
+func GetFlashbackClusterArgs(job *Job) (*FlashbackClusterArgs, error) {
+	if job.Version == JobVersion1 {
+		args := &FlashbackClusterArgs{}
+		var autoAnalyzeValue, readOnlyValue, ttlJobEnableValue string
+
+		if err := job.DecodeArgs(
+			&args.FlashbackTS, &args.PDScheduleValue, &args.EnableGC,
+			&autoAnalyzeValue, &readOnlyValue, &args.LockedRegionCnt,
+			&args.StartTS, &args.CommitTS, &ttlJobEnableValue, &args.FlashbackKeyRanges); err != nil {
+			return nil, errors.Trace(err)
+		}
+
+		if autoAnalyzeValue == "ON" {
+			args.EnableAutoAnalyze = true
+		}
+		if readOnlyValue == "ON" {
+			args.SuperReadOnly = true
+		}
+		if ttlJobEnableValue == "ON" {
+			args.EnableTTLJob = true
+		}
+
+		return args, nil
+	}
+
+	return getOrDecodeArgsV2[*FlashbackClusterArgs](job)
 }

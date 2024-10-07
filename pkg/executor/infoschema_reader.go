@@ -3397,12 +3397,14 @@ var (
 	tiflashTargetTableName = map[string]string{
 		"tiflash_tables":   "dt_tables",
 		"tiflash_segments": "dt_segments",
+		"tiflash_indexes":  "dt_local_indexes",
 	}
 )
 
 func (e *TiFlashSystemTableRetriever) dataForTiFlashSystemTables(ctx context.Context, sctx sessionctx.Context, tidbDatabases string, tidbTables string) ([][]types.Datum, error) {
 	maxCount := 1024
 	targetTable := tiflashTargetTableName[e.table.Name.L]
+
 	var filters []string
 	if keyspace.GetKeyspaceNameBySettings() != "" {
 		keyspaceID := uint32(sctx.GetStore().GetCodec().GetKeyspaceID())
