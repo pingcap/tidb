@@ -2161,3 +2161,9 @@ drop table if exists test.t;
 create table if not exists test.ast (i varchar(20));
 create table if not exists test.acc (j varchar(20), k varchar(20), l varchar(20), m varchar(20));
 explain format='brief' with t as(select i, (case when b.j = '20001' then b.l else b.k end) an from test.ast a inner join test.acc b on (a.i = b.m) and a.i = 'astp2019121731703151'), t1 as (select i, group_concat(an order by an separator '; ') an from t group by i) select * from t1;
+
+# TestIssue56460
+drop table if exists test.t;
+create table test.t (a int);
+insert into test.t values(0),(20015),(20100);
+select date_add(a, interval 12345 DAY_HOUR) from test.t;
