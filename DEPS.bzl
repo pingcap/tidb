@@ -5682,6 +5682,19 @@ def go_deps():
         ],
     )
     go_repository(
+        name = "com_github_panjf2000_ants_v2",
+        build_file_proto_mode = "disable_global",
+        importpath = "github.com/panjf2000/ants/v2",
+        sha256 = "43e72a322e3f729a9844e95ee15d1daa30c39cc4bc90270e6ef9fb40d51b0103",
+        strip_prefix = "github.com/panjf2000/ants/v2@v2.10.0",
+        urls = [
+            "http://bazel-cache.pingcap.net:8080/gomod/github.com/panjf2000/ants/v2/com_github_panjf2000_ants_v2-v2.10.0.zip",
+            "http://ats.apps.svc/gomod/github.com/panjf2000/ants/v2/com_github_panjf2000_ants_v2-v2.10.0.zip",
+            "https://cache.hawkingrei.com/gomod/github.com/panjf2000/ants/v2/com_github_panjf2000_ants_v2-v2.10.0.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/panjf2000/ants/v2/com_github_panjf2000_ants_v2-v2.10.0.zip",
+        ],
+    )
+    go_repository(
         name = "com_github_pbnjay_memory",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/pbnjay/memory",

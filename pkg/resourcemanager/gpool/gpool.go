@@ -18,8 +18,9 @@ import (
 	"runtime"
 	"time"
 
+	"github.com/panjf2000/ants/v2"
 	"github.com/pingcap/tidb/pkg/util/cpu"
-	"github.com/tiancaiamao/gp"
+	_ "github.com/tiancaiamao/gp"
 )
 
 // PoolCapacityPerCore is the goroutine pool capacity per core
@@ -35,15 +36,31 @@ const PoolRecycleInterval = time.Minute
 
 // GPool wraps gp.Pool.
 type GPool struct {
-	gp *gp.Pool
+	gp *ants.Pool
+}
+
+type AntPool struct {
+	*ants.Pool
+}
+
+func (p *AntPool) Go(fn func()) {
+	p.Submit(fn)
+}
+
+func (p *AntPool) Close() {
+	p.Release()
 }
 
 // NewGPool creates a new goroutine pool.
 func NewGPool() Pool {
 	_, supportCPUUsage := cpu.GetCPUUsage()
-	gpool := gp.New(PoolCapacityPerCore*runtime.NumCPU(), PoolRecycleInterval)
+	//gpool := gp.New(PoolCapacityPerCore*runtime.NumCPU(), PoolRecycleInterval)
+	gpool, err := ants.NewPool(PoolCapacityPerCore*runtime.NumCPU(), ants.WithExpiryDuration(PoolRecycleInterval))
+	if err != nil {
+		panic(err)
+	}
 	if !supportCPUUsage {
-		return gpool
+		return &AntPool{gpool}
 	}
 	return &GPool{gp: gpool}
 }
@@ -54,12 +71,12 @@ func (p *GPool) Go(fn func()) {
 		go fn()
 		return
 	}
-	p.gp.Go(fn)
+	p.gp.Submit(fn)
 }
 
 // Close closes the goroutine pool.
 func (p *GPool) Close() {
-	p.gp.Close()
+	p.gp.Release()
 }
 
 // Pool is a simple interface for global goroutine pool.
