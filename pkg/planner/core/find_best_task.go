@@ -1470,6 +1470,7 @@ func findBestTask4LogicalDataSource(lp base.LogicalPlan, prop *property.Physical
 					// Don't convert to point get during ddl
 					// TODO: Revisit truncate partition and global index
 					if len(ds.TableInfo.GetPartitionInfo().DroppingDefinitions) > 0 ||
+						len(ds.TableInfo.GetPartitionInfo().NewPartitionIDs) > 0 ||
 						len(ds.TableInfo.GetPartitionInfo().AddingDefinitions) > 0 {
 						canConvertPointGet = false
 					}

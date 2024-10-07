@@ -143,11 +143,11 @@ func runMultiSchemaTest(t *testing.T, createSQL, alterSQL string, initFn, postFn
 	}
 	failpoint.EnableCall("github.com/pingcap/tidb/pkg/ddl/onJobRunAfter", hookFunc)
 	defer failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/onJobRunAfter")
-	alterChan := make(chan struct{})
+	alterChan := make(chan error)
 	go func() {
-		tkDDLOwner.MustExec(alterSQL)
-		logutil.BgLogger().Info("XXXXXXXXXXX drop partition done!")
-		alterChan <- struct{}{}
+		err := tkDDLOwner.ExecToErr(alterSQL)
+		logutil.BgLogger().Info("XXXXXXXXXXX DDL done!", zap.String("alterSQL", alterSQL))
+		alterChan <- err
 	}()
 	// Skip the first state, since we want to compare before vs after in the loop
 	<-hookChan
@@ -160,7 +160,8 @@ func runMultiSchemaTest(t *testing.T, createSQL, alterSQL string, initFn, postFn
 		for {
 			select {
 			case <-hookChan:
-			case <-alterChan:
+			case err := <-alterChan:
+				require.NoError(t, err)
 				releaseHook = false
 				logutil.BgLogger().Info("XXXXXXXXXXX release hook")
 				break
@@ -205,6 +206,7 @@ func TestMultiSchemaTruncatePartitionWithGlobalIndex(t *testing.T) {
 	loopFn := func(tkO, tkNO *testkit.TestKit) {
 		res := tkO.MustQuery(`select schema_state from information_schema.DDL_JOBS where table_name = 't' order by job_id desc limit 1`)
 		schemaState := res.Rows()[0][0].(string)
+		logutil.BgLogger().Info("XXXXXXXXXXX loopFn", zap.String("schemaState", schemaState))
 		switch schemaState {
 		case "write only":
 			// tkNO is seeing state None, so unaware of DDL
@@ -242,6 +244,9 @@ func TestMultiSchemaTruncatePartitionWithGlobalIndex(t *testing.T) {
 			// conflicting to the old one
 			tkO.MustExec(`insert into t values (21,25,"OK")`)
 			tkNO.MustContainErrMsg(`insert into t values (8,25,"Duplicate key")`, "[kv:1062]Duplicate entry '25' for key 't.uk_b'")
+			// type differences, cannot use index
+			tkNO.MustQuery(`select count(*) from t where b = 25`).Check(testkit.Rows("0"))
+			tkNO.MustQuery(`select b from t where b = 25`).Check(testkit.Rows())
 			// PointGet should not find new partitions for StateWriteOnly
 			tkNO.MustQuery(`select count(*) from t where b = "25"`).Check(testkit.Rows("0"))
 			tkNO.MustQuery(`select b from t where b = "25"`).Check(testkit.Rows())
