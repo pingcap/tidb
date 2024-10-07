@@ -162,9 +162,9 @@
       {
         "SQL": "desc format = 'brief' select avg(a) from t",
         "Plan": [
-          "HashAgg 1.00 root  funcs:avg(Column#5, Column#6)->Column#4",
-          "└─TableReader 1.00 root  data:HashAgg",
-          "  └─HashAgg 1.00 batchCop[tiflash]  funcs:count(Column#9)->Column#5, funcs:sum(Column#10)->Column#6",
+          "StreamAgg 1.00 root  funcs:avg(Column#7, Column#8)->Column#4",
+          "└─TableReader 1.00 root  data:StreamAgg",
+          "  └─StreamAgg 1.00 batchCop[tiflash]  funcs:count(Column#9)->Column#7, funcs:sum(Column#10)->Column#8",
           "    └─Projection 10000.00 batchCop[tiflash]  test.t.a->Column#9, cast(test.t.a, decimal(10,0) BINARY)->Column#10",
           "      └─TableFullScan 10000.00 batchCop[tiflash] table:t keep order:false, stats:pseudo"
         ],
@@ -173,9 +173,9 @@
       {
         "SQL": "desc format = 'brief' select /*+ read_from_storage(tiflash[t]) */ avg(a) from t",
         "Plan": [
-          "HashAgg 1.00 root  funcs:avg(Column#5, Column#6)->Column#4",
-          "└─TableReader 1.00 root  data:HashAgg",
-          "  └─HashAgg 1.00 batchCop[tiflash]  funcs:count(Column#9)->Column#5, funcs:sum(Column#10)->Column#6",
+          "StreamAgg 1.00 root  funcs:avg(Column#7, Column#8)->Column#4",
+          "└─TableReader 1.00 root  data:StreamAgg",
+          "  └─StreamAgg 1.00 batchCop[tiflash]  funcs:count(Column#9)->Column#7, funcs:sum(Column#10)->Column#8",
           "    └─Projection 10000.00 batchCop[tiflash]  test.t.a->Column#9, cast(test.t.a, decimal(10,0) BINARY)->Column#10",
           "      └─TableFullScan 10000.00 batchCop[tiflash] table:t keep order:false, stats:pseudo"
         ],
