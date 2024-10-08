@@ -9,7 +9,11 @@ go_test(
     ],
     flaky = True,
     race = "on",
+<<<<<<< HEAD:executor/loaddatatest/BUILD.bazel
     shard_count = 10,
+=======
+    shard_count = 12,
+>>>>>>> 7daf0265f16 (executor: fix data inconsistency after `load data ... replace into ...` (#56415)):pkg/executor/test/loaddatatest/BUILD.bazel
     deps = [
         "//br/pkg/lightning/mydump",
         "//config",
