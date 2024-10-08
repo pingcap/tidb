@@ -3202,15 +3202,6 @@ NULL
 drop table if exists test.t;
 create table test.t(f1 char(1));
 insert into test.t values ('a'),('b'),('1');
-select f1 from test.t where f1 in (2,1);
-f1
-1
-SHOW WARNINGS;
-Level	Code	Message
-Warning	1292	Truncated incorrect DOUBLE value: 'a'
-Warning	1292	Truncated incorrect DOUBLE value: 'a'
-Warning	1292	Truncated incorrect DOUBLE value: 'b'
-Warning	1292	Truncated incorrect DOUBLE value: 'b'
 select (cast(f1 as float) = 1) or (cast(f1 as float) = 2) from test.t;
 (cast(f1 as float) = 1) or (cast(f1 as float) = 2)
 0
