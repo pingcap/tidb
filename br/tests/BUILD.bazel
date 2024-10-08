@@ -5,7 +5,10 @@ go_library(
     srcs = ["utils.go"],
     importpath = "github.com/pingcap/tidb/br/tests",
     visibility = ["//visibility:public"],
-    deps = ["@com_github_klauspost_compress//zstd"],
+    deps = [
+        "@com_github_klauspost_compress//zstd",
+        "@com_github_spf13_cobra//:cobra",
+    ],
 )
 
 go_binary(

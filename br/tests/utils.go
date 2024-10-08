@@ -4,7 +4,6 @@ package main
 
 import (
 	"encoding/binary"
-	"flag"
 	"fmt"
 	"io"
 	"os"
@@ -12,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/klauspost/compress/zstd"
+	"github.com/spf13/cobra"
 )
 
 const (
@@ -21,68 +21,94 @@ const (
 )
 
 func main() {
-	if len(os.Args) < 2 {
-		fmt.Println("Usage: go run utils.go <command> [arguments]")
-		fmt.Println("Available commands:")
-		fmt.Println("  validateBackupFiles")
-		os.Exit(1)
+	rootCmd := &cobra.Command{
+		Use:   "utils",
+		Short: "Utility commands for backup and restore",
 	}
 
-	switch os.Args[1] {
-	case cmdValidateBackupFiles:
-		if !validateBackupFiles(os.Args[2:]) {
-			fmt.Println("validation failed")
-			os.Exit(1)
-		}
-	default:
-		fmt.Printf("Unknown command: %s\n", os.Args[1])
+	validateCmd := &cobra.Command{
+		Use:   cmdValidateBackupFiles,
+		Short: "Validate backup files",
+		Run:   runValidateBackupFiles,
+	}
+
+	validateCmd.Flags().String("command", "", "Backup or restore command")
+	validateCmd.Flags().String("encryption", "", "Encryption argument")
+
+	rootCmd.AddCommand(validateCmd)
+
+	if err := rootCmd.Execute(); err != nil {
+		fmt.Println(err)
 		os.Exit(1)
 	}
 }
 
-func validateBackupFiles(args []string) bool {
-	validateCmd := flag.NewFlagSet(cmdValidateBackupFiles, flag.ExitOnError)
-	cmd := validateCmd.String("command", "", "Backup or restore command")
-	encryptionArg := validateCmd.String("encryption", "", "Encryption argument")
+func runValidateBackupFiles(cmd *cobra.Command, args []string) {
+	command, _ := cmd.Flags().GetString("command")
+	encryptionArg, _ := cmd.Flags().GetString("encryption")
 
-	err := validateCmd.Parse(args)
-	if err != nil {
-		fmt.Println("Failed to parse arguments")
-		return false
-	}
-
-	if *cmd == "" {
+	if command == "" {
 		fmt.Println("Please provide the full backup or restore command using --command flag")
-		validateCmd.PrintDefaults()
-		return false
+		err := cmd.Usage()
+		if err != nil {
+			fmt.Println("Usage error")
+			return
+		}
+		os.Exit(1)
 	}
 
-	storagePath, found := parseCommand(*cmd)
+	storagePath, found := parseCommand(command)
 	// doesn't need to validate if it's not doing backup/restore
 	if !found {
 		fmt.Println("No need to validate")
-		return true
+		return
 	}
 
 	fmt.Printf("Validating files in: %s\n", storagePath)
-	return checkCompressionAndEncryption(storagePath, *encryptionArg)
+	if !checkCompressionAndEncryption(storagePath, encryptionArg) {
+		fmt.Println("validation failed")
+		os.Exit(1)
+	}
 }
 
+// parseCommand parses the command and only returns the storage path if it's a full backup or restore point
+// as full backup will have backup files ready in the storage path after returning from the command
+// and log backup will not, so we can only use restore point to validate.
 func parseCommand(cmd string) (string, bool) {
-	args := strings.Fields(cmd)
-	hasBackupOrRestore := false
-	storagePath := ""
+	// Create a temporary cobra command to parse the input
+	tempCmd := &cobra.Command{}
+	tempCmd.Flags().String("s", "", "Storage path (short)")
+	tempCmd.Flags().String("storage", "", "Storage path (long)")
 
+	// Split the command string into args
+	args := strings.Fields(cmd)
+
+	// Parse the args
+	if err := tempCmd.Flags().Parse(args); err != nil {
+		return "", false
+	}
+
+	// Check for backup or restore point command
+	hasBackupOrRestorePoint := false
 	for i, arg := range args {
-		if arg == "backup" || arg == "restore" {
-			hasBackupOrRestore = true
+		if arg == "backup" {
+			hasBackupOrRestorePoint = true
+			break
 		}
-		if arg == "-s" && i+1 < len(args) && strings.HasPrefix(args[i+1], "local://") {
-			storagePath = strings.TrimPrefix(args[i+1], "local://")
+		if i < len(args)-1 && arg == "restore" && args[i+1] == "point" {
+			hasBackupOrRestorePoint = true
+			break
 		}
 	}
 
-	if hasBackupOrRestore && storagePath != "" {
+	// Get the storage path from either -s or -storage flag
+	storagePath, _ := tempCmd.Flags().GetString("s")
+	if storagePath == "" {
+		storagePath, _ = tempCmd.Flags().GetString("storage")
+	}
+	storagePath = strings.TrimPrefix(storagePath, "local://")
+
+	if hasBackupOrRestorePoint && storagePath != "" {
 		return storagePath, true
 	}
 	return "", false

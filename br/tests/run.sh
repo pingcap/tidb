@@ -57,7 +57,7 @@ export ENABLE_ENCRYPTION_CHECK
 MASTER_KEY_DIR="$TEST_DIR/master_key"
 mkdir -p "$MASTER_KEY_DIR"
 openssl rand -hex 32 > "$MASTER_KEY_DIR/master.key"
-MASTER_KEY_PATH="local:///$MASTER_KEY_DIR/master.key"
+MASTER_KEY_PATH="local://$MASTER_KEY_DIR/master.key"
 
 ENCRYPTION_ARGS="--crypter.method aes128-ctr --crypter.key 0123456789abcdef0123456789abcdef --master-key-crypter-method AES256-CTR --master-key $MASTER_KEY_PATH"
 

@@ -26,6 +26,7 @@ main() {
     fi
 
     # Check if validation is needed
+    # strings are from utils.go
     if echo "$output" | grep -q "No need to validate"; then
         echo "Validation not required. Skipping."
         exit 0
@@ -33,11 +34,13 @@ main() {
 
     # Check for expected strings in the output
     if [ -n "$ENCRYPTION_ARGS" ]; then
+        # strings are from utils.go
         if ! echo "$output" | grep -q "All files in .* are encrypted, as expected with encryption"; then
             echo "Error: Expected 'All files are encrypted' message not found in output with encryption"
             exit 1
         fi
     else
+        # strings are from utils.go
         if ! echo "$output" | grep -q "All files in .* are not encrypted, as expected without encryption"; then
             echo "Error: Expected 'All files are not encrypted' message not found in output without encryption"
             exit 1
