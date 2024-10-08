@@ -3270,3 +3270,76 @@ id	store_id	_tidb_rowid
 0	18	30257
 1	1	30001
 drop table t, t1;
+drop table if exists aaa;
+prepare stmt from "\ncreate table aaa(id bigint primary key) partition by range (id) interval (100) first partition less than (100) last partition less than (500)";
+execute stmt;
+show create table aaa;
+Table	Create Table
+aaa	CREATE TABLE `aaa` (
+  `id` bigint(20) NOT NULL,
+  PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+PARTITION BY RANGE (`id`)
+(PARTITION `P_LT_100` VALUES LESS THAN (100),
+ PARTITION `P_LT_200` VALUES LESS THAN (200),
+ PARTITION `P_LT_300` VALUES LESS THAN (300),
+ PARTITION `P_LT_400` VALUES LESS THAN (400),
+ PARTITION `P_LT_500` VALUES LESS THAN (500))
+prepare stmt2 from "\nalter table aaa last partition less than (600)";
+execute stmt2;
+show create table aaa;
+Table	Create Table
+aaa	CREATE TABLE `aaa` (
+  `id` bigint(20) NOT NULL,
+  PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+PARTITION BY RANGE (`id`)
+(PARTITION `P_LT_100` VALUES LESS THAN (100),
+ PARTITION `P_LT_200` VALUES LESS THAN (200),
+ PARTITION `P_LT_300` VALUES LESS THAN (300),
+ PARTITION `P_LT_400` VALUES LESS THAN (400),
+ PARTITION `P_LT_500` VALUES LESS THAN (500),
+ PARTITION `P_LT_600` VALUES LESS THAN (600))
+prepare stmt3 from "\nalter table aaa first partition less than (300)";
+execute stmt3;
+show create table aaa;
+Table	Create Table
+aaa	CREATE TABLE `aaa` (
+  `id` bigint(20) NOT NULL,
+  PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+PARTITION BY RANGE (`id`)
+(PARTITION `P_LT_300` VALUES LESS THAN (300),
+ PARTITION `P_LT_400` VALUES LESS THAN (400),
+ PARTITION `P_LT_500` VALUES LESS THAN (500),
+ PARTITION `P_LT_600` VALUES LESS THAN (600))
+drop table if exists aaa;
+prepare stmt from "create table aaa(id bigint primary key) partition by range (id)\n interval (100) first partition less than (100) last partition less than (500)";
+execute stmt;
+show create table aaa;
+Table	Create Table
+aaa	CREATE TABLE `aaa` (
+  `id` bigint(20) NOT NULL,
+  PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+PARTITION BY RANGE (`id`)
+(PARTITION `P_LT_100` VALUES LESS THAN (100),
+ PARTITION `P_LT_200` VALUES LESS THAN (200),
+ PARTITION `P_LT_300` VALUES LESS THAN (300),
+ PARTITION `P_LT_400` VALUES LESS THAN (400),
+ PARTITION `P_LT_500` VALUES LESS THAN (500))
+drop table if exists aaa;
+prepare stmt from "create table aaa(id bigint primary key) partition by range (id) interval (100) first partition\n less than (100) last partition less than (500)";
+execute stmt;
+show create table aaa;
+Table	Create Table
+aaa	CREATE TABLE `aaa` (
+  `id` bigint(20) NOT NULL,
+  PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+PARTITION BY RANGE (`id`)
+(PARTITION `P_LT_100` VALUES LESS THAN (100),
+ PARTITION `P_LT_200` VALUES LESS THAN (200),
+ PARTITION `P_LT_300` VALUES LESS THAN (300),
+ PARTITION `P_LT_400` VALUES LESS THAN (400),
+ PARTITION `P_LT_500` VALUES LESS THAN (500))

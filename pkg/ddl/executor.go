@@ -2329,7 +2329,12 @@ func (e *executor) AddTablePartitions(ctx sessionctx.Context, ident ast.Ident, s
 			AppendPartitionDefs(partInfo, &buf, sqlMode)
 
 			syntacticSugar := spec.Partition.PartitionMethod.OriginalText()
-			syntacticStart := spec.Partition.PartitionMethod.OriginTextPosition()
+			syntacticStart := strings.Index(query, syntacticSugar)
+			if syntacticStart == -1 {
+				logutil.DDLLogger().Error("Can't find related PARTITION definition in prepare stmt",
+					zap.String("PARTITION definition", syntacticSugar), zap.String("prepare stmt", query))
+				return errors.Errorf("Can't find related PARTITION definition in PREPARE STMT")
+			}
 			newQuery := query[:syntacticStart] + "ADD PARTITION (" + buf.String() + ")" + query[syntacticStart+len(syntacticSugar):]
 			defer ctx.SetValue(sessionctx.QueryString, query)
 			ctx.SetValue(sessionctx.QueryString, newQuery)
@@ -2881,7 +2886,12 @@ func (e *executor) DropTablePartition(ctx sessionctx.Context, ident ast.Ident, s
 				partNames = append(partNames, stringutil.Escape(spec.PartitionNames[i].O, sqlMode))
 			}
 			syntacticSugar := spec.Partition.PartitionMethod.OriginalText()
-			syntacticStart := spec.Partition.PartitionMethod.OriginTextPosition()
+			syntacticStart := strings.Index(query, syntacticSugar)
+			if syntacticStart == -1 {
+				logutil.DDLLogger().Error("Can't find related PARTITION definition in prepare stmt",
+					zap.String("PARTITION definition", syntacticSugar), zap.String("prepare stmt", query))
+				return errors.Errorf("Can't find related PARTITION definition in PREPARE STMT")
+			}
 			newQuery := query[:syntacticStart] + "DROP PARTITION " + strings.Join(partNames, ", ") + query[syntacticStart+len(syntacticSugar):]
 			defer ctx.SetValue(sessionctx.QueryString, query)
 			ctx.SetValue(sessionctx.QueryString, newQuery)
