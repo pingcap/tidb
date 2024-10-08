@@ -16,39 +16,14 @@ package repository
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/pingcap/tidb/pkg/meta/model"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/util/slice"
-	"github.com/pingcap/tidb/pkg/util/sqlexec"
-	"go.uber.org/atomic"
 )
-
-var (
-	retentionDays = atomic.NewInt32(int32(variable.DefTiDBWorkloadRepositoryRetentionDays))
-)
-
-func execRetry(ctx context.Context, exec sqlexec.SQLExecutor, sql string) error {
-	var errs [5]error
-	var succeed bool
-	for i := 0; i < len(errs); i++ {
-		_, err := exec.ExecuteInternal(ctx, sql)
-		if err == nil {
-			succeed = true
-			break
-		}
-		errs[i] = err
-	}
-	if !succeed {
-		return errors.Join(errs[:]...)
-	}
-	return nil
-}
 
 func generatePartitionDef(sb *strings.Builder, col string) {
 	fmt.Fprintf(sb, " PARTITION BY RANGE( TO_DAYS(%s) ) (", col)

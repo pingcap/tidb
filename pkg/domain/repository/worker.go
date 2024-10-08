@@ -17,19 +17,15 @@ package repository
 import (
 	"context"
 	"errors"
-	"fmt"
-	"strings"
-	"sync"
 	"time"
 
 	"github.com/ngaut/pools"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/owner"
-	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/util"
+	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/sqlescape"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
@@ -58,26 +54,24 @@ var workloadTables = []repositoryTable{
 		"",
 		"",
 		metadataTable,
-		"HIST_SNAPSHOTS",
+		histSnapshotsTable,
 		"",
-		sqlescape.MustEscapeSQL(`CREATE TABLE IF NOT EXISTS %n.HIST_SNAPSHOTS (
-			SNAP_ID int unsigned NOT NULL AUTO_INCREMENT COMMENT 'Global unique identifier of the snapshot',
+		sqlescape.MustEscapeSQL(`CREATE TABLE IF NOT EXISTS %n.%n (
+			SNAP_ID int unsigned NOT NULL COMMENT 'Global unique identifier of the snapshot',
 			BEGIN_TIME DATETIME NOT NULL COMMENT 'Datetime that TiDB begins taking this snapshot.',
 			END_TIME DATETIME NULL COMMENT 'Datetime that TiDB finish taking this snapshot.',
 			DB_VER JSON NULL COMMENT 'Versions of TiDB, TiKV, PD at the moment',
 			WR_VER int unsigned NULL COMMENT 'Version to identifiy the compatibility of workload schema between releases.',
-			INSTANCE varchar(64) DEFAULT NULL COMMENT 'The instance that initializes the snapshots',
 			SOURCE VARCHAR(20) NULL COMMENT 'The program that initializes the snaphost. ',
-			ERROR TEXT DEFAULT NULL COMMENT 'extra messages are written if anything happens to block that snapshots.')`, WorkloadSchema),
+			ERROR TEXT DEFAULT NULL COMMENT 'extra messages are written if anything happens to block that snapshots.')`, WorkloadSchema, histSnapshotsTable),
 		"",
 	},
 	//{"INFORMATION_SCHEMA", "TIDB_INDEX_USAGE", snapshotTable, "", "", "", ""},
-	//{"INFORMATION_SCHEMA", "TIDB_STATEMENTS_STATS", snapshotTable, "", "", "", ""},
+	{"INFORMATION_SCHEMA", "TIDB_STATEMENTS_STATS", snapshotTable, "", "", "", ""},
 	{"INFORMATION_SCHEMA", "CLIENT_ERRORS_SUMMARY_BY_HOST", snapshotTable, "", "", "", ""},
 	{"INFORMATION_SCHEMA", "CLIENT_ERRORS_SUMMARY_BY_USER", snapshotTable, "", "", "", ""},
 	{"INFORMATION_SCHEMA", "CLIENT_ERRORS_SUMMARY_GLOBAL", snapshotTable, "", "", "", ""},
 	{"INFORMATION_SCHEMA", "TIKV_REGION_STATUS", snapshotTable, "", "", "", ""},
-	{"INFORMATION_SCHEMA", "TIKV_STORE_STATUS", snapshotTable, "", "", "", ""},
 
 	{"INFORMATION_SCHEMA", "PROCESSLIST", samplingTable, "", "", "", ""},
 	{"INFORMATION_SCHEMA", "DATA_LOCK_WAITS", samplingTable, "", "", "", ""},
@@ -128,187 +122,32 @@ func NewWorker(
 	return w
 }
 
-func (w *Worker) runQuery(ctx context.Context, sctx sessionctx.Context, sql string, args ...interface{}) error {
+func (w *Worker) runQuery(ctx context.Context, sctx sessionctx.Context, sql string, args ...interface{}) (v []chunk.Row, e error) {
+	defer func() {
+		logutil.BgLogger().Debug("repository execute SQL", zap.String("sql", sql), zap.NamedError("err", e))
+	}()
 	exec := sctx.(sqlexec.SQLExecutor)
-	_, err := exec.ExecuteInternal(ctx, sql, args...)
-	return err
-}
-
-func (w *Worker) buildInsertQuery(ctx context.Context, sess sessionctx.Context, rt *repositoryTable) error {
-	is := sessiontxn.GetTxnManager(sess).GetTxnInfoSchema()
-	tbl, err := is.TableByName(ctx, model.NewCIStr(rt.schema), model.NewCIStr(rt.table))
-	if err != nil {
-		return err
-	}
-
-	sb := &strings.Builder{}
-	sqlescape.MustFormatSQL(sb, "INSERT %n.%n (", WorkloadSchema, rt.destTable)
-
-	if rt.tableType == snapshotTable {
-		fmt.Fprint(sb, "`SNAP_ID`, ")
-	}
-	fmt.Fprint(sb, "`TS`, ")
-	fmt.Fprint(sb, "`INSTANCE_ID`")
-
-	for _, v := range tbl.Cols() {
-		sqlescape.MustFormatSQL(sb, ", %n", v.Name.O)
-	}
-	fmt.Fprint(sb, ") SELECT ")
-
-	if rt.tableType == snapshotTable {
-		fmt.Fprint(sb, "%?, now(), %?")
-	} else {
-		fmt.Fprint(sb, "now(), %?")
-	}
-
-	for _, v := range tbl.Cols() {
-		sqlescape.MustFormatSQL(sb, ", %n", v.Name.O)
-	}
-	sqlescape.MustFormatSQL(sb, " FROM %n.%n", rt.schema, rt.table)
-	if rt.where != "" {
-		fmt.Fprint(sb, "WHERE ", rt.where)
-	}
-
-	rt.insertStmt = sb.String()
-	return nil
-}
-
-func (w *Worker) insertHistSnapshot(ctx context.Context, sctx sessionctx.Context) (uint64, error) {
-	snapshotsInsert := sqlescape.MustEscapeSQL("INSERT INTO %n.`HIST_SNAPSHOTS` (`BEGIN_TIME`, `INSTANCE`) VALUES (now(), %%?)",
-		WorkloadSchema)
-	if err := w.runQuery(ctx, sctx, snapshotsInsert, w.instanceID); err != nil {
-		return 0, err
-	}
-
-	return sctx.GetSessionVars().StmtCtx.LastInsertID, nil
-}
-
-func (w *Worker) updateHistSnapshot(ctx context.Context, sctx sessionctx.Context, snapID uint64, errs []error) error {
-	var errs2 interface{} = nil
-	if len(errs) > 0 {
-		nerr := errors.Join(errs...)
-		errs2 = nerr.Error()
-	}
-
-	snapshotsUpdate := sqlescape.MustEscapeSQL("UPDATE %n.`HIST_SNAPSHOTS` SET `END_TIME` = now(), `ERROR` = %%? WHERE `SNAP_ID` = %%?",
-		WorkloadSchema)
-	return w.runQuery(ctx, sctx, snapshotsUpdate, errs2, snapID)
-}
-
-func (w *Worker) snapshotTable(ctx context.Context, snapID uint64, rt *repositoryTable) error {
-	_sessctx := w.getSessionWithRetry()
-	defer w.sesspool.Put(_sessctx)
-	sess := _sessctx.(sessionctx.Context)
-
-	if rt.insertStmt == "" {
-		if err := w.buildInsertQuery(ctx, sess, rt); err != nil {
-			return fmt.Errorf("could not generate insert statement for `%s`: %v", rt.destTable, err)
+	res, err := exec.ExecuteInternal(ctx, sql, args...)
+	if err == nil {
+		if res != nil {
+			defer res.Close()
+			return sqlexec.DrainRecordSet(ctx, res, 256)
 		}
+		return nil, nil
 	}
-
-	if err := w.runQuery(ctx, sess, rt.insertStmt, snapID, w.instanceID); err != nil {
-		return fmt.Errorf("could not run insert statement for `%s`: %v", rt.destTable, err)
-	}
-
-	return nil
+	return nil, err
 }
 
-func (w *Worker) startSnapshot(ctx context.Context) func() {
-	return func() {
-		// final code will not use a timer
-		ticker := time.NewTicker(time.Minute)
-		defer ticker.Stop()
-		_sessctx := w.getSessionWithRetry()
-		defer w.sesspool.Put(_sessctx)
-		sess := _sessctx.(sessionctx.Context)
-
-		for {
-			select {
-			case <-w.exit:
-				return
-			case <-ctx.Done():
-				return
-			case <-ticker.C:
-				errs := make([]error, len(workloadTables))
-
-				snapID, err := w.insertHistSnapshot(ctx, sess)
-				if err != nil {
-					// we can not recover from this
-					logutil.BgLogger().Info("Snapshot failed: could not insert into hist_snapshots",
-						zap.Error(err))
-					continue
-				}
-
-				var wg sync.WaitGroup
-				cnt := 0
-				for rtIdx := range workloadTables {
-					rt := &workloadTables[rtIdx]
-					if rt.tableType == snapshotTable {
-						wg.Add(1)
-						go func(i int) {
-							defer wg.Done()
-							errs[i] = w.snapshotTable(ctx, snapID, rt)
-						}(cnt)
-						cnt++
-					}
-				}
-				wg.Wait()
-
-				if err := w.updateHistSnapshot(ctx, sess, snapID, errs); err != nil {
-					logutil.BgLogger().Info("Snapshot failed: could not update hist_snapshots",
-						zap.Error(err))
-					continue
-				}
-			}
+func (w *Worker) execRetry(ctx context.Context, sctx sessionctx.Context, sql string, args ...interface{}) ([]chunk.Row, error) {
+	var errs [5]error
+	for i := 0; i < len(errs); i++ {
+		res, err := w.runQuery(ctx, sctx, sql, args...)
+		if err == nil {
+			return res, nil
 		}
+		errs[i] = err
 	}
-}
-
-func (w *Worker) samplingTable(ctx context.Context, rt *repositoryTable) {
-	_sessctx := w.getSessionWithRetry()
-	defer w.sesspool.Put(_sessctx)
-	sess := _sessctx.(sessionctx.Context)
-
-	if rt.insertStmt == "" {
-		if err := w.buildInsertQuery(ctx, sess, rt); err != nil {
-			m := fmt.Sprintf("Sampling failed: could not generate insert statement for `%s`", rt.destTable)
-			logutil.BgLogger().Info(m, zap.Error(err))
-			return
-		}
-	}
-
-	if err := w.runQuery(ctx, sess, rt.insertStmt, w.instanceID); err != nil {
-		m := fmt.Sprintf("Sampling failed: could not run insert statement for `%s`", rt.destTable)
-		logutil.BgLogger().Info(m, zap.Error(err))
-	}
-}
-
-func (w *Worker) startSample(ctx context.Context) func() {
-	return func() {
-		ticker := time.NewTicker(time.Second)
-		defer ticker.Stop()
-		for {
-			select {
-			case <-w.exit:
-				return
-			case <-ctx.Done():
-				return
-			case <-ticker.C:
-				var wg util.WaitGroupWrapper
-
-				for rtIdx := range workloadTables {
-					rt := &workloadTables[rtIdx]
-					if rt.tableType == samplingTable {
-						wg.Run(func() {
-							w.samplingTable(ctx, rt)
-						})
-					}
-				}
-
-				wg.Wait()
-			}
-		}
-	}
+	return nil, errors.Join(errs[:]...)
 }
 
 func (w *Worker) getSessionWithRetry() pools.Resource {
@@ -358,7 +197,7 @@ func (w *Worker) start(ctx context.Context) func() {
 			case <-ticker.C:
 				if w.owner.IsOwner() {
 					if err := w.createAllTables(ctx); err != nil {
-						logutil.BgLogger().Error("can't create workload repository tables", zap.Error(err), zap.Stack("stack"))
+						logutil.BgLogger().Error("can't create workload repository tables", zap.NamedError("err", err))
 					}
 				}
 
@@ -374,14 +213,15 @@ func (w *Worker) start(ctx context.Context) func() {
 				}
 
 				w.wg.RunWithRecover(w.startSample(ctx), func(err interface{}) {
-					logutil.BgLogger().Info("sample panic", zap.Any("err", err), zap.Stack("stack"))
+					logutil.BgLogger().Info("repository sample panic", zap.Any("err", err), zap.Stack("stack"))
 				}, "sample")
 				w.wg.RunWithRecover(w.startSnapshot(ctx), func(err interface{}) {
-					logutil.BgLogger().Info("snapshot panic", zap.Any("err", err), zap.Stack("stack"))
+					logutil.BgLogger().Info("repository snapshot panic", zap.Any("err", err), zap.Stack("stack"))
 				}, "snapshot")
 				w.wg.RunWithRecover(w.startHouseKeeper(ctx), func(err interface{}) {
-					logutil.BgLogger().Info("housekeeper panic", zap.Any("err", err), zap.Stack("stack"))
+					logutil.BgLogger().Info("repository housekeeper panic", zap.Any("err", err), zap.Stack("stack"))
 				}, "housekeeper")
+
 				return
 			}
 		}
@@ -397,7 +237,7 @@ func (w *Worker) Start(ctx context.Context) {
 	nctx, cancel := context.WithCancel(context.Background())
 	w.cancel = cancel
 	w.wg.RunWithRecover(w.start(nctx), func(err interface{}) {
-		logutil.BgLogger().Info("prestart panic", zap.Any("err", err), zap.Stack("stack"))
+		logutil.BgLogger().Info("repository prestart panic", zap.Any("err", err), zap.Stack("stack"))
 	}, "prestart")
 }
 

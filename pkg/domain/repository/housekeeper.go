@@ -23,27 +23,33 @@ import (
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/sqlescape"
-	"github.com/pingcap/tidb/pkg/util/sqlexec"
+	"go.uber.org/atomic"
 	"go.uber.org/zap"
+)
+
+var (
+	retentionDays = atomic.NewInt32(int32(variable.DefTiDBWorkloadRepositoryRetentionDays))
 )
 
 func calcNextTick(now time.Time) time.Duration {
 	// only activated at 2am
 	next := time.Date(now.Year(), now.Month(), now.Day(), 2, 0, 0, 0, time.Local)
 	if !next.After(now) {
-		next = time.Date(now.Year(), now.Month(), now.Day()+1, 2, 0, 0, 0, time.Local)
+		next = next.AddDate(0, 0, 1)
 	}
 	return next.Sub(now)
 }
 
-func (w *Worker) createAllPartitions(ctx context.Context, exec sqlexec.SQLExecutor, is infoschema.InfoSchema) error {
+func (w *Worker) createAllPartitions(ctx context.Context, sess sessionctx.Context, is infoschema.InfoSchema) error {
 	sb := &strings.Builder{}
 	for _, tbl := range workloadTables {
 		tbSchema, err := is.TableByName(ctx, workloadSchemaCIStr, model.NewCIStr(tbl.destTable))
 		if err != nil {
-			logutil.BgLogger().Info("housekeeper can't get table", zap.String("tb", tbl.destTable), zap.Error(err))
+			logutil.BgLogger().Info("repository can't get table", zap.String("tbl", tbl.destTable), zap.NamedError("err", err))
 			return err
 		}
 		tbInfo := tbSchema.Meta()
@@ -52,9 +58,9 @@ func (w *Worker) createAllPartitions(ctx context.Context, exec sqlexec.SQLExecut
 		sqlescape.MustFormatSQL(sb, "ALTER TABLE %n.%n ADD PARTITION (", WorkloadSchema, tbl.destTable)
 		if !generatePartitionRanges(sb, tbInfo) {
 			fmt.Fprintf(sb, ")")
-			err = execRetry(ctx, exec, sb.String())
+			_, err = w.execRetry(ctx, sess, sb.String())
 			if err != nil {
-				logutil.BgLogger().Info("housekeeper can't add partitions", zap.String("parts", sb.String()), zap.Error(err))
+				logutil.BgLogger().Info("repository can't add partitions", zap.String("parts", sb.String()), zap.NamedError("err", err))
 				return err
 			}
 		}
@@ -62,7 +68,7 @@ func (w *Worker) createAllPartitions(ctx context.Context, exec sqlexec.SQLExecut
 	return nil
 }
 
-func (w *Worker) dropOldPartitions(ctx context.Context, exec sqlexec.SQLExecutor, is infoschema.InfoSchema, now time.Time) error {
+func (w *Worker) dropOldPartitions(ctx context.Context, sess sessionctx.Context, is infoschema.InfoSchema, now time.Time) error {
 	retention := int(retentionDays.Load())
 	if retention == 0 {
 		// disabled housekeeping
@@ -73,14 +79,14 @@ func (w *Worker) dropOldPartitions(ctx context.Context, exec sqlexec.SQLExecutor
 	for _, tbl := range workloadTables {
 		tbSchema, err := is.TableByName(ctx, workloadSchemaCIStr, model.NewCIStr(tbl.destTable))
 		if err != nil {
-			logutil.BgLogger().Info("housekeeper can't get table", zap.String("tb", tbl.destTable), zap.Error(err))
+			logutil.BgLogger().Info("repository can't get table", zap.String("tbl", tbl.destTable), zap.NamedError("err", err))
 			continue
 		}
 		tbInfo := tbSchema.Meta()
 		for _, pt := range tbInfo.GetPartitionInfo().Definitions {
 			ot, err := time.Parse("p20060102", pt.Name.L)
 			if err != nil {
-				logutil.BgLogger().Info("housekeeper can't parse partition name", zap.String("part", pt.Name.L), zap.Error(err))
+				logutil.BgLogger().Info("repository can't parse partition name", zap.String("part", pt.Name.L), zap.NamedError("err", err))
 				break
 			}
 			if int(now.Sub(ot).Hours()/24) < retention {
@@ -89,9 +95,9 @@ func (w *Worker) dropOldPartitions(ctx context.Context, exec sqlexec.SQLExecutor
 			sb.Reset()
 			sqlescape.MustFormatSQL(sb, "ALTER TABLE %s.%s DROP PARTITION %s",
 				WorkloadSchema, tbl.destTable, pt.Name.L)
-			err = execRetry(ctx, exec, sb.String())
+			_, err = w.execRetry(ctx, sess, sb.String())
 			if err != nil {
-				logutil.BgLogger().Info("housekeeper can't drop partition", zap.String("part", pt.Name.L), zap.Error(err))
+				logutil.BgLogger().Info("repository can't drop partition", zap.String("part", pt.Name.L), zap.NamedError("err", err))
 				break
 			}
 		}
@@ -107,7 +113,6 @@ func (w *Worker) startHouseKeeper(ctx context.Context) func() {
 
 		_sessctx := w.getSessionWithRetry()
 		defer w.sesspool.Put(_sessctx)
-		exec := _sessctx.(sqlexec.SQLExecutor)
 		sess := _sessctx.(sessionctx.Context)
 		for {
 			select {
@@ -122,20 +127,15 @@ func (w *Worker) startHouseKeeper(ctx context.Context) func() {
 				}
 
 				// get the latest infoschema
-				is := sess.GetDomainInfoSchema().(infoschema.InfoSchema)
-				err := execRetry(ctx, exec, "use "+workloadSchemaCIStr.L)
-				if err != nil {
-					logutil.BgLogger().Info("can't switch db", zap.Error(err))
-					continue
-				}
+				is := sessiontxn.GetTxnManager(sess).GetTxnInfoSchema()
 
 				// create new partitions
-				if err := w.createAllPartitions(ctx, exec, is); err != nil {
+				if err := w.createAllPartitions(ctx, sess, is); err != nil {
 					continue
 				}
 
 				// drop old partitions
-				if err := w.dropOldPartitions(ctx, exec, is, now); err != nil {
+				if err := w.dropOldPartitions(ctx, sess, is, now); err != nil {
 					continue
 				}
 

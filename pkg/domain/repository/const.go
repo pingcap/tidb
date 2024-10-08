@@ -14,7 +14,25 @@
 
 package repository
 
+import (
+	"time"
+
+	"github.com/pingcap/tidb/pkg/parser/model"
+)
+
 const (
 	ownerKey  = "/tidb/repository/owner"
 	promptKey = "repository"
+	snapIDKey = "/tidb/repository/snap_id"
+
+	etcdOpTimeout = 5 * time.Second
+
+	// WorkloadSchema is the name of database for repository worker.
+	WorkloadSchema     = "WORKLOAD_SCHEMA"
+	histSnapshotsTable = "HIST_SNAPSHOTS"
+)
+
+var (
+	workloadSchemaCIStr = model.NewCIStr(WorkloadSchema)
+	zeroTime            = time.Time{}
 )

@@ -16,6 +16,7 @@ package repository
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -26,17 +27,6 @@ import (
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/util/slice"
 	"github.com/pingcap/tidb/pkg/util/sqlescape"
-	"github.com/pingcap/tidb/pkg/util/sqlexec"
-)
-
-const (
-	// WorkloadSchema is the name of database for repository worker.
-	WorkloadSchema = "workload_schema"
-)
-
-var (
-	workloadSchemaCIStr = model.NewCIStr(WorkloadSchema)
-	zeroTime            = time.Time{}
 )
 
 func (w *Worker) buildCreateQuery(ctx context.Context, sess sessionctx.Context, rt *repositoryTable) (string, error) {
@@ -44,6 +34,9 @@ func (w *Worker) buildCreateQuery(ctx context.Context, sess sessionctx.Context, 
 	tbl, err := is.TableByName(ctx, model.NewCIStr(rt.schema), model.NewCIStr(rt.table))
 	if err != nil {
 		return "", err
+	}
+	if rt.tableType == metadataTable {
+		return "", errors.New("buildCreateQuery invoked on metadataTable")
 	}
 
 	sb := &strings.Builder{}
@@ -64,21 +57,58 @@ func (w *Worker) buildCreateQuery(ctx context.Context, sess sessionctx.Context, 
 	return sb.String(), nil
 }
 
+func (w *Worker) buildInsertQuery(ctx context.Context, sess sessionctx.Context, rt *repositoryTable) error {
+	is := sessiontxn.GetTxnManager(sess).GetTxnInfoSchema()
+	tbl, err := is.TableByName(ctx, model.NewCIStr(rt.schema), model.NewCIStr(rt.table))
+	if err != nil {
+		return err
+	}
+	if rt.tableType == metadataTable {
+		return errors.New("buildInsertQuery invoked on metadataTable")
+	}
+
+	sb := &strings.Builder{}
+	sqlescape.MustFormatSQL(sb, "INSERT %n.%n (", WorkloadSchema, rt.destTable)
+
+	if rt.tableType == snapshotTable {
+		fmt.Fprint(sb, "`SNAP_ID`, ")
+	}
+	fmt.Fprint(sb, "`TS`, ")
+	fmt.Fprint(sb, "`INSTANCE_ID`")
+
+	for _, v := range tbl.Cols() {
+		sqlescape.MustFormatSQL(sb, ", %n", v.Name.O)
+	}
+	fmt.Fprint(sb, ") SELECT ")
+
+	if rt.tableType == snapshotTable {
+		fmt.Fprint(sb, "%?, now(), %?")
+	} else if rt.tableType == samplingTable {
+		fmt.Fprint(sb, "now(), %?")
+	}
+
+	for _, v := range tbl.Cols() {
+		sqlescape.MustFormatSQL(sb, ", %n", v.Name.O)
+	}
+	sqlescape.MustFormatSQL(sb, " FROM %n.%n", rt.schema, rt.table)
+	if rt.where != "" {
+		fmt.Fprint(sb, "WHERE ", rt.where)
+	}
+
+	rt.insertStmt = sb.String()
+	return nil
+}
+
 func (w *Worker) createAllTables(ctx context.Context) error {
 	_sessctx := w.getSessionWithRetry()
-	exec := _sessctx.(sqlexec.SQLExecutor)
 	sess := _sessctx.(sessionctx.Context)
 	defer w.sesspool.Put(_sessctx)
 	is := sess.GetDomainInfoSchema().(infoschema.InfoSchema)
 	if !is.SchemaExists(workloadSchemaCIStr) {
-		_, err := exec.ExecuteInternal(ctx, "create database if not exists "+WorkloadSchema)
+		_, err := w.execRetry(ctx, sess, "create database if not exists "+WorkloadSchema)
 		if err != nil {
 			return err
 		}
-	}
-
-	if _, err := exec.ExecuteInternal(ctx, "use "+WorkloadSchema); err != nil {
-		return err
 	}
 
 	for _, tbl := range workloadTables {
@@ -107,12 +137,12 @@ func (w *Worker) createAllTables(ctx context.Context) error {
 			createStmt = sb.String()
 		}
 
-		if err := execRetry(ctx, exec, createStmt); err != nil {
+		if _, err := w.execRetry(ctx, sess, createStmt); err != nil {
 			return err
 		}
 	}
 
-	return w.createAllPartitions(ctx, exec, is)
+	return w.createAllPartitions(ctx, sess, is)
 }
 
 func (w *Worker) checkTablesExists(ctx context.Context) bool {
