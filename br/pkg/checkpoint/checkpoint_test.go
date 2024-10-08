@@ -390,6 +390,10 @@ func TestCheckpointRunnerRetry(t *testing.T) {
 	time.Sleep(time.Second)
 	err = failpoint.Disable("github.com/pingcap/tidb/br/pkg/checkpoint/failed-after-checkpoint-flushes")
 	require.NoError(t, err)
+	err = checkpoint.AppendRangesForRestore(ctx, checkpointRunner, 3, "789")
+	require.NoError(t, err)
+	err = checkpointRunner.FlushChecksum(ctx, 3, 3, 3, 3)
+	require.NoError(t, err)
 	checkpointRunner.WaitForFinish(ctx, true)
 	recordSet := make(map[string]int)
 	_, err = checkpoint.LoadCheckpointDataForSnapshotRestore(ctx, se.GetSessionCtx().GetRestrictedSQLExecutor(),
@@ -399,10 +403,12 @@ func TestCheckpointRunnerRetry(t *testing.T) {
 	require.NoError(t, err)
 	require.LessOrEqual(t, 1, recordSet["1_{123}"])
 	require.LessOrEqual(t, 1, recordSet["2_{456}"])
+	require.LessOrEqual(t, 1, recordSet["3_{789}"])
 	items, _, err := checkpoint.LoadCheckpointChecksumForRestore(ctx, se.GetSessionCtx().GetRestrictedSQLExecutor())
 	require.NoError(t, err)
 	require.Equal(t, fmt.Sprintf("%d_%d_%d", items[1].Crc64xor, items[1].TotalBytes, items[1].TotalKvs), "1_1_1")
 	require.Equal(t, fmt.Sprintf("%d_%d_%d", items[2].Crc64xor, items[2].TotalBytes, items[2].TotalKvs), "2_2_2")
+	require.Equal(t, fmt.Sprintf("%d_%d_%d", items[3].Crc64xor, items[3].TotalBytes, items[3].TotalKvs), "3_3_3")
 }
 
 func TestCheckpointRunnerNoRetry(t *testing.T) {

@@ -335,17 +335,19 @@ func (f *flusher[K, V]) doChecksumFlush(ctx context.Context, r *CheckpointRunner
 
 func (f *flusher[K, V]) flushOneIncomplete(ctx context.Context, r *CheckpointRunner[K, V]) {
 	if len(f.incompleteMetas) > 0 {
-		if err := r.doFlush(ctx, f.incompleteMetas[0]); err != nil {
+		lastIdx := len(f.incompleteMetas) - 1
+		if err := r.doFlush(ctx, f.incompleteMetas[lastIdx]); err != nil {
 			log.Warn("failed to flush checkpoint data", zap.Error(err))
 			return
 		}
-		f.incompleteMetas = f.incompleteMetas[1:]
+		f.incompleteMetas = f.incompleteMetas[:lastIdx]
 	} else if len(f.incompleteChecksums) > 0 {
-		if err := r.doChecksumFlush(ctx, f.incompleteChecksums[0]); err != nil {
+		lastIdx := len(f.incompleteChecksums) - 1
+		if err := r.doChecksumFlush(ctx, f.incompleteChecksums[lastIdx]); err != nil {
 			log.Warn("failed to flush checkpoint data", zap.Error(err))
 			return
 		}
-		f.incompleteChecksums = f.incompleteChecksums[1:]
+		f.incompleteChecksums = f.incompleteChecksums[:lastIdx]
 	}
 }
 
