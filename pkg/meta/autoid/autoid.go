@@ -875,7 +875,7 @@ func SeekToFirstAutoIDUnSigned(base, increment, offset uint64) uint64 {
 	return nr
 }
 
-func (alloc *allocator) alloc4Signed(ctx context.Context, n uint64, increment, offset int64) (mini, maxv int64, err error) {
+func (alloc *allocator) alloc4Signed(ctx context.Context, n uint64, increment, offset int64) (minv, maxv int64, err error) {
 	// Check offset rebase if necessary.
 	if offset-1 > alloc.base {
 		if err := alloc.rebase4Signed(ctx, offset-1, true); err != nil {
@@ -958,12 +958,12 @@ func (alloc *allocator) alloc4Signed(ctx context.Context, n uint64, increment, o
 			zap.Int64("table ID", alloc.tbID),
 			zap.Int64("database ID", alloc.dbID))
 	}
-	mini = alloc.base
+	minv = alloc.base
 	alloc.base += n1
-	return mini, alloc.base, nil
+	return minv, alloc.base, nil
 }
 
-func (alloc *allocator) alloc4Unsigned(ctx context.Context, n uint64, increment, offset int64) (mini int64, maxv int64, err error) {
+func (alloc *allocator) alloc4Unsigned(ctx context.Context, n uint64, increment, offset int64) (minv int64, maxv int64, err error) {
 	// Check offset rebase if necessary.
 	if uint64(offset-1) > uint64(alloc.base) {
 		if err := alloc.rebase4Unsigned(ctx, uint64(offset-1), true); err != nil {
@@ -1049,10 +1049,10 @@ func (alloc *allocator) alloc4Unsigned(ctx context.Context, n uint64, increment,
 		zap.Uint64("to ID", uint64(alloc.base+n1)),
 		zap.Int64("table ID", alloc.tbID),
 		zap.Int64("database ID", alloc.dbID))
-	mini = alloc.base
+	minv = alloc.base
 	// Use uint64 n directly.
 	alloc.base = int64(uint64(alloc.base) + uint64(n1))
-	return mini, alloc.base, nil
+	return minv, alloc.base, nil
 }
 
 func getAllocatorStatsFromCtx(ctx context.Context) (context.Context, *AllocatorRuntimeStats, **tikvutil.CommitDetails) {
