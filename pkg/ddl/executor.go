@@ -4019,8 +4019,9 @@ func (e *executor) RenameIndex(ctx sessionctx.Context, ident ast.Ident, spec *as
 		return errors.Trace(err)
 	}
 
+	// TODO(joechenrh): Switch job version after refactor done.
 	job := &model.Job{
-		Version:        model.GetJobVerInUse(),
+		Version:        model.JobVersion1,
 		SchemaID:       schema.ID,
 		TableID:        tb.Meta().ID,
 		SchemaName:     schema.Name.L,
@@ -4035,6 +4036,7 @@ func (e *executor) RenameIndex(ctx sessionctx.Context, ident ast.Ident, spec *as
 		From: spec.FromKey,
 		To:   spec.ToKey,
 	}
+	job.FillArgs(args)
 	err = e.doDDLJob2(ctx, job, args)
 	return errors.Trace(err)
 }
@@ -4895,6 +4897,7 @@ func (e *executor) createIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast
 	if err != nil {
 		return errors.Trace(err)
 	}
+	// TODO(joechenrh): Switch job version after refactor done.
 	job.Version = model.JobVersion1
 	job.Type = model.ActionAddIndex
 	job.CDCWriteSource = ctx.GetSessionVars().CDCWriteSource
@@ -5245,6 +5248,7 @@ func (e *executor) dropIndex(ctx sessionctx.Context, ti ast.Ident, indexName pmo
 		jobTp = model.ActionDropPrimaryKey
 	}
 
+	// TODO(joechenrh): Switch job version after refactor done.
 	job := &model.Job{
 		Version:        model.JobVersion1,
 		SchemaID:       schema.ID,

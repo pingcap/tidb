@@ -536,7 +536,8 @@ func (job *Job) Encode(updateRawArgs bool) ([]byte, error) {
 					continue
 				}
 
-				sub.RawArgs, err = marshalArgs(job.Version, sub.Args)
+				// TODO(joechenrh): Use version of parent job after refactor done.
+				sub.RawArgs, err = marshalArgs(JobVersion1, sub.Args)
 				if err != nil {
 					return nil, errors.Trace(err)
 				}
