@@ -159,8 +159,7 @@ func checkCompressionAndEncryption(dir string, encryptionArg string) bool {
 }
 
 func isZstdCompressed(filePath string) (bool, error) {
-	cleanedPath := filepath.Clean(filePath)
-	file, err := os.Open(cleanedPath)
+	file, err := os.OpenFile(filePath, os.O_RDONLY, 0)
 	if err != nil {
 		return false, err
 	}
@@ -182,8 +181,7 @@ func isZstdCompressed(filePath string) (bool, error) {
 }
 
 func isLikelySSTFile(filePath string) (bool, error) {
-	cleanedPath := filepath.Clean(filePath)
-	file, err := os.Open(cleanedPath)
+	file, err := os.OpenFile(filePath, os.O_RDONLY, 0)
 	if err != nil {
 		return false, err
 	}
