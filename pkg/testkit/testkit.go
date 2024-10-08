@@ -35,7 +35,9 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
+	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/session"
 	sessiontypes "github.com/pingcap/tidb/pkg/session/types"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
@@ -46,14 +48,12 @@ import (
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/metricsutil"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
-	"github.com/pingcap/tipb/go-binlog"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/tikvrpc"
 	"go.uber.org/atomic"
-	"google.golang.org/grpc"
 )
 
 var testKitIDGenerator atomic.Uint64
@@ -405,6 +405,8 @@ func (tk *TestKit) Exec(sql string, args ...any) (sqlexec.RecordSet, error) {
 // ExecWithContext executes a sql statement using the prepared stmt API
 func (tk *TestKit) ExecWithContext(ctx context.Context, sql string, args ...any) (rs sqlexec.RecordSet, err error) {
 	defer tk.Session().GetSessionVars().ClearAlloc(&tk.alloc, err != nil)
+
+	cursorExists := tk.Session().GetSessionVars().HasStatusFlag(mysql.ServerStatusCursorExists)
 	if len(args) == 0 {
 		sc := tk.session.GetSessionVars().StmtCtx
 		prevWarns := sc.GetWarnings()
@@ -418,7 +420,11 @@ func (tk *TestKit) ExecWithContext(ctx context.Context, sql string, args ...any)
 		}
 		warns := sc.GetWarnings()
 		parserWarns := warns[len(prevWarns):]
-		tk.Session().GetSessionVars().SetAlloc(tk.alloc)
+		if !cursorExists {
+			// When the cursor exists, do not use alloc pool to disable chunk reuses because multiple statements may
+			// exist in a session at the same time.
+			tk.Session().GetSessionVars().SetAlloc(tk.alloc)
+		}
 		var rs0 sqlexec.RecordSet
 		for i, stmt := range stmts {
 			var rs sqlexec.RecordSet
@@ -458,7 +464,11 @@ func (tk *TestKit) ExecWithContext(ctx context.Context, sql string, args ...any)
 		return nil, errors.Trace(err)
 	}
 	params := expression.Args2Expressions4Test(args...)
-	tk.Session().GetSessionVars().SetAlloc(tk.alloc)
+	if !cursorExists {
+		// When the cursor exists, do not use alloc pool to disable chunk reuses because multiple statements may
+		// exist in a session at the same time.
+		tk.Session().GetSessionVars().SetAlloc(tk.alloc)
+	}
 	rs, err = tk.session.ExecutePreparedStmt(ctx, stmtID, params)
 	if err != nil {
 		return rs, errors.Trace(err)
@@ -671,23 +681,10 @@ func (c *RegionProperityClient) SendRequest(ctx context.Context, addr string, re
 	return c.Client.SendRequest(ctx, addr, req, timeout)
 }
 
-// MockPumpClient is a mock pump client.
-type MockPumpClient struct{}
-
-// WriteBinlog is a mock method.
-func (m MockPumpClient) WriteBinlog(ctx context.Context, in *binlog.WriteBinlogReq, opts ...grpc.CallOption) (*binlog.WriteBinlogResp, error) {
-	return &binlog.WriteBinlogResp{}, nil
-}
-
-// PullBinlogs is a mock method.
-func (m MockPumpClient) PullBinlogs(ctx context.Context, in *binlog.PullBinlogReq, opts ...grpc.CallOption) (binlog.Pump_PullBinlogsClient, error) {
-	return nil, nil
-}
-
 var _ sqlexec.RecordSet = &rowsRecordSet{}
 
 type rowsRecordSet struct {
-	fields []*ast.ResultField
+	fields []*resolve.ResultField
 	rows   []chunk.Row
 
 	idx int
@@ -696,7 +693,7 @@ type rowsRecordSet struct {
 	err error
 }
 
-func (r *rowsRecordSet) Fields() []*ast.ResultField {
+func (r *rowsRecordSet) Fields() []*resolve.ResultField {
 	return r.fields
 }
 

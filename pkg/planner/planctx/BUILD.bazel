@@ -1,0 +1,34 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "planctx",
+    srcs = ["context.go"],
+    importpath = "github.com/pingcap/tidb/pkg/planner/planctx",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/expression/exprctx",
+        "//pkg/infoschema/context",
+        "//pkg/kv",
+        "//pkg/lock/context",
+        "//pkg/meta/model",
+        "//pkg/sessionctx/variable",
+        "//pkg/util",
+        "//pkg/util/context",
+        "//pkg/util/ranger/context",
+        "//pkg/util/sqlexec",
+    ],
+)
+
+go_test(
+    name = "planctx_test",
+    timeout = "short",
+    srcs = ["context_test.go"],
+    embed = [":planctx"],
+    flaky = True,
+    deps = [
+        "//pkg/expression/exprstatic",
+        "//pkg/util/context",
+        "//pkg/util/deeptest",
+        "@com_github_stretchr_testify//require",
+    ],
+)

@@ -17,6 +17,7 @@ package executor
 import (
 	"cmp"
 	"context"
+	"encoding/json"
 	stderrors "errors"
 	"fmt"
 	"math"
@@ -47,15 +48,16 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/auth"
-	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
-	planctx "github.com/pingcap/tidb/pkg/planner/context"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
+	"github.com/pingcap/tidb/pkg/planner/indexadvisor"
+	"github.com/pingcap/tidb/pkg/planner/planctx"
 	plannerutil "github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/fixcontrol"
 	"github.com/pingcap/tidb/pkg/privilege"
@@ -81,7 +83,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/logutil/consistency"
 	"github.com/pingcap/tidb/pkg/util/memory"
-	"github.com/pingcap/tidb/pkg/util/resourcegrouptag"
+	"github.com/pingcap/tidb/pkg/util/set"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/pingcap/tidb/pkg/util/syncutil"
 	"github.com/pingcap/tidb/pkg/util/topsql"
@@ -223,19 +225,19 @@ type CommandDDLJobsExec struct {
 	jobIDs []int64
 	errs   []error
 
-	execute func(se sessionctx.Context, ids []int64) (errs []error, err error)
+	execute func(ctx context.Context, se sessionctx.Context, ids []int64) (errs []error, err error)
 }
 
 // Open implements the Executor for all Cancel/Pause/Resume command on DDL jobs
 // just with different processes. And, it should not be called directly by the
 // Executor.
-func (e *CommandDDLJobsExec) Open(context.Context) error {
+func (e *CommandDDLJobsExec) Open(ctx context.Context) error {
 	// We want to use a global transaction to execute the admin command, so we don't use e.Ctx() here.
 	newSess, err := e.GetSysSession()
 	if err != nil {
 		return err
 	}
-	e.errs, err = e.execute(newSess, e.jobIDs)
+	e.errs, err = e.execute(ctx, newSess, e.jobIDs)
 	e.ReleaseSysSession(kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL), newSess)
 	return err
 }
@@ -410,19 +412,57 @@ type DDLJobRetriever struct {
 	activeRoles    []*auth.RoleIdentity
 	cacheJobs      []*model.Job
 	TZLoc          *time.Location
+	extractor      base.MemTablePredicateExtractor
 }
 
 func (e *DDLJobRetriever) initial(txn kv.Transaction, sess sessionctx.Context) error {
-	m := meta.NewMeta(txn)
-	jobs, err := ddl.GetAllDDLJobs(sess)
-	if err != nil {
-		return err
+	skipRunningJobs := false
+	skipHistoryJobs := false
+	schemaNames := set.NewStringSet()
+	tableNames := set.NewStringSet()
+
+	ex, ok := e.extractor.(*plannercore.InfoSchemaDDLExtractor)
+	if ok {
+		// Using state to determine whether we can skip checking running/history ddl jobs
+		if states, ok := ex.ColPredicates["state"]; ok {
+			skipHistoryJobs = true
+			skipRunningJobs = true
+			states.IterateWith(func(s string) {
+				ss := strings.ToLower(s)
+				if ss == "cancelled" || ss == "synced" {
+					skipHistoryJobs = false
+				} else {
+					skipRunningJobs = false
+				}
+			})
+		}
+
+		schemaNames = ex.ColPredicates["db_name"]
+		tableNames = ex.ColPredicates["table_name"]
 	}
-	e.historyJobIter, err = ddl.GetLastHistoryDDLJobsIterator(m)
-	if err != nil {
-		return err
+
+	var err error
+
+	if !skipRunningJobs {
+		// We cannot use table_id and schema_id to construct predicates for the tidb_ddl_job table.
+		// For instance, in the case of the SQL like `create table t(id int)`,
+		// the tableInfo for 't' will not be available in the infoschema until the job is completed.
+		// As a result, we cannot retrieve its table_id.
+		e.runningJobs, err = ddl.GetAllDDLJobs(context.Background(), sess)
+		if err != nil {
+			return err
+		}
 	}
-	e.runningJobs = jobs
+
+	if !skipHistoryJobs {
+		// For the similar reason, we can only use schema_name and table_name to do filtering here.
+		m := meta.NewMutator(txn)
+		e.historyJobIter, err = m.GetLastHistoryDDLJobsIteratorWithFilter(schemaNames, tableNames)
+		if err != nil {
+			return err
+		}
+	}
+
 	e.cursor = 0
 	return nil
 }
@@ -599,8 +639,8 @@ func (e *ShowDDLJobQueriesExec) Open(ctx context.Context) error {
 	}
 	session.GetSessionVars().SetInTxn(true)
 
-	m := meta.NewMeta(txn)
-	jobs, err = ddl.GetAllDDLJobs(session)
+	m := meta.NewMutator(txn)
+	jobs, err = ddl.GetAllDDLJobs(ctx, session)
 	if err != nil {
 		return err
 	}
@@ -687,8 +727,8 @@ func (e *ShowDDLJobQueriesWithRangeExec) Open(ctx context.Context) error {
 	}
 	session.GetSessionVars().SetInTxn(true)
 
-	m := meta.NewMeta(txn)
-	jobs, err = ddl.GetAllDDLJobs(session)
+	m := meta.NewMutator(txn)
+	jobs, err = ddl.GetAllDDLJobs(ctx, session)
 	if err != nil {
 		return err
 	}
@@ -790,7 +830,7 @@ func (e *ShowDDLJobsExec) Next(_ context.Context, req *chunk.Chunk) error {
 
 	// Append history ddl jobs.
 	var err error
-	if count < req.Capacity() {
+	if count < req.Capacity() && e.historyJobIter != nil {
 		num := req.Capacity() - count
 		remainNum := e.jobNumber - (e.cursor - len(e.runningJobs))
 		num = min(num, remainNum)
@@ -927,7 +967,7 @@ func (e *CheckTableExec) Next(ctx context.Context, _ *chunk.Chunk) error {
 
 	idxNames := make([]string, 0, len(e.indexInfos))
 	for _, idx := range e.indexInfos {
-		if idx.MVIndex {
+		if idx.MVIndex || idx.VectorInfo != nil {
 			continue
 		}
 		idxNames = append(idxNames, idx.Name.O)
@@ -1221,13 +1261,16 @@ func newLockCtx(sctx sessionctx.Context, lockWaitTime int64, numKeys int) (*tikv
 			return nil
 		}
 		if mutation := req.Mutations[0]; mutation != nil {
-			label := resourcegrouptag.GetResourceGroupLabelByKey(mutation.Key)
 			normalized, digest := seVars.StmtCtx.SQLDigest()
 			if len(normalized) == 0 {
 				return nil
 			}
 			_, planDigest := seVars.StmtCtx.GetPlanDigest()
-			return resourcegrouptag.EncodeResourceGroupTag(digest, planDigest, label)
+
+			return kv.NewResourceGroupTagBuilder().
+				SetPlanDigest(planDigest).
+				SetSQLDigest(digest).
+				EncodeTagWithKey(mutation.Key)
 		}
 		return nil
 	}
@@ -2670,7 +2713,7 @@ func (e *AdminShowBDRRoleExec) Next(ctx context.Context, req *chunk.Chunk) error
 	}
 
 	return kv.RunInNewTxn(kv.WithInternalSourceType(ctx, kv.InternalTxnAdmin), e.Ctx().GetStore(), true, func(_ context.Context, txn kv.Transaction) error {
-		role, err := meta.NewMeta(txn).GetBDRRole()
+		role, err := meta.NewMutator(txn).GetBDRRole()
 		if err != nil {
 			return err
 		}
@@ -2679,4 +2722,81 @@ func (e *AdminShowBDRRoleExec) Next(ctx context.Context, req *chunk.Chunk) error
 		e.done = true
 		return nil
 	})
+}
+
+// RecommendIndexExec represents a recommend index executor.
+type RecommendIndexExec struct {
+	exec.BaseExecutor
+
+	Action   string
+	SQL      string
+	AdviseID int64
+	Options  []ast.RecommendIndexOption
+	done     bool
+}
+
+// Next implements the Executor Next interface.
+func (e *RecommendIndexExec) Next(ctx context.Context, req *chunk.Chunk) error {
+	req.Reset()
+	if e.done {
+		return nil
+	}
+	e.done = true
+
+	if e.Action == "set" {
+		return indexadvisor.SetOptions(e.Ctx(), e.Options...)
+	}
+	if e.Action == "show" {
+		return e.showOptions(req)
+	}
+
+	if e.Action != "run" {
+		return fmt.Errorf("unsupported action: %s", e.Action)
+	}
+
+	var sqls []string
+	if e.SQL != "" {
+		tmp := strings.Split(e.SQL, ";")
+		for _, s := range tmp {
+			s = strings.TrimSpace(s)
+			if s != "" {
+				sqls = append(sqls, s)
+			}
+		}
+		if len(sqls) == 0 {
+			return errors.New("empty SQLs")
+		}
+	}
+	results, err := indexadvisor.AdviseIndexes(ctx, e.Ctx(), sqls, e.Options)
+
+	for _, r := range results {
+		req.AppendString(0, r.Database)
+		req.AppendString(1, r.Table)
+		req.AppendString(2, r.IndexName)
+		req.AppendString(3, strings.Join(r.IndexColumns, ","))
+		req.AppendString(4, fmt.Sprintf("%v", r.IndexDetail.IndexSize))
+		req.AppendString(5, r.IndexDetail.Reason)
+
+		jData, err := json.Marshal(r.TopImpactedQueries)
+		if err != nil {
+			return err
+		}
+		req.AppendString(6, string(jData))
+	}
+	return err
+}
+
+func (e *RecommendIndexExec) showOptions(req *chunk.Chunk) error {
+	vals, desc, err := indexadvisor.GetOptions(e.Ctx(), indexadvisor.AllOptions...)
+	if err != nil {
+		return err
+	}
+	for _, opt := range indexadvisor.AllOptions {
+		if v, ok := vals[opt]; ok {
+			req.AppendString(0, opt)
+			req.AppendString(1, v)
+			req.AppendString(2, desc[opt])
+		}
+	}
+	return nil
 }

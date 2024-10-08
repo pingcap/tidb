@@ -110,35 +110,6 @@ func TestCheckLogRange(t *testing.T) {
 	}
 }
 
-type fakeResolvedInfo struct {
-	storeID    int64
-	resolvedTS uint64
-}
-
-func fakeMetaFiles(ctx context.Context, tempDir string, infos []fakeResolvedInfo) error {
-	backupMetaDir := filepath.Join(tempDir, stream.GetStreamBackupMetaPrefix())
-	s, err := storage.NewLocalStorage(backupMetaDir)
-	if err != nil {
-		return errors.Trace(err)
-	}
-
-	for _, info := range infos {
-		meta := &backuppb.Metadata{
-			StoreId:    info.storeID,
-			ResolvedTs: info.resolvedTS,
-		}
-		buff, err := meta.Marshal()
-		if err != nil {
-			return errors.Trace(err)
-		}
-		filename := fmt.Sprintf("%d_%d.meta", info.storeID, info.resolvedTS)
-		if err = s.WriteFile(ctx, filename, buff); err != nil {
-			return errors.Trace(err)
-		}
-	}
-	return nil
-}
-
 func fakeCheckpointFiles(
 	ctx context.Context,
 	tmpDir string,
@@ -154,7 +125,7 @@ func fakeCheckpointFiles(
 	for _, info := range infos {
 		filename := fmt.Sprintf("%v.ts", info.storeID)
 		buff := make([]byte, 8)
-		binary.LittleEndian.PutUint64(buff, info.global_checkpoint)
+		binary.LittleEndian.PutUint64(buff, info.globalCheckpoint)
 		if _, err := s.Create(ctx, filename, nil); err != nil {
 			return errors.Trace(err)
 		}
@@ -170,8 +141,8 @@ func fakeCheckpointFiles(
 }
 
 type fakeGlobalCheckPoint struct {
-	storeID           int64
-	global_checkpoint uint64
+	storeID          int64
+	globalCheckpoint uint64
 }
 
 func TestGetGlobalCheckpointFromStorage(t *testing.T) {
@@ -182,16 +153,16 @@ func TestGetGlobalCheckpointFromStorage(t *testing.T) {
 
 	infos := []fakeGlobalCheckPoint{
 		{
-			storeID:           1,
-			global_checkpoint: 98,
+			storeID:          1,
+			globalCheckpoint: 98,
 		},
 		{
-			storeID:           2,
-			global_checkpoint: 90,
+			storeID:          2,
+			globalCheckpoint: 90,
 		},
 		{
-			storeID:           2,
-			global_checkpoint: 99,
+			storeID:          2,
+			globalCheckpoint: 99,
 		},
 	}
 

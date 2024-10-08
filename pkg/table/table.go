@@ -22,15 +22,17 @@ import (
 	"context"
 	"time"
 
+	"github.com/bits-and-blooms/bitset"
 	mysql "github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/expression"
-	exprctx "github.com/pingcap/tidb/pkg/expression/context"
+	"github.com/pingcap/tidb/pkg/expression/exprctx"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
-	tbctx "github.com/pingcap/tidb/pkg/table/context"
+	"github.com/pingcap/tidb/pkg/table/tblctx"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
@@ -213,6 +215,90 @@ type UpdateRecordOption interface {
 	applyUpdateRecordOpt(*UpdateRecordOpt)
 }
 
+// RemoveRecordOpt contains the options will be used when removing a record.
+type RemoveRecordOpt struct {
+	indexesLayoutOffset IndexesLayout
+	columnSize          *ColumnsSizeHelper
+}
+
+// HasIndexesLayout returns whether the RemoveRecordOpt has indexes layout.
+func (opt *RemoveRecordOpt) HasIndexesLayout() bool {
+	return opt.indexesLayoutOffset != nil
+}
+
+// GetIndexesLayout returns the IndexesLayout of the RemoveRecordOpt.
+func (opt *RemoveRecordOpt) GetIndexesLayout() IndexesLayout {
+	return opt.indexesLayoutOffset
+}
+
+// GetIndexLayout returns the IndexRowLayoutOption for the specified index.
+func (opt *RemoveRecordOpt) GetIndexLayout(indexID int64) IndexRowLayoutOption {
+	return opt.indexesLayoutOffset[indexID]
+}
+
+// GetColumnSizeOpt returns the ColumnSizeOption of the RemoveRecordOpt.
+func (opt *RemoveRecordOpt) GetColumnSizeOpt() *ColumnsSizeHelper {
+	return opt.columnSize
+}
+
+// NewRemoveRecordOpt creates a new RemoveRecordOpt with options.
+func NewRemoveRecordOpt(opts ...RemoveRecordOption) *RemoveRecordOpt {
+	opt := &RemoveRecordOpt{}
+	for _, o := range opts {
+		o.applyRemoveRecordOpt(opt)
+	}
+	return opt
+}
+
+// RemoveRecordOption is defined for the RemoveRecord() method of the Table interface.
+type RemoveRecordOption interface {
+	applyRemoveRecordOpt(*RemoveRecordOpt)
+}
+
+// ExtraPartialRowOption is the combined one of IndexesLayout and ColumnSizeOption.
+type ExtraPartialRowOption struct {
+	IndexesRowLayout  IndexesLayout
+	ColumnsSizeHelper *ColumnsSizeHelper
+}
+
+func (e *ExtraPartialRowOption) applyRemoveRecordOpt(opt *RemoveRecordOpt) {
+	opt.indexesLayoutOffset = e.IndexesRowLayout
+	opt.columnSize = e.ColumnsSizeHelper
+}
+
+// IndexRowLayoutOption is the option for index row layout.
+// It is used to specify the order of the index columns in the row.
+type IndexRowLayoutOption []int
+
+// IndexesLayout is used to specify the layout of the indexes.
+// It's mapping from index ID to the layout of the index.
+type IndexesLayout map[int64]IndexRowLayoutOption
+
+// GetIndexLayout returns the layout of the specified index.
+func (idx IndexesLayout) GetIndexLayout(idxID int64) IndexRowLayoutOption {
+	if idx == nil {
+		return nil
+	}
+	return idx[idxID]
+}
+
+// ColumnsSizeHelper records the column size information.
+// We're updating the total column size and total row size used in table statistics when doing DML.
+// If the column is pruned when doing DML, we can't get the accurate size of the column. So we need the estimated avg size.
+//   - If the column is not pruned, we can calculate its acurate size by the real data.
+//   - Otherwise, we use the estimated avg size given by table statistics and field type information.
+type ColumnsSizeHelper struct {
+	// NotPruned is a bitset to record the columns that are not pruned.
+	// The ith bit is 1 means the ith public column is not pruned.
+	NotPruned *bitset.BitSet
+	// If the column is pruned, we use the estimated avg size. They are stored by their ordinal in the table.
+	// The ith element is the estimated size of the ith pruned public column.
+	AvgSizes []float64
+	// If the column is not pruned, we use the accurate size. They are stored by their ordinal in the pruned row.
+	// The ith element is the position of the ith public column in the pruned row.
+	PublicColsLayout []int
+}
+
 // CommonMutateOptFunc is a function to provide common options for mutating a table.
 type CommonMutateOptFunc func(*commonMutateOpt)
 
@@ -354,10 +440,10 @@ type columnAPI interface {
 }
 
 // MutateContext is used to when mutating a table.
-type MutateContext = tbctx.MutateContext
+type MutateContext = tblctx.MutateContext
 
 // AllocatorContext is used to provide context for method `table.Allocators`.
-type AllocatorContext = tbctx.AllocatorContext
+type AllocatorContext = tblctx.AllocatorContext
 
 // Table is used to retrieve and modify rows in table.
 type Table interface {
@@ -366,6 +452,7 @@ type Table interface {
 	// Indices returns the indices of the table.
 	// The caller must be aware of that not all the returned indices are public.
 	Indices() []Index
+	DeletableIndices() []Index
 
 	// WritableConstraint returns constraints of the table in writable states.
 	WritableConstraint() []*Constraint
@@ -382,7 +469,7 @@ type Table interface {
 	UpdateRecord(ctx MutateContext, txn kv.Transaction, h kv.Handle, currData, newData []types.Datum, touched []bool, opts ...UpdateRecordOption) error
 
 	// RemoveRecord removes a row in the table.
-	RemoveRecord(ctx MutateContext, txn kv.Transaction, h kv.Handle, r []types.Datum) error
+	RemoveRecord(ctx MutateContext, txn kv.Transaction, h kv.Handle, r []types.Datum, opts ...RemoveRecordOption) error
 
 	// Allocators returns all allocators.
 	Allocators(ctx AllocatorContext) autoid.Allocators
@@ -454,7 +541,7 @@ type PartitionedTable interface {
 	GetPartitionIdxByRow(expression.EvalContext, []types.Datum) (int, error)
 	GetAllPartitionIDs() []int64
 	GetPartitionColumnIDs() []int64
-	GetPartitionColumnNames() []model.CIStr
+	GetPartitionColumnNames() []pmodel.CIStr
 	CheckForExchangePartition(ctx expression.EvalContext, pi *model.PartitionInfo, r []types.Datum, partID, ntID int64) error
 }
 

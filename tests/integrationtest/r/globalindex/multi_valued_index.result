@@ -1,4 +1,3 @@
-set tidb_enable_global_index = true;
 CREATE TABLE `customers` (
 `id` bigint(20),
 `name` char(10) DEFAULT NULL,

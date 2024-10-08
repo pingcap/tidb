@@ -377,19 +377,13 @@ func (p *ParallelAggSpillDiskAction) Action(t *memory.Tracker) {
 		return
 	}
 
-	p.triggerFallBackAction(t)
+	p.TriggerFallBackAction(t)
 }
 
 // Return true if we successfully set flag
 func (p *ParallelAggSpillDiskAction) actionImpl(t *memory.Tracker) bool {
 	p.spillHelper.waitForTheEndOfSpill()
 	return p.spillHelper.setNeedSpill(p.e.memTracker, t)
-}
-
-func (p *ParallelAggSpillDiskAction) triggerFallBackAction(t *memory.Tracker) {
-	if fallback := p.GetFallback(); fallback != nil {
-		fallback.Action(t)
-	}
 }
 
 // GetPriority get the priority of the Action
