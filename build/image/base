@@ -74,7 +74,7 @@ ENV PATH=$PATH:/opt/apache-maven-${MAVEN_VER}/bin
 #### install tools: bazelisk, codecov, oras
 # renovate: datasource=github-tags depName=bazelbuild/bazelisk
 ADD https://github.com/bazelbuild/bazel/releases/download/6.5.0/bazel-6.5.0-linux-x86_64 /usr/bin/bazel
-chmod u+x /usr/bin/bazel
+RUN chmod u+x /usr/bin/bazel
 
 # codecov tool
 # renovate: datasource=github-tags depName=codecov/uploader
