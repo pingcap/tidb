@@ -1056,6 +1056,7 @@ func fixTopNForANNIndex(p *PhysicalTopN) bool {
 		DistanceMetric: tipb.VectorDistanceMetric(distanceMetricPB),
 		TopK:           uint32(p.Count),
 		ColumnName:     col.Name.L,
+		ColumnId:       col.ID,
 		RefVecF32:      vs.Vec.SerializeTo(nil),
 		IndexId:        int64(ts.AnnIndexExtra.IndexInfo.ID),
 	}
