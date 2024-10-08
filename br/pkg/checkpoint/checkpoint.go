@@ -334,17 +334,18 @@ func (f *flusher[K, V]) doChecksumFlush(ctx context.Context, r *CheckpointRunner
 }
 
 func (f *flusher[K, V]) flushOneIncomplete(ctx context.Context, r *CheckpointRunner[K, V]) {
+	// retry the last item to avoid frequent changes to the slice capacity
 	if len(f.incompleteMetas) > 0 {
 		lastIdx := len(f.incompleteMetas) - 1
 		if err := r.doFlush(ctx, f.incompleteMetas[lastIdx]); err != nil {
-			log.Warn("failed to flush checkpoint data", zap.Error(err))
+			log.Warn("failed to retry to flush checkpoint data", zap.Error(err))
 			return
 		}
 		f.incompleteMetas = f.incompleteMetas[:lastIdx]
 	} else if len(f.incompleteChecksums) > 0 {
 		lastIdx := len(f.incompleteChecksums) - 1
 		if err := r.doChecksumFlush(ctx, f.incompleteChecksums[lastIdx]); err != nil {
-			log.Warn("failed to flush checkpoint data", zap.Error(err))
+			log.Warn("failed to retry to flush checkpoint data", zap.Error(err))
 			return
 		}
 		f.incompleteChecksums = f.incompleteChecksums[:lastIdx]
@@ -354,7 +355,7 @@ func (f *flusher[K, V]) flushOneIncomplete(ctx context.Context, r *CheckpointRun
 func (f *flusher[K, V]) flushAllIncompleteMeta(ctx context.Context, r *CheckpointRunner[K, V]) {
 	for _, meta := range f.incompleteMetas {
 		if err := r.doFlush(ctx, meta); err != nil {
-			log.Warn("failed to flush checkpoint data", zap.Error(err))
+			log.Warn("failed to retry to flush checkpoint data", zap.Error(err))
 		}
 	}
 }
@@ -362,7 +363,7 @@ func (f *flusher[K, V]) flushAllIncompleteMeta(ctx context.Context, r *Checkpoin
 func (f *flusher[K, V]) flushAllIncompleteChecksum(ctx context.Context, r *CheckpointRunner[K, V]) {
 	for _, checksums := range f.incompleteChecksums {
 		if err := r.doChecksumFlush(ctx, checksums); err != nil {
-			log.Warn("failed to flush checkpoint checksum", zap.Error(err))
+			log.Warn("failed to retry to flush checkpoint checksum", zap.Error(err))
 		}
 	}
 }
