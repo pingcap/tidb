@@ -93,7 +93,7 @@ func getOrDecodeArgs[T JobArgs](args T, job *Job) (T, error) {
 
 // JobArgs is the interface for job arguments.
 type JobArgs interface {
-	// getArgsV1 fills the job args v1 for submitting job. we make it private to
+	// getArgsV1 gets the job args v1 from submitting job. we make it private to
 	// avoid calling it directly, use Job.FillArgs to fill the job args.
 	getArgsV1(job *Job) []any
 	decodeV1(job *Job) error
