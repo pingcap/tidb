@@ -366,7 +366,11 @@ func (f *flusher[K, V]) flushAllIncompleteChecksum(ctx context.Context, r *Check
 }
 
 // start a goroutine to flush the meta, which is sent from `checkpoint looper`, to the external storage
-func (r *CheckpointRunner[K, V]) startCheckpointFlushLoop(ctx context.Context, wg *sync.WaitGroup, retryDuration time.Duration) chan error {
+func (r *CheckpointRunner[K, V]) startCheckpointFlushLoop(
+	ctx context.Context,
+	wg *sync.WaitGroup,
+	retryDuration time.Duration,
+) chan error {
 	errCh := make(chan error, 1)
 	wg.Add(1)
 	flushWorker := func(ctx context.Context, errCh chan error) {

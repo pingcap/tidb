@@ -65,7 +65,9 @@ func StartCheckpointRunnerForRestore(
 		nil, valueMarshalerForRestore)
 
 	// for restore, no need to set lock
-	runner.startCheckpointMainLoop(ctx, defaultTickDurationForFlush, defaultTickDurationForChecksum, 0, defaultRetryDuration)
+	runner.startCheckpointMainLoop(
+		ctx,
+		defaultTickDurationForFlush, defaultTickDurationForChecksum, 0, defaultRetryDuration)
 	return runner, nil
 }
 
