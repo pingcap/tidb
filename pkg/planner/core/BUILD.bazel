@@ -267,6 +267,7 @@ go_test(
     deps = [
         "//pkg/config",
         "//pkg/domain",
+        "//pkg/domain/infosync",
         "//pkg/expression",
         "//pkg/expression/aggregation",
         "//pkg/expression/exprctx",
