@@ -20,6 +20,7 @@ import (
 
 	"github.com/panjf2000/ants/v2"
 	"github.com/pingcap/tidb/pkg/util/cpu"
+	// black import, just to avoid too much change during experiments.
 	_ "github.com/tiancaiamao/gp"
 )
 
@@ -39,14 +40,17 @@ type GPool struct {
 	gp *ants.Pool
 }
 
+// AntPool wraps ants.Pool to implement Pool interface.
 type AntPool struct {
 	*ants.Pool
 }
 
+// Go submits a task to the pool.
 func (p *AntPool) Go(fn func()) {
-	p.Submit(fn)
+	_ = p.Submit(fn)
 }
 
+// Close closes the pool.
 func (p *AntPool) Close() {
 	p.Release()
 }
@@ -54,7 +58,7 @@ func (p *AntPool) Close() {
 // NewGPool creates a new goroutine pool.
 func NewGPool() Pool {
 	_, supportCPUUsage := cpu.GetCPUUsage()
-	//gpool := gp.New(PoolCapacityPerCore*runtime.NumCPU(), PoolRecycleInterval)
+	// gpool := gp.New(PoolCapacityPerCore*runtime.NumCPU(), PoolRecycleInterval)
 	gpool, err := ants.NewPool(PoolCapacityPerCore*runtime.NumCPU(), ants.WithExpiryDuration(PoolRecycleInterval))
 	if err != nil {
 		panic(err)
@@ -71,7 +75,7 @@ func (p *GPool) Go(fn func()) {
 		go fn()
 		return
 	}
-	p.gp.Submit(fn)
+	_ = p.gp.Submit(fn)
 }
 
 // Close closes the goroutine pool.
