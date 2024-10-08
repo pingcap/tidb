@@ -1076,11 +1076,12 @@ func getPathByIndexName(paths []*util.AccessPath, idxName pmodel.CIStr, tblInfo 
 	var primaryIdxPath, indexPrefixPath *util.AccessPath
 	prefixMatches := 0
 	for _, path := range paths {
-		if path.StoreType == kv.TiFlash {
+		if path.IsTiKVTablePath() {
+			primaryIdxPath = path
 			continue
 		}
-		if path.IsTablePath() {
-			primaryIdxPath = path
+		// If it's not a tikv table path and the index is nil, it could not be any index path.
+		if path.Index == nil {
 			continue
 		}
 		if path.Index.Name.L == idxName.L {
@@ -1193,7 +1194,11 @@ func getPossibleAccessPaths(ctx base.PlanContext, tableHints *hint.PlanHints, in
 					continue
 				}
 			}
-			publicPaths = append(publicPaths, &util.AccessPath{Index: index})
+			path := &util.AccessPath{Index: index}
+			if index.VectorInfo != nil {
+				path.StoreType = kv.TiFlash
+			}
+			publicPaths = append(publicPaths, path)
 		}
 	}
 

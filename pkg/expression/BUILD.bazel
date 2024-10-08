@@ -68,6 +68,7 @@ go_library(
         "simple_rewriter.go",
         "util.go",
         "vectorized.go",
+        "vs_helper.go",
     ],
     importpath = "github.com/pingcap/tidb/pkg/expression",
     visibility = ["//visibility:public"],

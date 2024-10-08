@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/expression/aggregation"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -38,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/paging"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
+	"github.com/pingcap/tipb/go-tipb"
 	"go.uber.org/zap"
 )
 
@@ -990,6 +992,9 @@ func (p *PhysicalTopN) Attach2Task(tasks ...base.Task) base.Task {
 	} else if mppTask, ok := t.(*MppTask); ok && needPushDown && p.canPushDownToTiFlash(mppTask) {
 		pushedDownTopN := p.getPushedDownTopN(mppTask.p)
 		mppTask.p = pushedDownTopN
+		if !fixTopNForANNIndex(pushedDownTopN) {
+			return base.InvalidTask
+		}
 	}
 	rootTask := t.ConvertToRootTask(p.SCtx())
 	// Skip TopN with partition on the root. This is a derived topN and window function
@@ -998,6 +1003,64 @@ func (p *PhysicalTopN) Attach2Task(tasks ...base.Task) base.Task {
 		return t
 	}
 	return attachPlan2Task(p, rootTask)
+}
+
+func fixTopNForANNIndex(p *PhysicalTopN) bool {
+	ts, ok := p.Children()[0].(*PhysicalTableScan)
+	if !ok || ts.AnnIndexExtra == nil {
+		return true
+	}
+	if ts.AnnIndexExtra.IndexInfo.VectorInfo == nil {
+		// AnnIndex is attached with a non-vector index.
+		// This should not happen.
+		return false
+	}
+	if len(p.ByItems) != 1 {
+		return false
+	}
+	if p.ByItems[0].Desc {
+		// Currently all vector search indexes must be used for ASC order.
+		// DESC order can be only applied to INNER_PRODUCT, which is not
+		// supported yet.
+		return false
+	}
+	vs, err := expression.ExtractVectorSearch(p.ByItems[0].Expr)
+	if err != nil || vs == nil {
+		return false
+	}
+	// Note that even if this is a vector search expression, it may not hit vector index
+	// because not all vector search functions are indexable.
+	distanceMetric, ok := model.FnNameToDistanceMetric[vs.DistanceFnName.L]
+	if !ok {
+		return false
+	}
+	// User may build a vector index with different distance metric.
+	// In this case the index shall not push down.
+	if distanceMetric != ts.AnnIndexExtra.IndexInfo.VectorInfo.DistanceMetric {
+		return false
+	}
+	// User may build a vector index with different vector column.
+	// In this case the index shall not push down.
+	col := ts.Table.Columns[ts.AnnIndexExtra.IndexInfo.Columns[0].Offset]
+	if col.ID != vs.Column.ID {
+		return false
+	}
+
+	distanceMetricPB, ok := tipb.VectorDistanceMetric_value[string(distanceMetric)]
+	if !ok {
+		// This should not happen.
+		return false
+	}
+	ts.AnnIndexExtra.PushDownQueryInfo = &tipb.ANNQueryInfo{
+		QueryType:      tipb.ANNQueryType_OrderBy,
+		DistanceMetric: tipb.VectorDistanceMetric(distanceMetricPB),
+		TopK:           uint32(p.Count),
+		ColumnName:     col.Name.L,
+		RefVecF32:      vs.Vec.SerializeTo(nil),
+		IndexId:        int64(ts.AnnIndexExtra.IndexInfo.ID),
+	}
+	ts.PlanCostInit = false
+	return true
 }
 
 // Attach2Task implements the PhysicalPlan interface.

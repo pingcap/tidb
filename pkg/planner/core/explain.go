@@ -270,6 +270,24 @@ func (p *PhysicalTableScan) OperatorInfo(normalized bool) string {
 			buffer.WriteString(runtimeFilter.ExplainInfo(false))
 		}
 	}
+	if p.AnnIndexExtra != nil && p.AnnIndexExtra.PushDownQueryInfo != nil {
+		buffer.WriteString(", annIndex:")
+		buffer.WriteString(p.AnnIndexExtra.PushDownQueryInfo.GetDistanceMetric().String())
+		buffer.WriteString("(")
+		buffer.WriteString(p.AnnIndexExtra.PushDownQueryInfo.GetColumnName())
+		buffer.WriteString("..")
+		{
+			v, _, err := types.ZeroCopyDeserializeVectorFloat32(p.AnnIndexExtra.PushDownQueryInfo.RefVecF32)
+			if err != nil {
+				buffer.WriteString("[?]")
+			} else {
+				buffer.WriteString(v.String())
+			}
+		}
+		buffer.WriteString(", limit:")
+		buffer.WriteString(fmt.Sprint(p.AnnIndexExtra.PushDownQueryInfo.TopK))
+		buffer.WriteString(")")
+	}
 	return buffer.String()
 }
 
