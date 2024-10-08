@@ -1563,8 +1563,8 @@ type DropIndexArgs struct {
 	// We don't support drop vector index in multi-schema change.
 	IsVector bool `json:"is_vector,omitempty"`
 
-	// This is used to distinguish rollback add index and drop index,
-	// since they have different args for v1.
+	// This is used to distinguish rollback add index and drop index in v1,
+	// since they have different args.
 	// TODO(joechenrh): remove this flag after totally switching to v2
 	IsRollback bool `json:"-"`
 }
@@ -1664,9 +1664,9 @@ type IndexArg struct {
 	Global                  bool                          `json:"global,omitempty"`
 	Unique                  bool                          `json:"unique,omitempty"`
 	IndexName               pmodel.CIStr                  `json:"index_name,omitempty"`
-	IndexPartSpecifications []*ast.IndexPartSpecification `json:"index_part_specifications"`
+	IndexPartSpecifications []*ast.IndexPartSpecification `json:"index_part_specifications,omitempty"`
 	IndexOption             *ast.IndexOption              `json:"index_option,omitempty"`
-	HiddenCols              []*ColumnInfo                 `json:"hidden_cols"`
+	HiddenCols              []*ColumnInfo                 `json:"hidden_cols,omitempty"`
 
 	// For vector index
 	FuncExpr string `json:"func_expr,omitempty"`
@@ -1686,11 +1686,11 @@ type AddIndexArgs struct {
 	IndexArgs []*IndexArg `json:"index_args,omitempty"`
 
 	// PartitionIDs will be used in onDropIndex.
-	PartitionIDs []int64 `json:"partition_ids"`
+	PartitionIDs []int64 `json:"partition_ids,omitempty"`
 
 	// Since most of the argument processing logic of PK and index is same,
 	// We use this variable to distinguish them.
-	IsPK bool `json:"is_pk"`
+	IsPK bool `json:"is_pk,omitempty"`
 
 	// MultiSchemaChange doesn't support vector index currently.
 	IsVector bool `json:"is_vector,omitempty"`
