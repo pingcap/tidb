@@ -66,7 +66,10 @@ function find_available_port() {
     local port=$1
 
     while :; do
-        # Use lsof to check if the port is in use
+        if [ "$port" -ge 65536 ]; then
+            echo "Error: No available ports found below 65536." >&2
+            exit 1
+        fi
         if ! lsof -i :"$port" &> /dev/null; then
             echo $port
             return 0
@@ -88,7 +91,7 @@ function find_multiple_available_ports() {
             ((start_port = available_port + 1))
         else
             echo "Error: Could not find an available port." >&2
-            return 1
+            exit 1
         fi
     done
 
