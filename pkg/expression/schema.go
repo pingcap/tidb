@@ -129,21 +129,47 @@ func (s *Schema) RetrieveColumn(col *Column) *Column {
 }
 
 // IsUniqueKey checks if this column is a unique key.
-func (s *Schema) IsUniqueKey(col *Column) bool {
+func (s *Schema) IsUniqueKey(cols ...*Column) bool {
 	for _, key := range s.Keys {
-		if len(key) == 1 && key[0].EqualColumn(col) {
-			return true
+		if len(key) > len(cols) {
+			continue
 		}
+		allFound := true
+		for _, keyCols := range key {
+			for _, col := range cols {
+				if !keyCols.EqualColumn(col) {
+					allFound = false
+					break
+				}
+			}
+		}
+		if !allFound {
+			continue
+		}
+		return true
 	}
 	return false
 }
 
 // IsUnique checks if this column is a unique key which may contain duplicate nulls .
-func (s *Schema) IsUnique(col *Column) bool {
+func (s *Schema) IsUnique(cols ...*Column) bool {
 	for _, key := range s.UniqueKeys {
-		if len(key) == 1 && key[0].EqualColumn(col) {
-			return true
+		if len(key) > len(cols) {
+			continue
 		}
+		allFound := true
+		for _, keyCols := range key {
+			for _, col := range cols {
+				if !keyCols.EqualColumn(col) {
+					allFound = false
+					break
+				}
+			}
+		}
+		if !allFound {
+			continue
+		}
+		return true
 	}
 	return false
 }
