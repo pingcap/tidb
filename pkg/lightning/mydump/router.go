@@ -48,6 +48,8 @@ const (
 	SourceTypeParquet
 	// SourceTypeViewSchema means this source file is a schema file for the view.
 	SourceTypeViewSchema
+	// SourceTypeORC means this source file is a ORC data file.
+	SourceTypeORC
 )
 
 const (
@@ -65,6 +67,8 @@ const (
 	TypeParquet = "parquet"
 	// TypeIgnore is the source type value for a ignored data file.
 	TypeIgnore = "ignore"
+	// TypeOrc is the source type value for a orc data file.
+	TypeOrc = "orc"
 )
 
 // Compression specifies the compression type.
@@ -116,6 +120,8 @@ func parseSourceType(t string) (SourceType, error) {
 		return SourceTypeCSV, nil
 	case TypeParquet:
 		return SourceTypeParquet, nil
+	case TypeOrc:
+		return SourceTypeORC, nil
 	case TypeIgnore:
 		return SourceTypeIgnore, nil
 	case ViewSchema:
@@ -137,6 +143,8 @@ func (s SourceType) String() string {
 		return TypeSQL
 	case SourceTypeParquet:
 		return TypeParquet
+	case SourceTypeORC:
+		return TypeOrc
 	case SourceTypeViewSchema:
 		return ViewSchema
 	default:
@@ -195,8 +203,8 @@ var defaultFileRouteRules = []*config.FileRouteRule{
 	// view schema create file pattern, matches files like '{schema}.{table}-schema-view.sql[.{compress}]'
 	{Pattern: `(?i)^(?:[^/]*/)*([^/.]+)\.(.*?)-schema-view\.sql(?:\.(\w*?))?$`,
 		Schema: "$1", Table: "$2", Type: ViewSchema, Compression: "$3", Unescape: true},
-	// source file pattern, matches files like '{schema}.{table}.0001.{sql|csv}[.{compress}]'
-	{Pattern: `(?i)^(?:[^/]*/)*([^/.]+)\.(.*?)(?:\.([0-9]+))?\.(sql|csv|parquet)(?:\.(\w+))?$`,
+	// source file pattern, matches files like '{schema}.{table}.0001.{sql|csv|parquet|orc}[.{compress}]'
+	{Pattern: `(?i)^(?:[^/]*/)*([^/.]+)\.(.*?)(?:\.([0-9]+))?\.(sql|csv|parquet|orc)(?:\.(\w+))?$`,
 		Schema: "$1", Table: "$2", Type: "$4", Key: "$3", Compression: "$5", Unescape: true},
 }
 
@@ -360,6 +368,9 @@ func (p regexRouterParser) Parse(r *config.FileRouteRule, logger log.Logger) (*R
 			}
 			if result.Type == SourceTypeParquet && compression != CompressionNone {
 				return errors.Errorf("can't support whole compressed parquet file, should compress parquet files by choosing correct parquet compress writer, path: %s", r.Path)
+			}
+			if result.Type == SourceTypeORC && compression != CompressionNone {
+				return errors.Errorf("can't support whole compressed orc file, because orc file has own compression methods, path: %s", r.Path)
 			}
 			result.Compression = compression
 			return nil
