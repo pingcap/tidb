@@ -202,7 +202,11 @@ func rollingbackAddColumn(jobCtx *jobContext, job *model.Job) (ver int64, err er
 	columnInfo.State = model.StateDeleteOnly
 	job.SchemaState = model.StateDeleteOnly
 
-	job.Args = []any{col.Name}
+	// rollback the AddColumn ddl. fill the DropColumn args into job.
+	args := &model.TableColumnArgs{
+		Col: &model.ColumnInfo{Name: col.Name},
+	}
+	model.FillRollBackArgsForAddColumn(job, args)
 	ver, err = updateVersionAndTableInfo(jobCtx, job, tblInfo, originalState != columnInfo.State)
 	if err != nil {
 		return ver, errors.Trace(err)

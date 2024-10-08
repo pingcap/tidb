@@ -1179,11 +1179,7 @@ func (e *InsertValues) handleDuplicateKey(ctx context.Context, txn kv.Transactio
 	if handle == nil {
 		return false, nil
 	}
-	_, err = e.removeRow(ctx, txn, handle, r, true)
-	if err != nil {
-		return false, err
-	}
-	return false, nil
+	return e.removeRow(ctx, txn, handle, r, true)
 }
 
 // batchCheckAndInsert checks rows with duplicate errors.

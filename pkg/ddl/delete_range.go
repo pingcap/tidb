@@ -398,7 +398,7 @@ func insertJobIntoDeleteRangeTable(ctx context.Context, wrapper DelRangeExecWrap
 			}
 		}
 	case model.ActionDropColumn:
-		args, err := model.GetDropColumnArgs(job)
+		args, err := model.GetTableColumnArgs(job)
 		if err != nil {
 			return errors.Trace(err)
 		}
