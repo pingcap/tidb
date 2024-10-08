@@ -3191,3 +3191,11 @@ Projection	8.00	root		test.ast.i, Column#32
       └─TableReader(Probe)	10.00	root		data:Selection
         └─Selection	10.00	cop[tikv]		eq("astp2019121731703151", test.acc.m)
           └─TableFullScan	10000.00	cop[tikv]	table:b	keep order:false, stats:pseudo
+drop table if exists test.t;
+create table test.t (a int);
+insert into test.t values(0),(20015),(20100);
+select date_add(a, interval 12345 DAY_HOUR) from test.t;
+date_add(a, interval 12345 DAY_HOUR)
+NULL
+NULL
+NULL
