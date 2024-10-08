@@ -2168,6 +2168,7 @@ create table test.t (a int);
 insert into test.t values(0),(20015),(20100);
 select date_add(a, interval 12345 DAY_HOUR) from test.t;
 
+# TestIssue56481
 drop table if exists test.t;
 create table test.t(f1 char(1));
 insert into test.t values ('a'),('b'),('1');
