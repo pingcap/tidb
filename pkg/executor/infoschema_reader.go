@@ -3510,7 +3510,7 @@ func (e *TiFlashSystemTableRetriever) dataForTiFlashSystemTables(ctx context.Con
 					logicalTableID = belongingTableID
 				}
 			}
-			if table, ok := is.TableByID(context.Background(), logicalTableID); ok {
+			if table, ok := is.TableByID(ctx, logicalTableID); ok {
 				tableInfo := table.Meta()
 				getInt64DatumVal := func(datum_name string, default_val int64) int64 {
 					datum := outputRow[outputColIndexMap[datum_name]]
