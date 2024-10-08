@@ -274,7 +274,7 @@ func main() {
 		os.Exit(0)
 	}
 	registerStores()
-	err := metricsutil.RegisterMetrics()
+	err := metricsutil.RegisterMetricsWithLabels(config.GetGlobalConfig().MetricsLabels)
 	terror.MustNil(err)
 
 	if variable.EnableTmpStorageOnOOM.Load() {
