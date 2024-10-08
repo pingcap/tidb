@@ -63,25 +63,13 @@ function help_message()
 
 # Function to find an available port starting from a given port
 function find_available_port() {
-    local start_port=$1
-    local port=$start_port
+    local port=$1
 
     while :; do
-        if command -v ss &> /dev/null; then
-            # Use 'ss' command if available (Linux)
-            if ! ss -tuln | grep -q ":$port "; then
-                echo $port
-                return 0
-            fi
-        elif command -v netstat &> /dev/null; then
-            # Use 'netstat' command (macOS and Linux fallback)
-            if ! netstat -an | grep -q "\.$port "; then
-                echo $port
-                return 0
-            fi
-        else
-            echo "Error: Neither 'ss' nor 'netstat' command is available." >&2
-            return 1
+        # Use lsof to check if the port is in use
+        if ! lsof -i :"$port" &> /dev/null; then
+            echo $port
+            return 0
         fi
         ((port++))
     done
