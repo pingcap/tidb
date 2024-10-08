@@ -746,28 +746,22 @@ func (w *worker) onCreateVectorIndex(jobCtx *jobContext, job *model.Job) (ver in
 		return ver, errors.Trace(err)
 	}
 
-	var (
-		indexName              pmodel.CIStr
-		indexOption            *ast.IndexOption
-		indexPartSpecification *ast.IndexPartSpecification
-		funcExpr               string
-	)
-	err = job.DecodeArgs(&indexName, &indexPartSpecification, &indexOption, &funcExpr)
+	args, err := model.GetAddIndexArgs(job)
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
-	indexPartSpecification.Expr, err = generatedexpr.ParseExpression(funcExpr)
+	a := args.IndexArgs[0]
+	a.IndexPartSpecifications[0].Expr, err = generatedexpr.ParseExpression(a.FuncExpr)
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
 	defer func() {
-		indexPartSpecification.Expr = nil
+		a.IndexPartSpecifications[0].Expr = nil
 	}()
 
-	var args *model.AddIndexArgs
-	indexInfo, err := checkAndBuildIndexInfo(job, tblInfo, true, false, args.IndexArgs[0])
+	indexInfo, err := checkAndBuildIndexInfo(job, tblInfo, true, false, a)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
@@ -836,7 +830,11 @@ func (w *worker) onCreateVectorIndex(jobCtx *jobContext, job *model.Job) (ver in
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
-		job.Args = []any{indexInfo.ID, false /*if exists*/, getPartitionIDs(tblInfo)}
+
+		finishedArgs := &model.AddIndexArgs{PartitionIDs: getPartitionIDs(tblInfo), IsFinishedArg: true}
+		finishedArgs.IndexArgs = append(finishedArgs.IndexArgs, &model.IndexArg{AddIndexID: indexInfo.ID})
+		job.FillFinishedArgs(finishedArgs)
+
 		// Finish this job.
 		job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
 		logutil.DDLLogger().Info("[ddl] run add vector index job done",

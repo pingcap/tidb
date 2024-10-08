@@ -1558,8 +1558,10 @@ type DropIndexArgs struct {
 	IfExists   []bool         `json:"if_exists,omitempty"`
 
 	// Belows are used for finished args.
-	IndexIDs     []int64 `json:"index_ids"`
-	PartitionIDs []int64 `json:"partition_ids"`
+	IndexIDs     []int64 `json:"index_ids,omitempty"`
+	PartitionIDs []int64 `json:"partition_ids,omitempty"`
+	// We don't support drop vector index in multi-schema change.
+	IsVector bool `json:"is_vector,omitempty"`
 
 	// This is used to distinguish rollback add index and drop index,
 	// since they have different args for v1.
@@ -1583,7 +1585,7 @@ func (a *DropIndexArgs) fillFinishedJobV1(job *Job) {
 	if a.IsRollback {
 		job.Args = []any{a.IndexNames, a.IfExists, a.IndexIDs}
 	} else {
-		job.Args = []any{a.IndexNames[0], a.IfExists[0], a.IndexIDs[0], a.PartitionIDs}
+		job.Args = []any{a.IndexNames[0], a.IfExists[0], a.IndexIDs[0], a.PartitionIDs, a.IsVector}
 	}
 }
 
@@ -1635,9 +1637,10 @@ func GetFinishedDropIndexArgs(job *Job) (*DropIndexArgs, error) {
 		ifExists := make([]bool, 1)
 		indexIDs := make([]int64, 1)
 		var partitionIDs []int64
+		var isVector bool
 
-		if err := job.DecodeArgs(&indexNames, &ifExists, &indexIDs); err != nil {
-			if err := job.DecodeArgs(&indexNames[0], &ifExists[0], &indexIDs[0], &partitionIDs); err != nil {
+		if err := job.DecodeArgs(&indexNames, &ifExists, &indexIDs, &isVector); err != nil {
+			if err := job.DecodeArgs(&indexNames[0], &ifExists[0], &indexIDs[0], &partitionIDs, &isVector); err != nil {
 				return nil, errors.Trace(err)
 			}
 		}
@@ -1647,6 +1650,7 @@ func GetFinishedDropIndexArgs(job *Job) (*DropIndexArgs, error) {
 			IfExists:     ifExists,
 			IndexIDs:     indexIDs,
 			PartitionIDs: partitionIDs,
+			IsVector:     isVector,
 		}, nil
 	}
 	return getOrDecodeArgsV2[*DropIndexArgs](job)
@@ -1664,6 +1668,9 @@ type IndexArg struct {
 	IndexPartSpecifications []*ast.IndexPartSpecification `json:"index_part_specifications"`
 	IndexOption             *ast.IndexOption              `json:"index_option,omitempty"`
 	HiddenCols              []*ColumnInfo                 `json:"hidden_cols"`
+
+	// For vector index
+	FuncExpr string `json:"func_expr,omitempty"`
 
 	// For PK
 	SQLMode mysql.SQLMode `json:"sql_mode,omitempty"`
@@ -1685,6 +1692,9 @@ type AddIndexArgs struct {
 	// Since most of the argument processing logic of PK and index is same,
 	// We use this variable to distinguish them.
 	IsPK bool `json:"is_pk"`
+
+	// MultiSchemaChange doesn't support vector index currently.
+	IsVector bool `json:"is_vector,omitempty"`
 
 	// This is to dintinguish finished and running args, see comments in expectedDeleteRangeCnt
 	IsFinishedArg bool `json:"is_finished,omitempty"`
@@ -1726,7 +1736,13 @@ func (a *AddIndexArgs) getV1Args() []any {
 }
 
 func (a *AddIndexArgs) fillJobV1(job *Job) {
-	job.Args = a.getV1Args()
+	if !a.IsVector {
+		job.Args = a.getV1Args()
+		return
+	}
+
+	arg := a.IndexArgs[0]
+	job.Args = []any{arg.IndexName, arg.IndexPartSpecifications[0], arg.IndexOption, arg.FuncExpr}
 }
 
 func (a *AddIndexArgs) fillFinishedJobV1(job *Job) {
@@ -1750,6 +1766,8 @@ func GetAddIndexArgs(job *Job) (*AddIndexArgs, error) {
 		}
 		if job.Type == ActionAddIndex {
 			return getAddIndexArgs(job)
+		} else if job.Type == ActionAddVectorIndex {
+			return getAddVectorIndexArgs(job)
 		}
 		intest.Assert(job.Type == ActionAddPrimaryKey, "Type should be ActionAddPrimaryKey")
 		return getAddPrimaryKeyArgs(job)
@@ -1860,6 +1878,30 @@ func getAddIndexArgs(job *Job) (*AddIndexArgs, error) {
 	return &a, nil
 }
 
+func getAddVectorIndexArgs(job *Job) (*AddIndexArgs, error) {
+	var (
+		indexName              pmodel.CIStr
+		indexPartSpecification *ast.IndexPartSpecification
+		indexOption            *ast.IndexOption
+		funcExpr               string
+	)
+
+	if err := job.DecodeArgs(
+		&indexName, &indexPartSpecification, &indexOption, &funcExpr); err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	return &AddIndexArgs{
+		IndexArgs: []*IndexArg{{
+			IndexName:               indexName,
+			IndexPartSpecifications: []*ast.IndexPartSpecification{indexPartSpecification},
+			IndexOption:             indexOption,
+			FuncExpr:                funcExpr,
+		}},
+		IsVector: true,
+	}, nil
+}
+
 // RenameIndexArgs is the argument for rename index.
 type RenameIndexArgs struct {
 	From pmodel.CIStr `json:"from"`
@@ -1870,6 +1912,7 @@ func (a *RenameIndexArgs) fillJobV1(job *Job) {
 	job.Args = []any{a.From, a.To}
 }
 
+// GetRenameIndexAegs get the rename index args.
 func GetRenameIndexArgs(job *Job) (*RenameIndexArgs, error) {
 	if job.Version == JobVersion1 {
 		if err := tryMarshalArgs(job); err != nil {
