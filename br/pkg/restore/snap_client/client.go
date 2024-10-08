@@ -43,7 +43,6 @@ import (
 	importclient "github.com/pingcap/tidb/br/pkg/restore/internal/import_client"
 	tidallocdb "github.com/pingcap/tidb/br/pkg/restore/internal/prealloc_db"
 	tidalloc "github.com/pingcap/tidb/br/pkg/restore/internal/prealloc_table_id"
-	"github.com/pingcap/tidb/br/pkg/restore/snap_client/sstfiles"
 	"github.com/pingcap/tidb/br/pkg/restore/split"
 	restoreutils "github.com/pingcap/tidb/br/pkg/restore/utils"
 	"github.com/pingcap/tidb/br/pkg/storage"

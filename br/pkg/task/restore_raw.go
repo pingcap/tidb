@@ -15,7 +15,6 @@ import (
 	"github.com/pingcap/tidb/br/pkg/metautil"
 	"github.com/pingcap/tidb/br/pkg/restore"
 	snapclient "github.com/pingcap/tidb/br/pkg/restore/snap_client"
-	"github.com/pingcap/tidb/br/pkg/restore/snap_client/sstfiles"
 	restoreutils "github.com/pingcap/tidb/br/pkg/restore/utils"
 	"github.com/pingcap/tidb/br/pkg/rtree"
 	"github.com/pingcap/tidb/br/pkg/summary"

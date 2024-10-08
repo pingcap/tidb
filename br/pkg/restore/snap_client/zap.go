@@ -19,7 +19,6 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/logutil"
-	"github.com/pingcap/tidb/br/pkg/restore/snap_client/sstfiles"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"

@@ -50,7 +50,6 @@ import (
 	importclient "github.com/pingcap/tidb/br/pkg/restore/internal/import_client"
 	logsplit "github.com/pingcap/tidb/br/pkg/restore/internal/log_split"
 	"github.com/pingcap/tidb/br/pkg/restore/internal/rawkv"
-	"github.com/pingcap/tidb/br/pkg/restore/snap_client/sstfiles"
 	"github.com/pingcap/tidb/br/pkg/restore/split"
 	"github.com/pingcap/tidb/br/pkg/restore/tiflashrec"
 	restoreutils "github.com/pingcap/tidb/br/pkg/restore/utils"
@@ -96,7 +95,7 @@ func GetCompactedSSTSplitBatchSize() int {
 }
 
 type LogClient struct {
-	restorer            sstfiles.FileRestorer
+	restorer            snapclient.FileRestorer
 	cipher              *backuppb.CipherInfo
 	pdClient            pd.Client
 	pdHTTPClient        pdhttp.Client

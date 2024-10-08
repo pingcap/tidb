@@ -128,11 +128,12 @@ type DDLMetaGroup struct {
 // Generally the config cannot be changed during its lifetime.
 func CreateLogFileManager(ctx context.Context, init LogFileManagerInit) (*LogFileManager, error) {
 	fm := &LogFileManager{
-		startTS:          init.StartTS,
-		restoreTS:        init.RestoreTS,
-		storage:          init.Storage,
-		helper:           stream.NewMetadataHelper(stream.WithEncryptionManager(init.EncryptionManager)),
-		migrationBuilder: init.MigrationsBuilder,
+		startTS:                   init.StartTS,
+		restoreTS:                 init.RestoreTS,
+		storage:                   init.Storage,
+		helper:                    stream.NewMetadataHelper(stream.WithEncryptionManager(init.EncryptionManager)),
+		migrationBuilder:          init.MigrationsBuilder,
+		metadataDownloadBatchSize: init.MetadataDownloadBatchSize,
 	}
 	err := fm.loadShiftTS(ctx)
 	if err != nil {

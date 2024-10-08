@@ -28,7 +28,6 @@ import (
 	"github.com/pingcap/tidb/br/pkg/metautil"
 	"github.com/pingcap/tidb/br/pkg/restore"
 	snapclient "github.com/pingcap/tidb/br/pkg/restore/snap_client"
-	"github.com/pingcap/tidb/br/pkg/restore/snap_client/sstfiles"
 	"github.com/pingcap/tidb/br/pkg/restore/tiflashrec"
 	"github.com/pingcap/tidb/br/pkg/summary"
 	"github.com/pingcap/tidb/br/pkg/utils"

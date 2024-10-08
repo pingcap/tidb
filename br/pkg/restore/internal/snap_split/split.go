@@ -12,23 +12,6 @@ import (
 	"go.uber.org/zap"
 )
 
-// RegionSplitter is a executor of region split by rules.
-type RegionSplitter struct {
-	client split.SplitClient
-}
-
-// NewRegionSplitter returns a new RegionSplitter.
-func NewRegionSplitter(client split.SplitClient) *RegionSplitter {
-	return &RegionSplitter{
-		client: client,
-	}
-}
-
-// SplitWaitAndScatter expose the function `SplitWaitAndScatter` of split client.
-func (rs *RegionSplitter) SplitWaitAndScatter(ctx context.Context, region *split.RegionInfo, keys [][]byte) ([]*split.RegionInfo, error) {
-	return rs.client.SplitWaitAndScatter(ctx, region, keys)
-}
-
 // ExecuteSplit executes regions split and make sure new splitted regions are balance.
 // It will split regions by the rewrite rules,
 // then it will split regions by the end key of each range.

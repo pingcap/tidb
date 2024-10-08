@@ -24,7 +24,6 @@ import (
 	"github.com/pingcap/errors"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/log"
-	snapsplit "github.com/pingcap/tidb/br/pkg/restore/internal/snap_split"
 	"github.com/pingcap/tidb/br/pkg/restore/split"
 	restoreutils "github.com/pingcap/tidb/br/pkg/restore/utils"
 	"github.com/pingcap/tidb/pkg/tablecodec"
@@ -138,11 +137,11 @@ func (helper *LogSplitHelper) Merge(file *backuppb.DataFileInfo) {
 	})
 }
 
-type splitFunc = func(context.Context, *snapsplit.RegionSplitter, uint64, int64, *split.RegionInfo, []Valued) error
+type splitFunc = func(context.Context, *split.RegionSplitter, uint64, int64, *split.RegionInfo, []Valued) error
 
 func (helper *LogSplitHelper) splitRegionByPoints(
 	ctx context.Context,
-	regionSplitter *snapsplit.RegionSplitter,
+	regionSplitter *split.RegionSplitter,
 	initialLength uint64,
 	initialNumber int64,
 	region *split.RegionInfo,
@@ -200,7 +199,7 @@ func SplitPoint(
 ) (err error) {
 	// common status
 	var (
-		regionSplitter *snapsplit.RegionSplitter = snapsplit.NewRegionSplitter(client)
+		regionSplitter *split.RegionSplitter = split.NewRegionSplitter(client)
 	)
 	// region traverse status
 	var (
@@ -352,7 +351,7 @@ func (helper *LogSplitHelper) Split(ctx context.Context) error {
 			}
 		}
 
-		regionSplitter := snapsplit.NewRegionSplitter(helper.client)
+		regionSplitter := split.NewRegionSplitter(helper.client)
 		// It is too expensive to stop recovery and wait for a small number of regions
 		// to complete scatter, so the maximum waiting time is reduced to 1 minute.
 		_ = regionSplitter.WaitForScatterRegionsTimeout(ctx, scatterRegions, time.Minute)

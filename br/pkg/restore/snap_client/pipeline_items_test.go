@@ -26,7 +26,6 @@ import (
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/logutil"
 	snapclient "github.com/pingcap/tidb/br/pkg/restore/snap_client"
-	"github.com/pingcap/tidb/br/pkg/restore/snap_client/sstfiles"
 	"github.com/pingcap/tidb/br/pkg/rtree"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/stretchr/testify/require"
