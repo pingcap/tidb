@@ -464,8 +464,12 @@ func (p *PhysicalStreamAgg) GetPlanCostVer2(taskType property.TaskType, option *
 	}
 
 	rows := getCardinality(p.Children()[0], option.CostFlag)
+	outputRows := getCardinality(p, option.CostFlag)
 	cpuFactor := getTaskCPUFactorVer2(p, taskType)
 
+	if rows > outputRows {
+		rows = math.Max(rows*0.1, outputRows)
+	}
 	aggCost := aggCostVer2(option, rows, p.AggFuncs, cpuFactor)
 	groupCost := groupCostVer2(option, rows, p.GroupByItems, cpuFactor)
 
@@ -497,9 +501,10 @@ func (p *PhysicalHashAgg) GetPlanCostVer2(taskType property.TaskType, option *op
 	groupCost := groupCostVer2(option, inputRows, p.GroupByItems, cpuFactor)
 	hashBuildCost := hashBuildCostVer2(option, outputRows, outputRowSize, float64(len(p.GroupByItems)), cpuFactor, memFactor)
 	hashProbeCost := hashProbeCostVer2(option, inputRows, float64(len(p.GroupByItems)), cpuFactor)
+	startCostRows := math.Max(10, (100*outputRows)/inputRows)
 	startCost := costusage.NewCostVer2(option, cpuFactor,
-		100*3*cpuFactor.Value, // 100rows * 3func * cpuFactor
-		func() string { return fmt.Sprintf("cpu(100*3*%v)", cpuFactor) })
+		startCostRows*3*cpuFactor.Value, // startCostRows * 3func * cpuFactor
+		func() string { return fmt.Sprintf("cpu(%v*3*%v)", startCostRows, cpuFactor) })
 
 	childCost, err := p.Children()[0].GetPlanCostVer2(taskType, option)
 	if err != nil {
