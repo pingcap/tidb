@@ -136,6 +136,7 @@ func checkCompressionAndEncryption(dir string, encryptionArg string) bool {
 		os.Exit(1)
 	}
 
+	// handle with encryption case
 	if encryptionArg != "" {
 		if allEncrypted {
 			fmt.Printf("All files in %s are encrypted, as expected with encryption\n", dir)
@@ -143,25 +144,27 @@ func checkCompressionAndEncryption(dir string, encryptionArg string) bool {
 		}
 		fmt.Printf("Error: Some files in %s are not encrypted, which is unexpected with encryption\n", dir)
 		return false
-	} else {
-		if allUnencrypted {
-			fmt.Printf("All files in %s are not encrypted, as expected without encryption\n", dir)
-			return true
-		} else if allEncrypted {
-			fmt.Printf("Error: All files in %s are encrypted, which is unexpected without encryption\n", dir)
-			return false
-		}
-		fmt.Printf("Error: Mixed encryption in %s. Some files are encrypted, some are not.\n", dir)
+	}
+
+	// handle without encryption case
+	if allUnencrypted {
+		fmt.Printf("All files in %s are not encrypted, as expected without encryption\n", dir)
+		return true
+	} else if allEncrypted {
+		fmt.Printf("Error: All files in %s are encrypted, which is unexpected without encryption\n", dir)
 		return false
 	}
+	fmt.Printf("Error: Mixed encryption in %s. Some files are encrypted, some are not.\n", dir)
+	return false
 }
 
 func isZstdCompressed(filePath string) (bool, error) {
-	file, err := os.Open(filePath)
-	defer file.Close()
+	cleanedPath := filepath.Clean(filePath)
+	file, err := os.Open(cleanedPath)
 	if err != nil {
 		return false, err
 	}
+	defer file.Close()
 
 	decoder, err := zstd.NewReader(file)
 	if err != nil {
@@ -179,11 +182,12 @@ func isZstdCompressed(filePath string) (bool, error) {
 }
 
 func isLikelySSTFile(filePath string) (bool, error) {
-	file, err := os.Open(filePath)
-	defer file.Close()
+	cleanedPath := filepath.Clean(filePath)
+	file, err := os.Open(cleanedPath)
 	if err != nil {
 		return false, err
 	}
+	defer file.Close()
 
 	// Seek to 8 bytes from the end of the file
 	_, err = file.Seek(-8, io.SeekEnd)
