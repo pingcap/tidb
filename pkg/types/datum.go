@@ -2526,31 +2526,31 @@ func CloneRow(dr []Datum) []Datum {
 }
 
 // GetMaxValue returns the max value datum for each type.
-func GetMaxValue(ft *FieldType) (maxv Datum) {
+func GetMaxValue(ft *FieldType) (maxVal Datum) {
 	switch ft.GetType() {
 	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong:
 		if mysql.HasUnsignedFlag(ft.GetFlag()) {
-			maxv.SetUint64(IntegerUnsignedUpperBound(ft.GetType()))
+			maxVal.SetUint64(IntegerUnsignedUpperBound(ft.GetType()))
 		} else {
-			maxv.SetInt64(IntegerSignedUpperBound(ft.GetType()))
+			maxVal.SetInt64(IntegerSignedUpperBound(ft.GetType()))
 		}
 	case mysql.TypeFloat:
-		maxv.SetFloat32(float32(GetMaxFloat(ft.GetFlen(), ft.GetDecimal())))
+		maxVal.SetFloat32(float32(GetMaxFloat(ft.GetFlen(), ft.GetDecimal())))
 	case mysql.TypeDouble:
-		maxv.SetFloat64(GetMaxFloat(ft.GetFlen(), ft.GetDecimal()))
+		maxVal.SetFloat64(GetMaxFloat(ft.GetFlen(), ft.GetDecimal()))
 	case mysql.TypeString, mysql.TypeVarString, mysql.TypeVarchar, mysql.TypeBlob, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob:
 		// codec.Encode KindMaxValue, to avoid import circle
 		bytes := []byte{250}
-		maxv.SetString(string(bytes), ft.GetCollate())
+		maxVal.SetString(string(bytes), ft.GetCollate())
 	case mysql.TypeNewDecimal:
-		maxv.SetMysqlDecimal(NewMaxOrMinDec(false, ft.GetFlen(), ft.GetDecimal()))
+		maxVal.SetMysqlDecimal(NewMaxOrMinDec(false, ft.GetFlen(), ft.GetDecimal()))
 	case mysql.TypeDuration:
-		maxv.SetMysqlDuration(Duration{Duration: MaxTime})
+		maxVal.SetMysqlDuration(Duration{Duration: MaxTime})
 	case mysql.TypeDate, mysql.TypeDatetime, mysql.TypeTimestamp:
 		if ft.GetType() == mysql.TypeDate || ft.GetType() == mysql.TypeDatetime {
-			maxv.SetMysqlTime(NewTime(MaxDatetime, ft.GetType(), 0))
+			maxVal.SetMysqlTime(NewTime(MaxDatetime, ft.GetType(), 0))
 		} else {
-			maxv.SetMysqlTime(MaxTimestamp)
+			maxVal.SetMysqlTime(MaxTimestamp)
 		}
 	}
 	return
