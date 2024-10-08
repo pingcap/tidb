@@ -1076,9 +1076,30 @@ func (p *LogicalJoin) pushDownTopNToChild(topN *LogicalTopN, idx int, opt *optim
 			}
 		}
 	}
+	count, offset := topN.Count+topN.Offset, uint64(0)
+	if p.JoinType == LeftOuterJoin {
+		innerChild := p.Children()[1]
+		innerJoinKey := make([]*expression.Column, 0, len(p.EqualConditions))
+		for _, eqCond := range p.EqualConditions {
+			innerJoinKey = append(innerJoinKey, eqCond.GetArgs()[1].(*expression.Column))
+		}
+		if innerChild.Schema().IsUniqueKey(innerJoinKey...) || innerChild.Schema().IsUnique(innerJoinKey...) {
+			count, offset = topN.Count, topN.Offset
+		}
+	} else if p.JoinType == RightOuterJoin {
+		innerChild := p.Children()[0]
+		innerJoinKey := make([]*expression.Column, 0, len(p.EqualConditions))
+		for _, eqCond := range p.EqualConditions {
+			innerJoinKey = append(innerJoinKey, eqCond.GetArgs()[0].(*expression.Column))
+		}
+		if innerChild.Schema().IsUniqueKey(innerJoinKey...) || innerChild.Schema().IsUnique(innerJoinKey...) {
+			count, offset = topN.Count, topN.Offset
+		}
+	}
 
 	newTopN := LogicalTopN{
-		Count:            topN.Count + topN.Offset,
+		Count:            count,
+		Offset:           offset,
 		ByItems:          make([]*util.ByItems, len(topN.ByItems)),
 		PreferLimitToCop: topN.PreferLimitToCop,
 	}.Init(topN.SCtx(), topN.QueryBlockOffset())
