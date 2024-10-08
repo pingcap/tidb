@@ -159,6 +159,7 @@ func (h *topNChunkHeap) Swap(i, j int) {
 	h.rowPtrs[i], h.rowPtrs[j] = h.rowPtrs[j], h.rowPtrs[i]
 }
 
+// TestKillSignalInTopN is for test
 func TestKillSignalInTopN(t *testing.T, topnExec *TopNExec) {
 	ctx := context.Background()
 	err := topnExec.Open(ctx)
