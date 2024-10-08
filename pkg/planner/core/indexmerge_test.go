@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/testkit/testdata"
@@ -102,10 +103,10 @@ func TestIndexMergePathGeneration(t *testing.T) {
 		p, err = logicalOptimize(ctx, builder.optFlag, p.(base.LogicalPlan))
 		require.NoError(t, err)
 		lp := p.(base.LogicalPlan)
-		var ds *DataSource
+		var ds *logicalop.DataSource
 		for ds == nil {
 			switch v := lp.(type) {
-			case *DataSource:
+			case *logicalop.DataSource:
 				ds = v
 			default:
 				lp = lp.Children()[0]

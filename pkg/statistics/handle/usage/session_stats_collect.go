@@ -169,7 +169,7 @@ func (s *statsUsageImpl) dumpTableStatCountToKV(is infoschema.InfoSchema, physic
 				isPartitionLocked = true
 			}
 			tableOrPartitionLocked := isTableLocked || isPartitionLocked
-			if err = storage.UpdateStatsMeta(sctx, statsVersion, delta,
+			if err = storage.UpdateStatsMeta(utilstats.StatsCtx, sctx, statsVersion, delta,
 				physicalTableID, tableOrPartitionLocked); err != nil {
 				return err
 			}
@@ -187,7 +187,7 @@ func (s *statsUsageImpl) dumpTableStatCountToKV(is infoschema.InfoSchema, physic
 			// To sum up, we only need to update the global-stats when the table and the partition are not locked.
 			if !isTableLocked && !isPartitionLocked {
 				// If it's a partitioned table and its global-stats exists, update its count and modify_count as well.
-				if err = storage.UpdateStatsMeta(sctx, statsVersion, delta, tableID, isTableLocked); err != nil {
+				if err = storage.UpdateStatsMeta(utilstats.StatsCtx, sctx, statsVersion, delta, tableID, isTableLocked); err != nil {
 					return err
 				}
 				affectedRows += sctx.GetSessionVars().StmtCtx.AffectedRows()
@@ -199,7 +199,7 @@ func (s *statsUsageImpl) dumpTableStatCountToKV(is infoschema.InfoSchema, physic
 			if _, ok := lockedTables[physicalTableID]; ok {
 				isTableLocked = true
 			}
-			if err = storage.UpdateStatsMeta(sctx, statsVersion, delta,
+			if err = storage.UpdateStatsMeta(utilstats.StatsCtx, sctx, statsVersion, delta,
 				physicalTableID, isTableLocked); err != nil {
 				return err
 			}

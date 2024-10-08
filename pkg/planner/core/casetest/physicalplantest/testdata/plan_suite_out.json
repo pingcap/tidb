@@ -2273,7 +2273,7 @@
       },
       {
         "SQL": "select max(a), min(a) from t;",
-        "Best": "RightHashJoin{TableReader(Table(t)->Limit)->Limit->StreamAgg->TableReader(Table(t)->Limit)->Limit->StreamAgg}"
+        "Best": "LeftHashJoin{TableReader(Table(t)->Limit)->Limit->StreamAgg->TableReader(Table(t)->Limit)->Limit->StreamAgg}"
       },
       {
         "SQL": "select max(a), min(a) from t where a > 10",
@@ -2285,7 +2285,7 @@
       },
       {
         "SQL": "select max(a), max(c), min(f) from t",
-        "Best": "LeftHashJoin{RightHashJoin{TableReader(Table(t)->Limit)->Limit->StreamAgg->IndexReader(Index(t.c_d_e)[[NULL,+inf]]->Limit)->Limit->StreamAgg}->IndexReader(Index(t.f)[[NULL,+inf]]->Limit)->Limit->StreamAgg}"
+        "Best": "LeftHashJoin{LeftHashJoin{TableReader(Table(t)->Limit)->Limit->StreamAgg->IndexReader(Index(t.c_d_e)[[NULL,+inf]]->Limit)->Limit->StreamAgg}->IndexReader(Index(t.f)[[NULL,+inf]]->Limit)->Limit->StreamAgg}"
       },
       {
         "SQL": "select max(a), max(b) from t",
@@ -2305,7 +2305,7 @@
       },
       {
         "SQL": "select max(a) from (select t1.a from t t1 join t t2 on t1.a=t2.a) t",
-        "Best": "MergeInnerJoin{TableReader(Table(t))->TableReader(Table(t))}(test.t.a,test.t.a)->Limit->StreamAgg"
+        "Best": "IndexJoin{TableReader(Table(t))->TableReader(Table(t))}(test.t.a,test.t.a)->Limit->StreamAgg"
       }
     ]
   },
@@ -2322,7 +2322,7 @@
       },
       {
         "SQL": "SELECT COUNT(t) FROM (SELECT a, (SELECT t2.b FROM t t2, t t3 WHERE t2.a = t3.a AND t1.a = t2.a LIMIT 1) t FROM t t1) t",
-        "Best": "Apply{IndexReader(Index(t.f)[[NULL,+inf]])->MergeInnerJoin{TableReader(Table(t))->TableReader(Table(t))}(test.t.a,test.t.a)->Limit}->HashAgg"
+        "Best": "Apply{IndexReader(Index(t.f)[[NULL,+inf]])->IndexJoin{TableReader(Table(t)->Sel([eq(test.t.a, test.t.a)]))->TableReader(Table(t))}(test.t.a,test.t.a)->Limit}->HashAgg"
       },
       {
         "SQL": "SELECT COUNT(a) FROM t t1 WHERE t1.a IN (SELECT t2.a FROM t t2, t t3 WHERE t2.b = t3.b)",
@@ -2402,9 +2402,9 @@
       },
       {
         "SQL": "select /*+ TIDB_INLJ(t2) */ t1.b, t2.a from t2 t1, t2 t2 where t1.b=t2.b and t2.c=-1;",
-        "Best": "IndexJoin{TableReader(Table(t2)->Sel([eq(test.t2.c, -1)]))->IndexReader(Index(t2.b)[[NULL,NULL]])}(test.t2.b,test.t2.b)->Projection",
+        "Best": "IndexJoin{IndexReader(Index(t2.b_c)[[NULL,+inf]]->Sel([eq(test.t2.c, -1)]))->IndexReader(Index(t2.b)[[NULL,NULL]])}(test.t2.b,test.t2.b)->Projection",
         "Warning": "[planner:1815]Optimizer Hint /*+ INL_JOIN(t2) */ or /*+ TIDB_INLJ(t2) */ is inapplicable",
-        "Hints": "inl_join(`test`.`t1`), use_index(@`sel_1` `test`.`t2` ), no_order_index(@`sel_1` `test`.`t2` `primary`), use_index(@`sel_1` `test`.`t1` `b`), no_order_index(@`sel_1` `test`.`t1` `b`)"
+        "Hints": "inl_join(`test`.`t1`), use_index(@`sel_1` `test`.`t2` `b_c`), no_order_index(@`sel_1` `test`.`t2` `b_c`), use_index(@`sel_1` `test`.`t1` `b`), no_order_index(@`sel_1` `test`.`t1` `b`)"
       }
     ]
   },

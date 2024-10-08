@@ -1124,7 +1124,7 @@ func (h DDLHistoryJobHandler) getHistoryDDL(jobID, limit int) (jobs []*model.Job
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	txnMeta := meta.NewMeta(txn)
+	txnMeta := meta.NewMutator(txn)
 
 	jobs, err = ddl.ScanHistoryDDLJobs(txnMeta, int64(jobID), limit)
 	if err != nil {
