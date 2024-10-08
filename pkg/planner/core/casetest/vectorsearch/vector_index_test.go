@@ -21,10 +21,13 @@ import (
 
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/planner/core"
+	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testdata"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
+	"github.com/pingcap/tidb/pkg/util/plancodec"
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/stretchr/testify/require"
 )
@@ -96,4 +99,88 @@ func TestTiFlashANNIndex(t *testing.T) {
 		tk.MustQuery(tt).Check(testkit.Rows(output[i].Plan...))
 		require.Equal(t, output[i].Warn, testdata.ConvertSQLWarnToStrings(tk.Session().GetSessionVars().StmtCtx.GetWarnings()))
 	}
+}
+
+func TestANNIndexNormalizedPlan(t *testing.T) {
+	store := testkit.CreateMockStoreWithSchemaLease(t, 1*time.Second, mockstore.WithMockTiFlash(2))
+
+	tk := testkit.NewTestKit(t, store)
+
+	tiflash := infosync.NewMockTiFlash()
+	infosync.SetMockTiFlash(tiflash)
+	defer func() {
+		tiflash.Lock()
+		tiflash.StatusServer.Close()
+		tiflash.Unlock()
+	}()
+
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/MockCheckVectorIndexProcess", `return(1)`)
+
+	getNormalizedPlan := func() ([]string, string) {
+		info := tk.Session().ShowProcess()
+		require.NotNil(t, info)
+		p, ok := info.Plan.(base.Plan)
+		require.True(t, ok)
+		plan, digest := core.NormalizePlan(p)
+
+		// test the new normalization code
+		flat := core.FlattenPhysicalPlan(p, false)
+		newNormalized, newDigest := core.NormalizeFlatPlan(flat)
+		require.Equal(t, plan, newNormalized)
+		require.Equal(t, digest, newDigest)
+
+		normalizedPlan, err := plancodec.DecodeNormalizedPlan(plan)
+		normalizedPlanRows := getPlanRows(normalizedPlan)
+		require.NoError(t, err)
+
+		return normalizedPlanRows, digest.String()
+	}
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec(`
+		create table t (
+			vec vector(3)
+		)
+	`)
+	tk.MustExec("alter table t set tiflash replica 1;")
+	tk.MustExec("alter table t add vector index ((vec_cosine_distance(vec))) using hnsw;")
+	tk.MustExec(`
+		insert into t values
+			('[1,1,1]'),
+			('[2,2,2]'),
+			('[3,3,3]')
+	`)
+
+	tk.MustExec("analyze table t")
+
+	tk.MustExec("set @@tidb_isolation_read_engines = 'tiflash'")
+
+	tk.MustExec("explain select * from t order by vec_cosine_distance(vec, '[0,0,0]') limit 1")
+	p1, d1 := getNormalizedPlan()
+	require.Equal(t, []string{
+		" Projection                    root         test.t.vec",
+		" └─TopN                        root         ?",
+		"   └─Projection                root         test.t.vec, vec_cosine_distance(test.t.vec, ?)",
+		"     └─TableReader             root         ",
+		"       └─ExchangeSender        cop[tiflash] ",
+		"         └─Projection          cop[tiflash] test.t.vec",
+		"           └─TopN              cop[tiflash] ?",
+		"             └─Projection      cop[tiflash] test.t.vec, vec_cosine_distance(test.t.vec, ?)",
+		"               └─TableFullScan cop[tiflash] table:t, index:vector_index(vec), range:[?,?], keep order:false, annIndex:COSINE(vec..[?], limit:?)",
+	}, p1)
+
+	tk.MustExec("explain select * from t order by vec_cosine_distance(vec, '[1,2,3]') limit 3")
+	_, d2 := getNormalizedPlan()
+
+	tk.MustExec("explain select * from t order by vec_cosine_distance(vec, '[]') limit 3")
+	_, d3 := getNormalizedPlan()
+
+	// Projection differs, so that normalized plan should differ.
+	tk.MustExec("explain select * from t order by vec_cosine_distance('[1,2,3]', vec) limit 3")
+	_, dx1 := getNormalizedPlan()
+
+	require.Equal(t, d1, d2)
+	require.Equal(t, d1, d3)
+	require.NotEqual(t, d1, dx1)
 }

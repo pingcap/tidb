@@ -274,7 +274,8 @@ func (p *PhysicalTableScan) ToPB(ctx *base.BuildPBContext, storeType kv.StoreTyp
 	}
 
 	if p.AnnIndexExtra != nil && p.AnnIndexExtra.PushDownQueryInfo != nil {
-		tsExec.AnnQuery = p.AnnIndexExtra.PushDownQueryInfo
+		annQueryCopy := *p.AnnIndexExtra.PushDownQueryInfo
+		tsExec.AnnQuery = &annQueryCopy
 	}
 
 	var err error
@@ -316,6 +317,12 @@ func (p *PhysicalTableScan) partitionTableScanToPBForFlash(ctx *base.BuildPBCont
 	ptsExec.MaxWaitTimeMs = int32(p.maxWaitTimeMs)
 
 	ptsExec.Desc = p.Desc
+
+	if p.AnnIndexExtra != nil && p.AnnIndexExtra.PushDownQueryInfo != nil {
+		annQueryCopy := *p.AnnIndexExtra.PushDownQueryInfo
+		ptsExec.AnnQuery = &annQueryCopy
+	}
+
 	executorID := p.ExplainID().String()
 	err = tables.SetPBColumnsDefaultValue(ctx.GetExprCtx(), ptsExec.Columns, p.Columns)
 	return &tipb.Executor{Tp: tipb.ExecType_TypePartitionTableScan, PartitionTableScan: ptsExec, ExecutorId: &executorID}, err
