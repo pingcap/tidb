@@ -631,7 +631,7 @@ func TestIndexUsageTable(t *testing.T) {
 			"test|idt1|idx_1",
 			"test|idt1|idx_2",
 			"test|idt1|idx_3"))
-	tk.MustQuery("select TABLE_SCHEMA, TABLE_NAME, INDEX_NAME from information_schema.tidb_index_usage where INDEX_NAME = 'IDX_3'").Check(
+	tk.MustQuery("select TABLE_SCHEMA, TABLE_NAME, INDEX_NAME from information_schema.tidb_index_usage where INDEX_NAME = 'idx_3'").Check(
 		testkit.RowsWithSep("|",
 			"test|idt1|idx_3"))
 	tk.MustQuery(`select TABLE_SCHEMA, TABLE_NAME, INDEX_NAME from information_schema.tidb_index_usage
