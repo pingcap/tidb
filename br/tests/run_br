@@ -26,7 +26,7 @@ main() {
     fi
 
     # Check if validation is needed
-    if echo "$output" | grep -q "doesn't need to validate"; then
+    if echo "$output" | grep -q "No need to validate"; then
         echo "Validation not required. Skipping."
         exit 0
     fi
