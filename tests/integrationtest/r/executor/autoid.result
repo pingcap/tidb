@@ -551,12 +551,10 @@ id
 show table t_473 next_row_id;
 DB_NAME	TABLE_NAME	COLUMN_NAME	NEXT_GLOBAL_ROW_ID	ID_TYPE
 executor__autoid	t_473	id	30001	_TIDB_ROWID
-executor__autoid	t_473	id	1	AUTO_INCREMENT
 alter table t_473 auto_id_cache = 100;
 show table t_473 next_row_id;
 DB_NAME	TABLE_NAME	COLUMN_NAME	NEXT_GLOBAL_ROW_ID	ID_TYPE
 executor__autoid	t_473	id	30001	_TIDB_ROWID
-executor__autoid	t_473	id	1	AUTO_INCREMENT
 insert into t_473 values ();
 select * from t_473;
 id
@@ -565,7 +563,6 @@ id
 show table t_473 next_row_id;
 DB_NAME	TABLE_NAME	COLUMN_NAME	NEXT_GLOBAL_ROW_ID	ID_TYPE
 executor__autoid	t_473	id	30101	_TIDB_ROWID
-executor__autoid	t_473	id	1	AUTO_INCREMENT
 alter table t_473 auto_id_cache = 1;
 Error 1105 (HY000): Can't Alter AUTO_ID_CACHE between 1 and non-1, the underlying implementation is different
 drop table if exists io;
