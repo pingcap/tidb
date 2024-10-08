@@ -324,11 +324,16 @@ func (s *JobSubmitter) addBatchDDLJobs2Table(jobWs []*JobWrapper) error {
 		if job.CDCWriteSource == 0 && bdrRole != string(ast.BDRRoleNone) {
 			if job.Type == model.ActionMultiSchemaChange && job.MultiSchemaInfo != nil {
 				for _, subJob := range job.MultiSchemaInfo.SubJobs {
-					if DeniedByBDR(ast.BDRRole(bdrRole), subJob.Type, &model.Job{Args: subJob.Args}) {
+					if DeniedByBDR(ast.BDRRole(bdrRole), &model.Job{
+						// TODO(joechenrh): Switch job version.
+						Version: model.JobVersion1,
+						Type:    subJob.Type,
+						Args:    subJob.Args,
+					}) {
 						return dbterror.ErrBDRRestrictedDDL.FastGenByArgs(bdrRole)
 					}
 				}
-			} else if DeniedByBDR(ast.BDRRole(bdrRole), job.Type, job) {
+			} else if DeniedByBDR(ast.BDRRole(bdrRole), job) {
 				return dbterror.ErrBDRRestrictedDDL.FastGenByArgs(bdrRole)
 			}
 		}

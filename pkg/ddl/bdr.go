@@ -85,7 +85,8 @@ func deniedByBDRWhenModifyColumn(newFieldType, oldFieldType types.FieldType, opt
 }
 
 // DeniedByBDR checks whether the DDL is denied by BDR.
-func DeniedByBDR(role ast.BDRRole, action model.ActionType, job *model.Job) (denied bool) {
+func DeniedByBDR(role ast.BDRRole, job *model.Job) (denied bool) {
+	action := job.Type
 	ddlType, ok := model.ActionBDRMap[action]
 	switch role {
 	case ast.BDRRolePrimary:
