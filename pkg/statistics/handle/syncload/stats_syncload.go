@@ -49,13 +49,13 @@ const RetryCount = 2
 func GetSyncLoadConcurrencyByCPU() int {
 	core := runtime.GOMAXPROCS(0)
 	if core <= 8 {
-		return 5
-	} else if core <= 16 {
 		return 6
-	} else if core <= 32 {
+	} else if core <= 16 {
 		return 8
+	} else if core <= 32 {
+		return 10
 	}
-	return 10
+	return 12
 }
 
 type statsSyncLoad struct {
