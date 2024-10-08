@@ -194,7 +194,11 @@ func rollingbackAddColumn(jobCtx *jobContext, job *model.Job) (ver int64, err er
 	columnInfo.State = model.StateDeleteOnly
 	job.SchemaState = model.StateDeleteOnly
 
-	job.Args = []any{col.Name}
+	// rollback the AddColumn ddl. fill the DropColumn args into job.
+	args := &model.TableColumnArgs{
+		Col: &model.ColumnInfo{Name: col.Name},
+	}
+	model.FillRollBackArgsForAddColumn(job, args)
 	ver, err = updateVersionAndTableInfo(jobCtx, job, tblInfo, originalState != columnInfo.State)
 	if err != nil {
 		return ver, errors.Trace(err)
@@ -254,6 +258,18 @@ func rollingbackDropIndex(jobCtx *jobContext, job *model.Job) (ver int64, err er
 	default:
 		return ver, dbterror.ErrInvalidDDLState.GenWithStackByArgs("index", indexInfo[0].State)
 	}
+}
+
+func rollingbackAddVectorIndex(w *worker, jobCtx *jobContext, job *model.Job) (ver int64, err error) {
+	if job.SchemaState == model.StateWriteReorganization {
+		// Add vector index workers are started. need to ask them to exit.
+		jobCtx.logger.Info("run the cancelling DDL job", zap.String("job", job.String()))
+		ver, err = w.onCreateVectorIndex(jobCtx, job)
+	} else {
+		// add index's reorg workers are not running, remove the indexInfo in tableInfo.
+		ver, err = convertNotReorgAddIdxJob2RollbackJob(jobCtx, job, dbterror.ErrCancelledDDLJob)
+	}
+	return
 }
 
 func rollingbackAddIndex(w *worker, jobCtx *jobContext, job *model.Job, isPK bool) (ver int64, err error) {
@@ -603,6 +619,8 @@ func convertJob2RollbackJob(w *worker, jobCtx *jobContext, job *model.Job) (ver 
 		ver, err = rollingbackAddIndex(w, jobCtx, job, false)
 	case model.ActionAddPrimaryKey:
 		ver, err = rollingbackAddIndex(w, jobCtx, job, true)
+	case model.ActionAddVectorIndex:
+		ver, err = rollingbackAddVectorIndex(w, jobCtx, job)
 	case model.ActionAddTablePartition:
 		ver, err = rollingbackAddTablePartition(jobCtx, job)
 	case model.ActionReorganizePartition, model.ActionRemovePartitioning,

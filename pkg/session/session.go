@@ -62,6 +62,7 @@ import (
 	infoschemactx "github.com/pingcap/tidb/pkg/infoschema/context"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
+	"github.com/pingcap/tidb/pkg/meta/metabuild"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/owner"
@@ -222,6 +223,9 @@ type session struct {
 	sandBoxMode bool
 
 	cursorTracker cursor.Tracker
+
+	// Used to wait for all async commit background jobs to finish.
+	commitWaitGroup sync.WaitGroup
 }
 
 var parserPool = &sync.Pool{New: func() any { return parser.New() }}
@@ -3253,7 +3257,7 @@ func createAndSplitTables(store kv.Storage, t *meta.Mutator, dbID int64, tables 
 		if err != nil {
 			return errors.Trace(err)
 		}
-		tblInfo, err := ddl.BuildTableInfoFromAST(stmt.(*ast.CreateTableStmt))
+		tblInfo, err := ddl.BuildTableInfoFromAST(metabuild.NewContext(), stmt.(*ast.CreateTableStmt))
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -3286,7 +3290,7 @@ func InitMDLTable(store kv.Storage) error {
 		if err != nil {
 			return errors.Trace(err)
 		}
-		tblInfo, err := ddl.BuildTableInfoFromAST(stmt.(*ast.CreateTableStmt))
+		tblInfo, err := ddl.BuildTableInfoFromAST(metabuild.NewContext(), stmt.(*ast.CreateTableStmt))
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -4602,4 +4606,9 @@ func GetDBNames(seVar *variable.SessionVars) []string {
 // GetCursorTracker returns the internal `cursor.Tracker`
 func (s *session) GetCursorTracker() cursor.Tracker {
 	return s.cursorTracker
+}
+
+// GetCommitWaitGroup returns the internal `sync.WaitGroup` for async commit and secondary key lock cleanup
+func (s *session) GetCommitWaitGroup() *sync.WaitGroup {
+	return &s.commitWaitGroup
 }
