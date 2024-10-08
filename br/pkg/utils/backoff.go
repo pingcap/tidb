@@ -108,6 +108,9 @@ func (rs *RetryState) ShouldRetry() bool {
 // Get the exponential backoff durion and transform the state.
 func (rs *RetryState) ExponentialBackoff() time.Duration {
 	rs.retryTimes++
+	failpoint.Inject("set-import-attempt-to-one", func(_ failpoint.Value) {
+		rs.retryTimes = rs.maxRetry
+	})
 	backoff := rs.nextBackoff
 	rs.nextBackoff *= 2
 	if rs.nextBackoff > rs.maxBackoff {
@@ -172,8 +175,8 @@ func (bo *importerBackoffer) NextBackoff(err error) time.Duration {
 	// we don't care storeID here.
 	errs := multierr.Errors(err)
 	lastErr := errs[len(errs)-1]
-	res := bo.errContext.HandleErrorMsg(lastErr.Error(), 0)
-	if res.Strategy == RetryStrategy {
+	res := HandleUnknownBackupError(lastErr.Error(), 0, bo.errContext)
+	if res.Strategy == StrategyRetry {
 		bo.delayTime = 2 * bo.delayTime
 		bo.attempt--
 	} else {
@@ -207,6 +210,11 @@ func (bo *importerBackoffer) NextBackoff(err error) time.Duration {
 			}
 		}
 	}
+	failpoint.Inject("set-import-attempt-to-one", func(_ failpoint.Value) {
+		if bo.attempt > 1 {
+			bo.attempt = 1
+		}
+	})
 	if bo.delayTime > bo.maxDelayTime {
 		return bo.maxDelayTime
 	}

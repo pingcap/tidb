@@ -24,11 +24,13 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/planner"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/table"
@@ -134,7 +136,7 @@ func buildFKCheckExecs(sctx sessionctx.Context, tbl table.Table, fkChecks []*pla
 }
 
 func buildFKCheckExec(sctx sessionctx.Context, tbl table.Table, fkCheck *plannercore.FKCheck) (*FKCheckExec, error) {
-	var cols []model.CIStr
+	var cols []pmodel.CIStr
 	if fkCheck.FK != nil {
 		cols = fkCheck.FK.Cols
 	} else if fkCheck.ReferredFK != nil {
@@ -517,7 +519,7 @@ func (*fkValueHelper) hasNullValue(vals []types.Datum) bool {
 	return false
 }
 
-func getFKColumnsOffsets(tbInfo *model.TableInfo, cols []model.CIStr) ([]int, error) {
+func getFKColumnsOffsets(tbInfo *model.TableInfo, cols []pmodel.CIStr) ([]int, error) {
 	colsOffsets := make([]int, len(cols))
 	for i, col := range cols {
 		offset := -1
@@ -682,7 +684,7 @@ func (fkc *FKCascadeExec) onUpdateRow(sc *stmtctx.StatementContext, oldRow, newR
 	if err != nil || len(oldVals) == 0 {
 		return err
 	}
-	if model.ReferOptionType(fkc.fk.OnUpdate) == model.ReferOptionSetNull {
+	if pmodel.ReferOptionType(fkc.fk.OnUpdate) == pmodel.ReferOptionSetNull {
 		fkc.fkValues = append(fkc.fkValues, oldVals)
 		return nil
 	}
@@ -724,7 +726,7 @@ func (fkc *FKCascadeExec) buildFKCascadePlan(ctx context.Context) (base.Plan, er
 	if len(fkc.fkValues) == 0 && len(fkc.fkUpdatedValuesMap) == 0 {
 		return nil, nil
 	}
-	var indexName model.CIStr
+	var indexName pmodel.CIStr
 	if fkc.fkIdx != nil {
 		indexName = fkc.fkIdx.Name
 	}
@@ -732,15 +734,15 @@ func (fkc *FKCascadeExec) buildFKCascadePlan(ctx context.Context) (base.Plan, er
 	switch fkc.tp {
 	case plannercore.FKCascadeOnDelete:
 		fkValues := fkc.fetchOnDeleteOrUpdateFKValues()
-		switch model.ReferOptionType(fkc.fk.OnDelete) {
-		case model.ReferOptionCascade:
+		switch pmodel.ReferOptionType(fkc.fk.OnDelete) {
+		case pmodel.ReferOptionCascade:
 			stmtNode = GenCascadeDeleteAST(fkc.referredFK.ChildSchema, fkc.childTable.Name, indexName, fkc.fkCols, fkValues)
-		case model.ReferOptionSetNull:
+		case pmodel.ReferOptionSetNull:
 			stmtNode = GenCascadeSetNullAST(fkc.referredFK.ChildSchema, fkc.childTable.Name, indexName, fkc.fkCols, fkValues)
 		}
 	case plannercore.FKCascadeOnUpdate:
-		switch model.ReferOptionType(fkc.fk.OnUpdate) {
-		case model.ReferOptionCascade:
+		switch pmodel.ReferOptionType(fkc.fk.OnUpdate) {
+		case pmodel.ReferOptionCascade:
 			couple := fkc.fetchUpdatedValuesCouple()
 			if couple != nil && len(couple.NewValues) != 0 {
 				if fkc.stats != nil {
@@ -748,7 +750,7 @@ func (fkc *FKCascadeExec) buildFKCascadePlan(ctx context.Context) (base.Plan, er
 				}
 				stmtNode = GenCascadeUpdateAST(fkc.referredFK.ChildSchema, fkc.childTable.Name, indexName, fkc.fkCols, couple)
 			}
-		case model.ReferOptionSetNull:
+		case pmodel.ReferOptionSetNull:
 			fkValues := fkc.fetchOnDeleteOrUpdateFKValues()
 			stmtNode = GenCascadeSetNullAST(fkc.referredFK.ChildSchema, fkc.childTable.Name, indexName, fkc.fkCols, fkValues)
 		}
@@ -757,11 +759,12 @@ func (fkc *FKCascadeExec) buildFKCascadePlan(ctx context.Context) (base.Plan, er
 		return nil, errors.Errorf("generate foreign key cascade ast failed, %v", fkc.tp)
 	}
 	sctx := fkc.b.ctx
-	err := plannercore.Preprocess(ctx, sctx, stmtNode)
+	nodeW := resolve.NewNodeW(stmtNode)
+	err := plannercore.Preprocess(ctx, sctx, nodeW)
 	if err != nil {
 		return nil, err
 	}
-	finalPlan, err := planner.OptimizeForForeignKeyCascade(ctx, sctx.GetPlanCtx(), stmtNode, fkc.b.is)
+	finalPlan, err := planner.OptimizeForForeignKeyCascade(ctx, sctx.GetPlanCtx(), nodeW, fkc.b.is)
 	if err != nil {
 		return nil, err
 	}
@@ -800,7 +803,7 @@ func (fkc *FKCascadeExec) fetchUpdatedValuesCouple() *UpdatedValuesCouple {
 }
 
 // GenCascadeDeleteAST uses to generate cascade delete ast, export for test.
-func GenCascadeDeleteAST(schema, table, idx model.CIStr, cols []*model.ColumnInfo, fkValues [][]types.Datum) *ast.DeleteStmt {
+func GenCascadeDeleteAST(schema, table, idx pmodel.CIStr, cols []*model.ColumnInfo, fkValues [][]types.Datum) *ast.DeleteStmt {
 	deleteStmt := &ast.DeleteStmt{
 		TableRefs: genTableRefsAST(schema, table, idx),
 		Where:     genWhereConditionAst(cols, fkValues),
@@ -809,7 +812,7 @@ func GenCascadeDeleteAST(schema, table, idx model.CIStr, cols []*model.ColumnInf
 }
 
 // GenCascadeSetNullAST uses to generate foreign key `SET NULL` ast, export for test.
-func GenCascadeSetNullAST(schema, table, idx model.CIStr, cols []*model.ColumnInfo, fkValues [][]types.Datum) *ast.UpdateStmt {
+func GenCascadeSetNullAST(schema, table, idx pmodel.CIStr, cols []*model.ColumnInfo, fkValues [][]types.Datum) *ast.UpdateStmt {
 	newValues := make([]types.Datum, len(cols))
 	for i := range cols {
 		newValues[i] = types.NewDatum(nil)
@@ -822,7 +825,7 @@ func GenCascadeSetNullAST(schema, table, idx model.CIStr, cols []*model.ColumnIn
 }
 
 // GenCascadeUpdateAST uses to generate cascade update ast, export for test.
-func GenCascadeUpdateAST(schema, table, idx model.CIStr, cols []*model.ColumnInfo, couple *UpdatedValuesCouple) *ast.UpdateStmt {
+func GenCascadeUpdateAST(schema, table, idx pmodel.CIStr, cols []*model.ColumnInfo, couple *UpdatedValuesCouple) *ast.UpdateStmt {
 	list := make([]*ast.Assignment, 0, len(cols))
 	for i, col := range cols {
 		v := &driver.ValueExpr{Datum: couple.NewValues[i]}
@@ -841,11 +844,11 @@ func GenCascadeUpdateAST(schema, table, idx model.CIStr, cols []*model.ColumnInf
 	return updateStmt
 }
 
-func genTableRefsAST(schema, table, idx model.CIStr) *ast.TableRefsClause {
+func genTableRefsAST(schema, table, idx pmodel.CIStr) *ast.TableRefsClause {
 	tn := &ast.TableName{Schema: schema, Name: table}
 	if idx.L != "" {
 		tn.IndexHints = []*ast.IndexHint{{
-			IndexNames: []model.CIStr{idx},
+			IndexNames: []pmodel.CIStr{idx},
 			HintType:   ast.HintUse,
 			HintScope:  ast.HintForScan,
 		}}

@@ -101,7 +101,7 @@ func (s *parallelSortSpillAction) Action(t *memory.Tracker) {
 	}
 
 	if t.CheckExceed() && !hasEnoughDataToSpill(s.spillHelper.sortExec.memTracker, t) {
-		s.GetFallback().Action(t)
+		s.TriggerFallBackAction(t)
 	}
 }
 

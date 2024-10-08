@@ -1,0 +1,52 @@
+SELECT FORMAT(1.234,0,'en_US');
+FORMAT(1.234,0,'en_US')
+1
+SELECT FORMAT(1.234,1,'en_US');
+FORMAT(1.234,1,'en_US')
+1.2
+SELECT FORMAT(1.234,2,'en_US');
+FORMAT(1.234,2,'en_US')
+1.23
+SELECT FORMAT(1.234,3,'en_US');
+FORMAT(1.234,3,'en_US')
+1.234
+SELECT FORMAT(1.234,4,'en_US');
+FORMAT(1.234,4,'en_US')
+1.2340
+SELECT FORMAT(1.234e-2,4,'en_US');
+FORMAT(1.234e-2,4,'en_US')
+0.0123
+SELECT FORMAT(-1.234,4,'en_US');
+FORMAT(-1.234,4,'en_US')
+-1.2340
+WITH RECURSIVE cte(n) AS (
+SELECT 1 n
+UNION ALL
+SELECT 100+n FROM cte WHERE n<1000
+)
+SELECT FORMAT(n+0.01,3,'foo_bar') FROM cte;
+FORMAT(n+0.01,3,'foo_bar')
+1.010
+101.010
+201.010
+301.010
+401.010
+501.010
+601.010
+701.010
+801.010
+901.010
+1,001.010
+SHOW WARNINGS;
+Level	Code	Message
+Warning	1649	Unknown locale: 'foo_bar'
+Warning	1649	Unknown locale: 'foo_bar'
+Warning	1649	Unknown locale: 'foo_bar'
+Warning	1649	Unknown locale: 'foo_bar'
+Warning	1649	Unknown locale: 'foo_bar'
+Warning	1649	Unknown locale: 'foo_bar'
+Warning	1649	Unknown locale: 'foo_bar'
+Warning	1649	Unknown locale: 'foo_bar'
+Warning	1649	Unknown locale: 'foo_bar'
+Warning	1649	Unknown locale: 'foo_bar'
+Warning	1649	Unknown locale: 'foo_bar'

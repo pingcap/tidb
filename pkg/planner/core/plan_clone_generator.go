@@ -20,6 +20,8 @@ import (
 	"go/format"
 	"reflect"
 	"strings"
+
+	"github.com/pingcap/tidb/pkg/planner/core/base"
 )
 
 // genPlanCloneForPlanCacheCode generates CloneForPlanCache for all physical plan nodes in plan_clone_generated.go.
@@ -33,7 +35,11 @@ import (
 func genPlanCloneForPlanCacheCode() ([]byte, error) {
 	var structures = []any{PhysicalTableScan{}, PhysicalIndexScan{}, PhysicalSelection{}, PhysicalProjection{},
 		PhysicalSort{}, PhysicalTopN{}, PhysicalStreamAgg{}, PhysicalHashAgg{},
-		PhysicalHashJoin{}, PhysicalMergeJoin{}}
+		PhysicalHashJoin{}, PhysicalMergeJoin{}, PhysicalTableReader{}, PhysicalIndexReader{},
+		PointGetPlan{}, BatchPointGetPlan{}, PhysicalLimit{},
+		PhysicalIndexJoin{}, PhysicalIndexHashJoin{},
+		PhysicalIndexLookUpReader{}, PhysicalIndexMergeReader{},
+		Update{}, Delete{}, Insert{}, PhysicalLock{}, PhysicalUnionScan{}}
 	c := new(codeGen)
 	c.write(codeGenPrefix)
 	for _, s := range structures {
@@ -62,35 +68,100 @@ func genPlanCloneForPlanCache(x any) ([]byte, error) {
 			c.write(`if op.%v != nil {return nil, false}`, f.Name)
 			continue
 		}
+
+		fullFieldName := fmt.Sprintf("%v.%v", vType.String(), vType.Field(i).Name)
+		switch fullFieldName { // handle some fields specially
+		case "core.PhysicalTableReader.TablePlans", "core.PhysicalIndexLookUpReader.TablePlans",
+			"core.PhysicalIndexMergeReader.TablePlans":
+			c.write("cloned.TablePlans = flattenPushDownPlan(cloned.tablePlan)")
+			continue
+		case "core.PhysicalIndexReader.IndexPlans", "core.PhysicalIndexLookUpReader.IndexPlans":
+			c.write("cloned.IndexPlans = flattenPushDownPlan(cloned.indexPlan)")
+			continue
+		case "core.PhysicalIndexMergeReader.PartialPlans":
+			c.write("cloned.PartialPlans = make([][]base.PhysicalPlan, len(op.PartialPlans))")
+			c.write("for i, plan := range cloned.partialPlans {")
+			c.write("cloned.PartialPlans[i] = flattenPushDownPlan(plan)")
+			c.write("}")
+			continue
+		}
+
 		switch f.Type.String() {
 		case "[]int", "[]byte", "[]float", "[]bool": // simple slice
 			c.write("cloned.%v = make(%v, len(op.%v))", f.Name, f.Type, f.Name)
 			c.write("copy(cloned.%v, op.%v)", f.Name, f.Name)
-		case "core.physicalSchemaProducer", "core.basePhysicalPlan", "core.basePhysicalAgg", "core.basePhysicalJoin":
+		case "core.physicalSchemaProducer", "core.basePhysicalAgg", "core.basePhysicalJoin":
 			fieldName := strings.Split(f.Type.String(), ".")[1]
 			c.write(`basePlan, baseOK := op.%v.cloneForPlanCacheWithSelf(newCtx, cloned)
-							if !baseOK {
-								return nil, false
-							}
+							if !baseOK {return nil, false}
 							cloned.%v = *basePlan`, fieldName, fieldName)
-		case "[]expression.Expression":
-			c.write("cloned.%v = util.CloneExprs(op.%v)", f.Name, f.Name)
-		case "[]*ranger.Range":
-			c.write("cloned.%v = util.CloneRanges(op.%v)", f.Name, f.Name)
-		case "[]*util.ByItems":
-			c.write("cloned.%v = util.CloneByItems(op.%v)", f.Name, f.Name)
-		case "[]*expression.Column":
-			c.write("cloned.%v = util.CloneCols(op.%v)", f.Name, f.Name)
-		case "[]*expression.ScalarFunction":
-			c.write("cloned.%v = util.CloneScalarFunctions(op.%v)", f.Name, f.Name)
-		case "[]property.SortItem":
-			c.write("cloned.%v = util.CloneSortItem(op.%v)", f.Name, f.Name)
+		case "physicalop.BasePhysicalPlan":
+			fieldName := strings.Split(f.Type.String(), ".")[1]
+			c.write(`basePlan, baseOK := op.%v.CloneForPlanCacheWithSelf(newCtx, cloned)
+							if !baseOK {return nil, false}
+							cloned.%v = *basePlan`, fieldName, fieldName)
+		case "baseimpl.Plan", "core.baseSchemaProducer":
+			c.write("cloned.%v = *op.%v.CloneWithNewCtx(newCtx)", f.Name, f.Name)
+		case "[]expression.Expression", "[]*ranger.Range", "[]*util.ByItems", "[]*expression.Column", "[]model.CIStr",
+			"[]*expression.Constant", "[]*expression.ScalarFunction", "[]property.SortItem", "[]types.Datum",
+			"[]kv.Handle", "[]*expression.Assignment":
+			structureName := strings.Split(f.Type.String(), ".")[1] + "s"
+			c.write("cloned.%v = util.Clone%v(op.%v)", f.Name, structureName, f.Name)
+		case "[][]*expression.Constant", "[][]types.Datum", "[][]expression.Expression":
+			structureName := strings.Split(f.Type.String(), ".")[1]
+			c.write("cloned.%v = util.Clone%v2D(op.%v)", f.Name, structureName, f.Name)
+		case "planctx.PlanContext":
+			c.write("cloned.%v = newCtx", f.Name)
 		case "util.HandleCols":
+			c.write("if op.%v != nil {", f.Name)
 			c.write("cloned.%v = op.%v.Clone(newCtx.GetSessionVars().StmtCtx)", f.Name, f.Name)
-		case "*core.PhysPlanPartInfo":
+			c.write("}")
+		case "*core.PhysPlanPartInfo", "*core.PushedDownLimit", "*expression.Schema":
 			c.write("cloned.%v = op.%v.Clone()", f.Name, f.Name)
-		case "*expression.Column":
-			c.write("cloned.%v = op.%v.Clone().(*expression.Column)", f.Name, f.Name)
+		case "kv.Handle":
+			c.write("if op.%v != nil {", f.Name)
+			c.write("cloned.%v = op.%v.Copy()", f.Name, f.Name)
+			c.write("}")
+		case "*core.ColWithCmpFuncManager", "core.InsertGeneratedColumns":
+			c.write("cloned.%v = op.%v.Copy()", f.Name, f.Name)
+		case "*expression.Column", "*expression.Constant":
+			c.write("if op.%v != nil {", f.Name)
+			c.write("cloned.%v = op.%v.Clone().(%v)", f.Name, f.Name, f.Type.String())
+			c.write("}")
+		case "core.PhysicalIndexJoin":
+			c.write("inlj, ok := op.%v.CloneForPlanCache(newCtx)", f.Name)
+			c.write("if !ok {return nil, false}")
+			c.write("cloned.%v = *inlj.(*PhysicalIndexJoin)", f.Name)
+			c.write("cloned.Self = cloned")
+		case "base.PhysicalPlan":
+			c.write("if op.%v != nil {", f.Name)
+			c.write("%v, ok := op.%v.CloneForPlanCache(newCtx)", f.Name, f.Name)
+			c.write("if !ok {return nil, false}")
+			c.write("cloned.%v = %v.(base.PhysicalPlan)", f.Name, f.Name)
+			c.write("}")
+		case "[]base.PhysicalPlan":
+			c.write("%v, ok := clonePhysicalPlansForPlanCache(newCtx, op.%v)", f.Name, f.Name)
+			c.write("if !ok {return nil, false}")
+			c.write("cloned.%v = %v", f.Name, f.Name)
+		case "*int":
+			c.write("if op.%v != nil {", f.Name)
+			c.write("cloned.%v = new(int)", f.Name)
+			c.write("*cloned.%v = *op.%v", f.Name, f.Name)
+			c.write("}")
+		case "ranger.MutableRanges":
+			c.write("cloned.%v = op.%v.CloneForPlanCache()", f.Name, f.Name)
+		case "map[int64][]util.HandleCols":
+			c.write("if op.%v != nil {", f.Name)
+			c.write("cloned.%v = make(map[int64][]util.HandleCols, len(op.%v))", f.Name, f.Name)
+			c.write("for k, v := range op.%v {", f.Name)
+			c.write("cloned.%v[k] = util.CloneHandleCols(newCtx.GetSessionVars().StmtCtx, v)", f.Name)
+			c.write("}}")
+		case "map[int64]*expression.Column":
+			c.write("if op.%v != nil {", f.Name)
+			c.write("cloned.%v = make(map[int64]*expression.Column, len(op.%v))", f.Name, f.Name)
+			c.write("for k, v := range op.%v {", f.Name)
+			c.write("cloned.%v[k] = v.Clone().(*expression.Column)", f.Name)
+			c.write("}}")
 		default:
 			return nil, fmt.Errorf("can't generate Clone method for type %v in %v", f.Type.String(), vType.String())
 		}
@@ -98,6 +169,18 @@ func genPlanCloneForPlanCache(x any) ([]byte, error) {
 	c.write("return cloned, true")
 	c.write("}")
 	return c.format()
+}
+
+func clonePhysicalPlansForPlanCache(newCtx base.PlanContext, plans []base.PhysicalPlan) ([]base.PhysicalPlan, bool) {
+	clonedPlans := make([]base.PhysicalPlan, len(plans))
+	for i, plan := range plans {
+		cloned, ok := plan.CloneForPlanCache(newCtx)
+		if !ok {
+			return nil, false
+		}
+		clonedPlans[i] = cloned.(base.PhysicalPlan)
+	}
+	return clonedPlans, true
 }
 
 func mustNilField(fType reflect.StructField) bool {

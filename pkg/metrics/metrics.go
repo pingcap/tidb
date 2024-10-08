@@ -171,6 +171,8 @@ func RegisterMetrics() {
 	prometheus.MustRegister(PseudoEstimation)
 	prometheus.MustRegister(PacketIOCounter)
 	prometheus.MustRegister(QueryDurationHistogram)
+	prometheus.MustRegister(QueryRPCHistogram)
+	prometheus.MustRegister(QueryProcessedKeyHistogram)
 	prometheus.MustRegister(QueryTotalCounter)
 	prometheus.MustRegister(AffectedRowsCounter)
 	prometheus.MustRegister(SchemaLeaseErrorCounter)
@@ -291,6 +293,7 @@ func RegisterMetrics() {
 	prometheus.MustRegister(BindingCacheMemUsage)
 	prometheus.MustRegister(BindingCacheMemLimit)
 	prometheus.MustRegister(BindingCacheNumBindings)
+	prometheus.MustRegister(InternalSessions)
 
 	tikvmetrics.InitMetrics(TiDB, TiKVClient)
 	tikvmetrics.RegisterMetrics()

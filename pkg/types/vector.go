@@ -16,6 +16,10 @@ package types
 
 import (
 	"encoding/binary"
+<<<<<<< HEAD
+=======
+	"fmt"
+>>>>>>> upstream/master
 	"math"
 	"strconv"
 	"unsafe"
@@ -119,6 +123,41 @@ func (v VectorFloat32) Elements() []float32 {
 	return unsafe.Slice((*float32)(unsafe.Pointer(&v.data[4])), l)
 }
 
+<<<<<<< HEAD
+=======
+// TruncatedString prints the vector in a truncated form, which is useful for
+// outputting in logs or EXPLAIN statements.
+func (v VectorFloat32) TruncatedString() string {
+	const (
+		maxDisplayElements = 5
+	)
+
+	truncatedElements := 0
+	elements := v.Elements()
+
+	if len(elements) > maxDisplayElements {
+		truncatedElements = len(elements) - maxDisplayElements
+		elements = elements[:maxDisplayElements]
+	}
+
+	buf := make([]byte, 0, 2+v.Len()*2)
+	buf = append(buf, '[')
+	for i, v := range elements {
+		if i > 0 {
+			buf = append(buf, ","...)
+		}
+		buf = strconv.AppendFloat(buf, float64(v), 'g', 2, 32)
+	}
+	if truncatedElements > 0 {
+		buf = append(buf, fmt.Sprintf(",(%d more)...", truncatedElements)...)
+	}
+	buf = append(buf, ']')
+
+	// buf is not used elsewhere, so it's safe to just cast to String
+	return unsafe.String(unsafe.SliceData(buf), len(buf))
+}
+
+>>>>>>> upstream/master
 // String returns a string representation of the vector, which can be parsed later.
 func (v VectorFloat32) String() string {
 	elements := v.Elements()

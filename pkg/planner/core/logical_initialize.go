@@ -13,15 +13,3 @@
 // limitations under the License.
 
 package core
-
-import (
-	"github.com/pingcap/tidb/pkg/planner/core/base"
-	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
-	"github.com/pingcap/tidb/pkg/util/plancodec"
-)
-
-// Init initializes LogicalProjection.
-func (p LogicalExpand) Init(ctx base.PlanContext, offset int) *LogicalExpand {
-	p.BaseLogicalPlan = logicalop.NewBaseLogicalPlan(ctx, plancodec.TypeExpand, &p, offset)
-	return &p
-}

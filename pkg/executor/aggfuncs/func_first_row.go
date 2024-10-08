@@ -39,6 +39,8 @@ const (
 	DefPartialResult4FirstRowDurationSize = int64(unsafe.Sizeof(partialResult4FirstRowDuration{}))
 	// DefPartialResult4FirstRowJSONSize is the size of partialResult4FirstRowJSON
 	DefPartialResult4FirstRowJSONSize = int64(unsafe.Sizeof(partialResult4FirstRowJSON{}))
+	// DefPartialResult4FirstRowVectorFloat32Size is the size of partialResult4FirstRowVectorFloat32
+	DefPartialResult4FirstRowVectorFloat32Size = int64(unsafe.Sizeof(partialResult4FirstRowVectorFloat32{}))
 	// DefPartialResult4FirstRowDecimalSize is the size of partialResult4FirstRowDecimal
 	DefPartialResult4FirstRowDecimalSize = int64(unsafe.Sizeof(partialResult4FirstRowDecimal{}))
 	// DefPartialResult4FirstRowEnumSize is the size of partialResult4FirstRowEnum
@@ -102,6 +104,12 @@ type partialResult4FirstRowJSON struct {
 	basePartialResult4FirstRow
 
 	val types.BinaryJSON
+}
+
+type partialResult4FirstRowVectorFloat32 struct {
+	basePartialResult4FirstRow
+
+	val types.VectorFloat32
 }
 
 type partialResult4FirstRowEnum struct {
@@ -577,6 +585,52 @@ func (e *firstRow4JSON) deserializeForSpill(helper *deserializeHelper) (PartialR
 		return nil, 0
 	}
 	return pr, memDelta
+}
+
+type firstRow4VectorFloat32 struct {
+	baseAggFunc
+}
+
+func (*firstRow4VectorFloat32) AllocPartialResult() (pr PartialResult, memDelta int64) {
+	return PartialResult(new(partialResult4FirstRowVectorFloat32)), DefPartialResult4FirstRowVectorFloat32Size
+}
+
+func (*firstRow4VectorFloat32) ResetPartialResult(pr PartialResult) {
+	p := (*partialResult4FirstRowVectorFloat32)(pr)
+	p.isNull, p.gotFirstRow = false, false
+}
+
+func (e *firstRow4VectorFloat32) UpdatePartialResult(sctx AggFuncUpdateContext, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {
+	p := (*partialResult4FirstRowVectorFloat32)(pr)
+	if p.gotFirstRow {
+		return memDelta, nil
+	}
+	if len(rowsInGroup) > 0 {
+		input, isNull, err := e.args[0].EvalVectorFloat32(sctx, rowsInGroup[0])
+		if err != nil {
+			return memDelta, err
+		}
+		p.gotFirstRow, p.isNull, p.val = true, isNull, input.Clone()
+		memDelta += int64(input.EstimatedMemUsage())
+	}
+	return memDelta, nil
+}
+func (*firstRow4VectorFloat32) MergePartialResult(_ AggFuncUpdateContext, src, dst PartialResult) (memDelta int64, err error) {
+	p1, p2 := (*partialResult4FirstRowVectorFloat32)(src), (*partialResult4FirstRowVectorFloat32)(dst)
+	if !p2.gotFirstRow {
+		*p2 = *p1
+	}
+	return memDelta, nil
+}
+
+func (e *firstRow4VectorFloat32) AppendFinalResult2Chunk(_ AggFuncUpdateContext, pr PartialResult, chk *chunk.Chunk) error {
+	p := (*partialResult4FirstRowVectorFloat32)(pr)
+	if p.isNull || !p.gotFirstRow {
+		chk.AppendNull(e.ordinal)
+		return nil
+	}
+	chk.AppendVectorFloat32(e.ordinal, p.val)
+	return nil
 }
 
 type firstRow4Decimal struct {

@@ -935,7 +935,6 @@ func TestBatchGetforRangeandListPartitionTable(t *testing.T) {
 	tk.MustExec("create database test_pointget")
 	tk.MustExec("use test_pointget")
 	tk.MustExec("set @@tidb_partition_prune_mode = 'dynamic'")
-	tk.MustExec("set @@session.tidb_enable_list_partition = ON")
 
 	// list partition table
 	tk.MustExec(`create table tlist(a int, b int, unique index idx_a(a), index idx_b(b)) partition by list(a)(
@@ -1184,49 +1183,49 @@ func TestPartitionTableWithDifferentJoin(t *testing.T) {
 	// tk.MustHavePlan(queryHash, "IndexMergeJoin")
 	// tk.MustQuery(queryHash).Sort().Check(tk.MustQuery(queryRegular).Sort().Rows())
 	tk.MustQuery(queryHash)
-	tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|", "Warning|1815|Optimizer Hint /*+ INL_MERGE_JOIN(trange, trange2) */ is inapplicable"))
+	tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|", "Warning|1815|The INDEX MERGE JOIN hint is deprecated for usage, try other hints."))
 
 	queryHash = fmt.Sprintf("select /*+ inl_merge_join(trange, trange2) */ * from trange, trange2 where trange.a=trange2.a and trange.a > %v and trange2.a > %v;", x1, x2)
 	// queryRegular = fmt.Sprintf("select /*+ inl_merge_join(tregular2, tregular4) */ * from tregular2, tregular4 where tregular2.a=tregular4.a and tregular2.a > %v and tregular4.a > %v;", x1, x2)
 	// tk.MustHavePlan(queryHash, "IndexMergeJoin")
 	// tk.MustQuery(queryHash).Sort().Check(tk.MustQuery(queryRegular).Sort().Rows())
 	tk.MustQuery(queryHash)
-	tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|", "Warning|1815|Optimizer Hint /*+ INL_MERGE_JOIN(trange, trange2) */ is inapplicable"))
+	tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|", "Warning|1815|The INDEX MERGE JOIN hint is deprecated for usage, try other hints."))
 
 	queryHash = fmt.Sprintf("select /*+ inl_merge_join(trange, trange2) */ * from trange, trange2 where trange.a=trange2.a and trange.a > %v and trange.b > %v;", x1, x2)
 	// queryRegular = fmt.Sprintf("select /*+ inl_merge_join(tregular2, tregular4) */ * from tregular2, tregular4 where tregular2.a=tregular4.a and tregular2.a > %v and tregular2.b > %v;", x1, x2)
 	// tk.MustHavePlan(queryHash, "IndexMergeJoin")
 	// tk.MustQuery(queryHash).Sort().Check(tk.MustQuery(queryRegular).Sort().Rows())
 	tk.MustQuery(queryHash)
-	tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|", "Warning|1815|Optimizer Hint /*+ INL_MERGE_JOIN(trange, trange2) */ is inapplicable"))
+	tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|", "Warning|1815|The INDEX MERGE JOIN hint is deprecated for usage, try other hints."))
 
 	queryHash = fmt.Sprintf("select /*+ inl_merge_join(trange, trange2) */ * from trange, trange2 where trange.a=trange2.a and trange.a > %v and trange2.b > %v;", x1, x2)
 	// queryRegular = fmt.Sprintf("select /*+ inl_merge_join(tregular2, tregular4) */ * from tregular2, tregular4 where tregular2.a=tregular4.a and tregular2.a > %v and tregular4.b > %v;", x1, x2)
 	// tk.MustHavePlan(queryHash, "IndexMergeJoin")
 	// tk.MustQuery(queryHash).Sort().Check(tk.MustQuery(queryRegular).Sort().Rows())
 	tk.MustQuery(queryHash)
-	tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|", "Warning|1815|Optimizer Hint /*+ INL_MERGE_JOIN(trange, trange2) */ is inapplicable"))
+	tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|", "Warning|1815|The INDEX MERGE JOIN hint is deprecated for usage, try other hints."))
 
 	// group 6
 	// index_merge_join range partition and regualr table
 	queryHash = fmt.Sprintf("select /*+ inl_merge_join(trange, tregular4) */ * from trange, tregular4 where trange.a=tregular4.a and trange.a > %v;", x1)
 	queryRegular = fmt.Sprintf("select /*+ inl_merge_join(tregular2, tregular4) */ * from tregular2, tregular4 where tregular2.a=tregular4.a and tregular2.a > %v;", x1)
-	tk.MustHavePlan(queryHash, "IndexMergeJoin")
+	tk.MustNotHavePlan(queryHash, "IndexMergeJoin")
 	tk.MustQuery(queryHash).Sort().Check(tk.MustQuery(queryRegular).Sort().Rows())
 
 	queryHash = fmt.Sprintf("select /*+ inl_merge_join(trange, tregular4) */ * from trange, tregular4 where trange.a=tregular4.a and trange.a > %v and tregular4.a > %v;", x1, x2)
 	queryRegular = fmt.Sprintf("select /*+ inl_merge_join(tregular2, tregular4) */ * from tregular2, tregular4 where tregular2.a=tregular4.a and tregular2.a > %v and tregular4.a > %v;", x1, x2)
-	tk.MustHavePlan(queryHash, "IndexMergeJoin")
+	tk.MustNotHavePlan(queryHash, "IndexMergeJoin")
 	tk.MustQuery(queryHash).Sort().Check(tk.MustQuery(queryRegular).Sort().Rows())
 
 	queryHash = fmt.Sprintf("select /*+ inl_merge_join(trange, tregular4) */ * from trange, tregular4 where trange.a=tregular4.a and trange.a > %v and trange.b > %v;", x1, x2)
 	queryRegular = fmt.Sprintf("select /*+ inl_merge_join(tregular2, tregular4) */ * from tregular2, tregular4 where tregular2.a=tregular4.a and tregular2.a > %v and tregular2.b > %v;", x1, x2)
-	tk.MustHavePlan(queryHash, "IndexMergeJoin")
+	tk.MustNotHavePlan(queryHash, "IndexMergeJoin")
 	tk.MustQuery(queryHash).Sort().Check(tk.MustQuery(queryRegular).Sort().Rows())
 
 	queryHash = fmt.Sprintf("select /*+ inl_merge_join(trange, tregular4) */ * from trange, tregular4 where trange.a=tregular4.a and trange.a > %v and tregular4.b > %v;", x1, x2)
 	queryRegular = fmt.Sprintf("select /*+ inl_merge_join(tregular2, tregular4) */ * from tregular2, tregular4 where tregular2.a=tregular4.a and tregular2.a > %v and tregular4.b > %v;", x1, x2)
-	tk.MustHavePlan(queryHash, "IndexMergeJoin")
+	tk.MustNotHavePlan(queryHash, "IndexMergeJoin")
 	tk.MustQuery(queryHash).Sort().Check(tk.MustQuery(queryRegular).Sort().Rows())
 
 	// group 7
@@ -2089,17 +2088,13 @@ func TestDropGlobalIndex(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("set tidb_enable_global_index=true")
-	defer func() {
-		tk.MustExec("set tidb_enable_global_index=default")
-	}()
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists p")
 	tk.MustExec(`create table p (id int, c int) partition by range (c) (
 partition p0 values less than (4),
 partition p1 values less than (7),
 partition p2 values less than (10))`)
-	tk.MustExec("alter table p add unique idx(id)")
+	tk.MustExec("alter table p add unique idx(id) global")
 
 	failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/checkDropGlobalIndex", `return(true)`)
 	tk.MustExec("alter table p drop index idx")
@@ -2243,10 +2238,6 @@ func TestIssue26251(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 
 	tk1 := testkit.NewTestKit(t, store)
-	tk1.MustExec("set tidb_enable_global_index=true")
-	defer func() {
-		tk1.MustExec("set tidb_enable_global_index=default")
-	}()
 	tk1.MustExec("use test")
 	tk1.MustExec("create table tp (id int primary key) partition by range (id) (partition p0 values less than (100));")
 	tk1.MustExec("create table tn (id int primary key);")
@@ -2414,27 +2405,52 @@ func TestGlobalIndexWithSelectLock(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 
 	tk1 := testkit.NewTestKit(t, store)
-	tk1.MustExec("set tidb_enable_global_index = true")
 	tk1.MustExec("use test")
-	tk1.MustExec("create table t(a int, b int, unique index(b), primary key(a)) partition by hash(a) partitions 5;")
-	tk1.MustExec("insert into t values (1,1),(2,2),(3,3),(4,4),(5,5);")
-	tk1.MustExec("begin")
-	tk1.MustExec("select * from t use index(b) where b = 2 order by b limit 1 for update;")
+	tk1.MustExec("create table t(" +
+		"	a int, " +
+		"	b int, " +
+		"	c int, " +
+		"	unique index(b) global, " +
+		"	unique index(c) global, " +
+		"	primary key(a)) " +
+		"partition by hash(a) partitions 5")
 
-	tk2 := testkit.NewTestKit(t, store)
-	tk2.MustExec("use test")
+	tk1.MustExec("insert into t values (1,1,1), (2,2,2), (3,3,3), (4,4,4), (5,5,5)")
 
-	ch := make(chan int, 10)
-	go func() {
-		// Check the key is locked.
-		tk2.MustExec("update t set b = 6 where b = 2")
-		ch <- 1
-	}()
+	cases := []struct {
+		sql  string
+		plan string
+	}{
+		{"select * from t use index(b) where b > 1 order by b limit 1 for update", "IndexLookUp"},
+		{"select b from t use index(b) where b > 1 for update", "IndexReader"},
+		{"select * from t use index(b) where b = 2 for update", "Point_Get"},
+		{"select * from t use index(b) where b in (2, 3) for update", "Batch_Point_Get"},
+		{"select /*+ USE_INDEX_MERGE(t, b, c) */ * from t where b = 2 or c = 3 for update", "IndexMerge"},
+	}
 
-	time.Sleep(50 * time.Millisecond)
-	ch <- 0
-	tk1.MustExec("commit")
+	for _, c := range cases {
+		tk1.MustExec("begin")
+		tk1.MustHavePlan(c.sql, c.plan)
+		tk1.MustExec(c.sql)
 
-	require.Equal(t, <-ch, 0)
-	require.Equal(t, <-ch, 1)
+		tk2 := testkit.NewTestKit(t, store)
+		tk2.MustExec("use test")
+
+		ch := make(chan int, 10)
+		go func() {
+			// Check the key is locked.
+			tk2.MustExec("update t set b = 6 where b = 2")
+			ch <- 1
+		}()
+
+		time.Sleep(50 * time.Millisecond)
+		ch <- 0
+		tk1.MustExec("commit")
+
+		require.Equal(t, <-ch, 0)
+		require.Equal(t, <-ch, 1)
+
+		require.Equal(t, tk1.MustQuery("select * from t where b = 6").Rows(), testkit.Rows("2 6 2"))
+		tk1.MustExec("update t set b = 2 where b = 6")
+	}
 }

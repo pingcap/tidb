@@ -35,6 +35,8 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/resolve"
+	"github.com/pingcap/tidb/pkg/planner/core/rule"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/fixcontrol"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -108,7 +110,8 @@ func GeneratePlanCacheStmtWithAST(ctx context.Context, sctx sessionctx.Context, 
 	}
 
 	ret := &PreprocessorReturn{InfoSchema: is} // is can be nil, and
-	err := Preprocess(ctx, sctx, paramStmt, InPrepare, WithPreprocessorReturn(ret))
+	nodeW := resolve.NewNodeW(paramStmt)
+	err := Preprocess(ctx, sctx, nodeW, InPrepare, WithPreprocessorReturn(ret))
 	if err != nil {
 		return nil, nil, 0, err
 	}
@@ -152,7 +155,7 @@ func GeneratePlanCacheStmtWithAST(ctx context.Context, sctx sessionctx.Context, 
 		}
 
 		if !cacheable {
-			sctx.GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackErrorf("skip prepared plan-cache: " + reason))
+			sctx.GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackError("skip prepared plan-cache: " + reason))
 		}
 	}
 
@@ -169,16 +172,16 @@ func GeneratePlanCacheStmtWithAST(ctx context.Context, sctx sessionctx.Context, 
 
 	var p base.Plan
 	destBuilder, _ := NewPlanBuilder().Init(sctx.GetPlanCtx(), ret.InfoSchema, hint.NewQBHintHandler(nil))
-	p, err = destBuilder.Build(ctx, paramStmt)
+	p, err = destBuilder.Build(ctx, nodeW)
 	if err != nil {
 		return nil, nil, 0, err
 	}
 
-	if cacheable && destBuilder.optFlag&flagPartitionProcessor > 0 {
+	if cacheable && destBuilder.optFlag&rule.FlagPartitionProcessor > 0 {
 		// dynamic prune mode is not used, could be that global statistics not yet available!
 		cacheable = false
 		reason = "static partition prune mode used"
-		sctx.GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackErrorf("skip prepared plan-cache: " + reason))
+		sctx.GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackError("skip prepared plan-cache: " + reason))
 	}
 
 	// Collect information for metadata lock.
@@ -186,7 +189,7 @@ func GeneratePlanCacheStmtWithAST(ctx context.Context, sctx sessionctx.Context, 
 	tbls := make([]table.Table, 0, len(vars.StmtCtx.MDLRelatedTableIDs))
 	relateVersion := make(map[int64]uint64, len(vars.StmtCtx.MDLRelatedTableIDs))
 	for id := range vars.StmtCtx.MDLRelatedTableIDs {
-		tbl, ok := is.TableByID(id)
+		tbl, ok := is.TableByID(ctx, id)
 		if !ok {
 			logutil.BgLogger().Error("table not found in info schema", zap.Int64("tableID", id))
 			return nil, nil, 0, errors.New("table not found in info schema")
@@ -203,6 +206,7 @@ func GeneratePlanCacheStmtWithAST(ctx context.Context, sctx sessionctx.Context, 
 
 	preparedObj := &PlanCacheStmt{
 		PreparedAst:         prepared,
+		ResolveCtx:          nodeW.GetResolveContext(),
 		StmtDB:              vars.CurrentDB,
 		StmtText:            paramSQL,
 		VisitInfos:          destBuilder.GetVisitInfo(),
@@ -290,11 +294,24 @@ func NewPlanCacheKey(sctx sessionctx.Context, stmt *PlanCacheStmt) (key, binding
 	}
 	_, connCollation := vars.GetCharsetInfo()
 
+	// not allow to share the same plan among different users for safety.
+	var userName, hostName string
+	if sctx.GetSessionVars().User != nil { // might be nil if in test
+		userName = sctx.GetSessionVars().User.AuthUsername
+		hostName = sctx.GetSessionVars().User.AuthHostname
+	}
+
+	// the user might switch the prune mode dynamically
+	pruneMode := sctx.GetSessionVars().PartitionPruneMode.Load()
+
 	hash := make([]byte, 0, len(stmt.StmtText)*2) // TODO: a Pool for this
+	hash = append(hash, hack.Slice(userName)...)
+	hash = append(hash, hack.Slice(hostName)...)
 	hash = append(hash, hack.Slice(stmtDB)...)
 	hash = append(hash, hack.Slice(stmt.StmtText)...)
 	hash = codec.EncodeInt(hash, stmt.SchemaVersion)
 	hash = hashInt64Uint64Map(hash, stmt.RelateVersion)
+	hash = append(hash, pruneMode...)
 	// Only be set in rc or for update read and leave it default otherwise.
 	// In Rc or ForUpdateRead, we should check whether the information schema has been changed when using plan cache.
 	// If it changed, we should rebuild the plan. lastUpdatedSchemaVersion help us to decide whether we should rebuild
@@ -389,6 +406,8 @@ func NewPlanCacheKey(sctx sessionctx.Context, stmt *PlanCacheStmt) (key, binding
 	hash = append(hash, bool2Byte(vars.InTxn()))
 	hash = append(hash, bool2Byte(vars.IsAutocommit()))
 	hash = append(hash, bool2Byte(config.GetGlobalConfig().PessimisticTxn.PessimisticAutoCommit.Load()))
+	hash = append(hash, bool2Byte(vars.StmtCtx.ForShareLockEnabledByNoop))
+	hash = append(hash, bool2Byte(vars.SharedLockPromotion))
 
 	return string(hash), binding, true, "", nil
 }
@@ -414,16 +433,12 @@ type PlanCacheValue struct {
 // Since PlanCacheValue.Plan is not read-only, to solve the concurrency problem when sharing the same PlanCacheValue
 // across multiple sessions, we need to clone the PlanCacheValue for each session.
 func (v *PlanCacheValue) CloneForInstancePlanCache(ctx context.Context, newCtx base.PlanContext) (*PlanCacheValue, bool) {
-	phyPlan, ok := v.Plan.(base.PhysicalPlan)
+	clonedPlan, ok := v.Plan.CloneForPlanCache(newCtx)
 	if !ok {
 		return nil, false
 	}
-	clonedPlan, err := phyPlan.Clone(newCtx)
-	if err != nil {
-		return nil, false
-	}
 	if intest.InTest && ctx.Value(PlanCacheKeyTestClone{}) != nil {
-		ctx.Value(PlanCacheKeyTestClone{}).(func(plan, cloned base.Plan))(phyPlan, clonedPlan)
+		ctx.Value(PlanCacheKeyTestClone{}).(func(plan, cloned base.Plan))(v.Plan, clonedPlan)
 	}
 	cloned := new(PlanCacheValue)
 	*cloned = *v
@@ -529,6 +544,7 @@ type PointGetExecutorCache struct {
 // PlanCacheStmt store prepared ast from PrepareExec and other related fields
 type PlanCacheStmt struct {
 	PreparedAst *ast.Prepared
+	ResolveCtx  *resolve.Context
 	StmtDB      string // which DB the statement will be processed over
 	VisitInfos  []visitInfo
 	Params      []ast.ParamMarkerExpr

@@ -125,8 +125,18 @@ check_result() {
 echo "restart a services"
 restart_services
 
+# non-compliant operation
+echo "non compliant operation"
+restore_fail=0
+run_br --pd $PD_ADDR restore point -s "local://$TEST_DIR/$PREFIX/log" --start-ts $current_ts || restore_fail=1
+if [ $restore_fail -ne 1 ]; then
+    echo 'pitr success' 
+    exit 1
+fi
+
 # PITR restore
 echo "run pitr"
+run_sql "DROP DATABASE __TiDB_BR_Temporary_Log_Restore_Checkpoint;"
 run_br --pd $PD_ADDR restore point -s "local://$TEST_DIR/$PREFIX/log" --full-backup-storage "local://$TEST_DIR/$PREFIX/full" > $res_file 2>&1
 
 check_result
@@ -151,4 +161,43 @@ echo "run snapshot restore#3"
 run_br --pd $PD_ADDR restore full -s "local://$TEST_DIR/$PREFIX/full" 
 
 echo "run incremental restore but failed"
-run_br --pd $PD_ADDR restore full -s "local://$TEST_DIR/$PREFIX/inc_fail" || { echo 'pitr failed' ; exit 1; }
+restore_fail=0
+run_br --pd $PD_ADDR restore full -s "local://$TEST_DIR/$PREFIX/inc_fail" || restore_fail=1
+if [ $restore_fail -ne 1 ]; then
+    echo 'pitr success' 
+    exit 1
+fi
+
+# start a new cluster for corruption
+echo "restart a services"
+restart_services
+
+echo "corrupt a log file"
+filename=$(find $TEST_DIR/$PREFIX/log -regex ".*\.log" | grep -v "schema-meta" | tail -n 1)
+filename_temp=$filename"_temp"
+filename_bak=$filename"_bak"
+echo "corruption" > $filename_temp
+cat $filename >> $filename_temp
+
+# file lost
+mv $filename $filename_bak
+export GO_FAILPOINTS="github.com/pingcap/tidb/br/pkg/utils/set-import-attempt-to-one=return(true)"
+restore_fail=0
+run_br --pd $PD_ADDR restore point -s "local://$TEST_DIR/$PREFIX/log" --full-backup-storage "local://$TEST_DIR/$PREFIX/full" || restore_fail=1
+export GO_FAILPOINTS=""
+if [ $restore_fail -ne 1 ]; then
+    echo 'pitr success' 
+    exit 1
+fi
+
+# file corruption
+mv $filename_temp $filename
+truncate --size=-11 $filename
+export GO_FAILPOINTS="github.com/pingcap/tidb/br/pkg/utils/set-import-attempt-to-one=return(true)"
+restore_fail=0
+run_br --pd $PD_ADDR restore point -s "local://$TEST_DIR/$PREFIX/log" --full-backup-storage "local://$TEST_DIR/$PREFIX/full" || restore_fail=1
+export GO_FAILPOINTS=""
+if [ $restore_fail -ne 1 ]; then
+    echo 'pitr success' 
+    exit 1
+fi

@@ -14,7 +14,8 @@ go_library(
         "//br/pkg/logutil",
         "//br/pkg/storage",
         "//br/pkg/summary",
-        "//pkg/parser/model",
+        "//br/pkg/utils",
+        "//pkg/meta/model",
         "//pkg/statistics/handle",
         "//pkg/statistics/handle/types",
         "//pkg/statistics/handle/util",
@@ -47,6 +48,8 @@ go_test(
     shard_count = 9,
     deps = [
         "//br/pkg/storage",
+        "//br/pkg/utils",
+        "//pkg/meta/model",
         "//pkg/parser/model",
         "//pkg/statistics/handle/types",
         "//pkg/statistics/handle/util",

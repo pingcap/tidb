@@ -362,12 +362,10 @@ SELECT * FROM tkey31 partition(p2);
 SELECT * FROM tkey31 partition(p3);
 
 # TestIssue31721
-set tidb_enable_list_partition=on;
 drop tables if exists t_31721;
 CREATE TABLE `t_31721` (`COL1` char(1) NOT NULL) CHARSET=utf8mb4 COLLATE=utf8mb4_bin PARTITION BY LIST COLUMNS(`COL1`) (PARTITION `P0` VALUES IN ('1'),PARTITION `P1` VALUES IN ('2'),PARTITION `P2` VALUES IN ('3'));
 insert into t_31721 values ('1');
 select * from t_31721 partition(p0, p1) where col1 != 2;
-set tidb_enable_list_partition=default;
 
 # TestKeyPartitionTableDDL
 drop table if exists tkey14, tkey15, tkey16, tkey17;

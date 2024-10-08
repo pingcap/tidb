@@ -13,8 +13,10 @@ go_library(
         "//pkg/ddl",
         "//pkg/ddl/logutil",
         "//pkg/domain",
-        "//pkg/parser/model",
+        "//pkg/domain/infosync",
+        "//pkg/meta/model",
         "//pkg/testkit",
+        "//pkg/types",
     ],
 )
 
@@ -34,10 +36,9 @@ go_test(
         "//pkg/config",
         "//pkg/ddl",
         "//pkg/ddl/testutil",
-        "//pkg/ddl/util/callback",
         "//pkg/domain",
         "//pkg/errno",
-        "//pkg/parser/model",
+        "//pkg/meta/model",
         "//pkg/testkit",
         "//pkg/testkit/testfailpoint",
         "//pkg/testkit/testsetup",

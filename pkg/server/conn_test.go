@@ -784,22 +784,72 @@ func TestShutDown(t *testing.T) {
 	cc = &clientConn{server: srv}
 	cc.SetCtx(tc)
 
-	// test in txn
-	srv.clients[dom.NextConnID()] = cc
-	cc.getCtx().GetSessionVars().SetInTxn(true)
+	waitMap := [][]bool{
+		// Reading, Not Reading
+		{false, true}, // Not InTxn
+		{true, true},  // InTxn
+	}
+	for idx, waitMap := range waitMap {
+		inTxn := idx > 0
+		for idx, shouldWait := range waitMap {
+			reading := idx == 0
+			if inTxn {
+				cc.getCtx().GetSessionVars().SetInTxn(true)
+			} else {
+				cc.getCtx().GetSessionVars().SetInTxn(false)
+			}
+			if reading {
+				cc.CompareAndSwapStatus(cc.getStatus(), connStatusReading)
+			} else {
+				cc.CompareAndSwapStatus(cc.getStatus(), connStatusDispatching)
+			}
 
-	waitTime := 100 * time.Millisecond
-	begin := time.Now()
-	srv.DrainClients(waitTime, waitTime)
-	require.Greater(t, time.Since(begin), waitTime)
+			srv.clients[dom.NextConnID()] = cc
 
-	// test not in txn
-	srv.clients[dom.NextConnID()] = cc
+			waitTime := 100 * time.Millisecond
+			begin := time.Now()
+			srv.DrainClients(waitTime, waitTime)
+
+			if shouldWait {
+				require.Greater(t, time.Since(begin), waitTime)
+			} else {
+				require.Less(t, time.Since(begin), waitTime)
+			}
+		}
+	}
+}
+
+func TestCommitWaitGroup(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+
+	se, err := session.CreateSession4Test(store)
+	require.NoError(t, err)
+	tc := &TiDBContext{Session: se}
+
+	cfg := serverutil.NewTestConfig()
+	cfg.Port = 0
+	cfg.Status.StatusPort = 0
+	drv := NewTiDBDriver(store)
+	srv, err := NewServer(cfg, drv)
+	require.NoError(t, err)
+	srv.SetDomain(dom)
+
+	cc := &clientConn{server: srv}
+	cc.SetCtx(tc)
+	cc.CompareAndSwapStatus(cc.getStatus(), connStatusReading)
 	cc.getCtx().GetSessionVars().SetInTxn(false)
+	srv.clients[dom.NextConnID()] = cc
 
-	begin = time.Now()
-	srv.DrainClients(waitTime, waitTime)
-	require.Less(t, time.Since(begin), waitTime)
+	wg := cc.getCtx().GetCommitWaitGroup()
+	wg.Add(1)
+	go func() {
+		time.Sleep(100 * time.Millisecond)
+		wg.Done()
+	}()
+	begin := time.Now()
+	srv.DrainClients(time.Second, time.Second)
+	require.Greater(t, time.Since(begin), 100*time.Millisecond)
+	require.Less(t, time.Since(begin), time.Second)
 }
 
 type snapshotCache interface {
@@ -967,8 +1017,6 @@ func TestPrefetchPartitionTable(t *testing.T) {
 	query := "delete from prefetch where a = 2;" +
 		"delete from prefetch where a = 3;" +
 		"delete from prefetch where a in (4,5);"
-	// TODO: refactor the build code and extract the partition pruning one,
-	// so it can be called in prefetchPointPlanKeys
 	err := cc.handleQuery(ctx, query)
 	require.NoError(t, err)
 	txn, err := tk.Session().Txn(false)

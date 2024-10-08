@@ -25,11 +25,12 @@ import (
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/executor"
 	"github.com/pingcap/tidb/pkg/infoschema"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/planner"
 	"github.com/pingcap/tidb/pkg/planner/core"
+	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/planner/util/coretestsdk"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/external"
@@ -73,7 +74,8 @@ func TestRefine(t *testing.T) {
 		require.NoError(t, err, comment)
 		sc := tk.Session().GetSessionVars().StmtCtx
 		sc.SetTypeFlags(sc.TypeFlags().WithIgnoreTruncateErr(false))
-		p, _, err := planner.Optimize(context.TODO(), tk.Session(), stmt, is)
+		nodeW := resolve.NewNodeW(stmt)
+		p, _, err := planner.Optimize(context.TODO(), tk.Session(), nodeW, is)
 		require.NoError(t, err, comment)
 		testdata.OnRecord(func() {
 			output[i].SQL = tt
@@ -106,7 +108,8 @@ func TestAggEliminator(t *testing.T) {
 		require.NoError(t, err, comment)
 		sc := tk.Session().GetSessionVars().StmtCtx
 		sc.SetTypeFlags(sc.TypeFlags().WithIgnoreTruncateErr(false))
-		p, _, err := planner.Optimize(context.TODO(), tk.Session(), stmt, is)
+		nodeW := resolve.NewNodeW(stmt)
+		p, _, err := planner.Optimize(context.TODO(), tk.Session(), nodeW, is)
 		require.NoError(t, err)
 		testdata.OnRecord(func() {
 			output[i].SQL = tt
@@ -135,7 +138,8 @@ func TestRuleColumnPruningLogicalApply(t *testing.T) {
 		comment := fmt.Sprintf("input: %s", tt)
 		stmt, err := p.ParseOneStmt(tt, "", "")
 		require.NoError(t, err, comment)
-		p, _, err := planner.Optimize(context.TODO(), tk.Session(), stmt, is)
+		nodeW := resolve.NewNodeW(stmt)
+		p, _, err := planner.Optimize(context.TODO(), tk.Session(), nodeW, is)
 		require.NoError(t, err)
 		testdata.OnRecord(func() {
 			output[i].SQL = tt
@@ -164,7 +168,8 @@ func TestSemiJoinToInner(t *testing.T) {
 	for i, tt := range input {
 		stmt, err := p.ParseOneStmt(tt, "", "")
 		require.NoError(t, err)
-		p, _, err := planner.Optimize(context.TODO(), tk.Session(), stmt, is)
+		nodeW := resolve.NewNodeW(stmt)
+		p, _, err := planner.Optimize(context.TODO(), tk.Session(), nodeW, is)
 		require.NoError(t, err)
 		testdata.OnRecord(func() {
 			output[i].SQL = tt
@@ -191,7 +196,8 @@ func TestUnmatchedTableInHint(t *testing.T) {
 		tk.Session().GetSessionVars().StmtCtx.SetWarnings(nil)
 		stmt, err := p.ParseOneStmt(test, "", "")
 		require.NoError(t, err)
-		_, _, err = planner.Optimize(context.TODO(), tk.Session(), stmt, is)
+		nodeW := resolve.NewNodeW(stmt)
+		_, _, err = planner.Optimize(context.TODO(), tk.Session(), nodeW, is)
 		require.NoError(t, err)
 		warnings := tk.Session().GetSessionVars().StmtCtx.GetWarnings()
 		testdata.OnRecord(func() {
@@ -633,7 +639,8 @@ func TestHintScope(t *testing.T) {
 		stmt, err := p.ParseOneStmt(test, "", "")
 		require.NoError(t, err, comment)
 
-		p, _, err := planner.Optimize(context.Background(), tk.Session(), stmt, is)
+		nodeW := resolve.NewNodeW(stmt)
+		p, _, err := planner.Optimize(context.Background(), tk.Session(), nodeW, is)
 		require.NoError(t, err)
 		testdata.OnRecord(func() {
 			output[i].SQL = test
@@ -671,7 +678,8 @@ func TestJoinHints(t *testing.T) {
 		require.NoError(t, err, comment)
 
 		tk.Session().GetSessionVars().StmtCtx.SetWarnings(nil)
-		p, _, err := planner.Optimize(ctx, tk.Session(), stmt, is)
+		nodeW := resolve.NewNodeW(stmt)
+		p, _, err := planner.Optimize(ctx, tk.Session(), nodeW, is)
 		require.NoError(t, err)
 		warnings := tk.Session().GetSessionVars().StmtCtx.GetWarnings()
 
@@ -733,7 +741,8 @@ func TestAggregationHints(t *testing.T) {
 		stmt, err := p.ParseOneStmt(test.SQL, "", "")
 		require.NoError(t, err, comment)
 
-		p, _, err := planner.Optimize(ctx, tk.Session(), stmt, is)
+		nodeW := resolve.NewNodeW(stmt)
+		p, _, err := planner.Optimize(ctx, tk.Session(), nodeW, is)
 		require.NoError(t, err)
 		warnings := tk.Session().GetSessionVars().StmtCtx.GetWarnings()
 
@@ -784,7 +793,8 @@ func TestSemiJoinRewriteHints(t *testing.T) {
 		stmt, err := p.ParseOneStmt(test, "", "")
 		require.NoError(t, err, comment)
 
-		_, _, err = planner.Optimize(ctx, tk.Session(), stmt, is)
+		nodeW := resolve.NewNodeW(stmt)
+		_, _, err = planner.Optimize(ctx, tk.Session(), nodeW, is)
 		require.NoError(t, err)
 		warnings := tk.Session().GetSessionVars().StmtCtx.GetWarnings()
 
@@ -839,7 +849,8 @@ func TestAggToCopHint(t *testing.T) {
 		stmt, err := p.ParseOneStmt(test, "", "")
 		require.NoError(t, err, comment)
 
-		p, _, err := planner.Optimize(ctx, tk.Session(), stmt, is)
+		nodeW := resolve.NewNodeW(stmt)
+		p, _, err := planner.Optimize(ctx, tk.Session(), nodeW, is)
 		require.NoError(t, err, comment)
 		planString := core.ToString(p)
 		testdata.OnRecord(func() {
@@ -932,7 +943,8 @@ func TestIndexHint(t *testing.T) {
 		stmt, err := p.ParseOneStmt(test, "", "")
 		require.NoError(t, err, comment)
 
-		p, _, err := planner.Optimize(ctx, tk.Session(), stmt, is)
+		nodeW := resolve.NewNodeW(stmt)
+		p, _, err := planner.Optimize(ctx, tk.Session(), nodeW, is)
 		require.NoError(t, err)
 		testdata.OnRecord(func() {
 			output[i].SQL = test
@@ -986,7 +998,8 @@ func TestIndexMergeHint(t *testing.T) {
 		sctx := tk.Session()
 		err = executor.ResetContextOfStmt(sctx, stmt)
 		require.NoError(t, err)
-		p, _, err := planner.Optimize(ctx, tk.Session(), stmt, is)
+		nodeW := resolve.NewNodeW(stmt)
+		p, _, err := planner.Optimize(ctx, tk.Session(), nodeW, is)
 		require.NoError(t, err)
 		testdata.OnRecord(func() {
 			output[i].SQL = test
@@ -1036,7 +1049,8 @@ func TestQueryBlockHint(t *testing.T) {
 		stmt, err := p.ParseOneStmt(tt, "", "")
 		require.NoError(t, err, comment)
 
-		p, _, err := planner.Optimize(ctx, tk.Session(), stmt, is)
+		nodeW := resolve.NewNodeW(stmt)
+		p, _, err := planner.Optimize(ctx, tk.Session(), nodeW, is)
 		require.NoError(t, err, comment)
 		testdata.OnRecord(func() {
 			output[i].SQL = tt
@@ -1082,7 +1096,8 @@ func TestInlineProjection(t *testing.T) {
 		stmt, err := p.ParseOneStmt(tt, "", "")
 		require.NoError(t, err, comment)
 
-		p, _, err := planner.Optimize(ctx, tk.Session(), stmt, is)
+		nodeW := resolve.NewNodeW(stmt)
+		p, _, err := planner.Optimize(ctx, tk.Session(), nodeW, is)
 		require.NoError(t, err, comment)
 		testdata.OnRecord(func() {
 			output[i].SQL = tt
@@ -1114,8 +1129,9 @@ func TestIndexJoinHint(t *testing.T) {
 
 	var input []string
 	var output []struct {
-		SQL  string
-		Plan string
+		SQL   string
+		Plan  string
+		Warns []string
 	}
 
 	is := domain.GetDomain(tk.Session()).InfoSchema()
@@ -1124,16 +1140,29 @@ func TestIndexJoinHint(t *testing.T) {
 
 	planSuiteData := GetPlanSuiteData()
 	planSuiteData.LoadTestCases(t, &input, &output)
+	filterWarnings := func(originalWarnings []contextutil.SQLWarn) []contextutil.SQLWarn {
+		warnings := make([]contextutil.SQLWarn, 0, 4)
+		for _, warning := range originalWarnings {
+			// filter out warning about skyline pruning
+			if !strings.Contains(warning.Err.Error(), "remain after pruning paths for") {
+				warnings = append(warnings, warning)
+			}
+		}
+		return warnings
+	}
 	for i, tt := range input {
 		comment := fmt.Sprintf("case:%v sql: %s", i, tt)
 		stmt, err := p.ParseOneStmt(tt, "", "")
 		require.NoError(t, err, comment)
-		p, _, err := planner.Optimize(ctx, tk.Session(), stmt, is)
+		nodeW := resolve.NewNodeW(stmt)
+		p, _, err := planner.Optimize(ctx, tk.Session(), nodeW, is)
 		require.NoError(t, err, comment)
 		testdata.OnRecord(func() {
 			output[i].SQL = tt
 			output[i].Plan = core.ToString(p)
+			output[i].Warns = testdata.ConvertSQLWarnToStrings(filterWarnings(tk.Session().GetSessionVars().StmtCtx.GetWarnings()))
 		})
+		tk.Session().GetSessionVars().StmtCtx.TruncateWarnings(0)
 		require.Equal(t, output[i].Plan, core.ToString(p), comment)
 	}
 }
@@ -1165,7 +1194,8 @@ func TestHintFromDiffDatabase(t *testing.T) {
 		comment := fmt.Sprintf("case:%v sql: %s", i, tt)
 		stmt, err := p.ParseOneStmt(tt, "", "")
 		require.NoError(t, err, comment)
-		p, _, err := planner.Optimize(ctx, tk.Session(), stmt, is)
+		nodeW := resolve.NewNodeW(stmt)
+		p, _, err := planner.Optimize(ctx, tk.Session(), nodeW, is)
 		require.NoError(t, err, comment)
 		testdata.OnRecord(func() {
 			output[i].SQL = tt
@@ -1498,4 +1528,9 @@ func TestExplainExpand(t *testing.T) {
 		})
 		tk.MustQuery(ts).Check(testkit.Rows(output[i].Plan...))
 	}
+}
+
+func TestPhysicalApplyIsNotPhysicalJoin(t *testing.T) {
+	// PhysicalApply is expected not to implement PhysicalJoin.
+	require.NotImplements(t, (*core.PhysicalJoin)(nil), new(core.PhysicalApply))
 }

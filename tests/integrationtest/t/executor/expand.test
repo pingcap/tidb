@@ -110,3 +110,163 @@ GROUP BY prod WITH ROLLUP;
 --sorted_result
 SELECT CONCAT(product,':',country_id), 1+1, SUM(profit)/COUNT(*) FROM t1
 GROUP BY CONCAT(product,':',country_id) WITH ROLLUP;
+
+SET @saved_sql_mode = @@session.sql_mode;
+SET SESSION sql_mode= '';
+--echo
+--sorted_result
+SELECT UPPER(product) AS prod,
+       SUM(profit)/COUNT(*)
+  FROM t1 GROUP BY prod WITH ROLLUP HAVING prod='COMPUTER' ;
+SET SESSION sql_mode= @saved_sql_mode;
+
+--echo
+--echo # Joins
+--sorted_result
+SELECT product, country , year, SUM(profit) FROM t1,t2 WHERE
+t1.country_id=t2.country_id GROUP BY product, country, year WITH ROLLUP;
+
+--echo
+--sorted_result
+SELECT product, `SUM` FROM (SELECT product, SUM(profit) AS 'sum' FROM t1
+                            GROUP BY product WITH ROLLUP) AS tmp
+WHERE product is null;
+
+--echo
+--sorted_result
+SELECT product FROM t1 WHERE EXISTS
+(SELECT product, country_id , SUM(profit) FROM t1 AS t2
+ WHERE t1.product=t2.product GROUP BY product, country_id WITH ROLLUP
+ HAVING SUM(profit) > 6000);
+
+--echo
+--sorted_result
+# The following does not return the expected answer, but this is a limitation
+# in the implementation so we should just document it
+SELECT product, country_id , year, SUM(profit) FROM t1
+GROUP BY product, country_id, year HAVING country_id is NULL;
+
+--echo
+--sorted_result
+SELECT CONCAT(':',product,':'), SUM(profit), AVG(profit) FROM t1
+GROUP BY product WITH ROLLUP;
+
+#
+# Test bug with const tables
+#
+--echo
+drop table t1,t2;
+CREATE TABLE t1 (i int);
+INSERT INTO t1 VALUES(100);
+CREATE TABLE t2 (i int);
+INSERT INTO t2 VALUES (100),(200);
+
+--echo
+--sorted_result
+SELECT i, COUNT(*) FROM t1 GROUP BY i WITH ROLLUP;
+
+--echo
+--sorted_result
+SELECT t1.i, t2.i, COUNT(*) FROM t1,t2 GROUP BY t1.i,t2.i WITH ROLLUP;
+
+#bug #4767: ROLLUP with LEFT JOIN
+--echo
+DROP TABLE t1,t2;
+CREATE TABLE user_day(
+  user_id INT NOT NULL,
+  date DATE NOT NULL,
+  UNIQUE INDEX user_date (user_id, date)
+);
+
+INSERT INTO user_day VALUES
+  (1, '2004-06-06' ),
+  (1, '2004-06-07' ),
+  (2, '2004-06-06' );
+
+--echo
+--sorted_result
+SELECT
+       d.date AS day,
+       COUNT(d.user_id) as sample,
+       COUNT(next_day.user_id) AS not_cancelled
+  FROM user_day d
+       LEFT JOIN user_day next_day
+       ON next_day.user_id=d.user_id AND
+          next_day.date= DATE_ADD( d.date, interval 1 day )
+  GROUP BY day;
+
+--echo
+--sorted_result
+SELECT
+       d.date AS day,
+       COUNT(d.user_id) as sample,
+       COUNT(next_day.user_id) AS not_cancelled
+  FROM user_day d
+       LEFT JOIN user_day next_day
+       ON next_day.user_id=d.user_id AND
+          next_day.date= DATE_ADD( d.date, interval 1 day )
+  GROUP BY day
+    WITH ROLLUP;
+
+--echo
+DROP TABLE user_day;
+
+#
+# Tests for bugs #8616, #8615: distinct sum with rollup
+#
+
+CREATE TABLE t1 (a int, b int);
+
+INSERT INTO t1 VALUES
+  (1,4),
+  (2,2), (2,2),
+  (4,1), (4,1), (4,1), (4,1),
+  (2,1), (2,1);
+
+--echo
+--sorted_result
+SELECT SUM(b) FROM t1 GROUP BY a WITH ROLLUP;
+--echo
+--sorted_result
+SELECT DISTINCT SUM(b) FROM t1 GROUP BY a WITH ROLLUP;
+--echo
+--sorted_result
+SELECT SUM(b), COUNT(DISTINCT b) FROM t1 GROUP BY a WITH ROLLUP;
+--echo
+--sorted_result
+SELECT DISTINCT SUM(b), COUNT(DISTINCT b) FROM t1 GROUP BY a WITH ROLLUP;
+--echo
+--sorted_result
+SELECT SUM(b), COUNT(*) FROM t1 GROUP BY a WITH ROLLUP;
+--echo
+--sorted_result
+SELECT DISTINCT SUM(b), COUNT(*) FROM t1 GROUP BY a WITH ROLLUP;
+--echo
+--sorted_result
+SELECT SUM(b), COUNT(DISTINCT b), COUNT(*) FROM t1 GROUP BY a WITH ROLLUP;
+--echo
+--sorted_result
+SELECT DISTINCT SUM(b), COUNT(DISTINCT b), COUNT(*) FROM t1
+  GROUP BY a WITH ROLLUP;
+--echo
+--sorted_result
+SELECT a, SUM(b) FROM t1 GROUP BY a,b WITH ROLLUP;
+--echo
+--sorted_result
+SELECT DISTINCT a, SUM(b) FROM t1 GROUP BY a,b WITH ROLLUP;
+--echo
+--sorted_result
+SELECT b, a, SUM(b) FROM t1 GROUP BY a,b WITH ROLLUP;
+--echo
+--sorted_result
+SELECT DISTINCT b,a, SUM(b) FROM t1 GROUP BY a,b WITH ROLLUP;
+--echo
+ALTER TABLE t1 ADD COLUMN c INT;
+--echo
+--sorted_result
+SELECT a,b,SUM(c) FROM t1 GROUP BY a,b,c WITH ROLLUP;
+--echo
+--sorted_result
+SELECT distinct a,b,SUM(c) FROM t1 GROUP BY a,b,c WITH ROLLUP;
+
+DROP TABLE t1;

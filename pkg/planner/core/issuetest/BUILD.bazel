@@ -10,11 +10,13 @@ go_test(
     data = glob(["testdata/**"]),
     flaky = True,
     race = "on",
+    shard_count = 4,
     deps = [
         "//pkg/parser",
         "//pkg/planner",
         "//pkg/planner/core",
         "//pkg/planner/core/base",
+        "//pkg/planner/core/resolve",
         "//pkg/testkit",
         "//pkg/testkit/testdata",
         "//pkg/testkit/testmain",
