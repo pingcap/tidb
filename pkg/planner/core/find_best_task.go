@@ -2503,6 +2503,12 @@ func convertToTableScan(ds *logicalop.DataSource, prop *property.PhysicalPropert
 		if prop.MPPPartitionTp != property.AnyType {
 			return base.InvalidTask, nil
 		}
+		if candidate.path.Index != nil && candidate.path.Index.VectorInfo != nil {
+			ts.AnnIndexExtra = &VectorIndexExtra{
+				IndexInfo:         candidate.path.Index,
+				PushDownQueryInfo: nil,
+			}
+		}
 		// ********************************** future deprecated start **************************/
 		var hasVirtualColumn bool
 		for _, col := range ts.schema.Columns {

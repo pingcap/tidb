@@ -561,6 +561,17 @@ func (tk *TestKit) MustUseIndex(sql string, index string, args ...any) bool {
 	return false
 }
 
+// MustNoIndexUsed checks if the result execution plan contains no index.
+func (tk *TestKit) MustNoIndexUsed(sql string, args ...any) bool {
+	rs := tk.MustQuery("explain "+sql, args...)
+	for i := range rs.rows {
+		if strings.Contains(rs.rows[i][3], "index:") {
+			return false
+		}
+	}
+	return true
+}
+
 // MustUseIndex4ExplainFor checks if the result execution plan contains specific index(es).
 func (tk *TestKit) MustUseIndex4ExplainFor(result *Result, index string) bool {
 	for i := range result.rows {

@@ -144,9 +144,14 @@ func (path *AccessPath) Clone() *AccessPath {
 	return ret
 }
 
-// IsTablePath returns true if it's IntHandlePath or CommonHandlePath.
+// IsTablePath returns true if it's IntHandlePath or CommonHandlePath. Including tiflash table scan.
 func (path *AccessPath) IsTablePath() bool {
-	return path.IsIntHandlePath || path.IsCommonHandlePath
+	return path.IsIntHandlePath || path.IsCommonHandlePath || (path.Index != nil && path.StoreType == kv.TiFlash)
+}
+
+// IsTiKVTablePath returns true if it's IntHandlePath or CommonHandlePath. And the store type is TiKV.
+func (path *AccessPath) IsTiKVTablePath() bool {
+	return (path.IsIntHandlePath || path.IsCommonHandlePath) && path.StoreType == kv.TiKV
 }
 
 // SplitCorColAccessCondFromFilters move the necessary filter in the form of index_col = corrlated_col to access conditions.

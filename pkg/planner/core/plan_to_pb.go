@@ -273,6 +273,10 @@ func (p *PhysicalTableScan) ToPB(ctx *base.BuildPBContext, storeType kv.StoreTyp
 		tsExec.PushedDownFilterConditions = conditions
 	}
 
+	if p.AnnIndexExtra != nil && p.AnnIndexExtra.PushDownQueryInfo != nil {
+		tsExec.AnnQuery = p.AnnIndexExtra.PushDownQueryInfo
+	}
+
 	var err error
 	tsExec.RuntimeFilterList, err = RuntimeFilterListToPB(ctx, p.runtimeFilterList, ctx.GetClient())
 	if err != nil {
