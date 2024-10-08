@@ -116,7 +116,7 @@ func StartCheckpointLogRestoreRunnerForTest(
 		newTableCheckpointStorage(se, LogRestoreCheckpointDatabaseName),
 		nil, valueMarshalerForLogRestore)
 
-	runner.startCheckpointMainLoop(ctx, tick, tick, 0)
+	runner.startCheckpointMainLoop(ctx, tick, tick, 0, defaultRetryDuration)
 	return runner, nil
 }
 
@@ -129,7 +129,9 @@ func StartCheckpointRunnerForLogRestore(
 		nil, valueMarshalerForLogRestore)
 
 	// for restore, no need to set lock
-	runner.startCheckpointMainLoop(ctx, defaultTickDurationForFlush, defaultTckDurationForChecksum, 0)
+	runner.startCheckpointMainLoop(
+		ctx,
+		defaultTickDurationForFlush, defaultTickDurationForChecksum, 0, defaultRetryDuration)
 	return runner, nil
 }
 
