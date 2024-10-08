@@ -1575,7 +1575,6 @@ func (a *DropIndexArgs) fillJobV1(job *Job) {
 	} else {
 		job.Args = []any{a.IndexNames, a.IfExists}
 	}
-
 }
 
 func (a *DropIndexArgs) fillFinishedJobV1(job *Job) {
@@ -1730,9 +1729,9 @@ func (a *AddIndexArgs) getV1Args() []any {
 	// This is to make the args compatible with old logic, same like DropIndexArgs
 	if n == 1 {
 		return []any{unique[0], indexName[0], indexPartSpecification[0], indexOption[0], hiddenCols[0], global[0]}
-	} else {
-		return []any{unique, indexName, indexPartSpecification, indexOption, hiddenCols, global}
 	}
+
+	return []any{unique, indexName, indexPartSpecification, indexOption, hiddenCols, global}
 }
 
 func (a *AddIndexArgs) fillJobV1(job *Job) {
@@ -1912,7 +1911,7 @@ func (a *RenameIndexArgs) fillJobV1(job *Job) {
 	job.Args = []any{a.From, a.To}
 }
 
-// GetRenameIndexAegs get the rename index args.
+// GetRenameIndexArgs get the rename index args.
 func GetRenameIndexArgs(job *Job) (*RenameIndexArgs, error) {
 	if job.Version == JobVersion1 {
 		if err := tryMarshalArgs(job); err != nil {
