@@ -15,6 +15,7 @@
 package gpool
 
 import (
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"runtime"
 	"time"
 
@@ -34,6 +35,9 @@ const PoolCPUThreshold = 0.8
 
 // PoolRecycleInterval is the idle time before recycling a goroutine
 const PoolRecycleInterval = time.Minute
+
+// DisableGlobalGPool is a flag to disable global goroutine pool.
+var DisableGlobalGPool = intest.InTest
 
 // GPool wraps gp.Pool.
 type GPool struct {
@@ -57,6 +61,9 @@ func (p *AntPool) Close() {
 
 // NewGPool creates a new goroutine pool.
 func NewGPool() Pool {
+	if DisableGlobalGPool {
+		return MockGPool
+	}
 	_, supportCPUUsage := cpu.GetCPUUsage()
 	// gpool := gp.New(PoolCapacityPerCore*runtime.NumCPU(), PoolRecycleInterval)
 	gpool, err := ants.NewPool(PoolCapacityPerCore*runtime.NumCPU(), ants.WithExpiryDuration(PoolRecycleInterval))
