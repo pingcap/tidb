@@ -20,7 +20,7 @@ import (
 
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/tablecodec"
@@ -178,7 +178,7 @@ func (cb *CommonHandleCols) NumCols() int {
 }
 
 // StringWithCtx implements the kv.HandleCols interface.
-func (cb *CommonHandleCols) StringWithCtx(ctx expression.ParamValues) string {
+func (cb *CommonHandleCols) StringWithCtx(ctx expression.ParamValues, _ string) string {
 	b := new(strings.Builder)
 	b.WriteByte('[')
 	for i, col := range cb.columns {
@@ -305,7 +305,7 @@ func (*IntHandleCols) IsInt() bool {
 }
 
 // StringWithCtx implements the kv.HandleCols interface.
-func (ib *IntHandleCols) StringWithCtx(ctx expression.ParamValues) string {
+func (ib *IntHandleCols) StringWithCtx(ctx expression.ParamValues, _ string) string {
 	return ib.col.ColumnExplainInfo(ctx, false)
 }
 

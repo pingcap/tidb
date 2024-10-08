@@ -277,9 +277,6 @@ type TableName struct {
 	Schema model.CIStr
 	Name   model.CIStr
 
-	DBInfo    *model.DBInfo
-	TableInfo *model.TableInfo
-
 	IndexHints     []*IndexHint
 	PartitionNames []model.CIStr
 	TableSample    *TableSample
@@ -3029,8 +3026,6 @@ const (
 	ShowErrors
 	ShowBindings
 	ShowBindingCacheStatus
-	ShowPumpStatus
-	ShowDrainerStatus
 	ShowOpenTables
 	ShowAnalyzeStatus
 	ShowRegions
@@ -3393,10 +3388,6 @@ func (n *ShowStmt) Restore(ctx *format.RestoreCtx) error {
 			ctx.WriteKeyWord("BINDINGS")
 		case ShowBindingCacheStatus:
 			ctx.WriteKeyWord("BINDING_CACHE STATUS")
-		case ShowPumpStatus:
-			ctx.WriteKeyWord("PUMP STATUS")
-		case ShowDrainerStatus:
-			ctx.WriteKeyWord("DRAINER STATUS")
 		case ShowAnalyzeStatus:
 			ctx.WriteKeyWord("ANALYZE STATUS")
 		case ShowRegions:

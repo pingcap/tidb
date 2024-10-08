@@ -373,11 +373,11 @@ func TestRebaseIfNeeded(t *testing.T) {
 	tbl, err := domain.InfoSchema().TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
 	require.Nil(t, sessiontxn.NewTxn(context.Background(), ctx))
+	txn, err := ctx.Txn(true)
+	require.NoError(t, err)
 	// AddRecord directly here will skip to rebase the auto ID in the insert statement,
 	// which could simulate another TiDB adds a large auto ID.
-	_, err = tbl.AddRecord(ctx.GetTableCtx(), types.MakeDatums(30001, 2))
-	require.NoError(t, err)
-	txn, err := ctx.Txn(true)
+	_, err = tbl.AddRecord(ctx.GetTableCtx(), txn, types.MakeDatums(30001, 2))
 	require.NoError(t, err)
 	require.NoError(t, txn.Commit(context.Background()))
 

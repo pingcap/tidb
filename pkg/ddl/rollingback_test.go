@@ -22,17 +22,17 @@ import (
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/ddl"
-	"github.com/pingcap/tidb/pkg/ddl/util/callback"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/external"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/stretchr/testify/require"
 )
 
 // TestCancelJobMeetError is used to test canceling ddl job failure when convert ddl job to a rolling back job.
 func TestCancelAddIndexJobError(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk1 := testkit.NewTestKit(t, store)
@@ -51,14 +51,12 @@ func TestCancelAddIndexJobError(t *testing.T) {
 	tbl := external.GetTableByName(t, tk, "test", "t_cancel_add_index") //nolint:typecheck
 	require.NotNil(t, tbl)
 
-	d := dom.DDL()
-	hook := &callback.TestDDLCallback{Do: dom}
 	var (
 		checkErr error
 		jobID    atomic.Int64
 		res      sqlexec.RecordSet
 	)
-	onJobUpdatedExportedFunc := func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobUpdated", func(job *model.Job) {
 		if job.TableID != tbl.Meta().ID {
 			return
 		}
@@ -78,9 +76,7 @@ func TestCancelAddIndexJobError(t *testing.T) {
 				checkErr = err
 			}
 		}
-	}
-	hook.OnJobUpdatedExported.Store(&onJobUpdatedExportedFunc)
-	d.SetHook(hook)
+	})
 
 	// This will hang on stateDeleteOnly, and the job will be canceled.
 	err := tk.ExecToErr("alter table t_cancel_add_index add index idx(a)")

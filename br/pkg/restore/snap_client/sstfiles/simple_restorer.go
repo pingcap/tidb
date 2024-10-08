@@ -24,7 +24,7 @@ import (
 	"github.com/juju/errors"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/logutil"
-	"github.com/pingcap/tidb/br/pkg/restore/internal/utils"
+	snapsplit "github.com/pingcap/tidb/br/pkg/restore/internal/snap_split"
 	"github.com/pingcap/tidb/br/pkg/restore/split"
 	"github.com/pingcap/tidb/br/pkg/rtree"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
@@ -69,12 +69,8 @@ func (s *SimpleFileRestorer) SplitRanges(ctx context.Context, ranges []rtree.Ran
 		})
 		s.splitter.ApplyOptions(splitClientOpt)
 	}
-	opts := make([]utils.SplitOption, 0, 1)
-	if s.useStartKeySplit {
-		opts = append(opts, &utils.UseStartKeyOption{})
-	}
-	splitter := utils.NewRegionSplitter(s.splitter, opts...)
-	return splitter.ExecuteSplit(ctx, ranges)
+	splitter := snapsplit.NewRegionSplitter(s.splitter)
+	return splitter.ExecuteSplit(ctx, nil)
 }
 
 func (r *SimpleFileRestorer) RestoreFiles(ctx context.Context, files []SstFilesInfo, onProgress func()) error {

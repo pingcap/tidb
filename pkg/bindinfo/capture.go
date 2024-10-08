@@ -194,7 +194,7 @@ func (h *globalBindingHandle) CaptureBaselines() {
 			SQLDigest:   digest.String(),
 		}
 		// We don't need to pass the `sctx` because the BindSQL has been validated already.
-		err = h.CreateGlobalBinding(nil, binding)
+		err = h.CreateGlobalBinding(nil, []*Binding{&binding})
 		if err != nil {
 			logutil.BindLogger().Debug("create bind record failed in baseline capture", zap.String("SQL", bindableStmt.Query), zap.Error(err))
 		}

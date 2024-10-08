@@ -16,7 +16,8 @@ package executor
 
 import (
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
-	"github.com/pingcap/tidb/pkg/expression/contextsession"
+	"github.com/pingcap/tidb/pkg/expression"
+	"github.com/pingcap/tidb/pkg/expression/sessionexpr"
 )
 
 // Detach detaches the current executor from the session context. After detaching, the session context
@@ -50,7 +51,7 @@ func Detach(originalExecutor exec.Executor) (exec.Executor, bool) {
 func (treCtx tableReaderExecutorContext) Detach() tableReaderExecutorContext {
 	newCtx := treCtx
 
-	if ctx, ok := treCtx.ectx.(*contextsession.SessionExprContext); ok {
+	if ctx, ok := treCtx.ectx.(*sessionexpr.ExprContext); ok {
 		staticExprCtx := ctx.IntoStatic()
 
 		newCtx.dctx = newCtx.dctx.Detach()
@@ -63,12 +64,109 @@ func (treCtx tableReaderExecutorContext) Detach() tableReaderExecutorContext {
 	return treCtx
 }
 
+func (ireCtx indexReaderExecutorContext) Detach() indexReaderExecutorContext {
+	newCtx := ireCtx
+
+	if ctx, ok := ireCtx.ectx.(*sessionexpr.ExprContext); ok {
+		staticExprCtx := ctx.IntoStatic()
+
+		newCtx.dctx = newCtx.dctx.Detach()
+		newCtx.rctx = newCtx.rctx.Detach(staticExprCtx)
+		newCtx.buildPBCtx = newCtx.buildPBCtx.Detach(staticExprCtx)
+		newCtx.ectx = staticExprCtx
+		return newCtx
+	}
+
+	return ireCtx
+}
+
+func (iluCtx indexLookUpExecutorContext) Detach() indexLookUpExecutorContext {
+	newCtx := iluCtx
+	newCtx.tableReaderExecutorContext = newCtx.tableReaderExecutorContext.Detach()
+
+	return iluCtx
+}
+
+func (pCtx projectionExecutorContext) Detach() projectionExecutorContext {
+	newCtx := pCtx
+	if ctx, ok := pCtx.evalCtx.(*sessionexpr.EvalContext); ok {
+		newCtx.evalCtx = ctx.IntoStatic()
+	}
+
+	return newCtx
+}
+
+func (sCtx selectionExecutorContext) Detach() selectionExecutorContext {
+	newCtx := sCtx
+	if ctx, ok := sCtx.evalCtx.(*sessionexpr.EvalContext); ok {
+		newCtx.evalCtx = ctx.IntoStatic()
+	}
+
+	return newCtx
+}
+
 // Detach detaches the current executor from the session context.
 func (e *TableReaderExecutor) Detach() (exec.Executor, bool) {
 	newExec := new(TableReaderExecutor)
 	*newExec = *e
 
 	newExec.tableReaderExecutorContext = newExec.tableReaderExecutorContext.Detach()
+
+	return newExec, true
+}
+
+// Detach detaches the current executor from the session context.
+func (e *IndexReaderExecutor) Detach() (exec.Executor, bool) {
+	newExec := new(IndexReaderExecutor)
+	*newExec = *e
+
+	newExec.indexReaderExecutorContext = newExec.indexReaderExecutorContext.Detach()
+
+	return newExec, true
+}
+
+// Detach detaches the current executor from the session context.
+func (e *IndexLookUpExecutor) Detach() (exec.Executor, bool) {
+	newExec := new(IndexLookUpExecutor)
+	*newExec = *e
+
+	newExec.indexLookUpExecutorContext = newExec.indexLookUpExecutorContext.Detach()
+
+	return newExec, true
+}
+
+// Detach detaches the current executor from the session context.
+func (e *ProjectionExec) Detach() (exec.Executor, bool) {
+	// check whether the `Projection` requires any optional property
+	// Now, no optional property is copied, so if it requires any optional property, it should return false.
+	// TODO: some optional property can be detached. If they are implemented in the future, this check needs to be changed.
+	if !e.evaluatorSuit.RequiredOptionalEvalProps().IsEmpty() {
+		return nil, false
+	}
+
+	newExec := new(ProjectionExec)
+	*newExec = *e
+
+	newExec.projectionExecutorContext = newExec.projectionExecutorContext.Detach()
+
+	return newExec, true
+}
+
+// Detach detaches the current executor from the session context.
+func (e *SelectionExec) Detach() (exec.Executor, bool) {
+	// check whether the `Selection` requires any optional property
+	// Now, no optional property is copied, so if it requires any optional property, it should return false.
+	// TODO: some optional property can be detached. If they are implemented in the future, this check needs to be changed.
+	for _, expr := range e.filters {
+		if !expression.GetOptionalEvalPropsForExpr(expr).IsEmpty() {
+			return nil, false
+		}
+	}
+
+	newExec := new(SelectionExec)
+	*newExec = *e
+
+	newExec.selectionExecutorContext = newExec.selectionExecutorContext.Detach()
 
 	return newExec, true
 }

@@ -26,7 +26,6 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/statistics"
-	"github.com/pingcap/tidb/pkg/statistics/handle/autoanalyze/exec"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/analyzehelper"
 	"github.com/pingcap/tidb/pkg/testkit/testdata"
@@ -331,9 +330,9 @@ func TestOutdatedStatsCheck(t *testing.T) {
 
 	oriStart := tk.MustQuery("select @@tidb_auto_analyze_start_time").Rows()[0][0].(string)
 	oriEnd := tk.MustQuery("select @@tidb_auto_analyze_end_time").Rows()[0][0].(string)
-	exec.AutoAnalyzeMinCnt = 0
+	statistics.AutoAnalyzeMinCnt = 0
 	defer func() {
-		exec.AutoAnalyzeMinCnt = 1000
+		statistics.AutoAnalyzeMinCnt = 1000
 		tk.MustExec(fmt.Sprintf("set global tidb_auto_analyze_start_time='%v'", oriStart))
 		tk.MustExec(fmt.Sprintf("set global tidb_auto_analyze_end_time='%v'", oriEnd))
 	}()
@@ -353,7 +352,7 @@ func TestOutdatedStatsCheck(t *testing.T) {
 	// To pass the stats.Pseudo check in autoAnalyzeTable
 	tk.MustExec("analyze table t")
 	tk.MustExec("explain select * from t where a = 1")
-	require.NoError(t, h.LoadNeededHistograms())
+	require.NoError(t, h.LoadNeededHistograms(dom.InfoSchema()))
 
 	getStatsHealthy := func() int {
 		rows := tk.MustQuery("show stats_healthy where db_name = 'test' and table_name = 't'").Rows()
@@ -509,46 +508,6 @@ func TestIssue44369(t *testing.T) {
 	tk.MustExec("select * from t where a = 10 and bb > 20;")
 }
 
-// Test the case that after ALTER TABLE happens, the pointer to the column info/index info should be refreshed.
-func TestColAndIdxExistenceMapChangedAfterAlterTable(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
-	h := dom.StatsHandle()
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("create table t(a int, b int, index iab(a,b));")
-	require.NoError(t, h.HandleDDLEvent(<-h.DDLEventCh()))
-	tk.MustExec("insert into t value(1,1);")
-	require.NoError(t, h.DumpStatsDeltaToKV(true))
-	tk.MustExec("analyze table t;")
-	is := dom.InfoSchema()
-	require.NoError(t, h.Update(context.Background(), is))
-	tbl, err := dom.InfoSchema().TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
-	require.NoError(t, err)
-	tblInfo := tbl.Meta()
-	statsTbl := h.GetTableStats(tblInfo)
-	colA := tblInfo.Columns[0]
-	colInfo := statsTbl.ColAndIdxExistenceMap.GetCol(colA.ID)
-	require.Equal(t, colA, colInfo)
-
-	tk.MustExec("alter table t modify column a double")
-	require.NoError(t, h.HandleDDLEvent(<-h.DDLEventCh()))
-	is = dom.InfoSchema()
-	require.NoError(t, h.Update(context.Background(), is))
-	tbl, err = dom.InfoSchema().TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
-	require.NoError(t, err)
-	tblInfo = tbl.Meta()
-	newColA := tblInfo.Columns[0]
-	require.NotEqual(t, colA.ID, newColA.ID)
-	statsTbl = h.GetTableStats(tblInfo)
-	colInfo = statsTbl.ColAndIdxExistenceMap.GetCol(newColA.ID)
-	require.Equal(t, newColA, colInfo)
-	tk.MustExec("analyze table t;")
-	require.NoError(t, h.Update(context.Background(), is))
-	statsTbl = h.GetTableStats(tblInfo)
-	colInfo = statsTbl.ColAndIdxExistenceMap.GetCol(newColA.ID)
-	require.Equal(t, newColA, colInfo)
-}
-
 func TestTableLastAnalyzeVersion(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	h := dom.StatsHandle()
@@ -607,7 +566,6 @@ func TestGlobalIndexWithAnalyzeVersion1AndHistoricalStats(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 
-	tk.MustExec("set tidb_enable_global_index = true")
 	tk.MustExec("set tidb_analyze_version = 1")
 	tk.MustExec("set global tidb_enable_historical_stats = true")
 	defer tk.MustExec("set global tidb_enable_historical_stats = default")
@@ -619,7 +577,7 @@ func TestGlobalIndexWithAnalyzeVersion1AndHistoricalStats(t *testing.T) {
 					PARTITION p1 VALUES LESS THAN (20),
 					PARTITION p2 VALUES LESS THAN (30),
 					PARTITION p3 VALUES LESS THAN (40))`)
-	tk.MustExec("ALTER TABLE t ADD UNIQUE INDEX idx(b)")
+	tk.MustExec("ALTER TABLE t ADD UNIQUE INDEX idx(b) GLOBAL")
 	tk.MustExec("INSERT INTO t(a, b) values(1, 1), (2, 2), (3, 3), (15, 15), (25, 25), (35, 35)")
 
 	tblID := dom.MustGetTableID(t, "test", "t")

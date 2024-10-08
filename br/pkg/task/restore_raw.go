@@ -17,6 +17,7 @@ import (
 	snapclient "github.com/pingcap/tidb/br/pkg/restore/snap_client"
 	"github.com/pingcap/tidb/br/pkg/restore/snap_client/sstfiles"
 	restoreutils "github.com/pingcap/tidb/br/pkg/restore/utils"
+	"github.com/pingcap/tidb/br/pkg/rtree"
 	"github.com/pingcap/tidb/br/pkg/summary"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
@@ -147,7 +148,8 @@ func RunRestoreRaw(c context.Context, g glue.Glue, cmdName string, cfg *RestoreR
 
 	onProgress := func() { updateCh.Inc() }
 	// RawKV restore does not need to rewrite keys.
-	err = client.GetRestorer().SplitRanges(ctx, ranges, onProgress)
+	// err = client.GetRestorer().SplitRanges(ctx, ranges, onProgress)
+	err = client.SplitPoints(ctx, getEndKeys(ranges), updateCh, true)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -170,4 +172,15 @@ func RunRestoreRaw(c context.Context, g glue.Glue, cmdName string, cfg *RestoreR
 	// Set task summary to success status.
 	summary.SetSuccessStatus(true)
 	return nil
+}
+
+func getEndKeys(ranges []rtree.RangeStats) [][]byte {
+	endKeys := make([][]byte, 0, len(ranges))
+	for _, rg := range ranges {
+		if len(rg.EndKey) == 0 {
+			continue
+		}
+		endKeys = append(endKeys, rg.EndKey)
+	}
+	return endKeys
 }

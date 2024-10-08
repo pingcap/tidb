@@ -23,7 +23,7 @@ import (
 
 	"github.com/ngaut/pools"
 	"github.com/pingcap/tidb/pkg/ddl/ingest"
-	"github.com/pingcap/tidb/pkg/ddl/internal/session"
+	"github.com/pingcap/tidb/pkg/ddl/session"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/oracle"
@@ -63,7 +63,7 @@ func TestCheckpointManager(t *testing.T) {
 	sessPool := session.NewSessionPool(rs)
 	tmpFolder := t.TempDir()
 	createDummyFile(t, tmpFolder)
-	mgr, err := ingest.NewCheckpointManager(ctx, sessPool, 1, []int64{1}, tmpFolder, mockGetTSClient{})
+	mgr, err := ingest.NewCheckpointManager(ctx, sessPool, 1, 1, []int64{1}, tmpFolder, mockGetTSClient{})
 	require.NoError(t, err)
 	defer mgr.Close()
 
@@ -123,7 +123,7 @@ func TestCheckpointManagerUpdateReorg(t *testing.T) {
 	sessPool := session.NewSessionPool(rs)
 	tmpFolder := t.TempDir()
 	createDummyFile(t, tmpFolder)
-	mgr, err := ingest.NewCheckpointManager(ctx, sessPool, 1, []int64{1}, tmpFolder, mockGetTSClient{})
+	mgr, err := ingest.NewCheckpointManager(ctx, sessPool, 1, 1, []int64{1}, tmpFolder, mockGetTSClient{})
 	require.NoError(t, err)
 
 	mgr.Register(1, []byte{'1', '9'})
@@ -159,6 +159,7 @@ func TestCheckpointManagerResumeReorg(t *testing.T) {
 			LocalKeyCount:  100,
 			GlobalSyncKey:  []byte{'1', '9'},
 			GlobalKeyCount: 200,
+			PhysicalID:     1,
 			InstanceAddr:   ingest.InstanceAddr(),
 			Version:        1,
 			TS:             123456,
@@ -175,7 +176,7 @@ func TestCheckpointManagerResumeReorg(t *testing.T) {
 	sessPool := session.NewSessionPool(rs)
 	tmpFolder := t.TempDir()
 	// checkpoint manager should not use local checkpoint if the folder is empty
-	mgr, err := ingest.NewCheckpointManager(ctx, sessPool, 1, []int64{1}, tmpFolder, nil)
+	mgr, err := ingest.NewCheckpointManager(ctx, sessPool, 1, 1, []int64{1}, tmpFolder, nil)
 	require.NoError(t, err)
 	defer mgr.Close()
 	require.True(t, mgr.IsKeyProcessed([]byte{'1', '9'}))
@@ -186,7 +187,7 @@ func TestCheckpointManagerResumeReorg(t *testing.T) {
 	require.EqualValues(t, 123456, mgr.GetTS())
 
 	createDummyFile(t, tmpFolder)
-	mgr2, err := ingest.NewCheckpointManager(ctx, sessPool, 1, []int64{1}, tmpFolder, nil)
+	mgr2, err := ingest.NewCheckpointManager(ctx, sessPool, 1, 1, []int64{1}, tmpFolder, nil)
 	require.NoError(t, err)
 	defer mgr2.Close()
 	require.True(t, mgr2.IsKeyProcessed([]byte{'1', '9'}))

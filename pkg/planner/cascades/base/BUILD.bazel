@@ -1,0 +1,24 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "base",
+    srcs = [
+        "base.go",
+        "hash_equaler.go",
+    ],
+    importpath = "github.com/pingcap/tidb/pkg/planner/cascades/base",
+    visibility = ["//visibility:public"],
+)
+
+go_test(
+    name = "base_test",
+    timeout = "short",
+    srcs = [
+        "base_test.go",
+        "hash_equaler_test.go",
+    ],
+    embed = [":base"],
+    flaky = True,
+    shard_count = 3,
+    deps = ["@com_github_stretchr_testify//require"],
+)

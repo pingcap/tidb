@@ -29,7 +29,7 @@ import (
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/checkpoint"
 	"github.com/pingcap/tidb/br/pkg/logutil"
-	"github.com/pingcap/tidb/br/pkg/restore/internal/utils"
+	snapsplit "github.com/pingcap/tidb/br/pkg/restore/internal/snap_split"
 	"github.com/pingcap/tidb/br/pkg/restore/split"
 	"github.com/pingcap/tidb/br/pkg/rtree"
 	"github.com/pingcap/tidb/br/pkg/summary"
@@ -74,8 +74,8 @@ func (s *MultiTablesRestorer) SplitRanges(ctx context.Context, ranges []rtree.Ra
 		}
 	})
 	s.splitter.ApplyOptions(splitClientOpt)
-	splitter := utils.NewRegionSplitter(s.splitter)
-	return splitter.ExecuteSplit(ctx, ranges)
+	splitter := snapsplit.NewRegionSplitter(s.splitter)
+	return splitter.ExecuteSplit(ctx, nil)
 }
 
 // RestoreSSTFiles tries to restore the files.

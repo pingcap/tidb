@@ -8,10 +8,10 @@ create table tt (a int,b int, index(a), index(b));
 insert into tt values (1, 1), (2, 2), (3, 4);
 explain select /*+nth_plan(4)*/ * from tt where a=1 and b=1;
 id	estRows	task	access object	operator info
-IndexLookUp_11	0.01	root		
-├─IndexRangeScan_8(Build)	10.00	cop[tikv]	table:tt, index:a(a)	range:[1,1], keep order:false, stats:pseudo
-└─Selection_10(Probe)	0.01	cop[tikv]		eq(planner__core__plan.tt.b, 1)
-  └─TableRowIDScan_9	10.00	cop[tikv]	table:tt	keep order:false, stats:pseudo
+IndexLookUp_8	0.01	root		
+├─IndexRangeScan_5(Build)	10.00	cop[tikv]	table:tt, index:a(a)	range:[1,1], keep order:false, stats:pseudo
+└─Selection_7(Probe)	0.01	cop[tikv]		eq(planner__core__plan.tt.b, 1)
+  └─TableRowIDScan_6	10.00	cop[tikv]	table:tt	keep order:false, stats:pseudo
 Level	Code	Message
 Warning	1105	The parameter of nth_plan() is out of range
 drop table if exists t;
@@ -21,7 +21,7 @@ hint
 use_index(@`sel_1` `planner__core__plan`.`t` `a_2`), no_order_index(@`sel_1` `planner__core__plan`.`t` `a_2`)
 explain format='hint' select /*+ nth_plan(1) */ * from t where a=1 and b=1;
 hint
-use_index(@`sel_1` `planner__core__plan`.`t` ), nth_plan(1)
+use_index(@`sel_1` `planner__core__plan`.`t` `a_2`), no_order_index(@`sel_1` `planner__core__plan`.`t` `a_2`), nth_plan(1)
 explain format='hint' select /*+ nth_plan(2) */ * from t where a=1 and b=1;
 hint
 use_index(@`sel_1` `planner__core__plan`.`t` `a_2`), no_order_index(@`sel_1` `planner__core__plan`.`t` `a_2`), nth_plan(2)
@@ -40,6 +40,7 @@ hint
 use_index(@`sel_1` `planner__core__plan`.`t` `a_2`), no_order_index(@`sel_1` `planner__core__plan`.`t` `a_2`), nth_plan(1), nth_plan(2)
 Level	Code	Message
 Warning	1105	NTH_PLAN() is defined more than once, only the last definition takes effect: NTH_PLAN(2)
+Warning	1105	The parameter of nth_plan() is out of range
 insert into t values (1,1,1);
 select  /*+ nth_plan(1) */ * from t where a=1 and b=1;
 a	b	c

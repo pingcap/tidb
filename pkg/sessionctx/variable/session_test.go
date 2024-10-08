@@ -16,6 +16,7 @@ package variable_test
 
 import (
 	"context"
+	"math/rand"
 	"strconv"
 	"sync"
 	"testing"
@@ -601,4 +602,52 @@ func TestMapDeltaCols(t *testing.T) {
 			require.Equal(t, originalCols, map[int64]int64(c.cols))
 		}
 	}
+}
+
+func TestRowIDShardGenerator(t *testing.T) {
+	g := variable.NewRowIDShardGenerator(rand.New(rand.NewSource(12345)), 128) // #nosec G404)
+	// default settings
+	require.Equal(t, 128, g.GetShardStep())
+	shard := g.GetCurrentShard(127)
+	require.Equal(t, int64(3535546008), shard)
+	require.Equal(t, shard, g.GetCurrentShard(1))
+	// reset alloc step
+	g.SetShardStep(5)
+	require.Equal(t, 5, g.GetShardStep())
+	// generate shard in step
+	shard = g.GetCurrentShard(1)
+	require.Equal(t, int64(1371624976), shard)
+	require.Equal(t, shard, g.GetCurrentShard(1))
+	require.Equal(t, shard, g.GetCurrentShard(1))
+	require.Equal(t, shard, g.GetCurrentShard(2))
+	// generate shard in next step
+	shard = g.GetCurrentShard(1)
+	require.Equal(t, int64(895725277), shard)
+	// set step will reset clear remain
+	g.SetShardStep(5)
+	require.NotEqual(t, shard, g.GetCurrentShard(1))
+}
+
+func TestUserVars(t *testing.T) {
+	vars := variable.NewUserVars()
+	vars.SetUserVarVal("a", types.NewIntDatum(1))
+	vars.SetUserVarVal("b", types.NewStringDatum("v2"))
+	dt, ok := vars.GetUserVarVal("a")
+	require.True(t, ok)
+	require.Equal(t, types.NewIntDatum(1), dt)
+
+	vars.SetUserVarType("a", types.NewFieldType(mysql.TypeLonglong))
+	tp, ok := vars.GetUserVarType("a")
+	require.True(t, ok)
+	require.Equal(t, types.NewFieldType(mysql.TypeLonglong), tp)
+
+	vars.UnsetUserVar("a")
+	_, ok = vars.GetUserVarVal("a")
+	require.False(t, ok)
+	_, ok = vars.GetUserVarType("a")
+	require.False(t, ok)
+
+	dt, ok = vars.GetUserVarVal("b")
+	require.True(t, ok)
+	require.Equal(t, types.NewStringDatum("v2"), dt)
 }

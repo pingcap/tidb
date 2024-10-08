@@ -32,6 +32,7 @@ import (
 
 	"github.com/gorilla/mux"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/ddl"
@@ -41,14 +42,14 @@ import (
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/server/handler"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/session/txninfo"
 	sessiontypes "github.com/pingcap/tidb/pkg/session/types"
 	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/sessionctx/binloginfo"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/store/gcworker"
 	"github.com/pingcap/tidb/pkg/store/helper"
@@ -76,11 +77,6 @@ type SettingsHandler struct {
 func NewSettingsHandler(tool *handler.TikvHandlerTool) *SettingsHandler {
 	return &SettingsHandler{tool}
 }
-
-// BinlogRecover is used to recover binlog service.
-// When config binlog IgnoreError, binlog service will stop after meeting the first error.
-// It can be recovered using HTTP API.
-type BinlogRecover struct{}
 
 // SchemaHandler is the handler for list database or table schemas.
 type SchemaHandler struct {
@@ -196,14 +192,7 @@ func NewProfileHandler(tool *handler.TikvHandlerTool) *ProfileHandler {
 
 // DDLHookHandler is the handler for use pre-defined ddl callback.
 // It's convenient to provide some APIs for integration tests.
-type DDLHookHandler struct {
-	store kv.Storage
-}
-
-// NewDDLHookHandler creates a new DDLHookHandler.
-func NewDDLHookHandler(store kv.Storage) *DDLHookHandler {
-	return &DDLHookHandler{store}
-}
+type DDLHookHandler struct{}
 
 // ValueHandler is the handler for get value.
 type ValueHandler struct {
@@ -588,39 +577,6 @@ func (h SettingsHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	}
 }
 
-// ServeHTTP recovers binlog service.
-func (BinlogRecover) ServeHTTP(w http.ResponseWriter, req *http.Request) {
-	op := req.FormValue(handler.Operation)
-	switch op {
-	case "reset":
-		binloginfo.ResetSkippedCommitterCounter()
-	case "nowait":
-		err := binloginfo.DisableSkipBinlogFlag()
-		if err != nil {
-			handler.WriteError(w, err)
-			return
-		}
-	case "status":
-	default:
-		sec, err := strconv.ParseInt(req.FormValue(handler.Seconds), 10, 64)
-		if sec <= 0 || err != nil {
-			sec = 1800
-		}
-		err = binloginfo.DisableSkipBinlogFlag()
-		if err != nil {
-			handler.WriteError(w, err)
-			return
-		}
-		timeout := time.Duration(sec) * time.Second
-		err = binloginfo.WaitBinlogRecover(timeout)
-		if err != nil {
-			handler.WriteError(w, err)
-			return
-		}
-	}
-	handler.WriteData(w, binloginfo.GetBinlogStatus())
-}
-
 // TableFlashReplicaInfo is the replica information of a table.
 type TableFlashReplicaInfo struct {
 	// Modifying the field name needs to negotiate with TiFlash colleague.
@@ -643,23 +599,23 @@ func (h FlashReplicaHandler) ServeHTTP(w http.ResponseWriter, req *http.Request)
 		return
 	}
 	replicaInfos := make([]*TableFlashReplicaInfo, 0)
-	allDBs := schema.AllSchemaNames()
-	for _, db := range allDBs {
-		tbls := schema.SchemaTables(db)
-		for _, tbl := range tbls {
-			replicaInfos = h.getTiFlashReplicaInfo(tbl.Meta(), replicaInfos)
+	schemas := schema.ListTablesWithSpecialAttribute(infoschema.TiFlashAttribute)
+	for _, schema := range schemas {
+		for _, tbl := range schema.TableInfos {
+			replicaInfos = appendTiFlashReplicaInfo(replicaInfos, tbl)
 		}
 	}
-	dropedOrTruncateReplicaInfos, err := h.getDropOrTruncateTableTiflash(schema)
+
+	droppedOrTruncateReplicaInfos, err := h.getDropOrTruncateTableTiflash(schema)
 	if err != nil {
 		handler.WriteError(w, err)
 		return
 	}
-	replicaInfos = append(replicaInfos, dropedOrTruncateReplicaInfos...)
+	replicaInfos = append(replicaInfos, droppedOrTruncateReplicaInfos...)
 	handler.WriteData(w, replicaInfos)
 }
 
-func (FlashReplicaHandler) getTiFlashReplicaInfo(tblInfo *model.TableInfo, replicaInfos []*TableFlashReplicaInfo) []*TableFlashReplicaInfo {
+func appendTiFlashReplicaInfo(replicaInfos []*TableFlashReplicaInfo, tblInfo *model.TableInfo) []*TableFlashReplicaInfo {
 	if tblInfo.TiFlashReplica == nil {
 		return replicaInfos
 	}
@@ -712,14 +668,14 @@ func (h FlashReplicaHandler) getDropOrTruncateTableTiflash(currentSchema infosch
 	uniqueIDMap := make(map[int64]struct{})
 	handleJobAndTableInfo := func(_ *model.Job, tblInfo *model.TableInfo) (bool, error) {
 		// Avoid duplicate table ID info.
-		if _, ok := currentSchema.TableByID(tblInfo.ID); ok {
+		if _, ok := currentSchema.TableByID(context.Background(), tblInfo.ID); ok {
 			return false, nil
 		}
 		if _, ok := uniqueIDMap[tblInfo.ID]; ok {
 			return false, nil
 		}
 		uniqueIDMap[tblInfo.ID] = struct{}{}
-		replicaInfos = h.getTiFlashReplicaInfo(tblInfo, replicaInfos)
+		replicaInfos = appendTiFlashReplicaInfo(replicaInfos, tblInfo)
 		return false, nil
 	}
 	dom := domain.GetDomain(s)
@@ -772,7 +728,7 @@ func (h FlashReplicaHandler) handleStatusReport(w http.ResponseWriter, req *http
 	defer s.Close()
 
 	available := status.checkTableFlashReplicaAvailable()
-	err = do.DDL().UpdateTableReplicaInfo(s, status.ID, available)
+	err = do.DDLExecutor().UpdateTableReplicaInfo(s, status.ID, available)
 	if err != nil {
 		handler.WriteError(w, err)
 	}
@@ -806,7 +762,7 @@ type SchemaTableStorage struct {
 	DataFree      int64  `json:"data_free"`
 }
 
-func getSchemaTablesStorageInfo(h *SchemaStorageHandler, schema *model.CIStr, table *model.CIStr) (messages []*SchemaTableStorage, err error) {
+func getSchemaTablesStorageInfo(h *SchemaStorageHandler, schema *pmodel.CIStr, table *pmodel.CIStr) (messages []*SchemaTableStorage, err error) {
 	var s sessiontypes.Session
 	if s, err = session.CreateSession(h.Store); err != nil {
 		return
@@ -877,13 +833,13 @@ func (h SchemaStorageHandler) ServeHTTP(w http.ResponseWriter, req *http.Request
 	params := mux.Vars(req)
 
 	var (
-		dbName    *model.CIStr
-		tableName *model.CIStr
+		dbName    *pmodel.CIStr
+		tableName *pmodel.CIStr
 		isSingle  bool
 	)
 
 	if reqDbName, ok := params[handler.DBName]; ok {
-		cDBName := model.NewCIStr(reqDbName)
+		cDBName := pmodel.NewCIStr(reqDbName)
 		// all table schemas in a specified database
 		schemaInfo, exists := schema.SchemaByName(cDBName)
 		if !exists {
@@ -894,7 +850,7 @@ func (h SchemaStorageHandler) ServeHTTP(w http.ResponseWriter, req *http.Request
 
 		if reqTableName, ok := params[handler.TableName]; ok {
 			// table schema of a specified table name
-			cTableName := model.NewCIStr(reqTableName)
+			cTableName := pmodel.NewCIStr(reqTableName)
 			data, e := schema.TableByName(context.Background(), cDBName, cTableName)
 			if e != nil {
 				handler.WriteError(w, e)
@@ -993,10 +949,10 @@ func (h SchemaHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	params := mux.Vars(req)
 
 	if dbName, ok := params[handler.DBName]; ok {
-		cDBName := model.NewCIStr(dbName)
+		cDBName := pmodel.NewCIStr(dbName)
 		if tableName, ok := params[handler.TableName]; ok {
 			// table schema of a specified table name
-			cTableName := model.NewCIStr(tableName)
+			cTableName := pmodel.NewCIStr(tableName)
 			data, err := schema.TableByName(context.Background(), cDBName, cTableName)
 			if err != nil {
 				handler.WriteError(w, err)
@@ -1008,11 +964,19 @@ func (h SchemaHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		// all table schemas in a specified database
 		if schema.SchemaExists(cDBName) {
 			if a := req.FormValue(handler.IDNameOnly); a == "true" {
-				tbs := schema.SchemaSimpleTableInfos(cDBName)
+				tbs, err := schema.SchemaSimpleTableInfos(context.Background(), cDBName)
+				if err != nil {
+					handler.WriteError(w, err)
+					return
+				}
 				writeDBSimpleTablesData(w, tbs)
 				return
 			}
-			tbs := schema.SchemaTableInfos(cDBName)
+			tbs, err := schema.SchemaTableInfos(context.Background(), cDBName)
+			if err != nil {
+				handler.WriteError(w, err)
+				return
+			}
 			WriteDBTablesData(w, tbs)
 			return
 		}
@@ -1060,7 +1024,7 @@ func getTableByIDStr(schema infoschema.InfoSchema, tableID string) (*model.Table
 	if tid < 0 {
 		return nil, infoschema.ErrTableNotExists.GenWithStack("Table which ID = %s does not exist.", tableID)
 	}
-	if data, ok := schema.TableByID(int64(tid)); ok {
+	if data, ok := schema.TableByID(context.Background(), int64(tid)); ok {
 		return data.Meta(), nil
 	}
 	// The tid maybe a partition ID of the partition-table.
@@ -1084,7 +1048,7 @@ func (h *TableHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	}
 
 	tableName, partitionName := handler.ExtractTableAndPartitionName(tableName)
-	tableVal, err := schema.TableByName(context.Background(), model.NewCIStr(dbName), model.NewCIStr(tableName))
+	tableVal, err := schema.TableByName(context.Background(), pmodel.NewCIStr(dbName), pmodel.NewCIStr(tableName))
 	if err != nil {
 		handler.WriteError(w, err)
 		return
@@ -1118,8 +1082,11 @@ func (h *TableHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 
 // ServeHTTP handles request of ddl jobs history.
 func (h DDLHistoryJobHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
-	var jobID, limitID int
-	var err error
+	var (
+		jobID   = 0
+		limitID = 0
+		err     error
+	)
 	if jobValue := req.FormValue(handler.JobID); len(jobValue) > 0 {
 		jobID, err = strconv.Atoi(jobValue)
 		if err != nil {
@@ -1137,8 +1104,9 @@ func (h DDLHistoryJobHandler) ServeHTTP(w http.ResponseWriter, req *http.Request
 			handler.WriteError(w, err)
 			return
 		}
-		if limitID < 1 {
-			handler.WriteError(w, errors.New("ddl history limit must be greater than 0"))
+		if limitID < 1 || limitID > ddl.DefNumGetDDLHistoryJobs {
+			handler.WriteError(w,
+				errors.Errorf("ddl history limit must be greater than 0 and less than or equal to %v", ddl.DefNumGetDDLHistoryJobs))
 			return
 		}
 	}
@@ -1156,13 +1124,9 @@ func (h DDLHistoryJobHandler) getHistoryDDL(jobID, limit int) (jobs []*model.Job
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	txnMeta := meta.NewMeta(txn)
+	txnMeta := meta.NewMutator(txn)
 
-	if jobID == 0 && limit == 0 {
-		jobs, err = ddl.GetAllHistoryDDLJobs(txnMeta)
-	} else {
-		jobs, err = ddl.ScanHistoryDDLJobs(txnMeta, int64(jobID), limit)
-	}
+	jobs, err = ddl.ScanHistoryDDLJobs(txnMeta, int64(jobID), limit)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -1471,12 +1435,12 @@ func (h RegionHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 				return
 			}
 			ctx := context.Background()
-			hotRead, err := h.ScrapeHotInfo(ctx, helper.HotRead, schema.AllSchemas())
+			hotRead, err := h.ScrapeHotInfo(ctx, helper.HotRead, schema, nil)
 			if err != nil {
 				handler.WriteError(w, err)
 				return
 			}
-			hotWrite, err := h.ScrapeHotInfo(ctx, helper.HotWrite, schema.AllSchemas())
+			hotWrite, err := h.ScrapeHotInfo(ctx, helper.HotWrite, schema, nil)
 			if err != nil {
 				handler.WriteError(w, err)
 				return
@@ -1528,9 +1492,13 @@ func (h RegionHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		if util.IsMemDB(dbName.L) {
 			continue
 		}
-		tables := schema.SchemaTables(dbName)
+		tables, err := schema.SchemaTableInfos(context.Background(), dbName)
+		if err != nil {
+			handler.WriteError(w, err)
+			return
+		}
 		for _, tableVal := range tables {
-			regionDetail.addTableInRange(dbName.String(), tableVal.Meta(), frameRange)
+			regionDetail.addTableInRange(dbName.String(), tableVal, frameRange)
 		}
 	}
 	handler.WriteData(w, regionDetail)
@@ -1849,7 +1817,7 @@ func (h DBTableHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	dbTblInfo := DBTableInfo{
 		SchemaVersion: schema.SchemaMetaVersion(),
 	}
-	tbl, ok := schema.TableByID(int64(physicalID))
+	tbl, ok := schema.TableByID(context.Background(), int64(physicalID))
 	if ok {
 		dbTblInfo.TableInfo = tbl.Meta()
 		dbInfo, ok := infoschema.SchemaByTable(schema, dbTblInfo.TableInfo)
@@ -1979,26 +1947,35 @@ func (h *TestHandler) handleGCResolveLocks(w http.ResponseWriter, req *http.Requ
 }
 
 // ServeHTTP handles request of resigning ddl owner.
-func (h DDLHookHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
+func (DDLHookHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	if req.Method != http.MethodPost {
 		handler.WriteError(w, errors.Errorf("This api only support POST method"))
 		return
 	}
 
-	dom, err := session.GetDomain(h.store)
-	if err != nil {
-		log.Error("failed to get session domain", zap.Error(err))
-		handler.WriteError(w, err)
+	hook := req.FormValue("ddl_hook")
+	switch hook {
+	case "ctc_hook":
+		err := failpoint.EnableCall("github.com/pingcap/tidb/pkg/ddl/onJobRunBefore", func(job *model.Job) {
+			log.Info("on job run before", zap.String("job", job.String()))
+			// Only block the ctc type ddl here.
+			if job.Type != model.ActionModifyColumn {
+				return
+			}
+			switch job.SchemaState {
+			case model.StateDeleteOnly, model.StateWriteOnly, model.StateWriteReorganization:
+				log.Warn(fmt.Sprintf("[DDL_HOOK] Hang for 0.5 seconds on %s state triggered", job.SchemaState.String()))
+				time.Sleep(500 * time.Millisecond)
+			}
+		})
+		if err != nil {
+			handler.WriteError(w, err)
+			return
+		}
+	case "default_hook":
+		_ = failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/onJobRunBefore")
 	}
 
-	newCallbackFunc, err := ddl.GetCustomizedHook(req.FormValue("ddl_hook"))
-	if err != nil {
-		log.Error("failed to get customized hook", zap.Error(err))
-		handler.WriteError(w, err)
-	}
-	callback := newCallbackFunc(dom)
-
-	dom.DDL().SetHook(callback)
 	handler.WriteData(w, "success!")
 
 	ctx := req.Context()

@@ -18,9 +18,11 @@ import (
 	"context"
 	"fmt"
 	"slices"
+	"sort"
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
@@ -32,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/stretchr/testify/require"
+	"github.com/tikv/client-go/v2/oracle"
 )
 
 func TestSpecialSchemas(t *testing.T) {
@@ -229,7 +232,7 @@ func checkResult(t *testing.T, tk *testkit.TestKit, result ...string) {
 	var rows []string
 	for _, v := range ch {
 		for _, tblInfo := range v.TableInfos {
-			rows = append(rows, v.DBName+" "+tblInfo.Name.L)
+			rows = append(rows, v.DBName.L+" "+tblInfo.Name.L)
 		}
 	}
 	slices.SortFunc(rows, strings.Compare)
@@ -275,7 +278,7 @@ func TestUnrelatedDDLTriggerReload(t *testing.T) {
 	is := dom.InfoSchema()
 	ok, v2 := infoschema.IsV2(is)
 	require.True(t, ok)
-	v2.EvictTable("test", "t1")
+	v2.EvictTable(model.NewCIStr("test"), model.NewCIStr("t1"))
 
 	tk.MustExec("create table t2 (id int)")
 
@@ -306,8 +309,26 @@ func TestTrace(t *testing.T) {
 	require.True(t, ok)
 
 	// Evict the table cache and check the trace information can catch this calling.
-	raw.EvictTable("test", "t_trace")
-	tk.MustQuery("trace select * from information_schema.tables").CheckContain("infoschema.loadTableInfo")
+	raw.EvictTable(model.NewCIStr("test"), model.NewCIStr("t_trace"))
+	tk.MustQuery("trace select * from information_schema.tables where table_schema='test' and table_name='t_trace'").CheckContain("infoschema.loadTableInfo")
+}
+
+func TestCachedTable(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set @@global.tidb_schema_cache_size = 1024 * 1024 * 1024")
+	tk.MustExec("create table t_cache (id int key auto_increment)")
+	tk.MustExec("insert into t_cache values (1)")
+	tk.MustExec("alter table t_cache cache")
+	is := dom.InfoSchema()
+	ok, raw := infoschema.IsV2(is)
+	require.True(t, ok)
+
+	// Cover a case that after cached table evict and load, table.Table goes wrong.
+	raw.EvictTable(model.NewCIStr("test"), model.NewCIStr("t_cache"))
+	tk.MustExec("insert into t_cache values (2)") // no panic here
+	tk.MustQuery("select * from t_cache").Check(testkit.Rows("1", "2"))
 }
 
 func BenchmarkTableByName(t *testing.B) {
@@ -327,4 +348,188 @@ func BenchmarkTableByName(t *testing.B) {
 		require.NoError(t, err)
 	}
 	t.StopTimer()
+}
+
+func TestFullLoadAndSnapshot(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set @@global.tidb_schema_cache_size = 512 * 1024 * 1024")
+
+	// For mocktikv, safe point is not initialized, we manually insert it for snapshot to use.
+	timeSafe := time.Now().Add(-48 * 60 * 60 * time.Second).Format("20060102-15:04:05 -0700 MST")
+	safePointSQL := `INSERT HIGH_PRIORITY INTO mysql.tidb VALUES ('tikv_gc_safe_point', '%[1]s', '')
+			       ON DUPLICATE KEY
+			       UPDATE variable_value = '%[1]s'`
+	tk.MustExec(fmt.Sprintf(safePointSQL, timeSafe))
+
+	tk.MustExec("use test")
+	tk.MustExec("create global temporary table tmp (id int) on commit delete rows")
+
+	tk.MustExec("create database db1")
+	tk.MustExec("create database db2")
+	tk.MustExec("use db1")
+	tk.MustExec("create table t (id int)")
+
+	timestamp := time.Now().Format(time.RFC3339Nano)
+	time.Sleep(100 * time.Millisecond)
+
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/domain/MockTryLoadDiffError", `return("renametable")`)
+	tk.MustExec("rename table db1.t to db2.t")
+
+	tk.MustQuery("select * from db2.t").Check(testkit.Rows())
+	tk.MustExecToErr("select * from db1.t")
+	tk.MustExec("use db2")
+	tk.MustQuery("show tables").Check(testkit.Rows("t"))
+	tk.MustExec("use db1")
+	tk.MustQuery("show tables").Check(testkit.Rows())
+
+	// Cover a bug that after full load using infoschema v2, the temporary table is gone.
+	// Check global temporary table not dispear after full load.
+	require.True(t, dom.InfoSchema().HasTemporaryTable())
+	tk.MustExec("begin")
+	tk.MustExec("insert into test.tmp values (1)")
+	tk.MustExec("commit")
+
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/domain/MockTryLoadDiffError", `return("dropdatabase")`)
+	tk.MustExec("drop database db1")
+	tk.MustExecToErr("use db1")
+	tk.MustQuery("select table_schema from information_schema.tables where table_schema = 'db2'").Check(testkit.Rows("db2"))
+	tk.MustQuery("select * from information_schema.tables where table_schema = 'db1'").Check(testkit.Rows())
+
+	// Set snapthost and read old schema.
+	tk.MustExec(fmt.Sprintf("set @@tidb_snapshot= '%s'", timestamp))
+	tk.MustQuery("select * from db1.t").Check(testkit.Rows())
+	tk.MustExecToErr("select * from db2.t")
+	tk.MustExec("use db2")
+	tk.MustQuery("show tables").Check(testkit.Rows())
+	tk.MustExec("use db1")
+	tk.MustQuery("show tables").Check(testkit.Rows("t"))
+}
+
+func TestIssue54926(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk2 := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set @@global.tidb_schema_cache_size = 0")
+	// For mocktikv, safe point is not initialized, we manually insert it for snapshot to use.
+	safePointName := "tikv_gc_safe_point"
+	safePointValue := "20160102-15:04:05 -0700"
+	safePointComment := "All versions after safe point can be accessed. (DO NOT EDIT)"
+	updateSafePoint := fmt.Sprintf(`INSERT INTO mysql.tidb VALUES ('%[1]s', '%[2]s', '%[3]s')
+	ON DUPLICATE KEY
+	UPDATE variable_value = '%[2]s', comment = '%[3]s'`, safePointName, safePointValue, safePointComment)
+	tk.MustExec(updateSafePoint)
+
+	time1 := time.Now()
+	time1TS := oracle.GoTimeToTS(time1)
+	schemaVer1 := tk.Session().GetInfoSchema().SchemaMetaVersion()
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (id int primary key);")
+	tk.MustExec(`drop table if exists t`)
+	time.Sleep(50 * time.Millisecond)
+	time2 := time.Now()
+	time2TS := oracle.GoTimeToTS(time2)
+	schemaVer2 := tk.Session().GetInfoSchema().SchemaMetaVersion()
+
+	tk2.MustExec("create table test.t (id int primary key)")
+	tk.MustExec("set @@global.tidb_schema_cache_size = 1073741824")
+	dom.Reload()
+
+	// test set txn as of will flush/mutex tidb_snapshot
+	tk.MustExec(fmt.Sprintf(`set @@tidb_snapshot="%s"`, time1.Format("2006-1-2 15:04:05.000")))
+	require.Equal(t, time1TS, tk.Session().GetSessionVars().SnapshotTS)
+	require.NotNil(t, tk.Session().GetSessionVars().SnapshotInfoschema)
+	require.Equal(t, schemaVer1, tk.Session().GetInfoSchema().SchemaMetaVersion())
+	tk.MustExec(fmt.Sprintf(`SET TRANSACTION READ ONLY AS OF TIMESTAMP '%s'`, time2.Format("2006-1-2 15:04:05.000")))
+	require.Equal(t, uint64(0), tk.Session().GetSessionVars().SnapshotTS)
+	require.NotNil(t, tk.Session().GetSessionVars().SnapshotInfoschema)
+	require.Equal(t, time2TS, tk.Session().GetSessionVars().TxnReadTS.PeakTxnReadTS())
+	require.Equal(t, schemaVer2, tk.Session().GetInfoSchema().SchemaMetaVersion())
+}
+
+func TestSchemaSimpleTableInfos(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	// For mocktikv, safe point is not initialized, we manually insert it for snapshot to use.
+	safePointName := "tikv_gc_safe_point"
+	safePointValue := "20160102-15:04:05 -0700"
+	safePointComment := "All versions after safe point can be accessed. (DO NOT EDIT)"
+	updateSafePoint := fmt.Sprintf(`INSERT INTO mysql.tidb VALUES ('%[1]s', '%[2]s', '%[3]s')
+	ON DUPLICATE KEY
+	UPDATE variable_value = '%[2]s', comment = '%[3]s'`, safePointName, safePointValue, safePointComment)
+	tk.MustExec(updateSafePoint)
+	tk.MustExec("set @@global.tidb_schema_cache_size = '512MB'")
+
+	tk.MustExec("create database aaa")
+	tk.MustExec("create database zzz")
+	tk.MustExec("drop database zzz")
+
+	tk.MustExec("create database simple")
+	tk.MustExec("use simple")
+	tk.MustExec("create table t1 (id int)")
+	tk.MustExec("create table t2 (id int)")
+
+	time1 := time.Now()
+	time.Sleep(50 * time.Millisecond)
+
+	tk.MustExec("rename table simple.t2 to aaa.t2")
+	tk.MustExec("drop database aaa")
+
+	is := tk.Session().GetInfoSchema()
+	// Cover special schema
+	tblInfos, err := is.SchemaSimpleTableInfos(context.Background(), model.NewCIStr("INFORMATION_SCHEMA"))
+	require.NoError(t, err)
+	res := make([]string, 0, len(tblInfos))
+	for _, tbl := range tblInfos {
+		res = append(res, tbl.Name.L)
+	}
+	sort.Strings(res)
+	tk.MustQuery("select lower(table_name) from information_schema.tables where table_schema = 'information_schema'").
+		Sort().Check(testkit.Rows(res...))
+
+	// Cover normal schema
+	tblInfos, err = is.SchemaSimpleTableInfos(context.Background(), model.NewCIStr("simple"))
+	require.NoError(t, err)
+	require.Len(t, tblInfos, 1)
+	require.Equal(t, tblInfos[0].Name.L, "t1")
+
+	// Cover snapshot infoschema
+	tk.MustExec(fmt.Sprintf(`set @@tidb_snapshot="%s"`, time1.Format("2006-1-2 15:04:05.000")))
+	is = tk.Session().GetInfoSchema()
+	tblInfos, err = is.SchemaSimpleTableInfos(context.Background(), model.NewCIStr("simple"))
+	require.NoError(t, err)
+	require.Len(t, tblInfos, 2)
+	require.Equal(t, tblInfos[0].Name.L, "t2")
+	require.Equal(t, tblInfos[1].Name.L, "t1")
+}
+
+func TestSnapshotInfoschemaReader(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	// For mocktikv, safe point is not initialized, we manually insert it for snapshot to use.
+	safePointName := "tikv_gc_safe_point"
+	safePointValue := "20160102-15:04:05 -0700"
+	safePointComment := "All versions after safe point can be accessed. (DO NOT EDIT)"
+	updateSafePoint := fmt.Sprintf(`INSERT INTO mysql.tidb VALUES ('%[1]s', '%[2]s', '%[3]s')
+	ON DUPLICATE KEY
+	UPDATE variable_value = '%[2]s', comment = '%[3]s'`, safePointName, safePointValue, safePointComment)
+	tk.MustExec(updateSafePoint)
+
+	tk.MustExec("create database issue55827")
+	tk.MustExec("use issue55827")
+
+	time1 := time.Now()
+	timeStr := time1.Format("2006-1-2 15:04:05.000")
+
+	tk.MustExec("create table t (id int primary key);")
+	tk.MustQuery("select count(*) from INFORMATION_SCHEMA.TABLES where table_schema = 'issue55827'").Check(testkit.Rows("1"))
+	tk.MustQuery("select count(tidb_table_id) from INFORMATION_SCHEMA.TABLES where table_schema = 'issue55827'").Check(testkit.Rows("1"))
+
+	// For issue 55827
+	sql := fmt.Sprintf("select count(*) from INFORMATION_SCHEMA.TABLES as of timestamp '%s' where table_schema = 'issue55827'", timeStr)
+	tk.MustQuery(sql).Check(testkit.Rows("0"))
+	sql = fmt.Sprintf("select * from INFORMATION_SCHEMA.TABLES as of timestamp '%s' where table_schema = 'issue55827'", timeStr)
+	tk.MustQuery(sql).Check(testkit.Rows())
 }

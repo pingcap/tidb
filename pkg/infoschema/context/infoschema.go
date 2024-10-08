@@ -15,8 +15,11 @@
 package context
 
 import (
+	stdctx "context"
+
 	"github.com/pingcap/tidb/pkg/ddl/placement"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 )
 
 // MetaOnlyInfoSchema is a workaround.
@@ -24,24 +27,29 @@ import (
 // But MetaOnlyInfoSchema is widely used for scenes that require meta only, so we give a convenience for that.
 type MetaOnlyInfoSchema interface {
 	SchemaMetaVersion() int64
-	SchemaByName(schema model.CIStr) (*model.DBInfo, bool)
-	SchemaExists(schema model.CIStr) bool
-	TableInfoByName(schema, table model.CIStr) (*model.TableInfo, error)
+	SchemaByName(schema pmodel.CIStr) (*model.DBInfo, bool)
+	SchemaExists(schema pmodel.CIStr) bool
+	TableInfoByName(schema, table pmodel.CIStr) (*model.TableInfo, error)
 	TableInfoByID(id int64) (*model.TableInfo, bool)
 	FindTableInfoByPartitionID(partitionID int64) (*model.TableInfo, *model.DBInfo, *model.PartitionDefinition)
-	TableExists(schema, table model.CIStr) bool
+	TableExists(schema, table pmodel.CIStr) bool
 	SchemaByID(id int64) (*model.DBInfo, bool)
-	AllSchemas() []*model.DBInfo
-	AllSchemaNames() []model.CIStr
-	SchemaTableInfos(schema model.CIStr) []*model.TableInfo
-	SchemaSimpleTableInfos(schema model.CIStr) []*model.TableNameInfo
+	SchemaAndTable
+	AllSchemaNames() []pmodel.CIStr
+	SchemaSimpleTableInfos(ctx stdctx.Context, schema pmodel.CIStr) ([]*model.TableNameInfo, error)
 	Misc
+}
+
+// SchemaAndTable is define for iterating all the schemas and tables in the infoschema.
+type SchemaAndTable interface {
+	AllSchemas() []*model.DBInfo
+	SchemaTableInfos(ctx stdctx.Context, schema pmodel.CIStr) ([]*model.TableInfo, error)
 }
 
 // Misc contains the methods that are not closely related to InfoSchema.
 type Misc interface {
-	PolicyByName(name model.CIStr) (*model.PolicyInfo, bool)
-	ResourceGroupByName(name model.CIStr) (*model.ResourceGroupInfo, bool)
+	PolicyByName(name pmodel.CIStr) (*model.PolicyInfo, bool)
+	ResourceGroupByName(name pmodel.CIStr) (*model.ResourceGroupInfo, bool)
 	// PlacementBundleByPhysicalTableID is used to get a rule bundle.
 	PlacementBundleByPhysicalTableID(id int64) (*placement.Bundle, bool)
 	// AllPlacementBundles is used to get all placement bundles
@@ -58,4 +66,22 @@ type Misc interface {
 	HasTemporaryTable() bool
 	// GetTableReferredForeignKeys gets the table's ReferredFKInfo by lowercase schema and table name.
 	GetTableReferredForeignKeys(schema, table string) []*model.ReferredFKInfo
+}
+
+// DBInfoAsInfoSchema is used mainly in test.
+type DBInfoAsInfoSchema []*model.DBInfo
+
+// AllSchemas implement infoschema.SchemaAndTable interface.
+func (d DBInfoAsInfoSchema) AllSchemas() []*model.DBInfo {
+	return []*model.DBInfo(d)
+}
+
+// SchemaTableInfos implement infoschema.SchemaAndTable interface.
+func (d DBInfoAsInfoSchema) SchemaTableInfos(ctx stdctx.Context, schema pmodel.CIStr) ([]*model.TableInfo, error) {
+	for _, db := range d {
+		if db.Name == schema {
+			return db.Deprecated.Tables, nil
+		}
+	}
+	return nil, nil
 }

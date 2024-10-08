@@ -16,6 +16,7 @@ package tests
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"crypto/tls"
 	"crypto/x509"
@@ -47,7 +48,8 @@ import (
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core"
 	server2 "github.com/pingcap/tidb/pkg/server"
@@ -59,7 +61,6 @@ import (
 	"github.com/pingcap/tidb/pkg/server/internal/util"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/sessionctx/binloginfo"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/store/helper"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
@@ -384,74 +385,6 @@ func TestGetRegionByIDWithError(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, http.StatusBadRequest, resp.StatusCode)
 	defer func() { require.NoError(t, resp.Body.Close()) }()
-}
-
-func TestBinlogRecover(t *testing.T) {
-	ts := createBasicHTTPHandlerTestSuite()
-	ts.startServer(t)
-	defer ts.stopServer(t)
-	binloginfo.EnableSkipBinlogFlag()
-	require.Equal(t, true, binloginfo.IsBinlogSkipped())
-	resp, err := ts.FetchStatus("/binlog/recover")
-	require.NoError(t, err)
-	defer func() { require.NoError(t, resp.Body.Close()) }()
-	require.Equal(t, http.StatusOK, resp.StatusCode)
-	require.Equal(t, false, binloginfo.IsBinlogSkipped())
-
-	// Invalid operation will use the default operation.
-	binloginfo.EnableSkipBinlogFlag()
-	require.Equal(t, true, binloginfo.IsBinlogSkipped())
-	resp, err = ts.FetchStatus("/binlog/recover?op=abc")
-	require.NoError(t, err)
-	defer func() { require.NoError(t, resp.Body.Close()) }()
-	require.Equal(t, http.StatusOK, resp.StatusCode)
-	require.Equal(t, false, binloginfo.IsBinlogSkipped())
-
-	binloginfo.EnableSkipBinlogFlag()
-	require.Equal(t, true, binloginfo.IsBinlogSkipped())
-	resp, err = ts.FetchStatus("/binlog/recover?op=abc&seconds=1")
-	require.NoError(t, err)
-	defer func() { require.NoError(t, resp.Body.Close()) }()
-	require.Equal(t, http.StatusOK, resp.StatusCode)
-	require.Equal(t, false, binloginfo.IsBinlogSkipped())
-
-	binloginfo.EnableSkipBinlogFlag()
-	require.Equal(t, true, binloginfo.IsBinlogSkipped())
-	binloginfo.AddOneSkippedCommitter()
-	resp, err = ts.FetchStatus("/binlog/recover?op=abc&seconds=1")
-	require.NoError(t, err)
-	defer func() { require.NoError(t, resp.Body.Close()) }()
-	require.Equal(t, http.StatusBadRequest, resp.StatusCode)
-	require.Equal(t, false, binloginfo.IsBinlogSkipped())
-	binloginfo.RemoveOneSkippedCommitter()
-
-	binloginfo.AddOneSkippedCommitter()
-	require.Equal(t, int32(1), binloginfo.SkippedCommitterCount())
-	resp, err = ts.FetchStatus("/binlog/recover?op=reset")
-	require.NoError(t, err)
-	defer func() { require.NoError(t, resp.Body.Close()) }()
-	require.Equal(t, http.StatusOK, resp.StatusCode)
-	require.Equal(t, int32(0), binloginfo.SkippedCommitterCount())
-
-	binloginfo.EnableSkipBinlogFlag()
-	resp, err = ts.FetchStatus("/binlog/recover?op=nowait")
-	require.NoError(t, err)
-	defer func() { require.NoError(t, resp.Body.Close()) }()
-	require.Equal(t, http.StatusOK, resp.StatusCode)
-	require.Equal(t, false, binloginfo.IsBinlogSkipped())
-
-	// Only the first should work.
-	binloginfo.EnableSkipBinlogFlag()
-	resp, err = ts.FetchStatus("/binlog/recover?op=nowait&op=reset")
-	require.NoError(t, err)
-	defer func() { require.NoError(t, resp.Body.Close()) }()
-	require.Equal(t, http.StatusOK, resp.StatusCode)
-	require.Equal(t, false, binloginfo.IsBinlogSkipped())
-
-	resp, err = ts.FetchStatus("/binlog/recover?op=status")
-	require.NoError(t, err)
-	defer func() { require.NoError(t, resp.Body.Close()) }()
-	require.Equal(t, http.StatusOK, resp.StatusCode)
 }
 
 func (ts *basicHTTPHandlerTestSuite) startServer(t *testing.T) {
@@ -897,6 +830,15 @@ func TestGetSchema(t *testing.T) {
 	require.NoError(t, resp.Body.Close())
 	require.Greater(t, len(lt), 2)
 
+	resp, err = ts.FetchStatus("/schema/tidb?id_name_only=true")
+	require.NoError(t, err)
+	var lti []*model.TableNameInfo
+	decoder = json.NewDecoder(resp.Body)
+	err = decoder.Decode(&lti)
+	require.NoError(t, err)
+	require.NoError(t, resp.Body.Close())
+	require.Greater(t, len(lti), 2)
+
 	resp, err = ts.FetchStatus("/schema/abc")
 	require.NoError(t, err)
 	require.NoError(t, resp.Body.Close())
@@ -1050,10 +992,15 @@ func TestAllHistory(t *testing.T) {
 	defer s.Close()
 	store := domain.GetDomain(s.(sessionctx.Context)).Store()
 	txn, _ := store.Begin()
-	txnMeta := meta.NewMeta(txn)
+	txnMeta := meta.NewMutator(txn)
 	data, err := ddl.GetAllHistoryDDLJobs(txnMeta)
 	require.NoError(t, err)
 	err = decoder.Decode(&jobs)
+	require.True(t, len(jobs) < ddl.DefNumGetDDLHistoryJobs)
+	// sort job.
+	slices.SortFunc(jobs, func(i, j *model.Job) int {
+		return cmp.Compare(i.ID, j.ID)
+	})
 
 	require.NoError(t, err)
 	require.NoError(t, resp.Body.Close())
@@ -1191,19 +1138,21 @@ func TestWriteDBTablesData(t *testing.T) {
 	// No table in a schema.
 	info := infoschema.MockInfoSchema([]*model.TableInfo{})
 	rc := httptest.NewRecorder()
-	tbs := info.SchemaTableInfos(model.NewCIStr("test"))
+	tbs, err := info.SchemaTableInfos(context.Background(), pmodel.NewCIStr("test"))
+	require.NoError(t, err)
 	require.Equal(t, 0, len(tbs))
 	tikvhandler.WriteDBTablesData(rc, tbs)
 	var ti []*model.TableInfo
 	decoder := json.NewDecoder(rc.Body)
-	err := decoder.Decode(&ti)
+	err = decoder.Decode(&ti)
 	require.NoError(t, err)
 	require.Equal(t, 0, len(ti))
 
 	// One table in a schema.
 	info = infoschema.MockInfoSchema([]*model.TableInfo{core.MockSignedTable()})
 	rc = httptest.NewRecorder()
-	tbs = info.SchemaTableInfos(model.NewCIStr("test"))
+	tbs, err = info.SchemaTableInfos(context.Background(), pmodel.NewCIStr("test"))
+	require.NoError(t, err)
 	require.Equal(t, 1, len(tbs))
 	tikvhandler.WriteDBTablesData(rc, tbs)
 	decoder = json.NewDecoder(rc.Body)
@@ -1216,7 +1165,8 @@ func TestWriteDBTablesData(t *testing.T) {
 	// Two tables in a schema.
 	info = infoschema.MockInfoSchema([]*model.TableInfo{core.MockSignedTable(), core.MockUnsignedTable()})
 	rc = httptest.NewRecorder()
-	tbs = info.SchemaTableInfos(model.NewCIStr("test"))
+	tbs, err = info.SchemaTableInfos(context.Background(), pmodel.NewCIStr("test"))
+	require.NoError(t, err)
 	require.Equal(t, 2, len(tbs))
 	tikvhandler.WriteDBTablesData(rc, tbs)
 	decoder = json.NewDecoder(rc.Body)

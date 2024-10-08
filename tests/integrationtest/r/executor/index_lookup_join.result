@@ -90,12 +90,12 @@ select /*+ INL_MERGE_JOIN(t1, t2) */ * from t1, t2;
 a	b	a	b
 show warnings;
 Level	Code	Message
-Warning	1815	Optimizer Hint /*+ INL_MERGE_JOIN(t1, t2) */ is inapplicable without column equal ON condition
+Warning	1815	The INDEX MERGE JOIN hint is deprecated for usage, try other hints.
 select /*+ INL_MERGE_JOIN(t1, t2) */ * from t1 join t2 on t1.a=t2.a;
 a	b	a	b
 show warnings;
 Level	Code	Message
-Warning	1815	Optimizer Hint /*+ INL_MERGE_JOIN(t1, t2) */ is inapplicable
+Warning	1815	The INDEX MERGE JOIN hint is deprecated for usage, try other hints.
 drop table if exists t1, t2;
 create table t1(a bigint, b bigint, index idx_a(a));
 create table t2(a bigint, b bigint);
@@ -123,12 +123,12 @@ select /*+ INL_MERGE_JOIN(t1) */ * from t1 left join t2 on t1.a=t2.a;
 a	b	a	b
 show warnings;
 Level	Code	Message
-Warning	1815	Optimizer Hint /*+ INL_MERGE_JOIN(t1) */ is inapplicable
+Warning	1815	The INDEX MERGE JOIN hint is deprecated for usage, try other hints.
 select /*+ INL_MERGE_JOIN(t2) */ * from t1 right join t2 on t1.a=t2.a;
 a	b	a	b
 show warnings;
 Level	Code	Message
-Warning	1815	Optimizer Hint /*+ INL_MERGE_JOIN(t2) */ is inapplicable
+Warning	1815	The INDEX MERGE JOIN hint is deprecated for usage, try other hints.
 drop table if exists t1, t2;
 create table t1 (a int, key(a));
 create table t2 (a int, key(a));

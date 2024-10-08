@@ -386,7 +386,7 @@ create table t1(c1 int, c2 int, c3 int, key(c1), key(c2));
 insert into t1 values(1, 1, 1), (2, 2, 2), (3, 3, 3), (4, 4, 4), (5, 5, 5);
 explain delete from t1 where c1 in (select /*+ use_index_merge(t1) */ c1 from t1 where c1 < 10 or c2 < 10 and c3 < 10) order by 1;
 id	estRows	task	access object	operator info
-Delete_10	N/A	root		N/A
+Delete_9	N/A	root		N/A
 └─Sort_14	4056.68	root		index_merge.t1.c1
   └─HashJoin_31	4056.68	root		inner join, equal:[eq(index_merge.t1.c1, index_merge.t1.c1)]
     ├─HashAgg_33(Build)	3245.34	root		group by:index_merge.t1.c1, funcs:firstrow(index_merge.t1.c1)->index_merge.t1.c1
@@ -453,8 +453,8 @@ c1	c2	c3
 ///// MEMORY Table
 explain select count(c1) from (select /*+ use_index_merge(t_alias), stream_agg() */ count(1) c1 from information_schema.statements_summary where sum_latency >= 0 or max_latency >= 0 order by 1) dt;
 id	estRows	task	access object	operator info
-StreamAgg_9	1.00	root		funcs:count(Column#105)->Column#106
-└─StreamAgg_11	1.00	root		funcs:count(1)->Column#105
+StreamAgg_9	1.00	root		funcs:count(Column#107)->Column#108
+└─StreamAgg_11	1.00	root		funcs:count(1)->Column#107
   └─MemTableScan_15	10000.00	root	table:STATEMENTS_SUMMARY	
 show warnings;
 Level	Code	Message

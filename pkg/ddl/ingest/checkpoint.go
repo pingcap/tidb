@@ -27,8 +27,8 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
-	sess "github.com/pingcap/tidb/pkg/ddl/internal/session"
 	"github.com/pingcap/tidb/pkg/ddl/logutil"
+	sess "github.com/pingcap/tidb/pkg/ddl/session"
 	"github.com/pingcap/tidb/pkg/ddl/util"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
@@ -50,6 +50,7 @@ type CheckpointManager struct {
 	localStoreDir string
 	pdCli         pd.Client
 	logger        *zap.Logger
+	physicalID    int64
 
 	// Derived and unchanged after the initialization.
 	instanceAddr     string
@@ -61,21 +62,14 @@ type CheckpointManager struct {
 	// we require each task ID to be continuous and start from 1.
 	minTaskIDFinished int
 	dirty             bool
-	// Local meta.
-	pidFlushed      int64
-	startKeyFlushed kv.Key
-	endKeyFlushed   kv.Key
 
 	// Persisted to the storage.
 	flushedKeyLowWatermark  kv.Key
 	importedKeyLowWatermark kv.Key
 	flushedKeyCnt           int
 	importedKeyCnt          int
-	// Global meta.
-	pidImported      int64
-	startKeyImported kv.Key
-	endKeyImported   kv.Key
-	ts               uint64
+
+	ts uint64
 
 	// For persisting the checkpoint periodically.
 	updaterWg sync.WaitGroup
@@ -96,13 +90,14 @@ type taskCheckpoint struct {
 type FlushController interface {
 	// Flush checks if al engines need to be flushed and imported based on given
 	// FlushMode. It's concurrent safe.
-	Flush(mode FlushMode) (flushed, imported bool, err error)
+	Flush(ctx context.Context, mode FlushMode) (flushed, imported bool, err error)
 }
 
 // NewCheckpointManager creates a new checkpoint manager.
 func NewCheckpointManager(
 	ctx context.Context,
 	sessPool *sess.Pool,
+	physicalID int64,
 	jobID int64,
 	indexIDs []int64,
 	localStoreDir string,
@@ -125,6 +120,7 @@ func NewCheckpointManager(
 		checkpoints:   make(map[int]*taskCheckpoint, 16),
 		mu:            sync.Mutex{},
 		instanceAddr:  instanceAddr,
+		physicalID:    physicalID,
 		updaterWg:     sync.WaitGroup{},
 		updaterCh:     make(chan chan struct{}),
 	}
@@ -160,9 +156,9 @@ func (s *CheckpointManager) IsKeyProcessed(end kv.Key) bool {
 	return s.localDataIsValid && len(s.flushedKeyLowWatermark) > 0 && end.Cmp(s.flushedKeyLowWatermark) <= 0
 }
 
-// LastProcessedKey finds the last processed key in checkpoint.
-// If there is no processed key, it returns nil.
-func (s *CheckpointManager) LastProcessedKey() kv.Key {
+// NextKeyToProcess finds the next unprocessed key in checkpoint.
+// If there is no such key, it returns nil.
+func (s *CheckpointManager) NextKeyToProcess() kv.Key {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -269,19 +265,10 @@ func (s *CheckpointManager) afterImport() {
 	s.importedKeyLowWatermark = s.flushedKeyLowWatermark
 	s.importedKeyCnt = s.flushedKeyCnt
 	s.dirty = true
-
-	s.startKeyImported = s.startKeyFlushed
-	s.pidImported = s.pidFlushed
-	s.endKeyImported = s.endKeyFlushed
 }
 
 // Close closes the checkpoint manager.
 func (s *CheckpointManager) Close() {
-	s.mu.Lock()
-	s.afterFlush()
-	s.afterImport()
-	s.mu.Unlock()
-
 	err := s.updateCheckpoint()
 	if err != nil {
 		s.logger.Error("update checkpoint failed", zap.Error(err))
@@ -290,26 +277,6 @@ func (s *CheckpointManager) Close() {
 	s.cancel()
 	s.updaterWg.Wait()
 	s.logger.Info("checkpoint manager closed")
-}
-
-// Reset resets the checkpoint manager before handling.
-// It resets the watermark if a new physical ID is given.
-func (s *CheckpointManager) Reset(newPhysicalID int64, start, end kv.Key) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	s.logger.Info("reset checkpoint manager",
-		zap.Int64("newPhysicalID", newPhysicalID),
-		zap.Int64("oldPhysicalID", s.pidFlushed),
-		zap.Int("flushedKeyCnt", s.flushedKeyCnt))
-	if s.pidFlushed != newPhysicalID {
-		s.flushedKeyLowWatermark = nil
-		s.importedKeyLowWatermark = nil
-		s.minTaskIDFinished = 0
-		s.pidFlushed = newPhysicalID
-		s.startKeyFlushed = start
-		s.endKeyFlushed = end
-	}
 }
 
 // GetTS returns the TS saved in checkpoint.
@@ -332,9 +299,7 @@ type ReorgCheckpoint struct {
 	GlobalKeyCount int    `json:"global_key_count"`
 	InstanceAddr   string `json:"instance_addr"`
 
-	PhysicalID int64  `json:"physical_id"`
-	StartKey   kv.Key `json:"start_key"`
-	EndKey     kv.Key `json:"end_key"`
+	PhysicalID int64 `json:"physical_id"`
 	// TS of next engine ingest.
 	TS uint64 `json:"ts"`
 
@@ -373,13 +338,17 @@ func (s *CheckpointManager) resumeOrInitCheckpoint() error {
 			return errors.Trace(err)
 		}
 		if cp := reorgMeta.Checkpoint; cp != nil {
+			if cp.PhysicalID != s.physicalID {
+				s.logger.Info("checkpoint physical table ID mismatch",
+					zap.Int64("current", s.physicalID),
+					zap.Int64("get", cp.PhysicalID))
+				return nil
+			}
 			s.importedKeyLowWatermark = cp.GlobalSyncKey
 			s.importedKeyCnt = cp.GlobalKeyCount
-			s.pidImported = cp.PhysicalID
-			s.startKeyImported = cp.StartKey
-			s.endKeyImported = cp.EndKey
 			s.ts = cp.TS
-			if util.FolderNotEmpty(s.localStoreDir) &&
+			folderNotEmpty := util.FolderNotEmpty(s.localStoreDir)
+			if folderNotEmpty &&
 				(s.instanceAddr == cp.InstanceAddr || cp.InstanceAddr == "" /* initial state */) {
 				s.localDataIsValid = true
 				s.flushedKeyLowWatermark = cp.LocalSyncKey
@@ -390,10 +359,11 @@ func (s *CheckpointManager) resumeOrInitCheckpoint() error {
 				zap.String("imported key low watermark", hex.EncodeToString(s.importedKeyLowWatermark)),
 				zap.Int64("physical table ID", cp.PhysicalID),
 				zap.String("previous instance", cp.InstanceAddr),
-				zap.String("current instance", s.instanceAddr))
+				zap.String("current instance", s.instanceAddr),
+				zap.Bool("folder is empty", !folderNotEmpty))
 			return nil
 		}
-		s.logger.Info("checkpoint is empty")
+		s.logger.Info("checkpoint not found")
 		return nil
 	})
 	if err != nil {
@@ -422,9 +392,7 @@ func (s *CheckpointManager) updateCheckpointImpl() error {
 	importedKeyLowWatermark := s.importedKeyLowWatermark
 	flushedKeyCnt := s.flushedKeyCnt
 	importedKeyCnt := s.importedKeyCnt
-	pidImported := s.pidImported
-	startKeyImported := s.startKeyImported
-	endKeyImported := s.endKeyImported
+	physicalID := s.physicalID
 	ts := s.ts
 	s.mu.Unlock()
 
@@ -442,9 +410,7 @@ func (s *CheckpointManager) updateCheckpointImpl() error {
 			LocalKeyCount:  flushedKeyCnt,
 			GlobalKeyCount: importedKeyCnt,
 			InstanceAddr:   s.instanceAddr,
-			PhysicalID:     pidImported,
-			StartKey:       startKeyImported,
-			EndKey:         endKeyImported,
+			PhysicalID:     physicalID,
 			TS:             ts,
 			Version:        JobCheckpointVersionCurrent,
 		}
@@ -463,11 +429,18 @@ func (s *CheckpointManager) updateCheckpointImpl() error {
 		s.mu.Unlock()
 		return nil
 	})
-	s.logger.Info("update checkpoint",
+
+	logFunc := s.logger.Info
+	if err != nil {
+		logFunc = s.logger.With(zap.Error(err)).Error
+	}
+	logFunc("update checkpoint",
 		zap.String("local checkpoint", hex.EncodeToString(flushedKeyLowWatermark)),
 		zap.String("global checkpoint", hex.EncodeToString(importedKeyLowWatermark)),
-		zap.Int64("global physical ID", pidImported),
-		zap.Error(err))
+		zap.Int("flushed keys", flushedKeyCnt),
+		zap.Int("imported keys", importedKeyCnt),
+		zap.Int64("global physical ID", physicalID),
+		zap.Uint64("ts", ts))
 	return err
 }
 

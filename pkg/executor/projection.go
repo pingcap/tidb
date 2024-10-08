@@ -95,7 +95,7 @@ type ProjectionExec struct {
 	parentReqRows int64
 
 	memTracker *memory.Tracker
-	wg         sync.WaitGroup
+	wg         *sync.WaitGroup
 
 	calculateNoDelay bool
 	prepared         bool
@@ -137,6 +137,8 @@ func (e *ProjectionExec) open(_ context.Context) error {
 		e.memTracker.Consume(e.childResult.MemoryUsage())
 	}
 
+	e.wg = &sync.WaitGroup{}
+
 	return nil
 }
 
@@ -150,7 +152,7 @@ func (e *ProjectionExec) open(_ context.Context) error {
 //
 // 1. "projectionInputFetcher" gets its input and output resources from its
 // "inputCh" and "outputCh" channel, once the input and output resources are
-// abtained, it fetches child's result into "input.chk" and:
+// obtained, it fetches child's result into "input.chk" and:
 //   a. Dispatches this input to the worker specified in "input.targetWorker"
 //   b. Dispatches this output to the main thread: "ProjectionExec.Next"
 //   c. Dispatches this output to the worker specified in "input.targetWorker"
