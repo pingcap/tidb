@@ -93,8 +93,8 @@ func getOrDecodeArgs[T JobArgs](args T, job *Job) (T, error) {
 
 // JobArgs is the interface for job arguments.
 type JobArgs interface {
-	// getArgsV1 gets the job args v1 from submitting job. we make it private to
-	// avoid calling it directly, use Job.FillArgs to fill the job args.
+	// getArgsV1 gets the job args for v1. we make it private to avoid calling it
+	// directly, use Job.FillArgs to fill the job args.
 	getArgsV1(job *Job) []any
 	decodeV1(job *Job) error
 }
@@ -1187,7 +1187,6 @@ func (a *PlacementPolicyArgs) getArgsV1(job *Job) []any {
 	} else if job.Type == ActionAlterPlacementPolicy {
 		return []any{a.Policy}
 	}
-	intest.Assert(job.Type == ActionDropPlacementPolicy, "Invalid job type for PlacementPolicyArgs")
 	return []any{a.PolicyName}
 }
 
@@ -1199,7 +1198,6 @@ func (a *PlacementPolicyArgs) decodeV1(job *Job) error {
 	} else if job.Type == ActionAlterPlacementPolicy {
 		return errors.Trace(job.DecodeArgs(&a.Policy))
 	}
-	intest.Assert(job.Type == ActionDropPlacementPolicy, "Invalid job type for PlacementPolicyArgs")
 	return errors.Trace(job.DecodeArgs(&a.PolicyName))
 }
 
