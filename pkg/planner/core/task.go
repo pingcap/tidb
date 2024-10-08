@@ -1056,6 +1056,7 @@ func fixTopNForANNIndex(p *PhysicalTopN) bool {
 		IndexId:        ts.AnnIndexExtra.IndexInfo.ID,
 		RefVecF32:      vs.Vec.SerializeTo(nil),
 	}
+	util.DeriveLimitStats(ts.StatsInfo(), float64(p.Count))
 	ts.PlanCostInit = false
 	return true
 }
