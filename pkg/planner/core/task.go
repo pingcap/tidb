@@ -1045,18 +1045,17 @@ func fixTopNForANNIndex(p *PhysicalTopN) bool {
 	}
 
 	distanceMetricPB, ok := tipb.VectorDistanceMetric_value[string(distanceMetric)]
-	intest.Assert(distanceMetricPB != 0, "invalid distance metric")
+	intest.Assert(ok && distanceMetricPB != 0, "invalid distance metric")
+
 	ts.AnnIndexExtra.PushDownQueryInfo = &tipb.ANNQueryInfo{
 		QueryType:      tipb.ANNQueryType_OrderBy,
 		DistanceMetric: tipb.VectorDistanceMetric(distanceMetricPB),
 		TopK:           uint32(p.Count),
 		ColumnName:     col.Name.L,
 		ColumnId:       col.ID,
+		IndexId:        ts.AnnIndexExtra.IndexInfo.ID,
 		RefVecF32:      vs.Vec.SerializeTo(nil),
-		IndexId:        int64(ts.AnnIndexExtra.IndexInfo.ID),
 	}
-	ts.AnnIndexExtra.PushDownQueryInfo.ColumnId = new(int64)
-	*ts.AnnIndexExtra.PushDownQueryInfo.ColumnId = vs.ColumnID
 	ts.PlanCostInit = false
 	return true
 }
