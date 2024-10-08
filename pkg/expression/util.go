@@ -1674,7 +1674,7 @@ func GetFormatNanoTime(time float64) string {
 		unit = "h"
 	} else if timeAbs >= minute {
 		divisor = minute
-		unit = "minute"
+		unit = "min"
 	} else if timeAbs >= sec {
 		divisor = sec
 		unit = "s"
