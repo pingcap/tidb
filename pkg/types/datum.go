@@ -2557,31 +2557,31 @@ func GetMaxValue(ft *FieldType) (maxVal Datum) {
 }
 
 // GetMinValue returns the min value datum for each type.
-func GetMinValue(ft *FieldType) (mi Datum) {
+func GetMinValue(ft *FieldType) (minVal Datum) {
 	switch ft.GetType() {
 	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong:
 		if mysql.HasUnsignedFlag(ft.GetFlag()) {
-			mi.SetUint64(0)
+			minVal.SetUint64(0)
 		} else {
-			mi.SetInt64(IntegerSignedLowerBound(ft.GetType()))
+			minVal.SetInt64(IntegerSignedLowerBound(ft.GetType()))
 		}
 	case mysql.TypeFloat:
-		mi.SetFloat32(float32(-GetMaxFloat(ft.GetFlen(), ft.GetDecimal())))
+		minVal.SetFloat32(float32(-GetMaxFloat(ft.GetFlen(), ft.GetDecimal())))
 	case mysql.TypeDouble:
-		mi.SetFloat64(-GetMaxFloat(ft.GetFlen(), ft.GetDecimal()))
+		minVal.SetFloat64(-GetMaxFloat(ft.GetFlen(), ft.GetDecimal()))
 	case mysql.TypeString, mysql.TypeVarString, mysql.TypeVarchar, mysql.TypeBlob, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob:
 		// codec.Encode KindMinNotNull, to avoid import circle
 		bytes := []byte{1}
-		mi.SetString(string(bytes), ft.GetCollate())
+		minVal.SetString(string(bytes), ft.GetCollate())
 	case mysql.TypeNewDecimal:
-		mi.SetMysqlDecimal(NewMaxOrMinDec(true, ft.GetFlen(), ft.GetDecimal()))
+		minVal.SetMysqlDecimal(NewMaxOrMinDec(true, ft.GetFlen(), ft.GetDecimal()))
 	case mysql.TypeDuration:
-		mi.SetMysqlDuration(Duration{Duration: MinTime})
+		minVal.SetMysqlDuration(Duration{Duration: MinTime})
 	case mysql.TypeDate, mysql.TypeDatetime, mysql.TypeTimestamp:
 		if ft.GetType() == mysql.TypeDate || ft.GetType() == mysql.TypeDatetime {
-			mi.SetMysqlTime(NewTime(MinDatetime, ft.GetType(), 0))
+			minVal.SetMysqlTime(NewTime(MinDatetime, ft.GetType(), 0))
 		} else {
-			mi.SetMysqlTime(MinTimestamp)
+			minVal.SetMysqlTime(MinTimestamp)
 		}
 	}
 	return
