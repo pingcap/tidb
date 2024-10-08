@@ -87,51 +87,51 @@ select table_type from information_schema.tables where (table_name='t4' or table
 table_type
 BASE TABLE
 BASE TABLE
-select table_type, table_rows from information_schema.tables where (table_name ='t4' or table_name = 't5') and table_schema = 'infoschema__infoschema';
-table_type	table_rows
-BASE TABLE	1
-BASE TABLE	1
-select table_type, DATA_LENGTH from information_schema.tables where (table_name ='t4' or table_name = 't5') and table_schema = 'infoschema__infoschema';
-table_type	DATA_LENGTH
-BASE TABLE	8
-BASE TABLE	8
-select engine, DATA_LENGTH from information_schema.tables where (table_name ='t4' or table_name = 't5') and table_schema = 'infoschema__infoschema';
-engine	DATA_LENGTH
-InnoDB	8
-InnoDB	8
-explain select engine, DATA_LENGTH from information_schema.tables where (table_name ='t4' or table_name = 't5') and table_schema = 'infoschema__infoschema';
+select table_type, tidb_pk_type from information_schema.tables where (table_name ='t4' or table_name = 't5') and table_schema = 'infoschema__infoschema';
+table_type	tidb_pk_type
+BASE TABLE	NONCLUSTERED
+BASE TABLE	NONCLUSTERED
+select table_type, tidb_pk_type from information_schema.tables where (table_name ='t4' or table_name = 't5') and table_schema = 'infoschema__infoschema';
+table_type	tidb_pk_type
+BASE TABLE	NONCLUSTERED
+BASE TABLE	NONCLUSTERED
+select engine, tidb_pk_type from information_schema.tables where (table_name ='t4' or table_name = 't5') and table_schema = 'infoschema__infoschema';
+engine	tidb_pk_type
+InnoDB	NONCLUSTERED
+InnoDB	NONCLUSTERED
+explain select engine, tidb_pk_type from information_schema.tables where (table_name ='t4' or table_name = 't5') and table_schema = 'infoschema__infoschema';
 id	estRows	task	access object	operator info
 MemTableScan_5	10000.00	root	table:TABLES	table_name:["t4","t5"], table_schema:["infoschema__infoschema"]
-select engine, DATA_LENGTH from information_schema.tables where (table_name ='t4' or upper(table_name) = 'T5') and table_schema = 'infoschema__infoschema';
-engine	DATA_LENGTH
-InnoDB	8
-InnoDB	8
-select engine, DATA_LENGTH from information_schema.tables where upper(table_name) = 'T5' and table_schema = 'infoschema__infoschema';
-engine	DATA_LENGTH
-InnoDB	8
-explain select engine, DATA_LENGTH from information_schema.tables where (table_name ='t4' or upper(table_name) = 'T5') and table_schema = 'infoschema__infoschema';
+select engine, tidb_pk_type from information_schema.tables where (table_name ='t4' or upper(table_name) = 'T5') and table_schema = 'infoschema__infoschema';
+engine	tidb_pk_type
+InnoDB	NONCLUSTERED
+InnoDB	NONCLUSTERED
+select engine, tidb_pk_type from information_schema.tables where upper(table_name) = 'T5' and table_schema = 'infoschema__infoschema';
+engine	tidb_pk_type
+InnoDB	NONCLUSTERED
+explain select engine, tidb_pk_type from information_schema.tables where (table_name ='t4' or upper(table_name) = 'T5') and table_schema = 'infoschema__infoschema';
 id	estRows	task	access object	operator info
-Projection_4	8000.00	root		Column#5, Column#10
+Projection_4	8000.00	root		Column#5, Column#24
 └─Selection_5	8000.00	root		or(eq(Column#3, "t4"), eq(upper(Column#3), "T5"))
   └─MemTableScan_6	10000.00	root	table:TABLES	table_schema:["infoschema__infoschema"]
-select engine, DATA_LENGTH from information_schema.tables where lower(table_name) = 't5' and  upper(table_schema) = 'INFOSCHEMA__INFOSCHEMA';
-engine	DATA_LENGTH
-InnoDB	8
-explain select engine, DATA_LENGTH from information_schema.tables where (table_name ='t4' or lower(table_name) = 't5') and  upper(table_schema) = 'INFOSCHEMA__INFOSCHEMA';
+select engine, tidb_pk_type from information_schema.tables where lower(table_name) = 't5' and  upper(table_schema) = 'INFOSCHEMA__INFOSCHEMA';
+engine	tidb_pk_type
+InnoDB	NONCLUSTERED
+explain select engine, tidb_pk_type from information_schema.tables where (table_name ='t4' or lower(table_name) = 't5') and  upper(table_schema) = 'INFOSCHEMA__INFOSCHEMA';
 id	estRows	task	access object	operator info
-Projection_4	8000.00	root		Column#5, Column#10
+Projection_4	8000.00	root		Column#5, Column#24
 └─Selection_5	8000.00	root		or(eq(Column#3, "t4"), eq(lower(Column#3), "t5"))
   └─MemTableScan_6	10000.00	root	table:TABLES	table_schema:["infoschema__infoschema"]
-select engine, DATA_LENGTH from information_schema.tables where (table_name ='t4' or table_name = 't5') and table_schema = 'infoschema__infoschema';
-engine	DATA_LENGTH
-InnoDB	8
-InnoDB	8
-explain select engine, DATA_LENGTH from information_schema.tables where table_name ='t4' and upper(table_name) ='T4' and table_schema = 'infoschema__infoschema';
+select engine, tidb_pk_type from information_schema.tables where (table_name ='t4' or table_name = 't5') and table_schema = 'infoschema__infoschema';
+engine	tidb_pk_type
+InnoDB	NONCLUSTERED
+InnoDB	NONCLUSTERED
+explain select engine, tidb_pk_type from information_schema.tables where table_name ='t4' and upper(table_name) ='T4' and table_schema = 'infoschema__infoschema';
 id	estRows	task	access object	operator info
 MemTableScan_5	10000.00	root	table:TABLES	table_name:["t4"], table_schema:["infoschema__infoschema"]
-select engine, DATA_LENGTH from information_schema.tables where table_name ='t4' and upper(table_name) ='T4' and table_schema = 'infoschema__infoschema';
-engine	DATA_LENGTH
-InnoDB	8
+select engine, tidb_pk_type from information_schema.tables where table_name ='t4' and upper(table_name) ='T4' and table_schema = 'infoschema__infoschema';
+engine	tidb_pk_type
+InnoDB	NONCLUSTERED
 drop table infoschema__infoschema.t4;
 drop table infoschema__infoschema.t5;
 create table caseSensitive (a int);
