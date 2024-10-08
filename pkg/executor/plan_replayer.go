@@ -484,7 +484,7 @@ func unzip(z *zip.File) (string, error) {
 	return bufa.String(), err
 }
 
-func compareTable(a, b *zip.File) int {
+func compareRestoreTable(a, b *zip.File) int {
 	originTexta, err := unzip(a)
 	if err == nil {
 		return 0
@@ -510,10 +510,10 @@ func compareTable(a, b *zip.File) int {
 		}
 		at := astmt[len(astmt)-1].(*ast.CreateTableStmt)
 		bt := bstmt[len(bstmt)-1].(*ast.CreateTableStmt)
-		afc, bfc := 0, 0
+		aFKCount, bFkCount := 0, 0
 		for _, c := range at.Constraints {
 			if c.Tp == ast.ConstraintForeignKey {
-				afc++
+				aFKCount++
 				if c.Refer.Table.Name.L == bt.Table.Name.L {
 					return 1
 				}
@@ -521,13 +521,13 @@ func compareTable(a, b *zip.File) int {
 		}
 		for _, c := range bt.Constraints {
 			if c.Tp == ast.ConstraintForeignKey {
-				bfc++
+				bFkCount++
 				if c.Refer.Table.Name.L == at.Table.Name.L {
 					return -1
 				}
 			}
 		}
-		return cmp.Compare(afc, bfc)
+		return cmp.Compare(aFKCount, bFkCount)
 	}
 	return 0
 }
@@ -557,7 +557,7 @@ func (e *PlanReplayerLoadInfo) Update(data []byte) error {
 			fss = append(fss, zipFile)
 		}
 	}
-	slices.SortStableFunc(fss, compareTable)
+	slices.SortStableFunc(fss, compareRestoreTable)
 	for _, f := range fss {
 		err = createSchemaAndItems(e.Ctx, f)
 		if err != nil {
