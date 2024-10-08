@@ -345,7 +345,7 @@ func (f *flusher[K, V]) flushOneIncomplete(ctx context.Context, r *CheckpointRun
 	} else if len(f.incompleteChecksums) > 0 {
 		lastIdx := len(f.incompleteChecksums) - 1
 		if err := r.doChecksumFlush(ctx, f.incompleteChecksums[lastIdx]); err != nil {
-			log.Warn("failed to retry to flush checkpoint data", zap.Error(err))
+			log.Warn("failed to retry to flush checkpoint checksum", zap.Error(err))
 			return
 		}
 		f.incompleteChecksums = f.incompleteChecksums[:lastIdx]
