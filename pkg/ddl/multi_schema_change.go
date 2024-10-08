@@ -343,7 +343,7 @@ func mergeAddIndex(info *model.MultiSchemaInfo) {
 	}
 
 	if mergeCnt <= 1 {
-		// no add index job in this multi-schema change.
+		// No multiple add index jobs in this multi-schema change.
 		return
 	}
 
