@@ -464,12 +464,8 @@ func (p *PhysicalStreamAgg) GetPlanCostVer2(taskType property.TaskType, option *
 	}
 
 	rows := getCardinality(p.Children()[0], option.CostFlag)
-	outputRows := getCardinality(p, option.CostFlag)
 	cpuFactor := getTaskCPUFactorVer2(p, taskType)
 
-	if rows > outputRows {
-		rows = math.Max(rows*0.1, outputRows)
-	}
 	aggCost := aggCostVer2(option, rows, p.AggFuncs, cpuFactor)
 	groupCost := groupCostVer2(option, rows, p.GroupByItems, cpuFactor)
 
