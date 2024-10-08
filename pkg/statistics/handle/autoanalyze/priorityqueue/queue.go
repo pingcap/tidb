@@ -15,9 +15,7 @@
 package priorityqueue
 
 import (
-	"container/heap"
 	"context"
-	"time"
 
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/meta/model"
@@ -38,7 +36,6 @@ type PushJobFunc func(job AnalysisJob) error
 func FetchAllTablesAndBuildAnalysisJobs(
 	sctx sessionctx.Context,
 	parameters map[string]string,
-	autoAnalysisTimeWindow AutoAnalysisTimeWindow,
 	statsHandle statstypes.StatsHandle,
 	jobFunc PushJobFunc,
 ) error {
@@ -62,12 +59,6 @@ func FetchAllTablesAndBuildAnalysisJobs(
 
 	dbs := is.AllSchemaNames()
 	for _, db := range dbs {
-		// Sometimes the tables are too many. Auto-analyze will take too much time on it.
-		// so we need to check the available time.
-		if !autoAnalysisTimeWindow.IsWithinTimeWindow(time.Now()) {
-			return nil
-		}
-
 		// Ignore the memory and system database.
 		if util.IsMemOrSysDB(db.L) {
 			continue
@@ -169,64 +160,4 @@ func getStartTs(sctx sessionctx.Context) (uint64, error) {
 		return 0, err
 	}
 	return txn.StartTS(), nil
-}
-
-// AnalysisPriorityQueue is a priority queue for TableAnalysisJobs.
-type AnalysisPriorityQueue struct {
-	inner *AnalysisInnerQueue
-}
-
-// NewAnalysisPriorityQueue creates a new AnalysisPriorityQueue.
-func NewAnalysisPriorityQueue() *AnalysisPriorityQueue {
-	q := &AnalysisPriorityQueue{
-		inner: &AnalysisInnerQueue{},
-	}
-	heap.Init(q.inner)
-	return q
-}
-
-// Push adds a job to the priority queue with the given weight.
-func (apq *AnalysisPriorityQueue) Push(job AnalysisJob) error {
-	heap.Push(apq.inner, job)
-	return nil
-}
-
-// Pop removes the highest priority job from the queue.
-func (apq *AnalysisPriorityQueue) Pop() AnalysisJob {
-	return heap.Pop(apq.inner).(AnalysisJob)
-}
-
-// Len returns the number of jobs in the queue.
-func (apq *AnalysisPriorityQueue) Len() int {
-	return apq.inner.Len()
-}
-
-// An AnalysisInnerQueue implements heap.Interface and holds TableAnalysisJobs.
-// Exported for testing purposes. You should not use this directly.
-type AnalysisInnerQueue []AnalysisJob
-
-// Implement the sort.Interface methods for the priority queue.
-
-func (aq AnalysisInnerQueue) Len() int { return len(aq) }
-func (aq AnalysisInnerQueue) Less(i, j int) bool {
-	// We want Pop to give us the highest, not lowest, priority, so we use greater than here.
-	return aq[i].GetWeight() > aq[j].GetWeight()
-}
-func (aq AnalysisInnerQueue) Swap(i, j int) {
-	aq[i], aq[j] = aq[j], aq[i]
-}
-
-// Push adds an item to the priority queue.
-func (aq *AnalysisInnerQueue) Push(x any) {
-	item := x.(AnalysisJob)
-	*aq = append(*aq, item)
-}
-
-// Pop removes the highest priority item from the queue.
-func (aq *AnalysisInnerQueue) Pop() any {
-	old := *aq
-	n := len(old)
-	item := old[n-1]
-	*aq = old[0 : n-1]
-	return item
 }
