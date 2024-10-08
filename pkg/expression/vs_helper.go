@@ -17,11 +17,11 @@ package expression
 import (
 	"strings"
 
-	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util/intest"
 )
 
 var (
@@ -33,35 +33,28 @@ var (
 	}
 )
 
-// VectorSearchExpr defines a minimal Vector Search expression, which is
-// a vector distance function, a column to search with, and a reference vector.
-type VectorSearchExpr struct {
+// VectorHelper is a helper struct for vector indexes.
+type VectorHelper struct {
 	DistanceFnName model.CIStr
 	Vec            types.VectorFloat32
-	Column         *Column
+	ColumnID       int64
 }
 
-// ExtractVectorSearch extracts a VectorSearchExpr from an expression.
+// ExtractVectorHelper extracts a VectorSearchExpr from an expression.
 // NOTE: not all VectorSearch functions are supported by the index. The caller
 // needs to check the distance function name.
-func ExtractVectorSearch(expr Expression) (*VectorSearchExpr, error) {
+func ExtractVectorHelper(expr Expression) *VectorHelper {
 	x, ok := expr.(*ScalarFunction)
 	if !ok {
-		return nil, nil
+		return nil
 	}
 
 	if _, isVecFn := vsDistanceFnNamesLower[x.FuncName.L]; !isVecFn {
-		return nil, nil
+		return nil
 	}
 
 	args := x.GetArgs()
-	if len(args) != 2 {
-		return nil, errors.Errorf("internal: expect 2 args for function %s, but got %d", x.FuncName.L, len(args))
-	}
-
 	// One arg must be a vector column ref, and one arg must be a vector constant.
-	// Note: this must be run after constant folding.
-
 	var vectorConstant *Constant = nil
 	var vectorColumn *Column = nil
 	nVectorColumns := 0
@@ -69,30 +62,27 @@ func ExtractVectorSearch(expr Expression) (*VectorSearchExpr, error) {
 	for _, arg := range args {
 		if v, ok := arg.(*Column); ok {
 			if v.RetType.GetType() != mysql.TypeTiDBVectorFloat32 {
-				break
+				return nil
 			}
 			vectorColumn = v
 			nVectorColumns++
 		} else if v, ok := arg.(*Constant); ok {
 			if v.RetType.GetType() != mysql.TypeTiDBVectorFloat32 {
-				break
+				return nil
 			}
 			vectorConstant = v
 			nVectorConstants++
 		}
 	}
 	if nVectorColumns != 1 || nVectorConstants != 1 {
-		return nil, nil
+		return nil
 	}
 
-	// All check passed.
-	if vectorConstant.Value.Kind() != types.KindVectorFloat32 {
-		return nil, errors.Errorf("internal: expect vectorFloat32 constant, but got %s", vectorConstant.Value.String())
-	}
+	intest.Assert(vectorConstant.Value.Kind() == types.KindVectorFloat32, "internal: expect vectorFloat32 constant, but got %s", vectorConstant.Value.String())
 
-	return &VectorSearchExpr{
+	return &VectorHelper{
 		DistanceFnName: x.FuncName,
 		Vec:            vectorConstant.Value.GetVectorFloat32(),
-		Column:         vectorColumn,
-	}, nil
+		ColumnID:       vectorColumn.ID,
+	}
 }

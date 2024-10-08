@@ -37,15 +37,15 @@ const (
 	DistanceMetricInnerProduct DistanceMetric = "INNER_PRODUCT"
 )
 
-// FnNameToDistanceMetric maps a distance function name to the distance metric.
+// IndexableFnNameToDistanceMetric maps a distance function name to the distance metric.
 // Only indexable distance functions should be listed here!
-var FnNameToDistanceMetric = map[string]DistanceMetric{
+var IndexableFnNameToDistanceMetric = map[string]DistanceMetric{
 	ast.VecCosineDistance: DistanceMetricCosine,
 	ast.VecL2Distance:     DistanceMetricL2,
 }
 
-// DistanceMetricToFnName maps a distance metric to the distance function name.
-var DistanceMetricToFnName = map[DistanceMetric]string{
+// IndexableDistanceMetricToFnName maps a distance metric to the distance function name.
+var IndexableDistanceMetricToFnName = map[DistanceMetric]string{
 	DistanceMetricCosine: ast.VecCosineDistance,
 	DistanceMetricL2:     ast.VecL2Distance,
 }

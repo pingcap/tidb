@@ -36,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/collate"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/paging"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
@@ -1024,33 +1025,27 @@ func fixTopNForANNIndex(p *PhysicalTopN) bool {
 		// supported yet.
 		return false
 	}
-	vs, err := expression.ExtractVectorSearch(p.ByItems[0].Expr)
-	if err != nil || vs == nil {
+	vs := expression.ExtractVectorHelper(p.ByItems[0].Expr)
+	if vs == nil {
 		return false
 	}
 	// Note that even if this is a vector search expression, it may not hit vector index
 	// because not all vector search functions are indexable.
-	distanceMetric, ok := model.FnNameToDistanceMetric[vs.DistanceFnName.L]
-	if !ok {
-		return false
-	}
+	distanceMetric, ok := model.IndexableFnNameToDistanceMetric[vs.DistanceFnName.L]
 	// User may build a vector index with different distance metric.
 	// In this case the index shall not push down.
-	if distanceMetric != ts.AnnIndexExtra.IndexInfo.VectorInfo.DistanceMetric {
+	if !ok || distanceMetric != ts.AnnIndexExtra.IndexInfo.VectorInfo.DistanceMetric {
 		return false
 	}
 	// User may build a vector index with different vector column.
 	// In this case the index shall not push down.
 	col := ts.Table.Columns[ts.AnnIndexExtra.IndexInfo.Columns[0].Offset]
-	if col.ID != vs.Column.ID {
+	if col.ID != vs.ColumnID {
 		return false
 	}
 
 	distanceMetricPB, ok := tipb.VectorDistanceMetric_value[string(distanceMetric)]
-	if !ok {
-		// This should not happen.
-		return false
-	}
+	intest.Assert(distanceMetricPB != 0, "invalid distance metric")
 	ts.AnnIndexExtra.PushDownQueryInfo = &tipb.ANNQueryInfo{
 		QueryType:      tipb.ANNQueryType_OrderBy,
 		DistanceMetric: tipb.VectorDistanceMetric(distanceMetricPB),
@@ -1059,6 +1054,8 @@ func fixTopNForANNIndex(p *PhysicalTopN) bool {
 		RefVecF32:      vs.Vec.SerializeTo(nil),
 		IndexId:        int64(ts.AnnIndexExtra.IndexInfo.ID),
 	}
+	ts.AnnIndexExtra.PushDownQueryInfo.ColumnId = new(int64)
+	*ts.AnnIndexExtra.PushDownQueryInfo.ColumnId = vs.ColumnID
 	ts.PlanCostInit = false
 	return true
 }
