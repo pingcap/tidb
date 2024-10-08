@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-FROM ghcr.io/pingcap-qe/ci/jenkins:v20240901-46-g07d1689-go1.23
+FROM hub.pingcap.net/wangweizhen/base_image:go12320241008
 USER root
 WORKDIR /root
 COPY .ci_bazel /data/bazel
