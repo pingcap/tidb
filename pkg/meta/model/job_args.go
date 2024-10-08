@@ -1664,7 +1664,7 @@ type IndexArg struct {
 	Global                  bool                          `json:"global,omitempty"`
 	Unique                  bool                          `json:"unique,omitempty"`
 	IndexName               pmodel.CIStr                  `json:"index_name,omitempty"`
-	IndexPartSpecifications []*ast.IndexPartSpecification `json:"index_part_specifications,omitempty"`
+	IndexPartSpecifications []*ast.IndexPartSpecification `json:"index_part_specifications"`
 	IndexOption             *ast.IndexOption              `json:"index_option,omitempty"`
 	HiddenCols              []*ColumnInfo                 `json:"hidden_cols,omitempty"`
 

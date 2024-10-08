@@ -1127,7 +1127,7 @@ func TestAddIndexArgs(t *testing.T) {
 			Global:                  false,
 			Unique:                  true,
 			IndexName:               model.NewCIStr("idx1"),
-			IndexPartSpecifications: []*ast.IndexPartSpecification{},
+			IndexPartSpecifications: []*ast.IndexPartSpecification{{Length: 2}},
 			IndexOption:             &ast.IndexOption{},
 			HiddenCols:              []*ColumnInfo{{}, {}},
 			SQLMode:                 mysql.ModeANSI,
@@ -1135,12 +1135,15 @@ func TestAddIndexArgs(t *testing.T) {
 			AddIndexID:              1,
 			IfExist:                 false,
 			IsGlobal:                false,
+			FuncExpr:                "test_string",
 		}},
+		IsVector:     false,
 		PartitionIDs: []int64{100, 101, 102},
 	}
 
+	inArgs.IsPK = false
+	inArgs.IsFinishedArg = false
 	for _, v := range []JobVersion{JobVersion1, JobVersion2} {
-		inArgs.IsPK = false
 		j2 := &Job{}
 		require.NoError(t, j2.Decode(getJobBytes(t, inArgs, v, ActionAddIndex)))
 
@@ -1156,24 +1159,9 @@ func TestAddIndexArgs(t *testing.T) {
 		require.Equal(t, inArgs.IndexArgs[0].HiddenCols, a.HiddenCols)
 	}
 
-	inArgs.IsFinishedArg = true
-	for _, v := range []JobVersion{JobVersion1, JobVersion2} {
-		j2 := &Job{}
-		require.NoError(t, j2.Decode(getFinishedJobBytes(t, inArgs, v, ActionAddIndex)))
-
-		args, err := GetFinishedAddIndexArgs(j2)
-		require.NoError(t, err)
-
-		a := args.IndexArgs[0]
-		require.Equal(t, inArgs.IndexArgs[0].AddIndexID, a.AddIndexID)
-		require.Equal(t, inArgs.IndexArgs[0].IfExist, a.IfExist)
-		require.Equal(t, inArgs.IndexArgs[0].IsGlobal, a.IsGlobal)
-		require.Equal(t, inArgs.PartitionIDs, args.PartitionIDs)
-	}
-
+	inArgs.IsPK = true
 	inArgs.IsFinishedArg = false
 	for _, v := range []JobVersion{JobVersion1, JobVersion2} {
-		inArgs.IsPK = true
 		j2 := &Job{}
 		require.NoError(t, j2.Decode(getJobBytes(t, inArgs, v, ActionAddPrimaryKey)))
 
@@ -1189,8 +1177,26 @@ func TestAddIndexArgs(t *testing.T) {
 		require.Equal(t, inArgs.IndexArgs[0].Warning, a.Warning)
 		require.Equal(t, inArgs.IndexArgs[0].IndexOption, a.IndexOption)
 	}
+
+	inArgs.IsPK = false
+	inArgs.IsVector = true
+	inArgs.IsFinishedArg = false
 	for _, v := range []JobVersion{JobVersion1, JobVersion2} {
-		inArgs.IsFinishedArg = true
+		j2 := &Job{}
+		require.NoError(t, j2.Decode(getJobBytes(t, inArgs, v, ActionAddVectorIndex)))
+
+		args, err := GetAddIndexArgs(j2)
+		require.NoError(t, err)
+
+		a := args.IndexArgs[0]
+		require.Equal(t, inArgs.IndexArgs[0].IndexName, a.IndexName)
+		require.Equal(t, inArgs.IndexArgs[0].IndexPartSpecifications, a.IndexPartSpecifications)
+		require.Equal(t, inArgs.IndexArgs[0].IndexOption, a.IndexOption)
+		require.Equal(t, inArgs.IndexArgs[0].FuncExpr, a.FuncExpr)
+	}
+
+	inArgs.IsFinishedArg = true
+	for _, v := range []JobVersion{JobVersion1, JobVersion2} {
 		j2 := &Job{}
 		require.NoError(t, j2.Decode(getFinishedJobBytes(t, inArgs, v, ActionAddIndex)))
 
