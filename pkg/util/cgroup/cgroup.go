@@ -26,7 +26,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/cockroachdb/errors"
+	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
 	"go.uber.org/zap"
 )
@@ -136,7 +136,7 @@ func readFile(filepath string) (res []byte, err error) {
 		return nil, err
 	}
 	defer func() {
-		err = errors.CombineErrors(err, f.Close())
+		err = errors.Join(err, f.Close())
 	}()
 	res, err = io.ReadAll(f)
 	return res, err
@@ -404,7 +404,7 @@ func detectCPUUsageInV2(cRoot string) (stime, utime uint64, err error) {
 		return 0, 0, errors.Wrapf(err, "can't read cpu usage from cgroup v2 at %s", statFilePath)
 	}
 	defer func() {
-		err = errors.CombineErrors(err, stat.Close())
+		err = errors.Join(err, stat.Close())
 	}()
 
 	scanner := bufio.NewScanner(stat)

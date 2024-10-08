@@ -35,6 +35,8 @@ const (
 
 // NonPartitionedTableAnalysisJob is a TableAnalysisJob for analyzing the physical table.
 type NonPartitionedTableAnalysisJob struct {
+	successHook JobHook
+	failureHook JobHook
 	TableSchema string
 	TableName   string
 	// This is only for newly added indexes.
@@ -69,11 +71,22 @@ func NewNonPartitionedTableAnalysisJob(
 	}
 }
 
+// GetTableID gets the table ID of the job.
+func (j *NonPartitionedTableAnalysisJob) GetTableID() int64 {
+	return j.TableID
+}
+
 // Analyze analyzes the table or indexes.
 func (j *NonPartitionedTableAnalysisJob) Analyze(
 	statsHandle statstypes.StatsHandle,
 	sysProcTracker sysproctrack.Tracker,
 ) error {
+	defer func() {
+		if j.successHook != nil {
+			j.successHook(j)
+		}
+	}()
+
 	return statsutil.CallWithSCtx(statsHandle.SPool(), func(sctx sessionctx.Context) error {
 		switch j.getAnalyzeType() {
 		case analyzeTable:
@@ -83,6 +96,16 @@ func (j *NonPartitionedTableAnalysisJob) Analyze(
 		}
 		return nil
 	})
+}
+
+// RegisterSuccessHook registers a successHook function that will be called after the job can be marked as successful.
+func (j *NonPartitionedTableAnalysisJob) RegisterSuccessHook(hook JobHook) {
+	j.successHook = hook
+}
+
+// RegisterFailureHook registers a failureHook function that will be called after the job can be marked as failed.
+func (j *NonPartitionedTableAnalysisJob) RegisterFailureHook(hook JobHook) {
+	j.failureHook = hook
 }
 
 // HasNewlyAddedIndex checks whether the table has newly added indexes.
@@ -100,6 +123,10 @@ func (j *NonPartitionedTableAnalysisJob) IsValidToAnalyze(
 		j.TableSchema,
 		j.TableName,
 	); !valid {
+		if j.failureHook != nil {
+			j.failureHook(j)
+		}
+
 		return false, failReason
 	}
 
@@ -119,6 +146,11 @@ func (j *NonPartitionedTableAnalysisJob) GetWeight() float64 {
 // GetIndicators returns the indicators of the table.
 func (j *NonPartitionedTableAnalysisJob) GetIndicators() Indicators {
 	return j.Indicators
+}
+
+// SetIndicators sets the indicators of the table.
+func (j *NonPartitionedTableAnalysisJob) SetIndicators(indicators Indicators) {
+	j.Indicators = indicators
 }
 
 // String implements fmt.Stringer interface.

@@ -26,14 +26,12 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/ngaut/pools"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/ddl/placement"
 	"github.com/pingcap/tidb/pkg/distsql"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
-	"github.com/pingcap/tidb/pkg/domain/resourcegroup"
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/executor/internal/querywatch"
@@ -48,8 +46,10 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core"
+	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/plugin"
 	"github.com/pingcap/tidb/pkg/privilege"
+	"github.com/pingcap/tidb/pkg/resourcegroup"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/sessionstates"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
@@ -83,7 +83,8 @@ const notSpecified = -1
 type SimpleExec struct {
 	exec.BaseExecutor
 
-	Statement ast.StmtNode
+	Statement  ast.StmtNode
+	ResolveCtx *resolve.Context
 	// IsFromRemote indicates whether the statement IS FROM REMOTE TiDB instance in cluster,
 	//   and executing in coprocessor.
 	//   Used for `global kill`. See https://github.com/pingcap/tidb/blob/master/docs/design/2020-06-01-global-kill.md.
@@ -120,16 +121,6 @@ type userInfo struct {
 	pLI        *passwordOrLockOptionsInfo
 	pwd        string
 	authString string
-}
-
-// clearSysSession close the session does not return the session.
-// Since the environment variables in the session are changed, the session object is not returned.
-func clearSysSession(ctx context.Context, sctx sessionctx.Context) {
-	if sctx == nil {
-		return
-	}
-	_, _ = sctx.GetSQLExecutor().ExecuteInternal(ctx, "rollback")
-	sctx.(pools.Resource).Close()
 }
 
 // Next implements the Executor Next interface.
@@ -647,9 +638,6 @@ func (e *SimpleExec) executeSavepoint(s *ast.SavepointStmt) error {
 	txnCtx := sessVars.TxnCtx
 	if !sessVars.InTxn() && sessVars.IsAutocommit() {
 		return nil
-	}
-	if sessVars.BinlogClient != nil {
-		return ErrSavepointNotSupportedWithBinlog
 	}
 	if !sessVars.ConstraintCheckInPlacePessimistic && sessVars.TxnCtx.IsPessimistic {
 		return errors.New("savepoint is not supported in pessimistic transactions when in-place constraint check is disabled")
@@ -1732,10 +1720,10 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 	}
 
 	sysSession, err := e.GetSysSession()
-	defer clearSysSession(ctx, sysSession)
 	if err != nil {
 		return err
 	}
+	defer e.ReleaseSysSession(ctx, sysSession)
 	sqlExecutor := sysSession.GetSQLExecutor()
 	// session isolation level changed to READ-COMMITTED.
 	// When tidb is at the RR isolation level, executing `begin` will obtain a consistent state.
@@ -2462,10 +2450,10 @@ func userExistsInternal(ctx context.Context, sqlExecutor sqlexec.SQLExecutor, na
 func (e *SimpleExec) executeSetPwd(ctx context.Context, s *ast.SetPwdStmt) error {
 	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnPrivilege)
 	sysSession, err := e.GetSysSession()
-	defer clearSysSession(ctx, sysSession)
 	if err != nil {
 		return err
 	}
+	defer e.ReleaseSysSession(ctx, sysSession)
 
 	sqlExecutor := sysSession.GetSQLExecutor()
 	// session isolation level changed to READ-COMMITTED.
@@ -2752,20 +2740,23 @@ func (e *SimpleExec) executeDropStats(ctx context.Context, s *ast.DropStatsStmt)
 	var statsIDs []int64
 	// TODO: GLOBAL option will be deprecated. Also remove this condition when the syntax is removed
 	if s.IsGlobalStats {
-		statsIDs = []int64{s.Tables[0].TableInfo.ID}
+		tnW := e.ResolveCtx.GetTableName(s.Tables[0])
+		statsIDs = []int64{tnW.TableInfo.ID}
 	} else {
 		if len(s.PartitionNames) == 0 {
 			for _, table := range s.Tables {
-				partitionStatIDs, _, err := core.GetPhysicalIDsAndPartitionNames(table.TableInfo, nil)
+				tnW := e.ResolveCtx.GetTableName(table)
+				partitionStatIDs, _, err := core.GetPhysicalIDsAndPartitionNames(tnW.TableInfo, nil)
 				if err != nil {
 					return err
 				}
 				statsIDs = append(statsIDs, partitionStatIDs...)
-				statsIDs = append(statsIDs, table.TableInfo.ID)
+				statsIDs = append(statsIDs, tnW.TableInfo.ID)
 			}
 		} else {
 			// TODO: drop stats for specific partition is deprecated. Also remove this condition when the syntax is removed
-			if statsIDs, _, err = core.GetPhysicalIDsAndPartitionNames(s.Tables[0].TableInfo, s.PartitionNames); err != nil {
+			tnW := e.ResolveCtx.GetTableName(s.Tables[0])
+			if statsIDs, _, err = core.GetPhysicalIDsAndPartitionNames(tnW.TableInfo, s.PartitionNames); err != nil {
 				return err
 			}
 		}
@@ -2901,7 +2892,7 @@ func (e *SimpleExec) executeAdminSetBDRRole(s *ast.AdminStmt) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	return errors.Trace(meta.NewMeta(txn).SetBDRRole(string(s.BDRRole)))
+	return errors.Trace(meta.NewMutator(txn).SetBDRRole(string(s.BDRRole)))
 }
 
 func (e *SimpleExec) executeAdminUnsetBDRRole() error {
@@ -2909,7 +2900,7 @@ func (e *SimpleExec) executeAdminUnsetBDRRole() error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	return errors.Trace(meta.NewMeta(txn).ClearBDRRole())
+	return errors.Trace(meta.NewMutator(txn).ClearBDRRole())
 }
 
 func (e *SimpleExec) executeSetResourceGroupName(s *ast.SetResourceGroupStmt) error {

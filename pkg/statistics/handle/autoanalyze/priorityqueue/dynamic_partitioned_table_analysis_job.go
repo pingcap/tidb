@@ -44,6 +44,9 @@ type DynamicPartitionedTableAnalysisJob struct {
 	// For example, the user may analyze some partitions manually, and we don't want to analyze them again.
 	PartitionIndexes map[string][]string
 
+	successHook JobHook
+	failureHook JobHook
+
 	TableSchema     string
 	GlobalTableName string
 	// This will analyze all indexes and columns of the specified partitions.
@@ -84,11 +87,22 @@ func NewDynamicPartitionedTableAnalysisJob(
 	}
 }
 
+// GetTableID gets the table ID of the job.
+func (j *DynamicPartitionedTableAnalysisJob) GetTableID() int64 {
+	return j.GlobalTableID
+}
+
 // Analyze analyzes the partitions or partition indexes.
 func (j *DynamicPartitionedTableAnalysisJob) Analyze(
 	statsHandle statstypes.StatsHandle,
 	sysProcTracker sysproctrack.Tracker,
 ) error {
+	defer func() {
+		if j.successHook != nil {
+			j.successHook(j)
+		}
+	}()
+
 	return statsutil.CallWithSCtx(statsHandle.SPool(), func(sctx sessionctx.Context) error {
 		switch j.getAnalyzeType() {
 		case analyzeDynamicPartition:
@@ -100,9 +114,24 @@ func (j *DynamicPartitionedTableAnalysisJob) Analyze(
 	})
 }
 
+// RegisterSuccessHook registers a successHook function that will be called after the job can be marked as successful.
+func (j *DynamicPartitionedTableAnalysisJob) RegisterSuccessHook(hook JobHook) {
+	j.successHook = hook
+}
+
+// RegisterFailureHook registers a successHook function that will be called after the job can be marked as failed.
+func (j *DynamicPartitionedTableAnalysisJob) RegisterFailureHook(hook JobHook) {
+	j.failureHook = hook
+}
+
 // GetIndicators returns the indicators of the table.
 func (j *DynamicPartitionedTableAnalysisJob) GetIndicators() Indicators {
 	return j.Indicators
+}
+
+// SetIndicators sets the indicators of the table.
+func (j *DynamicPartitionedTableAnalysisJob) SetIndicators(indicators Indicators) {
+	j.Indicators = indicators
 }
 
 // HasNewlyAddedIndex checks whether the job has newly added index.
@@ -126,6 +155,9 @@ func (j *DynamicPartitionedTableAnalysisJob) IsValidToAnalyze(
 			j.GlobalTableName,
 			partitions...,
 		); !valid {
+			if j.failureHook != nil {
+				j.failureHook(j)
+			}
 			return false, failReason
 		}
 	}

@@ -21,7 +21,8 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/pkg/domain"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/planner/util/coretestsdk"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/external"
@@ -52,7 +53,7 @@ func TestEnforceMPP(t *testing.T) {
 	// Create virtual tiflash replica info.
 	dom := domain.GetDomain(tk.Session())
 	is := dom.InfoSchema()
-	db, exists := is.SchemaByName(model.NewCIStr("test"))
+	db, exists := is.SchemaByName(pmodel.NewCIStr("test"))
 	require.True(t, exists)
 	coretestsdk.SetTiFlashReplica(t, dom, db.Name.L, "t")
 	coretestsdk.SetTiFlashReplica(t, dom, db.Name.L, "s")
@@ -130,7 +131,7 @@ func TestEnforceMPPWarning1(t *testing.T) {
 			// Create virtual tiflash replica info.
 			dom := domain.GetDomain(tk.Session())
 			is := dom.InfoSchema()
-			tblInfo, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
+			tblInfo, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
 			require.NoError(t, err)
 			tblInfo.Meta().TiFlashReplica = &model.TiFlashReplicaInfo{
 				Count:     1,
@@ -169,7 +170,7 @@ func TestEnforceMPPWarning2(t *testing.T) {
 	// Create virtual tiflash replica info.
 	dom := domain.GetDomain(tk.Session())
 	is := dom.InfoSchema()
-	tbl, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
+	tbl, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
 	require.NoError(t, err)
 	tbl.Meta().TiFlashReplica = &model.TiFlashReplicaInfo{
 		Count:     1,
@@ -217,7 +218,7 @@ func TestEnforceMPPWarning3(t *testing.T) {
 	// Create virtual tiflash replica info.
 	dom := domain.GetDomain(tk.Session())
 	is := dom.InfoSchema()
-	tbl, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
+	tbl, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
 	require.NoError(t, err)
 	tbl.Meta().TiFlashReplica = &model.TiFlashReplicaInfo{
 		Count:     1,
@@ -374,7 +375,7 @@ func TestMPPSkewedGroupDistinctRewrite(t *testing.T) {
 	// Create virtual tiflash replica info.
 	dom := domain.GetDomain(tk.Session())
 	is := dom.InfoSchema()
-	tbl, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
+	tbl, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
 	require.NoError(t, err)
 	tbl.Meta().TiFlashReplica = &model.TiFlashReplicaInfo{
 		Count:     1,
@@ -422,7 +423,7 @@ func TestMPPSingleDistinct3Stage(t *testing.T) {
 	// Create virtual tiflash replica info.
 	dom := domain.GetDomain(tk.Session())
 	is := dom.InfoSchema()
-	tbl, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
+	tbl, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
 	require.NoError(t, err)
 	tbl.Meta().TiFlashReplica = &model.TiFlashReplicaInfo{
 		Count:     1,
@@ -478,16 +479,7 @@ func TestMPPMultiDistinct3Stage(t *testing.T) {
 	tk.MustExec("set @@session.tidb_allow_mpp=ON;")
 	// todo: current mock regionCache won't scale the regions among tiFlash nodes. The under layer still collect data from only one of the nodes.
 	tk.MustExec("split table t BETWEEN (0) AND (5000) REGIONS 5;")
-	tk.MustExec("insert into t values(1000, 1000, 1000, 1)")
-	tk.MustExec("insert into t values(1000, 1000, 1000, 1)")
-	tk.MustExec("insert into t values(2000, 2000, 2000, 1)")
-	tk.MustExec("insert into t values(2000, 2000, 2000, 1)")
-	tk.MustExec("insert into t values(3000, 3000, 3000, 1)")
-	tk.MustExec("insert into t values(3000, 3000, 3000, 1)")
-	tk.MustExec("insert into t values(4000, 4000, 4000, 1)")
-	tk.MustExec("insert into t values(4000, 4000, 4000, 1)")
-	tk.MustExec("insert into t values(5000, 5000, 5000, 1)")
-	tk.MustExec("insert into t values(5000, 5000, 5000, 1)")
+	tk.MustExec("insert into t values(1000, 1000, 1000, 1),(1000, 1000, 1000, 1),(2000, 2000, 2000, 1),(2000, 2000, 2000, 1),(3000, 3000, 3000, 1),(3000, 3000, 3000, 1),(4000, 4000, 4000, 1),(4000, 4000, 4000, 1),(5000, 5000, 5000, 1),(5000, 5000, 5000, 1)")
 
 	var input []string
 	var output []struct {

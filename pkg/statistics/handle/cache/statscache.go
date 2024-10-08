@@ -66,7 +66,7 @@ func NewStatsCacheImplForTest() (types.StatsCache, error) {
 // Update reads stats meta from store and updates the stats map.
 func (s *StatsCacheImpl) Update(ctx context.Context, is infoschema.InfoSchema) error {
 	start := time.Now()
-	lastVersion := s.getLastVersion()
+	lastVersion := s.GetNextCheckVersionWithOffset()
 	var (
 		rows []chunk.Row
 		err  error
@@ -156,15 +156,16 @@ func (s *StatsCacheImpl) Update(ctx context.Context, is infoschema.InfoSchema) e
 	return nil
 }
 
-func (s *StatsCacheImpl) getLastVersion() uint64 {
+// GetNextCheckVersionWithOffset gets the last version with offset.
+func (s *StatsCacheImpl) GetNextCheckVersionWithOffset() uint64 {
 	// Get the greatest version of the stats meta table.
 	lastVersion := s.MaxTableStatsVersion()
 	// We need this because for two tables, the smaller version may write later than the one with larger version.
 	// Consider the case that there are two tables A and B, their version and commit time is (A0, A1) and (B0, B1),
 	// and A0 < B0 < B1 < A1. We will first read the stats of B, and update the lastVersion to B0, but we cannot read
 	// the table stats of A0 if we read stats that greater than lastVersion which is B0.
-	// We can read the stats if the diff between commit time and version is less than three lease.
-	offset := util.DurationToTS(3 * s.statsHandle.Lease())
+	// We can read the stats if the diff between commit time and version is less than five lease.
+	offset := util.DurationToTS(5 * s.statsHandle.Lease()) // 5 lease is 15s.
 	if s.MaxTableStatsVersion() >= offset {
 		lastVersion = lastVersion - offset
 	} else {

@@ -72,9 +72,6 @@ const (
 	ReadUncommitted = "READ-UNCOMMITTED"
 	Serializable    = "SERIALIZABLE"
 	RepeatableRead  = "REPEATABLE-READ"
-
-	PumpType    = "PUMP"
-	DrainerType = "DRAINER"
 )
 
 // Transaction mode constants.
@@ -2005,6 +2002,77 @@ func (n *StringOrUserVar) Accept(v Visitor) (node Node, ok bool) {
 	return v.Leave(n)
 }
 
+// RecommendIndexOption is the option for recommend index.
+type RecommendIndexOption struct {
+	Option string
+	Value  ValueExpr
+}
+
+// RecommendIndexStmt is a statement to recommend index.
+type RecommendIndexStmt struct {
+	stmtNode
+
+	Action  string
+	SQL     string
+	ID      int64
+	Options []RecommendIndexOption
+}
+
+func (n *RecommendIndexStmt) Restore(ctx *format.RestoreCtx) error {
+	ctx.WriteKeyWord("RECOMMEND INDEX")
+	switch n.Action {
+	case "run":
+		ctx.WriteKeyWord(" RUN")
+		if n.SQL != "" {
+			ctx.WriteKeyWord(" FOR ")
+			ctx.WriteString(n.SQL)
+		}
+		if len(n.Options) > 0 {
+			ctx.WriteKeyWord(" WITH ")
+			for i, opt := range n.Options {
+				if i != 0 {
+					ctx.WritePlain(", ")
+				}
+				ctx.WriteKeyWord(opt.Option)
+				ctx.WritePlain(" = ")
+				if err := opt.Value.Restore(ctx); err != nil {
+					return errors.Annotatef(err, "An error occurred while restore RecommendIndexStmt.Options[%d]", i)
+				}
+			}
+		}
+	case "show":
+		ctx.WriteKeyWord(" SHOW")
+	case "apply":
+		ctx.WriteKeyWord(" APPLY ")
+		ctx.WriteKeyWord(fmt.Sprintf("%d", n.ID))
+	case "ignore":
+		ctx.WriteKeyWord(" IGNORE ")
+		ctx.WriteKeyWord(fmt.Sprintf("%d", n.ID))
+	case "set":
+		ctx.WriteKeyWord(" SET ")
+		for i, opt := range n.Options {
+			if i != 0 {
+				ctx.WritePlain(", ")
+			}
+			ctx.WriteKeyWord(opt.Option)
+			ctx.WritePlain(" = ")
+			if err := opt.Value.Restore(ctx); err != nil {
+				return errors.Annotatef(err, "An error occurred while restore RecommendIndexStmt.Options[%d]", i)
+			}
+		}
+	}
+	return nil
+}
+
+func (n *RecommendIndexStmt) Accept(v Visitor) (Node, bool) {
+	newNode, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNode)
+	}
+	n = newNode.(*RecommendIndexStmt)
+	return v.Leave(n)
+}
+
 // CreateBindingStmt creates sql binding hint.
 type CreateBindingStmt struct {
 	stmtNode
@@ -2417,40 +2485,6 @@ const (
 	BDRRoleSecondary BDRRole = "secondary"
 	BDRRoleNone      BDRRole = ""
 )
-
-// DeniedByBDR checks whether the DDL is denied by BDR.
-func DeniedByBDR(role BDRRole, action model.ActionType, job *model.Job) (denied bool) {
-	ddlType, ok := model.ActionBDRMap[action]
-	switch role {
-	case BDRRolePrimary:
-		if !ok {
-			return true
-		}
-
-		// Can't add unique index on primary role.
-		if job != nil && (action == model.ActionAddIndex || action == model.ActionAddPrimaryKey) &&
-			len(job.Args) >= 1 && job.Args[0].(bool) {
-			// job.Args[0] is unique when job.Type is ActionAddIndex or ActionAddPrimaryKey.
-			return true
-		}
-
-		if ddlType == model.SafeDDL || ddlType == model.UnmanagementDDL {
-			return false
-		}
-	case BDRRoleSecondary:
-		if !ok {
-			return true
-		}
-		if ddlType == model.UnmanagementDDL {
-			return false
-		}
-	default:
-		// if user do not set bdr role, we will not deny any ddl as `none`
-		return false
-	}
-
-	return true
-}
 
 type StatementScope int
 
@@ -3751,12 +3785,12 @@ type TableOptimizerHint struct {
 	// See https://dev.mysql.com/doc/refman/5.7/en/optimizer-hints.html#optimizer-hints-execution-time
 	// - MAX_EXECUTION_TIME  => uint64
 	// - MEMORY_QUOTA        => int64
-	// - QUERY_TYPE          => model.CIStr
+	// - QUERY_TYPE          => CIStr
 	//
 	// Time Range is used to hint the time range of inspection tables
 	// e.g: select /*+ time_range('','') */ * from information_schema.inspection_result.
 	// - TIME_RANGE          => ast.HintTimeRange
-	// - READ_FROM_STORAGE   => model.CIStr
+	// - READ_FROM_STORAGE   => CIStr
 	// - USE_TOJA            => bool
 	// - NTH_PLAN            => int64
 	HintData interface{}

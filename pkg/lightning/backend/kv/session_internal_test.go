@@ -18,6 +18,12 @@ import (
 	"testing"
 
 	"github.com/docker/go-units"
+	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/lightning/backend/encode"
+	"github.com/pingcap/tidb/pkg/lightning/common"
+	"github.com/pingcap/tidb/pkg/lightning/log"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/util/timeutil"
 	"github.com/stretchr/testify/require"
 )
 
@@ -123,4 +129,47 @@ func TestKVMemBufBatchAllocAndRecycle(t *testing.T) {
 		testKVMemBuf.Recycle(bb)
 	}
 	require.Equal(t, maxAvailableBufSize, len(testKVMemBuf.availableBufs))
+}
+
+func TestSessionInternalState(t *testing.T) {
+	se, err := NewSession(&encode.SessionOptions{
+		SQLMode: mysql.ModeStrictAllTables,
+		SysVars: map[string]string{
+			"max_allowed_packet":      "40960",
+			"div_precision_increment": "9",
+			"time_zone":               "SYSTEM",
+			// readonly variables should be allowed for compatibility
+			"lc_time_names":           "en_US",
+			"default_week_format":     "1",
+			"block_encryption_mode":   "aes-256-ecb",
+			"group_concat_max_len":    "2048",
+			"tidb_backoff_weight":     "6",
+			"tidb_row_format_version": "2",
+		},
+		Timestamp: 123456,
+	}, log.L())
+	require.NoError(t, err)
+	// some system vars should be loaded
+	require.Equal(t, uint64(40960), se.GetExprCtx().GetEvalCtx().GetMaxAllowedPacket())
+	require.Equal(t, 9, se.GetExprCtx().GetEvalCtx().GetDivPrecisionIncrement())
+	require.Same(t, timeutil.SystemLocation(), se.GetExprCtx().GetEvalCtx().Location())
+	require.Equal(t, "1", se.GetExprCtx().GetEvalCtx().GetDefaultWeekFormatMode())
+	require.Equal(t, "aes-256-ecb", se.GetExprCtx().GetBlockEncryptionMode())
+	require.Equal(t, uint64(2048), se.GetExprCtx().GetGroupConcatMaxLen())
+	require.True(t, se.GetTableCtx().GetRowEncodingConfig().RowEncoder.Enable)
+	tm, err := se.GetExprCtx().GetEvalCtx().CurrentTime()
+	require.NoError(t, err)
+	require.Equal(t, int64(123456), tm.Unix())
+
+	// kv pairs
+	require.NoError(t, se.Txn().Set(kv.Key("k1"), []byte("v1")))
+	require.NoError(t, se.Txn().Set(kv.Key("k2"), []byte("v2")))
+	pairs := se.TakeKvPairs()
+	require.Equal(t, []common.KvPair{
+		{Key: kv.Key("k1"), Val: []byte("v1")},
+		{Key: kv.Key("k2"), Val: []byte("v2")},
+	}, pairs.Pairs)
+	// internal contexts
+	require.NotNil(t, se.GetExprCtx())
+	require.NotNil(t, se.GetTableCtx())
 }

@@ -16,6 +16,7 @@
 // 1. Use "github.com/stretchr/testify/require" to do assertions.
 // 2. Test max heap instead of min heap.
 // 3. Add a test for the peak API.
+// 4. Add a test for the IsEmpty API.
 
 package heap
 
@@ -344,4 +345,15 @@ func TestHeapAddAfterClose(t *testing.T) {
 
 	err = h.BulkAdd([]testHeapObject{mkHeapObj("test", 1)})
 	require.EqualError(t, err, closedMsg)
+}
+
+func TestHeap_IsEmpty(t *testing.T) {
+	h := NewHeap(testHeapObjectKeyFunc, compareInts)
+	require.True(t, h.IsEmpty())
+
+	h.Add(mkHeapObj("foo", 10))
+	require.False(t, h.IsEmpty())
+
+	h.Pop()
+	require.True(t, h.IsEmpty())
 }
