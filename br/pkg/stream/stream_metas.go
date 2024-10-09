@@ -687,7 +687,11 @@ func MMOptAppendPhantomMigration(migs ...pb.Migration) MergeAndMigrateToOpt {
 
 // MergeAndMigrateTo will merge the migrations from BASE until the specified SN, then migrate to it.
 // Finally it writes the new BASE and remove stale migrations from the storage.
-func (m MigrationExt) MergeAndMigrateTo(ctx context.Context, targetSpec int, opts ...MergeAndMigrateToOpt) (result MergeAndMigratedTo) {
+func (m MigrationExt) MergeAndMigrateTo(
+	ctx context.Context,
+	targetSpec int,
+	opts ...MergeAndMigrateToOpt,
+) (result MergeAndMigratedTo) {
 	config := mergeAndMigrateToConfig{}
 	for _, o := range opts {
 		o(&config)
@@ -832,7 +836,8 @@ func (m MigrationExt) doMetaEdits(ctx context.Context, mig *pb.Migration, out *M
 	}
 }
 
-// cleanUpFor modifies the real storage, remove the log files removed in the meta file, AFTER the meta edition has been applied.
+// cleanUpFor modifies the real storage, remove the log files
+// removed in the meta file, as if the meta edition has been applied.
 func (m MigrationExt) cleanUpFor(ctx context.Context, medit *pb.MetaEdit, out *MigratedTo) {
 	var err error
 	newMetaEdit := &pb.MetaEdit{
@@ -1028,7 +1033,10 @@ func (m MigrationExt) doTruncateLogs(
 		})
 	}
 	cannotBeRetryByRerunBase := func(err error) error {
-		return errors.Annotate(err, "this error may not be retry by `migrate-to --base`, you may need to rerun `log truncate`")
+		return errors.Annotate(
+			err,
+			"this error may not be retry by `migrate-to --base`, you may need to rerun `log truncate`",
+		)
 	}
 
 	worker := util.NewWorkerPool(128, "delete files")
@@ -1067,6 +1075,13 @@ func (m MigrationExt) doTruncateLogs(
 				}
 			}
 
+			// Firstly clean up the data file so they won't leak (meta have been deleted,
+			// but data not deleted. Then data cannot be found anymore.).
+			//
+			// We have already written `truncated-to` to the storage hence
+			// we don't need to worry that the user access files already deleted.
+			m.cleanUpFor(ctx, me, out)
+
 			err = m.applyMetaEditTo(ctx, me, meta)
 			if err != nil {
 				updateResult(func(r *MigratedTo) {
@@ -1074,7 +1089,6 @@ func (m MigrationExt) doTruncateLogs(
 					r.NewBase.EditMeta = append(r.NewBase.EditMeta, me)
 				})
 			}
-			m.cleanUpFor(ctx, me, out)
 			m.Hooks.DeletedAFileForTruncating(len(me.DeletePhysicalFiles))
 		})
 	}
