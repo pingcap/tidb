@@ -8,7 +8,6 @@ go_library(
         "errcode.go",
         "errname.go",
         "error.go",
-        "locale_format.go",
         "privs.go",
         "state.go",
         "type.go",

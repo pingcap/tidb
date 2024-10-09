@@ -30,6 +30,9 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/collate"
+	"golang.org/x/text/language"
+	"golang.org/x/text/message"
+	"golang.org/x/text/number"
 )
 
 //revive:disable:defer
@@ -2975,24 +2978,25 @@ func formatDecimal(ctx EvalContext, xBuf *chunk.Column, dInt64s []int64, result 
 			// FORMAT(x, d, NULL)
 			tc := typeCtx(ctx)
 			tc.AppendWarning(errUnknownLocale.FastGenByArgs("NULL"))
-		} else if !strings.EqualFold(localeBuf.GetString(i), "en_US") {
-			// TODO: support other locales.
-			tc := typeCtx(ctx)
-
+		} else {
 			// force copy of the string
 			// https://github.com/pingcap/tidb/issues/56193
-			locale := strings.Clone(localeBuf.GetString(i))
-			tc.AppendWarning(errUnknownLocale.FastGenByArgs(locale))
+			locale = strings.Clone(localeBuf.GetString(i))
 		}
 
-		xStr := roundFormatArgs(x.String(), int(d))
-		dStr := strconv.FormatInt(d, 10)
-		localeFormatFunction := mysql.GetLocaleFormatFunction(locale)
-
-		formatString, err := localeFormatFunction(xStr, dStr)
+		lang, err := language.Parse(locale)
+		if err != nil {
+			tc := typeCtx(ctx)
+			tc.AppendWarning(errUnknownLocale.FastGenByArgs(locale))
+			lang = language.English
+		}
+		p := message.NewPrinter(lang)
+		xint, err := strconv.ParseFloat(x.String(), 64)
 		if err != nil {
 			return err
 		}
+		formatString := p.Sprintf("%v", number.Decimal(xint, number.Scale(int(d))))
+
 		result.AppendString(formatString)
 	}
 	return nil
@@ -3021,24 +3025,20 @@ func formatReal(ctx EvalContext, xBuf *chunk.Column, dInt64s []int64, result *ch
 			// FORMAT(x, d, NULL)
 			tc := typeCtx(ctx)
 			tc.AppendWarning(errUnknownLocale.FastGenByArgs("NULL"))
-		} else if !strings.EqualFold(localeBuf.GetString(i), "en_US") {
-			// TODO: support other locales.
-			tc := typeCtx(ctx)
-
+		} else {
 			// force copy of the string
 			// https://github.com/pingcap/tidb/issues/56193
-			locale := strings.Clone(localeBuf.GetString(i))
-			tc.AppendWarning(errUnknownLocale.FastGenByArgs(locale))
+			locale = strings.Clone(localeBuf.GetString(i))
 		}
 
-		xStr := roundFormatArgs(strconv.FormatFloat(x, 'f', -1, 64), int(d))
-		dStr := strconv.FormatInt(d, 10)
-		localeFormatFunction := mysql.GetLocaleFormatFunction(locale)
-
-		formatString, err := localeFormatFunction(xStr, dStr)
+		lang, err := language.Parse(locale)
 		if err != nil {
-			return err
+			tc := typeCtx(ctx)
+			tc.AppendWarning(errUnknownLocale.FastGenByArgs(locale))
+			lang = language.English
 		}
+		p := message.NewPrinter(lang)
+		formatString := p.Sprintf("%v", number.Decimal(x, number.Scale(int(d))))
 		result.AppendString(formatString)
 	}
 	return nil
