@@ -60,7 +60,7 @@ const (
 
 type testAction struct {
 	op   testOp
-	args []interface{}
+	args []any
 }
 
 func TestInfoschemaCache(t *testing.T) {
@@ -68,42 +68,42 @@ func TestInfoschemaCache(t *testing.T) {
 		{
 			cacheCnt: 3,
 			testActions: []testAction{
-				{op: opCreateSchema, args: []interface{}{1, "db1"}},
+				{op: opCreateSchema, args: []any{1, "db1"}},
 
-				{op: opCreateTable, args: []interface{}{1, "db1", 1, "t1", 1}},
-				{op: opCreateTable, args: []interface{}{1, "db1", 2, "t2", 2}},
-				{op: opCreateTable, args: []interface{}{1, "db1", 3, "t3", 3}},
+				{op: opCreateTable, args: []any{1, "db1", 1, "t1", 1}},
+				{op: opCreateTable, args: []any{1, "db1", 2, "t2", 2}},
+				{op: opCreateTable, args: []any{1, "db1", 3, "t3", 3}},
 
-				{op: opCreateTable, args: []interface{}{1, "db1", 4, "t4", 4, opCacheEvict}},
+				{op: opCreateTable, args: []any{1, "db1", 4, "t4", 4, opCacheEvict}},
 
-				{op: opTableByID, args: []interface{}{1, 4, opCacheMiss, opCacheEvict}},
-				{op: opTableByID, args: []interface{}{2, 4, opCacheMiss, opCacheEvict}},
-				{op: opTableByID, args: []interface{}{3, 4, opCacheMiss, opCacheEvict}},
-				{op: opTableByID, args: []interface{}{4, 4, opCacheMiss, opCacheEvict}},
+				{op: opTableByID, args: []any{1, 4, opCacheMiss, opCacheEvict}},
+				{op: opTableByID, args: []any{2, 4, opCacheMiss, opCacheEvict}},
+				{op: opTableByID, args: []any{3, 4, opCacheMiss, opCacheEvict}},
+				{op: opTableByID, args: []any{4, 4, opCacheMiss, opCacheEvict}},
 
-				{op: opTableByID, args: []interface{}{2, 4, opCacheHit}},
-				{op: opTableByID, args: []interface{}{3, 4, opCacheHit}},
-				{op: opTableByID, args: []interface{}{4, 4, opCacheHit}},
+				{op: opTableByID, args: []any{2, 4, opCacheHit}},
+				{op: opTableByID, args: []any{3, 4, opCacheHit}},
+				{op: opTableByID, args: []any{4, 4, opCacheHit}},
 			},
 		},
 		{
 			cacheCnt: 3,
 			testActions: []testAction{
-				{op: opCreateSchema, args: []interface{}{1, "db1"}},
-				{op: opCreateTable, args: []interface{}{1, "db1", 1, "t1", 1}},
-				{op: opCreateTable, args: []interface{}{1, "db1", 2, "t2", 2}},
-				{op: opCreateTable, args: []interface{}{1, "db1", 3, "t3", 3}},
+				{op: opCreateSchema, args: []any{1, "db1"}},
+				{op: opCreateTable, args: []any{1, "db1", 1, "t1", 1}},
+				{op: opCreateTable, args: []any{1, "db1", 2, "t2", 2}},
+				{op: opCreateTable, args: []any{1, "db1", 3, "t3", 3}},
 
-				{op: opCreateTable, args: []interface{}{1, "db1", 4, "t4", 4, opCacheEvict}},
+				{op: opCreateTable, args: []any{1, "db1", 4, "t4", 4, opCacheEvict}},
 
-				{op: opTableByName, args: []interface{}{"db1", "t1", 4, opCacheMiss, opCacheEvict}},
-				{op: opTableByName, args: []interface{}{"db1", "t2", 4, opCacheMiss, opCacheEvict}},
-				{op: opTableByName, args: []interface{}{"db1", "t3", 4, opCacheMiss, opCacheEvict}},
-				{op: opTableByName, args: []interface{}{"db1", "t4", 4, opCacheMiss, opCacheEvict}},
+				{op: opTableByName, args: []any{"db1", "t1", 4, opCacheMiss, opCacheEvict}},
+				{op: opTableByName, args: []any{"db1", "t2", 4, opCacheMiss, opCacheEvict}},
+				{op: opTableByName, args: []any{"db1", "t3", 4, opCacheMiss, opCacheEvict}},
+				{op: opTableByName, args: []any{"db1", "t4", 4, opCacheMiss, opCacheEvict}},
 
-				{op: opTableByName, args: []interface{}{"db1", "t2", 4, opCacheHit}},
-				{op: opTableByName, args: []interface{}{"db1", "t3", 4, opCacheHit}},
-				{op: opTableByName, args: []interface{}{"db1", "t4", 4, opCacheHit}},
+				{op: opTableByName, args: []any{"db1", "t2", 4, opCacheHit}},
+				{op: opTableByName, args: []any{"db1", "t3", 4, opCacheHit}},
+				{op: opTableByName, args: []any{"db1", "t4", 4, opCacheHit}},
 			},
 		},
 	}
@@ -182,7 +182,7 @@ func (tc *testCase) runAction(action testAction) {
 }
 
 // args: dbID, dbName
-func (tc *testCase) createSchema(args []interface{}) {
+func (tc *testCase) createSchema(args []any) {
 	dbInfo := &model.DBInfo{
 		ID:    int64(args[0].(int)),
 		Name:  pmodel.NewCIStr(args[1].(string)),
@@ -194,7 +194,7 @@ func (tc *testCase) createSchema(args []interface{}) {
 }
 
 // args: dbID, dbName, tblID, tblName, schemaVersion, cacheOp
-func (tc *testCase) createTable(args []interface{}) {
+func (tc *testCase) createTable(args []any) {
 	colInfo := &model.ColumnInfo{
 		ID:        1,
 		Name:      pmodel.NewCIStr("a"),
@@ -222,7 +222,7 @@ func (tc *testCase) createTable(args []interface{}) {
 }
 
 // args: tblID, version, cacheOp, cacheOp, ...
-func (tc *testCase) tableByID(args []interface{}) {
+func (tc *testCase) tableByID(args []any) {
 	tc.is.base().schemaMetaVersion = int64(args[1].(int))
 	ver, err := tc.r.Store().CurrentVersion(kv.GlobalTxnScope)
 	require.NoError(tc.t, err)
@@ -243,7 +243,7 @@ func (tc *testCase) tableByID(args []interface{}) {
 }
 
 // args: dbName, tblName, version, cacheOp, cacheOp, ...
-func (tc *testCase) tableByName(args []interface{}) {
+func (tc *testCase) tableByName(args []any) {
 	tc.is.base().schemaMetaVersion = int64(args[2].(int))
 	ver, err := tc.r.Store().CurrentVersion(kv.GlobalTxnScope)
 	require.NoError(tc.t, err)
