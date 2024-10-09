@@ -3658,3 +3658,22 @@ func checkGlobalAndPK(t *testing.T, tk *testkit.TestKit, name string, indexes in
 		require.True(t, idxInfo.Primary)
 	}
 }
+
+func TestAdminCheckWithPartitions(t *testing.T) {
+	store := testkit.CreateMockStore(t, mockstore.WithDDLChecker())
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	// This gives an error in the test framework, where text -> mediumtext somehow...
+	//tk.MustExec("create table t (id binary(16) primary key, data text) partition by key (id) partitions 3")
+	tk.MustExec("create table t (id binary(16) primary key, data varchar(65000)) partition by key (id) partitions 3")
+	tk.MustExec(`insert into t (id) values (UUID_TO_BIN(UUID())), (UUID_TO_BIN(UUID())), (UUID_TO_BIN(UUID())), (UUID_TO_BIN(UUID())), (UUID_TO_BIN(UUID())), (UUID_TO_BIN(UUID())), (UUID_TO_BIN(UUID())), (UUID_TO_BIN(UUID()))`)
+	tk.MustExec(`insert into t select UUID_TO_BIN(UUID()), concat("FROM UUID: ", BIN_TO_UUID(id)) from t`)
+	tk.MustExec(`insert into t select UUID_TO_BIN(UUID()), concat("FROM UUID: ", BIN_TO_UUID(id)) from t`)
+	tk.MustExec(`insert into t select UUID_TO_BIN(UUID()), concat("FROM UUID: ", BIN_TO_UUID(id)) from t`)
+	tk.MustExec(`insert into t select UUID_TO_BIN(UUID()), concat("FROM UUID: ", BIN_TO_UUID(id)) from t`)
+	tk.MustExec(`alter table t add unique index d (d) global`)
+	tk.MustExec(`admin check table t partitions (p0)`)
+	tk.MustExec(`admin check index t partitions (p0) d`)
+	tk.MustExec(`admin check index t partitions (p0) PRIMARY`)
+}
