@@ -12,10 +12,12 @@ go_test(
     shard_count = 4,
     deps = [
         "//pkg/config",
+        "//pkg/domain",
         "//pkg/domain/infosync",
         "//pkg/meta/model",
         "//pkg/planner/core",
         "//pkg/planner/core/base",
+        "//pkg/planner/util/coretestsdk",
         "//pkg/store/mockstore",
         "//pkg/testkit",
         "//pkg/testkit/testdata",
