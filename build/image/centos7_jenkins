@@ -13,6 +13,9 @@
 # limitations under the License.
 
 FROM hub.pingcap.net/wangweizhen/base_image:go12320241009
+ENV GOPATH /go
+ENV GOROOT /usr/local/go
+ENV PATH $GOPATH/bin:$GOROOT/bin:$PATH
 USER root
 WORKDIR /root
 COPY .ci_bazel /data/bazel
@@ -24,6 +27,7 @@ RUN groupadd -g 1000 jenkins && \
     echo "jenkins:password" | chpasswd && \
     echo "jenkins ALL=(ALL) NOPASSWD: ALL" >> /etc/sudoers
 RUN mkdir -p /data/tikv1 /data/tikv2 /data/tikv3 /data/pd && \
+    mkdir /go && chown jenkins:jenkins /go && \
     chown -R jenkins:jenkins /data
 # Switch to the non-root user jenkins and set the working directory
 USER jenkins
