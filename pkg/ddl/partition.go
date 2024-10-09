@@ -780,8 +780,8 @@ func getPartitionIntervalFromTable(ctx expression.BuildContext, tbInfo *model.Ta
 	if len(tbInfo.Partition.Columns) > 0 {
 		partCol := findColumnByName(tbInfo.Partition.Columns[0].L, tbInfo)
 		if partCol.FieldType.EvalType() == types.ETInt {
-			min := getLowerBoundInt(partCol)
-			minVal = strconv.FormatInt(min, 10)
+			minv := getLowerBoundInt(partCol)
+			minVal = strconv.FormatInt(minv, 10)
 		} else if partCol.FieldType.EvalType() == types.ETDatetime {
 			isIntType = false
 			minVal = "0000-01-01"
@@ -1076,15 +1076,15 @@ func generatePartitionDefinitionsFromInterval(ctx expression.BuildContext, partO
 			// set LESS THAN to ZeroTime
 			partExpr = ast.NewValueExpr("0000-01-01", "", "")
 		} else {
-			var min int64
+			var minv int64
 			if partCol != nil {
-				min = getLowerBoundInt(partCol)
+				minv = getLowerBoundInt(partCol)
 			} else {
 				if !isPartExprUnsigned(ctx.GetEvalCtx(), tbInfo) {
-					min = math.MinInt64
+					minv = math.MinInt64
 				}
 			}
-			partExpr = ast.NewValueExpr(min, "", "")
+			partExpr = ast.NewValueExpr(minv, "", "")
 		}
 		partOptions.Definitions = append(partOptions.Definitions, &ast.PartitionDefinition{
 			Name: pmodel.NewCIStr("P_NULL"),
