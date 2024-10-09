@@ -360,17 +360,12 @@ func convertAddTablePartitionJob2RollbackJob(jobCtx *jobContext, job *model.Job,
 	}
 	args.PartNames = partNames
 	model.FillRollbackArgsForAddPartition(job, args)
-	/*
-		_, err = job.Encode(true)
-		if err != nil {
-			return ver, errors.Trace(err)
-		}
-
-	*/
 	ver, err = updateVersionAndTableInfo(jobCtx, job, tblInfo, true)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
+	tblInfo.Partition.DDLState = model.StateNone
+	tblInfo.Partition.DDLAction = model.ActionNone
 	job.State = model.JobStateRollingback
 	return ver, errors.Trace(otherwiseErr)
 }
@@ -427,7 +422,7 @@ func convertReorgPartitionJob2RollbackJob(jobCtx *jobContext, job *model.Job, ot
 			}
 			// We cannot drop the index here, we need to wait until
 			// the next schema version
-			// i.e. rollback in onDropTablePartition
+			// i.e. rollback in rollbackLikeDropPartition
 			// New index that became public in this state,
 			// mark it to be dropped in next schema version
 			if indexInfo.Global {
@@ -508,13 +503,6 @@ func convertReorgPartitionJob2RollbackJob(jobCtx *jobContext, job *model.Job, ot
 	}
 	args.PartNames = partNames
 	job.FillArgs(args)
-	/*
-		_, err = job.Encode(true)
-		if err != nil {
-			return ver, errors.Trace(err)
-		}
-
-	*/
 	ver, err = updateVersionAndTableInfo(jobCtx, job, tblInfo, true)
 	if err != nil {
 		return ver, errors.Trace(err)
