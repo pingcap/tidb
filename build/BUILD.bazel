@@ -159,7 +159,6 @@ nogo(
                "//build/linter/makezero",
                "//build/linter/mirror",
                "//build/linter/misspell",
-               "//build/linter/noloopclosure",
                "//build/linter/prealloc",
                "//build/linter/predeclared",
                "//build/linter/printexpression",
