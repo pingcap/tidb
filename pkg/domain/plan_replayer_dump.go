@@ -116,8 +116,8 @@ func (tne *tableNameExtractor) getTablesAndViews() (map[tableNamePair]struct{}, 
 		}
 		for _, fk := range tblInfo.Meta().ForeignKeys {
 			key := tableNamePair{
-				DBName:    fk.RefSchema.String(),
-				TableName: fk.RefTable.String(),
+				DBName:    fk.RefSchema.L,
+				TableName: fk.RefTable.L,
 				IsView:    false,
 			}
 			r[key] = struct{}{}
