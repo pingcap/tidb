@@ -28,7 +28,8 @@ RUN groupadd -g 1000 jenkins && \
     echo "jenkins ALL=(ALL) NOPASSWD: ALL" >> /etc/sudoers
 RUN mkdir -p /data/tikv1 /data/tikv2 /data/tikv3 /data/pd && \
     mkdir /go && chown jenkins:jenkins /go && \
-    chown -R jenkins:jenkins /data
+    chown -R jenkins:jenkins /data && \
+    chown jenkins:jenkins /usr/bin/bazel
 # Switch to the non-root user jenkins and set the working directory
 USER jenkins
 WORKDIR /home/jenkins
