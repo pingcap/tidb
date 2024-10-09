@@ -1616,8 +1616,8 @@ const (
 	micro   = 1000 * nano
 	milli   = 1000 * micro
 	sec     = 1000 * milli
-	min     = 60 * sec
-	hour    = 60 * min
+	minute  = 60 * sec
+	hour    = 60 * minute
 	dayTime = 24 * hour
 )
 
@@ -1672,8 +1672,8 @@ func GetFormatNanoTime(time float64) string {
 	} else if timeAbs >= hour {
 		divisor = hour
 		unit = "h"
-	} else if timeAbs >= min {
-		divisor = min
+	} else if timeAbs >= minute {
+		divisor = minute
 		unit = "min"
 	} else if timeAbs >= sec {
 		divisor = sec

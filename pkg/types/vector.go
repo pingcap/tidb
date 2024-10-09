@@ -35,6 +35,32 @@ func init() {
 	panic("VectorFloat32 only supports little endian")
 }
 
+// CreateVectorFloat32 creates a VectorFloat32. Returns error if there are invalid values like NaN and Inf.
+func CreateVectorFloat32(vector []float32) (VectorFloat32, error) {
+	for _, v := range vector {
+		if math.IsNaN(float64(v)) {
+			valueError := errors.Errorf("NaN not allowed in vector")
+			return ZeroVectorFloat32, valueError
+		}
+		if math.IsInf(float64(v), 0) {
+			valueError := errors.Errorf("infinite value not allowed in vector")
+			return ZeroVectorFloat32, valueError
+		}
+	}
+	vec := InitVectorFloat32(len(vector))
+	copy(vec.Elements(), vector)
+	return vec, nil
+}
+
+// MustCreateVectorFloat32 creates a VectorFloat32. Panics if there are invalid values like NaN and Inf.
+func MustCreateVectorFloat32(v []float32) VectorFloat32 {
+	r, err := CreateVectorFloat32(v)
+	if err != nil {
+		panic(err)
+	}
+	return r
+}
+
 // VectorFloat32 represents a vector of float32.
 //
 // Memory Format:

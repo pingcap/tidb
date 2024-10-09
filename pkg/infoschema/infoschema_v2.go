@@ -668,12 +668,12 @@ type TableItem struct {
 // Used by executor/infoschema_reader.go to handle reading from INFORMATION_SCHEMA.TABLES.
 // If visit return false, stop the iterate process.
 func (is *infoschemaV2) IterateAllTableItems(visit func(TableItem) bool) {
-	max, ok := is.byName.Max()
+	maxv, ok := is.byName.Max()
 	if !ok {
 		return
 	}
 	var pivot *tableItem
-	is.byName.Descend(max, func(item tableItem) bool {
+	is.byName.Descend(maxv, func(item tableItem) bool {
 		if item.schemaVersion > is.schemaMetaVersion {
 			// skip MVCC version, those items are not visible to the queried schema version
 			return true
