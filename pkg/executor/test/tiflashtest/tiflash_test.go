@@ -2015,19 +2015,19 @@ func TestMppAggShouldAlignFinalMode(t *testing.T) {
 		"  select /*+ read_from_storage(tiflash[t]) */ sum(1)" +
 		"  from t where d BETWEEN '2023-07-01' and '2023-07-03' group by d" +
 		") total;").Check(testkit.Rows("Projection 400.00 root  1->Column#4",
-		"└─HashAgg 400.00 root  group by:test.t.d, funcs:count(complete,1)->Column#8",
+		"└─HashAgg 400.00 root  group by:test.t.d, funcs:count(1)->Column#8",
 		"  └─PartitionUnion 400.00 root  ",
 		"    ├─Projection 200.00 root  test.t.d",
-		"    │ └─HashAgg 200.00 root  group by:test.t.d, funcs:firstrow(partial2,test.t.d)->test.t.d, funcs:count(final,Column#12)->Column#9",
+		"    │ └─HashAgg 200.00 root  group by:test.t.d, funcs:firstrow(test.t.d)->test.t.d, funcs:count(Column#12)->Column#9",
 		"    │   └─TableReader 200.00 root  MppVersion: 2, data:ExchangeSender",
 		"    │     └─ExchangeSender 200.00 mpp[tiflash]  ExchangeType: PassThrough",
-		"    │       └─HashAgg 200.00 mpp[tiflash]  group by:test.t.d, funcs:count(partial1,1)->Column#12",
+		"    │       └─HashAgg 200.00 mpp[tiflash]  group by:test.t.d, funcs:count(1)->Column#12",
 		"    │         └─TableRangeScan 250.00 mpp[tiflash] table:t, partition:p1 range:[2023-07-01,2023-07-03], keep order:false, stats:pseudo",
 		"    └─Projection 200.00 root  test.t.d",
-		"      └─HashAgg 200.00 root  group by:test.t.d, funcs:firstrow(partial2,test.t.d)->test.t.d, funcs:count(final,Column#14)->Column#10",
+		"      └─HashAgg 200.00 root  group by:test.t.d, funcs:firstrow(test.t.d)->test.t.d, funcs:count(Column#14)->Column#10",
 		"        └─TableReader 200.00 root  MppVersion: 2, data:ExchangeSender",
 		"          └─ExchangeSender 200.00 mpp[tiflash]  ExchangeType: PassThrough",
-		"            └─HashAgg 200.00 mpp[tiflash]  group by:test.t.d, funcs:count(partial1,1)->Column#14",
+		"            └─HashAgg 200.00 mpp[tiflash]  group by:test.t.d, funcs:count(1)->Column#14",
 		"              └─TableRangeScan 250.00 mpp[tiflash] table:t, partition:p2 range:[2023-07-01,2023-07-03], keep order:false, stats:pseudo"))
 
 	err = failpoint.Disable("github.com/pingcap/tidb/pkg/expression/aggregation/show-agg-mode")
