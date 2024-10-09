@@ -59,9 +59,10 @@ mkdir -p "$MASTER_KEY_DIR"
 openssl rand -hex 32 > "$MASTER_KEY_DIR/master.key"
 MASTER_KEY_PATH="local://$MASTER_KEY_DIR/master.key"
 
+# testing encryption using local master key
 ENCRYPTION_ARGS="--crypter.method aes128-ctr --crypter.key 0123456789abcdef0123456789abcdef --master-key-crypter-method AES256-CTR --master-key $MASTER_KEY_PATH"
 
-# plaintext data key
+# uncomment it to test plaintext data key manually.
 #ENCRYPTION_ARGS="--crypter.method aes128-ctr --crypter.key 0123456789abcdef0123456789abcdef --log.crypter.method AES256-CTR --log.crypter.key 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
 
 export ENCRYPTION_ARGS
