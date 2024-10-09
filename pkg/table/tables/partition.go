@@ -138,9 +138,20 @@ func newPartitionedTable(tbl *TableCommon, tblInfo *model.TableInfo) (table.Part
 		partitions[p.ID] = &t
 	}
 	ret.partitions = partitions
-	if pi.DDLAction != model.ActionReorganizePartition &&
-		pi.DDLAction != model.ActionRemovePartitioning &&
-		pi.DDLAction != model.ActionAlterTablePartitioning {
+	switch pi.DDLAction {
+	case model.ActionReorganizePartition, model.ActionRemovePartitioning,
+		model.ActionAlterTablePartitioning:
+		// continue after switch!
+	case model.ActionTruncateTablePartition:
+		for _, def := range pi.DroppingDefinitions {
+			p, err := initPartition(ret, def)
+			if err != nil {
+				return nil, err
+			}
+			partitions[def.ID] = p
+		}
+		fallthrough
+	default:
 		return ret, nil
 	}
 	// In StateWriteReorganization we are using the 'old' partition definitions
