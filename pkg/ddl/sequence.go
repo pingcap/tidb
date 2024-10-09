@@ -27,7 +27,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/mathutil"
 )
 
-func onCreateSequence(jobCtx *jobContext, t *meta.Mutator, job *model.Job) (ver int64, _ error) {
+func onCreateSequence(jobCtx *jobContext, job *model.Job) (ver int64, _ error) {
 	schemaID := job.SchemaID
 	args, err := model.GetCreateTableArgs(job)
 	if err != nil {
@@ -46,12 +46,12 @@ func onCreateSequence(jobCtx *jobContext, t *meta.Mutator, job *model.Job) (ver 
 		return ver, errors.Trace(err)
 	}
 
-	err = createSequenceWithCheck(t, job, tbInfo)
+	err = createSequenceWithCheck(jobCtx.metaMut, job, tbInfo)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
 
-	ver, err = updateSchemaVersion(jobCtx, t, job)
+	ver, err = updateSchemaVersion(jobCtx, job)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
@@ -232,7 +232,7 @@ func alterSequenceOptions(sequenceOptions []*ast.SequenceOption, ident ast.Ident
 	return false, 0, nil
 }
 
-func onAlterSequence(jobCtx *jobContext, t *meta.Mutator, job *model.Job) (ver int64, _ error) {
+func onAlterSequence(jobCtx *jobContext, job *model.Job) (ver int64, _ error) {
 	schemaID := job.SchemaID
 	args, err := model.GetAlterSequenceArgs(job)
 	if err != nil {
@@ -243,7 +243,7 @@ func onAlterSequence(jobCtx *jobContext, t *meta.Mutator, job *model.Job) (ver i
 	ident, sequenceOpts := args.Ident, args.SeqOptions
 
 	// Get the old tableInfo.
-	tblInfo, err := checkTableExistAndCancelNonExistJob(t, job, schemaID)
+	tblInfo, err := checkTableExistAndCancelNonExistJob(jobCtx.metaMut, job, schemaID)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
@@ -269,7 +269,7 @@ func onAlterSequence(jobCtx *jobContext, t *meta.Mutator, job *model.Job) (ver i
 	// to allocate sequence ids. Once the restart value is updated to kv here, the allocated ids in the upper layer won't
 	// guarantee to be consecutive and monotonous.
 	if restart {
-		err := restartSequenceValue(t, schemaID, tblInfo, restartValue)
+		err := restartSequenceValue(jobCtx.metaMut, schemaID, tblInfo, restartValue)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
@@ -278,7 +278,7 @@ func onAlterSequence(jobCtx *jobContext, t *meta.Mutator, job *model.Job) (ver i
 	// Store the sequence info into kv.
 	// Set shouldUpdateVer always to be true even altering doesn't take effect, since some tools like drainer won't take
 	// care of SchemaVersion=0.
-	ver, err = updateVersionAndTableInfo(jobCtx, t, job, tblInfo, true)
+	ver, err = updateVersionAndTableInfo(jobCtx, job, tblInfo, true)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}

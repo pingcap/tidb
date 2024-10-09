@@ -163,14 +163,13 @@ func TestCombinedIDAllocation(t *testing.T) {
 		)
 	}
 
-	genCreateDBJob := func() *model.Job {
+	genCreateDBJob := func(idAllocated bool) *ddl.JobWrapper {
 		info := &model.DBInfo{}
 		j := &model.Job{
 			Version: model.GetJobVerInUse(),
 			Type:    model.ActionCreateSchema,
 		}
-		j.FillArgs(&model.CreateSchemaArgs{DBInfo: info})
-		return j
+		return ddl.NewJobWrapperWithArgs(j, &model.CreateSchemaArgs{DBInfo: info}, idAllocated)
 	}
 
 	genRGroupJob := func(idAllocated bool) *ddl.JobWrapper {
@@ -279,11 +278,11 @@ func TestCombinedIDAllocation(t *testing.T) {
 			requiredIDCount: 1,
 		},
 		{
-			jobW:            ddl.NewJobWrapper(genCreateDBJob(), false),
+			jobW:            genCreateDBJob(false),
 			requiredIDCount: 2,
 		},
 		{
-			jobW:            ddl.NewJobWrapper(genCreateDBJob(), true),
+			jobW:            genCreateDBJob(true),
 			requiredIDCount: 1,
 		},
 		{

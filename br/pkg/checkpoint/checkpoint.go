@@ -51,9 +51,11 @@ const MaxChecksumTotalCost float64 = 60.0
 
 const defaultTickDurationForFlush = 30 * time.Second
 
-const defaultTckDurationForChecksum = 5 * time.Second
+const defaultTickDurationForChecksum = 5 * time.Second
 
 const defaultTickDurationForLock = 4 * time.Minute
+
+const defaultRetryDuration = 3 * time.Second
 
 const lockTimeToLive = 5 * time.Minute
 
@@ -305,12 +307,80 @@ func (r *CheckpointRunner[K, V]) setLock(ctx context.Context, errCh chan error) 
 	return nil
 }
 
+type flusher[K KeyType, V ValueType] struct {
+	incompleteMetas     []map[K]*RangeGroup[K, V]
+	incompleteChecksums []ChecksumItems
+}
+
+func newFlusher[K KeyType, V ValueType]() *flusher[K, V] {
+	return &flusher[K, V]{
+		incompleteMetas:     make([]map[K]*RangeGroup[K, V], 0),
+		incompleteChecksums: make([]ChecksumItems, 0),
+	}
+}
+
+func (f *flusher[K, V]) doFlush(ctx context.Context, r *CheckpointRunner[K, V], meta map[K]*RangeGroup[K, V]) {
+	if err := r.doFlush(ctx, meta); err != nil {
+		log.Warn("failed to flush checkpoint data", zap.Error(err))
+		f.incompleteMetas = append(f.incompleteMetas, meta)
+	}
+}
+
+func (f *flusher[K, V]) doChecksumFlush(ctx context.Context, r *CheckpointRunner[K, V], checksums ChecksumItems) {
+	if err := r.doChecksumFlush(ctx, checksums); err != nil {
+		log.Warn("failed to flush checkpoint checksum", zap.Error(err))
+		f.incompleteChecksums = append(f.incompleteChecksums, checksums)
+	}
+}
+
+func (f *flusher[K, V]) flushOneIncomplete(ctx context.Context, r *CheckpointRunner[K, V]) {
+	// retry the last item to avoid frequent changes to the slice capacity
+	if len(f.incompleteMetas) > 0 {
+		lastIdx := len(f.incompleteMetas) - 1
+		if err := r.doFlush(ctx, f.incompleteMetas[lastIdx]); err != nil {
+			log.Warn("failed to retry to flush checkpoint data", zap.Error(err))
+			return
+		}
+		f.incompleteMetas = f.incompleteMetas[:lastIdx]
+	} else if len(f.incompleteChecksums) > 0 {
+		lastIdx := len(f.incompleteChecksums) - 1
+		if err := r.doChecksumFlush(ctx, f.incompleteChecksums[lastIdx]); err != nil {
+			log.Warn("failed to retry to flush checkpoint checksum", zap.Error(err))
+			return
+		}
+		f.incompleteChecksums = f.incompleteChecksums[:lastIdx]
+	}
+}
+
+func (f *flusher[K, V]) flushAllIncompleteMeta(ctx context.Context, r *CheckpointRunner[K, V]) {
+	for _, meta := range f.incompleteMetas {
+		if err := r.doFlush(ctx, meta); err != nil {
+			log.Warn("failed to retry to flush checkpoint data", zap.Error(err))
+		}
+	}
+}
+
+func (f *flusher[K, V]) flushAllIncompleteChecksum(ctx context.Context, r *CheckpointRunner[K, V]) {
+	for _, checksums := range f.incompleteChecksums {
+		if err := r.doChecksumFlush(ctx, checksums); err != nil {
+			log.Warn("failed to retry to flush checkpoint checksum", zap.Error(err))
+		}
+	}
+}
+
 // start a goroutine to flush the meta, which is sent from `checkpoint looper`, to the external storage
-func (r *CheckpointRunner[K, V]) startCheckpointFlushLoop(ctx context.Context, wg *sync.WaitGroup) chan error {
+func (r *CheckpointRunner[K, V]) startCheckpointFlushLoop(
+	ctx context.Context,
+	wg *sync.WaitGroup,
+	retryDuration time.Duration,
+) chan error {
 	errCh := make(chan error, 1)
 	wg.Add(1)
 	flushWorker := func(ctx context.Context, errCh chan error) {
 		defer wg.Done()
+		flusher := newFlusher[K, V]()
+		retryTicker := time.NewTicker(retryDuration)
+		defer retryTicker.Stop()
 		for {
 			select {
 			case <-ctx.Done():
@@ -320,22 +390,18 @@ func (r *CheckpointRunner[K, V]) startCheckpointFlushLoop(ctx context.Context, w
 				return
 			case meta, ok := <-r.metaCh:
 				if !ok {
+					flusher.flushAllIncompleteMeta(ctx, r)
 					log.Info("stop checkpoint flush worker")
 					return
 				}
-				if err := r.doFlush(ctx, meta); err != nil {
-					errCh <- errors.Annotate(err, "failed to flush checkpoint data.")
-					return
-				}
+				flusher.doFlush(ctx, r, meta)
 			case checksums, ok := <-r.checksumMetaCh:
 				if !ok {
+					flusher.flushAllIncompleteChecksum(ctx, r)
 					log.Info("stop checkpoint flush worker")
 					return
 				}
-				if err := r.doChecksumFlush(ctx, checksums); err != nil {
-					errCh <- errors.Annotate(err, "failed to flush checkpoint checksum.")
-					return
-				}
+				flusher.doChecksumFlush(ctx, r, checksums)
 			case _, ok := <-r.lockCh:
 				if !ok {
 					log.Info("stop checkpoint flush worker")
@@ -345,6 +411,8 @@ func (r *CheckpointRunner[K, V]) startCheckpointFlushLoop(ctx context.Context, w
 					errCh <- errors.Annotate(err, "failed to update checkpoint lock.")
 					return
 				}
+			case <-retryTicker.C:
+				flusher.flushOneIncomplete(ctx, r)
 			}
 		}
 	}
@@ -370,7 +438,8 @@ func (r *CheckpointRunner[K, V]) startCheckpointMainLoop(
 	ctx context.Context,
 	tickDurationForFlush,
 	tickDurationForChecksum,
-	tickDurationForLock time.Duration,
+	tickDurationForLock,
+	retryDuration time.Duration,
 ) {
 	failpoint.Inject("checkpoint-more-quickly-flush", func(_ failpoint.Value) {
 		tickDurationForChecksum = 1 * time.Second
@@ -390,7 +459,7 @@ func (r *CheckpointRunner[K, V]) startCheckpointMainLoop(
 		cctx, cancel := context.WithCancel(ctx)
 		defer cancel()
 		var wg sync.WaitGroup
-		errCh := r.startCheckpointFlushLoop(cctx, &wg)
+		errCh := r.startCheckpointFlushLoop(cctx, &wg, retryDuration)
 		flushTicker := time.NewTicker(tickDurationForFlush)
 		defer flushTicker.Stop()
 		checksumTicker := time.NewTicker(tickDurationForChecksum)

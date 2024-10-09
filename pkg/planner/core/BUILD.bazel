@@ -122,7 +122,6 @@ go_library(
         "//pkg/planner/cardinality",
         "//pkg/planner/cascades/base",
         "//pkg/planner/core/base",
-        "//pkg/planner/core/constraint",
         "//pkg/planner/core/cost",
         "//pkg/planner/core/metrics",
         "//pkg/planner/core/operator/baseimpl",
@@ -268,6 +267,7 @@ go_test(
     deps = [
         "//pkg/config",
         "//pkg/domain",
+        "//pkg/domain/infosync",
         "//pkg/expression",
         "//pkg/expression/aggregation",
         "//pkg/expression/exprctx",
@@ -306,6 +306,7 @@ go_test(
         "//pkg/testkit/ddlhelper",
         "//pkg/testkit/external",
         "//pkg/testkit/testdata",
+        "//pkg/testkit/testfailpoint",
         "//pkg/testkit/testmain",
         "//pkg/testkit/testsetup",
         "//pkg/testkit/testutil",

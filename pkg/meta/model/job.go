@@ -110,6 +110,7 @@ const (
 	ActionDropResourceGroup      ActionType = 70
 	ActionAlterTablePartitioning ActionType = 71
 	ActionRemovePartitioning     ActionType = 72
+	ActionAddVectorIndex         ActionType = 73
 )
 
 // ActionMap is the map of DDL ActionType to string.
@@ -181,6 +182,7 @@ var ActionMap = map[ActionType]string{
 	ActionDropResourceGroup:             "drop resource group",
 	ActionAlterTablePartitioning:        "alter table partition by",
 	ActionRemovePartitioning:            "alter table remove partitioning",
+	ActionAddVectorIndex:                "add vector index",
 
 	// `ActionAlterTableAlterPartition` is removed and will never be used.
 	// Just left a tombstone here for compatibility.
@@ -484,7 +486,7 @@ func (job *Job) GetWarnings() (map[errors.ErrorID]*terror.Error, map[errors.Erro
 func (job *Job) FillArgs(args JobArgs) {
 	intest.Assert(job.Version == JobVersion1 || job.Version == JobVersion2, "job version is invalid")
 	if job.Version == JobVersion1 {
-		args.fillJobV1(job)
+		job.Args = args.getArgsV1(job)
 		return
 	}
 	job.Args = []any{args}
@@ -494,7 +496,7 @@ func (job *Job) FillArgs(args JobArgs) {
 func (job *Job) FillFinishedArgs(args FinishedJobArgs) {
 	intest.Assert(job.Version == JobVersion1 || job.Version == JobVersion2, "job version is invalid")
 	if job.Version == JobVersion1 {
-		args.fillFinishedJobV1(job)
+		job.Args = args.getFinishedArgsV1(job)
 		return
 	}
 	job.Args = []any{args}
@@ -582,6 +584,20 @@ func (job *Job) DecodeArgs(args ...any) error {
 	// use pointer
 	job.Args = args[:sz]
 	return nil
+}
+
+// DecodeDropIndexFinishedArgs decodes the drop index job's args when it's finished.
+func (job *Job) DecodeDropIndexFinishedArgs() (
+	indexName any, ifExists []bool, indexIDs []int64, partitionIDs []int64, hasVectors []bool, err error) {
+	ifExists = make([]bool, 1)
+	indexIDs = make([]int64, 1)
+	hasVectors = make([]bool, 1)
+	if err := job.DecodeArgs(&indexName, &ifExists[0], &indexIDs[0], &partitionIDs, &hasVectors[0]); err != nil {
+		if err := job.DecodeArgs(&indexName, &ifExists, &indexIDs, &partitionIDs, &hasVectors); err != nil {
+			return nil, []bool{false}, []int64{-1}, nil, []bool{false}, errors.Trace(err)
+		}
+	}
+	return
 }
 
 // String implements fmt.Stringer interface.
@@ -735,6 +751,10 @@ func (job *Job) IsPausing() bool {
 
 // IsPausable checks whether we can pause the job.
 func (job *Job) IsPausable() bool {
+	// TODO: We can remove it after TiFlash supports the pause operation.
+	if job.Type == ActionAddVectorIndex && job.SchemaState == StateWriteReorganization {
+		return false
+	}
 	return job.NotStarted() || (job.IsRunning() && job.IsRollbackable())
 }
 
