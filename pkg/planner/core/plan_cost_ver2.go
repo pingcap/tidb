@@ -497,7 +497,21 @@ func (p *PhysicalHashAgg) GetPlanCostVer2(taskType property.TaskType, option *op
 	groupCost := groupCostVer2(option, inputRows, p.GroupByItems, cpuFactor)
 	hashBuildCost := hashBuildCostVer2(option, outputRows, outputRowSize, float64(len(p.GroupByItems)), cpuFactor, memFactor)
 	hashProbeCost := hashProbeCostVer2(option, inputRows, float64(len(p.GroupByItems)), cpuFactor)
-	startCostRows := math.Max(10, (100*outputRows)/inputRows)
+
+	// Apply an additional startup cost to HashAgg for TiKV index or table scans - but not to TiFlash,
+	// and not to the tablereader on top of an aggregate pushed down to the child tasks
+	startCostRows := float64(10)
+	hasAggPenalty := true
+	if _, ok := p.Children()[0].(*PhysicalTableReader); ok {
+		hasAggPenalty = false
+	} else if tableScan, ok := p.Children()[0].(*PhysicalTableScan); ok {
+		if tableScan.StoreType == kv.TiFlash {
+			hasAggPenalty = false
+		}
+	}
+	if hasAggPenalty {
+		startCostRows = math.Max(20, (100*outputRows)/inputRows)
+	}
 	startCost := costusage.NewCostVer2(option, cpuFactor,
 		startCostRows*3*cpuFactor.Value, // startCostRows * 3func * cpuFactor
 		func() string { return fmt.Sprintf("cpu(%v*3*%v)", startCostRows, cpuFactor) })

@@ -318,9 +318,9 @@ StreamAgg_14	1.00	182552.01	root		funcs:count(Column#4)->Column#3
     └─TableFullScan_13	10000.00	2238500.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 explain format='verbose' select /*+ hash_agg() */ count(*) from t;
 id	estRows	estCost	task	access object	operator info
-HashAgg_9	1.00	178541.06	root		funcs:count(Column#4)->Column#3
-└─TableReader_10	1.00	163540.80	root		data:HashAgg_5
-  └─HashAgg_5	1.00	2453080.30	cop[tikv]		funcs:count(1)->Column#4
+HashAgg_9	1.00	177642.86	root		funcs:count(Column#4)->Column#3
+└─TableReader_10	1.00	162642.60	root		data:HashAgg_5
+  └─HashAgg_5	1.00	2439607.30	cop[tikv]		funcs:count(1)->Column#4
     └─TableFullScan_8	10000.00	2238500.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 drop table if exists t, pt, vt;
 create table t(a int, b int);
