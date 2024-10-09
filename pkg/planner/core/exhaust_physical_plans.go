@@ -2199,8 +2199,12 @@ func getPhysTopN(lt *logicalop.LogicalTopN, prop *property.PhysicalProperty) []b
 			return ret
 		}
 		// Currently, we only deal with the case the TopN is directly above a DataSource.
-		_, ok := lt.Children()[0].(*logicalop.DataSource)
+		ds, ok := lt.Children()[0].(*logicalop.DataSource)
 		if !ok {
+			return ret
+		}
+		// Reject any filters.
+		if len(ds.PushedDownConds) > 0 {
 			return ret
 		}
 		resultProp := &property.PhysicalProperty{

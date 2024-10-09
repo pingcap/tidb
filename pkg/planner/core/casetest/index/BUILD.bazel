@@ -14,6 +14,7 @@ go_test(
         "//pkg/domain",
         "//pkg/domain/infosync",
         "//pkg/parser/model",
+        "//pkg/planner/util/coretestsdk",
         "//pkg/store/mockstore",
         "//pkg/testkit",
         "//pkg/testkit/testdata",

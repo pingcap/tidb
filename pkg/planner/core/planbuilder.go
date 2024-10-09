@@ -1192,7 +1192,7 @@ func getPossibleAccessPaths(ctx base.PlanContext, tableHints *hint.PlanHints, in
 				}
 			}
 			path := &util.AccessPath{Index: index}
-			if index.VectorInfo != nil {
+			if index.VectorInfo != nil && tblInfo.TiFlashReplica.Available {
 				path.StoreType = kv.TiFlash
 			}
 			publicPaths = append(publicPaths, path)

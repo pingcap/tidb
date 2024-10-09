@@ -19,10 +19,12 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/util/coretestsdk"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testdata"
@@ -78,6 +80,8 @@ func TestTiFlashANNIndex(t *testing.T) {
 	for i := 0; i < 14; i++ {
 		tk.MustExec("insert into t1(vec, a, b, c, d) select vec, a, b, c, d from t1")
 	}
+	dom := domain.GetDomain(tk.Session())
+	coretestsdk.SetTiFlashReplica(t, dom, "test", "t1")
 	tk.MustExec("analyze table t1")
 
 	tk.MustExec("set @@tidb_isolation_read_engines = 'tiflash'")
