@@ -504,9 +504,17 @@ func (p *PhysicalHashAgg) GetPlanCostVer2(taskType property.TaskType, option *op
 	hasAggPenalty := true
 	if _, ok := p.Children()[0].(*PhysicalTableReader); ok {
 		hasAggPenalty = false
-	} else if tableScan, ok := p.Children()[0].(*PhysicalTableScan); ok {
-		if tableScan.StoreType == kv.TiFlash {
-			hasAggPenalty = false
+	} else {
+		for _, child := range p.Children() {
+			if tableScan, ok := child.(*PhysicalTableScan); ok {
+				if tableScan.StoreType == kv.TiFlash {
+					hasAggPenalty = false
+					break
+				}
+			}
+			if !hasAggPenalty {
+				break
+			}
 		}
 	}
 	if hasAggPenalty {
