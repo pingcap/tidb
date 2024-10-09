@@ -2282,9 +2282,8 @@ func (e *executor) AddTablePartitions(ctx sessionctx.Context, ident ast.Ident, s
 	}
 	if pi.Type == pmodel.PartitionTypeList {
 		// TODO: make sure that checks in ddl_api and ddl_worker is the same.
-		err = checkAddListPartitions(meta)
-		if err != nil {
-			return errors.Trace(err)
+		if meta.Partition.GetDefaultListPartition() != -1 {
+			return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("ADD List partition, already contains DEFAULT partition. Please use REORGANIZE PARTITION instead")
 		}
 	}
 
@@ -4472,6 +4471,14 @@ func getIdentKey(ident ast.Ident) string {
 	return fmt.Sprintf("%s.%s", ident.Schema.L, ident.Name.L)
 }
 
+func getAnonymousIndexPrefix(isVector bool) string {
+	colName := "expression_index"
+	if isVector {
+		colName = "vector_index"
+	}
+	return colName
+}
+
 // GetName4AnonymousIndex returns a valid name for anonymous index.
 func GetName4AnonymousIndex(t table.Table, colName pmodel.CIStr, idxName pmodel.CIStr) pmodel.CIStr {
 	// `id` is used to indicated the index name's suffix.
@@ -4599,10 +4606,7 @@ func checkIndexNameAndColumns(ctx *metabuild.Context, t table.Table, indexName p
 	indexPartSpecifications []*ast.IndexPartSpecification, isVector, ifNotExists bool) (pmodel.CIStr, []*model.ColumnInfo, error) {
 	// Deal with anonymous index.
 	if len(indexName.L) == 0 {
-		colName := pmodel.NewCIStr("expression_index")
-		if isVector {
-			colName = pmodel.NewCIStr("vector_index")
-		}
+		colName := pmodel.NewCIStr(getAnonymousIndexPrefix(isVector))
 		if indexPartSpecifications[0].Column != nil {
 			colName = indexPartSpecifications[0].Column.Name
 		}

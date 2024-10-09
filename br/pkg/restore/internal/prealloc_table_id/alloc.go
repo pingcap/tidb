@@ -43,23 +43,23 @@ func New(tables []*metautil.Table) *PreallocIDs {
 		}
 	}
 
-	max := int64(0)
+	maxv := int64(0)
 
 	for _, t := range tables {
-		if t.Info.ID > max && t.Info.ID < insaneTableIDThreshold {
-			max = t.Info.ID
+		if t.Info.ID > maxv && t.Info.ID < insaneTableIDThreshold {
+			maxv = t.Info.ID
 		}
 
 		if t.Info.Partition != nil && t.Info.Partition.Definitions != nil {
 			for _, part := range t.Info.Partition.Definitions {
-				if part.ID > max && part.ID < insaneTableIDThreshold {
-					max = part.ID
+				if part.ID > maxv && part.ID < insaneTableIDThreshold {
+					maxv = part.ID
 				}
 			}
 		}
 	}
 	return &PreallocIDs{
-		end: max + 1,
+		end: maxv + 1,
 
 		allocedFrom: math.MaxInt64,
 	}

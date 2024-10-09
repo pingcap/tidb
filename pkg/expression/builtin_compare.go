@@ -566,19 +566,19 @@ func (b *builtinGreatestIntSig) Clone() builtinFunc {
 
 // evalInt evals a builtinGreatestIntSig.
 // See http://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html#function_greatest
-func (b *builtinGreatestIntSig) evalInt(ctx EvalContext, row chunk.Row) (max int64, isNull bool, err error) {
-	max, isNull, err = b.args[0].EvalInt(ctx, row)
+func (b *builtinGreatestIntSig) evalInt(ctx EvalContext, row chunk.Row) (maxv int64, isNull bool, err error) {
+	maxv, isNull, err = b.args[0].EvalInt(ctx, row)
 	if isNull || err != nil {
-		return max, isNull, err
+		return maxv, isNull, err
 	}
 	for i := 1; i < len(b.args); i++ {
 		var v int64
 		v, isNull, err = b.args[i].EvalInt(ctx, row)
 		if isNull || err != nil {
-			return max, isNull, err
+			return maxv, isNull, err
 		}
-		if v > max {
-			max = v
+		if v > maxv {
+			maxv = v
 		}
 	}
 	return
@@ -596,19 +596,19 @@ func (b *builtinGreatestRealSig) Clone() builtinFunc {
 
 // evalReal evals a builtinGreatestRealSig.
 // See http://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html#function_greatest
-func (b *builtinGreatestRealSig) evalReal(ctx EvalContext, row chunk.Row) (max float64, isNull bool, err error) {
-	max, isNull, err = b.args[0].EvalReal(ctx, row)
+func (b *builtinGreatestRealSig) evalReal(ctx EvalContext, row chunk.Row) (maxv float64, isNull bool, err error) {
+	maxv, isNull, err = b.args[0].EvalReal(ctx, row)
 	if isNull || err != nil {
-		return max, isNull, err
+		return maxv, isNull, err
 	}
 	for i := 1; i < len(b.args); i++ {
 		var v float64
 		v, isNull, err = b.args[i].EvalReal(ctx, row)
 		if isNull || err != nil {
-			return max, isNull, err
+			return maxv, isNull, err
 		}
-		if v > max {
-			max = v
+		if v > maxv {
+			maxv = v
 		}
 	}
 	return
@@ -626,19 +626,19 @@ func (b *builtinGreatestDecimalSig) Clone() builtinFunc {
 
 // evalDecimal evals a builtinGreatestDecimalSig.
 // See http://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html#function_greatest
-func (b *builtinGreatestDecimalSig) evalDecimal(ctx EvalContext, row chunk.Row) (max *types.MyDecimal, isNull bool, err error) {
-	max, isNull, err = b.args[0].EvalDecimal(ctx, row)
+func (b *builtinGreatestDecimalSig) evalDecimal(ctx EvalContext, row chunk.Row) (maxv *types.MyDecimal, isNull bool, err error) {
+	maxv, isNull, err = b.args[0].EvalDecimal(ctx, row)
 	if isNull || err != nil {
-		return max, isNull, err
+		return maxv, isNull, err
 	}
 	for i := 1; i < len(b.args); i++ {
 		var v *types.MyDecimal
 		v, isNull, err = b.args[i].EvalDecimal(ctx, row)
 		if isNull || err != nil {
-			return max, isNull, err
+			return maxv, isNull, err
 		}
-		if v.Compare(max) > 0 {
-			max = v
+		if v.Compare(maxv) > 0 {
+			maxv = v
 		}
 	}
 	return
@@ -656,19 +656,19 @@ func (b *builtinGreatestStringSig) Clone() builtinFunc {
 
 // evalString evals a builtinGreatestStringSig.
 // See http://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html#function_greatest
-func (b *builtinGreatestStringSig) evalString(ctx EvalContext, row chunk.Row) (max string, isNull bool, err error) {
-	max, isNull, err = b.args[0].EvalString(ctx, row)
+func (b *builtinGreatestStringSig) evalString(ctx EvalContext, row chunk.Row) (maxv string, isNull bool, err error) {
+	maxv, isNull, err = b.args[0].EvalString(ctx, row)
 	if isNull || err != nil {
-		return max, isNull, err
+		return maxv, isNull, err
 	}
 	for i := 1; i < len(b.args); i++ {
 		var v string
 		v, isNull, err = b.args[i].EvalString(ctx, row)
 		if isNull || err != nil {
-			return max, isNull, err
+			return maxv, isNull, err
 		}
-		if types.CompareString(v, max, b.collation) > 0 {
-			max = v
+		if types.CompareString(v, maxv, b.collation) > 0 {
+			maxv = v
 		}
 	}
 	return
@@ -892,19 +892,19 @@ func (b *builtinLeastIntSig) Clone() builtinFunc {
 
 // evalInt evals a builtinLeastIntSig.
 // See http://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html#function_least
-func (b *builtinLeastIntSig) evalInt(ctx EvalContext, row chunk.Row) (min int64, isNull bool, err error) {
-	min, isNull, err = b.args[0].EvalInt(ctx, row)
+func (b *builtinLeastIntSig) evalInt(ctx EvalContext, row chunk.Row) (minv int64, isNull bool, err error) {
+	minv, isNull, err = b.args[0].EvalInt(ctx, row)
 	if isNull || err != nil {
-		return min, isNull, err
+		return minv, isNull, err
 	}
 	for i := 1; i < len(b.args); i++ {
 		var v int64
 		v, isNull, err = b.args[i].EvalInt(ctx, row)
 		if isNull || err != nil {
-			return min, isNull, err
+			return minv, isNull, err
 		}
-		if v < min {
-			min = v
+		if v < minv {
+			minv = v
 		}
 	}
 	return
@@ -922,19 +922,19 @@ func (b *builtinLeastRealSig) Clone() builtinFunc {
 
 // evalReal evals a builtinLeastRealSig.
 // See http://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html#functionleast
-func (b *builtinLeastRealSig) evalReal(ctx EvalContext, row chunk.Row) (min float64, isNull bool, err error) {
-	min, isNull, err = b.args[0].EvalReal(ctx, row)
+func (b *builtinLeastRealSig) evalReal(ctx EvalContext, row chunk.Row) (minv float64, isNull bool, err error) {
+	minv, isNull, err = b.args[0].EvalReal(ctx, row)
 	if isNull || err != nil {
-		return min, isNull, err
+		return minv, isNull, err
 	}
 	for i := 1; i < len(b.args); i++ {
 		var v float64
 		v, isNull, err = b.args[i].EvalReal(ctx, row)
 		if isNull || err != nil {
-			return min, isNull, err
+			return minv, isNull, err
 		}
-		if v < min {
-			min = v
+		if v < minv {
+			minv = v
 		}
 	}
 	return
@@ -952,19 +952,19 @@ func (b *builtinLeastDecimalSig) Clone() builtinFunc {
 
 // evalDecimal evals a builtinLeastDecimalSig.
 // See http://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html#functionleast
-func (b *builtinLeastDecimalSig) evalDecimal(ctx EvalContext, row chunk.Row) (min *types.MyDecimal, isNull bool, err error) {
-	min, isNull, err = b.args[0].EvalDecimal(ctx, row)
+func (b *builtinLeastDecimalSig) evalDecimal(ctx EvalContext, row chunk.Row) (minv *types.MyDecimal, isNull bool, err error) {
+	minv, isNull, err = b.args[0].EvalDecimal(ctx, row)
 	if isNull || err != nil {
-		return min, isNull, err
+		return minv, isNull, err
 	}
 	for i := 1; i < len(b.args); i++ {
 		var v *types.MyDecimal
 		v, isNull, err = b.args[i].EvalDecimal(ctx, row)
 		if isNull || err != nil {
-			return min, isNull, err
+			return minv, isNull, err
 		}
-		if v.Compare(min) < 0 {
-			min = v
+		if v.Compare(minv) < 0 {
+			minv = v
 		}
 	}
 	return
@@ -982,19 +982,19 @@ func (b *builtinLeastStringSig) Clone() builtinFunc {
 
 // evalString evals a builtinLeastStringSig.
 // See http://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html#functionleast
-func (b *builtinLeastStringSig) evalString(ctx EvalContext, row chunk.Row) (min string, isNull bool, err error) {
-	min, isNull, err = b.args[0].EvalString(ctx, row)
+func (b *builtinLeastStringSig) evalString(ctx EvalContext, row chunk.Row) (minv string, isNull bool, err error) {
+	minv, isNull, err = b.args[0].EvalString(ctx, row)
 	if isNull || err != nil {
-		return min, isNull, err
+		return minv, isNull, err
 	}
 	for i := 1; i < len(b.args); i++ {
 		var v string
 		v, isNull, err = b.args[i].EvalString(ctx, row)
 		if isNull || err != nil {
-			return min, isNull, err
+			return minv, isNull, err
 		}
-		if types.CompareString(v, min, b.collation) < 0 {
-			min = v
+		if types.CompareString(v, minv, b.collation) < 0 {
+			minv = v
 		}
 	}
 	return
