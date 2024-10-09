@@ -1118,14 +1118,16 @@ func TestCreateTableWithVectorIndex(t *testing.T) {
 	tk.MustExec("use test")
 
 	checkCreateTableWithVectorIdx := func(replicaCnt uint64) {
-		tk.MustExec("create table t(a int, b vector(3), vector index((VEC_COSINE_DISTANCE(b))) USING HNSW);")
+		tk.MustExec("create table t(a int, b vector(3), vector index((VEC_COSINE_DISTANCE(b))) USING HNSW, vector index((VEC_L2_DISTANCE(b))));")
 		tbl, err := dom.InfoSchema().TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
 		require.NoError(t, err)
 		require.Equal(t, replicaCnt, tbl.Meta().TiFlashReplica.Count)
 		indexes := tbl.Meta().Indices
-		require.Equal(t, 1, len(indexes))
+		require.Equal(t, 2, len(indexes))
 		require.Equal(t, pmodel.IndexTypeHNSW, indexes[0].Tp)
 		require.Equal(t, model.DistanceMetricCosine, indexes[0].VectorInfo.DistanceMetric)
+		require.Equal(t, "vector_index", tbl.Meta().Indices[0].Name.O)
+		require.Equal(t, "vector_index_2", tbl.Meta().Indices[1].Name.O)
 		tk.MustExec(`DROP TABLE t`)
 	}
 

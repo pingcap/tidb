@@ -258,7 +258,7 @@ func (s *StatsCacheImpl) SetStatsCacheCapacity(c int64) {
 
 // UpdateStatsHealthyMetrics updates stats healthy distribution metrics according to stats cache.
 func (s *StatsCacheImpl) UpdateStatsHealthyMetrics() {
-	distribution := make([]int64, 5)
+	distribution := make([]int64, 9)
 	uneligibleAnalyze := 0
 	for _, tbl := range s.Values() {
 		distribution[4]++ // total table count
@@ -273,16 +273,22 @@ func (s *StatsCacheImpl) UpdateStatsHealthyMetrics() {
 		}
 		if healthy < 50 {
 			distribution[0]++
-		} else if healthy < 80 {
+		} else if healthy < 55 {
 			distribution[1]++
-		} else if healthy < 100 {
+		} else if healthy < 60 {
 			distribution[2]++
-		} else {
+		} else if healthy < 70 {
 			distribution[3]++
+		} else if healthy < 80 {
+			distribution[4]++
+		} else if healthy < 100 {
+			distribution[5]++
+		} else {
+			distribution[6]++
 		}
 	}
 	for i, val := range distribution {
 		handle_metrics.StatsHealthyGauges[i].Set(float64(val))
 	}
-	handle_metrics.StatsHealthyGauges[5].Set(float64(uneligibleAnalyze))
+	handle_metrics.StatsHealthyGauges[8].Set(float64(uneligibleAnalyze))
 }
