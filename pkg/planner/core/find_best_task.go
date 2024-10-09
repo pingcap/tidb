@@ -2518,7 +2518,8 @@ func convertToTableScan(ds *logicalop.DataSource, prop *property.PhysicalPropert
 		if prop.MPPPartitionTp != property.AnyType {
 			return base.InvalidTask, nil
 		}
-		if candidate.path.Index != nil && !candidate.isMatchProp {
+		// If it has vector property, we need to check the candidate.isMatchProp.
+		if candidate.path.Index != nil && candidate.path.Index.VectorInfo != nil && !candidate.isMatchProp {
 			return base.InvalidTask, nil
 		}
 		if candidate.path.Index != nil && candidate.path.Index.VectorInfo != nil {

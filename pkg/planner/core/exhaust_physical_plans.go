@@ -2187,7 +2187,7 @@ func getPhysTopN(lt *logicalop.LogicalTopN, prop *property.PhysicalProperty) []b
 	// If we can generate MPP task and there's vector distance function in the order by column.
 	// We will try to generate a property for possible vector indexes.
 	if mppAllowed {
-		if len(lt.ByItems) > 1 {
+		if len(lt.ByItems) != 1 {
 			return ret
 		}
 		vs := expression.ExtractVectorHelper(lt.ByItems[0].Expr)
