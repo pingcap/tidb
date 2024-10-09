@@ -1318,31 +1318,30 @@ type ModifyColumnArgs struct {
 	OldColumn *ColumnInfo `json:"-"`
 }
 
-func (a *ModifyColumnArgs) fillJobV1(job *Job) {
-	job.Args = []any{
+func (a *ModifyColumnArgs) getArgsV1(job *Job) []any {
+	return []any{
 		a.Column, a.OldColumnName, a.Position, a.ModifyColumnType,
 		a.NewShardBits, a.ChangingColumn, a.ChangingIdxs, a.RemovedIdxs,
 	}
 }
 
+func (a *ModifyColumnArgs) decodeV1(job *Job) error {
+	return job.DecodeArgs(
+		&a.Column, &a.OldColumnName, &a.Position, &a.ModifyColumnType,
+		&a.NewShardBits, &a.ChangingColumn, &a.ChangingIdxs, &a.RemovedIdxs,
+	)
+}
+
+func (a *ModifyColumnArgs) getFinishedArgsV1(job *Job) []any {
+	return []any{a.IndexIDs, a.PartitionIDs}
+}
+
+// GetModifyColumnArgs get the modify column argument from job.
 func GetModifyColumnArgs(job *Job) (*ModifyColumnArgs, error) {
-	if job.Version == JobVersion1 {
-		args := &ModifyColumnArgs{}
-		if err := job.DecodeArgs(
-			&args.Column, &args.OldColumnName, &args.Position, &args.ModifyColumnType,
-			&args.NewShardBits, &args.ChangingColumn, &args.ChangingIdxs, &args.RemovedIdxs,
-		); err != nil {
-			return nil, errors.Trace(err)
-		}
-		return args, nil
-	}
-	return getOrDecodeArgsV2[*ModifyColumnArgs](job)
+	return getOrDecodeArgs(&ModifyColumnArgs{}, job)
 }
 
-func (a *ModifyColumnArgs) fillFinishedJobV1(job *Job) {
-	job.Args = []any{a.IndexIDs, a.PartitionIDs}
-}
-
+// GetFinishedModifyColumnArgs get the finished modify column argument from job.
 func GetFinishedModifyColumnArgs(job *Job) (*ModifyColumnArgs, error) {
 	if job.Version == JobVersion1 {
 		var (

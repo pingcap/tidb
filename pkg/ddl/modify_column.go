@@ -62,7 +62,7 @@ func hasVectorIndexColumn(tblInfo *model.TableInfo, col *model.ColumnInfo) bool 
 }
 
 func (w *worker) onModifyColumn(jobCtx *jobContext, job *model.Job) (ver int64, _ error) {
-	args, err := getModifyColumnArgs(t, job)
+	args, err := getModifyColumnArgs(jobCtx.metaMut, job)
 	if err != nil {
 		return ver, err
 	}
