@@ -50,7 +50,7 @@ func NewRegionSplitter(client SplitClient) *RegionSplitter {
 }
 
 // SplitWaitAndScatter expose the function `SplitWaitAndScatter` of split client.
-func (rs *RegionSplitter) SplitWaitAndScatter(ctx context.Context, region *RegionInfo, keys [][]byte) ([]*RegionInfo, error) {
+func (rs *RegionSplitter) ExecuteOneRegion(ctx context.Context, region *RegionInfo, keys [][]byte) ([]*RegionInfo, error) {
 	return rs.client.SplitWaitAndScatter(ctx, region, keys)
 }
 
@@ -60,7 +60,7 @@ func (rs *RegionSplitter) SplitWaitAndScatter(ctx context.Context, region *Regio
 // tableRules includes the prefix of a table, since some ranges may have
 // a prefix with record sequence or index sequence.
 // note: all ranges and rewrite rules must have raw key.
-func (rs *RegionSplitter) ExecuteSplit(
+func (rs *RegionSplitter) ExecuteSortedKeys(
 	ctx context.Context,
 	sortedSplitKeys [][]byte,
 ) error {

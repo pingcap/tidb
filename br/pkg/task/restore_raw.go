@@ -4,6 +4,7 @@ package task
 
 import (
 	"context"
+	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
@@ -12,6 +13,7 @@ import (
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/glue"
 	"github.com/pingcap/tidb/br/pkg/httputil"
+	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/metautil"
 	"github.com/pingcap/tidb/br/pkg/restore"
 	snapclient "github.com/pingcap/tidb/br/pkg/restore/snap_client"
@@ -20,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/summary"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
+	"go.uber.org/zap"
 )
 
 // RestoreRawConfig is the configuration specific for raw kv restore tasks.
@@ -160,10 +163,16 @@ func RunRestoreRaw(c context.Context, g glue.Glue, cmdName string, cfg *RestoreR
 	}
 	defer restore.RestorePostWork(ctx, importModeSwitcher, restoreSchedulers, cfg.Online)
 
-	err = client.RestoreRaw(ctx, cfg.StartKey, cfg.EndKey, onProgress, sstfiles.NewEmptyRuleFilesInfo(files))
+	start := time.Now()
+	err = client.GetRestorer().Restore(ctx, onProgress, restore.NewEmptyRuleSSTFilesInfos(files))
 	if err != nil {
 		return errors.Trace(err)
 	}
+	elapsed := time.Since(start)
+	log.Info("Restore Raw",
+		logutil.Key("startKey", cfg.StartKey),
+		logutil.Key("endKey", cfg.EndKey),
+		zap.Duration("take", elapsed))
 
 	// Restore has finished.
 	updateCh.Close()

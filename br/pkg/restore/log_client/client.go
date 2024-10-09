@@ -50,6 +50,7 @@ import (
 	importclient "github.com/pingcap/tidb/br/pkg/restore/internal/import_client"
 	logsplit "github.com/pingcap/tidb/br/pkg/restore/internal/log_split"
 	"github.com/pingcap/tidb/br/pkg/restore/internal/rawkv"
+	snapclient "github.com/pingcap/tidb/br/pkg/restore/snap_client"
 	"github.com/pingcap/tidb/br/pkg/restore/split"
 	"github.com/pingcap/tidb/br/pkg/restore/tiflashrec"
 	restoreutils "github.com/pingcap/tidb/br/pkg/restore/utils"
@@ -95,7 +96,7 @@ func GetCompactedSSTSplitBatchSize() int {
 }
 
 type LogClient struct {
-	restorer            snapclient.FileRestorer
+	restorer            restore.FileRestorer
 	cipher              *backuppb.CipherInfo
 	pdClient            pd.Client
 	pdHTTPClient        pdhttp.Client
@@ -170,7 +171,7 @@ func (rc *LogClient) Close() {
 }
 
 type CompactedItem struct {
-	files        sstfiles.SstFilesInfo
+	files        restore.RestoreFilesInfo
 	regionMinKey []byte
 	regionMaxKey []byte
 }
@@ -218,9 +219,9 @@ func (rc *LogClient) CollectCompactedSsts(
 		sstFileCount += len(i.SstOutputs)
 
 		regionCompactedMap[i.Meta.RegionId] = append(regionCompactedMap[i.Meta.RegionId], CompactedItem{
-			files: sstfiles.SstFilesInfo{
+			files: restore.RestoreFilesInfo{
 				TableID:      i.Meta.TableId,
-				Files:        i.SstOutputs,
+				SSTFiles:     i.SstOutputs,
 				RewriteRules: rewriteRules,
 			},
 			regionMaxKey: rawMaxKey,
@@ -291,24 +292,24 @@ func (rc *LogClient) RestoreCompactedSsts(
 		}
 
 		if len(splitRanges) > 0 {
-			files := make([]sstfiles.SstFilesInfo, 0, len(items))
+			files := make([]restore.RestoreFilesInfo, 0, len(items))
 			for _, i := range items {
 				files = append(files, i.files)
 			}
 			rc.workerPool.ApplyOnErrorGroup(eg, func() error {
-				err := rc.restorer.SplitRanges(eCtx, splitRanges, onProgress)
-				if err != nil {
-					return errors.Trace(err)
-				}
-				return rc.restorer.RestoreFiles(eCtx, files, onProgress)
+				// err := rc.restorer.SplitRanges(eCtx, splitRanges, onProgress)
+				// if err != nil {
+				// 	return errors.Trace(err)
+				// }
+				return rc.restorer.Restore(eCtx, onProgress, files)
 			})
 		} else {
-			files := make([]sstfiles.SstFilesInfo, 0, len(items))
+			files := make([]restore.RestoreFilesInfo, 0, len(items))
 			for _, i := range items {
 				files = append(files, i.files)
 			}
 			rc.workerPool.ApplyOnErrorGroup(eg, func() error {
-				return rc.restorer.RestoreFiles(eCtx, files, onProgress)
+				return rc.restorer.Restore(eCtx, onProgress, files)
 			})
 		}
 
@@ -403,7 +404,7 @@ func (rc *LogClient) StartCheckpointRunnerForLogRestore(ctx context.Context) (*c
 }
 
 func (rc *LogClient) StartCheckpointRunnerForCompactedSSTRestore(ctx context.Context, taskName string) (*checkpoint.CheckpointRunner[checkpoint.RestoreKeyType, checkpoint.RestoreValueType], error) {
-	runner, err := checkpoint.StartCheckpointRunnerForRestore(ctx, rc.storage, rc.cipher, taskName)
+	runner, err := checkpoint.StartCheckpointRunnerForRestore(ctx, rc.se)
 	return runner, errors.Trace(err)
 }
 
@@ -439,19 +440,19 @@ func (rc *LogClient) InitClients(ctx context.Context, backend *backuppb.StorageB
 	importCli := importclient.NewImportClient(metaClient, rc.tlsConf, rc.keepaliveConf)
 	rc.fileImporter = NewLogFileImporter(metaClient, importCli, backend)
 
-	var createCallBacks []func(*sstfiles.SnapFileImporter) error
-	var closeCallBacks []func(*sstfiles.SnapFileImporter) error
-	createCallBacks = append(createCallBacks, func(importer *sstfiles.SnapFileImporter) error {
+	var createCallBacks []func(*snapclient.SnapFileImporter) error
+	var closeCallBacks []func(*snapclient.SnapFileImporter) error
+	createCallBacks = append(createCallBacks, func(importer *snapclient.SnapFileImporter) error {
 		return importer.CheckMultiIngestSupport(ctx, stores)
 	})
 	log.Info("Initializing client.", zap.Stringer("api", rc.dom.Store().GetCodec().GetAPIVersion()))
-	snapFileImporter, err := sstfiles.NewSnapFileImporter(
+	snapFileImporter, err := snapclient.NewSnapFileImporter(
 		ctx, rc.cipher, rc.dom.Store().GetCodec().GetAPIVersion(), metaClient,
-		importCli, backend, false, false, stores, sstfiles.RewriteModeKeyspace, rc.concurrencyPerStore, createCallBacks, closeCallBacks)
+		importCli, backend, false, false, stores, snapclient.RewriteModeKeyspace, rc.concurrencyPerStore, createCallBacks, closeCallBacks)
 	if err != nil {
 		log.Fatal("failed to init snap file importer", zap.Error(err))
 	}
-	rc.restorer = sstfiles.NewSimpleFileRestorer(RightDeriveSplit, snapFileImporter, metaClient, rc.workerPool)
+	rc.restorer = restore.NewSimpleFileRestorer(snapFileImporter, rc.workerPool)
 }
 
 func (rc *LogClient) InitCheckpointMetadataForLogRestore(
@@ -500,25 +501,26 @@ func (rc *LogClient) InitCheckpointMetadataForLogRestore(
 func (rc *LogClient) InitCheckpointMetadataForSstRestore(ctx context.Context, taskName string) (map[int64]struct{}, error) {
 	// if the checkpoint metadata exists in the external storage, the restore is not
 	// for the first time.
-	exists, err := checkpoint.ExistsRestoreCheckpoint(ctx, rc.storage, taskName)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
+	// exists, err := checkpoint.ExistsRestoreCheckpoint(ctx, rc.storage, taskName)
+	// if err != nil {
+	// 	return nil, errors.Trace(err)
+	// }
 
-	checkpointSetWithRegionID := make(map[int64]struct{})
-	if exists {
-		// load the checkpoint since this is not the first time to restore
-		_, err := checkpoint.WalkCheckpointFileForRestore(ctx, rc.storage, rc.cipher, taskName, func(regionID int64, rangeKey checkpoint.RestoreValueType) {
-			_, exists := checkpointSetWithRegionID[regionID]
-			if !exists {
-				checkpointSetWithRegionID[regionID] = struct{}{}
-			}
-		})
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-	}
-	return checkpointSetWithRegionID, nil
+	// checkpointSetWithRegionID := make(map[int64]struct{})
+	// if exists {
+	// 	// load the checkpoint since this is not the first time to restore
+	// 	_, err := checkpoint.WalkCheckpointFileForRestore(ctx, rc.storage, rc.cipher, taskName, func(regionID int64, rangeKey checkpoint.RestoreValueType) {
+	// 		_, exists := checkpointSetWithRegionID[regionID]
+	// 		if !exists {
+	// 			checkpointSetWithRegionID[regionID] = struct{}{}
+	// 		}
+	// 	})
+	// 	if err != nil {
+	// 		return nil, errors.Trace(err)
+	// 	}
+	// }
+	// return checkpointSetWithRegionID, nil
+	return nil, nil
 }
 
 func (rc *LogClient) GetMigrations(ctx context.Context) ([]*backuppb.Migration, error) {

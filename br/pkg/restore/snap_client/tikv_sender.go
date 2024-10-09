@@ -349,7 +349,7 @@ func (rc *SnapClient) SplitPoints(
 		splitClientOpts...,
 	))
 
-	return splitter.ExecuteSplit(ctx, sortedSplitKeys)
+	return splitter.ExecuteSortedKeys(ctx, sortedSplitKeys)
 }
 
 func getFileRangeKey(f string) string {
@@ -369,10 +369,6 @@ func (rc *SnapClient) RestoreSSTFiles(
 	tableIDWithFilesGroup [][]TableIDWithFiles,
 	updateCh glue.Progress,
 ) (retErr error) {
-	if err := rc.setSpeedLimit(ctx, rc.rateLimit); err != nil {
-		return errors.Trace(err)
-	}
-
 	failpoint.Inject("corrupt-files", func(v failpoint.Value) {
 		if cmd, ok := v.(string); ok {
 			switch cmd {
@@ -410,7 +406,7 @@ func (rc *SnapClient) restoreSSTFilesInternal(
 			break
 		}
 		filesReplica := tableIDWithFiles
-		rc.fileImporter.WaitUntilUnblock()
+		// rc.fileImporter.WaitUntilUnblock()
 		rc.workerPool.ApplyOnErrorGroup(eg, func() (restoreErr error) {
 			fileStart := time.Now()
 			defer func() {
@@ -420,9 +416,9 @@ func (rc *SnapClient) restoreSSTFilesInternal(
 					updateCh.Inc()
 				}
 			}()
-			if importErr := rc.fileImporter.ImportSSTFiles(ectx, filesReplica, rc.cipher, rc.dom.Store().GetCodec().GetAPIVersion()); importErr != nil {
-				return errors.Trace(importErr)
-			}
+			// if importErr := rc.fileImporter.ImportSSTFiles(ectx, filesReplica, rc.cipher, rc.dom.Store().GetCodec().GetAPIVersion()); importErr != nil {
+			// 	return errors.Trace(importErr)
+			// }
 
 			// the data of this range has been import done
 			if rc.checkpointRunner != nil && len(filesReplica) > 0 {

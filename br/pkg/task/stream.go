@@ -1356,7 +1356,7 @@ func restoreStream(
 		if err != nil {
 			return errors.Trace(err)
 		}
-		sstTaskName := taskName + "_sst"
+		sstTaskName := ""
 		sstCheckpoints, err = client.InitCheckpointMetadataForSstRestore(ctx, sstTaskName)
 		if err != nil {
 			return errors.Trace(err)
@@ -1471,15 +1471,12 @@ func restoreStream(
 	sstFileCount += sstFileCount / logclient.CompactedSSTSplitBatchSize
 
 	pd := g.StartProgress(ctx, "Restore SST+KV Files", int64(dataFileCount+sstFileCount), !cfg.LogProgress)
-	err = withProgress(pd, func(p glue.Progress) error {
-
+	err = withProgress(pd, func(p glue.Progress) (pErr error) {
 		err = client.RestoreCompactedSsts(ctx, regionCompactedMap, importModeSwitcher, sstCheckpoints, sstCheckpointRunner, p.Inc, logclient.RightDeriveSplit)
 		if err != nil {
 			return errors.Trace(err)
 		}
 
-	pd := g.StartProgress(ctx, "Restore KV Files", int64(dataFileCount), !cfg.LogProgress)
-	err = withProgress(pd, func(p glue.Progress) (pErr error) {
 		if cfg.UseCheckpoint {
 			updateStatsWithCheckpoint := func(kvCount, size uint64) {
 				mu.Lock()

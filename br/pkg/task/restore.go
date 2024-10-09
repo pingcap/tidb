@@ -773,13 +773,8 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 	// set to cfg so that restoreStream can use it.
 	cfg.ConcurrencyPerStore = kvConfigs.ImportGoroutines
 	// using tikv config to set the concurrency-per-store for client.
-<<<<<<< HEAD
 	client.SetConcurrencyPerStore(cfg.ConcurrencyPerStore.Value)
-	err = configureRestoreClient(ctx, client, cfg)
-=======
-	client.SetConcurrencyPerStore(kvConfigs.ImportGoroutines.Value)
 	err := configureRestoreClient(ctx, client, cfg)
->>>>>>> master
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -1054,7 +1049,7 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 
 		// If the API V2 data occurs in the restore process, the cluster must
 		// support the keyspace rewrite mode.
-		if (len(oldKeyspace) > 0 || len(newKeyspace) > 0) && client.GetRewriteMode() == sstfiles.RewriteModeLegacy {
+		if (len(oldKeyspace) > 0 || len(newKeyspace) > 0) && client.GetRewriteMode() == snapclient.RewriteModeLegacy {
 			return errors.Annotate(berrors.ErrRestoreModeMismatch, "cluster only supports legacy rewrite mode")
 		}
 

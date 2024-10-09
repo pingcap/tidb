@@ -19,6 +19,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/logutil"
+	"github.com/pingcap/tidb/br/pkg/restore"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
@@ -38,16 +39,16 @@ func zapTables(tables []CreatedTable) zapcore.Field {
 	})
 }
 
-type zapTableIDWithFilesMarshaler []sstfiles.SstFilesInfo
+type zapTableIDWithFilesMarshaler []restore.RestoreFilesInfo
 
-func zapTableIDWithFiles(fs []sstfiles.SstFilesInfo) zap.Field {
+func zapTableIDWithFiles(fs []restore.RestoreFilesInfo) zap.Field {
 	return zap.Object("files", zapTableIDWithFilesMarshaler(fs))
 }
 
 func (fs zapTableIDWithFilesMarshaler) MarshalLogObject(encoder zapcore.ObjectEncoder) error {
 	for _, f := range fs {
 		encoder.AddInt64("table-id", f.TableID)
-		if err := logutil.MarshalLogObjectForFiles(f.Files, encoder); err != nil {
+		if err := logutil.MarshalLogObjectForFiles(f.SSTFiles, encoder); err != nil {
 			return errors.Trace(err)
 		}
 	}

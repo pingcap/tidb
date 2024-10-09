@@ -75,7 +75,7 @@ const (
 const minBatchDdlSize = 1
 
 type SnapClient struct {
-	restorer sstfiles.FileRestorer
+	restorer restore.FileRestorer
 	// Tool clients used by SnapClient
 	pdClient     pd.Client
 	pdHTTPClient pdhttp.Client
@@ -146,7 +146,7 @@ type SnapClient struct {
 	withSysTable bool
 
 	// the rewrite mode of the downloaded SST files in TiKV.
-	rewriteMode sstfiles.RewriteMode
+	rewriteMode RewriteMode
 
 	// checkpoint information for snapshot restore
 	checkpointRunner   *checkpoint.CheckpointRunner[checkpoint.RestoreKeyType, checkpoint.RestoreValueType]
@@ -169,7 +169,7 @@ func NewRestoreClient(
 	}
 }
 
-func (rc *SnapClient) GetRestorer() sstfiles.FileRestorer {
+func (rc *SnapClient) GetRestorer() restore.FileRestorer {
 	return rc.restorer
 }
 
@@ -254,13 +254,13 @@ func (rc *SnapClient) SetWithSysTable(withSysTable bool) {
 func (rc *SnapClient) SetRewriteMode(ctx context.Context) {
 	if err := version.CheckClusterVersion(ctx, rc.pdClient, version.CheckVersionForKeyspaceBR); err != nil {
 		log.Warn("Keyspace BR is not supported in this cluster, fallback to legacy restore", zap.Error(err))
-		rc.rewriteMode = sstfiles.RewriteModeLegacy
+		rc.rewriteMode = RewriteModeLegacy
 	} else {
-		rc.rewriteMode = sstfiles.RewriteModeKeyspace
+		rc.rewriteMode = RewriteModeKeyspace
 	}
 }
 
-func (rc *SnapClient) GetRewriteMode() sstfiles.RewriteMode {
+func (rc *SnapClient) GetRewriteMode() RewriteMode {
 	return rc.rewriteMode
 }
 
@@ -449,7 +449,6 @@ func (rc *SnapClient) Init(g glue.Glue, store kv.Storage) error {
 
 func (rc *SnapClient) initClients(ctx context.Context, backend *backuppb.StorageBackend, isRawKvMode bool, isTxnKvMode bool,
 	RawStartKey, RawEndKey []byte) error {
-	var fileImporter *sstfiles.SnapFileImporter
 	stores, err := conn.GetAllTiKVStoresWithRetry(ctx, rc.pdClient, util.SkipTiFlash)
 	if err != nil {
 		return errors.Annotate(err, "failed to get stores")
@@ -457,20 +456,20 @@ func (rc *SnapClient) initClients(ctx context.Context, backend *backuppb.Storage
 	rc.storeCount = len(stores)
 	rc.updateConcurrency()
 
-	var createCallBacks []func(*sstfiles.SnapFileImporter) error
-	var closeCallBacks []func(*sstfiles.SnapFileImporter) error
+	var createCallBacks []func(*SnapFileImporter) error
+	var closeCallBacks []func(*SnapFileImporter) error
 	var splitClientOpts []split.ClientOptionalParameter
 	if isRawKvMode {
 		splitClientOpts = append(splitClientOpts, split.WithRawKV())
-		createCallBacks = append(createCallBacks, func(importer *sstfiles.SnapFileImporter) error {
+		createCallBacks = append(createCallBacks, func(importer *SnapFileImporter) error {
 			return importer.SetRawRange(RawStartKey, RawEndKey)
 		})
 	}
-	createCallBacks = append(createCallBacks, func(importer *sstfiles.SnapFileImporter) error {
+	createCallBacks = append(createCallBacks, func(importer *SnapFileImporter) error {
 		return importer.CheckMultiIngestSupport(ctx, stores)
 	})
 	if rc.rateLimit != 0 {
-		setFn := func(ctx context.Context, importer *sstfiles.SnapFileImporter, limit uint64) error {
+		setFn := func(ctx context.Context, importer *SnapFileImporter, limit uint64) error {
 			eg, ectx := errgroup.WithContext(ctx)
 			for _, store := range stores {
 				if err := ectx.Err(); err != nil {
@@ -489,10 +488,10 @@ func (rc *SnapClient) initClients(ctx context.Context, backend *backuppb.Storage
 			}
 			return eg.Wait()
 		}
-		createCallBacks = append(createCallBacks, func(importer *sstfiles.SnapFileImporter) error {
+		createCallBacks = append(createCallBacks, func(importer *SnapFileImporter) error {
 			return setFn(ctx, importer, rc.rateLimit)
 		})
-		closeCallBacks = append(closeCallBacks, func(importer *sstfiles.SnapFileImporter) error {
+		closeCallBacks = append(closeCallBacks, func(importer *SnapFileImporter) error {
 			// In future we may need a mechanism to set speed limit in ttl. like what we do in switchmode. TODO
 			var resetErr error
 			for retry := 0; retry < resetSpeedLimitRetryTimes; retry++ {
@@ -514,25 +513,27 @@ func (rc *SnapClient) initClients(ctx context.Context, backend *backuppb.Storage
 
 	metaClient := split.NewClient(rc.pdClient, rc.pdHTTPClient, rc.tlsConf, maxSplitKeysOnce, rc.storeCount+1, splitClientOpts...)
 	importCli := importclient.NewImportClient(metaClient, rc.tlsConf, rc.keepaliveConf)
+
+	var fileImporter *SnapFileImporter
 	if isRawKvMode || isTxnKvMode {
 		// for raw/txn mode. use backupMeta.ApiVersion to create fileImporter
-		fileImporter, err = sstfiles.NewSnapFileImporter(
+		fileImporter, err = NewSnapFileImporter(
 			ctx, rc.cipher, rc.backupMeta.ApiVersion, metaClient,
 			importCli, backend, isRawKvMode, isTxnKvMode, stores, rc.rewriteMode, rc.concurrencyPerStore, createCallBacks, closeCallBacks)
 		if err != nil {
 			return errors.Trace(err)
 		}
-		rc.restorer = sstfiles.NewSimpleFileRestorer(false, fileImporter, metaClient, rc.workerPool)
+		rc.restorer = restore.NewSimpleFileRestorer(fileImporter, rc.workerPool)
 
 	} else {
 		// or create a fileImporter with the cluster API version
-		fileImporter, err = sstfiles.NewSnapFileImporter(
+		fileImporter, err = NewSnapFileImporter(
 			ctx, rc.cipher, rc.dom.Store().GetCodec().GetAPIVersion(), metaClient,
 			importCli, backend, isRawKvMode, isTxnKvMode, stores, rc.rewriteMode, rc.concurrencyPerStore, createCallBacks, closeCallBacks)
 		if err != nil {
 			return errors.Trace(err)
 		}
-		rc.restorer = sstfiles.NewMultiTablesRestorer(fileImporter, metaClient, rc.workerPool, rc.checkpointRunner)
+		// rc.restorer = NewMultiTablesRestorer(fileImporter, metaClient, rc.workerPool, rc.checkpointRunner)
 	}
 	return nil
 }
@@ -1025,47 +1026,6 @@ func (rc *SnapClient) ExecDDLs(ctx context.Context, ddlJobs []*model.Job) error 
 	return nil
 }
 
-func (rc *SnapClient) ResetSpeedLimit(ctx context.Context) error {
-	rc.hasSpeedLimited = false
-	err := rc.setSpeedLimit(ctx, 0)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	return nil
-}
-
-func (rc *SnapClient) setSpeedLimit(ctx context.Context, rateLimit uint64) error {
-	if !rc.hasSpeedLimited {
-		stores, err := util.GetAllTiKVStores(ctx, rc.pdClient, util.SkipTiFlash)
-		if err != nil {
-			return errors.Trace(err)
-		}
-
-		eg, ectx := errgroup.WithContext(ctx)
-		for _, store := range stores {
-			if err := ectx.Err(); err != nil {
-				return errors.Trace(err)
-			}
-
-			finalStore := store
-			rc.workerPool.ApplyOnErrorGroup(eg,
-				func() error {
-					err := rc.fileImporter.SetDownloadSpeedLimit(ectx, finalStore.GetId(), rateLimit)
-					if err != nil {
-						return errors.Trace(err)
-					}
-					return nil
-				})
-		}
-
-		if err := eg.Wait(); err != nil {
-			return errors.Trace(err)
-		}
-		rc.hasSpeedLimited = true
-	}
-	return nil
-}
-
 func (rc *SnapClient) execChecksum(
 	ctx context.Context,
 	tbl *CreatedTable,
@@ -1138,52 +1098,5 @@ func (rc *SnapClient) execChecksum(
 		return errors.Annotate(berrors.ErrRestoreChecksumMismatch, "failed to validate checksum")
 	}
 	logger.Info("success in validate checksum")
-	return nil
-}
-
-func (rc *SnapClient) WaitForFilesRestored(ctx context.Context, files []*backuppb.File, updateCh glue.Progress) error {
-	errCh := make(chan error, len(files))
-	eg, ectx := errgroup.WithContext(ctx)
-	defer close(errCh)
-
-	for _, file := range files {
-		fileReplica := file
-		rc.workerPool.ApplyOnErrorGroup(eg,
-			func() error {
-				defer func() {
-					log.Info("import sst files done", logutil.Files(files))
-					updateCh.Inc()
-				}()
-				return rc.fileImporter.ImportSSTFiles(ectx, []TableIDWithFiles{{Files: []*backuppb.File{fileReplica}, RewriteRules: restoreutils.EmptyRewriteRule()}}, rc.cipher, rc.backupMeta.ApiVersion)
-			})
-	}
-	if err := eg.Wait(); err != nil {
-		return errors.Trace(err)
-	}
-	return nil
-}
-
-// RestoreRaw tries to restore raw keys in the specified range.
-func (rc *SnapClient) RestoreRaw(
-	ctx context.Context, startKey, endKey []byte, onProgress func(), files []sstfiles.SstFilesInfo,
-) error {
-	start := time.Now()
-	defer func() {
-		elapsed := time.Since(start)
-		log.Info("Restore Raw",
-			logutil.Key("startKey", startKey),
-			logutil.Key("endKey", endKey),
-			zap.Duration("take", elapsed))
-	}()
-
-	err := rc.restorer.RestoreFiles(ctx, files, onProgress)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	log.Info(
-		"finish to restore raw range",
-		logutil.Key("startKey", startKey),
-		logutil.Key("endKey", endKey),
-	)
 	return nil
 }

@@ -171,13 +171,13 @@ func (helper *LogSplitHelper) splitRegionByPoints(
 	}
 
 	helper.pool.ApplyOnErrorGroup(helper.eg, func() error {
-		newRegions, errSplit := regionSplitter.SplitWaitAndScatter(ctx, region, splitPoints)
+		newRegions, errSplit := regionSplitter.ExecuteOneRegion(ctx, region, splitPoints)
 		if errSplit != nil {
 			log.Warn("failed to split the scaned region", zap.Error(errSplit))
 			sort.Slice(splitPoints, func(i, j int) bool {
 				return bytes.Compare(splitPoints[i], splitPoints[j]) < 0
 			})
-			return regionSplitter.ExecuteSplit(ctx, splitPoints)
+			return regionSplitter.ExecuteSortedKeys(ctx, splitPoints)
 		}
 		select {
 		case <-ctx.Done():

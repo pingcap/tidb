@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package sstfiles
+package snapclient
 
 import (
 	"bytes"
@@ -34,8 +34,8 @@ import (
 	"github.com/pingcap/log"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/logutil"
+	"github.com/pingcap/tidb/br/pkg/restore"
 	importclient "github.com/pingcap/tidb/br/pkg/restore/internal/import_client"
-	snapclient "github.com/pingcap/tidb/br/pkg/restore/snap_client"
 	"github.com/pingcap/tidb/br/pkg/restore/split"
 	restoreutils "github.com/pingcap/tidb/br/pkg/restore/utils"
 	"github.com/pingcap/tidb/br/pkg/summary"
@@ -298,7 +298,7 @@ func getKeyRangeByMode(mode KvMode) func(f *backuppb.File, rules *restoreutils.R
 
 // getKeyRangeForFiles gets the maximum range on files.
 func (importer *SnapFileImporter) getKeyRangeForFiles(
-	filesGroup []snapclient.TableIDWithFiles,
+	filesGroup []restore.RestoreFilesInfo,
 ) ([]byte, []byte, error) {
 	var (
 		startKey, endKey []byte
@@ -307,7 +307,7 @@ func (importer *SnapFileImporter) getKeyRangeForFiles(
 	)
 	getRangeFn := getKeyRangeByMode(importer.kvMode)
 	for _, files := range filesGroup {
-		for _, f := range files.Files {
+		for _, f := range files.SSTFiles {
 			start, end, err = getRangeFn(f, files.RewriteRules)
 			if err != nil {
 				return nil, nil, errors.Trace(err)
@@ -324,14 +324,12 @@ func (importer *SnapFileImporter) getKeyRangeForFiles(
 	return startKey, endKey, nil
 }
 
-// ImportSSTFiles tries to import a file.
+// Import tries to import a file.
 // Assert 1: All rewrite rules must contain raw key prefix.
 // Assert 2: len(filesGroup[any].Files) > 0.
-func (importer *SnapFileImporter) ImportSSTFiles(
+func (importer *SnapFileImporter) Import(
 	ctx context.Context,
-	filesGroup []snapclient.TableIDWithFiles,
-	cipher *backuppb.CipherInfo,
-	apiVersion kvrpcpb.APIVersion,
+	filesGroup ...restore.RestoreFilesInfo,
 ) error {
 	// Rewrite the start key and end key of file to scan regions
 	startKey, endKey, err := importer.getKeyRangeForFiles(filesGroup)
@@ -353,7 +351,7 @@ func (importer *SnapFileImporter) ImportSSTFiles(
 		for _, regionInfo := range regionInfos {
 			info := regionInfo
 			// Try to download file.
-			downloadMetas, errDownload := importer.download(ctx, info, filesGroup, cipher, apiVersion)
+			downloadMetas, errDownload := importer.download(ctx, info, filesGroup, importer.cipher, importer.apiVersion)
 			if errDownload != nil {
 				log.Warn("download file failed, retry later",
 					logutil.Region(info.Region),
@@ -383,7 +381,7 @@ func (importer *SnapFileImporter) ImportSSTFiles(
 		return errors.Trace(err)
 	}
 	for _, files := range filesGroup {
-		for _, f := range files.Files {
+		for _, f := range files.SSTFiles {
 			summary.CollectSuccessUnit(summary.TotalKV, 1, f.TotalKvs)
 			summary.CollectSuccessUnit(summary.TotalBytes, 1, f.TotalBytes)
 		}
@@ -476,7 +474,7 @@ func getSSTMetaFromFile(
 func (importer *SnapFileImporter) download(
 	ctx context.Context,
 	regionInfo *split.RegionInfo,
-	filesGroup []snapclient.TableIDWithFiles,
+	filesGroup []restore.RestoreFilesInfo,
 	cipher *backuppb.CipherInfo,
 	apiVersion kvrpcpb.APIVersion,
 ) ([]*import_sstpb.SSTMeta, error) {
@@ -582,7 +580,7 @@ func (importer *SnapFileImporter) buildDownloadRequest(
 func (importer *SnapFileImporter) downloadSST(
 	ctx context.Context,
 	regionInfo *split.RegionInfo,
-	filesGroup []snapclient.TableIDWithFiles,
+	filesGroup []restore.RestoreFilesInfo,
 	cipher *backuppb.CipherInfo,
 	apiVersion kvrpcpb.APIVersion,
 ) ([]*import_sstpb.SSTMeta, error) {
@@ -591,7 +589,7 @@ func (importer *SnapFileImporter) downloadSST(
 	resultMetasMap := make(map[string]*import_sstpb.SSTMeta)
 	downloadReqsMap := make(map[string]*import_sstpb.DownloadRequest)
 	for _, files := range filesGroup {
-		for _, file := range files.Files {
+		for _, file := range files.SSTFiles {
 			req, sstMeta, err := importer.buildDownloadRequest(file, files.RewriteRules, regionInfo, cipher)
 			if err != nil {
 				return nil, errors.Trace(err)
@@ -674,13 +672,13 @@ func (importer *SnapFileImporter) downloadSST(
 func (importer *SnapFileImporter) downloadRawKVSST(
 	ctx context.Context,
 	regionInfo *split.RegionInfo,
-	filesGroup []snapclient.TableIDWithFiles,
+	filesGroup []restore.RestoreFilesInfo,
 	cipher *backuppb.CipherInfo,
 	apiVersion kvrpcpb.APIVersion,
 ) ([]*import_sstpb.SSTMeta, error) {
 	downloadMetas := make([]*import_sstpb.SSTMeta, 0, len(filesGroup)*2+1)
 	for _, files := range filesGroup {
-		for _, file := range files.Files {
+		for _, file := range files.SSTFiles {
 			// Empty rule
 			var rule import_sstpb.RewriteRule
 			sstMeta, err := getSSTMetaFromFile(file, regionInfo.Region, &rule, RewriteModeLegacy)
