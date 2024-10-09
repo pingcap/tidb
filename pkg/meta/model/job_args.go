@@ -1590,7 +1590,7 @@ func (a *AddIndexArgs) getAddVectorIndexArgs(job *Job) error {
 	return nil
 }
 
-func (a *AddIndexArgs) getFinishedArgsV1(job *Job) []any {
+func (a *AddIndexArgs) getFinishedArgsV1(*Job) []any {
 	n := len(a.IndexArgs)
 	addIndexIDs := make([]int64, n)
 	ifExists := make([]bool, n)
@@ -1643,7 +1643,7 @@ type RenameIndexArgs struct {
 	To   pmodel.CIStr `json:"to"`
 }
 
-func (a *RenameIndexArgs) getArgsV1(job *Job) []any {
+func (a *RenameIndexArgs) getArgsV1(*Job) []any {
 	return []any{a.From, a.To}
 }
 
