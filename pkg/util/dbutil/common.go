@@ -272,7 +272,7 @@ func GetMinMaxValue(ctx context.Context, db QueryExecutor, schema, table, column
 		ColumnName(column), collation, ColumnName(column), collation, TableName(schema, table), limitRange)
 	log.Debug("GetMinMaxValue", zap.String("sql", query), zap.Reflect("args", limitArgs))
 
-	var min, max sql.NullString
+	var minv, maxv sql.NullString
 	rows, err := db.QueryContext(ctx, query, limitArgs...)
 	if err != nil {
 		return "", "", errors.Trace(err)
@@ -280,18 +280,18 @@ func GetMinMaxValue(ctx context.Context, db QueryExecutor, schema, table, column
 	defer rows.Close()
 
 	for rows.Next() {
-		err = rows.Scan(&min, &max)
+		err = rows.Scan(&minv, &maxv)
 		if err != nil {
 			return "", "", errors.Trace(err)
 		}
 	}
 
-	if !min.Valid || !max.Valid {
+	if !minv.Valid || !maxv.Valid {
 		// don't have any data
 		return "", "", ErrNoData
 	}
 
-	return min.String, max.String, errors.Trace(rows.Err())
+	return minv.String, maxv.String, errors.Trace(rows.Err())
 }
 
 // GetTimeZoneOffset is to get offset of timezone.

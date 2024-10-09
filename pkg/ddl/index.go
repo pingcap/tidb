@@ -385,7 +385,7 @@ func buildVectorInfoWithCheck(indexPartSpecifications []*ast.IndexPartSpecificat
 	if !ok {
 		return nil, "", dbterror.ErrUnsupportedAddVectorIndex.FastGenByArgs(fmt.Sprintf("unsupported function: %v", idxPart.Expr))
 	}
-	distanceMetric, ok := variable.DistanceMetric4VectorIndex[f.FnName.L]
+	distanceMetric, ok := model.FnNameToDistanceMetric[f.FnName.L]
 	if !ok {
 		return nil, "", dbterror.ErrUnsupportedAddVectorIndex.FastGenByArgs("unsupported function")
 	}

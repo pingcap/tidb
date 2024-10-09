@@ -46,15 +46,17 @@ func StartCheckpointRestoreRunnerForTest(
 	ctx context.Context,
 	se glue.Session,
 	tick time.Duration,
+	retryDuration time.Duration,
 ) (*CheckpointRunner[RestoreKeyType, RestoreValueType], error) {
 	runner := newCheckpointRunner[RestoreKeyType, RestoreValueType](
 		newTableCheckpointStorage(se, SnapshotRestoreCheckpointDatabaseName),
 		nil, valueMarshalerForRestore)
 
-	runner.startCheckpointMainLoop(ctx, tick, tick, 0)
+	runner.startCheckpointMainLoop(ctx, tick, tick, 0, retryDuration)
 	return runner, nil
 }
 
+// Notice that the session is owned by the checkpoint runner, and it will be also closed by it.
 func StartCheckpointRunnerForRestore(
 	ctx context.Context,
 	se glue.Session,
@@ -64,7 +66,9 @@ func StartCheckpointRunnerForRestore(
 		nil, valueMarshalerForRestore)
 
 	// for restore, no need to set lock
-	runner.startCheckpointMainLoop(ctx, defaultTickDurationForFlush, defaultTckDurationForChecksum, 0)
+	runner.startCheckpointMainLoop(
+		ctx,
+		defaultTickDurationForFlush, defaultTickDurationForChecksum, 0, defaultRetryDuration)
 	return runner, nil
 }
 
