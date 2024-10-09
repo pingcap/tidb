@@ -1073,12 +1073,12 @@ func (*PlanBuilder) detectSelectWindow(sel *ast.SelectStmt) bool {
 }
 
 func getPathByIndexName(paths []*util.AccessPath, idxName pmodel.CIStr, tblInfo *model.TableInfo) *util.AccessPath {
-	var primaryIdxPath, indexPrefixPath *util.AccessPath
+	var indexPrefixPath *util.AccessPath
 	prefixMatches := 0
 	for _, path := range paths {
-		if path.IsTiKVTablePath() {
-			primaryIdxPath = path
-			continue
+		// Only accept tikv's primary key table path.
+		if path.IsTiKVTablePath() && isPrimaryIndex(idxName) && tblInfo.HasClusteredIndex() {
+			return path
 		}
 		// If it's not a tikv table path and the index is nil, it could not be any index path.
 		if path.Index == nil {
@@ -1091,9 +1091,6 @@ func getPathByIndexName(paths []*util.AccessPath, idxName pmodel.CIStr, tblInfo 
 			indexPrefixPath = path
 			prefixMatches++
 		}
-	}
-	if isPrimaryIndex(idxName) && tblInfo.HasClusteredIndex() {
-		return primaryIdxPath
 	}
 
 	// Return only unique prefix matches
