@@ -4236,7 +4236,11 @@ CreateIndexStmt:
 		}
 
 		keyType := $2.(ast.IndexKeyType)
-		if (keyType == ast.IndexKeyTypeVector && indexOption.Tp != model.IndexTypeHNSW) || (keyType != ast.IndexKeyTypeVector && indexOption.Tp == model.IndexTypeHNSW) {
+		isVectorIndex := keyType == ast.IndexKeyTypeVector
+		if isVectorIndex && indexOption.Tp == model.IndexTypeInvalid {
+			indexOption.Tp = model.IndexTypeHNSW
+		}
+		if (isVectorIndex && indexOption.Tp != model.IndexTypeHNSW) || (!isVectorIndex && indexOption.Tp == model.IndexTypeHNSW) {
 			yylex.AppendError(ErrSyntax)
 			return 1
 		}
@@ -12376,17 +12380,22 @@ ConstraintVectorIndex:
 			Name:         $4.([]interface{})[0].(*ast.NullString).String,
 			IsEmptyIndex: $4.([]interface{})[0].(*ast.NullString).Empty,
 		}
+
 		if $8 != nil {
 			c.Option = $8.(*ast.IndexOption)
 		}
-
 		if indexType := $4.([]interface{})[1]; indexType != nil {
 			if c.Option == nil {
 				c.Option = &ast.IndexOption{}
 			}
 			c.Option.Tp = indexType.(model.IndexType)
 		}
-		if c.Option == nil || c.Option.Tp != model.IndexTypeHNSW {
+		if c.Option == nil {
+			c.Option = &ast.IndexOption{Tp: model.IndexTypeHNSW}
+		} else if c.Option.Tp == model.IndexTypeInvalid {
+			c.Option.Tp = model.IndexTypeHNSW
+		}
+		if c.Option.Tp != model.IndexTypeHNSW {
 			yylex.AppendError(ErrSyntax)
 			return 1
 		}

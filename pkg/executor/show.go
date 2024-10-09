@@ -1230,7 +1230,7 @@ func constructResultOfShowCreateTable(ctx sessionctx.Context, dbName *pmodel.CIS
 			cols = append(cols, colInfo)
 		}
 		if idxInfo.VectorInfo != nil {
-			funcName := variable.Function4VectorIndex[idxInfo.VectorInfo.DistanceMetric]
+			funcName := model.DistanceMetricToFnName[idxInfo.VectorInfo.DistanceMetric]
 			fmt.Fprintf(buf, "((%s(%s)))", strings.ToUpper(funcName), strings.Join(cols, ","))
 		} else {
 			fmt.Fprintf(buf, "(%s)", strings.Join(cols, ","))
