@@ -73,8 +73,8 @@
           "      └─ExchangeSender_17 1.00 mpp[tiflash]  ExchangeType: PassThrough",
           "        └─Projection_19 1.00 mpp[tiflash]  test.t1.vec, test.t1.a, test.t1.b, test.t1.c, test.t1.d",
           "          └─TopN_16 1.00 mpp[tiflash]  Column#7, offset:0, count:1",
-          "            └─Projection_20 10000.00 mpp[tiflash]  test.t1.vec, test.t1.a, test.t1.b, test.t1.c, test.t1.d, vec_cosine_distance(test.t1.vec, [1,1,1])->Column#7",
-          "              └─TableFullScan_15 10000.00 mpp[tiflash] table:t1, index:vector_index(vec) keep order:false, stats:pseudo, annIndex:COSINE(vec..[1,1,1], limit:1)"
+          "            └─Projection_20 1.00 mpp[tiflash]  test.t1.vec, test.t1.a, test.t1.b, test.t1.c, test.t1.d, vec_cosine_distance(test.t1.vec, [1,1,1])->Column#7",
+          "              └─TableFullScan_15 1.00 mpp[tiflash] table:t1, index:vector_index(vec) keep order:false, stats:pseudo, annIndex:COSINE(vec..[1,1,1], limit:1)"
         ],
         "Warn": null
       },
@@ -88,8 +88,8 @@
           "      └─ExchangeSender_17 1.00 mpp[tiflash]  ExchangeType: PassThrough",
           "        └─Projection_19 1.00 mpp[tiflash]  test.t1.vec, test.t1.a, test.t1.b, test.t1.c, test.t1.d",
           "          └─TopN_16 1.00 mpp[tiflash]  Column#7, offset:0, count:1",
-          "            └─Projection_20 10000.00 mpp[tiflash]  test.t1.vec, test.t1.a, test.t1.b, test.t1.c, test.t1.d, vec_cosine_distance(test.t1.vec, [1,1,1])->Column#7",
-          "              └─TableFullScan_15 10000.00 mpp[tiflash] table:t1, index:vector_index(vec) keep order:false, stats:pseudo, annIndex:COSINE(vec..[1,1,1], limit:1)"
+          "            └─Projection_20 1.00 mpp[tiflash]  test.t1.vec, test.t1.a, test.t1.b, test.t1.c, test.t1.d, vec_cosine_distance(test.t1.vec, [1,1,1])->Column#7",
+          "              └─TableFullScan_15 1.00 mpp[tiflash] table:t1, index:vector_index(vec) keep order:false, stats:pseudo, annIndex:COSINE(vec..[1,1,1], limit:1)"
         ],
         "Warn": null
       },
@@ -235,8 +235,8 @@
           "        └─ExchangeSender_17 1.00 mpp[tiflash]  ExchangeType: PassThrough",
           "          └─Projection_19 1.00 mpp[tiflash]  test.t1.vec",
           "            └─TopN_16 1.00 mpp[tiflash]  Column#8, offset:0, count:1",
-          "              └─Projection_20 10000.00 mpp[tiflash]  test.t1.vec, vec_cosine_distance(test.t1.vec, [1,1,1])->Column#8",
-          "                └─TableFullScan_15 10000.00 mpp[tiflash] table:t1, index:vector_index(vec) keep order:false, stats:pseudo, annIndex:COSINE(vec..[1,1,1], limit:1)"
+          "              └─Projection_20 1.00 mpp[tiflash]  test.t1.vec, vec_cosine_distance(test.t1.vec, [1,1,1])->Column#8",
+          "                └─TableFullScan_15 1.00 mpp[tiflash] table:t1, index:vector_index(vec) keep order:false, stats:pseudo, annIndex:COSINE(vec..[1,1,1], limit:1)"
         ],
         "Warn": null
       },
@@ -251,8 +251,8 @@
           "        └─ExchangeSender_17 1.00 mpp[tiflash]  ExchangeType: PassThrough",
           "          └─Projection_19 1.00 mpp[tiflash]  test.t1.vec, test.t1.a, test.t1.b",
           "            └─TopN_16 1.00 mpp[tiflash]  Column#8, offset:0, count:1",
-          "              └─Projection_20 10000.00 mpp[tiflash]  test.t1.vec, test.t1.a, test.t1.b, vec_cosine_distance(test.t1.vec, [1,1,1])->Column#8",
-          "                └─TableFullScan_15 10000.00 mpp[tiflash] table:t1, index:vector_index(vec) keep order:false, stats:pseudo, annIndex:COSINE(vec..[1,1,1], limit:1)"
+          "              └─Projection_20 1.00 mpp[tiflash]  test.t1.vec, test.t1.a, test.t1.b, vec_cosine_distance(test.t1.vec, [1,1,1])->Column#8",
+          "                └─TableFullScan_15 1.00 mpp[tiflash] table:t1, index:vector_index(vec) keep order:false, stats:pseudo, annIndex:COSINE(vec..[1,1,1], limit:1)"
         ],
         "Warn": null
       },
