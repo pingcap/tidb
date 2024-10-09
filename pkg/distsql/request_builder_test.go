@@ -593,8 +593,6 @@ func TestRequestBuilder7(t *testing.T) {
 		{kv.ReplicaReadFollower, "Follower"},
 		{kv.ReplicaReadMixed, "Mixed"},
 	} {
-		// copy iterator variable into a new variable, see issue #27779
-		replicaRead := replicaRead
 		t.Run(replicaRead.src, func(t *testing.T) {
 			dctx := NewDistSQLContextForTest()
 			dctx.ReplicaReadType = replicaRead.replicaReadType

@@ -126,7 +126,6 @@ func openAndGetFirstElem[
 	}
 
 	for i, f := range openers {
-		f := f
 		wg.Go(func() error {
 			rd, err := f()
 			switch err {
@@ -797,7 +796,6 @@ func NewMergePropIter(
 	closeReaderFlag := false
 	readerOpeners := make([]readerOpenerFn[*rangeProperty, mergePropBaseIter], 0, len(multiStat))
 	for _, m := range multiStat {
-		m := m
 		readerOpeners = append(readerOpeners, func() (*mergePropBaseIter, error) {
 			baseIter, err := newMergePropBaseIter(ctx, m, exStorage)
 			if err != nil {
