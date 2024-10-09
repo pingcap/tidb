@@ -302,6 +302,96 @@ func (p *PointGetPlan) MemoryUsage() (sum int64) {
 	return
 }
 
+<<<<<<< HEAD:planner/core/point_get_plan.go
+=======
+// LoadTableStats preloads the stats data for the physical table
+func (p *PointGetPlan) LoadTableStats(ctx sessionctx.Context) {
+	tableID := p.TblInfo.ID
+	if idx := p.PartitionIdx; idx != nil {
+		if *idx < 0 {
+			// No matching partitions
+			return
+		}
+		if pi := p.TblInfo.GetPartitionInfo(); pi != nil {
+			tableID = pi.Definitions[*idx].ID
+		}
+	}
+	loadTableStats(ctx, p.TblInfo, tableID)
+}
+
+// PrunePartitions will check which partition to use
+// returns true if no matching partition
+func (p *PointGetPlan) PrunePartitions(sctx sessionctx.Context) bool {
+	pi := p.TblInfo.GetPartitionInfo()
+	if pi == nil {
+		return false
+	}
+	if p.IndexInfo != nil && p.IndexInfo.Global {
+		// reading for the Global Index / table id
+		return false
+	}
+	// _tidb_rowid + specify a partition
+	if p.IndexInfo == nil && !p.TblInfo.HasClusteredIndex() && len(p.PartitionNames) == 1 {
+		for i, def := range pi.Definitions {
+			if def.Name.L == p.PartitionNames[0].L {
+				idx := i
+				p.PartitionIdx = &idx
+				break
+			}
+		}
+		return false
+	}
+	// If tryPointGetPlan did generate the plan,
+	// then PartitionIdx is not set and needs to be set here!
+	// There are two ways to get here from static mode partition pruning:
+	// 1) Converting a set of partitions into a Union scan
+	//    - This should NOT be cached and should already be having PartitionIdx set!
+	// 2) Converted to PointGet from checkTblIndexForPointPlan
+	//    and it does not have the PartitionIdx set
+	if !p.SCtx().GetSessionVars().StmtCtx.UseCache() &&
+		p.PartitionIdx != nil {
+		return false
+	}
+	is := sessiontxn.GetTxnManager(sctx).GetTxnInfoSchema()
+	tbl, ok := is.TableByID(context.Background(), p.TblInfo.ID)
+	if tbl == nil || !ok {
+		// Can this happen?
+		intest.Assert(false)
+		return false
+	}
+	pt := tbl.GetPartitionedTable()
+	if pt == nil {
+		// Can this happen?
+		intest.Assert(false)
+		return false
+	}
+	row := make([]types.Datum, len(p.TblInfo.Columns))
+	if p.HandleConstant == nil && len(p.IndexValues) > 0 {
+		for i := range p.IndexInfo.Columns {
+			// TODO: Skip copying non-partitioning columns?
+			p.IndexValues[i].Copy(&row[p.IndexInfo.Columns[i].Offset])
+		}
+	} else {
+		var dVal types.Datum
+		if p.UnsignedHandle {
+			dVal = types.NewUintDatum(uint64(p.Handle.IntValue()))
+		} else {
+			dVal = types.NewIntDatum(p.Handle.IntValue())
+		}
+		dVal.Copy(&row[p.HandleColOffset])
+	}
+	partIdx, err := pt.GetPartitionIdxByRow(sctx.GetExprCtx().GetEvalCtx(), row)
+	partIdx, err = pt.Meta().Partition.ReplaceWithOverlappingPartitionIdx(partIdx, err)
+	if err != nil || !isInExplicitPartitions(pi, partIdx, p.PartitionNames) {
+		partIdx = -1
+		p.PartitionIdx = &partIdx
+		return true
+	}
+	p.PartitionIdx = &partIdx
+	return false
+}
+
+>>>>>>> 1e24d396082 (*: Drop partition DDL handling for overlapping partitions during State Changes (#56082)):pkg/planner/core/point_get_plan.go
 // BatchPointGetPlan represents a physical plan which contains a bunch of
 // keys reference the same table and use the same `unique key`
 type BatchPointGetPlan struct {
@@ -521,6 +611,238 @@ func (p *BatchPointGetPlan) MemoryUsage() (sum int64) {
 	return
 }
 
+<<<<<<< HEAD:planner/core/point_get_plan.go
+=======
+// LoadTableStats preloads the stats data for the physical table
+func (p *BatchPointGetPlan) LoadTableStats(ctx sessionctx.Context) {
+	// as a `BatchPointGet` can access multiple partitions, and we cannot distinguish how many rows come from each
+	// partitions in the existing statistics information, we treat all index usage through a `BatchPointGet` just
+	// like a normal global index.
+	loadTableStats(ctx, p.TblInfo, p.TblInfo.ID)
+}
+
+func isInExplicitPartitions(pi *model.PartitionInfo, idx int, names []pmodel.CIStr) bool {
+	if len(names) == 0 {
+		return true
+	}
+	s := pi.Definitions[idx].Name.L
+	for _, name := range names {
+		if s == name.L {
+			return true
+		}
+	}
+	return false
+}
+
+// Map each index value to Partition ID
+func (p *BatchPointGetPlan) getPartitionIdxs(sctx sessionctx.Context) []int {
+	is := sessiontxn.GetTxnManager(sctx).GetTxnInfoSchema()
+	tbl, ok := is.TableByID(context.Background(), p.TblInfo.ID)
+	intest.Assert(ok)
+	pTbl, ok := tbl.(table.PartitionedTable)
+	intest.Assert(ok)
+	intest.Assert(pTbl != nil)
+	r := make([]types.Datum, len(pTbl.Cols()))
+	rows := p.IndexValues
+	idxs := make([]int, 0, len(rows))
+	for i := range rows {
+		for j := range rows[i] {
+			rows[i][j].Copy(&r[p.IndexInfo.Columns[j].Offset])
+		}
+		pIdx, err := pTbl.GetPartitionIdxByRow(sctx.GetExprCtx().GetEvalCtx(), r)
+		pIdx, err = pTbl.Meta().Partition.ReplaceWithOverlappingPartitionIdx(pIdx, err)
+		if err != nil {
+			// Skip on any error, like:
+			// No matching partition, overflow etc.
+			idxs = append(idxs, -1)
+			continue
+		}
+		idxs = append(idxs, pIdx)
+	}
+	return idxs
+}
+
+// PrunePartitionsAndValues will check which partition to use
+// returns:
+// slice of non-duplicated handles (or nil if IndexValues is used)
+// true if no matching partition (TableDual plan can be used)
+func (p *BatchPointGetPlan) PrunePartitionsAndValues(sctx sessionctx.Context) ([]kv.Handle, bool) {
+	pi := p.TblInfo.GetPartitionInfo()
+	if p.IndexInfo != nil && p.IndexInfo.Global {
+		// Reading from a global index, i.e. base table ID
+		// Skip pruning partitions here
+		pi = nil
+	}
+	// reset the PartitionIDs
+	if pi != nil && !p.SinglePartition {
+		p.PartitionIdxs = p.PartitionIdxs[:0]
+	}
+	if p.IndexInfo != nil && !(p.TblInfo.IsCommonHandle && p.IndexInfo.Primary) {
+		filteredVals := p.IndexValues[:0]
+		for _, idxVals := range p.IndexValues {
+			// For all x, 'x IN (null)' evaluate to null, so the query get no result.
+			if !types.DatumsContainNull(idxVals) {
+				filteredVals = append(filteredVals, idxVals)
+			}
+		}
+		p.IndexValues = filteredVals
+		if pi != nil {
+			partIdxs := p.getPartitionIdxs(sctx)
+			partitionsFound := 0
+			for i, idx := range partIdxs {
+				if idx < 0 ||
+					(p.SinglePartition &&
+						idx != p.PartitionIdxs[0]) ||
+					!isInExplicitPartitions(pi, idx, p.PartitionNames) {
+					// Index value does not match any partitions,
+					// remove it from the plan
+					partIdxs[i] = -1
+				} else {
+					partitionsFound++
+				}
+			}
+			if partitionsFound == 0 {
+				return nil, true
+			}
+			skipped := 0
+			for i, idx := range partIdxs {
+				if idx < 0 {
+					curr := i - skipped
+					next := curr + 1
+					p.IndexValues = append(p.IndexValues[:curr], p.IndexValues[next:]...)
+					skipped++
+				} else if !p.SinglePartition {
+					p.PartitionIdxs = append(p.PartitionIdxs, idx)
+				}
+			}
+			intest.Assert(p.SinglePartition || partitionsFound == len(p.PartitionIdxs))
+			intest.Assert(partitionsFound == len(p.IndexValues))
+		}
+		return nil, false
+	}
+	handles := make([]kv.Handle, 0, len(p.Handles))
+	dedup := kv.NewHandleMap()
+	if p.IndexInfo == nil {
+		for _, handle := range p.Handles {
+			if _, found := dedup.Get(handle); found {
+				continue
+			}
+			dedup.Set(handle, true)
+			handles = append(handles, handle)
+		}
+		if pi != nil {
+			is := sessiontxn.GetTxnManager(sctx).GetTxnInfoSchema()
+			tbl, ok := is.TableByID(context.Background(), p.TblInfo.ID)
+			intest.Assert(ok)
+			pTbl, ok := tbl.(table.PartitionedTable)
+			intest.Assert(ok)
+			intest.Assert(pTbl != nil)
+			r := make([]types.Datum, p.HandleColOffset+1)
+			partIdxs := make([]int, 0, len(handles))
+			partitionsFound := 0
+			for _, handle := range handles {
+				var d types.Datum
+				if mysql.HasUnsignedFlag(p.TblInfo.Columns[p.HandleColOffset].GetFlag()) {
+					d = types.NewUintDatum(uint64(handle.IntValue()))
+				} else {
+					d = types.NewIntDatum(handle.IntValue())
+				}
+				d.Copy(&r[p.HandleColOffset])
+				pIdx, err := pTbl.GetPartitionIdxByRow(sctx.GetExprCtx().GetEvalCtx(), r)
+				pIdx, err = pi.ReplaceWithOverlappingPartitionIdx(pIdx, err)
+				if err != nil ||
+					!isInExplicitPartitions(pi, pIdx, p.PartitionNames) ||
+					(p.SinglePartition &&
+						p.PartitionIdxs[0] != pIdx) {
+					{
+						pIdx = -1
+					}
+				} else {
+					partitionsFound++
+				}
+				partIdxs = append(partIdxs, pIdx)
+			}
+			if partitionsFound == 0 {
+				return nil, true
+			}
+			skipped := 0
+			for i, idx := range partIdxs {
+				if idx < 0 {
+					curr := i - skipped
+					next := curr + 1
+					handles = append(handles[:curr], handles[next:]...)
+					skipped++
+				} else if !p.SinglePartition {
+					p.PartitionIdxs = append(p.PartitionIdxs, idx)
+				}
+			}
+			intest.Assert(p.SinglePartition || partitionsFound == len(p.PartitionIdxs))
+			intest.Assert(p.SinglePartition || partitionsFound == len(handles))
+		}
+		p.Handles = handles
+	} else {
+		usedValues := make([]bool, len(p.IndexValues))
+		for i, value := range p.IndexValues {
+			if types.DatumsContainNull(value) {
+				continue
+			}
+			handleBytes, err := EncodeUniqueIndexValuesForKey(sctx, p.TblInfo, p.IndexInfo, value)
+			if err != nil {
+				if kv.ErrNotExist.Equal(err) {
+					continue
+				}
+				intest.Assert(false)
+				continue
+			}
+			handle, err := kv.NewCommonHandle(handleBytes)
+			if err != nil {
+				intest.Assert(false)
+				continue
+			}
+			if _, found := dedup.Get(handle); found {
+				continue
+			}
+			dedup.Set(handle, true)
+			handles = append(handles, handle)
+			usedValues[i] = true
+		}
+		skipped := 0
+		for i, use := range usedValues {
+			if !use {
+				curr := i - skipped
+				p.IndexValues = append(p.IndexValues[:curr], p.IndexValues[curr+1:]...)
+				skipped++
+			}
+		}
+		if pi != nil {
+			partIdxs := p.getPartitionIdxs(sctx)
+			skipped = 0
+			partitionsFound := 0
+			for i, idx := range partIdxs {
+				if partIdxs[i] < 0 ||
+					(p.SinglePartition &&
+						partIdxs[i] != p.PartitionIdxs[0]) ||
+					!isInExplicitPartitions(pi, idx, p.PartitionNames) {
+					curr := i - skipped
+					handles = append(handles[:curr], handles[curr+1:]...)
+					p.IndexValues = append(p.IndexValues[:curr], p.IndexValues[curr+1:]...)
+					skipped++
+					continue
+				} else if !p.SinglePartition {
+					p.PartitionIdxs = append(p.PartitionIdxs, idx)
+				}
+				partitionsFound++
+			}
+			if partitionsFound == 0 {
+				return nil, true
+			}
+			intest.Assert(p.SinglePartition || partitionsFound == len(p.PartitionIdxs))
+		}
+	}
+	return handles, false
+}
+
+>>>>>>> 1e24d396082 (*: Drop partition DDL handling for overlapping partitions during State Changes (#56082)):pkg/planner/core/point_get_plan.go
 // PointPlanKey is used to get point plan that is pre-built for multi-statement query.
 const PointPlanKey = stringutil.StringerStr("pointPlanKey")
 

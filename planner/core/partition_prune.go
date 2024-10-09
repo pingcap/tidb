@@ -15,11 +15,20 @@
 package core
 
 import (
+<<<<<<< HEAD:planner/core/partition_prune.go
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
+=======
+	"github.com/pingcap/tidb/pkg/expression"
+	tmodel "github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/table"
+	"github.com/pingcap/tidb/pkg/types"
+>>>>>>> 1e24d396082 (*: Drop partition DDL handling for overlapping partitions during State Changes (#56082)):pkg/planner/core/partition_prune.go
 )
 
 // PartitionPruning finds all used partitions according to query conditions, it will
@@ -38,9 +47,57 @@ func PartitionPruning(ctx sessionctx.Context, tbl table.PartitionedTable, conds 
 			return nil, err
 		}
 		ret := s.convertToIntSlice(rangeOr, pi, partitionNames)
+		ret = handleDroppingForRange(pi, partitionNames, ret)
 		return ret, nil
 	case model.PartitionTypeList:
 		return s.pruneListPartition(ctx, tbl, partitionNames, conds, columns)
 	}
 	return []int{FullRange}, nil
+}
+
+func handleDroppingForRange(pi *tmodel.PartitionInfo, partitionNames []model.CIStr, usedPartitions []int) []int {
+	if pi.CanHaveOverlappingDroppingPartition() {
+		if len(usedPartitions) == 1 && usedPartitions[0] == FullRange {
+			usedPartitions = make([]int, 0, len(pi.Definitions))
+			for i := range pi.Definitions {
+				usedPartitions = append(usedPartitions, i)
+			}
+		}
+		ret := make([]int, 0, len(usedPartitions))
+		for i := range usedPartitions {
+			idx := pi.GetOverlappingDroppingPartitionIdx(usedPartitions[i])
+			if idx == -1 {
+				// dropped without overlapping partition, skip it
+				continue
+			}
+			if idx == usedPartitions[i] {
+				// non-dropped partition
+				ret = append(ret, idx)
+				continue
+			}
+			// partition being dropped, remove the consecutive range of dropping partitions
+			// and add the overlapping partition.
+			end := i + 1
+			for ; end < len(usedPartitions) && usedPartitions[end] < idx; end++ {
+				continue
+			}
+			// add the overlapping partition, if not already included
+			if end >= len(usedPartitions) || usedPartitions[end] != idx {
+				// It must also match partitionNames if explicitly given
+				s := PartitionProcessor{}
+				if len(partitionNames) == 0 || s.findByName(partitionNames, pi.Definitions[idx].Name.L) {
+					ret = append(ret, idx)
+				}
+			}
+			if end < len(usedPartitions) {
+				ret = append(ret, usedPartitions[end:]...)
+			}
+			break
+		}
+		usedPartitions = ret
+	}
+	if len(usedPartitions) == len(pi.Definitions) {
+		return []int{FullRange}
+	}
+	return usedPartitions
 }
