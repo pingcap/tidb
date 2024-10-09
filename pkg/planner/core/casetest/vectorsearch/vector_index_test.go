@@ -184,3 +184,35 @@ func TestANNIndexNormalizedPlan(t *testing.T) {
 	require.Equal(t, d1, d3)
 	require.NotEqual(t, d1, dx1)
 }
+
+func TestANNInexWithSimpleCBO(t *testing.T) {
+	store := testkit.CreateMockStoreWithSchemaLease(t, 1*time.Second, mockstore.WithMockTiFlash(2))
+
+	tk := testkit.NewTestKit(t, store)
+
+	tiflash := infosync.NewMockTiFlash()
+	infosync.SetMockTiFlash(tiflash)
+	defer func() {
+		tiflash.Lock()
+		tiflash.StatusServer.Close()
+		tiflash.Unlock()
+	}()
+
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/MockCheckVectorIndexProcess", `return(1)`)
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec(`
+		create table t1 (
+			vec vector(3),
+			a int,
+			b int,
+			c vector(3),
+			d vector
+		)
+	`)
+	tk.MustExec("alter table t1 set tiflash replica 1;")
+	tk.MustExec("alter table t1 add vector index ((vec_cosine_distance(vec))) USING HNSW;")
+	tk.MustUseIndex("select * from t1 order by vec_cosine_distance(vec, '[1,1,1]') limit 1", "vector_index")
+	tk.MustNoIndexUsed("select * from t1 order by vec_cosine_distance(vec, '[1,1,1]') limit 10000")
+}

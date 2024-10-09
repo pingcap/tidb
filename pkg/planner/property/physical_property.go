@@ -221,6 +221,11 @@ type PhysicalProperty struct {
 	RejectSort bool
 
 	CTEProducerStatus cteProducerStatus
+
+	VectorProp struct {
+		*expression.VectorHelper
+		TopK uint32
+	}
 }
 
 // NewPhysicalProperty builds property from columns.
@@ -348,6 +353,12 @@ func (p *PhysicalProperty) HashCode() []byte {
 		p.hashcode = codec.EncodeInt(p.hashcode, int64(p.MPPPartitionTp))
 		for _, col := range p.MPPPartitionCols {
 			p.hashcode = append(p.hashcode, col.hashCode()...)
+		}
+		if p.VectorProp.VectorHelper != nil {
+			// We only accpect the vector information from the TopN which is directly above the DataSource.
+			// So it's safe to not hash the vector constant.
+			p.hashcode = append(p.hashcode, p.VectorProp.Column.HashCode()...)
+			p.hashcode = codec.EncodeInt(p.hashcode, int64(p.VectorProp.FnPbCode))
 		}
 	}
 	p.hashcode = append(p.hashcode, codec.EncodeInt(nil, int64(p.CTEProducerStatus))...)
