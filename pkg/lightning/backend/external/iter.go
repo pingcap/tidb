@@ -126,7 +126,6 @@ func openAndGetFirstElem[
 	}
 
 	for i, f := range openers {
-		i := i
 		f := f
 		wg.Go(func() error {
 			rd, err := f()
@@ -525,7 +524,6 @@ func NewMergeKVIter(
 	)
 
 	for i := range paths {
-		i := i
 		readerOpeners = append(readerOpeners, func() (*kvReaderProxy, error) {
 			rd, err := newKVReader(ctx, paths[i], exStorage, pathsStartOffset[i], readBufferSize)
 			if err != nil {
