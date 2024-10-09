@@ -75,7 +75,7 @@ GO_FAILPOINTS="github.com/pingcap/tidb/br/pkg/utils/determined-pprof-port=return
 run_br --pd $PD_ADDR backup full -s "local://$TEST_DIR/$DB/lock" \
     --remove-schedulers \
     --ratelimit 1 \
-    --ratelimit-unit 1 &> $TEST_DIR/br-other-stdout.log &# It will be killed after test finish.
+    --ratelimit-unit 1 &> $TEST_DIR/br-other-stdout.log & # It will be killed after test finish.
 
 # record last backup pid
 _pid=$!
