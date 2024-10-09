@@ -439,11 +439,6 @@ func ColumnSubstituteImpl(ctx BuildContext, expr Expression, schema *Schema, new
 	case *Column:
 		id := schema.ColumnIndex(v)
 		if id == -1 {
-			if fail1Return {
-				// one fail1Return is switched on, it requires that once a column can't be
-				// substituted by schema, the whole expr substitution should be failed.
-				return false, true, v
-			}
 			return false, false, v
 		}
 		newExpr := newExprs[id]
