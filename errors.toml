@@ -1413,7 +1413,7 @@ Invalid storage current version: %d
 
 ["ddl:8210"]
 error = '''
-Invalid %!s(MISSING) state: %!v(MISSING)
+Invalid %s state: %v
 '''
 
 ["ddl:8211"]
