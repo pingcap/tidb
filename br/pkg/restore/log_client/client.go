@@ -214,8 +214,12 @@ func (rc *LogClient) CleanUpKVFiles(
 	return rc.fileImporter.ClearFiles(ctx, rc.pdClient, "v1")
 }
 
-func (rc *LogClient) StartCheckpointRunnerForLogRestore(ctx context.Context) (*checkpoint.CheckpointRunner[checkpoint.LogRestoreKeyType, checkpoint.LogRestoreValueType], error) {
-	runner, err := checkpoint.StartCheckpointRunnerForLogRestore(ctx, rc.se)
+func (rc *LogClient) StartCheckpointRunnerForLogRestore(ctx context.Context, g glue.Glue, store kv.Storage) (*checkpoint.CheckpointRunner[checkpoint.LogRestoreKeyType, checkpoint.LogRestoreValueType], error) {
+	se, err := g.CreateSession(store)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	runner, err := checkpoint.StartCheckpointRunnerForLogRestore(ctx, se)
 	return runner, errors.Trace(err)
 }
 
