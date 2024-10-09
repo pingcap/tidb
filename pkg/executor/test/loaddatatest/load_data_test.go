@@ -482,16 +482,17 @@ func TestFix56408(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("USE test; DROP TABLE IF EXISTS load_data_replace;")
 	tk.MustExec("create table a(id int,name varchar(20),addr varchar(100),primary key (id) nonclustered);")
-	loadSQL := "LOAD DATA LOCAL INFILE '/tmp/nonexistence.csv' REPLACE INTO TABLE a FIELDS terminated by '|';"
+	tk.MustExec("LOAD DATA LOCAL INFILE '/tmp/nonexistence.csv' REPLACE INTO TABLE a FIELDS terminated by '|';")
 	ctx := tk.Session().(sessionctx.Context)
+	ld := ctx.Value(executor.LoadDataVarKey).(*executor.LoadDataWorker)
 	tests := []testCase{
 		{[]byte("1|aa|beijing\n1|aa|beijing\n1|aa|beijing\n1|aa|beijing\n2|bb|shanghai\n2|bb|shanghai\n2|bb|shanghai\n3|cc|guangzhou\n"),
 			[]string{"1 aa beijing", "2 bb shanghai", "3 cc guangzhou"},
 			"Records: 8  Deleted: 0  Skipped: 5  Warnings: 0",
 		},
 	}
-	deleteSQL := "DO 1"
-	selectSQL := "TABLE a;"
-	checkCases(tests, loadSQL, t, tk, ctx, selectSQL, deleteSQL)
+	deleteSQL := "delete from a;"
+	selectSQL := "select * from a;"
+	checkCases(tests, ld, t, tk, ctx, selectSQL, deleteSQL)
 	tk.MustExec("ADMIN CHECK TABLE a")
 }
