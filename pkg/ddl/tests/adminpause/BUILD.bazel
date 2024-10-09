@@ -13,8 +13,10 @@ go_library(
         "//pkg/ddl",
         "//pkg/ddl/logutil",
         "//pkg/domain",
+        "//pkg/domain/infosync",
         "//pkg/meta/model",
         "//pkg/testkit",
+        "//pkg/types",
     ],
 )
 

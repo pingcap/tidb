@@ -16,6 +16,7 @@ package ddl
 
 import (
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/ddl/notifier"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -25,7 +26,7 @@ import (
 	"go.uber.org/zap"
 )
 
-func (h *ddlHandlerImpl) onExchangeAPartition(t *util.DDLEvent) error {
+func (h *ddlHandlerImpl) onExchangeAPartition(t *notifier.SchemaChangeEvent) error {
 	globalTableInfo, originalPartInfo,
 		originalTableInfo := t.GetExchangePartitionInfo()
 	// Note: Put all the operations in a transaction.
@@ -107,12 +108,12 @@ func getCountsAndModifyCounts(
 	sctx sessionctx.Context,
 	partitionID, tableID int64,
 ) (partCount, partModifyCount, tableCount, tableModifyCount int64, err error) {
-	partCount, partModifyCount, _, err = storage.StatsMetaCountAndModifyCount(sctx, partitionID)
+	partCount, partModifyCount, _, err = storage.StatsMetaCountAndModifyCount(util.StatsCtx, sctx, partitionID)
 	if err != nil {
 		return
 	}
 
-	tableCount, tableModifyCount, _, err = storage.StatsMetaCountAndModifyCount(sctx, tableID)
+	tableCount, tableModifyCount, _, err = storage.StatsMetaCountAndModifyCount(util.StatsCtx, sctx, tableID)
 	if err != nil {
 		return
 	}

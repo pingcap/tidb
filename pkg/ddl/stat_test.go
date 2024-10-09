@@ -20,20 +20,14 @@ import (
 	"strconv"
 	"testing"
 
-	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/ddl/util"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
-	"github.com/pingcap/tidb/pkg/parser/ast"
-	pmodel "github.com/pingcap/tidb/pkg/parser/model"
-	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/parser/terror"
 	sessiontypes "github.com/pingcap/tidb/pkg/session/types"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/external"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
-	"github.com/pingcap/tidb/pkg/types"
 	"github.com/stretchr/testify/require"
 )
 
@@ -50,12 +44,14 @@ func TestGetDDLInfo(t *testing.T) {
 		ID: 2,
 	}
 	job := &model.Job{
+		Version:  model.JobVersion1,
 		ID:       1,
 		SchemaID: dbInfo2.ID,
 		Type:     model.ActionCreateSchema,
 		RowCount: 0,
 	}
 	job1 := &model.Job{
+		Version:  model.JobVersion1,
 		ID:       2,
 		SchemaID: dbInfo2.ID,
 		Type:     model.ActionAddIndex,
@@ -93,24 +89,6 @@ func addDDLJobs(sess sessiontypes.Session, txn kv.Transaction, job *model.Job) e
 	_, err = sess.Execute(kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL), fmt.Sprintf("insert into mysql.tidb_ddl_job(job_id, reorg, schema_ids, table_ids, job_meta, type, processing) values (%d, %t, %s, %s, %s, %d, %t)",
 		job.ID, job.MayNeedReorg(), strconv.Quote(strconv.FormatInt(job.SchemaID, 10)), strconv.Quote(strconv.FormatInt(job.TableID, 10)), util.WrapKey2String(b), job.Type, false))
 	return err
-}
-
-func buildCreateIdxJob(dbInfo *model.DBInfo, tblInfo *model.TableInfo, unique bool, indexName string, colName string) *model.Job {
-	return &model.Job{
-		SchemaID:   dbInfo.ID,
-		TableID:    tblInfo.ID,
-		Type:       model.ActionAddIndex,
-		BinlogInfo: &model.HistoryInfo{},
-		Args: []any{unique, pmodel.NewCIStr(indexName),
-			[]*ast.IndexPartSpecification{{
-				Column: &ast.ColumnName{Name: pmodel.NewCIStr(colName)},
-				Length: types.UnspecifiedLength}}},
-		ReorgMeta: &model.DDLReorgMeta{ // Add index job must have this field.
-			SQLMode:       mysql.SQLMode(0),
-			Warnings:      make(map[errors.ErrorID]*terror.Error),
-			WarningsCount: make(map[errors.ErrorID]int64),
-		},
-	}
 }
 
 func TestIssue42268(t *testing.T) {

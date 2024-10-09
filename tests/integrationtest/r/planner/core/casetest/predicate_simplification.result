@@ -130,3 +130,166 @@ id	estRows	task	access object	operator info
 TableReader	0.00	root		data:Selection
 └─Selection	0.00	cop[tikv]		in(planner__core__casetest__predicate_simplification.t.f, NULL, 2, 3), ne(planner__core__casetest__predicate_simplification.t.f, NULL)
   └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+drop table if exists dt;
+drop table if exists it;
+CREATE TABLE `dt` (
+`a` bigint(20) unsigned NOT NULL,
+`pk` bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+`b` longblob DEFAULT NULL,
+`c` int(11) unsigned NOT NULL,
+PRIMARY KEY (`pk`)
+);
+CREATE TABLE `it` (
+`pk` bigint(20) unsigned NOT NULL,
+`a` varbinary(767) DEFAULT NULL,
+`b` varbinary(767) DEFAULT NULL,
+`c` varbinary(767) DEFAULT NULL,
+`d` bigint(20) DEFAULT NULL,
+`e` varbinary(767) DEFAULT NULL,
+`f` int(11) unsigned NOT NULL,
+PRIMARY KEY (`pk`) ,
+KEY `a` (`a`,`d`,`c`,`pk`),
+KEY `b` (`b`,`pk`),
+KEY `c` (`d`,`pk`),
+KEY `d` (`e`,`pk`),
+KEY `e` (`c`,`pk`),
+KEY `f` (`a`,`pk`)
+);
+explain format='brief' SELECT
+dt.*
+FROM
+it
+LEFT JOIN dt ON it.pk = dt.pk
+WHERE
+it.a = "a"
+AND (
+(
+it.a > "a"
+)
+OR (
+it.a = "a" AND it.pk > 1
+)
+)
+ORDER BY
+it.pk
+LIMIT
+240;
+id	estRows	task	access object	operator info
+Projection	41.67	root		planner__core__casetest__predicate_simplification.dt.a, planner__core__casetest__predicate_simplification.dt.pk, planner__core__casetest__predicate_simplification.dt.b, planner__core__casetest__predicate_simplification.dt.c
+└─Limit	41.67	root		offset:0, count:240
+  └─IndexHashJoin	41.67	root		left outer join, inner:TableReader, outer key:planner__core__casetest__predicate_simplification.it.pk, inner key:planner__core__casetest__predicate_simplification.dt.pk, equal cond:eq(planner__core__casetest__predicate_simplification.it.pk, planner__core__casetest__predicate_simplification.dt.pk), other cond:or(gt(planner__core__casetest__predicate_simplification.it.a, "a"), and(eq(planner__core__casetest__predicate_simplification.it.a, "a"), gt(planner__core__casetest__predicate_simplification.dt.pk, 1)))
+    ├─Limit(Build)	33.33	root		offset:0, count:240
+    │ └─IndexReader	33.33	root		index:Limit
+    │   └─Limit	33.33	cop[tikv]		offset:0, count:240
+    │     └─IndexRangeScan	33.33	cop[tikv]	table:it, index:f(a, pk)	range:("a" 1,"a" +inf], keep order:true, stats:pseudo
+    └─TableReader(Probe)	33.33	root		data:TableRangeScan
+      └─TableRangeScan	33.33	cop[tikv]	table:dt	range: decided by [planner__core__casetest__predicate_simplification.it.pk], keep order:false, stats:pseudo
+explain  format='brief' SELECT * FROM
+(
+SELECT
+dt.*
+FROM
+it
+LEFT JOIN dt ON it.pk = dt.pk
+WHERE it.a = "a"
+AND it.a = "a"
+AND it.pk > 1
+) tb
+ORDER BY
+tb.pk
+LIMIT
+240;
+id	estRows	task	access object	operator info
+TopN	41.67	root		planner__core__casetest__predicate_simplification.dt.pk, offset:0, count:240
+└─IndexJoin	41.67	root		left outer join, inner:TableReader, outer key:planner__core__casetest__predicate_simplification.it.pk, inner key:planner__core__casetest__predicate_simplification.dt.pk, equal cond:eq(planner__core__casetest__predicate_simplification.it.pk, planner__core__casetest__predicate_simplification.dt.pk)
+  ├─IndexReader(Build)	33.33	root		index:IndexRangeScan
+  │ └─IndexRangeScan	33.33	cop[tikv]	table:it, index:f(a, pk)	range:("a" 1,"a" +inf], keep order:false, stats:pseudo
+  └─TableReader(Probe)	11.11	root		data:Selection
+    └─Selection	11.11	cop[tikv]		gt(planner__core__casetest__predicate_simplification.dt.pk, 1)
+      └─TableRangeScan	33.33	cop[tikv]	table:dt	range: decided by [planner__core__casetest__predicate_simplification.it.pk], keep order:false, stats:pseudo
+drop table if exists t1;
+create table t1 (a1 int, b1 int, c1 char(2));
+explain format='brief' select * from t1 where b1=1 and (b1>1 or b1 < 1);
+id	estRows	task	access object	operator info
+TableDual	0.00	root		rows:0
+explain format='brief' select * from t1 where a1=1 and (b1=1 or a1 < 1);
+id	estRows	task	access object	operator info
+TableReader	0.01	root		data:Selection
+└─Selection	0.01	cop[tikv]		eq(planner__core__casetest__predicate_simplification.t1.a1, 1), eq(planner__core__casetest__predicate_simplification.t1.b1, 1)
+  └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+explain format='brief' select * from t1 where (b1=1 or a1 < 1) and a1=1;
+id	estRows	task	access object	operator info
+TableReader	0.01	root		data:Selection
+└─Selection	0.01	cop[tikv]		eq(planner__core__casetest__predicate_simplification.t1.a1, 1), eq(planner__core__casetest__predicate_simplification.t1.b1, 1)
+  └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+explain format='brief' select * from t1 where a1 is null and (b1 = 1 or a1 > 5);
+id	estRows	task	access object	operator info
+TableReader	3.34	root		data:Selection
+└─Selection	3.34	cop[tikv]		isnull(planner__core__casetest__predicate_simplification.t1.a1), or(eq(planner__core__casetest__predicate_simplification.t1.b1, 1), gt(planner__core__casetest__predicate_simplification.t1.a1, 5))
+  └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+explain format='brief' select * from t1 where a1 is not null and (b1 = 1 or a1 > 5);
+id	estRows	task	access object	operator info
+TableReader	3336.66	root		data:Selection
+└─Selection	3336.66	cop[tikv]		not(isnull(planner__core__casetest__predicate_simplification.t1.a1)), or(eq(planner__core__casetest__predicate_simplification.t1.b1, 1), gt(planner__core__casetest__predicate_simplification.t1.a1, 5))
+  └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+explain format='brief' select * from t1 where a1=1 and (b1=1 or a1 <= 1);
+id	estRows	task	access object	operator info
+TableReader	10.00	root		data:Selection
+└─Selection	10.00	cop[tikv]		eq(planner__core__casetest__predicate_simplification.t1.a1, 1), or(eq(planner__core__casetest__predicate_simplification.t1.b1, 1), 1)
+  └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+explain format='brief' select * from t1 where c1=1 and (b1=1 or c1 < 1);
+id	estRows	task	access object	operator info
+TableReader	6401.60	root		data:Selection
+└─Selection	6401.60	cop[tikv]		eq(cast(planner__core__casetest__predicate_simplification.t1.c1, double BINARY), 1), or(eq(planner__core__casetest__predicate_simplification.t1.b1, 1), lt(cast(planner__core__casetest__predicate_simplification.t1.c1, double BINARY), 1))
+  └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+drop table if exists t1;
+drop table if exists t2;
+CREATE TABLE t1 (code varchar(10)) charset utf8mb4;
+CREATE TABLE t2 (id varchar(10) ) charset utf8mb4;
+EXPLAIN format='brief' SELECT * FROM t1 INNER JOIN t2 ON code=id WHERE id='a12' AND (LENGTH(code)=5 OR code < 'a00');
+id	estRows	task	access object	operator info
+HashJoin	10.00	root		inner join, equal:[eq(planner__core__casetest__predicate_simplification.t1.code, planner__core__casetest__predicate_simplification.t2.id)], other cond:or(eq(length(planner__core__casetest__predicate_simplification.t1.code), 5), lt(planner__core__casetest__predicate_simplification.t2.id, "a00"))
+├─TableReader(Build)	8.00	root		data:Selection
+│ └─Selection	8.00	cop[tikv]		eq(length(planner__core__casetest__predicate_simplification.t1.code), 5), eq(planner__core__casetest__predicate_simplification.t1.code, "a12"), not(isnull(planner__core__casetest__predicate_simplification.t1.code))
+│   └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+└─TableReader(Probe)	10.00	root		data:Selection
+  └─Selection	10.00	cop[tikv]		eq(planner__core__casetest__predicate_simplification.t2.id, "a12"), not(isnull(planner__core__casetest__predicate_simplification.t2.id))
+    └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
+drop table if exists t;
+CREATE TABLE t (a int , b int);
+explain format='brief' select a from t where (a between 2 and 1 or a < 1) and b < 1;
+id	estRows	task	access object	operator info
+TableReader	1104.45	root		data:Projection
+└─Projection	1104.45	cop[tikv]		planner__core__casetest__predicate_simplification.t.a
+  └─Selection	1104.45	cop[tikv]		lt(planner__core__casetest__predicate_simplification.t.b, 1), or(and(ge(planner__core__casetest__predicate_simplification.t.a, 2), le(planner__core__casetest__predicate_simplification.t.a, 1)), lt(planner__core__casetest__predicate_simplification.t.a, 1))
+    └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+explain format='brief' select a from t where (a between 0 and 2 or a < 2) and b < 1;
+id	estRows	task	access object	operator info
+TableReader	1104.45	root		data:Projection
+└─Projection	1104.45	cop[tikv]		planner__core__casetest__predicate_simplification.t.a
+  └─Selection	1104.45	cop[tikv]		lt(planner__core__casetest__predicate_simplification.t.b, 1), or(and(ge(planner__core__casetest__predicate_simplification.t.a, 0), le(planner__core__casetest__predicate_simplification.t.a, 2)), lt(planner__core__casetest__predicate_simplification.t.a, 2))
+    └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+drop table if exists IDT_MC21780;
+CREATE TABLE IDT_MC21780 (
+COL1 timestamp NULL DEFAULT NULL,
+COL2 timestamp NULL DEFAULT NULL,
+COL3 timestamp NULL DEFAULT NULL
+);
+explain
+select* from IDT_MC21780 t1 where t1.col1 < "1976-09-09 20:21:11" and t1.col1 in ("2021-07-14 09:28:16", "1982-01-09 03:36:39", "1970-12-18 10:53:28");
+id	estRows	task	access object	operator info
+TableReader_7	10.00	root		data:Selection_6
+└─Selection_6	10.00	cop[tikv]		eq(planner__core__casetest__predicate_simplification.idt_mc21780.col1, 1970-12-18 10:53:28.000000), lt(planner__core__casetest__predicate_simplification.idt_mc21780.col1, 1976-09-09 20:21:11.000000)
+  └─TableFullScan_5	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+explain
+select/*+ hash_join(t1) */ * from IDT_MC21780 t1 join IDT_MC21780 t2 on t1.col1 = t2.col1
+where t1. col1 < "1976-09-09 20:21:11"
+and t2. col1 in ("2021-07-14 09:28:16", "1982-01-09 03:36:39", "1970-12-18 10:53:28");
+id	estRows	task	access object	operator info
+HashJoin_9	12.50	root		inner join, equal:[eq(planner__core__casetest__predicate_simplification.idt_mc21780.col1, planner__core__casetest__predicate_simplification.idt_mc21780.col1)]
+├─TableReader_16(Build)	10.00	root		data:Selection_15
+│ └─Selection_15	10.00	cop[tikv]		eq(planner__core__casetest__predicate_simplification.idt_mc21780.col1, 1970-12-18 10:53:28.000000), lt(planner__core__casetest__predicate_simplification.idt_mc21780.col1, 1976-09-09 20:21:11.000000), not(isnull(planner__core__casetest__predicate_simplification.idt_mc21780.col1))
+│   └─TableFullScan_14	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
+└─TableReader_13(Probe)	10.00	root		data:Selection_12
+  └─Selection_12	10.00	cop[tikv]		eq(planner__core__casetest__predicate_simplification.idt_mc21780.col1, 1970-12-18 10:53:28.000000), lt(planner__core__casetest__predicate_simplification.idt_mc21780.col1, 1976-09-09 20:21:11.000000), not(isnull(planner__core__casetest__predicate_simplification.idt_mc21780.col1))
+    └─TableFullScan_11	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo

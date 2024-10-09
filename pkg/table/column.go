@@ -27,7 +27,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/errctx"
 	"github.com/pingcap/tidb/pkg/expression"
-	exprctx "github.com/pingcap/tidb/pkg/expression/context"
+	"github.com/pingcap/tidb/pkg/expression/exprctx"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -493,6 +493,11 @@ func CheckOnce(cols []*Column) error {
 // Otherwise, it will return a ErrColumnCantNull when error.
 func (c *Column) CheckNotNull(data *types.Datum, rowCntInLoadData uint64) error {
 	if (mysql.HasNotNullFlag(c.GetFlag()) || mysql.HasPreventNullInsertFlag(c.GetFlag())) && data.IsNull() {
+		if c.FieldType.EvalType().IsVectorKind() {
+			// Vector(N) is a special case because it does not have zero values as a fallback.
+			// So we always reject NULLs in NotNull context even if SQL mode is not strict.
+			return errors.Errorf("VECTOR column '%s' cannot be null", c.Name)
+		}
 		if rowCntInLoadData > 0 {
 			return ErrWarnNullToNotnull.GenWithStackByArgs(c.Name, rowCntInLoadData)
 		}

@@ -122,6 +122,43 @@ func TestV2Basic(t *testing.T) {
 	require.Equal(t, 0, len(tblInfos))
 
 	require.Equal(t, int64(2), is.SchemaMetaVersion())
+
+	// Test SchemaNameByTableID
+	schemaNameByTableIDTests := []struct {
+		name       string
+		tableID    int64
+		wantSchema pmodel.CIStr
+		wantOK     bool
+	}{
+		{
+			name:       "valid table ID",
+			tableID:    tblInfo.ID,
+			wantSchema: schemaName,
+			wantOK:     true,
+		},
+		{
+			name:       "non-existent table ID",
+			tableID:    tblInfo.ID + 1,
+			wantSchema: pmodel.CIStr{},
+			wantOK:     false,
+		},
+		{
+			name:       "invalid table ID (negative)",
+			tableID:    -1,
+			wantSchema: pmodel.CIStr{},
+			wantOK:     false,
+		},
+	}
+
+	for _, tt := range schemaNameByTableIDTests {
+		t.Run(tt.name, func(t *testing.T) {
+			gotSchema, gotOK := is.SchemaNameByTableID(tt.tableID)
+
+			require.Equal(t, tt.wantOK, gotOK)
+			require.Equal(t, tt.wantSchema, gotSchema)
+		})
+	}
+
 	// TODO: support FindTableByPartitionID.
 }
 
@@ -142,7 +179,7 @@ func TestMisc(t *testing.T) {
 	internal.AddResourceGroup(t, r.Store(), resourceGroupInfo)
 	txn, err := r.Store().Begin()
 	require.NoError(t, err)
-	err = applyCreateOrAlterResourceGroup(builder, meta.NewMeta(txn), &model.SchemaDiff{SchemaID: resourceGroupInfo.ID})
+	err = applyCreateOrAlterResourceGroup(builder, meta.NewMutator(txn), &model.SchemaDiff{SchemaID: resourceGroupInfo.ID})
 	require.NoError(t, err)
 	is = builder.Build(math.MaxUint64)
 	require.Len(t, is.AllResourceGroups(), 1)
@@ -156,7 +193,7 @@ func TestMisc(t *testing.T) {
 	internal.AddResourceGroup(t, r.Store(), resourceGroupInfo2)
 	txn, err = r.Store().Begin()
 	require.NoError(t, err)
-	err = applyCreateOrAlterResourceGroup(builder, meta.NewMeta(txn), &model.SchemaDiff{SchemaID: resourceGroupInfo2.ID})
+	err = applyCreateOrAlterResourceGroup(builder, meta.NewMutator(txn), &model.SchemaDiff{SchemaID: resourceGroupInfo2.ID})
 	require.NoError(t, err)
 	is = builder.Build(math.MaxUint64)
 	require.Len(t, is.AllResourceGroups(), 2)
@@ -170,7 +207,7 @@ func TestMisc(t *testing.T) {
 	internal.UpdateResourceGroup(t, r.Store(), resourceGroupInfo)
 	txn, err = r.Store().Begin()
 	require.NoError(t, err)
-	err = applyCreateOrAlterResourceGroup(builder, meta.NewMeta(txn), &model.SchemaDiff{SchemaID: resourceGroupInfo.ID})
+	err = applyCreateOrAlterResourceGroup(builder, meta.NewMutator(txn), &model.SchemaDiff{SchemaID: resourceGroupInfo.ID})
 	require.NoError(t, err)
 	is = builder.Build(math.MaxUint64)
 	require.Len(t, is.AllResourceGroups(), 2)
@@ -183,7 +220,7 @@ func TestMisc(t *testing.T) {
 	internal.DropResourceGroup(t, r.Store(), resourceGroupInfo)
 	txn, err = r.Store().Begin()
 	require.NoError(t, err)
-	_ = applyDropResourceGroup(builder, meta.NewMeta(txn), &model.SchemaDiff{SchemaID: resourceGroupInfo.ID})
+	_ = applyDropResourceGroup(builder, meta.NewMutator(txn), &model.SchemaDiff{SchemaID: resourceGroupInfo.ID})
 	is = builder.Build(math.MaxUint64)
 	require.Len(t, is.AllResourceGroups(), 1)
 	getResourceGroupInfo, ok = is.ResourceGroupByName(resourceGroupInfo2.Name)
@@ -196,7 +233,7 @@ func TestMisc(t *testing.T) {
 	internal.CreatePolicy(t, r.Store(), policyInfo)
 	txn, err = r.Store().Begin()
 	require.NoError(t, err)
-	err = applyCreatePolicy(builder, meta.NewMeta(txn), &model.SchemaDiff{SchemaID: policyInfo.ID})
+	err = applyCreatePolicy(builder, meta.NewMutator(txn), &model.SchemaDiff{SchemaID: policyInfo.ID})
 	require.NoError(t, err)
 	is = builder.Build(math.MaxUint64)
 	require.Len(t, is.AllPlacementPolicies(), 1)
@@ -210,7 +247,7 @@ func TestMisc(t *testing.T) {
 	internal.CreatePolicy(t, r.Store(), policyInfo2)
 	txn, err = r.Store().Begin()
 	require.NoError(t, err)
-	err = applyCreatePolicy(builder, meta.NewMeta(txn), &model.SchemaDiff{SchemaID: policyInfo2.ID})
+	err = applyCreatePolicy(builder, meta.NewMutator(txn), &model.SchemaDiff{SchemaID: policyInfo2.ID})
 	require.NoError(t, err)
 	is = builder.Build(math.MaxUint64)
 	require.Len(t, is.AllPlacementPolicies(), 2)
@@ -224,7 +261,7 @@ func TestMisc(t *testing.T) {
 	internal.UpdatePolicy(t, r.Store(), policyInfo)
 	txn, err = r.Store().Begin()
 	require.NoError(t, err)
-	_, err = applyAlterPolicy(builder, meta.NewMeta(txn), &model.SchemaDiff{SchemaID: policyInfo.ID})
+	_, err = applyAlterPolicy(builder, meta.NewMutator(txn), &model.SchemaDiff{SchemaID: policyInfo.ID})
 	require.NoError(t, err)
 	is = builder.Build(math.MaxUint64)
 	require.Len(t, is.AllPlacementPolicies(), 2)
@@ -265,7 +302,7 @@ func TestBundles(t *testing.T) {
 	internal.AddDB(t, r.Store(), dbInfo)
 	txn, err := r.Store().Begin()
 	require.NoError(t, err)
-	_, err = builder.ApplyDiff(meta.NewMeta(txn), &model.SchemaDiff{Type: model.ActionCreateSchema, Version: 1, SchemaID: dbInfo.ID})
+	_, err = builder.ApplyDiff(meta.NewMutator(txn), &model.SchemaDiff{Type: model.ActionCreateSchema, Version: 1, SchemaID: dbInfo.ID})
 	require.NoError(t, err)
 	is = builder.Build(math.MaxUint64)
 	require.Equal(t, 3, len(is.AllSchemas()))
@@ -277,7 +314,7 @@ func TestBundles(t *testing.T) {
 	internal.AddTable(t, r.Store(), dbInfo, tblInfo)
 	txn, err = r.Store().Begin()
 	require.NoError(t, err)
-	_, err = builder.ApplyDiff(meta.NewMeta(txn), &model.SchemaDiff{Type: model.ActionCreateTable, Version: 2, SchemaID: dbInfo.ID, TableID: tblInfo.ID})
+	_, err = builder.ApplyDiff(meta.NewMutator(txn), &model.SchemaDiff{Type: model.ActionCreateTable, Version: 2, SchemaID: dbInfo.ID, TableID: tblInfo.ID})
 	require.NoError(t, err)
 	is = builder.Build(math.MaxUint64)
 	tblInfos, err := is.SchemaTableInfos(context.Background(), dbInfo.Name)
@@ -294,7 +331,7 @@ func TestBundles(t *testing.T) {
 	internal.CreatePolicy(t, r.Store(), policyInfo)
 	txn, err = r.Store().Begin()
 	require.NoError(t, err)
-	_, err = builder.ApplyDiff(meta.NewMeta(txn), &model.SchemaDiff{Type: model.ActionCreatePlacementPolicy, Version: 3, SchemaID: policyInfo.ID})
+	_, err = builder.ApplyDiff(meta.NewMutator(txn), &model.SchemaDiff{Type: model.ActionCreatePlacementPolicy, Version: 3, SchemaID: policyInfo.ID})
 	require.NoError(t, err)
 	is = builder.Build(math.MaxUint64)
 	require.Len(t, is.AllPlacementPolicies(), 1)
@@ -311,7 +348,7 @@ func TestBundles(t *testing.T) {
 	internal.UpdateTable(t, r.Store(), dbInfo, tblInfo)
 	txn, err = r.Store().Begin()
 	require.NoError(t, err)
-	_, err = builder.ApplyDiff(meta.NewMeta(txn), &model.SchemaDiff{Type: model.ActionAlterTablePlacement, Version: 4, SchemaID: dbInfo.ID, TableID: tblInfo.ID})
+	_, err = builder.ApplyDiff(meta.NewMutator(txn), &model.SchemaDiff{Type: model.ActionAlterTablePlacement, Version: 4, SchemaID: dbInfo.ID, TableID: tblInfo.ID})
 	require.NoError(t, err)
 	is = builder.Build(math.MaxUint64)
 	getTableInfo, err := is.TableByName(context.Background(), schemaName, tableName)
@@ -329,7 +366,7 @@ func TestBundles(t *testing.T) {
 	internal.UpdatePolicy(t, r.Store(), policyInfo)
 	txn, err = r.Store().Begin()
 	require.NoError(t, err)
-	_, err = builder.ApplyDiff(meta.NewMeta(txn), &model.SchemaDiff{Type: model.ActionAlterPlacementPolicy, Version: 5, SchemaID: policyInfo.ID})
+	_, err = builder.ApplyDiff(meta.NewMutator(txn), &model.SchemaDiff{Type: model.ActionAlterPlacementPolicy, Version: 5, SchemaID: policyInfo.ID})
 	require.NoError(t, err)
 	is = builder.Build(math.MaxUint64)
 	getTableInfo, err = is.TableByName(context.Background(), schemaName, tableName)
@@ -346,7 +383,7 @@ func TestBundles(t *testing.T) {
 	internal.UpdateTable(t, r.Store(), dbInfo, tblInfo)
 	txn, err = r.Store().Begin()
 	require.NoError(t, err)
-	_, err = builder.ApplyDiff(meta.NewMeta(txn), &model.SchemaDiff{Type: model.ActionAlterTablePartitionPlacement, Version: 6, SchemaID: dbInfo.ID, TableID: tblInfo.ID})
+	_, err = builder.ApplyDiff(meta.NewMutator(txn), &model.SchemaDiff{Type: model.ActionAlterTablePartitionPlacement, Version: 6, SchemaID: dbInfo.ID, TableID: tblInfo.ID})
 	require.NoError(t, err)
 	is = builder.Build(math.MaxUint64)
 	bundle, ok = is.PlacementBundleByPhysicalTableID(tblInfo.Partition.Definitions[0].ID)
@@ -359,7 +396,7 @@ func TestBundles(t *testing.T) {
 	internal.UpdatePolicy(t, r.Store(), policyInfo)
 	txn, err = r.Store().Begin()
 	require.NoError(t, err)
-	_, err = builder.ApplyDiff(meta.NewMeta(txn), &model.SchemaDiff{Type: model.ActionAlterPlacementPolicy, Version: 6, SchemaID: policyInfo.ID})
+	_, err = builder.ApplyDiff(meta.NewMutator(txn), &model.SchemaDiff{Type: model.ActionAlterPlacementPolicy, Version: 6, SchemaID: policyInfo.ID})
 	require.NoError(t, err)
 	is = builder.Build(math.MaxUint64)
 	bundle, ok = is.PlacementBundleByPhysicalTableID(tblInfo.Partition.Definitions[0].ID)
@@ -387,7 +424,7 @@ func TestReferredFKInfo(t *testing.T) {
 	internal.AddDB(t, r.Store(), dbInfo)
 	txn, err := r.Store().Begin()
 	require.NoError(t, err)
-	_, err = builder.ApplyDiff(meta.NewMeta(txn), &model.SchemaDiff{Type: model.ActionCreateSchema, Version: 1, SchemaID: dbInfo.ID})
+	_, err = builder.ApplyDiff(meta.NewMutator(txn), &model.SchemaDiff{Type: model.ActionCreateSchema, Version: 1, SchemaID: dbInfo.ID})
 	require.NoError(t, err)
 
 	// check ReferredFKInfo after create table
@@ -402,7 +439,7 @@ func TestReferredFKInfo(t *testing.T) {
 	internal.AddTable(t, r.Store(), dbInfo, tblInfo)
 	txn, err = r.Store().Begin()
 	require.NoError(t, err)
-	_, err = builder.ApplyDiff(meta.NewMeta(txn), &model.SchemaDiff{Type: model.ActionCreateTable, Version: 2, SchemaID: dbInfo.ID, TableID: tblInfo.ID})
+	_, err = builder.ApplyDiff(meta.NewMutator(txn), &model.SchemaDiff{Type: model.ActionCreateTable, Version: 2, SchemaID: dbInfo.ID, TableID: tblInfo.ID})
 	require.NoError(t, err)
 	require.Equal(t, len(v2.referredForeignKeyMap), 1)
 	ref, ok := v2.referredForeignKeyMap[SchemaAndTableName{schema: tblInfo.ForeignKeys[0].RefSchema.L, table: tblInfo.ForeignKeys[0].RefTable.L}]
@@ -421,7 +458,7 @@ func TestReferredFKInfo(t *testing.T) {
 	internal.UpdateTable(t, r.Store(), dbInfo, tblInfo)
 	txn, err = r.Store().Begin()
 	require.NoError(t, err)
-	_, err = builder.ApplyDiff(meta.NewMeta(txn), &model.SchemaDiff{Type: model.ActionAddForeignKey, Version: 3, SchemaID: dbInfo.ID, TableID: tblInfo.ID})
+	_, err = builder.ApplyDiff(meta.NewMutator(txn), &model.SchemaDiff{Type: model.ActionAddForeignKey, Version: 3, SchemaID: dbInfo.ID, TableID: tblInfo.ID})
 	require.NoError(t, err)
 	require.Equal(t, len(v2.referredForeignKeyMap), 1)
 	ref, ok = v2.referredForeignKeyMap[SchemaAndTableName{schema: tblInfo.ForeignKeys[0].RefSchema.L, table: tblInfo.ForeignKeys[0].RefTable.L}]
@@ -434,7 +471,7 @@ func TestReferredFKInfo(t *testing.T) {
 	internal.UpdateTable(t, r.Store(), dbInfo, tblInfo)
 	txn, err = r.Store().Begin()
 	require.NoError(t, err)
-	_, err = builder.ApplyDiff(meta.NewMeta(txn), &model.SchemaDiff{Type: model.ActionDropForeignKey, Version: 4, SchemaID: dbInfo.ID, TableID: tblInfo.ID})
+	_, err = builder.ApplyDiff(meta.NewMutator(txn), &model.SchemaDiff{Type: model.ActionDropForeignKey, Version: 4, SchemaID: dbInfo.ID, TableID: tblInfo.ID})
 	require.NoError(t, err)
 	require.Equal(t, len(v2.referredForeignKeyMap), 1)
 	ref, ok = v2.referredForeignKeyMap[SchemaAndTableName{schema: tblInfo.ForeignKeys[0].RefSchema.L, table: tblInfo.ForeignKeys[0].RefTable.L}]
@@ -446,7 +483,7 @@ func TestReferredFKInfo(t *testing.T) {
 	internal.DropTable(t, r.Store(), dbInfo, tblInfo.ID, tblInfo.Name.L)
 	txn, err = r.Store().Begin()
 	require.NoError(t, err)
-	_, err = builder.ApplyDiff(meta.NewMeta(txn), &model.SchemaDiff{Type: model.ActionDropTable, Version: 5, SchemaID: dbInfo.ID, TableID: tblInfo.ID})
+	_, err = builder.ApplyDiff(meta.NewMutator(txn), &model.SchemaDiff{Type: model.ActionDropTable, Version: 5, SchemaID: dbInfo.ID, TableID: tblInfo.ID})
 	require.NoError(t, err)
 	require.Equal(t, len(v2.referredForeignKeyMap), 1)
 	ref, ok = v2.referredForeignKeyMap[SchemaAndTableName{schema: tblInfo.ForeignKeys[0].RefSchema.L, table: tblInfo.ForeignKeys[0].RefTable.L}]
@@ -459,7 +496,7 @@ func updateTableSpecialAttribute(t *testing.T, dbInfo *model.DBInfo, tblInfo *mo
 	internal.UpdateTable(t, r.Store(), dbInfo, tblInfo)
 	txn, err := r.Store().Begin()
 	require.NoError(t, err)
-	_, err = builder.ApplyDiff(meta.NewMeta(txn), &model.SchemaDiff{Type: actionType, Version: ver, SchemaID: dbInfo.ID, TableID: tblInfo.ID})
+	_, err = builder.ApplyDiff(meta.NewMutator(txn), &model.SchemaDiff{Type: actionType, Version: ver, SchemaID: dbInfo.ID, TableID: tblInfo.ID})
 	require.NoError(t, err)
 	is := builder.Build(math.MaxUint64)
 	tblInfoRes := is.ListTablesWithSpecialAttribute(filter)
@@ -492,7 +529,7 @@ func TestSpecialAttributeCorrectnessInSchemaChange(t *testing.T) {
 	internal.AddDB(t, r.Store(), dbInfo)
 	txn, err := r.Store().Begin()
 	require.NoError(t, err)
-	_, err = builder.ApplyDiff(meta.NewMeta(txn), &model.SchemaDiff{Type: model.ActionCreateSchema, Version: 1, SchemaID: dbInfo.ID})
+	_, err = builder.ApplyDiff(meta.NewMutator(txn), &model.SchemaDiff{Type: model.ActionCreateSchema, Version: 1, SchemaID: dbInfo.ID})
 	require.NoError(t, err)
 	is = builder.Build(math.MaxUint64)
 	require.Equal(t, 3, len(is.AllSchemas()))
@@ -503,7 +540,7 @@ func TestSpecialAttributeCorrectnessInSchemaChange(t *testing.T) {
 	internal.AddTable(t, r.Store(), dbInfo, tblInfo)
 	txn, err = r.Store().Begin()
 	require.NoError(t, err)
-	_, err = builder.ApplyDiff(meta.NewMeta(txn), &model.SchemaDiff{Type: model.ActionCreateTable, Version: 2, SchemaID: dbInfo.ID, TableID: tblInfo.ID})
+	_, err = builder.ApplyDiff(meta.NewMutator(txn), &model.SchemaDiff{Type: model.ActionCreateTable, Version: 2, SchemaID: dbInfo.ID, TableID: tblInfo.ID})
 	require.NoError(t, err)
 	is = builder.Build(math.MaxUint64)
 	tblInfos, err := is.SchemaTableInfos(context.Background(), dbInfo.Name)
@@ -600,7 +637,7 @@ func TestDataStructFieldsCorrectnessInSchemaChange(t *testing.T) {
 	internal.AddDB(t, r.Store(), dbInfo)
 	txn, err := r.Store().Begin()
 	require.NoError(t, err)
-	_, err = builder.ApplyDiff(meta.NewMeta(txn), &model.SchemaDiff{Type: model.ActionCreateSchema, Version: 1, SchemaID: dbInfo.ID})
+	_, err = builder.ApplyDiff(meta.NewMutator(txn), &model.SchemaDiff{Type: model.ActionCreateSchema, Version: 1, SchemaID: dbInfo.ID})
 	require.NoError(t, err)
 	dbIDName, ok := v2.Data.schemaID2Name.Get(schemaIDName{id: dbInfo.ID, schemaVersion: 1})
 	require.True(t, ok)
@@ -614,7 +651,7 @@ func TestDataStructFieldsCorrectnessInSchemaChange(t *testing.T) {
 	internal.AddTable(t, r.Store(), dbInfo, tblInfo)
 	txn, err = r.Store().Begin()
 	require.NoError(t, err)
-	_, err = builder.ApplyDiff(meta.NewMeta(txn), &model.SchemaDiff{Type: model.ActionCreateTable, Version: 2, SchemaID: dbInfo.ID, TableID: tblInfo.ID})
+	_, err = builder.ApplyDiff(meta.NewMutator(txn), &model.SchemaDiff{Type: model.ActionCreateTable, Version: 2, SchemaID: dbInfo.ID, TableID: tblInfo.ID})
 	require.NoError(t, err)
 	tblItem, ok := v2.Data.byName.Get(tableItem{dbName: dbInfo.Name, tableName: tblInfo.Name, schemaVersion: 2})
 	require.True(t, ok)
@@ -658,7 +695,7 @@ func TestDataStructFieldsCorrectnessInSchemaChange(t *testing.T) {
 	// verify table and partition related fields after drop table
 	txn, err = r.Store().Begin()
 	require.NoError(t, err)
-	_, err = builder.ApplyDiff(meta.NewMeta(txn), &model.SchemaDiff{Type: model.ActionDropTable, Version: 5, SchemaID: dbInfo.ID, TableID: tblInfo.ID})
+	_, err = builder.ApplyDiff(meta.NewMutator(txn), &model.SchemaDiff{Type: model.ActionDropTable, Version: 5, SchemaID: dbInfo.ID, TableID: tblInfo.ID})
 	require.NoError(t, err)
 	tblItem, ok = v2.Data.byName.Get(tableItem{dbName: dbInfo.Name, tableName: tblInfo.Name, schemaVersion: 5})
 	require.True(t, ok)
@@ -676,7 +713,7 @@ func TestDataStructFieldsCorrectnessInSchemaChange(t *testing.T) {
 	// verify schema related fields after drop database
 	txn, err = r.Store().Begin()
 	require.NoError(t, err)
-	_, err = builder.ApplyDiff(meta.NewMeta(txn), &model.SchemaDiff{Type: model.ActionDropSchema, Version: 6, SchemaID: dbInfo.ID})
+	_, err = builder.ApplyDiff(meta.NewMutator(txn), &model.SchemaDiff{Type: model.ActionDropSchema, Version: 6, SchemaID: dbInfo.ID})
 	require.NoError(t, err)
 	dbIDName, ok = v2.Data.schemaID2Name.Get(schemaIDName{id: dbInfo.ID, schemaVersion: 6})
 	require.True(t, ok)

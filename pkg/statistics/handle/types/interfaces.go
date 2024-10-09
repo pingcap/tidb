@@ -19,6 +19,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/pingcap/tidb/pkg/ddl/notifier"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -184,6 +185,10 @@ type StatsCache interface {
 	// UpdateStatsCache updates the cache.
 	UpdateStatsCache(addedTables []*statistics.Table, deletedTableIDs []int64)
 
+	// GetNextCheckVersionWithOffset returns the last version with offset.
+	// It is used to fetch updated statistics from the stats meta table.
+	GetNextCheckVersionWithOffset() uint64
+
 	// MaxTableStatsVersion returns the version of the current cache, which is defined as
 	// the max table stats version the cache has in its lifecycle.
 	MaxTableStatsVersion() uint64
@@ -277,7 +282,7 @@ type StatsReadWriter interface {
 	StatsMetaCountAndModifyCount(tableID int64) (count, modifyCount int64, err error)
 
 	// LoadNeededHistograms will load histograms for those needed columns/indices and put them into the cache.
-	LoadNeededHistograms() (err error)
+	LoadNeededHistograms(is infoschema.InfoSchema) (err error)
 
 	// ReloadExtendedStatistics drops the cache for extended statistics and reload data from mysql.stats_extended.
 	ReloadExtendedStatistics() error
@@ -458,9 +463,9 @@ type StatsGlobal interface {
 // DDL is used to handle ddl events.
 type DDL interface {
 	// HandleDDLEvent handles ddl events.
-	HandleDDLEvent(event *statsutil.DDLEvent) error
+	HandleDDLEvent(changeEvent *notifier.SchemaChangeEvent) error
 	// DDLEventCh returns ddl events channel in handle.
-	DDLEventCh() chan *statsutil.DDLEvent
+	DDLEventCh() chan *notifier.SchemaChangeEvent
 }
 
 // StatsHandle is used to manage TiDB Statistics.

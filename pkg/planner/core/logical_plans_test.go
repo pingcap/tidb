@@ -22,6 +22,7 @@ import (
 	"testing"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/expression"
@@ -88,6 +89,7 @@ func createPlannerSuite() (s *plannerSuite) {
 		MockHashPartitionTable(),
 		MockListPartitionTable(),
 		MockStateNoneColumnTable(),
+		MockGlobalIndexHashPartitionTable(),
 	}
 	id := int64(1)
 	for _, tblInfo := range tblInfos {
@@ -219,9 +221,9 @@ func TestJoinPredicatePushDown(t *testing.T) {
 		require.True(t, ok, comment)
 		join, ok := proj.Children()[0].(*logicalop.LogicalJoin)
 		require.True(t, ok, comment)
-		leftPlan, ok := join.Children()[0].(*DataSource)
+		leftPlan, ok := join.Children()[0].(*logicalop.DataSource)
 		require.True(t, ok, comment)
-		rightPlan, ok := join.Children()[1].(*DataSource)
+		rightPlan, ok := join.Children()[1].(*logicalop.DataSource)
 		require.True(t, ok, comment)
 		leftCond := expression.StringifyExpressionsWithCtx(ectx, leftPlan.PushedDownConds)
 		rightCond := expression.StringifyExpressionsWithCtx(ectx, rightPlan.PushedDownConds)
@@ -268,9 +270,9 @@ func TestOuterWherePredicatePushDown(t *testing.T) {
 		require.Equal(t, output[i].Sel, selCond, comment)
 		join, ok := selection.Children()[0].(*logicalop.LogicalJoin)
 		require.True(t, ok, comment)
-		leftPlan, ok := join.Children()[0].(*DataSource)
+		leftPlan, ok := join.Children()[0].(*logicalop.DataSource)
 		require.True(t, ok, comment)
-		rightPlan, ok := join.Children()[1].(*DataSource)
+		rightPlan, ok := join.Children()[1].(*logicalop.DataSource)
 		require.True(t, ok, comment)
 		leftCond := expression.StringifyExpressionsWithCtx(ectx, leftPlan.PushedDownConds)
 		rightCond := expression.StringifyExpressionsWithCtx(ectx, rightPlan.PushedDownConds)
@@ -381,8 +383,8 @@ func TestDeriveNotNullConds(t *testing.T) {
 		})
 		require.Equal(t, output[i].Plan, ToString(p), comment)
 		join := p.(base.LogicalPlan).Children()[0].(*logicalop.LogicalJoin)
-		left := join.Children()[0].(*DataSource)
-		right := join.Children()[1].(*DataSource)
+		left := join.Children()[0].(*logicalop.DataSource)
+		right := join.Children()[1].(*logicalop.DataSource)
 		leftConds := expression.StringifyExpressionsWithCtx(ectx, left.PushedDownConds)
 		rightConds := expression.StringifyExpressionsWithCtx(ectx, right.PushedDownConds)
 		testdata.OnRecord(func() {
@@ -404,7 +406,7 @@ func TestExtraPKNotNullFlag(t *testing.T) {
 	nodeW := resolve.NewNodeW(stmt)
 	p, err := BuildLogicalPlanForTest(ctx, s.sctx, nodeW, s.is)
 	require.NoError(t, err, comment)
-	ds := p.(*logicalop.LogicalProjection).Children()[0].(*logicalop.LogicalAggregation).Children()[0].(*DataSource)
+	ds := p.(*logicalop.LogicalProjection).Children()[0].(*logicalop.LogicalAggregation).Children()[0].(*logicalop.DataSource)
 	require.Equal(t, "_tidb_rowid", ds.Columns[2].Name.L)
 	require.Equal(t, mysql.PriKeyFlag|mysql.NotNullFlag, ds.Columns[2].GetFlag())
 	require.Equal(t, mysql.PriKeyFlag|mysql.NotNullFlag, ds.Schema().Columns[2].RetType.GetFlag())
@@ -799,15 +801,15 @@ func TestAllocID(t *testing.T) {
 	defer func() {
 		domain.GetDomain(ctx).StatsHandle().Close()
 	}()
-	pA := DataSource{}.Init(ctx, 0)
-	pB := DataSource{}.Init(ctx, 0)
+	pA := logicalop.DataSource{}.Init(ctx, 0)
+	pB := logicalop.DataSource{}.Init(ctx, 0)
 	require.Equal(t, pB.ID(), pA.ID()+1)
 }
 
 func checkDataSourceCols(p base.LogicalPlan, t *testing.T, ans map[int][]string, comment string) {
 	ectx := p.SCtx().GetExprCtx().GetEvalCtx()
 	switch v := p.(type) {
-	case *DataSource, *logicalop.LogicalUnionAll, *logicalop.LogicalLimit:
+	case *logicalop.DataSource, *logicalop.LogicalUnionAll, *logicalop.LogicalLimit:
 		testdata.OnRecord(func() {
 			ans[p.ID()] = make([]string, p.Schema().Len())
 		})
@@ -1931,19 +1933,35 @@ func byItemsToProperty(byItems []*util.ByItems) *property.PhysicalProperty {
 	return pp
 }
 
+func getIndexPathName(path *util.AccessPath) string {
+	if path.IsTablePath() {
+		return "PRIMARY_KEY"
+	}
+	return path.Index.Name.O
+}
+
 func pathsName(paths []*candidatePath) string {
 	var names []string
 	for _, path := range paths {
-		if path.path.IsTablePath() {
-			names = append(names, "PRIMARY_KEY")
+		if len(path.path.PartialIndexPaths) != 0 {
+			var partialIndexPahtNames []string
+			for _, partialIndexPath := range path.path.PartialIndexPaths {
+				partialIndexPahtNames = append(partialIndexPahtNames, getIndexPathName(partialIndexPath))
+			}
+			names = append(names, "["+strings.Join(partialIndexPahtNames, ",")+"]")
 		} else {
-			names = append(names, path.path.Index.Name.O)
+			names = append(names, getIndexPathName(path.path))
 		}
 	}
 	return strings.Join(names, ",")
 }
 
 func TestSkylinePruning(t *testing.T) {
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/planner/core/forceDynamicPrune", `return(true)`))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/planner/core/forceDynamicPrune"))
+	}()
+
 	tests := []struct {
 		sql    string
 		result string
@@ -1978,7 +1996,7 @@ func TestSkylinePruning(t *testing.T) {
 		},
 		{
 			sql:    "select * from t where f > 1 and g > 1",
-			result: "PRIMARY_KEY,g,f_g",
+			result: "f_g",
 		},
 		{
 			sql:    "select count(1) from t",
@@ -1986,7 +2004,7 @@ func TestSkylinePruning(t *testing.T) {
 		},
 		{
 			sql:    "select * from t where f > 3 and g = 5",
-			result: "PRIMARY_KEY,g,f_g",
+			result: "g,f_g",
 		},
 		{
 			sql:    "select * from t where g = 5 order by f",
@@ -1999,6 +2017,30 @@ func TestSkylinePruning(t *testing.T) {
 		{
 			sql:    "select * from t where d = 1 and f > 1 and g > 1 order by c, e",
 			result: "PRIMARY_KEY,c_d_e,g,f_g",
+		},
+		{
+			sql:    "select * from pt2_global_index where b > 1 order by b",
+			result: "b_global,b_c_global",
+		},
+		{
+			sql:    "select b from pt2_global_index where b > 1 order by b",
+			result: "b_global,b_c_global",
+		},
+		{
+			sql:    "select * from pt2_global_index where b > 1 or g = 5",
+			result: "PRIMARY_KEY,[g,b_global]",
+		},
+		{
+			sql:    "select * from pt2_global_index where b > 1 and c > 1",
+			result: "b_c_global", // will prune `b_c`
+		},
+		{
+			sql:    "select * from pt2_global_index where b > 1 and c > 1 and d > 1",
+			result: "PRIMARY_KEY,c_d_e,b_c_global", // will prune `b_c` and keep `c_d_e`
+		},
+		{
+			sql:    "select * from pt2_global_index where c > 1 and d > 1 and e > 1",
+			result: "c_d_e", // will prune `b_c` and `b_c_global`
 		},
 	}
 	s := createPlannerSuite()
@@ -2013,6 +2055,8 @@ func TestSkylinePruning(t *testing.T) {
 		require.NoError(t, err)
 		sctx := MockContext()
 		builder, _ := NewPlanBuilder().Init(sctx, s.is, hint.NewQBHintHandler(nil))
+		builder.ctx.GetSessionVars().StmtCtx.UseDynamicPruneMode = true
+		builder.ctx.GetSessionVars().PartitionPruneMode.Store("dynamic")
 		domain.GetDomain(sctx).MockInfoCacheAndLoadInfoSchema(s.is)
 		p, err := builder.Build(ctx, nodeW)
 		if err != nil {
@@ -2026,11 +2070,11 @@ func TestSkylinePruning(t *testing.T) {
 		lp := p.(base.LogicalPlan)
 		_, err = lp.RecursiveDeriveStats(nil)
 		require.NoError(t, err, comment)
-		var ds *DataSource
+		var ds *logicalop.DataSource
 		var byItems []*util.ByItems
 		for ds == nil {
 			switch v := lp.(type) {
-			case *DataSource:
+			case *logicalop.DataSource:
 				ds = v
 			case *logicalop.LogicalSort:
 				byItems = v.ByItems
@@ -2449,4 +2493,98 @@ func TestRollupExpand(t *testing.T) {
 	gm = expand.GenerateGroupingMarks([]*expression.Column{expand.Schema().Columns[2], expand.Schema().Columns[1]})
 	require.NotNil(t, gm)
 	require.Equal(t, len(gm), 2)
+}
+
+func TestPruneColumnsForDelete(t *testing.T) {
+	s := createPlannerSuite()
+	defer s.Close()
+	var (
+		inputs  []string
+		outputs []struct {
+			SQL            string
+			PrunedOutput   string
+			FullLayoutInfo [][]string
+			InsidePlan     string
+		}
+	)
+	testData := planSuiteUnexportedData
+	testData.LoadTestCases(t, &inputs, &outputs)
+	ctx := context.Background()
+	for i, input := range inputs {
+		comment := fmt.Sprintf("for %s %d", input, i)
+		stmt, err := s.p.ParseOneStmt(input, "", "")
+		require.NoError(t, err, comment)
+
+		nodeW := resolve.NewNodeW(stmt)
+		err = Preprocess(context.Background(), s.sctx, nodeW, WithPreprocessorReturn(&PreprocessorReturn{InfoSchema: s.is}))
+		require.NoError(t, err)
+		p, err := BuildLogicalPlanForTest(ctx, s.sctx, nodeW, s.is)
+		require.NoError(t, err)
+		deletePlan, ok := p.(*Delete)
+		require.True(t, ok, comment)
+		var sb strings.Builder
+
+		outputNames := func() string {
+			for i, names := range deletePlan.OutputNames() {
+				if i > 0 {
+					sb.WriteString(", ")
+				}
+				fmt.Fprintf(&sb, "%s: %d", names, i)
+			}
+			return sb.String()
+		}()
+
+		fullLayout := func() [][]string {
+			ret := make([][]string, 0, len(deletePlan.TblColPosInfos))
+			for _, colsLayout := range deletePlan.TblColPosInfos {
+				innerRet := make([]string, 0, len(colsLayout.IndexesRowLayout)*2+2)
+				if colsLayout.ExtraPartialRowOption.IndexesRowLayout == nil {
+					sb.Reset()
+					fmt.Fprintf(&sb, "no column-pruning happened")
+					innerRet = append(innerRet, sb.String())
+					ret = append(ret, innerRet)
+					continue
+				}
+				sb.Reset()
+				fmt.Fprintf(&sb, "tid: %d, [start, end]: [%d, %d] ", colsLayout.TblID, colsLayout.Start, colsLayout.End)
+				innerRet = append(innerRet, sb.String())
+				sb.Reset()
+				fmt.Fprintf(&sb, "handle cols: %s:", colsLayout.HandleCols.StringWithCtx(s.sctx.GetExprCtx().GetEvalCtx(), errors.RedactLogDisable))
+				for i := 0; i < colsLayout.HandleCols.NumCols(); i++ {
+					if i > 0 {
+						sb.WriteString(", ")
+					}
+					fmt.Fprintf(&sb, "%d", colsLayout.HandleCols.GetCol(i).Index)
+				}
+				innerRet = append(innerRet, sb.String())
+				tbl, _ := s.is.TableByID(context.Background(), colsLayout.TblID)
+				idxes := tbl.DeletableIndices()
+				require.Equal(t, len(colsLayout.IndexesRowLayout), len(idxes), comment)
+				for _, idx := range idxes {
+					sb.Reset()
+					idxInfo := idx.Meta()
+					fmt.Fprintf(&sb, "index %v: ", idxInfo.Name.O)
+					for _, col := range idxInfo.Columns {
+						fmt.Fprintf(&sb, "%s ", col.Name.O)
+					}
+					innerRet = append(innerRet, sb.String())
+					sb.Reset()
+					indexLayout := colsLayout.IndexesRowLayout[idxInfo.ID]
+					fmt.Fprintf(&sb, "col offset: %v", indexLayout)
+					innerRet = append(innerRet, sb.String())
+				}
+				ret = append(ret, innerRet)
+			}
+			return ret
+		}()
+
+		testdata.OnRecord(func() {
+			outputs[i].PrunedOutput = outputNames
+			outputs[i].FullLayoutInfo = fullLayout
+			outputs[i].InsidePlan = ToString(deletePlan.SelectPlan)
+		})
+		require.Equal(t, outputs[i].PrunedOutput, outputNames, comment)
+		require.Equal(t, outputs[i].FullLayoutInfo, fullLayout, comment)
+		require.Equal(t, outputs[i].InsidePlan, ToString(deletePlan.SelectPlan), comment)
+	}
 }

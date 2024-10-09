@@ -16,7 +16,7 @@ package ddl
 
 import (
 	"github.com/pingcap/errors"
-	ddlutil "github.com/pingcap/tidb/pkg/ddl/util"
+	"github.com/pingcap/tidb/pkg/ddl/notifier"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/statistics/handle/lockstats"
@@ -24,14 +24,14 @@ import (
 	"github.com/pingcap/tidb/pkg/statistics/handle/util"
 )
 
-func (h *ddlHandlerImpl) onDropPartitions(t *ddlutil.SchemaChangeEvent) error {
+func (h *ddlHandlerImpl) onDropPartitions(t *notifier.SchemaChangeEvent) error {
 	globalTableInfo, droppedPartitionInfo := t.GetDropPartitionInfo()
 	// Note: Put all the operations in a transaction.
 	if err := util.CallWithSCtx(h.statsHandler.SPool(), func(sctx sessionctx.Context) error {
 		count := int64(0)
 		for _, def := range droppedPartitionInfo.Definitions {
 			// Get the count and modify count of the partition.
-			tableCount, _, _, err := storage.StatsMetaCountAndModifyCount(sctx, def.ID)
+			tableCount, _, _, err := storage.StatsMetaCountAndModifyCount(util.StatsCtx, sctx, def.ID)
 			if err != nil {
 				return err
 			}
@@ -54,6 +54,7 @@ func (h *ddlHandlerImpl) onDropPartitions(t *ddlutil.SchemaChangeEvent) error {
 			// Because we drop the partition, we should subtract the count from the global stats.
 			delta := -count
 			err = storage.UpdateStatsMeta(
+				util.StatsCtx,
 				sctx,
 				startTS,
 				variable.TableDelta{Count: count, Delta: delta},

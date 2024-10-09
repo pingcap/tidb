@@ -31,7 +31,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/errctx"
-	"github.com/pingcap/tidb/pkg/expression/contextopt"
+	"github.com/pingcap/tidb/pkg/expression/expropt"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -2524,7 +2524,7 @@ func evalNowWithFsp(ctx EvalContext, fsp int) (types.Time, bool, error) {
 		return types.ZeroTime, true, err
 	}
 
-	err = result.ConvertTimeZone(time.Local, location(ctx))
+	err = result.ConvertTimeZone(nowTs.Location(), location(ctx))
 	if err != nil {
 		return types.ZeroTime, true, err
 	}
@@ -3005,8 +3005,8 @@ func (du *baseDateArithmetical) add(ctx EvalContext, date types.Time, interval, 
 
 func (du *baseDateArithmetical) addDate(ctx EvalContext, date types.Time, year, month, day, nano int64, resultFsp int) (types.Time, bool, error) {
 	goTime, err := date.GoTime(time.UTC)
-	if err := handleInvalidTimeError(ctx, err); err != nil {
-		return types.ZeroTime, true, err
+	if err != nil {
+		return types.ZeroTime, true, handleInvalidTimeError(ctx, err)
 	}
 
 	goTime = goTime.Add(time.Duration(nano))
@@ -3875,7 +3875,7 @@ func (c *addSubDateFunctionClass) getFunction(ctx BuildContext, args []Expressio
 			timeOp:               c.timeOp,
 		}
 		c.setPbCodeOp(sig, tipb.ScalarFuncSig_AddDateDatetimeDecimal, tipb.ScalarFuncSig_SubDateDatetimeDecimal)
-	case dateEvalTp == types.ETDuration && intervalEvalTp == types.ETString:
+	case dateEvalTp == types.ETDuration && intervalEvalTp == types.ETString && resultTp == mysql.TypeDuration:
 		sig = &builtinAddSubDateDurationAnySig{
 			baseBuiltinFunc:      bf,
 			baseDateArithmetical: newDateArithmeticalUtil(),
@@ -3885,7 +3885,7 @@ func (c *addSubDateFunctionClass) getFunction(ctx BuildContext, args []Expressio
 			durationOp:           c.durationOp,
 		}
 		c.setPbCodeOp(sig, tipb.ScalarFuncSig_AddDateDurationString, tipb.ScalarFuncSig_SubDateDurationString)
-	case dateEvalTp == types.ETDuration && intervalEvalTp == types.ETInt:
+	case dateEvalTp == types.ETDuration && intervalEvalTp == types.ETInt && resultTp == mysql.TypeDuration:
 		sig = &builtinAddSubDateDurationAnySig{
 			baseBuiltinFunc:      bf,
 			baseDateArithmetical: newDateArithmeticalUtil(),
@@ -3895,7 +3895,7 @@ func (c *addSubDateFunctionClass) getFunction(ctx BuildContext, args []Expressio
 			durationOp:           c.durationOp,
 		}
 		c.setPbCodeOp(sig, tipb.ScalarFuncSig_AddDateDurationInt, tipb.ScalarFuncSig_SubDateDurationInt)
-	case dateEvalTp == types.ETDuration && intervalEvalTp == types.ETReal:
+	case dateEvalTp == types.ETDuration && intervalEvalTp == types.ETReal && resultTp == mysql.TypeDuration:
 		sig = &builtinAddSubDateDurationAnySig{
 			baseBuiltinFunc:      bf,
 			baseDateArithmetical: newDateArithmeticalUtil(),
@@ -3905,7 +3905,7 @@ func (c *addSubDateFunctionClass) getFunction(ctx BuildContext, args []Expressio
 			durationOp:           c.durationOp,
 		}
 		c.setPbCodeOp(sig, tipb.ScalarFuncSig_AddDateDurationReal, tipb.ScalarFuncSig_SubDateDurationReal)
-	case dateEvalTp == types.ETDuration && intervalEvalTp == types.ETDecimal:
+	case dateEvalTp == types.ETDuration && intervalEvalTp == types.ETDecimal && resultTp == mysql.TypeDuration:
 		sig = &builtinAddSubDateDurationAnySig{
 			baseBuiltinFunc:      bf,
 			baseDateArithmetical: newDateArithmeticalUtil(),
@@ -3915,6 +3915,46 @@ func (c *addSubDateFunctionClass) getFunction(ctx BuildContext, args []Expressio
 			durationOp:           c.durationOp,
 		}
 		c.setPbCodeOp(sig, tipb.ScalarFuncSig_AddDateDurationDecimal, tipb.ScalarFuncSig_SubDateDurationDecimal)
+	case dateEvalTp == types.ETDuration && intervalEvalTp == types.ETString && resultTp == mysql.TypeDatetime:
+		sig = &builtinAddSubDateDurationAnySig{
+			baseBuiltinFunc:      bf,
+			baseDateArithmetical: newDateArithmeticalUtil(),
+			getInterval:          getIntervalFromString,
+			vecGetInterval:       vecGetIntervalFromString,
+			timeOp:               c.timeOp,
+			durationOp:           c.durationOp,
+		}
+		c.setPbCodeOp(sig, tipb.ScalarFuncSig_AddDateDurationStringDatetime, tipb.ScalarFuncSig_SubDateDurationStringDatetime)
+	case dateEvalTp == types.ETDuration && intervalEvalTp == types.ETInt && resultTp == mysql.TypeDatetime:
+		sig = &builtinAddSubDateDurationAnySig{
+			baseBuiltinFunc:      bf,
+			baseDateArithmetical: newDateArithmeticalUtil(),
+			getInterval:          getIntervalFromInt,
+			vecGetInterval:       vecGetIntervalFromInt,
+			timeOp:               c.timeOp,
+			durationOp:           c.durationOp,
+		}
+		c.setPbCodeOp(sig, tipb.ScalarFuncSig_AddDateDurationIntDatetime, tipb.ScalarFuncSig_SubDateDurationIntDatetime)
+	case dateEvalTp == types.ETDuration && intervalEvalTp == types.ETReal && resultTp == mysql.TypeDatetime:
+		sig = &builtinAddSubDateDurationAnySig{
+			baseBuiltinFunc:      bf,
+			baseDateArithmetical: newDateArithmeticalUtil(),
+			getInterval:          getIntervalFromReal,
+			vecGetInterval:       vecGetIntervalFromReal,
+			timeOp:               c.timeOp,
+			durationOp:           c.durationOp,
+		}
+		c.setPbCodeOp(sig, tipb.ScalarFuncSig_AddDateDurationRealDatetime, tipb.ScalarFuncSig_SubDateDurationRealDatetime)
+	case dateEvalTp == types.ETDuration && intervalEvalTp == types.ETDecimal && resultTp == mysql.TypeDatetime:
+		sig = &builtinAddSubDateDurationAnySig{
+			baseBuiltinFunc:      bf,
+			baseDateArithmetical: newDateArithmeticalUtil(),
+			getInterval:          getIntervalFromDecimal,
+			vecGetInterval:       vecGetIntervalFromDecimal,
+			timeOp:               c.timeOp,
+			durationOp:           c.durationOp,
+		}
+		c.setPbCodeOp(sig, tipb.ScalarFuncSig_AddDateDurationDecimalDatetime, tipb.ScalarFuncSig_SubDateDurationDecimalDatetime)
 	}
 	return sig, nil
 }
@@ -6655,8 +6695,8 @@ func (c *tidbBoundedStalenessFunctionClass) getFunction(ctx BuildContext, args [
 
 type builtinTiDBBoundedStalenessSig struct {
 	baseBuiltinFunc
-	contextopt.SessionVarsPropReader
-	contextopt.KVStorePropReader
+	expropt.SessionVarsPropReader
+	expropt.KVStorePropReader
 }
 
 // RequiredOptionalEvalProps implements the RequireOptionalEvalProps interface.
@@ -6807,7 +6847,7 @@ func (c *tidbCurrentTsoFunctionClass) getFunction(ctx BuildContext, args []Expre
 
 type builtinTiDBCurrentTsoSig struct {
 	baseBuiltinFunc
-	contextopt.SessionVarsPropReader
+	expropt.SessionVarsPropReader
 }
 
 func (b *builtinTiDBCurrentTsoSig) Clone() builtinFunc {

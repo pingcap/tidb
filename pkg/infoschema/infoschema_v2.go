@@ -590,6 +590,16 @@ func (is *infoschemaV2) CloneAndUpdateTS(startTS uint64) *infoschemaV2 {
 	return &tmp
 }
 
+func (is *infoschemaV2) searchTableItemByID(tableID int64) (tableItem, bool) {
+	eq := func(a, b *tableItem) bool { return a.tableID == b.tableID }
+	return search(
+		is.byID,
+		is.infoSchema.schemaMetaVersion,
+		tableItem{tableID: tableID, schemaVersion: math.MaxInt64},
+		eq,
+	)
+}
+
 // TableByID implements the InfoSchema interface.
 // As opposed to TableByName, TableByID will not refill cache when schema cache miss,
 // unless the caller changes the behavior by passing a context use WithRefillOption.
@@ -598,15 +608,7 @@ func (is *infoschemaV2) TableByID(ctx context.Context, id int64) (val table.Tabl
 		return
 	}
 
-	// Get from the cache.
-	key := tableCacheKey{id, is.infoSchema.schemaMetaVersion}
-	tbl, found := is.tableCache.Get(key)
-	if found && tbl != nil {
-		return tbl, true
-	}
-
-	eq := func(a, b *tableItem) bool { return a.tableID == b.tableID }
-	itm, ok := search(is.byID, is.infoSchema.schemaMetaVersion, tableItem{tableID: id, schemaVersion: math.MaxInt64}, eq)
+	itm, ok := is.searchTableItemByID(id)
 	if !ok {
 		return nil, false
 	}
@@ -627,11 +629,8 @@ func (is *infoschemaV2) TableByID(ctx context.Context, id int64) (val table.Tabl
 
 	// get cache with old key
 	oldKey := tableCacheKey{itm.tableID, itm.schemaVersion}
-	tbl, found = is.tableCache.Get(oldKey)
+	tbl, found := is.tableCache.Get(oldKey)
 	if found && tbl != nil {
-		if refill {
-			is.tableCache.Set(key, tbl)
-		}
 		return tbl, true
 	}
 
@@ -647,6 +646,19 @@ func (is *infoschemaV2) TableByID(ctx context.Context, id int64) (val table.Tabl
 	return ret, true
 }
 
+func (is *infoschemaV2) SchemaNameByTableID(tableID int64) (schemaName pmodel.CIStr, ok bool) {
+	if !tableIDIsValid(tableID) {
+		return
+	}
+
+	itm, ok := is.searchTableItemByID(tableID)
+	if !ok {
+		return
+	}
+
+	return itm.dbName, true
+}
+
 // TableItem is exported from tableItem.
 type TableItem struct {
 	DBName    pmodel.CIStr
@@ -657,12 +669,12 @@ type TableItem struct {
 // Used by executor/infoschema_reader.go to handle reading from INFORMATION_SCHEMA.TABLES.
 // If visit return false, stop the iterate process.
 func (is *infoschemaV2) IterateAllTableItems(visit func(TableItem) bool) {
-	max, ok := is.byName.Max()
+	maxv, ok := is.byName.Max()
 	if !ok {
 		return
 	}
 	var pivot *tableItem
-	is.byName.Descend(max, func(item tableItem) bool {
+	is.byName.Descend(maxv, func(item tableItem) bool {
 		if item.schemaVersion > is.schemaMetaVersion {
 			// skip MVCC version, those items are not visible to the queried schema version
 			return true
@@ -806,7 +818,7 @@ retry:
 	// Using the KV timeout read feature to address the issue of potential DDL lease expiration when
 	// the meta region leader is slow.
 	snapshot.SetOption(kv.TiKVClientReadTimeout, uint64(3000)) // 3000ms.
-	m := meta.NewSnapshotMeta(snapshot)
+	m := meta.NewReader(snapshot)
 	tblInfos, err := m.ListTables(dbInfo.ID)
 	if err != nil {
 		if meta.ErrDBNotExists.Equal(err) {
@@ -1071,7 +1083,7 @@ func (is *infoschemaV2) loadTableInfo(ctx context.Context, tblID, dbID int64, ts
 		// Using the KV timeout read feature to address the issue of potential DDL lease expiration when
 		// the meta region leader is slow.
 		snapshot.SetOption(kv.TiKVClientReadTimeout, uint64(3000)) // 3000ms.
-		m := meta.NewSnapshotMeta(snapshot)
+		m := meta.NewReader(snapshot)
 
 		tblInfo, err := m.GetTable(dbID, tblID)
 		if err != nil {
@@ -1131,14 +1143,14 @@ func IsV2(is InfoSchema) (bool, *infoschemaV2) {
 	return ok, ret
 }
 
-func applyTableUpdate(b *Builder, m *meta.Meta, diff *model.SchemaDiff) ([]int64, error) {
+func applyTableUpdate(b *Builder, m meta.Reader, diff *model.SchemaDiff) ([]int64, error) {
 	if b.enableV2 {
 		return b.applyTableUpdateV2(m, diff)
 	}
 	return b.applyTableUpdate(m, diff)
 }
 
-func applyCreateSchema(b *Builder, m *meta.Meta, diff *model.SchemaDiff) error {
+func applyCreateSchema(b *Builder, m meta.Reader, diff *model.SchemaDiff) error {
 	return b.applyCreateSchema(m, diff)
 }
 
@@ -1149,11 +1161,11 @@ func applyDropSchema(b *Builder, diff *model.SchemaDiff) []int64 {
 	return b.applyDropSchema(diff)
 }
 
-func applyRecoverSchema(b *Builder, m *meta.Meta, diff *model.SchemaDiff) ([]int64, error) {
+func applyRecoverSchema(b *Builder, m meta.Reader, diff *model.SchemaDiff) ([]int64, error) {
 	if diff.ReadTableFromMeta {
 		// recover tables under the database and set them to diff.AffectedOpts
 		s := b.store.GetSnapshot(kv.MaxVersion)
-		recoverMeta := meta.NewSnapshotMeta(s)
+		recoverMeta := meta.NewReader(s)
 		tables, err := recoverMeta.ListSimpleTables(diff.SchemaID)
 		if err != nil {
 			return nil, err
@@ -1175,7 +1187,7 @@ func applyRecoverSchema(b *Builder, m *meta.Meta, diff *model.SchemaDiff) ([]int
 	return b.applyRecoverSchema(m, diff)
 }
 
-func (b *Builder) applyRecoverSchemaV2(m *meta.Meta, diff *model.SchemaDiff) ([]int64, error) {
+func (b *Builder) applyRecoverSchemaV2(m meta.Reader, diff *model.SchemaDiff) ([]int64, error) {
 	if di, ok := b.infoschemaV2.SchemaByID(diff.SchemaID); ok {
 		return nil, ErrDatabaseExists.GenWithStackByArgs(
 			fmt.Sprintf("(Schema ID %d)", di.ID),
@@ -1189,14 +1201,14 @@ func (b *Builder) applyRecoverSchemaV2(m *meta.Meta, diff *model.SchemaDiff) ([]
 	return applyCreateTables(b, m, diff)
 }
 
-func applyModifySchemaCharsetAndCollate(b *Builder, m *meta.Meta, diff *model.SchemaDiff) error {
+func applyModifySchemaCharsetAndCollate(b *Builder, m meta.Reader, diff *model.SchemaDiff) error {
 	if b.enableV2 {
 		return b.applyModifySchemaCharsetAndCollateV2(m, diff)
 	}
 	return b.applyModifySchemaCharsetAndCollate(m, diff)
 }
 
-func applyModifySchemaDefaultPlacement(b *Builder, m *meta.Meta, diff *model.SchemaDiff) error {
+func applyModifySchemaDefaultPlacement(b *Builder, m meta.Reader, diff *model.SchemaDiff) error {
 	if b.enableV2 {
 		return b.applyModifySchemaDefaultPlacementV2(m, diff)
 	}
@@ -1210,7 +1222,7 @@ func applyDropTable(b *Builder, diff *model.SchemaDiff, dbInfo *model.DBInfo, ta
 	return b.applyDropTable(diff, dbInfo, tableID, affected)
 }
 
-func applyCreateTables(b *Builder, m *meta.Meta, diff *model.SchemaDiff) ([]int64, error) {
+func applyCreateTables(b *Builder, m meta.Reader, diff *model.SchemaDiff) ([]int64, error) {
 	return b.applyCreateTables(m, diff)
 }
 
@@ -1250,7 +1262,7 @@ func allocByID(b *Builder, id int64) (autoid.Allocators, bool) {
 }
 
 // TODO: more UT to check the correctness.
-func (b *Builder) applyTableUpdateV2(m *meta.Meta, diff *model.SchemaDiff) ([]int64, error) {
+func (b *Builder) applyTableUpdateV2(m meta.Reader, diff *model.SchemaDiff) ([]int64, error) {
 	oldDBInfo, ok := b.infoschemaV2.SchemaByID(diff.SchemaID)
 	if !ok {
 		return nil, ErrDatabaseNotExists.GenWithStackByArgs(
@@ -1331,7 +1343,7 @@ func (b *Builder) applyDropTableV2(diff *model.SchemaDiff, dbInfo *model.DBInfo,
 	return affected
 }
 
-func (b *Builder) applyModifySchemaCharsetAndCollateV2(m *meta.Meta, diff *model.SchemaDiff) error {
+func (b *Builder) applyModifySchemaCharsetAndCollateV2(m meta.Reader, diff *model.SchemaDiff) error {
 	di, err := m.GetDatabase(diff.SchemaID)
 	if err != nil {
 		return errors.Trace(err)
@@ -1350,7 +1362,7 @@ func (b *Builder) applyModifySchemaCharsetAndCollateV2(m *meta.Meta, diff *model
 	return nil
 }
 
-func (b *Builder) applyModifySchemaDefaultPlacementV2(m *meta.Meta, diff *model.SchemaDiff) error {
+func (b *Builder) applyModifySchemaDefaultPlacementV2(m meta.Reader, diff *model.SchemaDiff) error {
 	di, err := m.GetDatabase(diff.SchemaID)
 	if err != nil {
 		return errors.Trace(err)

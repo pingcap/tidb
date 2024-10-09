@@ -529,7 +529,7 @@ func TestChangingTableCharset(t *testing.T) {
 		require.NoError(t, err)
 		txn, err := mockCtx.Txn(true)
 		require.NoError(t, err)
-		mt := meta.NewMeta(txn)
+		mt := meta.NewMutator(txn)
 
 		err = mt.UpdateTable(db.ID, tblInfo)
 		require.NoError(t, err)
@@ -775,7 +775,7 @@ func TestCaseInsensitiveCharsetAndCollate(t *testing.T) {
 		require.NoError(t, err)
 		txn, err := mockCtx.Txn(true)
 		require.NoError(t, err)
-		mt := meta.NewMeta(txn)
+		mt := meta.NewMutator(txn)
 		require.True(t, ok)
 		err = mt.UpdateTable(db.ID, tblInfo)
 		require.NoError(t, err)
@@ -1333,7 +1333,8 @@ func assertAlterWarnExec(tk *testkit.TestKit, t *testing.T, sql string) {
 }
 
 func TestAlterAlgorithm(t *testing.T) {
-	store := testkit.CreateMockStore(t, mockstore.WithDDLChecker())
+	store, dom := testkit.CreateMockStoreAndDomain(t, mockstore.WithDDLChecker())
+	ddlChecker := dom.DDL().(*schematracker.Checker)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -1375,6 +1376,20 @@ func TestAlterAlgorithm(t *testing.T) {
 	assertAlterWarnExec(tk, t, "alter table t rename index idx_c1 to idx_c2, ALGORITHM=INPLACE")
 	tk.MustExec("alter table t rename index idx_c2 to idx_c, ALGORITHM=INSTANT")
 	tk.MustExec("alter table t rename index idx_c to idx_c1, ALGORITHM=DEFAULT")
+
+	// Test corner case for renameIndexes
+	tk.MustExec(`create table tscalar(c1 int, col_1_1 int, key col_1(col_1_1))`)
+	tk.MustExec("alter table tscalar rename index col_1 to col_2")
+	tk.MustExec("admin check table tscalar")
+	tk.MustExec("drop table tscalar")
+
+	// Test rename index with scalar function
+	ddlChecker.Disable()
+	tk.MustExec(`create table tscalar(id int, col_1 json, KEY idx_1 ((cast(col_1 as char(64) array))))`)
+	tk.MustExec("alter table tscalar rename index idx_1 to idx_1_1")
+	tk.MustExec("admin check table tscalar")
+	tk.MustExec("drop table tscalar")
+	ddlChecker.Enable()
 
 	// partition.
 	assertAlterWarnExec(tk, t, "alter table t ALGORITHM=COPY, truncate partition p1")
@@ -1428,7 +1443,7 @@ func TestTreatOldVersionUTF8AsUTF8MB4(t *testing.T) {
 		require.NoError(t, err)
 		txn, err := mockCtx.Txn(true)
 		require.NoError(t, err)
-		mt := meta.NewMeta(txn)
+		mt := meta.NewMutator(txn)
 		require.True(t, ok)
 		err = mt.UpdateTable(db.ID, tblInfo)
 		require.NoError(t, err)
@@ -1967,11 +1982,13 @@ func TestDropColumnWithCompositeIndex(t *testing.T) {
 	defer tk.MustExec("drop table if exists t_drop_column_with_comp_idx")
 	tk.MustExec("create index idx_bc on t_drop_column_with_comp_idx(b, c)")
 	tk.MustExec("create index idx_b on t_drop_column_with_comp_idx(b)")
-	tk.MustGetErrMsg("alter table t_drop_column_with_comp_idx drop column b", "[ddl:8200]can't drop column b with composite index covered or Primary Key covered now")
+	tk.MustGetErrMsg("alter table t_drop_column_with_comp_idx drop column b",
+		"[ddl:8200]can't drop column b with composite index covered or Primary Key covered now")
 	tk.MustQuery(query).Check(testkit.Rows("idx_b YES", "idx_bc YES"))
 	tk.MustExec("alter table t_drop_column_with_comp_idx alter index idx_bc invisible")
 	tk.MustExec("alter table t_drop_column_with_comp_idx alter index idx_b invisible")
-	tk.MustGetErrMsg("alter table t_drop_column_with_comp_idx drop column b", "[ddl:8200]can't drop column b with composite index covered or Primary Key covered now")
+	tk.MustGetErrMsg("alter table t_drop_column_with_comp_idx drop column b",
+		"[ddl:8200]can't drop column b with composite index covered or Primary Key covered now")
 	tk.MustQuery(query).Check(testkit.Rows("idx_b NO", "idx_bc NO"))
 }
 
@@ -2370,35 +2387,31 @@ func TestDuplicateErrorMessage(t *testing.T) {
 
 	for _, newCollate := range []bool{false, true} {
 		collate.SetNewCollationEnabledForTest(newCollate)
-		for _, globalIndex := range []bool{false, true} {
-			tk.MustExec(fmt.Sprintf("set tidb_enable_global_index=%t", globalIndex))
-			for _, clusteredIndex := range []variable.ClusteredIndexDefMode{variable.ClusteredIndexDefModeOn, variable.ClusteredIndexDefModeOff, variable.ClusteredIndexDefModeIntOnly} {
-				tk.Session().GetSessionVars().EnableClusteredIndex = clusteredIndex
-				for _, t := range tests {
-					tk.MustExec("drop table if exists t;")
-					fields := make([]string, len(t.types))
+		for _, clusteredIndex := range []variable.ClusteredIndexDefMode{variable.ClusteredIndexDefModeOn, variable.ClusteredIndexDefModeOff, variable.ClusteredIndexDefModeIntOnly} {
+			tk.Session().GetSessionVars().EnableClusteredIndex = clusteredIndex
+			for _, t := range tests {
+				tk.MustExec("drop table if exists t;")
+				fields := make([]string, len(t.types))
 
-					for i, tp := range t.types {
-						fields[i] = fmt.Sprintf("a%d %s", i, tp)
-					}
-					tk.MustExec("create table t (id1 int, id2 varchar(10), " + strings.Join(fields, ",") + ",primary key(id1, id2)) " +
-						"collate utf8mb4_general_ci " +
-						"partition by range (id1) (partition p1 values less than (2), partition p2 values less than (maxvalue))")
-
-					vals := strings.Join(t.values, ",")
-					tk.MustExec(fmt.Sprintf("insert into t values (1, 'asd', %s), (1, 'dsa', %s)", vals, vals))
-					for i := range t.types {
-						fields[i] = fmt.Sprintf("a%d", i)
-					}
-					index := strings.Join(fields, ",")
-					for i, val := range t.values {
-						fields[i] = strings.Replace(val, "'", "", -1)
-					}
-					tk.MustGetErrMsg("alter table t add unique index t_idx(id1,"+index+")",
-						fmt.Sprintf("[kv:1062]Duplicate entry '1-%s' for key 't.t_idx'", strings.Join(fields, "-")))
+				for i, tp := range t.types {
+					fields[i] = fmt.Sprintf("a%d %s", i, tp)
 				}
+				tk.MustExec("create table t (id1 int, id2 varchar(10), " + strings.Join(fields, ",") + ",primary key(id1, id2)) " +
+					"collate utf8mb4_general_ci " +
+					"partition by range (id1) (partition p1 values less than (2), partition p2 values less than (maxvalue))")
+
+				vals := strings.Join(t.values, ",")
+				tk.MustExec(fmt.Sprintf("insert into t values (1, 'asd', %s), (1, 'dsa', %s)", vals, vals))
+				for i := range t.types {
+					fields[i] = fmt.Sprintf("a%d", i)
+				}
+				index := strings.Join(fields, ",")
+				for i, val := range t.values {
+					fields[i] = strings.Replace(val, "'", "", -1)
+				}
+				tk.MustGetErrMsg("alter table t add unique index t_idx(id1,"+index+")",
+					fmt.Sprintf("[kv:1062]Duplicate entry '1-%s' for key 't.t_idx'", strings.Join(fields, "-")))
 			}
-			tk.MustExec("set tidb_enable_global_index=default")
 		}
 	}
 }
@@ -3058,11 +3071,11 @@ func TestIssue52680(t *testing.T) {
 
 	testSteps := []struct {
 		sql    string
-		expect meta.AutoIDGroup
+		expect model.AutoIDGroup
 	}{
-		{sql: "", expect: meta.AutoIDGroup{RowID: 0, IncrementID: 4000, RandomID: 0}},
-		{sql: "drop table issue52680", expect: meta.AutoIDGroup{RowID: 0, IncrementID: 0, RandomID: 0}},
-		{sql: "recover table issue52680", expect: meta.AutoIDGroup{RowID: 0, IncrementID: 4000, RandomID: 0}},
+		{sql: "", expect: model.AutoIDGroup{RowID: 0, IncrementID: 4000, RandomID: 0}},
+		{sql: "drop table issue52680", expect: model.AutoIDGroup{RowID: 0, IncrementID: 0, RandomID: 0}},
+		{sql: "recover table issue52680", expect: model.AutoIDGroup{RowID: 0, IncrementID: 4000, RandomID: 0}},
 	}
 	for _, step := range testSteps {
 		if step.sql != "" {
@@ -3071,7 +3084,7 @@ func TestIssue52680(t *testing.T) {
 
 		txn, err := store.Begin()
 		require.NoError(t, err)
-		m := meta.NewMeta(txn)
+		m := meta.NewMutator(txn)
 		idAcc := m.GetAutoIDAccessors(ti.DBID, ti.ID)
 		ids, err := idAcc.Get()
 		require.NoError(t, err)

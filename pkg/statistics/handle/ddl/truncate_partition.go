@@ -16,7 +16,7 @@ package ddl
 
 import (
 	"github.com/pingcap/errors"
-	ddlutil "github.com/pingcap/tidb/pkg/ddl/util"
+	"github.com/pingcap/tidb/pkg/ddl/notifier"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -28,7 +28,7 @@ import (
 	"go.uber.org/zap"
 )
 
-func (h *ddlHandlerImpl) onTruncatePartitions(t *ddlutil.SchemaChangeEvent) error {
+func (h *ddlHandlerImpl) onTruncatePartitions(t *notifier.SchemaChangeEvent) error {
 	globalTableInfo, addedPartInfo, droppedPartInfo := t.GetTruncatePartitionInfo()
 	// First, add the new stats meta record for the new partitions.
 	for _, def := range addedPartInfo.Definitions {
@@ -45,7 +45,7 @@ func (h *ddlHandlerImpl) onTruncatePartitions(t *ddlutil.SchemaChangeEvent) erro
 		partitionNames := make([]string, 0, len(droppedPartInfo.Definitions))
 		for _, def := range droppedPartInfo.Definitions {
 			// Get the count and modify count of the partition.
-			tableCount, _, _, err := storage.StatsMetaCountAndModifyCount(sctx, def.ID)
+			tableCount, _, _, err := storage.StatsMetaCountAndModifyCount(util.StatsCtx, sctx, def.ID)
 			if err != nil {
 				return err
 			}
@@ -83,6 +83,7 @@ func (h *ddlHandlerImpl) onTruncatePartitions(t *ddlutil.SchemaChangeEvent) erro
 			// 5. The global stats should not be `count` and 0 modify count. We need to keep the modify count.
 			delta := -count
 			err = storage.UpdateStatsMeta(
+				util.StatsCtx,
 				sctx,
 				startTS,
 				variable.TableDelta{Count: count, Delta: delta},

@@ -128,6 +128,7 @@ func TestConcurrentLockTables(t *testing.T) {
 
 func testParallelExecSQL(t *testing.T, store kv.Storage, sql1, sql2 string, se1, se2 sessiontypes.Session, f func(t *testing.T, err1, err2 error)) {
 	times := 0
+	ctx := context.Background()
 	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunBefore", func(job *model.Job) {
 		if times != 0 {
 			return
@@ -135,9 +136,9 @@ func testParallelExecSQL(t *testing.T, store kv.Storage, sql1, sql2 string, se1,
 		var qLen int
 		for {
 			sess := testkit.NewTestKit(t, store).Session()
-			err := sessiontxn.NewTxn(context.Background(), sess)
+			err := sessiontxn.NewTxn(ctx, sess)
 			require.NoError(t, err)
-			jobs, err := ddl.GetAllDDLJobs(sess)
+			jobs, err := ddl.GetAllDDLJobs(ctx, sess)
 			require.NoError(t, err)
 			qLen = len(jobs)
 			if qLen == 2 {
@@ -158,9 +159,9 @@ func testParallelExecSQL(t *testing.T, store kv.Storage, sql1, sql2 string, se1,
 		var qLen int
 		for {
 			sess := testkit.NewTestKit(t, store).Session()
-			err := sessiontxn.NewTxn(context.Background(), sess)
+			err := sessiontxn.NewTxn(ctx, sess)
 			require.NoError(t, err)
-			jobs, err := ddl.GetAllDDLJobs(sess)
+			jobs, err := ddl.GetAllDDLJobs(ctx, sess)
 			require.NoError(t, err)
 			qLen = len(jobs)
 			if qLen == 1 {

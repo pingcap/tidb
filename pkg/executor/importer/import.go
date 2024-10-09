@@ -16,6 +16,7 @@ package importer
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"math"
 	"net/url"
@@ -45,8 +46,8 @@ import (
 	pformat "github.com/pingcap/tidb/pkg/parser/format"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
-	planctx "github.com/pingcap/tidb/pkg/planner/context"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
+	"github.com/pingcap/tidb/pkg/planner/planctx"
 	plannerutil "github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
@@ -810,13 +811,14 @@ func (p *Plan) initParameters(plan *plannercore.ImportInto) error {
 		setClause = sb.String()
 	}
 	optionMap := make(map[string]any, len(plan.Options))
-	var evalCtx expression.EvalContext
-	if plan.SCtx() != nil {
-		evalCtx = plan.SCtx().GetExprCtx().GetEvalCtx()
-	}
 	for _, opt := range plan.Options {
 		if opt.Value != nil {
-			val := opt.Value.StringWithCtx(evalCtx, errors.RedactLogDisable)
+			// The option attached to the import statement here are all
+			// parameters entered by the user. TiDB will process the
+			// parameters entered by the user as constant. so we can
+			// directly convert it to constant.
+			cons := opt.Value.(*expression.Constant)
+			val := fmt.Sprintf("%v", cons.Value.GetValue())
 			if opt.Name == cloudStorageURIOption {
 				val = ast.RedactURL(val)
 			}
@@ -1297,20 +1299,11 @@ func (e *LoadDataController) CreateColAssignExprs(planCtx planctx.PlanContext) (
 	_ []contextutil.SQLWarn,
 	retErr error,
 ) {
-	var (
-		i      int
-		assign *ast.Assignment
-	)
-	// TODO(lance6716): indeterministic function should also return error
-	defer tidbutil.Recover("load-data/import-into", "CreateColAssignExprs", func() {
-		retErr = errors.Errorf("can't use function at SET index %d", i)
-	}, false)
-
 	e.colAssignMu.Lock()
 	defer e.colAssignMu.Unlock()
 	res := make([]expression.Expression, 0, len(e.ColumnAssignments))
 	allWarnings := []contextutil.SQLWarn{}
-	for i, assign = range e.ColumnAssignments {
+	for _, assign := range e.ColumnAssignments {
 		newExpr, err := plannerutil.RewriteAstExprWithPlanCtx(planCtx, assign.Expr, nil, nil, false)
 		// col assign expr warnings is static, we should generate it for each row processed.
 		// so we save it and clear it here.
@@ -1332,21 +1325,11 @@ func (e *LoadDataController) CreateColAssignExprs(planCtx planctx.PlanContext) (
 //   - Aggregate functions
 //   - Other special functions used in some specified queries such as `GROUPING`, `VALUES` ...
 func (e *LoadDataController) CreateColAssignSimpleExprs(ctx expression.BuildContext) (_ []expression.Expression, _ []contextutil.SQLWarn, retErr error) {
-	var (
-		i      int
-		assign *ast.Assignment
-	)
-
-	// TODO(lance6716): indeterministic function should also return error
-	defer tidbutil.Recover("load-data/import-into", "CreateColAssignExprs", func() {
-		retErr = errors.Errorf("can't use function at SET index %d", i)
-	}, false)
-
 	e.colAssignMu.Lock()
 	defer e.colAssignMu.Unlock()
 	res := make([]expression.Expression, 0, len(e.ColumnAssignments))
 	var allWarnings []contextutil.SQLWarn
-	for i, assign = range e.ColumnAssignments {
+	for _, assign := range e.ColumnAssignments {
 		newExpr, err := expression.BuildSimpleExpr(ctx, assign.Expr)
 		// col assign expr warnings is static, we should generate it for each row processed.
 		// so we save it and clear it here.

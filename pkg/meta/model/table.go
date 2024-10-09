@@ -322,6 +322,26 @@ func (t *TableInfo) FindIndexByName(idxName string) *IndexInfo {
 	return nil
 }
 
+// FindColumnByID finds ColumnInfo by id.
+func (t *TableInfo) FindColumnByID(id int64) *ColumnInfo {
+	for _, col := range t.Columns {
+		if col.ID == id {
+			return col
+		}
+	}
+	return nil
+}
+
+// FindIndexByID finds index by id.
+func (t *TableInfo) FindIndexByID(id int64) *IndexInfo {
+	for _, idx := range t.Indices {
+		if idx.ID == id {
+			return idx
+		}
+	}
+	return nil
+}
+
 // FindPublicColumnByName finds the public column by name.
 func (t *TableInfo) FindPublicColumnByName(colNameL string) *ColumnInfo {
 	for _, col := range t.Cols() {
@@ -709,7 +729,10 @@ type PartitionInfo struct {
 	// DroppingDefinitions is filled when dropping/truncating partitions that is in the mid state.
 	DroppingDefinitions []PartitionDefinition `json:"dropping_definitions"`
 	// NewPartitionIDs is filled when truncating partitions that is in the mid state.
-	NewPartitionIDs []int64
+	NewPartitionIDs []int64 `json:"new_partition_ids,omitempty"`
+	// OriginalPartitionIDsOrder is only needed for rollback of Reorganize Partition for
+	// LIST partitions, since in StateDeleteReorganize we don't know the old order any longer.
+	OriginalPartitionIDsOrder []int64 `json:"original_partition_ids_order,omitempty"`
 
 	States []PartitionState `json:"states"`
 	Num    uint64           `json:"num"`
@@ -852,6 +875,16 @@ func (pi *PartitionInfo) GetPartitionIDByName(partitionDefinitionName string) in
 		}
 	}
 	return -1
+}
+
+// SetOriginalPartitionIDs sets the order of the original partition IDs
+// in case it needs to be rolled back. LIST Partitioning would not know otherwise.
+func (pi *PartitionInfo) SetOriginalPartitionIDs() {
+	ids := make([]int64, 0, len(pi.Definitions))
+	for _, def := range pi.Definitions {
+		ids = append(ids, def.ID)
+	}
+	pi.OriginalPartitionIDsOrder = ids
 }
 
 // PartitionState is the state of the partition.
