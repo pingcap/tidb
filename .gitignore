@@ -6,6 +6,7 @@ coverage.out
 *.iml
 *.swp
 *.log
+*.bin
 tags
 profile.coverprofile
 mysql_tester

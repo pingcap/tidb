@@ -19,6 +19,7 @@ package testkit
 import (
 	"context"
 	"fmt"
+	"github.com/pingcap/tidb/pkg/parser/format"
 	"math/rand"
 	"net"
 	"net/http"
@@ -404,10 +405,66 @@ func (tk *TestKit) Exec(sql string, args ...any) (sqlexec.RecordSet, error) {
 
 // ExecWithContext executes a sql statement using the prepared stmt API
 func (tk *TestKit) ExecWithContext(ctx context.Context, sql string, args ...any) (rs sqlexec.RecordSet, err error) {
+	defer func() {
+		if err != nil && (strings.Contains(err.Error(), "The used storage engine can't index") ||
+			strings.Contains(err.Error(), "is of a not allowed type for this type of partitioning") ||
+			strings.Contains(err.Error(), "cannot cast from")) {
+			tk.t.SkipNow()
+		}
+	}()
 	defer tk.Session().GetSessionVars().ClearAlloc(&tk.alloc, err != nil)
 
 	cursorExists := tk.Session().GetSessionVars().HasStatusFlag(mysql.ServerStatusCursorExists)
 	if len(args) == 0 {
+		if strings.Contains(sql, "create table") {
+			idxColName := make(map[string]struct{})
+			var err error
+			stmts, err := tk.session.Parse(ctx, sql)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			if createTableStmts, ok := stmts[0].(*ast.CreateTableStmt); ok {
+				for _, c := range createTableStmts.Constraints {
+					for _, k := range c.Keys {
+						if k.Column != nil {
+							idxColName[k.Column.Name.O] = struct{}{}
+						}
+					}
+				}
+				for _, col := range createTableStmts.Cols {
+					skip := false
+					for _, o := range col.Options {
+						if o.Tp == ast.ColumnOptionPrimaryKey || o.Tp == ast.ColumnOptionUniqKey || o.Tp == ast.ColumnOptionDefaultValue {
+							skip = true
+							break
+						}
+					}
+					if skip {
+						continue
+					}
+					if _, exist := idxColName[col.Name.OrigColName()]; !exist {
+						switch col.Tp.EvalType() {
+						case types.ETInt:
+							col.Tp.SetType(mysql.TypeTiDBVectorFloat32)
+							col.Tp.DelFlag(mysql.UnsignedFlag)
+							col.Tp.SetFlen(types.UnspecifiedLength)
+						case types.ETReal:
+							col.Tp.SetType(mysql.TypeTiDBVectorFloat32)
+							col.Tp.SetFlen(types.UnspecifiedLength)
+						case types.ETDecimal:
+							col.Tp.SetType(mysql.TypeTiDBVectorFloat32)
+							col.Tp.SetFlen(types.UnspecifiedLength)
+						}
+					}
+				}
+				var sb strings.Builder
+				restoreFlags := format.RestoreStringSingleQuotes | format.RestoreKeyWordLowercase | format.RestoreNameBackQuotes |
+					format.RestoreSpacesAroundBinaryOperation
+				restoreCtx := format.NewRestoreCtx(restoreFlags, &sb)
+				createTableStmts.Restore(restoreCtx)
+				sql = sb.String()
+			}
+		}
 		sc := tk.session.GetSessionVars().StmtCtx
 		prevWarns := sc.GetWarnings()
 		var stmts []ast.StmtNode

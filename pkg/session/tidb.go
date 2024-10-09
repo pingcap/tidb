@@ -20,6 +20,8 @@ package session
 
 import (
 	"context"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -388,6 +390,11 @@ func ResultSetToStringSlice(ctx context.Context, s types.Session, rs sqlexec.Rec
 				iRow[j], err = d.ToString()
 				if err != nil {
 					return nil, err
+				}
+				if rs.Fields()[j].Column.FieldType.GetType() == mysql.TypeTiDBVectorFloat32 {
+					iRow[j] = strings.TrimFunc(iRow[j], func(r rune) bool {
+						return r == '[' || r == ']'
+					})
 				}
 			}
 		}

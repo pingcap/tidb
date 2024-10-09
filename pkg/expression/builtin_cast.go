@@ -709,10 +709,20 @@ func (b *builtinCastUnsupportedAsVectorFloat32Sig) Clone() builtinFunc {
 	return newSig
 }
 
-func (b *builtinCastUnsupportedAsVectorFloat32Sig) evalVectorFloat32(ctx EvalContext, _ chunk.Row) (res types.VectorFloat32, isNull bool, err error) {
-	return types.ZeroVectorFloat32, false, errors.Errorf(
-		"cannot cast from %s to vector",
-		types.TypeStr(b.args[0].GetType(ctx).GetType()))
+func (b *builtinCastUnsupportedAsVectorFloat32Sig) evalVectorFloat32(ctx EvalContext, row chunk.Row) (res types.VectorFloat32, isNull bool, err error) {
+	d, err := b.args[0].Eval(ctx, row)
+	if err != nil {
+		return types.ZeroVectorFloat32, isNull, err
+	}
+	sval := fmt.Sprintf("[%v]", d.GetValue())
+	vf32, err := types.ParseVectorFloat32(sval)
+	if err != nil {
+		return types.ZeroVectorFloat32, isNull, err
+	}
+	if err = vf32.CheckDimsFitColumn(b.tp.GetFlen()); err != nil {
+		return types.ZeroVectorFloat32, isNull, err
+	}
+	return vf32, false, nil
 }
 
 type builtinCastVectorFloat32AsUnsupportedSig struct {
