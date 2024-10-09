@@ -26,12 +26,14 @@ import (
 
 // this file is used for passing function pointer at init(){} to avoid some import cycles.
 
-// FindBestTask4BaseLogicalPlan will be called by baseLogicalPlan in logicalOp pkg. The logic inside covers Task, Property,
-// LogicalOp and PhysicalOp, so it doesn't belong to logicalOp pkg. it should be kept in core pkg.
-// todo: arenatlx, For clear division, we should remove Logical FindBestTask interface. Let core pkg to guide
-// todo: itself by receive logical tree.
-var FindBestTask4BaseLogicalPlan func(p base.LogicalPlan, prop *property.PhysicalProperty, planCounter *base.PlanCounterTp,
-	opt *optimizetrace.PhysicalOptimizeOp) (bestTask base.Task, cntPlan int64, err error)
+// FindBestTask4BaseLogicalPlan will be called by baseLogicalPlan in logicalOp pkg.
+// The logic inside covers Task, Property, LogicalOp and PhysicalOp, so it doesn't belong to logicalOp pkg.
+// It should be kept in core pkg.
+// todo: arenatlx, For clear division, we should remove Logical FindBestTask interface. Let core pkg to
+// guide itself by receive logical tree.
+var FindBestTask4BaseLogicalPlan func(p base.LogicalPlan, prop *property.PhysicalProperty,
+	planCounter *base.PlanCounterTp, opt *optimizetrace.PhysicalOptimizeOp) (
+	bestTask base.Task, cntPlan int64, err error)
 
 // ExhaustPhysicalPlans4LogicalMaxOneRow will be called by LogicalMaxOneRow in logicalOp pkg.
 var ExhaustPhysicalPlans4LogicalMaxOneRow func(p base.LogicalPlan, prop *property.PhysicalProperty) (
