@@ -92,7 +92,6 @@ var allRules = append([]lint.Rule{
 	&rule.BlankImportsRule{},
 	//&rule.FunctionResultsLimitRule{},
 	//&rule.MaxPublicStructsRule{},
-	&rule.RangeValInClosureRule{},
 	&rule.RangeValAddress{},
 	&rule.WaitGroupByValueRule{},
 	&rule.AtomicRule{},
