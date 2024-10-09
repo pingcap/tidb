@@ -122,7 +122,6 @@ func (tne *tableNameExtractor) getTablesAndViews() (map[tableNamePair]struct{}, 
 			}
 			r[key] = struct{}{}
 		}
-
 	}
 	return r, nil
 }
