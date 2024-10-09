@@ -976,7 +976,7 @@ func setEmptyConstraintName(namesMap map[string]bool, constr *ast.Constraint) {
 		var colName string
 		for _, keyPart := range constr.Keys {
 			if keyPart.Expr != nil {
-				colName = "expression_index"
+				colName = getAnonymousIndexPrefix(constr.Tp == ast.ConstraintVector)
 			}
 		}
 		if colName == "" {
