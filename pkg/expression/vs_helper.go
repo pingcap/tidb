@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/intest"
+	"github.com/pingcap/tipb/go-tipb"
 )
 
 var (
@@ -36,8 +37,9 @@ var (
 // VectorHelper is a helper struct for vector indexes.
 type VectorHelper struct {
 	DistanceFnName model.CIStr
+	FnPbCode       tipb.ScalarFuncSig
 	Vec            types.VectorFloat32
-	ColumnID       int64
+	Column         *Column
 }
 
 // ExtractVectorHelper extracts a VectorSearchExpr from an expression.
@@ -82,7 +84,8 @@ func ExtractVectorHelper(expr Expression) *VectorHelper {
 
 	return &VectorHelper{
 		DistanceFnName: x.FuncName,
+		FnPbCode:       x.Function.PbCode(),
 		Vec:            vectorConstant.Value.GetVectorFloat32(),
-		ColumnID:       vectorColumn.ID,
+		Column:         vectorColumn,
 	}
 }
