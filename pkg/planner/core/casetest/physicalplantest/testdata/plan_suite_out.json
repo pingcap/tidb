@@ -2293,7 +2293,7 @@
       },
       {
         "SQL": "select max(a), max(c) from t where c > 10",
-        "Best": "IndexReader(Index(t.c_d_e)[(10,+inf]]->StreamAgg)->StreamAgg"
+        "Best": "IndexReader(Index(t.c_d_e)[(10,+inf]]->HashAgg)->HashAgg"
       },
       {
         "SQL": "select max(a), min(a) from t where a * 3 + 10 < 100",
