@@ -486,7 +486,7 @@ func (job *Job) GetWarnings() (map[errors.ErrorID]*terror.Error, map[errors.Erro
 func (job *Job) FillArgs(args JobArgs) {
 	intest.Assert(job.Version == JobVersion1 || job.Version == JobVersion2, "job version is invalid")
 	if job.Version == JobVersion1 {
-		args.fillJobV1(job)
+		job.Args = args.getArgsV1(job)
 		return
 	}
 	job.Args = []any{args}
@@ -496,7 +496,7 @@ func (job *Job) FillArgs(args JobArgs) {
 func (job *Job) FillFinishedArgs(args FinishedJobArgs) {
 	intest.Assert(job.Version == JobVersion1 || job.Version == JobVersion2, "job version is invalid")
 	if job.Version == JobVersion1 {
-		args.fillFinishedJobV1(job)
+		job.Args = args.getFinishedArgsV1(job)
 		return
 	}
 	job.Args = []any{args}
