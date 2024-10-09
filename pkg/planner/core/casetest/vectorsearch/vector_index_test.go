@@ -156,6 +156,9 @@ func TestANNIndexNormalizedPlan(t *testing.T) {
 			('[3,3,3]')
 	`)
 
+	dom := domain.GetDomain(tk.Session())
+	coretestsdk.SetTiFlashReplica(t, dom, "test", "t")
+
 	tk.MustExec("analyze table t")
 
 	tk.MustExec("set @@tidb_isolation_read_engines = 'tiflash'")
