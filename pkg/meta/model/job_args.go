@@ -1340,7 +1340,10 @@ type DropIndexArgs struct {
 }
 
 func (a *DropIndexArgs) decodeV1(job *Job) error {
-	intest.Assert(job.Type == ActionDropIndex, "only drop index job can call GetDropIndexArgs")
+	intest.Assert(
+		job.Type == ActionDropIndex || job.Type == ActionDropPrimaryKey ||
+			job.Type == ActionAddIndex || job.Type == ActionAddPrimaryKey || job.Type == ActionAddVectorIndex,
+		"only add/drop index job can call GetDropIndexArgs")
 	if err := tryMarshalArgs(job); err != nil {
 		return errors.Trace(err)
 	}
@@ -1368,7 +1371,7 @@ func (a *DropIndexArgs) getArgsV1(*Job) []any {
 // GetDropIndexArgs gets the drop index args.
 // It's used for both drop index and rollback add index.
 func GetDropIndexArgs(job *Job) (*DropIndexArgs, error) {
-	return getOrDecodeArgs[*DropIndexArgs](&DropIndexArgs{}, job)
+	return getOrDecodeArgs(&DropIndexArgs{}, job)
 }
 
 func (a *DropIndexArgs) getFinishedArgsV1(*Job) []any {
@@ -1518,7 +1521,7 @@ func (a *AddIndexArgs) decodeV1(job *Job) error {
 
 // GetAddIndexArgs gets the add index args.
 func GetAddIndexArgs(job *Job) (*AddIndexArgs, error) {
-	return getOrDecodeArgs[*AddIndexArgs](&AddIndexArgs{}, job)
+	return getOrDecodeArgs(&AddIndexArgs{}, job)
 }
 
 func (a *AddIndexArgs) getAddIndexArgs(job *Job) error {
@@ -1658,5 +1661,5 @@ func (a *RenameIndexArgs) decodeV1(job *Job) error {
 
 // GetRenameIndexArgs get the rename index args.
 func GetRenameIndexArgs(job *Job) (*RenameIndexArgs, error) {
-	return getOrDecodeArgs[*RenameIndexArgs](&RenameIndexArgs{}, job)
+	return getOrDecodeArgs(&RenameIndexArgs{}, job)
 }

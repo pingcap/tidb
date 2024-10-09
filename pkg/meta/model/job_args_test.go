@@ -565,7 +565,7 @@ false]`),
 			RawArgs: c.raw,
 		}
 
-		args, err := getAddIndexArgs(job)
+		args, err := GetAddIndexArgs(job)
 		require.NoError(t, err)
 		for i, a := range args.IndexArgs {
 			require.Equal(t, c.uniques[i], a.Unique)
