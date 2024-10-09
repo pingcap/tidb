@@ -43,7 +43,11 @@ go_test(
         "statistics_handler_test.go",
     ],
     flaky = True,
+<<<<<<< HEAD
     shard_count = 4,
+=======
+    shard_count = 6,
+>>>>>>> 1eb0c8c1235 (domain: fix play replay dump cannot save the table in the foreign key's reference (#56512))
     deps = [
         ":optimizor",
         "//pkg/config",
