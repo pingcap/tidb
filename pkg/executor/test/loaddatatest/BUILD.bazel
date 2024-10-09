@@ -9,11 +9,7 @@ go_test(
     ],
     flaky = True,
     race = "on",
-<<<<<<< HEAD
-    shard_count = 10,
-=======
-    shard_count = 12,
->>>>>>> 7daf0265f16 (executor: fix data inconsistency after `load data ... replace into ...` (#56415))
+    shard_count = 11,
     deps = [
         "//br/pkg/lightning/mydump",
         "//pkg/config",
