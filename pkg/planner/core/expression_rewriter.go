@@ -325,9 +325,17 @@ func (er *expressionRewriter) constructBinaryOpFunction(l expression.Expression,
 func (er *expressionRewriter) buildSubquery(ctx context.Context, subq *ast.SubqueryExpr, subqueryCtx subQueryCtx) (np LogicalPlan, hintFlags uint64, err error) {
 	if er.schema != nil {
 		outerSchema := er.schema.Clone()
+<<<<<<< HEAD
 		er.b.outerSchemas = append(er.b.outerSchemas, outerSchema)
 		er.b.outerNames = append(er.b.outerNames, er.names)
 		er.b.outerBlockExpand = append(er.b.outerBlockExpand, er.b.currentBlockExpand)
+=======
+		b.outerSchemas = append(b.outerSchemas, outerSchema)
+		b.outerNames = append(b.outerNames, er.names)
+		b.outerBlockExpand = append(b.outerBlockExpand, b.currentBlockExpand)
+		// set it to nil, otherwise, inner qb will use outer expand meta to rewrite expressions.
+		b.currentBlockExpand = nil
+>>>>>>> 31d75bd9454 (planner: fix inner subq build process will ref-use outer's expand meta (#56424))
 		defer func() {
 			er.b.outerSchemas = er.b.outerSchemas[0 : len(er.b.outerSchemas)-1]
 			er.b.outerNames = er.b.outerNames[0 : len(er.b.outerNames)-1]
