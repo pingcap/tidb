@@ -2129,6 +2129,9 @@ func dropLabelRules(ctx context.Context, schemaName, tableName string, partNames
 	return infosync.UpdateLabelRules(ctx, patch)
 }
 
+// rollbackLikeDropPartition does rollback for Reorganize partition and Add partition.
+// It will drop newly created partitions that has not yet been used, including cleaning
+// up label rules and bundles as well as changed indexes due to global flag.
 func (w *worker) rollbackLikeDropPartition(jobCtx *jobContext, job *model.Job) (ver int64, _ error) {
 	args, err := model.GetTablePartitionArgs(job)
 	if err != nil {

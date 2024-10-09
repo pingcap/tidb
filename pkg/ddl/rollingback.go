@@ -400,7 +400,7 @@ func convertReorgPartitionJob2RollbackJob(jobCtx *jobContext, job *model.Job, ot
 			}
 			// We cannot drop the index here, we need to wait until
 			// the next schema version
-			// i.e. rollback in onDropTablePartition
+			// i.e. rollback in rollbackLikeDropPartition
 			// New index that became public in this state,
 			// mark it to be dropped in next schema version
 			if indexInfo.Global {
