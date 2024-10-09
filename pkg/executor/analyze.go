@@ -459,6 +459,7 @@ func (e *AnalyzeExec) handleResultsErrorWithConcurrency(ctx context.Context, sta
 	partitionStatsConcurrency := len(subSctxs)
 
 	wg := util.NewWaitGroupPool(e.gp)
+<<<<<<< HEAD
 	saveResultsCh := make(chan *statistics.AnalyzeResults, partitionStatsConcurrency)
 	errCh := make(chan error, partitionStatsConcurrency)
 	for i := 0; i < partitionStatsConcurrency; i++ {
@@ -466,6 +467,16 @@ func (e *AnalyzeExec) handleResultsErrorWithConcurrency(ctx context.Context, sta
 		ctx1 := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
 		wg.Run(func() {
 			worker.run(ctx1, e.Ctx().GetSessionVars().EnableAnalyzeSnapshot)
+=======
+	saveResultsCh := make(chan *statistics.AnalyzeResults, saveStatsConcurrency)
+	errCh := make(chan error, saveStatsConcurrency)
+	enableAnalyzeSnapshot := e.Ctx().GetSessionVars().EnableAnalyzeSnapshot
+	for i := 0; i < saveStatsConcurrency; i++ {
+		worker := newAnalyzeSaveStatsWorker(saveResultsCh, errCh, &e.Ctx().GetSessionVars().SQLKiller)
+		ctx1 := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
+		wg.Run(func() {
+			worker.run(ctx1, statsHandle, enableAnalyzeSnapshot)
+>>>>>>> b02581a7a47 (*: fix data race in the EnableAnalyzeSnapshot (#55596))
 		})
 	}
 	tableIDs := map[int64]struct{}{}
