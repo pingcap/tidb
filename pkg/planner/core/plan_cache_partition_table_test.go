@@ -796,8 +796,8 @@ func nonpreparedStmtBatchPointGet(t *testing.T, ids []any, tk *testkit.TestKit, 
 // randString generates a random string between min and max length
 // with [0-9a-zA-Z]
 // Copy from expression/bench_test.go - randString
-func randString(r *rand.Rand, min, max int) string {
-	n := min + r.Intn(max)
+func randString(r *rand.Rand, minv, maxv int) string {
+	n := minv + r.Intn(maxv)
 	buf := make([]byte, n)
 	for i := range buf {
 		x := r.Intn(62)

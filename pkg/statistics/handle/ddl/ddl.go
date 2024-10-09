@@ -30,23 +30,20 @@ import (
 )
 
 type ddlHandlerImpl struct {
-	ddlEventCh         chan *notifier.SchemaChangeEvent
-	statsWriter        types.StatsReadWriter
-	statsHandler       types.StatsHandle
-	globalStatsHandler types.StatsGlobal
+	ddlEventCh   chan *notifier.SchemaChangeEvent
+	statsWriter  types.StatsReadWriter
+	statsHandler types.StatsHandle
 }
 
 // NewDDLHandler creates a new ddl handler.
 func NewDDLHandler(
 	statsWriter types.StatsReadWriter,
 	statsHandler types.StatsHandle,
-	globalStatsHandler types.StatsGlobal,
 ) types.DDL {
 	return &ddlHandlerImpl{
-		ddlEventCh:         make(chan *notifier.SchemaChangeEvent, 1000),
-		statsWriter:        statsWriter,
-		statsHandler:       statsHandler,
-		globalStatsHandler: globalStatsHandler,
+		ddlEventCh:   make(chan *notifier.SchemaChangeEvent, 1000),
+		statsWriter:  statsWriter,
+		statsHandler: statsHandler,
 	}
 }
 
@@ -235,7 +232,11 @@ func updateStatsWithCountDeltaAndModifyCountDelta(
 	}
 
 	// Because count can not be negative, so we need to get the current and calculate the delta.
-	count, modifyCount, isNull, err := storage.StatsMetaCountAndModifyCountForUpdate(sctx, tableID)
+	count, modifyCount, isNull, err := storage.StatsMetaCountAndModifyCountForUpdate(
+		util.StatsCtx,
+		sctx,
+		tableID,
+	)
 	if err != nil {
 		return err
 	}

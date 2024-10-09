@@ -45,7 +45,7 @@ func TestV2Basic(t *testing.T) {
 	tblInfo := internal.MockTableInfo(t, r.Store(), tableName.O)
 	tblInfo.DBID = dbInfo.ID
 	is.Data.add(tableItem{schemaName, dbInfo.ID, tableName, tblInfo.ID, 2, false}, internal.MockTable(t, r.Store(), tblInfo))
-	internal.AddTable(t, r.Store(), dbInfo, tblInfo)
+	internal.AddTable(t, r.Store(), dbInfo.ID, tblInfo)
 	is.base().schemaMetaVersion = 1
 	require.Equal(t, 1, len(is.AllSchemas()))
 	ver, err := r.Store().CurrentVersion(kv.GlobalTxnScope)
@@ -310,7 +310,7 @@ func TestBundles(t *testing.T) {
 	// create table
 	tblInfo := internal.MockTableInfo(t, r.Store(), tableName.O)
 	tblInfo.Partition = &model.PartitionInfo{Definitions: []model.PartitionDefinition{{ID: 1}, {ID: 2}}}
-	internal.AddTable(t, r.Store(), dbInfo, tblInfo)
+	internal.AddTable(t, r.Store(), dbInfo.ID, tblInfo)
 	txn, err = r.Store().Begin()
 	require.NoError(t, err)
 	_, err = builder.ApplyDiff(meta.NewMutator(txn), &model.SchemaDiff{Type: model.ActionCreateTable, Version: 2, SchemaID: dbInfo.ID, TableID: tblInfo.ID})
@@ -435,7 +435,7 @@ func TestReferredFKInfo(t *testing.T) {
 		RefTable:  pmodel.NewCIStr("parent"),
 		Version:   1,
 	}}
-	internal.AddTable(t, r.Store(), dbInfo, tblInfo)
+	internal.AddTable(t, r.Store(), dbInfo.ID, tblInfo)
 	txn, err = r.Store().Begin()
 	require.NoError(t, err)
 	_, err = builder.ApplyDiff(meta.NewMutator(txn), &model.SchemaDiff{Type: model.ActionCreateTable, Version: 2, SchemaID: dbInfo.ID, TableID: tblInfo.ID})
@@ -536,7 +536,7 @@ func TestSpecialAttributeCorrectnessInSchemaChange(t *testing.T) {
 
 	// create table
 	tblInfo := internal.MockTableInfo(t, r.Store(), tableName.O)
-	internal.AddTable(t, r.Store(), dbInfo, tblInfo)
+	internal.AddTable(t, r.Store(), dbInfo.ID, tblInfo)
 	txn, err = r.Store().Begin()
 	require.NoError(t, err)
 	_, err = builder.ApplyDiff(meta.NewMutator(txn), &model.SchemaDiff{Type: model.ActionCreateTable, Version: 2, SchemaID: dbInfo.ID, TableID: tblInfo.ID})
@@ -647,7 +647,7 @@ func TestDataStructFieldsCorrectnessInSchemaChange(t *testing.T) {
 
 	// verify table related fields after create table
 	tblInfo := internal.MockTableInfo(t, r.Store(), tableName.O)
-	internal.AddTable(t, r.Store(), dbInfo, tblInfo)
+	internal.AddTable(t, r.Store(), dbInfo.ID, tblInfo)
 	txn, err = r.Store().Begin()
 	require.NoError(t, err)
 	_, err = builder.ApplyDiff(meta.NewMutator(txn), &model.SchemaDiff{Type: model.ActionCreateTable, Version: 2, SchemaID: dbInfo.ID, TableID: tblInfo.ID})

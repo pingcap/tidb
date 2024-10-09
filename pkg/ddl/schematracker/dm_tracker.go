@@ -416,20 +416,17 @@ func (d *SchemaTracker) createIndex(
 	if err != nil {
 		return err
 	}
-	finalColumns := make([]*model.ColumnInfo, len(tblInfo.Columns), len(tblInfo.Columns)+len(hiddenCols))
-	copy(finalColumns, tblInfo.Columns)
-	finalColumns = append(finalColumns, hiddenCols...)
-
 	for _, hiddenCol := range hiddenCols {
 		ddl.InitAndAddColumnToTable(tblInfo, hiddenCol)
 	}
 
 	indexInfo, err := ddl.BuildIndexInfo(
 		ddl.NewMetaBuildContextWithSctx(ctx),
-		finalColumns,
+		tblInfo,
 		indexName,
 		false,
 		unique,
+		false,
 		indexPartSpecifications,
 		indexOption,
 		model.StatePublic,
@@ -870,10 +867,11 @@ func (d *SchemaTracker) createPrimaryKey(
 
 	indexInfo, err := ddl.BuildIndexInfo(
 		ddl.NewMetaBuildContextWithSctx(ctx),
-		tblInfo.Columns,
+		tblInfo,
 		indexName,
 		true,
 		true,
+		false,
 		indexPartSpecifications,
 		indexOption,
 		model.StatePublic,
