@@ -831,8 +831,11 @@ func (w *worker) onCreateVectorIndex(jobCtx *jobContext, job *model.Job) (ver in
 			return ver, errors.Trace(err)
 		}
 
-		finishedArgs := &model.AddIndexArgs{PartitionIDs: getPartitionIDs(tblInfo), IsFinishedArg: true}
-		finishedArgs.IndexArgs = append(finishedArgs.IndexArgs, &model.IndexArg{AddIndexID: indexInfo.ID})
+		finishedArgs := &model.AddIndexArgs{
+			IndexArgs:     []*model.IndexArg{{IndexID: indexInfo.ID}},
+			PartitionIDs:  getPartitionIDs(tblInfo),
+			IsFinishedArg: true,
+		}
 		job.FillFinishedArgs(finishedArgs)
 
 		// Finish this job.
@@ -976,7 +979,7 @@ func (w *worker) onCreateIndex(jobCtx *jobContext, job *model.Job, isPK bool) (v
 
 	allIndexInfos := make([]*model.IndexInfo, 0, len(args.IndexArgs))
 	for _, arg := range args.IndexArgs {
-		indexInfo, err := checkAndBuildIndexInfo(job, tblInfo, false, args.IsPK, arg)
+		indexInfo, err := checkAndBuildIndexInfo(job, tblInfo, false, job.Type == model.ActionAddPrimaryKey, arg)
 		if err != nil {
 			job.State = model.JobStateCancelled
 			return ver, errors.Trace(err)
@@ -1097,9 +1100,9 @@ SwitchIndexState:
 		a := &model.AddIndexArgs{PartitionIDs: getPartitionIDs(tbl.Meta()), IsFinishedArg: true}
 		for _, indexInfo := range allIndexInfos {
 			a.IndexArgs = append(a.IndexArgs, &model.IndexArg{
-				AddIndexID: indexInfo.ID,
-				IfExist:    false,
-				IsGlobal:   indexInfo.Global,
+				IndexID:  indexInfo.ID,
+				IfExist:  false,
+				IsGlobal: indexInfo.Global,
 			})
 		}
 		job.FillFinishedArgs(a)
@@ -1459,8 +1462,8 @@ func onDropIndex(jobCtx *jobContext, job *model.Job) (ver int64, _ error) {
 			for i, indexID := range indexIDs {
 				addIndexArgs.IndexArgs = append(addIndexArgs.IndexArgs,
 					&model.IndexArg{
-						AddIndexID: indexID,
-						IfExist:    dropArgs.IfExists[i],
+						IndexID: indexID,
+						IfExist: dropArgs.IfExists[i],
 					})
 			}
 			job.FillFinishedArgs(addIndexArgs)

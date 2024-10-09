@@ -2019,7 +2019,7 @@ func (e *executor) multiSchemaChange(ctx sessionctx.Context, ti ast.Ident, info 
 	}
 
 	job := &model.Job{
-		Version:             model.GetJobVerInUse(),
+		Version:             model.JobVersion1,
 		SchemaID:            schema.ID,
 		TableID:             t.Meta().ID,
 		SchemaName:          schema.Name.L,
@@ -4574,11 +4574,9 @@ func (e *executor) CreatePrimaryKey(ctx sessionctx.Context, ti ast.Ident, indexN
 		}
 	}
 
-	unique := true
 	sqlMode := ctx.GetSessionVars().SQLMode
 	// global is set to  'false' is just there to be backwards compatible,
 	// to avoid unmarshal issues, it is now part of indexOption.
-	global := false
 	job := &model.Job{
 		Version:        model.JobVersion1,
 		SchemaID:       schema.ID,
@@ -4594,14 +4592,14 @@ func (e *executor) CreatePrimaryKey(ctx sessionctx.Context, ti ast.Ident, indexN
 	}
 
 	args := &model.AddIndexArgs{
-		IsPK: true,
 		IndexArgs: []*model.IndexArg{{
-			Unique:                  unique,
+			Unique:                  true,
 			IndexName:               indexName,
 			IndexPartSpecifications: indexPartSpecifications,
 			IndexOption:             indexOption,
 			SQLMode:                 sqlMode,
-			Global:                  global,
+			Global:                  false,
+			IsPK:                    true,
 		}},
 	}
 
@@ -4726,7 +4724,8 @@ func (e *executor) createVectorIndex(ctx sessionctx.Context, ti ast.Ident, index
 	if err != nil {
 		return errors.Trace(err)
 	}
-	job.Version = model.GetJobVerInUse()
+	// vector index is added in 8.4, always use JobVersion2
+	job.Version = model.JobVersion2
 	job.Type = model.ActionAddVectorIndex
 	indexPartSpecifications[0].Expr = nil
 
@@ -4738,8 +4737,8 @@ func (e *executor) createVectorIndex(ctx sessionctx.Context, ti ast.Ident, index
 			IndexPartSpecifications: indexPartSpecifications,
 			IndexOption:             indexOption,
 			FuncExpr:                funcExpr,
+			IsVector:                true,
 		}},
-		IsVector: true,
 	}
 
 	err = e.doDDLJob2(ctx, job, args)
@@ -5262,11 +5261,6 @@ func (e *executor) dropIndex(ctx sessionctx.Context, ti ast.Ident, indexName pmo
 		BinlogInfo:     &model.HistoryInfo{},
 		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
 		SQLMode:        ctx.GetSessionVars().SQLMode,
-	}
-
-	// TODO(joechenrh): force use Version1 if is MultiSchemaChange
-	if ctx.GetSessionVars().StmtCtx.MultiSchemaInfo != nil {
-		job.Version = model.JobVersion1
 	}
 
 	args := &model.DropIndexArgs{

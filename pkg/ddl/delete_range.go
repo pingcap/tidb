@@ -353,10 +353,10 @@ func insertJobIntoDeleteRangeTable(ctx context.Context, wrapper DelRangeExecWrap
 		}
 		for _, indexArg := range args.IndexArgs {
 			// Determine the index IDs to be added.
-			tempIdxID := tablecodec.TempIndexPrefix | indexArg.AddIndexID
+			tempIdxID := tablecodec.TempIndexPrefix | indexArg.IndexID
 			var indexIDs []int64
 			if job.State == model.JobStateRollbackDone {
-				indexIDs = []int64{indexArg.AddIndexID, tempIdxID}
+				indexIDs = []int64{indexArg.IndexID, tempIdxID}
 			} else {
 				indexIDs = []int64{tempIdxID}
 			}

@@ -868,7 +868,6 @@ func (job *Job) GetInvolvingSchemaInfo() []InvolvingSchemaInfo {
 // SubJob is a representation of one DDL schema change. A Job may contain zero
 // (when multi-schema change is not applicable) or more SubJobs.
 type SubJob struct {
-	Version     JobVersion      `json:"-"`
 	Type        ActionType      `json:"type"`
 	Args        []any           `json:"-"`
 	RawArgs     json.RawMessage `json:"raw_args"`
@@ -883,13 +882,6 @@ type SubJob struct {
 	SchemaVer   int64           `json:"schema_version"`
 	ReorgTp     ReorgType       `json:"reorg_tp"`
 	UseCloud    bool            `json:"use_cloud"`
-}
-
-// FillArgs fills args for subjob.
-func (sub *SubJob) FillArgs(args JobArgs, version JobVersion) {
-	job := &Job{Version: version}
-	job.FillArgs(args)
-	sub.Args = job.Args
 }
 
 // IsNormal returns true if the sub-job is normally running.
@@ -934,7 +926,7 @@ func (sub *SubJob) ToProxyJob(parentJob *Job, seq int) Job {
 		DependencyID:    parentJob.DependencyID,
 		Query:           parentJob.Query,
 		BinlogInfo:      parentJob.BinlogInfo,
-		Version:         JobVersion1, // TODO(joechenrh): revert this after refactor done.
+		Version:         parentJob.Version,
 		ReorgMeta:       parentJob.ReorgMeta,
 		MultiSchemaInfo: &MultiSchemaInfo{Revertible: sub.Revertible, Seq: int32(seq)},
 		Priority:        parentJob.Priority,

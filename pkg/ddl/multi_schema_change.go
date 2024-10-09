@@ -15,6 +15,7 @@
 package ddl
 
 import (
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -323,7 +324,7 @@ func checkOperateSameColAndIdx(info *model.MultiSchemaInfo) error {
 	return checkIndexes(info.AlterIndexes, true)
 }
 
-func mergeAddIndex(info *model.MultiSchemaInfo) {
+func mergeAddIndex(info *model.MultiSchemaInfo) (err error) {
 	var mergedSubJob *model.SubJob
 	var mergeCnt int
 	for _, subJob := range info.SubJobs {
@@ -352,19 +353,25 @@ func mergeAddIndex(info *model.MultiSchemaInfo) {
 
 	for _, subJob := range info.SubJobs {
 		if subJob.Type == model.ActionAddIndex {
-			// TODO(joechenrh): Change version of subjobs.
-			args, _ := model.GetArgsFromSubJob(subJob, model.JobVersion1, model.GetAddIndexArgs)
+			args, err := model.GetAddIndexArgsFromSubJob(subJob)
+			if err != nil {
+				return errors.Trace(err)
+			}
 			newAddIndexesArgs.IndexArgs = append(newAddIndexesArgs.IndexArgs, args.IndexArgs...)
 		} else {
 			newSubJobs = append(newSubJobs, subJob)
 		}
 	}
-	// TODO(joechenrh): Change version of subjobs.
-	mergedSubJob.FillArgs(newAddIndexesArgs, model.JobVersion1)
+
+	// Fill args for new subjob
+	proxyJob := &model.Job{Version: model.JobVersion1}
+	proxyJob.FillArgs(newAddIndexesArgs)
+	mergedSubJob.Args = proxyJob.Args
 
 	// place the merged add index job at the end of the sub-jobs.
 	newSubJobs = append(newSubJobs, mergedSubJob)
 	info.SubJobs = newSubJobs
+	return
 }
 
 func checkOperateDropIndexUseByForeignKey(info *model.MultiSchemaInfo, t table.Table) error {

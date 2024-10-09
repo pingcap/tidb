@@ -85,7 +85,7 @@ func deniedByBDRWhenModifyColumn(newFieldType, oldFieldType types.FieldType, opt
 }
 
 // DeniedByBDR checks whether the DDL is denied by BDR.
-func DeniedByBDR(role ast.BDRRole, action model.ActionType, job *model.Job) (denied bool) {
+func DeniedByBDR(role ast.BDRRole, action model.ActionType, args model.JobArgs) (denied bool) {
 	ddlType, ok := model.ActionBDRMap[action]
 	switch role {
 	case ast.BDRRolePrimary:
@@ -94,9 +94,8 @@ func DeniedByBDR(role ast.BDRRole, action model.ActionType, job *model.Job) (den
 		}
 
 		// Can't add unique index on primary role.
-		if job != nil && (action == model.ActionAddIndex || action == model.ActionAddPrimaryKey) {
-			args, _ := model.GetAddIndexArgs(job)
-			if args.IndexArgs[0].Unique {
+		if args != nil && (action == model.ActionAddIndex || action == model.ActionAddPrimaryKey) {
+			if args.(*model.AddIndexArgs).IndexArgs[0].Unique {
 				return true
 			}
 		}

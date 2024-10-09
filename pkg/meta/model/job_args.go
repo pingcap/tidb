@@ -1309,20 +1309,12 @@ func GetFlashbackClusterArgs(job *Job) (*FlashbackClusterArgs, error) {
 	return getOrDecodeArgs[*FlashbackClusterArgs](&FlashbackClusterArgs{}, job)
 }
 
-func tryMarshalArgs(job *Job) error {
-	if len(job.Args) == 0 {
-		return nil
-	}
-	b, err := json.Marshal(job.Args)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	job.RawArgs = b
-	return nil
-}
-
 // DropIndexArgs is the argument for drop index.
 // IndexIDs may have different length with IndexNames and IfExists.
+// When it's used in dropping index, length of IndexNames, IfExists and IndexIDs are 1.
+// When it's used in rolling back add indexes,
+// len(IndexNames) and len(IfExists) equals to the number of added indexes,
+// while IndexIDs stores the partition IDs of the corresponding table.
 type DropIndexArgs struct {
 	IndexNames []pmodel.CIStr `json:"index_names,omitempty"`
 	IfExists   []bool         `json:"if_exists,omitempty"`
@@ -1344,9 +1336,6 @@ func (a *DropIndexArgs) decodeV1(job *Job) error {
 		job.Type == ActionDropIndex || job.Type == ActionDropPrimaryKey ||
 			job.Type == ActionAddIndex || job.Type == ActionAddPrimaryKey || job.Type == ActionAddVectorIndex,
 		"only add/drop index job can call GetDropIndexArgs")
-	if err := tryMarshalArgs(job); err != nil {
-		return errors.Trace(err)
-	}
 
 	indexNames := make([]pmodel.CIStr, 1)
 	ifExists := make([]bool, 1)
@@ -1386,20 +1375,16 @@ func (a *DropIndexArgs) getFinishedArgsV1(*Job) []any {
 
 // GetFinishedDropIndexArgs gets the drop index args.
 // It's used for both drop index and rollback add index.
+// For add vector index, we always use JobVersion2
 func GetFinishedDropIndexArgs(job *Job) (*DropIndexArgs, error) {
 	if job.Version == JobVersion1 {
-		if err := tryMarshalArgs(job); err != nil {
-			return nil, errors.Trace(err)
-		}
-
 		indexNames := make([]pmodel.CIStr, 1)
 		ifExists := make([]bool, 1)
 		indexIDs := make([]int64, 1)
 		var partitionIDs []int64
-		var isVector bool
 
-		if err := job.DecodeArgs(&indexNames, &ifExists, &indexIDs, &isVector); err != nil {
-			if err := job.DecodeArgs(&indexNames[0], &ifExists[0], &indexIDs[0], &partitionIDs, &isVector); err != nil {
+		if err := job.DecodeArgs(&indexNames, &ifExists, &indexIDs); err != nil {
+			if err := job.DecodeArgs(&indexNames[0], &ifExists[0], &indexIDs[0], &partitionIDs); err != nil {
 				return nil, errors.Trace(err)
 			}
 		}
@@ -1409,7 +1394,6 @@ func GetFinishedDropIndexArgs(job *Job) (*DropIndexArgs, error) {
 			IfExists:     ifExists,
 			IndexIDs:     indexIDs,
 			PartitionIDs: partitionIDs,
-			IsVector:     isVector,
 		}, nil
 	}
 	return getOrDecodeArgsV2[*DropIndexArgs](job)
@@ -1421,7 +1405,8 @@ func GetFinishedDropIndexArgs(job *Job) (*DropIndexArgs, error) {
 // For PK
 // Unique, IndexName, IndexPartSpecifications, IndexOptions, HiddelCols, Global
 type IndexArg struct {
-	Global                  bool                          `json:"global,omitempty"`
+	// Global is never used, we only use Global in IndexOption. Can be deprecated later.
+	Global                  bool                          `json:"-"`
 	Unique                  bool                          `json:"unique,omitempty"`
 	IndexName               pmodel.CIStr                  `json:"index_name,omitempty"`
 	IndexPartSpecifications []*ast.IndexPartSpecification `json:"index_part_specifications"`
@@ -1430,15 +1415,16 @@ type IndexArg struct {
 
 	// For vector index
 	FuncExpr string `json:"func_expr,omitempty"`
+	IsVector bool   `json:"is_vector,omitempty"`
 
 	// For PK
+	IsPK    bool          `json:"is_pk,omitempty"`
 	SQLMode mysql.SQLMode `json:"sql_mode,omitempty"`
-	Warning string        `json:"warnings,omitempty"`
 
 	// IfExist will be used in onDropIndex.
-	AddIndexID int64 `json:"add_index_id,omitempty"`
-	IfExist    bool  `json:"if_exist,omitempty"`
-	IsGlobal   bool  `json:"is_global,omitempty"`
+	IndexID  int64 `json:"index_id,omitempty"`
+	IfExist  bool  `json:"if_exist,omitempty"`
+	IsGlobal bool  `json:"is_global,omitempty"`
 }
 
 // AddIndexArgs is the argument for add index.
@@ -1448,28 +1434,26 @@ type AddIndexArgs struct {
 	// PartitionIDs will be used in onDropIndex.
 	PartitionIDs []int64 `json:"partition_ids,omitempty"`
 
-	// Since most of the argument processing logic of PK and index is same,
-	// We use this variable to distinguish them.
-	IsPK bool `json:"is_pk,omitempty"`
-
 	// MultiSchemaChange doesn't support vector index currently.
-	IsVector bool `json:"is_vector,omitempty"`
 
 	// This is to dintinguish finished and running args, see comments in expectedDeleteRangeCnt
 	IsFinishedArg bool `json:"is_finished,omitempty"`
 }
 
-func (a *AddIndexArgs) getArgsV1(*Job) []any {
-	if a.IsVector {
+func (a *AddIndexArgs) getArgsV1(job *Job) []any {
+	if job.Type == ActionAddVectorIndex {
 		arg := a.IndexArgs[0]
 		return []any{arg.IndexName, arg.IndexPartSpecifications[0], arg.IndexOption, arg.FuncExpr}
 	}
 
-	if a.IsPK {
+	if job.Type == ActionAddPrimaryKey {
 		arg := a.IndexArgs[0]
+
+		// The sixth argument is set and never used.
+		// Leave it as nil to make it compatible with history job.
 		return []any{
 			arg.Unique, arg.IndexName, arg.IndexPartSpecifications,
-			arg.IndexOption, arg.SQLMode, arg.Warning, arg.Global,
+			arg.IndexOption, arg.SQLMode, nil, arg.Global,
 		}
 	}
 
@@ -1500,10 +1484,6 @@ func (a *AddIndexArgs) getArgsV1(*Job) []any {
 
 func (a *AddIndexArgs) decodeV1(job *Job) error {
 	var err error
-	if err := tryMarshalArgs(job); err != nil {
-		return errors.Trace(err)
-	}
-
 	if job.Type == ActionAddIndex {
 		err = a.getAddIndexArgs(job)
 	} else if job.Type == ActionAddVectorIndex {
@@ -1517,11 +1497,6 @@ func (a *AddIndexArgs) decodeV1(job *Job) error {
 		return errors.Trace(err)
 	}
 	return nil
-}
-
-// GetAddIndexArgs gets the add index args.
-func GetAddIndexArgs(job *Job) (*AddIndexArgs, error) {
-	return getOrDecodeArgs(&AddIndexArgs{}, job)
 }
 
 func (a *AddIndexArgs) getAddIndexArgs(job *Job) error {
@@ -1556,12 +1531,12 @@ func (a *AddIndexArgs) getAddIndexArgs(job *Job) error {
 }
 
 func (a *AddIndexArgs) getAddPrimaryKeyArgs(job *Job) error {
-	a.IsPK = true
-	a.IndexArgs = []*IndexArg{{}}
+	a.IndexArgs = []*IndexArg{{IsPK: true}}
+	var unused any
 	if err := job.DecodeArgs(
 		&a.IndexArgs[0].Unique, &a.IndexArgs[0].IndexName, &a.IndexArgs[0].IndexPartSpecifications,
 		&a.IndexArgs[0].IndexOption, &a.IndexArgs[0].SQLMode,
-		&a.IndexArgs[0].Warning, &a.IndexArgs[0].Global); err != nil {
+		&unused, &a.IndexArgs[0].Global); err != nil {
 		return errors.Trace(err)
 	}
 	return nil
@@ -1580,27 +1555,78 @@ func (a *AddIndexArgs) getAddVectorIndexArgs(job *Job) error {
 		return errors.Trace(err)
 	}
 
-	a.IsVector = true
 	a.IndexArgs = []*IndexArg{{
 		IndexName:               indexName,
 		IndexPartSpecifications: []*ast.IndexPartSpecification{indexPartSpecification},
 		IndexOption:             indexOption,
 		FuncExpr:                funcExpr,
+		IsVector:                true,
 	}}
 	return nil
 }
 
-func (a *AddIndexArgs) getFinishedArgsV1(*Job) []any {
+func (a *AddIndexArgs) getFinishedArgsV1(job *Job) []any {
+	if job.Type == ActionAddVectorIndex {
+		return []any{a.IndexArgs[0].IndexID, a.IndexArgs[0].IfExist, a.PartitionIDs, a.IndexArgs[0].IsGlobal}
+	}
+
 	n := len(a.IndexArgs)
-	addIndexIDs := make([]int64, n)
+	indexIDs := make([]int64, n)
 	ifExists := make([]bool, n)
 	isGlobals := make([]bool, n)
 	for i, arg := range a.IndexArgs {
-		addIndexIDs[i] = arg.AddIndexID
+		indexIDs[i] = arg.IndexID
 		ifExists[i] = arg.IfExist
 		isGlobals[i] = arg.Global
 	}
-	return []any{addIndexIDs, ifExists, a.PartitionIDs, isGlobals}
+	return []any{indexIDs, ifExists, a.PartitionIDs, isGlobals}
+}
+
+// GetAddIndexArgs gets the add index args.
+func GetAddIndexArgs(job *Job) (*AddIndexArgs, error) {
+	return getOrDecodeArgs(&AddIndexArgs{}, job)
+}
+
+// GetAddIndexArgsFromSubJob get args from sub job
+func GetAddIndexArgsFromSubJob(subjob *SubJob) (*AddIndexArgs, error) {
+	// TODO(joechenrh): support job version V2
+	uniques := make([]bool, 1)
+	indexNames := make([]pmodel.CIStr, 1)
+	indexPartSpecifications := make([][]*ast.IndexPartSpecification, 1)
+	indexOptions := make([]*ast.IndexOption, 1)
+	hiddenCols := make([][]*ColumnInfo, 1)
+	globals := make([]bool, 1)
+
+	var ok bool
+	if uniques[0], ok = subjob.Args[0].(bool); ok {
+		uniques[0] = subjob.Args[0].(bool)
+		indexNames[0] = subjob.Args[1].(pmodel.CIStr)
+		indexPartSpecifications[0] = subjob.Args[2].([]*ast.IndexPartSpecification)
+		indexOptions[0] = subjob.Args[3].(*ast.IndexOption)
+		hiddenCols[0] = subjob.Args[4].([]*ColumnInfo)
+		globals[0] = subjob.Args[5].(bool)
+	} else if uniques, ok = subjob.Args[0].([]bool); ok {
+		indexNames = subjob.Args[1].([]pmodel.CIStr)
+		indexPartSpecifications = subjob.Args[2].([][]*ast.IndexPartSpecification)
+		indexOptions = subjob.Args[3].([]*ast.IndexOption)
+		hiddenCols = subjob.Args[4].([][]*ColumnInfo)
+		globals = subjob.Args[5].([]bool)
+	} else {
+		return nil, errors.Errorf("Can not get argument from sub job")
+	}
+
+	a := &AddIndexArgs{}
+	for i, unique := range uniques {
+		a.IndexArgs = append(a.IndexArgs, &IndexArg{
+			Unique:                  unique,
+			IndexName:               indexNames[i],
+			IndexPartSpecifications: indexPartSpecifications[i],
+			IndexOption:             indexOptions[i],
+			HiddenCols:              hiddenCols[i],
+			Global:                  globals[i],
+		})
+	}
+	return a, nil
 }
 
 // GetFinishedAddIndexArgs gets the add index args after the job is finished.
@@ -1617,11 +1643,11 @@ func GetFinishedAddIndexArgs(job *Job) (*AddIndexArgs, error) {
 			}
 		}
 		a := &AddIndexArgs{PartitionIDs: partitionIDs, IsFinishedArg: true}
-		for i, addIndexID := range addIndexIDs {
+		for i, indexID := range addIndexIDs {
 			a.IndexArgs = append(a.IndexArgs, &IndexArg{
-				AddIndexID: addIndexID,
-				IfExist:    ifExists[i],
-				IsGlobal:   isGlobals[i],
+				IndexID:  indexID,
+				IfExist:  ifExists[i],
+				IsGlobal: isGlobals[i],
 			})
 		}
 		return a, nil
@@ -1648,10 +1674,6 @@ func (a *RenameIndexArgs) getArgsV1(*Job) []any {
 }
 
 func (a *RenameIndexArgs) decodeV1(job *Job) error {
-	if err := tryMarshalArgs(job); err != nil {
-		return errors.Trace(err)
-	}
-
 	if err := job.DecodeArgs(&a.From, &a.To); err != nil {
 		return errors.Trace(err)
 	}

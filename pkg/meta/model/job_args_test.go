@@ -1135,19 +1135,18 @@ func TestAddIndexArgs(t *testing.T) {
 			IndexOption:             &ast.IndexOption{},
 			HiddenCols:              []*ColumnInfo{{}, {}},
 			SQLMode:                 mysql.ModeANSI,
-			Warning:                 "test warning",
-			AddIndexID:              1,
+			IndexID:                 1,
 			IfExist:                 false,
 			IsGlobal:                false,
 			FuncExpr:                "test_string",
 		}},
-		IsVector:     false,
 		PartitionIDs: []int64{100, 101, 102},
 	}
 
-	inArgs.IsPK = false
 	inArgs.IsFinishedArg = false
 	for _, v := range []JobVersion{JobVersion1, JobVersion2} {
+		inArgs.IndexArgs[0].IsVector = false
+		inArgs.IndexArgs[0].IsPK = false
 		j2 := &Job{}
 		require.NoError(t, j2.Decode(getJobBytes(t, inArgs, v, ActionAddIndex)))
 
@@ -1163,9 +1162,10 @@ func TestAddIndexArgs(t *testing.T) {
 		require.Equal(t, inArgs.IndexArgs[0].HiddenCols, a.HiddenCols)
 	}
 
-	inArgs.IsPK = true
 	inArgs.IsFinishedArg = false
 	for _, v := range []JobVersion{JobVersion1, JobVersion2} {
+		inArgs.IndexArgs[0].IsVector = false
+		inArgs.IndexArgs[0].IsPK = true
 		j2 := &Job{}
 		require.NoError(t, j2.Decode(getJobBytes(t, inArgs, v, ActionAddPrimaryKey)))
 
@@ -1178,14 +1178,13 @@ func TestAddIndexArgs(t *testing.T) {
 		require.Equal(t, inArgs.IndexArgs[0].IndexName, a.IndexName)
 		require.Equal(t, inArgs.IndexArgs[0].IndexPartSpecifications, a.IndexPartSpecifications)
 		require.Equal(t, inArgs.IndexArgs[0].SQLMode, a.SQLMode)
-		require.Equal(t, inArgs.IndexArgs[0].Warning, a.Warning)
 		require.Equal(t, inArgs.IndexArgs[0].IndexOption, a.IndexOption)
 	}
 
-	inArgs.IsPK = false
-	inArgs.IsVector = true
 	inArgs.IsFinishedArg = false
 	for _, v := range []JobVersion{JobVersion1, JobVersion2} {
+		inArgs.IndexArgs[0].IsVector = true
+		inArgs.IndexArgs[0].IsPK = false
 		j2 := &Job{}
 		require.NoError(t, j2.Decode(getJobBytes(t, inArgs, v, ActionAddVectorIndex)))
 
@@ -1208,14 +1207,14 @@ func TestAddIndexArgs(t *testing.T) {
 		require.NoError(t, err)
 
 		a := args.IndexArgs[0]
-		require.Equal(t, inArgs.IndexArgs[0].AddIndexID, a.AddIndexID)
+		require.Equal(t, inArgs.IndexArgs[0].IndexID, a.IndexID)
 		require.Equal(t, inArgs.IndexArgs[0].IfExist, a.IfExist)
 		require.Equal(t, inArgs.IndexArgs[0].IsGlobal, a.IsGlobal)
 		require.Equal(t, inArgs.PartitionIDs, args.PartitionIDs)
 	}
 }
 
-func TestDropIndexArguemnts(t *testing.T) {
+func TestDropIndexArguements(t *testing.T) {
 	checkFunc := func(t *testing.T, inArgs *DropIndexArgs) {
 		for _, v := range []JobVersion{JobVersion1, JobVersion2} {
 			j2 := &Job{}
