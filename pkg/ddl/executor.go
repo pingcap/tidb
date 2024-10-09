@@ -4472,6 +4472,14 @@ func getIdentKey(ident ast.Ident) string {
 	return fmt.Sprintf("%s.%s", ident.Schema.L, ident.Name.L)
 }
 
+func getAnonymousIndexPrefix(isVector bool) string {
+	colName := "expression_index"
+	if isVector {
+		colName = "vector_index"
+	}
+	return colName
+}
+
 // GetName4AnonymousIndex returns a valid name for anonymous index.
 func GetName4AnonymousIndex(t table.Table, colName pmodel.CIStr, idxName pmodel.CIStr) pmodel.CIStr {
 	// `id` is used to indicated the index name's suffix.
@@ -4599,10 +4607,7 @@ func checkIndexNameAndColumns(ctx *metabuild.Context, t table.Table, indexName p
 	indexPartSpecifications []*ast.IndexPartSpecification, isVector, ifNotExists bool) (pmodel.CIStr, []*model.ColumnInfo, error) {
 	// Deal with anonymous index.
 	if len(indexName.L) == 0 {
-		colName := pmodel.NewCIStr("expression_index")
-		if isVector {
-			colName = pmodel.NewCIStr("vector_index")
-		}
+		colName := pmodel.NewCIStr(getAnonymousIndexPrefix(isVector))
 		if indexPartSpecifications[0].Column != nil {
 			colName = indexPartSpecifications[0].Column.Name
 		}
