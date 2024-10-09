@@ -2046,7 +2046,9 @@ func (e *executor) multiSchemaChange(ctx sessionctx.Context, ti ast.Ident, info 
 	if err != nil {
 		return errors.Trace(err)
 	}
-	mergeAddIndex(info)
+	if err = mergeAddIndex(info); err != nil {
+		return errors.Trace(err)
+	}
 	return e.DoDDLJob(ctx, job)
 }
 
