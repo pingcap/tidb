@@ -386,13 +386,14 @@ func TestTTLDeleteTaskWorker(t *testing.T) {
 	t4 := newMockTTLTbl(t, "t4")
 	s := newMockSession(t)
 	pool := newMockSessionPool(t)
-	pool.se = s
+	pool.pool.(*mockSessionPool).se = s
 
 	sqlMap := make(map[string]int)
 	t3Retried := make(chan struct{})
 	t4Retried := make(chan struct{})
 	s.executeSQL = func(ctx context.Context, sql string, args ...any) ([]chunk.Row, error) {
-		pool.lastSession.sessionInfoSchema = newMockInfoSchema(t1.TableInfo, t2.TableInfo, t3.TableInfo, t4.TableInfo)
+		pool.pool.(*mockSessionPool).lastSession.sessionInfoSchema =
+			newMockInfoSchema(t1.TableInfo, t2.TableInfo, t3.TableInfo, t4.TableInfo)
 		if strings.Contains(sql, "`t1`") {
 			// success
 			return nil, nil
@@ -410,7 +411,7 @@ func TestTTLDeleteTaskWorker(t *testing.T) {
 
 		if strings.Contains(sql, "`t3`") {
 			// error no retry
-			pool.lastSession.sessionInfoSchema = newMockInfoSchema()
+			pool.pool.(*mockSessionPool).lastSession.sessionInfoSchema = newMockInfoSchema()
 			return nil, nil
 		}
 

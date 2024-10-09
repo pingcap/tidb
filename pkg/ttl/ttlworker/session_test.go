@@ -17,7 +17,9 @@ package ttlworker
 import (
 	"context"
 	"errors"
+	"maps"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -30,6 +32,7 @@ import (
 	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/sysproctrack"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/ttl/cache"
 	"github.com/pingcap/tidb/pkg/ttl/session"
@@ -138,10 +141,51 @@ func (p *mockSessionPool) Put(pools.Resource) {}
 
 func (p *mockSessionPool) Close() {}
 
-func newMockSessionPool(t *testing.T, tbl ...*cache.PhysicalTable) *mockSessionPool {
-	return &mockSessionPool{
+func newMockSessionPool(t *testing.T, tbl ...*cache.PhysicalTable) *SessionPool {
+	pool := &mockSessionPool{
 		se: newMockSession(t, tbl...),
 	}
+	return NewSessionPool(pool, newMockSysProcTracker(t), allocTestTrackID)
+}
+
+type mockSysProcTracker struct {
+	sysproctrack.Tracker
+	t *testing.T
+	sync.Mutex
+	tracked map[uint64]sysproctrack.TrackProc
+}
+
+func newMockSysProcTracker(t *testing.T) *mockSysProcTracker {
+	return &mockSysProcTracker{
+		t:       t,
+		tracked: make(map[uint64]sysproctrack.TrackProc),
+	}
+}
+
+func (m *mockSysProcTracker) Track(id uint64, proc sysproctrack.TrackProc) error {
+	m.Lock()
+	defer m.Unlock()
+	_, ok := m.tracked[id]
+	require.False(m.t, ok)
+	require.NotNil(m.t, proc)
+	m.tracked[id] = proc
+	return nil
+}
+
+func (m *mockSysProcTracker) Reset() {
+	m.Lock()
+	defer m.Unlock()
+	m.tracked = make(map[uint64]sysproctrack.TrackProc)
+}
+
+func (m *mockSysProcTracker) Tracked() map[uint64]sysproctrack.TrackProc {
+	m.Lock()
+	defer m.Unlock()
+	return maps.Clone(m.tracked)
+}
+
+func allocTestTrackID() uint64 {
+	return uint64(idAllocator.Add(1))
 }
 
 type mockSession struct {
@@ -155,6 +199,7 @@ type mockSession struct {
 	resetTimeZoneCalls int
 	closed             bool
 	commitErr          error
+	killed             chan struct{}
 }
 
 func newMockSession(t *testing.T, tbl ...*cache.PhysicalTable) *mockSession {
@@ -168,6 +213,7 @@ func newMockSession(t *testing.T, tbl ...*cache.PhysicalTable) *mockSession {
 		t:                 t,
 		sessionInfoSchema: newMockInfoSchema(tbls...),
 		sessionVars:       sessVars,
+		killed:            make(chan struct{}),
 	}
 }
 
@@ -222,6 +268,11 @@ func (s *mockSession) ResetWithGlobalTimeZone(_ context.Context) (err error) {
 // GlobalTimeZone returns the global timezone
 func (s *mockSession) GlobalTimeZone(_ context.Context) (*time.Location, error) {
 	return time.Local, nil
+}
+
+// KillStmt kills the current statement execution
+func (s *mockSession) KillStmt() {
+	close(s.killed)
 }
 
 func (s *mockSession) Close() {

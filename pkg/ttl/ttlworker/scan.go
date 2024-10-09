@@ -99,7 +99,7 @@ func (t *ttlScanTask) getDatumRows(rows []chunk.Row) [][]types.Datum {
 	return datums
 }
 
-func (t *ttlScanTask) doScan(ctx context.Context, delCh chan<- *ttlDeleteTask, sessPool util.SessionPool) *ttlScanTaskExecResult {
+func (t *ttlScanTask) doScan(ctx context.Context, delCh chan<- *ttlDeleteTask, sessPool *SessionPool) *ttlScanTaskExecResult {
 	// TODO: merge the ctx and the taskCtx in ttl scan task, to allow both "cancel" and gracefully stop workers
 	// now, the taskCtx is only check at the beginning of every loop
 	taskCtx := t.ctx
@@ -107,11 +107,50 @@ func (t *ttlScanTask) doScan(ctx context.Context, delCh chan<- *ttlDeleteTask, s
 	defer tracer.EnterPhase(tracer.Phase())
 
 	tracer.EnterPhase(metrics.PhaseOther)
-	rawSess, err := getSession(sessPool)
+	rawSess, trackID, err := sessPool.GetSessionAndTrack()
 	if err != nil {
 		return t.result(err)
 	}
-	defer rawSess.Close()
+
+	doScanFinished, setDoScanFinished := context.WithCancel(context.Background())
+	wg := util.WaitGroupWrapper{}
+	wg.Run(func() {
+		select {
+		case <-taskCtx.Done():
+		case <-ctx.Done():
+		case <-doScanFinished.Done():
+			return
+		}
+		logger := logutil.BgLogger().With(
+			zap.Uint64("trackID", trackID),
+			zap.Int64("tableID", t.TableID),
+			zap.String("table", t.tbl.Name.O),
+			zap.String("partition", t.tbl.Partition.O),
+			zap.String("jobID", t.JobID),
+			zap.Int64("scanID", t.ScanID),
+		)
+		logger.Info("kill current scan execution for task or worker cancelled")
+		rawSess.KillStmt()
+		ticker := time.NewTicker(10 * time.Second)
+		defer ticker.Stop()
+		for {
+			// Have a small probability that the kill signal will be lost when the session is idle.
+			// So wait for a while and send the kill signal again if the scan is still running.
+			select {
+			case <-doScanFinished.Done():
+				return
+			case <-ticker.C:
+				logger.Warn("scan not finished after kill signal sent, send it again")
+				rawSess.KillStmt()
+			}
+		}
+	})
+
+	defer func() {
+		setDoScanFinished()
+		wg.Wait()
+		rawSess.Close()
+	}()
 
 	safeExpire, err := t.tbl.EvalExpireTime(taskCtx, rawSess, rawSess.Now())
 	if err != nil {
@@ -182,11 +221,12 @@ func (t *ttlScanTask) doScan(ctx context.Context, delCh chan<- *ttlDeleteTask, s
 		selectInterval := time.Since(sqlStart)
 		if sqlErr != nil {
 			metrics.SelectErrorDuration.Observe(selectInterval.Seconds())
-			needRetry := retryable && retryTimes < scanTaskExecuteSQLMaxRetry && ctx.Err() == nil
+			needRetry := retryable && retryTimes < scanTaskExecuteSQLMaxRetry && ctx.Err() == nil && t.ctx.Err() == nil
 			logutil.BgLogger().Error("execute query for ttl scan task failed",
 				zap.String("SQL", sql),
 				zap.Int("retryTimes", retryTimes),
 				zap.Bool("needRetry", needRetry),
+				zap.Uint64("trackID", trackID),
 				zap.Error(sqlErr),
 			)
 
@@ -242,10 +282,10 @@ type ttlScanWorker struct {
 	curTaskResult *ttlScanTaskExecResult
 	delCh         chan<- *ttlDeleteTask
 	notifyStateCh chan<- any
-	sessionPool   util.SessionPool
+	sessionPool   *SessionPool
 }
 
-func newScanWorker(delCh chan<- *ttlDeleteTask, notifyStateCh chan<- any, sessPool util.SessionPool) *ttlScanWorker {
+func newScanWorker(delCh chan<- *ttlDeleteTask, notifyStateCh chan<- any, sessPool *SessionPool) *ttlScanWorker {
 	w := &ttlScanWorker{
 		delCh:         delCh,
 		notifyStateCh: notifyStateCh,

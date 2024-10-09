@@ -84,7 +84,7 @@ func TestGetSession(t *testing.T) {
 	}, 1, 1, 0)
 	defer pool.Close()
 
-	se, err := ttlworker.GetSessionForTest(pool)
+	se, err := ttlworker.NewSessionPool(pool, nil, nil).GetSession()
 	require.NoError(t, err)
 	defer se.Close()
 
@@ -1066,7 +1066,8 @@ func TestDelayMetrics(t *testing.T) {
 
 func TestManagerJobAdapterCanSubmitJob(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
-	adapter := ttlworker.NewManagerJobAdapter(store, dom.SysSessionPool(), nil)
+	pool := ttlworker.NewSessionPool(dom.SysSessionPool(), nil, nil)
+	adapter := ttlworker.NewManagerJobAdapter(store, pool, nil)
 
 	// stop TTLJobManager to avoid unnecessary job schedule and make test stable
 	dom.TTLJobManager().Stop()
@@ -1195,7 +1196,8 @@ func TestManagerJobAdapterSubmitJob(t *testing.T) {
 
 func TestManagerJobAdapterGetJob(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
-	adapter := ttlworker.NewManagerJobAdapter(store, dom.SysSessionPool(), nil)
+	pool := ttlworker.NewSessionPool(dom.SysSessionPool(), nil, nil)
+	adapter := ttlworker.NewManagerJobAdapter(store, pool, nil)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -1290,7 +1292,8 @@ func TestManagerJobAdapterGetJob(t *testing.T) {
 
 func TestManagerJobAdapterNow(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
-	adapter := ttlworker.NewManagerJobAdapter(store, dom.SysSessionPool(), nil)
+	pool := ttlworker.NewSessionPool(dom.SysSessionPool(), nil, nil)
+	adapter := ttlworker.NewManagerJobAdapter(store, pool, nil)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")

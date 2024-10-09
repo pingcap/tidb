@@ -26,7 +26,6 @@ import (
 	"github.com/pingcap/tidb/pkg/ttl/cache"
 	"github.com/pingcap/tidb/pkg/ttl/metrics"
 	"github.com/pingcap/tidb/pkg/ttl/session"
-	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/tikv/client-go/v2/tikv"
@@ -85,7 +84,7 @@ var errTooManyRunningTasks = errors.New("there are too many running tasks")
 // taskManager schedules and manages the ttl tasks on this instance
 type taskManager struct {
 	ctx      context.Context
-	sessPool util.SessionPool
+	sessPool *SessionPool
 
 	id string
 
@@ -101,7 +100,7 @@ type taskManager struct {
 	notifyStateCh chan any
 }
 
-func newTaskManager(ctx context.Context, sessPool util.SessionPool, infoSchemaCache *cache.InfoSchemaCache, id string, store kv.Storage) *taskManager {
+func newTaskManager(ctx context.Context, sessPool *SessionPool, infoSchemaCache *cache.InfoSchemaCache, id string, store kv.Storage) *taskManager {
 	return &taskManager{
 		ctx:      logutil.WithKeyValue(ctx, "ttl-worker", "task-manager"),
 		sessPool: sessPool,

@@ -28,7 +28,6 @@ import (
 	"github.com/pingcap/tidb/pkg/ttl/session"
 	"github.com/pingcap/tidb/pkg/ttl/sqlbuilder"
 	"github.com/pingcap/tidb/pkg/types"
-	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
 	"golang.org/x/time/rate"
@@ -259,11 +258,11 @@ func (b *ttlDelRetryBuffer) recordRetryItem(task *ttlDeleteTask, retryRows [][]t
 type ttlDeleteWorker struct {
 	baseWorker
 	delCh       <-chan *ttlDeleteTask
-	sessionPool util.SessionPool
+	sessionPool *SessionPool
 	retryBuffer *ttlDelRetryBuffer
 }
 
-func newDeleteWorker(delCh <-chan *ttlDeleteTask, sessPool util.SessionPool) *ttlDeleteWorker {
+func newDeleteWorker(delCh <-chan *ttlDeleteTask, sessPool *SessionPool) *ttlDeleteWorker {
 	w := &ttlDeleteWorker{
 		delCh:       delCh,
 		sessionPool: sessPool,
@@ -281,7 +280,7 @@ func (w *ttlDeleteWorker) loop() error {
 	}()
 
 	tracer.EnterPhase(metrics.PhaseOther)
-	se, err := getSession(w.sessionPool)
+	se, err := w.sessionPool.GetSession()
 	if err != nil {
 		return err
 	}

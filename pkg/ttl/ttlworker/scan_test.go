@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/ttl/cache"
 	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/stretchr/testify/require"
 )
@@ -34,7 +35,7 @@ type mockScanWorker struct {
 	t        *testing.T
 	delCh    chan *ttlDeleteTask
 	notifyCh chan any
-	sessPoll *mockSessionPool
+	sessPoll *SessionPool
 }
 
 func NewMockScanWorker(t *testing.T) *mockScanWorker {
@@ -111,12 +112,12 @@ func (w *mockScanWorker) pollDelTask() *ttlDeleteTask {
 }
 
 func (w *mockScanWorker) setOneRowResult(tbl *cache.PhysicalTable, val ...any) {
-	w.sessPoll.se.sessionInfoSchema = newMockInfoSchema(tbl.TableInfo)
-	w.sessPoll.se.rows = newMockRows(w.t, tbl.KeyColumnTypes...).Append(val...).Rows()
+	w.sessPoll.pool.(*mockSessionPool).se.sessionInfoSchema = newMockInfoSchema(tbl.TableInfo)
+	w.sessPoll.pool.(*mockSessionPool).se.rows = newMockRows(w.t, tbl.KeyColumnTypes...).Append(val...).Rows()
 }
 
 func (w *mockScanWorker) clearInfoSchema() {
-	w.sessPoll.se.sessionInfoSchema = newMockInfoSchema()
+	w.sessPoll.pool.(*mockSessionPool).se.sessionInfoSchema = newMockInfoSchema()
 }
 
 func (w *mockScanWorker) stopWithWait() {
@@ -210,7 +211,7 @@ type mockScanTask struct {
 	*ttlScanTask
 	t        *testing.T
 	tbl      *cache.PhysicalTable
-	sessPool *mockSessionPool
+	sessPool *SessionPool
 	sqlRetry []int
 
 	delCh               chan *ttlDeleteTask
@@ -240,7 +241,7 @@ func newMockScanTask(t *testing.T, sqlCnt int) *mockScanTask {
 		sqlRetry:        make([]int, sqlCnt),
 		schemaChangeIdx: -1,
 	}
-	task.sessPool.se.executeSQL = task.execSQL
+	task.sessPool.pool.(*mockSessionPool).se.executeSQL = task.execSQL
 	return task
 }
 
@@ -263,14 +264,21 @@ func (t *mockScanTask) runDoScanForTest(delTaskCnt int, errString string) *ttlSc
 		scanTaskExecuteSQLRetryInterval = origRetryInterval
 	}()
 
-	t.sessPool.se.sessionInfoSchema = newMockInfoSchema(t.tbl.TableInfo)
+	t.sessPool.pool.(*mockSessionPool).se.sessionInfoSchema = newMockInfoSchema(t.tbl.TableInfo)
 	t.prevSQL = ""
 	t.prevSQLRetry = 0
-	t.sessPool.lastSession = nil
+	t.sessPool.pool.(*mockSessionPool).lastSession = nil
+	tracker := t.sessPool.sysTracker.(*mockSysProcTracker)
+	tracker.Reset()
 	r := t.doScan(context.TODO(), t.delCh, t.sessPool)
-	require.NotNil(t.t, t.sessPool.lastSession)
-	require.True(t.t, t.sessPool.lastSession.closed)
-	require.Greater(t.t, t.sessPool.lastSession.resetTimeZoneCalls, 0)
+	lastSe := t.sessPool.pool.(*mockSessionPool).lastSession
+	require.NotNil(t.t, lastSe)
+	require.True(t.t, lastSe.closed)
+	require.Greater(t.t, lastSe.resetTimeZoneCalls, 0)
+	require.Equal(t.t, 1, len(tracker.Tracked()))
+	for _, proc := range tracker.Tracked() {
+		require.Same(t.t, lastSe, proc)
+	}
 	require.NotNil(t.t, r)
 	require.Same(t.t, t.ttlScanTask, r.task)
 	if errString == "" {
@@ -376,7 +384,7 @@ func (t *mockScanTask) execSQL(_ context.Context, sql string, _ ...any) ([]chunk
 	require.LessOrEqual(t.t, curRetry, t.sqlRetry[i])
 
 	if t.schemaChangeIdx == i && t.schemaChangeInRetry == curRetry {
-		t.sessPool.lastSession.sessionInfoSchema = newMockInfoSchema()
+		t.sessPool.pool.(*mockSessionPool).lastSession.sessionInfoSchema = newMockInfoSchema()
 	}
 
 	if curRetry < t.sqlRetry[i] {
@@ -413,7 +421,7 @@ func TestScanTaskDoScan(t *testing.T) {
 func TestScanTaskCheck(t *testing.T) {
 	tbl := newMockTTLTbl(t, "t1")
 	pool := newMockSessionPool(t, tbl)
-	pool.se.rows = newMockRows(t, types.NewFieldType(mysql.TypeInt24)).Append(12).Rows()
+	pool.pool.(*mockSessionPool).se.rows = newMockRows(t, types.NewFieldType(mysql.TypeInt24)).Append(12).Rows()
 	ctx := cache.SetMockExpireTime(context.Background(), time.Unix(100, 0))
 
 	task := &ttlScanTask{
@@ -445,4 +453,53 @@ func TestScanTaskCheck(t *testing.T) {
 	require.NoError(t, result.err)
 	require.Equal(t, 1, len(ch))
 	require.Equal(t, "Total Rows: 1, Success Rows: 0, Error Rows: 0", task.statistics.String())
+}
+
+func TestScanTaskCancelStmt(t *testing.T) {
+	task := &ttlScanTask{
+		ctx: context.Background(),
+		tbl: newMockTTLTbl(t, "t1"),
+		TTLTask: &cache.TTLTask{
+			ExpireTime:     time.UnixMilli(0),
+			ScanRangeStart: []types.Datum{types.NewIntDatum(0)},
+		},
+		statistics: &ttlStatistics{},
+	}
+
+	testCancel := func(ctx context.Context, doCancel func()) {
+		pool := newMockSessionPool(t)
+		mockPool := pool.pool.(*mockSessionPool)
+		startExec := make(chan struct{})
+		mockPool.se.sessionInfoSchema = newMockInfoSchema(task.tbl.TableInfo)
+		mockPool.se.executeSQL = func(_ context.Context, _ string, _ ...any) ([]chunk.Row, error) {
+			close(startExec)
+			select {
+			case <-mockPool.se.killed:
+				return nil, errors.New("killed")
+			case <-time.After(10 * time.Second):
+				return nil, errors.New("timeout")
+			}
+		}
+		wg := util.WaitGroupWrapper{}
+		wg.Run(func() {
+			select {
+			case <-startExec:
+			case <-time.After(10 * time.Second):
+				require.FailNow(t, "timeout")
+			}
+			doCancel()
+		})
+		r := task.doScan(ctx, nil, pool)
+		require.NotNil(t, r)
+		require.EqualError(t, r.err, "killed")
+		wg.Wait()
+	}
+
+	// test cancel with input context
+	ctx, cancel := context.WithCancel(context.Background())
+	testCancel(ctx, cancel)
+
+	// test cancel with task context
+	task.ctx, cancel = context.WithCancel(context.Background())
+	testCancel(context.Background(), cancel)
 }

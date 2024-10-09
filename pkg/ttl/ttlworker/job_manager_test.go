@@ -29,7 +29,6 @@ import (
 	"github.com/pingcap/tidb/pkg/ttl/cache"
 	"github.com/pingcap/tidb/pkg/ttl/session"
 	"github.com/pingcap/tidb/pkg/types"
-	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -143,11 +142,6 @@ var updateStatusSQL = "SELECT LOW_PRIORITY table_id,parent_table_id,table_statis
 
 // TTLJob exports the ttlJob for test
 type TTLJob = ttlJob
-
-// GetSessionForTest is used for test
-func GetSessionForTest(pool util.SessionPool) (session.Session, error) {
-	return getSession(pool)
-}
 
 // LockJob is an exported version of lockNewJob for test
 func (m *JobManager) LockJob(ctx context.Context, se session.Session, table *cache.PhysicalTable, now time.Time, createJobID string, checkInterval bool) (*TTLJob, error) {

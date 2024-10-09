@@ -29,7 +29,6 @@ import (
 	timerapi "github.com/pingcap/tidb/pkg/timer/api"
 	"github.com/pingcap/tidb/pkg/ttl/cache"
 	"github.com/pingcap/tidb/pkg/ttl/session"
-	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
 	"golang.org/x/exp/maps"
@@ -50,7 +49,7 @@ type TTLTimerData struct {
 
 // TTLTimersSyncer is used to sync timers for ttl
 type TTLTimersSyncer struct {
-	pool           util.SessionPool
+	pool           *SessionPool
 	cli            timerapi.TimerClient
 	key2Timers     map[string]*timerapi.TimerRecord
 	lastPullTimers time.Time
@@ -61,7 +60,7 @@ type TTLTimersSyncer struct {
 }
 
 // NewTTLTimerSyncer creates a new TTLTimersSyncer
-func NewTTLTimerSyncer(pool util.SessionPool, cli timerapi.TimerClient) *TTLTimersSyncer {
+func NewTTLTimerSyncer(pool *SessionPool, cli timerapi.TimerClient) *TTLTimersSyncer {
 	return &TTLTimersSyncer{
 		pool:        pool,
 		cli:         cli,
@@ -81,7 +80,7 @@ func (g *TTLTimersSyncer) SetDelayDeleteInterval(interval time.Duration) {
 // ManualTriggerTTLTimer triggers a TTL job for a physical table which returns a function to wait the job done.
 // This returned function returns a bool value to indicates whether the job is finished.
 func (g *TTLTimersSyncer) ManualTriggerTTLTimer(ctx context.Context, tbl *cache.PhysicalTable) (func() (string, bool, error), error) {
-	se, err := getSession(g.pool)
+	se, err := g.pool.GetSession()
 	if err != nil {
 		return nil, err
 	}
@@ -98,7 +97,7 @@ func (g *TTLTimersSyncer) ManualTriggerTTLTimer(ctx context.Context, tbl *cache.
 	}
 
 	return func() (string, bool, error) {
-		se, err = getSession(g.pool)
+		se, err = g.pool.GetSession()
 		if err != nil {
 			return "", false, err
 		}
@@ -178,7 +177,7 @@ func (g *TTLTimersSyncer) SyncTimers(ctx context.Context, is infoschema.InfoSche
 		g.lastPullTimers = g.nowFunc()
 	}
 
-	se, err := getSession(g.pool)
+	se, err := g.pool.GetSession()
 	if err != nil {
 		logutil.BgLogger().Error("failed to sync TTL timers", zap.Error(err))
 		return

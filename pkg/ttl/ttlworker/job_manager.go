@@ -33,7 +33,6 @@ import (
 	"github.com/pingcap/tidb/pkg/ttl/client"
 	"github.com/pingcap/tidb/pkg/ttl/metrics"
 	"github.com/pingcap/tidb/pkg/ttl/session"
-	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/timeutil"
@@ -98,7 +97,7 @@ type JobManager struct {
 	// `scanWorkers` and `delWorkers` can be modified by setting variables at any time
 	baseWorker
 
-	sessPool util.SessionPool
+	sessPool *SessionPool
 
 	// id is the ddl id of this instance
 	id string
@@ -126,7 +125,7 @@ type JobManager struct {
 }
 
 // NewJobManager creates a new ttl job manager
-func NewJobManager(id string, sessPool util.SessionPool, store kv.Storage, etcdCli *clientv3.Client, leaderFunc func() bool) (manager *JobManager) {
+func NewJobManager(id string, sessPool *SessionPool, store kv.Storage, etcdCli *clientv3.Client, leaderFunc func() bool) (manager *JobManager) {
 	manager = &JobManager{}
 	manager.id = id
 	manager.store = store
@@ -157,12 +156,12 @@ func (m *JobManager) isLeader() bool {
 }
 
 func (m *JobManager) jobLoop() error {
-	se, err := getSession(m.sessPool)
+	se, err := m.sessPool.GetSession()
 	if err != nil {
 		return err
 	}
 
-	timerStore := ttltablestore.NewTableTimerStore(1, m.sessPool, "mysql", "tidb_timers", m.etcd)
+	timerStore := ttltablestore.NewTableTimerStore(1, m.sessPool.InternalPool(), "mysql", "tidb_timers", m.etcd)
 	jobRequestCh := make(chan *SubmitTTLManagerJobRequest)
 	adapter := NewManagerJobAdapter(m.store, m.sessPool, jobRequestCh)
 	timerRT := newTTLTimerRuntime(timerStore, adapter)
@@ -1142,17 +1141,17 @@ type SubmitTTLManagerJobRequest struct {
 
 type managerJobAdapter struct {
 	store     kv.Storage
-	sessPool  util.SessionPool
+	sessPool  *SessionPool
 	requestCh chan<- *SubmitTTLManagerJobRequest
 }
 
 // NewManagerJobAdapter creates a managerJobAdapter
-func NewManagerJobAdapter(store kv.Storage, sessPool util.SessionPool, requestCh chan<- *SubmitTTLManagerJobRequest) TTLJobAdapter {
+func NewManagerJobAdapter(store kv.Storage, sessPool *SessionPool, requestCh chan<- *SubmitTTLManagerJobRequest) TTLJobAdapter {
 	return &managerJobAdapter{store: store, sessPool: sessPool, requestCh: requestCh}
 }
 
 func (a *managerJobAdapter) CanSubmitJob(tableID, physicalID int64) bool {
-	se, err := getSession(a.sessPool)
+	se, err := a.sessPool.GetSession()
 	if err != nil {
 		terror.Log(err)
 		return false
@@ -1242,7 +1241,7 @@ func (a *managerJobAdapter) SubmitJob(ctx context.Context, tableID, physicalID i
 }
 
 func (a *managerJobAdapter) GetJob(ctx context.Context, tableID, physicalID int64, requestID string) (*TTLJobTrace, error) {
-	se, err := getSession(a.sessPool)
+	se, err := a.sessPool.GetSession()
 	if err != nil {
 		return nil, err
 	}
@@ -1288,7 +1287,7 @@ func (a *managerJobAdapter) GetJob(ctx context.Context, tableID, physicalID int6
 }
 
 func (a *managerJobAdapter) Now() (time.Time, error) {
-	se, err := getSession(a.sessPool)
+	se, err := a.sessPool.GetSession()
 	if err != nil {
 		return time.Time{}, err
 	}

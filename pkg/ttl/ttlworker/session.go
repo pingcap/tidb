@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/sysproctrack"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/ttl/cache"
 	"github.com/pingcap/tidb/pkg/ttl/metrics"
@@ -55,21 +56,73 @@ var DetachStatsCollector = func(s sqlexec.SQLExecutor) sqlexec.SQLExecutor {
 	return s
 }
 
-func getSession(pool util.SessionPool) (session.Session, error) {
+// SessionPool is a pool of session for TTL statements.
+type SessionPool struct {
+	pool         util.SessionPool
+	sysTracker   sysproctrack.Tracker
+	allocTrackID func() uint64
+}
+
+// NewSessionPool creates a new session pool.
+func NewSessionPool(pool util.SessionPool, tracker sysproctrack.Tracker, allocTrackID func() uint64) *SessionPool {
+	return &SessionPool{
+		pool:         pool,
+		sysTracker:   tracker,
+		allocTrackID: allocTrackID,
+	}
+}
+
+// InternalPool returns the internal session pool.
+func (p *SessionPool) InternalPool() util.SessionPool {
+	return p.pool
+}
+
+// GetSession gets a session from the pool.
+func (p *SessionPool) GetSession() (session.Session, error) {
+	return p.getSession(0)
+}
+
+// GetSessionAndTrack gets a session from the pool and track it as a system process.
+// The tracked session can be seen in `SHOW PROCESSLIST`.
+func (p *SessionPool) GetSessionAndTrack() (session.Session, uint64, error) {
+	var trackID uint64
+	intest.AssertNotNil(p.sysTracker)
+	intest.AssertNotNil(p.allocTrackID)
+	if p.sysTracker != nil && p.allocTrackID != nil {
+		trackID = p.allocTrackID()
+	}
+
+	intest.Assert(trackID > 0)
+	se, err := p.getSession(trackID)
+	if err != nil {
+		return nil, 0, err
+	}
+	return se, trackID, err
+}
+
+func (p *SessionPool) getSession(trackID uint64) (session.Session, error) {
+	pool := p.pool
 	resource, err := pool.Get()
 	if err != nil {
 		return nil, err
-	}
-
-	if se, ok := resource.(session.Session); ok {
-		// Only for test, in this case, the return session is mockSession
-		return se, nil
 	}
 
 	sctx, ok := resource.(sessionctx.Context)
 	if !ok {
 		pool.Put(resource)
 		return nil, errors.Errorf("%T cannot be casted to sessionctx.Context", sctx)
+	}
+
+	if trackID > 0 {
+		if err = p.sysTracker.Track(trackID, sctx); err != nil {
+			pool.Put(resource)
+			return nil, errors.Trace(err)
+		}
+	}
+
+	if se, ok := resource.(session.Session); ok {
+		// Only for test, in this case, the return session is mockSession
+		return se, nil
 	}
 
 	exec := sctx.GetSQLExecutor()
@@ -79,6 +132,10 @@ func getSession(pool util.SessionPool) (session.Session, error) {
 	originalTimeZone, restoreTimeZone := "", false
 
 	se := session.NewSession(sctx, exec, func(se session.Session) {
+		if trackID > 0 {
+			p.sysTracker.UnTrack(trackID)
+		}
+
 		_, err = se.ExecuteSQL(context.Background(), fmt.Sprintf("set tidb_retry_limit=%d", originalRetryLimit))
 		if err != nil {
 			intest.AssertNoError(err)
