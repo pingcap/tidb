@@ -113,6 +113,13 @@
       "/cgo/": "ignore cgo code"
     }
   },
+  "copyloopvar": {
+    "exclude_files": {
+      "pkg/parser/parser.go": "parser/parser.go code",
+      "external/": "no need to vet third party code",
+      ".*_generated\\.go$": "ignore generated code"
+    }
+  },
   "ctrlflow": {
     "exclude_files": {
       "pkg/parser/parser.go": "parser/parser.go code",
@@ -163,13 +170,6 @@
       "/parser/": "ignore code",
       "pkg/server/internal/testserverclient/server_client.go": "ignore code",
       ".*_/testmain\\.go$": "ignore code"
-    }
-  },
-  "exportloopref": {
-    "exclude_files": {
-      "pkg/parser/parser.go": "parser/parser.go code",
-      "external/": "no need to vet third party code",
-      ".*_generated\\.go$": "ignore generated code"
     }
   },
   "filepermission": {

@@ -12,15 +12,15 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package exportloopref
+package copyloopvar
 
 import (
-	"github.com/kyoh86/exportloopref"
+	"github.com/karamaru-alpha/copyloopvar"
 	"github.com/pingcap/tidb/build/linter/util"
 )
 
-// Analyzer is the analyzer struct of exportloopref.
-var Analyzer = exportloopref.Analyzer
+// Analyzer is the analyzer struct of copyloopvar.
+var Analyzer = copyloopvar.NewAnalyzer()
 
 func init() {
 	util.SkipAnalyzerByConfig(Analyzer)
