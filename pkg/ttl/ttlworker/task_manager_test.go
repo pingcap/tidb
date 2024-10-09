@@ -77,6 +77,11 @@ func (m *taskManager) MeetTTLRunningTasks(count int, taskStatus cache.TaskStatus
 }
 
 // ReportTaskFinished is an exported version of reportTaskFinished
+func (m *taskManager) ReportTaskFinished(se session.Session, now time.Time, task *runningScanTask) error {
+	return m.reportTaskFinished(se, now, task)
+}
+
+// SetResult sets the result of the task
 func (t *runningScanTask) SetResult(err error) {
 	t.result = t.ttlScanTask.result(err)
 }
