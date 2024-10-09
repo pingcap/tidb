@@ -35,6 +35,7 @@ const (
 	baseMigrationSN   = 0
 	baseMigrationName = "BASE"
 	baseTmp           = "BASE_TMP"
+	metaSuffix        = ".meta"
 	migrationPrefix   = "v1/migrations"
 )
 
@@ -735,11 +736,27 @@ func (m MigrationExt) MergeAndMigrateTo(
 	}
 
 	migTo := &result.MigratedTo
+
+	// Put the generated BASE before we do any operation.
+	// Or a user who reads a subset of migrations may get a broken storage.
+	//
+	// An example here, if we put the new BASE *after* executing:
+	// | BASE => ∅
+	// | [1]  => Del(foo.log)
+	// Assume we are running `MergeAndMigrateTo(1)`, then we deleted `foo.log`,
+	// but BR crashed and new BASE not written. A user want to read the BASE version,
+	// the user cannot found the `foo.log` here.
 	err = m.writeBase(ctx, newBase)
 	if err != nil {
-		result.MigratedTo.Warnings = append(result.MigratedTo.Warnings, errors.Annotatef(err, "failed to save the new base"))
+		result.Warnings = append(
+			result.MigratedTo.Warnings,
+			errors.Annotatef(err, "failed to save the merged new base, nothing will happen"),
+		)
+		// Put the new BASE here anyway. The caller may want this.
+		result.NewBase = newBase
 		return
 	}
+
 	for _, mig := range result.Source {
 		// Perhaps a phanom migration.
 		if len(mig.Path) > 0 {
@@ -753,6 +770,12 @@ func (m MigrationExt) MergeAndMigrateTo(
 		}
 	}
 	result.MigratedTo = m.MigrateTo(ctx, newBase, MTMaybeSkipTruncateLog(!config.alwaysRunTruncate && canSkipTruncate))
+
+	// Put the final BASE.
+	err = m.writeBase(ctx, result.MigratedTo.NewBase)
+	if err != nil {
+		result.Warnings = append(result.MigratedTo.Warnings, errors.Annotatef(err, "failed to save the new base"))
+	}
 	return
 }
 
@@ -894,13 +917,20 @@ func (m MigrationExt) applyMetaEdit(ctx context.Context, medit *pb.MetaEdit) (er
 }
 
 func (m MigrationExt) applyMetaEditTo(ctx context.Context, medit *pb.MetaEdit, metadata *pb.Metadata) error {
+	if isEmptyEdition(medit) {
+		// Fast path: skip write back for empty meta edits.
+		return nil
+	}
+
 	metadata.Files = slices.DeleteFunc(metadata.Files, func(dfi *pb.DataFileInfo) bool {
 		// Here, `DeletePhysicalFiles` is usually tiny.
 		// Use a hashmap to filter out if this gets slow in the future.
 		return slices.Contains(medit.DeletePhysicalFiles, dfi.Path)
 	})
 	metadata.FileGroups = slices.DeleteFunc(metadata.FileGroups, func(dfg *pb.DataFileGroup) bool {
-		return slices.Contains(medit.DeletePhysicalFiles, dfg.Path)
+		del := slices.Contains(medit.DeletePhysicalFiles, dfg.Path)
+		fmt.Println(medit.Path, medit.DeletePhysicalFiles, dfg.Path, del)
+		return del
 	})
 	for _, group := range metadata.FileGroups {
 		idx := slices.IndexFunc(medit.DeleteLogicalFiles, func(dsof *pb.DeleteSpansOfFile) bool {
@@ -1095,13 +1125,15 @@ func (m MigrationExt) doTruncateLogs(
 	wg.Wait()
 }
 
+// hookedStorage is a wrapper over the external storage,
+// which triggers the `BeforeDoWriteBack` hook when putting a metadata.
 type hookedStorage struct {
 	storage.ExternalStorage
 	metaSet *StreamMetadataSet
 }
 
 func (h hookedStorage) WriteFile(ctx context.Context, name string, data []byte) error {
-	if h.metaSet.BeforeDoWriteBack != nil {
+	if strings.HasSuffix(name, metaSuffix) && h.metaSet.BeforeDoWriteBack != nil {
 		meta, err := h.metaSet.Helper.ParseToMetadataHard(data)
 		if err != nil {
 			// Note: will this be too strict? But for now it seems this check won't fail.
@@ -1115,6 +1147,13 @@ func (h hookedStorage) WriteFile(ctx context.Context, name string, data []byte) 
 	}
 
 	return h.ExternalStorage.WriteFile(ctx, name, data)
+}
+
+func (h hookedStorage) DeleteFile(ctx context.Context, name string) error {
+	if strings.HasSuffix(name, metaSuffix) && h.metaSet.BeforeDoWriteBack != nil {
+		h.metaSet.BeforeDoWriteBack(name, new(pb.Metadata))
+	}
+	return h.ExternalStorage.DeleteFile(ctx, name)
 }
 
 func (ms *StreamMetadataSet) hook(s storage.ExternalStorage) hookedStorage {

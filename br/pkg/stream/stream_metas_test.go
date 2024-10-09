@@ -84,6 +84,14 @@ func fakeDataFilesV2(s storage.ExternalStorage, base, item int) (result []*backu
 			Path:  path,
 			MinTs: uint64(i),
 			MaxTs: uint64(i + 2),
+			// Make it looks not empty.
+			DataFilesInfo: []*backuppb.DataFileInfo{
+				{
+					RangeOffset: 0,
+					Length:      1,
+				},
+			},
+			Length: 1,
 		}
 		result = append(result, data)
 	}
@@ -2729,7 +2737,6 @@ func TestRetry(t *testing.T) {
 	mg := est.MergeAndMigrateTo(ctx, 2)
 	require.Len(t, mg.Warnings, 1)
 	require.Error(t, mg.Warnings[0], "this disk remembers nothing")
-	fmt.Printf("mg: %v\n", mg)
 	requireMigrationsEqual(t, mg.NewBase, mig(mDel(mN(1), lN(1), lN(2))))
 
 	mg = est.MergeAndMigrateTo(ctx, 2)

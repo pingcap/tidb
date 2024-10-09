@@ -5,12 +5,10 @@ package storage
 import (
 	"bufio"
 	"context"
-	stderrors "errors"
 	"io"
 	"os"
 	"path/filepath"
 	"strings"
-	"syscall"
 
 	"github.com/google/uuid"
 	"github.com/pingcap/errors"
@@ -51,7 +49,7 @@ func (l *LocalStorage) DeleteFile(_ context.Context, name string) error {
 	err := os.Remove(path)
 	if err != nil &&
 		l.IgnoreEnoentForDelete &&
-		stderrors.Is(err, syscall.ENOENT) {
+		os.IsNotExist(err) {
 		return nil
 	}
 	return err
