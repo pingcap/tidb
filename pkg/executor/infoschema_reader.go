@@ -3462,6 +3462,7 @@ func (e *TiFlashSystemTableRetriever) dataForTiFlashSystemTables(ctx context.Con
 			tiflashColIndexMap[tiFlashColIdx] = outputIdx
 		}
 	}
+	is := sessiontxn.GetTxnManager(sctx).GetTxnInfoSchema()
 	outputRows := make([][]types.Datum, 0, len(result.Data))
 	for _, rowFields := range result.Data {
 		if len(rowFields) == 0 {
@@ -3498,6 +3499,37 @@ func (e *TiFlashSystemTableRetriever) dataForTiFlashSystemTables(ctx context.Con
 			}
 		}
 		outputRow[len(e.outputCols)-1].SetString(instanceID, mysql.DefaultCollationName)
+
+		// for "tiflash_indexes", set the column_name and index_name according to the TableInfo
+		if e.table.Name.L == "tiflash_indexes" {
+			var logicalTableID = outputRow[outputColIndexMap["table_id"]].GetInt64()
+			if !outputRow[outputColIndexMap["belonging_table_id"]].IsNull() {
+				// Old TiFlash versions may not have this column. In this case we will try to get by the "table_id"
+				belongingTableID := outputRow[outputColIndexMap["belonging_table_id"]].GetInt64()
+				if belongingTableID != -1 && belongingTableID != 0 {
+					logicalTableID = belongingTableID
+				}
+			}
+			if table, ok := is.TableByID(ctx, logicalTableID); ok {
+				tableInfo := table.Meta()
+				getInt64DatumVal := func(datum_name string, default_val int64) int64 {
+					datum := outputRow[outputColIndexMap[datum_name]]
+					if !datum.IsNull() {
+						return datum.GetInt64()
+					}
+					return default_val
+				}
+				// set column_name
+				columnID := getInt64DatumVal("column_id", 0)
+				columnName := tableInfo.FindColumnNameByID(columnID)
+				outputRow[outputColIndexMap["column_name"]].SetString(columnName, mysql.DefaultCollationName)
+				// set index_name
+				indexID := getInt64DatumVal("index_id", 0)
+				indexName := tableInfo.FindIndexNameByID(indexID)
+				outputRow[outputColIndexMap["index_name"]].SetString(indexName, mysql.DefaultCollationName)
+			}
+		}
+
 		outputRows = append(outputRows, outputRow)
 	}
 	e.rowIdx += len(outputRows)
