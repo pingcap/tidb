@@ -329,7 +329,8 @@ func prepareData4Issue43192(t *testing.T, client *testserverclient.TestServerCli
 
 	tk.MustExec("create database planReplayer")
 	tk.MustExec("use planReplayer")
-	tk.MustExec("create table t(a int, b int, INDEX ia (a), INDEX ib (b));")
+	tk.MustExec("CREATE TABLE authors (id INT PRIMARY KEY AUTO_INCREMENT,name VARCHAR(100) NOT NULL,email VARCHAR(100) UNIQUE NOT NULL);")
+	tk.MustExec("create table t(a int, b int, INDEX ia (a), INDEX ib (b), FOREIGN KEY (author_id) REFERENCES authors(id) ON DELETE CASCADE);")
 	err = h.HandleDDLEvent(<-h.DDLEventCh())
 	require.NoError(t, err)
 	tk.MustExec("create global binding for select a, b from t where a in (1, 2, 3) using select a, b from t use index (ib) where a in (1, 2, 3)")
