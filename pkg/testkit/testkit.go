@@ -551,6 +551,16 @@ func (tk *TestKit) MustUseIndex(sql string, index string, args ...any) {
 	tk.require.Fail("index not used", "sql:%s, args: %v, index:%s, plan:%v", sql, args, index, rs.rows)
 }
 
+// MustNoIndexUsed checks if the result execution plan contains no index.
+func (tk *TestKit) MustNoIndexUsed(sql string, args ...any) {
+	rs := tk.MustQuery("explain "+sql, args...)
+	for i := range rs.rows {
+		if strings.Contains(rs.rows[i][3], "index:") {
+			tk.require.Fail("index is used")
+		}
+	}
+}
+
 // MustUseIndexForConnection checks if the result execution plan contains specific index(es) for a connection.
 func (tk *TestKit) MustUseIndexForConnection(connID string, index string) {
 	rs := tk.MustQuery("explain for connection " + connID)

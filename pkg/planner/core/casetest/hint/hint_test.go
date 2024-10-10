@@ -23,6 +23,7 @@ import (
 	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/planner/util/coretestsdk"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testdata"
 	"github.com/stretchr/testify/require"
@@ -69,7 +70,7 @@ func TestReadFromStorageHint(t *testing.T) {
 }
 
 func TestAllViewHintType(t *testing.T) {
-	store := testkit.CreateMockStore(t, coretestsdk.WithMockTiFlash(2))
+	store := testkit.CreateMockStore(t, mockstore.WithMockTiFlash(2))
 	tk := testkit.NewTestKit(t, store)
 
 	tk.MustExec("use test")
@@ -130,7 +131,7 @@ func TestAllViewHintType(t *testing.T) {
 }
 
 func TestJoinHintCompatibility(t *testing.T) {
-	store := testkit.CreateMockStore(t, coretestsdk.WithMockTiFlash(2))
+	store := testkit.CreateMockStore(t, mockstore.WithMockTiFlash(2))
 	tk := testkit.NewTestKit(t, store)
 
 	tk.MustExec("use test")
