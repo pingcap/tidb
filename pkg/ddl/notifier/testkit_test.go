@@ -18,6 +18,7 @@ import (
 	"context"
 	"io"
 	"math/rand"
+	"strconv"
 	"sync"
 	"testing"
 	"time"
@@ -231,20 +232,25 @@ func TestPublishToStoreBySQL(t *testing.T) {
 	tk.MustExec("alter table t add column b int")                                                                                        // ActionAddColumn
 	tk.MustExec("alter table t add index(b)")
 	tk.MustExec("create table t1(b int key, FOREIGN KEY (b) REFERENCES t(b) ON DELETE CASCADE);") // ActionCreateTable with foreign key
+	tk.MustExec("alter table t1 add column c int, add column d varchar(10)")                      // ActionAddColumn
 
 	ctx := context.Background()
 	s := notifier.OpenTableStore("test", "ddl_notifier")
 	se := sess.NewSession(tk.Session())
 	got, err := s.List(ctx, se)
 	require.NoError(t, err)
-	require.Len(t, got, 14)
-	rows := tk.MustQuery("select schema_change from test.ddl_notifier").Rows()
+	require.Len(t, got, 16)
+	rows := tk.MustQuery("select schema_change, multi_schema_change_seq from test.ddl_notifier").Rows()
 	tps := make([]model.ActionType, len(rows))
+	multiSchemaChangeSeqs := make([]int64, len(rows))
 	for i, row := range rows {
 		event := &notifier.SchemaChangeEvent{}
 		err = event.UnmarshalJSON([]byte(row[0].(string)))
 		require.NoError(t, err)
 		tps[i] = event.GetType()
+		seq, err := strconv.Atoi(row[1].(string))
+		require.NoError(t, err)
+		multiSchemaChangeSeqs[i] = int64(seq)
 	}
 	require.Equal(t, tps, []model.ActionType{
 		model.ActionCreateTable,
@@ -261,5 +267,8 @@ func TestPublishToStoreBySQL(t *testing.T) {
 		model.ActionModifyColumn,
 		model.ActionAddColumn,
 		model.ActionCreateTable,
+		model.ActionAddColumn,
+		model.ActionAddColumn,
 	})
+	require.Equal(t, multiSchemaChangeSeqs, []int64{-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, 0, 1})
 }

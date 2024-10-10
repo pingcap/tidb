@@ -570,7 +570,11 @@ func asyncNotifyEvent(jobCtx *jobContext, e *notifier.SchemaChangeEvent, job *mo
 			return
 		}
 		se := sess.NewSession(sctx)
-		err := notifier.PubSchemaChange(jobCtx.ctx, se, job.ID, -1, e)
+		var multiSchemaChangeSeq int64 = -1
+		if job.MultiSchemaInfo != nil {
+			multiSchemaChangeSeq = int64(job.MultiSchemaInfo.Seq)
+		}
+		err := notifier.PubSchemaChange(jobCtx.ctx, se, job.ID, multiSchemaChangeSeq, e)
 		if err != nil {
 			logutil.DDLLogger().Error("Error publish schema change event",
 				zap.Int64("jobID", job.ID), zap.String("event", e.String()), zap.Error(err))
