@@ -1464,7 +1464,7 @@ func onDropIndex(jobCtx *jobContext, job *model.Job) (ver int64, _ error) {
 				addIndexArgs.IndexArgs = append(addIndexArgs.IndexArgs,
 					&model.IndexArg{
 						IndexID: indexID,
-						IfExist: dropArgs.IfExists[i],
+						IfExist: dropArgs.IndexArgs[i].IfExist,
 					})
 			}
 			job.FillFinishedArgs(addIndexArgs)
@@ -1479,7 +1479,7 @@ func onDropIndex(jobCtx *jobContext, job *model.Job) (ver int64, _ error) {
 				return ver, errors.Trace(err)
 			}
 			dropArgs.IndexIDs = []int64{indexIDs[0]}
-			dropArgs.IsVector = allIndexInfos[0].VectorInfo != nil
+			dropArgs.IndexArgs[0].IsVector = allIndexInfos[0].VectorInfo != nil
 			if !allIndexInfos[0].Global {
 				dropArgs.PartitionIDs = getPartitionIDs(tblInfo)
 			}
@@ -1541,12 +1541,12 @@ func checkDropIndex(infoCache *infoschema.InfoCache, t *meta.Mutator, job *model
 		return nil, nil, false, errors.Trace(err)
 	}
 
-	indexInfos := make([]*model.IndexInfo, 0, len(args.IndexNames))
-	for i, indexName := range args.IndexNames {
-		indexInfo := tblInfo.FindIndexByName(indexName.L)
+	indexInfos := make([]*model.IndexInfo, 0, len(args.IndexArgs))
+	for _, idxArg := range args.IndexArgs {
+		indexInfo := tblInfo.FindIndexByName(idxArg.IndexName.L)
 		if indexInfo == nil {
 			job.State = model.JobStateCancelled
-			return nil, nil, args.IfExists[i], dbterror.ErrCantDropFieldOrKey.GenWithStack("index %s doesn't exist", indexName)
+			return nil, nil, idxArg.IfExist, dbterror.ErrCantDropFieldOrKey.GenWithStack("index %s doesn't exist", idxArg.IndexName)
 		}
 
 		// Check that drop primary index will not cause invisible implicit primary index.

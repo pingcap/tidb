@@ -15,7 +15,6 @@
 package ddl
 
 import (
-	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -188,6 +187,7 @@ func appendToSubJobs(m *model.MultiSchemaInfo, jobW *JobWrapper) error {
 	}
 	m.SubJobs = append(m.SubJobs, &model.SubJob{
 		Type:        jobW.Type,
+		JobArgs:     jobW.JobArgs,
 		Args:        jobW.Args,
 		RawArgs:     jobW.RawArgs,
 		SchemaState: jobW.SchemaState,
@@ -217,7 +217,7 @@ func fillMultiSchemaInfo(info *model.MultiSchemaInfo, job *JobWrapper) error {
 		info.DropColumns = append(info.DropColumns, colName)
 	case model.ActionDropIndex, model.ActionDropPrimaryKey:
 		args := job.JobArgs.(*model.DropIndexArgs)
-		info.DropIndexes = append(info.DropIndexes, args.IndexNames[0])
+		info.DropIndexes = append(info.DropIndexes, args.IndexArgs[0].IndexName)
 	case model.ActionAddIndex, model.ActionAddPrimaryKey:
 		args := job.JobArgs.(*model.AddIndexArgs)
 		// This job has not been merged, len(args) should be one.
@@ -324,7 +324,7 @@ func checkOperateSameColAndIdx(info *model.MultiSchemaInfo) error {
 	return checkIndexes(info.AlterIndexes, true)
 }
 
-func mergeAddIndex(info *model.MultiSchemaInfo) (err error) {
+func mergeAddIndex(info *model.MultiSchemaInfo) {
 	var mergedSubJob *model.SubJob
 	var mergeCnt int
 	for _, subJob := range info.SubJobs {
@@ -353,10 +353,7 @@ func mergeAddIndex(info *model.MultiSchemaInfo) (err error) {
 
 	for _, subJob := range info.SubJobs {
 		if subJob.Type == model.ActionAddIndex {
-			args, err := model.GetAddIndexArgsFromSubJob(subJob)
-			if err != nil {
-				return errors.Trace(err)
-			}
+			args := subJob.JobArgs.(*model.AddIndexArgs)
 			newAddIndexesArgs.IndexArgs = append(newAddIndexesArgs.IndexArgs, args.IndexArgs...)
 		} else {
 			newSubJobs = append(newSubJobs, subJob)
@@ -367,11 +364,11 @@ func mergeAddIndex(info *model.MultiSchemaInfo) (err error) {
 	proxyJob := &model.Job{Version: model.JobVersion1}
 	proxyJob.FillArgs(newAddIndexesArgs)
 	mergedSubJob.Args = proxyJob.Args
+	mergedSubJob.JobArgs = newAddIndexesArgs
 
 	// place the merged add index job at the end of the sub-jobs.
 	newSubJobs = append(newSubJobs, mergedSubJob)
 	info.SubJobs = newSubJobs
-	return
 }
 
 func checkOperateDropIndexUseByForeignKey(info *model.MultiSchemaInfo, t table.Table) error {

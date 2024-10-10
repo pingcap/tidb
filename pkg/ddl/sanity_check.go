@@ -141,7 +141,7 @@ func expectedDeleteRangeCnt(ctx delRangeCntCtx, job *model.Job) (int, error) {
 			return 0, errors.Trace(err)
 		}
 		// If it's a vector index, it needn't to store key ranges to gc_delete_range.
-		if args.IsVector {
+		if args.IndexArgs[0].IsVector {
 			return 0, nil
 		}
 		return mathutil.Max(len(args.PartitionIDs), 1), nil

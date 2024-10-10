@@ -2045,9 +2045,7 @@ func (e *executor) multiSchemaChange(ctx sessionctx.Context, ti ast.Ident, info 
 	if err != nil {
 		return errors.Trace(err)
 	}
-	if err = mergeAddIndex(info); err != nil {
-		return errors.Trace(err)
-	}
+	mergeAddIndex(info)
 	return e.DoDDLJob(ctx, job)
 }
 
@@ -5202,7 +5200,7 @@ func (*executor) dropHypoIndexFromCtx(ctx sessionctx.Context, schema, table, ind
 
 // dropIndex drops the specified index.
 // isHypo is used to indicate whether this operation is for a hypo-index.
-func (e *executor) dropIndex(ctx sessionctx.Context, ti ast.Ident, indexName pmodel.CIStr, ifExists, isHypo bool) error {
+func (e *executor) dropIndex(ctx sessionctx.Context, ti ast.Ident, indexName pmodel.CIStr, ifExist, isHypo bool) error {
 	is := e.infoCache.GetLatest()
 	schema, ok := is.SchemaByName(ti.Schema)
 	if !ok {
@@ -5217,7 +5215,7 @@ func (e *executor) dropIndex(ctx sessionctx.Context, ti ast.Ident, indexName pmo
 	}
 
 	if isHypo {
-		return e.dropHypoIndexFromCtx(ctx, ti.Schema, ti.Name, indexName, ifExists)
+		return e.dropHypoIndexFromCtx(ctx, ti.Schema, ti.Name, indexName, ifExist)
 	}
 
 	indexInfo := t.Meta().FindIndexByName(indexName.L)
@@ -5233,7 +5231,7 @@ func (e *executor) dropIndex(ctx sessionctx.Context, ti ast.Ident, indexName pmo
 
 	if indexInfo == nil {
 		err = dbterror.ErrCantDropFieldOrKey.GenWithStack("index %s doesn't exist", indexName)
-		if ifExists {
+		if ifExist {
 			ctx.GetSessionVars().StmtCtx.AppendNote(err)
 			return nil
 		}
@@ -5265,8 +5263,10 @@ func (e *executor) dropIndex(ctx sessionctx.Context, ti ast.Ident, indexName pmo
 	}
 
 	args := &model.DropIndexArgs{
-		IndexNames: []pmodel.CIStr{indexName},
-		IfExists:   []bool{ifExists},
+		IndexArgs: []*model.IndexArg{{
+			IndexName: indexName,
+			IfExist:   ifExist,
+		}},
 	}
 	job.FillArgs(args)
 	err = e.doDDLJob2(ctx, job, args)

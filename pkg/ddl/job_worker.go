@@ -318,7 +318,7 @@ func JobNeedGC(job *model.Job) bool {
 			}
 			// If it's a vector index, it needn't to store key ranges to gc_delete_range.
 			// We don't support drop vector index in multi-schema, so we only check the first one.
-			if args.IsVector {
+			if args.IndexArgs[0].IsVector {
 				return false
 			}
 			return true

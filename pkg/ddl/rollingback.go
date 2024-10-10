@@ -21,7 +21,6 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/ddl/ingest"
 	"github.com/pingcap/tidb/pkg/meta/model"
-	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
@@ -56,8 +55,10 @@ func convertAddIdxJob2RollbackJob(
 		}
 	})
 
-	indexNames := make([]pmodel.CIStr, 0, len(allIndexInfos))
-	ifExists := make([]bool, 0, len(allIndexInfos))
+	dropArgs := &model.DropIndexArgs{
+		IndexIDs:   getPartitionIDs(tblInfo),
+		IsRollback: true,
+	}
 
 	originalState := allIndexInfos[0].State
 	for _, indexInfo := range allIndexInfos {
@@ -76,17 +77,14 @@ func convertAddIdxJob2RollbackJob(
 		// The write reorganization state in add index job that likes write only state in drop index job.
 		// So the next state is delete only state.
 		indexInfo.State = model.StateDeleteOnly
-		indexNames = append(indexNames, indexInfo.Name)
-		ifExists = append(ifExists, false)
+		dropArgs.IndexArgs = append(dropArgs.IndexArgs, &model.IndexArg{
+			IndexName: indexInfo.Name,
+			IfExist:   false,
+		})
 	}
 
 	// Convert to DropIndexArgs
-	job.FillFinishedArgs(&model.DropIndexArgs{
-		IndexNames: indexNames,
-		IfExists:   ifExists,
-		IndexIDs:   getPartitionIDs(tblInfo),
-		IsRollback: true,
-	})
+	job.FillFinishedArgs(dropArgs)
 
 	job.SchemaState = model.StateDeleteOnly
 	ver, err1 := updateVersionAndTableInfo(jobCtx, job, tblInfo, originalState != model.StateDeleteOnly)

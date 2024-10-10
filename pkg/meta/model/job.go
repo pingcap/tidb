@@ -869,6 +869,7 @@ func (job *Job) GetInvolvingSchemaInfo() []InvolvingSchemaInfo {
 // (when multi-schema change is not applicable) or more SubJobs.
 type SubJob struct {
 	Type        ActionType      `json:"type"`
+	JobArgs     JobArgs         `json:"-"`
 	Args        []any           `json:"-"`
 	RawArgs     json.RawMessage `json:"raw_args"`
 	SchemaState SchemaState     `json:"schema_state"`
