@@ -854,10 +854,7 @@ func (dc *ddlCtx) writePhysicalTableRecord(
 	}
 	defer func() {
 		if err != nil && ctx.Err() != nil {
-			// Prevent "not owner" error being overwritten by context.Canceled.
-			if !dc.isOwner() {
-				err = dbterror.ErrNotOwner
-			}
+			err = context.Cause(ctx)
 		}
 	}()
 
