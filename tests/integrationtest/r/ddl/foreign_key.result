@@ -128,8 +128,8 @@ alter table t2 add foreign key (a) references t1(id), add foreign key (b) refere
 show create table t2;
 Table	Create Table
 t2	CREATE TABLE `t2` (
-  `a` int(11) DEFAULT NULL,
-  `b` int(11) DEFAULT NULL,
+  `a` int DEFAULT NULL,
+  `b` int DEFAULT NULL,
   KEY `fk_1` (`a`),
   KEY `fk_2` (`b`),
   CONSTRAINT `fk_1` FOREIGN KEY (`a`) REFERENCES `t1` (`id`),
