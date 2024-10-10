@@ -876,8 +876,7 @@ func (w *worker) checkVectorIndexProcessOnTiFlash(jobCtx *jobContext, job *model
 }
 
 func (w *worker) checkVectorIndexProcess(jobCtx *jobContext, tbl table.Table, job *model.Job, index *model.IndexInfo) error {
-	waitTimeout := ReorgWaitTimeout
-	ticker := time.NewTicker(waitTimeout)
+	ticker := time.NewTicker(500 * time.Millisecond)
 	defer ticker.Stop()
 	notAddedRowCnt := int64(-1)
 	for {
@@ -908,8 +907,6 @@ func (w *worker) checkVectorIndexProcess(jobCtx *jobContext, tbl table.Table, jo
 		if isDone {
 			break
 		}
-
-		time.Sleep(500 * time.Millisecond)
 	}
 	return nil
 }
