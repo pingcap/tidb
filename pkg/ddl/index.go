@@ -832,9 +832,8 @@ func (w *worker) onCreateVectorIndex(jobCtx *jobContext, job *model.Job) (ver in
 		}
 
 		finishedArgs := &model.AddIndexArgs{
-			IndexArgs:     []*model.IndexArg{{IndexID: indexInfo.ID}},
-			PartitionIDs:  getPartitionIDs(tblInfo),
-			IsFinishedArg: true,
+			IndexArgs:    []*model.IndexArg{{IndexID: indexInfo.ID}},
+			PartitionIDs: getPartitionIDs(tblInfo),
 		}
 		job.FillFinishedArgs(finishedArgs)
 
@@ -1097,7 +1096,7 @@ SwitchIndexState:
 			return ver, errors.Trace(err)
 		}
 
-		a := &model.AddIndexArgs{PartitionIDs: getPartitionIDs(tbl.Meta()), IsFinishedArg: true}
+		a := &model.AddIndexArgs{PartitionIDs: getPartitionIDs(tbl.Meta())}
 		for _, indexInfo := range allIndexInfos {
 			a.IndexArgs = append(a.IndexArgs, &model.IndexArg{
 				IndexID:  indexInfo.ID,
@@ -1460,7 +1459,7 @@ func onDropIndex(jobCtx *jobContext, job *model.Job) (ver int64, _ error) {
 
 			// Convert drop index args to finished add index args again to finish add index job.
 			// Only rolled back add index jobs will get here, since drop index jobs can only be cancelled, not rolled back.
-			addIndexArgs := &model.AddIndexArgs{PartitionIDs: dropArgs.PartitionIDs, IsFinishedArg: true}
+			addIndexArgs := &model.AddIndexArgs{PartitionIDs: dropArgs.PartitionIDs}
 			for i, indexID := range indexIDs {
 				addIndexArgs.IndexArgs = append(addIndexArgs.IndexArgs,
 					&model.IndexArg{

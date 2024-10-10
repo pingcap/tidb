@@ -1435,9 +1435,6 @@ type AddIndexArgs struct {
 
 	// PartitionIDs will be used in onDropIndex.
 	PartitionIDs []int64 `json:"partition_ids,omitempty"`
-
-	// This is to dintinguish finished and running args, it's only used in test.
-	IsFinishedArg bool `json:"-"`
 }
 
 func (a *AddIndexArgs) getArgsV1(job *Job) []any {
@@ -1644,7 +1641,7 @@ func GetFinishedAddIndexArgs(job *Job) (*AddIndexArgs, error) {
 				return nil, errors.Errorf("Failed to decode finished arguments from job version 1")
 			}
 		}
-		a := &AddIndexArgs{PartitionIDs: partitionIDs, IsFinishedArg: true}
+		a := &AddIndexArgs{PartitionIDs: partitionIDs}
 		for i, indexID := range addIndexIDs {
 			a.IndexArgs = append(a.IndexArgs, &IndexArg{
 				IndexID:  indexID,

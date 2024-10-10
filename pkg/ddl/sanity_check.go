@@ -123,11 +123,6 @@ func expectedDeleteRangeCnt(ctx delRangeCntCtx, job *model.Job) (int, error) {
 			return 0, errors.Trace(err)
 		}
 
-		// For version 2 jobs, we use IsFinishedArg flag to distinguish running/finished arguments.
-		if job.Version == model.JobVersion2 && !args.IsFinishedArg {
-			return 0, nil
-		}
-
 		ret := 0
 		for _, arg := range args.IndexArgs {
 			num := mathutil.Max(len(args.PartitionIDs), 1) // Add temporary index to del-range table.

@@ -1166,7 +1166,6 @@ func TestAddIndexArgs(t *testing.T) {
 		require.Equal(t, inArgs.IndexArgs[0].HiddenCols, a.HiddenCols)
 	}
 
-	inArgs.IsFinishedArg = false
 	for _, v := range []JobVersion{JobVersion1, JobVersion2} {
 		inArgs.IndexArgs[0].IsVector = false
 		inArgs.IndexArgs[0].IsPK = false
@@ -1219,7 +1218,6 @@ func TestAddIndexArgs(t *testing.T) {
 		require.Equal(t, inArgs.IndexArgs[0].FuncExpr, a.FuncExpr)
 	}
 
-	inArgs.IsFinishedArg = true
 	for _, v := range []JobVersion{JobVersion1, JobVersion2} {
 		j2 := &Job{}
 		require.NoError(t, j2.Decode(getFinishedJobBytes(t, inArgs, v, ActionAddIndex)))
