@@ -240,6 +240,7 @@ func TestIndexAdvisorTPCC(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec(`use test`)
 
+	// All PKs are removed otherwise can't recommend any index.
 	tk.MustExec(`CREATE TABLE IF NOT EXISTS customer (
 	c_id INT NOT NULL,
 	c_d_id INT NOT NULL,
@@ -261,8 +262,7 @@ func TestIndexAdvisorTPCC(t *testing.T) {
 	c_ytd_payment DECIMAL(12,2),
 	c_payment_cnt INT,
 	c_delivery_cnt INT,
-	c_data VARCHAR(500),
-	PRIMARY KEY(c_w_id, c_d_id, c_id))`)
+	c_data VARCHAR(500))`)
 	tk.MustExec(`CREATE TABLE IF NOT EXISTS warehouse (
 	w_id INT NOT NULL,
 	w_name VARCHAR(10),
@@ -272,8 +272,7 @@ func TestIndexAdvisorTPCC(t *testing.T) {
 	w_state CHAR(2),
 	w_zip CHAR(9),
 	w_tax DECIMAL(4, 4),
-	w_ytd DECIMAL(12, 2),
-	PRIMARY KEY (w_id) /*T![clustered_index] CLUSTERED */)`)
+	w_ytd DECIMAL(12, 2))`)
 	tk.MustExec(`CREATE TABLE IF NOT EXISTS stock (
 	s_i_id INT NOT NULL,
 	s_w_id INT NOT NULL,
@@ -291,8 +290,7 @@ func TestIndexAdvisorTPCC(t *testing.T) {
 	s_ytd INT,
 	s_order_cnt INT,
 	s_remote_cnt INT,
-	s_data VARCHAR(50),
-	PRIMARY KEY(s_w_id, s_i_id) /*T![clustered_index] CLUSTERED */)`)
+	s_data VARCHAR(50))`)
 	tk.MustExec(`CREATE TABLE IF NOT EXISTS orders (
 	o_id INT NOT NULL,
 	o_d_id INT NOT NULL,
@@ -301,13 +299,11 @@ func TestIndexAdvisorTPCC(t *testing.T) {
 	o_entry_d DATETIME,
 	o_carrier_id INT,
 	o_ol_cnt INT,
-	o_all_local INT,
-	PRIMARY KEY(o_w_id, o_d_id, o_id) /*T![clustered_index] CLUSTERED */)`)
+	o_all_local INT)`)
 	tk.MustExec(`CREATE TABLE IF NOT EXISTS new_order (
 	no_o_id INT NOT NULL,
 	no_d_id INT NOT NULL,
-	no_w_id INT NOT NULL,
-	PRIMARY KEY(no_w_id, no_d_id, no_o_id))`)
+	no_w_id INT NOT NULL)`)
 	tk.MustExec(`CREATE TABLE IF NOT EXISTS district (
 	d_id INT NOT NULL,
 	d_w_id INT NOT NULL,
@@ -319,15 +315,13 @@ func TestIndexAdvisorTPCC(t *testing.T) {
 	d_zip CHAR(9),
 	d_tax DECIMAL(4, 4),
 	d_ytd DECIMAL(12, 2),
-	d_next_o_id INT,
-	PRIMARY KEY (d_w_id, d_id) /*T![clustered_index] CLUSTERED */)`)
+	d_next_o_id INT)`)
 	tk.MustExec(`CREATE TABLE IF NOT EXISTS item (
 	i_id INT NOT NULL,
 	i_im_id INT,
 	i_name VARCHAR(24),
 	i_price DECIMAL(5, 2),
-	i_data VARCHAR(50),
-	PRIMARY KEY(i_id) /*T![clustered_index] CLUSTERED */)`)
+	i_data VARCHAR(50))`)
 	tk.MustExec(`CREATE TABLE IF NOT EXISTS order_line (
 		ol_o_id INT NOT NULL,
 		ol_d_id INT NOT NULL,
@@ -338,8 +332,7 @@ func TestIndexAdvisorTPCC(t *testing.T) {
 		ol_delivery_d TIMESTAMP,
 		ol_quantity INT,
 		ol_amount DECIMAL(6, 2),
-		ol_dist_info CHAR(24),
-		PRIMARY KEY(ol_w_id, ol_d_id, ol_o_id, ol_number))`)
+		ol_dist_info CHAR(24))`)
 
 	q1 := `SELECT c_discount, c_last, c_credit, w_tax FROM customer, warehouse WHERE w_id = 1 AND c_w_id = w_id AND c_d_id = 6 AND c_id = 1309`
 	q2 := `SELECT s_i_id, s_quantity, s_data, s_dist_01, s_dist_02, s_dist_03, s_dist_04, s_dist_05, s_dist_06, s_dist_07, s_dist_08, s_dist_09, s_dist_10 FROM stock WHERE (s_w_id, s_i_id) IN ((1, 54388), (1, 40944), (1, 66045)) FOR UPDATE`
