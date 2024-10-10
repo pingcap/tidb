@@ -343,8 +343,8 @@ func TestIndexAdvisorTPCC(t *testing.T) {
 	q7 := `SELECT no_o_id FROM new_order WHERE no_w_id = 1 AND no_d_id = 1 ORDER BY no_o_id ASC LIMIT 1 FOR UPDATE`
 	q8 := `SELECT d_next_o_id, d_tax FROM district WHERE d_id = 1 AND d_w_id = 3 FOR UPDATE`
 	q9 := `SELECT i_price, i_name, i_data, i_id FROM item WHERE i_id IN (81071, 93873, 97661, 2909, 24471, 8669, 40429, 31485, 31064, 20916, 16893, 8283)`
-	q10:=`SELECT s_i_id, s_quantity, s_data, s_dist_01, s_dist_02, s_dist_03, s_dist_04, s_dist_05, s_dist_06, s_dist_07, s_dist_08, s_dist_09, s_dist_10 FROM stock WHERE (s_w_id, s_i_id) IN ((1, 33259),(1, 98411)) FOR UPDATE`
-	q11:=`SELECT c_balance, c_first, c_middle, c_id FROM customer WHERE c_w_id = 4 AND c_d_id = 4 AND c_last = 'EINGOUGHTPRI' ORDER BY c_first`
+	q10 := `SELECT s_i_id, s_quantity, s_data, s_dist_01, s_dist_02, s_dist_03, s_dist_04, s_dist_05, s_dist_06, s_dist_07, s_dist_08, s_dist_09, s_dist_10 FROM stock WHERE (s_w_id, s_i_id) IN ((1, 33259),(1, 98411)) FOR UPDATE`
+	q11 := `SELECT c_balance, c_first, c_middle, c_id FROM customer WHERE c_w_id = 4 AND c_d_id = 4 AND c_last = 'EINGOUGHTPRI' ORDER BY c_first`
 	q12 := `SELECT d_next_o_id FROM district WHERE d_w_id = 4 AND d_id = 5`
 	q13 := `SELECT /*+ TIDB_INLJ(order_line,stock) */ COUNT(DISTINCT (s_i_id)) stock_count FROM order_line, stock  WHERE ol_w_id = 4 AND ol_d_id = 5 AND ol_o_id < 3005 AND ol_o_id >= 3005 - 20 AND s_w_id = 4 AND s_i_id = ol_i_id AND s_quantity < 14`
 	q14 := `SELECT ol_i_id, ol_supply_w_id, ol_quantity, ol_amount, ol_delivery_d FROM order_line WHERE ol_w_id = 4 AND ol_d_id = 6 AND ol_o_id = 93`
