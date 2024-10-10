@@ -712,10 +712,13 @@ func (d *SchemaTracker) handleModifyColumn(
 		return errors.Trace(err)
 	}
 
-	newColInfo := *job.Args[0].(**model.ColumnInfo)
-	updatedAutoRandomBits := job.Args[4].(uint64)
+	args, err := model.GetModifyColumnArgs(job)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	newColInfo := args.Column
 
-	tblInfo.AutoRandomBits = updatedAutoRandomBits
+	tblInfo.AutoRandomBits = args.NewShardBits
 	oldCol := table.FindCol(t.Cols(), originalColName.L).ColumnInfo
 
 	originDefVal, err := ddl.GetOriginDefaultValueForModifyColumn(sctx.GetExprCtx(), newColInfo, oldCol)

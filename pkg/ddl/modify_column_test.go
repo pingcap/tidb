@@ -26,8 +26,6 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/model"
-	"github.com/pingcap/tidb/pkg/parser/ast"
-	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
@@ -82,6 +80,7 @@ func TestModifyColumnReorgInfo(t *testing.T) {
 	ctx := mock.NewContext()
 	ctx.Store = store
 	times := 0
+	// TODO(joechenrh)
 	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunBefore", func(job *model.Job) {
 		if tbl.Meta().ID != job.TableID || checkErr != nil || job.SchemaState != model.StateWriteReorganization {
 			return
@@ -91,18 +90,9 @@ func TestModifyColumnReorgInfo(t *testing.T) {
 				times++
 				return
 			}
-			currJob = job
-			var (
-				_newCol                *model.ColumnInfo
-				_oldColName            *pmodel.CIStr
-				_pos                   = &ast.ColumnPosition{}
-				_modifyColumnTp        byte
-				_updatedAutoRandomBits uint64
-				changingCol            *model.ColumnInfo
-				changingIdxs           []*model.IndexInfo
-			)
-			checkErr = job.DecodeArgs(&_newCol, &_oldColName, _pos, &_modifyColumnTp, &_updatedAutoRandomBits, &changingCol, &changingIdxs)
-			elements = ddl.BuildElements(changingCol, changingIdxs)
+			var args *model.ModifyColumnArgs
+			args, checkErr = model.GetModifyColumnArgs(job)
+			elements = ddl.BuildElements(args.ChangingColumn, args.ChangingIdxs)
 		}
 		if job.Type == model.ActionAddIndex {
 			if times == 1 {

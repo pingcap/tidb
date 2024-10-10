@@ -236,9 +236,8 @@ func fillMultiSchemaInfo(info *model.MultiSchemaInfo, job *JobWrapper) error {
 		info.AddIndexes = append(info.AddIndexes, to)
 		info.DropIndexes = append(info.DropIndexes, from)
 	case model.ActionModifyColumn:
-		newCol := *job.Args[0].(**model.ColumnInfo)
-		oldColName := job.Args[1].(pmodel.CIStr)
-		pos := job.Args[2].(*ast.ColumnPosition)
+		args := job.JobArgs.(*model.ModifyColumnArgs)
+		newCol, oldColName, pos := args.Column, args.OldColumnName, args.Position
 		if newCol.Name.L != oldColName.L {
 			info.AddColumns = append(info.AddColumns, newCol.Name)
 			info.DropColumns = append(info.DropColumns, oldColName)

@@ -2856,7 +2856,7 @@ type changingIndex struct {
 }
 
 // FindRelatedIndexesToChange finds the indexes that covering the given column.
-// The normal one will be overridden by the temp one.
+// The normal one will be overwritten by the temp one.
 func FindRelatedIndexesToChange(tblInfo *model.TableInfo, colName pmodel.CIStr) []changingIndex {
 	// In multi-schema change jobs that contains several "modify column" sub-jobs, there may be temp indexes for another temp index.
 	// To prevent reorganizing too many indexes, we should create the temp indexes that are really necessary.
