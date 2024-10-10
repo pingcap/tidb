@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
-	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/log"
 	restoreutils "github.com/pingcap/tidb/br/pkg/restore/utils"
 	"github.com/pingcap/tidb/pkg/tablecodec"
@@ -44,98 +43,51 @@ type SplitStrategy[T any] interface {
 	Accumulate(T)
 	ShouldSplit() bool
 
-	AllAccumlations() *splitHelperIterator
+	AccumlationsIter() *SplitHelperIterator
 	// ShouldSplit evaluates whether the conditions for a split are met.
 	// If the conditions are met, it performs the split and returns the resulting split values.
 	// Returns a non-nil result when a split is triggered.
 	// SplitByAccmulation(ctx context.Context) error
 }
 
-type rewriteSplitter struct {
-	rewriteKey []byte
+type RewriteSplitter struct {
+	RewriteKey []byte
 	tableID    int64
 	rule       *restoreutils.RewriteRules
 	splitter   *SplitHelper
 }
 
-type splitHelperIterator struct {
-	tableSplitters []*rewriteSplitter
+func NewRewriteSpliter(
+	rewriteKey []byte,
+	tableID int64,
+	rule *restoreutils.RewriteRules,
+	splitter *SplitHelper,
+) *RewriteSplitter {
+	return &RewriteSplitter{
+		RewriteKey: rewriteKey,
+		tableID:    tableID,
+		rule:       rule,
+		splitter:   splitter,
+	}
+
 }
 
-func (iter *splitHelperIterator) Traverse(fn func(v Valued, endKey []byte, rule *restoreutils.RewriteRules) bool) {
+type SplitHelperIterator struct {
+	tableSplitters []*RewriteSplitter
+}
+
+func NewSplitHelperIterator(tableSplitters []*RewriteSplitter) *SplitHelperIterator {
+	return &SplitHelperIterator{tableSplitters: tableSplitters}
+
+}
+
+func (iter *SplitHelperIterator) Traverse(fn func(v Valued, endKey []byte, rule *restoreutils.RewriteRules) bool) {
 	for _, entry := range iter.tableSplitters {
 		endKey := codec.EncodeBytes([]byte{}, tablecodec.EncodeTablePrefix(entry.tableID+1))
 		rule := entry.rule
 		entry.splitter.Traverse(func(v Valued) bool {
 			return fn(v, endKey, rule)
 		})
-	}
-}
-
-type LogSplitStrategy struct {
-	tableSplitter map[int64]*SplitHelper
-	rules         map[int64]*restoreutils.RewriteRules
-}
-
-const splitFileThreshold = 1024 * 1024 // 1 MB
-
-func (l *LogSplitStrategy) skipFile(file *backuppb.DataFileInfo) bool {
-	_, exist := l.rules[file.TableId]
-	return file.Length < splitFileThreshold || file.IsMeta || !exist
-}
-
-func (l *LogSplitStrategy) Accumulate(file *backuppb.DataFileInfo) {
-	if l.skipFile(file) {
-		return
-	}
-	splitHelper, exist := l.tableSplitter[file.TableId]
-	if !exist {
-		splitHelper = NewSplitHelper()
-		l.tableSplitter[file.TableId] = splitHelper
-	}
-
-	splitHelper.Merge(Valued{
-		Key: Span{
-			StartKey: file.StartKey,
-			EndKey:   file.EndKey,
-		},
-		Value: Value{
-			Size:   file.Length,
-			Number: file.NumberOfEntries,
-		},
-	})
-}
-
-func (l *LogSplitStrategy) ShouldSplit() bool {
-	return len(l.tableSplitter) > 4096
-}
-
-func (l *LogSplitStrategy) AccumlationsIter() *splitHelperIterator {
-	tableSplitters := make([]*rewriteSplitter, 0, len(l.tableSplitter))
-	for tableID, splitter := range l.tableSplitter {
-		delete(l.tableSplitter, tableID)
-		rewriteRule, exists := l.rules[tableID]
-		if !exists {
-			log.Info("skip splitting due to no table id matched", zap.Int64("tableID", tableID))
-			continue
-		}
-		newTableID := restoreutils.GetRewriteTableID(tableID, rewriteRule)
-		if newTableID == 0 {
-			log.Warn("failed to get the rewrite table id", zap.Int64("tableID", tableID))
-			continue
-		}
-		tableSplitters = append(tableSplitters, &rewriteSplitter{
-			rewriteKey: codec.EncodeBytes([]byte{}, tablecodec.EncodeTablePrefix(newTableID)),
-			tableID:    newTableID,
-			rule:       rewriteRule,
-			splitter:   splitter,
-		})
-	}
-	sort.Slice(tableSplitters, func(i, j int) bool {
-		return bytes.Compare(tableSplitters[i].rewriteKey, tableSplitters[j].rewriteKey) < 0
-	})
-	return &splitHelperIterator{
-		tableSplitters: tableSplitters,
 	}
 }
 
@@ -149,8 +101,7 @@ type MultiRegionsSplitter interface {
 }
 
 type RegionsSplitter struct {
-	RegionSplitter
-	strategy           SplitStrategy[*backuppb.DataFileInfo]
+	*RegionSplitter
 	pool               util.WorkerPool
 	splitThreSholdSize uint64
 	splitThreSholdKeys int64
@@ -159,7 +110,20 @@ type RegionsSplitter struct {
 	regionsCh chan []*RegionInfo
 }
 
-func (r *RegionsSplitter) ExecuteRegions(ctx context.Context, s *splitHelperIterator) error {
+func NewRegionsSplitter(
+	client SplitClient,
+	splitSize uint64,
+	splitKeys int64,
+) RegionsSplitter {
+	return RegionsSplitter{
+		RegionSplitter:     NewRegionSplitter(client),
+		splitThreSholdSize: splitSize,
+		splitThreSholdKeys: splitKeys,
+	}
+
+}
+
+func (r *RegionsSplitter) ExecuteRegions(ctx context.Context, s *SplitHelperIterator) error {
 	var ectx context.Context
 	var wg sync.WaitGroup
 	r.eg, ectx = errgroup.WithContext(ctx)
@@ -181,13 +145,12 @@ func (r *RegionsSplitter) ExecuteRegions(ctx context.Context, s *splitHelperIter
 				scatterRegions = append(scatterRegions, newRegions...)
 			}
 		}
-
 		// It is too expensive to stop recovery and wait for a small number of regions
 		// to complete scatter, so the maximum waiting time is reduced to 1 minute.
 		_ = r.WaitForScatterRegionsTimeout(ectx, scatterRegions, time.Minute)
 	}()
 
-	err := SplitPoint(ectx, s, nil, r.splitRegionByPoints)
+	err := SplitPoint(ectx, s, r.client, r.splitRegionByPoints)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -209,7 +172,7 @@ type splitFunc = func(context.Context, uint64, int64, *RegionInfo, []Valued) err
 // SplitPoint selects ranges overlapped with each region, and calls `splitF` to split the region
 func SplitPoint(
 	ctx context.Context,
-	iter *splitHelperIterator,
+	iter *SplitHelperIterator,
 	client SplitClient,
 	splitF splitFunc,
 ) (err error) {

@@ -264,6 +264,33 @@ func findSplitRanges(regionId uint64, items CompactedItems, rightDeriveSplit boo
 	return splitRanges, nil
 }
 
+func (rc *LogClient) RestoreCompactedSstFiles(
+	ctx context.Context,
+	compactionsIter iter.TryNextor[*backuppb.LogFileSubcompaction],
+	rules map[int64]*restoreutils.RewriteRules,
+	onProgress func(),
+) error {
+	for r := compactionsIter.TryNext(ctx); !r.Finished; r = compactionsIter.TryNext(ctx) {
+		if r.Err != nil {
+			return r.Err
+		}
+		i := r.Item
+		rewriteRules, ok := rules[i.Meta.TableId]
+		if !ok {
+			log.Warn("Skipped excluded tables in restore.", zap.Int64("table_id", i.Meta.TableId))
+			continue
+		}
+		info := restore.RestoreFilesInfo{
+			TableID:      i.Meta.TableId,
+			SSTFiles:     i.SstOutputs,
+			RewriteRules: rewriteRules,
+		}
+		rc.restorer.Restore(ctx, onProgress, []restore.RestoreFilesInfo{info})
+	}
+
+	return nil
+}
+
 func (rc *LogClient) RestoreCompactedSsts(
 	ctx context.Context,
 	regionCompactedMap map[uint64]CompactedItems,
@@ -1484,16 +1511,22 @@ func (rc *LogClient) UpdateSchemaVersion(ctx context.Context) error {
 	return nil
 }
 
-func (rc *LogClient) WrapLogFilesIterWithSplitHelper(logIter LogIter, rules map[int64]*restoreutils.RewriteRules, g glue.Glue, store kv.Storage) (LogIter, error) {
-	se, err := g.CreateSession(store)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	execCtx := se.GetSessionCtx().GetRestrictedSQLExecutor()
-	splitSize, splitKeys := utils.GetRegionSplitInfo(execCtx)
-	log.Info("get split threshold from tikv config", zap.Uint64("split-size", splitSize), zap.Int64("split-keys", splitKeys))
+func (rc *LogClient) WrapCompactedFilesIterWithSplitHelper(compactedIter iter.TryNextor[*backuppb.LogFileSubcompaction], rules map[int64]*restoreutils.RewriteRules, splitSize uint64, splitKeys int64) (iter.TryNextor[*backuppb.LogFileSubcompaction], error) {
 	client := split.NewClient(rc.pdClient, rc.pdHTTPClient, rc.tlsConf, maxSplitKeysOnce, 3)
-	return NewLogFilesIterWithSplitHelper(logIter, rules, client, splitSize, splitKeys), nil
+	w := restore.PipelineFileRestorerWrapper[*backuppb.LogFileSubcompaction]{
+		RegionsSplitter: split.NewRegionsSplitter(client, splitSize, splitKeys),
+	}
+	s := NewCompactedFileSplitStrategy(rules)
+	return w.WrapIter(context.Background(), compactedIter, s), nil
+}
+
+func (rc *LogClient) WrapLogFilesIterWithSplitHelper(logIter LogIter, rules map[int64]*restoreutils.RewriteRules, splitSize uint64, splitKeys int64) (LogIter, error) {
+	client := split.NewClient(rc.pdClient, rc.pdHTTPClient, rc.tlsConf, maxSplitKeysOnce, 3)
+	w := restore.PipelineFileRestorerWrapper[*LogDataFileInfo]{
+		RegionsSplitter: split.NewRegionsSplitter(client, splitSize, splitKeys),
+	}
+	s := NewLogSplitStrategy(rules)
+	return w.WrapIter(context.Background(), logIter, s), nil
 }
 
 func (rc *LogClient) generateKvFilesSkipMap(ctx context.Context, downstreamIdset map[int64]struct{}) (*LogFilesSkipMap, error) {

@@ -1344,7 +1344,7 @@ func restoreStream(
 
 	var checkpointRunner *checkpoint.CheckpointRunner[checkpoint.LogRestoreKeyType, checkpoint.LogRestoreValueType]
 	var sstCheckpointRunner *checkpoint.CheckpointRunner[checkpoint.RestoreKeyType, checkpoint.RestoreValueType]
-	var sstCheckpoints map[int64]struct{}
+	// var sstCheckpoints map[int64]struct{}
 	if cfg.UseCheckpoint {
 		oldRatioFromCheckpoint, err := client.InitCheckpointMetadataForLogRestore(ctx, cfg.StartTS, cfg.RestoreTS, oldRatio, cfg.tiflashRecorder)
 		if err != nil {
@@ -1357,7 +1357,7 @@ func restoreStream(
 			return errors.Trace(err)
 		}
 		sstTaskName := ""
-		sstCheckpoints, err = client.InitCheckpointMetadataForSstRestore(ctx, sstTaskName)
+		// sstCheckpoints, err = client.InitCheckpointMetadataForSstRestore(ctx, sstTaskName)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -1463,19 +1463,33 @@ func restoreStream(
 
 	compactionIter := client.LogFileManager.OpenCompactionIter(ctx, migs)
 
-	sstFileCount, regionCompactedMap, err := client.CollectCompactedSsts(ctx, rewriteRules, compactionIter)
+	sstFileCount, _, err := client.CollectCompactedSsts(ctx, rewriteRules, compactionIter)
 	if err != nil {
 		return errors.Trace(err)
 	}
 	// total split ranges count
 	sstFileCount += sstFileCount / logclient.CompactedSSTSplitBatchSize
 
+	se, err := g.CreateSession(mgr.GetStorage())
+	if err != nil {
+		return errors.Trace(err)
+	}
+	execCtx := se.GetSessionCtx().GetRestrictedSQLExecutor()
+	splitSize, splitKeys := utils.GetRegionSplitInfo(execCtx)
+	log.Info("get split threshold from tikv config", zap.Uint64("split-size", splitSize), zap.Int64("split-keys", splitKeys))
+
 	pd := g.StartProgress(ctx, "Restore SST+KV Files", int64(dataFileCount+sstFileCount), !cfg.LogProgress)
 	err = withProgress(pd, func(p glue.Progress) (pErr error) {
-		err = client.RestoreCompactedSsts(ctx, regionCompactedMap, importModeSwitcher, sstCheckpoints, sstCheckpointRunner, p.Inc, logclient.RightDeriveSplit)
+
+		compactedSplitIter, err := client.WrapCompactedFilesIterWithSplitHelper(compactionIter, rewriteRules, splitSize, splitKeys)
 		if err != nil {
 			return errors.Trace(err)
 		}
+		// err = client.RestoreCompactedSsts(ctx, regionCompactedMap, importModeSwitcher, sstCheckpoints, sstCheckpointRunner, p.Inc, logclient.RightDeriveSplit)
+		// if err != nil {
+		// 	return errors.Trace(err)
+		// }
+		err = client.RestoreCompactedSstFiles(ctx, compactedSplitIter, rewriteRules, p.Inc)
 
 		if cfg.UseCheckpoint {
 			updateStatsWithCheckpoint := func(kvCount, size uint64) {
@@ -1496,7 +1510,7 @@ func restoreStream(
 				defer func() { pErr = retErr }()
 			})
 		}
-		logFilesIterWithSplit, err := client.WrapLogFilesIterWithSplitHelper(logFilesIter, rewriteRules, g, mgr.GetStorage())
+		logFilesIterWithSplit, err := client.WrapLogFilesIterWithSplitHelper(logFilesIter, rewriteRules, splitSize, splitKeys)
 		if err != nil {
 			return errors.Trace(err)
 		}

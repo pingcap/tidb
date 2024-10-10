@@ -33,27 +33,6 @@ import (
 	"golang.org/x/sync/errgroup"
 )
 
-type rewriteSplitter struct {
-	rewriteKey []byte
-	tableID    int64
-	rule       *restoreutils.RewriteRules
-	splitter   *split.SplitHelper
-}
-
-type splitHelperIterator struct {
-	tableSplitters []*rewriteSplitter
-}
-
-func (iter *splitHelperIterator) Traverse(fn func(v split.Valued, endKey []byte, rule *restoreutils.RewriteRules) bool) {
-	for _, entry := range iter.tableSplitters {
-		endKey := codec.EncodeBytes([]byte{}, tablecodec.EncodeTablePrefix(entry.tableID+1))
-		rule := entry.rule
-		entry.splitter.Traverse(func(v split.Valued) bool {
-			return fn(v, endKey, rule)
-		})
-	}
-}
-
 type LogSplitHelper struct {
 	tableSplitter map[int64]*split.SplitHelper
 	rules         map[int64]*restoreutils.RewriteRules
@@ -79,8 +58,8 @@ func NewLogSplitHelper(rules map[int64]*restoreutils.RewriteRules, client split.
 	}
 }
 
-func (helper *LogSplitHelper) iterator() *splitHelperIterator {
-	tableSplitters := make([]*rewriteSplitter, 0, len(helper.tableSplitter))
+func (helper *LogSplitHelper) iterator() *split.SplitHelperIterator {
+	tableSplitters := make([]*split.RewriteSplitter, 0, len(helper.tableSplitter))
 	for tableID, splitter := range helper.tableSplitter {
 		delete(helper.tableSplitter, tableID)
 		rewriteRule, exists := helper.rules[tableID]
@@ -93,19 +72,17 @@ func (helper *LogSplitHelper) iterator() *splitHelperIterator {
 			log.Warn("failed to get the rewrite table id", zap.Int64("tableID", tableID))
 			continue
 		}
-		tableSplitters = append(tableSplitters, &rewriteSplitter{
-			rewriteKey: codec.EncodeBytes([]byte{}, tablecodec.EncodeTablePrefix(newTableID)),
-			tableID:    newTableID,
-			rule:       rewriteRule,
-			splitter:   splitter,
-		})
+		tableSplitters = append(tableSplitters, split.NewRewriteSpliter(
+			codec.EncodeBytes([]byte{}, tablecodec.EncodeTablePrefix(newTableID)),
+			newTableID,
+			rewriteRule,
+			splitter,
+		))
 	}
 	sort.Slice(tableSplitters, func(i, j int) bool {
-		return bytes.Compare(tableSplitters[i].rewriteKey, tableSplitters[j].rewriteKey) < 0
+		return bytes.Compare(tableSplitters[i].RewriteKey, tableSplitters[j].RewriteKey) < 0
 	})
-	return &splitHelperIterator{
-		tableSplitters: tableSplitters,
-	}
+	return split.NewSplitHelperIterator(tableSplitters)
 }
 
 const splitFileThreshold = 1024 * 1024 // 1 MB
@@ -193,7 +170,7 @@ func (helper *LogSplitHelper) splitRegionByPoints(
 // SplitPoint selects ranges overlapped with each region, and calls `splitF` to split the region
 func SplitPoint(
 	ctx context.Context,
-	iter *splitHelperIterator,
+	iter *split.SplitHelperIterator,
 	client split.SplitClient,
 	splitF splitFunc,
 ) (err error) {

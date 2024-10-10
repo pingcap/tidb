@@ -269,30 +269,27 @@ type PipelineFileRestorer[T any] interface {
 
 	// Log Restore, Compacted Restore
 	// split when Iter until condition satified
-	PipelineIter(iter.TryNextor[T], split.SplitStrategy[T]) iter.TryNextor[T]
+	WrapIter(iter.TryNextor[T], split.SplitStrategy[T]) iter.TryNextor[T]
 }
 
 type PipelineFileRestorerWrapper[T any] struct {
 	split.RegionsSplitter
 }
 
-func (p *PipelineFileRestorerWrapper[T]) PipelineIter(ctx context.Context, i iter.TryNextor[T], strategy split.SplitStrategy[T]) iter.TryNextor[T] {
-	// Use an iterator to process items and apply merging and splitting logic
+func (p *PipelineFileRestorerWrapper[T]) WrapIter(ctx context.Context, i iter.TryNextor[T], strategy split.SplitStrategy[T]) iter.TryNextor[T] {
 	return iter.Map(i, func(item T) T {
 		strategy.Accumulate(item)
-
 		// Check if we need to split
 		if strategy.ShouldSplit() { // Assuming ShouldSplit returns true when split is needed
-			log.Info("start to split the regions")
+			log.Info("start to split the regions in pipeline")
 			startTime := time.Now()
-			s := strategy.AllAccumlations()
+			s := strategy.AccumlationsIter()
 			err := p.ExecuteRegions(ctx, s)
 			if err != nil {
-				// return iter.Throw[T](errors.Trace(err))
+				log.Error("failed to split regions in pipeline, anyway we can still doing restore")
 			}
-			log.Info("end to split the regions", zap.Duration("takes", time.Since(startTime)))
+			log.Info("end to split the regions in pipeline", zap.Duration("takes", time.Since(startTime)))
 		}
-
-		return item // Return the processed item
+		return item
 	})
 }
