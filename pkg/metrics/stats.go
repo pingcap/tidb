@@ -20,20 +20,21 @@ import (
 
 // Stats metrics.
 var (
-	AutoAnalyzeHistogram      prometheus.Histogram
-	AutoAnalyzeCounter        *prometheus.CounterVec
-	StatsInaccuracyRate       prometheus.Histogram
-	PseudoEstimation          *prometheus.CounterVec
-	SyncLoadCounter           prometheus.Counter
-	SyncLoadTimeoutCounter    prometheus.Counter
-	SyncLoadDedupCounter      prometheus.Counter
-	SyncLoadHistogram         prometheus.Histogram
-	ReadStatsHistogram        prometheus.Histogram
-	StatsCacheCounter         *prometheus.CounterVec
-	StatsCacheGauge           *prometheus.GaugeVec
-	StatsHealthyGauge         *prometheus.GaugeVec
-	StatsDeltaLoadHistogram   prometheus.Histogram
-	StatsDeltaUpdateHistogram prometheus.Histogram
+	AutoAnalyzeHistogram       prometheus.Histogram
+	AutoAnalyzeCurrentDuartion prometheus.Gauge
+	AutoAnalyzeCounter         *prometheus.CounterVec
+	StatsInaccuracyRate        prometheus.Histogram
+	PseudoEstimation           *prometheus.CounterVec
+	SyncLoadCounter            prometheus.Counter
+	SyncLoadTimeoutCounter     prometheus.Counter
+	SyncLoadDedupCounter       prometheus.Counter
+	SyncLoadHistogram          prometheus.Histogram
+	ReadStatsHistogram         prometheus.Histogram
+	StatsCacheCounter          *prometheus.CounterVec
+	StatsCacheGauge            *prometheus.GaugeVec
+	StatsHealthyGauge          *prometheus.GaugeVec
+	StatsDeltaLoadHistogram    prometheus.Histogram
+	StatsDeltaUpdateHistogram  prometheus.Histogram
 
 	HistoricalStatsCounter        *prometheus.CounterVec
 	PlanReplayerTaskCounter       *prometheus.CounterVec
@@ -42,6 +43,13 @@ var (
 
 // InitStatsMetrics initializes stats metrics.
 func InitStatsMetrics() {
+	AutoAnalyzeCurrentDuartion = NewGauge(
+		prometheus.GaugeOpts{
+			Namespace: "tidb",
+			Subsystem: "statistics",
+			Name:      "auto_analyze_current_duration",
+			Help:      "The current processing time (milliseconds) of auto analyze.",
+		})
 	AutoAnalyzeHistogram = NewHistogram(
 		prometheus.HistogramOpts{
 			Namespace: "tidb",
