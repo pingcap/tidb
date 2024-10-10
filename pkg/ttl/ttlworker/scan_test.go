@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/ttl/cache"
 	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/stretchr/testify/require"
 )
@@ -445,4 +446,52 @@ func TestScanTaskCheck(t *testing.T) {
 	require.NoError(t, result.err)
 	require.Equal(t, 1, len(ch))
 	require.Equal(t, "Total Rows: 1, Success Rows: 0, Error Rows: 0", task.statistics.String())
+}
+
+func TestScanTaskCancelStmt(t *testing.T) {
+	task := &ttlScanTask{
+		ctx: context.Background(),
+		tbl: newMockTTLTbl(t, "t1"),
+		TTLTask: &cache.TTLTask{
+			ExpireTime:     time.UnixMilli(0),
+			ScanRangeStart: []types.Datum{types.NewIntDatum(0)},
+		},
+		statistics: &ttlStatistics{},
+	}
+
+	testCancel := func(ctx context.Context, doCancel func()) {
+		mockPool := newMockSessionPool(t)
+		startExec := make(chan struct{})
+		mockPool.se.sessionInfoSchema = newMockInfoSchema(task.tbl.TableInfo)
+		mockPool.se.executeSQL = func(_ context.Context, _ string, _ ...any) ([]chunk.Row, error) {
+			close(startExec)
+			select {
+			case <-mockPool.se.killed:
+				return nil, errors.New("killed")
+			case <-time.After(10 * time.Second):
+				return nil, errors.New("timeout")
+			}
+		}
+		wg := util.WaitGroupWrapper{}
+		wg.Run(func() {
+			select {
+			case <-startExec:
+			case <-time.After(10 * time.Second):
+				require.FailNow(t, "timeout")
+			}
+			doCancel()
+		})
+		r := task.doScan(ctx, nil, mockPool)
+		require.NotNil(t, r)
+		require.EqualError(t, r.err, "killed")
+		wg.Wait()
+	}
+
+	// test cancel with input context
+	ctx, cancel := context.WithCancel(context.Background())
+	testCancel(ctx, cancel)
+
+	// test cancel with task context
+	task.ctx, cancel = context.WithCancel(context.Background())
+	testCancel(context.Background(), cancel)
 }
