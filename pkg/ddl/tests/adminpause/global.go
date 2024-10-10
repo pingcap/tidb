@@ -18,7 +18,6 @@ import (
 	"testing"
 	"time"
 
-	ddlctrl "github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/ddl/logutil"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -34,7 +33,6 @@ func prepareDomain(t *testing.T) (*domain.Domain, *testkit.TestKit, *testkit.Tes
 	stmtKit := testkit.NewTestKit(t, store)
 	adminCommandKit := testkit.NewTestKit(t, store)
 
-	ddlctrl.ReorgWaitTimeout = 10 * time.Millisecond
 	stmtKit.MustExec("set @@tidb_ddl_reorg_batch_size = 2")
 	stmtKit.MustExec("set @@tidb_ddl_reorg_worker_cnt = 1")
 	stmtKit = testkit.NewTestKit(t, store)

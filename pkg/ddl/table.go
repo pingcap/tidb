@@ -222,7 +222,7 @@ func (w *worker) onRecoverTable(jobCtx *jobContext, job *model.Job) (ver int64, 
 			job.State = model.JobStateCancelled
 			return ver, errors.Trace(err)
 		}
-		ver, err = w.recoverTable(metaMut, job, recoverInfo)
+		ver, err = w.recoverTable(jobCtx.ctx, metaMut, job, recoverInfo)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
@@ -243,7 +243,12 @@ func (w *worker) onRecoverTable(jobCtx *jobContext, job *model.Job) (ver int64, 
 	return ver, nil
 }
 
-func (w *worker) recoverTable(t *meta.Mutator, job *model.Job, recoverInfo *model.RecoverTableInfo) (ver int64, err error) {
+func (w *worker) recoverTable(
+	ctx context.Context,
+	t *meta.Mutator,
+	job *model.Job,
+	recoverInfo *model.RecoverTableInfo,
+) (ver int64, err error) {
 	var tids []int64
 	if recoverInfo.TableInfo.GetPartitionInfo() != nil {
 		tids = getPartitionIDs(recoverInfo.TableInfo)
@@ -257,11 +262,11 @@ func (w *worker) recoverTable(t *meta.Mutator, job *model.Job, recoverInfo *mode
 		return ver, errors.Wrapf(err, "failed to get old label rules from PD")
 	}
 	// Remove dropped table DDL job from gc_delete_range table.
-	err = w.delRangeManager.removeFromGCDeleteRange(w.ctx, recoverInfo.DropJobID)
+	err = w.delRangeManager.removeFromGCDeleteRange(ctx, recoverInfo.DropJobID)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
-	err = clearTablePlacementAndBundles(w.ctx, recoverInfo.TableInfo)
+	err = clearTablePlacementAndBundles(ctx, recoverInfo.TableInfo)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}

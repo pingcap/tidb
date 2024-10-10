@@ -293,6 +293,7 @@ func rollingbackAddIndex(w *worker, jobCtx *jobContext, job *model.Job, isPK boo
 	return
 }
 
+// TODO(lance6716): delete now?
 func needNotifyAndStopReorgWorker(job *model.Job) bool {
 	if job.SchemaState == model.StateWriteReorganization && job.SnapshotVer != 0 {
 		// If the value of SnapshotVer isn't zero, it means the reorg workers have been started.
@@ -598,15 +599,6 @@ func rollingbackTruncateTable(jobCtx *jobContext, job *model.Job) (ver int64, er
 	return cancelOnlyNotHandledJob(job, model.StateNone)
 }
 
-func pauseReorgWorkers(jobCtx *jobContext, job *model.Job) (err error) {
-	if needNotifyAndStopReorgWorker(job) {
-		jobCtx.logger.Info("pausing the DDL job", zap.String("job", job.String()))
-		jobCtx.oldDDLCtx.notifyReorgWorkerJobStateChange(job)
-	}
-
-	return dbterror.ErrPausedDDLJob.GenWithStackByArgs(job.ID)
-}
-
 func convertJob2RollbackJob(w *worker, jobCtx *jobContext, job *model.Job) (ver int64, err error) {
 	switch job.Type {
 	case model.ActionAddColumn:
@@ -660,6 +652,11 @@ func convertJob2RollbackJob(w *worker, jobCtx *jobContext, job *model.Job) (ver 
 	default:
 		job.State = model.JobStateCancelled
 		err = dbterror.ErrCancelledDDLJob
+	}
+
+	if job.State == model.JobStateRollingback {
+		// try the best effort to rollback, ignore the cancellation.
+		jobCtx.ctx = w.workCtx
 	}
 
 	logger := jobCtx.logger
