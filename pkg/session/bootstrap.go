@@ -3575,11 +3575,7 @@ func rebuildAllPartitionValueMapAndSorted(s *session) {
 			if pi == nil || pi.Type != model.PartitionTypeList {
 				continue
 			}
-			ctx := s.currentCtx
-			if ctx == nil {
-				ctx = context.Background()
-			}
-			tbl, ok := is.TableByID(ctx, t.ID)
+			tbl, ok := is.TableByID(context.Background(), t.ID)
 			intest.Assert(ok, "table not found in infoschema")
 			pe := tbl.(partitionExpr).PartitionExpr()
 			for _, cp := range pe.ColPrunes {
