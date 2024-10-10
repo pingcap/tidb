@@ -712,7 +712,9 @@ func (d *SchemaTracker) handleModifyColumn(
 		return errors.Trace(err)
 	}
 
-	jobW.Encode(true)
+	if _, err = jobW.Encode(true); err != nil {
+		return errors.Trace(err)
+	}
 	args, err := model.GetModifyColumnArgs(jobW.Job)
 	if err != nil {
 		return errors.Trace(err)
