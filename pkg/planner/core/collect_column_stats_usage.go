@@ -20,6 +20,7 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
@@ -207,6 +208,10 @@ func (c *columnStatsUsageCollector) addHistNeededColumns(ds *logicalop.DataSourc
 		if col.ID < 0 {
 			continue
 		}
+		// Don't need to load stats for vector type currently.
+		if col.RetType.GetType() == mysql.TypeTiDBVectorFloat32 {
+			continue
+		}
 		tblColID := model.TableItemID{TableID: ds.PhysicalTableID, ID: col.ID, IsIndex: false}
 		colIDSet.Insert(int(col.ID))
 		c.histNeededCols[tblColID] = true
@@ -215,6 +220,10 @@ func (c *columnStatsUsageCollector) addHistNeededColumns(ds *logicalop.DataSourc
 		// If the column is plan-generated one, Skip it.
 		// TODO: we may need to consider the ExtraHandle.
 		if column.ID < 0 {
+			continue
+		}
+		// Don't need to load stats for vector type currently.
+		if column.FieldType.GetType() == mysql.TypeTiDBVectorFloat32 {
 			continue
 		}
 		if !column.Hidden {

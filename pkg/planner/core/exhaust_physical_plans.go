@@ -2169,12 +2169,51 @@ func getPhysTopN(lt *logicalop.LogicalTopN, prop *property.PhysicalProperty) []b
 	if !pushLimitOrTopNForcibly(lt) {
 		allTaskTypes = append(allTaskTypes, property.RootTaskType)
 	}
-	if lt.SCtx().GetSessionVars().IsMPPAllowed() {
+	mppAllowed := lt.SCtx().GetSessionVars().IsMPPAllowed()
+	if mppAllowed {
 		allTaskTypes = append(allTaskTypes, property.MppTaskType)
 	}
 	ret := make([]base.PhysicalPlan, 0, len(allTaskTypes))
 	for _, tp := range allTaskTypes {
 		resultProp := &property.PhysicalProperty{TaskTp: tp, ExpectedCnt: math.MaxFloat64, CTEProducerStatus: prop.CTEProducerStatus}
+		topN := PhysicalTopN{
+			ByItems:     lt.ByItems,
+			PartitionBy: lt.PartitionBy,
+			Count:       lt.Count,
+			Offset:      lt.Offset,
+		}.Init(lt.SCtx(), lt.StatsInfo(), lt.QueryBlockOffset(), resultProp)
+		ret = append(ret, topN)
+	}
+	// If we can generate MPP task and there's vector distance function in the order by column.
+	// We will try to generate a property for possible vector indexes.
+	if mppAllowed {
+		if len(lt.ByItems) != 1 {
+			return ret
+		}
+		vs := expression.ExtractVectorHelper(lt.ByItems[0].Expr)
+		if vs == nil {
+			return ret
+		}
+		// Currently vector index only accept ascending order.
+		if lt.ByItems[0].Desc {
+			return ret
+		}
+		// Currently, we only deal with the case the TopN is directly above a DataSource.
+		ds, ok := lt.Children()[0].(*logicalop.DataSource)
+		if !ok {
+			return ret
+		}
+		// Reject any filters.
+		if len(ds.PushedDownConds) > 0 {
+			return ret
+		}
+		resultProp := &property.PhysicalProperty{
+			TaskTp:            property.MppTaskType,
+			ExpectedCnt:       math.MaxFloat64,
+			CTEProducerStatus: prop.CTEProducerStatus,
+		}
+		resultProp.VectorProp.VectorHelper = vs
+		resultProp.VectorProp.TopK = uint32(lt.Count + lt.Offset)
 		topN := PhysicalTopN{
 			ByItems:     lt.ByItems,
 			PartitionBy: lt.PartitionBy,

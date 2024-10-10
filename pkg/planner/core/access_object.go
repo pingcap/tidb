@@ -283,6 +283,19 @@ func (p *PhysicalTableScan) AccessObject() base.AccessObject {
 			res.Partitions = []string{partitionName}
 		}
 	}
+	if p.AnnIndexExtra != nil {
+		index := IndexAccess{
+			Name: p.AnnIndexExtra.IndexInfo.Name.O,
+		}
+		for _, idxCol := range p.AnnIndexExtra.IndexInfo.Columns {
+			if tblCol := p.Table.Columns[idxCol.Offset]; tblCol.Hidden {
+				index.Cols = append(index.Cols, tblCol.GeneratedExprString)
+			} else {
+				index.Cols = append(index.Cols, idxCol.Name.O)
+			}
+		}
+		res.Indexes = []IndexAccess{index}
+	}
 	return res
 }
 

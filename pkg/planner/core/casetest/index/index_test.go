@@ -15,12 +15,21 @@
 package index
 
 import (
+	"context"
 	"fmt"
 	"testing"
+	"time"
 
+	"github.com/pingcap/tidb/pkg/domain"
+	"github.com/pingcap/tidb/pkg/domain/infosync"
+	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/planner/util/coretestsdk"
+	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testdata"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/util"
+	"github.com/stretchr/testify/require"
 )
 
 func TestNullConditionForPrefixIndex(t *testing.T) {
@@ -229,4 +238,92 @@ func TestOrderedIndexWithIsNull(t *testing.T) {
 		"└─IndexReader_18 1.00 root  index:StreamAgg_9",
 		"  └─StreamAgg_9 1.00 cop[tikv]  funcs:count(1)->Column#5",
 		"    └─IndexRangeScan_16 3.00 cop[tikv] table:t2, index:index_on_id(id) range:[NULL,NULL], keep order:false"))
+}
+
+const tiflashReplicaLease = 600 * time.Millisecond
+
+func TestVectorIndex(t *testing.T) {
+	store := testkit.CreateMockStoreWithSchemaLease(t, tiflashReplicaLease, mockstore.WithMockTiFlash(2))
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	tiflash := infosync.NewMockTiFlash()
+	infosync.SetMockTiFlash(tiflash)
+	defer func() {
+		tiflash.Lock()
+		tiflash.StatusServer.Close()
+		tiflash.Unlock()
+	}()
+
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/MockCheckVectorIndexProcess", `return(1)`)
+
+	tk.MustExec("create table t (a int, b vector, c vector(3), d vector(4));")
+	tk.MustExec("alter table t set tiflash replica 1;")
+	tk.MustExec("alter table t add vector index vecIdx1((vec_cosine_distance(d))) USING HNSW;")
+	dom := domain.GetDomain(tk.Session())
+	coretestsdk.SetTiFlashReplica(t, dom, "test", "t")
+	tk.MustUseIndex("select * from t use index(vecIdx1) order by vec_cosine_distance(d, '[1,1,1,1]') limit 1", "vecIdx1")
+	tk.MustUseIndex("select * from t use index(vecIdx1) order by vec_cosine_distance('[1,1,1,1]', d) limit 1", "vecIdx1")
+	tk.MustExecToErr("select * from t use index(vecIdx1) order by vec_l2_distance(d, '[1,1,1,1]') limit 1")
+	tk.MustExecToErr("select * from t use index(vecIdx1) where a = 5 order by vec_cosine_distance(d, '[1,1,1,1]') limit 1")
+}
+
+func TestAnalyzeVectorIndex(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomainWithSchemaLease(t, 200*time.Millisecond, mockstore.WithMockTiFlash(2))
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t;")
+
+	tiflash := infosync.NewMockTiFlash()
+	infosync.SetMockTiFlash(tiflash)
+	defer func() {
+		tiflash.Lock()
+		tiflash.StatusServer.Close()
+		tiflash.Unlock()
+	}()
+	tk.MustExec(`create table t(a int, b vector(2), c vector(3), j json, index(a))`)
+	tk.MustExec("alter table t set tiflash replica 2 location labels 'a','b';")
+	tblInfo, err := dom.InfoSchema().TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
+	require.NoError(t, err)
+	err = domain.GetDomain(tk.Session()).DDLExecutor().UpdateTableReplicaInfo(tk.Session(), tblInfo.Meta().ID, true)
+	require.NoError(t, err)
+	coretestsdk.SetTiFlashReplica(t, dom, "test", "t")
+
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/MockCheckVectorIndexProcess", `return(1)`)
+	tk.MustExec("alter table t add vector index idx((VEC_COSINE_DISTANCE(b))) USING HNSW")
+	tk.MustExec("alter table t add vector index idx2((VEC_COSINE_DISTANCE(c))) USING HNSW")
+
+	tk.MustUseIndex("select * from t use index(idx) order by vec_cosine_distance(b, '[1, 0]') limit 1", "idx")
+	tk.MustUseIndex("select * from t order by vec_cosine_distance(b, '[1, 0]') limit 1", "idx")
+	tk.MustNoIndexUsed("select * from t ignore index(idx) order by vec_cosine_distance(b, '[1, 0]') limit 1")
+
+	tk.MustExec("set tidb_analyze_version=2")
+	tk.MustExec("analyze table t")
+	tk.MustQuery("show warnings").Sort().Check(testkit.Rows(
+		"Note 1105 Analyze use auto adjusted sample rate 1.000000 for table test.t, reason to use this rate is \"use min(1, 110000/10000) as the sample-rate=1\"",
+		"Warning 1105 No predicate column has been collected yet for table test.t, so only indexes and the columns composing the indexes will be analyzed",
+		"Warning 1105 analyzing vector index is not supported, skip idx",
+		"Warning 1105 analyzing vector index is not supported, skip idx2"))
+	tk.MustExec("analyze table t index idx")
+	tk.MustQuery("show warnings").Sort().Check(testkit.Rows(
+		"Note 1105 Analyze use auto adjusted sample rate 1.000000 for table test.t, reason to use this rate is \"TiDB assumes that the table is empty, use sample-rate=1\"",
+		"Warning 1105 No predicate column has been collected yet for table test.t, so only indexes and the columns composing the indexes will be analyzed",
+		"Warning 1105 The version 2 would collect all statistics not only the selected indexes",
+		"Warning 1105 analyzing vector index is not supported, skip idx",
+		"Warning 1105 analyzing vector index is not supported, skip idx2"))
+
+	tk.MustExec("set tidb_analyze_version=1")
+	tk.MustExec("analyze table t")
+	tk.MustQuery("show warnings").Sort().Check(testkit.Rows(
+		"Warning 1105 analyzing vector index is not supported, skip idx",
+		"Warning 1105 analyzing vector index is not supported, skip idx2"))
+	tk.MustExec("analyze table t index idx")
+	tk.MustQuery("show warnings").Sort().Check(testkit.Rows(
+		"Warning 1105 analyzing vector index is not supported, skip idx"))
+	tk.MustExec("analyze table t index a")
+	tk.MustQuery("show warnings").Sort().Check(testkit.Rows())
+	tk.MustExec("analyze table t index a, idx, idx2")
+	tk.MustQuery("show warnings").Sort().Check(testkit.Rows(
+		"Warning 1105 analyzing vector index is not supported, skip idx",
+		"Warning 1105 analyzing vector index is not supported, skip idx2"))
 }
