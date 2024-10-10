@@ -154,6 +154,10 @@ func (path *AccessPath) IsTiKVTablePath() bool {
 	return (path.IsIntHandlePath || path.IsCommonHandlePath) && path.StoreType == kv.TiKV
 }
 
+func (path *AccessPath) IsTiFlashSimpleTablePath() bool {
+	return (path.IsIntHandlePath || path.IsCommonHandlePath) && path.StoreType == kv.TiFlash
+}
+
 // SplitCorColAccessCondFromFilters move the necessary filter in the form of index_col = corrlated_col to access conditions.
 // The function consider the `idx_col_1 = const and index_col_2 = cor_col and index_col_3 = const` case.
 // It enables more index columns to be considered. The range will be rebuilt in 'ResolveCorrelatedColumns'.
