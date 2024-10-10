@@ -1453,11 +1453,13 @@ func onDropIndex(jobCtx *jobContext, job *model.Job) (ver int64, _ error) {
 		if job.IsRollingback() {
 			job.FinishTableJob(model.JobStateRollbackDone, model.StateNone, ver, tblInfo)
 
-			// Convert drop index args to finished add index args again.
 			dropArgs, err := model.GetFinishedDropIndexArgs(job)
 			if err != nil {
 				return ver, errors.Trace(err)
 			}
+
+			// Convert drop index args to finished add index args again to finish add index job.
+			// Only rolled back add index jobs will get here, since drop index jobs can only be cancelled, not rolled back.
 			addIndexArgs := &model.AddIndexArgs{PartitionIDs: dropArgs.PartitionIDs, IsFinishedArg: true}
 			for i, indexID := range indexIDs {
 				addIndexArgs.IndexArgs = append(addIndexArgs.IndexArgs,

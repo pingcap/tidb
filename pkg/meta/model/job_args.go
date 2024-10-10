@@ -1630,6 +1630,7 @@ func GetAddIndexArgsFromSubJob(subjob *SubJob) (*AddIndexArgs, error) {
 }
 
 // GetFinishedAddIndexArgs gets the add index args after the job is finished.
+// Return an error if arguments stored in job are not finished arguments.
 func GetFinishedAddIndexArgs(job *Job) (*AddIndexArgs, error) {
 	if job.Version == JobVersion1 {
 		addIndexIDs := make([]int64, 1)
@@ -1639,7 +1640,7 @@ func GetFinishedAddIndexArgs(job *Job) (*AddIndexArgs, error) {
 
 		if err := job.DecodeArgs(&addIndexIDs[0], &ifExists[0], &partitionIDs, &isGlobals[0]); err != nil {
 			if err = job.DecodeArgs(&addIndexIDs, &ifExists, &partitionIDs, &isGlobals); err != nil {
-				return nil, errors.Trace(err)
+				return nil, errors.Errorf("Failed to decode finished arguments from job version 1")
 			}
 		}
 		a := &AddIndexArgs{PartitionIDs: partitionIDs, IsFinishedArg: true}

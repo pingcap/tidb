@@ -113,9 +113,10 @@ func expectedDeleteRangeCnt(ctx delRangeCntCtx, job *model.Job) (int, error) {
 		}
 		return len(args.OldPhysicalTblIDs), nil
 	case model.ActionAddIndex, model.ActionAddPrimaryKey:
-		// In version 1, we would first try to decode args using finished arguments.
+		// For version 1 jobs, we would first try to decode args using layout of finished arguments.
 		// If decode failed, then we assume that the job is not finished and decode it again.
-		// In version 2, we we use IsFinishedArg flag to distinguish running/finishe arguments.
+		// For version 2 jobs, we use IsFinishedArg flag to distinguish running/finished arguments,
+		// so IsFinishedArg should be persisted.
 		args, err := model.GetFinishedAddIndexArgs(job)
 		if err != nil {
 			_, err := model.GetAddIndexArgs(job)
