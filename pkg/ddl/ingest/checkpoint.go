@@ -242,7 +242,7 @@ func (s *CheckpointManager) AdvanceWatermark(flushed, imported bool) {
 // afterFlush should be called after all engine is flushed.
 func (s *CheckpointManager) afterFlush() {
 	for {
-		cp := s.checkpoints[s.minTaskIDFinished+1]
+		cp := s.checkpoints[s.minTaskIDFinished]
 		if cp == nil || !cp.lastBatchRead || cp.writtenKeys < cp.totalKeys {
 			break
 		}
