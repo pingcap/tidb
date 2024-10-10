@@ -84,7 +84,7 @@
       {
         "SQL": "explain format = 'verbose' select count(*) from t2 group by a",
         "Plan": [
-          "HashAgg_8 3.00 15179.09 root  group by:test.t2.a, funcs:count(1)->Column#4",
+          "HashAgg_8 3.00 1706.09 root  group by:test.t2.a, funcs:count(1)->Column#4",
           "└─TableReader_17 3.00 58.13 root  data:TableFullScan_16",
           "  └─TableFullScan_16 3.00 681.92 cop[tikv] table:t2 keep order:false"
         ]
