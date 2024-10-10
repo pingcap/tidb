@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"path"
 	"sync"
 
 	"github.com/pingcap/errors"
@@ -58,7 +57,7 @@ func JSONEffects(es []Effect, output io.Writer) error {
 
 func SaveJSONEffectsToTmp(es []Effect) (string, error) {
 	// Save the json to a subdir so user can redirect the output path by symlinking...
-	tmp, err := os.CreateTemp(path.Join(os.TempDir(), "tidb_br"), "br-effects-*.json")
+	tmp, err := os.CreateTemp(os.TempDir(), "br-effects-*.json")
 	if err != nil {
 		return "", err
 	}
