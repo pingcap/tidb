@@ -1162,7 +1162,6 @@ func TestAddIndexArgs(t *testing.T) {
 		require.Equal(t, inArgs.IndexArgs[0].HiddenCols, a.HiddenCols)
 	}
 
-	inArgs.IsFinishedArg = false
 	for _, v := range []JobVersion{JobVersion1, JobVersion2} {
 		inArgs.IndexArgs[0].IsVector = false
 		inArgs.IndexArgs[0].IsPK = true
@@ -1181,7 +1180,6 @@ func TestAddIndexArgs(t *testing.T) {
 		require.Equal(t, inArgs.IndexArgs[0].IndexOption, a.IndexOption)
 	}
 
-	inArgs.IsFinishedArg = false
 	for _, v := range []JobVersion{JobVersion1, JobVersion2} {
 		inArgs.IndexArgs[0].IsVector = true
 		inArgs.IndexArgs[0].IsPK = false

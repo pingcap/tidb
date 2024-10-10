@@ -1313,7 +1313,7 @@ func GetFlashbackClusterArgs(job *Job) (*FlashbackClusterArgs, error) {
 // IndexIDs may have different length with IndexNames and IfExists.
 // When it's used in dropping index, length of IndexNames, IfExists and IndexIDs are 1.
 // When it's used in rolling back add indexes,
-// len(IndexNames) and len(IfExists) equals to the number of added indexes,
+// len(IndexNames) and len(IfExists) equals to the number of merged added index jobs,
 // while IndexIDs stores the partition IDs of the corresponding table.
 type DropIndexArgs struct {
 	IndexNames []pmodel.CIStr `json:"index_names,omitempty"`
@@ -1375,16 +1375,17 @@ func (a *DropIndexArgs) getFinishedArgsV1(*Job) []any {
 
 // GetFinishedDropIndexArgs gets the drop index args.
 // It's used for both drop index and rollback add index.
-// For add vector index, we always use JobVersion2
 func GetFinishedDropIndexArgs(job *Job) (*DropIndexArgs, error) {
 	if job.Version == JobVersion1 {
 		indexNames := make([]pmodel.CIStr, 1)
 		ifExists := make([]bool, 1)
 		indexIDs := make([]int64, 1)
 		var partitionIDs []int64
+		isVector := false
 
-		if err := job.DecodeArgs(&indexNames, &ifExists, &indexIDs); err != nil {
-			if err := job.DecodeArgs(&indexNames[0], &ifExists[0], &indexIDs[0], &partitionIDs); err != nil {
+		// See getFinishedArgsV1 for why we may need to decode twice.
+		if err := job.DecodeArgs(&indexNames, &ifExists, &indexIDs, &isVector); err != nil {
+			if err := job.DecodeArgs(&indexNames[0], &ifExists[0], &indexIDs[0], &partitionIDs, &isVector); err != nil {
 				return nil, errors.Trace(err)
 			}
 		}
@@ -1394,6 +1395,7 @@ func GetFinishedDropIndexArgs(job *Job) (*DropIndexArgs, error) {
 			IfExists:     ifExists,
 			IndexIDs:     indexIDs,
 			PartitionIDs: partitionIDs,
+			IsVector:     isVector,
 		}, nil
 	}
 	return getOrDecodeArgsV2[*DropIndexArgs](job)
@@ -1434,10 +1436,8 @@ type AddIndexArgs struct {
 	// PartitionIDs will be used in onDropIndex.
 	PartitionIDs []int64 `json:"partition_ids,omitempty"`
 
-	// MultiSchemaChange doesn't support vector index currently.
-
-	// This is to dintinguish finished and running args, see comments in expectedDeleteRangeCnt
-	IsFinishedArg bool `json:"is_finished,omitempty"`
+	// This is to dintinguish finished and running args, it's only used in test.
+	IsFinishedArg bool `json:"-"`
 }
 
 func (a *AddIndexArgs) getArgsV1(job *Job) []any {
@@ -1638,6 +1638,7 @@ func GetFinishedAddIndexArgs(job *Job) (*AddIndexArgs, error) {
 		isGlobals := make([]bool, 1)
 		var partitionIDs []int64
 
+		// add vector index args doesn't store slice.
 		if err := job.DecodeArgs(&addIndexIDs[0], &ifExists[0], &partitionIDs, &isGlobals[0]); err != nil {
 			if err = job.DecodeArgs(&addIndexIDs, &ifExists, &partitionIDs, &isGlobals); err != nil {
 				return nil, errors.Errorf("Failed to decode finished arguments from job version 1")
@@ -1657,9 +1658,6 @@ func GetFinishedAddIndexArgs(job *Job) (*AddIndexArgs, error) {
 	args, err := getOrDecodeArgsV2[*AddIndexArgs](job)
 	if err != nil {
 		return nil, errors.Trace(err)
-	}
-	if !args.IsFinishedArg {
-		return nil, errors.Errorf("Got running AddIndexArgs, expect finished AddIndexArgs")
 	}
 	return args, nil
 }
