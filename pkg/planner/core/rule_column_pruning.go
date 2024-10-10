@@ -18,13 +18,9 @@ import (
 	"context"
 	"slices"
 
-	"github.com/pingcap/tidb/pkg/expression"
-	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
-	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
-	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace/logicaltrace"
 	"github.com/pingcap/tidb/pkg/util/intest"
 )
 
@@ -62,37 +58,6 @@ func noZeroColumnLayOut(p base.LogicalPlan) bool {
 		}
 	}
 	return true
-}
-
-func pruneByItems(p base.LogicalPlan, old []*util.ByItems, opt *optimizetrace.LogicalOptimizeOp) (byItems []*util.ByItems,
-	parentUsedCols []*expression.Column) {
-	prunedByItems := make([]*util.ByItems, 0)
-	byItems = make([]*util.ByItems, 0, len(old))
-	seen := make(map[string]struct{}, len(old))
-	for _, byItem := range old {
-		pruned := true
-		hash := string(byItem.Expr.HashCode())
-		_, hashMatch := seen[hash]
-		seen[hash] = struct{}{}
-		cols := expression.ExtractColumns(byItem.Expr)
-		if !hashMatch {
-			if len(cols) == 0 {
-				if !expression.IsRuntimeConstExpr(byItem.Expr) {
-					pruned = false
-					byItems = append(byItems, byItem)
-				}
-			} else if byItem.Expr.GetType(p.SCtx().GetExprCtx().GetEvalCtx()).GetType() != mysql.TypeNull {
-				pruned = false
-				parentUsedCols = append(parentUsedCols, cols...)
-				byItems = append(byItems, byItem)
-			}
-		}
-		if pruned {
-			prunedByItems = append(prunedByItems, byItem)
-		}
-	}
-	logicaltrace.AppendByItemsPruneTraceStep(p, prunedByItems, opt)
-	return
 }
 
 // Name implements base.LogicalOptRule.<1st> interface.

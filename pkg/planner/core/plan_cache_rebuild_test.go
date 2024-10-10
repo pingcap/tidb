@@ -208,6 +208,10 @@ func TestPlanCacheClone(t *testing.T) {
 		`set @a1=1, @a2=2`, `execute st using @a1`, `execute st using @a2`)
 	testCachedPlanClone(t, tk1, tk2, `prepare st from 'select * from t where a=? for update'`,
 		`set @a1=1, @a2=2`, `execute st using @a1`, `execute st using @a2`)
+
+	// UnionAll
+	testCachedPlanClone(t, tk1, tk2, `prepare st from 'select * from t where a<? union all select * from t where a>?'`,
+		`set @a1=1, @a2=10`, `execute st using @a1, @a2`, `execute st using @a2, @a1`)
 }
 
 func testCachedPlanClone(t *testing.T, tk1, tk2 *testkit.TestKit, prep, set, exec1, exec2 string) {

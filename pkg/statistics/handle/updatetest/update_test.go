@@ -564,7 +564,7 @@ func TestSplitRange(t *testing.T) {
 			result:  "[8,9)",
 		},
 	}
-	sc := new(stmtctx.StatementContext)
+	sc := stmtctx.NewStmtCtx()
 	sc.SetTimeZone(time.UTC)
 	for _, test := range tests {
 		ranges := make([]*ranger.Range, 0, len(test.points)/2)

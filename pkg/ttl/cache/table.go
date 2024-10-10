@@ -189,11 +189,11 @@ func (t *PhysicalTable) ValidateKeyPrefix(key []types.Datum) error {
 	return nil
 }
 
-var mockExpireTimeKey struct{}
+type mockExpireTimeKey struct{}
 
 // SetMockExpireTime can only used in test
 func SetMockExpireTime(ctx context.Context, tm time.Time) context.Context {
-	return context.WithValue(ctx, mockExpireTimeKey, tm)
+	return context.WithValue(ctx, mockExpireTimeKey{}, tm)
 }
 
 // EvalExpireTime returns the expired time.
@@ -248,7 +248,7 @@ func EvalExpireTime(now time.Time, interval string, unit ast.TimeUnitType) (time
 func (t *PhysicalTable) EvalExpireTime(ctx context.Context, se session.Session,
 	now time.Time) (time.Time, error) {
 	if intest.InTest {
-		if tm, ok := ctx.Value(mockExpireTimeKey).(time.Time); ok {
+		if tm, ok := ctx.Value(mockExpireTimeKey{}).(time.Time); ok {
 			return tm, nil
 		}
 	}

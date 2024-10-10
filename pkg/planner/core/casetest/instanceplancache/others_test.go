@@ -16,11 +16,13 @@ package instanceplancache
 
 import (
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/util"
 	"github.com/stretchr/testify/require"
 )
 
@@ -329,4 +331,107 @@ func TestInstancePlanCachePartitioning(t *testing.T) {
 	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0"))
 	tk.MustQuery(`execute stmt using @a`).Check(testkit.Rows("4 d"))
 	tk.MustQuery(`show warnings`).Check(testkit.Rows("Warning 1105 skip prepared plan-cache: Static partition pruning mode"))
+}
+
+func TestInstancePlanCachePlan(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(`set global tidb_enable_instance_plan_cache=1`)
+	tk.MustExec(`create table t1 (a int, b int, c int, d int, primary key(a), key(b), unique key(c))`)
+	tk.MustExec(`create table t2 (a int, b int, c int, d int, primary key(a), key(b), unique key(c))`)
+	tkProcess := tk.Session().ShowProcess()
+	ps := []*util.ProcessInfo{tkProcess}
+	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
+	sessionID := tkProcess.ID
+	tk2 := testkit.NewTestKit(t, store)
+
+	type Case struct {
+		SQL  string
+		Args []string
+		Plan string
+	}
+
+	cases := []Case{
+		{
+			SQL:  "select * from t1 where a = ?",
+			Args: []string{"1"},
+			Plan: "Point_Get",
+		},
+		{
+			SQL:  "select * from t1 where c = ?",
+			Args: []string{"1"},
+			Plan: "Point_Get",
+		},
+		{
+			SQL:  "select * from t1 where a in (?,?)",
+			Args: []string{"1", "2"},
+			Plan: "Batch_Point_Get",
+		},
+		{
+			SQL:  "select * from t1 where c in (?,?)",
+			Args: []string{"1", "2"},
+			Plan: "Batch_Point_Get",
+		},
+		{
+			SQL:  "select * from t1 union all select * from t2 where a<?",
+			Args: []string{"1"},
+			Plan: "Union",
+		},
+		{
+			SQL:  "select a, b from t1 where b<? union all select a, b from t2 where a<?",
+			Args: []string{"1", "2"},
+			Plan: "Union",
+		},
+		{
+			SQL:  "select /*+ tidb_inlj(t2) */ * from t1, t2 where t1.a=? and t1.b=t2.b",
+			Args: []string{"1"},
+			Plan: "IndexJoin",
+		},
+		{
+			SQL:  "select /*+ use_index_merge(t1, b, c) */ * from t1 where b=? or c=?",
+			Args: []string{"1", "2"},
+			Plan: "IndexMerge",
+		},
+		{
+			SQL:  "update t1 set b=1 where b=?",
+			Args: []string{"1"},
+			Plan: "Update",
+		},
+		{
+			SQL:  "delete from t1 where b=?",
+			Args: []string{"1"},
+			Plan: "Delete",
+		},
+		{
+			SQL:  "insert ignore into t1 values (?,?,?,?)",
+			Args: []string{"1", "2", "3", "4"},
+			Plan: "Insert",
+		},
+	}
+
+	for _, c := range cases {
+		tk.MustExec(fmt.Sprintf("prepare stmt from '%v'", c.SQL))
+		using := ""
+		for i, arg := range c.Args {
+			tk.MustExec(fmt.Sprintf("set @p%v = %v", i, arg))
+			if i == 0 {
+				using = fmt.Sprintf("@p%v", i)
+			} else {
+				using = fmt.Sprintf("%v, @p%v", using, i)
+			}
+		}
+		tk.MustExec(fmt.Sprintf("execute stmt using %v", using))
+		plan := tk2.MustQuery(fmt.Sprintf(`explain for connection %v`, sessionID)).Rows()
+		expectedPlan := false
+		for _, r := range plan {
+			if strings.Contains(r[0].(string), c.Plan) {
+				expectedPlan = true
+			}
+		}
+		require.True(t, expectedPlan, c.SQL)
+		tk.MustQuery(`show warnings`).Check(testkit.Rows()) // no warning
+		tk.MustExec(fmt.Sprintf("execute stmt using %v", using))
+		tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
+	}
 }

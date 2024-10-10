@@ -58,19 +58,45 @@ function help_message()
                     This option will be ignored if \"-r <test-name>\" is provided.
                     Run all tests if this option is not provided.
 
-    -p <portgenerator-path>: Use port generator in <portgenerator-path> for generating port numbers.
-
 "
 }
 
-function build_portgenerator()
-{
-    portgenerator="./portgenerator"
-    echo "building portgenerator binary: $portgenerator"
-    rm -rf $portgenerator
-    GO111MODULE=on go build -o $portgenerator github.com/pingcap/tidb/cmd/portgenerator
+# Function to find an available port starting from a given port
+function find_available_port() {
+    local port=$1
+
+    while :; do
+        if [ "$port" -ge 65536 ]; then
+            echo "Error: No available ports found below 65536." >&2
+            exit 1
+        fi
+        if ! lsof -i :"$port" &> /dev/null; then
+            echo $port
+            return 0
+        fi
+        ((port++))
+    done
 }
 
+# Function to find multiple available ports starting from a given port
+function find_multiple_available_ports() {
+    local start_port=$1
+    local count=$2
+    local ports=()
+
+    while [ ${#ports[@]} -lt $count ]; do
+        local available_port=$(find_available_port $start_port)
+        if [ $? -eq 0 ]; then
+            ports+=($available_port)
+            ((start_port = available_port + 1))
+        else
+            echo "Error: Could not find an available port." >&2
+            exit 1
+        fi
+    done
+
+    echo "${ports[@]}"
+}
 
 function build_tidb_server()
 {
@@ -99,7 +125,7 @@ function extract_stats()
     unzip -qq s.zip
 }
 
-while getopts "t:s:r:b:d:c:i:h:p" opt; do
+while getopts "t:s:r:b:d:c:i:h" opt; do
     case $opt in
         t)
             tests="$OPTARG"
@@ -146,9 +172,6 @@ while getopts "t:s:r:b:d:c:i:h:p" opt; do
             help_message
             exit 0
             ;;
-        p)  
-            portgenerator="$OPTARG"
-            ;;
         *)
             help_message 1>&2
             exit 1
@@ -163,11 +186,6 @@ if [ $build -eq 1 ]; then
         build_tidb_server
     else
         echo "skip building tidb-server, using existing binary: $tidb_server"
-    fi
-    if [[ -z "$portgenerator" ]]; then
-        build_portgenerator
-    else
-        echo "skip building portgenerator, using existing binary: $portgenerator"
     fi
     build_mysql_tester
 else
@@ -187,23 +205,11 @@ else
             echo "skip building mysql-tester, using existing binary: $mysql_tester"
         fi
     fi
-    if [ -z "$portgenerator" ]; then
-        portgenerator="./portgenerator"
-        if [[ ! -f "$portgenerator" ]]; then
-            build_portgenerator
-        else
-            echo "skip building portgenerator, using existing binary: $portgenerator"
-        fi
-    fi
 fi
 
 rm -rf $mysql_tester_log
 
-ports=()
-for port in $($portgenerator -count 2); do
-    ports+=("$port")
-done
-
+ports=($(find_multiple_available_ports 4000 2))
 port=${ports[0]}
 status=${ports[1]}
 

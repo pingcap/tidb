@@ -17,7 +17,6 @@ package priorityqueue
 import (
 	"container/heap"
 	"context"
-	"time"
 
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/meta/model"
@@ -38,7 +37,6 @@ type PushJobFunc func(job AnalysisJob) error
 func FetchAllTablesAndBuildAnalysisJobs(
 	sctx sessionctx.Context,
 	parameters map[string]string,
-	autoAnalysisTimeWindow AutoAnalysisTimeWindow,
 	statsHandle statstypes.StatsHandle,
 	jobFunc PushJobFunc,
 ) error {
@@ -62,12 +60,6 @@ func FetchAllTablesAndBuildAnalysisJobs(
 
 	dbs := is.AllSchemaNames()
 	for _, db := range dbs {
-		// Sometimes the tables are too many. Auto-analyze will take too much time on it.
-		// so we need to check the available time.
-		if !autoAnalysisTimeWindow.IsWithinTimeWindow(time.Now()) {
-			return nil
-		}
-
 		// Ignore the memory and system database.
 		if util.IsMemOrSysDB(db.L) {
 			continue
