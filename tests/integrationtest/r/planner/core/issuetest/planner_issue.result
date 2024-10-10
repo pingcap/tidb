@@ -718,3 +718,8 @@ Projection_11	6.00	root		1->Column#18
   └─Projection_17(Probe)	10000.00	root		cast(test.t61a85298.col_71, double BINARY)->Column#19
     └─TableReader_19	10000.00	root		data:TableFullScan_18
       └─TableFullScan_18	10000.00	cop[tikv]	table:t61a85298	keep order:false, stats:pseudo
+drop table if exists t0, t1;
+CREATE TABLE t0(c0 int);
+CREATE TABLE t1(c0 int);
+SELECT t0.c0, t1.c0 FROM t0 NATURAL JOIN t1 WHERE '1' AND (t0.c0 IN (SELECT c0 FROM t0));
+c0	c0

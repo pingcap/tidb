@@ -111,9 +111,9 @@ type ReservedRowIDAlloc struct {
 }
 
 // Reset resets the base and max of reserved rowIDs.
-func (r *ReservedRowIDAlloc) Reset(base int64, max int64) {
+func (r *ReservedRowIDAlloc) Reset(base int64, maxv int64) {
 	r.base = base
-	r.max = max
+	r.max = maxv
 }
 
 // Consume consumes a reserved rowID.

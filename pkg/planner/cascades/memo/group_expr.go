@@ -39,6 +39,11 @@ type GroupExpression struct {
 	hash64 uint64
 }
 
+// GetGroup returns the Group that this GroupExpression belongs to.
+func (e *GroupExpression) GetGroup() *Group {
+	return e.group
+}
+
 // Sum64 returns the cached hash64 of the GroupExpression.
 func (e *GroupExpression) Sum64() uint64 {
 	intest.Assert(e.hash64 != 0, "hash64 should not be 0")
