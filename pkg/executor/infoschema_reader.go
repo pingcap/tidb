@@ -3907,7 +3907,7 @@ func checkRule(rule *label.Rule) (dbName, tableName string, partitionName string
 		err = errors.New("empty label rule type")
 		return
 	}
-	if rule.Labels == nil || len(rule.Labels) == 0 {
+	if len(rule.Labels) == 0 {
 		err = errors.New("the label rule has no label")
 		return
 	}

@@ -687,16 +687,16 @@ func TestStaticPartitionPruneMode(t *testing.T) {
 					partition p1 values less than (22))`)
 	tk.MustExec(`insert into t values (1), (2), (3), (10), (11)`)
 	tk.MustExec(`analyze table t`)
-	require.True(t, tk.MustNoGlobalStats("t"))
+	tk.MustNoGlobalStats("t")
 	tk.MustExec("set @@tidb_partition_prune_mode='" + string(variable.Dynamic) + "'")
-	require.True(t, tk.MustNoGlobalStats("t"))
+	tk.MustNoGlobalStats("t")
 
 	tk.MustExec("set @@tidb_partition_prune_mode='" + string(variable.Static) + "'")
 	tk.MustExec(`insert into t values (4), (5), (6)`)
 	tk.MustExec(`analyze table t partition p0`)
-	require.True(t, tk.MustNoGlobalStats("t"))
+	tk.MustNoGlobalStats("t")
 	tk.MustExec("set @@tidb_partition_prune_mode='" + string(variable.Dynamic) + "'")
-	require.True(t, tk.MustNoGlobalStats("t"))
+	tk.MustNoGlobalStats("t")
 	tk.MustExec("set @@tidb_partition_prune_mode='" + string(variable.Static) + "'")
 }
 
