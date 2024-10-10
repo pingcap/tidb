@@ -1201,9 +1201,12 @@ func (e *InsertValues) batchCheckAndInsert(ctx context.Context, rows [][]types.D
 					if handle == nil {
 						continue
 					}
-					_, err = e.removeRow(ctx, txn, handle, r, true)
+					skip, err = e.removeRow(ctx, txn, handle, r, true)
 					if err != nil {
 						return err
+					}
+					if skip {
+						break
 					}
 				} else {
 					// If duplicate keys were found in BatchGet, mark row = nil.
