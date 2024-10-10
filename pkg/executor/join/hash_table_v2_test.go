@@ -29,9 +29,7 @@ import (
 )
 
 func createMockRowTable(maxRowsPerSeg int, segmentCount int, fixedSize bool) *rowTable {
-	ret := &rowTable{
-		meta: nil,
-	}
+	ret := &rowTable{}
 	for i := 0; i < segmentCount; i++ {
 		// no empty segment is allowed
 		rows := maxRowsPerSeg
