@@ -30,7 +30,6 @@ func (m *chunkMapping[T, R]) fillChunk(ctx context.Context) IterResult[fromSlice
 	}
 	r := make([]R, len(s.Item))
 	for i := 0; i < len(s.Item); i++ {
-		i := i
 		m.quota.ApplyOnErrorGroup(eg, func() error {
 			var err error
 			r[i], err = m.mapper(cx, s.Item[i])
