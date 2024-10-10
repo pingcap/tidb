@@ -57,6 +57,7 @@ func newLitExprContext(sqlMode mysql.SQLMode, sysVars map[string]string, timesta
 	errLevels := stmtctx.DefaultStmtErrLevels
 	errLevels[errctx.ErrGroupTruncate] = errctx.ResolveErrLevel(flags.IgnoreTruncateErr(), flags.TruncateAsWarning())
 	errLevels[errctx.ErrGroupBadNull] = errctx.ResolveErrLevel(false, !sqlMode.HasStrictMode())
+	errLevels[errctx.ErrGroupNoDefault] = errctx.ResolveErrLevel(false, !sqlMode.HasStrictMode())
 	errLevels[errctx.ErrGroupDividedByZero] =
 		errctx.ResolveErrLevel(!sqlMode.HasErrorForDivisionByZeroMode(), !sqlMode.HasStrictMode())
 
