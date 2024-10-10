@@ -1123,10 +1123,25 @@ func (p *LogicalJoin) ExtractUsedCols(parentUsedCols []*expression.Column) (left
 	}
 	lChild := p.Children()[0]
 	rChild := p.Children()[1]
+	lSchema := lChild.Schema()
+	rSchema := rChild.Schema()
+	// parentused col = t2.a
+	// leftChild schema = t1.a(t2.a) + and others
+	// rightChild schema = t3 related + and others
+	if join, ok := lChild.(*LogicalJoin); ok {
+		if join.FullSchema != nil {
+			lSchema = join.FullSchema
+		}
+	}
+	if join, ok := rChild.(*LogicalJoin); ok {
+		if join.FullSchema != nil {
+			rSchema = join.FullSchema
+		}
+	}
 	for _, col := range parentUsedCols {
-		if lChild.Schema().Contains(col) {
+		if lSchema != nil && lSchema.Contains(col) {
 			leftCols = append(leftCols, col)
-		} else if rChild.Schema().Contains(col) {
+		} else if rSchema != nil && rSchema.Contains(col) {
 			rightCols = append(rightCols, col)
 		}
 	}
