@@ -15,9 +15,12 @@
 package ddl
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"math"
+	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -675,6 +678,97 @@ func lockGlobalIDKey(ctx context.Context, ddlSe *sess.Session, txn kv.Transactio
 		iteration = min(iteration+1, math.MaxInt)
 	}
 	return forUpdateTs, err
+}
+
+func insertDDLJobs2Table(ctx context.Context, se *sess.Session, jobWs ...*JobWrapper) error {
+	failpoint.Inject("mockAddBatchDDLJobsErr", func(val failpoint.Value) {
+		if val.(bool) {
+			failpoint.Return(errors.Errorf("mockAddBatchDDLJobsErr"))
+		}
+	})
+	if len(jobWs) == 0 {
+		return nil
+	}
+	var sql bytes.Buffer
+	sql.WriteString("insert into mysql.tidb_ddl_job(job_id, reorg, schema_ids, table_ids, job_meta, type, processing) values")
+	for i, jobW := range jobWs {
+		// TODO remove this check when all job type pass args in this way.
+		if jobW.JobArgs != nil {
+			jobW.FillArgs(jobW.JobArgs)
+		}
+		injectModifyJobArgFailPoint(jobWs)
+		b, err := jobW.Encode(true)
+		if err != nil {
+			return err
+		}
+		if i != 0 {
+			sql.WriteString(",")
+		}
+		fmt.Fprintf(&sql, "(%d, %t, %s, %s, %s, %d, %t)", jobW.ID, jobW.MayNeedReorg(),
+			strconv.Quote(job2SchemaIDs(jobW)), strconv.Quote(job2TableIDs(jobW)),
+			ddlutil.WrapKey2String(b), jobW.Type, jobW.Started())
+	}
+	se.GetSessionVars().SetDiskFullOpt(kvrpcpb.DiskFullOpt_AllowedOnAlmostFull)
+	_, err := se.Execute(ctx, sql.String(), "insert_job")
+	logutil.DDLLogger().Debug("add job to mysql.tidb_ddl_job table", zap.String("sql", sql.String()))
+	return errors.Trace(err)
+}
+
+func makeStringForIDs(ids []int64) string {
+	set := make(map[int64]struct{}, len(ids))
+	for _, id := range ids {
+		set[id] = struct{}{}
+	}
+
+	s := make([]string, 0, len(set))
+	for id := range set {
+		s = append(s, strconv.FormatInt(id, 10))
+	}
+	slices.Sort(s)
+	return strings.Join(s, ",")
+}
+
+func job2SchemaIDs(jobW *JobWrapper) string {
+	switch jobW.Type {
+	case model.ActionRenameTables:
+		var ids []int64
+		arg := jobW.JobArgs.(*model.RenameTablesArgs)
+		ids = make([]int64, 0, len(arg.RenameTableInfos)*2)
+		for _, info := range arg.RenameTableInfos {
+			ids = append(ids, info.OldSchemaID, info.NewSchemaID)
+		}
+		return makeStringForIDs(ids)
+	case model.ActionRenameTable:
+		oldSchemaID := jobW.JobArgs.(*model.RenameTableArgs).OldSchemaID
+		ids := []int64{oldSchemaID, jobW.SchemaID}
+		return makeStringForIDs(ids)
+	case model.ActionExchangeTablePartition:
+		args := jobW.JobArgs.(*model.ExchangeTablePartitionArgs)
+		return makeStringForIDs([]int64{jobW.SchemaID, args.PTSchemaID})
+	default:
+		return strconv.FormatInt(jobW.SchemaID, 10)
+	}
+}
+
+func job2TableIDs(jobW *JobWrapper) string {
+	switch jobW.Type {
+	case model.ActionRenameTables:
+		var ids []int64
+		arg := jobW.JobArgs.(*model.RenameTablesArgs)
+		ids = make([]int64, 0, len(arg.RenameTableInfos))
+		for _, info := range arg.RenameTableInfos {
+			ids = append(ids, info.TableID)
+		}
+		return makeStringForIDs(ids)
+	case model.ActionExchangeTablePartition:
+		args := jobW.JobArgs.(*model.ExchangeTablePartitionArgs)
+		return makeStringForIDs([]int64{jobW.TableID, args.PTTableID})
+	case model.ActionTruncateTable:
+		newTableID := jobW.JobArgs.(*model.TruncateTableArgs).NewTableID
+		return strconv.FormatInt(jobW.TableID, 10) + "," + strconv.FormatInt(newTableID, 10)
+	default:
+		return strconv.FormatInt(jobW.TableID, 10)
+	}
 }
 
 // TODO this failpoint is only checking how job scheduler handle
