@@ -32,7 +32,7 @@ func (h *ddlHandlerImpl) onExchangeAPartition(t *notifier.SchemaChangeEvent) err
 	globalTableInfo, originalPartInfo,
 		originalTableInfo := t.GetExchangePartitionInfo()
 	// Note: Put all the operations in a transaction.
-	if err := util.CallWithSCtx(h.statsHandler.SPool(), func(sctx sessionctx.Context) error {
+	return util.CallWithSCtx(h.statsHandler.SPool(), func(sctx sessionctx.Context) error {
 		return updateGlobalTableStats4ExchangePartition(
 			util.StatsCtx,
 			sctx,
@@ -40,11 +40,7 @@ func (h *ddlHandlerImpl) onExchangeAPartition(t *notifier.SchemaChangeEvent) err
 			originalPartInfo,
 			originalTableInfo,
 		)
-	}, util.FlagWrapTxn); err != nil {
-		return err
-	}
-
-	return nil
+	}, util.FlagWrapTxn)
 }
 
 func updateGlobalTableStats4ExchangePartition(
