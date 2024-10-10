@@ -4291,3 +4291,24 @@ func TestHandleColumnWithOnUpdateCurrentTimestamp(t *testing.T) {
 	tk.MustExec("update t force index(primary) set b = 10 where a = '2023-06-11 10:00:00'")
 	tk.MustExec("admin check table t")
 }
+
+func TestLoadDataReplaceConsistency(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("USE test; DROP TABLE IF EXISTS a;")
+	tk.MustExec("create table a(id int, name varchar(20), addr varchar(100), primary key (id) nonclustered);")
+	tk.MustExec("LOAD DATA LOCAL INFILE '/tmp/nonexistence.csv' replace into table a fields terminated by '|' escaped by '' lines terminated by '\n'")
+	ctx := tk.Session().(sessionctx.Context)
+	ld, ok := ctx.Value(executor.LoadDataVarKey).(*executor.LoadDataInfo)
+	require.True(t, ok)
+	defer ctx.SetValue(executor.LoadDataVarKey, nil)
+	require.NotNil(t, ld)
+	tests := []testCase{
+		{nil, []byte("1|aa|beijing\n1|aa|beijing\n1|aa|beijing\n1|aa|beijing\n2|bb|shanghai\n2|bb|shanghai\n2|bb|shanghai\n3|cc|guangzhou\n"),
+			[]string{"1 aa beijing", "2 bb shanghai", "3 cc guangzhou"}, nil, "Records: 8  Deleted: 0  Skipped: 5  Warnings: 0"},
+	}
+	deleteSQL := "delete from a"
+	selectSQL := "select * from  a;"
+	checkCases(tests, ld, t, tk, ctx, selectSQL, deleteSQL)
+	tk.MustExec("admin check table a")
+}
