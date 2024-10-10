@@ -20,6 +20,7 @@ import (
 
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/stretchr/testify/require"
 	pdhttp "github.com/tikv/pd/client/http"
 )
@@ -441,6 +442,137 @@ func TestAlterTablePartitionArgs(t *testing.T) {
 			} else {
 				require.EqualValues(t, inArgs.PolicyRefInfo, args.PolicyRefInfo)
 			}
+		}
+	}
+}
+
+func TestDecodeAddIndexArgsCompatibility(t *testing.T) {
+	cases := []struct {
+		raw                     json.RawMessage
+		uniques                 []bool
+		indexNames              []model.CIStr
+		indexPartSpecifications [][]*ast.IndexPartSpecification
+		indexOptions            []*ast.IndexOption
+		hiddenCols              [][]*ColumnInfo
+	}{
+		{
+			raw: json.RawMessage(`[
+true,
+{"O":"t","L":"t"},
+[
+	{"Column":{"Schema":{"O":"","L":""},"Table":{"O":"","L":""},"Name":{"O":"a","L":"a"}},"Length":-1,"Desc":false,"Expr":null},
+	{"Column":{"Schema":{"O":"","L":""},"Table":{"O":"","L":""},"Name":{"O":"b","L":"b"}},"Length":-1,"Desc":false,"Expr":null}
+],
+null,
+[],
+false]`),
+			uniques: []bool{true},
+			indexNames: []model.CIStr{
+				{O: "t", L: "t"},
+			},
+			indexPartSpecifications: [][]*ast.IndexPartSpecification{
+				{
+					{
+						Column: &ast.ColumnName{
+							Schema: model.CIStr{O: "", L: ""},
+							Table:  model.CIStr{O: "", L: ""},
+							Name:   model.CIStr{O: "a", L: "a"},
+						},
+						Length: -1,
+						Desc:   false,
+						Expr:   nil,
+					},
+					{
+						Column: &ast.ColumnName{
+							Schema: model.CIStr{O: "", L: ""},
+							Table:  model.CIStr{O: "", L: ""},
+							Name:   model.CIStr{O: "b", L: "b"},
+						},
+						Length: -1,
+						Desc:   false,
+						Expr:   nil,
+					},
+				},
+			},
+			indexOptions: []*ast.IndexOption{nil},
+			hiddenCols:   [][]*ColumnInfo{{}},
+		},
+		{
+			raw: json.RawMessage(`[
+[false,true],
+[{"O":"t","L":"t"},{"O":"t1","L":"t1"}],
+[
+	[
+		{"Column":{"Schema":{"O":"","L":""},"Table":{"O":"","L":""},"Name":{"O":"a","L":"a"}},"Length":-1,"Desc":false,"Expr":null},
+		{"Column":{"Schema":{"O":"","L":""},"Table":{"O":"","L":""},"Name":{"O":"b","L":"b"}},"Length":-1,"Desc":false,"Expr":null}
+	],
+	[
+		{"Column":{"Schema":{"O":"","L":""},"Table":{"O":"","L":""},"Name":{"O":"a","L":"a"}},"Length":-1,"Desc":false,"Expr":null}
+	]
+],
+[null,null],
+[[],[]],
+[false,false]]`),
+			uniques: []bool{false, true},
+			indexNames: []model.CIStr{
+				{O: "t", L: "t"}, {O: "t1", L: "t1"},
+			},
+			indexPartSpecifications: [][]*ast.IndexPartSpecification{
+				{
+					{
+						Column: &ast.ColumnName{
+							Schema: model.CIStr{O: "", L: ""},
+							Table:  model.CIStr{O: "", L: ""},
+							Name:   model.CIStr{O: "a", L: "a"},
+						},
+						Length: -1,
+						Desc:   false,
+						Expr:   nil,
+					},
+					{
+						Column: &ast.ColumnName{
+							Schema: model.CIStr{O: "", L: ""},
+							Table:  model.CIStr{O: "", L: ""},
+							Name:   model.CIStr{O: "b", L: "b"},
+						},
+						Length: -1,
+						Desc:   false,
+						Expr:   nil,
+					},
+				},
+				{
+					{
+						Column: &ast.ColumnName{
+							Schema: model.CIStr{O: "", L: ""},
+							Table:  model.CIStr{O: "", L: ""},
+							Name:   model.CIStr{O: "a", L: "a"},
+						},
+						Length: -1,
+						Desc:   false,
+						Expr:   nil,
+					},
+				},
+			},
+			indexOptions: []*ast.IndexOption{nil, nil},
+			hiddenCols:   [][]*ColumnInfo{{}, {}},
+		},
+	}
+
+	for _, c := range cases {
+		job := &Job{
+			Version: JobVersion1,
+			Type:    ActionAddIndex,
+			RawArgs: c.raw,
+		}
+
+		args, err := GetAddIndexArgs(job)
+		require.NoError(t, err)
+		for i, a := range args.IndexArgs {
+			require.Equal(t, c.uniques[i], a.Unique)
+			require.Equal(t, c.indexNames[i], a.IndexName)
+			require.Equal(t, c.indexPartSpecifications[i], a.IndexPartSpecifications)
+			require.Equal(t, c.indexOptions[i], a.IndexOption)
+			require.Equal(t, c.hiddenCols[i], a.HiddenCols)
 		}
 	}
 }
@@ -990,5 +1122,159 @@ func TestAlterTableAttributesArgs(t *testing.T) {
 		require.NoError(t, err)
 
 		require.Equal(t, *inArgs.LabelRule, *args.LabelRule)
+	}
+}
+
+func TestAddIndexArgs(t *testing.T) {
+	inArgs := &AddIndexArgs{
+		IndexArgs: []*IndexArg{{
+			Global:                  false,
+			Unique:                  true,
+			IndexName:               model.NewCIStr("idx1"),
+			IndexPartSpecifications: []*ast.IndexPartSpecification{{Length: 2}},
+			IndexOption:             &ast.IndexOption{},
+			HiddenCols:              []*ColumnInfo{{}, {}},
+			SQLMode:                 mysql.ModeANSI,
+			IndexID:                 1,
+			IfExist:                 false,
+			IsGlobal:                false,
+			FuncExpr:                "test_string",
+		}},
+		PartitionIDs: []int64{100, 101, 102},
+	}
+
+	for _, v := range []JobVersion{JobVersion1, JobVersion2} {
+		inArgs.IndexArgs[0].IsVector = false
+		inArgs.IndexArgs[0].IsPK = false
+		j2 := &Job{}
+		require.NoError(t, j2.Decode(getJobBytes(t, inArgs, v, ActionAddIndex)))
+
+		args, err := GetAddIndexArgs(j2)
+		require.NoError(t, err)
+
+		a := args.IndexArgs[0]
+		require.Equal(t, inArgs.IndexArgs[0].Global, a.Global)
+		require.Equal(t, inArgs.IndexArgs[0].Unique, a.Unique)
+		require.Equal(t, inArgs.IndexArgs[0].IndexName, a.IndexName)
+		require.Equal(t, inArgs.IndexArgs[0].IndexPartSpecifications, a.IndexPartSpecifications)
+		require.Equal(t, inArgs.IndexArgs[0].IndexOption, a.IndexOption)
+		require.Equal(t, inArgs.IndexArgs[0].HiddenCols, a.HiddenCols)
+	}
+
+	for _, v := range []JobVersion{JobVersion1, JobVersion2} {
+		inArgs.IndexArgs[0].IsVector = false
+		inArgs.IndexArgs[0].IsPK = true
+		j2 := &Job{}
+		require.NoError(t, j2.Decode(getJobBytes(t, inArgs, v, ActionAddPrimaryKey)))
+
+		args, err := GetAddIndexArgs(j2)
+		require.NoError(t, err)
+
+		a := args.IndexArgs[0]
+		require.Equal(t, inArgs.IndexArgs[0].Global, a.Global)
+		require.Equal(t, inArgs.IndexArgs[0].Unique, a.Unique)
+		require.Equal(t, inArgs.IndexArgs[0].IndexName, a.IndexName)
+		require.Equal(t, inArgs.IndexArgs[0].IndexPartSpecifications, a.IndexPartSpecifications)
+		require.Equal(t, inArgs.IndexArgs[0].SQLMode, a.SQLMode)
+		require.Equal(t, inArgs.IndexArgs[0].IndexOption, a.IndexOption)
+	}
+
+	for _, v := range []JobVersion{JobVersion1, JobVersion2} {
+		inArgs.IndexArgs[0].IsVector = true
+		inArgs.IndexArgs[0].IsPK = false
+		j2 := &Job{}
+		require.NoError(t, j2.Decode(getJobBytes(t, inArgs, v, ActionAddVectorIndex)))
+
+		args, err := GetAddIndexArgs(j2)
+		require.NoError(t, err)
+
+		a := args.IndexArgs[0]
+		require.Equal(t, inArgs.IndexArgs[0].IndexName, a.IndexName)
+		require.Equal(t, inArgs.IndexArgs[0].IndexPartSpecifications, a.IndexPartSpecifications)
+		require.Equal(t, inArgs.IndexArgs[0].IndexOption, a.IndexOption)
+		require.Equal(t, inArgs.IndexArgs[0].FuncExpr, a.FuncExpr)
+	}
+
+	for _, v := range []JobVersion{JobVersion1, JobVersion2} {
+		j2 := &Job{}
+		require.NoError(t, j2.Decode(getFinishedJobBytes(t, inArgs, v, ActionAddIndex)))
+
+		args, err := GetFinishedAddIndexArgs(j2)
+		require.NoError(t, err)
+
+		a := args.IndexArgs[0]
+		require.Equal(t, inArgs.IndexArgs[0].IndexID, a.IndexID)
+		require.Equal(t, inArgs.IndexArgs[0].IfExist, a.IfExist)
+		require.Equal(t, inArgs.IndexArgs[0].IsGlobal, a.IsGlobal)
+		require.Equal(t, inArgs.PartitionIDs, args.PartitionIDs)
+	}
+}
+
+func TestDropIndexArguements(t *testing.T) {
+	checkFunc := func(t *testing.T, inArgs *DropIndexArgs) {
+		for _, v := range []JobVersion{JobVersion1, JobVersion2} {
+			j2 := &Job{}
+			require.NoError(t, j2.Decode(getJobBytes(t, inArgs, v, ActionDropIndex)))
+			args, err := GetDropIndexArgs(j2)
+			require.NoError(t, err)
+			for i, expect := range inArgs.IndexArgs {
+				require.EqualValues(t, expect.IndexName, args.IndexArgs[i].IndexName)
+				require.EqualValues(t, expect.IfExist, args.IndexArgs[i].IfExist)
+			}
+
+			j2 = &Job{}
+			require.NoError(t, j2.Decode(getFinishedJobBytes(t, inArgs, v, ActionDropIndex)))
+			args2, err := GetFinishedDropIndexArgs(j2)
+			require.NoError(t, err)
+			require.EqualValues(t, inArgs.IndexArgs, args2.IndexArgs)
+			require.EqualValues(t, inArgs.IndexIDs, args2.IndexIDs)
+			require.EqualValues(t, inArgs.PartitionIDs, args2.PartitionIDs)
+		}
+	}
+
+	inArgs := &DropIndexArgs{
+		IndexArgs: []*IndexArg{
+			{
+				IndexName: model.NewCIStr("i2"),
+				IfExist:   true,
+				IsVector:  true,
+			},
+		},
+		IndexIDs:     []int64{1},
+		PartitionIDs: []int64{100, 101, 102, 103},
+		IsRollback:   false,
+	}
+	checkFunc(t, inArgs)
+
+	inArgs = &DropIndexArgs{
+		IndexArgs: []*IndexArg{
+			{
+				IndexName: model.NewCIStr("i2"),
+				IfExist:   true,
+			},
+			{
+				IndexName: model.NewCIStr("i3"),
+				IfExist:   true,
+			},
+		},
+		IndexIDs:   []int64{1, 2, 3},
+		IsRollback: true,
+	}
+	checkFunc(t, inArgs)
+}
+
+func TestGetRenameIndexArgs(t *testing.T) {
+	inArgs := &RenameIndexArgs{
+		From: model.NewCIStr("old"),
+		To:   model.NewCIStr("new"),
+	}
+	for _, v := range []JobVersion{JobVersion1, JobVersion2} {
+		j2 := &Job{}
+		require.NoError(t, j2.Decode(getJobBytes(t, inArgs, v, ActionRenameIndex)))
+
+		args, err := GetRenameIndexArgs(j2)
+		require.NoError(t, err)
+		require.Equal(t, inArgs.From, args.From)
+		require.Equal(t, inArgs.To, args.To)
 	}
 }

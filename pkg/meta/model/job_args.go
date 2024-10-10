@@ -20,6 +20,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	pmodel "github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	pdhttp "github.com/tikv/pd/client/http"
 )
@@ -82,6 +83,18 @@ func getOrDecodeArgsV2[T JobArgs](job *Job) (T, error) {
 	}
 	job.Args = []any{v}
 	return v, nil
+}
+
+// GetArgsFromSubJob get arguments from SubJob
+func GetArgsFromSubJob[T JobArgs](
+	subJob *SubJob,
+	version JobVersion,
+	f func(*Job) (T, error)) (T, error) {
+	return f(&Job{
+		Version: version,
+		Type:    subJob.Type,
+		Args:    subJob.Args,
+	})
 }
 
 func getOrDecodeArgs[T JobArgs](args T, job *Job) (T, error) {
@@ -1294,4 +1307,366 @@ func (a *FlashbackClusterArgs) decodeV1(job *Job) error {
 // GetFlashbackClusterArgs get the flashback cluster argument from job.
 func GetFlashbackClusterArgs(job *Job) (*FlashbackClusterArgs, error) {
 	return getOrDecodeArgs[*FlashbackClusterArgs](&FlashbackClusterArgs{}, job)
+}
+
+// IndexArg is the argument for add/drop index operation
+// For Adding NonPK, used fields are (listed in order of v1)
+// Unique, IndexName, IndexPartSpecifications, IndexOption, SQLMode, Warning, Global
+// For Adding PK
+// Unique, IndexName, IndexPartSpecifications, IndexOptions, HiddelCols, Global
+// For Adding vector index
+// IndexName, IndexPartSpecifications, IndexOption, FuncExpr
+// For drop index
+// IndexName, IfExist
+// For rollback add index
+// IndexName, IfExist, IsVector
+type IndexArg struct {
+	// Global is never used, we only use Global in IndexOption. Can be deprecated later.
+	Global                  bool                          `json:"-"`
+	Unique                  bool                          `json:"unique,omitempty"`
+	IndexName               pmodel.CIStr                  `json:"index_name,omitempty"`
+	IndexPartSpecifications []*ast.IndexPartSpecification `json:"index_part_specifications"`
+	IndexOption             *ast.IndexOption              `json:"index_option,omitempty"`
+	HiddenCols              []*ColumnInfo                 `json:"hidden_cols,omitempty"`
+
+	// For vector index
+	FuncExpr string `json:"func_expr,omitempty"`
+	IsVector bool   `json:"is_vector,omitempty"`
+
+	// For PK
+	IsPK    bool          `json:"is_pk,omitempty"`
+	SQLMode mysql.SQLMode `json:"sql_mode,omitempty"`
+
+	// IfExist will be used in onDropIndex.
+	IndexID  int64 `json:"index_id,omitempty"`
+	IfExist  bool  `json:"if_exist,omitempty"`
+	IsGlobal bool  `json:"is_global,omitempty"`
+}
+
+// DropIndexArgs is the argument for drop index.
+// IndexIDs may have different length with IndexNames and IfExists.
+// When it's used in dropping index, length of IndexNames, IfExists and IndexIDs are 1.
+// When it's used in rolling back add indexes,
+// len(IndexNames) and len(IfExists) equals to the number of merged added index jobs,
+// while IndexIDs stores the partition IDs of the corresponding table.
+type DropIndexArgs struct {
+	// Only IndexName, IfExists and IsVector fields are used currently.
+	// IsVector is only used in drop index jobs, not rollback add index jobs.
+	IndexArgs []*IndexArg `json:"index_args,omitempty"`
+
+	// Belows are used for finished args.
+	IndexIDs     []int64 `json:"index_ids,omitempty"`
+	PartitionIDs []int64 `json:"partition_ids,omitempty"`
+
+	// This is used to distinguish rollback add index and drop index in v1,
+	// since they have different args.
+	// TODO(joechenrh): remove this flag after totally switching to v2
+	IsRollback bool `json:"-"`
+}
+
+func (a *DropIndexArgs) decodeV1(job *Job) error {
+	intest.Assert(
+		job.Type == ActionDropIndex || job.Type == ActionDropPrimaryKey ||
+			job.Type == ActionAddIndex || job.Type == ActionAddPrimaryKey || job.Type == ActionAddVectorIndex,
+		"only add/drop index job can call GetDropIndexArgs")
+
+	indexNames := make([]pmodel.CIStr, 1)
+	ifExists := make([]bool, 1)
+	if err := job.DecodeArgs(&indexNames[0], &ifExists[0]); err != nil {
+		if err := job.DecodeArgs(&indexNames, &ifExists); err != nil {
+			return errors.Trace(err)
+		}
+	}
+
+	a.IndexArgs = make([]*IndexArg, len(indexNames))
+	for i, indexName := range indexNames {
+		a.IndexArgs[i] = &IndexArg{
+			IndexName: indexName,
+			IfExist:   ifExists[i],
+		}
+	}
+	return nil
+}
+
+func (a *DropIndexArgs) getArgsV1(*Job) []any {
+	if len(a.IndexArgs) == 1 {
+		return []any{a.IndexArgs[0].IndexName, a.IndexArgs[0].IfExist}
+	}
+	indexNames := make([]pmodel.CIStr, len(a.IndexArgs))
+	ifExists := make([]bool, len(a.IndexArgs))
+	for i, idxArg := range a.IndexArgs {
+		indexNames[i] = idxArg.IndexName
+		ifExists[i] = idxArg.IfExist
+	}
+	return []any{indexNames, ifExists}
+}
+
+// GetDropIndexArgs gets the drop index args.
+// It's used for both drop index and rollback add index.
+func GetDropIndexArgs(job *Job) (*DropIndexArgs, error) {
+	return getOrDecodeArgs(&DropIndexArgs{}, job)
+}
+
+func (a *DropIndexArgs) getFinishedArgsV1(job *Job) []any {
+	// This is to make the args compatible with old logic:
+	// 1. For drop index, arguments are [CIStr, bool, int64, []int64, bool].
+	// 3. For rollback add index, arguments are [[]CIStr, []bool, []int64].
+	if a.IsRollback {
+		indexNames := make([]pmodel.CIStr, len(a.IndexArgs))
+		ifExists := make([]bool, len(a.IndexArgs))
+		for i, idxArg := range a.IndexArgs {
+			indexNames[i] = idxArg.IndexName
+			ifExists[i] = idxArg.IfExist
+		}
+		return []any{indexNames, ifExists, a.IndexIDs}
+	}
+
+	idxArg := a.IndexArgs[0]
+	return []any{idxArg.IndexName, idxArg.IfExist, a.IndexIDs[0], a.PartitionIDs, idxArg.IsVector}
+}
+
+// GetFinishedDropIndexArgs gets the drop index args.
+// It's used for both drop index and rollback add index.
+func GetFinishedDropIndexArgs(job *Job) (*DropIndexArgs, error) {
+	if job.Version == JobVersion1 {
+		indexNames := make([]pmodel.CIStr, 1)
+		ifExists := make([]bool, 1)
+		indexIDs := make([]int64, 1)
+		var partitionIDs []int64
+		isVector := false
+
+		// See getFinishedArgsV1 for why we may need to decode twice.
+		if err := job.DecodeArgs(&indexNames, &ifExists, &indexIDs, &isVector); err != nil {
+			if err := job.DecodeArgs(&indexNames[0], &ifExists[0], &indexIDs[0], &partitionIDs, &isVector); err != nil {
+				return nil, errors.Trace(err)
+			}
+		}
+
+		a := &DropIndexArgs{
+			IndexIDs:     indexIDs,
+			PartitionIDs: partitionIDs,
+		}
+		a.IndexArgs = make([]*IndexArg, len(indexNames))
+		for i, indexName := range indexNames {
+			a.IndexArgs[i] = &IndexArg{
+				IndexName: indexName,
+				IfExist:   ifExists[i],
+				IsVector:  isVector,
+			}
+		}
+
+		return a, nil
+	}
+	return getOrDecodeArgsV2[*DropIndexArgs](job)
+}
+
+// AddIndexArgs is the argument for add index.
+type AddIndexArgs struct {
+	IndexArgs []*IndexArg `json:"index_args,omitempty"`
+
+	// PartitionIDs will be used in onDropIndex.
+	PartitionIDs []int64 `json:"partition_ids,omitempty"`
+}
+
+func (a *AddIndexArgs) getArgsV1(job *Job) []any {
+	if job.Type == ActionAddVectorIndex {
+		arg := a.IndexArgs[0]
+		return []any{arg.IndexName, arg.IndexPartSpecifications[0], arg.IndexOption, arg.FuncExpr}
+	}
+
+	if job.Type == ActionAddPrimaryKey {
+		arg := a.IndexArgs[0]
+
+		// The sixth argument is set and never used.
+		// Leave it as nil to make it compatible with history job.
+		return []any{
+			arg.Unique, arg.IndexName, arg.IndexPartSpecifications,
+			arg.IndexOption, arg.SQLMode, nil, arg.Global,
+		}
+	}
+
+	n := len(a.IndexArgs)
+	unique := make([]bool, n)
+	indexName := make([]pmodel.CIStr, n)
+	indexPartSpecification := make([][]*ast.IndexPartSpecification, n)
+	indexOption := make([]*ast.IndexOption, n)
+	hiddenCols := make([][]*ColumnInfo, n)
+	global := make([]bool, n)
+
+	for i, arg := range a.IndexArgs {
+		unique[i] = arg.Unique
+		indexName[i] = arg.IndexName
+		indexPartSpecification[i] = arg.IndexPartSpecifications
+		indexOption[i] = arg.IndexOption
+		hiddenCols[i] = arg.HiddenCols
+		global[i] = arg.Global
+	}
+
+	// This is to make the args compatible with old logic, same like DropIndexArgs
+	if n == 1 {
+		return []any{unique[0], indexName[0], indexPartSpecification[0], indexOption[0], hiddenCols[0], global[0]}
+	}
+
+	return []any{unique, indexName, indexPartSpecification, indexOption, hiddenCols, global}
+}
+
+func (a *AddIndexArgs) decodeV1(job *Job) error {
+	var err error
+	if job.Type == ActionAddIndex {
+		err = a.getAddIndexArgs(job)
+	} else if job.Type == ActionAddVectorIndex {
+		err = a.getAddVectorIndexArgs(job)
+	} else {
+		intest.Assert(job.Type == ActionAddPrimaryKey, "Type should be ActionAddPrimaryKey")
+		err = a.getAddPrimaryKeyArgs(job)
+	}
+
+	if err != nil {
+		return errors.Trace(err)
+	}
+	return nil
+}
+
+func (a *AddIndexArgs) getAddIndexArgs(job *Job) error {
+	uniques := make([]bool, 1)
+	indexNames := make([]pmodel.CIStr, 1)
+	indexPartSpecifications := make([][]*ast.IndexPartSpecification, 1)
+	indexOptions := make([]*ast.IndexOption, 1)
+	hiddenCols := make([][]*ColumnInfo, 1)
+	globals := make([]bool, 1)
+
+	if err := job.DecodeArgs(
+		&uniques, &indexNames, &indexPartSpecifications,
+		&indexOptions, &hiddenCols, &globals); err != nil {
+		if err = job.DecodeArgs(
+			&uniques[0], &indexNames[0], &indexPartSpecifications[0],
+			&indexOptions[0], &hiddenCols[0], &globals[0]); err != nil {
+			return errors.Trace(err)
+		}
+	}
+
+	for i, unique := range uniques {
+		a.IndexArgs = append(a.IndexArgs, &IndexArg{
+			Unique:                  unique,
+			IndexName:               indexNames[i],
+			IndexPartSpecifications: indexPartSpecifications[i],
+			IndexOption:             indexOptions[i],
+			HiddenCols:              hiddenCols[i],
+			Global:                  globals[i],
+		})
+	}
+	return nil
+}
+
+func (a *AddIndexArgs) getAddPrimaryKeyArgs(job *Job) error {
+	a.IndexArgs = []*IndexArg{{IsPK: true}}
+	var unused any
+	if err := job.DecodeArgs(
+		&a.IndexArgs[0].Unique, &a.IndexArgs[0].IndexName, &a.IndexArgs[0].IndexPartSpecifications,
+		&a.IndexArgs[0].IndexOption, &a.IndexArgs[0].SQLMode,
+		&unused, &a.IndexArgs[0].Global); err != nil {
+		return errors.Trace(err)
+	}
+	return nil
+}
+
+func (a *AddIndexArgs) getAddVectorIndexArgs(job *Job) error {
+	var (
+		indexName              pmodel.CIStr
+		indexPartSpecification *ast.IndexPartSpecification
+		indexOption            *ast.IndexOption
+		funcExpr               string
+	)
+
+	if err := job.DecodeArgs(
+		&indexName, &indexPartSpecification, &indexOption, &funcExpr); err != nil {
+		return errors.Trace(err)
+	}
+
+	a.IndexArgs = []*IndexArg{{
+		IndexName:               indexName,
+		IndexPartSpecifications: []*ast.IndexPartSpecification{indexPartSpecification},
+		IndexOption:             indexOption,
+		FuncExpr:                funcExpr,
+		IsVector:                true,
+	}}
+	return nil
+}
+
+func (a *AddIndexArgs) getFinishedArgsV1(job *Job) []any {
+	if job.Type == ActionAddVectorIndex {
+		return []any{a.IndexArgs[0].IndexID, a.IndexArgs[0].IfExist, a.PartitionIDs, a.IndexArgs[0].IsGlobal}
+	}
+
+	n := len(a.IndexArgs)
+	indexIDs := make([]int64, n)
+	ifExists := make([]bool, n)
+	isGlobals := make([]bool, n)
+	for i, arg := range a.IndexArgs {
+		indexIDs[i] = arg.IndexID
+		ifExists[i] = arg.IfExist
+		isGlobals[i] = arg.Global
+	}
+	return []any{indexIDs, ifExists, a.PartitionIDs, isGlobals}
+}
+
+// GetAddIndexArgs gets the add index args.
+func GetAddIndexArgs(job *Job) (*AddIndexArgs, error) {
+	return getOrDecodeArgs(&AddIndexArgs{}, job)
+}
+
+// GetFinishedAddIndexArgs gets the add index args after the job is finished.
+// Return an error if arguments stored in job are not finished arguments.
+func GetFinishedAddIndexArgs(job *Job) (*AddIndexArgs, error) {
+	if job.Version == JobVersion1 {
+		addIndexIDs := make([]int64, 1)
+		ifExists := make([]bool, 1)
+		isGlobals := make([]bool, 1)
+		var partitionIDs []int64
+
+		// add vector index args doesn't store slice.
+		if err := job.DecodeArgs(&addIndexIDs[0], &ifExists[0], &partitionIDs, &isGlobals[0]); err != nil {
+			if err = job.DecodeArgs(&addIndexIDs, &ifExists, &partitionIDs, &isGlobals); err != nil {
+				return nil, errors.Errorf("Failed to decode finished arguments from job version 1")
+			}
+		}
+		a := &AddIndexArgs{PartitionIDs: partitionIDs}
+		for i, indexID := range addIndexIDs {
+			a.IndexArgs = append(a.IndexArgs, &IndexArg{
+				IndexID:  indexID,
+				IfExist:  ifExists[i],
+				IsGlobal: isGlobals[i],
+			})
+		}
+		return a, nil
+	}
+
+	args, err := getOrDecodeArgsV2[*AddIndexArgs](job)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	return args, nil
+}
+
+// RenameIndexArgs is the argument for rename index.
+type RenameIndexArgs struct {
+	From pmodel.CIStr `json:"from"`
+	To   pmodel.CIStr `json:"to"`
+}
+
+func (a *RenameIndexArgs) getArgsV1(*Job) []any {
+	return []any{a.From, a.To}
+}
+
+func (a *RenameIndexArgs) decodeV1(job *Job) error {
+	if err := job.DecodeArgs(&a.From, &a.To); err != nil {
+		return errors.Trace(err)
+	}
+
+	return nil
+}
+
+// GetRenameIndexArgs get the rename index args.
+func GetRenameIndexArgs(job *Job) (*RenameIndexArgs, error) {
+	return getOrDecodeArgs(&RenameIndexArgs{}, job)
 }

@@ -4017,19 +4017,25 @@ func (e *executor) RenameIndex(ctx sessionctx.Context, ident ast.Ident, spec *as
 		return errors.Trace(err)
 	}
 
+	// TODO(joechenrh): Switch job version after refactor done.
 	job := &model.Job{
+		Version:        model.JobVersion1,
 		SchemaID:       schema.ID,
 		TableID:        tb.Meta().ID,
 		SchemaName:     schema.Name.L,
 		TableName:      tb.Meta().Name.L,
 		Type:           model.ActionRenameIndex,
 		BinlogInfo:     &model.HistoryInfo{},
-		Args:           []any{spec.FromKey, spec.ToKey},
 		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
 		SQLMode:        ctx.GetSessionVars().SQLMode,
 	}
 
-	err = e.DoDDLJob(ctx, job)
+	args := &model.RenameIndexArgs{
+		From: spec.FromKey,
+		To:   spec.ToKey,
+	}
+	job.FillArgs(args)
+	err = e.doDDLJob2(ctx, job, args)
 	return errors.Trace(err)
 }
 
@@ -4574,12 +4580,11 @@ func (e *executor) CreatePrimaryKey(ctx sessionctx.Context, ti ast.Ident, indexN
 		}
 	}
 
-	unique := true
 	sqlMode := ctx.GetSessionVars().SQLMode
 	// global is set to  'false' is just there to be backwards compatible,
 	// to avoid unmarshal issues, it is now part of indexOption.
-	global := false
 	job := &model.Job{
+		Version:        model.JobVersion1,
 		SchemaID:       schema.ID,
 		TableID:        t.Meta().ID,
 		SchemaName:     schema.Name.L,
@@ -4587,18 +4592,31 @@ func (e *executor) CreatePrimaryKey(ctx sessionctx.Context, ti ast.Ident, indexN
 		Type:           model.ActionAddPrimaryKey,
 		BinlogInfo:     &model.HistoryInfo{},
 		ReorgMeta:      nil,
-		Args:           []any{unique, indexName, indexPartSpecifications, indexOption, sqlMode, nil, global},
 		Priority:       ctx.GetSessionVars().DDLReorgPriority,
 		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
 		SQLMode:        ctx.GetSessionVars().SQLMode,
 	}
+
+	args := &model.AddIndexArgs{
+		IndexArgs: []*model.IndexArg{{
+			Unique:                  true,
+			IndexName:               indexName,
+			IndexPartSpecifications: indexPartSpecifications,
+			IndexOption:             indexOption,
+			SQLMode:                 sqlMode,
+			Global:                  false,
+			IsPK:                    true,
+		}},
+	}
+
 	reorgMeta, err := newReorgMetaFromVariables(job, ctx)
 	if err != nil {
 		return err
 	}
 	job.ReorgMeta = reorgMeta
 
-	err = e.DoDDLJob(ctx, job)
+	job.FillArgs(args)
+	err = e.doDDLJob2(ctx, job, args)
 	return errors.Trace(err)
 }
 
@@ -4709,12 +4727,24 @@ func (e *executor) createVectorIndex(ctx sessionctx.Context, ti ast.Ident, index
 	if err != nil {
 		return errors.Trace(err)
 	}
+	// vector index is added in 8.4, always use JobVersion2
+	job.Version = model.GetJobVerInUse()
 	job.Type = model.ActionAddVectorIndex
 	indexPartSpecifications[0].Expr = nil
-	job.Args = []any{indexName, indexPartSpecifications[0], indexOption, funcExpr}
+
 	// TODO: support CDCWriteSource
 
-	err = e.DoDDLJob(ctx, job)
+	args := &model.AddIndexArgs{
+		IndexArgs: []*model.IndexArg{{
+			IndexName:               indexName,
+			IndexPartSpecifications: indexPartSpecifications,
+			IndexOption:             indexOption,
+			FuncExpr:                funcExpr,
+			IsVector:                true,
+		}},
+	}
+
+	err = e.doDDLJob2(ctx, job, args)
 	// key exists, but if_not_exists flags is true, so we ignore this error.
 	if dbterror.ErrDupKeyName.Equal(err) && ifNotExists {
 		ctx.GetSessionVars().StmtCtx.AppendNote(err)
@@ -4871,11 +4901,24 @@ func (e *executor) createIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast
 	if err != nil {
 		return errors.Trace(err)
 	}
+	// TODO(joechenrh): Switch job version after refactor done.
+	job.Version = model.JobVersion1
 	job.Type = model.ActionAddIndex
-	job.Args = []any{unique, indexName, indexPartSpecifications, indexOption, hiddenCols, global}
 	job.CDCWriteSource = ctx.GetSessionVars().CDCWriteSource
 
-	err = e.DoDDLJob(ctx, job)
+	args := &model.AddIndexArgs{
+		IndexArgs: []*model.IndexArg{{
+			Unique:                  unique,
+			IndexName:               indexName,
+			IndexPartSpecifications: indexPartSpecifications,
+			IndexOption:             indexOption,
+			HiddenCols:              hiddenCols,
+			Global:                  global,
+		}},
+	}
+
+	job.FillArgs(args)
+	err = e.doDDLJob2(ctx, job, args)
 	// key exists, but if_not_exists flags is true, so we ignore this error.
 	if dbterror.ErrDupKeyName.Equal(err) && ifNotExists {
 		ctx.GetSessionVars().StmtCtx.AppendNote(err)
@@ -5161,7 +5204,7 @@ func (*executor) dropHypoIndexFromCtx(ctx sessionctx.Context, schema, table, ind
 
 // dropIndex drops the specified index.
 // isHypo is used to indicate whether this operation is for a hypo-index.
-func (e *executor) dropIndex(ctx sessionctx.Context, ti ast.Ident, indexName pmodel.CIStr, ifExists, isHypo bool) error {
+func (e *executor) dropIndex(ctx sessionctx.Context, ti ast.Ident, indexName pmodel.CIStr, ifExist, isHypo bool) error {
 	is := e.infoCache.GetLatest()
 	schema, ok := is.SchemaByName(ti.Schema)
 	if !ok {
@@ -5176,7 +5219,7 @@ func (e *executor) dropIndex(ctx sessionctx.Context, ti ast.Ident, indexName pmo
 	}
 
 	if isHypo {
-		return e.dropHypoIndexFromCtx(ctx, ti.Schema, ti.Name, indexName, ifExists)
+		return e.dropHypoIndexFromCtx(ctx, ti.Schema, ti.Name, indexName, ifExist)
 	}
 
 	indexInfo := t.Meta().FindIndexByName(indexName.L)
@@ -5192,7 +5235,7 @@ func (e *executor) dropIndex(ctx sessionctx.Context, ti ast.Ident, indexName pmo
 
 	if indexInfo == nil {
 		err = dbterror.ErrCantDropFieldOrKey.GenWithStack("index %s doesn't exist", indexName)
-		if ifExists {
+		if ifExist {
 			ctx.GetSessionVars().StmtCtx.AppendNote(err)
 			return nil
 		}
@@ -5209,7 +5252,9 @@ func (e *executor) dropIndex(ctx sessionctx.Context, ti ast.Ident, indexName pmo
 		jobTp = model.ActionDropPrimaryKey
 	}
 
+	// TODO(joechenrh): Switch job version after refactor done.
 	job := &model.Job{
+		Version:        model.JobVersion1,
 		SchemaID:       schema.ID,
 		TableID:        t.Meta().ID,
 		SchemaName:     schema.Name.L,
@@ -5217,12 +5262,18 @@ func (e *executor) dropIndex(ctx sessionctx.Context, ti ast.Ident, indexName pmo
 		TableName:      t.Meta().Name.L,
 		Type:           jobTp,
 		BinlogInfo:     &model.HistoryInfo{},
-		Args:           []any{indexName, ifExists},
 		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
 		SQLMode:        ctx.GetSessionVars().SQLMode,
 	}
 
-	err = e.DoDDLJob(ctx, job)
+	args := &model.DropIndexArgs{
+		IndexArgs: []*model.IndexArg{{
+			IndexName: indexName,
+			IfExist:   ifExist,
+		}},
+	}
+	job.FillArgs(args)
+	err = e.doDDLJob2(ctx, job, args)
 	return errors.Trace(err)
 }
 
