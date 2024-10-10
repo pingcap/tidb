@@ -300,15 +300,13 @@ func (do *Domain) loadInfoSchema(startTS uint64, isSnapshot bool) (infoschema.In
 		schemaTs = 0
 	}
 
-	var oldIsV2 bool
 	enableV2 := variable.SchemaCacheSize.Load() > 0
 	currentSchemaVersion := int64(0)
-	if oldInfoSchema := do.infoCache.GetLatest(); oldInfoSchema != nil {
+	oldInfoSchema := do.infoCache.GetLatest()
+	if oldInfoSchema != nil {
 		currentSchemaVersion = oldInfoSchema.SchemaMetaVersion()
-		oldIsV2, _ = infoschema.IsV2(oldInfoSchema)
 	}
-	useV2, isV1V2Switch := shouldUseV2(enableV2, oldIsV2, isSnapshot)
-
+	useV2, isV1V2Switch := shouldUseV2(enableV2, oldInfoSchema, isSnapshot)
 	if is := do.infoCache.GetByVersion(neededSchemaVersion); is != nil {
 		isV2, raw := infoschema.IsV2(is)
 		if isV2 {
@@ -557,11 +555,18 @@ func (*Domain) fetchSchemasWithTables(ctx context.Context, schemas []*model.DBIn
 // shouldUseV2 decides whether to use infoschema v2.
 // When loading snapshot, infoschema should keep the same as before to avoid v1/v2 switch.
 // Otherwise, it is decided by enabledV2.
-func shouldUseV2(enableV2 bool, oldIsV2 bool, isSnapshot bool) (useV2 bool, isV1V2Switch bool) {
+func shouldUseV2(enableV2 bool, old infoschema.InfoSchema, isSnapshot bool) (useV2 bool, isV1V2Switch bool) {
+	// case 1: no information about old
+	if old == nil {
+		return enableV2, false
+	}
+	// case 2: snapshot load should keep the same as old
+	oldIsV2, _ := infoschema.IsV2(old)
 	if isSnapshot {
 		return oldIsV2, false
 	}
-	return enableV2, enableV2 != oldIsV2
+	// case 3: the most general case
+	return enableV2, oldIsV2 != enableV2
 }
 
 // tryLoadSchemaDiffs tries to only load latest schema changes.
