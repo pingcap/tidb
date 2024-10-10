@@ -20,6 +20,7 @@ import (
 	"time"
 
 	pmodel "github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/statistics/handle/autoanalyze/priorityqueue"
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -321,4 +322,57 @@ func TestProcessDMLChangesWithRunningJobs(t *testing.T) {
 	require.NoError(t, err)
 	require.NotZero(t, job1.GetWeight())
 	require.Equal(t, tbl1.Meta().ID, job1.GetTableID(), "t1 has been removed from running jobs and should be in the queue")
+}
+
+func TestRequeueFailedJobs(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	handle := dom.StatsHandle()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("create database example_schema")
+	tk.MustExec("use example_schema")
+	tk.MustExec("create table example_table (a int)")
+	initJobs(tk)
+	insertMultipleFinishedJobs(tk, "example_table", "")
+	statistics.AutoAnalyzeMinCnt = 0
+	defer func() {
+		statistics.AutoAnalyzeMinCnt = 1000
+	}()
+
+	// Insert the failed job.
+	// Just failed.
+	now := tk.MustQuery("select now()").Rows()[0][0].(string)
+	insertFailedJobWithStartTime(tk, "example_schema", "example_table", "", now)
+
+	// Insert some rows.
+	tk.MustExec("insert into example_table values (11), (12), (13), (14), (15), (16), (17), (18), (19)")
+	require.NoError(t, handle.DumpStatsDeltaToKV(true))
+	require.NoError(t, handle.Update(context.Background(), dom.InfoSchema()))
+
+	pq := priorityqueue.NewAnalysisPriorityQueueV2(handle)
+	defer pq.Close()
+	require.NoError(t, pq.Initialize())
+
+	job, err := pq.Pop()
+	require.NoError(t, err)
+	require.NotNil(t, job)
+	sctx := tk.Session().(sessionctx.Context)
+	ok, _ := job.IsValidToAnalyze(sctx)
+	require.False(t, ok)
+
+	// Insert more rows.
+	tk.MustExec("insert into example_table values (20), (21), (22), (23), (24), (25), (26), (27), (28), (29)")
+	require.NoError(t, handle.DumpStatsDeltaToKV(true))
+	require.NoError(t, handle.Update(context.Background(), dom.InfoSchema()))
+
+	// Process the DML changes.
+	pq.ProcessDMLChanges()
+	l, err := pq.Len()
+	require.NoError(t, err)
+	require.Equal(t, 0, l)
+
+	// Requeue the failed jobs.
+	pq.RequeueFailedJobs()
+	l, err = pq.Len()
+	require.NoError(t, err)
+	require.Equal(t, 1, l)
 }
