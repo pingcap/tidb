@@ -492,3 +492,9 @@ FROM (
 ) AS derived_table
 WHERE 16739493649928310215 MEMBER OF (derived_table.col_60767)
    OR NOT (JSON_CONTAINS(derived_table.col_60767, '6019730272580550835'));
+
+# TestIssue53766
+drop table if exists t0, t1;
+CREATE TABLE t0(c0 int);
+CREATE TABLE t1(c0 int);
+SELECT t0.c0, t1.c0 FROM t0 NATURAL JOIN t1 WHERE '1' AND (t0.c0 IN (SELECT c0 FROM t0));
