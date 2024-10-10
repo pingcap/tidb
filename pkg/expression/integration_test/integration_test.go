@@ -1464,7 +1464,6 @@ func TestTimeFuncTruncation(t *testing.T) {
 	timeT9H := "1704067199.987678900"
 	timeT9M := "1704067199.499999600"
 	timeT9L := "1704067199.123443210"
-	//for _, sqlMode := range []string{""} {
 	for _, sqlMode := range []string{"TIME_TRUNCATE_FRACTIONAL", ""} {
 		tk.MustExec(`set @@sql_mode = DEFAULT`)
 		frac6H := "2023-12-31 23:59:59.987679"
@@ -1522,7 +1521,6 @@ func TestTimeFuncTruncation(t *testing.T) {
 			strings.Join([]string{timeTDL, timeTL, timeT6M, timeTL, timeT6M}, " ")))
 		// Test functions that take unix_timestamp (time_t) as argument
 		tk.MustQuery(`select from_unixtime(dc) from t order by id /* ` + sqlMode + ` */`).Check(testkit.Rows(frac6H, frac6L, frac6M))
-		//tk.MustExec(`update t set d = from_unixtime(dc), dt = from_unixtime(dc), dt6 = from_unixtime(dc), ts = from_unixtime(dc), ts6 = from_unixtime(dc) where id = 3`)
 		tk.MustExec(`update t set d = from_unixtime(dc), dt = from_unixtime(dc), dt6 = from_unixtime(dc), ts = from_unixtime(dc), ts6 = from_unixtime(dc)`)
 		res2 := tk.MustQuery(`select * from t order by id /* ` + sqlMode + ` */`)
 		rows := res.Sort().Rows()

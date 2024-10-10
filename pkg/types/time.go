@@ -1183,11 +1183,7 @@ func parseDatetime(ctx Context, str string, fsp int, isFloat bool) (Time, error)
 	if hhmmss {
 		// If input string is "20170118.999", without hhmmss, fsp is meaningless.
 		// TODO: this case is not only meaningless, but erroneous, please confirm.
-		truncate := false
-		if ctx.Flags().TimeTruncateFractional() {
-			truncate = true
-		}
-		microsecond, overflow, err = ParseTimeFrac(fracStr, fsp, truncate)
+		microsecond, overflow, err = ParseTimeFrac(fracStr, fsp, ctx.Flags().TimeTruncateFractional())
 		if err != nil {
 			return ZeroDatetime, errors.Trace(err)
 		}
@@ -1837,11 +1833,7 @@ func canFallbackToDateTime(str string) bool {
 // See http://dev.mysql.com/doc/refman/5.7/en/fractional-seconds.html
 func ParseDuration(ctx Context, str string, fsp int) (Duration, bool, error) {
 	rest := strings.TrimSpace(str)
-	truncate := false
-	if ctx.Flags().TimeTruncateFractional() {
-		truncate = true
-	}
-	d, isNull, err := matchDuration(rest, fsp, truncate)
+	d, isNull, err := matchDuration(rest, fsp, ctx.Flags().TimeTruncateFractional())
 	if err == nil {
 		return d, isNull, nil
 	}
