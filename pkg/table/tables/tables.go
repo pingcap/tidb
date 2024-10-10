@@ -871,6 +871,8 @@ func (t *TableCommon) addRecord(sctx table.MutateContext, txn kv.Transaction, r 
 			_, err = txn.Get(ctx, key)
 		}
 		if err == nil {
+			// If Global Index and reorganization truncate/drop partition, old partition,
+			// Accept and set Assertion key to kv.SetAssertUnknown for overwrite instead
 			dupErr := getDuplicateError(t.Meta(), recordID, r)
 			return recordID, dupErr
 		} else if !kv.ErrNotExist.Equal(err) {
