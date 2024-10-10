@@ -155,7 +155,7 @@ func (w *worker) onModifyColumn(jobCtx *jobContext, job *model.Job) (ver int64, 
 				oldTempIdxID := tmpIdx.ID
 				setIdxIDName(tmpIdx, newIdxID, tmpIdx.Name /* unchanged */)
 				SetIdxColNameOffset(tmpIdx.Columns[info.Offset], changingCol)
-				args.RemovedIdxs = append(args.RemovedIdxs, oldTempIdxID)
+				args.RedundantIdxs = append(args.RedundantIdxs, oldTempIdxID)
 			}
 		}
 	} else {
@@ -186,7 +186,7 @@ func rollbackModifyColumnJob(jobCtx *jobContext, tblInfo *model.TableInfo, job *
 		}
 	}
 	job.FinishTableJob(model.JobStateRollbackDone, model.StateNone, ver, tblInfo)
-	// For those column-type-change type which doesn't need reorg data, we should also mock the job args for delete range.
+	// For those column changes which doesn't need reorg data, we should also mock empty args for delete range.
 	job.FillFinishedArgs(&model.ModifyColumnArgs{})
 	return ver, nil
 }
@@ -427,6 +427,7 @@ func (w *worker) doModifyColumnTypeWithData(
 	changingCol, oldCol *model.ColumnInfo, args *model.ModifyColumnArgs,
 ) (ver int64, _ error) {
 	colName, pos := args.Column.Name, args.Position
+	rmIdxs := args.RedundantIdxs
 
 	var err error
 	originalState := changingCol.State
@@ -469,14 +470,14 @@ func (w *worker) doModifyColumnTypeWithData(
 		ver, err = updateVersionAndTableInfoWithCheck(jobCtx, job, tblInfo, originalState != changingCol.State)
 		if err != nil {
 			args.ChangingColumn = nil
-			args.ChangingIdxs = nil
-			args.RemovedIdxs = nil
+			args.RedundantIdxs = nil
 			return ver, errors.Trace(err)
 		}
 		// Make sure job args change after `updateVersionAndTableInfoWithCheck`, otherwise, the job args will
 		// be updated in `updateDDLJob` even if it meets an error in `updateVersionAndTableInfoWithCheck`.
 		job.SchemaState = model.StateDeleteOnly
 		metrics.GetBackfillProgressByLabel(metrics.LblModifyColumn, job.SchemaName, tblInfo.Name.String()).Set(0)
+		args.ChangingIdxs = changingIdxs
 		job.FillArgs(args)
 	case model.StateDeleteOnly:
 		// Column from null to not null.
@@ -524,7 +525,7 @@ func (w *worker) doModifyColumnTypeWithData(
 			return ver, err
 		}
 
-		args.IndexIDs = append(buildRelatedIndexIDs(tblInfo, oldCol.ID), args.RemovedIdxs...)
+		rmIdxs = append(buildRelatedIndexIDs(tblInfo, oldCol.ID), args.RedundantIdxs...)
 
 		err = adjustTableInfoAfterModifyColumnWithData(tblInfo, pos, oldCol, changingCol, colName, changingIdxs)
 		if err != nil {
@@ -541,7 +542,7 @@ func (w *worker) doModifyColumnTypeWithData(
 		// Finish this job.
 		job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
 		// Refactor the job args to add the old index ids into delete range table.
-		args.IndexIDs = args.RemovedIdxs
+		args.IndexIDs = rmIdxs
 		args.PartitionIDs = getPartitionIDs(tblInfo)
 		job.FillFinishedArgs(args)
 		modifyColumnEvent := notifier.NewModifyColumnEvent(tblInfo, []*model.ColumnInfo{changingCol})
@@ -681,7 +682,7 @@ func GetModifiableColumnJob(
 	schema *model.DBInfo,
 	t table.Table,
 	spec *ast.AlterTableSpec,
-) (*model.Job, error) {
+) (*JobWrapper, error) {
 	var err error
 	specNewColumn := spec.NewColumns[0]
 
@@ -937,7 +938,6 @@ func GetModifiableColumnJob(
 		BinlogInfo:     &model.HistoryInfo{},
 		ReorgMeta:      NewDDLReorgMeta(sctx),
 		CtxVars:        []any{needChangeColData},
-		Args:           []any{&newCol.ColumnInfo, originalColName, spec.Position, modifyColumnTp, newAutoRandBits},
 		CDCWriteSource: sctx.GetSessionVars().CDCWriteSource,
 		SQLMode:        sctx.GetSessionVars().SQLMode,
 	}
@@ -950,8 +950,7 @@ func GetModifiableColumnJob(
 		NewShardBits:     newAutoRandBits,
 	}
 	job.FillArgs(args)
-
-	return job, nil
+	return NewJobWrapperWithArgs(job, args, false), nil
 }
 
 func needChangeColumnData(oldCol, newCol *model.ColumnInfo) bool {

@@ -703,7 +703,7 @@ func (d *SchemaTracker) handleModifyColumn(
 
 	schema := d.SchemaByName(ident.Schema)
 	t := tables.MockTableFromMeta(tblInfo)
-	job, err := ddl.GetModifiableColumnJob(ctx, sctx, nil, ident, originalColName, schema, t, spec)
+	jobW, err := ddl.GetModifiableColumnJob(ctx, sctx, nil, ident, originalColName, schema, t, spec)
 	if err != nil {
 		if infoschema.ErrColumnNotExists.Equal(err) && spec.IfExists {
 			sctx.GetSessionVars().StmtCtx.AppendNote(infoschema.ErrColumnNotExists.FastGenByArgs(originalColName, ident.Name))
@@ -712,7 +712,8 @@ func (d *SchemaTracker) handleModifyColumn(
 		return errors.Trace(err)
 	}
 
-	args, err := model.GetModifyColumnArgs(job)
+	jobW.Encode(true)
+	args, err := model.GetModifyColumnArgs(jobW.Job)
 	if err != nil {
 		return errors.Trace(err)
 	}

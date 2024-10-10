@@ -1304,11 +1304,14 @@ type ModifyColumnArgs struct {
 	NewShardBits     uint64              `json:"new_shard_bits,omitempty"`
 	// ChangingColumn is the temporary column derived from OldColumn
 	ChangingColumn *ColumnInfo `json:"changing_column,omitempty"`
-	ChangingIdxs   []*IndexInfo
-	// RemoveIdxs stores newly-created indexes that will be removed after the job
-	RemovedIdxs []int64 `json:"removed_idxs,omitempty"`
+	// ChangingIdxs is only used in test, so don't persist it
+	ChangingIdxs []*IndexInfo `json:"-"`
+	// RedundantIdxs stores newly-created temp indexes which can be overwritten by other temp indexes.
+	// These idxs will be added to finished args after job done.
+	RedundantIdxs []int64 `json:"removed_idxs,omitempty"`
 
 	// Finished args
+	// IndexIDs stores index ids to be added to gc table.
 	IndexIDs     []int64 `json:"index_ids,omitempty"`
 	PartitionIDs []int64 `json:"partition_ids,omitempty"`
 }
@@ -1316,14 +1319,14 @@ type ModifyColumnArgs struct {
 func (a *ModifyColumnArgs) getArgsV1(job *Job) []any {
 	return []any{
 		a.Column, a.OldColumnName, a.Position, a.ModifyColumnType,
-		a.NewShardBits, a.ChangingColumn, a.ChangingIdxs, a.RemovedIdxs,
+		a.NewShardBits, a.ChangingColumn, a.ChangingIdxs, a.RedundantIdxs,
 	}
 }
 
 func (a *ModifyColumnArgs) decodeV1(job *Job) error {
 	return job.DecodeArgs(
 		&a.Column, &a.OldColumnName, &a.Position, &a.ModifyColumnType,
-		&a.NewShardBits, &a.ChangingColumn, &a.ChangingIdxs, &a.RemovedIdxs,
+		&a.NewShardBits, &a.ChangingColumn, &a.ChangingIdxs, &a.RedundantIdxs,
 	)
 }
 

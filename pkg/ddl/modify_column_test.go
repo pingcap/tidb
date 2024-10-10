@@ -90,6 +90,7 @@ func TestModifyColumnReorgInfo(t *testing.T) {
 				times++
 				return
 			}
+			currJob = job
 			var args *model.ModifyColumnArgs
 			args, checkErr = model.GetModifyColumnArgs(job)
 			elements = ddl.BuildElements(args.ChangingColumn, args.ChangingIdxs)
