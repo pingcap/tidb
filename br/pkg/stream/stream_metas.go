@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/mathutil"
 	"go.uber.org/multierr"
 	"go.uber.org/zap"
+	"golang.org/x/sync/errgroup"
 )
 
 const (
@@ -1062,15 +1063,9 @@ func (m MigrationExt) doTruncateLogs(
 			r.Warnings = append(r.Warnings, err)
 		})
 	}
-	cannotBeRetryByRerunBase := func(err error) error {
-		return errors.Annotate(
-			err,
-			"this error may not be retry by `migrate-to --base`, you may need to rerun `log truncate`",
-		)
-	}
 
-	worker := util.NewWorkerPool(128, "delete files")
-	wg := new(sync.WaitGroup)
+	worker := util.NewWorkerPool(metadataInfos.MetadataDownloadBatchSize, "delete files")
+	eg, cx := errgroup.WithContext(ctx)
 
 	m.Hooks.StartDeletingForTruncating(metadataInfos, from)
 	defer m.Hooks.DeletedAllFilesForTruncating()
@@ -1079,22 +1074,16 @@ func (m MigrationExt) doTruncateLogs(
 		if metaInfo.MinTS >= from {
 			continue
 		}
-		wg.Add(1)
-		worker.Apply(func() {
-			defer wg.Done()
-			data, err := m.s.ReadFile(ctx, path)
+		worker.ApplyOnErrorGroup(eg, func() error {
+			data, err := m.s.ReadFile(cx, path)
 			if err != nil {
-				emitErr(cannotBeRetryByRerunBase(
-					errors.Annotatef(err, "failed to open meta %s", path)))
-				return
+				return errors.Annotatef(err, "failed to open meta %s", path)
 			}
 
 			// Note: maybe make this a static method or just a normal function...
 			meta, err := (*MetadataHelper).ParseToMetadataHard(nil, data)
 			if err != nil {
-				emitErr(cannotBeRetryByRerunBase(
-					errors.Annotatef(err, "failed to parse meta %s", path)))
-				return
+				return errors.Annotatef(err, "failed to parse meta %s", path)
 			}
 
 			me := new(pb.MetaEdit)
@@ -1110,7 +1099,12 @@ func (m MigrationExt) doTruncateLogs(
 			//
 			// We have already written `truncated-to` to the storage hence
 			// we don't need to worry that the user access files already deleted.
-			m.cleanUpFor(ctx, me, out)
+			aOut := new(MigratedTo)
+			m.cleanUpFor(ctx, me, aOut)
+			updateResult(func(r *MigratedTo) {
+				r.Warnings = append(r.Warnings, aOut.Warnings...)
+				r.NewBase = MergeMigrations(r.NewBase, aOut.NewBase)
+			})
 
 			err = m.applyMetaEditTo(ctx, me, meta)
 			if err != nil {
@@ -1120,9 +1114,13 @@ func (m MigrationExt) doTruncateLogs(
 				})
 			}
 			m.Hooks.DeletedAFileForTruncating(len(me.DeletePhysicalFiles))
+			return nil
 		})
 	}
-	wg.Wait()
+
+	if err := eg.Wait(); err != nil {
+		emitErr(err)
+	}
 }
 
 // hookedStorage is a wrapper over the external storage,
