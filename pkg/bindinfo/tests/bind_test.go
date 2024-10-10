@@ -311,14 +311,14 @@ func TestBindingSymbolList(t *testing.T) {
 	// before binding
 	tk.MustQuery("select a, b from t where a = 3 limit 1, 100")
 	require.Equal(t, "t:ia", tk.Session().GetSessionVars().StmtCtx.IndexNames[0])
-	require.True(t, tk.MustUseIndex("select a, b from t where a = 3 limit 1, 100", "ia(a)"))
+	tk.MustUseIndex("select a, b from t where a = 3 limit 1, 100", "ia(a)")
 
 	tk.MustExec(`create global binding for select a, b from t where a = 1 limit 0, 1 using select a, b from t use index (ib) where a = 1 limit 0, 1`)
 
 	// after binding
 	tk.MustQuery("select a, b from t where a = 3 limit 1, 100")
 	require.Equal(t, "t:ib", tk.Session().GetSessionVars().StmtCtx.IndexNames[0])
-	require.True(t, tk.MustUseIndex("select a, b from t where a = 3 limit 1, 100", "ib(b)"))
+	tk.MustUseIndex("select a, b from t where a = 3 limit 1, 100", "ib(b)")
 
 	// Normalize
 	stmt, err := parser.New().ParseOneStmt("select a, b from test . t where a = 1 limit 0, 1", "", "")
@@ -354,14 +354,14 @@ func TestBindingInListWithSingleLiteral(t *testing.T) {
 	// before binding
 	tk.MustQuery(sqlcmd)
 	require.Equal(t, "t:ia", tk.Session().GetSessionVars().StmtCtx.IndexNames[0])
-	require.True(t, tk.MustUseIndex(sqlcmd, "ia(a)"))
+	tk.MustUseIndex(sqlcmd, "ia(a)")
 
 	tk.MustExec(bindingStmt)
 
 	// after binding
 	tk.MustQuery(sqlcmd)
 	require.Equal(t, "t:ib", tk.Session().GetSessionVars().StmtCtx.IndexNames[0])
-	require.True(t, tk.MustUseIndex(sqlcmd, "ib(b)"))
+	tk.MustUseIndex(sqlcmd, "ib(b)")
 
 	tk.MustQuery("select @@last_plan_from_binding").Check(testkit.Rows("1"))
 
@@ -394,11 +394,11 @@ func TestBestPlanInBaselines(t *testing.T) {
 	// before binding
 	tk.MustQuery("select a, b from t where a = 3 limit 1, 100")
 	require.Equal(t, "t:ia", tk.Session().GetSessionVars().StmtCtx.IndexNames[0])
-	require.True(t, tk.MustUseIndex("select a, b from t where a = 3 limit 1, 100", "ia(a)"))
+	tk.MustUseIndex("select a, b from t where a = 3 limit 1, 100", "ia(a)")
 
 	tk.MustQuery("select a, b from t where b = 3 limit 1, 100")
 	require.Equal(t, "t:ib", tk.Session().GetSessionVars().StmtCtx.IndexNames[0])
-	require.True(t, tk.MustUseIndex("select a, b from t where b = 3 limit 1, 100", "ib(b)"))
+	tk.MustUseIndex("select a, b from t where b = 3 limit 1, 100", "ib(b)")
 
 	tk.MustExec(`create global binding for select a, b from t where a = 1 limit 0, 1 using select /*+ use_index(@sel_1 test.t ia) */ a, b from t where a = 1 limit 0, 1`)
 	tk.MustExec(`create global binding for select a, b from t where b = 1 limit 0, 1 using select /*+ use_index(@sel_1 test.t ib) */ a, b from t where b = 1 limit 0, 1`)
@@ -415,11 +415,11 @@ func TestBestPlanInBaselines(t *testing.T) {
 
 	tk.MustQuery("select a, b from t where a = 3 limit 1, 10")
 	require.Equal(t, "t:ia", tk.Session().GetSessionVars().StmtCtx.IndexNames[0])
-	require.True(t, tk.MustUseIndex("select a, b from t where a = 3 limit 1, 100", "ia(a)"))
+	tk.MustUseIndex("select a, b from t where a = 3 limit 1, 100", "ia(a)")
 
 	tk.MustQuery("select a, b from t where b = 3 limit 1, 100")
 	require.Equal(t, "t:ib", tk.Session().GetSessionVars().StmtCtx.IndexNames[0])
-	require.True(t, tk.MustUseIndex("select a, b from t where b = 3 limit 1, 100", "ib(b)"))
+	tk.MustUseIndex("select a, b from t where b = 3 limit 1, 100", "ib(b)")
 }
 
 func TestIssue50646(t *testing.T) {
@@ -603,7 +603,7 @@ func TestInvisibleIndex(t *testing.T) {
 
 	tk.MustQuery("select * from t")
 	require.Equal(t, "t:idx_a", tk.Session().GetSessionVars().StmtCtx.IndexNames[0])
-	require.True(t, tk.MustUseIndex("select * from t", "idx_a(a)"))
+	tk.MustUseIndex("select * from t", "idx_a(a)")
 
 	tk.MustExec(`prepare stmt1 from 'select * from t'`)
 	tk.MustExec("execute stmt1")

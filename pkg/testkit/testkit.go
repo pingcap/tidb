@@ -551,7 +551,10 @@ func (tk *TestKit) MustMatchErrMsg(sql string, errRx any) {
 }
 
 // MustUseIndex checks if the result execution plan contains specific index(es).
-func (tk *TestKit) MustUseIndex(sql string, index string, args ...any) bool {
+func (tk *TestKit) MustUseIndex(sql string, index string, args ...any) (res bool) {
+	defer func() {
+		tk.require.True(res)
+	}()
 	rs := tk.MustQuery("explain "+sql, args...)
 	for i := range rs.rows {
 		if strings.Contains(rs.rows[i][3], "index:"+index) {
