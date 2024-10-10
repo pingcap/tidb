@@ -580,7 +580,11 @@ func asyncNotifyEvent(jobCtx *jobContext, e *notifier.SchemaChangeEvent, job *mo
 		defer sessPool.Put(sessCtx)
 
 		se := sess.NewSession(sessCtx)
-		notifier.PubSchemaChange(jobCtx.ctx, se, job.ID, -1, e)
+		err = notifier.PubSchemaChange(jobCtx.ctx, se, job.ID, -1, e)
+		if err != nil {
+			logutil.DDLLogger().Error("Error publish schema change event",
+				zap.Int64("jobID", job.ID), zap.String("event", e.String()), zap.Error(err))
+		}
 	}
 	// skip notify for system databases, system databases are expected to change at
 	// bootstrap and other nodes can also handle the changing in its bootstrap rather
