@@ -21,7 +21,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/types"
@@ -404,12 +403,11 @@ func (b *builtinUTCTimeWithArgSig) vecEvalDuration(ctx EvalContext, input *chunk
 		if result.IsNull(i) {
 			continue
 		}
-		fsp := i64s[i]
-		if fsp > int64(types.MaxFsp) {
-			return errors.Errorf("Too-big precision %v specified for 'utc_time'. Maximum is %v", fsp, types.MaxFsp)
-		}
-		if fsp < int64(types.MinFsp) {
-			return errors.Errorf("Invalid negative %d specified, must in [0, 6]", fsp)
+		// Here fsp must be greater than or equal to zero, there is a bug of parser for negetive precision now.
+		// There is a bug of MySQL, but not fixed now, so we keep it be compatible with MySQL. (#56453)
+		fsp := uint8(i64s[i])
+		if fsp > uint8(types.MaxFsp) {
+			return types.ErrTooBigPrecision.GenWithStackByArgs(fsp, "utc_time", types.MaxFsp)
 		}
 		res, _, err := types.ParseDuration(tc, utc, int(fsp))
 		if err != nil {
@@ -544,18 +542,17 @@ func (b *builtinNowWithArgSig) vecEvalTime(ctx EvalContext, input *chunk.Chunk, 
 	fsps := bufFsp.Int64s()
 
 	for i := 0; i < n; i++ {
-		fsp := 0
+		var fsp uint8 = 0
 		if !bufFsp.IsNull(i) {
-			if fsps[i] > int64(types.MaxFsp) {
-				return errors.Errorf("Too-big precision %v specified for 'now'. Maximum is %v", fsps[i], types.MaxFsp)
+			// Here fsp must be greater than or equal to zero, there is a bug of parser for negetive precision now.
+			// There is a bug of MySQL, but not fixed now, so we keep it be compatible with MySQL. (#56453)
+			fsp = uint8(fsps[i])
+			if fsp > uint8(types.MaxFsp) {
+				return types.ErrTooBigPrecision.GenWithStackByArgs(fsp, "now", types.MaxFsp)
 			}
-			if fsps[i] < int64(types.MinFsp) {
-				return errors.Errorf("Invalid negative %d specified, must in [0, 6]", fsps[i])
-			}
-			fsp = int(fsps[i])
 		}
 
-		t, isNull, err := evalNowWithFsp(ctx, fsp)
+		t, isNull, err := evalNowWithFsp(ctx, int(fsp))
 		if err != nil {
 			return err
 		}
@@ -1407,12 +1404,11 @@ func (b *builtinUTCTimestampWithArgSig) vecEvalTime(ctx EvalContext, input *chun
 		if result.IsNull(i) {
 			continue
 		}
-		fsp := i64s[i]
-		if fsp > int64(types.MaxFsp) {
-			return errors.Errorf("Too-big precision %v specified for 'utc_timestamp'. Maximum is %v", fsp, types.MaxFsp)
-		}
-		if fsp < int64(types.MinFsp) {
-			return errors.Errorf("Invalid negative %d specified, must in [0, 6]", fsp)
+		// Here fsp must be greater than or equal to zero, there is a bug of parser for negetive precision now.
+		// There is a bug of MySQL, but not fixed now, so we keep it be compatible with MySQL. (#56453)
+		fsp := uint8(i64s[i])
+		if fsp > uint8(types.MaxFsp) {
+			return types.ErrTooBigPrecision.GenWithStackByArgs(fsp, "utc_timestamp", types.MaxFsp)
 		}
 		res, isNull, err := evalUTCTimestampWithFsp(ctx, int(fsp))
 		if err != nil {
