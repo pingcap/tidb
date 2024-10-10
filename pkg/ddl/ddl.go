@@ -566,6 +566,12 @@ func asyncNotifyEvent(jobCtx *jobContext, e *notifier.SchemaChangeEvent, job *mo
 		if sessPool == nil || notifier.DefaultStore == nil {
 			return
 		}
+		// skip notify for system databases, system databases are expected to change at
+		// bootstrap and other nodes can also handle the changing in its bootstrap rather
+		// than be notified.
+		if tidbutil.IsMemOrSysDB(job.SchemaName) {
+			return
+		}
 		sessCtx, err := sessPool.Get()
 		if err != nil {
 			logutil.DDLLogger().Error("Error get sessionCtx before publish schema change event",
