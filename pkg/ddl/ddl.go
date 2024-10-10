@@ -61,6 +61,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/gcutil"
 	"github.com/pingcap/tidb/pkg/util/generic"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	atomicutil "go.uber.org/atomic"
 	"go.uber.org/zap"
@@ -560,7 +561,25 @@ func (d *ddl) RegisterStatsHandle(h *handle.Handle) {
 
 // asyncNotifyEvent will notify the ddl event to outside world, say statistic handle. When the channel is full, we may
 // give up notify and log it.
-func asyncNotifyEvent(jobCtx *jobContext, e *notifier.SchemaChangeEvent, job *model.Job) {
+func asyncNotifyEvent(jobCtx *jobContext, e *notifier.SchemaChangeEvent, job *model.Job, sctx sessionctx.Context) {
+	if intest.InTest && notifier.DefaultStore != nil {
+		// skip notify for system databases, system databases are expected to change at
+		// bootstrap and other nodes can also handle the changing in its bootstrap rather
+		// than be notified.
+		if tidbutil.IsMemOrSysDB(job.SchemaName) {
+			return
+		}
+		se := sess.NewSession(sctx)
+		var multiSchemaChangeSeq int64 = -1
+		if job.MultiSchemaInfo != nil {
+			multiSchemaChangeSeq = int64(job.MultiSchemaInfo.Seq)
+		}
+		err := notifier.PubSchemaChange(jobCtx.ctx, se, job.ID, multiSchemaChangeSeq, e)
+		if err != nil {
+			logutil.DDLLogger().Error("Error publish schema change event",
+				zap.Int64("jobID", job.ID), zap.String("event", e.String()), zap.Error(err))
+		}
+	}
 	// skip notify for system databases, system databases are expected to change at
 	// bootstrap and other nodes can also handle the changing in its bootstrap rather
 	// than be notified.

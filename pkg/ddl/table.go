@@ -58,7 +58,7 @@ func repairTableOrViewWithCheck(t *meta.Mutator, job *model.Job, schemaID int64,
 	return t.UpdateTable(schemaID, tbInfo)
 }
 
-func onDropTableOrView(jobCtx *jobContext, job *model.Job) (ver int64, _ error) {
+func (w *worker) onDropTableOrView(jobCtx *jobContext, job *model.Job) (ver int64, _ error) {
 	tblInfo, err := checkTableExistAndCancelNonExistJob(jobCtx.metaMut, job, job.SchemaID)
 	if err != nil {
 		return ver, errors.Trace(err)
@@ -128,7 +128,7 @@ func onDropTableOrView(jobCtx *jobContext, job *model.Job) (ver int64, _ error) 
 		})
 		if !tblInfo.IsSequence() && !tblInfo.IsView() {
 			dropTableEvent := notifier.NewDropTableEvent(tblInfo)
-			asyncNotifyEvent(jobCtx, dropTableEvent, job)
+			asyncNotifyEvent(jobCtx, dropTableEvent, job, w.sess.Context)
 		}
 	default:
 		return ver, errors.Trace(dbterror.ErrInvalidDDLState.GenWithStackByArgs("table", tblInfo.State))
@@ -578,7 +578,7 @@ func (w *worker) onTruncateTable(jobCtx *jobContext, job *model.Job) (ver int64,
 	}
 	job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
 	truncateTableEvent := notifier.NewTruncateTableEvent(tblInfo, oldTblInfo)
-	asyncNotifyEvent(jobCtx, truncateTableEvent, job)
+	asyncNotifyEvent(jobCtx, truncateTableEvent, job, w.sess.Context)
 	// see truncateTableByReassignPartitionIDs for why they might change.
 	args.OldPartitionIDs = oldPartitionIDs
 	args.NewPartitionIDs = newPartitionIDs
