@@ -533,7 +533,7 @@ func (rc *SnapClient) initClients(ctx context.Context, backend *backuppb.Storage
 		if err != nil {
 			return errors.Trace(err)
 		}
-		// rc.restorer = NewMultiTablesRestorer(fileImporter, metaClient, rc.workerPool, rc.checkpointRunner)
+		rc.restorer = restore.NewMultiTablesRestorer(fileImporter, rc.workerPool, rc.checkpointRunner)
 	}
 	return nil
 }

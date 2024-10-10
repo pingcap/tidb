@@ -29,8 +29,10 @@ import (
 
 	"github.com/pingcap/tidb/br/pkg/checkpoint"
 	"github.com/pingcap/tidb/br/pkg/logutil"
+	"github.com/pingcap/tidb/br/pkg/restore/split"
 	"github.com/pingcap/tidb/br/pkg/restore/utils"
 	"github.com/pingcap/tidb/br/pkg/summary"
+	"github.com/pingcap/tidb/br/pkg/utils/iter"
 	"github.com/pingcap/tidb/pkg/util"
 )
 
@@ -198,7 +200,7 @@ func (m *MultiTablesRestorer) Restore(ctx context.Context, onProgress func(), ba
 			break
 		}
 		filesReplica := tableIDWithFiles
-		// rc.fileImporter.WaitUntilUnblock()
+		m.fileImporter.WaitUntilUnblock()
 		m.workerPool.ApplyOnErrorGroup(eg, func() (restoreErr error) {
 			// fileStart := time.Now()
 			defer func() {
@@ -243,85 +245,7 @@ func (m *MultiTablesRestorer) Restore(ctx context.Context, onProgress func(), ba
 	// we may break the for loop without error in the errgroup. (Will this happen?)
 	// At that time, return the error in the context here.
 	return ctx.Err()
-
-	// 	eg, ectx := errgroup.WithContext(ctx)
-
-	// 	var rangeFiles []*backuppb.File
-	// 	var leftFiles []*backuppb.File
-	// LOOPFORTABLE:
-	// 	for _, file := range files {
-	// 		tableID := file.TableID
-	// 		files := file.SSTFiles
-	// 		rules := file.RewriteRules
-	// 		fileCount += len(files)
-	// 		for rangeFiles, leftFiles = drainFilesByRange(files); len(rangeFiles) != 0; rangeFiles, leftFiles = drainFilesByRange(leftFiles) {
-	// 			if ectx.Err() != nil {
-	// 				log.Warn("Restoring encountered error and already stopped, give up remained files.",
-	// 					zap.Int("remained", len(leftFiles)),
-	// 					logutil.ShortError(ectx.Err()))
-	// 				// We will fetch the error from the errgroup then (If there were).
-	// 				// Also note if the parent context has been canceled or something,
-	// 				// breaking here directly is also a reasonable behavior.
-	// 				break LOOPFORTABLE
-	// 			}
-	// 			filesReplica := rangeFiles
-	// 			m.fileImporter.WaitUntilUnblock()
-	// 			m.workerPool.ApplyOnErrorGroup(eg, func() (restoreErr error) {
-	// 				fileStart := time.Now()
-	// 				defer func() {
-	// 					if restoreErr == nil {
-	// 						log.Info("import files done", logutil.Files(filesReplica),
-	// 							zap.Duration("take", time.Since(fileStart)))
-	// 						onProgress()
-	// 					}
-	// 				}()
-	// 				if importErr := m.fileImporter.Import(ectx, NewSSTFilesInfo(filesReplica, rules)); importErr != nil {
-	// 					return errors.Trace(importErr)
-	// 				}
-
-	// 				// the data of this range has been import done
-	// 				if m.checkpointRunner != nil && len(filesReplica) > 0 {
-	// 					rangeKey := GetFileRangeKey(filesReplica[0].Name)
-	// 					// The checkpoint range shows this ranges of kvs has been restored into
-	// 					// the table corresponding to the table-id.
-	// 					if err := checkpoint.AppendRangesForRestore(ectx, m.checkpointRunner, tableID, rangeKey); err != nil {
-	// 						return errors.Trace(err)
-	// 					}
-	// 				}
-	// 				return nil
-	// 			})
-	// 		}
-	// 	}
-
-	//	if err := eg.Wait(); err != nil {
-	//		summary.CollectFailureUnit("file", err)
-	//		log.Error(
-	//			"restore files failed",
-	//			zap.Error(err),
-	//		)
-	//		return errors.Trace(err)
-	//	}
-	//
-	// // Once the parent context canceled and there is no task running in the errgroup,
-	// // we may break the for loop without error in the errgroup. (Will this happen?)
-	// // At that time, return the error in the context here.
-	// return ctx.Err()
 }
-
-// func drainFilesByRange(files []*backuppb.File) ([]*backuppb.File, []*backuppb.File) {
-// 	if len(files) == 0 {
-// 		return nil, nil
-// 	}
-// 	idx := 1
-// 	for idx < len(files) {
-// 		if !isFilesBelongToSameRange(files[idx-1].Name, files[idx].Name) {
-// 			break
-// 		}
-// 		idx++
-// 	}
-
-// 	return files[:idx], files[idx:]
-// }
 
 func GetFileRangeKey(f string) string {
 	// the backup date file pattern is `{store_id}_{region_id}_{epoch_version}_{key}_{ts}_{cf}.sst`
@@ -334,36 +258,41 @@ func GetFileRangeKey(f string) string {
 	return f[:idx]
 }
 
-// // isFilesBelongToSameRange check whether two files are belong to the same range with different cf.
-// func isFilesBelongToSameRange(f1, f2 string) bool {
-// 	return GetFileRangeKey(f1) == GetFileRangeKey(f2)
-// }
+// PipelineFileRestorer will try to do the restore and split in pipeline
+// used in log backup and compacted sst backup
+// because of unable to split all regions before restore these data.
+// we just can restore as well as split.
+type PipelineFileRestorer[T any] interface {
+	// Raw/Txn Restore, full Restore
+	FileRestorer
+	split.MultiRegionsSplitter
 
-// // LogRestore implements the Restore interface for log files using a pipeline strategy.
-// type LogRestore struct {
-// 	Splitter PipelineSplitter // Use LogFilePipelineSplitter for logs
-// }
+	// Log Restore, Compacted Restore
+	// split when Iter until condition satified
+	PipelineIter(iter.TryNextor[T], split.SplitStrategy[T]) iter.TryNextor[T]
+}
 
-// func (l *LogRestore) ExecuteRestore(ctx context.Context) error {
-// 	// Perform the log restore logic
-// 	if err := l.Splitter.Split(ctx); err != nil {
-// 		return err
-// 	}
-// 	// Continue with restore process
-// 	return nil
-// }
+type PipelineFileRestorerWrapper[T any] struct {
+	split.RegionsSplitter
+}
 
-// // CompactedRestore implements the Restore interface for compacted data.
-// type CompactedRestore struct {
-// 	SnapRestore                  // Embed SnapRestore for simple restore logic
-// 	Splitter    PipelineSplitter // Use PipelineSplitter for compacted data
-// }
+func (p *PipelineFileRestorerWrapper[T]) PipelineIter(ctx context.Context, i iter.TryNextor[T], strategy split.SplitStrategy[T]) iter.TryNextor[T] {
+	// Use an iterator to process items and apply merging and splitting logic
+	return iter.Map(i, func(item T) T {
+		strategy.Accumulate(item)
 
-// func (c *CompactedRestore) ExecuteRestore(ctx context.Context) error {
-// 	// Perform the compacted restore logic
-// 	if err := c.Splitter.Split(ctx); err != nil {
-// 		return err
-// 	}
-// 	// Continue with restore process using SnapRestore logic
-// 	return c.SnapRestore.ExecuteRestore(ctx)
-// }
+		// Check if we need to split
+		if strategy.ShouldSplit() { // Assuming ShouldSplit returns true when split is needed
+			log.Info("start to split the regions")
+			startTime := time.Now()
+			s := strategy.AllAccumlations()
+			err := p.ExecuteRegions(ctx, s)
+			if err != nil {
+				// return iter.Throw[T](errors.Trace(err))
+			}
+			log.Info("end to split the regions", zap.Duration("takes", time.Since(startTime)))
+		}
+
+		return item // Return the processed item
+	})
+}

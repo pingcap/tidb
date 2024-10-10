@@ -37,25 +37,25 @@ type rewriteSplitter struct {
 	rewriteKey []byte
 	tableID    int64
 	rule       *restoreutils.RewriteRules
-	splitter   *SplitHelper
+	splitter   *split.SplitHelper
 }
 
 type splitHelperIterator struct {
 	tableSplitters []*rewriteSplitter
 }
 
-func (iter *splitHelperIterator) Traverse(fn func(v Valued, endKey []byte, rule *restoreutils.RewriteRules) bool) {
+func (iter *splitHelperIterator) Traverse(fn func(v split.Valued, endKey []byte, rule *restoreutils.RewriteRules) bool) {
 	for _, entry := range iter.tableSplitters {
 		endKey := codec.EncodeBytes([]byte{}, tablecodec.EncodeTablePrefix(entry.tableID+1))
 		rule := entry.rule
-		entry.splitter.Traverse(func(v Valued) bool {
+		entry.splitter.Traverse(func(v split.Valued) bool {
 			return fn(v, endKey, rule)
 		})
 	}
 }
 
 type LogSplitHelper struct {
-	tableSplitter map[int64]*SplitHelper
+	tableSplitter map[int64]*split.SplitHelper
 	rules         map[int64]*restoreutils.RewriteRules
 	client        split.SplitClient
 	pool          *util.WorkerPool
@@ -68,7 +68,7 @@ type LogSplitHelper struct {
 
 func NewLogSplitHelper(rules map[int64]*restoreutils.RewriteRules, client split.SplitClient, splitSize uint64, splitKeys int64) *LogSplitHelper {
 	return &LogSplitHelper{
-		tableSplitter: make(map[int64]*SplitHelper),
+		tableSplitter: make(map[int64]*split.SplitHelper),
 		rules:         rules,
 		client:        client,
 		pool:          util.NewWorkerPool(128, "split region"),
@@ -121,23 +121,23 @@ func (helper *LogSplitHelper) Merge(file *backuppb.DataFileInfo) {
 	}
 	splitHelper, exist := helper.tableSplitter[file.TableId]
 	if !exist {
-		splitHelper = NewSplitHelper()
+		splitHelper = split.NewSplitHelper()
 		helper.tableSplitter[file.TableId] = splitHelper
 	}
 
-	splitHelper.Merge(Valued{
-		Key: Span{
+	splitHelper.Merge(split.Valued{
+		Key: split.Span{
 			StartKey: file.StartKey,
 			EndKey:   file.EndKey,
 		},
-		Value: Value{
+		Value: split.Value{
 			Size:   file.Length,
 			Number: file.NumberOfEntries,
 		},
 	})
 }
 
-type splitFunc = func(context.Context, *split.RegionSplitter, uint64, int64, *split.RegionInfo, []Valued) error
+type splitFunc = func(context.Context, *split.RegionSplitter, uint64, int64, *split.RegionInfo, []split.Valued) error
 
 func (helper *LogSplitHelper) splitRegionByPoints(
 	ctx context.Context,
@@ -145,7 +145,7 @@ func (helper *LogSplitHelper) splitRegionByPoints(
 	initialLength uint64,
 	initialNumber int64,
 	region *split.RegionInfo,
-	valueds []Valued,
+	valueds []split.Valued,
 ) error {
 	var (
 		splitPoints [][]byte = make([][]byte, 0)
@@ -213,7 +213,7 @@ func SplitPoint(
 		// region span    +------------------------------------+
 		//                +initial length+          +end valued+
 		// regionValueds is the ranges array overlapped with `regionInfo`
-		regionValueds []Valued = nil
+		regionValueds []split.Valued = nil
 		// regionInfo is the region to be split
 		regionInfo *split.RegionInfo = nil
 		// intialLength is the length of the part of the first range overlapped with the region
@@ -226,7 +226,7 @@ func SplitPoint(
 		regionOverCount uint64 = 0
 	)
 
-	iter.Traverse(func(v Valued, endKey []byte, rule *restoreutils.RewriteRules) bool {
+	iter.Traverse(func(v split.Valued, endKey []byte, rule *restoreutils.RewriteRules) bool {
 		if v.Value.Number == 0 || v.Value.Size == 0 {
 			return true
 		}
@@ -281,19 +281,19 @@ func SplitPoint(
 				if len(regionValueds) > 0 && regionInfo != region {
 					// add a part of the range as the end part
 					if bytes.Compare(vStartKey, regionInfo.Region.EndKey) < 0 {
-						regionValueds = append(regionValueds, NewValued(vStartKey, regionInfo.Region.EndKey, Value{Size: endLength, Number: endNumber}))
+						regionValueds = append(regionValueds, split.NewValued(vStartKey, regionInfo.Region.EndKey, split.Value{Size: endLength, Number: endNumber}))
 					}
 					// try to split the region
 					err = splitF(ctx, regionSplitter, initialLength, initialNumber, regionInfo, regionValueds)
 					if err != nil {
 						return false
 					}
-					regionValueds = make([]Valued, 0)
+					regionValueds = make([]split.Valued, 0)
 				}
 				if regionOverCount == 1 {
 					// the region completely contains the range
-					regionValueds = append(regionValueds, Valued{
-						Key: Span{
+					regionValueds = append(regionValueds, split.Valued{
+						Key: split.Span{
 							StartKey: vStartKey,
 							EndKey:   vEndKey,
 						},

@@ -1,5 +1,5 @@
 // Copyright 2022 PingCAP, Inc. Licensed under Apache-2.0.
-package logsplit_test
+package split_test
 
 import (
 	"fmt"

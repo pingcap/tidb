@@ -1100,6 +1100,13 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 	if err != nil {
 		return errors.Trace(err)
 	}
+	onProgress := func(n int64) {
+		if n == 0 {
+			updateCh.Inc()
+			return
+		}
+		updateCh.IncBy(n)
+	}
 	if err := client.RestoreTables(ctx, placementRuleManager, createdTables, files, checkpointSetWithTableID,
 		kvConfigs.MergeRegionSize.Value, kvConfigs.MergeRegionKeyCount.Value,
 		// If the command is from BR binary, the ddl.EnableSplitTableRegion is always 0,
@@ -1107,7 +1114,7 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 		// Notice that `split-region-on-table` configure from TiKV split on the region having data, it may trigger after restore done.
 		// It's recommended to enable TiDB configure `split-table` instead.
 		atomic.LoadUint32(&ddl.EnableSplitTableRegion) == 1,
-		updateCh,
+		onProgress,
 	); err != nil {
 		return errors.Trace(err)
 	}
