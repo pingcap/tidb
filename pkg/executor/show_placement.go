@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl/placement"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/infoschema"
+	infoschemacontext "github.com/pingcap/tidb/pkg/infoschema/context"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	pmodel "github.com/pingcap/tidb/pkg/parser/model"
@@ -361,7 +362,7 @@ func (e *ShowExec) fetchAllTablePlacements(ctx context.Context, scheduleState ma
 	dbs := e.is.AllSchemaNames()
 	slices.SortFunc(dbs, func(i, j pmodel.CIStr) int { return cmp.Compare(i.O, j.O) })
 
-	tbls := e.is.ListTablesWithSpecialAttribute(infoschema.AllSpecialAttribute)
+	tbls := e.is.ListTablesWithSpecialAttribute(infoschemacontext.AllSpecialAttribute)
 	for _, db := range tbls {
 		tableRowSets := make([]tableRowSet, 0)
 		for _, tblInfo := range db.TableInfos {

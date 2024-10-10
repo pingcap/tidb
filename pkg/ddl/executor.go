@@ -39,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/pkg/errctx"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/infoschema"
+	infoschemacontext "github.com/pingcap/tidb/pkg/infoschema/context"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
@@ -421,7 +422,7 @@ func (e *executor) getPendingTiFlashTableCount(originVersion int64, pendingCount
 		return originVersion, pendingCount
 	}
 	cnt := uint32(0)
-	dbs := is.ListTablesWithSpecialAttribute(infoschema.TiFlashAttribute)
+	dbs := is.ListTablesWithSpecialAttribute(infoschemacontext.TiFlashAttribute)
 	for _, db := range dbs {
 		if util.IsMemOrSysDB(db.DBName.L) {
 			continue

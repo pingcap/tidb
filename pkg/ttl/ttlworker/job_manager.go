@@ -24,6 +24,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/infoschema"
+	infoschemacontext "github.com/pingcap/tidb/pkg/infoschema/context"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
@@ -1090,7 +1091,7 @@ GROUP BY
 	}
 
 	noRecordTables := make([]string, 0)
-	ch := is.ListTablesWithSpecialAttribute(infoschema.TTLAttribute)
+	ch := is.ListTablesWithSpecialAttribute(infoschemacontext.TTLAttribute)
 	for _, v := range ch {
 		for _, tblInfo := range v.TableInfos {
 			interval, err := tblInfo.TTLInfo.GetJobInterval()

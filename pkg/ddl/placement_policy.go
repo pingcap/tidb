@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl/placement"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/infoschema"
+	infoschemacontext "github.com/pingcap/tidb/pkg/infoschema/context"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -377,7 +378,7 @@ func CheckPlacementPolicyNotInUseFromInfoSchema(is infoschema.InfoSchema, policy
 		}
 	}
 
-	schemaTables := is.ListTablesWithSpecialAttribute(infoschema.AllPlacementPolicyAttribute)
+	schemaTables := is.ListTablesWithSpecialAttribute(infoschemacontext.AllPlacementPolicyAttribute)
 	for _, schemaTable := range schemaTables {
 		for _, tblInfo := range schemaTable.TableInfos {
 			if err := checkPlacementPolicyNotUsedByTable(tblInfo, policy); err != nil {

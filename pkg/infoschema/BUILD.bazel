@@ -97,6 +97,7 @@ go_test(
     deps = [
         "//pkg/ddl/placement",
         "//pkg/domain",
+        "//pkg/infoschema/context",
         "//pkg/infoschema/internal",
         "//pkg/kv",
         "//pkg/meta",
