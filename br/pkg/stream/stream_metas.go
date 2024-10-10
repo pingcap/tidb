@@ -518,12 +518,12 @@ func MigerationExtension(s storage.ExternalStorage) MigrationExt {
 // The merged migration contains all operations from the two arguments.
 func MergeMigrations(m1 *pb.Migration, m2 *pb.Migration) *pb.Migration {
 	out := new(pb.Migration)
-	out.EditMeta = mergeMetaEdits(m1.EditMeta, m2.EditMeta)
-	out.Compactions = append(out.Compactions, m1.Compactions...)
-	out.Compactions = append(out.Compactions, m2.Compactions...)
-	out.TruncatedTo = mathutil.Max(m1.TruncatedTo, m2.TruncatedTo)
-	out.DestructPrefix = append(out.DestructPrefix, m1.DestructPrefix...)
-	out.DestructPrefix = append(out.DestructPrefix, m2.DestructPrefix...)
+	out.EditMeta = mergeMetaEdits(m1.GetEditMeta(), m2.GetEditMeta())
+	out.Compactions = append(out.Compactions, m1.GetCompactions()...)
+	out.Compactions = append(out.Compactions, m2.GetCompactions()...)
+	out.TruncatedTo = mathutil.Max(m1.GetTruncatedTo(), m2.GetTruncatedTo())
+	out.DestructPrefix = append(out.DestructPrefix, m1.GetDestructPrefix()...)
+	out.DestructPrefix = append(out.DestructPrefix, m2.GetDestructPrefix()...)
 	return out
 }
 
