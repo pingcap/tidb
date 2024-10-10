@@ -561,26 +561,16 @@ func (d *ddl) RegisterStatsHandle(h *handle.Handle) {
 
 // asyncNotifyEvent will notify the ddl event to outside world, say statistic handle. When the channel is full, we may
 // give up notify and log it.
-func asyncNotifyEvent(jobCtx *jobContext, e *notifier.SchemaChangeEvent, job *model.Job, sessPool *sess.Pool) {
-	if intest.InTest {
-		if sessPool == nil || notifier.DefaultStore == nil {
-			return
-		}
+func asyncNotifyEvent(jobCtx *jobContext, e *notifier.SchemaChangeEvent, job *model.Job, sctx sessionctx.Context) {
+	if intest.InTest && notifier.DefaultStore != nil {
 		// skip notify for system databases, system databases are expected to change at
 		// bootstrap and other nodes can also handle the changing in its bootstrap rather
 		// than be notified.
 		if tidbutil.IsMemOrSysDB(job.SchemaName) {
 			return
 		}
-		sessCtx, err := sessPool.Get()
-		if err != nil {
-			logutil.DDLLogger().Error("Error get sessionCtx before publish schema change event",
-				zap.Int64("jobID", job.ID), zap.Error(err))
-		}
-		defer sessPool.Put(sessCtx)
-
-		se := sess.NewSession(sessCtx)
-		err = notifier.PubSchemaChange(jobCtx.ctx, se, job.ID, -1, e)
+		se := sess.NewSession(sctx)
+		err := notifier.PubSchemaChange(jobCtx.ctx, se, job.ID, -1, e)
 		if err != nil {
 			logutil.DDLLogger().Error("Error publish schema change event",
 				zap.Int64("jobID", job.ID), zap.String("event", e.String()), zap.Error(err))

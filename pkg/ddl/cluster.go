@@ -806,7 +806,7 @@ func (w *worker) onFlashbackCluster(jobCtx *jobContext, job *model.Job) (ver int
 	case model.StateWriteReorganization:
 		// TODO: Support flashback in unistore.
 		if inFlashbackTest {
-			asyncNotifyEvent(jobCtx, notifier.NewFlashbackClusterEvent(), job, w.sessPool)
+			asyncNotifyEvent(jobCtx, notifier.NewFlashbackClusterEvent(), job, w.sess.Context)
 			job.State = model.JobStateDone
 			job.SchemaState = model.StatePublic
 			return ver, nil
@@ -829,7 +829,7 @@ func (w *worker) onFlashbackCluster(jobCtx *jobContext, job *model.Job) (ver int
 			}
 		}
 
-		asyncNotifyEvent(jobCtx, notifier.NewFlashbackClusterEvent(), job, w.sessPool)
+		asyncNotifyEvent(jobCtx, notifier.NewFlashbackClusterEvent(), job, w.sess.Context)
 		job.State = model.JobStateDone
 		job.SchemaState = model.StatePublic
 		return updateSchemaVersion(jobCtx, job)

@@ -133,7 +133,7 @@ func (w *worker) onAddColumn(jobCtx *jobContext, job *model.Job) (ver int64, err
 		// Finish this job.
 		job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
 		addColumnEvent := notifier.NewAddColumnEvent(tblInfo, []*model.ColumnInfo{columnInfo})
-		asyncNotifyEvent(jobCtx, addColumnEvent, job, w.sessPool)
+		asyncNotifyEvent(jobCtx, addColumnEvent, job, w.sess.Context)
 	default:
 		err = dbterror.ErrInvalidDDLState.GenWithStackByArgs("column", columnInfo.State)
 	}
