@@ -24,8 +24,8 @@ import (
 
 func TestMemo(t *testing.T) {
 	ctx := plannercore.MockContext()
-	t1 := plannercore.DataSource{}.Init(ctx, 0)
-	t2 := plannercore.DataSource{}.Init(ctx, 0)
+	t1 := logicalop.DataSource{}.Init(ctx, 0)
+	t2 := logicalop.DataSource{}.Init(ctx, 0)
 	join := logicalop.LogicalJoin{}.Init(ctx, 0)
 	join.SetChildren(t1, t2)
 
@@ -46,8 +46,8 @@ func TestMemo(t *testing.T) {
 
 func TestInsertGE(t *testing.T) {
 	ctx := plannercore.MockContext()
-	t1 := plannercore.DataSource{}.Init(ctx, 0)
-	t2 := plannercore.DataSource{}.Init(ctx, 0)
+	t1 := logicalop.DataSource{}.Init(ctx, 0)
+	t2 := logicalop.DataSource{}.Init(ctx, 0)
 	join := logicalop.LogicalJoin{}.Init(ctx, 0)
 	join.SetChildren(t1, t2)
 
