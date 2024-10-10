@@ -20,10 +20,17 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+<<<<<<< HEAD:ttl/ttlworker/job.go
 	"github.com/pingcap/tidb/ttl/cache"
 	"github.com/pingcap/tidb/ttl/session"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
+=======
+	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/ttl/cache"
+	"github.com/pingcap/tidb/pkg/ttl/session"
+	"github.com/pingcap/tidb/pkg/util/intest"
+>>>>>>> 93cad31464e (ttl: use a pessimistic transaction to finish the job (#56516)):pkg/ttl/ttlworker/job.go
 )
 
 const updateJobCurrentStatusTemplate = "UPDATE mysql.tidb_ttl_table_status SET current_job_status = %? WHERE table_id = %? AND current_job_status = %? AND current_job_id = %?"
@@ -126,7 +133,13 @@ type ttlJob struct {
 }
 
 // finish turns current job into last job, and update the error message and statistics summary
+<<<<<<< HEAD:ttl/ttlworker/job.go
 func (job *ttlJob) finish(se session.Session, now time.Time, summary *TTLSummary) {
+=======
+func (job *ttlJob) finish(se session.Session, now time.Time, summary *TTLSummary) error {
+	intest.Assert(se.GetSessionVars().Location().String() == now.Location().String())
+
+>>>>>>> 93cad31464e (ttl: use a pessimistic transaction to finish the job (#56516)):pkg/ttl/ttlworker/job.go
 	// at this time, the job.ctx may have been canceled (to cancel this job)
 	// even when it's canceled, we'll need to update the states, so use another context
 	err := se.RunInTxn(context.TODO(), func() error {
@@ -148,10 +161,9 @@ func (job *ttlJob) finish(se session.Session, now time.Time, summary *TTLSummary
 			return errors.Wrapf(err, "execute sql: %s", sql)
 		}
 
-		return nil
-	}, session.TxnModeOptimistic)
+		failpoint.InjectCall("ttl-finish", &err)
+		return err
+	}, session.TxnModePessimistic)
 
-	if err != nil {
-		logutil.BgLogger().Error("fail to finish a ttl job", zap.Error(err), zap.Int64("tableID", job.tbl.ID), zap.String("jobID", job.id))
-	}
+	return err
 }
