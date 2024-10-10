@@ -80,7 +80,6 @@ func TestModifyColumnReorgInfo(t *testing.T) {
 	ctx := mock.NewContext()
 	ctx.Store = store
 	times := 0
-	// TODO(joechenrh)
 	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunBefore", func(job *model.Job) {
 		if tbl.Meta().ID != job.TableID || checkErr != nil || job.SchemaState != model.StateWriteReorganization {
 			return
