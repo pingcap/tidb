@@ -308,22 +308,21 @@ func (c *castAsStringFunctionClass) getFunction(ctx BuildContext, args []Express
 	argTp := args[0].GetType(ctx.GetEvalCtx()).EvalType()
 	switch argTp {
 	case types.ETInt:
-		if bf.tp.GetFlen() == types.UnspecifiedLength {
-			// check https://github.com/pingcap/tidb/issues/44786
-			// set flen from integers may truncate integers, e.g. char(1) can not display -1[int(1)]
-			switch args[0].GetType(ctx.GetEvalCtx()).GetType() {
-			case mysql.TypeTiny:
-				bf.tp.SetFlen(4)
-			case mysql.TypeShort:
-				bf.tp.SetFlen(6)
-			case mysql.TypeInt24:
-				bf.tp.SetFlen(9)
-			case mysql.TypeLong:
-				// set it to 11 as mysql
-				bf.tp.SetFlen(11)
-			default:
-				bf.tp.SetFlen(args[0].GetType(ctx.GetEvalCtx()).GetFlen())
-			}
+		// Setting the flen to the maximum for the type, instead of the
+		// (deprecated) display width that was set to avoid truncation in
+		// case the string length of an integer is longer than the display
+		// width.
+		switch args[0].GetType(ctx.GetEvalCtx()).GetType() {
+		case mysql.TypeTiny:
+			bf.tp.SetFlen(4)
+		case mysql.TypeShort:
+			bf.tp.SetFlen(6)
+		case mysql.TypeInt24:
+			bf.tp.SetFlen(9)
+		case mysql.TypeLong:
+			bf.tp.SetFlen(11)
+		case mysql.TypeLonglong:
+			bf.tp.SetFlen(20)
 		}
 		sig = &builtinCastIntAsStringSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_CastIntAsString)
