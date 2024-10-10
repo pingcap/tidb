@@ -85,7 +85,7 @@ func (s *externalCheckpointStorage) getTS(ctx context.Context) (int64, int64, er
 		}
 
 		return nil
-	}, utils.NewPDReqBackoffer())
+	}, utils.NewAggressivePDBackoffStrategy())
 
 	return p, l, errors.Trace(errRetry)
 }

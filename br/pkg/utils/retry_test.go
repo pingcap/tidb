@@ -58,15 +58,15 @@ func TestFailNowIf(t *testing.T) {
 
 	// Test NextBackoff with an error that is not in failedOn
 	assert.Equal(time.Second, bo.NextBackoff(err2))
-	assert.NotEqualValues(0, bo.Attempt())
+	assert.NotEqualValues(0, bo.RemainingAttempts())
 
 	annotatedErr := errors.Annotate(errors.Annotate(err1, "meow?"), "nya?")
 	assert.Equal(time.Duration(0), bo.NextBackoff(annotatedErr))
-	assert.Equal(0, bo.Attempt())
+	assert.Equal(0, bo.RemainingAttempts())
 
 	mockBO = utils.InitialRetryState(100, time.Second, time.Second)
 	bo = utils.GiveUpRetryOn(&mockBO, berrors.ErrBackupNoLeader)
 	annotatedErr = berrors.ErrBackupNoLeader.FastGen("leader is taking an adventure")
 	assert.Equal(time.Duration(0), bo.NextBackoff(annotatedErr))
-	assert.Equal(0, bo.Attempt())
+	assert.Equal(0, bo.RemainingAttempts())
 }
