@@ -12,15 +12,9 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//go:build go1.22
+//go:build ddlargsv1
 
-package fastrand
+package testargsv1
 
-import (
-	_ "unsafe" // required by go:linkname
-)
-
-// Uint32 returns a lock free uint32 value.
-//
-//go:linkname Uint32 runtime.cheaprand
-func Uint32() uint32
+// ForceV1 is a flag to force using ddl job V1 in test.
+const ForceV1 = true

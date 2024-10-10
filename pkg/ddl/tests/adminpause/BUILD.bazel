@@ -12,8 +12,10 @@ go_library(
     deps = [
         "//pkg/ddl/logutil",
         "//pkg/domain",
+        "//pkg/domain/infosync",
         "//pkg/meta/model",
         "//pkg/testkit",
+        "//pkg/types",
     ],
 )
 

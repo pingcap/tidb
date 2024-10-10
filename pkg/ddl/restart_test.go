@@ -120,12 +120,11 @@ func TestSchemaResume(t *testing.T) {
 		Type:       model.ActionCreateSchema,
 		BinlogInfo: &model.HistoryInfo{},
 	}
-	job.FillArgs(&model.CreateSchemaArgs{DBInfo: dbInfo})
-	testRunInterruptedJob(t, store, dom, job, nil)
+	testRunInterruptedJob(t, store, dom, job, &model.CreateSchemaArgs{DBInfo: dbInfo})
 	testCheckSchemaState(t, store, dbInfo, model.StatePublic)
 
 	job = buildDropSchemaJob(dbInfo)
-	testRunInterruptedJob(t, store, dom, job, nil)
+	testRunInterruptedJob(t, store, dom, job, &model.DropSchemaArgs{FKCheck: true})
 	testCheckSchemaState(t, store, dbInfo, model.StateNone)
 }
 
@@ -139,7 +138,7 @@ func TestStat(t *testing.T) {
 
 	job := buildDropSchemaJob(dbInfo)
 	done := make(chan error, 1)
-	go runInterruptedJob(t, store, dom.DDLExecutor(), job, nil, done)
+	go runInterruptedJob(t, store, dom.DDLExecutor(), job, &model.DropSchemaArgs{FKCheck: true}, done)
 
 	ticker := time.NewTicker(dom.GetSchemaLease() * 1)
 	defer ticker.Stop()

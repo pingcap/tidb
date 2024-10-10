@@ -15,7 +15,10 @@
 package logicalop
 
 import (
+	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/constraint"
+	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
 )
 
 var (
@@ -69,4 +72,29 @@ func HasMaxOneRow(p base.LogicalPlan, childMaxOneRow []bool) bool {
 		}
 	}
 	return false
+}
+
+func addSelection(p base.LogicalPlan, child base.LogicalPlan, conditions []expression.Expression, chIdx int, opt *optimizetrace.LogicalOptimizeOp) {
+	if len(conditions) == 0 {
+		p.Children()[chIdx] = child
+		return
+	}
+	conditions = expression.PropagateConstant(p.SCtx().GetExprCtx(), conditions)
+	// Return table dual when filter is constant false or null.
+	dual := Conds2TableDual(child, conditions)
+	if dual != nil {
+		p.Children()[chIdx] = dual
+		AppendTableDualTraceStep(child, dual, conditions, opt)
+		return
+	}
+
+	conditions = constraint.DeleteTrueExprs(p, conditions)
+	if len(conditions) == 0 {
+		p.Children()[chIdx] = child
+		return
+	}
+	selection := LogicalSelection{Conditions: conditions}.Init(p.SCtx(), p.QueryBlockOffset())
+	selection.SetChildren(child)
+	p.Children()[chIdx] = selection
+	AppendAddSelectionTraceStep(p, child, selection, opt)
 }

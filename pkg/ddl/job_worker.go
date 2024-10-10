@@ -306,13 +306,24 @@ func JobNeedGC(job *model.Job) bool {
 		}
 		switch job.Type {
 		case model.ActionDropSchema, model.ActionDropTable,
-			model.ActionTruncateTable, model.ActionDropIndex,
+			model.ActionTruncateTable,
 			model.ActionDropPrimaryKey,
 			model.ActionDropTablePartition, model.ActionTruncateTablePartition,
 			model.ActionDropColumn, model.ActionModifyColumn,
 			model.ActionAddIndex, model.ActionAddPrimaryKey,
 			model.ActionReorganizePartition, model.ActionRemovePartitioning,
 			model.ActionAlterTablePartitioning:
+			return true
+		case model.ActionDropIndex:
+			_, _, _, _, hasVectors, err := job.DecodeDropIndexFinishedArgs()
+			if err != nil {
+				return false
+			}
+			// If it's a vector index, it needn't to store key ranges to gc_delete_range.
+			// We don't support drop vector index in multi-schema, so we only check the first one.
+			if len(hasVectors) > 0 && hasVectors[0] {
+				return false
+			}
 			return true
 		case model.ActionMultiSchemaChange:
 			for i, sub := range job.MultiSchemaInfo.SubJobs {
@@ -650,9 +661,9 @@ func skipWriteBinlog(job *model.Job) bool {
 	return false
 }
 
-func chooseLeaseTime(t, max time.Duration) time.Duration {
-	if t == 0 || t > max {
-		return max
+func chooseLeaseTime(t, maxv time.Duration) time.Duration {
+	if t == 0 || t > maxv {
+		return maxv
 	}
 	return t
 }
@@ -827,6 +838,8 @@ func (w *worker) runOneJobStep(
 		ver, err = w.onCreateIndex(jobCtx, job, false)
 	case model.ActionAddPrimaryKey:
 		ver, err = w.onCreateIndex(jobCtx, job, true)
+	case model.ActionAddVectorIndex:
+		ver, err = w.onCreateVectorIndex(jobCtx, job)
 	case model.ActionDropIndex, model.ActionDropPrimaryKey:
 		ver, err = onDropIndex(jobCtx, job)
 	case model.ActionRenameIndex:

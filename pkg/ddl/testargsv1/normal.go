@@ -1,4 +1,4 @@
-// Copyright 2022 PingCAP, Inc.
+// Copyright 2024 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -12,17 +12,12 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package noloopclosure
+//go:build !ddlargsv1
 
-import (
-	nlc "github.com/fatanugraha/noloopclosure"
-	"github.com/pingcap/tidb/build/linter/util"
-)
+package testargsv1
 
-// Analyzer is the analyzer struct of misspell.
-var Analyzer = nlc.Analyzer
-
-func init() {
-	util.SkipAnalyzerByConfig(Analyzer)
-	util.SkipAnalyzer(Analyzer)
-}
+// ForceV1 is a flag to force using ddl job V1 in test.
+// Since 8.4.0, we have a new version of DDL args, but we have to keep logics of
+// old version for compatibility. We change this to run unit-test another round
+// in V1 to make sure both code are working correctly.
+const ForceV1 = false

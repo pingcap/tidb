@@ -31,7 +31,7 @@ func (h *ddlHandlerImpl) onDropPartitions(t *notifier.SchemaChangeEvent) error {
 		count := int64(0)
 		for _, def := range droppedPartitionInfo.Definitions {
 			// Get the count and modify count of the partition.
-			tableCount, _, _, err := storage.StatsMetaCountAndModifyCount(sctx, def.ID)
+			tableCount, _, _, err := storage.StatsMetaCountAndModifyCount(util.StatsCtx, sctx, def.ID)
 			if err != nil {
 				return err
 			}
@@ -54,6 +54,7 @@ func (h *ddlHandlerImpl) onDropPartitions(t *notifier.SchemaChangeEvent) error {
 			// Because we drop the partition, we should subtract the count from the global stats.
 			delta := -count
 			err = storage.UpdateStatsMeta(
+				util.StatsCtx,
 				sctx,
 				startTS,
 				variable.TableDelta{Count: count, Delta: delta},

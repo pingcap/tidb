@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	infoschemactx "github.com/pingcap/tidb/pkg/infoschema/context"
+	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/meta/metabuild"
@@ -48,7 +49,6 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 	driver "github.com/pingcap/tidb/pkg/types/parser_driver"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
-	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/pingcap/tidb/pkg/util/set"
 	"go.uber.org/zap"
 )
@@ -392,13 +392,14 @@ func findTableIDFromStore(t *meta.Mutator, schemaID int64, tableName string) (in
 
 // BuildTableInfoFromAST builds model.TableInfo from a SQL statement.
 // Note: TableID and PartitionID are left as uninitialized value.
-func BuildTableInfoFromAST(s *ast.CreateTableStmt) (*model.TableInfo, error) {
-	return buildTableInfoWithCheck(NewMetaBuildContextWithSctx(mock.NewContext()), s, mysql.DefaultCharset, "", nil)
+func BuildTableInfoFromAST(ctx *metabuild.Context, s *ast.CreateTableStmt) (*model.TableInfo, error) {
+	// TODO: Support the vector index for this function.
+	return buildTableInfoWithCheck(ctx, nil, s, mysql.DefaultCharset, "", nil)
 }
 
 // buildTableInfoWithCheck builds model.TableInfo from a SQL statement.
 // Note: TableID and PartitionIDs are left as uninitialized value.
-func buildTableInfoWithCheck(ctx *metabuild.Context, s *ast.CreateTableStmt, dbCharset, dbCollate string, placementPolicyRef *model.PolicyRefInfo) (*model.TableInfo, error) {
+func buildTableInfoWithCheck(ctx *metabuild.Context, store kv.Storage, s *ast.CreateTableStmt, dbCharset, dbCollate string, placementPolicyRef *model.PolicyRefInfo) (*model.TableInfo, error) {
 	tbInfo, err := BuildTableInfoWithStmt(ctx, s, dbCharset, dbCollate, placementPolicyRef)
 	if err != nil {
 		return nil, err
@@ -409,7 +410,7 @@ func buildTableInfoWithCheck(ctx *metabuild.Context, s *ast.CreateTableStmt, dbC
 	if err = checkTableInfoValidWithStmt(ctx, tbInfo, s); err != nil {
 		return nil, err
 	}
-	if err = checkTableInfoValidExtra(ctx.GetExprCtx().GetEvalCtx().ErrCtx(), tbInfo); err != nil {
+	if err = checkTableInfoValidExtra(ctx.GetExprCtx().GetEvalCtx().ErrCtx(), store, tbInfo); err != nil {
 		return nil, err
 	}
 	return tbInfo, nil
@@ -510,12 +511,47 @@ func checkGeneratedColumn(ctx *metabuild.Context, schemaName pmodel.CIStr, table
 	return nil
 }
 
+func checkVectorIndexIfNeedTiFlashReplica(store kv.Storage, tblInfo *model.TableInfo) error {
+	var hasVectorIndex bool
+	for _, idx := range tblInfo.Indices {
+		if idx.VectorInfo != nil {
+			hasVectorIndex = true
+			break
+		}
+	}
+	if !hasVectorIndex {
+		return nil
+	}
+	if store == nil {
+		return errors.New("the store is nil")
+	}
+
+	if tblInfo.TiFlashReplica == nil || tblInfo.TiFlashReplica.Count == 0 {
+		replicas, err := infoschema.GetTiFlashStoreCount(store)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if replicas == 0 {
+			return errors.Trace(dbterror.ErrUnsupportedAddVectorIndex.FastGenByArgs("unsupported TiFlash store count is 0"))
+		}
+
+		// Always try to set to 1 as the default replica count.
+		defaultReplicas := uint64(1)
+		tblInfo.TiFlashReplica = &model.TiFlashReplicaInfo{
+			Count:          defaultReplicas,
+			LocationLabels: make([]string, 0),
+		}
+	}
+
+	return errors.Trace(checkTableTypeForVectorIndex(tblInfo))
+}
+
 // checkTableInfoValidExtra is like checkTableInfoValid, but also assumes the
 // table info comes from untrusted source and performs further checks such as
 // name length and column count.
 // (checkTableInfoValid is also used in repairing objects which don't perform
 // these checks. Perhaps the two functions should be merged together regardless?)
-func checkTableInfoValidExtra(ec errctx.Context, tbInfo *model.TableInfo) error {
+func checkTableInfoValidExtra(ec errctx.Context, store kv.Storage, tbInfo *model.TableInfo) error {
 	if err := checkTooLongTable(tbInfo.Name); err != nil {
 		return err
 	}
@@ -536,6 +572,9 @@ func checkTableInfoValidExtra(ec errctx.Context, tbInfo *model.TableInfo) error 
 		return errors.Trace(err)
 	}
 	if err := checkGlobalIndexes(ec, tbInfo); err != nil {
+		return errors.Trace(err)
+	}
+	if err := checkVectorIndexIfNeedTiFlashReplica(store, tbInfo); err != nil {
 		return errors.Trace(err)
 	}
 
@@ -621,7 +660,8 @@ func checkColumnAttributes(colName string, tp *types.FieldType) error {
 }
 
 // BuildSessionTemporaryTableInfo builds model.TableInfo from a SQL statement.
-func BuildSessionTemporaryTableInfo(ctx *metabuild.Context, is infoschema.InfoSchema, s *ast.CreateTableStmt, dbCharset, dbCollate string, placementPolicyRef *model.PolicyRefInfo) (*model.TableInfo, error) {
+func BuildSessionTemporaryTableInfo(ctx *metabuild.Context, store kv.Storage, is infoschema.InfoSchema, s *ast.CreateTableStmt,
+	dbCharset, dbCollate string, placementPolicyRef *model.PolicyRefInfo) (*model.TableInfo, error) {
 	ident := ast.Ident{Schema: s.Table.Schema, Name: s.Table.Name}
 	//build tableInfo
 	var tbInfo *model.TableInfo
@@ -639,7 +679,7 @@ func BuildSessionTemporaryTableInfo(ctx *metabuild.Context, is infoschema.InfoSc
 		}
 		tbInfo, err = BuildTableInfoWithLike(ident, referTbl.Meta(), s)
 	} else {
-		tbInfo, err = buildTableInfoWithCheck(ctx, s, dbCharset, dbCollate, placementPolicyRef)
+		tbInfo, err = buildTableInfoWithCheck(ctx, store, s, dbCharset, dbCollate, placementPolicyRef)
 	}
 	return tbInfo, err
 }
@@ -936,7 +976,7 @@ func setEmptyConstraintName(namesMap map[string]bool, constr *ast.Constraint) {
 		var colName string
 		for _, keyPart := range constr.Keys {
 			if keyPart.Expr != nil {
-				colName = "expression_index"
+				colName = getAnonymousIndexPrefix(constr.Tp == ast.ConstraintVector)
 			}
 		}
 		if colName == "" {
@@ -1168,10 +1208,13 @@ func BuildTableInfo(
 	}
 	foreignKeyID := tbInfo.MaxForeignKeyID
 	for _, constr := range constraints {
-		// Build hidden columns if necessary.
-		hiddenCols, err := buildHiddenColumnInfoWithCheck(ctx, constr.Keys, pmodel.NewCIStr(constr.Name), tbInfo, tblColumns)
-		if err != nil {
-			return nil, err
+		var hiddenCols []*model.ColumnInfo
+		if constr.Tp != ast.ConstraintVector {
+			// Build hidden columns if necessary.
+			hiddenCols, err = buildHiddenColumnInfoWithCheck(ctx, constr.Keys, pmodel.NewCIStr(constr.Name), tbInfo, tblColumns)
+			if err != nil {
+				return nil, err
+			}
 		}
 		for _, hiddenCol := range hiddenCols {
 			hiddenCol.State = model.StatePublic
@@ -1236,11 +1279,11 @@ func BuildTableInfo(
 		}
 
 		var (
-			indexName       = constr.Name
-			primary, unique bool
+			indexName               = constr.Name
+			primary, unique, vector bool
 		)
 
-		// Check if the index is primary or unique.
+		// Check if the index is primary, unique or vector.
 		switch constr.Tp {
 		case ast.ConstraintPrimaryKey:
 			primary = true
@@ -1248,6 +1291,11 @@ func BuildTableInfo(
 			indexName = mysql.PrimaryKeyName
 		case ast.ConstraintUniq, ast.ConstraintUniqKey, ast.ConstraintUniqIndex:
 			unique = true
+		case ast.ConstraintVector:
+			if constr.Option.Visibility == ast.IndexVisibilityInvisible {
+				return nil, dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("set vector index invisible")
+			}
+			vector = true
 		}
 
 		// check constraint
@@ -1316,10 +1364,11 @@ func BuildTableInfo(
 		// build index info.
 		idxInfo, err := BuildIndexInfo(
 			ctx,
-			tbInfo.Columns,
+			tbInfo,
 			pmodel.NewCIStr(indexName),
 			primary,
 			unique,
+			vector,
 			constr.Keys,
 			constr.Option,
 			model.StatePublic,
@@ -1484,7 +1533,7 @@ func addIndexForForeignKey(ctx *metabuild.Context, tbInfo *model.TableInfo) erro
 				Length: types.UnspecifiedLength,
 			})
 		}
-		idxInfo, err := BuildIndexInfo(ctx, tbInfo.Columns, idxName, false, false, keys, nil, model.StatePublic)
+		idxInfo, err := BuildIndexInfo(ctx, tbInfo, idxName, false, false, false, keys, nil, model.StatePublic)
 		if err != nil {
 			return errors.Trace(err)
 		}

@@ -72,15 +72,13 @@ func checkAddColumn(t *meta.Mutator, job *model.Job) (*model.TableInfo, *model.C
 	if err != nil {
 		return nil, nil, nil, nil, false, errors.Trace(err)
 	}
-	col := &model.ColumnInfo{}
-	pos := &ast.ColumnPosition{}
-	offset := 0
-	ifNotExists := false
-	err = job.DecodeArgs(col, pos, &offset, &ifNotExists)
+
+	args, err := model.GetTableColumnArgs(job)
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return nil, nil, nil, nil, false, errors.Trace(err)
 	}
+	col, pos, ifNotExists := args.Col, args.Pos, args.IgnoreExistenceErr
 
 	columnInfo := model.FindColumnInfo(tblInfo.Columns, col.Name.L)
 	if columnInfo != nil {
@@ -189,7 +187,7 @@ func onDropColumn(jobCtx *jobContext, job *model.Job) (ver int64, _ error) {
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
-		dropColumnArgs, err := model.GetDropColumnArgs(job)
+		dropColumnArgs, err := model.GetTableColumnArgs(job)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
@@ -220,7 +218,7 @@ func onDropColumn(jobCtx *jobContext, job *model.Job) (ver int64, _ error) {
 		} else {
 			// We should set related index IDs for job
 			job.FinishTableJob(model.JobStateDone, model.StateNone, ver, tblInfo)
-			dropColumnArgs, err := model.GetDropColumnArgs(job)
+			dropColumnArgs, err := model.GetTableColumnArgs(job)
 			if err != nil {
 				return ver, errors.Trace(err)
 			}
@@ -241,13 +239,13 @@ func checkDropColumn(jobCtx *jobContext, job *model.Job) (*model.TableInfo, *mod
 		return nil, nil, nil, false, errors.Trace(err)
 	}
 
-	dropColumnArgs, err := model.GetDropColumnArgs(job)
+	args, err := model.GetTableColumnArgs(job)
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return nil, nil, nil, false, errors.Trace(err)
 	}
 
-	colName, ifExists := dropColumnArgs.ColName, dropColumnArgs.IfExists
+	colName, ifExists := args.Col.Name, args.IgnoreExistenceErr
 	colInfo := model.FindColumnInfo(tblInfo.Columns, colName.L)
 	if colInfo == nil || colInfo.Hidden {
 		job.State = model.JobStateCancelled
@@ -292,13 +290,12 @@ func isDroppableColumn(tblInfo *model.TableInfo, colName pmodel.CIStr) error {
 }
 
 func onSetDefaultValue(jobCtx *jobContext, job *model.Job) (ver int64, _ error) {
-	newCol := &model.ColumnInfo{}
-	err := job.DecodeArgs(newCol)
+	args, err := model.GetSetDefaultValueArgs(job)
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
-
+	newCol := args.Col
 	return updateColumnDefaultValue(jobCtx, job, newCol, &newCol.Name)
 }
 
@@ -1102,10 +1099,14 @@ func isColumnWithIndex(colName string, indices []*model.IndexInfo) bool {
 
 func isColumnCanDropWithIndex(colName string, indices []*model.IndexInfo) error {
 	for _, indexInfo := range indices {
-		if indexInfo.Primary || len(indexInfo.Columns) > 1 {
+		if indexInfo.Primary || len(indexInfo.Columns) > 1 || indexInfo.VectorInfo != nil {
 			for _, col := range indexInfo.Columns {
 				if col.Name.L == colName {
-					return dbterror.ErrCantDropColWithIndex.GenWithStack("can't drop column %s with composite index covered or Primary Key covered now", colName)
+					errMsg := "with composite index covered or Primary Key covered now"
+					if indexInfo.VectorInfo != nil {
+						errMsg = "with Vector Key covered now"
+					}
+					return dbterror.ErrCantDropColWithIndex.GenWithStack("can't drop column %s "+errMsg, colName)
 				}
 			}
 		}

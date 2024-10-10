@@ -190,7 +190,11 @@ func TestPauseCancelAndRerunSchemaStmt(t *testing.T) {
 func TestPauseCancelAndRerunIndexStmt(t *testing.T) {
 	var dom, stmtKit, adminCommandKit = prepareDomain(t)
 
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/infoschema/mockTiFlashStoreCount", `return(true)`)
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/MockCheckVectorIndexProcess", `return(1)`)
+
 	require.Nil(t, generateTblUser(stmtKit, 10))
+	require.Nil(t, generateTblUserWithVec(stmtKit, 10))
 
 	for _, stmtCase := range indexDDLStmtCase {
 		pauseAndCancelStmt(t, stmtKit, adminCommandKit, dom, &stmtCase)

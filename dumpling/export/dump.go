@@ -773,24 +773,24 @@ func (d *Dumper) concurrentDumpTable(tctx *tcontext.Context, conn *BaseConn, met
 		return d.dumpWholeTableDirectly(tctx, meta, taskChan, "", orderByClause, 0, 1)
 	}
 
-	min, max, err := d.selectMinAndMaxIntValue(tctx, conn, db, tbl, field)
+	minv, maxv, err := d.selectMinAndMaxIntValue(tctx, conn, db, tbl, field)
 	if err != nil {
 		tctx.L().Info("fallback to sequential dump due to cannot get bounding values. This won't influence the whole dump process",
 			log.ShortError(err))
 		return d.dumpWholeTableDirectly(tctx, meta, taskChan, "", orderByClause, 0, 1)
 	}
 	tctx.L().Debug("get int bounding values",
-		zap.String("lower", min.String()),
-		zap.String("upper", max.String()))
+		zap.String("lower", minv.String()),
+		zap.String("upper", maxv.String()))
 
 	// every chunk would have eventual adjustments
 	estimatedChunks := count / conf.Rows
-	estimatedStep := new(big.Int).Sub(max, min).Uint64()/estimatedChunks + 1
+	estimatedStep := new(big.Int).Sub(maxv, minv).Uint64()/estimatedChunks + 1
 	bigEstimatedStep := new(big.Int).SetUint64(estimatedStep)
-	cutoff := new(big.Int).Set(min)
+	cutoff := new(big.Int).Set(minv)
 	totalChunks := estimatedChunks
 	if estimatedStep == 1 {
-		totalChunks = new(big.Int).Sub(max, min).Uint64() + 1
+		totalChunks = new(big.Int).Sub(maxv, minv).Uint64() + 1
 	}
 
 	selectField, selectLen := meta.SelectedField(), meta.SelectedLen()
@@ -800,7 +800,7 @@ func (d *Dumper) concurrentDumpTable(tctx *tcontext.Context, conn *BaseConn, met
 	if conf.Where == "" {
 		nullValueCondition = fmt.Sprintf("`%s` IS NULL OR ", escapeString(field))
 	}
-	for max.Cmp(cutoff) >= 0 {
+	for maxv.Cmp(cutoff) >= 0 {
 		nextCutOff := new(big.Int).Add(cutoff, bigEstimatedStep)
 		where := fmt.Sprintf("%s(`%s` >= %d AND `%s` < %d)", nullValueCondition, escapeString(field), cutoff, escapeString(field), nextCutOff)
 		query := buildSelectQuery(db, tbl, selectField, "", buildWhereCondition(conf, where), orderByClause)
@@ -847,23 +847,23 @@ func (d *Dumper) selectMinAndMaxIntValue(tctx *tcontext.Context, conn *BaseConn,
 		return err
 	}, func() {}, query)
 	if err != nil {
-		return zero, zero, errors.Annotatef(err, "can't get min/max values to split chunks, query: %s", query)
+		return zero, zero, errors.Annotatef(err, "can't get min/maxv values to split chunks, query: %s", query)
 	}
 	if !smax.Valid || !smin.Valid {
 		// found no data
 		return zero, zero, errors.Errorf("no invalid min/max value found in query %s", query)
 	}
 
-	max := new(big.Int)
-	min := new(big.Int)
+	maxv := new(big.Int)
+	minv := new(big.Int)
 	var ok bool
-	if max, ok = max.SetString(smax.String, 10); !ok {
+	if maxv, ok = maxv.SetString(smax.String, 10); !ok {
 		return zero, zero, errors.Errorf("fail to convert max value %s in query %s", smax.String, query)
 	}
-	if min, ok = min.SetString(smin.String, 10); !ok {
+	if minv, ok = minv.SetString(smin.String, 10); !ok {
 		return zero, zero, errors.Errorf("fail to convert min value %s in query %s", smin.String, query)
 	}
-	return min, max, nil
+	return minv, maxv, nil
 }
 
 func (d *Dumper) concurrentDumpTiDBTables(tctx *tcontext.Context, conn *BaseConn, meta TableMeta, taskChan chan<- Task) error {
