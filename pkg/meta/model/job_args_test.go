@@ -20,7 +20,6 @@ import (
 
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/model"
-	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/stretchr/testify/require"
 	pdhttp "github.com/tikv/pd/client/http"
 )
@@ -996,12 +995,12 @@ func TestAlterTableAttributesArgs(t *testing.T) {
 
 func TestModifyColumnsArgs(t *testing.T) {
 	inArgs := &ModifyColumnArgs{
-		Column:           &ColumnInfo{ID: 111, Name: pmodel.NewCIStr("col1")},
-		OldColumnName:    pmodel.NewCIStr("aa"),
+		Column:           &ColumnInfo{ID: 111, Name: model.NewCIStr("col1")},
+		OldColumnName:    model.NewCIStr("aa"),
 		Position:         &ast.ColumnPosition{Tp: ast.ColumnPositionFirst},
 		ModifyColumnType: 1,
 		NewShardBits:     123,
-		ChangingColumn:   &ColumnInfo{ID: 222, Name: pmodel.NewCIStr("col2")},
+		ChangingColumn:   &ColumnInfo{ID: 222, Name: model.NewCIStr("col2")},
 		RedundantIdxs:    []int64{1, 2},
 		IndexIDs:         []int64{3, 4},
 		PartitionIDs:     []int64{5, 6},
