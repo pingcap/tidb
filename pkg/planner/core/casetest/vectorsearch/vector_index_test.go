@@ -220,6 +220,7 @@ func TestANNInexWithSimpleCBO(t *testing.T) {
 	`)
 	tk.MustExec("alter table t1 set tiflash replica 1;")
 	tk.MustExec("alter table t1 add vector index ((vec_cosine_distance(vec))) USING HNSW;")
+	dom := domain.GetDomain(tk.Session())
+	coretestsdk.SetTiFlashReplica(t, dom, "test", "t1")
 	tk.MustUseIndex("select * from t1 order by vec_cosine_distance(vec, '[1,1,1]') limit 1", "vector_index")
-	tk.MustNoIndexUsed("select * from t1 order by vec_cosine_distance(vec, '[1,1,1]') limit 10000")
 }
