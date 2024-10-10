@@ -50,6 +50,7 @@ go_test(
     deps = [
         "//pkg/parser/ast",
         "//pkg/parser/charset",
+        "//pkg/parser/duration",
         "//pkg/parser/model",
         "//pkg/parser/mysql",
         "//pkg/parser/terror",
