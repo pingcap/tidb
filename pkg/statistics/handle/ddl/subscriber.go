@@ -132,7 +132,28 @@ func (h handler) handle(
 	case model.ActionExchangeTablePartition:
 		// TODO: implement me
 	case model.ActionReorganizePartition:
-		// TODO: implement me
+		globalTableInfo, addedPartInfo, droppedPartitionInfo := change.GetReorganizePartitionInfo()
+		// Avoid updating global stats as the data remains unchanged.
+		// For new partitions, it's crucial to correctly insert the count and modify count correctly.
+		// However, this is challenging due to the need to know the count of the new partitions.
+		// Given that a partition can be split into two, determining the count of the new partitions is so hard.
+		// It's acceptable to not update it immediately,
+		// as the new partitions will be analyzed shortly due to the absence of statistics for them.
+		// Therefore, the auto-analyze worker will handle them in the near future.
+		for _, def := range addedPartInfo.Definitions {
+			if err := h.insertStats4PhysicalID(ctx, sctx, globalTableInfo, def.ID); err != nil {
+				return err
+			}
+		}
+
+		// Reset the partition stats.
+		for _, def := range droppedPartitionInfo.Definitions {
+			if err := h.delayedDeleteStats4PhysicalID(ctx, sctx, def.ID); err != nil {
+				return err
+			}
+		}
+
+		return nil
 	case model.ActionAlterTablePartitioning:
 		oldSingleTableID, globalTableInfo, addedPartInfo := change.GetAddPartitioningInfo()
 		// Add new partition stats.
