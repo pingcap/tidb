@@ -36,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/statistics/handle/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/replayer"
 	"go.uber.org/zap"
@@ -467,6 +468,85 @@ func loadStats(ctx sessionctx.Context, f *zip.File) error {
 	return h.LoadStatsFromJSON(context.Background(), ctx.GetInfoSchema().(infoschema.InfoSchema), jsonTbl, 0)
 }
 
+func unzip(z *zip.File) (string, error) {
+	ra, err := z.Open()
+	if err != nil {
+		return "", err
+	}
+	//nolint: errcheck
+	defer ra.Close()
+	bufa := new(bytes.Buffer)
+	_, err = bufa.ReadFrom(ra)
+	if err != nil {
+		return "", err
+	}
+	return bufa.String(), err
+}
+
+func getTableNameFromZipFilename(name string) string {
+	// dbName.tableName.schema.txt
+	s := strings.Split(name, ".")
+	intest.Assert(len(s) == 4, "invalid zip file name")
+	return s[0] + "." + s[1]
+}
+
+func topoSortTable(input []*zip.File) (result []*zip.File, err error) {
+	outMap := make(map[string]int) // table -> out degree
+	stmtCache := make(map[string]*ast.CreateTableStmt)
+	zipMap := make(map[string]*zip.File)
+	for _, f := range input {
+		originText, err := unzip(f)
+		if err != nil {
+			return nil, err
+		}
+		tableName := getTableNameFromZipFilename(f.Name)
+		zipMap[tableName] = f
+		if !strings.Contains(originText, "FOREIGN KEY") {
+			outMap[tableName] = 0
+			continue
+		}
+		stmt, _, err := parser.New().ParseSQL(originText)
+		if err != nil {
+			return nil, err
+		}
+		outMap[tableName] = 0
+		stmtCache[tableName] = stmt[len(stmt)-1].(*ast.CreateTableStmt)
+		for _, c := range stmtCache[tableName].Constraints {
+			if c.Tp == ast.ConstraintForeignKey {
+				outMap[tableName]++
+			}
+		}
+	}
+	cnt := 0
+	taskCount := len(outMap)
+OUTLOOP:
+	for len(outMap) != 0 {
+		cnt++
+		if cnt > taskCount {
+			return nil, errors.New("plan replayer: unknown table")
+		}
+		for k, v := range outMap {
+			if v == 0 {
+				delete(outMap, k)
+				result = append(result, zipMap[k])
+				for name, stats := range stmtCache {
+					if outMap[name] == 0 {
+						continue
+					}
+					for _, c := range stats.Constraints {
+						if c.Tp == ast.ConstraintForeignKey &&
+							c.Refer.Table.Schema.L+"."+c.Refer.Table.Name.L == k {
+							outMap[name]--
+						}
+					}
+				}
+				continue OUTLOOP
+			}
+		}
+	}
+	return result, nil
+}
+
 // Update updates the data of the corresponding table.
 func (e *PlanReplayerLoadInfo) Update(data []byte) error {
 	b := bytes.NewReader(data)
@@ -482,16 +562,24 @@ func (e *PlanReplayerLoadInfo) Update(data []byte) error {
 	}
 
 	// build schema and table first
+	var fss []*zip.File
 	for _, zipFile := range z.File {
 		if zipFile.Name == fmt.Sprintf("schema/%v", domain.PlanReplayerSchemaMetaFile) {
 			continue
 		}
 		path := strings.Split(zipFile.Name, "/")
 		if len(path) == 2 && strings.Compare(path[0], "schema") == 0 && zipFile.Mode().IsRegular() {
-			err = createSchemaAndItems(e.Ctx, zipFile)
-			if err != nil {
-				return err
-			}
+			fss = append(fss, zipFile)
+		}
+	}
+	fss, err = topoSortTable(fss)
+	if err != nil {
+		return err
+	}
+	for _, f := range fss {
+		err = createSchemaAndItems(e.Ctx, f)
+		if err != nil {
+			return err
 		}
 	}
 
