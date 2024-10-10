@@ -1938,8 +1938,8 @@ func buildPointUpdatePlan(ctx base.PlanContext, pointPlan base.PhysicalPlan, dbN
 	updatePlan := Update{
 		SelectPlan:  pointPlan,
 		OrderedList: orderedList,
-		TblColPosInfos: TblColPosInfoSlice{
-			TblColPosInfo{
+		TblColPosInfos: util.TblColPosInfoSlice{
+			util.TblColPosInfo{
 				TblID:      tbl.ID,
 				Start:      0,
 				End:        pointPlan.Schema().Len(),
@@ -2070,7 +2070,7 @@ func buildPointDeletePlan(ctx base.PlanContext, pointPlan base.PhysicalPlan, dbN
 	}
 	delPlan := Delete{
 		SelectPlan:     pointPlan,
-		TblColPosInfos: []TblColPosInfo{colPosInfo},
+		TblColPosInfos: []util.TblColPosInfo{colPosInfo},
 	}.Init(ctx)
 	tblID2Table := map[int64]table.Table{tbl.ID: t}
 	err = delPlan.buildOnDeleteFKTriggers(ctx, is, tblID2Table)
