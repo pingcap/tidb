@@ -1143,6 +1143,29 @@ func TestAddIndexArgs(t *testing.T) {
 		PartitionIDs: []int64{100, 101, 102},
 	}
 
+	// TODO(joechenrh): test v2 after multi schema change done.
+	for _, v := range []JobVersion{JobVersion1} {
+		job := &Job{
+			Version: v,
+			Type:    ActionAddIndex,
+		}
+		job.FillArgs(inArgs)
+		subJob := &SubJob{
+			Type: ActionAddIndex,
+			Args: job.Args,
+		}
+		args, err := GetAddIndexArgsFromSubJob(subJob)
+		require.NoError(t, err)
+
+		a := args.IndexArgs[0]
+		require.Equal(t, inArgs.IndexArgs[0].Global, a.Global)
+		require.Equal(t, inArgs.IndexArgs[0].Unique, a.Unique)
+		require.Equal(t, inArgs.IndexArgs[0].IndexName, a.IndexName)
+		require.Equal(t, inArgs.IndexArgs[0].IndexPartSpecifications, a.IndexPartSpecifications)
+		require.Equal(t, inArgs.IndexArgs[0].IndexOption, a.IndexOption)
+		require.Equal(t, inArgs.IndexArgs[0].HiddenCols, a.HiddenCols)
+	}
+
 	inArgs.IsFinishedArg = false
 	for _, v := range []JobVersion{JobVersion1, JobVersion2} {
 		inArgs.IndexArgs[0].IsVector = false
