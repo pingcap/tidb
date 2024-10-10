@@ -1296,6 +1296,7 @@ func GetFlashbackClusterArgs(job *Job) (*FlashbackClusterArgs, error) {
 	return getOrDecodeArgs[*FlashbackClusterArgs](&FlashbackClusterArgs{}, job)
 }
 
+// ModifyColumnArgs is the argument for modify column.
 type ModifyColumnArgs struct {
 	Column           *ColumnInfo         `json:"column,omitempty"`
 	OldColumnName    pmodel.CIStr        `json:"old_column_name,omitempty"`
@@ -1316,7 +1317,7 @@ type ModifyColumnArgs struct {
 	PartitionIDs []int64 `json:"partition_ids,omitempty"`
 }
 
-func (a *ModifyColumnArgs) getArgsV1(job *Job) []any {
+func (a *ModifyColumnArgs) getArgsV1(*Job) []any {
 	return []any{
 		a.Column, a.OldColumnName, a.Position, a.ModifyColumnType,
 		a.NewShardBits, a.ChangingColumn, a.ChangingIdxs, a.RedundantIdxs,
@@ -1330,7 +1331,7 @@ func (a *ModifyColumnArgs) decodeV1(job *Job) error {
 	)
 }
 
-func (a *ModifyColumnArgs) getFinishedArgsV1(job *Job) []any {
+func (a *ModifyColumnArgs) getFinishedArgsV1(*Job) []any {
 	return []any{a.IndexIDs, a.PartitionIDs}
 }
 
