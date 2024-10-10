@@ -8,6 +8,7 @@ go_library(
     deps = [
         "//pkg/kv",
         "//pkg/metrics",
+        "//pkg/resourcemanager/gpool",
         "//pkg/sessionctx/variable",
         "//pkg/store/copr",
         "//pkg/store/driver/error",
