@@ -252,9 +252,11 @@ func (g *TTLTimersSyncer) shouldSyncTimer(timer *timerapi.TimerRecord, schema pm
 
 	tags := getTimerTags(schema, tblInfo, partition)
 	ttlInfo := tblInfo.TTLInfo
+	policyType, policyExpr := getTTLSchedulePolicy(ttlInfo)
 	return !slices.Equal(timer.Tags, tags) ||
 		timer.Enable != ttlInfo.Enable ||
-		timer.SchedPolicyExpr != ttlInfo.JobInterval
+		timer.SchedPolicyType != policyType ||
+		timer.SchedPolicyExpr != policyExpr
 }
 
 func (g *TTLTimersSyncer) syncOneTimer(ctx context.Context, se session.Session, schema pmodel.CIStr, tblInfo *model.TableInfo, partition *model.PartitionDefinition, skipCache bool) (*timerapi.TimerRecord, error) {
@@ -305,12 +307,13 @@ func (g *TTLTimersSyncer) syncOneTimer(ctx context.Context, se session.Session, 
 			return nil, err
 		}
 
+		policyType, policyExpr := getTTLSchedulePolicy(ttlInfo)
 		timer, err = g.cli.CreateTimer(ctx, timerapi.TimerSpec{
 			Key:             key,
 			Tags:            tags,
 			Data:            data,
-			SchedPolicyType: timerapi.SchedEventInterval,
-			SchedPolicyExpr: ttlInfo.JobInterval,
+			SchedPolicyType: policyType,
+			SchedPolicyExpr: policyExpr,
 			HookClass:       timerHookClass,
 			Watermark:       watermark,
 			Enable:          ttlInfo.Enable,
@@ -329,7 +332,7 @@ func (g *TTLTimersSyncer) syncOneTimer(ctx context.Context, se session.Session, 
 
 	err = g.cli.UpdateTimer(ctx, timer.ID,
 		timerapi.WithSetTags(tags),
-		timerapi.WithSetSchedExpr(timerapi.SchedEventInterval, tblInfo.TTLInfo.JobInterval),
+		timerapi.WithSetSchedExpr(getTTLSchedulePolicy(tblInfo.TTLInfo)),
 		timerapi.WithSetEnable(tblInfo.TTLInfo.Enable),
 	)
 
@@ -394,4 +397,14 @@ func getTTLTableStatus(ctx context.Context, se session.Session, tblInfo *model.T
 	}
 
 	return cache.RowToTableStatus(se, rows[0])
+}
+
+// getTTLSchedulePolicy returns the timer's schedule policy and expression for a TTL job
+func getTTLSchedulePolicy(info *model.TTLInfo) (timerapi.SchedPolicyType, string) {
+	interval := info.JobInterval
+	if interval == "" {
+		// This only happens when the table is created from 6.5 in which the `tidb_job_interval` is not introduced yet.
+		interval = model.DefaultJobIntervalStr
+	}
+	return timerapi.SchedEventInterval, interval
 }

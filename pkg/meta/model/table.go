@@ -1245,6 +1245,9 @@ func (s WindowRepeatType) String() string {
 // DefaultJobInterval sets the default interval between TTL jobs
 const DefaultJobInterval = time.Hour
 
+// DefaultJobIntervalStr is the string representation of DefaultJobInterval
+const DefaultJobIntervalStr = "1h"
+
 // TTLInfo records the TTL config
 type TTLInfo struct {
 	ColumnName      model.CIStr `json:"column"`
