@@ -1070,7 +1070,6 @@ func (m MigrationExt) doTruncateLogs(
 	m.Hooks.StartDeletingForTruncating(metadataInfos, from)
 	defer m.Hooks.DeletedAllFilesForTruncating()
 	for path, metaInfo := range metadataInfos.metadataInfos {
-		path := path
 		if metaInfo.MinTS >= from {
 			continue
 		}
