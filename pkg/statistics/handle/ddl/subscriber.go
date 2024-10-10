@@ -97,11 +97,34 @@ func (h handler) handle(
 			}
 		}
 	case model.ActionAddColumn:
-		// TODO: implement me
+		newTableInfo, newColumnInfo := change.GetAddColumnInfo()
+		ids, err := getPhysicalIDs(sctx, newTableInfo)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		for _, id := range ids {
+			if err = h.insertStats4Col(ctx, sctx, id, newColumnInfo); err != nil {
+				return errors.Trace(err)
+			}
+		}
 	case model.ActionModifyColumn:
-		// TODO: implement me
+		newTableInfo, modifiedColumnInfo := change.GetModifyColumnInfo()
+		ids, err := getPhysicalIDs(sctx, newTableInfo)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		for _, id := range ids {
+			if err = h.insertStats4Col(ctx, sctx, id, modifiedColumnInfo); err != nil {
+				return errors.Trace(err)
+			}
+		}
 	case model.ActionAddTablePartition:
-		// TODO: implement me
+		globalTableInfo, addedPartitionInfo := change.GetAddPartitionInfo()
+		for _, def := range addedPartitionInfo.Definitions {
+			if err := h.insertStats4PhysicalID(ctx, sctx, globalTableInfo, def.ID); err != nil {
+				return errors.Trace(err)
+			}
+		}
 	case model.ActionTruncateTablePartition:
 		// TODO: implement me
 	case model.ActionDropTablePartition:
@@ -111,11 +134,32 @@ func (h handler) handle(
 	case model.ActionReorganizePartition:
 		// TODO: implement me
 	case model.ActionAlterTablePartitioning:
-		// TODO: implement me
+		oldSingleTableID, globalTableInfo, addedPartInfo := change.GetAddPartitioningInfo()
+		// Add new partition stats.
+		for _, def := range addedPartInfo.Definitions {
+			if err := h.insertStats4PhysicalID(ctx, sctx, globalTableInfo, def.ID); err != nil {
+				return errors.Trace(err)
+			}
+		}
+		// Change id for global stats, since the data has not changed!
+		// Note: This operation will update all tables related to statistics with the new ID.
+		return errors.Trace(storage.ChangeGlobalStatsID(ctx, sctx, oldSingleTableID, globalTableInfo.ID))
 	case model.ActionRemovePartitioning:
-		// TODO: implement me
+		// Change id for global stats, since the data has not changed!
+		// Note: This operation will update all tables related to statistics with the new ID.
+		oldTblID, newSingleTableInfo, droppedPartInfo := change.GetRemovePartitioningInfo()
+		if err := storage.ChangeGlobalStatsID(ctx, sctx, oldTblID, newSingleTableInfo.ID); err != nil {
+			return errors.Trace(err)
+		}
+
+		// Remove partition stats.
+		for _, def := range droppedPartInfo.Definitions {
+			if err := h.delayedDeleteStats4PhysicalID(ctx, sctx, def.ID); err != nil {
+				return errors.Trace(err)
+			}
+		}
 	case model.ActionFlashbackCluster:
-		// TODO: implement me
+		return errors.Trace(storage.UpdateStatsVersion(ctx, sctx))
 	default:
 		intest.Assert(false)
 		logutil.StatsLogger().Error("Unhandled schema change event",
@@ -178,6 +222,19 @@ func (h handler) delayedDeleteStats4PhysicalID(
 		return errors.Trace(err2)
 	}
 	return errors.Trace(h.recordHistoricalStatsMeta(ctx, sctx, id, startTS))
+}
+
+func (h handler) insertStats4Col(
+	ctx context.Context,
+	sctx sessionctx.Context,
+	physicalID int64,
+	colInfos []*model.ColumnInfo,
+) error {
+	startTS, err := storage.InsertColStats2KV(ctx, sctx, physicalID, colInfos)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	return errors.Trace(h.recordHistoricalStatsMeta(ctx, sctx, physicalID, startTS))
 }
 
 func getPhysicalIDs(
