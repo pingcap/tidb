@@ -427,7 +427,6 @@ func (w *worker) doModifyColumnTypeWithData(
 	changingCol, oldCol *model.ColumnInfo, args *model.ModifyColumnArgs,
 ) (ver int64, _ error) {
 	colName, pos := args.Column.Name, args.Position
-	rmIdxs := args.RedundantIdxs
 
 	var err error
 	originalState := changingCol.State
@@ -525,7 +524,7 @@ func (w *worker) doModifyColumnTypeWithData(
 			return ver, err
 		}
 
-		rmIdxs = append(buildRelatedIndexIDs(tblInfo, oldCol.ID), args.RedundantIdxs...)
+		rmIdxs := append(buildRelatedIndexIDs(tblInfo, oldCol.ID), args.RedundantIdxs...)
 
 		err = adjustTableInfoAfterModifyColumnWithData(tblInfo, pos, oldCol, changingCol, colName, changingIdxs)
 		if err != nil {
