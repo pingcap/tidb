@@ -113,6 +113,13 @@
       "/cgo/": "ignore cgo code"
     }
   },
+  "copyloopvar": {
+    "exclude_files": {
+      "pkg/parser/parser.go": "parser/parser.go code",
+      "external/": "no need to vet third party code",
+      ".*_generated\\.go$": "ignore generated code"
+    }
+  },
   "ctrlflow": {
     "exclude_files": {
       "pkg/parser/parser.go": "parser/parser.go code",
@@ -163,13 +170,6 @@
       "/parser/": "ignore code",
       "pkg/server/internal/testserverclient/server_client.go": "ignore code",
       ".*_/testmain\\.go$": "ignore code"
-    }
-  },
-  "exportloopref": {
-    "exclude_files": {
-      "pkg/parser/parser.go": "parser/parser.go code",
-      "external/": "no need to vet third party code",
-      ".*_generated\\.go$": "ignore generated code"
     }
   },
   "filepermission": {
@@ -346,13 +346,6 @@
       ".*_generated\\.go$": "ignore generated code"
     }
   },
-  "loopclosure": {
-    "exclude_files": {
-      "pkg/parser/parser.go": "parser/parser.go code",
-      "external/": "no need to vet third party code",
-      ".*_generated\\.go$": "ignore generated code"
-    }
-  },
   "lostcancel": {
     "exclude_files": {
       "pkg/parser/parser.go": "parser/parser.go code",
@@ -492,22 +485,6 @@
       ".*_generated\\.go$": "ignore generated code",
       ".*mock.go$": "ignore generated code",
       "/cgo/": "ignore cgo"
-    }
-  },
-  "noloopclosure": {
-    "exclude_files": {
-      "pkg/parser/parser.go": "parser/parser.go code",
-      "external/": "no need to vet third party code",
-      ".*_generated\\.go$": "ignore generated code"
-    },
-    "only_files": {
-      "pkg/lightning/mydump/": "pkg/lightning/mydump/",
-      "lightning/pkg/importer/opts": "lightning/pkg/importer/opts",
-      "pkg/kv/": "kv code",
-      "pkg/util/memory": "util/memory",
-      "pkg/ddl/": "ddl",
-      "pkg/planner/": "planner",
-      "pkg/extension/": "extension code"
     }
   },
   "pkgfact": {

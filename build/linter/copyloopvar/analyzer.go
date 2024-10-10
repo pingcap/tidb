@@ -1,4 +1,4 @@
-// Copyright 2019 PingCAP, Inc.
+// Copyright 2022 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -12,4 +12,16 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package core
+package copyloopvar
+
+import (
+	"github.com/karamaru-alpha/copyloopvar"
+	"github.com/pingcap/tidb/build/linter/util"
+)
+
+// Analyzer is the analyzer struct of copyloopvar.
+var Analyzer = copyloopvar.NewAnalyzer()
+
+func init() {
+	util.SkipAnalyzerByConfig(Analyzer)
+}

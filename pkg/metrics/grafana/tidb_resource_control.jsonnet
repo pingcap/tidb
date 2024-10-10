@@ -780,6 +780,93 @@ local RunawayEventPanel = graphPanel.new(
   )
 );
 
+//*  ==============Panel (Priority Task Control)==================
+//*  Row Title: Priority Task Control
+//*  Description: The metrics about Priority Tasks Control resource control
+//*  Panels: 4
+//*  ==============Panel (Background Task Control)==================
+
+local priorityTaskRow = row.new(collapse=true, title="Priority Task Control");
+
+// The CPU time used of each priority
+local PriorityTaskCPUPanel = graphPanel.new(
+  title="CPU Time by Priority",
+  datasource=myDS,
+  legend_rightSide=true,
+  legend_current=true,
+  legend_alignAsTable=true,
+  legend_values=true,
+  format="µs",
+  logBase1Y=1,
+  description="The total CPU time cost by tasks of each priority.",
+).addTarget(
+  prometheus.target(
+    'sum(rate(tikv_resource_control_priority_task_exec_duration{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$tidb_instance"}[1m])) by (instance, priority)',
+    legendFormat="{{instance}}-{{priority}}",
+  )
+);
+
+// The CPU Limiter Quota of each priority
+local PriorityTaskQuotaLimitPanel = graphPanel.new(
+  title="CPU Quota Limit by Priority",
+  datasource=myDS,
+  legend_rightSide=true,
+  legend_current=true,
+  legend_alignAsTable=true,
+  legend_values=true,
+  format="µs",
+  logBase1Y=1,
+  description="The CPU quota limiter applied to each priority.",
+).addTarget(
+  prometheus.target(
+    'tikv_resource_control_priority_quota_limit{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$tikv_instance"}',
+    legendFormat="{{instance}}-{{priority}}",
+  )
+);
+
+// Task QPS that triggers wait
+local PriorityTaskWaitQPSPanel = graphPanel.new(
+  title="Tasks Wait QPS by Priority",
+  datasource=myDS,
+  legend_rightSide=true,
+  legend_current=true,
+  legend_alignAsTable=true,
+  legend_values=true,
+  format="short",
+  logBase1Y=1,
+  description="Tasks number per second that triggers quota limiter wait",
+).addTarget(
+  prometheus.target(
+    'sum(rate(tikv_resource_control_priority_wait_duration_count{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$tidb_instance"}[1m])) by (instance, priority)',
+    legendFormat="{{instance}}-{{priority}}",
+  )
+);
+
+// The task wait distribution by priority
+local PriorityTaskWaitDurationPanel = graphPanel.new(
+  title="Priority Task Wait Duration",
+  datasource=myDS,
+  legend_rightSide=true,
+  legend_max=true,
+  legend_avg=true,
+  legend_current=true,
+  legend_alignAsTable=true,
+  legend_values=true,
+  format="s",
+  logBase1Y=2,
+  description="The wait Duration of tasks that triggers quota limiter wait per priority",
+).addTarget(
+  prometheus.target(
+    'histogram_quantile(0.99, sum(rate(tikv_resource_control_priority_wait_duration_bucket{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$tikv_instance"}[1m])) by (instance, priority, le))',
+    legendFormat="{{instance}}-{{priority}}-P99",
+  )
+).addTarget(
+  prometheus.target(
+    'sum(rate(tikv_resource_control_priority_wait_duration_sum{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$tikv_instance"}[1m])) by (instance, priority) / sum(rate(tikv_resource_control_priority_wait_duration_count{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$tikv_instance"}[1m])) by (instance, priority)',
+    legendFormat="{{instance}}-{{priority}}-avg",
+  )
+);
+
 
 //*  ==============Panel (Background Task Control)==================
 //*  Row Title: Background Task Control
@@ -886,7 +973,7 @@ local BackgroundTaskCPUConsumptionPanel = graphPanel.new(
   legend_current=true,
   legend_alignAsTable=true,
   legend_values=true,
-  format="us",
+  format="µs",
   logBase1Y=1,
   description="The total background task's cpu consumption for all resource groups.",
 ).addTarget(
@@ -926,7 +1013,7 @@ local BackgroundTaskTotalWaitDurationPanel = graphPanel.new(
   legend_current=true,
   legend_alignAsTable=true,
   legend_values=true,
-  format="us",
+  format="µs",
   logBase1Y=1,
   description="The total background task's wait duration for all resource groups.",
 ).addTarget(
@@ -1126,6 +1213,14 @@ TiDBResourceControlDash
   runawayRow/* Runaway */
   .addPanel(QueryMaxDurationPanel, gridPos=leftPanelPos)
   .addPanel(RunawayEventPanel, gridPos=rightPanelPos)
+  ,
+  gridPos=rowPos
+).addPanel(
+  priorityTaskRow /* Priority Task Control */
+  .addPanel(PriorityTaskCPUPanel, gridPos=leftPanelPos)
+  .addPanel(PriorityTaskQuotaLimitPanel, gridPos=rightPanelPos)
+  .addPanel(PriorityTaskWaitQPSPanel, gridPos=leftPanelPos)
+  .addPanel(PriorityTaskWaitDurationPanel, gridPos=rightPanelPos)
   ,
   gridPos=rowPos
 ).addPanel(

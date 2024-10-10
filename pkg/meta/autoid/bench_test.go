@@ -44,7 +44,7 @@ func BenchmarkAllocator_Alloc(b *testing.B) {
 	tblID := int64(2)
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnMeta)
 	err = kv.RunInNewTxn(ctx, store, false, func(ctx context.Context, txn kv.Transaction) error {
-		m := meta.NewMeta(txn)
+		m := meta.NewMutator(txn)
 		err = m.CreateDatabase(&model.DBInfo{ID: dbID, Name: pmodel.NewCIStr("a")})
 		if err != nil {
 			return err
@@ -84,7 +84,7 @@ func BenchmarkAllocator_SequenceAlloc(b *testing.B) {
 	var sequenceBase int64
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnMeta)
 	err = kv.RunInNewTxn(ctx, store, false, func(ctx context.Context, txn kv.Transaction) error {
-		m := meta.NewMeta(txn)
+		m := meta.NewMutator(txn)
 		err = m.CreateDatabase(&model.DBInfo{ID: 1, Name: pmodel.NewCIStr("a")})
 		if err != nil {
 			return err

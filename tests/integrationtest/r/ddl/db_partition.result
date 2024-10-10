@@ -550,7 +550,7 @@ b	a
 4	4
 explain format = 'brief' select * from t where a = 4;
 id	estRows	task	access object	operator info
-TableReader	4.80	root	partition:p0,p1,p2	data:Selection
+TableReader	4.80	root	partition:all	data:Selection
 └─Selection	4.80	cop[tikv]		eq(cast(ddl__db_partition.t.a, double BINARY), 4)
   └─TableFullScan	6.00	cop[tikv]	table:t	keep order:false
 select * from t where a = 3;
@@ -558,7 +558,7 @@ b	a
 3	3
 explain format = 'brief' select * from t where a = 3;
 id	estRows	task	access object	operator info
-TableReader	4.80	root	partition:p0,p1,p2	data:Selection
+TableReader	4.80	root	partition:all	data:Selection
 └─Selection	4.80	cop[tikv]		eq(cast(ddl__db_partition.t.a, double BINARY), 3)
   └─TableFullScan	6.00	cop[tikv]	table:t	keep order:false
 explain format = 'brief' select * from t where a = "3";

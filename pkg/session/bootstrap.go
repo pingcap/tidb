@@ -1435,7 +1435,7 @@ func acquireLock(s sessiontypes.Session) (func(), bool) {
 			// do nothing
 		}, true
 	}
-	releaseFn, err := owner.AcquireDistributedLock(context.Background(), cli, ddl.DDLOwnerKey, 10)
+	releaseFn, err := owner.AcquireDistributedLock(context.Background(), cli, bootstrapOwnerKey, 10)
 	if err != nil {
 		return nil, false
 	}
@@ -1447,6 +1447,7 @@ func forceToLeader(ctx context.Context, s sessiontypes.Session) error {
 	for !dom.DDL().OwnerManager().IsOwner() {
 		ownerID, err := dom.DDL().OwnerManager().GetOwnerID(ctx)
 		if err != nil && (errors.ErrorEqual(err, concurrency.ErrElectionNoLeader) || strings.Contains(err.Error(), "no owner")) {
+			logutil.BgLogger().Info("ddl owner not found", zap.Error(err))
 			time.Sleep(50 * time.Millisecond)
 			continue
 		} else if err != nil {
@@ -2671,7 +2672,7 @@ func upgradeToVer99After(s sessiontypes.Session) {
 		mysql.SystemDB, mysql.GlobalVariablesTable, variable.TiDBEnableMDL, 1)
 	mustExecute(s, sql)
 	err := kv.RunInNewTxn(kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL), s.GetStore(), true, func(_ context.Context, txn kv.Transaction) error {
-		t := meta.NewMeta(txn)
+		t := meta.NewMutator(txn)
 		return t.SetMetadataLock(true)
 	})
 	terror.MustNil(err)
@@ -3045,7 +3046,7 @@ func writeDDLTableVersion(s sessiontypes.Session) {
 	var err error
 	var ddlTableVersion meta.DDLTableVersion
 	err = kv.RunInNewTxn(kv.WithInternalSourceType(context.Background(), kv.InternalTxnBootstrap), s.GetStore(), true, func(_ context.Context, txn kv.Transaction) error {
-		t := meta.NewMeta(txn)
+		t := meta.NewMutator(txn)
 		ddlTableVersion, err = t.CheckDDLTableVersion()
 		return err
 	})
