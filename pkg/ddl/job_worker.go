@@ -658,9 +658,9 @@ func skipWriteBinlog(job *model.Job) bool {
 	return false
 }
 
-func chooseLeaseTime(t, max time.Duration) time.Duration {
-	if t == 0 || t > max {
-		return max
+func chooseLeaseTime(t, maxv time.Duration) time.Duration {
+	if t == 0 || t > maxv {
+		return maxv
 	}
 	return t
 }

@@ -736,6 +736,8 @@ type PartitionInfo struct {
 
 	States []PartitionState `json:"states"`
 	Num    uint64           `json:"num"`
+	// Indicate which DDL Action is currently on going
+	DDLAction ActionType `json:"ddl_action,omitempty"`
 	// Only used during ReorganizePartition so far
 	DDLState SchemaState `json:"ddl_state"`
 	// Set during ALTER TABLE ... if the table id needs to change
@@ -848,6 +850,8 @@ func (pi *PartitionInfo) HasTruncatingPartitionID(pid int64) bool {
 
 // ClearReorgIntermediateInfo remove intermediate information used during reorganize partition.
 func (pi *PartitionInfo) ClearReorgIntermediateInfo() {
+	pi.DDLAction = ActionNone
+	pi.DDLState = StateNone
 	pi.DDLType = model.PartitionTypeNone
 	pi.DDLExpr = ""
 	pi.DDLColumns = nil
@@ -875,6 +879,122 @@ func (pi *PartitionInfo) GetPartitionIDByName(partitionDefinitionName string) in
 		}
 	}
 	return -1
+}
+
+// GetDefaultListPartition return the index of Definitions
+// that contains the LIST Default partition otherwise it returns -1
+func (pi *PartitionInfo) GetDefaultListPartition() int {
+	if pi.Type != model.PartitionTypeList {
+		return -1
+	}
+	defs := pi.Definitions
+	for i := range defs {
+		if len(defs[i].InValues) == 0 {
+			return i
+		}
+		for _, vs := range defs[i].InValues {
+			if len(vs) == 1 && vs[0] == "DEFAULT" {
+				return i
+			}
+		}
+	}
+
+	return -1
+}
+
+// CanHaveOverlappingDroppingPartition returns true if special handling
+// is needed during DDL of partitioned tables,
+// where range or list with default partition can have
+// overlapping partitions.
+// Example:
+// ... PARTITION BY RANGE (a)
+// (PARTITION p0 VALUES LESS THAN (10),
+// PARTITION p1 VALUES LESS THAN (20))
+// ALTER TABLE t DROP PARTITION p0;
+// When p0 is gone, then p1 can have values < 10,
+// so if p0 is visible for one session, while another session
+// have dropped p0, a value '9' will then be in p1, instead of p0,
+// i.e. an "overlapping" partition, that needs special handling.
+// Same can happen for LIST partitioning, if there is a DEFAULT partition.
+func (pi *PartitionInfo) CanHaveOverlappingDroppingPartition() bool {
+	if pi.DDLAction == ActionDropTablePartition &&
+		pi.DDLState == StateWriteOnly {
+		return true
+	}
+	return false
+}
+
+// ReplaceWithOverlappingPartitionIdx returns the overlapping partition
+// if there is one and a previous error.
+// Functions based on locatePartitionCommon, like GetPartitionIdxByRow
+// will return the found partition, with an error,
+// since it is being dropped.
+// This function will correct the partition index and error if it can.
+// For example of Overlapping partition,
+// see CanHaveOverlappingDroppingPartition
+// This function should not be used for writing, since we should block
+// writes to partitions that are being dropped.
+// But for read, we should replace the dropping partitions with
+// the overlapping partition if it exists, so we can read new data
+// from sessions one step ahead in the DDL State.
+func (pi *PartitionInfo) ReplaceWithOverlappingPartitionIdx(idx int, err error) (int, error) {
+	if err != nil && idx >= 0 {
+		idx = pi.GetOverlappingDroppingPartitionIdx(idx)
+		if idx >= 0 {
+			err = nil
+		}
+	}
+	return idx, err
+}
+
+// GetOverlappingDroppingPartitionIdx takes the index of Definitions
+// and returns possible overlapping partition to use instead.
+// Only used during DROP PARTITION!
+// For RANGE, DROP PARTITION must be a consecutive range of partitions.
+// For LIST, it only takes effect if there is default partition.
+// returns same idx if no overlapping partition
+// return -1 if the partition is being dropped, with no overlapping partition,
+// like for last range partition dropped or no default list partition.
+// See CanHaveOverlappingDroppingPartition() for more info about
+// Overlapping dropping partition.
+func (pi *PartitionInfo) GetOverlappingDroppingPartitionIdx(idx int) int {
+	if idx < 0 || idx >= len(pi.Definitions) {
+		return -1
+	}
+	if pi.CanHaveOverlappingDroppingPartition() {
+		switch pi.Type {
+		case model.PartitionTypeRange:
+			for i := idx; i < len(pi.Definitions); i++ {
+				if pi.IsDropping(i) {
+					continue
+				}
+				return i
+			}
+			// Last partition is also dropped!
+			return -1
+		case model.PartitionTypeList:
+			if pi.IsDropping(idx) {
+				defaultIdx := pi.GetDefaultListPartition()
+				if defaultIdx == idx {
+					return -1
+				}
+				return defaultIdx
+			}
+			return idx
+		}
+	}
+	return idx
+}
+
+// IsDropping returns true if the partition
+// is being dropped (i.e. in DroppingDefinitions)
+func (pi *PartitionInfo) IsDropping(idx int) bool {
+	for _, def := range pi.DroppingDefinitions {
+		if def.ID == pi.Definitions[idx].ID {
+			return true
+		}
+	}
+	return false
 }
 
 // SetOriginalPartitionIDs sets the order of the original partition IDs

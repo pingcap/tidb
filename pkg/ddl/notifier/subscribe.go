@@ -61,6 +61,8 @@ type HandlerID int
 const (
 	// TestHandlerID is used for testing only.
 	TestHandlerID HandlerID = 0
+	// StatsMetaHandlerID is used to update statistics system table.
+	StatsMetaHandlerID HandlerID = 1
 )
 
 // String implements fmt.Stringer interface.
@@ -68,6 +70,8 @@ func (id HandlerID) String() string {
 	switch id {
 	case TestHandlerID:
 		return "TestHandler"
+	case StatsMetaHandlerID:
+		return "StatsMetaHandler"
 	default:
 		return fmt.Sprintf("HandlerID(%d)", id)
 	}

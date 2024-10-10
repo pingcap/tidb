@@ -15,12 +15,14 @@
 package model
 
 import (
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/types"
 )
 
 // DistanceMetric is the distance metric used by the vector index.
-// `DistanceMetric` is actually vector functions in ast package. Use `DistanceMetric` to avoid cycle dependency
+// Note that not all distance functions are indexable.
+// See FnNameToDistanceMetric for a list of indexable distance functions.
 type DistanceMetric string
 
 // Note: tipb.VectorDistanceMetric's enum names must be aligned with these constant values.
@@ -29,8 +31,24 @@ const (
 	// DistanceMetricCosine is cosine distance.
 	DistanceMetricCosine DistanceMetric = "COSINE"
 	// DistanceMetricInnerProduct is inner product.
+	// Currently this distance metric is not supported. It is placed here only for
+	// reminding what's the desired naming convension (UPPER_UNDER_SCORE) if this
+	// is going to be implemented.
 	DistanceMetricInnerProduct DistanceMetric = "INNER_PRODUCT"
 )
+
+// FnNameToDistanceMetric maps a distance function name to the distance metric.
+// Only indexable distance functions should be listed here!
+var FnNameToDistanceMetric = map[string]DistanceMetric{
+	ast.VecCosineDistance: DistanceMetricCosine,
+	ast.VecL2Distance:     DistanceMetricL2,
+}
+
+// DistanceMetricToFnName maps a distance metric to the distance function name.
+var DistanceMetricToFnName = map[DistanceMetric]string{
+	DistanceMetricCosine: ast.VecCosineDistance,
+	DistanceMetricL2:     ast.VecL2Distance,
+}
 
 // VectorIndexInfo is the information of vector index of a column.
 type VectorIndexInfo struct {
@@ -51,7 +69,7 @@ type IndexInfo struct {
 	State         SchemaState      `json:"state"`
 	BackfillState BackfillState    `json:"backfill_state"`
 	Comment       string           `json:"comment"`      // Comment
-	Tp            model.IndexType  `json:"index_type"`   // Index type: Btree, Hash or Rtree
+	Tp            model.IndexType  `json:"index_type"`   // Index type: Btree, Hash, Rtree or HNSW
 	Unique        bool             `json:"is_unique"`    // Whether the index is unique.
 	Primary       bool             `json:"is_primary"`   // Whether the index is primary key.
 	Invisible     bool             `json:"is_invisible"` // Whether the index is invisible.

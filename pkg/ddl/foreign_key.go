@@ -20,6 +20,7 @@ import (
 	"strings"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	infoschemactx "github.com/pingcap/tidb/pkg/infoschema/context"
 	"github.com/pingcap/tidb/pkg/meta"
@@ -67,11 +68,13 @@ func (w *worker) onCreateForeignKey(jobCtx *jobContext, job *model.Job) (ver int
 		job.SchemaState = model.StateWriteOnly
 		return ver, nil
 	case model.StateWriteOnly:
+		delayForAsyncCommit()
 		err = checkForeignKeyConstrain(w, job.SchemaName, tblInfo.Name.L, fkInfo, fkCheck)
 		if err != nil {
 			job.State = model.JobStateRollingback
 			return ver, err
 		}
+		failpoint.InjectCall("afterCheckForeignKeyConstrain")
 		tblInfo.ForeignKeys[len(tblInfo.ForeignKeys)-1].State = model.StateWriteReorganization
 		ver, err = updateVersionAndTableInfo(jobCtx, job, tblInfo, true)
 		if err != nil {

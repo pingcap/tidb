@@ -831,7 +831,6 @@ func (m *dupeDetector) CollectDuplicateRowsFromDupDB(ctx context.Context, dupDB 
 	pool := util.NewWorkerPool(uint(m.concurrency), "collect duplicate rows from duplicate db")
 	g, gCtx := errgroup.WithContext(ctx)
 	for _, task := range tasks {
-		task := task
 		pool.ApplyOnErrorGroup(g, func() error {
 			if err := common.Retry("collect local duplicate rows", logger, func() error {
 				stream := NewLocalDupKVStream(dupDB, keyAdapter, task.KeyRange)
@@ -1041,7 +1040,6 @@ func (m *dupeDetector) collectDuplicateRowsFromTiKV(
 	regionPool := util.NewWorkerPool(uint(m.concurrency), "collect duplicate rows from tikv by region")
 	g, gCtx := errgroup.WithContext(ctx)
 	for _, task := range tasks {
-		task := task
 		taskPool.ApplyOnErrorGroup(g, func() error {
 			taskLogger := logger.With(
 				logutil.Key("startKey", task.StartKey),

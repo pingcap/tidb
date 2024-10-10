@@ -2981,8 +2981,8 @@ func (do *Domain) releaseServerID(context.Context) {
 // propose server ID by random.
 func (*Domain) proposeServerID(ctx context.Context, conflictCnt int) (uint64, error) {
 	// get a random server ID in range [min, max]
-	randomServerID := func(min uint64, max uint64) uint64 {
-		return uint64(rand.Int63n(int64(max-min+1)) + int64(min)) // #nosec G404
+	randomServerID := func(minv uint64, maxv uint64) uint64 {
+		return uint64(rand.Int63n(int64(maxv-minv+1)) + int64(minv)) // #nosec G404
 	}
 
 	if conflictCnt < acquire32BitsServerIDRetryCnt {
