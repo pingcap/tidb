@@ -10,6 +10,9 @@ UNIQUE KEY `idx1` (`c`) global
 PARTITION BY HASH (`b`) PARTITIONS 4;
 show warnings;
 Level	Code	Message
+Warning	1681	Integer display width is deprecated and will be removed in a future release.
+Warning	1681	Integer display width is deprecated and will be removed in a future release.
+Warning	1681	Integer display width is deprecated and will be removed in a future release.
 Warning	8265	Auto analyze is not effective for index 'idx', need analyze manually
 insert into t values (1,1,1),(2,2,2),(3,3,3),(4,4,4),(5,5,5);
 insert into t(a) values (1), (2);
