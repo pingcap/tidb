@@ -413,7 +413,7 @@
       {
         "SQL": "select count(*) from t1 where (a1, b1) > (1, 10) and (a1, b1) < (4, 20) and a1 < 0",
         "Plan": [
-          "StreamAgg 1.00 root  funcs:count(1)->Column#5",
+          "HashAgg 1.00 root  funcs:count(1)->Column#5",
           "└─TableDual 373.08 root  rows:0"
         ],
         "Result": [

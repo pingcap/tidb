@@ -499,26 +499,32 @@ func (p *PhysicalHashAgg) GetPlanCostVer2(taskType property.TaskType, option *op
 	hashProbeCost := hashProbeCostVer2(option, inputRows, float64(len(p.GroupByItems)), cpuFactor)
 
 	// Apply an additional startup cost to HashAgg for TiKV index or table scans - but not to TiFlash,
-	// and not to the tablereader on top of an aggregate pushed down to the child tasks
+	// and not an aggregate on top of a child aggregate.
 	startCostRows := float64(10)
 	hasAggPenalty := true
-	if _, ok := p.Children()[0].(*PhysicalTableReader); ok {
-		hasAggPenalty = false
-	} else {
-		for _, child := range p.Children() {
-			if tableScan, ok := child.(*PhysicalTableScan); ok {
-				if tableScan.StoreType == kv.TiFlash {
-					hasAggPenalty = false
-					break
-				}
-			}
-			if !hasAggPenalty {
-				break
+	hasPseudo := false
+	for _, child := range p.Children() {
+		if _, ok := child.(*PhysicalStreamAgg); ok {
+			hasAggPenalty = false
+		} else if _, ok := child.(*PhysicalHashAgg); ok {
+			hasAggPenalty = false
+		} else if tableScan, ok := child.(*PhysicalTableScan); ok {
+			if tableScan.StoreType == kv.TiFlash {
+				hasAggPenalty = false
+			} else if tableScan.tblColHists.Pseudo {
+				hasPseudo = true
 			}
 		}
+		if !hasAggPenalty || hasPseudo {
+			break
+		}
 	}
-	if hasAggPenalty {
-		startCostRows = math.Max(20, (100*outputRows)/inputRows)
+	// Apply the full (100 row) penalty if the child tablescan has pseudo stats. Otherwise scale the
+	// penalty based upon the reduction ratio.
+	if hasPseudo {
+		startCostRows = 100
+	} else if hasAggPenalty {
+		startCostRows = math.Max(10, (100*outputRows)/inputRows)
 	}
 	startCost := costusage.NewCostVer2(option, cpuFactor,
 		startCostRows*3*cpuFactor.Value, // startCostRows * 3func * cpuFactor
