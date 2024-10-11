@@ -139,7 +139,7 @@
                 "operator_info": "cast(test.t.a, decimal(10,0) BINARY)->Column#8"
               }
             ],
-            "cost": 1996995008.427438,
+            "cost": 1996993511.427438,
             "est_rows": 1,
             "act_rows": 1,
             "task_type": 1,
