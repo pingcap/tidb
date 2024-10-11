@@ -481,6 +481,7 @@ func TestScanTaskCancelStmt(t *testing.T) {
 			}
 			doCancel()
 		})
+		task.ctx = cache.SetMockExpireTime(task.ctx, time.Now())
 		r := task.doScan(ctx, nil, mockPool)
 		require.NotNil(t, r)
 		require.EqualError(t, r.err, "killed")
