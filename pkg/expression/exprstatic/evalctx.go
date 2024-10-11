@@ -70,21 +70,19 @@ func (t *timeOnce) getTime(loc *time.Location) (tm time.Time, err error) {
 // evalCtxState is the internal state for `EvalContext`.
 // We make it as a standalone private struct here to make sure `EvalCtxOption` can only be called in constructor.
 type evalCtxState struct {
-	warnHandler                  contextutil.WarnHandler
-	sqlMode                      mysql.SQLMode
-	typeCtx                      types.Context
-	errCtx                       errctx.Context
-	currentDB                    string
-	currentTime                  *timeOnce
-	maxAllowedPacket             uint64
-	enableRedactLog              string
-	defaultWeekFormatMode        string
-	divPrecisionIncrement        int
-	requestVerificationFn        func(db, table, column string, priv mysql.PrivilegeType) bool
-	requestDynamicVerificationFn func(privName string, grantable bool) bool
-	paramList                    []types.Datum
-	userVars                     variable.UserVarsReader
-	props                        expropt.OptionalEvalPropProviders
+	warnHandler           contextutil.WarnHandler
+	sqlMode               mysql.SQLMode
+	typeCtx               types.Context
+	errCtx                errctx.Context
+	currentDB             string
+	currentTime           *timeOnce
+	maxAllowedPacket      uint64
+	enableRedactLog       string
+	defaultWeekFormatMode string
+	divPrecisionIncrement int
+	paramList             []types.Datum
+	userVars              variable.UserVarsReader
+	props                 expropt.OptionalEvalPropProviders
 }
 
 // EvalCtxOption is the option to set `EvalContext`.
@@ -169,20 +167,6 @@ func WithDefaultWeekFormatMode(mode string) EvalCtxOption {
 func WithDivPrecisionIncrement(inc int) EvalCtxOption {
 	return func(s *evalCtxState) {
 		s.divPrecisionIncrement = inc
-	}
-}
-
-// WithPrivCheck sets the requestVerificationFn
-func WithPrivCheck(fn func(db, table, column string, priv mysql.PrivilegeType) bool) EvalCtxOption {
-	return func(s *evalCtxState) {
-		s.requestVerificationFn = fn
-	}
-}
-
-// WithDynamicPrivCheck sets the requestDynamicVerificationFn
-func WithDynamicPrivCheck(fn func(privName string, grantable bool) bool) EvalCtxOption {
-	return func(s *evalCtxState) {
-		s.requestDynamicVerificationFn = fn
 	}
 }
 
@@ -366,22 +350,6 @@ func (ctx *EvalContext) GetUserVarsReader() variable.UserVarsReader {
 	return ctx.userVars
 }
 
-// RequestVerification verifies user privilege
-func (ctx *EvalContext) RequestVerification(db, table, column string, priv mysql.PrivilegeType) bool {
-	if fn := ctx.requestVerificationFn; fn != nil {
-		return fn(db, table, column, priv)
-	}
-	return true
-}
-
-// RequestDynamicVerification verifies user privilege for a DYNAMIC privilege.
-func (ctx *EvalContext) RequestDynamicVerification(privName string, grantable bool) bool {
-	if fn := ctx.requestDynamicVerificationFn; fn != nil {
-		return fn(privName, grantable)
-	}
-	return true
-}
-
 // GetOptionalPropSet gets the optional property set from context
 func (ctx *EvalContext) GetOptionalPropSet() exprctx.OptionalEvalPropKeySet {
 	return ctx.props.PropKeySet()
@@ -427,16 +395,6 @@ var _ exprctx.StaticConvertibleEvalContext = &EvalContext{}
 // AllParamValues implements context.StaticConvertibleEvalContext.
 func (ctx *EvalContext) AllParamValues() []types.Datum {
 	return ctx.paramList
-}
-
-// GetDynamicPrivCheckFn implements context.StaticConvertibleEvalContext.
-func (ctx *EvalContext) GetDynamicPrivCheckFn() func(privName string, grantable bool) bool {
-	return ctx.requestDynamicVerificationFn
-}
-
-// GetRequestVerificationFn implements context.StaticConvertibleEvalContext.
-func (ctx *EvalContext) GetRequestVerificationFn() func(db string, table string, column string, priv mysql.PrivilegeType) bool {
-	return ctx.requestVerificationFn
 }
 
 // GetWarnHandler implements context.StaticConvertibleEvalContext.
@@ -561,8 +519,6 @@ func MakeEvalContextStatic(ctx exprctx.StaticConvertibleEvalContext) *EvalContex
 		WithMaxAllowedPacket(ctx.GetMaxAllowedPacket()),
 		WithDefaultWeekFormatMode(ctx.GetDefaultWeekFormatMode()),
 		WithDivPrecisionIncrement(ctx.GetDivPrecisionIncrement()),
-		WithPrivCheck(ctx.GetRequestVerificationFn()),
-		WithDynamicPrivCheck(ctx.GetDynamicPrivCheckFn()),
 		WithParamList(params),
 		WithUserVarsReader(ctx.GetUserVarsReader().Clone()),
 		WithOptionalProperty(props...),
