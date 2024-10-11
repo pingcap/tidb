@@ -5,10 +5,4 @@ go_library(
     srcs = ["testkit.go"],
     importpath = "github.com/pingcap/tidb/pkg/planner/util/coretestsdk",
     visibility = ["//visibility:public"],
-    deps = [
-        "//pkg/domain",
-        "//pkg/meta/model",
-        "//pkg/parser/model",
-        "@com_github_stretchr_testify//require",
-    ],
 )

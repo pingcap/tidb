@@ -15,26 +15,8 @@
 package coretestsdk
 
 import (
-	"context"
 	"strings"
-	"testing"
-
-	"github.com/pingcap/tidb/pkg/domain"
-	"github.com/pingcap/tidb/pkg/meta/model"
-	pmodel "github.com/pingcap/tidb/pkg/parser/model"
-	"github.com/stretchr/testify/require"
 )
-
-// SetTiFlashReplica is to set TiFlash replica
-func SetTiFlashReplica(t *testing.T, dom *domain.Domain, dbName, tableName string) {
-	is := dom.InfoSchema()
-	tblInfo, err := is.TableByName(context.Background(), pmodel.NewCIStr(dbName), pmodel.NewCIStr(tableName))
-	require.NoError(t, err)
-	tblInfo.Meta().TiFlashReplica = &model.TiFlashReplicaInfo{
-		Count:     1,
-		Available: true,
-	}
-}
 
 // GetFieldValue is to get field value.
 func GetFieldValue(prefix, row string) string {

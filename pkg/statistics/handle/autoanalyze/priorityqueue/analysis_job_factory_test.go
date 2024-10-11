@@ -151,6 +151,12 @@ func TestCheckIndexesNeedAnalyze(t *testing.T) {
 						Name:  pmodel.NewCIStr("index1"),
 						State: model.StatePublic,
 					},
+					{
+						ID:         2,
+						Name:       pmodel.NewCIStr("vec_index1"),
+						State:      model.StatePublic,
+						VectorInfo: &model.VectorIndexInfo{},
+					},
 				},
 			},
 			tblStats: &statistics.Table{
