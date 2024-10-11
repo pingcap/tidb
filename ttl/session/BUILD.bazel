@@ -6,6 +6,7 @@ go_library(
     importpath = "github.com/pingcap/tidb/ttl/session",
     visibility = ["//visibility:public"],
     deps = [
+<<<<<<< HEAD:ttl/session/BUILD.bazel
         "//infoschema",
         "//kv",
         "//parser/terror",
@@ -15,6 +16,19 @@ go_library(
         "//ttl/metrics",
         "//util/chunk",
         "//util/sqlexec",
+=======
+        "//pkg/infoschema",
+        "//pkg/kv",
+        "//pkg/parser/terror",
+        "//pkg/sessionctx",
+        "//pkg/sessionctx/variable",
+        "//pkg/sessiontxn",
+        "//pkg/ttl/metrics",
+        "//pkg/util/chunk",
+        "//pkg/util/sqlexec",
+        "//pkg/util/sqlkiller",
+        "//pkg/util/timeutil",
+>>>>>>> e68c26a0e67 (ttl: force to kill SQL in scan task when canceling TTL job/task (#56518)):pkg/ttl/session/BUILD.bazel
         "@com_github_pingcap_errors//:errors",
     ],
 )
@@ -28,12 +42,19 @@ go_test(
         "sysvar_test.go",
     ],
     flaky = True,
-    shard_count = 6,
+    shard_count = 7,
     deps = [
         ":session",
+<<<<<<< HEAD:ttl/session/BUILD.bazel
         "//sessionctx/variable",
         "//testkit",
         "//testkit/testsetup",
+=======
+        "//pkg/sessionctx/variable",
+        "//pkg/testkit",
+        "//pkg/testkit/testsetup",
+        "//pkg/util",
+>>>>>>> e68c26a0e67 (ttl: force to kill SQL in scan task when canceling TTL job/task (#56518)):pkg/ttl/session/BUILD.bazel
         "@com_github_pingcap_errors//:errors",
         "@com_github_stretchr_testify//require",
         "@org_uber_go_goleak//:goleak",
