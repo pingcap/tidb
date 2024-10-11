@@ -48,7 +48,7 @@ func GenPlanCloneForPlanCacheCode() ([]byte, error) {
 		if err != nil {
 			return nil, err
 		}
-		c.write(string(code))
+		c.write("%s", string(code))
 	}
 	return c.format()
 }
