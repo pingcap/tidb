@@ -486,9 +486,9 @@ func (p *PhysicalHashAgg) GetPlanCostVer2(taskType property.TaskType, option *op
 		return p.PlanCostVer2, nil
 	}
 
-	inputRows := getCardinality(p.Children()[0], option.CostFlag)
+	inputRows := math.Max(MinNumRows, getCardinality(p.Children()[0], option.CostFlag))
 	outputRows := math.Max(MinNumRows, getCardinality(p, option.CostFlag))
-	outputRowSize := getAvgRowSize(p.StatsInfo(), p.Schema().Columns)
+	outputRowSize := math.Max(MinRowSize, getAvgRowSize(p.StatsInfo(), p.Schema().Columns))
 	cpuFactor := getTaskCPUFactorVer2(p, taskType)
 	memFactor := getTaskMemFactorVer2(p, taskType)
 	concurrency := float64(p.SCtx().GetSessionVars().HashAggFinalConcurrency())
@@ -498,33 +498,17 @@ func (p *PhysicalHashAgg) GetPlanCostVer2(taskType property.TaskType, option *op
 	hashBuildCost := hashBuildCostVer2(option, outputRows, outputRowSize, float64(len(p.GroupByItems)), cpuFactor, memFactor)
 	hashProbeCost := hashProbeCostVer2(option, inputRows, float64(len(p.GroupByItems)), cpuFactor)
 
-	// Apply an additional startup cost to HashAgg for TiKV index or table scans - but not to TiFlash,
-	// and not an aggregate on top of a child aggregate.
+	// Apply an additional startup cost to HashAgg for Pseudo stats but not to TiFlash
 	startCostRows := float64(10)
-	hasAggPenalty := true
-	hasPseudo := false
 	for _, child := range p.Children() {
-		if _, ok := child.(*PhysicalStreamAgg); ok {
-			hasAggPenalty = false
-		} else if _, ok := child.(*PhysicalHashAgg); ok {
-			hasAggPenalty = false
-		} else if tableScan, ok := child.(*PhysicalTableScan); ok {
+		if tableScan, ok := child.(*PhysicalTableScan); ok {
 			if tableScan.StoreType == kv.TiFlash {
-				hasAggPenalty = false
+				break
 			} else if tableScan.tblColHists.Pseudo {
-				hasPseudo = true
+				startCostRows = 100
+				break
 			}
 		}
-		if !hasAggPenalty || hasPseudo {
-			break
-		}
-	}
-	// Apply the full (100 row) penalty if the child tablescan has pseudo stats. Otherwise scale the
-	// penalty based upon the reduction ratio.
-	if hasPseudo {
-		startCostRows = 100
-	} else if hasAggPenalty {
-		startCostRows = math.Max(10, (100*outputRows)/inputRows)
 	}
 	startCost := costusage.NewCostVer2(option, cpuFactor,
 		startCostRows*3*cpuFactor.Value, // startCostRows * 3func * cpuFactor
