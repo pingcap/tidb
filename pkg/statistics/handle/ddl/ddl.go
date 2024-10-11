@@ -15,6 +15,8 @@
 package ddl
 
 import (
+	"context"
+
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/ddl/notifier"
 	"github.com/pingcap/tidb/pkg/meta/model"
@@ -30,23 +32,20 @@ import (
 )
 
 type ddlHandlerImpl struct {
-	ddlEventCh         chan *notifier.SchemaChangeEvent
-	statsWriter        types.StatsReadWriter
-	statsHandler       types.StatsHandle
-	globalStatsHandler types.StatsGlobal
+	ddlEventCh   chan *notifier.SchemaChangeEvent
+	statsWriter  types.StatsReadWriter
+	statsHandler types.StatsHandle
 }
 
 // NewDDLHandler creates a new ddl handler.
 func NewDDLHandler(
 	statsWriter types.StatsReadWriter,
 	statsHandler types.StatsHandle,
-	globalStatsHandler types.StatsGlobal,
 ) types.DDL {
 	return &ddlHandlerImpl{
-		ddlEventCh:         make(chan *notifier.SchemaChangeEvent, 1000),
-		statsWriter:        statsWriter,
-		statsHandler:       statsHandler,
-		globalStatsHandler: globalStatsHandler,
+		ddlEventCh:   make(chan *notifier.SchemaChangeEvent, 1000),
+		statsWriter:  statsWriter,
+		statsHandler: statsHandler,
 	}
 }
 
@@ -192,18 +191,25 @@ func UpdateStatsWithCountDeltaAndModifyCountDeltaForTest(
 	tableID int64,
 	countDelta, modifyCountDelta int64,
 ) error {
-	return updateStatsWithCountDeltaAndModifyCountDelta(sctx, tableID, countDelta, modifyCountDelta)
+	return updateStatsWithCountDeltaAndModifyCountDelta(
+		util.StatsCtx,
+		sctx,
+		tableID,
+		countDelta,
+		modifyCountDelta,
+	)
 }
 
 // updateStatsWithCountDeltaAndModifyCountDelta updates
 // the global stats with the given count delta and modify count delta.
 // Only used by some special DDLs, such as exchange partition.
 func updateStatsWithCountDeltaAndModifyCountDelta(
+	ctx context.Context,
 	sctx sessionctx.Context,
 	tableID int64,
 	countDelta, modifyCountDelta int64,
 ) error {
-	lockedTables, err := lockstats.QueryLockedTables(sctx)
+	lockedTables, err := lockstats.QueryLockedTables(ctx, sctx)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -235,7 +241,11 @@ func updateStatsWithCountDeltaAndModifyCountDelta(
 	}
 
 	// Because count can not be negative, so we need to get the current and calculate the delta.
-	count, modifyCount, isNull, err := storage.StatsMetaCountAndModifyCountForUpdate(sctx, tableID)
+	count, modifyCount, isNull, err := storage.StatsMetaCountAndModifyCountForUpdate(
+		util.StatsCtx,
+		sctx,
+		tableID,
+	)
 	if err != nil {
 		return err
 	}

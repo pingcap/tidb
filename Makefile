@@ -566,7 +566,15 @@ dumpling_bins:
 
 .PHONY: generate_grafana_scripts
 generate_grafana_scripts:
-	@cd metrics/grafana && mv tidb_summary.json tidb_summary.json.committed && ./generate_json.sh && diff -u tidb_summary.json.committed tidb_summary.json && rm tidb_summary.json.committed
+	@cd pkg/metrics/grafana && \
+	  mv tidb_summary.json tidb_summary.json.committed && \
+	  mv tidb_resource_control.json tidb_resource_control.json.committed && \
+	  ./generate_json.sh && \
+	  diff -u tidb_summary.json.committed tidb_summary.json && \
+	  diff -u tidb_resource_control.json.committed tidb_resource_control.json && \
+	  rm tidb_summary.json.committed && \
+	  rm tidb_resource_control.json.committed
+
 
 .PHONY: bazel_ci_prepare
 bazel_ci_prepare:
@@ -627,8 +635,7 @@ bazel_coverage_test: failpoint-enable bazel_ci_simple_prepare
 .PHONY: bazel_coverage_test_ddlargsv1
 bazel_coverage_test_ddlargsv1: failpoint-enable bazel_ci_simple_prepare
 	bazel $(BAZEL_GLOBAL_CONFIG) --nohome_rc coverage $(BAZEL_CMD_CONFIG) $(BAZEL_INSTRUMENTATION_FILTER) --jobs=35 --build_tests_only --test_keep_going=false \
-		--@io_bazel_rules_go//go/config:cover_format=go_cover --define gotags=deadlock,intest \
-		--define gc_linkopts=-X,github.com/pingcap/tidb/pkg/ddl.ForceDDLJobVersionToV1InTest=true \
+		--@io_bazel_rules_go//go/config:cover_format=go_cover --define gotags=deadlock,intest,ddlargsv1 \
 		-- //... -//cmd/... -//tests/graceshutdown/... \
 		-//tests/globalkilltest/... -//tests/readonlytest/... -//br/pkg/task:task_test -//tests/realtikvtest/...
 

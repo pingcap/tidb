@@ -146,7 +146,7 @@ func TestTetchAllSchemasWithTables(t *testing.T) {
 	defer domain.Close()
 
 	snapshot := store.GetSnapshot(kv.NewVersion(mathutil.MaxUint))
-	m := meta.NewSnapshotMeta(snapshot)
+	m := meta.NewReader(snapshot)
 	dbs, err := domain.FetchAllSchemasWithTables(m)
 	require.NoError(t, err)
 	require.Equal(t, len(dbs), 3)
@@ -176,7 +176,7 @@ func TestTetchAllSchemasWithTablesWithFailpoint(t *testing.T) {
 	defer domain.Close()
 
 	snapshot := store.GetSnapshot(kv.NewVersion(mathutil.MaxUint))
-	m := meta.NewSnapshotMeta(snapshot)
+	m := meta.NewReader(snapshot)
 	dbs, err := domain.FetchAllSchemasWithTables(m)
 	require.NoError(t, err)
 	require.Equal(t, len(dbs), 3)

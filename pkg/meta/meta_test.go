@@ -57,7 +57,7 @@ func TestPlacementPolicy(t *testing.T) {
 	require.NoError(t, err)
 
 	// test the independent policy ID allocation.
-	m := meta.NewMeta(txn)
+	m := meta.NewMutator(txn)
 
 	// test the meta storage of placemnt policy.
 	policy := &model.PolicyInfo{
@@ -107,7 +107,7 @@ func TestPlacementPolicy(t *testing.T) {
 	txn, err = store.Begin()
 	require.NoError(t, err)
 
-	m = meta.NewMeta(txn)
+	m = meta.NewMutator(txn)
 	val, err = m.GetPolicy(1)
 	require.NoError(t, err)
 	require.Equal(t, policy, val)
@@ -127,7 +127,7 @@ func TestResourceGroup(t *testing.T) {
 	require.NoError(t, err)
 
 	// test the independent policy ID allocation.
-	m := meta.NewMeta(txn)
+	m := meta.NewMutator(txn)
 	groups, err := m.ListResourceGroups()
 	require.NoError(t, err)
 	require.Equal(t, len(groups), 1)
@@ -175,7 +175,7 @@ func TestMeta(t *testing.T) {
 	txn, err := store.Begin()
 	require.NoError(t, err)
 
-	m := meta.NewMeta(txn)
+	m := meta.NewMutator(txn)
 
 	n, err := m.GenGlobalID()
 	require.NoError(t, err)
@@ -455,7 +455,7 @@ func TestSnapshot(t *testing.T) {
 	}()
 
 	txn, _ := store.Begin()
-	m := meta.NewMeta(txn)
+	m := meta.NewMutator(txn)
 	_, err = m.GenGlobalID()
 	require.NoError(t, err)
 	n, _ := m.GetGlobalID()
@@ -466,7 +466,7 @@ func TestSnapshot(t *testing.T) {
 	ver1, _ := store.CurrentVersion(kv.GlobalTxnScope)
 	time.Sleep(time.Millisecond)
 	txn, _ = store.Begin()
-	m = meta.NewMeta(txn)
+	m = meta.NewMutator(txn)
 	_, err = m.GenGlobalID()
 	require.NoError(t, err)
 	n, _ = m.GetGlobalID()
@@ -475,12 +475,9 @@ func TestSnapshot(t *testing.T) {
 	require.NoError(t, err)
 
 	snapshot := store.GetSnapshot(ver1)
-	snapMeta := meta.NewSnapshotMeta(snapshot)
+	snapMeta := meta.NewReader(snapshot)
 	n, _ = snapMeta.GetGlobalID()
 	require.Equal(t, int64(1), n)
-	_, err = snapMeta.GenGlobalID()
-	require.NotNil(t, err)
-	require.Equal(t, "[structure:8220]write on snapshot", err.Error())
 }
 
 func TestElement(t *testing.T) {
@@ -523,7 +520,7 @@ func BenchmarkGenGlobalIDs(b *testing.B) {
 		require.NoError(b, err)
 	}()
 
-	m := meta.NewMeta(txn)
+	m := meta.NewMutator(txn)
 
 	b.ResetTimer()
 	var ids []int64
@@ -549,7 +546,7 @@ func BenchmarkGenGlobalIDOneByOne(b *testing.B) {
 		require.NoError(b, err)
 	}()
 
-	m := meta.NewMeta(txn)
+	m := meta.NewMutator(txn)
 
 	b.ResetTimer()
 	var id int64
@@ -647,7 +644,7 @@ func TestCreateMySQLDatabase(t *testing.T) {
 	txn, err := store.Begin()
 	require.NoError(t, err)
 
-	m := meta.NewMeta(txn)
+	m := meta.NewMutator(txn)
 
 	dbID, err := m.CreateMySQLDatabaseIfNotExists()
 	require.NoError(t, err)
@@ -966,9 +963,9 @@ func TestInfoSchemaV2SpecialAttributeCorrectnessAfterBootstrap(t *testing.T) {
 
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
 	err = kv.RunInNewTxn(ctx, store, true, func(ctx context.Context, txn kv.Transaction) error {
-		err := meta.NewMeta(txn).CreateDatabase(dbInfo)
+		err := meta.NewMutator(txn).CreateDatabase(dbInfo)
 		require.NoError(t, err)
-		err = meta.NewMeta(txn).CreateTableOrView(dbInfo.ID, tblInfo)
+		err = meta.NewMutator(txn).CreateTableOrView(dbInfo.ID, tblInfo)
 		require.NoError(t, err)
 		return errors.Trace(err)
 	})
@@ -1038,9 +1035,9 @@ func TestInfoSchemaV2DataFieldsCorrectnessAfterBootstrap(t *testing.T) {
 
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
 	err = kv.RunInNewTxn(ctx, store, true, func(ctx context.Context, txn kv.Transaction) error {
-		err := meta.NewMeta(txn).CreateDatabase(dbInfo)
+		err := meta.NewMutator(txn).CreateDatabase(dbInfo)
 		require.NoError(t, err)
-		err = meta.NewMeta(txn).CreateTableOrView(dbInfo.ID, tblInfo)
+		err = meta.NewMutator(txn).CreateTableOrView(dbInfo.ID, tblInfo)
 		require.NoError(t, err)
 		return errors.Trace(err)
 	})
@@ -1136,7 +1133,7 @@ func TestInfoSchemaMiscFieldsCorrectnessAfterBootstrap(t *testing.T) {
 	}
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
 	err = kv.RunInNewTxn(ctx, store, true, func(ctx context.Context, txn kv.Transaction) error {
-		m := meta.NewMeta(txn)
+		m := meta.NewMutator(txn)
 		err := m.CreatePolicy(policy)
 		require.NoError(t, err)
 		err = m.AddResourceGroup(group)

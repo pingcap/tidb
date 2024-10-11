@@ -23,6 +23,7 @@ go_test(
         "//pkg/planner/core",
         "//pkg/planner/core/resolve",
         "//pkg/planner/util/coretestsdk",
+        "//pkg/store/mockstore",
         "//pkg/testkit",
         "//pkg/testkit/external",
         "//pkg/testkit/testdata",

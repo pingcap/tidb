@@ -47,6 +47,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/rule"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
+	"github.com/pingcap/tidb/pkg/planner/util/domainmisc"
 	"github.com/pingcap/tidb/pkg/privilege"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
@@ -56,7 +57,6 @@ import (
 	handleutil "github.com/pingcap/tidb/pkg/statistics/handle/util"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/table/tables"
-	"github.com/pingcap/tidb/pkg/table/temptable"
 	"github.com/pingcap/tidb/pkg/types"
 	driver "github.com/pingcap/tidb/pkg/types/parser_driver"
 	util2 "github.com/pingcap/tidb/pkg/util"
@@ -1073,14 +1073,15 @@ func (*PlanBuilder) detectSelectWindow(sel *ast.SelectStmt) bool {
 }
 
 func getPathByIndexName(paths []*util.AccessPath, idxName pmodel.CIStr, tblInfo *model.TableInfo) *util.AccessPath {
-	var primaryIdxPath, indexPrefixPath *util.AccessPath
+	var indexPrefixPath *util.AccessPath
 	prefixMatches := 0
 	for _, path := range paths {
-		if path.StoreType == kv.TiFlash {
-			continue
+		// Only accept tikv's primary key table path.
+		if path.IsTiKVTablePath() && isPrimaryIndex(idxName) && tblInfo.HasClusteredIndex() {
+			return path
 		}
-		if path.IsTablePath() {
-			primaryIdxPath = path
+		// If it's not a tikv table path and the index is nil, it could not be any index path.
+		if path.Index == nil {
 			continue
 		}
 		if path.Index.Name.L == idxName.L {
@@ -1090,9 +1091,6 @@ func getPathByIndexName(paths []*util.AccessPath, idxName pmodel.CIStr, tblInfo 
 			indexPrefixPath = path
 			prefixMatches++
 		}
-	}
-	if isPrimaryIndex(idxName) && tblInfo.HasClusteredIndex() {
-		return primaryIdxPath
 	}
 
 	// Return only unique prefix matches
@@ -1134,29 +1132,6 @@ func isForUpdateReadSelectLock(lock *ast.SelectLockInfo) bool {
 	return lock.LockType == ast.SelectLockForUpdate ||
 		lock.LockType == ast.SelectLockForUpdateNoWait ||
 		lock.LockType == ast.SelectLockForUpdateWaitN
-}
-
-// getLatestIndexInfo gets the index info of latest schema version from given table id,
-// it returns nil if the schema version is not changed
-func getLatestIndexInfo(ctx base.PlanContext, id int64, startVer int64) (map[int64]*model.IndexInfo, bool, error) {
-	dom := domain.GetDomain(ctx)
-	if dom == nil {
-		return nil, false, errors.New("domain not found for ctx")
-	}
-	is := temptable.AttachLocalTemporaryTableInfoSchema(ctx, dom.InfoSchema())
-	if is.SchemaMetaVersion() == startVer {
-		return nil, false, nil
-	}
-	latestIndexes := make(map[int64]*model.IndexInfo)
-
-	latestTbl, latestTblExist := is.TableByID(context.Background(), id)
-	if latestTblExist {
-		latestTblInfo := latestTbl.Meta()
-		for _, index := range latestTblInfo.Indices {
-			latestIndexes[index.ID] = index
-		}
-	}
-	return latestIndexes, true, nil
 }
 
 func getPossibleAccessPaths(ctx base.PlanContext, tableHints *hint.PlanHints, indexHints []*ast.IndexHint, tbl table.Table, dbName, tblName pmodel.CIStr, check bool, hasFlagPartitionProcessor bool) ([]*util.AccessPath, error) {
@@ -1206,7 +1181,7 @@ func getPossibleAccessPaths(ctx base.PlanContext, tableHints *hint.PlanHints, in
 				continue
 			}
 			if check && latestIndexes == nil {
-				latestIndexes, check, err = getLatestIndexInfo(ctx, tblInfo.ID, 0)
+				latestIndexes, check, err = domainmisc.GetLatestIndexInfo(ctx, tblInfo.ID, 0)
 				if err != nil {
 					return nil, err
 				}
@@ -1216,7 +1191,11 @@ func getPossibleAccessPaths(ctx base.PlanContext, tableHints *hint.PlanHints, in
 					continue
 				}
 			}
-			publicPaths = append(publicPaths, &util.AccessPath{Index: index})
+			path := &util.AccessPath{Index: index}
+			if index.VectorInfo != nil && tblInfo.TiFlashReplica.Available {
+				path.StoreType = kv.TiFlash
+			}
+			publicPaths = append(publicPaths, path)
 		}
 	}
 
@@ -1403,7 +1382,7 @@ func removeIgnoredPaths(paths, ignoredPaths []*util.AccessPath, tblInfo *model.T
 	}
 	remainedPaths := make([]*util.AccessPath, 0, len(paths))
 	for _, path := range paths {
-		if path.IsTablePath() || getPathByIndexName(ignoredPaths, path.Index.Name, tblInfo) == nil {
+		if path.IsTiKVTablePath() || path.IsTiFlashSimpleTablePath() || getPathByIndexName(ignoredPaths, path.Index.Name, tblInfo) == nil {
 			remainedPaths = append(remainedPaths, path)
 		}
 	}
@@ -1447,11 +1426,11 @@ func (b *PlanBuilder) buildSelectLock(src base.LogicalPlan, lock *ast.SelectLock
 
 func setExtraPhysTblIDColsOnDataSource(p base.LogicalPlan, tblID2PhysTblIDCol map[int64]*expression.Column) {
 	switch ds := p.(type) {
-	case *DataSource:
+	case *logicalop.DataSource:
 		if ds.TableInfo.GetPartitionInfo() == nil {
 			return
 		}
-		tblID2PhysTblIDCol[ds.TableInfo.ID] = ds.AddExtraPhysTblIDColumn()
+		tblID2PhysTblIDCol[ds.TableInfo.ID] = addExtraPhysTblIDColumn4DS(ds)
 	default:
 		for _, child := range p.Children() {
 			setExtraPhysTblIDColsOnDataSource(child, tblID2PhysTblIDCol)
@@ -1786,7 +1765,7 @@ func (b *PlanBuilder) buildPhysicalIndexLookUpReaders(ctx context.Context, dbNam
 			continue
 		}
 		if check && latestIndexes == nil {
-			latestIndexes, check, err = getLatestIndexInfo(b.ctx, tblInfo.ID, b.is.SchemaMetaVersion())
+			latestIndexes, check, err = domainmisc.GetLatestIndexInfo(b.ctx, tblInfo.ID, b.is.SchemaMetaVersion())
 			if err != nil {
 				return nil, nil, err
 			}
@@ -2052,7 +2031,7 @@ func (b *PlanBuilder) getMustAnalyzedColumns(tbl *resolve.TableNameW, cols *calc
 		}
 		virtualExprs := make([]expression.Expression, 0, len(tblInfo.Columns))
 		for _, idx := range tblInfo.Indices {
-			if idx.State != model.StatePublic || idx.MVIndex {
+			if idx.State != model.StatePublic || idx.MVIndex || idx.VectorInfo != nil {
 				continue
 			}
 			for _, idxCol := range idx.Columns {
@@ -2307,6 +2286,7 @@ func getColOffsetForAnalyze(colsInfo []*model.ColumnInfo, colID int64) int {
 // For a special global index, we also need to analyze it as independent index analyze task.
 // See comments for AnalyzeResults.ForMVIndex for more details.
 func getModifiedIndexesInfoForAnalyze(
+	stmtCtx *stmtctx.StatementContext,
 	tblInfo *model.TableInfo,
 	allColumns bool,
 	colsInfo []*model.ColumnInfo,
@@ -2324,6 +2304,10 @@ func getModifiedIndexesInfoForAnalyze(
 		}
 		if originIdx.MVIndex {
 			independentIdxsInfo = append(independentIdxsInfo, originIdx)
+			continue
+		}
+		if originIdx.VectorInfo != nil {
+			stmtCtx.AppendWarning(errors.NewNoStackErrorf("analyzing vector index is not supported, skip %s", originIdx.Name.L))
 			continue
 		}
 		if allColumns {
@@ -2494,7 +2478,7 @@ func (b *PlanBuilder) buildAnalyzeFullSamplingTask(
 			}
 			execColsInfo = b.filterSkipColumnTypes(execColsInfo, tbl, &mustAnalyzedCols)
 			allColumns := len(tbl.TableInfo.Columns) == len(execColsInfo)
-			indexes, independentIndexes, specialGlobalIndexes = getModifiedIndexesInfoForAnalyze(tbl.TableInfo, allColumns, execColsInfo)
+			indexes, independentIndexes, specialGlobalIndexes = getModifiedIndexesInfoForAnalyze(b.ctx.GetSessionVars().StmtCtx, tbl.TableInfo, allColumns, execColsInfo)
 			handleCols := BuildHandleColsForAnalyze(b.ctx, tbl.TableInfo, allColumns, execColsInfo)
 			newTask := AnalyzeColumnsTask{
 				HandleCols:  handleCols,
@@ -2772,6 +2756,10 @@ func (b *PlanBuilder) buildAnalyzeTable(as *ast.AnalyzeTableStmt, opts map[ast.A
 				b.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackErrorf("analyzing multi-valued indexes is not supported, skip %s", idx.Name.L))
 				continue
 			}
+			if idx.VectorInfo != nil {
+				b.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackErrorf("analyzing vector index is not supported, skip %s", idx.Name.L))
+				continue
+			}
 			p.IdxTasks = append(p.IdxTasks, generateIndexTasks(idx, as, tnW.TableInfo, partitionNames, physicalIDs, version)...)
 		}
 		handleCols := BuildHandleColsForAnalyze(b.ctx, tnW.TableInfo, true, nil)
@@ -2848,6 +2836,10 @@ func (b *PlanBuilder) buildAnalyzeIndex(as *ast.AnalyzeTableStmt, opts map[ast.A
 			b.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackErrorf("analyzing multi-valued indexes is not supported, skip %s", idx.Name.L))
 			continue
 		}
+		if idx.VectorInfo != nil {
+			b.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackErrorf("analyzing vector index is not supported, skip %s", idx.Name.L))
+			continue
+		}
 		p.IdxTasks = append(p.IdxTasks, generateIndexTasks(idx, as, tblInfo, names, physicalIDs, version)...)
 	}
 	return p, nil
@@ -2876,6 +2868,10 @@ func (b *PlanBuilder) buildAnalyzeAllIndex(as *ast.AnalyzeTableStmt, opts map[as
 		if idx.State == model.StatePublic {
 			if idx.MVIndex {
 				b.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackErrorf("analyzing multi-valued indexes is not supported, skip %s", idx.Name.L))
+				continue
+			}
+			if idx.VectorInfo != nil {
+				b.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackErrorf("analyzing vector index is not supported, skip %s", idx.Name.L))
 				continue
 			}
 
@@ -5839,4 +5835,14 @@ func extractPatternLikeOrIlikeName(patternLike *ast.PatternLikeOrIlikeExpr) stri
 		return v.GetString()
 	}
 	return ""
+}
+
+// getTablePath finds the TablePath from a group of accessPaths.
+func getTablePath(paths []*util.AccessPath) *util.AccessPath {
+	for _, path := range paths {
+		if path.IsTablePath() {
+			return path
+		}
+	}
+	return nil
 }

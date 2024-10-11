@@ -132,6 +132,17 @@ func NewContext(opts ...Option) *Context {
 	return ctx
 }
 
+// NewNonStrictContext creates a new context for meta-building with non-strict mode.
+func NewNonStrictContext() *Context {
+	evalCtx := exprstatic.NewEvalContext(
+		// use mysql.ModeNone to avoid some special values like datetime `0000-00-00 00:00:00`
+		exprstatic.WithSQLMode(mysql.ModeNone),
+	)
+	return NewContext(WithExprCtx(exprstatic.NewExprContext(
+		exprstatic.WithEvalCtx(evalCtx),
+	)))
+}
+
 // GetExprCtx returns the expression context of the session.
 func (ctx *Context) GetExprCtx() exprctx.ExprContext {
 	return ctx.exprCtx

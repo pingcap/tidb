@@ -636,7 +636,7 @@ func TestGetMvccByEncodedKeyRegionError(t *testing.T) {
 	h := helper.NewHelper(store.(helper.Storage))
 	txn, err := store.Begin()
 	require.NoError(t, err)
-	m := meta.NewMeta(txn)
+	m := meta.NewMutator(txn)
 	schemaVersion := tk.Session().GetDomainInfoSchema().SchemaMetaVersion()
 	key := m.EncodeSchemaDiffKey(schemaVersion)
 

@@ -73,7 +73,6 @@ func (isc *InfoSchemaCache) Update(se session.Session) error {
 			}
 
 			for _, par := range tblInfo.Partition.Definitions {
-				par := par
 				ttlTable, err := isc.newTable(dbName, tblInfo, &par)
 				if err != nil {
 					logger.Warn("fail to build info schema cache",

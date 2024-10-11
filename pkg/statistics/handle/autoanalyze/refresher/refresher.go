@@ -15,21 +15,17 @@
 package refresher
 
 import (
-	"context"
 	"time"
 
-	"github.com/pingcap/tidb/pkg/infoschema"
-	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/sysproctrack"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/statistics/handle/autoanalyze/exec"
 	"github.com/pingcap/tidb/pkg/statistics/handle/autoanalyze/priorityqueue"
-	"github.com/pingcap/tidb/pkg/statistics/handle/lockstats"
 	statslogutil "github.com/pingcap/tidb/pkg/statistics/handle/logutil"
 	statstypes "github.com/pingcap/tidb/pkg/statistics/handle/types"
 	statsutil "github.com/pingcap/tidb/pkg/statistics/handle/util"
-	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"go.uber.org/zap"
 )
@@ -74,10 +70,6 @@ func (r *Refresher) UpdateConcurrency() {
 
 // AnalyzeHighestPriorityTables picks tables with the highest priority and analyzes them.
 func (r *Refresher) AnalyzeHighestPriorityTables() bool {
-	if !r.autoAnalysisTimeWindow.IsWithinTimeWindow(time.Now()) {
-		return false
-	}
-
 	se, err := r.statsHandle.SPool().Get()
 	if err != nil {
 		statslogutil.StatsLogger().Error("Failed to get session context", zap.Error(err))
@@ -86,6 +78,16 @@ func (r *Refresher) AnalyzeHighestPriorityTables() bool {
 	defer r.statsHandle.SPool().Put(se)
 
 	sctx := se.(sessionctx.Context)
+	parameters := exec.GetAutoAnalyzeParameters(sctx)
+	err = r.setAutoAnalysisTimeWindow(parameters)
+	if err != nil {
+		statslogutil.StatsLogger().Error("Set auto analyze time window failed", zap.Error(err))
+		return false
+	}
+	if !r.isWithinTimeWindow() {
+		return false
+	}
+
 	// Update the concurrency to the latest value.
 	r.UpdateConcurrency()
 	// Check remaining concurrency.
@@ -153,142 +155,41 @@ func (r *Refresher) RebuildTableAnalysisJobQueue() error {
 	// Reset the priority queue.
 	r.Jobs = priorityqueue.NewAnalysisPriorityQueue()
 
-	if err := statsutil.CallWithSCtx(
+	return statsutil.CallWithSCtx(
 		r.statsHandle.SPool(),
 		func(sctx sessionctx.Context) error {
 			parameters := exec.GetAutoAnalyzeParameters(sctx)
-			autoAnalyzeRatio := exec.ParseAutoAnalyzeRatio(parameters[variable.TiDBAutoAnalyzeRatio])
-			// Get the available time period for auto analyze and check if the current time is in the period.
-			start, end, err := exec.ParseAutoAnalysisWindow(
-				parameters[variable.TiDBAutoAnalyzeStartTime],
-				parameters[variable.TiDBAutoAnalyzeEndTime],
-			)
+			err := r.setAutoAnalysisTimeWindow(parameters)
 			if err != nil {
-				statslogutil.StatsLogger().Error(
-					"parse auto analyze period failed",
-					zap.Error(err),
-				)
-				return err
+				return errors.Wrap(err, "set auto analyze time window failed")
 			}
-			// We will check it again when we try to execute the job.
-			// So store the time window for later use.
-			r.autoAnalysisTimeWindow = priorityqueue.NewAutoAnalysisTimeWindow(start, end)
-			if !r.autoAnalysisTimeWindow.IsWithinTimeWindow(time.Now()) {
+			if !r.isWithinTimeWindow() {
 				return nil
 			}
-			calculator := priorityqueue.NewPriorityCalculator()
-			pruneMode := variable.PartitionPruneMode(sctx.GetSessionVars().PartitionPruneMode.Load())
-			is := sctx.GetDomainInfoSchema().(infoschema.InfoSchema)
-			// Query locked tables once to minimize overhead.
-			// Outdated lock info is acceptable as we verify table lock status pre-analysis.
-			lockedTables, err := lockstats.QueryLockedTables(sctx)
-			if err != nil {
-				return err
-			}
-			// Get current timestamp from the session context.
-			currentTs, err := getStartTs(sctx)
-			if err != nil {
-				return err
-			}
 
-			jobFactory := priorityqueue.NewAnalysisJobFactory(sctx, autoAnalyzeRatio, currentTs)
-
-			dbs := is.AllSchemaNames()
-			for _, db := range dbs {
-				// Sometimes the tables are too many. Auto-analyze will take too much time on it.
-				// so we need to check the available time.
-				if !r.autoAnalysisTimeWindow.IsWithinTimeWindow(time.Now()) {
-					return nil
-				}
-				// Ignore the memory and system database.
-				if util.IsMemOrSysDB(db.L) {
-					continue
-				}
-
-				tbls, err := is.SchemaTableInfos(context.Background(), db)
-				if err != nil {
-					return err
-				}
-				// We need to check every partition of every table to see if it needs to be analyzed.
-				for _, tblInfo := range tbls {
-					// If table locked, skip analyze all partitions of the table.
-					if _, ok := lockedTables[tblInfo.ID]; ok {
-						continue
-					}
-
-					if tblInfo.IsView() {
-						continue
-					}
-					pi := tblInfo.GetPartitionInfo()
-					if pi == nil {
-						job := jobFactory.CreateNonPartitionedTableAnalysisJob(
-							db.O,
-							tblInfo,
-							r.statsHandle.GetTableStatsForAutoAnalyze(tblInfo),
-						)
-						r.pushJob(job, calculator)
-						continue
-					}
-
-					// Only analyze the partition that has not been locked.
-					partitionDefs := make([]model.PartitionDefinition, 0, len(pi.Definitions))
-					for _, def := range pi.Definitions {
-						if _, ok := lockedTables[def.ID]; !ok {
-							partitionDefs = append(partitionDefs, def)
-						}
-					}
-					partitionStats := priorityqueue.GetPartitionStats(r.statsHandle, tblInfo, partitionDefs)
-					// If the prune mode is static, we need to analyze every partition as a separate table.
-					if pruneMode == variable.Static {
-						for pIDAndName, stats := range partitionStats {
-							job := jobFactory.CreateStaticPartitionAnalysisJob(
-								db.O,
-								tblInfo,
-								pIDAndName.ID,
-								pIDAndName.Name,
-								stats,
-							)
-							r.pushJob(job, calculator)
-						}
-					} else {
-						job := jobFactory.CreateDynamicPartitionedTableAnalysisJob(
-							db.O,
-							tblInfo,
-							r.statsHandle.GetPartitionStatsForAutoAnalyze(tblInfo, tblInfo.ID),
-							partitionStats,
-						)
-						r.pushJob(job, calculator)
-					}
-				}
-			}
-
-			return nil
+			return priorityqueue.FetchAllTablesAndBuildAnalysisJobs(sctx, parameters, r.statsHandle, r.Jobs.Push)
 		},
 		statsutil.FlagWrapTxn,
-	); err != nil {
-		return err
-	}
+	)
+}
 
+func (r *Refresher) setAutoAnalysisTimeWindow(
+	parameters map[string]string,
+) error {
+	start, end, err := exec.ParseAutoAnalysisWindow(
+		parameters[variable.TiDBAutoAnalyzeStartTime],
+		parameters[variable.TiDBAutoAnalyzeEndTime],
+	)
+	if err != nil {
+		return errors.Wrap(err, "parse auto analyze period failed")
+	}
+	r.autoAnalysisTimeWindow = priorityqueue.NewAutoAnalysisTimeWindow(start, end)
 	return nil
 }
 
-func (r *Refresher) pushJob(job priorityqueue.AnalysisJob, calculator *priorityqueue.PriorityCalculator) {
-	if job == nil {
-		return
-	}
-	// We apply a penalty to larger tables, which can potentially result in a negative weight.
-	// To prevent this, we filter out any negative weights. Under normal circumstances, table sizes should not be negative.
-	weight := calculator.CalculateWeight(job)
-	if weight <= 0 {
-		statslogutil.SingletonStatsSamplerLogger().Warn(
-			"Table gets a negative weight",
-			zap.Float64("weight", weight),
-			zap.Stringer("job", job),
-		)
-	}
-	job.SetWeight(weight)
-	// Push the job onto the queue.
-	r.Jobs.Push(job)
+// isWithinTimeWindow checks if the current time is within the auto analyze time window.
+func (r *Refresher) isWithinTimeWindow() bool {
+	return r.autoAnalysisTimeWindow.IsWithinTimeWindow(time.Now())
 }
 
 // WaitAutoAnalyzeFinishedForTest waits for the auto analyze job to be finished.
@@ -306,12 +207,4 @@ func (r *Refresher) GetRunningJobs() map[int64]struct{} {
 // Close stops all running jobs and releases resources.
 func (r *Refresher) Close() {
 	r.worker.Stop()
-}
-
-func getStartTs(sctx sessionctx.Context) (uint64, error) {
-	txn, err := sctx.Txn(true)
-	if err != nil {
-		return 0, err
-	}
-	return txn.StartTS(), nil
 }
