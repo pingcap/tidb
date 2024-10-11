@@ -185,7 +185,7 @@ local RUPanel = graphPanel.new(
   logBase1Y=10,
 ).addTarget(
   prometheus.target(
-    'sum(rate(resource_manager_resource_unit_read_request_unit_sum{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", type=~"|tp"}[1m])) by (resource_group) + sum(rate(resource_manager_resource_unit_write_request_unit_sum{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", type=~"|tp"}[1m])) by (resource_group)',
+    'sum(rate(resource_manager_resource_unit_read_request_unit_sum{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", type=~"|tp", resource_group=~"$resource_group"}[1m])) by (resource_group) + sum(rate(resource_manager_resource_unit_write_request_unit_sum{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", type=~"|tp", resource_group=~"$resource_group"}[1m])) by (resource_group)',
     legendFormat="{{resource_group}}",
   )
 ).addTarget(
@@ -207,12 +207,12 @@ local RUMaxPanel = graphPanel.new(
   logBase1Y=10,
 ).addTarget(
   prometheus.target(
-    'sum(resource_manager_resource_unit_read_request_unit_max_per_sec{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster"}) by (resource_group)',
+    'sum(resource_manager_resource_unit_read_request_unit_max_per_sec{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", resource_group=~"$resource_group"}) by (resource_group)',
     legendFormat="{{resource_group}}-read",
   )
 ).addTarget(
   prometheus.target(
-    'sum(resource_manager_resource_unit_write_request_unit_max_per_sec{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster"}) by (resource_group)',
+    'sum(resource_manager_resource_unit_write_request_unit_max_per_sec{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", resource_group=~"$resource_group"}) by (resource_group)',
     legendFormat="{{resource_group}}-write",
   )
 );
@@ -232,8 +232,8 @@ local RUPerQueryPanel = graphPanel.new(
   logBase1Y=10,
 ).addTarget(
   prometheus.target(
-    '(sum(rate(resource_manager_resource_unit_read_request_unit_sum{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", type=~"|tp"}[1m])) by (name) + sum(rate(resource_manager_resource_unit_write_request_unit_sum{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", type=~"|tp"}[1m])) by (name)) / sum(rate(tidb_session_resource_group_query_total{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster"}[1m])) by (name)',
-    legendFormat="{{name}}",
+    '(sum(rate(resource_manager_resource_unit_read_request_unit_sum{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", type=~"|tp", resource_group=~"$resource_group"}[1m])) by (name) + sum(rate(resource_manager_resource_unit_write_request_unit_sum{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", type=~"|tp", resource_group=~"$resource_group"}[1m])) by (resource_group)) / sum(rate(tidb_session_resource_group_query_total{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", resource_group=~"$resource_group"}[1m])) by (resource_group)',
+    legendFormat="{{resource_group}}",
   )
 ).addTarget(
   prometheus.target(
@@ -257,8 +257,8 @@ local RRUPanel = graphPanel.new(
   logBase1Y=10,
 ).addTarget(
   prometheus.target(
-    'sum(rate(resource_manager_resource_unit_read_request_unit_sum{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", type=~"|tp"}[1m])) by (name)',
-    legendFormat="{{name}}",
+    'sum(rate(resource_manager_resource_unit_read_request_unit_sum{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", type=~"|tp", resource_group=~"$resource_group"}[1m])) by (resource_group)',
+    legendFormat="{{resource_group}}",
   )
 ).addTarget(
   prometheus.target(
@@ -282,8 +282,8 @@ local RRUPerQueryPanel = graphPanel.new(
   logBase1Y=10,
 ).addTarget(
   prometheus.target(
-    'sum(rate(resource_manager_resource_unit_read_request_unit_sum{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", type=~"|tp"}[1m])) by (name) / sum(rate(tidb_session_resource_group_query_total{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster"}[1m])) by (name)',
-    legendFormat="{{name}}",
+    'sum(rate(resource_manager_resource_unit_read_request_unit_sum{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", type=~"|tp", resource_group=~"$resource_group"}[1m])) by (name) / sum(rate(tidb_session_resource_group_query_total{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", resource_group=~"$resource_group"}[1m])) by (resource_group)',
+    legendFormat="{{resource_group}}",
   )
 ).addTarget(
   prometheus.target(
@@ -307,8 +307,8 @@ local WRUPanel = graphPanel.new(
   logBase1Y=10,
 ).addTarget(
   prometheus.target(
-    'sum(rate(resource_manager_resource_unit_write_request_unit_sum{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", type=~"|tp"}[1m])) by (name)',
-    legendFormat="{{name}}",
+    'sum(rate(resource_manager_resource_unit_write_request_unit_sum{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", type=~"|tp", resource_group=~"$resource_group"}[1m])) by (resource_group)',
+    legendFormat="{{resource_group}}",
   )
 ).addTarget(
   prometheus.target(
@@ -332,8 +332,8 @@ local WRUPerQueryPanel = graphPanel.new(
   logBase1Y=10,
 ).addTarget(
   prometheus.target(
-    'sum(rate(resource_manager_resource_unit_write_request_unit_sum{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", type=~"|tp"}[1m])) by (name) / sum(rate(tidb_session_resource_group_query_total{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster"}[1m])) by (name)',
-    legendFormat="{{name}}",
+    'sum(rate(resource_manager_resource_unit_write_request_unit_sum{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", type=~"|tp", resource_group=~"$resource_group"}[1m])) by (resource_group) / sum(rate(tidb_session_resource_group_query_total{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", resource_group=~"$resource_group"}[1m])) by (resource_group)',
+    legendFormat="{{resource_group}}",
   )
 ).addTarget(
   prometheus.target(
@@ -365,13 +365,13 @@ local KVRequestCountPanel = graphPanel.new(
   logBase1Y=2,
 ).addTarget(
   prometheus.target(
-    'sum(rate(resource_manager_resource_request_count{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster"}[1m])) by (name, type)',
-    legendFormat="{{name}}-{{type}}",
+    'sum(rate(resource_manager_resource_request_count{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", resource_group=~"$resource_group"}[1m])) by (resource_group, type)',
+    legendFormat="{{resource_group}}-{{type}}",
   )
 ).addTarget(
   prometheus.target(
-    'sum(rate(resource_manager_resource_request_count{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster"}[1m])) by (name)',
-    legendFormat="{{name}}-total",
+    'sum(rate(resource_manager_resource_request_count{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", resource_group=~"$resource_group"}[1m])) by (resource_group)',
+    legendFormat="{{resource_group}}-total",
   )
 );
 
@@ -390,13 +390,13 @@ local KVRequestCountPerQueryPanel = graphPanel.new(
   logBase1Y=2,
 ).addTarget(
   prometheus.target(
-    'sum(rate(resource_manager_resource_request_count{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", type="read"}[1m])) by (name) / sum(rate(tidb_session_resource_group_query_total{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster"}[1m])) by (name)',
-    legendFormat="{{name}}-read",
+    'sum(rate(resource_manager_resource_request_count{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", type="read", resource_group=~"$resource_group"}[1m])) by (resource_group) / sum(rate(tidb_session_resource_group_query_total{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", resource_group=~"$resource_group"}[1m])) by (resource_group)',
+    legendFormat="{{resource_group}}-read",
   )
 ).addTarget(
   prometheus.target(
-    'sum(rate(resource_manager_resource_request_count{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", type="write"}[1m])) by (name) / sum(rate(tidb_session_resource_group_query_total{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster"}[1m])) by (name)',
-    legendFormat="{{name}}-write",
+    'sum(rate(resource_manager_resource_request_count{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", type="write", resource_group=~"$resource_group"}[1m])) by (resource_group) / sum(rate(tidb_session_resource_group_query_total{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", resource_group=~"$resource_group"}[1m])) by (resource_group)',
+    legendFormat="{{resource_group}}-write",
   )
 ).addTarget(
   prometheus.target(
@@ -425,8 +425,8 @@ local BytesReadPanel = graphPanel.new(
   logBase1Y=2,
 ).addTarget(
   prometheus.target(
-    'sum(rate(resource_manager_resource_read_byte_sum{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster"}[1m])) by (name)',
-    legendFormat="{{name}}",
+    'sum(rate(resource_manager_resource_read_byte_sum{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", resource_group=~"$resource_group"}[1m])) by (resource_group)',
+    legendFormat="{{resource_group}}",
   )
 ).addTarget(
   prometheus.target(
@@ -450,8 +450,8 @@ local BytesReadPerQueryPanel = graphPanel.new(
   logBase1Y=2,
 ).addTarget(
   prometheus.target(
-    'sum(rate(resource_manager_resource_read_byte_sum{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster"}[1m])) by (name) / sum(rate(tidb_session_resource_group_query_total{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster"}[1m])) by (name)',
-    legendFormat="{{name}}",
+    'sum(rate(resource_manager_resource_read_byte_sum{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", resource_group=~"$resource_group"}[1m])) by (resource_group) / sum(rate(tidb_session_resource_group_query_total{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", resource_group=~"$resource_group"}[1m])) by (resource_group)',
+    legendFormat="{{resource_group}}",
   )
 ).addTarget(
   prometheus.target(
@@ -475,8 +475,8 @@ local BytesWrittenPanel = graphPanel.new(
   logBase1Y=2,
 ).addTarget(
   prometheus.target(
-    'sum(rate(resource_manager_resource_write_byte_sum{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster"}[1m])) by (name)',
-    legendFormat="{{name}}",
+    'sum(rate(resource_manager_resource_write_byte_sum{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", resource_group=~"$resource_group"}[1m])) by (resource_group)',
+    legendFormat="{{resource_group}}",
   )
 ).addTarget(
   prometheus.target(
@@ -500,8 +500,8 @@ local BytesWrittenPerQueryPanel = graphPanel.new(
   logBase1Y=2,
 ).addTarget(
   prometheus.target(
-    'sum(rate(resource_manager_resource_write_byte_sum{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster"}[1m])) by (name) / sum(rate(tidb_session_resource_group_query_total{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster"}[1m])) by (name)',
-    legendFormat="{{name}}",
+    'sum(rate(resource_manager_resource_write_byte_sum{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster"}[1m])) by (name) / sum(rate(tidb_session_resource_group_query_total{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", resource_group=~"$resource_group"}[1m])) by (resource_group)',
+    legendFormat="{{resource_group}}",
   )
 ).addTarget(
   prometheus.target(
@@ -525,8 +525,8 @@ local KVCPUTimePanel = graphPanel.new(
   logBase1Y=1,
 ).addTarget(
   prometheus.target(
-    'sum(rate(resource_manager_resource_kv_cpu_time_ms_sum{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster"}[1m])) by (name)',
-    legendFormat="{{name}}",
+    'sum(rate(resource_manager_resource_kv_cpu_time_ms_sum{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", resource_group=~"$resource_group"}[1m])) by (resource_group)',
+    legendFormat="{{resource_group}}",
   )
 ).addTarget(
   prometheus.target(
@@ -550,8 +550,8 @@ local SQLCPUTimePanel = graphPanel.new(
   logBase1Y=1,
 ).addTarget(
   prometheus.target(
-    'sum(rate(resource_manager_resource_sql_cpu_time_ms_sum{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster"}[1m])) by (name)',
-    legendFormat="{{name}}",
+    'sum(rate(resource_manager_resource_sql_cpu_time_ms_sum{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", resource_group=~"$resource_group"}[1m])) by (resource_group)',
+    legendFormat="{{resource_group}}",
   )
 ).addTarget(
   prometheus.target(
@@ -580,8 +580,8 @@ local ActiveResourceGroupPanel = graphPanel.new(
   description="The metrics about active resource groups.",
 ).addTarget(
   prometheus.target(
-    'resource_manager_client_resource_group_status{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$tidb_instance"}',
-    legendFormat="{{instance}}-{{name}}",
+    'resource_manager_client_resource_group_status{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$tidb_instance", resource_group=~"$resource_group"}',
+    legendFormat="{{instance}}-{{resource_group}}",
   )
 );
 
@@ -622,8 +622,8 @@ local FailedKVRequestCountPanel = graphPanel.new(
   )
 ).addTarget(
   prometheus.target(
-    'sum(rate(resource_manager_client_request_fail{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$tidb_instance"}[1m])) by (instance, name)',
-    legendFormat="{{instance}}-{{name}}",
+    'sum(rate(resource_manager_client_request_fail{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$tidb_instance", resource_group=~"$resource_group"}[1m])) by (instance, resource_group)',
+    legendFormat="{{instance}}-{{resource_group}}",
   )
 );
 
@@ -641,13 +641,13 @@ local SuccessfulKVRequestWaitDurationPanel = graphPanel.new(
   description="The metrics about successful kv request wait duration.",
 ).addTarget(
   prometheus.target(
-    'histogram_quantile(0.99, sum(rate(resource_manager_client_request_success_bucket{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$tidb_instance"}[1m])) by (instance, name, le))',
-    legendFormat="{{instance}}-{{name}}-99",
+    'histogram_quantile(0.99, sum(rate(resource_manager_client_request_success_bucket{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$tidb_instance", resource_group=~"$resource_group"}[1m])) by (instance, resource_group, le))',
+    legendFormat="{{instance}}-{{resource_group}}-99",
   )
 ).addTarget(
   prometheus.target(
-    'histogram_quantile(0.9, sum(rate(resource_manager_client_request_success_bucket{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$tidb_instance"}[1m])) by (instance, name, le))',
-    legendFormat="{{instance}}-{{name}}-90",
+    'histogram_quantile(0.9, sum(rate(resource_manager_client_request_success_bucket{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$tidb_instance", resource_group=~"$resource_group"}[1m])) by (instance, resource_group, le))',
+    legendFormat="{{instance}}-{{resource_group}}-90",
   )
 );
 
@@ -669,8 +669,8 @@ local SuccessfulKVRequestCountPanel = graphPanel.new(
   )
 ).addTarget(
   prometheus.target(
-    'sum(rate(resource_manager_client_request_success_count{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$tidb_instance"}[1m])) by (instance, name)',
-    legendFormat="{{instance}}-{{name}}",
+    'sum(rate(resource_manager_client_request_success_count{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$tidb_instance", resource_group=~"$resource_group"}[1m])) by (instance, resource_group)',
+    legendFormat="{{instance}}-{{resource_group}}",
   )
 );
 
@@ -687,12 +687,12 @@ local TokenRequestHandleDurationPanel = graphPanel.new(
 ).addTarget(
   prometheus.target(
     'histogram_quantile(0.99, sum(rate(resource_manager_client_token_request_duration_bucket{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$tidb_instance"}[1m])) by (instance, le))',
-    legendFormat="{{instance}}-{{name}}-99",
+    legendFormat="{{instance}}-99",
   )
 ).addTarget(
   prometheus.target(
     'histogram_quantile(0.999, sum(rate(resource_manager_client_token_request_duration_bucket{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$tidb_instance"}[1m])) by (instance, le))',
-    legendFormat="{{instance}}-{{name}}-999",
+    legendFormat="{{instance}}-999",
   )
 );
 
@@ -723,8 +723,8 @@ local TokenRequestCountPanel = graphPanel.new(
   )
 ).addTarget(
   prometheus.target(
-    'sum(rate(resource_manager_client_token_request_resource_group{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$tidb_instance"}[1m])) by (instance, name)',
-    legendFormat="{{instance}}-{{name}}",
+    'sum(rate(resource_manager_client_token_request_resource_group{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$tidb_instance", resource_group=~"$resource_group"}[1m])) by (instance, resource_group)',
+    legendFormat="{{instance}}-{{resource_group}}",
   )
 );
 
@@ -750,7 +750,7 @@ local QueryMaxDurationPanel = graphPanel.new(
   description="TiDB max durations for different resource group",
 ).addTarget(
   prometheus.target(
-    'histogram_quantile(1.0, sum(rate(tidb_server_handle_query_duration_seconds_bucket{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster"}[1m])) by (le,resource_group))',
+    'histogram_quantile(1.0, sum(rate(tidb_server_handle_query_duration_seconds_bucket{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", resource_group=~"$resource_group"}[1m])) by (le,resource_group))',
     legendFormat="{{resource_group}}",
   )
 );
@@ -770,12 +770,12 @@ local RunawayEventPanel = graphPanel.new(
   description="Runaway manager events for different resource group",
 ).addTarget(
   prometheus.target(
-    'sum(rate(tidb_server_query_runaway_check{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", type="hit"}[5m])) by (resource_group)',
+    'sum(rate(tidb_server_query_runaway_check{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", type="hit", resource_group=~"$resource_group"}[5m])) by (resource_group)',
     legendFormat="{{resource_group}}-hit",
   )
 ).addTarget(
   prometheus.target(
-    'sum(rate(tidb_server_query_runaway_check{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", type!="hit"}[5m])) by (resource_group, type, action)',
+    'sum(rate(tidb_server_query_runaway_check{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", type!="hit", resource_group=~"$resource_group"}[5m])) by (resource_group, type, action)',
     legendFormat="{{resource_group}}-{{type}}-{{action}}",
   )
 );
@@ -892,8 +892,8 @@ local BackgroundTaskRUPanel = graphPanel.new(
   description="The total background task's request unit cost for all resource groups.",
 ).addTarget(
   prometheus.target(
-    'sum(rate(resource_manager_resource_unit_read_request_unit_sum{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", type=~"background"}[1m])) by (name) + sum(rate(resource_manager_resource_unit_write_request_unit_sum{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", type=~"background"}[1m])) by (name)',
-    legendFormat="{{name}}",
+    'sum(rate(resource_manager_resource_unit_read_request_unit_sum{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", type=~"background", resource_group=~"$resource_group"}[1m])) by (resource_group) + sum(rate(resource_manager_resource_unit_write_request_unit_sum{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", type=~"background", resource_group=~"$resource_group"}[1m])) by (resource_group)',
+    legendFormat="{{resource_group}}",
   )
 ).addTarget(
   prometheus.target(
@@ -938,7 +938,7 @@ local BackgroundTaskCPULimitPanel = graphPanel.new(
   description="The total background task's cpu limit for all resource groups.",
 ).addTarget(
   prometheus.target(
-    'tikv_resource_control_background_quota_limiter{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$tikv_instance", type="cpu"}',
+    'tikv_resource_control_background_quota_limiter{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$tikv_instance", resource_group=~"$resource_group", type="cpu"}',
     legendFormat="{{resource_group}}-{{instance}}",
   )
 );
@@ -958,7 +958,7 @@ local BackgroundTaskIOLimitPanel = graphPanel.new(
   description="The total background task's io limit for all resource groups.",
 ).addTarget(
   prometheus.target(
-    'tikv_resource_control_background_quota_limiter{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$tikv_instance", type="io"}',
+    'tikv_resource_control_background_quota_limiter{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$tikv_instance", resource_group=~"$resource_group", type="io"}',
     legendFormat="{{resource_group}}-{{instance}}",
   )
 );
@@ -978,7 +978,7 @@ local BackgroundTaskCPUConsumptionPanel = graphPanel.new(
   description="The total background task's cpu consumption for all resource groups.",
 ).addTarget(
   prometheus.target(
-    'rate(tikv_resource_control_background_resource_consumption{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$tikv_instance", type="cpu"}[1m])',
+    'rate(tikv_resource_control_background_resource_consumption{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$tikv_instance", resource_group=~"$resource_group", type="cpu"}[1m])',
     legendFormat="{{resource_group}}-{{instance}}",
   )
 );
@@ -998,7 +998,7 @@ local BackgroundTaskIOConsumptionPanel = graphPanel.new(
   description="The total background task's io consumption for all resource groups.",
 ).addTarget(
   prometheus.target(
-    'rate(tikv_resource_control_background_resource_consumption{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$tikv_instance", type="io"}[1m])',
+    'rate(tikv_resource_control_background_resource_consumption{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$tikv_instance", resource_group=~"$resource_group", type="io"}[1m])',
     legendFormat="{{resource_group}}-{{instance}}",
   )
 );
@@ -1018,7 +1018,7 @@ local BackgroundTaskTotalWaitDurationPanel = graphPanel.new(
   description="The total background task's wait duration for all resource groups.",
 ).addTarget(
   prometheus.target(
-    'rate(tikv_resource_control_background_task_wait_duration{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$tikv_instance"}[1m])',
+    'rate(tikv_resource_control_background_task_wait_duration{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$tikv_instance", resource_group=~"$resource_group"}[1m])',
     legendFormat="{{resource_group}}-{{instance}}",
   )
 );
@@ -1081,12 +1081,12 @@ local CommandPerSecondPanel = graphPanel.new(
 ).addTarget(
   prometheus.target(
     'sum(rate(tidb_server_query_total{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster",instance=~"$tidb_instance",resource_group=~"$resource_group"}[1m])) by (result,resource_group)',
-    legendFormat="{{resource_group}}--{{result}}",
+    legendFormat="{{resource_group}}-{{result}}",
   )
 ).addTarget(
   prometheus.target(
     'sum(rate(tidb_server_query_total{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster",result="OK",instance=~"$tidb_instance",resource_group=~"$resource_group"}[1m] offset 1d)) by (result,resource_group)',
-    legendFormat="{{resource_group}}--yesterday",
+    legendFormat="{{resource_group}}-yesterday",
     hide=true,
   )
 );
@@ -1107,12 +1107,12 @@ local QPSPanel = graphPanel.new(
 ).addTarget(
   prometheus.target(
     'sum(rate(tidb_executor_statement_total{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster",instance=~"$tidb_instance",resource_group=~"$resource_group"}[1m])) by (type,resource_group)',
-    legendFormat="{{resource_group}}--{{type}}",
+    legendFormat="{{resource_group}}-{{type}}",
   )
 ).addTarget(
   prometheus.target(
     'sum(rate(tidb_executor_statement_total{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster",instance=~"$tidb_instance",resource_group=~"$resource_group"}[1m])) by (resource_group)',
-    legendFormat="{{resource_group}}--total",
+    legendFormat="{{resource_group}}-total",
   )
 );
 
@@ -1154,7 +1154,7 @@ local FailedQueryOPMPanel = graphPanel.new(
 ).addTarget(
   prometheus.target(
     'sum(increase(tidb_server_execute_error_total{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance",resource_group=~"$resource_group"}[1m])) by (type, instance,resource_group)',
-    legendFormat="{{type}}--{{instance}}--{{resource_group}}",
+    legendFormat="{{type}}-{{instance}}-{{resource_group}}",
   )
 );
 
