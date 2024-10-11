@@ -889,6 +889,9 @@ type MydumperRuntime struct {
 	// DataInvalidCharReplace is the replacement characters for non-compatible characters, which shouldn't duplicate with the separators or line breaks.
 	// Changing the default value will result in increased parsing time. Non-compatible characters do not cause an increase in error.
 	DataInvalidCharReplace string `toml:"data-invalid-char-replace" json:"data-invalid-char-replace"`
+	// MaxSourceDataSize is the maximum size of the source data that can be imported.
+	// If the value is 0, the size of the source data is unlimited.
+	MaxSourceDataSize int64 `toml:"max-source-data-size" json:"max-source-data-size"`
 }
 
 func (m *MydumperRuntime) adjust() error {
