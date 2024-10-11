@@ -1126,6 +1126,10 @@ func TestCreateTableWithVectorIndex(t *testing.T) {
 		require.Equal(t, 1, len(indexes))
 		require.Equal(t, pmodel.IndexTypeHNSW, indexes[0].Tp)
 		require.Equal(t, model.DistanceMetricCosine, indexes[0].VectorInfo.DistanceMetric)
+		tk.MustExec("insert into t values (1, '[1,2.1,3.3]');")
+		tk.MustQuery("select * from t;").Check(testkit.Rows("1 [1,2.1,3.3]"))
+		tk.MustExec("create view v as select * from tt;")
+		tk.MustQuery("select * from v;").Check(testkit.Rows("1 [1,2.1,3.3]"))
 		tk.MustExec(`DROP TABLE t`)
 	}
 
@@ -1145,13 +1149,20 @@ func TestCreateTableWithVectorIndex(t *testing.T) {
 
 	// test unsupported table types
 	tk.MustContainErrMsg("create temporary table t(a int, b vector(3), vector index((VEC_COSINE_DISTANCE(b))) USING HNSW)",
-		"`vector index` is unsupported on temporary tables.")
+		"`set on tiflash` is unsupported on temporary tables.")
 	// global and local temporary table using different way to handle, so we have two test cases.
 	tk.MustContainErrMsg("create global temporary table t(a int, b vector(3), vector index((VEC_COSINE_DISTANCE(b))) USING HNSW) on commit delete rows;",
-		"`vector index` is unsupported on temporary tables.")
+		"`set on tiflash` is unsupported on temporary tables.")
 	tk.MustContainErrMsg("create table pt(id bigint, b vector(3), vector index((VEC_COSINE_DISTANCE(b))) USING HNSW) "+
 		"partition by range(id) (partition p0 values less than (20), partition p1 values less than (100));",
 		"Unsupported add vector index: unsupported partition table")
+	tk.MustContainErrMsg("create table t(a int, b vector(3), c char(210) CHARACTER SET gbk COLLATE gbk_bin, vector index((VEC_COSINE_DISTANCE(b))));",
+		"Unsupported ALTER TiFlash settings for tables not supported by TiFlash: table contains gbk charset")
+	tk.MustContainErrMsg("create table mysql.t(a int, b vector(3), vector index((VEC_COSINE_DISTANCE(b))));",
+		"Unsupported ALTER TiFlash settings for system table and memory table")
+	tk.MustContainErrMsg("create table information_schema.t(a int, b vector(3), vector index((VEC_COSINE_DISTANCE(b))));",
+		"Unsupported ALTER TiFlash settings for system table and memory table")
+
 	// a vector index with invisible
 	tk.MustContainErrMsg("create table t(a int, b vector(3), vector index((VEC_COSINE_DISTANCE(b))) USING HNSW INVISIBLE)",
 		"Unsupported set vector index invisible")
