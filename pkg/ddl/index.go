@@ -632,35 +632,6 @@ func moveAndUpdateHiddenColumnsToPublic(tblInfo *model.TableInfo, idxInfo *model
 	}
 }
 
-func decodeAddIndexArgs(job *model.Job) (
-	uniques []bool,
-	indexNames []pmodel.CIStr,
-	indexPartSpecifications [][]*ast.IndexPartSpecification,
-	indexOptions []*ast.IndexOption,
-	hiddenCols [][]*model.ColumnInfo,
-	err error,
-) {
-	var (
-		unique                 bool
-		indexName              pmodel.CIStr
-		indexPartSpecification []*ast.IndexPartSpecification
-		indexOption            *ast.IndexOption
-		hiddenCol              []*model.ColumnInfo
-	)
-	err = job.DecodeArgs(&unique, &indexName, &indexPartSpecification, &indexOption, &hiddenCol)
-	if err == nil {
-		return []bool{unique},
-			[]pmodel.CIStr{indexName},
-			[][]*ast.IndexPartSpecification{indexPartSpecification},
-			[]*ast.IndexOption{indexOption},
-			[][]*model.ColumnInfo{hiddenCol},
-			nil
-	}
-
-	err = job.DecodeArgs(&uniques, &indexNames, &indexPartSpecifications, &indexOptions, &hiddenCols)
-	return
-}
-
 func checkAndBuildIndexInfo(job *model.Job, tblInfo *model.TableInfo, isVector bool, isPK bool, args *model.IndexArg) (*model.IndexInfo, error) {
 	var err error
 	indexInfo := tblInfo.FindIndexByName(args.IndexName.L)
@@ -746,7 +717,7 @@ func (w *worker) onCreateVectorIndex(jobCtx *jobContext, job *model.Job) (ver in
 		return ver, errors.Trace(err)
 	}
 
-	args, err := model.GetAddIndexArgs(job)
+	args, err := model.GetModifyIndexArgs(job)
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
@@ -831,9 +802,10 @@ func (w *worker) onCreateVectorIndex(jobCtx *jobContext, job *model.Job) (ver in
 			return ver, errors.Trace(err)
 		}
 
-		finishedArgs := &model.AddIndexArgs{
+		finishedArgs := &model.ModifyIndexArgs{
 			IndexArgs:    []*model.IndexArg{{IndexID: indexInfo.ID}},
 			PartitionIDs: getPartitionIDs(tblInfo),
+			OpType:       model.OpAddIndex,
 		}
 		job.FillFinishedArgs(finishedArgs)
 
@@ -970,7 +942,7 @@ func (w *worker) onCreateIndex(jobCtx *jobContext, job *model.Job, isPK bool) (v
 		return ver, errors.Trace(dbterror.ErrOptOnCacheTable.GenWithStackByArgs("Create Index"))
 	}
 
-	args, err := model.GetAddIndexArgs(job)
+	args, err := model.GetModifyIndexArgs(job)
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
@@ -1096,7 +1068,10 @@ SwitchIndexState:
 			return ver, errors.Trace(err)
 		}
 
-		a := &model.AddIndexArgs{PartitionIDs: getPartitionIDs(tbl.Meta())}
+		a := &model.ModifyIndexArgs{
+			PartitionIDs: getPartitionIDs(tbl.Meta()),
+			OpType:       model.OpAddIndex,
+		}
 		for _, indexInfo := range allIndexInfos {
 			a.IndexArgs = append(a.IndexArgs, &model.IndexArg{
 				IndexID:  indexInfo.ID,
@@ -1450,16 +1425,18 @@ func onDropIndex(jobCtx *jobContext, job *model.Job) (ver int64, _ error) {
 
 		// Finish this job.
 		if job.IsRollingback() {
+			dropArgs, err := model.GetFinishedModifyIndexArgs(job)
 			job.FinishTableJob(model.JobStateRollbackDone, model.StateNone, ver, tblInfo)
-
-			dropArgs, err := model.GetFinishedDropIndexArgs(job)
 			if err != nil {
 				return ver, errors.Trace(err)
 			}
 
 			// Convert drop index args to finished add index args again to finish add index job.
 			// Only rolled back add index jobs will get here, since drop index jobs can only be cancelled, not rolled back.
-			addIndexArgs := &model.AddIndexArgs{PartitionIDs: dropArgs.PartitionIDs}
+			addIndexArgs := &model.ModifyIndexArgs{
+				PartitionIDs: dropArgs.PartitionIDs,
+				OpType:       model.OpAddIndex,
+			}
 			for i, indexID := range indexIDs {
 				addIndexArgs.IndexArgs = append(addIndexArgs.IndexArgs,
 					&model.IndexArg{
@@ -1475,6 +1452,7 @@ func onDropIndex(jobCtx *jobContext, job *model.Job) (ver int64, _ error) {
 			// Global index key has t{tableID}_ prefix.
 			// Assign partitionIDs empty to guarantee correct prefix in insertJobIntoDeleteRangeTable.
 			dropArgs, err := model.GetDropIndexArgs(job)
+			dropArgs.OpType = model.OpDropIndex
 			if err != nil {
 				return ver, errors.Trace(err)
 			}
@@ -1596,12 +1574,12 @@ func checkRenameIndex(t *meta.Mutator, job *model.Job) (*model.TableInfo, pmodel
 		return nil, from, to, errors.Trace(err)
 	}
 
-	args, err := model.GetRenameIndexArgs(job)
+	args, err := model.GetModifyIndexArgs(job)
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return nil, from, to, errors.Trace(err)
 	}
-	from, to = args.From, args.To
+	from, to = args.GetRenameIndexs()
 
 	// Double check. See function `RenameIndex` in executor.go
 	duplicate, err := ValidateRenameIndex(from, to, tblInfo)

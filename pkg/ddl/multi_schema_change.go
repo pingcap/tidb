@@ -216,10 +216,10 @@ func fillMultiSchemaInfo(info *model.MultiSchemaInfo, job *JobWrapper) error {
 		colName := job.JobArgs.(*model.TableColumnArgs).Col.Name
 		info.DropColumns = append(info.DropColumns, colName)
 	case model.ActionDropIndex, model.ActionDropPrimaryKey:
-		args := job.JobArgs.(*model.DropIndexArgs)
+		args := job.JobArgs.(*model.ModifyIndexArgs)
 		info.DropIndexes = append(info.DropIndexes, args.IndexArgs[0].IndexName)
 	case model.ActionAddIndex, model.ActionAddPrimaryKey:
-		args := job.JobArgs.(*model.AddIndexArgs)
+		args := job.JobArgs.(*model.ModifyIndexArgs)
 		// This job has not been merged, len(args) should be one.
 		intest.Assert(len(args.IndexArgs) == 1, "len(args.IndexArgs) != 1")
 		indexArg := args.IndexArgs[0]
@@ -233,9 +233,10 @@ func fillMultiSchemaInfo(info *model.MultiSchemaInfo, job *JobWrapper) error {
 			}
 		}
 	case model.ActionRenameIndex:
-		args := job.JobArgs.(*model.RenameIndexArgs)
-		info.AddIndexes = append(info.AddIndexes, args.To)
-		info.DropIndexes = append(info.DropIndexes, args.From)
+		args := job.JobArgs.(*model.ModifyIndexArgs)
+		from, to := args.GetRenameIndexs()
+		info.AddIndexes = append(info.AddIndexes, from)
+		info.DropIndexes = append(info.DropIndexes, to)
 	case model.ActionModifyColumn:
 		newCol := *job.Args[0].(**model.ColumnInfo)
 		oldColName := job.Args[1].(pmodel.CIStr)
@@ -349,11 +350,11 @@ func mergeAddIndex(info *model.MultiSchemaInfo) {
 	}
 
 	newSubJobs := make([]*model.SubJob, 0, len(info.SubJobs))
-	newAddIndexesArgs := &model.AddIndexArgs{}
+	newAddIndexesArgs := &model.ModifyIndexArgs{OpType: model.OpAddIndex}
 
 	for _, subJob := range info.SubJobs {
 		if subJob.Type == model.ActionAddIndex {
-			args := subJob.JobArgs.(*model.AddIndexArgs)
+			args := subJob.JobArgs.(*model.ModifyIndexArgs)
 			newAddIndexesArgs.IndexArgs = append(newAddIndexesArgs.IndexArgs, args.IndexArgs...)
 		} else {
 			newSubJobs = append(newSubJobs, subJob)

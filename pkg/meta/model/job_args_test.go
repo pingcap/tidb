@@ -446,137 +446,6 @@ func TestAlterTablePartitionArgs(t *testing.T) {
 	}
 }
 
-func TestDecodeAddIndexArgsCompatibility(t *testing.T) {
-	cases := []struct {
-		raw                     json.RawMessage
-		uniques                 []bool
-		indexNames              []model.CIStr
-		indexPartSpecifications [][]*ast.IndexPartSpecification
-		indexOptions            []*ast.IndexOption
-		hiddenCols              [][]*ColumnInfo
-	}{
-		{
-			raw: json.RawMessage(`[
-true,
-{"O":"t","L":"t"},
-[
-	{"Column":{"Schema":{"O":"","L":""},"Table":{"O":"","L":""},"Name":{"O":"a","L":"a"}},"Length":-1,"Desc":false,"Expr":null},
-	{"Column":{"Schema":{"O":"","L":""},"Table":{"O":"","L":""},"Name":{"O":"b","L":"b"}},"Length":-1,"Desc":false,"Expr":null}
-],
-null,
-[],
-false]`),
-			uniques: []bool{true},
-			indexNames: []model.CIStr{
-				{O: "t", L: "t"},
-			},
-			indexPartSpecifications: [][]*ast.IndexPartSpecification{
-				{
-					{
-						Column: &ast.ColumnName{
-							Schema: model.CIStr{O: "", L: ""},
-							Table:  model.CIStr{O: "", L: ""},
-							Name:   model.CIStr{O: "a", L: "a"},
-						},
-						Length: -1,
-						Desc:   false,
-						Expr:   nil,
-					},
-					{
-						Column: &ast.ColumnName{
-							Schema: model.CIStr{O: "", L: ""},
-							Table:  model.CIStr{O: "", L: ""},
-							Name:   model.CIStr{O: "b", L: "b"},
-						},
-						Length: -1,
-						Desc:   false,
-						Expr:   nil,
-					},
-				},
-			},
-			indexOptions: []*ast.IndexOption{nil},
-			hiddenCols:   [][]*ColumnInfo{{}},
-		},
-		{
-			raw: json.RawMessage(`[
-[false,true],
-[{"O":"t","L":"t"},{"O":"t1","L":"t1"}],
-[
-	[
-		{"Column":{"Schema":{"O":"","L":""},"Table":{"O":"","L":""},"Name":{"O":"a","L":"a"}},"Length":-1,"Desc":false,"Expr":null},
-		{"Column":{"Schema":{"O":"","L":""},"Table":{"O":"","L":""},"Name":{"O":"b","L":"b"}},"Length":-1,"Desc":false,"Expr":null}
-	],
-	[
-		{"Column":{"Schema":{"O":"","L":""},"Table":{"O":"","L":""},"Name":{"O":"a","L":"a"}},"Length":-1,"Desc":false,"Expr":null}
-	]
-],
-[null,null],
-[[],[]],
-[false,false]]`),
-			uniques: []bool{false, true},
-			indexNames: []model.CIStr{
-				{O: "t", L: "t"}, {O: "t1", L: "t1"},
-			},
-			indexPartSpecifications: [][]*ast.IndexPartSpecification{
-				{
-					{
-						Column: &ast.ColumnName{
-							Schema: model.CIStr{O: "", L: ""},
-							Table:  model.CIStr{O: "", L: ""},
-							Name:   model.CIStr{O: "a", L: "a"},
-						},
-						Length: -1,
-						Desc:   false,
-						Expr:   nil,
-					},
-					{
-						Column: &ast.ColumnName{
-							Schema: model.CIStr{O: "", L: ""},
-							Table:  model.CIStr{O: "", L: ""},
-							Name:   model.CIStr{O: "b", L: "b"},
-						},
-						Length: -1,
-						Desc:   false,
-						Expr:   nil,
-					},
-				},
-				{
-					{
-						Column: &ast.ColumnName{
-							Schema: model.CIStr{O: "", L: ""},
-							Table:  model.CIStr{O: "", L: ""},
-							Name:   model.CIStr{O: "a", L: "a"},
-						},
-						Length: -1,
-						Desc:   false,
-						Expr:   nil,
-					},
-				},
-			},
-			indexOptions: []*ast.IndexOption{nil, nil},
-			hiddenCols:   [][]*ColumnInfo{{}, {}},
-		},
-	}
-
-	for _, c := range cases {
-		job := &Job{
-			Version: JobVersion1,
-			Type:    ActionAddIndex,
-			RawArgs: c.raw,
-		}
-
-		args, err := GetAddIndexArgs(job)
-		require.NoError(t, err)
-		for i, a := range args.IndexArgs {
-			require.Equal(t, c.uniques[i], a.Unique)
-			require.Equal(t, c.indexNames[i], a.IndexName)
-			require.Equal(t, c.indexPartSpecifications[i], a.IndexPartSpecifications)
-			require.Equal(t, c.indexOptions[i], a.IndexOption)
-			require.Equal(t, c.hiddenCols[i], a.HiddenCols)
-		}
-	}
-}
-
 func TestRenameTableArgs(t *testing.T) {
 	inArgs := &RenameTableArgs{
 		OldSchemaID:   9527,
@@ -1126,7 +995,7 @@ func TestAlterTableAttributesArgs(t *testing.T) {
 }
 
 func TestAddIndexArgs(t *testing.T) {
-	inArgs := &AddIndexArgs{
+	inArgs := &ModifyIndexArgs{
 		IndexArgs: []*IndexArg{{
 			Global:                  false,
 			Unique:                  true,
@@ -1141,6 +1010,7 @@ func TestAddIndexArgs(t *testing.T) {
 			FuncExpr:                "test_string",
 		}},
 		PartitionIDs: []int64{100, 101, 102},
+		OpType:       OpAddIndex,
 	}
 
 	for _, v := range []JobVersion{JobVersion1, JobVersion2} {
@@ -1149,7 +1019,7 @@ func TestAddIndexArgs(t *testing.T) {
 		j2 := &Job{}
 		require.NoError(t, j2.Decode(getJobBytes(t, inArgs, v, ActionAddIndex)))
 
-		args, err := GetAddIndexArgs(j2)
+		args, err := GetModifyIndexArgs(j2)
 		require.NoError(t, err)
 
 		a := args.IndexArgs[0]
@@ -1167,7 +1037,7 @@ func TestAddIndexArgs(t *testing.T) {
 		j2 := &Job{}
 		require.NoError(t, j2.Decode(getJobBytes(t, inArgs, v, ActionAddPrimaryKey)))
 
-		args, err := GetAddIndexArgs(j2)
+		args, err := GetModifyIndexArgs(j2)
 		require.NoError(t, err)
 
 		a := args.IndexArgs[0]
@@ -1185,7 +1055,7 @@ func TestAddIndexArgs(t *testing.T) {
 		j2 := &Job{}
 		require.NoError(t, j2.Decode(getJobBytes(t, inArgs, v, ActionAddVectorIndex)))
 
-		args, err := GetAddIndexArgs(j2)
+		args, err := GetModifyIndexArgs(j2)
 		require.NoError(t, err)
 
 		a := args.IndexArgs[0]
@@ -1199,7 +1069,7 @@ func TestAddIndexArgs(t *testing.T) {
 		j2 := &Job{}
 		require.NoError(t, j2.Decode(getFinishedJobBytes(t, inArgs, v, ActionAddIndex)))
 
-		args, err := GetFinishedAddIndexArgs(j2)
+		args, err := GetFinishedModifyIndexArgs(j2)
 		require.NoError(t, err)
 
 		a := args.IndexArgs[0]
@@ -1211,7 +1081,7 @@ func TestAddIndexArgs(t *testing.T) {
 }
 
 func TestDropIndexArguements(t *testing.T) {
-	checkFunc := func(t *testing.T, inArgs *DropIndexArgs) {
+	checkFunc := func(t *testing.T, inArgs *ModifyIndexArgs) {
 		for _, v := range []JobVersion{JobVersion1, JobVersion2} {
 			j2 := &Job{}
 			require.NoError(t, j2.Decode(getJobBytes(t, inArgs, v, ActionDropIndex)))
@@ -1224,7 +1094,7 @@ func TestDropIndexArguements(t *testing.T) {
 
 			j2 = &Job{}
 			require.NoError(t, j2.Decode(getFinishedJobBytes(t, inArgs, v, ActionDropIndex)))
-			args2, err := GetFinishedDropIndexArgs(j2)
+			args2, err := GetFinishedModifyIndexArgs(j2)
 			require.NoError(t, err)
 			require.EqualValues(t, inArgs.IndexArgs, args2.IndexArgs)
 			require.EqualValues(t, inArgs.IndexIDs, args2.IndexIDs)
@@ -1232,7 +1102,7 @@ func TestDropIndexArguements(t *testing.T) {
 		}
 	}
 
-	inArgs := &DropIndexArgs{
+	inArgs := &ModifyIndexArgs{
 		IndexArgs: []*IndexArg{
 			{
 				IndexName: model.NewCIStr("i2"),
@@ -1242,11 +1112,11 @@ func TestDropIndexArguements(t *testing.T) {
 		},
 		IndexIDs:     []int64{1},
 		PartitionIDs: []int64{100, 101, 102, 103},
-		IsRollback:   false,
+		OpType:       OpDropIndex,
 	}
 	checkFunc(t, inArgs)
 
-	inArgs = &DropIndexArgs{
+	inArgs = &ModifyIndexArgs{
 		IndexArgs: []*IndexArg{
 			{
 				IndexName: model.NewCIStr("i2"),
@@ -1257,24 +1127,25 @@ func TestDropIndexArguements(t *testing.T) {
 				IfExist:   true,
 			},
 		},
-		IndexIDs:   []int64{1, 2, 3},
-		IsRollback: true,
+		IndexIDs: []int64{1, 2, 3},
+		OpType:   OpRollbackAddIndex,
 	}
 	checkFunc(t, inArgs)
 }
 
 func TestGetRenameIndexArgs(t *testing.T) {
-	inArgs := &RenameIndexArgs{
-		From: model.NewCIStr("old"),
-		To:   model.NewCIStr("new"),
+	inArgs := &ModifyIndexArgs{
+		IndexArgs: []*IndexArg{
+			{IndexName: model.NewCIStr("old")},
+			{IndexName: model.NewCIStr("new")},
+		},
 	}
 	for _, v := range []JobVersion{JobVersion1, JobVersion2} {
 		j2 := &Job{}
 		require.NoError(t, j2.Decode(getJobBytes(t, inArgs, v, ActionRenameIndex)))
 
-		args, err := GetRenameIndexArgs(j2)
+		args, err := GetModifyIndexArgs(j2)
 		require.NoError(t, err)
-		require.Equal(t, inArgs.From, args.From)
-		require.Equal(t, inArgs.To, args.To)
+		require.Equal(t, inArgs, args)
 	}
 }

@@ -95,7 +95,7 @@ func DeniedByBDR(role ast.BDRRole, action model.ActionType, args model.JobArgs) 
 
 		// Can't add unique index on primary role.
 		if args != nil && (action == model.ActionAddIndex || action == model.ActionAddPrimaryKey) {
-			if args.(*model.AddIndexArgs).IndexArgs[0].Unique {
+			if args.(*model.ModifyIndexArgs).IndexArgs[0].Unique {
 				return true
 			}
 		}

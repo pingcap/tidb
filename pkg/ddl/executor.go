@@ -4031,9 +4031,11 @@ func (e *executor) RenameIndex(ctx sessionctx.Context, ident ast.Ident, spec *as
 		SQLMode:        ctx.GetSessionVars().SQLMode,
 	}
 
-	args := &model.RenameIndexArgs{
-		From: spec.FromKey,
-		To:   spec.ToKey,
+	args := &model.ModifyIndexArgs{
+		IndexArgs: []*model.IndexArg{
+			{IndexName: spec.FromKey},
+			{IndexName: spec.ToKey},
+		},
 	}
 	job.FillArgs(args)
 	err = e.doDDLJob2(ctx, job, args)
@@ -4590,7 +4592,7 @@ func (e *executor) CreatePrimaryKey(ctx sessionctx.Context, ti ast.Ident, indexN
 		SQLMode:        ctx.GetSessionVars().SQLMode,
 	}
 
-	args := &model.AddIndexArgs{
+	args := &model.ModifyIndexArgs{
 		IndexArgs: []*model.IndexArg{{
 			Unique:                  true,
 			IndexName:               indexName,
@@ -4600,6 +4602,7 @@ func (e *executor) CreatePrimaryKey(ctx sessionctx.Context, ti ast.Ident, indexN
 			Global:                  false,
 			IsPK:                    true,
 		}},
+		OpType: model.OpAddIndex,
 	}
 
 	reorgMeta, err := newReorgMetaFromVariables(job, ctx)
@@ -4730,7 +4733,7 @@ func (e *executor) createVectorIndex(ctx sessionctx.Context, ti ast.Ident, index
 
 	// TODO: support CDCWriteSource
 
-	args := &model.AddIndexArgs{
+	args := &model.ModifyIndexArgs{
 		IndexArgs: []*model.IndexArg{{
 			IndexName:               indexName,
 			IndexPartSpecifications: indexPartSpecifications,
@@ -4738,6 +4741,7 @@ func (e *executor) createVectorIndex(ctx sessionctx.Context, ti ast.Ident, index
 			FuncExpr:                funcExpr,
 			IsVector:                true,
 		}},
+		OpType: model.OpAddIndex,
 	}
 
 	err = e.doDDLJob2(ctx, job, args)
@@ -4902,7 +4906,7 @@ func (e *executor) createIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast
 	job.Type = model.ActionAddIndex
 	job.CDCWriteSource = ctx.GetSessionVars().CDCWriteSource
 
-	args := &model.AddIndexArgs{
+	args := &model.ModifyIndexArgs{
 		IndexArgs: []*model.IndexArg{{
 			Unique:                  unique,
 			IndexName:               indexName,
@@ -4911,6 +4915,7 @@ func (e *executor) createIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast
 			HiddenCols:              hiddenCols,
 			Global:                  global,
 		}},
+		OpType: model.OpAddIndex,
 	}
 
 	job.FillArgs(args)
@@ -5262,11 +5267,12 @@ func (e *executor) dropIndex(ctx sessionctx.Context, ti ast.Ident, indexName pmo
 		SQLMode:        ctx.GetSessionVars().SQLMode,
 	}
 
-	args := &model.DropIndexArgs{
+	args := &model.ModifyIndexArgs{
 		IndexArgs: []*model.IndexArg{{
 			IndexName: indexName,
 			IfExist:   ifExist,
 		}},
+		OpType: model.OpDropIndex,
 	}
 	job.FillArgs(args)
 	err = e.doDDLJob2(ctx, job, args)

@@ -94,7 +94,7 @@ func (i *IngestRecorder) TryAddJob(job *model.Job, isSubJob bool) error {
 		return nil
 	}
 
-	args, err := model.GetFinishedAddIndexArgs(job)
+	args, err := model.GetFinishedModifyIndexArgs(job)
 	if err != nil {
 		return errors.Trace(err)
 	}

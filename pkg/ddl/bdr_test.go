@@ -476,7 +476,7 @@ func TestDeniedByBDR(t *testing.T) {
 	}
 
 	// test special cases
-	indexArgs := &model.AddIndexArgs{
+	indexArgs := &model.ModifyIndexArgs{
 		IndexArgs: []*model.IndexArg{{
 			Global:                  false,
 			IndexName:               pmodel.NewCIStr("idx1"),
@@ -488,6 +488,7 @@ func TestDeniedByBDR(t *testing.T) {
 			IfExist:                 false,
 			IsGlobal:                false,
 		}},
+		OpType: model.OpAddIndex,
 	}
 
 	testCases2 := []struct {
@@ -526,7 +527,7 @@ func TestDeniedByBDR(t *testing.T) {
 			}
 			job.FillArgs(indexArgs)
 			job.Encode(true)
-			args, err := model.GetAddIndexArgs(job)
+			args, err := model.GetModifyIndexArgs(job)
 			require.NoError(t, err)
 			assert.Equal(t, tc.expected, DeniedByBDR(tc.role, tc.action, args), fmt.Sprintf("role: %v, action: %v", tc.role, tc.action))
 		}

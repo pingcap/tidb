@@ -113,9 +113,9 @@ func expectedDeleteRangeCnt(ctx delRangeCntCtx, job *model.Job) (int, error) {
 		}
 		return len(args.OldPhysicalTblIDs), nil
 	case model.ActionAddIndex, model.ActionAddPrimaryKey:
-		args, err := model.GetFinishedAddIndexArgs(job)
+		args, err := model.GetFinishedModifyIndexArgs(job)
 		if err != nil {
-			_, err := model.GetAddIndexArgs(job)
+			_, err := model.GetModifyIndexArgs(job)
 			if err == nil {
 				// There are nothing need to be added to delete-range table.
 				return 0, nil
@@ -136,7 +136,7 @@ func expectedDeleteRangeCnt(ctx delRangeCntCtx, job *model.Job) (int, error) {
 		}
 		return ret, nil
 	case model.ActionDropIndex, model.ActionDropPrimaryKey:
-		args, err := model.GetFinishedDropIndexArgs(job)
+		args, err := model.GetFinishedModifyIndexArgs(job)
 		if err != nil {
 			return 0, errors.Trace(err)
 		}

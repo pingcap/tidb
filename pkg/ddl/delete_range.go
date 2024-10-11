@@ -342,7 +342,7 @@ func insertJobIntoDeleteRangeTable(ctx context.Context, wrapper DelRangeExecWrap
 		return errors.Trace(doBatchDeleteTablesRange(ctx, wrapper, job.ID, args.OldPartitionIDs, ea, "truncate partition: physical table ID(s)"))
 	// ActionAddIndex, ActionAddPrimaryKey needs do it, because it needs to be rolled back when it's canceled.
 	case model.ActionAddIndex, model.ActionAddPrimaryKey:
-		args, err := model.GetFinishedAddIndexArgs(job)
+		args, err := model.GetFinishedModifyIndexArgs(job)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -373,7 +373,7 @@ func insertJobIntoDeleteRangeTable(ctx context.Context, wrapper DelRangeExecWrap
 			}
 		}
 	case model.ActionDropIndex, model.ActionDropPrimaryKey:
-		args, err := model.GetFinishedDropIndexArgs(job)
+		args, err := model.GetFinishedModifyIndexArgs(job)
 		if err != nil {
 			return errors.Trace(err)
 		}

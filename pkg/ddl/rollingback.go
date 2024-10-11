@@ -55,9 +55,9 @@ func convertAddIdxJob2RollbackJob(
 		}
 	})
 
-	dropArgs := &model.DropIndexArgs{
-		IndexIDs:   getPartitionIDs(tblInfo),
-		IsRollback: true,
+	dropArgs := &model.ModifyIndexArgs{
+		IndexIDs: getPartitionIDs(tblInfo),
+		OpType:   model.OpRollbackAddIndex,
 	}
 
 	originalState := allIndexInfos[0].State
@@ -83,7 +83,7 @@ func convertAddIdxJob2RollbackJob(
 		})
 	}
 
-	// Convert to DropIndexArgs
+	// Convert to ModifyIndexArgs
 	job.FillFinishedArgs(dropArgs)
 
 	job.SchemaState = model.StateDeleteOnly
@@ -114,7 +114,7 @@ func convertNotReorgAddIdxJob2RollbackJob(jobCtx *jobContext, job *model.Job, oc
 		return ver, errors.Trace(err)
 	}
 
-	args, err := model.GetAddIndexArgs(job)
+	args, err := model.GetModifyIndexArgs(job)
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)

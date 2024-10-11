@@ -312,7 +312,7 @@ func JobNeedGC(job *model.Job) bool {
 			model.ActionAlterTablePartitioning:
 			return true
 		case model.ActionDropIndex:
-			args, err := model.GetFinishedDropIndexArgs(job)
+			args, err := model.GetFinishedModifyIndexArgs(job)
 			if err != nil {
 				return false
 			}

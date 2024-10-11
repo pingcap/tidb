@@ -161,7 +161,7 @@ func (s *backfillDistExecutor) getBackendCtx() (ingest.BackendCtx, error) {
 }
 
 func hasUniqueIndex(job *model.Job) (bool, error) {
-	args, err := model.GetAddIndexArgs(job)
+	args, err := model.GetModifyIndexArgs(job)
 	if err != nil {
 		return false, errors.Trace(err)
 	}
