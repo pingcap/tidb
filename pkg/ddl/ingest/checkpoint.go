@@ -59,7 +59,7 @@ type CheckpointManager struct {
 	// Live in memory.
 	mu          sync.Mutex
 	checkpoints map[int]*taskCheckpoint // task ID -> checkpoint
-	// we require each task ID to be continuous and start from 1.
+	// we require each task ID to be continuous and start from 0.
 	minTaskIDFinished int
 	dirty             bool
 	// Local meta.
@@ -173,7 +173,7 @@ func (s *CheckpointManager) Status() (keyCnt int, minKeyImported kv.Key) {
 }
 
 // Register registers a new task. taskID MUST be continuous ascending and start
-// from 1.
+// from 0.
 //
 // TODO(lance6716): remove this constraint, use endKey as taskID and use
 // ordered map type for checkpoints.
@@ -236,14 +236,14 @@ func (s *CheckpointManager) UpdateWrittenKeys(taskID int, delta int) error {
 // afterFlush should be called after all engine is flushed.
 func (s *CheckpointManager) afterFlush() {
 	for {
-		cp := s.checkpoints[s.minTaskIDFinished+1]
+		cp := s.checkpoints[s.minTaskIDFinished]
 		if cp == nil || !cp.lastBatchRead || cp.writtenKeys < cp.totalKeys {
 			break
 		}
+		delete(s.checkpoints, s.minTaskIDFinished)
 		s.minTaskIDFinished++
 		s.flushedKeyLowWatermark = cp.endKey
 		s.flushedKeyCnt += cp.totalKeys
-		delete(s.checkpoints, s.minTaskIDFinished)
 		s.dirty = true
 	}
 }

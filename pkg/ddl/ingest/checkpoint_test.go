@@ -68,7 +68,9 @@ func TestCheckpointManager(t *testing.T) {
 	require.NoError(t, err)
 	defer mgr.Close()
 
+	mgr.Register(0, []byte{'0', '9'})
 	mgr.Register(1, []byte{'1', '9'})
+<<<<<<< HEAD
 	mgr.Register(2, []byte{'2', '9'})
 	mgr.UpdateTotalKeys(1, 100, false)
 	require.False(t, mgr.IsKeyProcessed([]byte{'1', '9'}))
@@ -89,20 +91,53 @@ func TestCheckpointManager(t *testing.T) {
 	require.True(t, mgr.IsKeyProcessed([]byte{'1', '9'}))
 	require.False(t, mgr.IsKeyProcessed([]byte{'2', '9'}))
 	require.NoError(t, mgr.UpdateWrittenKeys(2, 50))
+=======
+	mgr.UpdateTotalKeys(0, 100, false)
+	require.False(t, mgr.IsKeyProcessed([]byte{'0', '9'}))
+	mgr.UpdateWrittenKeys(0, 100)
+	mgr.AdvanceWatermark(true, false)
+	require.False(t, mgr.IsKeyProcessed([]byte{'0', '9'}))
+	mgr.UpdateTotalKeys(0, 100, true)
+	mgr.UpdateWrittenKeys(0, 100)
+	mgr.AdvanceWatermark(true, false)
+	// The data is not imported to the storage yet.
+	require.False(t, mgr.IsKeyProcessed([]byte{'0', '9'}))
+	mgr.UpdateWrittenKeys(1, 0)
+	mgr.AdvanceWatermark(true, true) // Mock the data is imported to the storage.
+	require.True(t, mgr.IsKeyProcessed([]byte{'0', '9'}))
+
+	// Only when the last batch is completed, the job can be completed.
+	mgr.UpdateTotalKeys(1, 50, false)
+	mgr.UpdateTotalKeys(1, 50, true)
+	mgr.UpdateWrittenKeys(1, 50)
+	mgr.AdvanceWatermark(true, true)
+	require.True(t, mgr.IsKeyProcessed([]byte{'0', '9'}))
+	require.False(t, mgr.IsKeyProcessed([]byte{'1', '9'}))
+	mgr.UpdateWrittenKeys(1, 50)
+	mgr.AdvanceWatermark(true, true)
+	require.True(t, mgr.IsKeyProcessed([]byte{'0', '9'}))
+>>>>>>> 3c4b230ae89 (ddl: fix reorg handle not resumed after changing DDL owner (#56507))
 	require.True(t, mgr.IsKeyProcessed([]byte{'1', '9'}))
-	require.True(t, mgr.IsKeyProcessed([]byte{'2', '9'}))
 
 	// Only when the subsequent job is completed, the previous job can be completed.
+	mgr.Register(2, []byte{'2', '9'})
 	mgr.Register(3, []byte{'3', '9'})
 	mgr.Register(4, []byte{'4', '9'})
-	mgr.Register(5, []byte{'5', '9'})
+	mgr.UpdateTotalKeys(2, 100, true)
 	mgr.UpdateTotalKeys(3, 100, true)
 	mgr.UpdateTotalKeys(4, 100, true)
+<<<<<<< HEAD
 	mgr.UpdateTotalKeys(5, 100, true)
 	require.NoError(t, mgr.UpdateWrittenKeys(5, 100))
 	require.NoError(t, mgr.UpdateWrittenKeys(4, 100))
+=======
+	mgr.UpdateWrittenKeys(4, 100)
+	mgr.AdvanceWatermark(true, true)
+	mgr.UpdateWrittenKeys(3, 100)
+	mgr.AdvanceWatermark(true, true)
+	require.False(t, mgr.IsKeyProcessed([]byte{'2', '9'}))
+>>>>>>> 3c4b230ae89 (ddl: fix reorg handle not resumed after changing DDL owner (#56507))
 	require.False(t, mgr.IsKeyProcessed([]byte{'3', '9'}))
-	require.False(t, mgr.IsKeyProcessed([]byte{'4', '9'}))
 }
 
 func TestCheckpointManagerUpdateReorg(t *testing.T) {
@@ -123,10 +158,18 @@ func TestCheckpointManagerUpdateReorg(t *testing.T) {
 	require.NoError(t, err)
 	defer mgr.Close()
 
+<<<<<<< HEAD
 	mgr.Register(1, []byte{'1', '9'})
 	mgr.UpdateTotalKeys(1, 100, true)
 	require.NoError(t, mgr.UpdateWrittenKeys(1, 100))
 	mgr.Flush() // Wait the global checkpoint to be updated to the reorg table.
+=======
+	mgr.Register(0, []byte{'1', '9'})
+	mgr.UpdateTotalKeys(0, 100, true)
+	mgr.UpdateWrittenKeys(0, 100)
+	mgr.AdvanceWatermark(true, true)
+	mgr.Close() // Wait the global checkpoint to be updated to the reorg table.
+>>>>>>> 3c4b230ae89 (ddl: fix reorg handle not resumed after changing DDL owner (#56507))
 	r, err := tk.Exec("select reorg_meta from mysql.tidb_ddl_reorg where job_id = 1 and ele_id = 1;")
 	require.NoError(t, err)
 	req := r.NewChunk(nil)
