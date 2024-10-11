@@ -153,6 +153,7 @@ func setNonRestrictiveFlags(stmtCtx *stmtctx.StatementContext) {
 	levels := stmtCtx.ErrLevels()
 	levels[errctx.ErrGroupDupKey] = errctx.LevelWarn
 	levels[errctx.ErrGroupBadNull] = errctx.LevelWarn
+	levels[errctx.ErrGroupNoDefault] = errctx.LevelWarn
 	stmtCtx.SetErrLevels(levels)
 	stmtCtx.SetTypeFlags(stmtCtx.TypeFlags().WithTruncateAsWarning(true))
 }
