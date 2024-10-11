@@ -18,6 +18,9 @@ go_test(
     name = "generator_test",
     timeout = "short",
     srcs = ["plan_clone_test.go"],
+    data = glob([
+        "./../plan_clone_generated.go",
+    ]),
     embed = [":generator_lib"],
     flaky = True,
 )
