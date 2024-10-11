@@ -16,6 +16,7 @@ package keyspace
 
 import (
 	"fmt"
+	"os"
 
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/pkg/config"
@@ -50,7 +51,16 @@ func MakeKeyspaceEtcdNamespaceSlash(c tikv.Codec) string {
 
 // GetKeyspaceNameBySettings is used to get Keyspace name setting.
 func GetKeyspaceNameBySettings() (keyspaceName string) {
-	keyspaceName = config.GetGlobalKeyspaceName()
+	keyspaceName = config.GetGlobalConfig().KeyspaceName
+	if !IsKeyspaceNameEmpty(keyspaceName) {
+		return keyspaceName
+	}
+
+	// Specify the keyspace name to be loaded by TiDB by setting KEYSPACE_NAME.
+	keyspaceName = os.Getenv(config.EnvVarKeyspaceName)
+	config.UpdateGlobal(func(c *config.Config) {
+		c.KeyspaceName = keyspaceName
+	})
 	return keyspaceName
 }
 
