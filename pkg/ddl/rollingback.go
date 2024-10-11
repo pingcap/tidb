@@ -82,7 +82,7 @@ func convertAddIdxJob2RollbackJob(
 
 	// the second and the third args will be used in onDropIndex.
 	job.Args = []any{idxNames, ifExists, getPartitionIDs(tblInfo)}
-	// TODO(joechenrh): remove this after argument refactor done.
+	// TODO(joechenrh): remove tihis later.
 	job.UpdateRawArgs = true
 	job.SchemaState = model.StateDeleteOnly
 	ver, err1 := updateVersionAndTableInfo(jobCtx, job, tblInfo, originalState != model.StateDeleteOnly)
@@ -271,7 +271,7 @@ func rollingbackDropIndex(jobCtx *jobContext, job *model.Job) (ver int64, err er
 }
 
 func rollingbackAddVectorIndex(w *worker, jobCtx *jobContext, job *model.Job) (ver int64, err error) {
-	// TODO(joechenrh): remove this after refactor done.
+	// TODO(joechenrh): remove this later.
 	job.UpdateRawArgs = true
 
 	if job.SchemaState == model.StateWriteReorganization {
@@ -286,7 +286,7 @@ func rollingbackAddVectorIndex(w *worker, jobCtx *jobContext, job *model.Job) (v
 }
 
 func rollingbackAddIndex(w *worker, jobCtx *jobContext, job *model.Job, isPK bool) (ver int64, err error) {
-	// TODO(joechenrh): remove this after refactor done.
+	// TODO(joechenrh): remove tihis later.
 	job.UpdateRawArgs = true
 
 	if needNotifyAndStopReorgWorker(job) {

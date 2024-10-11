@@ -989,7 +989,7 @@ func (w *worker) onCreateIndex(jobCtx *jobContext, job *model.Job, isPK bool) (v
 		return ver, errors.Trace(err)
 	}
 
-	// TODO(joechenrh): remove this after argument refactor done.
+	// TODO(joechenrh): remove this later
 	job.UpdateRawArgs = true
 
 	allIndexInfos := make([]*model.IndexInfo, 0, len(indexNames))
@@ -1121,7 +1121,7 @@ SwitchIndexState:
 			isGlobal = append(isGlobal, indexInfo.Global)
 		}
 		job.Args = []any{allIndexIDs, ifExists, getPartitionIDs(tbl.Meta()), isGlobal}
-		// TODO(joechenrh): remove this after argument refactor done.
+		// TODO(joechenrh): remove this later
 		job.UpdateRawArgs = true
 		// Finish this job.
 		job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
@@ -1482,7 +1482,7 @@ func onDropIndex(jobCtx *jobContext, job *model.Job) (ver int64, _ error) {
 				job.Args = append(job.Args, idxIDs[0], getPartitionIDs(tblInfo), isVector)
 			}
 		}
-		// TODO(joechenrh): remove this after argument refactor done.
+		// TODO(joechenrh): remove this later.
 		job.UpdateRawArgs = true
 	default:
 		return ver, errors.Trace(dbterror.ErrInvalidDDLState.GenWithStackByArgs("index", allIndexInfos[0].State))
@@ -1543,7 +1543,7 @@ func checkDropIndex(infoCache *infoschema.InfoCache, t *meta.Mutator, job *model
 		}
 	}
 
-	// TODO(joechenrh): remove this after argument refactor done.
+	// TODO(joechenrh): remove this later.
 	job.UpdateRawArgs = true
 
 	indexInfos := make([]*model.IndexInfo, 0, len(indexNames))

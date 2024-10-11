@@ -242,7 +242,9 @@ func (a *CreateTableArgs) decodeV1(job *Job) error {
 
 // GetCreateTableArgs gets the create-table args.
 func GetCreateTableArgs(job *Job) (*CreateTableArgs, error) {
+	// Returned arguments will be modified outside.
 	job.UpdateRawArgs = true
+
 	return getOrDecodeArgs[*CreateTableArgs](&CreateTableArgs{}, job)
 }
 
@@ -465,7 +467,6 @@ func (a *TablePartitionArgs) decodeV1(job *Job) error {
 
 // GetTablePartitionArgs gets the table partition args.
 func GetTablePartitionArgs(job *Job) (*TablePartitionArgs, error) {
-	// job.UpdateRawArgs = true
 	args, err := getOrDecodeArgs[*TablePartitionArgs](&TablePartitionArgs{}, job)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -991,7 +992,9 @@ func (a *CheckConstraintArgs) decodeV1(job *Job) error {
 
 // GetCheckConstraintArgs gets the AlterCheckConstraint args.
 func GetCheckConstraintArgs(job *Job) (*CheckConstraintArgs, error) {
+	// Returned arguments will be modified outside.
 	job.UpdateRawArgs = true
+
 	return getOrDecodeArgs[*CheckConstraintArgs](&CheckConstraintArgs{}, job)
 }
 
@@ -1011,7 +1014,7 @@ func (a *AddCheckConstraintArgs) decodeV1(job *Job) error {
 
 // GetAddCheckConstraintArgs gets the AddCheckConstraint args.
 func GetAddCheckConstraintArgs(job *Job) (*AddCheckConstraintArgs, error) {
-	// returned arguments will be modified outside.
+	// Returned arguments will be modified outside.
 	job.UpdateRawArgs = true
 
 	return getOrDecodeArgs[*AddCheckConstraintArgs](&AddCheckConstraintArgs{}, job)
