@@ -45,9 +45,10 @@
       {
         "SQL": "explain format = 'brief' select count(*) from t group by a",
         "Plan": [
-          "HashAgg 2.00 root  group by:test.t.a, funcs:count(1)->Column#3",
-          "└─TableReader 8.00 root  data:TableFullScan",
-          "  └─TableFullScan 8.00 cop[tikv] table:t keep order:false"
+          "HashAgg 2.00 root  group by:test.t.a, funcs:count(Column#4)->Column#3",
+          "└─TableReader 2.00 root  data:HashAgg",
+          "  └─HashAgg 2.00 cop[tikv]  group by:test.t.a, funcs:count(1)->Column#4",
+          "    └─TableFullScan 8.00 cop[tikv] table:t keep order:false"
         ]
       }
     ]

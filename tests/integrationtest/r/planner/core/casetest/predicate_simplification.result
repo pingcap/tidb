@@ -115,10 +115,11 @@ TableReader	20.00	root		data:Selection
 explain format = 'brief' select count(*) cnt from ts where f <> '1' and f in ('1','2','3') group by a having cnt > 100  -- aggregate  ;
 id	estRows	task	access object	operator info
 Selection	12.80	root		gt(Column#4, 100)
-└─HashAgg	16.00	root		group by:planner__core__casetest__predicate_simplification.ts.a, funcs:count(1)->Column#4
-  └─TableReader	20.00	root		data:Selection
-    └─Selection	20.00	cop[tikv]		in(planner__core__casetest__predicate_simplification.ts.f, "2", "3")
-      └─TableFullScan	10000.00	cop[tikv]	table:ts	keep order:false, stats:pseudo
+└─HashAgg	16.00	root		group by:planner__core__casetest__predicate_simplification.ts.a, funcs:count(Column#5)->Column#4
+  └─TableReader	16.00	root		data:HashAgg
+    └─HashAgg	16.00	cop[tikv]		group by:planner__core__casetest__predicate_simplification.ts.a, funcs:count(1)->Column#5
+      └─Selection	20.00	cop[tikv]		in(planner__core__casetest__predicate_simplification.ts.f, "2", "3")
+        └─TableFullScan	10000.00	cop[tikv]	table:ts	keep order:false, stats:pseudo
 explain format = 'brief' select f from t where f <> NULL  and f in (1,2,3) -- Special case of NULL with no simplification.;
 id	estRows	task	access object	operator info
 TableReader	0.00	root		data:Selection
