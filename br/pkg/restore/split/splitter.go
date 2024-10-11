@@ -21,18 +21,17 @@ import (
 
 // Splitter defines the interface for basic splitting strategies.
 type Splitter interface {
-	// The execution will split the keys on one region, and starts scatter after the region finish split.
+	// ExecuteOneRegion splits the keys within a single region and initiates scattering
+	// after the region has been successfully split.
 	ExecuteOneRegion(ctx context.Context, region *RegionInfo, keys [][]byte) ([]*RegionInfo, error)
-	// The execution will split all privided keys
-	// and make sure new splitted regions are balance.
-	// It will split regions by the rewrite rules,
-	// then it will split regions by the end key of each range.
-	// tableRules includes the prefix of a table, since some ranges may have
-	// a prefix with record sequence or index sequence.
-	// note: all ranges and rewrite rules must have raw key.
+
+	// ExecuteSortedKeys splits all provided keys while ensuring that the newly created
+	// regions are balanced. It first applies the rewrite rules, then splits regions
+	// based on the end key of each range. Note: all ranges and rewrite rules must have raw keys.
 	ExecuteSortedKeys(ctx context.Context, keys [][]byte) error
 
-	// Wait until all region scatter finished.
+	// WaitForScatterRegionsTimeout blocks until all regions have finished scattering,
+	// or until the specified timeout duration has elapsed.
 	WaitForScatterRegionsTimeout(ctx context.Context, regionInfos []*RegionInfo, timeout time.Duration) error
 }
 
@@ -41,13 +40,50 @@ type SplitStrategy[T any] interface {
 	// Accumulate adds a new value into the split strategy's internal state.
 	// This method accumulates data points or values, preparing them for potential splitting.
 	Accumulate(T)
+	// ShouldSplit checks if the accumulated values meet the criteria for triggering a split.
 	ShouldSplit() bool
+	// AccumulationsIter returns an iterator for the accumulated values.
+	AccumulationsIter() *SplitHelperIterator
+}
 
-	AccumlationsIter() *SplitHelperIterator
-	// ShouldSplit evaluates whether the conditions for a split are met.
-	// If the conditions are met, it performs the split and returns the resulting split values.
-	// Returns a non-nil result when a split is triggered.
-	// SplitByAccmulation(ctx context.Context) error
+type BaseSplitStrategy struct {
+	TableSplitter map[int64]*SplitHelper
+	Rules         map[int64]*restoreutils.RewriteRules
+}
+
+func NewBaseSplitStrategy(rules map[int64]*restoreutils.RewriteRules) *BaseSplitStrategy {
+	return &BaseSplitStrategy{
+		TableSplitter: make(map[int64]*SplitHelper),
+		Rules:         rules,
+	}
+
+}
+
+func (b *BaseSplitStrategy) AccumulationsIter() *SplitHelperIterator {
+	tableSplitters := make([]*RewriteSplitter, 0, len(b.TableSplitter))
+	for tableID, splitter := range b.TableSplitter {
+		delete(b.TableSplitter, tableID)
+		rewriteRule, exists := b.Rules[tableID]
+		if !exists {
+			log.Info("skip splitting due to no table id matched", zap.Int64("tableID", tableID))
+			continue
+		}
+		newTableID := restoreutils.GetRewriteTableID(tableID, rewriteRule)
+		if newTableID == 0 {
+			log.Warn("failed to get the rewrite table id", zap.Int64("tableID", tableID))
+			continue
+		}
+		tableSplitters = append(tableSplitters, NewRewriteSpliter(
+			codec.EncodeBytes([]byte{}, tablecodec.EncodeTablePrefix(newTableID)),
+			newTableID,
+			rewriteRule,
+			splitter,
+		))
+	}
+	sort.Slice(tableSplitters, func(i, j int) bool {
+		return bytes.Compare(tableSplitters[i].RewriteKey, tableSplitters[j].RewriteKey) < 0
+	})
+	return NewSplitHelperIterator(tableSplitters)
 }
 
 type RewriteSplitter struct {

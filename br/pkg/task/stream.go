@@ -1485,11 +1485,11 @@ func restoreStream(
 		if err != nil {
 			return errors.Trace(err)
 		}
-		// err = client.RestoreCompactedSsts(ctx, regionCompactedMap, importModeSwitcher, sstCheckpoints, sstCheckpointRunner, p.Inc, logclient.RightDeriveSplit)
-		// if err != nil {
-		// 	return errors.Trace(err)
-		// }
 		err = client.RestoreCompactedSstFiles(ctx, compactedSplitIter, rewriteRules, p.Inc)
+
+		if err != nil {
+			return errors.Trace(err)
+		}
 
 		if cfg.UseCheckpoint {
 			updateStatsWithCheckpoint := func(kvCount, size uint64) {

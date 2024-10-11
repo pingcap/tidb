@@ -285,9 +285,11 @@ func (rc *LogClient) RestoreCompactedSstFiles(
 			SSTFiles:     i.SstOutputs,
 			RewriteRules: rewriteRules,
 		}
-		rc.restorer.Restore(ctx, onProgress, []restore.RestoreFilesInfo{info})
+		err := rc.restorer.Restore(ctx, onProgress, []restore.RestoreFilesInfo{info})
+		if err != nil {
+			return err
+		}
 	}
-
 	return nil
 }
 

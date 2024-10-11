@@ -283,7 +283,7 @@ func (p *PipelineFileRestorerWrapper[T]) WrapIter(ctx context.Context, i iter.Tr
 		if strategy.ShouldSplit() { // Assuming ShouldSplit returns true when split is needed
 			log.Info("start to split the regions in pipeline")
 			startTime := time.Now()
-			s := strategy.AccumlationsIter()
+			s := strategy.AccumulationsIter()
 			err := p.ExecuteRegions(ctx, s)
 			if err != nil {
 				log.Error("failed to split regions in pipeline, anyway we can still doing restore")
