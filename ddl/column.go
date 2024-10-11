@@ -1402,7 +1402,7 @@ func (w *updateColumnWorker) calcChecksums() []uint32 {
 		if !sort.IsSorted(w.checksumBuffer) {
 			sort.Sort(w.checksumBuffer)
 		}
-		checksum, err := w.checksumBuffer.Checksum()
+		checksum, err := w.checksumBuffer.Checksum(w.sessCtx.GetSessionVars().StmtCtx.TimeZone)
 		if err != nil {
 			logutil.BgLogger().Warn("skip checksum in update-column backfill due to encode error", zap.Error(err))
 			return nil
@@ -2035,6 +2035,15 @@ func getChangingIndexOriginName(changingIdx *model.IndexInfo) string {
 
 func getChangingColumnOriginName(changingColumn *model.ColumnInfo) string {
 	columnName := strings.TrimPrefix(changingColumn.Name.O, changingColumnPrefix)
+	var pos int
+	if pos = strings.LastIndex(columnName, "_"); pos == -1 {
+		return columnName
+	}
+	return columnName[:pos]
+}
+
+func getExpressionIndexOriginName(expressionIdx *model.ColumnInfo) string {
+	columnName := strings.TrimPrefix(expressionIdx.Name.O, expressionIndexPrefix+"_")
 	var pos int
 	if pos = strings.LastIndex(columnName, "_"); pos == -1 {
 		return columnName

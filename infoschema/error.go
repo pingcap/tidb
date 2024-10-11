@@ -36,6 +36,8 @@ var (
 	ErrResourceGroupExists = dbterror.ClassSchema.NewStd(mysql.ErrResourceGroupExists)
 	// ErrResourceGroupNotExists return for resource group not exists.
 	ErrResourceGroupNotExists = dbterror.ClassSchema.NewStd(mysql.ErrResourceGroupNotExists)
+	// ErrResourceGroupInvalidForRole return for invalid resource group for role.
+	ErrResourceGroupInvalidForRole = dbterror.ClassSchema.NewStd(mysql.ErrResourceGroupInvalidForRole)
 	// ErrReservedSyntax for internal syntax.
 	ErrReservedSyntax = dbterror.ClassSchema.NewStd(mysql.ErrReservedSyntax)
 	// ErrTableExists returns for table already exists.

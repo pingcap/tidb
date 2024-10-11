@@ -417,6 +417,8 @@ func (do *Domain) tryLoadSchemaDiffs(m *meta.Meta, usedVersion, newVersion int64
 		if diff == nil {
 			// Empty diff means the txn of generating schema version is committed, but the txn of `runDDLJob` is not or fail.
 			// It is safe to skip the empty diff because the infoschema is new enough and consistent.
+			logutil.BgLogger().Info("diff load InfoSchema get empty schema diff", zap.Int64("version", usedVersion))
+			do.infoCache.InsertEmptySchemaVersion(usedVersion)
 			continue
 		}
 		diffs = append(diffs, diff)
@@ -2194,6 +2196,9 @@ func (do *Domain) UpdateTableStatsLoop(ctx, initStatsCtx sessionctx.Context) err
 	do.wg.Run(func() { do.updateStatsWorker(ctx, owner) }, "updateStatsWorker")
 	do.wg.Run(func() { do.autoAnalyzeWorker(owner) }, "autoAnalyzeWorker")
 	do.wg.Run(func() { do.gcAnalyzeHistory(owner) }, "gcAnalyzeHistory")
+	do.wg.Run(func() {
+		do.handleDDLEvent()
+	}, "handleDDLEvent")
 	return nil
 }
 
@@ -2226,6 +2231,10 @@ func (do *Domain) newOwnerManager(prompt, ownerKey string) owner.Manager {
 func (do *Domain) initStats() {
 	statsHandle := do.StatsHandle()
 	defer func() {
+		if r := recover(); r != nil {
+			logutil.BgLogger().Error("panic when initiating stats", zap.Any("r", r),
+				zap.Stack("stack"))
+		}
 		close(statsHandle.InitStatsDone)
 	}()
 	t := time.Now()
@@ -2332,6 +2341,24 @@ func (do *Domain) updateStatsWorkerExitPreprocessing(statsHandle *handle.Handle,
 	}
 }
 
+func (do *Domain) handleDDLEvent() {
+	logutil.BgLogger().Info("handleDDLEvent started.")
+	defer util.Recover(metrics.LabelDomain, "handleDDLEvent", nil, false)
+	statsHandle := do.StatsHandle()
+	for {
+		select {
+		case <-do.exit:
+			return
+			// This channel is sent only by ddl owner.
+		case t := <-statsHandle.DDLEventCh():
+			err := statsHandle.HandleDDLEvent(t)
+			if err != nil {
+				logutil.BgLogger().Error("handle ddl event failed", zap.String("event", t.String()), zap.Error(err))
+			}
+		}
+	}
+}
+
 func (do *Domain) updateStatsWorker(ctx sessionctx.Context, owner owner.Manager) {
 	defer util.Recover(metrics.LabelDomain, "updateStatsWorker", nil, false)
 	logutil.BgLogger().Info("updateStatsWorker started.")
@@ -2363,12 +2390,6 @@ func (do *Domain) updateStatsWorker(ctx sessionctx.Context, owner owner.Manager)
 		case <-do.exit:
 			do.updateStatsWorkerExitPreprocessing(statsHandle, owner)
 			return
-			// This channel is sent only by ddl owner.
-		case t := <-statsHandle.DDLEventCh():
-			err := statsHandle.HandleDDLEvent(t)
-			if err != nil {
-				logutil.BgLogger().Error("handle ddl event failed", zap.String("event", t.String()), zap.Error(err))
-			}
 		case <-deltaUpdateTicker.C:
 			err := statsHandle.DumpStatsDeltaToKV(handle.DumpDelta)
 			if err != nil {

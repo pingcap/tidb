@@ -154,9 +154,15 @@ func (a *maxMinEliminator) splitAggFuncAndCheckIndices(agg *LogicalAggregation, 
 		newAgg := LogicalAggregation{AggFuncs: []*aggregation.AggFuncDesc{f}}.Init(agg.ctx, agg.blockOffset)
 		newAgg.SetChildren(a.cloneSubPlans(agg.children[0]))
 		newAgg.schema = expression.NewSchema(agg.schema.Columns[i])
-		if err := newAgg.PruneColumns([]*expression.Column{newAgg.schema.Columns[0]}, opt); err != nil {
+		// Since LogicalAggregation doesn’t use the parent LogicalPlan, passing an incorrect parameter here won’t affect subsequent optimizations.
+		var (
+			p   LogicalPlan
+			err error
+		)
+		if p, err = newAgg.PruneColumns([]*expression.Column{newAgg.schema.Columns[0]}, opt); err != nil {
 			return nil, false
 		}
+		newAgg = p.(*LogicalAggregation)
 		aggs = append(aggs, newAgg)
 	}
 	return aggs, true

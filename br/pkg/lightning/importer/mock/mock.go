@@ -212,6 +212,15 @@ func (t *TargetInfo) SetTableInfo(schemaName string, tableName string, tblInfo *
 	t.dbTblInfoMap[schemaName][tableName] = tblInfo
 }
 
+// FetchRemoteDBModels implements the TargetInfoGetter interface.
+func (t *TargetInfo) FetchRemoteDBModels(_ context.Context) ([]*model.DBInfo, error) {
+	resultInfos := []*model.DBInfo{}
+	for dbName := range t.dbTblInfoMap {
+		resultInfos = append(resultInfos, &model.DBInfo{Name: model.NewCIStr(dbName)})
+	}
+	return resultInfos, nil
+}
+
 // FetchRemoteTableModels fetches the table structures from the remote target.
 // It implements the TargetInfoGetter interface.
 func (t *TargetInfo) FetchRemoteTableModels(_ context.Context, schemaName string) ([]*model.TableInfo, error) {

@@ -22,11 +22,23 @@ import (
 	"os"
 	"strconv"
 	"sync"
+	"time"
 
 	"github.com/go-ldap/ldap/v3"
 	"github.com/ngaut/pools"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/util/logutil"
+	"go.uber.org/zap"
 )
+
+// ldapTimeout is set to 10s. It works on both the TCP/TLS dialing timeout, and the LDAP request timeout. For connection with TLS, the
+// user may find that it fails after 2*ldapTimeout, because TiDB will try to connect through both `StartTLS` (from a normal TCP connection)
+// and `TLS`, therefore the total time is 2*ldapTimeout.
+var ldapTimeout = 10 * time.Second
+
+// skipTLSForTest is used to skip trying to connect with TLS directly in tests. If it's set to false, connection will only try to
+// use `StartTLS`
+var skipTLSForTest = false
 
 // ldapAuthImpl gives the internal utilities of authentication with LDAP.
 // The getter and setter methods will lock the mutex inside, while all other methods don't, so all other method call
@@ -120,10 +132,13 @@ func (impl *ldapAuthImpl) connectionFactory() (pools.Resource, error) {
 	// It's fine to load these two TLS configurations one-by-one (but not guarded by a single lock), because there isn't
 	// a way to set two variables atomically.
 	if impl.enableTLS {
-		ldapConnection, err := ldap.Dial("tcp", address)
+		ldapConnection, err := ldap.DialURL("ldap://"+address, ldap.DialWithDialer(&net.Dialer{
+			Timeout: ldapTimeout,
+		}))
 		if err != nil {
 			return nil, errors.Wrap(err, "create ldap connection")
 		}
+		ldapConnection.SetTimeout(ldapTimeout)
 
 		err = ldapConnection.StartTLS(&tls.Config{
 			RootCAs:    impl.caPool,
@@ -134,15 +149,19 @@ func (impl *ldapAuthImpl) connectionFactory() (pools.Resource, error) {
 		}
 		return ldapConnection, nil
 	}
-	ldapConnection, err := ldap.Dial("tcp", address)
+	ldapConnection, err := ldap.DialURL("ldap://"+address, ldap.DialWithDialer(&net.Dialer{
+		Timeout: ldapTimeout,
+	}))
 	if err != nil {
 		return nil, errors.Wrap(err, "create ldap connection")
 	}
+	ldapConnection.SetTimeout(ldapTimeout)
 
 	return ldapConnection, nil
 }
 
 const getConnectionMaxRetry = 10
+const getConnectionRetryInterval = 500 * time.Millisecond
 
 func (impl *ldapAuthImpl) getConnection() (*ldap.Conn, error) {
 	retryCount := 0
@@ -163,6 +182,9 @@ func (impl *ldapAuthImpl) getConnection() (*ldap.Conn, error) {
 			Password: impl.bindRootPWD,
 		})
 		if err != nil {
+			logutil.BgLogger().Warn("fail to use LDAP connection bind to anonymous user. Retrying", zap.Error(err),
+				zap.Duration("backoff", getConnectionRetryInterval))
+
 			// fail to bind to anonymous user, just release this connection and try to get a new one
 			impl.ldapConnectionPool.Put(nil)
 
@@ -170,6 +192,9 @@ func (impl *ldapAuthImpl) getConnection() (*ldap.Conn, error) {
 			if retryCount >= getConnectionMaxRetry {
 				return nil, errors.Wrap(err, "fail to bind to anonymous user")
 			}
+			// Be careful that it's still holding the lock of the system variables, so it's not good to sleep here.
+			// TODO: refactor the `RWLock` to avoid the problem of holding the lock.
+			time.Sleep(getConnectionRetryInterval)
 			continue
 		}
 
@@ -182,12 +207,12 @@ func (impl *ldapAuthImpl) putConnection(conn *ldap.Conn) {
 }
 
 func (impl *ldapAuthImpl) initializePool() {
-	if impl.ldapConnectionPool != nil {
-		impl.ldapConnectionPool.Close()
-	}
-
-	// skip initialization when the variables are not correct
+	// skip re-initialization when the variables are not correct
 	if impl.initCapacity > 0 && impl.maxCapacity >= impl.initCapacity {
+		if impl.ldapConnectionPool != nil {
+			impl.ldapConnectionPool.Close()
+		}
+
 		impl.ldapConnectionPool = pools.NewResourcePool(impl.connectionFactory, impl.initCapacity, impl.maxCapacity, 0)
 	}
 }
@@ -232,6 +257,7 @@ func (impl *ldapAuthImpl) SetLDAPServerHost(ldapServerHost string) {
 
 	if ldapServerHost != impl.ldapServerHost {
 		impl.ldapServerHost = ldapServerHost
+		impl.initializePool()
 	}
 }
 
@@ -242,6 +268,7 @@ func (impl *ldapAuthImpl) SetLDAPServerPort(ldapServerPort int) {
 
 	if ldapServerPort != impl.ldapServerPort {
 		impl.ldapServerPort = ldapServerPort
+		impl.initializePool()
 	}
 }
 
@@ -252,6 +279,7 @@ func (impl *ldapAuthImpl) SetEnableTLS(enableTLS bool) {
 
 	if enableTLS != impl.enableTLS {
 		impl.enableTLS = enableTLS
+		impl.initializePool()
 	}
 }
 

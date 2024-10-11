@@ -362,13 +362,9 @@ type ddlCtx struct {
 
 	*waitSchemaSyncedController
 	*schemaVersionManager
-	// recording the running jobs.
-	runningJobs struct {
-		sync.RWMutex
-		ids map[int64]struct{}
-	}
-	// It holds the running DDL jobs ID.
-	runningJobIDs []string
+
+	runningJobs *runningJobs
+
 	// reorgCtx is used for reorganization.
 	reorgCtx reorgContexts
 	// backfillCtx is used for backfill workers.
@@ -684,7 +680,7 @@ func newDDL(ctx context.Context, options ...Option) *ddl {
 		autoidCli:                  opt.AutoIDClient,
 		schemaVersionManager:       newSchemaVersionManager(),
 		waitSchemaSyncedController: newWaitSchemaSyncedController(),
-		runningJobIDs:              make([]string, 0, jobRecordCapacity),
+		runningJobs:                newRunningJobs(),
 	}
 	ddlCtx.reorgCtx.reorgCtxMap = make(map[int64]*reorgCtx)
 	ddlCtx.jobCtx.jobCtxMap = make(map[int64]*JobContext)
@@ -692,7 +688,6 @@ func newDDL(ctx context.Context, options ...Option) *ddl {
 	ddlCtx.mu.interceptor = &BaseInterceptor{}
 	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnDDL)
 	ddlCtx.ctx, ddlCtx.cancel = context.WithCancel(ctx)
-	ddlCtx.runningJobs.ids = make(map[int64]struct{})
 
 	d := &ddl{
 		ddlCtx:            ddlCtx,

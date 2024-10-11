@@ -227,10 +227,15 @@ func DumpPlanReplayerInfo(ctx context.Context, sctx sessionctx.Context,
 					zap.String("sql-digest", task.SQLDigest),
 					zap.String("plan-digest", task.PlanDigest),
 					zap.Strings("sql", sqls),
-					zap.Bool("isContinues", task.IsContinuesCapture))
+					zap.Bool("isContinues", task.IsContinuesCapture),
+					zap.Error(err),
+				)
 			} else {
-				logutil.BgLogger().Info("[plan-replayer-dump] start to dump plan replayer result",
-					zap.Strings("sqls", sqls))
+				logutil.BgLogger().Info(
+					"[plan-replayer-dump] dump plan replayer result failed",
+					zap.Strings("sqls", sqls),
+					zap.Error(err),
+				)
 			}
 			errMsg = err.Error()
 			domain_metrics.PlanReplayerDumpTaskFailed.Inc()

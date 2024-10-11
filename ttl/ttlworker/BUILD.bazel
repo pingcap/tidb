@@ -59,7 +59,7 @@ go_test(
     embed = [":ttlworker"],
     flaky = True,
     race = "on",
-    shard_count = 35,
+    shard_count = 38,
     deps = [
         "//domain",
         "//infoschema",
@@ -88,6 +88,7 @@ go_test(
         "@com_github_stretchr_testify//assert",
         "@com_github_stretchr_testify//require",
         "@com_github_tikv_client_go_v2//testutils",
+        "@org_golang_x_exp//slices",
         "@org_golang_x_time//rate",
         "@org_uber_go_atomic//:atomic",
         "@org_uber_go_zap//:zap",

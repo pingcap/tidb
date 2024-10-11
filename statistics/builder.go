@@ -419,10 +419,8 @@ func BuildHistAndTopN(
 		}
 	}
 
-	for i := 0; i < len(topNList); i++ {
-		topNList[i].Count *= uint64(sampleFactor)
-	}
 	topn := &TopN{TopN: topNList}
+	topn.Scale(sampleFactor)
 
 	if uint64(count) <= topn.TotalCount() || int(hg.NDV) <= len(topn.TopN) {
 		// TopN includes all sample data

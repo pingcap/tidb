@@ -89,9 +89,13 @@ func GeneratePlanCacheStmtWithAST(ctx context.Context, sctx sessionctx.Context, 
 		return nil, nil, 0, ErrPrepareDDL
 	}
 
-	switch paramStmt.(type) {
+	switch stmt := paramStmt.(type) {
 	case *ast.LoadDataStmt, *ast.PrepareStmt, *ast.ExecuteStmt, *ast.DeallocateStmt, *ast.NonTransactionalDMLStmt:
 		return nil, nil, 0, ErrUnsupportedPs
+	case *ast.SelectStmt:
+		if stmt.SelectIntoOpt != nil {
+			return nil, nil, 0, ErrUnsupportedPs
+		}
 	}
 
 	// Prepare parameters should NOT over 2 bytes(MaxUint16)

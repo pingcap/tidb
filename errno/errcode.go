@@ -1124,6 +1124,7 @@ const (
 	ErrResourceGroupSupportDisabled   = 8250
 	ErrResourceGroupConfigUnavailable = 8251
 	ErrResourceGroupThrottled         = 8252
+	ErrResourceGroupInvalidForRole    = 8257
 
 	// TiKV/PD/TiFlash errors.
 	ErrPDServerTimeout           = 9001

@@ -117,7 +117,6 @@ go_test(
         "import_retry_test.go",
         "log_client_test.go",
         "main_test.go",
-        "merge_fuzz_test.go",
         "merge_test.go",
         "range_test.go",
         "rawkv_client_test.go",

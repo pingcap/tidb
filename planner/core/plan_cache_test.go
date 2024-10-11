@@ -1171,6 +1171,17 @@ func TestIssue38533(t *testing.T) {
 	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
 }
 
+func TestIssue49344(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(`create table t(a int)`)
+	tk.MustExec(`set @@tidb_enable_prepared_plan_cache=1`)
+	tk.MustExec(`prepare s from "select * from t"`)
+	tk.MustExec(`set @@tidb_enable_prepared_plan_cache=0`)
+	tk.MustExec(`execute s`) // no error
+}
+
 func TestInvalidRange(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -2491,6 +2502,16 @@ func TestNonPreparedPlanCacheBuiltinFuncs(t *testing.T) {
 		tk.MustExec(sql)
 		tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0"))
 	}
+}
+
+func TestIssue48165(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(`create table t(a int)`)
+	tk.MustExec(`insert into t values(1)`)
+	tk.MustExec(`prepare s from "select * from t where tidb_parse_tso(a) > unix_timestamp()"`)
+	tk.MustQuery(`execute s`).Check(testkit.Rows("1"))
 }
 
 func BenchmarkPlanCacheInsert(b *testing.B) {

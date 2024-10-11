@@ -1279,7 +1279,7 @@ type SessionVars struct {
 	ReadConsistency ReadConsistencyLevel
 
 	// StatsLoadSyncWait indicates how long to wait for stats load before timeout.
-	StatsLoadSyncWait int64
+	StatsLoadSyncWait atomic.Int64
 
 	// SysdateIsNow indicates whether Sysdate is an alias of Now function
 	SysdateIsNow bool
@@ -1944,7 +1944,6 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		TMPTableSize:                  DefTiDBTmpTableMaxSize,
 		MPPStoreFailTTL:               DefTiDBMPPStoreFailTTL,
 		Rng:                           mathutil.NewWithTime(),
-		StatsLoadSyncWait:             StatsLoadSyncWait.Load(),
 		EnableLegacyInstanceScope:     DefEnableLegacyInstanceScope,
 		RemoveOrderbyInSubquery:       DefTiDBRemoveOrderbyInSubquery,
 		EnableSkewDistinctAgg:         DefTiDBSkewDistinctAgg,
@@ -1961,6 +1960,7 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		mppVersion:                    kv.MppVersionUnspecified,
 		EnableLateMaterialization:     DefTiDBOptEnableLateMaterialization,
 		TiFlashComputeDispatchPolicy:  tiflashcompute.DispatchPolicyConsistentHash,
+		EnableWindowFunction:          DefEnableWindowFunction,
 	}
 	vars.KVVars = tikvstore.NewVariables(&vars.Killed)
 	vars.Concurrency = Concurrency{
@@ -2003,6 +2003,7 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 	vars.DiskTracker = disk.NewTracker(memory.LabelForSession, -1)
 	vars.MemTracker = memory.NewTracker(memory.LabelForSession, vars.MemQuotaQuery)
 	vars.MemTracker.IsRootTrackerOfSess = true
+	vars.StatsLoadSyncWait.Store(StatsLoadSyncWait.Load())
 
 	for _, engine := range config.GetGlobalConfig().IsolationRead.Engines {
 		switch engine {
@@ -2531,6 +2532,8 @@ func (s *SessionVars) LazyCheckKeyNotExists() bool {
 // GetTemporaryTable returns a TempTable by tableInfo.
 func (s *SessionVars) GetTemporaryTable(tblInfo *model.TableInfo) tableutil.TempTable {
 	if tblInfo.TempTableType != model.TempTableNone {
+		s.TxnCtxMu.Lock()
+		defer s.TxnCtxMu.Unlock()
 		if s.TxnCtx.TemporaryTables == nil {
 			s.TxnCtx.TemporaryTables = make(map[int64]tableutil.TempTable)
 		}

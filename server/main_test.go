@@ -35,6 +35,7 @@ import (
 var testDataMap = make(testdata.BookKeeper, 1)
 
 func TestMain(m *testing.M) {
+	RunInGoTestChan = make(chan struct{})
 	testsetup.SetupForCommonTest()
 
 	RunInGoTest = true // flag for NewServer to known it is running in test environment

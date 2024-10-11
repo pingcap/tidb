@@ -2154,6 +2154,18 @@ func (cli *testServerClient) runTestMultiStatements(t *testing.T) {
 		// the create table + drop table statements will return errors.
 		dbt.MustExec("CREATE DATABASE multistmtuse")
 		dbt.MustExec("use multistmtuse; create table if not exists t1 (id int); drop table t1;")
+
+		// Test issue #50012
+		dbt.MustExec("create database if not exists test;")
+		dbt.MustExec("use test;")
+		dbt.MustExec("CREATE TABLE t (a bigint(20), b int(10), PRIMARY KEY (b, a), UNIQUE KEY uk_a (a));")
+		dbt.MustExec("insert into t values (1, 1);")
+		dbt.MustExec("begin;")
+		rs := dbt.MustQuery("delete from t where a = 1; select 1;")
+		rs.Close()
+		rs = dbt.MustQuery("update t set b = 2 where a = 1; select 1;")
+		rs.Close()
+		dbt.MustExec("commit;")
 	})
 }
 
@@ -2642,4 +2654,26 @@ func (cli *testServerClient) RunTestStmtCountLimit(t *testing.T) {
 		require.NoError(t, rows.Close())
 		require.Equal(t, 5, count)
 	})
+}
+
+func TestSeverHealth(t *testing.T) {
+	RunInGoTestChan = make(chan struct{})
+	RunInGoTest = true
+	store := testkit.CreateMockStore(t)
+	tidbdrv := NewTiDBDriver(store)
+	cfg := newTestConfig()
+	cfg.Port, cfg.Status.StatusPort = 0, 0
+	cfg.Status.ReportStatus = false
+	server, err := NewServer(cfg, tidbdrv)
+	require.NoError(t, err)
+	require.False(t, server.health.Load(), "server should not be healthy")
+	go func() {
+		err = server.Run(nil)
+		require.NoError(t, err)
+	}()
+	defer server.Close()
+	for range RunInGoTestChan {
+		// wait for server to be healthy
+	}
+	require.True(t, server.health.Load(), "server should be healthy")
 }

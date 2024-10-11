@@ -34,6 +34,7 @@ go_test(
         "main_test.go",
         "tablecodec_test.go",
     ],
+    data = glob(["testdata/**"]),
     embed = [":tablecodec"],
     flaky = True,
     shard_count = 23,

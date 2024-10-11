@@ -912,6 +912,7 @@ import (
 	NowSymOptionFraction            "NowSym with optional fraction part"
 	NowSymOptionFractionParentheses "NowSym with optional fraction part within potential parentheses"
 	CharsetNameOrDefault            "Character set name or default"
+	NextValueForSequenceParentheses "Default nextval expression within potential parentheses"
 	NextValueForSequence            "Default nextval expression"
 	BuiltinFunction                 "Default builtin functions for columns"
 	FunctionNameSequence            "Function with sequence function call"
@@ -3733,7 +3734,7 @@ ReferOpt:
 DefaultValueExpr:
 	NowSymOptionFractionParentheses
 |	SignedLiteral
-|	NextValueForSequence
+|	NextValueForSequenceParentheses
 |	BuiltinFunction
 
 BuiltinFunction:
@@ -3783,6 +3784,13 @@ NowSymOptionFraction:
 	{
 		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr("CURRENT_DATE")}
 	}
+
+NextValueForSequenceParentheses:
+	'(' NextValueForSequenceParentheses ')'
+	{
+		$$ = $2.(*ast.FuncCallExpr)
+	}
+|	NextValueForSequence
 
 NextValueForSequence:
 	"NEXT" "VALUE" forKwd TableName
@@ -7065,14 +7073,17 @@ OnDuplicateKeyUpdate:
  *
  **********************************************************************************/
 ReplaceIntoStmt:
-	"REPLACE" PriorityOpt IntoOpt TableName PartitionNameListOpt InsertValues
+	"REPLACE" TableOptimizerHintsOpt PriorityOpt IntoOpt TableName PartitionNameListOpt InsertValues
 	{
-		x := $6.(*ast.InsertStmt)
+		x := $7.(*ast.InsertStmt)
+		if $2 != nil {
+			x.TableHints = $2.([]*ast.TableOptimizerHint)
+		}
 		x.IsReplace = true
-		x.Priority = $2.(mysql.PriorityEnum)
-		ts := &ast.TableSource{Source: $4.(*ast.TableName)}
+		x.Priority = $3.(mysql.PriorityEnum)
+		ts := &ast.TableSource{Source: $5.(*ast.TableName)}
 		x.Table = &ast.TableRefsClause{TableRefs: &ast.Join{Left: ts}}
-		x.PartitionNames = $5.([]model.CIStr)
+		x.PartitionNames = $6.([]model.CIStr)
 		$$ = x
 	}
 

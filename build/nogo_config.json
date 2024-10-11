@@ -144,6 +144,7 @@
   },
   "fieldalignment": {
     "exclude_files": {
+      "pkg/statistics/table.go": "disable this limitation that prevents us from splitting struct fields for clarity",
       "external/": "no need to vet third party code",
       ".*_generated\\.go$": "ignore generated code",
       ".*_/testmain\\.go$": "ignore code",

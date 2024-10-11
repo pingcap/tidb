@@ -1863,7 +1863,7 @@ func (ds *DataSource) crossEstimateRowCount(path *util.AccessPath, conds []expre
 		return 0, err == nil, corr
 	}
 	idxID := int64(-1)
-	idxIDs, idxExists := ds.stats.HistColl.ColID2IdxIDs[colID]
+	idxIDs, idxExists := ds.stats.HistColl.ColUniqueID2IdxIDs[colID]
 	if idxExists && len(idxIDs) > 0 {
 		idxID = idxIDs[0]
 	}

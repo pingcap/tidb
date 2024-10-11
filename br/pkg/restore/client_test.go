@@ -137,7 +137,7 @@ func TestCheckTargetClusterFresh(t *testing.T) {
 	ctx := context.Background()
 	require.NoError(t, client.CheckTargetClusterFresh(ctx))
 
-	require.NoError(t, client.CreateDatabase(ctx, &model.DBInfo{Name: model.NewCIStr("user_db")}))
+	require.NoError(t, client.CreateDatabases(ctx, []*utils.Database{{Info: &model.DBInfo{Name: model.NewCIStr("user_db")}}}))
 	require.True(t, berrors.ErrRestoreNotFreshCluster.Equal(client.CheckTargetClusterFresh(ctx)))
 }
 
@@ -378,6 +378,10 @@ func TestGetTSWithRetry(t *testing.T) {
 	})
 
 	t.Run("PD leader failure:", func(t *testing.T) {
+		require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/br/pkg/utils/set-attempt-to-one", "1*return(true)"))
+		defer func() {
+			require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/br/pkg/utils/set-attempt-to-one"))
+		}()
 		retryTimes := -1000
 		pDClient := fakePDClient{notLeader: true, retryTimes: &retryTimes}
 		client := restore.NewRestoreClient(pDClient, nil, defaultKeepaliveCfg, false)
@@ -1872,19 +1876,25 @@ func TestCheckNewCollationEnable(t *testing.T) {
 			CheckRequirements:           true,
 			isErr:                       true,
 		},
+		{
+			backupMeta:                  &backuppb.BackupMeta{NewCollationsEnabled: ""},
+			newCollationEnableInCluster: "False",
+			CheckRequirements:           false,
+			isErr:                       false,
+		},
 	}
 
 	for i, ca := range caseList {
 		g := &gluetidb.MockGlue{
 			GlobalVars: map[string]string{"new_collation_enabled": ca.newCollationEnableInCluster},
 		}
-		err := restore.CheckNewCollationEnable(ca.backupMeta.GetNewCollationsEnabled(), g, nil, ca.CheckRequirements)
-
+		enabled, err := restore.CheckNewCollationEnable(ca.backupMeta.GetNewCollationsEnabled(), g, nil, ca.CheckRequirements)
 		t.Logf("[%d] Got Error: %v\n", i, err)
 		if ca.isErr {
 			require.Error(t, err)
 		} else {
 			require.NoError(t, err)
 		}
+		require.Equal(t, ca.newCollationEnableInCluster == "True", enabled)
 	}
 }

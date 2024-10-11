@@ -247,6 +247,27 @@ func (t *Tracker) UnbindActions() {
 	t.actionMuForHardLimit.actionOnExceed = &LogOnExceed{}
 }
 
+// UnbindActionFromHardLimit unbinds action from hardLimit.
+func (t *Tracker) UnbindActionFromHardLimit(actionToUnbind ActionOnExceed) {
+	t.actionMuForHardLimit.Lock()
+	defer t.actionMuForHardLimit.Unlock()
+
+	var prev ActionOnExceed
+	for current := t.actionMuForHardLimit.actionOnExceed; current != nil; current = current.GetFallback() {
+		if current == actionToUnbind {
+			if prev == nil {
+				// actionToUnbind is the first element
+				t.actionMuForHardLimit.actionOnExceed = current.GetFallback()
+			} else {
+				// actionToUnbind is not the first element
+				prev.SetFallback(current.GetFallback())
+			}
+			break
+		}
+		prev = current
+	}
+}
+
 // reArrangeFallback merge two action chains and rearrange them by priority in descending order.
 func reArrangeFallback(a ActionOnExceed, b ActionOnExceed) ActionOnExceed {
 	if a == nil {

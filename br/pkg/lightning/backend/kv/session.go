@@ -290,7 +290,8 @@ func NewSession(options *encode.SessionOptions, logger log.Logger) *Session {
 	vars.StmtCtx.TruncateAsWarning = !sqlMode.HasStrictMode()
 	vars.StmtCtx.OverflowAsWarning = !sqlMode.HasStrictMode()
 	vars.StmtCtx.AllowInvalidDate = sqlMode.HasAllowInvalidDatesMode()
-	vars.StmtCtx.IgnoreZeroInDate = !sqlMode.HasStrictMode() || sqlMode.HasAllowInvalidDatesMode()
+	vars.StmtCtx.IgnoreZeroInDate = !sqlMode.HasStrictMode() || sqlMode.HasAllowInvalidDatesMode() ||
+		!sqlMode.HasNoZeroInDateMode() || !sqlMode.HasNoZeroDateMode()
 	vars.SQLMode = sqlMode
 	if options.SysVars != nil {
 		for k, v := range options.SysVars {

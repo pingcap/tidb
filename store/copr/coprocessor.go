@@ -899,7 +899,16 @@ func (sender *copIteratorTaskSender) run(connID uint64) {
 	}
 }
 
+// GlobalSyncChForTest is a global channel for test.
+var GlobalSyncChForTest = make(chan struct{})
+
 func (it *copIterator) recvFromRespCh(ctx context.Context, respCh <-chan *copResponse) (resp *copResponse, ok bool, exit bool) {
+	failpoint.Inject("CtxCancelBeforeReceive", func(_ failpoint.Value) {
+		if ctx.Value("TestContextCancel") == "test" {
+			GlobalSyncChForTest <- struct{}{}
+			<-GlobalSyncChForTest
+		}
+	})
 	ticker := time.NewTicker(3 * time.Second)
 	defer ticker.Stop()
 	for {
@@ -921,7 +930,12 @@ func (it *copIterator) recvFromRespCh(ctx context.Context, respCh <-chan *copRes
 			exit = true
 			return
 		case <-ticker.C:
-			if atomic.LoadUint32(it.vars.Killed) == 1 {
+			killed := atomic.LoadUint32(it.vars.Killed)
+			if killed != 0 {
+				logutil.Logger(ctx).Info(
+					"a killed signal is received",
+					zap.Uint32("signal", killed),
+				)
 				resp = &copResponse{err: derr.ErrQueryInterrupted}
 				ok = true
 				return
@@ -1031,7 +1045,7 @@ func (it *copIterator) Next(ctx context.Context) (kv.ResultSubset, error) {
 		resp, ok, closed = it.recvFromRespCh(ctx, it.respChan)
 		if !ok || closed {
 			it.actionOnExceed.close()
-			return nil, nil
+			return nil, errors.Trace(ctx.Err())
 		}
 		if resp == finCopResp {
 			it.actionOnExceed.destroyTokenIfNeeded(func() {
@@ -1049,8 +1063,8 @@ func (it *copIterator) Next(ctx context.Context) (kv.ResultSubset, error) {
 			task := it.tasks[it.curr]
 			resp, ok, closed = it.recvFromRespCh(ctx, task.respChan)
 			if closed {
-				// Close() is already called, so Next() is invalid.
-				return nil, nil
+				// Close() is called or context cancelled/timeout, so Next() is invalid.
+				return nil, errors.Trace(ctx.Err())
 			}
 			if ok {
 				break
@@ -1812,8 +1826,15 @@ func (worker *copIteratorWorker) calculateRemain(ranges *KeyRanges, split *copro
 
 // finished checks the flags and finished channel, it tells whether the worker is finished.
 func (worker *copIteratorWorker) finished() bool {
-	if worker.vars != nil && worker.vars.Killed != nil && atomic.LoadUint32(worker.vars.Killed) == 1 {
-		return true
+	if worker.vars != nil && worker.vars.Killed != nil {
+		killed := atomic.LoadUint32(worker.vars.Killed)
+		if killed != 0 {
+			logutil.BgLogger().Info(
+				"a killed signal is received in copIteratorWorker",
+				zap.Uint32("signal", killed),
+			)
+			return true
+		}
 	}
 	select {
 	case <-worker.finishCh:

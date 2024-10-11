@@ -6134,7 +6134,7 @@
           "        └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo"
         ],
         "Warn": [
-          "[planner:1815]We can only use one leading hint at most, when multiple leading hints are used, all leading hints will be invalid"
+          "[planner:1815]leading hint is inapplicable, check if the leading hint table is valid"
         ]
       },
       {
@@ -6155,7 +6155,7 @@
           "        └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo"
         ],
         "Warn": [
-          "[planner:1815]We can only use one leading hint at most, when multiple leading hints are used, all leading hints will be invalid"
+          "[planner:1815]leading hint is inapplicable, check if the leading hint table is valid"
         ]
       },
       {
@@ -7245,10 +7245,7 @@
           "      └─IndexRangeScan_148 19492.21 cop[tikv] table:t1, index:idx_a(a) range: decided by [eq(test.t1.a, test.t1.a)], keep order:false, stats:pseudo"
         ],
         "Warn": [
-          "[planner:1815]We can only use one leading hint at most, when multiple leading hints are used, all leading hints will be invalid",
-          "[planner:1815]There are no matching table names for (t1) in optimizer hint /*+ INL_JOIN(t1, t1) */ or /*+ TIDB_INLJ(t1, t1) */. Maybe you can use the table alias name",
-          "[planner:1815]We can only use one leading hint at most, when multiple leading hints are used, all leading hints will be invalid",
-          "[planner:1815]There are no matching table names for (t1, t1) in optimizer hint /*+ INL_JOIN(t1, t1, t1) */ or /*+ TIDB_INLJ(t1, t1, t1) */. Maybe you can use the table alias name"
+          "[planner:1815]We can only use one leading hint at most, when multiple leading hints are used, all leading hints will be invalid"
         ]
       },
       {
@@ -7280,10 +7277,7 @@
           "                └─TableRowIDScan_69 9990.00 cop[tikv] table:t2 keep order:false, stats:pseudo"
         ],
         "Warn": [
-          "[planner:1815]We can only use one leading hint at most, when multiple leading hints are used, all leading hints will be invalid",
-          "[planner:1815]There are no matching table names for (t2) in optimizer hint /*+ MERGE_JOIN(t2, t2) */ or /*+ TIDB_SMJ(t2, t2) */. Maybe you can use the table alias name",
-          "[planner:1815]We can only use one leading hint at most, when multiple leading hints are used, all leading hints will be invalid",
-          "[planner:1815]There are no matching table names for (t2, t2) in optimizer hint /*+ MERGE_JOIN(t2, t2, t2) */ or /*+ TIDB_SMJ(t2, t2, t2) */. Maybe you can use the table alias name"
+          "[planner:1815]We can only use one leading hint at most, when multiple leading hints are used, all leading hints will be invalid"
         ]
       },
       {

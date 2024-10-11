@@ -1119,6 +1119,7 @@ var MySQLErrName = map[uint16]*mysql.ErrMessage{
 	ErrOptOnCacheTable:                 mysql.Message("'%s' is unsupported on cache tables.", nil),
 	ErrResourceGroupExists:             mysql.Message("Resource group '%-.192s' already exists", nil),
 	ErrResourceGroupNotExists:          mysql.Message("Unknown resource group '%-.192s'", nil),
+	ErrResourceGroupInvalidForRole:     mysql.Message("Cannot set resource group for a role", nil),
 
 	ErrColumnInChange:                 mysql.Message("column %s id %d does not exist, this column may have been updated by other DDL ran in parallel", nil),
 	ErrResourceGroupSupportDisabled:   mysql.Message("Resource control feature is disabled. Run `SET GLOBAL tidb_enable_resource_control='on'` to enable the feature", nil),

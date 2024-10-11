@@ -230,24 +230,22 @@ func (rc *Client) Init(g glue.Glue, store kv.Storage) error {
 		rc.backupMeta = new(backuppb.BackupMeta)
 	}
 
-	// Only in binary we can use multi-thread sessions to create tables.
-	// so use OwnStorage() to tell whether we are use binary or SQL.
-	if g.OwnsStorage() {
-		// Maybe allow user modify the DDL concurrency isn't necessary,
-		// because executing DDL is really I/O bound (or, algorithm bound?),
-		// and we cost most of time at waiting DDL jobs be enqueued.
-		// So these jobs won't be faster or slower when machine become faster or slower,
-		// hence make it a fixed value would be fine.
-		rc.dbPool, err = makeDBPool(defaultDDLConcurrency, func() (*DB, error) {
-			db, _, err := NewDB(g, store, rc.policyMode)
-			return db, err
-		})
-		if err != nil {
-			log.Warn("create session pool failed, we will send DDLs only by created sessions",
-				zap.Error(err),
-				zap.Int("sessionCount", len(rc.dbPool)),
-			)
-		}
+	// There are different ways to create session between in binary and in SQL.
+	//
+	// Maybe allow user modify the DDL concurrency isn't necessary,
+	// because executing DDL is really I/O bound (or, algorithm bound?),
+	// and we cost most of time at waiting DDL jobs be enqueued.
+	// So these jobs won't be faster or slower when machine become faster or slower,
+	// hence make it a fixed value would be fine.
+	rc.dbPool, err = makeDBPool(defaultDDLConcurrency, func() (*DB, error) {
+		db, _, err := NewDB(g, store, rc.policyMode)
+		return db, err
+	})
+	if err != nil {
+		log.Warn("create session pool failed, we will send DDLs only by created sessions",
+			zap.Error(err),
+			zap.Int("sessionCount", len(rc.dbPool)),
+		)
 	}
 	return errors.Trace(err)
 }
@@ -487,12 +485,21 @@ func (rc *Client) GetRewriteMode() RewriteMode {
 	return rc.rewriteMode
 }
 
-// Close a client.
-func (rc *Client) Close() {
+func (rc *Client) closeConn() {
 	// rc.db can be nil in raw kv mode.
 	if rc.db != nil {
 		rc.db.Close()
 	}
+	for _, db := range rc.dbPool {
+		db.Close()
+	}
+}
+
+// Close a client.
+func (rc *Client) Close() {
+	// close the connection, and it must be succeed when in SQL mode.
+	rc.closeConn()
+
 	if rc.rawKVClient != nil {
 		rc.rawKVClient.Close()
 	}
@@ -775,13 +782,38 @@ func (rc *Client) GetDBSchema(dom *domain.Domain, dbName model.CIStr) (*model.DB
 	return info.SchemaByName(dbName)
 }
 
-// CreateDatabase creates a database.
-func (rc *Client) CreateDatabase(ctx context.Context, db *model.DBInfo) error {
+// CreateDatabases creates databases. If the client has the db pool, it would create it.
+func (rc *Client) CreateDatabases(ctx context.Context, dbs []*utils.Database) error {
 	if rc.IsSkipCreateSQL() {
-		log.Info("skip create database", zap.Stringer("name", db.Name))
+		log.Info("skip create database")
 		return nil
 	}
 
+	if len(rc.dbPool) == 0 {
+		log.Info("create databases sequentially")
+		for _, db := range dbs {
+			err := rc.createDatabaseWithDBConn(ctx, db.Info, rc.db)
+			if err != nil {
+				return errors.Trace(err)
+			}
+		}
+		return nil
+	}
+
+	log.Info("create databases in db pool", zap.Int("pool size", len(rc.dbPool)))
+	eg, ectx := errgroup.WithContext(ctx)
+	workers := utils.NewWorkerPool(uint(len(rc.dbPool)), "DB DDL workers")
+	for _, db_ := range dbs {
+		db := db_
+		workers.ApplyWithIDInErrorGroup(eg, func(id uint64) error {
+			conn := rc.dbPool[id%uint64(len(rc.dbPool))]
+			return rc.createDatabaseWithDBConn(ectx, db.Info, conn)
+		})
+	}
+	return eg.Wait()
+}
+
+func (rc *Client) createDatabaseWithDBConn(ctx context.Context, db *model.DBInfo, conn *DB) error {
 	log.Info("create database", zap.Stringer("name", db.Name))
 
 	if !rc.supportPolicy {
@@ -791,12 +823,12 @@ func (rc *Client) CreateDatabase(ctx context.Context, db *model.DBInfo) error {
 	}
 
 	if db.PlacementPolicyRef != nil {
-		if err := rc.db.ensurePlacementPolicy(ctx, db.PlacementPolicyRef.Name, rc.policyMap); err != nil {
+		if err := conn.ensurePlacementPolicy(ctx, db.PlacementPolicyRef.Name, rc.policyMap); err != nil {
 			return errors.Trace(err)
 		}
 	}
 
-	return rc.db.CreateDatabase(ctx, db)
+	return conn.CreateDatabase(ctx, db)
 }
 
 // CreateTables creates multiple tables, and returns their rewrite rules.
@@ -1422,12 +1454,14 @@ LOOPFORTABLE:
 			rc.workerPool.ApplyOnErrorGroup(eg, func() error {
 				filesGroups := getGroupFiles(filesReplica, rc.fileImporter.supportMultiIngest)
 				for _, filesGroup := range filesGroups {
-					if importErr := func(fs []*backuppb.File) error {
+					if importErr := func(fs []*backuppb.File) (err error) {
 						fileStart := time.Now()
 						defer func() {
-							log.Info("import files done", logutil.Files(filesGroup),
-								zap.Duration("take", time.Since(fileStart)))
-							updateCh.Inc()
+							if err == nil {
+								log.Info("import files done", logutil.Files(filesGroup),
+									zap.Duration("take", time.Since(fileStart)))
+								updateCh.Inc()
+							}
 						}()
 						return rc.fileImporter.ImportSSTFiles(ectx, fs, rewriteRules, rc.cipher, rc.dom.Store().GetCodec().GetAPIVersion())
 					}(filesGroup); importErr != nil {
@@ -3711,43 +3745,43 @@ func CheckNewCollationEnable(
 	g glue.Glue,
 	storage kv.Storage,
 	CheckRequirements bool,
-) error {
-	if backupNewCollationEnable == "" {
-		if CheckRequirements {
-			return errors.Annotatef(berrors.ErrUnknown,
-				"the config 'new_collations_enabled_on_first_bootstrap' not found in backupmeta. "+
-					"you can use \"show config WHERE name='new_collations_enabled_on_first_bootstrap';\" to manually check the config. "+
-					"if you ensure the config 'new_collations_enabled_on_first_bootstrap' in backup cluster is as same as restore cluster, "+
-					"use --check-requirements=false to skip this check")
-		}
-		log.Warn("the config 'new_collations_enabled_on_first_bootstrap' is not in backupmeta")
-		return nil
-	}
-
+) (bool, error) {
 	se, err := g.CreateSession(storage)
 	if err != nil {
-		return errors.Trace(err)
+		return false, errors.Trace(err)
 	}
 
 	newCollationEnable, err := se.GetGlobalVariable(utils.GetTidbNewCollationEnabled())
 	if err != nil {
-		return errors.Trace(err)
+		return false, errors.Trace(err)
 	}
-
-	if !strings.EqualFold(backupNewCollationEnable, newCollationEnable) {
-		return errors.Annotatef(berrors.ErrUnknown,
-			"the config 'new_collations_enabled_on_first_bootstrap' not match, upstream:%v, downstream: %v",
-			backupNewCollationEnable, newCollationEnable)
-	}
-
 	// collate.newCollationEnabled is set to 1 when the collate package is initialized,
 	// so we need to modify this value according to the config of the cluster
 	// before using the collate package.
 	enabled := newCollationEnable == "True"
 	// modify collate.newCollationEnabled according to the config of the cluster
 	collate.SetNewCollationEnabledForTest(enabled)
-	log.Info("set new_collation_enabled", zap.Bool("new_collation_enabled", enabled))
-	return nil
+	log.Info("set new_collations_enabled_on_first_bootstrap", zap.Bool("new_collation_enabled", enabled))
+
+	if backupNewCollationEnable == "" {
+		if CheckRequirements {
+			return enabled, errors.Annotatef(berrors.ErrUnknown,
+				"the config 'new_collations_enabled_on_first_bootstrap' not found in backupmeta. "+
+					"you can use \"SELECT VARIABLE_VALUE FROM mysql.tidb WHERE VARIABLE_NAME='new_collations_enabled_on_first_bootstrap';\" to manually check the config. "+
+					"if you ensure the value 'new_collations_enabled_on_first_bootstrap' in backup cluster is as same as restore cluster, use --check-requirements=false to skip this check",
+			)
+		}
+		log.Warn("the config 'new_collations_enabled_on_first_bootstrap' is not found in backupmeta")
+		return enabled, nil
+	}
+
+	if !strings.EqualFold(backupNewCollationEnable, newCollationEnable) {
+		return enabled, errors.Annotatef(berrors.ErrUnknown,
+			"the config 'new_collations_enabled_on_first_bootstrap' not match, upstream:%v, downstream: %v",
+			backupNewCollationEnable, newCollationEnable)
+	}
+
+	return enabled, nil
 }
 
 type waitTiFlashBackoffer struct {

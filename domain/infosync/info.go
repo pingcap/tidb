@@ -392,6 +392,39 @@ func GetAllServerInfo(ctx context.Context) (map[string]*ServerInfo, error) {
 	return is.getAllServerInfo(ctx)
 }
 
+// UpdateServerLabel updates the server label for global info syncer.
+func UpdateServerLabel(ctx context.Context, labels map[string]string) error {
+	is, err := getGlobalInfoSyncer()
+	if err != nil {
+		return err
+	}
+	// when etcdCli is nil, the server infos are generated from the latest config, no need to update.
+	if is.etcdCli == nil {
+		return nil
+	}
+	selfInfo, err := is.getServerInfoByID(ctx, is.info.ID)
+	if err != nil {
+		return err
+	}
+	changed := false
+	for k, v := range labels {
+		if selfInfo.Labels[k] != v {
+			changed = true
+			selfInfo.Labels[k] = v
+		}
+	}
+	if !changed {
+		return nil
+	}
+	infoBuf, err := selfInfo.Marshal()
+	if err != nil {
+		return errors.Trace(err)
+	}
+	str := string(hack.String(infoBuf))
+	err = util.PutKVToEtcd(ctx, is.etcdCli, keyOpDefaultRetryCnt, is.serverInfoPath, str, clientv3.WithLease(is.session.Lease()))
+	return err
+}
+
 // DeleteTiFlashTableSyncProgress is used to delete the tiflash table replica sync progress.
 func DeleteTiFlashTableSyncProgress(tableInfo *model.TableInfo) error {
 	is, err := getGlobalInfoSyncer()
@@ -1202,14 +1235,20 @@ func SetTiFlashPlacementRule(ctx context.Context, rule placement.TiFlashRule) er
 	return is.tiflashReplicaManager.SetPlacementRule(ctx, rule)
 }
 
-// DeleteTiFlashPlacementRule is to delete placement rule for certain group.
-func DeleteTiFlashPlacementRule(ctx context.Context, group string, ruleID string) error {
+// DeleteTiFlashPlacementRules is a helper function to delete TiFlash placement rules of given physical table IDs.
+func DeleteTiFlashPlacementRules(ctx context.Context, physicalTableIDs []int64) error {
 	is, err := getGlobalInfoSyncer()
 	if err != nil {
 		return errors.Trace(err)
 	}
-	logutil.BgLogger().Info("DeleteTiFlashPlacementRule", zap.String("ruleID", ruleID))
-	return is.tiflashReplicaManager.DeletePlacementRule(ctx, group, ruleID)
+	logutil.BgLogger().Info("DeleteTiFlashPlacementRules", zap.Int64s("physicalTableIDs", physicalTableIDs))
+	rules := make([]placement.TiFlashRule, 0, len(physicalTableIDs))
+	for _, id := range physicalTableIDs {
+		// make a rule with count 0 to delete the rule
+		rule := MakeNewRule(id, 0, nil)
+		rules = append(rules, rule)
+	}
+	return is.tiflashReplicaManager.SetPlacementRuleBatch(ctx, rules)
 }
 
 // GetTiFlashGroupRules to get all placement rule in a certain group.

@@ -12,9 +12,11 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//privilege/conn",
+        "//util/logutil",
         "@com_github_go_ldap_ldap_v3//:ldap",
         "@com_github_ngaut_pools//:pools",
         "@com_github_pingcap_errors//:errors",
+        "@org_uber_go_zap//:zap",
     ],
 )
 
@@ -23,6 +25,7 @@ go_test(
     timeout = "short",
     srcs = ["ldap_common_test.go"],
     embed = [":ldap"],
+    embedsrcs = ["test/ca.crt"],
     flaky = True,
     deps = ["@com_github_stretchr_testify//require"],
 )

@@ -10,6 +10,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/docker/go-units"
@@ -628,11 +629,11 @@ func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig
 			ctx, cmdName, int64(len(ranges)), !cfg.LogProgress)
 	}
 
-	progressCount := 0
+	progressCount := uint64(0)
 	progressCallBack := func(callBackUnit backup.ProgressUnit) {
 		if unit == callBackUnit {
 			updateCh.Inc()
-			progressCount++
+			atomic.AddUint64(&progressCount, 1)
 			failpoint.Inject("progress-call-back", func(v failpoint.Value) {
 				log.Info("failpoint progress-call-back injected")
 				if fileName, ok := v.(string); ok {

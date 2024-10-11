@@ -100,7 +100,15 @@ func ifNullFoldHandler(expr *ScalarFunction) (Expression, bool) {
 		// evaluated to constArg.Value after foldConstant(args[0]), it's not
 		// needed to be checked.
 		if constArg.Value.IsNull() {
-			return foldConstant(args[1])
+			foldedExpr, isConstant := foldConstant(args[1])
+
+			// See https://github.com/pingcap/tidb/issues/51765. If the first argument can
+			// be folded into NULL, the collation of IFNULL should be the same as the second
+			// arguments.
+			expr.GetType().SetCharset(args[1].GetType().GetCharset())
+			expr.GetType().SetCollate(args[1].GetType().GetCollate())
+
+			return foldedExpr, isConstant
 		}
 		return constArg, isDeferred
 	}
@@ -155,6 +163,10 @@ func foldConstant(expr Expression) (Expression, bool) {
 	switch x := expr.(type) {
 	case *ScalarFunction:
 		if _, ok := unFoldableFunctions[x.FuncName.L]; ok {
+			return expr, false
+		}
+		if _, ok := x.Function.(*extensionFuncSig); ok {
+			// we should not fold the extension function, because it may have a side effect.
 			return expr, false
 		}
 		if function := specialFoldHandler[x.FuncName.L]; function != nil && !MaybeOverOptimized4PlanCache(x.GetCtx(), []Expression{expr}) {

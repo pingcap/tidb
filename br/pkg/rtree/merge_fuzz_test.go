@@ -1,13 +1,11 @@
-// Copyright 2022 PingCAP, Inc. Licensed under Apache-2.0.
-//go:build go1.18
+// Copyright 2024 PingCAP, Inc. Licensed under Apache-2.0.
 
-package restore_test
+package rtree_test
 
 import (
 	"testing"
 
 	backup "github.com/pingcap/kvproto/pkg/brpb"
-	"github.com/pingcap/tidb/br/pkg/restore"
 	"github.com/pingcap/tidb/br/pkg/rtree"
 	"github.com/pingcap/tidb/tablecodec"
 )
@@ -19,6 +17,6 @@ func FuzzMerge(f *testing.F) {
 	f.Fuzz(func(t *testing.T, a, b []byte) {
 		left := rtree.Range{StartKey: a, Files: []*backup.File{{TotalKvs: 1, TotalBytes: 1}}}
 		right := rtree.Range{StartKey: b, Files: []*backup.File{{TotalKvs: 1, TotalBytes: 1}}}
-		restore.NeedsMerge(&left, &right, 42, 42)
+		rtree.NeedsMerge(&left, &right, 42, 42)
 	})
 }

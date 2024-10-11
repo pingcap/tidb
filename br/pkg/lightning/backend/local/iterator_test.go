@@ -178,55 +178,6 @@ func TestDupDetectIterator(t *testing.T) {
 	}
 }
 
-func TestDupDetectIterSeek(t *testing.T) {
-	pairs := []common.KvPair{
-		{
-			Key:   []byte{1, 2, 3, 0},
-			Val:   randBytes(128),
-			RowID: common.EncodeIntRowID(1),
-		},
-		{
-			Key:   []byte{1, 2, 3, 1},
-			Val:   randBytes(128),
-			RowID: common.EncodeIntRowID(2),
-		},
-		{
-			Key:   []byte{1, 2, 3, 1},
-			Val:   randBytes(128),
-			RowID: common.EncodeIntRowID(3),
-		},
-		{
-			Key:   []byte{1, 2, 3, 2},
-			Val:   randBytes(128),
-			RowID: common.EncodeIntRowID(4),
-		},
-	}
-
-	storeDir := t.TempDir()
-	db, err := pebble.Open(filepath.Join(storeDir, "kv"), &pebble.Options{})
-	require.NoError(t, err)
-
-	keyAdapter := dupDetectKeyAdapter{}
-	wb := db.NewBatch()
-	for _, p := range pairs {
-		key := keyAdapter.Encode(nil, p.Key, p.RowID)
-		require.NoError(t, wb.Set(key, p.Val, nil))
-	}
-	require.NoError(t, wb.Commit(pebble.Sync))
-
-	dupDB, err := pebble.Open(filepath.Join(storeDir, "duplicates"), &pebble.Options{})
-	require.NoError(t, err)
-	iter := newDupDetectIter(db, keyAdapter, &pebble.IterOptions{}, dupDB, log.L(), DupDetectOpt{})
-
-	require.True(t, iter.Seek([]byte{1, 2, 3, 1}))
-	require.Equal(t, pairs[1].Val, iter.Value())
-	require.True(t, iter.Next())
-	require.Equal(t, pairs[3].Val, iter.Value())
-	require.NoError(t, iter.Close())
-	require.NoError(t, db.Close())
-	require.NoError(t, dupDB.Close())
-}
-
 func TestKeyAdapterEncoding(t *testing.T) {
 	keyAdapter := dupDetectKeyAdapter{}
 	srcKey := []byte{1, 2, 3}

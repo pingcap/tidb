@@ -345,6 +345,14 @@ func TestCacheable(t *testing.T) {
 	require.True(t, core.Cacheable(stmt, is))
 }
 
+func TestIssue49166(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(`create table t (c int)`)
+	tk.MustContainErrMsg(`prepare stmt from "select c from t limit 1 into outfile 'text'"`, "This command is not supported in the prepared statement protocol yet")
+}
+
 func TestNonPreparedPlanCacheable(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 

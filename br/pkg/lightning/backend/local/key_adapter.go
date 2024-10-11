@@ -15,10 +15,7 @@
 package local
 
 import (
-	"math"
-
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/util/codec"
 )
 
@@ -102,8 +99,7 @@ func (dupDetectKeyAdapter) EncodedLen(key []byte, rowID []byte) int {
 
 var _ KeyAdapter = dupDetectKeyAdapter{}
 
-// static vars for rowID
 var (
-	MinRowID  = common.EncodeIntRowID(math.MinInt64)
-	ZeroRowID = common.EncodeIntRowID(0)
+	// MinRowID is the minimum rowID value after DupDetectKeyAdapter.Encode().
+	MinRowID = []byte{0, 0, 0, 0, 0, 0, 0, 0, 0}
 )

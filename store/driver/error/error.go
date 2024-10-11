@@ -116,7 +116,8 @@ func ToTiDBErr(err error) error {
 		return ErrTiFlashServerTimeout
 	}
 
-	if stderrs.Is(err, tikverr.ErrQueryInterrupted) {
+	if stderrs.Is(err, tikverr.ErrQueryInterruptedWithSignal{Signal: 1}) {
+		// TODO: This error is defined here, while others are using exeerrors as in sql killer. Maybe unify them?
 		return ErrQueryInterrupted
 	}
 

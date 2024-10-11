@@ -1015,7 +1015,7 @@ func tryWhereIn2BatchPointGet(ctx sessionctx.Context, selStmt *ast.SelectStmt) *
 // 3. All the columns must be public and not generated.
 // 4. The condition is an access path that the range is a unique key.
 func tryPointGetPlan(ctx sessionctx.Context, selStmt *ast.SelectStmt, check bool) *PointGetPlan {
-	if selStmt.Having != nil {
+	if selStmt.Having != nil || selStmt.OrderBy != nil {
 		return nil
 	} else if selStmt.Limit != nil {
 		count, offset, err := extractLimitCountOffset(ctx, selStmt.Limit)
@@ -1663,8 +1663,7 @@ func buildPointUpdatePlan(ctx sessionctx.Context, pointPlan PhysicalPlan, dbName
 	}
 	if tbl.GetPartitionInfo() != nil {
 		pt := t.(table.PartitionedTable)
-		var updateTableList []*ast.TableName
-		updateTableList = extractTableList(updateStmt.TableRefs.TableRefs, updateTableList, true)
+		updateTableList := ExtractTableList(updateStmt.TableRefs.TableRefs, true)
 		updatePlan.PartitionedTable = make([]table.PartitionedTable, 0, len(updateTableList))
 		for _, updateTable := range updateTableList {
 			if len(updateTable.PartitionNames) > 0 {

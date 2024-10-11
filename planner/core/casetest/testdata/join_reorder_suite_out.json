@@ -922,7 +922,6 @@
       }
     ]
   },
-
   {
     "Name": "TestNoIndexJoinHint",
     "Cases": [
@@ -7970,24 +7969,21 @@
       {
         "SQL": "select /*+ leading(t2, t3@sel_2) */ * from t1 join t2 on t1.a=t2.a where t1.a in (select t3.a from t3)",
         "Plan": [
-          "IndexHashJoin 4.69 root  inner join, inner:IndexLookUp, outer key:test.t1.a, inner key:test.t2.a, equal cond:eq(test.t1.a, test.t2.a)",
-          "├─IndexHashJoin(Build) 3.75 root  inner join, inner:IndexLookUp, outer key:test.t3.a, inner key:test.t1.a, equal cond:eq(test.t3.a, test.t1.a)",
-          "│ ├─StreamAgg(Build) 3.00 root  group by:test.t3.a, funcs:firstrow(test.t3.a)->test.t3.a",
-          "│ │ └─IndexReader 3.00 root  index:StreamAgg",
-          "│ │   └─StreamAgg 3.00 cop[tikv]  group by:test.t3.a, ",
-          "│ │     └─IndexFullScan 3.00 cop[tikv] table:t3, index:a(a) keep order:true",
-          "│ └─IndexLookUp(Probe) 3.75 root  ",
-          "│   ├─Selection(Build) 3.75 cop[tikv]  not(isnull(test.t1.a))",
-          "│   │ └─IndexRangeScan 3.75 cop[tikv] table:t1, index:a(a) range: decided by [eq(test.t1.a, test.t3.a)], keep order:false, stats:pseudo",
-          "│   └─TableRowIDScan(Probe) 3.75 cop[tikv] table:t1 keep order:false, stats:pseudo",
-          "└─IndexLookUp(Probe) 4.69 root  ",
-          "  ├─Selection(Build) 4.69 cop[tikv]  not(isnull(test.t2.a))",
-          "  │ └─IndexRangeScan 4.69 cop[tikv] table:t2, index:a(a) range: decided by [eq(test.t2.a, test.t1.a)], keep order:false, stats:pseudo",
-          "  └─TableRowIDScan(Probe) 4.69 cop[tikv] table:t2 keep order:false, stats:pseudo"
+          "Projection 37462.50 root  test.t1.a, test.t1.b, test.t2.a, test.t2.b",
+          "└─HashJoin 37462.50 root  inner join, equal:[eq(test.t2.a, test.t1.a) eq(test.t3.a, test.t1.a)]",
+          "  ├─TableReader(Build) 9990.00 root  data:Selection",
+          "  │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t1.a))",
+          "  │   └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+          "  └─HashJoin(Probe) 29970.00 root  CARTESIAN inner join",
+          "    ├─StreamAgg(Build) 3.00 root  group by:test.t3.a, funcs:firstrow(test.t3.a)->test.t3.a",
+          "    │ └─IndexReader 3.00 root  index:StreamAgg",
+          "    │   └─StreamAgg 3.00 cop[tikv]  group by:test.t3.a, ",
+          "    │     └─IndexFullScan 3.00 cop[tikv] table:t3, index:a(a) keep order:true",
+          "    └─TableReader(Probe) 9990.00 root  data:Selection",
+          "      └─Selection 9990.00 cop[tikv]  not(isnull(test.t2.a))",
+          "        └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo"
         ],
-        "Warning": [
-          "Warning 1815 We can only use one leading hint at most, when multiple leading hints are used, all leading hints will be invalid"
-        ]
+        "Warning": null
       },
       {
         "SQL": "select /*+ leading(t1, t3@sel_2) */ * from t1 join t2 on t1.a=t2.a where t1.a in (select t3.a from t3)",
@@ -8007,31 +8003,26 @@
           "  │ └─IndexRangeScan 4.69 cop[tikv] table:t2, index:a(a) range: decided by [eq(test.t2.a, test.t1.a)], keep order:false, stats:pseudo",
           "  └─TableRowIDScan(Probe) 4.69 cop[tikv] table:t2 keep order:false, stats:pseudo"
         ],
-        "Warning": [
-          "Warning 1815 We can only use one leading hint at most, when multiple leading hints are used, all leading hints will be invalid"
-        ]
+        "Warning": null
       },
       {
         "SQL": "select /*+ leading(t3@sel_2, t2) */ * from t1 join t2 on t1.a=t2.a where t1.a in (select t3.a from t3)",
         "Plan": [
-          "IndexHashJoin 4.69 root  inner join, inner:IndexLookUp, outer key:test.t1.a, inner key:test.t2.a, equal cond:eq(test.t1.a, test.t2.a)",
-          "├─IndexHashJoin(Build) 3.75 root  inner join, inner:IndexLookUp, outer key:test.t3.a, inner key:test.t1.a, equal cond:eq(test.t3.a, test.t1.a)",
-          "│ ├─StreamAgg(Build) 3.00 root  group by:test.t3.a, funcs:firstrow(test.t3.a)->test.t3.a",
-          "│ │ └─IndexReader 3.00 root  index:StreamAgg",
-          "│ │   └─StreamAgg 3.00 cop[tikv]  group by:test.t3.a, ",
-          "│ │     └─IndexFullScan 3.00 cop[tikv] table:t3, index:a(a) keep order:true",
-          "│ └─IndexLookUp(Probe) 3.75 root  ",
-          "│   ├─Selection(Build) 3.75 cop[tikv]  not(isnull(test.t1.a))",
-          "│   │ └─IndexRangeScan 3.75 cop[tikv] table:t1, index:a(a) range: decided by [eq(test.t1.a, test.t3.a)], keep order:false, stats:pseudo",
-          "│   └─TableRowIDScan(Probe) 3.75 cop[tikv] table:t1 keep order:false, stats:pseudo",
-          "└─IndexLookUp(Probe) 4.69 root  ",
-          "  ├─Selection(Build) 4.69 cop[tikv]  not(isnull(test.t2.a))",
-          "  │ └─IndexRangeScan 4.69 cop[tikv] table:t2, index:a(a) range: decided by [eq(test.t2.a, test.t1.a)], keep order:false, stats:pseudo",
-          "  └─TableRowIDScan(Probe) 4.69 cop[tikv] table:t2 keep order:false, stats:pseudo"
+          "Projection 37462.50 root  test.t1.a, test.t1.b, test.t2.a, test.t2.b",
+          "└─HashJoin 37462.50 root  inner join, equal:[eq(test.t2.a, test.t1.a) eq(test.t3.a, test.t1.a)]",
+          "  ├─TableReader(Build) 9990.00 root  data:Selection",
+          "  │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t1.a))",
+          "  │   └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+          "  └─HashJoin(Probe) 29970.00 root  CARTESIAN inner join",
+          "    ├─StreamAgg(Build) 3.00 root  group by:test.t3.a, funcs:firstrow(test.t3.a)->test.t3.a",
+          "    │ └─IndexReader 3.00 root  index:StreamAgg",
+          "    │   └─StreamAgg 3.00 cop[tikv]  group by:test.t3.a, ",
+          "    │     └─IndexFullScan 3.00 cop[tikv] table:t3, index:a(a) keep order:true",
+          "    └─TableReader(Probe) 9990.00 root  data:Selection",
+          "      └─Selection 9990.00 cop[tikv]  not(isnull(test.t2.a))",
+          "        └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo"
         ],
-        "Warning": [
-          "Warning 1815 We can only use one leading hint at most, when multiple leading hints are used, all leading hints will be invalid"
-        ]
+        "Warning": null
       },
       {
         "SQL": "select /*+ leading(t3@sel_2, t1) */ * from t1 join t2 on t1.a=t2.a where t1.a in (select t3.a from t3)",
@@ -8051,9 +8042,7 @@
           "  │ └─IndexRangeScan 4.69 cop[tikv] table:t2, index:a(a) range: decided by [eq(test.t2.a, test.t1.a)], keep order:false, stats:pseudo",
           "  └─TableRowIDScan(Probe) 4.69 cop[tikv] table:t2 keep order:false, stats:pseudo"
         ],
-        "Warning": [
-          "Warning 1815 We can only use one leading hint at most, when multiple leading hints are used, all leading hints will be invalid"
-        ]
+        "Warning": null
       },
       {
         "SQL": "select /*+ leading(t4) */ * from t1 join t2 on t1.a=t2.a join t4 on t1.b = t4.b where t1.a not in (select t3.a from t3)",
@@ -10036,22 +10025,21 @@
       {
         "SQL": "select /*+ leading(t2, t3@sel_2) */ * from t1 join t2 on t1.a=t2.a where t1.a in (select t3.a from t3)",
         "Plan": [
-          "HashJoin 12487.50 root  inner join, equal:[eq(test.t1.a, test.t3.a)]",
-          "├─StreamAgg(Build) 7992.00 root  group by:test.t3.a, funcs:firstrow(test.t3.a)->test.t3.a",
-          "│ └─IndexReader 7992.00 root  index:StreamAgg",
-          "│   └─StreamAgg 7992.00 cop[tikv]  group by:test.t3.a, ",
-          "│     └─IndexFullScan 9990.00 cop[tikv] table:t3, index:a(a) keep order:true, stats:pseudo",
-          "└─HashJoin(Probe) 12487.50 root  inner join, equal:[eq(test.t1.a, test.t2.a)]",
+          "Projection 99800100.00 root  test.t1.a, test.t1.b, test.t2.a, test.t2.b",
+          "└─HashJoin 99800100.00 root  inner join, equal:[eq(test.t2.a, test.t1.a) eq(test.t3.a, test.t1.a)]",
           "  ├─TableReader(Build) 9990.00 root  data:Selection",
-          "  │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t2.a))",
-          "  │   └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
-          "  └─TableReader(Probe) 9990.00 root  data:Selection",
-          "    └─Selection 9990.00 cop[tikv]  not(isnull(test.t1.a))",
-          "      └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+          "  │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t1.a))",
+          "  │   └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+          "  └─HashJoin(Probe) 79840080.00 root  CARTESIAN inner join",
+          "    ├─StreamAgg(Build) 7992.00 root  group by:test.t3.a, funcs:firstrow(test.t3.a)->test.t3.a",
+          "    │ └─IndexReader 7992.00 root  index:StreamAgg",
+          "    │   └─StreamAgg 7992.00 cop[tikv]  group by:test.t3.a, ",
+          "    │     └─IndexFullScan 9990.00 cop[tikv] table:t3, index:a(a) keep order:true, stats:pseudo",
+          "    └─TableReader(Probe) 9990.00 root  data:Selection",
+          "      └─Selection 9990.00 cop[tikv]  not(isnull(test.t2.a))",
+          "        └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo"
         ],
-        "Warning": [
-          "Warning 1815 We can only use one leading hint at most, when multiple leading hints are used, all leading hints will be invalid"
-        ]
+        "Warning": null
       },
       {
         "SQL": "select /*+ leading(t4) */ * from t1 left join t2 on t1.a=t2.a right join t4 on t1.b = t4.b where t1.a not in (select t3.a from t3)",

@@ -455,12 +455,6 @@ func TestHiddenColumn(t *testing.T) {
 	colInfo[1].Hidden = true
 	colInfo[3].Hidden = true
 	colInfo[5].Hidden = true
-	tc := tb.(*tables.TableCommon)
-	// Reset related caches
-	tc.VisibleColumns = nil
-	tc.WritableColumns = nil
-	tc.HiddenColumns = nil
-	tc.FullHiddenColsAndVisibleColumns = nil
 
 	// Basic test
 	cols := tb.VisibleCols()
@@ -1691,7 +1685,7 @@ func TestWriteWithChecksums(t *testing.T) {
 				}
 				data := rowcodec.RowData{Cols: cols}
 				sort.Sort(data)
-				checksum, err := data.Checksum()
+				checksum, err := data.Checksum(time.Local)
 				assert.NoError(t, err)
 				expectChecksums = append(expectChecksums, checksum)
 			}

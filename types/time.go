@@ -2319,16 +2319,17 @@ func parseSingleTimeValue(unit string, format string, strictCheck bool) (year in
 	lf := len(format) - 1
 	// Has fraction part
 	if decimalPointPos < lf {
+		var tmpErr error
 		dvPre := oneToSixDigitRegex.FindString(format[decimalPointPos+1:]) // the numberical prefix of the fraction part
 		decimalLen = len(dvPre)
 		if decimalLen >= 6 {
 			// MySQL rounds down to 1e-6.
-			if dv, err = strconv.ParseInt(dvPre[0:6], 10, 64); err != nil {
-				return 0, 0, 0, 0, 0, ErrWrongValue.GenWithStackByArgs(DateTimeStr, format)
+			if dv, tmpErr = strconv.ParseInt(dvPre[0:6], 10, 64); tmpErr != nil {
+				err = ErrWrongValue.GenWithStackByArgs(DateTimeStr, format)
 			}
 		} else {
-			if dv, err = strconv.ParseInt(dvPre+"000000"[:6-decimalLen], 10, 64); err != nil {
-				return 0, 0, 0, 0, 0, ErrWrongValue.GenWithStackByArgs(DateTimeStr, format)
+			if dv, tmpErr = strconv.ParseInt(dvPre+"000000"[:6-decimalLen], 10, 64); tmpErr != nil {
+				err = ErrWrongValue.GenWithStackByArgs(DateTimeStr, format)
 			}
 		}
 		if dv >= 500000 { // Round up, and we should keep 6 digits for microsecond, so dv should in [000000, 999999].
@@ -2428,39 +2429,44 @@ func parseTimeValue(format string, index, cnt int) (years int64, months int64, d
 		index--
 	}
 
+	// ParseInt may return an error when overflowed, but we should continue to parse the rest of the string because
+	// the caller may ignore the error and use the return value.
+	// In this case, we should return a big value to make sure the result date after adding this interval
+	// is also overflowed and NULL is returned to the user.
 	years, err = strconv.ParseInt(fields[YearIndex], 10, 64)
 	if err != nil {
-		return 0, 0, 0, 0, 0, ErrWrongValue.GenWithStackByArgs(DateTimeStr, originalFmt)
+		err = ErrWrongValue.GenWithStackByArgs(DateTimeStr, originalFmt)
 	}
-	months, err = strconv.ParseInt(fields[MonthIndex], 10, 64)
-	if err != nil {
-		return 0, 0, 0, 0, 0, ErrWrongValue.GenWithStackByArgs(DateTimeStr, originalFmt)
+	var tmpErr error
+	months, tmpErr = strconv.ParseInt(fields[MonthIndex], 10, 64)
+	if err == nil && tmpErr != nil {
+		err = ErrWrongValue.GenWithStackByArgs(DateTimeStr, originalFmt)
 	}
-	days, err = strconv.ParseInt(fields[DayIndex], 10, 64)
-	if err != nil {
-		return 0, 0, 0, 0, 0, ErrWrongValue.GenWithStackByArgs(DateTimeStr, originalFmt)
+	days, tmpErr = strconv.ParseInt(fields[DayIndex], 10, 64)
+	if err == nil && tmpErr != nil {
+		err = ErrWrongValue.GenWithStackByArgs(DateTimeStr, originalFmt)
 	}
 
-	hours, err := strconv.ParseInt(fields[HourIndex], 10, 64)
-	if err != nil {
-		return 0, 0, 0, 0, 0, ErrWrongValue.GenWithStackByArgs(DateTimeStr, originalFmt)
+	hours, tmpErr := strconv.ParseInt(fields[HourIndex], 10, 64)
+	if tmpErr != nil && err == nil {
+		err = ErrWrongValue.GenWithStackByArgs(DateTimeStr, originalFmt)
 	}
-	minutes, err := strconv.ParseInt(fields[MinuteIndex], 10, 64)
-	if err != nil {
-		return 0, 0, 0, 0, 0, ErrWrongValue.GenWithStackByArgs(DateTimeStr, originalFmt)
+	minutes, tmpErr := strconv.ParseInt(fields[MinuteIndex], 10, 64)
+	if tmpErr != nil && err == nil {
+		err = ErrWrongValue.GenWithStackByArgs(DateTimeStr, originalFmt)
 	}
-	seconds, err := strconv.ParseInt(fields[SecondIndex], 10, 64)
-	if err != nil {
-		return 0, 0, 0, 0, 0, ErrWrongValue.GenWithStackByArgs(DateTimeStr, originalFmt)
+	seconds, tmpErr := strconv.ParseInt(fields[SecondIndex], 10, 64)
+	if tmpErr != nil && err == nil {
+		err = ErrWrongValue.GenWithStackByArgs(DateTimeStr, originalFmt)
 	}
-	microseconds, err := strconv.ParseInt(alignFrac(fields[MicrosecondIndex], MaxFsp), 10, 64)
-	if err != nil {
-		return 0, 0, 0, 0, 0, ErrWrongValue.GenWithStackByArgs(DateTimeStr, originalFmt)
+	microseconds, tmpErr := strconv.ParseInt(alignFrac(fields[MicrosecondIndex], MaxFsp), 10, 64)
+	if tmpErr != nil && err == nil {
+		err = ErrWrongValue.GenWithStackByArgs(DateTimeStr, originalFmt)
 	}
 	seconds = hours*3600 + minutes*60 + seconds
 	days += seconds / (3600 * 24)
 	seconds %= 3600 * 24
-	return years, months, days, seconds*int64(gotime.Second) + microseconds*int64(gotime.Microsecond), fsp, nil
+	return years, months, days, seconds*int64(gotime.Second) + microseconds*int64(gotime.Microsecond), fsp, err
 }
 
 func parseAndValidateDurationValue(format string, index, cnt int) (int64, int, error) {

@@ -45,6 +45,7 @@ import (
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/stringutil"
 	"go.uber.org/zap/zapcore"
+	"golang.org/x/exp/slices"
 )
 
 var (
@@ -882,6 +883,44 @@ func defaultHashJoinTestCase(cols []*types.FieldType, joinType core.JoinType, us
 	return tc
 }
 
+func prepareResolveIndices(joinSchema, lSchema, rSchema *expression.Schema, joinType core.JoinType) *expression.Schema {
+	colsNeedResolving := joinSchema.Len()
+	// The last output column of this two join is the generated column to indicate whether the row is matched or not.
+	if joinType == core.LeftOuterSemiJoin || joinType == core.AntiLeftOuterSemiJoin {
+		colsNeedResolving--
+	}
+	mergedSchema := expression.MergeSchema(lSchema, rSchema)
+	// To avoid that two plan shares the same column slice.
+	shallowColSlice := make([]*expression.Column, joinSchema.Len())
+	copy(shallowColSlice, joinSchema.Columns)
+	joinSchema = expression.NewSchema(shallowColSlice...)
+	foundCnt := 0
+	// Here we want to resolve all join schema columns directly as a merged schema, and you know same name
+	// col in join schema should be separately redirected to corresponded same col in child schema. But two
+	// column sets are **NOT** always ordered, see comment: https://github.com/pingcap/tidb/pull/45831#discussion_r1481031471
+	// we are using mapping mechanism instead of moving j forward.
+	marked := make([]bool, mergedSchema.Len())
+	for i := 0; i < colsNeedResolving; i++ {
+		findIdx := -1
+		for j := 0; j < len(mergedSchema.Columns); j++ {
+			if !joinSchema.Columns[i].Equal(nil, mergedSchema.Columns[j]) || marked[j] {
+				continue
+			}
+			// resolve to a same unique id one, and it not being marked.
+			findIdx = j
+			break
+		}
+		if findIdx != -1 {
+			// valid one.
+			joinSchema.Columns[i] = joinSchema.Columns[i].Clone().(*expression.Column)
+			joinSchema.Columns[i].Index = findIdx
+			marked[findIdx] = true
+			foundCnt++
+		}
+	}
+	return joinSchema
+}
+
 func prepare4HashJoin(testCase *hashJoinTestCase, innerExec, outerExec Executor) *HashJoinExec {
 	if testCase.useOuterToBuild {
 		innerExec, outerExec = outerExec, innerExec
@@ -905,6 +944,10 @@ func prepare4HashJoin(testCase *hashJoinTestCase, innerExec, outerExec Executor)
 		joinSchema.Append(cols0...)
 		joinSchema.Append(cols1...)
 	}
+	// todo: need systematic way to protect.
+	// physical join should resolveIndices to get right schema column index.
+	// otherwise, markChildrenUsedColsForTest will fail below.
+	joinSchema = prepareResolveIndices(joinSchema, innerExec.Schema(), outerExec.Schema(), core.InnerJoin)
 
 	joinKeysColIdx := make([]int, 0, len(testCase.keyIdx))
 	joinKeysColIdx = append(joinKeysColIdx, testCase.keyIdx...)
@@ -960,25 +1003,39 @@ func prepare4HashJoin(testCase *hashJoinTestCase, innerExec, outerExec Executor)
 
 // markChildrenUsedColsForTest compares each child with the output schema, and mark
 // each column of the child is used by output or not.
-func markChildrenUsedColsForTest(outputSchema *expression.Schema, childSchemas ...*expression.Schema) (childrenUsed [][]bool) {
-	childrenUsed = make([][]bool, 0, len(childSchemas))
-	markedOffsets := make(map[int]struct{})
-	for _, col := range outputSchema.Columns {
-		markedOffsets[col.Index] = struct{}{}
+func markChildrenUsedColsForTest(outputSchema *expression.Schema, childSchemas ...*expression.Schema) (childrenUsed [][]int) {
+	childrenUsed = make([][]int, 0, len(childSchemas))
+	markedOffsets := make(map[int]int)
+	for originalIdx, col := range outputSchema.Columns {
+		markedOffsets[col.Index] = originalIdx
 	}
 	prefixLen := 0
+	type intPair struct {
+		first  int
+		second int
+	}
+	// for example here.
+	// left child schema: [col11]
+	// right child schema: [col21, col22]
+	// output schema is [col11, col22, col21], if not records the original derived order after physical resolve index.
+	// the lused will be [0], the rused will be [0,1], while the actual order is dismissed, [1,0] is correct for rused.
 	for _, childSchema := range childSchemas {
-		used := make([]bool, len(childSchema.Columns))
+		usedIdxPair := make([]intPair, 0, len(childSchema.Columns))
 		for i := range childSchema.Columns {
-			if _, ok := markedOffsets[prefixLen+i]; ok {
-				used[i] = true
+			if originalIdx, ok := markedOffsets[prefixLen+i]; ok {
+				usedIdxPair = append(usedIdxPair, intPair{first: originalIdx, second: i})
 			}
 		}
-		childrenUsed = append(childrenUsed, used)
-	}
-	for _, child := range childSchemas {
-		used := expression.GetUsedList(outputSchema.Columns, child)
-		childrenUsed = append(childrenUsed, used)
+		// sort the used idxes according their original indexes derived after resolveIndex.
+		slices.SortFunc(usedIdxPair, func(a, b intPair) bool {
+			return a.first < b.first
+		})
+		usedIdx := make([]int, 0, len(childSchema.Columns))
+		for _, one := range usedIdxPair {
+			usedIdx = append(usedIdx, one.second)
+		}
+		childrenUsed = append(childrenUsed, usedIdx)
+		prefixLen += childSchema.Len()
 	}
 	return
 }
@@ -1580,6 +1637,20 @@ func prepareMergeJoinExec(tc *mergeJoinTestCase, joinSchema *expression.Schema, 
 		isOuterJoin:  false,
 	}
 
+	var usedIdx [][]int
+	if tc.childrenUsedSchema != nil {
+		usedIdx = make([][]int, 0, len(tc.childrenUsedSchema))
+		for _, childSchema := range tc.childrenUsedSchema {
+			used := make([]int, 0, len(childSchema))
+			for idx, one := range childSchema {
+				if one {
+					used = append(used, idx)
+				}
+			}
+			usedIdx = append(usedIdx, used)
+		}
+	}
+
 	mergeJoinExec.joiner = newJoiner(
 		tc.ctx,
 		0,
@@ -1588,7 +1659,7 @@ func prepareMergeJoinExec(tc *mergeJoinTestCase, joinSchema *expression.Schema, 
 		nil,
 		retTypes(leftExec),
 		retTypes(rightExec),
-		tc.childrenUsedSchema,
+		usedIdx,
 		false,
 	)
 

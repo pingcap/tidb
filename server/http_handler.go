@@ -2228,6 +2228,11 @@ func (h labelHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 				}
 			}
 		}
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		if err := infosync.UpdateServerLabel(ctx, labels); err != nil {
+			logutil.BgLogger().Error("update etcd labels failed", zap.Any("labels", cfg.Labels), zap.Error(err))
+		}
+		cancel()
 		cfg.Labels = labels
 		config.StoreGlobalConfig(&cfg)
 		logutil.BgLogger().Info("update server labels", zap.Any("labels", cfg.Labels))

@@ -298,8 +298,7 @@ func TestMVIndexFullScan(t *testing.T) {
 	tk.MustQuery(`select /*+ use_index_merge(t, kj) */ count(*) from t where json_contains((j), '[1]')`).Check(testkit.Rows("2"))
 	tk.MustQuery(`select /*+ use_index_merge(t, kj) */ count(*) from t where json_overlaps((j), '[1]')`).Check(testkit.Rows("2"))
 
-	// Forbid IndexMerge+IndexFullScan since IndexFullScan on MVIndex cannot read all rows some cases.
-	tk.MustGetErrMsg(`select /*+ use_index(t, kj) */ count(*) from t`, "[planner:1815]Internal : Can't find a proper physical plan for this query")
+	tk.MustQuery(`select /*+ use_index(t, kj) */ count(*) from t`).Check(testkit.Rows("4"))
 }
 
 func TestMVIndexEmptyArray(t *testing.T) {

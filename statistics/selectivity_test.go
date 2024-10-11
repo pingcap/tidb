@@ -1106,8 +1106,8 @@ func generateMapsForMockStatsTbl(statsTbl *statistics.Table) {
 	for _, idxIDs := range colID2IdxIDs {
 		slices.Sort(idxIDs)
 	}
-	statsTbl.Idx2ColumnIDs = idx2Columns
-	statsTbl.ColID2IdxIDs = colID2IdxIDs
+	statsTbl.Idx2ColUniqueIDs = idx2Columns
+	statsTbl.ColUniqueID2IdxIDs = colID2IdxIDs
 }
 
 func TestIssue39593(t *testing.T) {

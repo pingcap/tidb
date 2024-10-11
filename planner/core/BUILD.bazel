@@ -218,6 +218,7 @@ go_test(
         "rule_join_reorder_test.go",
         "rule_result_reorder_test.go",
         "stringer_test.go",
+        "util_test.go",
     ],
     data = glob(["testdata/**"]),
     embed = [":core"],

@@ -16,14 +16,12 @@ package executor
 
 import (
 	"context"
-	"math"
 	"sort"
 	"sync/atomic"
 	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/metrics"
@@ -51,40 +49,6 @@ import (
 // AnalyzeColumnsExecV2 is used to maintain v2 analyze process
 type AnalyzeColumnsExecV2 struct {
 	*AnalyzeColumnsExec
-}
-
-func (e *AnalyzeColumnsExecV2) analyzeColumnsPushDownWithRetryV2() *statistics.AnalyzeResults {
-	analyzeResult := e.analyzeColumnsPushDownV2()
-	// do not retry if succeed / not oom error / not auto-analyze / samplerate not set
-	if analyzeResult.Err == nil || analyzeResult.Err != errAnalyzeOOM ||
-		!e.ctx.GetSessionVars().InRestrictedSQL ||
-		e.analyzePB.ColReq == nil || *e.analyzePB.ColReq.SampleRate <= 0 {
-		return analyzeResult
-	}
-	finishJobWithLog(e.ctx, analyzeResult.Job, analyzeResult.Err)
-	statsHandle := domain.GetDomain(e.ctx).StatsHandle()
-	if statsHandle == nil {
-		return analyzeResult
-	}
-	var statsTbl *statistics.Table
-	tid := e.tableID.GetStatisticsID()
-	if tid == e.tableInfo.ID {
-		statsTbl = statsHandle.GetTableStats(e.tableInfo)
-	} else {
-		statsTbl = statsHandle.GetPartitionStats(e.tableInfo, tid)
-	}
-	if statsTbl == nil || statsTbl.RealtimeCount <= 0 {
-		return analyzeResult
-	}
-	newSampleRate := math.Min(1, float64(config.DefRowsForSampleRate)/float64(statsTbl.RealtimeCount))
-	if newSampleRate >= *e.analyzePB.ColReq.SampleRate {
-		return analyzeResult
-	}
-	*e.analyzePB.ColReq.SampleRate = newSampleRate
-	prepareV2AnalyzeJobInfo(e.AnalyzeColumnsExec, true)
-	AddNewAnalyzeJob(e.ctx, e.job)
-	StartAnalyzeJob(e.ctx, e.job)
-	return e.analyzeColumnsPushDownV2()
 }
 
 func (e *AnalyzeColumnsExecV2) analyzeColumnsPushDownV2() *statistics.AnalyzeResults {

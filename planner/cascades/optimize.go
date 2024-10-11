@@ -116,7 +116,8 @@ func (opt *Optimizer) FindBestPlan(sctx sessionctx.Context, logical plannercore.
 }
 
 func (*Optimizer) onPhasePreprocessing(_ sessionctx.Context, plan plannercore.LogicalPlan) (plannercore.LogicalPlan, error) {
-	err := plan.PruneColumns(plan.Schema().Columns, nil)
+	var err error
+	plan, err = plan.PruneColumns(plan.Schema().Columns, nil)
 	if err != nil {
 		return nil, err
 	}

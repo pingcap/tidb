@@ -755,14 +755,11 @@ func (b *executorBuilder) buildLimit(v *plannercore.PhysicalLimit) Executor {
 		end:          v.Offset + v.Count,
 	}
 
+	childUsedSchemaLen := v.Children()[0].Schema().Len()
 	childUsedSchema := markChildrenUsedCols(v.Schema().Columns, v.Children()[0].Schema())[0]
 	e.columnIdxsUsedByChild = make([]int, 0, len(childUsedSchema))
-	for i, used := range childUsedSchema {
-		if used {
-			e.columnIdxsUsedByChild = append(e.columnIdxsUsedByChild, i)
-		}
-	}
-	if len(e.columnIdxsUsedByChild) == len(childUsedSchema) {
+	e.columnIdxsUsedByChild = append(e.columnIdxsUsedByChild, childUsedSchema...)
+	if len(e.columnIdxsUsedByChild) == childUsedSchemaLen {
 		e.columnIdxsUsedByChild = nil // indicates that all columns are used. LimitExec will improve performance for this condition.
 	}
 	return e
@@ -2006,13 +2003,16 @@ func (b *executorBuilder) buildMemTable(v *plannercore.PhysicalMemTable) Executo
 			strings.ToLower(infoschema.ClusterTableMemoryUsage),
 			strings.ToLower(infoschema.ClusterTableMemoryUsageOpsHistory),
 			strings.ToLower(infoschema.TableResourceGroups):
+			memTracker := memory.NewTracker(v.ID(), -1)
+			memTracker.AttachTo(b.ctx.GetSessionVars().StmtCtx.MemTracker)
 			return &MemTableReaderExec{
 				baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ID()),
 				table:        v.Table,
 				retriever: &memtableRetriever{
-					table:     v.Table,
-					columns:   v.Columns,
-					extractor: v.Extractor,
+					table:      v.Table,
+					columns:    v.Columns,
+					extractor:  v.Extractor,
+					memTracker: memTracker,
 				},
 			}
 		case strings.ToLower(infoschema.TableTiDBTrx),
@@ -3055,21 +3055,39 @@ func constructDistExec(sctx sessionctx.Context, plans []plannercore.PhysicalPlan
 
 // markChildrenUsedCols compares each child with the output schema, and mark
 // each column of the child is used by output or not.
-func markChildrenUsedCols(outputCols []*expression.Column, childSchemas ...*expression.Schema) (childrenUsed [][]bool) {
-	childrenUsed = make([][]bool, 0, len(childSchemas))
-	markedOffsets := make(map[int]struct{})
-	for _, col := range outputCols {
-		markedOffsets[col.Index] = struct{}{}
+func markChildrenUsedCols(outputCols []*expression.Column, childSchemas ...*expression.Schema) (childrenUsed [][]int) {
+	childrenUsed = make([][]int, 0, len(childSchemas))
+	markedOffsets := make(map[int]int)
+	// keep the original maybe reversed order.
+	for originalIdx, col := range outputCols {
+		markedOffsets[col.Index] = originalIdx
 	}
 	prefixLen := 0
+	type intPair struct {
+		first  int
+		second int
+	}
+	// for example here.
+	// left child schema: [col11]
+	// right child schema: [col21, col22]
+	// output schema is [col11, col22, col21], if not records the original derived order after physical resolve index.
+	// the lused will be [0], the rused will be [0,1], while the actual order is dismissed, [1,0] is correct for rused.
 	for _, childSchema := range childSchemas {
-		used := make([]bool, len(childSchema.Columns))
+		usedIdxPair := make([]intPair, 0, len(childSchema.Columns))
 		for i := range childSchema.Columns {
-			if _, ok := markedOffsets[prefixLen+i]; ok {
-				used[i] = true
+			if originalIdx, ok := markedOffsets[prefixLen+i]; ok {
+				usedIdxPair = append(usedIdxPair, intPair{first: originalIdx, second: i})
 			}
 		}
-		childrenUsed = append(childrenUsed, used)
+		// sort the used idxes according their original indexes derived after resolveIndex.
+		slices.SortFunc(usedIdxPair, func(a, b intPair) bool {
+			return a.first < b.first
+		})
+		usedIdx := make([]int, 0, len(childSchema.Columns))
+		for _, one := range usedIdxPair {
+			usedIdx = append(usedIdx, one.second)
+		}
+		childrenUsed = append(childrenUsed, usedIdx)
 		prefixLen += childSchema.Len()
 	}
 	return
@@ -3107,6 +3125,12 @@ func (b *executorBuilder) corColInDistPlan(plans []plannercore.PhysicalPlan) boo
 		case *plannercore.PhysicalSelection:
 			for _, cond := range x.Conditions {
 				if len(expression.ExtractCorColumns(cond)) > 0 {
+					return true
+				}
+			}
+		case *plannercore.PhysicalTopN:
+			for _, byItem := range x.ByItems {
+				if len(expression.ExtractCorColumns(byItem.Expr)) > 0 {
 					return true
 				}
 			}
@@ -3556,6 +3580,10 @@ func (b *executorBuilder) buildTableReader(v *plannercore.PhysicalTableReader) E
 		}
 	})
 	if useMPPExecution(b.ctx, v) {
+		// https://github.com/pingcap/tidb/issues/50358
+		if len(v.Schema().Columns) == 0 && len(v.GetTablePlan().Schema().Columns) > 0 {
+			v.SetSchema(v.GetTablePlan().Schema())
+		}
 		return b.buildMPPGather(v)
 	}
 	ts, err := v.GetTableScan()

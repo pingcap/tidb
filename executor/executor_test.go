@@ -19,6 +19,7 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"math/rand"
 	"path/filepath"
 	"reflect"
 	"runtime"
@@ -3123,7 +3124,7 @@ func TestPrevStmtDesensitization(t *testing.T) {
 	tk.MustExec("create table t (a int, unique key (a))")
 	tk.MustExec("begin")
 	tk.MustExec("insert into t values (1),(2)")
-	require.Equal(t, "insert into `t` values ( ? ) , ( ? )", tk.Session().GetSessionVars().PrevStmt.String())
+	require.Equal(t, "insert into `t` values ( ... )", tk.Session().GetSessionVars().PrevStmt.String())
 	tk.MustGetErrMsg("insert into t values (1)", `[kv:1062]Duplicate entry '?' for key 't.a'`)
 }
 
@@ -5045,6 +5046,82 @@ func TestIsPointGet(t *testing.T) {
 	}
 }
 
+func TestCheckActRowsWithUnistore(t *testing.T) {
+	defer config.RestoreFunc()()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.EnableCollectExecutionInfo = true
+	})
+	store := testkit.CreateMockStore(t)
+	// testSuite1 use default mockstore which is unistore
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set tidb_cost_model_version=2")
+	tk.MustExec("drop table if exists t_unistore_act_rows")
+	tk.MustExec("create table t_unistore_act_rows(a int, b int, index(a, b))")
+	tk.MustExec("insert into t_unistore_act_rows values (1, 0), (1, 0), (2, 0), (2, 1)")
+	tk.MustExec("analyze table t_unistore_act_rows")
+	tk.MustExec("set @@tidb_merge_join_concurrency= 5;")
+
+	type testStruct struct {
+		sql      string
+		expected []string
+	}
+
+	tests := []testStruct{
+		{
+			sql:      "select * from t_unistore_act_rows",
+			expected: []string{"4", "4"},
+		},
+		{
+			sql:      "select * from t_unistore_act_rows where a > 1",
+			expected: []string{"2", "2"},
+		},
+		{
+			sql:      "select * from t_unistore_act_rows where a > 1 and b > 0",
+			expected: []string{"1", "1", "2"},
+		},
+		{
+			sql:      "select b from t_unistore_act_rows",
+			expected: []string{"4", "4"},
+		},
+		{
+			sql:      "select * from t_unistore_act_rows where b > 0",
+			expected: []string{"1", "1", "4"},
+		},
+		{
+			sql:      "select count(*) from t_unistore_act_rows",
+			expected: []string{"1", "1", "1", "4"},
+		},
+		{
+			sql:      "select count(*) from t_unistore_act_rows group by a",
+			expected: []string{"2", "2", "2", "4"},
+		},
+		{
+			sql:      "select count(*) from t_unistore_act_rows group by b",
+			expected: []string{"2", "4", "4"},
+		},
+		{
+			sql:      "with cte(a) as (select a from t_unistore_act_rows) select (select 1 from cte limit 1) from cte;",
+			expected: []string{"4", "1", "1", "1", "4", "4", "4", "4", "4"},
+		},
+		{
+			sql:      "select a, row_number() over (partition by b) from t_unistore_act_rows;",
+			expected: []string{"4", "4", "4", "4", "4", "4", "4"},
+		},
+		{
+			sql:      "select /*+ merge_join(t1, t2) */ * from t_unistore_act_rows t1 join t_unistore_act_rows t2 on t1.b = t2.b;",
+			expected: []string{"10", "10", "4", "4", "4", "4", "4", "4", "4", "4", "4", "4"},
+		},
+	}
+
+	// Default RPC encoding may cause statistics explain result differ and then the test unstable.
+	tk.MustExec("set @@tidb_enable_chunk_rpc = on")
+
+	for _, test := range tests {
+		checkActRows(t, tk, test.sql, test.expected)
+	}
+}
+
 func TestClusteredIndexIsPointGet(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -6509,5 +6586,186 @@ func TestProcessInfoOfSubQuery(t *testing.T) {
 	}()
 	time.Sleep(time.Second)
 	tk2.MustQuery("select 1 from information_schema.processlist where TxnStart != '' and info like 'select%sleep% from t%'").Check(testkit.Rows("1"))
+	wg.Wait()
+}
+
+func TestIssue50043(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	// Test simplified case by update.
+	tk.MustExec("use test")
+	tk.MustExec("create table t (c1 boolean ,c2 decimal ( 37 , 17 ), unique key idx1 (c1 ,c2),unique key idx2 ( c1 ));")
+	tk.MustExec("insert into t values (0,NULL);")
+	tk.MustExec("alter table t alter column c2 drop default;")
+	tk.MustExec("update t set c2 = 5 where c1 = 0;")
+	tk.MustQuery("select * from t order by c1,c2").Check(testkit.Rows("0 5.00000000000000000"))
+
+	// Test simplified case by insert on duplicate key update.
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (c1 boolean ,c2 decimal ( 37 , 17 ), unique key idx1 (c1 ,c2));")
+	tk.MustExec("alter table t alter column c2 drop default;")
+	tk.MustExec("alter table t add unique key idx4 ( c1 );")
+	tk.MustExec("insert into t values (0, NULL), (1, 1);")
+	tk.MustExec("insert into t values (0, 2) ,(1, 3) on duplicate key update c2 = 5;")
+	tk.MustQuery("show warnings").Check(testkit.Rows())
+	tk.MustQuery("select * from t order by c1,c2").Check(testkit.Rows("0 5.00000000000000000", "1 5.00000000000000000"))
+
+	// Test Issue 50043.
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (c1 boolean ,c2 decimal ( 37 , 17 ), unique key idx1 (c1 ,c2));")
+	tk.MustExec("alter table t alter column c2 drop default;")
+	tk.MustExec("alter table t add unique key idx4 ( c1 );")
+	tk.MustExec("insert into t values (0, NULL), (1, 1);")
+	tk.MustExec("insert ignore into t values (0, 2) ,(1, 3) on duplicate key update c2 = 5, c1 = 0")
+	tk.MustQuery("select * from t order by c1,c2").Check(testkit.Rows("0 5.00000000000000000", "1 1.00000000000000000"))
+}
+
+func TestIssue51324(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (id int key, a int, b enum('a', 'b'))")
+	tk.MustGetErrMsg("insert into t values ()", "[table:1364]Field 'id' doesn't have a default value")
+	tk.MustExec("insert into t set id = 1")
+	tk.MustExec("insert into t set id = 2, a = NULL, b = NULL")
+	tk.MustExec("insert into t set id = 3, a = DEFAULT, b = DEFAULT")
+	tk.MustQuery("select * from t order by id").Check(testkit.Rows("1 <nil> <nil>", "2 <nil> <nil>", "3 <nil> <nil>"))
+
+	tk.MustExec("alter table t alter column a drop default")
+	tk.MustExec("alter table t alter column b drop default")
+	tk.MustGetErrMsg("insert into t set id = 4;", "[table:1364]Field 'a' doesn't have a default value")
+	tk.MustExec("insert into t set id = 5, a = NULL, b = NULL;")
+	tk.MustGetErrMsg("insert into t set id = 6, a = DEFAULT, b = DEFAULT;", "[table:1364]Field 'a' doesn't have a default value")
+	tk.MustQuery("select * from t order by id").Check(testkit.Rows("1 <nil> <nil>", "2 <nil> <nil>", "3 <nil> <nil>", "5 <nil> <nil>"))
+
+	tk.MustExec("insert ignore into t set id = 4;")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1364 Field 'a' doesn't have a default value"))
+	tk.MustExec("insert ignore into t set id = 6, a = DEFAULT, b = DEFAULT;")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1364 Field 'a' doesn't have a default value"))
+	tk.MustQuery("select * from t order by id").Check(testkit.Rows("1 <nil> <nil>", "2 <nil> <nil>", "3 <nil> <nil>", "4 <nil> <nil>", "5 <nil> <nil>", "6 <nil> <nil>"))
+	tk.MustExec("update t set id = id + 10")
+	tk.MustQuery("show warnings").Check(testkit.Rows())
+	tk.MustQuery("select * from t order by id").Check(testkit.Rows("11 <nil> <nil>", "12 <nil> <nil>", "13 <nil> <nil>", "14 <nil> <nil>", "15 <nil> <nil>", "16 <nil> <nil>"))
+
+	// Test not null case.
+	tk.MustExec("drop table t")
+	tk.MustExec("create table t (id int key, a int not null, b enum('a', 'b') not null)")
+	tk.MustGetErrMsg("insert into t values ()", "[table:1364]Field 'id' doesn't have a default value")
+	tk.MustGetErrMsg("insert into t set id = 1", "[table:1364]Field 'a' doesn't have a default value")
+	tk.MustGetErrMsg("insert into t set id = 2, a = NULL, b = NULL", "[table:1048]Column 'a' cannot be null")
+	tk.MustGetErrMsg("insert into t set id = 2, a = 2, b = NULL", "[table:1048]Column 'b' cannot be null")
+	tk.MustGetErrMsg("insert into t set id = 3, a = DEFAULT, b = DEFAULT", "[table:1364]Field 'a' doesn't have a default value")
+	tk.MustExec("alter table t alter column a drop default")
+	tk.MustExec("alter table t alter column b drop default")
+	tk.MustExec("insert ignore into t set id = 4;")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1364 Field 'a' doesn't have a default value"))
+	tk.MustExec("insert ignore into t set id = 5, a = NULL, b = NULL;")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1048 Column 'a' cannot be null", "Warning 1048 Column 'b' cannot be null"))
+	tk.MustExec("insert ignore into t set id = 6, a = 6,    b = NULL;")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1048 Column 'b' cannot be null"))
+	tk.MustExec("insert ignore into t set id = 7, a = DEFAULT, b = DEFAULT;")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1364 Field 'a' doesn't have a default value"))
+	tk.MustQuery("select * from t order by id").Check(testkit.Rows("4 0 a", "5 0 ", "6 6 ", "7 0 a"))
+
+	// Test add column with OriginDefaultValue case.
+	tk.MustExec("drop table t")
+	tk.MustExec("create table t (id int, unique key idx (id))")
+	tk.MustExec("insert into t values (1)")
+	tk.MustExec("alter table t add column a int default 1")
+	tk.MustExec("alter table t add column b int default null")
+	tk.MustExec("alter table t add column c int not null")
+	tk.MustExec("alter table t add column d int not null default 1")
+	tk.MustExec("insert ignore into t (id) values (2)")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1364 Field 'c' doesn't have a default value"))
+	tk.MustExec("insert ignore into t (id) values (1),(2) on duplicate key update id = id+10")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1364 Field 'c' doesn't have a default value"))
+	tk.MustExec("alter table t alter column a drop default")
+	tk.MustExec("alter table t alter column b drop default")
+	tk.MustExec("alter table t alter column c drop default")
+	tk.MustExec("alter table t alter column d drop default")
+	tk.MustExec("insert ignore into t (id) values (3)")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1364 Field 'a' doesn't have a default value", "Warning 1364 Field 'b' doesn't have a default value", "Warning 1364 Field 'c' doesn't have a default value", "Warning 1364 Field 'd' doesn't have a default value"))
+	tk.MustExec("insert ignore into t (id) values (11),(12),(3) on duplicate key update id = id+10")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1364 Field 'a' doesn't have a default value", "Warning 1364 Field 'b' doesn't have a default value", "Warning 1364 Field 'c' doesn't have a default value", "Warning 1364 Field 'd' doesn't have a default value"))
+	tk.MustQuery("select * from t order by id").Check(testkit.Rows("13 <nil> <nil> 0 0", "21 1 <nil> 0 1", "22 1 <nil> 0 1"))
+}
+
+func TestIssue48756(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("CREATE TABLE t (id INT, a VARBINARY(20), b BIGINT)")
+	tk.MustExec(`INSERT INTO t VALUES(1, _binary '2012-05-19 09:06:07', 20120519090607),
+(1, _binary '2012-05-19 09:06:07', 20120519090607),
+(2, _binary '12012-05-19 09:06:07', 120120519090607),
+(2, _binary '12012-05-19 09:06:07', 120120519090607)`)
+	tk.MustQuery("SELECT SUBTIME(BIT_OR(b), '1 1:1:1.000002') FROM t GROUP BY id").Sort().Check(testkit.Rows(
+		"2012-05-18 08:05:05.999998",
+		"<nil>",
+	))
+	tk.MustQuery("show warnings").Check(testkit.Rows(
+		"Warning 1292 Incorrect time value: '120120519090607'",
+		"Warning 1105 ",
+	))
+}
+
+func TestQueryWithKill(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test;")
+	tk.MustExec("drop table if exists tkq;")
+	tk.MustExec("create table tkq (a int key, b int, index idx_b(b));")
+	tk.MustExec("insert into tkq values (1,1);")
+	var wg sync.WaitGroup
+	ch := make(chan context.CancelFunc, 1024)
+	testDuration := time.Second * 10
+	for i := 0; i < 10; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			tk := testkit.NewTestKit(t, store)
+			tk.MustExec("use test;")
+			start := time.Now()
+			for {
+				ctx, cancel := context.WithCancel(context.Background())
+				ch <- cancel
+				rs, err := tk.ExecWithContext(ctx, "select a from tkq where b = 1;")
+				if err == nil {
+					require.NotNil(t, rs)
+					rows, err := session.ResultSetToStringSlice(ctx, tk.Session(), rs)
+					if err == nil {
+						require.Equal(t, 1, len(rows))
+						require.Equal(t, 1, len(rows[0]))
+						require.Equal(t, "1", fmt.Sprintf("%v", rows[0][0]))
+					}
+				}
+				if err != nil {
+					require.Equal(t, context.Canceled, err)
+				}
+				if rs != nil {
+					rs.Close()
+				}
+				if time.Since(start) > testDuration {
+					return
+				}
+			}
+		}()
+	}
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for {
+			select {
+			case cancel := <-ch:
+				// mock for random kill query
+				if len(ch) < 5 {
+					time.Sleep(time.Duration(rand.Intn(1000)) * time.Nanosecond)
+				}
+				cancel()
+			case <-time.After(time.Second):
+				return
+			}
+		}
+	}()
 	wg.Wait()
 }

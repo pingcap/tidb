@@ -778,7 +778,9 @@ func (er *expressionRewriter) handleNEAny(lexpr, rexpr expression.Expression, np
 // handleEQAll handles the case of = all. For example, if the query is t.id = all (select s.id from s), it will be rewrote to
 // t.id = (select s.id from s having count(distinct s.id) <= 1 and [all checker]).
 func (er *expressionRewriter) handleEQAll(lexpr, rexpr expression.Expression, np LogicalPlan, markNoDecorrelate bool) {
-	firstRowFunc, err := aggregation.NewAggFuncDesc(er.sctx, ast.AggFuncFirstRow, []expression.Expression{rexpr}, false)
+	// If there is NULL in s.id column, s.id should be the value that isn't null in condition t.id == s.id.
+	// So use function max to filter NULL.
+	maxFunc, err := aggregation.NewAggFuncDesc(er.sctx, ast.AggFuncMax, []expression.Expression{rexpr}, false)
 	if err != nil {
 		er.err = err
 		return
@@ -789,7 +791,7 @@ func (er *expressionRewriter) handleEQAll(lexpr, rexpr expression.Expression, np
 		return
 	}
 	plan4Agg := LogicalAggregation{
-		AggFuncs: []*aggregation.AggFuncDesc{firstRowFunc, countFunc},
+		AggFuncs: []*aggregation.AggFuncDesc{maxFunc, countFunc},
 	}.Init(er.sctx, er.b.getSelectOffset())
 	if hint := er.b.TableHints(); hint != nil {
 		plan4Agg.aggHints = hint.aggHints
@@ -797,29 +799,19 @@ func (er *expressionRewriter) handleEQAll(lexpr, rexpr expression.Expression, np
 	plan4Agg.SetChildren(np)
 	plan4Agg.names = append(plan4Agg.names, types.EmptyName)
 
-	// Currently, firstrow agg function is treated like the exact representation of aggregate group key,
-	// so the data type is the same with group key, even if the group key is not null.
-	// However, the return type of firstrow should be nullable, we clear the null flag here instead of
-	// during invoking NewAggFuncDesc, in order to keep compatibility with the existing presumption
-	// that the return type firstrow does not change nullability, whatsoever.
-	// Cloning it because the return type is the same object with argument's data type.
-	newRetTp := firstRowFunc.RetTp.Clone()
-	newRetTp.DelFlag(mysql.NotNullFlag)
-	firstRowFunc.RetTp = newRetTp
-
-	firstRowResultCol := &expression.Column{
+	maxResultCol := &expression.Column{
 		UniqueID: er.sctx.GetSessionVars().AllocPlanColumnID(),
-		RetType:  firstRowFunc.RetTp,
+		RetType:  maxFunc.RetTp,
 	}
-	firstRowResultCol.SetCoercibility(rexpr.Coercibility())
+	maxResultCol.SetCoercibility(rexpr.Coercibility())
 	plan4Agg.names = append(plan4Agg.names, types.EmptyName)
 	count := &expression.Column{
 		UniqueID: er.sctx.GetSessionVars().AllocPlanColumnID(),
 		RetType:  countFunc.RetTp,
 	}
-	plan4Agg.SetSchema(expression.NewSchema(firstRowResultCol, count))
+	plan4Agg.SetSchema(expression.NewSchema(maxResultCol, count))
 	leFunc := expression.NewFunctionInternal(er.sctx, ast.LE, types.NewFieldType(mysql.TypeTiny), count, expression.NewOne())
-	eqCond := expression.NewFunctionInternal(er.sctx, ast.EQ, types.NewFieldType(mysql.TypeTiny), lexpr, firstRowResultCol)
+	eqCond := expression.NewFunctionInternal(er.sctx, ast.EQ, types.NewFieldType(mysql.TypeTiny), lexpr, maxResultCol)
 	cond := expression.ComposeCNFCondition(er.sctx, leFunc, eqCond)
 	er.buildQuantifierPlan(plan4Agg, cond, lexpr, rexpr, true, markNoDecorrelate)
 }
@@ -1580,7 +1572,10 @@ func (er *expressionRewriter) inToExpression(lLen int, not bool, tp *types.Field
 						continue // no need to refine it
 					}
 					er.sctx.GetSessionVars().StmtCtx.SetSkipPlanCache(errors.Errorf("'%v' may be converted to INT", c.String()))
-					expression.RemoveMutableConst(er.sctx, []expression.Expression{c})
+					if err := expression.RemoveMutableConst(er.sctx, []expression.Expression{c}); err != nil {
+						er.err = err
+						return
+					}
 				}
 				args[i], isExceptional = expression.RefineComparedConstant(er.sctx, *leftFt, c, opcode.EQ)
 				if isExceptional {
@@ -1649,6 +1644,13 @@ func (er *expressionRewriter) deriveCollationForIn(colLen int, _ int, args []exp
 func (er *expressionRewriter) castCollationForIn(colLen int, elemCnt int, stkLen int, coll *expression.ExprCollation) {
 	// We don't handle the cases if the element is a tuple, such as (a, b, c) in ((x1, y1, z1), (x2, y2, z2)).
 	if colLen != 1 {
+		return
+	}
+	if !collate.NewCollationEnabled() {
+		// See https://github.com/pingcap/tidb/issues/52772
+		// This function will apply CoercibilityExplicit to the casted expression, but some checks(during ColumnSubstituteImpl) is missed when the new
+		// collation is disabled, then lead to panic.
+		// To work around this issue, we can skip the function, it should be good since the collation is disabled.
 		return
 	}
 	for i := stkLen - elemCnt; i < stkLen; i++ {
@@ -1990,7 +1992,7 @@ func (er *expressionRewriter) funcCallToExpression(v *ast.FuncCallExpr) {
 
 	var function expression.Expression
 	er.ctxStackPop(len(v.Args))
-	if _, ok := expression.DeferredFunctions[v.FnName.L]; er.useCache() && ok {
+	if ok := expression.IsDeferredFunctions(er.sctx, v.FnName.L); er.useCache() && ok {
 		// When the expression is unix_timestamp and the number of argument is not zero,
 		// we deal with it as normal expression.
 		if v.FnName.L == ast.UnixTimestamp && len(v.Args) != 0 {
@@ -2159,7 +2161,7 @@ func (er *expressionRewriter) evalDefaultExpr(v *ast.DefaultExpr) {
 		}
 	default:
 		// for other columns, just use what it is
-		val, er.err = er.b.getDefaultValue(col)
+		val, er.err = er.b.getDefaultValue(col, false)
 	}
 	if er.err != nil {
 		return

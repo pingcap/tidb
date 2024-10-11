@@ -583,6 +583,13 @@ func (p *UserPrivileges) ConnectionVerification(user *auth.UserIdentity, authUse
 			logutil.BgLogger().Warn("verify through LDAP Simple failed", zap.String("username", user.Username), zap.Error(err))
 			return info, ErrAccessDenied.FastGenByArgs(user.Username, user.Hostname, hasPassword)
 		}
+	} else if record.AuthPlugin == mysql.AuthSocket {
+		if string(authentication) != authUser && string(authentication) != pwd {
+			logutil.BgLogger().Error("Failed socket auth", zap.String("authUser", authUser),
+				zap.String("socket_user", string(authentication)),
+				zap.String("authentication_string", pwd))
+			return info, ErrAccessDenied.FastGenByArgs(user.Username, user.Hostname, hasPassword)
+		}
 	} else if len(pwd) > 0 && len(authentication) > 0 {
 		switch record.AuthPlugin {
 		// NOTE: If the checking of the clear-text password fails, please set `info.FailedDueToWrongPassword = true`.
@@ -608,22 +615,13 @@ func (p *UserPrivileges) ConnectionVerification(user *auth.UserIdentity, authUse
 				info.FailedDueToWrongPassword = true
 				return info, ErrAccessDenied.FastGenByArgs(user.Username, user.Hostname, hasPassword)
 			}
-		case mysql.AuthSocket:
-			if string(authentication) != authUser && string(authentication) != pwd {
-				logutil.BgLogger().Error("Failed socket auth", zap.String("authUser", authUser),
-					zap.String("socket_user", string(authentication)),
-					zap.String("authentication_string", pwd))
-				return info, ErrAccessDenied.FastGenByArgs(user.Username, user.Hostname, hasPassword)
-			}
 		default:
 			logutil.BgLogger().Error("unknown authentication plugin", zap.String("authUser", authUser), zap.String("plugin", record.AuthPlugin))
 			return info, ErrAccessDenied.FastGenByArgs(user.Username, user.Hostname, hasPassword)
 		}
 	} else if len(pwd) > 0 || len(authentication) > 0 {
-		if record.AuthPlugin != mysql.AuthSocket {
-			info.FailedDueToWrongPassword = true
-			return info, ErrAccessDenied.FastGenByArgs(user.Username, user.Hostname, hasPassword)
-		}
+		info.FailedDueToWrongPassword = true
+		return info, ErrAccessDenied.FastGenByArgs(user.Username, user.Hostname, hasPassword)
 	}
 
 	// Login a locked account is not allowed.

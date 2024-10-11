@@ -862,3 +862,25 @@ c1	c2	c3
 8	8	8
 9	9	9
 10	10	10
+# TestMultiValuedIndexWithoutRelatedColumnCondition
+drop table if exists t;
+create table t(a int, d json, index iad(a, (cast(d->'$.b' as signed array))));
+insert into t value(1,'{"b":[]}'), (2,'{"b":[]}');
+select * from t use index (iad) where a = 1;
+a	d
+1	{"b": []}
+select * from t ignore index (iad) where a = 1;
+a	d
+1	{"b": []}
+drop table if exists t;
+create table t (j json, key mvi( (cast(j as char(5) array)) ) );
+insert into t values ('[]');
+insert into t values ('["abc"]');
+select * from t use index (mvi) where json_contains(j, '[]');
+j
+[]
+["abc"]
+select * from t ignore index (mvi) where json_contains(j, '[]');
+j
+[]
+["abc"]

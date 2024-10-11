@@ -81,7 +81,7 @@ func prepareSortDir(e *LoadDataController, jobID int64) (string, error) {
 
 // NewTableImporter creates a new table importer.
 func NewTableImporter(param *JobImportParam, e *LoadDataController) (ti *TableImporter, err error) {
-	idAlloc := kv.NewPanickingAllocators(0)
+	idAlloc := kv.NewPanickingAllocators(e.Table.Meta().SepAutoInc(), 0)
 	tbl, err := tables.TableFromMeta(idAlloc, e.Table.Meta())
 	if err != nil {
 		return nil, errors.Annotatef(err, "failed to tables.TableFromMeta %s", e.Table.Meta().Name)
