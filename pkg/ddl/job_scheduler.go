@@ -98,7 +98,7 @@ type ownerListener struct {
 var _ owner.Listener = (*ownerListener)(nil)
 
 func (l *ownerListener) OnBecomeOwner() {
-	ctx, cancelFunc := context.WithCancel(l.ddl.ddlCtx.ctx)
+	ctx, cancelFunc := context.WithCancelCause(l.ddl.ddlCtx.ctx)
 	sysTblMgr := systable.NewManager(l.ddl.sessPool)
 	l.scheduler = &jobScheduler{
 		schCtx:            ctx,
@@ -133,7 +133,7 @@ func (l *ownerListener) OnRetireOwner() {
 type jobScheduler struct {
 	// *ddlCtx already have context named as "ctx", so we use "schCtx" here to avoid confusion.
 	schCtx            context.Context
-	cancel            context.CancelFunc
+	cancel            context.CancelCauseFunc
 	wg                tidbutil.WaitGroupWrapper
 	runningJobs       *runningJobs
 	sysTblMgr         systable.Manager
@@ -185,7 +185,7 @@ func (s *jobScheduler) start() {
 }
 
 func (s *jobScheduler) close() {
-	s.cancel()
+	s.cancel(dbterror.ErrNotOwner)
 	s.wg.Wait()
 	if s.reorgWorkerPool != nil {
 		s.reorgWorkerPool.close()

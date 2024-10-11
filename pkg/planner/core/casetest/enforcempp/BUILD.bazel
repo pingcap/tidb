@@ -15,6 +15,7 @@ go_test(
         "//pkg/meta/model",
         "//pkg/parser/model",
         "//pkg/planner/util/coretestsdk",
+        "//pkg/store/mockstore",
         "//pkg/testkit",
         "//pkg/testkit/external",
         "//pkg/testkit/testdata",
