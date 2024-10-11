@@ -139,7 +139,7 @@ func TestNonPreparedPlanCachePartitionIndex(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec(`set @@tidb_enable_non_prepared_plan_cache=1`)
 	tk.MustExec("use test")
-	tk.MustExec(`create table t (b varchar(255), a int primary key nonclustered, key (b)) partition by key(a) partitions 3`)
+	tk.MustExec(`create table t (b varchar(255), a int primary key nonclustered, key (b), unique key b_global (b) global) partition by key(a) partitions 3`)
 	// [Batch]PointGet does not use the plan cache,
 	// since it is already using the fast path!
 	tk.MustExec(`insert into t values ('Ab', 1),('abc',2),('BC',3),('AC',4),('BA',5),('cda',6)`)
@@ -162,12 +162,34 @@ func TestNonPreparedPlanCachePartitionIndex(t *testing.T) {
 	tk.MustQuery(`select count(*) from t partition (p0)`).Check(testkit.Rows("0"))
 	tk.MustQuery(`select count(*) from t partition (p1)`).Check(testkit.Rows("5"))
 	tk.MustQuery(`select * from t partition (p2)`).Check(testkit.Rows("Ab 1"))
+	tk.MustQuery(`select count(*) from t where b = "abc"`).Check(testkit.Rows("1"))
+	require.False(t, tk.Session().GetSessionVars().FoundInPlanCache)
+	tk.MustQuery(`select count(*) from t where b = "bc"`).Check(testkit.Rows("0"))
+	// Count(*) is not handled by fast path, so will use plan cache.
+	require.True(t, tk.Session().GetSessionVars().FoundInPlanCache)
+	tk.MustQuery(`explain format="plan_cache" select count(*) from t where b = "bc"`).Check(testkit.Rows(""+
+		"StreamAgg_9 1.00 root  funcs:count(1)->Column#4",
+		"└─Point_Get_11 1.00 root table:t, index:b_global(b) "))
+	tk.MustQuery(`select count(*) from t where b > "abc"`).Check(testkit.Rows("1"))
+	require.False(t, tk.Session().GetSessionVars().FoundInPlanCache)
+	tk.MustQuery(`select count(*) from t where b > "B"`).Check(testkit.Rows("4"))
+	require.True(t, tk.Session().GetSessionVars().FoundInPlanCache)
+	tk.MustQuery(`explain format="plan_cache" select count(*) from t where b > "B"`).Check(testkit.Rows(""+
+		"StreamAgg_10 1.00 root  funcs:count(1)->Column#4",
+		"└─IndexReader_15 1.00 root partition:all index:IndexRangeScan_14",
+		`  └─IndexRangeScan_14 1.00 cop[tikv] table:t, index:b_global(b) range:("B",+inf], keep order:false`))
+	tk.MustQuery(`select * from t where b = "abc"`).Check(testkit.Rows("abc 2"))
+	require.False(t, tk.Session().GetSessionVars().FoundInPlanCache)
+	tk.MustQuery(`select * from t where b = "bc"`).Check(testkit.Rows())
+	// fast path, no plan cache!
+	require.False(t, tk.Session().GetSessionVars().FoundInPlanCache)
+	tk.MustQuery(`explain format='plan_cache' select * from t where b = "bc"`).Check(testkit.Rows("Point_Get_1 1.00 root table:t, index:b_global(b) "))
 
 	tk.MustQuery(`explain format='plan_cache' select * from t where a = 2`).Check(testkit.Rows("Point_Get_1 1.00 root table:t, partition:p1, index:PRIMARY(a) "))
 	tk.MustQuery(`explain format='plan_cache' select * from t where a = 2`).Check(testkit.Rows("Point_Get_1 1.00 root table:t, partition:p1, index:PRIMARY(a) "))
 	require.False(t, tk.Session().GetSessionVars().FoundInPlanCache)
 	tk.MustQuery(`select * from t where a = 2`).Check(testkit.Rows("abc 2"))
-	tk.MustExec(`create table tk (a int primary key nonclustered, b varchar(255), key (b)) partition by key (a) partitions 3`)
+	tk.MustExec(`create table tk (a int primary key nonclustered, b varchar(255), key (b), unique key b_global (b) global) partition by key (a) partitions 3`)
 	tk.MustExec(`insert into tk select a, b from t`)
 	tk.MustExec(`analyze table tk`)
 	tk.MustQuery(`explain format='plan_cache' select * from tk where a = 2`).Check(testkit.Rows("Point_Get_1 1.00 root table:tk, partition:p1, index:PRIMARY(a) "))
@@ -175,6 +197,20 @@ func TestNonPreparedPlanCachePartitionIndex(t *testing.T) {
 	// PointGet will use Fast Plan, so no Plan Cache, even for Key Partitioned tables.
 	tk.MustQuery(`select * from tk where a = 2`).Check(testkit.Rows("2 abc"))
 	require.False(t, tk.Session().GetSessionVars().FoundInPlanCache)
+	tk.MustQuery(`explain format='plan_cache' select * from tk where b = "abc"`).Check(testkit.Rows("Point_Get_1 1.00 root table:tk, index:b_global(b) "))
+	require.False(t, tk.Session().GetSessionVars().FoundInPlanCache)
+	tk.MustQuery(`explain format='plan_cache' select * from tk where b = "cda"`).Check(testkit.Rows("Point_Get_1 1.00 root table:tk, index:b_global(b) "))
+	require.False(t, tk.Session().GetSessionVars().FoundInPlanCache)
+	tk.MustQuery(`explain format='plan_cache' select * from tk where b between "B" and "c"`).Check(testkit.Rows(""+
+		`TableReader_7 3.00 root partition:all data:Selection_6`,
+		`└─Selection_6 3.00 cop[tikv]  ge(test.tk.b, "B"), le(test.tk.b, "c")`,
+		`  └─TableFullScan_5 6.00 cop[tikv] table:tk keep order:false`))
+	require.False(t, tk.Session().GetSessionVars().FoundInPlanCache)
+	tk.MustQuery(`explain format='plan_cache' select * from tk where b between "b" and "C"`).Check(testkit.Rows(""+
+		`TableReader_7 3.00 root partition:all data:Selection_6`,
+		`└─Selection_6 3.00 cop[tikv]  ge(test.tk.b, "b"), le(test.tk.b, "C")`,
+		`  └─TableFullScan_5 6.00 cop[tikv] table:tk keep order:false`))
+	require.True(t, tk.Session().GetSessionVars().FoundInPlanCache)
 }
 
 func TestFixControl33031(t *testing.T) {
