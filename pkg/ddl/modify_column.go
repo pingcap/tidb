@@ -545,7 +545,10 @@ func (w *worker) doModifyColumnTypeWithData(
 		// Refactor the job args to add the old index ids into delete range table.
 		job.Args = []any{rmIdxIDs, getPartitionIDs(tblInfo)}
 		modifyColumnEvent := notifier.NewModifyColumnEvent(tblInfo, []*model.ColumnInfo{changingCol})
-		asyncNotifyEvent(jobCtx, modifyColumnEvent, job, w.sess.Context)
+		err = asyncNotifyEvent(jobCtx, modifyColumnEvent, job, w.sess.Context)
+		if err != nil {
+			return ver, errors.Trace(err)
+		}
 	default:
 		err = dbterror.ErrInvalidDDLState.GenWithStackByArgs("column", changingCol.State)
 	}

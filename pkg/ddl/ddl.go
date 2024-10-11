@@ -561,13 +561,13 @@ func (d *ddl) RegisterStatsHandle(h *handle.Handle) {
 
 // asyncNotifyEvent will notify the ddl event to outside world, say statistic handle. When the channel is full, we may
 // give up notify and log it.
-func asyncNotifyEvent(jobCtx *jobContext, e *notifier.SchemaChangeEvent, job *model.Job, sctx sessionctx.Context) {
+func asyncNotifyEvent(jobCtx *jobContext, e *notifier.SchemaChangeEvent, job *model.Job, sctx sessionctx.Context) error {
 	if intest.InTest && notifier.DefaultStore != nil {
 		// skip notify for system databases, system databases are expected to change at
 		// bootstrap and other nodes can also handle the changing in its bootstrap rather
 		// than be notified.
 		if tidbutil.IsMemOrSysDB(job.SchemaName) {
-			return
+			return nil
 		}
 		se := sess.NewSession(sctx)
 		var multiSchemaChangeSeq int64 = -1
@@ -578,13 +578,14 @@ func asyncNotifyEvent(jobCtx *jobContext, e *notifier.SchemaChangeEvent, job *mo
 		if err != nil {
 			logutil.DDLLogger().Error("Error publish schema change event",
 				zap.Int64("jobID", job.ID), zap.String("event", e.String()), zap.Error(err))
+			return err
 		}
 	}
 	// skip notify for system databases, system databases are expected to change at
 	// bootstrap and other nodes can also handle the changing in its bootstrap rather
 	// than be notified.
 	if tidbutil.IsMemOrSysDB(job.SchemaName) {
-		return
+		return nil
 	}
 
 	ch := jobCtx.oldDDLCtx.ddlEventCh
@@ -592,13 +593,14 @@ func asyncNotifyEvent(jobCtx *jobContext, e *notifier.SchemaChangeEvent, job *mo
 		for i := 0; i < 10; i++ {
 			select {
 			case ch <- e:
-				return
+				return nil
 			default:
 				time.Sleep(time.Microsecond * 10)
 			}
 		}
 		logutil.DDLLogger().Warn("fail to notify DDL event", zap.Stringer("event", e))
 	}
+	return nil
 }
 
 // NewDDL creates a new DDL.
