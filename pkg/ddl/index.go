@@ -1579,7 +1579,7 @@ func checkRenameIndex(t *meta.Mutator, job *model.Job) (*model.TableInfo, pmodel
 		job.State = model.JobStateCancelled
 		return nil, from, to, errors.Trace(err)
 	}
-	from, to = args.GetRenameIndexs()
+	from, to = args.GetRenameIndexes()
 
 	// Double check. See function `RenameIndex` in executor.go
 	duplicate, err := ValidateRenameIndex(from, to, tblInfo)

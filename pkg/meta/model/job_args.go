@@ -1312,6 +1312,7 @@ func GetFlashbackClusterArgs(job *Job) (*FlashbackClusterArgs, error) {
 // IndexOp is used to identify arguemnt type
 type IndexOp byte
 
+// List op types.
 const (
 	OpAddIndex = iota
 	OpDropIndex
@@ -1322,7 +1323,7 @@ const (
 // Different types of job use different fields.
 // Below lists used fields for each type (listed in order of the layout in v1)
 //
-//	Adding NonPK: Unique, IndexName, IndexPartSpecifications, IndexOption, SQLMode, Warning, Global
+//	Adding NonPK: Unique, IndexName, IndexPartSpecifications, IndexOption, SQLMode, Warning(not stored, always nil), Global
 //	Adding PK: Unique, IndexName, IndexPartSpecifications, IndexOptions, HiddelCols, Global
 //	Adding vector index: IndexName, IndexPartSpecifications, IndexOption, FuncExpr
 //	Drop index: IndexName, IfExist
@@ -1580,7 +1581,8 @@ func (a *ModifyIndexArgs) getFinishedArgsV1(job *Job) []any {
 	return []any{idxArg.IndexName, idxArg.IfExist, a.IndexIDs[0], a.PartitionIDs, idxArg.IsVector}
 }
 
-func (a *ModifyIndexArgs) GetRenameIndexs() (from, to pmodel.CIStr) {
+// GetRenameIndexes get name of renamed index.
+func (a *ModifyIndexArgs) GetRenameIndexes() (from, to pmodel.CIStr) {
 	from, to = a.IndexArgs[0].IndexName, a.IndexArgs[1].IndexName
 	return
 }
@@ -1590,8 +1592,8 @@ func GetModifyIndexArgs(job *Job) (*ModifyIndexArgs, error) {
 	return getOrDecodeArgs(&ModifyIndexArgs{}, job)
 }
 
-// GetDropIndexArgs get drop index arg.
-// The logic is seperated from ModifyIndexArgs.decodeV1.
+// GetDropIndexArgs is only used to get drop index arg.
+// The logic is separated from ModifyIndexArgs.decodeV1.
 // TODO(joechenrh): replace this function with GetModifyIndexArgs after totally switched to v2.
 func GetDropIndexArgs(job *Job) (*ModifyIndexArgs, error) {
 	if job.Version == JobVersion2 {
@@ -1603,7 +1605,7 @@ func GetDropIndexArgs(job *Job) (*ModifyIndexArgs, error) {
 	//		Decode rename index args if type == ActionRenameIndex
 	//		Try decode drop index args
 	//		Try decode add index args if failed
-	// So we seperate this from decodeV1 to avoid unecessary "try decode" logic.
+	// So we separate this from decodeV1 to avoid unnecessary "try decode" logic.
 	a := &ModifyIndexArgs{}
 	err := a.decodeDropIndexV1(job)
 	return a, errors.Trace(err)

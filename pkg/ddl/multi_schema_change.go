@@ -234,7 +234,7 @@ func fillMultiSchemaInfo(info *model.MultiSchemaInfo, job *JobWrapper) error {
 		}
 	case model.ActionRenameIndex:
 		args := job.JobArgs.(*model.ModifyIndexArgs)
-		from, to := args.GetRenameIndexs()
+		from, to := args.GetRenameIndexes()
 		info.AddIndexes = append(info.AddIndexes, from)
 		info.DropIndexes = append(info.DropIndexes, to)
 	case model.ActionModifyColumn:
