@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/pkg/statistics/handle/lockstats"
 	statslogutil "github.com/pingcap/tidb/pkg/statistics/handle/logutil"
 	statstypes "github.com/pingcap/tidb/pkg/statistics/handle/types"
+	statsutil "github.com/pingcap/tidb/pkg/statistics/handle/util"
 	"github.com/pingcap/tidb/pkg/util"
 	"go.uber.org/zap"
 )
@@ -45,7 +46,7 @@ func FetchAllTablesAndBuildAnalysisJobs(
 	is := sctx.GetDomainInfoSchema().(infoschema.InfoSchema)
 	// Query locked tables once to minimize overhead.
 	// Outdated lock info is acceptable as we verify table lock status pre-analysis.
-	lockedTables, err := lockstats.QueryLockedTables(sctx)
+	lockedTables, err := lockstats.QueryLockedTables(statsutil.StatsCtx, sctx)
 	if err != nil {
 		return err
 	}

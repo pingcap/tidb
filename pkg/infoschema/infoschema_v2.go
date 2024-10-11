@@ -626,9 +626,9 @@ func (is *infoschemaV2) TableByID(ctx context.Context, id int64) (val table.Tabl
 		refill = opt.(bool)
 	}
 
-	// get cache with old key
-	oldKey := tableCacheKey{itm.tableID, itm.schemaVersion}
-	tbl, found := is.tableCache.Get(oldKey)
+	// get cache with item key
+	key := tableCacheKey{itm.tableID, itm.schemaVersion}
+	tbl, found := is.tableCache.Get(key)
 	if found && tbl != nil {
 		return tbl, true
 	}
@@ -640,7 +640,7 @@ func (is *infoschemaV2) TableByID(ctx context.Context, id int64) (val table.Tabl
 	}
 
 	if refill {
-		is.tableCache.Set(oldKey, ret)
+		is.tableCache.Set(key, ret)
 	}
 	return ret, true
 }
@@ -668,12 +668,12 @@ type TableItem struct {
 // Used by executor/infoschema_reader.go to handle reading from INFORMATION_SCHEMA.TABLES.
 // If visit return false, stop the iterate process.
 func (is *infoschemaV2) IterateAllTableItems(visit func(TableItem) bool) {
-	max, ok := is.byName.Max()
+	maxv, ok := is.byName.Max()
 	if !ok {
 		return
 	}
 	var pivot *tableItem
-	is.byName.Descend(max, func(item tableItem) bool {
+	is.byName.Descend(maxv, func(item tableItem) bool {
 		if item.schemaVersion > is.schemaMetaVersion {
 			// skip MVCC version, those items are not visible to the queried schema version
 			return true

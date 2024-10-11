@@ -3199,3 +3199,28 @@ date_add(a, interval 12345 DAY_HOUR)
 NULL
 NULL
 NULL
+drop table if exists test.t;
+create table test.t(f1 char(1));
+insert into test.t values ('a'),('b'),('1');
+select (cast(f1 as float) = 1) or (cast(f1 as float) = 2) from test.t;
+(cast(f1 as float) = 1) or (cast(f1 as float) = 2)
+0
+0
+1
+SHOW WARNINGS;
+Level	Code	Message
+Warning	1292	Truncated incorrect DOUBLE value: 'a'
+Warning	1292	Truncated incorrect DOUBLE value: 'a'
+Warning	1292	Truncated incorrect DOUBLE value: 'b'
+Warning	1292	Truncated incorrect DOUBLE value: 'b'
+select (cast(f1 as float) != 1) and (cast(f1 as float) != 2) from test.t;
+(cast(f1 as float) != 1) and (cast(f1 as float) != 2)
+1
+1
+0
+SHOW WARNINGS;
+Level	Code	Message
+Warning	1292	Truncated incorrect DOUBLE value: 'a'
+Warning	1292	Truncated incorrect DOUBLE value: 'a'
+Warning	1292	Truncated incorrect DOUBLE value: 'b'
+Warning	1292	Truncated incorrect DOUBLE value: 'b'
