@@ -333,3 +333,9 @@ go_test(
         "@org_uber_go_goleak//:goleak",
     ],
 )
+
+filegroup(
+    name = "generator_files",
+    srcs = ["plan_clone_generated.go"],
+    visibility = ["//visibility:public"],
+)

@@ -14,16 +14,13 @@ go_binary(
     visibility = ["//visibility:public"],
 )
 
-filegroup(
-    name = "generator_files",
-    srcs = ["//pkg/planner/core/generator:plan_clone_generated.go"],
-)
-
 go_test(
     name = "generator_test",
     timeout = "short",
     srcs = ["plan_clone_test.go"],
-    data = generator_files,
+    data = [
+        "//pkg/planner/core:generator_files",
+    ],
     embed = [":generator_lib"],
     flaky = True,
 )
