@@ -56,8 +56,8 @@ func convertAddIdxJob2RollbackJob(
 	})
 
 	dropArgs := &model.ModifyIndexArgs{
-		IndexIDs: getPartitionIDs(tblInfo),
-		OpType:   model.OpRollbackAddIndex,
+		PartitionIDs: getPartitionIDs(tblInfo),
+		OpType:       model.OpRollbackAddIndex,
 	}
 
 	originalState := allIndexInfos[0].State

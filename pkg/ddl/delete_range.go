@@ -380,10 +380,11 @@ func insertJobIntoDeleteRangeTable(ctx context.Context, wrapper DelRangeExecWrap
 
 		tableID := job.TableID
 		partitionIDs := args.PartitionIDs
+		indexIDs := []int64{args.IndexArgs[0].IndexID}
 
 		// partitionIDs len is 0 if the dropped index is a global index, even if it is a partitioned table.
 		if len(partitionIDs) == 0 {
-			return errors.Trace(doBatchDeleteIndiceRange(ctx, wrapper, job.ID, tableID, args.IndexIDs, ea, "drop index: table ID"))
+			return errors.Trace(doBatchDeleteIndiceRange(ctx, wrapper, job.ID, tableID, indexIDs, ea, "drop index: table ID"))
 		}
 		failpoint.Inject("checkDropGlobalIndex", func(val failpoint.Value) {
 			if val.(bool) {
@@ -391,7 +392,7 @@ func insertJobIntoDeleteRangeTable(ctx context.Context, wrapper DelRangeExecWrap
 			}
 		})
 		for _, pid := range partitionIDs {
-			if err := doBatchDeleteIndiceRange(ctx, wrapper, job.ID, pid, args.IndexIDs, ea, "drop index: partition table ID"); err != nil {
+			if err := doBatchDeleteIndiceRange(ctx, wrapper, job.ID, pid, indexIDs, ea, "drop index: partition table ID"); err != nil {
 				return errors.Trace(err)
 			}
 		}

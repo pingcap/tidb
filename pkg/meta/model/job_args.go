@@ -1356,10 +1356,7 @@ type IndexArg struct {
 type ModifyIndexArgs struct {
 	IndexArgs []*IndexArg `json:"index_args,omitempty"`
 
-	// Belows are used for finished args.
-	// For dropping index, len(IndexIDs) is 1.
-	// While during rolling back add indexes, IndexIDs stores the partition IDs of the corresponding table.
-	IndexIDs     []int64 `json:"index_ids,omitempty"`
+	// Belows is used for finished args.
 	PartitionIDs []int64 `json:"partition_ids,omitempty"`
 
 	// This is only used for getFinishedArgsV1 to distinguish different type of job in v1,
@@ -1574,11 +1571,11 @@ func (a *ModifyIndexArgs) getFinishedArgsV1(job *Job) []any {
 			indexNames[i] = idxArg.IndexName
 			ifExists[i] = idxArg.IfExist
 		}
-		return []any{indexNames, ifExists, a.IndexIDs}
+		return []any{indexNames, ifExists, a.PartitionIDs}
 	}
 
 	idxArg := a.IndexArgs[0]
-	return []any{idxArg.IndexName, idxArg.IfExist, a.IndexIDs[0], a.PartitionIDs, idxArg.IsVector}
+	return []any{idxArg.IndexName, idxArg.IfExist, idxArg.IndexID, a.PartitionIDs, idxArg.IsVector}
 }
 
 // GetRenameIndexes get name of renamed index.
@@ -1617,23 +1614,26 @@ func GetFinishedModifyIndexArgs(job *Job) (*ModifyIndexArgs, error) {
 		return getOrDecodeArgsV2[*ModifyIndexArgs](job)
 	}
 
-	// Finished args is used for drop index/rollback add index
 	if job.IsRollingback() || job.Type == ActionDropIndex || job.Type == ActionDropPrimaryKey {
 		indexNames := make([]pmodel.CIStr, 1)
 		ifExists := make([]bool, 1)
 		indexIDs := make([]int64, 1)
 		var partitionIDs []int64
 		isVector := false
+		var err error
 
-		// See getFinishedArgsV1 for why we may need to decode twice.
-		if err := job.DecodeArgs(&indexNames, &ifExists, &indexIDs, &isVector); err != nil {
-			if err := job.DecodeArgs(&indexNames[0], &ifExists[0], &indexIDs[0], &partitionIDs, &isVector); err != nil {
-				return nil, errors.Trace(err)
-			}
+		if job.IsRollingback() {
+			// Rollback add indexes
+			err = job.DecodeArgs(&indexNames, &ifExists, &partitionIDs, &isVector)
+		} else {
+			// Finish drop index
+			err = job.DecodeArgs(&indexNames[0], &ifExists[0], &indexIDs[0], &partitionIDs, &isVector)
+		}
+		if err != nil {
+			return nil, errors.Trace(err)
 		}
 
 		a := &ModifyIndexArgs{
-			IndexIDs:     indexIDs,
 			PartitionIDs: partitionIDs,
 		}
 		a.IndexArgs = make([]*IndexArg, len(indexNames))
@@ -1644,10 +1644,15 @@ func GetFinishedModifyIndexArgs(job *Job) (*ModifyIndexArgs, error) {
 				IsVector:  isVector,
 			}
 		}
+		// For drop index, store index id in IndexArgs, no impact on other situations.
+		// Currently, there is only one indexID since drop index is not supported in multi schema change.
+		// TODO(joechenrh): modify this and corresponding logic if we need support drop multi indexes in V1.
+		a.IndexArgs[0].IndexID = indexIDs[0]
 
 		return a, nil
 	}
 
+	// Add index/vector index/PK
 	addIndexIDs := make([]int64, 1)
 	ifExists := make([]bool, 1)
 	isGlobals := make([]bool, 1)

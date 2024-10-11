@@ -1097,7 +1097,6 @@ func TestDropIndexArguements(t *testing.T) {
 			args2, err := GetFinishedModifyIndexArgs(j2)
 			require.NoError(t, err)
 			require.EqualValues(t, inArgs.IndexArgs, args2.IndexArgs)
-			require.EqualValues(t, inArgs.IndexIDs, args2.IndexIDs)
 			require.EqualValues(t, inArgs.PartitionIDs, args2.PartitionIDs)
 		}
 	}
@@ -1108,27 +1107,11 @@ func TestDropIndexArguements(t *testing.T) {
 				IndexName: model.NewCIStr("i2"),
 				IfExist:   true,
 				IsVector:  true,
+				IndexID:   1,
 			},
 		},
-		IndexIDs:     []int64{1},
 		PartitionIDs: []int64{100, 101, 102, 103},
 		OpType:       OpDropIndex,
-	}
-	checkFunc(t, inArgs)
-
-	inArgs = &ModifyIndexArgs{
-		IndexArgs: []*IndexArg{
-			{
-				IndexName: model.NewCIStr("i2"),
-				IfExist:   true,
-			},
-			{
-				IndexName: model.NewCIStr("i3"),
-				IfExist:   true,
-			},
-		},
-		IndexIDs: []int64{1, 2, 3},
-		OpType:   OpRollbackAddIndex,
 	}
 	checkFunc(t, inArgs)
 }

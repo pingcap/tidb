@@ -1456,7 +1456,7 @@ func onDropIndex(jobCtx *jobContext, job *model.Job) (ver int64, _ error) {
 			if err != nil {
 				return ver, errors.Trace(err)
 			}
-			dropArgs.IndexIDs = []int64{indexIDs[0]}
+			dropArgs.IndexArgs[0].IndexID = indexIDs[0]
 			dropArgs.IndexArgs[0].IsVector = allIndexInfos[0].VectorInfo != nil
 			if !allIndexInfos[0].Global {
 				dropArgs.PartitionIDs = getPartitionIDs(tblInfo)
