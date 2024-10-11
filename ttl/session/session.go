@@ -16,10 +16,10 @@ package session
 
 import (
 	"context"
+	"sync/atomic"
 	"time"
 
 	"github.com/pingcap/errors"
-<<<<<<< HEAD:ttl/session/session.go
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/terror"
@@ -29,19 +29,6 @@ import (
 	"github.com/pingcap/tidb/ttl/metrics"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/sqlexec"
-=======
-	"github.com/pingcap/tidb/pkg/infoschema"
-	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/parser/terror"
-	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
-	"github.com/pingcap/tidb/pkg/sessiontxn"
-	"github.com/pingcap/tidb/pkg/ttl/metrics"
-	"github.com/pingcap/tidb/pkg/util/chunk"
-	"github.com/pingcap/tidb/pkg/util/sqlexec"
-	"github.com/pingcap/tidb/pkg/util/sqlkiller"
-	"github.com/pingcap/tidb/pkg/util/timeutil"
->>>>>>> e68c26a0e67 (ttl: force to kill SQL in scan task when canceling TTL job/task (#56518)):pkg/ttl/session/session.go
 )
 
 // TxnMode represents using optimistic or pessimistic mode in the transaction
@@ -65,13 +52,8 @@ type Session interface {
 	RunInTxn(ctx context.Context, fn func() error, mode TxnMode) (err error)
 	// ResetWithGlobalTimeZone resets the session time zone to global time zone
 	ResetWithGlobalTimeZone(ctx context.Context) error
-<<<<<<< HEAD:ttl/session/session.go
-=======
-	// GlobalTimeZone returns the global timezone. It is used to compute expire time for TTL
-	GlobalTimeZone(ctx context.Context) (*time.Location, error)
 	// KillStmt kills the current statement execution
 	KillStmt()
->>>>>>> e68c26a0e67 (ttl: force to kill SQL in scan task when canceling TTL job/task (#56518)):pkg/ttl/session/session.go
 	// Close closes the session
 	Close()
 	// Now returns the current time in location specified by session var
@@ -189,23 +171,11 @@ func (s *session) ResetWithGlobalTimeZone(ctx context.Context) error {
 	return err
 }
 
-<<<<<<< HEAD:ttl/session/session.go
-=======
-// GlobalTimeZone returns the global timezone
-func (s *session) GlobalTimeZone(ctx context.Context) (*time.Location, error) {
-	str, err := s.GetSessionVars().GetGlobalSystemVar(ctx, "time_zone")
-	if err != nil {
-		return nil, err
-	}
-	return timeutil.ParseTimeZone(str)
-}
-
 // KillStmt kills the current statement execution
 func (s *session) KillStmt() {
-	s.GetSessionVars().SQLKiller.SendKillSignal(sqlkiller.QueryInterrupted)
+	atomic.StoreUint32(&s.GetSessionVars().Killed, 1)
 }
 
->>>>>>> e68c26a0e67 (ttl: force to kill SQL in scan task when canceling TTL job/task (#56518)):pkg/ttl/session/session.go
 // Close closes the session
 func (s *session) Close() {
 	if s.closeFn != nil {

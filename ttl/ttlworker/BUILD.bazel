@@ -59,7 +59,7 @@ go_test(
     embed = [":ttlworker"],
     flaky = True,
     race = "on",
-    shard_count = 38,
+    shard_count = 39,
     deps = [
         "//domain",
         "//infoschema",
@@ -78,6 +78,7 @@ go_test(
         "//ttl/metrics",
         "//ttl/session",
         "//types",
+        "//util",
         "//util/chunk",
         "//util/logutil",
         "@com_github_google_uuid//:uuid",

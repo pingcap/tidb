@@ -203,19 +203,11 @@ func (s *mockSession) ResetWithGlobalTimeZone(_ context.Context) (err error) {
 	return nil
 }
 
-<<<<<<< HEAD:ttl/ttlworker/session_test.go
-=======
-// GlobalTimeZone returns the global timezone
-func (s *mockSession) GlobalTimeZone(_ context.Context) (*time.Location, error) {
-	return time.Local, nil
-}
-
 // KillStmt kills the current statement execution
 func (s *mockSession) KillStmt() {
 	close(s.killed)
 }
 
->>>>>>> e68c26a0e67 (ttl: force to kill SQL in scan task when canceling TTL job/task (#56518)):pkg/ttl/ttlworker/session_test.go
 func (s *mockSession) Close() {
 	s.closed = true
 }

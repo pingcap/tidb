@@ -20,14 +20,9 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
-<<<<<<< HEAD:ttl/session/session_test.go
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/ttl/session"
-=======
-	"github.com/pingcap/tidb/pkg/testkit"
-	"github.com/pingcap/tidb/pkg/ttl/session"
-	"github.com/pingcap/tidb/pkg/util"
->>>>>>> e68c26a0e67 (ttl: force to kill SQL in scan task when canceling TTL job/task (#56518)):pkg/ttl/session/session_test.go
+	"github.com/pingcap/tidb/util"
 	"github.com/stretchr/testify/require"
 )
 

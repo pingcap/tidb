@@ -21,20 +21,12 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
-<<<<<<< HEAD:ttl/ttlworker/scan_test.go
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/ttl/cache"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
-=======
-	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
-	"github.com/pingcap/tidb/pkg/ttl/cache"
-	"github.com/pingcap/tidb/pkg/types"
-	"github.com/pingcap/tidb/pkg/util"
-	"github.com/pingcap/tidb/pkg/util/chunk"
->>>>>>> e68c26a0e67 (ttl: force to kill SQL in scan task when canceling TTL job/task (#56518)):pkg/ttl/ttlworker/scan_test.go
 	"github.com/stretchr/testify/require"
 )
 

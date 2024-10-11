@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/ttl/metrics"
 	"github.com/pingcap/tidb/ttl/sqlbuilder"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
