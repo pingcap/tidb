@@ -587,8 +587,8 @@ github.com/mattn/go-runewidth v0.0.16 h1:E5ScNMtiwvlvB5paMFdw9p4kSQzbXFikJ5SQO6T
 github.com/mattn/go-runewidth v0.0.16/go.mod h1:Jdepj2loyihRzMpdS35Xk/zdY8IAYHsh153qUoGf23w=
 github.com/mattn/go-sqlite3 v1.14.15/go.mod h1:2eHXhiwb8IkHr+BDWZGa96P6+rkvnG63S2DGjv9HUNg=
 github.com/matttproud/golang_protobuf_extensions v1.0.1/go.mod h1:D8He9yQNgCq6Z5Ld7szi9bcBfOoFv/3dc6xSMkL2PC0=
-github.com/mgechev/revive v1.3.10-0.20240809190117-a638ed6e2499 h1:Z5grv/SOpby7XE79XWha4cxWPD+JDRNlHPmCDv8Tnyc=
-github.com/mgechev/revive v1.3.10-0.20240809190117-a638ed6e2499/go.mod h1:h3Q6QRohivg9tHOnLeyGcIO2jca7suy65iOdlFLvisw=
+github.com/mgechev/revive v1.4.0 h1:+6LDNE1XKsUCkpuDOMrzjOsXqiQOZ/jPlscLyA6mMXw=
+github.com/mgechev/revive v1.4.0/go.mod h1:uzGR6feiCiJi4oND58/KMt/lEnR5vmjzRYPZiR0sQRQ=
 github.com/minio/asm2plan9s v0.0.0-20200509001527-cdd76441f9d8 h1:AMFGa4R4MiIpspGNG7Z948v4n35fFGB3RR3G/ry4FWs=
 github.com/minio/asm2plan9s v0.0.0-20200509001527-cdd76441f9d8/go.mod h1:mC1jAcsrzbxHt8iiaC+zU4b1ylILSosueou12R++wfY=
 github.com/minio/c2goasm v0.0.0-20190812172519-36a3d3bbc4f3 h1:+n/aFZefKZp7spd8DFdX7uMikMLXX4oubIzJF4kv/wI=
