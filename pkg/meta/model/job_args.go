@@ -553,6 +553,7 @@ func (a *TablePartitionArgs) decodeV1(job *Job) error {
 
 // GetTablePartitionArgs gets the table partition args.
 func GetTablePartitionArgs(job *Job) (*TablePartitionArgs, error) {
+	// job.UpdateRawArgs = true
 	if job.Version == JobVersion1 {
 		args := &TablePartitionArgs{}
 		if err := args.decodeV1(job); err != nil {
@@ -587,6 +588,7 @@ func GetFinishedTablePartitionArgs(job *Job) (*TablePartitionArgs, error) {
 // FillRollbackArgsForAddPartition fills the rollback args for add partition job.
 // see details in TablePartitionArgs.
 func FillRollbackArgsForAddPartition(job *Job, args *TablePartitionArgs) {
+	job.UpdateRawArgs = true
 	intest.Assert(job.Type == ActionAddTablePartition, "only for add partition job")
 	fake := &Job{
 		Version: job.Version,
