@@ -1230,7 +1230,7 @@ func constructResultOfShowCreateTable(ctx sessionctx.Context, dbName *pmodel.CIS
 			cols = append(cols, colInfo)
 		}
 		if idxInfo.VectorInfo != nil {
-			funcName := model.DistanceMetricToFnName[idxInfo.VectorInfo.DistanceMetric]
+			funcName := model.IndexableDistanceMetricToFnName[idxInfo.VectorInfo.DistanceMetric]
 			fmt.Fprintf(buf, "((%s(%s)))", strings.ToUpper(funcName), strings.Join(cols, ","))
 		} else {
 			fmt.Fprintf(buf, "(%s)", strings.Join(cols, ","))
@@ -1429,7 +1429,7 @@ func constructResultOfShowCreateTable(ctx sessionctx.Context, dbName *pmodel.CIS
 			restoreCtx.WriteKeyWord("TTL_JOB_INTERVAL")
 			restoreCtx.WritePlain("=")
 			if len(tableInfo.TTLInfo.JobInterval) == 0 {
-				restoreCtx.WriteString(model.DefaultJobInterval.String())
+				restoreCtx.WriteString(model.DefaultJobIntervalStr)
 			} else {
 				restoreCtx.WriteString(tableInfo.TTLInfo.JobInterval)
 			}

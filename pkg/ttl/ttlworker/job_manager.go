@@ -558,8 +558,12 @@ j:
 			if err != nil {
 				logutil.Logger(m.ctx).Info("fail to summarize job", zap.Error(err))
 			}
+			err = job.finish(se, se.Now(), summary)
+			if err != nil {
+				logutil.Logger(m.ctx).Warn("fail to finish job", zap.Error(err))
+				continue
+			}
 			m.removeJob(job)
-			job.finish(se, se.Now(), summary)
 		}
 		cancel()
 	}
@@ -591,10 +595,14 @@ func (m *JobManager) rescheduleJobs(se session.Session, now time.Time) {
 
 				summary, err := summarizeErr(errors.New(cancelReason))
 				if err != nil {
-					logutil.Logger(m.ctx).Info("fail to summarize job", zap.Error(err))
+					logutil.Logger(m.ctx).Warn("fail to summarize job", zap.Error(err))
+				}
+				err = job.finish(se, now, summary)
+				if err != nil {
+					logutil.Logger(m.ctx).Warn("fail to finish job", zap.Error(err))
+					continue
 				}
 				m.removeJob(job)
-				job.finish(se, now, summary)
 			}
 		}
 		return
@@ -611,10 +619,14 @@ func (m *JobManager) rescheduleJobs(se session.Session, now time.Time) {
 		logutil.Logger(m.ctx).Info("cancel job because the table has been dropped or it's no longer TTL table", zap.String("jobID", job.id), zap.Int64("tableID", job.tbl.ID))
 		summary, err := summarizeErr(errors.New("TTL table has been removed or the TTL on this table has been stopped"))
 		if err != nil {
-			logutil.Logger(m.ctx).Info("fail to summarize job", zap.Error(err))
+			logutil.Logger(m.ctx).Warn("fail to summarize job", zap.Error(err))
+		}
+		err = job.finish(se, now, summary)
+		if err != nil {
+			logutil.Logger(m.ctx).Warn("fail to finish job", zap.Error(err))
+			continue
 		}
 		m.removeJob(job)
-		job.finish(se, now, summary)
 	}
 
 	jobTables := m.readyForLockHBTimeoutJobTables(now)
@@ -882,11 +894,14 @@ func (m *JobManager) updateHeartBeat(ctx context.Context, se session.Session, no
 			logutil.Logger(m.ctx).Info("job is timeout", zap.String("jobID", job.id))
 			summary, err := summarizeErr(errors.New("job is timeout"))
 			if err != nil {
-				logutil.Logger(m.ctx).Info("fail to summarize job", zap.Error(err))
+				logutil.Logger(m.ctx).Warn("fail to summarize job", zap.Error(err))
+			}
+			err = job.finish(se, now, summary)
+			if err != nil {
+				logutil.Logger(m.ctx).Warn("fail to finish job", zap.Error(err))
+				continue
 			}
 			m.removeJob(job)
-			job.finish(se, now, summary)
-			continue
 		}
 
 		intest.Assert(se.GetSessionVars().TimeZone.String() == now.Location().String())
