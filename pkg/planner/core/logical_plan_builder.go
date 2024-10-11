@@ -1511,6 +1511,10 @@ func (b *PlanBuilder) buildDistinct(child base.LogicalPlan, length int) (*logica
 		}
 		plan4Agg.AggFuncs = append(plan4Agg.AggFuncs, aggDesc)
 	}
+	// flag it if cte contain aggregation
+	if b.buildingCTE {
+		b.outerCTEs[len(b.outerCTEs)-1].containAggOrWindow = true
+	}
 	plan4Agg.SetChildren(child)
 	plan4Agg.SetSchema(child.Schema().Clone())
 	plan4Agg.SetOutputNames(child.OutputNames())
@@ -4231,10 +4235,10 @@ func (b *PlanBuilder) tryBuildCTE(ctx context.Context, tn *ast.TableName, asName
 			if b.buildingCTE {
 				b.outerCTEs[len(b.outerCTEs)-1].containAggOrWindow = cte.containAggOrWindow || b.outerCTEs[len(b.outerCTEs)-1].containAggOrWindow
 			}
-			// Compute cte inline
-			b.computeCTEInlineFlag(cte)
+			// Compute cte inline bool with current status.
+			cteInlineBool := b.computeCTEInlineFlag(cte)
 
-			if cte.recurLP == nil && cte.isInline {
+			if cte.recurLP == nil && cteInlineBool {
 				saveCte := make([]*cteInfo, len(b.outerCTEs[i:]))
 				copy(saveCte, b.outerCTEs[i:])
 				b.outerCTEs = b.outerCTEs[:i]
@@ -4281,7 +4285,7 @@ func (b *PlanBuilder) tryBuildCTE(ctx context.Context, tn *ast.TableName, asName
      CTE will still not be inlined but a warning will be recorded "Hint or session variables are invalid"
    If 3 condition is met, CTE can be inlined by hint and session variables.
 */
-func (b *PlanBuilder) computeCTEInlineFlag(cte *cteInfo) {
+func (b *PlanBuilder) computeCTEInlineFlag(cte *cteInfo) bool {
 	if cte.recurLP != nil {
 		if cte.forceInlineByHintOrVar {
 			b.ctx.GetSessionVars().StmtCtx.SetHintWarning(
@@ -4293,11 +4297,12 @@ func (b *PlanBuilder) computeCTEInlineFlag(cte *cteInfo) {
 		}
 	} else if cte.consumerCount > 1 {
 		if cte.forceInlineByHintOrVar {
-			cte.isInline = true
+			return true
 		}
 	} else {
-		cte.isInline = true
+		return true
 	}
+	return false
 }
 
 func (b *PlanBuilder) buildDataSourceFromCTEMerge(ctx context.Context, cte *ast.CommonTableExpression) (base.LogicalPlan, error) {
