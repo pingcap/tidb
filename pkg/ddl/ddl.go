@@ -563,6 +563,9 @@ func (d *ddl) RegisterStatsHandle(h *handle.Handle) {
 // give up notify and log it.
 func asyncNotifyEvent(jobCtx *jobContext, e *notifier.SchemaChangeEvent, job *model.Job, sctx sessionctx.Context) error {
 	if intest.InTest && notifier.DefaultStore != nil {
+		failpoint.Inject("asyncNotifyEventError", func() {
+			failpoint.Return(errors.New("mock publish event error"))
+		})
 		// skip notify for system databases, system databases are expected to change at
 		// bootstrap and other nodes can also handle the changing in its bootstrap rather
 		// than be notified.

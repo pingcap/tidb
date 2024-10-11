@@ -23,6 +23,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/ddl/notifier"
 	sess "github.com/pingcap/tidb/pkg/ddl/session"
 	"github.com/pingcap/tidb/pkg/meta/model"
@@ -271,4 +272,24 @@ func TestPublishToStoreBySQL(t *testing.T) {
 		model.ActionAddColumn,
 	})
 	require.Equal(t, multiSchemaChangeSeqs, []int64{-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, 0, 1})
+}
+
+func TestPublishEventError(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("USE test")
+	tk.MustExec("DROP TABLE IF EXISTS ddl_notifier")
+	tk.MustExec(tableStructure)
+	notifier.DefaultStore = notifier.OpenTableStore("test", "ddl_notifier")
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/asyncNotifyEventError", "return()"))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/asyncNotifyEventError"))
+	}()
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a int)")
+	rows := tk.MustQuery("show tables").Rows()
+	require.Equal(t, 1, len(rows)) // only ddl_notifier
+	rows = tk.MustQuery("select * from test.ddl_notifier").Rows()
+	require.Equal(t, 0, len(rows))
 }
