@@ -71,19 +71,20 @@ fi
 # backup full with ratelimit = 1 to make sure this backup task won't finish quickly
 echo "backup start to test lock file"
 PPROF_PORT=6080
+# not easy to trap USR1 signal in our custom run_br, so we use the original run_br to run the backup command
 GO_FAILPOINTS="github.com/pingcap/tidb/br/pkg/utils/determined-pprof-port=return($PPROF_PORT)" \
-run_br --pd $PD_ADDR backup full -s "local://$TEST_DIR/$DB/lock" \
+$UTILS_DIR/run_br --pd $PD_ADDR backup full -s "local://$TEST_DIR/$DB/lock" \
     --remove-schedulers \
     --ratelimit 1 \
-    --ratelimit-unit 1 \
-    --concurrency 4 &> $TEST_DIR/br-other-stdout.log & # It will be killed after test finish.
+    --ratelimit-unit 1 &> $TEST_DIR/br-other-stdout.log & # It will be killed after test finish.
 
 # record last backup pid
 _pid=$!
 
 # give the former backup some time to write down lock file (and initialize signal listener).
 sleep 1
-pkill -10 -P $_pid
+# don't use numeric value as it's mapped differently on different unix like system
+pkill -USR1 -P $_pid
 echo "starting pprof..."
 
 # give the former backup some time to write down lock file (and start pprof server).
