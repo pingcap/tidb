@@ -484,11 +484,15 @@ func (e *InsertExec) doDupRowUpdate(ctx context.Context, handle kv.Handle, oldRo
 		return err
 	}
 
-	if autoColIdx >= 0 && e.Ctx().GetSessionVars().StmtCtx.AffectedRows() > 0 {
-		// If "INSERT ... ON DUPLICATE KEY UPDATE" duplicate and update a row,
-		// auto increment value should be set correctly for mysql_insert_id()
-		// See https://github.com/pingcap/tidb/issues/55965
-		e.Ctx().GetSessionVars().StmtCtx.InsertID = newData[autoColIdx].GetUint64()
+	if autoColIdx >= 0 {
+		if e.Ctx().GetSessionVars().StmtCtx.AffectedRows() > 0 {
+			// If "INSERT ... ON DUPLICATE KEY UPDATE" duplicate and update a row,
+			// auto increment value should be set correctly for mysql_insert_id()
+			// See https://github.com/pingcap/tidb/issues/55965
+			e.Ctx().GetSessionVars().StmtCtx.InsertID = newData[autoColIdx].GetUint64()
+		} else {
+			e.Ctx().GetSessionVars().StmtCtx.InsertID = 0
+		}
 	}
 	return nil
 }

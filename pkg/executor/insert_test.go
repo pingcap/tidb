@@ -638,4 +638,22 @@ func TestMySQLInsertID(t *testing.T) {
 	// How to distinguish LAST_INSERT_ID() and mysql_insert_id()?
 	// In a word, LAST_INSERT_ID() is always get from auto allocated value, while mysql_insert_id() can be
 	// auto allocated or explicited specified.
+
+	// Another scenario mentioned by @lcwangcao
+	// What's the behaviour when transaction conflict involved?
+	tk.MustExec("truncate table tb")
+	tk.MustExec("insert into tb (a, b) values (1, 1), (2, 2)")
+
+	tk1 := testkit.NewTestKit(t, store)
+	tk1.MustExec("use test")
+	tk1.MustExec("begin")
+	tk1.MustExec("update tb set b = 2 where a = 1")
+	go func() {
+		time.Sleep(100 * time.Millisecond)
+		tk1.MustExec("commit")
+	}()
+	// The first time this will update one row.
+	// Then transaction conflict and retry, in the second time it modify nothing.
+	tk.MustExec("insert into tb(a, b) values(1,2) on duplicate key update b = 2;")
+	require.Equal(t, tk.Session().LastInsertID(), uint64(0))
 }
