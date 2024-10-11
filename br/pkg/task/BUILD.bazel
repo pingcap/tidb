@@ -40,7 +40,6 @@ go_library(
         "//br/pkg/restore/ingestrec",
         "//br/pkg/restore/log_client",
         "//br/pkg/restore/snap_client",
-        "//br/pkg/restore/snap_client/sstfiles",
         "//br/pkg/restore/tiflashrec",
         "//br/pkg/restore/utils",
         "//br/pkg/rtree",

@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package logsplit
+package logsplit_test
 
 import (
 	"bytes"
@@ -33,7 +33,7 @@ import (
 	"golang.org/x/sync/errgroup"
 )
 
-type LogSplitHelper struct {
+type splitHelper struct {
 	tableSplitter map[int64]*split.SplitHelper
 	rules         map[int64]*restoreutils.RewriteRules
 	client        split.SplitClient
@@ -45,8 +45,8 @@ type LogSplitHelper struct {
 	splitThreSholdKeys int64
 }
 
-func NewLogSplitHelper(rules map[int64]*restoreutils.RewriteRules, client split.SplitClient, splitSize uint64, splitKeys int64) *LogSplitHelper {
-	return &LogSplitHelper{
+func NewsplitHelper(rules map[int64]*restoreutils.RewriteRules, client split.SplitClient, splitSize uint64, splitKeys int64) *splitHelper {
+	return &splitHelper{
 		tableSplitter: make(map[int64]*split.SplitHelper),
 		rules:         rules,
 		client:        client,
@@ -58,7 +58,7 @@ func NewLogSplitHelper(rules map[int64]*restoreutils.RewriteRules, client split.
 	}
 }
 
-func (helper *LogSplitHelper) iterator() *split.SplitHelperIterator {
+func (helper *splitHelper) iterator() *split.SplitHelperIterator {
 	tableSplitters := make([]*split.RewriteSplitter, 0, len(helper.tableSplitter))
 	for tableID, splitter := range helper.tableSplitter {
 		delete(helper.tableSplitter, tableID)
@@ -87,12 +87,12 @@ func (helper *LogSplitHelper) iterator() *split.SplitHelperIterator {
 
 const splitFileThreshold = 1024 * 1024 // 1 MB
 
-func (helper *LogSplitHelper) skipFile(file *backuppb.DataFileInfo) bool {
+func (helper *splitHelper) skipFile(file *backuppb.DataFileInfo) bool {
 	_, exist := helper.rules[file.TableId]
 	return file.Length < splitFileThreshold || file.IsMeta || !exist
 }
 
-func (helper *LogSplitHelper) Merge(file *backuppb.DataFileInfo) {
+func (helper *splitHelper) Merge(file *backuppb.DataFileInfo) {
 	if helper.skipFile(file) {
 		return
 	}
@@ -116,7 +116,7 @@ func (helper *LogSplitHelper) Merge(file *backuppb.DataFileInfo) {
 
 type splitFunc = func(context.Context, *split.RegionSplitter, uint64, int64, *split.RegionInfo, []split.Valued) error
 
-func (helper *LogSplitHelper) splitRegionByPoints(
+func (helper *splitHelper) splitRegionByPoints(
 	ctx context.Context,
 	regionSplitter *split.RegionSplitter,
 	initialLength uint64,
@@ -170,11 +170,9 @@ func (helper *LogSplitHelper) splitRegionByPoints(
 // SplitPoint selects ranges overlapped with each region, and calls `splitF` to split the region
 func SplitPoint(
 	ctx context.Context,
-	iter *split.SplitHelperIterator,
-	client split.SplitClient,
+	iter *split.SplitHelperIterator, client split.SplitClient,
 	splitF splitFunc,
-) (err error) {
-	// common status
+) (err error) { // common status
 	var (
 		regionSplitter *split.RegionSplitter = split.NewRegionSplitter(client)
 	)
@@ -305,7 +303,7 @@ func SplitPoint(
 	return nil
 }
 
-func (helper *LogSplitHelper) Split(ctx context.Context) error {
+func (helper *splitHelper) Split(ctx context.Context) error {
 	var ectx context.Context
 	var wg sync.WaitGroup
 	helper.eg, ectx = errgroup.WithContext(ctx)

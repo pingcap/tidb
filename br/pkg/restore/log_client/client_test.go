@@ -28,7 +28,9 @@ import (
 	"github.com/pingcap/tidb/br/pkg/glue"
 	"github.com/pingcap/tidb/br/pkg/gluetidb"
 	"github.com/pingcap/tidb/br/pkg/mock"
+	"github.com/pingcap/tidb/br/pkg/restore"
 	logclient "github.com/pingcap/tidb/br/pkg/restore/log_client"
+	"github.com/pingcap/tidb/br/pkg/restore/split"
 	"github.com/pingcap/tidb/br/pkg/restore/utils"
 	"github.com/pingcap/tidb/br/pkg/stream"
 	"github.com/pingcap/tidb/br/pkg/utils/iter"
@@ -1338,7 +1340,11 @@ func TestLogFilesIterWithSplitHelper(t *testing.T) {
 	}
 	mockIter := &mockLogIter{}
 	ctx := context.Background()
-	logIter := logclient.NewLogFilesIterWithSplitHelper(mockIter, rewriteRulesMap, utiltest.NewFakeSplitClient(), 144*1024*1024, 1440000)
+	w := restore.PipelineFileRestorerWrapper[*logclient.LogDataFileInfo]{
+		RegionsSplitter: split.NewRegionsSplitter(utiltest.NewFakeSplitClient(), 144*1024*1024, 1440000),
+	}
+	s := logclient.NewLogSplitStrategy(rewriteRulesMap)
+	logIter := w.WrapIter(context.Background(), mockIter, s)
 	next := 0
 	for r := logIter.TryNext(ctx); !r.Finished; r = logIter.TryNext(ctx) {
 		require.NoError(t, r.Err)

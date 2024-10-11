@@ -528,7 +528,6 @@ func TestFilterDataFiles(t *testing.T) {
 		RestoreTS: 10,
 		Storage:   loc,
 
-		Migrations:                emptyMigrations(),
 		MetadataDownloadBatchSize: 32,
 	})
 	req.NoError(err)
