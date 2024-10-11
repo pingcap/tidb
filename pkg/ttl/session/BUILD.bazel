@@ -15,8 +15,6 @@ go_library(
         "//pkg/ttl/metrics",
         "//pkg/util/chunk",
         "//pkg/util/sqlexec",
-        "//pkg/util/sqlkiller",
-        "//pkg/util/timeutil",
         "@com_github_pingcap_errors//:errors",
     ],
 )
