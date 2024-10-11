@@ -186,7 +186,11 @@ func (e *InsertValues) prefetchDataCache(ctx context.Context, txn kv.Transaction
 }
 
 // updateDupRow updates a duplicate row to a new row.
+<<<<<<< HEAD
 func (e *InsertExec) updateDupRow(ctx context.Context, idxInBatch int, txn kv.Transaction, row toBeCheckedRow, handle kv.Handle, _ []*expression.Assignment) error {
+=======
+func (e *InsertExec) updateDupRow(ctx context.Context, idxInBatch int, txn kv.Transaction, row toBeCheckedRow, handle kv.Handle, _ []*expression.Assignment, dupKeyCheck table.DupKeyCheckMode, autoColIdx int) error {
+>>>>>>> 3dfc47f2cc2 (executor: fix mysql_insert_id() for "INSERT .. ON DUPLICATE KEY" statement (#56514))
 	oldRow, err := getOldRow(ctx, e.Ctx(), txn, row.t, handle, e.GenExprs)
 	if err != nil {
 		return err
@@ -197,11 +201,18 @@ func (e *InsertExec) updateDupRow(ctx context.Context, idxInBatch int, txn kv.Tr
 		extraCols = e.Ctx().GetSessionVars().CurrInsertBatchExtraCols[idxInBatch]
 	}
 
+<<<<<<< HEAD
 	err = e.doDupRowUpdate(ctx, handle, oldRow, row.row, extraCols, e.OnDuplicate, idxInBatch)
 	if e.Ctx().GetSessionVars().StmtCtx.DupKeyAsWarning && (kv.ErrKeyExists.Equal(err) ||
 		table.ErrCheckConstraintViolated.Equal(err)) {
 		e.Ctx().GetSessionVars().StmtCtx.AppendWarning(err)
 		return nil
+=======
+	err = e.doDupRowUpdate(ctx, handle, oldRow, row.row, extraCols, e.OnDuplicate, idxInBatch, dupKeyCheck, autoColIdx)
+	if kv.ErrKeyExists.Equal(err) || table.ErrCheckConstraintViolated.Equal(err) {
+		ec := e.Ctx().GetSessionVars().StmtCtx.ErrCtx()
+		return ec.HandleErrorWithAlias(kv.ErrKeyExists, err, err)
+>>>>>>> 3dfc47f2cc2 (executor: fix mysql_insert_id() for "INSERT .. ON DUPLICATE KEY" statement (#56514))
 	}
 	return err
 }
@@ -236,6 +247,26 @@ func (e *InsertExec) batchUpdateDupRows(ctx context.Context, newRows [][]types.D
 		e.stats.Prefetch += time.Since(prefetchStart)
 	}
 
+<<<<<<< HEAD
+=======
+	// Use `optimizeDupKeyCheckForUpdate` to determine the update operation when the row meets the conflict in
+	// `INSERT ... ON DUPLICATE KEY UPDATE` statement.
+	// Though it is in an insert statement, `ON DUP KEY UPDATE` follows the dup-key check behavior of update.
+	// For example, it will ignore variable `tidb_constraint_check_in_place`, see the test case:
+	// https://github.com/pingcap/tidb/blob/3117d3fae50bbb5dabcde7b9589f92bfbbda5dc6/pkg/executor/test/writetest/write_test.go#L419-L426
+	updateDupKeyCheck := optimizeDupKeyCheckForUpdate(txn, e.IgnoreErr)
+	// Do not use `updateDupKeyCheck` for `AddRecord` because it is not optimized for insert.
+	// It seems that we can just use `DupKeyCheckSkip` here because all constraints are checked.
+	// But we still use `optimizeDupKeyCheckForNormalInsert` to make the refactor same behavior with the original code.
+	// TODO: just use `DupKeyCheckSkip` here.
+	addRecordDupKeyCheck := optimizeDupKeyCheckForNormalInsert(e.Ctx().GetSessionVars(), txn)
+
+	_, autoColIdx, found := findAutoIncrementColumn(e.Table)
+	if !found {
+		autoColIdx = -1
+	}
+
+>>>>>>> 3dfc47f2cc2 (executor: fix mysql_insert_id() for "INSERT .. ON DUPLICATE KEY" statement (#56514))
 	for i, r := range toBeCheckedRows {
 		if r.handleKey != nil {
 			handle, err := tablecodec.DecodeRowKey(r.handleKey.newKey)
@@ -243,7 +274,11 @@ func (e *InsertExec) batchUpdateDupRows(ctx context.Context, newRows [][]types.D
 				return err
 			}
 
+<<<<<<< HEAD
 			err = e.updateDupRow(ctx, i, txn, r, handle, e.OnDuplicate)
+=======
+			err = e.updateDupRow(ctx, i, txn, r, handle, e.OnDuplicate, updateDupKeyCheck, autoColIdx)
+>>>>>>> 3dfc47f2cc2 (executor: fix mysql_insert_id() for "INSERT .. ON DUPLICATE KEY" statement (#56514))
 			if err == nil {
 				continue
 			}
@@ -260,7 +295,11 @@ func (e *InsertExec) batchUpdateDupRows(ctx context.Context, newRows [][]types.D
 			if handle == nil {
 				continue
 			}
+<<<<<<< HEAD
 			err = e.updateDupRow(ctx, i, txn, r, handle, e.OnDuplicate)
+=======
+			err = e.updateDupRow(ctx, i, txn, r, handle, e.OnDuplicate, updateDupKeyCheck, autoColIdx)
+>>>>>>> 3dfc47f2cc2 (executor: fix mysql_insert_id() for "INSERT .. ON DUPLICATE KEY" statement (#56514))
 			if err != nil {
 				if kv.IsErrNotFound(err) {
 					// Data index inconsistent? A unique key provide the handle information, but the
@@ -381,7 +420,11 @@ func (e *InsertExec) initEvalBuffer4Dup() {
 
 // doDupRowUpdate updates the duplicate row.
 func (e *InsertExec) doDupRowUpdate(ctx context.Context, handle kv.Handle, oldRow []types.Datum, newRow []types.Datum,
+<<<<<<< HEAD
 	extraCols []types.Datum, cols []*expression.Assignment, idxInBatch int) error {
+=======
+	extraCols []types.Datum, cols []*expression.Assignment, idxInBatch int, dupKeyMode table.DupKeyCheckMode, autoColIdx int) error {
+>>>>>>> 3dfc47f2cc2 (executor: fix mysql_insert_id() for "INSERT .. ON DUPLICATE KEY" statement (#56514))
 	assignFlag := make([]bool, len(e.Table.WritableCols()))
 	// See http://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_values
 	e.curInsertVals.SetDatums(newRow...)
@@ -429,6 +472,17 @@ func (e *InsertExec) doDupRowUpdate(ctx context.Context, handle kv.Handle, oldRo
 	_, err := updateRecord(ctx, e.Ctx(), handle, oldRow, newData, assignFlag, e.Table, true, e.memTracker, e.fkChecks, e.fkCascades)
 	if err != nil {
 		return err
+	}
+
+	if autoColIdx >= 0 {
+		if e.Ctx().GetSessionVars().StmtCtx.AffectedRows() > 0 {
+			// If "INSERT ... ON DUPLICATE KEY UPDATE" duplicate and update a row,
+			// auto increment value should be set correctly for mysql_insert_id()
+			// See https://github.com/pingcap/tidb/issues/55965
+			e.Ctx().GetSessionVars().StmtCtx.InsertID = newData[autoColIdx].GetUint64()
+		} else {
+			e.Ctx().GetSessionVars().StmtCtx.InsertID = 0
+		}
 	}
 	return nil
 }
