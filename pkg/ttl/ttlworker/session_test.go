@@ -144,6 +144,7 @@ type mockSession struct {
 	resetTimeZoneCalls int
 	closed             bool
 	commitErr          error
+	killed             chan struct{}
 }
 
 func newMockSession(t *testing.T, tbl ...*cache.PhysicalTable) *mockSession {
@@ -158,6 +159,7 @@ func newMockSession(t *testing.T, tbl ...*cache.PhysicalTable) *mockSession {
 		sessionInfoSchema: newMockInfoSchema(tbls...),
 		evalExpire:        time.Now(),
 		sessionVars:       sessVars,
+		killed:            make(chan struct{}),
 	}
 }
 
@@ -205,6 +207,19 @@ func (s *mockSession) ResetWithGlobalTimeZone(_ context.Context) (err error) {
 	return nil
 }
 
+<<<<<<< HEAD
+=======
+// GlobalTimeZone returns the global timezone
+func (s *mockSession) GlobalTimeZone(_ context.Context) (*time.Location, error) {
+	return time.Local, nil
+}
+
+// KillStmt kills the current statement execution
+func (s *mockSession) KillStmt() {
+	close(s.killed)
+}
+
+>>>>>>> e68c26a0e67 (ttl: force to kill SQL in scan task when canceling TTL job/task (#56518))
 func (s *mockSession) Close() {
 	s.closed = true
 }
