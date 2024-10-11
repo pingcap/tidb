@@ -39,8 +39,7 @@ CREATE TABLE foo (
 );
 ```
 
-*
-By `IndexKeyTypeOpt` add `VECTOR` index type, and `IndexTypeOpt` add `HNSW` option type, and add vector index after creating the table.
+* By `IndexKeyTypeOpt` add `VECTOR` index type, and `IndexTypeOpt` add `HNSW` option type, and add vector index after creating the table.
 
 ```sql
 CREATE VECTOR INDEX idx_name USING HNSW ON foo ((VEC_COSINE_DISTANCE(data))) 
@@ -68,7 +67,8 @@ ALTER TABLE t ADD VECTOR INDEX IF NOT EXISTS ((VEC_COSINE_DISTANCE(a))) USING HN
 
 #### **Planner && Executor**
 
-The vector index only obtains the top n values through similarity. The following is the syntax for using a vector index when querying.
+* Support to choose vector index by CBO and `USE INDEX` hint.
+* The vector index only obtains the top n values through similarity. The following is the syntax for using a vector index when querying.
 
 ```sql
 SELECT * 
@@ -109,6 +109,7 @@ The analyze statement is not supported at the moment.
     * About the TiFlash replica of the table for which the vector index needs to be created
         * When a table is created with an index, the TiFlash replica of the table is set to 1 by default in the first stage (serverless is greater than or equal to minReplica in the configuration item).
         * After creating a table, creating an index requires a TiFlash replica.
+* Cannot be created on TiFlash nodes with static encryption enabled
 * Cannot be a primary key index
 * Cannot be a composite index
 * Create several index constraints for the same column
@@ -124,9 +125,10 @@ The analyze statement is not supported at the moment.
 | VEC\_NEGATIVE\_INNER\_PRODUCT（名字待定） VEC\_NEGATIVE\_INNER\_PRODUCT (name to be determined) |  | v |  |
 | VEC\_COSINE\_DISTANCE | v |  |  |
 
-* Dropping a column with a vector index is not supported, and creating multiple indexes together is not supported.
-    * Workaround, split it into multiple operations: for example, we can first drop all vector indexes on the column, and then drop the column.
-    * This operation is not supported in the first phase of this design, but it can be considered for support in the future.
+* Incompatibility with other features(This operation is not supported in the first phase of this design, but it can be considered for support in the future).
+    * Setting invisible properties is not supported
+    * Dropping a column with a vector index is not supported, and creating multiple indexes together is not supported. Also, modifying column types with vector indexes is not supported (lossy changes).
+        * Workaround, split it into multiple operations: for example, we can first drop all vector indexes on the column, and then drop the column.
 
 ##### **Meta Information**
 
@@ -157,7 +159,7 @@ type IndexInfo struct {
 
 * Consider adding `ActionAddVectorIndex` DDL job type, through the existing DDL framework, to achieve the operation of adding a vector index.
     * The middle state is consistent with adding a normal index (None \-\> Delete-Only \-\> Write-Only \-\> Write-Reorg \-\> Public).
-    * Write-Reorg state
+    * When in the Write-Reorg state, do not use the runReorgJob mechanism of this state, that is, do not enable backfilling or check execution progress logic in the background.
         * Sync `VectorIndexInfo` to TiFlash.
         * Wait for TiFlash to fill in the HNSW Index data.
         * We can check whether the operation has been completed by checking whether the `ROWS_STABLE_NOT_INDEXED` value of the table corresponding to the added vector index on the `system.dt_local_indexes` table on TiFlash is 0\.
