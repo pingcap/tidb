@@ -23,7 +23,6 @@ import (
 	"math"
 	"os"
 	"slices"
-	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -54,7 +53,6 @@ import (
 	"github.com/pingcap/tidb/br/pkg/restore/split"
 	"github.com/pingcap/tidb/br/pkg/restore/tiflashrec"
 	restoreutils "github.com/pingcap/tidb/br/pkg/restore/utils"
-	"github.com/pingcap/tidb/br/pkg/rtree"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/stream"
 	"github.com/pingcap/tidb/br/pkg/summary"
@@ -230,40 +228,6 @@ func (rc *LogClient) CollectCompactedSsts(
 	return sstFileCount, regionCompactedMap, nil
 }
 
-func findSplitRanges(regionId uint64, items CompactedItems, rightDeriveSplit bool) ([]rtree.Range, error) {
-	if len(items) == 0 {
-		return nil, nil
-	}
-	splitRanges := make([]rtree.Range, 0, CompactedSSTSplitBatchSize)
-
-	keyFn := func(i CompactedItem) []byte {
-		return i.regionMaxKey
-	}
-
-	sort.Slice(items, func(i, j int) bool {
-		return bytes.Compare(keyFn(items[i]), keyFn(items[j])) < 0
-	})
-
-	log.Info("find split key for region",
-		zap.Uint64("region_id", regionId),
-		zap.Int("items", len(items)))
-
-	// build split ranges
-	tmpRng := rtree.Range{
-		StartKey: []byte(keyFn(items[0])),
-		EndKey:   []byte(keyFn(items[0])),
-	}
-	// only one range in the region should split
-	// rg, err := restoreutils.RewriteRange(&tmpRng, items[0].files.RewriteRules)
-	//if err != nil {
-	//	return nil, errors.Trace(err)
-	//}
-	// hack do not rewrite, just split
-	splitRanges = append(splitRanges, tmpRng)
-
-	return splitRanges, nil
-}
-
 func (rc *LogClient) RestoreCompactedSstFiles(
 	ctx context.Context,
 	compactionsIter iter.TryNextor[*backuppb.LogFileSubcompaction],
@@ -291,67 +255,6 @@ func (rc *LogClient) RestoreCompactedSstFiles(
 		}
 	}
 	return nil
-}
-
-func (rc *LogClient) RestoreCompactedSsts(
-	ctx context.Context,
-	regionCompactedMap map[uint64]CompactedItems,
-	importModeSwitcher *restore.ImportModeSwitcher,
-	checkpoints map[int64]struct{},
-	checkpointRunner *checkpoint.CheckpointRunner[checkpoint.RestoreKeyType, checkpoint.RestoreValueType],
-	onProgress func(),
-	rightDeriveSplit bool,
-) error {
-	// need to enter import mode before restore SST files
-	// it will set to noral mode whatever
-	importModeSwitcher.SwitchToImportMode(ctx)
-	defer importModeSwitcher.SwitchToNormalMode(ctx)
-
-	eg, eCtx := errgroup.WithContext(ctx)
-	// select split keys every `CompactedSSTSplitBatchSize` regions
-	for regionId, CompactedItems := range regionCompactedMap {
-		if _, exists := checkpoints[int64(regionId)]; exists {
-			// already restored
-			continue
-		}
-		items := CompactedItems
-		splitRanges, err := findSplitRanges(regionId, items, rightDeriveSplit)
-		if err != nil {
-			return errors.Trace(err)
-		}
-
-		if len(splitRanges) > 0 {
-			files := make([]restore.RestoreFilesInfo, 0, len(items))
-			for _, i := range items {
-				files = append(files, i.files)
-			}
-			rc.workerPool.ApplyOnErrorGroup(eg, func() error {
-				// err := rc.restorer.SplitRanges(eCtx, splitRanges, onProgress)
-				// if err != nil {
-				// 	return errors.Trace(err)
-				// }
-				return rc.restorer.Restore(eCtx, onProgress, files)
-			})
-		} else {
-			files := make([]restore.RestoreFilesInfo, 0, len(items))
-			for _, i := range items {
-				files = append(files, i.files)
-			}
-			rc.workerPool.ApplyOnErrorGroup(eg, func() error {
-				return rc.restorer.Restore(eCtx, onProgress, files)
-			})
-		}
-
-		// append region ranges to checkpoint
-		// no need to record the value here
-		if err := checkpoint.AppendRangesForRestore(eCtx, checkpointRunner,
-			int64(regionId), ""); err != nil {
-			log.Warn("failed to append checkpoint", zap.Uint64("regionID", regionId), zap.Error(err))
-			// return errors.Trace(err)
-		}
-	}
-
-	return eg.Wait()
 }
 
 func (rc *LogClient) SetRawKVBatchClient(
