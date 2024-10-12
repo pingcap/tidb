@@ -882,6 +882,10 @@ func getReorgInfo(ctx *ReorgContext, jobCtx *jobContext, rh *reorgHandler, job *
 			tb = tbl.(table.PhysicalTable)
 		}
 		if mergingTmpIdx {
+			idxInfo := model.FindIndexInfoByID(tblInfo.Indices, elements[0].ID)
+			if idxInfo.Global {
+				pid = tblInfo.ID
+			}
 			firstElemTempID := tablecodec.TempIndexPrefix | elements[0].ID
 			lastElemTempID := tablecodec.TempIndexPrefix | elements[len(elements)-1].ID
 			start = tablecodec.EncodeIndexSeekKey(pid, firstElemTempID, nil)
