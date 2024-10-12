@@ -2222,6 +2222,7 @@ func (w *worker) addTableIndex(t table.Table, reorgInfo *reorgInfo) error {
 		for !finish {
 			var p table.PhysicalTable
 			if tbl.Meta().ID == reorgInfo.PhysicalTableID {
+				//nolint:forcetypeassert
 				p = t.(table.PhysicalTable)
 			} else {
 				p = tbl.GetPartition(reorgInfo.PhysicalTableID)
