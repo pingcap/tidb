@@ -19,11 +19,7 @@ import (
 	"math"
 	"sort"
 	"sync/atomic"
-<<<<<<< HEAD
-=======
-	"time"
 	"unsafe"
->>>>>>> 5b448649209 (executor: track the memory usage for building range in IndexLookUpExecutor (#56497))
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/metapb"
@@ -748,7 +744,7 @@ func indexRangesToKVWithoutSplit(sc *stmtctx.StatementContext, tids []int64, idx
 	if memTracker != nil {
 		memTracker.Consume(int64(unsafe.Sizeof(kv.KeyRange{})) * int64(len(ranges)))
 	}
-	const checkSignalStep = 8
+	const checkSignalStep = 64
 	var estimatedMemUsage int64
 	// encodeIndexKey and EncodeIndexSeekKey is time-consuming, thus we need to
 	// check the interrupt signal periodically.
@@ -777,7 +773,7 @@ func indexRangesToKVWithoutSplit(sc *stmtctx.StatementContext, tids []int64, idx
 				return kv.NewPartitionedKeyRanges(nil), nil
 			}
 			if memTracker != nil {
-				memTracker.HandleKillSignal()
+				memTracker.Consume(1)
 			}
 		}
 	}
