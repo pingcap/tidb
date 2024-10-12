@@ -133,9 +133,9 @@ func TestInstancePlanCacheConcurrencySysbench(t *testing.T) {
 			id := rand.Intn(maxID)
 			return &testStmt{
 				normalStmt: fmt.Sprintf("select c from normal.sbtest where id=%v", id),
-				prepStmt:   fmt.Sprintf("prepare st from 'select c from prepared.sbtest where id=?'"),
+				prepStmt:   "prepare st from 'select c from prepared.sbtest where id=?'",
 				setStmt:    fmt.Sprintf("set @id = %v", id),
-				execStmt:   fmt.Sprintf("execute st using @id"),
+				execStmt:   "execute st using @id",
 			}
 		case 1: // select c from sbtest where id between ? and ?
 			id1 := rand.Intn(maxID)
@@ -145,9 +145,9 @@ func TestInstancePlanCacheConcurrencySysbench(t *testing.T) {
 			}
 			return &testStmt{
 				normalStmt: fmt.Sprintf("select c from normal.sbtest where id between %v and %v", id1, id2),
-				prepStmt:   fmt.Sprintf("prepare st from 'select c from prepared.sbtest where id between ? and ?'"),
+				prepStmt:   "prepare st from 'select c from prepared.sbtest where id between ? and ?'",
 				setStmt:    fmt.Sprintf("set @id1 = %v, @id2 = %v", id1, id2),
-				execStmt:   fmt.Sprintf("execute st using @id1, @id2"),
+				execStmt:   "execute st using @id1, @id2",
 			}
 		case 2: // select sum(k) from sbtest where id between ? and ?
 			id1 := rand.Intn(maxID)
@@ -157,9 +157,9 @@ func TestInstancePlanCacheConcurrencySysbench(t *testing.T) {
 			}
 			return &testStmt{
 				normalStmt: fmt.Sprintf("select sum(k) from normal.sbtest where id between %v and %v", id1, id2),
-				prepStmt:   fmt.Sprintf("prepare st from 'select sum(k) from prepared.sbtest where id between ? and ?'"),
+				prepStmt:   "prepare st from 'select sum(k) from prepared.sbtest where id between ? and ?'",
 				setStmt:    fmt.Sprintf("set @id1 = %v, @id2 = %v", id1, id2),
-				execStmt:   fmt.Sprintf("execute st using @id1, @id2"),
+				execStmt:   "execute st using @id1, @id2",
 			}
 		case 3: // select c from sbtest where id between ? and ? order by c
 			id1 := rand.Intn(maxID)
@@ -169,9 +169,9 @@ func TestInstancePlanCacheConcurrencySysbench(t *testing.T) {
 			}
 			return &testStmt{
 				normalStmt: fmt.Sprintf("select c from normal.sbtest where id between %v and %v order by c", id1, id2),
-				prepStmt:   fmt.Sprintf("prepare st from 'select c from prepared.sbtest where id between ? and ? order by c'"),
+				prepStmt:   "prepare st from 'select c from prepared.sbtest where id between ? and ? order by c'",
 				setStmt:    fmt.Sprintf("set @id1 = %v, @id2 = %v", id1, id2),
-				execStmt:   fmt.Sprintf("execute st using @id1, @id2"),
+				execStmt:   "execute st using @id1, @id2",
 			}
 		default: // select distinct c from sbtest where id between ? and ? order by c
 			id1 := rand.Intn(maxID)
@@ -181,9 +181,9 @@ func TestInstancePlanCacheConcurrencySysbench(t *testing.T) {
 			}
 			return &testStmt{
 				normalStmt: fmt.Sprintf("select distinct c from normal.sbtest where id between %v and %v order by c", id1, id2),
-				prepStmt:   fmt.Sprintf("prepare st from 'select distinct c from prepared.sbtest where id between ? and ? order by c'"),
+				prepStmt:   "prepare st from 'select distinct c from prepared.sbtest where id between ? and ? order by c'",
 				setStmt:    fmt.Sprintf("set @id1 = %v, @id2 = %v", id1, id2),
-				execStmt:   fmt.Sprintf("execute st using @id1, @id2"),
+				execStmt:   "execute st using @id1, @id2",
 			}
 		}
 	}
@@ -193,18 +193,18 @@ func TestInstancePlanCacheConcurrencySysbench(t *testing.T) {
 			id := rand.Intn(maxID)
 			return &testStmt{
 				normalStmt: fmt.Sprintf("update normal.sbtest set k=k+1 where id=%v", id),
-				prepStmt:   fmt.Sprintf("prepare st from 'update prepared.sbtest set k=k+1 where id=?'"),
+				prepStmt:   "prepare st from 'update prepared.sbtest set k=k+1 where id=?'",
 				setStmt:    fmt.Sprintf("set @id = %v", id),
-				execStmt:   fmt.Sprintf("execute st using @id"),
+				execStmt:   "execute st using @id",
 			}
 		default: // update sbtest set c=? where id=?
 			id := rand.Intn(maxID)
 			c := fmt.Sprintf("%v", rand.Intn(10000))
 			return &testStmt{
 				normalStmt: fmt.Sprintf("update normal.sbtest set c='%v' where id=%v", c, id),
-				prepStmt:   fmt.Sprintf("prepare st from 'update prepared.sbtest set c=? where id=?'"),
+				prepStmt:   "prepare st from 'update prepared.sbtest set c=? where id=?'",
 				setStmt:    fmt.Sprintf("set @c = '%v', @id = %v", c, id),
-				execStmt:   fmt.Sprintf("execute st using @c, @id"),
+				execStmt:   "execute st using @c, @id",
 			}
 		}
 	}
@@ -215,18 +215,18 @@ func TestInstancePlanCacheConcurrencySysbench(t *testing.T) {
 		c := fmt.Sprintf("%v", rand.Intn(10000))
 		return &testStmt{
 			normalStmt: fmt.Sprintf("insert into normal.sbtest values (%v, %v, '%v')", id, k, c),
-			prepStmt:   fmt.Sprintf("prepare st from 'insert into prepared.sbtest values (?, ?, ?)'"),
+			prepStmt:   "prepare st from 'insert into prepared.sbtest values (?, ?, ?)'",
 			setStmt:    fmt.Sprintf("set @id = %v, @k = %v, @c = '%v'", id, k, c),
-			execStmt:   fmt.Sprintf("execute st using @id, @k, @c"),
+			execStmt:   "execute st using @id, @k, @c",
 		}
 	}
 	genDelete := func() *testStmt {
 		id := rand.Intn(maxID)
 		return &testStmt{
 			normalStmt: fmt.Sprintf("delete from normal.sbtest where id=%v", id),
-			prepStmt:   fmt.Sprintf("prepare st from 'delete from prepared.sbtest where id=?'"),
+			prepStmt:   "prepare st from 'delete from prepared.sbtest where id=?'",
 			setStmt:    fmt.Sprintf("set @id = %v", id),
-			execStmt:   fmt.Sprintf("execute st using @id"),
+			execStmt:   "execute st using @id",
 		}
 	}
 
