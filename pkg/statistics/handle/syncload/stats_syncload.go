@@ -310,6 +310,7 @@ func (s *statsSyncLoad) handleOneItemTask(task *statstypes.NeededItemTask) (err 
 	is := sctx.GetDomainInfoSchema().(infoschema.InfoSchema)
 	tblInfo, ok := s.statsHandle.TableInfoByID(is, item.TableID)
 	if !ok {
+		logutil.BgLogger().Info("wtf no find")
 		return nil
 	}
 	isPkIsHandle := tblInfo.Meta().PKIsHandle
