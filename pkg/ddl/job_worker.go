@@ -993,7 +993,7 @@ func updateGlobalVersionAndWaitSynced(
 		return nil
 	}
 
-	err = jobCtx.schemaVerSyncer.OwnerUpdateGlobalVersion(jobCtx.ctx, latestSchemaVersion)
+	err = jobCtx.schemaVerSyncer.OwnerUpdateGlobalVersion(ctx, latestSchemaVersion)
 	if err != nil {
 		logutil.DDLLogger().Info("update latest schema version failed", zap.Int64("ver", latestSchemaVersion), zap.Error(err))
 		if variable.EnableMDL.Load() {
