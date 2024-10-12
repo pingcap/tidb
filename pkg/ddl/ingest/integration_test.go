@@ -426,7 +426,7 @@ func TestAddIndexIngestPartitionCheckpoint(t *testing.T) {
 }
 
 func TestAddGlobalIndexInIngest(t *testing.T) {
-	store := realtikvtest.CreateMockStoreAndSetup(t)
+	store := testkit.CreateMockStore(t)
 	defer ingesttestutil.InjectMockBackendMgr(t, store)()
 
 	tk := testkit.NewTestKit(t, store)
