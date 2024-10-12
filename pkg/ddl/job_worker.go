@@ -84,12 +84,15 @@ type jobContext struct {
 	store           kv.Storage
 	schemaVerSyncer schemaver.Syncer
 
-	// per job fields
+	// per job fields, they are not changed in the life cycle of this context.
 	notifyCh chan struct{}
 	logger   *zap.Logger
 
-	// per job step fields
+	// per job step fields, they will be changed on each call of transitOneJobStep.
 	metaMut *meta.Mutator
+	// decoded JobArgs, we store it here to avoid decoding it multiple times and
+	// pass some runtime info specific to some job type.
+	jobArgs model.JobArgs
 
 	// TODO reorg part of code couple this struct so much, remove it later.
 	oldDDLCtx *ddlCtx

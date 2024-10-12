@@ -569,6 +569,9 @@ type RenameTableArgs struct {
 	OldTableName pmodel.CIStr `json:"old_table_name,omitempty"`
 	NewSchemaID  int64        `json:"new_schema_id,omitempty"`
 	TableID      int64        `json:"table_id,omitempty"`
+
+	// runtime info
+	OldSchemaIDForSchemaDiff int64 `json:"-"`
 }
 
 func (rt *RenameTableArgs) getArgsV1(*Job) []any {
@@ -588,36 +591,6 @@ func GetRenameTableArgs(job *Job) (*RenameTableArgs, error) {
 	// NewSchemaID is used for checkAndRenameTables, which is not set for rename table.
 	args.NewSchemaID = job.SchemaID
 	return args, nil
-}
-
-// UpdateRenameTableArgs updates the rename-table args.
-// need to reset the old schema ID to new schema ID.
-func UpdateRenameTableArgs(job *Job) error {
-	var err error
-
-	// for job version1
-	if job.Version == JobVersion1 {
-		// update schemaID and marshal()
-		job.Args[0] = job.SchemaID
-		job.RawArgs, err = json.Marshal(job.Args)
-		if err != nil {
-			return errors.Trace(err)
-		}
-	} else {
-		argsV2, err := getOrDecodeArgsV2[*RenameTableArgs](job)
-		if err != nil {
-			return errors.Trace(err)
-		}
-
-		// update schemaID and marshal()
-		argsV2.OldSchemaID = job.SchemaID
-		job.Args = []any{argsV2}
-		job.RawArgs, err = json.Marshal(job.Args[0])
-		if err != nil {
-			return errors.Trace(err)
-		}
-	}
-	return nil
 }
 
 // ResourceGroupArgs is the arguments for resource group job.

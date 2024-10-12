@@ -16,7 +16,6 @@ package ddl
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"strconv"
 	"sync/atomic"
@@ -747,6 +746,7 @@ func onRenameTable(jobCtx *jobContext, job *model.Job) (ver int64, _ error) {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
+	jobCtx.jobArgs = args
 
 	oldSchemaID, oldSchemaName, tableName := args.OldSchemaID, args.OldSchemaName, args.NewTableName
 	if job.SchemaState == model.StatePublic {
@@ -791,9 +791,10 @@ func onRenameTables(jobCtx *jobContext, job *model.Job) (ver int64, _ error) {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
+	jobCtx.jobArgs = args
 
 	if job.SchemaState == model.StatePublic {
-		return finishJobRenameTables(jobCtx, job, args)
+		return finishJobRenameTables(jobCtx, job)
 	}
 
 	fkh := newForeignKeyHelper()
@@ -937,21 +938,19 @@ func finishJobRenameTable(jobCtx *jobContext, job *model.Job) (int64, error) {
 	// Before updating the schema version, we need to reset the old schema ID to new schema ID, so that
 	// the table info can be dropped normally in `ApplyDiff`. This is because renaming table requires two
 	// schema versions to complete.
-	oldRawArgs := job.RawArgs
-	if err = model.UpdateRenameTableArgs(job); err != nil {
-		return 0, errors.Trace(err)
-	}
+	args := jobCtx.jobArgs.(*model.RenameTableArgs)
+	args.OldSchemaIDForSchemaDiff = job.SchemaID
 
 	ver, err := updateSchemaVersion(jobCtx, job)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
-	job.RawArgs = oldRawArgs
 	job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
 	return ver, nil
 }
 
-func finishJobRenameTables(jobCtx *jobContext, job *model.Job, args *model.RenameTablesArgs) (int64, error) {
+func finishJobRenameTables(jobCtx *jobContext, job *model.Job) (int64, error) {
+	args := jobCtx.jobArgs.(*model.RenameTablesArgs)
 	infos := args.RenameTableInfos
 	tblSchemaIDs := make(map[int64]int64, len(infos))
 	for _, info := range infos {
@@ -970,22 +969,13 @@ func finishJobRenameTables(jobCtx *jobContext, job *model.Job, args *model.Renam
 	// Before updating the schema version, we need to reset the old schema ID to new schema ID, so that
 	// the table info can be dropped normally in `ApplyDiff`. This is because renaming table requires two
 	// schema versions to complete.
-	// TODO(joechenrh): set the old schemaID in Args is a bit hacky. Maybe we need a better solution.
-	var err error
-	oldRawArgs := job.RawArgs
 	for _, info := range infos {
-		info.OldSchemaID = info.NewSchemaID
-	}
-	job.FillArgs(args)
-	job.RawArgs, err = json.Marshal(job.Args)
-	if err != nil {
-		return 0, errors.Trace(err)
+		info.OldSchemaIDForSchemaDiff = info.NewSchemaID
 	}
 	ver, err := updateSchemaVersion(jobCtx, job)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
-	job.RawArgs = oldRawArgs
 	job.FinishMultipleTableJob(model.JobStateDone, model.StatePublic, ver, tblInfos)
 	return ver, nil
 }
