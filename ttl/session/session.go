@@ -16,6 +16,7 @@ package session
 
 import (
 	"context"
+	"sync/atomic"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -51,6 +52,8 @@ type Session interface {
 	RunInTxn(ctx context.Context, fn func() error, mode TxnMode) (err error)
 	// ResetWithGlobalTimeZone resets the session time zone to global time zone
 	ResetWithGlobalTimeZone(ctx context.Context) error
+	// KillStmt kills the current statement execution
+	KillStmt()
 	// Close closes the session
 	Close()
 	// Now returns the current time in location specified by session var
@@ -166,6 +169,11 @@ func (s *session) ResetWithGlobalTimeZone(ctx context.Context) error {
 
 	_, err := s.ExecuteSQL(ctx, "SET @@time_zone=@@global.time_zone")
 	return err
+}
+
+// KillStmt kills the current statement execution
+func (s *session) KillStmt() {
+	atomic.StoreUint32(&s.GetSessionVars().Killed, 1)
 }
 
 // Close closes the session
