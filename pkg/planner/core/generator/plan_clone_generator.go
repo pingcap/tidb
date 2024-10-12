@@ -12,19 +12,21 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package core
+package main
 
 import (
 	"bytes"
 	"fmt"
 	"go/format"
+	"log"
+	"os"
 	"reflect"
 	"strings"
 
-	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core"
 )
 
-// genPlanCloneForPlanCacheCode generates CloneForPlanCache for all physical plan nodes in plan_clone_generated.go.
+// GenPlanCloneForPlanCacheCode generates CloneForPlanCache for all physical plan nodes in plan_clone_generated.go.
 // Using code-gen is safer than writing by hand, for example, if someone adds a new field to a struct,
 // the code-gen can update the Clone method correctly and automatically.
 // To update plan_clone_generated.go, please run TestUpdatePlanCloneCode manually.
@@ -32,14 +34,13 @@ import (
 // If a field is tagged with `plan-cache-clone:"shallow"`, then it will be shallow cloned.
 // If a field is tagged with `plan-cache-clone:"must-nil"`, then it will be checked for nil before cloning.
 // If a field is not tagged, then it will be deep cloned.
-func genPlanCloneForPlanCacheCode() ([]byte, error) {
-	var structures = []any{PhysicalTableScan{}, PhysicalIndexScan{}, PhysicalSelection{}, PhysicalProjection{},
-		PhysicalSort{}, PhysicalTopN{}, PhysicalStreamAgg{}, PhysicalHashAgg{},
-		PhysicalHashJoin{}, PhysicalMergeJoin{}, PhysicalTableReader{}, PhysicalIndexReader{},
-		PointGetPlan{}, BatchPointGetPlan{}, PhysicalLimit{},
-		PhysicalIndexJoin{}, PhysicalIndexHashJoin{},
-		PhysicalIndexLookUpReader{}, PhysicalIndexMergeReader{},
-		Update{}, Delete{}, Insert{}, PhysicalLock{}, PhysicalUnionScan{}, PhysicalUnionAll{}}
+func GenPlanCloneForPlanCacheCode() ([]byte, error) {
+	var structures = []any{core.PhysicalTableScan{}, core.PhysicalIndexScan{}, core.PhysicalSelection{},
+		core.PhysicalProjection{}, core.PhysicalSort{}, core.PhysicalTopN{}, core.PhysicalStreamAgg{},
+		core.PhysicalHashAgg{}, core.PhysicalHashJoin{}, core.PhysicalMergeJoin{}, core.PhysicalTableReader{},
+		core.PhysicalIndexReader{}, core.PointGetPlan{}, core.BatchPointGetPlan{}, core.PhysicalLimit{},
+		core.PhysicalIndexJoin{}, core.PhysicalIndexHashJoin{}, core.PhysicalIndexLookUpReader{}, core.PhysicalIndexMergeReader{},
+		core.Update{}, core.Delete{}, core.Insert{}, core.PhysicalLock{}, core.PhysicalUnionScan{}, core.PhysicalUnionAll{}}
 	c := new(codeGen)
 	c.write(codeGenPrefix)
 	for _, s := range structures {
@@ -47,7 +48,7 @@ func genPlanCloneForPlanCacheCode() ([]byte, error) {
 		if err != nil {
 			return nil, err
 		}
-		c.write(string(code))
+		c.write("%s", string(code))
 	}
 	return c.format()
 }
@@ -171,18 +172,6 @@ func genPlanCloneForPlanCache(x any) ([]byte, error) {
 	return c.format()
 }
 
-func clonePhysicalPlansForPlanCache(newCtx base.PlanContext, plans []base.PhysicalPlan) ([]base.PhysicalPlan, bool) {
-	clonedPlans := make([]base.PhysicalPlan, len(plans))
-	for i, plan := range plans {
-		cloned, ok := plan.CloneForPlanCache(newCtx)
-		if !ok {
-			return nil, false
-		}
-		clonedPlans[i] = cloned.(base.PhysicalPlan)
-	}
-	return clonedPlans, true
-}
-
 func mustNilField(fType reflect.StructField) bool {
 	return fType.Tag.Get("plan-cache-clone") == "must-nil"
 }
@@ -238,4 +227,26 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/util"
 )
+
+func clonePhysicalPlansForPlanCache(newCtx base.PlanContext, plans []base.PhysicalPlan) ([]base.PhysicalPlan, bool) {
+	clonedPlans := make([]base.PhysicalPlan, len(plans))
+	for i, plan := range plans {
+		cloned, ok := plan.CloneForPlanCache(newCtx)
+		if !ok {
+			return nil, false
+		}
+		clonedPlans[i] = cloned.(base.PhysicalPlan)
+	}
+	return clonedPlans, true
+}
 `
+
+func main() {
+	fileData, err := GenPlanCloneForPlanCacheCode()
+	if err != nil {
+		log.Fatalln("failed to generate plan_clone_generated.go", err)
+	}
+	if err := os.WriteFile("plan_clone_generated.go", fileData, 0644); err != nil {
+		log.Fatalln("failed to write plan_clone_generated.go", err)
+	}
+}

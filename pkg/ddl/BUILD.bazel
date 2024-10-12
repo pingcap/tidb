@@ -315,7 +315,6 @@ go_test(
         "//pkg/parser/mysql",
         "//pkg/parser/terror",
         "//pkg/parser/types",
-        "//pkg/privilege",
         "//pkg/server",
         "//pkg/session",
         "//pkg/session/types",
