@@ -680,16 +680,13 @@ func (e *HashJoinV2Exec) isAllMemoryClearedForTest() bool {
 }
 
 func (e *HashJoinV2Exec) initMaxSpillRound() {
-	e.maxSpillRound = 1
-	totalPartitionsNum := e.partitionNumber
-	for {
-		if totalPartitionsNum > 1024 {
-			break
-		}
-		totalPartitionsNum *= e.partitionNumber
-		e.maxSpillRound++
+	if e.partitionNumber > 1024 {
+		e.maxSpillRound = 1
+		return
 	}
-	e.maxSpillRound = max(1, e.maxSpillRound-1)
+
+	// Calculate the minimum number of rounds required for the total partitions to exceed 1024
+	e.maxSpillRound = int(math.Log(1024) / math.Log(float64(e.partitionNumber)))
 }
 
 // Close implements the Executor Close interface.
