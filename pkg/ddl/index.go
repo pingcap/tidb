@@ -2556,6 +2556,8 @@ func getNextPartitionInfo(reorg *reorgInfo, t table.PartitionedTable, currPhysic
 			// case 1
 			// Simply AddIndex, without any partitions added or dropped!
 			if reorg.mergingTmpIdx && currPhysicalTableID == t.Meta().ID {
+				// If the current Physical id is the table id,
+				// the next Physical id should be the first partition id.
 				pid = pi.Definitions[0].ID
 			} else {
 				pid, err = findNextPartitionID(currPhysicalTableID, pi.Definitions)
