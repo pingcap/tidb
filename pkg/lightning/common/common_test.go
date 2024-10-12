@@ -19,6 +19,8 @@ import (
 	"testing"
 
 	"github.com/pingcap/errors"
+	// autoid1.MockForTest is init there, we need to import it to make sure it's called
+	_ "github.com/pingcap/tidb/pkg/autoid_service"
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/common"
@@ -26,8 +28,6 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser"
-	// autoid1.MockForTest is init there, we need to import it to make sure it's called
-	_ "github.com/pingcap/tidb/pkg/autoid_service"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	tmock "github.com/pingcap/tidb/pkg/util/mock"
