@@ -1,7 +1,7 @@
 # Put and Verify Transactions for External Storages
 
-Author: [Yu Juncen](https://github.com/YuJuncen)
-Tracking Issue: https://github.com/pingcap/tidb/issues/56523
+- Author: [Yu Juncen](https://github.com/YuJuncen)
+- Tracking Issue: https://github.com/pingcap/tidb/issues/56523
 
 ## Background 
 
@@ -14,7 +14,7 @@ Sometimes, we need to control concurrency access to the same backup archive, lik
 
 But external storage locking isn't trivial. Simply putting a lock file isn't safe enough: because after checking there isn't such a lock file, another one may write it immediately. Object locks provide stronger consistency, but also require extra configuration and permissions.
 
-This proposal will propose a new procedure for locking / unlocking, which is safe in all object storages that have a strong consistency guarantee over its PUT, GET and LIST API. This guarantee have been promised in:
+This proposal will propose a new procedure for locking / unlocking, which is safe in all object storages that have a *strong consistency* guarantee over its PUT, GET and LIST API. This has been promised in:
 
 - S3: https://aws.amazon.com/cn/s3/consistency/
 - Google Cloud Storage: https://cloud.google.com/storage/docs/consistency#strongly_consistent_operations

@@ -28,6 +28,8 @@ import (
 //
 // if the write is success and the file wasn't deleted, no other `ExclusiveWrite`
 // over the same file was success.
+//
+// For more details, check docs/design/2024-10-11-put-and-verify-transactions-for-external-storages.md.
 type ExclusiveWrite struct {
 	// Target is the target file of this txn.
 	// There shouldn't be other files shares this prefix with this file, or the txn will fail.
@@ -47,8 +49,8 @@ type VerifyWriteContext struct {
 	TxnID   uuid.UUID
 }
 
-func (c *VerifyWriteContext) IntentFileName() string {
-	return fmt.Sprintf("%s.INTENT.%s", c.Target, hex.EncodeToString(c.TxnID[:]))
+func (cx *VerifyWriteContext) IntentFileName() string {
+	return fmt.Sprintf("%s.INTENT.%s", cx.Target, hex.EncodeToString(cx.TxnID[:]))
 }
 
 // CommitTo commits the write to the external storage.
