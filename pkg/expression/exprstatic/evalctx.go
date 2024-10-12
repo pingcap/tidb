@@ -300,6 +300,13 @@ func (ctx *EvalContext) AppendWarning(err error) {
 	}
 }
 
+// AppendNote appends notes to the context.
+func (ctx *EvalContext) AppendNote(err error) {
+	if h := ctx.warnHandler; h != nil {
+		h.AppendNote(err)
+	}
+}
+
 // WarningCount gets warning count.
 func (ctx *EvalContext) WarningCount() int {
 	if h := ctx.warnHandler; h != nil {
@@ -489,11 +496,35 @@ func (ctx *EvalContext) currentTimeFuncFromStringVal(val string) func() (time.Ti
 
 func newSessionVarsWithSystemVariables(vars map[string]string) (*variable.SessionVars, error) {
 	sessionVars := variable.NewSessionVars(nil)
+	var cs, col []string
 	for name, val := range vars {
-		if err := sessionVars.SetSystemVar(name, val); err != nil {
+		switch strings.ToLower(name) {
+		// `charset_connection` and `collation_connection` will overwrite each other.
+		// To make the result more determinate, just set them at last step in order:
+		// `charset_connection` first, then `collation_connection`.
+		case variable.CharacterSetConnection:
+			cs = []string{name, val}
+		case variable.CollationConnection:
+			col = []string{name, val}
+		default:
+			if err := sessionVars.SetSystemVar(name, val); err != nil {
+				return nil, err
+			}
+		}
+	}
+
+	if cs != nil {
+		if err := sessionVars.SetSystemVar(cs[0], cs[1]); err != nil {
 			return nil, err
 		}
 	}
+
+	if col != nil {
+		if err := sessionVars.SetSystemVar(col[0], col[1]); err != nil {
+			return nil, err
+		}
+	}
+
 	return sessionVars, nil
 }
 

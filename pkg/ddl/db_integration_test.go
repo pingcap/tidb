@@ -529,7 +529,7 @@ func TestChangingTableCharset(t *testing.T) {
 		require.NoError(t, err)
 		txn, err := mockCtx.Txn(true)
 		require.NoError(t, err)
-		mt := meta.NewMeta(txn)
+		mt := meta.NewMutator(txn)
 
 		err = mt.UpdateTable(db.ID, tblInfo)
 		require.NoError(t, err)
@@ -775,7 +775,7 @@ func TestCaseInsensitiveCharsetAndCollate(t *testing.T) {
 		require.NoError(t, err)
 		txn, err := mockCtx.Txn(true)
 		require.NoError(t, err)
-		mt := meta.NewMeta(txn)
+		mt := meta.NewMutator(txn)
 		require.True(t, ok)
 		err = mt.UpdateTable(db.ID, tblInfo)
 		require.NoError(t, err)
@@ -1443,7 +1443,7 @@ func TestTreatOldVersionUTF8AsUTF8MB4(t *testing.T) {
 		require.NoError(t, err)
 		txn, err := mockCtx.Txn(true)
 		require.NoError(t, err)
-		mt := meta.NewMeta(txn)
+		mt := meta.NewMutator(txn)
 		require.True(t, ok)
 		err = mt.UpdateTable(db.ID, tblInfo)
 		require.NoError(t, err)
@@ -1982,11 +1982,13 @@ func TestDropColumnWithCompositeIndex(t *testing.T) {
 	defer tk.MustExec("drop table if exists t_drop_column_with_comp_idx")
 	tk.MustExec("create index idx_bc on t_drop_column_with_comp_idx(b, c)")
 	tk.MustExec("create index idx_b on t_drop_column_with_comp_idx(b)")
-	tk.MustGetErrMsg("alter table t_drop_column_with_comp_idx drop column b", "[ddl:8200]can't drop column b with composite index covered or Primary Key covered now")
+	tk.MustGetErrMsg("alter table t_drop_column_with_comp_idx drop column b",
+		"[ddl:8200]can't drop column b with composite index covered or Primary Key covered now")
 	tk.MustQuery(query).Check(testkit.Rows("idx_b YES", "idx_bc YES"))
 	tk.MustExec("alter table t_drop_column_with_comp_idx alter index idx_bc invisible")
 	tk.MustExec("alter table t_drop_column_with_comp_idx alter index idx_b invisible")
-	tk.MustGetErrMsg("alter table t_drop_column_with_comp_idx drop column b", "[ddl:8200]can't drop column b with composite index covered or Primary Key covered now")
+	tk.MustGetErrMsg("alter table t_drop_column_with_comp_idx drop column b",
+		"[ddl:8200]can't drop column b with composite index covered or Primary Key covered now")
 	tk.MustQuery(query).Check(testkit.Rows("idx_b NO", "idx_bc NO"))
 }
 
@@ -3069,11 +3071,11 @@ func TestIssue52680(t *testing.T) {
 
 	testSteps := []struct {
 		sql    string
-		expect meta.AutoIDGroup
+		expect model.AutoIDGroup
 	}{
-		{sql: "", expect: meta.AutoIDGroup{RowID: 0, IncrementID: 4000, RandomID: 0}},
-		{sql: "drop table issue52680", expect: meta.AutoIDGroup{RowID: 0, IncrementID: 0, RandomID: 0}},
-		{sql: "recover table issue52680", expect: meta.AutoIDGroup{RowID: 0, IncrementID: 4000, RandomID: 0}},
+		{sql: "", expect: model.AutoIDGroup{RowID: 0, IncrementID: 4000, RandomID: 0}},
+		{sql: "drop table issue52680", expect: model.AutoIDGroup{RowID: 0, IncrementID: 0, RandomID: 0}},
+		{sql: "recover table issue52680", expect: model.AutoIDGroup{RowID: 0, IncrementID: 4000, RandomID: 0}},
 	}
 	for _, step := range testSteps {
 		if step.sql != "" {
@@ -3082,7 +3084,7 @@ func TestIssue52680(t *testing.T) {
 
 		txn, err := store.Begin()
 		require.NoError(t, err)
-		m := meta.NewMeta(txn)
+		m := meta.NewMutator(txn)
 		idAcc := m.GetAutoIDAccessors(ti.DBID, ti.ID)
 		ids, err := idAcc.Get()
 		require.NoError(t, err)

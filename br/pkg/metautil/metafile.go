@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/summary"
+	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/statistics/handle/util"
 	"github.com/pingcap/tidb/pkg/tablecodec"
@@ -87,22 +88,17 @@ func Encrypt(content []byte, cipher *backuppb.CipherInfo) (encryptedContent, iv 
 	}
 }
 
-// Decrypt decrypts the content according to CipherInfo and IV.
-func Decrypt(content []byte, cipher *backuppb.CipherInfo, iv []byte) ([]byte, error) {
-	if len(content) == 0 || cipher == nil {
-		return content, nil
+func DecryptFullBackupMetaIfNeeded(metaData []byte, cipherInfo *backuppb.CipherInfo) ([]byte, error) {
+	if cipherInfo == nil || !utils.IsEffectiveEncryptionMethod(cipherInfo.CipherType) {
+		return metaData, nil
 	}
-
-	switch cipher.CipherType {
-	case encryptionpb.EncryptionMethod_PLAINTEXT:
-		return content, nil
-	case encryptionpb.EncryptionMethod_AES128_CTR,
-		encryptionpb.EncryptionMethod_AES192_CTR,
-		encryptionpb.EncryptionMethod_AES256_CTR:
-		return encrypt.AESDecryptWithCTR(content, cipher.CipherKey, iv)
-	default:
-		return content, errors.Annotate(berrors.ErrInvalidArgument, "cipher type invalid")
+	// the prefix of backup meta file is iv(16 bytes) for ctr mode if encryption method is valid
+	iv := metaData[:CrypterIvLen]
+	decryptBackupMeta, err := utils.Decrypt(metaData[len(iv):], cipherInfo, iv)
+	if err != nil {
+		return nil, errors.Annotate(err, "decrypt failed with wrong key")
 	}
+	return decryptBackupMeta, nil
 }
 
 // walkLeafMetaFile walks the leaves of the given metafile, and deal with it by calling the function `output`.
@@ -130,7 +126,7 @@ func walkLeafMetaFile(
 				return errors.Trace(err)
 			}
 
-			decryptContent, err := Decrypt(content, cipher, node.CipherIv)
+			decryptContent, err := utils.Decrypt(content, cipher, node.CipherIv)
 			if err != nil {
 				return errors.Trace(err)
 			}

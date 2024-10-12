@@ -1,44 +1,3 @@
-# TestDisableTablePartition
-set @@session.tidb_enable_table_partition = 'ON';
-drop table if exists t;
-create table t (id int) partition by list  (id) (
-	    partition p0 values in (1,2),partition p1 values in (3,4));
-show create table t;
-alter table t add partition (
-		partition p4 values in (7),
-		partition p5 values in (8,9));
-insert into t values (1),(3),(7),(9);
-set @@session.tidb_enable_table_partition = 'OFF';
-drop table if exists t;
-create table t (id int) partition by list  (id) (
-	    partition p0 values in (1,2),partition p1 values in (3,4));
-show create table t;
--- error 1505
-alter table t add partition (
-		partition p4 values in (7),
-		partition p5 values in (8,9));
-insert into t values (1),(3),(7),(9);
-set @@session.tidb_enable_table_partition = 0;
-drop table if exists t;
-create table t (id int) partition by list  (id) (
-	    partition p0 values in (1,2),partition p1 values in (3,4));
-show create table t;
--- error 1505
-alter table t add partition (
-		partition p4 values in (7),
-		partition p5 values in (8,9));
-insert into t values (1),(3),(7),(9);
-set @@session.tidb_enable_table_partition = 'ON';
-drop table if exists t;
-create table t (id int) partition by list  (id) (
-	    partition p0 values in (1,2),partition p1 values in (3,4));
-show create table t;
-alter table t add partition (
-		partition p4 values in (7),
-		partition p5 values in (8,9));
-insert into t values (1),(3),(7),(9);
-set @@session.tidb_enable_table_partition = default;
-
 # TestPartitionRangeColumnsCollate
 drop table if exists t;
 create table t (a varchar(255) charset utf8mb4 collate utf8mb4_bin) partition by range columns (a)
@@ -1214,7 +1173,6 @@ alter table t coalesce partition 2;
 show create table t;
 
 # TestConstAndTimezoneDepent
-set @@session.tidb_enable_table_partition = 1;
 drop database if exists test_db_with_partition_const;
 create database test_db_with_partition_const;
 use test_db_with_partition_const;
@@ -1283,7 +1241,6 @@ create table t2332 ( time_recorded timestamp )
          partition by range(day(time_recorded)) (
   		 partition p0 values less than (1)
 		);
-set @@session.tidb_enable_table_partition = default;
 
 # TestUnsupportedPartitionManagementDDLs
 drop table if exists test_1465;
@@ -2013,7 +1970,6 @@ alter table rcp EXCHANGE PARTITION p20230829 WITH TABLE t;
 # TODO: add test not in first partition (both last without maxvalue and also not last with/without maxvalue)
 
 # TestConstAndTimezoneDepent2
-set @@session.tidb_enable_table_partition = 1;
 drop table if exists t1, t2, t3, t4, t5;
 create table t1 ( time_recorded datetime )
 partition by range(TO_DAYS(time_recorded)) (
@@ -2031,7 +1987,6 @@ create table t5 ( time_recorded timestamp )
 partition by range(unix_timestamp(time_recorded)) (
 	partition p1 values less than (1559192604)
 );
-set @@session.tidb_enable_table_partition = default;
 
 
 # TestExchangePartitionExpressIndex

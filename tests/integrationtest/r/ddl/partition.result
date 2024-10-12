@@ -36,9 +36,9 @@ t	CREATE TABLE `t` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 select * from t;
 a	b
+3	Hi
 1	a
 2	bye
-3	Hi
 drop table if exists t;
 create table t (a int primary key, b varchar(255), key (b));
 insert into t values (0,'filler0'), (1,'filler0'), (2,'filler0'), (3,'filler1'), (4,'filler1'), (5,'filler1'), (6,'filler2'), (7,'filler2'), (8,'filler2'), (9,'filler3'), (10,'filler3'), (11,'filler3'), (12,'filler4'), (13,'filler4'), (14,'filler4'), (15,'filler5'), (16,'filler5'), (17,'filler5'), (18,'filler6'), (19,'filler6'), (20,'filler6'), (21,'filler7'), (22,'filler7'), (23,'filler7'), (24,'filler8'), (25,'filler8'), (26,'filler8'), (27,'filler9'), (28,'filler9'), (29,'filler9'), (30,'filler10'), (31,'filler10'), (32,'filler10'), (33,'filler11'), (34,'filler11'), (35,'filler11'), (36,'filler12'), (37,'filler12'), (38,'filler12'), (39,'filler13'), (40,'filler13'), (41,'filler13'), (42,'filler14'), (43,'filler14'), (44,'filler14'), (45,'filler15'), (46,'filler15'), (47,'filler15'), (48,'filler16'), (49,'filler16'), (50,'filler16'), (51,'filler17'), (52,'filler17'), (53,'filler17'), (54,'filler18'), (55,'filler18'), (56,'filler18'), (57,'filler19'), (58,'filler19'), (59,'filler19'), (60,'filler20'), (61,'filler20'), (62,'filler20'), (63,'filler21'), (64,'filler21'), (65,'filler21'), (66,'filler22'), (67,'filler22'), (68,'filler22'), (69,'filler23'), (70,'filler23'), (71,'filler23'), (72,'filler24'), (73,'filler24'), (74,'filler24'), (75,'filler25'), (76,'filler25'), (77,'filler25'), (78,'filler26'), (79,'filler26'), (80,'filler26'), (81,'filler27'), (82,'filler27'), (83,'filler27'), (84,'filler28'), (85,'filler28'), (86,'filler28'), (87,'filler29'), (88,'filler29'), (89,'filler29'), (90,'filler30'), (91,'filler30'), (92,'filler30'), (93,'filler31'), (94,'filler31'), (95,'filler31'), (96,'filler32'), (97,'filler32'), (98,'filler32'), (99,'filler33');

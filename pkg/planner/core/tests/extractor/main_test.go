@@ -1,4 +1,4 @@
-// Copyright 2021 PingCAP, Inc.
+// Copyright 2024 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -12,39 +12,23 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package main
+package extractor_test
 
 import (
 	"flag"
-	"fmt"
+	"testing"
 
-	"github.com/phayes/freeport"
-	"github.com/pingcap/log"
-	"go.uber.org/zap"
+	"github.com/pingcap/tidb/pkg/testkit/testsetup"
+	"go.uber.org/goleak"
 )
 
-var (
-	count uint
-)
-
-func init() {
-	flag.UintVar(&count, "count", 1, "number of generated ports")
-}
-
-func generatePorts(count int) []int {
-	var (
-		err   error
-		ports []int
-	)
-	if ports, err = freeport.GetFreePorts(count); err != nil {
-		log.Fatal("no more free ports", zap.Error(err))
-	}
-	return ports
-}
-
-func main() {
+func TestMain(m *testing.M) {
+	testsetup.SetupForCommonTest()
 	flag.Parse()
-	for _, port := range generatePorts(int(count)) {
-		fmt.Println(port)
+	opts := []goleak.Option{
+		goleak.IgnoreTopFunction("github.com/golang/glog.(*fileSink).flushDaemon"),
+		goleak.IgnoreTopFunction("github.com/bazelbuild/rules_go/go/tools/bzltestutil.RegisterTimeoutHandler.func1"),
+		goleak.IgnoreTopFunction("github.com/lestrrat-go/httprc.runFetchWorker"),
 	}
+	goleak.VerifyTestMain(m, opts...)
 }

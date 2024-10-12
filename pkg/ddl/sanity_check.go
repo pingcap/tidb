@@ -96,12 +96,15 @@ func expectedDeleteRangeCnt(ctx delRangeCntCtx, job *model.Job) (int, error) {
 			return 0, errors.Trace(err)
 		}
 		return len(args.OldPartitionIDs) + 1, nil
-	case model.ActionTruncateTable:
+	case model.ActionTruncateTable, model.ActionTruncateTablePartition:
 		args, err := model.GetFinishedTruncateTableArgs(job)
 		if err != nil {
 			return 0, errors.Trace(err)
 		}
-		return len(args.OldPartitionIDs) + 1, nil
+		if job.Type == model.ActionTruncateTable {
+			return len(args.OldPartitionIDs) + 1, nil
+		}
+		return len(args.OldPartitionIDs), nil
 	case model.ActionDropTablePartition, model.ActionReorganizePartition,
 		model.ActionRemovePartitioning, model.ActionAlterTablePartitioning:
 		args, err := model.GetFinishedTablePartitionArgs(job)
@@ -109,12 +112,6 @@ func expectedDeleteRangeCnt(ctx delRangeCntCtx, job *model.Job) (int, error) {
 			return 0, errors.Trace(err)
 		}
 		return len(args.OldPhysicalTblIDs), nil
-	case model.ActionTruncateTablePartition:
-		var physicalTableIDs []int64
-		if err := job.DecodeArgs(&physicalTableIDs); err != nil {
-			return 0, errors.Trace(err)
-		}
-		return len(physicalTableIDs), nil
 	case model.ActionAddIndex, model.ActionAddPrimaryKey:
 		indexID := make([]int64, 1)
 		ifExists := make([]bool, 1)
@@ -143,18 +140,17 @@ func expectedDeleteRangeCnt(ctx delRangeCntCtx, job *model.Job) (int, error) {
 		}
 		return ret, nil
 	case model.ActionDropIndex, model.ActionDropPrimaryKey:
-		var indexName any
-		ifNotExists := make([]bool, 1)
-		indexID := make([]int64, 1)
-		var partitionIDs []int64
-		if err := job.DecodeArgs(&indexName, &ifNotExists[0], &indexID[0], &partitionIDs); err != nil {
-			if err := job.DecodeArgs(&indexName, &ifNotExists, &indexID, &partitionIDs); err != nil {
-				return 0, errors.Trace(err)
-			}
+		_, _, _, partitionIDs, hasVectors, err := job.DecodeDropIndexFinishedArgs()
+		if err != nil {
+			return 0, errors.Trace(err)
+		}
+		// We don't support drop vector index in multi-schema, so we only check the first one.
+		if len(hasVectors) > 0 && hasVectors[0] {
+			return 0, nil
 		}
 		return mathutil.Max(len(partitionIDs), 1), nil
 	case model.ActionDropColumn:
-		args, err := model.GetDropColumnArgs(job)
+		args, err := model.GetTableColumnArgs(job)
 		if err != nil {
 			return 0, errors.Trace(err)
 		}

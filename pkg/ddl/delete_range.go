@@ -256,7 +256,7 @@ func (dr *delRange) doTask(sctx sessionctx.Context, r util.DelRangeTask) error {
 				return errors.Trace(err)
 			}
 			startKey, endKey := r.Range()
-			logutil.DDLLogger().Info("delRange emulator complete task", zap.String("category", "ddl"),
+			logutil.DDLLogger().Info("delRange emulator complete task",
 				zap.Int64("jobID", r.JobID),
 				zap.Int64("elementID", r.ElementID),
 				zap.Stringer("startKey", startKey),
@@ -335,11 +335,11 @@ func insertJobIntoDeleteRangeTable(ctx context.Context, wrapper DelRangeExecWrap
 		}
 		return errors.Trace(doBatchDeleteTablesRange(ctx, wrapper, job.ID, args.OldPhysicalTblIDs, ea, "reorganize/drop partition: physical table ID(s)"))
 	case model.ActionTruncateTablePartition:
-		var physicalTableIDs []int64
-		if err := job.DecodeArgs(&physicalTableIDs); err != nil {
+		args, err := model.GetTruncateTableArgs(job)
+		if err != nil {
 			return errors.Trace(err)
 		}
-		return errors.Trace(doBatchDeleteTablesRange(ctx, wrapper, job.ID, physicalTableIDs, ea, "truncate partition: physical table ID(s)"))
+		return errors.Trace(doBatchDeleteTablesRange(ctx, wrapper, job.ID, args.OldPartitionIDs, ea, "truncate partition: physical table ID(s)"))
 	// ActionAddIndex, ActionAddPrimaryKey needs do it, because it needs to be rolled back when it's canceled.
 	case model.ActionAddIndex, model.ActionAddPrimaryKey:
 		allIndexIDs := make([]int64, 1)
@@ -379,14 +379,9 @@ func insertJobIntoDeleteRangeTable(ctx context.Context, wrapper DelRangeExecWrap
 		}
 	case model.ActionDropIndex, model.ActionDropPrimaryKey:
 		tableID := job.TableID
-		var indexName any
-		var partitionIDs []int64
-		ifExists := make([]bool, 1)
-		allIndexIDs := make([]int64, 1)
-		if err := job.DecodeArgs(&indexName, &ifExists[0], &allIndexIDs[0], &partitionIDs); err != nil {
-			if err = job.DecodeArgs(&indexName, &ifExists, &allIndexIDs, &partitionIDs); err != nil {
-				return errors.Trace(err)
-			}
+		_, _, allIndexIDs, partitionIDs, _, err := job.DecodeDropIndexFinishedArgs()
+		if err != nil {
+			return errors.Trace(err)
 		}
 		// partitionIDs len is 0 if the dropped index is a global index, even if it is a partitioned table.
 		if len(partitionIDs) == 0 {
@@ -403,7 +398,7 @@ func insertJobIntoDeleteRangeTable(ctx context.Context, wrapper DelRangeExecWrap
 			}
 		}
 	case model.ActionDropColumn:
-		args, err := model.GetDropColumnArgs(job)
+		args, err := model.GetTableColumnArgs(job)
 		if err != nil {
 			return errors.Trace(err)
 		}
