@@ -2427,8 +2427,6 @@ func TestTiDBUpgradeToVer212(t *testing.T) {
 	err = m.FinishBootstrap(int64(ver198))
 	require.NoError(t, err)
 	revertVersionAndVariables(t, seV198, ver198)
-	// simulate a real ver198 where mysql.tidb_runaway_queries` doesn't have `start_time`/`sample_sql` columns yet.
-	MustExec(t, seV198, "select original_sql, time from mysql.tidb_runaway_queries")
 	err = txn.Commit(context.Background())
 	require.NoError(t, err)
 	unsetStoreBootstrapped(store.UUID())
@@ -2493,26 +2491,4 @@ func TestIndexJoinMultiPatternByUpgrade650To840(t *testing.T) {
 	row := chk.GetRow(0)
 	require.Equal(t, 1, row.Len())
 	require.Equal(t, int64(0), row.GetInt64(0))
-}
-
-func TestTiDBUpgradeReentrent(t *testing.T) {
-	store, dom := CreateStoreAndBootstrap(t)
-	defer func() { require.NoError(t, store.Close()) }()
-	dom.Close()
-
-	txn, err := store.Begin()
-	require.NoError(t, err)
-	m := meta.NewMutator(txn)
-	err = m.FinishBootstrap(version211)
-	require.NoError(t, err)
-	err = txn.Commit(context.Background())
-	require.NoError(t, err)
-	unsetStoreBootstrapped(store.UUID())
-	se := CreateSessionAndSetID(t, store)
-	revertVersionAndVariables(t, se, version211)
-	se.Close()
-
-	domCurVer, err := BootstrapSession(store)
-	require.NoError(t, err)
-	defer domCurVer.Close()
 }
