@@ -15,6 +15,7 @@
 package ddl
 
 import (
+	"bytes"
 	"context"
 	"encoding/hex"
 	"fmt"
@@ -882,9 +883,16 @@ func getReorgInfo(ctx *ReorgContext, jobCtx *jobContext, rh *reorgHandler, job *
 			tb = tbl.(table.PhysicalTable)
 		}
 		if mergingTmpIdx {
-			idxInfo := model.FindIndexInfoByID(tblInfo.Indices, elements[0].ID)
-			if idxInfo.Global {
-				pid = tblInfo.ID
+			for _, element := range elements {
+				if !bytes.Equal(element.TypeKey, meta.IndexElementKey) {
+					continue
+				}
+				// If has a global index in elements, need start process at `tblInfo.ID`
+				// because there are some temporary global indexes prefixed with table ID.
+				idxInfo := model.FindIndexInfoByID(tblInfo.Indices, element.ID)
+				if idxInfo.Global {
+					pid = tblInfo.ID
+				}
 			}
 			firstElemTempID := tablecodec.TempIndexPrefix | elements[0].ID
 			lastElemTempID := tablecodec.TempIndexPrefix | elements[len(elements)-1].ID

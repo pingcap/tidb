@@ -2220,9 +2220,14 @@ func (w *worker) addTableIndex(t table.Table, reorgInfo *reorgInfo) error {
 	if tbl, ok := t.(table.PartitionedTable); ok {
 		var finish bool
 		for !finish {
-			p := tbl.GetPartition(reorgInfo.PhysicalTableID)
-			if p == nil {
-				return dbterror.ErrCancelledDDLJob.GenWithStack("Can not find partition id %d for table %d", reorgInfo.PhysicalTableID, t.Meta().ID)
+			var p table.PhysicalTable
+			if tbl.Meta().ID == reorgInfo.PhysicalTableID {
+				p = t.(table.PhysicalTable)
+			} else {
+				p = tbl.GetPartition(reorgInfo.PhysicalTableID)
+				if p == nil {
+					return dbterror.ErrCancelledDDLJob.GenWithStack("Can not find partition id %d for table %d", reorgInfo.PhysicalTableID, t.Meta().ID)
+				}
 			}
 			err = w.addPhysicalTableIndex(p, reorgInfo)
 			if err != nil {

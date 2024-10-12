@@ -700,3 +700,29 @@ func TestIssue55808(t *testing.T) {
 	err := tk.ExecToErr("alter table t add index idx(a);")
 	require.ErrorContains(t, err, "injected error")
 }
+
+func TestAddGlobalIndexInIngest(t *testing.T) {
+	store, _ := realtikvtest.CreateMockStoreAndDomainAndSetup(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test;")
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a int, b int) partition by hash(a) partitions 5;")
+	tk.MustExec("insert into t (a, b) values (1, 1), (2, 2), (3, 3);")
+	var i atomic.Int32
+	i.Store(3)
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/writeLocalExec", func(bool) {
+		tk2 := testkit.NewTestKit(t, store)
+		tmp := i.Add(1)
+		_, err := tk2.Exec(fmt.Sprintf("insert into test.t values (%d, %d)", tmp, tmp))
+		assert.Nil(t, err)
+	})
+	tk.MustExec("alter table t add index idx_1(b), add unique index idx_2(b) global;")
+	testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/writeLocalExec")
+	rs1 := tk.MustQuery("select * from t use index(idx_2)").Sort()
+	rs2 := tk.MustQuery("select * from t use index()").Sort()
+	rs3 := tk.MustQuery("select * from t use index(idx_1)").Sort()
+	require.Greater(t, len(rs1.Rows()), 3)
+	require.Equal(t, rs1.String(), rs2.String())
+	require.Equal(t, rs1.String(), rs3.String())
+}
