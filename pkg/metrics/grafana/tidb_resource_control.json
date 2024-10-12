@@ -32,8 +32,37 @@
          "id": 2,
          "panels": [
             {
-               "columns": [ ],
                "datasource": "${DS_TEST-CLUSTER}",
+               "fieldConfig": {
+                  "overrides": [
+                     {
+                        "matcher": {
+                           "id": "byName",
+                           "options": "Burstable"
+                        },
+                        "properties": [
+                           {
+                              "id": "mappings",
+                              "value": [
+                                 {
+                                    "options": {
+                                       "0": {
+                                          "index": 1,
+                                          "text": "false"
+                                       },
+                                       "1": {
+                                          "index": 0,
+                                          "text": "true"
+                                       }
+                                    },
+                                    "type": "value"
+                                 }
+                              ]
+                           }
+                        ]
+                     }
+                  ]
+               },
                "gridPos": {
                   "h": 7,
                   "w": 24,
@@ -41,36 +70,29 @@
                   "y": 0
                },
                "id": 3,
-               "links": [ ],
-               "styles": [ ],
                "targets": [
                   {
-                     "expr": "resource_manager_server_group_config{type=\"priority\"}",
+                     "expr": "max by (resource_group, type) (resource_manager_server_group_config{type=\"priority\"})",
                      "format": "time_series",
-                     "instant": "instant",
+                     "instant": true,
                      "intervalFactor": 2,
-                     "legendFormat": "{{resource_group}}",
-                     "refId": "A"
+                     "legendFormat": "{{resource_group}}"
                   },
                   {
-                     "expr": "resource_manager_server_group_config{type=\"ru_capacity\"}",
+                     "expr": "max by (resource_group, type) (resource_manager_server_group_config{type=\"ru_capacity\"}) < bool 0",
                      "format": "time_series",
-                     "instant": "instant",
+                     "instant": true,
                      "intervalFactor": 2,
-                     "legendFormat": "{{resource_group}}",
-                     "refId": "B"
+                     "legendFormat": "{{resource_group}}"
                   },
                   {
-                     "expr": "resource_manager_server_group_config{type=\"ru_per_sec\"}",
+                     "expr": "max by (resource_group, type) (resource_manager_server_group_config{type=\"ru_per_sec\"})",
                      "format": "time_series",
-                     "instant": "instant",
+                     "instant": true,
                      "intervalFactor": 2,
-                     "legendFormat": "{{resource_group}}",
-                     "refId": "C"
+                     "legendFormat": "{{resource_group}}"
                   }
                ],
-               "timeFrom": null,
-               "timeShift": null,
                "title": "RU Config",
                "transformations": [
                   {
@@ -97,10 +119,17 @@
                            "resource_group": 4,
                            "ru_capacity": 7,
                            "ru_per_sec": 6
+                        },
+                        "renameByName": {
+                           "priority": "Priority",
+                           "resource_group": "Group Name",
+                           "ru_capacity": "Burstable",
+                           "ru_per_sec": "RU_PER_SEC"
                         }
                      }
                   }
                ],
+               "transparent": false,
                "type": "table"
             },
             {
@@ -256,7 +285,7 @@
                "thresholds": [ ],
                "timeFrom": null,
                "timeShift": null,
-               "title": "RU (Max Cost During 20s Period)",
+               "title": "RU Max (Max Cost During 20s Period)",
                "tooltip": {
                   "shared": true,
                   "sort": 0,
@@ -1774,17 +1803,18 @@
                "steppedLine": false,
                "targets": [
                   {
-                     "expr": "sum(rate(resource_manager_client_request_fail{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$tidb_instance\"}[1m])) by (instance)",
+                     "expr": "sum(rate(resource_manager_client_request_fail{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$tidb_instance\"}[1m])) by (instance, name, type)",
                      "format": "time_series",
                      "intervalFactor": 2,
-                     "legendFormat": "{{instance}}-total",
+                     "legendFormat": "{{name}}-{{type}}-{{instance}}",
                      "refId": "A"
                   },
                   {
-                     "expr": "sum(rate(resource_manager_client_request_fail{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$tidb_instance\"}[1m])) by (instance, name)",
+                     "expr": "sum(rate(resource_manager_client_request_fail{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$tidb_instance\"}[1m])) by (instance)",
                      "format": "time_series",
+                     "hide": true,
                      "intervalFactor": 2,
-                     "legendFormat": "{{instance}}-{{name}}",
+                     "legendFormat": "{{instance}}-total",
                      "refId": "B"
                   }
                ],
@@ -2086,7 +2116,7 @@
                },
                "yaxes": [
                   {
-                     "format": "short",
+                     "format": "s",
                      "label": null,
                      "logBase": 1,
                      "max": null,
@@ -2094,7 +2124,7 @@
                      "show": true
                   },
                   {
-                     "format": "short",
+                     "format": "s",
                      "label": null,
                      "logBase": 1,
                      "max": null,
@@ -2299,7 +2329,7 @@
                },
                "yaxes": [
                   {
-                     "format": "short",
+                     "format": "s",
                      "label": null,
                      "logBase": 2,
                      "max": null,
@@ -2307,7 +2337,7 @@
                      "show": true
                   },
                   {
-                     "format": "short",
+                     "format": "s",
                      "label": null,
                      "logBase": 1,
                      "max": null,
@@ -3929,7 +3959,7 @@
             "multi": false,
             "name": "tidb_cluster",
             "options": [ ],
-            "query": "label_values(pd_cluster_status{k8s_cluster=\"$kuberentes\"}, tidb_cluster)",
+            "query": "label_values(pd_cluster_status{k8s_cluster=\"$k8s_cluster\"}, tidb_cluster)",
             "refresh": 2,
             "regex": "",
             "sort": 1,

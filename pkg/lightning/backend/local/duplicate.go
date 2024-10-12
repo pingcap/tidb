@@ -728,7 +728,7 @@ func (m *dupeDetector) buildDupTasks() ([]dupTask, error) {
 		putToTaskFunc(ranges, nil)
 	})
 	for _, indexInfo := range m.tbl.Meta().Indices {
-		if indexInfo.State != model.StatePublic {
+		if indexInfo.State != model.StatePublic || !indexInfo.Unique {
 			continue
 		}
 		keyRanges, err = tableIndexKeyRanges(m.tbl.Meta(), indexInfo)

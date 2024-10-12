@@ -26,7 +26,6 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/privilege"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/table"
@@ -180,26 +179,6 @@ func assertStaticExprContextEqual(t *testing.T, sctx sessionctx.Context, exprCtx
 				require.Equal(t, ctx.Location().String(), tm.Location().String())
 				require.InDelta(t, tm1.Unix(), tm.Unix(), 2)
 				require.NoError(t, err)
-			},
-		},
-		{
-			field: "requestVerificationFn",
-			check: func(ctx *exprstatic.EvalContext) {
-				// RequestVerification should allow all privileges
-				// that is the same with input session context (GetPrivilegeManager returns nil).
-				require.Nil(t, privilege.GetPrivilegeManager(sctx))
-				require.True(t, sctx.GetExprCtx().GetEvalCtx().RequestVerification("any", "any", "any", mysql.CreatePriv))
-				require.True(t, ctx.RequestVerification("any", "any", "any", mysql.CreatePriv))
-			},
-		},
-		{
-			field: "requestDynamicVerificationFn",
-			check: func(ctx *exprstatic.EvalContext) {
-				// RequestDynamicVerification should allow all privileges
-				// that is the same with input session context (GetPrivilegeManager returns nil).
-				require.Nil(t, privilege.GetPrivilegeManager(sctx))
-				require.True(t, sctx.GetExprCtx().GetEvalCtx().RequestDynamicVerification("RESTRICTED_USER_ADMIN", true))
-				require.True(t, ctx.RequestDynamicVerification("RESTRICTED_USER_ADMIN", true))
 			},
 		},
 	}

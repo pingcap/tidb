@@ -246,6 +246,7 @@ func TestPrepared(t *testing.T) {
 		tk.MustQuery("select a from prepare1;").Check(testkit.Rows("7"))
 
 		// Coverage.
+		//nolint:constructor
 		exec := &executor.ExecuteExec{}
 		err = exec.Next(ctx, nil)
 		require.NoError(t, err)
