@@ -128,7 +128,7 @@ func (w *worker) onDropTableOrView(jobCtx *jobContext, job *model.Job) (ver int6
 		})
 		if !tblInfo.IsSequence() && !tblInfo.IsView() {
 			dropTableEvent := notifier.NewDropTableEvent(tblInfo)
-			err = asyncNotifyEvent(jobCtx, dropTableEvent, job, w.sess.Context)
+			err = asyncNotifyEvent(jobCtx, dropTableEvent, job, w.sess)
 			if err != nil {
 				return ver, errors.Trace(err)
 			}
@@ -581,7 +581,7 @@ func (w *worker) onTruncateTable(jobCtx *jobContext, job *model.Job) (ver int64,
 	}
 	job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
 	truncateTableEvent := notifier.NewTruncateTableEvent(tblInfo, oldTblInfo)
-	err = asyncNotifyEvent(jobCtx, truncateTableEvent, job, w.sess.Context)
+	err = asyncNotifyEvent(jobCtx, truncateTableEvent, job, w.sess)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}

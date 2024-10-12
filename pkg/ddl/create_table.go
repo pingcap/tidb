@@ -184,7 +184,7 @@ func (w *worker) onCreateTable(jobCtx *jobContext, job *model.Job) (ver int64, _
 	// Finish this job.
 	job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tbInfo)
 	createTableEvent := notifier.NewCreateTableEvent(tbInfo)
-	err = asyncNotifyEvent(jobCtx, createTableEvent, job, w.sess.Context)
+	err = asyncNotifyEvent(jobCtx, createTableEvent, job, w.sess)
 	return ver, errors.Trace(err)
 }
 
@@ -214,7 +214,7 @@ func (w *worker) createTableWithForeignKeys(jobCtx *jobContext, job *model.Job, 
 		}
 		job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tbInfo)
 		createTableEvent := notifier.NewCreateTableEvent(tbInfo)
-		err = asyncNotifyEvent(jobCtx, createTableEvent, job, w.sess.Context)
+		err = asyncNotifyEvent(jobCtx, createTableEvent, job, w.sess)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
@@ -273,7 +273,7 @@ func (w *worker) onCreateTables(jobCtx *jobContext, job *model.Job) (int64, erro
 	job.BinlogInfo.SetTableInfos(ver, tableInfos)
 	for i := range tableInfos {
 		createTableEvent := notifier.NewCreateTableEvent(tableInfos[i])
-		err = asyncNotifyEvent(jobCtx, createTableEvent, job, w.sess.Context)
+		err = asyncNotifyEvent(jobCtx, createTableEvent, job, w.sess)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
