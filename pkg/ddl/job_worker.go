@@ -315,13 +315,13 @@ func JobNeedGC(job *model.Job) bool {
 			model.ActionAlterTablePartitioning:
 			return true
 		case model.ActionDropIndex:
-			_, _, _, _, hasVectors, err := job.DecodeDropIndexFinishedArgs()
+			args, err := model.GetFinishedModifyIndexArgs(job)
 			if err != nil {
 				return false
 			}
 			// If it's a vector index, it needn't to store key ranges to gc_delete_range.
 			// We don't support drop vector index in multi-schema, so we only check the first one.
-			if len(hasVectors) > 0 && hasVectors[0] {
+			if args.IndexArgs[0].IsVector {
 				return false
 			}
 			return true
