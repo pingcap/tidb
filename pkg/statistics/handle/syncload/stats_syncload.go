@@ -322,6 +322,7 @@ func (s *statsSyncLoad) handleOneItemTask(task *statstypes.NeededItemTask) (err 
 		if index != nil {
 			wrapper.idxInfo = index.Info
 		} else {
+			logutil.BgLogger().Info("debug WTF")
 			wrapper.idxInfo = tblInfo.Meta().FindIndexByID(item.ID)
 		}
 	} else {
