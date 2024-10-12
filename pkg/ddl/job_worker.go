@@ -247,7 +247,7 @@ func (w *worker) handleUpdateJobError(jobCtx *jobContext, job *model.Job, err er
 }
 
 // updateDDLJob updates the DDL job information.
-func (w *worker) updateDDLJob(jobCtx *jobContext, job *model.Job) error {
+func (w *worker) updateDDLJob(_ *jobContext, job *model.Job) error {
 	failpoint.Inject("mockErrEntrySizeTooLarge", func(val failpoint.Value) {
 		if val.(bool) {
 			failpoint.Return(kv.ErrEntryTooLarge)
