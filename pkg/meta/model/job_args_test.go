@@ -32,7 +32,7 @@ func TestGetOrDecodeArgsV2(t *testing.T) {
 	j.FillArgs(&TruncateTableArgs{
 		FKCheck: true,
 	})
-	_, err := j.Encode(true)
+	_, err := j.Encode()
 	require.NoError(t, err)
 	require.NotNil(t, j.RawArgs)
 	// return existing argsV2
@@ -54,7 +54,7 @@ func getJobBytes(t *testing.T, inArgs JobArgs, ver JobVersion, tp ActionType) []
 		Type:    tp,
 	}
 	j.FillArgs(inArgs)
-	bytes, err := j.Encode(true)
+	bytes, err := j.Encode()
 	require.NoError(t, err)
 	return bytes
 }
@@ -65,7 +65,7 @@ func getFinishedJobBytes(t *testing.T, inArgs FinishedJobArgs, ver JobVersion, t
 		Type:    tp,
 	}
 	j.FillFinishedArgs(inArgs)
-	bytes, err := j.Encode(true)
+	bytes, err := j.Encode()
 	require.NoError(t, err)
 	return bytes
 }
@@ -334,7 +334,7 @@ func TestTablePartitionArgs(t *testing.T) {
 			Type:    ActionAddTablePartition,
 		}
 		j.FillArgs(inArgs)
-		_, err := j.Encode(true)
+		_, err := j.Encode()
 		require.NoError(t, err)
 		partNames := []string{"aaaa", "bbb"}
 		FillRollbackArgsForAddPartition(j,
@@ -356,7 +356,7 @@ func TestTablePartitionArgs(t *testing.T) {
 		}
 
 		j.State = JobStateRollingback
-		bytes, err := j.Encode(true)
+		bytes, err := j.Encode()
 		require.NoError(t, err)
 
 		j2 := &Job{}
@@ -395,7 +395,7 @@ func TestFinishedTablePartitionArgs(t *testing.T) {
 			State:   JobStateRollbackDone,
 		}
 		j.FillFinishedArgs(inArgs)
-		bytes, err := j.Encode(true)
+		bytes, err := j.Encode()
 		require.NoError(t, err)
 
 		j2 := &Job{}
@@ -965,7 +965,7 @@ func TestAddColumnArgs(t *testing.T) {
 
 		FillRollBackArgsForAddColumn(j2, dropArgs)
 		j2.State = JobStateRollingback
-		jobBytes, err := j2.Encode(true)
+		jobBytes, err := j2.Encode()
 		require.NoError(t, err)
 		j3 := &Job{}
 		require.NoError(t, j3.Decode(jobBytes))

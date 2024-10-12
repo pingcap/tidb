@@ -1359,7 +1359,7 @@ func processJobs(
 				continue
 			}
 
-			err = updateDDLJob2Table(ctx, ns, job, false)
+			err = updateDDLJob2Table(ctx, ns, job)
 			if err != nil {
 				jobErrs[i] = err
 				continue
@@ -1457,7 +1457,7 @@ func processAllJobs(
 				continue
 			}
 
-			err = updateDDLJob2Table(ctx, ns, job, false)
+			err = updateDDLJob2Table(ctx, ns, job)
 			if err != nil {
 				jobErrs[job.ID] = err
 				continue

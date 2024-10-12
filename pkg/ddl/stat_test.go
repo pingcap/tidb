@@ -44,18 +44,20 @@ func TestGetDDLInfo(t *testing.T) {
 		ID: 2,
 	}
 	job := &model.Job{
-		Version:  model.JobVersion1,
-		ID:       1,
-		SchemaID: dbInfo2.ID,
-		Type:     model.ActionCreateSchema,
-		RowCount: 0,
+		Version:       model.JobVersion1,
+		ID:            1,
+		SchemaID:      dbInfo2.ID,
+		Type:          model.ActionCreateSchema,
+		RowCount:      0,
+		UpdateRawArgs: true,
 	}
 	job1 := &model.Job{
-		Version:  model.JobVersion1,
-		ID:       2,
-		SchemaID: dbInfo2.ID,
-		Type:     model.ActionAddIndex,
-		RowCount: 0,
+		Version:       model.JobVersion1,
+		ID:            2,
+		SchemaID:      dbInfo2.ID,
+		Type:          model.ActionAddIndex,
+		RowCount:      0,
+		UpdateRawArgs: true,
 	}
 
 	err = addDDLJobs(sess, txn, job)
@@ -82,7 +84,7 @@ func TestGetDDLInfo(t *testing.T) {
 }
 
 func addDDLJobs(sess sessiontypes.Session, txn kv.Transaction, job *model.Job) error {
-	b, err := job.Encode(true)
+	b, err := job.Encode()
 	if err != nil {
 		return err
 	}

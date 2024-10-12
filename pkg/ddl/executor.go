@@ -3402,6 +3402,8 @@ func (e *executor) RenameColumn(ctx sessionctx.Context, ident ast.Ident, spec *a
 		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
 		SQLMode:        ctx.GetSessionVars().SQLMode,
 	}
+	// TODO(joechenrh): remove this later
+	job.UpdateRawArgs = true
 	err = e.DoDDLJob(ctx, job)
 	return errors.Trace(err)
 }
@@ -4029,6 +4031,8 @@ func (e *executor) RenameIndex(ctx sessionctx.Context, ident ast.Ident, spec *as
 		SQLMode:        ctx.GetSessionVars().SQLMode,
 	}
 
+	// TODO(joechenrh): remove this later
+	job.UpdateRawArgs = true
 	err = e.DoDDLJob(ctx, job)
 	return errors.Trace(err)
 }
@@ -4597,6 +4601,9 @@ func (e *executor) CreatePrimaryKey(ctx sessionctx.Context, ti ast.Ident, indexN
 		return err
 	}
 	job.ReorgMeta = reorgMeta
+
+	// TODO(joechenrh): remove this later
+	job.UpdateRawArgs = true
 
 	err = e.DoDDLJob(ctx, job)
 	return errors.Trace(err)
@@ -5222,6 +5229,8 @@ func (e *executor) dropIndex(ctx sessionctx.Context, ti ast.Ident, indexName pmo
 		SQLMode:        ctx.GetSessionVars().SQLMode,
 	}
 
+	// TODO(joechenrh): remove this later
+	job.UpdateRawArgs = true
 	err = e.DoDDLJob(ctx, job)
 	return errors.Trace(err)
 }

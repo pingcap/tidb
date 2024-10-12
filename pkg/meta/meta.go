@@ -1454,7 +1454,7 @@ var (
 )
 
 func (m *Mutator) enQueueDDLJob(key []byte, job *model.Job) error {
-	b, err := job.Encode(true)
+	b, err := job.Encode()
 	if err == nil {
 		err = m.txn.RPush(key, b)
 	}
@@ -1527,8 +1527,8 @@ func (*Mutator) jobIDKey(id int64) []byte {
 	return b
 }
 
-func (m *Mutator) addHistoryDDLJob(key []byte, job *model.Job, updateRawArgs bool) error {
-	b, err := job.Encode(updateRawArgs)
+func (m *Mutator) addHistoryDDLJob(key []byte, job *model.Job) error {
+	b, err := job.Encode()
 	if err == nil {
 		err = m.txn.HSet(key, m.jobIDKey(job.ID), b)
 	}
@@ -1536,8 +1536,8 @@ func (m *Mutator) addHistoryDDLJob(key []byte, job *model.Job, updateRawArgs boo
 }
 
 // AddHistoryDDLJob adds DDL job to history.
-func (m *Mutator) AddHistoryDDLJob(job *model.Job, updateRawArgs bool) error {
-	return m.addHistoryDDLJob(mDDLJobHistoryKey, job, updateRawArgs)
+func (m *Mutator) AddHistoryDDLJob(job *model.Job) error {
+	return m.addHistoryDDLJob(mDDLJobHistoryKey, job)
 }
 
 func (m *Mutator) getHistoryDDLJob(key []byte, id int64) (*model.Job, error) {

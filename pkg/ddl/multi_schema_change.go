@@ -37,7 +37,7 @@ func onMultiSchemaChange(w *worker, jobCtx *jobContext, job *model.Job) (ver int
 					continue
 				}
 				proxyJob := sub.ToProxyJob(job, i)
-				ver, _, err = w.runOneJobStep(jobCtx, &proxyJob)
+				ver, err = w.runOneJobStep(jobCtx, &proxyJob)
 				err = handleRollbackException(err, proxyJob.Error)
 				if err != nil {
 					return ver, err
@@ -60,7 +60,7 @@ func onMultiSchemaChange(w *worker, jobCtx *jobContext, job *model.Job) (ver int
 				continue
 			}
 			proxyJob := sub.ToProxyJob(job, i)
-			ver, _, err = w.runOneJobStep(jobCtx, &proxyJob)
+			ver, err = w.runOneJobStep(jobCtx, &proxyJob)
 			sub.FromProxyJob(&proxyJob, ver)
 			handleRevertibleException(job, sub, proxyJob.Error)
 			return ver, err
@@ -86,7 +86,7 @@ func onMultiSchemaChange(w *worker, jobCtx *jobContext, job *model.Job) (ver int
 			if schemaVersionGenerated {
 				proxyJob.MultiSchemaInfo.SkipVersion = true
 			}
-			proxyJobVer, _, err := w.runOneJobStep(jobCtx, &proxyJob)
+			proxyJobVer, err := w.runOneJobStep(jobCtx, &proxyJob)
 			if !schemaVersionGenerated && proxyJobVer != 0 {
 				schemaVersionGenerated = true
 				ver = proxyJobVer
@@ -135,7 +135,7 @@ func onMultiSchemaChange(w *worker, jobCtx *jobContext, job *model.Job) (ver int
 			continue
 		}
 		proxyJob := sub.ToProxyJob(job, i)
-		ver, _, err = w.runOneJobStep(jobCtx, &proxyJob)
+		ver, err = w.runOneJobStep(jobCtx, &proxyJob)
 		sub.FromProxyJob(&proxyJob, ver)
 		return ver, err
 	}
@@ -185,15 +185,16 @@ func appendToSubJobs(m *model.MultiSchemaInfo, jobW *JobWrapper) error {
 		reorgTp = jobW.ReorgMeta.ReorgTp
 	}
 	m.SubJobs = append(m.SubJobs, &model.SubJob{
-		Type:        jobW.Type,
-		Args:        jobW.Args,
-		RawArgs:     jobW.RawArgs,
-		SchemaState: jobW.SchemaState,
-		SnapshotVer: jobW.SnapshotVer,
-		Revertible:  true,
-		CtxVars:     jobW.CtxVars,
-		ReorgTp:     reorgTp,
-		UseCloud:    false,
+		Type:          jobW.Type,
+		Args:          jobW.Args,
+		UpdateRawArgs: true,
+		RawArgs:       jobW.RawArgs,
+		SchemaState:   jobW.SchemaState,
+		SnapshotVer:   jobW.SnapshotVer,
+		Revertible:    true,
+		CtxVars:       jobW.CtxVars,
+		ReorgTp:       reorgTp,
+		UseCloud:      false,
 	})
 	return nil
 }

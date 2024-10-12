@@ -660,9 +660,8 @@ func updateDDLJob2Table(
 	ctx context.Context,
 	se *sess.Session,
 	job *model.Job,
-	updateRawArgs bool,
 ) error {
-	b, err := job.Encode(updateRawArgs)
+	b, err := job.Encode()
 	if err != nil {
 		return err
 	}

@@ -242,6 +242,9 @@ func (a *CreateTableArgs) decodeV1(job *Job) error {
 
 // GetCreateTableArgs gets the create-table args.
 func GetCreateTableArgs(job *Job) (*CreateTableArgs, error) {
+	// Returned arguments will be modified outside.
+	job.UpdateRawArgs = true
+
 	return getOrDecodeArgs[*CreateTableArgs](&CreateTableArgs{}, job)
 }
 
@@ -491,6 +494,7 @@ func GetFinishedTablePartitionArgs(job *Job) (*TablePartitionArgs, error) {
 // FillRollbackArgsForAddPartition fills the rollback args for add partition job.
 // see details in TablePartitionArgs.
 func FillRollbackArgsForAddPartition(job *Job, args *TablePartitionArgs) {
+	job.UpdateRawArgs = true
 	intest.Assert(job.Type == ActionAddTablePartition, "only for add partition job")
 	fake := &Job{
 		Version: job.Version,
@@ -805,6 +809,7 @@ func (a *TableColumnArgs) decodeV1(job *Job) error {
 // FillRollBackArgsForAddColumn fills the args for rollback add column ddl.
 func FillRollBackArgsForAddColumn(job *Job, args *TableColumnArgs) {
 	intest.Assert(job.Type == ActionAddColumn, "only for add column job")
+	job.UpdateRawArgs = true
 	fakeJob := &Job{
 		Version: job.Version,
 		Type:    ActionDropColumn,
@@ -987,6 +992,9 @@ func (a *CheckConstraintArgs) decodeV1(job *Job) error {
 
 // GetCheckConstraintArgs gets the AlterCheckConstraint args.
 func GetCheckConstraintArgs(job *Job) (*CheckConstraintArgs, error) {
+	// Returned arguments will be modified outside.
+	job.UpdateRawArgs = true
+
 	return getOrDecodeArgs[*CheckConstraintArgs](&CheckConstraintArgs{}, job)
 }
 
@@ -1006,6 +1014,9 @@ func (a *AddCheckConstraintArgs) decodeV1(job *Job) error {
 
 // GetAddCheckConstraintArgs gets the AddCheckConstraint args.
 func GetAddCheckConstraintArgs(job *Job) (*AddCheckConstraintArgs, error) {
+	// Returned arguments will be modified outside.
+	job.UpdateRawArgs = true
+
 	return getOrDecodeArgs[*AddCheckConstraintArgs](&AddCheckConstraintArgs{}, job)
 }
 
