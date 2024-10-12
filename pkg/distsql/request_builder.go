@@ -773,6 +773,8 @@ func indexRangesToKVWithoutSplit(sc *stmtctx.StatementContext, tids []int64, idx
 				return kv.NewPartitionedKeyRanges(nil), nil
 			}
 			if memTracker != nil {
+				// We use the Tracker.Consume function to check the memory usage of the current SQL.
+				// If the memory exceeds the quota, kill the SQL.
 				memTracker.Consume(1)
 			}
 		}
