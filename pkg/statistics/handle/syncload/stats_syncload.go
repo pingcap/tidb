@@ -94,7 +94,7 @@ func (s *statsSyncLoad) SendLoadRequests(sc *stmtctx.StatementContext, neededHis
 			}
 		}
 	})
-
+	logutil.BgLogger().Info("wtf start work")
 	if len(remainedItems) <= 0 {
 		return nil
 	}
