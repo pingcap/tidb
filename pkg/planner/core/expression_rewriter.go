@@ -328,6 +328,8 @@ func (er *expressionRewriter) buildSubquery(ctx context.Context, subq *ast.Subqu
 		er.b.outerSchemas = append(er.b.outerSchemas, outerSchema)
 		er.b.outerNames = append(er.b.outerNames, er.names)
 		er.b.outerBlockExpand = append(er.b.outerBlockExpand, er.b.currentBlockExpand)
+		// set it to nil, otherwise, inner qb will use outer expand meta to rewrite expressions.
+		er.b.currentBlockExpand = nil
 		defer func() {
 			er.b.outerSchemas = er.b.outerSchemas[0 : len(er.b.outerSchemas)-1]
 			er.b.outerNames = er.b.outerNames[0 : len(er.b.outerNames)-1]
