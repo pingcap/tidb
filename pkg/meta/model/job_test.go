@@ -238,6 +238,7 @@ func TestJobCodec(t *testing.T) {
 	}
 
 	require.Equal(t, false, job.IsCancelled())
+	job.UpdateRawArgs = false
 	b, err := job.Encode()
 	require.NoError(t, err)
 	newJob := &Job{}
@@ -255,6 +256,7 @@ func TestJobCodec(t *testing.T) {
 	require.Equal(t, newJob.ReorgMeta.Location.Offset, tzOffset)
 
 	job.BinlogInfo.Clean()
+	job.UpdateRawArgs = true
 	b1, err := job.Encode()
 	require.NoError(t, err)
 	newJob = &Job{}
@@ -468,13 +470,13 @@ func TestJobEncodeV2(t *testing.T) {
 		Version: JobVersion2,
 		Type:    ActionTruncateTable,
 	}
-	j.FillArgs(&TruncateTableArgs{
-		FKCheck: true,
-	})
 	_, err := j.Encode()
 	require.NoError(t, err)
 	require.Nil(t, j.RawArgs)
-	j.UpdateRawArgs = true
+
+	j.FillArgs(&TruncateTableArgs{
+		FKCheck: true,
+	})
 	_, err = j.Encode()
 	require.NoError(t, err)
 	require.NotNil(t, j.RawArgs)

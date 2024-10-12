@@ -965,7 +965,7 @@ func TestAddColumnArgs(t *testing.T) {
 
 		FillRollBackArgsForAddColumn(j2, dropArgs)
 		j2.State = JobStateRollingback
-		jobBytes, err := j2.Encode(true)
+		jobBytes, err := j2.Encode()
 		require.NoError(t, err)
 		j3 := &Job{}
 		require.NoError(t, j3.Decode(jobBytes))
