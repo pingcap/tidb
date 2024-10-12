@@ -114,7 +114,11 @@ go_test(
     shard_count = 30,
     deps = [
         "//br/pkg/errors",
+<<<<<<< HEAD:br/pkg/lightning/common/BUILD.bazel
         "//br/pkg/lightning/log",
+=======
+        "//pkg/autoid_service",
+>>>>>>> ea550644144 (lightning/importinto: set correct step to create single point allocator (#56602)):pkg/lightning/common/BUILD.bazel
         "//pkg/ddl",
         "//pkg/errno",
         "//pkg/kv",
