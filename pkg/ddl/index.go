@@ -632,7 +632,10 @@ func moveAndUpdateHiddenColumnsToPublic(tblInfo *model.TableInfo, idxInfo *model
 	}
 }
 
-func checkAndBuildIndexInfo(job *model.Job, tblInfo *model.TableInfo, isVector bool, isPK bool, args *model.IndexArg) (*model.IndexInfo, error) {
+func checkAndBuildIndexInfo(
+	job *model.Job, tblInfo *model.TableInfo,
+	isVector bool, isPK bool, args *model.IndexArg,
+) (*model.IndexInfo, error) {
 	var err error
 	indexInfo := tblInfo.FindIndexByName(args.IndexName.L)
 	if indexInfo != nil {

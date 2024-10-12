@@ -85,18 +85,6 @@ func getOrDecodeArgsV2[T JobArgs](job *Job) (T, error) {
 	return v, nil
 }
 
-// GetArgsFromSubJob get arguments from SubJob
-func GetArgsFromSubJob[T JobArgs](
-	subJob *SubJob,
-	version JobVersion,
-	f func(*Job) (T, error)) (T, error) {
-	return f(&Job{
-		Version: version,
-		Type:    subJob.Type,
-		Args:    subJob.Args,
-	})
-}
-
 func getOrDecodeArgs[T JobArgs](args T, job *Job) (T, error) {
 	if job.Version == JobVersion1 {
 		return getOrDecodeArgsV1[T](args, job)
@@ -1309,7 +1297,8 @@ func GetFlashbackClusterArgs(job *Job) (*FlashbackClusterArgs, error) {
 	return getOrDecodeArgs[*FlashbackClusterArgs](&FlashbackClusterArgs{}, job)
 }
 
-// IndexOp is used to identify arguemnt type
+// IndexOp is used to identify arguemnt type, which is only used for v1 index args.
+// TODO(joechenrh): remove this type after totally switched to v2
 type IndexOp byte
 
 // List op types.
@@ -1326,7 +1315,7 @@ const (
 //	Adding NonPK: Unique, IndexName, IndexPartSpecifications, IndexOption, SQLMode, Warning(not stored, always nil), Global
 //	Adding PK: Unique, IndexName, IndexPartSpecifications, IndexOptions, HiddelCols, Global
 //	Adding vector index: IndexName, IndexPartSpecifications, IndexOption, FuncExpr
-//	Drop index: IndexName, IfExist
+//	Drop index: IndexName, IfExist, IndexID
 //	Rollback add index: IndexName, IfExist, IsVector
 //	Rename index: IndexName
 type IndexArg struct {
@@ -1352,7 +1341,8 @@ type IndexArg struct {
 	IsGlobal bool  `json:"is_global,omitempty"`
 }
 
-// ModifyIndexArgs is the argument for add/drop index jobs.
+// ModifyIndexArgs is the argument for add/drop/rename index jobs,
+// which includes PK and vector index.
 type ModifyIndexArgs struct {
 	IndexArgs []*IndexArg `json:"index_args,omitempty"`
 
@@ -1361,7 +1351,7 @@ type ModifyIndexArgs struct {
 
 	// This is only used for getFinishedArgsV1 to distinguish different type of job in v1,
 	// since they need different arguments layout.
-	// TODO(joechenrh): remove this flag after totally switching to v2
+	// TODO(joechenrh): remove this flag after totally switched to v2
 	OpType IndexOp `json:"-"`
 }
 
