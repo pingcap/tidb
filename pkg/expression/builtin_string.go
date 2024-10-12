@@ -1604,24 +1604,32 @@ func (c *hexFunctionClass) getFunction(ctx BuildContext, args []Expression) (bui
 	}
 
 	argTp := args[0].GetType(ctx.GetEvalCtx()).EvalType()
+	argLen := args[0].GetType(ctx.GetEvalCtx()).GetFlen()
 	switch argTp {
 	case types.ETString, types.ETDatetime, types.ETTimestamp, types.ETDuration, types.ETJson:
 		bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETString, types.ETString)
+		bf.tp.SetFlen(types.UnspecifiedLength)
 		if err != nil {
 			return nil, err
 		}
 		argFieldTp := args[0].GetType(ctx.GetEvalCtx())
 		// Use UTF8MB4 as default.
+		if argLen != types.UnspecifiedLength {
+			bf.tp.SetFlen(argLen * 4 * 2)
+		}
 		bf.tp.SetFlen(argFieldTp.GetFlen() * 4 * 2)
 		sig := &builtinHexStrArgSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_HexStrArg)
 		return sig, nil
 	case types.ETInt, types.ETReal, types.ETDecimal:
 		bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETString, types.ETInt)
+		bf.tp.SetFlen(types.UnspecifiedLength)
 		if err != nil {
 			return nil, err
 		}
-		bf.tp.SetFlen(args[0].GetType(ctx.GetEvalCtx()).GetFlen() * 2)
+		if argLen != types.UnspecifiedLength {
+			bf.tp.SetFlen(argLen * 2)
+		}
 		charset, collate := ctx.GetCharsetInfo()
 		bf.tp.SetCharset(charset)
 		bf.tp.SetCollate(collate)
