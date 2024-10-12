@@ -21,27 +21,27 @@ import (
 	"sync/atomic"
 
 	"github.com/docker/go-units"
-	"github.com/ngaut/pools"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
-	"github.com/tikv/client-go/v2/util"
+	clitutil "github.com/tikv/client-go/v2/util"
 )
 
 const (
 	defaultSubtaskKeepDays = 14
 
-	basicTaskColumns = `t.id, t.task_key, t.type, t.state, t.step, t.priority, t.concurrency, t.create_time`
+	basicTaskColumns = `t.id, t.task_key, t.type, t.state, t.step, t.priority, t.concurrency, t.create_time, t.target_scope`
 	// TaskColumns is the columns for task.
 	// TODO: dispatcher_id will update to scheduler_id later
 	TaskColumns = basicTaskColumns + `, t.start_time, t.state_update_time, t.meta, t.dispatcher_id, t.error`
 	// InsertTaskColumns is the columns used in insert task.
-	InsertTaskColumns   = `task_key, type, state, priority, concurrency, step, meta, create_time`
+	InsertTaskColumns   = `task_key, type, state, priority, concurrency, step, meta, create_time, target_scope`
 	basicSubtaskColumns = `id, step, task_key, type, exec_id, state, concurrency, create_time, ordinal, start_time`
 	// SubtaskColumns is the columns for subtask.
 	SubtaskColumns = basicSubtaskColumns + `, state_update_time, meta, summary`
@@ -99,12 +99,7 @@ type TaskHandle interface {
 
 // TaskManager is the manager of task and subtask.
 type TaskManager struct {
-	sePool sessionPool
-}
-
-type sessionPool interface {
-	Get() (pools.Resource, error)
-	Put(resource pools.Resource)
+	sePool util.SessionPool
 }
 
 var _ SessionExecutor = &TaskManager{}
@@ -117,7 +112,7 @@ var (
 )
 
 // NewTaskManager creates a new task manager.
-func NewTaskManager(sePool sessionPool) *TaskManager {
+func NewTaskManager(sePool util.SessionPool) *TaskManager {
 	return &TaskManager{
 		sePool: sePool,
 	}
@@ -149,7 +144,7 @@ func (mgr *TaskManager) WithNewSession(fn func(se sessionctx.Context) error) err
 
 // WithNewTxn executes the fn in a new transaction.
 func (mgr *TaskManager) WithNewTxn(ctx context.Context, fn func(se sessionctx.Context) error) error {
-	ctx = util.WithInternalSourceType(ctx, kv.InternalDistTask)
+	ctx = clitutil.WithInternalSourceType(ctx, kv.InternalDistTask)
 	return mgr.WithNewSession(func(se sessionctx.Context) (err error) {
 		_, err = sqlexec.ExecSQL(ctx, se.GetSQLExecutor(), "begin")
 		if err != nil {
@@ -192,10 +187,10 @@ func (mgr *TaskManager) ExecuteSQLWithNewSession(ctx context.Context, sql string
 }
 
 // CreateTask adds a new task to task table.
-func (mgr *TaskManager) CreateTask(ctx context.Context, key string, tp proto.TaskType, concurrency int, meta []byte) (taskID int64, err error) {
+func (mgr *TaskManager) CreateTask(ctx context.Context, key string, tp proto.TaskType, concurrency int, targetScope string, meta []byte) (taskID int64, err error) {
 	err = mgr.WithNewSession(func(se sessionctx.Context) error {
 		var err2 error
-		taskID, err2 = mgr.CreateTaskWithSession(ctx, se, key, tp, concurrency, meta)
+		taskID, err2 = mgr.CreateTaskWithSession(ctx, se, key, tp, concurrency, targetScope, meta)
 		return err2
 	})
 	return
@@ -208,9 +203,10 @@ func (mgr *TaskManager) CreateTaskWithSession(
 	key string,
 	tp proto.TaskType,
 	concurrency int,
+	targetScope string,
 	meta []byte,
 ) (taskID int64, err error) {
-	cpuCount, err := mgr.getCPUCountOfManagedNode(ctx, se)
+	cpuCount, err := mgr.getCPUCountOfNode(ctx, se)
 	if err != nil {
 		return 0, err
 	}
@@ -219,8 +215,8 @@ func (mgr *TaskManager) CreateTaskWithSession(
 	}
 	_, err = sqlexec.ExecSQL(ctx, se.GetSQLExecutor(), `
 			insert into mysql.tidb_global_task(`+InsertTaskColumns+`)
-			values (%?, %?, %?, %?, %?, %?, %?, CURRENT_TIMESTAMP())`,
-		key, tp, proto.TaskStatePending, proto.NormalPriority, concurrency, proto.StepInit, meta)
+			values (%?, %?, %?, %?, %?, %?, %?, CURRENT_TIMESTAMP(), %?)`,
+		key, tp, proto.TaskStatePending, proto.NormalPriority, concurrency, proto.StepInit, meta, targetScope)
 	if err != nil {
 		return 0, err
 	}
@@ -281,7 +277,7 @@ func (mgr *TaskManager) GetTaskExecInfoByExecID(ctx context.Context, execID stri
 	for _, r := range rs {
 		res = append(res, &TaskExecInfo{
 			TaskBase:           row2TaskBasic(r),
-			SubtaskConcurrency: int(r.GetInt64(8)),
+			SubtaskConcurrency: int(r.GetInt64(9)),
 		})
 	}
 	return res, nil
@@ -801,9 +797,9 @@ func (mgr *TaskManager) GetAllSubtasks(ctx context.Context) ([]*proto.SubtaskBas
 // a stuck issue if the new version TiDB has less than 16 CPU count.
 // We don't adjust the concurrency in subtask table because this field does not exist in v7.5.0.
 // For details, see https://github.com/pingcap/tidb/issues/50894.
-// For the following versions, there is a check when submiting a new task. This function should be a no-op.
+// For the following versions, there is a check when submitting a new task. This function should be a no-op.
 func (mgr *TaskManager) AdjustTaskOverflowConcurrency(ctx context.Context, se sessionctx.Context) error {
-	cpuCount, err := mgr.getCPUCountOfManagedNode(ctx, se)
+	cpuCount, err := mgr.getCPUCountOfNode(ctx, se)
 	if err != nil {
 		return err
 	}

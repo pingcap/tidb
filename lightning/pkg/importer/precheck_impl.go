@@ -39,7 +39,7 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/config"
 	"github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/lightning/mydump"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/types"
@@ -274,7 +274,6 @@ func (ci *emptyRegionCheckItem) Check(ctx context.Context) (*precheck.CheckResul
 		}
 	}
 	for _, store := range storeInfo.Stores {
-		store := store
 		stores[store.Store.ID] = &store
 	}
 	tableCount := 0
@@ -356,7 +355,6 @@ func (ci *regionDistributionCheckItem) Check(ctx context.Context) (*precheck.Che
 	}
 	stores := make([]*pdhttp.StoreInfo, 0, len(storesInfo.Stores))
 	for _, store := range storesInfo.Stores {
-		store := store
 		if metapb.StoreState(metapb.StoreState_value[store.Store.StateName]) != metapb.StoreState_Up {
 			continue
 		}
@@ -837,7 +835,7 @@ func (ci *CDCPITRCheckItem) Check(ctx context.Context) (*precheck.CheckResult, e
 		errorMsg = append(errorMsg, fmt.Sprintf("found PiTR log streaming task(s): %v,", names))
 	}
 
-	nameSet, err := cdcutil.GetCDCChangefeedNameSet(ctx, ci.etcdCli)
+	nameSet, err := cdcutil.GetRunningChangefeeds(ctx, ci.etcdCli)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -1283,9 +1281,16 @@ outer:
 	theResult.Severity = precheck.Warn
 	if hasUniqueField && len(rows) > 1 {
 		theResult.Severity = precheck.Critical
-	} else if !checkFieldCompatibility(tableInfo.Core, ignoreColsSet, rows[0], log.FromContext(ctx)) {
-		// if there are only 1 csv file or there is not unique key, try to check if all columns are compatible with string value
-		theResult.Severity = precheck.Critical
+	} else {
+		ok, err := checkFieldCompatibility(tableInfo.Core, ignoreColsSet, rows[0], log.FromContext(ctx))
+		if err != nil {
+			return nil, err
+		}
+
+		if !ok {
+			// if there are only 1 csv file or there is not unique key, try to check if all columns are compatible with string value
+			theResult.Severity = precheck.Critical
+		}
 	}
 	return theResult, nil
 }
@@ -1295,10 +1300,14 @@ func checkFieldCompatibility(
 	ignoreCols map[string]struct{},
 	values []types.Datum,
 	logger log.Logger,
-) bool {
-	se := kv.NewSessionCtx(&encode.SessionOptions{
+) (bool, error) {
+	se, err := kv.NewSession(&encode.SessionOptions{
 		SQLMode: mysql.ModeStrictTransTables,
 	}, logger)
+	if err != nil {
+		return false, errors.Trace(err)
+	}
+
 	for i, col := range tbl.Columns {
 		// do not check ignored columns
 		if _, ok := ignoreCols[col.Name.L]; ok {
@@ -1307,15 +1316,14 @@ func checkFieldCompatibility(
 		if i >= len(values) {
 			break
 		}
-		_, err := table.CastValue(se, values[i], col, true, false)
+		_, err := table.CastColumnValue(se.GetExprCtx(), values[i], col, true, false)
 		if err != nil {
 			logger.Error("field value is not consistent with column type", zap.String("value", values[i].GetString()),
 				zap.Any("column_info", col), zap.Error(err))
-			return false
+			return false, nil
 		}
 	}
-
-	return true
+	return true, nil
 }
 
 type tableEmptyCheckItem struct {

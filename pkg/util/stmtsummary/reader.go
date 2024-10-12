@@ -19,8 +19,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/auth"
-	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -295,6 +295,8 @@ const (
 	AvgPdTimeStr                      = "AVG_PD_TIME"
 	AvgBackoffTotalTimeStr            = "AVG_BACKOFF_TOTAL_TIME"
 	AvgWriteSQLRespTimeStr            = "AVG_WRITE_SQL_RESP_TIME"
+	AvgTidbCPUTimeStr                 = "AVG_TIDB_CPU_TIME"
+	AvgTikvCPUTimeStr                 = "AVG_TIKV_CPU_TIME"
 	MaxResultRowsStr                  = "MAX_RESULT_ROWS"
 	MinResultRowsStr                  = "MIN_RESULT_ROWS"
 	AvgResultRowsStr                  = "AVG_RESULT_ROWS"
@@ -304,6 +306,8 @@ const (
 	LastSeenStr                       = "LAST_SEEN"
 	PlanInCacheStr                    = "PLAN_IN_CACHE"
 	PlanCacheHitsStr                  = "PLAN_CACHE_HITS"
+	PlanCacheUnqualifiedStr           = "PLAN_CACHE_UNQUALIFIED"
+	PlanCacheUnqualifiedLastReasonStr = "PLAN_CACHE_UNQUALIFIED_LAST_REASON"
 	PlanInBindingStr                  = "PLAN_IN_BINDING"
 	QuerySampleTextStr                = "QUERY_SAMPLE_TEXT"
 	PrevSampleTextStr                 = "PREV_SAMPLE_TEXT"
@@ -572,6 +576,12 @@ var columnValueFactoryMap = map[string]columnValueFactory{
 	AvgWriteSQLRespTimeStr: func(_ *stmtSummaryReader, ssElement *stmtSummaryByDigestElement, _ *stmtSummaryByDigest) any {
 		return avgInt(int64(ssElement.sumWriteSQLRespTotal), ssElement.commitCount)
 	},
+	AvgTidbCPUTimeStr: func(_ *stmtSummaryReader, ssElement *stmtSummaryByDigestElement, _ *stmtSummaryByDigest) any {
+		return avgInt(int64(ssElement.sumTidbCPU), ssElement.execCount)
+	},
+	AvgTikvCPUTimeStr: func(_ *stmtSummaryReader, ssElement *stmtSummaryByDigestElement, _ *stmtSummaryByDigest) any {
+		return avgInt(int64(ssElement.sumTikvCPU), ssElement.execCount)
+	},
 	MaxResultRowsStr: func(_ *stmtSummaryReader, ssElement *stmtSummaryByDigestElement, _ *stmtSummaryByDigest) any {
 		return ssElement.maxResultRows
 	},
@@ -659,5 +669,11 @@ var columnValueFactoryMap = map[string]columnValueFactory{
 	},
 	ResourceGroupName: func(_ *stmtSummaryReader, ssElement *stmtSummaryByDigestElement, _ *stmtSummaryByDigest) any {
 		return ssElement.resourceGroupName
+	},
+	PlanCacheUnqualifiedStr: func(_ *stmtSummaryReader, ssElement *stmtSummaryByDigestElement, _ *stmtSummaryByDigest) any {
+		return ssElement.planCacheUnqualifiedCount
+	},
+	PlanCacheUnqualifiedLastReasonStr: func(_ *stmtSummaryReader, ssElement *stmtSummaryByDigestElement, _ *stmtSummaryByDigest) any {
+		return ssElement.lastPlanCacheUnqualified
 	},
 }

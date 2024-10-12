@@ -16,32 +16,31 @@ package sessionctx
 
 import (
 	"context"
+	"sync"
 	"time"
 
 	"github.com/pingcap/errors"
 	distsqlctx "github.com/pingcap/tidb/pkg/distsql/context"
-	exprctx "github.com/pingcap/tidb/pkg/expression/context"
+	"github.com/pingcap/tidb/pkg/expression/exprctx"
 	"github.com/pingcap/tidb/pkg/extension"
 	infoschema "github.com/pingcap/tidb/pkg/infoschema/context"
 	"github.com/pingcap/tidb/pkg/kv"
 	tablelock "github.com/pingcap/tidb/pkg/lock/context"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/metrics"
-	"github.com/pingcap/tidb/pkg/parser/model"
-	planctx "github.com/pingcap/tidb/pkg/planner/context"
+	"github.com/pingcap/tidb/pkg/planner/planctx"
+	"github.com/pingcap/tidb/pkg/session/cursor"
 	"github.com/pingcap/tidb/pkg/sessionctx/sessionstates"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/statistics/handle/usage/indexusage"
-	tbctx "github.com/pingcap/tidb/pkg/table/context"
+	"github.com/pingcap/tidb/pkg/table/tblctx"
 	"github.com/pingcap/tidb/pkg/util"
 	contextutil "github.com/pingcap/tidb/pkg/util/context"
-	"github.com/pingcap/tidb/pkg/util/kvcache"
-	utilpc "github.com/pingcap/tidb/pkg/util/plancache"
 	rangerctx "github.com/pingcap/tidb/pkg/util/ranger/context"
 	"github.com/pingcap/tidb/pkg/util/sli"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/pingcap/tidb/pkg/util/topsql/stmtstats"
-	"github.com/pingcap/tipb/go-binlog"
 	"github.com/tikv/client-go/v2/oracle"
 )
 
@@ -53,15 +52,34 @@ type SessionStatesHandler interface {
 	DecodeSessionStates(context.Context, Context, *sessionstates.SessionStates) error
 }
 
-// PlanCache is an interface for prepare and non-prepared plan cache
-type PlanCache interface {
-	Get(key kvcache.Key, opts *utilpc.PlanCacheMatchOpts) (value kvcache.Value, ok bool)
-	Put(key kvcache.Key, value kvcache.Value, opts *utilpc.PlanCacheMatchOpts)
-	Delete(key kvcache.Key)
+// SessionPlanCache is an interface for prepare and non-prepared plan cache
+type SessionPlanCache interface {
+	Get(key string, paramTypes any) (value any, ok bool)
+	Put(key string, value, paramTypes any)
+	Delete(key string)
 	DeleteAll()
 	Size() int
 	SetCapacity(capacity uint) error
 	Close()
+}
+
+// InstancePlanCache represents the instance/node level plan cache.
+// Value and Opts should always be *PlanCacheValue and *PlanCacheMatchOpts, use any to avoid cycle-import.
+type InstancePlanCache interface {
+	// Get gets the cached value from the cache according to key and opts.
+	Get(key string, paramTypes any) (value any, ok bool)
+	// Put puts the key and value into the cache.
+	Put(key string, value, paramTypes any) (succ bool)
+	// Evict evicts some cached values.
+	Evict() (detailInfo string, numEvicted int)
+	// Size returns the number of cached values.
+	Size() int64
+	// MemUsage returns the total memory usage of this plan cache.
+	MemUsage() int64
+	// GetLimits returns the soft and hard memory limits of this plan cache.
+	GetLimits() (softLimit, hardLimit int64)
+	// SetLimits sets the soft and hard memory limits of this plan cache.
+	SetLimits(softLimit, hardLimit int64)
 }
 
 // Context is an interface for transaction and executive args environment.
@@ -72,6 +90,7 @@ type Context interface {
 	// RollbackTxn rolls back the current transaction.
 	RollbackTxn(ctx context.Context)
 	// CommitTxn commits the current transaction.
+	// buffered KV changes will be discarded, call StmtCommit if you want to commit them.
 	CommitTxn(ctx context.Context) error
 	// Txn returns the current transaction which is created before executing a statement.
 	// The returned kv.Transaction is not nil, but it maybe pending or invalid.
@@ -107,7 +126,7 @@ type Context interface {
 	GetExprCtx() exprctx.ExprContext
 
 	// GetTableCtx returns the table.MutateContext
-	GetTableCtx() tbctx.MutateContext
+	GetTableCtx() tblctx.MutateContext
 
 	// GetPlanCtx gets the plan context of the current session.
 	GetPlanCtx() planctx.PlanContext
@@ -132,7 +151,7 @@ type Context interface {
 	GetStore() kv.Storage
 
 	// GetSessionPlanCache returns the session-level cache of the physical plan.
-	GetSessionPlanCache() PlanCache
+	GetSessionPlanCache() SessionPlanCache
 
 	// UpdateColStatsUsage updates the column stats usage.
 	UpdateColStatsUsage(predicateColumns []model.TableItemID)
@@ -141,12 +160,18 @@ type Context interface {
 	HasDirtyContent(tid int64) bool
 
 	// StmtCommit flush all changes by the statement to the underlying transaction.
+	// it must be called before CommitTxn, else all changes since last StmtCommit
+	// will be lost. For SQL statement, StmtCommit or StmtRollback is called automatically.
+	// the "Stmt" not only means SQL statement, but also any KV changes, such as
+	// meta KV.
 	StmtCommit(ctx context.Context)
 	// StmtRollback provides statement level rollback. The parameter `forPessimisticRetry` should be true iff it's used
 	// for auto-retrying execution of DMLs in pessimistic transactions.
+	// if error happens when you are handling batch of KV changes since last StmtCommit
+	// or StmtRollback, and you don't want them to be committed, you must call StmtRollback
+	// before you start another batch, otherwise, the previous changes might be committed
+	// unexpectedly.
 	StmtRollback(ctx context.Context, isForPessimisticRetry bool)
-	// StmtGetMutation gets the binlog mutation for current statement.
-	StmtGetMutation(int64) *binlog.TableMutation
 	// IsDDLOwner checks whether this session is DDL owner.
 	IsDDLOwner() bool
 	// PrepareTSFuture uses to prepare timestamp by future.
@@ -181,6 +206,10 @@ type Context interface {
 	ReportUsageStats()
 	// NewStmtIndexUsageCollector creates a new index usage collector for statement
 	NewStmtIndexUsageCollector() *indexusage.StmtIndexUsageCollector
+	// GetCursorTracker returns the cursor tracker of the session
+	GetCursorTracker() cursor.Tracker
+	// GetCommitWaitGroup returns the wait group for async commit and secondary lock cleanup background goroutines
+	GetCommitWaitGroup() *sync.WaitGroup
 }
 
 // TxnFuture is an interface where implementations have a kv.Transaction field and after

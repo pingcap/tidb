@@ -18,26 +18,30 @@ package mock
 import (
 	"context"
 	"fmt"
+	"sync"
 	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	distsqlctx "github.com/pingcap/tidb/pkg/distsql/context"
-	exprctx "github.com/pingcap/tidb/pkg/expression/context"
-	exprctximpl "github.com/pingcap/tidb/pkg/expression/contextimpl"
+	"github.com/pingcap/tidb/pkg/expression/exprctx"
+	"github.com/pingcap/tidb/pkg/expression/sessionexpr"
 	"github.com/pingcap/tidb/pkg/extension"
 	infoschema "github.com/pingcap/tidb/pkg/infoschema/context"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/terror"
-	planctx "github.com/pingcap/tidb/pkg/planner/context"
+	"github.com/pingcap/tidb/pkg/planner/core/resolve"
+	"github.com/pingcap/tidb/pkg/planner/planctx"
+	"github.com/pingcap/tidb/pkg/session/cursor"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/sessionstates"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/statistics/handle/usage/indexusage"
-	tbctx "github.com/pingcap/tidb/pkg/table/context"
-	tbctximpl "github.com/pingcap/tidb/pkg/table/contextimpl"
+	"github.com/pingcap/tidb/pkg/table/tblctx"
+	"github.com/pingcap/tidb/pkg/table/tblsession"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/disk"
@@ -46,7 +50,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/sli"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/pingcap/tidb/pkg/util/topsql/stmtstats"
-	"github.com/pingcap/tipb/go-binlog"
 	"github.com/tikv/client-go/v2/oracle"
 	"github.com/tikv/client-go/v2/tikv"
 )
@@ -60,7 +63,7 @@ var (
 // Context represents mocked sessionctx.Context.
 type Context struct {
 	planctx.EmptyPlanContextExtended
-	*exprctximpl.ExprCtxExtendedImpl
+	*sessionexpr.ExprContext
 	txn           wrapTxn    // mock global variable
 	Store         kv.Storage // mock global variable
 	ctx           context.Context
@@ -68,9 +71,9 @@ type Context struct {
 	is            infoschema.MetaOnlyInfoSchema
 	values        map[fmt.Stringer]any
 	sessionVars   *variable.SessionVars
-	tblctx        *tbctximpl.TableContextImpl
+	tblctx        *tblsession.MutateContext
 	cancel        context.CancelFunc
-	pcache        sessionctx.PlanCache
+	pcache        sessionctx.SessionPlanCache
 	level         kvrpcpb.DiskFullOpt
 	inSandBoxMode bool
 	isDDLOwner    bool
@@ -159,12 +162,12 @@ func (*Context) ParseWithParams(_ context.Context, _ string, _ ...any) (ast.Stmt
 }
 
 // ExecRestrictedStmt implements sqlexec.RestrictedSQLExecutor ExecRestrictedStmt interface.
-func (*Context) ExecRestrictedStmt(_ context.Context, _ ast.StmtNode, _ ...sqlexec.OptionFuncAlias) ([]chunk.Row, []*ast.ResultField, error) {
+func (*Context) ExecRestrictedStmt(_ context.Context, _ ast.StmtNode, _ ...sqlexec.OptionFuncAlias) ([]chunk.Row, []*resolve.ResultField, error) {
 	return nil, nil, errors.Errorf("Not Supported")
 }
 
 // ExecRestrictedSQL implements sqlexec.RestrictedSQLExecutor ExecRestrictedSQL interface.
-func (*Context) ExecRestrictedSQL(_ context.Context, _ []sqlexec.OptionFuncAlias, _ string, _ ...any) ([]chunk.Row, []*ast.ResultField, error) {
+func (*Context) ExecRestrictedSQL(_ context.Context, _ []sqlexec.OptionFuncAlias, _ string, _ ...any) ([]chunk.Row, []*resolve.ResultField, error) {
 	return nil, nil, errors.Errorf("Not Supported")
 }
 
@@ -229,13 +232,18 @@ func (c *Context) GetPlanCtx() planctx.PlanContext {
 	return c
 }
 
+// GetNullRejectCheckExprCtx gets the expression context with null rejected check.
+func (c *Context) GetNullRejectCheckExprCtx() exprctx.ExprContext {
+	return exprctx.WithNullRejectCheck(c)
+}
+
 // GetExprCtx returns the expression context of the session.
 func (c *Context) GetExprCtx() exprctx.ExprContext {
 	return c
 }
 
 // GetTableCtx returns the table.MutateContext
-func (c *Context) GetTableCtx() tbctx.MutateContext {
+func (c *Context) GetTableCtx() tblctx.MutateContext {
 	return c.tblctx
 }
 
@@ -245,7 +253,7 @@ func (c *Context) GetDistSQLCtx() *distsqlctx.DistSQLContext {
 	sc := vars.StmtCtx
 
 	return &distsqlctx.DistSQLContext{
-		AppendWarning:                        sc.AppendWarning,
+		WarnHandler:                          sc.WarnHandler,
 		InRestrictedSQL:                      sc.InRestrictedSQL,
 		Client:                               c.GetClient(),
 		EnabledRateLimitAction:               vars.EnabledRateLimitAction,
@@ -257,6 +265,7 @@ func (c *Context) GetDistSQLCtx() *distsqlctx.DistSQLContext {
 		Location:                             sc.TimeZone(),
 		RuntimeStatsColl:                     sc.RuntimeStatsColl,
 		SQLKiller:                            &vars.SQLKiller,
+		CPUUsage:                             &vars.SQLCPUUsages,
 		ErrCtx:                               sc.ErrCtx(),
 		TiFlashReplicaRead:                   vars.TiFlashReplicaRead,
 		TiFlashMaxThreads:                    vars.TiFlashMaxThreads,
@@ -265,6 +274,7 @@ func (c *Context) GetDistSQLCtx() *distsqlctx.DistSQLContext {
 		TiFlashMaxBytesBeforeExternalSort:    vars.TiFlashMaxBytesBeforeExternalSort,
 		TiFlashMaxQueryMemoryPerNode:         vars.TiFlashMaxQueryMemoryPerNode,
 		TiFlashQuerySpillRatio:               vars.TiFlashQuerySpillRatio,
+		ResourceGroupName:                    sc.ResourceGroupName,
 		ExecDetails:                          &sc.SyncExecDetails,
 	}
 }
@@ -281,8 +291,8 @@ func (c *Context) GetRangerCtx() *rangerctx.RangerContext {
 		OptPrefixIndexSingleScan: c.GetSessionVars().OptPrefixIndexSingleScan,
 		OptimizerFixControl:      c.GetSessionVars().OptimizerFixControl,
 
-		// TODO: avoid using the whole `StmtCtx` here.
-		RangeFallbackHandler: c.GetSessionVars().StmtCtx,
+		PlanCacheTracker:     &c.GetSessionVars().StmtCtx.PlanCacheTracker,
+		RangeFallbackHandler: &c.GetSessionVars().StmtCtx.RangeFallbackHandler,
 	}
 }
 
@@ -298,10 +308,10 @@ func (c *Context) GetBuildPBCtx() *planctx.BuildPBContext {
 		// the following fields are used to build `expression.PushDownContext`.
 		// TODO: it'd be better to embed `expression.PushDownContext` in `BuildPBContext`. But `expression` already
 		// depends on this package, so we need to move `expression.PushDownContext` to a standalone package first.
-		GroupConcatMaxLen:  c.GetSessionVars().GroupConcatMaxLen,
-		InExplainStmt:      c.GetSessionVars().StmtCtx.InExplainStmt,
-		AppendWarning:      c.GetSessionVars().StmtCtx.AppendWarning,
-		AppendExtraWarning: c.GetSessionVars().StmtCtx.AppendExtraWarning,
+		GroupConcatMaxLen: c.GetSessionVars().GroupConcatMaxLen,
+		InExplainStmt:     c.GetSessionVars().StmtCtx.InExplainStmt,
+		WarnHandler:       c.GetSessionVars().StmtCtx.WarnHandler,
+		ExtraWarnghandler: c.GetSessionVars().StmtCtx.ExtraWarnHandler,
 	}
 }
 
@@ -379,7 +389,7 @@ func (*Context) SetGlobalSysVar(_ sessionctx.Context, name string, value string)
 }
 
 // GetSessionPlanCache implements the sessionctx.Context interface.
-func (c *Context) GetSessionPlanCache() sessionctx.PlanCache {
+func (c *Context) GetSessionPlanCache() sessionctx.SessionPlanCache {
 	return c.pcache
 }
 
@@ -473,11 +483,6 @@ func (*Context) StmtCommit(context.Context) {}
 // StmtRollback implements the sessionctx.Context interface.
 func (*Context) StmtRollback(context.Context, bool) {}
 
-// StmtGetMutation implements the sessionctx.Context interface.
-func (*Context) StmtGetMutation(_ int64) *binlog.TableMutation {
-	return nil
-}
-
 // AddTableLock implements the sessionctx.Context interface.
 func (*Context) AddTableLock(_ []model.TableLockTpInfo) {
 }
@@ -491,8 +496,8 @@ func (*Context) ReleaseTableLockByTableIDs(_ []int64) {
 }
 
 // CheckTableLocked implements the sessionctx.Context interface.
-func (*Context) CheckTableLocked(_ int64) (bool, model.TableLockType) {
-	return false, model.TableLockNone
+func (*Context) CheckTableLocked(_ int64) (bool, pmodel.TableLockType) {
+	return false, pmodel.TableLockNone
 }
 
 // GetAllTableLocks implements the sessionctx.Context interface.
@@ -602,6 +607,16 @@ func (*Context) NewStmtIndexUsageCollector() *indexusage.StmtIndexUsageCollector
 	return nil
 }
 
+// GetCursorTracker implements the sessionctx.Context interface
+func (*Context) GetCursorTracker() cursor.Tracker {
+	return nil
+}
+
+// GetCommitWaitGroup implements the sessionctx.Context interface
+func (*Context) GetCommitWaitGroup() *sync.WaitGroup {
+	return nil
+}
+
 // NewContext creates a new mocked sessionctx.Context.
 func NewContext() *Context {
 	ctx, cancel := context.WithCancel(context.Background())
@@ -612,8 +627,8 @@ func NewContext() *Context {
 	}
 	vars := variable.NewSessionVars(sctx)
 	sctx.sessionVars = vars
-	sctx.ExprCtxExtendedImpl = exprctximpl.NewExprExtendedImpl(sctx)
-	sctx.tblctx = tbctximpl.NewTableContextImpl(sctx, sctx)
+	sctx.ExprContext = sessionexpr.NewExprContext(sctx)
+	sctx.tblctx = tblsession.NewMutateContext(sctx)
 	vars.InitChunkSize = 2
 	vars.MaxChunkSize = 32
 	vars.TimeZone = time.UTC
@@ -621,8 +636,8 @@ func NewContext() *Context {
 	vars.MemTracker.SetBytesLimit(-1)
 	vars.DiskTracker.SetBytesLimit(-1)
 	vars.StmtCtx.MemTracker, vars.StmtCtx.DiskTracker = memory.NewTracker(-1, -1), disk.NewTracker(-1, -1)
-	vars.MemTracker.AttachTo(vars.MemTracker)
-	vars.DiskTracker.AttachTo(vars.DiskTracker)
+	vars.StmtCtx.MemTracker.AttachTo(vars.MemTracker)
+	vars.StmtCtx.DiskTracker.AttachTo(vars.DiskTracker)
 	vars.GlobalVarsAccessor = variable.NewMockGlobalAccessor()
 	vars.EnablePaging = variable.DefTiDBEnablePaging
 	vars.MinPagingSize = variable.DefMinPagingSize

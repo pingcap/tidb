@@ -359,8 +359,8 @@ func TestIntersectionWithDifferentConcurrency(t *testing.T) {
 		tk.MustExec("drop table if exists t1;")
 		tk.MustExec(tblSchema)
 
-		const queryCnt int = 10
-		const rowCnt int = 500
+		const queryCnt int = 5
+		const rowCnt int = 100
 		curRowCnt := 0
 		insertStr := "insert into t1 values"
 		for i := 0; i < rowCnt; i++ {

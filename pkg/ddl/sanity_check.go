@@ -20,30 +20,30 @@ import (
 	"strings"
 
 	"github.com/pingcap/errors"
-	sess "github.com/pingcap/tidb/pkg/ddl/internal/session"
+	"github.com/pingcap/tidb/pkg/ddl/logutil"
+	sess "github.com/pingcap/tidb/pkg/ddl/session"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/util/intest"
-	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/mathutil"
 	"go.uber.org/zap"
 )
 
-func (d *ddl) checkDeleteRangeCnt(job *model.Job) {
-	actualCnt, err := queryDeleteRangeCnt(d.sessPool, job.ID)
+func (e *executor) checkDeleteRangeCnt(job *model.Job) {
+	actualCnt, err := queryDeleteRangeCnt(e.sessPool, job.ID)
 	if err != nil {
 		if strings.Contains(err.Error(), "Not Supported") {
 			return // For mock session, we don't support executing SQLs.
 		}
-		logutil.BgLogger().Error("query delete range count failed", zap.Error(err))
+		logutil.DDLLogger().Error("query delete range count failed", zap.Error(err))
 		panic(err)
 	}
 	expectedCnt, err := expectedDeleteRangeCnt(delRangeCntCtx{idxIDs: map[int64]struct{}{}}, job)
 	if err != nil {
-		logutil.BgLogger().Error("decode job's delete range count failed", zap.Error(err))
+		logutil.DDLLogger().Error("decode job's delete range count failed", zap.Error(err))
 		panic(err)
 	}
 	if actualCnt != expectedCnt {
@@ -85,33 +85,40 @@ func expectedDeleteRangeCnt(ctx delRangeCntCtx, job *model.Job) (int, error) {
 	}
 	switch job.Type {
 	case model.ActionDropSchema:
-		var tableIDs []int64
-		if err := job.DecodeArgs(&tableIDs); err != nil {
+		args, err := model.GetFinishedDropSchemaArgs(job)
+		if err != nil {
 			return 0, errors.Trace(err)
 		}
-		return len(tableIDs), nil
-	case model.ActionDropTable, model.ActionTruncateTable:
-		var startKey kv.Key
-		var physicalTableIDs []int64
-		var ruleIDs []string
-		if err := job.DecodeArgs(&startKey, &physicalTableIDs, &ruleIDs); err != nil {
+		return len(args.AllDroppedTableIDs), nil
+	case model.ActionDropTable:
+		args, err := model.GetFinishedDropTableArgs(job)
+		if err != nil {
 			return 0, errors.Trace(err)
 		}
-		return len(physicalTableIDs) + 1, nil
-	case model.ActionDropTablePartition, model.ActionTruncateTablePartition,
-		model.ActionReorganizePartition, model.ActionRemovePartitioning,
-		model.ActionAlterTablePartitioning:
-		var physicalTableIDs []int64
-		if err := job.DecodeArgs(&physicalTableIDs); err != nil {
+		return len(args.OldPartitionIDs) + 1, nil
+	case model.ActionTruncateTable, model.ActionTruncateTablePartition:
+		args, err := model.GetFinishedTruncateTableArgs(job)
+		if err != nil {
 			return 0, errors.Trace(err)
 		}
-		return len(physicalTableIDs), nil
+		if job.Type == model.ActionTruncateTable {
+			return len(args.OldPartitionIDs) + 1, nil
+		}
+		return len(args.OldPartitionIDs), nil
+	case model.ActionDropTablePartition, model.ActionReorganizePartition,
+		model.ActionRemovePartitioning, model.ActionAlterTablePartitioning:
+		args, err := model.GetFinishedTablePartitionArgs(job)
+		if err != nil {
+			return 0, errors.Trace(err)
+		}
+		return len(args.OldPhysicalTblIDs), nil
 	case model.ActionAddIndex, model.ActionAddPrimaryKey:
 		indexID := make([]int64, 1)
 		ifExists := make([]bool, 1)
+		isGlobal := make([]bool, 0, 1)
 		var partitionIDs []int64
 		if err := job.DecodeArgs(&indexID[0], &ifExists[0], &partitionIDs); err != nil {
-			if err := job.DecodeArgs(&indexID, &ifExists, &partitionIDs); err != nil {
+			if err := job.DecodeArgs(&indexID, &ifExists, &partitionIDs, &isGlobal); err != nil {
 				var unique bool
 				if err := job.DecodeArgs(&unique); err == nil {
 					// The first argument is bool means nothing need to be added to delete-range table.
@@ -120,32 +127,36 @@ func expectedDeleteRangeCnt(ctx delRangeCntCtx, job *model.Job) (int, error) {
 				return 0, errors.Trace(err)
 			}
 		}
-		idxIDNumFactor := len(indexID) // Add temporary index to del-range table.
-		if job.State == model.JobStateRollbackDone {
-			idxIDNumFactor = 2 * len(indexID) // Add origin index to del-range table.
-		}
-		return mathutil.Max(len(partitionIDs)*idxIDNumFactor, idxIDNumFactor), nil
-	case model.ActionDropIndex, model.ActionDropPrimaryKey:
-		var indexName any
-		ifNotExists := make([]bool, 1)
-		indexID := make([]int64, 1)
-		var partitionIDs []int64
-		if err := job.DecodeArgs(&indexName, &ifNotExists[0], &indexID[0], &partitionIDs); err != nil {
-			if err := job.DecodeArgs(&indexName, &ifNotExists, &indexID, &partitionIDs); err != nil {
-				return 0, errors.Trace(err)
+		ret := 0
+		for i := 0; i < len(indexID); i++ {
+			num := mathutil.Max(len(partitionIDs), 1) // Add temporary index to del-range table.
+			if len(isGlobal) != 0 && isGlobal[i] {
+				num = 1 // Global index only has one del-range.
 			}
+			if job.State == model.JobStateRollbackDone {
+				num *= 2 // Add origin index to del-range table.
+			}
+			ret += num
+		}
+		return ret, nil
+	case model.ActionDropIndex, model.ActionDropPrimaryKey:
+		_, _, _, partitionIDs, hasVectors, err := job.DecodeDropIndexFinishedArgs()
+		if err != nil {
+			return 0, errors.Trace(err)
+		}
+		// We don't support drop vector index in multi-schema, so we only check the first one.
+		if len(hasVectors) > 0 && hasVectors[0] {
+			return 0, nil
 		}
 		return mathutil.Max(len(partitionIDs), 1), nil
 	case model.ActionDropColumn:
-		var colName model.CIStr
-		var ifExists bool
-		var indexIDs []int64
-		var partitionIDs []int64
-		if err := job.DecodeArgs(&colName, &ifExists, &indexIDs, &partitionIDs); err != nil {
+		args, err := model.GetTableColumnArgs(job)
+		if err != nil {
 			return 0, errors.Trace(err)
 		}
-		physicalCnt := mathutil.Max(len(partitionIDs), 1)
-		return physicalCnt * len(indexIDs), nil
+
+		physicalCnt := mathutil.Max(len(args.PartitionIDs), 1)
+		return physicalCnt * len(args.IndexIDs), nil
 	case model.ActionModifyColumn:
 		var indexIDs []int64
 		var partitionIDs []int64
@@ -187,14 +198,14 @@ func (ctx *delRangeCntCtx) deduplicateIdxCnt(indexIDs []int64) int {
 // checkHistoryJobInTest does some sanity check to make sure something is correct after DDL complete.
 // It's only check during the test environment, so it would panic directly.
 // These checks may be controlled by configuration in the future.
-func (d *ddl) checkHistoryJobInTest(ctx sessionctx.Context, historyJob *model.Job) {
+func (e *executor) checkHistoryJobInTest(ctx sessionctx.Context, historyJob *model.Job) {
 	if !intest.InTest {
 		return
 	}
 
 	// Check delete range.
 	if JobNeedGC(historyJob) {
-		d.checkDeleteRangeCnt(historyJob)
+		e.checkDeleteRangeCnt(historyJob)
 	}
 
 	// Check binlog.

@@ -11,8 +11,10 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/log"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
+	"go.uber.org/multierr"
 	"go.uber.org/zap"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -106,6 +108,9 @@ func (rs *RetryState) ShouldRetry() bool {
 // Get the exponential backoff durion and transform the state.
 func (rs *RetryState) ExponentialBackoff() time.Duration {
 	rs.retryTimes++
+	failpoint.Inject("set-import-attempt-to-one", func(_ failpoint.Value) {
+		rs.retryTimes = rs.maxRetry
+	})
 	backoff := rs.nextBackoff
 	rs.nextBackoff *= 2
 	if rs.nextBackoff > rs.maxBackoff {
@@ -168,12 +173,14 @@ func NewBackupSSTBackoffer() Backoffer {
 
 func (bo *importerBackoffer) NextBackoff(err error) time.Duration {
 	// we don't care storeID here.
-	res := bo.errContext.HandleErrorMsg(err.Error(), 0)
-	if res.Strategy == RetryStrategy {
+	errs := multierr.Errors(err)
+	lastErr := errs[len(errs)-1]
+	res := HandleUnknownBackupError(lastErr.Error(), 0, bo.errContext)
+	if res.Strategy == StrategyRetry {
 		bo.delayTime = 2 * bo.delayTime
 		bo.attempt--
 	} else {
-		e := errors.Cause(err)
+		e := errors.Cause(lastErr)
 		switch e { // nolint:errorlint
 		case berrors.ErrKVEpochNotMatch, berrors.ErrKVDownloadFailed, berrors.ErrKVIngestFailed, berrors.ErrPDLeaderNotFound:
 			bo.delayTime = 2 * bo.delayTime
@@ -188,7 +195,7 @@ func (bo *importerBackoffer) NextBackoff(err error) time.Duration {
 				bo.delayTime = 2 * bo.delayTime
 				bo.attempt--
 			case codes.Canceled:
-				if isGRPCCancel(err) {
+				if isGRPCCancel(lastErr) {
 					bo.delayTime = 2 * bo.delayTime
 					bo.attempt--
 				} else {
@@ -203,6 +210,11 @@ func (bo *importerBackoffer) NextBackoff(err error) time.Duration {
 			}
 		}
 	}
+	failpoint.Inject("set-import-attempt-to-one", func(_ failpoint.Value) {
+		if bo.attempt > 1 {
+			bo.attempt = 1
+		}
+	})
 	if bo.delayTime > bo.maxDelayTime {
 		return bo.maxDelayTime
 	}
@@ -264,6 +276,9 @@ func (bo *pdReqBackoffer) NextBackoff(err error) time.Duration {
 		}
 	}
 
+	failpoint.Inject("set-attempt-to-one", func(_ failpoint.Value) {
+		bo.attempt = 1
+	})
 	if bo.delayTime > bo.maxDelayTime {
 		return bo.maxDelayTime
 	}
@@ -271,5 +286,46 @@ func (bo *pdReqBackoffer) NextBackoff(err error) time.Duration {
 }
 
 func (bo *pdReqBackoffer) Attempt() int {
+	return bo.attempt
+}
+
+type DiskCheckBackoffer struct {
+	attempt      int
+	delayTime    time.Duration
+	maxDelayTime time.Duration
+}
+
+func NewDiskCheckBackoffer() Backoffer {
+	return &DiskCheckBackoffer{
+		attempt:      resetTSRetryTime,
+		delayTime:    resetTSWaitInterval,
+		maxDelayTime: resetTSMaxWaitInterval,
+	}
+}
+
+func (bo *DiskCheckBackoffer) NextBackoff(err error) time.Duration {
+	e := errors.Cause(err)
+	switch e { // nolint:errorlint
+	case nil, context.Canceled, context.DeadlineExceeded, berrors.ErrKVDiskFull:
+		bo.delayTime = 0
+		bo.attempt = 0
+	case berrors.ErrPDInvalidResponse:
+		bo.delayTime = 2 * bo.delayTime
+		bo.attempt--
+	default:
+		bo.delayTime = 2 * bo.delayTime
+		if bo.attempt > 5 {
+			bo.attempt = 5
+		}
+		bo.attempt--
+	}
+
+	if bo.delayTime > bo.maxDelayTime {
+		return bo.maxDelayTime
+	}
+	return bo.delayTime
+}
+
+func (bo *DiskCheckBackoffer) Attempt() int {
 	return bo.attempt
 }

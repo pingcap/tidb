@@ -10,10 +10,10 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//pkg/errno",
-        "//pkg/parser/model",
+        "//pkg/meta/model",
         "//pkg/parser/types",
-        "//pkg/sessionctx/stmtctx",
         "//pkg/types",
+        "//pkg/util/context",
         "//pkg/util/dbterror",
         "//pkg/util/logutil",
         "@com_github_pingcap_errors//:errors",

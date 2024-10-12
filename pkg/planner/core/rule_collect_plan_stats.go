@@ -21,8 +21,9 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/infoschema"
-	"github.com/pingcap/tidb/pkg/parser/model"
-	"github.com/pingcap/tidb/pkg/planner/util"
+	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/table"
@@ -30,17 +31,18 @@ import (
 	"go.uber.org/zap"
 )
 
-type collectPredicateColumnsPoint struct{}
+// CollectPredicateColumnsPoint collects the columns that are used in the predicates.
+type CollectPredicateColumnsPoint struct{}
 
-func (collectPredicateColumnsPoint) optimize(_ context.Context, plan LogicalPlan, _ *util.LogicalOptimizeOp) (LogicalPlan, bool, error) {
+// Optimize implements LogicalOptRule.<0th> interface.
+func (CollectPredicateColumnsPoint) Optimize(_ context.Context, plan base.LogicalPlan, _ *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, bool, error) {
 	planChanged := false
 	if plan.SCtx().GetSessionVars().InRestrictedSQL {
 		return plan, planChanged, nil
 	}
-	predicateNeeded := variable.EnableColumnTracking.Load()
 	syncWait := plan.SCtx().GetSessionVars().StatsLoadSyncWait.Load()
 	histNeeded := syncWait > 0
-	predicateColumns, histNeededColumns, visitedPhysTblIDs := CollectColumnStatsUsage(plan, predicateNeeded, histNeeded)
+	predicateColumns, histNeededColumns, visitedPhysTblIDs := CollectColumnStatsUsage(plan, histNeeded)
 	if len(predicateColumns) > 0 {
 		plan.SCtx().UpdateColStatsUsage(predicateColumns)
 	}
@@ -72,13 +74,16 @@ func (collectPredicateColumnsPoint) optimize(_ context.Context, plan LogicalPlan
 	return plan, planChanged, nil
 }
 
-func (collectPredicateColumnsPoint) name() string {
+// Name implements the base.LogicalOptRule.<1st> interface.
+func (CollectPredicateColumnsPoint) Name() string {
 	return "collect_predicate_columns_point"
 }
 
-type syncWaitStatsLoadPoint struct{}
+// SyncWaitStatsLoadPoint sync-wait for stats load point.
+type SyncWaitStatsLoadPoint struct{}
 
-func (syncWaitStatsLoadPoint) optimize(_ context.Context, plan LogicalPlan, _ *util.LogicalOptimizeOp) (LogicalPlan, bool, error) {
+// Optimize implements the base.LogicalOptRule.<0th> interface.
+func (SyncWaitStatsLoadPoint) Optimize(_ context.Context, plan base.LogicalPlan, _ *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, bool, error) {
 	planChanged := false
 	if plan.SCtx().GetSessionVars().InRestrictedSQL {
 		return plan, planChanged, nil
@@ -90,12 +95,13 @@ func (syncWaitStatsLoadPoint) optimize(_ context.Context, plan LogicalPlan, _ *u
 	return plan, planChanged, err
 }
 
-func (syncWaitStatsLoadPoint) name() string {
+// Name implements the base.LogicalOptRule.<1st> interface.
+func (SyncWaitStatsLoadPoint) Name() string {
 	return "sync_wait_stats_load_point"
 }
 
 // RequestLoadStats send load column/index stats requests to stats handle
-func RequestLoadStats(ctx PlanContext, neededHistItems []model.StatsLoadItem, syncWait int64) error {
+func RequestLoadStats(ctx base.PlanContext, neededHistItems []model.StatsLoadItem, syncWait int64) error {
 	maxExecutionTime := ctx.GetSessionVars().GetMaxExecutionTime()
 	if maxExecutionTime > 0 && maxExecutionTime < uint64(syncWait) {
 		syncWait = int64(maxExecutionTime)
@@ -124,7 +130,7 @@ func RequestLoadStats(ctx PlanContext, neededHistItems []model.StatsLoadItem, sy
 }
 
 // SyncWaitStatsLoad sync-wait for stats load until timeout
-func SyncWaitStatsLoad(plan LogicalPlan) error {
+func SyncWaitStatsLoad(plan base.LogicalPlan) error {
 	stmtCtx := plan.SCtx().GetSessionVars().StmtCtx
 	if len(stmtCtx.StatsLoad.NeededItems) <= 0 {
 		return nil
@@ -227,7 +233,7 @@ func CollectDependingVirtualCols(tblID2Tbl map[int64]table.Table, neededItems []
 // 1. the indices contained the any one of histNeededColumns, eg: histNeededColumns contained A,B columns, and idx_a is
 // composed up by A column, then we thought the idx_a should be collected
 // 2. The stats condition of idx_a can't meet IsFullLoad, which means its stats was evicted previously
-func collectSyncIndices(ctx PlanContext,
+func collectSyncIndices(ctx base.PlanContext,
 	histNeededColumns []model.StatsLoadItem,
 	tblID2Tbl map[int64]table.Table,
 ) map[model.TableItemID]struct{} {
@@ -276,7 +282,7 @@ func collectHistNeededItems(histNeededColumns []model.StatsLoadItem, histNeededI
 	return
 }
 
-func recordTableRuntimeStats(sctx PlanContext, tbls map[int64]struct{}) {
+func recordTableRuntimeStats(sctx base.PlanContext, tbls map[int64]struct{}) {
 	tblStats := sctx.GetSessionVars().StmtCtx.TableStats
 	if tblStats == nil {
 		tblStats = map[int64]any{}
@@ -294,11 +300,11 @@ func recordTableRuntimeStats(sctx PlanContext, tbls map[int64]struct{}) {
 	sctx.GetSessionVars().StmtCtx.TableStats = tblStats
 }
 
-func recordSingleTableRuntimeStats(sctx PlanContext, tblID int64) (stats *statistics.Table, skip bool, err error) {
+func recordSingleTableRuntimeStats(sctx base.PlanContext, tblID int64) (stats *statistics.Table, skip bool, err error) {
 	dom := domain.GetDomain(sctx)
 	statsHandle := dom.StatsHandle()
 	is := sctx.GetDomainInfoSchema().(infoschema.InfoSchema)
-	tbl, ok := is.TableByID(tblID)
+	tbl, ok := is.TableByID(context.Background(), tblID)
 	if !ok {
 		return nil, false, nil
 	}

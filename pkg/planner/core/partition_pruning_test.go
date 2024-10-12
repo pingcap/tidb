@@ -183,7 +183,7 @@ func prepareBenchCtx(createTable string, partitionExpr string) *testCtx {
 		return nil
 	}
 	sctx := mock.NewContext()
-	tblInfo, err := ddlhelper.BuildTableInfoFromAST(stmt.(*ast.CreateTableStmt))
+	tblInfo, err := ddlhelper.BuildTableInfoFromASTForTest(stmt.(*ast.CreateTableStmt))
 	if err != nil {
 		return nil
 	}
@@ -213,7 +213,7 @@ func prepareTestCtx(t *testing.T, createTable string, partitionExpr string) *tes
 	stmt, err := p.ParseOneStmt(createTable, "", "")
 	require.NoError(t, err)
 	sctx := mock.NewContext()
-	tblInfo, err := ddlhelper.BuildTableInfoFromAST(stmt.(*ast.CreateTableStmt))
+	tblInfo, err := ddlhelper.BuildTableInfoFromASTForTest(stmt.(*ast.CreateTableStmt))
 	require.NoError(t, err)
 	columns, names, err := expression.ColumnInfos2ColumnsAndNames(sctx, model.NewCIStr("t"), tblInfo.Name, tblInfo.Cols(), tblInfo)
 	require.NoError(t, err)
@@ -553,14 +553,13 @@ func TestPartitionRangeColumnsForExpr(t *testing.T) {
 		{"a is null", partitionRangeOR{{0, 1}}},
 		{"12 > a", partitionRangeOR{{0, 12}}},
 		{"4 <= a", partitionRangeOR{{1, 14}}},
-		// The expression is converted to 'if ...', see constructBinaryOpFunction, so not possible to break down to ranges
-		{"(a,b) < (4,4)", partitionRangeOR{{0, 14}}},
+		{"(a,b) < (4,4)", partitionRangeOR{{0, 4}}},
 		{"(a,b) = (4,4)", partitionRangeOR{{4, 5}}},
 		{"a < 4 OR (a = 4 AND b < 4)", partitionRangeOR{{0, 4}}},
-		// The expression is converted to 'if ...', see constructBinaryOpFunction, so not possible to break down to ranges
-		{"(a,b,c) < (4,4,4)", partitionRangeOR{{0, 14}}},
+		{"(a,b,c) < (4,4,4)", partitionRangeOR{{0, 5}}},
 		{"a < 4 OR (a = 4 AND b < 4) OR (a = 4 AND b = 4 AND c < 4)", partitionRangeOR{{0, 5}}},
-		{"(a,b,c) >= (4,7,4)", partitionRangeOR{{0, len(partDefs)}}},
+		{"(a,b,c) >= (4,7,4)", partitionRangeOR{{5, len(partDefs)}}},
+		{"a > 4 or (a= 4 and b > 7) or (a = 4 and b = 7 and c >= 4)", partitionRangeOR{{5, len(partDefs)}}},
 		{"(a,b,c) = (4,7,4)", partitionRangeOR{{5, 6}}},
 		{"a < 2 and a > 10", partitionRangeOR{}},
 		{"a < 1 and a > 1", partitionRangeOR{}},

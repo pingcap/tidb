@@ -39,7 +39,26 @@ func ExpressionsToPBList(ctx EvalContext, exprs []Expression, client kv.Client) 
 	for _, expr := range exprs {
 		v := pc.ExprToPB(expr)
 		if v == nil {
-			return nil, plannererrors.ErrInternal.GenWithStack("expression %v cannot be pushed down", expr)
+			return nil, plannererrors.ErrInternal.GenWithStack("expression %v cannot be pushed down", expr.StringWithCtx(ctx, errors.RedactLogDisable))
+		}
+		pbExpr = append(pbExpr, v)
+	}
+	return
+}
+
+// ProjectionExpressionsToPBList converts PhysicalProjection's expressions to tipb.Expr list for new plan.
+// It doesn't check type for top level column expression, since top level column expression doesn't imply any calculations
+func ProjectionExpressionsToPBList(ctx EvalContext, exprs []Expression, client kv.Client) (pbExpr []*tipb.Expr, err error) {
+	pc := PbConverter{client: client, ctx: ctx}
+	for _, expr := range exprs {
+		var v *tipb.Expr
+		if column, ok := expr.(*Column); ok {
+			v = pc.columnToPBExpr(column, false)
+		} else {
+			v = pc.ExprToPB(expr)
+		}
+		if v == nil {
+			return nil, plannererrors.ErrInternal.GenWithStack("expression %v cannot be pushed down", expr.StringWithCtx(ctx, errors.RedactLogDisable))
 		}
 		pbExpr = append(pbExpr, v)
 	}
@@ -69,7 +88,7 @@ func (pc PbConverter) ExprToPB(expr Expression) *tipb.Expr {
 	case *CorrelatedColumn:
 		return pc.conOrCorColToPBExpr(expr)
 	case *Column:
-		return pc.columnToPBExpr(x)
+		return pc.columnToPBExpr(x, true)
 	case *ScalarFunction:
 		return pc.scalarFuncToPBExpr(x)
 	}
@@ -77,7 +96,7 @@ func (pc PbConverter) ExprToPB(expr Expression) *tipb.Expr {
 }
 
 func (pc PbConverter) conOrCorColToPBExpr(expr Expression) *tipb.Expr {
-	ft := expr.GetType()
+	ft := expr.GetType(pc.ctx)
 	d, err := expr.Eval(pc.ctx, chunk.Row{})
 	if err != nil {
 		logutil.BgLogger().Error("eval constant or correlated column", zap.String("expression", expr.ExplainInfo(pc.ctx)), zap.Error(err))
@@ -156,6 +175,9 @@ func (pc *PbConverter) encodeDatum(ft *types.FieldType, d types.Datum) (tipb.Exp
 	case types.KindMysqlEnum:
 		tp = tipb.ExprType_MysqlEnum
 		val = codec.EncodeUint(nil, d.GetUint64())
+	case types.KindVectorFloat32:
+		tp = tipb.ExprType_TiDBVectorFloat32
+		val = d.GetVectorFloat32().ZeroCopySerialize()
 	default:
 		return tp, nil, false
 	}
@@ -190,20 +212,22 @@ func FieldTypeFromPB(ft *tipb.FieldType) *types.FieldType {
 	return ft1
 }
 
-func (pc PbConverter) columnToPBExpr(column *Column) *tipb.Expr {
+func (pc PbConverter) columnToPBExpr(column *Column, checkType bool) *tipb.Expr {
 	if !pc.client.IsRequestTypeSupported(kv.ReqTypeSelect, int64(tipb.ExprType_ColumnRef)) {
 		return nil
 	}
-	switch column.GetType().GetType() {
-	case mysql.TypeBit:
-		if !IsPushDownEnabled(ast.TypeStr(column.GetType().GetType()), kv.TiKV) {
+	if checkType {
+		switch column.GetType(pc.ctx).GetType() {
+		case mysql.TypeBit:
+			if !IsPushDownEnabled(ast.TypeStr(mysql.TypeBit), kv.TiKV) {
+				return nil
+			}
+		case mysql.TypeSet, mysql.TypeGeometry, mysql.TypeUnspecified:
 			return nil
-		}
-	case mysql.TypeSet, mysql.TypeGeometry, mysql.TypeUnspecified:
-		return nil
-	case mysql.TypeEnum:
-		if !IsPushDownEnabled("enum", kv.UnSpecified) {
-			return nil
+		case mysql.TypeEnum:
+			if !IsPushDownEnabled("enum", kv.UnSpecified) {
+				return nil
+			}
 		}
 	}
 
@@ -236,7 +260,7 @@ func (pc PbConverter) scalarFuncToPBExpr(expr *ScalarFunction) *tipb.Expr {
 	}
 
 	// Check whether this function can be pushed.
-	if !canFuncBePushed(expr, kv.UnSpecified) {
+	if !canFuncBePushed(pc.ctx, expr, kv.UnSpecified) {
 		return nil
 	}
 

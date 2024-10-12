@@ -20,6 +20,7 @@ import (
 	"database/sql"
 	"fmt"
 	"io"
+	"maps"
 	"strings"
 
 	mysql_sql_driver "github.com/go-sql-driver/mysql"
@@ -42,17 +43,16 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/mydump"
 	"github.com/pingcap/tidb/pkg/lightning/verification"
 	"github.com/pingcap/tidb/pkg/lightning/worker"
+	"github.com/pingcap/tidb/pkg/meta/metabuild"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/model"
 	_ "github.com/pingcap/tidb/pkg/planner/core" // to setup expression.EvalAstExpr. Otherwise we cannot parse the default value
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
-	"github.com/pingcap/tidb/pkg/util/mock"
 	pdhttp "github.com/tikv/pd/client/http"
 	"go.uber.org/zap"
-	"golang.org/x/exp/maps"
 )
 
 // compressionRatio is the tikv/tiflash's compression ratio
@@ -143,9 +143,6 @@ func NewTargetInfoGetterImpl(
 	case config.BackendTiDB:
 		backendTargetInfoGetter = tidb.NewTargetInfoGetter(targetDB)
 	case config.BackendLocal:
-		if pdHTTPCli == nil {
-			return nil, common.ErrUnknown.GenWithStack("pd HTTP client is required when using local backend")
-		}
 		backendTargetInfoGetter = local.NewTargetInfoGetter(tls, targetDB, pdHTTPCli)
 	default:
 		return nil, common.ErrUnknownBackend.GenWithStackByArgs(cfg.TikvImporter.Backend)
@@ -431,15 +428,15 @@ func newTableInfo(createTblSQL string, tableID int64) (*model.TableInfo, error) 
 		log.L().Error(errMsg, zap.Error(err), zap.String("sql", createTblSQL))
 		return nil, errors.Trace(err)
 	}
-	sctx := mock.NewContext()
 	createTableStmt, ok := astNode.(*ast.CreateTableStmt)
 	if !ok {
 		return nil, errors.New("cannot transfer the parsed SQL as an CREATE TABLE statement")
 	}
-	info, err := ddl.MockTableInfo(sctx, createTableStmt, tableID)
+	info, err := ddl.BuildTableInfoFromAST(metabuild.NewNonStrictContext(), createTableStmt)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+	info.ID = tableID
 	info.State = model.StatePublic
 	return info, nil
 }
@@ -464,7 +461,9 @@ func (p *PreImportInfoGetterImpl) ReadFirstNRowsByTableName(ctx context.Context,
 // ReadFirstNRowsByFileMeta reads the first N rows of an data file.
 // It implements the PreImportInfoGetter interface.
 func (p *PreImportInfoGetterImpl) ReadFirstNRowsByFileMeta(ctx context.Context, dataFileMeta mydump.SourceFileMeta, n int) ([]string, [][]types.Datum, error) {
-	reader, err := mydump.OpenReader(ctx, &dataFileMeta, p.srcStorage, storage.DecompressConfig{})
+	reader, err := mydump.OpenReader(ctx, &dataFileMeta, p.srcStorage, storage.DecompressConfig{
+		ZStdDecodeConcurrency: 1,
+	})
 	if err != nil {
 		return nil, nil, errors.Trace(err)
 	}
@@ -613,11 +612,13 @@ func (p *PreImportInfoGetterImpl) sampleDataFromTable(
 		return resultIndexRatio, isRowOrdered, nil
 	}
 	sampleFile := tableMeta.DataFiles[0].FileMeta
-	reader, err := mydump.OpenReader(ctx, &sampleFile, p.srcStorage, storage.DecompressConfig{})
+	reader, err := mydump.OpenReader(ctx, &sampleFile, p.srcStorage, storage.DecompressConfig{
+		ZStdDecodeConcurrency: 1,
+	})
 	if err != nil {
 		return 0.0, false, errors.Trace(err)
 	}
-	idAlloc := kv.NewPanickingAllocators(0)
+	idAlloc := kv.NewPanickingAllocators(tableInfo.SepAutoInc(), 0)
 	tbl, err := tables.TableFromMeta(idAlloc, tableInfo)
 	if err != nil {
 		return 0.0, false, errors.Trace(err)

@@ -19,6 +19,8 @@ import (
 	"slices"
 
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/texttree"
 	"go.uber.org/zap"
@@ -92,7 +94,7 @@ func (e FlatPlanTree) GetSelectPlan() (FlatPlanTree, int) {
 // It contains a reference to the original operator and some usually needed information.
 type FlatOperator struct {
 	// A reference to the original operator.
-	Origin Plan
+	Origin base.Plan
 
 	// With ChildrenIdx and ChildrenEndIdx, we can locate every children subtrees of this operator in the FlatPlanTree.
 	// For example, the first children subtree is flatTree[ChildrenIdx[0] : ChildrenIdx[1]], the last children subtree
@@ -171,7 +173,7 @@ type operatorCtx struct {
 }
 
 // FlattenPhysicalPlan generates a FlatPhysicalPlan from a PhysicalPlan, Insert, Delete, Update, Explain or Execute.
-func FlattenPhysicalPlan(p Plan, buildSideFirst bool) *FlatPhysicalPlan {
+func FlattenPhysicalPlan(p base.Plan, buildSideFirst bool) *FlatPhysicalPlan {
 	if p == nil {
 		return nil
 	}
@@ -216,7 +218,7 @@ func FlattenPhysicalPlan(p Plan, buildSideFirst bool) *FlatPhysicalPlan {
 	return res
 }
 
-func (*FlatPhysicalPlan) flattenSingle(p Plan, info *operatorCtx) *FlatOperator {
+func (*FlatPhysicalPlan) flattenSingle(p base.Plan, info *operatorCtx) *FlatOperator {
 	// Some operators are not initialized and given an ExplainID. So their explain IDs are "_0"
 	// (when in EXPLAIN FORMAT = 'brief' it will be ""), we skip such operators.
 	// Examples: Explain, Execute
@@ -234,14 +236,14 @@ func (*FlatPhysicalPlan) flattenSingle(p Plan, info *operatorCtx) *FlatOperator 
 		IsLastChild:    info.isLastChild,
 	}
 
-	if _, ok := p.(PhysicalPlan); ok {
+	if _, ok := p.(base.PhysicalPlan); ok {
 		res.IsPhysicalPlan = true
 	}
 	return res
 }
 
 // Note that info should not be modified in this method.
-func (f *FlatPhysicalPlan) flattenRecursively(p Plan, info *operatorCtx, target FlatPlanTree) (res FlatPlanTree, idx int) {
+func (f *FlatPhysicalPlan) flattenRecursively(p base.Plan, info *operatorCtx, target FlatPlanTree) (res FlatPlanTree, idx int) {
 	idx = -1
 	flat := f.flattenSingle(p, info)
 	if flat != nil {
@@ -259,7 +261,7 @@ func (f *FlatPhysicalPlan) flattenRecursively(p Plan, info *operatorCtx, target 
 	}
 	// For physical operators, we just enumerate their children and collect their information.
 	// Note that some physical operators are special, and they are handled below this part.
-	if physPlan, ok := p.(PhysicalPlan); ok {
+	if physPlan, ok := p.(base.PhysicalPlan); ok {
 		label := make([]OperatorLabel, len(physPlan.Children()))
 
 		switch plan := physPlan.(type) {
@@ -275,7 +277,7 @@ func (f *FlatPhysicalPlan) flattenRecursively(p Plan, info *operatorCtx, target 
 				label[1-plan.InnerChildIdx] = ProbeSide
 			}
 		case *PhysicalMergeJoin:
-			if plan.JoinType == RightOuterJoin {
+			if plan.JoinType == logicalop.RightOuterJoin {
 				label[0] = BuildSide
 				label[1] = ProbeSide
 			} else {
@@ -293,7 +295,7 @@ func (f *FlatPhysicalPlan) flattenRecursively(p Plan, info *operatorCtx, target 
 			label[1-plan.InnerChildIdx] = BuildSide
 		}
 
-		children := make([]PhysicalPlan, len(physPlan.Children()))
+		children := make([]base.PhysicalPlan, len(physPlan.Children()))
 		copy(children, physPlan.Children())
 		if len(label) == 2 &&
 			label[0] == ProbeSide &&
@@ -371,7 +373,7 @@ func (f *FlatPhysicalPlan) flattenRecursively(p Plan, info *operatorCtx, target 
 		// We shallow copy the PhysicalCTE here because we don't want the probeParents (see comments in PhysicalPlan
 		// for details) to affect the row count display of the independent CTE plan tree.
 		copiedCTE := *plan
-		copiedCTE.probeParents = nil
+		copiedCTE.SetProbeParents(nil)
 		if info.isRoot {
 			// If it's executed in TiDB, we need to record it since we don't have producer and consumer
 			f.ctesToFlatten = append(f.ctesToFlatten, &copiedCTE)

@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/store/driver"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/stretchr/testify/require"
 	"go.opencensus.io/stats/view"
 	"go.uber.org/mock/gomock"
@@ -92,7 +93,7 @@ func BenchmarkSchedulerOverhead(b *testing.B) {
 		for i := 0; i < 4*proto.MaxConcurrentTask; i++ {
 			taskKey := fmt.Sprintf("task-%03d", i)
 			taskMeta := make([]byte, *taskMetaSize)
-			_, err := handle.SubmitTask(c.Ctx, taskKey, proto.TaskTypeExample, 1, taskMeta)
+			_, err := handle.SubmitTask(c.Ctx, taskKey, proto.TaskTypeExample, 1, "", taskMeta)
 			require.NoError(c.T, err)
 		}
 		// task has 2 steps, each step has 1 subtask，wait in serial to reduce WaitTask check overhead.
@@ -106,7 +107,7 @@ func BenchmarkSchedulerOverhead(b *testing.B) {
 }
 
 func prepareForBenchTest(b *testing.B) {
-	testkit.EnableFailPoint(b, "github.com/pingcap/tidb/pkg/domain/MockDisableDistTask", "return(true)")
+	testfailpoint.Enable(b, "github.com/pingcap/tidb/pkg/domain/MockDisableDistTask", "return(true)")
 
 	var d driver.TiKVDriver
 	var err error

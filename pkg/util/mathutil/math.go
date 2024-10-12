@@ -17,6 +17,7 @@ package mathutil
 import (
 	"math"
 
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"golang.org/x/exp/constraints"
 )
 
@@ -69,32 +70,32 @@ func IsFinite(f float64) bool {
 
 // Max returns the largest one from its arguments.
 func Max[T constraints.Ordered](x T, xs ...T) T {
-	max := x
+	maxv := x
 	for _, n := range xs {
-		if n > max {
-			max = n
+		if n > maxv {
+			maxv = n
 		}
 	}
-	return max
+	return maxv
 }
 
 // Min returns the smallest one from its arguments.
 func Min[T constraints.Ordered](x T, xs ...T) T {
-	min := x
+	minv := x
 	for _, n := range xs {
-		if n < min {
-			min = n
+		if n < minv {
+			minv = n
 		}
 	}
-	return min
+	return minv
 }
 
 // Clamp restrict a value to a certain interval.
-func Clamp[T constraints.Ordered](n, min, max T) T {
-	if n >= max {
-		return max
-	} else if n <= min {
-		return min
+func Clamp[T constraints.Ordered](n, minv, maxv T) T {
+	if n >= maxv {
+		return maxv
+	} else if n <= minv {
+		return minv
 	}
 	return n
 }
@@ -110,4 +111,24 @@ func NextPowerOfTwo(i int64) int64 {
 		i &= i - 1
 	}
 	return i
+}
+
+// Divide2Batches divides 'total' into 'batches', and returns the size of each batch.
+// Σ(batchSizes) = 'total'. if 'total' < 'batches', we return 'total' batches with size 1.
+// 'total' is allowed to be 0.
+func Divide2Batches(total, batches int) []int {
+	result := make([]int, 0, batches)
+	quotient := total / batches
+	remainder := total % batches
+	for total > 0 {
+		size := quotient
+		if remainder > 0 {
+			size++
+			remainder--
+		}
+		intest.Assert(size > 0, "size should be positive")
+		result = append(result, size)
+		total -= size
+	}
+	return result
 }

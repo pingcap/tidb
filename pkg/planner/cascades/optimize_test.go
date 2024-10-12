@@ -22,9 +22,12 @@ import (
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/infoschema"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser"
-	"github.com/pingcap/tidb/pkg/parser/model"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
+	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
+	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/planner/memo"
 	"github.com/pingcap/tidb/pkg/planner/pattern"
 	"github.com/pingcap/tidb/pkg/planner/property"
@@ -42,11 +45,11 @@ func TestImplGroupZeroCost(t *testing.T) {
 
 	stmt, err := p.ParseOneStmt("select t1.a, t2.a from t as t1 left join t as t2 on t1.a = t2.a where t1.a < 1.0", "", "")
 	require.NoError(t, err)
-
-	plan, err := plannercore.BuildLogicalPlanForTest(context.Background(), ctx, stmt, is)
+	nodeW := resolve.NewNodeW(stmt)
+	plan, err := plannercore.BuildLogicalPlanForTest(context.Background(), ctx, nodeW, is)
 	require.NoError(t, err)
 
-	logic, ok := plan.(plannercore.LogicalPlan)
+	logic, ok := plan.(base.LogicalPlan)
 	require.True(t, ok)
 
 	rootGroup := memo.Convert2Group(logic)
@@ -70,10 +73,11 @@ func TestInitGroupSchema(t *testing.T) {
 	stmt, err := p.ParseOneStmt("select a from t", "", "")
 	require.NoError(t, err)
 
-	plan, err := plannercore.BuildLogicalPlanForTest(context.Background(), ctx, stmt, is)
+	nodeW := resolve.NewNodeW(stmt)
+	plan, err := plannercore.BuildLogicalPlanForTest(context.Background(), ctx, nodeW, is)
 	require.NoError(t, err)
 
-	logic, ok := plan.(plannercore.LogicalPlan)
+	logic, ok := plan.(base.LogicalPlan)
 	require.True(t, ok)
 
 	g := memo.Convert2Group(logic)
@@ -95,10 +99,11 @@ func TestFillGroupStats(t *testing.T) {
 	stmt, err := p.ParseOneStmt("select * from t t1 join t t2 on t1.a = t2.a", "", "")
 	require.NoError(t, err)
 
-	plan, err := plannercore.BuildLogicalPlanForTest(context.Background(), ctx, stmt, is)
+	nodeW := resolve.NewNodeW(stmt)
+	plan, err := plannercore.BuildLogicalPlanForTest(context.Background(), ctx, nodeW, is)
 	require.NoError(t, err)
 
-	logic, ok := plan.(plannercore.LogicalPlan)
+	logic, ok := plan.(base.LogicalPlan)
 	require.True(t, ok)
 
 	rootGroup := memo.Convert2Group(logic)
@@ -129,17 +134,18 @@ func TestPreparePossibleProperties(t *testing.T) {
 	stmt, err := p.ParseOneStmt("select f, sum(a) from t group by f", "", "")
 	require.NoError(t, err)
 
-	plan, err := plannercore.BuildLogicalPlanForTest(context.Background(), ctx, stmt, is)
+	nodeW := resolve.NewNodeW(stmt)
+	plan, err := plannercore.BuildLogicalPlanForTest(context.Background(), ctx, nodeW, is)
 	require.NoError(t, err)
 
-	logic, ok := plan.(plannercore.LogicalPlan)
+	logic, ok := plan.(base.LogicalPlan)
 	require.True(t, ok)
 
 	logic, err = optimizer.onPhasePreprocessing(ctx.GetPlanCtx(), logic)
 	require.NoError(t, err)
 
 	// collect the target columns: f, a
-	ds, ok := logic.Children()[0].Children()[0].(*plannercore.DataSource)
+	ds, ok := logic.Children()[0].Children()[0].(*logicalop.DataSource)
 	require.True(t, ok)
 
 	var columnF, columnA *expression.Column
@@ -153,7 +159,7 @@ func TestPreparePossibleProperties(t *testing.T) {
 	require.NotNil(t, columnF)
 	require.NotNil(t, columnA)
 
-	agg, ok := logic.Children()[0].(*plannercore.LogicalAggregation)
+	agg, ok := logic.Children()[0].(*logicalop.LogicalAggregation)
 	require.True(t, ok)
 
 	group := memo.Convert2Group(agg)
@@ -226,10 +232,11 @@ func TestAppliedRuleSet(t *testing.T) {
 	stmt, err := p.ParseOneStmt("select 1", "", "")
 	require.NoError(t, err)
 
-	plan, err := plannercore.BuildLogicalPlanForTest(context.Background(), ctx, stmt, is)
+	nodeW := resolve.NewNodeW(stmt)
+	plan, err := plannercore.BuildLogicalPlanForTest(context.Background(), ctx, nodeW, is)
 	require.NoError(t, err)
 
-	logic, ok := plan.(plannercore.LogicalPlan)
+	logic, ok := plan.(base.LogicalPlan)
 	require.True(t, ok)
 
 	group := memo.Convert2Group(logic)

@@ -25,8 +25,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/parser/model"
-	"github.com/pingcap/tidb/pkg/sessionctx/binloginfo"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	derr "github.com/pingcap/tidb/pkg/store/driver/error"
 	"github.com/pingcap/tidb/pkg/store/driver/options"
 	"github.com/pingcap/tidb/pkg/tablecodec"
@@ -39,6 +38,7 @@ import (
 	"github.com/tikv/client-go/v2/tikvrpc"
 	"github.com/tikv/client-go/v2/tikvrpc/interceptor"
 	"github.com/tikv/client-go/v2/txnkv"
+	"github.com/tikv/client-go/v2/txnkv/transaction"
 	"github.com/tikv/client-go/v2/txnkv/txnsnapshot"
 	"go.uber.org/zap"
 )
@@ -50,6 +50,7 @@ type tikvTxn struct {
 	// columnMapsCache is a cache used for the mutation checker
 	columnMapsCache    any
 	isCommitterWorking atomic.Bool
+	memBuffer          *memBuffer
 }
 
 // NewTiKVTxn returns a new Transaction.
@@ -61,7 +62,10 @@ func NewTiKVTxn(txn *tikv.KVTxn) kv.Transaction {
 	totalLimit := kv.TxnTotalSizeLimit.Load()
 	txn.GetUnionStore().SetEntrySizeLimit(entryLimit, totalLimit)
 
-	return &tikvTxn{txn, make(map[int64]*model.TableInfo), nil, nil, atomic.Bool{}}
+	return &tikvTxn{
+		txn, make(map[int64]*model.TableInfo), nil, nil, atomic.Bool{},
+		newMemBuffer(txn.GetMemBuffer(), txn.IsPipelined()),
+	}
 }
 
 func (txn *tikvTxn) GetTableInfo(id int64) *model.TableInfo {
@@ -210,7 +214,10 @@ func (txn *tikvTxn) Set(k kv.Key, v []byte) error {
 }
 
 func (txn *tikvTxn) GetMemBuffer() kv.MemBuffer {
-	return newMemBuffer(txn.KVTxn.GetMemBuffer(), txn.IsPipelined())
+	if txn.memBuffer == nil {
+		txn.memBuffer = newMemBuffer(txn.KVTxn.GetMemBuffer(), txn.IsPipelined())
+	}
+	return txn.memBuffer
 }
 
 func (txn *tikvTxn) SetOption(opt int, val any) {
@@ -218,11 +225,6 @@ func (txn *tikvTxn) SetOption(opt int, val any) {
 		txn.assertCommitterNotWorking()
 	}
 	switch opt {
-	case kv.BinlogInfo:
-		txn.SetBinlogExecutor(&binlogExecutor{
-			txn:     txn.KVTxn,
-			binInfo: val.(*binloginfo.BinlogInfo), // val cannot be other type.
-		})
 	case kv.SchemaChecker:
 		txn.SetSchemaLeaseChecker(val.(tikv.SchemaLeaseChecker))
 	case kv.IsolationLevel:
@@ -268,7 +270,12 @@ func (txn *tikvTxn) SetOption(opt int, val any) {
 	case kv.ResourceGroupTag:
 		txn.KVTxn.SetResourceGroupTag(val.([]byte))
 	case kv.ResourceGroupTagger:
-		txn.KVTxn.SetResourceGroupTagger(val.(tikvrpc.ResourceGroupTagger))
+		switch tagger := val.(type) {
+		case tikvrpc.ResourceGroupTagger:
+			txn.KVTxn.SetResourceGroupTagger(tagger)
+		case *kv.ResourceGroupTagBuilder:
+			txn.KVTxn.SetResourceGroupTagger(tagger.BuildProtoTagger())
+		}
 	case kv.KVFilter:
 		txn.KVTxn.SetKVFilter(val.(tikv.KVFilter))
 	case kv.SnapInterceptor:
@@ -302,6 +309,8 @@ func (txn *tikvTxn) SetOption(opt int, val any) {
 		txn.KVTxn.GetUnionStore().SetEntrySizeLimit(limits.Entry, limits.Total)
 	case kv.SessionID:
 		txn.KVTxn.SetSessionID(val.(uint64))
+	case kv.BackgroundGoroutineLifecycleHooks:
+		txn.KVTxn.SetBackgroundGoroutineLifecycleHooks(val.(transaction.LifecycleHooks))
 	}
 }
 

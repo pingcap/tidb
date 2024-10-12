@@ -896,11 +896,15 @@ const (
 	ErrDependentByGeneratedColumn                            = 3108
 	ErrGeneratedColumnRefAutoInc                             = 3109
 	ErrInvalidJSONText                                       = 3140
+	ErrInvalidJSONTextInParam                                = 3141
 	ErrInvalidJSONPath                                       = 3143
 	ErrInvalidTypeForJSON                                    = 3146
 	ErrInvalidJSONPathWildcard                               = 3149
 	ErrInvalidJSONContainsPathType                           = 3150
 	ErrJSONUsedAsKey                                         = 3152
+	ErrJSONVacuousPath                                       = 3153
+	ErrJSONBadOneOrAllArg                                    = 3154
+	ErrJSONDocumentTooDeep                                   = 3157
 	ErrJSONDocumentNULLKey                                   = 3158
 	ErrBadUser                                               = 3162
 	ErrUserAlreadyExists                                     = 3163
@@ -944,6 +948,7 @@ const (
 	ErrFKIncompatibleColumns                                 = 3780
 	ErrFunctionalIndexRowValueIsNotAllowed                   = 3800
 	ErrDependentByFunctionalIndex                            = 3837
+	ErrInvalidJSONType                                       = 3853
 	ErrInvalidJsonValueForFuncIndex                          = 3903 //nolint: revive
 	ErrJsonValueOutOfRangeForFuncIndex                       = 3904 //nolint: revive
 	ErrFunctionalIndexDataIsTooLong                          = 3907

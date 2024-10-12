@@ -113,9 +113,9 @@ func (rm *MockRegionManager) AllocID() uint64 {
 
 // AllocIDs allocs ids with the given number n.
 func (rm *MockRegionManager) AllocIDs(n int) []uint64 {
-	max := atomic.AddUint64(&rm.id, uint64(n))
+	maxID := atomic.AddUint64(&rm.id, uint64(n))
 	ids := make([]uint64, n)
-	base := max - uint64(n-1)
+	base := maxID - uint64(n-1)
 	for i := range ids {
 		ids[i] = base + uint64(i)
 	}
@@ -908,6 +908,37 @@ func (pd *MockPD) GetAllStores(ctx context.Context, opts ...pdclient.GetStoreOpt
 // with empty value (PeerID is 0).
 func (pd *MockPD) ScanRegions(ctx context.Context, startKey []byte, endKey []byte, limit int, opts ...pdclient.GetRegionOption) ([]*pdclient.Region, error) {
 	regions := pd.rm.ScanRegions(startKey, endKey, limit, opts...)
+	return regions, nil
+}
+
+// BatchScanRegions scans regions in batch, return flattened regions.
+// limit limits the maximum number of regions returned.
+func (pd *MockPD) BatchScanRegions(ctx context.Context, keyRanges []pdclient.KeyRange, limit int, opts ...pdclient.GetRegionOption) ([]*pdclient.Region, error) {
+	regions := make([]*pdclient.Region, 0, len(keyRanges))
+	var lastRegion *pdclient.Region
+	for _, keyRange := range keyRanges {
+		if lastRegion != nil && lastRegion.Meta != nil {
+			endKey := lastRegion.Meta.EndKey
+			if len(endKey) == 0 {
+				return regions, nil
+			}
+			if bytes.Compare(endKey, keyRange.EndKey) >= 0 {
+				continue
+			} else if bytes.Compare(endKey, keyRange.StartKey) > 0 {
+				keyRange.StartKey = endKey
+			}
+		}
+		rangeRegions := pd.rm.ScanRegions(keyRange.StartKey, keyRange.EndKey, limit, opts...)
+		if len(rangeRegions) == 0 {
+			continue
+		}
+		lastRegion = rangeRegions[len(rangeRegions)-1]
+		regions = append(regions, rangeRegions...)
+		limit -= len(rangeRegions)
+		if limit <= 0 {
+			break
+		}
+	}
 	return regions, nil
 }
 

@@ -333,6 +333,7 @@ func (m *txnManager) newProviderWithRequest(r *sessiontxn.EnterNewTxnRequest) (s
 	}
 
 	if r.StaleReadTS > 0 {
+		m.sctx.GetSessionVars().TxnCtx.StaleReadTs = r.StaleReadTS
 		return staleread.NewStalenessTxnContextProvider(m.sctx, r.StaleReadTS, nil), nil
 	}
 

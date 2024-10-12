@@ -38,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/tikv/client-go/v2/oracle"
 	"go.uber.org/zap"
 )
 
@@ -238,7 +239,7 @@ func buildControllerForPlan(p *LogicalPlan) (*importer.LoadDataController, error
 }
 
 func buildController(plan *importer.Plan, stmt string) (*importer.LoadDataController, error) {
-	idAlloc := kv.NewPanickingAllocators(0)
+	idAlloc := kv.NewPanickingAllocators(plan.TableInfo.SepAutoInc(), 0)
 	tbl, err := tables.TableFromMeta(idAlloc, plan.TableInfo)
 	if err != nil {
 		return nil, err
@@ -362,6 +363,13 @@ func generateWriteIngestSpecs(planCtx planner.PlanCtx, p *LogicalPlan) ([]planne
 			},
 		}, nil)
 	})
+
+	pTS, lTS, err := planCtx.Store.GetPDClient().GetTS(ctx)
+	if err != nil {
+		return nil, err
+	}
+	ts := oracle.ComposeTS(pTS, lTS)
+
 	specs := make([]planner.PipelineSpec, 0, 16)
 	for kvGroup, kvMeta := range kvMetas {
 		splitter, err1 := getRangeSplitter(ctx, controller.GlobalSortStore, kvMeta)
@@ -379,7 +387,7 @@ func generateWriteIngestSpecs(planCtx planner.PlanCtx, p *LogicalPlan) ([]planne
 			startKey := tidbkv.Key(kvMeta.StartKey)
 			var endKey tidbkv.Key
 			for {
-				endKeyOfGroup, dataFiles, statFiles, rangeSplitKeys, err2 := splitter.SplitOneRangesGroup()
+				endKeyOfGroup, dataFiles, statFiles, interiorRangeJobKeys, regionSplitKeys, err2 := splitter.SplitOneRangesGroup()
 				if err2 != nil {
 					return err2
 				}
@@ -396,6 +404,10 @@ func generateWriteIngestSpecs(planCtx planner.PlanCtx, p *LogicalPlan) ([]planne
 					return errors.Errorf("invalid kv range, startKey: %s, endKey: %s",
 						hex.EncodeToString(startKey), hex.EncodeToString(endKey))
 				}
+				rangeJobKeys := make([][]byte, 0, len(interiorRangeJobKeys)+2)
+				rangeJobKeys = append(rangeJobKeys, startKey)
+				rangeJobKeys = append(rangeJobKeys, interiorRangeJobKeys...)
+				rangeJobKeys = append(rangeJobKeys, endKey)
 				// each subtask will write and ingest one range group
 				m := &WriteIngestStepMeta{
 					KVGroup: kvGroup,
@@ -407,8 +419,9 @@ func generateWriteIngestSpecs(planCtx planner.PlanCtx, p *LogicalPlan) ([]planne
 					},
 					DataFiles:      dataFiles,
 					StatFiles:      statFiles,
-					RangeSplitKeys: rangeSplitKeys,
-					RangeSplitSize: splitter.GetRangeSplitSize(),
+					RangeJobKeys:   rangeJobKeys,
+					RangeSplitKeys: regionSplitKeys,
+					TS:             ts,
 				}
 				specs = append(specs, &WriteIngestSpec{m})
 
@@ -507,12 +520,15 @@ func getRangeSplitter(ctx context.Context, store storage.ExternalStorage, kvMeta
 		zap.Int64("region-split-size", regionSplitSize),
 		zap.Int64("region-split-keys", regionSplitKeys))
 
+	// no matter region split size and keys, we always split range jobs by 96MB
 	return external.NewRangeSplitter(
 		ctx,
 		kvMeta.MultipleFilesStats,
 		store,
 		int64(config.DefaultBatchSize),
 		int64(math.MaxInt64),
+		int64(config.SplitRegionSize),
+		int64(config.SplitRegionKeys),
 		regionSplitSize,
 		regionSplitKeys,
 	)

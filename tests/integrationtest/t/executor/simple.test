@@ -379,6 +379,11 @@ create user user1;
 ALTER USER `user1` RESOURCE GROUP `rg1`;
 SELECT CURRENT_RESOURCE_GROUP();
 
+create role role_for_resource_group;
+-- error 8257
+alter user role_for_resource_group resource group rg1;
+drop role role_for_resource_group;
+
 connect(conn1, localhost, user1,,);
 SELECT CURRENT_RESOURCE_GROUP();
 

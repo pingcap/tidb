@@ -69,11 +69,21 @@
       ".*_generated\\.go$": "ignore generated code"
     }
   },
+  "printexpression": {
+    "exclude_files": {
+      "pkg/parser/parser.go": "parser/parser.go code",
+      "external/": "no need to vet third party code",
+      ".*_generated\\.go$": "ignore generated code",
+      "build/linter/printexpression/testdata/": "ignore test code"
+    }
+  },
   "printf": {
     "exclude_files": {
       "pkg/parser/parser.go": "parser/parser.go code",
       "external/": "no need to vet third party code",
-      ".*_generated\\.go$": "ignore generated code"
+      ".*_generated\\.go$": "ignore generated code",
+      "pkg/planner/core/plan_clone_generator.go": "ignore plan_clone_generator code",
+      "pkg/util/dbterror/ddl_terror.go": "ignore ddl_terror code"
     }
   },
   "unreachable": {
@@ -103,6 +113,13 @@
       "/cgo/": "ignore cgo code"
     }
   },
+  "copyloopvar": {
+    "exclude_files": {
+      "pkg/parser/parser.go": "parser/parser.go code",
+      "external/": "no need to vet third party code",
+      ".*_generated\\.go$": "ignore generated code"
+    }
+  },
   "ctrlflow": {
     "exclude_files": {
       "pkg/parser/parser.go": "parser/parser.go code",
@@ -111,6 +128,13 @@
     }
   },
   "deadcode": {
+    "exclude_files": {
+      "pkg/parser/parser.go": "parser/parser.go code",
+      "external/": "no need to vet third party code",
+      ".*_generated\\.go$": "ignore generated code"
+    }
+  },
+  "defers": {
     "exclude_files": {
       "pkg/parser/parser.go": "parser/parser.go code",
       "external/": "no need to vet third party code",
@@ -153,13 +177,6 @@
       "/parser/": "ignore code",
       "pkg/server/internal/testserverclient/server_client.go": "ignore code",
       ".*_/testmain\\.go$": "ignore code"
-    }
-  },
-  "exportloopref": {
-    "exclude_files": {
-      "pkg/parser/parser.go": "parser/parser.go code",
-      "external/": "no need to vet third party code",
-      ".*_generated\\.go$": "ignore generated code"
     }
   },
   "filepermission": {
@@ -266,7 +283,10 @@
       "/cgo/": "ignore cgo code",
       "/rules_go_work-*": "ignore generated code",
       ".*test_/testmain\\.go$": "ignore generated code",
-      ".*failpoint_binding__.go$": "ignore generated code"
+      ".*failpoint_binding__.go$": "ignore generated code",
+      "_cgo_gotypes.go": "skip _cgo_gotypes.go",
+      "_cgo_imports.go": "skip _cgo_imports.go",
+      ".*.cgo1.go": "skip cgo1.go"
     }
   },
   "gci": {
@@ -327,13 +347,6 @@
     }
   },
   "inspect": {
-    "exclude_files": {
-      "pkg/parser/parser.go": "parser/parser.go code",
-      "external/": "no need to vet third party code",
-      ".*_generated\\.go$": "ignore generated code"
-    }
-  },
-  "loopclosure": {
     "exclude_files": {
       "pkg/parser/parser.go": "parser/parser.go code",
       "external/": "no need to vet third party code",
@@ -481,22 +494,6 @@
       "/cgo/": "ignore cgo"
     }
   },
-  "noloopclosure": {
-    "exclude_files": {
-      "pkg/parser/parser.go": "parser/parser.go code",
-      "external/": "no need to vet third party code",
-      ".*_generated\\.go$": "ignore generated code"
-    },
-    "only_files": {
-      "pkg/lightning/mydump/": "pkg/lightning/mydump/",
-      "lightning/pkg/importer/opts": "lightning/pkg/importer/opts",
-      "pkg/kv/": "kv code",
-      "pkg/util/memory": "util/memory",
-      "pkg/ddl/": "ddl",
-      "pkg/planner/": "planner",
-      "pkg/extension/": "extension code"
-    }
-  },
   "pkgfact": {
     "exclude_files": {
       "pkg/parser/parser.go": "parser/parser.go code",
@@ -514,6 +511,7 @@
       "pkg/parser/goyacc/": "ignore goyacc code",
       "pkg/parser/ast/": "ignore parser/ast code",
       "pkg/parser/test_driver/": "ignore parser/test_driver code",
+      "pkg/planner/core/plan_clone_generated.go": "ignore plan_clone_generated code",
       ".*_test\\.go$": "ignore generated code",
       ".*_generated\\.go$": "ignore generated code",
       ".*mock.go$": "ignore generated code",
@@ -1083,7 +1081,7 @@
   "SA1029": {
     "exclude_files": {
       "pkg/parser/parser.go": "parser/parser.go code",
-      "/external/": "no need to vet third party code",
+      "external/": "no need to vet third party code",
       ".*_generated\\.go$": "ignore generated code",
       ".*mock.go$": "ignore generated code",
       ".*_test\\.go$": "ignore test code"
@@ -1347,6 +1345,20 @@
   "bootstrap": {
     "only_files": {
       "pkg/session/": "bootstrap code"
+    }
+  },
+  "appends": {
+    "exclude_files": {
+      "pkg/parser/parser.go": "parser/parser.go code",
+      "external/": "no need to vet third party code",
+      ".*_generated\\.go$": "ignore generated code"
+    }
+  },
+  "unusedwrite": {
+    "exclude_files": {
+      "pkg/parser/parser.go": "parser/parser.go code",
+      "external/": "no need to vet third party code",
+      ".*_generated\\.go$": "ignore generated code"
     }
   }
 }

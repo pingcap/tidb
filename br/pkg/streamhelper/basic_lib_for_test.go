@@ -17,6 +17,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/errors"
 	backup "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/kvproto/pkg/errorpb"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
@@ -100,10 +101,11 @@ type fakeCluster struct {
 	regions   []*region
 	testCtx   *testing.T
 
-	onGetClient        func(uint64) error
-	onClearCache       func(uint64) error
-	serviceGCSafePoint uint64
-	currentTS          uint64
+	onGetClient               func(uint64) error
+	onClearCache              func(uint64) error
+	serviceGCSafePoint        uint64
+	serviceGCSafePointDeleted bool
+	currentTS                 uint64
 }
 
 func (r *region) splitAt(newID uint64, k string) *region {
@@ -264,15 +266,18 @@ func (f *fakeStore) GetLastFlushTSOfRegion(ctx context.Context, in *logbackup.Ge
 func (f *fakeCluster) BlockGCUntil(ctx context.Context, at uint64) (uint64, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	if at == 0 {
-		f.serviceGCSafePoint = at
-		return at, nil
-	}
 	if f.serviceGCSafePoint > at {
-		return f.serviceGCSafePoint, nil
+		return f.serviceGCSafePoint, errors.Errorf("minimal safe point %d is greater than the target %d", f.serviceGCSafePoint, at)
 	}
 	f.serviceGCSafePoint = at
 	return at, nil
+}
+
+func (f *fakeCluster) UnblockGC(ctx context.Context) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.serviceGCSafePointDeleted = true
+	return nil
 }
 
 func (f *fakeCluster) FetchCurrentTS(ctx context.Context) (uint64, error) {
@@ -521,9 +526,10 @@ func (f *fakeCluster) advanceClusterTimeBy(duration time.Duration) uint64 {
 
 func createFakeCluster(t *testing.T, n int, simEnabled bool) *fakeCluster {
 	c := &fakeCluster{
-		stores:  map[uint64]*fakeStore{},
-		regions: []*region{},
-		testCtx: t,
+		stores:             map[uint64]*fakeStore{},
+		regions:            []*region{},
+		testCtx:            t,
+		serviceGCSafePoint: 0,
 	}
 	stores := make([]*fakeStore, 0, n)
 	for i := 0; i < n; i++ {
@@ -635,10 +641,12 @@ func (f *fakeCluster) String() string {
 
 type testEnv struct {
 	*fakeCluster
-	checkpoint uint64
-	testCtx    *testing.T
-	ranges     []kv.KeyRange
-	taskCh     chan<- streamhelper.TaskEvent
+	checkpoint     uint64
+	pdDisconnected atomic.Bool
+	testCtx        *testing.T
+	ranges         []kv.KeyRange
+	taskCh         chan<- streamhelper.TaskEvent
+	task           streamhelper.TaskEvent
 
 	resolveLocks func([]*txnlock.Lock, *tikv.KeyLocation) (*tikv.KeyLocation, error)
 
@@ -646,20 +654,29 @@ type testEnv struct {
 	pd.Client
 }
 
-func (t *testEnv) Begin(ctx context.Context, ch chan<- streamhelper.TaskEvent) error {
-	rngs := t.ranges
+func newTestEnv(c *fakeCluster, t *testing.T) *testEnv {
+	env := &testEnv{
+		fakeCluster: c,
+		testCtx:     t,
+	}
+	rngs := env.ranges
 	if len(rngs) == 0 {
 		rngs = []kv.KeyRange{{}}
 	}
-	tsk := streamhelper.TaskEvent{
+	env.task = streamhelper.TaskEvent{
 		Type: streamhelper.EventAdd,
 		Name: "whole",
 		Info: &backup.StreamBackupTaskInfo{
-			Name: "whole",
+			Name:    "whole",
+			StartTs: 5,
 		},
 		Ranges: rngs,
 	}
-	ch <- tsk
+	return env
+}
+
+func (t *testEnv) Begin(ctx context.Context, ch chan<- streamhelper.TaskEvent) error {
+	ch <- t.task
 	t.taskCh = ch
 	return nil
 }
@@ -673,6 +690,25 @@ func (t *testEnv) UploadV3GlobalCheckpointForTask(ctx context.Context, _ string,
 	}
 	t.checkpoint = checkpoint
 	return nil
+}
+
+func (t *testEnv) mockPDConnectionError() {
+	t.pdDisconnected.Store(true)
+}
+
+func (t *testEnv) connectPD() bool {
+	if !t.pdDisconnected.Load() {
+		return true
+	}
+	t.pdDisconnected.Store(false)
+	return false
+}
+
+func (t *testEnv) GetGlobalCheckpointForTask(ctx context.Context, taskName string) (uint64, error) {
+	if !t.connectPD() {
+		return 0, status.Error(codes.Unavailable, "pd disconnected")
+	}
+	return t.checkpoint, nil
 }
 
 func (t *testEnv) ClearV3GlobalCheckpointForTask(ctx context.Context, taskName string) error {
@@ -706,11 +742,34 @@ func (t *testEnv) getCheckpoint() uint64 {
 	return t.checkpoint
 }
 
+func (t *testEnv) advanceCheckpointBy(duration time.Duration) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+
+	t.checkpoint = oracle.GoTimeToTS(oracle.GetTimeFromTS(t.checkpoint).Add(duration))
+}
+
 func (t *testEnv) unregisterTask() {
 	t.taskCh <- streamhelper.TaskEvent{
 		Type: streamhelper.EventDel,
 		Name: "whole",
 	}
+}
+
+func (t *testEnv) putTask() {
+	rngs := t.ranges
+	if len(rngs) == 0 {
+		rngs = []kv.KeyRange{{}}
+	}
+	tsk := streamhelper.TaskEvent{
+		Type: streamhelper.EventAdd,
+		Name: "whole",
+		Info: &backup.StreamBackupTaskInfo{
+			Name: "whole",
+		},
+		Ranges: rngs,
+	}
+	t.taskCh <- tsk
 }
 
 func (t *testEnv) ScanLocksInOneRegion(bo *tikv.Backoffer, key []byte, maxVersion uint64, limit uint32) ([]*txnlock.Lock, *tikv.KeyLocation, error) {

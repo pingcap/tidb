@@ -194,7 +194,7 @@ func (dt *DetectorClient) handleRemoteTask(requestType deadlockPb.DeadlockReques
 	dt.sendCh <- detectReq
 }
 
-// CleanUp processes cleaup task on local detector
+// CleanUp processes cleanup task on local detector
 // user interfaces
 func (dt *DetectorClient) CleanUp(startTs uint64) {
 	dt.handleRemoteTask(deadlockPb.DeadlockRequestType_CleanUp, startTs, 0, 0, diagnosticContext{})

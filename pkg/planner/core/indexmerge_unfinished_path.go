@@ -19,7 +19,8 @@ import (
 	"slices"
 
 	"github.com/pingcap/tidb/pkg/expression"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/util"
 )
 
@@ -85,7 +86,7 @@ Example:
   }
 */
 func generateUnfinishedIndexMergePathFromORList(
-	ds *DataSource,
+	ds *logicalop.DataSource,
 	orList []expression.Expression,
 	candidateAccessPaths []*util.AccessPath,
 ) *unfinishedAccessPath {
@@ -126,7 +127,7 @@ Example2:
     [unfinishedAccessPath{idx1,a=3}, unfinishedAccessPath{idx2,a=3}]
 */
 func initUnfinishedPathsFromExpr(
-	ds *DataSource,
+	ds *logicalop.DataSource,
 	candidateAccessPaths []*util.AccessPath,
 	expr expression.Expression,
 ) unfinishedAccessPathList {
@@ -142,7 +143,8 @@ func initUnfinishedPathsFromExpr(
 			// generateNormalIndexPartialPaths4DNF is introduced for handle a slice of DNF items and a slice of
 			// candidate AccessPaths before, now we reuse it to handle single filter and single candidate AccessPath,
 			// so we need to wrap them in a slice here.
-			paths, needSelection, usedMap := ds.generateNormalIndexPartialPaths4DNF(
+			paths, needSelection, usedMap := generateNormalIndexPartialPaths4DNF(
+				ds,
 				[]expression.Expression{expr},
 				[]*util.AccessPath{path},
 			)
@@ -162,7 +164,7 @@ func initUnfinishedPathsFromExpr(
 		if path.IsTablePath() {
 			continue
 		}
-		idxCols, ok := PrepareIdxColsAndUnwrapArrayType(ds.table.Meta(), path.Index, ds.TblCols, false)
+		idxCols, ok := PrepareIdxColsAndUnwrapArrayType(ds.Table.Meta(), path.Index, ds.TblCols, false)
 		if !ok {
 			continue
 		}
@@ -222,7 +224,7 @@ func initUnfinishedPathsFromExpr(
 // util.AccessPath.
 // The input candidateAccessPaths argument should be the same with generateUnfinishedIndexMergePathFromORList().
 func handleTopLevelANDListAndGenFinishedPath(
-	ds *DataSource,
+	ds *logicalop.DataSource,
 	allConds []expression.Expression,
 	orListIdxInAllConds int,
 	candidateAccessPaths []*util.AccessPath,
@@ -304,7 +306,7 @@ func mergeANDItemIntoUnfinishedIndexMergePath(
 }
 
 func buildIntoAccessPath(
-	ds *DataSource,
+	ds *logicalop.DataSource,
 	originalPaths []*util.AccessPath,
 	indexMergePath *unfinishedAccessPath,
 	allConds []expression.Expression,
@@ -337,7 +339,7 @@ func buildIntoAccessPath(
 			if unfinishedPath.index != nil && unfinishedPath.index.MVIndex {
 				// case 1: mv index
 				idxCols, ok := PrepareIdxColsAndUnwrapArrayType(
-					ds.table.Meta(),
+					ds.Table.Meta(),
 					unfinishedPath.index,
 					ds.TblCols,
 					true,
@@ -360,7 +362,7 @@ func buildIntoAccessPath(
 					accessFilters,
 					idxCols,
 					unfinishedPath.index,
-					ds.tableStats.HistColl,
+					ds.TableStats.HistColl,
 				)
 				if err != nil || !ok || (isIntersection && len(paths) > 1) {
 					continue
@@ -370,7 +372,8 @@ func buildIntoAccessPath(
 				// case 2: non-mv index
 				var usedMap []bool
 				// Reuse the previous implementation. The same usage as in initUnfinishedPathsFromExpr().
-				paths, needSelection, usedMap = ds.generateNormalIndexPartialPaths4DNF(
+				paths, needSelection, usedMap = generateNormalIndexPartialPaths4DNF(
+					ds,
 					[]expression.Expression{
 						expression.ComposeCNFCondition(
 							ds.SCtx().GetExprCtx(),
@@ -411,12 +414,12 @@ func buildIntoAccessPath(
 	// 2. Collect the final table filter
 	// We always put all filters in the top level AND list except for the OR list into the final table filters.
 	// Whether to put the OR list into the table filters also depends on the needSelectionGlobal.
-	tableFilter := allConds[:]
+	tableFilter := slices.Clone(allConds)
 	if !needSelectionGlobal {
 		tableFilter = slices.Delete(tableFilter, orListIdxInAllConds, orListIdxInAllConds+1)
 	}
 
 	// 3. Build the final access path
-	ret := ds.buildPartialPathUp4MVIndex(partialPaths, false, tableFilter, ds.tableStats.HistColl)
+	ret := buildPartialPathUp4MVIndex(partialPaths, false, tableFilter, ds.TableStats.HistColl)
 	return ret
 }

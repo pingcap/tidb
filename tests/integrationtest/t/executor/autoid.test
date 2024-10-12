@@ -483,3 +483,27 @@ show variables like 'auto_increment%';
 
 set auto_increment_offset = default;
 set auto_increment_increment = default;
+
+## Test for issue 52465
+drop table if exists issue52465;
+create table issue52465 (id int primary key auto_increment, k int) AUTO_ID_CACHE=1;
+insert into issue52465 (k) values (1);
+insert into issue52465 values (3997, 2);
+select * from issue52465 t;
+insert into issue52465 (k) values (1),(2),(3),(4),(5),(6),(7),(8),(9),(10);
+select * from issue52465;
+insert into issue52465 (k) values (11);
+select * from issue52465;
+drop table issue52465;
+
+
+drop table if exists issue52465;
+create table issue52465 (id int unsigned primary key auto_increment, k int) AUTO_ID_CACHE=1;
+insert into issue52465 (k) values (1);
+insert into issue52465 values (3997, 2);
+select * from issue52465 t;
+insert into issue52465 (k) values (1),(2),(3),(4),(5),(6),(7),(8),(9),(10);
+select * from issue52465;
+insert into issue52465 (k) values (11);
+select * from issue52465;
+drop table issue52465;

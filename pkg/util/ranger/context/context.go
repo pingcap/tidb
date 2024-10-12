@@ -16,28 +16,36 @@ package context
 
 import (
 	"github.com/pingcap/tidb/pkg/errctx"
-	exprctx "github.com/pingcap/tidb/pkg/expression/context"
+	"github.com/pingcap/tidb/pkg/expression/exprctx"
 	"github.com/pingcap/tidb/pkg/types"
 	contextutil "github.com/pingcap/tidb/pkg/util/context"
 )
-
-// RangeFallbackHandler is used to handle range fallback.
-// If there are too many ranges, it'll fallback and add a warning.
-type RangeFallbackHandler interface {
-	RecordRangeFallback(rangeMaxSize int64)
-	SetSkipPlanCache(err error)
-	contextutil.WarnHandler
-}
 
 // RangerContext is the context used to build range.
 type RangerContext struct {
 	TypeCtx types.Context
 	ErrCtx  errctx.Context
 	ExprCtx exprctx.BuildContext
-	RangeFallbackHandler
+	*contextutil.RangeFallbackHandler
+	*contextutil.PlanCacheTracker
 	OptimizerFixControl      map[uint64]string
 	UseCache                 bool
 	InPreparedPlanBuilding   bool
 	RegardNULLAsPoint        bool
 	OptPrefixIndexSingleScan bool
+}
+
+// Detach detaches this context from the session context.
+//
+// NOTE: Though this session context can be used parallelly with this context after calling
+// it, the `StatementContext` cannot. The session context should create a new `StatementContext`
+// before executing another statement.
+func (r *RangerContext) Detach(staticExprCtx exprctx.BuildContext) *RangerContext {
+	newCtx := *r
+	newCtx.ExprCtx = staticExprCtx
+	newCtx.OptimizerFixControl = make(map[uint64]string, len(r.OptimizerFixControl))
+	for k, v := range r.OptimizerFixControl {
+		newCtx.OptimizerFixControl[k] = v
+	}
+	return &newCtx
 }

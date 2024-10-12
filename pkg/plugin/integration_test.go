@@ -39,7 +39,6 @@ func TestAuditLogNormal(t *testing.T) {
 	conn := server.CreateMockConn(t, sv)
 	defer conn.Close()
 	session.DisableStats4Test()
-	session.SetSchemaLease(0)
 
 	type normalTest struct {
 		sql      string

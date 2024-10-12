@@ -120,8 +120,8 @@
           {
             "Depth": 1,
             "Label": 0,
-            "IsRoot": true,
-            "StoreType": 2,
+            "IsRoot": false,
+            "StoreType": 0,
             "ReqType": 0,
             "IsPhysicalPlan": true,
             "TextTreeIndent": "│ ",
@@ -156,8 +156,8 @@
           {
             "Depth": 1,
             "Label": 0,
-            "IsRoot": true,
-            "StoreType": 2,
+            "IsRoot": false,
+            "StoreType": 0,
             "ReqType": 0,
             "IsPhysicalPlan": true,
             "TextTreeIndent": "│ ",

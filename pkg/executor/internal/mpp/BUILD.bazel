@@ -19,6 +19,7 @@ go_library(
         "//pkg/infoschema",
         "//pkg/kv",
         "//pkg/planner/core",
+        "//pkg/planner/core/base",
         "//pkg/sessionctx",
         "//pkg/sessionctx/variable",
         "//pkg/store/copr",

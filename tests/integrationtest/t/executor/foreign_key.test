@@ -332,8 +332,8 @@ update t1 set pid=1 where id>1;
 alter table t1 add foreign key (pid) references t1 (id) on update cascade;
 select sum(id) from t1;
 SET GLOBAL tidb_mem_oom_action='CANCEL';
-set @@tidb_mem_quota_query=40960;
--- replace_regex /conn=[0-9]+/conn=<num>/
+set @@tidb_mem_quota_query=81920;
+-- replace_regex /conn=[-0-9]+/conn=<num>/
 -- error 8175
 update t1 set id=id+100000 where id=1;
 select id,pid from t1 where id = 1;

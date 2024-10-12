@@ -64,7 +64,11 @@ func (e *StreamAggExec) Open(ctx context.Context) error {
 	}
 	// If panic in Open, the children executor should be closed because they are open.
 	defer closeBaseExecutor(&e.BaseExecutor)
+	return e.OpenSelf()
+}
 
+// OpenSelf just opens the StreamAggExec.
+func (e *StreamAggExec) OpenSelf() error {
 	e.childResult = exec.TryNewCacheChunk(e.Children(0))
 	e.executed = false
 	e.IsChildReturnEmpty = true

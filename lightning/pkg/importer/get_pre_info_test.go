@@ -753,15 +753,21 @@ func TestGetPreInfoEstimateSourceSize(t *testing.T) {
 }
 
 func TestGetPreInfoIsTableEmpty(t *testing.T) {
-	ctx := context.TODO()
+	ctx := context.Background()
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
 	lnConfig := config.NewConfig()
 	lnConfig.TikvImporter.Backend = config.BackendLocal
-	_, err = NewTargetInfoGetterImpl(lnConfig, db, nil)
-	require.ErrorContains(t, err, "pd HTTP client is required when using local backend")
-	lnConfig.TikvImporter.Backend = config.BackendTiDB
 	targetGetter, err := NewTargetInfoGetterImpl(lnConfig, db, nil)
+	require.NoError(t, err)
+	mock.ExpectQuery("SELECT version()").
+		WillReturnRows(sqlmock.NewRows([]string{"version()"}).AddRow("8.0.11-TiDB-v8.2.0-alpha-256-qweqweqw"))
+	err = targetGetter.CheckVersionRequirements(ctx)
+	require.ErrorContains(t, err, "pd HTTP client is required for component version check in local backend")
+	require.NoError(t, mock.ExpectationsWereMet())
+
+	lnConfig.TikvImporter.Backend = config.BackendTiDB
+	targetGetter, err = NewTargetInfoGetterImpl(lnConfig, db, nil)
 	require.NoError(t, err)
 	require.Equal(t, lnConfig, targetGetter.cfg)
 

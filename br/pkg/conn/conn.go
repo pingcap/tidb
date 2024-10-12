@@ -63,6 +63,8 @@ const (
 	NormalVersionChecker VersionCheckerType = iota
 	// version checker for PiTR
 	StreamVersionChecker
+	// no check
+	NoVersionChecker
 )
 
 // Mgr manages connections to a TiDB cluster.
@@ -88,16 +90,26 @@ func GetAllTiKVStoresWithRetry(ctx context.Context,
 		func() error {
 			stores, err = util.GetAllTiKVStores(ctx, pdClient, storeBehavior)
 			failpoint.Inject("hint-GetAllTiKVStores-error", func(val failpoint.Value) {
+				logutil.CL(ctx).Debug("failpoint hint-GetAllTiKVStores-error injected.")
 				if val.(bool) {
-					logutil.CL(ctx).Debug("failpoint hint-GetAllTiKVStores-error injected.")
 					err = status.Error(codes.Unknown, "Retryable error")
+					failpoint.Return(err)
 				}
 			})
 
-			failpoint.Inject("hint-GetAllTiKVStores-cancel", func(val failpoint.Value) {
+			failpoint.Inject("hint-GetAllTiKVStores-grpc-cancel", func(val failpoint.Value) {
+				logutil.CL(ctx).Debug("failpoint hint-GetAllTiKVStores-grpc-cancel injected.")
 				if val.(bool) {
-					logutil.CL(ctx).Debug("failpoint hint-GetAllTiKVStores-cancel injected.")
 					err = status.Error(codes.Canceled, "Cancel Retry")
+					failpoint.Return(err)
+				}
+			})
+
+			failpoint.Inject("hint-GetAllTiKVStores-ctx-cancel", func(val failpoint.Value) {
+				logutil.CL(ctx).Debug("failpoint hint-GetAllTiKVStores-ctx-cancel injected.")
+				if val.(bool) {
+					err = context.Canceled
+					failpoint.Return(err)
 				}
 			})
 
@@ -160,17 +172,18 @@ func NewMgr(
 		return nil, errors.Trace(err)
 	}
 	if checkRequirements {
-		var checker version.VerChecker
+		var versionErr error
 		switch versionCheckerType {
 		case NormalVersionChecker:
-			checker = version.CheckVersionForBR
+			versionErr = version.CheckClusterVersion(ctx, controller.GetPDClient(), version.CheckVersionForBR)
 		case StreamVersionChecker:
-			checker = version.CheckVersionForBRPiTR
+			versionErr = version.CheckClusterVersion(ctx, controller.GetPDClient(), version.CheckVersionForBRPiTR)
+		case NoVersionChecker:
+			versionErr = nil
 		default:
 			return nil, errors.Errorf("unknown command type, comman code is %d", versionCheckerType)
 		}
-		err = version.CheckClusterVersion(ctx, controller.GetPDClient(), checker)
-		if err != nil {
+		if versionErr != nil {
 			return nil, errors.Annotate(err, "running BR in incompatible version of cluster, "+
 				"if you believe it's OK, use --check-requirements=false to skip.")
 		}
@@ -286,8 +299,8 @@ func (mgr *Mgr) Close() {
 	mgr.PdController.Close()
 }
 
-// GetTS gets current ts from pd.
-func (mgr *Mgr) GetTS(ctx context.Context) (uint64, error) {
+// GetCurrentTsFromPD gets current ts from PD.
+func (mgr *Mgr) GetCurrentTsFromPD(ctx context.Context) (uint64, error) {
 	p, l, err := mgr.GetPDClient().GetTS(ctx)
 	if err != nil {
 		return 0, errors.Trace(err)
@@ -348,6 +361,25 @@ func (mgr *Mgr) ProcessTiKVConfigs(ctx context.Context, cfg *kvconfig.KVConfig, 
 	}
 }
 
+// IsLogBackupEnabled is used for br to check whether tikv has enabled log backup.
+func (mgr *Mgr) IsLogBackupEnabled(ctx context.Context, client *http.Client) (bool, error) {
+	logbackupEnable := true
+	err := mgr.GetConfigFromTiKV(ctx, client, func(resp *http.Response) error {
+		respBytes, err := io.ReadAll(resp.Body)
+		if err != nil {
+			return err
+		}
+		enable, err := kvconfig.ParseLogBackupEnableFromConfig(respBytes)
+		if err != nil {
+			log.Warn("Failed to parse log-backup enable from config", logutil.ShortError(err))
+			return err
+		}
+		logbackupEnable = logbackupEnable && enable
+		return nil
+	})
+	return logbackupEnable, errors.Trace(err)
+}
+
 // GetConfigFromTiKV get configs from all alive tikv stores.
 func (mgr *Mgr) GetConfigFromTiKV(ctx context.Context, cli *http.Client, fn func(*http.Response) error) error {
 	allStores, err := GetAllTiKVStoresWithRetry(ctx, mgr.GetPDClient(), util.SkipTiFlash)
@@ -377,11 +409,11 @@ func (mgr *Mgr) GetConfigFromTiKV(ctx context.Context, cli *http.Client, fn func
 			if e != nil {
 				return e
 			}
+			defer resp.Body.Close()
 			err = fn(resp)
 			if err != nil {
 				return err
 			}
-			_ = resp.Body.Close()
 			return nil
 		}, utils.NewPDReqBackoffer())
 		if err != nil {

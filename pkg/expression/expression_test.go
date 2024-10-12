@@ -17,8 +17,11 @@ package expression
 import (
 	"testing"
 
+	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/expression/exprstatic"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
@@ -47,7 +50,9 @@ func TestEvaluateExprWithNull(t *testing.T) {
 	require.NoError(t, err)
 
 	res := EvaluateExprWithNull(ctx, schema, outerIfNull)
-	require.Equal(t, "ifnull(Column#1, 1)", res.String())
+	require.Equal(t, "ifnull(Column#1, 1)", res.StringWithCtx(ctx, errors.RedactLogDisable))
+	require.Equal(t, "ifnull(Column#1, ?)", res.StringWithCtx(ctx, errors.RedactLogEnable))
+	require.Equal(t, "ifnull(Column#1, ‹1›)", res.StringWithCtx(ctx, errors.RedactLogMarker))
 	schema.Columns = append(schema.Columns, col1)
 	// ifnull(null, ifnull(null, 1))
 	res = EvaluateExprWithNull(ctx, schema, outerIfNull)
@@ -60,7 +65,7 @@ func TestEvaluateExprWithNullAndParameters(t *testing.T) {
 	schema := tableInfoToSchemaForTest(tblInfo)
 	col0 := schema.Columns[0]
 
-	ctx.GetSessionVars().StmtCtx.UseCache = true
+	ctx.GetSessionVars().StmtCtx.EnablePlanCache()
 
 	// cases for parameters
 	ltWithoutParam, err := newFunctionForTest(ctx, ast.LT, col0, NewOne())
@@ -68,14 +73,14 @@ func TestEvaluateExprWithNullAndParameters(t *testing.T) {
 	res := EvaluateExprWithNull(ctx, schema, ltWithoutParam)
 	require.True(t, res.Equal(ctx, NewNull())) // the expression is evaluated to null
 	param := NewOne()
-	param.ParamMarker = &ParamMarker{ctx: ctx, order: 0}
+	param.ParamMarker = &ParamMarker{order: 0}
 	ctx.GetSessionVars().PlanCacheParams.Append(types.NewIntDatum(10))
 	ltWithParam, err := newFunctionForTest(ctx, ast.LT, col0, param)
 	require.NoError(t, err)
 	res = EvaluateExprWithNull(ctx, schema, ltWithParam)
 	_, isConst := res.(*Constant)
 	require.True(t, isConst) // this expression is evaluated and skip-plan cache flag is set.
-	require.True(t, !ctx.GetSessionVars().StmtCtx.UseCache)
+	require.True(t, !ctx.GetSessionVars().StmtCtx.UseCache())
 }
 
 func TestEvaluateExprWithNullNoChangeRetType(t *testing.T) {
@@ -109,9 +114,6 @@ func TestConstant(t *testing.T) {
 	require.True(t, NewZero().Decorrelate(nil).Equal(ctx, NewZero()))
 	require.Equal(t, []byte{0x0, 0x8, 0x0}, NewZero().HashCode())
 	require.False(t, NewZero().Equal(ctx, NewOne()))
-	res, err := NewZero().MarshalJSON()
-	require.NoError(t, err)
-	require.Equal(t, []byte{0x22, 0x30, 0x22}, res)
 }
 
 func TestIsBinaryLiteral(t *testing.T) {
@@ -133,6 +135,7 @@ func TestIsBinaryLiteral(t *testing.T) {
 func TestConstLevel(t *testing.T) {
 	ctxConst := NewZero()
 	ctxConst.DeferredExpr = newFunctionWithMockCtx(ast.UnixTimestamp)
+	ctx := exprstatic.NewEvalContext()
 	for _, c := range []struct {
 		exp   Expression
 		level ConstLevel
@@ -148,7 +151,7 @@ func TestConstLevel(t *testing.T) {
 		{newFunctionWithMockCtx(ast.Plus, NewOne(), newColumn(1)), ConstNone},
 		{newFunctionWithMockCtx(ast.Plus, NewOne(), ctxConst), ConstOnlyInContext},
 	} {
-		require.Equal(t, c.level, c.exp.ConstLevel(), c.exp.String())
+		require.Equal(t, c.level, c.exp.ConstLevel(), c.exp.StringWithCtx(ctx, errors.RedactLogDisable))
 	}
 }
 
@@ -218,7 +221,7 @@ func (builder *testTableBuilder) add(name string, tp byte, flag uint) *testTable
 func (builder *testTableBuilder) build() *model.TableInfo {
 	ti := &model.TableInfo{
 		ID:    1,
-		Name:  model.NewCIStr(builder.tableName),
+		Name:  pmodel.NewCIStr(builder.tableName),
 		State: model.StatePublic,
 	}
 	for i, colName := range builder.columnNames {
@@ -233,7 +236,7 @@ func (builder *testTableBuilder) build() *model.TableInfo {
 		fieldType.SetFlag(builder.flags[i])
 		ti.Columns = append(ti.Columns, &model.ColumnInfo{
 			ID:        int64(i + 1),
-			Name:      model.NewCIStr(colName),
+			Name:      pmodel.NewCIStr(colName),
 			Offset:    i,
 			FieldType: *fieldType,
 			State:     model.StatePublic,
@@ -268,9 +271,9 @@ func TestEvalExpr(t *testing.T) {
 		colBuf2 := chunk.NewColumn(ft, 1024)
 		var err error
 		require.True(t, colExpr.Vectorized())
-		err = EvalExpr(ctx, false, colExpr, colExpr.GetType().EvalType(), input, colBuf)
+		err = EvalExpr(ctx, false, colExpr, colExpr.GetType(ctx).EvalType(), input, colBuf)
 		require.NoError(t, err)
-		err = EvalExpr(ctx, true, colExpr, colExpr.GetType().EvalType(), input, colBuf2)
+		err = EvalExpr(ctx, true, colExpr, colExpr.GetType(ctx).EvalType(), input, colBuf2)
 		require.NoError(t, err)
 		for j := 0; j < 1024; j++ {
 			isNull := colBuf.IsNull(j)

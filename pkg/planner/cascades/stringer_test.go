@@ -20,9 +20,11 @@ import (
 
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/infoschema"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser"
-	"github.com/pingcap/tidb/pkg/parser/model"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
+	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/planner/memo"
 	"github.com/pingcap/tidb/pkg/planner/pattern"
 	"github.com/pingcap/tidb/pkg/testkit/testdata"
@@ -62,10 +64,11 @@ func TestGroupStringer(t *testing.T) {
 		stmt, err := p.ParseOneStmt(sql, "", "")
 		require.NoError(t, err)
 
-		plan, err := plannercore.BuildLogicalPlanForTest(context.Background(), ctx, stmt, is)
+		nodeW := resolve.NewNodeW(stmt)
+		plan, err := plannercore.BuildLogicalPlanForTest(context.Background(), ctx, nodeW, is)
 		require.NoError(t, err)
 
-		logic, ok := plan.(plannercore.LogicalPlan)
+		logic, ok := plan.(base.LogicalPlan)
 		require.True(t, ok)
 
 		logic, err = optimizer.onPhasePreprocessing(ctx, logic)
@@ -77,8 +80,8 @@ func TestGroupStringer(t *testing.T) {
 		group.BuildKeyInfo()
 		testdata.OnRecord(func() {
 			output[i].SQL = sql
-			output[i].Result = ToString(group)
+			output[i].Result = ToString(ctx.GetEvalCtx(), group)
 		})
-		require.Equalf(t, output[i].Result, ToString(group), "case:%v, sql:%s", i, sql)
+		require.Equalf(t, output[i].Result, ToString(ctx.GetEvalCtx(), group), "case:%v, sql:%s", i, sql)
 	}
 }

@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/pkg/statistics/handle/logutil"
 	"github.com/pingcap/tidb/pkg/statistics/handle/types"
 	"github.com/pingcap/tidb/pkg/statistics/handle/util"
+	pkgutil "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"go.uber.org/zap"
 )
@@ -38,11 +39,11 @@ const (
 
 // statsLockImpl implements the util.StatsLock interface.
 type statsLockImpl struct {
-	pool util.SessionPool
+	pool pkgutil.SessionPool
 }
 
 // NewStatsLock creates a new StatsLock.
-func NewStatsLock(pool util.SessionPool) types.StatsLock {
+func NewStatsLock(pool pkgutil.SessionPool) types.StatsLock {
 	return &statsLockImpl{pool: pool}
 }
 
@@ -107,7 +108,7 @@ func (sl *statsLockImpl) RemoveLockedPartitions(
 // queryLockedTables query locked tables from store.
 func (sl *statsLockImpl) queryLockedTables() (tables map[int64]struct{}, err error) {
 	err = util.CallWithSCtx(sl.pool, func(sctx sessionctx.Context) error {
-		tables, err = QueryLockedTables(sctx)
+		tables, err = QueryLockedTables(util.StatsCtx, sctx)
 		return err
 	})
 	return
@@ -143,7 +144,7 @@ func AddLockedTables(
 	tables map[int64]*types.StatsLockTable,
 ) (string, error) {
 	// Load tables to check duplicate before insert.
-	lockedTables, err := QueryLockedTables(sctx)
+	lockedTables, err := QueryLockedTables(util.StatsCtx, sctx)
 	if err != nil {
 		return "", err
 	}
@@ -199,7 +200,7 @@ func AddLockedPartitions(
 	pidNames map[int64]string,
 ) (string, error) {
 	// Load tables to check duplicate before insert.
-	lockedTables, err := QueryLockedTables(sctx)
+	lockedTables, err := QueryLockedTables(util.StatsCtx, sctx)
 	if err != nil {
 		return "", err
 	}

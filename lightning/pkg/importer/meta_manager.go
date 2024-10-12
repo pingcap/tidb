@@ -185,7 +185,7 @@ func (m *dbTableMetaMgr) AllocTableRowIDs(ctx context.Context, rawRowIDMax int64
 	//nolint: errcheck
 	defer conn.Close()
 	exec := &common.SQLWithRetry{
-		DB:     m.session,
+		DB:     conn,
 		Logger: m.tr.logger,
 	}
 	var newRowIDBase, newRowIDMax int64
@@ -266,6 +266,8 @@ func (m *dbTableMetaMgr) AllocTableRowIDs(ctx context.Context, rawRowIDMax int64
 			if curStatus == metaStatusInitial {
 				if needAutoID {
 					// maxRowIDMax is the max row_id that other tasks has allocated, we need to rebase the global autoid base first.
+					// TODO this is not right when AUTO_ID_CACHE=1 and have auto row id,
+					// the id allocators are separated in this case.
 					if err := common.RebaseGlobalAutoID(ctx, maxRowIDMax, m.tr, m.tr.dbInfo.ID, m.tr.tableInfo.Core); err != nil {
 						return errors.Trace(err)
 					}
@@ -389,7 +391,7 @@ func (m *dbTableMetaMgr) CheckAndUpdateLocalChecksum(ctx context.Context, checks
 	//nolint: errcheck
 	defer conn.Close()
 	exec := &common.SQLWithRetry{
-		DB:     m.session,
+		DB:     conn,
 		Logger: m.tr.logger,
 	}
 	err = exec.Exec(ctx, "enable pessimistic transaction", "SET SESSION tidb_txn_mode = 'pessimistic';")
@@ -662,7 +664,7 @@ func (m *dbTaskMetaMgr) CheckTasksExclusively(ctx context.Context, action func(t
 	//nolint: errcheck
 	defer conn.Close()
 	exec := &common.SQLWithRetry{
-		DB:     m.session,
+		DB:     conn,
 		Logger: log.FromContext(ctx),
 	}
 	err = exec.Exec(ctx, "enable pessimistic transaction", "SET SESSION tidb_txn_mode = 'pessimistic';")
@@ -733,7 +735,7 @@ func (m *dbTaskMetaMgr) CheckAndPausePdSchedulers(ctx context.Context) (pdutil.U
 	//nolint: errcheck
 	defer conn.Close()
 	exec := &common.SQLWithRetry{
-		DB:     m.session,
+		DB:     conn,
 		Logger: log.FromContext(ctx),
 	}
 	err = exec.Exec(ctx, "enable pessimistic transaction", "SET SESSION tidb_txn_mode = 'pessimistic';")
@@ -873,7 +875,7 @@ func (m *dbTaskMetaMgr) CheckAndFinishRestore(ctx context.Context, finished bool
 	//nolint: errcheck
 	defer conn.Close()
 	exec := &common.SQLWithRetry{
-		DB:     m.session,
+		DB:     conn,
 		Logger: log.FromContext(ctx),
 	}
 	err = exec.Exec(ctx, "enable pessimistic transaction", "SET SESSION tidb_txn_mode = 'pessimistic';")

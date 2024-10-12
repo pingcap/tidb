@@ -23,7 +23,7 @@ import (
 	"github.com/pingcap/tidb/pkg/executor/internal/vecgroupchecker"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/planner/core"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 )
@@ -41,8 +41,8 @@ type PipelinedWindowExec struct {
 	windowFuncs        []aggfuncs.AggFunc
 	slidingWindowFuncs []aggfuncs.SlidingWindowAggFunc
 	partialResults     []aggfuncs.PartialResult
-	start              *core.FrameBound
-	end                *core.FrameBound
+	start              *logicalop.FrameBound
+	end                *logicalop.FrameBound
 	groupChecker       *vecgroupchecker.VecGroupChecker
 
 	// childResult stores the child chunk. Note that even if remaining is 0, e.rows might still references rows in data[0].chk after returned it to upper executor, since there is no guarantee what the upper executor will do to the returned chunk, it might destroy the data (as in the benchmark test, it reused the chunk to pull data, and it will be chk.Reset(), causing panicking). So dataIdx, accumulated and dropped are added to ensure that chunk will only be returned if there is no row reference.
@@ -84,19 +84,10 @@ func (e *PipelinedWindowExec) Close() error {
 
 // Open implements the Executor Open interface
 func (e *PipelinedWindowExec) Open(ctx context.Context) (err error) {
-	e.rowToConsume = 0
-	e.done = false
-	e.accumulated = 0
-	e.dropped = 0
-	e.data = make([]dataInfo, 0)
-	e.dataIdx = 0
-	e.slidingWindowFuncs = make([]aggfuncs.SlidingWindowAggFunc, len(e.windowFuncs))
-	for i, windowFunc := range e.windowFuncs {
-		if slidingWindowAggFunc, ok := windowFunc.(aggfuncs.SlidingWindowAggFunc); ok {
-			e.slidingWindowFuncs[i] = slidingWindowAggFunc
-		}
-	}
-	e.rows = make([]chunk.Row, 0)
+	e.done, e.newPartition, e.whole, e.initializedSlidingWindow = false, false, false, false
+	e.dataIdx, e.curRowIdx, e.dropped, e.rowToConsume, e.accumulated = 0, 0, 0, 0, 0
+	e.lastStartRow, e.lastEndRow, e.stagedStartRow, e.stagedEndRow, e.rowStart, e.rowCnt = 0, 0, 0, 0, 0, 0
+	e.rows, e.data = make([]chunk.Row, 0), make([]dataInfo, 0)
 	return e.BaseExecutor.Open(ctx)
 }
 

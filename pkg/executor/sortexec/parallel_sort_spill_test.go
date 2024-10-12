@@ -29,7 +29,7 @@ import (
 var hardLimit1 = int64(100000)
 var hardLimit2 = hardLimit1 * 10
 
-func oneSpillCase(t *testing.T, ctx *mock.Context, exe *sortexec.SortExec, sortCase *testutil.SortCase, schema *expression.Schema, dataSource *testutil.MockDataSource) {
+func oneSpillCase(t *testing.T, exe *sortexec.SortExec, sortCase *testutil.SortCase, schema *expression.Schema, dataSource *testutil.MockDataSource) {
 	if exe == nil {
 		exe = buildSortExec(sortCase, dataSource)
 	}
@@ -60,7 +60,7 @@ func inMemoryThenSpill(t *testing.T, ctx *mock.Context, exe *sortexec.SortExec, 
 	require.True(t, checkCorrectness(schema, exe, dataSource, resultChunks))
 }
 
-func failpointNoMemoryDataTest(t *testing.T, ctx *mock.Context, exe *sortexec.SortExec, sortCase *testutil.SortCase, schema *expression.Schema, dataSource *testutil.MockDataSource) {
+func failpointNoMemoryDataTest(t *testing.T, exe *sortexec.SortExec, sortCase *testutil.SortCase, dataSource *testutil.MockDataSource) {
 	if exe == nil {
 		exe = buildSortExec(sortCase, dataSource)
 	}
@@ -68,7 +68,7 @@ func failpointNoMemoryDataTest(t *testing.T, ctx *mock.Context, exe *sortexec.So
 	executeInFailpoint(t, exe, 0, nil)
 }
 
-func failpointDataInMemoryThenSpillTest(t *testing.T, ctx *mock.Context, exe *sortexec.SortExec, sortCase *testutil.SortCase, schema *expression.Schema, dataSource *testutil.MockDataSource) {
+func failpointDataInMemoryThenSpillTest(t *testing.T, ctx *mock.Context, exe *sortexec.SortExec, sortCase *testutil.SortCase, dataSource *testutil.MockDataSource) {
 	if exe == nil {
 		exe = buildSortExec(sortCase, dataSource)
 	}
@@ -81,9 +81,9 @@ func TestParallelSortSpillDisk(t *testing.T) {
 	ctx := mock.NewContext()
 	sortCase := &testutil.SortCase{Rows: 10000, OrderByIdx: []int{0, 1}, Ndvs: []int{0, 0}, Ctx: ctx}
 
-	failpoint.Enable("github.com/pingcap/tidb/pkg/executor/sortexec/SlowSomeWorkers", `return(true)`)
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/executor/sortexec/SlowSomeWorkers", `return(true)`))
 	defer failpoint.Disable("github.com/pingcap/tidb/pkg/executor/sortexec/SlowSomeWorkers")
-	failpoint.Enable("github.com/pingcap/tidb/pkg/executor/sortexec/SignalCheckpointForSort", `return(true)`)
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/executor/sortexec/SignalCheckpointForSort", `return(true)`))
 	defer failpoint.Disable("github.com/pingcap/tidb/pkg/executor/sortexec/SignalCheckpointForSort")
 
 	ctx.GetSessionVars().InitChunkSize = 32
@@ -91,15 +91,13 @@ func TestParallelSortSpillDisk(t *testing.T) {
 	ctx.GetSessionVars().MemTracker = memory.NewTracker(memory.LabelForSQLText, hardLimit1)
 	ctx.GetSessionVars().StmtCtx.MemTracker = memory.NewTracker(memory.LabelForSQLText, -1)
 	ctx.GetSessionVars().StmtCtx.MemTracker.AttachTo(ctx.GetSessionVars().MemTracker)
-	// TODO use variable to choose parallel mode after system variable is added
-	// ctx.GetSessionVars().EnableParallelSort = true
 
 	schema := expression.NewSchema(sortCase.Columns()...)
 	dataSource := buildDataSource(sortCase, schema)
 	exe := buildSortExec(sortCase, dataSource)
 	for i := 0; i < 10; i++ {
-		oneSpillCase(t, ctx, nil, sortCase, schema, dataSource)
-		oneSpillCase(t, ctx, exe, sortCase, schema, dataSource)
+		oneSpillCase(t, nil, sortCase, schema, dataSource)
+		oneSpillCase(t, exe, sortCase, schema, dataSource)
 	}
 
 	ctx.GetSessionVars().MemTracker = memory.NewTracker(memory.LabelForSQLText, hardLimit2)
@@ -115,13 +113,13 @@ func TestParallelSortSpillDiskFailpoint(t *testing.T) {
 	ctx := mock.NewContext()
 	sortCase := &testutil.SortCase{Rows: 10000, OrderByIdx: []int{0, 1}, Ndvs: []int{0, 0}, Ctx: ctx}
 
-	failpoint.Enable("github.com/pingcap/tidb/pkg/executor/sortexec/SlowSomeWorkers", `return(true)`)
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/executor/sortexec/SlowSomeWorkers", `return(true)`))
 	defer failpoint.Disable("github.com/pingcap/tidb/pkg/executor/sortexec/SlowSomeWorkers")
-	failpoint.Enable("github.com/pingcap/tidb/pkg/executor/sortexec/SignalCheckpointForSort", `return(true)`)
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/executor/sortexec/SignalCheckpointForSort", `return(true)`))
 	defer failpoint.Disable("github.com/pingcap/tidb/pkg/executor/sortexec/SignalCheckpointForSort")
-	failpoint.Enable("github.com/pingcap/tidb/pkg/executor/sortexec/ParallelSortRandomFail", `return(true)`)
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/executor/sortexec/ParallelSortRandomFail", `return(true)`))
 	defer failpoint.Disable("github.com/pingcap/tidb/pkg/executor/sortexec/ParallelSortRandomFail")
-	failpoint.Enable("github.com/pingcap/tidb/pkg/util/chunk/ChunkInDiskError", `return(true)`)
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/util/chunk/ChunkInDiskError", `return(true)`))
 	defer failpoint.Disable("github.com/pingcap/tidb/pkg/util/chunk/ChunkInDiskError")
 
 	ctx.GetSessionVars().InitChunkSize = 32
@@ -129,21 +127,19 @@ func TestParallelSortSpillDiskFailpoint(t *testing.T) {
 	ctx.GetSessionVars().MemTracker = memory.NewTracker(memory.LabelForSQLText, hardLimit1)
 	ctx.GetSessionVars().StmtCtx.MemTracker = memory.NewTracker(memory.LabelForSQLText, -1)
 	ctx.GetSessionVars().StmtCtx.MemTracker.AttachTo(ctx.GetSessionVars().MemTracker)
-	// TODO use variable to choose parallel mode after system variable is added
-	// ctx.GetSessionVars().EnableParallelSort = true
 
 	schema := expression.NewSchema(sortCase.Columns()...)
 	dataSource := buildDataSource(sortCase, schema)
 	exe := buildSortExec(sortCase, dataSource)
 	for i := 0; i < 20; i++ {
-		failpointNoMemoryDataTest(t, ctx, nil, sortCase, schema, dataSource)
-		failpointNoMemoryDataTest(t, ctx, exe, sortCase, schema, dataSource)
+		failpointNoMemoryDataTest(t, nil, sortCase, dataSource)
+		failpointNoMemoryDataTest(t, exe, sortCase, dataSource)
 	}
 
 	ctx.GetSessionVars().MemTracker = memory.NewTracker(memory.LabelForSQLText, hardLimit2)
 	ctx.GetSessionVars().StmtCtx.MemTracker.AttachTo(ctx.GetSessionVars().MemTracker)
 	for i := 0; i < 20; i++ {
-		failpointDataInMemoryThenSpillTest(t, ctx, nil, sortCase, schema, dataSource)
-		failpointDataInMemoryThenSpillTest(t, ctx, exe, sortCase, schema, dataSource)
+		failpointDataInMemoryThenSpillTest(t, ctx, nil, sortCase, dataSource)
+		failpointDataInMemoryThenSpillTest(t, ctx, exe, sortCase, dataSource)
 	}
 }

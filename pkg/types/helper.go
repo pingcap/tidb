@@ -58,6 +58,12 @@ func Truncate(f float64, dec int) float64 {
 	if math.IsInf(tmp, 0) {
 		return f
 	}
+	if shift == 0.0 {
+		if math.IsNaN(f) {
+			return f
+		}
+		return 0.0
+	}
 	return math.Trunc(tmp) / shift
 }
 

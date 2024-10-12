@@ -24,14 +24,15 @@ import (
 	"crypto/sha256"
 	"crypto/sha512"
 	"encoding/binary"
+	"encoding/hex"
 	"fmt"
 	"hash"
 	"io"
 	"strings"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/pkg/expression/context"
-	"github.com/pingcap/tidb/pkg/expression/contextopt"
+	"github.com/pingcap/tidb/pkg/expression/exprctx"
+	"github.com/pingcap/tidb/pkg/expression/expropt"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
@@ -120,7 +121,7 @@ func (c *aesDecryptFunctionClass) getFunction(ctx BuildContext, args []Expressio
 	if err != nil {
 		return nil, err
 	}
-	bf.tp.SetFlen(args[0].GetType().GetFlen()) // At most.
+	bf.tp.SetFlen(args[0].GetType(ctx.GetEvalCtx()).GetFlen()) // At most.
 	types.SetBinChsClnFlag(bf.tp)
 
 	blockMode := ctx.GetBlockEncryptionMode()
@@ -255,7 +256,7 @@ func (c *aesEncryptFunctionClass) getFunction(ctx BuildContext, args []Expressio
 	if err != nil {
 		return nil, err
 	}
-	bf.tp.SetFlen(aes.BlockSize * (args[0].GetType().GetFlen()/aes.BlockSize + 1)) // At most.
+	bf.tp.SetFlen(aes.BlockSize * (args[0].GetType(ctx.GetEvalCtx()).GetFlen()/aes.BlockSize + 1)) // At most.
 	types.SetBinChsClnFlag(bf.tp)
 
 	blockMode := ctx.GetBlockEncryptionMode()
@@ -388,7 +389,7 @@ func (c *decodeFunctionClass) getFunction(ctx BuildContext, args []Expression) (
 		return nil, err
 	}
 
-	bf.tp.SetFlen(args[0].GetType().GetFlen())
+	bf.tp.SetFlen(args[0].GetType(ctx.GetEvalCtx()).GetFlen())
 	sig := &builtinDecodeSig{bf}
 	sig.setPbCode(tipb.ScalarFuncSig_Decode)
 	return sig, nil
@@ -451,7 +452,7 @@ func (c *encodeFunctionClass) getFunction(ctx BuildContext, args []Expression) (
 		return nil, err
 	}
 
-	bf.tp.SetFlen(args[0].GetType().GetFlen())
+	bf.tp.SetFlen(args[0].GetType(ctx.GetEvalCtx()).GetFlen())
 	sig := &builtinEncodeSig{bf}
 	sig.setPbCode(tipb.ScalarFuncSig_Encode)
 	return sig, nil
@@ -543,7 +544,7 @@ func (b *builtinPasswordSig) evalString(ctx EvalContext, row chunk.Row) (val str
 	// We should append a warning here because function "PASSWORD" is deprecated since MySQL 5.7.6.
 	// See https://dev.mysql.com/doc/refman/5.7/en/encryption-functions.html#function_password
 	tc := typeCtx(ctx)
-	tc.AppendWarning(errDeprecatedSyntaxNoReplacement.FastGenByArgs("PASSWORD"))
+	tc.AppendWarning(errDeprecatedSyntaxNoReplacement.FastGenByArgs("PASSWORD", ""))
 
 	return auth.EncodePassword(pass), false, nil
 }
@@ -635,7 +636,8 @@ func (b *builtinMD5Sig) evalString(ctx EvalContext, row chunk.Row) (string, bool
 		return "", isNull, err
 	}
 	sum := md5.Sum([]byte(arg)) // #nosec G401
-	hexStr := fmt.Sprintf("%x", sum)
+	hexStr := hex.EncodeToString(sum[:])
+
 	return hexStr, false, nil
 }
 
@@ -846,7 +848,7 @@ func (c *compressFunctionClass) getFunction(ctx BuildContext, args []Expression)
 	if err != nil {
 		return nil, err
 	}
-	srcLen := args[0].GetType().GetFlen()
+	srcLen := args[0].GetType(ctx.GetEvalCtx()).GetFlen()
 	compressBound := srcLen + (srcLen >> 12) + (srcLen >> 14) + (srcLen >> 25) + 13
 	if compressBound > mysql.MaxBlobWidth {
 		compressBound = mysql.MaxBlobWidth
@@ -1029,8 +1031,8 @@ func (c *validatePasswordStrengthFunctionClass) getFunction(ctx BuildContext, ar
 
 type builtinValidatePasswordStrengthSig struct {
 	baseBuiltinFunc
-	contextopt.SessionVarsPropReader
-	contextopt.CurrentUserPropReader
+	expropt.SessionVarsPropReader
+	expropt.CurrentUserPropReader
 }
 
 func (b *builtinValidatePasswordStrengthSig) Clone() builtinFunc {
@@ -1040,7 +1042,7 @@ func (b *builtinValidatePasswordStrengthSig) Clone() builtinFunc {
 }
 
 // RequiredOptionalEvalProps implements the RequireOptionalEvalProps interface.
-func (b *builtinValidatePasswordStrengthSig) RequiredOptionalEvalProps() context.OptionalEvalPropKeySet {
+func (b *builtinValidatePasswordStrengthSig) RequiredOptionalEvalProps() exprctx.OptionalEvalPropKeySet {
 	return b.SessionVarsPropReader.RequiredOptionalEvalProps() |
 		b.CurrentUserPropReader.RequiredOptionalEvalProps()
 }
