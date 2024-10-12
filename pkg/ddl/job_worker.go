@@ -75,10 +75,8 @@ func SetWaitTimeWhenErrorOccurred(dur time.Duration) {
 
 // jobContext is the context for execution of a DDL job.
 type jobContext struct {
-	// ctx becomes invalid when the job is cancelled or paused.
-	ctx    context.Context
-	cancel context.CancelCauseFunc
 	// below fields are shared by all DDL jobs
+
 	*unSyncedJobTracker
 	*schemaVersionManager
 	infoCache       *infoschema.InfoCache
@@ -87,10 +85,15 @@ type jobContext struct {
 	schemaVerSyncer schemaver.Syncer
 
 	// per job fields
+
+	// ctx becomes invalid when the job is cancelled or paused.
+	ctx      context.Context
+	cancel   context.CancelCauseFunc
 	notifyCh chan struct{}
 	logger   *zap.Logger
 
 	// per job step fields
+
 	metaMut *meta.Mutator
 
 	// TODO reorg part of code couple this struct so much, remove it later.

@@ -499,6 +499,7 @@ func (s *jobScheduler) deliveryJob(wk *worker, pool *workerPool, job *model.Job)
 						zap.Int64("job_id", jobID),
 						zap.Stringer("state", latestJob.State))
 					jobCtx.cancel(dbterror.ErrCancelledDDLJob)
+					return
 				case model.JobStatePausing, model.JobStatePaused:
 					logutil.DDLLogger().Info("job is paused",
 						zap.Int64("job_id", jobID),
@@ -569,8 +570,6 @@ func (s *jobScheduler) getJobRunCtx(jobID int64, traceInfo *model.TraceInfo) *jo
 	ch, _ := s.ddlJobDoneChMap.Load(jobID)
 	jobCtx, cancel := context.WithCancelCause(s.schCtx)
 	return &jobContext{
-		ctx:                  jobCtx,
-		cancel:               cancel,
 		unSyncedJobTracker:   s.unSyncedTracker,
 		schemaVersionManager: s.schemaVerMgr,
 		infoCache:            s.infoCache,
@@ -578,6 +577,8 @@ func (s *jobScheduler) getJobRunCtx(jobID int64, traceInfo *model.TraceInfo) *jo
 		store:                s.store,
 		schemaVerSyncer:      s.schemaVerSyncer,
 
+		ctx:      jobCtx,
+		cancel:   cancel,
 		notifyCh: ch,
 		logger: tidblogutil.LoggerWithTraceInfo(
 			logutil.DDLLogger().With(zap.Int64("jobID", jobID)),
