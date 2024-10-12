@@ -865,7 +865,11 @@ func (e *HashJoinV2Exec) startProbeJoinWorkers(ctx context.Context) {
 
 func (e *HashJoinV2Exec) fetchAndProbeHashTable(ctx context.Context) {
 	e.startProbeFetcher(ctx)
+
+	// Join workers directly read data from disk when we are in restore status
+	// and read data from fetcher otherwise.
 	e.startProbeJoinWorkers(ctx)
+
 	e.waiterWg.RunWithRecover(e.waitJoinWorkers, nil)
 }
 
