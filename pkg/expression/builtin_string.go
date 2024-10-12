@@ -3022,7 +3022,8 @@ func (c *eltFunctionClass) getFunction(ctx BuildContext, args []Expression) (bui
 		if types.IsBinaryStr(argType) {
 			types.SetBinChsClnFlag(bf.tp)
 		}
-		if argType.GetFlen() > bf.tp.GetFlen() {
+		flen := argType.GetFlen()
+		if flen == types.UnspecifiedLength || flen > bf.tp.GetFlen() {
 			bf.tp.SetFlen(argType.GetFlen())
 		}
 	}

@@ -92,6 +92,7 @@ func TestUnionIssue(t *testing.T) {
 	tk.MustExec("create table t2 (id int, c int);")
 	// Issue56587
 	tk.MustQuery("select quote(cast('abc' as char)) union all select '1'").Check(testkit.Rows("'abc'", "1"))
+	tk.MustQuery(`select elt(2, "1", cast('abc' as char)) union all select "12" where false`).Check(testkit.Rows("abc"))
 
 	testCases := []struct {
 		sql    string
