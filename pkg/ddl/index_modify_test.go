@@ -1128,19 +1128,19 @@ func TestCreateTableWithVectorIndex(t *testing.T) {
 
 	// test unsupported table types
 	tk.MustContainErrMsg("create temporary table t(a int, b vector(3), vector index((VEC_COSINE_DISTANCE(b))) USING HNSW)",
-		"`set on tiflash` is unsupported on temporary tables.")
+		"`set TiFlash replica` is unsupported on temporary tables.")
 	// global and local temporary table using different way to handle, so we have two test cases.
 	tk.MustContainErrMsg("create global temporary table t(a int, b vector(3), vector index((VEC_COSINE_DISTANCE(b))) USING HNSW) on commit delete rows;",
-		"`set on tiflash` is unsupported on temporary tables.")
+		"`set TiFlash replica` is unsupported on temporary tables.")
 	tk.MustContainErrMsg("create table pt(id bigint, b vector(3), vector index((VEC_COSINE_DISTANCE(b))) USING HNSW) "+
 		"partition by range(id) (partition p0 values less than (20), partition p1 values less than (100));",
 		"Unsupported add vector index: unsupported partition table")
 	tk.MustContainErrMsg("create table t(a int, b vector(3), c char(210) CHARACTER SET gbk COLLATE gbk_bin, vector index((VEC_COSINE_DISTANCE(b))));",
-		"Unsupported ALTER TiFlash settings for tables not supported by TiFlash: table contains gbk charset")
+		"Unsupported `set TiFlash replica` settings for table contains gbk charset")
 	tk.MustContainErrMsg("create table mysql.t(a int, b vector(3), vector index((VEC_COSINE_DISTANCE(b))));",
-		"Unsupported ALTER TiFlash settings for system table and memory table")
+		"Unsupported `set TiFlash replica` settings for system table and memory table")
 	tk.MustContainErrMsg("create table information_schema.t(a int, b vector(3), vector index((VEC_COSINE_DISTANCE(b))));",
-		"Unsupported ALTER TiFlash settings for system table and memory table")
+		"Unsupported `set TiFlash replica` settings for system table and memory table")
 
 	// a vector index with invisible
 	tk.MustContainErrMsg("create table t(a int, b vector(3), vector index((VEC_COSINE_DISTANCE(b))) USING HNSW INVISIBLE)",
