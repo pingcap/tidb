@@ -302,6 +302,7 @@ func (s *statsSyncLoad) handleOneItemTask(task *statstypes.NeededItemTask) (err 
 		}
 	}()
 	item := task.Item.TableItemID
+	logutil.BgLogger().Info("wtf start")
 	tbl, ok := s.statsHandle.Get(item.TableID)
 
 	if !ok {
