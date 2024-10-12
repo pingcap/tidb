@@ -106,6 +106,7 @@ func RequestLoadStats(ctx base.PlanContext, neededHistItems []model.StatsLoadIte
 	if maxExecutionTime > 0 && maxExecutionTime < uint64(syncWait) {
 		syncWait = int64(maxExecutionTime)
 	}
+	logutil.BgLogger().Info("wwz")
 	failpoint.Inject("assertSyncWaitFailed", func(val failpoint.Value) {
 		if val.(bool) {
 			if syncWait != 1 {
