@@ -90,6 +90,8 @@ func TestUnionIssue(t *testing.T) {
 	tk.MustExec("drop table if exists t1, t2")
 	tk.MustExec("create table t1 (id int);")
 	tk.MustExec("create table t2 (id int, c int);")
+	// Issue56587
+	tk.MustQuery("select quote(cast('abc' as char)) union all select '1'").Check(testkit.Rows("'abc'", "1"))
 
 	testCases := []struct {
 		sql    string

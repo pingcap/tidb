@@ -2896,7 +2896,12 @@ func (c *quoteFunctionClass) getFunction(ctx BuildContext, args []Expression) (b
 		return nil, err
 	}
 	SetBinFlagOrBinStr(args[0].GetType(ctx.GetEvalCtx()), bf.tp)
-	bf.tp.SetFlen(2*args[0].GetType(ctx.GetEvalCtx()).GetFlen() + 2)
+	flen := args[0].GetType(ctx.GetEvalCtx()).GetFlen()
+	newFlen := 2*flen + 2
+	if flen == types.UnspecifiedLength {
+		newFlen = types.UnspecifiedLength
+	}
+	bf.tp.SetFlen(newFlen)
 	if bf.tp.GetFlen() > mysql.MaxBlobWidth {
 		bf.tp.SetFlen(mysql.MaxBlobWidth)
 	}
