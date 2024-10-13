@@ -1,4 +1,3 @@
-
 // Copyright 2019 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -12,14 +11,11 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
-
 package mathutil
 
 import (
 	"math"
-
 	"github.com/pingcap/tidb/pkg/util/intest"
-	"golang.org/x/exp/constraints"
 )
 
 // Architecture and/or implementation specific integer limits and bit widths.
@@ -69,36 +65,9 @@ func IsFinite(f float64) bool {
 	return !math.IsNaN(f - f)
 }
 
-// Max returns the largest one from its arguments.
-func Max[T constraints.Ordered](x T, xs ...T) T {
-	maxv := x
-	for _, n := range xs {
-		if n > maxv {
-			maxv = n
-		}
-	}
-	return maxv
-}
-
-// Min returns the smallest one from its arguments.
-func Min[T constraints.Ordered](x T, xs ...T) T {
-	minv := x
-	for _, n := range xs {
-		if n < minv {
-			minv = n
-		}
-	}
-	return minv
-}
-
 // Clamp restrict a value to a certain interval.
 func Clamp[T constraints.Ordered](n, minv, maxv T) T {
-	if n >= maxv {
-		return maxv
-	} else if n <= minv {
-		return minv
-	}
-	return n
+	return max(minv, min(n, maxv))
 }
 
 // NextPowerOfTwo returns the smallest power of two greater than or equal to `i`
