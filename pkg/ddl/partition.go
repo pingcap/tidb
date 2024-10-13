@@ -136,6 +136,8 @@ func (w *worker) onAddTablePartition(jobCtx *jobContext, job *model.Job) (ver in
 
 		// move the adding definition into tableInfo.
 		updateAddingPartitionInfo(partInfo, tblInfo)
+		tblInfo.Partition.DDLState = model.StateReplicaOnly
+		tblInfo.Partition.DDLAction = job.Type
 		ver, err = updateVersionAndTableInfoWithCheck(jobCtx, job, tblInfo, true)
 		if err != nil {
 			return ver, errors.Trace(err)
@@ -222,6 +224,8 @@ func (w *worker) onAddTablePartition(jobCtx *jobContext, job *model.Job) (ver in
 
 		preSplitAndScatter(w.sess.Context, jobCtx.store, tblInfo, addingDefinitions)
 
+		tblInfo.Partition.DDLState = model.StateNone
+		tblInfo.Partition.DDLAction = model.ActionNone
 		ver, err = updateVersionAndTableInfo(jobCtx, job, tblInfo, true)
 		if err != nil {
 			return ver, errors.Trace(err)
@@ -2244,9 +2248,6 @@ func (w *worker) onDropTablePartition(jobCtx *jobContext, job *model.Job) (ver i
 	}
 
 	var physicalTableIDs []int64
-	// In order to skip maintaining the state check in partitionDefinition, TiDB use droppingDefinition instead of state field.
-	// So here using `job.SchemaState` to judge what the stage of this job is.
-	originalState := job.SchemaState
 	switch job.SchemaState {
 	case model.StatePublic:
 		// Here we mark the partitions to be dropped, so they are not read or written
@@ -2310,14 +2311,17 @@ func (w *worker) onDropTablePartition(jobCtx *jobContext, job *model.Job) (ver i
 
 		tblInfo.Partition.DDLState = model.StateDeleteOnly
 		job.SchemaState = model.StateDeleteOnly
-		ver, err = updateVersionAndTableInfo(jobCtx, job, tblInfo, originalState != job.SchemaState)
+		tblInfo.Partition.DDLState = job.SchemaState
+		tblInfo.Partition.DDLAction = job.Type
+		ver, err = updateVersionAndTableInfo(jobCtx, job, tblInfo, true)
 	case model.StateDeleteOnly:
 		// This state is not a real 'DeleteOnly' state, because tidb does not maintain the state check in partitionDefinition.
 		// Insert this state to confirm all servers can not see the old partitions when reorg is running,
 		// so that no new data will be inserted into old partitions when reorganizing.
 		tblInfo.Partition.DDLState = model.StateDeleteReorganization
 		job.SchemaState = model.StateDeleteReorganization
-		ver, err = updateVersionAndTableInfo(jobCtx, job, tblInfo, originalState != job.SchemaState)
+		tblInfo.Partition.DDLState = job.SchemaState
+		ver, err = updateVersionAndTableInfo(jobCtx, job, tblInfo, true)
 	case model.StateDeleteReorganization:
 		oldTblInfo := getTableInfoWithDroppingPartitions(tblInfo)
 		physicalTableIDs = getPartitionIDsFromDefinitions(tblInfo.Partition.DroppingDefinitions)
@@ -2384,6 +2388,7 @@ func (w *worker) onDropTablePartition(jobCtx *jobContext, job *model.Job) (ver i
 			return ver, errors.Trace(err)
 		}
 		job.SchemaState = model.StateNone
+		tblInfo.Partition.DDLState = job.SchemaState
 		job.FinishTableJob(model.JobStateDone, model.StateNone, ver, tblInfo)
 		dropPartitionEvent := notifier.NewDropPartitionEvent(
 			tblInfo,
@@ -2513,12 +2518,15 @@ func (w *worker) onTruncateTablePartition(jobCtx *jobContext, job *model.Job) (i
 
 		tblInfo.Partition.DDLAction = model.ActionTruncateTablePartition
 		job.SchemaState = model.StateDeleteOnly
+		pi.DDLState = job.SchemaState
+		pi.DDLAction = job.Type
 		ver, err = updateVersionAndTableInfo(jobCtx, job, tblInfo, true)
 	case model.StateDeleteOnly:
 		// This state is not a real 'DeleteOnly' state, because tidb does not maintaining the state check in partitionDefinition.
 		// Insert this state to confirm all servers can not see the old partitions when reorg is running,
 		// so that no new data will be inserted into old partitions when reorganizing.
 		job.SchemaState = model.StateDeleteReorganization
+		pi.DDLState = job.SchemaState
 		ver, err = updateVersionAndTableInfo(jobCtx, job, tblInfo, true)
 	case model.StateDeleteReorganization:
 		// Step2: clear global index rows.
@@ -2609,6 +2617,8 @@ func (w *worker) onTruncateTablePartition(jobCtx *jobContext, job *model.Job) (i
 		// Step4: clear DroppingDefinitions and finish job.
 		tblInfo.Partition.DroppingDefinitions = nil
 		tblInfo.Partition.NewPartitionIDs = nil
+		tblInfo.Partition.DDLAction = model.ActionNone
+		tblInfo.Partition.DDLState = model.StateNone
 
 		preSplitAndScatter(w.sess.Context, jobCtx.store, tblInfo, newPartitions)
 
@@ -2816,6 +2826,8 @@ func (w *worker) onExchangeTablePartition(jobCtx *jobContext, job *model.Job) (v
 		// into the table using the schema version
 		// before the exchange is made.
 		job.SchemaState = model.StateWriteOnly
+		pt.Partition.DDLState = job.SchemaState
+		pt.Partition.DDLAction = job.Type
 		return updateVersionAndTableInfoWithCheck(jobCtx, job, nt, true, ptInfo...)
 	}
 	// From now on, nt (the non-partitioned table) has
@@ -2890,6 +2902,8 @@ func (w *worker) onExchangeTablePartition(jobCtx *jobContext, job *model.Job) (v
 	originalPartitionDef := partDef.Clone()
 	originalNt := nt.Clone()
 	partDef.ID, nt.ID = nt.ID, partDef.ID
+	pt.Partition.DDLState = model.StateNone
+	pt.Partition.DDLAction = model.ActionNone
 
 	err = metaMut.UpdateTable(ptSchemaID, pt)
 	if err != nil {
@@ -3324,6 +3338,8 @@ func (w *worker) onReorganizePartition(jobCtx *jobContext, job *model.Job) (ver 
 		// Assume we cannot have more than MaxUint64 rows, set the progress to 1/10 of that.
 		metrics.GetBackfillProgressByLabel(metrics.LblReorgPartition, job.SchemaName, tblInfo.Name.String()).Set(0.1 / float64(math.MaxUint64))
 		job.SchemaState = model.StateDeleteOnly
+		tblInfo.Partition.DDLState = job.SchemaState
+		tblInfo.Partition.DDLAction = job.Type
 		tblInfo.Partition.DDLState = model.StateDeleteOnly
 		tblInfo.Partition.DDLAction = job.Type
 		ver, err = updateVersionAndTableInfoWithCheck(jobCtx, job, tblInfo, true)
@@ -3394,8 +3410,9 @@ func (w *worker) onReorganizePartition(jobCtx *jobContext, job *model.Job) (ver 
 				failpoint.Return(rollbackReorganizePartitionWithErr(jobCtx, job, err))
 			}
 		})
-		ver, err = updateVersionAndTableInfo(jobCtx, job, tblInfo, true)
 		job.SchemaState = model.StateWriteOnly
+		tblInfo.Partition.DDLState = job.SchemaState
+		ver, err = updateVersionAndTableInfo(jobCtx, job, tblInfo, true)
 	case model.StateWriteOnly:
 		// Insert this state to confirm all servers can see the new partitions when reorg is running,
 		// so that new data will be updated in both old and new partitions when reorganizing.
@@ -3405,10 +3422,10 @@ func (w *worker) onReorganizePartition(jobCtx *jobContext, job *model.Job) (ver 
 				tblInfo.Indices[i].State = model.StateWriteReorganization
 			}
 		}
-		tblInfo.Partition.DDLState = model.StateWriteReorganization
+		job.SchemaState = model.StateWriteReorganization
+		tblInfo.Partition.DDLState = job.SchemaState
 		metrics.GetBackfillProgressByLabel(metrics.LblReorgPartition, job.SchemaName, tblInfo.Name.String()).Set(0.3 / float64(math.MaxUint64))
 		ver, err = updateVersionAndTableInfo(jobCtx, job, tblInfo, true)
-		job.SchemaState = model.StateWriteReorganization
 	case model.StateWriteReorganization:
 		physicalTableIDs := getPartitionIDsFromDefinitions(tblInfo.Partition.DroppingDefinitions)
 		tbl, err2 := getTable(jobCtx.getAutoIDRequirement(), job.SchemaID, tblInfo)
@@ -3493,9 +3510,9 @@ func (w *worker) onReorganizePartition(jobCtx *jobContext, job *model.Job) (ver 
 		// Now all the data copying is done, but we cannot simply remove the droppingDefinitions
 		// since they are a part of the normal Definitions that other nodes with
 		// the current schema version. So we need to double write for one more schema version
-		tblInfo.Partition.DDLState = model.StateDeleteReorganization
-		ver, err = updateVersionAndTableInfo(jobCtx, job, tblInfo, true)
 		job.SchemaState = model.StateDeleteReorganization
+		tblInfo.Partition.DDLState = job.SchemaState
+		ver, err = updateVersionAndTableInfo(jobCtx, job, tblInfo, true)
 
 	case model.StateDeleteReorganization:
 		// Drop the droppingDefinitions and finish the DDL
@@ -3517,6 +3534,7 @@ func (w *worker) onReorganizePartition(jobCtx *jobContext, job *model.Job) (ver 
 		tblInfo.Partition.DroppingDefinitions = nil
 		tblInfo.Partition.AddingDefinitions = nil
 		tblInfo.Partition.DDLState = model.StateNone
+		tblInfo.Partition.DDLAction = model.ActionNone
 		tblInfo.Partition.OriginalPartitionIDsOrder = nil
 
 		var dropIndices []*model.IndexInfo
