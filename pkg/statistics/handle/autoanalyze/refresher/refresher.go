@@ -39,7 +39,6 @@ type Refresher struct {
 	sysProcTracker sysproctrack.Tracker
 
 	// jobs is the priority queue of analysis jobs.
-	// Exported for testing purposes.
 	jobs *priorityqueue.AnalysisPriorityQueueV2
 
 	// worker is the worker that runs the analysis jobs.
