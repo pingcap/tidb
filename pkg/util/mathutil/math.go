@@ -1,3 +1,4 @@
+
 // Copyright 2019 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -14,25 +15,28 @@
 
 package mathutil
 
-import "math"
+import (
+	"math"
+
+	"github.com/pingcap/tidb/pkg/util/intest"
+	"golang.org/x/exp/constraints"
+)
 
 // Architecture and/or implementation specific integer limits and bit widths.
 const (
 	MaxInt  = 1<<(IntBits-1) - 1
 	MinInt  = -MaxInt - 1
 	MaxUint = 1<<IntBits - 1
-	IntBits = 32 << (^uint(0) >> 63) // Detects whether 32 or 64 bit
+	IntBits = 1 << (^uint(0)>>32&1 + ^uint(0)>>16&1 + ^uint(0)>>8&1 + 3)
 )
 
-// Abs computes the absolute value of an int64.
+// Abs implement the abs function according to http://cavaliercoder.com/blog/optimized-abs-for-int64-in-go.html
 func Abs(n int64) int64 {
-	if n < 0 {
-		return -n
-	}
-	return n
+	y := n >> 63
+	return (n ^ y) - y
 }
 
-// uintSizeTable is used to determine the length of a uint64.
+// uintSizeTable is used as a table to do comparison to get uint length is faster than doing loop on division with 10
 var uintSizeTable = [21]uint64{
 	0, // redundant 0 here, so to make function StrLenOfUint64Fast to count from 1 and return i directly
 	9, 99, 999, 9999, 99999,
@@ -40,9 +44,9 @@ var uintSizeTable = [21]uint64{
 	99999999999, 999999999999, 9999999999999, 99999999999999, 999999999999999,
 	9999999999999999, 99999999999999999, 999999999999999999, 9999999999999999999,
 	math.MaxUint64,
-}
+} // math.MaxUint64 is 18446744073709551615 and it has 20 digits
 
-// StrLenOfUint64Fast efficiently calculates the length of the string representation of a uint64.
+// StrLenOfUint64Fast efficiently calculate the string character lengths of an uint64 as input
 func StrLenOfUint64Fast(x uint64) int {
 	for i := 1; ; i++ {
 		if x <= uintSizeTable[i] {
@@ -51,21 +55,21 @@ func StrLenOfUint64Fast(x uint64) int {
 	}
 }
 
-// StrLenOfInt64Fast efficiently calculates the length of the string representation of an int64.
+// StrLenOfInt64Fast efficiently calculate the string character lengths of an int64 as input
 func StrLenOfInt64Fast(x int64) int {
 	size := 0
 	if x < 0 {
-		size = 1 // for the negative sign
+		size = 1 // add "-" sign on the length count
 	}
 	return size + StrLenOfUint64Fast(uint64(Abs(x)))
 }
 
-// IsFinite checks whether a float64 is neither NaN nor infinity.
+// IsFinite reports whether f is neither NaN nor an infinity.
 func IsFinite(f float64) bool {
-	return !math.IsNaN(f) && !math.IsInf(f, 0)
+	return !math.IsNaN(f - f)
 }
 
-// Max returns the largest element from its arguments.
+// Max returns the largest one from its arguments.
 func Max[T constraints.Ordered](x T, xs ...T) T {
 	maxv := x
 	for _, n := range xs {
@@ -76,7 +80,7 @@ func Max[T constraints.Ordered](x T, xs ...T) T {
 	return maxv
 }
 
-// Min returns the smallest element from its arguments.
+// Min returns the smallest one from its arguments.
 func Min[T constraints.Ordered](x T, xs ...T) T {
 	minv := x
 	for _, n := range xs {
@@ -87,38 +91,43 @@ func Min[T constraints.Ordered](x T, xs ...T) T {
 	return minv
 }
 
-// Clamp restricts a value to a certain range [minv, maxv].
+// Clamp restrict a value to a certain interval.
 func Clamp[T constraints.Ordered](n, minv, maxv T) T {
-	if n > maxv {
+	if n >= maxv {
 		return maxv
-	}
-	if n < minv {
+	} else if n <= minv {
 		return minv
 	}
 	return n
 }
 
-// NextPowerOfTwo returns the smallest power of two greater than or equal to `i`.
+// NextPowerOfTwo returns the smallest power of two greater than or equal to `i`
+// Caller should guarantee that i > 0 and the return value is not overflow.
 func NextPowerOfTwo(i int64) int64 {
-	if i <= 0 {
-		return 1
+	if i&(i-1) == 0 {
+		return i
 	}
-	return 1 << (64 - bits.LeadingZeros64(uint64(i-1)))
+	i *= 2
+	for i&(i-1) != 0 {
+		i &= i - 1
+	}
+	return i
 }
 
-// Divide2Batches divides 'total' into 'batches', returning the size of each batch.
-// Σ(batchSizes) = 'total'. If 'total' < 'batches', it returns 'total' batches with size 1.
+// Divide2Batches divides 'total' into 'batches', and returns the size of each batch.
+// Σ(batchSizes) = 'total'. if 'total' < 'batches', we return 'total' batches with size 1.
 // 'total' is allowed to be 0.
 func Divide2Batches(total, batches int) []int {
 	result := make([]int, 0, batches)
 	quotient := total / batches
 	remainder := total % batches
-	for i := 0; i < batches && total > 0; i++ {
+	for total > 0 {
 		size := quotient
 		if remainder > 0 {
 			size++
 			remainder--
 		}
+		intest.Assert(size > 0, "size should be positive")
 		result = append(result, size)
 		total -= size
 	}
