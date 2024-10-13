@@ -867,6 +867,39 @@ func TestNullColumns(t *testing.T) {
 		Check(testkit.Rows("def test v_test type 1 <nil> YES binary 0 0 <nil> <nil> <nil> <nil> <nil> binary(0)   select,insert,update,references  "))
 }
 
+func TestDefaultValueOfVariablesInfo(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustQuery("select VARIABLE_NAME from information_schema.VARIABLES_INFO where DEFAULT_VALUE = CURRENT_VALUE and variable_name in ('tidb_enable_async_commit','tidb_enable_1pc', 'tidb_mem_oom_action', 'tidb_enable_auto_analyze', 'tidb_row_format_version', 'tidb_txn_assertion_level', 'tidb_enable_mutation_checker', 'tidb_pessimistic_txn_fair_locking') order by VARIABLE_NAME;").Check(testkit.Rows(
+		"tidb_enable_1pc",
+		"tidb_enable_async_commit",
+		"tidb_enable_auto_analyze",
+		"tidb_enable_mutation_checker",
+		"tidb_mem_oom_action",
+		"tidb_pessimistic_txn_fair_locking",
+		"tidb_row_format_version",
+		"tidb_txn_assertion_level",
+	))
+	tk.MustExec("set global tidb_enable_async_commit = default;")
+	tk.MustExec("set global tidb_enable_1pc = default;")
+	tk.MustExec("set global tidb_mem_oom_action = default;")
+	tk.MustExec("set global tidb_enable_auto_analyze = default;")
+	tk.MustExec("set global tidb_row_format_version = default;")
+	tk.MustExec("set global tidb_txn_assertion_level = default;")
+	tk.MustExec("set global tidb_enable_mutation_checker = default;")
+	tk.MustExec("set global tidb_pessimistic_txn_fair_locking = default;")
+	tk.MustQuery("select a.VARIABLE_NAME from information_schema.VARIABLES_INFO as a, mysql.GLOBAL_VARIABLES as b where a.VARIABLE_NAME = b.VARIABLE_NAME and a.DEFAULT_VALUE = b.VARIABLE_VALUE and a.CURRENT_VALUE = b.VARIABLE_VALUE and a.variable_name in ('tidb_enable_async_commit','tidb_enable_1pc', 'tidb_mem_oom_action', 'tidb_enable_auto_analyze', 'tidb_row_format_version', 'tidb_txn_assertion_level', 'tidb_enable_mutation_checker', 'tidb_pessimistic_txn_fair_locking') order by VARIABLE_NAME;").Check(testkit.Rows(
+		"tidb_enable_1pc",
+		"tidb_enable_async_commit",
+		"tidb_enable_auto_analyze",
+		"tidb_enable_mutation_checker",
+		"tidb_mem_oom_action",
+		"tidb_pessimistic_txn_fair_locking",
+		"tidb_row_format_version",
+		"tidb_txn_assertion_level",
+	))
+}
+
 // Code below are helper utilities for the test cases.
 
 type getTiFlashSystemTableRequestMocker struct {
