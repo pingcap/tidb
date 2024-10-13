@@ -3794,3 +3794,30 @@ func TestAlterLastIntervalPartition(t *testing.T) {
 }
 
 // TODO: check EXCHANGE how it handles null (for all types of partitioning!!!)
+
+func TestGlobalIndexCheck(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`use test`)
+	tk.MustExec(`create table t1(id bigint,id_1 bigint,name varchar(10),primary key (id) NONCLUSTERED)`)
+	tk.MustExec(`insert into t1 values(1,1,'AA'),(2,2,'BB'),(3,3,'CC'),(4,4,'DD')`)
+	tk.MustContainErrMsg(`alter table t1 partition by hash(id_1) partitions 4`, "[ddl:1503]A PRIMARY KEY must include all columns in the table's partitioning function")
+	tk.MustContainErrMsg(`insert into t1 values(2,1,'AA')`, "[kv:1062]Duplicate entry '2' for key 't1.PRIMARY'")
+	tk.MustContainErrMsg(`create table t (a int primary key clustered, b int) partition by hash(b) partitions 4`, "[ddl:1503]A CLUSTERED INDEX must include all columns in the table's partitioning function")
+	tk.MustContainErrMsg(`create table t (a int primary key unique, b int) partition by hash(b) partitions 4`, "[ddl:1503]A UNIQUE INDEX must include all columns in the table's partitioning function")
+	defer config.RestoreFunc()()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.EnableGlobalIndex = true
+	})
+	tk.MustContainErrMsg(`create table t (a int primary key clustered, b int) partition by hash(b) partitions 4`, "[ddl:1503]A CLUSTERED INDEX must include all columns in the table's partitioning function")
+	tk.MustExec(`create table t (a int primary key clustered, b int)`)
+	tk.MustContainErrMsg(`alter table t partition by hash(b) partitions 4`, "[ddl:1503]A CLUSTERED INDEX must include all columns in the table's partitioning function")
+	tk.MustExec(`drop table t`)
+
+	tk.MustExec(`create table t (a int primary key nonclustered, b int, c varchar(20))`)
+	tk.MustContainErrMsg(`alter table t partition by hash(b) partitions 4`, "[ddl:8200]Unsupported GLOBAL INDEX with ALTER TABLE PARTITION BY")
+	tk.MustExec(`drop table t`)
+	tk.MustExec(`create table t (a int primary key nonclustered, b int, c varchar(20)) partition by hash(b) partitions 4`)
+	tk.MustExec(`insert into t values(1,1,'AA'),(2,2,'BB'),(3,3,'CC'),(4,4,'DD')`)
+	tk.MustContainErrMsg(`insert into t values(2,1,'AA')`, "[kv:1062]Duplicate entry '2' for key 't.PRIMARY'")
+}
