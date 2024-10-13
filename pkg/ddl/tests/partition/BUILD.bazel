@@ -5,6 +5,7 @@ go_test(
     timeout = "short",
     srcs = [
         "db_partition_test.go",
+        "error_injection_test.go",
         "main_test.go",
         "multi_domain_test.go",
         "placement_test.go",
