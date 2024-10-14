@@ -316,10 +316,9 @@ func (s *JobSubmitter) addBatchDDLJobs2Table(jobWs []*JobWrapper) error {
 	for _, jobW := range jobWs {
 		job := jobW.Job
 		if job.Version == 0 {
-			// if not set, fix it to version 1
-			// TODO replace this with assert after we add code v2 for all jobs.
-			job.Version = model.JobVersion1
+			return errors.Errorf("Job version should not be zero")
 		}
+
 		job.StartTS = startTS
 		job.BDRRole = bdrRole
 
@@ -364,9 +363,7 @@ func (s *JobSubmitter) addBatchDDLJobs2Queue(jobWs []*JobWrapper) error {
 
 		for _, jobW := range jobWs {
 			if jobW.Version == 0 {
-				// if not set, fix it to version 1
-				// TODO replace this with assert after we add code v2 for all jobs.
-				jobW.Version = model.JobVersion1
+				return errors.Errorf("Job version should not be zero")
 			}
 		}
 
@@ -382,10 +379,7 @@ func (s *JobSubmitter) addBatchDDLJobs2Queue(jobWs []*JobWrapper) error {
 		}
 
 		for _, jobW := range jobWs {
-			// TODO remove this check when all job type pass args in this way.
-			if jobW.JobArgs != nil {
-				jobW.FillArgs(jobW.JobArgs)
-			}
+			jobW.FillArgsWithSubjobs()
 			job := jobW.Job
 			job.StartTS = txn.StartTS()
 			setJobStateToQueueing(job)
@@ -692,10 +686,7 @@ func insertDDLJobs2Table(ctx context.Context, se *sess.Session, jobWs ...*JobWra
 	var sql bytes.Buffer
 	sql.WriteString("insert into mysql.tidb_ddl_job(job_id, reorg, schema_ids, table_ids, job_meta, type, processing) values")
 	for i, jobW := range jobWs {
-		// TODO remove this check when all job type pass args in this way.
-		if jobW.JobArgs != nil {
-			jobW.FillArgs(jobW.JobArgs)
-		}
+		jobW.FillArgsWithSubjobs()
 		injectModifyJobArgFailPoint(jobWs)
 		b, err := jobW.Encode(true)
 		if err != nil {

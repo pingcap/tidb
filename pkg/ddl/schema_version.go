@@ -48,26 +48,15 @@ func SetSchemaDiffForCreateTables(diff *model.SchemaDiff, job *model.Job) error 
 }
 
 // SetSchemaDiffForTruncateTable set SchemaDiff for ActionTruncateTable.
-func SetSchemaDiffForTruncateTable(diff *model.SchemaDiff, job *model.Job) error {
+func SetSchemaDiffForTruncateTable(diff *model.SchemaDiff, job *model.Job, jobCtx *jobContext) error {
 	// Truncate table has two table ID, should be handled differently.
-	args, err := model.GetTruncateTableArgs(job)
-	if err != nil {
-		return errors.Trace(err)
-	}
+	args := jobCtx.jobArgs.(*model.TruncateTableArgs)
 	diff.TableID = args.NewTableID
 	diff.OldTableID = job.TableID
 
 	// affects are used to update placement rule cache
-	if job.Version == model.JobVersion1 {
-		if len(job.CtxVars) > 0 {
-			oldIDs := job.CtxVars[0].([]int64)
-			newIDs := job.CtxVars[1].([]int64)
-			diff.AffectedOpts = buildPlacementAffects(oldIDs, newIDs)
-		}
-	} else {
-		if len(args.OldPartIDsWithPolicy) > 0 {
-			diff.AffectedOpts = buildPlacementAffects(args.OldPartIDsWithPolicy, args.NewPartIDsWithPolicy)
-		}
+	if len(args.OldPartIDsWithPolicy) > 0 {
+		diff.AffectedOpts = buildPlacementAffects(args.OldPartIDsWithPolicy, args.NewPartIDsWithPolicy)
 	}
 	return nil
 }
@@ -241,17 +230,10 @@ func SetSchemaDiffForPartitionModify(diff *model.SchemaDiff, job *model.Job) err
 }
 
 // SetSchemaDiffForCreateTable set SchemaDiff for ActionCreateTable.
-func SetSchemaDiffForCreateTable(diff *model.SchemaDiff, job *model.Job) error {
+func SetSchemaDiffForCreateTable(diff *model.SchemaDiff, job *model.Job, jobCtx *jobContext) error {
 	diff.TableID = job.TableID
-	var tbInfo *model.TableInfo
-	// create table with foreign key will update tableInfo in the job args, so we
-	// must reuse already decoded ones.
-	// TODO make DecodeArgs can reuse already decoded args, so we can use GetCreateTableArgs.
-	if job.Version == model.JobVersion1 {
-		tbInfo, _ = job.Args[0].(*model.TableInfo)
-	} else {
-		tbInfo = job.Args[0].(*model.CreateTableArgs).TableInfo
-	}
+	tbInfo := jobCtx.jobArgs.(*model.CreateTableArgs).TableInfo
+
 	// When create table with foreign key, there are two schema status change:
 	// 1. none -> write-only
 	// 2. write-only -> public
@@ -330,7 +312,7 @@ func updateSchemaVersion(jobCtx *jobContext, job *model.Job, multiInfos ...schem
 	case model.ActionCreateTables:
 		err = SetSchemaDiffForCreateTables(diff, job)
 	case model.ActionTruncateTable:
-		err = SetSchemaDiffForTruncateTable(diff, job)
+		err = SetSchemaDiffForTruncateTable(diff, job, jobCtx)
 	case model.ActionCreateView:
 		err = SetSchemaDiffForCreateView(diff, job)
 	case model.ActionRenameTable:
@@ -348,7 +330,7 @@ func updateSchemaVersion(jobCtx *jobContext, job *model.Job, multiInfos ...schem
 	case model.ActionRemovePartitioning, model.ActionAlterTablePartitioning:
 		err = SetSchemaDiffForPartitionModify(diff, job)
 	case model.ActionCreateTable:
-		err = SetSchemaDiffForCreateTable(diff, job)
+		err = SetSchemaDiffForCreateTable(diff, job, jobCtx)
 	case model.ActionRecoverSchema:
 		err = SetSchemaDiffForRecoverSchema(diff, job)
 	case model.ActionFlashbackCluster:

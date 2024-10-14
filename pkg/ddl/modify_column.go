@@ -928,7 +928,7 @@ func GetModifiableColumnJob(
 	}
 
 	job := &model.Job{
-		Version:        model.JobVersion1,
+		Version:        model.GetJobVerInUse(),
 		SchemaID:       schema.ID,
 		TableID:        t.Meta().ID,
 		SchemaName:     schema.Name.L,
@@ -948,7 +948,6 @@ func GetModifiableColumnJob(
 		ModifyColumnType: modifyColumnTp,
 		NewShardBits:     newAutoRandBits,
 	}
-	job.FillArgs(args)
 	return NewJobWrapperWithArgs(job, args, false), nil
 }
 

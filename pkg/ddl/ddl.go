@@ -205,6 +205,20 @@ type JobWrapper struct {
 	cacheErr error
 }
 
+func (jobW *JobWrapper) FillArgsWithSubjobs() {
+	jobW.FillArgs(jobW.JobArgs)
+	if jobW.MultiSchemaInfo != nil {
+		for _, sub := range jobW.MultiSchemaInfo.SubJobs {
+			fakeJob := model.Job{
+				Version: jobW.Version,
+				Type:    sub.Type,
+			}
+			fakeJob.FillArgs(sub.JobArgs)
+			sub.Args = fakeJob.Args
+		}
+	}
+}
+
 // NewJobWrapper creates a new JobWrapper.
 // exported for testing.
 func NewJobWrapper(job *model.Job, idAllocated bool) *JobWrapper {

@@ -536,8 +536,7 @@ func (job *Job) Encode(updateRawArgs bool) ([]byte, error) {
 					continue
 				}
 
-				// TODO(joechenrh): Use version of parent job after refactor done.
-				sub.RawArgs, err = marshalArgs(JobVersion1, sub.Args)
+				sub.RawArgs, err = marshalArgs(job.Version, sub.Args)
 				if err != nil {
 					return nil, errors.Trace(err)
 				}
@@ -907,6 +906,7 @@ func (sub *SubJob) IsFinished() bool {
 // ToProxyJob converts a sub-job to a proxy job.
 func (sub *SubJob) ToProxyJob(parentJob *Job, seq int) Job {
 	return Job{
+		Version:         parentJob.Version,
 		ID:              parentJob.ID,
 		Type:            sub.Type,
 		SchemaID:        parentJob.SchemaID,
@@ -928,7 +928,6 @@ func (sub *SubJob) ToProxyJob(parentJob *Job, seq int) Job {
 		DependencyID:    parentJob.DependencyID,
 		Query:           parentJob.Query,
 		BinlogInfo:      parentJob.BinlogInfo,
-		Version:         parentJob.Version,
 		ReorgMeta:       parentJob.ReorgMeta,
 		MultiSchemaInfo: &MultiSchemaInfo{Revertible: sub.Revertible, Seq: int32(seq)},
 		Priority:        parentJob.Priority,

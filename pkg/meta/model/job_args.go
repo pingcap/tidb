@@ -489,22 +489,6 @@ func GetFinishedTablePartitionArgs(job *Job) (*TablePartitionArgs, error) {
 	return getOrDecodeArgsV2[*TablePartitionArgs](job)
 }
 
-// FillRollbackArgsForAddPartition fills the rollback args for add partition job.
-// see details in TablePartitionArgs.
-func FillRollbackArgsForAddPartition(job *Job, args *TablePartitionArgs) {
-	intest.Assert(job.Type == ActionAddTablePartition, "only for add partition job")
-	fake := &Job{
-		Version: job.Version,
-		Type:    ActionDropTablePartition,
-	}
-	// PartInfo cannot be saved, onDropTablePartition expects that PartInfo is empty
-	// in this case
-	fake.FillArgs(&TablePartitionArgs{
-		PartNames: args.PartNames,
-	})
-	job.Args = fake.Args
-}
-
 // ExchangeTablePartitionArgs is the arguments for exchange table partition job.
 // pt: the partition table to exchange
 // nt: the non-partition table to exchange with

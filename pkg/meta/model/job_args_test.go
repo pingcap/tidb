@@ -338,14 +338,9 @@ func TestTablePartitionArgs(t *testing.T) {
 		_, err := j.Encode(true)
 		require.NoError(t, err)
 		partNames := []string{"aaaa", "bbb"}
-		FillRollbackArgsForAddPartition(j,
-			&TablePartitionArgs{
-				PartNames: partNames,
-				PartInfo: &PartitionInfo{Type: model.PartitionTypeRange, Definitions: []PartitionDefinition{
-					{ID: 1, Name: model.NewCIStr("aaaa"), LessThan: []string{"1"}},
-					{ID: 2, Name: model.NewCIStr("bbb"), LessThan: []string{"2"}},
-				}},
-			})
+		j.FillArgs(&TablePartitionArgs{
+			PartNames: partNames,
+		})
 		require.Len(t, j.Args, 1)
 		if ver == JobVersion1 {
 			require.EqualValues(t, partNames, j.Args[0].([]string))

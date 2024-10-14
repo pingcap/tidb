@@ -360,13 +360,8 @@ func mergeAddIndex(info *model.MultiSchemaInfo) {
 		}
 	}
 
-	// Fill args for new subjob
-	proxyJob := &model.Job{Version: model.JobVersion1}
-	proxyJob.FillArgs(newAddIndexesArgs)
-	mergedSubJob.Args = proxyJob.Args
-	mergedSubJob.JobArgs = newAddIndexesArgs
-
 	// place the merged add index job at the end of the sub-jobs.
+	mergedSubJob.JobArgs = newAddIndexesArgs
 	newSubJobs = append(newSubJobs, mergedSubJob)
 	info.SubJobs = newSubJobs
 }
