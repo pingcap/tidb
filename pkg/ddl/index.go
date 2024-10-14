@@ -2224,7 +2224,7 @@ func (w *worker) addTableIndex(t table.Table, reorgInfo *reorgInfo) error {
 			if tbl.Meta().ID == reorgInfo.PhysicalTableID {
 				p, ok = t.(table.PhysicalTable) // global index
 				if !ok {
-					return errors.New(fmt.Sprintf("unexpected error, can't cast %T to table.PhysicalTable", t))
+					return fmt.Errorf("unexpected error, can't cast %T to table.PhysicalTable", t)
 				}
 			} else {
 				p = tbl.GetPartition(reorgInfo.PhysicalTableID)
