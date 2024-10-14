@@ -4,8 +4,8 @@ package stream
 
 import (
 	"context"
-	"encoding/binary"
 	"fmt"
+	"math"
 	"math/rand"
 	"os"
 	"path"
@@ -586,7 +586,7 @@ func mCompaction(cPath, aPath string, fromTs, untilTs uint64) migOP {
 	return func(m *backuppb.Migration) {
 		c := &backuppb.LogFileCompaction{}
 		c.GeneratedFiles = cPath
-		c.Artifactes = aPath
+		c.Artifacts = aPath
 		c.CompactionFromTs = fromTs
 		c.CompactionUntilTs = untilTs
 		m.Compactions = append(m.Compactions, c)

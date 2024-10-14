@@ -55,7 +55,6 @@ go_test(
         "misc_test.go",
     ],
     flaky = True,
-    race = "off",
     shard_count = 6,
     deps = [
         ":restore",
