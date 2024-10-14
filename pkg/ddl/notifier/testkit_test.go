@@ -281,15 +281,33 @@ func TestPublishEventError(t *testing.T) {
 	tk.MustExec("DROP TABLE IF EXISTS ddl_notifier")
 	tk.MustExec(tableStructure)
 	notifier.DefaultStore = notifier.OpenTableStore("test", "ddl_notifier")
-	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/asyncNotifyEventError", "return()")
-	defer func() {
-		testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/asyncNotifyEventError")
-	}()
+	cases := []string{
+		"create table t (a int)", // ActionCreateTable
+		//"alter table t partition by range(a) (partition p1 values less than (20))",                                              // ActionAlterTablePartitioning
+		//"alter table t reorganize partition p1 into (partition p11 values less than (10), partition p12 values less than (20))", // ActionReorganizePartition
+		//"alter table t truncate partition p11",                                                                                  // ActionTruncateTablePartition
+		//"alter table t drop partition p11",                                                                                      // ActionDropTablePartition
+		//"alter table t add partition(partition p13 values less than (30))",                                                      // ActionAddTablePartition
+		//"create table t1 (a int)",                                                                                               // ActionCreateTable
+		//"ALTER TABLE t EXCHANGE PARTITION p12 WITH TABLE t1",                                                                    // ActionExchangeTablePartition
+		//"alter table t remove partitioning",                                                                                     // ActionRemovePartitioning
+		//"truncate table t",                                                                                                      // ActionTruncateTable
+		//"drop table t1",                                                                                                         // ActionDropTable
+		//"alter table t modify column a varchar(15)",                                                                             // ActionModifyColumn
+		//"alter table t add column b int",                                                                                        // ActionAddColumn
+		//"alter table t add index(b)",                                                                                            // no event
+		//"create table t1(b int key, FOREIGN KEY (b) REFERENCES t(b) ON DELETE CASCADE);",                                        // ActionCreateTable with foreign key
+		//"alter table t1 add column c int, add column d varchar(10)",                                                             // ActionAddColumn
+	}
 
+	err := "[ddl:-1]DDL job rollback, error msg: mock publish event error"
+	tk.MustExec("set global tidb_ddl_error_count_limit = 3")
 	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t (a int)")
-	rows := tk.MustQuery("show tables").Rows()
-	require.Equal(t, 1, len(rows)) // only ddl_notifier
-	rows = tk.MustQuery("select * from test.ddl_notifier").Rows()
-	require.Equal(t, 0, len(rows))
+	for _, sql := range cases {
+		testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/asyncNotifyEventError", "return()")
+		tk.MustGetErrMsg(sql, err)
+		testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/asyncNotifyEventError")
+
+		tk.MustExec(sql)
+	}
 }
