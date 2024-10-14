@@ -15,7 +15,7 @@
 package handle
 
 import (
-	"fmt"
+	stderrors "errors"
 	"math/rand"
 	"sync"
 	"time"
@@ -80,7 +80,6 @@ func (h *Handle) SendLoadRequests(sc *stmtctx.StatementContext, neededHistItems 
 			}
 		}
 	})
-
 	if len(remainedItems) <= 0 {
 		return nil
 	}
@@ -326,7 +325,14 @@ func (h *Handle) handleOneItemTask(task *NeededItemTask) (err error) {
 	failpoint.Inject("handleOneItemTaskPanic", nil)
 	t := time.Now()
 	needUpdate := false
+<<<<<<< HEAD:pkg/statistics/handle/handle_hist.go
 	wrapper, err = h.readStatsForOneItem(sctx, item, wrapper)
+=======
+	wrapper, err = s.readStatsForOneItem(sctx, item, wrapper, isPkIsHandle, task.Item.FullLoad)
+	if stderrors.Is(err, errGetHistMeta) {
+		return nil
+	}
+>>>>>>> 10647c9d733 (statstics: avoid unnecessary try when to sync load (#56614)):pkg/statistics/handle/syncload/stats_syncload.go
 	if err != nil {
 		return err
 	}
@@ -346,6 +352,8 @@ func (h *Handle) handleOneItemTask(task *NeededItemTask) (err error) {
 	return nil
 }
 
+var errGetHistMeta = errors.New("fail to get hist meta")
+
 // readStatsForOneItem reads hist for one column/index, TODO load data via kv-get asynchronously
 func (h *Handle) readStatsForOneItem(sctx sessionctx.Context, item model.TableItemID, w *statsWrapper) (*statsWrapper, error) {
 	failpoint.Inject("mockReadStatsForOnePanic", nil)
@@ -360,6 +368,18 @@ func (h *Handle) readStatsForOneItem(sctx sessionctx.Context, item model.TableIt
 	var hg *statistics.Histogram
 	var err error
 	isIndexFlag := int64(0)
+<<<<<<< HEAD:pkg/statistics/handle/handle_hist.go
+=======
+	hg, lastAnalyzePos, statsVer, flag, err := storage.HistMetaFromStorageWithHighPriority(sctx, &item, w.colInfo)
+	if err != nil {
+		return nil, err
+	}
+	if hg == nil {
+		logutil.BgLogger().Warn("fail to get hist meta for this histogram, possibly a deleted one", zap.Int64("table_id", item.TableID),
+			zap.Int64("hist_id", item.ID), zap.Bool("is_index", item.IsIndex))
+		return nil, errGetHistMeta
+	}
+>>>>>>> 10647c9d733 (statstics: avoid unnecessary try when to sync load (#56614)):pkg/statistics/handle/syncload/stats_syncload.go
 	if item.IsIndex {
 		isIndexFlag = 1
 	}
