@@ -1,4 +1,3 @@
-
 // Copyright 2019 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -17,13 +16,13 @@ package mathutil
 
 import (
 	"math"
-	"slices"
+    "slices"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"golang.org/x/exp/constraints"
 )
 
 // Architecture and/or implementation specific integer limits and bit widths.
- const (
+const (
 	MaxInt  = 1<<(IntBits-1) - 1
 	MinInt  = -MaxInt - 1
 	MaxUint = 1<<IntBits - 1
@@ -43,7 +42,7 @@ var uintSizeTable = [21]uint64{
 	999999, 9999999, 99999999, 999999999, 9999999999,
 	99999999999, 999999999999, 9999999999999, 99999999999999, 999999999999999,
 	9999999999999999, 99999999999999999, 999999999999999999, 9999999999999999999,
-	math.MaxUint64,
+	^uint64(0),
 } // math.MaxUint64 is 18446744073709551615 and it has 20 digits
 
 // StrLenOfUint64Fast efficiently calculate the string character lengths of an uint64 as input
@@ -73,6 +72,7 @@ func IsFinite(f float64) bool {
 func Max[T constraints.Ordered](x T, xs ...T) T {
 	return slices.Max(append([]T{x}, xs...))
 }
+
 // Min returns the smallest one from its arguments.
 func Min[T constraints.Ordered](x T, xs ...T) T {
 	return slices.Min(append([]T{x}, xs...))
