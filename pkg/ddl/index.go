@@ -2218,12 +2218,14 @@ func (w *worker) addTableIndex(t table.Table, reorgInfo *reorgInfo) error {
 
 	var err error
 	if tbl, ok := t.(table.PartitionedTable); ok {
-		var finish bool
+		var finish, ok bool
 		for !finish {
 			var p table.PhysicalTable
 			if tbl.Meta().ID == reorgInfo.PhysicalTableID {
-				//nolint:forcetypeassert
-				p = t.(table.PhysicalTable) // global index
+				p, ok = t.(table.PhysicalTable) // global index
+				if !ok {
+					return errors.New(fmt.Sprintf("unexpected error, can't cast %T to table.PhysicalTable", t))
+				}
 			} else {
 				p = tbl.GetPartition(reorgInfo.PhysicalTableID)
 				if p == nil {
