@@ -54,14 +54,14 @@ func (e *GroupExpression) GetGroup() *Group {
 // String implements the fmt.Stringer interface.
 func (e *GroupExpression) String(w io.Writer) {
 	e.GetLogicalPlan().ExplainID()
-	w.Write([]byte("GE:" + e.GetLogicalPlan().ExplainID().String() + "{"))
+	_, _ = w.Write([]byte("GE:" + e.GetLogicalPlan().ExplainID().String() + "{"))
 	for i, input := range e.Inputs {
 		if i != 0 {
-			w.Write([]byte(", "))
+			_, _ = w.Write([]byte(", "))
 		}
 		input.String(w)
 	}
-	w.Write([]byte("}"))
+	_, _ = w.Write([]byte("}"))
 }
 
 // Sum64 returns the cached hash64 of the GroupExpression.
