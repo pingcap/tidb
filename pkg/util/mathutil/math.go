@@ -1,3 +1,4 @@
+
 // Copyright 2019 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -16,13 +17,13 @@ package mathutil
 
 import (
 	"math"
-
+	"slices"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"golang.org/x/exp/constraints"
 )
 
 // Architecture and/or implementation specific integer limits and bit widths.
-const (
+ const (
 	MaxInt  = 1<<(IntBits-1) - 1
 	MinInt  = -MaxInt - 1
 	MaxUint = 1<<IntBits - 1
@@ -70,25 +71,13 @@ func IsFinite(f float64) bool {
 
 // Max returns the largest one from its arguments.
 func Max[T constraints.Ordered](x T, xs ...T) T {
-	maxv := x
-	for _, n := range xs {
-		if n > maxv {
-			maxv = n
-		}
-	}
-	return maxv
+	return slices.Max(append([]T{x}, xs...))
 }
-
 // Min returns the smallest one from its arguments.
 func Min[T constraints.Ordered](x T, xs ...T) T {
-	minv := x
-	for _, n := range xs {
-		if n < minv {
-			minv = n
-		}
-	}
-	return minv
+	return slices.Min(append([]T{x}, xs...))
 }
+
 // Clamp restrict a value to a certain interval.
 func Clamp[T constraints.Ordered](n, minv, maxv T) T {
 	if n >= maxv {
