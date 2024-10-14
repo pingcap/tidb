@@ -242,12 +242,12 @@ func NewJobWrapperWithArgs(job *model.Job, args model.JobArgs, idAllocated bool)
 }
 
 // NotifyResult notifies the job submit result.
-func (t *JobWrapper) NotifyResult(err error) {
-	merged := len(t.ResultCh) > 1
-	for _, resultCh := range t.ResultCh {
+func (jobW *JobWrapper) NotifyResult(err error) {
+	merged := len(jobW.ResultCh) > 1
+	for _, resultCh := range jobW.ResultCh {
 		resultCh <- jobSubmitResult{
 			err:    err,
-			jobID:  t.ID,
+			jobID:  jobW.ID,
 			merged: merged,
 		}
 	}
