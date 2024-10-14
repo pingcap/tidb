@@ -21,8 +21,6 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/ddl/ingest"
 	"github.com/pingcap/tidb/pkg/meta/model"
-	"github.com/pingcap/tidb/pkg/parser/ast"
-	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
@@ -57,9 +55,12 @@ func convertAddIdxJob2RollbackJob(
 		}
 	})
 
+	dropArgs := &model.ModifyIndexArgs{
+		PartitionIDs: getPartitionIDs(tblInfo),
+		OpType:       model.OpRollbackAddIndex,
+	}
+
 	originalState := allIndexInfos[0].State
-	idxNames := make([]pmodel.CIStr, 0, len(allIndexInfos))
-	ifExists := make([]bool, 0, len(allIndexInfos))
 	for _, indexInfo := range allIndexInfos {
 		if indexInfo.Primary {
 			nullCols, err := getNullColInfos(tblInfo, indexInfo)
@@ -76,12 +77,15 @@ func convertAddIdxJob2RollbackJob(
 		// The write reorganization state in add index job that likes write only state in drop index job.
 		// So the next state is delete only state.
 		indexInfo.State = model.StateDeleteOnly
-		idxNames = append(idxNames, indexInfo.Name)
-		ifExists = append(ifExists, false)
+		dropArgs.IndexArgs = append(dropArgs.IndexArgs, &model.IndexArg{
+			IndexName: indexInfo.Name,
+			IfExist:   false,
+		})
 	}
 
-	// the second and the third args will be used in onDropIndex.
-	job.Args = []any{idxNames, ifExists, getPartitionIDs(tblInfo)}
+	// Convert to ModifyIndexArgs
+	job.FillFinishedArgs(dropArgs)
+
 	job.SchemaState = model.StateDeleteOnly
 	ver, err1 := updateVersionAndTableInfo(jobCtx, job, tblInfo, originalState != model.StateDeleteOnly)
 	if err1 != nil {
@@ -98,7 +102,7 @@ func convertAddIdxJob2RollbackJob(
 
 // convertNotReorgAddIdxJob2RollbackJob converts the add index job that are not started workers to rollingbackJob,
 // to rollback add index operations. job.SnapshotVer == 0 indicates the workers are not started.
-func convertNotReorgAddIdxJob2RollbackJob(jobCtx *jobContext, job *model.Job, occuredErr error, isVector bool) (ver int64, err error) {
+func convertNotReorgAddIdxJob2RollbackJob(jobCtx *jobContext, job *model.Job, occuredErr error) (ver int64, err error) {
 	defer func() {
 		if ingest.LitBackCtxMgr != nil {
 			ingest.LitBackCtxMgr.Unregister(job.ID)
@@ -110,29 +114,15 @@ func convertNotReorgAddIdxJob2RollbackJob(jobCtx *jobContext, job *model.Job, oc
 		return ver, errors.Trace(err)
 	}
 
-	var funcExpr string
-	var indexPartSpecification *ast.IndexPartSpecification
-	unique := make([]bool, 1)
-	indexName := make([]pmodel.CIStr, 1)
-	indexPartSpecifications := make([][]*ast.IndexPartSpecification, 1)
-	indexOption := make([]*ast.IndexOption, 1)
-
-	if !isVector {
-		err = job.DecodeArgs(&unique[0], &indexName[0], &indexPartSpecifications[0], &indexOption[0])
-		if err != nil {
-			err = job.DecodeArgs(&unique, &indexName, &indexPartSpecifications, &indexOption)
-		}
-	} else {
-		err = job.DecodeArgs(&indexName[0], &indexPartSpecification, &indexOption[0], &funcExpr)
-	}
+	args, err := model.GetModifyIndexArgs(job)
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
 
 	var indexesInfo []*model.IndexInfo
-	for _, idxName := range indexName {
-		indexInfo := tblInfo.FindIndexByName(idxName.L)
+	for _, a := range args.IndexArgs {
+		indexInfo := tblInfo.FindIndexByName(a.IndexName.L)
 		if indexInfo != nil {
 			indexesInfo = append(indexesInfo, indexInfo)
 		}
@@ -275,7 +265,7 @@ func rollingbackAddVectorIndex(w *worker, jobCtx *jobContext, job *model.Job) (v
 		ver, err = w.onCreateVectorIndex(jobCtx, job)
 	} else {
 		// add index's reorg workers are not running, remove the indexInfo in tableInfo.
-		ver, err = convertNotReorgAddIdxJob2RollbackJob(jobCtx, job, dbterror.ErrCancelledDDLJob, true)
+		ver, err = convertNotReorgAddIdxJob2RollbackJob(jobCtx, job, dbterror.ErrCancelledDDLJob)
 	}
 	return
 }
@@ -288,7 +278,7 @@ func rollingbackAddIndex(w *worker, jobCtx *jobContext, job *model.Job, isPK boo
 		ver, err = w.onCreateIndex(jobCtx, job, isPK)
 	} else {
 		// add index's reorg workers are not running, remove the indexInfo in tableInfo.
-		ver, err = convertNotReorgAddIdxJob2RollbackJob(jobCtx, job, dbterror.ErrCancelledDDLJob, false)
+		ver, err = convertNotReorgAddIdxJob2RollbackJob(jobCtx, job, dbterror.ErrCancelledDDLJob)
 	}
 	return
 }

@@ -2081,11 +2081,6 @@ func TestDoImport(t *testing.T) {
 	}
 	err = l.doImport(ctx, e, initRegionKeys, int64(config.SplitRegionSize), int64(config.SplitRegionKeys))
 	require.ErrorContains(t, err, "fatal error")
-	for _, v := range fakeRegionJobs {
-		for _, job := range v.jobs {
-			require.Len(t, job.injected, 0)
-		}
-	}
 }
 
 func TestRegionJobResetRetryCounter(t *testing.T) {

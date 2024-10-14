@@ -84,12 +84,15 @@ type jobContext struct {
 	store           kv.Storage
 	schemaVerSyncer schemaver.Syncer
 
-	// per job fields
+	// per job fields, they are not changed in the life cycle of this context.
 	notifyCh chan struct{}
 	logger   *zap.Logger
 
-	// per job step fields
+	// per job step fields, they will be changed on each call of transitOneJobStep.
 	metaMut *meta.Mutator
+	// decoded JobArgs, we store it here to avoid decoding it multiple times and
+	// pass some runtime info specific to some job type.
+	jobArgs model.JobArgs
 
 	// TODO reorg part of code couple this struct so much, remove it later.
 	oldDDLCtx *ddlCtx
@@ -312,13 +315,13 @@ func JobNeedGC(job *model.Job) bool {
 			model.ActionAlterTablePartitioning:
 			return true
 		case model.ActionDropIndex:
-			_, _, _, _, hasVectors, err := job.DecodeDropIndexFinishedArgs()
+			args, err := model.GetFinishedModifyIndexArgs(job)
 			if err != nil {
 				return false
 			}
 			// If it's a vector index, it needn't to store key ranges to gc_delete_range.
 			// We don't support drop vector index in multi-schema, so we only check the first one.
-			if len(hasVectors) > 0 && hasVectors[0] {
+			if args.IndexArgs[0].IsVector {
 				return false
 			}
 			return true

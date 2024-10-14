@@ -23,6 +23,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	timerapi "github.com/pingcap/tidb/pkg/timer/api"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -566,4 +567,24 @@ func TestTTLTimerRuntime(t *testing.T) {
 	require.NotNil(t, r.rt)
 	r.Pause()
 	require.Nil(t, r.rt)
+}
+
+func TestGetTTLSchedulePolicy(t *testing.T) {
+	// normal case
+	tp, expr := getTTLSchedulePolicy(&model.TTLInfo{
+		JobInterval: "12h",
+	})
+	require.Equal(t, timerapi.SchedEventInterval, tp)
+	require.Equal(t, "12h", expr)
+	_, err := timerapi.CreateSchedEventPolicy(tp, expr)
+	require.NoError(t, err)
+
+	// empty job interval
+	tp, expr = getTTLSchedulePolicy(&model.TTLInfo{
+		JobInterval: "",
+	})
+	require.Equal(t, timerapi.SchedEventInterval, tp)
+	require.Equal(t, model.DefaultJobIntervalStr, expr)
+	_, err = timerapi.CreateSchedEventPolicy(tp, expr)
+	require.NoError(t, err)
 }

@@ -115,6 +115,7 @@ go_test(
     shard_count = 29,
     deps = [
         "//br/pkg/errors",
+        "//pkg/autoid_service",
         "//pkg/ddl",
         "//pkg/errno",
         "//pkg/kv",

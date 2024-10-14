@@ -142,7 +142,7 @@ func (p *BaseLogicalPlan) PruneColumns(parentUsedCols []*expression.Column, opt 
 // FindBestTask implements LogicalPlan.<3rd> interface.
 func (p *BaseLogicalPlan) FindBestTask(prop *property.PhysicalProperty, planCounter *base.PlanCounterTp,
 	opt *optimizetrace.PhysicalOptimizeOp) (bestTask base.Task, cntPlan int64, err error) {
-	return utilfuncp.FindBestTask(p, prop, planCounter, opt)
+	return utilfuncp.FindBestTask4BaseLogicalPlan(p, prop, planCounter, opt)
 }
 
 // BuildKeyInfo implements LogicalPlan.<4th> interface.
@@ -156,7 +156,7 @@ func (p *BaseLogicalPlan) BuildKeyInfo(_ *expression.Schema, _ []*expression.Sch
 
 // PushDownTopN implements the LogicalPlan.<5th> interface.
 func (p *BaseLogicalPlan) PushDownTopN(topNLogicalPlan base.LogicalPlan, opt *optimizetrace.LogicalOptimizeOp) base.LogicalPlan {
-	return utilfuncp.PushDownTopNForBaseLogicalPlan(p, topNLogicalPlan, opt)
+	return pushDownTopNForBaseLogicalPlan(p, topNLogicalPlan, opt)
 }
 
 // DeriveTopN implements the LogicalPlan.<6th> interface.
@@ -309,7 +309,7 @@ func (p *BaseLogicalPlan) RollBackTaskMap(ts uint64) {
 // For TiFlash, it will check whether the operator is supported, but note that the check
 // might be inaccurate.
 func (p *BaseLogicalPlan) CanPushToCop(storeTp kv.StoreType) bool {
-	return utilfuncp.CanPushToCopImpl(p, storeTp, false)
+	return CanPushToCopImpl(p, storeTp, false)
 }
 
 // ExtractFD implements LogicalPlan.<22nd> interface.

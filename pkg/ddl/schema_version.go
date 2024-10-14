@@ -89,39 +89,45 @@ func SetSchemaDiffForCreateView(diff *model.SchemaDiff, job *model.Job) error {
 }
 
 // SetSchemaDiffForRenameTable set SchemaDiff for ActionRenameTable.
-func SetSchemaDiffForRenameTable(diff *model.SchemaDiff, job *model.Job) error {
-	args, err := model.GetRenameTableArgs(job)
-	if err != nil {
-		return errors.Trace(err)
+func SetSchemaDiffForRenameTable(diff *model.SchemaDiff, job *model.Job, jobCtx *jobContext) error {
+	args := jobCtx.jobArgs.(*model.RenameTableArgs)
+	adjustedOldSchemaID := args.OldSchemaID
+	if args.OldSchemaIDForSchemaDiff > 0 {
+		adjustedOldSchemaID = args.OldSchemaIDForSchemaDiff
 	}
 
-	diff.OldSchemaID = args.OldSchemaID
+	diff.OldSchemaID = adjustedOldSchemaID
 	diff.TableID = job.TableID
 	return nil
 }
 
 // SetSchemaDiffForRenameTables set SchemaDiff for ActionRenameTables.
-func SetSchemaDiffForRenameTables(diff *model.SchemaDiff, job *model.Job) error {
-	args, err := model.GetRenameTablesArgs(job)
-	if err != nil {
-		return errors.Trace(err)
-	}
+func SetSchemaDiffForRenameTables(diff *model.SchemaDiff, _ *model.Job, jobCtx *jobContext) error {
+	args := jobCtx.jobArgs.(*model.RenameTablesArgs)
 	affects := make([]*model.AffectedOption, len(args.RenameTableInfos)-1)
 	for i, info := range args.RenameTableInfos {
 		// Do not add the first table to AffectedOpts. Related issue tidb#47064.
 		if i == 0 {
 			continue
 		}
+		adjustedOldSchemaID := info.OldSchemaID
+		if info.OldSchemaIDForSchemaDiff > 0 {
+			adjustedOldSchemaID = info.OldSchemaIDForSchemaDiff
+		}
 		affects[i-1] = &model.AffectedOption{
 			SchemaID:    info.NewSchemaID,
 			TableID:     info.TableID,
 			OldTableID:  info.TableID,
-			OldSchemaID: info.OldSchemaID,
+			OldSchemaID: adjustedOldSchemaID,
 		}
+	}
+	adjustedOldSchemaID := args.RenameTableInfos[0].OldSchemaID
+	if args.RenameTableInfos[0].OldSchemaIDForSchemaDiff > 0 {
+		adjustedOldSchemaID = args.RenameTableInfos[0].OldSchemaIDForSchemaDiff
 	}
 	diff.TableID = args.RenameTableInfos[0].TableID
 	diff.SchemaID = args.RenameTableInfos[0].NewSchemaID
-	diff.OldSchemaID = args.RenameTableInfos[0].OldSchemaID
+	diff.OldSchemaID = adjustedOldSchemaID
 	diff.AffectedOpts = affects
 	return nil
 }
@@ -328,9 +334,9 @@ func updateSchemaVersion(jobCtx *jobContext, job *model.Job, multiInfos ...schem
 	case model.ActionCreateView:
 		err = SetSchemaDiffForCreateView(diff, job)
 	case model.ActionRenameTable:
-		err = SetSchemaDiffForRenameTable(diff, job)
+		err = SetSchemaDiffForRenameTable(diff, job, jobCtx)
 	case model.ActionRenameTables:
-		err = SetSchemaDiffForRenameTables(diff, job)
+		err = SetSchemaDiffForRenameTables(diff, job, jobCtx)
 	case model.ActionExchangeTablePartition:
 		err = SetSchemaDiffForExchangeTablePartition(diff, job, multiInfos...)
 	case model.ActionTruncateTablePartition:
