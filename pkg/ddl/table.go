@@ -117,6 +117,13 @@ func (w *worker) onDropTableOrView(jobCtx *jobContext, job *model.Job) (ver int6
 		}
 		// Placement rules cannot be removed immediately after drop table / truncate table, because the
 		// tables can be flashed back or recovered, therefore it moved to doGCPlacementRules in gc_worker.go.
+		if !tblInfo.IsSequence() && !tblInfo.IsView() {
+			dropTableEvent := notifier.NewDropTableEvent(tblInfo)
+			err = asyncNotifyEvent(jobCtx, dropTableEvent, job, w.sess)
+			if err != nil {
+				return ver, errors.Trace(err)
+			}
+		}
 
 		// Finish this job.
 		job.FinishTableJob(model.JobStateDone, model.StateNone, ver, tblInfo)
@@ -126,13 +133,6 @@ func (w *worker) onDropTableOrView(jobCtx *jobContext, job *model.Job) (ver int6
 			OldPartitionIDs: oldIDs,
 			OldRuleIDs:      ruleIDs,
 		})
-		if !tblInfo.IsSequence() && !tblInfo.IsView() {
-			dropTableEvent := notifier.NewDropTableEvent(tblInfo)
-			err = asyncNotifyEvent(jobCtx, dropTableEvent, job, w.sess)
-			if err != nil {
-				return ver, errors.Trace(err)
-			}
-		}
 	default:
 		return ver, errors.Trace(dbterror.ErrInvalidDDLState.GenWithStackByArgs("table", tblInfo.State))
 	}
@@ -579,12 +579,13 @@ func (w *worker) onTruncateTable(jobCtx *jobContext, job *model.Job) (ver int64,
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
-	job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
 	truncateTableEvent := notifier.NewTruncateTableEvent(tblInfo, oldTblInfo)
 	err = asyncNotifyEvent(jobCtx, truncateTableEvent, job, w.sess)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
+
+	job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
 	// see truncateTableByReassignPartitionIDs for why they might change.
 	args.OldPartitionIDs = oldPartitionIDs
 	args.NewPartitionIDs = newPartitionIDs
