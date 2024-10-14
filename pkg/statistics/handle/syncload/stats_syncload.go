@@ -392,7 +392,7 @@ func (*statsSyncLoad) readStatsForOneItem(sctx sessionctx.Context, item model.Ta
 		return nil, err
 	}
 	if hg == nil {
-		logutil.BgLogger().Error("fail to get hist meta for this histogram, possibly a deleted one", zap.Int64("table_id", item.TableID),
+		logutil.BgLogger().Warn("fail to get hist meta for this histogram, possibly a deleted one", zap.Int64("table_id", item.TableID),
 			zap.Int64("hist_id", item.ID), zap.Bool("is_index", item.IsIndex))
 		return nil, errGetHistMeta
 	}
