@@ -503,7 +503,7 @@ var (
 	ErrWarnGlobalIndexNeedManuallyAnalyze = ClassDDL.NewStd(mysql.ErrWarnGlobalIndexNeedManuallyAnalyze)
 )
 
-// ReorgRetryableErrCodes is the error codes that are retryable for reorganization.
+// ReorgRetryableErrCodes are the error codes that are retryable for reorganization.
 var ReorgRetryableErrCodes = map[uint16]struct{}{
 	mysql.ErrPDServerTimeout:           {},
 	mysql.ErrTiKVServerTimeout:         {},
@@ -527,17 +527,8 @@ var ReorgRetryableErrCodes = map[uint16]struct{}{
 	uint16(terror.CodeResultUndetermined): {},
 }
 
-// ReorgRetryableError is the retryable error during DDL reorganization.
-type ReorgRetryableError struct {
-	message string
-}
-
-// Error implements error interface.
-func (r ReorgRetryableError) Error() string {
-	return r.message
-}
-
-// NewReorgRetryableError creates a new ReorgRetryableError.
-func NewReorgRetryableError(msg string) ReorgRetryableError {
-	return ReorgRetryableError{message: msg}
+// ReorgRetryableErrMsgs are the error messages that are retryable for reorganization.
+var ReorgRetryableErrMsgs = []string{
+	"context deadline exceeded",
+	"requested lease not found",
 }

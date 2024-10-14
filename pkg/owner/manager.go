@@ -20,7 +20,6 @@ import (
 	"fmt"
 	"os"
 	"strconv"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -31,7 +30,6 @@ import (
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	util2 "github.com/pingcap/tidb/pkg/util"
-	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.etcd.io/etcd/api/v3/mvccpb"
 	"go.etcd.io/etcd/api/v3/v3rpc/rpctypes"
@@ -521,7 +519,7 @@ func AcquireDistributedLock(
 ) (release func(), err error) {
 	se, err := concurrency.NewSession(cli, concurrency.WithTTL(ttlInSec))
 	if err != nil {
-		return nil, wrapIntoRetryable(err)
+		return nil, err
 	}
 	mu := concurrency.NewMutex(se, key)
 	maxRetryCnt := 10
@@ -532,12 +530,17 @@ func AcquireDistributedLock(
 		}
 		return false, nil
 	})
+	failpoint.Inject("mockAcquireDistLockFailed", func(val failpoint.Value) {
+		if ok := val.(bool); ok {
+			err = errors.Errorf("requested lease not found")
+		}
+	})
 	if err != nil {
 		err1 := se.Close()
 		if err1 != nil {
 			logutil.Logger(ctx).Warn("close session error", zap.Error(err1))
 		}
-		return nil, wrapIntoRetryable(err)
+		return nil, err
 	}
 	logutil.Logger(ctx).Info("acquire distributed flush lock success", zap.String("key", key))
 	return func() {
@@ -552,13 +555,4 @@ func AcquireDistributedLock(
 			logutil.Logger(ctx).Warn("close session error", zap.Error(err))
 		}
 	}, nil
-}
-
-func wrapIntoRetryable(err error) error {
-	msg := err.Error()
-	if strings.Contains(msg, "requested lease not found") ||
-		strings.Contains(msg, "context deadline exceeded") {
-		return dbterror.NewReorgRetryableError(msg)
-	}
-	return err
 }

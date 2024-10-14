@@ -1301,10 +1301,13 @@ func errorIsRetryable(err error, job *model.Job) bool {
 	if job.ErrorCount+1 >= variable.GetDDLErrorCountLimit() {
 		return false
 	}
-	originErr := errors.Cause(err)
-	if _, ok := originErr.(dbterror.ReorgRetryableError); ok {
-		return true
+	errMsg := err.Error()
+	for _, m := range dbterror.ReorgRetryableErrMsgs {
+		if strings.Contains(errMsg, m) {
+			return true
+		}
 	}
+	originErr := errors.Cause(err)
 	if tErr, ok := originErr.(*terror.Error); ok {
 		sqlErr := terror.ToSQLError(tErr)
 		_, ok := dbterror.ReorgRetryableErrCodes[sqlErr.Code]
