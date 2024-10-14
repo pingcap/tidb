@@ -246,7 +246,7 @@ func TestSetTableFlashReplicaForSystemTable(t *testing.T) {
 				if tbl.Meta().View != nil {
 					require.ErrorIs(t, err, dbterror.ErrWrongObject)
 				} else {
-					require.Equal(t, "[ddl:8200]Unsupported ALTER TiFlash settings for system table and memory table", err.Error())
+					require.Equal(t, "[ddl:8200]Unsupported `set TiFlash replica` settings for system table and memory table", err.Error())
 				}
 			} else {
 				require.Equal(t, fmt.Sprintf("[planner:1142]ALTER command denied to user 'root'@'%%' for table '%s'", strings.ToLower(one)), err.Error())

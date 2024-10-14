@@ -1,12 +1,12 @@
 load("@io_bazel_rules_go//go:def.bzl", "go_library")
 
 go_library(
-    name = "exportloopref",
+    name = "copyloopvar",
     srcs = ["analyzer.go"],
-    importpath = "github.com/pingcap/tidb/build/linter/exportloopref",
+    importpath = "github.com/pingcap/tidb/build/linter/copyloopvar",
     visibility = ["//visibility:public"],
     deps = [
         "//build/linter/util",
-        "@com_github_kyoh86_exportloopref//:exportloopref",
+        "@com_github_karamaru_alpha_copyloopvar//:copyloopvar",
     ],
 )

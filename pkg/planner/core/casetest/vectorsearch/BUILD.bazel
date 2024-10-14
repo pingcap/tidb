@@ -1,0 +1,32 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_test")
+
+go_test(
+    name = "vectorsearch_test",
+    timeout = "short",
+    srcs = [
+        "main_test.go",
+        "vector_index_test.go",
+    ],
+    data = glob(["testdata/**"]),
+    flaky = True,
+    shard_count = 4,
+    deps = [
+        "//pkg/config",
+        "//pkg/domain",
+        "//pkg/domain/infosync",
+        "//pkg/meta/model",
+        "//pkg/planner/core",
+        "//pkg/planner/core/base",
+        "//pkg/planner/util/coretestsdk",
+        "//pkg/store/mockstore",
+        "//pkg/testkit",
+        "//pkg/testkit/testdata",
+        "//pkg/testkit/testfailpoint",
+        "//pkg/testkit/testmain",
+        "//pkg/testkit/testsetup",
+        "//pkg/util/plancodec",
+        "@com_github_pingcap_tipb//go-tipb",
+        "@com_github_stretchr_testify//require",
+        "@org_uber_go_goleak//:goleak",
+    ],
+)

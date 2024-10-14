@@ -23,6 +23,7 @@ go_library(
         "//pkg/util",
         "//pkg/util/chunk",
         "//pkg/util/execdetails",
+        "//pkg/util/linter/constructor",
         "//pkg/util/topsql",
         "//pkg/util/topsql/state",
         "//pkg/util/tracing",

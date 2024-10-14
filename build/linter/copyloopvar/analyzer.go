@@ -12,17 +12,16 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package noloopclosure
+package copyloopvar
 
 import (
-	nlc "github.com/fatanugraha/noloopclosure"
+	"github.com/karamaru-alpha/copyloopvar"
 	"github.com/pingcap/tidb/build/linter/util"
 )
 
-// Analyzer is the analyzer struct of misspell.
-var Analyzer = nlc.Analyzer
+// Analyzer is the analyzer struct of copyloopvar.
+var Analyzer = copyloopvar.NewAnalyzer()
 
 func init() {
 	util.SkipAnalyzerByConfig(Analyzer)
-	util.SkipAnalyzer(Analyzer)
 }

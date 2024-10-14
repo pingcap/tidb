@@ -43,9 +43,11 @@ import (
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/collate"
 	h "github.com/pingcap/tidb/pkg/util/hint"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/ranger"
 	"github.com/pingcap/tidb/pkg/util/tracing"
+	"github.com/pingcap/tipb/go-tipb"
 	"go.uber.org/zap"
 )
 
@@ -805,6 +807,19 @@ func isMatchProp(ds *logicalop.DataSource, path *util.AccessPath, prop *property
 				break
 			}
 		}
+	}
+	if prop.VectorProp.VectorHelper != nil && path.Index.VectorInfo != nil {
+		if path.Index == nil || path.Index.VectorInfo == nil {
+			return false
+		}
+		if ds.TableInfo.Columns[path.Index.Columns[0].Offset].ID != prop.VectorProp.Column.ID {
+			return false
+		}
+
+		if model.IndexableFnNameToDistanceMetric[prop.VectorProp.DistanceFnName.L] != path.Index.VectorInfo.DistanceMetric {
+			return false
+		}
+		return true
 	}
 	return isMatchProp
 }
@@ -2503,6 +2518,31 @@ func convertToTableScan(ds *logicalop.DataSource, prop *property.PhysicalPropert
 		if prop.MPPPartitionTp != property.AnyType {
 			return base.InvalidTask, nil
 		}
+		// If it has vector property, we need to check the candidate.isMatchProp.
+		if candidate.path.Index != nil && candidate.path.Index.VectorInfo != nil && !candidate.isMatchProp {
+			return base.InvalidTask, nil
+		}
+		if candidate.path.Index != nil && candidate.path.Index.VectorInfo != nil {
+			// Only the corresponding index can generate a valid task.
+			intest.Assert(ts.Table.Columns[candidate.path.Index.Columns[0].Offset].ID == prop.VectorProp.Column.ID, "The passed vector column is not matched with the index")
+			distanceMetric := model.IndexableFnNameToDistanceMetric[prop.VectorProp.DistanceFnName.L]
+			distanceMetricPB := tipb.VectorDistanceMetric_value[string(distanceMetric)]
+			intest.Assert(distanceMetricPB != 0, "unexpected distance metric")
+
+			ts.AnnIndexExtra = &VectorIndexExtra{
+				IndexInfo: candidate.path.Index,
+				PushDownQueryInfo: &tipb.ANNQueryInfo{
+					QueryType:      tipb.ANNQueryType_OrderBy,
+					DistanceMetric: tipb.VectorDistanceMetric(distanceMetricPB),
+					TopK:           prop.VectorProp.TopK,
+					ColumnName:     ts.Table.Columns[candidate.path.Index.Columns[0].Offset].Name.L,
+					ColumnId:       prop.VectorProp.Column.ID,
+					IndexId:        candidate.path.Index.ID,
+					RefVecF32:      prop.VectorProp.Vec.SerializeTo(nil),
+				},
+			}
+			ts.SetStats(util.DeriveLimitStats(ts.StatsInfo(), float64(prop.VectorProp.TopK)))
+		}
 		// ********************************** future deprecated start **************************/
 		var hasVirtualColumn bool
 		for _, col := range ts.schema.Columns {
@@ -2871,7 +2911,7 @@ func getOriginalPhysicalTableScan(ds *logicalop.DataSource, prop *property.Physi
 	if usedStats != nil && usedStats.GetUsedInfo(ts.physicalTableID) != nil {
 		ts.usedStatsInfo = usedStats.GetUsedInfo(ts.physicalTableID)
 	}
-	if isMatchProp {
+	if isMatchProp && prop.VectorProp.VectorHelper == nil {
 		ts.Desc = prop.SortItems[0].Desc
 		ts.KeepOrder = true
 	}

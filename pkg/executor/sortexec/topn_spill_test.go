@@ -376,6 +376,7 @@ func severalChunksInDiskCase(t *testing.T, topnExec *sortexec.TopNExec) {
 }
 
 func TestGenerateTopNResultsWhenSpillOnlyOnce(t *testing.T) {
+	//nolint:constructor
 	topnExec := &sortexec.TopNExec{}
 	topnExec.Limit = &plannercore.PhysicalLimit{}
 
@@ -491,6 +492,28 @@ func TestIssue54206(t *testing.T) {
 	tk.MustExec("create table t2(a bigint, b bigint);")
 	tk.MustExec("insert into t1 values(1, 1);")
 	tk.MustQuery("select t1.a+t1.b as result from t1 left join t2 on 1 = 0 order by result limit 1;")
+}
+
+func TestIssue54541(t *testing.T) {
+	totalRowNum := 30
+	sortexec.SetSmallSpillChunkSizeForTest()
+	ctx := mock.NewContext()
+	topNCase := &testutil.SortCase{Rows: totalRowNum, OrderByIdx: []int{0, 1}, Ndvs: []int{0, 0}, Ctx: ctx}
+
+	ctx.GetSessionVars().InitChunkSize = 32
+	ctx.GetSessionVars().MaxChunkSize = 32
+	ctx.GetSessionVars().MemTracker = memory.NewTracker(memory.LabelForSQLText, hardLimit2)
+	ctx.GetSessionVars().StmtCtx.MemTracker = memory.NewTracker(memory.LabelForSQLText, -1)
+	ctx.GetSessionVars().StmtCtx.MemTracker.AttachTo(ctx.GetSessionVars().MemTracker)
+
+	offset := uint64(totalRowNum / 10)
+	count := uint64(totalRowNum / 3)
+
+	schema := expression.NewSchema(topNCase.Columns()...)
+	dataSource := buildDataSource(topNCase, schema)
+	exe := buildTopNExec(topNCase, dataSource, offset, count)
+
+	sortexec.TestKillSignalInTopN(t, exe)
 }
 
 func TestTopNFallBackAction(t *testing.T) {

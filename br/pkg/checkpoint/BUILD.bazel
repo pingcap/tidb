@@ -45,7 +45,7 @@ go_test(
     srcs = ["checkpoint_test.go"],
     flaky = True,
     race = "on",
-    shard_count = 6,
+    shard_count = 8,
     deps = [
         ":checkpoint",
         "//br/pkg/gluetidb",
@@ -54,6 +54,7 @@ go_test(
         "//br/pkg/utiltest",
         "//pkg/meta/model",
         "//pkg/parser/model",
+        "@com_github_pingcap_failpoint//:failpoint",
         "@com_github_pingcap_kvproto//pkg/brpb",
         "@com_github_pingcap_kvproto//pkg/encryptionpb",
         "@com_github_stretchr_testify//require",

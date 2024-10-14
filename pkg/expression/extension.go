@@ -65,6 +65,7 @@ func removeExtensionFunc(name string) {
 
 type extensionFuncClass struct {
 	baseFunctionClass
+	expropt.PrivilegeCheckerPropReader
 	funcDef extension.FunctionDef
 	flen    int
 }
@@ -96,7 +97,12 @@ func newExtensionFuncClass(def *extension.FunctionDef) (*extensionFuncClass, err
 }
 
 func (c *extensionFuncClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
-	if err := checkPrivileges(ctx.GetEvalCtx(), &c.funcDef); err != nil {
+	checker, err := c.GetPrivilegeChecker(ctx.GetEvalCtx())
+	if err != nil {
+		return nil, err
+	}
+
+	if err := checkPrivileges(checker, &c.funcDef); err != nil {
 		return nil, err
 	}
 
@@ -117,7 +123,7 @@ func (c *extensionFuncClass) getFunction(ctx BuildContext, args []Expression) (b
 	return sig, nil
 }
 
-func checkPrivileges(ctx EvalContext, fnDef *extension.FunctionDef) error {
+func checkPrivileges(privChecker expropt.PrivilegeChecker, fnDef *extension.FunctionDef) error {
 	fn := fnDef.RequireDynamicPrivileges
 	if fn == nil {
 		return nil
@@ -130,7 +136,7 @@ func checkPrivileges(ctx EvalContext, fnDef *extension.FunctionDef) error {
 	}
 
 	for _, priv := range privs {
-		if !ctx.RequestDynamicVerification(priv, false) {
+		if !privChecker.RequestDynamicVerification(priv, false) {
 			msg := priv
 			if !semEnabled {
 				msg = "SUPER or " + msg
@@ -147,6 +153,7 @@ var _ extension.FunctionContext = extensionFnContext{}
 type extensionFuncSig struct {
 	baseBuiltinFunc
 	expropt.SessionVarsPropReader
+	expropt.PrivilegeCheckerPropReader
 
 	extension.FunctionDef
 }
@@ -159,11 +166,17 @@ func (b *extensionFuncSig) Clone() builtinFunc {
 }
 
 func (b *extensionFuncSig) RequiredOptionalEvalProps() OptionalEvalPropKeySet {
-	return b.SessionVarsPropReader.RequiredOptionalEvalProps()
+	return b.SessionVarsPropReader.RequiredOptionalEvalProps() |
+		b.PrivilegeCheckerPropReader.RequiredOptionalEvalProps()
 }
 
 func (b *extensionFuncSig) evalString(ctx EvalContext, row chunk.Row) (string, bool, error) {
-	if err := checkPrivileges(ctx, &b.FunctionDef); err != nil {
+	checker, err := b.GetPrivilegeChecker(ctx)
+	if err != nil {
+		return "", true, err
+	}
+
+	if err := checkPrivileges(checker, &b.FunctionDef); err != nil {
 		return "", true, err
 	}
 
@@ -180,7 +193,12 @@ func (b *extensionFuncSig) evalString(ctx EvalContext, row chunk.Row) (string, b
 }
 
 func (b *extensionFuncSig) evalInt(ctx EvalContext, row chunk.Row) (int64, bool, error) {
-	if err := checkPrivileges(ctx, &b.FunctionDef); err != nil {
+	checker, err := b.GetPrivilegeChecker(ctx)
+	if err != nil {
+		return 0, true, err
+	}
+
+	if err := checkPrivileges(checker, &b.FunctionDef); err != nil {
 		return 0, true, err
 	}
 

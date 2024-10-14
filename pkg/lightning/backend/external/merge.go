@@ -64,7 +64,6 @@ func MergeOverlappingFiles(
 	eg, egCtx := errgroup.WithContext(ctx)
 	eg.SetLimit(concurrency)
 	for _, files := range dataFilesSlice {
-		files := files
 		eg.Go(func() error {
 			return mergeOverlappingFilesInternal(
 				egCtx,

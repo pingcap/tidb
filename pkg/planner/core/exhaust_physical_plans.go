@@ -25,7 +25,6 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/expression/aggregation"
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/cardinality"
@@ -2169,12 +2168,51 @@ func getPhysTopN(lt *logicalop.LogicalTopN, prop *property.PhysicalProperty) []b
 	if !pushLimitOrTopNForcibly(lt) {
 		allTaskTypes = append(allTaskTypes, property.RootTaskType)
 	}
-	if lt.SCtx().GetSessionVars().IsMPPAllowed() {
+	mppAllowed := lt.SCtx().GetSessionVars().IsMPPAllowed()
+	if mppAllowed {
 		allTaskTypes = append(allTaskTypes, property.MppTaskType)
 	}
 	ret := make([]base.PhysicalPlan, 0, len(allTaskTypes))
 	for _, tp := range allTaskTypes {
 		resultProp := &property.PhysicalProperty{TaskTp: tp, ExpectedCnt: math.MaxFloat64, CTEProducerStatus: prop.CTEProducerStatus}
+		topN := PhysicalTopN{
+			ByItems:     lt.ByItems,
+			PartitionBy: lt.PartitionBy,
+			Count:       lt.Count,
+			Offset:      lt.Offset,
+		}.Init(lt.SCtx(), lt.StatsInfo(), lt.QueryBlockOffset(), resultProp)
+		ret = append(ret, topN)
+	}
+	// If we can generate MPP task and there's vector distance function in the order by column.
+	// We will try to generate a property for possible vector indexes.
+	if mppAllowed {
+		if len(lt.ByItems) != 1 {
+			return ret
+		}
+		vs := expression.ExtractVectorHelper(lt.ByItems[0].Expr)
+		if vs == nil {
+			return ret
+		}
+		// Currently vector index only accept ascending order.
+		if lt.ByItems[0].Desc {
+			return ret
+		}
+		// Currently, we only deal with the case the TopN is directly above a DataSource.
+		ds, ok := lt.Children()[0].(*logicalop.DataSource)
+		if !ok {
+			return ret
+		}
+		// Reject any filters.
+		if len(ds.PushedDownConds) > 0 {
+			return ret
+		}
+		resultProp := &property.PhysicalProperty{
+			TaskTp:            property.MppTaskType,
+			ExpectedCnt:       math.MaxFloat64,
+			CTEProducerStatus: prop.CTEProducerStatus,
+		}
+		resultProp.VectorProp.VectorHelper = vs
+		resultProp.VectorProp.TopK = uint32(lt.Count + lt.Offset)
 		topN := PhysicalTopN{
 			ByItems:     lt.ByItems,
 			PartitionBy: lt.PartitionBy,
@@ -2424,87 +2462,6 @@ func exhaustPhysicalPlans4LogicalWindow(lp base.LogicalPlan, prop *property.Phys
 
 	windows = append(windows, window)
 	return windows, true, nil
-}
-
-func canPushToCopImpl(lp base.LogicalPlan, storeTp kv.StoreType, considerDual bool) bool {
-	p := lp.GetBaseLogicalPlan().(*logicalop.BaseLogicalPlan)
-	ret := true
-	for _, ch := range p.Children() {
-		switch c := ch.(type) {
-		case *logicalop.DataSource:
-			validDs := false
-			indexMergeIsIntersection := false
-			for _, path := range c.PossibleAccessPaths {
-				if path.StoreType == storeTp {
-					validDs = true
-				}
-				if len(path.PartialIndexPaths) > 0 && path.IndexMergeIsIntersection {
-					indexMergeIsIntersection = true
-				}
-			}
-			ret = ret && validDs
-
-			_, isTopN := p.Self().(*logicalop.LogicalTopN)
-			_, isLimit := p.Self().(*logicalop.LogicalLimit)
-			if (isTopN || isLimit) && indexMergeIsIntersection {
-				return false // TopN and Limit cannot be pushed down to the intersection type IndexMerge
-			}
-
-			if c.TableInfo.TableCacheStatusType != model.TableCacheStatusDisable {
-				// Don't push to cop for cached table, it brings more harm than good:
-				// 1. Those tables are small enough, push to cop can't utilize several TiKV to accelerate computation.
-				// 2. Cached table use UnionScan to read the cache data, and push to cop is not supported when an UnionScan exists.
-				// Once aggregation is pushed to cop, the cache data can't be use any more.
-				return false
-			}
-		case *logicalop.LogicalUnionAll:
-			if storeTp != kv.TiFlash {
-				return false
-			}
-			ret = ret && canPushToCopImpl(&c.BaseLogicalPlan, storeTp, true)
-		case *logicalop.LogicalSort:
-			if storeTp != kv.TiFlash {
-				return false
-			}
-			ret = ret && canPushToCopImpl(&c.BaseLogicalPlan, storeTp, true)
-		case *logicalop.LogicalProjection:
-			if storeTp != kv.TiFlash {
-				return false
-			}
-			ret = ret && canPushToCopImpl(&c.BaseLogicalPlan, storeTp, considerDual)
-		case *logicalop.LogicalExpand:
-			// Expand itself only contains simple col ref and literal projection. (always ok, check its child)
-			if storeTp != kv.TiFlash {
-				return false
-			}
-			ret = ret && canPushToCopImpl(&c.BaseLogicalPlan, storeTp, considerDual)
-		case *logicalop.LogicalTableDual:
-			return storeTp == kv.TiFlash && considerDual
-		case *logicalop.LogicalAggregation, *logicalop.LogicalSelection, *logicalop.LogicalJoin, *logicalop.LogicalWindow:
-			if storeTp != kv.TiFlash {
-				return false
-			}
-			ret = ret && c.CanPushToCop(storeTp)
-		// These operators can be partially push down to TiFlash, so we don't raise warning for them.
-		case *logicalop.LogicalLimit, *logicalop.LogicalTopN:
-			return false
-		case *logicalop.LogicalSequence:
-			return storeTp == kv.TiFlash
-		case *logicalop.LogicalCTE:
-			if storeTp != kv.TiFlash {
-				return false
-			}
-			if c.Cte.RecursivePartLogicalPlan != nil || !c.Cte.SeedPartLogicalPlan.CanPushToCop(storeTp) {
-				return false
-			}
-			return true
-		default:
-			p.SCtx().GetSessionVars().RaiseWarningWhenMPPEnforced(
-				"MPP mode may be blocked because operator `" + c.TP() + "` is not supported now.")
-			return false
-		}
-	}
-	return ret
 }
 
 func getEnforcedStreamAggs(la *logicalop.LogicalAggregation, prop *property.PhysicalProperty) []base.PhysicalPlan {
@@ -2972,7 +2929,7 @@ func exhaustPhysicalPlans4LogicalUnionAll(lp base.LogicalPlan, prop *property.Ph
 	if prop.TaskTp == property.MppTaskType && prop.MPPPartitionTp != property.AnyType {
 		return nil, true, nil
 	}
-	canUseMpp := p.SCtx().GetSessionVars().IsMPPAllowed() && canPushToCopImpl(&p.BaseLogicalPlan, kv.TiFlash, true)
+	canUseMpp := p.SCtx().GetSessionVars().IsMPPAllowed() && logicalop.CanPushToCopImpl(&p.BaseLogicalPlan, kv.TiFlash, true)
 	chReqProps := make([]*property.PhysicalProperty, 0, p.ChildLen())
 	for range p.Children() {
 		if canUseMpp && prop.TaskTp == property.MppTaskType {
@@ -3040,7 +2997,7 @@ func exhaustPhysicalPlans4LogicalSort(lp base.LogicalPlan, prop *property.Physic
 			return ret, true, nil
 		}
 	} else if prop.TaskTp == property.MppTaskType && prop.RejectSort {
-		if canPushToCopImpl(&ls.BaseLogicalPlan, kv.TiFlash, true) {
+		if logicalop.CanPushToCopImpl(&ls.BaseLogicalPlan, kv.TiFlash, true) {
 			ps := getNominalSortSimple(ls, prop)
 			return []base.PhysicalPlan{ps}, true, nil
 		}

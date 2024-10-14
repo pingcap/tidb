@@ -84,7 +84,7 @@ func UpdateServiceSafePoint(ctx context.Context, pdClient pd.Client, sp BRServic
 	log.Debug("update PD safePoint limit with TTL", zap.Object("safePoint", sp))
 
 	lastSafePoint, err := pdClient.UpdateServiceGCSafePoint(ctx, sp.ID, sp.TTL, sp.BackupTS-1)
-	if lastSafePoint > sp.BackupTS-1 {
+	if lastSafePoint > sp.BackupTS-1 && sp.TTL > 0 {
 		log.Warn("service GC safe point lost, we may fail to back up if GC lifetime isn't long enough",
 			zap.Uint64("lastSafePoint", lastSafePoint),
 			zap.Object("safePoint", sp),

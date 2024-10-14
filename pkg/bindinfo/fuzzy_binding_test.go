@@ -61,9 +61,9 @@ func TestFuzzyBindingBasic(t *testing.T) {
 				tk.MustExec("use " + useDB)
 				for _, testDB := range []string{"", "test.", "test1.", "test2."} {
 					tk.MustExec(`set @@tidb_opt_enable_fuzzy_binding=1`) // enabled
-					require.True(t, tk.MustUseIndex(fmt.Sprintf("select * from %vt", testDB), idx))
+					tk.MustUseIndex(fmt.Sprintf("select * from %vt", testDB), idx)
 					tk.MustQuery(`select @@last_plan_from_binding`).Check(testkit.Rows("1"))
-					require.True(t, tk.MustUseIndex(fmt.Sprintf("select * from %vt", testDB), idx))
+					tk.MustUseIndex(fmt.Sprintf("select * from %vt", testDB), idx)
 					tk.MustQuery(`show warnings`).Check(testkit.Rows())  // no warning
 					tk.MustExec(`set @@tidb_opt_enable_fuzzy_binding=0`) // disabled
 					tk.MustQuery(fmt.Sprintf("select * from %vt", testDB))

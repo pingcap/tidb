@@ -706,3 +706,54 @@ func TestColumnNotMatchError(t *testing.T) {
 	tk.MustExec("delete from t where id=1")
 	tk.MustGetErrCode("commit", errno.ErrInfoSchemaChanged)
 }
+
+func TestSavepointWithForeignKey(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table parent (id int primary key)")
+	tk.MustExec("create table child (id int primary key, parent_id int, foreign key (parent_id) references parent(id))")
+
+	tk.MustExec("begin")
+	// rollback insertion to child table
+	tk.MustExec("savepoint sp1")
+	tk.MustExec("insert into parent values (1)")
+	tk.MustExec("savepoint sp2")
+	tk.MustExec("insert into child values (1, 1)")
+	tk.MustExec("rollback to sp2")
+	tk.MustQuery("select * from child").Check(testkit.Rows())
+	// rollback insertion to parent table
+	tk.MustExec("rollback to sp1")
+	require.Contains(t, tk.ExecToErr("insert into child values (1, 1)").Error(), "a foreign key constraint fails")
+	tk.MustQuery("select * from parent").Check(testkit.Rows())
+	tk.MustExec("rollback")
+
+	// A known limitation: the lock of the parent table is not released after rollback to savepoint.
+	tk.MustExec("insert into parent values (1)")
+
+	tk.MustExec("begin")
+	tk.MustExec("savepoint sp1")
+	tk.MustExec("insert into child values (1, 1)")
+	// Now, the row in parent table is locked
+	tk2 := testkit.NewTestKit(t, store)
+	tk2.MustExec("use test")
+	var wg sync.WaitGroup
+	wg.Add(1)
+	var updateTime, beforeCommitTime time.Time
+	go func() {
+		defer wg.Done()
+
+		// This SQL will be blocked until the transaction is committed. It's a known limitation that the pessimistic lock
+		// is not released after rollback to savepoint. If the lock can be released after rollback in the future, this test
+		// can be modified.
+		tk2.MustExec("update parent set id = 2 where id = 1")
+		updateTime = time.Now()
+	}()
+	tk.MustExec("rollback to sp1")
+	time.Sleep(500 * time.Millisecond)
+	beforeCommitTime = time.Now()
+	tk.MustExec("commit")
+
+	wg.Wait()
+	require.Greater(t, updateTime, beforeCommitTime)
+}

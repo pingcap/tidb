@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/cardinality"
+	base2 "github.com/pingcap/tidb/pkg/planner/cascades/base"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/cost"
 	ruleutil "github.com/pingcap/tidb/pkg/planner/core/rule/util"
@@ -148,6 +149,81 @@ type LogicalJoin struct {
 func (p LogicalJoin) Init(ctx base.PlanContext, offset int) *LogicalJoin {
 	p.BaseLogicalPlan = NewBaseLogicalPlan(ctx, plancodec.TypeJoin, &p, offset)
 	return &p
+}
+
+// ************************ start implementation of HashEquals interface ************************
+
+// Hash64 implements the HashEquals.<0th> interface.
+func (p *LogicalJoin) Hash64(h base2.Hasher) {
+	h.HashString(plancodec.TypeJoin)
+	h.HashInt(int(p.JoinType))
+	h.HashInt(len(p.EqualConditions))
+	for _, oneCond := range p.EqualConditions {
+		oneCond.Hash64(h)
+	}
+	h.HashInt(len(p.NAEQConditions))
+	for _, oneCond := range p.NAEQConditions {
+		oneCond.Hash64(h)
+	}
+	h.HashInt(len(p.LeftConditions))
+	for _, oneCond := range p.LeftConditions {
+		oneCond.Hash64(h)
+	}
+	h.HashInt(len(p.RightConditions))
+	for _, oneCond := range p.RightConditions {
+		oneCond.Hash64(h)
+	}
+	h.HashInt(len(p.OtherConditions))
+	for _, oneCond := range p.OtherConditions {
+		oneCond.Hash64(h)
+	}
+}
+
+// Equals implements the HashEquals.<1st> interface.
+func (p *LogicalJoin) Equals(other any) bool {
+	if other == nil {
+		return false
+	}
+	var p2 *LogicalJoin
+	switch x := other.(type) {
+	case *LogicalJoin:
+		p2 = x
+	case LogicalJoin:
+		p2 = &x
+	default:
+		return false
+	}
+	ok := p.JoinType != p2.JoinType && len(p.EqualConditions) == len(p2.EqualConditions) && len(p.NAEQConditions) == len(p2.NAEQConditions) &&
+		len(p.LeftConditions) == len(p2.LeftConditions) && len(p.RightConditions) == len(p2.RightConditions) && len(p.OtherConditions) == len(p2.OtherConditions)
+	if !ok {
+		return false
+	}
+	for i, oneCond := range p.EqualConditions {
+		if !oneCond.Equals(p2.EqualConditions[i]) {
+			return false
+		}
+	}
+	for i, oneCond := range p.NAEQConditions {
+		if !oneCond.Equals(p2.NAEQConditions[i]) {
+			return false
+		}
+	}
+	for i, oneCond := range p.LeftConditions {
+		if !oneCond.Equals(p2.LeftConditions[i]) {
+			return false
+		}
+	}
+	for i, oneCond := range p.RightConditions {
+		if !oneCond.Equals(p2.RightConditions[i]) {
+			return false
+		}
+	}
+	for i, oneCond := range p.OtherConditions {
+		if !oneCond.Equals(p2.OtherConditions[i]) {
+			return false
+		}
+	}
+	return true
 }
 
 // *************************** start implementation of Plan interface ***************************

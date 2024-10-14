@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	base2 "github.com/pingcap/tidb/pkg/planner/cascades/base"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/constraint"
 	ruleutil "github.com/pingcap/tidb/pkg/planner/core/rule/util"
@@ -119,6 +120,74 @@ type DataSource struct {
 func (ds DataSource) Init(ctx base.PlanContext, offset int) *DataSource {
 	ds.BaseLogicalPlan = NewBaseLogicalPlan(ctx, plancodec.TypeDataSource, &ds, offset)
 	return &ds
+}
+
+// ************************ start implementation of HashEquals interface ************************
+
+// Hash64 implements base.HashEquals interface.
+func (ds *DataSource) Hash64(h base2.Hasher) {
+	// hash the key elements to identify this datasource.
+	h.HashString(plancodec.TypeDataSource)
+	// table related.
+	if ds.TableInfo == nil {
+		h.HashByte(base2.NilFlag)
+	} else {
+		h.HashByte(base2.NotNilFlag)
+		h.HashInt64(ds.TableInfo.ID)
+	}
+	// table alias related.
+	if ds.TableAsName == nil {
+		h.HashByte(base2.NilFlag)
+	} else {
+		h.HashByte(base2.NotNilFlag)
+		h.HashInt(len(ds.TableAsName.L))
+		h.HashString(ds.TableAsName.L)
+	}
+	// visible columns related.
+	h.HashInt(len(ds.Columns))
+	for _, oneCol := range ds.Columns {
+		h.HashInt64(oneCol.ID)
+	}
+	// conditions related.
+	h.HashInt(len(ds.PushedDownConds))
+	for _, oneCond := range ds.PushedDownConds {
+		oneCond.Hash64(h)
+	}
+	h.HashInt(len(ds.AllConds))
+	for _, oneCond := range ds.AllConds {
+		oneCond.Hash64(h)
+	}
+	// hint and update misc.
+	h.HashInt(ds.PreferStoreType)
+	h.HashBool(ds.IsForUpdateRead)
+}
+
+// Equals implements base.HashEquals interface.
+func (ds *DataSource) Equals(other any) bool {
+	if other == nil {
+		return false
+	}
+	var ds2 *DataSource
+	switch x := other.(type) {
+	case *DataSource:
+		ds2 = x
+	case DataSource:
+		ds2 = &x
+	default:
+		return false
+	}
+	ok := ds.TableInfo.ID == ds2.TableInfo.ID && ds.TableAsName.L == ds2.TableAsName.L && len(ds.PushedDownConds) == len(ds2.PushedDownConds) &&
+		len(ds.AllConds) == len(ds2.AllConds) && ds.PreferStoreType == ds2.PreferStoreType && ds.IsForUpdateRead == ds2.IsForUpdateRead
+	if !ok {
+		return false
+	}
+	for i, oneCond := range ds.PushedDownConds {
+		oneCond.Equals(ds2.PushedDownConds[i])
+	}
+	for i, oneCond := range ds.AllConds {
+		oneCond.Equals(ds2.AllConds[i])
+	}
+	return true
 }
 
 // *************************** start implementation of Plan interface ***************************

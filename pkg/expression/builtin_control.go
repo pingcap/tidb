@@ -87,12 +87,25 @@ func setFlenFromArgs(evalType types.EvalType, resultFieldType *types.FieldType, 
 	} else if evalType == types.ETString {
 		maxLen := 0
 		for i := range argTps {
-			argFlen := argTps[i].GetFlen()
-			if argFlen == types.UnspecifiedLength {
-				resultFieldType.SetFlen(types.UnspecifiedLength)
-				return
+			switch argTps[i].GetType() {
+			case mysql.TypeTiny:
+				maxLen = maxlen(4, maxLen)
+			case mysql.TypeShort:
+				maxLen = maxlen(6, maxLen)
+			case mysql.TypeInt24:
+				maxLen = maxlen(9, maxLen)
+			case mysql.TypeLong:
+				maxLen = maxlen(11, maxLen)
+			case mysql.TypeLonglong:
+				maxLen = maxlen(20, maxLen)
+			default:
+				argFlen := argTps[i].GetFlen()
+				if argFlen == types.UnspecifiedLength {
+					resultFieldType.SetFlen(types.UnspecifiedLength)
+					return
+				}
+				maxLen = maxlen(argFlen, maxLen)
 			}
-			maxLen = maxlen(argFlen, maxLen)
 		}
 		resultFieldType.SetFlen(maxLen)
 	} else {

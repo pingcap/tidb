@@ -18,40 +18,22 @@ import (
 	"context"
 
 	"github.com/pingcap/tidb/pkg/expression"
-	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/property"
-	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
 )
 
 // this file is used for passing function pointer at init(){} to avoid some import cycles.
 
-// PushDownTopNForBaseLogicalPlan will be called by baseLogicalPlan in logicalOp pkg. While the implementation
-// of pushDownTopNForBaseLogicalPlan depends on concrete logical operators.
-// todo: (5) arenatlx, Remove this util func pointer when logical operators are moved from core to logicalop.
-var PushDownTopNForBaseLogicalPlan func(s base.LogicalPlan, topNLogicalPlan base.LogicalPlan,
-	opt *optimizetrace.LogicalOptimizeOp) base.LogicalPlan
-
-// FindBestTask will be called by baseLogicalPlan in logicalOp pkg. The logic inside covers Task, Property,
-// LogicalOp and PhysicalOp, so it doesn't belong to logicalOp pkg. it should be kept in core pkg.
-// todo: (6) arenatlx, For clear division, we should remove Logical FindBestTask interface. Let core pkg to guide
-// todo: itself by receive logical tree.
-var FindBestTask func(p base.LogicalPlan, prop *property.PhysicalProperty, planCounter *base.PlanCounterTp,
-	opt *optimizetrace.PhysicalOptimizeOp) (bestTask base.Task, cntPlan int64, err error)
-
-// CanPushToCopImpl will be called by baseLogicalPlan in logicalOp pkg. The logic inside covers concrete logical
-// operators.
-// todo: (7) arenatlx, remove this util func pointer when logical operators are all moved from core to logicalOp.
-var CanPushToCopImpl func(p base.LogicalPlan, storeTp kv.StoreType, considerDual bool) bool
-
-// PruneByItems will be called by baseLogicalPlan in logicalOp pkg. The logic current exists for rule logic
-// inside core.
-// todo: (8) arenatlx, when rule is moved out of core, we should direct ref the rule.Func instead of this
-// util func pointer.
-var PruneByItems func(p base.LogicalPlan, old []*util.ByItems, opt *optimizetrace.LogicalOptimizeOp) (
-	byItems []*util.ByItems, parentUsedCols []*expression.Column)
+// FindBestTask4BaseLogicalPlan will be called by baseLogicalPlan in logicalOp pkg.
+// The logic inside covers Task, Property, LogicalOp and PhysicalOp, so it doesn't belong to logicalOp pkg.
+// It should be kept in core pkg.
+// todo: arenatlx, For clear division, we should remove Logical FindBestTask interface. Let core pkg to
+// guide itself by receive logical tree.
+var FindBestTask4BaseLogicalPlan func(p base.LogicalPlan, prop *property.PhysicalProperty,
+	planCounter *base.PlanCounterTp, opt *optimizetrace.PhysicalOptimizeOp) (
+	bestTask base.Task, cntPlan int64, err error)
 
 // ExhaustPhysicalPlans4LogicalMaxOneRow will be called by LogicalMaxOneRow in logicalOp pkg.
 var ExhaustPhysicalPlans4LogicalMaxOneRow func(p base.LogicalPlan, prop *property.PhysicalProperty) (

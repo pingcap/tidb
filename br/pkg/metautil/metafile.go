@@ -118,8 +118,7 @@ func walkLeafMetaFile(
 	}
 	eg, ectx := errgroup.WithContext(ctx)
 	workers := tidbutil.NewWorkerPool(8, "download files workers")
-	for _, node_ := range file.MetaFiles {
-		node := node_
+	for _, node := range file.MetaFiles {
 		workers.ApplyOnErrorGroup(eg, func() error {
 			content, err := storage.ReadFile(ectx, node.Name)
 			if err != nil {

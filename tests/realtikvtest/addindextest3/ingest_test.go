@@ -659,7 +659,6 @@ func TestConcFastReorg(t *testing.T) {
 	var wg sync.WaitGroup
 	wg.Add(tblNum)
 	for i := 0; i < tblNum; i++ {
-		i := i
 		go func() {
 			defer wg.Done()
 			tk2 := testkit.NewTestKit(t, store)

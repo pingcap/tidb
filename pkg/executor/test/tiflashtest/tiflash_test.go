@@ -71,7 +71,7 @@ func TestNonsupportCharsetTable(t *testing.T) {
 	tk.MustExec("create table t(a int, b char(10) charset gbk collate gbk_bin)")
 	err := tk.ExecToErr("alter table t set tiflash replica 1")
 	require.Error(t, err)
-	require.Equal(t, "[ddl:8200]Unsupported ALTER TiFlash settings for tables not supported by TiFlash: table contains gbk charset", err.Error())
+	require.Equal(t, "[ddl:8200]Unsupported `set TiFlash replica` settings for table contains gbk charset", err.Error())
 
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a char(10) charset utf8)")

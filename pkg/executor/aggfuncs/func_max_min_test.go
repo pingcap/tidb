@@ -131,7 +131,6 @@ func TestMergePartialResult4MaxMin(t *testing.T) {
 		buildAggTester(ast.AggFuncMin, mysql.TypeSet, 5, setC, setC, setC),
 	}
 	for _, test := range tests {
-		test := test
 		t.Run(test.funcName, func(t *testing.T) {
 			testMergePartialResult(t, test)
 		})
@@ -163,7 +162,6 @@ func TestMaxMin(t *testing.T) {
 		buildAggTester(ast.AggFuncMin, mysql.TypeJSON, 5, nil, types.CreateBinaryJSON(int64(0))),
 	}
 	for _, test := range tests {
-		test := test
 		t.Run(test.funcName, func(t *testing.T) {
 			testAggFunc(t, test)
 		})
@@ -219,7 +217,6 @@ func TestMemMaxMin(t *testing.T) {
 			aggfuncs.DefPartialResult4MaxMinSetSize, minUpdateMemDeltaGens, false),
 	}
 	for _, test := range tests {
-		test := test
 		t.Run(test.aggTest.funcName, func(t *testing.T) {
 			testAggMemFunc(t, test)
 		})

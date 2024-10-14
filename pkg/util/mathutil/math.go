@@ -70,32 +70,32 @@ func IsFinite(f float64) bool {
 
 // Max returns the largest one from its arguments.
 func Max[T constraints.Ordered](x T, xs ...T) T {
-	max := x
+	maxv := x
 	for _, n := range xs {
-		if n > max {
-			max = n
+		if n > maxv {
+			maxv = n
 		}
 	}
-	return max
+	return maxv
 }
 
 // Min returns the smallest one from its arguments.
 func Min[T constraints.Ordered](x T, xs ...T) T {
-	min := x
+	minv := x
 	for _, n := range xs {
-		if n < min {
-			min = n
+		if n < minv {
+			minv = n
 		}
 	}
-	return min
+	return minv
 }
 
 // Clamp restrict a value to a certain interval.
-func Clamp[T constraints.Ordered](n, min, max T) T {
-	if n >= max {
-		return max
-	} else if n <= min {
-		return min
+func Clamp[T constraints.Ordered](n, minv, maxv T) T {
+	if n >= maxv {
+		return maxv
+	} else if n <= minv {
+		return minv
 	}
 	return n
 }

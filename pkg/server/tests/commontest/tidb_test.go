@@ -3214,7 +3214,6 @@ func TestConnectionWillNotLeak(t *testing.T) {
 	var wg sync.WaitGroup
 	for _, conn := range conns {
 		wg.Add(1)
-		conn := conn
 		go func() {
 			rows, err := conn.QueryContext(context.Background(), "SELECT 2023")
 			require.NoError(t, err)

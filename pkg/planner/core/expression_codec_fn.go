@@ -24,6 +24,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/expression"
+	"github.com/pingcap/tidb/pkg/expression/expropt"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	infoschemactx "github.com/pingcap/tidb/pkg/infoschema/context"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -50,6 +51,7 @@ type tidbCodecFuncHelper struct{}
 
 func (h tidbCodecFuncHelper) encodeHandleFromRow(
 	ctx expression.EvalContext,
+	checker expropt.PrivilegeChecker,
 	isVer infoschemactx.MetaOnlyInfoSchema,
 	args []expression.Expression,
 	row chunk.Row,
@@ -63,7 +65,7 @@ func (h tidbCodecFuncHelper) encodeHandleFromRow(
 		return nil, isNull, err
 	}
 	is := isVer.(infoschema.InfoSchema)
-	tbl, _, err := h.findCommonOrPartitionedTable(ctx, is, dbName, tblName)
+	tbl, _, err := h.findCommonOrPartitionedTable(checker, is, dbName, tblName)
 	if err != nil {
 		return nil, false, err
 	}
@@ -76,7 +78,7 @@ func (h tidbCodecFuncHelper) encodeHandleFromRow(
 }
 
 func (h tidbCodecFuncHelper) findCommonOrPartitionedTable(
-	ctx expression.EvalContext,
+	checker expropt.PrivilegeChecker,
 	is infoschema.InfoSchema,
 	dbName string,
 	tblName string,
@@ -86,7 +88,7 @@ func (h tidbCodecFuncHelper) findCommonOrPartitionedTable(
 	if err != nil {
 		return nil, 0, err
 	}
-	if !ctx.RequestVerification(dbName, tblName, "", mysql.AllPrivMask) {
+	if !checker.RequestVerification(dbName, tblName, "", mysql.AllPrivMask) {
 		// The arguments will be filled by caller.
 		return nil, 0, plannererrors.ErrSpecificAccessDenied
 	}
@@ -165,6 +167,7 @@ func (tidbCodecFuncHelper) buildHandle(
 
 func (h tidbCodecFuncHelper) encodeIndexKeyFromRow(
 	ctx expression.EvalContext,
+	checker expropt.PrivilegeChecker,
 	isVer infoschemactx.MetaOnlyInfoSchema,
 	args []expression.Expression,
 	row chunk.Row,
@@ -182,7 +185,7 @@ func (h tidbCodecFuncHelper) encodeIndexKeyFromRow(
 		return nil, isNull, err
 	}
 	is := isVer.(infoschema.InfoSchema)
-	tbl, physicalID, err := h.findCommonOrPartitionedTable(ctx, is, dbName, tblName)
+	tbl, physicalID, err := h.findCommonOrPartitionedTable(checker, is, dbName, tblName)
 	if err != nil {
 		return nil, false, err
 	}

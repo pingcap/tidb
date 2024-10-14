@@ -262,6 +262,12 @@ func TestSessionEvalContextOptProps(t *testing.T) {
 	require.False(t, ddlInfoProvider())
 	ctx.SetIsDDLOwner(true)
 	require.True(t, ddlInfoProvider())
+
+	// test for OptPropPrivilegeChecker
+	privCheckerProvider := getProvider[expropt.PrivilegeCheckerProvider](t, impl, exprctx.OptPropPrivilegeChecker)
+	privChecker := privCheckerProvider()
+	require.NotNil(t, privChecker)
+	require.Same(t, impl, privChecker)
 }
 
 func TestSessionBuildContext(t *testing.T) {

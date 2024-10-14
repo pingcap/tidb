@@ -41,7 +41,7 @@ func RemoveLockedTables(
 	tables map[int64]*types.StatsLockTable,
 ) (string, error) {
 	// Load tables to check locked before delete.
-	lockedTables, err := QueryLockedTables(sctx)
+	lockedTables, err := QueryLockedTables(util.StatsCtx, sctx)
 	if err != nil {
 		return "", err
 	}
@@ -98,7 +98,7 @@ func RemoveLockedPartitions(
 	pidNames map[int64]string,
 ) (string, error) {
 	// Load tables to check locked before delete.
-	lockedTables, err := QueryLockedTables(sctx)
+	lockedTables, err := QueryLockedTables(util.StatsCtx, sctx)
 	if err != nil {
 		return "", err
 	}

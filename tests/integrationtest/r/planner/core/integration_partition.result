@@ -423,7 +423,7 @@ create table tcollist (a int, b int, key(a)) partition by list columns (a) (part
 alter table tcollist alter index a invisible;
 explain select a from tcollist where a>=0 and a<=5;
 id	estRows	task	access object	operator info
-TableReader_7	250.00	root	partition:p0,p1	data:Selection_6
+TableReader_7	250.00	root	partition:all	data:Selection_6
 └─Selection_6	250.00	cop[tikv]		ge(list_partition_invisible_idx.tcollist.a, 0), le(list_partition_invisible_idx.tcollist.a, 5)
   └─TableFullScan_5	10000.00	cop[tikv]	table:tcollist	keep order:false, stats:pseudo
 create database list_partition_cte;

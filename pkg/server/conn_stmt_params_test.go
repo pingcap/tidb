@@ -305,7 +305,7 @@ func TestParseExecArgsAndEncode(t *testing.T) {
 	require.Equal(t, "测试", dt[0].(*expression.Constant).Value.GetString())
 }
 
-func buildDatetimeParam(year uint16, month uint8, day uint8, hour uint8, min uint8, sec uint8, msec uint32) []byte {
+func buildDatetimeParam(year uint16, month uint8, day uint8, hour uint8, minute uint8, sec uint8, msec uint32) []byte {
 	endian := binary.LittleEndian
 
 	result := []byte{mysql.TypeDatetime, 0x0, 11}
@@ -313,7 +313,7 @@ func buildDatetimeParam(year uint16, month uint8, day uint8, hour uint8, min uin
 	result = append(result, month)
 	result = append(result, day)
 	result = append(result, hour)
-	result = append(result, min)
+	result = append(result, minute)
 	result = append(result, sec)
 	result = endian.AppendUint32(result, msec)
 	return result

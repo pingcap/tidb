@@ -164,42 +164,42 @@ func TestSignedAutoid(t *testing.T) {
 	globalAutoID, err = alloc.NextGlobalAutoID()
 	require.NoError(t, err)
 	require.Equal(t, int64(1), globalAutoID)
-	min, max, err := alloc.Alloc(ctx, 1, 1, 1)
+	minv, maxv, err := alloc.Alloc(ctx, 1, 1, 1)
 	require.NoError(t, err)
-	require.Equal(t, int64(1), max-min)
-	require.Equal(t, int64(1), min+1)
+	require.Equal(t, int64(1), maxv-minv)
+	require.Equal(t, int64(1), minv+1)
 
-	min, max, err = alloc.Alloc(ctx, 2, 1, 1)
+	minv, maxv, err = alloc.Alloc(ctx, 2, 1, 1)
 	require.NoError(t, err)
-	require.Equal(t, int64(2), max-min)
-	require.Equal(t, int64(2), min+1)
-	require.Equal(t, int64(3), max)
+	require.Equal(t, int64(2), maxv-minv)
+	require.Equal(t, int64(2), minv+1)
+	require.Equal(t, int64(3), maxv)
 
-	min, max, err = alloc.Alloc(ctx, 100, 1, 1)
+	minv, maxv, err = alloc.Alloc(ctx, 100, 1, 1)
 	require.NoError(t, err)
-	require.Equal(t, int64(100), max-min)
+	require.Equal(t, int64(100), maxv-minv)
 	expected := int64(4)
-	for i := min + 1; i <= max; i++ {
+	for i := minv + 1; i <= maxv; i++ {
 		require.Equal(t, expected, i)
 		expected++
 	}
 
 	err = alloc.Rebase(context.Background(), int64(1000), false)
 	require.NoError(t, err)
-	min, max, err = alloc.Alloc(ctx, 3, 1, 1)
+	minv, maxv, err = alloc.Alloc(ctx, 3, 1, 1)
 	require.NoError(t, err)
-	require.Equal(t, int64(3), max-min)
-	require.Equal(t, int64(1001), min+1)
-	require.Equal(t, int64(1002), min+2)
-	require.Equal(t, int64(1003), max)
+	require.Equal(t, int64(3), maxv-minv)
+	require.Equal(t, int64(1001), minv+1)
+	require.Equal(t, int64(1002), minv+2)
+	require.Equal(t, int64(1003), maxv)
 
 	lastRemainOne := alloc.End()
 	err = alloc.Rebase(context.Background(), alloc.End()-2, false)
 	require.NoError(t, err)
-	min, max, err = alloc.Alloc(ctx, 5, 1, 1)
+	minv, maxv, err = alloc.Alloc(ctx, 5, 1, 1)
 	require.NoError(t, err)
-	require.Equal(t, int64(5), max-min)
-	require.Greater(t, min+1, lastRemainOne)
+	require.Equal(t, int64(5), maxv-minv)
+	require.Greater(t, minv+1, lastRemainOne)
 
 	// Test for increment & offset for signed.
 	alloc = autoid.NewAllocator(mockRequirement{store}, 1, 5, false, autoid.RowIDAllocType)
@@ -209,46 +209,46 @@ func TestSignedAutoid(t *testing.T) {
 	offset := int64(100)
 	require.NoError(t, err)
 	require.Equal(t, int64(1), globalAutoID)
-	min, max, err = alloc.Alloc(ctx, 1, increment, offset)
+	minv, maxv, err = alloc.Alloc(ctx, 1, increment, offset)
 	require.NoError(t, err)
-	require.Equal(t, int64(99), min)
-	require.Equal(t, int64(100), max)
+	require.Equal(t, int64(99), minv)
+	require.Equal(t, int64(100), maxv)
 
-	min, max, err = alloc.Alloc(ctx, 2, increment, offset)
+	minv, maxv, err = alloc.Alloc(ctx, 2, increment, offset)
 	require.NoError(t, err)
-	require.Equal(t, int64(4), max-min)
-	require.Equal(t, autoid.CalcNeededBatchSize(100, 2, increment, offset, false), max-min)
-	require.Equal(t, int64(100), min)
-	require.Equal(t, int64(104), max)
+	require.Equal(t, int64(4), maxv-minv)
+	require.Equal(t, autoid.CalcNeededBatchSize(100, 2, increment, offset, false), maxv-minv)
+	require.Equal(t, int64(100), minv)
+	require.Equal(t, int64(104), maxv)
 
 	increment = int64(5)
-	min, max, err = alloc.Alloc(ctx, 3, increment, offset)
+	minv, maxv, err = alloc.Alloc(ctx, 3, increment, offset)
 	require.NoError(t, err)
-	require.Equal(t, int64(11), max-min)
-	require.Equal(t, autoid.CalcNeededBatchSize(104, 3, increment, offset, false), max-min)
-	require.Equal(t, int64(104), min)
-	require.Equal(t, int64(115), max)
+	require.Equal(t, int64(11), maxv-minv)
+	require.Equal(t, autoid.CalcNeededBatchSize(104, 3, increment, offset, false), maxv-minv)
+	require.Equal(t, int64(104), minv)
+	require.Equal(t, int64(115), maxv)
 	firstID := autoid.SeekToFirstAutoIDSigned(104, increment, offset)
 	require.Equal(t, int64(105), firstID)
 
 	increment = int64(15)
-	min, max, err = alloc.Alloc(ctx, 2, increment, offset)
+	minv, maxv, err = alloc.Alloc(ctx, 2, increment, offset)
 	require.NoError(t, err)
-	require.Equal(t, int64(30), max-min)
-	require.Equal(t, autoid.CalcNeededBatchSize(115, 2, increment, offset, false), max-min)
-	require.Equal(t, int64(115), min)
-	require.Equal(t, int64(145), max)
+	require.Equal(t, int64(30), maxv-minv)
+	require.Equal(t, autoid.CalcNeededBatchSize(115, 2, increment, offset, false), maxv-minv)
+	require.Equal(t, int64(115), minv)
+	require.Equal(t, int64(145), maxv)
 	firstID = autoid.SeekToFirstAutoIDSigned(115, increment, offset)
 	require.Equal(t, int64(130), firstID)
 
 	offset = int64(200)
-	min, max, err = alloc.Alloc(ctx, 2, increment, offset)
+	minv, maxv, err = alloc.Alloc(ctx, 2, increment, offset)
 	require.NoError(t, err)
-	require.Equal(t, int64(16), max-min)
+	require.Equal(t, int64(16), maxv-minv)
 	// offset-1 > base will cause alloc rebase to offset-1.
-	require.Equal(t, autoid.CalcNeededBatchSize(offset-1, 2, increment, offset, false), max-min)
-	require.Equal(t, int64(199), min)
-	require.Equal(t, int64(215), max)
+	require.Equal(t, autoid.CalcNeededBatchSize(offset-1, 2, increment, offset, false), maxv-minv)
+	require.Equal(t, int64(199), minv)
+	require.Equal(t, int64(215), maxv)
 	firstID = autoid.SeekToFirstAutoIDSigned(offset-1, increment, offset)
 	require.Equal(t, int64(200), firstID)
 }
@@ -372,27 +372,27 @@ func TestUnsignedAutoid(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, int64(1), globalAutoID)
 
-	min, max, err := alloc.Alloc(ctx, 2, 1, 1)
+	minv, maxv, err := alloc.Alloc(ctx, 2, 1, 1)
 	require.NoError(t, err)
-	require.Equal(t, int64(2), max-min)
-	require.Equal(t, int64(1), min+1)
-	require.Equal(t, int64(2), max)
+	require.Equal(t, int64(2), maxv-minv)
+	require.Equal(t, int64(1), minv+1)
+	require.Equal(t, int64(2), maxv)
 
 	err = alloc.Rebase(context.Background(), int64(500), true)
 	require.NoError(t, err)
-	min, max, err = alloc.Alloc(ctx, 2, 1, 1)
+	minv, maxv, err = alloc.Alloc(ctx, 2, 1, 1)
 	require.NoError(t, err)
-	require.Equal(t, int64(2), max-min)
-	require.Equal(t, int64(501), min+1)
-	require.Equal(t, int64(502), max)
+	require.Equal(t, int64(2), maxv-minv)
+	require.Equal(t, int64(501), minv+1)
+	require.Equal(t, int64(502), maxv)
 
 	lastRemainOne := alloc.End()
 	err = alloc.Rebase(context.Background(), alloc.End()-2, false)
 	require.NoError(t, err)
-	min, max, err = alloc.Alloc(ctx, 5, 1, 1)
+	minv, maxv, err = alloc.Alloc(ctx, 5, 1, 1)
 	require.NoError(t, err)
-	require.Equal(t, int64(5), max-min)
-	require.Greater(t, min+1, lastRemainOne)
+	require.Equal(t, int64(5), maxv-minv)
+	require.Greater(t, minv+1, lastRemainOne)
 
 	// Test increment & offset for unsigned. Using AutoRandomType to avoid valid range check for increment and offset.
 	alloc = autoid.NewAllocator(mockRequirement{store}, 1, 5, true, autoid.AutoRandomType)
@@ -404,13 +404,13 @@ func TestUnsignedAutoid(t *testing.T) {
 	n = math.MaxUint64 - 100
 	offset := int64(n)
 
-	min, max, err = alloc.Alloc(ctx, 2, increment, offset)
+	minv, maxv, err = alloc.Alloc(ctx, 2, increment, offset)
 	require.NoError(t, err)
-	require.Equal(t, uint64(math.MaxUint64-101), uint64(min))
-	require.Equal(t, uint64(math.MaxUint64-98), uint64(max))
+	require.Equal(t, uint64(math.MaxUint64-101), uint64(minv))
+	require.Equal(t, uint64(math.MaxUint64-98), uint64(maxv))
 
-	require.Equal(t, autoid.CalcNeededBatchSize(int64(uint64(offset)-1), 2, increment, offset, true), max-min)
-	firstID := autoid.SeekToFirstAutoIDUnSigned(uint64(min), uint64(increment), uint64(offset))
+	require.Equal(t, autoid.CalcNeededBatchSize(int64(uint64(offset)-1), 2, increment, offset, true), maxv-minv)
+	firstID := autoid.SeekToFirstAutoIDUnSigned(uint64(minv), uint64(increment), uint64(offset))
 	require.Equal(t, uint64(math.MaxUint64-100), firstID)
 }
 
@@ -468,7 +468,7 @@ func TestConcurrentAlloc(t *testing.T) {
 
 			// test Alloc N
 			N := rand.Uint64() % 100
-			min, max, err1 := alloc.Alloc(ctx, N, 1, 1)
+			minv, maxv, err1 := alloc.Alloc(ctx, N, 1, 1)
 			if err1 != nil {
 				errCh <- err1
 				break
@@ -476,7 +476,7 @@ func TestConcurrentAlloc(t *testing.T) {
 
 			errFlag := false
 			mu.Lock()
-			for i := min + 1; i <= max; i++ {
+			for i := minv + 1; i <= maxv; i++ {
 				if _, ok := m[i]; ok {
 					errCh <- fmt.Errorf("duplicate id:%v", i)
 					errFlag = true
@@ -599,14 +599,14 @@ func TestAllocComputationIssue(t *testing.T) {
 	autoid.TestModifyBaseAndEndInjection(signedAlloc1, 4, 6)
 
 	// Here will recompute the new allocator batch size base on new base = 10, which will get 6.
-	min, max, err := unsignedAlloc1.Alloc(ctx, 2, 3, 1)
+	minv, maxv, err := unsignedAlloc1.Alloc(ctx, 2, 3, 1)
 	require.NoError(t, err)
-	require.Equal(t, int64(10), min)
-	require.Equal(t, int64(16), max)
-	min, max, err = signedAlloc2.Alloc(ctx, 2, 3, 1)
+	require.Equal(t, int64(10), minv)
+	require.Equal(t, int64(16), maxv)
+	minv, maxv, err = signedAlloc2.Alloc(ctx, 2, 3, 1)
 	require.NoError(t, err)
-	require.Equal(t, int64(7), min)
-	require.Equal(t, int64(13), max)
+	require.Equal(t, int64(7), minv)
+	require.Equal(t, int64(13), maxv)
 }
 
 func TestIssue40584(t *testing.T) {

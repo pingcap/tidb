@@ -364,15 +364,10 @@ func (is *infoSchema) SchemaSimpleTableInfos(ctx stdctx.Context, schema pmodel.C
 	return ret, nil
 }
 
-type tableInfoResult struct {
-	DBName     pmodel.CIStr
-	TableInfos []*model.TableInfo
-}
-
-func (is *infoSchema) ListTablesWithSpecialAttribute(filter specialAttributeFilter) []tableInfoResult {
-	ret := make([]tableInfoResult, 0, 10)
+func (is *infoSchema) ListTablesWithSpecialAttribute(filter context.SpecialAttributeFilter) []context.TableInfoResult {
+	ret := make([]context.TableInfoResult, 0, 10)
 	for _, dbName := range is.AllSchemaNames() {
-		res := tableInfoResult{DBName: dbName}
+		res := context.TableInfoResult{DBName: dbName}
 		tblInfos, err := is.SchemaTableInfos(stdctx.Background(), dbName)
 		terror.Log(err)
 		for _, tblInfo := range tblInfos {

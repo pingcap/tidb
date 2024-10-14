@@ -132,7 +132,7 @@ func executeQueryLockedTables(exec *mock.MockRestrictedSQLExecutor, numRows int,
 			statsutil.UseCurrentSessionOpt,
 			selectSQL,
 		).Return(nil, nil, errors.New("error"))
-		return QueryLockedTables(wrapAsSCtx(exec))
+		return QueryLockedTables(statsutil.StatsCtx, wrapAsSCtx(exec))
 	}
 
 	c := chunk.NewChunkWithCapacity([]*types.FieldType{types.NewFieldType(mysql.TypeLonglong)}, numRows)
@@ -149,5 +149,5 @@ func executeQueryLockedTables(exec *mock.MockRestrictedSQLExecutor, numRows int,
 		selectSQL,
 	).Return(rows, nil, nil)
 
-	return QueryLockedTables(wrapAsSCtx(exec))
+	return QueryLockedTables(statsutil.StatsCtx, wrapAsSCtx(exec))
 }

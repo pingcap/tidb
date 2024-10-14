@@ -16,9 +16,14 @@ package logicalop
 
 import (
 	"github.com/pingcap/tidb/pkg/expression"
+	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/constraint"
+	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
+	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace/logicaltrace"
 )
 
 var (
@@ -97,4 +102,135 @@ func addSelection(p base.LogicalPlan, child base.LogicalPlan, conditions []expre
 	selection.SetChildren(child)
 	p.Children()[chIdx] = selection
 	AppendAddSelectionTraceStep(p, child, selection, opt)
+}
+
+// pushDownTopNForBaseLogicalPlan can be moved when LogicalTopN has been moved to logicalop.
+func pushDownTopNForBaseLogicalPlan(lp base.LogicalPlan, topNLogicalPlan base.LogicalPlan,
+	opt *optimizetrace.LogicalOptimizeOp) base.LogicalPlan {
+	s := lp.GetBaseLogicalPlan().(*BaseLogicalPlan)
+	var topN *LogicalTopN
+	if topNLogicalPlan != nil {
+		topN = topNLogicalPlan.(*LogicalTopN)
+	}
+	p := s.Self()
+	for i, child := range p.Children() {
+		p.Children()[i] = child.PushDownTopN(nil, opt)
+	}
+	if topN != nil {
+		return topN.AttachChild(p, opt)
+	}
+	return p
+}
+
+func pruneByItems(p base.LogicalPlan, old []*util.ByItems, opt *optimizetrace.LogicalOptimizeOp) (byItems []*util.ByItems,
+	parentUsedCols []*expression.Column) {
+	prunedByItems := make([]*util.ByItems, 0)
+	byItems = make([]*util.ByItems, 0, len(old))
+	seen := make(map[string]struct{}, len(old))
+	for _, byItem := range old {
+		pruned := true
+		hash := string(byItem.Expr.HashCode())
+		_, hashMatch := seen[hash]
+		seen[hash] = struct{}{}
+		cols := expression.ExtractColumns(byItem.Expr)
+		if !hashMatch {
+			if len(cols) == 0 {
+				if !expression.IsRuntimeConstExpr(byItem.Expr) {
+					pruned = false
+					byItems = append(byItems, byItem)
+				}
+			} else if byItem.Expr.GetType(p.SCtx().GetExprCtx().GetEvalCtx()).GetType() != mysql.TypeNull {
+				pruned = false
+				parentUsedCols = append(parentUsedCols, cols...)
+				byItems = append(byItems, byItem)
+			}
+		}
+		if pruned {
+			prunedByItems = append(prunedByItems, byItem)
+		}
+	}
+	logicaltrace.AppendByItemsPruneTraceStep(p, prunedByItems, opt)
+	return
+}
+
+// CanPushToCopImpl checks whether the logical plan can be pushed to coprocessor.
+func CanPushToCopImpl(lp base.LogicalPlan, storeTp kv.StoreType, considerDual bool) bool {
+	p := lp.GetBaseLogicalPlan().(*BaseLogicalPlan)
+	ret := true
+	for _, ch := range p.Children() {
+		switch c := ch.(type) {
+		case *DataSource:
+			validDs := false
+			indexMergeIsIntersection := false
+			for _, path := range c.PossibleAccessPaths {
+				if path.StoreType == storeTp {
+					validDs = true
+				}
+				if len(path.PartialIndexPaths) > 0 && path.IndexMergeIsIntersection {
+					indexMergeIsIntersection = true
+				}
+			}
+			ret = ret && validDs
+
+			_, isTopN := p.Self().(*LogicalTopN)
+			_, isLimit := p.Self().(*LogicalLimit)
+			if (isTopN || isLimit) && indexMergeIsIntersection {
+				return false // TopN and Limit cannot be pushed down to the intersection type IndexMerge
+			}
+
+			if c.TableInfo.TableCacheStatusType != model.TableCacheStatusDisable {
+				// Don't push to cop for cached table, it brings more harm than good:
+				// 1. Those tables are small enough, push to cop can't utilize several TiKV to accelerate computation.
+				// 2. Cached table use UnionScan to read the cache data, and push to cop is not supported when an UnionScan exists.
+				// Once aggregation is pushed to cop, the cache data can't be use any more.
+				return false
+			}
+		case *LogicalUnionAll:
+			if storeTp != kv.TiFlash {
+				return false
+			}
+			ret = ret && CanPushToCopImpl(&c.BaseLogicalPlan, storeTp, true)
+		case *LogicalSort:
+			if storeTp != kv.TiFlash {
+				return false
+			}
+			ret = ret && CanPushToCopImpl(&c.BaseLogicalPlan, storeTp, true)
+		case *LogicalProjection:
+			if storeTp != kv.TiFlash {
+				return false
+			}
+			ret = ret && CanPushToCopImpl(&c.BaseLogicalPlan, storeTp, considerDual)
+		case *LogicalExpand:
+			// Expand itself only contains simple col ref and literal projection. (always ok, check its child)
+			if storeTp != kv.TiFlash {
+				return false
+			}
+			ret = ret && CanPushToCopImpl(&c.BaseLogicalPlan, storeTp, considerDual)
+		case *LogicalTableDual:
+			return storeTp == kv.TiFlash && considerDual
+		case *LogicalAggregation, *LogicalSelection, *LogicalJoin, *LogicalWindow:
+			if storeTp != kv.TiFlash {
+				return false
+			}
+			ret = ret && c.CanPushToCop(storeTp)
+		// These operators can be partially push down to TiFlash, so we don't raise warning for them.
+		case *LogicalLimit, *LogicalTopN:
+			return false
+		case *LogicalSequence:
+			return storeTp == kv.TiFlash
+		case *LogicalCTE:
+			if storeTp != kv.TiFlash {
+				return false
+			}
+			if c.Cte.RecursivePartLogicalPlan != nil || !c.Cte.SeedPartLogicalPlan.CanPushToCop(storeTp) {
+				return false
+			}
+			return true
+		default:
+			p.SCtx().GetSessionVars().RaiseWarningWhenMPPEnforced(
+				"MPP mode may be blocked because operator `" + c.TP() + "` is not supported now.")
+			return false
+		}
+	}
+	return ret
 }

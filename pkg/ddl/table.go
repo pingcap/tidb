@@ -16,7 +16,6 @@ package ddl
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"strconv"
 	"sync/atomic"
@@ -59,6 +58,12 @@ func repairTableOrViewWithCheck(t *meta.Mutator, job *model.Job, schemaID int64,
 }
 
 func onDropTableOrView(jobCtx *jobContext, job *model.Job) (ver int64, _ error) {
+	args, err := model.GetDropTableArgs(job)
+	if err != nil {
+		job.State = model.JobStateCancelled
+		return 0, errors.Trace(err)
+	}
+	jobCtx.jobArgs = args
 	tblInfo, err := checkTableExistAndCancelNonExistJob(jobCtx.metaMut, job, job.SchemaID)
 	if err != nil {
 		return ver, errors.Trace(err)
@@ -69,7 +74,7 @@ func onDropTableOrView(jobCtx *jobContext, job *model.Job) (ver int64, _ error) 
 	case model.StatePublic:
 		// public -> write only
 		if job.Type == model.ActionDropTable {
-			err = checkDropTableHasForeignKeyReferredInOwner(jobCtx.infoCache, job)
+			err = checkDropTableHasForeignKeyReferredInOwner(jobCtx.infoCache, job, args)
 			if err != nil {
 				return ver, err
 			}
@@ -90,8 +95,8 @@ func onDropTableOrView(jobCtx *jobContext, job *model.Job) (ver int64, _ error) 
 		tblInfo.State = model.StateNone
 		oldIDs := getPartitionIDs(tblInfo)
 		ruleIDs := append(getPartitionRuleIDs(job.SchemaName, tblInfo), fmt.Sprintf(label.TableIDFormat, label.IDPrefix, job.SchemaName, tblInfo.Name.L))
-		job.CtxVars = []any{oldIDs}
 
+		args.OldPartitionIDs = oldIDs
 		ver, err = updateVersionAndTableInfo(jobCtx, job, tblInfo, originalState != tblInfo.State)
 		if err != nil {
 			return ver, errors.Trace(err)
@@ -144,6 +149,7 @@ func (w *worker) onRecoverTable(jobCtx *jobContext, job *model.Job) (ver int64, 
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
+	jobCtx.jobArgs = args
 	recoverInfo := args.RecoverTableInfos()[0]
 
 	schemaID := recoverInfo.SchemaID
@@ -229,6 +235,15 @@ func (w *worker) onRecoverTable(jobCtx *jobContext, job *model.Job) (ver int64, 
 		tableInfo := tblInfo.Clone()
 		tableInfo.State = model.StatePublic
 		tableInfo.UpdateTS = metaMut.StartTS
+
+		var tids []int64
+		if recoverInfo.TableInfo.GetPartitionInfo() != nil {
+			tids = getPartitionIDs(recoverInfo.TableInfo)
+			tids = append(tids, recoverInfo.TableInfo.ID)
+		} else {
+			tids = []int64{recoverInfo.TableInfo.ID}
+		}
+		args.AffectedPhysicalIDs = tids
 		ver, err = updateVersionAndTableInfo(jobCtx, job, tableInfo, true)
 		if err != nil {
 			return ver, errors.Trace(err)
@@ -244,13 +259,6 @@ func (w *worker) onRecoverTable(jobCtx *jobContext, job *model.Job) (ver int64, 
 }
 
 func (w *worker) recoverTable(t *meta.Mutator, job *model.Job, recoverInfo *model.RecoverTableInfo) (ver int64, err error) {
-	var tids []int64
-	if recoverInfo.TableInfo.GetPartitionInfo() != nil {
-		tids = getPartitionIDs(recoverInfo.TableInfo)
-		tids = append(tids, recoverInfo.TableInfo.ID)
-	} else {
-		tids = []int64{recoverInfo.TableInfo.ID}
-	}
 	tableRuleID, partRuleIDs, oldRuleIDs, oldRules, err := getOldLabelRules(recoverInfo.TableInfo, recoverInfo.OldSchemaName, recoverInfo.OldTableName)
 	if err != nil {
 		job.State = model.JobStateCancelled
@@ -289,8 +297,6 @@ func (w *worker) recoverTable(t *meta.Mutator, job *model.Job, recoverInfo *mode
 		return ver, errors.Wrapf(err, "failed to update the label rule to PD")
 	}
 
-	// TODO(joechenrh): tid is used in SerSchemaDiffForDropTable, remove this after refactor done.
-	job.CtxVars = []any{tids}
 	return ver, nil
 }
 
@@ -434,6 +440,7 @@ func (w *worker) onTruncateTable(jobCtx *jobContext, job *model.Job) (ver int64,
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
+	jobCtx.jobArgs = args
 	metaMut := jobCtx.metaMut
 	tblInfo, err := GetTableInfoAndCancelFaultJob(metaMut, job, schemaID)
 	if err != nil {
@@ -499,12 +506,8 @@ func (w *worker) onTruncateTable(jobCtx *jobContext, job *model.Job) (ver int64,
 				newIDs = append(newIDs, newID)
 			}
 		}
-		if job.Version == model.JobVersion1 {
-			job.CtxVars = []any{oldIDs, newIDs}
-		} else {
-			args.OldPartIDsWithPolicy = oldIDs
-			args.NewPartIDsWithPolicy = newIDs
-		}
+		args.OldPartIDsWithPolicy = oldIDs
+		args.NewPartIDsWithPolicy = newIDs
 	}
 
 	tableRuleID, partRuleIDs, _, oldRules, err := getOldLabelRules(tblInfo, job.SchemaName, tblInfo.Name.L)
@@ -747,6 +750,7 @@ func onRenameTable(jobCtx *jobContext, job *model.Job) (ver int64, _ error) {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
+	jobCtx.jobArgs = args
 
 	oldSchemaID, oldSchemaName, tableName := args.OldSchemaID, args.OldSchemaName, args.NewTableName
 	if job.SchemaState == model.StatePublic {
@@ -791,9 +795,10 @@ func onRenameTables(jobCtx *jobContext, job *model.Job) (ver int64, _ error) {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
+	jobCtx.jobArgs = args
 
 	if job.SchemaState == model.StatePublic {
-		return finishJobRenameTables(jobCtx, job, args)
+		return finishJobRenameTables(jobCtx, job)
 	}
 
 	fkh := newForeignKeyHelper()
@@ -937,21 +942,19 @@ func finishJobRenameTable(jobCtx *jobContext, job *model.Job) (int64, error) {
 	// Before updating the schema version, we need to reset the old schema ID to new schema ID, so that
 	// the table info can be dropped normally in `ApplyDiff`. This is because renaming table requires two
 	// schema versions to complete.
-	oldRawArgs := job.RawArgs
-	if err = model.UpdateRenameTableArgs(job); err != nil {
-		return 0, errors.Trace(err)
-	}
+	args := jobCtx.jobArgs.(*model.RenameTableArgs)
+	args.OldSchemaIDForSchemaDiff = job.SchemaID
 
 	ver, err := updateSchemaVersion(jobCtx, job)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
-	job.RawArgs = oldRawArgs
 	job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
 	return ver, nil
 }
 
-func finishJobRenameTables(jobCtx *jobContext, job *model.Job, args *model.RenameTablesArgs) (int64, error) {
+func finishJobRenameTables(jobCtx *jobContext, job *model.Job) (int64, error) {
+	args := jobCtx.jobArgs.(*model.RenameTablesArgs)
 	infos := args.RenameTableInfos
 	tblSchemaIDs := make(map[int64]int64, len(infos))
 	for _, info := range infos {
@@ -970,22 +973,13 @@ func finishJobRenameTables(jobCtx *jobContext, job *model.Job, args *model.Renam
 	// Before updating the schema version, we need to reset the old schema ID to new schema ID, so that
 	// the table info can be dropped normally in `ApplyDiff`. This is because renaming table requires two
 	// schema versions to complete.
-	// TODO(joechenrh): set the old schemaID in Args is a bit hacky. Maybe we need a better solution.
-	var err error
-	oldRawArgs := job.RawArgs
 	for _, info := range infos {
-		info.OldSchemaID = info.NewSchemaID
-	}
-	job.FillArgs(args)
-	job.RawArgs, err = json.Marshal(job.Args)
-	if err != nil {
-		return 0, errors.Trace(err)
+		info.OldSchemaIDForSchemaDiff = info.NewSchemaID
 	}
 	ver, err := updateSchemaVersion(jobCtx, job)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
-	job.RawArgs = oldRawArgs
 	job.FinishMultipleTableJob(model.JobStateDone, model.StatePublic, ver, tblInfos)
 	return ver, nil
 }

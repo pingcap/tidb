@@ -18,6 +18,7 @@ import (
 	"fmt"
 
 	"github.com/pingcap/errors"
+	infoschemacontext "github.com/pingcap/tidb/pkg/infoschema/context"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/model"
 )
@@ -115,7 +116,7 @@ func (b *Builder) initMisc(dbInfos []*model.DBInfo, policies []*model.PolicyInfo
 
 	// Maintain foreign key reference information.
 	if b.enableV2 {
-		rs := b.ListTablesWithSpecialAttribute(ForeignKeysAttribute)
+		rs := b.ListTablesWithSpecialAttribute(infoschemacontext.ForeignKeysAttribute)
 		for _, db := range rs {
 			for _, tbl := range db.TableInfos {
 				info.addReferredForeignKeys(db.DBName, tbl)

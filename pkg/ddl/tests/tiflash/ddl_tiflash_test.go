@@ -816,7 +816,7 @@ func TestAlterDatabaseBasic(t *testing.T) {
 	tk.MustQuery(`show warnings;`).Sort().Check(testkit.Rows(
 		"Note 1347 'tiflash_ddl_skip.t_seq' is not BASE TABLE",
 		"Note 1347 'tiflash_ddl_skip.t_view' is not BASE TABLE",
-		"Note 8006 `set on tiflash` is unsupported on temporary tables."))
+		"Note 8006 `set TiFlash replica` is unsupported on temporary tables."))
 }
 
 func execWithTimeout(t *testing.T, tk *testkit.TestKit, to time.Duration, sql string) (bool, error) {

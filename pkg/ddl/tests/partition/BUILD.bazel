@@ -6,6 +6,7 @@ go_test(
     srcs = [
         "db_partition_test.go",
         "main_test.go",
+        "multi_domain_test.go",
         "placement_test.go",
         "reorg_partition_test.go",
     ],
@@ -39,6 +40,7 @@ go_test(
         "//pkg/types",
         "//pkg/util/codec",
         "//pkg/util/dbterror",
+        "//pkg/util/logutil",
         "//pkg/util/mathutil",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_failpoint//:failpoint",

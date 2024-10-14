@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/disk"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/memory"
+	"github.com/pingcap/tidb/pkg/util/sqlkiller"
 	"go.uber.org/zap"
 )
 
@@ -47,6 +48,8 @@ type topNSpillHelper struct {
 
 	bytesConsumed atomic.Int64
 	bytesLimit    atomic.Int64
+
+	sqlKiller *sqlkiller.SQLKiller
 }
 
 func newTopNSpillerHelper(
@@ -58,6 +61,7 @@ func newTopNSpillerHelper(
 	fieldTypes []*types.FieldType,
 	workers []*topNWorker,
 	concurrencyNum int,
+	sqlKiller *sqlkiller.SQLKiller,
 ) *topNSpillHelper {
 	lock := sync.Mutex{}
 	tmpSpillChunksChan := make(chan *chunk.Chunk, concurrencyNum)
@@ -78,6 +82,7 @@ func newTopNSpillerHelper(
 		workers:            workers,
 		bytesConsumed:      atomic.Int64{},
 		bytesLimit:         atomic.Int64{},
+		sqlKiller:          sqlKiller,
 	}
 }
 
@@ -209,6 +214,13 @@ func (t *topNSpillHelper) spillHeap(chkHeap *topNChunkHeap) error {
 
 	rowPtrNum := chkHeap.Len()
 	for ; chkHeap.idx < rowPtrNum; chkHeap.idx++ {
+		if chkHeap.idx%100 == 0 && t.sqlKiller != nil {
+			err := t.sqlKiller.HandleSignal()
+			if err != nil {
+				return err
+			}
+		}
+
 		if tmpSpillChunk.IsFull() {
 			err := t.spillTmpSpillChunk(inDisk, tmpSpillChunk)
 			if err != nil {

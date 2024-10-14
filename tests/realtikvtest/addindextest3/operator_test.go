@@ -74,7 +74,7 @@ func TestBackfillOperators(t *testing.T) {
 
 		tasks := sink.Collect()
 		require.Len(t, tasks, 10)
-		require.Equal(t, 1, tasks[0].ID)
+		require.Equal(t, 0, tasks[0].ID)
 		require.Equal(t, startKey, tasks[0].Start)
 		require.Equal(t, endKey, tasks[9].End)
 

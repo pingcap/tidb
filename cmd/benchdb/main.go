@@ -201,8 +201,8 @@ func (ut *benchDB) truncateTable() {
 func (ut *benchDB) runCountTimes(name string, count int, f func()) {
 	var (
 		sum, first, last time.Duration
-		min              = time.Minute
-		max              = time.Nanosecond
+		minv             = time.Minute
+		maxv             = time.Nanosecond
 	)
 	cLogf("%s started", name)
 	for i := 0; i < count; i++ {
@@ -213,16 +213,16 @@ func (ut *benchDB) runCountTimes(name string, count int, f func()) {
 			first = dur
 		}
 		last = dur
-		if dur < min {
-			min = dur
+		if dur < minv {
+			minv = dur
 		}
-		if dur > max {
-			max = dur
+		if dur > maxv {
+			maxv = dur
 		}
 		sum += dur
 	}
 	cLogf("%s done, avg %s, count %d, sum %s, first %s, last %s, max %s, min %s\n\n",
-		name, sum/time.Duration(count), count, sum, first, last, max, min)
+		name, sum/time.Duration(count), count, sum, first, last, maxv, minv)
 }
 
 // #nosec G404

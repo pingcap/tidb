@@ -108,6 +108,12 @@ func (p *parallelSortSpillHelper) spill() (err error) {
 		}
 	}()
 
+	p.setInSpilling()
+
+	// Spill is done, broadcast to wake up all sleep goroutines
+	defer p.cond.Broadcast()
+	defer p.setNotSpilled()
+
 	select {
 	case <-p.finishCh:
 		return nil
@@ -138,11 +144,6 @@ func (p *parallelSortSpillHelper) spill() (err error) {
 	}
 
 	workerWaiter.Wait()
-	p.setInSpilling()
-
-	// Spill is done, broadcast to wake up all sleep goroutines
-	defer p.cond.Broadcast()
-	defer p.setNotSpilled()
 
 	totalRows := 0
 	for i := range sortedRowsIters {

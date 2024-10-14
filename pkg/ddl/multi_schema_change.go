@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
+	"github.com/pingcap/tidb/pkg/util/intest"
 )
 
 func onMultiSchemaChange(w *worker, jobCtx *jobContext, job *model.Job) (ver int64, err error) {
@@ -186,6 +187,7 @@ func appendToSubJobs(m *model.MultiSchemaInfo, jobW *JobWrapper) error {
 	}
 	m.SubJobs = append(m.SubJobs, &model.SubJob{
 		Type:        jobW.Type,
+		JobArgs:     jobW.JobArgs,
 		Args:        jobW.Args,
 		RawArgs:     jobW.RawArgs,
 		SchemaState: jobW.SchemaState,
@@ -214,27 +216,27 @@ func fillMultiSchemaInfo(info *model.MultiSchemaInfo, job *JobWrapper) error {
 		colName := job.JobArgs.(*model.TableColumnArgs).Col.Name
 		info.DropColumns = append(info.DropColumns, colName)
 	case model.ActionDropIndex, model.ActionDropPrimaryKey:
-		indexName := job.Args[0].(pmodel.CIStr)
-		info.DropIndexes = append(info.DropIndexes, indexName)
+		args := job.JobArgs.(*model.ModifyIndexArgs)
+		info.DropIndexes = append(info.DropIndexes, args.IndexArgs[0].IndexName)
 	case model.ActionAddIndex, model.ActionAddPrimaryKey:
-		indexName := job.Args[1].(pmodel.CIStr)
-		indexPartSpecifications := job.Args[2].([]*ast.IndexPartSpecification)
-		info.AddIndexes = append(info.AddIndexes, indexName)
-		for _, indexPartSpecification := range indexPartSpecifications {
+		args := job.JobArgs.(*model.ModifyIndexArgs)
+		// This job has not been merged, len(args) should be one.
+		intest.Assert(len(args.IndexArgs) == 1, "len(args.IndexArgs) != 1")
+		indexArg := args.IndexArgs[0]
+		info.AddIndexes = append(info.AddIndexes, indexArg.IndexName)
+		for _, indexPartSpecification := range indexArg.IndexPartSpecifications {
 			info.RelativeColumns = append(info.RelativeColumns, indexPartSpecification.Column.Name)
 		}
-		if hiddenCols, ok := job.Args[4].([]*model.ColumnInfo); ok {
-			for _, c := range hiddenCols {
-				for depColName := range c.Dependences {
-					info.RelativeColumns = append(info.RelativeColumns, pmodel.NewCIStr(depColName))
-				}
+		for _, c := range indexArg.HiddenCols {
+			for depColName := range c.Dependences {
+				info.RelativeColumns = append(info.RelativeColumns, pmodel.NewCIStr(depColName))
 			}
 		}
 	case model.ActionRenameIndex:
-		from := job.Args[0].(pmodel.CIStr)
-		to := job.Args[1].(pmodel.CIStr)
-		info.AddIndexes = append(info.AddIndexes, to)
-		info.DropIndexes = append(info.DropIndexes, from)
+		args := job.JobArgs.(*model.ModifyIndexArgs)
+		from, to := args.GetRenameIndexes()
+		info.AddIndexes = append(info.AddIndexes, from)
+		info.DropIndexes = append(info.DropIndexes, to)
 	case model.ActionModifyColumn:
 		newCol := *job.Args[0].(**model.ColumnInfo)
 		oldColName := job.Args[1].(pmodel.CIStr)
@@ -343,30 +345,28 @@ func mergeAddIndex(info *model.MultiSchemaInfo) {
 	}
 
 	if mergeCnt <= 1 {
-		// no add index job in this multi-schema change.
+		// No multiple add index jobs in this multi-schema change.
 		return
 	}
 
-	var unique []bool
-	var indexNames []pmodel.CIStr
-	var indexPartSpecifications [][]*ast.IndexPartSpecification
-	var indexOption []*ast.IndexOption
-	var hiddenCols [][]*model.ColumnInfo
-
 	newSubJobs := make([]*model.SubJob, 0, len(info.SubJobs))
+	newAddIndexesArgs := &model.ModifyIndexArgs{OpType: model.OpAddIndex}
+
 	for _, subJob := range info.SubJobs {
 		if subJob.Type == model.ActionAddIndex {
-			unique = append(unique, subJob.Args[0].(bool))
-			indexNames = append(indexNames, subJob.Args[1].(pmodel.CIStr))
-			indexPartSpecifications = append(indexPartSpecifications, subJob.Args[2].([]*ast.IndexPartSpecification))
-			indexOption = append(indexOption, subJob.Args[3].(*ast.IndexOption))
-			hiddenCols = append(hiddenCols, subJob.Args[4].([]*model.ColumnInfo))
+			args := subJob.JobArgs.(*model.ModifyIndexArgs)
+			newAddIndexesArgs.IndexArgs = append(newAddIndexesArgs.IndexArgs, args.IndexArgs...)
 		} else {
 			newSubJobs = append(newSubJobs, subJob)
 		}
 	}
 
-	mergedSubJob.Args = []any{unique, indexNames, indexPartSpecifications, indexOption, hiddenCols}
+	// Fill args for new subjob
+	proxyJob := &model.Job{Version: model.JobVersion1}
+	proxyJob.FillArgs(newAddIndexesArgs)
+	mergedSubJob.Args = proxyJob.Args
+	mergedSubJob.JobArgs = newAddIndexesArgs
+
 	// place the merged add index job at the end of the sub-jobs.
 	newSubJobs = append(newSubJobs, mergedSubJob)
 	info.SubJobs = newSubJobs

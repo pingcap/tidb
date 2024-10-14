@@ -1350,7 +1350,7 @@ func restoreStream(
 		}
 		oldRatio = oldRatioFromCheckpoint
 
-		checkpointRunner, err = client.StartCheckpointRunnerForLogRestore(ctx)
+		checkpointRunner, err = client.StartCheckpointRunnerForLogRestore(ctx, g, mgr.GetStorage())
 		if err != nil {
 			return errors.Trace(err)
 		}

@@ -97,7 +97,7 @@ type tableNameExtractor struct {
 	err      error
 }
 
-func (tne *tableNameExtractor) getTablesAndViews() map[tableNamePair]struct{} {
+func (tne *tableNameExtractor) getTablesAndViews() (map[tableNamePair]struct{}, error) {
 	r := make(map[tableNamePair]struct{})
 	for tablePair := range tne.names {
 		if tablePair.IsView {
@@ -109,8 +109,21 @@ func (tne *tableNameExtractor) getTablesAndViews() map[tableNamePair]struct{} {
 		if !ok {
 			r[tablePair] = struct{}{}
 		}
+		// if the table has a foreign key, we need to add the referenced table to the list
+		tblInfo, err := tne.is.TableByName(tne.ctx, model.NewCIStr(tablePair.DBName), model.NewCIStr(tablePair.TableName))
+		if err != nil {
+			return nil, err
+		}
+		for _, fk := range tblInfo.Meta().ForeignKeys {
+			key := tableNamePair{
+				DBName:    fk.RefSchema.L,
+				TableName: fk.RefTable.L,
+				IsView:    false,
+			}
+			r[key] = struct{}{}
+		}
 	}
-	return r
+	return r, nil
 }
 
 func (*tableNameExtractor) Enter(in ast.Node) (ast.Node, bool) {
@@ -776,7 +789,7 @@ func extractTableNames(ctx context.Context, sctx sessionctx.Context,
 	if tableExtractor.err != nil {
 		return nil, tableExtractor.err
 	}
-	return tableExtractor.getTablesAndViews(), nil
+	return tableExtractor.getTablesAndViews()
 }
 
 func getStatsForTable(do *Domain, pair tableNamePair, historyStatsTS uint64) (*util.JSONTable, []string, error) {
