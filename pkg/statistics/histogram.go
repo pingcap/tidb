@@ -930,7 +930,7 @@ func (hg *Histogram) OutOfRangeRowCount(
 		}()
 	}
 	if hg.Len() == 0 {
-		return 0
+		return 1
 	}
 
 	// For bytes and string type, we need to cut the common prefix when converting them to scalar value.
@@ -971,14 +971,14 @@ func (hg *Histogram) OutOfRangeRowCount(
 
 	// make sure l < r
 	if l >= r {
-		return 0
+		return 1
 	}
 	// Convert the lower and upper bound of the histogram to scalar value(float64)
 	histL := convertDatumToScalar(hg.GetLower(0), commonPrefix)
 	histR := convertDatumToScalar(hg.GetUpper(hg.Len()-1), commonPrefix)
 	histWidth := histR - histL
 	if histWidth <= 0 {
-		return 0
+		return 1
 	}
 	boundL := histL - histWidth
 	boundR := histR + histWidth
@@ -1057,7 +1057,7 @@ func (hg *Histogram) OutOfRangeRowCount(
 	}
 
 	// Use modifyCount as a final bound
-	return min(rowCount, float64(modifyCount))
+	return max(1, min(rowCount, float64(modifyCount)))
 }
 
 // Copy deep copies the histogram.
