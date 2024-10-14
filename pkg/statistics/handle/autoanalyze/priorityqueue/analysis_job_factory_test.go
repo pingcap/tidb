@@ -403,6 +403,12 @@ func TestCheckNewlyAddedIndexesNeedAnalyzeForPartitionedTable(t *testing.T) {
 				Name:  pmodel.NewCIStr("index2"),
 				State: model.StatePublic,
 			},
+			{
+				ID: 3,
+				Name: pmodel.NewCIStr("index3"),
+				State: model.StatePublic,
+				VectorInfo: &model.VectorIndexInfo{},
+			},
 		},
 		Columns: []*model.ColumnInfo{
 			{

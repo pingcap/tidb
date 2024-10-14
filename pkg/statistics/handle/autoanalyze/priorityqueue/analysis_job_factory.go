@@ -311,6 +311,10 @@ func (*AnalysisJobFactory) CheckNewlyAddedIndexesNeedAnalyzeForPartitionedTable(
 		if idx.State != model.StatePublic || util.IsSpecialGlobalIndex(idx, tblInfo) {
 			continue
 		}
+		// Index on vector type doesn't have stats currently.
+		if idx.VectorInfo != nil {
+			continue
+		}
 
 		// Find all the partitions that need to analyze this index.
 		names := make([]string, 0, len(partitionStats))
