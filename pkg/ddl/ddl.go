@@ -205,6 +205,7 @@ type JobWrapper struct {
 	cacheErr error
 }
 
+// FillArgsWithSubjobs fill args for job and its sub jobs
 func (jobW *JobWrapper) FillArgsWithSubjobs() {
 	jobW.FillArgs(jobW.JobArgs)
 	if jobW.MultiSchemaInfo != nil {

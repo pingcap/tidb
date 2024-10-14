@@ -1622,6 +1622,7 @@ func GetFinishedModifyIndexArgs(job *Job) (*ModifyIndexArgs, error) {
 	return a, nil
 }
 
+// ModifyColumnArgs is the argument for modify column.
 type ModifyColumnArgs struct {
 	Column           *ColumnInfo         `json:"column,omitempty"`
 	OldColumnName    pmodel.CIStr        `json:"old_column_name,omitempty"`
