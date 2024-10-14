@@ -283,7 +283,8 @@ func GetBatchCreateTableArgs(job *Job) (*BatchCreateTableArgs, error) {
 // when dropping multiple objects, each object will have a separate job
 type DropTableArgs struct {
 	// below fields are only for drop table.
-	// when dropping multiple tables, the Identifiers is the same.
+	// when dropping multiple tables, the Identifiers is the same, but each drop-table
+	// runs in a separate job.
 	Identifiers []ast.Ident `json:"identifiers,omitempty"`
 	FKCheck     bool        `json:"fk_check,omitempty"`
 
@@ -1104,6 +1105,9 @@ func GetAlterTableAttributesArgs(job *Job) (*AlterTableAttributesArgs, error) {
 type RecoverArgs struct {
 	RecoverInfo *RecoverSchemaInfo `json:"recover_info,omitempty"`
 	CheckFlag   int64              `json:"check_flag,omitempty"`
+
+	// used during runtime
+	AffectedPhysicalIDs []int64 `json:"-"`
 }
 
 func (a *RecoverArgs) getArgsV1(job *Job) []any {
