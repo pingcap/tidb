@@ -2,15 +2,11 @@ load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 
 go_library(
     name = "log_split",
-    srcs = [
-        "split.go",
-        "sum_sorted.go",
-    ],
+    srcs = ["split.go"],
     importpath = "github.com/pingcap/tidb/br/pkg/restore/internal/log_split",
     visibility = ["//br/pkg/restore:__subpackages__"],
     deps = [
         "//br/pkg/logutil",
-        "//br/pkg/restore/internal/snap_split",
         "//br/pkg/restore/split",
         "//br/pkg/restore/utils",
         "//br/pkg/utils",
@@ -33,13 +29,11 @@ go_test(
     srcs = [
         "export_test.go",
         "split_test.go",
-        "sum_sorted_test.go",
     ],
     embed = [":log_split"],
     flaky = True,
     shard_count = 3,
     deps = [
-        "//br/pkg/restore/internal/snap_split",
         "//br/pkg/restore/split",
         "//br/pkg/restore/utils",
         "//br/pkg/utiltest",

@@ -1463,12 +1463,12 @@ func restoreStream(
 
 	compactionIter := client.LogFileManager.OpenCompactionIter(ctx, migs)
 
-	sstFileCount, _, err := client.CollectCompactedSsts(ctx, rewriteRules, compactionIter)
-	if err != nil {
-		return errors.Trace(err)
-	}
+	// sstFileCount, _, err := client.CollectCompactedSsts(ctx, rewriteRules, compactionIter)
+	// if err != nil {
+	// 	return errors.Trace(err)
+	// }
 	// total split ranges count
-	sstFileCount += sstFileCount / logclient.CompactedSSTSplitBatchSize
+	//sstFileCount += sstFileCount / logclient.CompactedSSTSplitBatchSize
 
 	se, err := g.CreateSession(mgr.GetStorage())
 	if err != nil {
@@ -1478,7 +1478,7 @@ func restoreStream(
 	splitSize, splitKeys := utils.GetRegionSplitInfo(execCtx)
 	log.Info("get split threshold from tikv config", zap.Uint64("split-size", splitSize), zap.Int64("split-keys", splitKeys))
 
-	pd := g.StartProgress(ctx, "Restore SST+KV Files", int64(dataFileCount+sstFileCount), !cfg.LogProgress)
+	pd := g.StartProgress(ctx, "Restore SST+KV Files", int64(dataFileCount), !cfg.LogProgress)
 	err = withProgress(pd, func(p glue.Progress) (pErr error) {
 
 		compactedSplitIter, err := client.WrapCompactedFilesIterWithSplitHelper(compactionIter, rewriteRules, splitSize, splitKeys)
