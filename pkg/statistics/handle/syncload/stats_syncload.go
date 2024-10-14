@@ -394,7 +394,6 @@ func (*statsSyncLoad) readStatsForOneItem(sctx sessionctx.Context, item model.Ta
 	if hg == nil {
 		logutil.BgLogger().Error("fail to get hist meta for this histogram, possibly a deleted one", zap.Int64("table_id", item.TableID),
 			zap.Int64("hist_id", item.ID), zap.Bool("is_index", item.IsIndex))
-		// Although it is errors, we don't return err, because raise error will have to retry. it is unnecessay.
 		return nil, errGetHistMeta
 	}
 	if item.IsIndex {
