@@ -820,7 +820,7 @@ func (w *worker) runOneJobStep(
 		if sysTblMgr != nil {
 			stopCheckingJobCancelled := make(chan struct{})
 			defer close(stopCheckingJobCancelled)
-			
+
 			var cancelStep context.CancelCauseFunc
 			jobCtx.stepCtx, cancelStep = context.WithCancelCause(jobCtx.ctx)
 			defer cancelStep(context.Canceled)
