@@ -460,4 +460,13 @@ func TestAddGlobalIndexInIngest(t *testing.T) {
 	require.Greater(t, len(rsGlobalIndex.Rows()), num)
 	require.Equal(t, rsGlobalIndex.String(), rsTable.String())
 	require.Equal(t, rsGlobalIndex.String(), rsNormalIndex.String())
+
+	// for all global indexes
+	tk.MustExec("alter table t add unique index idx_5(b) global, add unique index idx_6(b) global")
+	rsGlobalIndex1 := tk.MustQuery("select * from t use index(idx_6)").Sort()
+	rsTable = tk.MustQuery("select * from t use index()").Sort()
+	rsGlobalIndex2 := tk.MustQuery("select * from t use index(idx_5)").Sort()
+	require.Greater(t, len(rsGlobalIndex1.Rows()), len(rsGlobalIndex.Rows()))
+	require.Equal(t, rsGlobalIndex1.String(), rsTable.String())
+	require.Equal(t, rsGlobalIndex1.String(), rsGlobalIndex2.String())
 }
