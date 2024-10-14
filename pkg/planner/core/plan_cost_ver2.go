@@ -123,7 +123,7 @@ func (p *PhysicalIndexScan) GetPlanCostVer2(taskType property.TaskType, option *
 	}
 
 	rows := getCardinality(p, option.CostFlag)
-	rowSize := max(getAvgRowSize(p.StatsInfo(), p.schema.Columns), MinRowSize) // consider all index columns
+	rowSize := getAvgRowSize(p.StatsInfo(), p.schema.Columns) // consider all index columns
 	scanFactor := getTaskScanFactorVer2(p, kv.TiKV, taskType)
 
 	p.PlanCostVer2 = scanCostVer2(option, rows, rowSize, scanFactor)
@@ -139,17 +139,20 @@ func (p *PhysicalTableScan) GetPlanCostVer2(taskType property.TaskType, option *
 		return p.PlanCostVer2, nil
 	}
 
-	// Ensure rows has a reasonable minimum value to avoid underestimation
-	rows := max(MinNumRows, getCardinality(p, option.CostFlag))
-
 	var columns []*expression.Column
 	if p.StoreType == kv.TiKV { // Assume all columns for TiKV
 		columns = p.tblCols
 	} else { // TiFlash
 		columns = p.schema.Columns
 	}
-	// Ensure rowSize has a reasonable minimum value to avoid underestimation
-	rowSize := max(getAvgRowSize(p.StatsInfo(), columns), MinRowSize)
+
+	// Ensure rows nad rowSize have reasonable minimum values to avoid underestimation for table scans
+	rows := max(0, getCardinality(p, option.CostFlag))
+	rowSize := max(0, getAvgRowSize(p.StatsInfo(), columns))
+	if !p.isChildOfIndexLookUp {
+		rows = max(MinNumRows, rows)
+		rowSize = max(MinRowSize, rowSize)
+	}
 
 	scanFactor := getTaskScanFactorVer2(p, p.StoreType, taskType)
 	p.PlanCostVer2 = scanCostVer2(option, rows, rowSize, scanFactor)
@@ -221,8 +224,8 @@ func (p *PhysicalTableReader) GetPlanCostVer2(taskType property.TaskType, option
 		return p.PlanCostVer2, nil
 	}
 
-	rows := getCardinality(p.tablePlan, option.CostFlag)
-	rowSize := getAvgRowSize(p.StatsInfo(), p.schema.Columns)
+	rows := max(MinNumRows, getCardinality(p.tablePlan, option.CostFlag))
+	rowSize := max(MinRowSize, getAvgRowSize(p.StatsInfo(), p.schema.Columns))
 	netFactor := getTaskNetFactorVer2(p, taskType)
 	concurrency := float64(p.SCtx().GetSessionVars().DistSQLScanConcurrency())
 	childType := property.CopSingleReadTaskType
@@ -382,8 +385,8 @@ func (p *PhysicalSort) GetPlanCostVer2(taskType property.TaskType, option *optim
 		return p.PlanCostVer2, nil
 	}
 
-	rows := max(getCardinality(p.Children()[0], option.CostFlag), MinNumRows)
-	rowSize := getAvgRowSize(p.StatsInfo(), p.Schema().Columns)
+	rows := max(MinNumRows, getCardinality(p.Children()[0], option.CostFlag))
+	rowSize := max(MinRowSize, getAvgRowSize(p.StatsInfo(), p.Schema().Columns))
 	cpuFactor := getTaskCPUFactorVer2(p, taskType)
 	memFactor := getTaskMemFactorVer2(p, taskType)
 	diskFactor := defaultVer2Factors.TiDBDisk
@@ -430,14 +433,14 @@ func (p *PhysicalTopN) GetPlanCostVer2(taskType property.TaskType, option *optim
 		return p.PlanCostVer2, nil
 	}
 
-	rows := getCardinality(p.Children()[0], option.CostFlag)
-	n := max(1, float64(p.Count+p.Offset))
+	rows := max(MinNumRows, getCardinality(p.Children()[0], option.CostFlag))
+	n := max(MinNumRows, float64(p.Count+p.Offset))
 	if n > 10000 {
 		// It's only used to prevent some extreme cases, e.g. `select * from t order by a limit 18446744073709551615`.
 		// For normal cases, considering that `rows` may be under-estimated, better to keep `n` unchanged.
 		n = min(n, rows)
 	}
-	rowSize := getAvgRowSize(p.StatsInfo(), p.Schema().Columns)
+	rowSize := max(MinNumRows, getAvgRowSize(p.StatsInfo(), p.Schema().Columns))
 	cpuFactor := getTaskCPUFactorVer2(p, taskType)
 	memFactor := getTaskMemFactorVer2(p, taskType)
 
@@ -463,9 +466,16 @@ func (p *PhysicalStreamAgg) GetPlanCostVer2(taskType property.TaskType, option *
 		return p.PlanCostVer2, nil
 	}
 
+	// rows does NOT set a minimum of minRowSize on purpose - to NOT discourage streamAGG
 	rows := getCardinality(p.Children()[0], option.CostFlag)
 	cpuFactor := getTaskCPUFactorVer2(p, taskType)
 
+	// Commented out to test impact
+	//if indexScan, ok := p.Children()[0].(*PhysicalIndexScan); ok {
+	//	if indexScan.KeepOrder {
+	//		rows *= 0.8
+	//	}
+	//}
 	aggCost := aggCostVer2(option, rows, p.AggFuncs, cpuFactor)
 	groupCost := groupCostVer2(option, rows, p.GroupByItems, cpuFactor)
 
@@ -498,26 +508,15 @@ func (p *PhysicalHashAgg) GetPlanCostVer2(taskType property.TaskType, option *op
 	hashBuildCost := hashBuildCostVer2(option, outputRows, outputRowSize, float64(len(p.GroupByItems)), cpuFactor, memFactor)
 	hashProbeCost := hashProbeCostVer2(option, inputRows, float64(len(p.GroupByItems)), cpuFactor)
 
-	// Apply an additional startup cost to HashAgg for Pseudo stats but not to TiFlash
+	// Apply an additional startup cost to HashAgg for Pseudo stats, only TiVK and NOT TiFlash since
+	// this is to discourage hashAgg as compared to streamAgg if stats are unreliable
 	startCostRows := float64(10)
-	for _, child := range p.Children() {
-		if tableReader, ok := child.(*PhysicalTableScan); ok {
-			if tableReader.StoreType == kv.TiFlash {
-				break
-			} else if tableReader.tblColHists.Pseudo {
-				startCostRows = 100
-				break
-			}
-		}
-		if tableScan, ok := child.(*PhysicalTableScan); ok {
-			if tableScan.StoreType == kv.TiFlash {
-				break
-			} else if tableScan.tblColHists.Pseudo {
-				startCostRows = 100
-				break
-			}
-		}
-	}
+	// Commented out to test impact
+	//if tableScan, ok := p.Children()[0].(*PhysicalTableScan); ok {
+	//	if tableScan.StoreType == kv.TiKV && tableScan.tblColHists.Pseudo {
+	//		startCostRows = 100
+	//	}
+	//}
 	startCost := costusage.NewCostVer2(option, cpuFactor,
 		startCostRows*3*cpuFactor.Value, // startCostRows * 3func * cpuFactor
 		func() string { return fmt.Sprintf("cpu(%v*3*%v)", startCostRows, cpuFactor) })
@@ -579,8 +578,9 @@ func (p *PhysicalHashJoin) GetPlanCostVer2(taskType property.TaskType, option *o
 		buildFilters, probeFilters = probeFilters, buildFilters
 	}
 	buildRows := max(MinNumRows, getCardinality(build, option.CostFlag))
+	// Do not set a min of MinNumRows for probe rows on purpose - as a probe may find less than 1 row
 	probeRows := getCardinality(probe, option.CostFlag)
-	buildRowSize := getAvgRowSize(build.StatsInfo(), build.Schema().Columns)
+	buildRowSize := max(MinNumRows, getAvgRowSize(build.StatsInfo(), build.Schema().Columns))
 	tidbConcurrency := float64(p.Concurrency)
 	mppConcurrency := float64(3) // TODO: remove this empirical value
 	cpuFactor := getTaskCPUFactorVer2(p, taskType)
@@ -620,6 +620,7 @@ func (p *PhysicalIndexJoin) getIndexJoinCostVer2(taskType property.TaskType, opt
 		return p.PlanCostVer2, nil
 	}
 
+	// Do not set a minimum for build/probe rows in index join
 	build, probe := p.Children()[1-p.InnerChildIdx], p.Children()[p.InnerChildIdx]
 	buildRows := getCardinality(build, option.CostFlag)
 	buildRowSize := max(MinRowSize, getAvgRowSize(build.StatsInfo(), build.Schema().Columns))
