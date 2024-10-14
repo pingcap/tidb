@@ -345,13 +345,10 @@ func convertAddTablePartitionJob2RollbackJob(jobCtx *jobContext, job *model.Job,
 		partNames = append(partNames, pd.Name.L)
 	}
 
-	// PartInfo cannot be saved, onDropTablePartition expects that PartInfo is empty
-	// in this case
 	args := &model.TablePartitionArgs{
 		PartNames: partNames,
 	}
-	job.FillArgs(args)
-
+	model.FillRollbackArgsForAddPartition(job, args)
 	ver, err = updateVersionAndTableInfo(jobCtx, job, tblInfo, true)
 	if err != nil {
 		return ver, errors.Trace(err)
