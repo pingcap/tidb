@@ -30,8 +30,8 @@ import (
 )
 
 func flushMetaFile(
-	t *testing.T,
 	ctx context.Context,
+	t *testing.T,
 	fname string,
 	metaFile *backuppb.MetaFile,
 	storage storage.ExternalStorage,
@@ -58,8 +58,8 @@ func flushMetaFile(
 }
 
 func flushStatsFile(
-	t *testing.T,
 	ctx context.Context,
+	t *testing.T,
 	fname string,
 	statsFile *backuppb.StatsFile,
 	storage storage.ExternalStorage,
@@ -92,7 +92,7 @@ func TestDecodeMetaFile(t *testing.T) {
 	s, err := storage.NewLocalStorage(base)
 	require.NoError(t, err)
 	cipher := &backuppb.CipherInfo{CipherType: 1}
-	file1 := flushMetaFile(t, ctx, "data", &backuppb.MetaFile{
+	file1 := flushMetaFile(ctx, t, "data", &backuppb.MetaFile{
 		DataFiles: []*backuppb.File{
 			{
 				Name:       "1.sst",
@@ -108,7 +108,7 @@ func TestDecodeMetaFile(t *testing.T) {
 			},
 		},
 	}, s, cipher)
-	stats := flushStatsFile(t, ctx, "stats", &backuppb.StatsFile{Blocks: []*backuppb.StatsBlock{
+	stats := flushStatsFile(ctx, t, "stats", &backuppb.StatsFile{Blocks: []*backuppb.StatsBlock{
 		{
 			PhysicalId: 1,
 			JsonTable:  []byte("1"),
@@ -118,7 +118,7 @@ func TestDecodeMetaFile(t *testing.T) {
 			JsonTable:  []byte("2"),
 		},
 	}}, s, cipher)
-	file2 := flushMetaFile(t, ctx, "schema", &backuppb.MetaFile{
+	file2 := flushMetaFile(ctx, t, "schema", &backuppb.MetaFile{
 		Schemas: []*backuppb.Schema{
 			{
 				Db:              []byte("db"),
