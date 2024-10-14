@@ -526,3 +526,18 @@ var ReorgRetryableErrCodes = map[uint16]struct{}{
 	// Temporary network partitioning may cause pk commit failure.
 	uint16(terror.CodeResultUndetermined): {},
 }
+
+// ReorgRetryableError is the retryable error during DDL reorganization.
+type ReorgRetryableError struct {
+	message string
+}
+
+// Error implements error interface.
+func (r ReorgRetryableError) Error() string {
+	return r.message
+}
+
+// NewReorgRetryableError creates a new ReorgRetryableError.
+func NewReorgRetryableError(msg string) ReorgRetryableError {
+	return ReorgRetryableError{message: msg}
+}
