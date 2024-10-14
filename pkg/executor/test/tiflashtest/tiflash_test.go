@@ -2015,7 +2015,7 @@ func TestMppAggShouldAlignFinalMode(t *testing.T) {
 		"  select /*+ read_from_storage(tiflash[t]) */ sum(1)" +
 		"  from t where d BETWEEN '2023-07-01' and '2023-07-03' group by d" +
 		") total;").Check(testkit.Rows("Projection 400.00 root  1->Column#4",
-		"└─HashAgg 400.00 root  group by:test.t.d, funcs:count(1)->Column#8",
+		"└─HashAgg 400.00 root  group by:test.t.d, funcs:count(complete,1)->Column#8",
 		"  └─PartitionUnion 400.00 root  ",
 		"    ├─Projection 200.00 root  test.t.d",
 		"    │ └─HashAgg 200.00 root  group by:test.t.d, funcs:firstrow(partial2,test.t.d)->test.t.d, funcs:count(final,Column#12)->Column#9",
