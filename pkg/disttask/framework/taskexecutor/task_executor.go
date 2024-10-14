@@ -533,7 +533,7 @@ func (e *BaseTaskExecutor) onError(err error) {
 		return
 	}
 	err = errors.Trace(err)
-	e.logger.Error("onError", zap.Error(err), zap.StackSkip("stack", 2))
+	e.logger.Error("onError", zap.Error(err), zap.StackSkip("stack", 1))
 	e.mu.Lock()
 	defer e.mu.Unlock()
 

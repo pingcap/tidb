@@ -16,17 +16,20 @@ package taskexecutor
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/disttask/framework/mock"
-	"github.com/pingcap/tidb/pkg/disttask/framework/mock/execute"
+	mockexecute "github.com/pingcap/tidb/pkg/disttask/framework/mock/execute"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
 	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/execute"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/mock/gomock"
+	"go.uber.org/zap"
+	"go.uber.org/zap/zaptest/observer"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
@@ -545,4 +548,34 @@ func TestInject(t *testing.T) {
 	execute.SetFrameworkInfo(e, r)
 	got := e.GetResource()
 	require.Equal(t, r, got)
+}
+
+func callOnError(taskExecutor *BaseTaskExecutor) {
+	taskExecutor.onError(errors.Errorf("mock error"))
+}
+
+func TestExecutorOnErrorLog(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+	mockSubtaskTable := mock.NewMockTaskTable(ctrl)
+	mockExtension := mock.NewMockExtension(ctrl)
+
+	ctx := context.Background()
+	task := &proto.Task{TaskBase: proto.TaskBase{Step: proto.StepOne, Type: "type", ID: 1, Concurrency: 1}}
+	taskExecutor := NewBaseTaskExecutor(ctx, "tidb1", task, mockSubtaskTable)
+	taskExecutor.Extension = mockExtension
+
+	observedZapCore, observedLogs := observer.New(zap.ErrorLevel)
+	observedLogger := zap.New(observedZapCore)
+	taskExecutor.logger = observedLogger
+
+	callOnError(taskExecutor)
+	require.GreaterOrEqual(t, observedLogs.Len(), 1)
+	errLog := observedLogs.All()[0]
+	stack := errLog.ContextMap()["stack"]
+	require.IsType(t, "", stack)
+	stackStr := stack.(string)
+	require.Truef(t, strings.HasPrefix(stackStr,
+		"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor.callOnError"),
+		"got log stack: %s", stackStr)
 }
