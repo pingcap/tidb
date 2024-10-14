@@ -2223,7 +2223,7 @@ func (w *worker) addTableIndex(t table.Table, reorgInfo *reorgInfo) error {
 			var p table.PhysicalTable
 			if tbl.Meta().ID == reorgInfo.PhysicalTableID {
 				//nolint:forcetypeassert
-				p = t.(table.PhysicalTable)
+				p = t.(table.PhysicalTable) // global index
 			} else {
 				p = tbl.GetPartition(reorgInfo.PhysicalTableID)
 				if p == nil {
