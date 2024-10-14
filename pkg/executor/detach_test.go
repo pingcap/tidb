@@ -27,6 +27,7 @@ type mockSimpleExecutor struct {
 	exec.BaseExecutorV2
 }
 
+//nolint:constructor
 func TestDetachExecutor(t *testing.T) {
 	// call `Detach` on a mock executor will fail
 	_, ok := Detach(&mockSimpleExecutor{})

@@ -19,6 +19,7 @@ import (
 	"errors"
 
 	"github.com/pingcap/tidb/pkg/infoschema"
+	infoschemacontext "github.com/pingcap/tidb/pkg/infoschema/context"
 	"github.com/pingcap/tidb/pkg/lock/context"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -141,7 +142,7 @@ func (c *Checker) CheckLockInDB(db string, privilege mysql.PrivilegeType) error 
 	if privilege == mysql.CreatePriv {
 		return nil
 	}
-	rs := c.is.ListTablesWithSpecialAttribute(infoschema.TableLockAttribute)
+	rs := c.is.ListTablesWithSpecialAttribute(infoschemacontext.TableLockAttribute)
 	for _, schema := range rs {
 		for _, tbl := range schema.TableInfos {
 			err := c.CheckTableLock(db, tbl.Name.L, privilege, false)

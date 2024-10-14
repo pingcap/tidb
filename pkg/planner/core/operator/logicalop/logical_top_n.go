@@ -82,7 +82,7 @@ func (lt *LogicalTopN) ReplaceExprColumns(replace map[string]*expression.Column)
 func (lt *LogicalTopN) PruneColumns(parentUsedCols []*expression.Column, opt *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, error) {
 	child := lt.Children()[0]
 	var cols []*expression.Column
-	lt.ByItems, cols = utilfuncp.PruneByItems(lt, lt.ByItems, opt)
+	lt.ByItems, cols = pruneByItems(lt, lt.ByItems, opt)
 	parentUsedCols = append(parentUsedCols, cols...)
 	var err error
 	lt.Children()[0], err = child.PruneColumns(parentUsedCols, opt)

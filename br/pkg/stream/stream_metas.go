@@ -196,6 +196,24 @@ func (ms *StreamMetadataSet) RemoveDataFilesAndUpdateMetadataInBatch(
 	est.Hooks = updateFnHook{updateFn: updateFn}
 	res := MigratedTo{NewBase: new(pb.Migration)}
 	est.doTruncatingLogs(ctx, ms.metadataInfos, from, &res)
+	var notDeleted struct {
+		item []string
+		sync.Mutex
+	}
+	worker := util.NewWorkerPool(ms.MetadataDownloadBatchSize, "delete files")
+	eg, cx := errgroup.WithContext(ctx)
+	for path, metaInfo := range ms.metadataInfos {
+		// It's safety to remove the item within a range loop
+		delete(ms.metadataInfos, path)
+		if metaInfo.MinTS >= from {
+			// That means all the datafiles wouldn't be removed,
+			// so that the metadata is skipped.
+			continue
+		}
+		worker.ApplyOnErrorGroup(eg, func() error {
+			if cx.Err() != nil {
+				return cx.Err()
+			}
 
 	if bst, ok := hst.ExternalStorage.(*storage.Batched); ok {
 		effs, err := storage.SaveJSONEffectsToTmp(bst.ReadOnlyEffects())

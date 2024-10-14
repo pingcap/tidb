@@ -12,6 +12,7 @@ go_library(
         "//pkg/domain/infosync",
         "//pkg/executor",
         "//pkg/infoschema",
+        "//pkg/infoschema/context",
         "//pkg/kv",
         "//pkg/meta",
         "//pkg/meta/model",
