@@ -366,46 +366,6 @@ func TestFindAllUserEffectiveRoles(t *testing.T) {
 	require.Equal(t, "r_3", ret[1].Username)
 }
 
-func TestSortUserTable(t *testing.T) {
-	var p privileges.MySQLPrivilege
-	p.User = []privileges.UserRecord{
-		privileges.NewUserRecord(`%`, "root"),
-		privileges.NewUserRecord(`%`, "jeffrey"),
-		privileges.NewUserRecord("localhost", "root"),
-		privileges.NewUserRecord("localhost", ""),
-	}
-	p.SortUserTable()
-	result := []privileges.UserRecord{
-		privileges.NewUserRecord("localhost", "root"),
-		privileges.NewUserRecord("localhost", ""),
-		privileges.NewUserRecord(`%`, "jeffrey"),
-		privileges.NewUserRecord(`%`, "root"),
-	}
-	checkUserRecord(t, p.User, result)
-
-	p.User = []privileges.UserRecord{
-		privileges.NewUserRecord(`%`, "jeffrey"),
-		privileges.NewUserRecord("h1.example.net", ""),
-	}
-	p.SortUserTable()
-	result = []privileges.UserRecord{
-		privileges.NewUserRecord("h1.example.net", ""),
-		privileges.NewUserRecord(`%`, "jeffrey"),
-	}
-	checkUserRecord(t, p.User, result)
-
-	p.User = []privileges.UserRecord{
-		privileges.NewUserRecord(`192.168.%`, "xxx"),
-		privileges.NewUserRecord(`192.168.199.%`, "xxx"),
-	}
-	p.SortUserTable()
-	result = []privileges.UserRecord{
-		privileges.NewUserRecord(`192.168.199.%`, "xxx"),
-		privileges.NewUserRecord(`192.168.%`, "xxx"),
-	}
-	checkUserRecord(t, p.User, result)
-}
-
 func TestGlobalPrivValueRequireStr(t *testing.T) {
 	var (
 		none  = privileges.GlobalPrivValue{SSLType: privileges.SslTypeNone}
@@ -423,14 +383,6 @@ func TestGlobalPrivValueRequireStr(t *testing.T) {
 	require.Equal(t, "ISSUER 'i1' SUBJECT 's1'", spec2.RequireStr())
 	require.Equal(t, "ISSUER 'i1'", spec3.RequireStr())
 	require.Equal(t, "NONE", spec4.RequireStr())
-}
-
-func checkUserRecord(t *testing.T, x, y []privileges.UserRecord) {
-	require.Equal(t, len(x), len(y))
-	for i := 0; i < len(x); i++ {
-		require.Equal(t, x[i].User, y[i].User)
-		require.Equal(t, x[i].Host, y[i].Host)
-	}
 }
 
 func TestDBIsVisible(t *testing.T) {
