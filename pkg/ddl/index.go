@@ -632,42 +632,15 @@ func moveAndUpdateHiddenColumnsToPublic(tblInfo *model.TableInfo, idxInfo *model
 	}
 }
 
-func decodeAddIndexArgs(job *model.Job) (
-	uniques []bool,
-	indexNames []pmodel.CIStr,
-	indexPartSpecifications [][]*ast.IndexPartSpecification,
-	indexOptions []*ast.IndexOption,
-	hiddenCols [][]*model.ColumnInfo,
-	err error,
-) {
-	var (
-		unique                 bool
-		indexName              pmodel.CIStr
-		indexPartSpecification []*ast.IndexPartSpecification
-		indexOption            *ast.IndexOption
-		hiddenCol              []*model.ColumnInfo
-	)
-	err = job.DecodeArgs(&unique, &indexName, &indexPartSpecification, &indexOption, &hiddenCol)
-	if err == nil {
-		return []bool{unique},
-			[]pmodel.CIStr{indexName},
-			[][]*ast.IndexPartSpecification{indexPartSpecification},
-			[]*ast.IndexOption{indexOption},
-			[][]*model.ColumnInfo{hiddenCol},
-			nil
-	}
-
-	err = job.DecodeArgs(&uniques, &indexNames, &indexPartSpecifications, &indexOptions, &hiddenCols)
-	return
-}
-
-func checkAndBuildIndexInfo(job *model.Job, tblInfo *model.TableInfo, indexName pmodel.CIStr, isPK, unique, isVector bool,
-	indexPartSpecifications []*ast.IndexPartSpecification, indexOption *ast.IndexOption, hiddenCols []*model.ColumnInfo) (*model.IndexInfo, error) {
+func checkAndBuildIndexInfo(
+	job *model.Job, tblInfo *model.TableInfo,
+	isVector bool, isPK bool, args *model.IndexArg,
+) (*model.IndexInfo, error) {
 	var err error
-	indexInfo := tblInfo.FindIndexByName(indexName.L)
+	indexInfo := tblInfo.FindIndexByName(args.IndexName.L)
 	if indexInfo != nil {
 		if indexInfo.State == model.StatePublic {
-			err = dbterror.ErrDupKeyName.GenWithStack("index already exist %s", indexName)
+			err = dbterror.ErrDupKeyName.GenWithStack("index already exist %s", args.IndexName)
 			if isPK {
 				err = infoschema.ErrMultiplePriKey
 			}
@@ -676,7 +649,7 @@ func checkAndBuildIndexInfo(job *model.Job, tblInfo *model.TableInfo, indexName 
 		return indexInfo, nil
 	}
 
-	for _, hiddenCol := range hiddenCols {
+	for _, hiddenCol := range args.HiddenCols {
 		columnInfo := model.FindColumnInfo(tblInfo.Columns, hiddenCol.Name.L)
 		if columnInfo != nil && columnInfo.State == model.StatePublic {
 			// We already have a column with the same column name.
@@ -685,8 +658,8 @@ func checkAndBuildIndexInfo(job *model.Job, tblInfo *model.TableInfo, indexName 
 		}
 	}
 
-	if len(hiddenCols) > 0 {
-		for _, hiddenCol := range hiddenCols {
+	if len(args.HiddenCols) > 0 {
+		for _, hiddenCol := range args.HiddenCols {
 			InitAndAddColumnToTable(tblInfo, hiddenCol)
 		}
 	}
@@ -696,19 +669,19 @@ func checkAndBuildIndexInfo(job *model.Job, tblInfo *model.TableInfo, indexName 
 	indexInfo, err = BuildIndexInfo(
 		nil,
 		tblInfo,
-		indexName,
+		args.IndexName,
 		isPK,
-		unique,
+		args.Unique,
 		isVector,
-		indexPartSpecifications,
-		indexOption,
+		args.IndexPartSpecifications,
+		args.IndexOption,
 		model.StateNone,
 	)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 	if isPK {
-		if _, err = CheckPKOnGeneratedColumn(tblInfo, indexPartSpecifications); err != nil {
+		if _, err = CheckPKOnGeneratedColumn(tblInfo, args.IndexPartSpecifications); err != nil {
 			return nil, err
 		}
 	}
@@ -747,27 +720,22 @@ func (w *worker) onCreateVectorIndex(jobCtx *jobContext, job *model.Job) (ver in
 		return ver, errors.Trace(err)
 	}
 
-	var (
-		indexName              pmodel.CIStr
-		indexOption            *ast.IndexOption
-		indexPartSpecification *ast.IndexPartSpecification
-		funcExpr               string
-	)
-	err = job.DecodeArgs(&indexName, &indexPartSpecification, &indexOption, &funcExpr)
+	args, err := model.GetModifyIndexArgs(job)
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
-	indexPartSpecification.Expr, err = generatedexpr.ParseExpression(funcExpr)
+	a := args.IndexArgs[0]
+	a.IndexPartSpecifications[0].Expr, err = generatedexpr.ParseExpression(a.FuncExpr)
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
 	defer func() {
-		indexPartSpecification.Expr = nil
+		a.IndexPartSpecifications[0].Expr = nil
 	}()
 
-	indexInfo, err := checkAndBuildIndexInfo(job, tblInfo, indexName, false, false, true, []*ast.IndexPartSpecification{indexPartSpecification}, indexOption, nil)
+	indexInfo, err := checkAndBuildIndexInfo(job, tblInfo, true, false, a)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
@@ -836,7 +804,14 @@ func (w *worker) onCreateVectorIndex(jobCtx *jobContext, job *model.Job) (ver in
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
-		job.Args = []any{indexInfo.ID, false /*if exists*/, getPartitionIDs(tblInfo)}
+
+		finishedArgs := &model.ModifyIndexArgs{
+			IndexArgs:    []*model.IndexArg{{IndexID: indexInfo.ID}},
+			PartitionIDs: getPartitionIDs(tblInfo),
+			OpType:       model.OpAddIndex,
+		}
+		job.FillFinishedArgs(finishedArgs)
+
 		// Finish this job.
 		job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
 		logutil.DDLLogger().Info("[ddl] run add vector index job done",
@@ -970,28 +945,15 @@ func (w *worker) onCreateIndex(jobCtx *jobContext, job *model.Job, isPK bool) (v
 		return ver, errors.Trace(dbterror.ErrOptOnCacheTable.GenWithStackByArgs("Create Index"))
 	}
 
-	uniques := make([]bool, 1)
-	indexNames := make([]pmodel.CIStr, 1)
-	indexPartSpecifications := make([][]*ast.IndexPartSpecification, 1)
-	indexOption := make([]*ast.IndexOption, 1)
-	var sqlMode mysql.SQLMode
-	var warnings []string
-	hiddenCols := make([][]*model.ColumnInfo, 1)
-
-	if isPK {
-		// Notice: sqlMode and warnings is used to support non-strict mode.
-		err = job.DecodeArgs(&uniques[0], &indexNames[0], &indexPartSpecifications[0], &indexOption[0], &sqlMode, &warnings)
-	} else {
-		uniques, indexNames, indexPartSpecifications, indexOption, hiddenCols, err = decodeAddIndexArgs(job)
-	}
+	args, err := model.GetModifyIndexArgs(job)
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
 
-	allIndexInfos := make([]*model.IndexInfo, 0, len(indexNames))
-	for i, indexName := range indexNames {
-		indexInfo, err := checkAndBuildIndexInfo(job, tblInfo, indexName, isPK, uniques[i], false, indexPartSpecifications[i], indexOption[i], hiddenCols[i])
+	allIndexInfos := make([]*model.IndexInfo, 0, len(args.IndexArgs))
+	for _, arg := range args.IndexArgs {
+		indexInfo, err := checkAndBuildIndexInfo(job, tblInfo, false, job.Type == model.ActionAddPrimaryKey, arg)
 		if err != nil {
 			job.State = model.JobStateCancelled
 			return ver, errors.Trace(err)
@@ -1109,15 +1071,19 @@ SwitchIndexState:
 			return ver, errors.Trace(err)
 		}
 
-		allIndexIDs := make([]int64, 0, len(allIndexInfos))
-		ifExists := make([]bool, 0, len(allIndexInfos))
-		isGlobal := make([]bool, 0, len(allIndexInfos))
-		for _, indexInfo := range allIndexInfos {
-			allIndexIDs = append(allIndexIDs, indexInfo.ID)
-			ifExists = append(ifExists, false)
-			isGlobal = append(isGlobal, indexInfo.Global)
+		a := &model.ModifyIndexArgs{
+			PartitionIDs: getPartitionIDs(tbl.Meta()),
+			OpType:       model.OpAddIndex,
 		}
-		job.Args = []any{allIndexIDs, ifExists, getPartitionIDs(tbl.Meta()), isGlobal}
+		for _, indexInfo := range allIndexInfos {
+			a.IndexArgs = append(a.IndexArgs, &model.IndexArg{
+				IndexID:  indexInfo.ID,
+				IfExist:  false,
+				IsGlobal: indexInfo.Global,
+			})
+		}
+		job.FillFinishedArgs(a)
+
 		// Finish this job.
 		job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
 		if !job.ReorgMeta.IsDistReorg && job.ReorgMeta.ReorgTp == model.ReorgTypeLitMerge {
@@ -1438,14 +1404,14 @@ func onDropIndex(jobCtx *jobContext, job *model.Job) (ver int64, _ error) {
 		}
 	case model.StateDeleteReorganization:
 		// reorganization -> absent
-		idxIDs := make([]int64, 0, len(allIndexInfos))
+		indexIDs := make([]int64, 0, len(allIndexInfos))
 		for _, indexInfo := range allIndexInfos {
 			indexInfo.State = model.StateNone
 			// Set column index flag.
 			DropIndexColumnFlag(tblInfo, indexInfo)
 			RemoveDependentHiddenColumns(tblInfo, indexInfo)
 			removeIndexInfo(tblInfo, indexInfo)
-			idxIDs = append(idxIDs, indexInfo.ID)
+			indexIDs = append(indexIDs, indexInfo.ID)
 		}
 
 		failpoint.Inject("mockExceedErrorLimit", func(val failpoint.Value) {
@@ -1462,20 +1428,43 @@ func onDropIndex(jobCtx *jobContext, job *model.Job) (ver int64, _ error) {
 
 		// Finish this job.
 		if job.IsRollingback() {
+			dropArgs, err := model.GetFinishedModifyIndexArgs(job)
 			job.FinishTableJob(model.JobStateRollbackDone, model.StateNone, ver, tblInfo)
-			job.Args[0] = idxIDs
+			if err != nil {
+				return ver, errors.Trace(err)
+			}
+
+			// Convert drop index args to finished add index args again to finish add index job.
+			// Only rolled back add index jobs will get here, since drop index jobs can only be cancelled, not rolled back.
+			addIndexArgs := &model.ModifyIndexArgs{
+				PartitionIDs: dropArgs.PartitionIDs,
+				OpType:       model.OpAddIndex,
+			}
+			for i, indexID := range indexIDs {
+				addIndexArgs.IndexArgs = append(addIndexArgs.IndexArgs,
+					&model.IndexArg{
+						IndexID: indexID,
+						IfExist: dropArgs.IndexArgs[i].IfExist,
+					})
+			}
+			job.FillFinishedArgs(addIndexArgs)
 		} else {
 			// the partition ids were append by convertAddIdxJob2RollbackJob, it is weird, but for the compatibility,
 			// we should keep appending the partitions in the convertAddIdxJob2RollbackJob.
 			job.FinishTableJob(model.JobStateDone, model.StateNone, ver, tblInfo)
-			isVector := allIndexInfos[0].VectorInfo != nil
 			// Global index key has t{tableID}_ prefix.
 			// Assign partitionIDs empty to guarantee correct prefix in insertJobIntoDeleteRangeTable.
-			if allIndexInfos[0].Global {
-				job.Args = append(job.Args, idxIDs[0], []int64{}, isVector)
-			} else {
-				job.Args = append(job.Args, idxIDs[0], getPartitionIDs(tblInfo), isVector)
+			dropArgs, err := model.GetDropIndexArgs(job)
+			dropArgs.OpType = model.OpDropIndex
+			if err != nil {
+				return ver, errors.Trace(err)
 			}
+			dropArgs.IndexArgs[0].IndexID = indexIDs[0]
+			dropArgs.IndexArgs[0].IsVector = allIndexInfos[0].VectorInfo != nil
+			if !allIndexInfos[0].Global {
+				dropArgs.PartitionIDs = getPartitionIDs(tblInfo)
+			}
+			job.FillFinishedArgs(dropArgs)
 		}
 	default:
 		return ver, errors.Trace(dbterror.ErrInvalidDDLState.GenWithStackByArgs("index", allIndexInfos[0].State))
@@ -1527,21 +1516,18 @@ func checkDropIndex(infoCache *infoschema.InfoCache, t *meta.Mutator, job *model
 		return nil, nil, false, errors.Trace(err)
 	}
 
-	indexNames := make([]pmodel.CIStr, 1)
-	ifExists := make([]bool, 1)
-	if err = job.DecodeArgs(&indexNames[0], &ifExists[0]); err != nil {
-		if err = job.DecodeArgs(&indexNames, &ifExists); err != nil {
-			job.State = model.JobStateCancelled
-			return nil, nil, false, errors.Trace(err)
-		}
+	args, err := model.GetDropIndexArgs(job)
+	if err != nil {
+		job.State = model.JobStateCancelled
+		return nil, nil, false, errors.Trace(err)
 	}
 
-	indexInfos := make([]*model.IndexInfo, 0, len(indexNames))
-	for i, idxName := range indexNames {
-		indexInfo := tblInfo.FindIndexByName(idxName.L)
+	indexInfos := make([]*model.IndexInfo, 0, len(args.IndexArgs))
+	for _, idxArg := range args.IndexArgs {
+		indexInfo := tblInfo.FindIndexByName(idxArg.IndexName.L)
 		if indexInfo == nil {
 			job.State = model.JobStateCancelled
-			return nil, nil, ifExists[i], dbterror.ErrCantDropFieldOrKey.GenWithStack("index %s doesn't exist", idxName)
+			return nil, nil, idxArg.IfExist, dbterror.ErrCantDropFieldOrKey.GenWithStack("index %s doesn't exist", idxArg.IndexName)
 		}
 
 		// Check that drop primary index will not cause invisible implicit primary index.
@@ -1591,10 +1577,12 @@ func checkRenameIndex(t *meta.Mutator, job *model.Job) (*model.TableInfo, pmodel
 		return nil, from, to, errors.Trace(err)
 	}
 
-	if err := job.DecodeArgs(&from, &to); err != nil {
+	args, err := model.GetModifyIndexArgs(job)
+	if err != nil {
 		job.State = model.JobStateCancelled
 		return nil, from, to, errors.Trace(err)
 	}
+	from, to = args.GetRenameIndexes()
 
 	// Double check. See function `RenameIndex` in executor.go
 	duplicate, err := ValidateRenameIndex(from, to, tblInfo)
