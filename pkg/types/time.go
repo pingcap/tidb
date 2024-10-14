@@ -2669,7 +2669,7 @@ func ParseTimeFromFloat64(ctx Context, f float64) (Time, error) {
 	}
 	if t.Type() == mysql.TypeDatetime {
 		// US part is only kept when the integral part is recognized as datetime.
-		fracPart := uint32((f - float64(intPart)) * 1000000.0)
+		fracPart := uint32(math.Round((f - float64(intPart)) * 1000000.0))
 		ct := t.CoreTime()
 		ct.setMicrosecond(fracPart)
 		t.SetCoreTime(ct)
