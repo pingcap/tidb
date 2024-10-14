@@ -2424,6 +2424,7 @@ func (w *worker) onTruncateTablePartition(jobCtx *jobContext, job *model.Job) (i
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
+	jobCtx.jobArgs = args
 	oldIDs, newIDs := args.OldPartitionIDs, args.NewPartitionIDs
 	if len(oldIDs) != len(newIDs) {
 		job.State = model.JobStateCancelled
@@ -2471,7 +2472,7 @@ func (w *worker) onTruncateTablePartition(jobCtx *jobContext, job *model.Job) (i
 
 		preSplitAndScatter(w.sess.Context, jobCtx.store, tblInfo, newPartitions)
 
-		job.CtxVars = []any{oldIDs, newIDs}
+		args.ShouldUpdateAffectedPartitions = true
 		ver, err = updateVersionAndTableInfo(jobCtx, job, tblInfo, true)
 		if err != nil {
 			return ver, errors.Trace(err)
@@ -2613,7 +2614,7 @@ func (w *worker) onTruncateTablePartition(jobCtx *jobContext, job *model.Job) (i
 		preSplitAndScatter(w.sess.Context, jobCtx.store, tblInfo, newPartitions)
 
 		// used by ApplyDiff in updateSchemaVersion
-		job.CtxVars = []any{oldIDs, newIDs}
+		args.ShouldUpdateAffectedPartitions = true
 		ver, err = updateVersionAndTableInfo(jobCtx, job, tblInfo, true)
 		if err != nil {
 			return ver, errors.Trace(err)

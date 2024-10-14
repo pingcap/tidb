@@ -159,12 +159,11 @@ func SetSchemaDiffForExchangeTablePartition(diff *model.SchemaDiff, job *model.J
 }
 
 // SetSchemaDiffForTruncateTablePartition set SchemaDiff for ActionTruncateTablePartition.
-func SetSchemaDiffForTruncateTablePartition(diff *model.SchemaDiff, job *model.Job) {
+func SetSchemaDiffForTruncateTablePartition(diff *model.SchemaDiff, job *model.Job, jobCtx *jobContext) {
 	diff.TableID = job.TableID
-	if len(job.CtxVars) > 0 {
-		oldIDs := job.CtxVars[0].([]int64)
-		newIDs := job.CtxVars[1].([]int64)
-		diff.AffectedOpts = buildPlacementAffects(oldIDs, newIDs)
+	args := jobCtx.jobArgs.(*model.TruncateTableArgs)
+	if args.ShouldUpdateAffectedPartitions {
+		diff.AffectedOpts = buildPlacementAffects(args.OldPartitionIDs, args.NewPartitionIDs)
 	}
 }
 
@@ -329,7 +328,7 @@ func updateSchemaVersion(jobCtx *jobContext, job *model.Job, multiInfos ...schem
 	case model.ActionExchangeTablePartition:
 		err = SetSchemaDiffForExchangeTablePartition(diff, job, multiInfos...)
 	case model.ActionTruncateTablePartition:
-		SetSchemaDiffForTruncateTablePartition(diff, job)
+		SetSchemaDiffForTruncateTablePartition(diff, job, jobCtx)
 	case model.ActionDropTablePartition, model.ActionRecoverTable, model.ActionDropTable:
 		SetSchemaDiffForDropTable(diff, job)
 	case model.ActionReorganizePartition:

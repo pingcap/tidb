@@ -343,8 +343,9 @@ type TruncateTableArgs struct {
 	OldPartitionIDs []int64 `json:"old_partition_ids,omitempty"`
 
 	// context vars
-	NewPartIDsWithPolicy []int64 `json:"-"`
-	OldPartIDsWithPolicy []int64 `json:"-"`
+	NewPartIDsWithPolicy           []int64 `json:"-"`
+	OldPartIDsWithPolicy           []int64 `json:"-"`
+	ShouldUpdateAffectedPartitions bool    `json:"-"`
 }
 
 func (a *TruncateTableArgs) getArgsV1(job *Job) []any {
