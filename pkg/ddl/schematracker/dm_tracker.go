@@ -712,13 +712,7 @@ func (d *SchemaTracker) handleModifyColumn(
 		return errors.Trace(err)
 	}
 
-	if _, err = jobW.Encode(true); err != nil {
-		return errors.Trace(err)
-	}
-	args, err := model.GetModifyColumnArgs(jobW.Job)
-	if err != nil {
-		return errors.Trace(err)
-	}
+	args := jobW.JobArgs.(*model.ModifyColumnArgs)
 	newColInfo := args.Column
 
 	tblInfo.AutoRandomBits = args.NewShardBits

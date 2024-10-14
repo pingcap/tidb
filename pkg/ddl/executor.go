@@ -67,7 +67,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/domainutil"
 	"github.com/pingcap/tidb/pkg/util/generic"
-	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/mathutil"
 	"github.com/pingcap/tidb/pkg/util/stringutil"
 	"github.com/tikv/client-go/v2/oracle"
@@ -1987,23 +1986,10 @@ func (e *executor) multiSchemaChange(ctx sessionctx.Context, ti ast.Ident, info 
 		return errors.Trace(err)
 	}
 
-	logFn := logutil.DDLLogger().Warn
-	if intest.InTest {
-		logFn = logutil.DDLLogger().Fatal
-	}
-
-	// to do:(joccau)
-	// we need refactor this part to support V2 job version after refactor all of ddl types.
 	var involvingSchemaInfo []model.InvolvingSchemaInfo
 	for _, j := range subJobs {
 		if j.Type == model.ActionAddForeignKey {
-			ref, ok := j.Args[0].(*model.FKInfo)
-			if !ok {
-				logFn("unexpected type of foreign key info",
-					zap.Any("args[0]", j.Args[0]),
-					zap.String("type", fmt.Sprintf("%T", j.Args[0])))
-				continue
-			}
+			ref := j.JobArgs.(*model.AddForeignKeyArgs).FkInfo
 			involvingSchemaInfo = append(involvingSchemaInfo, model.InvolvingSchemaInfo{
 				Database: ref.RefSchema.L,
 				Table:    ref.RefTable.L,
