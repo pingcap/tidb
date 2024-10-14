@@ -2559,7 +2559,8 @@ func getNextPartitionInfo(reorg *reorgInfo, t table.PartitionedTable, currPhysic
 			// Simply AddIndex, without any partitions added or dropped!
 			if reorg.mergingTmpIdx && currPhysicalTableID == t.Meta().ID {
 				// If the current Physical id is the table id,
-				// the next Physical id should be the first partition id.
+				// 1. All indexes are global index, the next Physical id should be the first partition id.
+				// 2. Not all indexes are global index, return 0.
 				allGlobal := true
 				for _, element := range reorg.elements {
 					if !bytes.Equal(element.TypeKey, meta.IndexElementKey) {
