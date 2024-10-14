@@ -17,6 +17,7 @@ package ddl
 import (
 	"context"
 	"encoding/json"
+	"strings"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/ddl/ingest"
@@ -224,10 +225,13 @@ func (*backfillDistExecutor) IsIdempotent(*proto.Subtask) bool {
 }
 
 func isRetryableError(err error) bool {
-	originErr := errors.Cause(err)
-	if _, ok := originErr.(dbterror.ReorgRetryableError); ok {
-		return true
+	errMsg := err.Error()
+	for _, m := range dbterror.ReorgRetryableErrMsgs {
+		if strings.Contains(errMsg, m) {
+			return true
+		}
 	}
+	originErr := errors.Cause(err)
 	if tErr, ok := originErr.(*terror.Error); ok {
 		sqlErr := terror.ToSQLError(tErr)
 		_, ok := dbterror.ReorgRetryableErrCodes[sqlErr.Code]
