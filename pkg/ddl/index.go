@@ -2206,11 +2206,19 @@ func (w *worker) addTableIndex(t table.Table, reorgInfo *reorgInfo) error {
 
 	var err error
 	if tbl, ok := t.(table.PartitionedTable); ok {
-		var finish bool
+		var finish, ok bool
 		for !finish {
-			p := tbl.GetPartition(reorgInfo.PhysicalTableID)
-			if p == nil {
-				return dbterror.ErrCancelledDDLJob.GenWithStack("Can not find partition id %d for table %d", reorgInfo.PhysicalTableID, t.Meta().ID)
+			var p table.PhysicalTable
+			if tbl.Meta().ID == reorgInfo.PhysicalTableID {
+				p, ok = t.(table.PhysicalTable) // global index
+				if !ok {
+					return fmt.Errorf("unexpected error, can't cast %T to table.PhysicalTable", t)
+				}
+			} else {
+				p = tbl.GetPartition(reorgInfo.PhysicalTableID)
+				if p == nil {
+					return dbterror.ErrCancelledDDLJob.GenWithStack("Can not find partition id %d for table %d", reorgInfo.PhysicalTableID, t.Meta().ID)
+				}
 			}
 			err = w.addPhysicalTableIndex(p, reorgInfo)
 			if err != nil {
@@ -2537,7 +2545,30 @@ func getNextPartitionInfo(reorg *reorgInfo, t table.PartitionedTable, currPhysic
 		if len(pi.AddingDefinitions) == 0 {
 			// case 1
 			// Simply AddIndex, without any partitions added or dropped!
-			pid, err = findNextPartitionID(currPhysicalTableID, pi.Definitions)
+			if reorg.mergingTmpIdx && currPhysicalTableID == t.Meta().ID {
+				// If the current Physical id is the table id,
+				// 1. All indexes are global index, the next Physical id should be the first partition id.
+				// 2. Not all indexes are global index, return 0.
+				allGlobal := true
+				for _, element := range reorg.elements {
+					if !bytes.Equal(element.TypeKey, meta.IndexElementKey) {
+						allGlobal = false
+						break
+					}
+					idxInfo := model.FindIndexInfoByID(t.Meta().Indices, element.ID)
+					if !idxInfo.Global {
+						allGlobal = false
+						break
+					}
+				}
+				if allGlobal {
+					pid = 0
+				} else {
+					pid = pi.Definitions[0].ID
+				}
+			} else {
+				pid, err = findNextPartitionID(currPhysicalTableID, pi.Definitions)
+			}
 		} else {
 			// case 3 (or if not found AddingDefinitions; 4)
 			// check if recreating Global Index (during Reorg Partition)
