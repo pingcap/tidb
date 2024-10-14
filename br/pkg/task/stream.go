@@ -1460,6 +1460,7 @@ func restoreStream(
 
 	compactionIter := client.LogFileManager.OpenCompactionIter(ctx, migs)
 
+	// TODO fix the count
 	// sstFileCount, _, err := client.CollectCompactedSsts(ctx, rewriteRules, compactionIter)
 	// if err != nil {
 	// 	return errors.Trace(err)
