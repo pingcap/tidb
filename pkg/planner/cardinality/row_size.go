@@ -54,6 +54,7 @@ func GetTableAvgRowSize(ctx planctx.PlanContext, coll *statistics.HistColl, cols
 			size += 8 /* row_id length */
 		}
 	}
+	// Avoid errors related to size less than zero
 	size = max(0, size)
 	return
 }
