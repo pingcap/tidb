@@ -1268,6 +1268,9 @@ func errorIsRetryable(err error, job *model.Job) bool {
 		return false
 	}
 	originErr := errors.Cause(err)
+	if _, ok := originErr.(dbterror.ReorgRetryableError); ok {
+		return true
+	}
 	if tErr, ok := originErr.(*terror.Error); ok {
 		sqlErr := terror.ToSQLError(tErr)
 		_, ok := dbterror.ReorgRetryableErrCodes[sqlErr.Code]
