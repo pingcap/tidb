@@ -341,7 +341,7 @@ func (a *ExecStmt) PointGet(ctx context.Context) (*recordSet, error) {
 	if raw, ok := sctx.(processinfoSetter); ok {
 		pi = raw
 		sql := a.OriginText()
-		maxExecutionTime := getMaxExecutionTime(sctx)
+		maxExecutionTime := sctx.GetSessionVars().GetMaxExecutionTime()
 		// Update processinfo, ShowProcess() will use it.
 		pi.SetProcessInfo(sql, time.Now(), cmd, maxExecutionTime)
 		if sctx.GetSessionVars().StmtCtx.StmtType == "" {
@@ -538,6 +538,7 @@ func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 	var pi processinfoSetter
 	if raw, ok := sctx.(processinfoSetter); ok {
 		pi = raw
+<<<<<<< HEAD:executor/adapter.go
 		sql := a.OriginText()
 		if simple, ok := a.Plan.(*plannercore.Simple); ok && simple.Statement != nil {
 			if ss, ok := simple.Statement.(ast.SensitiveStmtNode); ok {
@@ -546,6 +547,10 @@ func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 			}
 		}
 		maxExecutionTime := getMaxExecutionTime(sctx)
+=======
+		sql := a.getSQLForProcessInfo()
+		maxExecutionTime := sctx.GetSessionVars().GetMaxExecutionTime()
+>>>>>>> 13bff87d08c (variable: unifiy MaxExecuteTime usage and fix some problem (#50915)):pkg/executor/adapter.go
 		// Update processinfo, ShowProcess() will use it.
 		if a.Ctx.GetSessionVars().StmtCtx.StmtType == "" {
 			a.Ctx.GetSessionVars().StmtCtx.StmtType = ast.GetStmtLabel(a.StmtNode)
@@ -802,14 +807,6 @@ func isNoResultPlan(p plannercore.Plan) bool {
 		}
 	}
 	return false
-}
-
-// getMaxExecutionTime get the max execution timeout value.
-func getMaxExecutionTime(sctx sessionctx.Context) uint64 {
-	if sctx.GetSessionVars().StmtCtx.HasMaxExecutionTime {
-		return sctx.GetSessionVars().StmtCtx.MaxExecutionTime
-	}
-	return sctx.GetSessionVars().MaxExecutionTime
 }
 
 type chunkRowRecordSet struct {
