@@ -23,13 +23,13 @@ import (
 	"testing"
 	"time"
 
-	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/ddl/notifier"
 	sess "github.com/pingcap/tidb/pkg/ddl/session"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/stretchr/testify/require"
 )
 
@@ -281,9 +281,9 @@ func TestPublishEventError(t *testing.T) {
 	tk.MustExec("DROP TABLE IF EXISTS ddl_notifier")
 	tk.MustExec(tableStructure)
 	notifier.DefaultStore = notifier.OpenTableStore("test", "ddl_notifier")
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/asyncNotifyEventError", "return()"))
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/asyncNotifyEventError", "return()")
 	defer func() {
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/asyncNotifyEventError"))
+		testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/asyncNotifyEventError")
 	}()
 
 	tk.MustExec("drop table if exists t")
