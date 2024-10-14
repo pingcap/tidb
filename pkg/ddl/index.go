@@ -594,7 +594,7 @@ func checkPrimaryKeyNotNull(jobCtx *jobContext, w *worker, job *model.Job,
 	}
 
 	err = modifyColsFromNull2NotNull(
-		jobCtx.ctx,
+		jobCtx.stepCtx,
 		w,
 		dbInfo,
 		tblInfo,
@@ -792,7 +792,7 @@ func (w *worker) onCreateVectorIndex(jobCtx *jobContext, job *model.Job) (ver in
 			if err != nil {
 				return ver, errors.Trace(err)
 			}
-			err = infosync.SyncTiFlashTableSchema(jobCtx.ctx, tbl.Meta().ID)
+			err = infosync.SyncTiFlashTableSchema(jobCtx.stepCtx, tbl.Meta().ID)
 			if err != nil {
 				return ver, errors.Trace(err)
 			}
@@ -910,7 +910,7 @@ func (w *worker) checkVectorIndexProcessOnce(jobCtx *jobContext, tbl table.Table
 
 	sql := fmt.Sprintf("select rows_stable_not_indexed, rows_stable_indexed, error_message from information_schema.tiflash_indexes where table_id = %d and index_id = %d;",
 		tbl.Meta().ID, indexID)
-	rows, err := w.sess.Execute(jobCtx.ctx, sql, "add_vector_index_check_result")
+	rows, err := w.sess.Execute(jobCtx.stepCtx, sql, "add_vector_index_check_result")
 	if err != nil || len(rows) == 0 {
 		return false, 0, 0, errors.Trace(err)
 	}
@@ -1335,7 +1335,7 @@ func runReorgJobAndHandleErr(
 			func() {
 				addIndexErr = dbterror.ErrCancelledDDLJob.GenWithStack("add table `%v` index `%v` panic", tbl.Meta().Name, allIndexInfos[0].Name)
 			}, false)
-		return w.addTableIndex(jobCtx.ctx, tbl, reorgInfo)
+		return w.addTableIndex(jobCtx.stepCtx, tbl, reorgInfo)
 	})
 	if err != nil {
 		if dbterror.ErrPausedDDLJob.Equal(err) {

@@ -221,7 +221,7 @@ func (w *worker) onRecoverTable(jobCtx *jobContext, job *model.Job) (ver int64, 
 			job.State = model.JobStateCancelled
 			return ver, errors.Trace(err)
 		}
-		ver, err = w.recoverTable(jobCtx.ctx, metaMut, job, recoverInfo)
+		ver, err = w.recoverTable(jobCtx.stepCtx, metaMut, job, recoverInfo)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
@@ -1394,10 +1394,10 @@ func onAlterTableAttributes(jobCtx *jobContext, job *model.Job) (ver int64, err 
 
 	if len(args.LabelRule.Labels) == 0 {
 		patch := label.NewRulePatch([]*label.Rule{}, []string{args.LabelRule.ID})
-		err = infosync.UpdateLabelRules(jobCtx.ctx, patch)
+		err = infosync.UpdateLabelRules(jobCtx.stepCtx, patch)
 	} else {
 		labelRule := label.Rule(*args.LabelRule)
-		err = infosync.PutLabelRule(jobCtx.ctx, &labelRule)
+		err = infosync.PutLabelRule(jobCtx.stepCtx, &labelRule)
 	}
 	if err != nil {
 		job.State = model.JobStateCancelled

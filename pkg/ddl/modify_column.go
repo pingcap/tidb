@@ -310,7 +310,7 @@ func (w *worker) doModifyColumn(
 
 		// Introduce the `mysql.PreventNullInsertFlag` flag to prevent users from inserting or updating null values.
 		err := modifyColsFromNull2NotNull(
-			jobCtx.ctx,
+			jobCtx.stepCtx,
 			w,
 			dbInfo,
 			tblInfo,
@@ -463,7 +463,7 @@ func (w *worker) doModifyColumnTypeWithData(
 		if !mysql.HasNotNullFlag(oldCol.GetFlag()) && mysql.HasNotNullFlag(changingCol.GetFlag()) {
 			// Introduce the `mysql.PreventNullInsertFlag` flag to prevent users from inserting or updating null values.
 			err := modifyColsFromNull2NotNull(
-				jobCtx.ctx,
+				jobCtx.stepCtx,
 				w,
 				dbInfo,
 				tblInfo,
@@ -512,7 +512,7 @@ func (w *worker) doModifyColumnTypeWithData(
 		if !mysql.HasNotNullFlag(oldCol.GetFlag()) && mysql.HasNotNullFlag(changingCol.GetFlag()) {
 			// Introduce the `mysql.PreventNullInsertFlag` flag to prevent users from inserting or updating null values.
 			err := modifyColsFromNull2NotNull(
-				jobCtx.ctx,
+				jobCtx.stepCtx,
 				w,
 				dbInfo,
 				tblInfo,
@@ -638,7 +638,7 @@ func doReorgWorkForModifyColumn(w *worker, jobCtx *jobContext, job *model.Job, t
 		// Use old column name to generate less confusing error messages.
 		changingColCpy := changingCol.Clone()
 		changingColCpy.Name = oldCol.Name
-		return w.updateCurrentElement(jobCtx.ctx, tbl, reorgInfo)
+		return w.updateCurrentElement(jobCtx.stepCtx, tbl, reorgInfo)
 	})
 	if err != nil {
 		if dbterror.ErrPausedDDLJob.Equal(err) {

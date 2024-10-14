@@ -471,47 +471,6 @@ func (s *jobScheduler) deliveryJob(wk *worker, pool *workerPool, job *model.Job)
 	s.runningJobs.addRunning(jobID, involvedSchemaInfos)
 	metrics.DDLRunningJobCount.WithLabelValues(pool.tp().String()).Inc()
 	jobCtx := s.getJobRunCtx(job.ID, job.TraceInfo)
-	// TODO(lance6716): how to make sure no context leak?
-	done := make(chan struct{})
-
-	s.wg.Run(func() {
-		ticker := time.NewTicker(2 * time.Second)
-		defer ticker.Stop()
-		for {
-			select {
-			case <-done:
-				return
-			case <-ticker.C:
-				latestJob, err := s.sysTblMgr.GetJobByID(s.schCtx, jobID)
-				if err == systable.ErrNotFound {
-					logutil.DDLLogger().Info("job not found, might already finished",
-						zap.Int64("job_id", jobID))
-					return
-				}
-				if err != nil {
-					logutil.DDLLogger().Error("get job failed, will retry later",
-						zap.Int64("job_id", jobID), zap.Error(err))
-					continue
-				}
-				switch latestJob.State {
-				case model.JobStateCancelling, model.JobStateCancelled:
-					logutil.DDLLogger().Info("job is cancelled",
-						zap.Int64("job_id", jobID),
-						zap.Stringer("state", latestJob.State))
-					jobCtx.cancel(dbterror.ErrCancelledDDLJob)
-					return
-				case model.JobStatePausing, model.JobStatePaused:
-					logutil.DDLLogger().Info("job is paused",
-						zap.Int64("job_id", jobID),
-						zap.Stringer("state", latestJob.State))
-					jobCtx.cancel(dbterror.ErrPausedDDLJob)
-					return
-				case model.JobStateDone, model.JobStateSynced:
-					return
-				}
-			}
-		}
-	})
 
 	s.wg.Run(func() {
 		defer func() {
@@ -528,7 +487,6 @@ func (s *jobScheduler) deliveryJob(wk *worker, pool *workerPool, job *model.Job)
 			asyncNotify(s.ddlJobNotifyCh)
 			metrics.DDLRunningJobCount.WithLabelValues(pool.tp().String()).Dec()
 			pool.put(wk)
-			close(done)
 		}()
 		for {
 			err := s.transitOneJobStepAndWaitSync(wk, jobCtx, job)
@@ -568,8 +526,8 @@ func (s *jobScheduler) deliveryJob(wk *worker, pool *workerPool, job *model.Job)
 
 func (s *jobScheduler) getJobRunCtx(jobID int64, traceInfo *model.TraceInfo) *jobContext {
 	ch, _ := s.ddlJobDoneChMap.Load(jobID)
-	jobCtx, cancel := context.WithCancelCause(s.schCtx)
 	return &jobContext{
+		ctx:                  s.schCtx,
 		unSyncedJobTracker:   s.unSyncedTracker,
 		schemaVersionManager: s.schemaVerMgr,
 		infoCache:            s.infoCache,
@@ -577,8 +535,6 @@ func (s *jobScheduler) getJobRunCtx(jobID int64, traceInfo *model.TraceInfo) *jo
 		store:                s.store,
 		schemaVerSyncer:      s.schemaVerSyncer,
 
-		ctx:      jobCtx,
-		cancel:   cancel,
 		notifyCh: ch,
 		logger: tidblogutil.LoggerWithTraceInfo(
 			logutil.DDLLogger().With(zap.Int64("jobID", jobID)),
@@ -622,7 +578,7 @@ func (s *jobScheduler) transitOneJobStepAndWaitSync(wk *worker, jobCtx *jobConte
 		jobCtx.setAlreadyRunOnce(job.ID)
 	}
 
-	schemaVer, err := wk.transitOneJobStep(jobCtx, job)
+	schemaVer, err := wk.transitOneJobStep(jobCtx, job, s.sysTblMgr)
 	if err != nil {
 		jobCtx.logger.Info("handle ddl job failed", zap.Error(err), zap.Stringer("job", job))
 		return err

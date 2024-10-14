@@ -20,7 +20,6 @@ import (
 	"math/rand"
 	"os"
 	"strings"
-	"sync"
 	"sync/atomic"
 	"time"
 
@@ -30,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl/logutil"
 	"github.com/pingcap/tidb/pkg/ddl/schemaver"
 	sess "github.com/pingcap/tidb/pkg/ddl/session"
+	"github.com/pingcap/tidb/pkg/ddl/systable"
 	"github.com/pingcap/tidb/pkg/ddl/util"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -79,6 +79,9 @@ type jobContext struct {
 
 	*unSyncedJobTracker
 	*schemaVersionManager
+	// ctx is the context of job scheduler. When worker is running the job, it should
+	// use stepCtx instead.
+	ctx             context.Context
 	infoCache       *infoschema.InfoCache
 	autoidCli       *autoid.ClientDiscover
 	store           kv.Storage
@@ -86,14 +89,12 @@ type jobContext struct {
 
 	// per job fields, they are not changed in the life cycle of this context.
 
-	// ctx becomes invalid when the job is cancelled or paused.
-	ctx      context.Context
-	cancel   context.CancelCauseFunc
 	notifyCh chan struct{}
 	logger   *zap.Logger
 
 	// per job step fields, they will be changed on each call of transitOneJobStep.
 
+	stepCtx context.Context
 	metaMut *meta.Mutator
 	// decoded JobArgs, we store it here to avoid decoding it multiple times and
 	// pass some runtime info specific to some job type.
@@ -137,7 +138,7 @@ type worker struct {
 	// workCtx is valid only when this node is DDL owner. *ddlCtx already have
 	// context named as "ctx", so we use "workCtx" here to avoid confusion.
 	workCtx context.Context
-	wg      sync.WaitGroup
+	wg      tidbutil.WaitGroupWrapper
 
 	sessPool        *sess.Pool    // sessPool is used to new sessions to execute SQL in ddl package.
 	sess            *sess.Session // sess is used and only used in running DDL job.
@@ -524,7 +525,11 @@ func (w *worker) prepareTxn(job *model.Job) (kv.Transaction, error) {
 //
 // The first return value is the schema version after running the job. If it's
 // non-zero, caller should wait for other nodes to catch up.
-func (w *worker) transitOneJobStep(jobCtx *jobContext, job *model.Job) (int64, error) {
+func (w *worker) transitOneJobStep(
+	jobCtx *jobContext,
+	job *model.Job,
+	sysTblMgr systable.Manager,
+) (int64, error) {
 	var (
 		err error
 	)
@@ -560,7 +565,7 @@ func (w *worker) transitOneJobStep(jobCtx *jobContext, job *model.Job) (int64, e
 
 	// If running job meets error, we will save this error in job Error and retry
 	// later if the job is not cancelled.
-	schemaVer, updateRawArgs, runJobErr := w.runOneJobStep(jobCtx, job)
+	schemaVer, updateRawArgs, runJobErr := w.runOneJobStep(jobCtx, job, sysTblMgr)
 
 	failpoint.InjectCall("onJobRunAfter", job)
 
@@ -738,8 +743,12 @@ func (*worker) processJobPausingRequest(jobCtx *jobContext, job *model.Job) (isR
 }
 
 // runOneJobStep runs a DDL job *step*. It returns the current schema version in
-// this transaction, if the given job.Args has changed, and the error. The *step*
-// is defined as the following reasons:
+// this transaction, if the given job.Args has changed, and the error. It will be
+// called in two cases: Normally, it will be called by transitOneJobStep and
+// `sysTblMgr` is not nil. Additionally, for multi-schema change DDL, each
+// sub-job will call this function in onMultiSchemaChange with nil `sysTblMgr`.
+//
+// The *step* is defined as the following reasons:
 //
 // - TiDB uses "Asynchronous Schema Change in F1", one job may have multiple
 // *steps* each for a schema state change such as 'delete only' -> 'write only'.
@@ -759,6 +768,7 @@ func (*worker) processJobPausingRequest(jobCtx *jobContext, job *model.Job) (isR
 func (w *worker) runOneJobStep(
 	jobCtx *jobContext,
 	job *model.Job,
+	sysTblMgr systable.Manager,
 ) (ver int64, updateRawArgs bool, err error) {
 	defer tidbutil.Recover(metrics.LabelDDLWorker, fmt.Sprintf("%s runOneJobStep", w),
 		func() {
@@ -793,9 +803,69 @@ func (w *worker) runOneJobStep(
 		return ver, false, err
 	}
 
+	// when sysTblMgr is nil, clean up the job step context just for clearness.
+	// Otherwise, we are in multi-schema change DDL and this is not the outermost
+	// runOneJobStep, we should keep the job step context.
+	if sysTblMgr != nil {
+		jobCtx.stepCtx = nil
+	}
+
 	// It would be better to do the positive check, but no idea to list all valid states here now.
-	if !job.IsRollingback() {
+	if job.IsRollingback() {
+		// when rolling back, we use worker context to process.
+		jobCtx.stepCtx = w.workCtx
+	} else {
 		job.State = model.JobStateRunning
+
+		if sysTblMgr != nil {
+			stopCheckingJobCancelled := make(chan struct{})
+			defer close(stopCheckingJobCancelled)
+			
+			var cancelStep context.CancelCauseFunc
+			jobCtx.stepCtx, cancelStep = context.WithCancelCause(jobCtx.ctx)
+			defer cancelStep(context.Canceled)
+			w.wg.Run(func() {
+				ticker := time.NewTicker(2 * time.Second)
+				defer ticker.Stop()
+
+				for {
+					select {
+					case <-stopCheckingJobCancelled:
+						return
+					case <-ticker.C:
+						latestJob, err := sysTblMgr.GetJobByID(w.workCtx, job.ID)
+						if err == systable.ErrNotFound {
+							logutil.DDLLogger().Info(
+								"job not found, might already finished",
+								zap.Int64("job_id", job.ID))
+							return
+						}
+						if err != nil {
+							logutil.DDLLogger().Error(
+								"get job failed, will retry later",
+								zap.Int64("job_id", job.ID), zap.Error(err))
+							continue
+						}
+						switch latestJob.State {
+						case model.JobStateCancelling, model.JobStateCancelled:
+							logutil.DDLLogger().Info("job is cancelled",
+								zap.Int64("job_id", job.ID),
+								zap.Stringer("state", latestJob.State))
+							cancelStep(dbterror.ErrCancelledDDLJob)
+							return
+						case model.JobStatePausing, model.JobStatePaused:
+							logutil.DDLLogger().Info("job is paused",
+								zap.Int64("job_id", job.ID),
+								zap.Stringer("state", latestJob.State))
+							cancelStep(dbterror.ErrPausedDDLJob)
+							return
+						case model.JobStateDone, model.JobStateSynced:
+							return
+						}
+					}
+				}
+			})
+		}
 	}
 
 	prevState := job.State

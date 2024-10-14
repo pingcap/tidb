@@ -388,12 +388,10 @@ func (w *worker) runReorgJob(
 
 		beOwnerTS := w.ddlCtx.reorgCtx.getOwnerTS()
 		rc = w.newReorgCtx(reorgInfo.Job.ID, reorgInfo.Job.GetRowCount())
-		w.wg.Add(1)
-		go func() {
-			defer w.wg.Done()
+		w.wg.Run(func() {
 			err := reorgFn()
 			rc.doneCh <- reorgFnResult{ownerTS: beOwnerTS, err: err}
-		}()
+		})
 	}
 
 	updateProcessTicker := time.NewTicker(5 * time.Second)
