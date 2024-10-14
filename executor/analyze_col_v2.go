@@ -216,8 +216,8 @@ func (e *AnalyzeColumnsExecV2) buildSamplingStats(
 	if err != nil {
 		return 0, nil, nil, nil, nil, err
 	}
-	mergeResultCh := make(chan *samplingMergeResult, statsConcurrency)
-	mergeTaskCh := make(chan []byte, statsConcurrency)
+	mergeResultCh := make(chan *samplingMergeResult, 1)
+	mergeTaskCh := make(chan []byte, 1)
 	e.samplingMergeWg = &util.WaitGroupWrapper{}
 	e.samplingMergeWg.Add(statsConcurrency)
 	for i := 0; i < statsConcurrency; i++ {

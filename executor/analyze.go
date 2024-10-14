@@ -157,8 +157,8 @@ func (e *AnalyzeExec) Next(ctx context.Context, _ *chunk.Chunk) error {
 	if err != nil {
 		return err
 	}
-	taskCh := make(chan *analyzeTask, len(tasks))
-	resultsCh := make(chan *statistics.AnalyzeResults, len(tasks))
+	taskCh := make(chan *analyzeTask, 1)
+	resultsCh := make(chan *statistics.AnalyzeResults, 1)
 	if len(tasks) < concurrency {
 		concurrency = len(tasks)
 	}
