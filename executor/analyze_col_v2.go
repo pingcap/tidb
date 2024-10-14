@@ -212,29 +212,12 @@ func (e *AnalyzeColumnsExecV2) buildSamplingStats(
 		rootRowCollector.Base().FMSketches = append(rootRowCollector.Base().FMSketches, statistics.NewFMSketch(maxSketchSize))
 	}
 	sc := e.ctx.GetSessionVars().StmtCtx
-<<<<<<< HEAD:executor/analyze_col_v2.go
 	statsConcurrency, err := getBuildStatsConcurrency(e.ctx)
 	if err != nil {
 		return 0, nil, nil, nil, nil, err
 	}
-	mergeResultCh := make(chan *samplingMergeResult, statsConcurrency)
-	mergeTaskCh := make(chan []byte, statsConcurrency)
-=======
-
-	// Start workers to merge the result from collectors.
 	mergeResultCh := make(chan *samplingMergeResult, 1)
 	mergeTaskCh := make(chan []byte, 1)
-	var taskEg errgroup.Group
-	// Start read data from resultHandler and send them to mergeTaskCh.
-	taskEg.Go(func() (err error) {
-		defer func() {
-			if r := recover(); r != nil {
-				err = getAnalyzePanicErr(r)
-			}
-		}()
-		return readDataAndSendTask(e.ctx, e.resultHandler, mergeTaskCh, e.memTracker)
-	})
->>>>>>> 6dd6a5e50cd (executor: improve channel length for analyze (#47960)):pkg/executor/analyze_col_v2.go
 	e.samplingMergeWg = &util.WaitGroupWrapper{}
 	e.samplingMergeWg.Add(statsConcurrency)
 	for i := 0; i < statsConcurrency; i++ {

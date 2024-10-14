@@ -157,19 +157,11 @@ func (e *AnalyzeExec) Next(ctx context.Context, _ *chunk.Chunk) error {
 	if err != nil {
 		return err
 	}
-<<<<<<< HEAD:executor/analyze.go
-	taskCh := make(chan *analyzeTask, len(tasks))
-	resultsCh := make(chan *statistics.AnalyzeResults, len(tasks))
+	taskCh := make(chan *analyzeTask, 1)
+	resultsCh := make(chan *statistics.AnalyzeResults, 1)
 	if len(tasks) < concurrency {
 		concurrency = len(tasks)
 	}
-=======
-	concurrency = min(len(tasks), concurrency)
-
-	// Start workers with channel to collect results.
-	taskCh := make(chan *analyzeTask, concurrency)
-	resultsCh := make(chan *statistics.AnalyzeResults, 1)
->>>>>>> 6dd6a5e50cd (executor: improve channel length for analyze (#47960)):pkg/executor/analyze.go
 	for i := 0; i < concurrency; i++ {
 		e.wg.Run(func() { e.analyzeWorker(taskCh, resultsCh) })
 	}
