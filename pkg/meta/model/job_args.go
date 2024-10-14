@@ -307,8 +307,10 @@ func (a *DropTableArgs) getFinishedArgsV1(*Job) []any {
 }
 
 func (a *DropTableArgs) decodeV1(job *Job) error {
-	intest.Assert(job.Type == ActionDropTable, "only drop table job can call GetDropTableArgs")
-	return job.DecodeArgs(&a.Identifiers, &a.FKCheck)
+	if job.Type == ActionDropTable {
+		return job.DecodeArgs(&a.Identifiers, &a.FKCheck)
+	}
+	return nil
 }
 
 // GetDropTableArgs gets the drop-table args.
