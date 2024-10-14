@@ -1358,9 +1358,6 @@ func restoreStream(
 		}
 		sstTaskName := ""
 		// sstCheckpoints, err = client.InitCheckpointMetadataForSstRestore(ctx, sstTaskName)
-		if err != nil {
-			return errors.Trace(err)
-		}
 
 		sstCheckpointRunner, err = client.StartCheckpointRunnerForCompactedSSTRestore(ctx, sstTaskName)
 		if err != nil {
@@ -1480,7 +1477,6 @@ func restoreStream(
 
 	pd := g.StartProgress(ctx, "Restore SST+KV Files", int64(dataFileCount), !cfg.LogProgress)
 	err = withProgress(pd, func(p glue.Progress) (pErr error) {
-
 		compactedSplitIter, err := client.WrapCompactedFilesIterWithSplitHelper(compactionIter, rewriteRules, splitSize, splitKeys)
 		if err != nil {
 			return errors.Trace(err)
@@ -1591,7 +1587,7 @@ func createRestoreClient(ctx context.Context, g glue.Glue, cfg *RestoreConfig, m
 	}
 	client.SetCrypter(&cfg.CipherInfo)
 	client.SetConcurrency(uint(cfg.Concurrency))
-	client.SetConcurrencyPerStore(uint(cfg.ConcurrencyPerStore.Value))
+	client.SetConcurrencyPerStore(cfg.ConcurrencyPerStore.Value)
 	client.SetUpstreamClusterID(cfg.upstreamClusterID)
 	client.InitClients(ctx, u)
 

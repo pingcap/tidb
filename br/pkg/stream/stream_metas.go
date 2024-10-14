@@ -783,7 +783,8 @@ func (m MigrationExt) doMetaEdits(ctx context.Context, mig *pb.Migration, out *M
 	}
 }
 
-// cleanUpFor modifies the real storage, remove the log files removed in the meta file, AFTER the meta edition has been applied.
+// cleanUpFor modifies the real storage, remove the log files removed in the meta file,
+// AFTER the meta edition has been applied.
 func (m MigrationExt) cleanUpFor(ctx context.Context, medit *pb.MetaEdit, out *MigratedTo) {
 	var err error
 	newMetaEdit := &pb.MetaEdit{
@@ -978,13 +979,13 @@ func (m MigrationExt) doTruncatingLogs(
 		})
 	}
 	cannotBeRetryByRerunBase := func(err error) error {
-		return errors.Annotate(err, "this error may not be retry by `migrate-to --base`, you may need to rerun `log truncate`")
+		return errors.Annotate(err,
+			"this error may not be retry by `migrate-to --base`, you may need to rerun `log truncate`")
 	}
 
 	worker := util.NewWorkerPool(128, "delete files")
 	wg := new(sync.WaitGroup)
 	for path, metaInfo := range metadataInfos {
-		path := path
 		if metaInfo.MinTS >= from {
 			continue
 		}

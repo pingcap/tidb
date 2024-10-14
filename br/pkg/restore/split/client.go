@@ -56,8 +56,6 @@ var (
 
 // SplitClient is an external client used by RegionSplitter.
 type SplitClient interface {
-	// ApplyOptions applies the options to the client dynamically.
-	ApplyOptions(options ...ClientOptionalParameter)
 	// GetStore gets a store by a store id.
 	GetStore(ctx context.Context, storeID uint64) (*metapb.Store, error)
 	// GetRegion gets a region which includes a specified key.
@@ -168,12 +166,6 @@ func NewClient(
 		opt(cli)
 	}
 	return cli
-}
-
-func (c *pdClient) ApplyOptions(opts ...ClientOptionalParameter) {
-	for _, opt := range opts {
-		opt(c)
-	}
 }
 
 func (c *pdClient) needScatter(ctx context.Context) bool {

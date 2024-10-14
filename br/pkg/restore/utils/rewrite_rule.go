@@ -283,15 +283,15 @@ func FindMatchedRewriteRule(file AppliedFile, rules *RewriteRules) *import_sstpb
 	return rule
 }
 
-func (rs *RewriteRules) String() string {
+func (r *RewriteRules) String() string {
 	var out strings.Builder
 	out.WriteRune('[')
-	if len(rs.OldKeyspace) != 0 {
-		out.WriteString(redact.Key(rs.OldKeyspace))
+	if len(r.OldKeyspace) != 0 {
+		out.WriteString(redact.Key(r.OldKeyspace))
 		out.WriteString(" =[ks]=> ")
-		out.WriteString(redact.Key(rs.NewKeyspace))
+		out.WriteString(redact.Key(r.NewKeyspace))
 	}
-	for i, d := range rs.Data {
+	for i, d := range r.Data {
 		if i > 0 {
 			out.WriteString(",")
 		}

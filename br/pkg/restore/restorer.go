@@ -24,9 +24,6 @@ import (
 	"github.com/ngaut/log"
 	"github.com/opentracing/opentracing-go"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
-	"go.uber.org/zap"
-	"golang.org/x/sync/errgroup"
-
 	"github.com/pingcap/tidb/br/pkg/checkpoint"
 	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/restore/split"
@@ -34,6 +31,8 @@ import (
 	"github.com/pingcap/tidb/br/pkg/summary"
 	"github.com/pingcap/tidb/br/pkg/utils/iter"
 	"github.com/pingcap/tidb/pkg/util"
+	"go.uber.org/zap"
+	"golang.org/x/sync/errgroup"
 )
 
 // RestoreFilesInfo represents the batch files to be restored for a table. Current, we have 5 type files

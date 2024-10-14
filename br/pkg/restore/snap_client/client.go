@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
+	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/checkpoint"
 	"github.com/pingcap/tidb/br/pkg/checksum"
@@ -92,8 +93,7 @@ type SnapClient struct {
 	supportPolicy bool
 	workerPool    *tidbutil.WorkerPool
 
-	noSchema        bool
-	hasSpeedLimited bool
+	noSchema bool
 
 	databases map[string]*metautil.Database
 	ddlJobs   []*model.Job
@@ -450,6 +450,28 @@ func (rc *SnapClient) Init(g glue.Glue, store kv.Storage) error {
 	return errors.Trace(err)
 }
 
+func SetSpeedLimitFn(ctx context.Context, stores []*metapb.Store, pool *tidbutil.WorkerPool) func(*SnapFileImporter, uint64) error {
+	return func(importer *SnapFileImporter, limit uint64) error {
+		eg, ectx := errgroup.WithContext(ctx)
+		for _, store := range stores {
+			if err := ectx.Err(); err != nil {
+				return errors.Trace(err)
+			}
+
+			finalStore := store
+			pool.ApplyOnErrorGroup(eg,
+				func() error {
+					err := importer.SetDownloadSpeedLimit(ectx, finalStore.GetId(), limit)
+					if err != nil {
+						return errors.Trace(err)
+					}
+					return nil
+				})
+		}
+		return eg.Wait()
+	}
+}
+
 func (rc *SnapClient) initClients(ctx context.Context, backend *backuppb.StorageBackend, isRawKvMode bool, isTxnKvMode bool,
 	RawStartKey, RawEndKey []byte) error {
 	stores, err := conn.GetAllTiKVStoresWithRetry(ctx, rc.pdClient, util.SkipTiFlash)
@@ -472,33 +494,15 @@ func (rc *SnapClient) initClients(ctx context.Context, backend *backuppb.Storage
 		return importer.CheckMultiIngestSupport(ctx, stores)
 	})
 	if rc.rateLimit != 0 {
-		setFn := func(ctx context.Context, importer *SnapFileImporter, limit uint64) error {
-			eg, ectx := errgroup.WithContext(ctx)
-			for _, store := range stores {
-				if err := ectx.Err(); err != nil {
-					return errors.Trace(err)
-				}
-
-				finalStore := store
-				rc.workerPool.ApplyOnErrorGroup(eg,
-					func() error {
-						err := importer.SetDownloadSpeedLimit(ectx, finalStore.GetId(), limit)
-						if err != nil {
-							return errors.Trace(err)
-						}
-						return nil
-					})
-			}
-			return eg.Wait()
-		}
+		setFn := SetSpeedLimitFn(ctx, stores, rc.workerPool)
 		createCallBacks = append(createCallBacks, func(importer *SnapFileImporter) error {
-			return setFn(ctx, importer, rc.rateLimit)
+			return setFn(importer, rc.rateLimit)
 		})
 		closeCallBacks = append(closeCallBacks, func(importer *SnapFileImporter) error {
 			// In future we may need a mechanism to set speed limit in ttl. like what we do in switchmode. TODO
 			var resetErr error
 			for retry := 0; retry < resetSpeedLimitRetryTimes; retry++ {
-				resetErr = setFn(ctx, importer, 0)
+				resetErr = setFn(importer, 0)
 				if resetErr != nil {
 					log.Warn("failed to reset speed limit, retry it",
 						zap.Int("retry time", retry), logutil.ShortError(resetErr))
@@ -527,7 +531,6 @@ func (rc *SnapClient) initClients(ctx context.Context, backend *backuppb.Storage
 			return errors.Trace(err)
 		}
 		rc.restorer = restore.NewSimpleFileRestorer(fileImporter, rc.workerPool)
-
 	} else {
 		// or create a fileImporter with the cluster API version
 		fileImporter, err = NewSnapFileImporter(

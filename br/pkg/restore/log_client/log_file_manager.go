@@ -12,7 +12,6 @@ import (
 
 	"github.com/pingcap/errors"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
-	pb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/kvproto/pkg/encryptionpb"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/encryption"
@@ -27,7 +26,7 @@ import (
 )
 
 // MetaIter is the type of iterator of metadata files' content.
-type MetaIter = iter.TryNextor[*pb.Metadata]
+type MetaIter = iter.TryNextor[*backuppb.Metadata]
 
 type SubCompactionIter iter.TryNextor[*backuppb.LogFileSubcompaction]
 
@@ -40,20 +39,20 @@ type MetaName struct {
 type MetaNameIter = iter.TryNextor[*MetaName]
 
 type LogDataFileInfo struct {
-	*pb.DataFileInfo
+	*backuppb.DataFileInfo
 	MetaDataGroupName   string
 	OffsetInMetaGroup   int
 	OffsetInMergedGroup int
 }
 
 // GroupIndex is the type of physical data file with index from metadata.
-type GroupIndex = iter.Indexed[*pb.DataFileGroup]
+type GroupIndex = iter.Indexed[*backuppb.DataFileGroup]
 
 // GroupIndexIter is the type of iterator of physical data file with index from metadata.
 type GroupIndexIter = iter.TryNextor[GroupIndex]
 
 // FileIndex is the type of logical data file with index from physical data file.
-type FileIndex = iter.Indexed[*pb.DataFileInfo]
+type FileIndex = iter.Indexed[*backuppb.DataFileInfo]
 
 // FileIndexIter is the type of iterator of logical data file with index from physical data file.
 type FileIndexIter = iter.TryNextor[FileIndex]
@@ -65,10 +64,10 @@ type LogIter = iter.TryNextor[*LogDataFileInfo]
 type MetaGroupIter = iter.TryNextor[DDLMetaGroup]
 
 // Meta is the metadata of files.
-type Meta = *pb.Metadata
+type Meta = *backuppb.Metadata
 
 // Log is the metadata of one file recording KV sequences.
-type Log = *pb.DataFileInfo
+type Log = *backuppb.DataFileInfo
 
 type streamMetadataHelper interface {
 	InitCacheEntry(path string, ref int)
@@ -77,12 +76,12 @@ type streamMetadataHelper interface {
 		path string,
 		offset uint64,
 		length uint64,
-		compressionType pb.CompressionType,
+		compressionType backuppb.CompressionType,
 		storage storage.ExternalStorage,
 		encryptionInfo *encryptionpb.FileEncryptionInfo,
 	) ([]byte, error)
-	ParseToMetadata(rawMetaData []byte) (*pb.Metadata, error)
-	ParseToOneCompaction(rawData []byte) (*pb.LogFileSubcompaction, error)
+	ParseToMetadata(rawMetaData []byte) (*backuppb.Metadata, error)
+	ParseToOneCompaction(rawData []byte) (*backuppb.LogFileSubcompaction, error)
 }
 
 // LogFileManager is the manager for log files of a certain restoration,
@@ -121,7 +120,7 @@ type LogFileManagerInit struct {
 
 type DDLMetaGroup struct {
 	Path      string
-	FileMetas []*pb.DataFileInfo
+	FileMetas []*backuppb.DataFileInfo
 }
 
 // CreateLogFileManager creates a log file manager using the specified config.
@@ -244,7 +243,7 @@ func (rc *LogFileManager) FilterDataFiles(m MetaNameIter) LogIter {
 				gim.Logicals(iter.Enumerate(iter.FromSlice(gim.physical.Item.DataFilesInfo))),
 				func(di FileIndex) bool {
 					// Modify the data internally, a little hacky.
-					if m.meta.MetaVersion > pb.MetaVersion_V1 {
+					if m.meta.MetaVersion > backuppb.MetaVersion_V1 {
 						di.Item.Path = gim.physical.Item.Path
 					}
 					return di.Item.IsMeta || rc.ShouldFilterOut(di.Item)
@@ -267,7 +266,7 @@ func (rc *LogFileManager) FilterDataFiles(m MetaNameIter) LogIter {
 }
 
 // ShouldFilterOut checks whether a file should be filtered out via the current client.
-func (rc *LogFileManager) ShouldFilterOut(d *pb.DataFileInfo) bool {
+func (rc *LogFileManager) ShouldFilterOut(d *backuppb.DataFileInfo) bool {
 	return d.MinTs > rc.restoreTS ||
 		(d.Cf == stream.WriteCF && d.MaxTs < rc.startTS) ||
 		(d.Cf == stream.DefaultCF && d.MaxTs < rc.shiftStartTS)
@@ -282,7 +281,7 @@ func (rc *LogFileManager) collectDDLFilesAndPrepareCache(
 		return nil, errors.Annotatef(fs.Err, "failed to collect from files")
 	}
 
-	dataFileInfos := make([]*pb.DataFileInfo, 0)
+	dataFileInfos := make([]*backuppb.DataFileInfo, 0)
 	for _, g := range fs.Item {
 		rc.helper.InitCacheEntry(g.Path, len(g.FileMetas))
 		dataFileInfos = append(dataFileInfos, g.FileMetas...)
@@ -329,10 +328,10 @@ func (rc *LogFileManager) LoadDMLFiles(ctx context.Context) (LogIter, error) {
 
 func (rc *LogFileManager) FilterMetaFiles(ms MetaNameIter) MetaGroupIter {
 	return iter.FlatMap(ms, func(m *MetaName) MetaGroupIter {
-		return iter.Map(iter.FromSlice(m.meta.FileGroups), func(g *pb.DataFileGroup) DDLMetaGroup {
+		return iter.Map(iter.FromSlice(m.meta.FileGroups), func(g *backuppb.DataFileGroup) DDLMetaGroup {
 			metas := iter.FilterOut(iter.FromSlice(g.DataFilesInfo), func(d Log) bool {
 				// Modify the data internally, a little hacky.
-				if m.meta.MetaVersion > pb.MetaVersion_V1 {
+				if m.meta.MetaVersion > backuppb.MetaVersion_V1 {
 					d.Path = g.Path
 				}
 				return !d.IsMeta || rc.ShouldFilterOut(d)
@@ -451,12 +450,12 @@ func Subcompactions(ctx context.Context, prefix string, s storage.ExternalStorag
 		ctx,
 		&storage.WalkOption{SubDir: prefix},
 		s,
-		func(t *pb.LogFileSubcompactions, name string, b []byte) error { return t.Unmarshal(b) },
-	), func(subcs *pb.LogFileSubcompactions) iter.TryNextor[*pb.LogFileSubcompaction] {
+		func(t *backuppb.LogFileSubcompactions, name string, b []byte) error { return t.Unmarshal(b) },
+	), func(subcs *backuppb.LogFileSubcompactions) iter.TryNextor[*backuppb.LogFileSubcompaction] {
 		return iter.FromSlice(subcs.Subcompactions)
 	})
 }
 
-func LoadMigrations(ctx context.Context, s storage.ExternalStorage) iter.TryNextor[*pb.Migration] {
-	return storage.UnmarshalDir(ctx, &storage.WalkOption{SubDir: "v1/migrations/"}, s, func(t *pb.Migration, name string, b []byte) error { return t.Unmarshal(b) })
+func LoadMigrations(ctx context.Context, s storage.ExternalStorage) iter.TryNextor[*backuppb.Migration] {
+	return storage.UnmarshalDir(ctx, &storage.WalkOption{SubDir: "v1/migrations/"}, s, func(t *backuppb.Migration, name string, b []byte) error { return t.Unmarshal(b) })
 }

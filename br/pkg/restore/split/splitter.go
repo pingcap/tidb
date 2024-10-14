@@ -56,7 +56,6 @@ func NewBaseSplitStrategy(rules map[int64]*restoreutils.RewriteRules) *BaseSplit
 		TableSplitter: make(map[int64]*SplitHelper),
 		Rules:         rules,
 	}
-
 }
 
 func (b *BaseSplitStrategy) AccumulationsIter() *SplitHelperIterator {
@@ -105,7 +104,6 @@ func NewRewriteSpliter(
 		rule:       rule,
 		splitter:   splitter,
 	}
-
 }
 
 type SplitHelperIterator struct {
@@ -114,7 +112,6 @@ type SplitHelperIterator struct {
 
 func NewSplitHelperIterator(tableSplitters []*RewriteSplitter) *SplitHelperIterator {
 	return &SplitHelperIterator{tableSplitters: tableSplitters}
-
 }
 
 func (iter *SplitHelperIterator) Traverse(fn func(v Valued, endKey []byte, rule *restoreutils.RewriteRules) bool) {
@@ -156,7 +153,6 @@ func NewRegionsSplitter(
 		splitThreSholdSize: splitSize,
 		splitThreSholdKeys: splitKeys,
 	}
-
 }
 
 func (r *RegionsSplitter) ExecuteRegions(ctx context.Context, s *SplitHelperIterator) error {

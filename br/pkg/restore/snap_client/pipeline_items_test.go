@@ -18,17 +18,15 @@ import (
 	"context"
 	"sync"
 	"testing"
-	"time"
 
 	"github.com/pingcap/errors"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/log"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/logutil"
+	"github.com/pingcap/tidb/br/pkg/restore"
 	snapclient "github.com/pingcap/tidb/br/pkg/restore/snap_client"
 	"github.com/pingcap/tidb/br/pkg/rtree"
-	"github.com/pingcap/tidb/pkg/parser/model"
-	"github.com/stretchr/testify/require"
 )
 
 type fakeRestorer struct {
@@ -56,7 +54,7 @@ func (f *fakeRestorer) SplitRanges(ctx context.Context, ranges []rtree.Range, on
 	return nil
 }
 
-func (f *fakeRestorer) RestoreSSTFiles(ctx context.Context, files []sstfiles.RestoreFilesInfo, onProgress func()) error {
+func (f *fakeRestorer) Restore(ctx context.Context, files []restore.RestoreFilesInfo, onProgress func()) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 
@@ -67,31 +65,11 @@ func (f *fakeRestorer) RestoreSSTFiles(ctx context.Context, files []sstfiles.Res
 		if int64(i) != tableIDWithFile.TableID {
 			f.tableIDIsInsequence = false
 		}
-		f.restoredFiles = append(f.restoredFiles, tableIDWithFile.Files...)
+		f.restoredFiles = append(f.restoredFiles, tableIDWithFile.SSTFiles...)
 	}
 	err := errors.Annotatef(berrors.ErrRestoreWriteAndIngest, "the files to restore are taken by a hijacker, meow :3")
 	log.Error("error happens :3", logutil.ShortError(err))
 	return err
-}
-
-func fakeRanges(keys ...string) (r snapclient.DrainResult) {
-	for i := range keys {
-		if i+1 == len(keys) {
-			return
-		}
-		r.Ranges = append(r.Ranges, rtree.Range{
-			StartKey: []byte(keys[i]),
-			EndKey:   []byte(keys[i+1]),
-			Files:    []*backuppb.File{{Name: "fake.sst"}},
-		})
-		r.TableEndOffsetInRanges = append(r.TableEndOffsetInRanges, len(r.Ranges))
-		r.TablesToSend = append(r.TablesToSend, snapclient.CreatedTable{
-			Table: &model.TableInfo{
-				ID: int64(i),
-			},
-		})
-	}
-	return
 }
 
 type errorInTimeSink struct {
@@ -124,58 +102,4 @@ func assertErrorEmitInTime(ctx context.Context, t *testing.T) errorInTimeSink {
 		errCh: errCh,
 		t:     t,
 	}
-}
-
-func TestSplitFailed(t *testing.T) {
-	ranges := []snapclient.DrainResult{
-		fakeRanges("aax", "abx", "abz"),
-		fakeRanges("abz", "bbz", "bcy"),
-		fakeRanges("bcy", "cad", "xxy"),
-	}
-	r := &fakeRestorer{errorInSplit: true, tableIDIsInsequence: true}
-	sender, err := snapclient.NewTiKVSender(context.TODO(), r, nil, 1)
-	require.NoError(t, err)
-	dctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-	sink := assertErrorEmitInTime(dctx, t)
-	sender.PutSink(sink)
-	for _, r := range ranges {
-		sender.RestoreBatch(r)
-	}
-	sink.Wait()
-	sender.Close()
-	require.GreaterOrEqual(t, len(r.splitRanges), 2)
-	require.Len(t, r.restoredFiles, 0)
-	require.True(t, r.tableIDIsInsequence)
-}
-
-func TestRestoreFailed(t *testing.T) {
-	ranges := []snapclient.DrainResult{
-		fakeRanges("aax", "abx", "abz"),
-		fakeRanges("abz", "bbz", "bcy"),
-		fakeRanges("bcy", "cad", "xxy"),
-	}
-	r := &fakeRestorer{
-		tableIDIsInsequence: true,
-	}
-	sender, err := snapclient.NewTiKVSender(context.TODO(), r, nil, 1)
-	require.NoError(t, err)
-	dctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-	sink := assertErrorEmitInTime(dctx, t)
-	sender.PutSink(sink)
-	for _, r := range ranges {
-		sender.RestoreBatch(r)
-	}
-	var wg sync.WaitGroup
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		sink.Wait()
-	}()
-	sink.Close()
-	sender.Close()
-	wg.Wait()
-	require.GreaterOrEqual(t, len(r.restoredFiles), 1)
-	require.True(t, r.tableIDIsInsequence)
 }

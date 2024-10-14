@@ -220,8 +220,3 @@ func (wm WithMigrations) Metas(metaNameIter MetaNameIter) MetaMigrationsIter {
 		}, false
 	})
 }
-
-// Filter out logs that deleted by migrations.
-func (m WithMigrations) WrapLogIter(l LogIter) LogIter {
-	return nil
-}
