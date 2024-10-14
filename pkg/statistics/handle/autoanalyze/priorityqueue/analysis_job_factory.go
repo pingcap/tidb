@@ -236,8 +236,8 @@ func (*AnalysisJobFactory) CheckIndexesNeedAnalyze(tblInfo *model.TableInfo, tbl
 	// Check if missing index stats.
 	for _, idx := range tblInfo.Indices {
 		if idxStats := tblStats.GetIdx(idx.ID); idxStats == nil && !tblStats.ColAndIdxExistenceMap.HasAnalyzed(idx.ID, true) && idx.State == model.StatePublic {
+			// Vector index doesn't have stats currently.
 			if idx.VectorInfo != nil {
-				// Vector index doesn't have stats currently.
 				continue
 			}
 			indexes = append(indexes, idx.Name.O)
