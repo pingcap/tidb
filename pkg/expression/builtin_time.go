@@ -2431,9 +2431,9 @@ func (b *builtinUTCTimestampWithArgSig) evalTime(ctx EvalContext, row chunk.Row)
 	}
 
 	if !isNull {
-		if fsp > math.MaxInt32 || fsp < types.MinFsp {
+		if fsp > int64(math.MaxInt32) || fsp < int64(types.MinFsp) {
 			return types.ZeroTime, true, types.ErrSyntax.GenWithStack(util.SyntaxErrorPrefix)
-		} else if fsp > types.MaxFsp {
+		} else if fsp > int64(types.MaxFsp) {
 			return types.ZeroTime, true, types.ErrTooBigPrecision.GenWithStackByArgs(fsp, "utc_timestamp", types.MaxFsp)
 		}
 	}
@@ -2555,9 +2555,9 @@ func (b *builtinNowWithArgSig) evalTime(ctx EvalContext, row chunk.Row) (types.T
 
 	if isNull {
 		fsp = 0
-	} else if fsp > math.MaxInt32 || fsp < types.MinFsp {
+	} else if fsp > int64(math.MaxInt32) || fsp < int64(types.MinFsp) {
 		return types.ZeroTime, true, types.ErrSyntax.GenWithStack(util.SyntaxErrorPrefix)
-	} else if fsp > types.MaxFsp {
+	} else if fsp > int64(types.MaxFsp) {
 		return types.ZeroTime, true, types.ErrTooBigPrecision.GenWithStackByArgs(fsp, "now", types.MaxFsp)
 	}
 
@@ -6516,9 +6516,9 @@ func (b *builtinUTCTimeWithArgSig) evalDuration(ctx EvalContext, row chunk.Row) 
 		return types.Duration{}, isNull, err
 	}
 
-	if fsp > math.MaxInt32 || fsp < types.MinFsp {
+	if fsp > int64(math.MaxInt32) || fsp < int64(types.MinFsp) {
 		return types.Duration{}, true, types.ErrSyntax.GenWithStack(util.SyntaxErrorPrefix)
-	} else if fsp > types.MaxFsp {
+	} else if fsp > int64(types.MaxFsp) {
 		return types.Duration{}, true, types.ErrTooBigPrecision.GenWithStackByArgs(fsp, "utc_time", types.MaxFsp)
 	}
 
@@ -6822,11 +6822,12 @@ func getFspByIntArg(ctx BuildContext, exps []Expression, funcName string) (int, 
 			return 0, err
 		}
 
-		if fsp > math.MaxInt32 || fsp < types.MinFsp {
+		if fsp > int64(math.MaxInt32) || fsp < int64(types.MinFsp) {
 			return 0, types.ErrSyntax.GenWithStack(util.SyntaxErrorPrefix)
-		} else if fsp > types.MaxFsp {
+		} else if fsp > int64(types.MaxFsp) {
 			return 0, types.ErrTooBigPrecision.GenWithStackByArgs(fsp, funcName, types.MaxFsp)
 		}
+		return int(fsp), nil
 	}
 	// Should no happen. But our tests may generate non-constant input.
 	return 0, nil
