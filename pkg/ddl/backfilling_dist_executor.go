@@ -17,7 +17,6 @@ package ddl
 import (
 	"context"
 	"encoding/json"
-	"strings"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/ddl/ingest"
@@ -28,10 +27,8 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/backend/external"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/meta/model"
-	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/table"
-	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/tikv/client-go/v2/tikv"
 	"go.uber.org/zap"
 )
@@ -222,23 +219,6 @@ func (s *backfillDistExecutor) GetStepExecutor(task *proto.Task) (execute.StepEx
 
 func (*backfillDistExecutor) IsIdempotent(*proto.Subtask) bool {
 	return true
-}
-
-func isRetryableError(err error) bool {
-	errMsg := err.Error()
-	for _, m := range dbterror.ReorgRetryableErrMsgs {
-		if strings.Contains(errMsg, m) {
-			return true
-		}
-	}
-	originErr := errors.Cause(err)
-	if tErr, ok := originErr.(*terror.Error); ok {
-		sqlErr := terror.ToSQLError(tErr)
-		_, ok := dbterror.ReorgRetryableErrCodes[sqlErr.Code]
-		return ok
-	}
-	// can't retry Unknown err.
-	return false
 }
 
 func (*backfillDistExecutor) IsRetryableError(err error) bool {

@@ -530,10 +530,8 @@ func AcquireDistributedLock(
 		}
 		return false, nil
 	})
-	failpoint.Inject("mockAcquireDistLockFailed", func(val failpoint.Value) {
-		if ok := val.(bool); ok {
-			err = errors.Errorf("requested lease not found")
-		}
+	failpoint.Inject("mockAcquireDistLockFailed", func() {
+		err = errors.Errorf("requested lease not found")
 	})
 	if err != nil {
 		err1 := se.Close()
