@@ -429,8 +429,6 @@ func getTableInfo(t *meta.Mutator, tableID, schemaID int64) (*model.TableInfo, e
 func (w *worker) onTruncateTable(jobCtx *jobContext, job *model.Job) (ver int64, _ error) {
 	schemaID := job.SchemaID
 	args, err := model.GetTruncateTableArgs(job)
-	jobCtx.jobArgs = args
-
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
@@ -500,8 +498,12 @@ func (w *worker) onTruncateTable(jobCtx *jobContext, job *model.Job) (ver int64,
 				newIDs = append(newIDs, newID)
 			}
 		}
-		args.OldPartIDsWithPolicy = oldIDs
-		args.NewPartIDsWithPolicy = newIDs
+		if job.Version == model.JobVersion1 {
+			job.CtxVars = []any{oldIDs, newIDs}
+		} else {
+			args.OldPartIDsWithPolicy = oldIDs
+			args.NewPartIDsWithPolicy = newIDs
+		}
 	}
 
 	tableRuleID, partRuleIDs, _, oldRules, err := getOldLabelRules(tblInfo, job.SchemaName, tblInfo.Name.L)
