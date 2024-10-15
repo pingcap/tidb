@@ -46,6 +46,7 @@ func TestInvalidDDLJob(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomainWithSchemaLease(t, testLease)
 
 	job := &model.Job{
+		Version:             model.GetJobVerInUse(),
 		SchemaID:            0,
 		TableID:             0,
 		Type:                model.ActionNone,
