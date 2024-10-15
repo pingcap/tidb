@@ -3416,6 +3416,17 @@ func BootstrapSession4DistExecution(store kv.Storage) (*domain.Domain, error) {
 // - start domain and other routines.
 func bootstrapSessionImpl(ctx context.Context, store kv.Storage, createSessionsImpl func(store kv.Storage, cnt int) ([]*session, error)) (*domain.Domain, error) {
 	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnBootstrap)
+	ver := getStoreBootstrapVersion(store)
+	// since v6.2.0 and bootstrap version 92, we start support concurrent DDL where
+	// DDL jobs are stored in system table instead of plain meta KV queue. we have
+	// kept the old code for 4 LTS versions to make upgrade smooth as much as possible.
+	// Since v8.5, we will remove those old code. If you want to upgrade from below
+	// v6.2.0 to version >= v8.5, you need to upgrade to a version in range [v6.2.0, v8.5.0)
+	// first, then upgrade to v8.5+.
+	if ver > notBootstrapped && ver < version92 {
+		return nil, errors.Errorf("Cannot upgrade from below v6.2.0 to this version, please upgrade to a version in range [v6.2.0, v8.5.0) first. Current bootstrap version=%d, target version=%d", ver, currentBootstrapVersion)
+	}
+
 	cfg := config.GetGlobalConfig()
 	if len(cfg.Instance.PluginLoad) > 0 {
 		err := plugin.Load(context.Background(), plugin.Config{
@@ -3442,7 +3453,6 @@ func bootstrapSessionImpl(ctx context.Context, store kv.Storage, createSessionsI
 	if err != nil {
 		return nil, err
 	}
-	ver := getStoreBootstrapVersion(store)
 	if ver == notBootstrapped {
 		runInBootstrapSession(store, bootstrap)
 	} else if ver < currentBootstrapVersion {
@@ -3836,7 +3846,7 @@ func getStoreBootstrapVersion(store kv.Storage) int64 {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBootstrap)
 	err := kv.RunInNewTxn(ctx, store, false, func(_ context.Context, txn kv.Transaction) error {
 		var err error
-		t := meta.NewMutator(txn)
+		t := meta.NewReader(txn)
 		ver, err = t.GetBootstrapVersion()
 		return err
 	})
