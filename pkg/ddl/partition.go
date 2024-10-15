@@ -3597,7 +3597,8 @@ func (w *worker) onReorganizePartition(jobCtx *jobContext, job *model.Job) (ver 
 				failpoint.Return(ver, errors.New("Injected error by reorgPartFail5"))
 			}
 		})
-		job.CtxVars = []any{physicalTableIDs, newIDs}
+		args.OldPhysicalTblIDs = physicalTableIDs
+		args.NewPartitionIDs = newIDs
 		ver, err = updateVersionAndTableInfo(jobCtx, job, tblInfo, true)
 		if err != nil {
 			return ver, errors.Trace(err)
@@ -3614,7 +3615,6 @@ func (w *worker) onReorganizePartition(jobCtx *jobContext, job *model.Job) (ver 
 		}
 		asyncNotifyEvent(jobCtx, event, job)
 		// A background job will be created to delete old partition data.
-		args.OldPhysicalTblIDs = physicalTableIDs
 		job.FillFinishedArgs(args)
 
 	default:
