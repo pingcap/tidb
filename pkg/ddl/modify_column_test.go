@@ -84,12 +84,7 @@ func TestModifyColumnReorgInfo(t *testing.T) {
 		if job.Type == model.ActionModifyColumn {
 			if times == 0 {
 				times++
-				return
 			}
-			currJob = job
-			var args *model.ModifyColumnArgs
-			args, checkErr = model.GetModifyColumnArgs(job)
-			elements = ddl.BuildElements(args.ChangingColumn, args.ChangingIdxs)
 		}
 		if job.Type == model.ActionAddIndex {
 			if times == 1 {
@@ -101,6 +96,19 @@ func TestModifyColumnReorgInfo(t *testing.T) {
 			elements = []*meta.Element{{ID: indexInfo.ID, TypeKey: meta.IndexElementKey}}
 		}
 	})
+
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunAfter", func(job *model.Job) {
+		if tbl.Meta().ID == job.TableID &&
+			checkErr == nil &&
+			job.SchemaState == model.StateDeleteOnly &&
+			job.Type == model.ActionModifyColumn {
+			currJob = job
+			var args *model.ModifyColumnArgs
+			args, checkErr = model.GetModifyColumnArgs(job)
+			elements = ddl.BuildElements(args.ChangingColumn, args.ChangingIdxs)
+		}
+	})
+
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/MockGetIndexRecordErr", `return("cantDecodeRecordErr")`))
 	err := tk.ExecToErr(sql)
 	require.EqualError(t, err, "[ddl:8202]Cannot decode index value, because mock can't decode record error")
