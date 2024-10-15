@@ -298,6 +298,45 @@ func TestIssue56458(t *testing.T) {
 		"table_tiflash_replica.txt",
 		"variables.toml",
 	}, filesInReplayer)
+
+	// 3. check plan replayer load
+	// 3-1. write the plan replayer file from manual command to a file
+	path := "/tmp/plan_replayer.zip"
+	fp, err := os.Create(path)
+	require.NoError(t, err)
+	require.NotNil(t, fp)
+	defer func() {
+		require.NoError(t, fp.Close())
+		require.NoError(t, os.Remove(path))
+	}()
+
+	_, err = io.Copy(fp, bytes.NewReader(body))
+	require.NoError(t, err)
+	require.NoError(t, fp.Sync())
+
+	// 3-2. connect to tidb and use PLAN REPLAYER LOAD to load this file
+	db, err := sql.Open("mysql", client.GetDSN(func(config *mysql.Config) {
+		config.AllowAllFiles = true
+	}))
+	require.NoError(t, err, "Error connecting")
+	defer func() {
+		err := db.Close()
+		require.NoError(t, err)
+	}()
+	tk := testkit.NewDBTestKit(t, db)
+	tk.MustExec("use planReplayer")
+	tk.MustExec("drop table planReplayer.t")
+	tk.MustExec("drop table planReplayer.v")
+	tk.MustExec(`plan replayer load "/tmp/plan_replayer.zip"`)
+
+	// 3-3. check whether binding takes effect
+	tk.MustExec(`select a, b from t where a in (1, 2, 3)`)
+	rows := tk.MustQuery("select @@last_plan_from_binding")
+	require.True(t, rows.Next(), "unexpected data")
+	var count int64
+	err = rows.Scan(&count)
+	require.NoError(t, err)
+	require.Equal(t, int64(1), count)
 }
 
 func TestIssue43192(t *testing.T) {
@@ -408,6 +447,8 @@ func prepareData4Issue56458(t *testing.T, client *testserverclient.TestServerCli
 	tk.MustExec("create database planReplayer")
 	tk.MustExec("use planReplayer")
 	tk.MustExec("CREATE TABLE v(id INT PRIMARY KEY AUTO_INCREMENT);")
+	err = h.HandleDDLEvent(<-h.DDLEventCh())
+	require.NoError(t, err)
 	tk.MustExec("create table t(a int, b int, INDEX ia (a), INDEX ib (b), author_id int, FOREIGN KEY (author_id) REFERENCES v(id) ON DELETE CASCADE);")
 	err = h.HandleDDLEvent(<-h.DDLEventCh())
 	require.NoError(t, err)

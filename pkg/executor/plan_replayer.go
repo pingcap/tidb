@@ -520,7 +520,7 @@ func topoSortTable(input []*zip.File) (result []*zip.File, err error) {
 	cnt := 0
 	taskCount := len(outMap)
 OUTLOOP:
-	for len(outMap) != 0 {
+	for len(outMap) > 1 {
 		cnt++
 		if cnt > taskCount {
 			return nil, errors.New("plan replayer: unknown table")
@@ -543,6 +543,9 @@ OUTLOOP:
 				continue OUTLOOP
 			}
 		}
+	}
+	for k, _ := range outMap {
+		result = append(result, zipMap[k])
 	}
 	return result, nil
 }
