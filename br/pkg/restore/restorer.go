@@ -81,8 +81,9 @@ func NewSSTFilesInfo(files []*backuppb.File, rules *utils.RewriteRules) RestoreF
 // 4. Log Compacted ssts
 type FileRestorer interface {
 	// Restore import the files to the TiKV.
-	Restore(ctx context.Context, onProgress func(), files ...BatchRestoreFilesInfo) error
-
+	Restore(onProgress func(), files ...BatchRestoreFilesInfo) error
+	// OnFinish wait for all pending restore files finished
+	OnFinish() error
 	// Close release the resources.
 	Close() error
 }
@@ -102,17 +103,23 @@ type ConcurrentlFileImporter interface {
 }
 
 type SimpleRestorer struct {
+	eg               *errgroup.Group
+	ectx             context.Context
 	workerPool       *util.WorkerPool
 	fileImporter     FileImporter
 	checkpointRunner *checkpoint.CheckpointRunner[checkpoint.RestoreKeyType, checkpoint.RestoreValueType]
 }
 
 func NewSimpleFileRestorer(
+	ctx context.Context,
 	fileImporter FileImporter,
 	workerPool *util.WorkerPool,
 	checkpointRunner *checkpoint.CheckpointRunner[checkpoint.RestoreKeyType, checkpoint.RestoreValueType],
 ) FileRestorer {
+	eg, ectx := errgroup.WithContext(ctx)
 	return &SimpleRestorer{
+		eg:               eg,
+		ectx:             ectx,
 		workerPool:       workerPool,
 		fileImporter:     fileImporter,
 		checkpointRunner: checkpointRunner,
@@ -123,14 +130,17 @@ func (s *SimpleRestorer) Close() error {
 	return s.fileImporter.Close()
 }
 
-func (s *SimpleRestorer) Restore(ctx context.Context, onProgress func(), batchFilesInfo ...BatchRestoreFilesInfo) error {
+func (s *SimpleRestorer) OnFinish() error {
+	return s.eg.Wait()
+}
+
+func (s *SimpleRestorer) Restore(onProgress func(), batchFilesInfo ...BatchRestoreFilesInfo) error {
 	errCh := make(chan error, len(batchFilesInfo))
-	eg, ectx := errgroup.WithContext(ctx)
 	defer close(errCh)
 
 	for _, info := range batchFilesInfo {
 		for _, fileGroup := range info {
-			s.workerPool.ApplyOnErrorGroup(eg,
+			s.workerPool.ApplyOnErrorGroup(s.eg,
 				func() (restoreErr error) {
 					fileStart := time.Now()
 					defer func() {
@@ -140,7 +150,7 @@ func (s *SimpleRestorer) Restore(ctx context.Context, onProgress func(), batchFi
 							onProgress()
 						}
 					}()
-					err := s.fileImporter.Import(ectx, fileGroup)
+					err := s.fileImporter.Import(s.ectx, fileGroup)
 					if err != nil {
 						return errors.Trace(err)
 					}
@@ -148,7 +158,7 @@ func (s *SimpleRestorer) Restore(ctx context.Context, onProgress func(), batchFi
 					if s.checkpointRunner != nil {
 						for _, file := range fileGroup.SSTFiles {
 							// the table corresponding to the table-id.
-							if err := checkpoint.AppendRangesForRestore(ectx, s.checkpointRunner, fileGroup.TableID, "", file.Name); err != nil {
+							if err := checkpoint.AppendRangesForRestore(s.ectx, s.checkpointRunner, fileGroup.TableID, "", file.Name); err != nil {
 								return errors.Trace(err)
 							}
 						}
@@ -157,24 +167,27 @@ func (s *SimpleRestorer) Restore(ctx context.Context, onProgress func(), batchFi
 				})
 		}
 	}
-	if err := eg.Wait(); err != nil {
-		return errors.Trace(err)
-	}
 	return nil
 }
 
 type MultiTablesRestorer struct {
+	eg               *errgroup.Group
+	ectx             context.Context
 	workerPool       *util.WorkerPool
 	fileImporter     ConcurrentlFileImporter
 	checkpointRunner *checkpoint.CheckpointRunner[checkpoint.RestoreKeyType, checkpoint.RestoreValueType]
 }
 
 func NewMultiTablesRestorer(
+	ctx context.Context,
 	fileImporter ConcurrentlFileImporter,
 	workerPool *util.WorkerPool,
 	checkpointRunner *checkpoint.CheckpointRunner[checkpoint.RestoreKeyType, checkpoint.RestoreValueType],
 ) FileRestorer {
+	eg, ectx := errgroup.WithContext(ctx)
 	return &MultiTablesRestorer{
+		eg:               eg,
+		ectx:             ectx,
 		workerPool:       workerPool,
 		fileImporter:     fileImporter,
 		checkpointRunner: checkpointRunner,
@@ -185,7 +198,16 @@ func (m *MultiTablesRestorer) Close() error {
 	return m.fileImporter.Close()
 }
 
-func (m *MultiTablesRestorer) Restore(ctx context.Context, onProgress func(), batchFilesInfo ...BatchRestoreFilesInfo) (err error) {
+func (m *MultiTablesRestorer) OnFinish() error {
+	if err := m.eg.Wait(); err != nil {
+		summary.CollectFailureUnit("file", err)
+		log.Error("restore files failed", zap.Error(err))
+		return errors.Trace(err)
+	}
+	return nil
+}
+
+func (m *MultiTablesRestorer) Restore(onProgress func(), batchFilesInfo ...BatchRestoreFilesInfo) (err error) {
 	start := time.Now()
 	fileCount := 0
 	defer func() {
@@ -198,17 +220,16 @@ func (m *MultiTablesRestorer) Restore(ctx context.Context, onProgress func(), ba
 
 	log.Debug("start to restore files", zap.Int("files", fileCount))
 
-	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
+	if span := opentracing.SpanFromContext(m.ectx); span != nil && span.Tracer() != nil {
 		span1 := span.Tracer().StartSpan("Client.RestoreSSTFiles", opentracing.ChildOf(span.Context()))
 		defer span1.Finish()
-		ctx = opentracing.ContextWithSpan(ctx, span1)
+		m.ectx = opentracing.ContextWithSpan(m.ectx, span1)
 	}
 
-	eg, ectx := errgroup.WithContext(ctx)
 	for _, tableIDWithFiles := range batchFilesInfo {
-		if ectx.Err() != nil {
+		if m.ectx.Err() != nil {
 			log.Warn("Restoring encountered error and already stopped, give up remained files.",
-				logutil.ShortError(ectx.Err()))
+				logutil.ShortError(m.ectx.Err()))
 			// We will fetch the error from the errgroup then (If there were).
 			// Also note if the parent context has been canceled or something,
 			// breaking here directly is also a reasonable behavior.
@@ -216,7 +237,7 @@ func (m *MultiTablesRestorer) Restore(ctx context.Context, onProgress func(), ba
 		}
 		filesReplica := tableIDWithFiles
 		m.fileImporter.WaitUntilUnblock()
-		m.workerPool.ApplyOnErrorGroup(eg, func() (restoreErr error) {
+		m.workerPool.ApplyOnErrorGroup(m.eg, func() (restoreErr error) {
 			// fileStart := time.Now()
 			defer func() {
 				if restoreErr == nil {
@@ -224,7 +245,7 @@ func (m *MultiTablesRestorer) Restore(ctx context.Context, onProgress func(), ba
 					onProgress()
 				}
 			}()
-			if importErr := m.fileImporter.Import(ectx, filesReplica...); importErr != nil {
+			if importErr := m.fileImporter.Import(m.ectx, filesReplica...); importErr != nil {
 				return errors.Trace(importErr)
 			}
 
@@ -240,7 +261,7 @@ func (m *MultiTablesRestorer) Restore(ctx context.Context, onProgress func(), ba
 					for rangeKey := range rangeKeySet {
 						// The checkpoint range shows this ranges of kvs has been restored into
 						// the table corresponding to the table-id.
-						if err := checkpoint.AppendRangesForRestore(ectx, m.checkpointRunner, filesGroup.TableID, rangeKey, ""); err != nil {
+						if err := checkpoint.AppendRangesForRestore(m.ectx, m.checkpointRunner, filesGroup.TableID, rangeKey, ""); err != nil {
 							return errors.Trace(err)
 						}
 					}
@@ -250,16 +271,10 @@ func (m *MultiTablesRestorer) Restore(ctx context.Context, onProgress func(), ba
 			return nil
 		})
 	}
-
-	if err := eg.Wait(); err != nil {
-		summary.CollectFailureUnit("file", err)
-		log.Error("restore files failed", zap.Error(err))
-		return errors.Trace(err)
-	}
 	// Once the parent context canceled and there is no task running in the errgroup,
 	// we may break the for loop without error in the errgroup. (Will this happen?)
 	// At that time, return the error in the context here.
-	return ctx.Err()
+	return m.ectx.Err()
 }
 
 func GetFileRangeKey(f string) string {

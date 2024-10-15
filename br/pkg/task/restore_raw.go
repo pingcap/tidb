@@ -164,7 +164,11 @@ func RunRestoreRaw(c context.Context, g glue.Glue, cmdName string, cfg *RestoreR
 	defer restore.RestorePostWork(ctx, importModeSwitcher, restoreSchedulers, cfg.Online)
 
 	start := time.Now()
-	err = client.GetRestorer().Restore(ctx, onProgress, restore.NewEmptyRuleSSTFilesInfos(files))
+	err = client.GetRestorer().Restore(onProgress, restore.NewEmptyRuleSSTFilesInfos(files))
+	if err != nil {
+		return errors.Trace(err)
+	}
+	err = client.GetRestorer().OnFinish()
 	if err != nil {
 		return errors.Trace(err)
 	}

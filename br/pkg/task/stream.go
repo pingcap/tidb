@@ -1460,6 +1460,8 @@ func restoreStream(
 	splitSize, splitKeys := utils.GetRegionSplitInfo(execCtx)
 	log.Info("get split threshold from tikv config", zap.Uint64("split-size", splitSize), zap.Int64("split-keys", splitKeys))
 
+	log.Info("dataFileCount", zap.Int("count", dataFileCount))
+
 	pd := g.StartProgress(ctx, "Restore SST+KV Files", int64(dataFileCount), !cfg.LogProgress)
 	err = withProgress(pd, func(p glue.Progress) (pErr error) {
 		updateStatsWithCheckpoint := func(kvCount, size uint64) {
@@ -1475,7 +1477,11 @@ func restoreStream(
 			return errors.Trace(err)
 		}
 
-		err = client.RestoreCompactedSstFiles(ctx, compactedSplitIter, sstCheckpointSets, updateStatsWithCheckpoint, rewriteRules, p.Inc)
+		onProgress := func() {
+			log.Info("inc")
+			p.Inc()
+		}
+		err = client.RestoreCompactedSstFiles(ctx, compactedSplitIter, sstCheckpointSets, updateStatsWithCheckpoint, rewriteRules, onProgress)
 		if err != nil {
 			return errors.Trace(err)
 		}

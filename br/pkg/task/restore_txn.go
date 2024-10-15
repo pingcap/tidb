@@ -101,11 +101,14 @@ func RunRestoreTxn(c context.Context, g glue.Glue, cmdName string, cfg *Config) 
 	}
 	defer restore.RestorePostWork(ctx, importModeSwitcher, restoreSchedulers, false)
 
-	err = client.GetRestorer().Restore(ctx, onProgress, restore.NewEmptyRuleSSTFilesInfos(files))
+	err = client.GetRestorer().Restore(onProgress, restore.NewEmptyRuleSSTFilesInfos(files))
 	if err != nil {
 		return errors.Trace(err)
 	}
-
+	err = client.GetRestorer().OnFinish()
+	if err != nil {
+		return errors.Trace(err)
+	}
 	// Restore has finished.
 	updateCh.Close()
 

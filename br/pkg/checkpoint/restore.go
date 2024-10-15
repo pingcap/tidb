@@ -123,17 +123,18 @@ func LoadCheckpointMetadataForSstRestore(
 	return m, err
 }
 
-func SaveCheckpointMetadataForSnapshotRestore(
+func SaveCheckpointMetadataForSstRestore(
 	ctx context.Context,
 	se glue.Session,
+	dbName string,
 	meta *CheckpointMetadataForSnapshotRestore,
 ) error {
-	err := initCheckpointTable(ctx, se, SnapshotRestoreCheckpointDatabaseName,
+	err := initCheckpointTable(ctx, se, dbName,
 		[]string{checkpointDataTableName, checkpointChecksumTableName})
 	if err != nil {
 		return errors.Trace(err)
 	}
-	return insertCheckpointMeta(ctx, se, SnapshotRestoreCheckpointDatabaseName, checkpointMetaTableName, meta)
+	return insertCheckpointMeta(ctx, se, dbName, checkpointMetaTableName, meta)
 }
 
 func ExistsSstRestoreCheckpoint(

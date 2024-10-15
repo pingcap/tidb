@@ -277,12 +277,12 @@ func (rc *LogClient) RestoreCompactedSstFiles(
 			SSTFiles:     sstOutputs,
 			RewriteRules: rewriteRules,
 		}
-		err := rc.restorer.Restore(ctx, onProgress, []restore.RestoreFilesInfo{info})
+		err := rc.restorer.Restore(onProgress, []restore.RestoreFilesInfo{info})
 		if err != nil {
 			return err
 		}
 	}
-	return nil
+	return rc.restorer.OnFinish()
 }
 
 func (rc *LogClient) SetRawKVBatchClient(
@@ -422,7 +422,7 @@ func (rc *LogClient) InitClients(ctx context.Context, backend *backuppb.StorageB
 	if err != nil {
 		log.Fatal("failed to init snap file importer", zap.Error(err))
 	}
-	rc.restorer = restore.NewSimpleFileRestorer(snapFileImporter, rc.workerPool, rc.sstCheckpointRunner)
+	rc.restorer = restore.NewSimpleFileRestorer(ctx, snapFileImporter, rc.workerPool, rc.sstCheckpointRunner)
 }
 
 func (rc *LogClient) InitCheckpointMetadataForCompactedSstRestore(
@@ -440,7 +440,7 @@ func (rc *LogClient) InitCheckpointMetadataForCompactedSstRestore(
 			return nil, errors.Trace(err)
 		}
 	} else {
-		if err := checkpoint.SaveCheckpointMetadataForSnapshotRestore(ctx, rc.se, nil); err != nil {
+		if err := checkpoint.SaveCheckpointMetadataForSstRestore(ctx, rc.se, checkpoint.CompactedRestoreCheckpointDatabaseName, nil); err != nil {
 			return nil, errors.Trace(err)
 		}
 	}

@@ -75,7 +75,7 @@ func TestCheckpointMetaForRestore(t *testing.T) {
 			},
 		},
 	}
-	err = checkpoint.SaveCheckpointMetadataForSnapshotRestore(ctx, se, checkpointMetaForSnapshotRestore)
+	err = checkpoint.SaveCheckpointMetadataForSstRestore(ctx, se, checkpointMetaForSnapshotRestore)
 	require.NoError(t, err)
 	checkpointMetaForSnapshotRestore2, err := checkpoint.LoadCheckpointMetadataForSstRestore(ctx, se.GetSessionCtx().GetRestrictedSQLExecutor())
 	require.NoError(t, err)
@@ -278,7 +278,7 @@ func TestCheckpointRestoreRunner(t *testing.T) {
 	se, err := g.CreateSession(s.Mock.Storage)
 	require.NoError(t, err)
 
-	err = checkpoint.SaveCheckpointMetadataForSnapshotRestore(ctx, se, &checkpoint.CheckpointMetadataForSnapshotRestore{})
+	err = checkpoint.SaveCheckpointMetadataForSstRestore(ctx, se, &checkpoint.CheckpointMetadataForSnapshotRestore{})
 	require.NoError(t, err)
 	checkpointRunner, err := checkpoint.StartCheckpointRestoreRunnerForTest(ctx, se, 5*time.Second, 3*time.Second)
 	require.NoError(t, err)
@@ -371,7 +371,7 @@ func TestCheckpointRunnerRetry(t *testing.T) {
 	se, err := g.CreateSession(s.Mock.Storage)
 	require.NoError(t, err)
 
-	err = checkpoint.SaveCheckpointMetadataForSnapshotRestore(ctx, se, &checkpoint.CheckpointMetadataForSnapshotRestore{})
+	err = checkpoint.SaveCheckpointMetadataForSstRestore(ctx, se, &checkpoint.CheckpointMetadataForSnapshotRestore{})
 	require.NoError(t, err)
 	checkpointRunner, err := checkpoint.StartCheckpointRestoreRunnerForTest(ctx, se, 100*time.Millisecond, 300*time.Millisecond)
 	require.NoError(t, err)
@@ -422,7 +422,7 @@ func TestCheckpointRunnerNoRetry(t *testing.T) {
 	se, err := g.CreateSession(s.Mock.Storage)
 	require.NoError(t, err)
 
-	err = checkpoint.SaveCheckpointMetadataForSnapshotRestore(ctx, se, &checkpoint.CheckpointMetadataForSnapshotRestore{})
+	err = checkpoint.SaveCheckpointMetadataForSstRestore(ctx, se, &checkpoint.CheckpointMetadataForSnapshotRestore{})
 	require.NoError(t, err)
 	checkpointRunner, err := checkpoint.StartCheckpointRestoreRunnerForTest(ctx, se, 100*time.Millisecond, 300*time.Millisecond)
 	require.NoError(t, err)

@@ -377,7 +377,7 @@ func (rc *SnapClient) InitCheckpoint(
 		if config != nil {
 			meta.SchedulersConfig = &pdutil.ClusterConfig{Schedulers: config.Schedulers, ScheduleCfg: config.ScheduleCfg}
 		}
-		if err := checkpoint.SaveCheckpointMetadataForSnapshotRestore(ctx, rc.db.Session(), meta); err != nil {
+		if err := checkpoint.SaveCheckpointMetadataForSstRestore(ctx, rc.db.Session(), checkpoint.SnapshotRestoreCheckpointDatabaseName, meta); err != nil {
 			return checkpointSetWithTableID, nil, errors.Trace(err)
 		}
 	}
@@ -530,7 +530,7 @@ func (rc *SnapClient) initClients(ctx context.Context, backend *backuppb.Storage
 		if err != nil {
 			return errors.Trace(err)
 		}
-		rc.restorer = restore.NewSimpleFileRestorer(fileImporter, rc.workerPool, nil)
+		rc.restorer = restore.NewSimpleFileRestorer(ctx, fileImporter, rc.workerPool, nil)
 	} else {
 		// or create a fileImporter with the cluster API version
 		fileImporter, err = NewSnapFileImporter(
@@ -539,7 +539,7 @@ func (rc *SnapClient) initClients(ctx context.Context, backend *backuppb.Storage
 		if err != nil {
 			return errors.Trace(err)
 		}
-		rc.restorer = restore.NewMultiTablesRestorer(fileImporter, rc.workerPool, rc.checkpointRunner)
+		rc.restorer = restore.NewMultiTablesRestorer(ctx, fileImporter, rc.workerPool, rc.checkpointRunner)
 	}
 	return nil
 }
