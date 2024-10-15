@@ -38,7 +38,7 @@ go_test(
         "//pkg/parser/model",
         "//pkg/sessionctx",
         "//pkg/testkit",
-        "@com_github_pingcap_failpoint//:failpoint",
+        "//pkg/testkit/testfailpoint",
         "@com_github_stretchr_testify//require",
     ],
 )
