@@ -487,7 +487,8 @@ func getTableNameFromZipFilename(name string) string {
 	// dbName.tableName.schema.txt
 	s := strings.Split(name, ".")
 	intest.Assert(len(s) == 4, "invalid zip file name")
-	return s[0] + "." + s[1]
+	t := strings.Split(s[0], "/")
+	return t[1] + "." + s[1]
 }
 
 func topoSortTable(input []*zip.File) (result []*zip.File, err error) {
@@ -520,7 +521,7 @@ func topoSortTable(input []*zip.File) (result []*zip.File, err error) {
 	cnt := 0
 	taskCount := len(outMap)
 OUTLOOP:
-	for len(outMap) > 1 {
+	for len(outMap) != 0 {
 		cnt++
 		if cnt > taskCount {
 			return nil, errors.New("plan replayer: unknown table")
@@ -534,8 +535,16 @@ OUTLOOP:
 						continue
 					}
 					for _, c := range stats.Constraints {
-						if c.Tp == ast.ConstraintForeignKey &&
-							c.Refer.Table.Schema.L+"."+c.Refer.Table.Name.L == k {
+						if c.Tp != ast.ConstraintForeignKey {
+							continue
+						}
+						schema := c.Refer.Table.Schema.L
+						if schema == "" {
+							t := strings.Split(name, ".")
+							schema = t[0]
+						}
+						tableName := schema + "." + c.Refer.Table.Name.L
+						if tableName == k {
 							outMap[name]--
 						}
 					}
@@ -543,9 +552,6 @@ OUTLOOP:
 				continue OUTLOOP
 			}
 		}
-	}
-	for k := range outMap {
-		result = append(result, zipMap[k])
 	}
 	return result, nil
 }
