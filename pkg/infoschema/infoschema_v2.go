@@ -1139,8 +1139,12 @@ func isTableVirtual(id int64) bool {
 
 // IsV2 tells whether an InfoSchema is v2 or not.
 func IsV2(is InfoSchema) (bool, *infoschemaV2) {
-	ret, ok := is.(*infoschemaV2)
-	return ok, ret
+	ret, ok := is.(*InfoschemaV3)
+	if ok {
+		return ret.IsV2, ret.infoV2
+	}
+	retv2, ok := is.(*infoschemaV2)
+	return ok, retv2
 }
 
 func applyTableUpdate(b *Builder, m meta.Reader, diff *model.SchemaDiff) ([]int64, error) {

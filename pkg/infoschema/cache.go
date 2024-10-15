@@ -298,6 +298,9 @@ func (h *InfoCache) Insert(is InfoSchema, schemaTS uint64) bool {
 			} else if xisV2 {
 				// update infoschema if it's infoschema v2
 				h.cache[i].infoschema = is
+			} else if xisV3, _ := IsV3(h.cache[i].infoschema); xisV3 {
+				// update infoschema if it's infoschema v3
+				h.cache[i].infoschema = is
 			}
 			return true
 		}
