@@ -29,8 +29,7 @@ func RunRestoreTxn(c context.Context, g glue.Glue, cmdName string, cfg *Config) 
 	defer cancel()
 
 	// Restore raw does not need domain.
-	needDomain := false
-	mgr, err := NewMgr(ctx, g, cfg.PD, cfg.TLS, GetKeepalive(cfg), cfg.CheckRequirements, needDomain, conn.NormalVersionChecker)
+	mgr, err := NewMgr(ctx, g, cfg.PD, cfg.TLS, GetKeepalive(cfg), cfg.CheckRequirements, false, conn.NormalVersionChecker)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -88,7 +87,7 @@ func RunRestoreTxn(c context.Context, g glue.Glue, cmdName string, cfg *Config) 
 		!cfg.LogProgress)
 
 	// RawKV restore does not need to rewrite keys.
-	err = client.SplitRanges(ctx, ranges, updateCh, false)
+	err = client.SplitPoints(ctx, getEndKeys(ranges), updateCh, false)
 	if err != nil {
 		return errors.Trace(err)
 	}

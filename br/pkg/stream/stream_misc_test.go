@@ -66,14 +66,14 @@ func TestMetadataHelperReadFile(t *testing.T) {
 	require.NoError(t, err)
 
 	helper.InitCacheEntry(filename2, 2)
-	get_data, err := helper.ReadFile(ctx, filename1, 0, 0, backuppb.CompressionType_UNKNOWN, s)
+	get_data, err := helper.ReadFile(ctx, filename1, 0, 0, backuppb.CompressionType_UNKNOWN, s, nil)
 	require.NoError(t, err)
 	require.Equal(t, data1, get_data)
-	get_data, err = helper.ReadFile(ctx, filename2, 0, uint64(len(data1)), backuppb.CompressionType_UNKNOWN, s)
+	get_data, err = helper.ReadFile(ctx, filename2, 0, uint64(len(data1)), backuppb.CompressionType_UNKNOWN, s, nil)
 	require.NoError(t, err)
 	require.Equal(t, data1, get_data)
 	get_data, err = helper.ReadFile(ctx, filename2, uint64(len(data1)), uint64(len(data2)),
-		backuppb.CompressionType_ZSTD, s)
+		backuppb.CompressionType_ZSTD, s, nil)
 	require.NoError(t, err)
 	require.Equal(t, data1, get_data)
 }

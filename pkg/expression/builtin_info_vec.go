@@ -385,6 +385,30 @@ func (b *builtinVersionSig) vecEvalString(ctx EvalContext, input *chunk.Chunk, r
 	return nil
 }
 
+func (b *builtinTiDBMVCCInfoSig) vectorized() bool {
+	return false
+}
+
+func (b *builtinTiDBMVCCInfoSig) vecEvalString(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
+	return errors.Errorf("not implemented")
+}
+
+func (b *builtinTiDBEncodeRecordKeySig) vectorized() bool {
+	return false
+}
+
+func (b *builtinTiDBEncodeRecordKeySig) vecEvalString(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
+	return errors.Errorf("not implemented")
+}
+
+func (b *builtinTiDBEncodeIndexKeySig) vectorized() bool {
+	return false
+}
+
+func (b *builtinTiDBEncodeIndexKeySig) vecEvalString(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
+	return errors.Errorf("not implemented")
+}
+
 func (b *builtinTiDBDecodeKeySig) vectorized() bool {
 	return true
 }

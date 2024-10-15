@@ -363,15 +363,16 @@ endif
 #	make bench-daily TO=/path/to/file.json
 .PHONY: bench-daily
 bench-daily:
-	go test github.com/pingcap/tidb/pkg/session -run TestBenchDaily -bench Ignore --outfile bench_daily.json
+	go test github.com/pingcap/tidb/pkg/distsql -run TestBenchDaily -bench Ignore --outfile bench_daily.json
 	go test github.com/pingcap/tidb/pkg/executor -run TestBenchDaily -bench Ignore --outfile bench_daily.json
 	go test github.com/pingcap/tidb/pkg/executor/test/splittest -run TestBenchDaily -bench Ignore --outfile bench_daily.json
-	go test github.com/pingcap/tidb/pkg/tablecodec -run TestBenchDaily -bench Ignore --outfile bench_daily.json
 	go test github.com/pingcap/tidb/pkg/expression -run TestBenchDaily -bench Ignore --outfile bench_daily.json
-	go test github.com/pingcap/tidb/pkg/util/rowcodec -run TestBenchDaily -bench Ignore --outfile bench_daily.json
-	go test github.com/pingcap/tidb/pkg/util/codec -run TestBenchDaily -bench Ignore --outfile bench_daily.json
-	go test github.com/pingcap/tidb/pkg/distsql -run TestBenchDaily -bench Ignore --outfile bench_daily.json
+	go test github.com/pingcap/tidb/pkg/planner/core/tests/partition -run TestBenchDaily -bench Ignore --outfile bench_daily.json
+	go test github.com/pingcap/tidb/pkg/session -run TestBenchDaily -bench Ignore --outfile bench_daily.json
 	go test github.com/pingcap/tidb/pkg/statistics -run TestBenchDaily -bench Ignore --outfile bench_daily.json
+	go test github.com/pingcap/tidb/pkg/tablecodec -run TestBenchDaily -bench Ignore --outfile bench_daily.json
+	go test github.com/pingcap/tidb/pkg/util/codec -run TestBenchDaily -bench Ignore --outfile bench_daily.json
+	go test github.com/pingcap/tidb/pkg/util/rowcodec -run TestBenchDaily -bench Ignore --outfile bench_daily.json
 	go test github.com/pingcap/tidb/pkg/util/benchdaily -run TestBenchDaily -bench Ignore \
 		-date `git log -n1 --date=unix --pretty=format:%cd` \
 		-commit `git log -n1 --pretty=format:%h` \
@@ -435,7 +436,8 @@ build_for_br_integration_test:
 	$(GOBUILD) $(RACE_FLAG) -o bin/gc br/tests/br_z_gc_safepoint/*.go && \
 	$(GOBUILD) $(RACE_FLAG) -o bin/fake-oauth tools/fake-oauth/main.go && \
 	$(GOBUILD) $(RACE_FLAG) -o bin/rawkv br/tests/br_rawkv/*.go && \
-	$(GOBUILD) $(RACE_FLAG) -o bin/txnkv br/tests/br_txn/*.go \
+	$(GOBUILD) $(RACE_FLAG) -o bin/txnkv br/tests/br_txn/*.go && \
+	$(GOBUILD) $(RACE_FLAG) -o bin/utils br/tests/utils.go \
 	) || (make failpoint-disable && exit 1)
 	@make failpoint-disable
 
@@ -565,7 +567,15 @@ dumpling_bins:
 
 .PHONY: generate_grafana_scripts
 generate_grafana_scripts:
-	@cd metrics/grafana && mv tidb_summary.json tidb_summary.json.committed && ./generate_json.sh && diff -u tidb_summary.json.committed tidb_summary.json && rm tidb_summary.json.committed
+	@cd pkg/metrics/grafana && \
+	  mv tidb_summary.json tidb_summary.json.committed && \
+	  mv tidb_resource_control.json tidb_resource_control.json.committed && \
+	  ./generate_json.sh && \
+	  diff -u tidb_summary.json.committed tidb_summary.json && \
+	  diff -u tidb_resource_control.json.committed tidb_resource_control.json && \
+	  rm tidb_summary.json.committed && \
+	  rm tidb_resource_control.json.committed
+
 
 .PHONY: bazel_ci_prepare
 bazel_ci_prepare:
@@ -623,11 +633,18 @@ bazel_coverage_test: failpoint-enable bazel_ci_simple_prepare
 		-- //... -//cmd/... -//tests/graceshutdown/... \
 		-//tests/globalkilltest/... -//tests/readonlytest/... -//br/pkg/task:task_test -//tests/realtikvtest/...
 
+.PHONY: bazel_coverage_test_ddlargsv1
+bazel_coverage_test_ddlargsv1: failpoint-enable bazel_ci_simple_prepare
+	bazel $(BAZEL_GLOBAL_CONFIG) --nohome_rc coverage $(BAZEL_CMD_CONFIG) $(BAZEL_INSTRUMENTATION_FILTER) --jobs=35 --build_tests_only --test_keep_going=false \
+		--@io_bazel_rules_go//go/config:cover_format=go_cover --define gotags=deadlock,intest,ddlargsv1 \
+		-- //... -//cmd/... -//tests/graceshutdown/... \
+		-//tests/globalkilltest/... -//tests/readonlytest/... -//br/pkg/task:task_test -//tests/realtikvtest/...
+
 .PHONY: bazel_build
 bazel_build:
 	mkdir -p bin
 	bazel $(BAZEL_GLOBAL_CONFIG) build $(BAZEL_CMD_CONFIG) \
-		//... --//build:with_nogo_flag=$(NOGO_FLAG) --subcommands
+		//... --//build:with_nogo_flag=$(NOGO_FLAG)
 	bazel $(BAZEL_GLOBAL_CONFIG) build $(BAZEL_CMD_CONFIG) \
 		//cmd/importer:importer //cmd/tidb-server:tidb-server //cmd/tidb-server:tidb-server-check --//build:with_nogo_flag=$(NOGO_FLAG)
 	cp bazel-out/k8-fastbuild/bin/cmd/tidb-server/tidb-server_/tidb-server ./bin
@@ -799,3 +816,7 @@ bazel_mirror:
 .PHONY: bazel_sync
 bazel_sync:
 	bazel $(BAZEL_GLOBAL_CONFIG) sync $(BAZEL_SYNC_CONFIG)
+
+.PHONY: bazel_mirror_upload
+bazel_mirror_upload:
+	bazel $(BAZEL_GLOBAL_CONFIG) run $(BAZEL_CMD_CONFIG)  //cmd/mirror -- --mirror --upload

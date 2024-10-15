@@ -27,7 +27,8 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/infoschema"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/sysproctrack"
@@ -41,6 +42,7 @@ import (
 	statsutil "github.com/pingcap/tidb/pkg/statistics/handle/util"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/sqlescape"
 	"github.com/pingcap/tidb/pkg/util/timeutil"
@@ -53,6 +55,9 @@ type statsAnalyze struct {
 	statsHandle statstypes.StatsHandle
 	// sysProcTracker is used to track sys process like analyze
 	sysProcTracker sysproctrack.Tracker
+	// refresher is used to refresh the analyze job queue and analyze the highest priority tables.
+	// It is only used when auto-analyze priority queue is enabled.
+	refresher *refresher.Refresher
 }
 
 // NewStatsAnalyze creates a new StatsAnalyze.
@@ -60,7 +65,14 @@ func NewStatsAnalyze(
 	statsHandle statstypes.StatsHandle,
 	sysProcTracker sysproctrack.Tracker,
 ) statstypes.StatsAnalyze {
-	return &statsAnalyze{statsHandle: statsHandle, sysProcTracker: sysProcTracker}
+	// Usually, we should only create the refresher when auto-analyze priority queue is enabled.
+	// But to allow users to enable auto-analyze priority queue on the fly, we need to create the refresher here.
+	r := refresher.NewRefresher(statsHandle, sysProcTracker)
+	return &statsAnalyze{
+		statsHandle:    statsHandle,
+		sysProcTracker: sysProcTracker,
+		refresher:      r,
+	}
 }
 
 // InsertAnalyzeJob inserts the analyze job to the storage.
@@ -268,10 +280,12 @@ func CleanupCorruptedAnalyzeJobsOnDeadInstances(
 // HandleAutoAnalyze analyzes the outdated tables. (The change percent of the table exceeds the threshold)
 // It also analyzes newly created tables and newly added indexes.
 func (sa *statsAnalyze) HandleAutoAnalyze() (analyzed bool) {
-	_ = statsutil.CallWithSCtx(sa.statsHandle.SPool(), func(sctx sessionctx.Context) error {
-		analyzed = HandleAutoAnalyze(sctx, sa.statsHandle, sa.sysProcTracker)
+	if err := statsutil.CallWithSCtx(sa.statsHandle.SPool(), func(sctx sessionctx.Context) error {
+		analyzed = sa.handleAutoAnalyze(sctx)
 		return nil
-	})
+	}); err != nil {
+		statslogutil.StatsLogger().Error("Failed to handle auto analyze", zap.Error(err))
+	}
 	return
 }
 
@@ -291,12 +305,7 @@ func (sa *statsAnalyze) CheckAnalyzeVersion(tblInfo *model.TableInfo, physicalID
 	return statistics.CheckAnalyzeVerOnTable(tbl, version)
 }
 
-// HandleAutoAnalyze analyzes the newly created table or index.
-func HandleAutoAnalyze(
-	sctx sessionctx.Context,
-	statsHandle statstypes.StatsHandle,
-	sysProcTracker sysproctrack.Tracker,
-) (analyzed bool) {
+func (sa *statsAnalyze) handleAutoAnalyze(sctx sessionctx.Context) bool {
 	defer func() {
 		if r := recover(); r != nil {
 			statslogutil.StatsLogger().Error(
@@ -307,13 +316,17 @@ func HandleAutoAnalyze(
 		}
 	}()
 	if variable.EnableAutoAnalyzePriorityQueue.Load() {
-		r := refresher.NewRefresher(statsHandle, sysProcTracker)
-		err := r.RebuildTableAnalysisJobQueue()
-		if err != nil {
-			statslogutil.StatsLogger().Error("rebuild table analysis job queue failed", zap.Error(err))
-			return false
+		// During the test, we need to fetch all DML changes before analyzing the highest priority tables.
+		if intest.InTest {
+			sa.refresher.ProcessDMLChangesForTest()
+			sa.refresher.RequeueFailedJobsForTest()
 		}
-		return r.AnalyzeHighestPriorityTables()
+		analyzed := sa.refresher.AnalyzeHighestPriorityTables()
+		// During the test, we need to wait for the auto analyze job to be finished.
+		if intest.InTest {
+			sa.refresher.WaitAutoAnalyzeFinishedForTest()
+		}
+		return analyzed
 	}
 
 	parameters := exec.GetAutoAnalyzeParameters(sctx)
@@ -327,13 +340,18 @@ func HandleAutoAnalyze(
 
 	return RandomPickOneTableAndTryAutoAnalyze(
 		sctx,
-		statsHandle,
-		sysProcTracker,
+		sa.statsHandle,
+		sa.sysProcTracker,
 		autoAnalyzeRatio,
 		pruneMode,
 		start,
 		end,
 	)
+}
+
+// Close closes the auto-analyze worker.
+func (sa *statsAnalyze) Close() {
+	sa.refresher.Close()
 }
 
 // CheckAutoAnalyzeWindow determine the time window for auto-analysis and verify if the current time falls within this range.
@@ -385,7 +403,7 @@ func RandomPickOneTableAndTryAutoAnalyze(
 	})
 	// Query locked tables once to minimize overhead.
 	// Outdated lock info is acceptable as we verify table lock status pre-analysis.
-	lockedTables, err := lockstats.QueryLockedTables(sctx)
+	lockedTables, err := lockstats.QueryLockedTables(statsutil.StatsCtx, sctx)
 	if err != nil {
 		statslogutil.StatsLogger().Error(
 			"check table lock failed",
@@ -400,7 +418,7 @@ func RandomPickOneTableAndTryAutoAnalyze(
 			continue
 		}
 
-		tbls, err := is.SchemaTableInfos(context.Background(), model.NewCIStr(db))
+		tbls, err := is.SchemaTableInfos(context.Background(), pmodel.NewCIStr(db))
 		terror.Log(err)
 		// We shuffle dbs and tbls so that the order of iterating tables is random. If the order is fixed and the auto
 		// analyze job of one table fails for some reason, it may always analyze the same table and fail again and again
@@ -536,6 +554,10 @@ func tryAutoAnalyzeTable(
 	// Whether the table needs to analyze or not, we need to check the indices of the table.
 	for _, idx := range tblInfo.Indices {
 		if idxStats := statsTbl.GetIdx(idx.ID); idxStats == nil && !statsTbl.ColAndIdxExistenceMap.HasAnalyzed(idx.ID, true) && idx.State == model.StatePublic {
+			// Vector index doesn't need stats yet.
+			if idx.VectorInfo != nil {
+				continue
+			}
 			sqlWithIdx := sql + " index %n"
 			paramsWithIdx := append(params, idx.Name.O)
 			escaped, err := sqlescape.EscapeSQL(sqlWithIdx, paramsWithIdx...)
@@ -670,7 +692,11 @@ func tryAutoAnalyzePartitionTableInDynamicMode(
 	}
 	// Check if any index of the table needs to analyze.
 	for _, idx := range tblInfo.Indices {
-		if idx.State != model.StatePublic {
+		if idx.State != model.StatePublic || statsutil.IsSpecialGlobalIndex(idx, tblInfo) {
+			continue
+		}
+		// Vector index doesn't need stats yet.
+		if idx.VectorInfo != nil {
 			continue
 		}
 		// Collect all the partition names that need to analyze.

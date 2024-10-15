@@ -25,8 +25,9 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/meta"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
@@ -51,12 +52,9 @@ func batchInsert(tk *testkit.TestKit, tbl string, start, end int) {
 func TestModifyColumnReorgInfo(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 
-	originalTimeout := ddl.ReorgWaitTimeout
-	ddl.ReorgWaitTimeout = 10 * time.Millisecond
 	limit := variable.GetDDLErrorCountLimit()
 	variable.SetDDLErrorCountLimit(5)
 	defer func() {
-		ddl.ReorgWaitTimeout = originalTimeout
 		variable.SetDDLErrorCountLimit(limit)
 	}()
 	tk := testkit.NewTestKit(t, store)
@@ -93,7 +91,7 @@ func TestModifyColumnReorgInfo(t *testing.T) {
 			currJob = job
 			var (
 				_newCol                *model.ColumnInfo
-				_oldColName            *model.CIStr
+				_oldColName            *pmodel.CIStr
 				_pos                   = &ast.ColumnPosition{}
 				_modifyColumnTp        byte
 				_updatedAutoRandomBits uint64

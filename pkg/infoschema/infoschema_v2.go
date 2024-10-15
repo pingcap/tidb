@@ -26,11 +26,13 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/ddl/placement"
+	infoschemacontext "github.com/pingcap/tidb/pkg/infoschema/context"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/metrics"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/util"
@@ -42,9 +44,9 @@ import (
 
 // tableItem is the btree item sorted by name or by id.
 type tableItem struct {
-	dbName        model.CIStr
+	dbName        pmodel.CIStr
 	dbID          int64
-	tableName     model.CIStr
+	tableName     pmodel.CIStr
 	tableID       int64
 	schemaVersion int64
 	tomb          bool
@@ -59,7 +61,7 @@ type schemaItem struct {
 type schemaIDName struct {
 	schemaVersion int64
 	id            int64
-	name          model.CIStr
+	name          pmodel.CIStr
 	tomb          bool
 }
 
@@ -123,7 +125,7 @@ type Data struct {
 }
 
 type tableInfoItem struct {
-	dbName        model.CIStr
+	dbName        pmodel.CIStr
 	tableID       int64
 	schemaVersion int64
 	tableInfo     *model.TableInfo
@@ -212,7 +214,7 @@ func (isd *Data) add(item tableItem, tbl table.Table) {
 			isd.pid2tid.Set(partitionItem{def.ID, item.schemaVersion, tbl.Meta().ID, false})
 		}
 	}
-	if hasSpecialAttributes(ti) {
+	if infoschemacontext.HasSpecialAttributes(ti) {
 		isd.tableInfoResident.Set(tableInfoItem{
 			dbName:        item.dbName,
 			tableID:       item.tableID,
@@ -588,6 +590,16 @@ func (is *infoschemaV2) CloneAndUpdateTS(startTS uint64) *infoschemaV2 {
 	return &tmp
 }
 
+func (is *infoschemaV2) searchTableItemByID(tableID int64) (tableItem, bool) {
+	eq := func(a, b *tableItem) bool { return a.tableID == b.tableID }
+	return search(
+		is.byID,
+		is.infoSchema.schemaMetaVersion,
+		tableItem{tableID: tableID, schemaVersion: math.MaxInt64},
+		eq,
+	)
+}
+
 // TableByID implements the InfoSchema interface.
 // As opposed to TableByName, TableByID will not refill cache when schema cache miss,
 // unless the caller changes the behavior by passing a context use WithRefillOption.
@@ -596,15 +608,7 @@ func (is *infoschemaV2) TableByID(ctx context.Context, id int64) (val table.Tabl
 		return
 	}
 
-	// Get from the cache.
-	key := tableCacheKey{id, is.infoSchema.schemaMetaVersion}
-	tbl, found := is.tableCache.Get(key)
-	if found && tbl != nil {
-		return tbl, true
-	}
-
-	eq := func(a, b *tableItem) bool { return a.tableID == b.tableID }
-	itm, ok := search(is.byID, is.infoSchema.schemaMetaVersion, tableItem{tableID: id, schemaVersion: math.MaxInt64}, eq)
+	itm, ok := is.searchTableItemByID(id)
 	if !ok {
 		return nil, false
 	}
@@ -623,13 +627,10 @@ func (is *infoschemaV2) TableByID(ctx context.Context, id int64) (val table.Tabl
 		refill = opt.(bool)
 	}
 
-	// get cache with old key
-	oldKey := tableCacheKey{itm.tableID, itm.schemaVersion}
-	tbl, found = is.tableCache.Get(oldKey)
+	// get cache with item key
+	key := tableCacheKey{itm.tableID, itm.schemaVersion}
+	tbl, found := is.tableCache.Get(key)
 	if found && tbl != nil {
-		if refill {
-			is.tableCache.Set(key, tbl)
-		}
 		return tbl, true
 	}
 
@@ -640,9 +641,54 @@ func (is *infoschemaV2) TableByID(ctx context.Context, id int64) (val table.Tabl
 	}
 
 	if refill {
-		is.tableCache.Set(oldKey, ret)
+		is.tableCache.Set(key, ret)
 	}
 	return ret, true
+}
+
+func (is *infoschemaV2) SchemaNameByTableID(tableID int64) (schemaName pmodel.CIStr, ok bool) {
+	if !tableIDIsValid(tableID) {
+		return
+	}
+
+	itm, ok := is.searchTableItemByID(tableID)
+	if !ok {
+		return
+	}
+
+	return itm.dbName, true
+}
+
+// TableItem is exported from tableItem.
+type TableItem struct {
+	DBName    pmodel.CIStr
+	TableName pmodel.CIStr
+}
+
+// IterateAllTableItems is used for special performance optimization.
+// Used by executor/infoschema_reader.go to handle reading from INFORMATION_SCHEMA.TABLES.
+// If visit return false, stop the iterate process.
+func (is *infoschemaV2) IterateAllTableItems(visit func(TableItem) bool) {
+	maxv, ok := is.byName.Max()
+	if !ok {
+		return
+	}
+	var pivot *tableItem
+	is.byName.Descend(maxv, func(item tableItem) bool {
+		if item.schemaVersion > is.schemaMetaVersion {
+			// skip MVCC version, those items are not visible to the queried schema version
+			return true
+		}
+		if pivot != nil && pivot.dbName == item.dbName && pivot.tableName == item.tableName {
+			// skip MVCC version, this db.table has been visited already
+			return true
+		}
+		pivot = &item
+		if !item.tomb {
+			return visit(TableItem{DBName: item.dbName, TableName: item.tableName})
+		}
+		return true
+	})
 }
 
 // IsSpecialDB tells whether the database is a special database.
@@ -653,7 +699,7 @@ func IsSpecialDB(dbName string) bool {
 }
 
 // EvictTable is exported for testing only.
-func (is *infoschemaV2) EvictTable(schema, tbl model.CIStr) {
+func (is *infoschemaV2) EvictTable(schema, tbl pmodel.CIStr) {
 	eq := func(a, b *tableItem) bool { return a.dbName == b.dbName && a.tableName == b.tableName }
 	itm, ok := search(is.byName, is.infoSchema.schemaMetaVersion, tableItem{dbName: schema, tableName: tbl, schemaVersion: math.MaxInt64}, eq)
 	if !ok {
@@ -687,7 +733,7 @@ func (h *tableByNameHelper) onItem(item tableItem) bool {
 
 // TableByName implements the InfoSchema interface.
 // When schema cache miss, it will fetch the TableInfo from TikV and refill cache.
-func (is *infoschemaV2) TableByName(ctx context.Context, schema, tbl model.CIStr) (t table.Table, err error) {
+func (is *infoschemaV2) TableByName(ctx context.Context, schema, tbl pmodel.CIStr) (t table.Table, err error) {
 	if IsSpecialDB(schema.L) {
 		if raw, ok := is.specials.Load(schema.L); ok {
 			tbNames := raw.(*schemaTables)
@@ -737,7 +783,7 @@ func (is *infoschemaV2) TableByName(ctx context.Context, schema, tbl model.CIStr
 }
 
 // TableInfoByName implements InfoSchema.TableInfoByName
-func (is *infoschemaV2) TableInfoByName(schema, table model.CIStr) (*model.TableInfo, error) {
+func (is *infoschemaV2) TableInfoByName(schema, table pmodel.CIStr) (*model.TableInfo, error) {
 	tbl, err := is.TableByName(context.Background(), schema, table)
 	return getTableInfo(tbl), err
 }
@@ -749,7 +795,7 @@ func (is *infoschemaV2) TableInfoByID(id int64) (*model.TableInfo, bool) {
 }
 
 // SchemaTableInfos implements MetaOnlyInfoSchema.
-func (is *infoschemaV2) SchemaTableInfos(ctx context.Context, schema model.CIStr) ([]*model.TableInfo, error) {
+func (is *infoschemaV2) SchemaTableInfos(ctx context.Context, schema pmodel.CIStr) ([]*model.TableInfo, error) {
 	if IsSpecialDB(schema.L) {
 		raw, ok := is.Data.specials.Load(schema.L)
 		if ok {
@@ -772,7 +818,7 @@ retry:
 	// Using the KV timeout read feature to address the issue of potential DDL lease expiration when
 	// the meta region leader is slow.
 	snapshot.SetOption(kv.TiKVClientReadTimeout, uint64(3000)) // 3000ms.
-	m := meta.NewSnapshotMeta(snapshot)
+	m := meta.NewReader(snapshot)
 	tblInfos, err := m.ListTables(dbInfo.ID)
 	if err != nil {
 		if meta.ErrDBNotExists.Equal(err) {
@@ -795,7 +841,7 @@ retry:
 }
 
 // SchemaSimpleTableInfos implements MetaOnlyInfoSchema.
-func (is *infoschemaV2) SchemaSimpleTableInfos(ctx context.Context, schema model.CIStr) ([]*model.TableNameInfo, error) {
+func (is *infoschemaV2) SchemaSimpleTableInfos(ctx context.Context, schema pmodel.CIStr) ([]*model.TableNameInfo, error) {
 	if IsSpecialDB(schema.L) {
 		raw, ok := is.Data.specials.Load(schema.L)
 		if ok {
@@ -852,7 +898,7 @@ func (is *infoschemaV2) FindTableInfoByPartitionID(
 	return getTableInfo(tbl), db, partDef
 }
 
-func (is *infoschemaV2) SchemaByName(schema model.CIStr) (val *model.DBInfo, ok bool) {
+func (is *infoschemaV2) SchemaByName(schema pmodel.CIStr) (val *model.DBInfo, ok bool) {
 	if IsSpecialDB(schema.L) {
 		raw, ok := is.Data.specials.Load(schema.L)
 		if !ok {
@@ -917,15 +963,15 @@ func (is *infoschemaV2) AllSchemas() (schemas []*model.DBInfo) {
 	return
 }
 
-func (is *infoschemaV2) AllSchemaNames() []model.CIStr {
-	rs := make([]model.CIStr, 0, is.Data.schemaMap.Len())
+func (is *infoschemaV2) AllSchemaNames() []pmodel.CIStr {
+	rs := make([]pmodel.CIStr, 0, is.Data.schemaMap.Len())
 	is.allSchemas(func(di *model.DBInfo) {
 		rs = append(rs, di.Name)
 	})
 	return rs
 }
 
-func (is *infoschemaV2) SchemaExists(schema model.CIStr) bool {
+func (is *infoschemaV2) SchemaExists(schema pmodel.CIStr) bool {
 	_, ok := is.SchemaByName(schema)
 	return ok
 }
@@ -979,7 +1025,7 @@ func (is *infoschemaV2) FindTableByPartitionID(partitionID int64) (table.Table, 
 	return tbl, dbInfo, def
 }
 
-func (is *infoschemaV2) TableExists(schema, table model.CIStr) bool {
+func (is *infoschemaV2) TableExists(schema, table pmodel.CIStr) bool {
 	_, err := is.TableByName(context.Background(), schema, table)
 	return err == nil
 }
@@ -1001,7 +1047,7 @@ func (is *infoschemaV2) SchemaByID(id int64) (*model.DBInfo, bool) {
 		return st.dbInfo, true
 	}
 	var ok bool
-	var name model.CIStr
+	var name pmodel.CIStr
 	is.Data.schemaID2Name.Descend(schemaIDName{
 		id:            id,
 		schemaVersion: math.MaxInt64,
@@ -1037,7 +1083,7 @@ func (is *infoschemaV2) loadTableInfo(ctx context.Context, tblID, dbID int64, ts
 		// Using the KV timeout read feature to address the issue of potential DDL lease expiration when
 		// the meta region leader is slow.
 		snapshot.SetOption(kv.TiKVClientReadTimeout, uint64(3000)) // 3000ms.
-		m := meta.NewSnapshotMeta(snapshot)
+		m := meta.NewReader(snapshot)
 
 		tblInfo, err := m.GetTable(dbID, tblID)
 		if err != nil {
@@ -1097,14 +1143,14 @@ func IsV2(is InfoSchema) (bool, *infoschemaV2) {
 	return ok, ret
 }
 
-func applyTableUpdate(b *Builder, m *meta.Meta, diff *model.SchemaDiff) ([]int64, error) {
+func applyTableUpdate(b *Builder, m meta.Reader, diff *model.SchemaDiff) ([]int64, error) {
 	if b.enableV2 {
 		return b.applyTableUpdateV2(m, diff)
 	}
 	return b.applyTableUpdate(m, diff)
 }
 
-func applyCreateSchema(b *Builder, m *meta.Meta, diff *model.SchemaDiff) error {
+func applyCreateSchema(b *Builder, m meta.Reader, diff *model.SchemaDiff) error {
 	return b.applyCreateSchema(m, diff)
 }
 
@@ -1115,11 +1161,11 @@ func applyDropSchema(b *Builder, diff *model.SchemaDiff) []int64 {
 	return b.applyDropSchema(diff)
 }
 
-func applyRecoverSchema(b *Builder, m *meta.Meta, diff *model.SchemaDiff) ([]int64, error) {
+func applyRecoverSchema(b *Builder, m meta.Reader, diff *model.SchemaDiff) ([]int64, error) {
 	if diff.ReadTableFromMeta {
 		// recover tables under the database and set them to diff.AffectedOpts
 		s := b.store.GetSnapshot(kv.MaxVersion)
-		recoverMeta := meta.NewSnapshotMeta(s)
+		recoverMeta := meta.NewReader(s)
 		tables, err := recoverMeta.ListSimpleTables(diff.SchemaID)
 		if err != nil {
 			return nil, err
@@ -1141,7 +1187,7 @@ func applyRecoverSchema(b *Builder, m *meta.Meta, diff *model.SchemaDiff) ([]int
 	return b.applyRecoverSchema(m, diff)
 }
 
-func (b *Builder) applyRecoverSchemaV2(m *meta.Meta, diff *model.SchemaDiff) ([]int64, error) {
+func (b *Builder) applyRecoverSchemaV2(m meta.Reader, diff *model.SchemaDiff) ([]int64, error) {
 	if di, ok := b.infoschemaV2.SchemaByID(diff.SchemaID); ok {
 		return nil, ErrDatabaseExists.GenWithStackByArgs(
 			fmt.Sprintf("(Schema ID %d)", di.ID),
@@ -1155,14 +1201,14 @@ func (b *Builder) applyRecoverSchemaV2(m *meta.Meta, diff *model.SchemaDiff) ([]
 	return applyCreateTables(b, m, diff)
 }
 
-func applyModifySchemaCharsetAndCollate(b *Builder, m *meta.Meta, diff *model.SchemaDiff) error {
+func applyModifySchemaCharsetAndCollate(b *Builder, m meta.Reader, diff *model.SchemaDiff) error {
 	if b.enableV2 {
 		return b.applyModifySchemaCharsetAndCollateV2(m, diff)
 	}
 	return b.applyModifySchemaCharsetAndCollate(m, diff)
 }
 
-func applyModifySchemaDefaultPlacement(b *Builder, m *meta.Meta, diff *model.SchemaDiff) error {
+func applyModifySchemaDefaultPlacement(b *Builder, m meta.Reader, diff *model.SchemaDiff) error {
 	if b.enableV2 {
 		return b.applyModifySchemaDefaultPlacementV2(m, diff)
 	}
@@ -1176,7 +1222,7 @@ func applyDropTable(b *Builder, diff *model.SchemaDiff, dbInfo *model.DBInfo, ta
 	return b.applyDropTable(diff, dbInfo, tableID, affected)
 }
 
-func applyCreateTables(b *Builder, m *meta.Meta, diff *model.SchemaDiff) ([]int64, error) {
+func applyCreateTables(b *Builder, m meta.Reader, diff *model.SchemaDiff) ([]int64, error) {
 	return b.applyCreateTables(m, diff)
 }
 
@@ -1216,7 +1262,7 @@ func allocByID(b *Builder, id int64) (autoid.Allocators, bool) {
 }
 
 // TODO: more UT to check the correctness.
-func (b *Builder) applyTableUpdateV2(m *meta.Meta, diff *model.SchemaDiff) ([]int64, error) {
+func (b *Builder) applyTableUpdateV2(m meta.Reader, diff *model.SchemaDiff) ([]int64, error) {
 	oldDBInfo, ok := b.infoschemaV2.SchemaByID(diff.SchemaID)
 	if !ok {
 		return nil, ErrDatabaseNotExists.GenWithStackByArgs(
@@ -1297,7 +1343,7 @@ func (b *Builder) applyDropTableV2(diff *model.SchemaDiff, dbInfo *model.DBInfo,
 	return affected
 }
 
-func (b *Builder) applyModifySchemaCharsetAndCollateV2(m *meta.Meta, diff *model.SchemaDiff) error {
+func (b *Builder) applyModifySchemaCharsetAndCollateV2(m meta.Reader, diff *model.SchemaDiff) error {
 	di, err := m.GetDatabase(diff.SchemaID)
 	if err != nil {
 		return errors.Trace(err)
@@ -1316,7 +1362,7 @@ func (b *Builder) applyModifySchemaCharsetAndCollateV2(m *meta.Meta, diff *model
 	return nil
 }
 
-func (b *Builder) applyModifySchemaDefaultPlacementV2(m *meta.Meta, diff *model.SchemaDiff) error {
+func (b *Builder) applyModifySchemaDefaultPlacementV2(m meta.Reader, diff *model.SchemaDiff) error {
 	di, err := m.GetDatabase(diff.SchemaID)
 	if err != nil {
 		return errors.Trace(err)
@@ -1345,7 +1391,7 @@ func (b *bundleInfoBuilder) updateInfoSchemaBundlesV2(is *infoschemaV2) {
 
 	// do full update bundles
 	is.ruleBundleMap = make(map[int64]*placement.Bundle)
-	tmp := is.ListTablesWithSpecialAttribute(PlacementPolicyAttribute)
+	tmp := is.ListTablesWithSpecialAttribute(infoschemacontext.PlacementPolicyAttribute)
 	for _, v := range tmp {
 		for _, tbl := range v.TableInfos {
 			b.updateTableBundles(is, tbl.ID)
@@ -1358,7 +1404,7 @@ func (b *bundleInfoBuilder) completeUpdateTablesV2(is *infoschemaV2) {
 		return
 	}
 
-	dbs := is.ListTablesWithSpecialAttribute(AllSpecialAttribute)
+	dbs := is.ListTablesWithSpecialAttribute(infoschemacontext.AllSpecialAttribute)
 	for _, db := range dbs {
 		for _, tbl := range db.TableInfos {
 			tblInfo := tbl
@@ -1379,60 +1425,11 @@ func (b *bundleInfoBuilder) completeUpdateTablesV2(is *infoschemaV2) {
 	}
 }
 
-type specialAttributeFilter func(*model.TableInfo) bool
-
-// TTLAttribute is the TTL attribute filter used by ListTablesWithSpecialAttribute.
-var TTLAttribute specialAttributeFilter = func(t *model.TableInfo) bool {
-	return t.State == model.StatePublic && t.TTLInfo != nil
-}
-
-// TiFlashAttribute is the TiFlashReplica attribute filter used by ListTablesWithSpecialAttribute.
-var TiFlashAttribute specialAttributeFilter = func(t *model.TableInfo) bool {
-	return t.TiFlashReplica != nil
-}
-
-// PlacementPolicyAttribute is the Placement Policy attribute filter used by ListTablesWithSpecialAttribute.
-var PlacementPolicyAttribute specialAttributeFilter = func(t *model.TableInfo) bool {
-	if t.PlacementPolicyRef != nil {
-		return true
-	}
-	if parInfo := t.GetPartitionInfo(); parInfo != nil {
-		for _, def := range parInfo.Definitions {
-			if def.PlacementPolicyRef != nil {
-				return true
-			}
-		}
-	}
-	return false
-}
-
-// TableLockAttribute is the Table Lock attribute filter used by ListTablesWithSpecialAttribute.
-var TableLockAttribute specialAttributeFilter = func(t *model.TableInfo) bool {
-	return t.Lock != nil
-}
-
-// ForeignKeysAttribute is the ForeignKeys attribute filter used by ListTablesWithSpecialAttribute.
-var ForeignKeysAttribute specialAttributeFilter = func(t *model.TableInfo) bool {
-	return len(t.ForeignKeys) > 0
-}
-
-// PartitionAttribute is the Partition attribute filter used by ListTablesWithSpecialAttribute.
-var PartitionAttribute specialAttributeFilter = func(t *model.TableInfo) bool {
-	return t.GetPartitionInfo() != nil
-}
-
-func hasSpecialAttributes(t *model.TableInfo) bool {
-	return TTLAttribute(t) || TiFlashAttribute(t) || PlacementPolicyAttribute(t) || PartitionAttribute(t) || TableLockAttribute(t) || ForeignKeysAttribute(t)
-}
-
-// AllSpecialAttribute marks a model.TableInfo with any special attributes.
-var AllSpecialAttribute specialAttributeFilter = hasSpecialAttributes
-
-func (is *infoschemaV2) ListTablesWithSpecialAttribute(filter specialAttributeFilter) []tableInfoResult {
-	ret := make([]tableInfoResult, 0, 10)
+func (is *infoschemaV2) ListTablesWithSpecialAttribute(filter infoschemacontext.SpecialAttributeFilter) []infoschemacontext.TableInfoResult {
+	ret := make([]infoschemacontext.TableInfoResult, 0, 10)
 	var currDB string
 	var lastTableID int64
-	var res tableInfoResult
+	var res infoschemacontext.TableInfoResult
 	is.Data.tableInfoResident.Reverse(func(item tableInfoItem) bool {
 		if item.schemaVersion > is.infoSchema.schemaMetaVersion {
 			// Skip the versions that we are not looking for.
@@ -1454,13 +1451,13 @@ func (is *infoschemaV2) ListTablesWithSpecialAttribute(filter specialAttributeFi
 
 		if currDB == "" {
 			currDB = item.dbName.L
-			res = tableInfoResult{DBName: item.dbName}
+			res = infoschemacontext.TableInfoResult{DBName: item.dbName}
 			res.TableInfos = append(res.TableInfos, item.tableInfo)
 		} else if currDB == item.dbName.L {
 			res.TableInfos = append(res.TableInfos, item.tableInfo)
 		} else {
 			ret = append(ret, res)
-			res = tableInfoResult{DBName: item.dbName}
+			res = infoschemacontext.TableInfoResult{DBName: item.dbName}
 			res.TableInfos = append(res.TableInfos, item.tableInfo)
 		}
 		return true

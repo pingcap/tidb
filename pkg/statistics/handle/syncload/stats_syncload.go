@@ -15,7 +15,7 @@
 package syncload
 
 import (
-	"fmt"
+	stderrors "errors"
 	"math/rand"
 	"runtime"
 	"time"
@@ -23,15 +23,17 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/metrics"
-	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/statistics/handle/storage"
 	statstypes "github.com/pingcap/tidb/pkg/statistics/handle/types"
+	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/intest"
@@ -58,14 +60,15 @@ func GetSyncLoadConcurrencyByCPU() int {
 
 type statsSyncLoad struct {
 	statsHandle statstypes.StatsHandle
+	is          infoschema.InfoSchema
 	StatsLoad   statstypes.StatsLoad
 }
 
 var globalStatsSyncLoadSingleFlight singleflight.Group
 
 // NewStatsSyncLoad creates a new StatsSyncLoad.
-func NewStatsSyncLoad(statsHandle statstypes.StatsHandle) statstypes.StatsSyncLoad {
-	s := &statsSyncLoad{statsHandle: statsHandle}
+func NewStatsSyncLoad(is infoschema.InfoSchema, statsHandle statstypes.StatsHandle) statstypes.StatsSyncLoad {
+	s := &statsSyncLoad{statsHandle: statsHandle, is: is}
 	cfg := config.GetGlobalConfig()
 	s.StatsLoad.NeededItemsCh = make(chan *statstypes.NeededItemTask, cfg.Performance.StatsLoadQueueSize)
 	s.StatsLoad.TimeoutItemsCh = make(chan *statstypes.NeededItemTask, cfg.Performance.StatsLoadQueueSize)
@@ -91,7 +94,6 @@ func (s *statsSyncLoad) SendLoadRequests(sc *stmtctx.StatementContext, neededHis
 			}
 		}
 	})
-
 	if len(remainedItems) <= 0 {
 		return nil
 	}
@@ -300,9 +302,16 @@ func (s *statsSyncLoad) handleOneItemTask(task *statstypes.NeededItemTask) (err 
 	}()
 	item := task.Item.TableItemID
 	tbl, ok := s.statsHandle.Get(item.TableID)
+
 	if !ok {
 		return nil
 	}
+	is := sctx.GetDomainInfoSchema().(infoschema.InfoSchema)
+	tblInfo, ok := s.statsHandle.TableInfoByID(is, item.TableID)
+	if !ok {
+		return nil
+	}
+	isPkIsHandle := tblInfo.Meta().PKIsHandle
 	wrapper := &statsWrapper{}
 	if item.IsIndex {
 		index, loadNeeded := tbl.IndexIsLoadNeeded(item.ID)
@@ -312,7 +321,7 @@ func (s *statsSyncLoad) handleOneItemTask(task *statstypes.NeededItemTask) (err 
 		if index != nil {
 			wrapper.idxInfo = index.Info
 		} else {
-			wrapper.idxInfo = tbl.ColAndIdxExistenceMap.GetIndex(item.ID)
+			wrapper.idxInfo = tblInfo.Meta().FindIndexByID(item.ID)
 		}
 	} else {
 		col, loadNeeded, analyzed := tbl.ColumnIsLoadNeeded(item.ID, task.Item.FullLoad)
@@ -322,7 +331,9 @@ func (s *statsSyncLoad) handleOneItemTask(task *statstypes.NeededItemTask) (err 
 		if col != nil {
 			wrapper.colInfo = col.Info
 		} else {
-			wrapper.colInfo = tbl.ColAndIdxExistenceMap.GetCol(item.ID)
+			// Now, we cannot init the column info in the ColAndIdxExistenceMap when to disable lite-init-stats.
+			// so we have to get the column info from the domain.
+			wrapper.colInfo = tblInfo.Meta().GetColumnByID(item.ID)
 		}
 		// If this column is not analyzed yet and we don't have it in memory.
 		// We create a fake one for the pseudo estimation.
@@ -331,15 +342,18 @@ func (s *statsSyncLoad) handleOneItemTask(task *statstypes.NeededItemTask) (err 
 				PhysicalID: item.TableID,
 				Info:       wrapper.colInfo,
 				Histogram:  *statistics.NewHistogram(item.ID, 0, 0, 0, &wrapper.colInfo.FieldType, 0, 0),
-				IsHandle:   tbl.IsPkIsHandle && mysql.HasPriKeyFlag(wrapper.colInfo.GetFlag()),
+				IsHandle:   isPkIsHandle && mysql.HasPriKeyFlag(wrapper.colInfo.GetFlag()),
 			}
-			s.updateCachedItem(item, wrapper.col, wrapper.idx, task.Item.FullLoad)
+			s.updateCachedItem(tblInfo, item, wrapper.col, wrapper.idx, task.Item.FullLoad)
 			return nil
 		}
 	}
 	t := time.Now()
 	needUpdate := false
-	wrapper, err = s.readStatsForOneItem(sctx, item, wrapper, tbl.IsPkIsHandle, task.Item.FullLoad)
+	wrapper, err = s.readStatsForOneItem(sctx, item, wrapper, isPkIsHandle, task.Item.FullLoad)
+	if stderrors.Is(err, errGetHistMeta) {
+		return nil
+	}
 	if err != nil {
 		return err
 	}
@@ -354,10 +368,12 @@ func (s *statsSyncLoad) handleOneItemTask(task *statstypes.NeededItemTask) (err 
 	}
 	metrics.ReadStatsHistogram.Observe(float64(time.Since(t).Milliseconds()))
 	if needUpdate {
-		s.updateCachedItem(item, wrapper.col, wrapper.idx, task.Item.FullLoad)
+		s.updateCachedItem(tblInfo, item, wrapper.col, wrapper.idx, task.Item.FullLoad)
 	}
 	return nil
 }
+
+var errGetHistMeta = errors.New("fail to get hist meta")
 
 // readStatsForOneItem reads hist for one column/index, TODO load data via kv-get asynchronously
 func (*statsSyncLoad) readStatsForOneItem(sctx sessionctx.Context, item model.TableItemID, w *statsWrapper, isPkIsHandle bool, fullLoad bool) (*statsWrapper, error) {
@@ -376,9 +392,9 @@ func (*statsSyncLoad) readStatsForOneItem(sctx sessionctx.Context, item model.Ta
 		return nil, err
 	}
 	if hg == nil {
-		logutil.BgLogger().Error("fail to get hist meta for this histogram, possibly a deleted one", zap.Int64("table_id", item.TableID),
+		logutil.BgLogger().Warn("fail to get hist meta for this histogram, possibly a deleted one", zap.Int64("table_id", item.TableID),
 			zap.Int64("hist_id", item.ID), zap.Bool("is_index", item.IsIndex))
-		return nil, errors.Trace(fmt.Errorf("fail to get hist meta for this histogram, table_id:%v, hist_id:%v, is_index:%v", item.TableID, item.ID, item.IsIndex))
+		return nil, errGetHistMeta
 	}
 	if item.IsIndex {
 		isIndexFlag = 1
@@ -527,7 +543,7 @@ func (*statsSyncLoad) writeToResultChan(resultCh chan stmtctx.StatsLoadResult, r
 }
 
 // updateCachedItem updates the column/index hist to global statsCache.
-func (s *statsSyncLoad) updateCachedItem(item model.TableItemID, colHist *statistics.Column, idxHist *statistics.Index, fullLoaded bool) (updated bool) {
+func (s *statsSyncLoad) updateCachedItem(tblInfo table.Table, item model.TableItemID, colHist *statistics.Column, idxHist *statistics.Index, fullLoaded bool) (updated bool) {
 	s.StatsLoad.Lock()
 	defer s.StatsLoad.Unlock()
 	// Reload the latest stats cache, otherwise the `updateStatsCache` may fail with high probability, because functions
@@ -535,6 +551,22 @@ func (s *statsSyncLoad) updateCachedItem(item model.TableItemID, colHist *statis
 	tbl, ok := s.statsHandle.Get(item.TableID)
 	if !ok {
 		return false
+	}
+	if !tbl.ColAndIdxExistenceMap.Checked() {
+		tbl = tbl.Copy()
+		for _, col := range tbl.HistColl.GetColSlice() {
+			if tblInfo.Meta().FindColumnByID(col.ID) == nil {
+				tbl.HistColl.DelCol(col.ID)
+				tbl.ColAndIdxExistenceMap.DeleteColAnalyzed(col.ID)
+			}
+		}
+		for _, idx := range tbl.HistColl.GetIdxSlice() {
+			if tblInfo.Meta().FindIndexByID(idx.ID) == nil {
+				tbl.HistColl.DelIdx(idx.ID)
+				tbl.ColAndIdxExistenceMap.DeleteIdxAnalyzed(idx.ID)
+			}
+		}
+		tbl.ColAndIdxExistenceMap.SetChecked()
 	}
 	if !item.IsIndex && colHist != nil {
 		c := tbl.GetCol(item.ID)
@@ -545,14 +577,17 @@ func (s *statsSyncLoad) updateCachedItem(item model.TableItemID, colHist *statis
 		}
 		tbl = tbl.Copy()
 		tbl.SetCol(item.ID, colHist)
+
 		// If the column is analyzed we refresh the map for the possible change.
 		if colHist.StatsAvailable() {
-			tbl.ColAndIdxExistenceMap.InsertCol(item.ID, colHist.Info, true)
+			tbl.ColAndIdxExistenceMap.InsertCol(item.ID, true)
 		}
 		// All the objects shares the same stats version. Update it here.
 		if colHist.StatsVer != statistics.Version0 {
 			tbl.StatsVer = statistics.Version0
 		}
+		// we have to refresh the map for the possible change to ensure that the map information is not missing.
+		tbl.ColAndIdxExistenceMap.InsertCol(item.ID, colHist.StatsAvailable())
 	} else if item.IsIndex && idxHist != nil {
 		index := tbl.GetIdx(item.ID)
 		// - If the stats is fully loaded,
@@ -564,7 +599,7 @@ func (s *statsSyncLoad) updateCachedItem(item model.TableItemID, colHist *statis
 		tbl.SetIdx(item.ID, idxHist)
 		// If the index is analyzed we refresh the map for the possible change.
 		if idxHist.IsAnalyzed() {
-			tbl.ColAndIdxExistenceMap.InsertIndex(item.ID, idxHist.Info, true)
+			tbl.ColAndIdxExistenceMap.InsertIndex(item.ID, true)
 			// All the objects shares the same stats version. Update it here.
 			tbl.StatsVer = statistics.Version0
 		}

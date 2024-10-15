@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/parser/types"
+	"github.com/pingcap/tidb/pkg/planner/cascades/base"
 	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/pkg/util/hack"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -551,6 +552,37 @@ func (d *Datum) GetValue() any {
 	}
 }
 
+// TruncatedStringify returns the %v representation of the datum
+// but truncated (for example, for strings, only first 64 bytes is printed).
+// This function is useful in contexts like EXPLAIN.
+func (d *Datum) TruncatedStringify() string {
+	const maxLen = 64
+
+	switch d.k {
+	case KindString, KindBytes:
+		str := d.GetString()
+		if len(str) > maxLen {
+			// This efficiently returns the truncated string without
+			// less possible allocations.
+			return fmt.Sprintf("%s...(len:%d)", str[:maxLen], len(str))
+		}
+		return str
+	case KindMysqlJSON:
+		// For now we can only stringify then truncate.
+		str := d.GetMysqlJSON().String()
+		if len(str) > maxLen {
+			return fmt.Sprintf("%s...(len:%d)", str[:maxLen], len(str))
+		}
+		return str
+	case KindVectorFloat32:
+		// Vector supports native efficient truncation.
+		return d.GetVectorFloat32().TruncatedString()
+	default:
+		// For other types, no truncation is needed.
+		return fmt.Sprintf("%v", d.GetValue())
+	}
+}
+
 // SetValueWithDefaultCollation sets any kind of value.
 func (d *Datum) SetValueWithDefaultCollation(val any) {
 	switch x := val.(type) {
@@ -648,6 +680,48 @@ func (d *Datum) SetValue(val any, tp *types.FieldType) {
 		d.SetVectorFloat32(x)
 	default:
 		d.SetInterface(x)
+	}
+}
+
+// Hash64ForDatum is a hash function for initialized by codec package.
+var Hash64ForDatum func(h base.Hasher, d *Datum)
+
+// Hash64 implements base.HashEquals<0th> interface.
+func (d *Datum) Hash64(h base.Hasher) {
+	Hash64ForDatum(h, d)
+}
+
+// Equals implements base.HashEquals.<1st> interface.
+func (d *Datum) Equals(other any) bool {
+	if other == nil {
+		return false
+	}
+	var d2 *Datum
+	switch x := other.(type) {
+	case *Datum:
+		d2 = x
+	case Datum:
+		d2 = &x
+	default:
+		return false
+	}
+	ok := d.k == d2.k &&
+		d.decimal == d2.decimal &&
+		d.length == d2.length &&
+		d.i == d2.i &&
+		d.collation == d2.collation &&
+		string(d.b) == string(d2.b)
+	if !ok {
+		return false
+	}
+	// compare x
+	switch d.k {
+	case KindMysqlDecimal:
+		return d.GetMysqlDecimal().Compare(d2.GetMysqlDecimal()) == 0
+	case KindMysqlTime:
+		return d.GetMysqlTime().Compare(d2.GetMysqlTime()) == 0
+	default:
+		return true
 	}
 }
 
@@ -1234,7 +1308,7 @@ func (d *Datum) convertToInt(ctx Context, target *FieldType) (Datum, error) {
 
 func (d *Datum) convertToUint(ctx Context, target *FieldType) (Datum, error) {
 	tp := target.GetType()
-	upperBound := IntergerUnsignedUpperBound(tp)
+	upperBound := IntegerUnsignedUpperBound(tp)
 	var (
 		val uint64
 		err error
@@ -1929,8 +2003,8 @@ func (d *Datum) ToInt64(ctx Context) (int64, error) {
 }
 
 func (d *Datum) toSignedInteger(ctx Context, tp byte) (int64, error) {
-	lowerBound := IntergerSignedLowerBound(tp)
-	upperBound := IntergerSignedUpperBound(tp)
+	lowerBound := IntegerSignedLowerBound(tp)
+	upperBound := IntegerSignedUpperBound(tp)
 	switch d.Kind() {
 	case KindInt64:
 		return ConvertIntToInt(d.GetInt64(), lowerBound, upperBound, tp)
@@ -2452,62 +2526,62 @@ func CloneRow(dr []Datum) []Datum {
 }
 
 // GetMaxValue returns the max value datum for each type.
-func GetMaxValue(ft *FieldType) (max Datum) {
+func GetMaxValue(ft *FieldType) (maxVal Datum) {
 	switch ft.GetType() {
 	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong:
 		if mysql.HasUnsignedFlag(ft.GetFlag()) {
-			max.SetUint64(IntergerUnsignedUpperBound(ft.GetType()))
+			maxVal.SetUint64(IntegerUnsignedUpperBound(ft.GetType()))
 		} else {
-			max.SetInt64(IntergerSignedUpperBound(ft.GetType()))
+			maxVal.SetInt64(IntegerSignedUpperBound(ft.GetType()))
 		}
 	case mysql.TypeFloat:
-		max.SetFloat32(float32(GetMaxFloat(ft.GetFlen(), ft.GetDecimal())))
+		maxVal.SetFloat32(float32(GetMaxFloat(ft.GetFlen(), ft.GetDecimal())))
 	case mysql.TypeDouble:
-		max.SetFloat64(GetMaxFloat(ft.GetFlen(), ft.GetDecimal()))
+		maxVal.SetFloat64(GetMaxFloat(ft.GetFlen(), ft.GetDecimal()))
 	case mysql.TypeString, mysql.TypeVarString, mysql.TypeVarchar, mysql.TypeBlob, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob:
 		// codec.Encode KindMaxValue, to avoid import circle
 		bytes := []byte{250}
-		max.SetString(string(bytes), ft.GetCollate())
+		maxVal.SetString(string(bytes), ft.GetCollate())
 	case mysql.TypeNewDecimal:
-		max.SetMysqlDecimal(NewMaxOrMinDec(false, ft.GetFlen(), ft.GetDecimal()))
+		maxVal.SetMysqlDecimal(NewMaxOrMinDec(false, ft.GetFlen(), ft.GetDecimal()))
 	case mysql.TypeDuration:
-		max.SetMysqlDuration(Duration{Duration: MaxTime})
+		maxVal.SetMysqlDuration(Duration{Duration: MaxTime})
 	case mysql.TypeDate, mysql.TypeDatetime, mysql.TypeTimestamp:
 		if ft.GetType() == mysql.TypeDate || ft.GetType() == mysql.TypeDatetime {
-			max.SetMysqlTime(NewTime(MaxDatetime, ft.GetType(), 0))
+			maxVal.SetMysqlTime(NewTime(MaxDatetime, ft.GetType(), 0))
 		} else {
-			max.SetMysqlTime(MaxTimestamp)
+			maxVal.SetMysqlTime(MaxTimestamp)
 		}
 	}
 	return
 }
 
 // GetMinValue returns the min value datum for each type.
-func GetMinValue(ft *FieldType) (min Datum) {
+func GetMinValue(ft *FieldType) (minVal Datum) {
 	switch ft.GetType() {
 	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong:
 		if mysql.HasUnsignedFlag(ft.GetFlag()) {
-			min.SetUint64(0)
+			minVal.SetUint64(0)
 		} else {
-			min.SetInt64(IntergerSignedLowerBound(ft.GetType()))
+			minVal.SetInt64(IntegerSignedLowerBound(ft.GetType()))
 		}
 	case mysql.TypeFloat:
-		min.SetFloat32(float32(-GetMaxFloat(ft.GetFlen(), ft.GetDecimal())))
+		minVal.SetFloat32(float32(-GetMaxFloat(ft.GetFlen(), ft.GetDecimal())))
 	case mysql.TypeDouble:
-		min.SetFloat64(-GetMaxFloat(ft.GetFlen(), ft.GetDecimal()))
+		minVal.SetFloat64(-GetMaxFloat(ft.GetFlen(), ft.GetDecimal()))
 	case mysql.TypeString, mysql.TypeVarString, mysql.TypeVarchar, mysql.TypeBlob, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob:
 		// codec.Encode KindMinNotNull, to avoid import circle
 		bytes := []byte{1}
-		min.SetString(string(bytes), ft.GetCollate())
+		minVal.SetString(string(bytes), ft.GetCollate())
 	case mysql.TypeNewDecimal:
-		min.SetMysqlDecimal(NewMaxOrMinDec(true, ft.GetFlen(), ft.GetDecimal()))
+		minVal.SetMysqlDecimal(NewMaxOrMinDec(true, ft.GetFlen(), ft.GetDecimal()))
 	case mysql.TypeDuration:
-		min.SetMysqlDuration(Duration{Duration: MinTime})
+		minVal.SetMysqlDuration(Duration{Duration: MinTime})
 	case mysql.TypeDate, mysql.TypeDatetime, mysql.TypeTimestamp:
 		if ft.GetType() == mysql.TypeDate || ft.GetType() == mysql.TypeDatetime {
-			min.SetMysqlTime(NewTime(MinDatetime, ft.GetType(), 0))
+			minVal.SetMysqlTime(NewTime(MinDatetime, ft.GetType(), 0))
 		} else {
-			min.SetMysqlTime(MinTimestamp)
+			minVal.SetMysqlTime(MinTimestamp)
 		}
 	}
 	return

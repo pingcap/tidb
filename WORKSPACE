@@ -37,12 +37,12 @@ versions.check(minimum_bazel_version = "6.0.0")
 
 http_archive(
     name = "io_bazel_rules_go",
-    sha256 = "b2038e2de2cace18f032249cb4bb0048abf583a36369fa98f687af1b3f880b26",
+    sha256 = "f4a9314518ca6acfa16cc4ab43b0b8ce1e4ea64b81c38d8a3772883f153346b8",
     urls = [
-        "http://bazel-cache.pingcap.net:8080/bazelbuild/rules_go/releases/download/v0.48.1/rules_go-v0.48.1.zip",
-        "http://ats.apps.svc/bazelbuild/rules_go/releases/download/v0.48.1/rules_go-v0.48.1.zip",
-        "https://mirror.bazel.build/github.com/bazelbuild/rules_go/releases/download/v0.48.1/rules_go-v0.48.1.zip",
-        "https://github.com/bazelbuild/rules_go/releases/download/v0.48.1/rules_go-v0.48.1.zip",
+        "http://bazel-cache.pingcap.net:8080/bazelbuild/rules_go/releases/download/v0.50.1/rules_go-v0.50.1.zip",
+        "http://ats.apps.svc/bazelbuild/rules_go/releases/download/v0.50.1/rules_go-v0.50.1.zip",
+        "https://mirror.bazel.build/github.com/bazelbuild/rules_go/releases/download/v0.50.1/rules_go-v0.50.1.zip",
+        "https://github.com/bazelbuild/rules_go/releases/download/v0.50.1/rules_go-v0.50.1.zip",
     ],
 )
 
@@ -85,7 +85,7 @@ go_download_sdk(
         "https://mirrors.aliyun.com/golang/{}",
         "https://dl.google.com/go/{}",
     ],
-    version = "1.21.13",
+    version = "1.23.2",
 )
 
 go_register_toolchains(

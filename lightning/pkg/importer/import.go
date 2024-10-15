@@ -56,7 +56,7 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/tikv"
 	"github.com/pingcap/tidb/pkg/lightning/worker"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/store/driver"
@@ -1356,7 +1356,7 @@ func (rc *Controller) importTables(ctx context.Context) (finalErr error) {
 		if err != nil {
 			return errors.Trace(err)
 		}
-		etcdCli, err := clientv3.New(clientv3.Config{
+		etcdCli, err = clientv3.New(clientv3.Config{
 			Endpoints:        urlsWithScheme,
 			AutoSyncInterval: 30 * time.Second,
 			TLS:              rc.tls.TLSConfig(),

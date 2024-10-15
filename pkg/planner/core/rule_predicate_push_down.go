@@ -15,19 +15,17 @@
 package core
 
 import (
-	"bytes"
 	"context"
-	"fmt"
 
-	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
-	"github.com/pingcap/tidb/pkg/planner/core/constraint"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/ranger"
+	"go.uber.org/zap"
 )
 
 // PPDSolver stands for Predicate Push Down.
@@ -49,59 +47,48 @@ func (*PPDSolver) Optimize(_ context.Context, lp base.LogicalPlan, opt *optimize
 	return p, planChanged, nil
 }
 
-func addSelection(p base.LogicalPlan, child base.LogicalPlan, conditions []expression.Expression, chIdx int, opt *optimizetrace.LogicalOptimizeOp) {
-	if len(conditions) == 0 {
-		p.Children()[chIdx] = child
-		return
-	}
-	conditions = expression.PropagateConstant(p.SCtx().GetExprCtx(), conditions)
-	// Return table dual when filter is constant false or null.
-	dual := logicalop.Conds2TableDual(child, conditions)
-	if dual != nil {
-		p.Children()[chIdx] = dual
-		logicalop.AppendTableDualTraceStep(child, dual, conditions, opt)
-		return
-	}
-
-	conditions = constraint.DeleteTrueExprs(p, conditions)
-	if len(conditions) == 0 {
-		p.Children()[chIdx] = child
-		return
-	}
-	selection := logicalop.LogicalSelection{Conditions: conditions}.Init(p.SCtx(), p.QueryBlockOffset())
-	selection.SetChildren(child)
-	p.Children()[chIdx] = selection
-	logicalop.AppendAddSelectionTraceStep(p, child, selection, opt)
-}
-
 // Name implements base.LogicalOptRule.<1st> interface.
 func (*PPDSolver) Name() string {
 	return "predicate_push_down"
 }
 
-func appendDataSourcePredicatePushDownTraceStep(ds *DataSource, opt *optimizetrace.LogicalOptimizeOp) {
-	if len(ds.PushedDownConds) < 1 {
-		return
+// addPrefix4ShardIndexes add expression prefix for shard index. e.g. an index is test.uk(tidb_shard(a), a).
+// DataSource.PredicatePushDown ---> DataSource.AddPrefix4ShardIndexes
+// It transforms the sql "SELECT * FROM test WHERE a = 10" to
+// "SELECT * FROM test WHERE tidb_shard(a) = val AND a = 10", val is the value of tidb_shard(10).
+// It also transforms the sql "SELECT * FROM test WHERE a IN (10, 20, 30)" to
+// "SELECT * FROM test WHERE tidb_shard(a) = val1 AND a = 10 OR tidb_shard(a) = val2 AND a = 20"
+// @param[in] conds            the original condtion of this datasource
+// @retval - the new condition after adding expression prefix
+func addPrefix4ShardIndexes(lp base.LogicalPlan, sc base.PlanContext, conds []expression.Expression) []expression.Expression {
+	ds := lp.(*logicalop.DataSource)
+	if !ds.ContainExprPrefixUk {
+		return conds
 	}
-	ectx := ds.SCtx().GetExprCtx().GetEvalCtx()
-	reason := func() string {
-		return ""
-	}
-	action := func() string {
-		buffer := bytes.NewBufferString("The conditions[")
-		for i, cond := range ds.PushedDownConds {
-			if i > 0 {
-				buffer.WriteString(",")
-			}
-			buffer.WriteString(cond.StringWithCtx(ectx, errors.RedactLogDisable))
+
+	var err error
+	newConds := conds
+
+	for _, path := range ds.PossibleAccessPaths {
+		if !path.IsUkShardIndexPath {
+			continue
 		}
-		fmt.Fprintf(buffer, "] are pushed down across %v_%v", ds.TP(), ds.ID())
-		return buffer.String()
+		newConds, err = addExprPrefixCond(ds, sc, path, newConds)
+		if err != nil {
+			logutil.BgLogger().Error("Add tidb_shard expression failed",
+				zap.Error(err),
+				zap.Uint64("connection id", sc.GetSessionVars().ConnectionID),
+				zap.String("database name", ds.DBName.L),
+				zap.String("table name", ds.TableInfo.Name.L),
+				zap.String("index name", path.Index.Name.L))
+			return conds
+		}
 	}
-	opt.AppendStepToCurrent(ds.ID(), ds.TP(), reason, action)
+
+	return newConds
 }
 
-func (ds *DataSource) addExprPrefixCond(sc base.PlanContext, path *util.AccessPath,
+func addExprPrefixCond(ds *logicalop.DataSource, sc base.PlanContext, path *util.AccessPath,
 	conds []expression.Expression) ([]expression.Expression, error) {
 	idxCols, idxColLens :=
 		expression.IndexInfo2PrefixCols(ds.Columns, ds.Schema().Columns, path.Index)

@@ -13,6 +13,7 @@ go_library(
         "//pkg/domain",
         "//pkg/domain/infosync",
         "//pkg/infoschema",
+        "//pkg/meta/model",
         "//pkg/parser/model",
         "//pkg/parser/mysql",
         "//pkg/server/handler",
@@ -43,7 +44,7 @@ go_test(
         "statistics_handler_test.go",
     ],
     flaky = True,
-    shard_count = 5,
+    shard_count = 6,
     deps = [
         ":optimizor",
         "//pkg/config",

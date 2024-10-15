@@ -33,7 +33,7 @@ import (
 
 	"github.com/gogo/protobuf/proto"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/pkg/expression/contextopt"
+	"github.com/pingcap/tidb/pkg/expression/expropt"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -464,6 +464,35 @@ func newBaseBuiltinCastFunc(builtinFunc baseBuiltinFunc, inUnion bool) baseBuilt
 	}
 }
 
+func newBaseBuiltinCastFunc4String(ctx BuildContext, funcName string, args []Expression, tp *types.FieldType, isExplicitCharset bool) (baseBuiltinFunc, error) {
+	var bf baseBuiltinFunc
+	var err error
+	if isExplicitCharset {
+		bf = baseBuiltinFunc{
+			bufAllocator:           newLocalColumnPool(),
+			childrenVectorizedOnce: new(sync.Once),
+
+			args: args,
+			tp:   tp,
+		}
+		bf.SetCharsetAndCollation(tp.GetCharset(), tp.GetCollate())
+		bf.setCollator(collate.GetCollator(tp.GetCollate()))
+		bf.SetCoercibility(CoercibilityExplicit)
+		bf.SetExplicitCharset(true)
+		if tp.GetCharset() == charset.CharsetASCII {
+			bf.SetRepertoire(ASCII)
+		} else {
+			bf.SetRepertoire(UNICODE)
+		}
+	} else {
+		bf, err = newBaseBuiltinFunc(ctx, funcName, args, tp)
+		if err != nil {
+			return baseBuiltinFunc{}, err
+		}
+	}
+	return bf, nil
+}
+
 // vecBuiltinFunc contains all vectorized methods for a builtin function.
 type vecBuiltinFunc interface {
 	// vectorized returns if this builtin function itself supports vectorized evaluation.
@@ -499,7 +528,7 @@ type vecBuiltinFunc interface {
 
 // builtinFunc stands for a particular function signature.
 type builtinFunc interface {
-	contextopt.RequireOptionalEvalProps
+	expropt.RequireOptionalEvalProps
 	vecBuiltinFunc
 
 	// evalInt evaluates int result of builtinFunc by given row.
@@ -941,13 +970,16 @@ var funcs = map[string]functionClass{
 	ast.VecAsText:               &vecAsTextFunctionClass{baseFunctionClass{ast.VecAsText, 1, 1}},
 
 	// TiDB internal function.
-	ast.TiDBDecodeKey: &tidbDecodeKeyFunctionClass{baseFunctionClass{ast.TiDBDecodeKey, 1, 1}},
+	ast.TiDBDecodeKey:       &tidbDecodeKeyFunctionClass{baseFunctionClass{ast.TiDBDecodeKey, 1, 1}},
+	ast.TiDBMVCCInfo:        &tidbMVCCInfoFunctionClass{baseFunctionClass: baseFunctionClass{ast.TiDBMVCCInfo, 1, 1}},
+	ast.TiDBEncodeRecordKey: &tidbEncodeRecordKeyClass{baseFunctionClass{ast.TiDBEncodeRecordKey, 3, -1}},
+	ast.TiDBEncodeIndexKey:  &tidbEncodeIndexKeyClass{baseFunctionClass{ast.TiDBEncodeIndexKey, 4, -1}},
 	// This function is used to show tidb-server version info.
 	ast.TiDBVersion:          &tidbVersionFunctionClass{baseFunctionClass{ast.TiDBVersion, 0, 0}},
 	ast.TiDBIsDDLOwner:       &tidbIsDDLOwnerFunctionClass{baseFunctionClass{ast.TiDBIsDDLOwner, 0, 0}},
 	ast.TiDBDecodePlan:       &tidbDecodePlanFunctionClass{baseFunctionClass{ast.TiDBDecodePlan, 1, 1}},
 	ast.TiDBDecodeBinaryPlan: &tidbDecodePlanFunctionClass{baseFunctionClass{ast.TiDBDecodeBinaryPlan, 1, 1}},
-	ast.TiDBDecodeSQLDigests: &tidbDecodeSQLDigestsFunctionClass{baseFunctionClass{ast.TiDBDecodeSQLDigests, 1, 2}},
+	ast.TiDBDecodeSQLDigests: &tidbDecodeSQLDigestsFunctionClass{baseFunctionClass: baseFunctionClass{ast.TiDBDecodeSQLDigests, 1, 2}},
 	ast.TiDBEncodeSQLDigest:  &tidbEncodeSQLDigestFunctionClass{baseFunctionClass{ast.TiDBEncodeSQLDigest, 1, 1}},
 
 	// TiDB Sequence function.

@@ -22,7 +22,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/summary"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	tidbconfig "github.com/pingcap/tidb/pkg/config"
-	"github.com/pingcap/tidb/pkg/infoschema"
+	infoschemacontext "github.com/pingcap/tidb/pkg/infoschema/context"
 	"github.com/pingcap/tidb/pkg/kv"
 	pd "github.com/tikv/pd/client"
 	"go.uber.org/zap"
@@ -181,7 +181,7 @@ func resetTiFlashReplicas(ctx context.Context, g glue.Glue, storage kv.Storage, 
 
 	expectTiFlashStoreCount := uint64(0)
 	needTiFlash := false
-	tableInfoRes := info.ListTablesWithSpecialAttribute(infoschema.TiFlashAttribute)
+	tableInfoRes := info.ListTablesWithSpecialAttribute(infoschemacontext.TiFlashAttribute)
 	for _, s := range tableInfoRes {
 		for _, t := range s.TableInfos {
 			if t.TiFlashReplica != nil {

@@ -327,7 +327,7 @@ select * from t3;
 	tk.MustQuery("select count(*) from `SLOW_QUERY`").Check(testkit.Rows("4"))
 	tk.MustQuery("select count(*) from `CLUSTER_PROCESSLIST`").Check(testkit.Rows("1"))
 	tk.MustQuery("select * from `CLUSTER_PROCESSLIST`").Check(testkit.Rows(fmt.Sprintf(
-		":10080 1 root 127.0.0.1 <nil> Query 9223372036 %s <nil>  0 0    <nil>", "")))
+		":10080 1 root 127.0.0.1 <nil> Query 9223372036 %s <nil>  0 0    <nil> 0 0", "")))
 	tk.MustExec("create user user1")
 	tk.MustExec("create user user2")
 	user1 := testkit.NewTestKit(t, s.store)
@@ -911,7 +911,8 @@ func TestMDLView(t *testing.T) {
 	}
 }
 
-func TestMDLViewPrivilege(t *testing.T) {
+func TestMDLViewWithNoPrivilege(t *testing.T) {
+	// It's with TestMDLViewWithPrivilege. Split to two tests just because it runs too much time.
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil, nil))
@@ -920,9 +921,14 @@ func TestMDLViewPrivilege(t *testing.T) {
 	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "test", Hostname: "%"}, nil, nil, nil))
 	_, err := tk.Exec("select * from mysql.tidb_mdl_view;")
 	require.ErrorContains(t, err, "view lack rights")
+}
 
+func TestMDLViewWithPrivilege(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
 	// grant all privileges to test user.
 	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil, nil))
+	tk.MustExec("create user 'test'@'%' identified by '';")
 	tk.MustExec("grant all privileges on *.* to 'test'@'%';")
 	tk.MustExec("flush privileges;")
 	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "test", Hostname: "%"}, nil, nil, nil))
@@ -1048,7 +1054,7 @@ func TestQuickBinding(t *testing.T) {
 		},
 
 		{`select (select sum(b) from t3 where t2.b=t3.a) from t1 join t2 where t1.a = t2.a and t1.c = ?`,
-			"leading(`test`.`t1`, `test`.`t2`, `test`.`t3`@`sel_2`), inl_hash_join(`test`.`t2`), use_index(@`sel_1` `test`.`t1` ), no_order_index(@`sel_1` `test`.`t1` `primary`), use_index(@`sel_1` `test`.`t2` `k_a`), no_order_index(@`sel_1` `test`.`t2` `k_a`), hash_agg(@`sel_2`), use_index(@`sel_2` `test`.`t3` ), agg_to_cop(@`sel_2`)",
+			"leading(`test`.`t1`, `test`.`t2`, `test`.`t3`@`sel_2`), inl_hash_join(`test`.`t2`), use_index(@`sel_1` `test`.`t1` ), no_order_index(@`sel_1` `test`.`t1` `primary`), use_index(@`sel_1` `test`.`t2` `k_a`), no_order_index(@`sel_1` `test`.`t2` `k_a`), hash_agg(@`sel_2`), use_index(@`sel_2` `test`.`t3` `k_a`), no_order_index(@`sel_2` `test`.`t3` `k_a`), agg_to_cop(@`sel_2`)",
 			nil,
 		},
 
@@ -1107,13 +1113,13 @@ func TestQuickBinding(t *testing.T) {
 	}
 
 	// test general queries and prepared / execute statements
-	for _, tc := range testCases {
+	for i, tc := range testCases {
 		stmtsummary.StmtSummaryByDigestMap.Clear()
 		firstSQL := fillValues(tc.template)
 		tk.MustExec(firstSQL)
 		result := tk.MustQuery(`select plan_hint, digest, plan_digest from information_schema.statements_summary`).Rows()
 		planHint, sqlDigest, planDigest := result[0][0].(string), result[0][1].(string), result[0][2].(string)
-		require.Equal(t, tc.expectedHint, planHint)
+		require.Equal(t, tc.expectedHint, planHint, "Failed at case #%d, template: %s", i, tc.template)
 		tk.MustExec(fmt.Sprintf(`create session binding from history using plan digest '%v'`, planDigest))
 
 		// normal test

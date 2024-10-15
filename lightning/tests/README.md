@@ -9,17 +9,27 @@ This folder contains all tests which relies on external processes such as TiDB.
     * `bin/tidb-server`
     * `bin/tikv-server`
     * `bin/pd-server`
-    * `bin/pd-ctl`
+    * `bin/tiflash`
     * `bin/minio`
     * `bin/mc`
-    * `bin/tiflash`
 
     The versions must be ≥2.1.0.
 
-    What's more, there must be dynamic link library for TiFlash, see make target `bin` to learn more.
-    You can install most of dependencies by running `download_tools.sh`.
+    **Only some tests requires `minio`/`mc`** which can be downloaded from the official site, you can skip them if you don't need to run those cases.
+
+    You can use `tiup` to download binaries related to TiDB cluster, and then link them to the `bin` directory:
+    ```shell
+    cluster_version=v8.1.0 # change to the version you need
+    tiup install tidb:$cluster_version tikv:$cluster_version pd:$cluster_version tiflash:$cluster_version
+    ln -s ~/.tiup/components/tidb/$cluster_version/tidb-server bin/tidb-server
+    ln -s ~/.tiup/components/tikv/$cluster_version/tikv-server bin/tikv-server
+    ln -s ~/.tiup/components/pd/$cluster_version/pd-server bin/pd-server
+    ln -s ~/.tiup/components/tiflash/$cluster_version/tiflash/tiflash bin/tiflash
+    ```
 
 2. `make build_for_lightning_integration_test`
+   
+    `make server` to build the latest TiDB server if your test requires it.
 
 3. The following programs must be installed:
 

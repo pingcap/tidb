@@ -21,9 +21,9 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/backend/encode"
 	"github.com/pingcap/tidb/pkg/lightning/backend/kv"
 	"github.com/pingcap/tidb/pkg/lightning/log"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/table/tables"
@@ -52,7 +52,8 @@ func TestIterRawIndexKeysClusteredPK(t *testing.T) {
 	decoder, err := kv.NewTableKVDecoder(tbl, "`test`.`c1`", sessionOpts, log.L())
 	require.NoError(t, err)
 
-	sctx := kv.NewSession(sessionOpts, log.L())
+	sctx, err := kv.NewSession(sessionOpts, log.L())
+	require.NoError(t, err)
 	txn := sctx.Txn()
 	handle, err := tbl.AddRecord(sctx.GetTableCtx(), txn, []types.Datum{types.NewIntDatum(1), types.NewIntDatum(2)})
 	require.NoError(t, err)
@@ -92,7 +93,8 @@ func TestIterRawIndexKeysIntPK(t *testing.T) {
 	decoder, err := kv.NewTableKVDecoder(tbl, "`test`.`c1`", sessionOpts, log.L())
 	require.NoError(t, err)
 
-	sctx := kv.NewSession(sessionOpts, log.L())
+	sctx, err := kv.NewSession(sessionOpts, log.L())
+	require.NoError(t, err)
 	txn := sctx.Txn()
 	require.NoError(t, err)
 	handle, err := tbl.AddRecord(sctx.GetTableCtx(), txn, []types.Datum{types.NewIntDatum(1), types.NewIntDatum(2)})

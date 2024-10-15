@@ -36,13 +36,15 @@ import (
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/auth"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
+	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
@@ -51,12 +53,222 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/collate"
+	"github.com/pingcap/tidb/pkg/util/plancodec"
 	"github.com/pingcap/tidb/pkg/util/sem"
 	"github.com/pingcap/tidb/pkg/util/versioninfo"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/oracle"
 )
+
+func TestVectorDefaultValue(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	// ============================
+	// NULLABLE, NO DEFAULT, Non-Strict Mode
+
+	tk.MustExec("set @@session.sql_mode=''")
+	tk.MustExec("create table t(embedding VECTOR)")
+	tk.MustExec("insert into t values ('[1,2,3]')")
+	tk.MustExec("insert into t values ('[4]')")
+	tk.MustExec("insert into t values (DEFAULT)")
+	tk.MustExec("insert into t values (NULL)")
+	tk.MustQuery("select *, vec_dims(embedding) from t").Check(testkit.Rows(
+		"[1,2,3] 3",
+		"[4] 1",
+		"<nil> <nil>",
+		"<nil> <nil>",
+	))
+	tk.MustExec("drop table t")
+
+	tk.MustExec("create table t(embedding VECTOR(3))")
+	tk.MustExec("insert into t values ('[1,2,3]')")
+	tk.MustExecToErr("insert into t values ('[4]')")
+	tk.MustExec("insert into t values (DEFAULT)")
+	tk.MustExec("insert into t values (NULL)")
+	tk.MustQuery("select *, vec_dims(embedding) from t").Check(testkit.Rows(
+		"[1,2,3] 3",
+		"<nil> <nil>",
+		"<nil> <nil>",
+	))
+	tk.MustExec("drop table t")
+
+	// ============================
+	// NULLABLE, NO DEFAULT, Strict Mode
+
+	tk.MustExec("set @@session.sql_mode='STRICT_ALL_TABLES'")
+	tk.MustExec("create table t(embedding VECTOR)")
+	tk.MustExec("insert into t values ('[1,2,3]')")
+	tk.MustExec("insert into t values ('[4]')")
+	tk.MustExec("insert into t values (DEFAULT)")
+	tk.MustExec("insert into t values (NULL)")
+	tk.MustQuery("select *, vec_dims(embedding) from t").Check(testkit.Rows(
+		"[1,2,3] 3",
+		"[4] 1",
+		"<nil> <nil>",
+		"<nil> <nil>",
+	))
+	tk.MustExec("drop table t")
+
+	tk.MustExec("create table t(embedding VECTOR(3))")
+	tk.MustExec("insert into t values ('[1,2,3]')")
+	tk.MustExecToErr("insert into t values ('[4]')")
+	tk.MustExec("insert into t values (DEFAULT)")
+	tk.MustExec("insert into t values (NULL)")
+	tk.MustQuery("select *, vec_dims(embedding) from t").Check(testkit.Rows(
+		"[1,2,3] 3",
+		"<nil> <nil>",
+		"<nil> <nil>",
+	))
+	tk.MustExec("drop table t")
+
+	// ============================
+	// NULLABLE, DEFAULT
+
+	tk.MustGetErrMsg("create table t(embedding VECTOR DEFAULT '[1,2,3]')", `VECTOR column 'embedding' can't have a literal default. Use expression default instead: ((VEC_FROM_TEXT('...')))`)
+	tk.MustExec("create table t(embedding VECTOR DEFAULT (VEC_FROM_TEXT('[1,2,3]')))")
+	tk.MustExec("insert into t values ()")
+	tk.MustExec("insert into t values ('[4]')")
+	tk.MustExec("insert into t values (DEFAULT)")
+	tk.MustExec("insert into t values (NULL)")
+	tk.MustExec("insert into t values (DEFAULT(embedding))")
+	tk.MustQuery("select *, vec_dims(embedding) from t").Check(testkit.Rows(
+		"[1,2,3] 3",
+		"[4] 1",
+		"[1,2,3] 3",
+		"<nil> <nil>",
+		"[1,2,3] 3",
+	))
+	tk.MustExec("drop table t")
+
+	// Allow. Error happens when inserting.
+	tk.MustExec("create table t(embedding VECTOR(5) DEFAULT (VEC_FROM_TEXT('[1,2,3]')))")
+	tk.MustGetErrMsg("insert into t values ()", "vector has 3 dimensions, does not fit VECTOR(5)")
+	tk.MustGetErrMsg("insert into t values (DEFAULT)", "vector has 3 dimensions, does not fit VECTOR(5)")
+	tk.MustExec("insert into t values ('[1,2,3,4,5]')")
+	tk.MustExec("insert into t values (NULL)")
+	tk.MustQuery("select *, vec_dims(embedding) from t").Check(testkit.Rows("[1,2,3,4,5] 5", "<nil> <nil>"))
+	tk.MustExec("drop table t")
+
+	// Allow. Error happens when inserting.
+	tk.MustExec("create table t(embedding VECTOR(5) DEFAULT (UUID()))")
+	tk.MustContainErrMsg("insert into t values ()", "Invalid vector text: ")
+	tk.MustExec("insert into t values ('[1,2,3,4,5]')")
+	tk.MustExec("insert into t values (NULL)")
+	tk.MustQuery("select *, vec_dims(embedding) from t").Check(testkit.Rows("[1,2,3,4,5] 5", "<nil> <nil>"))
+	tk.MustExec("drop table t")
+
+	// ============================
+	// NOT NULL, NO DEFAULT, Non-Strict Mode
+
+	tk.MustExec("set @@session.sql_mode=''")
+	tk.MustExec("create table t(embedding VECTOR NOT NULL)")
+	tk.MustExec("insert into t values ('[1,2,3]')")
+	tk.MustExec("insert into t values ('[4]')")
+	tk.MustExec("insert into t values (DEFAULT)")
+	tk.MustExecToErr("insert into t values (NULL)")
+	tk.MustQuery("select *, vec_dims(embedding) from t").Check(testkit.Rows(
+		"[1,2,3] 3",
+		"[4] 1",
+		"[] 0",
+	))
+	tk.MustExec("drop table t")
+
+	tk.MustExec("create table t(embedding VECTOR(3) NOT NULL)")
+	tk.MustExec("insert into t values ('[1,2,3]')")
+	tk.MustExecToErr("insert into t values ('[4]')")
+	tk.MustExecToErr("insert into t values (DEFAULT)")
+	tk.MustExecToErr("insert into t values (NULL)")
+	tk.MustQuery("select *, vec_dims(embedding) from t").Check(testkit.Rows(
+		"[1,2,3] 3",
+	))
+	tk.MustExec("drop table t")
+
+	// ============================
+	// NOT NULL, NO DEFAULT, Strict Mode
+
+	tk.MustExec("set @@session.sql_mode='STRICT_ALL_TABLES'")
+	tk.MustExec("create table t(embedding VECTOR NOT NULL)")
+	tk.MustExec("insert into t values ('[1,2,3]')")
+	tk.MustExec("insert into t values ('[4]')")
+	tk.MustExecToErr("insert into t values (DEFAULT)")
+	tk.MustExecToErr("insert into t values (NULL)")
+	tk.MustQuery("select *, vec_dims(embedding) from t").Check(testkit.Rows(
+		"[1,2,3] 3",
+		"[4] 1",
+	))
+	tk.MustExec("drop table t")
+
+	tk.MustExec("create table t(embedding VECTOR(3) NOT NULL)")
+	tk.MustExec("insert into t values ('[1,2,3]')")
+	tk.MustExecToErr("insert into t values ('[4]')")
+	tk.MustExecToErr("insert into t values (DEFAULT)")
+	tk.MustExecToErr("insert into t values (NULL)")
+	tk.MustQuery("select *, vec_dims(embedding) from t").Check(testkit.Rows(
+		"[1,2,3] 3",
+	))
+	tk.MustExec("drop table t")
+
+	// ============================
+	// NOT NULL, DEFAULT, Non-Strict Mode
+
+	tk.MustExec("set @@session.sql_mode=''")
+	tk.MustExec("create table t(embedding VECTOR NOT NULL DEFAULT (VEC_FROM_TEXT('[1,2,3]')))")
+	tk.MustExec("insert into t values ()")
+	tk.MustExec("insert into t values ('[4]')")
+	tk.MustExec("insert into t values (DEFAULT)")
+	tk.MustExecToErr("insert into t values (NULL)")
+	tk.MustExec("insert into t values (DEFAULT(embedding))")
+	tk.MustQuery("select *, vec_dims(embedding) from t").Check(testkit.Rows(
+		"[1,2,3] 3",
+		"[4] 1",
+		"[1,2,3] 3",
+		"[1,2,3] 3",
+	))
+	tk.MustExec("drop table t")
+
+	tk.MustExec("create table t(embedding VECTOR(1) NOT NULL DEFAULT (VEC_FROM_TEXT('[1,2,3]')))")
+	tk.MustExecToErr("insert into t values ()")
+	tk.MustExec("insert into t values ('[4]')")
+	tk.MustExecToErr("insert into t values (DEFAULT)")
+	tk.MustExecToErr("insert into t values (NULL)")
+	tk.MustExecToErr("insert into t values (DEFAULT(embedding))")
+	tk.MustQuery("select *, vec_dims(embedding) from t").Check(testkit.Rows(
+		"[4] 1",
+	))
+	tk.MustExec("drop table t")
+
+	// ============================
+	// NOT NULL, DEFAULT, Strict Mode
+
+	tk.MustExec("set @@session.sql_mode='STRICT_ALL_TABLES'")
+	tk.MustExec("create table t(embedding VECTOR NOT NULL DEFAULT (VEC_FROM_TEXT('[1,2,3]')))")
+	tk.MustExec("insert into t values ()")
+	tk.MustExec("insert into t values ('[4]')")
+	tk.MustExec("insert into t values (DEFAULT)")
+	tk.MustExecToErr("insert into t values (NULL)")
+	tk.MustExec("insert into t values (DEFAULT(embedding))")
+	tk.MustQuery("select *, vec_dims(embedding) from t").Check(testkit.Rows(
+		"[1,2,3] 3",
+		"[4] 1",
+		"[1,2,3] 3",
+		"[1,2,3] 3",
+	))
+	tk.MustExec("drop table t")
+
+	tk.MustExec("create table t(embedding VECTOR(1) NOT NULL DEFAULT (VEC_FROM_TEXT('[1,2,3]')))")
+	tk.MustExecToErr("insert into t values ()")
+	tk.MustExec("insert into t values ('[4]')")
+	tk.MustExecToErr("insert into t values (DEFAULT)")
+	tk.MustExecToErr("insert into t values (NULL)")
+	tk.MustExecToErr("insert into t values (DEFAULT(embedding))")
+	tk.MustQuery("select *, vec_dims(embedding) from t").Check(testkit.Rows(
+		"[4] 1",
+	))
+	tk.MustExec("drop table t")
+}
 
 func TestVectorColumnInfo(t *testing.T) {
 	store := testkit.CreateMockStore(t)
@@ -108,6 +320,67 @@ func TestVectorColumnInfo(t *testing.T) {
 	// Vector dimension MUST be equal or less than 16383.
 	tk.MustExec("drop table if exists t;")
 	tk.MustGetErrMsg("create table t(embedding VECTOR(16384))", "vector cannot have more than 16383 dimensions")
+}
+
+func TestVectorConstantExplain(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("CREATE TABLE t(c VECTOR);")
+	tk.MustQuery(`EXPLAIN format='brief' SELECT VEC_COSINE_DISTANCE(c, '[1,2,3,4,5,6,7,8,9,10,11]') FROM t;`).Check(testkit.Rows(
+		"Projection 10000.00 root  vec_cosine_distance(test.t.c, [1,2,3,4,5,(6 more)...])->Column#3",
+		"└─TableReader 10000.00 root  data:TableFullScan",
+		"  └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo",
+	))
+	tk.MustQuery(`EXPLAIN format='brief' SELECT VEC_COSINE_DISTANCE(c, VEC_FROM_TEXT('[1,2,3,4,5,6,7,8,9,10,11]')) FROM t;`).Check(testkit.Rows(
+		"Projection 10000.00 root  vec_cosine_distance(test.t.c, [1,2,3,4,5,(6 more)...])->Column#3",
+		"└─TableReader 10000.00 root  data:TableFullScan",
+		"  └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo",
+	))
+	tk.MustQuery(`EXPLAIN format = 'brief' SELECT VEC_COSINE_DISTANCE(c, '[1,2,3,4,5,6,7,8,9,10,11]') AS d FROM t ORDER BY d LIMIT 10;`).Check(testkit.Rows(
+		"Projection 10.00 root  vec_cosine_distance(test.t.c, [1,2,3,4,5,(6 more)...])->Column#3",
+		"└─Projection 10.00 root  test.t.c",
+		"  └─TopN 10.00 root  Column#4, offset:0, count:10",
+		"    └─Projection 10.00 root  test.t.c, vec_cosine_distance(test.t.c, [1,2,3,4,5,(6 more)...])->Column#4",
+		"      └─TableReader 10.00 root  data:TopN",
+		"        └─TopN 10.00 cop[tikv]  vec_cosine_distance(test.t.c, [1,2,3,4,5,(6 more)...]), offset:0, count:10",
+		"          └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo",
+	))
+
+	// Prepare a large Vector string
+	vb := strings.Builder{}
+	vb.WriteString("[")
+	for i := 0; i < 100; i++ {
+		if i > 0 {
+			vb.WriteString(",")
+		}
+		vb.WriteString("100")
+	}
+	vb.WriteString("]")
+
+	stmtID, _, _, err := tk.Session().PrepareStmt("SELECT VEC_COSINE_DISTANCE(c, ?) FROM t")
+	require.Nil(t, err)
+	rs, err := tk.Session().ExecutePreparedStmt(context.Background(), stmtID, expression.Args2Expressions4Test(vb.String()))
+	require.NoError(t, err)
+
+	p, ok := tk.Session().GetSessionVars().StmtCtx.GetPlan().(base.Plan)
+	require.True(t, ok)
+
+	flat := plannercore.FlattenPhysicalPlan(p, true)
+	encodedPlanTree := plannercore.EncodeFlatPlan(flat)
+	planTree, err := plancodec.DecodePlan(encodedPlanTree)
+	require.NoError(t, err)
+	fmt.Println(planTree)
+	fmt.Println("++++")
+	require.Equal(t, strings.Join([]string{
+		`	id                 	task     	estRows	operator info                                                                                                                      	actRows	execution info  	memory 	disk`,
+		`	Projection_3       	root     	10000  	vec_cosine_distance(test.t.c, cast([100,100,100,100,100,100,100,100,100,100,100,100,100,100,100,100...(len:401), vector))->Column#3	0      	time:0s, loops:0	0 Bytes	N/A`,
+		`	└─TableReader_5    	root     	10000  	data:TableFullScan_4                                                                                                               	0      	time:0s, loops:0	0 Bytes	N/A`,
+		`	  └─TableFullScan_4	cop[tikv]	10000  	table:t, keep order:false, stats:pseudo                                                                                            	0      	                	N/A    	N/A`,
+	}, "\n"), planTree)
+
+	// No need to check result at all.
+	tk.ResultSetToResult(rs, fmt.Sprintf("%v", rs))
 }
 
 func TestFixedVector(t *testing.T) {
@@ -928,9 +1201,10 @@ func TestFilterExtractFromDNF(t *testing.T) {
 		require.NoError(t, err, "error %v, for expr %s", err, tt.exprStr)
 		require.Len(t, stmts, 1)
 		ret := &plannercore.PreprocessorReturn{}
-		err = plannercore.Preprocess(context.Background(), sctx, stmts[0], plannercore.WithPreprocessorReturn(ret))
+		nodeW := resolve.NewNodeW(stmts[0])
+		err = plannercore.Preprocess(context.Background(), sctx, nodeW, plannercore.WithPreprocessorReturn(ret))
 		require.NoError(t, err, "error %v, for resolve name, expr %s", err, tt.exprStr)
-		p, err := plannercore.BuildLogicalPlanForTest(ctx, sctx, stmts[0], ret.InfoSchema)
+		p, err := plannercore.BuildLogicalPlanForTest(ctx, sctx, nodeW, ret.InfoSchema)
 		require.NoError(t, err, "error %v, for build plan, expr %s", err, tt.exprStr)
 		selection := p.(base.LogicalPlan).Children()[0].(*logicalop.LogicalSelection)
 		conds := make([]expression.Expression, len(selection.Conditions))
@@ -983,7 +1257,7 @@ func TestTiDBDecodeKeyFunc(t *testing.T) {
 	tk.MustExec("create table t (a varchar(255), b int, c datetime, primary key (a, b, c));")
 	dom := domain.GetDomain(tk.Session())
 	is := dom.InfoSchema()
-	tbl, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
+	tbl, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
 	require.NoError(t, err)
 	getTime := func(year, month, day int, timeType byte) types.Time {
 		ret := types.NewTime(types.FromDate(year, month, day, 0, 0, 0, 0), timeType, types.DefaultFsp)
@@ -1014,7 +1288,7 @@ func TestTiDBDecodeKeyFunc(t *testing.T) {
 	tk.MustExec("create table t (a varchar(255), b int, c datetime, index idx(a, b, c));")
 	dom = domain.GetDomain(tk.Session())
 	is = dom.InfoSchema()
-	tbl, err = is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
+	tbl, err = is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
 	require.NoError(t, err)
 	buildIndexKeyFromData := func(tableID, indexID int64, data []types.Datum) string {
 		k, err := codec.EncodeKey(tk.Session().GetSessionVars().StmtCtx.TimeZone(), nil, data...)
@@ -1053,7 +1327,7 @@ func TestTiDBDecodeKeyFunc(t *testing.T) {
 	tk.MustExec("create table t (a int primary key nonclustered, b int, key bk (b));")
 	dom = domain.GetDomain(tk.Session())
 	is = dom.InfoSchema()
-	tbl, err = is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
+	tbl, err = is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
 	require.NoError(t, err)
 	buildTableRowKey := func(tableID, rowID int64) string {
 		return hex.EncodeToString(
@@ -1072,7 +1346,7 @@ func TestTiDBDecodeKeyFunc(t *testing.T) {
 	tk.MustExec("create table t (a int primary key clustered, b int, key bk (b));")
 	dom = domain.GetDomain(tk.Session())
 	is = dom.InfoSchema()
-	tbl, err = is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
+	tbl, err = is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
 	require.NoError(t, err)
 	hexKey = buildTableRowKey(tbl.Meta().ID, rowID)
 	sql = fmt.Sprintf("select tidb_decode_key( '%s' )", hexKey)
@@ -1084,7 +1358,7 @@ func TestTiDBDecodeKeyFunc(t *testing.T) {
 	tk.MustExec("create table t (a int primary key clustered, b int, key bk (b)) PARTITION BY RANGE (a) (PARTITION p0 VALUES LESS THAN (1), PARTITION p1 VALUES LESS THAN (2));")
 	dom = domain.GetDomain(tk.Session())
 	is = dom.InfoSchema()
-	tbl, err = is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
+	tbl, err = is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
 	require.NoError(t, err)
 	require.NotNil(t, tbl.Meta().Partition)
 	hexKey = buildTableRowKey(tbl.Meta().Partition.Definitions[0].ID, rowID)
@@ -1102,6 +1376,45 @@ func TestTiDBDecodeKeyFunc(t *testing.T) {
 	sql = fmt.Sprintf("select tidb_decode_key( '%s' )", hexKey)
 	rs = fmt.Sprintf(`{"index_id":1,"index_vals":{"b":"100"},"partition_id":%d,"table_id":%d}`, tbl.Meta().Partition.Definitions[0].ID, tbl.Meta().ID)
 	tk.MustQuery(sql).Check(testkit.Rows(rs))
+}
+
+func TestTiDBEncodeKey(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (a int primary key, b int);")
+	tk.MustExec("insert into t values (1, 1);")
+	err := tk.QueryToErr("select tidb_encode_record_key('test', 't1', 0);")
+	require.ErrorContains(t, err, "doesn't exist")
+	tk.MustQuery("select tidb_encode_record_key('test', 't', 1);").
+		Check(testkit.Rows("74800000000000006e5f728000000000000001"))
+
+	tk.MustExec("alter table t add index i(b);")
+	err = tk.QueryToErr("select tidb_encode_index_key('test', 't', 'i1', 1);")
+	require.ErrorContains(t, err, "index not found")
+	tk.MustQuery("select tidb_encode_index_key('test', 't', 'i', 1, 1);").
+		Check(testkit.Rows("74800000000000006e5f698000000000000001038000000000000001038000000000000001"))
+
+	tk.MustExec("create table t1 (a int primary key, b int) partition by hash(a) partitions 4;")
+	tk.MustExec("insert into t1 values (1, 1);")
+	tk.MustQuery("select tidb_encode_record_key('test', 't1(p1)', 1);").Check(testkit.Rows("7480000000000000735f728000000000000001"))
+	rs := tk.MustQuery("select tidb_mvcc_info('74800000000000006f5f728000000000000001');")
+	mvccInfo := rs.Rows()[0][0].(string)
+	require.NotEqual(t, mvccInfo, `{"info":{}}`)
+
+	tk.MustExec("create user 'alice'@'%';")
+	tk.MustExec("flush privileges;")
+	tk2 := testkit.NewTestKit(t, store)
+	err = tk2.Session().Auth(&auth.UserIdentity{Username: "alice", Hostname: "localhost"}, nil, nil, nil)
+	require.NoError(t, err)
+	err = tk2.QueryToErr("select tidb_mvcc_info('74800000000000006f5f728000000000000001');")
+	require.ErrorContains(t, err, "Access denied")
+	err = tk2.QueryToErr("select tidb_encode_record_key('test', 't1(p1)', 1);")
+	require.ErrorContains(t, err, "SELECT command denied")
+	err = tk2.QueryToErr("select tidb_encode_index_key('test', 't', 'i1', 1);")
+	require.ErrorContains(t, err, "SELECT command denied")
+	tk.MustExec("grant select on test.t1 to 'alice'@'%';")
+	tk2.MustQuery("select tidb_encode_record_key('test', 't1(p1)', 1);").Check(testkit.Rows("7480000000000000735f728000000000000001"))
 }
 
 func TestIssue9710(t *testing.T) {
@@ -1146,7 +1459,7 @@ func TestShardIndexOnTiFlash(t *testing.T) {
 	// Create virtual tiflash replica info.
 	dom := domain.GetDomain(tk.Session())
 	is := dom.InfoSchema()
-	tbl, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
+	tbl, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
 	require.NoError(t, err)
 	tbl.Meta().TiFlashReplica = &model.TiFlashReplicaInfo{
 		Count:     1,
@@ -1182,7 +1495,7 @@ func TestExprPushdownBlacklist(t *testing.T) {
 	// Create virtual tiflash replica info.
 	dom := domain.GetDomain(tk.Session())
 	is := dom.InfoSchema()
-	tbl, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
+	tbl, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
 	require.NoError(t, err)
 	tbl.Meta().TiFlashReplica = &model.TiFlashReplicaInfo{
 		Count:     1,
@@ -3544,4 +3857,40 @@ func TestIssue43527(t *testing.T) {
 	tk.MustQuery(
 		"SELECT @total := @total + d FROM (SELECT d FROM test) AS temp, (SELECT @total := b FROM test) AS T1 where @total >= 100",
 	).Check(testkit.Rows("200", "300", "400", "500"))
+}
+
+func TestIssue51842(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("CREATE TABLE t0(c0 DOUBLE);")
+	tk.MustExec("REPLACE INTO t0(c0) VALUES (0.40194983109852933);")
+	tk.MustExec("CREATE VIEW v0(c0) AS SELECT CAST(')' AS TIME) FROM t0 WHERE '0.030417148673465677';")
+	res := tk.MustQuery("SELECT f1 FROM (SELECT NULLIF(v0.c0, 1371581446) AS f1 FROM v0, t0) AS t WHERE f1 <=> 1292367147;").String() // test int
+	require.Equal(t, 0, len(res))
+	res = tk.MustQuery("SELECT f1 FROM (SELECT NULLIF(v0.c0, 1371581446) AS f1 FROM v0, t0) AS t WHERE f1 <=> cast(123988.42132 as real);").String() // test real
+	require.Equal(t, 0, len(res))
+	res = tk.MustQuery("SELECT f1 FROM (SELECT NULLIF(v0.c0, 1371581446) AS f1 FROM v0, t0) AS t WHERE f1 <=> cast(123988.42132 as decimal);").String() // test decimal
+	require.Equal(t, 0, len(res))
+	res = tk.MustQuery("SELECT f1 FROM (SELECT NULLIF(v0.c0, 1371581446) AS f1 FROM v0, t0) AS t WHERE f1 <=> cast('fdasge' as char);").String() // test string
+	require.Equal(t, 0, len(res))
+	res = tk.MustQuery("SELECT f1 FROM (SELECT NULLIF(v0.c0, 1371581446) AS f1 FROM v0, t0) AS t WHERE f1 <=> cast('10:10:10' as time);").String() // test time
+	require.Equal(t, 0, len(res))
+	res = tk.MustQuery("SELECT f1 FROM (SELECT NULLIF(v0.c0, 1371581446) AS f1 FROM v0, t0) AS t WHERE f1 <=> cast(2024 as year);").String() // test year
+	require.Equal(t, 0, len(res))
+	res = tk.MustQuery("SELECT f1 FROM (SELECT NULLIF(v0.c0, 1371581446) AS f1 FROM v0, t0) AS t WHERE f1 <=> cast('2024-1-1 10:10:10' as datetime);").String() // test datetime
+	require.Equal(t, 0, len(res))
+}
+
+func TestIssue44706(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("CREATE TABLE t0(c2 BIGINT)")
+	tk.MustExec("INSERT INTO t0(c2) VALUES (1)")
+
+	tk.MustQuery("SELECT MIN(t0.c2) FROM t0 WHERE false").Check(testkit.Rows("<nil>"))
+	tk.MustQuery("SELECT t0.c2 FROM t0 WHERE ((-1)<=(~ ('n') = ANY (SELECT (NULL))))").Check(testkit.Rows())
+	tk.MustQuery("SELECT t0.c2 FROM t0 WHERE ((-1)<=(~ ('n') = ANY (SELECT MIN(t0.c2) FROM t0 WHERE false)))").Check(testkit.Rows())
 }

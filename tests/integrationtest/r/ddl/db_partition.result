@@ -1,65 +1,3 @@
-set @@session.tidb_enable_table_partition = 'AUTO';
-set @@session.tidb_enable_list_partition = OFF;
-drop table if exists t;
-create table t (id int) partition by list  (id) (
-partition p0 values in (1,2),partition p1 values in (3,4));
-show create table t;
-Table	Create Table
-t	CREATE TABLE `t` (
-  `id` int(11) DEFAULT NULL
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
-alter table t add partition (
-partition p4 values in (7),
-partition p5 values in (8,9));
-Error 1505 (HY000): Partition management on a not partitioned table is not possible
-insert into t values (1),(3),(5),(100),(null);
-set @@session.tidb_enable_table_partition = 'OFF';
-set @@session.tidb_enable_list_partition = OFF;
-drop table if exists t;
-create table t (id int) partition by list  (id) (
-partition p0 values in (1,2),partition p1 values in (3,4));
-show create table t;
-Table	Create Table
-t	CREATE TABLE `t` (
-  `id` int(11) DEFAULT NULL
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
-alter table t add partition (
-partition p4 values in (7),
-partition p5 values in (8,9));
-Error 1505 (HY000): Partition management on a not partitioned table is not possible
-insert into t values (1),(3),(5),(100),(null);
-set @@session.tidb_enable_table_partition = 0;
-set @@session.tidb_enable_list_partition = OFF;
-drop table if exists t;
-create table t (id int) partition by list  (id) (
-partition p0 values in (1,2),partition p1 values in (3,4));
-show create table t;
-Table	Create Table
-t	CREATE TABLE `t` (
-  `id` int(11) DEFAULT NULL
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
-alter table t add partition (
-partition p4 values in (7),
-partition p5 values in (8,9));
-Error 1505 (HY000): Partition management on a not partitioned table is not possible
-insert into t values (1),(3),(5),(100),(null);
-set @@session.tidb_enable_table_partition = 'ON';
-set @@session.tidb_enable_list_partition = OFF;
-drop table if exists t;
-create table t (id int) partition by list  (id) (
-partition p0 values in (1,2),partition p1 values in (3,4));
-show create table t;
-Table	Create Table
-t	CREATE TABLE `t` (
-  `id` int(11) DEFAULT NULL
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
-alter table t add partition (
-partition p4 values in (7),
-partition p5 values in (8,9));
-Error 1505 (HY000): Partition management on a not partitioned table is not possible
-insert into t values (1),(3),(5),(100),(null);
-set @@session.tidb_enable_table_partition = default;
-set @@session.tidb_enable_list_partition = default;
 drop table if exists t;
 create table t (a varchar(255) charset utf8mb4 collate utf8mb4_bin) partition by range columns (a)
 (partition p0A values less than ("A"),
@@ -283,7 +221,6 @@ bb
 ÄÄÄ
 ä
 drop table if exists t;
-set @@session.tidb_enable_list_partition = ON;
 create table t (a int) partition by list (a) (partition p1 values in (null, 6), partition p2 values in (7,null));
 Error 1495 (HY000): Multiple definition of same constant in list partitioning
 create table t (id int) partition by list  (id) (
@@ -358,9 +295,7 @@ drop table if exists t;
 create table t (a datetime) partition by list columns (a) (partition p0 values in ('2020-11-30 12:00:00'));
 alter table t add partition (partition p1 values in ('2020-11-31 12:00:00'));
 Error 1654 (HY000): Partition column values of incorrect type
-set @@session.tidb_enable_list_partition = default;
 drop table if exists t;
-set @@session.tidb_enable_list_partition = ON;
 create table t (id int, name varchar(10)) partition by list columns (id,name) (
 partition p0 values in ((1,'a'),(2,'b')),
 partition p1 values in ((3,'a'),(4,'b')),
@@ -484,7 +419,6 @@ p3	3	LIST COLUMNS	`id`,`name`	(5,NULL)		NULL
 p4	4	LIST COLUMNS	`id`,`name`	(7,'a')		NULL
 p5	5	LIST COLUMNS	`id`,`name`	(8,'a')		NULL
 pDef	6	LIST COLUMNS	`id`,`name`	(9,'d'),DEFAULT,(10,'d')		NULL
-set @@session.tidb_enable_list_partition = OFF;
 alter table t drop partition pDef;
 alter table t add partition (partition pDef);
 Error 1479 (HY000): Syntax : LIST PARTITIONING requires definition of VALUES IN for each partition
@@ -506,7 +440,6 @@ p3	3	LIST COLUMNS	`id`,`name`	(5,NULL)		NULL
 p4	4	LIST COLUMNS	`id`,`name`	(7,'a')		NULL
 p5	5	LIST COLUMNS	`id`,`name`	(8,'a')		NULL
 pDef	6	LIST COLUMNS	`id`,`name`	DEFAULT,(9,'c')		NULL
-set @@session.tidb_enable_list_partition = default;
 drop table if exists t;
 create table t (a int, b varchar(255), unique key (a), key (b)) partition by list (a) (partition p0 values in (0,4), partition p1 values in (1, null, default), partition p2 values in (2,7,10));
 insert into t values (1, "1"), (2, "2"), (3,'3'), (null, "null"), (4, "4"), (11, "11");
@@ -617,7 +550,7 @@ b	a
 4	4
 explain format = 'brief' select * from t where a = 4;
 id	estRows	task	access object	operator info
-TableReader	4.80	root	partition:p0,p1,p2	data:Selection
+TableReader	4.80	root	partition:all	data:Selection
 └─Selection	4.80	cop[tikv]		eq(cast(ddl__db_partition.t.a, double BINARY), 4)
   └─TableFullScan	6.00	cop[tikv]	table:t	keep order:false
 select * from t where a = 3;
@@ -625,7 +558,7 @@ b	a
 3	3
 explain format = 'brief' select * from t where a = 3;
 id	estRows	task	access object	operator info
-TableReader	4.80	root	partition:p0,p1,p2	data:Selection
+TableReader	4.80	root	partition:all	data:Selection
 └─Selection	4.80	cop[tikv]		eq(cast(ddl__db_partition.t.a, double BINARY), 3)
   └─TableFullScan	6.00	cop[tikv]	table:t	keep order:false
 explain format = 'brief' select * from t where a = "3";
@@ -756,7 +689,6 @@ drop table t;
 create table t (a int) partition by list (a) (partition p0 values in ());
 Error 1064 (42000): You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 71 near "));" 
 drop table if exists t;
-set @@session.tidb_enable_list_partition = ON;
 create table t (id int) partition by list  (id) (
 partition p0 values in (1,2),
 partition p1 values in (3,4),
@@ -785,9 +717,7 @@ id
 1
 alter table t drop partition p0;
 Error 1508 (HY000): Cannot remove all partitions, use DROP TABLE instead
-set @@session.tidb_enable_list_partition = default;
 drop table if exists t;
-set @@session.tidb_enable_list_partition = ON;
 create table t (id int, name varchar(10)) partition by list columns (id,name) (
 partition p0 values in ((1,'a'),(2,'b')),
 partition p1 values in ((3,'a'),(4,'b')),
@@ -819,7 +749,6 @@ id	name
 1	a
 alter table t drop partition p0;
 Error 1508 (HY000): Cannot remove all partitions, use DROP TABLE instead
-set @@session.tidb_enable_list_partition = default;
 drop table if exists employees;
 create table employees (
 id int not null,
@@ -1374,7 +1303,7 @@ partition by range( col3 ) (
 partition p1 values less than (11),
 partition p2 values less than (15)
 );
-Error 1503 (HY000): A UNIQUE INDEX must include all columns in the table's partitioning function
+Error 8264 (HY000): Global Index is needed for index 'col1', since the unique index is not including all partitioning columns, and GLOBAL is not given as IndexOption
 drop table if exists Part1;
 create table Part1 (
 col1 int not null,
@@ -1388,7 +1317,7 @@ partition by range( col1 + col3 ) (
 partition p1 values less than (11),
 partition p2 values less than (15)
 );
-Error 1503 (HY000): A UNIQUE INDEX must include all columns in the table's partitioning function
+Error 8264 (HY000): Global Index is needed for index 'col1', since the unique index is not including all partitioning columns, and GLOBAL is not given as IndexOption
 drop table if exists Part1;
 create table Part1 (
 col1 int not null,
@@ -1402,7 +1331,7 @@ partition by range( col3 ) (
 partition p1 values less than (11),
 partition p2 values less than (15)
 );
-Error 1503 (HY000): A UNIQUE INDEX must include all columns in the table's partitioning function
+Error 8264 (HY000): Global Index is needed for index 'col1', since the unique index is not including all partitioning columns, and GLOBAL is not given as IndexOption
 drop table if exists Part1;
 create table Part1 (
 col1 int not null,
@@ -1416,7 +1345,7 @@ partition by range( col1 + col3 ) (
 partition p1 values less than (11),
 partition p2 values less than (15)
 );
-Error 1503 (HY000): A UNIQUE INDEX must include all columns in the table's partitioning function
+Error 8264 (HY000): Global Index is needed for index 'col3', since the unique index is not including all partitioning columns, and GLOBAL is not given as IndexOption
 drop table if exists Part1;
 create table Part1 (
 col1 int not null,
@@ -1429,7 +1358,7 @@ partition by range( col3 ) (
 partition p1 values less than (11),
 partition p2 values less than (15)
 );
-Error 1503 (HY000): A PRIMARY KEY must include all columns in the table's partitioning function
+Error 8264 (HY000): Global Index is needed for index 'PRIMARY', since the unique index is not including all partitioning columns, and GLOBAL is not given as IndexOption
 drop table if exists Part1;
 create table Part1 (
 col1 int not null,
@@ -1443,7 +1372,7 @@ partition by range( year(col2)  ) (
 partition p1 values less than (11),
 partition p2 values less than (15)
 );
-Error 1503 (HY000): A PRIMARY KEY must include all columns in the table's partitioning function
+Error 8264 (HY000): Global Index is needed for index 'PRIMARY', since the unique index is not including all partitioning columns, and GLOBAL is not given as IndexOption
 drop table if exists Part1;
 create table Part1 (
 col1 int not null,
@@ -1457,7 +1386,7 @@ partition by range( col1 + col2 ) (
 partition p1 values less than (11),
 partition p2 values less than (15)
 );
-Error 1503 (HY000): A PRIMARY KEY must include all columns in the table's partitioning function
+Error 8264 (HY000): Global Index is needed for index 'PRIMARY', since the unique index is not including all partitioning columns, and GLOBAL is not given as IndexOption
 drop table if exists part6;
 create table part6 (
 col1 int not null,
@@ -1472,7 +1401,7 @@ partition by range( col1 + col2 ) (
 partition p1 values less than (11),
 partition p2 values less than (15)
 );
-Error 1503 (HY000): A UNIQUE INDEX must include all columns in the table's partitioning function
+Error 8264 (HY000): Global Index is needed for index 'col1_2', since the unique index is not including all partitioning columns, and GLOBAL is not given as IndexOption
 create table part7 (
 col1 int not null,
 col2 int not null,
@@ -1483,7 +1412,7 @@ partition by range (col1 + col2) (
 partition p1 values less than (11),
 partition p2 values less than (15)
 );
-Error 1503 (HY000): A UNIQUE INDEX must include all columns in the table's partitioning function
+Error 8264 (HY000): Global Index is needed for index 'col3', since the unique index is not including all partitioning columns, and GLOBAL is not given as IndexOption
 create table part8 (
 a int not null,
 b int not null,
@@ -1498,7 +1427,7 @@ partition p0 values less than (4),
 partition p1 values less than (7),
 partition p2 values less than (11)
 );
-Error 1503 (HY000): A UNIQUE INDEX must include all columns in the table's partitioning function
+Error 8264 (HY000): Global Index is needed for index 'c', since the unique index is not including all partitioning columns, and GLOBAL is not given as IndexOption
 create table part9 (
 a int not null,
 b int not null,
@@ -1513,18 +1442,18 @@ partition p0 values less than (4, 5),
 partition p1 values less than (7, 9),
 partition p2 values less than (11, 22)
 );
-Error 1503 (HY000): A PRIMARY KEY must include all columns in the table's partitioning function
+Error 8264 (HY000): Global Index is needed for index 'PRIMARY', since the unique index is not including all partitioning columns, and GLOBAL is not given as IndexOption
 create table part12 (a varchar(20), b binary, unique index (a(5))) partition by range columns (a) (
 partition p0 values less than ('aaaaa'),
 partition p1 values less than ('bbbbb'),
 partition p2 values less than ('ccccc'));
-Error 1503 (HY000): A UNIQUE INDEX must include all columns in the table's partitioning function
+Error 8264 (HY000): Global Index is needed for index 'a', since the unique index is not including all partitioning columns, and GLOBAL is not given as IndexOption
 create table part12 (a varchar(20), b binary) partition by range columns (a) (
 partition p0 values less than ('aaaaa'),
 partition p1 values less than ('bbbbb'),
 partition p2 values less than ('ccccc'));
 alter table part12 add unique index (a(5));
-Error 1503 (HY000): A UNIQUE INDEX must include all columns in the table's partitioning function
+Error 8264 (HY000): Global Index is needed for index 'a', since the unique index is not including all partitioning columns, and GLOBAL is not given as IndexOption
 create table part13 (a varchar(20), b varchar(10), unique index (a(5),b)) partition by range columns (b) (
 partition p0 values less than ('aaaaa'),
 partition p1 values less than ('bbbbb'),
@@ -1850,7 +1779,6 @@ t	CREATE TABLE `t` (
   `store_id` int(11) DEFAULT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 PARTITION BY KEY (`hired`) PARTITIONS 11
-set @@session.tidb_enable_table_partition = 1;
 drop database if exists test_db_with_partition_const;
 create database test_db_with_partition_const;
 use test_db_with_partition_const;
@@ -1919,7 +1847,6 @@ partition by range(day(time_recorded)) (
 partition p0 values less than (1)
 );
 Error 1486 (HY000): Constant, random or timezone-dependent expressions in (sub)partitioning function are not allowed
-set @@session.tidb_enable_table_partition = default;
 drop table if exists test_1465;
 create table test_1465 (a int)
 partition by range(a) (
@@ -2007,16 +1934,13 @@ alter table t_date add partition (partition p1 values less than (0x20));
 Error 1654 (HY000): Partition column values of incorrect type
 alter table t_date add partition (partition p1 values less than (20));
 Error 1654 (HY000): Partition column values of incorrect type
-set @@session.tidb_enable_list_partition = ON;
 drop table if exists t_list1;
 create table t_list1(a date) partition by list columns (a) (partition p0 values in ('2010-02-02', '20180203'), partition p1 values in ('20200202'));
 insert into t_list1(a) values (20180203);
 select * from t_list1 partition (p0);
 a
 2018-02-03
-set @@session.tidb_enable_list_partition = default;
 drop table if exists t;
-set @@session.tidb_enable_list_partition = ON;
 create table t (a char(10) collate utf8mb4_general_ci) partition by list columns (a) (partition p0 values in ('a', 'A'));
 Error 1495 (HY000): Multiple definition of same constant in list partitioning
 create table t11(a char(10) collate utf8mb4_general_ci) partition by list columns (a) (partition p0 values in ('a', 'b'), partition p1 values in ('C', 'D'));
@@ -2043,7 +1967,6 @@ id	estRows	task	access object	operator info
 TableReader_7	1.00	root	partition:p0	data:Selection_6
 └─Selection_6	1.00	cop[tikv]		eq(test_db_with_partition_const.t11.a, "b")
   └─TableFullScan_5	5.00	cop[tikv]	table:t11	keep order:false
-set @@session.tidb_enable_list_partition = default;
 drop table if exists global_partition_table;
 create global temporary table global_partition_table (a int, b int) partition by hash(a) partitions 3 ON COMMIT DELETE ROWS;
 Error 1562 (HY000): Cannot create temporary table with partitions
@@ -2061,7 +1984,6 @@ partition p3 values less than (MAXVALUE)
 Error 1562 (HY000): Cannot create temporary table with partitions
 drop table if exists partition_range_table;
 drop table if exists partition_list_table;
-set @@session.tidb_enable_list_partition = ON;
 create global temporary table partition_list_table (id int) partition by list  (id) (
 partition p0 values in (1,2),
 partition p1 values in (3,4),
@@ -2086,7 +2008,6 @@ partition p3 values less than (MAXVALUE)
 Error 1562 (HY000): Cannot create temporary table with partitions
 drop table if exists local_partition_range_table;
 drop table if exists local_partition_list_table;
-set @@session.tidb_enable_list_partition = ON;
 create temporary table local_partition_list_table (id int) partition by list  (id) (
 partition p0 values in (1,2),
 partition p1 values in (3,4),
@@ -2094,9 +2015,7 @@ partition p3 values in (5,null)
 );
 Error 1562 (HY000): Cannot create temporary table with partitions
 drop table if exists local_partition_list_table;
-set @@session.tidb_enable_list_partition = default;
 drop table if exists t1;
-set @@tidb_enable_list_partition=on;
 create table t1 (a int) partition by list (a) (partition p1 values in (1), partition p2 values in (2), partition p3 values in (3));
 insert into t1 values (1),(2),(3);
 alter table t1 truncate partition p1,p1;
@@ -2131,7 +2050,6 @@ t1	CREATE TABLE `t1` (
 PARTITION BY LIST (`a`)
 (PARTITION `p2` VALUES IN (2),
  PARTITION `p3` VALUES IN (3))
-set @@tidb_enable_list_partition=default;
 drop table if exists t;
 CREATE TABLE `t` (
 `id` int(11) DEFAULT NULL
@@ -3119,7 +3037,6 @@ Error 1526 (HY000): Table has no partition for value from column_list
 insert into t values ('2023-08-31', 'c', "FAIL");
 alter table rcp EXCHANGE PARTITION p20230829 WITH TABLE t;
 Error 1737 (HY000): Found a row that does not match the partition
-set @@session.tidb_enable_table_partition = 1;
 drop table if exists t1, t2, t3, t4, t5;
 create table t1 ( time_recorded datetime )
 partition by range(TO_DAYS(time_recorded)) (
@@ -3137,7 +3054,6 @@ create table t5 ( time_recorded timestamp )
 partition by range(unix_timestamp(time_recorded)) (
 partition p1 values less than (1559192604)
 );
-set @@session.tidb_enable_table_partition = default;
 set @@tidb_enable_exchange_partition=1;
 drop table if exists pt1;
 create table pt1(a int, b int, c int) PARTITION BY hash (a) partitions 1;
@@ -3161,7 +3077,6 @@ drop table if exists nt2;
 create table nt2 (a int, b int, c int);
 alter table nt2 add index idx((a+c));
 alter table pt1 exchange partition p0 with table nt2;
-set tidb_enable_global_index=true;
 drop database if exists partition_exchange;
 create database partition_exchange;
 use partition_exchange;
@@ -3314,7 +3229,6 @@ alter table pt35 exchange partition p0 with table nt35;
 Error 1731 (HY000): Non matching attribute 'global index: b' between partition and table
 drop database partition_exchange;
 use ddl__db_partition;
-set tidb_enable_global_index=default;
 # 53385
 drop table if exists t,t1;
 create table t (id int not null, store_id int not null )  partition by range (store_id) (partition p0 values less than (6), partition p1 values less than (11), partition p2 values less than (16), partition p3 values less than (21));

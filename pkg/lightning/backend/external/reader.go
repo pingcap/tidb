@@ -17,6 +17,7 @@ package external
 import (
 	"bytes"
 	"context"
+	"encoding/hex"
 	"io"
 	"time"
 
@@ -43,8 +44,8 @@ func readAllData(
 	task.Info("arguments",
 		zap.Int("data-file-count", len(dataFiles)),
 		zap.Int("stat-file-count", len(statsFiles)),
-		zap.Binary("start-key", startKey),
-		zap.Binary("end-key", endKey),
+		zap.String("start-key", hex.EncodeToString(startKey)),
+		zap.String("end-key", hex.EncodeToString(endKey)),
 	)
 	defer func() {
 		if err != nil {
@@ -80,7 +81,6 @@ func readAllData(
 	taskCh := make(chan int)
 	output.memKVBuffers = make([]*membuf.Buffer, readConn*2)
 	for readIdx := 0; readIdx < readConn; readIdx++ {
-		readIdx := readIdx
 		eg.Go(func() error {
 			output.memKVBuffers[readIdx] = smallBlockBufPool.NewBuffer()
 			output.memKVBuffers[readIdx+readConn] = largeBlockBufPool.NewBuffer()

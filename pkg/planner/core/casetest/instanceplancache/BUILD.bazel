@@ -3,7 +3,18 @@ load("@io_bazel_rules_go//go:def.bzl", "go_test")
 go_test(
     name = "instanceplancache_test",
     timeout = "short",
-    srcs = ["main_test.go"],
+    srcs = [
+        "concurrency_test.go",
+        "dml_test.go",
+        "main_test.go",
+        "others_test.go",
+    ],
     flaky = True,
-    deps = ["//pkg/testkit"],
+    shard_count = 16,
+    deps = [
+        "//pkg/parser/auth",
+        "//pkg/testkit",
+        "//pkg/util",
+        "@com_github_stretchr_testify//require",
+    ],
 )

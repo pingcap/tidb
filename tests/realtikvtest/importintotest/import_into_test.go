@@ -146,6 +146,39 @@ func (s *mockGCSSuite) TestBasicImportInto() {
 	})
 	s.prepareAndUseDB("import_into")
 
+	s.tk.MustExec("drop table if exists t")
+	s.tk.MustExec("create table t (a bigint, b varchar(100), c int);")
+	s.tk.MustExec("set @v='test'")
+	// IMPORT INTO does not support column reference
+	sql := fmt.Sprintf(`IMPORT INTO t(a, @, c) SET b=a+1 FROM 'gs://test-multi-load/db.tbl.001.csv?endpoint=%s'
+		with thread=1`, gcsEndpoint)
+	err := s.tk.ExecToErr(sql)
+	require.ErrorContains(s.T(), err, "COLUMN reference is not supported in IMPORT INTO column assignment, index 0")
+	// IMPORT INTO does not support some functions
+	sql = fmt.Sprintf(`IMPORT INTO t(a, @, c) SET b=tidb_is_ddl_owner() FROM 'gs://test-multi-load/db.tbl.001.csv?endpoint=%s'
+		with thread=1`, gcsEndpoint)
+	err = s.tk.QueryToErr(sql)
+	require.ErrorContains(s.T(), err, "FUNCTION tidb_is_ddl_owner is not supported in IMPORT INTO column assignment, index 0")
+	// IMPORT INTO does not support reading session variables which are set outside this statement
+	s.tk.MustExec("drop table if exists t")
+	s.tk.MustExec("create table t (a bigint, b varchar(100), c int);")
+	s.tk.MustExec("set @v='test'")
+	sql = fmt.Sprintf(`IMPORT INTO t(a, @, c) SET b=@v FROM 'gs://test-multi-load/db.tbl.001.csv?endpoint=%s'
+		with thread=1`, gcsEndpoint)
+	err = s.tk.ExecToErr(sql)
+	require.ErrorContains(s.T(), err, "column assignment cannot use variables set outside IMPORT INTO statement, index 0")
+	sql = fmt.Sprintf(`IMPORT INTO t(a, @, c) SET b=getvar('v') FROM 'gs://test-multi-load/db.tbl.001.csv?endpoint=%s'
+		with thread=1`, gcsEndpoint)
+	err = s.tk.ExecToErr(sql)
+	require.ErrorContains(s.T(), err, "column assignment cannot use variables set outside IMPORT INTO statement, index 0")
+	// IMPORT INTO does not support subquery in SET
+	s.tk.MustExec("drop table if exists t")
+	s.tk.MustExec("create table t (a bigint, b varchar(100), c int);")
+	sql = fmt.Sprintf(`IMPORT INTO t(a, @, c) SET b=(SELECT 'subquery') FROM 'gs://test-multi-load/db.tbl.001.csv?endpoint=%s'
+		with thread=1`, gcsEndpoint)
+	err = s.tk.ExecToErr(sql)
+	require.ErrorContains(s.T(), err, "subquery is not supported in IMPORT INTO column assignment, index 0")
+
 	allData := []string{"1 test1 11", "2 test2 22", "3 test3 33", "4 test4 44", "5 test5 55", "6 test6 66"}
 	cases := []struct {
 		createTableSQL string
@@ -1205,4 +1238,25 @@ func (s *mockGCSSuite) TestBadCases() {
 		FROM 'gs://test-load/bad-cases-1.csv?endpoint=%s'`, gcsEndpoint)
 	err := s.tk.QueryToErr(sql)
 	require.ErrorContains(s.T(), err, "panic occurred during import, please check log")
+}
+
+func (s *mockGCSSuite) TestImportIntoWithFK() {
+	content := []byte(`1,1
+	2,2`)
+	s.server.CreateObject(fakestorage.Object{
+		ObjectAttrs: fakestorage.ObjectAttrs{
+			BucketName: "foreign-key-test",
+			Name:       "child.csv",
+		},
+		Content: content,
+	})
+	s.prepareAndUseDB("import_into")
+	s.tk.MustExec("create table parent (id int primary key);")
+	s.tk.MustExec("create table child (id int primary key, fk int, foreign key (fk) references parent(id));")
+	sql := fmt.Sprintf(`IMPORT INTO import_into.child
+		FROM 'gs://foreign-key-test/child.csv?endpoint=%s'`, gcsEndpoint)
+
+	// it should success even if the parent table is empty
+	s.tk.MustQuery(sql)
+	s.tk.MustQuery("SELECT * FROM import_into.child;").Check(testkit.Rows("1 1", "2 2"))
 }

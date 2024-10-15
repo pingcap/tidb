@@ -25,17 +25,18 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/planner"
 	"github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
-	"github.com/pingcap/tidb/pkg/planner/util/coretestsdk"
 	"github.com/pingcap/tidb/pkg/session"
+	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/external"
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
@@ -92,9 +93,10 @@ func TestAnalyzeBuildSucc(t *testing.T) {
 		} else if err != nil {
 			continue
 		}
-		err = core.Preprocess(context.Background(), tk.Session(), stmt, core.WithPreprocessorReturn(&core.PreprocessorReturn{InfoSchema: is}))
+		nodeW := resolve.NewNodeW(stmt)
+		err = core.Preprocess(context.Background(), tk.Session(), nodeW, core.WithPreprocessorReturn(&core.PreprocessorReturn{InfoSchema: is}))
 		require.NoError(t, err)
-		_, _, err = planner.Optimize(context.Background(), tk.Session(), stmt, is)
+		_, _, err = planner.Optimize(context.Background(), tk.Session(), nodeW, is)
 		if tt.succ {
 			require.NoError(t, err, comment)
 		} else {
@@ -134,9 +136,10 @@ func TestAnalyzeSetRate(t *testing.T) {
 		stmt, err := p.ParseOneStmt(tt.sql, "", "")
 		require.NoError(t, err, comment)
 
-		err = core.Preprocess(context.Background(), tk.Session(), stmt, core.WithPreprocessorReturn(&core.PreprocessorReturn{InfoSchema: is}))
+		nodeW := resolve.NewNodeW(stmt)
+		err = core.Preprocess(context.Background(), tk.Session(), nodeW, core.WithPreprocessorReturn(&core.PreprocessorReturn{InfoSchema: is}))
 		require.NoError(t, err, comment)
-		p, _, err := planner.Optimize(context.Background(), tk.Session(), stmt, is)
+		p, _, err := planner.Optimize(context.Background(), tk.Session(), nodeW, is)
 		require.NoError(t, err, comment)
 		ana := p.(*core.Analyze)
 		require.Equal(t, tt.rate, math.Float64frombits(ana.Opts[ast.AnalyzeOptSampleRate]))
@@ -169,7 +172,8 @@ func TestRequestTypeSupportedOff(t *testing.T) {
 	is := infoschema.MockInfoSchema([]*model.TableInfo{core.MockSignedTable(), core.MockUnsignedTable()})
 	stmt, err := parser.New().ParseOneStmt(sql, "", "")
 	require.NoError(t, err)
-	p, _, err := planner.Optimize(context.TODO(), se, stmt, is)
+	nodeW := resolve.NewNodeW(stmt)
+	p, _, err := planner.Optimize(context.TODO(), se, nodeW, is)
 	require.NoError(t, err)
 	require.Equal(t, expect, core.ToString(p), fmt.Sprintf("sql: %s", sql))
 }
@@ -197,7 +201,8 @@ func TestDoSubQuery(t *testing.T) {
 		comment := fmt.Sprintf("for %s", tt.sql)
 		stmt, err := p.ParseOneStmt(tt.sql, "", "")
 		require.NoError(t, err, comment)
-		p, _, err := planner.Optimize(context.TODO(), tk.Session(), stmt, is)
+		nodeW := resolve.NewNodeW(stmt)
+		p, _, err := planner.Optimize(context.TODO(), tk.Session(), nodeW, is)
 		require.NoError(t, err)
 		require.Equal(t, tt.best, core.ToString(p), comment)
 	}
@@ -212,7 +217,8 @@ func TestIndexLookupCartesianJoin(t *testing.T) {
 	require.NoError(t, err)
 
 	is := infoschema.MockInfoSchema([]*model.TableInfo{core.MockSignedTable(), core.MockUnsignedTable()})
-	p, _, err := planner.Optimize(context.TODO(), tk.Session(), stmt, is)
+	nodeW := resolve.NewNodeW(stmt)
+	p, _, err := planner.Optimize(context.TODO(), tk.Session(), nodeW, is)
 	require.NoError(t, err)
 	require.Equal(t, "LeftHashJoin{TableReader(Table(t))->TableReader(Table(t))}", core.ToString(p))
 
@@ -223,7 +229,7 @@ func TestIndexLookupCartesianJoin(t *testing.T) {
 }
 
 func TestMPPHintsWithBinding(t *testing.T) {
-	store := testkit.CreateMockStore(t, coretestsdk.WithMockTiFlash(2))
+	store := testkit.CreateMockStore(t, mockstore.WithMockTiFlash(2))
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("set tidb_cost_model_version=2")
@@ -272,7 +278,7 @@ func TestMPPHintsWithBinding(t *testing.T) {
 }
 
 func TestJoinHintCompatibilityWithBinding(t *testing.T) {
-	store := testkit.CreateMockStore(t, coretestsdk.WithMockTiFlash(2))
+	store := testkit.CreateMockStore(t, mockstore.WithMockTiFlash(2))
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("set tidb_cost_model_version=2")
@@ -351,9 +357,11 @@ func TestHintAlias(t *testing.T) {
 		stmt2, err := p.ParseOneStmt(tt.sql2, "", "")
 		require.NoError(t, err, comment)
 
-		p1, _, err := planner.Optimize(ctx, tk.Session(), stmt1, is)
+		nodeW1 := resolve.NewNodeW(stmt1)
+		p1, _, err := planner.Optimize(ctx, tk.Session(), nodeW1, is)
 		require.NoError(t, err)
-		p2, _, err := planner.Optimize(ctx, tk.Session(), stmt2, is)
+		nodeW2 := resolve.NewNodeW(stmt2)
+		p2, _, err := planner.Optimize(ctx, tk.Session(), nodeW2, is)
 		require.NoError(t, err)
 
 		require.Equal(t, core.ToString(p2), core.ToString(p1))
@@ -388,9 +396,10 @@ func TestDAGPlanBuilderSplitAvg(t *testing.T) {
 		stmt, err := p.ParseOneStmt(tt.sql, "", "")
 		require.NoError(t, err, comment)
 
-		err = core.Preprocess(context.Background(), tk.Session(), stmt, core.WithPreprocessorReturn(&core.PreprocessorReturn{InfoSchema: is}))
+		nodeW := resolve.NewNodeW(stmt)
+		err = core.Preprocess(context.Background(), tk.Session(), nodeW, core.WithPreprocessorReturn(&core.PreprocessorReturn{InfoSchema: is}))
 		require.NoError(t, err)
-		p, _, err := planner.Optimize(context.TODO(), tk.Session(), stmt, is)
+		p, _, err := planner.Optimize(context.TODO(), tk.Session(), nodeW, is)
 		require.NoError(t, err, comment)
 
 		require.Equal(t, tt.plan, core.ToString(p), comment)
@@ -443,7 +452,7 @@ func TestPhysicalPlanMemoryTrace(t *testing.T) {
 }
 
 func TestPhysicalTableScanExtractCorrelatedCols(t *testing.T) {
-	store := testkit.CreateMockStore(t, coretestsdk.WithMockTiFlash(2))
+	store := testkit.CreateMockStore(t, mockstore.WithMockTiFlash(2))
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t1 (id int, client_type tinyint, client_no char(18), taxpayer_no varchar(50), status tinyint, update_time datetime)")

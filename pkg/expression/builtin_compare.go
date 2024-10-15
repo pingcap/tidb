@@ -566,19 +566,19 @@ func (b *builtinGreatestIntSig) Clone() builtinFunc {
 
 // evalInt evals a builtinGreatestIntSig.
 // See http://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html#function_greatest
-func (b *builtinGreatestIntSig) evalInt(ctx EvalContext, row chunk.Row) (max int64, isNull bool, err error) {
-	max, isNull, err = b.args[0].EvalInt(ctx, row)
+func (b *builtinGreatestIntSig) evalInt(ctx EvalContext, row chunk.Row) (maxv int64, isNull bool, err error) {
+	maxv, isNull, err = b.args[0].EvalInt(ctx, row)
 	if isNull || err != nil {
-		return max, isNull, err
+		return maxv, isNull, err
 	}
 	for i := 1; i < len(b.args); i++ {
 		var v int64
 		v, isNull, err = b.args[i].EvalInt(ctx, row)
 		if isNull || err != nil {
-			return max, isNull, err
+			return maxv, isNull, err
 		}
-		if v > max {
-			max = v
+		if v > maxv {
+			maxv = v
 		}
 	}
 	return
@@ -596,19 +596,19 @@ func (b *builtinGreatestRealSig) Clone() builtinFunc {
 
 // evalReal evals a builtinGreatestRealSig.
 // See http://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html#function_greatest
-func (b *builtinGreatestRealSig) evalReal(ctx EvalContext, row chunk.Row) (max float64, isNull bool, err error) {
-	max, isNull, err = b.args[0].EvalReal(ctx, row)
+func (b *builtinGreatestRealSig) evalReal(ctx EvalContext, row chunk.Row) (maxv float64, isNull bool, err error) {
+	maxv, isNull, err = b.args[0].EvalReal(ctx, row)
 	if isNull || err != nil {
-		return max, isNull, err
+		return maxv, isNull, err
 	}
 	for i := 1; i < len(b.args); i++ {
 		var v float64
 		v, isNull, err = b.args[i].EvalReal(ctx, row)
 		if isNull || err != nil {
-			return max, isNull, err
+			return maxv, isNull, err
 		}
-		if v > max {
-			max = v
+		if v > maxv {
+			maxv = v
 		}
 	}
 	return
@@ -626,19 +626,19 @@ func (b *builtinGreatestDecimalSig) Clone() builtinFunc {
 
 // evalDecimal evals a builtinGreatestDecimalSig.
 // See http://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html#function_greatest
-func (b *builtinGreatestDecimalSig) evalDecimal(ctx EvalContext, row chunk.Row) (max *types.MyDecimal, isNull bool, err error) {
-	max, isNull, err = b.args[0].EvalDecimal(ctx, row)
+func (b *builtinGreatestDecimalSig) evalDecimal(ctx EvalContext, row chunk.Row) (maxv *types.MyDecimal, isNull bool, err error) {
+	maxv, isNull, err = b.args[0].EvalDecimal(ctx, row)
 	if isNull || err != nil {
-		return max, isNull, err
+		return maxv, isNull, err
 	}
 	for i := 1; i < len(b.args); i++ {
 		var v *types.MyDecimal
 		v, isNull, err = b.args[i].EvalDecimal(ctx, row)
 		if isNull || err != nil {
-			return max, isNull, err
+			return maxv, isNull, err
 		}
-		if v.Compare(max) > 0 {
-			max = v
+		if v.Compare(maxv) > 0 {
+			maxv = v
 		}
 	}
 	return
@@ -656,19 +656,19 @@ func (b *builtinGreatestStringSig) Clone() builtinFunc {
 
 // evalString evals a builtinGreatestStringSig.
 // See http://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html#function_greatest
-func (b *builtinGreatestStringSig) evalString(ctx EvalContext, row chunk.Row) (max string, isNull bool, err error) {
-	max, isNull, err = b.args[0].EvalString(ctx, row)
+func (b *builtinGreatestStringSig) evalString(ctx EvalContext, row chunk.Row) (maxv string, isNull bool, err error) {
+	maxv, isNull, err = b.args[0].EvalString(ctx, row)
 	if isNull || err != nil {
-		return max, isNull, err
+		return maxv, isNull, err
 	}
 	for i := 1; i < len(b.args); i++ {
 		var v string
 		v, isNull, err = b.args[i].EvalString(ctx, row)
 		if isNull || err != nil {
-			return max, isNull, err
+			return maxv, isNull, err
 		}
-		if types.CompareString(v, max, b.collation) > 0 {
-			max = v
+		if types.CompareString(v, maxv, b.collation) > 0 {
+			maxv = v
 		}
 	}
 	return
@@ -892,19 +892,19 @@ func (b *builtinLeastIntSig) Clone() builtinFunc {
 
 // evalInt evals a builtinLeastIntSig.
 // See http://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html#function_least
-func (b *builtinLeastIntSig) evalInt(ctx EvalContext, row chunk.Row) (min int64, isNull bool, err error) {
-	min, isNull, err = b.args[0].EvalInt(ctx, row)
+func (b *builtinLeastIntSig) evalInt(ctx EvalContext, row chunk.Row) (minv int64, isNull bool, err error) {
+	minv, isNull, err = b.args[0].EvalInt(ctx, row)
 	if isNull || err != nil {
-		return min, isNull, err
+		return minv, isNull, err
 	}
 	for i := 1; i < len(b.args); i++ {
 		var v int64
 		v, isNull, err = b.args[i].EvalInt(ctx, row)
 		if isNull || err != nil {
-			return min, isNull, err
+			return minv, isNull, err
 		}
-		if v < min {
-			min = v
+		if v < minv {
+			minv = v
 		}
 	}
 	return
@@ -922,19 +922,19 @@ func (b *builtinLeastRealSig) Clone() builtinFunc {
 
 // evalReal evals a builtinLeastRealSig.
 // See http://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html#functionleast
-func (b *builtinLeastRealSig) evalReal(ctx EvalContext, row chunk.Row) (min float64, isNull bool, err error) {
-	min, isNull, err = b.args[0].EvalReal(ctx, row)
+func (b *builtinLeastRealSig) evalReal(ctx EvalContext, row chunk.Row) (minv float64, isNull bool, err error) {
+	minv, isNull, err = b.args[0].EvalReal(ctx, row)
 	if isNull || err != nil {
-		return min, isNull, err
+		return minv, isNull, err
 	}
 	for i := 1; i < len(b.args); i++ {
 		var v float64
 		v, isNull, err = b.args[i].EvalReal(ctx, row)
 		if isNull || err != nil {
-			return min, isNull, err
+			return minv, isNull, err
 		}
-		if v < min {
-			min = v
+		if v < minv {
+			minv = v
 		}
 	}
 	return
@@ -952,19 +952,19 @@ func (b *builtinLeastDecimalSig) Clone() builtinFunc {
 
 // evalDecimal evals a builtinLeastDecimalSig.
 // See http://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html#functionleast
-func (b *builtinLeastDecimalSig) evalDecimal(ctx EvalContext, row chunk.Row) (min *types.MyDecimal, isNull bool, err error) {
-	min, isNull, err = b.args[0].EvalDecimal(ctx, row)
+func (b *builtinLeastDecimalSig) evalDecimal(ctx EvalContext, row chunk.Row) (minv *types.MyDecimal, isNull bool, err error) {
+	minv, isNull, err = b.args[0].EvalDecimal(ctx, row)
 	if isNull || err != nil {
-		return min, isNull, err
+		return minv, isNull, err
 	}
 	for i := 1; i < len(b.args); i++ {
 		var v *types.MyDecimal
 		v, isNull, err = b.args[i].EvalDecimal(ctx, row)
 		if isNull || err != nil {
-			return min, isNull, err
+			return minv, isNull, err
 		}
-		if v.Compare(min) < 0 {
-			min = v
+		if v.Compare(minv) < 0 {
+			minv = v
 		}
 	}
 	return
@@ -982,19 +982,19 @@ func (b *builtinLeastStringSig) Clone() builtinFunc {
 
 // evalString evals a builtinLeastStringSig.
 // See http://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html#functionleast
-func (b *builtinLeastStringSig) evalString(ctx EvalContext, row chunk.Row) (min string, isNull bool, err error) {
-	min, isNull, err = b.args[0].EvalString(ctx, row)
+func (b *builtinLeastStringSig) evalString(ctx EvalContext, row chunk.Row) (minv string, isNull bool, err error) {
+	minv, isNull, err = b.args[0].EvalString(ctx, row)
 	if isNull || err != nil {
-		return min, isNull, err
+		return minv, isNull, err
 	}
 	for i := 1; i < len(b.args); i++ {
 		var v string
 		v, isNull, err = b.args[i].EvalString(ctx, row)
 		if isNull || err != nil {
-			return min, isNull, err
+			return minv, isNull, err
 		}
-		if types.CompareString(v, min, b.collation) < 0 {
-			min = v
+		if types.CompareString(v, minv, b.collation) < 0 {
+			minv = v
 		}
 	}
 	return
@@ -1603,6 +1603,48 @@ func matchRefineRule3Pattern(conEvalType types.EvalType, exprType *types.FieldTy
 		(conEvalType == types.ETReal || conEvalType == types.ETDecimal || conEvalType == types.ETInt)
 }
 
+// handleDurationTypeComparison handles comparisons between a duration type column and a non-duration type constant.
+// If the constant cannot be cast to a duration type and the comparison operator is `<=>`, the expression is rewritten as `0 <=> 1`.
+// This is necessary to maintain compatibility with MySQL behavior under the following conditions:
+//  1. When a duration type column is compared with a non-duration type constant, MySQL casts the duration column to the non-duration type.
+//     This cast prevents the use of indexes on the duration column. In TiDB, we instead cast the non-duration type constant to the duration type.
+//  2. If the non-duration type constant cannot be successfully cast to a duration type, the cast returns null. A duration type constant, however,
+//     can always be cast to a non-duration type without returning null.
+//  3. If the duration type column's value is null and the non-duration type constant cannot be cast to a duration type, and the comparison operator
+//     is `<=>` (null equal), then in TiDB, `durationColumn <=> non-durationTypeConstant` evaluates to `null <=> null`, returning true. In MySQL,
+//     it would evaluate to `null <=> not-null constant`, returning false.
+//
+// To ensure MySQL compatibility, we need to handle this case specifically. If the non-duration type constant cannot be cast to a duration type,
+// we rewrite the expression to always return false by converting it to `0 <=> 1`.
+func (c *compareFunctionClass) handleDurationTypeComparison(ctx BuildContext, arg0, arg1 Expression) (_ []Expression, err error) {
+	// check if a constant value becomes null after being cast to a duration type.
+	castToDurationIsNull := func(ctx BuildContext, arg Expression) (bool, error) {
+		f := WrapWithCastAsDuration(ctx, arg)
+		_, isNull, err := f.EvalDuration(ctx.GetEvalCtx(), chunk.Row{})
+		if err != nil {
+			return false, err
+		}
+		return isNull, nil
+	}
+
+	arg0Const, arg0IsCon := arg0.(*Constant)
+	arg1Const, arg1IsCon := arg1.(*Constant)
+
+	var isNull bool
+	if arg0IsCon && arg0Const.DeferredExpr == nil && !arg1IsCon && arg1.GetType(ctx.GetEvalCtx()).GetType() == mysql.TypeDuration {
+		isNull, err = castToDurationIsNull(ctx, arg0)
+	} else if arg1IsCon && arg1Const.DeferredExpr == nil && !arg0IsCon && arg0.GetType(ctx.GetEvalCtx()).GetType() == mysql.TypeDuration {
+		isNull, err = castToDurationIsNull(ctx, arg1)
+	}
+	if err != nil {
+		return nil, err
+	}
+	if isNull {
+		return []Expression{NewZero(), NewOne()}, nil
+	}
+	return nil, nil
+}
+
 // Since the argument refining of cmp functions can bring some risks to the plan-cache, the optimizer
 // needs to decide to whether to skip the refining or skip plan-cache for safety.
 // For example, `unsigned_int_col > ?(-1)` can be refined to `True`, but the validation of this result
@@ -1654,9 +1696,12 @@ func allowCmpArgsRefining4PlanCache(ctx BuildContext, args []Expression) (allowR
 }
 
 // refineArgs will rewrite the arguments if the compare expression is
-// 1. `int column <cmp> non-int constant` or `non-int constant <cmp> int column`. E.g., `a < 1.1` will be rewritten to `a < 2`.
-// 2. It also handles comparing year type with int constant if the int constant falls into a sensible year representation.
-// 3. It also handles comparing datetime/timestamp column with numeric constant, try to cast numeric constant as timestamp type, do nothing if failed.
+//  1. `int column <cmp> non-int constant` or `non-int constant <cmp> int column`. E.g., `a < 1.1` will be rewritten to `a < 2`.
+//  2. It also handles comparing year type with int constant if the int constant falls into a sensible year representation.
+//  3. It also handles comparing datetime/timestamp column with numeric constant, try to cast numeric constant as timestamp type, do nothing if failed.
+//  4. Handles special cases where a duration type column is compared with a non-duration type constant, particularly when the constant
+//     cannot be cast to a duration type, ensuring compatibility with MySQL’s behavior by rewriting the expression as `0 <=> 1`.
+//
 // This refining operation depends on the values of these args, but these values can change when using plan-cache.
 // So we have to skip this operation or mark the plan as over-optimized when using plan-cache.
 func (c *compareFunctionClass) refineArgs(ctx BuildContext, args []Expression) ([]Expression, error) {
@@ -1675,6 +1720,13 @@ func (c *compareFunctionClass) refineArgs(ctx BuildContext, args []Expression) (
 	// We should remove the mutable constant for correctness, because its value may be changed.
 	if err := RemoveMutableConst(ctx, args); err != nil {
 		return nil, err
+	}
+
+	// Handle comparison between a duration type column and a non-duration type constant.
+	if c.op == opcode.NullEQ {
+		if result, err := c.handleDurationTypeComparison(ctx, args[0], args[1]); err != nil || result != nil {
+			return result, err
+		}
 	}
 
 	if arg0IsCon && !arg1IsCon && matchRefineRule3Pattern(arg0EvalType, arg1Type) {
@@ -1822,8 +1874,8 @@ func (c *compareFunctionClass) refineArgsByUnsignedFlag(ctx BuildContext, args [
 				if i == 1 {
 					op = symmetricOp[c.op]
 				}
-				if op == opcode.EQ || op == opcode.NullEQ {
-					if _, err := types.ConvertUintToInt(uint64(v), types.IntergerSignedUpperBound(col.RetType.GetType()), col.RetType.GetType()); err != nil {
+				if (op == opcode.EQ && mysql.HasNotNullFlag(col.RetType.GetFlag())) || op == opcode.NullEQ {
+					if _, err := types.ConvertUintToInt(uint64(v), types.IntegerSignedUpperBound(col.RetType.GetType()), col.RetType.GetType()); err != nil {
 						args[i], args[1-i] = NewOne(), NewZero()
 						return args
 					}

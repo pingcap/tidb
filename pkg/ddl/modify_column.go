@@ -23,24 +23,26 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/ddl/logutil"
+	"github.com/pingcap/tidb/pkg/ddl/notifier"
 	sess "github.com/pingcap/tidb/pkg/ddl/session"
 	"github.com/pingcap/tidb/pkg/errctx"
 	"github.com/pingcap/tidb/pkg/expression"
-	exprctx "github.com/pingcap/tidb/pkg/expression/context"
+	"github.com/pingcap/tidb/pkg/expression/exprctx"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
+	"github.com/pingcap/tidb/pkg/meta/metabuild"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/parser/format"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
-	statsutil "github.com/pingcap/tidb/pkg/statistics/handle/util"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/types"
@@ -51,7 +53,7 @@ import (
 
 type modifyingColInfo struct {
 	newCol                *model.ColumnInfo
-	oldColName            *model.CIStr
+	oldColName            *pmodel.CIStr
 	modifyColumnTp        byte
 	updatedAutoRandomBits uint64
 	changingCol           *model.ColumnInfo
@@ -60,8 +62,18 @@ type modifyingColInfo struct {
 	removedIdxs           []int64
 }
 
-func (w *worker) onModifyColumn(jobCtx *jobContext, t *meta.Meta, job *model.Job) (ver int64, _ error) {
-	dbInfo, tblInfo, oldCol, modifyInfo, err := getModifyColumnInfo(t, job)
+func hasVectorIndexColumn(tblInfo *model.TableInfo, col *model.ColumnInfo) bool {
+	indexesToChange := FindRelatedIndexesToChange(tblInfo, col.Name)
+	for _, idx := range indexesToChange {
+		if idx.IndexInfo.VectorInfo != nil {
+			return true
+		}
+	}
+	return false
+}
+
+func (w *worker) onModifyColumn(jobCtx *jobContext, job *model.Job) (ver int64, _ error) {
+	dbInfo, tblInfo, oldCol, modifyInfo, err := getModifyColumnInfo(jobCtx.metaMut, job)
 	if err != nil {
 		return ver, err
 	}
@@ -69,10 +81,10 @@ func (w *worker) onModifyColumn(jobCtx *jobContext, t *meta.Meta, job *model.Job
 	if job.IsRollingback() {
 		// For those column-type-change jobs which don't reorg the data.
 		if !needChangeColumnData(oldCol, modifyInfo.newCol) {
-			return rollbackModifyColumnJob(jobCtx, t, tblInfo, job, modifyInfo.newCol, oldCol, modifyInfo.modifyColumnTp)
+			return rollbackModifyColumnJob(jobCtx, tblInfo, job, modifyInfo.newCol, oldCol, modifyInfo.modifyColumnTp)
 		}
 		// For those column-type-change jobs which reorg the data.
-		return rollbackModifyColumnJobWithData(jobCtx, t, tblInfo, job, oldCol, modifyInfo)
+		return rollbackModifyColumnJobWithData(jobCtx, tblInfo, job, oldCol, modifyInfo)
 	}
 
 	// If we want to rename the column name, we need to check whether it already exists.
@@ -93,14 +105,14 @@ func (w *worker) onModifyColumn(jobCtx *jobContext, t *meta.Meta, job *model.Job
 		}
 	})
 
-	err = checkAndApplyAutoRandomBits(jobCtx, t, dbInfo, tblInfo, oldCol, modifyInfo.newCol, modifyInfo.updatedAutoRandomBits)
+	err = checkAndApplyAutoRandomBits(jobCtx, dbInfo, tblInfo, oldCol, modifyInfo.newCol, modifyInfo.updatedAutoRandomBits)
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
 
 	if !needChangeColumnData(oldCol, modifyInfo.newCol) {
-		return w.doModifyColumn(jobCtx, t, job, dbInfo, tblInfo, modifyInfo.newCol, oldCol, modifyInfo.pos)
+		return w.doModifyColumn(jobCtx, job, dbInfo, tblInfo, modifyInfo.newCol, oldCol, modifyInfo.pos)
 	}
 
 	if err = isGeneratedRelatedColumn(tblInfo, modifyInfo.newCol, oldCol); err != nil {
@@ -111,10 +123,13 @@ func (w *worker) onModifyColumn(jobCtx *jobContext, t *meta.Meta, job *model.Job
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(dbterror.ErrUnsupportedModifyColumn.GenWithStackByArgs("table is partition table"))
 	}
+	if hasVectorIndexColumn(tblInfo, oldCol) {
+		return ver, errors.Trace(dbterror.ErrUnsupportedModifyColumn.GenWithStackByArgs("vector indexes on the column"))
+	}
 
 	changingCol := modifyInfo.changingCol
 	if changingCol == nil {
-		newColName := model.NewCIStr(genChangingColumnUniqueName(tblInfo, oldCol))
+		newColName := pmodel.NewCIStr(genChangingColumnUniqueName(tblInfo, oldCol))
 		if mysql.HasPriKeyFlag(oldCol.GetFlag()) {
 			job.State = model.JobStateCancelled
 			msg := "this column has primary key flag"
@@ -141,7 +156,7 @@ func (w *worker) onModifyColumn(jobCtx *jobContext, t *meta.Meta, job *model.Job
 				// We create a temp index for each normal index.
 				tmpIdx := info.IndexInfo.Clone()
 				tmpIdxName := genChangingIndexUniqueName(tblInfo, info.IndexInfo)
-				setIdxIDName(tmpIdx, newIdxID, model.NewCIStr(tmpIdxName))
+				setIdxIDName(tmpIdx, newIdxID, pmodel.NewCIStr(tmpIdxName))
 				SetIdxColNameOffset(tmpIdx.Columns[info.Offset], changingCol)
 				tblInfo.Indices = append(tblInfo.Indices, tmpIdx)
 			} else {
@@ -163,18 +178,18 @@ func (w *worker) onModifyColumn(jobCtx *jobContext, t *meta.Meta, job *model.Job
 		}
 	}
 
-	return w.doModifyColumnTypeWithData(jobCtx, t, job, dbInfo, tblInfo, changingCol, oldCol, modifyInfo.newCol.Name, modifyInfo.pos, modifyInfo.removedIdxs)
+	return w.doModifyColumnTypeWithData(jobCtx, job, dbInfo, tblInfo, changingCol, oldCol, modifyInfo.newCol.Name, modifyInfo.pos, modifyInfo.removedIdxs)
 }
 
 // rollbackModifyColumnJob rollbacks the job when an error occurs.
-func rollbackModifyColumnJob(jobCtx *jobContext, t *meta.Meta, tblInfo *model.TableInfo, job *model.Job, newCol, oldCol *model.ColumnInfo, modifyColumnTp byte) (ver int64, _ error) {
+func rollbackModifyColumnJob(jobCtx *jobContext, tblInfo *model.TableInfo, job *model.Job, newCol, oldCol *model.ColumnInfo, modifyColumnTp byte) (ver int64, _ error) {
 	var err error
 	if oldCol.ID == newCol.ID && modifyColumnTp == mysql.TypeNull {
 		// field NotNullFlag flag reset.
 		tblInfo.Columns[oldCol.Offset].SetFlag(oldCol.GetFlag() &^ mysql.NotNullFlag)
 		// field PreventNullInsertFlag flag reset.
 		tblInfo.Columns[oldCol.Offset].SetFlag(oldCol.GetFlag() &^ mysql.PreventNullInsertFlag)
-		ver, err = updateVersionAndTableInfo(jobCtx, t, job, tblInfo, true)
+		ver, err = updateVersionAndTableInfo(jobCtx, job, tblInfo, true)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
@@ -185,7 +200,7 @@ func rollbackModifyColumnJob(jobCtx *jobContext, t *meta.Meta, tblInfo *model.Ta
 	return ver, nil
 }
 
-func getModifyColumnInfo(t *meta.Meta, job *model.Job) (*model.DBInfo, *model.TableInfo, *model.ColumnInfo, *modifyingColInfo, error) {
+func getModifyColumnInfo(t *meta.Mutator, job *model.Job) (*model.DBInfo, *model.TableInfo, *model.ColumnInfo, *modifyingColInfo, error) {
 	modifyInfo := &modifyingColInfo{pos: &ast.ColumnPosition{}}
 	err := job.DecodeArgs(&modifyInfo.newCol, &modifyInfo.oldColName, modifyInfo.pos, &modifyInfo.modifyColumnTp,
 		&modifyInfo.updatedAutoRandomBits, &modifyInfo.changingCol, &modifyInfo.changingIdxs, &modifyInfo.removedIdxs)
@@ -246,7 +261,7 @@ func GetOriginDefaultValueForModifyColumn(ctx exprctx.BuildContext, changingCol,
 }
 
 // rollbackModifyColumnJobWithData is used to rollback modify-column job which need to reorg the data.
-func rollbackModifyColumnJobWithData(jobCtx *jobContext, t *meta.Meta, tblInfo *model.TableInfo, job *model.Job, oldCol *model.ColumnInfo, modifyInfo *modifyingColInfo) (ver int64, err error) {
+func rollbackModifyColumnJobWithData(jobCtx *jobContext, tblInfo *model.TableInfo, job *model.Job, oldCol *model.ColumnInfo, modifyInfo *modifyingColInfo) (ver int64, err error) {
 	// If the not-null change is included, we should clean the flag info in oldCol.
 	if modifyInfo.modifyColumnTp == mysql.TypeNull {
 		// Reset NotNullFlag flag.
@@ -261,7 +276,7 @@ func rollbackModifyColumnJobWithData(jobCtx *jobContext, t *meta.Meta, tblInfo *
 		// be removed from the tableInfo as well.
 		removeChangingColAndIdxs(tblInfo, modifyInfo.changingCol.ID)
 	}
-	ver, err = updateVersionAndTableInfoWithCheck(jobCtx, t, job, tblInfo, true)
+	ver, err = updateVersionAndTableInfoWithCheck(jobCtx, job, tblInfo, true)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
@@ -273,8 +288,13 @@ func rollbackModifyColumnJobWithData(jobCtx *jobContext, t *meta.Meta, tblInfo *
 
 // doModifyColumn updates the column information and reorders all columns. It does not support modifying column data.
 func (w *worker) doModifyColumn(
-	jobCtx *jobContext, t *meta.Meta, job *model.Job, dbInfo *model.DBInfo, tblInfo *model.TableInfo,
-	newCol, oldCol *model.ColumnInfo, pos *ast.ColumnPosition) (ver int64, _ error) {
+	jobCtx *jobContext,
+	job *model.Job,
+	dbInfo *model.DBInfo,
+	tblInfo *model.TableInfo,
+	newCol, oldCol *model.ColumnInfo,
+	pos *ast.ColumnPosition,
+) (ver int64, _ error) {
 	if oldCol.ID != newCol.ID {
 		job.State = model.JobStateRollingback
 		return ver, dbterror.ErrColumnInChange.GenWithStackByArgs(oldCol.Name, newCol.ID)
@@ -289,7 +309,15 @@ func (w *worker) doModifyColumn(
 		}
 
 		// Introduce the `mysql.PreventNullInsertFlag` flag to prevent users from inserting or updating null values.
-		err := modifyColsFromNull2NotNull(w, dbInfo, tblInfo, []*model.ColumnInfo{oldCol}, newCol, oldCol.GetType() != newCol.GetType())
+		err := modifyColsFromNull2NotNull(
+			jobCtx.stepCtx,
+			w,
+			dbInfo,
+			tblInfo,
+			[]*model.ColumnInfo{oldCol},
+			newCol,
+			oldCol.GetType() != newCol.GetType(),
+		)
 		if err != nil {
 			if dbterror.ErrWarnDataTruncated.Equal(err) || dbterror.ErrInvalidUseOfNull.Equal(err) {
 				job.State = model.JobStateRollingback
@@ -298,14 +326,14 @@ func (w *worker) doModifyColumn(
 		}
 		// The column should get into prevent null status first.
 		if noPreventNullFlag {
-			return updateVersionAndTableInfoWithCheck(jobCtx, t, job, tblInfo, true)
+			return updateVersionAndTableInfoWithCheck(jobCtx, job, tblInfo, true)
 		}
 	}
 
 	if job.MultiSchemaInfo != nil && job.MultiSchemaInfo.Revertible {
 		job.MarkNonRevertible()
 		// Store the mark and enter the next DDL handling loop.
-		return updateVersionAndTableInfoWithCheck(jobCtx, t, job, tblInfo, false)
+		return updateVersionAndTableInfoWithCheck(jobCtx, job, tblInfo, false)
 	}
 
 	if err := adjustTableInfoAfterModifyColumn(tblInfo, newCol, oldCol, pos); err != nil {
@@ -313,11 +341,11 @@ func (w *worker) doModifyColumn(
 		return ver, errors.Trace(err)
 	}
 
-	childTableInfos, err := adjustForeignKeyChildTableInfoAfterModifyColumn(jobCtx.infoCache, t, job, tblInfo, newCol, oldCol)
+	childTableInfos, err := adjustForeignKeyChildTableInfoAfterModifyColumn(jobCtx.infoCache, jobCtx.metaMut, job, tblInfo, newCol, oldCol)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
-	ver, err = updateVersionAndTableInfoWithCheck(jobCtx, t, job, tblInfo, true, childTableInfos...)
+	ver, err = updateVersionAndTableInfoWithCheck(jobCtx, job, tblInfo, true, childTableInfos...)
 	if err != nil {
 		// Modified the type definition of 'null' to 'not null' before this, so rollBack the job when an error occurs.
 		job.State = model.JobStateRollingback
@@ -351,7 +379,7 @@ func adjustTableInfoAfterModifyColumn(
 	return nil
 }
 
-func updateFKInfoWhenModifyColumn(tblInfo *model.TableInfo, oldCol, newCol model.CIStr) {
+func updateFKInfoWhenModifyColumn(tblInfo *model.TableInfo, oldCol, newCol pmodel.CIStr) {
 	if oldCol.L == newCol.L {
 		return
 	}
@@ -364,7 +392,7 @@ func updateFKInfoWhenModifyColumn(tblInfo *model.TableInfo, oldCol, newCol model
 	}
 }
 
-func updateTTLInfoWhenModifyColumn(tblInfo *model.TableInfo, oldCol, newCol model.CIStr) {
+func updateTTLInfoWhenModifyColumn(tblInfo *model.TableInfo, oldCol, newCol pmodel.CIStr) {
 	if oldCol.L == newCol.L {
 		return
 	}
@@ -375,7 +403,7 @@ func updateTTLInfoWhenModifyColumn(tblInfo *model.TableInfo, oldCol, newCol mode
 	}
 }
 
-func adjustForeignKeyChildTableInfoAfterModifyColumn(infoCache *infoschema.InfoCache, t *meta.Meta, job *model.Job, tblInfo *model.TableInfo, newCol, oldCol *model.ColumnInfo) ([]schemaIDAndTableInfo, error) {
+func adjustForeignKeyChildTableInfoAfterModifyColumn(infoCache *infoschema.InfoCache, t *meta.Mutator, job *model.Job, tblInfo *model.TableInfo, newCol, oldCol *model.ColumnInfo) ([]schemaIDAndTableInfo, error) {
 	if !variable.EnableForeignKey.Load() || newCol.Name.L == oldCol.Name.L {
 		return nil, nil
 	}
@@ -415,9 +443,15 @@ func adjustForeignKeyChildTableInfoAfterModifyColumn(infoCache *infoschema.InfoC
 }
 
 func (w *worker) doModifyColumnTypeWithData(
-	jobCtx *jobContext, t *meta.Meta, job *model.Job,
-	dbInfo *model.DBInfo, tblInfo *model.TableInfo, changingCol, oldCol *model.ColumnInfo,
-	colName model.CIStr, pos *ast.ColumnPosition, rmIdxIDs []int64) (ver int64, _ error) {
+	jobCtx *jobContext,
+	job *model.Job,
+	dbInfo *model.DBInfo,
+	tblInfo *model.TableInfo,
+	changingCol, oldCol *model.ColumnInfo,
+	colName pmodel.CIStr,
+	pos *ast.ColumnPosition,
+	rmIdxIDs []int64,
+) (ver int64, _ error) {
 	var err error
 	originalState := changingCol.State
 	targetCol := changingCol.Clone()
@@ -428,7 +462,15 @@ func (w *worker) doModifyColumnTypeWithData(
 		// Column from null to not null.
 		if !mysql.HasNotNullFlag(oldCol.GetFlag()) && mysql.HasNotNullFlag(changingCol.GetFlag()) {
 			// Introduce the `mysql.PreventNullInsertFlag` flag to prevent users from inserting or updating null values.
-			err := modifyColsFromNull2NotNull(w, dbInfo, tblInfo, []*model.ColumnInfo{oldCol}, targetCol, oldCol.GetType() != changingCol.GetType())
+			err := modifyColsFromNull2NotNull(
+				jobCtx.stepCtx,
+				w,
+				dbInfo,
+				tblInfo,
+				[]*model.ColumnInfo{oldCol},
+				targetCol,
+				oldCol.GetType() != changingCol.GetType(),
+			)
 			if err != nil {
 				if dbterror.ErrWarnDataTruncated.Equal(err) || dbterror.ErrInvalidUseOfNull.Equal(err) {
 					job.State = model.JobStateRollingback
@@ -456,7 +498,7 @@ func (w *worker) doModifyColumnTypeWithData(
 				}
 			}
 		})
-		ver, err = updateVersionAndTableInfoWithCheck(jobCtx, t, job, tblInfo, originalState != changingCol.State)
+		ver, err = updateVersionAndTableInfoWithCheck(jobCtx, job, tblInfo, originalState != changingCol.State)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
@@ -469,7 +511,15 @@ func (w *worker) doModifyColumnTypeWithData(
 		// Column from null to not null.
 		if !mysql.HasNotNullFlag(oldCol.GetFlag()) && mysql.HasNotNullFlag(changingCol.GetFlag()) {
 			// Introduce the `mysql.PreventNullInsertFlag` flag to prevent users from inserting or updating null values.
-			err := modifyColsFromNull2NotNull(w, dbInfo, tblInfo, []*model.ColumnInfo{oldCol}, targetCol, oldCol.GetType() != changingCol.GetType())
+			err := modifyColsFromNull2NotNull(
+				jobCtx.stepCtx,
+				w,
+				dbInfo,
+				tblInfo,
+				[]*model.ColumnInfo{oldCol},
+				targetCol,
+				oldCol.GetType() != changingCol.GetType(),
+			)
 			if err != nil {
 				if dbterror.ErrWarnDataTruncated.Equal(err) || dbterror.ErrInvalidUseOfNull.Equal(err) {
 					job.State = model.JobStateRollingback
@@ -479,7 +529,7 @@ func (w *worker) doModifyColumnTypeWithData(
 		}
 		// delete only -> write only
 		updateChangingObjState(changingCol, changingIdxs, model.StateWriteOnly)
-		ver, err = updateVersionAndTableInfo(jobCtx, t, job, tblInfo, originalState != changingCol.State)
+		ver, err = updateVersionAndTableInfo(jobCtx, job, tblInfo, originalState != changingCol.State)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
@@ -488,7 +538,7 @@ func (w *worker) doModifyColumnTypeWithData(
 	case model.StateWriteOnly:
 		// write only -> reorganization
 		updateChangingObjState(changingCol, changingIdxs, model.StateWriteReorganization)
-		ver, err = updateVersionAndTableInfo(jobCtx, t, job, tblInfo, originalState != changingCol.State)
+		ver, err = updateVersionAndTableInfo(jobCtx, job, tblInfo, originalState != changingCol.State)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
@@ -503,9 +553,9 @@ func (w *worker) doModifyColumnTypeWithData(
 
 		var done bool
 		if job.MultiSchemaInfo != nil {
-			done, ver, err = doReorgWorkForModifyColumnMultiSchema(w, jobCtx, t, job, tbl, oldCol, changingCol, changingIdxs)
+			done, ver, err = doReorgWorkForModifyColumnMultiSchema(w, jobCtx, job, tbl, oldCol, changingCol, changingIdxs)
 		} else {
-			done, ver, err = doReorgWorkForModifyColumn(w, jobCtx, t, job, tbl, oldCol, changingCol, changingIdxs)
+			done, ver, err = doReorgWorkForModifyColumn(w, jobCtx, job, tbl, oldCol, changingCol, changingIdxs)
 		}
 		if !done {
 			return ver, err
@@ -520,7 +570,7 @@ func (w *worker) doModifyColumnTypeWithData(
 		}
 
 		updateChangingObjState(changingCol, changingIdxs, model.StatePublic)
-		ver, err = updateVersionAndTableInfo(jobCtx, t, job, tblInfo, originalState != changingCol.State)
+		ver, err = updateVersionAndTableInfo(jobCtx, job, tblInfo, originalState != changingCol.State)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
@@ -529,12 +579,8 @@ func (w *worker) doModifyColumnTypeWithData(
 		job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
 		// Refactor the job args to add the old index ids into delete range table.
 		job.Args = []any{rmIdxIDs, getPartitionIDs(tblInfo)}
-		modifyColumnEvent := statsutil.NewModifyColumnEvent(
-			job.SchemaID,
-			tblInfo,
-			[]*model.ColumnInfo{changingCol},
-		)
-		asyncNotifyEvent(jobCtx, modifyColumnEvent)
+		modifyColumnEvent := notifier.NewModifyColumnEvent(tblInfo, []*model.ColumnInfo{changingCol})
+		asyncNotifyEvent(jobCtx, modifyColumnEvent, job)
 	default:
 		err = dbterror.ErrInvalidDDLState.GenWithStackByArgs("column", changingCol.State)
 	}
@@ -542,10 +588,10 @@ func (w *worker) doModifyColumnTypeWithData(
 	return ver, errors.Trace(err)
 }
 
-func doReorgWorkForModifyColumnMultiSchema(w *worker, jobCtx *jobContext, t *meta.Meta, job *model.Job, tbl table.Table,
+func doReorgWorkForModifyColumnMultiSchema(w *worker, jobCtx *jobContext, job *model.Job, tbl table.Table,
 	oldCol, changingCol *model.ColumnInfo, changingIdxs []*model.IndexInfo) (done bool, ver int64, err error) {
 	if job.MultiSchemaInfo.Revertible {
-		done, ver, err = doReorgWorkForModifyColumn(w, jobCtx, t, job, tbl, oldCol, changingCol, changingIdxs)
+		done, ver, err = doReorgWorkForModifyColumn(w, jobCtx, job, tbl, oldCol, changingCol, changingIdxs)
 		if done {
 			// We need another round to wait for all the others sub-jobs to finish.
 			job.MarkNonRevertible()
@@ -557,7 +603,7 @@ func doReorgWorkForModifyColumnMultiSchema(w *worker, jobCtx *jobContext, t *met
 	return true, ver, err
 }
 
-func doReorgWorkForModifyColumn(w *worker, jobCtx *jobContext, t *meta.Meta, job *model.Job, tbl table.Table,
+func doReorgWorkForModifyColumn(w *worker, jobCtx *jobContext, job *model.Job, tbl table.Table,
 	oldCol, changingCol *model.ColumnInfo, changingIdxs []*model.IndexInfo) (done bool, ver int64, err error) {
 	job.ReorgMeta.ReorgTp = model.ReorgTypeTxn
 	sctx, err1 := w.sessPool.Get()
@@ -567,7 +613,7 @@ func doReorgWorkForModifyColumn(w *worker, jobCtx *jobContext, t *meta.Meta, job
 	}
 	defer w.sessPool.Put(sctx)
 	rh := newReorgHandler(sess.NewSession(sctx))
-	dbInfo, err := t.GetDatabase(job.SchemaID)
+	dbInfo, err := jobCtx.metaMut.GetDatabase(job.SchemaID)
 	if err != nil {
 		return false, ver, errors.Trace(err)
 	}
@@ -592,7 +638,7 @@ func doReorgWorkForModifyColumn(w *worker, jobCtx *jobContext, t *meta.Meta, job
 		// Use old column name to generate less confusing error messages.
 		changingColCpy := changingCol.Clone()
 		changingColCpy.Name = oldCol.Name
-		return w.updateCurrentElement(tbl, reorgInfo)
+		return w.updateCurrentElement(jobCtx.stepCtx, tbl, reorgInfo)
 	})
 	if err != nil {
 		if dbterror.ErrPausedDDLJob.Equal(err) {
@@ -618,7 +664,7 @@ func doReorgWorkForModifyColumn(w *worker, jobCtx *jobContext, t *meta.Meta, job
 }
 
 func adjustTableInfoAfterModifyColumnWithData(tblInfo *model.TableInfo, pos *ast.ColumnPosition,
-	oldCol, changingCol *model.ColumnInfo, newName model.CIStr, changingIdxs []*model.IndexInfo) (err error) {
+	oldCol, changingCol *model.ColumnInfo, newName pmodel.CIStr, changingIdxs []*model.IndexInfo) (err error) {
 	if pos != nil && pos.RelativeColumn != nil && oldCol.Name.L == pos.RelativeColumn.Name.L {
 		// For cases like `modify column b after b`, it should report this error.
 		return errors.Trace(infoschema.ErrColumnNotExists.GenWithStackByArgs(oldCol.Name, tblInfo.Name))
@@ -642,7 +688,7 @@ func adjustTableInfoAfterModifyColumnWithData(tblInfo *model.TableInfo, pos *ast
 	return nil
 }
 
-func checkModifyColumnWithGeneratedColumnsConstraint(allCols []*table.Column, oldColName model.CIStr) error {
+func checkModifyColumnWithGeneratedColumnsConstraint(allCols []*table.Column, oldColName pmodel.CIStr) error {
 	for _, col := range allCols {
 		if col.GeneratedExpr == nil {
 			continue
@@ -666,7 +712,7 @@ func GetModifiableColumnJob(
 	sctx sessionctx.Context,
 	is infoschema.InfoSchema, // WARN: is maybe nil here.
 	ident ast.Ident,
-	originalColName model.CIStr,
+	originalColName pmodel.CIStr,
 	schema *model.DBInfo,
 	t table.Table,
 	spec *ast.AlterTableSpec,
@@ -727,7 +773,7 @@ func GetModifiableColumnJob(
 		Version:               col.Version,
 	})
 
-	if err = ProcessColumnCharsetAndCollation(sctx, col, newCol, t.Meta(), specNewColumn, schema); err != nil {
+	if err = ProcessColumnCharsetAndCollation(NewMetaBuildContextWithSctx(sctx), col, newCol, t.Meta(), specNewColumn, schema); err != nil {
 		return nil, err
 	}
 
@@ -761,6 +807,9 @@ func GetModifiableColumnJob(
 		}
 		if t.Meta().Partition != nil {
 			return nil, dbterror.ErrUnsupportedModifyColumn.GenWithStackByArgs("table is partition table")
+		}
+		if hasVectorIndexColumn(t.Meta(), col.ColumnInfo) {
+			return nil, dbterror.ErrUnsupportedModifyColumn.GenWithStackByArgs("vector indexes on the column")
 		}
 	}
 
@@ -904,7 +953,7 @@ func GetModifiableColumnJob(
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	bdrRole, err := meta.NewMeta(txn).GetBDRRole()
+	bdrRole, err := meta.NewMutator(txn).GetBDRRole()
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -1009,7 +1058,7 @@ func IsElemsChangedToModifyColumn(oldElems, newElems []string) bool {
 }
 
 // ProcessColumnCharsetAndCollation process column charset and collation
-func ProcessColumnCharsetAndCollation(sctx sessionctx.Context, col *table.Column, newCol *table.Column, meta *model.TableInfo, specNewColumn *ast.ColumnDef, schema *model.DBInfo) error {
+func ProcessColumnCharsetAndCollation(ctx *metabuild.Context, col *table.Column, newCol *table.Column, meta *model.TableInfo, specNewColumn *ast.ColumnDef, schema *model.DBInfo) error {
 	var chs, coll string
 	var err error
 	// TODO: Remove it when all table versions are greater than or equal to TableInfoVersion1.
@@ -1019,22 +1068,22 @@ func ProcessColumnCharsetAndCollation(sctx sessionctx.Context, col *table.Column
 		chs = col.FieldType.GetCharset()
 		coll = col.FieldType.GetCollate()
 	} else {
-		chs, coll, err = getCharsetAndCollateInColumnDef(sctx.GetSessionVars(), specNewColumn)
+		chs, coll, err = getCharsetAndCollateInColumnDef(specNewColumn, ctx.GetDefaultCollationForUTF8MB4())
 		if err != nil {
 			return errors.Trace(err)
 		}
-		chs, coll, err = ResolveCharsetCollation(sctx.GetSessionVars(),
-			ast.CharsetOpt{Chs: chs, Col: coll},
-			ast.CharsetOpt{Chs: meta.Charset, Col: meta.Collate},
-			ast.CharsetOpt{Chs: schema.Charset, Col: schema.Collate},
-		)
-		chs, coll = OverwriteCollationWithBinaryFlag(sctx.GetSessionVars(), specNewColumn, chs, coll)
+		chs, coll, err = ResolveCharsetCollation([]ast.CharsetOpt{
+			{Chs: chs, Col: coll},
+			{Chs: meta.Charset, Col: meta.Collate},
+			{Chs: schema.Charset, Col: schema.Collate},
+		}, ctx.GetDefaultCollationForUTF8MB4())
+		chs, coll = OverwriteCollationWithBinaryFlag(specNewColumn, chs, coll, ctx.GetDefaultCollationForUTF8MB4())
 		if err != nil {
 			return errors.Trace(err)
 		}
 	}
 
-	if err = setCharsetCollationFlenDecimal(&newCol.FieldType, newCol.Name.O, chs, coll, sctx.GetSessionVars()); err != nil {
+	if err = setCharsetCollationFlenDecimal(ctx, &newCol.FieldType, newCol.Name.O, chs, coll); err != nil {
 		return errors.Trace(err)
 	}
 	decodeEnumSetBinaryLiteralToUTF8(&newCol.FieldType, chs)
@@ -1070,7 +1119,7 @@ func checkColumnWithIndexConstraint(tbInfo *model.TableInfo, originalCol, newCol
 		if !modified {
 			return
 		}
-		err = checkIndexInModifiableColumns(columns, indexInfo.Columns)
+		err = checkIndexInModifiableColumns(columns, indexInfo.Columns, indexInfo.VectorInfo != nil)
 		if err != nil {
 			return
 		}
@@ -1103,7 +1152,7 @@ func checkColumnWithIndexConstraint(tbInfo *model.TableInfo, originalCol, newCol
 	return nil
 }
 
-func checkIndexInModifiableColumns(columns []*model.ColumnInfo, idxColumns []*model.IndexColumn) error {
+func checkIndexInModifiableColumns(columns []*model.ColumnInfo, idxColumns []*model.IndexColumn, isVectorIndex bool) error {
 	for _, ic := range idxColumns {
 		col := model.FindColumnInfo(columns, ic.Name.L)
 		if col == nil {
@@ -1116,7 +1165,7 @@ func checkIndexInModifiableColumns(columns []*model.ColumnInfo, idxColumns []*mo
 			// if the type is still prefixable and larger than old prefix length.
 			prefixLength = ic.Length
 		}
-		if err := checkIndexColumn(nil, col, prefixLength); err != nil {
+		if err := checkIndexColumn(col, prefixLength, false, isVectorIndex); err != nil {
 			return err
 		}
 	}
@@ -1165,12 +1214,12 @@ func ProcessModifyColumnOptions(ctx sessionctx.Context, col *table.Column, optio
 	for _, opt := range options {
 		switch opt.Tp {
 		case ast.ColumnOptionDefaultValue:
-			hasDefaultValue, err = SetDefaultValue(ctx, col, opt)
+			hasDefaultValue, err = SetDefaultValue(ctx.GetExprCtx(), col, opt)
 			if err != nil {
 				return errors.Trace(err)
 			}
 		case ast.ColumnOptionComment:
-			err := setColumnComment(ctx, col, opt)
+			err := setColumnComment(ctx.GetExprCtx(), col, opt)
 			if err != nil {
 				return errors.Trace(err)
 			}
@@ -1224,7 +1273,7 @@ func ProcessModifyColumnOptions(ctx sessionctx.Context, col *table.Column, optio
 		}
 	}
 
-	if err = processAndCheckDefaultValueAndColumn(ctx, col, nil, hasDefaultValue, setOnUpdateNow, hasNullFlag); err != nil {
+	if err = processAndCheckDefaultValueAndColumn(ctx.GetExprCtx(), col, nil, hasDefaultValue, setOnUpdateNow, hasNullFlag); err != nil {
 		return errors.Trace(err)
 	}
 

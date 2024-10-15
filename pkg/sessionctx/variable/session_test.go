@@ -64,8 +64,6 @@ func TestSetSystemVariable(t *testing.T) {
 	}
 
 	for _, tc := range testCases {
-		// copy iterator variable into a new variable, see issue #27779
-		tc := tc
 		t.Run(tc.key, func(t *testing.T) {
 			mtx.Lock()
 			err := v.SetSystemVar(tc.key, tc.value)
@@ -626,4 +624,28 @@ func TestRowIDShardGenerator(t *testing.T) {
 	// set step will reset clear remain
 	g.SetShardStep(5)
 	require.NotEqual(t, shard, g.GetCurrentShard(1))
+}
+
+func TestUserVars(t *testing.T) {
+	vars := variable.NewUserVars()
+	vars.SetUserVarVal("a", types.NewIntDatum(1))
+	vars.SetUserVarVal("b", types.NewStringDatum("v2"))
+	dt, ok := vars.GetUserVarVal("a")
+	require.True(t, ok)
+	require.Equal(t, types.NewIntDatum(1), dt)
+
+	vars.SetUserVarType("a", types.NewFieldType(mysql.TypeLonglong))
+	tp, ok := vars.GetUserVarType("a")
+	require.True(t, ok)
+	require.Equal(t, types.NewFieldType(mysql.TypeLonglong), tp)
+
+	vars.UnsetUserVar("a")
+	_, ok = vars.GetUserVarVal("a")
+	require.False(t, ok)
+	_, ok = vars.GetUserVarType("a")
+	require.False(t, ok)
+
+	dt, ok = vars.GetUserVarVal("b")
+	require.True(t, ok)
+	require.Equal(t, types.NewStringDatum("v2"), dt)
 }
