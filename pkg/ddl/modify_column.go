@@ -176,9 +176,8 @@ func (w *worker) onModifyColumn(jobCtx *jobContext, job *model.Job) (ver int64, 
 		}
 	}
 
-	args.ChangingColumn = changingCol
 	return w.doModifyColumnTypeWithData(
-		jobCtx, job, dbInfo, tblInfo, oldCol, args)
+		jobCtx, job, dbInfo, tblInfo, changingCol, oldCol, args)
 }
 
 // rollbackModifyColumnJob rollbacks the job when an error occurs.
@@ -445,10 +444,10 @@ func (w *worker) doModifyColumnTypeWithData(
 	job *model.Job,
 	dbInfo *model.DBInfo,
 	tblInfo *model.TableInfo,
-	oldCol *model.ColumnInfo,
+	changingCol, oldCol *model.ColumnInfo,
 	args *model.ModifyColumnArgs,
 ) (ver int64, _ error) {
-	changingCol, colName, pos := args.ChangingColumn, args.Column.Name, args.Position
+	colName, pos := args.Column.Name, args.Position
 
 	var err error
 	originalState := changingCol.State
@@ -504,6 +503,7 @@ func (w *worker) doModifyColumnTypeWithData(
 		// be updated in `updateDDLJob` even if it meets an error in `updateVersionAndTableInfoWithCheck`.
 		job.SchemaState = model.StateDeleteOnly
 		metrics.GetBackfillProgressByLabel(metrics.LblModifyColumn, job.SchemaName, tblInfo.Name.String()).Set(0)
+		args.ChangingColumn = changingCol
 		args.ChangingIdxs = changingIdxs
 		job.FillArgs(args)
 	case model.StateDeleteOnly:
