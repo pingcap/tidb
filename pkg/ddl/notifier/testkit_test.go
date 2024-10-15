@@ -53,7 +53,7 @@ func TestPublishToTableStore(t *testing.T) {
 	ctx := context.Background()
 	s := notifier.OpenTableStore("test", "ddl_notifier")
 	se := sess.NewSession(tk.Session())
-	event1 := notifier.NewCreateTableEvent(&model.TableInfo{ID: 1000, Name: pmodel.NewCIStr("t1")})
+	event1 := notifier.NewCreateTablesEvent([]*model.TableInfo{{ID: 1000, Name: pmodel.NewCIStr("t1")}})
 	err := notifier.PubSchemeChangeToStore(ctx, se, 1, -1, event1, s)
 	require.NoError(t, err)
 	event2 := notifier.NewDropTableEvent(&model.TableInfo{ID: 1001, Name: pmodel.NewCIStr("t2")})
@@ -111,7 +111,7 @@ func TestBasicPubSub(t *testing.T) {
 
 	tk2 := testkit.NewTestKit(t, store)
 	se := sess.NewSession(tk2.Session())
-	event1 := notifier.NewCreateTableEvent(&model.TableInfo{ID: 1000, Name: pmodel.NewCIStr("t1")})
+	event1 := notifier.NewCreateTablesEvent([]*model.TableInfo{{ID: 1000, Name: pmodel.NewCIStr("t1")}})
 	err := notifier.PubSchemeChangeToStore(ctx, se, 1, -1, event1, s)
 	require.NoError(t, err)
 	event2 := notifier.NewDropTableEvent(&model.TableInfo{ID: 1001, Name: pmodel.NewCIStr("t2")})
@@ -163,7 +163,9 @@ func TestDeliverOrderAndCleanup(t *testing.T) {
 				}
 			}
 
-			tableIDs = append(tableIDs, change.GetCreateTableInfo().ID)
+			for _, tbl := range change.GetCreateTablesInfo() {
+				tableIDs = append(tableIDs, tbl.ID)
+			}
 			return nil
 		}
 		return h, &tableIDs
@@ -185,13 +187,13 @@ func TestDeliverOrderAndCleanup(t *testing.T) {
 	tk2 := testkit.NewTestKit(t, store)
 	se := sess.NewSession(tk2.Session())
 
-	event1 := notifier.NewCreateTableEvent(&model.TableInfo{ID: 1000, Name: pmodel.NewCIStr("t1")})
+	event1 := notifier.NewCreateTablesEvent([]*model.TableInfo{{ID: 1000, Name: pmodel.NewCIStr("t1")}})
 	err := notifier.PubSchemeChangeToStore(ctx, se, 1, -1, event1, s)
 	require.NoError(t, err)
-	event2 := notifier.NewCreateTableEvent(&model.TableInfo{ID: 1001, Name: pmodel.NewCIStr("t2")})
+	event2 := notifier.NewCreateTablesEvent([]*model.TableInfo{{ID: 1001, Name: pmodel.NewCIStr("t2")}})
 	err = notifier.PubSchemeChangeToStore(ctx, se, 2, -1, event2, s)
 	require.NoError(t, err)
-	event3 := notifier.NewCreateTableEvent(&model.TableInfo{ID: 1002, Name: pmodel.NewCIStr("t3")})
+	event3 := notifier.NewCreateTablesEvent([]*model.TableInfo{{ID: 1002, Name: pmodel.NewCIStr("t3")}})
 	err = notifier.PubSchemeChangeToStore(ctx, se, 3, -1, event3, s)
 	require.NoError(t, err)
 
@@ -254,20 +256,20 @@ func TestPublishToStoreBySQL(t *testing.T) {
 		multiSchemaChangeSeqs[i] = int64(seq)
 	}
 	require.Equal(t, tps, []model.ActionType{
-		model.ActionCreateTable,
+		model.ActionCreateTables,
 		model.ActionAlterTablePartitioning,
 		model.ActionReorganizePartition,
 		model.ActionTruncateTablePartition,
 		model.ActionDropTablePartition,
 		model.ActionAddTablePartition,
-		model.ActionCreateTable,
+		model.ActionCreateTables,
 		model.ActionExchangeTablePartition,
 		model.ActionRemovePartitioning,
 		model.ActionTruncateTable,
 		model.ActionDropTable,
 		model.ActionModifyColumn,
 		model.ActionAddColumn,
-		model.ActionCreateTable,
+		model.ActionCreateTables,
 		model.ActionAddColumn,
 		model.ActionAddColumn,
 	})

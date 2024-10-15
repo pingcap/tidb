@@ -180,7 +180,7 @@ func (w *worker) onCreateTable(jobCtx *jobContext, job *model.Job) (ver int64, _
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
-	createTableEvent := notifier.NewCreateTableEvent(tbInfo)
+	createTableEvent := notifier.NewCreateTablesEvent([]*model.TableInfo{tbInfo})
 	err = asyncNotifyEvent(jobCtx, createTableEvent, job, w.sess)
 	if err != nil {
 		return ver, errors.Trace(err)
@@ -215,7 +215,7 @@ func (w *worker) createTableWithForeignKeys(jobCtx *jobContext, job *model.Job, 
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
-		createTableEvent := notifier.NewCreateTableEvent(tbInfo)
+		createTableEvent := notifier.NewCreateTablesEvent([]*model.TableInfo{tbInfo})
 		err = asyncNotifyEvent(jobCtx, createTableEvent, job, w.sess)
 		if err != nil {
 			return ver, errors.Trace(err)
@@ -271,12 +271,10 @@ func (w *worker) onCreateTables(jobCtx *jobContext, job *model.Job) (int64, erro
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
-	for i := range tableInfos {
-		createTableEvent := notifier.NewCreateTableEvent(tableInfos[i])
-		err = asyncNotifyEvent(jobCtx, createTableEvent, job, w.sess)
-		if err != nil {
-			return ver, errors.Trace(err)
-		}
+	createTablesEvent := notifier.NewCreateTablesEvent(tableInfos)
+	err = asyncNotifyEvent(jobCtx, createTablesEvent, job, w.sess)
+	if err != nil {
+		return ver, errors.Trace(err)
 	}
 
 	job.State = model.JobStateDone
