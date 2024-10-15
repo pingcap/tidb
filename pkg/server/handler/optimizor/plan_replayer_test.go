@@ -287,14 +287,17 @@ func TestIssue56458(t *testing.T) {
 		"meta.txt",
 		"schema/planreplayer.t.schema.txt",
 		"schema/planreplayer.v.schema.txt",
+		"schema/planreplayer2.t.schema.txt",
 		"schema/schema_meta.txt",
 		"session_bindings.sql",
 		"sql/sql0.sql",
 		"sql_meta.toml",
 		"stats/planreplayer.t.json",
 		"stats/planreplayer.v.json",
+		"stats/planreplayer2.t.json",
 		"statsMem/planreplayer.t.txt",
 		"statsMem/planreplayer.v.txt",
+		"statsMem/planreplayer2.t.txt",
 		"table_tiflash_replica.txt",
 		"variables.toml",
 	}, filesInReplayer)
@@ -326,6 +329,7 @@ func TestIssue56458(t *testing.T) {
 	tk := testkit.NewDBTestKit(t, db)
 	tk.MustExec("use planReplayer")
 	tk.MustExec("drop table planReplayer.t")
+	tk.MustExec("drop table planReplayer2.t")
 	tk.MustExec("drop table planReplayer.v")
 	tk.MustExec(`plan replayer load "/tmp/plan_replayer.zip"`)
 
@@ -445,13 +449,19 @@ func prepareData4Issue56458(t *testing.T, client *testserverclient.TestServerCli
 	tk := testkit.NewDBTestKit(t, db)
 
 	tk.MustExec("create database planReplayer")
+	tk.MustExec("create database planReplayer2")
 	tk.MustExec("use planReplayer")
+
 	tk.MustExec("CREATE TABLE v(id INT PRIMARY KEY AUTO_INCREMENT);")
 	err = h.HandleDDLEvent(<-h.DDLEventCh())
 	require.NoError(t, err)
-	tk.MustExec("create table t(a int, b int, INDEX ia (a), INDEX ib (b), author_id int, FOREIGN KEY (author_id) REFERENCES v(id) ON DELETE CASCADE);")
+	tk.MustExec("create table planReplayer2.t(a int, b int, INDEX ia (a), INDEX ib (b), author_id int, FOREIGN KEY (author_id) REFERENCES planReplayer.v(id) ON DELETE CASCADE);")
 	err = h.HandleDDLEvent(<-h.DDLEventCh())
 	require.NoError(t, err)
+	tk.MustExec("create table t(a int, b int, INDEX ia (a), INDEX ib (b), author_id int, FOREIGN KEY (author_id) REFERENCES planReplayer2.t(a) ON DELETE CASCADE);")
+	err = h.HandleDDLEvent(<-h.DDLEventCh())
+	require.NoError(t, err)
+
 	tk.MustExec("create global binding for select a, b from t where a in (1, 2, 3) using select a, b from t use index (ib) where a in (1, 2, 3)")
 	rows := tk.MustQuery("plan replayer dump explain select a, b from t where a in (1, 2, 3)")
 	require.True(t, rows.Next(), "unexpected data")
