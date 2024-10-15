@@ -17,16 +17,20 @@ package priorityqueue_test
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/pingcap/tidb/pkg/ddl/notifier"
 	"github.com/pingcap/tidb/pkg/domain"
+	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/statistics/handle/autoanalyze/priorityqueue"
 	statsutil "github.com/pingcap/tidb/pkg/statistics/handle/util"
+	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/stretchr/testify/require"
 )
 
@@ -36,6 +40,21 @@ func findEvent(eventCh <-chan *notifier.SchemaChangeEvent, eventType model.Actio
 		event := <-eventCh
 		if event.GetType() == eventType {
 			return event
+		}
+	}
+}
+
+func findEventWithTimeout(eventCh <-chan *notifier.SchemaChangeEvent, eventType model.ActionType, timeout int) *notifier.SchemaChangeEvent {
+	ticker := time.NewTicker(time.Second * time.Duration(timeout))
+	// Find the target event.
+	for {
+		select {
+		case event := <-eventCh:
+			if event.GetType() == eventType {
+				return event
+			}
+		case <-ticker.C:
+			return nil
 		}
 	}
 }
@@ -617,4 +636,46 @@ func TestRemovePartitioning(t *testing.T) {
 	isEmpty, err = pq.IsEmpty()
 	require.NoError(t, err)
 	require.True(t, isEmpty)
+}
+
+const tiflashReplicaLease = 600 * time.Millisecond
+
+func TestVectorIndexTriggerAutoAnalyze(t *testing.T) {
+	store := testkit.CreateMockStoreWithSchemaLease(t, tiflashReplicaLease, mockstore.WithMockTiFlash(2))
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	tiflash := infosync.NewMockTiFlash()
+	infosync.SetMockTiFlash(tiflash)
+	defer func() {
+		tiflash.Lock()
+		tiflash.StatusServer.Close()
+		tiflash.Unlock()
+	}()
+	dom := domain.GetDomain(tk.Session())
+	h := dom.StatsHandle()
+
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/MockCheckVectorIndexProcess", `return(1)`)
+
+	tk.MustExec("create table t (a int, b vector, c vector(3), d vector(4));")
+	tk.MustExec("analyze table t")
+	statistics.AutoAnalyzeMinCnt = 0
+	defer func() {
+		statistics.AutoAnalyzeMinCnt = 1000
+	}()
+
+	pq := priorityqueue.NewAnalysisPriorityQueueV2(h)
+	tk.MustExec("alter table t set tiflash replica 1;")
+	testkit.SetTiFlashReplica(t, dom, "test", "t")
+	defer pq.Close()
+	require.NoError(t, pq.Initialize())
+	isEmpty, err := pq.IsEmpty()
+	require.NoError(t, err)
+	require.True(t, isEmpty)
+
+	tk.MustExec("alter table t add vector index vecIdx1((vec_cosine_distance(d))) USING HNSW;")
+
+	addIndexEvent := findEventWithTimeout(h.DDLEventCh(), model.ActionAddVectorIndex, 1)
+	// No event is found
+	require.Nil(t, addIndexEvent)
 }

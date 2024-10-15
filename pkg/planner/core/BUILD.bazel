@@ -290,7 +290,6 @@ go_test(
         "//pkg/planner/core/rule",
         "//pkg/planner/property",
         "//pkg/planner/util",
-        "//pkg/planner/util/coretestsdk",
         "//pkg/planner/util/costusage",
         "//pkg/planner/util/optimizetrace",
         "//pkg/session",

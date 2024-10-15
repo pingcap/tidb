@@ -241,7 +241,6 @@ go_test(
         "index_change_test.go",
         "index_cop_test.go",
         "index_modify_test.go",
-        "index_test.go",
         "integration_test.go",
         "job_scheduler_test.go",
         "job_scheduler_testkit_test.go",
