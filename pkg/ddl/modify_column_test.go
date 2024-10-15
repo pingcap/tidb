@@ -393,7 +393,6 @@ func TestModifyColumnBetweenStringTypes(t *testing.T) {
 }
 
 func TestModifyColumnCharset(t *testing.T) {
-	t.SkipNow()
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")

@@ -2521,7 +2521,6 @@ func TestPartitionByExtensivePart(t *testing.T) {
 }
 
 func TestReorgPartExtensivePart(t *testing.T) {
-	t.SkipNow()
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	schemaName := "ReorgPartExtensive"

@@ -409,7 +409,6 @@ func TestTableFromMeta(t *testing.T) {
 }
 
 func TestHiddenColumn(t *testing.T) {
-	t.Skip("modify table info")
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("DROP DATABASE IF EXISTS test_hidden;")

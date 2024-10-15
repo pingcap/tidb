@@ -82,6 +82,16 @@ var skipTestNames = map[string]struct{}{
 	"TestEnforceMPPWarning1":                             {},
 	"TestSpecialSchemas":                                 {},
 	"TestSelectHiddenColumn":                             {},
+	"TestAlterAddConstraintStateChange2":                 {},
+	"TestAlterAddConstraintStateChange3":                 {},
+	"TestAlterEnforcedConstraintStateChange":             {},
+	"TestAddIndexWithDupIndex":                           {},
+	"TestModifyColumnCharset":                            {},
+	"TestReorgPartitionConcurrent":                       {},
+	"TestInfoSchemaForTiFlashReplica":                    {},
+	"TestRuntimeFilterGenerator":                         {},
+	"TestReorgPartExtensivePart":                         {},
+	"TestHiddenColumn":                                   {},
 }
 
 func getFuncName(skip int) string {

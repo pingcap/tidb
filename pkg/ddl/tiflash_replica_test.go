@@ -173,7 +173,6 @@ func updateTableMeta(t *testing.T, store kv.Storage, dbID int64, tableInfo *mode
 }
 
 func TestInfoSchemaForTiFlashReplica(t *testing.T) {
-	t.Skip()
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/infoschema/mockTiFlashStoreCount", `return(true)`))
 	defer func() {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/infoschema/mockTiFlashStoreCount"))
