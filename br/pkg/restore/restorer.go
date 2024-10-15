@@ -102,17 +102,20 @@ type ConcurrentlFileImporter interface {
 }
 
 type SimpleRestorer struct {
-	workerPool   *util.WorkerPool
-	fileImporter FileImporter
+	workerPool       *util.WorkerPool
+	fileImporter     FileImporter
+	checkpointRunner *checkpoint.CheckpointRunner[checkpoint.RestoreKeyType, checkpoint.RestoreValueType]
 }
 
 func NewSimpleFileRestorer(
 	fileImporter FileImporter,
 	workerPool *util.WorkerPool,
+	checkpointRunner *checkpoint.CheckpointRunner[checkpoint.RestoreKeyType, checkpoint.RestoreValueType],
 ) FileRestorer {
 	return &SimpleRestorer{
-		workerPool:   workerPool,
-		fileImporter: fileImporter,
+		workerPool:       workerPool,
+		fileImporter:     fileImporter,
+		checkpointRunner: checkpointRunner,
 	}
 }
 
@@ -137,7 +140,20 @@ func (s *SimpleRestorer) Restore(ctx context.Context, onProgress func(), batchFi
 							onProgress()
 						}
 					}()
-					return s.fileImporter.Import(ectx, fileGroup)
+					err := s.fileImporter.Import(ectx, fileGroup)
+					if err != nil {
+						return errors.Trace(err)
+					}
+					// the data of this range has been import done
+					if s.checkpointRunner != nil {
+						for _, file := range fileGroup.SSTFiles {
+							// the table corresponding to the table-id.
+							if err := checkpoint.AppendRangesForRestore(ectx, s.checkpointRunner, fileGroup.TableID, "", file.Name); err != nil {
+								return errors.Trace(err)
+							}
+						}
+					}
+					return nil
 				})
 		}
 	}
@@ -224,7 +240,7 @@ func (m *MultiTablesRestorer) Restore(ctx context.Context, onProgress func(), ba
 					for rangeKey := range rangeKeySet {
 						// The checkpoint range shows this ranges of kvs has been restored into
 						// the table corresponding to the table-id.
-						if err := checkpoint.AppendRangesForRestore(ectx, m.checkpointRunner, filesGroup.TableID, rangeKey); err != nil {
+						if err := checkpoint.AppendRangesForRestore(ectx, m.checkpointRunner, filesGroup.TableID, rangeKey, ""); err != nil {
 							return errors.Trace(err)
 						}
 					}

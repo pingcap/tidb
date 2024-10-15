@@ -77,7 +77,7 @@ func TestCheckpointMetaForRestore(t *testing.T) {
 	}
 	err = checkpoint.SaveCheckpointMetadataForSnapshotRestore(ctx, se, checkpointMetaForSnapshotRestore)
 	require.NoError(t, err)
-	checkpointMetaForSnapshotRestore2, err := checkpoint.LoadCheckpointMetadataForSnapshotRestore(ctx, se.GetSessionCtx().GetRestrictedSQLExecutor())
+	checkpointMetaForSnapshotRestore2, err := checkpoint.LoadCheckpointMetadataForSstRestore(ctx, se.GetSessionCtx().GetRestrictedSQLExecutor())
 	require.NoError(t, err)
 	require.Equal(t, checkpointMetaForSnapshotRestore.SchedulersConfig, checkpointMetaForSnapshotRestore2.SchedulersConfig)
 	require.Equal(t, checkpointMetaForSnapshotRestore.UpstreamClusterID, checkpointMetaForSnapshotRestore2.UpstreamClusterID)
@@ -343,7 +343,7 @@ func TestCheckpointRestoreRunner(t *testing.T) {
 		respCount += 1
 	}
 
-	_, err = checkpoint.LoadCheckpointDataForSnapshotRestore(ctx, se.GetSessionCtx().GetRestrictedSQLExecutor(), checker)
+	_, err = checkpoint.LoadCheckpointDataForSstRestore(ctx, se.GetSessionCtx().GetRestrictedSQLExecutor(), checker)
 	require.NoError(t, err)
 	require.Equal(t, 4, respCount)
 
@@ -355,10 +355,10 @@ func TestCheckpointRestoreRunner(t *testing.T) {
 		require.Equal(t, checksum[i].Crc64xor, uint64(i))
 	}
 
-	err = checkpoint.RemoveCheckpointDataForSnapshotRestore(ctx, s.Mock.Domain, se)
+	err = checkpoint.RemoveCheckpointDataForSstRestore(ctx, s.Mock.Domain, se)
 	require.NoError(t, err)
 
-	exists := checkpoint.ExistsSnapshotRestoreCheckpoint(ctx, s.Mock.Domain)
+	exists := checkpoint.ExistsSstRestoreCheckpoint(ctx, s.Mock.Domain)
 	require.False(t, exists)
 	exists = s.Mock.Domain.InfoSchema().SchemaExists(pmodel.NewCIStr(checkpoint.SnapshotRestoreCheckpointDatabaseName))
 	require.False(t, exists)
@@ -400,7 +400,7 @@ func TestCheckpointRunnerRetry(t *testing.T) {
 	se, err = g.CreateSession(s.Mock.Storage)
 	require.NoError(t, err)
 	recordSet := make(map[string]int)
-	_, err = checkpoint.LoadCheckpointDataForSnapshotRestore(ctx, se.GetSessionCtx().GetRestrictedSQLExecutor(),
+	_, err = checkpoint.LoadCheckpointDataForSstRestore(ctx, se.GetSessionCtx().GetRestrictedSQLExecutor(),
 		func(tableID int64, rangeKey checkpoint.RestoreValueType) {
 			recordSet[fmt.Sprintf("%d_%s", tableID, rangeKey)] += 1
 		})
@@ -440,7 +440,7 @@ func TestCheckpointRunnerNoRetry(t *testing.T) {
 	se, err = g.CreateSession(s.Mock.Storage)
 	require.NoError(t, err)
 	recordSet := make(map[string]int)
-	_, err = checkpoint.LoadCheckpointDataForSnapshotRestore(ctx, se.GetSessionCtx().GetRestrictedSQLExecutor(),
+	_, err = checkpoint.LoadCheckpointDataForSstRestore(ctx, se.GetSessionCtx().GetRestrictedSQLExecutor(),
 		func(tableID int64, rangeKey checkpoint.RestoreValueType) {
 			recordSet[fmt.Sprintf("%d_%s", tableID, rangeKey)] += 1
 		})

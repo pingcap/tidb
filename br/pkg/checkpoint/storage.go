@@ -48,8 +48,9 @@ type checkpointStorage interface {
 // 2. BR regards the metadata table as a file so that it is not empty if the table exists.
 // 3. BR regards the checkpoint table as a directory which is managed by metadata table.
 const (
-	LogRestoreCheckpointDatabaseName      string = "__TiDB_BR_Temporary_Log_Restore_Checkpoint"
-	SnapshotRestoreCheckpointDatabaseName string = "__TiDB_BR_Temporary_Snapshot_Restore_Checkpoint"
+	LogRestoreCheckpointDatabaseName       string = "__TiDB_BR_Temporary_Log_Restore_Checkpoint"
+	SnapshotRestoreCheckpointDatabaseName  string = "__TiDB_BR_Temporary_Snapshot_Restore_Checkpoint"
+	CompactedRestoreCheckpointDatabaseName string = "__TiDB_BR_Temporary_Compacted_Restore_Checkpoint"
 
 	// directory level table
 	checkpointDataTableName     string = "cpt_data"

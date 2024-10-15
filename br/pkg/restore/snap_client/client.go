@@ -314,7 +314,7 @@ func (rc *SnapClient) InitCheckpoint(
 	if !checkpointFirstRun {
 		execCtx := rc.db.Session().GetSessionCtx().GetRestrictedSQLExecutor()
 		// load the checkpoint since this is not the first time to restore
-		meta, err := checkpoint.LoadCheckpointMetadataForSnapshotRestore(ctx, execCtx)
+		meta, err := checkpoint.LoadCheckpointMetadataForSstRestore(ctx, execCtx, checkpoint.SnapshotRestoreCheckpointDatabaseName)
 		if err != nil {
 			return checkpointSetWithTableID, nil, errors.Trace(err)
 		}
@@ -344,13 +344,13 @@ func (rc *SnapClient) InitCheckpoint(
 		}
 
 		// t1 is the latest time the checkpoint ranges persisted to the external storage.
-		t1, err := checkpoint.LoadCheckpointDataForSnapshotRestore(ctx, execCtx, func(tableID int64, rangeKey checkpoint.RestoreValueType) {
+		t1, err := checkpoint.LoadCheckpointDataForSstRestore(ctx, execCtx, checkpoint.SnapshotRestoreCheckpointDatabaseName, func(tableID int64, v checkpoint.RestoreValueType) {
 			checkpointSet, exists := checkpointSetWithTableID[tableID]
 			if !exists {
 				checkpointSet = make(map[string]struct{})
 				checkpointSetWithTableID[tableID] = checkpointSet
 			}
-			checkpointSet[rangeKey.RangeKey] = struct{}{}
+			checkpointSet[v.RangeKey] = struct{}{}
 		})
 		if err != nil {
 			return checkpointSetWithTableID, nil, errors.Trace(err)
@@ -530,7 +530,7 @@ func (rc *SnapClient) initClients(ctx context.Context, backend *backuppb.Storage
 		if err != nil {
 			return errors.Trace(err)
 		}
-		rc.restorer = restore.NewSimpleFileRestorer(fileImporter, rc.workerPool)
+		rc.restorer = restore.NewSimpleFileRestorer(fileImporter, rc.workerPool, nil)
 	} else {
 		// or create a fileImporter with the cluster API version
 		fileImporter, err = NewSnapFileImporter(

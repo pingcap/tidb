@@ -1290,7 +1290,7 @@ func restoreStream(
 	if err != nil {
 		return errors.Annotate(err, "failed to create restore client")
 	}
-	defer client.Close()
+	defer client.Close(ctx)
 
 	if taskInfo != nil && taskInfo.Metadata != nil {
 		// reuse the task's rewrite ts
@@ -1342,9 +1342,7 @@ func restoreStream(
 		log.Info("finish restoring gc")
 	}()
 
-	var checkpointRunner *checkpoint.CheckpointRunner[checkpoint.LogRestoreKeyType, checkpoint.LogRestoreValueType]
-	var sstCheckpointRunner *checkpoint.CheckpointRunner[checkpoint.RestoreKeyType, checkpoint.RestoreValueType]
-	// var sstCheckpoints map[int64]struct{}
+	sstCheckpointSets := make(map[string]struct{})
 	if cfg.UseCheckpoint {
 		oldRatioFromCheckpoint, err := client.InitCheckpointMetadataForLogRestore(ctx, cfg.StartTS, cfg.RestoreTS, oldRatio, cfg.tiflashRecorder)
 		if err != nil {
@@ -1352,22 +1350,21 @@ func restoreStream(
 		}
 		oldRatio = oldRatioFromCheckpoint
 
-		checkpointRunner, err = client.StartCheckpointRunnerForLogRestore(ctx, g, mgr.GetStorage())
-		if err != nil {
-			return errors.Trace(err)
+		// get sst checkpoint to skip repeated files
+		existsCompactedCheckpoint := checkpoint.ExistsSstRestoreCheckpoint(ctx, mgr.GetDomain(), checkpoint.CompactedRestoreCheckpointDatabaseName)
+		if existsCompactedCheckpoint {
+			se, err := g.CreateSession(mgr.GetStorage())
+			if err != nil {
+				return errors.Trace(err)
+			}
+			execCtx := se.GetSessionCtx().GetRestrictedSQLExecutor()
+			_, err = checkpoint.LoadCheckpointDataForSstRestore(ctx, execCtx, checkpoint.CompactedRestoreCheckpointDatabaseName, func(tableID int64, v checkpoint.RestoreValueType) {
+				sstCheckpointSets[v.Name] = struct{}{}
+			})
+			if err != nil {
+				return errors.Trace(err)
+			}
 		}
-		sstTaskName := ""
-		// sstCheckpoints, err = client.InitCheckpointMetadataForSstRestore(ctx, sstTaskName)
-
-		sstCheckpointRunner, err = client.StartCheckpointRunnerForCompactedSSTRestore(ctx, sstTaskName)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		defer func() {
-			log.Info("wait for flush checkpoint...")
-			sstCheckpointRunner.WaitForFinish(ctx, !gcDisabledRestorable)
-			checkpointRunner.WaitForFinish(ctx, !gcDisabledRestorable)
-		}()
 	}
 
 	encryptionManager, err := encryption.NewManager(&cfg.LogBackupCipherInfo, &cfg.MasterKeyConfig)
@@ -1478,25 +1475,26 @@ func restoreStream(
 
 	pd := g.StartProgress(ctx, "Restore SST+KV Files", int64(dataFileCount), !cfg.LogProgress)
 	err = withProgress(pd, func(p glue.Progress) (pErr error) {
-		compactedSplitIter, err := client.WrapCompactedFilesIterWithSplitHelper(compactionIter, rewriteRules, splitSize, splitKeys)
+		updateStatsWithCheckpoint := func(kvCount, size uint64) {
+			mu.Lock()
+			defer mu.Unlock()
+			totalKVCount += kvCount
+			totalSize += size
+			checkpointTotalKVCount += kvCount
+			checkpointTotalSize += size
+		}
+		compactedSplitIter, err := client.WrapCompactedFilesIterWithSplitHelper(compactionIter, rewriteRules, sstCheckpointSets, splitSize, splitKeys)
 		if err != nil {
 			return errors.Trace(err)
 		}
-		err = client.RestoreCompactedSstFiles(ctx, compactedSplitIter, rewriteRules, p.Inc)
 
+		err = client.RestoreCompactedSstFiles(ctx, compactedSplitIter, sstCheckpointSets, updateStatsWithCheckpoint, rewriteRules, p.Inc)
 		if err != nil {
 			return errors.Trace(err)
 		}
 
+		// TODO unify the log checkpoint logic to the sst checkpoint
 		if cfg.UseCheckpoint {
-			updateStatsWithCheckpoint := func(kvCount, size uint64) {
-				mu.Lock()
-				defer mu.Unlock()
-				totalKVCount += kvCount
-				totalSize += size
-				checkpointTotalKVCount += kvCount
-				checkpointTotalSize += size
-			}
 			logFilesIter, err = client.WrapLogFilesIterWithCheckpoint(ctx, logFilesIter, downstreamIdset, updateStatsWithCheckpoint, p.Inc)
 			if err != nil {
 				return errors.Trace(err)
@@ -1512,7 +1510,7 @@ func restoreStream(
 			return errors.Trace(err)
 		}
 
-		return client.RestoreKVFiles(ctx, rewriteRules, idrules, logFilesIterWithSplit, checkpointRunner,
+		return client.RestoreKVFiles(ctx, rewriteRules, idrules, logFilesIterWithSplit,
 			cfg.PitrBatchCount, cfg.PitrBatchSize, updateStats, p.IncBy, &cfg.LogBackupCipherInfo, cfg.MasterKeyConfig.MasterKeys)
 	})
 	if err != nil {
@@ -1567,13 +1565,13 @@ func createRestoreClient(ctx context.Context, g glue.Glue, cfg *RestoreConfig, m
 	keepaliveCfg := GetKeepalive(&cfg.Config)
 	keepaliveCfg.PermitWithoutStream = true
 	client := logclient.NewRestoreClient(mgr.GetPDClient(), mgr.GetPDHTTPClient(), mgr.GetTLSConfig(), keepaliveCfg)
-	err = client.Init(g, mgr.GetStorage())
+	err = client.Init(ctx, g, mgr.GetStorage(), cfg.UseCheckpoint)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 	defer func() {
 		if err != nil {
-			client.Close()
+			client.Close(ctx)
 		}
 	}()
 
