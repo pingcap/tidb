@@ -1840,6 +1840,9 @@ func (p *preprocessor) hasAutoConvertWarning(colDef *ast.ColumnDef) bool {
 }
 
 func tryLockMDLAndUpdateSchemaIfNecessary(ctx context.Context, sctx base.PlanContext, dbName pmodel.CIStr, tbl table.Table, is infoschema.InfoSchema) (table.Table, error) {
+	defer func() {
+		sctx.GetSessionVars().StmtCtx.StmtRelatedTableIDs[tbl.Meta().ID] = struct{}{}
+	}()
 	if !sctx.GetSessionVars().TxnCtx.EnableMDL {
 		return tbl, nil
 	}
