@@ -1342,31 +1342,18 @@ func restoreStream(
 		log.Info("finish restoring gc")
 	}()
 
-	sstCheckpointSets := make(map[string]struct{})
+	var sstCheckpointSets map[string]struct{}
 	if cfg.UseCheckpoint {
 		oldRatioFromCheckpoint, err := client.InitCheckpointMetadataForLogRestore(ctx, cfg.StartTS, cfg.RestoreTS, oldRatio, cfg.tiflashRecorder)
 		if err != nil {
 			return errors.Trace(err)
 		}
 		oldRatio = oldRatioFromCheckpoint
-
-		// get sst checkpoint to skip repeated files
-		existsCompactedCheckpoint := checkpoint.ExistsSstRestoreCheckpoint(ctx, mgr.GetDomain(), checkpoint.CompactedRestoreCheckpointDatabaseName)
-		if existsCompactedCheckpoint {
-			se, err := g.CreateSession(mgr.GetStorage())
-			if err != nil {
-				return errors.Trace(err)
-			}
-			execCtx := se.GetSessionCtx().GetRestrictedSQLExecutor()
-			_, err = checkpoint.LoadCheckpointDataForSstRestore(ctx, execCtx, checkpoint.CompactedRestoreCheckpointDatabaseName, func(tableID int64, v checkpoint.RestoreValueType) {
-				sstCheckpointSets[v.Name] = struct{}{}
-			})
-			if err != nil {
-				return errors.Trace(err)
-			}
+		sstCheckpointSets, err = client.InitCheckpointMetadataForCompactedSstRestore(ctx)
+		if err != nil {
+			return errors.Trace(err)
 		}
 	}
-
 	encryptionManager, err := encryption.NewManager(&cfg.LogBackupCipherInfo, &cfg.MasterKeyConfig)
 	if err != nil {
 		return errors.Annotate(err, "failed to create encryption manager for log restore")

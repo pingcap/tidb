@@ -425,6 +425,28 @@ func (rc *LogClient) InitClients(ctx context.Context, backend *backuppb.StorageB
 	rc.restorer = restore.NewSimpleFileRestorer(snapFileImporter, rc.workerPool, rc.sstCheckpointRunner)
 }
 
+func (rc *LogClient) InitCheckpointMetadataForCompactedSstRestore(
+	ctx context.Context,
+) (map[string]struct{}, error) {
+	// get sst checkpoint to skip repeated files
+	sstCheckpointSets := make(map[string]struct{})
+	existsCompactedCheckpoint := checkpoint.ExistsSstRestoreCheckpoint(ctx, rc.dom, checkpoint.CompactedRestoreCheckpointDatabaseName)
+	if existsCompactedCheckpoint {
+		execCtx := rc.se.GetSessionCtx().GetRestrictedSQLExecutor()
+		_, err := checkpoint.LoadCheckpointDataForSstRestore(ctx, execCtx, checkpoint.CompactedRestoreCheckpointDatabaseName, func(tableID int64, v checkpoint.RestoreValueType) {
+			sstCheckpointSets[v.Name] = struct{}{}
+		})
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+	} else {
+		if err := checkpoint.SaveCheckpointMetadataForSnapshotRestore(ctx, rc.se, nil); err != nil {
+			return nil, errors.Trace(err)
+		}
+	}
+	return sstCheckpointSets, nil
+}
+
 func (rc *LogClient) InitCheckpointMetadataForLogRestore(
 	ctx context.Context,
 	startTS, restoredTS uint64,
