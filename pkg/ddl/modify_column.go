@@ -165,9 +165,8 @@ func (w *worker) onModifyColumn(jobCtx *jobContext, job *model.Job) (ver int64, 
 				SetIdxColNameOffset(tmpIdx.Columns[info.Offset], changingCol)
 				redundantIdxs = append(redundantIdxs, oldTempIdxID)
 			}
-
-			args.RedundantIdxs = redundantIdxs
 		}
+		args.RedundantIdxs = redundantIdxs
 	} else {
 		changingCol = model.FindColumnInfoByID(tblInfo.Columns, args.ChangingColumn.ID)
 		if changingCol == nil {
