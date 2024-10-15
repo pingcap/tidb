@@ -1307,7 +1307,7 @@ func restoreStream(
 	}
 
 	importModeSwitcher := restore.NewImportModeSwitcher(mgr.GetPDClient(), cfg.Config.SwitchModeInterval, mgr.GetTLSConfig())
-	restoreSchedulers, _, err := restore.RestorePreWork(ctx, mgr, importModeSwitcher, cfg.Online, len(cfg.FullBackupStorage) == 0)
+	restoreSchedulers, _, err := restore.RestorePreWork(ctx, mgr, importModeSwitcher, cfg.Online, false)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -1442,15 +1442,12 @@ func restoreStream(
 		return errors.Trace(err)
 	}
 
-	compactionIter := client.LogFileManager.OpenCompactionIter(ctx, migs)
-
-	// TODO fix the count
-	// sstFileCount, _, err := client.CollectCompactedSsts(ctx, rewriteRules, compactionIter)
-	// if err != nil {
-	// 	return errors.Trace(err)
-	// }
-	// total split ranges count
-	//sstFileCount += sstFileCount / logclient.CompactedSSTSplitBatchSize
+	deleteDataFileCount, compactionIter := client.LogFileManager.OpenCompactionIter(ctx, migs)
+	restoreFileCount := dataFileCount - deleteDataFileCount
+	if restoreFileCount < 0 {
+		// should not happen, this will make the progress not accurate
+		restoreFileCount = dataFileCount
+	}
 
 	se, err := g.CreateSession(mgr.GetStorage())
 	if err != nil {
@@ -1462,7 +1459,7 @@ func restoreStream(
 
 	log.Info("dataFileCount", zap.Int("count", dataFileCount))
 
-	pd := g.StartProgress(ctx, "Restore SST+KV Files", int64(dataFileCount), !cfg.LogProgress)
+	pd := g.StartProgress(ctx, "Restore SST+KV Files", int64(restoreFileCount), !cfg.LogProgress)
 	err = withProgress(pd, func(p glue.Progress) (pErr error) {
 		updateStatsWithCheckpoint := func(kvCount, size uint64) {
 			mu.Lock()
@@ -1472,19 +1469,17 @@ func restoreStream(
 			checkpointTotalKVCount += kvCount
 			checkpointTotalSize += size
 		}
+		importModeSwitcher.SwitchToImportMode(ctx)
 		compactedSplitIter, err := client.WrapCompactedFilesIterWithSplitHelper(compactionIter, rewriteRules, sstCheckpointSets, splitSize, splitKeys)
 		if err != nil {
 			return errors.Trace(err)
 		}
 
-		onProgress := func() {
-			log.Info("inc")
-			p.Inc()
-		}
-		err = client.RestoreCompactedSstFiles(ctx, compactedSplitIter, sstCheckpointSets, updateStatsWithCheckpoint, rewriteRules, onProgress)
+		err = client.RestoreCompactedSstFiles(ctx, compactedSplitIter, sstCheckpointSets, updateStatsWithCheckpoint, rewriteRules, p.Inc)
 		if err != nil {
 			return errors.Trace(err)
 		}
+		importModeSwitcher.SwitchToNormalMode(ctx)
 
 		// TODO unify the log checkpoint logic to the sst checkpoint
 		if cfg.UseCheckpoint {

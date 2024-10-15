@@ -490,31 +490,6 @@ func (rc *LogClient) InitCheckpointMetadataForLogRestore(
 	return gcRatio, nil
 }
 
-func (rc *LogClient) InitCheckpointMetadataForSstRestore(ctx context.Context, taskName string) (map[int64]struct{}, error) {
-	// if the checkpoint metadata exists in the external storage, the restore is not
-	// for the first time.
-	// exists, err := checkpoint.ExistsRestoreCheckpoint(ctx, rc.storage, taskName)
-	// if err != nil {
-	// 	return nil, errors.Trace(err)
-	// }
-
-	// checkpointSetWithRegionID := make(map[int64]struct{})
-	// if exists {
-	// 	// load the checkpoint since this is not the first time to restore
-	// 	_, err := checkpoint.WalkCheckpointFileForRestore(ctx, rc.storage, rc.cipher, taskName, func(regionID int64, rangeKey checkpoint.RestoreValueType) {
-	// 		_, exists := checkpointSetWithRegionID[regionID]
-	// 		if !exists {
-	// 			checkpointSetWithRegionID[regionID] = struct{}{}
-	// 		}
-	// 	})
-	// 	if err != nil {
-	// 		return nil, errors.Trace(err)
-	// 	}
-	// }
-	// return checkpointSetWithRegionID, nil
-	return nil, nil
-}
-
 func (rc *LogClient) GetMigrations(ctx context.Context) ([]*backuppb.Migration, error) {
 	ext := stream.MigerationExtension(rc.storage)
 	migs, err := ext.Load(ctx)
@@ -1952,52 +1927,3 @@ func (rc *LogClient) FailpointDoChecksumForLogRestore(
 
 	return eg.Wait()
 }
-
-// type LogFilesIterWithSplitHelper struct {
-// 	iter   LogIter
-// 	helper *logsplit.LogSplitHelper
-// 	buffer []*LogDataFileInfo
-// 	next   int
-// }
-
-// const SplitFilesBufferSize = 4096
-
-// func NewLogFilesIterWithSplitHelper(iter LogIter, rules map[int64]*restoreutils.RewriteRules, client split.SplitClient, splitSize uint64, splitKeys int64) LogIter {
-// 	return &LogFilesIterWithSplitHelper{
-// 		iter:   iter,
-// 		helper: logsplit.NewLogSplitHelper(rules, client, splitSize, splitKeys),
-// 		buffer: nil,
-// 		next:   0,
-// 	}
-// }
-
-// func (splitIter *LogFilesIterWithSplitHelper) TryNext(ctx context.Context) iter.IterResult[*LogDataFileInfo] {
-// 	if splitIter.next >= len(splitIter.buffer) {
-// 		splitIter.buffer = make([]*LogDataFileInfo, 0, SplitFilesBufferSize)
-// 		for r := splitIter.iter.TryNext(ctx); !r.Finished; r = splitIter.iter.TryNext(ctx) {
-// 			if r.Err != nil {
-// 				return r
-// 			}
-// 			f := r.Item
-// 			splitIter.helper.Merge(f.DataFileInfo)
-// 			splitIter.buffer = append(splitIter.buffer, f)
-// 			if len(splitIter.buffer) >= SplitFilesBufferSize {
-// 				break
-// 			}
-// 		}
-// 		splitIter.next = 0
-// 		if len(splitIter.buffer) == 0 {
-// 			return iter.Done[*LogDataFileInfo]()
-// 		}
-// 		log.Info("start to split the regions")
-// 		startTime := time.Now()
-// 		if err := splitIter.helper.Split(ctx); err != nil {
-// 			return iter.Throw[*LogDataFileInfo](errors.Trace(err))
-// 		}
-// 		log.Info("end to split the regions", zap.Duration("takes", time.Since(startTime)))
-// 	}
-
-// 	res := iter.Emit(splitIter.buffer[splitIter.next])
-// 	splitIter.next += 1
-// 	return res
-// }

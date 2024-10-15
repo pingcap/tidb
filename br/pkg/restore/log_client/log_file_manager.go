@@ -346,16 +346,20 @@ func (rc *LogFileManager) FilterMetaFiles(ms MetaNameIter) MetaGroupIter {
 }
 
 // Fetch compactions that may contain file less than the TS.
-func (rc *LogFileManager) OpenCompactionIter(ctx context.Context, migs []*backuppb.Migration) iter.TryNextor[*backuppb.LogFileSubcompaction] {
+func (rc *LogFileManager) OpenCompactionIter(ctx context.Context, migs []*backuppb.Migration) (int, iter.TryNextor[*backuppb.LogFileSubcompaction]) {
 	compactionDirs := make([]string, 0, 8)
+	deleteDataFileCount := 0
 	for _, mig := range migs {
 		for _, c := range mig.Compactions {
 			compactionDirs = append(compactionDirs, c.Artifacts)
 		}
+		for _, m := range mig.EditMeta {
+			deleteDataFileCount += len(m.DeleteLogicalFiles)
+		}
 	}
 
 	compactionDirIter := iter.FromSlice(compactionDirs)
-	return iter.FlatMap(compactionDirIter, func(name string) iter.TryNextor[*backuppb.LogFileSubcompaction] {
+	return deleteDataFileCount, iter.FlatMap(compactionDirIter, func(name string) iter.TryNextor[*backuppb.LogFileSubcompaction] {
 		// name is the absolute path in external storage.
 		return Subcompactions(ctx, name, rc.storage)
 	})
