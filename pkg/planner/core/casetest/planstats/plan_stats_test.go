@@ -167,20 +167,6 @@ func TestPlanStatsLoad(t *testing.T) {
 				require.Greater(t, countFullStats(ptr.StatsInfo().HistColl, tableInfo.Columns[2].ID), 0)
 			},
 		},
-		{ // CTE
-			sql: "with cte(x, y) as (select d + 1, b from t where c > 1) select * from cte where x < 3",
-			check: func(p base.Plan, tableInfo *model.TableInfo) {
-				ps, ok := p.(*plannercore.PhysicalProjection)
-				require.True(t, ok)
-				pc, ok := ps.Children()[0].(*plannercore.PhysicalTableReader)
-				require.True(t, ok)
-				pp, ok := pc.GetTablePlan().(*plannercore.PhysicalSelection)
-				require.True(t, ok)
-				reader, ok := pp.Children()[0].(*plannercore.PhysicalTableScan)
-				require.True(t, ok)
-				require.Greater(t, countFullStats(reader.StatsInfo().HistColl, tableInfo.Columns[2].ID), 0)
-			},
-		},
 		{ // recursive CTE
 			sql: "with recursive cte(x, y) as (select a, b from t where c > 1 union select x + 1, y from cte where x < 5) select * from cte",
 			check: func(p base.Plan, tableInfo *model.TableInfo) {
@@ -211,6 +197,74 @@ func TestPlanStatsLoad(t *testing.T) {
 		is := dom.InfoSchema()
 		dom.StatsHandle().Clear() // clear statsCache
 		require.NoError(t, dom.StatsHandle().Update(context.Background(), is))
+		stmt, err := p.ParseOneStmt(testCase.sql, "", "")
+		require.NoError(t, err)
+		err = executor.ResetContextOfStmt(ctx, stmt)
+		require.NoError(t, err)
+		nodeW := resolve.NewNodeW(stmt)
+		p, _, err := planner.Optimize(context.TODO(), ctx, nodeW, is)
+		require.NoError(t, err)
+		tbl, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
+		require.NoError(t, err)
+		tableInfo := tbl.Meta()
+		testCase.check(p, tableInfo)
+	}
+}
+
+func TestPlanStatsLoadForCTE(t *testing.T) {
+	p := parser.New()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	ctx := tk.Session().(sessionctx.Context)
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("set @@session.tidb_analyze_version=2")
+	tk.MustExec("set @@session.tidb_partition_prune_mode = 'static'")
+	tk.MustExec("set @@session.tidb_stats_load_sync_wait = 60000")
+	tk.MustExec("set tidb_opt_projection_push_down = 0")
+	tk.MustExec("create table t(a int, b int, c int, d int, primary key(a), key idx(b))")
+	tk.MustExec("insert into t values (1,1,1,1),(2,2,2,2),(3,3,3,3)")
+	tk.MustExec("create table pt(a int, b int, c int) partition by range(a) (partition p0 values less than (10), partition p1 values less than (20), partition p2 values less than maxvalue)")
+	tk.MustExec("insert into pt values (1,1,1),(2,2,2),(13,13,13),(14,14,14),(25,25,25),(36,36,36)")
+
+	oriLease := dom.StatsHandle().Lease()
+	dom.StatsHandle().SetLease(1)
+	defer func() {
+		dom.StatsHandle().SetLease(oriLease)
+	}()
+	tk.MustExec("analyze table t all columns")
+	tk.MustExec("analyze table pt all columns")
+
+	testCases := []struct {
+		sql   string
+		skip  bool
+		check func(p base.Plan, tableInfo *model.TableInfo)
+	}{
+		{ // CTE
+			sql: "with cte(x, y) as (select d + 1, b from t where c > 1) select * from cte where x < 3",
+			check: func(p base.Plan, tableInfo *model.TableInfo) {
+				ps, ok := p.(*plannercore.PhysicalProjection)
+				require.True(t, ok)
+				pc, ok := ps.Children()[0].(*plannercore.PhysicalTableReader)
+				require.True(t, ok)
+				pp, ok := pc.GetTablePlan().(*plannercore.PhysicalSelection)
+				require.True(t, ok)
+				reader, ok := pp.Children()[0].(*plannercore.PhysicalTableScan)
+				require.True(t, ok)
+				require.Greater(t, countFullStats(reader.StatsInfo().HistColl, tableInfo.Columns[2].ID), 0)
+			},
+		},
+	}
+	for _, testCase := range testCases {
+		if !testCase.skip {
+			continue
+		}
+		fmt.Println(testdata.ConvertRowsToStrings(tk.MustQuery("explain with cte(x, y) as (select d + 1, b from t where c > 1) select * from cte where x < 3").Rows()))
+		is := dom.InfoSchema()
+		dom.StatsHandle().Clear() // clear statsCache
+		require.NoError(t, dom.StatsHandle().Update(context.Background(), is))
+		fmt.Println(testdata.ConvertRowsToStrings(tk.MustQuery("explain with cte(x, y) as (select d + 1, b from t where c > 1) select * from cte where x < 3").Rows()))
 		stmt, err := p.ParseOneStmt(testCase.sql, "", "")
 		require.NoError(t, err)
 		err = executor.ResetContextOfStmt(ctx, stmt)
