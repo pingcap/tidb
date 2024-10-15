@@ -285,7 +285,7 @@ func (e *BaseTaskExecutor) runStep(resource *proto.StepResource) (resErr error) 
 	taskBase := e.taskBase.Load()
 	task, err := e.taskTable.GetTaskByID(e.ctx, taskBase.ID)
 	if err != nil {
-		e.onError(err)
+		e.onError(errors.Trace(err))
 		return e.getError()
 	}
 	stepLogger := llog.BeginTask(e.logger.With(
@@ -301,7 +301,7 @@ func (e *BaseTaskExecutor) runStep(resource *proto.StepResource) (resErr error) 
 
 	stepExecutor, err := e.GetStepExecutor(task)
 	if err != nil {
-		e.onError(err)
+		e.onError(errors.Trace(err))
 		return e.getError()
 	}
 	execute.SetFrameworkInfo(stepExecutor, resource)
@@ -310,7 +310,7 @@ func (e *BaseTaskExecutor) runStep(resource *proto.StepResource) (resErr error) 
 		failpoint.Return(errors.New("mockExecSubtaskInitEnvErr"))
 	})
 	if err := stepExecutor.Init(runStepCtx); err != nil {
-		e.onError(err)
+		e.onError(errors.Trace(err))
 		return e.getError()
 	}
 
@@ -318,7 +318,7 @@ func (e *BaseTaskExecutor) runStep(resource *proto.StepResource) (resErr error) 
 		err := stepExecutor.Cleanup(runStepCtx)
 		if err != nil {
 			e.logger.Error("cleanup subtask exec env failed", zap.Error(err))
-			e.onError(err)
+			e.onError(errors.Trace(err))
 		}
 	}()
 
@@ -345,7 +345,7 @@ func (e *BaseTaskExecutor) runStep(resource *proto.StepResource) (resErr error) 
 			if !e.IsIdempotent(subtask) {
 				e.logger.Info("subtask in running state and is not idempotent, fail it",
 					zap.Int64("subtask-id", subtask.ID))
-				e.onError(ErrNonIdempotentSubtask)
+				e.onError(errors.Trace(ErrNonIdempotentSubtask))
 				e.updateSubtaskStateAndErrorImpl(runStepCtx, subtask.ExecID, subtask.ID, proto.SubtaskStateFailed, ErrNonIdempotentSubtask)
 				e.markErrorHandled()
 				break
@@ -362,7 +362,7 @@ func (e *BaseTaskExecutor) runStep(resource *proto.StepResource) (resErr error) 
 				if err == storage.ErrSubtaskNotFound {
 					continue
 				}
-				e.onError(err)
+				e.onError(errors.Trace(err))
 				continue
 			}
 		}
@@ -415,7 +415,7 @@ func (e *BaseTaskExecutor) runSubtask(ctx context.Context, stepExecutor execute.
 	})
 
 	if err != nil {
-		e.onError(err)
+		e.onError(errors.Trace(err))
 	}
 
 	finished := e.markSubTaskCanceledOrFailed(ctx, subtask)
@@ -431,7 +431,7 @@ func (e *BaseTaskExecutor) runSubtask(ctx context.Context, stepExecutor execute.
 
 	failpoint.Inject("MockExecutorRunErr", func(val failpoint.Value) {
 		if val.(bool) {
-			e.onError(errors.New("MockExecutorRunErr"))
+			e.onError(errors.Trace(errors.New("MockExecutorRunErr")))
 		}
 	})
 	failpoint.Inject("MockExecutorRunCancel", func(val failpoint.Value) {
@@ -453,12 +453,12 @@ func (e *BaseTaskExecutor) runSubtask(ctx context.Context, stepExecutor execute.
 func (e *BaseTaskExecutor) onSubtaskFinished(ctx context.Context, executor execute.StepExecutor, subtask *proto.Subtask) {
 	if err := e.getError(); err == nil {
 		if err = executor.OnFinished(ctx, subtask); err != nil {
-			e.onError(err)
+			e.onError(errors.Trace(err))
 		}
 	}
 	failpoint.Inject("MockSubtaskFinishedCancel", func(val failpoint.Value) {
 		if val.(bool) {
-			e.onError(ErrCancelSubtask)
+			e.onError(errors.Trace(ErrCancelSubtask))
 		}
 	})
 
@@ -575,7 +575,7 @@ func (e *BaseTaskExecutor) updateSubtaskStateAndErrorImpl(ctx context.Context, e
 		},
 	)
 	if err != nil {
-		e.onError(err)
+		e.onError(errors.Trace(err))
 	}
 }
 
@@ -605,7 +605,7 @@ func (e *BaseTaskExecutor) finishSubtask(ctx context.Context, subtask *proto.Sub
 		},
 	)
 	if err != nil {
-		e.onError(err)
+		e.onError(errors.Trace(err))
 	}
 }
 

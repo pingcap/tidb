@@ -16,6 +16,7 @@ package taskexecutor
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -550,8 +551,12 @@ func TestInject(t *testing.T) {
 	require.Equal(t, r, got)
 }
 
+func throwError() error {
+	return errors.Trace(errors.New("mock error"))
+}
+
 func callOnError(taskExecutor *BaseTaskExecutor) {
-	taskExecutor.onError(errors.Errorf("mock error"))
+	taskExecutor.onError(throwError())
 }
 
 func TestExecutorOnErrorLog(t *testing.T) {
@@ -573,9 +578,20 @@ func TestExecutorOnErrorLog(t *testing.T) {
 	require.GreaterOrEqual(t, observedLogs.Len(), 1)
 	errLog := observedLogs.All()[0]
 	stack := errLog.ContextMap()["stack"]
+	var err error
+	for _, e := range errLog.Context {
+		if e.Key == "error" {
+			err = e.Interface.(error)
+		}
+	}
 	require.IsType(t, "", stack)
 	stackStr := stack.(string)
+	errStackStr := fmt.Sprintf("%+v", err)
 	require.Truef(t, strings.HasPrefix(stackStr,
 		"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor.callOnError"),
 		"got log stack: %s", stackStr)
+	require.Regexpf(t, `mock error[\n\t ]*`+
+		"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor.throwError",
+		errStackStr,
+		"got err stack: %s", errStackStr)
 }
