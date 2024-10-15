@@ -544,7 +544,7 @@ OUTLOOP:
 			}
 		}
 	}
-	for k, _ := range outMap {
+	for k := range outMap {
 		result = append(result, zipMap[k])
 	}
 	return result, nil
