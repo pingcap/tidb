@@ -6529,7 +6529,7 @@ func (e *executor) DoDDLJobWrapper(ctx sessionctx.Context, jobW *JobWrapper) (re
 			<-jobW.ResultCh[0]
 			// The same job will be put to the DDL queue twice.
 			job = job.Clone()
-			newJobW := NewJobWrapper(job, jobW.IDAllocated)
+			newJobW := NewJobWrapperWithArgs(job, jobW.JobArgs, jobW.IDAllocated)
 			e.deliverJobTask(newJobW)
 			// The second job result is used for test.
 			jobW = newJobW

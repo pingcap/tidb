@@ -443,6 +443,7 @@ func (job *Job) Clone() *Job {
 	}
 	if job.MultiSchemaInfo != nil {
 		for i, sub := range job.MultiSchemaInfo.SubJobs {
+			clone.MultiSchemaInfo.SubJobs[i].JobArgs = sub.JobArgs
 			clone.MultiSchemaInfo.SubJobs[i].Args = make([]any, len(sub.Args))
 			copy(clone.MultiSchemaInfo.SubJobs[i].Args, sub.Args)
 		}
