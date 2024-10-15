@@ -283,7 +283,8 @@ func GetBatchCreateTableArgs(job *Job) (*BatchCreateTableArgs, error) {
 // when dropping multiple objects, each object will have a separate job
 type DropTableArgs struct {
 	// below fields are only for drop table.
-	// when dropping multiple tables, the Identifiers is the same.
+	// when dropping multiple tables, the Identifiers is the same, but each drop-table
+	// runs in a separate job.
 	Identifiers []ast.Ident `json:"identifiers,omitempty"`
 	FKCheck     bool        `json:"fk_check,omitempty"`
 
@@ -306,8 +307,10 @@ func (a *DropTableArgs) getFinishedArgsV1(*Job) []any {
 }
 
 func (a *DropTableArgs) decodeV1(job *Job) error {
-	intest.Assert(job.Type == ActionDropTable, "only drop table job can call GetDropTableArgs")
-	return job.DecodeArgs(&a.Identifiers, &a.FKCheck)
+	if job.Type == ActionDropTable {
+		return job.DecodeArgs(&a.Identifiers, &a.FKCheck)
+	}
+	return nil
 }
 
 // GetDropTableArgs gets the drop-table args.
@@ -343,8 +346,9 @@ type TruncateTableArgs struct {
 	OldPartitionIDs []int64 `json:"old_partition_ids,omitempty"`
 
 	// context vars
-	NewPartIDsWithPolicy []int64 `json:"-"`
-	OldPartIDsWithPolicy []int64 `json:"-"`
+	NewPartIDsWithPolicy           []int64 `json:"-"`
+	OldPartIDsWithPolicy           []int64 `json:"-"`
+	ShouldUpdateAffectedPartitions bool    `json:"-"`
 }
 
 func (a *TruncateTableArgs) getArgsV1(job *Job) []any {
@@ -1103,6 +1107,9 @@ func GetAlterTableAttributesArgs(job *Job) (*AlterTableAttributesArgs, error) {
 type RecoverArgs struct {
 	RecoverInfo *RecoverSchemaInfo `json:"recover_info,omitempty"`
 	CheckFlag   int64              `json:"check_flag,omitempty"`
+
+	// used during runtime
+	AffectedPhysicalIDs []int64 `json:"-"`
 }
 
 func (a *RecoverArgs) getArgsV1(job *Job) []any {
