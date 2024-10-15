@@ -1273,7 +1273,7 @@ func isPointGetConvertableSchema(ds *logicalop.DataSource) bool {
 // exploreEnforcedPlan determines whether to explore enforced plans for this DataSource if it has already found an unenforced plan.
 // See #46177 for more information.
 func exploreEnforcedPlan(ds *logicalop.DataSource) bool {
-	// default value is false to keep it compatible with previous versions.
+	// default value is true which is different than original implementation.
 	return fixcontrol.GetBoolWithDefault(ds.SCtx().GetSessionVars().GetOptimizerFixControlMap(), fixcontrol.Fix46177, true)
 }
 
