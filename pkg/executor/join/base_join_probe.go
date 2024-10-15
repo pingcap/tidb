@@ -315,7 +315,7 @@ func (j *baseJoinProbe) prepareForProbe(chk *chunk.Chunk) (joinedChk *chunk.Chun
 	j.nextCachedBuildRowIndex = 0
 	j.matchedRowsForCurrentProbeRow = 0
 	joinedChk = chk
-	if j.ctx.OtherCondition != nil {
+	if j.ctx.hasOtherCondition() {
 		j.tmpChk.Reset()
 		j.rowIndexInfos = j.rowIndexInfos[:0]
 		j.selected = j.selected[:0]
