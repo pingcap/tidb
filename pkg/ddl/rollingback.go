@@ -139,9 +139,15 @@ func convertNotReorgAddIdxJob2RollbackJob(jobCtx *jobContext, job *model.Job, oc
 // normal-type has only two states:    None -> Public
 // reorg-type has five states:         None -> Delete-only -> Write-only -> Write-org -> Public
 func rollingbackModifyColumn(jobCtx *jobContext, job *model.Job) (ver int64, err error) {
-	_, tblInfo, oldCol, args, err := getModifyColumnInfo(jobCtx.metaMut, job)
+	args, err := model.GetModifyColumnArgs(job)
 	if err != nil {
-		return ver, err
+		job.State = model.JobStateCancelled
+		return ver, errors.Trace(err)
+	}
+
+	_, tblInfo, oldCol, err := getModifyColumnInfo(jobCtx.metaMut, job, args.OldColumnName)
+	if err != nil {
+		return ver, errors.Trace(err)
 	}
 	if !needChangeColumnData(oldCol, args.Column) {
 		// Normal-type rolling back

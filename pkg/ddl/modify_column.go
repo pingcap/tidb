@@ -62,9 +62,15 @@ func hasVectorIndexColumn(tblInfo *model.TableInfo, col *model.ColumnInfo) bool 
 }
 
 func (w *worker) onModifyColumn(jobCtx *jobContext, job *model.Job) (ver int64, _ error) {
-	dbInfo, tblInfo, oldCol, args, err := getModifyColumnInfo(jobCtx.metaMut, job)
+	args, err := model.GetModifyColumnArgs(job)
 	if err != nil {
-		return ver, err
+		job.State = model.JobStateCancelled
+		return ver, errors.Trace(err)
+	}
+
+	dbInfo, tblInfo, oldCol, err := getModifyColumnInfo(jobCtx.metaMut, job, args.OldColumnName)
+	if err != nil {
+		return ver, errors.Trace(err)
 	}
 
 	if job.IsRollingback() {
@@ -137,6 +143,8 @@ func (w *worker) onModifyColumn(jobCtx *jobContext, job *model.Job) (ver int64, 
 			return ver, errors.Trace(err)
 		}
 
+		var redundantIdxs []int64
+
 		InitAndAddColumnToTable(tblInfo, changingCol)
 		indexesToChange := FindRelatedIndexesToChange(tblInfo, oldCol.Name)
 		for _, info := range indexesToChange {
@@ -155,8 +163,10 @@ func (w *worker) onModifyColumn(jobCtx *jobContext, job *model.Job) (ver int64, 
 				oldTempIdxID := tmpIdx.ID
 				setIdxIDName(tmpIdx, newIdxID, tmpIdx.Name /* unchanged */)
 				SetIdxColNameOffset(tmpIdx.Columns[info.Offset], changingCol)
-				args.RedundantIdxs = append(args.RedundantIdxs, oldTempIdxID)
+				redundantIdxs = append(redundantIdxs, oldTempIdxID)
 			}
+
+			args.RedundantIdxs = redundantIdxs
 		}
 	} else {
 		changingCol = model.FindColumnInfoByID(tblInfo.Columns, args.ChangingColumn.ID)
@@ -169,7 +179,7 @@ func (w *worker) onModifyColumn(jobCtx *jobContext, job *model.Job) (ver int64, 
 
 	args.ChangingColumn = changingCol
 	return w.doModifyColumnTypeWithData(
-		jobCtx, job, dbInfo, tblInfo, changingCol, oldCol, args)
+		jobCtx, job, dbInfo, tblInfo, oldCol, args)
 }
 
 // rollbackModifyColumnJob rollbacks the job when an error occurs.
@@ -191,30 +201,26 @@ func rollbackModifyColumnJob(jobCtx *jobContext, tblInfo *model.TableInfo, job *
 	return ver, nil
 }
 
-func getModifyColumnInfo(t *meta.Mutator, job *model.Job) (*model.DBInfo, *model.TableInfo, *model.ColumnInfo, *model.ModifyColumnArgs, error) {
-	args, err := model.GetModifyColumnArgs(job)
-	if err != nil {
-		job.State = model.JobStateCancelled
-		return nil, nil, nil, nil, errors.Trace(err)
-	}
-
+func getModifyColumnInfo(
+	t *meta.Mutator, job *model.Job, oldColName pmodel.CIStr,
+) (*model.DBInfo, *model.TableInfo, *model.ColumnInfo, error) {
 	dbInfo, err := checkSchemaExistAndCancelNotExistJob(t, job)
 	if err != nil {
-		return nil, nil, nil, nil, errors.Trace(err)
+		return nil, nil, nil, errors.Trace(err)
 	}
 
 	tblInfo, err := GetTableInfoAndCancelFaultJob(t, job, job.SchemaID)
 	if err != nil {
-		return nil, nil, nil, nil, errors.Trace(err)
+		return nil, nil, nil, errors.Trace(err)
 	}
 
-	oldCol := model.FindColumnInfo(tblInfo.Columns, args.OldColumnName.L)
+	oldCol := model.FindColumnInfo(tblInfo.Columns, oldColName.L)
 	if oldCol == nil || oldCol.State != model.StatePublic {
 		job.State = model.JobStateCancelled
-		return nil, nil, nil, nil, errors.Trace(infoschema.ErrColumnNotExists.GenWithStackByArgs(*(&args.OldColumnName), tblInfo.Name))
+		return nil, nil, nil, errors.Trace(infoschema.ErrColumnNotExists.GenWithStackByArgs(oldColName, tblInfo.Name))
 	}
 
-	return dbInfo, tblInfo, oldCol, args, errors.Trace(err)
+	return dbInfo, tblInfo, oldCol, errors.Trace(err)
 }
 
 // GetOriginDefaultValueForModifyColumn gets the original default value for modifying column.
@@ -440,10 +446,10 @@ func (w *worker) doModifyColumnTypeWithData(
 	job *model.Job,
 	dbInfo *model.DBInfo,
 	tblInfo *model.TableInfo,
-	changingCol, oldCol *model.ColumnInfo,
+	oldCol *model.ColumnInfo,
 	args *model.ModifyColumnArgs,
 ) (ver int64, _ error) {
-	colName, pos := args.Column.Name, args.Position
+	changingCol, colName, pos := args.ChangingColumn, args.Column.Name, args.Position
 
 	var err error
 	originalState := changingCol.State
@@ -493,8 +499,6 @@ func (w *worker) doModifyColumnTypeWithData(
 		})
 		ver, err = updateVersionAndTableInfoWithCheck(jobCtx, job, tblInfo, originalState != changingCol.State)
 		if err != nil {
-			args.ChangingColumn = nil
-			args.RedundantIdxs = nil
 			return ver, errors.Trace(err)
 		}
 		// Make sure job args change after `updateVersionAndTableInfoWithCheck`, otherwise, the job args will

@@ -4719,7 +4719,6 @@ func (e *executor) createVectorIndex(ctx sessionctx.Context, ti ast.Ident, index
 	if err != nil {
 		return errors.Trace(err)
 	}
-	// vector index is added in 8.4, always use JobVersion2
 	job.Version = model.GetJobVerInUse()
 	job.Type = model.ActionAddVectorIndex
 	indexPartSpecifications[0].Expr = nil

@@ -228,14 +228,10 @@ func NewJobWrapperWithArgs(job *model.Job, args model.JobArgs, idAllocated bool)
 
 // FillArgsWithSubJobs fill args for job and its sub jobs
 func (jobW *JobWrapper) FillArgsWithSubJobs() {
-	if jobW.JobArgs != nil {
+	if jobW.Type != model.ActionMultiSchemaChange {
 		jobW.FillArgs(jobW.JobArgs)
-	}
-	if jobW.MultiSchemaInfo != nil {
+	} else {
 		for _, sub := range jobW.MultiSchemaInfo.SubJobs {
-			if sub.JobArgs == nil {
-				continue
-			}
 			fakeJob := model.Job{
 				Version: jobW.Version,
 				Type:    sub.Type,
