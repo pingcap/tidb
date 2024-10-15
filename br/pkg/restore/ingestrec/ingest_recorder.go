@@ -94,15 +94,9 @@ func (i *IngestRecorder) TryAddJob(job *model.Job, isSubJob bool) error {
 		return nil
 	}
 
-	allIndexIDs := make([]int64, 1)
-	// The job.Args is either `Multi-index: ([]int64, ...)`,
-	// or `Single-index: (int64, ...)`.
-	// TODO: it's better to use the public function to parse the
-	// job's Args.
-	if err := job.DecodeArgs(&allIndexIDs[0]); err != nil {
-		if err = job.DecodeArgs(&allIndexIDs); err != nil {
-			return errors.Trace(err)
-		}
+	args, err := model.GetFinishedModifyIndexArgs(job)
+	if err != nil {
+		return errors.Trace(err)
 	}
 
 	tableindexes, exists := i.items[job.TableID]
@@ -113,8 +107,8 @@ func (i *IngestRecorder) TryAddJob(job *model.Job, isSubJob bool) error {
 
 	// the current information of table/index might be modified by other ddl jobs,
 	// therefore update the index information at last
-	for _, indexID := range allIndexIDs {
-		tableindexes[indexID] = &IngestIndexInfo{
+	for _, a := range args.IndexArgs {
+		tableindexes[a.IndexID] = &IngestIndexInfo{
 			IsPrimary: job.Type == model.ActionAddPrimaryKey,
 			Updated:   false,
 		}

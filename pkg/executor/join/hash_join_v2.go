@@ -26,6 +26,7 @@ import (
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
+	"github.com/pingcap/tidb/pkg/executor/join/joinversion"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
@@ -40,25 +41,20 @@ import (
 
 var (
 	_ exec.Executor = &HashJoinV2Exec{}
-	// enableHashJoinV2 is a variable used only in test
-	enableHashJoinV2 = atomic.Bool{}
+	// EnableHashJoinV2 enable hash join v2, used for test
+	EnableHashJoinV2 = "set tidb_hash_join_version = " + joinversion.HashJoinVersionOptimized
+	// DisableHashJoinV2 disable hash join v2, used for test
+	DisableHashJoinV2 = "set tidb_hash_join_version = " + joinversion.HashJoinVersionLegacy
+	// HashJoinV2Strings is used for test
+	HashJoinV2Strings = []string{DisableHashJoinV2, EnableHashJoinV2}
 )
 
-func init() {
-	enableHashJoinV2.Store(true)
-}
-
-// IsHashJoinV2Enabled return true if hash join v2 is enabled
-func IsHashJoinV2Enabled() bool {
+// IsHashJoinV2Supported return true if hash join v2 is supported in current env
+func IsHashJoinV2Supported() bool {
 	// sizeOfUintptr should always equal to sizeOfUnsafePointer, because according to golang's doc,
 	// a Pointer can be converted to an uintptr. Add this check here in case in the future go runtime
 	// change this
-	return !heapObjectsCanMove() && enableHashJoinV2.Load() && sizeOfUintptr >= sizeOfUnsafePointer
-}
-
-// SetEnableHashJoinV2 enable/disable hash join v2
-func SetEnableHashJoinV2(enable bool) {
-	enableHashJoinV2.Store(enable)
+	return !heapObjectsCanMove() && sizeOfUintptr >= sizeOfUnsafePointer
 }
 
 type hashTableContext struct {
@@ -299,6 +295,7 @@ func (e *HashJoinV2Exec) Close() error {
 		for i := range e.ProbeWorkers {
 			close(e.ProbeWorkers[i].joinChkResourceCh)
 			channel.Clear(e.ProbeWorkers[i].joinChkResourceCh)
+			e.ProbeWorkers[i].JoinProbe.ClearProbeState()
 		}
 		e.ProbeSideTupleFetcher.probeChkResourceCh = nil
 		e.waiterWg.Wait()
@@ -474,6 +471,9 @@ func (e *HashJoinV2Exec) waitJoinWorkersAndCloseResultChan() {
 			}, e.handleJoinWorkerPanic)
 		}
 		e.workerWg.Wait()
+	}
+	for _, probeWorker := range e.ProbeWorkers {
+		probeWorker.JoinProbe.ClearProbeState()
 	}
 	close(e.joinResultCh)
 }

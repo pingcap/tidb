@@ -35,7 +35,10 @@ func init() {
 func InitMetricsVars() {
 	StatsHealthyGauges = []prometheus.Gauge{
 		metrics.StatsHealthyGauge.WithLabelValues("[0,50)"),
-		metrics.StatsHealthyGauge.WithLabelValues("[50,80)"),
+		metrics.StatsHealthyGauge.WithLabelValues("[50,55)"),
+		metrics.StatsHealthyGauge.WithLabelValues("[55,60)"),
+		metrics.StatsHealthyGauge.WithLabelValues("[60,70)"),
+		metrics.StatsHealthyGauge.WithLabelValues("[70,80)"),
 		metrics.StatsHealthyGauge.WithLabelValues("[80,100)"),
 		metrics.StatsHealthyGauge.WithLabelValues("[100,100]"),
 		// [0,100] should always be the last

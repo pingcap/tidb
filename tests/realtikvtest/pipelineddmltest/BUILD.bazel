@@ -12,7 +12,6 @@ go_test(
     deps = [
         "//pkg/config",
         "//pkg/kv",
-        "//pkg/sessionctx/binloginfo",
         "//pkg/sessionctx/variable",
         "//pkg/testkit",
         "//tests/realtikvtest",

@@ -211,7 +211,7 @@ func cloneTableInfos(
 	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnBR)
 	tableInfos = make([]*metautil.Table, 0, len(originTableInfos))
 	err := kv.RunInNewTxn(ctx, dom.Store(), true, func(_ context.Context, txn kv.Transaction) error {
-		allocater := meta.NewMeta(txn)
+		allocater := meta.NewMutator(txn)
 		id, e := allocater.GetGlobalID()
 		if e != nil {
 			return e

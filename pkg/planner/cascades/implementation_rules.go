@@ -175,7 +175,7 @@ func (*ImplTiKVSingleReadGather) Match(_ *memo.GroupExpr, _ *property.PhysicalPr
 // OnImplement implements ImplementationRule OnImplement interface.
 func (*ImplTiKVSingleReadGather) OnImplement(expr *memo.GroupExpr, reqProp *property.PhysicalProperty) ([]memo.Implementation, error) {
 	logicProp := expr.Group.Prop
-	sg := expr.ExprNode.(*plannercore.TiKVSingleGather)
+	sg := expr.ExprNode.(*logicalop.TiKVSingleGather)
 	if sg.IsIndexGather {
 		reader := plannercore.GetPhysicalIndexReader(sg, logicProp.Schema, logicProp.Stats.ScaleByExpectCnt(reqProp.ExpectedCnt), reqProp)
 		return []memo.Implementation{impl.NewIndexReaderImpl(reader, sg.Source)}, nil
@@ -190,14 +190,14 @@ type ImplTableScan struct {
 
 // Match implements ImplementationRule Match interface.
 func (*ImplTableScan) Match(expr *memo.GroupExpr, prop *property.PhysicalProperty) (matched bool) {
-	ts := expr.ExprNode.(*plannercore.LogicalTableScan)
+	ts := expr.ExprNode.(*logicalop.LogicalTableScan)
 	return prop.IsSortItemEmpty() || (len(prop.SortItems) == 1 && ts.HandleCols != nil && prop.SortItems[0].Col.EqualColumn(ts.HandleCols.GetCol(0)))
 }
 
 // OnImplement implements ImplementationRule OnImplement interface.
 func (*ImplTableScan) OnImplement(expr *memo.GroupExpr, reqProp *property.PhysicalProperty) ([]memo.Implementation, error) {
 	logicProp := expr.Group.Prop
-	logicalScan := expr.ExprNode.(*plannercore.LogicalTableScan)
+	logicalScan := expr.ExprNode.(*logicalop.LogicalTableScan)
 	ts := plannercore.GetPhysicalScan4LogicalTableScan(logicalScan, logicProp.Schema, logicProp.Stats.ScaleByExpectCnt(reqProp.ExpectedCnt))
 	if !reqProp.IsSortItemEmpty() {
 		ts.KeepOrder = true
@@ -213,13 +213,13 @@ type ImplIndexScan struct {
 
 // Match implements ImplementationRule Match interface.
 func (*ImplIndexScan) Match(expr *memo.GroupExpr, prop *property.PhysicalProperty) (matched bool) {
-	is := expr.ExprNode.(*plannercore.LogicalIndexScan)
+	is := expr.ExprNode.(*logicalop.LogicalIndexScan)
 	return is.MatchIndexProp(prop)
 }
 
 // OnImplement implements ImplementationRule OnImplement interface.
 func (*ImplIndexScan) OnImplement(expr *memo.GroupExpr, reqProp *property.PhysicalProperty) ([]memo.Implementation, error) {
-	logicalScan := expr.ExprNode.(*plannercore.LogicalIndexScan)
+	logicalScan := expr.ExprNode.(*logicalop.LogicalIndexScan)
 	is := plannercore.GetPhysicalIndexScan4LogicalIndexScan(logicalScan, expr.Group.Prop.Schema, expr.Group.Prop.Stats.ScaleByExpectCnt(reqProp.ExpectedCnt))
 	if !reqProp.IsSortItemEmpty() {
 		is.KeepOrder = true

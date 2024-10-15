@@ -114,6 +114,8 @@ const (
 	SizeLimits
 	// SessionID marks the connection id, for logging and tracing.
 	SessionID
+	// BackgroundGoroutineLifecycleHooks is the hooks to track the start and end of background goroutine
+	BackgroundGoroutineLifecycleHooks
 )
 
 // TxnSizeLimits is the argument type for `SizeLimits` option
@@ -218,6 +220,8 @@ const (
 	InternalDistTask = "DistTask"
 	// InternalTimer is the type of internal timer
 	InternalTimer = "Timer"
+	// InternalDDLNotifier is the type of DDL notifier
+	InternalDDLNotifier = "DDLNotifier"
 )
 
 // The bitmap:

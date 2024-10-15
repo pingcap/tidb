@@ -27,7 +27,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/pkg/expression/contextopt"
+	"github.com/pingcap/tidb/pkg/expression/expropt"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
@@ -124,7 +124,7 @@ func (c *sleepFunctionClass) getFunction(ctx BuildContext, args []Expression) (b
 
 type builtinSleepSig struct {
 	baseBuiltinFunc
-	contextopt.SessionVarsPropReader
+	expropt.SessionVarsPropReader
 }
 
 func (b *builtinSleepSig) Clone() builtinFunc {
@@ -190,7 +190,7 @@ func (c *lockFunctionClass) getFunction(ctx BuildContext, args []Expression) (bu
 
 type builtinLockSig struct {
 	baseBuiltinFunc
-	contextopt.AdvisoryLockPropReader
+	expropt.AdvisoryLockPropReader
 }
 
 func (b *builtinLockSig) Clone() builtinFunc {
@@ -284,7 +284,7 @@ func (c *releaseLockFunctionClass) getFunction(ctx BuildContext, args []Expressi
 
 type builtinReleaseLockSig struct {
 	baseBuiltinFunc
-	contextopt.AdvisoryLockPropReader
+	expropt.AdvisoryLockPropReader
 }
 
 func (b *builtinReleaseLockSig) Clone() builtinFunc {
@@ -791,7 +791,7 @@ func (c *isFreeLockFunctionClass) getFunction(ctx BuildContext, args []Expressio
 
 type builtinFreeLockSig struct {
 	baseBuiltinFunc
-	contextopt.AdvisoryLockPropReader
+	expropt.AdvisoryLockPropReader
 }
 
 func (b *builtinFreeLockSig) Clone() builtinFunc {
@@ -1063,7 +1063,7 @@ func (c *isUsedLockFunctionClass) getFunction(ctx BuildContext, args []Expressio
 
 type builtinUsedLockSig struct {
 	baseBuiltinFunc
-	contextopt.AdvisoryLockPropReader
+	expropt.AdvisoryLockPropReader
 }
 
 func (b *builtinUsedLockSig) Clone() builtinFunc {
@@ -1328,7 +1328,7 @@ func (c *releaseAllLocksFunctionClass) getFunction(ctx BuildContext, args []Expr
 
 type builtinReleaseAllLocksSig struct {
 	baseBuiltinFunc
-	contextopt.AdvisoryLockPropReader
+	expropt.AdvisoryLockPropReader
 }
 
 func (b *builtinReleaseAllLocksSig) Clone() builtinFunc {

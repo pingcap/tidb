@@ -1045,5 +1045,135 @@
         "Right": "[]"
       }
     ]
+  },
+  {
+    "Name": "TestPruneColumnsForDelete",
+    "Cases": [
+      {
+        "SQL": "",
+        "PrunedOutput": "test.t.a: 0, test.t.c: 1, test.t.d: 2, test.t.e: 3, test.t.c_str: 4, test.t.d_str: 5, test.t.e_str: 6, test.t.f: 7, test.t.g: 8",
+        "FullLayoutInfo": [
+          [
+            "tid: 1, [start, end]: [0, 9] ",
+            "handle cols: test.t.a:0",
+            "index c_d_e: c d e ",
+            "col offset: [1 2 3]",
+            "index x: e ",
+            "col offset: [3]",
+            "index f: f ",
+            "col offset: [7]",
+            "index g: g ",
+            "col offset: [8]",
+            "index f_g: f g ",
+            "col offset: [7 8]",
+            "index c_d_e_str: c_str d_str e_str ",
+            "col offset: [4 5 6]",
+            "index e_d_c_str_prefix: e_str d_str c_str ",
+            "col offset: [6 5 4]"
+          ]
+        ],
+        "InsidePlan": "PointGet(Handle(t.a)1)"
+      },
+      {
+        "SQL": "",
+        "PrunedOutput": "test.t.a: 0, test.t.c: 1, test.t.d: 2, test.t.e: 3, test.t.c_str: 4, test.t.d_str: 5, test.t.e_str: 6, test.t.f: 7, test.t.g: 8",
+        "FullLayoutInfo": [
+          [
+            "tid: 1, [start, end]: [0, 9] ",
+            "handle cols: test.t.a:0",
+            "index c_d_e: c d e ",
+            "col offset: [1 2 3]",
+            "index x: e ",
+            "col offset: [3]",
+            "index f: f ",
+            "col offset: [7]",
+            "index g: g ",
+            "col offset: [8]",
+            "index f_g: f g ",
+            "col offset: [7 8]",
+            "index c_d_e_str: c_str d_str e_str ",
+            "col offset: [4 5 6]",
+            "index e_d_c_str_prefix: e_str d_str c_str ",
+            "col offset: [6 5 4]"
+          ]
+        ],
+        "InsidePlan": "BatchPointGet(Handle(t.a)[1 2 3])"
+      },
+      {
+        "SQL": "",
+        "PrunedOutput": "test.t.a: 0, test.t.c: 1, test.t.d: 2, test.t.e: 3, test.t.c_str: 4, test.t.d_str: 5, test.t.e_str: 6, test.t.f: 7, test.t.g: 8",
+        "FullLayoutInfo": [
+          [
+            "tid: 1, [start, end]: [0, 9] ",
+            "handle cols: test.t.a:0",
+            "index c_d_e: c d e ",
+            "col offset: [1 2 3]",
+            "index x: e ",
+            "col offset: [3]",
+            "index f: f ",
+            "col offset: [7]",
+            "index g: g ",
+            "col offset: [8]",
+            "index f_g: f g ",
+            "col offset: [7 8]",
+            "index c_d_e_str: c_str d_str e_str ",
+            "col offset: [4 5 6]",
+            "index e_d_c_str_prefix: e_str d_str c_str ",
+            "col offset: [6 5 4]"
+          ]
+        ],
+        "InsidePlan": "TableReader(Table(t))"
+      },
+      {
+        "SQL": "",
+        "PrunedOutput": "test.t3._tidb_rowid: 0",
+        "FullLayoutInfo": [
+          [
+            "tid: 4, [start, end]: [0, 0] ",
+            "handle cols: test.t3._tidb_rowid:0"
+          ]
+        ],
+        "InsidePlan": "TableReader(Table(t3)->Sel([eq(test.t3.b, 1)]))->Projection"
+      },
+      {
+        "SQL": "",
+        "PrunedOutput": "test.pt2.a: 0, test.pt2.b: 1, test.pt2.c: 2, test.pt2.d: 3, test.pt2.e: 4, test.pt2.c_str: 5, test.pt2.d_str: 6, test.pt2.e_str: 7, test.pt2.f: 8, test.pt2.g: 9, test.pt2.h: 10, test.pt2.i_date: 11, test.pt2.ptn: 12",
+        "FullLayoutInfo": [
+          [
+            "no column-pruning happened"
+          ]
+        ],
+        "InsidePlan": "PartitionUnionAll{TableReader(Table(pt2))->TableReader(Table(pt2))}"
+      },
+      {
+        "SQL": "",
+        "PrunedOutput": "test.t.a: 0, test.t.c: 1, test.t.d: 2, test.t.e: 3, test.t.c_str: 4, test.t.d_str: 5, test.t.e_str: 6, test.t.f: 7, test.t.g: 8, test.t3._tidb_rowid: 9",
+        "FullLayoutInfo": [
+          [
+            "tid: 1, [start, end]: [0, 9] ",
+            "handle cols: test.t.a:0",
+            "index c_d_e: c d e ",
+            "col offset: [1 2 3]",
+            "index x: e ",
+            "col offset: [3]",
+            "index f: f ",
+            "col offset: [7]",
+            "index g: g ",
+            "col offset: [8]",
+            "index f_g: f g ",
+            "col offset: [7 8]",
+            "index c_d_e_str: c_str d_str e_str ",
+            "col offset: [4 5 6]",
+            "index e_d_c_str_prefix: e_str d_str c_str ",
+            "col offset: [6 5 4]"
+          ],
+          [
+            "tid: 4, [start, end]: [9, 9] ",
+            "handle cols: test.t3._tidb_rowid:9"
+          ]
+        ],
+        "InsidePlan": "LeftHashJoin{TableReader(Table(t))->TableReader(Table(t3))}(test.t.a,test.t3.a)"
+      }
+    ]
   }
 ]

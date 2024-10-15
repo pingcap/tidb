@@ -59,9 +59,9 @@ func TestCostModelVer2ScanRowSize(t *testing.T) {
 		{"select a, b from t use index(abc) where a=1 and b=1", "scan(1*logrowsize(48)*tikv_scan_factor(40.7))"},
 		{"select a, b, c from t use index(abc) where a=1 and b=1 and c=1", "scan(1*logrowsize(48)*tikv_scan_factor(40.7))"},
 		// table scan row-size is always equal to row-size(*)
-		{"select a from t use index(primary) where a=1", "scan(1*logrowsize(80)*tikv_scan_factor(40.7))"},
-		{"select a, d from t use index(primary) where a=1", "scan(1*logrowsize(80)*tikv_scan_factor(40.7))"},
-		{"select * from t use index(primary) where a=1", "scan(1*logrowsize(80)*tikv_scan_factor(40.7))"},
+		{"select a from t use index(primary) where a=1", "(scan(1*logrowsize(80)*tikv_scan_factor(40.7))) + (scan(1000*logrowsize(80)*tikv_scan_factor(40.7)))"},
+		{"select a, d from t use index(primary) where a=1", "(scan(1*logrowsize(80)*tikv_scan_factor(40.7))) + (scan(1000*logrowsize(80)*tikv_scan_factor(40.7)))"},
+		{"select * from t use index(primary) where a=1", "(scan(1*logrowsize(80)*tikv_scan_factor(40.7))) + (scan(1000*logrowsize(80)*tikv_scan_factor(40.7)))"},
 	}
 	for _, c := range cases {
 		rs := tk.MustQuery("explain analyze format=true_card_cost " + c.query).Rows()

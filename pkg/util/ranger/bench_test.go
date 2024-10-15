@@ -119,7 +119,7 @@ WHERE
 	p, err := plannercore.BuildLogicalPlanForTest(ctx, sctx, nodeW, ret.InfoSchema)
 	require.NoError(b, err)
 	selection := p.(base.LogicalPlan).Children()[0].(*logicalop.LogicalSelection)
-	tbl := selection.Children()[0].(*plannercore.DataSource).TableInfo
+	tbl := selection.Children()[0].(*logicalop.DataSource).TableInfo
 	require.NotNil(b, selection)
 	conds := make([]expression.Expression, len(selection.Conditions))
 	for i, cond := range selection.Conditions {

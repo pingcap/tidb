@@ -51,7 +51,6 @@ func TestMemVarpop(t *testing.T) {
 			aggfuncs.DefPartialResult4VarPopDistinctFloat64Size+hack.DefBucketMemoryUsageForSetFloat64, distinctUpdateMemDeltaGens, true),
 	}
 	for n, test := range tests {
-		test := test
 		t.Run(fmt.Sprintf("%s_%d", test.aggTest.funcName, n), func(t *testing.T) {
 			testAggMemFunc(t, test)
 		})

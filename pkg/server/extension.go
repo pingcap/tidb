@@ -17,6 +17,7 @@ package server
 import (
 	"fmt"
 
+	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/extension"
 	"github.com/pingcap/tidb/pkg/param"
 	"github.com/pingcap/tidb/pkg/parser"
@@ -92,7 +93,7 @@ func (cc *clientConn) onExtensionStmtEnd(node any, stmtCtxValid bool, err error,
 		// eliminate one of them by storing the parsed result.
 		typectx := ctx.GetSessionVars().StmtCtx.TypeCtx()
 		typectx = types.NewContext(typectx.Flags(), typectx.Location(), contextutil.IgnoreWarn)
-		params, _ := param.ExecArgs(typectx, args)
+		params, _ := expression.ExecBinaryParam(typectx, args)
 		info.executeStmt = &ast.ExecuteStmt{
 			PrepStmt:   prepared,
 			BinaryArgs: params,

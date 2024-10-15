@@ -19,7 +19,6 @@ import (
 
 	"github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
-	"github.com/pingcap/tidb/pkg/planner/util/coretestsdk"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testdata"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
@@ -40,7 +39,7 @@ func TestTiFlashLateMaterialization(t *testing.T) {
 	tk.MustExec("set @@session.tidb_allow_tiflash_cop=ON")
 
 	// Create virtual `tiflash` replica info.
-	coretestsdk.SetTiFlashReplica(t, dom, "test", "t1")
+	testkit.SetTiFlashReplica(t, dom, "test", "t1")
 	// Enable late materialization.
 	tk.MustExec("set @@tidb_opt_enable_late_materialization = on")
 	tk.MustExec("set @@tidb_isolation_read_engines = 'tiflash'")

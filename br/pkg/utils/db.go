@@ -110,7 +110,10 @@ func GetGcRatio(ctx sqlexec.RestrictedSQLExecutor) (string, error) {
 	return d.ToString()
 }
 
-const DefaultGcRatioVal = "1.1"
+const (
+	DefaultGcRatioVal  = "1.1"
+	DisabledGcRatioVal = "-1.0"
+)
 
 func SetGcRatio(ctx sqlexec.RestrictedSQLExecutor, ratio string) error {
 	_, _, err := ctx.ExecRestrictedSQL(

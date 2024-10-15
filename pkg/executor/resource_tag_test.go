@@ -57,7 +57,7 @@ func TestResourceGroupTag(t *testing.T) {
 
 	var sqlDigest, planDigest *parser.Digest
 	var tagLabel tipb.ResourceGroupTagLabel
-	checkFn := func() {}
+	checkFn := func(int64) {}
 	unistoreRPCClientSendHook := func(req *tikvrpc.Request) {
 		var startKey []byte
 		var ctx *kvrpcpb.Context
@@ -99,8 +99,10 @@ func TestResourceGroupTag(t *testing.T) {
 		require.NoError(t, err)
 		sqlDigest = parser.NewDigest(tag.SqlDigest)
 		planDigest = parser.NewDigest(tag.PlanDigest)
-		tagLabel = *tag.Label
-		checkFn()
+		if tag.Label != nil {
+			tagLabel = *tag.Label
+		}
+		checkFn(tag.TableId)
 	}
 	unistore.UnistoreRPCClientSendHook.Store(&unistoreRPCClientSendHook)
 
@@ -187,10 +189,11 @@ func TestResourceGroupTag(t *testing.T) {
 		_, expectSQLDigest := parser.NormalizeDigest(ca.sql)
 		var expectPlanDigest *parser.Digest
 		checkCnt := 0
-		checkFn = func() {
+		checkFn = func(tid int64) {
 			if ca.ignore {
 				return
 			}
+			require.Equal(t, tbInfo.Meta().ID, tid)
 			if expectPlanDigest == nil {
 				info := tk.Session().ShowProcess()
 				require.NotNil(t, info)
@@ -208,7 +211,6 @@ func TestResourceGroupTag(t *testing.T) {
 			require.True(t, ok)
 			checkCnt++
 		}
-
 		if strings.HasPrefix(ca.sql, "select") {
 			tk.MustQuery(ca.sql)
 		} else {

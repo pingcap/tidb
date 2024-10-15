@@ -72,9 +72,6 @@ const (
 	ReadUncommitted = "READ-UNCOMMITTED"
 	Serializable    = "SERIALIZABLE"
 	RepeatableRead  = "REPEATABLE-READ"
-
-	PumpType    = "PUMP"
-	DrainerType = "DRAINER"
 )
 
 // Transaction mode constants.
@@ -2002,6 +1999,77 @@ func (n *StringOrUserVar) Accept(v Visitor) (node Node, ok bool) {
 		}
 		n.UserVar = node.(*VariableExpr)
 	}
+	return v.Leave(n)
+}
+
+// RecommendIndexOption is the option for recommend index.
+type RecommendIndexOption struct {
+	Option string
+	Value  ValueExpr
+}
+
+// RecommendIndexStmt is a statement to recommend index.
+type RecommendIndexStmt struct {
+	stmtNode
+
+	Action  string
+	SQL     string
+	ID      int64
+	Options []RecommendIndexOption
+}
+
+func (n *RecommendIndexStmt) Restore(ctx *format.RestoreCtx) error {
+	ctx.WriteKeyWord("RECOMMEND INDEX")
+	switch n.Action {
+	case "run":
+		ctx.WriteKeyWord(" RUN")
+		if n.SQL != "" {
+			ctx.WriteKeyWord(" FOR ")
+			ctx.WriteString(n.SQL)
+		}
+		if len(n.Options) > 0 {
+			ctx.WriteKeyWord(" WITH ")
+			for i, opt := range n.Options {
+				if i != 0 {
+					ctx.WritePlain(", ")
+				}
+				ctx.WriteKeyWord(opt.Option)
+				ctx.WritePlain(" = ")
+				if err := opt.Value.Restore(ctx); err != nil {
+					return errors.Annotatef(err, "An error occurred while restore RecommendIndexStmt.Options[%d]", i)
+				}
+			}
+		}
+	case "show":
+		ctx.WriteKeyWord(" SHOW")
+	case "apply":
+		ctx.WriteKeyWord(" APPLY ")
+		ctx.WriteKeyWord(fmt.Sprintf("%d", n.ID))
+	case "ignore":
+		ctx.WriteKeyWord(" IGNORE ")
+		ctx.WriteKeyWord(fmt.Sprintf("%d", n.ID))
+	case "set":
+		ctx.WriteKeyWord(" SET ")
+		for i, opt := range n.Options {
+			if i != 0 {
+				ctx.WritePlain(", ")
+			}
+			ctx.WriteKeyWord(opt.Option)
+			ctx.WritePlain(" = ")
+			if err := opt.Value.Restore(ctx); err != nil {
+				return errors.Annotatef(err, "An error occurred while restore RecommendIndexStmt.Options[%d]", i)
+			}
+		}
+	}
+	return nil
+}
+
+func (n *RecommendIndexStmt) Accept(v Visitor) (Node, bool) {
+	newNode, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNode)
+	}
+	n = newNode.(*RecommendIndexStmt)
 	return v.Leave(n)
 }
 

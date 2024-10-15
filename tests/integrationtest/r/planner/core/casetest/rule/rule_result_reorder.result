@@ -113,8 +113,8 @@ Insert	N/A	root		N/A
 explain FORMAT='brief' delete from t;
 id	estRows	task	access object	operator info
 Delete	N/A	root		N/A
-└─TableReader	10000.00	root		data:TableFullScan
-  └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+└─IndexReader	10000.00	root		index:IndexFullScan
+  └─IndexFullScan	10000.00	cop[tikv]	table:t, index:b(b)	keep order:false, stats:pseudo
 explain FORMAT='brief' delete from t where a>1;
 id	estRows	task	access object	operator info
 Delete	N/A	root		N/A

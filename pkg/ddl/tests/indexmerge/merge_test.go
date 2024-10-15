@@ -831,3 +831,26 @@ func TestAddIndexUpdateUntouchedValues(t *testing.T) {
 	tk.MustExec("admin check table t;")
 	tk.MustQuery("select * from t;").Check(testkit.Rows("1 1 2", "2 1 2"))
 }
+
+func TestAddUniqueIndexFalsePositiveDuplicate(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(`create table t(a bigint DEFAULT '-13202', 
+        b varchar(221) NOT NULL DEFAULT 'dup',
+        unique key exist_idx(b),
+        PRIMARY KEY (a));`)
+	tk.MustExec("INSERT INTO t VALUES (1,'1'), (2,'dup');")
+
+	tk1 := testkit.NewTestKit(t, store)
+	tk1.MustExec("use test")
+	ddl.MockDMLExecution = func() {
+		_, err := tk1.Exec("replace into `t` values (3, 'dup');")
+		assert.NoError(t, err)
+	}
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/mockDMLExecution", "1*return(true)->return(false)")
+
+	tk.MustExec("alter table t add unique index idx(b);")
+	tk.MustExec("admin check table t;")
+}

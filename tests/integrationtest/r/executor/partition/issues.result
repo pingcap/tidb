@@ -1,6 +1,5 @@
 drop table if exists t, t0, t1, t2;
 set @@tidb_partition_prune_mode = 'dynamic';
-set @@session.tidb_enable_list_partition = ON;
 CREATE TABLE t (
 col1 tinyint(4) primary key
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin PARTITION BY HASH( COL1 DIV 80 )
@@ -30,7 +29,6 @@ select a from t2 where a in (5);
 a
 5
 set @@tidb_partition_prune_mode = default;
-set @@session.tidb_enable_list_partition = default;
 drop table if exists UK_HP16726;
 CREATE TABLE UK_HP16726 (
 COL1 bigint(16) DEFAULT NULL,
@@ -203,9 +201,10 @@ c_datetime	c_datetime
 rollback;
 set @@tidb_partition_prune_mode = default;
 drop table if exists p, t;
-set @@tidb_enable_list_partition = OFF;
-create table t (a int, b int, unique index idx(a)) partition by list columns(b) (partition p0 values in (1), partition p1 values in (2));
-set @@tidb_enable_list_partition = default;
+set tidb_enable_global_index = 1;
+create table t (a int, b int, unique index idx(a) global) partition by list columns(b) (partition p0 values in (1), partition p1 values in (2));
+drop table t;
+set tidb_enable_global_index = default;
 drop table if exists issue25528;
 set @@tidb_partition_prune_mode = 'static';
 create table issue25528 (id int primary key, balance DECIMAL(10, 2), balance2 DECIMAL(10, 2) GENERATED ALWAYS AS (-balance) VIRTUAL, created_at TIMESTAMP) PARTITION BY HASH(id) PARTITIONS 8;
@@ -222,7 +221,6 @@ c1	c2	c3	c4
 3	3	3	3
 4	4	4	4
 rollback;
-set @@tidb_enable_list_partition = default;
 set @@tidb_enable_index_merge=1,@@tidb_partition_prune_mode='dynamic';
 DROP TABLE IF EXISTS `tbl_18`;
 CREATE TABLE `tbl_18` (`col_119` binary(16) NOT NULL DEFAULT 'skPoKiwYUi',`col_120` int(10) unsigned NOT NULL,`col_121` timestamp NOT NULL,`col_122` double NOT NULL DEFAULT '3937.1887880628115',`col_123` bigint(20) NOT NULL DEFAULT '3550098074891542725',PRIMARY KEY (`col_123`,`col_121`,`col_122`,`col_120`) CLUSTERED,UNIQUE KEY `idx_103` (`col_123`,`col_119`,`col_120`),UNIQUE KEY `idx_104` (`col_122`,`col_120`),UNIQUE KEY `idx_105` (`col_119`,`col_120`),KEY `idx_106` (`col_121`,`col_120`,`col_122`,`col_119`),KEY `idx_107` (`col_121`)) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_general_ci PARTITION BY HASH( `col_120` ) PARTITIONS 3;

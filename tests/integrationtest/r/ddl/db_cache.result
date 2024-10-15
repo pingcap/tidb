@@ -12,7 +12,6 @@ partition p3 values less than (MAXVALUE)
 alter table cache_partition_range_table cache;
 Error 8242 (HY000): 'partition mode' is unsupported on cache tables.
 drop table if exists partition_list_table;
-set @@session.tidb_enable_list_partition = ON;
 create table cache_partition_list_table (id int) partition by list  (id) (
 partition p0 values in (1,2),
 partition p1 values in (3,4),
@@ -23,7 +22,6 @@ Error 8242 (HY000): 'partition mode' is unsupported on cache tables.
 drop table if exists cache_partition_list_table;
 drop table if exists cache_partition_range_table;
 drop table if exists cache_partition_table;
-set @@session.tidb_enable_list_partition = default;
 drop table if exists cache_view_t;
 create table cache_view_t (id int);
 create view v as select * from cache_view_t;

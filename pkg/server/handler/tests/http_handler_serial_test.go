@@ -454,11 +454,10 @@ func TestDebugRoutes(t *testing.T) {
 		"/debug/pprof/block?debug=1",
 		"/debug/pprof/threadcreate?debug=1",
 		"/debug/pprof/cmdline",
-		"/debug/pprof/profile",
+		"/debug/pprof/profile?seconds=5",
 		"/debug/pprof/mutex?debug=1",
 		"/debug/pprof/symbol",
 		"/debug/pprof/trace",
-		"/debug/pprof/profile",
 		"/debug/gogc",
 		// "/debug/zip", // this creates unexpected goroutines which will make goleak complain, so we skip it for now
 		"/debug/ballast-object-sz",

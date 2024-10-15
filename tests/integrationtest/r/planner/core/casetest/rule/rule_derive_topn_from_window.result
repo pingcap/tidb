@@ -201,9 +201,9 @@ Projection	2.40	root		Column#5
 └─Selection	2.40	root		le(Column#5, 3)
   └─Window	3.00	root		row_number()->Column#5 over(rows between current row and current row)
     └─Limit	3.00	root		offset:0, count:3
-      └─TableReader	3.00	root		data:Limit
+      └─IndexReader	3.00	root		index:Limit
         └─Limit	3.00	cop[tikv]		offset:0, count:3
-          └─TableFullScan	3.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+          └─IndexFullScan	3.00	cop[tikv]	table:t, index:PRIMARY(b, a)	keep order:false, stats:pseudo
 select * from (select row_number() over(rows between 1 preceding and 1 following) as rownumber from t) DT where rownumber <= 3 -- pattern is applicable. No partition by;
 rownumber
 1

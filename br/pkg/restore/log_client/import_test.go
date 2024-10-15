@@ -60,6 +60,7 @@ func TestImportKVFiles(t *testing.T) {
 		startTS,
 		restoreTS,
 		false,
+		nil, nil,
 	)
 	require.True(t, berrors.ErrInvalidArgument.Equal(err))
 }
@@ -268,9 +269,9 @@ func TestFileImporter(t *testing.T) {
 	require.NoError(t, err)
 
 	rewriteRules, encodeKeyFiles := prepareData()
-	err = importer.ImportKVFiles(ctx, encodeKeyFiles, rewriteRules, 1, 1, 1, true)
+	err = importer.ImportKVFiles(ctx, encodeKeyFiles, rewriteRules, 1, 1, 1, true, nil, nil)
 	require.NoError(t, err)
 
-	err = importer.ImportKVFiles(ctx, encodeKeyFiles, rewriteRules, 1, 1, 1, false)
+	err = importer.ImportKVFiles(ctx, encodeKeyFiles, rewriteRules, 1, 1, 1, false, nil, nil)
 	require.NoError(t, err)
 }

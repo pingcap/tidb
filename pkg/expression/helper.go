@@ -17,6 +17,7 @@ package expression
 import (
 	"math"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/pingcap/failpoint"
@@ -25,6 +26,10 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/types"
 	driver "github.com/pingcap/tidb/pkg/types/parser_driver"
+	"github.com/pingcap/tidb/pkg/util/intest"
+	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/pingcap/tidb/pkg/util/timeutil"
+	"go.uber.org/zap"
 )
 
 func boolToInt64(v bool) int64 {
@@ -73,7 +78,7 @@ func getTimeCurrentTimeStamp(ctx EvalContext, tp byte, fsp int) (t types.Time, e
 	}
 	value.SetCoreTime(types.FromGoTime(defaultTime.Truncate(time.Duration(math.Pow10(9-fsp)) * time.Nanosecond)))
 	if tp == mysql.TypeTimestamp || tp == mysql.TypeDatetime || tp == mysql.TypeDate {
-		err = value.ConvertTimeZone(time.Local, ctx.Location())
+		err = value.ConvertTimeZone(defaultTime.Location(), ctx.Location())
 		if err != nil {
 			return value, err
 		}
@@ -159,9 +164,47 @@ func GetTimeValue(ctx BuildContext, v any, tp byte, fsp int, explicitTz *time.Lo
 	return d, nil
 }
 
+// randomNowLocationForTest is only used for test
+var randomNowLocationForTest *time.Location
+var randomNowLocationForTestOnce sync.Once
+
+func pickRandomLocationForTest() *time.Location {
+	randomNowLocationForTestOnce.Do(func() {
+		names := []string{
+			"",
+			"UTC",
+			"Asia/Shanghai",
+			"America/Los_Angeles",
+			"Asia/Tokyo",
+			"Europe/Berlin",
+		}
+		name := names[int(time.Now().UnixMilli())%len(names)]
+		loc := time.Local
+		if name != "" {
+			var err error
+			loc, err = timeutil.LoadLocation(name)
+			terror.MustNil(err)
+		}
+		randomNowLocationForTest = loc
+		logutil.BgLogger().Info(
+			"set random timezone for getStmtTimestamp",
+			zap.String("timezone", loc.String()),
+		)
+	})
+	return randomNowLocationForTest
+}
+
 // if timestamp session variable set, use session variable as current time, otherwise use cached time
 // during one sql statement, the "current_time" should be the same
-func getStmtTimestamp(ctx EvalContext) (time.Time, error) {
+func getStmtTimestamp(ctx EvalContext) (now time.Time, err error) {
+	if intest.InTest {
+		// When in a test, return the now with random location to make sure all outside code will
+		// respect the location of return value `now` instead of having a strong assumption what its location is.
+		defer func() {
+			now = now.In(pickRandomLocationForTest())
+		}()
+	}
+
 	failpoint.Inject("injectNow", func(val failpoint.Value) {
 		v := time.Unix(int64(val.(int)), 0)
 		failpoint.Return(v, nil)

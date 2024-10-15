@@ -55,7 +55,7 @@ func TestNewCollationStatsWithPrefixIndex(t *testing.T) {
 
 	tk.MustExec("analyze table t")
 	tk.MustExec("explain select * from t where a = 'aaa'")
-	require.NoError(t, h.LoadNeededHistograms())
+	require.NoError(t, h.LoadNeededHistograms(dom.InfoSchema()))
 
 	tk.MustQuery("show stats_buckets where db_name = 'test' and table_name = 't'").Sort().Check(testkit.Rows(
 		"test t  a 0 0 1 1 \x00A \x00A 0",
@@ -126,7 +126,7 @@ func TestNewCollationStatsWithPrefixIndex(t *testing.T) {
 
 	tk.MustExec("analyze table t")
 	tk.MustExec("explain select * from t where a = 'aaa'")
-	require.NoError(t, h.LoadNeededHistograms())
+	require.NoError(t, h.LoadNeededHistograms(dom.InfoSchema()))
 
 	tk.MustQuery("show stats_buckets where db_name = 'test' and table_name = 't'").Sort().Check(testkit.Rows())
 	tk.MustQuery("show stats_topn where db_name = 'test' and table_name = 't'").Sort().Check(testkit.Rows(

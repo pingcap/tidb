@@ -345,17 +345,14 @@ func (b *builtinGetStringVarSig) vecEvalString(ctx EvalContext, input *chunk.Chu
 		return err
 	}
 	result.ReserveString(n)
-	sessionVars, err := b.GetSessionVars(ctx)
-	if err != nil {
-		return err
-	}
+	userVars := ctx.GetUserVarsReader()
 	for i := 0; i < n; i++ {
 		if buf0.IsNull(i) {
 			result.AppendNull()
 			continue
 		}
 		varName := strings.ToLower(buf0.GetString(i))
-		if v, ok := sessionVars.GetUserVarVal(varName); ok {
+		if v, ok := userVars.GetUserVarVal(varName); ok {
 			res, err := v.ToString()
 			if err != nil {
 				return err
@@ -385,16 +382,13 @@ func (b *builtinGetIntVarSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, re
 	result.ResizeInt64(n, false)
 	result.MergeNulls(buf0)
 	i64s := result.Int64s()
-	sessionVars, err := b.GetSessionVars(ctx)
-	if err != nil {
-		return err
-	}
+	userVars := ctx.GetUserVarsReader()
 	for i := 0; i < n; i++ {
 		if result.IsNull(i) {
 			continue
 		}
 		varName := strings.ToLower(buf0.GetString(i))
-		if v, ok := sessionVars.GetUserVarVal(varName); ok {
+		if v, ok := userVars.GetUserVarVal(varName); ok {
 			i64s[i] = v.GetInt64()
 			continue
 		}
@@ -422,16 +416,13 @@ func (b *builtinGetRealVarSig) vecEvalReal(ctx EvalContext, input *chunk.Chunk, 
 	result.ResizeFloat64(n, false)
 	result.MergeNulls(buf0)
 	f64s := result.Float64s()
-	sessionVars, err := b.GetSessionVars(ctx)
-	if err != nil {
-		return err
-	}
+	userVars := ctx.GetUserVarsReader()
 	for i := 0; i < n; i++ {
 		if result.IsNull(i) {
 			continue
 		}
 		varName := strings.ToLower(buf0.GetString(i))
-		if v, ok := sessionVars.GetUserVarVal(varName); ok {
+		if v, ok := userVars.GetUserVarVal(varName); ok {
 			d, err := v.ToFloat64(typeCtx(ctx))
 			if err != nil {
 				return err
@@ -463,16 +454,13 @@ func (b *builtinGetDecimalVarSig) vecEvalDecimal(ctx EvalContext, input *chunk.C
 	result.ResizeDecimal(n, false)
 	result.MergeNulls(buf0)
 	decs := result.Decimals()
-	sessionVars, err := b.GetSessionVars(ctx)
-	if err != nil {
-		return err
-	}
+	userVars := ctx.GetUserVarsReader()
 	for i := 0; i < n; i++ {
 		if result.IsNull(i) {
 			continue
 		}
 		varName := strings.ToLower(buf0.GetString(i))
-		if v, ok := sessionVars.GetUserVarVal(varName); ok {
+		if v, ok := userVars.GetUserVarVal(varName); ok {
 			d, err := v.ToDecimal(typeCtx(ctx))
 			if err != nil {
 				return err

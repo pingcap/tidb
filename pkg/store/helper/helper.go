@@ -383,7 +383,6 @@ type HotTableIndex struct {
 func (h *Helper) FetchRegionTableIndex(metrics map[uint64]RegionMetric, is infoschema.SchemaAndTable, filter func([]*model.DBInfo) []*model.DBInfo) ([]HotTableIndex, error) {
 	hotTables := make([]HotTableIndex, 0, len(metrics))
 	for regionID, regionMetric := range metrics {
-		regionMetric := regionMetric
 		t := HotTableIndex{RegionID: regionID, RegionMetric: &regionMetric}
 		region, err := h.RegionCache.LocateRegionByID(tikv.NewBackofferWithVars(context.Background(), 500, nil), regionID)
 		if err != nil {
@@ -904,6 +903,29 @@ func CollectTiFlashStatus(statusAddress string, keyspaceID tikv.KeyspaceID, tabl
 	reader := bufio.NewReader(resp.Body)
 	if err = ComputeTiFlashStatus(reader, regionReplica); err != nil {
 		return errors.Trace(err)
+	}
+	return nil
+}
+
+// SyncTableSchemaToTiFlash query sync schema of one table to TiFlash store.
+func SyncTableSchemaToTiFlash(statusAddress string, keyspaceID tikv.KeyspaceID, tableID int64) error {
+	// The new query schema is like: http://<host>/tiflash/sync-schema/keyspace/<keyspaceID>/table/<tableID>.
+	// For TiDB forward compatibility, we define the Nullspace as the "keyspace" of the old table.
+	// The query URL is like: http://<host>/sync-schema/keyspace/<NullspaceID>/table/<tableID>
+	statURL := fmt.Sprintf("%s://%s/tiflash/sync-schema/keyspace/%d/table/%d",
+		util.InternalHTTPSchema(),
+		statusAddress,
+		keyspaceID,
+		tableID,
+	)
+	resp, err := util.InternalHTTPClient().Get(statURL)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	err = resp.Body.Close()
+	if err != nil {
+		logutil.BgLogger().Error("close body failed", zap.Error(err))
 	}
 	return nil
 }

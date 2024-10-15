@@ -293,6 +293,7 @@ func RegisterMetrics() {
 	prometheus.MustRegister(BindingCacheMemUsage)
 	prometheus.MustRegister(BindingCacheMemLimit)
 	prometheus.MustRegister(BindingCacheNumBindings)
+	prometheus.MustRegister(InternalSessions)
 
 	tikvmetrics.InitMetrics(TiDB, TiKVClient)
 	tikvmetrics.RegisterMetrics()

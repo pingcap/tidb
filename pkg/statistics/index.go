@@ -17,7 +17,7 @@ package statistics
 import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/planner/context"
+	"github.com/pingcap/tidb/pkg/planner/planctx"
 	"github.com/pingcap/tidb/pkg/planner/util/debugtrace"
 	"github.com/pingcap/tidb/pkg/statistics/asyncload"
 	"github.com/pingcap/tidb/pkg/types"
@@ -129,7 +129,7 @@ func (idx *Index) TotalRowCount() float64 {
 }
 
 // IndexStatsIsInvalid checks whether the index has valid stats or not.
-func IndexStatsIsInvalid(sctx context.PlanContext, idxStats *Index, coll *HistColl, cid int64) (res bool) {
+func IndexStatsIsInvalid(sctx planctx.PlanContext, idxStats *Index, coll *HistColl, cid int64) (res bool) {
 	var totalCount float64
 	if sctx.GetSessionVars().StmtCtx.EnableOptimizerDebugTrace {
 		debugtrace.EnterContextCommon(sctx)
@@ -195,7 +195,7 @@ func (idx *Index) MemoryUsage() CacheItemMemoryUsage {
 
 // QueryBytes is used to query the count of specified bytes.
 // The input sctx is just for debug trace, you can pass nil safely if that's not needed.
-func (idx *Index) QueryBytes(sctx context.PlanContext, d []byte) (result uint64) {
+func (idx *Index) QueryBytes(sctx planctx.PlanContext, d []byte) (result uint64) {
 	if sctx != nil && sctx.GetSessionVars().StmtCtx.EnableOptimizerDebugTrace {
 		debugtrace.EnterContextCommon(sctx)
 		defer func() {

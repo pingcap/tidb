@@ -223,14 +223,14 @@ func TestInstancePlanCacheDMLBasic(t *testing.T) {
 		insert = fmt.Sprintf("insert into t2 values (%d, %d, %d)", a, b, c)
 		return
 	}
-	randDelete := func() (prep, set, exec, delete string) {
+	randDelete := func() (prep, set, exec, del string) {
 		a := rand.Intn(100)
 		b := rand.Intn(100)
 		c := rand.Intn(100)
 		prep = `prepare stmt from 'delete from t1 where a < ? and b < ? or c < ?'`
 		set = fmt.Sprintf("set @a = %d, @b = %d, @c = %d", a, b, c)
 		exec = `execute stmt using @a, @b, @c`
-		delete = fmt.Sprintf("delete from t2 where a < %d and b < %d or c < %d", a, b, c)
+		del = fmt.Sprintf("delete from t2 where a < %d and b < %d or c < %d", a, b, c)
 		return
 	}
 	randUpdate := func() (prep, set, exec, update string) {

@@ -189,3 +189,12 @@ alter table t add partition (PARTITION `p20240521Z` VALUES LESS THAN ('Z','2024-
 CREATE TABLE employees (id int unsigned NOT NULL) PARTITION BY RANGE (id) INTERVAL (1) FIRST PARTITION LESS THAN (1) LAST PARTITION LESS THAN (8193);
 CREATE TABLE employees (id int unsigned NOT NULL) PARTITION BY RANGE (id) INTERVAL (1) FIRST PARTITION LESS THAN (1) LAST PARTITION LESS THAN (8192);
 
+# test rewrite SQL in DDL with interval partition
+drop table if exists tp1;
+CREATE TABLE tp1 (id int) PARTITION BY RANGE (id) INTERVAL (100) FIRST PARTITION LESS THAN (100) LAST PARTITION LESS THAN (500);
+select QUERY from information_schema.ddl_jobs limit 1;
+drop table tp1;
+create table tp1(id int);
+ALTER TABLE tp1 PARTITION BY RANGE (id) INTERVAL (100) FIRST PARTITION LESS THAN (200) LAST PARTITION LESS THAN (600);
+select QUERY from information_schema.ddl_jobs limit 1;
+drop table tp1;

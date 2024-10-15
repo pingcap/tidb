@@ -858,10 +858,6 @@ func TestGlobalIndexStatistics(t *testing.T) {
 	h.SetLease(time.Millisecond)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	tk.MustExec("set tidb_enable_global_index=true")
-	defer func() {
-		tk.MustExec("set tidb_enable_global_index=default")
-	}()
 
 	for i, version := range []string{"1", "2"} {
 		tk.MustExec("set @@session.tidb_analyze_version = " + version)

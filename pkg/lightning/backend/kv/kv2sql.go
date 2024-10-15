@@ -129,10 +129,12 @@ func NewTableKVDecoder(
 	options *encode.SessionOptions,
 	logger log.Logger,
 ) (*TableKVDecoder, error) {
-	se := NewSession(options, logger)
-	cols := tbl.Cols()
-	// Set CommonAddRecordCtx to session to reuse the slices and BufStore in AddRecord
+	se, err := NewSession(options, logger)
+	if err != nil {
+		return nil, err
+	}
 
+	cols := tbl.Cols()
 	genCols, err := CollectGeneratedColumns(se, tbl.Meta(), cols)
 	if err != nil {
 		return nil, err

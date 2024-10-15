@@ -17,32 +17,16 @@
 package dbutiltest
 
 import (
-	"context"
-
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/ddl"
+	"github.com/pingcap/tidb/pkg/meta/metabuild"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	_ "github.com/pingcap/tidb/pkg/planner/core" // to setup expression.EvalAstExpr. See: https://github.com/pingcap/tidb/blob/a94cff903cd1e7f3b050db782da84273ef5592f4/planner/core/optimizer.go#L202
 	"github.com/pingcap/tidb/pkg/types"
-	"github.com/pingcap/tidb/pkg/util/dbutil"
 )
-
-// GetTableInfo returns table information.
-func GetTableInfo(ctx context.Context, db dbutil.QueryExecutor, schemaName string, tableName string) (*model.TableInfo, error) {
-	createTableSQL, err := dbutil.GetCreateTableSQL(ctx, db, schemaName, tableName)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-
-	parser2, err := dbutil.GetParserForDB(ctx, db)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	return GetTableInfoBySQL(createTableSQL, parser2)
-}
 
 // GetTableInfoBySQL returns table information by given create table sql.
 func GetTableInfoBySQL(createTableSQL string, parser2 *parser.Parser) (table *model.TableInfo, err error) {
@@ -53,7 +37,7 @@ func GetTableInfoBySQL(createTableSQL string, parser2 *parser.Parser) (table *mo
 
 	s, ok := stmt.(*ast.CreateTableStmt)
 	if ok {
-		table, err := ddl.BuildTableInfoFromAST(s)
+		table, err := ddl.BuildTableInfoFromAST(metabuild.NewContext(), s)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}

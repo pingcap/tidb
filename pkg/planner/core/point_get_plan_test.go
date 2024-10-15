@@ -226,3 +226,52 @@ func TestIssue18042(t *testing.T) {
 	require.Equal(t, uint64(100), tk.Session().GetSessionVars().StmtCtx.MaxExecutionTime)
 	tk.MustExec("drop table t")
 }
+
+func TestIssue52592(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`set @@tidb_opt_fix_control = "52592:OFF"`) // affect hit counter in this ut
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a bigint unsigned primary key, b int, c int, key idx_bc(b,c))")
+	tk.MustExec("insert into t values(1, 1, 1), (2, 2, 2), (3, 3, 3)")
+	tk.MustQuery("explain format = 'brief' select * from t where a = 1").Check(testkit.Rows(
+		"Point_Get 1.00 root table:t handle:1",
+	))
+	tk.MustQuery("explain format = 'brief' select * from t where 1 = a").Check(testkit.Rows(
+		"Point_Get 1.00 root table:t handle:1",
+	))
+	tk.MustQuery("explain format = 'brief' update t set b=b+1, c=c+1 where a = 1").Check(testkit.Rows(
+		"Update N/A root  N/A",
+		"└─Point_Get 1.00 root table:t handle:1",
+	))
+	tk.MustQuery("explain format = 'brief' delete from t where a = 1").Check(testkit.Rows(
+		"Delete N/A root  N/A",
+		"└─Point_Get 1.00 root table:t handle:1",
+	))
+	tk.MustQuery("explain format = 'brief' select a from t where a = -1").Check(testkit.Rows(
+		"TableDual 0.00 root  rows:0",
+	))
+	tk.MustExec(`set @@tidb_opt_fix_control = "52592:ON"`)
+	tk.MustQuery("explain format = 'brief' select * from t where a = 1").Check(testkit.Rows(
+		"TableReader 1.00 root  data:TableRangeScan",
+		"└─TableRangeScan 1.00 cop[tikv] table:t range:[1,1], keep order:false, stats:pseudo",
+	))
+	tk.MustQuery("explain format = 'brief' select * from t where 1 = a").Check(testkit.Rows(
+		"TableReader 1.00 root  data:TableRangeScan",
+		"└─TableRangeScan 1.00 cop[tikv] table:t range:[1,1], keep order:false, stats:pseudo",
+	))
+	tk.MustQuery("explain format = 'brief' update t set b=b+1, c=c+1 where a = 1").Check(testkit.Rows(
+		"Update N/A root  N/A",
+		"└─TableReader 1.00 root  data:TableRangeScan",
+		"  └─TableRangeScan 1.00 cop[tikv] table:t range:[1,1], keep order:false, stats:pseudo",
+	))
+	tk.MustQuery("explain format = 'brief' delete from t where a = 1").Check(testkit.Rows(
+		"Delete N/A root  N/A",
+		"└─TableReader 1.00 root  data:TableRangeScan",
+		"  └─TableRangeScan 1.00 cop[tikv] table:t range:[1,1], keep order:false, stats:pseudo",
+	))
+	tk.MustQuery("explain format = 'brief' select a from t where a = -1").Check(testkit.Rows(
+		"TableDual 0.00 root  rows:0",
+	))
+}

@@ -137,7 +137,7 @@ func makeStatsMapForTPCHQ5() map[int]*property.StatsInfo {
 }
 
 func newDataSource(ctx base.PlanContext, name string, count int) base.LogicalPlan {
-	ds := DataSource{}.Init(ctx, 0)
+	ds := logicalop.DataSource{}.Init(ctx, 0)
 	tan := model.NewCIStr(name)
 	ds.TableAsName = &tan
 	ds.SetSchema(expression.NewSchema())
@@ -155,7 +155,7 @@ func planToString(plan base.LogicalPlan) string {
 	switch x := plan.(type) {
 	case *mockLogicalJoin:
 		return fmt.Sprintf("MockJoin{%v, %v}", planToString(x.Children()[0]), planToString(x.Children()[1]))
-	case *DataSource:
+	case *logicalop.DataSource:
 		return x.TableAsName.L
 	}
 	return ""

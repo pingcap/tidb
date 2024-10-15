@@ -555,7 +555,6 @@ func (i *intReader) close() error {
 func buildOpener(in [][]int, refCnt *atomic.Int64) []readerOpenerFn[myInt, *intReader] {
 	ret := make([]readerOpenerFn[myInt, *intReader], 0, len(in))
 	for _, ints := range in {
-		ints := ints
 		ret = append(ret, func() (**intReader, error) {
 			refCnt.Inc()
 			r := &intReader{ints, refCnt}

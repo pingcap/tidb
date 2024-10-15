@@ -24,7 +24,6 @@ go_test(
         "//pkg/planner/core/operator/logicalop",
         "//pkg/planner/core/resolve",
         "//pkg/planner/property",
-        "//pkg/planner/util/coretestsdk",
         "//pkg/testkit",
         "//pkg/testkit/testdata",
         "//pkg/testkit/testmain",

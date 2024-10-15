@@ -1536,7 +1536,7 @@ func TestAdminShowDDLJobs(t *testing.T) {
 	require.NoError(t, err)
 	txn, err := tk.Session().Txn(true)
 	require.NoError(t, err)
-	err = meta.NewMeta(txn).AddHistoryDDLJob(job, true)
+	err = meta.NewMutator(txn).AddHistoryDDLJob(job, true)
 	require.NoError(t, err)
 	tk.Session().StmtCommit(context.Background())
 
@@ -2443,7 +2443,7 @@ func TestAdmin(t *testing.T) {
 	require.Equal(t, 12, row.Len())
 	txn, err := store.Begin()
 	require.NoError(t, err)
-	historyJobs, err := ddl.GetLastNHistoryDDLJobs(meta.NewMeta(txn), ddl.DefNumHistoryJobs)
+	historyJobs, err := ddl.GetLastNHistoryDDLJobs(meta.NewMutator(txn), ddl.DefNumHistoryJobs)
 	require.Greater(t, len(historyJobs), 1)
 	require.Greater(t, len(row.GetString(1)), 0)
 	require.NoError(t, err)
@@ -2468,7 +2468,7 @@ func TestAdmin(t *testing.T) {
 	result.Check(testkit.Rows())
 	result = tk.MustQuery(`admin show ddl job queries 1, 2, 3, 4`)
 	result.Check(testkit.Rows())
-	historyJobs, err = ddl.GetLastNHistoryDDLJobs(meta.NewMeta(txn), ddl.DefNumHistoryJobs)
+	historyJobs, err = ddl.GetLastNHistoryDDLJobs(meta.NewMutator(txn), ddl.DefNumHistoryJobs)
 	result = tk.MustQuery(fmt.Sprintf("admin show ddl job queries %d", historyJobs[0].ID))
 	result.Check(testkit.Rows(historyJobs[0].Query))
 	require.NoError(t, err)
@@ -2489,7 +2489,7 @@ func TestAdmin(t *testing.T) {
 	tk.MustExec("create table admin_test7 (c1 int, c2 int, c3 int default 1, index (c1))")
 	tk.MustExec("drop table if exists admin_test8")
 	tk.MustExec("create table admin_test8 (c1 int, c2 int, c3 int default 1, index (c1))")
-	historyJobs, err = ddl.GetLastNHistoryDDLJobs(meta.NewMeta(txn), ddl.DefNumHistoryJobs)
+	historyJobs, err = ddl.GetLastNHistoryDDLJobs(meta.NewMutator(txn), ddl.DefNumHistoryJobs)
 	result = tk.MustQuery(`admin show ddl job queries limit 3`)
 	result.Check(testkit.Rows(fmt.Sprintf("%d %s", historyJobs[0].ID, historyJobs[0].Query), fmt.Sprintf("%d %s", historyJobs[1].ID, historyJobs[1].Query), fmt.Sprintf("%d %s", historyJobs[2].ID, historyJobs[2].Query)))
 	result = tk.MustQuery(`admin show ddl job queries limit 3, 2`)
@@ -2619,16 +2619,16 @@ func TestAdmin(t *testing.T) {
 	// Test for reverse scan get history ddl jobs when ddl history jobs queue has multiple regions.
 	txn, err = store.Begin()
 	require.NoError(t, err)
-	historyJobs, err = ddl.GetLastNHistoryDDLJobs(meta.NewMeta(txn), 20)
+	historyJobs, err = ddl.GetLastNHistoryDDLJobs(meta.NewMutator(txn), 20)
 	require.NoError(t, err)
 
 	// Split region for history ddl job queues.
-	m := meta.NewMeta(txn)
+	m := meta.NewMutator(txn)
 	startKey := meta.DDLJobHistoryKey(m, 0)
 	endKey := meta.DDLJobHistoryKey(m, historyJobs[0].ID)
 	cluster.SplitKeys(startKey, endKey, int(historyJobs[0].ID/5))
 
-	historyJobs2, err := ddl.GetLastNHistoryDDLJobs(meta.NewMeta(txn), 20)
+	historyJobs2, err := ddl.GetLastNHistoryDDLJobs(meta.NewMutator(txn), 20)
 	require.NoError(t, err)
 	require.Equal(t, historyJobs2, historyJobs)
 }

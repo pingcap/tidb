@@ -1,4 +1,3 @@
-set tidb_enable_global_index=true;
 drop table if exists t;
 CREATE TABLE `t` (
   `a` int(11) NOT NULL,
@@ -40,5 +39,3 @@ create table t(a varchar(70), b mediumint(9), unique index idx_a(a) global, uniq
 insert into t values ('',826534 );
 replace into t values ('',826536 );
 select * from t;
-
-set tidb_enable_global_index=default;

@@ -824,6 +824,41 @@ func TestSubscriptionPanic(t *testing.T) {
 	wg.Wait()
 }
 
+func TestGCCheckpoint(t *testing.T) {
+	c := createFakeCluster(t, 4, false)
+	defer func() {
+		fmt.Println(c)
+	}()
+	c.splitAndScatter("01", "02", "022", "023", "033", "04", "043")
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	env := newTestEnv(c, t)
+	rngs := env.ranges
+	if len(rngs) == 0 {
+		rngs = []kv.KeyRange{{}}
+	}
+	env.task = streamhelper.TaskEvent{
+		Type: streamhelper.EventAdd,
+		Name: "whole",
+		Info: &backup.StreamBackupTaskInfo{
+			Name:    "whole",
+			StartTs: oracle.GoTimeToTS(oracle.GetTimeFromTS(0)),
+		},
+		Ranges: rngs,
+	}
+	log.Info("Start Time:", zap.Uint64("StartTs", env.task.Info.StartTs))
+
+	adv := streamhelper.NewCheckpointAdvancer(env)
+	adv.StartTaskListener(ctx)
+	c.advanceClusterTimeBy(1 * time.Minute)
+	c.advanceCheckpointBy(1 * time.Minute)
+	env.PauseTask(ctx, "whole")
+	c.serviceGCSafePoint = oracle.GoTimeToTS(oracle.GetTimeFromTS(0).Add(2 * time.Minute))
+	env.ResumeTask(ctx)
+	require.ErrorContains(t, adv.OnTick(ctx), "greater than the target")
+}
+
 func TestRedactBackend(t *testing.T) {
 	info := new(backup.StreamBackupTaskInfo)
 	info.Name = "test"

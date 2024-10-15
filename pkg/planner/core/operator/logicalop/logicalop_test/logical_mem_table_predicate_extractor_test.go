@@ -1863,7 +1863,7 @@ func TestInfoSchemaTableExtract(t *testing.T) {
 			sql:         `select * from INFORMATION_SCHEMA.TABLES where lower(table_name)='T';`,
 			skipRequest: false,
 			colPredicates: map[string]set.StringSet{
-				"table_name": set.NewStringSet("T"),
+				"table_name": set.NewStringSet("t"),
 			},
 		},
 		{
@@ -1884,7 +1884,7 @@ func TestInfoSchemaTableExtract(t *testing.T) {
 			sql:         `select * from INFORMATION_SCHEMA.TABLES where upper(table_name)=upper('T');`,
 			skipRequest: false,
 			colPredicates: map[string]set.StringSet{
-				"table_name": set.NewStringSet("T"),
+				"table_name": set.NewStringSet("t"),
 			},
 		},
 		{

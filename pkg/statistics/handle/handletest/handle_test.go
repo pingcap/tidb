@@ -118,7 +118,7 @@ func TestVersion(t *testing.T) {
 	tbl1, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t1"))
 	require.NoError(t, err)
 	tableInfo1 := tbl1.Meta()
-	h, err := handle.NewHandle(testKit.Session(), testKit2.Session(), time.Millisecond, do.SysSessionPool(), do.SysProcTracker(), do.NextConnID, do.ReleaseConnID)
+	h, err := handle.NewHandle(testKit.Session(), testKit2.Session(), time.Millisecond, is, do.SysSessionPool(), do.SysProcTracker(), do.NextConnID, do.ReleaseConnID)
 	defer func() {
 		h.Close()
 	}()
@@ -687,16 +687,16 @@ func TestStaticPartitionPruneMode(t *testing.T) {
 					partition p1 values less than (22))`)
 	tk.MustExec(`insert into t values (1), (2), (3), (10), (11)`)
 	tk.MustExec(`analyze table t`)
-	require.True(t, tk.MustNoGlobalStats("t"))
+	tk.MustNoGlobalStats("t")
 	tk.MustExec("set @@tidb_partition_prune_mode='" + string(variable.Dynamic) + "'")
-	require.True(t, tk.MustNoGlobalStats("t"))
+	tk.MustNoGlobalStats("t")
 
 	tk.MustExec("set @@tidb_partition_prune_mode='" + string(variable.Static) + "'")
 	tk.MustExec(`insert into t values (4), (5), (6)`)
 	tk.MustExec(`analyze table t partition p0`)
-	require.True(t, tk.MustNoGlobalStats("t"))
+	tk.MustNoGlobalStats("t")
 	tk.MustExec("set @@tidb_partition_prune_mode='" + string(variable.Dynamic) + "'")
-	require.True(t, tk.MustNoGlobalStats("t"))
+	tk.MustNoGlobalStats("t")
 	tk.MustExec("set @@tidb_partition_prune_mode='" + string(variable.Static) + "'")
 }
 
@@ -1401,7 +1401,7 @@ func TestInitStatsLite(t *testing.T) {
 	checkAllEvicted(t, statsTbl0)
 
 	h.Clear()
-	require.NoError(t, h.InitStatsLite(context.Background(), is))
+	require.NoError(t, h.InitStatsLite(context.Background()))
 	statsTbl1 := h.GetTableStats(tblInfo)
 	checkAllEvicted(t, statsTbl1)
 	{
@@ -1417,7 +1417,7 @@ func TestInitStatsLite(t *testing.T) {
 	// async stats load
 	tk.MustExec("set @@tidb_stats_load_sync_wait = 0")
 	tk.MustExec("explain select * from t where b > 1")
-	require.NoError(t, h.LoadNeededHistograms())
+	require.NoError(t, h.LoadNeededHistograms(is))
 	statsTbl2 := h.GetTableStats(tblInfo)
 	colBStats1 := statsTbl2.GetCol(colBID)
 	colCStats := statsTbl2.GetCol(colCID)

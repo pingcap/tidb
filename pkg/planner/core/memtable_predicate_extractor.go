@@ -49,10 +49,8 @@ import (
 // define an individual struct instead of a bunch of un-exported functions
 // to avoid polluting the global scope of current package.
 type extractHelper struct {
-	// when supportLower, we store the function for the lower(col) or upper(col)
-	// for lower(col), kv = col : true
-	// for upper(col), kv = col : false
-	isLower map[string]bool
+	enableScalarPushDown bool
+	pushedDownFuncs      map[string]func(string) string
 }
 
 func (extractHelper) extractColInConsExpr(ctx base.PlanContext, extractCols map[int64]*types.FieldName, expr *expression.ScalarFunction) (string, []types.Datum) {
@@ -88,7 +86,105 @@ func (extractHelper) extractColInConsExpr(ctx base.PlanContext, extractCols map[
 	return name.ColName.L, results
 }
 
-func (helper *extractHelper) extractColBinaryOpConsExpr(ctx base.PlanContext, extractCols map[int64]*types.FieldName, supportLower bool, expr *expression.ScalarFunction) (string, []types.Datum) {
+func (helper *extractHelper) setColumnPushedDownFn(
+	colNameL string,
+	extractCols map[int64]*types.FieldName,
+	expr *expression.ScalarFunction,
+) {
+	scalar := helper.extractColBinaryOpScalarFunc(extractCols, expr)
+	if scalar == nil {
+		return
+	}
+	switch scalar.FuncName.L {
+	case ast.Lower:
+		helper.pushedDownFuncs = make(map[string]func(string) string)
+		helper.pushedDownFuncs[colNameL] = strings.ToLower
+	case ast.Upper:
+		helper.pushedDownFuncs = make(map[string]func(string) string)
+		helper.pushedDownFuncs[colNameL] = strings.ToUpper
+	}
+}
+
+func (extractHelper) isPushDownSupported(fnNameL string) bool {
+	for _, s := range []string{ast.Lower, ast.Upper} {
+		if fnNameL == s {
+			return true
+		}
+	}
+	return false
+}
+
+// extractColBinaryOpScalarFunc extract the scalar function from a binary operation. For example,
+// `eq(lower(col), "constant")` returns `lower`.
+func (extractHelper) extractColBinaryOpScalarFunc(
+	extractCols map[int64]*types.FieldName,
+	expr *expression.ScalarFunction,
+) (sf *expression.ScalarFunction) {
+	args := expr.GetArgs()
+	var constIdx int
+	// c = 'rhs'
+	// 'lhs' = c
+	for i := 0; i < 2; i++ {
+		_, isConst := args[i].(*expression.Constant)
+		if isConst {
+			constIdx = i
+			break
+		}
+	}
+	scalar, isScalar := args[1-constIdx].(*expression.ScalarFunction)
+	if !isScalar {
+		return nil
+	}
+	args = scalar.GetArgs()
+	if len(args) != 1 {
+		return nil
+	}
+	col, isCol := args[0].(*expression.Column)
+	if !isCol {
+		return nil
+	}
+	_, found := extractCols[col.UniqueID]
+	if !found {
+		return nil
+	}
+	return scalar
+}
+
+func (helper *extractHelper) tryToFindInnerColAndIdx(args []expression.Expression) (innerCol *expression.Column, colIdx int) {
+	if !helper.enableScalarPushDown {
+		return nil, -1
+	}
+	var scalar *expression.ScalarFunction
+	for i := 0; i < 2; i++ {
+		var isScalar bool
+		scalar, isScalar = args[i].(*expression.ScalarFunction)
+		if isScalar {
+			colIdx = i
+			break
+		}
+	}
+	if scalar != nil {
+		args := scalar.GetArgs()
+		if len(args) != 1 {
+			return nil, -1
+		}
+		col, isCol := args[0].(*expression.Column)
+		if !isCol {
+			return nil, -1
+		}
+		if !helper.isPushDownSupported(scalar.FuncName.L) {
+			return nil, -1
+		}
+		return col, colIdx
+	}
+	return nil, -1
+}
+
+func (helper *extractHelper) extractColBinaryOpConsExpr(
+	ctx base.PlanContext,
+	extractCols map[int64]*types.FieldName,
+	expr *expression.ScalarFunction,
+) (string, []types.Datum) {
 	args := expr.GetArgs()
 	var col *expression.Column
 	var colIdx int
@@ -102,58 +198,20 @@ func (helper *extractHelper) extractColBinaryOpConsExpr(ctx base.PlanContext, ex
 			break
 		}
 	}
-	var scalar *expression.ScalarFunction
-	// when supportLower, we can support cases like
-	// lower(colName)='xxx'
-	// or upper(colName)='xxx'.
-	if supportLower {
-		var isScalar bool
-		for i := 0; i < 2; i++ {
-			scalar, isScalar = args[i].(*expression.ScalarFunction)
-			if isScalar {
-				colIdx = i
-				break
-			}
-		}
+
+	innerCol, innerColIdx := helper.tryToFindInnerColAndIdx(args)
+	if innerCol != nil {
+		col, colIdx = innerCol, innerColIdx
 	}
-	if col == nil && scalar == nil {
+	if col == nil {
 		return "", nil
 	}
 
-	var name *types.FieldName
-	var found bool
-	if col != nil {
-		name, found = extractCols[col.UniqueID]
-		if !found {
-			return "", nil
-		}
+	name, found := extractCols[col.UniqueID]
+	if !found {
+		return "", nil
 	}
 
-	// check the scalar function is lower or upper
-	if scalar != nil {
-		args := scalar.GetArgs()
-		if len(args) != 1 {
-			return "", nil
-		}
-		var isCol bool
-		col, isCol = args[0].(*expression.Column)
-		if !isCol {
-			return "", nil
-		}
-		name, found = extractCols[col.UniqueID]
-		if !found {
-			return "", nil
-		}
-		if scalar.FuncName.L == "lower" {
-			helper.isLower = make(map[string]bool)
-			helper.isLower[name.ColName.L] = true
-		} else if scalar.FuncName.L == "upper" {
-			helper.isLower = make(map[string]bool)
-			helper.isLower[name.ColName.L] = false
-		} else {
-			return "", nil
-		}
-	}
 	// The `lhs/rhs` of EQ expression must be a constant
 	// SELECT * FROM t1 WHERE c='rhs'
 	// SELECT * FROM t1 WHERE 'lhs'=c
@@ -176,7 +234,7 @@ func (helper *extractHelper) extractColBinaryOpConsExpr(ctx base.PlanContext, ex
 
 // extract the OR expression, e.g:
 // SELECT * FROM t1 WHERE c1='a' OR c1='b' OR c1='c'
-func (helper *extractHelper) extractColOrExpr(ctx base.PlanContext, extractCols map[int64]*types.FieldName, supportLower bool, expr *expression.ScalarFunction) (string, []types.Datum) {
+func (helper *extractHelper) extractColOrExpr(ctx base.PlanContext, extractCols map[int64]*types.FieldName, expr *expression.ScalarFunction) (string, []types.Datum) {
 	args := expr.GetArgs()
 	lhs, ok := args[0].(*expression.ScalarFunction)
 	if !ok {
@@ -190,9 +248,9 @@ func (helper *extractHelper) extractColOrExpr(ctx base.PlanContext, extractCols 
 	var extract = func(extractCols map[int64]*types.FieldName, fn *expression.ScalarFunction) (string, []types.Datum) {
 		switch helper.getStringFunctionName(fn) {
 		case ast.EQ:
-			return helper.extractColBinaryOpConsExpr(ctx, extractCols, supportLower, fn)
+			return helper.extractColBinaryOpConsExpr(ctx, extractCols, fn)
 		case ast.LogicOr:
-			return helper.extractColOrExpr(ctx, extractCols, supportLower, fn)
+			return helper.extractColOrExpr(ctx, extractCols, fn)
 		case ast.In:
 			return helper.extractColInConsExpr(ctx, extractCols, fn)
 		default:
@@ -231,77 +289,6 @@ func (extractHelper) merge(lhs set.StringSet, datums []types.Datum, toLower bool
 	return tmpNodeTypes
 }
 
-// when push down lower/upper function,
-// both of upper case and lower case string can be merged together.
-func (extractHelper) mergeWithLower(lhs set.StringSet, datums []types.Datum, toLower bool) set.StringSet {
-	tmpNodeTypes := set.NewStringSet()
-	for _, datum := range datums {
-		s, err := datum.ToString()
-		if err != nil {
-			return nil
-		}
-		tmpNodeTypes.Insert(s)
-	}
-	if len(lhs) > 0 {
-		return lhs.IntersectionWithLower(tmpNodeTypes, toLower)
-	}
-	return tmpNodeTypes
-}
-
-func (helper *extractHelper) extractColWithLower(
-	ctx base.PlanContext,
-	schema *expression.Schema,
-	names []*types.FieldName,
-	predicates []expression.Expression,
-	extractColName string,
-) (
-	remained []expression.Expression,
-	skipRequest bool,
-	result set.StringSet,
-) {
-	remained = make([]expression.Expression, 0, len(predicates))
-	result = set.NewStringSet()
-	extractCols := helper.findColumn(schema, names, extractColName)
-	if len(extractCols) == 0 {
-		return predicates, false, result
-	}
-
-	for _, expr := range predicates {
-		fn, ok := expr.(*expression.ScalarFunction)
-		if !ok {
-			remained = append(remained, expr)
-			continue
-		}
-		var colName string
-		var datums []types.Datum // the memory of datums should not be reused, they will be put into result.
-		switch helper.getStringFunctionName(fn) {
-		case ast.EQ:
-			colName, datums = helper.extractColBinaryOpConsExpr(ctx, extractCols, true, fn)
-		case ast.In:
-			colName, datums = helper.extractColInConsExpr(ctx, extractCols, fn)
-		case ast.LogicOr:
-			// disable predicate pushdown for case like `lower(c1) = xx or c1 = yy`
-			colName, datums = "", nil
-		}
-		if colName == extractColName {
-			isLower, ok := helper.isLower[colName]
-			if ok {
-				result = helper.mergeWithLower(result, datums, !isLower)
-			} else {
-				remained = append(remained, expr)
-			}
-		} else {
-			remained = append(remained, expr)
-		}
-		// There are no data if the low-level executor skip request, so the filter can be droped
-		if skipRequest {
-			remained = remained[:0]
-			break
-		}
-	}
-	return
-}
-
 func (helper *extractHelper) extractCol(
 	ctx base.PlanContext,
 	schema *expression.Schema,
@@ -332,11 +319,16 @@ func (helper *extractHelper) extractCol(
 		var datums []types.Datum // the memory of datums should not be reused, they will be put into result.
 		switch helper.getStringFunctionName(fn) {
 		case ast.EQ:
-			colName, datums = helper.extractColBinaryOpConsExpr(ctx, extractCols, false, fn)
+			helper.enableScalarPushDown = true
+			colName, datums = helper.extractColBinaryOpConsExpr(ctx, extractCols, fn)
+			if colName == extractColName {
+				helper.setColumnPushedDownFn(colName, extractCols, fn)
+			}
+			helper.enableScalarPushDown = false
 		case ast.In:
 			colName, datums = helper.extractColInConsExpr(ctx, extractCols, fn)
 		case ast.LogicOr:
-			colName, datums = helper.extractColOrExpr(ctx, extractCols, false, fn)
+			colName, datums = helper.extractColOrExpr(ctx, extractCols, fn)
 		}
 		if colName == extractColName {
 			result = helper.merge(result, datums, valueToLower)
@@ -357,7 +349,7 @@ func (helper *extractHelper) extractCol(
 // SELECT * FROM t WHERE c LIKE '%a%'
 // SELECT * FROM t WHERE c LIKE '%a%' AND c REGEXP '.*xxx.*'
 // SELECT * FROM t WHERE c LIKE '%a%' OR c REGEXP '.*xxx.*'
-func (helper extractHelper) extractLikePatternCol(
+func (helper *extractHelper) extractLikePatternCol(
 	ctx base.PlanContext,
 	schema *expression.Schema,
 	names []*types.FieldName,
@@ -453,7 +445,7 @@ func (helper extractHelper) extractLikePattern(
 	var datums []types.Datum
 	switch fn.FuncName.L {
 	case ast.EQ, ast.Like, ast.Ilike, ast.Regexp, ast.RegexpLike:
-		colName, datums = helper.extractColBinaryOpConsExpr(ctx, extractCols, false, fn)
+		colName, datums = helper.extractColBinaryOpConsExpr(ctx, extractCols, fn)
 	}
 	if colName != extractColName {
 		return false, ""
@@ -559,7 +551,7 @@ func (helper extractHelper) extractTimeRange(
 		fnName := helper.getTimeFunctionName(fn)
 		switch fnName {
 		case ast.GT, ast.GE, ast.LT, ast.LE, ast.EQ:
-			colName, datums = helper.extractColBinaryOpConsExpr(ctx, extractCols, false, fn)
+			colName, datums = helper.extractColBinaryOpConsExpr(ctx, extractCols, fn)
 		}
 
 		if colName == extractColName {

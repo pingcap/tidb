@@ -15,6 +15,7 @@ go_library(
     importpath = "github.com/pingcap/tidb/br/pkg/stream",
     visibility = ["//visibility:public"],
     deps = [
+        "//br/pkg/encryption",
         "//br/pkg/errors",
         "//br/pkg/glue",
         "//br/pkg/httputil",
@@ -36,6 +37,7 @@ go_library(
         "@com_github_klauspost_compress//zstd",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_kvproto//pkg/brpb",
+        "@com_github_pingcap_kvproto//pkg/encryptionpb",
         "@com_github_pingcap_kvproto//pkg/metapb",
         "@com_github_pingcap_log//:log",
         "@com_github_tikv_client_go_v2//oracle",

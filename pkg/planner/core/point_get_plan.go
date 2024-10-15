@@ -41,6 +41,8 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/costusage"
+	"github.com/pingcap/tidb/pkg/planner/util/domainmisc"
+	"github.com/pingcap/tidb/pkg/planner/util/fixcontrol"
 	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
 	"github.com/pingcap/tidb/pkg/privilege"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -399,25 +401,11 @@ func (p *PointGetPlan) PrunePartitions(sctx sessionctx.Context) bool {
 		dVal.Copy(&row[p.HandleColOffset])
 	}
 	partIdx, err := pt.GetPartitionIdxByRow(sctx.GetExprCtx().GetEvalCtx(), row)
-	if err != nil {
+	partIdx, err = pt.Meta().Partition.ReplaceWithOverlappingPartitionIdx(partIdx, err)
+	if err != nil || !isInExplicitPartitions(pi, partIdx, p.PartitionNames) {
 		partIdx = -1
 		p.PartitionIdx = &partIdx
 		return true
-	}
-	if len(p.PartitionNames) > 0 {
-		found := false
-		partName := pi.Definitions[partIdx].Name.L
-		for _, name := range p.PartitionNames {
-			if name.L == partName {
-				found = true
-				break
-			}
-		}
-		if !found {
-			partIdx = -1
-			p.PartitionIdx = &partIdx
-			return true
-		}
 	}
 	p.PartitionIdx = &partIdx
 	return false
@@ -682,6 +670,7 @@ func (p *BatchPointGetPlan) getPartitionIdxs(sctx sessionctx.Context) []int {
 			rows[i][j].Copy(&r[p.IndexInfo.Columns[j].Offset])
 		}
 		pIdx, err := pTbl.GetPartitionIdxByRow(sctx.GetExprCtx().GetEvalCtx(), r)
+		pIdx, err = pTbl.Meta().Partition.ReplaceWithOverlappingPartitionIdx(pIdx, err)
 		if err != nil {
 			// Skip on any error, like:
 			// No matching partition, overflow etc.
@@ -780,6 +769,7 @@ func (p *BatchPointGetPlan) PrunePartitionsAndValues(sctx sessionctx.Context) ([
 				}
 				d.Copy(&r[p.HandleColOffset])
 				pIdx, err := pTbl.GetPartitionIdxByRow(sctx.GetExprCtx().GetEvalCtx(), r)
+				pIdx, err = pi.ReplaceWithOverlappingPartitionIdx(pIdx, err)
 				if err != nil ||
 					!isInExplicitPartitions(pi, pIdx, p.PartitionNames) ||
 					(p.SinglePartition &&
@@ -883,8 +873,9 @@ type PointPlanVal struct {
 
 // TryFastPlan tries to use the PointGetPlan for the query.
 func TryFastPlan(ctx base.PlanContext, node *resolve.NodeW) (p base.Plan) {
-	if checkStableResultMode(ctx) {
+	if checkStableResultMode(ctx) || fixcontrol.GetBoolWithDefault(ctx.GetSessionVars().OptimizerFixControl, fixcontrol.Fix52592, false) {
 		// the rule of stabilizing results has not taken effect yet, so cannot generate a plan here in this mode
+		// or Fix52592 is turn on to disable fast path for select, update and delete
 		return nil
 	}
 
@@ -1409,7 +1400,7 @@ func checkTblIndexForPointPlan(ctx base.PlanContext, tblName *resolve.TableNameW
 		}
 		if isTableDual {
 			if check && latestIndexes == nil {
-				latestIndexes, check, err = getLatestIndexInfo(ctx, tbl.ID, 0)
+				latestIndexes, check, err = domainmisc.GetLatestIndexInfo(ctx, tbl.ID, 0)
 				if err != nil {
 					logutil.BgLogger().Warn("get information schema failed", zap.Error(err))
 					return nil
@@ -1429,7 +1420,7 @@ func checkTblIndexForPointPlan(ctx base.PlanContext, tblName *resolve.TableNameW
 			continue
 		}
 		if check && latestIndexes == nil {
-			latestIndexes, check, err = getLatestIndexInfo(ctx, tbl.ID, 0)
+			latestIndexes, check, err = domainmisc.GetLatestIndexInfo(ctx, tbl.ID, 0)
 			if err != nil {
 				logutil.BgLogger().Warn("get information schema failed", zap.Error(err))
 				return nil
@@ -1943,7 +1934,7 @@ func buildPointUpdatePlan(ctx base.PlanContext, pointPlan base.PhysicalPlan, dbN
 	if orderedList == nil {
 		return nil
 	}
-	handleCols := buildHandleCols(ctx, tbl, pointPlan.Schema())
+	handleCols := buildHandleCols(ctx, dbName, tbl, pointPlan)
 	updatePlan := Update{
 		SelectPlan:  pointPlan,
 		OrderedList: orderedList,
@@ -2064,27 +2055,27 @@ func buildPointDeletePlan(ctx base.PlanContext, pointPlan base.PhysicalPlan, dbN
 	if checkFastPlanPrivilege(ctx, dbName, tbl.Name.L, mysql.SelectPriv, mysql.DeletePriv) != nil {
 		return nil
 	}
-	handleCols := buildHandleCols(ctx, tbl, pointPlan.Schema())
-	delPlan := Delete{
-		SelectPlan: pointPlan,
-		TblColPosInfos: TblColPosInfoSlice{
-			TblColPosInfo{
-				TblID:      tbl.ID,
-				Start:      0,
-				End:        pointPlan.Schema().Len(),
-				HandleCols: handleCols,
-			},
-		},
-	}.Init(ctx)
+	handleCols := buildHandleCols(ctx, dbName, tbl, pointPlan)
 	var err error
 	is := ctx.GetInfoSchema().(infoschema.InfoSchema)
 	t, _ := is.TableByID(context.Background(), tbl.ID)
-	if t != nil {
-		tblID2Table := map[int64]table.Table{tbl.ID: t}
-		err = delPlan.buildOnDeleteFKTriggers(ctx, is, tblID2Table)
-		if err != nil {
-			return nil
-		}
+	intest.Assert(t != nil, "The point get executor is accessing a table without meta info.")
+	colPosInfo, err := initColPosInfo(tbl.ID, pointPlan.OutputNames(), handleCols)
+	if err != nil {
+		return nil
+	}
+	err = buildSingleTableColPosInfoForDelete(t, &colPosInfo)
+	if err != nil {
+		return nil
+	}
+	delPlan := Delete{
+		SelectPlan:     pointPlan,
+		TblColPosInfos: []TblColPosInfo{colPosInfo},
+	}.Init(ctx)
+	tblID2Table := map[int64]table.Table{tbl.ID: t}
+	err = delPlan.buildOnDeleteFKTriggers(ctx, is, tblID2Table)
+	if err != nil {
+		return nil
 	}
 	return delPlan
 }
@@ -2113,7 +2104,8 @@ func colInfoToColumn(col *model.ColumnInfo, idx int) *expression.Column {
 	}
 }
 
-func buildHandleCols(ctx base.PlanContext, tbl *model.TableInfo, schema *expression.Schema) util.HandleCols {
+func buildHandleCols(ctx base.PlanContext, dbName string, tbl *model.TableInfo, pointget base.PhysicalPlan) util.HandleCols {
+	schema := pointget.Schema()
 	// fields len is 0 for update and delete.
 	if tbl.PKIsHandle {
 		for i, col := range tbl.Columns {
@@ -2130,6 +2122,18 @@ func buildHandleCols(ctx base.PlanContext, tbl *model.TableInfo, schema *express
 
 	handleCol := colInfoToColumn(model.NewExtraHandleColInfo(), schema.Len())
 	schema.Append(handleCol)
+	newOutputNames := pointget.OutputNames().Shallow()
+	tableAliasName := tbl.Name
+	if schema.Len() > 0 {
+		tableAliasName = pointget.OutputNames()[0].TblName
+	}
+	newOutputNames = append(newOutputNames, &types.FieldName{
+		DBName:      pmodel.NewCIStr(dbName),
+		TblName:     tableAliasName,
+		OrigTblName: tbl.Name,
+		ColName:     model.ExtraHandleName,
+	})
+	pointget.SetOutputNames(newOutputNames)
 	return util.NewIntHandleCols(handleCol)
 }
 

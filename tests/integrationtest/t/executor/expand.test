@@ -270,3 +270,49 @@ SELECT a,b,SUM(c) FROM t1 GROUP BY a,b,c WITH ROLLUP;
 SELECT distinct a,b,SUM(c) FROM t1 GROUP BY a,b,c WITH ROLLUP;
 
 DROP TABLE t1;
+
+# Test Issue 56218
+# Test with normal constant case
+
+--echo
+SELECT
+    (SELECT 100.00
+     FROM
+         (SELECT '2024-09-15' AS DATE ) newTb
+     WHERE T0.DATE = DATE_ADD(newTb.DATE, INTERVAL 1 MONTH)) AS 'PROFIT'
+FROM
+    (SELECT '2024-09-15' AS DATE) T0
+GROUP BY T0.DATE WITH ROLLUP;
+
+--echo
+EXPLAIN SELECT
+            (SELECT 100.00
+             FROM
+                 (SELECT '2024-09-15' AS DATE ) newTb
+             WHERE T0.DATE = DATE_ADD(newTb.DATE, INTERVAL 1 MONTH)) AS 'PROFIT'
+        FROM
+            (SELECT '2024-09-15' AS DATE) T0
+        GROUP BY T0.DATE WITH ROLLUP;
+
+# Test with real correlated column case
+drop table if exists tr;
+create table tr(a date);
+insert into tr values('2024-09-15');
+
+--echo
+SELECT
+    (SELECT 100.00
+     FROM  (SELECT '2024-09-15' AS DATE ) newTb
+     WHERE T0.DATE = DATE_ADD(newTb.DATE, INTERVAL 0 MONTH)
+     ) AS 'PROFIT'
+FROM  (select tr.a as DATE from tr) T0
+GROUP BY T0.DATE WITH ROLLUP;
+
+--echo
+EXPLAIN SELECT
+    (SELECT 100.00
+     FROM  (SELECT '2024-09-15' AS DATE ) newTb
+     WHERE T0.DATE = DATE_ADD(newTb.DATE, INTERVAL 0 MONTH)
+     ) AS 'PROFIT'
+FROM  (select tr.a as DATE from tr) T0
+GROUP BY T0.DATE WITH ROLLUP;

@@ -1,0 +1,15 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "domainmisc",
+    srcs = ["info.go"],
+    importpath = "github.com/pingcap/tidb/pkg/planner/util/domainmisc",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/domain",
+        "//pkg/meta/model",
+        "//pkg/planner/core/base",
+        "//pkg/table/temptable",
+        "@com_github_pingcap_errors//:errors",
+    ],
+)

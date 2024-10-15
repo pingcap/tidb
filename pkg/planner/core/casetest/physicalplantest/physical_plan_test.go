@@ -31,7 +31,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner"
 	"github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
-	"github.com/pingcap/tidb/pkg/planner/util/coretestsdk"
+	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/external"
 	"github.com/pingcap/tidb/pkg/testkit/testdata"
@@ -217,7 +217,7 @@ func TestUnmatchedTableInHint(t *testing.T) {
 }
 
 func TestIssue37520(t *testing.T) {
-	store := testkit.CreateMockStore(t, coretestsdk.WithMockTiFlash(2))
+	store := testkit.CreateMockStore(t, mockstore.WithMockTiFlash(2))
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("set tidb_cost_model_version=2")
@@ -247,7 +247,7 @@ func TestIssue37520(t *testing.T) {
 }
 
 func TestMPPHints(t *testing.T) {
-	store := testkit.CreateMockStore(t, coretestsdk.WithMockTiFlash(2))
+	store := testkit.CreateMockStore(t, mockstore.WithMockTiFlash(2))
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("set tidb_cost_model_version=2")
@@ -289,7 +289,7 @@ func TestMPPHints(t *testing.T) {
 }
 
 func TestMPPHintsScope(t *testing.T) {
-	store := testkit.CreateMockStore(t, coretestsdk.WithMockTiFlash(2))
+	store := testkit.CreateMockStore(t, mockstore.WithMockTiFlash(2))
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("set tidb_cost_model_version=2")
@@ -346,7 +346,7 @@ func TestMPPBCJModel(t *testing.T) {
 			Probe: sizeof(Data) * 2 / 3
 			exchange size: Build + Probe = 4/3 * sizeof(Data)
 	*/
-	store := testkit.CreateMockStore(t, coretestsdk.WithMockTiFlash(3))
+	store := testkit.CreateMockStore(t, mockstore.WithMockTiFlash(3))
 	{
 		cnt, err := store.GetMPPClient().GetMPPStoreCount()
 		require.Equal(t, cnt, 3)
@@ -388,7 +388,7 @@ func TestMPPBCJModel(t *testing.T) {
 }
 
 func TestMPPPreferBCJ(t *testing.T) {
-	store := testkit.CreateMockStore(t, coretestsdk.WithMockTiFlash(3))
+	store := testkit.CreateMockStore(t, mockstore.WithMockTiFlash(3))
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1")
@@ -455,7 +455,7 @@ func TestMPPBCJModelOneTiFlash(t *testing.T) {
 			Probe: sizeof(Data) * 0 / 1
 			exchange size: Build + Probe = 0 * sizeof(Data)
 	*/
-	store := testkit.CreateMockStore(t, coretestsdk.WithMockTiFlash(1))
+	store := testkit.CreateMockStore(t, mockstore.WithMockTiFlash(1))
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t (a int, b int, c int, index idx_a(a), index idx_b(b))")
@@ -506,7 +506,7 @@ func TestMPPBCJModelOneTiFlash(t *testing.T) {
 }
 
 func TestMPPRightSemiJoin(t *testing.T) {
-	store := testkit.CreateMockStore(t, coretestsdk.WithMockTiFlash(3))
+	store := testkit.CreateMockStore(t, mockstore.WithMockTiFlash(3))
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1")
@@ -562,7 +562,7 @@ func TestMPPRightSemiJoin(t *testing.T) {
 }
 
 func TestMPPRightOuterJoin(t *testing.T) {
-	store := testkit.CreateMockStore(t, coretestsdk.WithMockTiFlash(3))
+	store := testkit.CreateMockStore(t, mockstore.WithMockTiFlash(3))
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1")
@@ -1268,9 +1268,9 @@ func TestHJBuildAndProbeHint4TiFlash(t *testing.T) {
 	tk.MustExec("insert into t3 values(1,1),(2,1)")
 	// Create virtual tiflash replica info.
 	dom := domain.GetDomain(tk.Session())
-	coretestsdk.SetTiFlashReplica(t, dom, "test", "t1")
-	coretestsdk.SetTiFlashReplica(t, dom, "test", "t2")
-	coretestsdk.SetTiFlashReplica(t, dom, "test", "t3")
+	testkit.SetTiFlashReplica(t, dom, "test", "t1")
+	testkit.SetTiFlashReplica(t, dom, "test", "t2")
+	testkit.SetTiFlashReplica(t, dom, "test", "t3")
 
 	tk.MustExec("set @@tidb_allow_mpp=1; set @@tidb_enforce_mpp=1;")
 	for i, ts := range input {
@@ -1301,7 +1301,7 @@ func TestMPPSinglePartitionType(t *testing.T) {
 	tk.MustExec("create table employee(empid int, deptid int, salary decimal(10,2))")
 	tk.MustExec("set tidb_enforce_mpp=0")
 
-	coretestsdk.SetTiFlashReplica(t, dom, "test", "employee")
+	testkit.SetTiFlashReplica(t, dom, "test", "employee")
 
 	for i, ts := range input {
 		testdata.OnRecord(func() {
@@ -1340,8 +1340,8 @@ func TestCountStarForTiFlash(t *testing.T) {
 
 	// tiflash
 	dom := domain.GetDomain(tk.Session())
-	coretestsdk.SetTiFlashReplica(t, dom, "test", "t")
-	coretestsdk.SetTiFlashReplica(t, dom, "test", "t_pick_row_id")
+	testkit.SetTiFlashReplica(t, dom, "test", "t")
+	testkit.SetTiFlashReplica(t, dom, "test", "t_pick_row_id")
 
 	tk.MustExec("set @@tidb_allow_mpp=1; set @@tidb_enforce_mpp=1;")
 	for i, ts := range input {
@@ -1425,8 +1425,8 @@ func TestHashAggPushdownToTiFlashCompute(t *testing.T) {
 	})
 
 	dom := domain.GetDomain(tk.Session())
-	coretestsdk.SetTiFlashReplica(t, dom, "test", "tbl_15")
-	coretestsdk.SetTiFlashReplica(t, dom, "test", "tbl_16")
+	testkit.SetTiFlashReplica(t, dom, "test", "tbl_15")
+	testkit.SetTiFlashReplica(t, dom, "test", "tbl_16")
 
 	tk.MustExec("set @@tidb_allow_mpp=1; set @@tidb_enforce_mpp=1;")
 	tk.MustExec("set @@tidb_partition_prune_mode = 'static';")

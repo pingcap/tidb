@@ -45,7 +45,6 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/resourcegroup"
 	"github.com/pingcap/tidb/pkg/session/cursor"
-	"github.com/pingcap/tidb/pkg/sessionctx/binloginfo"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	util2 "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
@@ -138,7 +137,6 @@ type ServerInfo struct {
 	Port           uint              `json:"listening_port"`
 	StatusPort     uint              `json:"status_port"`
 	Lease          string            `json:"lease"`
-	BinlogStatus   string            `json:"binlog_status"`
 	StartTimestamp int64             `json:"start_timestamp"`
 	Labels         map[string]string `json:"labels"`
 	// ServerID is a function, to always retrieve latest serverID from `Domain`,
@@ -191,6 +189,17 @@ func getGlobalInfoSyncer() (*InfoSyncer, error) {
 
 func setGlobalInfoSyncer(is *InfoSyncer) {
 	globalInfoSyncer.Store(is)
+}
+
+// SetPDHttpCliForTest sets the pdhttp.Client for testing.
+// Please do not use it in the production environment.
+func SetPDHttpCliForTest(cli pdhttp.Client) func() {
+	syncer := globalInfoSyncer.Load()
+	originalCli := syncer.pdHTTPCli
+	syncer.pdHTTPCli = cli
+	return func() {
+		syncer.pdHTTPCli = originalCli
+	}
 }
 
 // GlobalInfoSyncerInit return a new InfoSyncer. It is exported for testing.
@@ -858,11 +867,6 @@ func (is *InfoSyncer) newSessionAndStoreServerInfo(ctx context.Context, retryCnt
 		return err
 	}
 	is.session = session
-	binloginfo.RegisterStatusListener(func(status binloginfo.BinlogStatus) error {
-		is.info.BinlogStatus = status.String()
-		err := is.StoreServerInfo(ctx)
-		return errors.Trace(err)
-	})
 	return is.StoreServerInfo(ctx)
 }
 
@@ -999,9 +1003,7 @@ func getInfo(ctx context.Context, etcdCli *clientv3.Client, key string, retryCnt
 			continue
 		}
 		for _, kv := range resp.Kvs {
-			info := &ServerInfo{
-				BinlogStatus: binloginfo.BinlogStatusUnknown.String(),
-			}
+			info := &ServerInfo{}
 			err = info.Unmarshal(kv.Value)
 			if err != nil {
 				logutil.BgLogger().Info("get key failed", zap.String("key", string(kv.Key)), zap.ByteString("value", kv.Value),
@@ -1024,7 +1026,6 @@ func getServerInfo(id string, serverIDGetter func() uint64) *ServerInfo {
 		Port:           cfg.Port,
 		StatusPort:     cfg.Status.StatusPort,
 		Lease:          cfg.Lease,
-		BinlogStatus:   binloginfo.GetStatus().String(),
 		StartTimestamp: time.Now().Unix(),
 		Labels:         cfg.Labels,
 		ServerIDGetter: serverIDGetter,
@@ -1104,6 +1105,25 @@ func GetLabelRules(ctx context.Context, ruleIDs []string) (map[string]*label.Rul
 		return nil, nil
 	}
 	return is.labelRuleManager.GetLabelRules(ctx, ruleIDs)
+}
+
+// SyncTiFlashTableSchema syncs TiFlash table schema.
+func SyncTiFlashTableSchema(ctx context.Context, tableID int64) error {
+	is, err := getGlobalInfoSyncer()
+	if err != nil {
+		return errors.Trace(err)
+	}
+	tikvStats, err := is.tiflashReplicaManager.GetStoresStat(ctx)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	tiflashStores := make([]pdhttp.StoreInfo, 0, len(tikvStats.Stores))
+	for _, store := range tikvStats.Stores {
+		if engine.IsTiFlashHTTPResp(&store.Store) {
+			tiflashStores = append(tiflashStores, store)
+		}
+	}
+	return is.tiflashReplicaManager.SyncTiFlashTableSchema(tableID, tiflashStores)
 }
 
 // CalculateTiFlashProgress calculates TiFlash replica progress

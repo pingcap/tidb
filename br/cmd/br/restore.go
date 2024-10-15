@@ -74,14 +74,14 @@ func runRestoreCommand(command *cobra.Command, cmdName string) error {
 
 	if err := task.RunRestore(GetDefaultContext(), tidbGlue, cmdName, &cfg); err != nil {
 		log.Error("failed to restore", zap.Error(err))
-		printWorkaroundOnFullRestoreError(command, err)
+		printWorkaroundOnFullRestoreError(err)
 		return errors.Trace(err)
 	}
 	return nil
 }
 
 // print workaround when we met not fresh or incompatible cluster error on full cluster restore
-func printWorkaroundOnFullRestoreError(command *cobra.Command, err error) {
+func printWorkaroundOnFullRestoreError(err error) {
 	if !errors.ErrorEqual(err, berrors.ErrRestoreNotFreshCluster) &&
 		!errors.ErrorEqual(err, berrors.ErrRestoreIncompatibleSys) {
 		return

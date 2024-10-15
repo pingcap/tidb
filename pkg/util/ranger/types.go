@@ -24,7 +24,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/errctx"
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/planner/context"
+	"github.com/pingcap/tidb/pkg/planner/planctx"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/collate"
@@ -37,7 +37,7 @@ type MutableRanges interface {
 	// Range returns the underlying range values.
 	Range() Ranges
 	// Rebuild rebuilds the underlying ranges again.
-	Rebuild(sctx context.PlanContext) error
+	Rebuild(sctx planctx.PlanContext) error
 	// CloneForPlanCache clones the MutableRanges for plan cache.
 	CloneForPlanCache() MutableRanges
 }
@@ -51,7 +51,7 @@ func (rs Ranges) Range() Ranges {
 }
 
 // Rebuild rebuilds this range.
-func (Ranges) Rebuild(context.PlanContext) error {
+func (Ranges) Rebuild(planctx.PlanContext) error {
 	return nil
 }
 
@@ -140,6 +140,18 @@ func (ran *Range) isPoint(tc types.Context, regardNullAsPoint bool) bool {
 		}
 	}
 	return !ran.LowExclude && !ran.HighExclude
+}
+
+// IsOnlyNull checks if the range has [NULL, NULL] or [NULL NULL, NULL NULL] range.
+func (ran *Range) IsOnlyNull() bool {
+	for i := range ran.LowVal {
+		a := ran.LowVal[i]
+		b := ran.HighVal[i]
+		if !(a.IsNull() && b.IsNull()) {
+			return false
+		}
+	}
+	return true
 }
 
 // IsPointNonNullable returns if the range is a point without NULL.

@@ -548,7 +548,12 @@ func (e *topNExec) open() error {
 	if e.dummy {
 		return nil
 	}
-
+	evaluatorSuite := expression.NewEvaluatorSuite(e.conds, true)
+	fieldTypes := make([]*types.FieldType, 0, len(e.conds))
+	for i := 0; i < len(e.conds); i++ {
+		fieldTypes = append(fieldTypes, e.conds[i].GetType(e.sctx.GetExprCtx().GetEvalCtx()))
+	}
+	evalChk := chunk.NewEmptyChunk(fieldTypes)
 	for {
 		chk, err = e.children[0].next()
 		if err != nil {
@@ -559,14 +564,17 @@ func (e *topNExec) open() error {
 		}
 		e.execSummary.updateOnlyRows(chk.NumRows())
 		numRows := chk.NumRows()
+
+		err := evaluatorSuite.Run(e.sctx.GetExprCtx().GetEvalCtx(), true, chk, evalChk)
+		if err != nil {
+			return err
+		}
+
 		for i := 0; i < numRows; i++ {
-			row := chk.GetRow(i)
-			for j, cond := range e.conds {
-				d, err := cond.Eval(e.sctx.GetExprCtx().GetEvalCtx(), row)
-				if err != nil {
-					return err
-				}
-				d.Copy(&e.row.key[j])
+			row := evalChk.GetRow(i)
+			tmpDatums := row.GetDatumRow(fieldTypes)
+			for j := 0; j < len(tmpDatums); j++ {
+				tmpDatums[j].Copy(&e.row.key[j])
 			}
 			if e.heap.tryToAddRow(e.row) {
 				e.row.data[0] = make([]byte, 4)
@@ -576,6 +584,7 @@ func (e *topNExec) open() error {
 				e.row = newTopNSortRow(len(e.conds))
 			}
 		}
+		evalChk.Reset()
 		e.recv = append(e.recv, chk)
 	}
 	sort.Sort(&e.heap.topNSorter)
@@ -1121,6 +1130,7 @@ func (e *selExec) open() error {
 
 func (e *selExec) next() (*chunk.Chunk, error) {
 	ret := chunk.NewChunkWithCapacity(e.getFieldTypes(), DefaultBatchSize)
+	var selected []bool
 	for !ret.IsFull() {
 		chk, err := e.children[0].next()
 		if err != nil {
@@ -1129,31 +1139,13 @@ func (e *selExec) next() (*chunk.Chunk, error) {
 		if chk == nil || chk.NumRows() == 0 {
 			break
 		}
-		numRows := chk.NumRows()
-		for rows := 0; rows < numRows; rows++ {
-			row := chk.GetRow(rows)
-			passCheck := true
-			for _, cond := range e.conditions {
-				d, err := cond.Eval(e.sctx.GetExprCtx().GetEvalCtx(), row)
-				if err != nil {
-					return nil, errors.Trace(err)
-				}
-
-				if d.IsNull() {
-					passCheck = false
-				} else {
-					isBool, err := d.ToBool(e.sctx.GetSessionVars().StmtCtx.TypeCtx())
-					if err != nil {
-						return nil, errors.Trace(err)
-					}
-					passCheck = isBool != 0
-				}
-				if !passCheck {
-					break
-				}
-			}
-			if passCheck {
-				ret.AppendRow(row)
+		selected, err := expression.VectorizedFilter(e.sctx.GetExprCtx().GetEvalCtx(), true, e.conditions, chunk.NewIterator4Chunk(chk), selected)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		for i := 0; i < len(selected); i++ {
+			if selected[i] {
+				ret.AppendRow(chk.GetRow(i))
 				e.execSummary.updateOnlyRows(1)
 			}
 		}

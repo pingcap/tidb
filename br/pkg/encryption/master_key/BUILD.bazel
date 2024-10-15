@@ -1,0 +1,44 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "master_key",
+    srcs = [
+        "common.go",
+        "file_backend.go",
+        "kms_backend.go",
+        "master_key.go",
+        "mem_backend.go",
+        "multi_master_key_backend.go",
+    ],
+    importpath = "github.com/pingcap/tidb/br/pkg/encryption/master_key",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//br/pkg/kms:aws",
+        "//br/pkg/utils",
+        "@com_github_pingcap_errors//:errors",
+        "@com_github_pingcap_kvproto//pkg/encryptionpb",
+        "@com_github_pingcap_log//:log",
+        "@org_uber_go_multierr//:multierr",
+        "@org_uber_go_zap//:zap",
+    ],
+)
+
+go_test(
+    name = "master_key_test",
+    timeout = "short",
+    srcs = [
+        "file_backend_test.go",
+        "kms_backend_test.go",
+        "mem_backend_test.go",
+        "multi_master_key_backend_test.go",
+    ],
+    embed = [":master_key"],
+    flaky = True,
+    shard_count = 11,
+    deps = [
+        "@com_github_pingcap_errors//:errors",
+        "@com_github_pingcap_kvproto//pkg/encryptionpb",
+        "@com_github_stretchr_testify//mock",
+        "@com_github_stretchr_testify//require",
+    ],
+)

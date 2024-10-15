@@ -940,11 +940,10 @@ TableReader	15.99	root		data:Selection
   └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
 explain format=brief select * from t1 where (c=1 or b=1) and (1 member of (j)) and d=1;
 id	estRows	task	access object	operator info
-IndexMerge	0.20	root		type: union
-├─IndexRangeScan(Build)	0.10	cop[tikv]	table:t1, index:d(d, c)	range:[1 1,1 1], keep order:false, stats:pseudo
-├─IndexRangeScan(Build)	0.10	cop[tikv]	table:t1, index:kb(b, cast(`j` as unsigned array))	range:[1 1,1 1], keep order:false, stats:pseudo
-└─Selection(Probe)	0.20	cop[tikv]		eq(planner__core__indexmerge_path.t1.d, 1), json_memberof(cast(1, json BINARY), planner__core__indexmerge_path.t1.j), or(eq(planner__core__indexmerge_path.t1.c, 1), eq(planner__core__indexmerge_path.t1.b, 1))
-  └─TableRowIDScan	0.20	cop[tikv]	table:t1	keep order:false, stats:pseudo
+IndexLookUp	0.02	root		
+├─IndexRangeScan(Build)	10.00	cop[tikv]	table:t1, index:d(d, c)	range:[1,1], keep order:false, stats:pseudo
+└─Selection(Probe)	0.02	cop[tikv]		json_memberof(cast(1, json BINARY), planner__core__indexmerge_path.t1.j), or(eq(planner__core__indexmerge_path.t1.c, 1), eq(planner__core__indexmerge_path.t1.b, 1))
+  └─TableRowIDScan	10.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
 drop table if exists t;
 CREATE TABLE `t` (
 `col_37` json DEFAULT NULL,

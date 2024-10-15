@@ -17,7 +17,6 @@ package redact
 import (
 	"testing"
 
-	"github.com/pingcap/tidb/pkg/planner/util/coretestsdk"
 	"github.com/pingcap/tidb/pkg/testkit"
 )
 
@@ -36,7 +35,7 @@ func TestRedactExplain(t *testing.T) {
 	tk.MustExec("create table employee (empid int, deptid int, salary decimal(10,2))")
 	tk.MustExec("CREATE TABLE person (id INT NOT NULL AUTO_INCREMENT PRIMARY KEY,name VARCHAR(255) NOT NULL,address_info JSON,city_no INT AS (JSON_EXTRACT(address_info, '$.city_no')) VIRTUAL,KEY(city_no));")
 
-	coretestsdk.SetTiFlashReplica(t, dom, "test", "employee")
+	testkit.SetTiFlashReplica(t, dom, "test", "employee")
 	// ---------------------------------------------------------------------------
 	// tidb_redact_log=MARKER
 	// ---------------------------------------------------------------------------
@@ -246,8 +245,8 @@ func TestRedactTiFlash(t *testing.T) {
 	tk.MustExec("set @@tidb_allow_mpp=1; set @@tidb_enforce_mpp=1")
 	tk.MustExec("set @@tidb_isolation_read_engines = 'tiflash'")
 	// Create virtual tiflash replica info.
-	coretestsdk.SetTiFlashReplica(t, dom, "test", "first_range")
-	coretestsdk.SetTiFlashReplica(t, dom, "test", "first_range_d64")
+	testkit.SetTiFlashReplica(t, dom, "test", "first_range")
+	testkit.SetTiFlashReplica(t, dom, "test", "first_range_d64")
 
 	tk.MustExec(`set @@tidb_max_tiflash_threads=20`)
 	tk.MustExec("set session tidb_redact_log=ON")

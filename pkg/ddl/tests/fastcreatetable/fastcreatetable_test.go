@@ -15,6 +15,7 @@
 package fastcreatetable
 
 import (
+	"context"
 	"testing"
 	"time"
 
@@ -96,6 +97,7 @@ func TestDDL(t *testing.T) {
 
 func TestMergedJob(t *testing.T) {
 	store := testkit.CreateMockStore(t)
+	ctx := context.Background()
 	var wg util.WaitGroupWrapper
 
 	tk := testkit.NewTestKit(t, store)
@@ -114,7 +116,7 @@ func TestMergedJob(t *testing.T) {
 		tk1.MustExec("create table t(a int)")
 	})
 	require.Eventually(t, func() bool {
-		gotJobs, err := ddl.GetAllDDLJobs(tk.Session())
+		gotJobs, err := ddl.GetAllDDLJobs(ctx, tk.Session())
 		require.NoError(t, err)
 		return len(gotJobs) == 1
 	}, 10*time.Second, 100*time.Millisecond)
@@ -136,7 +138,7 @@ func TestMergedJob(t *testing.T) {
 		tk1.MustExecToErr("create table t1(a int)")
 	})
 	require.Eventually(t, func() bool {
-		gotJobs, err := ddl.GetAllDDLJobs(tk.Session())
+		gotJobs, err := ddl.GetAllDDLJobs(ctx, tk.Session())
 		require.NoError(t, err)
 		return len(gotJobs) == 2 && gotJobs[1].Type == model.ActionCreateTables
 	}, 10*time.Second, 100*time.Millisecond)

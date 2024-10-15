@@ -356,7 +356,6 @@ id	estRows	task	access object	operator info
 Projection_3	1.00	root		sysdate()->Column#1, sleep(1)->Column#2, sysdate()->Column#3
 └─TableDual_4	1.00	root		rows:1
 drop table if exists th;
-set @@session.tidb_enable_table_partition = '1';
 set @@session.tidb_partition_prune_mode = 'static';
 create table th (a int, b int) partition by hash(a) partitions 3;
 insert into th values (0,0),(1,1),(2,2),(3,3),(4,4),(5,5),(6,6),(7,7),(8,8);

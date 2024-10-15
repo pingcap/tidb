@@ -12,9 +12,10 @@ Insert	N/A	root		N/A
 explain format = 'brief' delete from t where a > 100;
 id	estRows	task	access object	operator info
 Delete	N/A	root		N/A
-└─TableReader	3333.33	root		data:Selection
-  └─Selection	3333.33	cop[tikv]		gt(explain-non-select-stmt.t.a, 100)
-    └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+└─TableReader	3333.33	root		data:Projection
+  └─Projection	3333.33	cop[tikv]		explain-non-select-stmt.t._tidb_rowid
+    └─Selection	3333.33	cop[tikv]		gt(explain-non-select-stmt.t.a, 100)
+      └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 explain format = 'brief' update t set b = 100 where a = 200;
 id	estRows	task	access object	operator info
 Update	N/A	root		N/A

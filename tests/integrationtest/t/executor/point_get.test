@@ -45,7 +45,6 @@ drop table if exists PK_1389;
 
 # TestIssue25489
 set @@tidb_partition_prune_mode = 'dynamic';
-set @@session.tidb_enable_list_partition = ON;
 drop table if exists UK_RP16939;
 CREATE TABLE UK_RP16939 (
 	COL1 tinyint(16) DEFAULT '108' COMMENT 'NUMERIC UNIQUE INDEX',
@@ -84,7 +83,6 @@ explain format='brief' select col1, col2 from UK_RP16939 where col1 in (116, 48,
 select col1, col2 from UK_RP16939 where col1 in (116, 48, -30);
 drop table if exists UK_RP16939;
 set @@tidb_partition_prune_mode = DEFAULT;
-set @@session.tidb_enable_list_partition = DEFAULT;
 
 # TestDistinctPlan
 # issue #25320

@@ -114,6 +114,9 @@ const dropUniqueIndexStmt string = alterTableDropPrefix + "index if exists idx_p
 const addIndexStmt string = alterTableAddPrefix + "index if not exists idx_name (name);"
 const dropIndexStmt string = alterTableDropPrefix + "index if exists idx_name;"
 
+const addVectorIndexStmt string = "alter table " + adminPauseTestTableWithVec + " add vector index v_idx((VEC_COSINE_DISTANCE(vec))) USING HNSW;"
+const dropVectorIndexStmt string = "alter table " + adminPauseTestTableWithVec + " drop index if exists v_idx;"
+
 var indexDDLStmtCase = [...]StmtCase{
 	// Add primary key
 	{ai.globalID(), addPrimaryIndexStmt, model.StateNone, true, nil, []string{dropPrimaryIndexStmt}},
@@ -124,7 +127,7 @@ var indexDDLStmtCase = [...]StmtCase{
 
 	// Drop primary key
 	{ai.globalID(), dropPrimaryIndexStmt, model.StatePublic, true, []string{addPrimaryIndexStmt}, []string{dropPrimaryIndexStmt}},
-	{ai.globalID(), dropPrimaryIndexStmt, model.StateWriteOnly, false, []string{addPrimaryIndexStmt}, []string{dropPrimaryIndexStmt}},
+	{ai.globalID(), dropPrimaryIndexStmt, model.StateDeleteReorganization, false, []string{addPrimaryIndexStmt}, []string{dropPrimaryIndexStmt}},
 	{ai.globalID(), dropPrimaryIndexStmt, model.StateWriteOnly, false, []string{addPrimaryIndexStmt}, []string{dropPrimaryIndexStmt}},
 	{ai.globalID(), dropPrimaryIndexStmt, model.StateDeleteOnly, false, []string{addPrimaryIndexStmt}, []string{dropPrimaryIndexStmt}},
 
@@ -142,9 +145,21 @@ var indexDDLStmtCase = [...]StmtCase{
 	{ai.globalID(), addIndexStmt, model.StateWriteReorganization, true, nil, []string{dropIndexStmt}},
 	{ai.globalID(), addIndexStmt, model.StatePublic, false, nil, []string{dropIndexStmt}},
 
+	// Add vector index
+	{ai.globalID(), addVectorIndexStmt, model.StateNone, true, nil, []string{dropVectorIndexStmt}},
+	{ai.globalID(), addVectorIndexStmt, model.StateDeleteOnly, true, nil, []string{dropVectorIndexStmt}},
+	{ai.globalID(), addVectorIndexStmt, model.StateWriteOnly, true, nil, []string{dropVectorIndexStmt}},
+	{ai.globalID(), addVectorIndexStmt, model.StatePublic, false, nil, []string{dropVectorIndexStmt}},
+
+	// Drop vector index
+	{ai.globalID(), dropVectorIndexStmt, model.StatePublic, true, []string{addVectorIndexStmt}, []string{dropVectorIndexStmt}},
+	{ai.globalID(), dropVectorIndexStmt, model.StateWriteOnly, false, []string{addVectorIndexStmt}, []string{dropVectorIndexStmt}},
+	{ai.globalID(), dropVectorIndexStmt, model.StateDeleteOnly, false, []string{addVectorIndexStmt}, []string{dropVectorIndexStmt}},
+	{ai.globalID(), dropVectorIndexStmt, model.StateDeleteReorganization, false, []string{addVectorIndexStmt}, []string{dropVectorIndexStmt}},
+
 	// Drop normal key
 	{ai.globalID(), dropIndexStmt, model.StatePublic, true, []string{addIndexStmt}, []string{dropIndexStmt}},
-	{ai.globalID(), dropIndexStmt, model.StateWriteOnly, false, []string{addIndexStmt}, []string{dropIndexStmt}},
+	{ai.globalID(), dropIndexStmt, model.StateDeleteReorganization, false, []string{addIndexStmt}, []string{dropIndexStmt}},
 	{ai.globalID(), dropIndexStmt, model.StateWriteOnly, false, []string{addIndexStmt}, []string{dropIndexStmt}},
 	{ai.globalID(), dropIndexStmt, model.StateDeleteOnly, false, []string{addIndexStmt}, []string{dropIndexStmt}},
 }

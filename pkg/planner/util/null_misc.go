@@ -18,8 +18,8 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/planner/context"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/planctx"
 )
 
 // allConstants checks if only the expression has only constants.
@@ -99,7 +99,7 @@ func IsNullRejected(ctx base.PlanContext, innerSchema *expression.Schema, predic
 // A condition would be null-rejected in one of following cases:
 // If it is a predicate containing a reference to an inner table (null producing side) that evaluates
 // to UNKNOWN or FALSE when one of its arguments is NULL.
-func isNullRejectedSimpleExpr(ctx context.PlanContext, schema *expression.Schema, expr expression.Expression) bool {
+func isNullRejectedSimpleExpr(ctx planctx.PlanContext, schema *expression.Schema, expr expression.Expression) bool {
 	// The expression should reference at least one field in innerSchema or all constants.
 	if !expression.ExprReferenceSchema(expr, schema) && !allConstants(ctx.GetExprCtx(), expr) {
 		return false

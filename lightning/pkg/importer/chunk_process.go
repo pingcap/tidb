@@ -177,9 +177,10 @@ func (cr *chunkProcessor) process(
 	// Create the encoder.
 	kvEncoder, err := rc.encBuilder.NewEncoder(ctx, &encode.EncodingConfig{
 		SessionOptions: encode.SessionOptions{
-			SQLMode:   rc.cfg.TiDB.SQLMode,
-			Timestamp: cr.chunk.Timestamp,
-			SysVars:   rc.sysVars,
+			SQLMode:               rc.cfg.TiDB.SQLMode,
+			Timestamp:             cr.chunk.Timestamp,
+			SysVars:               rc.sysVars,
+			LogicalImportPrepStmt: rc.cfg.TikvImporter.LogicalImportPrepStmt,
 			// use chunk.PrevRowIDMax as the auto random seed, so it can stay the same value after recover from checkpoint.
 			AutoRandomSeed: cr.chunk.Chunk.PrevRowIDMax,
 		},
@@ -262,9 +263,10 @@ func (cr *chunkProcessor) encodeLoop(
 
 		originalTableEncoder, err = rc.encBuilder.NewEncoder(ctx, &encode.EncodingConfig{
 			SessionOptions: encode.SessionOptions{
-				SQLMode:   rc.cfg.TiDB.SQLMode,
-				Timestamp: cr.chunk.Timestamp,
-				SysVars:   rc.sysVars,
+				SQLMode:               rc.cfg.TiDB.SQLMode,
+				Timestamp:             cr.chunk.Timestamp,
+				SysVars:               rc.sysVars,
+				LogicalImportPrepStmt: rc.cfg.TikvImporter.LogicalImportPrepStmt,
 				// use chunk.PrevRowIDMax as the auto random seed, so it can stay the same value after recover from checkpoint.
 				AutoRandomSeed: cr.chunk.Chunk.PrevRowIDMax,
 			},

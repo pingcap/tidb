@@ -258,22 +258,6 @@ func TestVarsutil(t *testing.T) {
 	require.Equal(t, "3", val)
 	require.Equal(t, int64(3), v.RetryLimit)
 
-	require.Equal(t, "", v.EnableTablePartition)
-	err = v.SetSystemVar(TiDBEnableTablePartition, "on")
-	require.NoError(t, err)
-	val, err = v.GetSessionOrGlobalSystemVar(context.Background(), TiDBEnableTablePartition)
-	require.NoError(t, err)
-	require.Equal(t, "ON", val)
-	require.Equal(t, "ON", v.EnableTablePartition)
-
-	require.False(t, v.EnableListTablePartition)
-	err = v.SetSystemVar(TiDBEnableListTablePartition, "on")
-	require.NoError(t, err)
-	val, err = v.GetSessionOrGlobalSystemVar(context.Background(), TiDBEnableListTablePartition)
-	require.NoError(t, err)
-	require.Equal(t, "ON", val)
-	require.True(t, v.EnableListTablePartition)
-
 	require.Equal(t, DefTiDBOptJoinReorderThreshold, v.TiDBOptJoinReorderThreshold)
 	err = v.SetSystemVar(TiDBOptJoinReorderThreshold, "5")
 	require.NoError(t, err)
@@ -501,13 +485,6 @@ func TestValidate(t *testing.T) {
 		{SecureAuth, "3", true},
 		{MyISAMUseMmap, "ON", false},
 		{MyISAMUseMmap, "OFF", false},
-		{TiDBEnableTablePartition, "ON", false},
-		{TiDBEnableTablePartition, "OFF", false},
-		{TiDBEnableTablePartition, "AUTO", false},
-		{TiDBEnableTablePartition, "UN", true},
-		{TiDBEnableListTablePartition, "ON", false},
-		{TiDBEnableListTablePartition, "OFF", false},
-		{TiDBEnableListTablePartition, "list", true},
 		{TiDBOptCorrelationExpFactor, "a", true},
 		{TiDBOptCorrelationExpFactor, "-10", false},
 		{TiDBOptCorrelationThreshold, "a", true},
@@ -571,9 +548,6 @@ func TestValidate(t *testing.T) {
 		value string
 		error bool
 	}{
-		{TiDBEnableListTablePartition, "ON", false},
-		{TiDBEnableListTablePartition, "OFF", false},
-		{TiDBEnableListTablePartition, "list", true},
 		{TiDBIsolationReadEngines, "", true},
 		{TiDBIsolationReadEngines, "tikv", false},
 		{TiDBIsolationReadEngines, "TiKV,tiflash", false},
@@ -581,8 +555,6 @@ func TestValidate(t *testing.T) {
 	}
 
 	for _, tc := range testCases {
-		// copy iterator variable into a new variable, see issue #27779
-		tc := tc
 		t.Run(tc.key, func(t *testing.T) {
 			_, err := GetSysVar(tc.key).Validate(v, tc.value, ScopeSession)
 			if tc.error {
@@ -623,8 +595,6 @@ func TestValidateStmtSummary(t *testing.T) {
 	}
 
 	for _, tc := range testCases {
-		// copy iterator variable into a new variable, see issue #27779
-		tc := tc
 		t.Run(tc.key, func(t *testing.T) {
 			_, err := GetSysVar(tc.key).Validate(v, tc.value, ScopeGlobal)
 			if tc.error {

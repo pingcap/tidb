@@ -753,3 +753,127 @@ func TestRequireInsertAndSelectPriv(t *testing.T) {
 	require.Equal(t, mysql.InsertPriv, pb.visitInfo[0].privilege)
 	require.Equal(t, mysql.SelectPriv, pb.visitInfo[1].privilege)
 }
+
+func TestImportIntoCollAssignmentChecker(t *testing.T) {
+	cases := []struct {
+		expr       string
+		error      string
+		neededVars []string
+	}{
+		{
+			expr:       "@a+1",
+			neededVars: []string{"a"},
+		},
+		{
+			expr:       "@b+@c+@1",
+			neededVars: []string{"b", "c", "1"},
+		},
+		{
+			expr: "instr(substr(concat_ws('','b','~~'), 6)) + sysdate()",
+		},
+		{
+			expr: "now() + interval 1 day",
+		},
+		{
+			expr: "sysdate() + interval 1 month",
+		},
+		{
+			expr: "cast('123' as unsigned)",
+		},
+		{
+			expr:       "getvar('c')",
+			neededVars: []string{"c"},
+		},
+		{
+			expr:  "a",
+			error: "COLUMN reference is not supported in IMPORT INTO column assignment",
+		},
+		{
+			expr:  "a+2",
+			error: "COLUMN reference is not supported in IMPORT INTO column assignment",
+		},
+		{
+			expr:  "(select 1)",
+			error: "subquery is not supported in IMPORT INTO column assignment",
+		},
+		{
+			expr:  "exists(select 1)",
+			error: "subquery is not supported in IMPORT INTO column assignment",
+		},
+		{
+			expr:  "1 in (select 1)",
+			error: "subquery is not supported in IMPORT INTO column assignment",
+		},
+		{
+			expr:  "1 + (select 1)",
+			error: "subquery is not supported in IMPORT INTO column assignment",
+		},
+		{
+			expr:  "@@sql_mode",
+			error: "system variable is not supported in IMPORT INTO column assignment",
+		},
+		{
+			expr:  "@@global.sql_mode",
+			error: "system variable is not supported in IMPORT INTO column assignment",
+		},
+		{
+			expr:  "@a:=1",
+			error: "setting a variable in IMPORT INTO column assignment is not supported",
+		},
+		{
+			expr:  "default(t.a)",
+			error: "FUNCTION default is not supported in IMPORT INTO column assignment",
+		},
+		{
+			expr:  "ROW_NUMBER() OVER(PARTITION BY 1)",
+			error: "window FUNCTION ROW_NUMBER is not supported in IMPORT INTO column assignment",
+		},
+		{
+			expr:  "COUNT(1)",
+			error: "aggregate FUNCTION COUNT is not supported in IMPORT INTO column assignment",
+		},
+		{
+			expr:  "grouping(1)",
+			error: "FUNCTION grouping is not supported in IMPORT INTO column assignment",
+		},
+		{
+			expr:  "getvar(concat('a', 'b'))",
+			error: "the argument of getvar should be a constant string in IMPORT INTO column assignment",
+		},
+		{
+			expr:  "getvar(now())",
+			error: "the argument of getvar should be a constant string in IMPORT INTO column assignment",
+		},
+		{
+			expr:  "noexist()",
+			error: "FUNCTION noexist is not supported in IMPORT INTO column assignment",
+		},
+		{
+			expr:  "values(a)",
+			error: "COLUMN reference is not supported in IMPORT INTO column assignment",
+		},
+	}
+
+	for i, c := range cases {
+		t.Run(fmt.Sprintf("case-%d-%s", i, c.expr), func(t *testing.T) {
+			stmt, err := parser.New().ParseOneStmt("select "+c.expr, "", "")
+			require.NoError(t, err, c.expr)
+			expr := stmt.(*ast.SelectStmt).Fields.Fields[0].Expr
+
+			checker := newImportIntoCollAssignmentChecker()
+			checker.idx = i
+			expr.Accept(checker)
+			if c.error != "" {
+				require.EqualError(t, checker.err, fmt.Sprintf("%s, index %d", c.error, i), c.expr)
+			} else {
+				require.NoError(t, checker.err, c.expr)
+			}
+
+			expectedNeededVars := make(map[string]int)
+			for _, v := range c.neededVars {
+				expectedNeededVars[v] = i
+			}
+			require.Equal(t, expectedNeededVars, checker.neededVars, c.expr)
+		})
+	}
+}

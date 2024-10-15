@@ -172,11 +172,9 @@ func (ms *StreamMetadataSet) RemoveDataFilesAndUpdateMetadataInBatch(
 	worker := util.NewWorkerPool(ms.MetadataDownloadBatchSize, "delete files")
 	eg, cx := errgroup.WithContext(ctx)
 	for path, metaInfo := range ms.metadataInfos {
-		path := path
-		minTS := metaInfo.MinTS
 		// It's safety to remove the item within a range loop
 		delete(ms.metadataInfos, path)
-		if minTS >= from {
+		if metaInfo.MinTS >= from {
 			// That means all the datafiles wouldn't be removed,
 			// so that the metadata is skipped.
 			continue

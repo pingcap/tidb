@@ -128,8 +128,8 @@ id	estRows	task	access object	operator info
 Projection	12487.50	root		planner__core__casetest__physicalplantest__physical_plan.t.a, planner__core__casetest__physicalplantest__physical_plan.t.b
 └─HashJoin	12487.50	root		inner join, equal:[eq(planner__core__casetest__physicalplantest__physical_plan.t.b, planner__core__casetest__physicalplantest__physical_plan.t.a)]
   ├─UnionScan(Build)	10000.00	root		
-  │ └─TableReader	10000.00	root		data:TableFullScan
-  │   └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+  │ └─IndexReader	10000.00	root		index:IndexFullScan
+  │   └─IndexFullScan	10000.00	cop[tikv]	table:t1, index:idx(a)	keep order:false, stats:pseudo
   └─UnionScan(Probe)	9990.00	root		not(isnull(planner__core__casetest__physicalplantest__physical_plan.t.b))
     └─TableReader	9990.00	root		data:Selection
       └─Selection	9990.00	cop[tikv]		not(isnull(planner__core__casetest__physicalplantest__physical_plan.t.b))
@@ -598,8 +598,8 @@ id	estRows	task	access object	operator info
 Limit	1.00	root		offset:0, count:1
 └─HashAgg	1.00	root		group by:Column#18, funcs:firstrow(Column#18)->Column#18
   └─Union	20000.00	root		
-    ├─TableReader	10000.00	root		data:TableFullScan
-    │ └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+    ├─IndexReader	10000.00	root		index:IndexFullScan
+    │ └─IndexFullScan	10000.00	cop[tikv]	table:t1, index:c2(c2)	keep order:false, stats:pseudo
     └─IndexReader	10000.00	root		index:IndexFullScan
       └─IndexFullScan	10000.00	cop[tikv]	table:t2, index:c1(c1)	keep order:false, stats:pseudo
 explain format='brief' with recursive cte1(c1) as (select c1 from t1 union select c1 from t2 limit 100 offset 100) select * from cte1; -- non-recursive limit, inline cte1;
@@ -607,8 +607,8 @@ id	estRows	task	access object	operator info
 Limit	100.00	root		offset:100, count:100
 └─HashAgg	200.00	root		group by:Column#18, funcs:firstrow(Column#18)->Column#18
   └─Union	20000.00	root		
-    ├─TableReader	10000.00	root		data:TableFullScan
-    │ └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+    ├─IndexReader	10000.00	root		index:IndexFullScan
+    │ └─IndexFullScan	10000.00	cop[tikv]	table:t1, index:c2(c2)	keep order:false, stats:pseudo
     └─IndexReader	10000.00	root		index:IndexFullScan
       └─IndexFullScan	10000.00	cop[tikv]	table:t2, index:c1(c1)	keep order:false, stats:pseudo
 explain format='brief' with recursive cte1(c1) as (select c1 from t1 union select c1 from t2 limit 0 offset 0) select * from cte1; -- non-recursive limit, inline cte1;
@@ -741,8 +741,8 @@ id	estRows	task	access object	operator info
 CTEFullScan	20000.00	root	CTE:tmp	data:CTE_4
 CTE_4	20000.00	root		Recursive CTE
 ├─Projection(Seed Part)	10000.00	root		1->Column#26
-│ └─TableReader	10000.00	root		data:TableFullScan
-│   └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+│ └─IndexReader	10000.00	root		index:IndexFullScan
+│   └─IndexFullScan	10000.00	cop[tikv]	table:t1, index:c2(c2)	keep order:false, stats:pseudo
 └─Projection(Recursive Part)	10000.00	root		cast(plus(Column#27, 1), bigint(1) BINARY)->Column#30
   └─HashJoin	10000.00	root		CARTESIAN inner join, other cond:lt(plus(Column#27, 1), Column#28)
     ├─CTEFullScan(Build)	1.00	root	CTE:b	data:CTE_1
@@ -750,18 +750,18 @@ CTE_4	20000.00	root		Recursive CTE
 CTE_1	1.00	root		Non-Recursive CTE
 └─Projection(Seed Part)	1.00	root		2->Column#8
   └─HashAgg	1.00	root		funcs:count(Column#37)->Column#35
-    └─TableReader	1.00	root		data:HashAgg
+    └─IndexReader	1.00	root		index:HashAgg
       └─HashAgg	1.00	cop[tikv]		funcs:count(1)->Column#37
-        └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+        └─IndexFullScan	10000.00	cop[tikv]	table:t1, index:c2(c2)	keep order:false, stats:pseudo
 explain format='brief' with a as (select count(*) from t1), b as (select 2 as bb from a), c as (with recursive tmp as (select bb as res from b union all select res+1 from tmp where res +1 < 10) select * from tmp) select * from c; -- inline a, b, cannot be inline tmp, c;
 id	estRows	task	access object	operator info
 CTEFullScan	1.80	root	CTE:tmp	data:CTE_4
 CTE_4	1.80	root		Recursive CTE
 ├─Projection(Seed Part)	1.00	root		2->Column#37
 │ └─HashAgg	1.00	root		funcs:count(Column#46)->Column#44
-│   └─TableReader	1.00	root		data:HashAgg
+│   └─IndexReader	1.00	root		index:HashAgg
 │     └─HashAgg	1.00	cop[tikv]		funcs:count(1)->Column#46
-│       └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+│       └─IndexFullScan	10000.00	cop[tikv]	table:t1, index:c2(c2)	keep order:false, stats:pseudo
 └─Projection(Recursive Part)	0.80	root		cast(plus(Column#38, 1), bigint(1) BINARY)->Column#40
   └─Selection	0.80	root		lt(plus(Column#38, 1), 10)
     └─CTETable	1.00	root		Scan on CTE_4
@@ -986,26 +986,27 @@ insert into test.tt values (1, 1), (2, 2), (3, 4);
 set @@tidb_partition_prune_mode='static';
 explain format = 'brief' select /*+nth_plan(1)*/ * from test.tt where a=1 and b=1;
 id	estRows	task	access object	operator info
-TableReader	0.01	root		data:Selection
-└─Selection	0.01	cop[tikv]		eq(test.tt.a, 1), eq(test.tt.b, 1)
-  └─TableFullScan	10000.00	cop[tikv]	table:tt	keep order:false, stats:pseudo
-explain format = 'brief' select /*+nth_plan(2)*/ * from test.tt where a=1 and b=1;
-id	estRows	task	access object	operator info
 IndexLookUp	0.01	root		
 ├─IndexRangeScan(Build)	10.00	cop[tikv]	table:tt, index:a(a)	range:[1,1], keep order:false, stats:pseudo
 └─Selection(Probe)	0.01	cop[tikv]		eq(test.tt.b, 1)
   └─TableRowIDScan	10.00	cop[tikv]	table:tt	keep order:false, stats:pseudo
-explain format = 'brief' select /*+nth_plan(3)*/ * from test.tt where a=1 and b=1;
+explain format = 'brief' select /*+nth_plan(2)*/ * from test.tt where a=1 and b=1;
 id	estRows	task	access object	operator info
 IndexLookUp	0.01	root		
 ├─IndexRangeScan(Build)	10.00	cop[tikv]	table:tt, index:b(b)	range:[1,1], keep order:false, stats:pseudo
 └─Selection(Probe)	0.01	cop[tikv]		eq(test.tt.a, 1)
   └─TableRowIDScan	10.00	cop[tikv]	table:tt	keep order:false, stats:pseudo
-explain format = 'brief' select /*+nth_plan(2)*/ * from test.tt where a=1 and b=1;
+explain format = 'brief' select /*+nth_plan(3)*/ * from test.tt where a=1 and b=1;
 id	estRows	task	access object	operator info
 IndexLookUp	0.01	root		
 ├─IndexRangeScan(Build)	10.00	cop[tikv]	table:tt, index:a(a)	range:[1,1], keep order:false, stats:pseudo
 └─Selection(Probe)	0.01	cop[tikv]		eq(test.tt.b, 1)
+  └─TableRowIDScan	10.00	cop[tikv]	table:tt	keep order:false, stats:pseudo
+explain format = 'brief' select /*+nth_plan(2)*/ * from test.tt where a=1 and b=1;
+id	estRows	task	access object	operator info
+IndexLookUp	0.01	root		
+├─IndexRangeScan(Build)	10.00	cop[tikv]	table:tt, index:b(b)	range:[1,1], keep order:false, stats:pseudo
+└─Selection(Probe)	0.01	cop[tikv]		eq(test.tt.a, 1)
   └─TableRowIDScan	10.00	cop[tikv]	table:tt	keep order:false, stats:pseudo
 explain format = 'brief' select * from test.tt where a=1 and b=1;
 id	estRows	task	access object	operator info
@@ -3109,12 +3110,13 @@ Level	Code	Message
 explain format = 'brief' SELECT ta.NAME,(SELECT sum(tb.CODE) FROM tb WHERE ta.id = tb.id) tb_sum_code FROM ta WHERE ta.NAME LIKE 'chad999%';
 id	estRows	task	access object	operator info
 HashJoin	250.00	root		left outer join, equal:[eq(planner__core__casetest__physicalplantest__physical_plan.ta.id, planner__core__casetest__physicalplantest__physical_plan.tb.id)]
-├─TableReader(Build)	250.00	root		data:Selection
-│ └─Selection	250.00	cop[tikv]		like(planner__core__casetest__physicalplantest__physical_plan.ta.name, "chad999%", 92)
-│   └─TableFullScan	10000.00	cop[tikv]	table:ta	keep order:false, stats:pseudo
-└─HashAgg(Probe)	7992.00	root		group by:planner__core__casetest__physicalplantest__physical_plan.tb.id, funcs:sum(Column#19)->Column#13, funcs:firstrow(planner__core__casetest__physicalplantest__physical_plan.tb.id)->planner__core__casetest__physicalplantest__physical_plan.tb.id
+├─IndexLookUp(Build)	250.00	root		
+│ ├─Selection(Build)	250.00	cop[tikv]		like(planner__core__casetest__physicalplantest__physical_plan.ta.name, "chad999%", 92)
+│ │ └─IndexRangeScan	250.00	cop[tikv]	table:ta, index:idx_ta_name(name)	range:["chad999","chad99:"), keep order:false, stats:pseudo
+│ └─TableRowIDScan(Probe)	250.00	cop[tikv]	table:ta	keep order:false, stats:pseudo
+└─HashAgg(Probe)	7992.00	root		group by:planner__core__casetest__physicalplantest__physical_plan.tb.id, funcs:sum(Column#26)->Column#13, funcs:firstrow(planner__core__casetest__physicalplantest__physical_plan.tb.id)->planner__core__casetest__physicalplantest__physical_plan.tb.id
   └─TableReader	7992.00	root		data:HashAgg
-    └─HashAgg	7992.00	cop[tikv]		group by:planner__core__casetest__physicalplantest__physical_plan.tb.id, funcs:sum(planner__core__casetest__physicalplantest__physical_plan.tb.code)->Column#19
+    └─HashAgg	7992.00	cop[tikv]		group by:planner__core__casetest__physicalplantest__physical_plan.tb.id, funcs:sum(planner__core__casetest__physicalplantest__physical_plan.tb.code)->Column#26
       └─Selection	9990.00	cop[tikv]		not(isnull(planner__core__casetest__physicalplantest__physical_plan.tb.id))
         └─TableFullScan	10000.00	cop[tikv]	table:tb	keep order:false, stats:pseudo
 SELECT ta.NAME,(SELECT sum(tb.CODE) FROM tb WHERE ta.id = tb.id) tb_sum_code FROM ta WHERE ta.NAME LIKE 'chad999%';
@@ -3125,9 +3127,10 @@ explain format = 'brief' SELECT ta.NAME,(SELECT /*+ no_decorrelate() */ sum(tb.C
 id	estRows	task	access object	operator info
 Projection	250.00	root		planner__core__casetest__physicalplantest__physical_plan.ta.name, Column#13
 └─Apply	250.00	root		CARTESIAN left outer join
-  ├─TableReader(Build)	250.00	root		data:Selection
-  │ └─Selection	250.00	cop[tikv]		like(planner__core__casetest__physicalplantest__physical_plan.ta.name, "chad999%", 92)
-  │   └─TableFullScan	10000.00	cop[tikv]	table:ta	keep order:false, stats:pseudo
+  ├─IndexLookUp(Build)	250.00	root		
+  │ ├─Selection(Build)	250.00	cop[tikv]		like(planner__core__casetest__physicalplantest__physical_plan.ta.name, "chad999%", 92)
+  │ │ └─IndexRangeScan	250.00	cop[tikv]	table:ta, index:idx_ta_name(name)	range:["chad999","chad99:"), keep order:false, stats:pseudo
+  │ └─TableRowIDScan(Probe)	250.00	cop[tikv]	table:ta	keep order:false, stats:pseudo
   └─MaxOneRow(Probe)	250.00	root		
     └─StreamAgg	250.00	root		funcs:sum(Column#21)->Column#13
       └─Projection	2500.00	root		cast(planner__core__casetest__physicalplantest__physical_plan.tb.code, decimal(10,0) BINARY)->Column#21
@@ -3141,9 +3144,10 @@ Level	Code	Message
 explain format = 'brief' SELECT ta.NAME,(SELECT sum(tb.CODE) FROM tb WHERE ta.id = tb.id and exists (select 1 from tc where tb.name=tc.name and tc.`code` like '999%')) tb_sum_code FROM ta WHERE ta.NAME LIKE 'chad999%';
 id	estRows	task	access object	operator info
 HashJoin	250.00	root		left outer join, equal:[eq(planner__core__casetest__physicalplantest__physical_plan.ta.id, planner__core__casetest__physicalplantest__physical_plan.tb.id)]
-├─TableReader(Build)	250.00	root		data:Selection
-│ └─Selection	250.00	cop[tikv]		like(planner__core__casetest__physicalplantest__physical_plan.ta.name, "chad999%", 92)
-│   └─TableFullScan	10000.00	cop[tikv]	table:ta	keep order:false, stats:pseudo
+├─IndexLookUp(Build)	250.00	root		
+│ ├─Selection(Build)	250.00	cop[tikv]		like(planner__core__casetest__physicalplantest__physical_plan.ta.name, "chad999%", 92)
+│ │ └─IndexRangeScan	250.00	cop[tikv]	table:ta, index:idx_ta_name(name)	range:["chad999","chad99:"), keep order:false, stats:pseudo
+│ └─TableRowIDScan(Probe)	250.00	cop[tikv]	table:ta	keep order:false, stats:pseudo
 └─HashAgg(Probe)	6387.21	root		group by:Column#38, funcs:sum(Column#37)->Column#18, funcs:firstrow(Column#38)->planner__core__casetest__physicalplantest__physical_plan.tb.id
   └─Projection	7984.01	root		cast(planner__core__casetest__physicalplantest__physical_plan.tb.code, decimal(10,0) BINARY)->Column#37, planner__core__casetest__physicalplantest__physical_plan.tb.id->Column#38
     └─HashJoin	7984.01	root		semi join, equal:[eq(planner__core__casetest__physicalplantest__physical_plan.tb.name, planner__core__casetest__physicalplantest__physical_plan.tc.name)]
@@ -3161,9 +3165,10 @@ explain format = 'brief' SELECT ta.NAME,(SELECT /*+ no_decorrelate() */ sum(tb.C
 id	estRows	task	access object	operator info
 Projection	250.00	root		planner__core__casetest__physicalplantest__physical_plan.ta.name, Column#18
 └─Apply	250.00	root		CARTESIAN left outer join
-  ├─TableReader(Build)	250.00	root		data:Selection
-  │ └─Selection	250.00	cop[tikv]		like(planner__core__casetest__physicalplantest__physical_plan.ta.name, "chad999%", 92)
-  │   └─TableFullScan	10000.00	cop[tikv]	table:ta	keep order:false, stats:pseudo
+  ├─IndexLookUp(Build)	250.00	root		
+  │ ├─Selection(Build)	250.00	cop[tikv]		like(planner__core__casetest__physicalplantest__physical_plan.ta.name, "chad999%", 92)
+  │ │ └─IndexRangeScan	250.00	cop[tikv]	table:ta, index:idx_ta_name(name)	range:["chad999","chad99:"), keep order:false, stats:pseudo
+  │ └─TableRowIDScan(Probe)	250.00	cop[tikv]	table:ta	keep order:false, stats:pseudo
   └─MaxOneRow(Probe)	250.00	root		
     └─StreamAgg	250.00	root		funcs:sum(Column#33)->Column#18
       └─Projection	1998.00	root		cast(planner__core__casetest__physicalplantest__physical_plan.tb.code, decimal(10,0) BINARY)->Column#33
@@ -3184,9 +3189,10 @@ Level	Code	Message
 explain format = 'brief' SELECT ta.NAME,(SELECT sum(tb.CODE) FROM tb WHERE ta.id = tb.id and exists (select /*+ no_decorrelate() */ 1 from tc where tb.name=tc.name and tc.`code` like '999%')) tb_sum_code FROM ta WHERE ta.NAME LIKE 'chad999%';
 id	estRows	task	access object	operator info
 HashJoin	250.00	root		left outer join, equal:[eq(planner__core__casetest__physicalplantest__physical_plan.ta.id, planner__core__casetest__physicalplantest__physical_plan.tb.id)]
-├─TableReader(Build)	250.00	root		data:Selection
-│ └─Selection	250.00	cop[tikv]		like(planner__core__casetest__physicalplantest__physical_plan.ta.name, "chad999%", 92)
-│   └─TableFullScan	10000.00	cop[tikv]	table:ta	keep order:false, stats:pseudo
+├─IndexLookUp(Build)	250.00	root		
+│ ├─Selection(Build)	250.00	cop[tikv]		like(planner__core__casetest__physicalplantest__physical_plan.ta.name, "chad999%", 92)
+│ │ └─IndexRangeScan	250.00	cop[tikv]	table:ta, index:idx_ta_name(name)	range:["chad999","chad99:"), keep order:false, stats:pseudo
+│ └─TableRowIDScan(Probe)	250.00	cop[tikv]	table:ta	keep order:false, stats:pseudo
 └─HashAgg(Probe)	7992.00	root		group by:Column#27, funcs:sum(Column#26)->Column#18, funcs:firstrow(Column#27)->planner__core__casetest__physicalplantest__physical_plan.tb.id
   └─Projection	9990.00	root		cast(planner__core__casetest__physicalplantest__physical_plan.tb.code, decimal(10,0) BINARY)->Column#26, planner__core__casetest__physicalplantest__physical_plan.tb.id->Column#27
     └─Apply	9990.00	root		CARTESIAN semi join
@@ -3205,9 +3211,10 @@ explain format = 'brief' SELECT ta.NAME,(SELECT /*+ no_decorrelate() */ sum(tb.C
 id	estRows	task	access object	operator info
 Projection	250.00	root		planner__core__casetest__physicalplantest__physical_plan.ta.name, Column#18
 └─Apply	250.00	root		CARTESIAN left outer join
-  ├─TableReader(Build)	250.00	root		data:Selection
-  │ └─Selection	250.00	cop[tikv]		like(planner__core__casetest__physicalplantest__physical_plan.ta.name, "chad999%", 92)
-  │   └─TableFullScan	10000.00	cop[tikv]	table:ta	keep order:false, stats:pseudo
+  ├─IndexLookUp(Build)	250.00	root		
+  │ ├─Selection(Build)	250.00	cop[tikv]		like(planner__core__casetest__physicalplantest__physical_plan.ta.name, "chad999%", 92)
+  │ │ └─IndexRangeScan	250.00	cop[tikv]	table:ta, index:idx_ta_name(name)	range:["chad999","chad99:"), keep order:false, stats:pseudo
+  │ └─TableRowIDScan(Probe)	250.00	cop[tikv]	table:ta	keep order:false, stats:pseudo
   └─MaxOneRow(Probe)	250.00	root		
     └─StreamAgg	250.00	root		funcs:sum(Column#22)->Column#18
       └─Projection	2500.00	root		cast(planner__core__casetest__physicalplantest__physical_plan.tb.code, decimal(10,0) BINARY)->Column#22
@@ -3226,17 +3233,18 @@ Level	Code	Message
 explain format = 'brief' SELECT ta.id, 'split' as flag FROM ta WHERE ta.NAME ='chad999' and (select max(tb.code) from tb where ta.id=tb.id ) > 900;
 id	estRows	task	access object	operator info
 Projection	9.99	root		planner__core__casetest__physicalplantest__physical_plan.ta.id, split->Column#10
-└─HashJoin	9.99	root		inner join, equal:[eq(planner__core__casetest__physicalplantest__physical_plan.ta.id, planner__core__casetest__physicalplantest__physical_plan.tb.id)]
+└─IndexHashJoin	9.99	root		inner join, inner:Selection, outer key:planner__core__casetest__physicalplantest__physical_plan.ta.id, inner key:planner__core__casetest__physicalplantest__physical_plan.tb.id, equal cond:eq(planner__core__casetest__physicalplantest__physical_plan.ta.id, planner__core__casetest__physicalplantest__physical_plan.tb.id)
   ├─IndexLookUp(Build)	9.99	root		
   │ ├─IndexRangeScan(Build)	10.00	cop[tikv]	table:ta, index:idx_ta_name(name)	range:["chad999","chad999"], keep order:false, stats:pseudo
   │ └─Selection(Probe)	9.99	cop[tikv]		not(isnull(planner__core__casetest__physicalplantest__physical_plan.ta.id))
   │   └─TableRowIDScan	10.00	cop[tikv]	table:ta	keep order:false, stats:pseudo
-  └─Selection(Probe)	6393.60	root		gt(Column#9, 900)
-    └─HashAgg	7992.00	root		group by:planner__core__casetest__physicalplantest__physical_plan.tb.id, funcs:max(Column#19)->Column#9, funcs:firstrow(planner__core__casetest__physicalplantest__physical_plan.tb.id)->planner__core__casetest__physicalplantest__physical_plan.tb.id
-      └─TableReader	7992.00	root		data:HashAgg
-        └─HashAgg	7992.00	cop[tikv]		group by:planner__core__casetest__physicalplantest__physical_plan.tb.id, funcs:max(planner__core__casetest__physicalplantest__physical_plan.tb.code)->Column#19
-          └─Selection	9990.00	cop[tikv]		not(isnull(planner__core__casetest__physicalplantest__physical_plan.tb.id))
-            └─TableFullScan	10000.00	cop[tikv]	table:tb	keep order:false, stats:pseudo
+  └─Selection(Probe)	63872.06	root		gt(Column#9, 900)
+    └─HashAgg	79840.08	root		group by:planner__core__casetest__physicalplantest__physical_plan.tb.id, funcs:max(Column#13)->Column#9, funcs:firstrow(planner__core__casetest__physicalplantest__physical_plan.tb.id)->planner__core__casetest__physicalplantest__physical_plan.tb.id
+      └─IndexLookUp	79840.08	root		
+        ├─Selection(Build)	9.99	cop[tikv]		not(isnull(planner__core__casetest__physicalplantest__physical_plan.tb.id))
+        │ └─IndexRangeScan	10.00	cop[tikv]	table:tb, index:idx_tb_id(id)	range: decided by [eq(planner__core__casetest__physicalplantest__physical_plan.tb.id, planner__core__casetest__physicalplantest__physical_plan.ta.id)], keep order:false, stats:pseudo
+        └─HashAgg(Probe)	79840.08	cop[tikv]		group by:planner__core__casetest__physicalplantest__physical_plan.tb.id, funcs:max(planner__core__casetest__physicalplantest__physical_plan.tb.code)->Column#13
+          └─TableRowIDScan	9.99	cop[tikv]	table:tb	keep order:false, stats:pseudo
 SELECT ta.id, 'split' as flag FROM ta WHERE ta.NAME ='chad999' and (select max(tb.code) from tb where ta.id=tb.id ) > 900;
 id	flag
 show warnings;
@@ -3265,18 +3273,19 @@ explain format = 'brief' SELECT ta.NAME FROM ta WHERE EXISTS (select 1 from tb w
 id	estRows	task	access object	operator info
 HashJoin	159.84	root		inner join, equal:[eq(planner__core__casetest__physicalplantest__physical_plan.ta.id, planner__core__casetest__physicalplantest__physical_plan.td.id)]
 ├─Selection(Build)	159.84	root		gt(Column#19, 100)
-│ └─HashAgg	199.80	root		group by:planner__core__casetest__physicalplantest__physical_plan.td.id, funcs:max(Column#32)->Column#19, funcs:firstrow(planner__core__casetest__physicalplantest__physical_plan.td.id)->planner__core__casetest__physicalplantest__physical_plan.td.id
+│ └─HashAgg	199.80	root		group by:planner__core__casetest__physicalplantest__physical_plan.td.id, funcs:max(Column#51)->Column#19, funcs:firstrow(planner__core__casetest__physicalplantest__physical_plan.td.id)->planner__core__casetest__physicalplantest__physical_plan.td.id
 │   └─TableReader	199.80	root		data:HashAgg
-│     └─HashAgg	199.80	cop[tikv]		group by:planner__core__casetest__physicalplantest__physical_plan.td.id, funcs:max(planner__core__casetest__physicalplantest__physical_plan.td.id)->Column#32
+│     └─HashAgg	199.80	cop[tikv]		group by:planner__core__casetest__physicalplantest__physical_plan.td.id, funcs:max(planner__core__casetest__physicalplantest__physical_plan.td.id)->Column#51
 │       └─Selection	249.75	cop[tikv]		like(planner__core__casetest__physicalplantest__physical_plan.td.name, "chad999%", 92), not(isnull(planner__core__casetest__physicalplantest__physical_plan.td.id))
 │         └─TableFullScan	10000.00	cop[tikv]	table:td	keep order:false, stats:pseudo
 └─HashJoin(Probe)	200.00	root		inner join, equal:[eq(planner__core__casetest__physicalplantest__physical_plan.ta.name, planner__core__casetest__physicalplantest__physical_plan.tc.name)]
   ├─Selection(Build)	160.00	root		gt(Column#14, 100)
-  │ └─HashAgg	200.00	root		group by:planner__core__casetest__physicalplantest__physical_plan.tc.name, funcs:max(Column#24)->Column#14, funcs:firstrow(planner__core__casetest__physicalplantest__physical_plan.tc.name)->planner__core__casetest__physicalplantest__physical_plan.tc.name
-  │   └─TableReader	200.00	root		data:HashAgg
-  │     └─HashAgg	200.00	cop[tikv]		group by:planner__core__casetest__physicalplantest__physical_plan.tc.name, funcs:max(planner__core__casetest__physicalplantest__physical_plan.tc.id)->Column#24
-  │       └─Selection	250.00	cop[tikv]		like(planner__core__casetest__physicalplantest__physical_plan.tc.name, "chad99%", 92), not(isnull(planner__core__casetest__physicalplantest__physical_plan.tc.name))
-  │         └─TableFullScan	10000.00	cop[tikv]	table:tc	keep order:false, stats:pseudo
+  │ └─HashAgg	200.00	root		group by:planner__core__casetest__physicalplantest__physical_plan.tc.name, funcs:max(Column#46)->Column#14, funcs:firstrow(planner__core__casetest__physicalplantest__physical_plan.tc.name)->planner__core__casetest__physicalplantest__physical_plan.tc.name
+  │   └─IndexLookUp	200.00	root		
+  │     ├─Selection(Build)	250.00	cop[tikv]		like(planner__core__casetest__physicalplantest__physical_plan.tc.name, "chad99%", 92)
+  │     │ └─IndexRangeScan	250.00	cop[tikv]	table:tc, index:idx_tc_name(name)	range:["chad99","chad9:"), keep order:false, stats:pseudo
+  │     └─HashAgg(Probe)	200.00	cop[tikv]		group by:planner__core__casetest__physicalplantest__physical_plan.tc.name, funcs:max(planner__core__casetest__physicalplantest__physical_plan.tc.id)->Column#46
+  │       └─TableRowIDScan	250.00	cop[tikv]	table:tc	keep order:false, stats:pseudo
   └─HashJoin(Probe)	7976.02	root		semi join, equal:[eq(planner__core__casetest__physicalplantest__physical_plan.ta.code, planner__core__casetest__physicalplantest__physical_plan.tb.code)]
     ├─TableReader(Build)	249.75	root		data:Selection
     │ └─Selection	249.75	cop[tikv]		like(planner__core__casetest__physicalplantest__physical_plan.tb.name, "chad9%", 92), not(isnull(planner__core__casetest__physicalplantest__physical_plan.tb.code))

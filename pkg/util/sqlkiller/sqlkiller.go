@@ -79,7 +79,7 @@ func (killer *SQLKiller) getKillError(status killSignal) error {
 	case ServerMemoryExceeded:
 		return exeerrors.ErrMemoryExceedForInstance.GenWithStackByArgs(killer.ConnID.Load())
 	case RunawayQueryExceeded:
-		return exeerrors.ErrResourceGroupQueryRunawayInterrupted.GenWithStackByArgs()
+		return exeerrors.ErrResourceGroupQueryRunawayInterrupted.FastGenByArgs("runaway exceed tidb side")
 	default:
 	}
 	return nil

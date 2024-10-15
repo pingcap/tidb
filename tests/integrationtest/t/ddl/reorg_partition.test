@@ -390,4 +390,16 @@ ADMIN CHECK TABLE t;
 SELECT * FROM t PARTITION(pAll);
 --sorted_result
 SELECT * FROM t;
+drop table t;
 
+# Issue 56094
+-- error 1659
+create table t(a varchar(20), b int) partition by hash(a) partitions 2;
+create table t(a varchar(20), b int);
+-- error 1659
+alter table t partition by hash(a) partitions 2;
+-- error 1105
+alter table t partition by key() partitions 2;
+-- error 1488
+alter table t partition by key(c) partitions 2;
+drop table t;

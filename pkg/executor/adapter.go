@@ -555,7 +555,12 @@ func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 			return nil, err
 		}
 		if len(switchGroupName) > 0 {
-			stmtCtx.ResourceGroupName = switchGroupName
+			group, err := rm.ResourceGroupCtl.GetResourceGroup(switchGroupName)
+			if err != nil || group == nil {
+				logutil.BgLogger().Debug("invalid switch resource group", zap.String("switch-group-name", switchGroupName), zap.Error(err))
+			} else {
+				stmtCtx.ResourceGroupName = switchGroupName
+			}
 		}
 	}
 	ctx = a.observeStmtBeginForTopSQL(ctx)
@@ -1421,6 +1426,7 @@ func (a *ExecStmt) FinishExecuteStmt(txnTS uint64, err error, hasMoreResults boo
 	}
 	a.updatePrevStmt()
 	a.recordLastQueryInfo(err)
+	a.recordAffectedRows2Metrics()
 	a.observePhaseDurations(sessVars.InRestrictedSQL, execDetail.CommitDetail)
 	executeDuration := sessVars.GetExecuteDuration()
 	if sessVars.InRestrictedSQL {
@@ -1465,6 +1471,22 @@ func (a *ExecStmt) FinishExecuteStmt(txnTS uint64, err error, hasMoreResults boo
 	}
 
 	a.Ctx.ReportUsageStats()
+}
+
+func (a *ExecStmt) recordAffectedRows2Metrics() {
+	sessVars := a.Ctx.GetSessionVars()
+	if affectedRows := sessVars.StmtCtx.AffectedRows(); affectedRows > 0 {
+		switch sessVars.StmtCtx.StmtType {
+		case "Insert":
+			metrics.AffectedRowsCounterInsert.Add(float64(affectedRows))
+		case "Replace":
+			metrics.AffectedRowsCounterReplace.Add(float64(affectedRows))
+		case "Delete":
+			metrics.AffectedRowsCounterDelete.Add(float64(affectedRows))
+		case "Update":
+			metrics.AffectedRowsCounterUpdate.Add(float64(affectedRows))
+		}
+	}
 }
 
 func (a *ExecStmt) recordLastQueryInfo(err error) {

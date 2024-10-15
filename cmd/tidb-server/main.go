@@ -51,14 +51,12 @@ import (
 	"github.com/pingcap/tidb/pkg/server"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/session/txninfo"
-	"github.com/pingcap/tidb/pkg/sessionctx/binloginfo"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/statistics"
 	kvstore "github.com/pingcap/tidb/pkg/store"
 	"github.com/pingcap/tidb/pkg/store/copr"
 	"github.com/pingcap/tidb/pkg/store/driver"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
-	pumpcli "github.com/pingcap/tidb/pkg/tidb-binlog/pump_client"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/cgmon"
 	"github.com/pingcap/tidb/pkg/util/chunk"
@@ -86,7 +84,6 @@ import (
 	"github.com/prometheus/client_golang/prometheus/push"
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/txnkv/transaction"
-	pd "github.com/tikv/pd/client"
 	"go.uber.org/automaxprocs/maxprocs"
 	"go.uber.org/zap"
 )
@@ -104,7 +101,6 @@ const (
 	nmPort             = "P"
 	nmCors             = "cors"
 	nmSocket           = "socket"
-	nmEnableBinlog     = "enable-binlog"
 	nmRunDDL           = "run-ddl"
 	nmLogLevel         = "L"
 	nmLogFile          = "log-file"
@@ -209,7 +205,6 @@ func initFlagSet() *flag.FlagSet {
 	port = fset.String(nmPort, "4000", "tidb server port")
 	cors = fset.String(nmCors, "", "tidb server allow cors origin")
 	socket = fset.String(nmSocket, "/tmp/tidb-{Port}.sock", "The socket file to use for connection.")
-	enableBinlog = flagBoolean(fset, nmEnableBinlog, false, "enable generate binlog")
 	runDDL = flagBoolean(fset, nmRunDDL, true, "run ddl worker on this tidb-server")
 	ddlLease = fset.String(nmDdlLease, "45s", "schema lease duration, very dangerous to change only if you know what you do")
 	tokenLimit = fset.Int(nmTokenLimit, 1000, "the limit of concurrent executed sessions")
@@ -317,7 +312,6 @@ func main() {
 	cgmon.StartCgroupMonitor()
 	setupTracing() // Should before createServer and after setup config.
 	printInfo()
-	setupBinlogClient()
 	setupMetrics()
 
 	keyspaceName := keyspace.GetKeyspaceNameBySettings()
@@ -422,42 +416,6 @@ func createStoreAndDomain(keyspaceName string) (kv.Storage, *domain.Domain) {
 	return storage, dom
 }
 
-func setupBinlogClient() {
-	cfg := config.GetGlobalConfig()
-	if !cfg.Binlog.Enable {
-		return
-	}
-
-	if cfg.Binlog.IgnoreError {
-		binloginfo.SetIgnoreError(true)
-	}
-
-	var (
-		client *pumpcli.PumpsClient
-		err    error
-	)
-
-	securityOption := pd.SecurityOption{
-		CAPath:   cfg.Security.ClusterSSLCA,
-		CertPath: cfg.Security.ClusterSSLCert,
-		KeyPath:  cfg.Security.ClusterSSLKey,
-	}
-
-	if len(cfg.Binlog.BinlogSocket) == 0 {
-		client, err = pumpcli.NewPumpsClient(cfg.Path, cfg.Binlog.Strategy, parseDuration(cfg.Binlog.WriteTimeout), securityOption)
-	} else {
-		client, err = pumpcli.NewLocalPumpsClient(cfg.Path, cfg.Binlog.BinlogSocket, parseDuration(cfg.Binlog.WriteTimeout), securityOption)
-	}
-
-	terror.MustNil(err)
-
-	err = logutil.InitLogger(cfg.Log.ToLogConfig())
-	terror.MustNil(err)
-
-	binloginfo.SetPumpsClient(client)
-	log.Info("tidb-server", zap.Bool("create pumps client success, ignore binlog error", cfg.Binlog.IgnoreError))
-}
-
 // Prometheus push.
 const zeroDuration = time.Duration(0)
 
@@ -560,9 +518,6 @@ func overrideConfig(cfg *config.Config, fset *flag.FlagSet) {
 	}
 	if actualFlags[nmSocket] {
 		cfg.Socket = *socket
-	}
-	if actualFlags[nmEnableBinlog] {
-		cfg.Binlog.Enable = *enableBinlog
 	}
 	if actualFlags[nmRunDDL] {
 		cfg.Instance.TiDBEnableDDL.Store(*runDDL)
@@ -810,7 +765,6 @@ func setGlobalVars() {
 	variable.SetSysVar(variable.TiDBForcePriority, mysql.Priority2Str[priority])
 	variable.SetSysVar(variable.TiDBOptDistinctAggPushDown, variable.BoolToOnOff(cfg.Performance.DistinctAggPushDown))
 	variable.SetSysVar(variable.TiDBOptProjectionPushDown, variable.BoolToOnOff(cfg.Performance.ProjectionPushDown))
-	variable.SetSysVar(variable.LogBin, variable.BoolToOnOff(cfg.Binlog.Enable))
 	variable.SetSysVar(variable.Port, fmt.Sprintf("%d", cfg.Port))
 	cfg.Socket = strings.Replace(cfg.Socket, "{Port}", fmt.Sprintf("%d", cfg.Port), 1)
 	variable.SetSysVar(variable.Socket, cfg.Socket)

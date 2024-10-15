@@ -31,7 +31,7 @@ type DeriveTopNFromWindow struct {
 
 // checkPartitionBy mainly checks if partition by of window function is a prefix of
 // data order (clustered index) of the data source. TiFlash is allowed only for empty partition by.
-func checkPartitionBy(p *logicalop.LogicalWindow, d *DataSource) bool {
+func checkPartitionBy(p *logicalop.LogicalWindow, d *logicalop.DataSource) bool {
 	// No window partition by. We are OK.
 	if len(p.PartitionBy) == 0 {
 		return true
@@ -87,7 +87,7 @@ func windowIsTopN(lp base.LogicalPlan) (bool, uint64) {
 	}
 
 	grandChild := child.Children()[0]
-	dataSource, isDataSource := grandChild.(*DataSource)
+	dataSource, isDataSource := grandChild.(*logicalop.DataSource)
 	if !isDataSource {
 		return false, 0
 	}

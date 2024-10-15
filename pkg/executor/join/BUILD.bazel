@@ -29,6 +29,7 @@ go_library(
         "//pkg/executor/internal/applycache",
         "//pkg/executor/internal/exec",
         "//pkg/executor/internal/vecgroupchecker",
+        "//pkg/executor/join/joinversion",
         "//pkg/executor/unionexec",
         "//pkg/expression",
         "//pkg/parser/mysql",

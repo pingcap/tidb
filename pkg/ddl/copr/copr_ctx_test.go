@@ -19,7 +19,7 @@ import (
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/expression"
-	"github.com/pingcap/tidb/pkg/expression/contextstatic"
+	"github.com/pingcap/tidb/pkg/expression/exprstatic"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -202,7 +202,7 @@ func TestCollectVirtualColumnOffsetsAndTypes(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			ctx := contextstatic.NewStaticEvalContext()
+			ctx := exprstatic.NewEvalContext()
 			gotOffsets, gotFt := collectVirtualColumnOffsetsAndTypes(ctx, tt.cols)
 			require.Equal(t, gotOffsets, tt.offsets)
 			require.Equal(t, len(gotFt), len(tt.fieldTp))

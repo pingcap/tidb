@@ -1,0 +1,152 @@
+set tidb_enable_global_index=true;
+drop table if exists t;
+CREATE TABLE `t` (
+`a` int(11) DEFAULT NULL,
+`b` int(11) DEFAULT NULL,
+`c` int(11) DEFAULT NULL,
+UNIQUE KEY `idx` ((`c` + 1)) global,
+UNIQUE KEY `idx1` (`c`) global
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+PARTITION BY HASH (`b`) PARTITIONS 4;
+show warnings;
+Level	Code	Message
+Warning	8265	Auto analyze is not effective for index 'idx', need analyze manually
+insert into t values (1,1,1),(2,2,2),(3,3,3),(4,4,4),(5,5,5);
+insert into t(a) values (1), (2);
+analyze table t;
+#Test special global index
+explain select c+1 from t where (c+1)>3;
+id	estRows	task	access object	operator info
+IndexReader_7	3.00	root	partition:all	index:IndexRangeScan_5
+└─IndexRangeScan_5	3.00	cop[tikv]	table:t, index:idx(`c` + 1)	range:(3,+inf], keep order:false
+explain select c+1 from t where (c+1)>4;
+id	estRows	task	access object	operator info
+IndexReader_7	2.00	root	partition:all	index:IndexRangeScan_5
+└─IndexRangeScan_5	2.00	cop[tikv]	table:t, index:idx(`c` + 1)	range:(4,+inf], keep order:false
+#Test normal global index
+explain select c from t where c > 2;
+id	estRows	task	access object	operator info
+IndexReader_7	3.00	root	partition:all	index:IndexRangeScan_5
+└─IndexRangeScan_5	3.00	cop[tikv]	table:t, index:idx1(c)	range:(2,+inf], keep order:false
+explain select c from t where c > 3;
+id	estRows	task	access object	operator info
+IndexReader_7	2.00	root	partition:all	index:IndexRangeScan_5
+└─IndexRangeScan_5	2.00	cop[tikv]	table:t, index:idx1(c)	range:(3,+inf], keep order:false
+alter table t add unique index idx2((`c` + 2)) global;
+show warnings;
+Level	Code	Message
+analyze table t index idx2;
+#Test special global index after analyze index
+explain select c+2 from t where (c+2)>3;
+id	estRows	task	access object	operator info
+IndexReader_7	4.00	root	partition:all	index:IndexRangeScan_5
+└─IndexRangeScan_5	4.00	cop[tikv]	table:t, index:idx2(`c` + 2)	range:(3,+inf], keep order:false
+explain select c+2 from t where (c+2)>4;
+id	estRows	task	access object	operator info
+IndexReader_7	3.00	root	partition:all	index:IndexRangeScan_5
+└─IndexRangeScan_5	3.00	cop[tikv]	table:t, index:idx2(`c` + 2)	range:(4,+inf], keep order:false
+#Test return error with analyze special global index
+analyze table t partition p0, p1 index idx;
+Error 1105 (HY000): Analyze global index 'idx' can't work with analyze specified partitions
+analyze table t partition p0, p1 index;
+Error 1105 (HY000): Analyze global index 'idx' can't work with analyze specified partitions
+show stats_histograms where table_name='t' and Db_name='globalindex__analyze';
+Db_name	Table_name	Partition_name	Column_name	Is_index	Update_time	Distinct_count	Null_count	Avg_col_size	Correlation	Load_status	Total_mem_usage	Hist_mem_usage	Topn_mem_usage	Cms_mem_usage
+globalindex__analyze	t	global	c	0	<update_time>	5	2	<avg_col_size>	0	allLoaded	237	0	237	0
+globalindex__analyze	t	global	idx	1	<update_time>	5	2	<avg_col_size>	0	allLoaded	237	0	237	0
+globalindex__analyze	t	global	idx1	1	<update_time>	5	2	<avg_col_size>	0	allLoaded	237	0	237	0
+globalindex__analyze	t	global	idx2	1	<update_time>	5	2	<avg_col_size>	0	allLoaded	237	0	237	0
+globalindex__analyze	t	p0	c	0	<update_time>	1	2	<avg_col_size>	1	allLoaded	73	0	73	0
+globalindex__analyze	t	p0	idx1	1	<update_time>	1	2	<avg_col_size>	0	allLoaded	73	0	73	0
+globalindex__analyze	t	p1	c	0	<update_time>	2	0	<avg_col_size>	1	allLoaded	114	0	114	0
+globalindex__analyze	t	p1	idx1	1	<update_time>	2	0	<avg_col_size>	0	allLoaded	114	0	114	0
+globalindex__analyze	t	p2	c	0	<update_time>	1	0	<avg_col_size>	1	allLoaded	73	0	73	0
+globalindex__analyze	t	p2	idx1	1	<update_time>	1	0	<avg_col_size>	0	allLoaded	73	0	73	0
+globalindex__analyze	t	p3	c	0	<update_time>	1	0	<avg_col_size>	1	allLoaded	73	0	73	0
+globalindex__analyze	t	p3	idx1	1	<update_time>	1	0	<avg_col_size>	0	allLoaded	73	0	73	0
+#Test global index + primary key + prefix index
+drop table if exists t;
+create table t (
+id int,
+value int,
+name varchar(20),
+primary key(name(2), id) global
+) partition by hash(value) partitions 4;
+show warnings;
+Level	Code	Message
+Warning	8265	Auto analyze is not effective for index 'PRIMARY', need analyze manually
+insert into t values (1, 1, 'abc'), (2, 2, 'abd'), (3, 3, 'axe'), (4, 4, 'axf'), (5, 5, 'azd');
+analyze table t;
+explain select id from t use index(primary) where name like 'ab%';
+id	estRows	task	access object	operator info
+Projection_4	2.00	root		globalindex__analyze.t.id
+└─IndexLookUp_10	2.00	root	partition:all	
+  ├─IndexRangeScan_6(Build)	2.00	cop[tikv]	table:t, index:PRIMARY(name, id)	range:["ab","ac"), keep order:false
+  └─Selection_9(Probe)	2.00	cop[tikv]		like(globalindex__analyze.t.name, "ab%", 92)
+    └─TableRowIDScan_7	2.00	cop[tikv]	table:t	keep order:false
+select id from t use index(primary) where name like 'ab%';
+id
+1
+2
+#Test return error with analyze special global index
+analyze table t partition p0 index primary;
+Error 1105 (HY000): Analyze global index 'PRIMARY' can't work with analyze specified partitions
+analyze table t partition p0 index;
+Error 1105 (HY000): Analyze global index 'PRIMARY' can't work with analyze specified partitions
+#Test analyze special global indexes and normal indexes mixed.
+drop table if exists t;
+create table t(
+a int,
+b int,
+c int,
+d varchar(20),
+index b(b),
+unique index b_s((b + 1)) global,
+unique index d_s(d(3)) global
+) partition by hash(a) partitions 5;
+show warnings;
+Level	Code	Message
+Warning	8265	Auto analyze is not effective for index 'b_s', need analyze manually
+Warning	8265	Auto analyze is not effective for index 'd_s', need analyze manually
+insert into t values (1, 1, 1, 'abc'), (2, 2, 2, 'abd'), (3, 3, 3, 'axe'), (4, 4, 4, 'axf'), (5, 5, 5, 'azd');
+#Test `analyze table t index idx1[, idx2]` stmt
+analyze table t index b, b_s, d_s;
+explain select * from t use index(b_s) where b + 1 > 3;
+id	estRows	task	access object	operator info
+Projection_4	3.00	root		globalindex__analyze.t.a, globalindex__analyze.t.b, globalindex__analyze.t.c, globalindex__analyze.t.d
+└─IndexLookUp_9	3.00	root	partition:all	
+  ├─IndexRangeScan_6(Build)	3.00	cop[tikv]	table:t, index:b_s(`b` + 1)	range:(3,+inf], keep order:false
+  └─TableRowIDScan_7(Probe)	3.00	cop[tikv]	table:t	keep order:false
+explain select * from t use index(b) where b > 3;
+id	estRows	task	access object	operator info
+IndexLookUp_7	2.00	root	partition:all	
+├─IndexRangeScan_5(Build)	2.00	cop[tikv]	table:t, index:b(b)	range:(3,+inf], keep order:false
+└─TableRowIDScan_6(Probe)	2.00	cop[tikv]	table:t	keep order:false
+explain select * from t use index(d_s) where d like 'ab%';
+id	estRows	task	access object	operator info
+IndexLookUp_9	2.00	root	partition:all	
+├─IndexRangeScan_5(Build)	2.00	cop[tikv]	table:t, index:d_s(d)	range:["ab","ac"), keep order:false
+└─Selection_8(Probe)	2.00	cop[tikv]		like(globalindex__analyze.t.d, "ab%", 92)
+  └─TableRowIDScan_6	2.00	cop[tikv]	table:t	keep order:false
+show stats_histograms where table_name='t' and Db_name='globalindex__analyze';
+Db_name	Table_name	Partition_name	Column_name	Is_index	Update_time	Distinct_count	Null_count	Avg_col_size	Correlation	Load_status	Total_mem_usage	Hist_mem_usage	Topn_mem_usage	Cms_mem_usage
+globalindex__analyze	t	global	b	0	<update_time>	5	0	<avg_col_size>	0	allLoaded	237	0	237	0
+globalindex__analyze	t	global	b	1	<update_time>	5	0	<avg_col_size>	0	allLoaded	237	0	237	0
+globalindex__analyze	t	global	b_s	1	<update_time>	5	0	<avg_col_size>	0	allLoaded	237	0	237	0
+globalindex__analyze	t	global	d	0	<update_time>	5	0	<avg_col_size>	0	allLoaded	242	0	242	0
+globalindex__analyze	t	global	d_s	1	<update_time>	5	0	<avg_col_size>	0	allLoaded	242	0	242	0
+globalindex__analyze	t	p0	b	0	<update_time>	1	0	<avg_col_size>	1	allLoaded	73	0	73	0
+globalindex__analyze	t	p0	b	1	<update_time>	1	0	<avg_col_size>	0	allLoaded	73	0	73	0
+globalindex__analyze	t	p0	d	0	<update_time>	1	0	<avg_col_size>	1	allLoaded	74	0	74	0
+globalindex__analyze	t	p1	b	0	<update_time>	1	0	<avg_col_size>	1	allLoaded	73	0	73	0
+globalindex__analyze	t	p1	b	1	<update_time>	1	0	<avg_col_size>	0	allLoaded	73	0	73	0
+globalindex__analyze	t	p1	d	0	<update_time>	1	0	<avg_col_size>	1	allLoaded	74	0	74	0
+globalindex__analyze	t	p2	b	0	<update_time>	1	0	<avg_col_size>	1	allLoaded	73	0	73	0
+globalindex__analyze	t	p2	b	1	<update_time>	1	0	<avg_col_size>	0	allLoaded	73	0	73	0
+globalindex__analyze	t	p2	d	0	<update_time>	1	0	<avg_col_size>	1	allLoaded	74	0	74	0
+globalindex__analyze	t	p3	b	0	<update_time>	1	0	<avg_col_size>	1	allLoaded	73	0	73	0
+globalindex__analyze	t	p3	b	1	<update_time>	1	0	<avg_col_size>	0	allLoaded	73	0	73	0
+globalindex__analyze	t	p3	d	0	<update_time>	1	0	<avg_col_size>	1	allLoaded	74	0	74	0
+globalindex__analyze	t	p4	b	0	<update_time>	1	0	<avg_col_size>	1	allLoaded	73	0	73	0
+globalindex__analyze	t	p4	b	1	<update_time>	1	0	<avg_col_size>	0	allLoaded	73	0	73	0
+globalindex__analyze	t	p4	d	0	<update_time>	1	0	<avg_col_size>	1	allLoaded	74	0	74	0

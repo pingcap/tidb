@@ -8,7 +8,7 @@ go_library(
     deps = [
         "//pkg/distsql/context",
         "//pkg/expression",
-        "//pkg/expression/context",
+        "//pkg/expression/exprctx",
         "//pkg/infoschema",
         "//pkg/meta/model",
         "//pkg/parser/model",
@@ -27,7 +27,7 @@ go_test(
     shard_count = 3,
     deps = [
         "//pkg/expression",
-        "//pkg/expression/contextstatic",
+        "//pkg/expression/exprstatic",
         "//pkg/meta/model",
         "//pkg/parser/model",
         "//pkg/parser/mysql",

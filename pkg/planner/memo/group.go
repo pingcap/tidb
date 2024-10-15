@@ -22,9 +22,9 @@ import (
 	// import core pkg first to call its init func.
 	_ "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/pattern"
 	"github.com/pingcap/tidb/pkg/planner/property"
-	"github.com/pingcap/tidb/pkg/planner/util/utilfuncp"
 )
 
 // ExploreMark is uses to mark whether a Group or GroupExpr has
@@ -223,5 +223,5 @@ func (g *Group) BuildKeyInfo() {
 		g.Prop.Schema.Keys = childSchema[0].Keys
 	}
 	e.ExprNode.BuildKeyInfo(g.Prop.Schema, childSchema)
-	g.Prop.MaxOneRow = e.ExprNode.MaxOneRow() || utilfuncp.HasMaxOneRowUtil(e.ExprNode, childMaxOneRow)
+	g.Prop.MaxOneRow = e.ExprNode.MaxOneRow() || logicalop.HasMaxOneRow(e.ExprNode, childMaxOneRow)
 }

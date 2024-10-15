@@ -18,7 +18,7 @@ import (
 	"testing"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/pkg/expression/contextstatic"
+	"github.com/pingcap/tidb/pkg/expression/exprstatic"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	pmodel "github.com/pingcap/tidb/pkg/parser/model"
@@ -135,7 +135,7 @@ func TestIsBinaryLiteral(t *testing.T) {
 func TestConstLevel(t *testing.T) {
 	ctxConst := NewZero()
 	ctxConst.DeferredExpr = newFunctionWithMockCtx(ast.UnixTimestamp)
-	ctx := contextstatic.NewStaticEvalContext()
+	ctx := exprstatic.NewEvalContext()
 	for _, c := range []struct {
 		exp   Expression
 		level ConstLevel

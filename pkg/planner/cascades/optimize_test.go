@@ -145,7 +145,7 @@ func TestPreparePossibleProperties(t *testing.T) {
 	require.NoError(t, err)
 
 	// collect the target columns: f, a
-	ds, ok := logic.Children()[0].Children()[0].(*plannercore.DataSource)
+	ds, ok := logic.Children()[0].Children()[0].(*logicalop.DataSource)
 	require.True(t, ok)
 
 	var columnF, columnA *expression.Column

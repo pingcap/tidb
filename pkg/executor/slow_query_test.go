@@ -147,8 +147,8 @@ func TestParseSlowLogFile(t *testing.T) {
 # Request_unit_read: 2.158
 # Request_unit_write: 2.123
 # Time_queued_by_rc: 0.05
-# Tidb_cpu_usage: 0.01
-# Tikv_cpu_usage: 0.021
+# Tidb_cpu_time: 0.01
+# Tikv_cpu_time: 0.021
 # Plan_digest: 60e9378c746d9a2be1c791047e008967cf252eb6de9167ad3aa6098fa2d523f4
 # Prev_stmt: update t set i = 1;
 use test;

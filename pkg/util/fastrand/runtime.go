@@ -12,8 +12,6 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//go:build !go1.22
-
 package fastrand
 
 import (
@@ -22,5 +20,5 @@ import (
 
 // Uint32 returns a lock free uint32 value.
 //
-//go:linkname Uint32 runtime.fastrand
+//go:linkname Uint32 runtime.cheaprand
 func Uint32() uint32

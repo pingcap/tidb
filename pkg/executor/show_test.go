@@ -97,3 +97,30 @@ func TestShow(t *testing.T) {
 	tk.MustExec("create global temporary table test.t2(id int) ON COMMIT DELETE ROWS;")
 	tk.MustQuery("show tables from test like 't2';").Check(testkit.Rows("t2"))
 }
+
+func TestShowIndex(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("use test")
+	tk.MustExec("create table t(id int, abclmn int);")
+
+	tk.MustExec("create index idx on t(abclmn);")
+	tk.MustQuery("show index from t").Check(testkit.Rows("t 1 idx 1 abclmn A 0 <nil> <nil> YES BTREE   YES <nil> NO NO"))
+}
+
+func TestShowIndexWithGlobalIndex(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("use test")
+	tk.MustExec("set tidb_enable_global_index=true;")
+
+	defer tk.MustExec("set tidb_enable_global_index=false;")
+
+	tk.MustExec("create table test_t1 (a int, b int) partition by range (b) (partition p0 values less than (10),  partition p1 values less than (maxvalue));")
+
+	tk.MustExec("insert test_t1 values (1, 1);")
+	tk.MustExec("alter table test_t1 add unique index p_a (a) GLOBAL;")
+	tk.MustQuery("show index from test_t1").Check(testkit.Rows("test_t1 0 p_a 1 a A 0 <nil> <nil> YES BTREE   YES <nil> NO YES"))
+}

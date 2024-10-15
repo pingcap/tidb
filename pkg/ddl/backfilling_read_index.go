@@ -105,8 +105,8 @@ func (r *readIndexExecutor) RunSubtask(ctx context.Context, subtask *proto.Subta
 		return err
 	}
 
-	opCtx := NewDistTaskOperatorCtx(ctx, subtask.TaskID, subtask.ID)
-	defer opCtx.Cancel()
+	opCtx, cancel := NewDistTaskOperatorCtx(ctx, subtask.TaskID, subtask.ID)
+	defer cancel()
 	r.curRowCount.Store(0)
 
 	if len(r.cloudStorageURI) > 0 {

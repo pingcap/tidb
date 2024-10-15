@@ -17,6 +17,7 @@ package runaway
 import (
 	"context"
 	"fmt"
+	"hash/fnv"
 	"strings"
 	"time"
 
@@ -52,45 +53,73 @@ var NullTime time.Time
 // Record is used to save records which will be inserted into mysql.tidb_runaway_queries.
 type Record struct {
 	ResourceGroupName string
-	Time              time.Time
+	StartTime         time.Time
 	Match             string
 	Action            string
-	SQLText           string
+	SampleText        string
+	SQLDigest         string
 	PlanDigest        string
 	Source            string
+	ExceedCause       string
+	// Repeats is used to avoid inserting the same record multiple times.
+	// It records the number of times after flushing the record(10s) to the table or len(map) exceeds the threshold(1024).
+	// We only consider `resource_group_name`, `sql_digest`, `plan_digest` and `match_type` when comparing records.
+	// default value is 1.
+	Repeats int
+}
+
+// recordMap is used to save records which will be inserted into `mysql.tidb_runaway_queries` by function `flushRunawayRecords`.
+var recordMap map[recordKey]*Record
+
+// recordKey represents the composite key for record key in `tidb_runaway_queries`.
+type recordKey struct {
+	ResourceGroupName string
+	SQLDigest         string
+	PlanDigest        string
+	Match             string
+}
+
+// Hash generates a hash for the recordKey.
+// Because `tidb_runaway_queries` is informational and not performance-critical,
+// we can lose some accuracy for other component's performance.
+func (k recordKey) Hash() uint64 {
+	h := fnv.New64a()
+	h.Write([]byte(k.ResourceGroupName))
+	h.Write([]byte(k.SQLDigest))
+	h.Write([]byte(k.PlanDigest))
+	h.Write([]byte(k.Match))
+	return h.Sum64()
 }
 
 // genRunawayQueriesStmt generates statement with given RunawayRecords.
-func genRunawayQueriesStmt(records []*Record) (string, []any) {
+func genRunawayQueriesStmt(recordMap map[recordKey]*Record) (string, []any) {
 	var builder strings.Builder
-	params := make([]any, 0, len(records)*7)
-	builder.WriteString("insert into mysql.tidb_runaway_queries VALUES ")
-	for count, r := range records {
-		if count > 0 {
+	params := make([]any, 0, len(recordMap)*10)
+	builder.WriteString("INSERT INTO mysql.tidb_runaway_queries " +
+		"(resource_group_name, start_time, match_type, action, sample_sql, sql_digest, plan_digest, tidb_server, rule, repeats) VALUES ")
+	firstRecord := true
+	for _, r := range recordMap {
+		if !firstRecord {
 			builder.WriteByte(',')
 		}
-		builder.WriteString("(%?, %?, %?, %?, %?, %?, %?)")
-		params = append(params, r.ResourceGroupName)
-		params = append(params, r.Time)
-		params = append(params, r.Match)
-		params = append(params, r.Action)
-		params = append(params, r.SQLText)
-		params = append(params, r.PlanDigest)
-		params = append(params, r.Source)
+		firstRecord = false
+		builder.WriteString("(%?, %?, %?, %?, %?, %?, %?, %?, %?, %?)")
+		params = append(params, r.ResourceGroupName, r.StartTime, r.Match, r.Action, r.SampleText, r.SQLDigest, r.PlanDigest, r.Source, r.ExceedCause, r.Repeats)
 	}
 	return builder.String(), params
 }
 
-// QuarantineRecord is used to save records which will be insert into mysql.tidb_runaway_watch.
+// QuarantineRecord is used to save records which will be inserted into mysql.tidb_runaway_watch.
 type QuarantineRecord struct {
 	ID                int64
 	ResourceGroupName string
 	// startTime and endTime are in UTC.
-	StartTime time.Time
-	EndTime   time.Time
-	Watch     rmpb.RunawayWatchType
-	WatchText string
-	Source    string
+	StartTime   time.Time
+	EndTime     time.Time
+	Watch       rmpb.RunawayWatchType
+	WatchText   string
+	Source      string
+	ExceedCause string
 	// Action-related fields.
 	Action          rmpb.RunawayAction
 	SwitchGroupName string
@@ -106,6 +135,11 @@ func (r *QuarantineRecord) getSwitchGroupName() string {
 		return r.SwitchGroupName
 	}
 	return ""
+}
+
+// GetExceedCause returns the exceed cause.
+func (r *QuarantineRecord) GetExceedCause() string {
+	return r.ExceedCause
 }
 
 // GetActionString returns the action string.
@@ -128,9 +162,9 @@ func writeInsert(builder *strings.Builder, tableName string) {
 // genInsertionStmt is used to generate insertion sql.
 func (r *QuarantineRecord) genInsertionStmt() (string, []any) {
 	var builder strings.Builder
-	params := make([]any, 0, 6)
+	params := make([]any, 0, 9)
 	writeInsert(&builder, watchTableName)
-	builder.WriteString("(null, %?, %?, %?, %?, %?, %?, %?, %?)")
+	builder.WriteString("(null, %?, %?, %?, %?, %?, %?, %?, %?, %?)")
 	params = append(params, r.ResourceGroupName)
 	params = append(params, r.StartTime)
 	if r.EndTime.Equal(NullTime) {
@@ -143,15 +177,16 @@ func (r *QuarantineRecord) genInsertionStmt() (string, []any) {
 	params = append(params, r.Source)
 	params = append(params, r.Action)
 	params = append(params, r.getSwitchGroupName())
+	params = append(params, r.ExceedCause)
 	return builder.String(), params
 }
 
 // genInsertionDoneStmt is used to generate insertion sql for runaway watch done record.
 func (r *QuarantineRecord) genInsertionDoneStmt() (string, []any) {
 	var builder strings.Builder
-	params := make([]any, 0, 9)
+	params := make([]any, 0, 11)
 	writeInsert(&builder, watchDoneTableName)
-	builder.WriteString("(null, %?, %?, %?, %?, %?, %?, %?, %?, %?, %?)")
+	builder.WriteString("(null, %?, %?, %?, %?, %?, %?, %?, %?, %?, %?, %?)")
 	params = append(params, r.ID)
 	params = append(params, r.ResourceGroupName)
 	params = append(params, r.StartTime)
@@ -165,6 +200,7 @@ func (r *QuarantineRecord) genInsertionDoneStmt() (string, []any) {
 	params = append(params, r.Source)
 	params = append(params, r.Action)
 	params = append(params, r.getSwitchGroupName())
+	params = append(params, r.ExceedCause)
 	params = append(params, time.Now().UTC())
 	return builder.String(), params
 }
@@ -183,7 +219,7 @@ func (r *QuarantineRecord) genDeletionStmt() (string, []any) {
 func (rm *Manager) deleteExpiredRows(expiredDuration time.Duration) {
 	const (
 		tableName = "tidb_runaway_queries"
-		colName   = "time"
+		colName   = "start_time"
 	)
 	var systemSchemaCIStr = model.NewCIStr("mysql")
 

@@ -31,3 +31,18 @@ alter table t rename column b to b2;
 -- error 3837
 alter table t drop column b;
 
+# The generated current time should be correct after DDL reorging in different timezones.
+# see issue: https://github.com/pingcap/tidb/issues/56051
+drop table if exists t;
+create table t(a int, b int, c int);
+insert into t values(NULL, NULL, NULL);
+alter table t modify column a timestamp not null;
+# the timestamp diff should be less than 2s
+select floor((unix_timestamp() - unix_timestamp(a)) / 2) from t;
+set @@time_zone='UTC';
+alter table t modify column b timestamp not null;
+select floor((unix_timestamp() - unix_timestamp(b)) / 2) from t;
+set @@time_zone='Asia/Tokyo';
+alter table t modify column c timestamp not null;
+select floor((unix_timestamp() - unix_timestamp(c)) / 2) from t;
+set @@time_zone='SYSTEM'

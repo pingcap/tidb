@@ -23,6 +23,16 @@ import (
 )
 
 const (
+	// Fix52592 controls whether to disallow fast path for Get and BatchGet.
+	// Fast path does not support column projection, so we need to disable it when column projection is required.
+	// Here are the common cases that column projection is required:
+	// 1. Wide tables with many columns, where applications only query a few columns.
+	// 2. JSON fields with large column values, where queries may not necessarily retrieve the values of JSON columns
+	//    or only extract specific small JSON content.
+	// By default, fast path is enabled, when it's disabled, the optimizer will fallback to coproccessor.
+	// It should be only disabled when fast path is more expensive than coprocessor.
+	// See #52592
+	Fix52592 uint64 = 52592
 	// Fix33031 controls whether to disallow plan cache for partitioned
 	// tables (both prepared statments and non-prepared statements)
 	// See #33031

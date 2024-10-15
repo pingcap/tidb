@@ -18,7 +18,7 @@ import (
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/errctx"
-	"github.com/pingcap/tidb/pkg/expression/contextstatic"
+	"github.com/pingcap/tidb/pkg/expression/exprstatic"
 	"github.com/pingcap/tidb/pkg/types"
 	contextutil "github.com/pingcap/tidb/pkg/util/context"
 	"github.com/pingcap/tidb/pkg/util/deeptest"
@@ -32,7 +32,7 @@ func TestContextDetach(t *testing.T) {
 	obj := &RangerContext{
 		TypeCtx:                  types.DefaultStmtNoWarningContext,
 		ErrCtx:                   errctx.StrictNoWarningContext,
-		ExprCtx:                  contextstatic.NewStaticExprContext(),
+		ExprCtx:                  exprstatic.NewExprContext(),
 		RangeFallbackHandler:     &rangeFallbackHandler,
 		PlanCacheTracker:         &planCacheTracker,
 		OptimizerFixControl:      map[uint64]string{1: "a"},

@@ -236,7 +236,6 @@ func (c *CheckpointAdvancer) tryAdvance(ctx context.Context, length int,
 	})
 	clampedRanges := utils.IntersectAll(ranges, utils.CloneSlice(c.taskRange))
 	for _, r := range clampedRanges {
-		r := r
 		workers.ApplyOnErrorGroup(eg, func() (e error) {
 			defer c.recordTimeCost("get regions in range")()
 			defer utils.PanicToErr(&e)
@@ -435,7 +434,7 @@ func (c *CheckpointAdvancer) onTaskEvent(ctx context.Context, e TaskEvent) error
 		}
 		log.Info("get global checkpoint", zap.Uint64("checkpoint", globalCheckpointTs))
 		c.lastCheckpoint = newCheckpointWithTS(globalCheckpointTs)
-		p, err := c.env.BlockGCUntil(ctx, globalCheckpointTs)
+		p, err := c.env.BlockGCUntil(ctx, globalCheckpointTs-1)
 		if err != nil {
 			log.Warn("failed to upload service GC safepoint, skipping.", logutil.ShortError(err))
 		}

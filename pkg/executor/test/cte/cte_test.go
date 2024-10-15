@@ -167,11 +167,15 @@ func TestCTEDelSpillFile(t *testing.T) {
 	tk.MustExec("drop table if exists t1, t2;")
 	tk.MustExec("create table t1(c1 int, c2 int);")
 	tk.MustExec("create table t2(c1 int);")
-	tk.MustExec("set @@cte_max_recursion_depth = 1000000;")
-	tk.MustExec("set global tidb_mem_oom_action = 'log';")
-	tk.MustExec("set @@tidb_mem_quota_query = 100;")
 	tk.MustExec("insert into t2 values(1);")
-	tk.MustExec("insert into t1 (c1, c2) with recursive cte1 as (select c1 from t2 union select cte1.c1 + 1 from cte1 where cte1.c1 < 100000) select cte1.c1, cte1.c1+1 from cte1;")
+	tk.MustExec("set @@cte_max_recursion_depth = 100;")
+	tk.MustExec("set @@tidb_mem_quota_query = 100;")
+	tk.MustExec("set global tidb_mem_oom_action = 'cancel';")
+	// Make sure the OOM happens.
+	tk.MustExecToErr("insert into t1 (c1, c2) with recursive cte1 as (select c1 from t2 union select cte1.c1 + 1 from cte1 where cte1.c1 < 100) select cte1.c1, cte1.c1+1 from cte1;")
+	tk.MustExec("set global tidb_mem_oom_action = 'log';")
+	// Test that the storage is cleaned as expected.
+	tk.MustExec("insert into t1 (c1, c2) with recursive cte1 as (select c1 from t2 union select cte1.c1 + 1 from cte1 where cte1.c1 < 100) select cte1.c1, cte1.c1+1 from cte1;")
 	require.Nil(t, tk.Session().GetSessionVars().StmtCtx.CTEStorageMap)
 }
 

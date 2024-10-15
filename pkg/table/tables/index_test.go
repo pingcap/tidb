@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/backend/encode"
 	lkv "github.com/pingcap/tidb/pkg/lightning/backend/kv"
+	"github.com/pingcap/tidb/pkg/meta/metabuild"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -170,7 +171,7 @@ func TestSingleColumnCommonHandle(t *testing.T) {
 func buildTableInfo(t *testing.T, sql string) *model.TableInfo {
 	stmt, err := parser.New().ParseOneStmt(sql, "", "")
 	require.NoError(t, err)
-	tblInfo, err := ddl.BuildTableInfoFromAST(stmt.(*ast.CreateTableStmt))
+	tblInfo, err := ddl.BuildTableInfoFromAST(metabuild.NewContext(), stmt.(*ast.CreateTableStmt))
 	require.NoError(t, err)
 	return tblInfo
 }

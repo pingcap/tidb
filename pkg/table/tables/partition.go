@@ -29,7 +29,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/errctx"
 	"github.com/pingcap/tidb/pkg/expression"
-	"github.com/pingcap/tidb/pkg/expression/contextstatic"
+	"github.com/pingcap/tidb/pkg/expression/exprstatic"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser"
@@ -138,6 +138,11 @@ func newPartitionedTable(tbl *TableCommon, tblInfo *model.TableInfo) (table.Part
 		partitions[p.ID] = &t
 	}
 	ret.partitions = partitions
+	if pi.DDLAction != model.ActionReorganizePartition &&
+		pi.DDLAction != model.ActionRemovePartitioning &&
+		pi.DDLAction != model.ActionAlterTablePartitioning {
+		return ret, nil
+	}
 	// In StateWriteReorganization we are using the 'old' partition definitions
 	// and if any new change happens in DroppingDefinitions, it needs to be done
 	// also in AddingDefinitions (with new evaluation of the new expression)
@@ -241,19 +246,19 @@ func initPartition(t *partitionedTable, def model.PartitionDefinition) (*partiti
 
 // NewPartitionExprBuildCtx returns a context to build partition expression.
 func NewPartitionExprBuildCtx() expression.BuildContext {
-	return contextstatic.NewStaticExprContext(
-		contextstatic.WithEvalCtx(contextstatic.NewStaticEvalContext(
+	return exprstatic.NewExprContext(
+		exprstatic.WithEvalCtx(exprstatic.NewEvalContext(
 			// Set a non-strict SQL mode and allow all date values if possible to make sure constant fold can work to
 			// estimate some undetermined result when locating a row to a partition.
 			// See issue: https://github.com/pingcap/tidb/issues/54271 for details.
-			contextstatic.WithSQLMode(mysql.ModeAllowInvalidDates),
-			contextstatic.WithTypeFlags(types.StrictFlags.
+			exprstatic.WithSQLMode(mysql.ModeAllowInvalidDates),
+			exprstatic.WithTypeFlags(types.StrictFlags.
 				WithIgnoreTruncateErr(true).
 				WithIgnoreZeroDateErr(true).
 				WithIgnoreZeroInDate(true).
 				WithIgnoreInvalidDateErr(true),
 			),
-			contextstatic.WithErrLevelMap(errctx.LevelMap{
+			exprstatic.WithErrLevelMap(errctx.LevelMap{
 				errctx.ErrGroupTruncate: errctx.LevelIgnore,
 			}),
 		)),
@@ -1312,6 +1317,19 @@ func (t *partitionedTable) locatePartitionCommon(ctx expression.EvalContext, tp 
 		} else {
 			idx, err = t.locateRangePartition(ctx, partitionExpr, r)
 		}
+		if err != nil {
+			return -1, err
+		}
+		pi := t.Meta().Partition
+		if pi.CanHaveOverlappingDroppingPartition() {
+			if pi.IsDropping(idx) {
+				// Give an error, since it should not be written to!
+				// For read it can check the Overlapping partition and ignore the error.
+				// One should use the next non-dropping partition for range, or the default
+				// partition for list partitioned table with default partition, for read.
+				return idx, table.ErrNoPartitionForGivenValue.GenWithStackByArgs(fmt.Sprintf("matching a partition being dropped, '%s'", pi.Definitions[idx].Name.String()))
+			}
+		}
 	case pmodel.PartitionTypeHash:
 		// Note that only LIST and RANGE supports REORGANIZE PARTITION
 		idx, err = t.locateHashPartition(ctx, partitionExpr, num, r)
@@ -1319,11 +1337,15 @@ func (t *partitionedTable) locatePartitionCommon(ctx expression.EvalContext, tp 
 		idx, err = partitionExpr.LocateKeyPartition(num, r)
 	case pmodel.PartitionTypeList:
 		idx, err = partitionExpr.locateListPartition(ctx, r)
+		pi := t.Meta().Partition
+		if idx != pi.GetOverlappingDroppingPartitionIdx(idx) {
+			return idx, table.ErrNoPartitionForGivenValue.GenWithStackByArgs(fmt.Sprintf("matching a partition being dropped, '%s'", pi.Definitions[idx].Name.String()))
+		}
 	case pmodel.PartitionTypeNone:
 		idx = 0
 	}
 	if err != nil {
-		return 0, errors.Trace(err)
+		return -1, errors.Trace(err)
 	}
 	return idx, nil
 }
@@ -1331,11 +1353,7 @@ func (t *partitionedTable) locatePartitionCommon(ctx expression.EvalContext, tp 
 func (t *partitionedTable) locatePartitionIdx(ctx expression.EvalContext, r []types.Datum) (int, error) {
 	pi := t.Meta().GetPartitionInfo()
 	columnsSet := len(t.meta.Partition.Columns) > 0
-	idx, err := t.locatePartitionCommon(ctx, pi.Type, t.partitionExpr, pi.Num, columnsSet, r)
-	if err != nil {
-		return -1, errors.Trace(err)
-	}
-	return idx, nil
+	return t.locatePartitionCommon(ctx, pi.Type, t.partitionExpr, pi.Num, columnsSet, r)
 }
 
 func (t *partitionedTable) locatePartition(ctx expression.EvalContext, r []types.Datum) (int64, error) {
@@ -1492,7 +1510,14 @@ func (t *partitionedTable) locateHashPartition(ctx expression.EvalContext, partE
 
 // GetPartition returns a Table, which is actually a partition.
 func (t *partitionedTable) GetPartition(pid int64) table.PhysicalTable {
-	return t.getPartition(pid)
+	part := t.getPartition(pid)
+
+	// Explicitly check if the partition is nil, and return a nil interface if it is
+	if part == nil {
+		return nil // Return a truly nil interface instead of an interface holding a nil pointer
+	}
+
+	return part
 }
 
 // getPartition returns a Table, which is actually a partition.
@@ -1685,15 +1710,16 @@ func (t *partitionTableWithGivenSets) GetAllPartitionIDs() []int64 {
 }
 
 // RemoveRecord implements table.Table RemoveRecord interface.
-func (t *partitionedTable) RemoveRecord(ctx table.MutateContext, txn kv.Transaction, h kv.Handle, r []types.Datum) error {
+func (t *partitionedTable) RemoveRecord(ctx table.MutateContext, txn kv.Transaction, h kv.Handle, r []types.Datum, opts ...table.RemoveRecordOption) error {
+	opt := table.NewRemoveRecordOpt(opts...)
 	ectx := ctx.GetExprCtx()
 	pid, err := t.locatePartition(ectx.GetEvalCtx(), r)
 	if err != nil {
 		return errors.Trace(err)
 	}
 
-	tbl := t.GetPartition(pid)
-	err = tbl.RemoveRecord(ctx, txn, h, r)
+	tbl := t.getPartition(pid)
+	err = tbl.removeRecord(ctx, txn, h, r, opt)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -1703,8 +1729,8 @@ func (t *partitionedTable) RemoveRecord(ctx table.MutateContext, txn kv.Transact
 		if err != nil {
 			return errors.Trace(err)
 		}
-		tbl = t.GetPartition(pid)
-		err = tbl.RemoveRecord(ctx, txn, h, r)
+		tbl = t.getPartition(pid)
+		err = tbl.removeRecord(ctx, txn, h, r, opt)
 		if err != nil {
 			return errors.Trace(err)
 		}

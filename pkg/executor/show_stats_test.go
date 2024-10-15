@@ -235,7 +235,6 @@ func TestShowPartitionStats(t *testing.T) {
 
 	tk := testkit.NewTestKit(t, store)
 	testkit.WithPruneMode(tk, variable.Static, func() {
-		tk.MustExec("set @@session.tidb_enable_table_partition=1")
 		// Version2 is tested in TestGlobalStatsData1/2/3 and TestAnalyzeGlobalStatsWithOpts.
 		tk.MustExec("set @@session.tidb_analyze_version=1")
 		tk.MustExec("use test")

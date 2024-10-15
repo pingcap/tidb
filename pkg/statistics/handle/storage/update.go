@@ -15,6 +15,7 @@
 package storage
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"slices"
@@ -30,20 +31,26 @@ import (
 	statsutil "github.com/pingcap/tidb/pkg/statistics/handle/util"
 )
 
-// UpdateStatsVersion will set statistics version to the newest TS,
-// then tidb-server will reload automatic.
-func UpdateStatsVersion(sctx sessionctx.Context) error {
+// UpdateStatsVersion will set statistics version to the newest TS, then
+// tidb-server will reload automatic.
+func UpdateStatsVersion(ctx context.Context, sctx sessionctx.Context) error {
 	startTS, err := statsutil.GetStartTS(sctx)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	if _, err = statsutil.Exec(sctx, "update mysql.stats_meta set version = %?", startTS); err != nil {
+	if _, err = statsutil.ExecWithCtx(
+		ctx, sctx, "update mysql.stats_meta set version = %?", startTS,
+	); err != nil {
 		return err
 	}
-	if _, err = statsutil.Exec(sctx, "update mysql.stats_extended set version = %?", startTS); err != nil {
+	if _, err = statsutil.ExecWithCtx(
+		ctx, sctx, "update mysql.stats_extended set version = %?", startTS,
+	); err != nil {
 		return err
 	}
-	if _, err = statsutil.Exec(sctx, "update mysql.stats_histograms set version = %?", startTS); err != nil {
+	if _, err = statsutil.ExecWithCtx(
+		ctx, sctx, "update mysql.stats_histograms set version = %?", startTS,
+	); err != nil {
 		return err
 	}
 	return nil
@@ -51,6 +58,7 @@ func UpdateStatsVersion(sctx sessionctx.Context) error {
 
 // UpdateStatsMeta update the stats meta stat for this Table.
 func UpdateStatsMeta(
+	ctx context.Context,
 	sctx sessionctx.Context,
 	startTS uint64,
 	delta variable.TableDelta,
@@ -60,18 +68,18 @@ func UpdateStatsMeta(
 	if isLocked {
 		// use INSERT INTO ... ON DUPLICATE KEY UPDATE here to fill missing stats_table_locked.
 		// Note: For locked tables, it is possible that the record gets deleted. So it can be negative.
-		_, err = statsutil.Exec(sctx, "insert into mysql.stats_table_locked (version, table_id, modify_count, count) values (%?, %?, %?, %?) on duplicate key "+
+		_, err = statsutil.ExecWithCtx(ctx, sctx, "insert into mysql.stats_table_locked (version, table_id, modify_count, count) values (%?, %?, %?, %?) on duplicate key "+
 			"update version = values(version), modify_count = modify_count + values(modify_count), count = count + values(count)",
 			startTS, id, delta.Count, delta.Delta)
 	} else {
 		if delta.Delta < 0 {
 			// use INSERT INTO ... ON DUPLICATE KEY UPDATE here to fill missing stats_meta.
-			_, err = statsutil.Exec(sctx, "insert into mysql.stats_meta (version, table_id, modify_count, count) values (%?, %?, %?, 0) on duplicate key "+
+			_, err = statsutil.ExecWithCtx(ctx, sctx, "insert into mysql.stats_meta (version, table_id, modify_count, count) values (%?, %?, %?, 0) on duplicate key "+
 				"update version = values(version), modify_count = modify_count + values(modify_count), count = if(count > %?, count - %?, 0)",
 				startTS, id, delta.Count, -delta.Delta, -delta.Delta)
 		} else {
 			// use INSERT INTO ... ON DUPLICATE KEY UPDATE here to fill missing stats_meta.
-			_, err = statsutil.Exec(sctx, "insert into mysql.stats_meta (version, table_id, modify_count, count) values (%?, %?, %?, %?) on duplicate key "+
+			_, err = statsutil.ExecWithCtx(ctx, sctx, "insert into mysql.stats_meta (version, table_id, modify_count, count) values (%?, %?, %?, %?) on duplicate key "+
 				"update version = values(version), modify_count = modify_count + values(modify_count), count = count + values(count)", startTS,
 				id, delta.Count, delta.Delta)
 		}
@@ -204,4 +212,50 @@ func removeExtendedStatsItem(statsCache types.StatsCache,
 	newTbl := tbl.Copy()
 	delete(newTbl.ExtendedStats.Stats, statsName)
 	statsCache.UpdateStatsCache([]*statistics.Table{newTbl}, nil)
+}
+
+var changeGlobalStatsTables = []string{
+	"stats_meta", "stats_top_n", "stats_fm_sketch", "stats_buckets",
+	"stats_histograms", "column_stats_usage",
+}
+
+// ChangeGlobalStatsID changes the table ID in global-stats to the new table ID.
+func ChangeGlobalStatsID(
+	ctx context.Context,
+	sctx sessionctx.Context,
+	from, to int64,
+) error {
+	for _, table := range changeGlobalStatsTables {
+		_, err := statsutil.ExecWithCtx(
+			ctx, sctx,
+			"update mysql."+table+" set table_id = %? where table_id = %?",
+			to, from,
+		)
+		if err != nil {
+			return errors.Trace(err)
+		}
+	}
+	return nil
+}
+
+// UpdateStatsMetaVersionForGC updates the version of stats_meta to be deleted
+// soon.
+func UpdateStatsMetaVersionForGC(
+	ctx context.Context,
+	sctx sessionctx.Context,
+	physicalID int64,
+) (uint64, error) {
+	startTS, err := statsutil.GetStartTS(sctx)
+	if err != nil {
+		return 0, errors.Trace(err)
+	}
+	if _, err = statsutil.ExecWithCtx(
+		ctx,
+		sctx,
+		"update mysql.stats_meta set version=%? where table_id =%?",
+		startTS, physicalID,
+	); err != nil {
+		return 0, errors.Trace(err)
+	}
+	return startTS, nil
 }

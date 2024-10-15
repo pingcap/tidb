@@ -17,7 +17,7 @@ package expression
 import (
 	"sync/atomic"
 
-	"github.com/pingcap/tidb/pkg/expression/context"
+	"github.com/pingcap/tidb/pkg/expression/exprctx"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/disjointset"
 	"github.com/pingcap/tidb/pkg/util/intest"
@@ -173,8 +173,8 @@ func (e *defaultEvaluator) run(ctx EvalContext, vecEnabled bool, input, output *
 }
 
 // RequiredOptionalEvalProps exposes all optional evaluation properties that this evaluator requires.
-func (e *defaultEvaluator) RequiredOptionalEvalProps() context.OptionalEvalPropKeySet {
-	props := context.OptionalEvalPropKeySet(0)
+func (e *defaultEvaluator) RequiredOptionalEvalProps() exprctx.OptionalEvalPropKeySet {
+	props := exprctx.OptionalEvalPropKeySet(0)
 	for _, expr := range e.exprs {
 		props = props | GetOptionalEvalPropsForExpr(expr)
 	}
@@ -183,7 +183,7 @@ func (e *defaultEvaluator) RequiredOptionalEvalProps() context.OptionalEvalPropK
 }
 
 // GetOptionalEvalPropsForExpr gets all optional evaluation properties that this expression requires.
-func GetOptionalEvalPropsForExpr(expr Expression) context.OptionalEvalPropKeySet {
+func GetOptionalEvalPropsForExpr(expr Expression) exprctx.OptionalEvalPropKeySet {
 	switch e := expr.(type) {
 	case *ScalarFunction:
 		props := e.Function.RequiredOptionalEvalProps()
@@ -257,7 +257,7 @@ func (e *EvaluatorSuite) Run(ctx EvalContext, vecEnabled bool, input, output *ch
 }
 
 // RequiredOptionalEvalProps exposes all optional evaluation properties that this evaluator requires.
-func (e *EvaluatorSuite) RequiredOptionalEvalProps() context.OptionalEvalPropKeySet {
+func (e *EvaluatorSuite) RequiredOptionalEvalProps() exprctx.OptionalEvalPropKeySet {
 	if e.defaultEvaluator != nil {
 		return e.defaultEvaluator.RequiredOptionalEvalProps()
 	}

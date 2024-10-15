@@ -15,12 +15,14 @@
 package storage_test
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"math"
 	"runtime"
+	"slices"
 	"strings"
 	"testing"
 
@@ -600,6 +602,10 @@ func TestJSONTableToBlocks(t *testing.T) {
 
 	dumpJSONTable, err := h.DumpStatsToJSON("test", tableInfo.Meta(), nil, true)
 	require.NoError(t, err)
+	// the slice is generated from a map loop, which is randomly
+	slices.SortFunc(dumpJSONTable.PredicateColumns, func(a, b *handleutil.JSONPredicateColumn) int {
+		return cmp.Compare(a.ID, b.ID)
+	})
 	jsOrigin, _ := json.Marshal(dumpJSONTable)
 
 	blockSize := 30
@@ -608,6 +614,10 @@ func TestJSONTableToBlocks(t *testing.T) {
 	dumpJSONBlocks, err := storage.JSONTableToBlocks(js, blockSize)
 	require.NoError(t, err)
 	jsConverted, err := storage.BlocksToJSONTable(dumpJSONBlocks)
+	// the slice is generated from a map loop, which is randomly
+	slices.SortFunc(jsConverted.PredicateColumns, func(a, b *handleutil.JSONPredicateColumn) int {
+		return cmp.Compare(a.ID, b.ID)
+	})
 	require.NoError(t, err)
 	jsonStr, err := json.Marshal(jsConverted)
 	require.NoError(t, err)

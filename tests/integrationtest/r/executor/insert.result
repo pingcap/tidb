@@ -1252,8 +1252,8 @@ Level	Code	Message
 Warning	1062	Duplicate entry 'Alice' for key 't2.idx_10'
 select * from t2;
 col_25	col_26
-Bob	1989-03-23
 Alice	2023-11-24
+Bob	1989-03-23
 Charlie	2023-12-05
 drop table if exists t4;
 create table t4(id int primary key clustered, k int, v int, unique key uk1(k));

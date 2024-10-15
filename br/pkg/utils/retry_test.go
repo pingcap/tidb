@@ -29,7 +29,6 @@ func TestRetryAdapter(t *testing.T) {
 	wg := new(sync.WaitGroup)
 	wg.Add(len(requestedBackOff))
 	for _, bms := range requestedBackOff {
-		bms := bms
 		go func() {
 			bo.RequestBackOff(bms)
 			wg.Done()

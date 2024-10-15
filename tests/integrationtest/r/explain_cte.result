@@ -502,8 +502,8 @@ a	b
 1	4321
 explain delete from  t1 using t1 inner join (select t2.c from t2 inner join (with temp as (select e from t3 where t3.f = 1234) select e from temp) tt on t2.d = tt.e) t on t1.a = t.c;
 id	estRows	task	access object	operator info
-Delete_17	N/A	root		N/A
-└─Projection_23	15.61	root		explain_cte.t1.a, explain_cte.t1.b, explain_cte.t1._tidb_rowid, explain_cte.t2.c
+Delete_16	N/A	root		N/A
+└─Projection_23	15.61	root		explain_cte.t1._tidb_rowid, explain_cte.t2.c
   └─HashJoin_25	15.61	root		inner join, equal:[eq(explain_cte.t2.c, explain_cte.t1.a)]
     ├─HashJoin_27(Build)	12.49	root		inner join, equal:[eq(explain_cte.t3.e, explain_cte.t2.d)]
     │ ├─TableReader_30(Build)	9.99	root		data:Selection_29

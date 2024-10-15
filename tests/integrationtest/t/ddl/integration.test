@@ -88,7 +88,6 @@ create table t(a int not null, b int, primary key(a), unique idx_b(b));
 drop table if exists t2;
 create table t2(a int not null, b int, primary key(a) nonclustered, unique idx_b(b));
 drop table if exists t3;
-set tidb_enable_global_index=1;
 create table t3(a int not null, b int, primary key(a) nonclustered, unique idx_b(b) global) partition by hash(a) partitions 3;
 drop table if exists t4;
 create table t4(a int not null, b int, primary key(a)) partition by hash(a) partitions 3;
@@ -104,23 +103,21 @@ alter table t3 partition by key(a) partitions 3;
 alter table t3 remove partitioning;
 -- error 1503
 alter table t4 partition by hash(b) partitions 3 update indexes(`primary` global, idx_b local);
-set tidb_enable_global_index=0;
--- error 1503
+-- error 8264
 alter table t partition by hash(a) partitions 3;
--- error 1503
+-- error 8264
 alter table t partition by key() partitions 3;
 -- error 1503
 alter table t partition by hash(b) partitions 3;
--- error 1503
+-- error 8264
 alter table t2 partition by hash(b) partitions 3;
--- error 1503
+-- error 8264
 alter table t3 partition by key(a) partitions 3;
 -- error 1503
 alter table t4 partition by hash(b) partitions 3;
 drop table t, t2, t3, t4;
 
 # Issue found during code review
-set tidb_enable_global_index=1;
 CREATE TABLE `members` (
   `id` int(11) DEFAULT NULL,
   `fname` varchar(255) DEFAULT NULL,
@@ -137,4 +134,3 @@ PARTITION BY RANGE (YEAR(`dob`))
  PARTITION `p1980` VALUES LESS THAN (1990),
  PARTITION `p1990` VALUES LESS THAN (2000));
 ALTER TABLE members REORGANIZE PARTITION `p1990` INTO (PARTITION p1995 VALUES LESS THAN (1995),  PARTITION p2000 VALUES LESS THAN (2010));
-set tidb_enable_global_index=0;

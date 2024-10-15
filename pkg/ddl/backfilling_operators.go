@@ -83,33 +83,33 @@ type OperatorCtx struct {
 }
 
 // NewDistTaskOperatorCtx is used for adding index with dist framework.
-func NewDistTaskOperatorCtx(ctx context.Context, taskID, subtaskID int64) *OperatorCtx {
+func NewDistTaskOperatorCtx(
+	ctx context.Context,
+	taskID, subtaskID int64,
+) (*OperatorCtx, context.CancelFunc) {
 	opCtx, cancel := context.WithCancel(ctx)
-	opCtx = logutil.WithFields(opCtx, zap.Int64("task-id", taskID), zap.Int64("subtask-id", subtaskID))
+	opCtx = logutil.WithFields(opCtx,
+		zap.Int64("task-id", taskID),
+		zap.Int64("subtask-id", subtaskID))
 	return &OperatorCtx{
 		Context: opCtx,
 		cancel:  cancel,
-	}
+	}, cancel
 }
 
 // NewLocalOperatorCtx is used for adding index with local ingest mode.
-func NewLocalOperatorCtx(ctx context.Context, jobID int64) *OperatorCtx {
+func NewLocalOperatorCtx(ctx context.Context, jobID int64) (*OperatorCtx, context.CancelFunc) {
 	opCtx, cancel := context.WithCancel(ctx)
 	opCtx = logutil.WithFields(opCtx, zap.Int64("jobID", jobID))
 	return &OperatorCtx{
 		Context: opCtx,
 		cancel:  cancel,
-	}
+	}, cancel
 }
 
 func (ctx *OperatorCtx) onError(err error) {
 	tracedErr := errors.Trace(err)
-	ctx.cancel()
 	ctx.err.CompareAndSwap(nil, &tracedErr)
-}
-
-// Cancel cancels the pipeline.
-func (ctx *OperatorCtx) Cancel() {
 	ctx.cancel()
 }
 
@@ -769,7 +769,7 @@ func (w *indexIngestLocalWorker) HandleTask(ck IndexRecordChunk, send func(Index
 		return
 	}
 	w.rowCntListener.Written(rs.Added)
-	flushed, imported, err := w.backendCtx.Flush(ingest.FlushModeAuto)
+	flushed, imported, err := w.backendCtx.Flush(w.ctx, ingest.FlushModeAuto)
 	if err != nil {
 		w.ctx.onError(err)
 		return
@@ -949,7 +949,7 @@ func (s *indexWriteResultSink) flush() error {
 	failpoint.Inject("mockFlushError", func(_ failpoint.Value) {
 		failpoint.Return(errors.New("mock flush error"))
 	})
-	flushed, imported, err := s.backendCtx.Flush(ingest.FlushModeForceFlushAndImport)
+	flushed, imported, err := s.backendCtx.Flush(s.ctx, ingest.FlushModeForceFlushAndImport)
 	if s.cpMgr != nil {
 		// Try to advance watermark even if there is an error.
 		s.cpMgr.AdvanceWatermark(flushed, imported)

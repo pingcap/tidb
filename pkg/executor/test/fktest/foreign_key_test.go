@@ -1680,7 +1680,7 @@ func TestForeignKeyOnUpdateCascade(t *testing.T) {
 			tk.MustExec("update t1 set a=101 where id = 1")
 			tk.MustExec("insert into t2 (id, a, b, name) values (1, 1, 1, 'a')")
 			tk.MustExec("update t1 set b=102 where id = 2")
-			tk.MustQuery("select * from t1").Check(testkit.Rows("1 101 1", "2 1 102"))
+			tk.MustQuery("select * from t1").Sort().Check(testkit.Rows("1 101 1", "2 1 102"))
 			tk.MustQuery("select id, a, b, name from t2").Check(testkit.Rows("1 1 102 a"))
 			err := tk.ExecToErr("insert into t2 (id, a, b, name) values (3, 1, 1, 'e')")
 			require.Error(t, err)

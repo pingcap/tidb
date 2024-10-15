@@ -47,8 +47,10 @@ stop() {
 }
 
 restart_services() {
+    echo "Restarting services"
 	stop_services
 	start_services
+    echo "Services restarted"
 }
 
 stop_services() {

@@ -370,7 +370,7 @@ delete from t where a = 4;
 alter table t add unique index idx_a(a);
 alter table t add unique index idx_ac(a, c);
 alter table t add unique index idx_b(b);
-Error 1503 (HY000): A UNIQUE INDEX must include all columns in the table's partitioning function
+Error 8264 (HY000): Global Index is needed for index 'idx_b', since the unique index is not including all partitioning columns, and GLOBAL is not given as IndexOption
 drop table if exists t;
 drop table if exists t_ft;
 create table t_ft (a text, fulltext key (a));

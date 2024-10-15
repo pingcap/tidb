@@ -17,6 +17,7 @@ go_library(
         "//pkg/infoschema",
         "//pkg/kv",
         "//pkg/meta/autoid",
+        "//pkg/meta/metabuild",
         "//pkg/meta/model",
         "//pkg/owner",
         "//pkg/parser/ast",
@@ -47,7 +48,7 @@ go_test(
     ],
     embed = [":schematracker"],
     flaky = True,
-    shard_count = 15,
+    shard_count = 16,
     deps = [
         "//pkg/executor",
         "//pkg/infoschema",

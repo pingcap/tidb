@@ -91,7 +91,7 @@ func TestGroupNDVs(t *testing.T) {
 				for i := 1; i < len(v.Children()); i++ {
 					stack = append(stack, v.Children()[i])
 				}
-			case *core.DataSource:
+			case *logicalop.DataSource:
 				if len(stack) == 0 {
 					traversed = true
 				} else {

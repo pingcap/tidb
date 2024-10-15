@@ -74,18 +74,17 @@ Error 1062 (23000): Duplicate entry '0' for key 'test_add_index_after_add_col.cc
 drop table if exists employ, issue9100t1, issue9100t2;
 create table employ (a int, b int) partition by range (b) (partition p0 values less than (1));
 alter table employ add unique index p_a (a);
-Error 1503 (HY000): A UNIQUE INDEX must include all columns in the table's partitioning function
+Error 8264 (HY000): Global Index is needed for index 'p_a', since the unique index is not including all partitioning columns, and GLOBAL is not given as IndexOption
 alter table employ add primary key p_a (a);
-Error 1503 (HY000): A PRIMARY must include all columns in the table's partitioning function
+Error 8264 (HY000): Global Index is needed for index 'PRIMARY', since the unique index is not including all partitioning columns, and GLOBAL is not given as IndexOption
 create table issue9100t1 (col1 int not null, col2 date not null, col3 int not null, unique key (col1, col2)) partition by range( col1 ) (partition p1 values less than (11));
 alter table issue9100t1 add unique index p_col1 (col1);
 alter table issue9100t1 add primary key p_col1 (col1);
 create table issue9100t2 (col1 int not null, col2 date not null, col3 int not null, unique key (col1, col3)) partition by range( col1 + col3 ) (partition p1 values less than (11));
 alter table issue9100t2 add unique index p_col1 (col1);
-Error 1503 (HY000): A UNIQUE INDEX must include all columns in the table's partitioning function
+Error 8264 (HY000): Global Index is needed for index 'p_col1', since the unique index is not including all partitioning columns, and GLOBAL is not given as IndexOption
 alter table issue9100t2 add primary key p_col1 (col1);
-Error 1503 (HY000): A PRIMARY must include all columns in the table's partitioning function
-set @@session.tidb_enable_list_partition = ON;
+Error 8264 (HY000): Global Index is needed for index 'PRIMARY', since the unique index is not including all partitioning columns, and GLOBAL is not given as IndexOption
 set @@session.tidb_enable_exchange_partition = 1;
 drop table if exists t1;
 drop table if exists t2;
@@ -114,7 +113,6 @@ id
 select * from t1;
 id
 set @@session.tidb_enable_exchange_partition = default;
-set @@session.tidb_enable_list_partition = default;
 drop table if exists ob;
 create table ob (pk int primary key, c int default 1, c1 int default 1, KEY cl(c1));
 alter table ob order by c;

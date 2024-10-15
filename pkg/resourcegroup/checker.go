@@ -17,6 +17,7 @@ package resourcegroup
 import (
 	rmpb "github.com/pingcap/kvproto/pkg/resource_manager"
 	"github.com/tikv/client-go/v2/tikvrpc"
+	"github.com/tikv/client-go/v2/util"
 )
 
 // DefaultResourceGroupName is the default resource group name.
@@ -28,13 +29,13 @@ type RunawayChecker interface {
 	BeforeExecutor() (string, error)
 	// BeforeCopRequest checks runaway and modifies the request if necessary before sending coprocessor request.
 	BeforeCopRequest(req *tikvrpc.Request) error
-	// CheckCopRespError checks TiKV error after receiving coprocessor response.
-	CheckCopRespError(err error) error
+	// CheckThresholds checks TiKV error whether it exceeds the threshold.
+	CheckThresholds(ruDetail *util.RUDetails, processKeys int64, err error) error
+	// ResetTotalProcessedKeys resets the current total processed keys.
+	ResetTotalProcessedKeys()
 	// CheckAction is used to check current action of the query.
 	// It's safe to call this method concurrently.
 	CheckAction() rmpb.RunawayAction
 	// CheckRuleKillAction checks whether the query should be killed according to the group settings.
-	CheckRuleKillAction() bool
-	// Rule returns the rule of the runaway checker.
-	Rule() string
+	CheckRuleKillAction() (string, bool)
 }

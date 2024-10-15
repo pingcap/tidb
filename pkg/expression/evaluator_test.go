@@ -20,7 +20,7 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/pkg/errctx"
-	"github.com/pingcap/tidb/pkg/expression/context"
+	"github.com/pingcap/tidb/pkg/expression/exprctx"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/parser/model"
@@ -648,16 +648,16 @@ func TestOptionalProp(t *testing.T) {
 		RetType:  f2.getRetTp(),
 	}
 
-	require.Equal(t, context.OptionalEvalPropKeySet(0), f.RequiredOptionalEvalProps())
-	require.Equal(t, context.OptPropCurrentUser.AsPropKeySet()|context.OptPropDDLOwnerInfo.AsPropKeySet(),
+	require.Equal(t, exprctx.OptionalEvalPropKeySet(0), f.RequiredOptionalEvalProps())
+	require.Equal(t, exprctx.OptPropCurrentUser.AsPropKeySet()|exprctx.OptPropDDLOwnerInfo.AsPropKeySet(),
 		GetOptionalEvalPropsForExpr(fe))
-	require.Equal(t, context.OptPropCurrentUser.AsPropKeySet()|context.OptPropDDLOwnerInfo.AsPropKeySet()|
-		context.OptPropAdvisoryLock.AsPropKeySet(),
+	require.Equal(t, exprctx.OptPropCurrentUser.AsPropKeySet()|exprctx.OptPropDDLOwnerInfo.AsPropKeySet()|
+		exprctx.OptPropAdvisoryLock.AsPropKeySet(),
 		GetOptionalEvalPropsForExpr(fe)|GetOptionalEvalPropsForExpr(fe2))
 
 	evalSuit := NewEvaluatorSuite([]Expression{fe, fe2}, false)
-	require.Equal(t, context.OptPropCurrentUser.AsPropKeySet()|context.OptPropDDLOwnerInfo.AsPropKeySet()|
-		context.OptPropAdvisoryLock.AsPropKeySet(), evalSuit.RequiredOptionalEvalProps())
+	require.Equal(t, exprctx.OptPropCurrentUser.AsPropKeySet()|exprctx.OptPropDDLOwnerInfo.AsPropKeySet()|
+		exprctx.OptPropAdvisoryLock.AsPropKeySet(), evalSuit.RequiredOptionalEvalProps())
 }
 
 func TestMergeInputIdxToOutputIdxes(t *testing.T) {

@@ -79,7 +79,11 @@ func (w *HashAggPartialWorker) getChildInput() bool {
 		if !ok {
 			return false
 		}
+
+		sizeBefore := w.chk.MemoryUsage()
 		w.chk.SwapColumns(chk)
+		w.memTracker.Consume(w.chk.MemoryUsage() - sizeBefore)
+
 		w.giveBackCh <- &HashAggInput{
 			chk:        chk,
 			giveBackCh: w.inputCh,

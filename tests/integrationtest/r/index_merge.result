@@ -386,7 +386,7 @@ create table t1(c1 int, c2 int, c3 int, key(c1), key(c2));
 insert into t1 values(1, 1, 1), (2, 2, 2), (3, 3, 3), (4, 4, 4), (5, 5, 5);
 explain delete from t1 where c1 in (select /*+ use_index_merge(t1) */ c1 from t1 where c1 < 10 or c2 < 10 and c3 < 10) order by 1;
 id	estRows	task	access object	operator info
-Delete_10	N/A	root		N/A
+Delete_9	N/A	root		N/A
 └─Sort_14	4056.68	root		index_merge.t1.c1
   └─HashJoin_31	4056.68	root		inner join, equal:[eq(index_merge.t1.c1, index_merge.t1.c1)]
     ├─HashAgg_33(Build)	3245.34	root		group by:index_merge.t1.c1, funcs:firstrow(index_merge.t1.c1)->index_merge.t1.c1

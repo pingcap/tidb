@@ -23,8 +23,8 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/expression/aggregation"
-	exprctx "github.com/pingcap/tidb/pkg/expression/context"
-	"github.com/pingcap/tidb/pkg/expression/contextopt"
+	"github.com/pingcap/tidb/pkg/expression/exprctx"
+	"github.com/pingcap/tidb/pkg/expression/expropt"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -472,6 +472,8 @@ func (er *expressionRewriter) buildSubquery(ctx context.Context, planCtx *exprRe
 		b.outerSchemas = append(b.outerSchemas, outerSchema)
 		b.outerNames = append(b.outerNames, er.names)
 		b.outerBlockExpand = append(b.outerBlockExpand, b.currentBlockExpand)
+		// set it to nil, otherwise, inner qb will use outer expand meta to rewrite expressions.
+		b.currentBlockExpand = nil
 		defer func() {
 			b.outerSchemas = b.outerSchemas[0 : len(b.outerSchemas)-1]
 			b.outerNames = b.outerNames[0 : len(b.outerNames)-1]
@@ -1244,6 +1246,11 @@ func (er *expressionRewriter) handleInSubquery(ctx context.Context, planCtx *exp
 		copy(join.OutputNames(), planCtx.plan.OutputNames())
 		copy(join.OutputNames()[planCtx.plan.Schema().Len():], agg.OutputNames())
 		join.AttachOnConds(expression.SplitCNFItems(checkCondition))
+		// set FullSchema and FullNames for this join
+		if left, ok := planCtx.plan.(*logicalop.LogicalJoin); ok && left.FullSchema != nil {
+			join.FullSchema = left.FullSchema
+			join.FullNames = left.FullNames
+		}
 		// Set join hint for this join.
 		if planCtx.builder.TableHints() != nil {
 			join.SetPreferredJoinTypeAndOrder(planCtx.builder.TableHints())
@@ -1507,7 +1514,7 @@ func (er *expressionRewriter) Leave(originInNode ast.Node) (retNode ast.Node, ok
 			return retNode, false
 		}
 
-		castFunction, err := expression.BuildCastFunctionWithCheck(er.sctx, arg, v.Tp, false)
+		castFunction, err := expression.BuildCastFunctionWithCheck(er.sctx, arg, v.Tp, false, v.ExplicitCharSet)
 		if err != nil {
 			er.err = err
 			return retNode, false
@@ -1658,20 +1665,20 @@ func (er *expressionRewriter) rewriteUserVariable(v *ast.VariableExpr) {
 	stkLen := len(er.ctxStack)
 	name := strings.ToLower(v.Name)
 	evalCtx := er.sctx.GetEvalCtx()
-	if !evalCtx.GetOptionalPropSet().Contains(exprctx.OptPropSessionVars) {
-		er.err = errors.Errorf("rewriting user variable requires '%s' in evalCtx", exprctx.OptPropSessionVars.String())
-		return
-	}
-
-	sessionVars, err := contextopt.SessionVarsPropReader{}.GetSessionVars(evalCtx)
-	if err != nil {
-		er.err = err
-		return
-	}
-
-	intest.Assert(er.planCtx == nil || sessionVars == er.planCtx.builder.ctx.GetSessionVars())
-
 	if v.Value != nil {
+		if !evalCtx.GetOptionalPropSet().Contains(exprctx.OptPropSessionVars) {
+			er.err = errors.Errorf("rewriting user variable requires '%s' in evalCtx", exprctx.OptPropSessionVars.String())
+			return
+		}
+
+		sessionVars, err := expropt.SessionVarsPropReader{}.GetSessionVars(evalCtx)
+		if err != nil {
+			er.err = err
+			return
+		}
+
+		intest.Assert(er.planCtx == nil || sessionVars == er.planCtx.builder.ctx.GetSessionVars())
+
 		tp := er.ctxStack[stkLen-1].GetType(er.sctx.GetEvalCtx())
 		er.ctxStack[stkLen-1], er.err = er.newFunction(ast.SetVar, tp,
 			expression.DatumToConstant(types.NewDatum(name), mysql.TypeString, 0),
@@ -1683,7 +1690,7 @@ func (er *expressionRewriter) rewriteUserVariable(v *ast.VariableExpr) {
 		sessionVars.SetUserVarType(name, tp)
 		return
 	}
-	tp, ok := sessionVars.GetUserVarType(name)
+	tp, ok := evalCtx.GetUserVarsReader().GetUserVarType(name)
 	if !ok {
 		tp = types.NewFieldType(mysql.TypeVarString)
 		tp.SetFlen(mysql.MaxFieldVarCharLength)

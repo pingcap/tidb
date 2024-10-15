@@ -312,5 +312,5 @@ a	b
 alter table t6 drop primary key;
 Error 3522 (HY000): A primary key index cannot be invisible
 show index from t6 where Key_name='PRIMARY';
-Table	Non_unique	Key_name	Seq_in_index	Column_name	Collation	Cardinality	Sub_part	Packed	Null	Index_type	Comment	Index_comment	Visible	Expression	Clustered
-t6	0	PRIMARY	1	b	A	0	NULL	NULL		BTREE			YES	NULL	NO
+Table	Non_unique	Key_name	Seq_in_index	Column_name	Collation	Cardinality	Sub_part	Packed	Null	Index_type	Comment	Index_comment	Visible	Expression	Clustered	Global
+t6	0	PRIMARY	1	b	A	0	NULL	NULL		BTREE			YES	NULL	NO	NO

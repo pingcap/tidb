@@ -308,6 +308,19 @@ func (is *infoSchema) TableByID(_ stdctx.Context, id int64) (val table.Table, ok
 	return slice[idx], true
 }
 
+func (is *infoSchema) SchemaNameByTableID(tableID int64) (schemaName pmodel.CIStr, ok bool) {
+	tbl, ok := is.TableByID(stdctx.Background(), tableID)
+	if !ok {
+		return
+	}
+	db, ok := is.SchemaByID(tbl.Meta().DBID)
+	if !ok {
+		return
+	}
+
+	return db.Name, true
+}
+
 // TableInfoByID implements InfoSchema.TableInfoByID
 func (is *infoSchema) TableInfoByID(id int64) (*model.TableInfo, bool) {
 	tbl, ok := is.TableByID(stdctx.Background(), id)
@@ -351,15 +364,10 @@ func (is *infoSchema) SchemaSimpleTableInfos(ctx stdctx.Context, schema pmodel.C
 	return ret, nil
 }
 
-type tableInfoResult struct {
-	DBName     pmodel.CIStr
-	TableInfos []*model.TableInfo
-}
-
-func (is *infoSchema) ListTablesWithSpecialAttribute(filter specialAttributeFilter) []tableInfoResult {
-	ret := make([]tableInfoResult, 0, 10)
+func (is *infoSchema) ListTablesWithSpecialAttribute(filter context.SpecialAttributeFilter) []context.TableInfoResult {
+	ret := make([]context.TableInfoResult, 0, 10)
 	for _, dbName := range is.AllSchemaNames() {
-		res := tableInfoResult{DBName: dbName}
+		res := context.TableInfoResult{DBName: dbName}
 		tblInfos, err := is.SchemaTableInfos(stdctx.Background(), dbName)
 		terror.Log(err)
 		for _, tblInfo := range tblInfos {

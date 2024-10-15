@@ -15,6 +15,7 @@
 package ddl_test
 
 import (
+	"context"
 	"strconv"
 	"sync"
 	"sync/atomic"
@@ -49,13 +50,12 @@ func TestInvalidDDLJob(t *testing.T) {
 		TableID:             0,
 		Type:                model.ActionNone,
 		BinlogInfo:          &model.HistoryInfo{},
-		Args:                []any{},
 		InvolvingSchemaInfo: []model.InvolvingSchemaInfo{{}},
 	}
 	ctx := testNewContext(store)
 	ctx.SetValue(sessionctx.QueryString, "skip")
 	de := dom.DDLExecutor().(ddl.ExecutorForTest)
-	err := de.DoDDLJobWrapper(ctx, ddl.NewJobWrapper(job, true))
+	err := de.DoDDLJobWrapper(ctx, ddl.NewJobWrapperWithArgs(job, &model.EmptyArgs{}, true))
 	require.ErrorContains(t, err, "[ddl:8204]invalid ddl job type: none")
 }
 
@@ -76,6 +76,7 @@ func TestAddBatchJobError(t *testing.T) {
 
 func TestParallelDDL(t *testing.T) {
 	store := testkit.CreateMockStoreWithSchemaLease(t, testLease)
+	ctx := context.Background()
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -107,7 +108,7 @@ func TestParallelDDL(t *testing.T) {
 			for {
 				tk1 := testkit.NewTestKit(t, store)
 				tk1.MustExec("begin")
-				jobs, err := ddl.GetAllDDLJobs(tk1.Session())
+				jobs, err := ddl.GetAllDDLJobs(ctx, tk1.Session())
 				require.NoError(t, err)
 				tk1.MustExec("rollback")
 				var qLen1, qLen2 int

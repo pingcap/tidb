@@ -32,7 +32,7 @@ func createSampleTestkit(t *testing.T, store kv.Storage) *testkit.TestKit {
 	tk.MustExec("drop database if exists test_table_sample;")
 	tk.MustExec("create database test_table_sample;")
 	tk.MustExec("use test_table_sample;")
-	tk.MustExec("set @@global.tidb_scatter_region=1;")
+	tk.MustExec("set @@session.tidb_scatter_region='table';")
 	return tk
 }
 

@@ -16,6 +16,7 @@ go_library(
     visibility = ["//visibility:private"],
     deps = [
         "//pkg/ddl",
+        "//pkg/meta/metabuild",
         "//pkg/meta/model",
         "//pkg/parser",
         "//pkg/parser/ast",
@@ -26,7 +27,6 @@ go_library(
         "//pkg/statistics/handle/util",
         "//pkg/types",
         "//pkg/util/mathutil",
-        "//pkg/util/mock",
         "@com_github_burntsushi_toml//:toml",
         "@com_github_go_sql_driver_mysql//:mysql",
         "@com_github_pingcap_errors//:errors",
