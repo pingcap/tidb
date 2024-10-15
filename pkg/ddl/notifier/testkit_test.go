@@ -174,9 +174,11 @@ func TestDeliverOrderAndCleanup(t *testing.T) {
 	h1, id1 := newRndFailHandler()
 	h2, id2 := newRndFailHandler()
 	h3, id3 := newRndFailHandler()
+	h4, id4 := newRndFailHandler()
 	notifier.RegisterHandler(3, h1)
 	notifier.RegisterHandler(4, h2)
 	notifier.RegisterHandler(9, h3)
+	notifier.RegisterHandler(11, h4)
 
 	done := make(chan struct{})
 	go func() {
@@ -196,6 +198,10 @@ func TestDeliverOrderAndCleanup(t *testing.T) {
 	event3 := notifier.NewCreateTablesEvent([]*model.TableInfo{{ID: 1002, Name: pmodel.NewCIStr("t3")}})
 	err = notifier.PubSchemeChangeToStore(ctx, se, 3, -1, event3, s)
 	require.NoError(t, err)
+	event4 := notifier.NewCreateTablesEvent([]*model.TableInfo{{ID: 1003, Name: pmodel.NewCIStr("t3")},
+		{ID: 1004, Name: pmodel.NewCIStr("t4")}})
+	err = notifier.PubSchemeChangeToStore(ctx, se, 4, -1, event4, s)
+	require.NoError(t, err)
 
 	require.Eventually(t, func() bool {
 		changes, err2 := s.List(ctx, se)
@@ -203,9 +209,10 @@ func TestDeliverOrderAndCleanup(t *testing.T) {
 		return len(changes) == 0
 	}, time.Second, 50*time.Millisecond)
 
-	require.Equal(t, []int64{1000, 1001, 1002}, *id1)
-	require.Equal(t, []int64{1000, 1001, 1002}, *id2)
-	require.Equal(t, []int64{1000, 1001, 1002}, *id3)
+	require.Equal(t, []int64{1000, 1001, 1002, 1003, 1004}, *id1)
+	require.Equal(t, []int64{1000, 1001, 1002, 1003, 1004}, *id2)
+	require.Equal(t, []int64{1000, 1001, 1002, 1003, 1004}, *id3)
+	require.Equal(t, []int64{1000, 1001, 1002, 1003, 1004}, *id4)
 
 	cancel()
 	<-done
