@@ -228,7 +228,7 @@ func (w *worker) onRecoverTable(jobCtx *jobContext, job *model.Job) (ver int64, 
 			job.State = model.JobStateCancelled
 			return ver, errors.Trace(err)
 		}
-		ver, err = w.recoverTable(metaMut, job, recoverInfo)
+		ver, err = w.recoverTable(jobCtx.stepCtx, metaMut, job, recoverInfo)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
@@ -258,18 +258,23 @@ func (w *worker) onRecoverTable(jobCtx *jobContext, job *model.Job) (ver int64, 
 	return ver, nil
 }
 
-func (w *worker) recoverTable(t *meta.Mutator, job *model.Job, recoverInfo *model.RecoverTableInfo) (ver int64, err error) {
+func (w *worker) recoverTable(
+	ctx context.Context,
+	t *meta.Mutator,
+	job *model.Job,
+	recoverInfo *model.RecoverTableInfo,
+) (ver int64, err error) {
 	tableRuleID, partRuleIDs, oldRuleIDs, oldRules, err := getOldLabelRules(recoverInfo.TableInfo, recoverInfo.OldSchemaName, recoverInfo.OldTableName)
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Wrapf(err, "failed to get old label rules from PD")
 	}
 	// Remove dropped table DDL job from gc_delete_range table.
-	err = w.delRangeManager.removeFromGCDeleteRange(w.ctx, recoverInfo.DropJobID)
+	err = w.delRangeManager.removeFromGCDeleteRange(ctx, recoverInfo.DropJobID)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
-	err = clearTablePlacementAndBundles(w.ctx, recoverInfo.TableInfo)
+	err = clearTablePlacementAndBundles(ctx, recoverInfo.TableInfo)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
@@ -1393,10 +1398,10 @@ func onAlterTableAttributes(jobCtx *jobContext, job *model.Job) (ver int64, err 
 
 	if len(args.LabelRule.Labels) == 0 {
 		patch := label.NewRulePatch([]*label.Rule{}, []string{args.LabelRule.ID})
-		err = infosync.UpdateLabelRules(jobCtx.ctx, patch)
+		err = infosync.UpdateLabelRules(jobCtx.stepCtx, patch)
 	} else {
 		labelRule := label.Rule(*args.LabelRule)
-		err = infosync.PutLabelRule(jobCtx.ctx, &labelRule)
+		err = infosync.PutLabelRule(jobCtx.stepCtx, &labelRule)
 	}
 	if err != nil {
 		job.State = model.JobStateCancelled

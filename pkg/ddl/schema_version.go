@@ -15,6 +15,7 @@
 package ddl
 
 import (
+	"context"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -375,7 +376,12 @@ func updateSchemaVersion(jobCtx *jobContext, job *model.Job, multiInfos ...schem
 	return schemaVersion, errors.Trace(err)
 }
 
-func waitVersionSynced(jobCtx *jobContext, job *model.Job, latestSchemaVersion int64) (err error) {
+func waitVersionSynced(
+	ctx context.Context,
+	jobCtx *jobContext,
+	job *model.Job,
+	latestSchemaVersion int64,
+) (err error) {
 	failpoint.Inject("checkDownBeforeUpdateGlobalVersion", func(val failpoint.Value) {
 		if val.(bool) {
 			if mockDDLErrOnce > 0 && mockDDLErrOnce != latestSchemaVersion {
@@ -389,7 +395,7 @@ func waitVersionSynced(jobCtx *jobContext, job *model.Job, latestSchemaVersion i
 		metrics.DDLWorkerHistogram.WithLabelValues(metrics.WorkerWaitSchemaChanged, job.Type.String(), metrics.RetLabel(err)).Observe(time.Since(timeStart).Seconds())
 	}()
 	// WaitVersionSynced returns only when all TiDB schemas are synced(exclude the isolated TiDB).
-	err = jobCtx.schemaVerSyncer.WaitVersionSynced(jobCtx.ctx, job.ID, latestSchemaVersion)
+	err = jobCtx.schemaVerSyncer.WaitVersionSynced(ctx, job.ID, latestSchemaVersion)
 	if err != nil {
 		logutil.DDLLogger().Info("wait latest schema version encounter error", zap.Int64("ver", latestSchemaVersion),
 			zap.Int64("jobID", job.ID), zap.Duration("take time", time.Since(timeStart)), zap.Error(err))
@@ -408,7 +414,7 @@ func waitVersionSynced(jobCtx *jobContext, job *model.Job, latestSchemaVersion i
 // but schema version might not sync.
 // So here we get the latest schema version to make sure all servers' schema version
 // update to the latest schema version in a cluster.
-func waitVersionSyncedWithoutMDL(jobCtx *jobContext, job *model.Job) error {
+func waitVersionSyncedWithoutMDL(ctx context.Context, jobCtx *jobContext, job *model.Job) error {
 	if !job.IsRunning() && !job.IsRollingback() && !job.IsDone() && !job.IsRollbackDone() {
 		return nil
 	}
@@ -431,5 +437,5 @@ func waitVersionSyncedWithoutMDL(jobCtx *jobContext, job *model.Job) error {
 		}
 	})
 
-	return updateGlobalVersionAndWaitSynced(jobCtx, latestSchemaVersion, job)
+	return updateGlobalVersionAndWaitSynced(ctx, jobCtx, latestSchemaVersion, job)
 }
