@@ -536,7 +536,8 @@ func (job *Job) Encode(updateRawArgs bool) ([]byte, error) {
 					continue
 				}
 
-				sub.RawArgs, err = marshalArgs(job.Version, sub.Args)
+				// TODO(joechenrh): Use version of parent job after refactor done.
+				sub.RawArgs, err = marshalArgs(JobVersion1, sub.Args)
 				if err != nil {
 					return nil, errors.Trace(err)
 				}
@@ -584,20 +585,6 @@ func (job *Job) DecodeArgs(args ...any) error {
 	// use pointer
 	job.Args = args[:sz]
 	return nil
-}
-
-// DecodeDropIndexFinishedArgs decodes the drop index job's args when it's finished.
-func (job *Job) DecodeDropIndexFinishedArgs() (
-	indexName any, ifExists []bool, indexIDs []int64, partitionIDs []int64, hasVectors []bool, err error) {
-	ifExists = make([]bool, 1)
-	indexIDs = make([]int64, 1)
-	hasVectors = make([]bool, 1)
-	if err := job.DecodeArgs(&indexName, &ifExists[0], &indexIDs[0], &partitionIDs, &hasVectors[0]); err != nil {
-		if err := job.DecodeArgs(&indexName, &ifExists, &indexIDs, &partitionIDs, &hasVectors); err != nil {
-			return nil, []bool{false}, []int64{-1}, nil, []bool{false}, errors.Trace(err)
-		}
-	}
-	return
 }
 
 // String implements fmt.Stringer interface.
@@ -882,6 +869,7 @@ func (job *Job) GetInvolvingSchemaInfo() []InvolvingSchemaInfo {
 // (when multi-schema change is not applicable) or more SubJobs.
 type SubJob struct {
 	Type        ActionType      `json:"type"`
+	JobArgs     JobArgs         `json:"-"`
 	Args        []any           `json:"-"`
 	RawArgs     json.RawMessage `json:"raw_args"`
 	SchemaState SchemaState     `json:"schema_state"`

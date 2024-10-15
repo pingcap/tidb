@@ -2348,6 +2348,10 @@ func (b *PlanBuilder) filterSkipColumnTypes(origin []*model.ColumnInfo, tbl *res
 	}
 	// If one column's type is in the skipTypes list and it doesn't exist in mustAnalyzedCols, we will skip it.
 	for _, colInfo := range origin {
+		// Vector type is skip by hardcoded. Just because that collecting it is meanless for current TiDB.
+		if colInfo.FieldType.GetType() == mysql.TypeTiDBVectorFloat32 {
+			continue
+		}
 		_, skip := skipTypes[types.TypeToStr(colInfo.FieldType.GetType(), colInfo.FieldType.GetCharset())]
 		// Currently, if the column exists in some index(except MV Index), we need to bring the column's sample values
 		// into TiDB to build the index statistics.

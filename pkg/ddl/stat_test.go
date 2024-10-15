@@ -44,14 +44,14 @@ func TestGetDDLInfo(t *testing.T) {
 		ID: 2,
 	}
 	job := &model.Job{
-		Version:  model.JobVersion1,
+		Version:  model.GetJobVerInUse(),
 		ID:       1,
 		SchemaID: dbInfo2.ID,
 		Type:     model.ActionCreateSchema,
 		RowCount: 0,
 	}
 	job1 := &model.Job{
-		Version:  model.JobVersion1,
+		Version:  model.GetJobVerInUse(),
 		ID:       2,
 		SchemaID: dbInfo2.ID,
 		Type:     model.ActionAddIndex,

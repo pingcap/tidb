@@ -292,7 +292,7 @@ func NewPlanCacheKey(sctx sessionctx.Context, stmt *PlanCacheStmt) (key, binding
 	if vars.TimeZone != nil {
 		_, timezoneOffset = time.Now().In(vars.TimeZone).Zone()
 	}
-	_, connCollation := vars.GetCharsetInfo()
+	connCharset, connCollation := vars.GetCharsetInfo()
 
 	// not allow to share the same plan among different users for safety.
 	var userName, hostName string
@@ -330,6 +330,7 @@ func NewPlanCacheKey(sctx sessionctx.Context, stmt *PlanCacheStmt) (key, binding
 	}
 	hash = codec.EncodeInt(hash, int64(vars.SelectLimit))
 	hash = append(hash, hack.Slice(binding)...)
+	hash = append(hash, hack.Slice(connCharset)...)
 	hash = append(hash, hack.Slice(connCollation)...)
 	hash = append(hash, hack.Slice(strconv.FormatBool(vars.InRestrictedSQL))...)
 	hash = append(hash, hack.Slice(strconv.FormatBool(variable.RestrictedReadOnly.Load()))...)
