@@ -544,6 +544,7 @@ OUTLOOP:
 						}
 						schema := c.Refer.Table.Schema.L
 						if schema == "" {
+							// if schema is empty, use the default schema
 							t := strings.Split(name, ".")
 							schema = t[0]
 						}
