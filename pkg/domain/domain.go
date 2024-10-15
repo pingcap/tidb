@@ -281,12 +281,6 @@ func (do *Domain) FullReload(startTS uint64) error {
 	// Using the KV timeout read feature to address the issue of potential DDL lease expiration when
 	// the meta region leader is slow.
 	snapshot.SetOption(kv.TiKVClientReadTimeout, uint64(3000)) // 3000ms.
-
-	currentSchemaVersion := int64(0)
-	if oldInfoSchema := do.infoCache.GetLatest(); oldInfoSchema != nil {
-		currentSchemaVersion = oldInfoSchema.SchemaMetaVersion()
-	}
-
 	m := meta.NewReader(snapshot)
 	neededSchemaVersion, err := m.GetSchemaVersionWithNonEmptyDiff()
 	if err != nil {
@@ -326,12 +320,6 @@ func (do *Domain) FullReload(startTS uint64) error {
 	if err != nil {
 		return err
 	}
-	infoschema_metrics.LoadSchemaDurationLoadAll.Observe(time.Since(beginTime).Seconds())
-	logutil.BgLogger().Info("full load InfoSchema success",
-		zap.Int64("currentSchemaVersion", currentSchemaVersion),
-		zap.Int64("neededSchemaVersion", neededSchemaVersion),
-		zap.Duration("start time", time.Since(beginTime)))
-
 	is := newISBuilder.Build(startTS)
 	do.infoCache.Insert(is, schemaTs)
 	return nil
