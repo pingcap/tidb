@@ -251,7 +251,7 @@ func prepareData4PlanReplayer(t *testing.T, client *testserverclient.TestServerC
 	return filename, filename3
 }
 
-func TestIssue56458(t *testing.T) {
+func TestPlanReplayerWithMultiForeignKey(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	dom, err := session.GetDomain(store)
 	require.NoError(t, err)
