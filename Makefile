@@ -231,9 +231,9 @@ enterprise-docker: init-submodule enterprise-prepare
 enterprise-server-build: TIDB_EDITION=Enterprise
 enterprise-server-build:
 ifeq ($(TARGET), "")
-	CGO_ENABLED=1 $(GOBUILD) -tags enterprise $(RACE_FLAG) -ldflags '$(LDFLAGS) $(CHECK_FLAG) $(EXTENSION_FLAG)' -o bin/tidb-server cmd/tidb-server/main.go
+	CGO_ENABLED=1 $(GOBUILD) -tags=codes,enterprise $(RACE_FLAG) -ldflags '$(LDFLAGS) $(CHECK_FLAG) $(EXTENSION_FLAG)' -o bin/tidb-server cmd/tidb-server/main.go
 else
-	CGO_ENABLED=1 $(GOBUILD) -tags enterprise $(RACE_FLAG) -ldflags '$(LDFLAGS) $(CHECK_FLAG) $(EXTENSION_FLAG)' -o '$(TARGET)' cmd/tidb-server/main.go
+	CGO_ENABLED=1 $(GOBUILD) -tags=codes,enterprise $(RACE_FLAG) -ldflags '$(LDFLAGS) $(CHECK_FLAG) $(EXTENSION_FLAG)' -o '$(TARGET)' cmd/tidb-server/main.go
 endif
 
 .PHONY: enterprise-server
@@ -387,7 +387,7 @@ lightning_web:
 
 .PHONY: build_br
 build_br:
-	CGO_ENABLED=1 $(GOBUILD) $(RACE_FLAG) -ldflags '$(LDFLAGS) $(CHECK_FLAG)' -o $(BR_BIN) ./br/cmd/br
+	CGO_ENABLED=1 $(GOBUILD) -tags codes $(RACE_FLAG) -ldflags '$(LDFLAGS) $(CHECK_FLAG)' -o $(BR_BIN) ./br/cmd/br
 
 .PHONY: build_lightning_for_web
 build_lightning_for_web:
@@ -395,7 +395,7 @@ build_lightning_for_web:
 
 .PHONY: build_lightning
 build_lightning:
-	CGO_ENABLED=1 $(GOBUILD) $(RACE_FLAG) -ldflags '$(LDFLAGS) $(CHECK_FLAG)' -o $(LIGHTNING_BIN) ./lightning/cmd/tidb-lightning
+	CGO_ENABLED=1 $(GOBUILD) -tags codes $(RACE_FLAG) -ldflags '$(LDFLAGS) $(CHECK_FLAG)' -o $(LIGHTNING_BIN) ./lightning/cmd/tidb-lightning
 
 .PHONY: build_lightning-ctl
 build_lightning-ctl:
