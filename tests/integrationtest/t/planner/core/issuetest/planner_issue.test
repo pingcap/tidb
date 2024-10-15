@@ -492,14 +492,6 @@ FROM (
 ) AS derived_table
 WHERE 16739493649928310215 MEMBER OF (derived_table.col_60767)
    OR NOT (JSON_CONTAINS(derived_table.col_60767, '6019730272580550835'));
-<<<<<<< HEAD
-=======
-
-# TestIssue53766
-drop table if exists t0, t1;
-CREATE TABLE t0(c0 int);
-CREATE TABLE t1(c0 int);
-SELECT t0.c0, t1.c0 FROM t0 NATURAL JOIN t1 WHERE '1' AND (t0.c0 IN (SELECT c0 FROM t0));
 
 # TestIssue56472
 drop table if exists t1, t2, t3, t4;
@@ -519,4 +511,3 @@ SELECT t2.a,t2.b,t3.a,t3.b,t4.a,t4.b
        ON t3.a=1 AND t3.b=t2.b AND t2.b=t4.b order by 1, 2, 3, 4, 5;
 show warnings;
 drop table if exists t1, t2, t3, t4;
->>>>>>> 10647c9d733 (statstics: avoid unnecessary try when to sync load (#56614))
