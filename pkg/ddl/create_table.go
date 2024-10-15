@@ -160,13 +160,13 @@ func onCreateTable(jobCtx *jobContext, job *model.Job) (ver int64, _ error) {
 	})
 
 	args, err := model.GetCreateTableArgs(job)
-	jobCtx.jobArgs = args
-
 	if err != nil {
 		// Invalid arguments, cancel this job.
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
+	jobCtx.jobArgs = args
+
 	tbInfo := args.TableInfo
 
 	if len(tbInfo.ForeignKeys) > 0 {
