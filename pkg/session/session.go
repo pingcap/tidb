@@ -3424,7 +3424,7 @@ func bootstrapSessionImpl(ctx context.Context, store kv.Storage, createSessionsI
 	// v6.2.0 to version >= v8.5, you need to upgrade to a version in range [v6.2.0, v8.5.0)
 	// first, then upgrade to v8.5+.
 	if ver > notBootstrapped && ver < version92 {
-		return nil, errors.Errorf("Cannot upgrade from below v6.2.0 to this version, please upgrade to a version in range [v6.2.0, v8.5.0) first. Current bootstrap version=%d, target version=%d", ver, currentBootstrapVersion)
+		return nil, errors.Errorf("Cannot upgrade from below v6.2.0 to this version, please upgrade to a version in range [v6.2.0, v8.5.0) first. Current bootstrap version is %d, target version is %d", ver, currentBootstrapVersion)
 	}
 
 	cfg := config.GetGlobalConfig()
