@@ -63,7 +63,11 @@ func onCreateResourceGroup(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, 
 			return ver, errors.Trace(err)
 		}
 
+<<<<<<< HEAD
 		ctx, cancel := context.WithTimeout(d.ctx, defaultInfosyncTimeout)
+=======
+		ctx, cancel := context.WithTimeout(jobCtx.stepCtx, defaultInfosyncTimeout)
+>>>>>>> 4c1979ae128 (ddl: job context will be canceled when cancel or pause job (#56404))
 		defer cancel()
 		err = infosync.AddResourceGroup(ctx, protoGroup)
 		if err != nil {

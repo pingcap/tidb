@@ -95,9 +95,12 @@ func newContext(store kv.Storage) sessionctx.Context {
 
 const defaultWaitReorgTimeout = 10 * time.Second
 
+<<<<<<< HEAD
 // ReorgWaitTimeout is the timeout that wait ddl in write reorganization stage.
 var ReorgWaitTimeout = 5 * time.Second
 
+=======
+>>>>>>> 4c1979ae128 (ddl: job context will be canceled when cancel or pause job (#56404))
 func (rc *reorgCtx) notifyJobState(state model.JobState) {
 	atomic.StoreInt32((*int32)(&rc.jobState), int32(state))
 }
@@ -209,14 +212,20 @@ func (w *worker) runReorgJob(reorgInfo *reorgInfo, tblInfo *model.TableInfo,
 
 		beOwnerTS := w.ddlCtx.reorgCtx.getOwnerTS()
 		rc = w.newReorgCtx(reorgInfo.Job.ID, reorgInfo.Job.GetRowCount())
+<<<<<<< HEAD
 		w.wg.Add(1)
 		go func() {
 			defer w.wg.Done()
 			err := f()
+=======
+		w.wg.Run(func() {
+			err := reorgFn()
+>>>>>>> 4c1979ae128 (ddl: job context will be canceled when cancel or pause job (#56404))
 			rc.doneCh <- reorgFnResult{ownerTS: beOwnerTS, err: err}
-		}()
+		})
 	}
 
+<<<<<<< HEAD
 	waitTimeout := defaultWaitReorgTimeout
 	// if lease is 0, we are using a local storage,
 	// and we can wait the reorganization to be done here.
@@ -251,19 +260,57 @@ func (w *worker) runReorgJob(reorgInfo *reorgInfo, tblInfo *model.TableInfo,
 		} else {
 			logutil.BgLogger().Info("run reorg job done", zap.String("category", "ddl"), zap.Int64("handled rows", rowCount))
 		}
+=======
+	updateProcessTicker := time.NewTicker(5 * time.Second)
+	defer updateProcessTicker.Stop()
+	for {
+		select {
+		case res := <-rc.doneCh:
+			err := res.err
+			curTS := w.ddlCtx.reorgCtx.getOwnerTS()
+			if res.ownerTS != curTS {
+				d.removeReorgCtx(job.ID)
+				logutil.DDLLogger().Warn("owner ts mismatch, return timeout error and retry",
+					zap.Int64("prevTS", res.ownerTS),
+					zap.Int64("curTS", curTS))
+				return dbterror.ErrWaitReorgTimeout
+			}
+			// Since job is cancelled，we don't care about its partial counts.
+			// TODO(lance6716): should we also do for paused job?
+			if terror.ErrorEqual(err, dbterror.ErrCancelledDDLJob) {
+				d.removeReorgCtx(job.ID)
+				return err
+			}
+			rowCount := rc.getRowCount()
+			job.SetRowCount(rowCount)
+			if err != nil {
+				logutil.DDLLogger().Warn("run reorg job done", zap.Int64("handled rows", rowCount), zap.Error(err))
+			} else {
+				logutil.DDLLogger().Info("run reorg job done", zap.Int64("handled rows", rowCount))
+			}
 
-		// Update a job's warnings.
-		w.mergeWarningsIntoJob(job)
+			// Update a job's warnings.
+			w.mergeWarningsIntoJob(job)
 
-		d.removeReorgCtx(job.ID)
+			d.removeReorgCtx(job.ID)
+>>>>>>> 4c1979ae128 (ddl: job context will be canceled when cancel or pause job (#56404))
 
-		updateBackfillProgress(w, reorgInfo, tblInfo, rowCount)
+			updateBackfillProgress(w, reorgInfo, tblInfo, rowCount)
 
-		// For other errors, even err is not nil here, we still wait the partial counts to be collected.
-		// since in the next round, the startKey is brand new which is stored by last time.
-		if err != nil {
+			// For other errors, even err is not nil here, we still wait the partial counts to be collected.
+			// since in the next round, the startKey is brand new which is stored by last time.
 			return errors.Trace(err)
+		case <-updateProcessTicker.C:
+			rowCount := rc.getRowCount()
+			job.SetRowCount(rowCount)
+			updateBackfillProgress(w, reorgInfo, tblInfo, rowCount)
+
+			// Update a job's warnings.
+			w.mergeWarningsIntoJob(job)
+
+			rc.resetWarnings()
 		}
+<<<<<<< HEAD
 	case <-w.ctx.Done():
 		logutil.BgLogger().Info("run reorg job quit", zap.String("category", "ddl"))
 		d.removeReorgCtx(job.ID)
@@ -284,8 +331,9 @@ func (w *worker) runReorgJob(reorgInfo *reorgInfo, tblInfo *model.TableInfo,
 			zap.Int64("total added row count", rowCount))
 		// If timeout, we will return, check the owner and retry to wait job done again.
 		return dbterror.ErrWaitReorgTimeout
+=======
+>>>>>>> 4c1979ae128 (ddl: job context will be canceled when cancel or pause job (#56404))
 	}
-	return nil
 }
 
 func overwriteReorgInfoFromGlobalCheckpoint(w *worker, sess *sess.Session, job *model.Job, reorgInfo *reorgInfo) error {
@@ -414,10 +462,10 @@ func getTableTotalCount(w *worker, tblInfo *model.TableInfo) int64 {
 			partIDs = append(partIDs, strconv.FormatInt(def.ID, 10))
 		}
 		sql := "select sum(table_rows) from information_schema.partitions where tidb_partition_id in (%?);"
-		rows, _, err = executor.ExecRestrictedSQL(w.ctx, nil, sql, strings.Join(partIDs, ","))
+		rows, _, err = executor.ExecRestrictedSQL(w.workCtx, nil, sql, strings.Join(partIDs, ","))
 	} else {
 		sql := "select table_rows from information_schema.tables where tidb_table_id=%?;"
-		rows, _, err = executor.ExecRestrictedSQL(w.ctx, nil, sql, tblInfo.ID)
+		rows, _, err = executor.ExecRestrictedSQL(w.workCtx, nil, sql, tblInfo.ID)
 	}
 	if err != nil {
 		return statistics.PseudoRowCount
@@ -441,6 +489,7 @@ func (dc *ddlCtx) isReorgRunnable(jobID int64, isDistReorg bool) error {
 		return dbterror.ErrInvalidWorker.GenWithStack("worker is closed")
 	}
 
+	// TODO(lance6716): check ctx.Err?
 	if dc.isReorgCancelled(jobID) {
 		// Job is cancelled. So it can't be done.
 		return dbterror.ErrCancelledDDLJob

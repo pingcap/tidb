@@ -86,7 +86,11 @@ func onMultiSchemaChange(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job) (ve
 					continue
 				}
 				proxyJob := sub.ToProxyJob(job, i)
+<<<<<<< HEAD
 				ver, err = w.runDDLJob(d, t, &proxyJob)
+=======
+				ver, _, err = w.runOneJobStep(jobCtx, &proxyJob, nil)
+>>>>>>> 4c1979ae128 (ddl: job context will be canceled when cancel or pause job (#56404))
 				err = handleRollbackException(err, proxyJob.Error)
 				if err != nil {
 					return ver, err
@@ -109,7 +113,11 @@ func onMultiSchemaChange(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job) (ve
 				continue
 			}
 			proxyJob := sub.ToProxyJob(job, i)
+<<<<<<< HEAD
 			ver, err = w.runDDLJob(d, t, &proxyJob)
+=======
+			ver, _, err = w.runOneJobStep(jobCtx, &proxyJob, nil)
+>>>>>>> 4c1979ae128 (ddl: job context will be canceled when cancel or pause job (#56404))
 			sub.FromProxyJob(&proxyJob, ver)
 			handleRevertibleException(job, sub, proxyJob.Error)
 			return ver, err
@@ -135,7 +143,11 @@ func onMultiSchemaChange(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job) (ve
 			if schemaVersionGenerated {
 				proxyJob.MultiSchemaInfo.SkipVersion = true
 			}
+<<<<<<< HEAD
 			proxyJobVer, err := w.runDDLJob(d, t, &proxyJob)
+=======
+			proxyJobVer, _, err := w.runOneJobStep(jobCtx, &proxyJob, nil)
+>>>>>>> 4c1979ae128 (ddl: job context will be canceled when cancel or pause job (#56404))
 			if !schemaVersionGenerated && proxyJobVer != 0 {
 				schemaVersionGenerated = true
 				ver = proxyJobVer
@@ -184,7 +196,11 @@ func onMultiSchemaChange(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job) (ve
 			continue
 		}
 		proxyJob := sub.ToProxyJob(job, i)
+<<<<<<< HEAD
 		ver, err = w.runDDLJob(d, t, &proxyJob)
+=======
+		ver, _, err = w.runOneJobStep(jobCtx, &proxyJob, nil)
+>>>>>>> 4c1979ae128 (ddl: job context will be canceled when cancel or pause job (#56404))
 		sub.FromProxyJob(&proxyJob, ver)
 		return ver, err
 	}

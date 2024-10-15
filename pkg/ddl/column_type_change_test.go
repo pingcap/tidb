@@ -575,10 +575,7 @@ func TestCancelCTCInReorgStateWillCauseGoroutineLeak(t *testing.T) {
 	tk.MustExec("set global tidb_enable_row_level_checksum = 1")
 	tk.MustExec("use test")
 
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/mockInfiniteReorgLogic", `return(true)`))
-	defer func() {
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/mockInfiniteReorgLogic"))
-	}()
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/mockInfiniteReorgLogic", `return()`)
 
 	// set ddl hook
 	originalHook := dom.DDL().GetHook()

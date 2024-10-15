@@ -10,7 +10,11 @@ go_library(
     importpath = "github.com/pingcap/tidb/pkg/ddl/tests/adminpause",
     visibility = ["//visibility:public"],
     deps = [
+<<<<<<< HEAD
         "//pkg/ddl",
+=======
+        "//pkg/ddl/logutil",
+>>>>>>> 4c1979ae128 (ddl: job context will be canceled when cancel or pause job (#56404))
         "//pkg/domain",
         "//pkg/parser/model",
         "//pkg/testkit",

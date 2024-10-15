@@ -545,6 +545,7 @@ func (dc *ddlCtx) removeReorgCtx(jobID int64) {
 	}
 }
 
+<<<<<<< HEAD
 func (dc *ddlCtx) notifyReorgWorkerJobStateChange(job *model.Job) {
 	rc := dc.getReorgCtx(job.ID)
 	if rc == nil {
@@ -557,6 +558,8 @@ func (dc *ddlCtx) notifyReorgWorkerJobStateChange(job *model.Job) {
 	rc.notifyJobState(job.State)
 }
 
+=======
+>>>>>>> 4c1979ae128 (ddl: job context will be canceled when cancel or pause job (#56404))
 // EnableTiFlashPoll enables TiFlash poll loop aka PollTiFlashReplicaStatus.
 func EnableTiFlashPoll(d interface{}) {
 	if dd, ok := d.(*ddl); ok {

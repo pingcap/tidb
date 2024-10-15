@@ -1075,8 +1075,17 @@ func BuildElements(changingCol *model.ColumnInfo, changingIdxs []*model.IndexInf
 	return elements
 }
 
+<<<<<<< HEAD
 func (w *worker) updatePhysicalTableRow(t table.Table, reorgInfo *reorgInfo) error {
 	logutil.BgLogger().Info("start to update table row", zap.String("category", "ddl"), zap.String("job", reorgInfo.Job.String()), zap.String("reorgInfo", reorgInfo.String()))
+=======
+func (w *worker) updatePhysicalTableRow(
+	ctx context.Context,
+	t table.Table,
+	reorgInfo *reorgInfo,
+) error {
+	logutil.DDLLogger().Info("start to update table row", zap.Stringer("job", reorgInfo.Job), zap.Stringer("reorgInfo", reorgInfo))
+>>>>>>> 4c1979ae128 (ddl: job context will be canceled when cancel or pause job (#56404))
 	if tbl, ok := t.(table.PartitionedTable); ok {
 		done := false
 		for !done {
@@ -1096,7 +1105,11 @@ func (w *worker) updatePhysicalTableRow(t table.Table, reorgInfo *reorgInfo) err
 				// https://github.com/pingcap/tidb/issues/38297
 				return dbterror.ErrCancelledDDLJob.GenWithStack("Modify Column on partitioned table / typeUpdateColumnWorker not yet supported.")
 			}
+<<<<<<< HEAD
 			err := w.writePhysicalTableRecord(w.sessPool, p, workType, reorgInfo)
+=======
+			err := w.writePhysicalTableRecord(ctx, w.sessPool, p, workType, reorgInfo)
+>>>>>>> 4c1979ae128 (ddl: job context will be canceled when cancel or pause job (#56404))
 			if err != nil {
 				return err
 			}
@@ -1108,12 +1121,17 @@ func (w *worker) updatePhysicalTableRow(t table.Table, reorgInfo *reorgInfo) err
 		return nil
 	}
 	if tbl, ok := t.(table.PhysicalTable); ok {
+<<<<<<< HEAD
 		return w.writePhysicalTableRecord(w.sessPool, tbl, typeUpdateColumnWorker, reorgInfo)
+=======
+		return w.writePhysicalTableRecord(ctx, w.sessPool, tbl, typeUpdateColumnWorker, reorgInfo)
+>>>>>>> 4c1979ae128 (ddl: job context will be canceled when cancel or pause job (#56404))
 	}
 	return dbterror.ErrCancelledDDLJob.GenWithStack("internal error for phys tbl id: %d tbl id: %d", reorgInfo.PhysicalTableID, t.Meta().ID)
 }
 
 // TestReorgGoroutineRunning is only used in test to indicate the reorg goroutine has been started.
+<<<<<<< HEAD
 var TestReorgGoroutineRunning = make(chan interface{})
 
 // updateCurrentElement update the current element for reorgInfo.
@@ -1131,11 +1149,26 @@ func (w *worker) updateCurrentElement(t table.Table, reorgInfo *reorgInfo) error
 				}
 			}
 		}
+=======
+var TestReorgGoroutineRunning = make(chan struct{})
+
+// updateCurrentElement update the current element for reorgInfo.
+func (w *worker) updateCurrentElement(
+	ctx context.Context,
+	t table.Table,
+	reorgInfo *reorgInfo,
+) error {
+	failpoint.Inject("mockInfiniteReorgLogic", func() {
+		TestReorgGoroutineRunning <- struct{}{}
+		<-ctx.Done()
+		// Job is cancelled. So it can't be done.
+		failpoint.Return(dbterror.ErrCancelledDDLJob)
+>>>>>>> 4c1979ae128 (ddl: job context will be canceled when cancel or pause job (#56404))
 	})
 	// TODO: Support partition tables.
 	if bytes.Equal(reorgInfo.currElement.TypeKey, meta.ColumnElementKey) {
 		//nolint:forcetypeassert
-		err := w.updatePhysicalTableRow(t.(table.PhysicalTable), reorgInfo)
+		err := w.updatePhysicalTableRow(ctx, t.(table.PhysicalTable), reorgInfo)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -1189,7 +1222,7 @@ func (w *worker) updateCurrentElement(t table.Table, reorgInfo *reorgInfo) error
 		if err != nil {
 			return errors.Trace(err)
 		}
-		err = w.addTableIndex(t, reorgInfo)
+		err = w.addTableIndex(ctx, t, reorgInfo)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -1915,7 +1948,15 @@ func rollbackModifyColumnJob(d *ddlCtx, t *meta.Meta, tblInfo *model.TableInfo, 
 
 // modifyColsFromNull2NotNull modifies the type definitions of 'null' to 'not null'.
 // Introduce the `mysql.PreventNullInsertFlag` flag to prevent users from inserting or updating null values.
-func modifyColsFromNull2NotNull(w *worker, dbInfo *model.DBInfo, tblInfo *model.TableInfo, cols []*model.ColumnInfo, newCol *model.ColumnInfo, isDataTruncated bool) error {
+func modifyColsFromNull2NotNull(
+	ctx context.Context,
+	w *worker,
+	dbInfo *model.DBInfo,
+	tblInfo *model.TableInfo,
+	cols []*model.ColumnInfo,
+	newCol *model.ColumnInfo,
+	isDataTruncated bool,
+) error {
 	// Get sessionctx from context resource pool.
 	var sctx sessionctx.Context
 	sctx, err := w.sessPool.Get()
@@ -1933,7 +1974,7 @@ func modifyColsFromNull2NotNull(w *worker, dbInfo *model.DBInfo, tblInfo *model.
 	})
 	if !skipCheck {
 		// If there is a null value inserted, it cannot be modified and needs to be rollback.
-		err = checkForNullValue(w.ctx, sctx, isDataTruncated, dbInfo.Name, tblInfo.Name, newCol, cols...)
+		err = checkForNullValue(ctx, sctx, isDataTruncated, dbInfo.Name, tblInfo.Name, newCol, cols...)
 		if err != nil {
 			return errors.Trace(err)
 		}

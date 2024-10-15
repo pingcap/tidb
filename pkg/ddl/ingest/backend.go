@@ -225,9 +225,13 @@ func (bc *litBackendCtx) Flush(indexID int64, mode FlushMode) (flushed, imported
 	return true, true, nil
 }
 
+<<<<<<< HEAD
 func (bc *litBackendCtx) unsafeImportAndReset(ei *engineInfo) error {
 	logutil.Logger(bc.ctx).Info(LitInfoUnsafeImport, zap.Int64("index ID", ei.indexID),
 		zap.String("usage info", bc.diskRoot.UsageInfo()))
+=======
+func (bc *litBackendCtx) unsafeImportAndReset(ctx context.Context, ei *engineInfo) error {
+>>>>>>> 4c1979ae128 (ddl: job context will be canceled when cancel or pause job (#56404))
 	logger := log.FromContext(bc.ctx).With(
 		zap.Stringer("engineUUID", ei.uuid),
 	)

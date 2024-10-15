@@ -1999,7 +1999,22 @@ func (w *worker) onDropTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (
 			return ver, errors.Trace(err)
 		}
 		physicalTableIDs = updateDroppingPartitionInfo(tblInfo, partNames)
+<<<<<<< HEAD
 		err = dropLabelRules(d, job.SchemaName, tblInfo.Name.L, partNames)
+=======
+		tblInfo.Partition.Definitions = originalDefs
+		tblInfo.Partition.DDLState = model.StateWriteOnly
+		tblInfo.Partition.DDLAction = model.ActionDropTablePartition
+
+		job.SchemaState = model.StateWriteOnly
+		ver, err = updateVersionAndTableInfo(jobCtx, job, tblInfo, originalState != job.SchemaState)
+	case model.StateWriteOnly:
+		// Since the previous state do not use the dropping partitions,
+		// we can now actually remove them, allowing to write into the overlapping range
+		// of the higher range partition or LIST default partition.
+		physicalTableIDs = updateDroppingPartitionInfo(tblInfo, partNames)
+		err = dropLabelRules(jobCtx.stepCtx, job.SchemaName, tblInfo.Name.L, partNames)
+>>>>>>> 4c1979ae128 (ddl: job context will be canceled when cancel or pause job (#56404))
 		if err != nil {
 			job.State = model.JobStateCancelled
 			return ver, errors.Wrapf(err, "failed to notify PD the label rules")
@@ -2496,7 +2511,11 @@ func (w *worker) onExchangeTablePartition(d *ddlCtx, t *meta.Meta, job *model.Jo
 				zap.String("job", job.String()), zap.Int64("defID", defID), zap.Int64("partDef.ID", partDef.ID))
 			job.Args[0] = partDef.ID
 			defID = partDef.ID
+<<<<<<< HEAD
 			err = updateDDLJob2Table(w.sess, job, true)
+=======
+			err = updateDDLJob2Table(jobCtx.stepCtx, w.sess, job, true)
+>>>>>>> 4c1979ae128 (ddl: job context will be canceled when cancel or pause job (#56404))
 			if err != nil {
 				return ver, errors.Trace(err)
 			}
@@ -2539,7 +2558,11 @@ func (w *worker) onExchangeTablePartition(d *ddlCtx, t *meta.Meta, job *model.Jo
 			zap.String("job", job.String()), zap.Int64("defID", defID), zap.Int64("partDef.ID", partDef.ID))
 		job.Args[0] = partDef.ID
 		defID = partDef.ID
+<<<<<<< HEAD
 		err = updateDDLJob2Table(w.sess, job, true)
+=======
+		err = updateDDLJob2Table(jobCtx.stepCtx, w.sess, job, true)
+>>>>>>> 4c1979ae128 (ddl: job context will be canceled when cancel or pause job (#56404))
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
@@ -2554,7 +2577,15 @@ func (w *worker) onExchangeTablePartition(d *ddlCtx, t *meta.Meta, job *model.Jo
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
-		err = checkExchangePartitionRecordValidation(w, ptbl, ntbl, ptDbInfo.Name.L, ntDbInfo.Name.L, partName)
+		err = checkExchangePartitionRecordValidation(
+			jobCtx.stepCtx,
+			w,
+			ptbl,
+			ntbl,
+			ptDbInfo.Name.L,
+			ntDbInfo.Name.L,
+			partName,
+		)
 		if err != nil {
 			job.State = model.JobStateRollingback
 			return ver, errors.Trace(err)
@@ -3085,7 +3116,7 @@ func doPartitionReorgWork(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job, tb
 			func() {
 				reorgErr = dbterror.ErrCancelledDDLJob.GenWithStack("reorganize partition for table `%v` panic", tbl.Meta().Name)
 			}, false)
-		return w.reorgPartitionDataAndIndex(tbl, reorgInfo)
+		return w.reorgPartitionDataAndIndex(jobCtx.stepCtx, tbl, reorgInfo)
 	})
 	if err != nil {
 		if dbterror.ErrPausedDDLJob.Equal(err) {
@@ -3316,15 +3347,28 @@ func (w *reorgPartitionWorker) GetCtx() *backfillCtx {
 	return w.backfillCtx
 }
 
+<<<<<<< HEAD
 func (w *worker) reorgPartitionDataAndIndex(t table.Table, reorgInfo *reorgInfo) error {
 	// First copy all table data to the new partitions
+=======
+func (w *worker) reorgPartitionDataAndIndex(
+	ctx context.Context,
+	t table.Table,
+	reorgInfo *reorgInfo,
+) (err error) {
+	// First copy all table data to the new AddingDefinitions partitions
+>>>>>>> 4c1979ae128 (ddl: job context will be canceled when cancel or pause job (#56404))
 	// from each of the DroppingDefinitions partitions.
 	// Then create all indexes on the AddingDefinitions partitions
 	// for each new index, one partition at a time.
 
 	// Copy the data from the DroppingDefinitions to the AddingDefinitions
 	if bytes.Equal(reorgInfo.currElement.TypeKey, meta.ColumnElementKey) {
+<<<<<<< HEAD
 		err := w.updatePhysicalTableRow(t, reorgInfo)
+=======
+		err = w.updatePhysicalTableRow(ctx, t, reorgInfo)
+>>>>>>> 4c1979ae128 (ddl: job context will be canceled when cancel or pause job (#56404))
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -3401,16 +3445,32 @@ func (w *worker) reorgPartitionDataAndIndex(t table.Table, reorgInfo *reorgInfo)
 		if err != nil {
 			return errors.Trace(err)
 		}
+<<<<<<< HEAD
 		err = w.addTableIndex(t, reorgInfo)
+=======
+	}
+
+	pi := t.Meta().GetPartitionInfo()
+	if _, err = findNextPartitionID(reorgInfo.PhysicalTableID, pi.AddingDefinitions); err == nil {
+		// Now build all the indexes in the new partitions
+		err = w.addTableIndex(ctx, t, reorgInfo)
+>>>>>>> 4c1979ae128 (ddl: job context will be canceled when cancel or pause job (#56404))
 		if err != nil {
 			return errors.Trace(err)
 		}
 		reorgInfo.PhysicalTableID = firstNewPartitionID
 	}
+<<<<<<< HEAD
 	failpoint.Inject("reorgPartitionAfterIndex", func(val failpoint.Value) {
 		//nolint:forcetypeassert
 		if val.(bool) {
 			panic("panic test in reorgPartitionAfterIndex")
+=======
+	if _, err = findNextNonTouchedPartitionID(reorgInfo.PhysicalTableID, pi); err == nil {
+		err = w.addTableIndex(ctx, t, reorgInfo)
+		if err != nil {
+			return errors.Trace(err)
+>>>>>>> 4c1979ae128 (ddl: job context will be canceled when cancel or pause job (#56404))
 		}
 	})
 	return nil
@@ -3458,16 +3518,36 @@ func bundlesForExchangeTablePartition(t *meta.Meta, pt *model.TableInfo, newPar 
 	return bundles, nil
 }
 
+<<<<<<< HEAD
 func checkExchangePartitionRecordValidation(w *worker, ptbl, ntbl table.Table, pschemaName, nschemaName, partitionName string) error {
 	verifyFunc := func(sql string, params ...interface{}) error {
 		var ctx sessionctx.Context
 		ctx, err := w.sessPool.Get()
+=======
+func checkExchangePartitionRecordValidation(
+	ctx context.Context,
+	w *worker,
+	ptbl, ntbl table.Table,
+	pschemaName, nschemaName, partitionName string,
+) error {
+	verifyFunc := func(sql string, params ...any) error {
+		sctx, err := w.sessPool.Get()
+>>>>>>> 4c1979ae128 (ddl: job context will be canceled when cancel or pause job (#56404))
 		if err != nil {
 			return errors.Trace(err)
 		}
-		defer w.sessPool.Put(ctx)
+		defer w.sessPool.Put(sctx)
 
+<<<<<<< HEAD
 		rows, _, err := ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(w.ctx, nil, sql, params...)
+=======
+		rows, _, err := sctx.GetRestrictedSQLExecutor().ExecRestrictedSQL(
+			ctx,
+			nil,
+			sql,
+			params...,
+		)
+>>>>>>> 4c1979ae128 (ddl: job context will be canceled when cancel or pause job (#56404))
 		if err != nil {
 			return errors.Trace(err)
 		}

@@ -499,7 +499,11 @@ func (w *worker) onRecoverTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver in
 			job.State = model.JobStateCancelled
 			return ver, errors.Trace(err)
 		}
+<<<<<<< HEAD
 		ver, err = w.recoverTable(t, job, recoverInfo)
+=======
+		ver, err = w.recoverTable(jobCtx.stepCtx, metaMut, job, recoverInfo)
+>>>>>>> 4c1979ae128 (ddl: job context will be canceled when cancel or pause job (#56404))
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
@@ -520,6 +524,7 @@ func (w *worker) onRecoverTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver in
 	return ver, nil
 }
 
+<<<<<<< HEAD
 func (w *worker) recoverTable(t *meta.Meta, job *model.Job, recoverInfo *RecoverInfo) (ver int64, err error) {
 	var tids []int64
 	if recoverInfo.TableInfo.GetPartitionInfo() != nil {
@@ -528,17 +533,25 @@ func (w *worker) recoverTable(t *meta.Meta, job *model.Job, recoverInfo *Recover
 	} else {
 		tids = []int64{recoverInfo.TableInfo.ID}
 	}
+=======
+func (w *worker) recoverTable(
+	ctx context.Context,
+	t *meta.Mutator,
+	job *model.Job,
+	recoverInfo *model.RecoverTableInfo,
+) (ver int64, err error) {
+>>>>>>> 4c1979ae128 (ddl: job context will be canceled when cancel or pause job (#56404))
 	tableRuleID, partRuleIDs, oldRuleIDs, oldRules, err := getOldLabelRules(recoverInfo.TableInfo, recoverInfo.OldSchemaName, recoverInfo.OldTableName)
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Wrapf(err, "failed to get old label rules from PD")
 	}
 	// Remove dropped table DDL job from gc_delete_range table.
-	err = w.delRangeManager.removeFromGCDeleteRange(w.ctx, recoverInfo.DropJobID)
+	err = w.delRangeManager.removeFromGCDeleteRange(ctx, recoverInfo.DropJobID)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
-	err = clearTablePlacementAndBundles(w.ctx, recoverInfo.TableInfo)
+	err = clearTablePlacementAndBundles(ctx, recoverInfo.TableInfo)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
@@ -1700,11 +1713,20 @@ func onAlterTableAttributes(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64,
 		return 0, err
 	}
 
+<<<<<<< HEAD
 	if len(rule.Labels) == 0 {
 		patch := label.NewRulePatch([]*label.Rule{}, []string{rule.ID})
 		err = infosync.UpdateLabelRules(context.TODO(), patch)
 	} else {
 		err = infosync.PutLabelRule(context.TODO(), rule)
+=======
+	if len(args.LabelRule.Labels) == 0 {
+		patch := label.NewRulePatch([]*label.Rule{}, []string{args.LabelRule.ID})
+		err = infosync.UpdateLabelRules(jobCtx.stepCtx, patch)
+	} else {
+		labelRule := label.Rule(*args.LabelRule)
+		err = infosync.PutLabelRule(jobCtx.stepCtx, &labelRule)
+>>>>>>> 4c1979ae128 (ddl: job context will be canceled when cancel or pause job (#56404))
 	}
 	if err != nil {
 		job.State = model.JobStateCancelled

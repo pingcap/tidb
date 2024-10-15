@@ -439,11 +439,15 @@ func TestCancelAddIndexPanic(t *testing.T) {
 		tk.MustExec("insert into t values (?, ?)", i, i)
 	}
 	var checkErr error
+<<<<<<< HEAD
 	oldReorgWaitTimeout := ddl.ReorgWaitTimeout
 	ddl.ReorgWaitTimeout = 50 * time.Millisecond
 	defer func() { ddl.ReorgWaitTimeout = oldReorgWaitTimeout }()
 	hook := &callback.TestDDLCallback{Do: dom}
 	hook.OnJobRunBeforeExported = func(job *model.Job) {
+=======
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunBefore", func(job *model.Job) {
+>>>>>>> 4c1979ae128 (ddl: job context will be canceled when cancel or pause job (#56404))
 		if job.Type == model.ActionAddIndex && job.State == model.JobStateRunning && job.SchemaState == model.StateWriteReorganization && job.SnapshotVer != 0 {
 			tkCancel.MustQuery(fmt.Sprintf("admin cancel ddl jobs %d", job.ID))
 		}

@@ -106,6 +106,38 @@ func TestAddIndexIngestLimitOneBackend(t *testing.T) {
 	require.True(t, strings.Contains(rows[1][3].(string) /* job_type */, "ingest"))
 	require.Equal(t, rows[0][7].(string) /* row_count */, "3")
 	require.Equal(t, rows[1][7].(string) /* row_count */, "3")
+<<<<<<< HEAD:tests/realtikvtest/addindextest4/ingest_test.go
+=======
+
+	tk.MustExec("set @@global.tidb_enable_dist_task = 0;")
+	// TODO(lance6716): dist_task also need this
+
+	// test cancel is timely
+	enter := make(chan struct{})
+	testfailpoint.EnableCall(
+		t,
+		"github.com/pingcap/tidb/pkg/lightning/backend/local/beforeExecuteRegionJob",
+		func(ctx context.Context) {
+			close(enter)
+			select {
+			case <-time.After(time.Second * 20):
+			case <-ctx.Done():
+			}
+		})
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		err := tk2.ExecToErr("alter table t add index idx_ba(b, a);")
+		require.ErrorContains(t, err, "Cancelled DDL job")
+	}()
+	<-enter
+	jobID := tk.MustQuery("admin show ddl jobs 1;").Rows()[0][0].(string)
+	now := time.Now()
+	tk.MustExec("admin cancel ddl jobs " + jobID)
+	wg.Wait()
+	// cancel should be timely
+	require.Less(t, time.Since(now).Seconds(), 10.0)
+>>>>>>> 4c1979ae128 (ddl: job context will be canceled when cancel or pause job (#56404)):tests/realtikvtest/addindextest3/ingest_test.go
 }
 
 func TestAddIndexIngestWriterCountOnPartitionTable(t *testing.T) {

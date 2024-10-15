@@ -21,7 +21,6 @@ import (
 	"time"
 
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/ddl/testutil"
 	"github.com/pingcap/tidb/pkg/ddl/util/callback"
 	"github.com/pingcap/tidb/pkg/errno"
@@ -232,9 +231,14 @@ func TestCancel(t *testing.T) {
 	}
 
 	// Change some configurations.
+<<<<<<< HEAD
 	ddl.ReorgWaitTimeout = 10 * time.Millisecond
 	tk.MustExec("set @@global.tidb_ddl_reorg_batch_size = 8")
 	tk.MustExec("set @@global.tidb_ddl_reorg_worker_cnt = 1")
+=======
+	tk.MustExec("set @@tidb_ddl_reorg_batch_size = 8")
+	tk.MustExec("set @@tidb_ddl_reorg_worker_cnt = 1")
+>>>>>>> 4c1979ae128 (ddl: job context will be canceled when cancel or pause job (#56404))
 	tk = testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/mockBackfillSlow", "return"))
