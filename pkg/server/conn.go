@@ -853,8 +853,12 @@ func (cc *clientConn) checkAuthPlugin(ctx context.Context, resp *handshake.Respo
 	if err != nil {
 		return nil, servererr.ErrAccessDenied.FastGenByArgs(cc.user, host, hasPassword)
 	}
+	defaultAuthPlugin, err := cc.ctx.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(variable.DefaultAuthPlugin)
+	if err != nil {
+		return nil, err
+	}
 	// Get the plugin for the identity.
-	userplugin, err := cc.ctx.AuthPluginForUser(identity)
+	userplugin, err := cc.ctx.AuthPluginForUser(identity, defaultAuthPlugin)
 	if err != nil {
 		logutil.Logger(ctx).Warn("Failed to get authentication method for user",
 			zap.String("user", cc.user), zap.String("host", host))
