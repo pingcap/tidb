@@ -212,12 +212,10 @@ func TestPlanStatsLoad(t *testing.T) {
 }
 
 func TestPlanStatsLoadForCTE(t *testing.T) {
-	p := parser.New()
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	ctx := tk.Session().(sessionctx.Context)
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("set @@session.tidb_analyze_version=2")
 	tk.MustExec("set @@session.tidb_partition_prune_mode = 'static'")
@@ -236,46 +234,21 @@ func TestPlanStatsLoadForCTE(t *testing.T) {
 	tk.MustExec("analyze table t all columns")
 	tk.MustExec("analyze table pt all columns")
 
-	testCases := []struct {
-		sql   string
-		skip  bool
-		check func(p base.Plan, tableInfo *model.TableInfo)
-	}{
-		{ // CTE
-			sql: "with cte(x, y) as (select d + 1, b from t where c > 1) select * from cte where x < 3",
-			check: func(p base.Plan, tableInfo *model.TableInfo) {
-				ps, ok := p.(*plannercore.PhysicalProjection)
-				require.True(t, ok)
-				pc, ok := ps.Children()[0].(*plannercore.PhysicalTableReader)
-				require.True(t, ok)
-				pp, ok := pc.GetTablePlan().(*plannercore.PhysicalSelection)
-				require.True(t, ok)
-				reader, ok := pp.Children()[0].(*plannercore.PhysicalTableScan)
-				require.True(t, ok)
-				require.Greater(t, countFullStats(reader.StatsInfo().HistColl, tableInfo.Columns[2].ID), 0)
-			},
-		},
-	}
-	for _, testCase := range testCases {
-		if !testCase.skip {
-			continue
+	var (
+		input  []string
+		output []struct {
+			Query  string
+			Result []string
 		}
-		fmt.Println(testdata.ConvertRowsToStrings(tk.MustQuery("explain with cte(x, y) as (select d + 1, b from t where c > 1) select * from cte where x < 3").Rows()))
-		is := dom.InfoSchema()
-		dom.StatsHandle().Clear() // clear statsCache
-		require.NoError(t, dom.StatsHandle().Update(context.Background(), is))
-		fmt.Println(testdata.ConvertRowsToStrings(tk.MustQuery("explain with cte(x, y) as (select d + 1, b from t where c > 1) select * from cte where x < 3").Rows()))
-		stmt, err := p.ParseOneStmt(testCase.sql, "", "")
-		require.NoError(t, err)
-		err = executor.ResetContextOfStmt(ctx, stmt)
-		require.NoError(t, err)
-		nodeW := resolve.NewNodeW(stmt)
-		p, _, err := planner.Optimize(context.TODO(), ctx, nodeW, is)
-		require.NoError(t, err)
-		tbl, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
-		require.NoError(t, err)
-		tableInfo := tbl.Meta()
-		testCase.check(p, tableInfo)
+	)
+	testData := GetPlanStatsData()
+	testData.LoadTestCases(t, &input, &output)
+	for i, sql := range input {
+		testdata.OnRecord(func() {
+			output[i].Query = input[i]
+			output[i].Result = testdata.ConvertRowsToStrings(tk.MustQuery(sql).Rows())
+		})
+		tk.MustQuery(sql).Check(testkit.Rows(output[i].Result...))
 	}
 }
 
