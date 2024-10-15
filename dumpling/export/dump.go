@@ -847,7 +847,7 @@ func (d *Dumper) selectMinAndMaxIntValue(tctx *tcontext.Context, conn *BaseConn,
 		return err
 	}, func() {}, query)
 	if err != nil {
-		return zero, zero, errors.Annotatef(err, "can't get min/maxv values to split chunks, query: %s", query)
+		return zero, zero, errors.Annotatef(err, "can't get min/max values to split chunks, query: %s", query)
 	}
 	if !smax.Valid || !smin.Valid {
 		// found no data

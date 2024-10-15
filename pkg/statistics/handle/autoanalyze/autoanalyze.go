@@ -282,10 +282,6 @@ func CleanupCorruptedAnalyzeJobsOnDeadInstances(
 func (sa *statsAnalyze) HandleAutoAnalyze() (analyzed bool) {
 	if err := statsutil.CallWithSCtx(sa.statsHandle.SPool(), func(sctx sessionctx.Context) error {
 		analyzed = sa.handleAutoAnalyze(sctx)
-		// During the test, we need to wait for the auto analyze job to be finished.
-		if intest.InTest {
-			sa.refresher.WaitAutoAnalyzeFinishedForTest()
-		}
 		return nil
 	}); err != nil {
 		statslogutil.StatsLogger().Error("Failed to handle auto analyze", zap.Error(err))
@@ -320,12 +316,17 @@ func (sa *statsAnalyze) handleAutoAnalyze(sctx sessionctx.Context) bool {
 		}
 	}()
 	if variable.EnableAutoAnalyzePriorityQueue.Load() {
-		err := sa.refresher.RebuildTableAnalysisJobQueue()
-		if err != nil {
-			statslogutil.StatsLogger().Error("rebuild table analysis job queue failed", zap.Error(err))
-			return false
+		// During the test, we need to fetch all DML changes before analyzing the highest priority tables.
+		if intest.InTest {
+			sa.refresher.ProcessDMLChangesForTest()
+			sa.refresher.RequeueFailedJobsForTest()
 		}
-		return sa.refresher.AnalyzeHighestPriorityTables()
+		analyzed := sa.refresher.AnalyzeHighestPriorityTables()
+		// During the test, we need to wait for the auto analyze job to be finished.
+		if intest.InTest {
+			sa.refresher.WaitAutoAnalyzeFinishedForTest()
+		}
+		return analyzed
 	}
 
 	parameters := exec.GetAutoAnalyzeParameters(sctx)
@@ -553,6 +554,10 @@ func tryAutoAnalyzeTable(
 	// Whether the table needs to analyze or not, we need to check the indices of the table.
 	for _, idx := range tblInfo.Indices {
 		if idxStats := statsTbl.GetIdx(idx.ID); idxStats == nil && !statsTbl.ColAndIdxExistenceMap.HasAnalyzed(idx.ID, true) && idx.State == model.StatePublic {
+			// Vector index doesn't need stats yet.
+			if idx.VectorInfo != nil {
+				continue
+			}
 			sqlWithIdx := sql + " index %n"
 			paramsWithIdx := append(params, idx.Name.O)
 			escaped, err := sqlescape.EscapeSQL(sqlWithIdx, paramsWithIdx...)
@@ -688,6 +693,10 @@ func tryAutoAnalyzePartitionTableInDynamicMode(
 	// Check if any index of the table needs to analyze.
 	for _, idx := range tblInfo.Indices {
 		if idx.State != model.StatePublic || statsutil.IsSpecialGlobalIndex(idx, tblInfo) {
+			continue
+		}
+		// Vector index doesn't need stats yet.
+		if idx.VectorInfo != nil {
 			continue
 		}
 		// Collect all the partition names that need to analyze.
