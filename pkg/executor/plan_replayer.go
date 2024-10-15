@@ -495,6 +495,7 @@ func topoSortTable(input []*zip.File) (result []*zip.File, err error) {
 	outMap := make(map[string]int) // table -> out degree
 	stmtCache := make(map[string]*ast.CreateTableStmt)
 	zipMap := make(map[string]*zip.File)
+	// 1. build graph and out degree
 	for _, f := range input {
 		originText, err := unzip(f)
 		if err != nil {
@@ -520,6 +521,7 @@ func topoSortTable(input []*zip.File) (result []*zip.File, err error) {
 	}
 	cnt := 0
 	taskCount := len(outMap)
+	// 2. topological sort
 OUTLOOP:
 	for len(outMap) != 0 {
 		cnt++
@@ -527,6 +529,8 @@ OUTLOOP:
 			return nil, errors.New("plan replayer: unknown table")
 		}
 		for k, v := range outMap {
+			// find the table which out degree is 0, remove it from the graph and add it to the result
+			// decrease the out degree of the table which has a foreign key constraint to the table
 			if v == 0 {
 				delete(outMap, k)
 				result = append(result, zipMap[k])
