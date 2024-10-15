@@ -219,14 +219,11 @@ func SetSchemaDiffForReorganizePartition(diff *model.SchemaDiff, job *model.Job)
 }
 
 // SetSchemaDiffForPartitionModify set SchemaDiff for ActionRemovePartitioning, ActionAlterTablePartitioning.
-func SetSchemaDiffForPartitionModify(diff *model.SchemaDiff, job *model.Job) error {
+func SetSchemaDiffForPartitionModify(diff *model.SchemaDiff, job *model.Job, jobCtx *jobContext) error {
 	diff.TableID = job.TableID
 	diff.OldTableID = job.TableID
 	if job.SchemaState == model.StateDeleteReorganization {
-		args, err := model.GetTablePartitionArgs(job)
-		if err != nil {
-			return errors.Trace(err)
-		}
+		args := jobCtx.jobArgs.(*model.TablePartitionArgs)
 		partInfo := args.PartInfo
 		// Final part, new table id is assigned
 		diff.TableID = partInfo.NewTableID
@@ -358,7 +355,7 @@ func updateSchemaVersion(jobCtx *jobContext, job *model.Job, multiInfos ...schem
 	case model.ActionReorganizePartition:
 		SetSchemaDiffForReorganizePartition(diff, job)
 	case model.ActionRemovePartitioning, model.ActionAlterTablePartitioning:
-		err = SetSchemaDiffForPartitionModify(diff, job)
+		err = SetSchemaDiffForPartitionModify(diff, job, jobCtx)
 	case model.ActionCreateTable:
 		err = SetSchemaDiffForCreateTable(diff, job)
 	case model.ActionRecoverSchema:
