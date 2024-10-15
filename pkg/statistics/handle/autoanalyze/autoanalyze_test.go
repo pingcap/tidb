@@ -33,7 +33,9 @@ import (
 	"github.com/pingcap/tidb/pkg/statistics/handle/autoanalyze"
 	statsutil "github.com/pingcap/tidb/pkg/statistics/handle/util"
 	"github.com/pingcap/tidb/pkg/statistics/handle/util/test"
+	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/sqlexec/mock"
@@ -621,4 +623,48 @@ func TestSkipAutoAnalyzeOutsideTheAvailableTime(t *testing.T) {
 			ttEnd,
 		),
 	)
+}
+
+const tiflashReplicaLease = 600 * time.Millisecond
+
+func TestAutoAnalyzeWithVectorIndex(t *testing.T) {
+	store := testkit.CreateMockStoreWithSchemaLease(t, tiflashReplicaLease, mockstore.WithMockTiFlash(2))
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	tiflash := infosync.NewMockTiFlash()
+	infosync.SetMockTiFlash(tiflash)
+	defer func() {
+		tiflash.Lock()
+		tiflash.StatusServer.Close()
+		tiflash.Unlock()
+	}()
+	dom := domain.GetDomain(tk.Session())
+	h := dom.StatsHandle()
+
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/MockCheckVectorIndexProcess", `return(1)`)
+	statistics.AutoAnalyzeMinCnt = 0
+	defer func() {
+		statistics.AutoAnalyzeMinCnt = 1000
+	}()
+
+	tk.MustExec("use test")
+	tk.MustExec("create table t (a int, b vector, c vector(3), d vector(4));")
+	tk.MustExec("insert into t values(1, '[1, 2]', '[1, 3, 4]', '[1, 4, 5, 6]')")
+	tk.MustExec("SET GLOBAL tidb_enable_auto_analyze_priority_queue=off")
+	tk.MustExec("analyze table t all columns")
+	tbl, err := dom.InfoSchema().TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
+	require.NoError(t, err)
+	tableInfo := tbl.Meta()
+	statsTbl := h.GetTableStats(tableInfo)
+	require.True(t, statsTbl.LastAnalyzeVersion > 0)
+	require.NoError(t, h.Update(context.Background(), dom.InfoSchema()))
+	tk.MustExec("alter table t add index idx(a)")
+	// Normal Index can trigger auto analyze.
+	require.True(t, h.HandleAutoAnalyze())
+	tk.MustExec("alter table t set tiflash replica 1")
+	testkit.SetTiFlashReplica(t, dom, "test", "t")
+	tk.MustExec("alter table t add vector index vecIdx1((vec_cosine_distance(d))) USING HNSW;")
+	// Vector Index can not trigger auto analyze.
+	require.False(t, h.HandleAutoAnalyze())
 }

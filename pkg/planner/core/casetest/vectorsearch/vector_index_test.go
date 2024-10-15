@@ -24,7 +24,6 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
-	"github.com/pingcap/tidb/pkg/planner/util/coretestsdk"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testdata"
@@ -81,7 +80,7 @@ func TestTiFlashANNIndex(t *testing.T) {
 		tk.MustExec("insert into t1(vec, a, b, c, d) select vec, a, b, c, d from t1")
 	}
 	dom := domain.GetDomain(tk.Session())
-	coretestsdk.SetTiFlashReplica(t, dom, "test", "t1")
+	testkit.SetTiFlashReplica(t, dom, "test", "t1")
 	tk.MustExec("analyze table t1")
 
 	tk.MustExec("set @@tidb_isolation_read_engines = 'tiflash'")
@@ -157,7 +156,7 @@ func TestANNIndexNormalizedPlan(t *testing.T) {
 	`)
 
 	dom := domain.GetDomain(tk.Session())
-	coretestsdk.SetTiFlashReplica(t, dom, "test", "t")
+	testkit.SetTiFlashReplica(t, dom, "test", "t")
 
 	tk.MustExec("analyze table t")
 
@@ -221,6 +220,6 @@ func TestANNInexWithSimpleCBO(t *testing.T) {
 	tk.MustExec("alter table t1 set tiflash replica 1;")
 	tk.MustExec("alter table t1 add vector index ((vec_cosine_distance(vec))) USING HNSW;")
 	dom := domain.GetDomain(tk.Session())
-	coretestsdk.SetTiFlashReplica(t, dom, "test", "t1")
+	testkit.SetTiFlashReplica(t, dom, "test", "t1")
 	tk.MustUseIndex("select * from t1 order by vec_cosine_distance(vec, '[1,1,1]') limit 1", "vector_index")
 }

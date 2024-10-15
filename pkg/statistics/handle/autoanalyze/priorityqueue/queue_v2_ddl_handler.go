@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/statistics/handle/autoanalyze/exec"
 	statslogutil "github.com/pingcap/tidb/pkg/statistics/handle/logutil"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"go.uber.org/zap"
 )
 
@@ -145,7 +146,17 @@ func (pq *AnalysisPriorityQueueV2) handleAddIndexEvent(
 	sctx sessionctx.Context,
 	event *notifier.SchemaChangeEvent,
 ) error {
-	tableInfo, _ := event.GetAddIndexInfo()
+	tableInfo, idxes := event.GetAddIndexInfo()
+
+	intest.AssertFunc(func() bool {
+		// Vector index has a separate job type. We should not see vector index here.
+		for _, idx := range idxes {
+			if idx.VectorInfo != nil {
+				return false
+			}
+		}
+		return true
+	})
 
 	parameters := exec.GetAutoAnalyzeParameters(sctx)
 	autoAnalyzeRatio := exec.ParseAutoAnalyzeRatio(parameters[variable.TiDBAutoAnalyzeRatio])
