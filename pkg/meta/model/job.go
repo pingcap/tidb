@@ -522,11 +522,11 @@ func (job *Job) Encode(updateRawArgs bool) ([]byte, error) {
 		if job.MultiSchemaInfo != nil {
 			for _, sub := range job.MultiSchemaInfo.SubJobs {
 				// Only update the args of executing sub-jobs.
-				if sub.args == nil {
+				if sub.Args == nil {
 					continue
 				}
 
-				sub.RawArgs, err = marshalArgs(job.Version, sub.args)
+				sub.RawArgs, err = marshalArgs(job.Version, sub.Args)
 				if err != nil {
 					return nil, errors.Trace(err)
 				}
@@ -862,9 +862,9 @@ func (job *Job) ClearDecodedArgs() {
 // SubJob is a representation of one DDL schema change. A Job may contain zero
 // (when multi-schema change is not applicable) or more SubJobs.
 type SubJob struct {
-	Type        ActionType `json:"type"`
-	JobArgs     JobArgs    `json:"-"`
-	args        []any
+	Type        ActionType      `json:"type"`
+	JobArgs     JobArgs         `json:"-"`
+	Args        []any           `json:"-"`
 	RawArgs     json.RawMessage `json:"raw_args"`
 	SchemaState SchemaState     `json:"schema_state"`
 	SnapshotVer uint64          `json:"snapshot_ver"`
@@ -913,7 +913,7 @@ func (sub *SubJob) ToProxyJob(parentJob *Job, seq int) Job {
 		RowCount:        sub.RowCount,
 		Mu:              sync.Mutex{},
 		CtxVars:         sub.CtxVars,
-		Args:            sub.args,
+		Args:            sub.Args,
 		RawArgs:         sub.RawArgs,
 		SchemaState:     sub.SchemaState,
 		SnapshotVer:     sub.SnapshotVer,
@@ -939,7 +939,7 @@ func (sub *SubJob) FromProxyJob(proxyJob *Job, ver int64) {
 	sub.SchemaState = proxyJob.SchemaState
 	sub.SnapshotVer = proxyJob.SnapshotVer
 	sub.RealStartTS = proxyJob.RealStartTS
-	sub.args = proxyJob.Args
+	sub.Args = proxyJob.Args
 	sub.State = proxyJob.State
 	sub.Warning = proxyJob.Warning
 	sub.RowCount = proxyJob.RowCount
@@ -955,14 +955,14 @@ func (sub *SubJob) FillArgs(jobVer JobVersion) {
 		Type:    sub.Type,
 	}
 	fakeJob.FillArgs(sub.JobArgs)
-	sub.args = fakeJob.Args
+	sub.Args = fakeJob.Args
 }
 
 // Clone returns a copy of the sub-job.
 // Note: private args fields are not copied.
 func (sub *SubJob) Clone() *SubJob {
 	clonedSubJob := *sub
-	clonedSubJob.args = nil
+	clonedSubJob.Args = nil
 	return &clonedSubJob
 }
 
