@@ -157,13 +157,12 @@ func TestDumpPlanReplayerAPI(t *testing.T) {
 	// 3. check plan replayer load
 
 	// 3-1. write the plan replayer file from manual command to a file
-	path := "/tmp/plan_replayer.zip"
+	path := filepath.Join(t.TempDir(), "plan_replayer.zip")
 	fp, err := os.Create(path)
 	require.NoError(t, err)
 	require.NotNil(t, fp)
 	defer func() {
 		require.NoError(t, fp.Close())
-		require.NoError(t, os.Remove(path))
 	}()
 
 	_, err = io.Copy(fp, bytes.NewReader(body))
@@ -281,13 +280,12 @@ func TestIssue43192(t *testing.T) {
 
 	// 3. check plan replayer load
 	// 3-1. write the plan replayer file from manual command to a file
-	path := "/tmp/plan_replayer.zip"
+	path := filepath.Join(t.TempDir(), "plan_replayer.zip")
 	fp, err := os.Create(path)
 	require.NoError(t, err)
 	require.NotNil(t, fp)
 	defer func() {
 		require.NoError(t, fp.Close())
-		require.NoError(t, os.Remove(path))
 	}()
 
 	_, err = io.Copy(fp, bytes.NewReader(body))
