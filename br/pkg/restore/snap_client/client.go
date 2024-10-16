@@ -523,19 +523,24 @@ func (rc *SnapClient) initClients(ctx context.Context, backend *backuppb.Storage
 
 	var fileImporter *SnapFileImporter
 	if isRawKvMode || isTxnKvMode {
+		mode := Raw
+		if isTxnKvMode {
+			mode = Txn
+		}
 		// for raw/txn mode. use backupMeta.ApiVersion to create fileImporter
 		fileImporter, err = NewSnapFileImporter(
 			ctx, rc.cipher, rc.backupMeta.ApiVersion, metaClient,
-			importCli, backend, isRawKvMode, isTxnKvMode, stores, rc.rewriteMode, rc.concurrencyPerStore, createCallBacks, closeCallBacks)
+			importCli, backend, mode, stores, rc.rewriteMode, rc.concurrencyPerStore, createCallBacks, closeCallBacks)
 		if err != nil {
 			return errors.Trace(err)
 		}
+		// Raw/Txn restore are not support checkpoint for now
 		rc.restorer = restore.NewSimpleFileRestorer(ctx, fileImporter, rc.workerPool, nil)
 	} else {
 		// or create a fileImporter with the cluster API version
 		fileImporter, err = NewSnapFileImporter(
 			ctx, rc.cipher, rc.dom.Store().GetCodec().GetAPIVersion(), metaClient,
-			importCli, backend, isRawKvMode, isTxnKvMode, stores, rc.rewriteMode, rc.concurrencyPerStore, createCallBacks, closeCallBacks)
+			importCli, backend, TiDBFull, stores, rc.rewriteMode, rc.concurrencyPerStore, createCallBacks, closeCallBacks)
 		if err != nil {
 			return errors.Trace(err)
 		}

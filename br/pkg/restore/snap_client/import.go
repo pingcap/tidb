@@ -53,9 +53,10 @@ import (
 type KvMode int
 
 const (
-	TiDB KvMode = iota
+	TiDBFull KvMode = iota
 	Raw
 	Txn
+	TiDBCompcated
 )
 
 const (
@@ -160,22 +161,13 @@ func NewSnapFileImporter(
 	metaClient split.SplitClient,
 	importClient importclient.ImporterClient,
 	backend *backuppb.StorageBackend,
-	isRawKvMode bool,
-	isTxnKvMode bool,
+	kvMode KvMode,
 	tikvStores []*metapb.Store,
 	rewriteMode RewriteMode,
 	concurrencyPerStore uint,
 	createCallBacks []func(*SnapFileImporter) error,
 	closeCallbacks []func(*SnapFileImporter) error,
 ) (*SnapFileImporter, error) {
-	kvMode := TiDB
-	if isRawKvMode {
-		kvMode = Raw
-	}
-	if isTxnKvMode {
-		kvMode = Txn
-	}
-
 	fileImporter := &SnapFileImporter{
 		cipher:              cipher,
 		apiVersion:          apiVersion,
@@ -289,6 +281,11 @@ func getKeyRangeByMode(mode KvMode) func(f *backuppb.File, rules *restoreutils.R
 			}
 			return start, end, nil
 		}
+	case TiDBCompcated:
+		return func(f *backuppb.File, rules *restoreutils.RewriteRules) ([]byte, []byte, error) {
+			return restoreutils.GetRewriteEncodedKeys(f, rules)
+		}
+
 	default:
 		return func(f *backuppb.File, rules *restoreutils.RewriteRules) ([]byte, []byte, error) {
 			return restoreutils.GetRewriteRawKeys(f, rules)

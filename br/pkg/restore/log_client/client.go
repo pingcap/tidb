@@ -415,7 +415,7 @@ func (rc *LogClient) InitClients(ctx context.Context, backend *backuppb.StorageB
 	log.Info("Initializing client.", zap.Stringer("api", rc.dom.Store().GetCodec().GetAPIVersion()))
 	snapFileImporter, err := snapclient.NewSnapFileImporter(
 		ctx, rc.cipher, rc.dom.Store().GetCodec().GetAPIVersion(), metaClient,
-		importCli, backend, false, false, stores, snapclient.RewriteModeKeyspace, rc.concurrencyPerStore, createCallBacks, closeCallBacks)
+		importCli, backend, snapclient.TiDBCompcated, stores, snapclient.RewriteModeKeyspace, rc.concurrencyPerStore, createCallBacks, closeCallBacks)
 	if err != nil {
 		log.Fatal("failed to init snap file importer", zap.Error(err))
 	}
