@@ -308,9 +308,8 @@ func makeJSONStatsBlock(statsBlock *backuppb.StatsBlock) (*jsonStatsBlock, error
 	result := &jsonStatsBlock{
 		StatsBlock: statsBlock,
 	}
-	if err := json.Unmarshal(statsBlock.JsonTable, &result.JSONTable); err != nil {
-		return nil, errors.Trace(err)
-	}
+	// the JSON table is from the marshaled stats table
+	result.JSONTable = string(statsBlock.JsonTable)
 	return result, nil
 }
 
