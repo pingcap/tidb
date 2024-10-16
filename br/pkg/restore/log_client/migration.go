@@ -15,7 +15,10 @@
 package logclient
 
 import (
+	"context"
+
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
+	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/utils/iter"
 )
 
@@ -140,6 +143,7 @@ func (builder *WithMigrationsBuilder) coarseGrainedFilter(mig *backuppb.Migratio
 // Create the wrapper by migrations.
 func (builder *WithMigrationsBuilder) Build(migs []*backuppb.Migration) WithMigrations {
 	skipmap := make(metaSkipMap)
+	compactionDirs := make([]string, 0, 8)
 
 	for _, mig := range migs {
 		// TODO: deal with TruncatedTo and DestructPrefix
@@ -147,9 +151,14 @@ func (builder *WithMigrationsBuilder) Build(migs []*backuppb.Migration) WithMigr
 			continue
 		}
 		builder.updateSkipMap(skipmap, mig.EditMeta)
+
+		for _, c := range mig.Compactions {
+			compactionDirs = append(compactionDirs, c.Artifacts)
+		}
 	}
 	withMigrations := WithMigrations{
-		skipmap: skipmap,
+		skipmap:        skipmap,
+		compactionDirs: compactionDirs,
 	}
 	return withMigrations
 }
@@ -199,7 +208,8 @@ func (mwm *MetaWithMigrations) Physicals(groupIndexIter GroupIndexIter) Physical
 }
 
 type WithMigrations struct {
-	skipmap metaSkipMap
+	skipmap        metaSkipMap
+	compactionDirs []string
 }
 
 func (wm WithMigrations) Metas(metaNameIter MetaNameIter) MetaMigrationsIter {
@@ -218,5 +228,13 @@ func (wm WithMigrations) Metas(metaNameIter MetaNameIter) MetaMigrationsIter {
 			skipmap: phySkipmap,
 			meta:    mname.meta,
 		}, false
+	})
+}
+
+func (wm WithMigrations) Compactions(ctx context.Context, s storage.ExternalStorage) iter.TryNextor[*backuppb.LogFileSubcompaction] {
+	compactionDirIter := iter.FromSlice(wm.compactionDirs)
+	return iter.FlatMap(compactionDirIter, func(name string) iter.TryNextor[*backuppb.LogFileSubcompaction] {
+		// name is the absolute path in external storage.
+		return Subcompactions(ctx, name, s)
 	})
 }

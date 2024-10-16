@@ -81,7 +81,7 @@ func NewSSTFilesInfo(files []*backuppb.File, rules *utils.RewriteRules) RestoreF
 // 4. Log Compacted ssts
 type FileRestorer interface {
 	// Restore import the files to the TiKV.
-	Restore(onProgress func(), files ...BatchRestoreFilesInfo) error
+	Restore(onProgress func(int64), files ...BatchRestoreFilesInfo) error
 	// OnFinish wait for all pending restore files finished
 	OnFinish() error
 	// Close release the resources.
@@ -134,7 +134,7 @@ func (s *SimpleRestorer) OnFinish() error {
 	return s.eg.Wait()
 }
 
-func (s *SimpleRestorer) Restore(onProgress func(), batchFilesInfo ...BatchRestoreFilesInfo) error {
+func (s *SimpleRestorer) Restore(onProgress func(int64), batchFilesInfo ...BatchRestoreFilesInfo) error {
 	errCh := make(chan error, len(batchFilesInfo))
 	defer close(errCh)
 
@@ -147,7 +147,9 @@ func (s *SimpleRestorer) Restore(onProgress func(), batchFilesInfo ...BatchResto
 						if restoreErr == nil {
 							log.Info("import sst files done", logutil.Files(fileGroup.SSTFiles),
 								zap.Duration("take", time.Since(fileStart)))
-							onProgress()
+							for _, f := range fileGroup.SSTFiles {
+								onProgress(int64(f.TotalKvs))
+							}
 						}
 					}()
 					err := s.fileImporter.Import(s.ectx, fileGroup)
@@ -207,7 +209,7 @@ func (m *MultiTablesRestorer) OnFinish() error {
 	return nil
 }
 
-func (m *MultiTablesRestorer) Restore(onProgress func(), batchFilesInfo ...BatchRestoreFilesInfo) (err error) {
+func (m *MultiTablesRestorer) Restore(onProgress func(int64), batchFilesInfo ...BatchRestoreFilesInfo) (err error) {
 	start := time.Now()
 	fileCount := 0
 	defer func() {
@@ -238,11 +240,11 @@ func (m *MultiTablesRestorer) Restore(onProgress func(), batchFilesInfo ...Batch
 		filesReplica := tableIDWithFiles
 		m.fileImporter.WaitUntilUnblock()
 		m.workerPool.ApplyOnErrorGroup(m.eg, func() (restoreErr error) {
-			// fileStart := time.Now()
+			fileStart := time.Now()
 			defer func() {
 				if restoreErr == nil {
-					// log.Info("import files done", zapFilesGroup(filesReplica), zap.Duration("take", time.Since(fileStart)))
-					onProgress()
+					log.Info("import files done", zap.Duration("take", time.Since(fileStart)))
+					onProgress(int64(len(filesReplica)))
 				}
 			}()
 			if importErr := m.fileImporter.Import(m.ectx, filesReplica...); importErr != nil {

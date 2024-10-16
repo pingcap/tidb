@@ -248,7 +248,7 @@ func (rc *LogClient) RestoreCompactedSstFiles(
 	checkpointsSet map[string]struct{},
 	updateStats func(kvCount, size uint64),
 	rules map[int64]*restoreutils.RewriteRules,
-	onProgress func(),
+	onProgress func(int64),
 ) error {
 	for r := compactionsIter.TryNext(ctx); !r.Finished; r = compactionsIter.TryNext(ctx) {
 		if r.Err != nil {
@@ -726,7 +726,7 @@ func (rc *LogClient) RestoreKVFiles(
 			// For this version we do not handle new created table after full backup.
 			// in next version we will perform rewrite and restore meta key to restore new created tables.
 			// so we can simply skip the file that doesn't have the rule here.
-			onProgress(int64(len(files)))
+			onProgress(kvCount)
 			summary.CollectInt("FileSkip", len(files))
 			log.Debug("skip file due to table id not matched", zap.Int64("table-id", files[0].TableId))
 			skipFile += len(files)
@@ -737,7 +737,7 @@ func (rc *LogClient) RestoreKVFiles(
 				fileStart := time.Now()
 				defer applyWg.Done()
 				defer func() {
-					onProgress(int64(len(files)))
+					onProgress(int64(kvCount))
 					updateStats(uint64(kvCount), size)
 					summary.CollectInt("File", len(files))
 

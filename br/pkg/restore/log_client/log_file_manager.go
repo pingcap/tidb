@@ -25,6 +25,8 @@ import (
 	"go.uber.org/zap"
 )
 
+var TotalEntryCount int64
+
 // MetaIter is the type of iterator of metadata files' content.
 type MetaIter = iter.TryNextor[*backuppb.Metadata]
 
@@ -291,23 +293,11 @@ func (rc *LogFileManager) collectDDLFilesAndPrepareCache(
 }
 
 // LoadDDLFilesAndCountDMLFiles loads all DDL files needs to be restored in the restoration.
-// At the same time, if the `counter` isn't nil, counting the DML file needs to be restored into `counter`.
 // This function returns all DDL files needing directly because we need sort all of them.
-func (rc *LogFileManager) LoadDDLFilesAndCountDMLFiles(ctx context.Context, counter *int) ([]Log, error) {
+func (rc *LogFileManager) LoadDDLFilesAndCountDMLFiles(ctx context.Context) ([]Log, error) {
 	m, err := rc.streamingMeta(ctx)
 	if err != nil {
 		return nil, err
-	}
-	if counter != nil {
-		m = iter.Tap(m, func(m *MetaName) {
-			for _, fg := range m.meta.FileGroups {
-				for _, f := range fg.DataFilesInfo {
-					if !f.IsMeta && !rc.ShouldFilterOut(f) {
-						*counter += 1
-					}
-				}
-			}
-		})
 	}
 	mg := rc.FilterMetaFiles(m)
 
@@ -334,7 +324,12 @@ func (rc *LogFileManager) FilterMetaFiles(ms MetaNameIter) MetaGroupIter {
 				if m.meta.MetaVersion > backuppb.MetaVersion_V1 {
 					d.Path = g.Path
 				}
-				return !d.IsMeta || rc.ShouldFilterOut(d)
+				if rc.ShouldFilterOut(d) {
+					return true
+				}
+				// count the progress
+				TotalEntryCount += d.NumberOfEntries
+				return !d.IsMeta
 			})
 			return DDLMetaGroup{
 				Path: g.Path,
@@ -346,23 +341,8 @@ func (rc *LogFileManager) FilterMetaFiles(ms MetaNameIter) MetaGroupIter {
 }
 
 // Fetch compactions that may contain file less than the TS.
-func (rc *LogFileManager) OpenCompactionIter(ctx context.Context, migs []*backuppb.Migration) (int, iter.TryNextor[*backuppb.LogFileSubcompaction]) {
-	compactionDirs := make([]string, 0, 8)
-	deleteDataFileCount := 0
-	for _, mig := range migs {
-		for _, c := range mig.Compactions {
-			compactionDirs = append(compactionDirs, c.Artifacts)
-		}
-		for _, m := range mig.EditMeta {
-			deleteDataFileCount += len(m.DeleteLogicalFiles)
-		}
-	}
-
-	compactionDirIter := iter.FromSlice(compactionDirs)
-	return deleteDataFileCount, iter.FlatMap(compactionDirIter, func(name string) iter.TryNextor[*backuppb.LogFileSubcompaction] {
-		// name is the absolute path in external storage.
-		return Subcompactions(ctx, name, rc.storage)
-	})
+func (rc *LogFileManager) OpenCompactionIter(ctx context.Context) iter.TryNextor[*backuppb.LogFileSubcompaction] {
+	return rc.withMigrations.Compactions(ctx, rc.storage)
 }
 
 // the kv entry with ts, the ts is decoded from entry.

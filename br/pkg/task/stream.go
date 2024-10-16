@@ -1408,8 +1408,7 @@ func restoreStream(
 		totalKVCount += kvCount
 		totalSize += size
 	}
-	dataFileCount := 0
-	ddlFiles, err := client.LoadDDLFilesAndCountDMLFiles(ctx, &dataFileCount)
+	ddlFiles, err := client.LoadDDLFilesAndCountDMLFiles(ctx)
 	if err != nil {
 		return err
 	}
@@ -1442,12 +1441,7 @@ func restoreStream(
 		return errors.Trace(err)
 	}
 
-	deleteDataFileCount, compactionIter := client.LogFileManager.OpenCompactionIter(ctx, migs)
-	restoreFileCount := dataFileCount - deleteDataFileCount
-	if restoreFileCount < 0 {
-		// should not happen, this will make the progress not accurate
-		restoreFileCount = dataFileCount
-	}
+	compactionIter := client.LogFileManager.OpenCompactionIter(ctx)
 
 	se, err := g.CreateSession(mgr.GetStorage())
 	if err != nil {
@@ -1457,9 +1451,9 @@ func restoreStream(
 	splitSize, splitKeys := utils.GetRegionSplitInfo(execCtx)
 	log.Info("get split threshold from tikv config", zap.Uint64("split-size", splitSize), zap.Int64("split-keys", splitKeys))
 
-	log.Info("dataFileCount", zap.Int("count", dataFileCount))
+	log.Info("dataFileCount", zap.Int64("count", logclient.TotalEntryCount))
 
-	pd := g.StartProgress(ctx, "Restore SST+KV Files", int64(restoreFileCount), !cfg.LogProgress)
+	pd := g.StartProgress(ctx, "Restore SST+KV Files", logclient.TotalEntryCount, !cfg.LogProgress)
 	err = withProgress(pd, func(p glue.Progress) (pErr error) {
 		updateStatsWithCheckpoint := func(kvCount, size uint64) {
 			mu.Lock()
@@ -1474,12 +1468,14 @@ func restoreStream(
 		if err != nil {
 			return errors.Trace(err)
 		}
-
-		err = client.RestoreCompactedSstFiles(ctx, compactedSplitIter, sstCheckpointSets, updateStatsWithCheckpoint, rewriteRules, p.Inc)
+		err = client.RestoreCompactedSstFiles(ctx, compactedSplitIter, sstCheckpointSets, updateStatsWithCheckpoint, rewriteRules, p.IncBy)
 		if err != nil {
 			return errors.Trace(err)
 		}
-		importModeSwitcher.SwitchToNormalMode(ctx)
+		switchErr := importModeSwitcher.SwitchToNormalMode(ctx)
+		if switchErr != nil {
+			log.Warn("unable to swtich to normal mode", zap.Error(switchErr))
+		}
 
 		// TODO unify the log checkpoint logic to the sst checkpoint
 		if cfg.UseCheckpoint {

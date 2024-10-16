@@ -303,7 +303,7 @@ func (rc *SnapClient) RestoreTables(
 	}
 	log.Info("Restore Stage Duration", zap.String("stage", "merge ranges"), zap.Duration("take", time.Since(start)))
 
-	newProgress := func() { onProgress(0) }
+	newProgress := func(i int64) { onProgress(i) }
 	start = time.Now()
 	if err = rc.SplitPoints(ctx, sortedSplitKeys, newProgress, false); err != nil {
 		return errors.Trace(err)
@@ -326,14 +326,12 @@ func (rc *SnapClient) RestoreTables(
 func (rc *SnapClient) SplitPoints(
 	ctx context.Context,
 	sortedSplitKeys [][]byte,
-	onProgress func(),
+	onProgress func(int64),
 	isRawKv bool,
 ) error {
 	splitClientOpts := make([]split.ClientOptionalParameter, 0, 2)
 	splitClientOpts = append(splitClientOpts, split.WithOnSplit(func(keys [][]byte) {
-		for range keys {
-			onProgress()
-		}
+		onProgress(int64(len(keys)))
 	}))
 	if isRawKv {
 		splitClientOpts = append(splitClientOpts, split.WithRawKV())
@@ -366,7 +364,7 @@ func getFileRangeKey(f string) string {
 func (rc *SnapClient) RestoreSSTFiles(
 	ctx context.Context,
 	tableIDWithFilesGroup []restore.BatchRestoreFilesInfo,
-	onProgress func(),
+	onProgress func(int64),
 ) (retErr error) {
 	failpoint.Inject("corrupt-files", func(v failpoint.Value) {
 		if cmd, ok := v.(string); ok {
