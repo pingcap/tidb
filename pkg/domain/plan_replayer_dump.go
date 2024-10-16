@@ -109,7 +109,7 @@ func (tne *tableNameExtractor) getTablesAndViews() (map[tableNamePair]struct{}, 
 			r[tablePair] = struct{}{}
 		}
 		// if the table has a foreign key, we need to add the referenced table to the list
-		tblInfo, err := tne.is.TableByName(tne.ctx, model.NewCIStr(tablePair.DBName), model.NewCIStr(tablePair.TableName))
+		tblInfo, err := tne.is.TableByName(model.NewCIStr(tablePair.DBName), model.NewCIStr(tablePair.TableName))
 		if err != nil {
 			return nil, err
 		}
