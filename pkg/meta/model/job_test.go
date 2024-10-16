@@ -52,9 +52,6 @@ func TestState(t *testing.T) {
 }
 
 func TestJobCodec(t *testing.T) {
-	type A struct {
-		Name string
-	}
 	tzName, tzOffset := time.Now().In(time.UTC).Zone()
 	job := &Job{
 		Version:    JobVersion1,
@@ -62,11 +59,11 @@ func TestJobCodec(t *testing.T) {
 		TableID:    2,
 		SchemaID:   1,
 		BinlogInfo: &HistoryInfo{},
-		Args:       []any{model.NewCIStr("a"), A{Name: "abc"}},
 		ReorgMeta: &DDLReorgMeta{
 			Location: &TimeZoneLocation{Name: tzName, Offset: tzOffset},
 		},
 	}
+	job.FillArgs(&RenameTableArgs{OldSchemaID: 2, NewTableName: model.NewCIStr("table1")})
 	job.BinlogInfo.AddDBInfo(123, &DBInfo{ID: 1, Name: model.NewCIStr("test_history_db")})
 	job.BinlogInfo.AddTableInfo(123, &TableInfo{ID: 1, Name: model.NewCIStr("test_history_tbl")})
 	job1 := &Job{
@@ -243,12 +240,7 @@ func TestJobCodec(t *testing.T) {
 	err = newJob.Decode(b)
 	require.NoError(t, err)
 	require.Equal(t, job.BinlogInfo, newJob.BinlogInfo)
-	name := model.CIStr{}
-	a := A{}
-	err = newJob.DecodeArgs(&name, &a)
 	require.NoError(t, err)
-	require.Equal(t, model.NewCIStr(""), name)
-	require.Equal(t, A{Name: ""}, a)
 	require.Greater(t, len(newJob.String()), 0)
 	require.Equal(t, newJob.ReorgMeta.Location.Name, tzName)
 	require.Equal(t, newJob.ReorgMeta.Location.Offset, tzOffset)
@@ -260,12 +252,7 @@ func TestJobCodec(t *testing.T) {
 	err = newJob.Decode(b1)
 	require.NoError(t, err)
 	require.Equal(t, &HistoryInfo{}, newJob.BinlogInfo)
-	name = model.CIStr{}
-	a = A{}
-	err = newJob.DecodeArgs(&name, &a)
 	require.NoError(t, err)
-	require.Equal(t, model.NewCIStr("a"), name)
-	require.Equal(t, A{Name: "abc"}, a)
 	require.Greater(t, len(newJob.String()), 0)
 
 	b2, err := job.Encode(true)
@@ -273,11 +260,6 @@ func TestJobCodec(t *testing.T) {
 	newJob = &Job{}
 	err = newJob.Decode(b2)
 	require.NoError(t, err)
-	name = model.CIStr{}
-	// Don't decode to a here.
-	err = newJob.DecodeArgs(&name)
-	require.NoError(t, err)
-	require.Equal(t, model.NewCIStr("a"), name)
 	require.Greater(t, len(newJob.String()), 0)
 
 	job.State = JobStateDone
