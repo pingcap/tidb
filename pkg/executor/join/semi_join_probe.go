@@ -15,10 +15,8 @@
 package join
 
 import (
-	"fmt"
 	"unsafe"
 
-	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/sqlkiller"
@@ -101,12 +99,6 @@ func (j *semiJoinProbe) IsScanRowTableDone() bool {
 
 // TODO maybe we can extract some common codes from semi join and outer join
 func (j *semiJoinProbe) ScanRowTable(joinResult *hashjoinWorkerResult, sqlKiller *sqlkiller.SQLKiller) *hashjoinWorkerResult {
-	// TODO delete
-	if j.setUsedFlagNum >= 0 {
-		log.Info(fmt.Sprintf("set used flag num %d", j.setUsedFlagNum))
-		j.setUsedFlagNum = -1
-	}
-
 	if !j.isLeftSideBuild {
 		panic("should not reach here")
 	}
@@ -172,7 +164,7 @@ func (j *semiJoinProbe) Probe(joinResult *hashjoinWorkerResult, sqlKiller *sqlki
 		}
 	} else {
 		if hasOtherCondition {
-
+			err = j.probeForRightSideBuildHasOtherCondition(joinResult.chk, joinedChk, remainCap, sqlKiller)
 		} else {
 			err = j.probeForRightSideBuildNoOtherCondition(joinResult.chk, remainCap, sqlKiller)
 		}

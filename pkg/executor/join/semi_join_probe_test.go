@@ -15,16 +15,19 @@
 package join
 
 import (
+	"math/rand"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/executor/internal/testutil"
 	"github.com/pingcap/tidb/pkg/expression"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/mock"
+	"github.com/stretchr/testify/require"
 )
 
 var semiJoinleftCols = []*expression.Column{
@@ -82,6 +85,13 @@ func buildSemiDataSourceAndExpectResult(ctx sessionctx.Context, leftCols []*expr
 
 		rightCol0Datums = append(rightCol0Datums, i)
 		rightCol1Datums = append(rightCol1Datums, int64(0))
+	}
+
+	// Shuffle
+	for i := int64(0); i < rowNum; i++ {
+		j := rand.Int31n(int32(i + 1))
+		leftCol0Datums[i], leftCol0Datums[j] = leftCol0Datums[j], leftCol0Datums[i]
+		leftCol1Datums[i], leftCol1Datums[j] = leftCol1Datums[j], leftCol1Datums[i]
 	}
 
 	resultRowNum := expectResultChunk.NumRows()
@@ -175,7 +185,63 @@ func TestLeftSideBuildNoOtherCondition(t *testing.T) {
 // }
 
 func TestLeftSideBuildHasOtherCondition(t *testing.T) {
+	ctx := mock.NewContext()
+	ctx.GetSessionVars().InitChunkSize = 32
+	ctx.GetSessionVars().MaxChunkSize = 32
+	leftDataSource, rightDataSource, expectedResult := buildSemiDataSourceAndExpectResult(ctx, semiJoinleftCols, semiJoinrightCols, true)
 
+	maxRowTableSegmentSize = 100
+
+	intTp := types.NewFieldType(mysql.TypeLonglong)
+
+	leftKeys := []*expression.Column{
+		{Index: 0, RetType: intTp},
+	}
+
+	rightKeys := []*expression.Column{
+		{Index: 0, RetType: intTp},
+	}
+
+	tinyTp := types.NewFieldType(mysql.TypeTiny)
+	a := &expression.Column{Index: 1, RetType: intTp}
+	b := &expression.Column{Index: 3, RetType: intTp}
+	sf, err := expression.NewFunction(mock.NewContext(), ast.GT, tinyTp, a, b)
+	require.NoError(t, err, "error when create other condition")
+	otherCondition := make(expression.CNFExprs, 0)
+	otherCondition = append(otherCondition, sf)
+
+	rightAsBuildSide := false
+	var buildKeys []*expression.Column
+	var probeKeys []*expression.Column
+	if rightAsBuildSide {
+		buildKeys = rightKeys
+		probeKeys = leftKeys
+	} else {
+		buildKeys = leftKeys
+		probeKeys = rightKeys
+	}
+
+	info := &hashJoinInfo{
+		ctx:                   ctx,
+		schema:                buildSchema(semiJoinRetTypes),
+		leftExec:              leftDataSource,
+		rightExec:             rightDataSource,
+		joinType:              logicalop.SemiJoin,
+		rightAsBuildSide:      rightAsBuildSide,
+		buildKeys:             buildKeys,
+		probeKeys:             probeKeys,
+		lUsed:                 []int{0, 1},
+		rUsed:                 []int{},
+		otherCondition:        otherCondition,
+		lUsedInOtherCondition: []int{1},
+		rUsedInOtherCondition: []int{1},
+	}
+
+	leftDataSource.PrepareChunks()
+	rightDataSource.PrepareChunks()
+	hashJoinExec := buildHashJoinV2Exec(info)
+	result := getSortedResults(t, hashJoinExec, semiJoinRetTypes)
+	checkResults(t, semiJoinRetTypes, result, expectedResult)
 }
 
 func TestRightSideBuildNoOtherCondition(t *testing.T) {
@@ -231,5 +297,63 @@ func TestRightSideBuildNoOtherCondition(t *testing.T) {
 }
 
 func TestRightSideBuildHasOtherCondition(t *testing.T) {
+	ctx := mock.NewContext()
+	ctx.GetSessionVars().InitChunkSize = 32
+	ctx.GetSessionVars().MaxChunkSize = 32
+	leftDataSource, rightDataSource, expectedResult := buildSemiDataSourceAndExpectResult(ctx, semiJoinleftCols, semiJoinrightCols, true)
 
+	maxRowTableSegmentSize = 100
+
+	intTp := types.NewFieldType(mysql.TypeLonglong)
+
+	leftKeys := []*expression.Column{
+		{Index: 0, RetType: intTp},
+	}
+
+	rightKeys := []*expression.Column{
+		{Index: 0, RetType: intTp},
+	}
+
+	tinyTp := types.NewFieldType(mysql.TypeTiny)
+	a := &expression.Column{Index: 1, RetType: intTp}
+	b := &expression.Column{Index: 3, RetType: intTp}
+	sf, err := expression.NewFunction(mock.NewContext(), ast.GT, tinyTp, a, b)
+	require.NoError(t, err, "error when create other condition")
+	otherCondition := make(expression.CNFExprs, 0)
+	otherCondition = append(otherCondition, sf)
+
+	rightAsBuildSide := true
+	var buildKeys []*expression.Column
+	var probeKeys []*expression.Column
+	if rightAsBuildSide {
+		buildKeys = rightKeys
+		probeKeys = leftKeys
+	} else {
+		buildKeys = leftKeys
+		probeKeys = rightKeys
+	}
+
+	info := &hashJoinInfo{
+		ctx:                   ctx,
+		schema:                buildSchema(semiJoinRetTypes),
+		leftExec:              leftDataSource,
+		rightExec:             rightDataSource,
+		joinType:              logicalop.SemiJoin,
+		rightAsBuildSide:      rightAsBuildSide,
+		buildKeys:             buildKeys,
+		probeKeys:             probeKeys,
+		lUsed:                 []int{0, 1},
+		rUsed:                 []int{},
+		otherCondition:        otherCondition,
+		lUsedInOtherCondition: []int{1},
+		rUsedInOtherCondition: []int{1},
+	}
+
+	leftDataSource.PrepareChunks()
+	rightDataSource.PrepareChunks()
+	hashJoinExec := buildHashJoinV2Exec(info)
+	result := getSortedResults(t, hashJoinExec, semiJoinRetTypes)
+	checkResults(t, semiJoinRetTypes, result, expectedResult)
 }
+
+// TODO add test for `truncateSelect` function

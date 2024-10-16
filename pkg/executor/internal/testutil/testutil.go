@@ -97,14 +97,7 @@ func (mds *MockDataSource) GenColDatums(col int) (results []any) {
 				panic("need to provid data")
 			}
 
-			datums = mds.P.Datums[col]
-
-			// Shuffle
-			for i := range datums {
-				j := mathrand.Int31n(int32(i + 1))
-				datums[i], datums[j] = datums[j], datums[i]
-			}
-			results = datums
+			results = mds.P.Datums[col]
 		} else {
 			datumSet := make(map[string]bool, ndv)
 			for len(datums) < ndv {
