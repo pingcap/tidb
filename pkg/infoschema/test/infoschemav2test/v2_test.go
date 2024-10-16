@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/infoschema"
+	infoschemacontext "github.com/pingcap/tidb/pkg/infoschema/context"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
@@ -228,7 +229,7 @@ func TestListTablesWithSpecialAttribute(t *testing.T) {
 
 func checkResult(t *testing.T, tk *testkit.TestKit, result ...string) {
 	is := domain.GetDomain(tk.Session()).InfoSchema()
-	ch := is.ListTablesWithSpecialAttribute(infoschema.AllSpecialAttribute)
+	ch := is.ListTablesWithSpecialAttribute(infoschemacontext.AllSpecialAttribute)
 	var rows []string
 	for _, v := range ch {
 		for _, tblInfo := range v.TableInfos {

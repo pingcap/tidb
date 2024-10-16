@@ -1239,3 +1239,24 @@ func (s *mockGCSSuite) TestBadCases() {
 	err := s.tk.QueryToErr(sql)
 	require.ErrorContains(s.T(), err, "panic occurred during import, please check log")
 }
+
+func (s *mockGCSSuite) TestImportIntoWithFK() {
+	content := []byte(`1,1
+	2,2`)
+	s.server.CreateObject(fakestorage.Object{
+		ObjectAttrs: fakestorage.ObjectAttrs{
+			BucketName: "foreign-key-test",
+			Name:       "child.csv",
+		},
+		Content: content,
+	})
+	s.prepareAndUseDB("import_into")
+	s.tk.MustExec("create table parent (id int primary key);")
+	s.tk.MustExec("create table child (id int primary key, fk int, foreign key (fk) references parent(id));")
+	sql := fmt.Sprintf(`IMPORT INTO import_into.child
+		FROM 'gs://foreign-key-test/child.csv?endpoint=%s'`, gcsEndpoint)
+
+	// it should success even if the parent table is empty
+	s.tk.MustQuery(sql)
+	s.tk.MustQuery("SELECT * FROM import_into.child;").Check(testkit.Rows("1 1", "2 2"))
+}

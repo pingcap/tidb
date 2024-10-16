@@ -14,6 +14,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+# disable global ENCRYPTION_ARGS for this script as not working with brv4.0.8
+ENCRYPTION_ARGS=""
+ENABLE_ENCRYPTION_CHECK=false
+export ENCRYPTION_ARGS
+export ENABLE_ENCRYPTION_CHECK
+
 set -eu
 DB="$TEST_NAME"
 
