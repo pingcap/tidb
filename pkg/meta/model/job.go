@@ -946,8 +946,11 @@ func (sub *SubJob) FromProxyJob(proxyJob *Job, ver int64) {
 }
 
 // FillArgs fills args.
-func (sub *SubJob) FillArgs(job *Job) {
-	sub.args = sub.JobArgs.getArgsV1(job)
+func (sub *SubJob) FillArgs(ver JobVersion) {
+	sub.args = sub.JobArgs.getArgsV1(&Job{
+		Version: ver,
+		Type:    sub.Type,
+	})
 }
 
 // Clone returns a copy of the sub-job.

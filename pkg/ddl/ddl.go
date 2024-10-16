@@ -233,7 +233,7 @@ func (jobW *JobWrapper) FillArgsWithSubJobs() {
 		jobW.FillArgs(jobW.JobArgs)
 	} else {
 		for _, sub := range jobW.MultiSchemaInfo.SubJobs {
-			sub.FillArgs(jobW.Job)
+			sub.FillArgs(jobW.Version)
 		}
 	}
 }
