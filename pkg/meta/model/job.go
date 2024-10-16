@@ -310,7 +310,7 @@ type Job struct {
 	CtxVars []any `json:"-"`
 	// it's a temporary place to cache job args.
 	// when Version is JobVersion2, Args contains a single element of type JobArgs.
-	args []any
+	Args []any
 	// we use json raw message to delay parsing special args.
 	// the args are cleared out unless Job.FillFinishedArgs is called.
 	RawArgs json.RawMessage `json:"raw_args"`
@@ -476,20 +476,20 @@ func (job *Job) GetWarnings() (map[errors.ErrorID]*terror.Error, map[errors.Erro
 func (job *Job) FillArgs(args JobArgs) {
 	intest.Assert(job.Version == JobVersion1 || job.Version == JobVersion2, "job version is invalid")
 	if job.Version == JobVersion1 {
-		job.args = args.getArgsV1(job)
+		job.Args = args.getArgsV1(job)
 		return
 	}
-	job.args = []any{args}
+	job.Args = []any{args}
 }
 
 // FillFinishedArgs fills args for finished job.
 func (job *Job) FillFinishedArgs(args FinishedJobArgs) {
 	intest.Assert(job.Version == JobVersion1 || job.Version == JobVersion2, "job version is invalid")
 	if job.Version == JobVersion1 {
-		job.args = args.getFinishedArgsV1(job)
+		job.Args = args.getFinishedArgsV1(job)
 		return
 	}
-	job.args = []any{args}
+	job.Args = []any{args}
 }
 
 func marshalArgs(jobVer JobVersion, args []any) (json.RawMessage, error) {
@@ -514,7 +514,7 @@ func marshalArgs(jobVer JobVersion, args []any) (json.RawMessage, error) {
 func (job *Job) Encode(updateRawArgs bool) ([]byte, error) {
 	var err error
 	if updateRawArgs {
-		job.RawArgs, err = marshalArgs(job.Version, job.args)
+		job.RawArgs, err = marshalArgs(job.Version, job.Args)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -575,7 +575,7 @@ func (job *Job) decodeArgs(args ...any) error {
 func (job *Job) String() string {
 	rowCount := job.GetRowCount()
 	ret := fmt.Sprintf("ID:%d, Type:%s, State:%s, SchemaState:%s, SchemaID:%d, TableID:%d, RowCount:%d, ArgLen:%d, start time: %v, Err:%v, ErrCount:%d, SnapshotVersion:%v, Version: %s",
-		job.ID, job.Type, job.State, job.SchemaState, job.SchemaID, job.TableID, rowCount, len(job.args), TSConvert2Time(job.StartTS), job.Error, job.ErrorCount, job.SnapshotVer, job.Version)
+		job.ID, job.Type, job.State, job.SchemaState, job.SchemaID, job.TableID, rowCount, len(job.Args), TSConvert2Time(job.StartTS), job.Error, job.ErrorCount, job.SnapshotVer, job.Version)
 	if job.ReorgMeta != nil {
 		warnings, _ := job.GetWarnings()
 		ret += fmt.Sprintf(", UniqueWarnings:%d", len(warnings))
@@ -852,13 +852,15 @@ func (job *Job) GetInvolvingSchemaInfo() []InvolvingSchemaInfo {
 
 // ClearDecodedArgs clears the decoded args.
 func (job *Job) ClearDecodedArgs() {
-	job.args = nil
+	job.Args = nil
 }
 
 // SubJob is a representation of one DDL schema change. A Job may contain zero
 // (when multi-schema change is not applicable) or more SubJobs.
 type SubJob struct {
-	Type        ActionType      `json:"type"`
+	Type        ActionType `json:"type"`
+	JobArgs     JobArgs    `json:"-"`
+	args        []any
 	RawArgs     json.RawMessage `json:"raw_args"`
 	SchemaState SchemaState     `json:"schema_state"`
 	SnapshotVer uint64          `json:"snapshot_ver"`
@@ -871,9 +873,6 @@ type SubJob struct {
 	SchemaVer   int64           `json:"schema_version"`
 	ReorgTp     ReorgType       `json:"reorg_tp"`
 	UseCloud    bool            `json:"use_cloud"`
-
-	JobArgs JobArgs `json:"-"`
-	args    []any
 }
 
 // IsNormal returns true if the sub-job is normally running.
@@ -910,7 +909,7 @@ func (sub *SubJob) ToProxyJob(parentJob *Job, seq int) Job {
 		RowCount:        sub.RowCount,
 		Mu:              sync.Mutex{},
 		CtxVars:         sub.CtxVars,
-		args:            sub.args,
+		Args:            sub.args,
 		RawArgs:         sub.RawArgs,
 		SchemaState:     sub.SchemaState,
 		SnapshotVer:     sub.SnapshotVer,
@@ -936,7 +935,7 @@ func (sub *SubJob) FromProxyJob(proxyJob *Job, ver int64) {
 	sub.SchemaState = proxyJob.SchemaState
 	sub.SnapshotVer = proxyJob.SnapshotVer
 	sub.RealStartTS = proxyJob.RealStartTS
-	sub.args = proxyJob.args
+	sub.args = proxyJob.Args
 	sub.State = proxyJob.State
 	sub.Warning = proxyJob.Warning
 	sub.RowCount = proxyJob.RowCount

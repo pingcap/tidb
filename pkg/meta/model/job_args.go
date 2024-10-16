@@ -73,15 +73,15 @@ func getOrDecodeArgsV1[T JobArgs](args T, job *Job) (T, error) {
 // and cache in job.Args.
 func getOrDecodeArgsV2[T JobArgs](job *Job) (T, error) {
 	intest.Assert(job.Version == JobVersion2, "job version is not v2")
-	if len(job.args) > 0 {
-		intest.Assert(len(job.args) == 1, "job args length is not 1")
-		return job.args[0].(T), nil
+	if len(job.Args) > 0 {
+		intest.Assert(len(job.Args) == 1, "job args length is not 1")
+		return job.Args[0].(T), nil
 	}
 	var v T
 	if err := json.Unmarshal(job.RawArgs, &v); err != nil {
 		return v, errors.Trace(err)
 	}
-	job.args = []any{v}
+	job.Args = []any{v}
 	return v, nil
 }
 
@@ -506,7 +506,7 @@ func FillRollbackArgsForAddPartition(job *Job, args *TablePartitionArgs) {
 	fake.FillArgs(&TablePartitionArgs{
 		PartNames: args.PartNames,
 	})
-	job.args = fake.args
+	job.Args = fake.Args
 }
 
 // ExchangeTablePartitionArgs is the arguments for exchange table partition job.
@@ -788,7 +788,7 @@ func FillRollBackArgsForAddColumn(job *Job, args *TableColumnArgs) {
 		Type:    ActionDropColumn,
 	}
 	fakeJob.FillArgs(args)
-	job.args = fakeJob.args
+	job.Args = fakeJob.Args
 }
 
 // GetTableColumnArgs gets the args for dropping column ddl or Adding column ddl.
