@@ -883,7 +883,7 @@ func TryFastPlan(ctx base.PlanContext, node *resolve.NodeW) (p base.Plan) {
 	ctx.GetSessionVars().PlanColumnID.Store(0)
 	switch x := node.Node.(type) {
 	case *ast.SelectStmt:
-		if x.SelectIntoOpt != nil {
+		if x.SelectIntoOpt != nil || x.LockInfo != nil {
 			return nil
 		}
 		defer func() {
