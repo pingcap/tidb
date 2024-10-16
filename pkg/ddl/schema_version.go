@@ -249,17 +249,10 @@ func SetSchemaDiffForPartitionModify(diff *model.SchemaDiff, job *model.Job) err
 }
 
 // SetSchemaDiffForCreateTable set SchemaDiff for ActionCreateTable.
-func SetSchemaDiffForCreateTable(diff *model.SchemaDiff, job *model.Job) error {
+func SetSchemaDiffForCreateTable(diff *model.SchemaDiff, job *model.Job, jobCtx *jobContext) error {
 	diff.TableID = job.TableID
-	var tbInfo *model.TableInfo
-	// create table with foreign key will update tableInfo in the job args, so we
-	// must reuse already decoded ones.
-	// TODO make DecodeArgs can reuse already decoded args, so we can use GetCreateTableArgs.
-	if job.Version == model.JobVersion1 {
-		tbInfo, _ = job.Args[0].(*model.TableInfo)
-	} else {
-		tbInfo = job.Args[0].(*model.CreateTableArgs).TableInfo
-	}
+	tbInfo := jobCtx.jobArgs.(*model.CreateTableArgs).TableInfo
+
 	// When create table with foreign key, there are two schema status change:
 	// 1. none -> write-only
 	// 2. write-only -> public
@@ -360,7 +353,7 @@ func updateSchemaVersion(jobCtx *jobContext, job *model.Job, multiInfos ...schem
 	case model.ActionRemovePartitioning, model.ActionAlterTablePartitioning:
 		err = SetSchemaDiffForPartitionModify(diff, job)
 	case model.ActionCreateTable:
-		err = SetSchemaDiffForCreateTable(diff, job)
+		err = SetSchemaDiffForCreateTable(diff, job, jobCtx)
 	case model.ActionRecoverSchema:
 		err = SetSchemaDiffForRecoverSchema(diff, job)
 	case model.ActionFlashbackCluster:
