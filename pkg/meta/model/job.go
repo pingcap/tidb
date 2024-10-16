@@ -310,7 +310,7 @@ type Job struct {
 	CtxVars []any `json:"-"`
 	// it's a temporary place to cache job args.
 	// when Version is JobVersion2, Args contains a single element of type JobArgs.
-	Args []any
+	Args []any `json:"-"`
 	// we use json raw message to delay parsing special args.
 	// the args are cleared out unless Job.FillFinishedArgs is called.
 	RawArgs json.RawMessage `json:"raw_args"`
@@ -568,6 +568,10 @@ func (job *Job) decodeArgs(args ...any) error {
 			return errors.Trace(err)
 		}
 	}
+	// TODO(lance6716): don't assign to job.Args here, because the types of argument
+	// `args` are always pointer type. But sometimes in the `job` literals we don't
+	// use pointer
+	job.Args = args[:sz]
 	return nil
 }
 
@@ -945,11 +949,13 @@ func (sub *SubJob) FromProxyJob(proxyJob *Job, ver int64) {
 }
 
 // FillArgs fills args.
-func (sub *SubJob) FillArgs(ver JobVersion) {
-	sub.args = sub.JobArgs.getArgsV1(&Job{
-		Version: ver,
+func (sub *SubJob) FillArgs(jobVer JobVersion) {
+	fakeJob := Job{
+		Version: jobVer,
 		Type:    sub.Type,
-	})
+	}
+	fakeJob.FillArgs(sub.JobArgs)
+	sub.args = fakeJob.Args
 }
 
 // Clone returns a copy of the sub-job.
