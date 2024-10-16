@@ -1274,7 +1274,7 @@ func isPointGetConvertableSchema(ds *logicalop.DataSource) bool {
 // See #46177 for more information.
 func exploreEnforcedPlan(ds *logicalop.DataSource) bool {
 	// default value is false to keep it compatible with previous versions.
-	return fixcontrol.GetBoolWithDefault(ds.SCtx().GetSessionVars().GetOptimizerFixControlMap(), fixcontrol.Fix46177, false)
+	return fixcontrol.GetBoolWithDefault(ds.SCtx().GetSessionVars().GetOptimizerFixControlMap(), fixcontrol.Fix46177, true)
 }
 
 func findBestTask4LogicalDataSource(lp base.LogicalPlan, prop *property.PhysicalProperty, planCounter *base.PlanCounterTp, opt *optimizetrace.PhysicalOptimizeOp) (t base.Task, cntPlan int64, err error) {
