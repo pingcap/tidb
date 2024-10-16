@@ -94,6 +94,8 @@ func buildSemiDataSourceAndExpectResult(ctx sessionctx.Context, leftCols []*expr
 	return testutil.BuildMockDataSource(leftMockSrcParm), testutil.BuildMockDataSource(rightMockSrcParm), expectResult
 }
 
+// TODO extract common codes in tests
+
 func TestLeftSideBuildNoOtherCondition(t *testing.T) {
 	ctx := mock.NewContext()
 	ctx.GetSessionVars().InitChunkSize = 32
@@ -129,7 +131,7 @@ func TestLeftSideBuildNoOtherCondition(t *testing.T) {
 		leftExec:              leftDataSource,
 		rightExec:             rightDataSource,
 		joinType:              logicalop.SemiJoin,
-		rightAsBuildSide:      false,
+		rightAsBuildSide:      rightAsBuildSide,
 		buildKeys:             buildKeys,
 		probeKeys:             probeKeys,
 		lUsed:                 []int{0, 1},
@@ -177,7 +179,55 @@ func TestLeftSideBuildHasOtherCondition(t *testing.T) {
 }
 
 func TestRightSideBuildNoOtherCondition(t *testing.T) {
+	ctx := mock.NewContext()
+	ctx.GetSessionVars().InitChunkSize = 32
+	ctx.GetSessionVars().MaxChunkSize = 32
+	leftDataSource, rightDataSource, expectedResult := buildSemiDataSourceAndExpectResult(ctx, semiJoinleftCols, semiJoinrightCols, false)
 
+	maxRowTableSegmentSize = 100
+
+	intTp := types.NewFieldType(mysql.TypeLonglong)
+
+	leftKeys := []*expression.Column{
+		{Index: 0, RetType: intTp},
+	}
+
+	rightKeys := []*expression.Column{
+		{Index: 0, RetType: intTp},
+	}
+
+	rightAsBuildSide := true
+	var buildKeys []*expression.Column
+	var probeKeys []*expression.Column
+	if rightAsBuildSide {
+		buildKeys = rightKeys
+		probeKeys = leftKeys
+	} else {
+		buildKeys = leftKeys
+		probeKeys = rightKeys
+	}
+
+	info := &hashJoinInfo{
+		ctx:                   ctx,
+		schema:                buildSchema(semiJoinRetTypes),
+		leftExec:              leftDataSource,
+		rightExec:             rightDataSource,
+		joinType:              logicalop.SemiJoin,
+		rightAsBuildSide:      rightAsBuildSide,
+		buildKeys:             buildKeys,
+		probeKeys:             probeKeys,
+		lUsed:                 []int{0, 1},
+		rUsed:                 []int{},
+		otherCondition:        nil,
+		lUsedInOtherCondition: []int{},
+		rUsedInOtherCondition: []int{},
+	}
+
+	leftDataSource.PrepareChunks()
+	rightDataSource.PrepareChunks()
+	hashJoinExec := buildHashJoinV2Exec(info)
+	result := getSortedResults(t, hashJoinExec, semiJoinRetTypes)
+	checkResults(t, semiJoinRetTypes, result, expectedResult)
 }
 
 func TestRightSideBuildHasOtherCondition(t *testing.T) {
