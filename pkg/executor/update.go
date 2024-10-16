@@ -184,6 +184,7 @@ func (e *UpdateExec) exec(ctx context.Context, _ *expression.Schema, row, newDat
 	var totalMemDelta int64
 	defer func() { e.memTracker.Consume(totalMemDelta) }()
 
+	fkToBeCheckedRows := make([]toBeCheckedRow, 1)
 	for i, content := range e.tblColPosInfos {
 		if !e.tableUpdatable[i] {
 			// If there's nothing to update, we can just skip current row
@@ -207,7 +208,20 @@ func (e *UpdateExec) exec(ctx context.Context, _ *expression.Schema, row, newDat
 		// Update row
 		fkChecks := e.fkChecks[content.TblID]
 		fkCascades := e.fkCascades[content.TblID]
-		changed, err1 := updateRecord(ctx, e.Ctx(), handle, oldData, newTableData, flags, tbl, false, e.memTracker, fkChecks, fkCascades, dupKeyCheck)
+
+		if e.IgnoreError {
+			fkToBeCheckedRows[0] = toBeCheckedRow{row: newTableData, ignored: false}
+			err := checkFKIgnoreErr(ctx, e.Ctx(), e.fkChecks[tbl.Meta().ID], fkToBeCheckedRows)
+			if err != nil {
+				return err
+			}
+
+			// meets an error, skip this row.
+			if fkToBeCheckedRows[0].ignored {
+				continue
+			}
+		}
+		changed, err1 := updateRecord(ctx, e.Ctx(), handle, oldData, newTableData, flags, tbl, false, e.memTracker, fkChecks, fkCascades, dupKeyCheck, e.IgnoreError)
 		if err1 == nil {
 			_, exist := e.updatedRowKeys[content.Start].Get(handle)
 			memDelta := e.updatedRowKeys[content.Start].Set(handle, changed)
