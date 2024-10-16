@@ -353,6 +353,9 @@
       ".*_generated\\.go$": "ignore generated code",
       ".*mock.go$": "ignore generated code",
       "/cgo/": "no need to vet cgo code"
+    },
+    "only_files": {
+      "pkg/util/": "util code"
     }
   },
   "inspect": {
