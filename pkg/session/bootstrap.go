@@ -1183,11 +1183,16 @@ const (
 	// version 216
 	//   changes variable `tidb_scatter_region` value from ON to "table" and OFF to "".
 	version216 = 216
+
+	// version 217
+	//   in this version, we disable upgrade from below v6.2.0, there are no system
+	//   table changes related to it.
+	version217 = 217
 )
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-var currentBootstrapVersion int64 = version216
+var currentBootstrapVersion int64 = version217
 
 // DDL owner key's expired time is ManagerSessionTTL seconds, we should wait the time and give more time to have a chance to finish it.
 var internalSQLTimeout = owner.ManagerSessionTTL + 15

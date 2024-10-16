@@ -117,7 +117,7 @@ func revertVersionAndVariables(t *testing.T, se sessiontypes.Session, ver int) {
 }
 
 func TestUpgradeVersion66(t *testing.T) {
-	t.Skip("we disallow upgrade from below bootstrap version 92 to version >= 216 (current), user must upgrade to a version in between first, so skip this test")
+	t.Skip("we disallow upgrade from below bootstrap version 92 to version >= 217 (current), user must upgrade to a version in between first, so skip this test")
 	ctx := context.Background()
 	store, dom := session.CreateStoreAndBootstrap(t)
 	defer func() { require.NoError(t, store.Close()) }()
@@ -155,7 +155,7 @@ func TestUpgradeVersion66(t *testing.T) {
 }
 
 func TestUpgradeVersion74(t *testing.T) {
-	t.Skip("we disallow upgrade from below bootstrap version 92 to version >= 216 (current), user must upgrade to a version in between first, so skip this test")
+	t.Skip("we disallow upgrade from below bootstrap version 92 to version >= 217 (current), user must upgrade to a version in between first, so skip this test")
 	ctx := context.Background()
 
 	cases := []struct {
@@ -206,7 +206,7 @@ func TestUpgradeVersion74(t *testing.T) {
 }
 
 func TestUpgradeVersion75(t *testing.T) {
-	t.Skip("we disallow upgrade from below bootstrap version 92 to version >= 216 (current), user must upgrade to a version in between first, so skip this test")
+	t.Skip("we disallow upgrade from below bootstrap version 92 to version >= 217 (current), user must upgrade to a version in between first, so skip this test")
 	ctx := context.Background()
 
 	store, dom := session.CreateStoreAndBootstrap(t)

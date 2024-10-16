@@ -368,7 +368,7 @@ func TestUpgrade(t *testing.T) {
 }
 
 func TestIssue17979_1(t *testing.T) {
-	t.Skip("we disallow upgrade from below bootstrap version 92 to version >= 216 (current), user must upgrade to a version in between first, so skip this test")
+	t.Skip("we disallow upgrade from below bootstrap version 92 to version >= 217 (current), user must upgrade to a version in between first, so skip this test")
 	ctx := context.Background()
 
 	store, dom := CreateStoreAndBootstrap(t)
@@ -404,7 +404,7 @@ func TestIssue17979_1(t *testing.T) {
 }
 
 func TestIssue17979_2(t *testing.T) {
-	t.Skip("we disallow upgrade from below bootstrap version 92 to version >= 216 (current), user must upgrade to a version in between first, so skip this test")
+	t.Skip("we disallow upgrade from below bootstrap version 92 to version >= 217 (current), user must upgrade to a version in between first, so skip this test")
 	ctx := context.Background()
 
 	store, dom := CreateStoreAndBootstrap(t)
@@ -447,7 +447,7 @@ func TestIssue17979_2(t *testing.T) {
 // but from 4.0 -> 5.0, the new default is picked up.
 
 func TestIssue20900_2(t *testing.T) {
-	t.Skip("we disallow upgrade from below bootstrap version 92 to version >= 216 (current), user must upgrade to a version in between first, so skip this test")
+	t.Skip("we disallow upgrade from below bootstrap version 92 to version >= 217 (current), user must upgrade to a version in between first, so skip this test")
 	ctx := context.Background()
 
 	store, dom := CreateStoreAndBootstrap(t)
@@ -598,7 +598,7 @@ func TestUpdateDuplicateBindInfo(t *testing.T) {
 }
 
 func TestUpgradeClusteredIndexDefaultValue(t *testing.T) {
-	t.Skip("we disallow upgrade from below bootstrap version 92 to version >= 216 (current), user must upgrade to a version in between first, so skip this test")
+	t.Skip("we disallow upgrade from below bootstrap version 92 to version >= 217 (current), user must upgrade to a version in between first, so skip this test")
 	store, dom := CreateStoreAndBootstrap(t)
 	defer func() { require.NoError(t, store.Close()) }()
 
@@ -688,7 +688,7 @@ func TestReferencesPrivilegeOnColumn(t *testing.T) {
 }
 
 func TestAnalyzeVersionUpgradeFrom300To500(t *testing.T) {
-	t.Skip("we disallow upgrade from below bootstrap version 92 to version >= 216 (current), user must upgrade to a version in between first, so skip this test")
+	t.Skip("we disallow upgrade from below bootstrap version 92 to version >= 217 (current), user must upgrade to a version in between first, so skip this test")
 	ctx := context.Background()
 	store, dom := CreateStoreAndBootstrap(t)
 	defer func() { require.NoError(t, store.Close()) }()
@@ -764,7 +764,7 @@ func TestIndexMergeInNewCluster(t *testing.T) {
 }
 
 func TestIndexMergeUpgradeFrom300To540(t *testing.T) {
-	t.Skip("we disallow upgrade from below bootstrap version 92 to version >= 216 (current), user must upgrade to a version in between first, so skip this test")
+	t.Skip("we disallow upgrade from below bootstrap version 92 to version >= 217 (current), user must upgrade to a version in between first, so skip this test")
 	ctx := context.Background()
 	store, dom := CreateStoreAndBootstrap(t)
 	defer func() { require.NoError(t, store.Close()) }()
@@ -816,12 +816,12 @@ func TestIndexMergeUpgradeFrom300To540(t *testing.T) {
 // We set tidb_enable_index_merge as on.
 // And after upgrade to 5.x, tidb_enable_index_merge should remains to be on.
 func TestIndexMergeUpgradeFrom400To540Enable(t *testing.T) {
-	t.Skip("we disallow upgrade from below bootstrap version 92 to version >= 216 (current), user must upgrade to a version in between first, so skip this test")
+	t.Skip("we disallow upgrade from below bootstrap version 92 to version >= 217 (current), user must upgrade to a version in between first, so skip this test")
 	testIndexMergeUpgradeFrom400To540(t, true)
 }
 
 func TestIndexMergeUpgradeFrom400To540Disable(t *testing.T) {
-	t.Skip("we disallow upgrade from below bootstrap version 92 to version >= 216 (current), user must upgrade to a version in between first, so skip this test")
+	t.Skip("we disallow upgrade from below bootstrap version 92 to version >= 217 (current), user must upgrade to a version in between first, so skip this test")
 	testIndexMergeUpgradeFrom400To540(t, false)
 }
 
@@ -1099,7 +1099,7 @@ func TestTiDBCostModelInNewCluster(t *testing.T) {
 }
 
 func TestTiDBCostModelUpgradeFrom300To650(t *testing.T) {
-	t.Skip("we disallow upgrade from below bootstrap version 92 to version >= 216 (current), user must upgrade to a version in between first, so skip this test")
+	t.Skip("we disallow upgrade from below bootstrap version 92 to version >= 217 (current), user must upgrade to a version in between first, so skip this test")
 	ctx := context.Background()
 	store, dom := CreateStoreAndBootstrap(t)
 	defer func() { require.NoError(t, store.Close()) }()
@@ -1150,7 +1150,7 @@ func TestTiDBCostModelUpgradeFrom300To650(t *testing.T) {
 }
 
 func TestTiDBCostModelUpgradeFrom610To650(t *testing.T) {
-	t.Skip("we disallow upgrade from below bootstrap version 92 to version >= 216 (current), user must upgrade to a version in between first, so skip this test")
+	t.Skip("we disallow upgrade from below bootstrap version 92 to version >= 217 (current), user must upgrade to a version in between first, so skip this test")
 	for i := 0; i < 2; i++ {
 		func() {
 			ctx := context.Background()
@@ -1553,7 +1553,7 @@ func TestTiDBUpgradeToVer140(t *testing.T) {
 }
 
 func TestTiDBNonPrepPlanCacheUpgradeFrom540To700(t *testing.T) {
-	t.Skip("we disallow upgrade from below bootstrap version 92 to version >= 216 (current), user must upgrade to a version in between first, so skip this test")
+	t.Skip("we disallow upgrade from below bootstrap version 92 to version >= 217 (current), user must upgrade to a version in between first, so skip this test")
 	ctx := context.Background()
 	store, dom := CreateStoreAndBootstrap(t)
 	defer func() { require.NoError(t, store.Close()) }()
@@ -1614,7 +1614,7 @@ func TestTiDBNonPrepPlanCacheUpgradeFrom540To700(t *testing.T) {
 }
 
 func TestTiDBStatsLoadPseudoTimeoutUpgradeFrom610To650(t *testing.T) {
-	t.Skip("we disallow upgrade from below bootstrap version 92 to version >= 216 (current), user must upgrade to a version in between first, so skip this test")
+	t.Skip("we disallow upgrade from below bootstrap version 92 to version >= 217 (current), user must upgrade to a version in between first, so skip this test")
 	ctx := context.Background()
 	store, dom := CreateStoreAndBootstrap(t)
 	defer func() { require.NoError(t, store.Close()) }()
