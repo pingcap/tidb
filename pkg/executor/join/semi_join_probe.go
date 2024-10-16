@@ -208,6 +208,7 @@ func (j *semiJoinProbe) truncateSelect() {
 	}
 }
 
+// TODO quick exit and fix bug
 func (j *semiJoinProbe) probeForLeftSideBuildHasOtherCondition(joinedChk *chunk.Chunk, remainCap int, sqlKiller *sqlkiller.SQLKiller) (err error) {
 	meta := j.ctx.hashTableMeta
 	tagHelper := j.ctx.hashTableContext.tagHelper
@@ -280,6 +281,7 @@ func (j *semiJoinProbe) probeForLeftSideBuildNoOtherCondition(remainCap int, sql
 	return
 }
 
+// TODO quick exit and fix bug
 func (j *semiJoinProbe) probeForRightSideBuildHasOtherCondition(chk, joinedChk *chunk.Chunk, remainCap int, sqlKiller *sqlkiller.SQLKiller) (err error) {
 	j.groupMark = j.groupMark[:0]
 	meta := j.ctx.hashTableMeta

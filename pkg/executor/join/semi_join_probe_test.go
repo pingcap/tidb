@@ -357,3 +357,4 @@ func TestRightSideBuildHasOtherCondition(t *testing.T) {
 }
 
 // TODO add test for `truncateSelect` function
+// TODO one row matches many many rows and exceeds the capacity of one chunk when we have other condition
