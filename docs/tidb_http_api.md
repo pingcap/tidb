@@ -582,7 +582,7 @@ timezone.*
 27. Get count {number} TiDB DDL job history information, start with job {id}
 
      ```shell
-     curl http://{TIDBIP}:10080/ddl/history?"start_job_id={id}&limit={number}"
+     curl "http://{TIDBIP}:10080/ddl/history?start_job_id={id}&limit={number}"
      ```
 
 28. Download TiDB debug info
