@@ -17,6 +17,7 @@
 package testkit
 
 import (
+	"context"
 	"flag"
 	"os"
 	"sync"
@@ -27,6 +28,8 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl/schematracker"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta/model"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/resourcemanager"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/store/driver"
@@ -195,6 +198,11 @@ func (d *DistExecutionContext) GetDomainCnt() int {
 
 // NewDistExecutionContext create DistExecutionContext for testing.
 func NewDistExecutionContext(t testing.TB, serverNum int) *DistExecutionContext {
+	return NewDistExecutionContextWithLease(t, serverNum, 500*time.Millisecond)
+}
+
+// NewDistExecutionContextWithLease create DistExecutionContext for testing.
+func NewDistExecutionContextWithLease(t testing.TB, serverNum int, lease time.Duration) *DistExecutionContext {
 	store, err := mockstore.NewMockStore()
 	require.NoError(t, err)
 	gctuner.GlobalMemoryLimitTuner.Stop()
@@ -203,7 +211,7 @@ func NewDistExecutionContext(t testing.TB, serverNum int) *DistExecutionContext 
 
 	var domInfo []string
 	for i := 0; i < serverNum; i++ {
-		dom := bootstrap4DistExecution(t, store, 500*time.Millisecond)
+		dom := bootstrap4DistExecution(t, store, lease)
 		if i != serverNum-1 {
 			dom.SetOnClose(func() { /* don't delete the store in domain map */ })
 		}
@@ -280,4 +288,15 @@ func CreateMockStoreAndDomainWithSchemaLease(t testing.TB, lease time.Duration, 
 	sm := MockSessionManager{}
 	dom.InfoSyncer().SetSessionManager(&sm)
 	return schematracker.UnwrapStorage(store), dom
+}
+
+// SetTiFlashReplica is to set TiFlash replica
+func SetTiFlashReplica(t testing.TB, dom *domain.Domain, dbName, tableName string) {
+	is := dom.InfoSchema()
+	tblInfo, err := is.TableByName(context.Background(), pmodel.NewCIStr(dbName), pmodel.NewCIStr(tableName))
+	require.NoError(t, err)
+	tblInfo.Meta().TiFlashReplica = &model.TiFlashReplicaInfo{
+		Count:     1,
+		Available: true,
+	}
 }

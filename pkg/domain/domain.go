@@ -300,15 +300,13 @@ func (do *Domain) loadInfoSchema(startTS uint64, isSnapshot bool) (infoschema.In
 		schemaTs = 0
 	}
 
-	var oldIsV2 bool
 	enableV2 := variable.SchemaCacheSize.Load() > 0
 	currentSchemaVersion := int64(0)
-	if oldInfoSchema := do.infoCache.GetLatest(); oldInfoSchema != nil {
+	oldInfoSchema := do.infoCache.GetLatest()
+	if oldInfoSchema != nil {
 		currentSchemaVersion = oldInfoSchema.SchemaMetaVersion()
-		oldIsV2, _ = infoschema.IsV2(oldInfoSchema)
 	}
-	useV2, isV1V2Switch := shouldUseV2(enableV2, oldIsV2, isSnapshot)
-
+	useV2, isV1V2Switch := shouldUseV2(enableV2, oldInfoSchema, isSnapshot)
 	if is := do.infoCache.GetByVersion(neededSchemaVersion); is != nil {
 		isV2, raw := infoschema.IsV2(is)
 		if isV2 {
@@ -557,11 +555,18 @@ func (*Domain) fetchSchemasWithTables(ctx context.Context, schemas []*model.DBIn
 // shouldUseV2 decides whether to use infoschema v2.
 // When loading snapshot, infoschema should keep the same as before to avoid v1/v2 switch.
 // Otherwise, it is decided by enabledV2.
-func shouldUseV2(enableV2 bool, oldIsV2 bool, isSnapshot bool) (useV2 bool, isV1V2Switch bool) {
+func shouldUseV2(enableV2 bool, old infoschema.InfoSchema, isSnapshot bool) (useV2 bool, isV1V2Switch bool) {
+	// case 1: no information about old
+	if old == nil {
+		return enableV2, false
+	}
+	// case 2: snapshot load should keep the same as old
+	oldIsV2, _ := infoschema.IsV2(old)
 	if isSnapshot {
 		return oldIsV2, false
 	}
-	return enableV2, enableV2 != oldIsV2
+	// case 3: the most general case
+	return enableV2, oldIsV2 != enableV2
 }
 
 // tryLoadSchemaDiffs tries to only load latest schema changes.
@@ -2266,7 +2271,7 @@ func (do *Domain) StatsHandle() *handle.Handle {
 
 // CreateStatsHandle is used only for test.
 func (do *Domain) CreateStatsHandle(ctx, initStatsCtx sessionctx.Context) error {
-	h, err := handle.NewHandle(ctx, initStatsCtx, do.statsLease, do.sysSessionPool, &do.sysProcesses, do.NextConnID, do.ReleaseConnID)
+	h, err := handle.NewHandle(ctx, initStatsCtx, do.statsLease, do.InfoSchema(), do.sysSessionPool, &do.sysProcesses, do.NextConnID, do.ReleaseConnID)
 	if err != nil {
 		return err
 	}
@@ -2303,7 +2308,7 @@ func (do *Domain) LoadAndUpdateStatsLoop(ctxs []sessionctx.Context, initStatsCtx
 // It should be called only once in BootstrapSession.
 func (do *Domain) UpdateTableStatsLoop(ctx, initStatsCtx sessionctx.Context) error {
 	ctx.GetSessionVars().InRestrictedSQL = true
-	statsHandle, err := handle.NewHandle(ctx, initStatsCtx, do.statsLease, do.sysSessionPool, &do.sysProcesses, do.NextConnID, do.ReleaseConnID)
+	statsHandle, err := handle.NewHandle(ctx, initStatsCtx, do.statsLease, do.InfoSchema(), do.sysSessionPool, &do.sysProcesses, do.NextConnID, do.ReleaseConnID)
 	if err != nil {
 		return err
 	}
@@ -2449,7 +2454,7 @@ func (do *Domain) initStats(ctx context.Context) {
 	initstats.InitStatsPercentage.Store(0)
 	var err error
 	if liteInitStats {
-		err = statsHandle.InitStatsLite(ctx, do.InfoSchema())
+		err = statsHandle.InitStatsLite(ctx)
 	} else {
 		err = statsHandle.InitStats(ctx, do.InfoSchema())
 	}
@@ -2488,7 +2493,7 @@ func (do *Domain) loadStatsWorker() {
 			if err != nil {
 				logutil.BgLogger().Debug("update stats info failed", zap.Error(err))
 			}
-			err = statsHandle.LoadNeededHistograms()
+			err = statsHandle.LoadNeededHistograms(do.InfoSchema())
 			if err != nil {
 				logutil.BgLogger().Debug("load histograms failed", zap.Error(err))
 			}
@@ -2981,8 +2986,8 @@ func (do *Domain) releaseServerID(context.Context) {
 // propose server ID by random.
 func (*Domain) proposeServerID(ctx context.Context, conflictCnt int) (uint64, error) {
 	// get a random server ID in range [min, max]
-	randomServerID := func(min uint64, max uint64) uint64 {
-		return uint64(rand.Int63n(int64(max-min+1)) + int64(min)) // #nosec G404
+	randomServerID := func(minv uint64, maxv uint64) uint64 {
+		return uint64(rand.Int63n(int64(maxv-minv+1)) + int64(minv)) // #nosec G404
 	}
 
 	if conflictCnt < acquire32BitsServerIDRetryCnt {

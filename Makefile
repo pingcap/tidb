@@ -436,7 +436,8 @@ build_for_br_integration_test:
 	$(GOBUILD) $(RACE_FLAG) -o bin/gc br/tests/br_z_gc_safepoint/*.go && \
 	$(GOBUILD) $(RACE_FLAG) -o bin/fake-oauth tools/fake-oauth/main.go && \
 	$(GOBUILD) $(RACE_FLAG) -o bin/rawkv br/tests/br_rawkv/*.go && \
-	$(GOBUILD) $(RACE_FLAG) -o bin/txnkv br/tests/br_txn/*.go \
+	$(GOBUILD) $(RACE_FLAG) -o bin/txnkv br/tests/br_txn/*.go && \
+	$(GOBUILD) $(RACE_FLAG) -o bin/utils br/tests/utils.go \
 	) || (make failpoint-disable && exit 1)
 	@make failpoint-disable
 
@@ -635,8 +636,7 @@ bazel_coverage_test: failpoint-enable bazel_ci_simple_prepare
 .PHONY: bazel_coverage_test_ddlargsv1
 bazel_coverage_test_ddlargsv1: failpoint-enable bazel_ci_simple_prepare
 	bazel $(BAZEL_GLOBAL_CONFIG) --nohome_rc coverage $(BAZEL_CMD_CONFIG) $(BAZEL_INSTRUMENTATION_FILTER) --jobs=35 --build_tests_only --test_keep_going=false \
-		--@io_bazel_rules_go//go/config:cover_format=go_cover --define gotags=deadlock,intest \
-		--define gc_linkopts=-X,github.com/pingcap/tidb/pkg/ddl.ForceDDLJobVersionToV1InTest=true \
+		--@io_bazel_rules_go//go/config:cover_format=go_cover --define gotags=deadlock,intest,ddlargsv1 \
 		-- //... -//cmd/... -//tests/graceshutdown/... \
 		-//tests/globalkilltest/... -//tests/readonlytest/... -//br/pkg/task:task_test -//tests/realtikvtest/...
 
@@ -816,3 +816,7 @@ bazel_mirror:
 .PHONY: bazel_sync
 bazel_sync:
 	bazel $(BAZEL_GLOBAL_CONFIG) sync $(BAZEL_SYNC_CONFIG)
+
+.PHONY: bazel_mirror_upload
+bazel_mirror_upload:
+	bazel $(BAZEL_GLOBAL_CONFIG) run $(BAZEL_CMD_CONFIG)  //cmd/mirror -- --mirror --upload

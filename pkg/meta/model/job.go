@@ -110,6 +110,7 @@ const (
 	ActionDropResourceGroup      ActionType = 70
 	ActionAlterTablePartitioning ActionType = 71
 	ActionRemovePartitioning     ActionType = 72
+	ActionAddVectorIndex         ActionType = 73
 )
 
 // ActionMap is the map of DDL ActionType to string.
@@ -181,6 +182,7 @@ var ActionMap = map[ActionType]string{
 	ActionDropResourceGroup:             "drop resource group",
 	ActionAlterTablePartitioning:        "alter table partition by",
 	ActionRemovePartitioning:            "alter table remove partitioning",
+	ActionAddVectorIndex:                "add vector index",
 
 	// `ActionAlterTableAlterPartition` is removed and will never be used.
 	// Just left a tombstone here for compatibility.
@@ -484,7 +486,7 @@ func (job *Job) GetWarnings() (map[errors.ErrorID]*terror.Error, map[errors.Erro
 func (job *Job) FillArgs(args JobArgs) {
 	intest.Assert(job.Version == JobVersion1 || job.Version == JobVersion2, "job version is invalid")
 	if job.Version == JobVersion1 {
-		args.fillJobV1(job)
+		job.Args = args.getArgsV1(job)
 		return
 	}
 	job.Args = []any{args}
@@ -494,7 +496,7 @@ func (job *Job) FillArgs(args JobArgs) {
 func (job *Job) FillFinishedArgs(args FinishedJobArgs) {
 	intest.Assert(job.Version == JobVersion1 || job.Version == JobVersion2, "job version is invalid")
 	if job.Version == JobVersion1 {
-		args.fillFinishedJobV1(job)
+		job.Args = args.getFinishedArgsV1(job)
 		return
 	}
 	job.Args = []any{args}
@@ -534,7 +536,8 @@ func (job *Job) Encode(updateRawArgs bool) ([]byte, error) {
 					continue
 				}
 
-				sub.RawArgs, err = marshalArgs(job.Version, sub.Args)
+				// TODO(joechenrh): Use version of parent job after refactor done.
+				sub.RawArgs, err = marshalArgs(JobVersion1, sub.Args)
 				if err != nil {
 					return nil, errors.Trace(err)
 				}
@@ -735,6 +738,10 @@ func (job *Job) IsPausing() bool {
 
 // IsPausable checks whether we can pause the job.
 func (job *Job) IsPausable() bool {
+	// TODO: We can remove it after TiFlash supports the pause operation.
+	if job.Type == ActionAddVectorIndex && job.SchemaState == StateWriteReorganization {
+		return false
+	}
 	return job.NotStarted() || (job.IsRunning() && job.IsRollbackable())
 }
 
@@ -862,6 +869,7 @@ func (job *Job) GetInvolvingSchemaInfo() []InvolvingSchemaInfo {
 // (when multi-schema change is not applicable) or more SubJobs.
 type SubJob struct {
 	Type        ActionType      `json:"type"`
+	JobArgs     JobArgs         `json:"-"`
 	Args        []any           `json:"-"`
 	RawArgs     json.RawMessage `json:"raw_args"`
 	SchemaState SchemaState     `json:"schema_state"`

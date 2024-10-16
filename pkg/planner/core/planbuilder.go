@@ -1073,14 +1073,15 @@ func (*PlanBuilder) detectSelectWindow(sel *ast.SelectStmt) bool {
 }
 
 func getPathByIndexName(paths []*util.AccessPath, idxName pmodel.CIStr, tblInfo *model.TableInfo) *util.AccessPath {
-	var primaryIdxPath, indexPrefixPath *util.AccessPath
+	var indexPrefixPath *util.AccessPath
 	prefixMatches := 0
 	for _, path := range paths {
-		if path.StoreType == kv.TiFlash {
-			continue
+		// Only accept tikv's primary key table path.
+		if path.IsTiKVTablePath() && isPrimaryIndex(idxName) && tblInfo.HasClusteredIndex() {
+			return path
 		}
-		if path.IsTablePath() {
-			primaryIdxPath = path
+		// If it's not a tikv table path and the index is nil, it could not be any index path.
+		if path.Index == nil {
 			continue
 		}
 		if path.Index.Name.L == idxName.L {
@@ -1090,9 +1091,6 @@ func getPathByIndexName(paths []*util.AccessPath, idxName pmodel.CIStr, tblInfo 
 			indexPrefixPath = path
 			prefixMatches++
 		}
-	}
-	if isPrimaryIndex(idxName) && tblInfo.HasClusteredIndex() {
-		return primaryIdxPath
 	}
 
 	// Return only unique prefix matches
@@ -1193,7 +1191,11 @@ func getPossibleAccessPaths(ctx base.PlanContext, tableHints *hint.PlanHints, in
 					continue
 				}
 			}
-			publicPaths = append(publicPaths, &util.AccessPath{Index: index})
+			path := &util.AccessPath{Index: index}
+			if index.VectorInfo != nil && tblInfo.TiFlashReplica.Available {
+				path.StoreType = kv.TiFlash
+			}
+			publicPaths = append(publicPaths, path)
 		}
 	}
 
@@ -1380,7 +1382,7 @@ func removeIgnoredPaths(paths, ignoredPaths []*util.AccessPath, tblInfo *model.T
 	}
 	remainedPaths := make([]*util.AccessPath, 0, len(paths))
 	for _, path := range paths {
-		if path.IsTablePath() || getPathByIndexName(ignoredPaths, path.Index.Name, tblInfo) == nil {
+		if path.IsTiKVTablePath() || path.IsTiFlashSimpleTablePath() || getPathByIndexName(ignoredPaths, path.Index.Name, tblInfo) == nil {
 			remainedPaths = append(remainedPaths, path)
 		}
 	}
@@ -2029,7 +2031,7 @@ func (b *PlanBuilder) getMustAnalyzedColumns(tbl *resolve.TableNameW, cols *calc
 		}
 		virtualExprs := make([]expression.Expression, 0, len(tblInfo.Columns))
 		for _, idx := range tblInfo.Indices {
-			if idx.State != model.StatePublic || idx.MVIndex {
+			if idx.State != model.StatePublic || idx.MVIndex || idx.VectorInfo != nil {
 				continue
 			}
 			for _, idxCol := range idx.Columns {
@@ -2284,6 +2286,7 @@ func getColOffsetForAnalyze(colsInfo []*model.ColumnInfo, colID int64) int {
 // For a special global index, we also need to analyze it as independent index analyze task.
 // See comments for AnalyzeResults.ForMVIndex for more details.
 func getModifiedIndexesInfoForAnalyze(
+	stmtCtx *stmtctx.StatementContext,
 	tblInfo *model.TableInfo,
 	allColumns bool,
 	colsInfo []*model.ColumnInfo,
@@ -2301,6 +2304,10 @@ func getModifiedIndexesInfoForAnalyze(
 		}
 		if originIdx.MVIndex {
 			independentIdxsInfo = append(independentIdxsInfo, originIdx)
+			continue
+		}
+		if originIdx.VectorInfo != nil {
+			stmtCtx.AppendWarning(errors.NewNoStackErrorf("analyzing vector index is not supported, skip %s", originIdx.Name.L))
 			continue
 		}
 		if allColumns {
@@ -2341,6 +2348,10 @@ func (b *PlanBuilder) filterSkipColumnTypes(origin []*model.ColumnInfo, tbl *res
 	}
 	// If one column's type is in the skipTypes list and it doesn't exist in mustAnalyzedCols, we will skip it.
 	for _, colInfo := range origin {
+		// Vector type is skip by hardcoded. Just because that collecting it is meanless for current TiDB.
+		if colInfo.FieldType.GetType() == mysql.TypeTiDBVectorFloat32 {
+			continue
+		}
 		_, skip := skipTypes[types.TypeToStr(colInfo.FieldType.GetType(), colInfo.FieldType.GetCharset())]
 		// Currently, if the column exists in some index(except MV Index), we need to bring the column's sample values
 		// into TiDB to build the index statistics.
@@ -2471,7 +2482,7 @@ func (b *PlanBuilder) buildAnalyzeFullSamplingTask(
 			}
 			execColsInfo = b.filterSkipColumnTypes(execColsInfo, tbl, &mustAnalyzedCols)
 			allColumns := len(tbl.TableInfo.Columns) == len(execColsInfo)
-			indexes, independentIndexes, specialGlobalIndexes = getModifiedIndexesInfoForAnalyze(tbl.TableInfo, allColumns, execColsInfo)
+			indexes, independentIndexes, specialGlobalIndexes = getModifiedIndexesInfoForAnalyze(b.ctx.GetSessionVars().StmtCtx, tbl.TableInfo, allColumns, execColsInfo)
 			handleCols := BuildHandleColsForAnalyze(b.ctx, tbl.TableInfo, allColumns, execColsInfo)
 			newTask := AnalyzeColumnsTask{
 				HandleCols:  handleCols,
@@ -2749,6 +2760,10 @@ func (b *PlanBuilder) buildAnalyzeTable(as *ast.AnalyzeTableStmt, opts map[ast.A
 				b.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackErrorf("analyzing multi-valued indexes is not supported, skip %s", idx.Name.L))
 				continue
 			}
+			if idx.VectorInfo != nil {
+				b.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackErrorf("analyzing vector index is not supported, skip %s", idx.Name.L))
+				continue
+			}
 			p.IdxTasks = append(p.IdxTasks, generateIndexTasks(idx, as, tnW.TableInfo, partitionNames, physicalIDs, version)...)
 		}
 		handleCols := BuildHandleColsForAnalyze(b.ctx, tnW.TableInfo, true, nil)
@@ -2825,6 +2840,10 @@ func (b *PlanBuilder) buildAnalyzeIndex(as *ast.AnalyzeTableStmt, opts map[ast.A
 			b.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackErrorf("analyzing multi-valued indexes is not supported, skip %s", idx.Name.L))
 			continue
 		}
+		if idx.VectorInfo != nil {
+			b.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackErrorf("analyzing vector index is not supported, skip %s", idx.Name.L))
+			continue
+		}
 		p.IdxTasks = append(p.IdxTasks, generateIndexTasks(idx, as, tblInfo, names, physicalIDs, version)...)
 	}
 	return p, nil
@@ -2853,6 +2872,10 @@ func (b *PlanBuilder) buildAnalyzeAllIndex(as *ast.AnalyzeTableStmt, opts map[as
 		if idx.State == model.StatePublic {
 			if idx.MVIndex {
 				b.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackErrorf("analyzing multi-valued indexes is not supported, skip %s", idx.Name.L))
+				continue
+			}
+			if idx.VectorInfo != nil {
+				b.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackErrorf("analyzing vector index is not supported, skip %s", idx.Name.L))
 				continue
 			}
 

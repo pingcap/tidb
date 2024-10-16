@@ -196,7 +196,6 @@ func TestJobCodec(t *testing.T) {
 		ID:         16,
 		Type:       ActionFlashbackCluster,
 		BinlogInfo: &HistoryInfo{},
-		Args:       []any{0, map[string]any{}, "ON", true},
 	}
 
 	for _, j := range []*Job{job1, job2, job3, job4, job5, job6, job7, job8, job9, job10, job11, job12, job13, job14, job15} {

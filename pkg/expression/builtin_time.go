@@ -3005,8 +3005,8 @@ func (du *baseDateArithmetical) add(ctx EvalContext, date types.Time, interval, 
 
 func (du *baseDateArithmetical) addDate(ctx EvalContext, date types.Time, year, month, day, nano int64, resultFsp int) (types.Time, bool, error) {
 	goTime, err := date.GoTime(time.UTC)
-	if err := handleInvalidTimeError(ctx, err); err != nil {
-		return types.ZeroTime, true, err
+	if err != nil {
+		return types.ZeroTime, true, handleInvalidTimeError(ctx, err)
 	}
 
 	goTime = goTime.Add(time.Duration(nano))

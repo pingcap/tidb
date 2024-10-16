@@ -120,8 +120,8 @@ func TestGetTableLastAnalyzeDuration(t *testing.T) {
 
 func TestCheckIndexesNeedAnalyze(t *testing.T) {
 	analyzedMap := statistics.NewColAndIndexExistenceMap(1, 0)
-	analyzedMap.InsertCol(1, nil, true)
-	analyzedMap.InsertIndex(1, nil, false)
+	analyzedMap.InsertCol(1, true)
+	analyzedMap.InsertIndex(1, false)
 	tests := []struct {
 		name     string
 		tblInfo  *model.TableInfo
@@ -150,6 +150,12 @@ func TestCheckIndexesNeedAnalyze(t *testing.T) {
 						ID:    1,
 						Name:  pmodel.NewCIStr("index1"),
 						State: model.StatePublic,
+					},
+					{
+						ID:         2,
+						Name:       pmodel.NewCIStr("vec_index1"),
+						State:      model.StatePublic,
+						VectorInfo: &model.VectorIndexInfo{},
 					},
 				},
 			},
@@ -184,9 +190,9 @@ func TestCalculateIndicatorsForPartitions(t *testing.T) {
 	lastUpdateTs := oracle.GoTimeToTS(lastUpdateTime)
 	unanalyzedMap := statistics.NewColAndIndexExistenceMap(0, 0)
 	analyzedMap := statistics.NewColAndIndexExistenceMap(2, 1)
-	analyzedMap.InsertCol(1, nil, true)
-	analyzedMap.InsertCol(2, nil, true)
-	analyzedMap.InsertIndex(1, nil, true)
+	analyzedMap.InsertCol(1, true)
+	analyzedMap.InsertCol(2, true)
+	analyzedMap.InsertIndex(1, true)
 	tests := []struct {
 		name                       string
 		globalStats                *statistics.Table
@@ -396,6 +402,12 @@ func TestCheckNewlyAddedIndexesNeedAnalyzeForPartitionedTable(t *testing.T) {
 				ID:    2,
 				Name:  pmodel.NewCIStr("index2"),
 				State: model.StatePublic,
+			},
+			{
+				ID:         3,
+				Name:       pmodel.NewCIStr("index3"),
+				State:      model.StatePublic,
+				VectorInfo: &model.VectorIndexInfo{},
 			},
 		},
 		Columns: []*model.ColumnInfo{

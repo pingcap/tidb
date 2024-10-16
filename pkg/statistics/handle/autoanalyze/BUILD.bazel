@@ -38,7 +38,7 @@ go_test(
     timeout = "short",
     srcs = ["autoanalyze_test.go"],
     flaky = True,
-    shard_count = 14,
+    shard_count = 15,
     deps = [
         ":autoanalyze",
         "//pkg/domain",
@@ -50,7 +50,9 @@ go_test(
         "//pkg/statistics",
         "//pkg/statistics/handle/util",
         "//pkg/statistics/handle/util/test",
+        "//pkg/store/mockstore",
         "//pkg/testkit",
+        "//pkg/testkit/testfailpoint",
         "//pkg/types",
         "//pkg/util/chunk",
         "//pkg/util/sqlexec/mock",

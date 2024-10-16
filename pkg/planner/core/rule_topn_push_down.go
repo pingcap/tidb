@@ -18,7 +18,6 @@ import (
 	"context"
 
 	"github.com/pingcap/tidb/pkg/planner/core/base"
-	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
 )
 
@@ -30,24 +29,6 @@ type PushDownTopNOptimizer struct {
 func (*PushDownTopNOptimizer) Optimize(_ context.Context, p base.LogicalPlan, opt *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, bool, error) {
 	planChanged := false
 	return p.PushDownTopN(nil, opt), planChanged, nil
-}
-
-// pushDownTopNForBaseLogicalPlan can be moved when LogicalTopN has been moved to logicalop.
-func pushDownTopNForBaseLogicalPlan(lp base.LogicalPlan, topNLogicalPlan base.LogicalPlan,
-	opt *optimizetrace.LogicalOptimizeOp) base.LogicalPlan {
-	s := lp.GetBaseLogicalPlan().(*logicalop.BaseLogicalPlan)
-	var topN *logicalop.LogicalTopN
-	if topNLogicalPlan != nil {
-		topN = topNLogicalPlan.(*logicalop.LogicalTopN)
-	}
-	p := s.Self()
-	for i, child := range p.Children() {
-		p.Children()[i] = child.PushDownTopN(nil, opt)
-	}
-	if topN != nil {
-		return topN.AttachChild(p, opt)
-	}
-	return p
 }
 
 // Name implements the base.LogicalOptRule.<1st> interface.

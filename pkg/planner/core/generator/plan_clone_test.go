@@ -1,4 +1,4 @@
-// Copyright 2022 PingCAP, Inc.
+// Copyright 2024 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -12,16 +12,26 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package exportloopref
+package main
 
 import (
-	"github.com/kyoh86/exportloopref"
-	"github.com/pingcap/tidb/build/linter/util"
+	"bytes"
+	"os"
+	"testing"
 )
 
-// Analyzer is the analyzer struct of exportloopref.
-var Analyzer = exportloopref.Analyzer
-
-func init() {
-	util.SkipAnalyzerByConfig(Analyzer)
+func TestPlanClone(t *testing.T) {
+	updatedCode, err := GenPlanCloneForPlanCacheCode()
+	if err != nil {
+		t.Errorf("Generate CloneForPlanCache code error: %v", err)
+		return
+	}
+	currentCode, err := os.ReadFile("../plan_clone_generated.go")
+	if err != nil {
+		t.Errorf("Read current plan_clone_generated.go code error: %v", err)
+		return
+	}
+	if !bytes.Equal(updatedCode, currentCode) {
+		t.Errorf("plan_clone_generated.go should be updated, please run 'make gogenerate' to update it.")
+	}
 }
