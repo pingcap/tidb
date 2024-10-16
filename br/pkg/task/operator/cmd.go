@@ -82,7 +82,7 @@ func (cx *AdaptEnvForSnapshotBackupContext) Close() {
 	cx.kvMgr.Close()
 }
 
-func (cx *AdaptEnvForSnapshotBackupContext) GetBackOffer(operation string) utils.Backoffer {
+func (cx *AdaptEnvForSnapshotBackupContext) GetBackOffer(operation string) utils.BackoffStrategy {
 	state := utils.InitialRetryState(64, 1*time.Second, 10*time.Second)
 	bo := utils.GiveUpRetryOn(&state, berrors.ErrPossibleInconsistency)
 	bo = utils.VerboseRetry(bo, logutil.CL(cx).With(zap.String("operation", operation)))

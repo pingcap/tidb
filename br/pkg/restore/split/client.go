@@ -195,14 +195,11 @@ func (c *pdClient) scatterRegions(ctx context.Context, newRegions []*RegionInfo)
 			c.scatterRegionsSequentially(
 				ctx, newRegions,
 				// backoff about 6s, or we give up scattering this region.
-				&ExponentialBackoffer{
-					Attempts:    7,
-					BaseBackoff: 100 * time.Millisecond,
-				})
+				utils.NewBackoffRetryAllErrorStrategy(7, 100*time.Millisecond, 2*time.Second))
 			return nil
 		}
 		return err
-	}, &ExponentialBackoffer{Attempts: 3, BaseBackoff: 500 * time.Millisecond})
+	}, utils.NewBackoffRetryAllErrorStrategy(3, 500*time.Millisecond, 2*time.Second))
 }
 
 func (c *pdClient) tryScatterRegions(ctx context.Context, regionInfo []*RegionInfo) error {
@@ -617,30 +614,12 @@ func (c *pdClient) SplitKeysAndScatter(ctx context.Context, sortedSplitKeys [][]
 		}
 		slices.SortFunc(retrySplitKeys, bytes.Compare)
 		return lastSplitErr
-	}, newSplitBackoffer())
+	}, utils.NewBackoffRetryAllExceptStrategy(SplitRetryTimes, SplitRetryInterval, SplitMaxRetryInterval, isNonRetryErrForSplit))
 	return ret, errors.Trace(err)
 }
 
-type splitBackoffer struct {
-	state utils.RetryState
-}
-
-func newSplitBackoffer() *splitBackoffer {
-	return &splitBackoffer{
-		state: utils.InitialRetryState(SplitRetryTimes, SplitRetryInterval, SplitMaxRetryInterval),
-	}
-}
-
-func (bo *splitBackoffer) NextBackoff(err error) time.Duration {
-	if berrors.ErrInvalidRange.Equal(err) {
-		bo.state.GiveUp()
-		return 0
-	}
-	return bo.state.ExponentialBackoff()
-}
-
-func (bo *splitBackoffer) Attempt() int {
-	return bo.state.Attempt()
+func isNonRetryErrForSplit(err error) bool {
+	return berrors.ErrInvalidRange.Equal(err)
 }
 
 func (c *pdClient) SplitWaitAndScatter(ctx context.Context, region *RegionInfo, keys [][]byte) ([]*RegionInfo, error) {
@@ -808,7 +787,7 @@ func (c *pdClient) SetStoresLabel(
 	return nil
 }
 
-func (c *pdClient) scatterRegionsSequentially(ctx context.Context, newRegions []*RegionInfo, backoffer utils.Backoffer) {
+func (c *pdClient) scatterRegionsSequentially(ctx context.Context, newRegions []*RegionInfo, backoffStrategy utils.BackoffStrategy) {
 	newRegionSet := make(map[uint64]*RegionInfo, len(newRegions))
 	for _, newRegion := range newRegions {
 		newRegionSet[newRegion.Region.Id] = newRegion
@@ -832,7 +811,7 @@ func (c *pdClient) scatterRegionsSequentially(ctx context.Context, newRegions []
 			errs = multierr.Append(errs, err)
 		}
 		return errs
-	}, backoffer); err != nil {
+	}, backoffStrategy); err != nil {
 		log.Warn("Some regions haven't been scattered because errors.",
 			zap.Int("count", len(newRegionSet)),
 			// if all region are failed to scatter, the short error might also be verbose...
