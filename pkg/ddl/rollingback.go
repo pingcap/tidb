@@ -138,14 +138,7 @@ func convertNotReorgAddIdxJob2RollbackJob(jobCtx *jobContext, job *model.Job, oc
 // Since modifying column job has two types: normal-type and reorg-type, we should handle it respectively.
 // normal-type has only two states:    None -> Public
 // reorg-type has five states:         None -> Delete-only -> Write-only -> Write-org -> Public
-func rollingbackModifyColumn(w *worker, jobCtx *jobContext, job *model.Job) (ver int64, err error) {
-	if needNotifyAndStopReorgWorker(job) {
-		// column type change workers are started. we have to ask them to exit.
-		jobCtx.logger.Info("run the cancelling DDL job", zap.String("job", job.String()))
-		jobCtx.oldDDLCtx.notifyReorgWorkerJobStateChange(job)
-		// Give the this kind of ddl one more round to run, the dbterror.ErrCancelledDDLJob should be fetched from the bottom up.
-		return w.onModifyColumn(jobCtx, job)
-	}
+func rollingbackModifyColumn(jobCtx *jobContext, job *model.Job) (ver int64, err error) {
 	_, tblInfo, oldCol, jp, err := getModifyColumnInfo(jobCtx.metaMut, job)
 	if err != nil {
 		return ver, err
@@ -270,30 +263,9 @@ func rollingbackAddVectorIndex(w *worker, jobCtx *jobContext, job *model.Job) (v
 	return
 }
 
-func rollingbackAddIndex(w *worker, jobCtx *jobContext, job *model.Job, isPK bool) (ver int64, err error) {
-	if needNotifyAndStopReorgWorker(job) {
-		// add index workers are started. need to ask them to exit.
-		jobCtx.logger.Info("run the cancelling DDL job", zap.String("job", job.String()))
-		jobCtx.oldDDLCtx.notifyReorgWorkerJobStateChange(job)
-		ver, err = w.onCreateIndex(jobCtx, job, isPK)
-	} else {
-		// add index's reorg workers are not running, remove the indexInfo in tableInfo.
-		ver, err = convertNotReorgAddIdxJob2RollbackJob(jobCtx, job, dbterror.ErrCancelledDDLJob)
-	}
-	return
-}
-
-func needNotifyAndStopReorgWorker(job *model.Job) bool {
-	if job.SchemaState == model.StateWriteReorganization && job.SnapshotVer != 0 {
-		// If the value of SnapshotVer isn't zero, it means the reorg workers have been started.
-		if job.MultiSchemaInfo != nil {
-			// However, if the sub-job is non-revertible, it means the reorg process is finished.
-			// We don't need to start another round to notify reorg workers to exit.
-			return job.MultiSchemaInfo.Revertible
-		}
-		return true
-	}
-	return false
+func rollingbackAddIndex(jobCtx *jobContext, job *model.Job) (ver int64, err error) {
+	// add index's reorg workers are not running, remove the indexInfo in tableInfo.
+	return convertNotReorgAddIdxJob2RollbackJob(jobCtx, job, dbterror.ErrCancelledDDLJob)
 }
 
 // rollbackExchangeTablePartition will clear the non-partitioned
@@ -588,23 +560,14 @@ func rollingbackTruncateTable(jobCtx *jobContext, job *model.Job) (ver int64, er
 	return cancelOnlyNotHandledJob(job, model.StateNone)
 }
 
-func pauseReorgWorkers(jobCtx *jobContext, job *model.Job) (err error) {
-	if needNotifyAndStopReorgWorker(job) {
-		jobCtx.logger.Info("pausing the DDL job", zap.String("job", job.String()))
-		jobCtx.oldDDLCtx.notifyReorgWorkerJobStateChange(job)
-	}
-
-	return dbterror.ErrPausedDDLJob.GenWithStackByArgs(job.ID)
-}
-
 func convertJob2RollbackJob(w *worker, jobCtx *jobContext, job *model.Job) (ver int64, err error) {
 	switch job.Type {
 	case model.ActionAddColumn:
 		ver, err = rollingbackAddColumn(jobCtx, job)
 	case model.ActionAddIndex:
-		ver, err = rollingbackAddIndex(w, jobCtx, job, false)
+		ver, err = rollingbackAddIndex(jobCtx, job)
 	case model.ActionAddPrimaryKey:
-		ver, err = rollingbackAddIndex(w, jobCtx, job, true)
+		ver, err = rollingbackAddIndex(jobCtx, job)
 	case model.ActionAddVectorIndex:
 		ver, err = rollingbackAddVectorIndex(w, jobCtx, job)
 	case model.ActionAddTablePartition:
@@ -629,7 +592,7 @@ func convertJob2RollbackJob(w *worker, jobCtx *jobContext, job *model.Job) (ver 
 	case model.ActionTruncateTable:
 		ver, err = rollingbackTruncateTable(jobCtx, job)
 	case model.ActionModifyColumn:
-		ver, err = rollingbackModifyColumn(w, jobCtx, job)
+		ver, err = rollingbackModifyColumn(jobCtx, job)
 	case model.ActionDropForeignKey, model.ActionTruncateTablePartition:
 		ver, err = cancelOnlyNotHandledJob(job, model.StatePublic)
 	case model.ActionRebaseAutoID, model.ActionShardRowID, model.ActionAddForeignKey,

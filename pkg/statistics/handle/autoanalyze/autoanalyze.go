@@ -554,6 +554,10 @@ func tryAutoAnalyzeTable(
 	// Whether the table needs to analyze or not, we need to check the indices of the table.
 	for _, idx := range tblInfo.Indices {
 		if idxStats := statsTbl.GetIdx(idx.ID); idxStats == nil && !statsTbl.ColAndIdxExistenceMap.HasAnalyzed(idx.ID, true) && idx.State == model.StatePublic {
+			// Vector index doesn't need stats yet.
+			if idx.VectorInfo != nil {
+				continue
+			}
 			sqlWithIdx := sql + " index %n"
 			paramsWithIdx := append(params, idx.Name.O)
 			escaped, err := sqlescape.EscapeSQL(sqlWithIdx, paramsWithIdx...)
@@ -689,6 +693,10 @@ func tryAutoAnalyzePartitionTableInDynamicMode(
 	// Check if any index of the table needs to analyze.
 	for _, idx := range tblInfo.Indices {
 		if idx.State != model.StatePublic || statsutil.IsSpecialGlobalIndex(idx, tblInfo) {
+			continue
+		}
+		// Vector index doesn't need stats yet.
+		if idx.VectorInfo != nil {
 			continue
 		}
 		// Collect all the partition names that need to analyze.

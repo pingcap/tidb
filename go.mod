@@ -34,7 +34,7 @@ require (
 	github.com/daixiang0/gci v0.13.5
 	github.com/danjacques/gofslock v0.0.0-20191023191349-0a45f885bc37
 	github.com/dgraph-io/ristretto v0.1.1
-	github.com/dgryski/go-farm v0.0.0-20200201041132-a6ae2369ad13
+	github.com/dgryski/go-farm v0.0.0-20240924180020-3414d57e47da
 	github.com/docker/go-units v0.5.0
 	github.com/dolthub/swiss v0.2.1
 	github.com/emirpasic/gods v1.18.1
@@ -81,7 +81,7 @@ require (
 	github.com/opentracing/opentracing-go v1.2.0
 	github.com/otiai10/copy v1.2.0
 	github.com/phayes/freeport v0.0.0-20180830031419-95f893ade6f2
-	github.com/pingcap/badger v1.5.1-0.20230103063557-828f39b09b6d
+	github.com/pingcap/badger v1.5.1-0.20241015064302-38533b6cbf8d
 	github.com/pingcap/errors v0.11.5-0.20240318064555-6bd07397691f
 	github.com/pingcap/failpoint v0.0.0-20240528011301-b51a646c7c86
 	github.com/pingcap/fn v1.0.0
@@ -108,7 +108,7 @@ require (
 	github.com/tdakkota/asciicheck v0.2.0
 	github.com/tiancaiamao/appdash v0.0.0-20181126055449-889f96f722a2
 	github.com/tidwall/btree v1.7.0
-	github.com/tikv/client-go/v2 v2.0.8-0.20241008085809-c3e10ae7c8fc
+	github.com/tikv/client-go/v2 v2.0.8-0.20241015065014-8dfa86b5d1db
 	github.com/tikv/pd/client v0.0.0-20240926021936-642f0e919b0d
 	github.com/timakin/bodyclose v0.0.0-20240125160201-f835fa56326a
 	github.com/twmb/murmur3 v1.1.6

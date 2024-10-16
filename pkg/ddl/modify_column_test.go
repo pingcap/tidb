@@ -52,12 +52,9 @@ func batchInsert(tk *testkit.TestKit, tbl string, start, end int) {
 func TestModifyColumnReorgInfo(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 
-	originalTimeout := ddl.ReorgWaitTimeout
-	ddl.ReorgWaitTimeout = 10 * time.Millisecond
 	limit := variable.GetDDLErrorCountLimit()
 	variable.SetDDLErrorCountLimit(5)
 	defer func() {
-		ddl.ReorgWaitTimeout = originalTimeout
 		variable.SetDDLErrorCountLimit(limit)
 	}()
 	tk := testkit.NewTestKit(t, store)

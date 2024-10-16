@@ -518,18 +518,6 @@ func (dc *ddlCtx) removeReorgCtx(jobID int64) {
 	}
 }
 
-func (dc *ddlCtx) notifyReorgWorkerJobStateChange(job *model.Job) {
-	rc := dc.getReorgCtx(job.ID)
-	if rc == nil {
-		logutil.DDLLogger().Warn("cannot find reorgCtx", zap.Int64("Job ID", job.ID))
-		return
-	}
-	logutil.DDLLogger().Info("notify reorg worker the job's state",
-		zap.Int64("Job ID", job.ID), zap.Stringer("Job State", job.State),
-		zap.Stringer("Schema State", job.SchemaState))
-	rc.notifyJobState(job.State)
-}
-
 // EnableTiFlashPoll enables TiFlash poll loop aka PollTiFlashReplicaStatus.
 func EnableTiFlashPoll(d any) {
 	if dd, ok := d.(*ddl); ok {
