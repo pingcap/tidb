@@ -47,7 +47,6 @@ import (
 type InsertExec struct {
 	*InsertValues
 	OnDuplicate    []*expression.Assignment
-	IgnoreErr      bool
 	evalBuffer4Dup chunk.MutRow
 	curInsertVals  chunk.MutRow
 	row4Update     []types.Datum
@@ -92,7 +91,7 @@ func (e *InsertExec) exec(ctx context.Context, rows [][]types.Datum) error {
 		if err != nil {
 			return err
 		}
-	} else if e.IgnoreErr {
+	} else if e.ignoreErr {
 		err := e.batchCheckAndInsert(ctx, rows, e.addRecord, false)
 		if err != nil {
 			return err
@@ -242,7 +241,7 @@ func (e *InsertExec) batchUpdateDupRows(ctx context.Context, newRows [][]types.D
 	// Though it is in an insert statement, `ON DUP KEY UPDATE` follows the dup-key check behavior of update.
 	// For example, it will ignore variable `tidb_constraint_check_in_place`, see the test case:
 	// https://github.com/pingcap/tidb/blob/3117d3fae50bbb5dabcde7b9589f92bfbbda5dc6/pkg/executor/test/writetest/write_test.go#L419-L426
-	updateDupKeyCheck := optimizeDupKeyCheckForUpdate(txn, e.IgnoreErr)
+	updateDupKeyCheck := optimizeDupKeyCheckForUpdate(txn, e.ignoreErr)
 	// Do not use `updateDupKeyCheck` for `AddRecord` because it is not optimized for insert.
 	// It seems that we can just use `DupKeyCheckSkip` here because all constraints are checked.
 	// But we still use `optimizeDupKeyCheckForNormalInsert` to make the refactor same behavior with the original code.
@@ -479,7 +478,18 @@ func (e *InsertExec) doDupRowUpdate(ctx context.Context, handle kv.Handle, oldRo
 	}
 
 	newData := e.row4Update[:len(oldRow)]
-	_, err := updateRecord(ctx, e.Ctx(), handle, oldRow, newData, assignFlag, e.Table, true, e.memTracker, e.fkChecks, e.fkCascades, dupKeyMode)
+	if e.ignoreErr {
+		ignored, err := checkFKIgnoreErr(ctx, e.Ctx(), e.fkChecks, newData)
+		if err != nil {
+			return err
+		}
+
+		// meets an error, skip this row.
+		if ignored {
+			return nil
+		}
+	}
+	_, err := updateRecord(ctx, e.Ctx(), handle, oldRow, newData, assignFlag, e.Table, true, e.memTracker, e.fkChecks, e.fkCascades, dupKeyMode, e.ignoreErr)
 	if err != nil {
 		return err
 	}
@@ -504,7 +514,7 @@ func (e *InsertExec) setMessage() {
 	if e.SelectExec != nil || numRecords > 1 {
 		numWarnings := stmtCtx.WarningCount()
 		var numDuplicates uint64
-		if e.IgnoreErr {
+		if e.ignoreErr {
 			// if ignoreErr
 			numDuplicates = numRecords - stmtCtx.CopiedRows()
 		} else {
