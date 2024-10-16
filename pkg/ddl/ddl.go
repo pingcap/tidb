@@ -233,12 +233,7 @@ func (jobW *JobWrapper) FillArgsWithSubJobs() {
 		jobW.FillArgs(jobW.JobArgs)
 	} else {
 		for _, sub := range jobW.MultiSchemaInfo.SubJobs {
-			fakeJob := model.Job{
-				Version: jobW.Version,
-				Type:    sub.Type,
-			}
-			fakeJob.FillArgs(sub.JobArgs)
-			sub.Args = fakeJob.Args
+			sub.FillArgs(jobW.Job)
 		}
 	}
 }

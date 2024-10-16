@@ -372,7 +372,7 @@ func (w *worker) finishDDLJob(jobCtx *jobContext, job *model.Job) (err error) {
 		if job.IsCancelled() {
 			// it may be too large that it can not be added to the history queue, so
 			// delete its arguments
-			job.Args = nil
+			job.ClearDecodedArgs()
 		}
 	}
 	if err != nil {

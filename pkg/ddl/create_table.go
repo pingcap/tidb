@@ -240,7 +240,6 @@ func onCreateTables(jobCtx *jobContext, job *model.Job) (int64, error) {
 	//
 	// it clones a stub job from the ActionCreateTables job
 	stubJob := job.Clone()
-	stubJob.Args = make([]any, 1)
 	for i := range args.Tables {
 		tblArgs := args.Tables[i]
 		tableInfo := tblArgs.TableInfo
