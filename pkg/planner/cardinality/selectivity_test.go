@@ -243,11 +243,11 @@ func TestEstimationForUnknownValues(t *testing.T) {
 
 	count, err = cardinality.GetRowCountByColumnRanges(sctx, &statsTbl.HistColl, colID, getRange(9, 30))
 	require.NoError(t, err)
-	require.Equal(t, 7.2, count)
+	require.Equal(t, 7.7, count)
 
 	count, err = cardinality.GetRowCountByColumnRanges(sctx, &statsTbl.HistColl, colID, getRange(9, math.MaxInt64))
 	require.NoError(t, err)
-	require.Equal(t, 7.2, count)
+	require.Equal(t, 7.7, count)
 
 	idxID := table.Meta().Indices[0].ID
 	count, err = cardinality.GetRowCountByIndexRanges(sctx, &statsTbl.HistColl, idxID, getRange(30, 30))
@@ -405,7 +405,7 @@ func TestSelectivity(t *testing.T) {
 		},
 		{
 			exprs:                    "a >= 1 and b > 1 and a < 2",
-			selectivity:              0.017832647462277088,
+			selectivity:              0.018175582990397805,
 			selectivityAfterIncrease: 0.018518518518518517,
 		},
 		{
