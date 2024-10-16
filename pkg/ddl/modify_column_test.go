@@ -97,15 +97,14 @@ func TestModifyColumnReorgInfo(t *testing.T) {
 		}
 	})
 
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunAfter", func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/modifyColumnTypeWithData", func(job *model.Job, args model.JobArgs) {
 		if tbl.Meta().ID == job.TableID &&
 			checkErr == nil &&
 			job.SchemaState == model.StateDeleteOnly &&
 			job.Type == model.ActionModifyColumn {
 			currJob = job
-			var args *model.ModifyColumnArgs
-			args, checkErr = model.GetModifyColumnArgs(job)
-			elements = ddl.BuildElements(args.ChangingColumn, args.ChangingIdxs)
+			a := args.(*model.ModifyColumnArgs)
+			elements = ddl.BuildElements(a.ChangingColumn, a.ChangingIdxs)
 		}
 	})
 

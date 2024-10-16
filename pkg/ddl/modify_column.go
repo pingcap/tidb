@@ -505,6 +505,7 @@ func (w *worker) doModifyColumnTypeWithData(
 		metrics.GetBackfillProgressByLabel(metrics.LblModifyColumn, job.SchemaName, tblInfo.Name.String()).Set(0)
 		args.ChangingColumn = changingCol
 		args.ChangingIdxs = changingIdxs
+		failpoint.InjectCall("modifyColumnTypeWithData", job, args)
 		job.FillArgs(args)
 	case model.StateDeleteOnly:
 		// Column from null to not null.
