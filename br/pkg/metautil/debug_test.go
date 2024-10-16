@@ -17,7 +17,6 @@ package metautil_test
 import (
 	"context"
 	"crypto/sha256"
-	"encoding/json"
 	"fmt"
 	"math/rand"
 	"testing"
@@ -26,6 +25,7 @@ import (
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/tidb/br/pkg/metautil"
 	"github.com/pingcap/tidb/br/pkg/storage"
+	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/stretchr/testify/require"
 )
 
@@ -118,28 +118,28 @@ func TestDecodeMetaFile(t *testing.T) {
 			JsonTable:  []byte("2"),
 		},
 	}}, s, cipher)
-	file2 := flushMetaFile(ctx, t, "schema", &backuppb.MetaFile{
+	metaFile2 := &backuppb.MetaFile{
 		Schemas: []*backuppb.Schema{
 			{
-				Db:              []byte("db"),
-				Table:           []byte("table"),
+				Db:              []byte(`{"db_name":{"L":"test","O":"test"},"id":1,"state":5}`),
+				Table:           []byte(`{"id":2,"state":5}`),
 				Crc64Xor:        1,
 				TotalKvs:        2,
 				TotalBytes:      3,
 				TiflashReplicas: 4,
-				Stats:           []byte("5"),
+				Stats:           []byte(`{"a":1}`),
 				StatsIndex:      []*backuppb.StatsFileIndex{stats},
 			},
 		},
-	}, s, cipher)
+	}
+	file2 := flushMetaFile(ctx, t, "schema", metaFile2, s, cipher)
 
 	{
 		err = metautil.DecodeMetaFile(ctx, s, cipher, &backuppb.MetaFile{MetaFiles: []*backuppb.File{file1}})
 		require.NoError(t, err)
-		content, err := s.ReadFile(ctx, "data.json")
+		content, err := s.ReadFile(ctx, "jsons/data.json")
 		require.NoError(t, err)
-		metaFile := &backuppb.MetaFile{}
-		err = json.Unmarshal(content, metaFile)
+		metaFile, err := utils.UnmarshalMetaFile(content)
 		require.NoError(t, err)
 		require.Equal(t, 1, len(metaFile.DataFiles))
 		require.Equal(t, "1.sst", metaFile.DataFiles[0].Name)
@@ -158,19 +158,18 @@ func TestDecodeMetaFile(t *testing.T) {
 		err = metautil.DecodeMetaFile(ctx, s, cipher, &backuppb.MetaFile{MetaFiles: []*backuppb.File{file2}})
 		require.NoError(t, err)
 		{
-			content, err := s.ReadFile(ctx, "schema.json")
+			content, err := s.ReadFile(ctx, "jsons/schema.json")
 			require.NoError(t, err)
-			metaFile := &backuppb.MetaFile{}
-			err = json.Unmarshal(content, metaFile)
+			metaFile, err := utils.UnmarshalMetaFile(content)
 			require.NoError(t, err)
 			require.Equal(t, 1, len(metaFile.Schemas))
-			require.Equal(t, []byte("db"), metaFile.Schemas[0].Db)
-			require.Equal(t, []byte("table"), metaFile.Schemas[0].Table)
+			require.Equal(t, metaFile2.Schemas[0].Db, metaFile.Schemas[0].Db)
+			require.Equal(t, metaFile2.Schemas[0].Table, metaFile.Schemas[0].Table)
 			require.Equal(t, uint64(1), metaFile.Schemas[0].Crc64Xor)
 			require.Equal(t, uint64(2), metaFile.Schemas[0].TotalKvs)
 			require.Equal(t, uint64(3), metaFile.Schemas[0].TotalBytes)
 			require.Equal(t, uint32(4), metaFile.Schemas[0].TiflashReplicas)
-			require.Equal(t, []byte("5"), metaFile.Schemas[0].Stats)
+			require.Equal(t, metaFile2.Schemas[0].Stats, metaFile.Schemas[0].Stats)
 			statsIndex := metaFile.Schemas[0].StatsIndex
 			require.Equal(t, 1, len(statsIndex))
 			require.Equal(t, stats.Name, statsIndex[0].Name)
@@ -181,10 +180,9 @@ func TestDecodeMetaFile(t *testing.T) {
 			require.Equal(t, stats.InlineData, statsIndex[0].InlineData)
 		}
 		{
-			content, err := s.ReadFile(ctx, "stats.json")
+			content, err := s.ReadFile(ctx, "jsons/stats.json")
 			require.NoError(t, err)
-			statsFileBlocks := &backuppb.StatsFile{}
-			err = json.Unmarshal(content, statsFileBlocks)
+			statsFileBlocks, err := utils.UnmarshalStatsFile(content)
 			require.NoError(t, err)
 			require.Equal(t, 2, len(statsFileBlocks.Blocks))
 			require.Equal(t, int64(1), statsFileBlocks.Blocks[0].PhysicalId)

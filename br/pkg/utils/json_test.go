@@ -492,7 +492,7 @@ func TestEncodeAndDecodeForMetaFile(t *testing.T) {
 }
 
 var testStatsFileJSONs = [][]byte{
-	[]byte(`{"blocks":[{"json_table":"123","physical_id":123},{"json_table":"456","physical_id":456}]}`),
+	[]byte(`{"blocks":[{"json_table":{"a":1},"physical_id":123},{"json_table":{"a":2},"physical_id":456}]}`),
 }
 
 func TestEncodeAndDecodeForStatsFile(t *testing.T) {

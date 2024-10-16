@@ -127,6 +127,7 @@ func fromJSONRawRange(rng *jsonRawRange) (*backuppb.RawRange, error) {
 type jsonSchema struct {
 	Table jsonValue `json:"table,omitempty"`
 	DB    jsonValue `json:"db,omitempty"`
+	Stats jsonValue `json:"stats,omitempty"`
 	*backuppb.Schema
 }
 
@@ -138,6 +139,12 @@ func makeJSONSchema(schema *backuppb.Schema) (*jsonSchema, error) {
 
 	if schema.Table != nil {
 		if err := json.Unmarshal(schema.Table, &result.Table); err != nil {
+			return nil, errors.Trace(err)
+		}
+	}
+
+	if schema.Stats != nil {
+		if err := json.Unmarshal(schema.Stats, &result.Stats); err != nil {
 			return nil, errors.Trace(err)
 		}
 	}
@@ -157,6 +164,12 @@ func fromJSONSchema(jSchema *jsonSchema) (*backuppb.Schema, error) {
 	}
 	if jSchema.Table != nil {
 		schema.Table, err = json.Marshal(jSchema.Table)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+	}
+	if jSchema.Stats != nil {
+		schema.Stats, err = json.Marshal(jSchema.Stats)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -266,6 +279,9 @@ func makeJSONMetaFile(meta *backuppb.MetaFile) (*jsonMetaFile, error) {
 
 func fromJSONMetaFile(jMeta *jsonMetaFile) (*backuppb.MetaFile, error) {
 	meta := jMeta.MetaFile
+	if meta == nil {
+		meta = &backuppb.MetaFile{}
+	}
 
 	for _, schema := range jMeta.Schemas {
 		s, err := fromJSONSchema(schema)
@@ -299,7 +315,7 @@ func fromJSONMetaFile(jMeta *jsonMetaFile) (*backuppb.MetaFile, error) {
 }
 
 type jsonStatsBlock struct {
-	JSONTable string `json:"json_table,omitempty"`
+	JSONTable jsonValue `json:"json_table,omitempty"`
 
 	*backuppb.StatsBlock
 }
@@ -308,8 +324,9 @@ func makeJSONStatsBlock(statsBlock *backuppb.StatsBlock) (*jsonStatsBlock, error
 	result := &jsonStatsBlock{
 		StatsBlock: statsBlock,
 	}
-	// the JSON table is from the marshaled stats table
-	result.JSONTable = string(statsBlock.JsonTable)
+	if err := json.Unmarshal(statsBlock.JsonTable, &result.JSONTable); err != nil {
+		return nil, errors.Trace(err)
+	}
 	return result, nil
 }
 
