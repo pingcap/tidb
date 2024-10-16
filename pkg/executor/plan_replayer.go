@@ -525,6 +525,8 @@ func (e *PlanReplayerLoadInfo) Update(data []byte) error {
 
 func (e *PlanReplayerLoadInfo) createTable(z *zip.Reader) error {
 	origin := e.Ctx.GetSessionVars().ForeignKeyChecks
+	// We need to disable foreign key check when we create schema and tables.
+	// because the order of creating schema and tables is not guaranteed.
 	e.Ctx.GetSessionVars().ForeignKeyChecks = false
 	defer func() {
 		e.Ctx.GetSessionVars().ForeignKeyChecks = origin
