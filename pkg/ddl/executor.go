@@ -67,7 +67,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/domainutil"
 	"github.com/pingcap/tidb/pkg/util/generic"
-	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/mathutil"
 	"github.com/pingcap/tidb/pkg/util/stringutil"
 	"github.com/tikv/client-go/v2/oracle"
@@ -1987,23 +1986,10 @@ func (e *executor) multiSchemaChange(ctx sessionctx.Context, ti ast.Ident, info 
 		return errors.Trace(err)
 	}
 
-	logFn := logutil.DDLLogger().Warn
-	if intest.InTest {
-		logFn = logutil.DDLLogger().Fatal
-	}
-
-	// to do:(joccau)
-	// we need refactor this part to support V2 job version after refactor all of ddl types.
 	var involvingSchemaInfo []model.InvolvingSchemaInfo
 	for _, j := range subJobs {
 		if j.Type == model.ActionAddForeignKey {
-			ref, ok := j.Args[0].(*model.FKInfo)
-			if !ok {
-				logFn("unexpected type of foreign key info",
-					zap.Any("args[0]", j.Args[0]),
-					zap.String("type", fmt.Sprintf("%T", j.Args[0])))
-				continue
-			}
+			ref := j.JobArgs.(*model.AddForeignKeyArgs).FkInfo
 			involvingSchemaInfo = append(involvingSchemaInfo, model.InvolvingSchemaInfo{
 				Database: ref.RefSchema.L,
 				Table:    ref.RefTable.L,
@@ -2020,6 +2006,7 @@ func (e *executor) multiSchemaChange(ctx sessionctx.Context, ti ast.Ident, info 
 	}
 
 	job := &model.Job{
+		Version:             model.GetJobVerInUse(),
 		SchemaID:            schema.ID,
 		TableID:             t.Meta().ID,
 		SchemaName:          schema.Name.L,
@@ -2101,7 +2088,7 @@ func (e *executor) RebaseAutoID(ctx sessionctx.Context, ident ast.Ident, newBase
 		newBase = newBaseTemp
 	}
 	job := &model.Job{
-		Version:        model.JobVersion1,
+		Version:        model.GetJobVerInUse(),
 		SchemaID:       schema.ID,
 		TableID:        tbInfo.ID,
 		SchemaName:     schema.Name.L,
@@ -2115,8 +2102,6 @@ func (e *executor) RebaseAutoID(ctx sessionctx.Context, ident ast.Ident, newBase
 		NewBase: newBase,
 		Force:   force,
 	}
-	// need fill args, the job will be pushed subjob.
-	job.FillArgs(args)
 	err = e.doDDLJob2(ctx, job, args)
 	return errors.Trace(err)
 }
@@ -2226,7 +2211,7 @@ func (e *executor) AddColumn(ctx sessionctx.Context, ti ast.Ident, spec *ast.Alt
 	}
 
 	job := &model.Job{
-		Version:        model.JobVersion1,
+		Version:        model.GetJobVerInUse(),
 		SchemaID:       schema.ID,
 		TableID:        tbInfo.ID,
 		SchemaName:     schema.Name.L,
@@ -2236,12 +2221,12 @@ func (e *executor) AddColumn(ctx sessionctx.Context, ti ast.Ident, spec *ast.Alt
 		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
 		SQLMode:        ctx.GetSessionVars().SQLMode,
 	}
+
 	args := &model.TableColumnArgs{
 		Col:                col.ColumnInfo,
 		Pos:                spec.Position,
 		IgnoreExistenceErr: spec.IfNotExists,
 	}
-	job.FillArgs(args)
 	err = e.doDDLJob2(ctx, job, args)
 	return errors.Trace(err)
 }
@@ -3165,9 +3150,7 @@ func (e *executor) DropColumn(ctx sessionctx.Context, ti ast.Ident, spec *ast.Al
 	}
 
 	job := &model.Job{
-		// to do(joccau)
-		// we should  set Version = model.GetJobVerInUse() after refactor the actionMultiSchemaChange.
-		Version:        model.JobVersion1,
+		Version:        model.GetJobVerInUse(),
 		SchemaID:       schema.ID,
 		TableID:        t.Meta().ID,
 		SchemaName:     schema.Name.L,
@@ -3178,12 +3161,11 @@ func (e *executor) DropColumn(ctx sessionctx.Context, ti ast.Ident, spec *ast.Al
 		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
 		SQLMode:        ctx.GetSessionVars().SQLMode,
 	}
+
 	args := &model.TableColumnArgs{
 		Col:                &model.ColumnInfo{Name: colName},
 		IgnoreExistenceErr: spec.IfExists,
 	}
-	// we need fill args here, because it will be added subjob which contains args and rawArgs from job.
-	job.FillArgs(args)
 	err = e.doDDLJob2(ctx, job, args)
 	return errors.Trace(err)
 }
@@ -3295,8 +3277,10 @@ func checkModifyCharsetAndCollation(toCharset, toCollate, origCharset, origColla
 	return nil
 }
 
-func (e *executor) getModifiableColumnJob(ctx context.Context, sctx sessionctx.Context, ident ast.Ident, originalColName pmodel.CIStr,
-	spec *ast.AlterTableSpec) (*model.Job, error) {
+func (e *executor) getModifiableColumnJob(
+	ctx context.Context, sctx sessionctx.Context,
+	ident ast.Ident, originalColName pmodel.CIStr, spec *ast.AlterTableSpec,
+) (*JobWrapper, error) {
 	is := e.infoCache.GetLatest()
 	schema, ok := is.SchemaByName(ident.Schema)
 	if !ok {
@@ -3328,7 +3312,7 @@ func (e *executor) ChangeColumn(ctx context.Context, sctx sessionctx.Context, id
 		return dbterror.ErrWrongTableName.GenWithStackByArgs(spec.OldColumnName.Table.O)
 	}
 
-	job, err := e.getModifiableColumnJob(ctx, sctx, ident, spec.OldColumnName.Name, spec)
+	jobW, err := e.getModifiableColumnJob(ctx, sctx, ident, spec.OldColumnName.Name, spec)
 	if err != nil {
 		if infoschema.ErrColumnNotExists.Equal(err) && spec.IfExists {
 			sctx.GetSessionVars().StmtCtx.AppendNote(infoschema.ErrColumnNotExists.FastGenByArgs(spec.OldColumnName.Name, ident.Name))
@@ -3337,7 +3321,7 @@ func (e *executor) ChangeColumn(ctx context.Context, sctx sessionctx.Context, id
 		return errors.Trace(err)
 	}
 
-	err = e.DoDDLJob(sctx, job)
+	err = e.DoDDLJobWrapper(sctx, jobW)
 	// column not exists, but if_exists flags is true, so we ignore this error.
 	if infoschema.ErrColumnNotExists.Equal(err) && spec.IfExists {
 		sctx.GetSessionVars().StmtCtx.AppendNote(err)
@@ -3392,6 +3376,7 @@ func (e *executor) RenameColumn(ctx sessionctx.Context, ident ast.Ident, spec *a
 	newCol := oldCol.Clone()
 	newCol.Name = newColName
 	job := &model.Job{
+		Version:        model.GetJobVerInUse(),
 		SchemaID:       schema.ID,
 		TableID:        tbl.Meta().ID,
 		SchemaName:     schema.Name.L,
@@ -3399,11 +3384,16 @@ func (e *executor) RenameColumn(ctx sessionctx.Context, ident ast.Ident, spec *a
 		Type:           model.ActionModifyColumn,
 		BinlogInfo:     &model.HistoryInfo{},
 		ReorgMeta:      NewDDLReorgMeta(ctx),
-		Args:           []any{&newCol, oldColName, spec.Position, 0, 0},
 		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
 		SQLMode:        ctx.GetSessionVars().SQLMode,
 	}
-	err = e.DoDDLJob(ctx, job)
+
+	args := &model.ModifyColumnArgs{
+		Column:        newCol,
+		OldColumnName: oldColName,
+		Position:      spec.Position,
+	}
+	err = e.doDDLJob2(ctx, job, args)
 	return errors.Trace(err)
 }
 
@@ -3419,7 +3409,7 @@ func (e *executor) ModifyColumn(ctx context.Context, sctx sessionctx.Context, id
 	}
 
 	originalColName := specNewColumn.Name.Name
-	job, err := e.getModifiableColumnJob(ctx, sctx, ident, originalColName, spec)
+	jobW, err := e.getModifiableColumnJob(ctx, sctx, ident, originalColName, spec)
 	if err != nil {
 		if infoschema.ErrColumnNotExists.Equal(err) && spec.IfExists {
 			sctx.GetSessionVars().StmtCtx.AppendNote(infoschema.ErrColumnNotExists.FastGenByArgs(originalColName, ident.Name))
@@ -3428,7 +3418,7 @@ func (e *executor) ModifyColumn(ctx context.Context, sctx sessionctx.Context, id
 		return errors.Trace(err)
 	}
 
-	err = e.DoDDLJob(sctx, job)
+	err = e.DoDDLJobWrapper(sctx, jobW)
 	// column not exists, but if_exists flags is true, so we ignore this error.
 	if infoschema.ErrColumnNotExists.Equal(err) && spec.IfExists {
 		sctx.GetSessionVars().StmtCtx.AppendNote(err)
@@ -3480,7 +3470,7 @@ func (e *executor) AlterColumn(ctx sessionctx.Context, ident ast.Ident, spec *as
 	}
 
 	job := &model.Job{
-		Version:        model.JobVersion1,
+		Version:        model.GetJobVerInUse(),
 		SchemaID:       schema.ID,
 		TableID:        t.Meta().ID,
 		SchemaName:     schema.Name.L,
@@ -3490,10 +3480,10 @@ func (e *executor) AlterColumn(ctx sessionctx.Context, ident ast.Ident, spec *as
 		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
 		SQLMode:        ctx.GetSessionVars().SQLMode,
 	}
+
 	args := &model.SetDefaultValueArgs{
 		Col: col.ColumnInfo,
 	}
-	job.FillArgs(args)
 	err = e.doDDLJob2(ctx, job, args)
 	return errors.Trace(err)
 }
@@ -3516,7 +3506,7 @@ func (e *executor) AlterTableComment(ctx sessionctx.Context, ident ast.Ident, sp
 	}
 
 	job := &model.Job{
-		Version:        model.JobVersion1,
+		Version:        model.GetJobVerInUse(),
 		SchemaID:       schema.ID,
 		TableID:        tb.Meta().ID,
 		SchemaName:     schema.Name.L,
@@ -3526,8 +3516,9 @@ func (e *executor) AlterTableComment(ctx sessionctx.Context, ident ast.Ident, sp
 		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
 		SQLMode:        ctx.GetSessionVars().SQLMode,
 	}
-	args := &model.ModifyTableCommentArgs{Comment: spec.Comment}
-	job.FillArgs(args)
+	args := &model.ModifyTableCommentArgs{
+		Comment: spec.Comment,
+	}
 	err = e.doDDLJob2(ctx, job, args)
 	return errors.Trace(err)
 }
@@ -3601,7 +3592,7 @@ func (e *executor) AlterTableCharsetAndCollate(ctx sessionctx.Context, ident ast
 	}
 
 	job := &model.Job{
-		Version:        model.JobVersion1,
+		Version:        model.GetJobVerInUse(),
 		SchemaID:       schema.ID,
 		TableID:        tb.Meta().ID,
 		SchemaName:     schema.Name.L,
@@ -3617,7 +3608,6 @@ func (e *executor) AlterTableCharsetAndCollate(ctx sessionctx.Context, ident ast
 		ToCollate:          toCollate,
 		NeedsOverwriteCols: needsOverwriteCols,
 	}
-	job.FillArgs(args)
 	err = e.doDDLJob2(ctx, job, args)
 	return errors.Trace(err)
 }
@@ -3919,6 +3909,7 @@ func (e *executor) UpdateTableReplicaInfo(ctx sessionctx.Context, physicalID int
 		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
 		SQLMode:        ctx.GetSessionVars().SQLMode,
 	}
+
 	args := &model.UpdateTiFlashReplicaStatusArgs{
 		Available:  available,
 		PhysicalID: physicalID,
@@ -4018,9 +4009,8 @@ func (e *executor) RenameIndex(ctx sessionctx.Context, ident ast.Ident, spec *as
 		return errors.Trace(err)
 	}
 
-	// TODO(joechenrh): Switch job version after refactor done.
 	job := &model.Job{
-		Version:        model.JobVersion1,
+		Version:        model.GetJobVerInUse(),
 		SchemaID:       schema.ID,
 		TableID:        tb.Meta().ID,
 		SchemaName:     schema.Name.L,
@@ -4037,7 +4027,6 @@ func (e *executor) RenameIndex(ctx sessionctx.Context, ident ast.Ident, spec *as
 			{IndexName: spec.ToKey},
 		},
 	}
-	job.FillArgs(args)
 	err = e.doDDLJob2(ctx, job, args)
 	return errors.Trace(err)
 }
@@ -4587,7 +4576,7 @@ func (e *executor) CreatePrimaryKey(ctx sessionctx.Context, ti ast.Ident, indexN
 	// global is set to  'false' is just there to be backwards compatible,
 	// to avoid unmarshal issues, it is now part of indexOption.
 	job := &model.Job{
-		Version:        model.JobVersion1,
+		Version:        model.GetJobVerInUse(),
 		SchemaID:       schema.ID,
 		TableID:        t.Meta().ID,
 		SchemaName:     schema.Name.L,
@@ -4619,7 +4608,6 @@ func (e *executor) CreatePrimaryKey(ctx sessionctx.Context, ti ast.Ident, indexN
 	}
 	job.ReorgMeta = reorgMeta
 
-	job.FillArgs(args)
 	err = e.doDDLJob2(ctx, job, args)
 	return errors.Trace(err)
 }
@@ -4731,7 +4719,6 @@ func (e *executor) createVectorIndex(ctx sessionctx.Context, ti ast.Ident, index
 	if err != nil {
 		return errors.Trace(err)
 	}
-	// vector index is added in 8.4, always use JobVersion2
 	job.Version = model.GetJobVerInUse()
 	job.Type = model.ActionAddVectorIndex
 	indexPartSpecifications[0].Expr = nil
@@ -4906,8 +4893,8 @@ func (e *executor) createIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast
 	if err != nil {
 		return errors.Trace(err)
 	}
-	// TODO(joechenrh): Switch job version after refactor done.
-	job.Version = model.JobVersion1
+
+	job.Version = model.GetJobVerInUse()
 	job.Type = model.ActionAddIndex
 	job.CDCWriteSource = ctx.GetSessionVars().CDCWriteSource
 
@@ -4923,7 +4910,6 @@ func (e *executor) createIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast
 		OpType: model.OpAddIndex,
 	}
 
-	job.FillArgs(args)
 	err = e.doDDLJob2(ctx, job, args)
 	// key exists, but if_not_exists flags is true, so we ignore this error.
 	if dbterror.ErrDupKeyName.Equal(err) && ifNotExists {
@@ -5123,7 +5109,7 @@ func (e *executor) CreateForeignKey(ctx sessionctx.Context, ti ast.Ident, fkName
 	}
 
 	job := &model.Job{
-		Version:        model.JobVersion1,
+		Version:        model.GetJobVerInUse(),
 		SchemaID:       schema.ID,
 		TableID:        t.Meta().ID,
 		SchemaName:     schema.Name.L,
@@ -5144,11 +5130,11 @@ func (e *executor) CreateForeignKey(ctx sessionctx.Context, ti ast.Ident, fkName
 		},
 		SQLMode: ctx.GetSessionVars().SQLMode,
 	}
+
 	args := &model.AddForeignKeyArgs{
 		FkInfo:  fkInfo,
 		FkCheck: fkCheck,
 	}
-	job.FillArgs(args)
 	err = e.doDDLJob2(ctx, job, args)
 	return errors.Trace(err)
 }
@@ -5166,7 +5152,7 @@ func (e *executor) DropForeignKey(ctx sessionctx.Context, ti ast.Ident, fkName p
 	}
 
 	job := &model.Job{
-		Version:        model.JobVersion1,
+		Version:        model.GetJobVerInUse(),
 		SchemaID:       schema.ID,
 		TableID:        t.Meta().ID,
 		SchemaName:     schema.Name.L,
@@ -5177,8 +5163,8 @@ func (e *executor) DropForeignKey(ctx sessionctx.Context, ti ast.Ident, fkName p
 		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
 		SQLMode:        ctx.GetSessionVars().SQLMode,
 	}
+
 	args := &model.DropForeignKeyArgs{FkName: fkName}
-	job.FillArgs(args)
 	err = e.doDDLJob2(ctx, job, args)
 	return errors.Trace(err)
 }
@@ -5258,9 +5244,8 @@ func (e *executor) dropIndex(ctx sessionctx.Context, ti ast.Ident, indexName pmo
 		jobTp = model.ActionDropPrimaryKey
 	}
 
-	// TODO(joechenrh): Switch job version after refactor done.
 	job := &model.Job{
-		Version:        model.JobVersion1,
+		Version:        model.GetJobVerInUse(),
 		SchemaID:       schema.ID,
 		TableID:        t.Meta().ID,
 		SchemaName:     schema.Name.L,
@@ -5279,7 +5264,6 @@ func (e *executor) dropIndex(ctx sessionctx.Context, ti ast.Ident, indexName pmo
 		}},
 		OpType: model.OpDropIndex,
 	}
-	job.FillArgs(args)
 	err = e.doDDLJob2(ctx, job, args)
 	return errors.Trace(err)
 }
@@ -5804,7 +5788,7 @@ func (e *executor) AlterIndexVisibility(ctx sessionctx.Context, ident ast.Ident,
 	}
 
 	job := &model.Job{
-		Version:        model.JobVersion1,
+		Version:        model.GetJobVerInUse(),
 		SchemaID:       schema.ID,
 		TableID:        tb.Meta().ID,
 		SchemaName:     schema.Name.L,
@@ -5814,11 +5798,11 @@ func (e *executor) AlterIndexVisibility(ctx sessionctx.Context, ident ast.Ident,
 		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
 		SQLMode:        ctx.GetSessionVars().SQLMode,
 	}
+
 	args := &model.AlterIndexVisibilityArgs{
 		IndexName: indexName,
 		Invisible: invisible,
 	}
-	job.FillArgs(args)
 	err = e.doDDLJob2(ctx, job, args)
 	return errors.Trace(err)
 }
@@ -6545,7 +6529,7 @@ func (e *executor) DoDDLJobWrapper(ctx sessionctx.Context, jobW *JobWrapper) (re
 			<-jobW.ResultCh[0]
 			// The same job will be put to the DDL queue twice.
 			job = job.Clone()
-			newJobW := NewJobWrapper(job, jobW.IDAllocated)
+			newJobW := NewJobWrapperWithArgs(job, jobW.JobArgs, jobW.IDAllocated)
 			e.deliverJobTask(newJobW)
 			// The second job result is used for test.
 			jobW = newJobW
