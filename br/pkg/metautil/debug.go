@@ -18,7 +18,6 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
-	"encoding/json"
 	"fmt"
 
 	"github.com/gogo/protobuf/proto"
@@ -60,7 +59,7 @@ func DecodeStatsFile(
 			if err := proto.Unmarshal(decryptContent, statsFileBlocks); err != nil {
 				return errors.Trace(err)
 			}
-			jsonContent, err := json.Marshal(statsFileBlocks)
+			jsonContent, err := utils.MarshalStatsFile(statsFileBlocks)
 			if err != nil {
 				return errors.Trace(err)
 			}
@@ -113,7 +112,7 @@ func DecodeMetaFile(
 				return errors.Errorf("the metafile has unexpected level: %v", child)
 			}
 
-			jsonContent, err := json.Marshal(child)
+			jsonContent, err := utils.MarshalMetaFile(child)
 			if err != nil {
 				return errors.Trace(err)
 			}
