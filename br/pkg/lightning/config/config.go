@@ -1076,6 +1076,7 @@ type TikvImporter struct {
 	StoreWriteBWLimit       ByteSize `toml:"store-write-bwlimit" json:"store-write-bwlimit"`
 	// default is PausePDSchedulerScopeTable to compatible with previous version(>= 6.1)
 	PausePDSchedulerScope PausePDSchedulerScope `toml:"pause-pd-scheduler-scope" json:"pause-pd-scheduler-scope"`
+	BlockSize             ByteSize              `toml:"block-size" json:"block-size"`
 }
 
 func (t *TikvImporter) adjust() error {
@@ -1463,6 +1464,7 @@ func NewConfig() *Config {
 			DiskQuota:               ByteSize(math.MaxInt64),
 			DuplicateResolution:     DupeResAlgNone,
 			PausePDSchedulerScope:   PausePDSchedulerScopeTable,
+			BlockSize:               16 * 1024,
 		},
 		PostRestore: PostRestore{
 			Checksum:          OpLevelRequired,
