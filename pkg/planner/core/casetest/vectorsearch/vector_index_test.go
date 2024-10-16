@@ -142,7 +142,7 @@ func TestANNIndexNormalizedPlan(t *testing.T) {
 	}
 
 	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t, tt")
+	tk.MustExec("drop table if exists t")
 	tk.MustExec(`
 		create table t (
 			vec vector(3)
@@ -192,18 +192,7 @@ func TestANNIndexNormalizedPlan(t *testing.T) {
 	require.Equal(t, d1, d3)
 	require.NotEqual(t, d1, dx1)
 
-	tk.MustExec(`
-		create table tt (
-			vec vector(3),
-			VECTOR INDEX vecIdx((VEC_L2_DISTANCE(vec)))
-		)
-	`)
-	tk.MustExec(`
-		insert into t values
-			('[1,1,1]'),
-			('[2,2,2]'),
-			('[3,3,3]')
-	`)
+	// test for TiFlashReplica's Available
 	tbl, err := dom.InfoSchema().TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
 	require.NoError(t, err)
 	tbl.Meta().TiFlashReplica.Available = false
