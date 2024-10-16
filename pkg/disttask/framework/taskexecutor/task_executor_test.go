@@ -16,7 +16,6 @@ package taskexecutor
 
 import (
 	"context"
-	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -559,6 +558,14 @@ func callOnError(taskExecutor *BaseTaskExecutor) {
 	taskExecutor.onError(throwError())
 }
 
+func throwErrorNoTrace() error {
+	return errors.NewNoStackError("mock error")
+}
+
+func callOnErrorNoTrace(taskExecutor *BaseTaskExecutor) {
+	taskExecutor.onError(throwErrorNoTrace())
+}
+
 func TestExecutorOnErrorLog(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
@@ -574,24 +581,40 @@ func TestExecutorOnErrorLog(t *testing.T) {
 	observedLogger := zap.New(observedZapCore)
 	taskExecutor.logger = observedLogger
 
-	callOnError(taskExecutor)
-	require.GreaterOrEqual(t, observedLogs.Len(), 1)
-	errLog := observedLogs.All()[0]
-	stack := errLog.ContextMap()["stack"]
-	var err error
-	for _, e := range errLog.Context {
-		if e.Key == "error" {
-			err = e.Interface.(error)
-		}
+	{
+		callOnError(taskExecutor)
+		require.GreaterOrEqual(t, observedLogs.Len(), 1)
+		errLog := observedLogs.TakeAll()[0]
+		contextMap := errLog.ContextMap()
+		require.Contains(t, contextMap, "stack")
+		stack := contextMap["stack"]
+		require.IsType(t, "", stack)
+		stackStr := stack.(string)
+		require.Contains(t, contextMap, "error stack")
+		errStack := contextMap["error stack"]
+		require.IsType(t, "", errStack)
+		errStackStr := errStack.(string)
+		require.Truef(t, strings.HasPrefix(stackStr,
+			"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor.callOnError"),
+			"got log stack: %s", stackStr)
+		require.Regexpf(t, `mock error[\n\t ]*`+
+			"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor.throwError",
+			errStackStr,
+			"got err stack: %s", errStackStr)
 	}
-	require.IsType(t, "", stack)
-	stackStr := stack.(string)
-	errStackStr := fmt.Sprintf("%+v", err)
-	require.Truef(t, strings.HasPrefix(stackStr,
-		"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor.callOnError"),
-		"got log stack: %s", stackStr)
-	require.Regexpf(t, `mock error[\n\t ]*`+
-		"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor.throwError",
-		errStackStr,
-		"got err stack: %s", errStackStr)
+
+	{
+		callOnErrorNoTrace(taskExecutor)
+		require.GreaterOrEqual(t, observedLogs.Len(), 1)
+		errLog := observedLogs.TakeAll()[0]
+		contextMap := errLog.ContextMap()
+		require.Contains(t, contextMap, "stack")
+		stack := contextMap["stack"]
+		require.IsType(t, "", stack)
+		stackStr := stack.(string)
+		require.NotContains(t, contextMap, "error stack")
+		require.Truef(t, strings.HasPrefix(stackStr,
+			"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor.callOnError"),
+			"got log stack: %s", stackStr)
+	}
 }

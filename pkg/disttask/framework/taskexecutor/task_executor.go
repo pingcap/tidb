@@ -16,6 +16,7 @@ package taskexecutor
 
 import (
 	"context"
+	"fmt"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -532,8 +533,13 @@ func (e *BaseTaskExecutor) onError(err error) {
 	if err == nil {
 		return
 	}
-	err = errors.Trace(err)
-	e.logger.Error("onError", zap.Error(err), zap.StackSkip("stack", 1))
+
+	if errors.HasStack(err) {
+		e.logger.Error("onError", zap.Error(err), zap.StackSkip("stack", 1), zap.String("error stack", fmt.Sprintf("%+v", err)))
+	} else {
+		err = errors.Trace(err)
+		e.logger.Error("onError", zap.Error(err), zap.StackSkip("stack", 1))
+	}
 	e.mu.Lock()
 	defer e.mu.Unlock()
 
