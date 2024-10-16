@@ -15,8 +15,10 @@
 package join
 
 import (
+	"fmt"
 	"unsafe"
 
+	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/sqlkiller"
@@ -44,6 +46,8 @@ type semiJoinProbe struct {
 	buildColOffsetInResultChk int
 	probeColUsed              []int
 	probeColOffsetInResultChk int
+
+	setUsedFlagNum int
 }
 
 func newSemiJoinProbe(base baseJoinProbe, isLeftSideBuild bool) *semiJoinProbe {
@@ -97,6 +101,12 @@ func (j *semiJoinProbe) IsScanRowTableDone() bool {
 
 // TODO maybe we can extract some common codes from semi join and outer join
 func (j *semiJoinProbe) ScanRowTable(joinResult *hashjoinWorkerResult, sqlKiller *sqlkiller.SQLKiller) *hashjoinWorkerResult {
+	// TODO delete
+	if j.setUsedFlagNum >= 0 {
+		log.Info(fmt.Sprintf("set used flag num %d", j.setUsedFlagNum))
+		j.setUsedFlagNum = -1
+	}
+
 	if !j.isLeftSideBuild {
 		panic("should not reach here")
 	}
@@ -130,11 +140,9 @@ func (j *semiJoinProbe) ScanRowTable(joinResult *hashjoinWorkerResult, sqlKiller
 	return joinResult
 }
 
-func (j *semiJoinProbe) ClearProbeState() {
-	if j.isLeftSideBuild {
-		j.rowIter = nil
-	}
-	j.baseJoinProbe.ClearProbeState()
+func (j *semiJoinProbe) ResetProbe() {
+	j.rowIter = nil
+	j.baseJoinProbe.ResetProbe()
 }
 
 func (j *semiJoinProbe) Probe(joinResult *hashjoinWorkerResult, sqlKiller *sqlkiller.SQLKiller) (ok bool, _ *hashjoinWorkerResult) {
@@ -263,6 +271,7 @@ func (j *semiJoinProbe) probeForLeftSideBuildNoOtherCondition(remainCap int, sql
 				meta.setUsedFlag(candidateRow)
 				remainCap--
 				j.matchedRowsHeaders[j.currentProbeRow] = 0
+				j.setUsedFlagNum++
 			} else {
 				j.probeCollision++
 				j.matchedRowsHeaders[j.currentProbeRow] = getNextRowAddress(candidateRow, tagHelper, j.matchedRowsHashValue[j.currentProbeRow])
