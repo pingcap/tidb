@@ -1364,6 +1364,7 @@ var (
 		upgradeToVer214,
 		upgradeToVer215,
 		upgradeToVer216,
+		upgradeToVer217,
 	}
 )
 
@@ -3271,6 +3272,16 @@ func upgradeToVer216(s sessiontypes.Session, ver int64) {
 
 	mustExecute(s, "UPDATE mysql.global_variables SET VARIABLE_VALUE='' WHERE VARIABLE_NAME = 'tidb_scatter_region' AND VARIABLE_VALUE = 'OFF'")
 	mustExecute(s, "UPDATE mysql.global_variables SET VARIABLE_VALUE='table' WHERE VARIABLE_NAME = 'tidb_scatter_region' AND VARIABLE_VALUE = 'ON'")
+}
+
+func upgradeToVer217(_ sessiontypes.Session, ver int64) {
+	if ver >= version217 {
+		return
+	}
+	// add this function to pass linter.
+	// we disable upgrade from below v6.2.0 in this version, so we can have to version
+	// to check with if it's needed later, there are no system table changes related
+	// to it.
 }
 
 // initGlobalVariableIfNotExists initialize a global variable with specific val if it does not exist.
