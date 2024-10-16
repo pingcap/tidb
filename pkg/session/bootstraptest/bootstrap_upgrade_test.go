@@ -99,6 +99,11 @@ func TestUpgradeVersion83AndVersion84(t *testing.T) {
 
 func revertVersionAndVariables(t *testing.T, se sessiontypes.Session, ver int) {
 	session.MustExec(t, se, fmt.Sprintf("update mysql.tidb set variable_value='%d' where variable_name='tidb_server_version'", ver))
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBootstrap)
+	require.NoError(t, kv.RunInNewTxn(ctx, se.GetStore(), false, func(_ context.Context, txn kv.Transaction) error {
+		mut := meta.NewMutator(txn)
+		return mut.FinishBootstrap(int64(ver))
+	}))
 	if ver <= 195 {
 		// for version <= version195, tidb_enable_dist_task should be disabled before upgrade
 		session.MustExec(t, se, "update mysql.global_variables set variable_value='off' where variable_name='tidb_enable_dist_task'")
@@ -112,6 +117,7 @@ func revertVersionAndVariables(t *testing.T, se sessiontypes.Session, ver int) {
 }
 
 func TestUpgradeVersion66(t *testing.T) {
+	t.Skip("we disallow upgrade from below bootstrap version 92 to version >= 216 (current), user must upgrade to a version in between first, so skip this test")
 	ctx := context.Background()
 	store, dom := session.CreateStoreAndBootstrap(t)
 	defer func() { require.NoError(t, store.Close()) }()
@@ -149,6 +155,7 @@ func TestUpgradeVersion66(t *testing.T) {
 }
 
 func TestUpgradeVersion74(t *testing.T) {
+	t.Skip("we disallow upgrade from below bootstrap version 92 to version >= 216 (current), user must upgrade to a version in between first, so skip this test")
 	ctx := context.Background()
 
 	cases := []struct {
@@ -199,6 +206,7 @@ func TestUpgradeVersion74(t *testing.T) {
 }
 
 func TestUpgradeVersion75(t *testing.T) {
+	t.Skip("we disallow upgrade from below bootstrap version 92 to version >= 216 (current), user must upgrade to a version in between first, so skip this test")
 	ctx := context.Background()
 
 	store, dom := session.CreateStoreAndBootstrap(t)
@@ -251,13 +259,6 @@ func TestUpgradeVersionMockLatest(t *testing.T) {
 	defer func() { require.NoError(t, store.Close()) }()
 
 	seV := session.CreateSessionAndSetID(t, store)
-	txn, err := store.Begin()
-	require.NoError(t, err)
-	m := meta.NewMutator(txn)
-	err = m.FinishBootstrap(session.CurrentBootstrapVersion - 1)
-	require.NoError(t, err)
-	err = txn.Commit(context.Background())
-	require.NoError(t, err)
 	revertVersionAndVariables(t, seV, int(session.CurrentBootstrapVersion-1))
 	session.UnsetStoreBootstrapped(store.UUID())
 	ver, err := session.GetBootstrapVersion(seV)
@@ -316,13 +317,6 @@ func TestUpgradeVersionWithUpgradeHTTPOp(t *testing.T) {
 	defer func() { require.NoError(t, store.Close()) }()
 
 	seV := session.CreateSessionAndSetID(t, store)
-	txn, err := store.Begin()
-	require.NoError(t, err)
-	m := meta.NewMutator(txn)
-	err = m.FinishBootstrap(session.SupportUpgradeHTTPOpVer)
-	require.NoError(t, err)
-	err = txn.Commit(context.Background())
-	require.NoError(t, err)
 	revertVersionAndVariables(t, seV, int(session.SupportUpgradeHTTPOpVer))
 	session.UnsetStoreBootstrapped(store.UUID())
 	ver, err := session.GetBootstrapVersion(seV)
@@ -366,13 +360,6 @@ func TestUpgradeVersionWithoutUpgradeHTTPOp(t *testing.T) {
 	defer func() { require.NoError(t, store.Close()) }()
 
 	seV := session.CreateSessionAndSetID(t, store)
-	txn, err := store.Begin()
-	require.NoError(t, err)
-	m := meta.NewMutator(txn)
-	err = m.FinishBootstrap(session.SupportUpgradeHTTPOpVer)
-	require.NoError(t, err)
-	err = txn.Commit(context.Background())
-	require.NoError(t, err)
 	revertVersionAndVariables(t, seV, int(session.SupportUpgradeHTTPOpVer))
 	session.UnsetStoreBootstrapped(store.UUID())
 	ver, err := session.GetBootstrapVersion(seV)
@@ -409,13 +396,6 @@ func TestUpgradeVersionForPausedJob(t *testing.T) {
 	defer func() { require.NoError(t, store.Close()) }()
 
 	seV := session.CreateSessionAndSetID(t, store)
-	txn, err := store.Begin()
-	require.NoError(t, err)
-	m := meta.NewMutator(txn)
-	err = m.FinishBootstrap(session.CurrentBootstrapVersion - 1)
-	require.NoError(t, err)
-	err = txn.Commit(context.Background())
-	require.NoError(t, err)
 	revertVersionAndVariables(t, seV, int(session.CurrentBootstrapVersion-1))
 	session.UnsetStoreBootstrapped(store.UUID())
 	ver, err := session.GetBootstrapVersion(seV)
@@ -490,13 +470,6 @@ func TestUpgradeVersionForSystemPausedJob(t *testing.T) {
 	defer func() { require.NoError(t, store.Close()) }()
 
 	seV := session.CreateSessionAndSetID(t, store)
-	txn, err := store.Begin()
-	require.NoError(t, err)
-	m := meta.NewMutator(txn)
-	err = m.FinishBootstrap(session.CurrentBootstrapVersion - 1)
-	require.NoError(t, err)
-	err = txn.Commit(context.Background())
-	require.NoError(t, err)
 	revertVersionAndVariables(t, seV, int(session.CurrentBootstrapVersion-1))
 	session.UnsetStoreBootstrapped(store.UUID())
 	ver, err := session.GetBootstrapVersion(seV)
@@ -551,13 +524,6 @@ func TestUpgradeVersionForResumeJob(t *testing.T) {
 	defer func() { require.NoError(t, store.Close()) }()
 
 	seV := session.CreateSessionAndSetID(t, store)
-	txn, err := store.Begin()
-	require.NoError(t, err)
-	m := meta.NewMutator(txn)
-	err = m.FinishBootstrap(session.CurrentBootstrapVersion - 1)
-	require.NoError(t, err)
-	err = txn.Commit(context.Background())
-	require.NoError(t, err)
 	revertVersionAndVariables(t, seV, int(session.CurrentBootstrapVersion-1))
 	session.UnsetStoreBootstrapped(store.UUID())
 	ver, err := session.GetBootstrapVersion(seV)
@@ -759,13 +725,6 @@ func TestUpgradeWithPauseDDL(t *testing.T) {
 	mock := true
 	session.WithMockUpgrade = &mock
 	seV := session.CreateSessionAndSetID(t, store)
-	txn, err := store.Begin()
-	require.NoError(t, err)
-	m := meta.NewMutator(txn)
-	err = m.FinishBootstrap(session.CurrentBootstrapVersion - 1)
-	require.NoError(t, err)
-	err = txn.Commit(context.Background())
-	require.NoError(t, err)
 	revertVersionAndVariables(t, seV, int(session.CurrentBootstrapVersion-1))
 	session.UnsetStoreBootstrapped(store.UUID())
 	ver, err := session.GetBootstrapVersion(seV)
