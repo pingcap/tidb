@@ -182,7 +182,7 @@ func TestDumpPlanReplayerAPI(t *testing.T) {
 
 	tk.MustExec("use planReplayer")
 	tk.MustExec("drop table planReplayer.t")
-	tk.MustExec(`plan replayer load "/tmp/plan_replayer.zip"`)
+	tk.MustExec(fmt.Sprintf(`plan replayer load "%s"`, path))
 
 	// 3-3. assert that the count and modify count in the stats is as expected
 	rows := tk.MustQuery("show stats_meta")
@@ -353,7 +353,7 @@ func TestIssue43192(t *testing.T) {
 	tk := testkit.NewDBTestKit(t, db)
 	tk.MustExec("use planReplayer")
 	tk.MustExec("drop table planReplayer.t")
-	tk.MustExec(`plan replayer load "/tmp/plan_replayer.zip"`)
+	tk.MustExec(fmt.Sprintf(`plan replayer load "%s"`, path))
 
 	// 3-3. check whether binding takes effect
 	tk.MustExec(`select a, b from t where a in (1, 2, 3)`)
