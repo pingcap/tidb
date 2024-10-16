@@ -17,7 +17,7 @@ package core
 import (
 	"context"
 	"fmt"
-	"sort"
+	"slices"
 	"testing"
 
 	"github.com/pingcap/failpoint"
@@ -90,7 +90,7 @@ func checkColumnStatsUsageForPredicates(t *testing.T, is infoschema.InfoSchema, 
 		col := getColumnName(t, is, tblColID, comment)
 		cols = append(cols, col)
 	}
-	sort.Strings(cols)
+	slices.Sort(cols)
 	require.Equal(t, expected, cols, comment)
 }
 
@@ -102,7 +102,7 @@ func checkColumnStatsUsageForStatsLoad(t *testing.T, is infoschema.InfoSchema, l
 		col := getStatsLoadItem(t, is, item, comment)
 		cols = append(cols, col)
 	}
-	sort.Strings(cols)
+	slices.Sort(cols)
 	require.Equal(t, expected, cols, comment+", we get %v", cols)
 }
 

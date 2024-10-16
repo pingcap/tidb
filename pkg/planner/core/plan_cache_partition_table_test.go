@@ -17,7 +17,7 @@ package core_test
 import (
 	"fmt"
 	"math/rand"
-	"sort"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -607,7 +607,7 @@ func getRowData(rowData map[any]string, filler string, cols []string, id ...any)
 		ret = append(ret, row)
 		dup[id[i]] = struct{}{}
 	}
-	sort.Strings(ret)
+	slices.Sort(ret)
 	return ret
 }
 
