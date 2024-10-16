@@ -30,6 +30,11 @@ import (
 	"golang.org/x/sync/errgroup"
 )
 
+const (
+	// JSONFileFormat represents json file name format
+	JSONFileFormat = "jsons/%s.json"
+)
+
 // DecodeStatsFile decodes the stats file to json format, it is called by br debug
 func DecodeStatsFile(
 	ctx context.Context,
@@ -63,7 +68,7 @@ func DecodeStatsFile(
 			if err != nil {
 				return errors.Trace(err)
 			}
-			if err := s.WriteFile(ctx, fmt.Sprintf("%s.json", statsIndex.Name), jsonContent); err != nil {
+			if err := s.WriteFile(ctx, fmt.Sprintf(JSONFileFormat, statsIndex.Name), jsonContent); err != nil {
 				return errors.Trace(err)
 			}
 		}
@@ -117,7 +122,7 @@ func DecodeMetaFile(
 				return errors.Trace(err)
 			}
 
-			if err := s.WriteFile(ctx, fmt.Sprintf("%s.json", node.Name), jsonContent); err != nil {
+			if err := s.WriteFile(ctx, fmt.Sprintf(JSONFileFormat, node.Name), jsonContent); err != nil {
 				return errors.Trace(err)
 			}
 
