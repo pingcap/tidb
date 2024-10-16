@@ -92,7 +92,7 @@ func TestNormalize(t *testing.T) {
 		{"select * from t where a in(1, 2, 3)", "select * from `t` where `a` in ( ... )"},
 	}
 	for _, test := range tests_for_binding_specific_rules {
-		normalized := parser.NormalizeForBinding(test.input)
+		normalized := parser.NormalizeForBinding(test.input, false)
 		digest := parser.DigestNormalized(normalized)
 		require.Equal(t, test.expect, normalized)
 
