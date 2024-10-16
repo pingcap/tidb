@@ -32,7 +32,6 @@ type Reader interface {
 	GetAllNameToIDAndTheMustLoadedTableInfo(dbID int64) (map[string]int64, []*model.TableInfo, error)
 
 	GetMetadataLock() (enable bool, isNull bool, err error)
-	GetAllDDLJobsInQueue(jobListKeys ...JobListKeyType) ([]*model.Job, error)
 	GetHistoryDDLJob(id int64) (*model.Job, error)
 	GetHistoryDDLCount() (uint64, error)
 	GetLastHistoryDDLJobsIterator() (LastJobIterator, error)
