@@ -568,10 +568,6 @@ func (job *Job) decodeArgs(args ...any) error {
 			return errors.Trace(err)
 		}
 	}
-	// TODO(lance6716): don't assign to job.Args here, because the types of argument
-	// `args` are always pointer type. But sometimes in the `job` literals we don't
-	// use pointer
-	job.args = args[:sz]
 	return nil
 }
 
