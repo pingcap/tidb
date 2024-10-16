@@ -310,7 +310,7 @@ type Job struct {
 	CtxVars []any `json:"-"`
 	// it's a temporary place to cache job args.
 	// when Version is JobVersion2, Args contains a single element of type JobArgs.
-	Args []any `json:"-"`
+	args []any
 	// we use json raw message to delay parsing special args.
 	// the args are cleared out unless Job.FillFinishedArgs is called.
 	RawArgs json.RawMessage `json:"raw_args"`
@@ -476,20 +476,20 @@ func (job *Job) GetWarnings() (map[errors.ErrorID]*terror.Error, map[errors.Erro
 func (job *Job) FillArgs(args JobArgs) {
 	intest.Assert(job.Version == JobVersion1 || job.Version == JobVersion2, "job version is invalid")
 	if job.Version == JobVersion1 {
-		job.Args = args.getArgsV1(job)
+		job.args = args.getArgsV1(job)
 		return
 	}
-	job.Args = []any{args}
+	job.args = []any{args}
 }
 
 // FillFinishedArgs fills args for finished job.
 func (job *Job) FillFinishedArgs(args FinishedJobArgs) {
 	intest.Assert(job.Version == JobVersion1 || job.Version == JobVersion2, "job version is invalid")
 	if job.Version == JobVersion1 {
-		job.Args = args.getFinishedArgsV1(job)
+		job.args = args.getFinishedArgsV1(job)
 		return
 	}
-	job.Args = []any{args}
+	job.args = []any{args}
 }
 
 func marshalArgs(jobVer JobVersion, args []any) (json.RawMessage, error) {
@@ -514,7 +514,7 @@ func marshalArgs(jobVer JobVersion, args []any) (json.RawMessage, error) {
 func (job *Job) Encode(updateRawArgs bool) ([]byte, error) {
 	var err error
 	if updateRawArgs {
-		job.RawArgs, err = marshalArgs(job.Version, job.Args)
+		job.RawArgs, err = marshalArgs(job.Version, job.args)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -522,11 +522,11 @@ func (job *Job) Encode(updateRawArgs bool) ([]byte, error) {
 		if job.MultiSchemaInfo != nil {
 			for _, sub := range job.MultiSchemaInfo.SubJobs {
 				// Only update the args of executing sub-jobs.
-				if sub.Args == nil {
+				if sub.args == nil {
 					continue
 				}
 
-				sub.RawArgs, err = marshalArgs(job.Version, sub.Args)
+				sub.RawArgs, err = marshalArgs(job.Version, sub.args)
 				if err != nil {
 					return nil, errors.Trace(err)
 				}
@@ -571,7 +571,7 @@ func (job *Job) decodeArgs(args ...any) error {
 	// TODO(lance6716): don't assign to job.Args here, because the types of argument
 	// `args` are always pointer type. But sometimes in the `job` literals we don't
 	// use pointer
-	job.Args = args[:sz]
+	job.args = args[:sz]
 	return nil
 }
 
@@ -579,7 +579,7 @@ func (job *Job) decodeArgs(args ...any) error {
 func (job *Job) String() string {
 	rowCount := job.GetRowCount()
 	ret := fmt.Sprintf("ID:%d, Type:%s, State:%s, SchemaState:%s, SchemaID:%d, TableID:%d, RowCount:%d, ArgLen:%d, start time: %v, Err:%v, ErrCount:%d, SnapshotVersion:%v, Version: %s",
-		job.ID, job.Type, job.State, job.SchemaState, job.SchemaID, job.TableID, rowCount, len(job.Args), TSConvert2Time(job.StartTS), job.Error, job.ErrorCount, job.SnapshotVer, job.Version)
+		job.ID, job.Type, job.State, job.SchemaState, job.SchemaID, job.TableID, rowCount, len(job.args), TSConvert2Time(job.StartTS), job.Error, job.ErrorCount, job.SnapshotVer, job.Version)
 	if job.ReorgMeta != nil {
 		warnings, _ := job.GetWarnings()
 		ret += fmt.Sprintf(", UniqueWarnings:%d", len(warnings))
@@ -856,15 +856,15 @@ func (job *Job) GetInvolvingSchemaInfo() []InvolvingSchemaInfo {
 
 // ClearDecodedArgs clears the decoded args.
 func (job *Job) ClearDecodedArgs() {
-	job.Args = nil
+	job.args = nil
 }
 
 // SubJob is a representation of one DDL schema change. A Job may contain zero
 // (when multi-schema change is not applicable) or more SubJobs.
 type SubJob struct {
-	Type        ActionType      `json:"type"`
-	JobArgs     JobArgs         `json:"-"`
-	Args        []any           `json:"-"`
+	Type        ActionType `json:"type"`
+	JobArgs     JobArgs    `json:"-"`
+	args        []any
 	RawArgs     json.RawMessage `json:"raw_args"`
 	SchemaState SchemaState     `json:"schema_state"`
 	SnapshotVer uint64          `json:"snapshot_ver"`
@@ -913,7 +913,7 @@ func (sub *SubJob) ToProxyJob(parentJob *Job, seq int) Job {
 		RowCount:        sub.RowCount,
 		Mu:              sync.Mutex{},
 		CtxVars:         sub.CtxVars,
-		Args:            sub.Args,
+		args:            sub.args,
 		RawArgs:         sub.RawArgs,
 		SchemaState:     sub.SchemaState,
 		SnapshotVer:     sub.SnapshotVer,
@@ -939,7 +939,7 @@ func (sub *SubJob) FromProxyJob(proxyJob *Job, ver int64) {
 	sub.SchemaState = proxyJob.SchemaState
 	sub.SnapshotVer = proxyJob.SnapshotVer
 	sub.RealStartTS = proxyJob.RealStartTS
-	sub.Args = proxyJob.Args
+	sub.args = proxyJob.args
 	sub.State = proxyJob.State
 	sub.Warning = proxyJob.Warning
 	sub.RowCount = proxyJob.RowCount
@@ -955,14 +955,14 @@ func (sub *SubJob) FillArgs(jobVer JobVersion) {
 		Type:    sub.Type,
 	}
 	fakeJob.FillArgs(sub.JobArgs)
-	sub.Args = fakeJob.Args
+	sub.args = fakeJob.args
 }
 
 // Clone returns a copy of the sub-job.
 // Note: private args fields are not copied.
 func (sub *SubJob) Clone() *SubJob {
 	clonedSubJob := *sub
-	clonedSubJob.Args = nil
+	clonedSubJob.args = nil
 	return &clonedSubJob
 }
 

@@ -460,5 +460,5 @@ func TestJobEncodeV2(t *testing.T) {
 	require.NotNil(t, j.RawArgs)
 	args := &TruncateTableArgs{}
 	require.NoError(t, json.Unmarshal(j.RawArgs, args))
-	require.EqualValues(t, j.Args[0], args)
+	require.EqualValues(t, j.args[0], args)
 }
