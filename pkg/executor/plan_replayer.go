@@ -524,9 +524,10 @@ func (e *PlanReplayerLoadInfo) Update(data []byte) error {
 }
 
 func (e *PlanReplayerLoadInfo) createTable(z *zip.Reader) error {
+	origin := e.Ctx.GetSessionVars().ForeignKeyChecks
 	e.Ctx.GetSessionVars().ForeignKeyChecks = false
 	defer func() {
-		e.Ctx.GetSessionVars().ForeignKeyChecks = true
+		e.Ctx.GetSessionVars().ForeignKeyChecks = origin
 	}()
 	for _, zipFile := range z.File {
 		if zipFile.Name == fmt.Sprintf("schema/%v", domain.PlanReplayerSchemaMetaFile) {
