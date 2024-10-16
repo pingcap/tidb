@@ -581,6 +581,7 @@ func NewJoinProbe(ctx *HashJoinCtxV2, workID uint, joinType logicalop.JoinType, 
 		return newOuterJoinProbe(base, !rightAsBuildSide, rightAsBuildSide)
 	case logicalop.RightOuterJoin:
 		return newOuterJoinProbe(base, rightAsBuildSide, rightAsBuildSide)
+
 	default:
 		panic("unsupported join type")
 	}
