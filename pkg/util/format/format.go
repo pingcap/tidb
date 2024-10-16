@@ -114,7 +114,7 @@ func (f *indentFormatter) format(flat bool, format string, args ...any) (n int, 
 				f.state = stBOLPERC
 			default:
 				if !flat {
-					for _ = range f.indentLevel {
+					for range f.indentLevel {
 						buf = append(buf, f.indent...)
 					}
 				}
@@ -131,7 +131,7 @@ func (f *indentFormatter) format(flat bool, format string, args ...any) (n int, 
 				f.state = stBOL
 			default:
 				if !flat {
-					for _ = range f.indentLevel {
+					for range f.indentLevel {
 						buf = append(buf, f.indent...)
 					}
 				}
