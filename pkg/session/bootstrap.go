@@ -3279,7 +3279,7 @@ func upgradeToVer217(_ sessiontypes.Session, ver int64) {
 		return
 	}
 	// add this function to pass linter.
-	// we disable upgrade from below v6.2.0 in this version, so we can have to version
+	// we disable upgrade from below v6.2.0 in this version, so we can have a version
 	// to check with if it's needed later, there are no system table changes related
 	// to it.
 }
