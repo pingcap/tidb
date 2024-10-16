@@ -244,6 +244,8 @@ type mdLoaderSetup struct {
 	dbIndexMap    map[string]int
 	tableIndexMap map[filter.Table]int
 	setupCfg      *MDLoaderSetupConfig
+
+	sampledParquetRowSizes map[string]float64
 }
 
 // NewLoader constructs a MyDumper loader that scanns the data source and constructs a set of metadatas.
@@ -320,6 +322,8 @@ func NewLoaderWithStore(ctx context.Context, cfg LoaderConfig,
 		dbIndexMap:    make(map[string]int),
 		tableIndexMap: make(map[filter.Table]int),
 		setupCfg:      mdLoaderSetupCfg,
+
+		sampledParquetRowSizes: make(map[string]float64),
 	}
 
 	if err := setup.setup(ctx); err != nil {
@@ -532,12 +536,24 @@ func (s *mdLoaderSetup) constructFileInfo(ctx context.Context, path string, size
 		}
 		s.tableDatas = append(s.tableDatas, info)
 	case SourceTypeParquet:
-		parquestDataSize, err2 := SampleParquetDataSize(ctx, info.FileMeta, s.loader.GetStore())
-		if err2 != nil {
-			logger.Error("fail to sample parquet data size", zap.String("category", "loader"),
-				zap.String("schema", res.Schema), zap.String("table", res.Name), zap.Stringer("type", res.Type), zap.Error(err2))
-		} else {
-			info.FileMeta.RealSize = parquestDataSize
+		tableName := info.TableName.String()
+		if s.sampledParquetRowSizes[tableName] == 0 {
+			s.sampledParquetRowSizes[tableName], err = SampleParquetRowSize(ctx, info.FileMeta, s.loader.GetStore())
+			if err != nil {
+				logger.Error("fail to sample parquet row size", zap.String("category", "loader"),
+					zap.String("schema", res.Schema), zap.String("table", res.Name),
+					zap.Stringer("type", res.Type), zap.Error(err))
+			}
+		}
+		if s.sampledParquetRowSizes[tableName] != 0 {
+			totalRowCount, err2 := ReadParquetFileRowCountByFile(ctx, s.loader.GetStore(), info.FileMeta)
+			if err2 != nil {
+				logger.Error("fail to get file total row count", zap.String("category", "loader"),
+					zap.String("schema", res.Schema), zap.String("table", res.Name),
+					zap.Stringer("type", res.Type), zap.Error(err2))
+			} else {
+				info.FileMeta.RealSize = int64(float64(totalRowCount) * s.sampledParquetRowSizes[tableName])
+			}
 		}
 		s.tableDatas = append(s.tableDatas, info)
 	}
@@ -823,8 +839,8 @@ func SampleFileCompressRatio(ctx context.Context, fileMeta SourceFileMeta, store
 	return float64(tot) / float64(pos), nil
 }
 
-// SampleParquetDataSize samples the data size of the parquet file.
-func SampleParquetDataSize(ctx context.Context, fileMeta SourceFileMeta, store storage.ExternalStorage) (int64, error) {
+// SampleParquetRowSize samples row size of the parquet file.
+func SampleParquetRowSize(ctx context.Context, fileMeta SourceFileMeta, store storage.ExternalStorage) (float64, error) {
 	totalRowCount, err := ReadParquetFileRowCountByFile(ctx, store, fileMeta)
 	if totalRowCount == 0 || err != nil {
 		return 0, err
@@ -863,6 +879,5 @@ func SampleParquetDataSize(ctx context.Context, fileMeta SourceFileMeta, store s
 			break
 		}
 	}
-	size := int64(float64(totalRowCount) / float64(rowCount) * float64(rowSize))
-	return size, nil
+	return float64(rowSize) / float64(rowCount), nil
 }
