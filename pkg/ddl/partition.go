@@ -99,7 +99,7 @@ func (w *worker) onAddTablePartition(jobCtx *jobContext, job *model.Job) (ver in
 	jobCtx.jobArgs = args
 	// Handle the rolling back job
 	if job.IsRollingback() {
-		ver, err := w.rollbackLikeDropPartition(jobCtx, job, args)
+		ver, err := w.rollbackLikeDropPartition(jobCtx, job)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
@@ -2134,7 +2134,8 @@ func dropLabelRules(ctx context.Context, schemaName, tableName string, partNames
 // rollbackLikeDropPartition does rollback for Reorganize partition and Add partition.
 // It will drop newly created partitions that has not yet been used, including cleaning
 // up label rules and bundles as well as changed indexes due to global flag.
-func (w *worker) rollbackLikeDropPartition(jobCtx *jobContext, job *model.Job, args *model.TablePartitionArgs) (ver int64, _ error) {
+func (w *worker) rollbackLikeDropPartition(jobCtx *jobContext, job *model.Job) (ver int64, _ error) {
+	args := jobCtx.jobArgs.(*model.TablePartitionArgs)
 	partInfo := args.PartInfo
 	metaMut := jobCtx.metaMut
 	tblInfo, err := GetTableInfoAndCancelFaultJob(metaMut, job, job.SchemaID)
@@ -3127,7 +3128,7 @@ func (w *worker) onReorganizePartition(jobCtx *jobContext, job *model.Job) (ver 
 	jobCtx.jobArgs = args
 	// Handle the rolling back job
 	if job.IsRollingback() {
-		ver, err := w.rollbackLikeDropPartition(jobCtx, job, args)
+		ver, err := w.rollbackLikeDropPartition(jobCtx, job)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
