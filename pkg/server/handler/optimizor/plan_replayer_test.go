@@ -42,6 +42,7 @@ import (
 	"github.com/pingcap/tidb/pkg/session"
 	util2 "github.com/pingcap/tidb/pkg/statistics/handle/util"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/util/replayer"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/oracle"
 )
@@ -246,8 +247,6 @@ func prepareData4PlanReplayer(t *testing.T, client *testserverclient.TestServerC
 	return filename, filename3
 }
 
-<<<<<<< HEAD
-=======
 func TestIssue56458(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	dom, err := session.GetDomain(store)
@@ -419,7 +418,6 @@ func prepareData4Issue56458(t *testing.T, client *testserverclient.TestServerCli
 	return filename
 }
 
->>>>>>> 1eb0c8c1235 (domain: fix play replay dump cannot save the table in the foreign key's reference (#56512))
 func forEachFileInZipBytes(t *testing.T, b []byte, fn func(file *zip.File)) {
 	br := bytes.NewReader(b)
 	z, err := zip.NewReader(br, int64(len(b)))
