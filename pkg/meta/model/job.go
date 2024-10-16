@@ -443,6 +443,7 @@ func (job *Job) Clone() *Job {
 	}
 	if job.MultiSchemaInfo != nil {
 		for i, sub := range job.MultiSchemaInfo.SubJobs {
+			clone.MultiSchemaInfo.SubJobs[i].JobArgs = sub.JobArgs
 			clone.MultiSchemaInfo.SubJobs[i].Args = make([]any, len(sub.Args))
 			copy(clone.MultiSchemaInfo.SubJobs[i].Args, sub.Args)
 		}
@@ -486,7 +487,7 @@ func (job *Job) GetWarnings() (map[errors.ErrorID]*terror.Error, map[errors.Erro
 func (job *Job) FillArgs(args JobArgs) {
 	intest.Assert(job.Version == JobVersion1 || job.Version == JobVersion2, "job version is invalid")
 	if job.Version == JobVersion1 {
-		args.fillJobV1(job)
+		job.Args = args.getArgsV1(job)
 		return
 	}
 	job.Args = []any{args}
@@ -496,7 +497,7 @@ func (job *Job) FillArgs(args JobArgs) {
 func (job *Job) FillFinishedArgs(args FinishedJobArgs) {
 	intest.Assert(job.Version == JobVersion1 || job.Version == JobVersion2, "job version is invalid")
 	if job.Version == JobVersion1 {
-		args.fillFinishedJobV1(job)
+		job.Args = args.getFinishedArgsV1(job)
 		return
 	}
 	job.Args = []any{args}
@@ -584,20 +585,6 @@ func (job *Job) DecodeArgs(args ...any) error {
 	// use pointer
 	job.Args = args[:sz]
 	return nil
-}
-
-// DecodeDropIndexFinishedArgs decodes the drop index job's args when it's finished.
-func (job *Job) DecodeDropIndexFinishedArgs() (
-	indexName any, ifExists []bool, indexIDs []int64, partitionIDs []int64, hasVectors []bool, err error) {
-	ifExists = make([]bool, 1)
-	indexIDs = make([]int64, 1)
-	hasVectors = make([]bool, 1)
-	if err := job.DecodeArgs(&indexName, &ifExists[0], &indexIDs[0], &partitionIDs, &hasVectors[0]); err != nil {
-		if err := job.DecodeArgs(&indexName, &ifExists, &indexIDs, &partitionIDs, &hasVectors); err != nil {
-			return nil, []bool{false}, []int64{-1}, nil, []bool{false}, errors.Trace(err)
-		}
-	}
-	return
 }
 
 // String implements fmt.Stringer interface.
@@ -808,6 +795,7 @@ func (job *Job) MayNeedReorg() bool {
 		ActionRemovePartitioning, ActionAlterTablePartitioning:
 		return true
 	case ActionModifyColumn:
+		// TODO(joechenrh): remove CtxVars here
 		if len(job.CtxVars) > 0 {
 			needReorg, ok := job.CtxVars[0].(bool)
 			return ok && needReorg
@@ -882,6 +870,7 @@ func (job *Job) GetInvolvingSchemaInfo() []InvolvingSchemaInfo {
 // (when multi-schema change is not applicable) or more SubJobs.
 type SubJob struct {
 	Type        ActionType      `json:"type"`
+	JobArgs     JobArgs         `json:"-"`
 	Args        []any           `json:"-"`
 	RawArgs     json.RawMessage `json:"raw_args"`
 	SchemaState SchemaState     `json:"schema_state"`
@@ -918,6 +907,7 @@ func (sub *SubJob) IsFinished() bool {
 // ToProxyJob converts a sub-job to a proxy job.
 func (sub *SubJob) ToProxyJob(parentJob *Job, seq int) Job {
 	return Job{
+		Version:         parentJob.Version,
 		ID:              parentJob.ID,
 		Type:            sub.Type,
 		SchemaID:        parentJob.SchemaID,
@@ -939,7 +929,6 @@ func (sub *SubJob) ToProxyJob(parentJob *Job, seq int) Job {
 		DependencyID:    parentJob.DependencyID,
 		Query:           parentJob.Query,
 		BinlogInfo:      parentJob.BinlogInfo,
-		Version:         parentJob.Version,
 		ReorgMeta:       parentJob.ReorgMeta,
 		MultiSchemaInfo: &MultiSchemaInfo{Revertible: sub.Revertible, Seq: int32(seq)},
 		Priority:        parentJob.Priority,

@@ -143,8 +143,10 @@ func GetGlobalAutoIDAlloc(r autoid.Requirement, dbID int64, tblInfo *model.Table
 	case hasRowID || hasAutoIncID:
 		allocators := make([]autoid.Allocator, 0, 2)
 		if tblInfo.SepAutoInc() && hasAutoIncID {
+			// we must pass CustomAutoIncCacheOption(1) so NewAllocator can create
+			// correct single point allocator.
 			allocators = append(allocators, autoid.NewAllocator(r, dbID, tblInfo.ID, tblInfo.IsAutoIncColUnsigned(),
-				autoid.AutoIncrementType, noCache, tblVer))
+				autoid.AutoIncrementType, autoid.CustomAutoIncCacheOption(1), tblVer))
 		}
 		// this allocator is NOT used when SepAutoInc=true and auto increment column is clustered.
 		allocators = append(allocators, autoid.NewAllocator(r, dbID, tblInfo.ID, tblInfo.IsAutoIncColUnsigned(),

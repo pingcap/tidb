@@ -211,6 +211,7 @@ func NewJobWrapper(job *model.Job, idAllocated bool) *JobWrapper {
 	return &JobWrapper{
 		Job:         job,
 		IDAllocated: idAllocated,
+		JobArgs:     &model.EmptyArgs{},
 		ResultCh:    []chan jobSubmitResult{make(chan jobSubmitResult)},
 	}
 }
@@ -226,13 +227,29 @@ func NewJobWrapperWithArgs(job *model.Job, args model.JobArgs, idAllocated bool)
 	}
 }
 
+// FillArgsWithSubJobs fill args for job and its sub jobs
+func (jobW *JobWrapper) FillArgsWithSubJobs() {
+	if jobW.Type != model.ActionMultiSchemaChange {
+		jobW.FillArgs(jobW.JobArgs)
+	} else {
+		for _, sub := range jobW.MultiSchemaInfo.SubJobs {
+			fakeJob := model.Job{
+				Version: jobW.Version,
+				Type:    sub.Type,
+			}
+			fakeJob.FillArgs(sub.JobArgs)
+			sub.Args = fakeJob.Args
+		}
+	}
+}
+
 // NotifyResult notifies the job submit result.
-func (t *JobWrapper) NotifyResult(err error) {
-	merged := len(t.ResultCh) > 1
-	for _, resultCh := range t.ResultCh {
+func (jobW *JobWrapper) NotifyResult(err error) {
+	merged := len(jobW.ResultCh) > 1
+	for _, resultCh := range jobW.ResultCh {
 		resultCh <- jobSubmitResult{
 			err:    err,
-			jobID:  t.ID,
+			jobID:  jobW.ID,
 			merged: merged,
 		}
 	}
@@ -516,18 +533,6 @@ func (dc *ddlCtx) removeReorgCtx(jobID int64) {
 			delete(dc.reorgCtx.reorgCtxMap, jobID)
 		}
 	}
-}
-
-func (dc *ddlCtx) notifyReorgWorkerJobStateChange(job *model.Job) {
-	rc := dc.getReorgCtx(job.ID)
-	if rc == nil {
-		logutil.DDLLogger().Warn("cannot find reorgCtx", zap.Int64("Job ID", job.ID))
-		return
-	}
-	logutil.DDLLogger().Info("notify reorg worker the job's state",
-		zap.Int64("Job ID", job.ID), zap.Stringer("Job State", job.State),
-		zap.Stringer("Schema State", job.SchemaState))
-	rc.notifyJobState(job.State)
 }
 
 // EnableTiFlashPoll enables TiFlash poll loop aka PollTiFlashReplicaStatus.

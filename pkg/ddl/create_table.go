@@ -165,6 +165,8 @@ func onCreateTable(jobCtx *jobContext, job *model.Job) (ver int64, _ error) {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
+	jobCtx.jobArgs = args
+
 	tbInfo := args.TableInfo
 
 	if len(tbInfo.ForeignKeys) > 0 {
@@ -410,7 +412,7 @@ func buildTableInfoWithCheck(ctx *metabuild.Context, store kv.Storage, s *ast.Cr
 	if err = checkTableInfoValidWithStmt(ctx, tbInfo, s); err != nil {
 		return nil, err
 	}
-	if err = checkTableInfoValidExtra(ctx.GetExprCtx().GetEvalCtx().ErrCtx(), store, tbInfo); err != nil {
+	if err = checkTableInfoValidExtra(ctx.GetExprCtx().GetEvalCtx().ErrCtx(), store, s.Table.Schema, tbInfo); err != nil {
 		return nil, err
 	}
 	return tbInfo, nil
@@ -511,7 +513,7 @@ func checkGeneratedColumn(ctx *metabuild.Context, schemaName pmodel.CIStr, table
 	return nil
 }
 
-func checkVectorIndexIfNeedTiFlashReplica(store kv.Storage, tblInfo *model.TableInfo) error {
+func checkVectorIndexIfNeedTiFlashReplica(store kv.Storage, dbName pmodel.CIStr, tblInfo *model.TableInfo) error {
 	var hasVectorIndex bool
 	for _, idx := range tblInfo.Indices {
 		if idx.VectorInfo != nil {
@@ -524,6 +526,9 @@ func checkVectorIndexIfNeedTiFlashReplica(store kv.Storage, tblInfo *model.Table
 	}
 	if store == nil {
 		return errors.New("the store is nil")
+	}
+	if err := isTableTiFlashSupported(dbName, tblInfo); err != nil {
+		return errors.Trace(err)
 	}
 
 	if tblInfo.TiFlashReplica == nil || tblInfo.TiFlashReplica.Count == 0 {
@@ -551,7 +556,7 @@ func checkVectorIndexIfNeedTiFlashReplica(store kv.Storage, tblInfo *model.Table
 // name length and column count.
 // (checkTableInfoValid is also used in repairing objects which don't perform
 // these checks. Perhaps the two functions should be merged together regardless?)
-func checkTableInfoValidExtra(ec errctx.Context, store kv.Storage, tbInfo *model.TableInfo) error {
+func checkTableInfoValidExtra(ec errctx.Context, store kv.Storage, dbName pmodel.CIStr, tbInfo *model.TableInfo) error {
 	if err := checkTooLongTable(tbInfo.Name); err != nil {
 		return err
 	}
@@ -574,7 +579,7 @@ func checkTableInfoValidExtra(ec errctx.Context, store kv.Storage, tbInfo *model
 	if err := checkGlobalIndexes(ec, tbInfo); err != nil {
 		return errors.Trace(err)
 	}
-	if err := checkVectorIndexIfNeedTiFlashReplica(store, tbInfo); err != nil {
+	if err := checkVectorIndexIfNeedTiFlashReplica(store, dbName, tbInfo); err != nil {
 		return errors.Trace(err)
 	}
 
@@ -976,7 +981,7 @@ func setEmptyConstraintName(namesMap map[string]bool, constr *ast.Constraint) {
 		var colName string
 		for _, keyPart := range constr.Keys {
 			if keyPart.Expr != nil {
-				colName = "expression_index"
+				colName = getAnonymousIndexPrefix(constr.Tp == ast.ConstraintVector)
 			}
 		}
 		if colName == "" {

@@ -203,8 +203,13 @@ func (m *JobManager) ReportMetrics(se session.Session) {
 	m.reportMetrics(se)
 }
 
-func (j *ttlJob) Finish(se session.Session, now time.Time, summary *TTLSummary) {
-	j.finish(se, now, summary)
+// CheckFinishedJob is an exported version of checkFinishedJob
+func (m *JobManager) CheckFinishedJob(se session.Session) {
+	m.checkFinishedJob(se)
+}
+
+func (j *ttlJob) Finish(se session.Session, now time.Time, summary *TTLSummary) error {
+	return j.finish(se, now, summary)
 }
 
 func (j *ttlJob) ID() string {

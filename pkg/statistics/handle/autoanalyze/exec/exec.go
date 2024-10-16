@@ -50,7 +50,7 @@ func AutoAnalyze(
 	statsVer int,
 	sql string,
 	params ...any,
-) {
+) bool {
 	startTime := time.Now()
 	_, _, err := RunAnalyzeStmt(sctx, statsHandle, sysProcTracker, statsVer, sql, params...)
 	dur := time.Since(startTime)
@@ -67,9 +67,10 @@ func AutoAnalyze(
 			zap.Error(err),
 		)
 		metrics.AutoAnalyzeCounter.WithLabelValues("failed").Inc()
-	} else {
-		metrics.AutoAnalyzeCounter.WithLabelValues("succ").Inc()
+		return false
 	}
+	metrics.AutoAnalyzeCounter.WithLabelValues("succ").Inc()
+	return true
 }
 
 // RunAnalyzeStmt executes the analyze statement.

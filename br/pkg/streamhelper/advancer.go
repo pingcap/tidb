@@ -236,7 +236,6 @@ func (c *CheckpointAdvancer) tryAdvance(ctx context.Context, length int,
 	})
 	clampedRanges := utils.IntersectAll(ranges, utils.CloneSlice(c.taskRange))
 	for _, r := range clampedRanges {
-		r := r
 		workers.ApplyOnErrorGroup(eg, func() (e error) {
 			defer c.recordTimeCost("get regions in range")()
 			defer utils.PanicToErr(&e)
