@@ -1289,6 +1289,7 @@ func TestSingleConsumerCTE(t *testing.T) {
 	tk.MustExec("create table t1 (c1 int primary key, c2 int, index c2 (c2));")
 	tk.MustExec("create table t2 (c1 int unique, c2 int);")
 	tk.MustExec("insert into t values (1), (5), (10), (15), (20), (30), (50);")
+	tk.MustExec("create table test(a int);")
 
 	var (
 		input  []string
@@ -1305,7 +1306,7 @@ func TestSingleConsumerCTE(t *testing.T) {
 		testdata.OnRecord(func() {
 			output[i].SQL = ts
 		})
-		if strings.HasPrefix(ts, "set") {
+		if strings.HasPrefix(ts, "set") || strings.HasPrefix(ts, "create") {
 			tk.MustExec(ts)
 			continue
 		}
