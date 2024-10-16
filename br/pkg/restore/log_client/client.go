@@ -249,6 +249,7 @@ func (rc *LogClient) RestoreCompactedSstFiles(
 	rules map[int64]*restoreutils.RewriteRules,
 	onProgress func(int64),
 ) error {
+	infos := make([]restore.RestoreFilesInfo, 0, 8)
 	for r := compactionsIter.TryNext(ctx); !r.Finished; r = compactionsIter.TryNext(ctx) {
 		if r.Err != nil {
 			return r.Err
@@ -264,11 +265,20 @@ func (rc *LogClient) RestoreCompactedSstFiles(
 			SSTFiles:     i.SstOutputs,
 			RewriteRules: rewriteRules,
 		}
-		err := rc.restorer.Restore(onProgress, []restore.RestoreFilesInfo{info})
+		infos = append(infos, info)
+	}
+	i := 0
+	for ; i+8 < len(infos); i += 8 {
+		err := rc.restorer.Restore(onProgress, infos[i:i+8])
 		if err != nil {
 			return err
 		}
 	}
+	err := rc.restorer.Restore(onProgress, infos[i:])
+	if err != nil {
+		return err
+	}
+
 	return rc.restorer.OnFinish()
 }
 

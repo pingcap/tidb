@@ -310,6 +310,7 @@ type PipelineFileRestorerWrapper[T any] struct {
 
 func (p *PipelineFileRestorerWrapper[T]) WrapIter(ctx context.Context, i iter.TryNextor[T], strategy split.SplitStrategy[T]) iter.TryNextor[T] {
 	return iter.MapFilter(i, func(item T) (T, bool) {
+		log.Info("start to process item")
 		if strategy.ShouldSkip(item) {
 			return item, true
 		}

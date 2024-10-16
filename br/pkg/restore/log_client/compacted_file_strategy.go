@@ -55,7 +55,7 @@ func (l *CompactedFileSplitStrategy) Accumulate(file *backuppb.LogFileSubcompact
 }
 
 func (l *CompactedFileSplitStrategy) ShouldSplit() bool {
-	return l.AccumulateCount > 2048
+	return l.AccumulateCount > 256
 }
 
 func (l *CompactedFileSplitStrategy) ShouldSkip(file *backuppb.LogFileSubcompaction) bool {

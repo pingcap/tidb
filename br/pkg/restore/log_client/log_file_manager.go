@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/pingcap/errors"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
@@ -278,10 +279,13 @@ func (rc *LogFileManager) collectDDLFilesAndPrepareCache(
 	ctx context.Context,
 	files MetaGroupIter,
 ) ([]Log, error) {
+	start := time.Now()
+	log.Info("start to collect all ddl files")
 	fs := iter.CollectAll(ctx, files)
 	if fs.Err != nil {
 		return nil, errors.Annotatef(fs.Err, "failed to collect from files")
 	}
+	log.Info("finish to collect all ddl files", zap.Duration("take", time.Since(start)))
 
 	dataFileInfos := make([]*backuppb.DataFileInfo, 0)
 	for _, g := range fs.Item {
