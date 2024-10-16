@@ -1360,14 +1360,27 @@ func (p *LogicalJoin) extractOnCondition(conditions []expression.Expression, der
 	return p.ExtractOnCondition(conditions, p.Children()[0].Schema(), p.Children()[1].Schema(), deriveLeft, deriveRight)
 }
 
+func extractTableAlias(cteList []*ast.CommonTableExpression, p base.Plan, parentOffset int) *utilhint.HintedTable {
+	alias := util.ExtractTableAlias(p, parentOffset)
+	if alias != nil {
+		for _, cte := range cteList {
+			if cte.Name.L == alias.TblName.L {
+				// with CTE, this offset cannot be smaller than 1.
+				alias.SelectOffset = max(1, alias.SelectOffset-1)
+			}
+		}
+	}
+	return alias
+}
+
 // SetPreferredJoinTypeAndOrder sets the preferred join type and order for the LogicalJoin.
-func (p *LogicalJoin) SetPreferredJoinTypeAndOrder(hintInfo *utilhint.PlanHints) {
+func (p *LogicalJoin) SetPreferredJoinTypeAndOrder(cteList []*ast.CommonTableExpression, hintInfo *utilhint.PlanHints) {
 	if hintInfo == nil {
 		return
 	}
 
-	lhsAlias := util.ExtractTableAlias(p.Children()[0], p.QueryBlockOffset())
-	rhsAlias := util.ExtractTableAlias(p.Children()[1], p.QueryBlockOffset())
+	lhsAlias := extractTableAlias(cteList, p.Children()[0], p.QueryBlockOffset())
+	rhsAlias := extractTableAlias(cteList, p.Children()[1], p.QueryBlockOffset())
 	if hintInfo.IfPreferMergeJoin(lhsAlias) {
 		p.PreferJoinType |= utilhint.PreferMergeJoin
 		p.LeftPreferJoinType |= utilhint.PreferMergeJoin
