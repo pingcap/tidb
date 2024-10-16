@@ -2128,3 +2128,17 @@ Level	Code	Message
 Warning	1264	Out of range value for column 'd' at row 1
 Warning	1292	Truncated incorrect INTEGER value: '18446744073709551616'
 set sql_mode=DEFAULT;
+drop table if exists parent, child;
+create table parent (id int primary key, ref int, key(ref));
+create table child (id int primary key, ref int, foreign key (ref) references parent(ref));
+insert into parent values (1, 1), (2, 2);
+insert into child values (1, 1);
+insert into child values (1, 2) on duplicate key update ref = 2;
+insert into child values (1, 3) on duplicate key update ref = 3;
+Error 1452 (23000): Cannot add or update a child row: a foreign key constraint fails (`executor__insert`.`child`, CONSTRAINT `fk_1` FOREIGN KEY (`ref`) REFERENCES `parent` (`ref`))
+insert ignore into child values (1, 3) on duplicate key update ref = 3;
+Level	Code	Message
+Warning	1452	Cannot add or update a child row: a foreign key constraint fails (`executor__insert`.`child`, CONSTRAINT `fk_1` FOREIGN KEY (`ref`) REFERENCES `parent` (`ref`))
+insert into parent values (2, 3) on duplicate key update ref = 3;
+Error 1451 (23000): Cannot delete or update a parent row: a foreign key constraint fails (`executor__insert`.`child`, CONSTRAINT `fk_1` FOREIGN KEY (`ref`) REFERENCES `parent` (`ref`))
+insert ignore into parent values (2, 3) on duplicate key update ref = 3;

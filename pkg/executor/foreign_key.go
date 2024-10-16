@@ -619,6 +619,23 @@ func (fkc FKCheckExec) checkRows(ctx context.Context, sc *stmtctx.StatementConte
 	return nil
 }
 
+// checkFKIgnoreErr will use `fkc.checkRows` to check the rows. The `fkc.checkRows` will ignore the error and append the error as warning to the statement context.
+func checkFKIgnoreErr(ctx context.Context, sctx sessionctx.Context, fkChecks []*FKCheckExec, toBeCheckedRows []toBeCheckedRow) error {
+	txn, err := sctx.Txn(true)
+	if err != nil {
+		return err
+	}
+
+	for _, fkc := range fkChecks {
+		err := fkc.checkRows(ctx, sctx.GetSessionVars().StmtCtx, txn, toBeCheckedRows)
+		if err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
 func (b *executorBuilder) buildTblID2FKCascadeExecs(tblID2Table map[int64]table.Table, tblID2FKCascades map[int64][]*plannercore.FKCascade) (map[int64][]*FKCascadeExec, error) {
 	fkCascadesMap := make(map[int64][]*FKCascadeExec)
 	for tid, tbl := range tblID2Table {

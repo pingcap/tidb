@@ -56,7 +56,7 @@ var (
 func updateRecord(
 	ctx context.Context, sctx sessionctx.Context, h kv.Handle, oldData, newData []types.Datum, modified []bool,
 	t table.Table,
-	onDup bool, _ *memory.Tracker, fkChecks []*FKCheckExec, fkCascades []*FKCascadeExec, dupKeyMode table.DupKeyCheckMode,
+	onDup bool, _ *memory.Tracker, fkChecks []*FKCheckExec, fkCascades []*FKCascadeExec, dupKeyMode table.DupKeyCheckMode, ignoreErr bool,
 ) (bool, error) {
 	r, ctx := tracing.StartRegionEx(ctx, "executor.updateRecord")
 	defer r.End()
@@ -221,10 +221,12 @@ func updateRecord(
 			}
 		}
 	}
-	for _, fkt := range fkChecks {
-		err := fkt.updateRowNeedToCheck(sc, oldData, newData)
-		if err != nil {
-			return false, err
+	if !ignoreErr {
+		for _, fkt := range fkChecks {
+			err := fkt.updateRowNeedToCheck(sc, oldData, newData)
+			if err != nil {
+				return false, err
+			}
 		}
 	}
 	for _, fkc := range fkCascades {
