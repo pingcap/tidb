@@ -45,6 +45,8 @@ type RewriteRules struct {
 	Data        []*import_sstpb.RewriteRule
 	OldKeyspace []byte
 	NewKeyspace []byte
+	// used to record checkpoint data
+	NewTableID int64
 }
 
 // Append append its argument to this rewrite rules.
@@ -172,7 +174,7 @@ func GetRewriteRuleOfTable(
 		})
 	}
 
-	return &RewriteRules{Data: dataRules}
+	return &RewriteRules{Data: dataRules, NewTableID: newTableID}
 }
 
 // ValidateFileRewriteRule uses rewrite rules to validate the ranges of a file.

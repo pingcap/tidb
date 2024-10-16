@@ -309,19 +309,23 @@ type PipelineFileRestorerWrapper[T any] struct {
 }
 
 func (p *PipelineFileRestorerWrapper[T]) WrapIter(ctx context.Context, i iter.TryNextor[T], strategy split.SplitStrategy[T]) iter.TryNextor[T] {
-	return iter.Map(i, func(item T) T {
+	return iter.MapFilter(i, func(item T) (T, bool) {
+		if strategy.ShouldSkip(item) {
+			return item, true
+		}
 		strategy.Accumulate(item)
 		// Check if we need to split
-		if strategy.ShouldSplit() { // Assuming ShouldSplit returns true when split is needed
+		if strategy.ShouldSplit() {
 			log.Info("start to split the regions in pipeline")
 			startTime := time.Now()
 			s := strategy.AccumulationsIter()
 			err := p.ExecuteRegions(ctx, s)
 			if err != nil {
-				log.Error("failed to split regions in pipeline, anyway we can still doing restore")
+				log.Error("failed to split regions in pipeline, anyway we can still doing restore", zap.Error(err))
 			}
+			strategy.ResetAccumulations()
 			log.Info("end to split the regions in pipeline", zap.Duration("takes", time.Since(startTime)))
 		}
-		return item
+		return item, false
 	})
 }

@@ -1427,15 +1427,6 @@ func restoreStream(
 		return errors.Trace(err)
 	}
 
-	// generate the upstream->downstream id maps for checkpoint
-	idrules := make(map[int64]int64)
-	downstreamIdset := make(map[int64]struct{})
-	for upstreamId, rule := range rewriteRules {
-		downstreamId := restoreutils.GetRewriteTableID(upstreamId, rule)
-		idrules[upstreamId] = downstreamId
-		downstreamIdset[downstreamId] = struct{}{}
-	}
-
 	logFilesIter, err := client.LoadDMLFiles(ctx)
 	if err != nil {
 		return errors.Trace(err)
@@ -1462,13 +1453,18 @@ func restoreStream(
 			totalSize += size
 			checkpointTotalKVCount += kvCount
 			checkpointTotalSize += size
+			// increase the progress
+			p.IncBy(int64(kvCount))
 		}
 		importModeSwitcher.SwitchToImportMode(ctx)
-		compactedSplitIter, err := client.WrapCompactedFilesIterWithSplitHelper(compactionIter, rewriteRules, sstCheckpointSets, splitSize, splitKeys)
+		compactedSplitIter, err := client.WrapCompactedFilesIterWithSplitHelper(
+			ctx, compactionIter, rewriteRules, sstCheckpointSets,
+			updateStatsWithCheckpoint, splitSize, splitKeys,
+		)
 		if err != nil {
 			return errors.Trace(err)
 		}
-		err = client.RestoreCompactedSstFiles(ctx, compactedSplitIter, sstCheckpointSets, updateStatsWithCheckpoint, rewriteRules, p.IncBy)
+		err = client.RestoreCompactedSstFiles(ctx, compactedSplitIter, rewriteRules, p.IncBy)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -1479,22 +1475,22 @@ func restoreStream(
 
 		// TODO unify the log checkpoint logic to the sst checkpoint
 		if cfg.UseCheckpoint {
-			logFilesIter, err = client.WrapLogFilesIterWithCheckpoint(ctx, logFilesIter, downstreamIdset, updateStatsWithCheckpoint, p.Inc)
-			if err != nil {
-				return errors.Trace(err)
-			}
+			//logFilesIter, err = client.WrapLogFilesIterWithCheckpoint(ctx, logFilesIter, downstreamIdset, updateStatsWithCheckpoint, p.Inc)
+			//if err != nil {
+			//	return errors.Trace(err)
+			//}
 			failpoint.Inject("corrupt-files", func(v failpoint.Value) {
 				var retErr error
 				logFilesIter, retErr = logclient.WrapLogFilesIterWithCheckpointFailpoint(v, logFilesIter, rewriteRules)
 				defer func() { pErr = retErr }()
 			})
 		}
-		logFilesIterWithSplit, err := client.WrapLogFilesIterWithSplitHelper(logFilesIter, rewriteRules, splitSize, splitKeys)
+		logFilesIterWithSplit, err := client.WrapLogFilesIterWithSplitHelper(ctx, logFilesIter, execCtx, rewriteRules, updateStatsWithCheckpoint, splitSize, splitKeys)
 		if err != nil {
 			return errors.Trace(err)
 		}
 
-		return client.RestoreKVFiles(ctx, rewriteRules, idrules, logFilesIterWithSplit,
+		return client.RestoreKVFiles(ctx, rewriteRules, logFilesIterWithSplit,
 			cfg.PitrBatchCount, cfg.PitrBatchSize, updateStats, p.IncBy, &cfg.LogBackupCipherInfo, cfg.MasterKeyConfig.MasterKeys)
 	})
 	if err != nil {
@@ -1534,7 +1530,7 @@ func restoreStream(
 	}
 
 	failpoint.Inject("do-checksum-with-rewrite-rules", func(_ failpoint.Value) {
-		if err := client.FailpointDoChecksumForLogRestore(ctx, mgr.GetStorage().GetClient(), mgr.GetPDClient(), idrules, rewriteRules); err != nil {
+		if err := client.FailpointDoChecksumForLogRestore(ctx, mgr.GetStorage().GetClient(), mgr.GetPDClient(), rewriteRules); err != nil {
 			failpoint.Return(errors.Annotate(err, "failed to do checksum"))
 		}
 	})

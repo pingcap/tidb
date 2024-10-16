@@ -42,26 +42,31 @@ type SplitStrategy[T any] interface {
 	Accumulate(T)
 	// ShouldSplit checks if the accumulated values meet the criteria for triggering a split.
 	ShouldSplit() bool
+	// Skip the file by checkpoints or other rules
+	ShouldSkip(T) bool
 	// AccumulationsIter returns an iterator for the accumulated values.
 	AccumulationsIter() *SplitHelperIterator
+	// Reset the buffer for next round
+	ResetAccumulations()
 }
 
 type BaseSplitStrategy struct {
-	TableSplitter map[int64]*SplitHelper
-	Rules         map[int64]*restoreutils.RewriteRules
+	AccumulateCount int
+	TableSplitter   map[int64]*SplitHelper
+	Rules           map[int64]*restoreutils.RewriteRules
 }
 
 func NewBaseSplitStrategy(rules map[int64]*restoreutils.RewriteRules) *BaseSplitStrategy {
 	return &BaseSplitStrategy{
-		TableSplitter: make(map[int64]*SplitHelper),
-		Rules:         rules,
+		AccumulateCount: 0,
+		TableSplitter:   make(map[int64]*SplitHelper),
+		Rules:           rules,
 	}
 }
 
 func (b *BaseSplitStrategy) AccumulationsIter() *SplitHelperIterator {
 	tableSplitters := make([]*RewriteSplitter, 0, len(b.TableSplitter))
 	for tableID, splitter := range b.TableSplitter {
-		delete(b.TableSplitter, tableID)
 		rewriteRule, exists := b.Rules[tableID]
 		if !exists {
 			log.Info("skip splitting due to no table id matched", zap.Int64("tableID", tableID))
@@ -83,6 +88,12 @@ func (b *BaseSplitStrategy) AccumulationsIter() *SplitHelperIterator {
 		return bytes.Compare(tableSplitters[i].RewriteKey, tableSplitters[j].RewriteKey) < 0
 	})
 	return NewSplitHelperIterator(tableSplitters)
+}
+
+func (b *BaseSplitStrategy) ResetAccumulations() {
+	log.Info("reset accumulations")
+	clear(b.TableSplitter)
+	b.AccumulateCount = 0
 }
 
 type RewriteSplitter struct {
@@ -135,7 +146,7 @@ type MultiRegionsSplitter interface {
 
 type RegionsSplitter struct {
 	*RegionSplitter
-	pool               util.WorkerPool
+	pool               *util.WorkerPool
 	splitThreSholdSize uint64
 	splitThreSholdKeys int64
 
@@ -148,7 +159,9 @@ func NewRegionsSplitter(
 	splitSize uint64,
 	splitKeys int64,
 ) RegionsSplitter {
+	pool := util.NewWorkerPool(128, "split")
 	return RegionsSplitter{
+		pool:               pool,
 		RegionSplitter:     NewRegionSplitter(client),
 		splitThreSholdSize: splitSize,
 		splitThreSholdKeys: splitKeys,

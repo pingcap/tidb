@@ -65,6 +65,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/codec"
+	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	filter "github.com/pingcap/tidb/pkg/util/table-filter"
 	"github.com/tikv/client-go/v2/config"
 	kvutil "github.com/tikv/client-go/v2/util"
@@ -245,8 +246,6 @@ func (rc *LogClient) CollectCompactedSsts(
 func (rc *LogClient) RestoreCompactedSstFiles(
 	ctx context.Context,
 	compactionsIter iter.TryNextor[*backuppb.LogFileSubcompaction],
-	checkpointsSet map[string]struct{},
-	updateStats func(kvCount, size uint64),
 	rules map[int64]*restoreutils.RewriteRules,
 	onProgress func(int64),
 ) error {
@@ -260,21 +259,9 @@ func (rc *LogClient) RestoreCompactedSstFiles(
 			log.Warn("Skipped excluded tables in restore.", zap.Int64("table_id", i.Meta.TableId))
 			continue
 		}
-		sstOutputs := make([]*backuppb.File, 0, len(i.SstOutputs))
-		for _, sst := range i.SstOutputs {
-			if _, ok := checkpointsSet[sst.Name]; !ok {
-				sstOutputs = append(sstOutputs, sst)
-			} else {
-				updateStats(sst.TotalKvs, sst.TotalBytes)
-			}
-		}
-		if len(sstOutputs) == 0 {
-			log.Info("Skipped non sst files item in restore.", zap.Int64("table_id", i.Meta.TableId))
-			continue
-		}
 		info := restore.RestoreFilesInfo{
 			TableID:      i.Meta.TableId,
-			SSTFiles:     sstOutputs,
+			SSTFiles:     i.SstOutputs,
 			RewriteRules: rewriteRules,
 		}
 		err := rc.restorer.Restore(onProgress, []restore.RestoreFilesInfo{info})
@@ -433,12 +420,13 @@ func (rc *LogClient) InitCheckpointMetadataForCompactedSstRestore(
 	existsCompactedCheckpoint := checkpoint.ExistsSstRestoreCheckpoint(ctx, rc.dom, checkpoint.CompactedRestoreCheckpointDatabaseName)
 	if existsCompactedCheckpoint {
 		execCtx := rc.se.GetSessionCtx().GetRestrictedSQLExecutor()
-		_, err := checkpoint.LoadCheckpointDataForSstRestore(ctx, execCtx, checkpoint.CompactedRestoreCheckpointDatabaseName, func(tableID int64, v checkpoint.RestoreValueType) {
+		t, err := checkpoint.LoadCheckpointDataForSstRestore(ctx, execCtx, checkpoint.CompactedRestoreCheckpointDatabaseName, func(tableID int64, v checkpoint.RestoreValueType) {
 			sstCheckpointSets[v.Name] = struct{}{}
 		})
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
+		summary.AdjustStartTimeToEarlierTime(t)
 	} else {
 		if err := checkpoint.SaveCheckpointMetadataForSstRestore(ctx, rc.se, checkpoint.CompactedRestoreCheckpointDatabaseName, nil); err != nil {
 			return nil, errors.Trace(err)
@@ -682,7 +670,6 @@ func ApplyKVFilesWithSingleMethod(
 func (rc *LogClient) RestoreKVFiles(
 	ctx context.Context,
 	rules map[int64]*restoreutils.RewriteRules,
-	idrules map[int64]int64,
 	logIter LogIter,
 	pitrBatchCount uint32,
 	pitrBatchSize uint32,
@@ -732,7 +719,6 @@ func (rc *LogClient) RestoreKVFiles(
 			skipFile += len(files)
 		} else {
 			applyWg.Add(1)
-			downstreamId := idrules[files[0].TableId]
 			rc.workerPool.ApplyOnErrorGroup(eg, func() (err error) {
 				fileStart := time.Now()
 				defer applyWg.Done()
@@ -746,7 +732,7 @@ func (rc *LogClient) RestoreKVFiles(
 						for _, f := range files {
 							filenames = append(filenames, f.Path+", ")
 							if rc.checkpointRunner != nil {
-								if e := checkpoint.AppendRangeForLogRestore(ectx, rc.checkpointRunner, f.MetaDataGroupName, downstreamId, f.OffsetInMetaGroup, f.OffsetInMergedGroup); e != nil {
+								if e := checkpoint.AppendRangeForLogRestore(ectx, rc.checkpointRunner, f.MetaDataGroupName, rule.NewTableID, f.OffsetInMetaGroup, f.OffsetInMergedGroup); e != nil {
 									err = errors.Annotate(e, "failed to append checkpoint data")
 									break
 								}
@@ -1447,9 +1433,11 @@ func (rc *LogClient) UpdateSchemaVersion(ctx context.Context) error {
 }
 
 func (rc *LogClient) WrapCompactedFilesIterWithSplitHelper(
+	ctx context.Context,
 	compactedIter iter.TryNextor[*backuppb.LogFileSubcompaction],
 	rules map[int64]*restoreutils.RewriteRules,
 	checkpointSets map[string]struct{},
+	updateStatsFn func(uint64, uint64),
 	splitSize uint64,
 	splitKeys int64,
 ) (iter.TryNextor[*backuppb.LogFileSubcompaction], error) {
@@ -1457,37 +1445,28 @@ func (rc *LogClient) WrapCompactedFilesIterWithSplitHelper(
 	w := restore.PipelineFileRestorerWrapper[*backuppb.LogFileSubcompaction]{
 		RegionsSplitter: split.NewRegionsSplitter(client, splitSize, splitKeys),
 	}
-	s := NewCompactedFileSplitStrategy(rules, checkpointSets)
-	return w.WrapIter(context.Background(), compactedIter, s), nil
+	s := NewCompactedFileSplitStrategy(rules, checkpointSets, updateStatsFn)
+	return w.WrapIter(ctx, compactedIter, s), nil
 }
 
-func (rc *LogClient) WrapLogFilesIterWithSplitHelper(logIter LogIter, rules map[int64]*restoreutils.RewriteRules, splitSize uint64, splitKeys int64) (LogIter, error) {
+func (rc *LogClient) WrapLogFilesIterWithSplitHelper(
+	ctx context.Context,
+	logIter LogIter,
+	execCtx sqlexec.RestrictedSQLExecutor,
+	rules map[int64]*restoreutils.RewriteRules,
+	updateStatsFn func(uint64, uint64),
+	splitSize uint64,
+	splitKeys int64,
+) (LogIter, error) {
 	client := split.NewClient(rc.pdClient, rc.pdHTTPClient, rc.tlsConf, maxSplitKeysOnce, 3)
 	w := restore.PipelineFileRestorerWrapper[*LogDataFileInfo]{
 		RegionsSplitter: split.NewRegionsSplitter(client, splitSize, splitKeys),
 	}
-	s := NewLogSplitStrategy(rules)
-	return w.WrapIter(context.Background(), logIter, s), nil
-}
-
-func (rc *LogClient) generateKvFilesSkipMap(ctx context.Context, downstreamIdset map[int64]struct{}) (*LogFilesSkipMap, error) {
-	skipMap := NewLogFilesSkipMap()
-	t, err := checkpoint.LoadCheckpointDataForLogRestore(
-		ctx, rc.se.GetSessionCtx().GetRestrictedSQLExecutor(), func(groupKey checkpoint.LogRestoreKeyType, off checkpoint.LogRestoreValueMarshaled) {
-			for tableID, foffs := range off.Foffs {
-				// filter out the checkpoint data of dropped table
-				if _, exists := downstreamIdset[tableID]; exists {
-					for _, foff := range foffs {
-						skipMap.Insert(groupKey, off.Goff, foff)
-					}
-				}
-			}
-		})
+	s, err := NewLogSplitStrategy(ctx, execCtx, rules, updateStatsFn)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	summary.AdjustStartTimeToEarlierTime(t)
-	return skipMap, nil
+	return w.WrapIter(ctx, logIter, s), nil
 }
 
 func WrapLogFilesIterWithCheckpointFailpoint(
@@ -1516,26 +1495,26 @@ func WrapLogFilesIterWithCheckpointFailpoint(
 	return logIter, nil
 }
 
-func (rc *LogClient) WrapLogFilesIterWithCheckpoint(
-	ctx context.Context,
-	logIter LogIter,
-	downstreamIdset map[int64]struct{},
-	updateStats func(kvCount, size uint64),
-	onProgress func(),
-) (LogIter, error) {
-	skipMap, err := rc.generateKvFilesSkipMap(ctx, downstreamIdset)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	return iter.FilterOut(logIter, func(d *LogDataFileInfo) bool {
-		if skipMap.NeedSkip(d.MetaDataGroupName, d.OffsetInMetaGroup, d.OffsetInMergedGroup) {
-			onProgress()
-			updateStats(uint64(d.NumberOfEntries), d.Length)
-			return true
-		}
-		return false
-	}), nil
-}
+// func (rc *LogClient) WrapLogFilesIterWithCheckpoint(
+// ctx context.Context,
+// logIter LogIter,
+// downstreamIdset map[int64]struct{},
+// updateStats func(kvCount, size uint64),
+// onProgress func(),
+// ) (LogIter, error) {
+// skipMap, err := rc.generateKvFilesSkipMap(ctx, downstreamIdset)
+// if err != nil {
+// return nil, errors.Trace(err)
+// }
+// return iter.FilterOut(logIter, func(d *LogDataFileInfo) bool {
+// if skipMap.NeedSkip(d.MetaDataGroupName, d.OffsetInMetaGroup, d.OffsetInMergedGroup) {
+// onProgress()
+// updateStats(uint64(d.NumberOfEntries), d.Length)
+// return true
+// }
+// return false
+// }), nil
+// }
 
 const (
 	alterTableDropIndexSQL         = "ALTER TABLE %n.%n DROP INDEX %n"
@@ -1825,7 +1804,6 @@ func (rc *LogClient) FailpointDoChecksumForLogRestore(
 	ctx context.Context,
 	kvClient kv.Client,
 	pdClient pd.Client,
-	idrules map[int64]int64,
 	rewriteRules map[int64]*restoreutils.RewriteRules,
 ) (finalErr error) {
 	startTS, err := restore.GetTSWithRetry(ctx, rc.pdClient)
@@ -1862,11 +1840,11 @@ func (rc *LogClient) FailpointDoChecksumForLogRestore(
 	infoSchema := rc.GetDomain().InfoSchema()
 	// downstream id -> upstream id
 	reidRules := make(map[int64]int64)
-	for upstreamID, downstreamID := range idrules {
-		reidRules[downstreamID] = upstreamID
+	for upstreamID, r := range rewriteRules {
+		reidRules[r.NewTableID] = upstreamID
 	}
-	for upstreamID, downstreamID := range idrules {
-		newTable, ok := infoSchema.TableByID(ctx, downstreamID)
+	for upstreamID, r := range rewriteRules {
+		newTable, ok := infoSchema.TableByID(ctx, r.NewTableID)
 		if !ok {
 			// a dropped table
 			continue
