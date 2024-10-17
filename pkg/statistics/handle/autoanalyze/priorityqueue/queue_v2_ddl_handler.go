@@ -26,7 +26,9 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/statistics/handle/autoanalyze/exec"
+	"github.com/pingcap/tidb/pkg/statistics/handle/lockstats"
 	statslogutil "github.com/pingcap/tidb/pkg/statistics/handle/logutil"
+	statsutil "github.com/pingcap/tidb/pkg/statistics/handle/util"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"go.uber.org/zap"
 )
@@ -105,6 +107,7 @@ func (pq *AnalysisPriorityQueueV2) getAndDeleteJob(tableID int64) error {
 // recreateAndPushJob is a helper function that recreates a job and pushes it to the queue.
 func (pq *AnalysisPriorityQueueV2) recreateAndPushJob(
 	sctx sessionctx.Context,
+	lockedTables map[int64]struct{},
 	pruneMode variable.PartitionPruneMode,
 	stats *statistics.Table,
 ) error {
@@ -116,7 +119,7 @@ func (pq *AnalysisPriorityQueueV2) recreateAndPushJob(
 	}
 	jobFactory := NewAnalysisJobFactory(sctx, autoAnalyzeRatio, currentTs)
 	is := sctx.GetDomainInfoSchema().(infoschema.InfoSchema)
-	job := pq.tryCreateJob(is, stats, pruneMode, jobFactory)
+	job := pq.tryCreateJob(is, stats, pruneMode, jobFactory, lockedTables)
 	return pq.pushWithoutLock(job)
 }
 
@@ -127,11 +130,15 @@ func (pq *AnalysisPriorityQueueV2) recreateAndPushJob(
 func (pq *AnalysisPriorityQueueV2) recreateAndPushJobForTable(sctx sessionctx.Context, tableInfo *model.TableInfo) error {
 	pruneMode := variable.PartitionPruneMode(sctx.GetSessionVars().PartitionPruneMode.Load())
 	partitionInfo := tableInfo.GetPartitionInfo()
+	lockedTables, err := lockstats.QueryLockedTables(statsutil.StatsCtx, sctx)
+	if err != nil {
+		return err
+	}
 	// For static partitioned tables, we need to recreate the job for each partition.
 	if partitionInfo != nil && pruneMode == variable.Static {
 		for _, def := range partitionInfo.Definitions {
 			partitionStats := pq.statsHandle.GetPartitionStatsForAutoAnalyze(tableInfo, def.ID)
-			err := pq.recreateAndPushJob(sctx, pruneMode, partitionStats)
+			err := pq.recreateAndPushJob(sctx, lockedTables, pruneMode, partitionStats)
 			if err != nil {
 				return err
 			}
@@ -139,7 +146,7 @@ func (pq *AnalysisPriorityQueueV2) recreateAndPushJobForTable(sctx sessionctx.Co
 		return nil
 	}
 	stats := pq.statsHandle.GetTableStatsForAutoAnalyze(tableInfo)
-	return pq.recreateAndPushJob(sctx, pruneMode, stats)
+	return pq.recreateAndPushJob(sctx, lockedTables, pruneMode, stats)
 }
 
 func (pq *AnalysisPriorityQueueV2) handleAddIndexEvent(
@@ -169,12 +176,16 @@ func (pq *AnalysisPriorityQueueV2) handleAddIndexEvent(
 	is := sctx.GetDomainInfoSchema().(infoschema.InfoSchema)
 	pruneMode := variable.PartitionPruneMode(sctx.GetSessionVars().PartitionPruneMode.Load())
 	partitionInfo := tableInfo.GetPartitionInfo()
+	lockedTables, err := lockstats.QueryLockedTables(statsutil.StatsCtx, sctx)
+	if err != nil {
+		return err
+	}
 	if pruneMode == variable.Static && partitionInfo != nil {
 		// For static partitioned tables, we need to recreate the job for each partition.
 		for _, def := range partitionInfo.Definitions {
 			partitionID := def.ID
 			partitionStats := pq.statsHandle.GetPartitionStatsForAutoAnalyze(tableInfo, partitionID)
-			job := pq.tryCreateJob(is, partitionStats, pruneMode, jobFactory)
+			job := pq.tryCreateJob(is, partitionStats, pruneMode, jobFactory, lockedTables)
 			return pq.pushWithoutLock(job)
 		}
 		return nil
@@ -183,7 +194,7 @@ func (pq *AnalysisPriorityQueueV2) handleAddIndexEvent(
 	// For normal tables and dynamic partitioned tables, we only need to recreate the job for the table.
 	stats := pq.statsHandle.GetTableStatsForAutoAnalyze(tableInfo)
 	// Directly create a new job for the newly added index.
-	job := pq.tryCreateJob(is, stats, pruneMode, jobFactory)
+	job := pq.tryCreateJob(is, stats, pruneMode, jobFactory, lockedTables)
 	return pq.pushWithoutLock(job)
 }
 
