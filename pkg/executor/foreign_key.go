@@ -223,10 +223,19 @@ func (fkc *FKCheckExec) doCheck(ctx context.Context) error {
 		fkc.stats = &FKCheckRuntimeStats{}
 		defer fkc.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(fkc.ID(), fkc.stats)
 	}
-	if len(fkc.toBeCheckedKeys) == 0 && len(fkc.toBeCheckedPrefixKeys) == 0 {
-		return nil
-	}
 	start := time.Now()
+	if len(fkc.toBeCheckedKeys) == 0 && len(fkc.toBeCheckedPrefixKeys) == 0 {
+		// It's possible that the `toBeLockedKeys` is not empty. Because the `INSERT IGNORE` will use
+		// `checkRows` to check each row, which doesn't need this function to check the rows again, but
+		// it still needs to lock the rows.
+		err := fkc.doLock(ctx)
+		if len(fkc.toBeLockedKeys) > 0 && fkc.stats != nil {
+			fkc.stats.Lock = time.Since(start)
+			fkc.stats.Total = fkc.stats.Lock
+		}
+
+		return err
+	}
 	if fkc.stats != nil {
 		defer func() {
 			fkc.stats.Keys = len(fkc.toBeCheckedKeys) + len(fkc.toBeCheckedPrefixKeys)
@@ -248,6 +257,15 @@ func (fkc *FKCheckExec) doCheck(ctx context.Context) error {
 	if fkc.stats != nil {
 		fkc.stats.Check = time.Since(start)
 	}
+
+	err = fkc.doLock(ctx)
+	if fkc.stats != nil {
+		fkc.stats.Lock = time.Since(start) - fkc.stats.Check
+	}
+	return err
+}
+
+func (fkc *FKCheckExec) doLock(ctx context.Context) error {
 	if len(fkc.toBeLockedKeys) == 0 {
 		return nil
 	}
@@ -263,9 +281,6 @@ func (fkc *FKCheckExec) doCheck(ctx context.Context) error {
 	// doLockKeys may set TxnCtx.ForUpdate to 1, then if the lock meet write conflict, TiDB can't retry for update.
 	// So reset TxnCtx.ForUpdate to 0 then can be retry if meet write conflict.
 	atomic.StoreUint32(&sessVars.TxnCtx.ForUpdate, forUpdate)
-	if fkc.stats != nil {
-		fkc.stats.Lock = time.Since(start) - fkc.stats.Check
-	}
 	return err
 }
 
@@ -542,7 +557,7 @@ type fkCheckKey struct {
 	isPrefix bool
 }
 
-func (fkc FKCheckExec) checkRows(ctx context.Context, sc *stmtctx.StatementContext, txn kv.Transaction, rows []toBeCheckedRow) error {
+func (fkc *FKCheckExec) checkRows(ctx context.Context, sc *stmtctx.StatementContext, txn kv.Transaction, rows []toBeCheckedRow) error {
 	if fkc.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl != nil {
 		fkc.stats = &FKCheckRuntimeStats{}
 		defer fkc.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(fkc.ID(), fkc.stats)
