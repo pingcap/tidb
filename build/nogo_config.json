@@ -346,6 +346,18 @@
       "/cgo/": "no need to vet cgo code"
     }
   },
+  "intrange": {
+    "exclude_files": {
+      "pkg/parser/parser.go": "parser/parser.go code",
+      "external/": "no need to vet third party code",
+      ".*_generated\\.go$": "ignore generated code",
+      ".*mock.go$": "ignore generated code",
+      "/cgo/": "no need to vet cgo code"
+    },
+    "only_files": {
+      "pkg/util/": "util code"
+    }
+  },
   "inspect": {
     "exclude_files": {
       "pkg/parser/parser.go": "parser/parser.go code",
