@@ -1179,7 +1179,13 @@ func checkIfTempIndexReorgWorkCanSkip(
 	ctx.resourceGroupName = job.ReorgMeta.ResourceGroupName
 	firstIdxID := allIndexInfos[0].ID
 	lastIdxID := allIndexInfos[len(allIndexInfos)-1].ID
-	return checkIfTempIndexIsEmpty(ctx, store, tbl, firstIdxID, lastIdxID)
+	var globalIdxIDs []int64
+	for _, idxInfo := range allIndexInfos {
+		if idxInfo.Global {
+			globalIdxIDs = append(globalIdxIDs, idxInfo.ID)
+		}
+	}
+	return checkIfTempIndexIsEmpty(ctx, store, tbl, firstIdxID, lastIdxID, globalIdxIDs)
 }
 
 func checkIfTempIndexIsEmpty(
@@ -1187,30 +1193,35 @@ func checkIfTempIndexIsEmpty(
 	store kv.Storage,
 	tbl table.Table,
 	firstIdxID, lastIdxID int64,
+	globalIdxIDs []int64,
 ) bool {
+	tblMetaID := tbl.Meta().ID
 	if pTbl, ok := tbl.(table.PartitionedTable); ok {
 		for _, pid := range pTbl.GetAllPartitionIDs() {
-			pTbl := pTbl.GetPartition(pid)
-			if !checkIfTempIndexIsEmptyForPhysicalTable(ctx, store, pTbl, firstIdxID, lastIdxID) {
+			if !checkIfTempIndexIsEmptyForPhysicalTable(ctx, store, pid, firstIdxID, lastIdxID) {
+				return false
+			}
+		}
+		for _, globalIdxID := range globalIdxIDs {
+			if !checkIfTempIndexIsEmptyForPhysicalTable(ctx, store, tblMetaID, globalIdxID, globalIdxID) {
 				return false
 			}
 		}
 		return true
 	}
-	//nolint:forcetypeassert
-	plainTbl := tbl.(table.PhysicalTable)
-	return checkIfTempIndexIsEmptyForPhysicalTable(ctx, store, plainTbl, firstIdxID, lastIdxID)
+	return checkIfTempIndexIsEmptyForPhysicalTable(ctx, store, tblMetaID, firstIdxID, lastIdxID)
 }
 
 func checkIfTempIndexIsEmptyForPhysicalTable(
 	ctx *ReorgContext,
 	store kv.Storage,
-	tbl table.PhysicalTable,
+	pid int64,
 	firstIdxID, lastIdxID int64,
 ) bool {
-	start, end := encodeTempIndexRange(tbl.GetPhysicalID(), firstIdxID, lastIdxID)
+	start, end := encodeTempIndexRange(pid, firstIdxID, lastIdxID)
 	foundKey := false
-	err := iterateSnapshotKeys(ctx, store, kv.PriorityLow, tbl.IndexPrefix(), math.MaxUint64, start, end,
+	idxPrefix := tablecodec.GenTableIndexPrefix(pid)
+	err := iterateSnapshotKeys(ctx, store, kv.PriorityLow, idxPrefix, math.MaxUint64, start, end,
 		func(_ kv.Handle, _ kv.Key, _ []byte) (more bool, err error) {
 			foundKey = true
 			return false, nil
