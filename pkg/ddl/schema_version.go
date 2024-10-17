@@ -15,6 +15,7 @@
 package ddl
 
 import (
+	"context"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -248,17 +249,10 @@ func SetSchemaDiffForPartitionModify(diff *model.SchemaDiff, job *model.Job) err
 }
 
 // SetSchemaDiffForCreateTable set SchemaDiff for ActionCreateTable.
-func SetSchemaDiffForCreateTable(diff *model.SchemaDiff, job *model.Job) error {
+func SetSchemaDiffForCreateTable(diff *model.SchemaDiff, job *model.Job, jobCtx *jobContext) error {
 	diff.TableID = job.TableID
-	var tbInfo *model.TableInfo
-	// create table with foreign key will update tableInfo in the job args, so we
-	// must reuse already decoded ones.
-	// TODO make DecodeArgs can reuse already decoded args, so we can use GetCreateTableArgs.
-	if job.Version == model.JobVersion1 {
-		tbInfo, _ = job.Args[0].(*model.TableInfo)
-	} else {
-		tbInfo = job.Args[0].(*model.CreateTableArgs).TableInfo
-	}
+	tbInfo := jobCtx.jobArgs.(*model.CreateTableArgs).TableInfo
+
 	// When create table with foreign key, there are two schema status change:
 	// 1. none -> write-only
 	// 2. write-only -> public
@@ -359,7 +353,7 @@ func updateSchemaVersion(jobCtx *jobContext, job *model.Job, multiInfos ...schem
 	case model.ActionRemovePartitioning, model.ActionAlterTablePartitioning:
 		err = SetSchemaDiffForPartitionModify(diff, job)
 	case model.ActionCreateTable:
-		err = SetSchemaDiffForCreateTable(diff, job)
+		err = SetSchemaDiffForCreateTable(diff, job, jobCtx)
 	case model.ActionRecoverSchema:
 		err = SetSchemaDiffForRecoverSchema(diff, job)
 	case model.ActionFlashbackCluster:
@@ -375,7 +369,12 @@ func updateSchemaVersion(jobCtx *jobContext, job *model.Job, multiInfos ...schem
 	return schemaVersion, errors.Trace(err)
 }
 
-func waitVersionSynced(jobCtx *jobContext, job *model.Job, latestSchemaVersion int64) (err error) {
+func waitVersionSynced(
+	ctx context.Context,
+	jobCtx *jobContext,
+	job *model.Job,
+	latestSchemaVersion int64,
+) (err error) {
 	failpoint.Inject("checkDownBeforeUpdateGlobalVersion", func(val failpoint.Value) {
 		if val.(bool) {
 			if mockDDLErrOnce > 0 && mockDDLErrOnce != latestSchemaVersion {
@@ -389,7 +388,7 @@ func waitVersionSynced(jobCtx *jobContext, job *model.Job, latestSchemaVersion i
 		metrics.DDLWorkerHistogram.WithLabelValues(metrics.WorkerWaitSchemaChanged, job.Type.String(), metrics.RetLabel(err)).Observe(time.Since(timeStart).Seconds())
 	}()
 	// WaitVersionSynced returns only when all TiDB schemas are synced(exclude the isolated TiDB).
-	err = jobCtx.schemaVerSyncer.WaitVersionSynced(jobCtx.ctx, job.ID, latestSchemaVersion)
+	err = jobCtx.schemaVerSyncer.WaitVersionSynced(ctx, job.ID, latestSchemaVersion)
 	if err != nil {
 		logutil.DDLLogger().Info("wait latest schema version encounter error", zap.Int64("ver", latestSchemaVersion),
 			zap.Int64("jobID", job.ID), zap.Duration("take time", time.Since(timeStart)), zap.Error(err))
@@ -408,7 +407,7 @@ func waitVersionSynced(jobCtx *jobContext, job *model.Job, latestSchemaVersion i
 // but schema version might not sync.
 // So here we get the latest schema version to make sure all servers' schema version
 // update to the latest schema version in a cluster.
-func waitVersionSyncedWithoutMDL(jobCtx *jobContext, job *model.Job) error {
+func waitVersionSyncedWithoutMDL(ctx context.Context, jobCtx *jobContext, job *model.Job) error {
 	if !job.IsRunning() && !job.IsRollingback() && !job.IsDone() && !job.IsRollbackDone() {
 		return nil
 	}
@@ -431,5 +430,5 @@ func waitVersionSyncedWithoutMDL(jobCtx *jobContext, job *model.Job) error {
 		}
 	})
 
-	return updateGlobalVersionAndWaitSynced(jobCtx, latestSchemaVersion, job)
+	return updateGlobalVersionAndWaitSynced(ctx, jobCtx, latestSchemaVersion, job)
 }
