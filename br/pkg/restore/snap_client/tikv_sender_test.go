@@ -225,8 +225,6 @@ func cptKey(tableID int64, startRow int, cf string) string {
 }
 
 func TestSortAndValidateFileRanges(t *testing.T) {
-	updateCh := MockUpdateCh{}
-
 	d := restoreutils.DefaultCFName
 	w := restoreutils.WriteCFName
 	cases := []struct {
@@ -248,6 +246,7 @@ func TestSortAndValidateFileRanges(t *testing.T) {
 		// expected result
 		splitKeys              [][]byte
 		tableIDWithFilesGroups [][]snapclient.TableIDWithFiles
+		skipFileCount          int64
 	}{
 		{ // large sst, split-on-table, no checkpoint
 			upstreamTableIDs:     []int64{100, 200, 300},
@@ -277,6 +276,7 @@ func TestSortAndValidateFileRanges(t *testing.T) {
 				{files(302, []int{1}, []string{w})},
 				{files(100, []int{1, 1}, []string{w, d})},
 			},
+			skipFileCount: 0,
 		},
 		{ // large sst, split-on-table, checkpoint
 			upstreamTableIDs:     []int64{100, 200, 300},
@@ -305,6 +305,7 @@ func TestSortAndValidateFileRanges(t *testing.T) {
 				{files(302, []int{1}, []string{w})},
 				//{files(100, []int{1, 1}, []string{w, d})},
 			},
+			skipFileCount: 4,
 		},
 		{ // large sst, no split-on-table, no checkpoint
 			upstreamTableIDs:     []int64{100, 200, 300},
@@ -330,6 +331,7 @@ func TestSortAndValidateFileRanges(t *testing.T) {
 				{files(302, []int{1}, []string{w})},
 				{files(100, []int{1, 1}, []string{w, d})},
 			},
+			skipFileCount: 0,
 		},
 		{ // large sst, no split-on-table, checkpoint
 			upstreamTableIDs:     []int64{100, 200, 300},
@@ -358,6 +360,7 @@ func TestSortAndValidateFileRanges(t *testing.T) {
 				{files(302, []int{1}, []string{w})},
 				//{files(100, []int{1, 1}, []string{w, d})},
 			},
+			skipFileCount: 4,
 		},
 		{ // small sst 1, split-table, no checkpoint
 			upstreamTableIDs:     []int64{100, 200, 300},
@@ -383,6 +386,7 @@ func TestSortAndValidateFileRanges(t *testing.T) {
 				{files(302, []int{1}, []string{w})},
 				{files(100, []int{1, 1}, []string{w, d})},
 			},
+			skipFileCount: 0,
 		},
 		{ // small sst 1, split-table, checkpoint
 			upstreamTableIDs:     []int64{100, 200, 300},
@@ -411,6 +415,7 @@ func TestSortAndValidateFileRanges(t *testing.T) {
 				{files(302, []int{1}, []string{w})},
 				// {files(100, []int{1, 1}, []string{w, d})},
 			},
+			skipFileCount: 4,
 		},
 		{ // small sst 1, no split-table, no checkpoint
 			upstreamTableIDs:     []int64{100, 200, 300},
@@ -434,6 +439,7 @@ func TestSortAndValidateFileRanges(t *testing.T) {
 				{files(202, []int{2, 2}, []string{w, d}), files(302, []int{1}, []string{w})},
 				{files(100, []int{1, 1}, []string{w, d})},
 			},
+			skipFileCount: 0,
 		},
 		{ // small sst 1, no split-table, checkpoint
 			upstreamTableIDs:     []int64{100, 200, 300},
@@ -459,6 +465,7 @@ func TestSortAndValidateFileRanges(t *testing.T) {
 				{files(102, []int{1}, []string{w})},
 				{files(202, []int{2, 2}, []string{w, d}), files(302, []int{1}, []string{w})},
 			},
+			skipFileCount: 4,
 		},
 		{ // small sst 2, split-table, no checkpoint
 			upstreamTableIDs:     []int64{100, 200, 300},
@@ -481,6 +488,7 @@ func TestSortAndValidateFileRanges(t *testing.T) {
 				{files(302, []int{1}, []string{w})},
 				{files(100, []int{1, 1}, []string{w, d})},
 			},
+			skipFileCount: 0,
 		},
 		{ // small sst 2, split-table, checkpoint
 			upstreamTableIDs:     []int64{100, 200, 300},
@@ -505,6 +513,7 @@ func TestSortAndValidateFileRanges(t *testing.T) {
 				{files(202, []int{2, 2}, []string{w, d})},
 				{files(302, []int{1}, []string{w})},
 			},
+			skipFileCount: 4,
 		},
 		{ // small sst 2, no split-table, no checkpoint
 			upstreamTableIDs:     []int64{100, 200, 300},
@@ -528,6 +537,7 @@ func TestSortAndValidateFileRanges(t *testing.T) {
 				{files(202, []int{1, 1, 2, 2}, []string{w, d, w, d})},
 				{files(302, []int{1}, []string{w}), files(100, []int{1, 1}, []string{w, d})},
 			},
+			skipFileCount: 0,
 		},
 		{ // small sst 2, no split-table, checkpoint
 			upstreamTableIDs:     []int64{100, 200, 300},
@@ -554,6 +564,7 @@ func TestSortAndValidateFileRanges(t *testing.T) {
 				{files(202, []int{2, 2}, []string{w, d})},
 				{files(302, []int{1}, []string{w})},
 			},
+			skipFileCount: 4,
 		},
 		{ // small sst 3, no split-table, no checkpoint
 			upstreamTableIDs:     []int64{100, 200, 300},
@@ -576,6 +587,7 @@ func TestSortAndValidateFileRanges(t *testing.T) {
 				{files(102, []int{1}, []string{w}), files(202, []int{1, 1, 2, 2}, []string{w, d, w, d})},
 				{files(302, []int{1}, []string{w}), files(100, []int{1, 1}, []string{w, d})},
 			},
+			skipFileCount: 0,
 		},
 		{ // small sst 3, no split-table, checkpoint
 			upstreamTableIDs:     []int64{100, 200, 300},
@@ -601,6 +613,7 @@ func TestSortAndValidateFileRanges(t *testing.T) {
 				{files(102, []int{1}, []string{w}), files(202, []int{2, 2}, []string{w, d, w, d})},
 				{files(302, []int{1}, []string{w})},
 			},
+			skipFileCount: 4,
 		},
 		{ // small sst 4, no split-table, no checkpoint
 			upstreamTableIDs:     []int64{100, 200, 300},
@@ -624,6 +637,7 @@ func TestSortAndValidateFileRanges(t *testing.T) {
 				{files(202, []int{2, 2}, []string{w, d}), files(302, []int{1}, []string{w})},
 				{files(100, []int{1, 1}, []string{w, d})},
 			},
+			skipFileCount: 0,
 		},
 		{ // small sst 4, no split-table, checkpoint
 			upstreamTableIDs:     []int64{100, 200, 300},
@@ -649,16 +663,18 @@ func TestSortAndValidateFileRanges(t *testing.T) {
 				{files(102, []int{1}, []string{w})},
 				{files(202, []int{2, 2}, []string{w, d}), files(302, []int{1}, []string{w})},
 			},
+			skipFileCount: 4,
 		},
 	}
 
 	for i, cs := range cases {
 		t.Log(i)
 		createdTables := generateCreatedTables(t, cs.upstreamTableIDs, cs.upstreamPartitionIDs, downstreamID)
-		splitKeys, tableIDWithFilesGroups, err := snapclient.SortAndValidateFileRanges(createdTables, cs.files, cs.checkpointSetWithTableID, cs.splitSizeBytes, cs.splitKeyCount, cs.splitOnTable, updateCh)
+		splitKeys, tableIDWithFilesGroups, skipFileCount, err := snapclient.SortAndValidateFileRanges(createdTables, cs.files, cs.checkpointSetWithTableID, cs.splitSizeBytes, cs.splitKeyCount, cs.splitOnTable)
 		require.NoError(t, err)
 		require.Equal(t, cs.splitKeys, splitKeys)
 		require.Equal(t, len(cs.tableIDWithFilesGroups), len(tableIDWithFilesGroups))
+		require.Equal(t, cs.skipFileCount, skipFileCount)
 		for i, expectFilesGroup := range cs.tableIDWithFilesGroups {
 			actualFilesGroup := tableIDWithFilesGroups[i]
 			require.Equal(t, len(expectFilesGroup), len(actualFilesGroup))
