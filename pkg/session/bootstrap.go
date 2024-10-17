@@ -1183,11 +1183,15 @@ const (
 	// version 216
 	//   changes variable `tidb_scatter_region` value from ON to "table" and OFF to "".
 	version216 = 216
+
+	// version 217
+	// Keep tidb_schema_cache_size to 0 if this variable does not exist (upgrading from old version pre 8.1).
+	version217 = 217
 )
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-var currentBootstrapVersion int64 = version216
+var currentBootstrapVersion int64 = version217
 
 // DDL owner key's expired time is ManagerSessionTTL seconds, we should wait the time and give more time to have a chance to finish it.
 var internalSQLTimeout = owner.ManagerSessionTTL + 15
@@ -1359,6 +1363,7 @@ var (
 		upgradeToVer214,
 		upgradeToVer215,
 		upgradeToVer216,
+		upgradeToVer217,
 	}
 )
 
@@ -3266,6 +3271,15 @@ func upgradeToVer216(s sessiontypes.Session, ver int64) {
 
 	mustExecute(s, "UPDATE mysql.global_variables SET VARIABLE_VALUE='' WHERE VARIABLE_NAME = 'tidb_scatter_region' AND VARIABLE_VALUE = 'OFF'")
 	mustExecute(s, "UPDATE mysql.global_variables SET VARIABLE_VALUE='table' WHERE VARIABLE_NAME = 'tidb_scatter_region' AND VARIABLE_VALUE = 'ON'")
+}
+
+func upgradeToVer217(s sessiontypes.Session, ver int64) {
+	if ver >= version217 {
+		return
+	}
+	// If tidb_schema_cache_size does not exist, insert a record and set the value to 0
+	// Otherwise do nothing.
+	mustExecute(s, "INSERT IGNORE INTO mysql.global_variables VALUES ('tidb_schema_cache_size', 0)")
 }
 
 // initGlobalVariableIfNotExists initialize a global variable with specific val if it does not exist.
