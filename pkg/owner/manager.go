@@ -530,6 +530,9 @@ func AcquireDistributedLock(
 		}
 		return false, nil
 	})
+	failpoint.Inject("mockAcquireDistLockFailed", func() {
+		err = errors.Errorf("requested lease not found")
+	})
 	if err != nil {
 		err1 := se.Close()
 		if err1 != nil {

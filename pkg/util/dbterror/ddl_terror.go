@@ -503,7 +503,7 @@ var (
 	ErrWarnGlobalIndexNeedManuallyAnalyze = ClassDDL.NewStd(mysql.ErrWarnGlobalIndexNeedManuallyAnalyze)
 )
 
-// ReorgRetryableErrCodes is the error codes that are retryable for reorganization.
+// ReorgRetryableErrCodes are the error codes that are retryable for reorganization.
 var ReorgRetryableErrCodes = map[uint16]struct{}{
 	mysql.ErrPDServerTimeout:           {},
 	mysql.ErrTiKVServerTimeout:         {},
@@ -525,4 +525,10 @@ var ReorgRetryableErrCodes = map[uint16]struct{}{
 
 	// Temporary network partitioning may cause pk commit failure.
 	uint16(terror.CodeResultUndetermined): {},
+}
+
+// ReorgRetryableErrMsgs are the error messages that are retryable for reorganization.
+var ReorgRetryableErrMsgs = []string{
+	"context deadline exceeded",
+	"requested lease not found",
 }
