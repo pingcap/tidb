@@ -345,7 +345,7 @@ func (rc *LogFileManager) FilterMetaFiles(ms MetaNameIter) MetaGroupIter {
 }
 
 // Fetch compactions that may contain file less than the TS.
-func (rc *LogFileManager) OpenCompactionIter(ctx context.Context) iter.TryNextor[*backuppb.LogFileSubcompaction] {
+func (rc *LogFileManager) GetCompactionIter(ctx context.Context) iter.TryNextor[*backuppb.LogFileSubcompaction] {
 	return rc.withMigrations.Compactions(ctx, rc.storage)
 }
 

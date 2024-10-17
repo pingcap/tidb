@@ -186,9 +186,13 @@ func (rc *LogClient) RestoreCompactedSstFiles(
 	ctx context.Context,
 	compactionsIter iter.TryNextor[*backuppb.LogFileSubcompaction],
 	rules map[int64]*restoreutils.RewriteRules,
+	importModeSwitcher *restore.ImportModeSwitcher,
 	onProgress func(int64),
 ) error {
-	infos := make([]restore.RestoreFilesInfo, 0, 8)
+	restoreFilesInfos := make([]restore.RestoreFilesInfo, 0, 8)
+	// Collect all items from the iterator in advance to avoid blocking during restoration.
+	// This approach ensures that we have all necessary data ready for processing,
+	// preventing any potential delays caused by waiting for the iterator to yield more items.
 	for r := compactionsIter.TryNext(ctx); !r.Finished; r = compactionsIter.TryNext(ctx) {
 		if r.Err != nil {
 			return r.Err
@@ -196,7 +200,7 @@ func (rc *LogClient) RestoreCompactedSstFiles(
 		i := r.Item
 		rewriteRules, ok := rules[i.Meta.TableId]
 		if !ok {
-			log.Warn("Skipped excluded tables in restore.", zap.Int64("table_id", i.Meta.TableId))
+			log.Warn("[Compacted SST Restore] Skipping excluded table during restore.", zap.Int64("table_id", i.Meta.TableId))
 			continue
 		}
 		info := restore.RestoreFilesInfo{
@@ -204,10 +208,27 @@ func (rc *LogClient) RestoreCompactedSstFiles(
 			SSTFiles:     i.SstOutputs,
 			RewriteRules: rewriteRules,
 		}
-		infos = append(infos, info)
+		restoreFilesInfos = append(restoreFilesInfos, info)
 	}
-	// in order to reduce the cross region download, we should give up the batch restore here.
-	for _, i := range infos {
+	if len(restoreFilesInfos) == 0 {
+		log.Info("[Compacted SST Restore] No SST files found for restoration.")
+		return nil
+	}
+	importModeSwitcher.SwitchToImportMode(ctx)
+	defer func() {
+		switchErr := importModeSwitcher.SwitchToNormalMode(ctx)
+		if switchErr != nil {
+			log.Warn("[Compacted SST Restore] Failed to switch back to normal mode after restoration.", zap.Error(switchErr))
+		}
+	}()
+
+	// To optimize performance and minimize cross-region downloads,
+	// we are currently opting for a single restore approach instead of batch restoration.
+	// This decision is similar to the handling of raw and txn restores,
+	// where batch processing may lead to increased complexity and potential inefficiencies.
+	// TODO: Future enhancements may explore the feasibility of reintroducing batch restoration
+	// while maintaining optimal performance and resource utilization.
+	for _, i := range restoreFilesInfos {
 		err := rc.restorer.Restore(onProgress, []restore.RestoreFilesInfo{i})
 		if err != nil {
 			return errors.Trace(err)
@@ -1387,6 +1408,8 @@ func (rc *LogClient) UpdateSchemaVersion(ctx context.Context) error {
 	return nil
 }
 
+// WrapCompactedFilesIteratorWithSplit applies a splitting strategy to the compacted files iterator.
+// It uses a region splitter to handle the splitting logic based on the provided rules and checkpoint sets.
 func (rc *LogClient) WrapCompactedFilesIterWithSplitHelper(
 	ctx context.Context,
 	compactedIter iter.TryNextor[*backuppb.LogFileSubcompaction],
@@ -1397,13 +1420,15 @@ func (rc *LogClient) WrapCompactedFilesIterWithSplitHelper(
 	splitKeys int64,
 ) (iter.TryNextor[*backuppb.LogFileSubcompaction], error) {
 	client := split.NewClient(rc.pdClient, rc.pdHTTPClient, rc.tlsConf, maxSplitKeysOnce, 3)
-	w := restore.PipelineFileRestorerWrapper[*backuppb.LogFileSubcompaction]{
+	wrapper := restore.PipelineFileRestorerWrapper[*backuppb.LogFileSubcompaction]{
 		RegionsSplitter: split.NewRegionsSplitter(client, splitSize, splitKeys),
 	}
-	s := NewCompactedFileSplitStrategy(rules, checkpointSets, updateStatsFn)
-	return w.WithSplit(ctx, compactedIter, s), nil
+	strategy := NewCompactedFileSplitStrategy(rules, checkpointSets, updateStatsFn)
+	return wrapper.WithSplit(ctx, compactedIter, strategy), nil
 }
 
+// WrapLogFilesIteratorWithSplit applies a splitting strategy to the log files iterator.
+// It uses a region splitter to handle the splitting logic based on the provided rules.
 func (rc *LogClient) WrapLogFilesIterWithSplitHelper(
 	ctx context.Context,
 	logIter LogIter,
@@ -1414,14 +1439,14 @@ func (rc *LogClient) WrapLogFilesIterWithSplitHelper(
 	splitKeys int64,
 ) (LogIter, error) {
 	client := split.NewClient(rc.pdClient, rc.pdHTTPClient, rc.tlsConf, maxSplitKeysOnce, 3)
-	w := restore.PipelineFileRestorerWrapper[*LogDataFileInfo]{
+	wrapper := restore.PipelineFileRestorerWrapper[*LogDataFileInfo]{
 		RegionsSplitter: split.NewRegionsSplitter(client, splitSize, splitKeys),
 	}
-	s, err := NewLogSplitStrategy(ctx, execCtx, rules, updateStatsFn)
+	strategy, err := NewLogSplitStrategy(ctx, execCtx, rules, updateStatsFn)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	return w.WithSplit(ctx, logIter, s), nil
+	return wrapper.WithSplit(ctx, logIter, strategy), nil
 }
 
 func WrapLogFilesIterWithCheckpointFailpoint(
@@ -1449,27 +1474,6 @@ func WrapLogFilesIterWithCheckpointFailpoint(
 	}
 	return logIter, nil
 }
-
-// func (rc *LogClient) WrapLogFilesIterWithCheckpoint(
-// ctx context.Context,
-// logIter LogIter,
-// downstreamIdset map[int64]struct{},
-// updateStats func(kvCount, size uint64),
-// onProgress func(),
-// ) (LogIter, error) {
-// skipMap, err := rc.generateKvFilesSkipMap(ctx, downstreamIdset)
-// if err != nil {
-// return nil, errors.Trace(err)
-// }
-// return iter.FilterOut(logIter, func(d *LogDataFileInfo) bool {
-// if skipMap.NeedSkip(d.MetaDataGroupName, d.OffsetInMetaGroup, d.OffsetInMergedGroup) {
-// onProgress()
-// updateStats(uint64(d.NumberOfEntries), d.Length)
-// return true
-// }
-// return false
-// }), nil
-// }
 
 const (
 	alterTableDropIndexSQL         = "ALTER TABLE %n.%n DROP INDEX %n"

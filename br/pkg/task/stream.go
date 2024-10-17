@@ -1432,7 +1432,7 @@ func restoreStream(
 		return errors.Trace(err)
 	}
 
-	compactionIter := client.LogFileManager.OpenCompactionIter(ctx)
+	compactionIter := client.LogFileManager.GetCompactionIter(ctx)
 
 	se, err := g.CreateSession(mgr.GetStorage())
 	if err != nil {
@@ -1440,9 +1440,9 @@ func restoreStream(
 	}
 	execCtx := se.GetSessionCtx().GetRestrictedSQLExecutor()
 	splitSize, splitKeys := utils.GetRegionSplitInfo(execCtx)
-	log.Info("get split threshold from tikv config", zap.Uint64("split-size", splitSize), zap.Int64("split-keys", splitKeys))
+	log.Info("[Log Restore] get split threshold from tikv config", zap.Uint64("split-size", splitSize), zap.Int64("split-keys", splitKeys))
 
-	pd := g.StartProgress(ctx, "Restore SST+KV Files", logclient.TotalEntryCount, !cfg.LogProgress)
+	pd := g.StartProgress(ctx, "Restore Files(SST + KV)", logclient.TotalEntryCount, !cfg.LogProgress)
 	err = withProgress(pd, func(p glue.Progress) (pErr error) {
 		updateStatsWithCheckpoint := func(kvCount, size uint64) {
 			mu.Lock()
@@ -1454,7 +1454,6 @@ func restoreStream(
 			// increase the progress
 			p.IncBy(int64(kvCount))
 		}
-		importModeSwitcher.SwitchToImportMode(ctx)
 		compactedSplitIter, err := client.WrapCompactedFilesIterWithSplitHelper(
 			ctx, compactionIter, rewriteRules, sstCheckpointSets,
 			updateStatsWithCheckpoint, splitSize, splitKeys,
@@ -1462,13 +1461,10 @@ func restoreStream(
 		if err != nil {
 			return errors.Trace(err)
 		}
-		err = client.RestoreCompactedSstFiles(ctx, compactedSplitIter, rewriteRules, p.IncBy)
+
+		err = client.RestoreCompactedSstFiles(ctx, compactedSplitIter, rewriteRules, importModeSwitcher, p.IncBy)
 		if err != nil {
 			return errors.Trace(err)
-		}
-		switchErr := importModeSwitcher.SwitchToNormalMode(ctx)
-		if switchErr != nil {
-			log.Warn("unable to swtich to normal mode after compacted sst finished", zap.Error(switchErr))
 		}
 
 		if cfg.UseCheckpoint {
@@ -1478,6 +1474,7 @@ func restoreStream(
 				defer func() { pErr = retErr }()
 			})
 		}
+
 		logFilesIterWithSplit, err := client.WrapLogFilesIterWithSplitHelper(ctx, logFilesIter, execCtx, rewriteRules, updateStatsWithCheckpoint, splitSize, splitKeys)
 		if err != nil {
 			return errors.Trace(err)

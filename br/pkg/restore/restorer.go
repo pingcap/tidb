@@ -304,24 +304,36 @@ type PipelineFileRestorerWrapper[T any] struct {
 	split.RegionsSplitter
 }
 
+// WithSplit processes items using a split strategy within a pipeline.
+// It iterates over items, accumulating them until a split condition is met.
+// When a split is required, it executes the split operation on the accumulated items.
 func (p *PipelineFileRestorerWrapper[T]) WithSplit(ctx context.Context, i iter.TryNextor[T], strategy split.SplitStrategy[T]) iter.TryNextor[T] {
 	return iter.MapFilter(i, func(item T) (T, bool) {
+		// Skip items based on the strategy's criteria.
 		if strategy.ShouldSkip(item) {
 			return item, true
 		}
+
+		// Accumulate the item for potential splitting.
 		strategy.Accumulate(item)
-		// Check if we need to split
+
+		// Check if the accumulated items meet the criteria for splitting.
 		if strategy.ShouldSplit() {
-			log.Info("start to split the regions in pipeline")
+			log.Info("Starting region split in pipeline")
 			startTime := time.Now()
+
+			// Execute the split operation on the accumulated items.
 			s := strategy.AccumulationsIter()
 			err := p.ExecuteRegions(ctx, s)
 			if err != nil {
-				log.Error("failed to split regions in pipeline, anyway we can still doing restore", zap.Error(err))
+				log.Error("Failed to split regions in pipeline; continuing with restore", zap.Error(err))
 			}
+
+			// Reset accumulations after the split operation.
 			strategy.ResetAccumulations()
-			log.Info("end to split the regions in pipeline", zap.Duration("takes", time.Since(startTime)))
+			log.Info("Completed region split in pipeline", zap.Duration("duration", time.Since(startTime)))
 		}
+		// Return the item without filtering it out.
 		return item, false
 	})
 }
