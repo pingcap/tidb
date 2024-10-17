@@ -260,7 +260,7 @@ func matchRune(a, b rune) bool {
 func CompileLike2Regexp(str string) string {
 	patChars, patTypes := CompilePattern(str, '\\')
 	var result []rune
-	for i := range len(patChars) {
+	for i := range patChars {
 		switch patTypes[i] {
 		case PatMatch:
 			result = append(result, patChars[i])
