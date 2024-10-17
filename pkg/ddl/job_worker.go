@@ -887,15 +887,15 @@ func (w *worker) runOneJobStep(
 	case model.ActionModifySchemaDefaultPlacement:
 		ver, err = onModifySchemaDefaultPlacement(jobCtx, job)
 	case model.ActionCreateTable:
-		ver, err = onCreateTable(jobCtx, job)
+		ver, err = w.onCreateTable(jobCtx, job)
 	case model.ActionCreateTables:
-		ver, err = onCreateTables(jobCtx, job)
+		ver, err = w.onCreateTables(jobCtx, job)
 	case model.ActionRepairTable:
 		ver, err = onRepairTable(jobCtx, job)
 	case model.ActionCreateView:
 		ver, err = onCreateView(jobCtx, job)
 	case model.ActionDropTable, model.ActionDropView, model.ActionDropSequence:
-		ver, err = onDropTableOrView(jobCtx, job)
+		ver, err = w.onDropTableOrView(jobCtx, job)
 	case model.ActionDropTablePartition:
 		ver, err = w.onDropTablePartition(jobCtx, job)
 	case model.ActionTruncateTablePartition:
@@ -903,7 +903,7 @@ func (w *worker) runOneJobStep(
 	case model.ActionExchangeTablePartition:
 		ver, err = w.onExchangeTablePartition(jobCtx, job)
 	case model.ActionAddColumn:
-		ver, err = onAddColumn(jobCtx, job)
+		ver, err = w.onAddColumn(jobCtx, job)
 	case model.ActionDropColumn:
 		ver, err = onDropColumn(jobCtx, job)
 	case model.ActionModifyColumn:

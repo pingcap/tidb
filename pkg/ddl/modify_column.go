@@ -574,6 +574,11 @@ func (w *worker) doModifyColumnTypeWithData(
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
+		modifyColumnEvent := notifier.NewModifyColumnEvent(tblInfo, []*model.ColumnInfo{changingCol})
+		err = asyncNotifyEvent(jobCtx, modifyColumnEvent, job, w.sess)
+		if err != nil {
+			return ver, errors.Trace(err)
+		}
 
 		// Finish this job.
 		job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
@@ -581,8 +586,6 @@ func (w *worker) doModifyColumnTypeWithData(
 		args.IndexIDs = rmIdxs
 		args.PartitionIDs = getPartitionIDs(tblInfo)
 		job.FillFinishedArgs(args)
-		modifyColumnEvent := notifier.NewModifyColumnEvent(tblInfo, []*model.ColumnInfo{changingCol})
-		asyncNotifyEvent(jobCtx, modifyColumnEvent, job)
 	default:
 		err = dbterror.ErrInvalidDDLState.GenWithStackByArgs("column", changingCol.State)
 	}

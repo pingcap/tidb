@@ -421,6 +421,9 @@ type TablePartitionArgs struct {
 
 	// set on finished
 	OldPhysicalTblIDs []int64 `json:"old_physical_tbl_ids,omitempty"`
+
+	// runtime info
+	NewPartitionIDs []int64 `json:"-"`
 }
 
 func (a *TablePartitionArgs) getArgsV1(job *Job) []any {

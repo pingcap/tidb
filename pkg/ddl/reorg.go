@@ -57,7 +57,6 @@ import (
 	contextutil "github.com/pingcap/tidb/pkg/util/context"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/intest"
-	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/pingcap/tidb/pkg/util/ranger"
 	"github.com/pingcap/tidb/pkg/util/rowcodec"
 	"github.com/pingcap/tidb/pkg/util/timeutil"
@@ -542,12 +541,6 @@ func getTableTotalCount(w *worker, tblInfo *model.TableInfo) int64 {
 		return statistics.PseudoRowCount
 	}
 	defer w.sessPool.Put(ctx)
-
-	// `mock.Context` is used in tests, which doesn't support sql exec
-	if _, ok := ctx.(*mock.Context); ok {
-		return statistics.PseudoRowCount
-	}
-
 	executor := ctx.GetRestrictedSQLExecutor()
 	var rows []chunk.Row
 	if tblInfo.Partition != nil && len(tblInfo.Partition.DroppingDefinitions) > 0 {
