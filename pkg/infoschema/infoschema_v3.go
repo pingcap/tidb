@@ -218,6 +218,12 @@ func tableInfoResultEqual(t1, t2 []infoschemacontext.TableInfoResult) bool {
 func (is *InfoschemaV3) TableByID(ctx context.Context, id int64) (val table.Table, ok bool) {
 	tbl1, ok1 := is.infoV1.TableByID(ctx, id)
 	tbl2, ok2 := is.infoV2.TableByID(ctx, id)
+
+	// During switching from v1 to v2, we may hit tombstone in ByID
+	if ok1 && !ok2 {
+		return tbl1, ok1
+	}
+
 	if ok1 != ok2 {
 		panic("inconsistent infoschema 1")
 	}
@@ -233,6 +239,14 @@ func (is *InfoschemaV3) TableByID(ctx context.Context, id int64) (val table.Tabl
 func (is *InfoschemaV3) TableByName(ctx context.Context, schema, tbl pmodel.CIStr) (t table.Table, err error) {
 	tbl1, err1 := is.infoV1.TableByName(ctx, schema, tbl)
 	tbl2, err2 := is.infoV2.TableByName(ctx, schema, tbl)
+
+	// During switching from v1 to v2, we may hit tombstone in ByName
+	if err1 == nil && err2 != nil {
+		if strings.Contains(err2.Error(), "doesn't exist") {
+			return tbl1, err1
+		}
+	}
+
 	if !errors.ErrorEqual(err2, err1) {
 		panic("inconsistent infoschema 3")
 	}
