@@ -268,7 +268,7 @@ func TestChunkSizeControl(t *testing.T) {
 	chk := New([]*types.FieldType{types.NewFieldType(mysql.TypeLong)}, maxChunkSize, maxChunkSize)
 	require.Equal(t, maxChunkSize, chk.RequiredRows())
 
-	for i := 0; i < maxChunkSize; i++ {
+	for range maxChunkSize {
 		chk.AppendInt64(0, 1)
 	}
 	maxChunkSize += maxChunkSize / 3
@@ -400,10 +400,10 @@ func newAllTypes() []*types.FieldType {
 func TestCompare(t *testing.T) {
 	allTypes := newAllTypes()
 	chunk := NewChunkWithCapacity(allTypes, 32)
-	for i := 0; i < len(allTypes); i++ {
+	for i := range len(allTypes) {
 		chunk.AppendNull(i)
 	}
-	for i := 0; i < len(allTypes); i++ {
+	for i := range len(allTypes) {
 		switch allTypes[i].GetType() {
 		case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong, mysql.TypeYear:
 			if mysql.HasUnsignedFlag(allTypes[i].GetFlag()) {
@@ -436,7 +436,7 @@ func TestCompare(t *testing.T) {
 			require.FailNow(t, "type not handled", allTypes[i].GetType())
 		}
 	}
-	for i := 0; i < len(allTypes); i++ {
+	for i := range len(allTypes) {
 		switch allTypes[i].GetType() {
 		case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong, mysql.TypeYear:
 			if mysql.HasUnsignedFlag(allTypes[i].GetFlag()) {
@@ -472,7 +472,7 @@ func TestCompare(t *testing.T) {
 	rowNull := chunk.GetRow(0)
 	rowSmall := chunk.GetRow(1)
 	rowBig := chunk.GetRow(2)
-	for i := 0; i < len(allTypes); i++ {
+	for i := range len(allTypes) {
 		cmpFunc := GetCompareFunc(allTypes[i])
 		require.Equal(t, 0, cmpFunc(rowNull, i, rowNull, i))
 		require.Equal(t, -1, cmpFunc(rowNull, i, rowSmall, i))
@@ -487,11 +487,11 @@ func TestCompare(t *testing.T) {
 func TestCopyTo(t *testing.T) {
 	allTypes := newAllTypes()
 	chunk := NewChunkWithCapacity(allTypes, 101)
-	for i := 0; i < len(allTypes); i++ {
+	for i := range len(allTypes) {
 		chunk.AppendNull(i)
 	}
 	for k := 0; k < 100; k++ {
-		for i := 0; i < len(allTypes); i++ {
+		for i := range len(allTypes) {
 			switch allTypes[i].GetType() {
 			case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong, mysql.TypeYear:
 				if mysql.HasUnsignedFlag(allTypes[i].GetFlag()) {
@@ -531,7 +531,7 @@ func TestCopyTo(t *testing.T) {
 	for k := 0; k < 101; k++ {
 		row := chunk.GetRow(k)
 		r1 := ck1.GetRow(k)
-		for i := 0; i < len(allTypes); i++ {
+		for i := range len(allTypes) {
 			cmpFunc := GetCompareFunc(allTypes[i])
 			require.Zero(t, cmpFunc(row, i, r1, i))
 		}
