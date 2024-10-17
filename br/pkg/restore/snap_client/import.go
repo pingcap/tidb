@@ -281,11 +281,6 @@ func getKeyRangeByMode(mode KvMode) func(f *backuppb.File, rules *restoreutils.R
 			}
 			return start, end, nil
 		}
-	case TiDBCompcated:
-		return func(f *backuppb.File, rules *restoreutils.RewriteRules) ([]byte, []byte, error) {
-			return restoreutils.GetRewriteEncodedKeys(f, rules)
-		}
-
 	default:
 		return func(f *backuppb.File, rules *restoreutils.RewriteRules) ([]byte, []byte, error) {
 			return restoreutils.GetRewriteRawKeys(f, rules)
@@ -328,10 +323,16 @@ func (importer *SnapFileImporter) Import(
 	ctx context.Context,
 	filesGroup ...restore.RestoreFilesInfo,
 ) error {
+
 	// Rewrite the start key and end key of file to scan regions
 	startKey, endKey, err := importer.getKeyRangeForFiles(filesGroup)
 	if err != nil {
 		return errors.Trace(err)
+	}
+	for _, f := range filesGroup {
+		for _, s := range f.SSTFiles {
+			log.Info("iIIII", logutil.File(s), logutil.Key("start key", startKey), logutil.Key("end key", endKey))
+		}
 	}
 
 	err = utils.WithRetry(ctx, func() error {
@@ -342,7 +343,7 @@ func (importer *SnapFileImporter) Import(
 			return errors.Trace(errScanRegion)
 		}
 
-		log.Debug("scan regions", logutil.Key("start key", startKey), logutil.Key("end key", endKey), zap.Int("count", len(regionInfos)))
+		log.Info("scan regions", logutil.Key("start key", startKey), logutil.Key("end key", endKey), zap.Int("count", len(regionInfos)))
 		start := time.Now()
 		// Try to download and ingest the file in every region
 		for _, regionInfo := range regionInfos {
@@ -588,6 +589,7 @@ func (importer *SnapFileImporter) downloadSST(
 	for _, files := range filesGroup {
 		for _, file := range files.SSTFiles {
 			req, sstMeta, err := importer.buildDownloadRequest(file, files.RewriteRules, regionInfo, cipher)
+			log.Info("filesINGGG", logutil.File(file), logutil.SSTMeta(&sstMeta))
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
@@ -647,7 +649,7 @@ func (importer *SnapFileImporter) downloadSST(
 				resultMetasMap[fileName] = &sstMeta
 				mu.Unlock()
 
-				log.Debug("download from peer",
+				log.Info("download from peer",
 					zap.String("filename", fileName),
 					logutil.Region(regionInfo.Region),
 					logutil.Peer(peer),

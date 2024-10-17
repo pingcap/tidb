@@ -47,15 +47,17 @@ func (l *CompactedFileSplitStrategy) Accumulate(file *backuppb.LogFileSubcompact
 				EndKey:   endKey,
 			},
 			Value: split.Value{
-				Size:   f.Size_,
-				Number: int64(f.TotalKvs),
+				// because we have too many mvcc in the sst files.
+				// consider the MVCC impact here.
+				Size:   f.Size_ / 16,
+				Number: int64(f.TotalKvs) / 16,
 			},
 		})
 	}
 }
 
 func (l *CompactedFileSplitStrategy) ShouldSplit() bool {
-	return l.AccumulateCount > 256
+	return l.AccumulateCount > 128
 }
 
 func (l *CompactedFileSplitStrategy) ShouldSkip(file *backuppb.LogFileSubcompaction) bool {
@@ -64,7 +66,7 @@ func (l *CompactedFileSplitStrategy) ShouldSkip(file *backuppb.LogFileSubcompact
 		if _, ok := l.checkpointSets[sst.Name]; !ok {
 			sstOutputs = append(sstOutputs, sst)
 		} else {
-			l.updateStatusFn(sst.TotalKvs, sst.TotalBytes)
+			l.updateStatusFn(sst.TotalKvs, sst.Size_)
 		}
 	}
 	if len(sstOutputs) == 0 {

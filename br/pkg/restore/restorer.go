@@ -135,9 +135,6 @@ func (s *SimpleRestorer) OnFinish() error {
 }
 
 func (s *SimpleRestorer) Restore(onProgress func(int64), batchFilesInfo ...BatchRestoreFilesInfo) error {
-	errCh := make(chan error, len(batchFilesInfo))
-	defer close(errCh)
-
 	for _, info := range batchFilesInfo {
 		for _, fileGroup := range info {
 			s.workerPool.ApplyOnErrorGroup(s.eg,
@@ -269,7 +266,6 @@ func (m *MultiTablesRestorer) Restore(onProgress func(int64), batchFilesInfo ...
 					}
 				}
 			}
-
 			return nil
 		})
 	}
@@ -310,7 +306,6 @@ type PipelineFileRestorerWrapper[T any] struct {
 
 func (p *PipelineFileRestorerWrapper[T]) WrapIter(ctx context.Context, i iter.TryNextor[T], strategy split.SplitStrategy[T]) iter.TryNextor[T] {
 	return iter.MapFilter(i, func(item T) (T, bool) {
-		log.Info("start to process item")
 		if strategy.ShouldSkip(item) {
 			return item, true
 		}

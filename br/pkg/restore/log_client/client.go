@@ -122,8 +122,9 @@ type LogClient struct {
 
 	*LogFileManager
 
-	workerPool   *tidbutil.WorkerPool
-	fileImporter *LogFileImporter
+	workerPool    *tidbutil.WorkerPool
+	sstWorkerPool *tidbutil.WorkerPool
+	fileImporter  *LogFileImporter
 
 	// the query to insert rows into table `gc_delete_range`, lack of ts.
 	deleteRangeQuery          []*stream.PreDelRangeQuery
@@ -267,17 +268,23 @@ func (rc *LogClient) RestoreCompactedSstFiles(
 		}
 		infos = append(infos, info)
 	}
-	i := 0
-	for ; i+8 < len(infos); i += 8 {
-		err := rc.restorer.Restore(onProgress, infos[i:i+8])
+	for _, i := range infos {
+		err := rc.restorer.Restore(onProgress, []restore.RestoreFilesInfo{i})
 		if err != nil {
-			return err
+			return errors.Trace(err)
 		}
 	}
-	err := rc.restorer.Restore(onProgress, infos[i:])
-	if err != nil {
-		return err
-	}
+	// i := 0
+	// for ; i+8 < len(infos); i += 8 {
+	// 	err := rc.restorer.Restore(onProgress, infos[i:i+8])
+	// 	if err != nil {
+	// 		return err
+	// 	}
+	// }
+	// err := rc.restorer.Restore(onProgress, infos[i:])
+	// if err != nil {
+	// 	return err
+	// }
 
 	return rc.restorer.OnFinish()
 }
@@ -397,6 +404,16 @@ func (rc *LogClient) Init(ctx context.Context, g glue.Glue, store kv.Storage, us
 	return nil
 }
 
+func (rc *LogClient) initSstWorkerPool() {
+	// we believe 32 is large enough for download worker pool.
+	// it won't reach the limit if sst files distribute evenly.
+	// when restore memory usage is still too high, we should reduce concurrencyPerStore
+	// to sarifice some speed to reduce memory usage.
+	count := rc.concurrencyPerStore * 32 * 6
+	log.Info("log file download coarse sst worker pool", zap.Uint("size", count))
+	rc.sstWorkerPool = tidbutil.NewWorkerPool(count, "sst file")
+}
+
 func (rc *LogClient) InitClients(ctx context.Context, backend *backuppb.StorageBackend) {
 	stores, err := conn.GetAllTiKVStoresWithRetry(ctx, rc.pdClient, util.SkipTiFlash)
 	if err != nil {
@@ -419,7 +436,8 @@ func (rc *LogClient) InitClients(ctx context.Context, backend *backuppb.StorageB
 	if err != nil {
 		log.Fatal("failed to init snap file importer", zap.Error(err))
 	}
-	rc.restorer = restore.NewSimpleFileRestorer(ctx, snapFileImporter, rc.workerPool, rc.sstCheckpointRunner)
+	rc.initSstWorkerPool()
+	rc.restorer = restore.NewSimpleFileRestorer(ctx, snapFileImporter, rc.sstWorkerPool, rc.sstCheckpointRunner)
 }
 
 func (rc *LogClient) InitCheckpointMetadataForCompactedSstRestore(

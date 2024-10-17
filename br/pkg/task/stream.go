@@ -1415,7 +1415,8 @@ func restoreStream(
 	pm := g.StartProgress(ctx, "Restore Meta Files", int64(len(ddlFiles)), !cfg.LogProgress)
 	if err = withProgress(pm, func(p glue.Progress) error {
 		client.RunGCRowsLoader(ctx)
-		return client.RestoreMetaKVFiles(ctx, ddlFiles, schemasReplace, updateStats, p.Inc)
+		// return client.RestoreMetaKVFiles(ctx, ddlFiles, schemasReplace, updateStats, p.Inc)
+		return nil
 	}); err != nil {
 		return errors.Annotate(err, "failed to restore meta files")
 	}
@@ -1441,8 +1442,6 @@ func restoreStream(
 	execCtx := se.GetSessionCtx().GetRestrictedSQLExecutor()
 	splitSize, splitKeys := utils.GetRegionSplitInfo(execCtx)
 	log.Info("get split threshold from tikv config", zap.Uint64("split-size", splitSize), zap.Int64("split-keys", splitKeys))
-
-	log.Info("dataFileCount", zap.Int64("count", logclient.TotalEntryCount))
 
 	pd := g.StartProgress(ctx, "Restore SST+KV Files", logclient.TotalEntryCount, !cfg.LogProgress)
 	err = withProgress(pd, func(p glue.Progress) (pErr error) {
@@ -1473,12 +1472,7 @@ func restoreStream(
 			log.Warn("unable to swtich to normal mode", zap.Error(switchErr))
 		}
 
-		// TODO unify the log checkpoint logic to the sst checkpoint
 		if cfg.UseCheckpoint {
-			//logFilesIter, err = client.WrapLogFilesIterWithCheckpoint(ctx, logFilesIter, downstreamIdset, updateStatsWithCheckpoint, p.Inc)
-			//if err != nil {
-			//	return errors.Trace(err)
-			//}
 			failpoint.Inject("corrupt-files", func(v failpoint.Value) {
 				var retErr error
 				logFilesIter, retErr = logclient.WrapLogFilesIterWithCheckpointFailpoint(v, logFilesIter, rewriteRules)

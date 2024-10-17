@@ -280,6 +280,7 @@ func FindMatchedRewriteRule(file AppliedFile, rules *RewriteRules) *import_sstpb
 	_, rule := rewriteRawKey(file.GetStartKey(), rules)
 	if rule == nil {
 		// fall back to encoded key
+		log.Info("fall backup encode")
 		_, rule = rewriteEncodedKey(file.GetStartKey(), rules)
 	}
 	return rule
