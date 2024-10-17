@@ -100,9 +100,17 @@ type fakeCluster struct {
 	regions   []*region
 	testCtx   *testing.T
 
+<<<<<<< HEAD
 	onGetClient        func(uint64) error
 	serviceGCSafePoint uint64
 	currentTS          uint64
+=======
+	onGetClient               func(uint64) error
+	onClearCache              func(uint64) error
+	serviceGCSafePoint        uint64
+	serviceGCSafePointDeleted bool
+	currentTS                 uint64
+>>>>>>> 545b4a3a443 (advancer: fix the incorrect gc safepoint behaviours (#52835))
 }
 
 func (r *region) splitAt(newID uint64, k string) *region {
@@ -263,15 +271,18 @@ func (f *fakeStore) GetLastFlushTSOfRegion(ctx context.Context, in *logbackup.Ge
 func (f *fakeCluster) BlockGCUntil(ctx context.Context, at uint64) (uint64, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	if at == 0 {
-		f.serviceGCSafePoint = at
-		return at, nil
-	}
 	if f.serviceGCSafePoint > at {
 		return f.serviceGCSafePoint, nil
 	}
 	f.serviceGCSafePoint = at
 	return at, nil
+}
+
+func (f *fakeCluster) UnblockGC(ctx context.Context) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.serviceGCSafePointDeleted = true
+	return nil
 }
 
 func (f *fakeCluster) FetchCurrentTS(ctx context.Context) (uint64, error) {
