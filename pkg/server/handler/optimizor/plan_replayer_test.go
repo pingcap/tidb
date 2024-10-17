@@ -157,13 +157,12 @@ func TestDumpPlanReplayerAPI(t *testing.T) {
 	// 3. check plan replayer load
 
 	// 3-1. write the plan replayer file from manual command to a file
-	path := "/tmp/plan_replayer.zip"
+	path := filepath.Join(t.TempDir(), "plan_replayer.zip")
 	fp, err := os.Create(path)
 	require.NoError(t, err)
 	require.NotNil(t, fp)
 	defer func() {
 		require.NoError(t, fp.Close())
-		require.NoError(t, os.Remove(path))
 	}()
 
 	_, err = io.Copy(fp, bytes.NewReader(body))
@@ -183,7 +182,7 @@ func TestDumpPlanReplayerAPI(t *testing.T) {
 
 	tk.MustExec("use planReplayer")
 	tk.MustExec("drop table planReplayer.t")
-	tk.MustExec(`plan replayer load "/tmp/plan_replayer.zip"`)
+	tk.MustExec(fmt.Sprintf(`plan replayer load "%s"`, path))
 
 	// 3-3. assert that the count and modify count in the stats is as expected
 	rows := tk.MustQuery("show stats_meta")
@@ -375,13 +374,12 @@ func TestIssue43192(t *testing.T) {
 
 	// 3. check plan replayer load
 	// 3-1. write the plan replayer file from manual command to a file
-	path := "/tmp/plan_replayer.zip"
+	path := filepath.Join(t.TempDir(), "plan_replayer.zip")
 	fp, err := os.Create(path)
 	require.NoError(t, err)
 	require.NotNil(t, fp)
 	defer func() {
 		require.NoError(t, fp.Close())
-		require.NoError(t, os.Remove(path))
 	}()
 
 	_, err = io.Copy(fp, bytes.NewReader(body))
@@ -400,7 +398,7 @@ func TestIssue43192(t *testing.T) {
 	tk := testkit.NewDBTestKit(t, db)
 	tk.MustExec("use planReplayer")
 	tk.MustExec("drop table planReplayer.t")
-	tk.MustExec(`plan replayer load "/tmp/plan_replayer.zip"`)
+	tk.MustExec(fmt.Sprintf(`plan replayer load "%s"`, path))
 
 	// 3-3. check whether binding takes effect
 	tk.MustExec(`select a, b from t where a in (1, 2, 3)`)
