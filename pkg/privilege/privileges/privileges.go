@@ -379,7 +379,10 @@ func (p *UserPrivileges) MatchIdentity(sctx sessionctx.Context, user, host strin
 	if SkipWithGrant {
 		return user, host, true
 	}
-	p.Handle.ensureActiveUser(sctx, user)
+	if err := p.Handle.ensureActiveUser(sctx, user); err != nil {
+		logutil.BgLogger().Error("ensure user data fail",
+			zap.String("user", user))
+	}
 	mysqlPriv := p.Handle.Get()
 	record := mysqlPriv.matchIdentity(sctx, user, host, skipNameResolve)
 	if record != nil {
