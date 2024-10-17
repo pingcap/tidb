@@ -346,7 +346,7 @@ func (e *BaseTaskExecutor) runStep(resource *proto.StepResource) (resErr error) 
 			if !e.IsIdempotent(subtask) {
 				e.logger.Info("subtask in running state and is not idempotent, fail it",
 					zap.Int64("subtask-id", subtask.ID))
-				e.onError(errors.Trace(ErrNonIdempotentSubtask))
+				e.onError(ErrNonIdempotentSubtask)
 				e.updateSubtaskStateAndErrorImpl(runStepCtx, subtask.ExecID, subtask.ID, proto.SubtaskStateFailed, ErrNonIdempotentSubtask)
 				e.markErrorHandled()
 				break
@@ -432,7 +432,7 @@ func (e *BaseTaskExecutor) runSubtask(ctx context.Context, stepExecutor execute.
 
 	failpoint.Inject("MockExecutorRunErr", func(val failpoint.Value) {
 		if val.(bool) {
-			e.onError(errors.Trace(errors.New("MockExecutorRunErr")))
+			e.onError(errors.New("MockExecutorRunErr"))
 		}
 	})
 	failpoint.Inject("MockExecutorRunCancel", func(val failpoint.Value) {
@@ -537,8 +537,7 @@ func (e *BaseTaskExecutor) onError(err error) {
 	if errors.HasStack(err) {
 		e.logger.Error("onError", zap.Error(err), zap.Stack("stack"), zap.String("error stack", fmt.Sprintf("%+v", err)))
 	} else {
-		err = errors.Trace(err)
-		e.logger.Error("onError", zap.Error(err), zap.StackSkip("stack", 1))
+		e.logger.Error("onError", zap.Error(err), zap.Stack("stack"))
 	}
 	e.mu.Lock()
 	defer e.mu.Unlock()
