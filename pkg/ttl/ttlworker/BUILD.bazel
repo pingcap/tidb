@@ -91,6 +91,7 @@ go_test(
         "//pkg/ttl/metrics",
         "//pkg/ttl/session",
         "//pkg/types",
+        "//pkg/util",
         "//pkg/util/chunk",
         "//pkg/util/logutil",
         "//pkg/util/mock",

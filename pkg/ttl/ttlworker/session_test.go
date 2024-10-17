@@ -144,6 +144,7 @@ type mockSession struct {
 	resetTimeZoneCalls int
 	closed             bool
 	commitErr          error
+	killed             chan struct{}
 }
 
 func newMockSession(t *testing.T, tbl ...*cache.PhysicalTable) *mockSession {
@@ -158,6 +159,7 @@ func newMockSession(t *testing.T, tbl ...*cache.PhysicalTable) *mockSession {
 		sessionInfoSchema: newMockInfoSchema(tbls...),
 		evalExpire:        time.Now(),
 		sessionVars:       sessVars,
+		killed:            make(chan struct{}),
 	}
 }
 
@@ -203,6 +205,11 @@ func (s *mockSession) ResetWithGlobalTimeZone(_ context.Context) (err error) {
 	require.False(s.t, s.closed)
 	s.resetTimeZoneCalls++
 	return nil
+}
+
+// KillStmt kills the current statement execution
+func (s *mockSession) KillStmt() {
+	close(s.killed)
 }
 
 func (s *mockSession) Close() {
