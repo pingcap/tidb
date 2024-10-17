@@ -61,6 +61,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/gcutil"
 	"github.com/pingcap/tidb/pkg/util/generic"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	atomicutil "go.uber.org/atomic"
 	"go.uber.org/zap"
@@ -565,12 +566,31 @@ func (d *ddl) RegisterStatsHandle(h *handle.Handle) {
 
 // asyncNotifyEvent will notify the ddl event to outside world, say statistic handle. When the channel is full, we may
 // give up notify and log it.
-func asyncNotifyEvent(jobCtx *jobContext, e *notifier.SchemaChangeEvent, job *model.Job) {
+func asyncNotifyEvent(jobCtx *jobContext, e *notifier.SchemaChangeEvent, job *model.Job, sctx *sess.Session) error {
 	// skip notify for system databases, system databases are expected to change at
 	// bootstrap and other nodes can also handle the changing in its bootstrap rather
 	// than be notified.
 	if tidbutil.IsMemOrSysDB(job.SchemaName) {
-		return
+		return nil
+	}
+
+	if intest.InTest && notifier.DefaultStore != nil {
+		failpoint.Inject("asyncNotifyEventError", func() {
+			failpoint.Return(errors.New("mock publish event error"))
+		})
+		var multiSchemaChangeSeq int64 = -1
+		if job.MultiSchemaInfo != nil {
+			multiSchemaChangeSeq = int64(job.MultiSchemaInfo.Seq)
+		}
+		err := notifier.PubSchemaChange(jobCtx.ctx, sctx, job.ID, multiSchemaChangeSeq, e)
+		if err != nil {
+			logutil.DDLLogger().Error("Error publish schema change event",
+				zap.Int64("jobID", job.ID),
+				zap.Int64("multiSchemaChangeSeq", multiSchemaChangeSeq),
+				zap.String("event", e.String()), zap.Error(err))
+			return err
+		}
+		return nil
 	}
 
 	ch := jobCtx.oldDDLCtx.ddlEventCh
@@ -578,13 +598,14 @@ func asyncNotifyEvent(jobCtx *jobContext, e *notifier.SchemaChangeEvent, job *mo
 		for i := 0; i < 10; i++ {
 			select {
 			case ch <- e:
-				return
+				return nil
 			default:
 				time.Sleep(time.Microsecond * 10)
 			}
 		}
 		logutil.DDLLogger().Warn("fail to notify DDL event", zap.Stringer("event", e))
 	}
+	return nil
 }
 
 // NewDDL creates a new DDL.

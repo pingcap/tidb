@@ -51,7 +51,7 @@ import (
 	"go.uber.org/zap"
 )
 
-func onAddColumn(jobCtx *jobContext, job *model.Job) (ver int64, err error) {
+func (w *worker) onAddColumn(jobCtx *jobContext, job *model.Job) (ver int64, err error) {
 	// Handle the rolling back job.
 	if job.IsRollingback() {
 		ver, err = onDropColumn(jobCtx, job)
@@ -130,10 +130,13 @@ func onAddColumn(jobCtx *jobContext, job *model.Job) (ver int64, err error) {
 			return ver, errors.Trace(err)
 		}
 
+		addColumnEvent := notifier.NewAddColumnEvent(tblInfo, []*model.ColumnInfo{columnInfo})
+		err = asyncNotifyEvent(jobCtx, addColumnEvent, job, w.sess)
+		if err != nil {
+			return ver, errors.Trace(err)
+		}
 		// Finish this job.
 		job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
-		addColumnEvent := notifier.NewAddColumnEvent(tblInfo, []*model.ColumnInfo{columnInfo})
-		asyncNotifyEvent(jobCtx, addColumnEvent, job)
 	default:
 		err = dbterror.ErrInvalidDDLState.GenWithStackByArgs("column", columnInfo.State)
 	}

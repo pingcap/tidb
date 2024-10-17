@@ -48,16 +48,17 @@ func (h handler) handle(
 	change *notifier.SchemaChangeEvent,
 ) error {
 	switch change.GetType() {
-	case model.ActionCreateTable:
-		info := change.GetCreateTableInfo()
-		ids, err := getPhysicalIDs(sctx, info)
-		if err != nil {
-			return err
-		}
-		for _, id := range ids {
-			err = h.insertStats4PhysicalID(ctx, sctx, info, id)
+	case model.ActionCreateTables:
+		for _, info := range change.GetCreateTablesInfo() {
+			ids, err := getPhysicalIDs(sctx, info)
 			if err != nil {
-				return errors.Trace(err)
+				return err
+			}
+			for _, id := range ids {
+				err = h.insertStats4PhysicalID(ctx, sctx, info, id)
+				if err != nil {
+					return errors.Trace(err)
+				}
 			}
 		}
 	case model.ActionTruncateTable:

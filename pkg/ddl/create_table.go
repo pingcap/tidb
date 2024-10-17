@@ -152,7 +152,7 @@ func createTable(jobCtx *jobContext, job *model.Job, args *model.CreateTableArgs
 	}
 }
 
-func onCreateTable(jobCtx *jobContext, job *model.Job) (ver int64, _ error) {
+func (w *worker) onCreateTable(jobCtx *jobContext, job *model.Job) (ver int64, _ error) {
 	failpoint.Inject("mockExceedErrorLimit", func(val failpoint.Value) {
 		if val.(bool) {
 			failpoint.Return(ver, errors.New("mock do job error"))
@@ -170,7 +170,7 @@ func onCreateTable(jobCtx *jobContext, job *model.Job) (ver int64, _ error) {
 	tbInfo := args.TableInfo
 
 	if len(tbInfo.ForeignKeys) > 0 {
-		return createTableWithForeignKeys(jobCtx, job, args)
+		return w.createTableWithForeignKeys(jobCtx, job, args)
 	}
 
 	tbInfo, err = createTable(jobCtx, job, args)
@@ -182,15 +182,18 @@ func onCreateTable(jobCtx *jobContext, job *model.Job) (ver int64, _ error) {
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
+	createTableEvent := notifier.NewCreateTablesEvent([]*model.TableInfo{tbInfo})
+	err = asyncNotifyEvent(jobCtx, createTableEvent, job, w.sess)
+	if err != nil {
+		return ver, errors.Trace(err)
+	}
 
 	// Finish this job.
 	job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tbInfo)
-	createTableEvent := notifier.NewCreateTableEvent(tbInfo)
-	asyncNotifyEvent(jobCtx, createTableEvent, job)
 	return ver, errors.Trace(err)
 }
 
-func createTableWithForeignKeys(jobCtx *jobContext, job *model.Job, args *model.CreateTableArgs) (ver int64, err error) {
+func (w *worker) createTableWithForeignKeys(jobCtx *jobContext, job *model.Job, args *model.CreateTableArgs) (ver int64, err error) {
 	tbInfo := args.TableInfo
 	switch tbInfo.State {
 	case model.StateNone, model.StatePublic:
@@ -214,9 +217,13 @@ func createTableWithForeignKeys(jobCtx *jobContext, job *model.Job, args *model.
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
+		createTableEvent := notifier.NewCreateTablesEvent([]*model.TableInfo{tbInfo})
+		err = asyncNotifyEvent(jobCtx, createTableEvent, job, w.sess)
+		if err != nil {
+			return ver, errors.Trace(err)
+		}
+
 		job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tbInfo)
-		createTableEvent := notifier.NewCreateTableEvent(tbInfo)
-		asyncNotifyEvent(jobCtx, createTableEvent, job)
 		return ver, nil
 	default:
 		return ver, errors.Trace(dbterror.ErrInvalidDDLJob.GenWithStackByArgs("table", tbInfo.State))
@@ -224,7 +231,7 @@ func createTableWithForeignKeys(jobCtx *jobContext, job *model.Job, args *model.
 	return ver, errors.Trace(err)
 }
 
-func onCreateTables(jobCtx *jobContext, job *model.Job) (int64, error) {
+func (w *worker) onCreateTables(jobCtx *jobContext, job *model.Job) (int64, error) {
 	var ver int64
 
 	args, err := model.GetBatchCreateTableArgs(job)
@@ -266,15 +273,15 @@ func onCreateTables(jobCtx *jobContext, job *model.Job) (int64, error) {
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
+	createTablesEvent := notifier.NewCreateTablesEvent(tableInfos)
+	err = asyncNotifyEvent(jobCtx, createTablesEvent, job, w.sess)
+	if err != nil {
+		return ver, errors.Trace(err)
+	}
 
 	job.State = model.JobStateDone
 	job.SchemaState = model.StatePublic
 	job.BinlogInfo.SetTableInfos(ver, tableInfos)
-	for i := range tableInfos {
-		createTableEvent := notifier.NewCreateTableEvent(tableInfos[i])
-		asyncNotifyEvent(jobCtx, createTableEvent, job)
-	}
-
 	return ver, errors.Trace(err)
 }
 
