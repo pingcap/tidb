@@ -28,7 +28,6 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
-	"github.com/pingcap/tidb/tests/realtikvtest"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -121,7 +120,7 @@ func TestIngestError(t *testing.T) {
 }
 
 func TestAddIndexIngestPanic(t *testing.T) {
-	store := realtikvtest.CreateMockStoreAndSetup(t)
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
 	defer ingesttestutil.InjectMockBackendMgr(t, store)()
@@ -148,7 +147,7 @@ func TestAddIndexIngestPanic(t *testing.T) {
 }
 
 func TestAddIndexIngestCancel(t *testing.T) {
-	store, dom := realtikvtest.CreateMockStoreAndDomainAndSetup(t)
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
 	defer ingesttestutil.InjectMockBackendMgr(t, store)()
