@@ -648,9 +648,9 @@ func buildTablePartitionInfo(ctx *metabuild.Context, s *ast.PartitionOptions, tb
 	return nil
 }
 
-func rewritePartitionQueryString(ctx sessionctx.Context, s *ast.PartitionOptions, tbInfo *model.TableInfo) {
+func rewritePartitionQueryString(ctx sessionctx.Context, s *ast.PartitionOptions, tbInfo *model.TableInfo) error {
 	if s == nil {
-		return
+		return nil
 	}
 
 	if s.Interval != nil {
@@ -673,6 +673,7 @@ func rewritePartitionQueryString(ctx sessionctx.Context, s *ast.PartitionOptions
 			ctx.SetValue(sessionctx.QueryString, newQuery)
 		}
 	}
+	return nil
 }
 
 func getPartitionColSlices(sctx expression.BuildContext, tblInfo *model.TableInfo, s *ast.PartitionOptions) (partCols stringSlice, err error) {

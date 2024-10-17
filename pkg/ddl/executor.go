@@ -1028,8 +1028,8 @@ func (e *executor) CreateTable(ctx sessionctx.Context, s *ast.CreateTableStmt) (
 		return errors.Trace(err)
 	}
 
-	if s.Partition != nil {
-		rewritePartitionQueryString(ctx, s.Partition, tbInfo)
+	if err = rewritePartitionQueryString(ctx, s.Partition, tbInfo); err != nil {
+		return err
 	}
 
 	if err = checkTableInfoValidWithStmt(metaBuildCtx, tbInfo, s); err != nil {
@@ -2443,7 +2443,9 @@ func (e *executor) AlterTablePartitioning(ctx sessionctx.Context, ident ast.Iden
 	}
 
 	newPartInfo := newMeta.Partition
-	rewritePartitionQueryString(ctx, spec.Partition, newMeta)
+	if err = rewritePartitionQueryString(ctx, spec.Partition, newMeta); err != nil {
+		return errors.Trace(err)
+	}
 
 	if err = handlePartitionPlacement(ctx, newPartInfo); err != nil {
 		return errors.Trace(err)
@@ -5630,8 +5632,8 @@ func (e *executor) RepairTable(ctx sessionctx.Context, createStmt *ast.CreateTab
 	if err != nil {
 		return errors.Trace(err)
 	}
-	if createStmt.Partition != nil {
-		rewritePartitionQueryString(ctx, createStmt.Partition, newTableInfo)
+	if err = rewritePartitionQueryString(ctx, createStmt.Partition, newTableInfo); err != nil {
+		return errors.Trace(err)
 	}
 	// Override newTableInfo with oldTableInfo's element necessary.
 	// TODO: There may be more element assignments here, and the new TableInfo should be verified with the actual data.
