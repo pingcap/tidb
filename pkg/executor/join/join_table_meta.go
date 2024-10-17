@@ -122,6 +122,12 @@ func (*joinTableMeta) isCurrentRowUsed(rowStart unsafe.Pointer) bool {
 	return (*(*uint32)(unsafe.Add(rowStart, sizeOfNextPtr)) & usedFlagMask) == usedFlagMask
 }
 
+func (*joinTableMeta) isCurrentRowUsedWithAtomic(rowStart unsafe.Pointer) bool {
+	addr := (*uint32)(unsafe.Add(rowStart, sizeOfNextPtr))
+	value := atomic.LoadUint32(addr)
+	return (value & usedFlagMask) == usedFlagMask
+}
+
 type keyProp struct {
 	canBeInlined  bool
 	keyLength     int
