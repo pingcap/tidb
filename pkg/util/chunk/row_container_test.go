@@ -369,8 +369,8 @@ func TestCloseRowContainerReader(t *testing.T) {
 	// read 8.5 of these chunks
 	reader := NewRowContainerReader(rc)
 	defer reader.Close()
-	for i := 0; i < 8; i++ {
-		for j := 0; j < 16; j++ {
+	for i := range 8 {
+		for j := range 16 {
 			row := reader.Current()
 			require.Equal(t, allRows[i*16+j], row.GetBytes(0))
 			reader.Next()
