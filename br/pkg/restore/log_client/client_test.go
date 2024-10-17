@@ -93,7 +93,7 @@ func TestDeleteRangeQueryExec(t *testing.T) {
 	g := gluetidb.New()
 	client := logclient.NewRestoreClient(
 		utiltest.NewFakePDClient(nil, false, nil), nil, nil, keepalive.ClientParameters{})
-	err := client.Init(g, m.Storage)
+	err := client.Init(ctx, g, m.Storage, false)
 	require.NoError(t, err)
 
 	client.RunGCRowsLoader(ctx)
@@ -112,7 +112,7 @@ func TestDeleteRangeQuery(t *testing.T) {
 	g := gluetidb.New()
 	client := logclient.NewRestoreClient(
 		utiltest.NewFakePDClient(nil, false, nil), nil, nil, keepalive.ClientParameters{})
-	err := client.Init(g, m.Storage)
+	err := client.Init(ctx, g, m.Storage, false)
 	require.NoError(t, err)
 
 	client.RunGCRowsLoader(ctx)
@@ -1343,8 +1343,9 @@ func TestLogFilesIterWithSplitHelper(t *testing.T) {
 	w := restore.PipelineFileRestorerWrapper[*logclient.LogDataFileInfo]{
 		RegionsSplitter: split.NewRegionsSplitter(utiltest.NewFakeSplitClient(), 144*1024*1024, 1440000),
 	}
-	s := logclient.NewLogSplitStrategy(rewriteRulesMap)
-	logIter := w.WrapIter(context.Background(), mockIter, s)
+	s, err := logclient.NewLogSplitStrategy(ctx, nil, rewriteRulesMap, func(uint64, uint64) {})
+	require.NoError(t, err)
+	logIter := w.WithSplit(context.Background(), mockIter, s)
 	next := 0
 	for r := logIter.TryNext(ctx); !r.Finished; r = logIter.TryNext(ctx) {
 		require.NoError(t, r.Err)

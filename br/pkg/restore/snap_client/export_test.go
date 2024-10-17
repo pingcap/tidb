@@ -61,8 +61,8 @@ func MockCallSetSpeedLimit(ctx context.Context, fakeImportClient importclient.Im
 	closeCallBacks = append(createCallBacks, func(importer *SnapFileImporter) error {
 		return setFn(importer, rc.rateLimit)
 	})
-	fileImporter, err := NewSnapFileImporter(ctx, nil, kvrpcpb.APIVersion(0), nil, fakeImportClient, nil, false, false, nil, rc.rewriteMode, 128, createCallBacks, closeCallBacks)
-	rc.restorer = restore.NewSimpleFileRestorer(fileImporter, rc.workerPool, nil)
+	fileImporter, err := NewSnapFileImporter(ctx, nil, kvrpcpb.APIVersion(0), nil, fakeImportClient, nil, TiDBFull, nil, rc.rewriteMode, 128, createCallBacks, closeCallBacks)
+	rc.restorer = restore.NewSimpleFileRestorer(ctx, fileImporter, rc.workerPool, nil)
 	if err != nil {
 		return errors.Trace(err)
 	}

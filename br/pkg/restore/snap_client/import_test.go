@@ -75,7 +75,7 @@ func TestGetKeyRangeByMode(t *testing.T) {
 	require.Equal(t, []byte(""), end)
 
 	// normal kv: the keys must be encoded.
-	testFn := snapclient.GetKeyRangeByMode(snapclient.TiDB)
+	testFn := snapclient.GetKeyRangeByMode(snapclient.TiDBFull)
 	start, end, err = testFn(file, rule)
 	require.NoError(t, err)
 	require.Equal(t, codec.EncodeBytes(nil, []byte("t2a")), start)
@@ -162,7 +162,7 @@ func TestSnapImporter(t *testing.T) {
 		splitClient.AppendPdRegion(region)
 	}
 	importClient := newFakeImporterClient()
-	importer, err := snapclient.NewSnapFileImporter(ctx, nil, kvrpcpb.APIVersion_V1, splitClient, importClient, nil, false, false, generateStores(), snapclient.RewriteModeKeyspace, 10, nil, nil)
+	importer, err := snapclient.NewSnapFileImporter(ctx, nil, kvrpcpb.APIVersion_V1, splitClient, importClient, nil, snapclient.TiDBFull, generateStores(), snapclient.RewriteModeKeyspace, 10, nil, nil)
 	require.NoError(t, err)
 	err = importer.SetDownloadSpeedLimit(ctx, 1, 5)
 	require.NoError(t, err)
@@ -186,7 +186,7 @@ func TestSnapImporterRaw(t *testing.T) {
 		splitClient.AppendPdRegion(region)
 	}
 	importClient := newFakeImporterClient()
-	importer, err := snapclient.NewSnapFileImporter(ctx, nil, kvrpcpb.APIVersion_V1, splitClient, importClient, nil, true, false, generateStores(), snapclient.RewriteModeKeyspace, 10, nil, nil)
+	importer, err := snapclient.NewSnapFileImporter(ctx, nil, kvrpcpb.APIVersion_V1, splitClient, importClient, nil, snapclient.Raw, generateStores(), snapclient.RewriteModeKeyspace, 10, nil, nil)
 	require.NoError(t, err)
 	err = importer.SetRawRange([]byte(""), []byte(""))
 	require.NoError(t, err)

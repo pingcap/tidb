@@ -388,5 +388,5 @@ func (rc *SnapClient) RestoreSSTFiles(
 	if retErr != nil {
 		return retErr
 	}
-	return rc.restorer.OnFinish()
+	return rc.restorer.WaitUnitilFinish()
 }

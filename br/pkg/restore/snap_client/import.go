@@ -323,7 +323,6 @@ func (importer *SnapFileImporter) Import(
 	ctx context.Context,
 	filesGroup ...restore.RestoreFilesInfo,
 ) error {
-
 	// Rewrite the start key and end key of file to scan regions
 	startKey, endKey, err := importer.getKeyRangeForFiles(filesGroup)
 	if err != nil {
@@ -331,7 +330,7 @@ func (importer *SnapFileImporter) Import(
 	}
 	for _, f := range filesGroup {
 		for _, s := range f.SSTFiles {
-			log.Info("iIIII", logutil.File(s), logutil.Key("start key", startKey), logutil.Key("end key", endKey))
+			log.Debug("file in one import", logutil.File(s), logutil.Key("start key", startKey), logutil.Key("end key", endKey))
 		}
 	}
 
@@ -343,7 +342,7 @@ func (importer *SnapFileImporter) Import(
 			return errors.Trace(errScanRegion)
 		}
 
-		log.Info("scan regions", logutil.Key("start key", startKey), logutil.Key("end key", endKey), zap.Int("count", len(regionInfos)))
+		log.Debug("scan regions", logutil.Key("start key", startKey), logutil.Key("end key", endKey), zap.Int("count", len(regionInfos)))
 		start := time.Now()
 		// Try to download and ingest the file in every region
 		for _, regionInfo := range regionInfos {
@@ -589,7 +588,6 @@ func (importer *SnapFileImporter) downloadSST(
 	for _, files := range filesGroup {
 		for _, file := range files.SSTFiles {
 			req, sstMeta, err := importer.buildDownloadRequest(file, files.RewriteRules, regionInfo, cipher)
-			log.Info("filesINGGG", logutil.File(file), logutil.SSTMeta(&sstMeta))
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
@@ -649,7 +647,7 @@ func (importer *SnapFileImporter) downloadSST(
 				resultMetasMap[fileName] = &sstMeta
 				mu.Unlock()
 
-				log.Info("download from peer",
+				log.Debug("download from peer",
 					zap.String("filename", fileName),
 					logutil.Region(regionInfo.Region),
 					logutil.Peer(peer),

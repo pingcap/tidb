@@ -85,7 +85,7 @@ go_test(
     ],
     embed = [":snap_client"],
     flaky = True,
-    shard_count = 20,
+    shard_count = 18,
     deps = [
         "//br/pkg/errors",
         "//br/pkg/glue",

@@ -74,7 +74,7 @@ func (l *CompactedFileSplitStrategy) ShouldSkip(file *backuppb.LogFileSubcompact
 		return true
 	}
 	if len(sstOutputs) != len(file.SstOutputs) {
-		log.Info("partical files in sub compaction skipped")
+		log.Info("partial files in sub compaction skipped")
 		file.SstOutputs = sstOutputs
 		return false
 	}

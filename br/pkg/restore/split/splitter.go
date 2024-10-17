@@ -42,7 +42,7 @@ type SplitStrategy[T any] interface {
 	Accumulate(T)
 	// ShouldSplit checks if the accumulated values meet the criteria for triggering a split.
 	ShouldSplit() bool
-	// Skip the file by checkpoints or other rules
+	// Skip the file by checkpoints or invalid files
 	ShouldSkip(T) bool
 	// AccumulationsIter returns an iterator for the accumulated values.
 	AccumulationsIter() *SplitHelperIterator

@@ -491,7 +491,7 @@ func testFileManagerWithMeta(t *testing.T, m metaMaker) {
 			if c.DMLFileCount != nil {
 				counter = new(int)
 			}
-			data, err := fm.LoadDDLFilesAndCountDMLFiles(ctx, counter)
+			data, err := fm.LoadDDLFilesAndCountDMLFiles(ctx)
 			req.NoError(err)
 			if counter != nil {
 				req.Equal(*c.DMLFileCount, *counter)

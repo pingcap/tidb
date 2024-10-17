@@ -29,7 +29,6 @@ go_library(
         "//pkg/util",
         "@com_github_go_sql_driver_mysql//:mysql",
         "@com_github_juju_errors//:errors",
-        "@com_github_ngaut_log//:log",
         "@com_github_opentracing_opentracing_go//:opentracing-go",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_failpoint//:failpoint",

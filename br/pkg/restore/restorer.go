@@ -82,8 +82,8 @@ func NewSSTFilesInfo(files []*backuppb.File, rules *utils.RewriteRules) RestoreF
 type FileRestorer interface {
 	// Restore import the files to the TiKV.
 	Restore(onProgress func(int64), files ...BatchRestoreFilesInfo) error
-	// OnFinish wait for all pending restore files finished
-	OnFinish() error
+	// WaitUnitilFinish wait for all pending restore files finished
+	WaitUnitilFinish() error
 	// Close release the resources.
 	Close() error
 }
@@ -130,7 +130,7 @@ func (s *SimpleRestorer) Close() error {
 	return s.fileImporter.Close()
 }
 
-func (s *SimpleRestorer) OnFinish() error {
+func (s *SimpleRestorer) WaitUnitilFinish() error {
 	return s.eg.Wait()
 }
 
@@ -197,7 +197,7 @@ func (m *MultiTablesRestorer) Close() error {
 	return m.fileImporter.Close()
 }
 
-func (m *MultiTablesRestorer) OnFinish() error {
+func (m *MultiTablesRestorer) WaitUnitilFinish() error {
 	if err := m.eg.Wait(); err != nil {
 		summary.CollectFailureUnit("file", err)
 		log.Error("restore files failed", zap.Error(err))
@@ -297,14 +297,14 @@ type PipelineFileRestorer[T any] interface {
 
 	// Log Restore, Compacted Restore
 	// split when Iter until condition satified
-	WrapIter(iter.TryNextor[T], split.SplitStrategy[T]) iter.TryNextor[T]
+	WithSplit(iter.TryNextor[T], split.SplitStrategy[T]) iter.TryNextor[T]
 }
 
 type PipelineFileRestorerWrapper[T any] struct {
 	split.RegionsSplitter
 }
 
-func (p *PipelineFileRestorerWrapper[T]) WrapIter(ctx context.Context, i iter.TryNextor[T], strategy split.SplitStrategy[T]) iter.TryNextor[T] {
+func (p *PipelineFileRestorerWrapper[T]) WithSplit(ctx context.Context, i iter.TryNextor[T], strategy split.SplitStrategy[T]) iter.TryNextor[T] {
 	return iter.MapFilter(i, func(item T) (T, bool) {
 		if strategy.ShouldSkip(item) {
 			return item, true

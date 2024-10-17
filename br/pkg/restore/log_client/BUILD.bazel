@@ -46,6 +46,7 @@ go_library(
         "//pkg/util",
         "//pkg/util/codec",
         "//pkg/util/redact",
+        "//pkg/util/sqlexec",
         "//pkg/util/table-filter",
         "@com_github_fatih_color//:color",
         "@com_github_gogo_protobuf//proto",

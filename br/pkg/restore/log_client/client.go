@@ -15,7 +15,6 @@
 package logclient
 
 import (
-	"bytes"
 	"cmp"
 	"context"
 	"crypto/tls"
@@ -64,7 +63,6 @@ import (
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
-	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	filter "github.com/pingcap/tidb/pkg/util/table-filter"
 	"github.com/tikv/client-go/v2/config"
@@ -184,66 +182,6 @@ func (rc *LogClient) Close(ctx context.Context) {
 	log.Info("Restore client closed")
 }
 
-type CompactedItem struct {
-	files        restore.RestoreFilesInfo
-	regionMinKey []byte
-	regionMaxKey []byte
-}
-
-type CompactedItems []CompactedItem
-
-func (rc *LogClient) CollectCompactedSsts(
-	ctx context.Context,
-	rules map[int64]*restoreutils.RewriteRules,
-	compactionsIter iter.TryNextor[*backuppb.LogFileSubcompaction],
-) (int, map[uint64]CompactedItems, error) {
-	sstFileCount := 0
-	regionCompactedMap := make(map[uint64]CompactedItems)
-	// read unorder files
-	for r := compactionsIter.TryNext(ctx); !r.Finished; r = compactionsIter.TryNext(ctx) {
-		if r.Err != nil {
-			return 0, nil, r.Err
-		}
-		i := r.Item
-		rewriteRules, ok := rules[i.Meta.TableId]
-		if !ok {
-			log.Warn("Skipped excluded tables.", zap.Int64("table_id", i.Meta.TableId))
-			continue
-		}
-
-		if _, ok := regionCompactedMap[i.Meta.RegionId]; !ok {
-			regionCompactedMap[i.Meta.RegionId] = make([]CompactedItem, 0, CompactedSSTSplitBatchSize)
-		}
-
-		var maxRegionKey []byte
-		for _, r := range i.RegionMetaHints {
-			if len(r.EndKey) == 0 {
-				// region end key is max end key
-				maxRegionKey = r.EndKey
-				break
-			}
-			if bytes.Compare(maxRegionKey, r.EndKey) < 0 {
-				maxRegionKey = r.EndKey
-			}
-		}
-		_, rawMaxKey, err := codec.DecodeBytes(maxRegionKey, nil)
-		if err != nil {
-			return 0, nil, errors.Trace(err)
-		}
-		sstFileCount += len(i.SstOutputs)
-
-		regionCompactedMap[i.Meta.RegionId] = append(regionCompactedMap[i.Meta.RegionId], CompactedItem{
-			files: restore.RestoreFilesInfo{
-				TableID:      i.Meta.TableId,
-				SSTFiles:     i.SstOutputs,
-				RewriteRules: rewriteRules,
-			},
-			regionMaxKey: rawMaxKey,
-		})
-	}
-	return sstFileCount, regionCompactedMap, nil
-}
-
 func (rc *LogClient) RestoreCompactedSstFiles(
 	ctx context.Context,
 	compactionsIter iter.TryNextor[*backuppb.LogFileSubcompaction],
@@ -268,25 +206,14 @@ func (rc *LogClient) RestoreCompactedSstFiles(
 		}
 		infos = append(infos, info)
 	}
+	// in order to reduce the cross region download, we should give up the batch restore here.
 	for _, i := range infos {
 		err := rc.restorer.Restore(onProgress, []restore.RestoreFilesInfo{i})
 		if err != nil {
 			return errors.Trace(err)
 		}
 	}
-	// i := 0
-	// for ; i+8 < len(infos); i += 8 {
-	// 	err := rc.restorer.Restore(onProgress, infos[i:i+8])
-	// 	if err != nil {
-	// 		return err
-	// 	}
-	// }
-	// err := rc.restorer.Restore(onProgress, infos[i:])
-	// if err != nil {
-	// 	return err
-	// }
-
-	return rc.restorer.OnFinish()
+	return rc.restorer.WaitUnitilFinish()
 }
 
 func (rc *LogClient) SetRawKVBatchClient(
@@ -751,7 +678,7 @@ func (rc *LogClient) RestoreKVFiles(
 				fileStart := time.Now()
 				defer applyWg.Done()
 				defer func() {
-					onProgress(int64(kvCount))
+					onProgress(kvCount)
 					updateStats(uint64(kvCount), size)
 					summary.CollectInt("File", len(files))
 
@@ -1474,7 +1401,7 @@ func (rc *LogClient) WrapCompactedFilesIterWithSplitHelper(
 		RegionsSplitter: split.NewRegionsSplitter(client, splitSize, splitKeys),
 	}
 	s := NewCompactedFileSplitStrategy(rules, checkpointSets, updateStatsFn)
-	return w.WrapIter(ctx, compactedIter, s), nil
+	return w.WithSplit(ctx, compactedIter, s), nil
 }
 
 func (rc *LogClient) WrapLogFilesIterWithSplitHelper(
@@ -1494,7 +1421,7 @@ func (rc *LogClient) WrapLogFilesIterWithSplitHelper(
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	return w.WrapIter(ctx, logIter, s), nil
+	return w.WithSplit(ctx, logIter, s), nil
 }
 
 func WrapLogFilesIterWithCheckpointFailpoint(
