@@ -109,23 +109,35 @@ func (tne *tableNameExtractor) getTablesAndViews() (map[tableNamePair]struct{}, 
 			r[tablePair] = struct{}{}
 		}
 		// if the table has a foreign key, we need to add the referenced table to the list
-		tblInfo, err := tne.is.TableByName(model.NewCIStr(tablePair.DBName), model.NewCIStr(tablePair.TableName))
+		err := findFK(tne.is, tablePair.DBName, tablePair.TableName, r)
 		if err != nil {
 			return nil, err
-		}
-		for _, fk := range tblInfo.Meta().ForeignKeys {
-			key := tableNamePair{
-				DBName:    fk.RefSchema.L,
-				TableName: fk.RefTable.L,
-				IsView:    false,
-			}
-			r[key] = struct{}{}
 		}
 	}
 	return r, nil
 }
 
-func (tne *tableNameExtractor) Enter(in ast.Node) (ast.Node, bool) {
+func findFK(is infoschema.InfoSchema, dbName, tableName string, tableMap map[tableNamePair]struct{}) error {
+	tblInfo, err := is.TableByName(model.NewCIStr(dbName), model.NewCIStr(tableName))
+	if err != nil {
+		return err
+	}
+	for _, fk := range tblInfo.Meta().ForeignKeys {
+		key := tableNamePair{
+			DBName:    fk.RefSchema.L,
+			TableName: fk.RefTable.L,
+			IsView:    false,
+		}
+		tableMap[key] = struct{}{}
+		err := findFK(is, key.DBName, key.TableName, tableMap)
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (*tableNameExtractor) Enter(in ast.Node) (ast.Node, bool) {
 	if _, ok := in.(*ast.TableName); ok {
 		return in, true
 	}
