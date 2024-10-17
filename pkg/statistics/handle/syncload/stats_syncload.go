@@ -43,19 +43,19 @@ import (
 )
 
 // RetryCount is the max retry count for a sync load task.
-const RetryCount = 3
+const RetryCount = 2
 
 // GetSyncLoadConcurrencyByCPU returns the concurrency of sync load by CPU.
 func GetSyncLoadConcurrencyByCPU() int {
 	core := runtime.GOMAXPROCS(0)
 	if core <= 8 {
-		return 5
-	} else if core <= 16 {
 		return 6
-	} else if core <= 32 {
+	} else if core <= 16 {
 		return 8
+	} else if core <= 32 {
+		return 10
 	}
-	return 10
+	return 12
 }
 
 type statsSyncLoad struct {
