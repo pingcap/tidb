@@ -85,7 +85,7 @@ func IndentFormatter(w io.Writer, indent string) Formatter {
 
 func (f *indentFormatter) format(flat bool, format string, args ...any) (n int, errno error) {
 	var buf = make([]byte, 0)
-	for i := 0; i < len(format); i++ {
+	for i := range len(format) {
 		c := format[i]
 		switch f.state {
 		case st0:
