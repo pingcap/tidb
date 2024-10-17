@@ -2539,12 +2539,11 @@ AlterTableSpec:
 			Name:     $4,
 		}
 	}
-|	"DROP" "FOREIGN" "KEY" IfExists Symbol
+|	"DROP" "FOREIGN" "KEY" Symbol
 	{
 		$$ = &ast.AlterTableSpec{
-			IfExists: $4.(bool),
 			Tp:       ast.AlterTableDropForeignKey,
-			Name:     $5,
+			Name:     $4,
 		}
 	}
 |	"ORDER" "BY" AlterOrderList %prec lowerThenOrder
