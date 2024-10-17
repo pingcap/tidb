@@ -88,7 +88,7 @@ func (s *SchemaChangeEvent) GetType() model.ActionType {
 
 // NewCreateTablesEvent creates a SchemaChangeEvent whose type is
 // ActionCreateTables.
-// The type of the ActionCreateTable should also be included in ActionCreateTables,
+// The type of the ActionCreateTable should also be included in ActionCreateTables.
 func NewCreateTablesEvent(
 	newTableInfos []*model.TableInfo,
 ) *SchemaChangeEvent {
