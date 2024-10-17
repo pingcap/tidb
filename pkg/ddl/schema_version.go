@@ -201,53 +201,45 @@ func SetSchemaDiffForRecoverTable(diff *model.SchemaDiff, job *model.Job, jobCtx
 }
 
 // SetSchemaDiffForReorganizePartition set SchemaDiff for ActionReorganizePartition.
-func SetSchemaDiffForReorganizePartition(diff *model.SchemaDiff, job *model.Job) {
+func SetSchemaDiffForReorganizePartition(diff *model.SchemaDiff, job *model.Job, jobCtx *jobContext) {
 	diff.TableID = job.TableID
 	// TODO: should this be for every state of Reorganize?
-	if len(job.CtxVars) > 0 {
-		if droppedIDs, ok := job.CtxVars[0].([]int64); ok {
-			if addedIDs, ok := job.CtxVars[1].([]int64); ok {
-				// to use AffectedOpts we need both new and old to have the same length
-				maxParts := mathutil.Max[int](len(droppedIDs), len(addedIDs))
-				// Also initialize them to 0!
-				oldIDs := make([]int64, maxParts)
-				copy(oldIDs, droppedIDs)
-				newIDs := make([]int64, maxParts)
-				copy(newIDs, addedIDs)
-				diff.AffectedOpts = buildPlacementAffects(oldIDs, newIDs)
-			}
-		}
+	args := jobCtx.jobArgs.(*model.TablePartitionArgs)
+	droppedIDs, addedIDs := args.OldPhysicalTblIDs, args.NewPartitionIDs
+	if len(addedIDs) > 0 {
+		// to use AffectedOpts we need both new and old to have the same length
+		maxParts := mathutil.Max[int](len(droppedIDs), len(addedIDs))
+		// Also initialize them to 0!
+		oldIDs := make([]int64, maxParts)
+		copy(oldIDs, droppedIDs)
+		newIDs := make([]int64, maxParts)
+		copy(newIDs, addedIDs)
+		diff.AffectedOpts = buildPlacementAffects(oldIDs, newIDs)
 	}
 }
 
 // SetSchemaDiffForPartitionModify set SchemaDiff for ActionRemovePartitioning, ActionAlterTablePartitioning.
-func SetSchemaDiffForPartitionModify(diff *model.SchemaDiff, job *model.Job) error {
+func SetSchemaDiffForPartitionModify(diff *model.SchemaDiff, job *model.Job, jobCtx *jobContext) {
 	diff.TableID = job.TableID
 	diff.OldTableID = job.TableID
 	if job.SchemaState == model.StateDeleteReorganization {
-		args, err := model.GetTablePartitionArgs(job)
-		if err != nil {
-			return errors.Trace(err)
-		}
+		args := jobCtx.jobArgs.(*model.TablePartitionArgs)
 		partInfo := args.PartInfo
 		// Final part, new table id is assigned
 		diff.TableID = partInfo.NewTableID
-		if len(job.CtxVars) > 0 { // TODO remove it.
-			if droppedIDs, ok := job.CtxVars[0].([]int64); ok {
-				if addedIDs, ok := job.CtxVars[1].([]int64); ok {
-					// to use AffectedOpts we need both new and old to have the same length
-					maxParts := mathutil.Max[int](len(droppedIDs), len(addedIDs))
-					// Also initialize them to 0!
-					oldIDs := make([]int64, maxParts)
-					copy(oldIDs, droppedIDs)
-					newIDs := make([]int64, maxParts)
-					copy(newIDs, addedIDs)
-					diff.AffectedOpts = buildPlacementAffects(oldIDs, newIDs)
-				}
-			}
+
+		droppedIDs, addedIDs := args.OldPhysicalTblIDs, args.NewPartitionIDs
+		if len(addedIDs) > 0 {
+			// to use AffectedOpts we need both new and old to have the same length
+			maxParts := mathutil.Max[int](len(droppedIDs), len(addedIDs))
+			// Also initialize them to 0!
+			oldIDs := make([]int64, maxParts)
+			copy(oldIDs, droppedIDs)
+			newIDs := make([]int64, maxParts)
+			copy(newIDs, addedIDs)
+			diff.AffectedOpts = buildPlacementAffects(oldIDs, newIDs)
 		}
 	}
-	return nil
 }
 
 // SetSchemaDiffForCreateTable set SchemaDiff for ActionCreateTable.
@@ -351,9 +343,9 @@ func updateSchemaVersion(jobCtx *jobContext, job *model.Job, multiInfos ...schem
 	case model.ActionDropTable:
 		SetSchemaDiffForDropTable(diff, job, jobCtx)
 	case model.ActionReorganizePartition:
-		SetSchemaDiffForReorganizePartition(diff, job)
+		SetSchemaDiffForReorganizePartition(diff, job, jobCtx)
 	case model.ActionRemovePartitioning, model.ActionAlterTablePartitioning:
-		err = SetSchemaDiffForPartitionModify(diff, job)
+		SetSchemaDiffForPartitionModify(diff, job, jobCtx)
 	case model.ActionCreateTable:
 		err = SetSchemaDiffForCreateTable(diff, job, jobCtx)
 	case model.ActionRecoverSchema:

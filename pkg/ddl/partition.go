@@ -75,17 +75,13 @@ const (
 	partitionMaxValue = "MAXVALUE"
 )
 
-func checkAddPartition(t *meta.Mutator, job *model.Job) (*model.TableInfo, *model.PartitionInfo, []model.PartitionDefinition, error) {
+func checkAddPartition(jobCtx *jobContext, job *model.Job) (*model.TableInfo, *model.PartitionInfo, []model.PartitionDefinition, error) {
 	schemaID := job.SchemaID
-	tblInfo, err := GetTableInfoAndCancelFaultJob(t, job, schemaID)
+	tblInfo, err := GetTableInfoAndCancelFaultJob(jobCtx.metaMut, job, schemaID)
 	if err != nil {
 		return nil, nil, nil, errors.Trace(err)
 	}
-	args, err := model.GetTablePartitionArgs(job)
-	if err != nil {
-		job.State = model.JobStateCancelled
-		return nil, nil, nil, errors.Trace(err)
-	}
+	args := jobCtx.jobArgs.(*model.TablePartitionArgs)
 	partInfo := args.PartInfo
 	if len(tblInfo.Partition.AddingDefinitions) > 0 {
 		return tblInfo, partInfo, tblInfo.Partition.AddingDefinitions, nil
@@ -95,6 +91,12 @@ func checkAddPartition(t *meta.Mutator, job *model.Job) (*model.TableInfo, *mode
 
 // TODO: Move this into reorganize partition!
 func (w *worker) onAddTablePartition(jobCtx *jobContext, job *model.Job) (ver int64, _ error) {
+	args, err := model.GetTablePartitionArgs(job)
+	if err != nil {
+		job.State = model.JobStateCancelled
+		return ver, errors.Trace(err)
+	}
+	jobCtx.jobArgs = args
 	// Handle the rolling back job
 	if job.IsRollingback() {
 		ver, err := w.rollbackLikeDropPartition(jobCtx, job)
@@ -105,7 +107,7 @@ func (w *worker) onAddTablePartition(jobCtx *jobContext, job *model.Job) (ver in
 	}
 
 	// notice: addingDefinitions is empty when job is in state model.StateNone
-	tblInfo, partInfo, addingDefinitions, err := checkAddPartition(jobCtx.metaMut, job)
+	tblInfo, partInfo, addingDefinitions, err := checkAddPartition(jobCtx, job)
 	if err != nil {
 		return ver, err
 	}
@@ -2136,11 +2138,7 @@ func dropLabelRules(ctx context.Context, schemaName, tableName string, partNames
 // It will drop newly created partitions that has not yet been used, including cleaning
 // up label rules and bundles as well as changed indexes due to global flag.
 func (w *worker) rollbackLikeDropPartition(jobCtx *jobContext, job *model.Job) (ver int64, _ error) {
-	args, err := model.GetTablePartitionArgs(job)
-	if err != nil {
-		job.State = model.JobStateCancelled
-		return ver, errors.Trace(err)
-	}
+	args := jobCtx.jobArgs.(*model.TablePartitionArgs)
 	partInfo := args.PartInfo
 	metaMut := jobCtx.metaMut
 	tblInfo, err := GetTableInfoAndCancelFaultJob(metaMut, job, job.SchemaID)
@@ -3041,15 +3039,10 @@ func getNewGlobal(partInfo *model.PartitionInfo, idx *model.IndexInfo) bool {
 	return idx.Global
 }
 
-func getReorgPartitionInfo(t *meta.Mutator, job *model.Job) (*model.TableInfo, []string, *model.PartitionInfo, []model.PartitionDefinition, []model.PartitionDefinition, error) {
+func getReorgPartitionInfo(t *meta.Mutator, job *model.Job, args *model.TablePartitionArgs) (*model.TableInfo, []string, *model.PartitionInfo, []model.PartitionDefinition, []model.PartitionDefinition, error) {
 	schemaID := job.SchemaID
 	tblInfo, err := GetTableInfoAndCancelFaultJob(t, job, schemaID)
 	if err != nil {
-		return nil, nil, nil, nil, nil, errors.Trace(err)
-	}
-	args, err := model.GetTablePartitionArgs(job)
-	if err != nil {
-		job.State = model.JobStateCancelled
 		return nil, nil, nil, nil, nil, errors.Trace(err)
 	}
 	partNames, partInfo := args.PartNames, args.PartInfo
@@ -3144,6 +3137,12 @@ func getReorgPartitionInfo(t *meta.Mutator, job *model.Job) (*model.TableInfo, [
 //	Everything now looks as it should, no memory of old partitions/indexes,
 //	and no more double writing, since the previous state is only reading the new partitions/indexes.
 func (w *worker) onReorganizePartition(jobCtx *jobContext, job *model.Job) (ver int64, _ error) {
+	args, err := model.GetTablePartitionArgs(job)
+	if err != nil {
+		job.State = model.JobStateCancelled
+		return ver, errors.Trace(err)
+	}
+	jobCtx.jobArgs = args
 	// Handle the rolling back job
 	if job.IsRollingback() {
 		ver, err := w.rollbackLikeDropPartition(jobCtx, job)
@@ -3153,7 +3152,7 @@ func (w *worker) onReorganizePartition(jobCtx *jobContext, job *model.Job) (ver 
 		return ver, nil
 	}
 
-	tblInfo, partNames, partInfo, _, addingDefinitions, err := getReorgPartitionInfo(jobCtx.metaMut, job)
+	tblInfo, partNames, partInfo, _, addingDefinitions, err := getReorgPartitionInfo(jobCtx.metaMut, job, args)
 	if err != nil {
 		return ver, err
 	}
@@ -3616,7 +3615,8 @@ func (w *worker) onReorganizePartition(jobCtx *jobContext, job *model.Job) (ver 
 				failpoint.Return(ver, errors.New("Injected error by reorgPartFail5"))
 			}
 		})
-		job.CtxVars = []any{physicalTableIDs, newIDs}
+		args.OldPhysicalTblIDs = physicalTableIDs
+		args.NewPartitionIDs = newIDs
 		ver, err = updateVersionAndTableInfo(jobCtx, job, tblInfo, true)
 		if err != nil {
 			return ver, errors.Trace(err)
@@ -3637,11 +3637,6 @@ func (w *worker) onReorganizePartition(jobCtx *jobContext, job *model.Job) (ver 
 
 		job.FinishTableJob(model.JobStateDone, model.StateNone, ver, tblInfo)
 		// A background job will be created to delete old partition data.
-		args, err := model.GetTablePartitionArgs(job)
-		if err != nil {
-			return ver, errors.Trace(err)
-		}
-		args.OldPhysicalTblIDs = physicalTableIDs
 		job.FillFinishedArgs(args)
 
 	default:
