@@ -71,7 +71,7 @@ type Session interface {
 	Close()
 	Auth(user *auth.UserIdentity, auth, salt []byte, authConn conn.AuthConn) error
 	AuthWithoutVerification(user *auth.UserIdentity) bool
-	AuthPluginForUser(user *auth.UserIdentity) (string, error)
+	AuthPluginForUser(user *auth.UserIdentity, defaultAuthPlugin string) (string, error)
 	MatchIdentity(username, remoteHost string) (*auth.UserIdentity, error)
 	// Return the information of the txn current running
 	TxnInfo() *txninfo.TxnInfo
