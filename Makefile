@@ -231,9 +231,9 @@ enterprise-docker: init-submodule enterprise-prepare
 enterprise-server-build: TIDB_EDITION=Enterprise
 enterprise-server-build:
 ifeq ($(TARGET), "")
-	CGO_ENABLED=1 $(GOBUILD) -tags enterprise $(RACE_FLAG) -ldflags '$(LDFLAGS) $(CHECK_FLAG) $(EXTENSION_FLAG)' -o bin/tidb-server cmd/tidb-server/main.go
+	CGO_ENABLED=1 $(GOBUILD) -tags=codes,enterprise $(RACE_FLAG) -ldflags '$(LDFLAGS) $(CHECK_FLAG) $(EXTENSION_FLAG)' -o bin/tidb-server cmd/tidb-server/main.go
 else
-	CGO_ENABLED=1 $(GOBUILD) -tags enterprise $(RACE_FLAG) -ldflags '$(LDFLAGS) $(CHECK_FLAG) $(EXTENSION_FLAG)' -o '$(TARGET)' cmd/tidb-server/main.go
+	CGO_ENABLED=1 $(GOBUILD) -tags=codes,enterprise $(RACE_FLAG) -ldflags '$(LDFLAGS) $(CHECK_FLAG) $(EXTENSION_FLAG)' -o '$(TARGET)' cmd/tidb-server/main.go
 endif
 
 .PHONY: enterprise-server
@@ -387,7 +387,7 @@ lightning_web:
 
 .PHONY: build_br
 build_br:
-	CGO_ENABLED=1 $(GOBUILD) $(RACE_FLAG) -ldflags '$(LDFLAGS) $(CHECK_FLAG)' -o $(BR_BIN) ./br/cmd/br
+	CGO_ENABLED=1 $(GOBUILD) -tags codes $(RACE_FLAG) -ldflags '$(LDFLAGS) $(CHECK_FLAG)' -o $(BR_BIN) ./br/cmd/br
 
 .PHONY: build_lightning_for_web
 build_lightning_for_web:
@@ -395,7 +395,7 @@ build_lightning_for_web:
 
 .PHONY: build_lightning
 build_lightning:
-	CGO_ENABLED=1 $(GOBUILD) $(RACE_FLAG) -ldflags '$(LDFLAGS) $(CHECK_FLAG)' -o $(LIGHTNING_BIN) ./lightning/cmd/tidb-lightning
+	CGO_ENABLED=1 $(GOBUILD) -tags codes $(RACE_FLAG) -ldflags '$(LDFLAGS) $(CHECK_FLAG)' -o $(LIGHTNING_BIN) ./lightning/cmd/tidb-lightning
 
 .PHONY: build_lightning-ctl
 build_lightning-ctl:
@@ -646,12 +646,12 @@ bazel_build:
 	bazel $(BAZEL_GLOBAL_CONFIG) build $(BAZEL_CMD_CONFIG) \
 		//... --//build:with_nogo_flag=$(NOGO_FLAG)
 	bazel $(BAZEL_GLOBAL_CONFIG) build $(BAZEL_CMD_CONFIG) \
-		//cmd/importer:importer //cmd/tidb-server:tidb-server //cmd/tidb-server:tidb-server-check --//build:with_nogo_flag=$(NOGO_FLAG)
+		//cmd/importer:importer //cmd/tidb-server:tidb-server //cmd/tidb-server:tidb-server-check --define gotags=codes --//build:with_nogo_flag=$(NOGO_FLAG)
 	cp bazel-out/k8-fastbuild/bin/cmd/tidb-server/tidb-server_/tidb-server ./bin
 	cp bazel-out/k8-fastbuild/bin/cmd/importer/importer_/importer      ./bin
 	cp bazel-out/k8-fastbuild/bin/cmd/tidb-server/tidb-server-check_/tidb-server-check ./bin
 	bazel $(BAZEL_GLOBAL_CONFIG) build $(BAZEL_CMD_CONFIG) \
-		//cmd/tidb-server:tidb-server --stamp --workspace_status_command=./build/print-enterprise-workspace-status.sh --define gotags=enterprise
+		//cmd/tidb-server:tidb-server --stamp --workspace_status_command=./build/print-enterprise-workspace-status.sh --define gotags=codes,enterprise
 	./bazel-out/k8-fastbuild/bin/cmd/tidb-server/tidb-server_/tidb-server -V
 
 .PHONY: bazel_fail_build
