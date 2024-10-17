@@ -23,6 +23,7 @@ import (
 	"net"
 	"slices"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -55,7 +56,7 @@ const globalDBVisible = mysql.CreatePriv | mysql.SelectPriv | mysql.InsertPriv |
 const (
 	sqlLoadRoleGraph        = "SELECT HIGH_PRIORITY FROM_USER, FROM_HOST, TO_USER, TO_HOST FROM mysql.role_edges"
 	sqlLoadGlobalPrivTable  = "SELECT HIGH_PRIORITY Host,User,Priv FROM mysql.global_priv"
-	sqlLoadDBTable          = "SELECT HIGH_PRIORITY Host,DB,User,Select_priv,Insert_priv,Update_priv,Delete_priv,Create_priv,Drop_priv,Grant_priv,Index_priv,References_priv,Lock_tables_priv,Create_tmp_table_priv,Event_priv,Create_routine_priv,Alter_routine_priv,Alter_priv,Execute_priv,Create_view_priv,Show_view_priv,Trigger_priv FROM mysql.db ORDER BY host, db, user"
+	sqlLoadDBTable          = "SELECT HIGH_PRIORITY Host,DB,User,Select_priv,Insert_priv,Update_priv,Delete_priv,Create_priv,Drop_priv,Grant_priv,Index_priv,References_priv,Lock_tables_priv,Create_tmp_table_priv,Event_priv,Create_routine_priv,Alter_routine_priv,Alter_priv,Execute_priv,Create_view_priv,Show_view_priv,Trigger_priv FROM mysql.db"
 	sqlLoadTablePrivTable   = "SELECT HIGH_PRIORITY Host,DB,User,Table_name,Grantor,Timestamp,Table_priv,Column_priv FROM mysql.tables_priv"
 	sqlLoadColumnsPrivTable = "SELECT HIGH_PRIORITY Host,DB,User,Table_name,Column_name,Timestamp,Column_priv FROM mysql.columns_priv"
 	sqlLoadDefaultRoles     = "SELECT HIGH_PRIORITY HOST, USER, DEFAULT_ROLE_HOST, DEFAULT_ROLE_USER FROM mysql.default_roles"
@@ -260,6 +261,26 @@ func (g roleGraphEdgesTable) Find(user, host string) bool {
 	return ok
 }
 
+type immutable struct {
+	User         []UserRecord
+	DB           []dbRecord
+	TablesPriv   []tablesPrivRecord
+	ColumnsPriv  []columnsPrivRecord
+	DefaultRoles []defaultRoleRecord
+
+	GlobalPriv  []globalPrivRecord
+	DynamicPriv []dynamicPrivRecord
+	RoleGraph   map[string]roleGraphEdgesTable
+}
+
+type extended struct {
+	UserMap       map[string][]UserRecord // Accelerate User searching
+	Global        map[string][]globalPrivRecord
+	Dynamic       map[string][]dynamicPrivRecord
+	DBMap         map[string][]dbRecord         // Accelerate DB searching
+	TablesPrivMap map[string][]tablesPrivRecord // Accelerate TablesPriv searching
+}
+
 // MySQLPrivilege is the in-memory cache of mysql privilege tables.
 type MySQLPrivilege struct {
 	// In MySQL, a user identity consists of a user + host.
@@ -271,20 +292,9 @@ type MySQLPrivilege struct {
 	// which is that usernames can not contain wildcards.
 	// This means that DB-records are organized in both a
 	// slice (p.DB) and a Map (p.DBMap).
+	immutable
 
-	// This helps in the case that there are a number of users with
-	// non-full privileges (i.e. user.db entries).
-	User          []UserRecord
-	UserMap       map[string][]UserRecord // Accelerate User searching
-	Global        map[string][]globalPrivRecord
-	Dynamic       map[string][]dynamicPrivRecord
-	DB            []dbRecord
-	DBMap         map[string][]dbRecord // Accelerate DB searching
-	TablesPriv    []tablesPrivRecord
-	TablesPrivMap map[string][]tablesPrivRecord // Accelerate TablesPriv searching
-	ColumnsPriv   []columnsPrivRecord
-	DefaultRoles  []defaultRoleRecord
-	RoleGraph     map[string]roleGraphEdgesTable
+	extended
 }
 
 // FindAllUserEffectiveRoles is used to find all effective roles grant to this user.
@@ -398,6 +408,87 @@ func (p *MySQLPrivilege) LoadAll(ctx sessionctx.Context) error {
 		logutil.BgLogger().Warn("mysql.role_edges missing")
 	}
 	return nil
+}
+
+func (p *immutable) loadSomeUsers(ctx sessionctx.Context, userList ...string) error {
+	err := p.loadTable(ctx, sqlLoadUserTable, p.decodeUserTableRow, userList...)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	err = p.loadTable(ctx, sqlLoadGlobalPrivTable, p.decodeGlobalPrivTableRow, userList...)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	err = p.loadTable(ctx, sqlLoadGlobalGrantsTable, p.decodeGlobalGrantsTableRow, userList...)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	err = p.loadTable(ctx, sqlLoadDBTable, p.decodeDBTableRow, userList...)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	err = p.loadTable(ctx, sqlLoadTablePrivTable, p.decodeTablesPrivTableRow, userList...)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	err = p.loadTable(ctx, sqlLoadDefaultRoles, p.decodeDefaultRoleTableRow, userList...)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	err = p.loadTable(ctx, sqlLoadColumnsPrivTable, p.decodeColumnsPrivTableRow, userList...)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	return nil
+}
+
+// merge construct a new MySQLPrivilege by merging the data of the two objects;.
+func (p *MySQLPrivilege) merge(diff *immutable) *MySQLPrivilege {
+	var ret MySQLPrivilege
+	ret.User = make([]UserRecord, 0, len(p.User)+len(diff.User))
+	ret.User = append(ret.User, p.User...)
+	ret.User = append(ret.User, diff.User...)
+
+	// sort and dedup
+	slices.SortStableFunc(ret.User, compareUserRecord)
+	skip := 0
+	for i := 1; i < len(ret.User); i++ {
+		if compareUserRecord(ret.User[i], ret.User[i-1]) == 0 {
+			skip++
+		}
+		ret.User[i-skip] = ret.User[i]
+	}
+	ret.User = ret.User[:len(ret.User)-skip]
+	ret.buildUserMap()
+
+	fmt.Println("after merge, len(user) ==", len(ret.User))
+
+	ret.DB = make([]dbRecord, 0, len(p.DB)+len(diff.DB))
+	ret.DB = append(ret.DB, p.DB...)
+	ret.DB = append(ret.DB, diff.DB...)
+	ret.buildDBMap()
+
+	ret.TablesPriv = make([]tablesPrivRecord, 0, len(p.TablesPriv)+len(diff.TablesPriv))
+	ret.TablesPriv = append(ret.TablesPriv, p.TablesPriv...)
+	ret.TablesPriv = append(ret.TablesPriv, diff.TablesPriv...)
+	p.buildTablesPrivMap()
+
+	ret.ColumnsPriv = make([]columnsPrivRecord, 0, len(p.ColumnsPriv)+len(diff.ColumnsPriv))
+	ret.ColumnsPriv = append(ret.ColumnsPriv, p.ColumnsPriv...)
+	ret.ColumnsPriv = append(ret.ColumnsPriv, diff.ColumnsPriv...)
+
+	ret.DefaultRoles = make([]defaultRoleRecord, 0, len(p.DefaultRoles)+len(diff.DefaultRoles))
+	ret.DefaultRoles = append(p.DefaultRoles, p.DefaultRoles...)
+	ret.DefaultRoles = append(ret.DefaultRoles, diff.DefaultRoles...)
+
+	return &ret
 }
 
 func noSuchTable(err error) bool {
@@ -515,12 +606,31 @@ func (p MySQLPrivilege) SortUserTable() {
 
 // LoadGlobalPrivTable loads the mysql.global_priv table from database.
 func (p *MySQLPrivilege) LoadGlobalPrivTable(ctx sessionctx.Context) error {
-	return p.loadTable(ctx, sqlLoadGlobalPrivTable, p.decodeGlobalPrivTableRow)
+	if err := p.loadTable(ctx, sqlLoadGlobalPrivTable, p.decodeGlobalPrivTableRow); err != nil {
+		return errors.Trace(err)
+	}
+
+	if p.Global == nil {
+		p.Global = make(map[string][]globalPrivRecord)
+	}
+	for _, value := range p.GlobalPriv {
+		p.Global[value.User] = append(p.Global[value.User], value)
+	}
+	return nil
 }
 
 // LoadGlobalGrantsTable loads the mysql.global_priv table from database.
 func (p *MySQLPrivilege) LoadGlobalGrantsTable(ctx sessionctx.Context) error {
-	return p.loadTable(ctx, sqlLoadGlobalGrantsTable, p.decodeGlobalGrantsTableRow)
+	if err := p.loadTable(ctx, sqlLoadGlobalGrantsTable, p.decodeGlobalGrantsTableRow); err != nil {
+		return errors.Trace(err)
+	}
+	if p.Dynamic == nil {
+		p.Dynamic = make(map[string][]dynamicPrivRecord)
+	}
+	for _, value := range p.DynamicPriv {
+		p.Dynamic[value.User] = append(p.Dynamic[value.User], value)
+	}
+	return nil
 }
 
 // LoadDBTable loads the mysql.db table from database.
@@ -578,9 +688,27 @@ func (p *MySQLPrivilege) LoadDefaultRoles(ctx sessionctx.Context) error {
 	return p.loadTable(ctx, sqlLoadDefaultRoles, p.decodeDefaultRoleTableRow)
 }
 
-func (p *MySQLPrivilege) loadTable(sctx sessionctx.Context, sql string,
-	decodeTableRow func(chunk.Row, []*resolve.ResultField) error) error {
+func addUserFilterCondition(sql string, userList []string) string {
+	if len(userList) == 0 {
+		return sql
+	}
+	var b strings.Builder
+	b.WriteString(sql)
+	b.WriteString(" where ")
+	for i, user := range userList {
+		if i > 0 {
+			b.WriteString(" Or ")
+		}
+		fmt.Fprintf(&b, "User = '%s'", user)
+	}
+	return b.String()
+}
+
+func (p *immutable) loadTable(sctx sessionctx.Context, sql string,
+	decodeTableRow func(chunk.Row, []*resolve.ResultField) error, userList ...string) error {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnPrivilege)
+
+	sql = addUserFilterCondition(sql, userList)
 	rs, err := sctx.GetSQLExecutor().ExecuteInternal(ctx, sql)
 	if err != nil {
 		return errors.Trace(err)
@@ -651,7 +779,7 @@ func (record *baseRecord) assignUserOrHost(row chunk.Row, i int, f *resolve.Resu
 	}
 }
 
-func (p *MySQLPrivilege) decodeUserTableRow(row chunk.Row, fs []*resolve.ResultField) error {
+func (p *immutable) decodeUserTableRow(row chunk.Row, fs []*resolve.ResultField) error {
 	var value UserRecord
 	for i, f := range fs {
 		switch {
@@ -739,7 +867,7 @@ func (p *MySQLPrivilege) decodeUserTableRow(row chunk.Row, fs []*resolve.ResultF
 	return nil
 }
 
-func (p *MySQLPrivilege) decodeGlobalPrivTableRow(row chunk.Row, fs []*resolve.ResultField) error {
+func (p *immutable) decodeGlobalPrivTableRow(row chunk.Row, fs []*resolve.ResultField) error {
 	var value globalPrivRecord
 	for i, f := range fs {
 		if f.ColumnAsName.L == "priv" {
@@ -769,14 +897,11 @@ func (p *MySQLPrivilege) decodeGlobalPrivTableRow(row chunk.Row, fs []*resolve.R
 			value.assignUserOrHost(row, i, f)
 		}
 	}
-	if p.Global == nil {
-		p.Global = make(map[string][]globalPrivRecord)
-	}
-	p.Global[value.User] = append(p.Global[value.User], value)
+	p.GlobalPriv = append(p.GlobalPriv, value)
 	return nil
 }
 
-func (p *MySQLPrivilege) decodeGlobalGrantsTableRow(row chunk.Row, fs []*resolve.ResultField) error {
+func (p *immutable) decodeGlobalGrantsTableRow(row chunk.Row, fs []*resolve.ResultField) error {
 	var value dynamicPrivRecord
 	for i, f := range fs {
 		switch f.ColumnAsName.L {
@@ -788,14 +913,11 @@ func (p *MySQLPrivilege) decodeGlobalGrantsTableRow(row chunk.Row, fs []*resolve
 			value.assignUserOrHost(row, i, f)
 		}
 	}
-	if p.Dynamic == nil {
-		p.Dynamic = make(map[string][]dynamicPrivRecord)
-	}
-	p.Dynamic[value.User] = append(p.Dynamic[value.User], value)
+	p.DynamicPriv = append(p.DynamicPriv, value)
 	return nil
 }
 
-func (p *MySQLPrivilege) decodeDBTableRow(row chunk.Row, fs []*resolve.ResultField) error {
+func (p *immutable) decodeDBTableRow(row chunk.Row, fs []*resolve.ResultField) error {
 	var value dbRecord
 	for i, f := range fs {
 		switch {
@@ -819,7 +941,7 @@ func (p *MySQLPrivilege) decodeDBTableRow(row chunk.Row, fs []*resolve.ResultFie
 	return nil
 }
 
-func (p *MySQLPrivilege) decodeTablesPrivTableRow(row chunk.Row, fs []*resolve.ResultField) error {
+func (p *immutable) decodeTablesPrivTableRow(row chunk.Row, fs []*resolve.ResultField) error {
 	var value tablesPrivRecord
 	for i, f := range fs {
 		switch f.ColumnAsName.L {
@@ -839,7 +961,7 @@ func (p *MySQLPrivilege) decodeTablesPrivTableRow(row chunk.Row, fs []*resolve.R
 	return nil
 }
 
-func (p *MySQLPrivilege) decodeRoleEdgesTable(row chunk.Row, fs []*resolve.ResultField) error {
+func (p *immutable) decodeRoleEdgesTable(row chunk.Row, fs []*resolve.ResultField) error {
 	var fromUser, fromHost, toHost, toUser string
 	for i, f := range fs {
 		switch f.ColumnAsName.L {
@@ -864,7 +986,7 @@ func (p *MySQLPrivilege) decodeRoleEdgesTable(row chunk.Row, fs []*resolve.Resul
 	return nil
 }
 
-func (p *MySQLPrivilege) decodeDefaultRoleTableRow(row chunk.Row, fs []*resolve.ResultField) error {
+func (p *immutable) decodeDefaultRoleTableRow(row chunk.Row, fs []*resolve.ResultField) error {
 	var value defaultRoleRecord
 	for i, f := range fs {
 		switch f.ColumnAsName.L {
@@ -880,7 +1002,7 @@ func (p *MySQLPrivilege) decodeDefaultRoleTableRow(row chunk.Row, fs []*resolve.
 	return nil
 }
 
-func (p *MySQLPrivilege) decodeColumnsPrivTableRow(row chunk.Row, fs []*resolve.ResultField) error {
+func (p *immutable) decodeColumnsPrivTableRow(row chunk.Row, fs []*resolve.ResultField) error {
 	var value columnsPrivRecord
 	for i, f := range fs {
 		switch f.ColumnAsName.L {
@@ -976,7 +1098,7 @@ func patternMatch(str string, patChars, patTypes []byte) bool {
 
 // matchIdentity finds an identity to match a user + host
 // using the correct rules according to MySQL.
-func (p *MySQLPrivilege) matchIdentity(user, host string, skipNameResolve bool) *UserRecord {
+func (p *MySQLPrivilege) matchIdentity(sctx sessionctx.Context, user, host string, skipNameResolve bool) *UserRecord {
 	for i := 0; i < len(p.User); i++ {
 		record := &p.User[i]
 		if record.match(user, host) {
@@ -1634,11 +1756,45 @@ func (p *MySQLPrivilege) getAllRoles(user, host string) []*auth.RoleIdentity {
 // Handle wraps MySQLPrivilege providing thread safe access.
 type Handle struct {
 	priv atomic.Pointer[MySQLPrivilege]
+	// Only load the active user's data to save memory
+	mu struct {
+		sync.RWMutex
+		activeUsers map[string]struct{}
+	}
 }
 
 // NewHandle returns a Handle.
 func NewHandle() *Handle {
-	return &Handle{}
+	var priv MySQLPrivilege
+	ret := &Handle{}
+	ret.priv.Store(&priv)
+	ret.mu.activeUsers = make(map[string]struct{})
+	return ret
+}
+
+// ensureActiveUser ensure that the specific user data is loaded in-memory.
+func (p *Handle) ensureActiveUser(sctx sessionctx.Context, user string) error {
+	p.mu.RLock()
+	_, exist := p.mu.activeUsers[user]
+	p.mu.RUnlock()
+	if exist {
+		return nil
+	}
+
+	var data immutable
+	err := data.loadSomeUsers(sctx, user)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	old := p.Get()
+	p.priv.Store(old.merge(&data))
+
+	p.mu.Lock()
+	p.mu.activeUsers[user] = struct{}{}
+	p.mu.Unlock()
+
+	return nil
 }
 
 // Get the MySQLPrivilege for read.

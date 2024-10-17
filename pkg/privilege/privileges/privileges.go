@@ -375,12 +375,13 @@ func (p *UserPrivileges) GetAuthPlugin(user, host string) (string, error) {
 }
 
 // MatchIdentity implements the Manager interface.
-func (p *UserPrivileges) MatchIdentity(user, host string, skipNameResolve bool) (u string, h string, success bool) {
+func (p *UserPrivileges) MatchIdentity(sctx sessionctx.Context, user, host string, skipNameResolve bool) (u string, h string, success bool) {
 	if SkipWithGrant {
 		return user, host, true
 	}
+	p.Handle.ensureActiveUser(sctx, user)
 	mysqlPriv := p.Handle.Get()
-	record := mysqlPriv.matchIdentity(user, host, skipNameResolve)
+	record := mysqlPriv.matchIdentity(sctx, user, host, skipNameResolve)
 	if record != nil {
 		return record.User, record.Host, true
 	}
