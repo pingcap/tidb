@@ -583,7 +583,6 @@ func (w *worker) doModifyColumnTypeWithData(
 		// Finish this job.
 		job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
 		// Refactor the job args to add the old index ids into delete range table.
-		job.Args = []any{rmIdxIDs, getPartitionIDs(tblInfo)}
 		args.IndexIDs = rmIdxs
 		args.PartitionIDs = getPartitionIDs(tblInfo)
 		job.FillFinishedArgs(args)
