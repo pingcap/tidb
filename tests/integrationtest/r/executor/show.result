@@ -3,7 +3,7 @@ create table auto_random_tbl1 (a bigint primary key auto_random(3), b varchar(25
 show create table `auto_random_tbl1`;
 Table	Create Table
 auto_random_tbl1	CREATE TABLE `auto_random_tbl1` (
-  `a` bigint(20) NOT NULL /*T![auto_rand] AUTO_RANDOM(3) */,
+  `a` bigint NOT NULL /*T![auto_rand] AUTO_RANDOM(3) */,
   `b` varchar(255) DEFAULT NULL,
   PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
@@ -12,7 +12,7 @@ create table auto_random_tbl2 (a bigint auto_random primary key, b char);
 show create table auto_random_tbl2;
 Table	Create Table
 auto_random_tbl2	CREATE TABLE `auto_random_tbl2` (
-  `a` bigint(20) NOT NULL /*T![auto_rand] AUTO_RANDOM(5) */,
+  `a` bigint NOT NULL /*T![auto_rand] AUTO_RANDOM(5) */,
   `b` char(1) DEFAULT NULL,
   PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
@@ -21,7 +21,7 @@ create table auto_random_tbl3 (a bigint /*T![auto_rand] auto_random */ primary k
 show create table auto_random_tbl3;
 Table	Create Table
 auto_random_tbl3	CREATE TABLE `auto_random_tbl3` (
-  `a` bigint(20) NOT NULL /*T![auto_rand] AUTO_RANDOM(5) */,
+  `a` bigint NOT NULL /*T![auto_rand] AUTO_RANDOM(5) */,
   PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 drop table if exists auto_random_tbl4;
@@ -29,7 +29,7 @@ create table auto_random_tbl4 (a bigint primary key auto_random(5), b varchar(25
 show create table `auto_random_tbl4`;
 Table	Create Table
 auto_random_tbl4	CREATE TABLE `auto_random_tbl4` (
-  `a` bigint(20) NOT NULL /*T![auto_rand] AUTO_RANDOM(5) */,
+  `a` bigint NOT NULL /*T![auto_rand] AUTO_RANDOM(5) */,
   `b` varchar(255) DEFAULT NULL,
   PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![auto_rand_base] AUTO_RANDOM_BASE=100 */
@@ -38,7 +38,7 @@ create table auto_random_tbl5 (a bigint auto_random primary key, b char) auto_ra
 show create table auto_random_tbl5;
 Table	Create Table
 auto_random_tbl5	CREATE TABLE `auto_random_tbl5` (
-  `a` bigint(20) NOT NULL /*T![auto_rand] AUTO_RANDOM(5) */,
+  `a` bigint NOT NULL /*T![auto_rand] AUTO_RANDOM(5) */,
   `b` char(1) DEFAULT NULL,
   PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![auto_rand_base] AUTO_RANDOM_BASE=50 */
@@ -47,7 +47,7 @@ create table auto_random_tbl6 (a bigint /*T![auto_rand] auto_random */ primary k
 show create table auto_random_tbl6;
 Table	Create Table
 auto_random_tbl6	CREATE TABLE `auto_random_tbl6` (
-  `a` bigint(20) NOT NULL /*T![auto_rand] AUTO_RANDOM(5) */,
+  `a` bigint NOT NULL /*T![auto_rand] AUTO_RANDOM(5) */,
   PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![auto_rand_base] AUTO_RANDOM_BASE=200 */
 drop table if exists auto_random_tbl7;
@@ -55,7 +55,7 @@ create table auto_random_tbl7 (a bigint primary key auto_random(4, 32), b varcha
 show create table auto_random_tbl7;
 Table	Create Table
 auto_random_tbl7	CREATE TABLE `auto_random_tbl7` (
-  `a` bigint(20) NOT NULL /*T![auto_rand] AUTO_RANDOM(4, 32) */,
+  `a` bigint NOT NULL /*T![auto_rand] AUTO_RANDOM(4, 32) */,
   `b` varchar(255) DEFAULT NULL,
   PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
@@ -64,7 +64,7 @@ create table t(a int auto_increment key) auto_id_cache = 10;
 show create table t;
 Table	Create Table
 t	CREATE TABLE `t` (
-  `a` int(11) NOT NULL AUTO_INCREMENT,
+  `a` int NOT NULL AUTO_INCREMENT,
   PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![auto_id_cache] AUTO_ID_CACHE=10 */
 drop table if exists t;
@@ -72,8 +72,8 @@ create table t(a int auto_increment unique, b int key) auto_id_cache 100;
 show create table t;
 Table	Create Table
 t	CREATE TABLE `t` (
-  `a` int(11) NOT NULL AUTO_INCREMENT,
-  `b` int(11) NOT NULL,
+  `a` int NOT NULL AUTO_INCREMENT,
+  `b` int NOT NULL,
   PRIMARY KEY (`b`) /*T![clustered_index] CLUSTERED */,
   UNIQUE KEY `a` (`a`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![auto_id_cache] AUTO_ID_CACHE=100 */
@@ -82,7 +82,7 @@ create table t(a int key) auto_id_cache 5;
 show create table t;
 Table	Create Table
 t	CREATE TABLE `t` (
-  `a` int(11) NOT NULL,
+  `a` int NOT NULL,
   PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![auto_id_cache] AUTO_ID_CACHE=5 */
 drop table if exists t2;
@@ -108,8 +108,8 @@ CREATE TABLE `test1` (`id` int(0) NOT NULL,`num` int(0) DEFAULT NULL) ENGINE=Inn
 create or replace view test1_v as(select id,row_number() over (partition by num) from test1);
 desc test1_v;
 Field	Type	Null	Key	Default	Extra
-id	int(0)	NO		NULL	
-row_number() over (partition by num)	bigint(21)	YES		NULL	
+id	int	NO		NULL	
+row_number() over (partition by num)	bigint	YES		NULL	
 drop table if exists t;
 create table t(created_at datetime) ttl = `created_at` + INTERVAL 100 YEAR;
 show create table t;
@@ -191,16 +191,16 @@ create table t(c int, b int as (c + 1))ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COL
 show create table `t`;
 Table	Create Table
 t	CREATE TABLE `t` (
-  `c` int(11) DEFAULT NULL,
-  `b` int(11) GENERATED ALWAYS AS (`c` + 1) VIRTUAL
+  `c` int DEFAULT NULL,
+  `b` int GENERATED ALWAYS AS (`c` + 1) VIRTUAL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 drop table t;
 create table t(c int, b int as (c + 1) not null)ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
 show create table `t`;
 Table	Create Table
 t	CREATE TABLE `t` (
-  `c` int(11) DEFAULT NULL,
-  `b` int(11) GENERATED ALWAYS AS (`c` + 1) VIRTUAL NOT NULL
+  `c` int DEFAULT NULL,
+  `b` int GENERATED ALWAYS AS (`c` + 1) VIRTUAL NOT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 drop table t;
 create table t ( a char(10) charset utf8 collate utf8_bin, b char(10) as (rtrim(a)));
@@ -246,8 +246,8 @@ create table t (a int, b int) shard_row_id_bits = 4 pre_split_regions=3;
 show create table `t`;
 Table	Create Table
 t	CREATE TABLE `t` (
-  `a` int(11) DEFAULT NULL,
-  `b` int(11) DEFAULT NULL
+  `a` int DEFAULT NULL,
+  `b` int DEFAULT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T! SHARD_ROW_ID_BITS=4 PRE_SPLIT_REGIONS=3 */
 drop table t;
 drop table if exists t1;
@@ -255,20 +255,20 @@ create table t1(c int unsigned default 0);
 show create table `t1`;
 Table	Create Table
 t1	CREATE TABLE `t1` (
-  `c` int(10) unsigned DEFAULT '0'
+  `c` int unsigned DEFAULT '0'
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 drop table t1;
 CREATE TABLE `log` (`LOG_ID` bigint(20) UNSIGNED NOT NULL AUTO_INCREMENT,`ROUND_ID` bigint(20) UNSIGNED NOT NULL,`USER_ID` int(10) UNSIGNED NOT NULL,`USER_IP` int(10) UNSIGNED DEFAULT NULL,`END_TIME` datetime NOT NULL,`USER_TYPE` int(11) DEFAULT NULL,`APP_ID` int(11) DEFAULT NULL,PRIMARY KEY (`LOG_ID`,`END_TIME`) NONCLUSTERED,KEY `IDX_EndTime` (`END_TIME`),KEY `IDX_RoundId` (`ROUND_ID`),KEY `IDX_UserId_EndTime` (`USER_ID`,`END_TIME`)) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin AUTO_INCREMENT=505488 PARTITION BY RANGE ( month(`end_time`) ) (PARTITION `p1` VALUES LESS THAN (2),PARTITION `p2` VALUES LESS THAN (3),PARTITION `p3` VALUES LESS THAN (4),PARTITION `p4` VALUES LESS THAN (5),PARTITION `p5` VALUES LESS THAN (6),PARTITION `p6` VALUES LESS THAN (7),PARTITION `p7` VALUES LESS THAN (8),PARTITION `p8` VALUES LESS THAN (9),PARTITION `p9` VALUES LESS THAN (10),PARTITION `p10` VALUES LESS THAN (11),PARTITION `p11` VALUES LESS THAN (12),PARTITION `p12` VALUES LESS THAN (MAXVALUE));
 show create table log;
 Table	Create Table
 log	CREATE TABLE `log` (
-  `LOG_ID` bigint(20) unsigned NOT NULL AUTO_INCREMENT,
-  `ROUND_ID` bigint(20) unsigned NOT NULL,
-  `USER_ID` int(10) unsigned NOT NULL,
-  `USER_IP` int(10) unsigned DEFAULT NULL,
+  `LOG_ID` bigint unsigned NOT NULL AUTO_INCREMENT,
+  `ROUND_ID` bigint unsigned NOT NULL,
+  `USER_ID` int unsigned NOT NULL,
+  `USER_IP` int unsigned DEFAULT NULL,
   `END_TIME` datetime NOT NULL,
-  `USER_TYPE` int(11) DEFAULT NULL,
-  `APP_ID` int(11) DEFAULT NULL,
+  `USER_TYPE` int DEFAULT NULL,
+  `APP_ID` int DEFAULT NULL,
   PRIMARY KEY (`LOG_ID`,`END_TIME`) /*T![clustered_index] NONCLUSTERED */,
   KEY `IDX_EndTime` (`END_TIME`),
   KEY `IDX_RoundId` (`ROUND_ID`),
@@ -305,7 +305,7 @@ alter table t add index expr_idx((a*b+1));
 show create table t;
 Table	Create Table
 t	CREATE TABLE `t` (
-  `a` int(11) DEFAULT NULL,
+  `a` int DEFAULT NULL,
   `b` double DEFAULT NULL,
   KEY `expr_idx` ((`a` * `b` + 1))
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
@@ -340,7 +340,7 @@ create table default_num(a int default 11);
 show create table default_num;
 Table	Create Table
 default_num	CREATE TABLE `default_num` (
-  `a` int(11) DEFAULT '11'
+  `a` int DEFAULT '11'
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 drop table if exists default_varchar;
 create table default_varchar(a varchar(10) default "haha");
@@ -354,7 +354,7 @@ create table default_sequence(a int default nextval(seq));
 show create table default_sequence;
 Table	Create Table
 default_sequence	CREATE TABLE `default_sequence` (
-  `a` int(11) DEFAULT (nextval(`executor__show`.`seq`))
+  `a` int DEFAULT (nextval(`executor__show`.`seq`))
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 set @@foreign_key_checks=0;
 DROP TABLE IF EXISTS parent, child;
@@ -363,8 +363,8 @@ CREATE TABLE parent ( id INT NOT NULL PRIMARY KEY auto_increment );
 show create table child;
 Table	Create Table
 child	CREATE TABLE `child` (
-  `id` int(11) NOT NULL AUTO_INCREMENT,
-  `parent_id` int(11) NOT NULL,
+  `id` int NOT NULL AUTO_INCREMENT,
+  `parent_id` int NOT NULL,
   PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */,
   KEY `par_ind` (`parent_id`),
   CONSTRAINT `child_ibfk_1` FOREIGN KEY (`parent_id`) REFERENCES `parent` (`id`)
@@ -374,8 +374,8 @@ CREATE TABLE child (id INT NOT NULL PRIMARY KEY auto_increment, parent_id INT NO
 show create table child;
 Table	Create Table
 child	CREATE TABLE `child` (
-  `id` int(11) NOT NULL AUTO_INCREMENT,
-  `parent_id` int(11) NOT NULL,
+  `id` int NOT NULL AUTO_INCREMENT,
+  `parent_id` int NOT NULL,
   PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */,
   KEY `par_ind` (`parent_id`),
   CONSTRAINT `child_ibfk_1` FOREIGN KEY (`parent_id`) REFERENCES `parent` (`id`) ON DELETE RESTRICT ON UPDATE CASCADE
@@ -387,8 +387,8 @@ create table test2.t2 (id int key, b int, foreign key fk(b) references test1.t1(
 show create table test2.t2;
 Table	Create Table
 t2	CREATE TABLE `t2` (
-  `id` int(11) NOT NULL,
-  `b` int(11) DEFAULT NULL,
+  `id` int NOT NULL,
+  `b` int DEFAULT NULL,
   PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */,
   KEY `fk` (`b`),
   CONSTRAINT `fk` FOREIGN KEY (`b`) REFERENCES `test1`.`t1` (`id`)
@@ -400,7 +400,7 @@ create table t(a int, b char(10) as ('a'));
 show create table t;
 Table	Create Table
 t	CREATE TABLE `t` (
-  `a` int(11) DEFAULT NULL,
+  `a` int DEFAULT NULL,
   `b` char(10) GENERATED ALWAYS AS (_utf8mb4'a') VIRTUAL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 drop table if exists t;
@@ -408,7 +408,7 @@ create table t(a int, b char(10) as (_utf8'a'));
 show create table t;
 Table	Create Table
 t	CREATE TABLE `t` (
-  `a` int(11) DEFAULT NULL,
+  `a` int DEFAULT NULL,
   `b` char(10) GENERATED ALWAYS AS (_utf8'a') VIRTUAL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 DROP TABLE IF EXISTS t;
@@ -421,7 +421,7 @@ partition p3 values in (7,8,15,16,null)
 show create table t;
 Table	Create Table
 t	CREATE TABLE `t` (
-  `id` int(11) DEFAULT NULL,
+  `id` int DEFAULT NULL,
   `name` varchar(10) DEFAULT NULL,
   UNIQUE KEY `idx` (`id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
@@ -440,7 +440,7 @@ partition p3 values in (7,8,15,16,null)
 show create table t;
 Table	Create Table
 t	CREATE TABLE `t` (
-  `id` int(11) DEFAULT NULL,
+  `id` int DEFAULT NULL,
   `name` varchar(10) DEFAULT NULL,
   UNIQUE KEY `idx` (`id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
@@ -456,7 +456,7 @@ partition p1 values in ((1, '1')));
 show create table t;
 Table	Create Table
 t	CREATE TABLE `t` (
-  `id` int(11) DEFAULT NULL,
+  `id` int DEFAULT NULL,
   `name` varchar(10) DEFAULT NULL,
   UNIQUE KEY `idx` (`id`,`name`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
@@ -468,7 +468,7 @@ create table t (id int primary key, v varchar(255) not null, key idx_v (v) comme
 show create table t;
 Table	Create Table
 t	CREATE TABLE `t` (
-  `id` int(11) NOT NULL,
+  `id` int NOT NULL,
   `v` varchar(255) NOT NULL,
   PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */,
   KEY `idx_v` (`v`) COMMENT 'foo''bar'
@@ -484,7 +484,7 @@ PARTITION pOdd COMMENT = "Odd ids");
 show create table `thash`;
 Table	Create Table
 thash	CREATE TABLE `thash` (
-  `id` bigint(20) unsigned NOT NULL,
+  `id` bigint unsigned NOT NULL,
   `data` varchar(255) DEFAULT NULL,
   PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
@@ -501,7 +501,7 @@ PARTITION BY HASH (`id`);
 show create table `thash`;
 Table	Create Table
 thash	CREATE TABLE `thash` (
-  `id` bigint(20) unsigned NOT NULL,
+  `id` bigint unsigned NOT NULL,
   `data` varchar(255) DEFAULT NULL,
   PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
@@ -511,7 +511,7 @@ create table t(a int primary key, b varchar(20) default '\\');
 show create table t;
 Table	Create Table
 t	CREATE TABLE `t` (
-  `a` int(11) NOT NULL,
+  `a` int NOT NULL,
   `b` varchar(20) DEFAULT '\\',
   PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
@@ -573,7 +573,7 @@ create temporary table v1 (a int);
 show create table v1;
 Table	Create Table
 v1	CREATE TEMPORARY TABLE `v1` (
-  `a` int(11) DEFAULT NULL
+  `a` int DEFAULT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 drop view v1;
 show create view v1;
@@ -902,13 +902,13 @@ create global temporary table t3 (i int primary key, j int) on commit delete row
 show create table t1;
 Table	Create Table
 t1	CREATE GLOBAL TEMPORARY TABLE `t1` (
-  `id` int(11) DEFAULT NULL
+  `id` int DEFAULT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin ON COMMIT DELETE ROWS
 show create table t3;
 Table	Create Table
 t3	CREATE GLOBAL TEMPORARY TABLE `t3` (
-  `i` int(11) NOT NULL,
-  `j` int(11) DEFAULT NULL,
+  `i` int NOT NULL,
+  `j` int DEFAULT NULL,
   PRIMARY KEY (`i`) /*T![clustered_index] CLUSTERED */
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin ON COMMIT DELETE ROWS
 CREATE GLOBAL TEMPORARY TABLE `t4` (
@@ -925,8 +925,8 @@ KEY b (b)) ON COMMIT DELETE ROWS;
 show create table t5;
 Table	Create Table
 t5	CREATE GLOBAL TEMPORARY TABLE `t5` (
-  `id` int(11) NOT NULL AUTO_INCREMENT,
-  `b` int(11) NOT NULL,
+  `id` int NOT NULL AUTO_INCREMENT,
+  `b` int NOT NULL,
   `pad` varbinary(255) DEFAULT NULL,
   PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */,
   KEY `b` (`b`)
@@ -935,8 +935,8 @@ create temporary table t6 (i int primary key, j int);
 show create table t6;
 Table	Create Table
 t6	CREATE TEMPORARY TABLE `t6` (
-  `i` int(11) NOT NULL,
-  `j` int(11) DEFAULT NULL,
+  `i` int NOT NULL,
+  `j` int DEFAULT NULL,
   PRIMARY KEY (`i`) /*T![clustered_index] CLUSTERED */
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 create temporary table t7 (i int primary key auto_increment, j int);
@@ -950,8 +950,8 @@ i	j
 show create table t7;
 Table	Create Table
 t7	CREATE TEMPORARY TABLE `t7` (
-  `i` int(11) NOT NULL AUTO_INCREMENT,
-  `j` int(11) DEFAULT NULL,
+  `i` int NOT NULL AUTO_INCREMENT,
+  `j` int DEFAULT NULL,
   PRIMARY KEY (`i`) /*T![clustered_index] CLUSTERED */
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin AUTO_INCREMENT=3
 commit;
@@ -961,7 +961,7 @@ alter table t1 cache;
 show create table t1;
 Table	Create Table
 t1	CREATE TABLE `t1` (
-  `id` int(11) DEFAULT NULL
+  `id` int DEFAULT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /* CACHED ON */
 select create_options from information_schema.tables where table_schema = 'executor__show' and table_name = 't1';
 create_options
@@ -970,7 +970,7 @@ alter table t1 nocache;
 show create table t1;
 Table	Create Table
 t1	CREATE TABLE `t1` (
-  `id` int(11) DEFAULT NULL
+  `id` int DEFAULT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 select create_options from information_schema.tables where table_schema = 'executor__show' and table_name = 't1';
 create_options
@@ -1137,7 +1137,7 @@ CREATE TABLE `t` (a BIGINT PRIMARY KEY AUTO_RANDOM(2), b INT) PRE_SPLIT_REGIONS=
 SHOW CREATE TABLE `t`;
 Table	Create Table
 t	CREATE TABLE `t` (
-  `a` bigint(20) NOT NULL /*T![auto_rand] AUTO_RANDOM(2) */,
-  `b` int(11) DEFAULT NULL,
+  `a` bigint NOT NULL /*T![auto_rand] AUTO_RANDOM(2) */,
+  `b` int DEFAULT NULL,
   PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T! PRE_SPLIT_REGIONS=2 */

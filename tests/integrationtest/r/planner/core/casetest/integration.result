@@ -1277,7 +1277,7 @@ id	estRows	task	access object	operator info
 HashAgg	2.00	root		group by:Column#3, funcs:firstrow(Column#3)->Column#3
 └─Union	2.00	root		
   ├─Point_Get	1.00	root	table:t1	handle:1
-  └─Projection	1.00	root		cast(planner__core__casetest__integration.t2.a, bigint(20) BINARY)->Column#3
+  └─Projection	1.00	root		cast(planner__core__casetest__integration.t2.a, bigint BINARY)->Column#3
     └─Point_Get	1.00	root	table:t2	handle:1
 select * from v1 where a = 1; -- the condition should be downcast through both side and go get point;
 a
@@ -1286,7 +1286,7 @@ id	estRows	task	access object	operator info
 HashAgg	2.00	root		group by:Column#3, funcs:firstrow(Column#3)->Column#3
 └─Union	2.00	root		
   ├─Point_Get	1.00	root	table:t1	handle:1
-  └─Projection	1.00	root		cast(planner__core__casetest__integration.t2.a, bigint(20) BINARY)->Column#3
+  └─Projection	1.00	root		cast(planner__core__casetest__integration.t2.a, bigint BINARY)->Column#3
     └─Point_Get	1.00	root	table:t2	handle:1
 select * from v1 where a = '1test'; -- the condition should be downcast through both side and go get point too;
 a
@@ -1296,7 +1296,7 @@ HashAgg	5333.33	root		group by:Column#3, funcs:firstrow(Column#3)->Column#3
 └─Union	6666.67	root		
   ├─TableReader	3333.33	root		data:TableRangeScan
   │ └─TableRangeScan	3333.33	cop[tikv]	table:t1	range:(1,+inf], keep order:false, stats:pseudo
-  └─Projection	3333.33	root		cast(planner__core__casetest__integration.t2.a, bigint(20) BINARY)->Column#3
+  └─Projection	3333.33	root		cast(planner__core__casetest__integration.t2.a, bigint BINARY)->Column#3
     └─TableReader	3333.33	root		data:TableRangeScan
       └─TableRangeScan	3333.33	cop[tikv]	table:t2	range:(1,+inf], keep order:false, stats:pseudo
 select * from v1 where a > 1; -- the condition should be downcast through both side and go range scan;

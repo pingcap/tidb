@@ -11,9 +11,9 @@ admin check table t;
 show create table t;
 Table	Create Table
 t	CREATE TABLE `t` (
-  `a` int(10) unsigned NOT NULL,
+  `a` int unsigned NOT NULL,
   `b` varchar(255) DEFAULT NULL,
-  `c` int(11) DEFAULT NULL,
+  `c` int DEFAULT NULL,
   PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */,
   KEY `b` (`b`),
   KEY `c` (`c`,`b`)
@@ -70,9 +70,9 @@ a	b	c
 show create table t;
 Table	Create Table
 t	CREATE TABLE `t` (
-  `a` int(10) unsigned NOT NULL,
+  `a` int unsigned NOT NULL,
   `b` varchar(255) DEFAULT NULL,
-  `c` int(11) DEFAULT NULL,
+  `c` int DEFAULT NULL,
   PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */,
   KEY `b` (`b`),
   KEY `c` (`c`,`b`)
@@ -104,9 +104,9 @@ admin check table t;
 show create table t;
 Table	Create Table
 t	CREATE TABLE `t` (
-  `a` int(10) unsigned NOT NULL,
+  `a` int unsigned NOT NULL,
   `b` varchar(255) DEFAULT NULL,
-  `c` int(11) DEFAULT NULL,
+  `c` int DEFAULT NULL,
   PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */,
   KEY `b` (`b`),
   KEY `c` (`c`,`b`)
@@ -130,9 +130,9 @@ admin check table t;
 show create table t;
 Table	Create Table
 t	CREATE TABLE `t` (
-  `a` int(10) unsigned NOT NULL,
+  `a` int unsigned NOT NULL,
   `b` varchar(255) DEFAULT NULL,
-  `c` int(11) DEFAULT NULL,
+  `c` int DEFAULT NULL,
   PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 PARTITION BY RANGE (`a`)
@@ -156,9 +156,9 @@ Error 1526 (HY000): Table has no partition for value 56
 show create table t2;
 Table	Create Table
 t2	CREATE TABLE `t2` (
-  `a` int(10) unsigned NOT NULL,
+  `a` int unsigned NOT NULL,
   `b` varchar(255) DEFAULT NULL,
-  `c` int(11) DEFAULT NULL,
+  `c` int DEFAULT NULL,
   KEY `b` (`b`),
   KEY `c` (`c`,`b`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
@@ -172,9 +172,9 @@ admin check table t2;
 show create table t2;
 Table	Create Table
 t2	CREATE TABLE `t2` (
-  `a` int(10) unsigned NOT NULL,
+  `a` int unsigned NOT NULL,
   `b` varchar(255) DEFAULT NULL,
-  `c` int(11) DEFAULT NULL,
+  `c` int DEFAULT NULL,
   KEY `b` (`b`),
   KEY `c` (`c`,`b`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
@@ -191,9 +191,9 @@ admin check table t;
 show create table t;
 Table	Create Table
 t	CREATE TABLE `t` (
-  `a` int(11) NOT NULL,
+  `a` int NOT NULL,
   `b` varchar(255) DEFAULT NULL,
-  `c` int(11) DEFAULT NULL,
+  `c` int DEFAULT NULL,
   PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */,
   KEY `b` (`b`),
   KEY `c` (`c`,`b`)
@@ -217,9 +217,9 @@ admin check table t;
 show create table t;
 Table	Create Table
 t	CREATE TABLE `t` (
-  `a` int(11) NOT NULL,
+  `a` int NOT NULL,
   `b` varchar(255) DEFAULT NULL,
-  `c` int(11) DEFAULT NULL,
+  `c` int DEFAULT NULL,
   PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */,
   KEY `c` (`c`,`b`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
@@ -260,9 +260,9 @@ ADMIN CHECK TABLE t;
 SHOW CREATE TABLE t;
 Table	Create Table
 t	CREATE TABLE `t` (
-  `a` int(11) DEFAULT NULL,
+  `a` int DEFAULT NULL,
   `b` char(3) DEFAULT NULL,
-  `c` int(11) DEFAULT NULL,
+  `c` int DEFAULT NULL,
   KEY `b` (`b`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 PARTITION BY RANGE COLUMNS(`a`,`b`)
@@ -302,9 +302,9 @@ ADMIN CHECK TABLE t;
 SHOW CREATE TABLE t;
 Table	Create Table
 t	CREATE TABLE `t` (
-  `a` int(11) DEFAULT NULL,
+  `a` int DEFAULT NULL,
   `b` char(3) DEFAULT NULL,
-  `c` int(11) DEFAULT NULL,
+  `c` int DEFAULT NULL,
   KEY `c` (`c`,`b`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 PARTITION BY RANGE COLUMNS(`b`,`a`)
@@ -324,9 +324,9 @@ ADMIN CHECK TABLE t;
 SHOW CREATE TABLE t;
 Table	Create Table
 t	CREATE TABLE `t` (
-  `a` int(11) DEFAULT NULL,
+  `a` int DEFAULT NULL,
   `b` char(3) DEFAULT NULL,
-  `c` int(11) DEFAULT NULL,
+  `c` int DEFAULT NULL,
   KEY `c` (`c`,`b`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 PARTITION BY RANGE COLUMNS(`b`,`a`)
@@ -361,7 +361,7 @@ Table	Create Table
 t	CREATE TABLE `t` (
   `a` date DEFAULT NULL,
   `b` datetime DEFAULT NULL,
-  `c` int(11) DEFAULT NULL,
+  `c` int DEFAULT NULL,
   KEY `b` (`b`),
   KEY `c` (`c`,`b`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
@@ -387,7 +387,7 @@ Table	Create Table
 t	CREATE TABLE `t` (
   `a` date DEFAULT NULL,
   `b` datetime DEFAULT NULL,
-  `c` int(11) DEFAULT NULL,
+  `c` int DEFAULT NULL,
   KEY `b` (`b`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 PARTITION BY RANGE COLUMNS(`a`,`b`)
@@ -426,7 +426,7 @@ Table	Create Table
 t	CREATE TABLE `t` (
   `a` date DEFAULT NULL,
   `b` datetime DEFAULT NULL,
-  `c` int(11) DEFAULT NULL,
+  `c` int DEFAULT NULL,
   KEY `b` (`b`),
   KEY `c` (`c`,`b`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
@@ -452,7 +452,7 @@ Table	Create Table
 t	CREATE TABLE `t` (
   `a` date DEFAULT NULL,
   `b` datetime DEFAULT NULL,
-  `c` int(11) DEFAULT NULL,
+  `c` int DEFAULT NULL,
   KEY `c` (`c`,`b`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 PARTITION BY RANGE COLUMNS(`b`,`a`)
@@ -477,9 +477,9 @@ admin check table t;
 show create table t;
 Table	Create Table
 t	CREATE TABLE `t` (
-  `a` int(11) DEFAULT NULL,
+  `a` int DEFAULT NULL,
   `b` varchar(55) DEFAULT NULL,
-  `c` int(11) DEFAULT NULL
+  `c` int DEFAULT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 PARTITION BY LIST (`a`)
 (PARTITION `p0` VALUES IN (12,51,13),
@@ -492,9 +492,9 @@ admin check table t;
 show create table t;
 Table	Create Table
 t	CREATE TABLE `t` (
-  `a` int(11) NOT NULL,
+  `a` int NOT NULL,
   `b` varchar(55) DEFAULT NULL,
-  `c` int(11) DEFAULT NULL,
+  `c` int DEFAULT NULL,
   PRIMARY KEY (`a`) /*T![clustered_index] NONCLUSTERED */,
   KEY `b` (`b`),
   KEY `c` (`c`,`b`)
@@ -526,9 +526,9 @@ a	b	c
 show create table t;
 Table	Create Table
 t	CREATE TABLE `t` (
-  `a` int(11) DEFAULT NULL,
+  `a` int DEFAULT NULL,
   `b` varchar(55) DEFAULT NULL,
-  `c` int(11) DEFAULT NULL
+  `c` int DEFAULT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 PARTITION BY LIST (ABS(`a`))
 (PARTITION `p0` VALUES IN (0,1,2,12,51,13),
@@ -552,9 +552,9 @@ a	b	c
 show create table t;
 Table	Create Table
 t	CREATE TABLE `t` (
-  `a` int(11) NOT NULL,
+  `a` int NOT NULL,
   `b` varchar(55) DEFAULT NULL,
-  `c` int(11) DEFAULT NULL,
+  `c` int DEFAULT NULL,
   PRIMARY KEY (`a`) /*T![clustered_index] NONCLUSTERED */,
   KEY `b` (`b`),
   KEY `c` (`c`,`b`)
@@ -603,9 +603,9 @@ ADMIN CHECK TABLE t;
 SHOW CREATE TABLE t;
 Table	Create Table
 t	CREATE TABLE `t` (
-  `a` int(11) DEFAULT NULL,
+  `a` int DEFAULT NULL,
   `b` char(3) DEFAULT NULL,
-  `c` int(11) DEFAULT NULL,
+  `c` int DEFAULT NULL,
   KEY `b` (`b`),
   KEY `c` (`c`,`b`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
@@ -659,9 +659,9 @@ ADMIN CHECK TABLE t;
 SHOW CREATE TABLE t;
 Table	Create Table
 t	CREATE TABLE `t` (
-  `a` int(11) DEFAULT NULL,
+  `a` int DEFAULT NULL,
   `b` char(3) DEFAULT NULL,
-  `c` int(11) DEFAULT NULL,
+  `c` int DEFAULT NULL,
   KEY `b` (`b`),
   KEY `c` (`c`,`b`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
@@ -713,7 +713,7 @@ Table	Create Table
 t	CREATE TABLE `t` (
   `a` date DEFAULT NULL,
   `b` datetime DEFAULT NULL,
-  `c` int(11) DEFAULT NULL,
+  `c` int DEFAULT NULL,
   KEY `b` (`b`),
   KEY `c` (`c`,`b`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
@@ -739,7 +739,7 @@ Table	Create Table
 t	CREATE TABLE `t` (
   `a` date DEFAULT NULL,
   `b` datetime DEFAULT NULL,
-  `c` int(11) DEFAULT NULL,
+  `c` int DEFAULT NULL,
   KEY `c` (`c`,`b`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 PARTITION BY LIST COLUMNS(`a`,`b`)
@@ -782,7 +782,7 @@ Table	Create Table
 t	CREATE TABLE `t` (
   `a` date DEFAULT NULL,
   `b` datetime DEFAULT NULL,
-  `c` int(11) DEFAULT NULL,
+  `c` int DEFAULT NULL,
   KEY `b` (`b`),
   KEY `c` (`c`,`b`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
@@ -808,7 +808,7 @@ Table	Create Table
 t	CREATE TABLE `t` (
   `a` date DEFAULT NULL,
   `b` datetime DEFAULT NULL,
-  `c` int(11) DEFAULT NULL,
+  `c` int DEFAULT NULL,
   KEY `c` (`c`,`b`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 PARTITION BY LIST COLUMNS(`b`,`a`)
