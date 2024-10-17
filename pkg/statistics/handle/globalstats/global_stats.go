@@ -364,9 +364,8 @@ func blockingMergePartitionStats2GlobalStats(
 			for j := range globalStats.Hg[i].Buckets {
 				globalStats.Hg[i].Buckets[j].NDV = 0
 			}
+			globalStats.Hg[i].NDV = globalStatsNDV
 		}
-
-		globalStats.Hg[i].NDV = globalStatsNDV
 	}
 	return
 }

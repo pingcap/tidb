@@ -524,10 +524,12 @@ func (a *AsyncMergePartitionStats2GlobalStats) dealHistogramAndTopN(stmtCtx *stm
 			}
 
 			// NOTICE: after merging bucket NDVs have the trend to be underestimated, so for safe we don't use them.
-			for j := range (*globalHg).Buckets {
-				(*globalHg).Buckets[j].NDV = 0
+			if globalHg != nil {
+				for j := range (*globalHg).Buckets {
+					(*globalHg).Buckets[j].NDV = 0
+				}
+				(*globalHg).NDV = a.globalStatsNDV[item.idx]
 			}
-			(*globalHg).NDV = a.globalStatsNDV[item.idx]
 		case <-a.ioWorkerExitWhenErrChan:
 			return nil
 		}
