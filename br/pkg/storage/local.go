@@ -5,13 +5,16 @@ package storage
 import (
 	"bufio"
 	"context"
+	stderrors "errors"
 	"io"
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 
 	"github.com/google/uuid"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/log"
 	"go.uber.org/zap"
 )
@@ -28,12 +31,30 @@ const (
 // export for using in tests.
 type LocalStorage struct {
 	base string
+	// Whether ignoring ENOINT while deleting.
+	// Don't fail when deleting an unexist file is more like
+	// a normal ExternalStorage implementation does.
+	IgnoreEnoentForDelete bool
+}
+
+// Base returns the base dir used by this local storage.
+func (l *LocalStorage) Base() string {
+	return l.base
 }
 
 // DeleteFile deletes the file.
 func (l *LocalStorage) DeleteFile(_ context.Context, name string) error {
+	failpoint.Inject("local_delete_file_err", func(v failpoint.Value) {
+		failpoint.Return(errors.New(v.(string)))
+	})
 	path := filepath.Join(l.base, name)
-	return os.Remove(path)
+	err := os.Remove(path)
+	if err != nil &&
+		l.IgnoreEnoentForDelete &&
+		stderrors.Is(err, syscall.ENOENT) {
+		return nil
+	}
+	return err
 }
 
 // DeleteFiles deletes the files.
@@ -49,6 +70,10 @@ func (l *LocalStorage) DeleteFiles(ctx context.Context, names []string) error {
 
 // WriteFile writes data to a file to storage.
 func (l *LocalStorage) WriteFile(_ context.Context, name string, data []byte) error {
+	failpoint.Inject("local_write_file_err", func(v failpoint.Value) {
+		failpoint.Return(errors.New(v.(string)))
+	})
+
 	// because `os.WriteFile` is not atomic, directly write into it may reset the file
 	// to an empty file if write is not finished.
 	tmpPath := filepath.Join(l.base, name) + ".tmp." + uuid.NewString()
