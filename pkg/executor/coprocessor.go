@@ -172,7 +172,7 @@ func (h *CoprocessorDAGHandler) buildDAGExecutor(req *coprocessor.Request) (exec
 				Username: dagReq.User.UserName,
 				Hostname: dagReq.User.UserHost,
 			}
-			authName, authHost, success := pm.MatchIdentity(dagReq.User.UserName, dagReq.User.UserHost, false)
+			authName, authHost, success := pm.MatchIdentity(h.sctx, dagReq.User.UserName, dagReq.User.UserHost, false)
 			if success && pm.GetAuthWithoutVerification(authName, authHost) {
 				h.sctx.GetSessionVars().User.AuthUsername = authName
 				h.sctx.GetSessionVars().User.AuthHostname = authHost
