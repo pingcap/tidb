@@ -71,7 +71,7 @@ func BenchmarkNativeIntMap(b *testing.B) {
 	for _, s := range inputs {
 		b.Run("NativeIntMap_"+strconv.Itoa(s.input), func(b *testing.B) {
 			var x int
-			for i := 0; i < b.N; i++ {
+			for range b.N {
 				x = nativeIntMap(s.input)
 			}
 			result = x

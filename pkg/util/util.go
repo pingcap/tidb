@@ -255,7 +255,7 @@ func ReadLine(reader *bufio.Reader, maxLineSize int) ([]byte, error) {
 // maxLineSize specifies the maximum size of a single line.
 func ReadLines(reader *bufio.Reader, count int, maxLineSize int) ([][]byte, error) {
 	lines := make([][]byte, 0, count)
-	for i := 0; i < count; i++ {
+	for range count {
 		line, err := ReadLine(reader, maxLineSize)
 		if err == io.EOF && len(lines) > 0 {
 			return lines, nil
