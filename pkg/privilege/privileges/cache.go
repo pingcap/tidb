@@ -1773,10 +1773,10 @@ func NewHandle() *Handle {
 }
 
 // ensureActiveUser ensure that the specific user data is loaded in-memory.
-func (p *Handle) ensureActiveUser(sctx sessionctx.Context, user string) error {
-	p.mu.RLock()
-	_, exist := p.mu.activeUsers[user]
-	p.mu.RUnlock()
+func (h *Handle) ensureActiveUser(sctx sessionctx.Context, user string) error {
+	h.mu.RLock()
+	_, exist := h.mu.activeUsers[user]
+	h.mu.RUnlock()
 	if exist {
 		return nil
 	}
@@ -1787,12 +1787,12 @@ func (p *Handle) ensureActiveUser(sctx sessionctx.Context, user string) error {
 		return errors.Trace(err)
 	}
 
-	old := p.Get()
-	p.priv.Store(old.merge(&data))
+	old := h.Get()
+	h.priv.Store(old.merge(&data))
 
-	p.mu.Lock()
-	p.mu.activeUsers[user] = struct{}{}
-	p.mu.Unlock()
+	h.mu.Lock()
+	h.mu.activeUsers[user] = struct{}{}
+	h.mu.Unlock()
 
 	return nil
 }
