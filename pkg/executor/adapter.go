@@ -19,12 +19,14 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"math/rand"
 	"runtime/trace"
 	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
+	"unicode/utf8"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -1577,8 +1579,124 @@ func resetCTEStorageMap(se sessionctx.Context) error {
 	return nil
 }
 
+func simplifyQueryPlan(s []string) string {
+	// state
+	enterPartitionUnion := false
+	canPrintInPartitionUnion := false
+	idxRuneForPartitionUnion := 0
+
+	simpleRow := func(s string) string {
+		if strings.Contains(s, "PartitionUnion") {
+			enterPartitionUnion = true
+			canPrintInPartitionUnion = false
+			idxRuneForPartitionUnion = utf8.RuneCountInString(s[:strings.Index(s, "PartitionUnion")])
+		}
+		if enterPartitionUnion && !canPrintInPartitionUnion {
+			a := string([]rune(s)[idxRuneForPartitionUnion:])
+			if strings.HasPrefix(a, "└─") {
+				canPrintInPartitionUnion = true
+			}
+		}
+		if enterPartitionUnion && !canPrintInPartitionUnion && !strings.Contains(s, "PartitionUnion") {
+			return ""
+		}
+
+		simplePlan := strings.ReplaceAll(s, "├─", "")
+		simplePlan = strings.ReplaceAll(simplePlan, "└─", "")
+		simplePlan = strings.ReplaceAll(simplePlan, "│", "")
+		simplePlan = strings.ReplaceAll(simplePlan, "'", "")
+		simplePlan = strings.TrimSpace(simplePlan)
+		simplePlan += ";"
+		return simplePlan
+	}
+	totalPlan := ""
+	for _, r := range s {
+		totalPlan += simpleRow(r)
+	}
+	return totalPlan
+}
+
+func getPlan(se sqlexec.RestrictedSQLExecutor, sql string, print bool) string {
+	rows, _, err := se.ExecRestrictedSQL(context.Background(), []sqlexec.OptionFuncAlias{sqlexec.ExecOptionUseDBName("test")}, fmt.Sprintf("explain format='brief' %s", sql))
+	if err != nil {
+		logutil.BgLogger().Error("get plan for sql", zap.String("sql", sql), zap.Error(err))
+		return ""
+	}
+	ss := make([]string, 0, len(rows))
+	//totalS := ""
+	for _, row := range rows {
+		p := row.GetString(0) + " " + row.GetString(1) + " " + row.GetString(2) + " " + row.GetString(3) + " " + row.GetString(4)
+		if print {
+			logutil.BgLogger().Info("plan for sql", zap.String("sql", sql), zap.String("plan", p))
+		}
+		ss = append(ss, row.GetString(0))
+		//totalS += p
+	}
+	//return totalS
+	return simplifyQueryPlan(ss)
+}
+
 // LogSlowQuery is used to print the slow query in the log files.
 func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
+	if !a.Ctx.GetSessionVars().InRestrictedSQL && succ {
+		sql := FormatSQL(a.GetTextToLog(true)).String()
+		if strings.Contains(sql, "select") && !strings.Contains(sql, "explain") {
+			se := a.Ctx.GetRestrictedSQLExecutor()
+			tblIDs := a.Ctx.GetSessionVars().StmtCtx.StmtRelatedTableIDs
+
+			err := domain.GetDomain(a.Ctx).StatsHandle().DumpColStatsUsageToKV()
+			if err != nil {
+				panic(err)
+			}
+
+			printPlan := rand.Intn(100) == 0
+			logutil.BgLogger().Error("sql", zap.String("sql", sql), zap.Any("tblIDs", tblIDs))
+
+			for id := range tblIDs {
+				tbl, ok := a.Ctx.GetDomainInfoSchema().TableInfoByID(id)
+				if !ok {
+					continue
+				}
+				db, ok := a.Ctx.GetDomainInfoSchema().SchemaByID(tbl.DBID)
+				if !ok {
+					continue
+				}
+				//_, _, err = se.ExecRestrictedSQL(context.Background(), nil, fmt.Sprintf("drop stats %s.%s", db.Name.O, tbl.Name.O))
+				//if err != nil {
+				//	panic(err)
+				//}
+				_, _, err = se.ExecRestrictedSQL(context.Background(), nil, fmt.Sprintf("analyze table %s.%s predicate columns", db.Name.O, tbl.Name.O))
+				if err != nil {
+					panic(err)
+				}
+			}
+			predicatePlan := getPlan(se, sql, printPlan)
+
+			for id := range tblIDs {
+				tbl, ok := a.Ctx.GetDomainInfoSchema().TableInfoByID(id)
+				if !ok {
+					continue
+				}
+				db, ok := a.Ctx.GetDomainInfoSchema().SchemaByID(tbl.DBID)
+				if !ok {
+					continue
+				}
+				_, _, err = se.ExecRestrictedSQL(context.Background(), nil, fmt.Sprintf("drop stats %s.%s", db.Name.O, tbl.Name.O))
+				if err != nil {
+					panic(err)
+				}
+				_, _, err = se.ExecRestrictedSQL(context.Background(), nil, fmt.Sprintf("analyze table %s.%s all columns", db.Name.O, tbl.Name.O))
+				if err != nil {
+					panic(err)
+				}
+			}
+			allPlan := getPlan(se, sql, printPlan)
+			if predicatePlan != allPlan {
+				logutil.BgLogger().Error("plan not match", zap.String("sql", sql), zap.String("predicatePlan", predicatePlan), zap.String("allPlan", allPlan))
+			}
+		}
+	}
+
 	sessVars := a.Ctx.GetSessionVars()
 	stmtCtx := sessVars.StmtCtx
 	level := log.GetLevel()
