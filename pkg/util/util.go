@@ -22,11 +22,13 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"os"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/parser"
 	"go.uber.org/atomic"
 	"go.uber.org/zap"
@@ -288,4 +290,13 @@ func GetRecoverError(r any) error {
 		return errors.Trace(err)
 	}
 	return errors.Errorf("%v", r)
+}
+
+func InstanceName() string {
+	cfg := config.GetGlobalConfig()
+	hostname, err := os.Hostname()
+	if err != nil {
+		return "unknown"
+	}
+	return fmt.Sprintf("%s_%d", hostname, cfg.Port)
 }
