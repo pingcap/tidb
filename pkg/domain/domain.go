@@ -1842,10 +1842,13 @@ func (do *Domain) LoadPrivilegeLoop(sctx sessionctx.Context) error {
 		defer util.Recover(metrics.LabelDomain, "loadPrivilegeInLoop", nil, false)
 
 		var count int
+		subWg := util.NewErrorGroupWithRecover()
+		subWg.SetLimit(100)
 		for {
 			ok := true
 			select {
 			case <-do.exit:
+				_ = subWg.Wait()
 				return
 			case _, ok = <-watchCh:
 			case <-time.After(duration):
@@ -1861,11 +1864,14 @@ func (do *Domain) LoadPrivilegeLoop(sctx sessionctx.Context) error {
 			}
 
 			count = 0
-			err := do.privHandle.Update(sctx)
-			metrics.LoadPrivilegeCounter.WithLabelValues(metrics.RetLabel(err)).Inc()
-			if err != nil {
-				logutil.BgLogger().Error("load privilege failed", zap.Error(err))
-			}
+			subWg.TryGo(func() error {
+				err := do.privHandle.Update(sctx)
+				metrics.LoadPrivilegeCounter.WithLabelValues(metrics.RetLabel(err)).Inc()
+				if err != nil {
+					logutil.BgLogger().Error("load privilege failed", zap.Error(err))
+				}
+				return err
+			})
 		}
 	}, "loadPrivilegeInLoop")
 	return nil
