@@ -18,7 +18,7 @@ import (
 	"context"
 	"fmt"
 	"math/rand"
-	"sort"
+	"slices"
 	"strings"
 	"testing"
 
@@ -53,7 +53,7 @@ func check(ctx context.Context, t *testing.T, tk *testkit.TestKit,
 	for _, result := range r {
 		indexes = append(indexes, fmt.Sprintf("%v.%v.%v", result.Database, result.Table, strings.Join(result.IndexColumns, "_")))
 	}
-	sort.Strings(indexes)
+	slices.Sort(indexes)
 	require.Equal(t, expected, strings.Join(indexes, ","))
 }
 
