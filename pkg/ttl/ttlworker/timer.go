@@ -29,10 +29,6 @@ import (
 	"go.uber.org/zap"
 )
 
-const (
-	defaultCheckTTLJobInterval = 10 * time.Second
-)
-
 type ttlTimerSummary struct {
 	LastJobRequestID string      `json:"last_job_request_id,omitempty"`
 	LastJobSummary   *TTLSummary `json:"last_job_summary,omitempty"`
@@ -78,7 +74,7 @@ func newTTLTimerHook(adapter TTLJobAdapter, cli timerapi.TimerClient) *ttlTimerH
 		cli:                 cli,
 		ctx:                 ctx,
 		cancel:              cancel,
-		checkTTLJobInterval: defaultCheckTTLJobInterval,
+		checkTTLJobInterval: getCheckJobInterval(),
 	}
 }
 

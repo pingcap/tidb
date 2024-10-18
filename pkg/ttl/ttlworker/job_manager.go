@@ -181,14 +181,14 @@ func (m *JobManager) jobLoop() error {
 	resizeWorkersTicker := time.Tick(getResizeWorkersInterval())
 	gcTicker := time.Tick(ttlGCInterval)
 
-	scheduleJobTicker := time.Tick(jobManagerLoopTickerInterval)
-	jobCheckTicker := time.Tick(jobManagerLoopTickerInterval)
+	scheduleJobTicker := time.Tick(getCheckJobInterval())
+	jobCheckTicker := time.Tick(getCheckJobInterval())
 	updateJobHeartBeatTicker := time.Tick(jobManagerLoopTickerInterval)
-	timerTicker := time.Tick(time.Second)
+	timerTicker := time.Tick(getJobManagerLoopSyncTimerInterval())
 
 	scheduleTaskTicker := time.Tick(getTaskManagerLoopTickerInterval())
 	updateTaskHeartBeatTicker := time.Tick(ttlTaskHeartBeatTickerInterval)
-	taskCheckTicker := time.Tick(time.Second * 5)
+	taskCheckTicker := time.Tick(getTaskManagerLoopCheckTaskInterval())
 	checkScanTaskFinishedTicker := time.Tick(getTaskManagerLoopTickerInterval())
 
 	cmdWatcher := m.cmdCli.WatchCommand(m.ctx)
@@ -297,7 +297,13 @@ func (m *JobManager) onTimerTick(se session.Session, rt *ttlTimerRuntime, syncer
 	rt.Resume()
 	lastSyncTime, lastSyncVer := syncer.GetLastSyncInfo()
 	sinceLastSync := now.Sub(lastSyncTime)
-	if sinceLastSync < 5*time.Second {
+	minSyncDuration := 5 * time.Second
+	if intest.InTest {
+		// in test, we can set the minSyncDuration to 1ms to boost the test speed
+		minSyncDuration = time.Millisecond
+	}
+
+	if sinceLastSync < minSyncDuration {
 		// limit timer sync frequency by every 5 seconds
 		return
 	}
@@ -419,7 +425,7 @@ func (m *JobManager) triggerTTLJob(requestID string, cmd *client.TriggerNewTTLJo
 
 	go func() {
 		defer cancel()
-		ticker := time.NewTicker(2 * time.Second)
+		ticker := time.NewTicker(getCheckJobTriggeredInterval())
 		defer ticker.Stop()
 	loop:
 		for {
@@ -716,9 +722,15 @@ func (m *JobManager) couldLockJob(tableStatus *cache.TableStatus, table *cache.P
 	if tableStatus.CurrentJobOwnerID != "" {
 		// see whether it's heart beat time is expired
 		hbTime := tableStatus.CurrentJobOwnerHBTime
-		// a more concrete value is `2 * max(updateTTLTableStatusCacheInterval, jobManagerLoopTickerInterval)`, but the
-		// `updateTTLTableStatusCacheInterval` is greater than `jobManagerLoopTickerInterval` in most cases.
-		if hbTime.Add(2 * getUpdateTTLTableStatusCacheInterval()).Before(now) {
+		// jobManagerLoopTickerInterval is used to do heartbeat periodically.
+		// Use twice the time to detect the heartbeat timeout.
+		hbTimeout := jobManagerLoopTickerInterval * 2
+		if interval := getUpdateTTLTableStatusCacheInterval() * 2; interval > hbTimeout {
+			// tableStatus is get from the cache which may contain stale data.
+			// So if cache update interval > heartbeat interval, use the cache update interval instead.
+			hbTimeout = interval
+		}
+		if hbTime.Add(hbTimeout).Before(now) {
 			logutil.Logger(m.ctx).Info("task heartbeat has stopped", zap.Int64("tableID", table.ID), zap.Time("hbTime", hbTime), zap.Time("now", now))
 			return true
 		}

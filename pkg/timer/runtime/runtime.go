@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/pkg/timer/api"
 	"github.com/pingcap/tidb/pkg/timer/metrics"
 	"github.com/pingcap/tidb/pkg/util"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/prometheus/client_golang/prometheus"
 	"go.uber.org/zap"
@@ -40,6 +41,16 @@ var (
 	retryBusyWorkerInterval       = 5 * time.Second
 	checkWaitCloseTimerInterval   = 10 * time.Second
 )
+
+func init() {
+	if intest.InTest {
+		// minTriggerEventInterval and batchProcessWatchRespInterval are used to
+		// forbid the event trigger too fast to exhaust the CPU.
+		// In the test environment, we can set them to a smaller value to speed up the test.
+		minTriggerEventInterval = time.Millisecond
+		batchProcessWatchRespInterval = time.Millisecond
+	}
+}
 
 var idleWatchChan = make(api.WatchTimerChan)
 

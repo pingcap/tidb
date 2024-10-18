@@ -23,6 +23,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.uber.org/zap"
@@ -321,27 +322,17 @@ func (c *mockClient) Command(ctx context.Context, cmdType string, request any, r
 	ctx, cancel := context.WithTimeout(ctx, time.Second*time.Duration(ttlCmdKeyLeaseSeconds))
 	defer cancel()
 
-	reqID, err := c.sendCmd(ctx, cmdType, request)
+	reqID, respCh, err := c.sendCmd(ctx, cmdType, request)
 	if err != nil {
 		return reqID, err
 	}
 
-	responseKey := ttlCmdKeyResponsePrefix + reqID
-	for ctx.Err() == nil {
-		time.Sleep(time.Second)
-		c.Lock()
-		val, ok := c.store[responseKey]
-		c.Unlock()
-
+	select {
+	case res, ok := <-respCh:
+		intest.Assert(ok, "response channel should not be closed")
 		if !ok {
-			continue
+			return "", errors.New("response channel is closed")
 		}
-
-		res, ok := val.(*cmdResponse)
-		if !ok {
-			return reqID, errors.New("response cannot be casted to *cmdResponse")
-		}
-
 		if res.ErrorMessage != "" {
 			return reqID, errors.New(res.ErrorMessage)
 		}
@@ -350,15 +341,16 @@ func (c *mockClient) Command(ctx context.Context, cmdType string, request any, r
 			return reqID, err
 		}
 		return reqID, nil
+	case <-ctx.Done():
+		return reqID, ctx.Err()
 	}
-	return reqID, ctx.Err()
 }
 
-func (c *mockClient) sendCmd(ctx context.Context, cmdType string, request any) (string, error) {
+func (c *mockClient) sendCmd(ctx context.Context, cmdType string, request any) (string, chan *cmdResponse, error) {
 	reqID := uuid.New().String()
 	data, err := json.Marshal(request)
 	if err != nil {
-		return reqID, err
+		return reqID, nil, err
 	}
 
 	req := &CmdRequest{
@@ -369,18 +361,22 @@ func (c *mockClient) sendCmd(ctx context.Context, cmdType string, request any) (
 
 	c.Lock()
 	defer c.Unlock()
-	key := ttlCmdKeyRequestPrefix + reqID
-	c.store[key] = req
+	reqKey := ttlCmdKeyRequestPrefix + reqID
+	c.store[reqKey] = req
+	respKey := ttlCmdKeyResponsePrefix + reqID
+	respCh := make(chan *cmdResponse, 1)
+	c.store[respKey] = respCh
 	for _, ch := range c.commandWatchers {
 		select {
 		case <-ctx.Done():
-			return reqID, ctx.Err()
+			return reqID, nil, ctx.Err()
 		case ch <- req:
 		default:
-			return reqID, errors.New("watcher channel is blocked")
+			intest.Assert(false, "watcher channel should not be blocked")
+			return reqID, nil, errors.New("watcher channel is blocked")
 		}
 	}
-	return reqID, nil
+	return reqID, respCh, nil
 }
 
 // TakeCommand implements the CommandClient
@@ -414,7 +410,19 @@ func (c *mockClient) ResponseCommand(_ context.Context, reqID string, obj any) e
 		resp.Data = jsonData
 	}
 
-	c.store[ttlCmdKeyResponsePrefix+reqID] = resp
+	respKey := ttlCmdKeyResponsePrefix + reqID
+	item, ok := c.store[respKey]
+	if !ok {
+		return errors.New("response key not found for: " + reqID)
+	}
+	delete(c.store, respKey)
+	respCh := item.(chan *cmdResponse)
+	select {
+	case item.(chan *cmdResponse) <- resp:
+		close(respCh)
+	default:
+		intest.Assert(false, "response channel should not be blocked")
+	}
 	return nil
 }
 
