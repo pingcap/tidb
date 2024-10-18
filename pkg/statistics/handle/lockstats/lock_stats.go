@@ -19,6 +19,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/statistics/handle/logutil"
 	"github.com/pingcap/tidb/pkg/statistics/handle/types"
@@ -34,7 +35,8 @@ const (
 	lockedStatus   = "locked"
 	unlockedStatus = "unlocked"
 
-	insertSQL = "INSERT INTO mysql.stats_table_locked (table_id) VALUES (%?) ON DUPLICATE KEY UPDATE table_id = %?"
+	insertSQL            = "INSERT INTO mysql.stats_table_locked (table_id) VALUES (%?) ON DUPLICATE KEY UPDATE table_id = %?"
+	updateMetaVersionSQL = "UPDATE mysql.stats_meta SET version = %? WHERE table_id = %?"
 )
 
 // statsLockImpl implements the util.StatsLock interface.
@@ -165,7 +167,7 @@ func AddLockedTables(
 	lockedTablesAndPartitions := GetLockedTables(lockedTables, ids...)
 	for tid, table := range tables {
 		if _, ok := lockedTablesAndPartitions[tid]; !ok {
-			if err := insertIntoStatsTableLocked(sctx, tid); err != nil {
+			if err := insertIntoStatsTableLockedAndUpdateStatsVersion(sctx, tid); err != nil {
 				return "", err
 			}
 		} else {
@@ -174,7 +176,7 @@ func AddLockedTables(
 
 		for pid := range table.PartitionInfo {
 			if _, ok := lockedTablesAndPartitions[pid]; !ok {
-				if err := insertIntoStatsTableLocked(sctx, pid); err != nil {
+				if err := insertIntoStatsTableLockedAndUpdateStatsVersion(sctx, pid); err != nil {
 					return "", err
 				}
 			}
@@ -231,7 +233,7 @@ func AddLockedPartitions(
 	lockedPartitions := GetLockedTables(lockedTables, pids...)
 	for _, pid := range pids {
 		if _, ok := lockedPartitions[pid]; !ok {
-			if err := insertIntoStatsTableLocked(sctx, pid); err != nil {
+			if err := insertIntoStatsTableLockedAndUpdateStatsVersion(sctx, pid); err != nil {
 				return "", err
 			}
 		} else {
@@ -289,10 +291,20 @@ func generateStableSkippedPartitionsMessage(ids []int64, tableName string, skipp
 	return ""
 }
 
-func insertIntoStatsTableLocked(sctx sessionctx.Context, tid int64) error {
+func insertIntoStatsTableLockedAndUpdateStatsVersion(sctx sessionctx.Context, tid int64) error {
 	_, _, err := util.ExecRows(sctx, insertSQL, tid, tid)
 	if err != nil {
 		logutil.StatsLogger().Error("error occurred when insert mysql.stats_table_locked", zap.Error(err))
+		return err
+	}
+
+	version, err := util.GetStartTS(sctx)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	_, _, err = util.ExecRows(sctx, updateMetaVersionSQL, version, tid)
+	if err != nil {
+		logutil.StatsLogger().Error("error occurred when update mysql.stats_meta version", zap.Error(err))
 		return err
 	}
 	return nil
