@@ -1028,8 +1028,8 @@ func (e *executor) CreateTable(ctx sessionctx.Context, s *ast.CreateTableStmt) (
 		return errors.Trace(err)
 	}
 
-	if s.Partition != nil {
-		rewritePartitionQueryString(ctx, s.Partition, tbInfo)
+	if err = rewritePartitionQueryString(ctx, s.Partition, tbInfo); err != nil {
+		return err
 	}
 
 	if err = checkTableInfoValidWithStmt(metaBuildCtx, tbInfo, s); err != nil {
@@ -2314,7 +2314,12 @@ func (e *executor) AddTablePartitions(ctx sessionctx.Context, ident ast.Ident, s
 			AppendPartitionDefs(partInfo, &buf, sqlMode)
 
 			syntacticSugar := spec.Partition.PartitionMethod.OriginalText()
-			syntacticStart := spec.Partition.PartitionMethod.OriginTextPosition()
+			syntacticStart := strings.Index(query, syntacticSugar)
+			if syntacticStart == -1 {
+				logutil.DDLLogger().Error("Can't find related PARTITION definition in prepare stmt",
+					zap.String("PARTITION definition", syntacticSugar), zap.String("prepare stmt", query))
+				return errors.Errorf("Can't find related PARTITION definition in PREPARE STMT")
+			}
 			newQuery := query[:syntacticStart] + "ADD PARTITION (" + buf.String() + ")" + query[syntacticStart+len(syntacticSugar):]
 			defer ctx.SetValue(sessionctx.QueryString, query)
 			ctx.SetValue(sessionctx.QueryString, newQuery)
@@ -2438,7 +2443,9 @@ func (e *executor) AlterTablePartitioning(ctx sessionctx.Context, ident ast.Iden
 	}
 
 	newPartInfo := newMeta.Partition
-	rewritePartitionQueryString(ctx, spec.Partition, newMeta)
+	if err = rewritePartitionQueryString(ctx, spec.Partition, newMeta); err != nil {
+		return errors.Trace(err)
+	}
 
 	if err = handlePartitionPlacement(ctx, newPartInfo); err != nil {
 		return errors.Trace(err)
@@ -2866,7 +2873,12 @@ func (e *executor) DropTablePartition(ctx sessionctx.Context, ident ast.Ident, s
 				partNames = append(partNames, stringutil.Escape(spec.PartitionNames[i].O, sqlMode))
 			}
 			syntacticSugar := spec.Partition.PartitionMethod.OriginalText()
-			syntacticStart := spec.Partition.PartitionMethod.OriginTextPosition()
+			syntacticStart := strings.Index(query, syntacticSugar)
+			if syntacticStart == -1 {
+				logutil.DDLLogger().Error("Can't find related PARTITION definition in prepare stmt",
+					zap.String("PARTITION definition", syntacticSugar), zap.String("prepare stmt", query))
+				return errors.Errorf("Can't find related PARTITION definition in PREPARE STMT")
+			}
 			newQuery := query[:syntacticStart] + "DROP PARTITION " + strings.Join(partNames, ", ") + query[syntacticStart+len(syntacticSugar):]
 			defer ctx.SetValue(sessionctx.QueryString, query)
 			ctx.SetValue(sessionctx.QueryString, newQuery)
@@ -5620,8 +5632,8 @@ func (e *executor) RepairTable(ctx sessionctx.Context, createStmt *ast.CreateTab
 	if err != nil {
 		return errors.Trace(err)
 	}
-	if createStmt.Partition != nil {
-		rewritePartitionQueryString(ctx, createStmt.Partition, newTableInfo)
+	if err = rewritePartitionQueryString(ctx, createStmt.Partition, newTableInfo); err != nil {
+		return errors.Trace(err)
 	}
 	// Override newTableInfo with oldTableInfo's element necessary.
 	// TODO: There may be more element assignments here, and the new TableInfo should be verified with the actual data.
