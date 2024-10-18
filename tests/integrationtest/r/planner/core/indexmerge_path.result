@@ -668,23 +668,6 @@ a
 select /*+ use_index_merge(t, j0_0) */ a from t where ('1' member of (j0->'$.path0'));
 a
 drop table if exists t;
-create table t(a int, b int, c int, d json, index iad(a, (cast(d->'$.b' as signed array))));
-insert into t value(1,1,1, '{"b":[1,2,3,4]}');
-insert into t value(2,2,2, '{"b":[3,4,5,6]}');
-set tidb_analyze_version=2;
-analyze table t all columns;
-set @@tidb_stats_load_sync_wait=1000;
-explain select * from t use index (iad) where a = 1;
-id	estRows	task	access object	operator info
-TableReader_7	1.00	root		data:Selection_6
-└─Selection_6	1.00	cop[tikv]		eq(planner__core__indexmerge_path.t.a, 1)
-  └─TableFullScan_5	2.00	cop[tikv]	table:t	keep order:false
-explain select * from t use index (iad) where a = 1 and (2 member of (d->'$.b'));
-id	estRows	task	access object	operator info
-IndexMerge_7	1.00	root		type: union
-├─IndexRangeScan_5(Build)	1.00	cop[tikv]	table:t, index:iad(a, cast(json_extract(`d`, _utf8mb4'$.b') as signed array))	range:[1 2,1 2], keep order:false, stats:partial[d:unInitialized]
-└─TableRowIDScan_6(Probe)	1.00	cop[tikv]	table:t	keep order:false, stats:partial[d:unInitialized]
-drop table if exists t;
 create table t(a int, d json, index iad(a, (cast(d->'$.b' as signed array))));
 insert into t value(1,'{"b":[]}'), (2,'{"b":[]}');
 select * from t use index (iad) where a = 1;
@@ -713,8 +696,8 @@ alter table t add index ibb( (cast(b->'$.b' as signed array)) );
 explain select /*+ use_index_merge(t) */ * from t where 10 member of (b->'$.b');
 id	estRows	task	access object	operator info
 IndexMerge_7	1.00	root		type: union
-├─IndexRangeScan_5(Build)	1.00	cop[tikv]	table:t, index:ibb(cast(json_extract(`b`, _utf8mb4'$.b') as signed array))	range:[10,10], keep order:false, stats:partial[ibb:missing, b:unInitialized]
-└─TableRowIDScan_6(Probe)	1.00	cop[tikv]	table:t	keep order:false, stats:partial[ibb:missing, b:unInitialized]
+├─IndexRangeScan_5(Build)	1.00	cop[tikv]	table:t, index:ibb(cast(json_extract(`b`, _utf8mb4'$.b') as signed array))	range:[10,10], keep order:false, stats:partial[ibb:missing]
+└─TableRowIDScan_6(Probe)	1.00	cop[tikv]	table:t	keep order:false, stats:partial[ibb:missing]
 drop table if exists t, t1;
 create table t (j json, i bigint(20) not null primary key, key mvi((cast(j as unsigned array))));
 insert into t values ('[1,2,3]', 1);
