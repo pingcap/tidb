@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
@@ -55,6 +56,12 @@ var DetachStatsCollector = func(s sqlexec.SQLExecutor) sqlexec.SQLExecutor {
 	return s
 }
 
+var allIsolationReadEngines = map[kv.StoreType]struct{}{
+	kv.TiKV:    {},
+	kv.TiFlash: {},
+	kv.TiDB:    {},
+}
+
 func getSession(pool util.SessionPool) (session.Session, error) {
 	resource, err := pool.Get()
 	if err != nil {
@@ -77,6 +84,7 @@ func getSession(pool util.SessionPool) (session.Session, error) {
 	originalEnable1PC := sctx.GetSessionVars().Enable1PC
 	originalEnableAsyncCommit := sctx.GetSessionVars().EnableAsyncCommit
 	originalTimeZone, restoreTimeZone := "", false
+	originalIsolationReadEngines, restoreIsolationReadEngines := "", false
 
 	se := session.NewSession(sctx, exec, func(se session.Session) {
 		_, err = se.ExecuteSQL(context.Background(), fmt.Sprintf("set tidb_retry_limit=%d", originalRetryLimit))
@@ -99,6 +107,12 @@ func getSession(pool util.SessionPool) (session.Session, error) {
 
 		if restoreTimeZone {
 			_, err = se.ExecuteSQL(context.Background(), "set @@time_zone=%?", originalTimeZone)
+			intest.AssertNoError(err)
+			terror.Log(err)
+		}
+
+		if restoreIsolationReadEngines {
+			_, err = se.ExecuteSQL(context.Background(), "set tidb_isolation_read_engines=%?", originalIsolationReadEngines)
 			intest.AssertNoError(err)
 			terror.Log(err)
 		}
@@ -156,6 +170,32 @@ func getSession(pool util.SessionPool) (session.Session, error) {
 		return nil, err
 	}
 	restoreTimeZone = true
+
+	// allow the session in TTL to use all read engines.
+	_, hasTiDBEngine := se.GetSessionVars().IsolationReadEngines[kv.TiDB]
+	_, hasTiKVEngine := se.GetSessionVars().IsolationReadEngines[kv.TiKV]
+	_, hasTiFlashEngine := se.GetSessionVars().IsolationReadEngines[kv.TiFlash]
+	if !hasTiDBEngine || !hasTiKVEngine || !hasTiFlashEngine {
+		rows, err := se.ExecuteSQL(context.Background(), "select @@tidb_isolation_read_engines")
+		if err != nil {
+			se.Close()
+			return nil, err
+		}
+
+		if len(rows) == 0 || rows[0].Len() == 0 {
+			se.Close()
+			return nil, errors.New("failed to get tidb_isolation_read_engines variable")
+		}
+		originalIsolationReadEngines = rows[0].GetString(0)
+
+		_, err = se.ExecuteSQL(context.Background(), "set tidb_isolation_read_engines='tikv,tiflash,tidb'")
+		if err != nil {
+			se.Close()
+			return nil, err
+		}
+
+		restoreIsolationReadEngines = true
+	}
 
 	return se, nil
 }
