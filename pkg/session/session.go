@@ -3394,12 +3394,17 @@ func InitMDLVariable(store kv.Storage) error {
 
 // BootstrapSession bootstrap session and domain.
 func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
-	return bootstrapSessionImpl(context.Background(), store, createSessions)
+	return bootstrapSessionImpl(context.Background(), store, false, createSessions)
+}
+
+// BootstrapSessionAfterPreInit bootstrap session after the pre-init
+func BootstrapSessionAfterPreInit(store kv.Storage) (*domain.Domain, error) {
+	return bootstrapSessionImpl(context.Background(), store, true, createSessions)
 }
 
 // BootstrapSession4DistExecution bootstrap session and dom for Distributed execution test, only for unit testing.
 func BootstrapSession4DistExecution(store kv.Storage) (*domain.Domain, error) {
-	return bootstrapSessionImpl(context.Background(), store, createSessions4DistExecution)
+	return bootstrapSessionImpl(context.Background(), store, false, createSessions4DistExecution)
 }
 
 // bootstrapSessionImpl bootstraps session and domain.
@@ -3414,7 +3419,7 @@ func BootstrapSession4DistExecution(store kv.Storage) (*domain.Domain, error) {
 // - initialization global variables from system table that's required to use sessionCtx,
 // such as system time zone
 // - start domain and other routines.
-func bootstrapSessionImpl(ctx context.Context, store kv.Storage, createSessionsImpl func(store kv.Storage, cnt int) ([]*session, error)) (*domain.Domain, error) {
+func bootstrapSessionImpl(ctx context.Context, store kv.Storage, afterPreInit bool, createSessionsImpl func(store kv.Storage, cnt int) ([]*session, error)) (*domain.Domain, error) {
 	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnBootstrap)
 	cfg := config.GetGlobalConfig()
 	if len(cfg.Instance.PluginLoad) > 0 {
@@ -3444,9 +3449,9 @@ func bootstrapSessionImpl(ctx context.Context, store kv.Storage, createSessionsI
 	}
 	ver := getStoreBootstrapVersion(store)
 	if ver == notBootstrapped {
-		runInBootstrapSession(store, bootstrap)
+		runInBootstrapSession(store, afterPreInit, bootstrap)
 	} else if ver < currentBootstrapVersion {
-		runInBootstrapSession(store, upgrade)
+		runInBootstrapSession(store, afterPreInit, upgrade)
 	} else {
 		err = InitMDLVariable(store)
 		if err != nil {
@@ -3666,7 +3671,7 @@ func GetDomain(store kv.Storage) (*domain.Domain, error) {
 // If no bootstrap and storage is remote, we must use a little lease time to
 // bootstrap quickly, after bootstrapped, we will reset the lease time.
 // TODO: Using a bootstrap tool for doing this may be better later.
-func runInBootstrapSession(store kv.Storage, bootstrap func(types.Session)) {
+func runInBootstrapSession(store kv.Storage, afterPreInit bool, bootstrap func(types.Session)) {
 	s, err := createSession(store)
 	if err != nil {
 		// Bootstrap fail will cause program exit.
@@ -3683,9 +3688,13 @@ func runInBootstrapSession(store kv.Storage, bootstrap func(types.Session)) {
 	s.sessionVars.EnableClusteredIndex = variable.ClusteredIndexDefModeIntOnly
 
 	s.SetValue(sessionctx.Initing, true)
+	if afterPreInit {
+		s.SetValue(sessionctx.AfterPreInit, true)
+	}
 	bootstrap(s)
 	finishBootstrap(store)
 	s.ClearValue(sessionctx.Initing)
+	s.ClearValue(sessionctx.AfterPreInit)
 
 	dom.Close()
 	if intest.InTest {

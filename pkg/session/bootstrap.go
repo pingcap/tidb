@@ -47,6 +47,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	sessiontypes "github.com/pingcap/tidb/pkg/session/types"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	timertable "github.com/pingcap/tidb/pkg/timer/tablestore"
@@ -763,6 +764,12 @@ const (
 
 // CreateTimers is a table to store all timers for tidb
 var CreateTimers = timertable.CreateTimerTableSQL("mysql", "tidb_timers")
+
+// BootstrapExecutor is an interface to execute bootstrap SQLs.
+type BootstrapExecutor interface {
+	// ExecuteInternal executes the SQL
+	ExecuteInternal(context.Context, string, ...any) (sqlexec.RecordSet, error)
+}
 
 // bootstrap initiates system DB for a store.
 func bootstrap(s sessiontypes.Session) {
@@ -2225,11 +2232,6 @@ func upgradeToVer57(s sessiontypes.Session, ver int64) {
 	insertBuiltinBindInfoRow(s)
 }
 
-func initBindInfoTable(s sessiontypes.Session) {
-	mustExecute(s, CreateBindInfoTable)
-	insertBuiltinBindInfoRow(s)
-}
-
 func insertBuiltinBindInfoRow(s sessiontypes.Session) {
 	mustExecute(s, `INSERT HIGH_PRIORITY INTO mysql.bind_info(original_sql, bind_sql, default_db, status, create_time, update_time, charset, collation, source)
 						VALUES (%?, %?, "mysql", %?, "0000-00-00 00:00:00", "0000-00-00 00:00:00", "", "", %?)`,
@@ -3312,12 +3314,24 @@ func getBootstrapVersion(s sessiontypes.Session) (int64, error) {
 	return strconv.ParseInt(sVal, 10, 64)
 }
 
-// doDDLWorks executes DDL statements in bootstrap stage.
 func doDDLWorks(s sessiontypes.Session) {
-	// Create a test database.
-	mustExecute(s, "CREATE DATABASE IF NOT EXISTS test")
 	// Create system db.
 	mustExecute(s, "CREATE DATABASE IF NOT EXISTS %n", mysql.SystemDB)
+	// Create a test database.
+	mustExecute(s, "CREATE DATABASE IF NOT EXISTS test")
+	// create `sys` schema
+	mustExecute(s, CreateSysSchema)
+	if s.Value(sessionctx.AfterPreInit) == nil {
+		DoMayPreBootstrapDDLWorks(s)
+	}
+	// Create mdl view.
+	mustExecute(s, CreateMDLView)
+	// create `sys.schema_unused_indexes` view
+	mustExecute(s, CreateSchemaUnusedIndexesView)
+}
+
+// DoMayPreBootstrapDDLWorks do DDL works may pre-bootstraped
+func DoMayPreBootstrapDDLWorks(s BootstrapExecutor) {
 	// Create user table.
 	mustExecute(s, CreateUserTable)
 	// Create password history.
@@ -3351,7 +3365,7 @@ func doDDLWorks(s sessiontypes.Session) {
 	// Create default_roles table.
 	mustExecute(s, CreateDefaultRolesTable)
 	// Create bind_info table.
-	initBindInfoTable(s)
+	mustExecute(s, CreateBindInfoTable)
 	// Create stats_topn_store table.
 	mustExecute(s, CreateStatsTopNTable)
 	// Create expr_pushdown_blacklist table.
@@ -3380,8 +3394,6 @@ func doDDLWorks(s sessiontypes.Session) {
 	mustExecute(s, CreateAnalyzeJobs)
 	// Create advisory_locks table.
 	mustExecute(s, CreateAdvisoryLocks)
-	// Create mdl view.
-	mustExecute(s, CreateMDLView)
 	// Create plan_replayer_status table
 	mustExecute(s, CreatePlanReplayerStatusTable)
 	// Create plan_replayer_task table
@@ -3414,10 +3426,6 @@ func doDDLWorks(s sessiontypes.Session) {
 	mustExecute(s, CreateRequestUnitByGroupTable)
 	// create tidb_pitr_id_map
 	mustExecute(s, CreatePITRIDMap)
-	// create `sys` schema
-	mustExecute(s, CreateSysSchema)
-	// create `sys.schema_unused_indexes` view
-	mustExecute(s, CreateSchemaUnusedIndexesView)
 	// create mysql.index_advisor_results
 	mustExecute(s, CreateIndexAdvisorTable)
 	// create mysql.tidb_kernel_options
@@ -3466,6 +3474,7 @@ func doBootstrapSQLFile(s sessiontypes.Session) error {
 // doDMLWorks executes DML statements in bootstrap stage.
 // All the statements run in a single transaction.
 func doDMLWorks(s sessiontypes.Session) {
+	insertBuiltinBindInfoRow(s)
 	mustExecute(s, "BEGIN")
 	if config.GetGlobalConfig().Security.SecureBootstrap {
 		// If secure bootstrap is enabled, we create a root@localhost account which can login with auth_socket.
@@ -3539,7 +3548,7 @@ func doDMLWorks(s sessiontypes.Session) {
 	}
 }
 
-func mustExecute(s sessiontypes.Session, sql string, args ...any) {
+func mustExecute(s BootstrapExecutor, sql string, args ...any) {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(internalSQLTimeout)*time.Second)
 	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnBootstrap)
 	_, err := s.ExecuteInternal(ctx, sql, args...)

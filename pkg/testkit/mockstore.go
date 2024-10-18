@@ -25,19 +25,30 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/ddl/schematracker"
 	"github.com/pingcap/tidb/pkg/domain"
+	"github.com/pingcap/tidb/pkg/expression/exprstatic"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta"
+	"github.com/pingcap/tidb/pkg/meta/metabuild"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/parser"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	pmodel "github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/resourcemanager"
 	"github.com/pingcap/tidb/pkg/session"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/store/driver"
 	"github.com/pingcap/tidb/pkg/store/helper"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/gctuner"
 	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/pingcap/tidb/pkg/util/sqlescape"
+	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/stretchr/testify/require"
 	"go.opencensus.io/stats/view"
 	"go.uber.org/zap"
@@ -259,7 +270,8 @@ func bootstrap(t testing.TB, store kv.Storage, lease time.Duration) *domain.Doma
 	session.DisableStats4Test()
 	domain.DisablePlanReplayerBackgroundJob4Test()
 	domain.DisableDumpHistoricalStats4Test()
-	dom, err := session.BootstrapSession(store)
+	preBootstrapWithStore(t, store)
+	dom, err := session.BootstrapSessionAfterPreInit(store)
 	require.NoError(t, err)
 
 	dom.SetStatsUpdating(true)
@@ -272,6 +284,96 @@ func bootstrap(t testing.TB, store kv.Storage, lease time.Duration) *domain.Doma
 		resourcemanager.InstanceResourceManager.Reset()
 	})
 	return dom
+}
+
+func preBootstrapWithStore(t testing.TB, store kv.Storage) {
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
+	err := kv.RunInNewTxn(ctx, store, false, func(ctx context.Context, txn kv.Transaction) error {
+		e, err := newKVTxnExecutor(txn)
+		require.NoError(t, err)
+		session.DoMayPreBootstrapDDLWorks(e)
+		return nil
+	})
+	require.NoError(t, err)
+}
+
+type kvTxnExecutor struct {
+	txn          kv.Transaction
+	mutator      *meta.Mutator
+	parser       *parser.Parser
+	buildMetaCtx *metabuild.Context
+	sysDBID      int64
+}
+
+func newKVTxnExecutor(txn kv.Transaction) (*kvTxnExecutor, error) {
+	mutator := meta.NewMutator(txn)
+	dbID, err := mutator.CreateMySQLDatabaseIfNotExists()
+	if err != nil {
+		return nil, err
+	}
+
+	exprCtx := exprstatic.NewExprContext(
+		exprstatic.WithEvalCtx(
+			exprstatic.NewEvalContext(exprstatic.WithSQLMode(mysql.ModeNone)),
+		),
+	)
+
+	return &kvTxnExecutor{
+		txn:     txn,
+		mutator: mutator,
+		parser:  parser.New(),
+		buildMetaCtx: metabuild.NewContext(
+			metabuild.WithExprCtx(exprCtx),
+			metabuild.WithClusteredIndexDefMode(variable.ClusteredIndexDefModeIntOnly),
+		),
+		sysDBID: dbID,
+	}, nil
+}
+
+func (e *kvTxnExecutor) ExecuteInternal(_ context.Context, sql string, args ...any) (_ sqlexec.RecordSet, err error) {
+	if len(args) > 0 {
+		sql, err = sqlescape.EscapeSQL(sql, args...)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	n, err := e.parser.ParseOneStmt(sql, "", "")
+	if err != nil {
+		return nil, err
+	}
+
+	switch stmt := n.(type) {
+	case *ast.CreateTableStmt:
+		return nil, e.executeCreateTable(stmt)
+	default:
+		return nil, errors.Errorf("unsupported statement: %T", stmt)
+	}
+}
+
+func (e *kvTxnExecutor) executeCreateTable(stmt *ast.CreateTableStmt) error {
+	dbName := stmt.Table.Schema.L
+	if dbName != mysql.SystemDB {
+		return errors.Errorf("only table in database '%s' is allowed", mysql.SystemDB)
+	}
+
+	tblName := stmt.Table.Name.L
+	if tblName == "" {
+		return errors.New("table name is empty")
+	}
+
+	tblID, err := e.mutator.GenGlobalID()
+	if err != nil {
+		return err
+	}
+
+	tblInfo, err := ddl.BuildTableInfoFromAST(e.buildMetaCtx, stmt)
+	if err != nil {
+		return err
+	}
+	tblInfo.ID = tblID
+	tblInfo.State = model.StatePublic
+	return e.mutator.CreateTableOrView(e.sysDBID, tblInfo)
 }
 
 // CreateMockStoreWithSchemaLease return a new mock kv.Storage.
