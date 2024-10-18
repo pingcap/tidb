@@ -140,10 +140,7 @@ func NewHandle(
 	handle.StatsAnalyze = autoanalyze.NewStatsAnalyze(handle, tracker)
 	handle.StatsSyncLoad = syncload.NewStatsSyncLoad(is, handle)
 	handle.StatsGlobal = globalstats.NewStatsGlobal(handle)
-	handle.DDL = ddl.NewDDLHandler(
-		handle.StatsReadWriter,
-		handle,
-	)
+	ddl.NewHandlerAndRegister(handle)
 	return handle, nil
 }
 

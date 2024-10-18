@@ -104,11 +104,22 @@ type ddlNotifier struct {
 
 	// handlersBitMap is set to the full bitmap of all registered handlers in Start.
 	handlersBitMap uint64
+
+	// Only used for testing.
+	ddlEventChForTest chan *SchemaChangeEvent
 }
 
 // TODO(lance6716): remove this global variable. Move it into Domain and make
 // related functions a member of it.
 var globalDDLNotifier *ddlNotifier
+
+// CreateDDLNotifierTable is a table to store DDL events for ddl notifier.
+const CreateDDLNotifierTable = `CREATE TABLE IF NOT EXISTS mysql.ddl_notifier (
+	ddl_job_id BIGINT,
+	multi_schema_change_seq BIGINT COMMENT '-1 if the schema change does not belong to a multi-schema change DDL. 0 or positive numbers representing the sub-job index of a multi-schema change DDL',
+	schema_change LONGBLOB COMMENT 'SchemaChangeEvent at rest',
+	processed_by_flag BIGINT UNSIGNED DEFAULT 0 COMMENT 'flag to mark which subscriber has processed the event',
+	PRIMARY KEY(ddl_job_id, multi_schema_change_seq))`
 
 // InitDDLNotifier initializes the global ddlNotifier. It should be called only
 // once and before any RegisterHandler call. The ownership of the sctx is passed
@@ -117,17 +128,30 @@ func InitDDLNotifier(
 	sctx sessionctx.Context,
 	store Store,
 	pollInterval time.Duration,
-) {
-	globalDDLNotifier = &ddlNotifier{
-		ownedSCtx:    sctx,
-		store:        store,
-		handlers:     make(map[HandlerID]SchemaChangeHandler),
-		pollInterval: pollInterval,
+) error {
+	// TODO: use the correct context.
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalDDLNotifier)
+	_, err := sctx.GetSQLExecutor().ExecuteInternal(ctx, CreateDDLNotifierTable)
+	if err != nil {
+		return errors.Trace(err)
 	}
+	globalDDLNotifier = &ddlNotifier{
+		ownedSCtx:         sctx,
+		store:             store,
+		handlers:          make(map[HandlerID]SchemaChangeHandler),
+		pollInterval:      pollInterval,
+		ddlEventChForTest: make(chan *SchemaChangeEvent, 1000),
+	}
+	return nil
 }
 
 // ResetDDLNotifier is used for testing only.
 func ResetDDLNotifier() { globalDDLNotifier = nil }
+
+// DDLEventCh returns the channel for testing only.
+func DDLEventChForTest() chan *SchemaChangeEvent {
+	return globalDDLNotifier.ddlEventChForTest
+}
 
 // StartDDLNotifier starts the global ddlNotifier. It will block until the
 // context is canceled.
@@ -196,6 +220,8 @@ func (n *ddlNotifier) processEvents(ctx context.Context) error {
 					zap.Int64("ddlJobID", change.ddlJobID),
 					zap.Int64("multiSchemaChangeSeq", change.multiSchemaChangeSeq),
 					zap.Error(err2))
+			} else {
+				n.ddlEventChForTest <- change.event
 			}
 		}
 	}

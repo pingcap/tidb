@@ -13,35 +13,3 @@
 // limitations under the License.
 
 package ddl
-
-import (
-	"github.com/pingcap/tidb/pkg/ddl/notifier"
-)
-
-func (h *ddlHandlerImpl) onReorganizePartitions(t *notifier.SchemaChangeEvent) error {
-	globalTableInfo,
-		addedPartInfo,
-		droppedPartitionInfo := t.GetReorganizePartitionInfo()
-	// Avoid updating global stats as the data remains unchanged.
-	// For new partitions, it's crucial to correctly insert the count and modify count correctly.
-	// However, this is challenging due to the need to know the count of the new partitions.
-	// Given that a partition can be split into two, determining the count of the new partitions is so hard.
-	// It's acceptable to not update it immediately,
-	// as the new partitions will be analyzed shortly due to the absence of statistics for them.
-	// Therefore, the auto-analyze worker will handle them in the near future.
-	for _, def := range addedPartInfo.Definitions {
-		if err := h.statsWriter.InsertTableStats2KV(globalTableInfo, def.ID); err != nil {
-			return err
-		}
-	}
-
-	// Reset the partition stats.
-	// It's OK to put those operations in different transactions. Because it will not affect the correctness.
-	for _, def := range droppedPartitionInfo.Definitions {
-		if err := h.statsWriter.UpdateStatsMetaVersionForGC(def.ID); err != nil {
-			return err
-		}
-	}
-
-	return nil
-}

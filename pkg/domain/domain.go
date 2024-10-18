@@ -37,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/pkg/bindinfo"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/ddl"
+	"github.com/pingcap/tidb/pkg/ddl/notifier"
 	"github.com/pingcap/tidb/pkg/ddl/placement"
 	"github.com/pingcap/tidb/pkg/ddl/schematracker"
 	"github.com/pingcap/tidb/pkg/ddl/systable"
@@ -1516,6 +1517,16 @@ func (do *Domain) Start() error {
 		return err
 	}
 
+	notifier.DefaultStore = notifier.OpenTableStore("mysql", "ddl_notifier")
+	sctx, err := do.sysSessionPool.Get()
+	if err != nil {
+		return err
+	}
+	err = notifier.InitDDLNotifier(sctx.(sessionctx.Context), notifier.DefaultStore, 50*time.Millisecond)
+	if err != nil {
+		return err
+	}
+
 	return nil
 }
 
@@ -2325,6 +2336,12 @@ func (do *Domain) UpdateTableStatsLoop(ctx, initStatsCtx sessionctx.Context) err
 	do.wg.Run(func() {
 		do.indexUsageWorker()
 	}, "indexUsageWorker")
+	// TODO: Does it guarantee we can always get the latest stats owner status here?
+	if do.statsOwner.IsOwner() {
+		do.wg.Run(func() {
+			notifier.StartDDLNotifier(do.ctx)
+		}, "ddlNotifier")
+	}
 	if do.statsLease <= 0 {
 		// For statsLease > 0, `updateStatsWorker` handles the quit of stats owner.
 		do.wg.Run(func() { quitStatsOwner(do, do.statsOwner) }, "quitStatsOwner")
