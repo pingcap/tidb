@@ -8,6 +8,7 @@ go_library(
     deps = [
         "//util/table-rule-selector",
         "@com_github_pingcap_errors//:errors",
+        "@com_github_pingcap_kvproto//pkg/brpb",
     ],
 )
 
