@@ -40,6 +40,7 @@ func InitMetricsVars() {
 		metrics.StatsHealthyGauge.WithLabelValues("[100,100]"),
 		// [0,100] should always be the last
 		metrics.StatsHealthyGauge.WithLabelValues("[0,100]"),
+		metrics.StatsHealthyGauge.WithLabelValues("unneeded analyze"),
 	}
 
 	DumpHistoricalStatsSuccessCounter = metrics.HistoricalStatsCounter.WithLabelValues("dump", "success")
