@@ -673,6 +673,7 @@ insert into t value(1,1,1, '{"b":[1,2,3,4]}');
 insert into t value(2,2,2, '{"b":[3,4,5,6]}');
 set tidb_analyze_version=2;
 analyze table t all columns;
+set @@tidb_stats_load_sync_wait=1000;
 explain select * from t use index (iad) where a = 1;
 id	estRows	task	access object	operator info
 TableReader_7	1.00	root		data:Selection_6
