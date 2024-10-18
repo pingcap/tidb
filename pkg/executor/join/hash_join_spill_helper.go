@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/disk"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"go.uber.org/zap"
@@ -383,11 +384,12 @@ func (h *hashJoinSpillHelper) spillRowTableImpl(partitionsNeedSpill []int, total
 
 	h.setPartitionSpilled(partitionsNeedSpill)
 
-	if len(partitionsNeedSpill) == int(h.hashJoinExec.partitionNumber) {
-		h.allPartitionsSpilledForTest = true
+	if intest.InTest {
+		if len(partitionsNeedSpill) == int(h.hashJoinExec.partitionNumber) {
+			h.allPartitionsSpilledForTest = true
+		}
+		h.spillTriggeredForTest = true
 	}
-
-	h.spillTriggeredForTest = true
 
 	logutil.BgLogger().Info(spillInfo, zap.Int64("consumed", h.bytesConsumed.Load()), zap.Int64("quota", h.bytesLimit.Load()))
 	for i := 0; i < workerNum; i++ {
