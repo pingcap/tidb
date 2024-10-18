@@ -302,7 +302,7 @@ func cmdRun(args ...string) bool {
 	taskCh := make(chan task, 100)
 	works := make([]numa, p)
 	var wg sync.WaitGroup
-	for i := 0; i < p; i++ {
+	for range p {
 		wg.Add(1)
 		go works[i].worker(&wg, taskCh)
 	}
@@ -427,7 +427,7 @@ func handleFlags(flag string) string {
 
 func handleFlag(f string) (found bool) {
 	tmp := os.Args[:0]
-	for i := 0; i < len(os.Args); i++ {
+	for range len(os.Args) {
 		if os.Args[i] == f {
 			found = true
 			continue
@@ -757,7 +757,7 @@ func (n *numa) runTestCase(pkg string, fn string) testResult {
 	var buf bytes.Buffer
 	var err error
 	var start time.Time
-	for i := 0; i < 3; i++ {
+	for range 3 {
 		cmd := n.testCommand(pkg, fn)
 		cmd.Dir = filepath.Join(workDir, pkg)
 		// Combine the test case output, so the run result for failed cases can be displayed.
@@ -1009,7 +1009,7 @@ func filter(input []string, f func(string) bool) []string {
 }
 
 func shuffle(tasks []task) {
-	for i := 0; i < len(tasks); i++ {
+	for range len(tasks) {
 		pos := rand.Intn(len(tasks))
 		tasks[i], tasks[pos] = tasks[pos], tasks[i]
 	}
