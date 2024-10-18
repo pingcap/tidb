@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/ddl/notifier"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -88,6 +89,9 @@ func NewAnalysisPriorityQueueV2(handle statstypes.StatsHandle) *AnalysisPriority
 	queue.syncFields.runningJobs = make(map[int64]struct{})
 	queue.syncFields.failedJobs = make(map[int64]struct{})
 	queue.syncFields.mu.Unlock()
+
+	// Register the handler for the priority queue.
+	notifier.RegisterHandler(notifier.PriorityQueueHandlerID, queue.HandleDDLEvent)
 
 	return queue
 }

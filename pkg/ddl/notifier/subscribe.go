@@ -63,6 +63,8 @@ const (
 	TestHandlerID HandlerID = 0
 	// StatsMetaHandlerID is used to update statistics system table.
 	StatsMetaHandlerID HandlerID = 1
+	// PriorityQueueHandlerID is used to trigger the update of the priority queue.
+	PriorityQueueHandlerID HandlerID = 2
 )
 
 // String implements fmt.Stringer interface.
@@ -72,6 +74,8 @@ func (id HandlerID) String() string {
 		return "TestHandler"
 	case StatsMetaHandlerID:
 		return "StatsMetaHandler"
+	case PriorityQueueHandlerID:
+		return "PriorityQueueHandler"
 	default:
 		return fmt.Sprintf("HandlerID(%d)", id)
 	}
