@@ -1017,7 +1017,7 @@ SELECT + - (- CASE + col0 WHEN + CAST( col0 AS SIGNED ) THEN col1 WHEN 79 THEN N
 show create table tab0;
 Table	Create Table
 tab0	CREATE TABLE `tab0` (
-  `col0` int(11) DEFAULT NULL,
-  `col1` int(11) DEFAULT NULL,
-  `col2` int(11) DEFAULT NULL
+  `col0` int DEFAULT NULL,
+  `col1` int DEFAULT NULL,
+  `col2` int DEFAULT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
