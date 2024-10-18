@@ -110,6 +110,14 @@ type ddlNotifier struct {
 // related functions a member of it.
 var globalDDLNotifier *ddlNotifier
 
+// CreateDDLNotifierTable is a table to store DDL events for ddl notifier.
+const CreateDDLNotifierTable = `CREATE TABLE IF NOT EXISTS mysql.ddl_notifier (
+	ddl_job_id BIGINT,
+	multi_schema_change_seq BIGINT COMMENT '-1 if the schema change does not belong to a multi-schema change DDL. 0 or positive numbers representing the sub-job index of a multi-schema change DDL',
+	schema_change LONGBLOB COMMENT 'SchemaChangeEvent at rest',
+	processed_by_flag BIGINT UNSIGNED DEFAULT 0 COMMENT 'flag to mark which subscriber has processed the event',
+	PRIMARY KEY(ddl_job_id, multi_schema_change_seq))`
+
 // InitDDLNotifier initializes the global ddlNotifier. It should be called only
 // once and before any RegisterHandler call. The ownership of the sctx is passed
 // to the ddlNotifier.
@@ -117,13 +125,20 @@ func InitDDLNotifier(
 	sctx sessionctx.Context,
 	store Store,
 	pollInterval time.Duration,
-) {
+) error {
+	// TODO: use the correct context.
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalDDLNotifier)
+	_, err := sctx.GetSQLExecutor().ExecuteInternal(ctx, CreateDDLNotifierTable)
+	if err != nil {
+		return errors.Trace(err)
+	}
 	globalDDLNotifier = &ddlNotifier{
 		ownedSCtx:    sctx,
 		store:        store,
 		handlers:     make(map[HandlerID]SchemaChangeHandler),
 		pollInterval: pollInterval,
 	}
+	return nil
 }
 
 // ResetDDLNotifier is used for testing only.

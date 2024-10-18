@@ -74,7 +74,7 @@ func TestBasicPubSub(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	s := notifier.OpenTableStore("test", "ddl_notifier")
 
-	notifier.InitDDLNotifier(tk.Session(), s, 50*time.Millisecond)
+	require.NoError(t, notifier.InitDDLNotifier(tk.Session(), s, 50*time.Millisecond))
 	t.Cleanup(notifier.ResetDDLNotifier)
 
 	var seenChangesMu sync.Mutex
@@ -145,7 +145,7 @@ func TestDeliverOrderAndCleanup(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	s := notifier.OpenTableStore("test", "ddl_notifier")
 
-	notifier.InitDDLNotifier(tk.Session(), s, 50*time.Millisecond)
+	require.NoError(t, notifier.InitDDLNotifier(tk.Session(), s, 50*time.Millisecond))
 	t.Cleanup(notifier.ResetDDLNotifier)
 
 	newRndFailHandler := func() (notifier.SchemaChangeHandler, *[]int64) {

@@ -37,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/pkg/bindinfo"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/ddl"
+	"github.com/pingcap/tidb/pkg/ddl/notifier"
 	"github.com/pingcap/tidb/pkg/ddl/placement"
 	"github.com/pingcap/tidb/pkg/ddl/schematracker"
 	"github.com/pingcap/tidb/pkg/ddl/systable"
@@ -1489,6 +1490,15 @@ func (do *Domain) Start() error {
 		return err
 	}
 	do.minJobIDRefresher = do.ddl.GetMinJobIDRefresher()
+	notifier.DefaultStore = notifier.OpenTableStore("mysql", "ddl_notifier")
+	sctx, err := do.sysSessionPool.Get()
+	if err != nil {
+		return err
+	}
+	err = notifier.InitDDLNotifier(sctx.(sessionctx.Context), notifier.DefaultStore, 50*time.Millisecond)
+	if err != nil {
+		return err
+	}
 
 	// Local store needs to get the change information for every DDL state in each session.
 	do.wg.Run(func() {
