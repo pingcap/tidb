@@ -467,8 +467,8 @@ func (rc *SnapClient) needLoadSchemas(backupMeta *backuppb.BackupMeta) bool {
 	return !(backupMeta.IsRawKv || backupMeta.IsTxnKv)
 }
 
-// InitBackupMeta loads schemas from BackupMeta to initialize RestoreClient.
-func (rc *SnapClient) InitBackupMeta(
+// LoadSchemaIfNeededAndInitClient loads schemas from BackupMeta to initialize RestoreClient.
+func (rc *SnapClient) LoadSchemaIfNeededAndInitClient(
 	c context.Context,
 	backupMeta *backuppb.BackupMeta,
 	backend *backuppb.StorageBackend,
@@ -989,7 +989,7 @@ func (rc *SnapClient) setSpeedLimit(ctx context.Context, rateLimit uint64) error
 	return nil
 }
 
-func (rc *SnapClient) execChecksum(
+func (rc *SnapClient) execAndValidateChecksum(
 	ctx context.Context,
 	tbl *CreatedTable,
 	kvClient kv.Client,
@@ -1000,13 +1000,8 @@ func (rc *SnapClient) execChecksum(
 		zap.String("table", tbl.OldTable.Info.Name.O),
 	)
 
-	if tbl.OldTable.NoChecksum() {
-		logger.Warn("table has no checksum, skipping checksum")
-		return nil
-	}
-
 	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
-		span1 := span.Tracer().StartSpan("Client.execChecksum", opentracing.ChildOf(span.Context()))
+		span1 := span.Tracer().StartSpan("Client.execAndValidateChecksum", opentracing.ChildOf(span.Context()))
 		defer span1.Finish()
 		ctx = opentracing.ContextWithSpan(ctx, span1)
 	}
@@ -1046,16 +1041,16 @@ func (rc *SnapClient) execChecksum(
 			}
 		}
 	}
-	table := tbl.OldTable
-	if item.Crc64xor != table.Crc64Xor ||
-		item.TotalKvs != table.TotalKvs ||
-		item.TotalBytes != table.TotalBytes {
+	expectedChecksumStats := metautil.CalculateChecksumStatsOnAllFiles(tbl.OldTable.Files)
+	if item.Crc64xor != expectedChecksumStats.Crc64Xor ||
+		item.TotalKvs != expectedChecksumStats.TotalKvs ||
+		item.TotalBytes != expectedChecksumStats.TotalBytes {
 		logger.Error("failed in validate checksum",
-			zap.Uint64("origin tidb crc64", table.Crc64Xor),
+			zap.Uint64("origin tidb crc64", expectedChecksumStats.Crc64Xor),
 			zap.Uint64("calculated crc64", item.Crc64xor),
-			zap.Uint64("origin tidb total kvs", table.TotalKvs),
+			zap.Uint64("origin tidb total kvs", expectedChecksumStats.TotalKvs),
 			zap.Uint64("calculated total kvs", item.TotalKvs),
-			zap.Uint64("origin tidb total bytes", table.TotalBytes),
+			zap.Uint64("origin tidb total bytes", expectedChecksumStats.TotalBytes),
 			zap.Uint64("calculated total bytes", item.TotalBytes),
 		)
 		return errors.Annotate(berrors.ErrRestoreChecksumMismatch, "failed to validate checksum")
