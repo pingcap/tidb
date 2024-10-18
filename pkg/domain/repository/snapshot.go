@@ -23,11 +23,17 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/sqlescape"
 	clientv3 "go.etcd.io/etcd/client/v3"
+	"go.uber.org/atomic"
 	"go.uber.org/zap"
+)
+
+var (
+	snapshotInterval = atomic.NewInt32(int32(variable.DefTiDBWorkloadRepositorySnapshotInterval))
 )
 
 func (w *Worker) etcdCreate(ctx context.Context, key, val string) error {
@@ -130,7 +136,7 @@ func (w *Worker) snapshotTable(ctx context.Context, snapID uint64, rt *repositor
 
 func (w *Worker) startSnapshot(_ctx context.Context) func() {
 	return func() {
-		ticker := time.NewTicker(10 * time.Second)
+		w.ResetSnapshotInterval(snapshotInterval.Load())
 
 		_sessctx := w.getSessionWithRetry()
 		defer w.sesspool.Put(_sessctx)
@@ -148,7 +154,7 @@ func (w *Worker) startSnapshot(_ctx context.Context) func() {
 				return
 			case <-ctx.Done():
 				return
-			case <-ticker.C:
+			case <-w.snapshotTicker.C:
 				// coordination logic
 				if !w.owner.IsOwner() {
 					continue
@@ -157,7 +163,7 @@ func (w *Worker) startSnapshot(_ctx context.Context) func() {
 				for i := 0; i < 5; i++ {
 					snapID, err := w.getSnapID(ctx)
 					if err != nil {
-						logutil.BgLogger().Info("repository can't get current snapid", zap.NamedError("err", err))
+						logutil.BgLogger().Info("repository cannot get current snapid", zap.NamedError("err", err))
 						continue
 					}
 					// use upsert such that this SQL does not fail on duplicated snapID
@@ -173,7 +179,7 @@ func (w *Worker) startSnapshot(_ctx context.Context) func() {
 					}
 					err = w.updateSnapID(ctx, snapID, snapID+1)
 					if err != nil {
-						logutil.BgLogger().Info("repository can't update current snapid", zap.Uint64("new_id", snapID), zap.NamedError("err", err))
+						logutil.BgLogger().Info("repository cannot update current snapid", zap.Uint64("new_id", snapID), zap.NamedError("err", err))
 						continue
 					}
 					logutil.BgLogger().Info("repository fired snapshot", zap.String("owner", w.instanceID), zap.Uint64("snapID", snapID+1))
@@ -184,7 +190,7 @@ func (w *Worker) startSnapshot(_ctx context.Context) func() {
 					// since there is no event, we don't know the latest snapid either
 					// really should not happen except creation
 					// but let us just skip
-					logutil.BgLogger().Debug("repository can't get snap ID update")
+					logutil.BgLogger().Debug("repository cannot get snap ID update")
 					continue
 				}
 
@@ -221,4 +227,15 @@ func (w *Worker) startSnapshot(_ctx context.Context) func() {
 			}
 		}
 	}
+}
+
+// SetSnapshotInterval will set the snapshot interval rate in seconds.
+func SetSnapshotInterval(newRate int32) bool {
+	old := snapshotInterval.Swap(newRate)
+	return old != newRate
+}
+
+// ResetSnapshotInterval restarts the snapshot routine with the new interval.
+func (w *Worker) ResetSnapshotInterval(newRate int32) {
+	w.snapshotTicker.Reset(time.Duration(newRate) * time.Second)
 }

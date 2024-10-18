@@ -101,6 +101,9 @@ type Worker struct {
 	owner        owner.Manager
 	wg           *util.WaitGroupEnhancedWrapper
 	instanceID   string
+
+	samplingTicker *time.Ticker
+	snapshotTicker *time.Ticker
 }
 
 // NewWorker creates a new repository worker.
@@ -119,6 +122,12 @@ func NewWorker(
 		newOwner:     newOwner,
 		wg:           util.NewWaitGroupEnhancedWrapper("repository", exit, false),
 	}
+
+	w.samplingTicker = time.NewTicker(time.Second)
+	w.samplingTicker.Stop()
+	w.snapshotTicker = time.NewTicker(time.Second)
+	w.snapshotTicker.Stop()
+
 	return w
 }
 
@@ -154,7 +163,7 @@ func (w *Worker) getSessionWithRetry() pools.Resource {
 	for {
 		_sessctx, err := w.sesspool.Get()
 		if err != nil {
-			logutil.BgLogger().Warn("can not init session for repository")
+			logutil.BgLogger().Warn("repository cannot init session")
 			time.Sleep(time.Second)
 			continue
 		}
@@ -197,18 +206,17 @@ func (w *Worker) start(ctx context.Context) func() {
 			case <-ticker.C:
 				if w.owner.IsOwner() {
 					if err := w.createAllTables(ctx); err != nil {
-						logutil.BgLogger().Error("can't create workload repository tables", zap.NamedError("err", err))
+						logutil.BgLogger().Error("repository cannot create tables", zap.NamedError("err", err))
 					}
 				}
 
-				// check if table exists
 				if !w.checkTablesExists(ctx) {
 					continue
 				}
 
 				if err := w.readInstanceID(); err != nil {
 					// if this fails try it again
-					logutil.BgLogger().Info("could not get instance ID", zap.Error(err))
+					logutil.BgLogger().Info("repository could not get instance ID", zap.NamedError("err", err))
 					continue
 				}
 

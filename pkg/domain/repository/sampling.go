@@ -19,9 +19,15 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/logutil"
+	"go.uber.org/atomic"
 	"go.uber.org/zap"
+)
+
+var (
+	samplingInterval = atomic.NewInt32(int32(variable.DefTiDBWorkloadRepositoryActiveSamplingInterval))
 )
 
 func (w *Worker) samplingTable(ctx context.Context, rt *repositoryTable) {
@@ -43,7 +49,7 @@ func (w *Worker) samplingTable(ctx context.Context, rt *repositoryTable) {
 
 func (w *Worker) startSample(ctx context.Context) func() {
 	return func() {
-		ticker := time.NewTicker(5 * time.Second)
+		w.ResetSamplingInterval(samplingInterval.Load())
 
 		for {
 			select {
@@ -51,7 +57,7 @@ func (w *Worker) startSample(ctx context.Context) func() {
 				return
 			case <-ctx.Done():
 				return
-			case <-ticker.C:
+			case <-w.samplingTicker.C:
 				// sample thread
 				var wg util.WaitGroupWrapper
 
@@ -68,5 +74,20 @@ func (w *Worker) startSample(ctx context.Context) func() {
 				wg.Wait()
 			}
 		}
+	}
+}
+
+// SetSamplingInterval will set the sampling interval rate in seconds.
+func SetSamplingInterval(newRate int32) bool {
+	old := samplingInterval.Swap(newRate)
+	return old != newRate
+}
+
+// ResetSamplingInterval restarts the sampling routine with the new interval.
+func (w *Worker) ResetSamplingInterval(newRate int32) {
+	if newRate == 0 {
+		w.samplingTicker.Stop()
+	} else {
+		w.samplingTicker.Reset(time.Duration(newRate) * time.Second)
 	}
 }

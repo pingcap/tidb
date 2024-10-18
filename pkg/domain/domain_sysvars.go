@@ -19,7 +19,7 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/pingcap/log"
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/domain/repository"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
@@ -44,6 +44,8 @@ func (do *Domain) initDomainSysVars() {
 	variable.SetRepositoryDest = do.setRepositoryDest
 	variable.ValidateRepositoryDest = repository.ValidateDest
 	variable.SetRepositoryRetentionDays = repository.SetRetentionDays
+	variable.SetRepositorySamplingInterval = do.setSamplingInterval
+	variable.SetRepositorySnapshotInterval = do.setSnapshotInterval
 
 	setGlobalResourceControlFunc := do.setGlobalResourceControl
 	variable.SetGlobalResourceControl.Store(&setGlobalResourceControlFunc)
@@ -165,11 +167,10 @@ func (do *Domain) setRepositoryDest(ctx context.Context, dst string) error {
 	}
 }
 
-func (do *Domain) startRepositoryWorker(ctx context.Context) error {
+func (do *Domain) startRepositoryWorker(_ context.Context) error {
 	if do.repositoryWorker == nil {
 		if do.etcdClient == nil {
-			log.Warn("etcd client not provided, no repositoryWorker.")
-			return nil
+			return errors.Errorf("etcd client required for workload repository")
 		}
 		do.repositoryWorker = repository.NewWorker(do.etcdClient, do.GetGlobalVar, do.newOwnerManager, do.SysSessionPool(), do.exit)
 	}
@@ -183,5 +184,33 @@ func (do *Domain) stopRepositoryWorker() error {
 	}
 	do.repositoryWorker.Stop()
 	do.repositoryWorker = nil
+	return nil
+}
+
+func (do *Domain) setSamplingInterval(_ context.Context, d string) error {
+	n, err := strconv.Atoi(d)
+	if err != nil {
+		return err
+	}
+
+	reset := repository.SetSamplingInterval(int32(n))
+	if do.repositoryWorker != nil && reset {
+		do.repositoryWorker.ResetSamplingInterval(int32(n))
+	}
+
+	return nil
+}
+
+func (do *Domain) setSnapshotInterval(_ context.Context, d string) error {
+	n, err := strconv.Atoi(d)
+	if err != nil {
+		return err
+	}
+
+	reset := repository.SetSnapshotInterval(int32(n))
+	if do.repositoryWorker != nil && reset {
+		do.repositoryWorker.ResetSnapshotInterval(int32(n))
+	}
+
 	return nil
 }

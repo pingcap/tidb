@@ -631,6 +631,16 @@ var defaultSysVars = []*SysVar{
 				return SetRepositoryRetentionDays(ctx, val)
 			},
 		},
+		{Scope: ScopeGlobal, Name: TiDBWorkloadRepositoryActiveSamplingInterval, Type: TypeInt, Value: strconv.Itoa(DefTiDBWorkloadRepositoryActiveSamplingInterval), MinValue: 0, MaxValue: 365,
+			SetGlobal: func(ctx context.Context, s *SessionVars, val string) error {
+				return SetRepositorySamplingInterval(ctx, val)
+			},
+		},
+		{Scope: ScopeGlobal, Name: TiDBWorkloadRepositorySnapshotInterval, Type: TypeInt, Value: strconv.Itoa(DefTiDBWorkloadRepositorySnapshotInterval), MinValue: 900, MaxValue: 7200,
+			SetGlobal: func(ctx context.Context, s *SessionVars, val string) error {
+				return SetRepositorySnapshotInterval(ctx, val)
+			},
+		},
 	*/
 	{Scope: ScopeGlobal, Name: ValidatePasswordEnable, Value: Off, Type: TypeBool},
 	{Scope: ScopeGlobal, Name: ValidatePasswordPolicy, Value: "MEDIUM", Type: TypeEnum, PossibleValues: []string{"LOW", "MEDIUM", "STRONG"}},
