@@ -1188,6 +1188,11 @@ type SelectStmt struct {
 	AsViewSchema bool
 }
 
+// SetTableHints is to set table hints for select statement.
+func (n *SelectStmt) SetTableHints(h []*TableOptimizerHint) {
+	n.TableHints = h
+}
+
 func (*SelectStmt) resultSet() {}
 
 func (n *WithClause) Restore(ctx *format.RestoreCtx) error {
@@ -2534,6 +2539,11 @@ type DeleteStmt struct {
 	With       *WithClause
 }
 
+// SetTableHints is to set table hints for delete statement.
+func (n *DeleteStmt) SetTableHints(h []*TableOptimizerHint) {
+	n.TableHints = h
+}
+
 // Restore implements Node interface.
 func (n *DeleteStmt) Restore(ctx *format.RestoreCtx) error {
 	if n.With != nil {
@@ -2784,6 +2794,11 @@ type UpdateStmt struct {
 	MultipleTable bool
 	TableHints    []*TableOptimizerHint
 	With          *WithClause
+}
+
+// SetTableHints is to set table hints for update statement.
+func (n *UpdateStmt) SetTableHints(h []*TableOptimizerHint) {
+	n.TableHints = h
 }
 
 // Restore implements Node interface.

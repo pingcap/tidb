@@ -67,15 +67,22 @@ func (hs *HintsSet) ContainTableHint(hint string) bool {
 	return false
 }
 
+type setHintAstNode interface {
+	ast.Node
+	SetTableHints(h []*ast.TableOptimizerHint)
+}
+
+var (
+	_ setHintAstNode = &ast.DeleteStmt{}
+	_ setHintAstNode = &ast.SelectStmt{}
+	_ setHintAstNode = &ast.UpdateStmt{}
+)
+
 // setTableHints4StmtNode sets table hints for select/update/delete.
 func setTableHints4StmtNode(node ast.Node, hints []*ast.TableOptimizerHint) {
-	switch x := node.(type) {
-	case *ast.SelectStmt:
-		x.TableHints = hints
-	case *ast.UpdateStmt:
-		x.TableHints = hints
-	case *ast.DeleteStmt:
-		x.TableHints = hints
+	if n, ok := node.(setHintAstNode); ok {
+		// SetTableHints is only supported by select/update/delete.
+		n.SetTableHints(hints)
 	}
 }
 
