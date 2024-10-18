@@ -20,7 +20,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/pingcap/tipb/go-tipb"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/util"
 )
@@ -452,8 +451,8 @@ func TestRuntimeStatsWithCommit(t *testing.T) {
 func TestRootRuntimeStats(t *testing.T) {
 	pid := 1
 	stmtStats := NewRuntimeStatsColl(nil)
-	basic1 := stmtStats.GetBasicRuntimeStats(pid)
-	basic2 := stmtStats.GetBasicRuntimeStats(pid)
+	basic1 := stmtStats.GetBasicRuntimeStats(pid, false)
+	basic2 := stmtStats.GetBasicRuntimeStats(pid, false)
 	basic1.RecordOpen(time.Millisecond * 10)
 	basic1.Record(time.Second, 20)
 	basic2.Record(time.Second*2, 30)

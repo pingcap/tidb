@@ -1303,6 +1303,8 @@ func (waitSummary *TiFlashWaitSummary) CanBeIgnored() bool {
 
 // BasicRuntimeStats is the basic runtime stats.
 type BasicRuntimeStats struct {
+	// stats shared by multiple executors with the same id
+	multipleExecutors atomic.Bool
 	// executor's Next() called times.
 	loop atomic.Int32
 	// executor consume time, including open, next, and close time.
@@ -1323,6 +1325,7 @@ func (e *BasicRuntimeStats) GetActRows() int64 {
 // Clone implements the RuntimeStats interface.
 func (e *BasicRuntimeStats) Clone() RuntimeStats {
 	result := &BasicRuntimeStats{}
+	result.multipleExecutors.Store(e.multipleExecutors.Load())
 	result.loop.Store(e.loop.Load())
 	result.consume.Store(e.consume.Load())
 	result.open.Store(e.open.Load())
@@ -1351,6 +1354,7 @@ func (*BasicRuntimeStats) Tp() int {
 
 // RootRuntimeStats is the executor runtime stats that combine with multiple runtime stats.
 type RootRuntimeStats struct {
+	basics   []*BasicRuntimeStats
 	basic    *BasicRuntimeStats
 	groupRss []RuntimeStats
 }
@@ -1419,17 +1423,21 @@ func (e *BasicRuntimeStats) String() string {
 		return ""
 	}
 	var str strings.Builder
+	timePrefix := ""
+	if e.multipleExecutors.Load() {
+		timePrefix = "total_"
+	}
 	totalTime := e.consume.Load()
 	openTime := e.open.Load()
 	closeTime := e.close.Load()
-	str.WriteString("time:")
+	str.WriteString(fmt.sprintf("%stime:", timePrefix))
 	str.WriteString(FormatDuration(time.Duration(totalTime)))
 	if openTime >= int64(time.Millisecond) {
-		str.WriteString(", open:")
+		str.WriteString(fmt.sprintf(", %sopen:", timePrefix))
 		str.WriteString(FormatDuration(time.Duration(openTime)))
 	}
 	if closeTime >= int64(time.Millisecond) {
-		str.WriteString(", close:")
+		str.WriteString(fmt.sprintf(", %sclose:", timePrefix))
 		str.WriteString(FormatDuration(time.Duration(closeTime)))
 	}
 	str.WriteString(", loops:")
@@ -1495,7 +1503,7 @@ func (e *RuntimeStatsColl) RegisterStats(planID int, info RuntimeStats) {
 }
 
 // GetBasicRuntimeStats gets basicRuntimeStats for a executor.
-func (e *RuntimeStatsColl) GetBasicRuntimeStats(planID int) *BasicRuntimeStats {
+func (e *RuntimeStatsColl) GetBasicRuntimeStats(planID int, initNewExecutorStats bool) *BasicRuntimeStats {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	stats, ok := e.rootStats[planID]
@@ -1505,6 +1513,8 @@ func (e *RuntimeStatsColl) GetBasicRuntimeStats(planID int) *BasicRuntimeStats {
 	}
 	if stats.basic == nil {
 		stats.basic = &BasicRuntimeStats{}
+	} else if initNewExecutorStats {
+		stats.basic.multipleExecutors.CompareAndSwap(false, true)
 	}
 	return stats.basic
 }
@@ -1655,7 +1665,7 @@ func (e *RuntimeStatsWithConcurrencyInfo) String() string {
 			if concurrency.concurrencyNum > 0 {
 				result += fmt.Sprintf("%s:%d", concurrency.concurrencyName, concurrency.concurrencyNum)
 			} else {
-				result += fmt.Sprintf("%s:OFF", concurrency.concurrencyName)
+				result += fmt.sprintf("%s:off", concurrency.concurrencyname)
 			}
 		}
 	}

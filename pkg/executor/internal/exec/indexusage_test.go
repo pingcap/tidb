@@ -30,7 +30,6 @@ import (
 	"github.com/pingcap/tidb/pkg/testkit"
 	driver "github.com/pingcap/tidb/pkg/types/parser_driver"
 	"github.com/pingcap/tidb/pkg/util/logutil"
-	"github.com/pingcap/tipb/go-tipb"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
 )
@@ -53,7 +52,7 @@ func TestIndexUsageReporter(t *testing.T) {
 
 	// For PointGet and BatchPointGet
 	planID := 3
-	runtimeStatsColl.GetBasicRuntimeStats(planID).Record(time.Second, 2024)
+	runtimeStatsColl.GetBasicRuntimeStats(planID, false).Record(time.Second, 2024)
 	reporter.ReportPointGetIndexUsage(tableID, tableID, indexID, planID, 1)
 
 	require.Eventually(t, func() bool {
@@ -88,7 +87,7 @@ func TestIndexUsageReporter(t *testing.T) {
 		RealtimeCount: 100,
 	})
 	planID = 4
-	runtimeStatsColl.GetBasicRuntimeStats(planID).Record(time.Second, 2024)
+	runtimeStatsColl.GetBasicRuntimeStats(planID, false).Record(time.Second, 2024)
 	reporter.ReportPointGetIndexUsage(tableID, tableID, indexID, planID, 1)
 
 	require.Eventually(t, func() bool {
