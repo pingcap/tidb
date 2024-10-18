@@ -7,6 +7,7 @@ import (
 	"crypto/tls"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"net/url"
@@ -327,6 +328,33 @@ func (mgr *Mgr) GetMergeRegionSizeAndCount(ctx context.Context, client *http.Cli
 		return DefaultMergeRegionSizeBytes, DefaultMergeRegionKeyCount
 	}
 	return regionSplitSize, regionSplitKeys
+}
+
+// IsLogBackupEnabled is used for br to check whether tikv has enabled log backup.
+func (mgr *Mgr) IsLogBackupEnabled(ctx context.Context, client *http.Client) (bool, error) {
+	logbackupEnable := true
+	type logbackup struct {
+		Enable bool `json:"enable"`
+	}
+	type config struct {
+		LogBackup logbackup `json:"log-backup"`
+	}
+	err := mgr.GetConfigFromTiKV(ctx, client, func(resp *http.Response) error {
+		respBytes, err := io.ReadAll(resp.Body)
+		if err != nil {
+			return err
+		}
+
+		var c config
+		err = json.Unmarshal(respBytes, &c)
+		if err != nil {
+			log.Warn("Failed to parse log-backup enable from config", logutil.ShortError(err))
+			return err
+		}
+		logbackupEnable = logbackupEnable && c.LogBackup.Enable
+		return nil
+	})
+	return logbackupEnable, errors.Trace(err)
 }
 
 // GetConfigFromTiKV get configs from all alive tikv stores.
