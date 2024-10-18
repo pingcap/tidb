@@ -4416,6 +4416,57 @@ func (d *ddl) AlterTablePartitioning(ctx sessionctx.Context, ident ast.Ident, sp
 	}
 	newPartInfo := newMeta.Partition
 
+<<<<<<< HEAD
+=======
+	for _, index := range newMeta.Indices {
+		if index.Unique {
+			ck, err := checkPartitionKeysConstraint(newMeta.GetPartitionInfo(), index.Columns, newMeta)
+			if err != nil {
+				return err
+			}
+			if !ck {
+				indexTp := ""
+				if !ctx.GetSessionVars().EnableGlobalIndex {
+					if index.Primary {
+						indexTp = "PRIMARY KEY"
+					} else {
+						indexTp = "UNIQUE INDEX"
+					}
+				} else if t.Meta().IsCommonHandle {
+					indexTp = "CLUSTERED INDEX"
+				}
+				if indexTp != "" {
+					return dbterror.ErrUniqueKeyNeedAllFieldsInPf.GenWithStackByArgs(indexTp)
+				}
+				// Also mark the unique index as global index
+				index.Global = true
+			}
+		}
+	}
+	if newMeta.PKIsHandle {
+		// This case is covers when the Handle is the PK (only ints), since it would not
+		// have an entry in the tblInfo.Indices
+		indexCols := []*model.IndexColumn{{
+			Name:   newMeta.GetPkName(),
+			Length: types.UnspecifiedLength,
+		}}
+		ck, err := checkPartitionKeysConstraint(newMeta.GetPartitionInfo(), indexCols, newMeta)
+		if err != nil {
+			return err
+		}
+		if !ck {
+			if !ctx.GetSessionVars().EnableGlobalIndex {
+				return dbterror.ErrUniqueKeyNeedAllFieldsInPf.GenWithStackByArgs("PRIMARY KEY")
+			}
+			return dbterror.ErrUniqueKeyNeedAllFieldsInPf.GenWithStackByArgs("CLUSTERED INDEX")
+		}
+	}
+
+	if err = handlePartitionPlacement(ctx, newPartInfo); err != nil {
+		return errors.Trace(err)
+	}
+
+>>>>>>> be86a2594ee (ddl: Reorganize partition supporting global index (#53277))
 	if err = d.assignPartitionIDs(newPartInfo.Definitions); err != nil {
 		return errors.Trace(err)
 	}

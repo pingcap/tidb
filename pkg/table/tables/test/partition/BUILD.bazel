@@ -8,7 +8,11 @@ go_test(
         "partition_test.go",
     ],
     flaky = True,
+<<<<<<< HEAD
     shard_count = 19,
+=======
+    shard_count = 23,
+>>>>>>> be86a2594ee (ddl: Reorganize partition supporting global index (#53277))
     deps = [
         "//pkg/ddl",
         "//pkg/domain",
