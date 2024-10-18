@@ -38,14 +38,7 @@ var (
 	// DumpStatsDeltaRatio is the lower bound of `Modify Count / Table Count` for stats delta to be dumped.
 	DumpStatsDeltaRatio = 1 / 10000.0
 	// dumpStatsMaxDuration is the max duration since last update.
-<<<<<<< HEAD
-	dumpStatsMaxDuration = time.Hour
-=======
 	dumpStatsMaxDuration = 5 * time.Minute
-
-	// batchInsertSize is the batch size used by internal SQL to insert values to some system table.
-	batchInsertSize = 10
->>>>>>> 0955c91c8c9 (statistics: reduce dumpStatsMaxDuration as 5min (#56538))
 )
 
 // needDumpStatsDelta checks whether to dump stats delta.
