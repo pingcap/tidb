@@ -1002,7 +1002,7 @@ func (lp *ForListPruning) LocatePartition(value int64, isNull bool) int {
 	return partitionIdx.partIdx
 }
 
-// LocatePartition locates partition by the column value
+// LocatePartitionByRange locates partition by the range
 func (lp *ForListPruning) LocatePartitionByRange(ctx exprctx.EvalContext, r *ranger.Range) (idxs map[int]struct{}, err error) {
 	lowVal := r.LowVal[0]
 	if r.LowVal[0].Kind() == types.KindMinNotNull {
