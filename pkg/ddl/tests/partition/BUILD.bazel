@@ -16,6 +16,7 @@ go_test(
         "//pkg/config",
         "//pkg/ddl",
         "//pkg/ddl/logutil",
+        "//pkg/ddl/notifier",
         "//pkg/ddl/testutil",
         "//pkg/domain",
         "//pkg/errno",

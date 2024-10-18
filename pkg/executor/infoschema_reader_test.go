@@ -26,6 +26,7 @@ import (
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
+	"github.com/pingcap/tidb/pkg/ddl/notifier"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/auth"
@@ -173,7 +174,7 @@ func TestDataForTableStatsField(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (c int, d int, e char(5), index idx(e))")
-	require.NoError(t, h.HandleDDLEvent(<-h.DDLEventCh()))
+	<-notifier.DDLEventChForTest()
 	tk.MustQuery("select table_rows, avg_row_length, data_length, index_length from information_schema.tables where table_name='t'").Check(
 		testkit.Rows("0 0 0 0"))
 	tk.MustExec(`insert into t(c, d, e) values(1, 2, "c"), (2, 3, "d"), (3, 4, "e")`)
@@ -200,7 +201,7 @@ func TestDataForTableStatsField(t *testing.T) {
 	// Test partition table.
 	tk.MustExec("drop table if exists t")
 	tk.MustExec(`CREATE TABLE t (a int, b int, c varchar(5), primary key(a), index idx(c)) PARTITION BY RANGE (a) (PARTITION p0 VALUES LESS THAN (6), PARTITION p1 VALUES LESS THAN (11), PARTITION p2 VALUES LESS THAN (16))`)
-	require.NoError(t, h.HandleDDLEvent(<-h.DDLEventCh()))
+	<-notifier.DDLEventChForTest()
 	tk.MustExec(`insert into t(a, b, c) values(1, 2, "c"), (7, 3, "d"), (12, 4, "e")`)
 	require.NoError(t, h.DumpStatsDeltaToKV(true))
 	require.NoError(t, h.Update(context.Background(), is))
@@ -219,7 +220,7 @@ func TestPartitionsTable(t *testing.T) {
 	testkit.WithPruneMode(tk, variable.Static, func() {
 		tk.MustExec("DROP TABLE IF EXISTS `test_partitions`;")
 		tk.MustExec(`CREATE TABLE test_partitions (a int, b int, c varchar(5), primary key(a), index idx(c)) PARTITION BY RANGE (a) (PARTITION p0 VALUES LESS THAN (6), PARTITION p1 VALUES LESS THAN (11), PARTITION p2 VALUES LESS THAN (16));`)
-		require.NoError(t, h.HandleDDLEvent(<-h.DDLEventCh()))
+		<-notifier.DDLEventChForTest()
 		tk.MustExec(`insert into test_partitions(a, b, c) values(1, 2, "c"), (7, 3, "d"), (12, 4, "e");`)
 
 		tk.MustQuery("select PARTITION_NAME, PARTITION_DESCRIPTION from information_schema.PARTITIONS where table_name='test_partitions';").Check(
@@ -245,7 +246,7 @@ func TestPartitionsTable(t *testing.T) {
 	// Test for table has no partitions.
 	tk.MustExec("DROP TABLE IF EXISTS `test_partitions_1`;")
 	tk.MustExec(`CREATE TABLE test_partitions_1 (a int, b int, c varchar(5), primary key(a), index idx(c));`)
-	require.NoError(t, h.HandleDDLEvent(<-h.DDLEventCh()))
+	<-notifier.DDLEventChForTest()
 	tk.MustExec(`insert into test_partitions_1(a, b, c) values(1, 2, "c"), (7, 3, "d"), (12, 4, "e");`)
 	require.NoError(t, h.DumpStatsDeltaToKV(true))
 	require.NoError(t, h.Update(context.Background(), is))

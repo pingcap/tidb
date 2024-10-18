@@ -19,6 +19,7 @@ package core
 import (
 	"fmt"
 
+	"github.com/pingcap/tidb/pkg/ddl/notifier"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/meta/model"
@@ -422,6 +423,7 @@ func MockContext() *mock.Context {
 	ctx.GetSessionVars().CurrentDB = "test"
 	ctx.GetSessionVars().DivPrecisionIncrement = variable.DefDivPrecisionIncrement
 	do := domain.NewMockDomain()
+	notifier.InitDDLNotifierForMockDomain()
 	if err := do.CreateStatsHandle(ctx, initStatsCtx); err != nil {
 		panic(fmt.Sprintf("create mock context panic: %+v", err))
 	}

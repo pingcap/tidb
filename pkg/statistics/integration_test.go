@@ -24,6 +24,7 @@ import (
 	"time"
 
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/ddl/notifier"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -343,7 +344,7 @@ func TestOutdatedStatsCheck(t *testing.T) {
 	h := dom.StatsHandle()
 	tk.MustExec("use test")
 	tk.MustExec("create table t (a int)")
-	require.NoError(t, h.HandleDDLEvent(<-h.DDLEventCh()))
+	<-notifier.DDLEventChForTest()
 	tk.MustExec("insert into t values (1)" + strings.Repeat(", (1)", 19)) // 20 rows
 	analyzehelper.TriggerPredicateColumnsCollection(t, tk, store, "t", "a")
 	require.NoError(t, h.DumpStatsDeltaToKV(true))
@@ -406,7 +407,7 @@ func TestShowHistogramsLoadStatus(t *testing.T) {
 	defer func() { h.SetLease(origLease) }()
 	tk.MustExec("use test")
 	tk.MustExec("create table t(a int primary key, b int, c int, index idx(b, c))")
-	require.NoError(t, h.HandleDDLEvent(<-h.DDLEventCh()))
+	<-notifier.DDLEventChForTest()
 	tk.MustExec("insert into t values (1,2,3), (4,5,6)")
 	require.NoError(t, h.DumpStatsDeltaToKV(true))
 	tk.MustExec("analyze table t")
@@ -418,12 +419,11 @@ func TestShowHistogramsLoadStatus(t *testing.T) {
 }
 
 func TestSingleColumnIndexNDV(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
-	h := dom.StatsHandle()
 	tk.MustExec("use test")
 	tk.MustExec("create table t(a int, b int, c varchar(20), d varchar(20), index idx_a(a), index idx_b(b), index idx_c(c), index idx_d(d))")
-	require.NoError(t, h.HandleDDLEvent(<-h.DDLEventCh()))
+	<-notifier.DDLEventChForTest()
 	tk.MustExec("insert into t values (1, 1, 'xxx', 'zzz'), (2, 2, 'yyy', 'zzz'), (1, 3, null, 'zzz')")
 	for i := 0; i < 5; i++ {
 		tk.MustExec("insert into t select * from t")
@@ -452,7 +452,7 @@ func TestColumnStatsLazyLoad(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("create table t(a int, b int)")
 	tk.MustExec("insert into t values (1,2), (3,4), (5,6), (7,8)")
-	require.NoError(t, h.HandleDDLEvent(<-h.DDLEventCh()))
+	<-notifier.DDLEventChForTest()
 	analyzehelper.TriggerPredicateColumnsCollection(t, tk, store, "t", "a", "b")
 	tk.MustExec("analyze table t")
 	is := dom.InfoSchema()
@@ -475,7 +475,7 @@ func TestUpdateNotLoadIndexFMSketch(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("create table t(a int, b int, index idx(a)) partition by range (a) (partition p0 values less than (10),partition p1 values less than maxvalue)")
 	tk.MustExec("insert into t values (1,2), (3,4), (5,6), (7,8)")
-	require.NoError(t, h.HandleDDLEvent(<-h.DDLEventCh()))
+	<-notifier.DDLEventChForTest()
 	tk.MustExec("analyze table t")
 	is := dom.InfoSchema()
 	tbl, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
@@ -498,7 +498,7 @@ func TestIssue44369(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t(a int, b int, index iab(a,b));")
-	require.NoError(t, h.HandleDDLEvent(<-h.DDLEventCh()))
+	<-notifier.DDLEventChForTest()
 	tk.MustExec("insert into t value(1,1);")
 	require.NoError(t, h.DumpStatsDeltaToKV(true))
 	tk.MustExec("analyze table t;")
@@ -516,7 +516,7 @@ func TestTableLastAnalyzeVersion(t *testing.T) {
 	// Only create table should not set the last_analyze_version
 	tk.MustExec("use test")
 	tk.MustExec("create table t(a int);")
-	require.NoError(t, h.HandleDDLEvent(<-h.DDLEventCh()))
+	<-notifier.DDLEventChForTest()
 	is := dom.InfoSchema()
 	require.NoError(t, h.Update(context.Background(), is))
 	tbl, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
@@ -530,7 +530,7 @@ func TestTableLastAnalyzeVersion(t *testing.T) {
 	is = dom.InfoSchema()
 	tbl, err = is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
-	require.NoError(t, h.HandleDDLEvent(<-h.DDLEventCh()))
+	<-notifier.DDLEventChForTest()
 	require.NoError(t, h.Update(context.Background(), is))
 	statsTbl, found = h.Get(tbl.Meta().ID)
 	require.True(t, found)
@@ -539,7 +539,7 @@ func TestTableLastAnalyzeVersion(t *testing.T) {
 	is = dom.InfoSchema()
 	tbl, err = is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
 	// We don't handle the ADD INDEX event in the HandleDDLEvent.
-	require.Equal(t, 0, len(h.DDLEventCh()))
+	require.Equal(t, 0, len(notifier.DDLEventChForTest()))
 	require.NoError(t, err)
 	require.NoError(t, h.Update(context.Background(), is))
 	statsTbl, found = h.Get(tbl.Meta().ID)

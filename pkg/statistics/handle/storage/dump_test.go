@@ -26,6 +26,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/pingcap/tidb/pkg/ddl/notifier"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	pmodel "github.com/pingcap/tidb/pkg/parser/model"
@@ -632,7 +633,7 @@ func TestLoadStatsFromOldVersion(t *testing.T) {
 	tk.MustExec("create table t(a int, b int, index idx(b))")
 	h := dom.StatsHandle()
 	is := dom.InfoSchema()
-	require.NoError(t, h.HandleDDLEvent(<-h.DDLEventCh()))
+	<-notifier.DDLEventChForTest()
 	require.NoError(t, h.Update(context.Background(), is))
 
 	statsJSONFromOldVersion := `{

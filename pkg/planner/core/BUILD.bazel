@@ -93,6 +93,7 @@ go_library(
         "//pkg/bindinfo",
         "//pkg/bindinfo/norm",
         "//pkg/config",
+        "//pkg/ddl/notifier",
         "//pkg/distsql",
         "//pkg/domain",
         "//pkg/errctx",
@@ -263,6 +264,7 @@ go_test(
     shard_count = 50,
     deps = [
         "//pkg/config",
+        "//pkg/ddl/notifier",
         "//pkg/domain",
         "//pkg/domain/infosync",
         "//pkg/expression",

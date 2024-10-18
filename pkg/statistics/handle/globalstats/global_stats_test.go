@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/ddl/notifier"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -511,7 +512,7 @@ partition by range (a) (
 	partition p0 values less than (10),
 	partition p1 values less than (20)
 )`)
-	require.NoError(t, dom.StatsHandle().HandleDDLEvent(<-dom.StatsHandle().DDLEventCh()))
+	<-notifier.DDLEventChForTest()
 	tk.MustExec("insert into t values (1), (5), (null), (11), (15)")
 	require.NoError(t, dom.StatsHandle().DumpStatsDeltaToKV(true))
 
@@ -585,8 +586,7 @@ func TestDDLPartition4GlobalStats(t *testing.T) {
 	do := dom
 	is := do.InfoSchema()
 	h := do.StatsHandle()
-	err := h.HandleDDLEvent(<-h.DDLEventCh())
-	require.NoError(t, err)
+	<-notifier.DDLEventChForTest()
 	require.NoError(t, h.Update(context.Background(), is))
 	tk.MustExec("insert into t values (1), (2), (3), (4), (5), " +
 		"(11), (21), (31), (41), (51)," +
@@ -604,7 +604,7 @@ func TestDDLPartition4GlobalStats(t *testing.T) {
 
 	tk.MustExec("alter table t truncate partition p2, p4;")
 	require.NoError(t, h.DumpStatsDeltaToKV(true))
-	require.NoError(t, h.HandleDDLEvent(<-h.DDLEventCh()))
+	<-notifier.DDLEventChForTest()
 	require.NoError(t, h.Update(context.Background(), is))
 	// We will update the global-stats after the truncate operation.
 	globalStats = h.GetTableStats(tableInfo)
@@ -865,7 +865,7 @@ func TestGlobalIndexStatistics(t *testing.T) {
 		// analyze table t
 		tk.MustExec("drop table if exists t")
 		if i != 0 {
-			require.Nil(t, h.HandleDDLEvent(<-h.DDLEventCh()))
+			<-notifier.DDLEventChForTest()
 		}
 		tk.MustExec("CREATE TABLE t ( a int, b int, c int default 0, key(a) )" +
 			"PARTITION BY RANGE (a) (" +
@@ -873,7 +873,7 @@ func TestGlobalIndexStatistics(t *testing.T) {
 			"PARTITION p1 VALUES LESS THAN (20)," +
 			"PARTITION p2 VALUES LESS THAN (30)," +
 			"PARTITION p3 VALUES LESS THAN (40))")
-		require.Nil(t, h.HandleDDLEvent(<-h.DDLEventCh()))
+		<-notifier.DDLEventChForTest()
 		tk.MustExec("insert into t(a,b) values (1,1), (2,2), (3,3), (15,15), (25,25), (35,35)")
 		tk.MustExec("ALTER TABLE t ADD UNIQUE INDEX idx(b) GLOBAL")
 		require.Nil(t, h.DumpStatsDeltaToKV(true))
@@ -887,14 +887,14 @@ func TestGlobalIndexStatistics(t *testing.T) {
 
 		// analyze table t index idx
 		tk.MustExec("drop table if exists t")
-		require.Nil(t, h.HandleDDLEvent(<-h.DDLEventCh()))
+		<-notifier.DDLEventChForTest()
 		tk.MustExec("CREATE TABLE t ( a int, b int, c int default 0, primary key(b, a) clustered)" +
 			"PARTITION BY RANGE (a) (" +
 			"PARTITION p0 VALUES LESS THAN (10)," +
 			"PARTITION p1 VALUES LESS THAN (20)," +
 			"PARTITION p2 VALUES LESS THAN (30)," +
 			"PARTITION p3 VALUES LESS THAN (40));")
-		require.Nil(t, h.HandleDDLEvent(<-h.DDLEventCh()))
+		<-notifier.DDLEventChForTest()
 		tk.MustExec("insert into t(a,b) values (1,1), (2,2), (3,3), (15,15), (25,25), (35,35)")
 		tk.MustExec("ALTER TABLE t ADD UNIQUE INDEX idx(b) GLOBAL")
 		require.Nil(t, h.DumpStatsDeltaToKV(true))
@@ -905,14 +905,14 @@ func TestGlobalIndexStatistics(t *testing.T) {
 
 		// analyze table t index
 		tk.MustExec("drop table if exists t")
-		require.Nil(t, h.HandleDDLEvent(<-h.DDLEventCh()))
+		<-notifier.DDLEventChForTest()
 		tk.MustExec("CREATE TABLE t ( a int, b int, c int default 0, primary key(b, a) clustered )" +
 			"PARTITION BY RANGE (a) (" +
 			"PARTITION p0 VALUES LESS THAN (10)," +
 			"PARTITION p1 VALUES LESS THAN (20)," +
 			"PARTITION p2 VALUES LESS THAN (30)," +
 			"PARTITION p3 VALUES LESS THAN (40));")
-		require.Nil(t, h.HandleDDLEvent(<-h.DDLEventCh()))
+		<-notifier.DDLEventChForTest()
 		tk.MustExec("insert into t(a,b) values (1,1), (2,2), (3,3), (15,15), (25,25), (35,35)")
 		tk.MustExec("ALTER TABLE t ADD UNIQUE INDEX idx(b) GLOBAL")
 		require.Nil(t, h.DumpStatsDeltaToKV(true))

@@ -76,8 +76,15 @@ func TestDDLTable(t *testing.T) {
 	require.NoError(t, err)
 	tableInfo := tbl.Meta()
 	h := do.StatsHandle()
-	err = h.HandleDDLEvent(<-h.DDLEventCh())
-	require.NoError(t, err)
+	ch := notifier.DDLEventChForTest()
+	findEventByFilter(ch, func(event *notifier.SchemaChangeEvent) bool {
+		if event.GetType() == model.ActionCreateTables {
+			if event.GetCreateTablesInfo()[0].Name.O == "t" {
+				return true
+			}
+		}
+		return false
+	})
 	require.Nil(t, h.Update(context.Background(), is))
 	statsTbl := h.GetTableStats(tableInfo)
 	require.False(t, statsTbl.Pseudo)
@@ -87,8 +94,14 @@ func TestDDLTable(t *testing.T) {
 	tbl, err = is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t1"))
 	require.NoError(t, err)
 	tableInfo = tbl.Meta()
-	err = h.HandleDDLEvent(<-h.DDLEventCh())
-	require.NoError(t, err)
+	findEventByFilter(ch, func(event *notifier.SchemaChangeEvent) bool {
+		if event.GetType() == model.ActionCreateTables {
+			if event.GetCreateTablesInfo()[0].Name.O == "t1" {
+				return true
+			}
+		}
+		return false
+	})
 	require.Nil(t, h.Update(context.Background(), is))
 	statsTbl = h.GetTableStats(tableInfo)
 	require.False(t, statsTbl.Pseudo)
@@ -100,8 +113,14 @@ func TestDDLTable(t *testing.T) {
 	tbl, err = is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t_parent"))
 	require.NoError(t, err)
 	tableInfo = tbl.Meta()
-	err = h.HandleDDLEvent(<-h.DDLEventCh())
-	require.NoError(t, err)
+	findEventByFilter(ch, func(event *notifier.SchemaChangeEvent) bool {
+		if event.GetType() == model.ActionCreateTables {
+			if event.GetCreateTablesInfo()[0].Name.O == "t_parent" {
+				return true
+			}
+		}
+		return false
+	})
 	require.Nil(t, h.Update(context.Background(), is))
 	statsTbl = h.GetTableStats(tableInfo)
 	require.False(t, statsTbl.Pseudo)
@@ -111,48 +130,54 @@ func TestDDLTable(t *testing.T) {
 	tbl, err = is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t_child"))
 	require.NoError(t, err)
 	tableInfo = tbl.Meta()
-	err = h.HandleDDLEvent(<-h.DDLEventCh())
-	require.NoError(t, err)
+	findEventByFilter(ch, func(event *notifier.SchemaChangeEvent) bool {
+		if event.GetType() == model.ActionCreateTables {
+			if event.GetCreateTablesInfo()[0].Name.O == "t_child" {
+				return true
+			}
+		}
+		return false
+	})
 	require.Nil(t, h.Update(context.Background(), is))
 	statsTbl = h.GetTableStats(tableInfo)
 	require.False(t, statsTbl.Pseudo)
 }
 
 func TestSystemTableDDLHasNoEvent(t *testing.T) {
-	store, do := testkit.CreateMockStoreAndDomain(t)
+	store := testkit.CreateMockStore(t)
 	testKit := testkit.NewTestKit(t, store)
 	testKit.MustExec("use test")
 	// Test create a system table.
 	testKit.MustExec("create table mysql.test (c1 int, c2 int)")
-	h := do.StatsHandle()
-	require.Len(t, h.DDLEventCh(), 0)
+	ch := notifier.DDLEventChForTest()
+	require.Len(t, ch, 0)
 	testKit.MustExec("truncate table mysql.test")
-	require.Len(t, h.DDLEventCh(), 0)
+	require.Len(t, ch, 0)
 	testKit.MustExec("alter table mysql.test add column c3 int")
-	require.Len(t, h.DDLEventCh(), 0)
+	require.Len(t, ch, 0)
 	testKit.MustExec("alter table mysql.test modify column c1 int")
-	require.Len(t, h.DDLEventCh(), 0)
+	require.Len(t, ch, 0)
 	testKit.MustExec("drop table mysql.test")
-	require.Len(t, h.DDLEventCh(), 0)
+	require.Len(t, ch, 0)
 
 	testKit.MustExec("create table mysql.test2 (c1 int, c2 int) partition by range (c1) (partition p0 values less than (6))")
-	require.Len(t, h.DDLEventCh(), 0)
+	require.Len(t, ch, 0)
 	testKit.MustExec("alter table mysql.test2 add partition (partition p1 values less than (11))")
-	require.Len(t, h.DDLEventCh(), 0)
+	require.Len(t, ch, 0)
 	testKit.MustExec("alter table mysql.test2 truncate partition p1")
-	require.Len(t, h.DDLEventCh(), 0)
+	require.Len(t, ch, 0)
 	testKit.MustExec("alter table mysql.test2 drop partition p1")
-	require.Len(t, h.DDLEventCh(), 0)
+	require.Len(t, ch, 0)
 	testKit.MustExec("alter table mysql.test2 remove partitioning")
-	require.Len(t, h.DDLEventCh(), 0)
+	require.Len(t, ch, 0)
 
 	testKit.MustExec("create table t (c1 int, c2 int, index idx(c1, c2)) partition by range (c1) (partition p0 values less than (6))")
-	<-h.DDLEventCh()
+	<-ch
 	testKit.MustExec("create table mysql.test3 (c1 int, c2 int, index idx(c1, c2))")
 	// Exchange partition.
 	// NOTE: This is a rare case and the effort required to address it outweighs the benefits, hence it is not prioritized for a fix.
 	testKit.MustExec("alter table t exchange partition p0 with table mysql.test3")
-	require.Len(t, h.DDLEventCh(), 0)
+	require.Len(t, ch, 0)
 }
 
 func TestTruncateTable(t *testing.T) {
@@ -185,9 +210,13 @@ func TestTruncateTable(t *testing.T) {
 	testKit.MustExec("truncate table t")
 
 	// Find the truncate table partition event.
-	truncateTableEvent := findEvent(h.DDLEventCh(), model.ActionTruncateTable)
-	err = h.HandleDDLEvent(truncateTableEvent)
-	require.NoError(t, err)
+	findEventByFilter(notifier.DDLEventChForTest(), func(event *notifier.SchemaChangeEvent) bool {
+		if event.GetType() == model.ActionTruncateTable {
+			_, droppedTableInfo := event.GetTruncateTableInfo()
+			return droppedTableInfo.ID == tableInfo.ID
+		}
+		return false
+	})
 
 	// Get new table info.
 	is = do.InfoSchema()
@@ -258,9 +287,14 @@ func TestTruncateAPartitionedTable(t *testing.T) {
 	// Truncate the whole table.
 	testKit.MustExec("truncate table t")
 	// Find the truncate table event.
-	truncateTableEvent := findEvent(h.DDLEventCh(), model.ActionTruncateTable)
-	err = h.HandleDDLEvent(truncateTableEvent)
-	require.NoError(t, err)
+	findEventByFilter(notifier.DDLEventChForTest(), func(event *notifier.SchemaChangeEvent) bool {
+		if event.GetType() == model.ActionTruncateTable {
+			_, droppedTableInfo := event.GetTruncateTableInfo()
+			return droppedTableInfo.ID == tableInfo.ID
+		}
+
+		return false
+	})
 
 	// Get new table info.
 	is = do.InfoSchema()
@@ -295,13 +329,15 @@ func TestDDLHistogram(t *testing.T) {
 
 	testKit.MustExec("use test")
 	testKit.MustExec("create table t (c1 int, c2 int, index idx(c1, c2))")
-	<-h.DDLEventCh()
+	ch := notifier.DDLEventChForTest()
+	<-ch
 	testKit.MustExec("insert into t values(1,2),(3,4)")
 	testKit.MustExec("analyze table t")
 
 	testKit.MustExec("alter table t add column c_null int")
-	err := h.HandleDDLEvent(<-h.DDLEventCh())
-	require.NoError(t, err)
+	findEventByFilter(ch, func(event *notifier.SchemaChangeEvent) bool {
+		return event.GetType() == model.ActionAddColumn
+	})
 	is := do.InfoSchema()
 	require.Nil(t, h.Update(context.Background(), is))
 	tbl, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
@@ -315,8 +351,9 @@ func TestDDLHistogram(t *testing.T) {
 	require.Equal(t, int64(0), statsTbl.GetCol(tableInfo.Columns[2].ID).Histogram.NDV)
 
 	testKit.MustExec("alter table t add column c3 int NOT NULL")
-	err = h.HandleDDLEvent(<-h.DDLEventCh())
-	require.NoError(t, err)
+	findEventByFilter(ch, func(event *notifier.SchemaChangeEvent) bool {
+		return event.GetType() == model.ActionAddColumn
+	})
 	is = do.InfoSchema()
 	require.Nil(t, h.Update(context.Background(), is))
 	tbl, err = is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
@@ -335,8 +372,9 @@ func TestDDLHistogram(t *testing.T) {
 	require.Equal(t, float64(0), count)
 
 	testKit.MustExec("alter table t add column c4 datetime NOT NULL default CURRENT_TIMESTAMP")
-	err = h.HandleDDLEvent(<-h.DDLEventCh())
-	require.NoError(t, err)
+	findEventByFilter(ch, func(event *notifier.SchemaChangeEvent) bool {
+		return event.GetType() == model.ActionAddColumn
+	})
 	is = do.InfoSchema()
 	require.Nil(t, h.Update(context.Background(), is))
 	tbl, err = is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
@@ -348,8 +386,9 @@ func TestDDLHistogram(t *testing.T) {
 	require.True(t, statsTbl.ColAndIdxExistenceMap.HasAnalyzed(4, false))
 
 	testKit.MustExec("alter table t add column c5 varchar(15) DEFAULT '123'")
-	err = h.HandleDDLEvent(<-h.DDLEventCh())
-	require.NoError(t, err)
+	findEventByFilter(ch, func(event *notifier.SchemaChangeEvent) bool {
+		return event.GetType() == model.ActionAddColumn
+	})
 	is = do.InfoSchema()
 	require.Nil(t, h.Update(context.Background(), is))
 	tbl, err = is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
@@ -362,8 +401,9 @@ func TestDDLHistogram(t *testing.T) {
 	require.Equal(t, 3.0, cardinality.AvgColSize(statsTbl.GetCol(tableInfo.Columns[5].ID), statsTbl.RealtimeCount, false))
 
 	testKit.MustExec("alter table t add column c6 varchar(15) DEFAULT '123', add column c7 varchar(15) DEFAULT '123'")
-	err = h.HandleDDLEvent(<-h.DDLEventCh())
-	require.NoError(t, err)
+	findEventByFilter(ch, func(event *notifier.SchemaChangeEvent) bool {
+		return event.GetType() == model.ActionAddColumn
+	})
 	is = do.InfoSchema()
 	require.Nil(t, h.Update(context.Background(), is))
 	tbl, err = is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
@@ -402,8 +442,7 @@ func TestDDLPartition(t *testing.T) {
 		testKit.MustExec("drop table if exists t")
 		h := do.StatsHandle()
 		if i == 1 {
-			err := h.HandleDDLEvent(<-h.DDLEventCh())
-			require.NoError(t, err)
+			<-notifier.DDLEventChForTest()
 		}
 		createTable := `CREATE TABLE t (a int, b int, primary key(a), index idx(b))
 PARTITION BY RANGE ( a ) (
@@ -417,8 +456,7 @@ PARTITION BY RANGE ( a ) (
 		tbl, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
 		require.NoError(t, err)
 		tableInfo := tbl.Meta()
-		err = h.HandleDDLEvent(<-h.DDLEventCh())
-		require.NoError(t, err)
+		<-notifier.DDLEventChForTest()
 		require.Nil(t, h.Update(context.Background(), is))
 		pi := tableInfo.GetPartitionInfo()
 		for _, def := range pi.Definitions {
@@ -429,8 +467,7 @@ PARTITION BY RANGE ( a ) (
 		testKit.MustExec("insert into t values (1,2),(6,2),(11,2),(16,2)")
 		testKit.MustExec("analyze table t")
 		testKit.MustExec("alter table t add column c varchar(15) DEFAULT '123'")
-		err = h.HandleDDLEvent(<-h.DDLEventCh())
-		require.NoError(t, err)
+		<-notifier.DDLEventChForTest()
 		is = do.InfoSchema()
 		require.Nil(t, h.Update(context.Background(), is))
 		tbl, err = is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
@@ -449,8 +486,7 @@ PARTITION BY RANGE ( a ) (
 		tbl, err = is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
 		require.NoError(t, err)
 		tableInfo = tbl.Meta()
-		err = h.HandleDDLEvent(<-h.DDLEventCh())
-		require.NoError(t, err)
+		<-notifier.DDLEventChForTest()
 		require.Nil(t, h.Update(context.Background(), is))
 		pi = tableInfo.GetPartitionInfo()
 		for _, def := range pi.Definitions {
@@ -515,9 +551,13 @@ func TestReorgPartitions(t *testing.T) {
 	// Reorganize two partitions.
 	testKit.MustExec("alter table t reorganize partition p0, p1 into (partition p0 values less than (11))")
 	// Find the reorganize partition event.
-	reorganizePartitionEvent := findEvent(h.DDLEventCh(), model.ActionReorganizePartition)
-	err = h.HandleDDLEvent(reorganizePartitionEvent)
-	require.NoError(t, err)
+	findEventByFilter(notifier.DDLEventChForTest(), func(event *notifier.SchemaChangeEvent) bool {
+		if event.GetType() == model.ActionReorganizePartition {
+			globalTableInfo, _, _ := event.GetReorganizePartitionInfo()
+			return globalTableInfo.ID == tableInfo.ID
+		}
+		return false
+	})
 	require.Nil(t, h.Update(context.Background(), is))
 
 	// Check the version again.
@@ -567,9 +607,13 @@ func TestIncreasePartitionCountOfHashPartitionTable(t *testing.T) {
 	// Increase the partition count to 4.
 	testKit.MustExec("alter table t add partition partitions 2")
 	// Find the reorganize partition event.
-	reorganizePartitionEvent := findEvent(h.DDLEventCh(), model.ActionReorganizePartition)
-	err = h.HandleDDLEvent(reorganizePartitionEvent)
-	require.NoError(t, err)
+	findEventByFilter(notifier.DDLEventChForTest(), func(event *notifier.SchemaChangeEvent) bool {
+		if event.GetType() == model.ActionReorganizePartition {
+			globalTableInfo, _, _ := event.GetReorganizePartitionInfo()
+			return globalTableInfo.ID == tableInfo.ID
+		}
+		return false
+	})
 	require.Nil(t, h.Update(context.Background(), is))
 
 	// Check new partitions are added.
@@ -641,9 +685,13 @@ func TestDecreasePartitionCountOfHashPartitionTable(t *testing.T) {
 	// Decrease the partition count to 2.
 	testKit.MustExec("alter table t coalesce partition 2")
 	// Find the reorganize partition event.
-	reorganizePartitionEvent := findEvent(h.DDLEventCh(), model.ActionReorganizePartition)
-	err = h.HandleDDLEvent(reorganizePartitionEvent)
-	require.NoError(t, err)
+	findEventByFilter(notifier.DDLEventChForTest(), func(event *notifier.SchemaChangeEvent) bool {
+		if event.GetType() == model.ActionReorganizePartition {
+			globalTableInfo, _, _ := event.GetReorganizePartitionInfo()
+			return globalTableInfo.ID == tableInfo.ID
+		}
+		return false
+	})
 	require.Nil(t, h.Update(context.Background(), is))
 
 	// Check new partitions are added.
@@ -721,9 +769,13 @@ func TestTruncateAPartition(t *testing.T) {
 
 	testKit.MustExec("alter table t truncate partition p0")
 	// Find the truncate partition event.
-	truncatePartitionEvent := findEvent(h.DDLEventCh(), model.ActionTruncateTablePartition)
-	err = h.HandleDDLEvent(truncatePartitionEvent)
-	require.NoError(t, err)
+	findEventByFilter(notifier.DDLEventChForTest(), func(event *notifier.SchemaChangeEvent) bool {
+		if event.GetType() == model.ActionTruncateTablePartition {
+			globalTableInfo, _, _ := event.GetTruncatePartitionInfo()
+			return globalTableInfo.ID == tableInfo.ID
+		}
+		return false
+	})
 	// Check global stats meta.
 	// Because we have truncated a partition, the count should be 5 - 2 = 3 and the modify count should be 2.
 	testKit.MustQuery(
@@ -784,9 +836,14 @@ func TestTruncateAHashPartition(t *testing.T) {
 
 	testKit.MustExec("alter table t truncate partition p0")
 	// Find the truncate partition event.
-	truncatePartitionEvent := findEvent(h.DDLEventCh(), model.ActionTruncateTablePartition)
-	err = h.HandleDDLEvent(truncatePartitionEvent)
-	require.NoError(t, err)
+	findEventByFilter(notifier.DDLEventChForTest(), func(event *notifier.SchemaChangeEvent) bool {
+		if event.GetType() == model.ActionTruncateTablePartition {
+			globalTableInfo, _, _ := event.GetTruncatePartitionInfo()
+			return globalTableInfo.ID == tableInfo.ID
+		}
+		return false
+	})
+
 	// Check global stats meta.
 	// Because we have truncated a partition, the count should be 5 - 1 = 4 and the modify count should be 1.
 	testKit.MustQuery(
@@ -854,9 +911,13 @@ func TestTruncatePartitions(t *testing.T) {
 	// Truncate two partitions.
 	testKit.MustExec("alter table t truncate partition p0, p1")
 	// Find the truncate partition event.
-	truncatePartitionEvent := findEvent(h.DDLEventCh(), model.ActionTruncateTablePartition)
-	err = h.HandleDDLEvent(truncatePartitionEvent)
-	require.NoError(t, err)
+	findEventByFilter(notifier.DDLEventChForTest(), func(event *notifier.SchemaChangeEvent) bool {
+		if event.GetType() == model.ActionTruncateTablePartition {
+			globalTableInfo, _, _ := event.GetTruncatePartitionInfo()
+			return globalTableInfo.ID == tableInfo.ID
+		}
+		return false
+	})
 	// Check global stats meta.
 	// Because we have truncated two partitions, the count should be 5 - 2 - 1  = 2 and the modify count should be 3.
 	testKit.MustQuery(
@@ -911,12 +972,31 @@ func TestDropAPartition(t *testing.T) {
 	err = h.Update(context.Background(), is)
 	require.NoError(t, err)
 
+	// Get old partition p0's stats update version.
+	partitionID := pi.Definitions[0].ID
+	// Get it from stats_meta first.
+	rows := testKit.MustQuery(
+		"select version from mysql.stats_meta where table_id = ?", partitionID,
+	).Rows()
+	require.Len(t, rows, 1)
+	oldPartitionVersion := rows[0][0].(string)
+
+	// Get old table's stats update version.
+	rows = testKit.MustQuery(
+		"select version from mysql.stats_meta where table_id = ?", tableInfo.ID,
+	).Rows()
+	require.Len(t, rows, 1)
+	oldTableVersion := rows[0][0].(string)
+
 	testKit.MustExec("alter table t drop partition p0")
 	// Find the drop partition event.
-	dropPartitionEvent := findEvent(h.DDLEventCh(), model.ActionDropTablePartition)
-
-	err = h.HandleDDLEvent(dropPartitionEvent)
-	require.NoError(t, err)
+	findEventByFilter(notifier.DDLEventChForTest(), func(event *notifier.SchemaChangeEvent) bool {
+		if event.GetType() == model.ActionDropTablePartition {
+			globalTableInfo, _ := event.GetDropPartitionInfo()
+			return globalTableInfo.ID == tableInfo.ID
+		}
+		return false
+	})
 	// Check the global stats meta.
 	// Because we have dropped a partition, the count should be 3 and the modify count should be 2.
 	testKit.MustQuery(
@@ -925,21 +1005,20 @@ func TestDropAPartition(t *testing.T) {
 		testkit.Rows("3 2"),
 	)
 
-	// Get partition p0's stats update version.
-	partitionID := pi.Definitions[0].ID
 	// Get it from stats_meta first.
-	rows := testKit.MustQuery(
+	rows = testKit.MustQuery(
 		"select version from mysql.stats_meta where table_id = ?", partitionID,
 	).Rows()
 	require.Len(t, rows, 1)
 	version := rows[0][0].(string)
+	require.NotEqual(t, oldPartitionVersion, version)
 
 	// Check the update version is changed.
 	rows = testKit.MustQuery(
 		"select version from mysql.stats_meta where table_id = ?", tableInfo.ID,
 	).Rows()
 	require.Len(t, rows, 1)
-	require.NotEqual(t, version, rows[0][0].(string))
+	require.NotEqual(t, oldTableVersion, rows[0][0].(string))
 }
 
 func TestDropPartitions(t *testing.T) {
@@ -993,10 +1072,14 @@ func TestDropPartitions(t *testing.T) {
 	// Drop partition p0 and p1.
 	testKit.MustExec("alter table t drop partition p0,p1")
 	// Find the drop partition event.
-	dropPartitionEvent := findEvent(h.DDLEventCh(), model.ActionDropTablePartition)
+	findEventByFilter(notifier.DDLEventChForTest(), func(event *notifier.SchemaChangeEvent) bool {
+		if event.GetType() == model.ActionDropTablePartition {
+			globalTableInfo, _ := event.GetDropPartitionInfo()
+			return globalTableInfo.ID == tableInfo.ID
+		}
 
-	err = h.HandleDDLEvent(dropPartitionEvent)
-	require.NoError(t, err)
+		return false
+	})
 
 	// Check the global stats meta.
 	// Because we have dropped two partitions,
@@ -1081,9 +1164,14 @@ func TestExchangeAPartition(t *testing.T) {
 	// Exchange partition p0 with table t1.
 	testKit.MustExec("alter table t exchange partition p0 with table t1")
 	// Find the exchange partition event.
-	exchangePartitionEvent := findEvent(h.DDLEventCh(), model.ActionExchangeTablePartition)
-	err = h.HandleDDLEvent(exchangePartitionEvent)
-	require.NoError(t, err)
+	findEventByFilter(notifier.DDLEventChForTest(), func(event *notifier.SchemaChangeEvent) bool {
+		if event.GetType() == model.ActionExchangeTablePartition {
+			globalTableInfo, _, _ := event.GetExchangePartitionInfo()
+			return globalTableInfo.ID == tableInfo.ID
+		}
+
+		return false
+	})
 	// Check the global stats meta.
 	// Because we have exchanged a partition, the count should be 5 and the modify count should be 5(table) + 2(partition).
 	// 5 -> Five rows are added to table 't' as 't1' is included as a new partition.
@@ -1122,9 +1210,14 @@ func TestExchangeAPartition(t *testing.T) {
 
 	testKit.MustExec("alter table t exchange partition p1 with table t2")
 	// Find the exchange partition event.
-	exchangePartitionEvent = findEvent(h.DDLEventCh(), model.ActionExchangeTablePartition)
-	err = h.HandleDDLEvent(exchangePartitionEvent)
-	require.NoError(t, err)
+	findEventByFilter(notifier.DDLEventChForTest(), func(event *notifier.SchemaChangeEvent) bool {
+		if event.GetType() == model.ActionExchangeTablePartition {
+			globalTableInfo, _, _ := event.GetExchangePartitionInfo()
+			return globalTableInfo.ID == tableInfo.ID
+		}
+
+		return false
+	})
 	// Check the global stats meta.
 	testKit.MustQuery(
 		fmt.Sprintf("select count, modify_count from mysql.stats_meta where table_id = %d", tableInfo.ID),
@@ -1157,9 +1250,14 @@ func TestExchangeAPartition(t *testing.T) {
 	// Drop the global stats.
 	testKit.MustExec(fmt.Sprintf("delete from mysql.stats_meta where table_id = %d", tableInfo.ID))
 	// Find the exchange partition event.
-	exchangePartitionEvent = findEvent(h.DDLEventCh(), model.ActionExchangeTablePartition)
-	err = h.HandleDDLEvent(exchangePartitionEvent)
-	require.NoError(t, err)
+	findEventByFilter(notifier.DDLEventChForTest(), func(event *notifier.SchemaChangeEvent) bool {
+		if event.GetType() == model.ActionExchangeTablePartition {
+			globalTableInfo, _, _ := event.GetExchangePartitionInfo()
+			return globalTableInfo.ID == tableInfo.ID
+		}
+
+		return false
+	})
 	// Check the global stats meta.
 	testKit.MustQuery(
 		fmt.Sprintf("select count, modify_count from mysql.stats_meta where table_id = %d", tableInfo.ID),
@@ -1225,9 +1323,13 @@ func TestRemovePartitioning(t *testing.T) {
 	// Remove partitioning.
 	testKit.MustExec("alter table t remove partitioning")
 	// Find the remove partitioning event.
-	removePartitioningEvent := findEvent(h.DDLEventCh(), model.ActionRemovePartitioning)
-	err = h.HandleDDLEvent(removePartitioningEvent)
-	require.NoError(t, err)
+	findEventByFilter(notifier.DDLEventChForTest(), func(event *notifier.SchemaChangeEvent) bool {
+		if event.GetType() == model.ActionRemovePartitioning {
+			oldPartitionedTableID, _, _ := event.GetRemovePartitioningInfo()
+			return oldPartitionedTableID == tableInfo.ID
+		}
+		return false
+	})
 	// Check the global stats meta make sure the count and modify count are not changed.
 	// Get new table id after remove partitioning.
 	is = do.InfoSchema()
@@ -1288,9 +1390,14 @@ func TestAddPartitioning(t *testing.T) {
 	// Add partitioning.
 	testKit.MustExec("alter table t partition by hash(a) partitions 3")
 	// Find the add partitioning event.
-	addPartitioningEvent := findEvent(h.DDLEventCh(), model.ActionAlterTablePartitioning)
-	err = h.HandleDDLEvent(addPartitioningEvent)
-	require.NoError(t, err)
+	findEventByFilter(notifier.DDLEventChForTest(), func(event *notifier.SchemaChangeEvent) bool {
+		if event.GetType() == model.ActionAlterTablePartitioning {
+			nonPartTableID, _, _ := event.GetAddPartitioningInfo()
+			return nonPartTableID == tableInfo.ID
+		}
+
+		return false
+	})
 	// Check the global stats meta make sure the count and modify count are not changed.
 	// Get new table id after remove partitioning.
 	is = do.InfoSchema()
@@ -1306,11 +1413,11 @@ func TestAddPartitioning(t *testing.T) {
 	)
 }
 
-func findEvent(eventCh <-chan *notifier.SchemaChangeEvent, eventType model.ActionType) *notifier.SchemaChangeEvent {
+func findEventByFilter(eventCh <-chan *notifier.SchemaChangeEvent, filter func(event *notifier.SchemaChangeEvent) bool) *notifier.SchemaChangeEvent {
 	// Find the target event.
 	for {
 		event := <-eventCh
-		if event.GetType() == eventType {
+		if filter(event) {
 			return event
 		}
 	}

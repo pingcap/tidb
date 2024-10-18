@@ -91,7 +91,8 @@ func RegisterHandler(id HandlerID, handler SchemaChangeHandler) {
 	}
 
 	if _, ok := globalDDLNotifier.handlers[id]; ok {
-		panic(fmt.Sprintf("HandlerID %d already registered", id))
+		// TODO: avoid duplicate registration.
+		logutil.BgLogger().Warn("handler already registered", zap.Stringer("handler", id))
 	}
 	globalDDLNotifier.handlers[id] = handler
 }
@@ -145,10 +146,18 @@ func InitDDLNotifier(
 	return nil
 }
 
+// InitDDLNotifierForMockDomain is used for testing only.
+func InitDDLNotifierForMockDomain() {
+	globalDDLNotifier = &ddlNotifier{
+		handlers:          make(map[HandlerID]SchemaChangeHandler),
+		ddlEventChForTest: make(chan *SchemaChangeEvent, 1000),
+	}
+}
+
 // ResetDDLNotifier is used for testing only.
 func ResetDDLNotifier() { globalDDLNotifier = nil }
 
-// DDLEventCh returns the channel for testing only.
+// DDLEventChForTest returns the channel for testing only.
 func DDLEventChForTest() chan *SchemaChangeEvent {
 	return globalDDLNotifier.ddlEventChForTest
 }

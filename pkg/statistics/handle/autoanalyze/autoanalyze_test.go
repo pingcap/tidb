@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/ddl/notifier"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/parser/model"
@@ -62,8 +63,7 @@ func TestEnableAutoAnalyzePriorityQueue(t *testing.T) {
 	tk.MustExec("SET GLOBAL tidb_enable_auto_analyze_priority_queue=ON")
 	require.True(t, variable.EnableAutoAnalyzePriorityQueue.Load())
 	h := dom.StatsHandle()
-	err := h.HandleDDLEvent(<-h.DDLEventCh())
-	require.NoError(t, err)
+	<-notifier.DDLEventChForTest()
 	require.NoError(t, h.DumpStatsDeltaToKV(true))
 	is := dom.InfoSchema()
 	require.NoError(t, h.Update(context.Background(), is))
@@ -81,8 +81,7 @@ func TestAutoAnalyzeLockedTable(t *testing.T) {
 	tk.MustExec("create table t (a int)")
 	tk.MustExec("insert into t values (1)")
 	h := dom.StatsHandle()
-	err := h.HandleDDLEvent(<-h.DDLEventCh())
-	require.NoError(t, err)
+	<-notifier.DDLEventChForTest()
 	require.NoError(t, h.DumpStatsDeltaToKV(true))
 	// Lock the table.
 	tk.MustExec("lock stats t")
@@ -112,8 +111,7 @@ func TestAutoAnalyzeWithPredicateColumns(t *testing.T) {
 	tk.MustExec("insert into t values (1, 1)")
 	tk.MustQuery("select * from t where a > 0").Check(testkit.Rows("1 1"))
 	h := dom.StatsHandle()
-	err := h.HandleDDLEvent(<-h.DDLEventCh())
-	require.NoError(t, err)
+	<-notifier.DDLEventChForTest()
 	require.NoError(t, h.DumpColStatsUsageToKV())
 	require.NoError(t, h.DumpStatsDeltaToKV(true))
 	is := dom.InfoSchema()
@@ -161,8 +159,7 @@ func disableAutoAnalyzeCase(t *testing.T, tk *testkit.TestKit, dom *domain.Domai
 	tk.MustExec("create table t (a int)")
 	tk.MustExec("insert into t values (1)")
 	h := dom.StatsHandle()
-	err := h.HandleDDLEvent(<-h.DDLEventCh())
-	require.NoError(t, err)
+	<-notifier.DDLEventChForTest()
 	require.NoError(t, h.DumpStatsDeltaToKV(true))
 	is := dom.InfoSchema()
 	require.NoError(t, h.Update(context.Background(), is))
@@ -199,8 +196,7 @@ func TestAutoAnalyzeOnChangeAnalyzeVer(t *testing.T) {
 		statistics.AutoAnalyzeMinCnt = 1000
 	}()
 	h := do.StatsHandle()
-	err := h.HandleDDLEvent(<-h.DDLEventCh())
-	require.NoError(t, err)
+	<-notifier.DDLEventChForTest()
 	require.NoError(t, h.DumpStatsDeltaToKV(true))
 	is := do.InfoSchema()
 	require.NoError(t, h.Update(context.Background(), is))
@@ -242,8 +238,7 @@ func TestAutoAnalyzeOnChangeAnalyzeVer(t *testing.T) {
 	// Add a new table after the analyze version set to 2.
 	tk.MustExec("create table tt(a int, index idx(a))")
 	tk.MustExec("insert into tt values(1), (2), (3), (4), (5)")
-	err = h.HandleDDLEvent(<-h.DDLEventCh())
-	require.NoError(t, err)
+	<-notifier.DDLEventChForTest()
 	require.NoError(t, h.DumpStatsDeltaToKV(true))
 	is = do.InfoSchema()
 	tbl2, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("tt"))

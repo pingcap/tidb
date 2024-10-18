@@ -18,6 +18,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/tidb/pkg/ddl/notifier"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/analyzehelper"
@@ -104,7 +105,7 @@ func TestGCExtendedStats(t *testing.T) {
 	testKit.MustExec("alter table t add stats_extended s1 correlation(a,b)")
 	testKit.MustExec("alter table t add stats_extended s2 correlation(b,c)")
 	h := dom.StatsHandle()
-	require.Nil(t, h.HandleDDLEvent(<-h.DDLEventCh()))
+	<-notifier.DDLEventChForTest()
 	testKit.MustExec("analyze table t")
 
 	testKit.MustQuery("select name, type, column_ids, stats, status from mysql.stats_extended").Sort().Check(testkit.Rows(
@@ -131,7 +132,7 @@ func TestGCExtendedStats(t *testing.T) {
 	testKit.MustQuery("select name, type, column_ids, stats, status from mysql.stats_extended").Sort().Check(testkit.Rows(
 		"s2 2 [2,3] 1.000000 1",
 	))
-	require.Nil(t, h.HandleDDLEvent(<-h.DDLEventCh()))
+	<-notifier.DDLEventChForTest()
 	require.Nil(t, h.GCStats(dom.InfoSchema(), ddlLease))
 	testKit.MustQuery("select name, type, column_ids, stats, status from mysql.stats_extended").Sort().Check(testkit.Rows(
 		"s2 2 [2,3] 1.000000 2",

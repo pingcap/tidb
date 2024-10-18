@@ -25,6 +25,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/ddl/notifier"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/errno"
@@ -107,8 +108,9 @@ PARTITION BY RANGE ( a ) (
 				require.False(t, statsTbl.Pseudo)
 				require.Equal(t, statsTbl.ColNum(), 3)
 				require.Equal(t, statsTbl.IdxNum(), 1)
+				require.NotEqual(t, statsTbl.LastAnalyzeVersion, uint64(0))
 			} else {
-				require.True(t, statsTbl.Pseudo)
+				require.Equal(t, statsTbl.LastAnalyzeVersion, uint64(0))
 			}
 		}
 	})
@@ -496,7 +498,7 @@ func TestAdjustSampleRateNote(t *testing.T) {
 	statsHandle := domain.GetDomain(tk.Session().(sessionctx.Context)).StatsHandle()
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int, index index_a(a))")
-	require.NoError(t, statsHandle.HandleDDLEvent(<-statsHandle.DDLEventCh()))
+	<-notifier.DDLEventChForTest()
 	is := tk.Session().(sessionctx.Context).GetInfoSchema().(infoschema.InfoSchema)
 	tbl, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
@@ -1364,6 +1366,7 @@ func TestAnalyzeColumnsWithDynamicPartitionTable(t *testing.T) {
 			tk.MustExec("set @@tidb_analyze_version = 2")
 			tk.MustExec("set @@tidb_partition_prune_mode = 'dynamic'")
 			tk.MustExec("create table t (a int, b int, c int, index idx(c)) partition by range (a) (partition p0 values less than (10), partition p1 values less than maxvalue)")
+			<-notifier.DDLEventChForTest()
 			tk.MustExec("insert into t values (1,2,1), (2,4,1), (3,6,1), (4,8,2), (4,8,2), (5,10,3), (5,10,4), (5,10,5), (null,null,6), (11,22,7), (12,24,8), (13,26,9), (14,28,10), (15,30,11), (16,32,12), (16,32,13), (16,32,13), (16,32,14), (17,34,14), (17,34,14)")
 			require.NoError(t, h.DumpStatsDeltaToKV(true))
 
@@ -1461,6 +1464,7 @@ func TestAnalyzeColumnsWithDynamicPartitionTable(t *testing.T) {
 
 			tk.MustQuery("select table_id, is_index, hist_id, distinct_count, null_count, tot_col_size, stats_ver, truncate(correlation,2) from mysql.stats_histograms order by table_id, is_index, hist_id asc").Check(
 				testkit.Rows(fmt.Sprintf("%d 0 1 12 1 19 2 0", tblID), // global, a
+					fmt.Sprintf("%d 0 2 0 0 0 0 0", tblID),   // global, b, not analyzed
 					fmt.Sprintf("%d 0 3 14 0 20 2 0", tblID), // global, c
 					fmt.Sprintf("%d 1 1 14 0 0 2 0", tblID),  // global, idx
 					fmt.Sprintf("%d 0 1 5 1 8 2 1", p0ID),    // p0, a
@@ -2719,7 +2723,7 @@ func TestAutoAnalyzeAwareGlobalVariableChange(t *testing.T) {
 	tk.MustExec("create table t(a int)")
 	analyzehelper.TriggerPredicateColumnsCollection(t, tk, store, "t", "a")
 	h := dom.StatsHandle()
-	require.NoError(t, h.HandleDDLEvent(<-h.DDLEventCh()))
+	<-notifier.DDLEventChForTest()
 	tbl, err := dom.InfoSchema().TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
 	tid := tbl.Meta().ID
@@ -2836,7 +2840,7 @@ func TestAnalyzeMVIndex(t *testing.T) {
 		"index ij_binary((cast(j->'$.bin' as binary(50) array)))," +
 		"index ij_char((cast(j->'$.char' as char(50) array)))" +
 		")")
-	require.NoError(t, h.HandleDDLEvent(<-h.DDLEventCh()))
+	<-notifier.DDLEventChForTest()
 	jsonData := []map[string]any{
 		{
 			"signed":   []int64{1, 2, 300, 300, 0, 4, 5, -40000},

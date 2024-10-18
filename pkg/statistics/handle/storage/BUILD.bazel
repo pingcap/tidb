@@ -61,6 +61,7 @@ go_test(
     shard_count = 23,
     deps = [
         ":storage",
+        "//pkg/ddl/notifier",
         "//pkg/domain",
         "//pkg/meta/model",
         "//pkg/parser/model",

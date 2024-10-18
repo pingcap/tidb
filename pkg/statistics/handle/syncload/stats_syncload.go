@@ -16,6 +16,7 @@ package syncload
 
 import (
 	stderrors "errors"
+	"fmt"
 	"math/rand"
 	"runtime"
 	"time"
@@ -90,7 +91,7 @@ func (s *statsSyncLoad) SendLoadRequests(sc *stmtctx.StatementContext, neededHis
 		if sc.OptimizeTracer != nil {
 			count := val.(int)
 			if len(remainedItems) != count {
-				panic("remained items count wrong")
+				panic(fmt.Sprintf("assertSyncLoadItems failed, expected: %d, got: %d", count, len(remainedItems)))
 			}
 		}
 	})

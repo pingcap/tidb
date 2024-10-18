@@ -24,6 +24,7 @@ import (
 	"testing"
 
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/ddl/notifier"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/server/internal"
@@ -67,8 +68,7 @@ func TestOptimizerDebugTrace(t *testing.T) {
 
 	tk.MustExec("use test")
 	tk.MustExec("create table t (col1 int, index i(col1))")
-	h := dom.StatsHandle()
-	require.NoError(t, h.HandleDDLEvent(<-h.DDLEventCh()))
+	<-notifier.DDLEventChForTest()
 
 	tk.MustExec("plan replayer capture '0595c79f25d183319d0830ff8ca538c9054cbf407e5e27488b5dc40e4738a7c8' '*'")
 	tk.MustExec("plan replayer capture 'c0fcc0abbaaffcaafe21115a3c67ae5d96a188cc197559953d2865ea6852d3cc' '*'")

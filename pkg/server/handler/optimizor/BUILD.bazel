@@ -48,6 +48,7 @@ go_test(
     deps = [
         ":optimizor",
         "//pkg/config",
+        "//pkg/ddl/notifier",
         "//pkg/domain",
         "//pkg/kv",
         "//pkg/metrics",

@@ -13,6 +13,7 @@ go_test(
     shard_count = 49,
     deps = [
         "//pkg/config",
+        "//pkg/ddl/notifier",
         "//pkg/domain",
         "//pkg/domain/infosync",
         "//pkg/errno",

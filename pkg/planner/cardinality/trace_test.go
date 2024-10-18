@@ -23,6 +23,7 @@ import (
 	"testing"
 
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/ddl/notifier"
 	"github.com/pingcap/tidb/pkg/executor"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/infoschema"
@@ -135,7 +136,7 @@ func TestTraceDebugSelectivity(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int, b int, index iab(a, b), index ib(b))")
-	require.NoError(t, statsHandle.HandleDDLEvent(<-statsHandle.DDLEventCh()))
+	<-notifier.DDLEventChForTest()
 
 	// Prepare the data.
 

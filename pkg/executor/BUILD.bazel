@@ -375,6 +375,7 @@ go_test(
     deps = [
         "//pkg/config",
         "//pkg/ddl",
+        "//pkg/ddl/notifier",
         "//pkg/ddl/placement",
         "//pkg/ddl/util",
         "//pkg/distsql",

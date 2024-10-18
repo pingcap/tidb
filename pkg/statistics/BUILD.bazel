@@ -85,6 +85,7 @@ go_test(
     shard_count = 37,
     deps = [
         "//pkg/config",
+        "//pkg/ddl/notifier",
         "//pkg/meta/model",
         "//pkg/parser/model",
         "//pkg/parser/mysql",

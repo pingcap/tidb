@@ -22,6 +22,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/pingcap/tidb/pkg/ddl/notifier"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/executor"
 	"github.com/pingcap/tidb/pkg/meta/model"
@@ -65,8 +66,8 @@ func TestCBOWithoutAnalyze(t *testing.T) {
 	testKit.MustExec("create table t1 (a int)")
 	testKit.MustExec("create table t2 (a int)")
 	h := dom.StatsHandle()
-	require.NoError(t, h.HandleDDLEvent(<-h.DDLEventCh()))
-	require.NoError(t, h.HandleDDLEvent(<-h.DDLEventCh()))
+	<-notifier.DDLEventChForTest()
+	<-notifier.DDLEventChForTest()
 	testKit.MustExec("insert into t1 values (1), (2), (3), (4), (5), (6)")
 	testKit.MustExec("insert into t2 values (1), (2), (3), (4), (5), (6)")
 	require.NoError(t, h.DumpStatsDeltaToKV(true))
@@ -89,13 +90,12 @@ func TestCBOWithoutAnalyze(t *testing.T) {
 }
 
 func TestStraightJoin(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
+	store := testkit.CreateMockStore(t)
 	testKit := testkit.NewTestKit(t, store)
 	testKit.MustExec("use test")
-	h := dom.StatsHandle()
 	for _, tblName := range []string{"t1", "t2", "t3", "t4"} {
 		testKit.MustExec(fmt.Sprintf("create table %s (a int)", tblName))
-		require.NoError(t, h.HandleDDLEvent(<-h.DDLEventCh()))
+		<-notifier.DDLEventChForTest()
 	}
 	var input []string
 	var output [][]string
@@ -117,7 +117,7 @@ func TestTableDual(t *testing.T) {
 	h := dom.StatsHandle()
 	testKit.MustExec(`create table t(a int)`)
 	testKit.MustExec("insert into t values (1), (2), (3), (4), (5), (6), (7), (8), (9), (10)")
-	require.NoError(t, h.HandleDDLEvent(<-h.DDLEventCh()))
+	<-notifier.DDLEventChForTest()
 
 	require.NoError(t, h.DumpStatsDeltaToKV(true))
 	require.NoError(t, h.Update(context.Background(), dom.InfoSchema()))
@@ -150,7 +150,7 @@ func TestEstimation(t *testing.T) {
 	testKit.MustExec("insert into t select * from t")
 	testKit.MustExec("insert into t select * from t")
 	h := dom.StatsHandle()
-	require.NoError(t, h.HandleDDLEvent(<-h.DDLEventCh()))
+	<-notifier.DDLEventChForTest()
 	require.NoError(t, h.DumpStatsDeltaToKV(true))
 	testKit.MustExec("analyze table t all columns")
 	for i := 1; i <= 8; i++ {
@@ -336,7 +336,7 @@ func TestOutdatedAnalyze(t *testing.T) {
 		testKit.MustExec(fmt.Sprintf("insert into t values (%d,%d)", i, i))
 	}
 	h := dom.StatsHandle()
-	require.NoError(t, h.HandleDDLEvent(<-h.DDLEventCh()))
+	<-notifier.DDLEventChForTest()
 	require.NoError(t, h.DumpStatsDeltaToKV(true))
 	testKit.MustExec("analyze table t all columns")
 	testKit.MustExec("insert into t select * from t")

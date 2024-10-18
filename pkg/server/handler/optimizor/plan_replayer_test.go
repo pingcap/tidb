@@ -33,6 +33,7 @@ import (
 	"github.com/BurntSushi/toml"
 	"github.com/go-sql-driver/mysql"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/ddl/notifier"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/model"
@@ -217,8 +218,7 @@ func prepareData4PlanReplayer(t *testing.T, client *testserverclient.TestServerC
 	tk.MustExec("create table t(a int)")
 	tk.MustExec("CREATE TABLE authors (id INT PRIMARY KEY AUTO_INCREMENT,name VARCHAR(100) NOT NULL,email VARCHAR(100) UNIQUE NOT NULL);")
 	tk.MustExec("CREATE TABLE books (id INT PRIMARY KEY AUTO_INCREMENT,title VARCHAR(200) NOT NULL,publication_date DATE NOT NULL,author_id INT,FOREIGN KEY (author_id) REFERENCES authors(id) ON DELETE CASCADE);")
-	err = h.HandleDDLEvent(<-h.DDLEventCh())
-	require.NoError(t, err)
+	<-notifier.DDLEventChForTest()
 	tk.MustExec("insert into t values(1), (2), (3), (4)")
 	require.NoError(t, h.DumpStatsDeltaToKV(true))
 	tk.MustExec("analyze table t")
@@ -413,7 +413,6 @@ func TestIssue43192(t *testing.T) {
 }
 
 func prepareData4Issue43192(t *testing.T, client *testserverclient.TestServerClient, dom *domain.Domain) string {
-	h := dom.StatsHandle()
 	db, err := sql.Open("mysql", client.GetDSN())
 	require.NoError(t, err, "Error connecting")
 	defer func() {
@@ -425,8 +424,7 @@ func prepareData4Issue43192(t *testing.T, client *testserverclient.TestServerCli
 	tk.MustExec("create database planReplayer")
 	tk.MustExec("use planReplayer")
 	tk.MustExec("create table t(a int, b int, INDEX ia (a), INDEX ib (b));")
-	err = h.HandleDDLEvent(<-h.DDLEventCh())
-	require.NoError(t, err)
+	<-notifier.DDLEventChForTest()
 	tk.MustExec("create global binding for select a, b from t where a in (1, 2, 3) using select a, b from t use index (ib) where a in (1, 2, 3)")
 	rows := tk.MustQuery("plan replayer dump explain select a, b from t where a in (1, 2, 3)")
 	require.True(t, rows.Next(), "unexpected data")
@@ -439,7 +437,6 @@ func prepareData4Issue43192(t *testing.T, client *testserverclient.TestServerCli
 }
 
 func prepareData4Issue56458(t *testing.T, client *testserverclient.TestServerClient, dom *domain.Domain) string {
-	h := dom.StatsHandle()
 	db, err := sql.Open("mysql", client.GetDSN())
 	require.NoError(t, err, "Error connecting")
 	defer func() {
@@ -453,14 +450,11 @@ func prepareData4Issue56458(t *testing.T, client *testserverclient.TestServerCli
 	tk.MustExec("use planReplayer")
 
 	tk.MustExec("CREATE TABLE v(id INT PRIMARY KEY AUTO_INCREMENT);")
-	err = h.HandleDDLEvent(<-h.DDLEventCh())
-	require.NoError(t, err)
+	<-notifier.DDLEventChForTest()
 	tk.MustExec("create table planReplayer2.t(a int, b int, INDEX ia (a), INDEX ib (b), author_id int, FOREIGN KEY (author_id) REFERENCES planReplayer.v(id) ON DELETE CASCADE);")
-	err = h.HandleDDLEvent(<-h.DDLEventCh())
-	require.NoError(t, err)
+	<-notifier.DDLEventChForTest()
 	tk.MustExec("create table t(a int, b int, INDEX ia (a), INDEX ib (b), author_id int, FOREIGN KEY (author_id) REFERENCES planReplayer2.t(a) ON DELETE CASCADE);")
-	err = h.HandleDDLEvent(<-h.DDLEventCh())
-	require.NoError(t, err)
+	<-notifier.DDLEventChForTest()
 
 	tk.MustExec("create global binding for select a, b from t where a in (1, 2, 3) using select a, b from t use index (ib) where a in (1, 2, 3)")
 	rows := tk.MustQuery("plan replayer dump explain select a, b from t where a in (1, 2, 3)")

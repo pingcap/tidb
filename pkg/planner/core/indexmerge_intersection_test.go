@@ -19,6 +19,7 @@ import (
 	"regexp"
 	"testing"
 
+	"github.com/pingcap/tidb/pkg/ddl/notifier"
 	"github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testdata"
@@ -147,7 +148,7 @@ func TestHintForIntersectionIndexMerge(t *testing.T) {
 	tk.MustExec("insert into t8 values('啊aabbccdd', 'abcc', 'cccc', 'aa', '2,test')," +
 		"('啊aabb', 'abcdc', 'aaaa', '??', '2')")
 
-	require.NoError(t, handle.HandleDDLEvent(<-handle.DDLEventCh()))
+	<-notifier.DDLEventChForTest()
 	require.Nil(t, handle.Update(context.Background(), domain.InfoSchema()))
 	tk.MustExec("set @@tidb_partition_prune_mode = 'dynamic'")
 	tk.MustExec("analyze table t1,t2,t3,t4")

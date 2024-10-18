@@ -41,6 +41,7 @@ go_test(
     shard_count = 15,
     deps = [
         ":autoanalyze",
+        "//pkg/ddl/notifier",
         "//pkg/domain",
         "//pkg/domain/infosync",
         "//pkg/parser/model",

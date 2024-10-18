@@ -26,6 +26,7 @@ import (
 
 	"github.com/go-sql-driver/mysql"
 	"github.com/gorilla/mux"
+	"github.com/pingcap/tidb/pkg/ddl/notifier"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	server2 "github.com/pingcap/tidb/pkg/server"
 	"github.com/pingcap/tidb/pkg/server/handler/optimizor"
@@ -150,8 +151,7 @@ func prepareData(t *testing.T, client *testserverclient.TestServerClient, statHa
 	tk.MustExec("create database tidb")
 	tk.MustExec("use tidb")
 	tk.MustExec("create table test (a int, b varchar(20))")
-	err = h.HandleDDLEvent(<-h.DDLEventCh())
-	require.NoError(t, err)
+	<-notifier.DDLEventChForTest()
 	tk.MustExec("create index c on test (a, b)")
 	tk.MustExec("insert test values (1, 's')")
 	require.NoError(t, h.DumpStatsDeltaToKV(true))

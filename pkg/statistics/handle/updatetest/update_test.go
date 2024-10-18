@@ -23,6 +23,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/tidb/pkg/ddl/notifier"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/cardinality"
@@ -64,9 +65,9 @@ func TestSingleSessionInsert(t *testing.T) {
 	tableInfo1 := tbl1.Meta()
 	h := dom.StatsHandle()
 
-	err = h.HandleDDLEvent(<-h.DDLEventCh())
+	<-notifier.DDLEventChForTest()
 	require.NoError(t, err)
-	err = h.HandleDDLEvent(<-h.DDLEventCh())
+	<-notifier.DDLEventChForTest()
 	require.NoError(t, err)
 
 	require.NoError(t, h.DumpStatsDeltaToKV(true))
@@ -181,7 +182,7 @@ func TestRollback(t *testing.T) {
 	require.NoError(t, err)
 	tableInfo := tbl.Meta()
 	h := dom.StatsHandle()
-	err = h.HandleDDLEvent(<-h.DDLEventCh())
+	<-notifier.DDLEventChForTest()
 	require.NoError(t, err)
 	require.NoError(t, h.DumpStatsDeltaToKV(true))
 	require.NoError(t, h.Update(context.Background(), is))
@@ -216,8 +217,7 @@ func TestMultiSession(t *testing.T) {
 	tableInfo1 := tbl1.Meta()
 	h := dom.StatsHandle()
 
-	err = h.HandleDDLEvent(<-h.DDLEventCh())
-	require.NoError(t, err)
+	<-notifier.DDLEventChForTest()
 
 	require.NoError(t, h.DumpStatsDeltaToKV(true))
 	require.NoError(t, h.Update(context.Background(), is))
@@ -260,8 +260,7 @@ func TestTxnWithFailure(t *testing.T) {
 	tableInfo1 := tbl1.Meta()
 	h := dom.StatsHandle()
 
-	err = h.HandleDDLEvent(<-h.DDLEventCh())
-	require.NoError(t, err)
+	<-notifier.DDLEventChForTest()
 
 	rowCount1 := 10
 	testKit.MustExec("begin")
@@ -313,8 +312,7 @@ func TestUpdatePartition(t *testing.T) {
 		require.NoError(t, err)
 		tableInfo := tbl.Meta()
 		h := do.StatsHandle()
-		err = h.HandleDDLEvent(<-h.DDLEventCh())
-		require.NoError(t, err)
+		<-notifier.DDLEventChForTest()
 		pi := tableInfo.GetPartitionInfo()
 		require.Len(t, pi.Definitions, 2)
 		bColID := tableInfo.Columns[1].ID
@@ -380,8 +378,7 @@ func TestAutoUpdate(t *testing.T) {
 		tableInfo := tbl.Meta()
 		h := do.StatsHandle()
 
-		err = h.HandleDDLEvent(<-h.DDLEventCh())
-		require.NoError(t, err)
+		<-notifier.DDLEventChForTest()
 		require.NoError(t, h.Update(context.Background(), is))
 		stats := h.GetTableStats(tableInfo)
 		require.Equal(t, int64(0), stats.RealtimeCount)
@@ -600,8 +597,7 @@ func TestOutOfOrderUpdate(t *testing.T) {
 	require.NoError(t, err)
 	tableInfo := tbl.Meta()
 	h := do.StatsHandle()
-	err = h.HandleDDLEvent(<-h.DDLEventCh())
-	require.NoError(t, err)
+	<-notifier.DDLEventChForTest()
 
 	// Simulate the case that another tidb has inserted some value, but delta info has not been dumped to kv yet.
 	testKit.MustExec("insert into t values (2,2),(4,5)")
@@ -798,7 +794,7 @@ func TestAutoUpdatePartitionInDynamicOnlyMode(t *testing.T) {
 		do := dom
 		is := do.InfoSchema()
 		h := do.StatsHandle()
-		require.NoError(t, h.HandleDDLEvent(<-h.DDLEventCh()))
+		<-notifier.DDLEventChForTest()
 
 		testKit.MustExec("insert into t values (1, 'a'), (2, 'b'), (11, 'c'), (12, 'd'), (21, 'e'), (22, 'f')")
 		require.NoError(t, h.DumpStatsDeltaToKV(true))
@@ -861,7 +857,7 @@ func TestAutoAnalyzeRatio(t *testing.T) {
 	h := dom.StatsHandle()
 	tk.MustExec("use test")
 	tk.MustExec("create table t (a int, index idx(a))")
-	require.NoError(t, h.HandleDDLEvent(<-h.DDLEventCh()))
+	<-notifier.DDLEventChForTest()
 	tk.MustExec("insert into t values (1)" + strings.Repeat(", (1)", 19))
 	require.NoError(t, h.DumpStatsDeltaToKV(true))
 	is := dom.InfoSchema()
@@ -1063,7 +1059,7 @@ func TestStatsLockUnlockForAutoAnalyze(t *testing.T) {
 	h := dom.StatsHandle()
 	tk.MustExec("use test")
 	tk.MustExec("create table t (a int, index idx(a))")
-	require.NoError(t, h.HandleDDLEvent(<-h.DDLEventCh()))
+	<-notifier.DDLEventChForTest()
 	tk.MustExec("insert into t values (1)" + strings.Repeat(", (1)", 19))
 	require.NoError(t, h.DumpStatsDeltaToKV(true))
 	is := dom.InfoSchema()
@@ -1138,10 +1134,8 @@ func TestStatsLockForDelta(t *testing.T) {
 		testKit.MustExec("insert into t2 values(1, 2)")
 	}
 
-	err = h.HandleDDLEvent(<-h.DDLEventCh())
-	require.NoError(t, err)
-	err = h.HandleDDLEvent(<-h.DDLEventCh())
-	require.NoError(t, err)
+	<-notifier.DDLEventChForTest()
+	<-notifier.DDLEventChForTest()
 
 	require.NoError(t, h.DumpStatsDeltaToKV(true))
 	require.NoError(t, h.Update(context.Background(), is))
@@ -1239,7 +1233,7 @@ func TestNotDumpSysTable(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("create table t1 (a int, b int)")
 	h := dom.StatsHandle()
-	require.NoError(t, h.HandleDDLEvent(<-h.DDLEventCh()))
+	<-notifier.DDLEventChForTest()
 	tk.MustQuery("select count(1) from mysql.stats_meta").Check(testkit.Rows("1"))
 	// After executing `delete from mysql.stats_meta`, a delta for mysql.stats_meta is created but it would not be dumped.
 	tk.MustExec("delete from mysql.stats_meta")
@@ -1270,7 +1264,7 @@ func TestAutoAnalyzePartitionTableAfterAddingIndex(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("create table t (a int, b int) partition by range (a) (PARTITION p0 VALUES LESS THAN (10), PARTITION p1 VALUES LESS THAN MAXVALUE)")
 	h := dom.StatsHandle()
-	require.NoError(t, h.HandleDDLEvent(<-h.DDLEventCh()))
+	<-notifier.DDLEventChForTest()
 	tk.MustExec("insert into t values (1,2), (3,4), (11,12),(13,14)")
 	tk.MustExec("set session tidb_analyze_version = 2")
 	tk.MustExec("set session tidb_partition_prune_mode = 'dynamic'")

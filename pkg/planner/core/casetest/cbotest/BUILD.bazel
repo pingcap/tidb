@@ -12,6 +12,7 @@ go_test(
     race = "on",
     shard_count = 17,
     deps = [
+        "//pkg/ddl/notifier",
         "//pkg/domain",
         "//pkg/executor",
         "//pkg/meta/model",

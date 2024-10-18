@@ -20,6 +20,7 @@ import (
 	"testing"
 
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/ddl/notifier"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	pmodel "github.com/pingcap/tidb/pkg/parser/model"
@@ -225,7 +226,7 @@ func TestIssue32632(t *testing.T) {
 		"`S_COMMENT` varchar(101) NOT NULL," +
 		"PRIMARY KEY (`S_SUPPKEY`) /*T![clustered_index] CLUSTERED */)")
 	h := dom.StatsHandle()
-	require.NoError(t, h.HandleDDLEvent(<-h.DDLEventCh()))
+	<-notifier.DDLEventChForTest()
 	tk.MustExec("set @@tidb_enforce_mpp = 1")
 
 	tbl1, err := dom.InfoSchema().TableByName(context.Background(), pmodel.CIStr{O: "test", L: "test"}, pmodel.CIStr{O: "partsupp", L: "partsupp"})

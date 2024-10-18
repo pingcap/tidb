@@ -21,6 +21,7 @@ import (
 
 	"github.com/pingcap/errors"
 	sess "github.com/pingcap/tidb/pkg/ddl/session"
+	"github.com/pingcap/tidb/pkg/util/sqlescape"
 )
 
 // Store is the (de)serialization and persistent layer.
@@ -58,7 +59,8 @@ func (t *tableStore) Insert(ctx context.Context, s *sess.Session, change *schema
 			processed_by_flag
 		) VALUES (%d, %d, '%s', 0)`,
 		t.db, t.table,
-		change.ddlJobID, change.multiSchemaChangeSeq, event,
+		// TODO: find the correct way to escape the string.
+		change.ddlJobID, change.multiSchemaChangeSeq, sqlescape.EscapeString(string(event)),
 	)
 	_, err = s.Execute(ctx, sql, "ddl_notifier")
 	return err

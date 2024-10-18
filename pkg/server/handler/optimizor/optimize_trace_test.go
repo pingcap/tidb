@@ -21,6 +21,7 @@ import (
 	"testing"
 
 	"github.com/gorilla/mux"
+	"github.com/pingcap/tidb/pkg/ddl/notifier"
 	server2 "github.com/pingcap/tidb/pkg/server"
 	"github.com/pingcap/tidb/pkg/server/handler/optimizor"
 	"github.com/pingcap/tidb/pkg/server/internal/testserverclient"
@@ -83,12 +84,10 @@ func prepareData4OptimizeTrace(t *testing.T, client *testserverclient.TestServer
 	}()
 	tk := testkit.NewDBTestKit(t, db)
 
-	h := statHandle.Domain().StatsHandle()
 	tk.MustExec("create database optimizeTrace")
 	tk.MustExec("use optimizeTrace")
 	tk.MustExec("create table t(a int)")
-	err = h.HandleDDLEvent(<-h.DDLEventCh())
-	require.NoError(t, err)
+	<-notifier.DDLEventChForTest()
 	rows := tk.MustQuery("trace plan select * from t")
 	require.True(t, rows.Next(), "unexpected data")
 	var filename string

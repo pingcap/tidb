@@ -89,9 +89,6 @@ type Handle struct {
 	// StatsGlobal is used to manage global stats.
 	types.StatsGlobal
 
-	// DDL is used to handle ddl events.
-	types.DDL
-
 	InitStatsDone chan struct{}
 
 	// StatsCache ...
@@ -101,9 +98,6 @@ type Handle struct {
 // Clear the statsCache, only for test.
 func (h *Handle) Clear() {
 	h.StatsCache.Clear()
-	for len(h.DDLEventCh()) > 0 {
-		<-h.DDLEventCh()
-	}
 	h.ResetSessionStatsList()
 }
 
@@ -140,10 +134,7 @@ func NewHandle(
 	handle.StatsAnalyze = autoanalyze.NewStatsAnalyze(handle, tracker)
 	handle.StatsSyncLoad = syncload.NewStatsSyncLoad(is, handle)
 	handle.StatsGlobal = globalstats.NewStatsGlobal(handle)
-	handle.DDL = ddl.NewDDLHandler(
-		handle.StatsReadWriter,
-		handle,
-	)
+	ddl.NewHandlerAndRegister(handle)
 	return handle, nil
 }
 
@@ -193,12 +184,6 @@ func (h *Handle) getPartitionStats(tblInfo *model.TableInfo, pid int64, returnPs
 
 // FlushStats flushes the cached stats update into store.
 func (h *Handle) FlushStats() {
-	for len(h.DDLEventCh()) > 0 {
-		e := <-h.DDLEventCh()
-		if err := h.HandleDDLEvent(e); err != nil {
-			statslogutil.StatsLogger().Error("handle ddl event fail", zap.Error(err))
-		}
-	}
 	if err := h.DumpStatsDeltaToKV(true); err != nil {
 		statslogutil.StatsLogger().Error("dump stats delta fail", zap.Error(err))
 	}

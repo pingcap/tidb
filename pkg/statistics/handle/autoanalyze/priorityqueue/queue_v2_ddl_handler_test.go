@@ -93,10 +93,7 @@ func TestTruncateTable(t *testing.T) {
 	testKit.MustExec("truncate table t")
 
 	// Find the truncate table partition event.
-	truncateTableEvent := findEvent(h.DDLEventCh(), model.ActionTruncateTable)
-
-	// Handle the truncate table event.
-	require.NoError(t, h.HandleDDLEvent(truncateTableEvent))
+	truncateTableEvent := findEvent(notifier.DDLEventChForTest(), model.ActionTruncateTable)
 
 	ctx := context.Background()
 	sctx := testKit.Session().(sessionctx.Context)
@@ -154,10 +151,7 @@ func testTruncatePartitionedTable(
 	testKit.MustExec("truncate table t")
 
 	// Find the truncate table partition event.
-	truncateTableEvent := findEvent(h.DDLEventCh(), model.ActionTruncateTable)
-
-	// Handle the truncate table event.
-	require.NoError(t, h.HandleDDLEvent(truncateTableEvent))
+	truncateTableEvent := findEvent(notifier.DDLEventChForTest(), model.ActionTruncateTable)
 
 	ctx := context.Background()
 	sctx := testKit.Session().(sessionctx.Context)
@@ -204,10 +198,7 @@ func TestDropTable(t *testing.T) {
 	testKit.MustExec("drop table t")
 
 	// Find the drop table partition event.
-	dropTableEvent := findEvent(h.DDLEventCh(), model.ActionDropTable)
-
-	// Handle the drop table event.
-	require.NoError(t, h.HandleDDLEvent(dropTableEvent))
+	dropTableEvent := findEvent(notifier.DDLEventChForTest(), model.ActionDropTable)
 
 	ctx := context.Background()
 	sctx := testKit.Session().(sessionctx.Context)
@@ -265,10 +256,7 @@ func testDropPartitionedTable(
 	testKit.MustExec("drop table t")
 
 	// Find the drop table partition event.
-	dropTableEvent := findEvent(h.DDLEventCh(), model.ActionDropTable)
-
-	// Handle the drop table event.
-	require.NoError(t, h.HandleDDLEvent(dropTableEvent))
+	dropTableEvent := findEvent(notifier.DDLEventChForTest(), model.ActionDropTable)
 
 	ctx := context.Background()
 	sctx := testKit.Session().(sessionctx.Context)
@@ -318,10 +306,7 @@ func TestTruncateTablePartition(t *testing.T) {
 	testKit.MustExec("alter table t truncate partition p0")
 
 	// Find the truncate table partition event.
-	truncateTablePartitionEvent := findEvent(h.DDLEventCh(), model.ActionTruncateTablePartition)
-
-	// Handle the truncate table partition event.
-	require.NoError(t, h.HandleDDLEvent(truncateTablePartitionEvent))
+	truncateTablePartitionEvent := findEvent(notifier.DDLEventChForTest(), model.ActionTruncateTablePartition)
 
 	ctx := context.Background()
 	require.NoError(t, statsutil.CallWithSCtx(
@@ -376,10 +361,7 @@ func TestDropTablePartition(t *testing.T) {
 	testKit.MustExec("alter table t drop partition p0")
 
 	// Find the drop table partition event.
-	dropTablePartitionEvent := findEvent(h.DDLEventCh(), model.ActionDropTablePartition)
-
-	// Handle the drop table partition event.
-	require.NoError(t, h.HandleDDLEvent(dropTablePartitionEvent))
+	dropTablePartitionEvent := findEvent(notifier.DDLEventChForTest(), model.ActionDropTablePartition)
 
 	ctx := context.Background()
 	require.NoError(t, statsutil.CallWithSCtx(
@@ -440,10 +422,7 @@ func TestExchangeTablePartition(t *testing.T) {
 	testKit.MustExec("alter table t1 exchange partition p0 with table t2")
 
 	// Find the exchange table partition event.
-	exchangeTablePartitionEvent := findEvent(h.DDLEventCh(), model.ActionExchangeTablePartition)
-
-	// Handle the exchange table partition event.
-	require.NoError(t, h.HandleDDLEvent(exchangeTablePartitionEvent))
+	exchangeTablePartitionEvent := findEvent(notifier.DDLEventChForTest(), model.ActionExchangeTablePartition)
 
 	ctx := context.Background()
 	require.NoError(t, statsutil.CallWithSCtx(
@@ -501,10 +480,7 @@ func TestReorganizeTablePartition(t *testing.T) {
 	testKit.MustExec("alter table t reorganize partition p0 into (partition p0 values less than (5), partition p2 values less than (10))")
 
 	// Find the reorganize table partition event.
-	reorganizeTablePartitionEvent := findEvent(h.DDLEventCh(), model.ActionReorganizePartition)
-
-	// Handle the reorganize table partition event.
-	require.NoError(t, h.HandleDDLEvent(reorganizeTablePartitionEvent))
+	reorganizeTablePartitionEvent := findEvent(notifier.DDLEventChForTest(), model.ActionReorganizePartition)
 
 	ctx := context.Background()
 	require.NoError(t, statsutil.CallWithSCtx(
@@ -559,10 +535,7 @@ func TestAlterTablePartitioning(t *testing.T) {
 	testKit.MustExec("alter table t partition by range columns (c1) (partition p0 values less than (5), partition p1 values less than (10))")
 
 	// Find the alter table partitioning event.
-	alterTablePartitioningEvent := findEvent(h.DDLEventCh(), model.ActionAlterTablePartitioning)
-
-	// Handle the alter table partitioning event.
-	require.NoError(t, h.HandleDDLEvent(alterTablePartitioningEvent))
+	alterTablePartitioningEvent := findEvent(notifier.DDLEventChForTest(), model.ActionAlterTablePartitioning)
 
 	ctx := context.Background()
 	require.NoError(t, statsutil.CallWithSCtx(
@@ -617,10 +590,7 @@ func TestRemovePartitioning(t *testing.T) {
 	testKit.MustExec("alter table t remove partitioning")
 
 	// Find the remove partitioning event.
-	removePartitioningEvent := findEvent(h.DDLEventCh(), model.ActionRemovePartitioning)
-
-	// Handle the remove partitioning event.
-	require.NoError(t, h.HandleDDLEvent(removePartitioningEvent))
+	removePartitioningEvent := findEvent(notifier.DDLEventChForTest(), model.ActionRemovePartitioning)
 
 	ctx := context.Background()
 	require.NoError(t, statsutil.CallWithSCtx(
@@ -675,7 +645,7 @@ func TestVectorIndexTriggerAutoAnalyze(t *testing.T) {
 
 	tk.MustExec("alter table t add vector index vecIdx1((vec_cosine_distance(d))) USING HNSW;")
 
-	addIndexEvent := findEventWithTimeout(h.DDLEventCh(), model.ActionAddVectorIndex, 1)
+	addIndexEvent := findEventWithTimeout(notifier.DDLEventChForTest(), model.ActionAddVectorIndex, 1)
 	// No event is found
 	require.Nil(t, addIndexEvent)
 }

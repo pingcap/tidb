@@ -19,7 +19,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/pingcap/tidb/pkg/ddl/notifier"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -460,14 +459,6 @@ type StatsGlobal interface {
 	) (err error)
 }
 
-// DDL is used to handle ddl events.
-type DDL interface {
-	// HandleDDLEvent handles ddl events.
-	HandleDDLEvent(changeEvent *notifier.SchemaChangeEvent) error
-	// DDLEventCh returns ddl events channel in handle.
-	DDLEventCh() chan *notifier.SchemaChangeEvent
-}
-
 // StatsHandle is used to manage TiDB Statistics.
 type StatsHandle interface {
 	// Pool is used to get a session or a goroutine to execute stats updating.
@@ -517,7 +508,4 @@ type StatsHandle interface {
 
 	// StatsGlobal is used to manage partition table global stats.
 	StatsGlobal
-
-	// DDL is used to handle ddl events.
-	DDL
 }

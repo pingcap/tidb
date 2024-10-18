@@ -24,6 +24,7 @@ import (
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/ddl/notifier"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/planner/cardinality"
@@ -200,8 +201,7 @@ func TestLoadHist(t *testing.T) {
 	testKit.MustExec("create table t (c1 varchar(12), c2 char(12))")
 	do := dom
 	h := do.StatsHandle()
-	err := h.HandleDDLEvent(<-h.DDLEventCh())
-	require.NoError(t, err)
+	<-notifier.DDLEventChForTest()
 	rowCount := 10
 	for i := 0; i < rowCount; i++ {
 		testKit.MustExec("insert into t values('a','ddd')")
@@ -236,8 +236,7 @@ func TestLoadHist(t *testing.T) {
 	})
 	// Add column c3, we only update c3.
 	testKit.MustExec("alter table t add column c3 int")
-	err = h.HandleDDLEvent(<-h.DDLEventCh())
-	require.NoError(t, err)
+	<-notifier.DDLEventChForTest()
 	is = do.InfoSchema()
 	tbl, err = is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
@@ -1166,8 +1165,7 @@ func testIncrementalModifyCountUpdateHelper(analyzeSnapshot bool) func(*testing.
 		analyzehelper.TriggerPredicateColumnsCollection(t, tk, store, "t", "a")
 		tk.MustExec("set @@session.tidb_analyze_version = 2")
 		h := dom.StatsHandle()
-		err := h.HandleDDLEvent(<-h.DDLEventCh())
-		require.NoError(t, err)
+		<-notifier.DDLEventChForTest()
 		tbl, err := dom.InfoSchema().TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
 		require.NoError(t, err)
 		tblInfo := tbl.Meta()
@@ -1294,7 +1292,7 @@ func TestUninitializedStatsStatus(t *testing.T) {
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int, b int, c int, index idx_a(a))")
 	h := dom.StatsHandle()
-	require.NoError(t, h.HandleDDLEvent(<-h.DDLEventCh()))
+	<-notifier.DDLEventChForTest()
 	tk.MustExec("insert into t values (1,2,2), (3,4,4), (5,6,6), (7,8,8), (9,10,10)")
 	require.NoError(t, h.DumpStatsDeltaToKV(true))
 	is := dom.InfoSchema()
