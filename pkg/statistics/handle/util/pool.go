@@ -15,17 +15,14 @@
 package util
 
 import (
-	"math"
-	"time"
-
+	"github.com/pingcap/tidb/pkg/resourcemanager/gpool"
 	"github.com/pingcap/tidb/pkg/util"
-	"github.com/tiancaiamao/gp"
 )
 
 // Pool is used to reuse goroutine and session.
 type Pool interface {
 	// GPool returns the goroutine pool.
-	GPool() *gp.Pool
+	GPool() gpool.Pool
 
 	// SPool returns the session pool.
 	SPool() util.SessionPool
@@ -38,20 +35,20 @@ var _ Pool = (*pool)(nil)
 
 type pool struct {
 	// This gpool is used to reuse goroutine in the mergeGlobalStatsTopN.
-	gpool *gp.Pool
+	gpool gpool.Pool
 	pool  util.SessionPool
 }
 
 // NewPool creates a new Pool.
-func NewPool(p util.SessionPool) Pool {
+func NewPool(gPool gpool.Pool, p util.SessionPool) Pool {
 	return &pool{
-		gpool: gp.New(math.MaxInt16, time.Minute),
+		gpool: gPool,
 		pool:  p,
 	}
 }
 
 // GPool returns the goroutine pool.
-func (p *pool) GPool() *gp.Pool {
+func (p *pool) GPool() gpool.Pool {
 	return p.gpool
 }
 
