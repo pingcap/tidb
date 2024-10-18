@@ -54,6 +54,7 @@ import (
 	"github.com/pingcap/tidb/pkg/server/internal/dump"
 	"github.com/pingcap/tidb/pkg/server/internal/parse"
 	"github.com/pingcap/tidb/pkg/server/internal/resultset"
+	util2 "github.com/pingcap/tidb/pkg/server/internal/util"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	storeerr "github.com/pingcap/tidb/pkg/store/driver/error"
@@ -180,6 +181,13 @@ func (cc *clientConn) handleStmtExecute(ctx context.Context, data []byte) (err e
 	)
 	cc.initInputEncoder(ctx)
 	numParams := stmt.NumParams()
+	clientHasQueryAttr := cc.capability&mysql.ClientQueryAttributes > 0
+	if clientHasQueryAttr && (numParams > 0 || flag&mysql.ParameterCountAvailable > 0) {
+		paraCount, _, np := util2.ParseLengthEncodedInt(data[pos:])
+		numParams = int(paraCount)
+		pos += np
+	}
+
 	args := make([]param.BinaryParam, numParams)
 	if numParams > 0 {
 		nullBitmapLen := (numParams + 7) >> 3
@@ -192,12 +200,28 @@ func (cc *clientConn) handleStmtExecute(ctx context.Context, data []byte) (err e
 		// new param bound flag
 		if data[pos] == 1 {
 			pos++
-			if len(data) < (pos + (numParams << 1)) {
-				return mysql.ErrMalformPacket
+			// For client that has query attribute ability, parameter's name will also be sent.
+			// However, it is useless for execute statement, so we ignore it here.
+			if clientHasQueryAttr {
+				for i := 0; i < numParams; i++ {
+					paramTypes = append(paramTypes, data[pos:pos+2]...)
+					pos += 2
+					// parse names
+					_, _, p, e := util2.ParseLengthEncodedBytes(data[pos:])
+					if e != nil {
+						return mysql.ErrMalformPacket
+					}
+					pos += p
+				}
+			} else {
+				if len(data) < (pos + (numParams << 1)) {
+					return mysql.ErrMalformPacket
+				}
+
+				paramTypes = data[pos : pos+(numParams<<1)]
+				pos += numParams << 1
 			}
 
-			paramTypes = data[pos : pos+(numParams<<1)]
-			pos += numParams << 1
 			paramValues = data[pos:]
 			// Just the first StmtExecute packet contain parameters type,
 			// we need save it for further use.
@@ -206,7 +230,7 @@ func (cc *clientConn) handleStmtExecute(ctx context.Context, data []byte) (err e
 			paramValues = data[pos+1:]
 		}
 
-		err = parseBinaryParams(args, stmt.BoundParams(), nullBitmaps, stmt.GetParamsType(), paramValues, cc.inputDecoder)
+		_, err = parseBinaryParams(args, stmt.BoundParams(), nullBitmaps, stmt.GetParamsType(), paramValues, cc.inputDecoder)
 		// This `.Reset` resets the arguments, so it's fine to just ignore the error (and the it'll be reset again in the following routine)
 		errReset := stmt.Reset()
 		if errReset != nil {
