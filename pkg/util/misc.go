@@ -140,8 +140,8 @@ func HasCancelled(ctx context.Context) (cancel bool) {
 }
 
 const (
-	// syntaxErrorPrefix is the common prefix for SQL syntax error in TiDB.
-	syntaxErrorPrefix = "You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use"
+	// SyntaxErrorPrefix is the common prefix for SQL syntax error in TiDB.
+	SyntaxErrorPrefix = "You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use"
 )
 
 // SyntaxError converts parser error to TiDB's syntax error.
@@ -159,7 +159,7 @@ func SyntaxError(err error) error {
 		}
 	}
 
-	return parser.ErrParse.GenWithStackByArgs(syntaxErrorPrefix, err.Error())
+	return parser.ErrParse.GenWithStackByArgs(SyntaxErrorPrefix, err.Error())
 }
 
 // SyntaxWarn converts parser warn to TiDB's syntax warn.
@@ -175,7 +175,7 @@ func SyntaxWarn(err error) error {
 		return err
 	}
 
-	return parser.ErrParse.FastGenByArgs(syntaxErrorPrefix, err.Error())
+	return parser.ErrParse.FastGenByArgs(SyntaxErrorPrefix, err.Error())
 }
 
 var (
