@@ -297,7 +297,7 @@ func waitAllScheduleStoppedAndNoRegionHole(ctx context.Context, cfg Config, mgr 
 	}
 	// we wait for nearly 15*40 = 600s = 10m
 	backoffer := utils.InitialRetryState(40, 5*time.Second, waitAllScheduleStoppedInterval)
-	for backoffer.Attempt() > 0 {
+	for backoffer.RemainingAttempts() > 0 {
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
