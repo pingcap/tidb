@@ -18,6 +18,7 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/config"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/redact"
+	pd "github.com/tikv/pd/client"
 	"go.uber.org/zap"
 )
 
@@ -37,38 +38,8 @@ const (
 	ScanRegionPaginationLimit = 128
 )
 
-func checkRegionConsistency(startKey, endKey []byte, regions []*RegionInfo) error {
-	// current pd can't guarantee the consistency of returned regions
-	if len(regions) == 0 {
-		return errors.Annotatef(berrors.ErrPDBatchScanRegion, "scan region return empty result, startKey: %s, endKey: %s",
-			redact.Key(startKey), redact.Key(endKey))
-	}
-
-	if bytes.Compare(regions[0].Region.StartKey, startKey) > 0 {
-		return errors.Annotatef(berrors.ErrPDBatchScanRegion,
-			"first region %d's startKey(%s) > startKey(%s), region epoch: %s",
-			regions[0].Region.Id,
-			redact.Key(regions[0].Region.StartKey), redact.Key(startKey),
-			regions[0].Region.RegionEpoch.String())
-	} else if len(regions[len(regions)-1].Region.EndKey) != 0 &&
-		bytes.Compare(regions[len(regions)-1].Region.EndKey, endKey) < 0 {
-		return errors.Annotatef(berrors.ErrPDBatchScanRegion,
-			"last region %d's endKey(%s) < endKey(%s), region epoch: %s",
-			regions[len(regions)-1].Region.Id,
-			redact.Key(regions[len(regions)-1].Region.EndKey), redact.Key(endKey),
-			regions[len(regions)-1].Region.RegionEpoch.String())
-	}
-
-	cur := regions[0]
-	if cur.Leader == nil {
-		return errors.Annotatef(berrors.ErrPDBatchScanRegion,
-			"region %d's leader is nil", cur.Region.Id)
-	}
-	if cur.Leader.StoreId == 0 {
-		return errors.Annotatef(berrors.ErrPDBatchScanRegion,
-			"region %d's leader's store id is 0", cur.Region.Id)
-	}
-	for _, r := range regions[1:] {
+func checkRegionConsistency(regions []*RegionInfo) error {
+	for _, r := range regions {
 		if r.Leader == nil {
 			return errors.Annotatef(berrors.ErrPDBatchScanRegion,
 				"region %d's leader is nil", r.Region.Id)
@@ -77,14 +48,6 @@ func checkRegionConsistency(startKey, endKey []byte, regions []*RegionInfo) erro
 			return errors.Annotatef(berrors.ErrPDBatchScanRegion,
 				"region %d's leader's store id is 0", r.Region.Id)
 		}
-		if !bytes.Equal(cur.Region.EndKey, r.Region.StartKey) {
-			return errors.Annotatef(berrors.ErrPDBatchScanRegion,
-				"region %d's endKey not equal to next region %d's startKey, endKey: %s, startKey: %s, region epoch: %s %s",
-				cur.Region.Id, r.Region.Id,
-				redact.Key(cur.Region.EndKey), redact.Key(r.Region.StartKey),
-				cur.Region.RegionEpoch.String(), r.Region.RegionEpoch.String())
-		}
-		cur = r
 	}
 
 	return nil
@@ -111,7 +74,13 @@ func PaginateScanRegion(
 		scanStartKey := startKey
 		for {
 			var batch []*RegionInfo
-			batch, err = client.ScanRegions(ctx, scanStartKey, endKey, limit)
+			batch, err = client.ScanRegions(
+				ctx,
+				scanStartKey,
+				endKey,
+				limit,
+				pd.WithOutputMustContainAllKeyRange(),
+			)
 			if err != nil {
 				err = errors.Annotatef(berrors.ErrPDBatchScanRegion.Wrap(err), "scan regions from start-key:%s, err: %s",
 					redact.Key(scanStartKey), err.Error())
@@ -136,7 +105,7 @@ func PaginateScanRegion(
 		}
 		lastRegions = regions
 
-		if err = checkRegionConsistency(startKey, endKey, regions); err != nil {
+		if err = checkRegionConsistency(regions); err != nil {
 			log.Warn("failed to scan region, retrying",
 				logutil.ShortError(err),
 				zap.Int("regionLength", len(regions)))
@@ -146,34 +115,6 @@ func PaginateScanRegion(
 	}, backoffer)
 
 	return lastRegions, err
-}
-
-// checkPartRegionConsistency only checks the continuity of regions and the first region consistency.
-func checkPartRegionConsistency(startKey, endKey []byte, regions []*RegionInfo) error {
-	// current pd can't guarantee the consistency of returned regions
-	if len(regions) == 0 {
-		return errors.Annotatef(berrors.ErrPDBatchScanRegion,
-			"scan region return empty result, startKey: %s, endKey: %s",
-			redact.Key(startKey), redact.Key(endKey))
-	}
-
-	if bytes.Compare(regions[0].Region.StartKey, startKey) > 0 {
-		return errors.Annotatef(berrors.ErrPDBatchScanRegion,
-			"first region's startKey > startKey, startKey: %s, regionStartKey: %s",
-			redact.Key(startKey), redact.Key(regions[0].Region.StartKey))
-	}
-
-	cur := regions[0]
-	for _, r := range regions[1:] {
-		if !bytes.Equal(cur.Region.EndKey, r.Region.StartKey) {
-			return errors.Annotatef(berrors.ErrPDBatchScanRegion,
-				"region endKey not equal to next region startKey, endKey: %s, startKey: %s",
-				redact.Key(cur.Region.EndKey), redact.Key(r.Region.StartKey))
-		}
-		cur = r
-	}
-
-	return nil
 }
 
 func ScanRegionsWithRetry(
@@ -192,15 +133,16 @@ func ScanRegionsWithRetry(
 	// because it's not easy to check multierr equals normal error.
 	// see https://github.com/pingcap/tidb/issues/33419.
 	_ = utils.WithRetry(ctx, func() error {
-		regions, err = client.ScanRegions(ctx, startKey, endKey, limit)
+		regions, err = client.ScanRegions(
+			ctx,
+			startKey,
+			endKey,
+			limit,
+			pd.WithOutputMustContainAllKeyRange(),
+		)
 		if err != nil {
 			err = errors.Annotatef(berrors.ErrPDBatchScanRegion, "scan regions from start-key:%s, err: %s",
 				redact.Key(startKey), err.Error())
-			return err
-		}
-
-		if err = checkPartRegionConsistency(startKey, endKey, regions); err != nil {
-			log.Warn("failed to scan region, retrying", logutil.ShortError(err))
 			return err
 		}
 
