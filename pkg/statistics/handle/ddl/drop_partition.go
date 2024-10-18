@@ -18,7 +18,6 @@ import (
 	"context"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/pkg/ddl/notifier"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
@@ -26,26 +25,6 @@ import (
 	"github.com/pingcap/tidb/pkg/statistics/handle/storage"
 	"github.com/pingcap/tidb/pkg/statistics/handle/util"
 )
-
-func (h *ddlHandlerImpl) onDropPartitions(t *notifier.SchemaChangeEvent) error {
-	globalTableInfo, droppedPartitionInfo := t.GetDropPartitionInfo()
-	// Note: Put all the operations in a transaction.
-	if err := util.CallWithSCtx(h.statsHandler.SPool(), func(sctx sessionctx.Context) error {
-		return updateGlobalTableStats4DropPartition(util.StatsCtx, sctx, globalTableInfo, droppedPartitionInfo)
-	}, util.FlagWrapTxn); err != nil {
-		return err
-	}
-
-	// Reset the partition stats.
-	// It's OK to put those operations in different transactions. Because it will not affect the correctness.
-	for _, def := range droppedPartitionInfo.Definitions {
-		if err := h.statsWriter.UpdateStatsMetaVersionForGC(def.ID); err != nil {
-			return err
-		}
-	}
-
-	return nil
-}
 
 func updateGlobalTableStats4DropPartition(
 	ctx context.Context,

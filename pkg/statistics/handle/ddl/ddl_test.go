@@ -76,8 +76,16 @@ func TestDDLTable(t *testing.T) {
 	require.NoError(t, err)
 	tableInfo := tbl.Meta()
 	h := do.StatsHandle()
-	err = h.HandleDDLEvent(<-h.DDLEventCh())
-	require.NoError(t, err)
+	ch := notifier.DDLEventChForTest()
+	findEventByFilter(ch, func(event *notifier.SchemaChangeEvent) bool {
+		if event.GetType() == model.ActionCreateTables {
+			if event.GetCreateTablesInfo()[0].Name.O == "t" {
+				return true
+			}
+		}
+
+		return false
+	})
 	require.Nil(t, h.Update(context.Background(), is))
 	statsTbl := h.GetTableStats(tableInfo)
 	require.False(t, statsTbl.Pseudo)
@@ -1311,6 +1319,16 @@ func findEvent(eventCh <-chan *notifier.SchemaChangeEvent, eventType model.Actio
 	for {
 		event := <-eventCh
 		if event.GetType() == eventType {
+			return event
+		}
+	}
+}
+
+func findEventByFilter(eventCh <-chan *notifier.SchemaChangeEvent, filter func(event *notifier.SchemaChangeEvent) bool) *notifier.SchemaChangeEvent {
+	// Find the target event.
+	for {
+		event := <-eventCh
+		if filter(event) {
 			return event
 		}
 	}

@@ -18,7 +18,6 @@ import (
 	"context"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/pkg/ddl/notifier"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -29,39 +28,6 @@ import (
 	"github.com/pingcap/tidb/pkg/statistics/handle/util"
 	"go.uber.org/zap"
 )
-
-func (h *ddlHandlerImpl) onTruncatePartitions(t *notifier.SchemaChangeEvent) error {
-	globalTableInfo, addedPartInfo, droppedPartInfo := t.GetTruncatePartitionInfo()
-	// First, add the new stats meta record for the new partitions.
-	for _, def := range addedPartInfo.Definitions {
-		if err := h.statsWriter.InsertTableStats2KV(globalTableInfo, def.ID); err != nil {
-			return err
-		}
-	}
-
-	// Second, clean up the old stats meta from global stats meta for the dropped partitions.
-	// Do not forget to put those operations in one transaction.
-	if err := util.CallWithSCtx(h.statsHandler.SPool(), func(sctx sessionctx.Context) error {
-		return updateGlobalTableStats4TruncatePartition(
-			util.StatsCtx,
-			sctx,
-			globalTableInfo,
-			droppedPartInfo,
-		)
-	}, util.FlagWrapTxn); err != nil {
-		return err
-	}
-
-	// Third, clean up the old stats meta from partition stats meta for the dropped partitions.
-	// It's OK to put those operations in different transactions. Because it will not affect the correctness.
-	for _, def := range droppedPartInfo.Definitions {
-		if err := h.statsWriter.UpdateStatsMetaVersionForGC(def.ID); err != nil {
-			return err
-		}
-	}
-
-	return nil
-}
 
 func updateGlobalTableStats4TruncatePartition(
 	ctx context.Context,

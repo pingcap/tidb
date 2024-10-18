@@ -561,7 +561,6 @@ func (d *ddl) IsTiFlashPollEnabled() bool {
 func (d *ddl) RegisterStatsHandle(h *handle.Handle) {
 	d.ddlCtx.statsHandle = h
 	d.executor.statsHandle = h
-	d.ddlEventCh = h.DDLEventCh()
 }
 
 // asyncNotifyEvent will notify the ddl event to outside world, say statistic handle. When the channel is full, we may

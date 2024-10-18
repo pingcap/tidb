@@ -1490,15 +1490,6 @@ func (do *Domain) Start() error {
 		return err
 	}
 	do.minJobIDRefresher = do.ddl.GetMinJobIDRefresher()
-	notifier.DefaultStore = notifier.OpenTableStore("mysql", "ddl_notifier")
-	sctx, err := do.sysSessionPool.Get()
-	if err != nil {
-		return err
-	}
-	err = notifier.InitDDLNotifier(sctx.(sessionctx.Context), notifier.DefaultStore, 50*time.Millisecond)
-	if err != nil {
-		return err
-	}
 
 	// Local store needs to get the change information for every DDL state in each session.
 	do.wg.Run(func() {
@@ -1522,6 +1513,16 @@ func (do *Domain) Start() error {
 	}
 
 	err = do.initLogBackup(do.ctx, pdCli)
+	if err != nil {
+		return err
+	}
+
+	notifier.DefaultStore = notifier.OpenTableStore("mysql", "ddl_notifier")
+	sctx, err := do.sysSessionPool.Get()
+	if err != nil {
+		return err
+	}
+	err = notifier.InitDDLNotifier(sctx.(sessionctx.Context), notifier.DefaultStore, 50*time.Millisecond)
 	if err != nil {
 		return err
 	}
@@ -2335,6 +2336,12 @@ func (do *Domain) UpdateTableStatsLoop(ctx, initStatsCtx sessionctx.Context) err
 	do.wg.Run(func() {
 		do.indexUsageWorker()
 	}, "indexUsageWorker")
+	// TODO: Does it guarantee we can always get the latest stats owner status here?
+	if do.statsOwner.IsOwner() {
+		do.wg.Run(func() {
+			notifier.StartDDLNotifier(do.ctx)
+		}, "ddlNotifier")
+	}
 	if do.statsLease <= 0 {
 		// For statsLease > 0, `updateStatsWorker` handles the quit of stats owner.
 		do.wg.Run(func() { quitStatsOwner(do, do.statsOwner) }, "quitStatsOwner")
