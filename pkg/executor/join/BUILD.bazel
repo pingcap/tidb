@@ -54,6 +54,7 @@ go_library(
         "//pkg/util/disk",
         "//pkg/util/execdetails",
         "//pkg/util/hack",
+        "//pkg/util/intest",
         "//pkg/util/logutil",
         "//pkg/util/memory",
         "//pkg/util/mvmap",
