@@ -142,6 +142,8 @@ type Server struct {
 	authTokenCancelFunc context.CancelFunc
 	wg                  sync.WaitGroup
 	printMDLLogTime     time.Time
+
+	StandbyController
 }
 
 // NewTestServer creates a new Server for test.
@@ -650,6 +652,10 @@ func (s *Server) registerConn(conn *clientConn) bool {
 
 // onConn runs in its own goroutine, handles queries from this connection.
 func (s *Server) onConn(conn *clientConn) {
+	if s.StandbyController != nil {
+		s.StandbyController.OnConnActive()
+	}
+
 	// init the connInfo
 	_, _, err := conn.PeerHost("", false)
 	if err != nil {
