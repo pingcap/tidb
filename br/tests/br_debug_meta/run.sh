@@ -42,7 +42,7 @@ run_sql "DROP DATABASE $DB;"
 run_br validate decode -s "local://$TEST_DIR/$DB"
 
 # should generate backupmeta.json
-if [ ! -f "$TEST_DIR/$DB/backupmeta.json" ]; then
+if [ ! -f "$TEST_DIR/$DB/jsons/backupmeta.json" ]; then
     echo "TEST: [$TEST_NAME] decode failed!"
     exit 1
 fi
