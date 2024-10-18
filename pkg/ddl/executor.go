@@ -5163,6 +5163,17 @@ func (e *executor) DropForeignKey(ctx sessionctx.Context, ti ast.Ident, fkName p
 		return errors.Trace(infoschema.ErrTableNotExists.GenWithStackByArgs(ti.Schema, ti.Name))
 	}
 
+	foundFK := false
+	for _, fk := range t.Meta().ForeignKeys {
+		if fk.Name.L == fkName.L {
+			foundFK = true
+			break
+		}
+	}
+	if !foundFK {
+		return infoschema.ErrForeignKeyNotExists.GenWithStackByArgs(fkName)
+	}
+
 	job := &model.Job{
 		Version:        model.GetJobVerInUse(),
 		SchemaID:       schema.ID,
