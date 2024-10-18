@@ -299,7 +299,7 @@ func (j *semiJoinProbe) concatenateProbeAndBuildRows(joinedChk *chunk.Chunk, sql
 	return nil
 }
 
-// TODO quick exit and fix bug
+// TODO improve when probe chunk has only few rows
 func (j *semiJoinProbe) probeForLeftSideBuildHasOtherCondition(joinedChk *chunk.Chunk, sqlKiller *sqlkiller.SQLKiller) (err error) {
 	err = j.concatenateProbeAndBuildRows(joinedChk, sqlKiller, false)
 	if err != nil {
@@ -357,6 +357,7 @@ func (j *semiJoinProbe) probeForLeftSideBuildNoOtherCondition(remainCap int, sql
 	return
 }
 
+// TODO improve when probe chunk has only few rows
 func (j *semiJoinProbe) probeForRightSideBuildHasOtherCondition(chk, joinedChk *chunk.Chunk, sqlKiller *sqlkiller.SQLKiller) (err error) {
 	err = j.concatenateProbeAndBuildRows(joinedChk, sqlKiller, true)
 	if err != nil {
