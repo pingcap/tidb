@@ -104,6 +104,9 @@ type ddlNotifier struct {
 
 	// handlersBitMap is set to the full bitmap of all registered handlers in Start.
 	handlersBitMap uint64
+
+	// Only used for testing.
+	ddlEventChForTest chan *SchemaChangeEvent
 }
 
 // TODO(lance6716): remove this global variable. Move it into Domain and make
@@ -133,16 +136,22 @@ func InitDDLNotifier(
 		return errors.Trace(err)
 	}
 	globalDDLNotifier = &ddlNotifier{
-		ownedSCtx:    sctx,
-		store:        store,
-		handlers:     make(map[HandlerID]SchemaChangeHandler),
-		pollInterval: pollInterval,
+		ownedSCtx:         sctx,
+		store:             store,
+		handlers:          make(map[HandlerID]SchemaChangeHandler),
+		pollInterval:      pollInterval,
+		ddlEventChForTest: make(chan *SchemaChangeEvent, 1000),
 	}
 	return nil
 }
 
 // ResetDDLNotifier is used for testing only.
 func ResetDDLNotifier() { globalDDLNotifier = nil }
+
+// DDLEventCh returns the channel for testing only.
+func DDLEventChForTest() chan *SchemaChangeEvent {
+	return globalDDLNotifier.ddlEventChForTest
+}
 
 // StartDDLNotifier starts the global ddlNotifier. It will block until the
 // context is canceled.
@@ -211,6 +220,8 @@ func (n *ddlNotifier) processEvents(ctx context.Context) error {
 					zap.Int64("ddlJobID", change.ddlJobID),
 					zap.Int64("multiSchemaChangeSeq", change.multiSchemaChangeSeq),
 					zap.Error(err2))
+			} else {
+				n.ddlEventChForTest <- change.event
 			}
 		}
 	}
