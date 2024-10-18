@@ -84,7 +84,11 @@ func TestAddIndexIngestLimitOneBackend(t *testing.T) {
 	tk2.MustExec("insert into t2 values (1, 1), (2, 2), (3, 3);")
 
 	// Mock there is a running ingest job.
+<<<<<<< HEAD:tests/realtikvtest/addindextest/integration_test.go
 	_, err := ingest.LitBackCtxMgr.Register(context.Background(), false, 65535, nil)
+=======
+	_, err := ingest.LitBackCtxMgr.Register(context.Background(), false, 65535, nil, realtikvtest.PDAddr, "")
+>>>>>>> 6260e66ad8f (ddl: use latest PD address to register lightning (#48687)):tests/realtikvtest/addindextest4/ingest_test.go
 	require.NoError(t, err)
 	wg := &sync.WaitGroup{}
 	wg.Add(2)
