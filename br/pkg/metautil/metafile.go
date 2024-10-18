@@ -235,12 +235,29 @@ func (reader *MetaReader) readDataFiles(ctx context.Context, output func(*backup
 }
 
 // ArchiveSize return the size of Archive data
-func (*MetaReader) ArchiveSize(_ context.Context, files []*backuppb.File) uint64 {
+func ArchiveSize(files []*backuppb.File) uint64 {
 	total := uint64(0)
 	for _, file := range files {
 		total += file.Size_
 	}
 	return total
+}
+
+type ChecksumStats struct {
+	Crc64Xor   uint64
+	TotalKvs   uint64
+	TotalBytes uint64
+}
+
+// CalculateChecksumStatsOnAllFiles returns the ChecksumStats for all files
+func CalculateChecksumStatsOnAllFiles(files []*backuppb.File) ChecksumStats {
+	var stats ChecksumStats
+	for _, file := range files {
+		stats.Crc64Xor ^= file.Crc64Xor
+		stats.TotalKvs += file.TotalKvs
+		stats.TotalBytes += file.TotalBytes
+	}
+	return stats
 }
 
 // ReadDDLs reads the ddls from the backupmeta.
