@@ -1823,10 +1823,6 @@ func (do *Domain) LoadPrivilegeLoop(sctx sessionctx.Context) error {
 		return err
 	}
 	do.privHandle = privileges.NewHandle()
-	err = do.privHandle.Update(sctx)
-	if err != nil {
-		return err
-	}
 
 	var watchCh clientv3.WatchChan
 	duration := 5 * time.Minute
