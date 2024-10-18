@@ -16,6 +16,9 @@ package memo
 
 import (
 	"container/list"
+	"fmt"
+	"io"
+	"strconv"
 
 	"github.com/pingcap/tidb/pkg/planner/cascades/base"
 	"github.com/pingcap/tidb/pkg/planner/pattern"
@@ -33,9 +36,9 @@ type Group struct {
 	// logicalExpressions indicates the logical equiv classes for this group.
 	logicalExpressions *list.List
 
-	// operand2FirstExpr is used to locate to the first same type logical expression
+	// Operand2FirstExpr is used to locate to the first same type logical expression
 	// in list above instead of traverse them all.
-	operand2FirstExpr map[pattern.Operand]*list.Element
+	Operand2FirstExpr map[pattern.Operand]*list.Element
 
 	// hash2GroupExpr is used to de-duplication in the list.
 	hash2GroupExpr map[uint64]*list.Element
@@ -89,18 +92,42 @@ func (g *Group) Insert(e *GroupExpression) bool {
 	}
 	operand := pattern.GetOperand(e.logicalPlan)
 	var newEquiv *list.Element
-	mark, ok := g.operand2FirstExpr[operand]
+	mark, ok := g.Operand2FirstExpr[operand]
 	if ok {
 		// cluster same operands together.
 		newEquiv = g.logicalExpressions.InsertAfter(e, mark)
 	} else {
 		// otherwise, put it at the end.
 		newEquiv = g.logicalExpressions.PushBack(e)
-		g.operand2FirstExpr[operand] = newEquiv
+		g.Operand2FirstExpr[operand] = newEquiv
 	}
 	g.hash2GroupExpr[hash64] = newEquiv
 	e.group = g
 	return true
+}
+
+// GetGroupID gets the group id.
+func (g *Group) GetGroupID() GroupID {
+	return g.groupID
+}
+
+// GetLogicalExpressions gets the logical expressions list.
+func (g *Group) GetLogicalExpressions() *list.List {
+	return g.logicalExpressions
+}
+
+// GetFirstElem returns the first Group expression which matches the Operand.
+// Return a nil pointer if there isn't.
+func (g *Group) GetFirstElem(operand pattern.Operand) *list.Element {
+	if operand == pattern.OperandAny {
+		return g.logicalExpressions.Front()
+	}
+	return g.Operand2FirstExpr[operand]
+}
+
+// String implements fmt.Stringer interface.
+func (g *Group) String(w io.Writer) {
+	fmt.Fprintf(w, "inputs:%s", strconv.Itoa(int(g.groupID)))
 }
 
 // NewGroup creates a new Group with given logical prop.
@@ -108,7 +135,7 @@ func NewGroup(prop *property.LogicalProperty) *Group {
 	g := &Group{
 		logicalExpressions: list.New(),
 		hash2GroupExpr:     make(map[uint64]*list.Element),
-		operand2FirstExpr:  make(map[pattern.Operand]*list.Element),
+		Operand2FirstExpr:  make(map[pattern.Operand]*list.Element),
 		logicalProp:        prop,
 	}
 	return g
