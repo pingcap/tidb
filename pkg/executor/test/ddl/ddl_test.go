@@ -988,7 +988,7 @@ func TestRenameTable(t *testing.T) {
 	defer func() {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/meta/autoid/mockAutoIDChange"))
 	}()
-	store := testkit.CreateMockStore(t, mockstore.WithDDLChecker())
+	store, dom := testkit.CreateMockStoreAndDomain(t, mockstore.WithDDLChecker())
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("drop database if exists rename1")
@@ -1003,6 +1003,13 @@ func TestRenameTable(t *testing.T) {
 	tk.MustExec("rename table rename1.t to rename2.t")
 	// Make sure the drop old database doesn't affect the rename3.t's operations.
 	tk.MustExec("drop database rename1")
+
+	ver, err := store.CurrentVersion(kv.GlobalTxnScope)
+	require.NoError(t, err)
+	version := ver.Ver
+	err = dom.FullReload(version)
+	require.NoError(t, err)
+
 	tk.MustExec("insert rename2.t values ()")
 	tk.MustExec("rename table rename2.t to rename3.t")
 	tk.MustExec("insert rename3.t values ()")
