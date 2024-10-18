@@ -157,6 +157,8 @@ func (b *PrecheckItemBuilder) BuildPrecheckItem(checkID precheck.CheckItemID) (p
 		return NewLocalTempKVDirCheckItem(b.cfg, b.preInfoGetter, b.dbMetas), nil
 	case precheck.CheckTargetUsingCDCPITR:
 		return NewCDCPITRCheckItem(b.cfg, b.pdAddrsGetter), nil
+	case precheck.CheckSourceDataSize:
+		return NewSourceDataSizeCheckItem(b.cfg, b.preInfoGetter), nil
 	default:
 		return nil, errors.Errorf("unsupported check item: %v", checkID)
 	}
