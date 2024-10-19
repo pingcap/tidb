@@ -39,6 +39,9 @@ import (
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tipb/go-tipb"
 	"go.uber.org/zap"
+	"golang.org/x/text/language"
+	"golang.org/x/text/message"
+	"golang.org/x/text/number"
 )
 
 var (
@@ -3298,6 +3301,12 @@ func evalNumDecArgsForFormat(ctx EvalContext, f builtinFunc, row chunk.Row) (str
 	return xStr, dStr, false, nil
 }
 
+// roundFormatArgs does rounding for FORMAT()
+//
+//  1. It takes a string instead of a float and avoids float related rounding issues.
+//  2. It rounds up, so (2.5, 0) rounds to 3.
+//  3. Note that golang.org/x/text/{message,number,language} also does rounding
+//     but not in the way needed for FORMAT()
 func roundFormatArgs(xStr string, maxNumDecimals int) string {
 	if !strings.Contains(xStr, ".") {
 		return xStr
@@ -3346,7 +3355,11 @@ func roundFormatArgs(xStr string, maxNumDecimals int) string {
 		}
 	}
 
-	xStr = integerPart + "." + decimalPart
+	if len(decimalPart) > maxNumDecimals {
+		xStr = integerPart + "." + decimalPart[:maxNumDecimals]
+	} else {
+		xStr = integerPart + "." + decimalPart
+	}
 	if sign {
 		xStr = "-" + xStr
 	}
@@ -3377,11 +3390,25 @@ func (b *builtinFormatWithLocaleSig) evalString(ctx EvalContext, row chunk.Row) 
 	tc := typeCtx(ctx)
 	if isNull {
 		tc.AppendWarning(errUnknownLocale.FastGenByArgs("NULL"))
-	} else if !strings.EqualFold(locale, "en_US") { // TODO: support other locales.
-		tc.AppendWarning(errUnknownLocale.FastGenByArgs(locale))
+		locale = "en_US"
 	}
-	locale = "en_US"
-	formatString, err := mysql.GetLocaleFormatFunction(locale)(x, d)
+
+	lang, err := language.Parse(locale)
+	if err != nil {
+		tc.AppendWarning(errUnknownLocale.FastGenByArgs(locale))
+		lang = language.English
+	}
+	p := message.NewPrinter(lang)
+	xint, err := strconv.ParseFloat(x, 64)
+	if err != nil {
+		return "", false, err
+	}
+	dint, err := strconv.Atoi(d)
+	if err != nil {
+		return "", false, err
+	}
+	formatString := p.Sprintf("%v", number.Decimal(xint, number.Scale(dint)))
+
 	return formatString, false, err
 }
 
@@ -3402,7 +3429,16 @@ func (b *builtinFormatSig) evalString(ctx EvalContext, row chunk.Row) (string, b
 	if isNull || err != nil {
 		return "", isNull, err
 	}
-	formatString, err := mysql.GetLocaleFormatFunction("en_US")(x, d)
+	p := message.NewPrinter(language.English)
+	xint, err := strconv.ParseFloat(x, 64)
+	if err != nil {
+		return "", false, err
+	}
+	dint, err := strconv.Atoi(d)
+	if err != nil {
+		return "", false, err
+	}
+	formatString := p.Sprintf("%v", number.Decimal(xint, number.Scale(dint)))
 	return formatString, false, err
 }
 
