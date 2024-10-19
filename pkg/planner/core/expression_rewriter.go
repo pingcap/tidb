@@ -1253,7 +1253,7 @@ func (er *expressionRewriter) handleInSubquery(ctx context.Context, planCtx *exp
 		}
 		// Set join hint for this join.
 		if planCtx.builder.TableHints() != nil {
-			join.SetPreferredJoinTypeAndOrder(planCtx.builder.TableHints())
+			join.SetPreferredJoinTypeAndOrder(planCtx.builder.GetCTE(), planCtx.builder.TableHints())
 		}
 		planCtx.plan = join
 	} else {
