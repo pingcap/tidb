@@ -19,7 +19,6 @@ import (
 	"fmt"
 	"regexp"
 	"slices"
-	"sort"
 	"strconv"
 	"testing"
 	"time"
@@ -751,7 +750,7 @@ func TestMetricsSummaryTableExtractor(t *testing.T) {
 	}
 	parser := parser.New()
 	for _, ca := range cases {
-		sort.Float64s(ca.quantiles)
+		slices.Sort(ca.quantiles)
 
 		logicalMemTable := getLogicalMemTable(t, dom, se, parser, ca.sql)
 		require.NotNil(t, logicalMemTable.Extractor)

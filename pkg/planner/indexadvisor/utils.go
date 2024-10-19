@@ -17,7 +17,7 @@ package indexadvisor
 import (
 	"context"
 	"fmt"
-	"sort"
+	"slices"
 	"strings"
 
 	"github.com/pingcap/tidb/pkg/kv"
@@ -525,7 +525,7 @@ func evaluateIndexSetCost(
 		totCols += len(index.Columns)
 		keys = append(keys, index.Key())
 	}
-	sort.Strings(keys)
+	slices.Sort(keys)
 
 	return IndexSetCost{workloadCost, totCols, strings.Join(keys, ",")}, nil
 }
