@@ -24,6 +24,7 @@ tidb-lightning.test -test.coverprofile="$COV_DIR/cov.$TEST_NAME.$$.out" DEVEL \
     --cert "$TEST_DIR/certs/lightning.pem" \
     --key "$TEST_DIR/certs/lightning.key" \
     --log-file "$TEST_DIR/lightning.log" \
+    -L debug \
     --tidb-port 4000 \
     --pd-urls '127.0.0.1:2379' \
     --config "$TESTS_ROOT/$TEST_NAME/config.toml" \
