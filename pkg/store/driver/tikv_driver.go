@@ -169,7 +169,9 @@ func (d TiKVDriver) OpenWithOptions(path string, options ...Option) (resStore kv
 			}),
 		),
 		pd.WithCustomTimeoutOption(time.Duration(d.pdConfig.PDServerTimeout)*time.Second),
-		pd.WithForwardingOption(config.GetGlobalConfig().EnableForwarding))
+		pd.WithForwardingOption(config.GetGlobalConfig().EnableForwarding),
+		pd.WithMetricsLabels(metrics.GetConstLabels()),
+	)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
