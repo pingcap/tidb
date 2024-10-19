@@ -428,9 +428,8 @@ func TestRetryEnv(t *testing.T) {
 		return nil
 	}
 	ms := RetryAndSplitRequestEnv{Env: tms}
-	ms.GetBackoffer = func() utils.Backoffer {
-		o := utils.InitialRetryState(2, 0, 0)
-		return &o
+	ms.GetBackoffStrategy = func() utils.BackoffStrategy {
+		return utils.NewBackoffRetryAllErrorStrategy(2, 0, 0)
 	}
 	prep := New(ms)
 	ctx := context.Background()
