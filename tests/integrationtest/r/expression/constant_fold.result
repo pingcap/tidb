@@ -24,3 +24,9 @@ utf8mb4_general_ci
 select collation(ifnull(concat(NULL),ifnull(concat(NULL),id))) from t1;
 collation(ifnull(concat(NULL),ifnull(concat(NULL),id)))
 utf8mb4_general_ci
+drop table if exists t1;
+create table t1 (c1 int);
+insert into t1 values (null);
+select truncate(1,c1), truncate(1,c1) is not NULL from t1;
+truncate(1,c1)	truncate(1,c1) is not NULL
+NULL	0
