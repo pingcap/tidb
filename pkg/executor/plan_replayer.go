@@ -482,17 +482,9 @@ func (e *PlanReplayerLoadInfo) Update(data []byte) error {
 	}
 
 	// build schema and table first
-	for _, zipFile := range z.File {
-		if zipFile.Name == fmt.Sprintf("schema/%v", domain.PlanReplayerSchemaMetaFile) {
-			continue
-		}
-		path := strings.Split(zipFile.Name, "/")
-		if len(path) == 2 && strings.Compare(path[0], "schema") == 0 && zipFile.Mode().IsRegular() {
-			err = createSchemaAndItems(e.Ctx, zipFile)
-			if err != nil {
-				return err
-			}
-		}
+	err = e.createTable(z)
+	if err != nil {
+		return err
 	}
 
 	// set tiflash replica if exists
@@ -527,6 +519,29 @@ func (e *PlanReplayerLoadInfo) Update(data []byte) error {
 	if err != nil {
 		logutil.BgLogger().Warn("load bindings failed", zap.Error(err))
 		e.Ctx.GetSessionVars().StmtCtx.AppendWarning(fmt.Errorf("load bindings failed, err:%v", err))
+	}
+	return nil
+}
+
+func (e *PlanReplayerLoadInfo) createTable(z *zip.Reader) error {
+	origin := e.Ctx.GetSessionVars().ForeignKeyChecks
+	// We need to disable foreign key check when we create schema and tables.
+	// because the order of creating schema and tables is not guaranteed.
+	e.Ctx.GetSessionVars().ForeignKeyChecks = false
+	defer func() {
+		e.Ctx.GetSessionVars().ForeignKeyChecks = origin
+	}()
+	for _, zipFile := range z.File {
+		if zipFile.Name == fmt.Sprintf("schema/%v", domain.PlanReplayerSchemaMetaFile) {
+			continue
+		}
+		path := strings.Split(zipFile.Name, "/")
+		if len(path) == 2 && strings.Compare(path[0], "schema") == 0 && zipFile.Mode().IsRegular() {
+			err := createSchemaAndItems(e.Ctx, zipFile)
+			if err != nil {
+				return err
+			}
+		}
 	}
 	return nil
 }

@@ -313,7 +313,8 @@ func (e *memtableRetriever) setDataForVariablesInfo(ctx sessionctx.Context) erro
 
 func (e *memtableRetriever) setDataForUserAttributes(ctx context.Context, sctx sessionctx.Context) error {
 	exec := sctx.GetRestrictedSQLExecutor()
-	chunkRows, _, err := exec.ExecRestrictedSQL(ctx, nil, `SELECT user, host, JSON_UNQUOTE(JSON_EXTRACT(user_attributes, '$.metadata')) FROM mysql.user`)
+	wrappedCtx := kv.WithInternalSourceType(ctx, kv.InternalTxnOthers)
+	chunkRows, _, err := exec.ExecRestrictedSQL(wrappedCtx, nil, `SELECT user, host, JSON_UNQUOTE(JSON_EXTRACT(user_attributes, '$.metadata')) FROM mysql.user`)
 	if err != nil {
 		return err
 	}

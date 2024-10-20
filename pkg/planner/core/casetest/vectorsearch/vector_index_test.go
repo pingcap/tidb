@@ -15,6 +15,7 @@
 package vectorsearch
 
 import (
+	"context"
 	"strings"
 	"testing"
 	"time"
@@ -22,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
@@ -160,7 +162,7 @@ func TestANNIndexNormalizedPlan(t *testing.T) {
 
 	tk.MustExec("analyze table t")
 
-	tk.MustExec("set @@tidb_isolation_read_engines = 'tiflash'")
+	tk.MustExec("set @@tidb_isolation_read_engines = 'tiflash, tikv'")
 
 	tk.MustExec("explain select * from t order by vec_cosine_distance(vec, '[0,0,0]') limit 1")
 	p1, d1 := getNormalizedPlan()
@@ -189,6 +191,25 @@ func TestANNIndexNormalizedPlan(t *testing.T) {
 	require.Equal(t, d1, d2)
 	require.Equal(t, d1, d3)
 	require.NotEqual(t, d1, dx1)
+
+	// test for TiFlashReplica's Available
+	tbl, err := dom.InfoSchema().TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
+	require.NoError(t, err)
+	tbl.Meta().TiFlashReplica.Available = false
+	tk.MustExec("explain select * from t order by vec_cosine_distance(vec, '[1,2,3]') limit 3")
+	p2, _ := getNormalizedPlan()
+	require.Equal(t, []string{
+		" Projection              root test.t.vec",
+		" └─TopN                  root ?",
+		"   └─Projection          root test.t.vec, vec_cosine_distance(test.t.vec, ?)",
+		"     └─TableReader       root ",
+		"       └─TopN            cop  vec_cosine_distance(test.t.vec, ?)",
+		"         └─TableFullScan cop  table:t, range:[?,?], keep order:false",
+	}, p2)
+	tbl.Meta().TiFlashReplica.Available = true
+	tk.MustExec("explain select * from t order by vec_cosine_distance(vec, '[1,2,3]') limit 3")
+	_, d4 := getNormalizedPlan()
+	require.Equal(t, d1, d4)
 }
 
 func TestANNInexWithSimpleCBO(t *testing.T) {

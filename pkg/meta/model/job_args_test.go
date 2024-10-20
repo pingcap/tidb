@@ -1102,3 +1102,43 @@ func TestGetRenameIndexArgs(t *testing.T) {
 		require.Equal(t, inArgs, args)
 	}
 }
+
+func TestModifyColumnsArgs(t *testing.T) {
+	inArgs := &ModifyColumnArgs{
+		Column:           &ColumnInfo{ID: 111, Name: model.NewCIStr("col1")},
+		OldColumnName:    model.NewCIStr("aa"),
+		Position:         &ast.ColumnPosition{Tp: ast.ColumnPositionFirst},
+		ModifyColumnType: 1,
+		NewShardBits:     123,
+		ChangingColumn:   &ColumnInfo{ID: 222, Name: model.NewCIStr("col2")},
+		RedundantIdxs:    []int64{1, 2},
+		IndexIDs:         []int64{3, 4},
+		PartitionIDs:     []int64{5, 6},
+	}
+
+	for _, v := range []JobVersion{JobVersion1, JobVersion2} {
+		j2 := &Job{}
+		require.NoError(t, j2.Decode(getJobBytes(t, inArgs, v, ActionModifyColumn)))
+		args, err := GetModifyColumnArgs(j2)
+		require.NoError(t, err)
+
+		require.Equal(t, *inArgs.Column, *args.Column)
+		require.Equal(t, inArgs.OldColumnName, args.OldColumnName)
+		require.Equal(t, inArgs.Position, args.Position)
+		require.Equal(t, inArgs.ModifyColumnType, args.ModifyColumnType)
+		require.Equal(t, inArgs.NewShardBits, args.NewShardBits)
+		require.Equal(t, *inArgs.ChangingColumn, *args.ChangingColumn)
+		require.Equal(t, inArgs.ChangingIdxs, args.ChangingIdxs)
+		require.Equal(t, inArgs.RedundantIdxs, args.RedundantIdxs)
+	}
+
+	for _, v := range []JobVersion{JobVersion1, JobVersion2} {
+		j2 := &Job{}
+		require.NoError(t, j2.Decode(getFinishedJobBytes(t, inArgs, v, ActionModifyColumn)))
+		args, err := GetFinishedModifyColumnArgs(j2)
+		require.NoError(t, err)
+
+		require.Equal(t, inArgs.IndexIDs, args.IndexIDs)
+		require.Equal(t, inArgs.PartitionIDs, args.PartitionIDs)
+	}
+}

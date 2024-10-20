@@ -177,8 +177,8 @@ type cteInfo struct {
 	isInline bool
 	// forceInlineByHintOrVar will be true when CTE is hint by merge() or session variable "tidb_opt_force_inline_cte=true"
 	forceInlineByHintOrVar bool
-	// If CTE contain aggregation or window function in query (Indirect references to other cte containing agg or window in the query are also counted.)
-	containAggOrWindow bool
+	// If CTE contain aggregation, window function, order by, distinct and limit in query (Indirect references to other cte containing those operator in the query are also counted.)
+	containRecursiveForbiddenOperator bool
 	// Compute in preprocess phase. Record how many consumers the current CTE has
 	consumerCount int
 }
@@ -1192,7 +1192,12 @@ func getPossibleAccessPaths(ctx base.PlanContext, tableHints *hint.PlanHints, in
 				}
 			}
 			path := &util.AccessPath{Index: index}
-			if index.VectorInfo != nil && tblInfo.TiFlashReplica.Available {
+			if index.VectorInfo != nil {
+				// Because the value of `TiFlashReplica.Available` changes as the user modify replica, it is not ideal if the state of index changes accordingly.
+				// So the current way to use the vector indexes is to require the TiFlash Replica to be available.
+				if !tblInfo.TiFlashReplica.Available {
+					continue
+				}
 				path.StoreType = kv.TiFlash
 			}
 			publicPaths = append(publicPaths, path)

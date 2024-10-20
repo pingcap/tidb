@@ -492,3 +492,26 @@ func TestTiFlashExtraColumnPrune(t *testing.T) {
 		tk.MustQuery(tt).Check(testkit.Rows(output[i].Plan...))
 	}
 }
+
+func TestIndexMergeJSONMemberOf2FlakyPart(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	// The following tests are flaky, we add it in unit test to have more chance to debug the issue.
+	tk.MustExec(`use test`)
+	tk.MustExec(`drop table if exists t`)
+	tk.MustExec(`create table t(a int, b int, c int, d json, index iad(a, (cast(d->'$.b' as signed array))));`)
+	tk.MustExec(`insert into t value(1,1,1, '{"b":[1,2,3,4]}');`)
+	tk.MustExec(`insert into t value(2,2,2, '{"b":[3,4,5,6]}');`)
+	tk.MustExec(`set tidb_analyze_version=2;`)
+	tk.MustExec(`analyze table t all columns;`)
+	tk.MustQuery("explain select * from t use index (iad) where a = 1;").Check(testkit.Rows(
+		"TableReader_7 1.00 root  data:Selection_6",
+		"└─Selection_6 1.00 cop[tikv]  eq(test.t.a, 1)",
+		"  └─TableFullScan_5 2.00 cop[tikv] table:t keep order:false",
+	))
+	tk.MustQuery("explain select * from t use index (iad) where a = 1 and (2 member of (d->'$.b'));").Check(testkit.Rows(
+		"IndexMerge_7 1.00 root  type: union",
+		"├─IndexRangeScan_5(Build) 1.00 cop[tikv] table:t, index:iad(a, cast(json_extract(`d`, _utf8mb4'$.b') as signed array)) range:[1 2,1 2], keep order:false, stats:partial[d:unInitialized]",
+		"└─TableRowIDScan_6(Probe) 1.00 cop[tikv] table:t keep order:false, stats:partial[d:unInitialized]",
+	))
+}

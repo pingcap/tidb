@@ -26,8 +26,6 @@ import (
 	ddlutil "github.com/pingcap/tidb/pkg/ddl/util"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/meta/model"
-	"github.com/pingcap/tidb/pkg/parser/ast"
-	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/external"
 	"github.com/pingcap/tidb/pkg/util"
@@ -66,19 +64,11 @@ func TestModifyColumnTypeArgs(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, historyJob)
 
-	var (
-		_newCol                *model.ColumnInfo
-		_oldColName            *pmodel.CIStr
-		_modifyColumnTp        byte
-		_updatedAutoRandomBits uint64
-		changingCol            *model.ColumnInfo
-		changingIdxs           []*model.IndexInfo
-	)
-	_pos := &ast.ColumnPosition{}
-	err = historyJob.DecodeArgs(&_newCol, &_oldColName, _pos, &_modifyColumnTp, &_updatedAutoRandomBits, &changingCol, &changingIdxs)
+	args, err := model.GetModifyColumnArgs(historyJob)
 	require.NoError(t, err)
-	require.Nil(t, changingCol)
-	require.Nil(t, changingIdxs)
+	require.NoError(t, err)
+	require.Nil(t, args.ChangingColumn)
+	require.Nil(t, args.ChangingIdxs)
 }
 
 func TestParallelUpdateTableReplica(t *testing.T) {

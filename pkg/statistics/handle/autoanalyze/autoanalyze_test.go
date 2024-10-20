@@ -38,11 +38,19 @@ import (
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
+	mockexec "github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/pingcap/tidb/pkg/util/sqlexec/mock"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/oracle"
 	"go.uber.org/mock/gomock"
 )
+
+// WrapAsSCtx wraps the MockRestrictedSQLExecutor into sessionctx.Context.
+func WrapAsSCtx(exec *mock.MockRestrictedSQLExecutor) sessionctx.Context {
+	sctx := mockexec.NewContext()
+	sctx.SetValue(mock.RestrictedSQLExecutorKey{}, exec)
+	return sctx
+}
 
 func TestEnableAutoAnalyzePriorityQueue(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
@@ -511,7 +519,7 @@ func TestCleanupCorruptedAnalyzeJobsOnCurrentInstance(t *testing.T) {
 	).Return(nil, nil, nil)
 
 	err := autoanalyze.CleanupCorruptedAnalyzeJobsOnCurrentInstance(
-		mock.WrapAsSCtx(exec),
+		WrapAsSCtx(exec),
 		map[uint64]struct{}{
 			3: {},
 			4: {},
@@ -536,7 +544,7 @@ func TestCleanupCorruptedAnalyzeJobsOnCurrentInstance(t *testing.T) {
 
 	// No running analyze jobs on current instance.
 	err = autoanalyze.CleanupCorruptedAnalyzeJobsOnCurrentInstance(
-		mock.WrapAsSCtx(exec),
+		WrapAsSCtx(exec),
 		map[uint64]struct{}{},
 	)
 	require.NoError(t, err)
@@ -592,7 +600,7 @@ func TestCleanupCorruptedAnalyzeJobsOnDeadInstances(t *testing.T) {
 	).Return(nil, nil, nil)
 
 	err := autoanalyze.CleanupCorruptedAnalyzeJobsOnDeadInstances(
-		mock.WrapAsSCtx(exec),
+		WrapAsSCtx(exec),
 	)
 	require.NoError(t, err)
 }

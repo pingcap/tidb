@@ -44,6 +44,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/generic"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/mathutil"
 	tikv "github.com/tikv/client-go/v2/kv"
 	"github.com/tikv/client-go/v2/oracle"
@@ -315,11 +316,8 @@ func (s *JobSubmitter) addBatchDDLJobs2Table(jobWs []*JobWrapper) error {
 
 	for _, jobW := range jobWs {
 		job := jobW.Job
-		if job.Version == 0 {
-			// if not set, fix it to version 1
-			// TODO replace this with assert after we add code v2 for all jobs.
-			job.Version = model.JobVersion1
-		}
+		intest.Assert(job.Version != 0, "Job version should not be zero")
+
 		job.StartTS = startTS
 		job.BDRRole = bdrRole
 
@@ -363,11 +361,7 @@ func (s *JobSubmitter) addBatchDDLJobs2Queue(jobWs []*JobWrapper) error {
 		t := meta.NewMutator(txn)
 
 		for _, jobW := range jobWs {
-			if jobW.Version == 0 {
-				// if not set, fix it to version 1
-				// TODO replace this with assert after we add code v2 for all jobs.
-				jobW.Version = model.JobVersion1
-			}
+			intest.Assert(jobW.Version != 0, "Job version should not be zero")
 		}
 
 		count := getRequiredGIDCount(jobWs)
@@ -382,10 +376,7 @@ func (s *JobSubmitter) addBatchDDLJobs2Queue(jobWs []*JobWrapper) error {
 		}
 
 		for _, jobW := range jobWs {
-			// TODO remove this check when all job type pass args in this way.
-			if jobW.JobArgs != nil {
-				jobW.FillArgs(jobW.JobArgs)
-			}
+			jobW.FillArgsWithSubJobs()
 			job := jobW.Job
 			job.StartTS = txn.StartTS()
 			setJobStateToQueueing(job)
@@ -692,10 +683,7 @@ func insertDDLJobs2Table(ctx context.Context, se *sess.Session, jobWs ...*JobWra
 	var sql bytes.Buffer
 	sql.WriteString("insert into mysql.tidb_ddl_job(job_id, reorg, schema_ids, table_ids, job_meta, type, processing) values")
 	for i, jobW := range jobWs {
-		// TODO remove this check when all job type pass args in this way.
-		if jobW.JobArgs != nil {
-			jobW.FillArgs(jobW.JobArgs)
-		}
+		jobW.FillArgsWithSubJobs()
 		injectModifyJobArgFailPoint(jobWs)
 		b, err := jobW.Encode(true)
 		if err != nil {

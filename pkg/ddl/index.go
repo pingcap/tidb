@@ -840,7 +840,7 @@ func (w *worker) checkVectorIndexProcessOnTiFlash(jobCtx *jobContext, job *model
 		if dbterror.ErrWaitReorgTimeout.Equal(err) {
 			return false, ver, nil
 		}
-		if !errorIsRetryable(err, job) {
+		if !isRetryableJobError(err, job.ErrorCount) {
 			logutil.DDLLogger().Warn("run add vector index job failed, convert job to rollback", zap.Stringer("job", job), zap.Error(err))
 			ver, err = convertAddIdxJob2RollbackJob(jobCtx, job, tbl.Meta(), []*model.IndexInfo{indexInfo}, err)
 		}
@@ -981,7 +981,7 @@ SwitchIndexState:
 		var reorgTp model.ReorgType
 		reorgTp, err = pickBackfillType(job)
 		if err != nil {
-			if !errorIsRetryable(err, job) {
+			if !isRetryableJobError(err, job.ErrorCount) {
 				job.State = model.JobStateCancelled
 			}
 			return ver, err
@@ -1261,7 +1261,7 @@ func runIngestReorgJob(w *worker, jobCtx *jobContext, job *model.Job,
 		if kv.ErrKeyExists.Equal(err) {
 			logutil.DDLLogger().Warn("import index duplicate key, convert job to rollback", zap.Stringer("job", job), zap.Error(err))
 			ver, err = convertAddIdxJob2RollbackJob(jobCtx, job, tbl.Meta(), allIndexInfos, err)
-		} else if !errorIsRetryable(err, job) {
+		} else if !isRetryableJobError(err, job.ErrorCount) {
 			logutil.DDLLogger().Warn("run reorg job failed, convert job to rollback",
 				zap.String("job", job.String()), zap.Error(err))
 			ver, err = convertAddIdxJob2RollbackJob(jobCtx, job, tbl.Meta(), allIndexInfos, err)
@@ -1274,9 +1274,19 @@ func runIngestReorgJob(w *worker, jobCtx *jobContext, job *model.Job,
 	return done, ver, nil
 }
 
-func errorIsRetryable(err error, job *model.Job) bool {
-	if job.ErrorCount+1 >= variable.GetDDLErrorCountLimit() {
+func isRetryableJobError(err error, jobErrCnt int64) bool {
+	if jobErrCnt+1 >= variable.GetDDLErrorCountLimit() {
 		return false
+	}
+	return isRetryableError(err)
+}
+
+func isRetryableError(err error) bool {
+	errMsg := err.Error()
+	for _, m := range dbterror.ReorgRetryableErrMsgs {
+		if strings.Contains(errMsg, m) {
+			return true
+		}
 	}
 	originErr := errors.Cause(err)
 	if tErr, ok := originErr.(*terror.Error); ok {
@@ -1347,7 +1357,7 @@ func runReorgJobAndHandleErr(
 		}
 		// TODO(tangenta): get duplicate column and match index.
 		err = ingest.TryConvertToKeyExistsErr(err, allIndexInfos[0], tbl.Meta())
-		if !errorIsRetryable(err, job) {
+		if !isRetryableJobError(err, job.ErrorCount) {
 			logutil.DDLLogger().Warn("run add index job failed, convert job to rollback", zap.Stringer("job", job), zap.Error(err))
 			ver, err = convertAddIdxJob2RollbackJob(jobCtx, job, tbl.Meta(), allIndexInfos, err)
 			if err1 := rh.RemoveDDLReorgHandle(job, reorgInfo.elements); err1 != nil {
@@ -2894,7 +2904,7 @@ type changingIndex struct {
 }
 
 // FindRelatedIndexesToChange finds the indexes that covering the given column.
-// The normal one will be overridden by the temp one.
+// The normal one will be overwritten by the temp one.
 func FindRelatedIndexesToChange(tblInfo *model.TableInfo, colName pmodel.CIStr) []changingIndex {
 	// In multi-schema change jobs that contains several "modify column" sub-jobs, there may be temp indexes for another temp index.
 	// To prevent reorganizing too many indexes, we should create the temp indexes that are really necessary.

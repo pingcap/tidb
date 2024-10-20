@@ -57,7 +57,7 @@ func repairTableOrViewWithCheck(t *meta.Mutator, job *model.Job, schemaID int64,
 	return t.UpdateTable(schemaID, tbInfo)
 }
 
-func onDropTableOrView(jobCtx *jobContext, job *model.Job) (ver int64, _ error) {
+func (w *worker) onDropTableOrView(jobCtx *jobContext, job *model.Job) (ver int64, _ error) {
 	args, err := model.GetDropTableArgs(job)
 	if err != nil {
 		job.State = model.JobStateCancelled
@@ -122,6 +122,13 @@ func onDropTableOrView(jobCtx *jobContext, job *model.Job) (ver int64, _ error) 
 		}
 		// Placement rules cannot be removed immediately after drop table / truncate table, because the
 		// tables can be flashed back or recovered, therefore it moved to doGCPlacementRules in gc_worker.go.
+		if !tblInfo.IsSequence() && !tblInfo.IsView() {
+			dropTableEvent := notifier.NewDropTableEvent(tblInfo)
+			err = asyncNotifyEvent(jobCtx, dropTableEvent, job, w.sess)
+			if err != nil {
+				return ver, errors.Trace(err)
+			}
+		}
 
 		// Finish this job.
 		job.FinishTableJob(model.JobStateDone, model.StateNone, ver, tblInfo)
@@ -131,10 +138,6 @@ func onDropTableOrView(jobCtx *jobContext, job *model.Job) (ver int64, _ error) 
 			OldPartitionIDs: oldIDs,
 			OldRuleIDs:      ruleIDs,
 		})
-		if !tblInfo.IsSequence() && !tblInfo.IsView() {
-			dropTableEvent := notifier.NewDropTableEvent(tblInfo)
-			asyncNotifyEvent(jobCtx, dropTableEvent, job)
-		}
 	default:
 		return ver, errors.Trace(dbterror.ErrInvalidDDLState.GenWithStackByArgs("table", tblInfo.State))
 	}
@@ -584,9 +587,13 @@ func (w *worker) onTruncateTable(jobCtx *jobContext, job *model.Job) (ver int64,
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
-	job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
 	truncateTableEvent := notifier.NewTruncateTableEvent(tblInfo, oldTblInfo)
-	asyncNotifyEvent(jobCtx, truncateTableEvent, job)
+	err = asyncNotifyEvent(jobCtx, truncateTableEvent, job, w.sess)
+	if err != nil {
+		return ver, errors.Trace(err)
+	}
+
+	job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
 	// see truncateTableByReassignPartitionIDs for why they might change.
 	args.OldPartitionIDs = oldPartitionIDs
 	args.NewPartitionIDs = newPartitionIDs

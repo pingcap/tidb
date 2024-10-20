@@ -46,6 +46,7 @@ func TestInvalidDDLJob(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomainWithSchemaLease(t, testLease)
 
 	job := &model.Job{
+		Version:             model.GetJobVerInUse(),
 		SchemaID:            0,
 		TableID:             0,
 		Type:                model.ActionNone,
@@ -65,7 +66,11 @@ func TestAddBatchJobError(t *testing.T) {
 
 	require.Nil(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/mockAddBatchDDLJobsErr", `return(true)`))
 	// Test the job runner should not hang forever.
-	job := &model.Job{SchemaID: 1, TableID: 1}
+	job := &model.Job{
+		Version:  model.GetJobVerInUse(),
+		SchemaID: 1,
+		TableID:  1,
+	}
 	ctx.SetValue(sessionctx.QueryString, "skip")
 	de := dom.DDLExecutor().(ddl.ExecutorForTest)
 	err := de.DoDDLJobWrapper(ctx, ddl.NewJobWrapper(job, true))

@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/statistics/handle/autoanalyze/exec"
 	"github.com/pingcap/tidb/pkg/statistics/handle/autoanalyze/internal/heap"
+	"github.com/pingcap/tidb/pkg/statistics/handle/lockstats"
 	statslogutil "github.com/pingcap/tidb/pkg/statistics/handle/logutil"
 	statstypes "github.com/pingcap/tidb/pkg/statistics/handle/types"
 	statsutil "github.com/pingcap/tidb/pkg/statistics/handle/util"
@@ -229,14 +230,19 @@ func (pq *AnalysisPriorityQueueV2) ProcessDMLChanges() {
 		// We need to fetch the next check version with offset before fetching new DML changes.
 		// Otherwise, we may miss some DML changes happened during the process.
 		newMaxVersion := pq.statsHandle.GetNextCheckVersionWithOffset()
+		// Query locked tables once to minimize overhead.
+		// Outdated lock info is acceptable as we verify table lock status pre-analysis.
+		lockedTables, err := lockstats.QueryLockedTables(statsutil.StatsCtx, sctx)
+		if err != nil {
+			return err
+		}
 		values := pq.statsHandle.Values()
 		lastFetchTimestamp := pq.syncFields.lastDMLUpdateFetchTimestamp
 		for _, value := range values {
 			// We only process the tables that have been updated.
 			// So here we only need to process the tables whose version is greater than the last fetch timestamp.
 			if value.Version > lastFetchTimestamp {
-				// TODO: consider locked tables and partitions. Consider move this check to
-				err := pq.processTableStats(sctx, value, parameters)
+				err := pq.processTableStats(sctx, value, parameters, lockedTables)
 				if err != nil {
 					statslogutil.StatsLogger().Error(
 						"Failed to process table stats",
@@ -263,6 +269,7 @@ func (pq *AnalysisPriorityQueueV2) processTableStats(
 	sctx sessionctx.Context,
 	stats *statistics.Table,
 	parameters map[string]string,
+	lockedTables map[int64]struct{},
 ) error {
 	// Check if the table is eligible for analysis first to avoid unnecessary work.
 	if !stats.IsEligibleForAnalysis() {
@@ -292,8 +299,25 @@ func (pq *AnalysisPriorityQueueV2) processTableStats(
 	// This is acceptable for now, but in the future, we may consider separating the analysis job for each partition.
 	job, ok, _ := pq.syncFields.inner.GetByKey(stats.PhysicalID)
 	if !ok {
-		job = pq.tryCreateJob(is, stats, pruneMode, jobFactory)
+		job = pq.tryCreateJob(is, stats, pruneMode, jobFactory, lockedTables)
 	} else {
+		// Skip analysis if the table is locked.
+		// Dynamic partitioned tables are managed in the tryCreateJob branch.
+		// Non-partitioned tables can be skipped entirely here.
+		// For static partitioned tables, skip either the locked partition or the whole table if all partitions are locked.
+		// For dynamic partitioned tables, if the parent table is locked, we skip the whole table here as well.
+		if _, ok := lockedTables[stats.PhysicalID]; ok {
+			// Clean up the job if the table is locked.
+			err := pq.syncFields.inner.Delete(job)
+			if err != nil {
+				statslogutil.StatsLogger().Error(
+					"Failed to delete job from priority queue",
+					zap.Error(err),
+					zap.String("job", job.String()),
+				)
+			}
+			return nil
+		}
 		job = pq.tryUpdateJob(is, stats, job, jobFactory)
 	}
 	return pq.pushWithoutLock(job)
@@ -303,6 +327,7 @@ func (pq *AnalysisPriorityQueueV2) tryCreateJob(
 	stats *statistics.Table,
 	pruneMode variable.PartitionPruneMode,
 	jobFactory *AnalysisJobFactory,
+	lockedTables map[int64]struct{},
 ) (job AnalysisJob) {
 	if stats == nil {
 		return nil
@@ -327,6 +352,10 @@ func (pq *AnalysisPriorityQueueV2) tryCreateJob(
 	}
 	partitionedTable := tableMeta.GetPartitionInfo()
 	if partitionedTable == nil {
+		// If the table is locked, we do not analyze it.
+		if _, ok := lockedTables[tableMeta.ID]; ok {
+			return nil
+		}
 		job = jobFactory.CreateNonPartitionedTableAnalysisJob(
 			schemaName.O,
 			tableMeta,
@@ -351,6 +380,10 @@ func (pq *AnalysisPriorityQueueV2) tryCreateJob(
 				// TODO: add tests to verify this behavior.
 				return nil
 			}
+			// If the partition is locked, we do not analyze it.
+			if _, ok := lockedTables[partitionDef.ID]; ok {
+				return nil
+			}
 			job = jobFactory.CreateStaticPartitionAnalysisJob(
 				schemaName.O,
 				tableMeta,
@@ -359,7 +392,32 @@ func (pq *AnalysisPriorityQueueV2) tryCreateJob(
 				stats,
 			)
 		} else {
-			partitionStats := GetPartitionStats(pq.statsHandle, tableMeta, partitionDefs)
+			// If the table is locked, we do not analyze it.
+			// Note: the table meta is the parent table meta.
+			if _, ok := lockedTables[tableMeta.ID]; ok {
+				return nil
+			}
+
+			// Only analyze the partition that has not been locked.
+			// Special case for dynamic partitioned tables:
+			// 1. Initially, neither the table nor any partitions are locked.
+			// 2. Once partition p1 reaches the auto-analyze threshold, a job is created for the entire table.
+			// 3. At this point, partition p1 is locked.
+			// 4. There are no further partitions requiring analysis for this table because the only partition needing analysis is locked.
+			//
+			// Normally, we would remove the table's job in this scenario, but that is not handled here.
+			// The primary responsibility of this function is to create jobs for tables needing analysis,
+			// and deleting jobs falls outside its scope.
+			//
+			// This behavior is acceptable, as lock statuses will be validated before running the analysis.
+			// So let keep it simple and ignore this edge case here.
+			filteredPartitionDefs := make([]model.PartitionDefinition, 0, len(partitionDefs))
+			for _, def := range partitionDefs {
+				if _, ok := lockedTables[def.ID]; !ok {
+					filteredPartitionDefs = append(filteredPartitionDefs, def)
+				}
+			}
+			partitionStats := GetPartitionStats(pq.statsHandle, tableMeta, filteredPartitionDefs)
 			job = jobFactory.CreateDynamicPartitionedTableAnalysisJob(
 				schemaName.O,
 				tableMeta,

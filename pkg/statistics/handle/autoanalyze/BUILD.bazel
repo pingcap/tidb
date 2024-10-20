@@ -55,6 +55,7 @@ go_test(
         "//pkg/testkit/testfailpoint",
         "//pkg/types",
         "//pkg/util/chunk",
+        "//pkg/util/mock",
         "//pkg/util/sqlexec/mock",
         "@com_github_pingcap_failpoint//:failpoint",
         "@com_github_stretchr_testify//require",

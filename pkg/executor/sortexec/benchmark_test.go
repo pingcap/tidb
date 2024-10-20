@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/util/mock"
 )
 
 func benchmarkSortExec(b *testing.B, cas *testutil.SortCase) {
@@ -101,7 +102,7 @@ func benchmarkSortExecDerivateCases(b *testing.B, cas *testutil.SortCase) {
 
 func BenchmarkSortExec(b *testing.B) {
 	b.ReportAllocs()
-	cas := testutil.DefaultSortTestCase()
+	cas := testutil.DefaultSortTestCase(mock.NewContext())
 	benchmarkSortExecDerivateCases(b, cas)
 }
 
@@ -111,6 +112,6 @@ func BenchmarkSortExecSpillToDisk(b *testing.B) {
 	defer variable.EnableTmpStorageOnOOM.Store(enableTmpStorageOnOOMCurrentVal)
 
 	b.ReportAllocs()
-	cas := testutil.SortTestCaseWithMemoryLimit(1)
+	cas := testutil.SortTestCaseWithMemoryLimit(mock.NewContext(), 1)
 	benchmarkSortExecDerivateCases(b, cas)
 }

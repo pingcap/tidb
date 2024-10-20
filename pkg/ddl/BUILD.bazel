@@ -162,7 +162,6 @@ go_library(
         "//pkg/util/logutil",
         "//pkg/util/mathutil",
         "//pkg/util/memory",
-        "//pkg/util/mock",
         "//pkg/util/ppcpuusage",
         "//pkg/util/ranger",
         "//pkg/util/rowDecoder",

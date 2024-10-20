@@ -238,9 +238,8 @@ func fillMultiSchemaInfo(info *model.MultiSchemaInfo, job *JobWrapper) error {
 		info.AddIndexes = append(info.AddIndexes, from)
 		info.DropIndexes = append(info.DropIndexes, to)
 	case model.ActionModifyColumn:
-		newCol := *job.Args[0].(**model.ColumnInfo)
-		oldColName := job.Args[1].(pmodel.CIStr)
-		pos := job.Args[2].(*ast.ColumnPosition)
+		args := job.JobArgs.(*model.ModifyColumnArgs)
+		newCol, oldColName, pos := args.Column, args.OldColumnName, args.Position
 		if newCol.Name.L != oldColName.L {
 			info.AddColumns = append(info.AddColumns, newCol.Name)
 			info.DropColumns = append(info.DropColumns, oldColName)
@@ -361,13 +360,8 @@ func mergeAddIndex(info *model.MultiSchemaInfo) {
 		}
 	}
 
-	// Fill args for new subjob
-	proxyJob := &model.Job{Version: model.JobVersion1}
-	proxyJob.FillArgs(newAddIndexesArgs)
-	mergedSubJob.Args = proxyJob.Args
-	mergedSubJob.JobArgs = newAddIndexesArgs
-
 	// place the merged add index job at the end of the sub-jobs.
+	mergedSubJob.JobArgs = newAddIndexesArgs
 	newSubJobs = append(newSubJobs, mergedSubJob)
 	info.SubJobs = newSubJobs
 }

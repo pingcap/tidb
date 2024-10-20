@@ -413,11 +413,11 @@ func insertJobIntoDeleteRangeTable(ctx context.Context, wrapper DelRangeExecWrap
 			}
 		}
 	case model.ActionModifyColumn:
-		var indexIDs []int64
-		var partitionIDs []int64
-		if err := job.DecodeArgs(&indexIDs, &partitionIDs); err != nil {
+		args, err := model.GetFinishedModifyColumnArgs(job)
+		if err != nil {
 			return errors.Trace(err)
 		}
+		indexIDs, partitionIDs := args.IndexIDs, args.PartitionIDs
 		if len(indexIDs) == 0 {
 			return nil
 		}
