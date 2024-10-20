@@ -113,7 +113,7 @@ func (pq *AnalysisPriorityQueueV2) recreateAndPushJob(
 ) error {
 	parameters := exec.GetAutoAnalyzeParameters(sctx)
 	autoAnalyzeRatio := exec.ParseAutoAnalyzeRatio(parameters[variable.TiDBAutoAnalyzeRatio])
-	currentTs, err := getStartTs(sctx)
+	currentTs, err := statsutil.GetStartTS(sctx)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -168,7 +168,7 @@ func (pq *AnalysisPriorityQueueV2) handleAddIndexEvent(
 	parameters := exec.GetAutoAnalyzeParameters(sctx)
 	autoAnalyzeRatio := exec.ParseAutoAnalyzeRatio(parameters[variable.TiDBAutoAnalyzeRatio])
 	// Get current timestamp from the session context.
-	currentTs, err := getStartTs(sctx)
+	currentTs, err := statsutil.GetStartTS(sctx)
 	if err != nil {
 		return errors.Trace(err)
 	}
