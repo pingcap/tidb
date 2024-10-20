@@ -18,6 +18,7 @@ import (
 	"context"
 	"io"
 	"math/rand"
+	"strconv"
 	"sync"
 	"testing"
 	"time"
@@ -28,6 +29,7 @@ import (
 	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/stretchr/testify/require"
 )
 
@@ -51,7 +53,7 @@ func TestPublishToTableStore(t *testing.T) {
 	ctx := context.Background()
 	s := notifier.OpenTableStore("test", "ddl_notifier")
 	se := sess.NewSession(tk.Session())
-	event1 := notifier.NewCreateTableEvent(&model.TableInfo{ID: 1000, Name: pmodel.NewCIStr("t1")})
+	event1 := notifier.NewCreateTablesEvent([]*model.TableInfo{{ID: 1000, Name: pmodel.NewCIStr("t1")}})
 	err := notifier.PubSchemeChangeToStore(ctx, se, 1, -1, event1, s)
 	require.NoError(t, err)
 	event2 := notifier.NewDropTableEvent(&model.TableInfo{ID: 1001, Name: pmodel.NewCIStr("t2")})
@@ -109,7 +111,7 @@ func TestBasicPubSub(t *testing.T) {
 
 	tk2 := testkit.NewTestKit(t, store)
 	se := sess.NewSession(tk2.Session())
-	event1 := notifier.NewCreateTableEvent(&model.TableInfo{ID: 1000, Name: pmodel.NewCIStr("t1")})
+	event1 := notifier.NewCreateTablesEvent([]*model.TableInfo{{ID: 1000, Name: pmodel.NewCIStr("t1")}})
 	err := notifier.PubSchemeChangeToStore(ctx, se, 1, -1, event1, s)
 	require.NoError(t, err)
 	event2 := notifier.NewDropTableEvent(&model.TableInfo{ID: 1001, Name: pmodel.NewCIStr("t2")})
@@ -161,7 +163,9 @@ func TestDeliverOrderAndCleanup(t *testing.T) {
 				}
 			}
 
-			tableIDs = append(tableIDs, change.GetCreateTableInfo().ID)
+			for _, tbl := range change.GetCreateTablesInfo() {
+				tableIDs = append(tableIDs, tbl.ID)
+			}
 			return nil
 		}
 		return h, &tableIDs
@@ -170,9 +174,11 @@ func TestDeliverOrderAndCleanup(t *testing.T) {
 	h1, id1 := newRndFailHandler()
 	h2, id2 := newRndFailHandler()
 	h3, id3 := newRndFailHandler()
+	h4, id4 := newRndFailHandler()
 	notifier.RegisterHandler(3, h1)
 	notifier.RegisterHandler(4, h2)
 	notifier.RegisterHandler(9, h3)
+	notifier.RegisterHandler(11, h4)
 
 	done := make(chan struct{})
 	go func() {
@@ -183,14 +189,18 @@ func TestDeliverOrderAndCleanup(t *testing.T) {
 	tk2 := testkit.NewTestKit(t, store)
 	se := sess.NewSession(tk2.Session())
 
-	event1 := notifier.NewCreateTableEvent(&model.TableInfo{ID: 1000, Name: pmodel.NewCIStr("t1")})
+	event1 := notifier.NewCreateTablesEvent([]*model.TableInfo{{ID: 1000, Name: pmodel.NewCIStr("t1")}})
 	err := notifier.PubSchemeChangeToStore(ctx, se, 1, -1, event1, s)
 	require.NoError(t, err)
-	event2 := notifier.NewCreateTableEvent(&model.TableInfo{ID: 1001, Name: pmodel.NewCIStr("t2")})
+	event2 := notifier.NewCreateTablesEvent([]*model.TableInfo{{ID: 1001, Name: pmodel.NewCIStr("t2")}})
 	err = notifier.PubSchemeChangeToStore(ctx, se, 2, -1, event2, s)
 	require.NoError(t, err)
-	event3 := notifier.NewCreateTableEvent(&model.TableInfo{ID: 1002, Name: pmodel.NewCIStr("t3")})
+	event3 := notifier.NewCreateTablesEvent([]*model.TableInfo{{ID: 1002, Name: pmodel.NewCIStr("t3")}})
 	err = notifier.PubSchemeChangeToStore(ctx, se, 3, -1, event3, s)
+	require.NoError(t, err)
+	event4 := notifier.NewCreateTablesEvent([]*model.TableInfo{{ID: 1003, Name: pmodel.NewCIStr("t3")},
+		{ID: 1004, Name: pmodel.NewCIStr("t4")}})
+	err = notifier.PubSchemeChangeToStore(ctx, se, 4, -1, event4, s)
 	require.NoError(t, err)
 
 	require.Eventually(t, func() bool {
@@ -199,10 +209,100 @@ func TestDeliverOrderAndCleanup(t *testing.T) {
 		return len(changes) == 0
 	}, time.Second, 50*time.Millisecond)
 
-	require.Equal(t, []int64{1000, 1001, 1002}, *id1)
-	require.Equal(t, []int64{1000, 1001, 1002}, *id2)
-	require.Equal(t, []int64{1000, 1001, 1002}, *id3)
+	require.Equal(t, []int64{1000, 1001, 1002, 1003, 1004}, *id1)
+	require.Equal(t, []int64{1000, 1001, 1002, 1003, 1004}, *id2)
+	require.Equal(t, []int64{1000, 1001, 1002, 1003, 1004}, *id3)
+	require.Equal(t, []int64{1000, 1001, 1002, 1003, 1004}, *id4)
 
 	cancel()
 	<-done
+}
+
+func TestPublishToStoreBySQL(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("USE test")
+	tk.MustExec("DROP TABLE IF EXISTS ddl_notifier")
+	tk.MustExec(tableStructure)
+	notifier.DefaultStore = notifier.OpenTableStore("test", "ddl_notifier")
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a int)")                                                                                                // ActionCreateTable
+	tk.MustExec("alter table t partition by range(a) (partition p1 values less than (20))")                                              // ActionAlterTablePartitioning
+	tk.MustExec("alter table t reorganize partition p1 into (partition p11 values less than (10), partition p12 values less than (20))") // ActionReorganizePartition
+	tk.MustExec("alter table t truncate partition p11")                                                                                  // ActionTruncateTablePartition
+	tk.MustExec("alter table t drop partition p11")                                                                                      // ActionDropTablePartition
+	tk.MustExec("alter table t add partition(partition p13 values less than (30))")                                                      // ActionAddTablePartition
+	tk.MustExec("create table t1 (a int)")                                                                                               // ActionCreateTable
+	tk.MustExec("ALTER TABLE t EXCHANGE PARTITION p12 WITH TABLE t1")                                                                    // ActionExchangeTablePartition
+	tk.MustExec("alter table t remove partitioning")                                                                                     // ActionRemovePartitioning
+	tk.MustExec("truncate table t")                                                                                                      // ActionTruncateTable
+	tk.MustExec("drop table t1")                                                                                                         // ActionDropTable
+	tk.MustExec("alter table t modify column a varchar(15)")                                                                             // ActionModifyColumn
+	tk.MustExec("alter table t add column b int")                                                                                        // ActionAddColumn
+	tk.MustExec("alter table t add index(b)")
+	tk.MustExec("create table t1(b int key, FOREIGN KEY (b) REFERENCES t(b) ON DELETE CASCADE);") // ActionCreateTable with foreign key
+	tk.MustExec("alter table t1 add column c int, add column d varchar(10)")                      // ActionAddColumn
+
+	ctx := context.Background()
+	s := notifier.OpenTableStore("test", "ddl_notifier")
+	se := sess.NewSession(tk.Session())
+	got, err := s.List(ctx, se)
+	require.NoError(t, err)
+	require.Len(t, got, 16)
+	rows := tk.MustQuery("select schema_change, multi_schema_change_seq from test.ddl_notifier").Rows()
+	tps := make([]model.ActionType, len(rows))
+	multiSchemaChangeSeqs := make([]int64, len(rows))
+	for i, row := range rows {
+		event := &notifier.SchemaChangeEvent{}
+		err = event.UnmarshalJSON([]byte(row[0].(string)))
+		require.NoError(t, err)
+		tps[i] = event.GetType()
+		seq, err := strconv.Atoi(row[1].(string))
+		require.NoError(t, err)
+		multiSchemaChangeSeqs[i] = int64(seq)
+	}
+	require.Equal(t, tps, []model.ActionType{
+		model.ActionCreateTables,
+		model.ActionAlterTablePartitioning,
+		model.ActionReorganizePartition,
+		model.ActionTruncateTablePartition,
+		model.ActionDropTablePartition,
+		model.ActionAddTablePartition,
+		model.ActionCreateTables,
+		model.ActionExchangeTablePartition,
+		model.ActionRemovePartitioning,
+		model.ActionTruncateTable,
+		model.ActionDropTable,
+		model.ActionModifyColumn,
+		model.ActionAddColumn,
+		model.ActionCreateTables,
+		model.ActionAddColumn,
+		model.ActionAddColumn,
+	})
+	require.Equal(t, multiSchemaChangeSeqs, []int64{-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, 0, 1})
+}
+
+func TestPublishEventError(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("USE test")
+	tk.MustExec("DROP TABLE IF EXISTS ddl_notifier")
+	tk.MustExec(tableStructure)
+	notifier.DefaultStore = notifier.OpenTableStore("test", "ddl_notifier")
+	cases := []string{
+		// todo: will add more case after issue 56634 fixed
+		"create table t (a int)", // ActionCreateTable
+	}
+
+	err := "[ddl:-1]DDL job rollback, error msg: mock publish event error"
+	tk.MustExec("set global tidb_ddl_error_count_limit = 3")
+	tk.MustExec("drop table if exists t")
+	for _, sql := range cases {
+		testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/asyncNotifyEventError", "return()")
+		tk.MustGetErrMsg(sql, err)
+		testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/asyncNotifyEventError")
+
+		tk.MustExec(sql)
+	}
 }

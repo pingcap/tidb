@@ -139,16 +139,22 @@ func convertNotReorgAddIdxJob2RollbackJob(jobCtx *jobContext, job *model.Job, oc
 // normal-type has only two states:    None -> Public
 // reorg-type has five states:         None -> Delete-only -> Write-only -> Write-org -> Public
 func rollingbackModifyColumn(jobCtx *jobContext, job *model.Job) (ver int64, err error) {
-	_, tblInfo, oldCol, jp, err := getModifyColumnInfo(jobCtx.metaMut, job)
+	args, err := model.GetModifyColumnArgs(job)
 	if err != nil {
-		return ver, err
+		job.State = model.JobStateCancelled
+		return ver, errors.Trace(err)
 	}
-	if !needChangeColumnData(oldCol, jp.newCol) {
+
+	_, tblInfo, oldCol, err := getModifyColumnInfo(jobCtx.metaMut, job, args.OldColumnName)
+	if err != nil {
+		return ver, errors.Trace(err)
+	}
+	if !needChangeColumnData(oldCol, args.Column) {
 		// Normal-type rolling back
 		if job.SchemaState == model.StateNone {
 			// When change null to not null, although state is unchanged with none, the oldCol flag's has been changed to preNullInsertFlag.
 			// To roll back this kind of normal job, it is necessary to mark the state as JobStateRollingback to restore the old col's flag.
-			if jp.modifyColumnTp == mysql.TypeNull && tblInfo.Columns[oldCol.Offset].GetFlag()|mysql.PreventNullInsertFlag != 0 {
+			if args.ModifyColumnType == mysql.TypeNull && tblInfo.Columns[oldCol.Offset].GetFlag()|mysql.PreventNullInsertFlag != 0 {
 				job.State = model.JobStateRollingback
 				return ver, dbterror.ErrCancelledDDLJob
 			}
@@ -161,7 +167,7 @@ func rollingbackModifyColumn(jobCtx *jobContext, job *model.Job) (ver int64, err
 		return ver, nil
 	}
 	// reorg-type rolling back
-	if jp.changingCol == nil {
+	if args.ChangingColumn == nil {
 		// The job hasn't been handled and we cancel it directly.
 		job.State = model.JobStateCancelled
 		return ver, dbterror.ErrCancelledDDLJob
@@ -316,11 +322,10 @@ func convertAddTablePartitionJob2RollbackJob(jobCtx *jobContext, job *model.Job,
 	for _, pd := range addingDefinitions {
 		partNames = append(partNames, pd.Name.L)
 	}
-	args, err := model.GetTablePartitionArgs(job)
-	if err != nil {
-		return ver, errors.Trace(err)
+
+	args := &model.TablePartitionArgs{
+		PartNames: partNames,
 	}
-	args.PartNames = partNames
 	model.FillRollbackArgsForAddPartition(job, args)
 	ver, err = updateVersionAndTableInfo(jobCtx, job, tblInfo, true)
 	if err != nil {
@@ -330,6 +335,17 @@ func convertAddTablePartitionJob2RollbackJob(jobCtx *jobContext, job *model.Job,
 	tblInfo.Partition.DDLAction = model.ActionNone
 	job.State = model.JobStateRollingback
 	return ver, errors.Trace(otherwiseErr)
+}
+
+func onRollbackReorganizePartition(jobCtx *jobContext, job *model.Job) (ver int64, err error) {
+	args, err := model.GetTablePartitionArgs(job)
+	if err != nil {
+		job.State = model.JobStateCancelled
+		return ver, errors.Trace(err)
+	}
+	jobCtx.jobArgs = args
+
+	return rollbackReorganizePartitionWithErr(jobCtx, job, dbterror.ErrCancelledDDLJob)
 }
 
 func rollbackReorganizePartitionWithErr(jobCtx *jobContext, job *model.Job, otherwiseErr error) (ver int64, err error) {
@@ -459,10 +475,7 @@ func convertReorgPartitionJob2RollbackJob(jobCtx *jobContext, job *model.Job, ot
 		}
 	}
 
-	args, err := model.GetTablePartitionArgs(job)
-	if err != nil {
-		return ver, errors.Trace(err)
-	}
+	args := jobCtx.jobArgs.(*model.TablePartitionArgs)
 	args.PartNames = partNames
 	job.FillArgs(args)
 	ver, err = updateVersionAndTableInfo(jobCtx, job, tblInfo, true)
@@ -474,7 +487,13 @@ func convertReorgPartitionJob2RollbackJob(jobCtx *jobContext, job *model.Job, ot
 }
 
 func rollingbackAddTablePartition(jobCtx *jobContext, job *model.Job) (ver int64, err error) {
-	tblInfo, _, addingDefinitions, err := checkAddPartition(jobCtx.metaMut, job)
+	args, err := model.GetTablePartitionArgs(job)
+	if err != nil {
+		job.State = model.JobStateCancelled
+		return ver, errors.Trace(err)
+	}
+	jobCtx.jobArgs = args
+	tblInfo, _, addingDefinitions, err := checkAddPartition(jobCtx, job)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
@@ -574,7 +593,7 @@ func convertJob2RollbackJob(w *worker, jobCtx *jobContext, job *model.Job) (ver 
 		ver, err = rollingbackAddTablePartition(jobCtx, job)
 	case model.ActionReorganizePartition, model.ActionRemovePartitioning,
 		model.ActionAlterTablePartitioning:
-		ver, err = rollbackReorganizePartitionWithErr(jobCtx, job, dbterror.ErrCancelledDDLJob)
+		ver, err = onRollbackReorganizePartition(jobCtx, job)
 	case model.ActionDropColumn:
 		ver, err = rollingbackDropColumn(jobCtx, job)
 	case model.ActionDropIndex, model.ActionDropPrimaryKey:
