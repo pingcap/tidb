@@ -1157,8 +1157,6 @@ func (tr *TableImporter) postProcess(
 		switch {
 		case shouldSkipAnalyze || rc.cfg.PostRestore.Analyze == config.OpLevelOff:
 			if !shouldSkipAnalyze {
-				// TODO: Find the correct way to wait for the stats_meta insert to complete.
-				time.Sleep(5 * time.Second)
 				updateStatsMeta(ctx, rc.db, tr.tableInfo.ID, estimatedModifyCnt)
 			}
 			tr.logger.Info("skip analyze")
