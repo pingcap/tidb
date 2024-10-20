@@ -163,7 +163,7 @@
         ]
       },
       {
-        "SQL": "format='brief' select /*+ broadcast_join(t1, t2), hash_join_build(t1) */ * from t1 where t1.k1 not in (select k1 from t2); -- RF could not push to t2 because of anti join",
+        "SQL": "format='brief' select /*+ broadcast_join(t1, t2), hash_join_build(t1), hash_join_probe(t2) */ * from t1 where t1.k1 not in (select k1 from t2); -- RF could not push to t2 because of anti join",
         "Plan": [
           "TableReader 0.80 root  MppVersion: 2, data:ExchangeSender",
           "└─ExchangeSender 0.80 mpp[tiflash]  ExchangeType: PassThrough",
