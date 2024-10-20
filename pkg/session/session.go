@@ -3194,6 +3194,7 @@ var (
 		{ddl.JobTableSQL, ddl.JobTableID},
 		{ddl.ReorgTableSQL, ddl.ReorgTableID},
 		{ddl.HistoryTableSQL, ddl.HistoryTableID},
+		{ddl.NotifierTable, ddl.NotifierTableID},
 	}
 	// BackfillTables is a list of tables definitions used in dist reorg DDL.
 	BackfillTables = []tableBasicInfo{
