@@ -39,7 +39,7 @@ type Refresher struct {
 	sysProcTracker sysproctrack.Tracker
 
 	// jobs is the priority queue of analysis jobs.
-	jobs *priorityqueue.AnalysisPriorityQueueV2
+	jobs *priorityqueue.AnalysisPriorityQueue
 
 	// worker is the worker that runs the analysis jobs.
 	worker *worker
@@ -62,7 +62,7 @@ func NewRefresher(
 	r := &Refresher{
 		statsHandle:    statsHandle,
 		sysProcTracker: sysProcTracker,
-		jobs:           priorityqueue.NewAnalysisPriorityQueueV2(statsHandle),
+		jobs:           priorityqueue.NewAnalysisPriorityQueue(statsHandle),
 		worker:         NewWorker(statsHandle, sysProcTracker, maxConcurrency),
 	}
 
