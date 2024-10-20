@@ -187,7 +187,7 @@ func TestDumpPlanReplayerAPI(t *testing.T) {
 	tk.MustExec(`plan replayer load "/tmp/plan_replayer.zip"`)
 
 	// 3-3. assert that the count and modify count in the stats is as expected
-	rows := tk.MustQuery("show stats_meta")
+	rows := tk.MustQuery("show stats_meta where db_name = 'planReplayer' and table_name = 't'")
 	require.True(t, rows.Next(), "unexpected data")
 	var dbName, tableName string
 	var modifyCount, count int64
