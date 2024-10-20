@@ -2336,12 +2336,15 @@ func (do *Domain) UpdateTableStatsLoop(ctx, initStatsCtx sessionctx.Context) err
 	do.wg.Run(func() {
 		do.indexUsageWorker()
 	}, "indexUsageWorker")
-	// TODO: Does it guarantee we can always get the latest stats owner status here?
-	if do.statsOwner.IsOwner() {
-		do.wg.Run(func() {
-			notifier.StartDDLNotifier(do.ctx)
-		}, "ddlNotifier")
-	}
+	// Start a goroutine to initialize the DDL notifier if the stats owner is found.
+	do.wg.Run(func() {
+		for {
+			if do.statsOwner.IsOwner() {
+				notifier.StartDDLNotifier(do.ctx)
+				return
+			}
+		}
+	}, "initDDLNotifier")
 	if do.statsLease <= 0 {
 		// For statsLease > 0, `updateStatsWorker` handles the quit of stats owner.
 		do.wg.Run(func() { quitStatsOwner(do, do.statsOwner) }, "quitStatsOwner")
