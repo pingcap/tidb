@@ -28,7 +28,7 @@ import (
 
 func TestColumnCopy(t *testing.T) {
 	col := newFixedLenColumn(8, 10)
-	for i := 0; i < 10; i++ {
+	for i := range 10 {
 		col.AppendInt64(int64(i))
 	}
 
@@ -76,7 +76,7 @@ func TestColumnCopyReconstructFixedLen(t *testing.T) {
 	require.Equal(t, col.nullCount(), nullCnt)
 	require.Len(t, sel, col.length)
 
-	for i := 0; i < 128; i++ {
+	for i := range 128 {
 		if i%2 == 0 {
 			col.AppendNull()
 		} else {
@@ -86,7 +86,7 @@ func TestColumnCopyReconstructFixedLen(t *testing.T) {
 
 	require.Len(t, sel, col.length-128)
 	require.Equal(t, nullCnt+128/2, col.nullCount())
-	for i := 0; i < 128; i++ {
+	for i := range 128 {
 		if i%2 == 0 {
 			require.True(t, col.IsNull(len(sel)+i))
 		} else {
@@ -132,7 +132,7 @@ func TestColumnCopyReconstructVarLen(t *testing.T) {
 	require.Equal(t, col.nullCount(), nullCnt)
 	require.Len(t, sel, col.length)
 
-	for i := 0; i < 128; i++ {
+	for i := range 128 {
 		if i%2 == 0 {
 			col.AppendNull()
 		} else {
@@ -142,7 +142,7 @@ func TestColumnCopyReconstructVarLen(t *testing.T) {
 
 	require.Len(t, sel, col.length-128)
 	require.Equal(t, nullCnt+128/2, col.nullCount())
-	for i := 0; i < 128; i++ {
+	for i := range 128 {
 		if i%2 == 0 {
 			require.True(t, col.IsNull(len(sel)+i))
 		} else {
@@ -465,7 +465,7 @@ func TestReconstructFixedLen(t *testing.T) {
 	require.Equal(t, col.nullCount(), nullCnt)
 	require.Len(t, sel, col.length)
 
-	for i := 0; i < 128; i++ {
+	for i := range 128 {
 		if i%2 == 0 {
 			col.AppendNull()
 		} else {
@@ -475,7 +475,7 @@ func TestReconstructFixedLen(t *testing.T) {
 
 	require.Len(t, sel, col.length-128)
 	require.Equal(t, nullCnt+128/2, col.nullCount())
-	for i := 0; i < 128; i++ {
+	for i := range 128 {
 		if i%2 == 0 {
 			require.True(t, col.IsNull(len(sel)+i))
 		} else {
@@ -521,7 +521,7 @@ func TestReconstructVarLen(t *testing.T) {
 	require.Equal(t, col.nullCount(), nullCnt)
 	require.Len(t, sel, col.length)
 
-	for i := 0; i < 128; i++ {
+	for i := range 128 {
 		if i%2 == 0 {
 			col.AppendNull()
 		} else {
@@ -531,7 +531,7 @@ func TestReconstructVarLen(t *testing.T) {
 
 	require.Len(t, sel, col.length-128)
 	require.Equal(t, nullCnt+128/2, col.nullCount())
-	for i := 0; i < 128; i++ {
+	for i := range 128 {
 		if i%2 == 0 {
 			require.True(t, col.IsNull(len(sel)+i))
 		} else {
@@ -546,7 +546,7 @@ func TestPreAllocInt64(t *testing.T) {
 	col.ResizeInt64(256, true)
 	i64s := col.Int64s()
 	require.Equal(t, 256, len(i64s))
-	for i := 0; i < 256; i++ {
+	for i := range 256 {
 		require.True(t, col.IsNull(i))
 	}
 	col.AppendInt64(2333)
@@ -562,7 +562,7 @@ func TestPreAllocUint64(t *testing.T) {
 	col.ResizeUint64(256, true)
 	u64s := col.Uint64s()
 	require.Equal(t, 256, len(u64s))
-	for i := 0; i < 256; i++ {
+	for i := range 256 {
 		require.True(t, col.IsNull(i))
 	}
 	col.AppendUint64(2333)
@@ -576,7 +576,7 @@ func TestPreAllocFloat32(t *testing.T) {
 	col.ResizeFloat32(256, true)
 	f32s := col.Float32s()
 	require.Equal(t, 256, len(f32s))
-	for i := 0; i < 256; i++ {
+	for i := range 256 {
 		require.True(t, col.IsNull(i))
 	}
 	col.AppendFloat32(2333)
@@ -590,7 +590,7 @@ func TestPreAllocFloat64(t *testing.T) {
 	col.ResizeFloat64(256, true)
 	f64s := col.Float64s()
 	require.Equal(t, 256, len(f64s))
-	for i := 0; i < 256; i++ {
+	for i := range 256 {
 		require.True(t, col.IsNull(i))
 	}
 	col.AppendFloat64(2333)
@@ -604,7 +604,7 @@ func TestPreAllocDecimal(t *testing.T) {
 	col.ResizeDecimal(256, true)
 	ds := col.Decimals()
 	require.Equal(t, 256, len(ds))
-	for i := 0; i < 256; i++ {
+	for i := range 256 {
 		require.True(t, col.IsNull(i))
 	}
 	col.AppendMyDecimal(new(types.MyDecimal))
@@ -617,7 +617,7 @@ func TestPreAllocTime(t *testing.T) {
 	col.ResizeTime(256, true)
 	ds := col.Times()
 	require.Equal(t, 256, len(ds))
-	for i := 0; i < 256; i++ {
+	for i := range 256 {
 		require.True(t, col.IsNull(i))
 	}
 	col.AppendTime(types.ZeroDatetime)
@@ -631,7 +631,7 @@ func TestNull(t *testing.T) {
 	require.Equal(t, 1024, col.nullCount())
 
 	notNulls := make(map[int]struct{})
-	for i := 0; i < 512; i++ {
+	for range 512 {
 		idx := rand.Intn(1024)
 		notNulls[idx] = struct{}{}
 		col.SetNull(idx, false)
@@ -666,7 +666,7 @@ func TestSetNulls(t *testing.T) {
 	require.Zero(t, col.nullCount())
 
 	nullMap := make(map[int]struct{})
-	for i := 0; i < 100; i++ {
+	for range 100 {
 		begin := rand.Intn(1024)
 		l := rand.Intn(37)
 		end := begin + l
@@ -688,7 +688,7 @@ func TestSetNulls(t *testing.T) {
 func TestResizeReserve(t *testing.T) {
 	cI64s := newFixedLenColumn(sizeInt64, 0)
 	require.Zero(t, cI64s.length)
-	for i := 0; i < 100; i++ {
+	for range 100 {
 		n := rand.Intn(1024)
 		cI64s.ResizeInt64(n, true)
 		require.Equal(t, n, cI64s.length)
@@ -699,7 +699,7 @@ func TestResizeReserve(t *testing.T) {
 	require.Zero(t, len(cI64s.Int64s()))
 
 	cStrs := newVarLenColumn(0)
-	for i := 0; i < 100; i++ {
+	for range 100 {
 		n := rand.Intn(1024)
 		cStrs.ReserveString(n)
 		require.Zero(t, cStrs.length)
@@ -919,7 +919,7 @@ func genNullCols(n int) []*Column {
 }
 
 func TestVectorizedNulls(t *testing.T) {
-	for i := 0; i < 256; i++ {
+	for range 256 {
 		cols := genNullCols(4)
 		lCol, rCol := cols[0], cols[1]
 		vecResult, rowResult := cols[2], cols[3]
@@ -956,7 +956,7 @@ func TestResetColumn(t *testing.T) {
 func BenchmarkMergeNullsVectorized(b *testing.B) {
 	cols := genNullCols(3)
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for range b.N {
 		cols[0].MergeNulls(cols[1:]...)
 	}
 }
@@ -964,7 +964,7 @@ func BenchmarkMergeNullsVectorized(b *testing.B) {
 func BenchmarkMergeNullsNonVectorized(b *testing.B) {
 	cols := genNullCols(3)
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for range b.N {
 		for i := range 1024 {
 			cols[0].SetNull(i, cols[1].IsNull(i) || cols[2].IsNull(i))
 		}
