@@ -5,4 +5,4 @@ load data local infile 'csv/extreamfloat64.csv' into table lrr_test fields termi
 analyze table lrr_test;
 
 select t1.col1, t2.col1 from lrr_test as t1 right join lrr_test as t2 on t1.col1 = t2.col1 where t1.col1 >=0 order by t1.col1;
-explain select t1. col1, t2.col1 from lrr_test as t1 right join lrr_test as t2 on t1.col1 = t2.col1 where t1.col1 >=0;
+explain format='brief' select t1. col1, t2.col1 from lrr_test as t1 right join lrr_test as t2 on t1.col1 = t2.col1 where t1.col1 >=0;
