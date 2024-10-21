@@ -207,9 +207,8 @@ type Range struct {
 }
 
 type RangeAndRegion struct {
-	r           Range
-	isScheduled bool
-	regions     map[uint64]int
+	r       Range
+	regions map[uint64]int
 }
 
 type encodingBuilder struct {
@@ -1304,8 +1303,6 @@ func (local *local) scanRegion(
 	ctxt context.Context,
 	engine *Engine,
 	start, end []byte,
-	regionSplitSize int64,
-	regionSplitKeys int64,
 ) ([]*split.RegionInfo, error) {
 	ito := &pebble.IterOptions{
 		LowerBound: start,
@@ -1363,34 +1360,30 @@ WriteAndIngest:
 	return nil, err
 }
 
-func pickRanges(rangeAndRegions []RangeAndRegion, regionProcessingMap *sync.Map, finished int) *RangeAndRegion {
+func pickRanges(rangeAndRegions map[int]RangeAndRegion, regionProcessingMap *sync.Map) *RangeAndRegion {
 	minScore := math.MaxInt64
-	var bestRange *RangeAndRegion
-	index := 0
+	var bestRangeIdx int
 	for i, rangeAndRegion := range rangeAndRegions {
-		if !rangeAndRegion.isScheduled {
-			score := 0
-			for store, val := range rangeAndRegion.regions {
-				// lower score mean less threads are processing its stores
-				score = score + val*getValue(regionProcessingMap, store)
-			}
-			if score == 0 {
-				// break early since no threads is importing its stores
-				bestRange = &rangeAndRegions[i]
-				index = i
-				break
-			} else if minScore > score {
-				minScore = score
-				bestRange = &rangeAndRegions[i]
-				index = i
-			}
+		score := 0
+		for store, val := range rangeAndRegion.regions {
+			// lower score mean less threads are processing its stores
+			score = score + val*getValue(regionProcessingMap, store)
+		}
+		if score == 0 {
+			// break early since no threads is importing its stores
+			bestRangeIdx = i
+			break
+		} else if minScore > score {
+			minScore = score
+			bestRangeIdx = i
 		}
 	}
+	bestRange := rangeAndRegions[bestRangeIdx]
 	for store, count := range bestRange.regions {
 		increaseByKey(regionProcessingMap, store, count)
 	}
-	bestRange.isScheduled = true
-	return bestRange
+	delete(rangeAndRegions, bestRangeIdx)
+	return &bestRange
 }
 
 func getValue(m *sync.Map, key interface{}) int {
@@ -1664,38 +1657,33 @@ func (local *local) writeAndIngestByRanges(ctx context.Context, engine *Engine, 
 	var allErr error
 	var wg sync.WaitGroup
 	metErr := atomic.NewBool(false)
-	rangeAndRegions := make([]RangeAndRegion, 0)
+	rangeAndRegions := make(map[int]RangeAndRegion)
 	regionProcessingMap := sync.Map{}
 
-	for _, r := range ranges {
+	for i, r := range ranges {
 		startKey := r.start
 		endKey := r.end
-		regions, err := local.scanRegion(ctx, engine, startKey, endKey, regionSplitSize, regionSplitKeys)
+		regions, err := local.scanRegion(ctx, engine, startKey, endKey)
 		if err != nil {
 			log.FromContext(ctx).Warn("scaen regino failed", zap.Error(err))
 			return err
 		}
 		rr := RangeAndRegion{
-			r:           r,
-			isScheduled: false,
-			regions:     make(map[uint64]int),
+			r:       r,
+			regions: make(map[uint64]int),
 		}
 		for _, region := range regions {
 			for _, peer := range region.Region.Peers {
-				if val, ok := rr.regions[peer.StoreId]; ok {
-					rr.regions[peer.StoreId] = val + 1
-				} else {
-					rr.regions[peer.StoreId] = 1
-				}
+				rr.regions[peer.StoreId]++
 			}
 		}
-		rangeAndRegions = append(rangeAndRegions, rr)
+		rangeAndRegions[i] = rr
 	}
 
 	finished := 0
 outerLoop:
 	for finished < len(rangeAndRegions) {
-		rr := pickRanges(rangeAndRegions, &regionProcessingMap, finished)
+		rr := pickRanges(rangeAndRegions, &regionProcessingMap)
 		startKey := rr.r.start
 		endKey := rr.r.end
 		processingRegions := rr.regions
@@ -1709,7 +1697,7 @@ outerLoop:
 		go func(w *worker.Worker) {
 			defer func() {
 				for store, count := range processingRegions {
-					// when we finish importing reange, remove store count in the map
+					// when we finish importing ranges, remove store count in the map
 					increaseByKey(&regionProcessingMap, store, count*-1)
 				}
 				local.rangeConcurrency.Recycle(w)
