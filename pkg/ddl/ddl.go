@@ -578,6 +578,7 @@ func asyncNotifyEvents(jobCtx *jobContext, e *notifier.SchemaChangeEvent, job *m
 				return err
 			}
 		}
+		return nil
 	}
 	return asyncNotifyEvent(jobCtx, e, job, subJobID, sctx)
 }
