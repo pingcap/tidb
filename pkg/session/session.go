@@ -2145,7 +2145,11 @@ func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlex
 	}
 
 	// Execute the physical plan.
-	logStmt(stmt, s)
+	if variable.ProcessDeferGeneralLog.Load() {
+		defer logStmt(stmt, s)
+	} else {
+		logStmt(stmt, s)
+	}
 
 	var recordSet sqlexec.RecordSet
 	if stmt.PsStmt != nil { // point plan short path
