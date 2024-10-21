@@ -38,6 +38,8 @@ const (
 	BackgroundSubtaskTableID = meta.MaxInt48 - 5
 	// BackgroundSubtaskHistoryTableID is the table ID of `tidb_background_subtask_history`.
 	BackgroundSubtaskHistoryTableID = meta.MaxInt48 - 6
+	// NotifierTableID is the table ID of `tidb_ddl_notifier`.
+	NotifierTableID = meta.MaxInt48 - 7
 
 	// JobTableSQL is the CREATE TABLE SQL of `tidb_ddl_job`.
 	JobTableSQL = "create table " + JobTable + `(
@@ -117,4 +119,13 @@ const (
 		summary json,
 		key idx_task_key(task_key),
 		key idx_state_update_time(state_update_time))`
+
+	// NotifierTableSQL is the CREATE TABLE SQL of `tidb_ddl_notifier`.
+	// TODO(lance6716): update the column name multi_schema_change_seq
+	NotifierTableSQL = `CREATE TABLE tidb_ddl_notifier (
+		ddl_job_id BIGINT,
+		multi_schema_change_seq BIGINT COMMENT '-1 if the schema change does not belong to a multi-schema change DDL. 0 or positive numbers representing the sub-job index of a multi-schema change DDL',
+		schema_change LONGBLOB COMMENT 'SchemaChangeEvent at rest',
+		processed_by_flag BIGINT UNSIGNED DEFAULT 0 COMMENT 'flag to mark which subscriber has processed the event',
+		PRIMARY KEY(ddl_job_id, multi_schema_change_seq))`
 )
