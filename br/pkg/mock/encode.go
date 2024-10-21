@@ -5,6 +5,7 @@
 //
 //	mockgen -package mock github.com/pingcap/tidb/pkg/lightning/backend/encode Encoder,EncodingBuilder,Rows,Row
 //
+
 // Package mock is a generated GoMock package.
 package mock
 
@@ -22,6 +23,7 @@ import (
 type MockEncoder struct {
 	ctrl     *gomock.Controller
 	recorder *MockEncoderMockRecorder
+	isgomock struct{}
 }
 
 // MockEncoderMockRecorder is the mock recorder for MockEncoder.
@@ -54,24 +56,25 @@ func (mr *MockEncoderMockRecorder) Close() *gomock.Call {
 }
 
 // Encode mocks base method.
-func (m *MockEncoder) Encode(arg0 []types.Datum, arg1 int64, arg2 []int, arg3 int64) (encode.Row, error) {
+func (m *MockEncoder) Encode(row []types.Datum, rowID int64, columnPermutation []int, offset int64) (encode.Row, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "Encode", arg0, arg1, arg2, arg3)
+	ret := m.ctrl.Call(m, "Encode", row, rowID, columnPermutation, offset)
 	ret0, _ := ret[0].(encode.Row)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
 // Encode indicates an expected call of Encode.
-func (mr *MockEncoderMockRecorder) Encode(arg0, arg1, arg2, arg3 any) *gomock.Call {
+func (mr *MockEncoderMockRecorder) Encode(row, rowID, columnPermutation, offset any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Encode", reflect.TypeOf((*MockEncoder)(nil).Encode), arg0, arg1, arg2, arg3)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Encode", reflect.TypeOf((*MockEncoder)(nil).Encode), row, rowID, columnPermutation, offset)
 }
 
 // MockEncodingBuilder is a mock of EncodingBuilder interface.
 type MockEncodingBuilder struct {
 	ctrl     *gomock.Controller
 	recorder *MockEncodingBuilderMockRecorder
+	isgomock struct{}
 }
 
 // MockEncodingBuilderMockRecorder is the mock recorder for MockEncodingBuilder.
@@ -106,24 +109,25 @@ func (mr *MockEncodingBuilderMockRecorder) MakeEmptyRows() *gomock.Call {
 }
 
 // NewEncoder mocks base method.
-func (m *MockEncodingBuilder) NewEncoder(arg0 context.Context, arg1 *encode.EncodingConfig) (encode.Encoder, error) {
+func (m *MockEncodingBuilder) NewEncoder(ctx context.Context, config *encode.EncodingConfig) (encode.Encoder, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "NewEncoder", arg0, arg1)
+	ret := m.ctrl.Call(m, "NewEncoder", ctx, config)
 	ret0, _ := ret[0].(encode.Encoder)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
 // NewEncoder indicates an expected call of NewEncoder.
-func (mr *MockEncodingBuilderMockRecorder) NewEncoder(arg0, arg1 any) *gomock.Call {
+func (mr *MockEncodingBuilderMockRecorder) NewEncoder(ctx, config any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "NewEncoder", reflect.TypeOf((*MockEncodingBuilder)(nil).NewEncoder), arg0, arg1)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "NewEncoder", reflect.TypeOf((*MockEncodingBuilder)(nil).NewEncoder), ctx, config)
 }
 
 // MockRows is a mock of Rows interface.
 type MockRows struct {
 	ctrl     *gomock.Controller
 	recorder *MockRowsMockRecorder
+	isgomock struct{}
 }
 
 // MockRowsMockRecorder is the mock recorder for MockRows.
@@ -161,6 +165,7 @@ func (mr *MockRowsMockRecorder) Clear() *gomock.Call {
 type MockRow struct {
 	ctrl     *gomock.Controller
 	recorder *MockRowMockRecorder
+	isgomock struct{}
 }
 
 // MockRowMockRecorder is the mock recorder for MockRow.
@@ -181,15 +186,15 @@ func (m *MockRow) EXPECT() *MockRowMockRecorder {
 }
 
 // ClassifyAndAppend mocks base method.
-func (m *MockRow) ClassifyAndAppend(arg0 *encode.Rows, arg1 *verification.KVChecksum, arg2 *encode.Rows, arg3 *verification.KVChecksum) {
+func (m *MockRow) ClassifyAndAppend(data *encode.Rows, dataChecksum *verification.KVChecksum, indices *encode.Rows, indexChecksum *verification.KVChecksum) {
 	m.ctrl.T.Helper()
-	m.ctrl.Call(m, "ClassifyAndAppend", arg0, arg1, arg2, arg3)
+	m.ctrl.Call(m, "ClassifyAndAppend", data, dataChecksum, indices, indexChecksum)
 }
 
 // ClassifyAndAppend indicates an expected call of ClassifyAndAppend.
-func (mr *MockRowMockRecorder) ClassifyAndAppend(arg0, arg1, arg2, arg3 any) *gomock.Call {
+func (mr *MockRowMockRecorder) ClassifyAndAppend(data, dataChecksum, indices, indexChecksum any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ClassifyAndAppend", reflect.TypeOf((*MockRow)(nil).ClassifyAndAppend), arg0, arg1, arg2, arg3)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ClassifyAndAppend", reflect.TypeOf((*MockRow)(nil).ClassifyAndAppend), data, dataChecksum, indices, indexChecksum)
 }
 
 // Size mocks base method.

@@ -334,7 +334,7 @@ tools/bin/gotestsum:
 # mockgen@v0.2.0 is imcompatible with v0.3.0, so install it always.
 .PHONY: mockgen
 mockgen:
-	GOBIN=$(shell pwd)/tools/bin $(GO) install github.com/lance6716/mock/mockgen@v0.4.0-patch
+	GOBIN=$(shell pwd)/tools/bin $(GO) install github.com/lance6716/mock/mockgen@v0.5.0-patch-3
 
 # Usage:
 #

@@ -5,6 +5,7 @@
 //
 //	mockgen -package mock github.com/pingcap/tidb/br/pkg/utils TaskRegister
 //
+
 // Package mock is a generated GoMock package.
 package mock
 
@@ -19,6 +20,7 @@ import (
 type MockTaskRegister struct {
 	ctrl     *gomock.Controller
 	recorder *MockTaskRegisterMockRecorder
+	isgomock struct{}
 }
 
 // MockTaskRegisterMockRecorder is the mock recorder for MockTaskRegister.
@@ -39,43 +41,43 @@ func (m *MockTaskRegister) EXPECT() *MockTaskRegisterMockRecorder {
 }
 
 // Close mocks base method.
-func (m *MockTaskRegister) Close(arg0 context.Context) error {
+func (m *MockTaskRegister) Close(ctx context.Context) error {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "Close", arg0)
+	ret := m.ctrl.Call(m, "Close", ctx)
 	ret0, _ := ret[0].(error)
 	return ret0
 }
 
 // Close indicates an expected call of Close.
-func (mr *MockTaskRegisterMockRecorder) Close(arg0 any) *gomock.Call {
+func (mr *MockTaskRegisterMockRecorder) Close(ctx any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Close", reflect.TypeOf((*MockTaskRegister)(nil).Close), arg0)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Close", reflect.TypeOf((*MockTaskRegister)(nil).Close), ctx)
 }
 
 // RegisterTask mocks base method.
-func (m *MockTaskRegister) RegisterTask(arg0 context.Context) error {
+func (m *MockTaskRegister) RegisterTask(c context.Context) error {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "RegisterTask", arg0)
+	ret := m.ctrl.Call(m, "RegisterTask", c)
 	ret0, _ := ret[0].(error)
 	return ret0
 }
 
 // RegisterTask indicates an expected call of RegisterTask.
-func (mr *MockTaskRegisterMockRecorder) RegisterTask(arg0 any) *gomock.Call {
+func (mr *MockTaskRegisterMockRecorder) RegisterTask(c any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "RegisterTask", reflect.TypeOf((*MockTaskRegister)(nil).RegisterTask), arg0)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "RegisterTask", reflect.TypeOf((*MockTaskRegister)(nil).RegisterTask), c)
 }
 
 // RegisterTaskOnce mocks base method.
-func (m *MockTaskRegister) RegisterTaskOnce(arg0 context.Context) error {
+func (m *MockTaskRegister) RegisterTaskOnce(ctx context.Context) error {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "RegisterTaskOnce", arg0)
+	ret := m.ctrl.Call(m, "RegisterTaskOnce", ctx)
 	ret0, _ := ret[0].(error)
 	return ret0
 }
 
 // RegisterTaskOnce indicates an expected call of RegisterTaskOnce.
-func (mr *MockTaskRegisterMockRecorder) RegisterTaskOnce(arg0 any) *gomock.Call {
+func (mr *MockTaskRegisterMockRecorder) RegisterTaskOnce(ctx any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "RegisterTaskOnce", reflect.TypeOf((*MockTaskRegister)(nil).RegisterTaskOnce), arg0)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "RegisterTaskOnce", reflect.TypeOf((*MockTaskRegister)(nil).RegisterTaskOnce), ctx)
 }
