@@ -694,3 +694,22 @@ UPDATE update_with_diff_type SET b = '{"a":   "\\u6d4b\\u8bd5"}';
 SELECT b FROM update_with_diff_type;
 set SQL_MODE=default;
 
+# TestUpdateIgnoreWithFK
+drop table if exists parent, child;
+create table parent (id int primary key, ref int, key(ref));
+create table child (id int primary key, ref int, foreign key (ref) references parent(ref));
+insert into parent values (1, 1), (2, 2);
+insert into child values (1, 1);
+
+update child set ref = 2 where id = 1;
+-- error 1452
+update child set ref = 3 where id = 1;
+--enable_warnings
+update ignore child set ref = 3 where id = 1;
+--disable_warnings
+
+-- error 1451
+update parent set ref = 3 where id = 2;
+--enable_warnings
+update ignore parent set ref = 3 where id = 2;
+--disable_warnings

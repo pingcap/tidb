@@ -207,7 +207,19 @@ func (e *UpdateExec) exec(ctx context.Context, _ *expression.Schema, row, newDat
 		// Update row
 		fkChecks := e.fkChecks[content.TblID]
 		fkCascades := e.fkCascades[content.TblID]
-		changed, err1 := updateRecord(ctx, e.Ctx(), handle, oldData, newTableData, flags, tbl, false, e.memTracker, fkChecks, fkCascades, dupKeyCheck)
+
+		if e.IgnoreError {
+			ignored, err := checkFKIgnoreErr(ctx, e.Ctx(), e.fkChecks[tbl.Meta().ID], newTableData)
+			if err != nil {
+				return err
+			}
+
+			// meets an error, skip this row.
+			if ignored {
+				continue
+			}
+		}
+		changed, err1 := updateRecord(ctx, e.Ctx(), handle, oldData, newTableData, flags, tbl, false, e.memTracker, fkChecks, fkCascades, dupKeyCheck, e.IgnoreError)
 		if err1 == nil {
 			_, exist := e.updatedRowKeys[content.Start].Get(handle)
 			memDelta := e.updatedRowKeys[content.Start].Set(handle, changed)
