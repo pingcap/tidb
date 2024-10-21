@@ -21,6 +21,7 @@ go_library(
         "//pkg/parser/ast",
         "//pkg/parser/model",
         "//pkg/parser/mysql",
+        "//pkg/planner/cascades/base",
         "//pkg/planner/core/base",
         "//pkg/planner/funcdep",
         "//pkg/planner/planctx",

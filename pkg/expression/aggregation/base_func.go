@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/planner/cascades/base"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/mathutil"
@@ -45,6 +46,42 @@ func newBaseFuncDesc(ctx expression.BuildContext, name string, args []expression
 	b := baseFuncDesc{Name: strings.ToLower(name), Args: args}
 	err := b.TypeInfer(ctx)
 	return b, err
+}
+
+// Hash64 implements the base.Hasher interface.
+func (a *baseFuncDesc) Hash64(h base.Hasher) {
+	h.HashString(a.Name)
+	h.HashInt(len(a.Args))
+	for _, arg := range a.Args {
+		arg.Hash64(h)
+	}
+	if a.RetTp != nil {
+		h.HashByte(base.NotNilFlag)
+		a.RetTp.Hash64(h)
+	} else {
+		h.HashByte(base.NilFlag)
+	}
+}
+
+// Equals implements the base.Equals interface.
+func (a *baseFuncDesc) Equals(other any) bool {
+	if other == nil {
+		return false
+	}
+	a2, ok := other.(*baseFuncDesc)
+	if !ok {
+		return false
+	}
+	ok = a.Name == a2.Name && len(a.Args) == len(a2.Args) && ((a.RetTp == nil && a2.RetTp == nil) || (a.RetTp != nil && a2.RetTp != nil && a.RetTp.Equals(a2.RetTp)))
+	if !ok {
+		return false
+	}
+	for i, arg := range a.Args {
+		if !arg.Equals(a2.Args[i]) {
+			return false
+		}
+	}
+	return true
 }
 
 func (a *baseFuncDesc) equal(ctx expression.EvalContext, other *baseFuncDesc) bool {
