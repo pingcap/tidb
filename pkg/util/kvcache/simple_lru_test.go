@@ -34,7 +34,7 @@ func (mk *mockCacheKey) Hash() []byte {
 	}
 	mk.hash = make([]byte, 8)
 	for i := range 8 {
-		mk.hash[i] = byte((mk.key >> ((i - 1) * 8)) & 0xff)
+		mk.hash[i] = byte((mk.key >> ((uint(i) - 1) * 8)) & 0xff)
 	}
 	return mk.hash
 }
