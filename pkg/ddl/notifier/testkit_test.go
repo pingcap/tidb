@@ -36,10 +36,10 @@ import (
 const tableStructure = `
 CREATE TABLE ddl_notifier (
 	ddl_job_id BIGINT,
-	multi_schema_change_seq BIGINT COMMENT '-1 if the schema change does not belong to a multi-schema change DDL. 0 or positive numbers representing the sub-job index of a multi-schema change DDL',
+	sub_job_id BIGINT COMMENT '-1 if the schema change does not belong to a multi-schema change DDL or a merged DDL. 0 or positive numbers representing the sub-job index of a multi-schema change DDL or a merged DDL',
 	schema_change LONGBLOB COMMENT 'SchemaChangeEvent at rest',
 	processed_by_flag BIGINT UNSIGNED DEFAULT 0 COMMENT 'flag to mark which subscriber has processed the event',
-	PRIMARY KEY(ddl_job_id, multi_schema_change_seq)
+	PRIMARY KEY(ddl_job_id, sub_job_id)
 )
 `
 
@@ -53,7 +53,7 @@ func TestPublishToTableStore(t *testing.T) {
 	ctx := context.Background()
 	s := notifier.OpenTableStore("mysql", "tidb_ddl_notifier")
 	se := sess.NewSession(tk.Session())
-	event1 := notifier.NewCreateTablesEvent([]*model.TableInfo{{ID: 1000, Name: pmodel.NewCIStr("t1")}})
+	event1 := notifier.NewCreateTableEvent(&model.TableInfo{ID: 1000, Name: pmodel.NewCIStr("t1")})
 	err := notifier.PubSchemeChangeToStore(ctx, se, 1, -1, event1, s)
 	require.NoError(t, err)
 	event2 := notifier.NewDropTableEvent(&model.TableInfo{ID: 1001, Name: pmodel.NewCIStr("t2")})
@@ -111,7 +111,7 @@ func TestBasicPubSub(t *testing.T) {
 
 	tk2 := testkit.NewTestKit(t, store)
 	se := sess.NewSession(tk2.Session())
-	event1 := notifier.NewCreateTablesEvent([]*model.TableInfo{{ID: 1000, Name: pmodel.NewCIStr("t1")}})
+	event1 := notifier.NewCreateTableEvent(&model.TableInfo{ID: 1000, Name: pmodel.NewCIStr("t1")})
 	err := notifier.PubSchemeChangeToStore(ctx, se, 1, -1, event1, s)
 	require.NoError(t, err)
 	event2 := notifier.NewDropTableEvent(&model.TableInfo{ID: 1001, Name: pmodel.NewCIStr("t2#special-char?in'name")})
@@ -163,9 +163,7 @@ func TestDeliverOrderAndCleanup(t *testing.T) {
 				}
 			}
 
-			for _, tbl := range change.GetCreateTablesInfo() {
-				tableIDs = append(tableIDs, tbl.ID)
-			}
+			tableIDs = append(tableIDs, change.GetCreateTableInfo().ID)
 			return nil
 		}
 		return h, &tableIDs
@@ -174,11 +172,9 @@ func TestDeliverOrderAndCleanup(t *testing.T) {
 	h1, id1 := newRndFailHandler()
 	h2, id2 := newRndFailHandler()
 	h3, id3 := newRndFailHandler()
-	h4, id4 := newRndFailHandler()
 	notifier.RegisterHandler(3, h1)
 	notifier.RegisterHandler(4, h2)
 	notifier.RegisterHandler(9, h3)
-	notifier.RegisterHandler(11, h4)
 
 	done := make(chan struct{})
 	go func() {
@@ -189,18 +185,14 @@ func TestDeliverOrderAndCleanup(t *testing.T) {
 	tk2 := testkit.NewTestKit(t, store)
 	se := sess.NewSession(tk2.Session())
 
-	event1 := notifier.NewCreateTablesEvent([]*model.TableInfo{{ID: 1000, Name: pmodel.NewCIStr("t1")}})
+	event1 := notifier.NewCreateTableEvent(&model.TableInfo{ID: 1000, Name: pmodel.NewCIStr("t1")})
 	err := notifier.PubSchemeChangeToStore(ctx, se, 1, -1, event1, s)
 	require.NoError(t, err)
-	event2 := notifier.NewCreateTablesEvent([]*model.TableInfo{{ID: 1001, Name: pmodel.NewCIStr("t2")}})
+	event2 := notifier.NewCreateTableEvent(&model.TableInfo{ID: 1001, Name: pmodel.NewCIStr("t2")})
 	err = notifier.PubSchemeChangeToStore(ctx, se, 2, -1, event2, s)
 	require.NoError(t, err)
-	event3 := notifier.NewCreateTablesEvent([]*model.TableInfo{{ID: 1002, Name: pmodel.NewCIStr("t3")}})
+	event3 := notifier.NewCreateTableEvent(&model.TableInfo{ID: 1002, Name: pmodel.NewCIStr("t3")})
 	err = notifier.PubSchemeChangeToStore(ctx, se, 3, -1, event3, s)
-	require.NoError(t, err)
-	event4 := notifier.NewCreateTablesEvent([]*model.TableInfo{{ID: 1003, Name: pmodel.NewCIStr("t3")},
-		{ID: 1004, Name: pmodel.NewCIStr("t4")}})
-	err = notifier.PubSchemeChangeToStore(ctx, se, 4, -1, event4, s)
 	require.NoError(t, err)
 
 	require.Eventually(t, func() bool {
@@ -209,10 +201,9 @@ func TestDeliverOrderAndCleanup(t *testing.T) {
 		return len(changes) == 0
 	}, time.Second, 50*time.Millisecond)
 
-	require.Equal(t, []int64{1000, 1001, 1002, 1003, 1004}, *id1)
-	require.Equal(t, []int64{1000, 1001, 1002, 1003, 1004}, *id2)
-	require.Equal(t, []int64{1000, 1001, 1002, 1003, 1004}, *id3)
-	require.Equal(t, []int64{1000, 1001, 1002, 1003, 1004}, *id4)
+	require.Equal(t, []int64{1000, 1001, 1002}, *id1)
+	require.Equal(t, []int64{1000, 1001, 1002}, *id2)
+	require.Equal(t, []int64{1000, 1001, 1002}, *id3)
 
 	cancel()
 	<-done
@@ -250,7 +241,7 @@ func TestPublishToStoreBySQL(t *testing.T) {
 	got, err := s.List(ctx, se)
 	require.NoError(t, err)
 	require.Len(t, got, 16)
-	rows := tk.MustQuery("select schema_change, multi_schema_change_seq from test.ddl_notifier").Rows()
+	rows := tk.MustQuery("select schema_change, sub_job_id from test.ddl_notifier").Rows()
 	tps := make([]model.ActionType, len(rows))
 	multiSchemaChangeSeqs := make([]int64, len(rows))
 	for i, row := range rows {
@@ -263,20 +254,20 @@ func TestPublishToStoreBySQL(t *testing.T) {
 		multiSchemaChangeSeqs[i] = int64(seq)
 	}
 	require.Equal(t, tps, []model.ActionType{
-		model.ActionCreateTables,
+		model.ActionCreateTable,
 		model.ActionAlterTablePartitioning,
 		model.ActionReorganizePartition,
 		model.ActionTruncateTablePartition,
 		model.ActionDropTablePartition,
 		model.ActionAddTablePartition,
-		model.ActionCreateTables,
+		model.ActionCreateTable,
 		model.ActionExchangeTablePartition,
 		model.ActionRemovePartitioning,
 		model.ActionTruncateTable,
 		model.ActionDropTable,
 		model.ActionModifyColumn,
 		model.ActionAddColumn,
-		model.ActionCreateTables,
+		model.ActionCreateTable,
 		model.ActionAddColumn,
 		model.ActionAddColumn,
 	})

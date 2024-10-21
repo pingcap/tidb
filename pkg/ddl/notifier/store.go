@@ -53,7 +53,7 @@ func (t *tableStore) Insert(ctx context.Context, s *sess.Session, change *schema
 	sql := fmt.Sprintf(`
 		INSERT INTO %s.%s (
 			ddl_job_id,
-			multi_schema_change_seq,
+			sub_job_id,
 			schema_change,
 			processed_by_flag
 		) VALUES (%%?, %%?, %%?, 0)`,
@@ -76,7 +76,7 @@ func (t *tableStore) UpdateProcessed(
 	sql := fmt.Sprintf(`
 		UPDATE %s.%s
 		SET processed_by_flag = %d
-		WHERE ddl_job_id = %d AND multi_schema_change_seq = %d`,
+		WHERE ddl_job_id = %d AND sub_job_id = %d`,
 		t.db, t.table,
 		processedBy,
 		ddlJobID, multiSchemaChangeID)
@@ -102,7 +102,7 @@ func (t *tableStore) DeleteAndCommit(
 	}()
 	sql := fmt.Sprintf(`
 		DELETE FROM %s.%s
-		WHERE ddl_job_id = %d AND multi_schema_change_seq = %d`,
+		WHERE ddl_job_id = %d AND sub_job_id = %d`,
 		t.db, t.table,
 		ddlJobID, multiSchemaChangeID)
 	_, err = se.Execute(ctx, sql, "ddl_notifier")
@@ -113,10 +113,10 @@ func (t *tableStore) List(ctx context.Context, se *sess.Session) ([]*schemaChang
 	sql := fmt.Sprintf(`
 		SELECT
 			ddl_job_id,
-			multi_schema_change_seq,
+			sub_job_id,
 			schema_change,
 			processed_by_flag
-		FROM %s.%s ORDER BY ddl_job_id, multi_schema_change_seq`,
+		FROM %s.%s ORDER BY ddl_job_id, sub_job_id`,
 		t.db, t.table)
 	rows, err := se.Execute(ctx, sql, "ddl_notifier")
 	if err != nil {
@@ -143,7 +143,7 @@ func (t *tableStore) List(ctx context.Context, se *sess.Session) ([]*schemaChang
 // be created with the table structure:
 //
 //	ddl_job_id BIGINT,
-//	multi_schema_change_seq BIGINT COMMENT '-1 if the schema change does not belong to a multi-schema change DDL. 0 or positive numbers representing the sub-job index of a multi-schema change DDL',
+//	sub_job_id BIGINT COMMENT '-1 if the schema change does not belong to a multi-schema change DDL or a merged DDL. 0 or positive numbers representing the sub-job index of a multi-schema change DDL or a merged DDL',
 //	schema_change JSON COMMENT 'SchemaChange at rest',
 //	processed_by_flag BIGINT UNSIGNED DEFAULT 0 COMMENT 'flag to mark which subscriber has processed the event',
 //	PRIMARY KEY(ddl_job_id, multi_schema_change_id)
