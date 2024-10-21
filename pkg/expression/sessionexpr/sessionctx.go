@@ -144,8 +144,9 @@ func (ctx *ExprContext) IntoStatic() *exprstatic.ExprContext {
 
 // EvalContext implements the `expression.EvalContext` interface to provide evaluation context in session.
 type EvalContext struct {
-	sctx  sessionctx.Context
-	props expropt.OptionalEvalPropProviders
+	sctx         sessionctx.Context
+	props        expropt.OptionalEvalPropProviders
+	readonlyVars map[string]struct{}
 }
 
 // NewEvalContext creates a new EvalContext.
@@ -163,7 +164,24 @@ func NewEvalContext(sctx sessionctx.Context) *EvalContext {
 	ctx.setOptionalProp(expropt.PrivilegeCheckerProvider(func() expropt.PrivilegeChecker { return ctx }))
 	// When EvalContext is created from a session, it should contain all the optional properties.
 	intest.Assert(ctx.props.PropKeySet().IsFull())
+	ctx.readonlyVars = make(map[string]struct{})
 	return ctx
+}
+
+// ResetReadonlyVarMap resets the readonly vars map.
+func (ctx *EvalContext) ResetReadonlyVarMap() {
+	ctx.readonlyVars = make(map[string]struct{})
+}
+
+// SetReadonlyVarMap sets the readonly vars map.
+func (ctx *EvalContext) SetReadonlyVarMap(vars map[string]struct{}) {
+	ctx.readonlyVars = vars
+}
+
+// IsReadonlyVar checks whether the variable is readonly.
+func (ctx *EvalContext) IsReadonlyVar(name string) bool {
+	_, ok := ctx.readonlyVars[name]
+	return ok
 }
 
 func (ctx *EvalContext) setOptionalProp(prop exprctx.OptionalEvalPropProvider) {

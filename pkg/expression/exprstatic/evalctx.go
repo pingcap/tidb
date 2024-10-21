@@ -83,6 +83,7 @@ type evalCtxState struct {
 	paramList             []types.Datum
 	userVars              variable.UserVarsReader
 	props                 expropt.OptionalEvalPropProviders
+	readonlyVarMap        map[string]struct{}
 }
 
 // EvalCtxOption is the option to set `EvalContext`.
@@ -388,6 +389,22 @@ func (ctx *EvalContext) GetParamValue(idx int) (types.Datum, error) {
 		return types.Datum{}, exprctx.ErrParamIndexExceedParamCounts
 	}
 	return ctx.paramList[idx], nil
+}
+
+// ResetReadonlyVarMap resets the readonly variable map.
+func (ctx *EvalContext) ResetReadonlyVarMap() {
+	ctx.readonlyVarMap = make(map[string]struct{})
+}
+
+// SetReadonlyVarMap sets the readonly variable map.
+func (ctx *EvalContext) SetReadonlyVarMap(m map[string]struct{}) {
+	ctx.readonlyVarMap = m
+}
+
+// IsReadonlyVar checks whether the variable is readonly.
+func (ctx *EvalContext) IsReadonlyVar(name string) bool {
+	_, ok := ctx.readonlyVarMap[name]
+	return ok
 }
 
 var _ exprctx.StaticConvertibleEvalContext = &EvalContext{}

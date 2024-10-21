@@ -132,6 +132,8 @@ func Preprocess(ctx context.Context, sctx sessionctx.Context, node *resolve.Node
 		tableAliasInJoin:   make([]map[string]any, 0),
 		preprocessWith:     &preprocessWith{cteCanUsed: make([]string, 0), cteBeforeOffset: make([]int, 0)},
 		staleReadProcessor: staleread.NewStaleReadProcessor(ctx, sctx),
+		varsChanged:        make(map[string]struct{}),
+		varsReadonly:       make(map[string]struct{}),
 		resolveCtx:         node.GetResolveContext(),
 	}
 	for _, optFn := range preprocessOpt {
@@ -144,6 +146,10 @@ func Preprocess(ctx context.Context, sctx sessionctx.Context, node *resolve.Node
 	node.Node.Accept(&v)
 	// InfoSchema must be non-nil after preprocessing
 	v.ensureInfoSchema()
+	sctx.GetExprCtx().GetEvalCtx().SetReadonlyVarMap(v.varsReadonly)
+	if len(v.varsReadonly) > 0 {
+		sctx.GetSessionVars().StmtCtx.SetSkipPlanCache("read-only variables are used")
+	}
 	return errors.Trace(v.err)
 }
 
@@ -235,6 +241,9 @@ type preprocessor struct {
 	preprocessWith   *preprocessWith
 
 	staleReadProcessor staleread.Processor
+
+	varsChanged  map[string]struct{}
+	varsReadonly map[string]struct{}
 
 	// values that may be returned
 	*PreprocessorReturn
@@ -419,6 +428,16 @@ func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 		}
 	case *ast.AnalyzeTableStmt:
 		p.flag |= inAnalyze
+	case *ast.VariableExpr:
+		if node.Value != nil {
+			p.varsChanged[node.Name] = struct{}{}
+			delete(p.varsReadonly, node.Name)
+		} else {
+			_, ok := p.varsChanged[node.Name]
+			if !ok {
+				p.varsReadonly[node.Name] = struct{}{}
+			}
+		}
 	default:
 		p.flag &= ^parentIsJoin
 	}
