@@ -678,20 +678,20 @@ SwitchIndexState:
 		job.SchemaState = model.StateWriteOnly
 	case model.StateWriteOnly:
 		// write only -> reorganization
-		for _, indexInfo := range allIndexInfos {
-			indexInfo.State = model.StateWriteReorganization
-			_, err = checkPrimaryKeyNotNull(d, w, t, job, tblInfo, indexInfo)
-			if err != nil {
-				break SwitchIndexState
-			}
-		}
+		//for _, indexInfo := range allIndexInfos {
+		//	indexInfo.State = model.StateWriteReorganization
+		//	_, err = checkPrimaryKeyNotNull(d, w, t, job, tblInfo, indexInfo)
+		//	if err != nil {
+		//		break SwitchIndexState
+		//	}
+		//}
 
-		ver, err = updateVersionAndTableInfo(d, t, job, tblInfo, originalState != model.StateWriteReorganization)
-		if err != nil {
-			return ver, err
-		}
-		// Initialize SnapshotVer to 0 for later reorganization check.
-		job.SnapshotVer = 0
+		//ver, err = updateVersionAndTableInfo(d, t, job, tblInfo, originalState != model.StateWriteReorganization)
+		//if err != nil {
+		//	return ver, err
+		//}
+		//// Initialize SnapshotVer to 0 for later reorganization check.
+		//job.SnapshotVer = 0
 		//job.SchemaState = model.StateWriteReorganization
 		time.Sleep(5 * time.Second)
 	case model.StateWriteReorganization:
