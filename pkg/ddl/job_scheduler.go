@@ -15,13 +15,11 @@
 package ddl
 
 import (
-	"bytes"
 	"context"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"runtime"
-	"slices"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -46,7 +44,6 @@ import (
 	"github.com/pingcap/tidb/pkg/owner"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/table"
-	pumpcli "github.com/pingcap/tidb/pkg/tidb-binlog/pump_client"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/generic"
@@ -99,7 +96,7 @@ type ownerListener struct {
 var _ owner.Listener = (*ownerListener)(nil)
 
 func (l *ownerListener) OnBecomeOwner() {
-	ctx, cancelFunc := context.WithCancel(l.ddl.ddlCtx.ctx)
+	ctx, cancelFunc := context.WithCancelCause(l.ddl.ddlCtx.ctx)
 	sysTblMgr := systable.NewManager(l.ddl.sessPool)
 	l.scheduler = &jobScheduler{
 		schCtx:            ctx,
@@ -111,7 +108,6 @@ func (l *ownerListener) OnBecomeOwner() {
 		unSyncedTracker:   newUnSyncedJobTracker(),
 		schemaVerMgr:      newSchemaVersionManager(l.ddl.store),
 		schemaVerSyncer:   l.ddl.schemaVerSyncer,
-		binlogCli:         l.ddl.binlogCli,
 
 		ddlCtx:         l.ddl.ddlCtx,
 		ddlJobNotifyCh: l.jobSubmitter.ddlJobNotifyCh,
@@ -133,9 +129,10 @@ func (l *ownerListener) OnRetireOwner() {
 
 // jobScheduler is used to schedule the DDL jobs, it's only run on the DDL owner.
 type jobScheduler struct {
-	// *ddlCtx already have context named as "ctx", so we use "schCtx" here to avoid confusion.
+	// schCtx is valid only when this node is DDL owner. *ddlCtx already have context
+	// named as "ctx", so we use "schCtx" here to avoid confusion.
 	schCtx            context.Context
-	cancel            context.CancelFunc
+	cancel            context.CancelCauseFunc
 	wg                tidbutil.WaitGroupWrapper
 	runningJobs       *runningJobs
 	sysTblMgr         systable.Manager
@@ -144,7 +141,6 @@ type jobScheduler struct {
 	unSyncedTracker   *unSyncedJobTracker
 	schemaVerMgr      *schemaVersionManager
 	schemaVerSyncer   schemaver.Syncer
-	binlogCli         *pumpcli.PumpsClient
 
 	// those fields are created or initialized on start
 	reorgWorkerPool      *workerPool
@@ -188,7 +184,7 @@ func (s *jobScheduler) start() {
 }
 
 func (s *jobScheduler) close() {
-	s.cancel()
+	s.cancel(dbterror.ErrNotOwner)
 	s.wg.Wait()
 	if s.reorgWorkerPool != nil {
 		s.reorgWorkerPool.close()
@@ -474,7 +470,8 @@ func (s *jobScheduler) deliveryJob(wk *worker, pool *workerPool, job *model.Job)
 	jobID, involvedSchemaInfos := job.ID, job.GetInvolvingSchemaInfo()
 	s.runningJobs.addRunning(jobID, involvedSchemaInfos)
 	metrics.DDLRunningJobCount.WithLabelValues(pool.tp().String()).Inc()
-	jobCtx := s.getJobRunCtx(job.ID)
+	jobCtx := s.getJobRunCtx(job.ID, job.TraceInfo)
+
 	s.wg.Run(func() {
 		defer func() {
 			r := recover()
@@ -527,7 +524,7 @@ func (s *jobScheduler) deliveryJob(wk *worker, pool *workerPool, job *model.Job)
 	})
 }
 
-func (s *jobScheduler) getJobRunCtx(jobID int64) *jobContext {
+func (s *jobScheduler) getJobRunCtx(jobID int64, traceInfo *model.TraceInfo) *jobContext {
 	ch, _ := s.ddlJobDoneChMap.Load(jobID)
 	return &jobContext{
 		ctx:                  s.schCtx,
@@ -537,9 +534,12 @@ func (s *jobScheduler) getJobRunCtx(jobID int64) *jobContext {
 		autoidCli:            s.autoidCli,
 		store:                s.store,
 		schemaVerSyncer:      s.schemaVerSyncer,
-		binlogCli:            s.binlogCli,
 
 		notifyCh: ch,
+		logger: tidblogutil.LoggerWithTraceInfo(
+			logutil.DDLLogger().With(zap.Int64("jobID", jobID)),
+			traceInfo,
+		),
 
 		oldDDLCtx: s.ddlCtx,
 	}
@@ -559,17 +559,17 @@ func (s *jobScheduler) transitOneJobStepAndWaitSync(wk *worker, jobCtx *jobConte
 		if variable.EnableMDL.Load() {
 			version, err := s.sysTblMgr.GetMDLVer(s.schCtx, job.ID)
 			if err == nil {
-				err = waitVersionSynced(jobCtx, job, version)
+				err = waitVersionSynced(s.schCtx, jobCtx, job, version)
 				if err != nil {
 					return err
 				}
 				s.cleanMDLInfo(job, ownerID)
 			} else if err != systable.ErrNotFound {
-				wk.jobLogger(job).Warn("check MDL info failed", zap.Error(err))
+				jobCtx.logger.Warn("check MDL info failed", zap.Error(err))
 				return err
 			}
 		} else {
-			err := waitVersionSyncedWithoutMDL(jobCtx, job)
+			err := waitVersionSyncedWithoutMDL(s.schCtx, jobCtx, job)
 			if err != nil {
 				time.Sleep(time.Second)
 				return err
@@ -578,9 +578,9 @@ func (s *jobScheduler) transitOneJobStepAndWaitSync(wk *worker, jobCtx *jobConte
 		jobCtx.setAlreadyRunOnce(job.ID)
 	}
 
-	schemaVer, err := wk.transitOneJobStep(jobCtx, job)
+	schemaVer, err := wk.transitOneJobStep(jobCtx, job, s.sysTblMgr)
 	if err != nil {
-		tidblogutil.Logger(wk.logCtx).Info("handle ddl job failed", zap.Error(err), zap.Stringer("job", job))
+		jobCtx.logger.Info("handle ddl job failed", zap.Error(err), zap.Stringer("job", job))
 		return err
 	}
 	failpoint.Inject("mockDownBeforeUpdateGlobalVersion", func(val failpoint.Value) {
@@ -596,7 +596,7 @@ func (s *jobScheduler) transitOneJobStepAndWaitSync(wk *worker, jobCtx *jobConte
 	// Here means the job enters another state (delete only, write only, public, etc...) or is cancelled.
 	// If the job is done or still running or rolling back, we will wait 2 * lease time or util MDL synced to guarantee other servers to update
 	// the newest schema.
-	if err = updateGlobalVersionAndWaitSynced(jobCtx, schemaVer, job); err != nil {
+	if err = updateGlobalVersionAndWaitSynced(s.schCtx, jobCtx, schemaVer, job); err != nil {
 		return err
 	}
 	s.cleanMDLInfo(job, ownerID)
@@ -642,7 +642,7 @@ func (d *ddl) getTableByTxn(r autoid.Requirement, schemaID, tableID int64) (*mod
 	var tbl table.Table
 	var dbInfo *model.DBInfo
 	err := kv.RunInNewTxn(d.ctx, r.Store(), false, func(_ context.Context, txn kv.Transaction) error {
-		t := meta.NewMeta(txn)
+		t := meta.NewMutator(txn)
 		var err1 error
 		dbInfo, err1 = t.GetDatabase(schemaID)
 		if err1 != nil {
@@ -658,109 +658,18 @@ func (d *ddl) getTableByTxn(r autoid.Requirement, schemaID, tableID int64) (*mod
 	return dbInfo, tbl, err
 }
 
-const (
-	addDDLJobSQL    = "insert into mysql.tidb_ddl_job(job_id, reorg, schema_ids, table_ids, job_meta, type, processing) values"
-	updateDDLJobSQL = "update mysql.tidb_ddl_job set job_meta = %s where job_id = %d"
-)
-
-func insertDDLJobs2Table(ctx context.Context, se *sess.Session, jobWs ...*JobWrapper) error {
-	failpoint.Inject("mockAddBatchDDLJobsErr", func(val failpoint.Value) {
-		if val.(bool) {
-			failpoint.Return(errors.Errorf("mockAddBatchDDLJobsErr"))
-		}
-	})
-	if len(jobWs) == 0 {
-		return nil
-	}
-	var sql bytes.Buffer
-	sql.WriteString(addDDLJobSQL)
-	for i, jobW := range jobWs {
-		// TODO remove this check when all job type pass args in this way.
-		if jobW.JobArgs != nil {
-			jobW.FillArgs(jobW.JobArgs)
-		}
-		injectModifyJobArgFailPoint(jobWs)
-		b, err := jobW.Encode(true)
-		if err != nil {
-			return err
-		}
-		if i != 0 {
-			sql.WriteString(",")
-		}
-		fmt.Fprintf(&sql, "(%d, %t, %s, %s, %s, %d, %t)", jobW.ID, jobW.MayNeedReorg(),
-			strconv.Quote(job2SchemaIDs(jobW)), strconv.Quote(job2TableIDs(jobW)),
-			util.WrapKey2String(b), jobW.Type, jobW.Started())
-	}
-	se.GetSessionVars().SetDiskFullOpt(kvrpcpb.DiskFullOpt_AllowedOnAlmostFull)
-	_, err := se.Execute(ctx, sql.String(), "insert_job")
-	logutil.DDLLogger().Debug("add job to mysql.tidb_ddl_job table", zap.String("sql", sql.String()))
-	return errors.Trace(err)
-}
-
-func makeStringForIDs(ids []int64) string {
-	set := make(map[int64]struct{}, len(ids))
-	for _, id := range ids {
-		set[id] = struct{}{}
-	}
-
-	s := make([]string, 0, len(set))
-	for id := range set {
-		s = append(s, strconv.FormatInt(id, 10))
-	}
-	slices.Sort(s)
-	return strings.Join(s, ",")
-}
-
-func job2SchemaIDs(jobW *JobWrapper) string {
-	switch jobW.Type {
-	case model.ActionRenameTables:
-		var ids []int64
-		arg := jobW.JobArgs.(*model.RenameTablesArgs)
-		ids = make([]int64, 0, len(arg.RenameTableInfos)*2)
-		for _, info := range arg.RenameTableInfos {
-			ids = append(ids, info.OldSchemaID, info.NewSchemaID)
-		}
-		return makeStringForIDs(ids)
-	case model.ActionRenameTable:
-		oldSchemaID := jobW.JobArgs.(*model.RenameTableArgs).OldSchemaID
-		ids := []int64{oldSchemaID, jobW.SchemaID}
-		return makeStringForIDs(ids)
-	case model.ActionExchangeTablePartition:
-		ids := jobW.CtxVars[0].([]int64)
-		return makeStringForIDs(ids)
-	default:
-		return strconv.FormatInt(jobW.SchemaID, 10)
-	}
-}
-
-func job2TableIDs(jobW *JobWrapper) string {
-	switch jobW.Type {
-	case model.ActionRenameTables:
-		var ids []int64
-		arg := jobW.JobArgs.(*model.RenameTablesArgs)
-		ids = make([]int64, 0, len(arg.RenameTableInfos))
-		for _, info := range arg.RenameTableInfos {
-			ids = append(ids, info.TableID)
-		}
-		return makeStringForIDs(ids)
-	case model.ActionExchangeTablePartition:
-		ids := jobW.CtxVars[1].([]int64)
-		return makeStringForIDs(ids)
-	case model.ActionTruncateTable:
-		newTableID := jobW.JobArgs.(*model.TruncateTableArgs).NewTableID
-		return strconv.FormatInt(jobW.TableID, 10) + "," + strconv.FormatInt(newTableID, 10)
-	default:
-		return strconv.FormatInt(jobW.TableID, 10)
-	}
-}
-
-func updateDDLJob2Table(se *sess.Session, job *model.Job, updateRawArgs bool) error {
+func updateDDLJob2Table(
+	ctx context.Context,
+	se *sess.Session,
+	job *model.Job,
+	updateRawArgs bool,
+) error {
 	b, err := job.Encode(updateRawArgs)
 	if err != nil {
 		return err
 	}
-	sql := fmt.Sprintf(updateDDLJobSQL, util.WrapKey2String(b), job.ID)
-	_, err = se.Execute(context.Background(), sql, "update_job")
+	sql := fmt.Sprintf("update mysql.tidb_ddl_job set job_meta = %s where job_id = %d", util.WrapKey2String(b), job.ID)
+	_, err = se.Execute(ctx, sql, "update_job")
 	return errors.Trace(err)
 }
 
@@ -878,8 +787,12 @@ func cleanDDLReorgHandles(se *sess.Session, job *model.Job) error {
 	})
 }
 
-func getJobsBySQL(se *sess.Session, tbl, condition string) ([]*model.Job, error) {
-	rows, err := se.Execute(context.Background(), fmt.Sprintf("select job_meta from mysql.%s where %s", tbl, condition), "get_job")
+func getJobsBySQL(
+	ctx context.Context,
+	se *sess.Session,
+	tbl, condition string,
+) ([]*model.Job, error) {
+	rows, err := se.Execute(ctx, fmt.Sprintf("select job_meta from mysql.%s where %s", tbl, condition), "get_job")
 	if err != nil {
 		return nil, errors.Trace(err)
 	}

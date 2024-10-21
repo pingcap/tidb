@@ -487,3 +487,46 @@ rollback;
 select * from auto_new;
 
 set autocommit = default;
+
+# TestDefaultAuthPluginForCreateUser
+
+connection default;
+
+--error 1231
+set global default_authentication_plugin = 'invalid_auth_plugin';
+--error 1231
+set global default_authentication_plugin = 'auth_socket';
+
+set global default_authentication_plugin = 'tidb_sm3_password';
+create user default_sm3_user;
+show create user default_sm3_user;
+select plugin from mysql.user where user = 'default_sm3_user';
+
+set global default_authentication_plugin = 'caching_sha2_password';
+create user default_sha2_user;
+create user native_plugin_user identified with 'mysql_native_password';
+create role default_sha2_role;
+show create user default_sha2_user;
+select plugin from mysql.user where user = 'default_sha2_user';
+show create user native_plugin_user;
+select plugin from mysql.user where user = 'native_plugin_user';
+show create user default_sha2_role;
+select plugin from mysql.user where user = 'default_sha2_role';
+
+alter user default_sha2_user identified with 'tidb_sm3_password';
+show create user default_sha2_user;
+select plugin from mysql.user where user = 'default_sha2_user';
+
+alter user default_sha2_user identified with 'authentication_ldap_simple';
+show create user default_sha2_user;
+select plugin from mysql.user where user = 'default_sha2_user';
+
+alter user default_sha2_user identified with 'authentication_ldap_sasl';
+show create user default_sha2_user;
+select plugin from mysql.user where user = 'default_sha2_user';
+
+drop user default_sm3_user;
+drop user default_sha2_user;
+drop user native_plugin_user;
+drop user default_sha2_role;
+set global default_authentication_plugin = default;

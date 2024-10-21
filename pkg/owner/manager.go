@@ -196,7 +196,9 @@ func (m *ownerManager) CampaignOwner(withTTL ...int) error {
 	}
 	m.sessionLease.Store(int64(session.Lease()))
 	m.wg.Add(1)
-	go m.campaignLoop(session)
+	var campaignContext context.Context
+	campaignContext, m.campaignCancel = context.WithCancel(m.ctx)
+	go m.campaignLoop(campaignContext, session)
 	return nil
 }
 
@@ -241,9 +243,7 @@ func (m *ownerManager) CampaignCancel() {
 	m.wg.Wait()
 }
 
-func (m *ownerManager) campaignLoop(etcdSession *concurrency.Session) {
-	var campaignContext context.Context
-	campaignContext, m.campaignCancel = context.WithCancel(m.ctx)
+func (m *ownerManager) campaignLoop(campaignContext context.Context, etcdSession *concurrency.Session) {
 	defer func() {
 		m.campaignCancel()
 		if r := recover(); r != nil {
@@ -498,4 +498,59 @@ func init() {
 	if err != nil {
 		logutil.BgLogger().Warn("set manager session TTL failed", zap.Error(err))
 	}
+}
+
+// DeleteLeader deletes the leader key.
+func DeleteLeader(ctx context.Context, cli *clientv3.Client, key string) error {
+	ownerKey, _, _, _, _, err := getOwnerInfo(ctx, ctx, cli, key)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	_, err = cli.Delete(ctx, ownerKey)
+	return err
+}
+
+// AcquireDistributedLock creates a mutex with ETCD client, and returns a mutex release function.
+func AcquireDistributedLock(
+	ctx context.Context,
+	cli *clientv3.Client,
+	key string,
+	ttlInSec int,
+) (release func(), err error) {
+	se, err := concurrency.NewSession(cli, concurrency.WithTTL(ttlInSec))
+	if err != nil {
+		return nil, err
+	}
+	mu := concurrency.NewMutex(se, key)
+	maxRetryCnt := 10
+	err = util2.RunWithRetry(maxRetryCnt, util2.RetryInterval, func() (bool, error) {
+		err = mu.Lock(ctx)
+		if err != nil {
+			return true, err
+		}
+		return false, nil
+	})
+	failpoint.Inject("mockAcquireDistLockFailed", func() {
+		err = errors.Errorf("requested lease not found")
+	})
+	if err != nil {
+		err1 := se.Close()
+		if err1 != nil {
+			logutil.Logger(ctx).Warn("close session error", zap.Error(err1))
+		}
+		return nil, err
+	}
+	logutil.Logger(ctx).Info("acquire distributed flush lock success", zap.String("key", key))
+	return func() {
+		err = mu.Unlock(ctx)
+		if err != nil {
+			logutil.Logger(ctx).Warn("release distributed flush lock error", zap.Error(err), zap.String("key", key))
+		} else {
+			logutil.Logger(ctx).Info("release distributed flush lock success", zap.String("key", key))
+		}
+		err = se.Close()
+		if err != nil {
+			logutil.Logger(ctx).Warn("close session error", zap.Error(err))
+		}
+	}, nil
 }

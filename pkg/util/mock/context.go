@@ -18,6 +18,7 @@ package mock
 import (
 	"context"
 	"fmt"
+	"sync"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -49,7 +50,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/sli"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/pingcap/tidb/pkg/util/topsql/stmtstats"
-	"github.com/pingcap/tipb/go-binlog"
 	"github.com/tikv/client-go/v2/oracle"
 	"github.com/tikv/client-go/v2/tikv"
 )
@@ -70,7 +70,6 @@ type Context struct {
 	sm            util.SessionManager
 	is            infoschema.MetaOnlyInfoSchema
 	values        map[fmt.Stringer]any
-	Mutations     map[int64]*binlog.TableMutation
 	sessionVars   *variable.SessionVars
 	tblctx        *tblsession.MutateContext
 	cancel        context.CancelFunc
@@ -484,19 +483,6 @@ func (*Context) StmtCommit(context.Context) {}
 // StmtRollback implements the sessionctx.Context interface.
 func (*Context) StmtRollback(context.Context, bool) {}
 
-// StmtGetMutation implements the sessionctx.Context interface.
-func (c *Context) StmtGetMutation(tblID int64) *binlog.TableMutation {
-	if c.Mutations == nil {
-		return nil
-	}
-	m, ok := c.Mutations[tblID]
-	if !ok {
-		m = &binlog.TableMutation{}
-		c.Mutations[tblID] = m
-	}
-	return m
-}
-
 // AddTableLock implements the sessionctx.Context interface.
 func (*Context) AddTableLock(_ []model.TableLockTpInfo) {
 }
@@ -626,8 +612,20 @@ func (*Context) GetCursorTracker() cursor.Tracker {
 	return nil
 }
 
-// NewContext creates a new mocked sessionctx.Context.
-func NewContext() *Context {
+// GetCommitWaitGroup implements the sessionctx.Context interface
+func (*Context) GetCommitWaitGroup() *sync.WaitGroup {
+	return nil
+}
+
+// NewContextDeprecated creates a new mocked sessionctx.Context.
+// Deprecated: This method is only used for some legacy code.
+// DO NOT use mock.Context in new production code, and use the real Context instead.
+func NewContextDeprecated() *Context {
+	return newContext()
+}
+
+// newContext creates a new mocked sessionctx.Context.
+func newContext() *Context {
 	ctx, cancel := context.WithCancel(context.Background())
 	sctx := &Context{
 		values: make(map[fmt.Stringer]any),
@@ -652,7 +650,6 @@ func NewContext() *Context {
 	vars.MinPagingSize = variable.DefMinPagingSize
 	vars.CostModelVersion = variable.DefTiDBCostModelVer
 	vars.EnableChunkRPC = true
-	vars.EnableListTablePartition = true
 	vars.DivPrecisionIncrement = variable.DefDivPrecisionIncrement
 	if err := sctx.GetSessionVars().SetSystemVar(variable.MaxAllowedPacket, "67108864"); err != nil {
 		panic(err)

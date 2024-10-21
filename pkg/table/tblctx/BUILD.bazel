@@ -23,7 +23,6 @@ go_library(
         "//pkg/util/intest",
         "//pkg/util/rowcodec",
         "//pkg/util/tableutil",
-        "@com_github_pingcap_tipb//go-binlog",
     ],
 )
 

@@ -154,8 +154,6 @@ func TestHashPartitionAddRecord(t *testing.T) {
 	require.NoError(t, err)
 	_, err = tk.Session().Execute(context.Background(), "drop table if exists t1;")
 	require.NoError(t, err)
-	_, err = tk.Session().Execute(context.Background(), "set @@session.tidb_enable_table_partition = '1';")
-	require.NoError(t, err)
 	_, err = tk.Session().Execute(context.Background(), `CREATE TABLE test.t1 (id int(11), index(id)) PARTITION BY HASH (id) partitions 4;`)
 	require.NoError(t, err)
 	tb, err := dom.InfoSchema().TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t1"))
@@ -318,7 +316,6 @@ func TestLocatePartition(t *testing.T) {
 func TestIssue31629(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("set @@tidb_enable_list_partition = 1")
 	tk.MustExec("create database Issue31629")
 	defer tk.MustExec("drop database Issue31629")
 	tk.MustExec("use Issue31629")
@@ -2069,7 +2066,7 @@ func TestPruneModeWarningInfo(t *testing.T) {
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("set @@tidb_partition_prune_mode = 'static'")
-	tk.MustQuery("show warnings").Check(testkit.Rows())
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1681 static prune mode is deprecated and will be removed in the future release."))
 	tk.MustExec("set session tidb_partition_prune_mode = 'dynamic'")
 	tk.MustQuery("show warnings").Sort().Check(testkit.Rows("Warning 1105 Please analyze all partition tables again for consistency between partition and global stats",
 		"Warning 1105 Please avoid setting partition prune mode to dynamic at session level and set partition prune mode to dynamic at global level"))
@@ -2286,10 +2283,8 @@ func TestGlobalIndexPartitionByIntExtensivePart(t *testing.T) {
 	schemaName := "PartitionByIntExtensive"
 	tk.MustExec("create database " + schemaName)
 	tk.MustExec("use " + schemaName)
-	tk.MustExec(`set @@tidb_enable_global_index = ON`)
 	tk2 := testkit.NewTestKit(t, store)
 	tk2.MustExec("use " + schemaName)
-	tk2.MustExec(`set @@tidb_enable_global_index = ON`)
 
 	tBase := `(a int unsigned not null, b varchar(255) collate utf8mb4_general_ci, c int, d datetime, e timestamp, f double, g text, unique key idx_a(a), unique key idx_b(b), key (c,b), unique key idx_dc(d,c), key(e))`
 	tBaseA := `(a int unsigned not null, b varchar(255) collate utf8mb4_general_ci, c int, d datetime, e timestamp, f double, g text, unique key idx_a(a), unique key idx_b(b) Global, key (c,b), unique key idx_dc(d,c) Global, key(e))`

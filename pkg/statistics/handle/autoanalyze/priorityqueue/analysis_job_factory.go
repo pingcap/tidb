@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/statistics"
 	statstypes "github.com/pingcap/tidb/pkg/statistics/handle/types"
+	"github.com/pingcap/tidb/pkg/statistics/handle/util"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/timeutil"
 	"github.com/tikv/client-go/v2/oracle"
@@ -235,6 +236,10 @@ func (*AnalysisJobFactory) CheckIndexesNeedAnalyze(tblInfo *model.TableInfo, tbl
 	// Check if missing index stats.
 	for _, idx := range tblInfo.Indices {
 		if idxStats := tblStats.GetIdx(idx.ID); idxStats == nil && !tblStats.ColAndIdxExistenceMap.HasAnalyzed(idx.ID, true) && idx.State == model.StatePublic {
+			// Vector index doesn't have stats currently.
+			if idx.VectorInfo != nil {
+				continue
+			}
 			indexes = append(indexes, idx.Name.O)
 		}
 	}
@@ -302,7 +307,12 @@ func (*AnalysisJobFactory) CheckNewlyAddedIndexesNeedAnalyzeForPartitionedTable(
 
 	for _, idx := range tblInfo.Indices {
 		// No need to analyze the index if it's not public.
-		if idx.State != model.StatePublic {
+		// Special global index also no need to trigger by auto analyze.
+		if idx.State != model.StatePublic || util.IsSpecialGlobalIndex(idx, tblInfo) {
+			continue
+		}
+		// Index on vector type doesn't have stats currently.
+		if idx.VectorInfo != nil {
 			continue
 		}
 

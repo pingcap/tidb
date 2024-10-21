@@ -13,6 +13,7 @@ go_test(
         "//pkg/domain",
         "//pkg/domain/infosync",
         "//pkg/infoschema",
+        "//pkg/infoschema/context",
         "//pkg/parser/auth",
         "//pkg/parser/model",
         "//pkg/sessionctx/variable",

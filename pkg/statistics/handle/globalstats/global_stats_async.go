@@ -145,7 +145,11 @@ func (a *AsyncMergePartitionStats2GlobalStats) prepare(sctx sessionctx.Context, 
 		}
 		tableInfo := partitionTable.Meta()
 		a.tableInfo[partitionID] = tableInfo
-		realtimeCount, modifyCount, isNull, err := storage.StatsMetaCountAndModifyCount(sctx, partitionID)
+		realtimeCount, modifyCount, isNull, err := storage.StatsMetaCountAndModifyCount(
+			util.StatsCtx,
+			sctx,
+			partitionID,
+		)
 		if err != nil {
 			return err
 		}

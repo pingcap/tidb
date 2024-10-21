@@ -256,7 +256,6 @@ set @@tidb_enable_collect_execution_info=default;
 # TestListPartition4PlanCache
 set tidb_enable_prepared_plan_cache=1;
 set @@tidb_enable_collect_execution_info=0;
-set @@session.tidb_enable_list_partition=1;
 drop table if exists t;
 create table t(a int, b int) PARTITION BY LIST (a) ( PARTITION p0 VALUES IN (1, 2, 3), PARTITION p1 VALUES IN (4, 5, 6));
 set @@tidb_partition_prune_mode='static';
@@ -266,7 +265,6 @@ execute stmt;
 select @@last_plan_from_cache;
 set tidb_enable_prepared_plan_cache=default;
 set @@tidb_enable_collect_execution_info=default;
-set @@session.tidb_enable_list_partition=default;
 set @@tidb_partition_prune_mode=default;
 
 # TestIssue28792

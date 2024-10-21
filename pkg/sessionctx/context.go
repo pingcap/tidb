@@ -16,6 +16,7 @@ package sessionctx
 
 import (
 	"context"
+	"sync"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -40,7 +41,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/sli"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/pingcap/tidb/pkg/util/topsql/stmtstats"
-	"github.com/pingcap/tipb/go-binlog"
 	"github.com/tikv/client-go/v2/oracle"
 )
 
@@ -172,8 +172,6 @@ type Context interface {
 	// before you start another batch, otherwise, the previous changes might be committed
 	// unexpectedly.
 	StmtRollback(ctx context.Context, isForPessimisticRetry bool)
-	// StmtGetMutation gets the binlog mutation for current statement.
-	StmtGetMutation(int64) *binlog.TableMutation
 	// IsDDLOwner checks whether this session is DDL owner.
 	IsDDLOwner() bool
 	// PrepareTSFuture uses to prepare timestamp by future.
@@ -210,6 +208,8 @@ type Context interface {
 	NewStmtIndexUsageCollector() *indexusage.StmtIndexUsageCollector
 	// GetCursorTracker returns the cursor tracker of the session
 	GetCursorTracker() cursor.Tracker
+	// GetCommitWaitGroup returns the wait group for async commit and secondary lock cleanup background goroutines
+	GetCommitWaitGroup() *sync.WaitGroup
 }
 
 // TxnFuture is an interface where implementations have a kv.Transaction field and after

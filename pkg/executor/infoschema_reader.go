@@ -40,6 +40,7 @@ import (
 	"github.com/pingcap/tidb/pkg/executor/internal/pdhelper"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/infoschema"
+	infoschemacontext "github.com/pingcap/tidb/pkg/infoschema/context"
 	"github.com/pingcap/tidb/pkg/keyspace"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
@@ -312,7 +313,8 @@ func (e *memtableRetriever) setDataForVariablesInfo(ctx sessionctx.Context) erro
 
 func (e *memtableRetriever) setDataForUserAttributes(ctx context.Context, sctx sessionctx.Context) error {
 	exec := sctx.GetRestrictedSQLExecutor()
-	chunkRows, _, err := exec.ExecRestrictedSQL(ctx, nil, `SELECT user, host, JSON_UNQUOTE(JSON_EXTRACT(user_attributes, '$.metadata')) FROM mysql.user`)
+	wrappedCtx := kv.WithInternalSourceType(ctx, kv.InternalTxnOthers)
+	chunkRows, _, err := exec.ExecRestrictedSQL(wrappedCtx, nil, `SELECT user, host, JSON_UNQUOTE(JSON_EXTRACT(user_attributes, '$.metadata')) FROM mysql.user`)
 	if err != nil {
 		return err
 	}
@@ -1199,7 +1201,7 @@ func (e *memtableRetriever) setDataFromPartitions(ctx context.Context, sctx sess
 				avgRowLength = dataLength / rowCount
 			}
 			// If there are any condition on the `PARTITION_NAME` in the extractor, this record should be ignored
-			if len(ex.ColPredicates["partition_name"]) > 0 {
+			if ex.HasPartitionPred() {
 				continue
 			}
 			record := types.MakeDatums(
@@ -2594,7 +2596,6 @@ func (e *memtableRetriever) setDataForServersInfo(ctx sessionctx.Context) error 
 			info.Lease,           // LEASE
 			info.Version,         // VERSION
 			info.GitHash,         // GIT_HASH
-			info.BinlogStatus,    // BINLOG_STATUS
 			stringutil.BuildStringFromLabels(info.Labels), // LABELS
 		)
 		if sem.IsEnabled() {
@@ -2657,7 +2658,7 @@ func (e *memtableRetriever) dataForTableTiFlashReplica(_ context.Context, sctx s
 		rows          [][]types.Datum
 		tiFlashStores map[int64]pd.StoreInfo
 	)
-	rs := e.is.ListTablesWithSpecialAttribute(infoschema.TiFlashAttribute)
+	rs := e.is.ListTablesWithSpecialAttribute(infoschemacontext.TiFlashAttribute)
 	for _, schema := range rs {
 		for _, tbl := range schema.TableInfos {
 			if checker != nil && !checker.RequestVerification(sctx.GetSessionVars().ActiveRoles, schema.DBName.L, tbl.Name.L, "", mysql.AllPrivMask) {
@@ -3398,12 +3399,14 @@ var (
 	tiflashTargetTableName = map[string]string{
 		"tiflash_tables":   "dt_tables",
 		"tiflash_segments": "dt_segments",
+		"tiflash_indexes":  "dt_local_indexes",
 	}
 )
 
 func (e *TiFlashSystemTableRetriever) dataForTiFlashSystemTables(ctx context.Context, sctx sessionctx.Context, tidbDatabases string, tidbTables string) ([][]types.Datum, error) {
 	maxCount := 1024
 	targetTable := tiflashTargetTableName[e.table.Name.L]
+
 	var filters []string
 	if keyspace.GetKeyspaceNameBySettings() != "" {
 		keyspaceID := uint32(sctx.GetStore().GetCodec().GetKeyspaceID())
@@ -3461,6 +3464,7 @@ func (e *TiFlashSystemTableRetriever) dataForTiFlashSystemTables(ctx context.Con
 			tiflashColIndexMap[tiFlashColIdx] = outputIdx
 		}
 	}
+	is := sessiontxn.GetTxnManager(sctx).GetTxnInfoSchema()
 	outputRows := make([][]types.Datum, 0, len(result.Data))
 	for _, rowFields := range result.Data {
 		if len(rowFields) == 0 {
@@ -3497,6 +3501,37 @@ func (e *TiFlashSystemTableRetriever) dataForTiFlashSystemTables(ctx context.Con
 			}
 		}
 		outputRow[len(e.outputCols)-1].SetString(instanceID, mysql.DefaultCollationName)
+
+		// for "tiflash_indexes", set the column_name and index_name according to the TableInfo
+		if e.table.Name.L == "tiflash_indexes" {
+			var logicalTableID = outputRow[outputColIndexMap["table_id"]].GetInt64()
+			if !outputRow[outputColIndexMap["belonging_table_id"]].IsNull() {
+				// Old TiFlash versions may not have this column. In this case we will try to get by the "table_id"
+				belongingTableID := outputRow[outputColIndexMap["belonging_table_id"]].GetInt64()
+				if belongingTableID != -1 && belongingTableID != 0 {
+					logicalTableID = belongingTableID
+				}
+			}
+			if table, ok := is.TableByID(ctx, logicalTableID); ok {
+				tableInfo := table.Meta()
+				getInt64DatumVal := func(datum_name string, default_val int64) int64 {
+					datum := outputRow[outputColIndexMap[datum_name]]
+					if !datum.IsNull() {
+						return datum.GetInt64()
+					}
+					return default_val
+				}
+				// set column_name
+				columnID := getInt64DatumVal("column_id", 0)
+				columnName := tableInfo.FindColumnNameByID(columnID)
+				outputRow[outputColIndexMap["column_name"]].SetString(columnName, mysql.DefaultCollationName)
+				// set index_name
+				indexID := getInt64DatumVal("index_id", 0)
+				indexName := tableInfo.FindIndexNameByID(indexID)
+				outputRow[outputColIndexMap["index_name"]].SetString(indexName, mysql.DefaultCollationName)
+			}
+		}
+
 		outputRows = append(outputRows, outputRow)
 	}
 	e.rowIdx += len(outputRows)
@@ -3656,6 +3691,7 @@ func (e *memtableRetriever) setDataFromRunawayWatches(sctx sessionctx.Context) e
 			watch.WatchText,
 			watch.Source,
 			watch.GetActionString(),
+			watch.GetExceedCause(),
 		)
 		if watch.EndTime.Equal(runaway.NullTime) {
 			row[3].SetString("UNLIMITED", mysql.DefaultCollationName)
@@ -3695,8 +3731,27 @@ func (e *memtableRetriever) setDataFromResourceGroups() error {
 			if setting.Rule == nil {
 				return errors.Errorf("unexpected runaway config in resource group")
 			}
-			dur := time.Duration(setting.Rule.ExecElapsedTimeMs) * time.Millisecond
-			fmt.Fprintf(limitBuilder, "EXEC_ELAPSED='%s'", dur.String())
+			// rule settings
+			firstParam := true
+			if setting.Rule.ExecElapsedTimeMs > 0 {
+				dur := time.Duration(setting.Rule.ExecElapsedTimeMs) * time.Millisecond
+				fmt.Fprintf(limitBuilder, "EXEC_ELAPSED='%s'", dur.String())
+				firstParam = false
+			}
+			if setting.Rule.ProcessedKeys > 0 {
+				if !firstParam {
+					fmt.Fprintf(limitBuilder, ", ")
+				}
+				fmt.Fprintf(limitBuilder, "PROCESSED_KEYS=%d", setting.Rule.ProcessedKeys)
+				firstParam = false
+			}
+			if setting.Rule.RequestUnit > 0 {
+				if !firstParam {
+					fmt.Fprintf(limitBuilder, ", ")
+				}
+				fmt.Fprintf(limitBuilder, "RU=%d", setting.Rule.RequestUnit)
+			}
+			// action settings
 			actionType := pmodel.RunawayActionType(setting.Action)
 			switch actionType {
 			case pmodel.RunawayActionDryRun, pmodel.RunawayActionCooldown, pmodel.RunawayActionKill:
@@ -3718,7 +3773,17 @@ func (e *memtableRetriever) setDataFromResourceGroups() error {
 		// convert background settings
 		bgBuilder := new(strings.Builder)
 		if setting := group.BackgroundSettings; setting != nil {
-			fmt.Fprintf(bgBuilder, "TASK_TYPES='%s'", strings.Join(setting.JobTypes, ","))
+			first := true
+			if len(setting.JobTypes) > 0 {
+				fmt.Fprintf(bgBuilder, "TASK_TYPES='%s'", strings.Join(setting.JobTypes, ","))
+				first = false
+			}
+			if setting.UtilizationLimit > 0 {
+				if !first {
+					bgBuilder.WriteString(", ")
+				}
+				fmt.Fprintf(bgBuilder, "UTILIZATION_LIMIT=%d", setting.UtilizationLimit)
+			}
 		}
 		background := bgBuilder.String()
 
@@ -3773,50 +3838,47 @@ func (e *memtableRetriever) setDataFromIndexUsage(ctx context.Context, sctx sess
 	dom := domain.GetDomain(sctx)
 	rows := make([][]types.Datum, 0, 100)
 	checker := privilege.GetPrivilegeManager(sctx)
-	extractor, ok := e.extractor.(*plannercore.InfoSchemaTiDBIndexUsageExtractor)
+	ex, ok := e.extractor.(*plannercore.InfoSchemaTiDBIndexUsageExtractor)
 	if !ok {
 		return errors.Errorf("wrong extractor type: %T, expected InfoSchemaIndexUsageExtractor", e.extractor)
 	}
-	if extractor.SkipRequest {
+	if ex.SkipRequest {
 		return nil
 	}
 
-	schemas := extractor.ListSchemas(e.is)
-	for _, schema := range schemas {
-		tbls, err := extractor.ListTables(ctx, schema, e.is)
-		if err != nil {
-			return errors.Trace(err)
+	schemas, tbls, err := ex.ListSchemasAndTables(ctx, e.is)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	for i, tbl := range tbls {
+		schema := schemas[i]
+		if checker != nil && !checker.RequestVerification(
+			sctx.GetSessionVars().ActiveRoles,
+			schema.L, tbl.Name.L, "", mysql.AllPrivMask) {
+			continue
 		}
 
-		for _, tbl := range tbls {
-			if checker != nil && !checker.RequestVerification(
-				sctx.GetSessionVars().ActiveRoles,
-				schema.L, tbl.Name.L, "", mysql.AllPrivMask) {
-				continue
+		idxs := ex.ListIndexes(tbl)
+		for _, idx := range idxs {
+			row := make([]types.Datum, 0, 14)
+			usage := dom.StatsHandle().GetIndexUsage(tbl.ID, idx.ID)
+			row = append(row, types.NewStringDatum(schema.O))
+			row = append(row, types.NewStringDatum(tbl.Name.O))
+			row = append(row, types.NewStringDatum(idx.Name.O))
+			row = append(row, types.NewIntDatum(int64(usage.QueryTotal)))
+			row = append(row, types.NewIntDatum(int64(usage.KvReqTotal)))
+			row = append(row, types.NewIntDatum(int64(usage.RowAccessTotal)))
+			for _, percentage := range usage.PercentageAccess {
+				row = append(row, types.NewIntDatum(int64(percentage)))
 			}
-
-			idxs := extractor.ListIndexes(tbl)
-			for _, idx := range idxs {
-				row := make([]types.Datum, 0, 14)
-				usage := dom.StatsHandle().GetIndexUsage(tbl.ID, idx.ID)
-				row = append(row, types.NewStringDatum(schema.O))
-				row = append(row, types.NewStringDatum(tbl.Name.O))
-				row = append(row, types.NewStringDatum(idx.Name.O))
-				row = append(row, types.NewIntDatum(int64(usage.QueryTotal)))
-				row = append(row, types.NewIntDatum(int64(usage.KvReqTotal)))
-				row = append(row, types.NewIntDatum(int64(usage.RowAccessTotal)))
-				for _, percentage := range usage.PercentageAccess {
-					row = append(row, types.NewIntDatum(int64(percentage)))
-				}
-				lastUsedAt := types.Datum{}
-				lastUsedAt.SetNull()
-				if !usage.LastUsedAt.IsZero() {
-					t := types.NewTime(types.FromGoTime(usage.LastUsedAt), mysql.TypeTimestamp, 0)
-					lastUsedAt = types.NewTimeDatum(t)
-				}
-				row = append(row, lastUsedAt)
-				rows = append(rows, row)
+			lastUsedAt := types.Datum{}
+			lastUsedAt.SetNull()
+			if !usage.LastUsedAt.IsZero() {
+				t := types.NewTime(types.FromGoTime(usage.LastUsedAt), mysql.TypeTimestamp, 0)
+				lastUsedAt = types.NewTimeDatum(t)
 			}
+			row = append(row, lastUsedAt)
+			rows = append(rows, row)
 		}
 	}
 
@@ -3847,7 +3909,7 @@ func checkRule(rule *label.Rule) (dbName, tableName string, partitionName string
 		err = errors.New("empty label rule type")
 		return
 	}
-	if rule.Labels == nil || len(rule.Labels) == 0 {
+	if len(rule.Labels) == 0 {
 		err = errors.New("the label rule has no label")
 		return
 	}

@@ -70,8 +70,8 @@ const (
 	ActionCreateSequence                ActionType = 34
 	ActionAlterSequence                 ActionType = 35
 	ActionDropSequence                  ActionType = 36
-	_DEPRECATEDActionAddColumns         ActionType = 37 // Deprecated, we use ActionMultiSchemaChange instead.
-	_DEPRECATEDActionDropColumns        ActionType = 38 // Deprecated, we use ActionMultiSchemaChange instead.
+	ActionAddColumns                    ActionType = 37 // Deprecated, we use ActionMultiSchemaChange instead.
+	ActionDropColumns                   ActionType = 38 // Deprecated, we use ActionMultiSchemaChange instead.
 	ActionModifyTableAutoIDCache        ActionType = 39
 	ActionRebaseAutoRandomBase          ActionType = 40
 	ActionAlterIndexVisibility          ActionType = 41
@@ -110,6 +110,7 @@ const (
 	ActionDropResourceGroup      ActionType = 70
 	ActionAlterTablePartitioning ActionType = 71
 	ActionRemovePartitioning     ActionType = 72
+	ActionAddVectorIndex         ActionType = 73
 )
 
 // ActionMap is the map of DDL ActionType to string.
@@ -181,6 +182,7 @@ var ActionMap = map[ActionType]string{
 	ActionDropResourceGroup:             "drop resource group",
 	ActionAlterTablePartitioning:        "alter table partition by",
 	ActionRemovePartitioning:            "alter table remove partitioning",
+	ActionAddVectorIndex:                "add vector index",
 
 	// `ActionAlterTableAlterPartition` is removed and will never be used.
 	// Just left a tombstone here for compatibility.
@@ -441,6 +443,7 @@ func (job *Job) Clone() *Job {
 	}
 	if job.MultiSchemaInfo != nil {
 		for i, sub := range job.MultiSchemaInfo.SubJobs {
+			clone.MultiSchemaInfo.SubJobs[i].JobArgs = sub.JobArgs
 			clone.MultiSchemaInfo.SubJobs[i].Args = make([]any, len(sub.Args))
 			copy(clone.MultiSchemaInfo.SubJobs[i].Args, sub.Args)
 		}
@@ -482,12 +485,39 @@ func (job *Job) GetWarnings() (map[errors.ErrorID]*terror.Error, map[errors.Erro
 
 // FillArgs fills args for new job.
 func (job *Job) FillArgs(args JobArgs) {
-	args.fillJob(job)
+	intest.Assert(job.Version == JobVersion1 || job.Version == JobVersion2, "job version is invalid")
+	if job.Version == JobVersion1 {
+		job.Args = args.getArgsV1(job)
+		return
+	}
+	job.Args = []any{args}
 }
 
 // FillFinishedArgs fills args for finished job.
 func (job *Job) FillFinishedArgs(args FinishedJobArgs) {
-	args.fillFinishedJob(job)
+	intest.Assert(job.Version == JobVersion1 || job.Version == JobVersion2, "job version is invalid")
+	if job.Version == JobVersion1 {
+		job.Args = args.getFinishedArgsV1(job)
+		return
+	}
+	job.Args = []any{args}
+}
+
+func marshalArgs(jobVer JobVersion, args []any) (json.RawMessage, error) {
+	if jobVer <= JobVersion1 {
+		rawArgs, err := json.Marshal(args)
+		return rawArgs, errors.Trace(err)
+	}
+
+	intest.Assert(jobVer == JobVersion2, "job version is not v2")
+	var arg any
+	if len(args) > 0 {
+		intest.Assert(len(args) == 1, "Job.Args should have only one element")
+		arg = args[0]
+	}
+
+	rawArgs, err := json.Marshal(arg)
+	return rawArgs, errors.Trace(err)
 }
 
 // Encode encodes job with json format.
@@ -495,34 +525,23 @@ func (job *Job) FillFinishedArgs(args FinishedJobArgs) {
 func (job *Job) Encode(updateRawArgs bool) ([]byte, error) {
 	var err error
 	if updateRawArgs {
-		if job.Version == JobVersion1 {
-			job.RawArgs, err = json.Marshal(job.Args)
-			if err != nil {
-				return nil, errors.Trace(err)
-			}
-			if job.MultiSchemaInfo != nil {
-				for _, sub := range job.MultiSchemaInfo.SubJobs {
-					// Only update the args of executing sub-jobs.
-					if sub.Args == nil {
-						continue
-					}
-					sub.RawArgs, err = json.Marshal(sub.Args)
-					if err != nil {
-						return nil, errors.Trace(err)
-					}
+		job.RawArgs, err = marshalArgs(job.Version, job.Args)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+
+		if job.MultiSchemaInfo != nil {
+			for _, sub := range job.MultiSchemaInfo.SubJobs {
+				// Only update the args of executing sub-jobs.
+				if sub.Args == nil {
+					continue
+				}
+
+				sub.RawArgs, err = marshalArgs(job.Version, sub.Args)
+				if err != nil {
+					return nil, errors.Trace(err)
 				}
 			}
-		} else {
-			var arg any
-			if len(job.Args) > 0 {
-				intest.Assert(len(job.Args) == 1, "Job.Args should have only one element")
-				arg = job.Args[0]
-			}
-			job.RawArgs, err = json.Marshal(arg)
-			if err != nil {
-				return nil, errors.Trace(err)
-			}
-			// TODO remember update sub-jobs' RawArgs when we do it.
 		}
 	}
 
@@ -599,17 +618,11 @@ func (job *Job) hasDependentSchema(other *Job) (bool, error) {
 			}
 		}
 		if job.Type == ActionExchangeTablePartition {
-			var (
-				defID          int64
-				ptSchemaID     int64
-				ptID           int64
-				partName       string
-				withValidation bool
-			)
-			if err := job.DecodeArgs(&defID, &ptSchemaID, &ptID, &partName, &withValidation); err != nil {
+			args, err := GetExchangeTablePartitionArgs(job)
+			if err != nil {
 				return false, errors.Trace(err)
 			}
-			if other.SchemaID == ptSchemaID {
+			if other.SchemaID == args.PTSchemaID {
 				return true, nil
 			}
 		}
@@ -619,39 +632,28 @@ func (job *Job) hasDependentSchema(other *Job) (bool, error) {
 
 func (job *Job) hasDependentTableForExchangePartition(other *Job) (bool, error) {
 	if job.Type == ActionExchangeTablePartition {
-		var (
-			defID          int64
-			ptSchemaID     int64
-			ptID           int64
-			partName       string
-			withValidation bool
-		)
-
-		if err := job.DecodeArgs(&defID, &ptSchemaID, &ptID, &partName, &withValidation); err != nil {
+		// TODO this code seems buggy, we haven't encode Args into RawArgs yet, so cannot decode.
+		// but it's very old code for previous job queue, will be removed later anyway.
+		args, err := GetExchangeTablePartitionArgs(job)
+		if err != nil {
 			return false, errors.Trace(err)
 		}
-		if ptID == other.TableID || defID == other.TableID {
+		if args.PTTableID == other.TableID || args.PartitionID == other.TableID {
 			return true, nil
 		}
 
 		if other.Type == ActionExchangeTablePartition {
-			var (
-				otherDefID          int64
-				otherPtSchemaID     int64
-				otherPtID           int64
-				otherPartName       string
-				otherWithValidation bool
-			)
-			if err := other.DecodeArgs(&otherDefID, &otherPtSchemaID, &otherPtID, &otherPartName, &otherWithValidation); err != nil {
+			otherArgs, err := GetExchangeTablePartitionArgs(other)
+			if err != nil {
 				return false, errors.Trace(err)
 			}
-			if job.TableID == other.TableID || job.TableID == otherPtID || job.TableID == otherDefID {
+			if job.TableID == other.TableID || job.TableID == otherArgs.PTTableID || job.TableID == otherArgs.PartitionID {
 				return true, nil
 			}
-			if ptID == other.TableID || ptID == otherPtID || ptID == otherDefID {
+			if args.PTTableID == other.TableID || args.PTTableID == otherArgs.PTTableID || args.PTTableID == otherArgs.PartitionID {
 				return true, nil
 			}
-			if defID == other.TableID || defID == otherPtID || defID == otherDefID {
+			if args.PartitionID == other.TableID || args.PartitionID == otherArgs.PTTableID || args.PartitionID == otherArgs.PartitionID {
 				return true, nil
 			}
 		}
@@ -736,6 +738,10 @@ func (job *Job) IsPausing() bool {
 
 // IsPausable checks whether we can pause the job.
 func (job *Job) IsPausable() bool {
+	// TODO: We can remove it after TiFlash supports the pause operation.
+	if job.Type == ActionAddVectorIndex && job.SchemaState == StateWriteReorganization {
+		return false
+	}
 	return job.NotStarted() || (job.IsRunning() && job.IsRollbackable())
 }
 
@@ -789,6 +795,7 @@ func (job *Job) MayNeedReorg() bool {
 		ActionRemovePartitioning, ActionAlterTablePartitioning:
 		return true
 	case ActionModifyColumn:
+		// TODO(joechenrh): remove CtxVars here
 		if len(job.CtxVars) > 0 {
 			needReorg, ok := job.CtxVars[0].(bool)
 			return ok && needReorg
@@ -863,6 +870,7 @@ func (job *Job) GetInvolvingSchemaInfo() []InvolvingSchemaInfo {
 // (when multi-schema change is not applicable) or more SubJobs.
 type SubJob struct {
 	Type        ActionType      `json:"type"`
+	JobArgs     JobArgs         `json:"-"`
 	Args        []any           `json:"-"`
 	RawArgs     json.RawMessage `json:"raw_args"`
 	SchemaState SchemaState     `json:"schema_state"`
@@ -899,6 +907,7 @@ func (sub *SubJob) IsFinished() bool {
 // ToProxyJob converts a sub-job to a proxy job.
 func (sub *SubJob) ToProxyJob(parentJob *Job, seq int) Job {
 	return Job{
+		Version:         parentJob.Version,
 		ID:              parentJob.ID,
 		Type:            sub.Type,
 		SchemaID:        parentJob.SchemaID,
@@ -920,7 +929,6 @@ func (sub *SubJob) ToProxyJob(parentJob *Job, seq int) Job {
 		DependencyID:    parentJob.DependencyID,
 		Query:           parentJob.Query,
 		BinlogInfo:      parentJob.BinlogInfo,
-		Version:         parentJob.Version,
 		ReorgMeta:       parentJob.ReorgMeta,
 		MultiSchemaInfo: &MultiSchemaInfo{Revertible: sub.Revertible, Seq: int32(seq)},
 		Priority:        parentJob.Priority,

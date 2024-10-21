@@ -40,6 +40,7 @@ import (
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/executor"
 	"github.com/pingcap/tidb/pkg/infoschema"
+	infoschemacontext "github.com/pingcap/tidb/pkg/infoschema/context"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/model"
@@ -50,7 +51,6 @@ import (
 	"github.com/pingcap/tidb/pkg/session/txninfo"
 	sessiontypes "github.com/pingcap/tidb/pkg/session/types"
 	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/sessionctx/binloginfo"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/store/gcworker"
 	"github.com/pingcap/tidb/pkg/store/helper"
@@ -78,11 +78,6 @@ type SettingsHandler struct {
 func NewSettingsHandler(tool *handler.TikvHandlerTool) *SettingsHandler {
 	return &SettingsHandler{tool}
 }
-
-// BinlogRecover is used to recover binlog service.
-// When config binlog IgnoreError, binlog service will stop after meeting the first error.
-// It can be recovered using HTTP API.
-type BinlogRecover struct{}
 
 // SchemaHandler is the handler for list database or table schemas.
 type SchemaHandler struct {
@@ -583,39 +578,6 @@ func (h SettingsHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	}
 }
 
-// ServeHTTP recovers binlog service.
-func (BinlogRecover) ServeHTTP(w http.ResponseWriter, req *http.Request) {
-	op := req.FormValue(handler.Operation)
-	switch op {
-	case "reset":
-		binloginfo.ResetSkippedCommitterCounter()
-	case "nowait":
-		err := binloginfo.DisableSkipBinlogFlag()
-		if err != nil {
-			handler.WriteError(w, err)
-			return
-		}
-	case "status":
-	default:
-		sec, err := strconv.ParseInt(req.FormValue(handler.Seconds), 10, 64)
-		if sec <= 0 || err != nil {
-			sec = 1800
-		}
-		err = binloginfo.DisableSkipBinlogFlag()
-		if err != nil {
-			handler.WriteError(w, err)
-			return
-		}
-		timeout := time.Duration(sec) * time.Second
-		err = binloginfo.WaitBinlogRecover(timeout)
-		if err != nil {
-			handler.WriteError(w, err)
-			return
-		}
-	}
-	handler.WriteData(w, binloginfo.GetBinlogStatus())
-}
-
 // TableFlashReplicaInfo is the replica information of a table.
 type TableFlashReplicaInfo struct {
 	// Modifying the field name needs to negotiate with TiFlash colleague.
@@ -638,7 +600,7 @@ func (h FlashReplicaHandler) ServeHTTP(w http.ResponseWriter, req *http.Request)
 		return
 	}
 	replicaInfos := make([]*TableFlashReplicaInfo, 0)
-	schemas := schema.ListTablesWithSpecialAttribute(infoschema.TiFlashAttribute)
+	schemas := schema.ListTablesWithSpecialAttribute(infoschemacontext.TiFlashAttribute)
 	for _, schema := range schemas {
 		for _, tbl := range schema.TableInfos {
 			replicaInfos = appendTiFlashReplicaInfo(replicaInfos, tbl)
@@ -1163,7 +1125,7 @@ func (h DDLHistoryJobHandler) getHistoryDDL(jobID, limit int) (jobs []*model.Job
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	txnMeta := meta.NewMeta(txn)
+	txnMeta := meta.NewMutator(txn)
 
 	jobs, err = ddl.ScanHistoryDDLJobs(txnMeta, int64(jobID), limit)
 	if err != nil {

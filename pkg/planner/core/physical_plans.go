@@ -52,6 +52,8 @@ import (
 	"github.com/pingcap/tipb/go-tipb"
 )
 
+//go:generate go run ./generator/plan_clone_generator.go -- plan_clone_generated.go
+
 var (
 	_ base.PhysicalPlan = &PhysicalSelection{}
 	_ base.PhysicalPlan = &PhysicalProjection{}
@@ -266,7 +268,7 @@ func setMppOrBatchCopForTableScan(curPlan base.PhysicalPlan) {
 }
 
 // GetPhysicalIndexReader returns PhysicalIndexReader for logical TiKVSingleGather.
-func GetPhysicalIndexReader(sg *TiKVSingleGather, schema *expression.Schema, stats *property.StatsInfo, props ...*property.PhysicalProperty) *PhysicalIndexReader {
+func GetPhysicalIndexReader(sg *logicalop.TiKVSingleGather, schema *expression.Schema, stats *property.StatsInfo, props ...*property.PhysicalProperty) *PhysicalIndexReader {
 	reader := PhysicalIndexReader{}.Init(sg.SCtx(), sg.QueryBlockOffset())
 	reader.SetStats(stats)
 	reader.SetSchema(schema)
@@ -275,7 +277,7 @@ func GetPhysicalIndexReader(sg *TiKVSingleGather, schema *expression.Schema, sta
 }
 
 // GetPhysicalTableReader returns PhysicalTableReader for logical TiKVSingleGather.
-func GetPhysicalTableReader(sg *TiKVSingleGather, schema *expression.Schema, stats *property.StatsInfo, props ...*property.PhysicalProperty) *PhysicalTableReader {
+func GetPhysicalTableReader(sg *logicalop.TiKVSingleGather, schema *expression.Schema, stats *property.StatsInfo, props ...*property.PhysicalProperty) *PhysicalTableReader {
 	reader := PhysicalTableReader{}.Init(sg.SCtx(), sg.QueryBlockOffset())
 	reader.PlanPartInfo = &PhysPlanPartInfo{
 		PruningConds:   sg.Source.AllConds,
@@ -955,6 +957,19 @@ type PhysicalTableScan struct {
 	// for runtime filter
 	runtimeFilterList []*RuntimeFilter `plan-cache-clone:"must-nil"` // plan with runtime filter is not cached
 	maxWaitTimeMs     int
+
+	AnnIndexExtra *VectorIndexExtra `plan-cache-clone:"must-nil"` // MPP plan should not be cached.
+}
+
+// VectorIndexExtra is the extra information for vector index.
+type VectorIndexExtra struct {
+	// Note: Even if IndexInfo is not nil, it doesn't mean the VectorSearch push down
+	// will happen because optimizer will explore all available vector indexes and fill them
+	// in IndexInfo, and later invalid plans are filtered out according to a topper executor.
+	IndexInfo *model.IndexInfo
+
+	// Not nil if there is an VectorSearch push down.
+	PushDownQueryInfo *tipb.ANNQueryInfo
 }
 
 // Clone implements op.PhysicalPlan interface.

@@ -919,11 +919,13 @@ func (c *tidbMVCCInfoFunctionClass) getFunction(ctx BuildContext, args []Express
 type builtinTiDBMVCCInfoSig struct {
 	baseBuiltinFunc
 	expropt.KVStorePropReader
+	expropt.PrivilegeCheckerPropReader
 }
 
 // RequiredOptionalEvalProps implements the RequireOptionalEvalProps interface.
 func (b *builtinTiDBMVCCInfoSig) RequiredOptionalEvalProps() OptionalEvalPropKeySet {
-	return b.KVStorePropReader.RequiredOptionalEvalProps()
+	return b.KVStorePropReader.RequiredOptionalEvalProps() |
+		b.PrivilegeCheckerPropReader.RequiredOptionalEvalProps()
 }
 
 func (b *builtinTiDBMVCCInfoSig) Clone() builtinFunc {
@@ -934,7 +936,11 @@ func (b *builtinTiDBMVCCInfoSig) Clone() builtinFunc {
 
 // evalString evals a builtinTiDBMVCCInfoSig.
 func (b *builtinTiDBMVCCInfoSig) evalString(ctx EvalContext, row chunk.Row) (string, bool, error) {
-	if !ctx.RequestVerification("", "", "", mysql.SuperPriv) {
+	privChecker, err := b.GetPrivilegeChecker(ctx)
+	if err != nil {
+		return "", false, err
+	}
+	if !privChecker.RequestVerification("", "", "", mysql.SuperPriv) {
 		return "", false, plannererrors.ErrSpecificAccessDenied.FastGenByArgs("SUPER")
 	}
 	s, isNull, err := b.args[0].EvalString(ctx, row)
@@ -1006,12 +1012,14 @@ type builtinTiDBEncodeRecordKeySig struct {
 	baseBuiltinFunc
 	expropt.InfoSchemaPropReader
 	expropt.SessionVarsPropReader
+	expropt.PrivilegeCheckerPropReader
 }
 
 // RequiredOptionalEvalProps implements the RequireOptionalEvalProps interface.
 func (b *builtinTiDBEncodeRecordKeySig) RequiredOptionalEvalProps() OptionalEvalPropKeySet {
 	return b.InfoSchemaPropReader.RequiredOptionalEvalProps() |
-		b.SessionVarsPropReader.RequiredOptionalEvalProps()
+		b.SessionVarsPropReader.RequiredOptionalEvalProps() |
+		b.PrivilegeCheckerPropReader.RequiredOptionalEvalProps()
 }
 
 func (b *builtinTiDBEncodeRecordKeySig) Clone() builtinFunc {
@@ -1029,7 +1037,11 @@ func (b *builtinTiDBEncodeRecordKeySig) evalString(ctx EvalContext, row chunk.Ro
 	if EncodeRecordKeyFromRow == nil {
 		return "", false, errors.New("EncodeRecordKeyFromRow is not initialized")
 	}
-	recordKey, isNull, err := EncodeRecordKeyFromRow(ctx, is, b.args, row)
+	privChecker, err := b.GetPrivilegeChecker(ctx)
+	if err != nil {
+		return "", false, err
+	}
+	recordKey, isNull, err := EncodeRecordKeyFromRow(ctx, privChecker, is, b.args, row)
 	if isNull || err != nil {
 		if errors.ErrorEqual(err, plannererrors.ErrSpecificAccessDenied) {
 			sv, err2 := b.GetSessionVars(ctx)
@@ -1072,12 +1084,14 @@ type builtinTiDBEncodeIndexKeySig struct {
 	baseBuiltinFunc
 	expropt.InfoSchemaPropReader
 	expropt.SessionVarsPropReader
+	expropt.PrivilegeCheckerPropReader
 }
 
 // RequiredOptionalEvalProps implements the RequireOptionalEvalProps interface.
 func (b *builtinTiDBEncodeIndexKeySig) RequiredOptionalEvalProps() OptionalEvalPropKeySet {
 	return b.InfoSchemaPropReader.RequiredOptionalEvalProps() |
-		b.SessionVarsPropReader.RequiredOptionalEvalProps()
+		b.SessionVarsPropReader.RequiredOptionalEvalProps() |
+		b.PrivilegeCheckerPropReader.RequiredOptionalEvalProps()
 }
 
 func (b *builtinTiDBEncodeIndexKeySig) Clone() builtinFunc {
@@ -1095,7 +1109,11 @@ func (b *builtinTiDBEncodeIndexKeySig) evalString(ctx EvalContext, row chunk.Row
 	if EncodeIndexKeyFromRow == nil {
 		return "", false, errors.New("EncodeIndexKeyFromRow is not initialized")
 	}
-	idxKey, isNull, err := EncodeIndexKeyFromRow(ctx, is, b.args, row)
+	privChecker, err := b.GetPrivilegeChecker(ctx)
+	if err != nil {
+		return "", false, err
+	}
+	idxKey, isNull, err := EncodeIndexKeyFromRow(ctx, privChecker, is, b.args, row)
 	if isNull || err != nil {
 		if errors.ErrorEqual(err, plannererrors.ErrSpecificAccessDenied) {
 			sv, err2 := b.GetSessionVars(ctx)
@@ -1133,10 +1151,10 @@ func (c *tidbDecodeKeyFunctionClass) getFunction(ctx BuildContext, args []Expres
 var DecodeKeyFromString func(types.Context, infoschema.MetaOnlyInfoSchema, string) string
 
 // EncodeRecordKeyFromRow is used to encode record key by expressions.
-var EncodeRecordKeyFromRow func(ctx EvalContext, is infoschema.MetaOnlyInfoSchema, args []Expression, row chunk.Row) ([]byte, bool, error)
+var EncodeRecordKeyFromRow func(ctx EvalContext, checker expropt.PrivilegeChecker, is infoschema.MetaOnlyInfoSchema, args []Expression, row chunk.Row) ([]byte, bool, error)
 
 // EncodeIndexKeyFromRow is used to encode index key by expressions.
-var EncodeIndexKeyFromRow func(ctx EvalContext, is infoschema.MetaOnlyInfoSchema, args []Expression, row chunk.Row) ([]byte, bool, error)
+var EncodeIndexKeyFromRow func(ctx EvalContext, checker expropt.PrivilegeChecker, is infoschema.MetaOnlyInfoSchema, args []Expression, row chunk.Row) ([]byte, bool, error)
 
 type builtinTiDBDecodeKeySig struct {
 	baseBuiltinFunc
@@ -1173,6 +1191,7 @@ func (b *builtinTiDBDecodeKeySig) evalString(ctx EvalContext, row chunk.Row) (st
 
 type tidbDecodeSQLDigestsFunctionClass struct {
 	baseFunctionClass
+	expropt.PrivilegeCheckerPropReader
 }
 
 func (c *tidbDecodeSQLDigestsFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
@@ -1180,7 +1199,12 @@ func (c *tidbDecodeSQLDigestsFunctionClass) getFunction(ctx BuildContext, args [
 		return nil, err
 	}
 
-	if !ctx.GetEvalCtx().RequestVerification("", "", "", mysql.ProcessPriv) {
+	privChecker, err := c.GetPrivilegeChecker(ctx.GetEvalCtx())
+	if err != nil {
+		return nil, err
+	}
+
+	if !privChecker.RequestVerification("", "", "", mysql.ProcessPriv) {
 		return nil, errSpecificAccessDenied.GenWithStackByArgs("PROCESS")
 	}
 
@@ -1202,12 +1226,14 @@ type builtinTiDBDecodeSQLDigestsSig struct {
 	baseBuiltinFunc
 	expropt.SessionVarsPropReader
 	expropt.SQLExecutorPropReader
+	expropt.PrivilegeCheckerPropReader
 }
 
 // RequiredOptionalEvalProps implements the RequireOptionalEvalProps interface.
 func (b *builtinTiDBDecodeSQLDigestsSig) RequiredOptionalEvalProps() OptionalEvalPropKeySet {
 	return b.SessionVarsPropReader.RequiredOptionalEvalProps() |
-		b.SQLExecutorPropReader.RequiredOptionalEvalProps()
+		b.SQLExecutorPropReader.RequiredOptionalEvalProps() |
+		b.PrivilegeCheckerPropReader.RequiredOptionalEvalProps()
 }
 
 func (b *builtinTiDBDecodeSQLDigestsSig) Clone() builtinFunc {
@@ -1217,6 +1243,15 @@ func (b *builtinTiDBDecodeSQLDigestsSig) Clone() builtinFunc {
 }
 
 func (b *builtinTiDBDecodeSQLDigestsSig) evalString(ctx EvalContext, row chunk.Row) (string, bool, error) {
+	privChecker, err := b.GetPrivilegeChecker(ctx)
+	if err != nil {
+		return "", true, err
+	}
+
+	if !privChecker.RequestVerification("", "", "", mysql.ProcessPriv) {
+		return "", true, errSpecificAccessDenied.GenWithStackByArgs("PROCESS")
+	}
+
 	args := b.getArgs()
 	digestsStr, isNull, err := args[0].EvalString(ctx, row)
 	if err != nil {
@@ -1443,11 +1478,13 @@ type builtinNextValSig struct {
 	baseBuiltinFunc
 	expropt.SequenceOperatorPropReader
 	expropt.SessionVarsPropReader
+	expropt.PrivilegeCheckerPropReader
 }
 
 func (b *builtinNextValSig) RequiredOptionalEvalProps() OptionalEvalPropKeySet {
 	return b.SequenceOperatorPropReader.RequiredOptionalEvalProps() |
-		b.SessionVarsPropReader.RequiredOptionalEvalProps()
+		b.SessionVarsPropReader.RequiredOptionalEvalProps() |
+		b.PrivilegeCheckerPropReader.RequiredOptionalEvalProps()
 }
 
 func (b *builtinNextValSig) Clone() builtinFunc {
@@ -1477,7 +1514,11 @@ func (b *builtinNextValSig) evalInt(ctx EvalContext, row chunk.Row) (int64, bool
 	}
 	// Do the privilege check.
 	user := vars.User
-	if !ctx.RequestVerification(db, seq, "", mysql.InsertPriv) {
+	privChecker, err := b.GetPrivilegeChecker(ctx)
+	if err != nil {
+		return 0, false, err
+	}
+	if !privChecker.RequestVerification(db, seq, "", mysql.InsertPriv) {
 		return 0, false, errSequenceAccessDenied.GenWithStackByArgs("INSERT", user.AuthUsername, user.AuthHostname, seq)
 	}
 	nextVal, err := sequence.GetSequenceNextVal()
@@ -1510,11 +1551,13 @@ type builtinLastValSig struct {
 	baseBuiltinFunc
 	expropt.SequenceOperatorPropReader
 	expropt.SessionVarsPropReader
+	expropt.PrivilegeCheckerPropReader
 }
 
 func (b *builtinLastValSig) RequiredOptionalEvalProps() OptionalEvalPropKeySet {
 	return b.SequenceOperatorPropReader.RequiredOptionalEvalProps() |
-		b.SessionVarsPropReader.RequiredOptionalEvalProps()
+		b.SessionVarsPropReader.RequiredOptionalEvalProps() |
+		b.PrivilegeCheckerPropReader.RequiredOptionalEvalProps()
 }
 
 func (b *builtinLastValSig) Clone() builtinFunc {
@@ -1544,7 +1587,11 @@ func (b *builtinLastValSig) evalInt(ctx EvalContext, row chunk.Row) (int64, bool
 	}
 	// Do the privilege check.
 	user := vars.User
-	if !ctx.RequestVerification(db, seq, "", mysql.SelectPriv) {
+	privChecker, err := b.GetPrivilegeChecker(ctx)
+	if err != nil {
+		return 0, false, err
+	}
+	if !privChecker.RequestVerification(db, seq, "", mysql.SelectPriv) {
 		return 0, false, errSequenceAccessDenied.GenWithStackByArgs("SELECT", user.AuthUsername, user.AuthHostname, seq)
 	}
 	return vars.SequenceState.GetLastValue(sequence.GetSequenceID())
@@ -1571,11 +1618,13 @@ type builtinSetValSig struct {
 	baseBuiltinFunc
 	expropt.SequenceOperatorPropReader
 	expropt.SessionVarsPropReader
+	expropt.PrivilegeCheckerPropReader
 }
 
 func (b *builtinSetValSig) RequiredOptionalEvalProps() OptionalEvalPropKeySet {
 	return b.SequenceOperatorPropReader.RequiredOptionalEvalProps() |
-		b.SessionVarsPropReader.RequiredOptionalEvalProps()
+		b.SessionVarsPropReader.RequiredOptionalEvalProps() |
+		b.PrivilegeCheckerPropReader.RequiredOptionalEvalProps()
 }
 
 func (b *builtinSetValSig) Clone() builtinFunc {
@@ -1605,7 +1654,11 @@ func (b *builtinSetValSig) evalInt(ctx EvalContext, row chunk.Row) (int64, bool,
 	}
 	// Do the privilege check.
 	user := vars.User
-	if !ctx.RequestVerification(db, seq, "", mysql.InsertPriv) {
+	privChecker, err := b.GetPrivilegeChecker(ctx)
+	if err != nil {
+		return 0, false, err
+	}
+	if !privChecker.RequestVerification(db, seq, "", mysql.InsertPriv) {
 		return 0, false, errSequenceAccessDenied.GenWithStackByArgs("INSERT", user.AuthUsername, user.AuthHostname, seq)
 	}
 	setValue, isNull, err := b.args[1].EvalInt(ctx, row)
