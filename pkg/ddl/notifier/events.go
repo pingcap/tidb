@@ -28,7 +28,8 @@ import (
 // check the GetType of SchemaChange and call the corresponding getter function
 // to retrieve the needed information.
 type SchemaChangeEvent struct {
-	inner *jsonSchemaChangeEvent
+	inner      *jsonSchemaChangeEvent
+	tableInfos []*model.TableInfo // used for ActionCreateTables event.
 }
 
 // String implements fmt.Stringer interface.
@@ -41,9 +42,6 @@ func (s *SchemaChangeEvent) String() string {
 	_, _ = fmt.Fprintf(&sb, "(Event Type: %s", s.inner.Tp)
 	if s.inner.TableInfo != nil {
 		_, _ = fmt.Fprintf(&sb, ", Table ID: %d, Table Name: %s", s.inner.TableInfo.ID, s.inner.TableInfo.Name)
-	}
-	for _, tableInfo := range s.inner.TableInfos {
-		_, _ = fmt.Fprintf(&sb, ", Table ID: %d, Table Name: %s", tableInfo.ID, tableInfo.Name)
 	}
 	if s.inner.OldTableInfo != nil {
 		_, _ = fmt.Fprintf(&sb, ", Old Table ID: %d, Old Table Name: %s", s.inner.OldTableInfo.ID, s.inner.OldTableInfo.Name)
@@ -86,25 +84,45 @@ func (s *SchemaChangeEvent) GetType() model.ActionType {
 	return s.inner.Tp
 }
 
-// NewCreateTablesEvent creates a SchemaChangeEvent whose type is
-// ActionCreateTables.
-// The type of the ActionCreateTable should also be included in ActionCreateTables.
-func NewCreateTablesEvent(
-	newTableInfos []*model.TableInfo,
+// NewCreateTableEvent creates a SchemaChangeEvent whose type is
+// ActionCreateTable.
+func NewCreateTableEvent(
+	newTableInfo *model.TableInfo,
 ) *SchemaChangeEvent {
 	return &SchemaChangeEvent{
 		inner: &jsonSchemaChangeEvent{
-			Tp:         model.ActionCreateTables,
-			TableInfos: newTableInfos,
+			Tp:        model.ActionCreateTable,
+			TableInfo: newTableInfo,
 		},
 	}
 }
 
-// GetCreateTablesInfo returns the table info of the SchemaChangeEvent whose type
+// GetCreateTableInfo returns the table info of the SchemaChangeEvent whose type
 // is ActionCreateTable.
+func (s *SchemaChangeEvent) GetCreateTableInfo() *model.TableInfo {
+	intest.Assert(s.inner.Tp == model.ActionCreateTable)
+	return s.inner.TableInfo
+}
+
+// NewCreateTablesEvent creates a SchemaChangeEvent whose type is
+// ActionCreateTables.
+// Note: the NewCreateTablesEvent should only be used in publisher, it will split the
+// ActionCreateTables into multiple ActionCreateTable events.
+func NewCreateTablesEvent(
+	newTableInfos []*model.TableInfo,
+) *SchemaChangeEvent {
+	return &SchemaChangeEvent{
+		tableInfos: newTableInfos,
+	}
+}
+
+// GetCreateTablesInfo returns the table infos of the SchemaChangeEvent whose type
+// is ActionCreateTables.
+// Note: the GetCreatesTableInfo should only be used in publisher, it will split the
+// ActionCreateTables into multiple ActionCreateTable events.
 func (s *SchemaChangeEvent) GetCreateTablesInfo() []*model.TableInfo {
 	intest.Assert(s.inner.Tp == model.ActionCreateTables)
-	return s.inner.TableInfos
+	return s.tableInfos
 }
 
 // NewTruncateTableEvent creates a SchemaChangeEvent whose type is
@@ -434,7 +452,6 @@ func NewFlashbackClusterEvent() *SchemaChangeEvent {
 // we want to hide the details to subscribers, so SchemaChangeEvent contain this struct.
 type jsonSchemaChangeEvent struct {
 	TableInfo       *model.TableInfo     `json:"table_info,omitempty"`
-	TableInfos      []*model.TableInfo   `json:"table_infos,omitempty"`
 	OldTableInfo    *model.TableInfo     `json:"old_table_info,omitempty"`
 	AddedPartInfo   *model.PartitionInfo `json:"added_partition_info,omitempty"`
 	DroppedPartInfo *model.PartitionInfo `json:"dropped_partition_info,omitempty"`

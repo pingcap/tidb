@@ -55,7 +55,7 @@ import (
 
 // DANGER: it is an internal function used by onCreateTable and onCreateTables, for reusing code. Be careful.
 // 1. it expects the argument of job has been deserialized.
-// 2. it won't call updateSchemaVersion, FinishTableJob and asyncNotifyEvent.
+// 2. it won't call updateSchemaVersion, FinishTableJob and asyncNotifyEvents.
 func createTable(jobCtx *jobContext, job *model.Job, args *model.CreateTableArgs) (*model.TableInfo, error) {
 	schemaID := job.SchemaID
 	tbInfo, fkCheck := args.TableInfo, args.FKCheck
@@ -182,8 +182,8 @@ func (w *worker) onCreateTable(jobCtx *jobContext, job *model.Job) (ver int64, _
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
-	createTableEvent := notifier.NewCreateTablesEvent([]*model.TableInfo{tbInfo})
-	err = asyncNotifyEvent(jobCtx, createTableEvent, job, w.sess)
+	createTableEvent := notifier.NewCreateTableEvent(tbInfo)
+	err = asyncNotifyEvents(jobCtx, createTableEvent, job, w.sess)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
@@ -217,8 +217,8 @@ func (w *worker) createTableWithForeignKeys(jobCtx *jobContext, job *model.Job, 
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
-		createTableEvent := notifier.NewCreateTablesEvent([]*model.TableInfo{tbInfo})
-		err = asyncNotifyEvent(jobCtx, createTableEvent, job, w.sess)
+		createTableEvent := notifier.NewCreateTableEvent(tbInfo)
+		err = asyncNotifyEvents(jobCtx, createTableEvent, job, w.sess)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
@@ -274,7 +274,7 @@ func (w *worker) onCreateTables(jobCtx *jobContext, job *model.Job) (int64, erro
 		return ver, errors.Trace(err)
 	}
 	createTablesEvent := notifier.NewCreateTablesEvent(tableInfos)
-	err = asyncNotifyEvent(jobCtx, createTablesEvent, job, w.sess)
+	err = asyncNotifyEvents(jobCtx, createTablesEvent, job, w.sess)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}

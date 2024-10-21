@@ -564,9 +564,27 @@ func (d *ddl) RegisterStatsHandle(h *handle.Handle) {
 	d.ddlEventCh = h.DDLEventCh()
 }
 
+// asyncNotifyEvents wrap the asyncNotifyEvent to notify events.
+// It handles the multi schema change event and merged DDL.
+func asyncNotifyEvents(jobCtx *jobContext, e *notifier.SchemaChangeEvent, job *model.Job, sctx *sess.Session) error {
+	var subJobID int64 = -1
+	if job.MultiSchemaInfo != nil {
+		return asyncNotifyEvent(jobCtx, e, job, subJobID, sctx)
+	} else if e.GetType() == model.ActionCreateTables {
+		// split creat tables event to multiple create table events
+		for i, tbl := range e.GetCreateTablesInfo() {
+			createTableEvent := notifier.NewCreateTableEvent(tbl)
+			if err := asyncNotifyEvent(jobCtx, createTableEvent, job, int64(i), sctx); err != nil {
+				return err
+			}
+		}
+	}
+	return asyncNotifyEvent(jobCtx, e, job, subJobID, sctx)
+}
+
 // asyncNotifyEvent will notify the ddl event to outside world, say statistic handle. When the channel is full, we may
 // give up notify and log it.
-func asyncNotifyEvent(jobCtx *jobContext, e *notifier.SchemaChangeEvent, job *model.Job, sctx *sess.Session) error {
+func asyncNotifyEvent(jobCtx *jobContext, e *notifier.SchemaChangeEvent, job *model.Job, subJobID int64, sctx *sess.Session) error {
 	// skip notify for system databases, system databases are expected to change at
 	// bootstrap and other nodes can also handle the changing in its bootstrap rather
 	// than be notified.
@@ -578,15 +596,11 @@ func asyncNotifyEvent(jobCtx *jobContext, e *notifier.SchemaChangeEvent, job *mo
 		failpoint.Inject("asyncNotifyEventError", func() {
 			failpoint.Return(errors.New("mock publish event error"))
 		})
-		var multiSchemaChangeSeq int64 = -1
-		if job.MultiSchemaInfo != nil {
-			multiSchemaChangeSeq = int64(job.MultiSchemaInfo.Seq)
-		}
-		err := notifier.PubSchemaChange(jobCtx.ctx, sctx, job.ID, multiSchemaChangeSeq, e)
+		err := notifier.PubSchemaChange(jobCtx.ctx, sctx, job.ID, subJobID, e)
 		if err != nil {
 			logutil.DDLLogger().Error("Error publish schema change event",
 				zap.Int64("jobID", job.ID),
-				zap.Int64("multiSchemaChangeSeq", multiSchemaChangeSeq),
+				zap.Int64("multiSchemaChangeSeq", subJobID),
 				zap.String("event", e.String()), zap.Error(err))
 			return err
 		}

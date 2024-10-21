@@ -131,7 +131,7 @@ func (w *worker) onAddColumn(jobCtx *jobContext, job *model.Job) (ver int64, err
 		}
 
 		addColumnEvent := notifier.NewAddColumnEvent(tblInfo, []*model.ColumnInfo{columnInfo})
-		err = asyncNotifyEvent(jobCtx, addColumnEvent, job, w.sess)
+		err = asyncNotifyEvents(jobCtx, addColumnEvent, job, w.sess)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
