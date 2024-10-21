@@ -5,6 +5,7 @@
 //
 //	mockgen -package mock github.com/aws/aws-sdk-go/service/s3/s3iface S3API
 //
+
 // Package mock is a generated GoMock package.
 package mock
 
@@ -21,6 +22,7 @@ import (
 type MockS3API struct {
 	ctrl     *gomock.Controller
 	recorder *MockS3APIMockRecorder
+	isgomock struct{}
 }
 
 // MockS3APIMockRecorder is the mock recorder for MockS3API.

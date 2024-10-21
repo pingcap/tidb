@@ -13,7 +13,7 @@ import (
 	context "context"
 	reflect "reflect"
 
-	"github.com/pingcap/tidb/pkg/lightning/backend"
+	backend "github.com/pingcap/tidb/pkg/lightning/backend"
 	gomock "go.uber.org/mock/gomock"
 )
 
@@ -21,6 +21,7 @@ import (
 type MockMiniTaskExecutor struct {
 	ctrl     *gomock.Controller
 	recorder *MockMiniTaskExecutorMockRecorder
+	isgomock struct{}
 }
 
 // MockMiniTaskExecutorMockRecorder is the mock recorder for MockMiniTaskExecutor.
@@ -40,21 +41,16 @@ func (m *MockMiniTaskExecutor) EXPECT() *MockMiniTaskExecutorMockRecorder {
 	return m.recorder
 }
 
-// ISGOMOCK indicates that this struct is a gomock mock.
-func (m *MockMiniTaskExecutor) ISGOMOCK() struct{} {
-	return struct{}{}
-}
-
 // Run mocks base method.
-func (m *MockMiniTaskExecutor) Run(arg0 context.Context, arg1, arg2 backend.EngineWriter) error {
+func (m *MockMiniTaskExecutor) Run(ctx context.Context, dataWriter, indexWriter backend.EngineWriter) error {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "Run", arg0, arg1, arg2)
+	ret := m.ctrl.Call(m, "Run", ctx, dataWriter, indexWriter)
 	ret0, _ := ret[0].(error)
 	return ret0
 }
 
 // Run indicates an expected call of Run.
-func (mr *MockMiniTaskExecutorMockRecorder) Run(arg0, arg1, arg2 any) *gomock.Call {
+func (mr *MockMiniTaskExecutorMockRecorder) Run(ctx, dataWriter, indexWriter any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Run", reflect.TypeOf((*MockMiniTaskExecutor)(nil).Run), arg0, arg1, arg2)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Run", reflect.TypeOf((*MockMiniTaskExecutor)(nil).Run), ctx, dataWriter, indexWriter)
 }
