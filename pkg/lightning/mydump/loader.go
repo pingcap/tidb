@@ -543,16 +543,19 @@ func (s *mdLoaderSetup) constructFileInfo(ctx context.Context, path string, size
 				logger.Error("fail to sample parquet row size", zap.String("category", "loader"),
 					zap.String("schema", res.Schema), zap.String("table", res.Name),
 					zap.Stringer("type", res.Type), zap.Error(err))
+				return errors.Trace(err)
 			}
 		}
 		if s.sampledParquetRowSizes[tableName] != 0 {
-			totalRowCount, err2 := ReadParquetFileRowCountByFile(ctx, s.loader.GetStore(), info.FileMeta)
-			if err2 != nil {
+			totalRowCount, err := ReadParquetFileRowCountByFile(ctx, s.loader.GetStore(), info.FileMeta)
+			if err != nil {
 				logger.Error("fail to get file total row count", zap.String("category", "loader"),
 					zap.String("schema", res.Schema), zap.String("table", res.Name),
-					zap.Stringer("type", res.Type), zap.Error(err2))
+					zap.Stringer("type", res.Type), zap.Error(err))
+				return errors.Trace(err)
 			} else {
 				info.FileMeta.RealSize = int64(float64(totalRowCount) * s.sampledParquetRowSizes[tableName])
+				info.FileMeta.Rows = totalRowCount
 			}
 		}
 		s.tableDatas = append(s.tableDatas, info)
