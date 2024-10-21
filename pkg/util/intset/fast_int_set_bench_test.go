@@ -74,7 +74,7 @@ func BenchmarkIntSet_Insert(b *testing.B) {
 	b.ResetTimer()
 	for range b.N {
 		intSet := NewIntSet()
-		for j := 0; j < 64; j++ {
+		for j := range 64 {
 			intSet.Insert(j)
 		}
 	}
@@ -84,7 +84,7 @@ func BenchmarkSparse_Insert(b *testing.B) {
 	b.ResetTimer()
 	for range b.N {
 		intSet := &intsets.Sparse{}
-		for j := 0; j < 64; j++ {
+		for j := range 64 {
 			intSet.Insert(j)
 		}
 	}
@@ -94,7 +94,7 @@ func BenchmarkFastIntSet_Insert(b *testing.B) {
 	b.ResetTimer()
 	for range b.N {
 		intSet := NewFastIntSet()
-		for j := 0; j < 64; j++ {
+		for j := range 64 {
 			intSet.Insert(j)
 		}
 	}

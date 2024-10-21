@@ -699,8 +699,8 @@ func (c *Chunk) Reconstruct() {
 
 // ToString returns all the values in a chunk.
 func (c *Chunk) ToString(ft []*types.FieldType) string {
-	var buf []byte
-	for rowIdx := 0; rowIdx < c.NumRows(); rowIdx++ {
+	buf := make([]byte, 0, c.NumRows()*2)
+	for rowIdx := range c.NumRows() {
 		row := c.GetRow(rowIdx)
 		buf = append(buf, row.ToString(ft)...)
 		buf = append(buf, '\n')

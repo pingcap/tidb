@@ -311,14 +311,14 @@ func TestCollectAndTopN(t *testing.T) {
 func TestCollectCapacity(t *testing.T) {
 	tsr, _ := setupRemoteTopSQLReporter(maxSQLNum, 60)
 	registerSQL := func(n int) {
-		for i := 0; i < n; i++ {
+		for i := range n {
 			key := []byte("sqlDigest" + strconv.Itoa(i))
 			value := "sqlNormalized" + strconv.Itoa(i)
 			tsr.RegisterSQL(key, value, false)
 		}
 	}
 	registerPlan := func(n int) {
-		for i := 0; i < n; i++ {
+		for i := range n {
 			key := []byte("planDigest" + strconv.Itoa(i))
 			value := "planNormalized" + strconv.Itoa(i)
 			tsr.RegisterPlan(key, value, false)
@@ -326,7 +326,7 @@ func TestCollectCapacity(t *testing.T) {
 	}
 	genRecord := func(n int) []collector.SQLCPUTimeRecord {
 		records := make([]collector.SQLCPUTimeRecord, 0, n)
-		for i := 0; i < n; i++ {
+		for i := range n {
 			records = append(records, collector.SQLCPUTimeRecord{
 				SQLDigest:  []byte("sqlDigest" + strconv.Itoa(i+1)),
 				PlanDigest: []byte("planDigest" + strconv.Itoa(i+1)),
@@ -397,8 +397,8 @@ func TestMultipleDataSinks(t *testing.T) {
 
 	tsr := NewRemoteTopSQLReporter(mockPlanBinaryDecoderFunc, mockPlanBinaryCompressFunc)
 
-	var chs []chan *ReportData
-	for i := 0; i < 7; i++ {
+	chs := make([]chan *ReportData, 0, 7)
+	for range 7 {
 		chs = append(chs, make(chan *ReportData, 1))
 	}
 	dss := make([]DataSink, 0, len(chs))
