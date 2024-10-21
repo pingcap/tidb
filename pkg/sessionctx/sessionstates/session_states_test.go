@@ -127,6 +127,12 @@ func TestSystemVars(t *testing.T) {
 			expectedValue:   "0",
 		},
 		{
+			// instance-scoped variable
+			inSessionStates: false,
+			varName:         variable.TiDBDeferGeneralLog,
+			expectedValue:   "0",
+		},
+		{
 			// global-scoped variable
 			inSessionStates: false,
 			varName:         variable.TiDBAutoAnalyzeStartTime,
