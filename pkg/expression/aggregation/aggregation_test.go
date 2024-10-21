@@ -15,6 +15,8 @@
 package aggregation
 
 import (
+	"github.com/pingcap/tidb/pkg/planner/cascades/base"
+	"github.com/pingcap/tidb/pkg/planner/util"
 	"math"
 	"testing"
 
@@ -599,4 +601,55 @@ func TestMaxMin(t *testing.T) {
 	require.Equal(t, int64(1), result.GetInt64())
 	partialResult := minFunc.GetPartialResult(minEvalCtx)
 	require.Equal(t, int64(1), partialResult[0].GetInt64())
+}
+
+func TestAggFuncDesc(t *testing.T) {
+	s := createAggFuncSuite()
+	col := &expression.Column{
+		Index:   0,
+		RetType: types.NewFieldType(mysql.TypeLonglong),
+	}
+	desc1, err := NewAggFuncDesc(s.ctx, ast.AggFuncSum, []expression.Expression{col}, false)
+	desc2, err := NewAggFuncDesc(s.ctx, ast.AggFuncSum, []expression.Expression{col}, false)
+	require.NoError(t, err)
+	hasher1 := base.NewHashEqualer()
+	hasher2 := base.NewHashEqualer()
+	desc1.Hash64(hasher1)
+	desc2.Hash64(hasher2)
+	require.Equal(t, hasher1.Sum64(), hasher2.Sum64())
+
+	desc2.HasDistinct = true
+	hasher2.Reset()
+	desc2.Hash64(hasher2)
+	require.NotEqual(t, hasher1.Sum64(), hasher2.Sum64())
+
+	desc2.HasDistinct = false
+	desc2.Mode = FinalMode
+	hasher2.Reset()
+	desc2.Hash64(hasher2)
+	require.NotEqual(t, hasher1.Sum64(), hasher2.Sum64())
+
+	desc2.Mode = CompleteMode
+	desc2.Name = "whatever"
+	hasher2.Reset()
+	desc2.Hash64(hasher2)
+	require.NotEqual(t, hasher1.Sum64(), hasher2.Sum64())
+
+	desc2.Name = ast.AggFuncSum
+	desc2.Args = []expression.Expression{}
+	hasher2.Reset()
+	desc2.Hash64(hasher2)
+	require.NotEqual(t, hasher1.Sum64(), hasher2.Sum64())
+
+	desc2.Args = []expression.Expression{col}
+	desc2.RetTp = types.NewFieldType(mysql.TypeNewDecimal)
+	hasher2.Reset()
+	desc2.Hash64(hasher2)
+	require.NotEqual(t, hasher1.Sum64(), hasher2.Sum64())
+
+	desc2.RetTp = types.NewFieldType(mysql.TypeLonglong)
+	desc2.OrderByItems = []*util.ByItems{{Expr: col, Desc: true}}
+	hasher2.Reset()
+	desc2.Hash64(hasher2)
+	require.NotEqual(t, hasher1.Sum64(), hasher2.Sum64())
 }
