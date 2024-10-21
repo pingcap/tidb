@@ -24,6 +24,7 @@ var _ split.SplitStrategy[*LogDataFileInfo] = &LogSplitStrategy{}
 
 func NewLogSplitStrategy(
 	ctx context.Context,
+	useCheckpoint bool,
 	execCtx sqlexec.RestrictedSQLExecutor,
 	rules map[int64]*restoreutils.RewriteRules,
 	updateStatsFn func(uint64, uint64),
@@ -33,22 +34,24 @@ func NewLogSplitStrategy(
 		downstreamIdset[rule.NewTableID] = struct{}{}
 	}
 	skipMap := NewLogFilesSkipMap()
-	t, err := checkpoint.LoadCheckpointDataForLogRestore(
-		ctx, execCtx, func(groupKey checkpoint.LogRestoreKeyType, off checkpoint.LogRestoreValueMarshaled) {
-			for tableID, foffs := range off.Foffs {
-				// filter out the checkpoint data of dropped table
-				if _, exists := downstreamIdset[tableID]; exists {
-					for _, foff := range foffs {
-						skipMap.Insert(groupKey, off.Goff, foff)
+	if useCheckpoint {
+		t, err := checkpoint.LoadCheckpointDataForLogRestore(
+			ctx, execCtx, func(groupKey checkpoint.LogRestoreKeyType, off checkpoint.LogRestoreValueMarshaled) {
+				for tableID, foffs := range off.Foffs {
+					// filter out the checkpoint data of dropped table
+					if _, exists := downstreamIdset[tableID]; exists {
+						for _, foff := range foffs {
+							skipMap.Insert(groupKey, off.Goff, foff)
+						}
 					}
 				}
-			}
-		})
+			})
 
-	if err != nil {
-		return nil, errors.Trace(err)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		summary.AdjustStartTimeToEarlierTime(t)
 	}
-	summary.AdjustStartTimeToEarlierTime(t)
 	return &LogSplitStrategy{
 		BaseSplitStrategy: split.NewBaseSplitStrategy(rules),
 		skipMap:           skipMap,

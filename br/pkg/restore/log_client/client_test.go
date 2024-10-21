@@ -22,6 +22,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/kvproto/pkg/import_sstpb"
@@ -32,16 +33,19 @@ import (
 	logclient "github.com/pingcap/tidb/br/pkg/restore/log_client"
 	"github.com/pingcap/tidb/br/pkg/restore/split"
 	"github.com/pingcap/tidb/br/pkg/restore/utils"
+	restoreutils "github.com/pingcap/tidb/br/pkg/restore/utils"
 	"github.com/pingcap/tidb/br/pkg/stream"
 	"github.com/pingcap/tidb/br/pkg/utils/iter"
 	"github.com/pingcap/tidb/br/pkg/utiltest"
 	"github.com/pingcap/tidb/pkg/domain"
+	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	filter "github.com/pingcap/tidb/pkg/util/table-filter"
 	"github.com/stretchr/testify/require"
@@ -1343,7 +1347,7 @@ func TestLogFilesIterWithSplitHelper(t *testing.T) {
 	w := restore.PipelineFileRestorerWrapper[*logclient.LogDataFileInfo]{
 		RegionsSplitter: split.NewRegionsSplitter(utiltest.NewFakeSplitClient(), 144*1024*1024, 1440000),
 	}
-	s, err := logclient.NewLogSplitStrategy(ctx, nil, rewriteRulesMap, func(uint64, uint64) {})
+	s, err := logclient.NewLogSplitStrategy(ctx, false, nil, rewriteRulesMap, func(uint64, uint64) {})
 	require.NoError(t, err)
 	logIter := w.WithSplit(context.Background(), mockIter, s)
 	next := 0
@@ -1511,4 +1515,109 @@ func TestPITRIDMap(t *testing.T) {
 			}
 		}
 	}
+}
+
+type mockLogStrategy struct {
+	*logclient.LogSplitStrategy
+	accumulatedCount int
+	expectSplitCount int
+}
+
+func (m *mockLogStrategy) ShouldSplit() bool {
+	if m.accumulatedCount == m.expectSplitCount {
+		return true
+	}
+	m.accumulatedCount += 1
+	return false
+}
+
+func TestSplitHelper(t *testing.T) {
+	ctx := context.Background()
+	rules := map[int64]*restoreutils.RewriteRules{
+		1: {
+			Data: []*import_sstpb.RewriteRule{
+				{
+					OldKeyPrefix: tablecodec.GenTableRecordPrefix(1),
+					NewKeyPrefix: tablecodec.GenTableRecordPrefix(100),
+				},
+			},
+		},
+		2: {
+			Data: []*import_sstpb.RewriteRule{
+				{
+					OldKeyPrefix: tablecodec.GenTableRecordPrefix(2),
+					NewKeyPrefix: tablecodec.GenTableRecordPrefix(200),
+				},
+			},
+		},
+	}
+	oriRegions := []string{
+		"",
+		string(tablecodec.EncodeTablePrefix(100)),
+		string(tablecodec.EncodeTablePrefix(200)),
+		string(tablecodec.EncodeTablePrefix(402)),
+	}
+
+	regionsMap, stores := logclient.GenOneStorRegionsForTest(false, oriRegions)
+	mockPDCli := utiltest.NewFakePDClient(stores, false, nil)
+	mockPDCli.SetRegions(regionsMap)
+
+	client := split.NewClient(mockPDCli, nil, nil, 100, 4)
+	mockIter := iter.FromSlice([]*backuppb.DataFileInfo{
+		fakeFile(1, 100, 100, 100),
+		fakeFile(1, 200, 2*units.MiB, 200),
+		fakeFile(2, 100, 3*units.MiB, 300),
+		fakeFile(3, 100, 10*units.MiB, 100000),
+		fakeFile(1, 300, 3*units.MiB, 10),
+		fakeFile(1, 400, 4*units.MiB, 10),
+	})
+	logIter := toLogDataFileInfoIter(mockIter)
+
+	wrapper := restore.PipelineFileRestorerWrapper[*logclient.LogDataFileInfo]{
+		RegionsSplitter: split.NewRegionsSplitter(client, 4*units.MB, 400),
+	}
+	strategy, err := logclient.NewLogSplitStrategy(ctx, false, nil, rules, func(u1, u2 uint64) {})
+	require.NoError(t, err)
+
+	mockStrategy := &mockLogStrategy{
+		LogSplitStrategy: strategy,
+		expectSplitCount: 4,
+	}
+
+	helper := wrapper.WithSplit(ctx, logIter, mockStrategy)
+	// iterate the first 4 items and check
+	count := 0
+	for i := helper.TryNext(ctx); !i.Finished && count <= 4; helper.TryNext(ctx) {
+		count += 1
+	}
+	// different regions, no split happens
+	regions, err := mockPDCli.ScanRegions(ctx, []byte{}, []byte{}, 0)
+	require.NoError(t, err)
+	require.Len(t, regions, 3)
+	require.Equal(t, []byte{}, regions[0].Meta.StartKey)
+	require.Equal(t, codec.EncodeBytes(nil, tablecodec.EncodeTablePrefix(100)), regions[1].Meta.StartKey)
+	require.Equal(t, codec.EncodeBytes(nil, tablecodec.EncodeTablePrefix(200)), regions[2].Meta.StartKey)
+	require.Equal(t, codec.EncodeBytes(nil, tablecodec.EncodeTablePrefix(402)), regions[2].Meta.EndKey)
+
+	// iterate to the end
+	for i := helper.TryNext(ctx); !i.Finished; helper.TryNext(ctx) {
+	}
+	regions, err = mockPDCli.ScanRegions(ctx, []byte{}, []byte{}, 0)
+	require.NoError(t, err)
+	require.Len(t, regions, 4)
+	require.Equal(t, fakeRowKey(100, 400), kv.Key(regions[1].Meta.EndKey))
+}
+
+func fakeFile(tableID, rowID int64, length uint64, num int64) *backuppb.DataFileInfo {
+	return &backuppb.DataFileInfo{
+		StartKey:        fakeRowKey(tableID, rowID),
+		EndKey:          fakeRowKey(tableID, rowID+1),
+		TableId:         tableID,
+		Length:          length,
+		NumberOfEntries: num,
+	}
+}
+
+func fakeRowKey(tableID, rowID int64) kv.Key {
+	return codec.EncodeBytes(nil, tablecodec.EncodeRecordKey(tablecodec.GenTableRecordPrefix(tableID), kv.IntHandle(rowID)))
 }
