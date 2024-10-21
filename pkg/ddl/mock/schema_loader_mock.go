@@ -19,6 +19,7 @@ import (
 type MockSchemaLoader struct {
 	ctrl     *gomock.Controller
 	recorder *MockSchemaLoaderMockRecorder
+	isgomock struct{}
 }
 
 // MockSchemaLoaderMockRecorder is the mock recorder for MockSchemaLoader.
@@ -36,11 +37,6 @@ func NewMockSchemaLoader(ctrl *gomock.Controller) *MockSchemaLoader {
 // EXPECT returns an object that allows the caller to indicate expected use.
 func (m *MockSchemaLoader) EXPECT() *MockSchemaLoaderMockRecorder {
 	return m.recorder
-}
-
-// ISGOMOCK indicates that this struct is a gomock mock.
-func (m *MockSchemaLoader) ISGOMOCK() struct{} {
-	return struct{}{}
 }
 
 // Reload mocks base method.

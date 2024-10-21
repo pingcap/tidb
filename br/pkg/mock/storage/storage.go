@@ -21,6 +21,7 @@ import (
 type MockExternalStorage struct {
 	ctrl     *gomock.Controller
 	recorder *MockExternalStorageMockRecorder
+	isgomock struct{}
 }
 
 // MockExternalStorageMockRecorder is the mock recorder for MockExternalStorage.
@@ -40,11 +41,6 @@ func (m *MockExternalStorage) EXPECT() *MockExternalStorageMockRecorder {
 	return m.recorder
 }
 
-// ISGOMOCK indicates that this struct is a gomock mock.
-func (m *MockExternalStorage) ISGOMOCK() struct{} {
-	return struct{}{}
-}
-
 // Close mocks base method.
 func (m *MockExternalStorage) Close() {
 	m.ctrl.T.Helper()
@@ -58,105 +54,105 @@ func (mr *MockExternalStorageMockRecorder) Close() *gomock.Call {
 }
 
 // Create mocks base method.
-func (m *MockExternalStorage) Create(arg0 context.Context, arg1 string, arg2 *storage.WriterOption) (storage.ExternalFileWriter, error) {
+func (m *MockExternalStorage) Create(ctx context.Context, path string, option *storage.WriterOption) (storage.ExternalFileWriter, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "Create", arg0, arg1, arg2)
+	ret := m.ctrl.Call(m, "Create", ctx, path, option)
 	ret0, _ := ret[0].(storage.ExternalFileWriter)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
 // Create indicates an expected call of Create.
-func (mr *MockExternalStorageMockRecorder) Create(arg0, arg1, arg2 any) *gomock.Call {
+func (mr *MockExternalStorageMockRecorder) Create(ctx, path, option any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Create", reflect.TypeOf((*MockExternalStorage)(nil).Create), arg0, arg1, arg2)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Create", reflect.TypeOf((*MockExternalStorage)(nil).Create), ctx, path, option)
 }
 
 // DeleteFile mocks base method.
-func (m *MockExternalStorage) DeleteFile(arg0 context.Context, arg1 string) error {
+func (m *MockExternalStorage) DeleteFile(ctx context.Context, name string) error {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "DeleteFile", arg0, arg1)
+	ret := m.ctrl.Call(m, "DeleteFile", ctx, name)
 	ret0, _ := ret[0].(error)
 	return ret0
 }
 
 // DeleteFile indicates an expected call of DeleteFile.
-func (mr *MockExternalStorageMockRecorder) DeleteFile(arg0, arg1 any) *gomock.Call {
+func (mr *MockExternalStorageMockRecorder) DeleteFile(ctx, name any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "DeleteFile", reflect.TypeOf((*MockExternalStorage)(nil).DeleteFile), arg0, arg1)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "DeleteFile", reflect.TypeOf((*MockExternalStorage)(nil).DeleteFile), ctx, name)
 }
 
 // DeleteFiles mocks base method.
-func (m *MockExternalStorage) DeleteFiles(arg0 context.Context, arg1 []string) error {
+func (m *MockExternalStorage) DeleteFiles(ctx context.Context, names []string) error {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "DeleteFiles", arg0, arg1)
+	ret := m.ctrl.Call(m, "DeleteFiles", ctx, names)
 	ret0, _ := ret[0].(error)
 	return ret0
 }
 
 // DeleteFiles indicates an expected call of DeleteFiles.
-func (mr *MockExternalStorageMockRecorder) DeleteFiles(arg0, arg1 any) *gomock.Call {
+func (mr *MockExternalStorageMockRecorder) DeleteFiles(ctx, names any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "DeleteFiles", reflect.TypeOf((*MockExternalStorage)(nil).DeleteFiles), arg0, arg1)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "DeleteFiles", reflect.TypeOf((*MockExternalStorage)(nil).DeleteFiles), ctx, names)
 }
 
 // FileExists mocks base method.
-func (m *MockExternalStorage) FileExists(arg0 context.Context, arg1 string) (bool, error) {
+func (m *MockExternalStorage) FileExists(ctx context.Context, name string) (bool, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "FileExists", arg0, arg1)
+	ret := m.ctrl.Call(m, "FileExists", ctx, name)
 	ret0, _ := ret[0].(bool)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
 // FileExists indicates an expected call of FileExists.
-func (mr *MockExternalStorageMockRecorder) FileExists(arg0, arg1 any) *gomock.Call {
+func (mr *MockExternalStorageMockRecorder) FileExists(ctx, name any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "FileExists", reflect.TypeOf((*MockExternalStorage)(nil).FileExists), arg0, arg1)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "FileExists", reflect.TypeOf((*MockExternalStorage)(nil).FileExists), ctx, name)
 }
 
 // Open mocks base method.
-func (m *MockExternalStorage) Open(arg0 context.Context, arg1 string, arg2 *storage.ReaderOption) (storage.ExternalFileReader, error) {
+func (m *MockExternalStorage) Open(ctx context.Context, path string, option *storage.ReaderOption) (storage.ExternalFileReader, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "Open", arg0, arg1, arg2)
+	ret := m.ctrl.Call(m, "Open", ctx, path, option)
 	ret0, _ := ret[0].(storage.ExternalFileReader)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
 // Open indicates an expected call of Open.
-func (mr *MockExternalStorageMockRecorder) Open(arg0, arg1, arg2 any) *gomock.Call {
+func (mr *MockExternalStorageMockRecorder) Open(ctx, path, option any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Open", reflect.TypeOf((*MockExternalStorage)(nil).Open), arg0, arg1, arg2)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Open", reflect.TypeOf((*MockExternalStorage)(nil).Open), ctx, path, option)
 }
 
 // ReadFile mocks base method.
-func (m *MockExternalStorage) ReadFile(arg0 context.Context, arg1 string) ([]byte, error) {
+func (m *MockExternalStorage) ReadFile(ctx context.Context, name string) ([]byte, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "ReadFile", arg0, arg1)
+	ret := m.ctrl.Call(m, "ReadFile", ctx, name)
 	ret0, _ := ret[0].([]byte)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
 // ReadFile indicates an expected call of ReadFile.
-func (mr *MockExternalStorageMockRecorder) ReadFile(arg0, arg1 any) *gomock.Call {
+func (mr *MockExternalStorageMockRecorder) ReadFile(ctx, name any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ReadFile", reflect.TypeOf((*MockExternalStorage)(nil).ReadFile), arg0, arg1)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ReadFile", reflect.TypeOf((*MockExternalStorage)(nil).ReadFile), ctx, name)
 }
 
 // Rename mocks base method.
-func (m *MockExternalStorage) Rename(arg0 context.Context, arg1, arg2 string) error {
+func (m *MockExternalStorage) Rename(ctx context.Context, oldFileName, newFileName string) error {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "Rename", arg0, arg1, arg2)
+	ret := m.ctrl.Call(m, "Rename", ctx, oldFileName, newFileName)
 	ret0, _ := ret[0].(error)
 	return ret0
 }
 
 // Rename indicates an expected call of Rename.
-func (mr *MockExternalStorageMockRecorder) Rename(arg0, arg1, arg2 any) *gomock.Call {
+func (mr *MockExternalStorageMockRecorder) Rename(ctx, oldFileName, newFileName any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Rename", reflect.TypeOf((*MockExternalStorage)(nil).Rename), arg0, arg1, arg2)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Rename", reflect.TypeOf((*MockExternalStorage)(nil).Rename), ctx, oldFileName, newFileName)
 }
 
 // URI mocks base method.
@@ -174,29 +170,29 @@ func (mr *MockExternalStorageMockRecorder) URI() *gomock.Call {
 }
 
 // WalkDir mocks base method.
-func (m *MockExternalStorage) WalkDir(arg0 context.Context, arg1 *storage.WalkOption, arg2 func(string, int64) error) error {
+func (m *MockExternalStorage) WalkDir(ctx context.Context, opt *storage.WalkOption, fn func(string, int64) error) error {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "WalkDir", arg0, arg1, arg2)
+	ret := m.ctrl.Call(m, "WalkDir", ctx, opt, fn)
 	ret0, _ := ret[0].(error)
 	return ret0
 }
 
 // WalkDir indicates an expected call of WalkDir.
-func (mr *MockExternalStorageMockRecorder) WalkDir(arg0, arg1, arg2 any) *gomock.Call {
+func (mr *MockExternalStorageMockRecorder) WalkDir(ctx, opt, fn any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "WalkDir", reflect.TypeOf((*MockExternalStorage)(nil).WalkDir), arg0, arg1, arg2)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "WalkDir", reflect.TypeOf((*MockExternalStorage)(nil).WalkDir), ctx, opt, fn)
 }
 
 // WriteFile mocks base method.
-func (m *MockExternalStorage) WriteFile(arg0 context.Context, arg1 string, arg2 []byte) error {
+func (m *MockExternalStorage) WriteFile(ctx context.Context, name string, data []byte) error {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "WriteFile", arg0, arg1, arg2)
+	ret := m.ctrl.Call(m, "WriteFile", ctx, name, data)
 	ret0, _ := ret[0].(error)
 	return ret0
 }
 
 // WriteFile indicates an expected call of WriteFile.
-func (mr *MockExternalStorageMockRecorder) WriteFile(arg0, arg1, arg2 any) *gomock.Call {
+func (mr *MockExternalStorageMockRecorder) WriteFile(ctx, name, data any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "WriteFile", reflect.TypeOf((*MockExternalStorage)(nil).WriteFile), arg0, arg1, arg2)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "WriteFile", reflect.TypeOf((*MockExternalStorage)(nil).WriteFile), ctx, name, data)
 }

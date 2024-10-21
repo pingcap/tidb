@@ -14,7 +14,7 @@ import (
 	reflect "reflect"
 
 	ast "github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/planner/core/resolve"
+	resolve "github.com/pingcap/tidb/pkg/planner/core/resolve"
 	chunk "github.com/pingcap/tidb/pkg/util/chunk"
 	sqlexec "github.com/pingcap/tidb/pkg/util/sqlexec"
 	gomock "go.uber.org/mock/gomock"
@@ -24,6 +24,7 @@ import (
 type MockRestrictedSQLExecutor struct {
 	ctrl     *gomock.Controller
 	recorder *MockRestrictedSQLExecutorMockRecorder
+	isgomock struct{}
 }
 
 // MockRestrictedSQLExecutorMockRecorder is the mock recorder for MockRestrictedSQLExecutor.
@@ -43,16 +44,11 @@ func (m *MockRestrictedSQLExecutor) EXPECT() *MockRestrictedSQLExecutorMockRecor
 	return m.recorder
 }
 
-// ISGOMOCK indicates that this struct is a gomock mock.
-func (m *MockRestrictedSQLExecutor) ISGOMOCK() struct{} {
-	return struct{}{}
-}
-
 // ExecRestrictedSQL mocks base method.
-func (m *MockRestrictedSQLExecutor) ExecRestrictedSQL(arg0 context.Context, arg1 []func(*sqlexec.ExecOption), arg2 string, arg3 ...any) ([]chunk.Row, []*resolve.ResultField, error) {
+func (m *MockRestrictedSQLExecutor) ExecRestrictedSQL(ctx context.Context, opts []func(*sqlexec.ExecOption), sql string, args ...any) ([]chunk.Row, []*resolve.ResultField, error) {
 	m.ctrl.T.Helper()
-	varargs := []any{arg0, arg1, arg2}
-	for _, a := range arg3 {
+	varargs := []any{ctx, opts, sql}
+	for _, a := range args {
 		varargs = append(varargs, a)
 	}
 	ret := m.ctrl.Call(m, "ExecRestrictedSQL", varargs...)
@@ -63,17 +59,17 @@ func (m *MockRestrictedSQLExecutor) ExecRestrictedSQL(arg0 context.Context, arg1
 }
 
 // ExecRestrictedSQL indicates an expected call of ExecRestrictedSQL.
-func (mr *MockRestrictedSQLExecutorMockRecorder) ExecRestrictedSQL(arg0, arg1, arg2 any, arg3 ...any) *gomock.Call {
+func (mr *MockRestrictedSQLExecutorMockRecorder) ExecRestrictedSQL(ctx, opts, sql any, args ...any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	varargs := append([]any{arg0, arg1, arg2}, arg3...)
+	varargs := append([]any{ctx, opts, sql}, args...)
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ExecRestrictedSQL", reflect.TypeOf((*MockRestrictedSQLExecutor)(nil).ExecRestrictedSQL), varargs...)
 }
 
 // ExecRestrictedStmt mocks base method.
-func (m *MockRestrictedSQLExecutor) ExecRestrictedStmt(arg0 context.Context, arg1 ast.StmtNode, arg2 ...func(*sqlexec.ExecOption)) ([]chunk.Row, []*resolve.ResultField, error) {
+func (m *MockRestrictedSQLExecutor) ExecRestrictedStmt(ctx context.Context, stmt ast.StmtNode, opts ...func(*sqlexec.ExecOption)) ([]chunk.Row, []*resolve.ResultField, error) {
 	m.ctrl.T.Helper()
-	varargs := []any{arg0, arg1}
-	for _, a := range arg2 {
+	varargs := []any{ctx, stmt}
+	for _, a := range opts {
 		varargs = append(varargs, a)
 	}
 	ret := m.ctrl.Call(m, "ExecRestrictedStmt", varargs...)
@@ -84,17 +80,17 @@ func (m *MockRestrictedSQLExecutor) ExecRestrictedStmt(arg0 context.Context, arg
 }
 
 // ExecRestrictedStmt indicates an expected call of ExecRestrictedStmt.
-func (mr *MockRestrictedSQLExecutorMockRecorder) ExecRestrictedStmt(arg0, arg1 any, arg2 ...any) *gomock.Call {
+func (mr *MockRestrictedSQLExecutorMockRecorder) ExecRestrictedStmt(ctx, stmt any, opts ...any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	varargs := append([]any{arg0, arg1}, arg2...)
+	varargs := append([]any{ctx, stmt}, opts...)
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ExecRestrictedStmt", reflect.TypeOf((*MockRestrictedSQLExecutor)(nil).ExecRestrictedStmt), varargs...)
 }
 
 // ParseWithParams mocks base method.
-func (m *MockRestrictedSQLExecutor) ParseWithParams(arg0 context.Context, arg1 string, arg2 ...any) (ast.StmtNode, error) {
+func (m *MockRestrictedSQLExecutor) ParseWithParams(ctx context.Context, sql string, args ...any) (ast.StmtNode, error) {
 	m.ctrl.T.Helper()
-	varargs := []any{arg0, arg1}
-	for _, a := range arg2 {
+	varargs := []any{ctx, sql}
+	for _, a := range args {
 		varargs = append(varargs, a)
 	}
 	ret := m.ctrl.Call(m, "ParseWithParams", varargs...)
@@ -104,8 +100,8 @@ func (m *MockRestrictedSQLExecutor) ParseWithParams(arg0 context.Context, arg1 s
 }
 
 // ParseWithParams indicates an expected call of ParseWithParams.
-func (mr *MockRestrictedSQLExecutorMockRecorder) ParseWithParams(arg0, arg1 any, arg2 ...any) *gomock.Call {
+func (mr *MockRestrictedSQLExecutorMockRecorder) ParseWithParams(ctx, sql any, args ...any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	varargs := append([]any{arg0, arg1}, arg2...)
+	varargs := append([]any{ctx, sql}, args...)
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ParseWithParams", reflect.TypeOf((*MockRestrictedSQLExecutor)(nil).ParseWithParams), varargs...)
 }

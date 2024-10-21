@@ -21,6 +21,7 @@ import (
 type MockManager struct {
 	ctrl     *gomock.Controller
 	recorder *MockManagerMockRecorder
+	isgomock struct{}
 }
 
 // MockManagerMockRecorder is the mock recorder for MockManager.
@@ -40,67 +41,62 @@ func (m *MockManager) EXPECT() *MockManagerMockRecorder {
 	return m.recorder
 }
 
-// ISGOMOCK indicates that this struct is a gomock mock.
-func (m *MockManager) ISGOMOCK() struct{} {
-	return struct{}{}
-}
-
 // GetJobByID mocks base method.
-func (m *MockManager) GetJobByID(arg0 context.Context, arg1 int64) (*model.Job, error) {
+func (m *MockManager) GetJobByID(ctx context.Context, jobID int64) (*model.Job, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "GetJobByID", arg0, arg1)
+	ret := m.ctrl.Call(m, "GetJobByID", ctx, jobID)
 	ret0, _ := ret[0].(*model.Job)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
 // GetJobByID indicates an expected call of GetJobByID.
-func (mr *MockManagerMockRecorder) GetJobByID(arg0, arg1 any) *gomock.Call {
+func (mr *MockManagerMockRecorder) GetJobByID(ctx, jobID any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetJobByID", reflect.TypeOf((*MockManager)(nil).GetJobByID), arg0, arg1)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetJobByID", reflect.TypeOf((*MockManager)(nil).GetJobByID), ctx, jobID)
 }
 
 // GetMDLVer mocks base method.
-func (m *MockManager) GetMDLVer(arg0 context.Context, arg1 int64) (int64, error) {
+func (m *MockManager) GetMDLVer(ctx context.Context, jobID int64) (int64, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "GetMDLVer", arg0, arg1)
+	ret := m.ctrl.Call(m, "GetMDLVer", ctx, jobID)
 	ret0, _ := ret[0].(int64)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
 // GetMDLVer indicates an expected call of GetMDLVer.
-func (mr *MockManagerMockRecorder) GetMDLVer(arg0, arg1 any) *gomock.Call {
+func (mr *MockManagerMockRecorder) GetMDLVer(ctx, jobID any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetMDLVer", reflect.TypeOf((*MockManager)(nil).GetMDLVer), arg0, arg1)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetMDLVer", reflect.TypeOf((*MockManager)(nil).GetMDLVer), ctx, jobID)
 }
 
 // GetMinJobID mocks base method.
-func (m *MockManager) GetMinJobID(arg0 context.Context, arg1 int64) (int64, error) {
+func (m *MockManager) GetMinJobID(ctx context.Context, prevMinJobID int64) (int64, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "GetMinJobID", arg0, arg1)
+	ret := m.ctrl.Call(m, "GetMinJobID", ctx, prevMinJobID)
 	ret0, _ := ret[0].(int64)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
 // GetMinJobID indicates an expected call of GetMinJobID.
-func (mr *MockManagerMockRecorder) GetMinJobID(arg0, arg1 any) *gomock.Call {
+func (mr *MockManagerMockRecorder) GetMinJobID(ctx, prevMinJobID any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetMinJobID", reflect.TypeOf((*MockManager)(nil).GetMinJobID), arg0, arg1)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetMinJobID", reflect.TypeOf((*MockManager)(nil).GetMinJobID), ctx, prevMinJobID)
 }
 
 // HasFlashbackClusterJob mocks base method.
-func (m *MockManager) HasFlashbackClusterJob(arg0 context.Context, arg1 int64) (bool, error) {
+func (m *MockManager) HasFlashbackClusterJob(ctx context.Context, minJobID int64) (bool, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "HasFlashbackClusterJob", arg0, arg1)
+	ret := m.ctrl.Call(m, "HasFlashbackClusterJob", ctx, minJobID)
 	ret0, _ := ret[0].(bool)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
 // HasFlashbackClusterJob indicates an expected call of HasFlashbackClusterJob.
-func (mr *MockManagerMockRecorder) HasFlashbackClusterJob(arg0, arg1 any) *gomock.Call {
+func (mr *MockManagerMockRecorder) HasFlashbackClusterJob(ctx, minJobID any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "HasFlashbackClusterJob", reflect.TypeOf((*MockManager)(nil).HasFlashbackClusterJob), arg0, arg1)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "HasFlashbackClusterJob", reflect.TypeOf((*MockManager)(nil).HasFlashbackClusterJob), ctx, minJobID)
 }

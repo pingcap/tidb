@@ -22,6 +22,7 @@ import (
 type MockExtension struct {
 	ctrl     *gomock.Controller
 	recorder *MockExtensionMockRecorder
+	isgomock struct{}
 }
 
 // MockExtensionMockRecorder is the mock recorder for MockExtension.
@@ -41,91 +42,86 @@ func (m *MockExtension) EXPECT() *MockExtensionMockRecorder {
 	return m.recorder
 }
 
-// ISGOMOCK indicates that this struct is a gomock mock.
-func (m *MockExtension) ISGOMOCK() struct{} {
-	return struct{}{}
-}
-
 // GetEligibleInstances mocks base method.
-func (m *MockExtension) GetEligibleInstances(arg0 context.Context, arg1 *proto.Task) ([]string, error) {
+func (m *MockExtension) GetEligibleInstances(ctx context.Context, task *proto.Task) ([]string, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "GetEligibleInstances", arg0, arg1)
+	ret := m.ctrl.Call(m, "GetEligibleInstances", ctx, task)
 	ret0, _ := ret[0].([]string)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
 // GetEligibleInstances indicates an expected call of GetEligibleInstances.
-func (mr *MockExtensionMockRecorder) GetEligibleInstances(arg0, arg1 any) *gomock.Call {
+func (mr *MockExtensionMockRecorder) GetEligibleInstances(ctx, task any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetEligibleInstances", reflect.TypeOf((*MockExtension)(nil).GetEligibleInstances), arg0, arg1)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetEligibleInstances", reflect.TypeOf((*MockExtension)(nil).GetEligibleInstances), ctx, task)
 }
 
 // GetNextStep mocks base method.
-func (m *MockExtension) GetNextStep(arg0 *proto.TaskBase) proto.Step {
+func (m *MockExtension) GetNextStep(task *proto.TaskBase) proto.Step {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "GetNextStep", arg0)
+	ret := m.ctrl.Call(m, "GetNextStep", task)
 	ret0, _ := ret[0].(proto.Step)
 	return ret0
 }
 
 // GetNextStep indicates an expected call of GetNextStep.
-func (mr *MockExtensionMockRecorder) GetNextStep(arg0 any) *gomock.Call {
+func (mr *MockExtensionMockRecorder) GetNextStep(task any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetNextStep", reflect.TypeOf((*MockExtension)(nil).GetNextStep), arg0)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetNextStep", reflect.TypeOf((*MockExtension)(nil).GetNextStep), task)
 }
 
 // IsRetryableErr mocks base method.
-func (m *MockExtension) IsRetryableErr(arg0 error) bool {
+func (m *MockExtension) IsRetryableErr(err error) bool {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "IsRetryableErr", arg0)
+	ret := m.ctrl.Call(m, "IsRetryableErr", err)
 	ret0, _ := ret[0].(bool)
 	return ret0
 }
 
 // IsRetryableErr indicates an expected call of IsRetryableErr.
-func (mr *MockExtensionMockRecorder) IsRetryableErr(arg0 any) *gomock.Call {
+func (mr *MockExtensionMockRecorder) IsRetryableErr(err any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "IsRetryableErr", reflect.TypeOf((*MockExtension)(nil).IsRetryableErr), arg0)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "IsRetryableErr", reflect.TypeOf((*MockExtension)(nil).IsRetryableErr), err)
 }
 
 // OnDone mocks base method.
-func (m *MockExtension) OnDone(arg0 context.Context, arg1 storage.TaskHandle, arg2 *proto.Task) error {
+func (m *MockExtension) OnDone(ctx context.Context, h storage.TaskHandle, task *proto.Task) error {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "OnDone", arg0, arg1, arg2)
+	ret := m.ctrl.Call(m, "OnDone", ctx, h, task)
 	ret0, _ := ret[0].(error)
 	return ret0
 }
 
 // OnDone indicates an expected call of OnDone.
-func (mr *MockExtensionMockRecorder) OnDone(arg0, arg1, arg2 any) *gomock.Call {
+func (mr *MockExtensionMockRecorder) OnDone(ctx, h, task any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "OnDone", reflect.TypeOf((*MockExtension)(nil).OnDone), arg0, arg1, arg2)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "OnDone", reflect.TypeOf((*MockExtension)(nil).OnDone), ctx, h, task)
 }
 
 // OnNextSubtasksBatch mocks base method.
-func (m *MockExtension) OnNextSubtasksBatch(arg0 context.Context, arg1 storage.TaskHandle, arg2 *proto.Task, arg3 []string, arg4 proto.Step) ([][]byte, error) {
+func (m *MockExtension) OnNextSubtasksBatch(ctx context.Context, h storage.TaskHandle, task *proto.Task, execIDs []string, step proto.Step) ([][]byte, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "OnNextSubtasksBatch", arg0, arg1, arg2, arg3, arg4)
+	ret := m.ctrl.Call(m, "OnNextSubtasksBatch", ctx, h, task, execIDs, step)
 	ret0, _ := ret[0].([][]byte)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
 // OnNextSubtasksBatch indicates an expected call of OnNextSubtasksBatch.
-func (mr *MockExtensionMockRecorder) OnNextSubtasksBatch(arg0, arg1, arg2, arg3, arg4 any) *gomock.Call {
+func (mr *MockExtensionMockRecorder) OnNextSubtasksBatch(ctx, h, task, execIDs, step any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "OnNextSubtasksBatch", reflect.TypeOf((*MockExtension)(nil).OnNextSubtasksBatch), arg0, arg1, arg2, arg3, arg4)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "OnNextSubtasksBatch", reflect.TypeOf((*MockExtension)(nil).OnNextSubtasksBatch), ctx, h, task, execIDs, step)
 }
 
 // OnTick mocks base method.
-func (m *MockExtension) OnTick(arg0 context.Context, arg1 *proto.Task) {
+func (m *MockExtension) OnTick(ctx context.Context, task *proto.Task) {
 	m.ctrl.T.Helper()
-	m.ctrl.Call(m, "OnTick", arg0, arg1)
+	m.ctrl.Call(m, "OnTick", ctx, task)
 }
 
 // OnTick indicates an expected call of OnTick.
-func (mr *MockExtensionMockRecorder) OnTick(arg0, arg1 any) *gomock.Call {
+func (mr *MockExtensionMockRecorder) OnTick(ctx, task any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "OnTick", reflect.TypeOf((*MockExtension)(nil).OnTick), arg0, arg1)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "OnTick", reflect.TypeOf((*MockExtension)(nil).OnTick), ctx, task)
 }

@@ -23,6 +23,7 @@ type MockStepExecutor struct {
 	execute.StepExecutor
 	ctrl     *gomock.Controller
 	recorder *MockStepExecutorMockRecorder
+	isgomock struct{}
 }
 
 // MockStepExecutorMockRecorder is the mock recorder for MockStepExecutor.
@@ -40,11 +41,6 @@ func NewMockStepExecutor(ctrl *gomock.Controller) *MockStepExecutor {
 // EXPECT returns an object that allows the caller to indicate expected use.
 func (m *MockStepExecutor) EXPECT() *MockStepExecutorMockRecorder {
 	return m.recorder
-}
-
-// ISGOMOCK indicates that this struct is a gomock mock.
-func (m *MockStepExecutor) ISGOMOCK() struct{} {
-	return struct{}{}
 }
 
 // Cleanup mocks base method.
@@ -90,17 +86,17 @@ func (mr *MockStepExecutorMockRecorder) Init(arg0 any) *gomock.Call {
 }
 
 // OnFinished mocks base method.
-func (m *MockStepExecutor) OnFinished(arg0 context.Context, arg1 *proto.Subtask) error {
+func (m *MockStepExecutor) OnFinished(ctx context.Context, subtask *proto.Subtask) error {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "OnFinished", arg0, arg1)
+	ret := m.ctrl.Call(m, "OnFinished", ctx, subtask)
 	ret0, _ := ret[0].(error)
 	return ret0
 }
 
 // OnFinished indicates an expected call of OnFinished.
-func (mr *MockStepExecutorMockRecorder) OnFinished(arg0, arg1 any) *gomock.Call {
+func (mr *MockStepExecutorMockRecorder) OnFinished(ctx, subtask any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "OnFinished", reflect.TypeOf((*MockStepExecutor)(nil).OnFinished), arg0, arg1)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "OnFinished", reflect.TypeOf((*MockStepExecutor)(nil).OnFinished), ctx, subtask)
 }
 
 // RealtimeSummary mocks base method.
@@ -118,17 +114,17 @@ func (mr *MockStepExecutorMockRecorder) RealtimeSummary() *gomock.Call {
 }
 
 // RunSubtask mocks base method.
-func (m *MockStepExecutor) RunSubtask(arg0 context.Context, arg1 *proto.Subtask) error {
+func (m *MockStepExecutor) RunSubtask(ctx context.Context, subtask *proto.Subtask) error {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "RunSubtask", arg0, arg1)
+	ret := m.ctrl.Call(m, "RunSubtask", ctx, subtask)
 	ret0, _ := ret[0].(error)
 	return ret0
 }
 
 // RunSubtask indicates an expected call of RunSubtask.
-func (mr *MockStepExecutorMockRecorder) RunSubtask(arg0, arg1 any) *gomock.Call {
+func (mr *MockStepExecutorMockRecorder) RunSubtask(ctx, subtask any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "RunSubtask", reflect.TypeOf((*MockStepExecutor)(nil).RunSubtask), arg0, arg1)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "RunSubtask", reflect.TypeOf((*MockStepExecutor)(nil).RunSubtask), ctx, subtask)
 }
 
 // restricted mocks base method.
