@@ -1012,13 +1012,13 @@ func (lp *ForListPruning) LocatePartition(value int64, isNull bool) int {
 }
 
 // LocatePartitionByRange locates partition by the range
+// Only could process `column [> | < | <= | >=] value` right now.
 func (lp *ForListPruning) LocatePartitionByRange(ctx exprctx.EvalContext, r *ranger.Range) (idxs map[int]struct{}, err error) {
-	lowVal := r.LowVal[0]
+	lowVal, highVal := r.LowVal[0], r.HighVal[0]
 	if r.LowVal[0].Kind() == types.KindMinNotNull {
 		lowVal = types.GetMinValue(lp.PruneExpr.GetType(ctx))
 	}
 
-	highVal := r.HighVal[0]
 	if r.HighVal[0].Kind() == types.KindMaxValue {
 		highVal = types.GetMaxValue(lp.PruneExpr.GetType(ctx))
 	}
