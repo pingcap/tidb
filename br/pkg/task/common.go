@@ -300,6 +300,7 @@ func DefineCommonFlags(flags *pflag.FlagSet) {
 	flags.Uint(flagChecksumConcurrency, variable.DefChecksumTableConcurrency, "The concurrency of checksumming in one table")
 
 	flags.Uint64(flagRateLimit, unlimited, "The rate limit of the task, MB/s per node")
+	// backup will override default to be false, restore will keep default to be true
 	flags.Bool(flagChecksum, true, "Run checksum at end of task")
 	flags.Bool(flagRemoveTiFlash, true,
 		"Remove TiFlash replicas before backup or restore, for unsupported versions of TiFlash")
