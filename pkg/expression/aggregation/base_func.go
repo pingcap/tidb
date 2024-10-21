@@ -68,16 +68,11 @@ func (a *baseFuncDesc) Equals(other any) bool {
 	if other == nil {
 		return false
 	}
-	var a2 *baseFuncDesc
-	switch x := other.(type) {
-	case *baseFuncDesc:
-		a2 = x
-	case baseFuncDesc:
-		a2 = &x
-	default:
+	a2, ok := other.(*baseFuncDesc)
+	if !ok {
 		return false
 	}
-	ok := a.Name == a2.Name && len(a.Args) == len(a2.Args) && ((a.RetTp == nil && a2.RetTp == nil) || (a.RetTp != nil && a2.RetTp != nil && a.RetTp.Equals(a2.RetTp)))
+	ok = a.Name == a2.Name && len(a.Args) == len(a2.Args) && ((a.RetTp == nil && a2.RetTp == nil) || (a.RetTp != nil && a2.RetTp != nil && a.RetTp.Equals(a2.RetTp)))
 	if !ok {
 		return false
 	}

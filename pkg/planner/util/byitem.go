@@ -16,11 +16,11 @@ package util
 
 import (
 	"fmt"
-	"github.com/pingcap/tidb/pkg/planner/cascades/base"
 	"strings"
 
 	perrors "github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/expression"
+	"github.com/pingcap/tidb/pkg/planner/cascades/base"
 	"github.com/pingcap/tidb/pkg/util/size"
 )
 
