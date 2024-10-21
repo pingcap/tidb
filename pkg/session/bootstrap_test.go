@@ -250,6 +250,8 @@ func TestDDLTableCreateBackfillTable(t *testing.T) {
 	m.SetDDLTables(meta.MDLTableVersion)
 	MustExec(t, se, "drop table mysql.tidb_background_subtask")
 	MustExec(t, se, "drop table mysql.tidb_background_subtask_history")
+	// TODO(lance6716): remove it after tidb_ddl_notifier GA
+	MustExec(t, se, "drop table mysql.tidb_ddl_notifier")
 	err = txn.Commit(context.Background())
 	require.NoError(t, err)
 

@@ -56,11 +56,13 @@ func (t *tableStore) Insert(ctx context.Context, s *sess.Session, change *schema
 			sub_job_id,
 			schema_change,
 			processed_by_flag
-		) VALUES (%d, %d, '%s', 0)`,
+		) VALUES (%%?, %%?, %%?, 0)`,
 		t.db, t.table,
+	)
+	_, err = s.Execute(
+		ctx, sql, "ddl_notifier",
 		change.ddlJobID, change.multiSchemaChangeSeq, event,
 	)
-	_, err = s.Execute(ctx, sql, "ddl_notifier")
 	return err
 }
 
