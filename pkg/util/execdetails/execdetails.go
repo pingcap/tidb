@@ -851,27 +851,25 @@ func (crs *CopRuntimeStats) String() string {
 	isTiFlashCop := crs.storeType == "tiflash"
 
 	buf := bytes.NewBuffer(make([]byte, 0, 16))
-	if totalTasks == 1 {
-		fmt.Fprintf(buf, "%v_task:{time:%v, loops:%d", crs.storeType, FormatDuration(time.Duration(procTimes.GetPercentile(0))), totalLoops)
-		if isTiFlashCop {
-			fmt.Fprintf(buf, ", threads:%d}", totalThreads)
-			if !totalTiFlashScanContext.Empty() {
-				buf.WriteString(", " + totalTiFlashScanContext.String())
+	{
+		printTiFlashScanContext := func() {
+			if isTiFlashCop {
+				fmt.Fprintf(buf, ", threads:%d}", totalThreads)
+				if !totalTiFlashScanContext.Empty() {
+					buf.WriteString(", " + totalTiFlashScanContext.String())
+				}
+			} else {
+				buf.WriteString("}")
 			}
-		} else {
-			buf.WriteString("}")
 		}
-	} else {
-		fmt.Fprintf(buf, "%v_task:{proc max:%v, min:%v, avg: %v, p80:%v, p95:%v, iters:%v, tasks:%v",
-			crs.storeType, FormatDuration(time.Duration(procTimes.GetMax().GetFloat64())), FormatDuration(time.Duration(procTimes.GetMin().GetFloat64())), FormatDuration(avgTime),
-			FormatDuration(time.Duration(procTimes.GetPercentile(0.8))), FormatDuration(time.Duration(procTimes.GetPercentile(0.95))), totalLoops, totalTasks)
-		if isTiFlashCop {
-			fmt.Fprintf(buf, ", threads:%d}", totalThreads)
-			if !totalTiFlashScanContext.Empty() {
-				buf.WriteString(", " + totalTiFlashScanContext.String())
-			}
+		if totalTasks == 1 {
+			fmt.Fprintf(buf, "%v_task:{time:%v, loops:%d", crs.storeType, FormatDuration(time.Duration(procTimes.GetPercentile(0))), totalLoops)
+			printTiFlashScanContext()
 		} else {
-			buf.WriteString("}")
+			fmt.Fprintf(buf, "%v_task:{proc max:%v, min:%v, avg: %v, p80:%v, p95:%v, iters:%v, tasks:%v",
+				crs.storeType, FormatDuration(time.Duration(procTimes.GetMax().GetFloat64())), FormatDuration(time.Duration(procTimes.GetMin().GetFloat64())), FormatDuration(avgTime),
+				FormatDuration(time.Duration(procTimes.GetPercentile(0.8))), FormatDuration(time.Duration(procTimes.GetPercentile(0.95))), totalLoops, totalTasks)
+			printTiFlashScanContext()
 		}
 	}
 	if !isTiFlashCop {
