@@ -460,7 +460,7 @@ func (rc *LogClient) GetMigrations(ctx context.Context) ([]*backuppb.Migration, 
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	return migs.AllPbMigrations(), nil
+	return migs.ListAll(), nil
 }
 
 func (rc *LogClient) InstallLogFileManager(ctx context.Context, startTS, restoreTS uint64, metadataDownloadBatchSize uint,
