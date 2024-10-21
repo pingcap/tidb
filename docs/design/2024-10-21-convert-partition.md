@@ -51,15 +51,17 @@ Conclusion of motivation:
 
 ### Logical functionality
 
-There are two main use cases:
-1. Move data from a partition out from the partitioned table to a new non-partitioned table:
+There are four main use cases:
+
+#### 1) Move data from a partition out from the partitioned table to a new non-partitioned table:
 `ALTER TABLE t CONVERT PARTITION p TO TABLE t2` 
 MariaDB implements this as 'Move the partition into a table, and drop the partition definition'.
 But we TiDB could optionally also support 'Move the partition data into a table, and replace it with an empty partition, keeping the partition definition'. That would also support KEY/HASH partitioned tables, which MariaDB does not.
 Proposed option `TRUNCATE PARTITION`, so the full syntax would be `ALTER TABLE t CONVERT PARTITION p0 TO TABLE t2 TRUNCATE PARTITION` meaning the partition will be converted to a new table, and then truncated instead of dropped, while without `TRUNCATE PARTITION` it would be dropped instead. We could add `DROP PARTITION` as the default, if that makes things more clear? But the default must be drop partition (without syntax) since that is what MariaDB implements.
 
 Possible other options, specifically for Global Index:
-- skip converting them to local unique indexes in the non-partitioned table, since it will take extra time and resources for something that might not be needed? But it might also mean that one cannot directly do CONVERT TABLE TO PARTITION if that requires such unique index, see below! Note: Oracle supports `[{INCLUDING|EXCLUDING} INDEXES]` as option for also exchanging the local indexes, which we could use for including or excluding the Global Index to be converted to local indexes.
+- Skip converting them to local unique indexes in the non-partitioned table, since it will take extra time and resources for something that might not be needed? But it might also mean that one cannot directly do CONVERT TABLE TO PARTITION if that requires such unique index, see below! Note: Oracle supports `[{INCLUDING|EXCLUDING} INDEXES]` as option for also exchanging the local indexes, which we could use for including or excluding the Global Index to be converted to local indexes.
+
 Discussion:
 - @mjonss propose to support `TRUNCATE PARTITION` option to cover more use cases.
 - @mjonss propose to always create "local" unique indexes for the global indexes, since it most likely need to be implemented any way, and could later add a new option for skipping. If we would support skipping creating "local" indexes from the global ones, then `{INCLUDING|EXCLUDING} GLOBAL INDEXES` is probably the most suiting option, with INCLUDING as default. Non-global indexes should always be included, since it is already stored that way.
@@ -67,20 +69,44 @@ Discussion:
 So proposal is:
 `ALTER TABLE t CONVERT PARTITION p TO TABLE t2 [TRUNCATE PARTITION]`
 - A new non-partitioned table t2 will be created with the same structure as the partitioned table t, with the data from partition p.
-- if `TRUNCATE PARTITION` is not given then the partition p will be dropped.
-- if `TRUNCATE PARTITION` is given then the partition p will become empty.
+- if `TRUNCATE PARTITION` is not given then the partition p will be dropped. MariaDB implements this.
+- if `TRUNCATE PARTITION` is given then the partition p will become empty, which will also be supported for HASH/KEY partitioned tables.
 
-2. Move data from a non-partitioned table into a partition of a partitioned table:
+#### 2) Move data from a non-partitioned table into a partition of a partitioned table:
 `ALTER TABLE t CONVERT TABLE t2 TO PARTITION p ...` 
 MariaDB implements this as 'Create a new partition according to the given partitioning definition, and convert the table to the new partition, efficently dropping the table'.
-TiDB could optionally also support 'Replace the existing partition's data with the data from the table, and drop the table' (3. below) as well as 'Exchange the existing partition with the table data' (4. below), logically the same as EXCHANGE PARTITION, but allow for optimizations, like not allowing reads and writes to the non-partitioned table during the operation, which will simplify the implementation for Global Index, since if read/write would be allowed for both the partition and the non-partitioned table then the non-partitioned table would need to write to both the local unique index as well as the global index (which has a different table ID) which would make the internal handling of reads and writes even more complicated and increase the risk for bugs, even for non-partitioned tables.
+TiDB could optionally also support 'Replace the existing partition's data with the data from the table, and drop the table' (3. below) as well as 'Swap the existing partition data with the table data' (4. below).
 
-3. Move data from a non-partitioned table and replace an existing partition
+Possible other options, specifically for Global Index:
+- Should we allow non-matching indexes and during the operation drop indexes on the non-partitioned table that does not match the partitioned table and create local indexes that only exists in the partitioned table?
+  - Pro: easier to create a table that would be allowed to use for CONVERT TABLE TO PARTITION, including getting index ids matching.
+  - Con: extra work/time/resources during 
+- Should we require "local" indexes on the non-partitioned table matching the partitioned tables global indexes? At least no need to match the internal index ids.
+  - Pro: at least there are no duplicate entries within the non-partitioned table.
+  - Con: it will just be dropped, and each row will be inserted and checked into the global indexes anyway, so not technically needed.
+
+Discussion:
+- @mjonss propose to require all indexes on the non-partitioned table t2 to match all non-global indexes of the partitioned table t.
+- @mjonss propose to not require t2 having indexes that matches global indexes of t.
+
+Note: Oracle supports `[{INCLUDING|EXCLUDING} INDEXES]` as option for also exchanging the local indexes, which we could use for including or excluding the Global Index to be converted to local indexes.
+
+#### 3) Move data from a non-partitioned table and replace an existing partition
 `ALTER TABLE t CONVERT TABLE t2 TO PARTITION p` basically the same syntax as 2), but only needing the partition name, and it will replace the data in that partition, so it also will work for KEY/HASH partitioned tables.
 MariaDB does not support this.
+It might be risky to support this, since it would efficiently TRUNCATE the existing partitions data and replace it with the data from t2.
 
-4. Swap the data between a non-partitioned table with a partition.
+Discussion:
+- @mjonss propose to not support it, but rely on the following case instead + drop the "exchanged" table if the data is truly not needed.
+
+#### 4) Swap the data between a non-partitioned table with a partition.
+Logically the same as `ALTER TABLE t EXCHANGE PARTITION p WITH TABLE t2 [{WITH|WITHOUT} VALIDATION]`
+
+But currently the `EXCHANGE PARTITION` implementation in TiDB allows for concurrent read and write to both the exchanged table and partition, making it complex to support Global Index, where there will need to be a DDL state where one session, S1, sees the new t2 (original p) and the new p (original t2), while another session, S2, might see the original t2 and the original p. Meaning that S2 still needs to double write/update the Global Index of t, when writing to t2 and the S1 also needs to duble write/update the "local" index of t2 when writing to t/p, to keep both table's indexes consistent in the different views of S1 and S2. This makes the DDL extra complex and risky to implement and hard to test.
+Having a way to only allow access to the data of both t/p and t2 through table t during the DDL operation would make it less complex, fewer error handling conditions and also having less performance impact, due to less indexes to keep updated at the same time.
+
 Should we extend `EXCHANGE PARTITION` to also support Global index or have a new syntax?
+Logically the same as EXCHANGE PARTITION, but allow for optimizations, like not allowing reads and writes to the non-partitioned table during the operation, which will simplify the implementation for Global Index, since if read/write would be allowed for both the partition and the non-partitioned table then the non-partitioned table would need to write to both the local unique index as well as the global index (which has a different table ID) which would make the internal handling of reads and writes even more complicated and increase the risk for bugs, even for non-partitioned tables.
 
 Possible other options, specifically for Global Index:
 - Should we allow non-matching indexes and during the operation drop indexes on the non-partitioned table that does not match the partitioned table and create local indexes that only exists in the partitioned table?
