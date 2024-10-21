@@ -346,8 +346,8 @@ func TestSyncAllocator(t *testing.T) {
 	for range 1000 {
 		wg.Add(1)
 		go func() {
-			for j := 0; j < 10; j++ {
-				for k := 0; k < 100; k++ {
+			for range 10 {
+				for range 100 {
 					chk := alloc.Alloc(fieldTypes, 5, 100)
 					require.NotNil(t, chk)
 				}

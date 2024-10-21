@@ -29,7 +29,7 @@ func TestMutRow(t *testing.T) {
 	mutRow := MutRowFromTypes(allTypes)
 	row := mutRow.ToRow()
 	typeCtx := types.DefaultStmtNoWarningContext
-	for i := 0; i < row.Len(); i++ {
+	for i := range row.Len() {
 		val := zeroValForType(allTypes[i])
 		d := row.GetDatum(i, allTypes[i])
 		d2 := types.NewDatum(val)
@@ -208,7 +208,7 @@ func BenchmarkMutRowShallowCopyPartialRow(b *testing.B) {
 	row := MutRowFromValues("abc", "abcdefg", 123, 456, types.ZeroDatetime).ToRow()
 	b.ResetTimer()
 	for range b.N {
-		for j := 0; j < rowsNum; j++ {
+		for range rowsNum {
 			mutRow.ShallowCopyPartialRow(0, row)
 		}
 	}
@@ -221,7 +221,7 @@ func BenchmarkChunkAppendPartialRow(b *testing.B) {
 	b.ResetTimer()
 	for range b.N {
 		chk.Reset()
-		for j := 0; j < rowsNum; j++ {
+		for range rowsNum {
 			chk.AppendPartialRow(0, row)
 		}
 	}
