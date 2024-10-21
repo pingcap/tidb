@@ -1,8 +1,8 @@
 # TiDB Design Documents
 
-- Author(s): [Mattias Jonsson](http://github.com/mjonss), [Co-Author Name](http://github.com/Defined2014)
-- Discussion PR: https://github.com/pingcap/tidb/pull/XXX
-- Tracking Issue: https://github.com/pingcap/tidb/issues/XXX
+- Author(s): [Mattias Jonsson](http://github.com/mjonss), [Hangjie Mo](http://github.com/Defined2014)
+- Discussion PR: https://github.com/pingcap/tidb/pull/56749
+- Tracking Issue: https://github.com/pingcap/tidb/issues/56201
 
 ## Table of Contents
 
@@ -20,12 +20,12 @@
 
 ## Introduction
 
-This design propose a new syntax for moving data in and out from table partitions, simpler to use than EXCHANGE PARTITION.
+This design propose a new syntax for moving data in and out from table partitions, simpler to use than EXCHANGE PARTITION, more efficient for Global Index due to added restrictions by not allowing concurrent read/write for non-partitioned table during all steps of the DDL state changes, which would also introduce more complexity and risk to the core read/write path in TiDB.
 
 Proposed syntax:
 `ALTER TABLE t CONVERT PARTITION p TO TABLE t2`
 and
-`ALTER TABLE t CONVERT TABLE t2 TO PARTITION p VALUES LESS THAN (100)` or more generic `ALTER TABLE t CONVERT TABLE t2 TO <partition definition>`
+`ALTER TABLE t CONVERT TABLE t2 TO <partition definition>`, example: `ALTER TABLE t CONVERT TABLE t2 TO PARTITION p VALUES LESS THAN (100)`
 
 ## Motivation or Background
 
@@ -42,12 +42,70 @@ MariaDB's implementation restricts the use to always drop the partition if CONVE
 TiDB should extend the CONVERT syntax to also allow to keep the partition definition by replacing it with an empty partition, for CONVERT PARTITION p TO TABLE t2 as well as keeping the data (similar to EXCHANGE PARTITION) for CONVERT TABLE t2 TO PARTITION p0...
 This would allow the new syntax to handle all cases that EXCHANGE does, also for KEY/HASH partitioned tables, which MariaDB does not support. This is very useful when there are Global Indexes.
 
-Conclusion of motivition:
+Conclusion of motivation:
 - Easier usage, no need to create tables/partitions in separate steps, including error handling outside the DDLs.
 - No need to change expectations and restrictions on existing EXCHANGE PARTITION.
 - Support Global Index.
 
 ## Detailed Design
+
+### Logical functionality
+
+There are two main use cases:
+1. Move data from a partition out from the partitioned table to a new non-partitioned table:
+`ALTER TABLE t CONVERT PARTITION p TO TABLE t2` 
+MariaDB implements this as 'Move the partition into a table, and drop the partition definition'.
+But we TiDB could optionally also support 'Move the partition data into a table, and replace it with an empty partition, keeping the partition definition'. That would also support KEY/HASH partitioned tables, which MariaDB does not.
+Proposed option `TRUNCATE PARTITION`, so the full syntax would be `ALTER TABLE t CONVERT PARTITION p0 TO TABLE t2 TRUNCATE PARTITION` meaning the partition will be converted to a new table, and then truncated instead of dropped, while without `TRUNCATE PARTITION` it would be dropped instead. We could add `DROP PARTITION` as the default, if that makes things more clear? But the default must be drop partition (without syntax) since that is what MariaDB implements.
+
+Possible other options, specifically for Global Index:
+- skip converting them to local unique indexes in the non-partitioned table, since it will take extra time and resources for something that might not be needed? But it might also mean that one cannot directly do CONVERT TABLE TO PARTITION if that requires such unique index, see below! Note: Oracle supports `[{INCLUDING|EXCLUDING} INDEXES]` as option for also exchanging the local indexes, which we could use for including or excluding the Global Index to be converted to local indexes.
+Discussion:
+- @mjonss propose to support `TRUNCATE PARTITION` option to cover more use cases.
+- @mjonss propose to always create "local" unique indexes for the global indexes, since it most likely need to be implemented any way, and could later add a new option for skipping. If we would support skipping creating "local" indexes from the global ones, then `{INCLUDING|EXCLUDING} GLOBAL INDEXES` is probably the most suiting option, with INCLUDING as default. Non-global indexes should always be included, since it is already stored that way.
+
+So proposal is:
+`ALTER TABLE t CONVERT PARTITION p TO TABLE t2 [TRUNCATE PARTITION]`
+- A new non-partitioned table t2 will be created with the same structure as the partitioned table t, with the data from partition p.
+- if `TRUNCATE PARTITION` is not given then the partition p will be dropped.
+- if `TRUNCATE PARTITION` is given then the partition p will become empty.
+
+2. Move data from a non-partitioned table into a partition of a partitioned table:
+`ALTER TABLE t CONVERT TABLE t2 TO PARTITION p ...` 
+MariaDB implements this as 'Create a new partition according to the given partitioning definition, and convert the table to the new partition, efficently dropping the table'.
+TiDB could optionally also support 'Replace the existing partition's data with the data from the table, and drop the table' (3. below) as well as 'Exchange the existing partition with the table data' (4. below), logically the same as EXCHANGE PARTITION, but allow for optimizations, like not allowing reads and writes to the non-partitioned table during the operation, which will simplify the implementation for Global Index, since if read/write would be allowed for both the partition and the non-partitioned table then the non-partitioned table would need to write to both the local unique index as well as the global index (which has a different table ID) which would make the internal handling of reads and writes even more complicated and increase the risk for bugs, even for non-partitioned tables.
+
+3. Move data from a non-partitioned table and replace an existing partition
+`ALTER TABLE t CONVERT TABLE t2 TO PARTITION p` basically the same syntax as 2), but only needing the partition name, and it will replace the data in that partition, so it also will work for KEY/HASH partitioned tables.
+MariaDB does not support this.
+
+4. Swap the data between a non-partitioned table with a partition.
+Should we extend `EXCHANGE PARTITION` to also support Global index or have a new syntax?
+
+Possible other options, specifically for Global Index:
+- Should we allow non-matching indexes and during the operation drop indexes on the non-partitioned table that does not match the partitioned table and create local indexes that only exists in the partitioned table?
+  - Pro: easier to create a table that would be allowed to use for CONVERT TABLE TO PARTITION, including getting index ids matching.
+  - Con: extra work/time/resources during 
+- Should we require "local" unique indexes on the non-partitioned table matching the partitioned tables global indexes? At least no need to match the internal index ids.
+  - Pro: at least there are no duplicate entries within the non-partitioned table.
+  - Con: it will just be dropped, and each row will be inserted and checked into the global indexes anyway, so not technically needed.
+Discussion:
+- @mjonss propose optional syntax `
+
+Notes:
+- MySQL does not have any notion of invalid or unusable indexes (i.e. not up-to-date) as Oracle has, so all existing indexes should always be up-to-date and consitent.
+- Oracle supports `INCLUDING INDEXES` as option to `EXCHANGE PARTITION`
+- `CREATE TABLE t2 LIKE t` in TiDB also creates the indexes with the same index ids, so by also doing `ALTER TABLE t2 REMOVE PARTITIONING` to get a non-partitioned table with the same indexes including ids works. But that is what makes the CONVERT PARTITION TO TABLE syntax much easier :)
+- Currently Foreign Keys in TiDB does not support Partitioned tables, so no extra validation would be needed.
+
+TODO:
+- How to handle:
+  - Updating table statistics.
+- Should we also add support for `CREATE TABLE t2 FOR EXCHANGE WITH t` that Oracle supports?
+
+### Physical / implementation design
+
+
 
 TODO: Fill in the rest of the design :)
 Do not forget about need for double writing, rollback, cross schema version compatibility, error handling for duplicate key, both in DDL as well as user sessions in various schema versions and states.
