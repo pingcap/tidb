@@ -47,11 +47,12 @@ func valueMarshalerForRestore(group *RangeGroup[RestoreKeyType, RestoreValueType
 func StartCheckpointRestoreRunnerForTest(
 	ctx context.Context,
 	se glue.Session,
+	dbName string,
 	tick time.Duration,
 	retryDuration time.Duration,
 ) (*CheckpointRunner[RestoreKeyType, RestoreValueType], error) {
 	runner := newCheckpointRunner[RestoreKeyType, RestoreValueType](
-		newTableCheckpointStorage(se, SnapshotRestoreCheckpointDatabaseName),
+		newTableCheckpointStorage(se, dbName),
 		nil, valueMarshalerForRestore)
 
 	runner.startCheckpointMainLoop(ctx, tick, tick, 0, retryDuration)
@@ -134,7 +135,10 @@ func SaveCheckpointMetadataForSstRestore(
 	if err != nil {
 		return errors.Trace(err)
 	}
-	return insertCheckpointMeta(ctx, se, dbName, checkpointMetaTableName, meta)
+	if meta != nil {
+		return insertCheckpointMeta(ctx, se, dbName, checkpointMetaTableName, meta)
+	}
+	return nil
 }
 
 func ExistsSstRestoreCheckpoint(

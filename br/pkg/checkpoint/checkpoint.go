@@ -261,7 +261,6 @@ func (r *CheckpointRunner[K, V]) WaitForFinish(ctx context.Context, flush bool) 
 	// wait the range flusher exit
 	r.wg.Wait()
 	// remove the checkpoint lock
-	r.checkpointStorage.deleteLock(ctx)
 	r.checkpointStorage.close()
 }
 

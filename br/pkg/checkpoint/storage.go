@@ -38,7 +38,6 @@ type checkpointStorage interface {
 
 	initialLock(ctx context.Context) error
 	updateLock(ctx context.Context) error
-	deleteLock(ctx context.Context)
 
 	close()
 }
@@ -91,7 +90,9 @@ const (
 
 // IsCheckpointDB checks whether the dbname is checkpoint database.
 func IsCheckpointDB(dbname pmodel.CIStr) bool {
-	return dbname.O == LogRestoreCheckpointDatabaseName || dbname.O == SnapshotRestoreCheckpointDatabaseName
+	return dbname.O == LogRestoreCheckpointDatabaseName ||
+		dbname.O == SnapshotRestoreCheckpointDatabaseName ||
+		dbname.O == CompactedRestoreCheckpointDatabaseName
 }
 
 const CheckpointIdMapBlockSize int = 524288
@@ -142,8 +143,6 @@ func (s *tableCheckpointStorage) updateLock(ctx context.Context) error {
 	log.Fatal("unimplement!")
 	return nil
 }
-
-func (s *tableCheckpointStorage) deleteLock(ctx context.Context) {}
 
 func (s *tableCheckpointStorage) flushCheckpointData(ctx context.Context, data []byte) error {
 	sqls, argss := chunkInsertCheckpointSQLs(s.checkpointDBName, checkpointDataTableName, data)
