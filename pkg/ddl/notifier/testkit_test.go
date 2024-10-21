@@ -36,7 +36,7 @@ import (
 const tableStructure = `
 CREATE TABLE ddl_notifier (
 	ddl_job_id BIGINT,
-	multi_schema_change_seq BIGINT COMMENT '-1 if the schema change does not belong to a multi-schema change DDL. 0 or positive numbers representing the sub-job index of a multi-schema change DDL',
+	sub_job_id BIGINT COMMENT '-1 if the schema change does not belong to a multi-schema change DDL or a merged DDL. 0 or positive numbers representing the sub-job index of a multi-schema change DDL or a merged DDL',
 	schema_change LONGBLOB COMMENT 'SchemaChangeEvent at rest',
 	processed_by_flag BIGINT UNSIGNED DEFAULT 0 COMMENT 'flag to mark which subscriber has processed the event',
 	PRIMARY KEY(ddl_job_id, multi_schema_change_seq)
