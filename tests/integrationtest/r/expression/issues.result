@@ -3224,3 +3224,9 @@ Warning	1292	Truncated incorrect DOUBLE value: 'a'
 Warning	1292	Truncated incorrect DOUBLE value: 'a'
 Warning	1292	Truncated incorrect DOUBLE value: 'b'
 Warning	1292	Truncated incorrect DOUBLE value: 'b'
+DROP TABLE IF EXISTS test.t;
+CREATE TABLE test.t (id bigint(11) UNSIGNED PRIMARY KEY);
+INSERT INTO test.t VALUES (1234567890123456);
+SELECT IFNULL(id, 'abcdef') FROM test.t;
+IFNULL(id, 'abcdef')
+1234567890123456

@@ -210,7 +210,7 @@ func BenchmarkShuffleStreamAggRows(b *testing.B) {
 	for _, row := range rows {
 		for _, con := range concurrencies {
 			for _, sorted := range sortTypes {
-				cas := testutil.DefaultAggTestCase("stream")
+				cas := testutil.DefaultAggTestCase(mock.NewContext(), "stream")
 				cas.Rows = row
 				cas.DataSourceSorted = sorted
 				cas.Concurrency = con
@@ -227,7 +227,7 @@ func BenchmarkHashAggRows(b *testing.B) {
 	concurrencies := []int{1, 4, 8, 15, 20, 30, 40}
 	for _, row := range rows {
 		for _, con := range concurrencies {
-			cas := testutil.DefaultAggTestCase("hash")
+			cas := testutil.DefaultAggTestCase(mock.NewContext(), "hash")
 			cas.Rows = row
 			cas.Concurrency = con
 			b.Run(fmt.Sprintf("%v", cas), func(b *testing.B) {
@@ -241,7 +241,7 @@ func BenchmarkAggGroupByNDV(b *testing.B) {
 	NDVs := []int{10, 100, 1000, 10000, 100000, 1000000, 10000000}
 	for _, NDV := range NDVs {
 		for _, exec := range []string{"hash", "stream"} {
-			cas := testutil.DefaultAggTestCase(exec)
+			cas := testutil.DefaultAggTestCase(mock.NewContext(), exec)
 			cas.GroupByNDV = NDV
 			b.Run(fmt.Sprintf("%v", cas), func(b *testing.B) {
 				benchmarkAggExecWithCase(b, cas)
@@ -254,7 +254,7 @@ func BenchmarkAggConcurrency(b *testing.B) {
 	concs := []int{1, 4, 8, 15, 20, 30, 40}
 	for _, con := range concs {
 		for _, exec := range []string{"hash", "stream"} {
-			cas := testutil.DefaultAggTestCase(exec)
+			cas := testutil.DefaultAggTestCase(mock.NewContext(), exec)
 			cas.Concurrency = con
 			b.Run(fmt.Sprintf("%v", cas), func(b *testing.B) {
 				benchmarkAggExecWithCase(b, cas)
@@ -269,7 +269,7 @@ func BenchmarkAggDistinct(b *testing.B) {
 	for _, row := range rows {
 		for _, exec := range []string{"hash", "stream"} {
 			for _, distinct := range distincts {
-				cas := testutil.DefaultAggTestCase(exec)
+				cas := testutil.DefaultAggTestCase(mock.NewContext(), exec)
 				cas.Rows = row
 				cas.HasDistinct = distinct
 				b.Run(fmt.Sprintf("%v", cas), func(b *testing.B) {
@@ -414,7 +414,7 @@ func baseBenchmarkWindowRows(b *testing.B, pipelined int) {
 	for _, row := range rows {
 		for _, ndv := range ndvs {
 			for _, con := range concs {
-				cas := testutil.DefaultWindowTestCase()
+				cas := testutil.DefaultWindowTestCase(mock.NewContext())
 				cas.Rows = row
 				cas.Ndv = ndv
 				cas.Concurrency = con
@@ -452,7 +452,7 @@ func baseBenchmarkWindowFunctions(b *testing.B, pipelined int) {
 	concs := []int{1, 4}
 	for _, windowFunc := range windowFuncs {
 		for _, con := range concs {
-			cas := testutil.DefaultWindowTestCase()
+			cas := testutil.DefaultWindowTestCase(mock.NewContext())
 			cas.Rows = 100000
 			cas.Ndv = 1000
 			cas.Concurrency = con
@@ -487,7 +487,7 @@ func baseBenchmarkWindowFunctionsWithFrame(b *testing.B, pipelined int) {
 		for _, sorted := range sortTypes {
 			for _, numFunc := range numFuncs {
 				for _, con := range concs {
-					cas := testutil.DefaultWindowTestCase()
+					cas := testutil.DefaultWindowTestCase(mock.NewContext())
 					cas.Rows = 100000
 					cas.Ndv = 1000
 					cas.Concurrency = con
@@ -516,7 +516,7 @@ func baseBenchmarkWindowFunctionsAggWindowProcessorAboutFrame(b *testing.B, pipe
 	b.ReportAllocs()
 	windowFunc := ast.AggFuncMax
 	frame := &logicalop.WindowFrame{Type: ast.Rows, Start: &logicalop.FrameBound{UnBounded: true}, End: &logicalop.FrameBound{UnBounded: true}}
-	cas := testutil.DefaultWindowTestCase()
+	cas := testutil.DefaultWindowTestCase(mock.NewContext())
 	cas.Rows = 10000
 	cas.Ndv = 10
 	cas.Concurrency = 1
@@ -560,7 +560,7 @@ func baseBenchmarkWindowFunctionsWithSlidingWindow(b *testing.B, frameType ast.F
 		End:   &logicalop.FrameBound{Type: ast.Following, Num: 10},
 	}
 	for _, windowFunc := range windowFuncs {
-		cas := testutil.DefaultWindowTestCase()
+		cas := testutil.DefaultWindowTestCase(mock.NewContext())
 		cas.Ctx.GetSessionVars().WindowingUseHighPrecision = false
 		cas.Rows = row
 		cas.Ndv = ndv
@@ -1843,7 +1843,7 @@ func benchmarkLimitExec(b *testing.B, cas *testutil.LimitCase) {
 
 func BenchmarkLimitExec(b *testing.B) {
 	b.ReportAllocs()
-	cas := testutil.DefaultLimitTestCase()
+	cas := testutil.DefaultLimitTestCase(mock.NewContext())
 	usingInlineProjection := []bool{false, true}
 	for _, inlineProjection := range usingInlineProjection {
 		cas.UsingInlineProjection = inlineProjection

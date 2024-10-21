@@ -6,8 +6,8 @@ import (
 	"context"
 	"sync/atomic"
 
-	"github.com/ngaut/log"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/utils/iter"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/util"
