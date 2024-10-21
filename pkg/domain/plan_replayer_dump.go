@@ -109,11 +109,7 @@ func (tne *tableNameExtractor) getTablesAndViews() (map[tableNamePair]struct{}, 
 			r[tablePair] = struct{}{}
 		}
 		// if the table has a foreign key, we need to add the referenced table to the list
-<<<<<<< HEAD
-		tblInfo, err := tne.is.TableByName(model.NewCIStr(tablePair.DBName), model.NewCIStr(tablePair.TableName))
-=======
 		err := findFK(tne.is, tablePair.DBName, tablePair.TableName, r)
->>>>>>> 53a4c3eded2 (planner: play replay load restore the table with foreign key with right order. (#56457))
 		if err != nil {
 			return nil, err
 		}
@@ -122,7 +118,7 @@ func (tne *tableNameExtractor) getTablesAndViews() (map[tableNamePair]struct{}, 
 }
 
 func findFK(is infoschema.InfoSchema, dbName, tableName string, tableMap map[tableNamePair]struct{}) error {
-	tblInfo, err := is.TableByName(context.Background(), model.NewCIStr(dbName), model.NewCIStr(tableName))
+	tblInfo, err := is.TableByName(model.NewCIStr(dbName), model.NewCIStr(tableName))
 	if err != nil {
 		return err
 	}
