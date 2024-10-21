@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/ddl/schematracker"
 	"github.com/pingcap/tidb/pkg/domain"
+	"github.com/pingcap/tidb/pkg/errctx"
 	"github.com/pingcap/tidb/pkg/expression/exprstatic"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
@@ -44,6 +45,7 @@ import (
 	"github.com/pingcap/tidb/pkg/store/driver"
 	"github.com/pingcap/tidb/pkg/store/helper"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
+	"github.com/pingcap/tidb/pkg/types"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/gctuner"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -314,7 +316,18 @@ func newKVTxnExecutor(txn kv.Transaction) (*kvTxnExecutor, error) {
 
 	exprCtx := exprstatic.NewExprContext(
 		exprstatic.WithEvalCtx(
-			exprstatic.NewEvalContext(exprstatic.WithSQLMode(mysql.ModeNone)),
+			exprstatic.NewEvalContext(
+				exprstatic.WithSQLMode(mysql.ModeAllowInvalidDates),
+				exprstatic.WithTypeFlags(types.StrictFlags.
+					WithIgnoreTruncateErr(true).
+					WithIgnoreZeroDateErr(true).
+					WithIgnoreZeroInDate(true).
+					WithIgnoreInvalidDateErr(true),
+				),
+				exprstatic.WithErrLevelMap(errctx.LevelMap{
+					errctx.ErrGroupTruncate: errctx.LevelIgnore,
+				}),
+			),
 		),
 	)
 

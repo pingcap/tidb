@@ -17,6 +17,7 @@ go_library(
         "//pkg/ddl",
         "//pkg/ddl/schematracker",
         "//pkg/domain",
+        "//pkg/errctx",
         "//pkg/expression",
         "//pkg/expression/exprstatic",
         "//pkg/kv",
