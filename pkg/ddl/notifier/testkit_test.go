@@ -254,20 +254,20 @@ func TestPublishToStoreBySQL(t *testing.T) {
 		multiSchemaChangeSeqs[i] = int64(seq)
 	}
 	require.Equal(t, tps, []model.ActionType{
-		model.ActionCreateTables,
+		model.ActionCreateTable,
 		model.ActionAlterTablePartitioning,
 		model.ActionReorganizePartition,
 		model.ActionTruncateTablePartition,
 		model.ActionDropTablePartition,
 		model.ActionAddTablePartition,
-		model.ActionCreateTables,
+		model.ActionCreateTable,
 		model.ActionExchangeTablePartition,
 		model.ActionRemovePartitioning,
 		model.ActionTruncateTable,
 		model.ActionDropTable,
 		model.ActionModifyColumn,
 		model.ActionAddColumn,
-		model.ActionCreateTables,
+		model.ActionCreateTable,
 		model.ActionAddColumn,
 		model.ActionAddColumn,
 	})
