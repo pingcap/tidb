@@ -285,8 +285,6 @@ type MySQLPrivilege struct {
 	ColumnsPriv   []columnsPrivRecord
 	DefaultRoles  []defaultRoleRecord
 	RoleGraph     map[string]roleGraphEdgesTable
-
-	defaultAuthPlugin string
 }
 
 // FindAllUserEffectiveRoles is used to find all effective roles grant to this user.
@@ -399,9 +397,7 @@ func (p *MySQLPrivilege) LoadAll(ctx sessionctx.Context) error {
 		}
 		logutil.BgLogger().Warn("mysql.role_edges missing")
 	}
-
-	p.defaultAuthPlugin, err = ctx.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(variable.DefaultAuthPlugin)
-	return err
+	return nil
 }
 
 func noSuchTable(err error) bool {
@@ -669,7 +665,7 @@ func (p *MySQLPrivilege) decodeUserTableRow(row chunk.Row, fs []*resolve.ResultF
 			if row.GetString(i) != "" {
 				value.AuthPlugin = row.GetString(i)
 			} else {
-				value.AuthPlugin = p.defaultAuthPlugin
+				value.AuthPlugin = mysql.AuthNativePassword
 			}
 		case f.ColumnAsName.L == "token_issuer":
 			value.AuthTokenIssuer = row.GetString(i)

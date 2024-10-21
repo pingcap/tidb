@@ -116,10 +116,10 @@ type Manager interface {
 	IsDynamicPrivilege(privNameInUpper string) bool
 
 	// GetAuthPluginForConnection gets the authentication plugin used in connection establishment.
-	GetAuthPluginForConnection(user, host, defaultAuthPlugin string) (string, error)
+	GetAuthPluginForConnection(user, host string) (string, error)
 
 	// GetAuthPlugin gets the authentication plugin for the account identified by the user and host
-	GetAuthPlugin(user, host, defaultAuthPlugin string) (string, error)
+	GetAuthPlugin(user, host string) (string, error)
 }
 
 const key keyType = 0

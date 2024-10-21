@@ -456,10 +456,17 @@ id
 set autocommit = default;
 set global default_authentication_plugin = 'caching_sha2_password';
 create user default_sha256_user;
+create role default_sha256_role;
 show create user default_sha256_user;
 CREATE USER for default_sha256_user@%
 CREATE USER 'default_sha256_user'@'%' IDENTIFIED WITH 'caching_sha2_password' AS '' REQUIRE NONE PASSWORD EXPIRE DEFAULT ACCOUNT UNLOCK PASSWORD HISTORY DEFAULT PASSWORD REUSE INTERVAL DEFAULT
 select plugin from mysql.user where user = 'default_sha256_user';
+plugin
+caching_sha2_password
+show create user default_sha256_role;
+CREATE USER for default_sha256_role@%
+CREATE USER 'default_sha256_role'@'%' IDENTIFIED WITH 'caching_sha2_password' AS '' REQUIRE NONE PASSWORD EXPIRE ACCOUNT LOCK PASSWORD HISTORY DEFAULT PASSWORD REUSE INTERVAL DEFAULT
+select plugin from mysql.user where user = 'default_sha256_role';
 plugin
 caching_sha2_password
 alter user default_sha256_user identified with 'tidb_sm3_password';
@@ -484,4 +491,5 @@ select plugin from mysql.user where user = 'default_sha256_user';
 plugin
 authentication_ldap_sasl
 drop user default_sha256_user;
+drop user default_sha256_role;
 set global default_authentication_plugin = default;
