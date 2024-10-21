@@ -1,15 +1,17 @@
-.PHONY: all parser clean
+.PHONY: all
+all: fmt parser
 
-all: fmt parser generate
-
+.PHONY: test
 test: fmt parser
 	sh test.sh
 
-parser: parser.go hintparser.go
+.PHONY: parser
+parser: parser.go hintparser.go generate
 
 genkeyword: generate_keyword/genkeyword.go
 	go build -C generate_keyword -o ../genkeyword
 
+.PHONY: generate
 generate: genkeyword parser.y
 	go generate
 
@@ -26,10 +28,12 @@ generate: genkeyword parser.y
 bin/goyacc: goyacc/main.go goyacc/format_yacc.go
 	GO111MODULE=on go build -o bin/goyacc goyacc/main.go goyacc/format_yacc.go
 
+.PHONY: fmt
 fmt: bin/goyacc parser_golden.y hintparser_golden.y
 	@echo "gofmt (simplify)"
 	@gofmt -s -l -w . 2>&1 | awk '{print} END{if(NR>0) {exit 1}}'
 
+.PHONY: clean
 clean:
 	go clean -i ./...
 	rm -rf *.out
