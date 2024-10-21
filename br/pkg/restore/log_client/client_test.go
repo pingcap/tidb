@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/errors"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/kvproto/pkg/import_sstpb"
+	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/br/pkg/glue"
 	"github.com/pingcap/tidb/br/pkg/gluetidb"
 	"github.com/pingcap/tidb/br/pkg/mock"
@@ -49,6 +50,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	filter "github.com/pingcap/tidb/pkg/util/table-filter"
 	"github.com/stretchr/testify/require"
+	pd "github.com/tikv/pd/client"
 	"google.golang.org/grpc/keepalive"
 )
 
@@ -1558,9 +1560,22 @@ func TestSplitHelper(t *testing.T) {
 		string(tablecodec.EncodeTablePrefix(402)),
 	}
 
-	regionsMap, stores := logclient.GenOneStorRegionsForTest(false, oriRegions)
-	mockPDCli := utiltest.NewFakePDClient(stores, false, nil)
-	mockPDCli.SetRegions(regionsMap)
+	regionsMap, storesMap := logclient.GenOneStoreRegionsForTest(false, oriRegions)
+	storeSclice := make([]*metapb.Store, 0, len(storesMap))
+	for _, store := range storesMap {
+		storeSclice = append(storeSclice, store)
+	}
+	regionSlice := make([]*pd.Region, 0, len(regionsMap))
+	for _, region := range regionsMap {
+		regionSlice = append(regionSlice, &pd.Region{
+			Meta:         region.Region,
+			Leader:       region.Leader,
+			DownPeers:    region.DownPeers,
+			PendingPeers: region.PendingPeers,
+		})
+	}
+	mockPDCli := utiltest.NewFakePDClient(storeSclice, false, nil)
+	mockPDCli.SetRegions(regionSlice)
 
 	client := split.NewClient(mockPDCli, nil, nil, 100, 4)
 	mockIter := iter.FromSlice([]*backuppb.DataFileInfo{

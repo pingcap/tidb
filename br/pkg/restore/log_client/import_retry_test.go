@@ -3,11 +3,13 @@
 package logclient_test
 
 import (
+	"bytes"
 	"context"
 	"encoding/hex"
 	"fmt"
 	"os"
 	"strconv"
+	"sync"
 	"testing"
 	"time"
 
@@ -16,12 +18,15 @@ import (
 	"github.com/pingcap/kvproto/pkg/errorpb"
 	"github.com/pingcap/kvproto/pkg/import_sstpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
+	"github.com/pingcap/kvproto/pkg/pdpb"
 	logclient "github.com/pingcap/tidb/br/pkg/restore/log_client"
 	"github.com/pingcap/tidb/br/pkg/restore/split"
 	"github.com/pingcap/tidb/br/pkg/utils"
+	"github.com/pingcap/tidb/br/pkg/utiltest"
 	"github.com/pingcap/tidb/pkg/store/pdtypes"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/stretchr/testify/require"
+	pd "github.com/tikv/pd/client"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
@@ -48,15 +53,152 @@ func assertRegions(t *testing.T, regions []*split.RegionInfo, keys ...string) {
 	}
 }
 
-// region: [, aay), [aay, bba), [bba, bbh), [bbh, cca), [cca, )
-func initTestClient(isRawKv bool) *logclient.TestClient {
-	keys := []string{"", "aay", "bba", "bbh", "cca", ""}
-	regions := logclient.GenSplitRegionsForTest(isRawKv, keys)
-	stores := make(map[uint64]*metapb.Store)
-	stores[1] = &metapb.Store{
-		Id: 1,
+type TestClient struct {
+	split.SplitClient
+	pd.Client
+
+	mu           sync.RWMutex
+	stores       map[uint64]*metapb.Store
+	Regions      map[uint64]*split.RegionInfo
+	RegionsInfo  *pdtypes.RegionTree // For now it's only used in ScanRegions
+	nextRegionID uint64
+
+	scattered   map[uint64]bool
+	InjectErr   bool
+	InjectTimes int32
+}
+
+func NewTestClient(
+	stores map[uint64]*metapb.Store,
+	regions map[uint64]*split.RegionInfo,
+	nextRegionID uint64,
+) *TestClient {
+	regionsInfo := &pdtypes.RegionTree{}
+	for _, regionInfo := range regions {
+		regionsInfo.SetRegion(pdtypes.NewRegionInfo(regionInfo.Region, regionInfo.Leader))
 	}
-	return logclient.NewTestClient(stores, regions, 6)
+	return &TestClient{
+		stores:       stores,
+		Regions:      regions,
+		RegionsInfo:  regionsInfo,
+		nextRegionID: nextRegionID,
+		scattered:    map[uint64]bool{},
+	}
+}
+
+func (c *TestClient) GetAllRegions() map[uint64]*split.RegionInfo {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.Regions
+}
+
+func (c *TestClient) GetPDClient() *utiltest.FakePDClient {
+	stores := make([]*metapb.Store, 0, len(c.stores))
+	for _, store := range c.stores {
+		stores = append(stores, store)
+	}
+	return utiltest.NewFakePDClient(stores, false, nil)
+}
+
+func (c *TestClient) GetStore(ctx context.Context, storeID uint64) (*metapb.Store, error) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	store, ok := c.stores[storeID]
+	if !ok {
+		return nil, errors.Errorf("store not found")
+	}
+	return store, nil
+}
+
+func (c *TestClient) GetRegion(ctx context.Context, key []byte) (*split.RegionInfo, error) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	for _, region := range c.Regions {
+		if bytes.Compare(key, region.Region.StartKey) >= 0 &&
+			(len(region.Region.EndKey) == 0 || bytes.Compare(key, region.Region.EndKey) < 0) {
+			return region, nil
+		}
+	}
+	return nil, errors.Errorf("region not found: key=%s", string(key))
+}
+
+func (c *TestClient) GetRegionByID(ctx context.Context, regionID uint64) (*split.RegionInfo, error) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	region, ok := c.Regions[regionID]
+	if !ok {
+		return nil, errors.Errorf("region not found: id=%d", regionID)
+	}
+	return region, nil
+}
+
+func (c *TestClient) SplitWaitAndScatter(_ context.Context, _ *split.RegionInfo, keys [][]byte) ([]*split.RegionInfo, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	newRegions := make([]*split.RegionInfo, 0)
+	for _, key := range keys {
+		var target *split.RegionInfo
+		splitKey := codec.EncodeBytes([]byte{}, key)
+		for _, region := range c.Regions {
+			if region.ContainsInterior(splitKey) {
+				target = region
+			}
+		}
+		if target == nil {
+			continue
+		}
+		newRegion := &split.RegionInfo{
+			Region: &metapb.Region{
+				Peers:    target.Region.Peers,
+				Id:       c.nextRegionID,
+				StartKey: target.Region.StartKey,
+				EndKey:   splitKey,
+			},
+		}
+		c.Regions[c.nextRegionID] = newRegion
+		c.nextRegionID++
+		target.Region.StartKey = splitKey
+		c.Regions[target.Region.Id] = target
+		newRegions = append(newRegions, newRegion)
+	}
+	return newRegions, nil
+}
+
+func (c *TestClient) GetOperator(context.Context, uint64) (*pdpb.GetOperatorResponse, error) {
+	return &pdpb.GetOperatorResponse{
+		Header: new(pdpb.ResponseHeader),
+	}, nil
+}
+
+func (c *TestClient) ScanRegions(ctx context.Context, key, endKey []byte, limit int) ([]*split.RegionInfo, error) {
+	if c.InjectErr && c.InjectTimes > 0 {
+		c.InjectTimes -= 1
+		return nil, status.Error(codes.Unavailable, "not leader")
+	}
+	if len(key) != 0 && bytes.Equal(key, endKey) {
+		return nil, status.Error(codes.Internal, "key and endKey are the same")
+	}
+
+	infos := c.RegionsInfo.ScanRange(key, endKey, limit)
+	regions := make([]*split.RegionInfo, 0, len(infos))
+	for _, info := range infos {
+		regions = append(regions, &split.RegionInfo{
+			Region: info.Meta,
+			Leader: info.Leader,
+		})
+	}
+	return regions, nil
+}
+
+func (c *TestClient) WaitRegionsScattered(context.Context, []*split.RegionInfo) (int, error) {
+	return 0, nil
+}
+
+// region: [, aay), [aay, bba), [bba, bbh), [bbh, cca), [cca, )
+func initTestClient(isRawKv bool) *TestClient {
+	keys := []string{"", "aay", "bba", "bbh", "cca", ""}
+	regions, stores := logclient.GenOneStoreRegionsForTest(isRawKv, keys)
+	return NewTestClient(stores, regions, 6)
 }
 
 func TestScanSuccess(t *testing.T) {
