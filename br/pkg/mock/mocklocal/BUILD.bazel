@@ -8,7 +8,7 @@ go_library(
     deps = [
         "//pkg/lightning/backend",
         "@com_github_pingcap_kvproto//pkg/import_sstpb",
-        "@com_github_tikv_client_go_v2//tikv",
+        "@com_github_tikv_client_go_v2//internal/apicodec",
         "@org_uber_go_mock//gomock",
     ],
 )
