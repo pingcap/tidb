@@ -171,7 +171,7 @@ HashAgg_24	5325.33	root		group by:Column#14, Column#15, funcs:firstrow(Column#14
   │   └─TableReader_31(Probe)	3333.33	root		data:Selection_30
   │     └─Selection_30	3333.33	cop[tikv]		gt(planner__core__rule_constant_propagation.t.id, 1), not(isnull(planner__core__rule_constant_propagation.t.id))
   │       └─TableFullScan_29	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
-  └─Projection_35	4154.17	root		cast(planner__core__rule_constant_propagation.t.id, bigint(20) BINARY)->Column#14, planner__core__rule_constant_propagation.t.name->Column#15
+  └─Projection_35	4154.17	root		cast(planner__core__rule_constant_propagation.t.id, bigint BINARY)->Column#14, planner__core__rule_constant_propagation.t.name->Column#15
     └─HashJoin_36	4154.17	root		left outer join, equal:[eq(planner__core__rule_constant_propagation.t.id, planner__core__rule_constant_propagation.s.id)]
       ├─TableReader_43(Build)	3323.33	root		data:Selection_42
       │ └─Selection_42	3323.33	cop[tikv]		lt(planner__core__rule_constant_propagation.s.id, 3), not(isnull(planner__core__rule_constant_propagation.s.id))
