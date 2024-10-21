@@ -112,6 +112,9 @@ func NewCreateTablesEvent(
 	newTableInfos []*model.TableInfo,
 ) *SchemaChangeEvent {
 	return &SchemaChangeEvent{
+		inner: &jsonSchemaChangeEvent{
+			Tp: model.ActionCreateTables,
+		},
 		tableInfos: newTableInfos,
 	}
 }
