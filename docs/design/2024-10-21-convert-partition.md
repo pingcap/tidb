@@ -24,7 +24,7 @@ This design propose a new syntax for moving data in and out from table partition
 
 Proposed syntax:
 - `ALTER TABLE t CONVERT PARTITION p TO TABLE t2`
-- `ALTER TABLE t CONVERT TABLE t2 TO <partition definition>`, example: `ALTER TABLE t CONVERT TABLE t2 TO PARTITION p VALUES LESS THAN (100)`
+- `ALTER TABLE t CONVERT TABLE t2 TO <partition definition> [{WITH|WITHOUT} VALIDATION]`, example: `ALTER TABLE t CONVERT TABLE t2 TO PARTITION p VALUES LESS THAN (100)`
 - `ALTER TABLE t EXCHANGE PARTITION p WITH TABLE t2 [{WITH|WITHOUT} VALIDATION | UPDATE GLOBAL INDEXES]` where `UPDATE GLOBAL INDEXES` is new and have an effect on execution time etc.
 
 ## Motivation or Background
@@ -52,7 +52,7 @@ Conclusion of motivation:
 There are four main use cases:
 
 #### 1) Move data from a partition out from the partitioned table to a new non-partitioned table:
-`ALTER TABLE t CONVERT PARTITION p TO TABLE t2` 
+`ALTER TABLE t CONVERT PARTITION p TO TABLE t2`
 MariaDB implements this as 'Move the partition into a table, and drop the partition definition'.
 But we TiDB could optionally also support 'Move the partition data into a table, and replace it with an empty partition, keeping the partition definition'. That would also support KEY/HASH partitioned tables, which MariaDB does not.
 Proposed option `TRUNCATE PARTITION`, so the full syntax would be `ALTER TABLE t CONVERT PARTITION p0 TO TABLE t2 TRUNCATE PARTITION` meaning the partition will be converted to a new table, and then truncated instead of dropped, while without `TRUNCATE PARTITION` it would be dropped instead. We could add `DROP PARTITION` as the default, if that makes things more clear? But the default must be drop partition (without syntax) since that is what MariaDB implements.
@@ -71,7 +71,7 @@ So proposal is:
 - if `TRUNCATE PARTITION` is given then the partition p will become empty, which will also be supported for HASH/KEY partitioned tables.
 
 #### 2) Move data from a non-partitioned table into a partition of a partitioned table:
-`ALTER TABLE t CONVERT TABLE t2 TO PARTITION p ...` 
+`ALTER TABLE t CONVERT TABLE t2 TO PARTITION p ... [{WITH | WITHOUT} VALIDATION]`
 MariaDB implements this as 'Create a new partition according to the given partitioning definition, and convert the table to the new partition, efficently dropping the table'.
 TiDB could optionally also support 'Replace the existing partition's data with the data from the table, and drop the table' (3. below) as well as 'Swap the existing partition data with the table data' (4. below).
 
