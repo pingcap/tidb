@@ -692,7 +692,8 @@ SwitchIndexState:
 		}
 		// Initialize SnapshotVer to 0 for later reorganization check.
 		job.SnapshotVer = 0
-		job.SchemaState = model.StateWriteReorganization
+		//job.SchemaState = model.StateWriteReorganization
+		time.Sleep(5 * time.Second)
 	case model.StateWriteReorganization:
 		// reorganization -> public
 		tbl, err := getTable((*asAutoIDRequirement)(d), schemaID, tblInfo)
