@@ -566,6 +566,7 @@ func (d *ddl) RegisterStatsHandle(h *handle.Handle) {
 
 // asyncNotifyEvent will notify the ddl event to outside world, say statistic handle. When the channel is full, we may
 // give up notify and log it.
+// subJobID is used to identify the sub job in a merged ddl, such as create tables, should be -1 if not a merged ddl.
 func asyncNotifyEvent(jobCtx *jobContext, e *notifier.SchemaChangeEvent, job *model.Job, subJobID int64, sctx *sess.Session) error {
 	// skip notify for system databases, system databases are expected to change at
 	// bootstrap and other nodes can also handle the changing in its bootstrap rather
@@ -578,6 +579,9 @@ func asyncNotifyEvent(jobCtx *jobContext, e *notifier.SchemaChangeEvent, job *mo
 		failpoint.Inject("asyncNotifyEventError", func() {
 			failpoint.Return(errors.New("mock publish event error"))
 		})
+		if subJobID < 0 && job.MultiSchemaInfo != nil {
+			subJobID = int64(job.MultiSchemaInfo.Seq)
+		}
 		err := notifier.PubSchemaChange(jobCtx.ctx, sctx, job.ID, subJobID, e)
 		if err != nil {
 			logutil.DDLLogger().Error("Error publish schema change event",

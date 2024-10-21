@@ -575,11 +575,7 @@ func (w *worker) doModifyColumnTypeWithData(
 			return ver, errors.Trace(err)
 		}
 		modifyColumnEvent := notifier.NewModifyColumnEvent(tblInfo, []*model.ColumnInfo{changingCol})
-		var subJobID int64 = -1
-		if job.MultiSchemaInfo != nil {
-			subJobID = int64(job.MultiSchemaInfo.Seq)
-		}
-		err = asyncNotifyEvent(jobCtx, modifyColumnEvent, job, subJobID, w.sess)
+		err = asyncNotifyEvent(jobCtx, modifyColumnEvent, job, -1, w.sess)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}

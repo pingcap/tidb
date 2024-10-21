@@ -806,11 +806,7 @@ func (w *worker) onFlashbackCluster(jobCtx *jobContext, job *model.Job) (ver int
 	case model.StateWriteReorganization:
 		// TODO: Support flashback in unistore.
 		if inFlashbackTest {
-			var subJobID int64 = -1
-			if job.MultiSchemaInfo != nil {
-				subJobID = int64(job.MultiSchemaInfo.Seq)
-			}
-			err = asyncNotifyEvent(jobCtx, notifier.NewFlashbackClusterEvent(), job, subJobID, w.sess)
+			err = asyncNotifyEvent(jobCtx, notifier.NewFlashbackClusterEvent(), job, -1, w.sess)
 			if err != nil {
 				return ver, errors.Trace(err)
 			}
@@ -835,15 +831,11 @@ func (w *worker) onFlashbackCluster(jobCtx *jobContext, job *model.Job) (ver int
 				return ver, errors.Trace(err)
 			}
 		}
-
-		var subJobID int64 = -1
-		if job.MultiSchemaInfo != nil {
-			subJobID = int64(job.MultiSchemaInfo.Seq)
-		}
-		err = asyncNotifyEvent(jobCtx, notifier.NewFlashbackClusterEvent(), job, subJobID, w.sess)
+		err = asyncNotifyEvent(jobCtx, notifier.NewFlashbackClusterEvent(), job, -1, w.sess)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
+
 		job.State = model.JobStateDone
 		job.SchemaState = model.StatePublic
 		return updateSchemaVersion(jobCtx, job)
