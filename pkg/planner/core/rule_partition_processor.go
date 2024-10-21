@@ -786,13 +786,13 @@ func (l *listPartitionPruner) findUsedListPartitions(conds []expression.Expressi
 		}
 		var idxs map[int]struct{}
 		if !r.IsPointNullable(tc) {
-			if _, ok := pruneExpr.(*expression.Column); ok {
-				idxs, err = l.listPrune.LocatePartitionByRange(l.ctx.GetExprCtx().GetEvalCtx(), r)
-				if err != nil {
-					return nil, err
-				}
-			} else {
+			// Only support `pruneExpr` is a Column
+			if _, ok := pruneExpr.(*expression.Column); !ok {
 				return l.fullRange, nil
+			}
+			idxs, err = l.listPrune.LocatePartitionByRange(l.ctx.GetExprCtx().GetEvalCtx(), r)
+			if err != nil {
+				return nil, err
 			}
 		} else {
 			value, isNull, err := pruneExpr.EvalInt(l.ctx.GetExprCtx().GetEvalCtx(), chunk.MutRowFromDatums(r.HighVal).ToRow())
