@@ -80,7 +80,7 @@ TiDB could optionally also support 'Replace the existing partition's data with t
 Possible other options, specifically for Global Index:
 - Should we allow non-matching indexes and during the operation drop indexes on the non-partitioned table that does not match the partitioned table and create local indexes that only exists in the partitioned table?
   - Pro: easier to create a table that would be allowed to use for CONVERT TABLE TO PARTITION, including getting index ids matching.
-  - Con: extra work/time/resources during 
+  - Con: extra work/time/resources during DDL operation.
 - Should we require "local" indexes on the non-partitioned table matching the partitioned tables global indexes? At least no need to match the internal index ids.
   - Pro: at least there are no duplicate entries within the non-partitioned table.
   - Con: it will just be dropped, and each row will be inserted and checked into the global indexes anyway, so not technically needed.
@@ -105,18 +105,23 @@ Logically the same as `ALTER TABLE t EXCHANGE PARTITION p WITH TABLE t2 [{WITH|W
 But currently the `EXCHANGE PARTITION` implementation in TiDB allows for concurrent read and write to both the exchanged table and partition, making it complex to support Global Index, where there will need to be a DDL state where one session, S1, sees the new t2 (original p) and the new p (original t2), while another session, S2, might see the original t2 and the original p. Meaning that S2 still needs to double write/update the Global Index of t, when writing to t2 and the S1 also needs to duble write/update the "local" index of t2 when writing to t/p, to keep both table's indexes consistent in the different views of S1 and S2. This makes the DDL extra complex and risky to implement and hard to test.
 Having a way to only allow access to the data of both t/p and t2 through table t during the DDL operation would make it less complex, fewer error handling conditions and also having less performance impact, due to less indexes to keep updated at the same time.
 
-Should we extend `EXCHANGE PARTITION` to also support Global index or have a new syntax?
-Logically the same as EXCHANGE PARTITION, but allow for optimizations, like not allowing reads and writes to the non-partitioned table during the operation, which will simplify the implementation for Global Index, since if read/write would be allowed for both the partition and the non-partitioned table then the non-partitioned table would need to write to both the local unique index as well as the global index (which has a different table ID) which would make the internal handling of reads and writes even more complicated and increase the risk for bugs, even for non-partitioned tables.
+So the question is if we should extend the syntax for `EXCHANGE PARTITION` for this new restriction and support Global Index or have a new syntax?
+
+While thinking of new syntax extension of `EXCHANGE PARTITION` for Global Index, note that VALIDATION always will happen, since each row in t2 needs to be read and inserted in the Global Indexes, so it would not make sense to support `WITHOUT VALIDATION` if the partitioned table has any Global Indexes.
+
+`UPDATE GLOBAL INDEXES` exists as an option to other partitioning management commands, like `ALTER TABLE t TRUNCATE PARTITION p UDPATE GLOBAL INDEXES` in Oracle, so we could use that, resulting in:
+`ALTER TABLE t EXCHANGE PARTITION p WITH TABLE t2 [UPDATE GLOBAL INDEXES | {WITH | WITHOUT} VALIDATION]` with clear documentation of the operation for Global Indexes, i.e. that it would need to update the global indexes during the DDL execution and it will not be a meta-data only change.
 
 Possible other options, specifically for Global Index:
 - Should we allow non-matching indexes and during the operation drop indexes on the non-partitioned table that does not match the partitioned table and create local indexes that only exists in the partitioned table?
   - Pro: easier to create a table that would be allowed to use for CONVERT TABLE TO PARTITION, including getting index ids matching.
-  - Con: extra work/time/resources during 
+  - Con: extra work/time/resources during DDL operation.
 - Should we require "local" unique indexes on the non-partitioned table matching the partitioned tables global indexes? At least no need to match the internal index ids.
   - Pro: at least there are no duplicate entries within the non-partitioned table.
   - Con: it will just be dropped, and each row will be inserted and checked into the global indexes anyway, so not technically needed.
 Discussion:
-- @mjonss propose optional syntax `
+- @mjonss propose extended syntax `ALTER TABLE t EXCHANGE PARTITION p WITH TABLE t2 [UPDATE GLOBAL INDEXES | {WITH | WITHOUT} VALIDATION]`, where the new `UPDATE GLOBAL INDEXES` option indicates that also partitioned tables with Global Indexes will be Exchanged, and that it is allowed to update the Global Indexes accordingly during the process, *with* new limitations that the exchanged table t2 will have restricted access during the operation.
+- @mjonss propose that all indexes of t2 must match all indexes of t, except for global indexes. If indexes in t2 matches global indexes in t, then those indexes will be recreated for the new data in t2, if an global index in t does not have a match in t2, then it will be skipped.
 
 Notes:
 - MySQL does not have any notion of invalid or unusable indexes (i.e. not up-to-date) as Oracle has, so all existing indexes should always be up-to-date and consitent.
@@ -127,7 +132,10 @@ Notes:
 TODO:
 - How to handle:
   - Updating table statistics.
+
+Questions:
 - Should we also add support for `CREATE TABLE t2 FOR EXCHANGE WITH t` that Oracle supports?
+  - No, `CREATE TABLE t2 LIKE t; ALTER TABLE t2 REMOVE PARTITIONING;` works.
 
 ### Physical / implementation design
 
