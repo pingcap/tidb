@@ -1,0 +1,8 @@
+# https://github.com/pingcap/tidb/issues/56704
+CREATE TABLE `lrr_test` (   `COL102` double DEFAULT NULL,   `COL1` double GENERATED ALWAYS AS (`COL102` + 10) STORED NOT NULL,   PRIMARY KEY (`COL1`) /*T![clustered_index] CLUSTERED */ ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
+load data local infile 'csv/extreamfloat64.csv' into table lrr_test fields terminated by ',' enclosed by '"' lines terminated by '\n';
+
+analyze table lrr_test;
+
+select t1.col1, t2.col1 from lrr_test as t1 right join lrr_test as t2 on t1.col1 = t2.col1 where t1.col1 >=0 order by t1.col1;
+explain select t1. col1, t2.col1 from lrr_test as t1 right join lrr_test as t2 on t1.col1 = t2.col1 where t1.col1 >=0;
