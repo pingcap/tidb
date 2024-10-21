@@ -161,13 +161,13 @@ func buildSemiDataSourceAndExpectResult(ctx sessionctx.Context, leftCols []*expr
 
 	// Shuffle
 	for i := int64(0); i < int64(leftLen); i++ {
-		j := rand.Int31n(int32(i + 1))
+		j := rand.Int63n(i + 1)
 		leftCol0Datums[i], leftCol0Datums[j] = leftCol0Datums[j], leftCol0Datums[i]
 		leftCol1Datums[i], leftCol1Datums[j] = leftCol1Datums[j], leftCol1Datums[i]
 	}
 
 	for i := int64(0); i < int64(rightLen); i++ {
-		j := rand.Int31n(int32(i + 1))
+		j := rand.Int63n(i + 1)
 		rightCol0Datums[i], rightCol0Datums[j] = rightCol0Datums[j], rightCol0Datums[i]
 		rightCol1Datums[i], rightCol1Datums[j] = rightCol1Datums[j], rightCol1Datums[i]
 	}
@@ -262,11 +262,96 @@ func TestSemiJoinDuplicateKeys(t *testing.T) {
 	testSemiJoin(t, false, true, true) // Left side build with other condition
 }
 
-// TODO add test for `truncateSelect` function
+func TestTruncateSelectFunction(t *testing.T) {
+	semiJoin := &semiJoinProbe{
+		skipRowIdxSet: make(map[int]struct{}),
+		groupMark:     make([]int, 0, 200),
+		baseJoinProbe: baseJoinProbe{
+			selected: make([]bool, 0, 200),
+		},
+	}
 
-// TODO delete
-// func printResult(result []chunk.Row) {
-// 	for _, res := range result {
-// 		log.Info(res.ToString(semiJoinRetTypes))
-// 	}
-// }
+	totalIndexNum := 10
+	selectedData := make([][]bool, totalIndexNum)
+	canOutputIndex := make(map[int]struct{})
+	noOutputIndex := make(map[int]struct{})
+
+	canOutputIndex[0] = struct{}{}
+	canOutputIndex[3] = struct{}{}
+	canOutputIndex[4] = struct{}{}
+	canOutputIndex[7] = struct{}{}
+
+	for i := 0; i < totalIndexNum; i++ {
+		_, ok := canOutputIndex[i]
+		if !ok {
+			noOutputIndex[i] = struct{}{}
+		}
+	}
+
+	baseIndexNum := 10
+
+	for idx := range noOutputIndex {
+		indexNum := rand.Intn(10) + baseIndexNum
+		for indexNum > 0 {
+			selectedData[idx] = append(selectedData[idx], false)
+			indexNum--
+		}
+	}
+
+	for idx := range canOutputIndex {
+		indexNum := rand.Intn(10) + baseIndexNum
+
+		for i := 0; i < indexNum; i++ {
+			selectedData[idx] = append(selectedData[idx], false)
+		}
+
+		trueNum := rand.Intn(indexNum) + 1
+		for i := 0; i < trueNum; i++ {
+			selectedData[idx][i] = true
+		}
+
+		// Shuffle
+		for i := 0; i < len(selectedData[idx]); i++ {
+			j := rand.Intn(i + 1)
+			selectedData[idx][i], selectedData[idx][j] = selectedData[idx][j], selectedData[idx][i]
+		}
+	}
+
+	cursors := make(map[int]int)
+	for i := 0; i < totalIndexNum; i++ {
+		cursors[i] = 0
+	}
+
+	for len(cursors) > 0 {
+		for idx := range cursors {
+			appendNum := rand.Intn(5)
+			length := len(selectedData[idx])
+			for appendNum > 0 && cursors[idx] < length {
+				semiJoin.groupMark = append(semiJoin.groupMark, idx)
+				semiJoin.selected = append(semiJoin.selected, selectedData[idx][cursors[idx]])
+
+				appendNum--
+				cursors[idx]++
+			}
+
+			if cursors[idx] >= length {
+				delete(cursors, idx)
+			}
+		}
+	}
+
+	semiJoin.truncateSelect()
+
+	selectedLen := len(semiJoin.selected)
+	for i := 0; i < selectedLen; i++ {
+		if semiJoin.selected[i] {
+			idx := semiJoin.groupMark[i]
+			_, ok := noOutputIndex[idx]
+			require.False(t, ok)
+
+			_, ok = canOutputIndex[idx]
+			require.True(t, ok)
+			delete(canOutputIndex, idx)
+		}
+	}
+}

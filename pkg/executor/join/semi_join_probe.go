@@ -27,10 +27,12 @@ import (
 // together and generate a new row. If one probe row could match n build row, then we will get
 // n new rows. If n is very big, there will generate too much rows. In order to avoid this case
 // we need to limit the max generated row number. This variable describe this max number.
+// NOTE: Suppose probe chunk has n rows and n*maxMatchedRowNum << chunkRemainingCapacity.
+// We will keep on join probe rows that have been matched before with build rows, though
+// probe row with idex i may have produced `maxMatchedRowNum` number rows before. So that
+// we can process as many rows as possible.
 const maxMatchedRowNum = 4
 
-// TODO outer join also has scanning row table function, and there are many codes similiar to semi join
-// TODO so we need to extract codes that related with scanning row table in this pr.
 type semiJoinProbe struct {
 	baseJoinProbe
 	isLeftSideBuild bool
@@ -43,11 +45,14 @@ type semiJoinProbe struct {
 	// used when left side is build side
 	rowIter *rowIter
 
-	outputProbeRowNum      int
 	nextProcessProbeRowIdx int
 
 	// used in other condition to record which rows are being processed now
 	processedProbeRowIdxSet map[int]struct{}
+
+	// used in other condition to record if `j.selected` of this row has been set to true
+	// so that we can skip this row.
+	skipRowIdxSet map[int]struct{}
 }
 
 func newSemiJoinProbe(base baseJoinProbe, isLeftSideBuild bool) *semiJoinProbe {
@@ -55,6 +60,7 @@ func newSemiJoinProbe(base baseJoinProbe, isLeftSideBuild bool) *semiJoinProbe {
 		baseJoinProbe:           base,
 		isLeftSideBuild:         isLeftSideBuild,
 		processedProbeRowIdxSet: make(map[int]struct{}),
+		skipRowIdxSet:           make(map[int]struct{}),
 	}
 	return probe
 }
@@ -79,7 +85,6 @@ func (j *semiJoinProbe) InitForScanRowTable() {
 }
 
 func (j *semiJoinProbe) initProbe() {
-	j.outputProbeRowNum = 0
 	j.nextProcessProbeRowIdx = 0
 	clear(j.processedProbeRowIdxSet)
 }
@@ -115,7 +120,6 @@ func (j *semiJoinProbe) IsScanRowTableDone() bool {
 	return j.rowIter.isEnd()
 }
 
-// TODO maybe we can extract some common codes from semi join and outer join
 func (j *semiJoinProbe) ScanRowTable(joinResult *hashjoinWorkerResult, sqlKiller *sqlkiller.SQLKiller) *hashjoinWorkerResult {
 	if !j.isLeftSideBuild {
 		panic("should not reach here")
@@ -203,6 +207,8 @@ func (j *semiJoinProbe) Probe(joinResult *hashjoinWorkerResult, sqlKiller *sqlki
 // In semi join, we only need one row when left table is probe side, so we need to truncate
 // the `j.select` to meet the rule that one probe row outputs at most one result row.
 func (j *semiJoinProbe) truncateSelect() {
+	clear(j.skipRowIdxSet)
+
 	// scannedGroupIdx refers to which group we are scanning now
 	scannedGroupIdx := -1
 	selectLen := len(j.selected)
@@ -214,7 +220,27 @@ func (j *semiJoinProbe) truncateSelect() {
 		currentGroupIdx := j.groupMark[i]
 		if scannedGroupIdx != currentGroupIdx {
 			// Switch to a new group
-			encounterTrue = j.selected[i]
+			_, ok := j.skipRowIdxSet[currentGroupIdx]
+			if ok {
+				// When row index n is set to true in `j.selected`, it will be outputed as result.
+				// However, in semi join, rows in left side should be outputed for only once.
+				//
+				// When one left side row has been set to true before, we should not output it again.
+				// groupMark: | 0 | 0 | 0 | 0 | 1 | 1 | 2 | 2 | 2 | 0 | 0 | 1 | 2 |
+				// selected:  | T | F | T | F | T | T | F | F | F | T | F | F | T |
+				//              ▲                                   ▲
+				//              └ output index 0 here               |
+				//                                                  |
+				//                       index 0 was true before, we should not output it again
+				encounterTrue = true
+				j.selected[i] = false
+			} else {
+				encounterTrue = j.selected[i]
+				if encounterTrue {
+					j.skipRowIdxSet[currentGroupIdx] = struct{}{}
+				}
+			}
+
 			scannedGroupIdx = currentGroupIdx
 			continue
 		}
@@ -227,6 +253,9 @@ func (j *semiJoinProbe) truncateSelect() {
 		}
 
 		encounterTrue = j.selected[i]
+		if encounterTrue {
+			j.skipRowIdxSet[currentGroupIdx] = struct{}{}
+		}
 	}
 }
 
@@ -234,7 +263,6 @@ func (j *semiJoinProbe) removeMatchedProbeRow() {
 	for idx, selected := range j.selected {
 		if selected {
 			delete(j.processedProbeRowIdxSet, j.groupMark[idx])
-			j.outputProbeRowNum++
 		}
 	}
 }
@@ -267,27 +295,29 @@ func (j *semiJoinProbe) concatenateProbeAndBuildRows(joinedChk *chunk.Chunk, sql
 	j.groupMark = j.groupMark[:0]
 	joinedChkRemainCap := joinedChk.Capacity()
 
-	for probeRowIdx := range j.processedProbeRowIdxSet {
-		j.currentProbeRow = probeRowIdx
-		j.matchMultiBuildRows(joinedChk, &joinedChkRemainCap, isRightSideBuild)
+	for joinedChkRemainCap > 0 && (len(j.processedProbeRowIdxSet) > 0 || j.nextProcessProbeRowIdx < j.chunkRows) {
+		for probeRowIdx := range j.processedProbeRowIdxSet {
+			j.currentProbeRow = probeRowIdx
+			j.matchMultiBuildRows(joinedChk, &joinedChkRemainCap, isRightSideBuild)
 
-		if j.matchedRowsHeaders[probeRowIdx] == 0 {
-			delete(j.processedProbeRowIdxSet, probeRowIdx)
+			if j.matchedRowsHeaders[probeRowIdx] == 0 {
+				delete(j.processedProbeRowIdxSet, probeRowIdx)
+			}
+
+			if joinedChkRemainCap == 0 {
+				break
+			}
 		}
 
-		if joinedChkRemainCap == 0 {
-			break
-		}
-	}
+		for joinedChkRemainCap > 0 && j.nextProcessProbeRowIdx < j.chunkRows {
+			j.currentProbeRow = j.nextProcessProbeRowIdx
+			j.matchMultiBuildRows(joinedChk, &joinedChkRemainCap, true)
 
-	for joinedChkRemainCap > 0 && j.nextProcessProbeRowIdx < j.chunkRows {
-		j.currentProbeRow = j.nextProcessProbeRowIdx
-		j.matchMultiBuildRows(joinedChk, &joinedChkRemainCap, true)
-
-		if j.matchedRowsHeaders[j.currentProbeRow] != 0 {
-			j.processedProbeRowIdxSet[j.currentProbeRow] = struct{}{}
+			if j.matchedRowsHeaders[j.currentProbeRow] != 0 {
+				j.processedProbeRowIdxSet[j.currentProbeRow] = struct{}{}
+			}
+			j.nextProcessProbeRowIdx++
 		}
-		j.nextProcessProbeRowIdx++
 	}
 
 	err := checkSQLKiller(sqlKiller, "killedDuringProbe")
@@ -343,7 +373,6 @@ func (j *semiJoinProbe) probeForLeftSideBuildNoOtherCondition(remainCap int, sql
 			}
 		} else {
 			j.currentProbeRow++
-			j.outputProbeRowNum++
 		}
 	}
 
@@ -398,7 +427,6 @@ func (j *semiJoinProbe) probeForRightSideBuildNoOtherCondition(chk *chunk.Chunk,
 		} else {
 			j.finishLookupCurrentProbeRow()
 			j.currentProbeRow++
-			j.outputProbeRowNum++
 		}
 	}
 
