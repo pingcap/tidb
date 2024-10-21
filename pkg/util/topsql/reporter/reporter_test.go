@@ -528,7 +528,7 @@ func initializeCache(maxStatementsNum, interval int) (*RemoteTopSQLReporter, *mo
 
 func BenchmarkTopSQL_CollectAndIncrementFrequency(b *testing.B) {
 	tsr, _ := initializeCache(maxSQLNum, 120)
-	for i := 0; i < b.N; i++ {
+	for i := range b.N {
 		populateCache(tsr, 0, maxSQLNum, uint64(i))
 	}
 }
@@ -537,7 +537,7 @@ func BenchmarkTopSQL_CollectAndEvict(b *testing.B) {
 	tsr, _ := initializeCache(maxSQLNum, 120)
 	begin := 0
 	end := maxSQLNum
-	for i := 0; i < b.N; i++ {
+	for i := range b.N {
 		begin += maxSQLNum
 		end += maxSQLNum
 		populateCache(tsr, begin, end, uint64(i))

@@ -108,7 +108,7 @@ func BenchmarkDataInDiskByRowsAdd(b *testing.B) {
 	defer l.Close()
 
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for i := range b.N {
 		err := l.Add(chk)
 		if err != nil {
 			b.Fatal(err)
@@ -139,7 +139,7 @@ func BenchmarkDataInDiskByRowsGetRow(b *testing.B) {
 		ptrs = append(ptrs, ptrs[i%10000])
 	}
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for i := range b.N {
 		_, err := l.GetRow(ptrs[i])
 		if err != nil {
 			b.Fatal(err)
@@ -280,7 +280,7 @@ func BenchmarkDataInDiskByRows_GetChunk(b *testing.B) {
 	}
 
 	b.StartTimer()
-	for i := 0; i < b.N; i++ {
+	for i := range b.N {
 		v := i % numChk
 		_, _ = l.GetChunk(v)
 	}

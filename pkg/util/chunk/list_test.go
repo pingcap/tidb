@@ -137,7 +137,7 @@ func BenchmarkListMemoryUsage(b *testing.B) {
 		list.AppendRow(row)
 	}
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for i := range b.N {
 		list.GetMemTracker().BytesConsumed()
 	}
 }
@@ -149,7 +149,7 @@ func BenchmarkListAdd(b *testing.B) {
 	l := NewList(fields, numRow, numRow)
 
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for i := range b.N {
 		l.Add(chk)
 	}
 }
@@ -173,7 +173,7 @@ func BenchmarkListGetRow(b *testing.B) {
 		ptrs = append(ptrs, ptrs[i%10000])
 	}
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for i := range b.N {
 		l.GetRow(ptrs[i])
 	}
 }

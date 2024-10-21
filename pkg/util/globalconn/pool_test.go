@@ -459,7 +459,7 @@ func BenchmarkPoolConcurrency(b *testing.B) {
 	for _, ta := range cases {
 		b.Run(fmt.Sprintf("LockBasedCircularPool: P:C: %v:%v", ta.producers, ta.consumers), func(b *testing.B) {
 			b.ResetTimer()
-			for i := 0; i < b.N; i++ {
+			for i := range b.N {
 				b.StopTimer()
 				var total int64
 				pool := prepareLockBasedPool(poolSizeInBits, 0)
@@ -479,7 +479,7 @@ func BenchmarkPoolConcurrency(b *testing.B) {
 
 		b.Run(fmt.Sprintf("LockFreeCircularPool: P:C: %v:%v", ta.producers, ta.consumers), func(b *testing.B) {
 			b.ResetTimer()
-			for i := 0; i < b.N; i++ {
+			for i := range b.N {
 				b.StopTimer()
 				var total int64
 				pool := prepareLockFreePool(poolSizeInBits, 0, 0)

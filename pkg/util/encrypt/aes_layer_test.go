@@ -146,7 +146,7 @@ func benchmarkReadAtWithCase(b *testing.B, testCase readAtTestCase) {
 	r := testCase.newReader(f)
 	rBuf := make([]byte, 10)
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for i := range b.N {
 		_, err := r.ReadAt(rBuf, int64(i%(n1+n2)))
 		if err != nil {
 			b.Fatal(err)
