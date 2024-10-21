@@ -44,6 +44,10 @@ func (p pbProgress) GetCurrent() int64 {
 // Close marks the progress as 100% complete and that Inc() can no longer be
 // called.
 func (p pbProgress) Close() {
+	// This wait shouldn't block.
+	// We are just waiting the progress bar refresh to the finished state.
+	defer p.bar.Wait()
+
 	if p.bar.Completed() || p.bar.Aborted() {
 		return
 	}

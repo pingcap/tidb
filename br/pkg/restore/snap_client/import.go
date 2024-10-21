@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/log"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/logutil"
+	"github.com/pingcap/tidb/br/pkg/restore"
 	importclient "github.com/pingcap/tidb/br/pkg/restore/internal/import_client"
 	"github.com/pingcap/tidb/br/pkg/restore/split"
 	restoreutils "github.com/pingcap/tidb/br/pkg/restore/utils"
@@ -52,9 +53,10 @@ import (
 type KvMode int
 
 const (
-	TiDB KvMode = iota
+	TiDBFull KvMode = iota
 	Raw
 	Txn
+	TiDBCompcated
 )
 
 const (
@@ -129,12 +131,17 @@ func newStoreTokenChannelMap(stores []*metapb.Store, bufferSize uint) *storeToke
 }
 
 type SnapFileImporter struct {
+	cipher     *backuppb.CipherInfo
+	apiVersion kvrpcpb.APIVersion
+
 	metaClient   split.SplitClient
 	importClient importclient.ImporterClient
 	backend      *backuppb.StorageBackend
 
 	downloadTokensMap *storeTokenChannelMap
 	ingestTokensMap   *storeTokenChannelMap
+
+	closeCallbacks []func(*SnapFileImporter) error
 
 	concurrencyPerStore uint
 
@@ -149,24 +156,21 @@ type SnapFileImporter struct {
 
 func NewSnapFileImporter(
 	ctx context.Context,
+	cipher *backuppb.CipherInfo,
+	apiVersion kvrpcpb.APIVersion,
 	metaClient split.SplitClient,
 	importClient importclient.ImporterClient,
 	backend *backuppb.StorageBackend,
-	isRawKvMode bool,
-	isTxnKvMode bool,
+	kvMode KvMode,
 	tikvStores []*metapb.Store,
 	rewriteMode RewriteMode,
 	concurrencyPerStore uint,
+	createCallBacks []func(*SnapFileImporter) error,
+	closeCallbacks []func(*SnapFileImporter) error,
 ) (*SnapFileImporter, error) {
-	kvMode := TiDB
-	if isRawKvMode {
-		kvMode = Raw
-	}
-	if isTxnKvMode {
-		kvMode = Txn
-	}
-
 	fileImporter := &SnapFileImporter{
+		cipher:              cipher,
+		apiVersion:          apiVersion,
 		metaClient:          metaClient,
 		backend:             backend,
 		importClient:        importClient,
@@ -177,10 +181,16 @@ func NewSnapFileImporter(
 		cacheKey:            fmt.Sprintf("BR-%s-%d", time.Now().Format("20060102150405"), rand.Int63()),
 		concurrencyPerStore: concurrencyPerStore,
 		cond:                sync.NewCond(new(sync.Mutex)),
+		closeCallbacks:      closeCallbacks,
 	}
 
-	err := fileImporter.checkMultiIngestSupport(ctx, tikvStores)
-	return fileImporter, errors.Trace(err)
+	for _, f := range createCallBacks {
+		err := f(fileImporter)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+	}
+	return fileImporter, nil
 }
 
 func (importer *SnapFileImporter) WaitUntilUnblock() {
@@ -209,6 +219,12 @@ func (importer *SnapFileImporter) releaseToken(tokenCh chan struct{}) {
 
 func (importer *SnapFileImporter) Close() error {
 	if importer != nil && importer.importClient != nil {
+		for _, f := range importer.closeCallbacks {
+			err := f(importer)
+			if err != nil {
+				log.Warn("failed on close snap importer", zap.Error(err))
+			}
+		}
 		return importer.importClient.CloseGrpcClient()
 	}
 	return nil
@@ -222,8 +238,8 @@ func (importer *SnapFileImporter) SetDownloadSpeedLimit(ctx context.Context, sto
 	return errors.Trace(err)
 }
 
-// checkMultiIngestSupport checks whether all stores support multi-ingest
-func (importer *SnapFileImporter) checkMultiIngestSupport(ctx context.Context, tikvStores []*metapb.Store) error {
+// CheckMultiIngestSupport checks whether all stores support multi-ingest
+func (importer *SnapFileImporter) CheckMultiIngestSupport(ctx context.Context, tikvStores []*metapb.Store) error {
 	storeIDs := make([]uint64, 0, len(tikvStores))
 	for _, s := range tikvStores {
 		if s.State != metapb.StoreState_Up {
@@ -274,7 +290,7 @@ func getKeyRangeByMode(mode KvMode) func(f *backuppb.File, rules *restoreutils.R
 
 // getKeyRangeForFiles gets the maximum range on files.
 func (importer *SnapFileImporter) getKeyRangeForFiles(
-	filesGroup []TableIDWithFiles,
+	filesGroup []restore.RestoreFilesInfo,
 ) ([]byte, []byte, error) {
 	var (
 		startKey, endKey []byte
@@ -283,7 +299,7 @@ func (importer *SnapFileImporter) getKeyRangeForFiles(
 	)
 	getRangeFn := getKeyRangeByMode(importer.kvMode)
 	for _, files := range filesGroup {
-		for _, f := range files.Files {
+		for _, f := range files.SSTFiles {
 			start, end, err = getRangeFn(f, files.RewriteRules)
 			if err != nil {
 				return nil, nil, errors.Trace(err)
@@ -300,19 +316,22 @@ func (importer *SnapFileImporter) getKeyRangeForFiles(
 	return startKey, endKey, nil
 }
 
-// ImportSSTFiles tries to import a file.
+// Import tries to import a file.
 // Assert 1: All rewrite rules must contain raw key prefix.
 // Assert 2: len(filesGroup[any].Files) > 0.
-func (importer *SnapFileImporter) ImportSSTFiles(
+func (importer *SnapFileImporter) Import(
 	ctx context.Context,
-	filesGroup []TableIDWithFiles,
-	cipher *backuppb.CipherInfo,
-	apiVersion kvrpcpb.APIVersion,
+	filesGroup ...restore.RestoreFilesInfo,
 ) error {
 	// Rewrite the start key and end key of file to scan regions
 	startKey, endKey, err := importer.getKeyRangeForFiles(filesGroup)
 	if err != nil {
 		return errors.Trace(err)
+	}
+	for _, f := range filesGroup {
+		for _, s := range f.SSTFiles {
+			log.Debug("file in one import", logutil.File(s), logutil.Key("start key", startKey), logutil.Key("end key", endKey))
+		}
 	}
 
 	err = utils.WithRetry(ctx, func() error {
@@ -329,7 +348,7 @@ func (importer *SnapFileImporter) ImportSSTFiles(
 		for _, regionInfo := range regionInfos {
 			info := regionInfo
 			// Try to download file.
-			downloadMetas, errDownload := importer.download(ctx, info, filesGroup, cipher, apiVersion)
+			downloadMetas, errDownload := importer.download(ctx, info, filesGroup, importer.cipher, importer.apiVersion)
 			if errDownload != nil {
 				log.Warn("download file failed, retry later",
 					logutil.Region(info.Region),
@@ -355,11 +374,11 @@ func (importer *SnapFileImporter) ImportSSTFiles(
 		return nil
 	}, utils.NewImportSSTBackoffer())
 	if err != nil {
-		log.Error("import sst file failed after retry, stop the whole progress", zapFilesGroup(filesGroup), zap.Error(err))
+		log.Error("import sst file failed after retry, stop the whole progress", zap.Error(err))
 		return errors.Trace(err)
 	}
 	for _, files := range filesGroup {
-		for _, f := range files.Files {
+		for _, f := range files.SSTFiles {
 			summary.CollectSuccessUnit(summary.TotalKV, 1, f.TotalKvs)
 			summary.CollectSuccessUnit(summary.TotalBytes, 1, f.TotalBytes)
 		}
@@ -452,7 +471,7 @@ func getSSTMetaFromFile(
 func (importer *SnapFileImporter) download(
 	ctx context.Context,
 	regionInfo *split.RegionInfo,
-	filesGroup []TableIDWithFiles,
+	filesGroup []restore.RestoreFilesInfo,
 	cipher *backuppb.CipherInfo,
 	apiVersion kvrpcpb.APIVersion,
 ) ([]*import_sstpb.SSTMeta, error) {
@@ -476,7 +495,7 @@ func (importer *SnapFileImporter) download(
 			e = status.Error(codes.Unavailable, "the connection to TiKV has been cut by a neko, meow :3")
 		})
 		if isDecryptSstErr(e) {
-			log.Info("fail to decrypt when download sst, try again with no-crypt", zapFilesGroup(filesGroup))
+			log.Info("fail to decrypt when download sst, try again with no-crypt")
 			if importer.kvMode == Raw || importer.kvMode == Txn {
 				downloadMetas, e = importer.downloadRawKVSST(ctx, regionInfo, filesGroup, nil, apiVersion)
 			} else {
@@ -558,7 +577,7 @@ func (importer *SnapFileImporter) buildDownloadRequest(
 func (importer *SnapFileImporter) downloadSST(
 	ctx context.Context,
 	regionInfo *split.RegionInfo,
-	filesGroup []TableIDWithFiles,
+	filesGroup []restore.RestoreFilesInfo,
 	cipher *backuppb.CipherInfo,
 	apiVersion kvrpcpb.APIVersion,
 ) ([]*import_sstpb.SSTMeta, error) {
@@ -567,7 +586,7 @@ func (importer *SnapFileImporter) downloadSST(
 	resultMetasMap := make(map[string]*import_sstpb.SSTMeta)
 	downloadReqsMap := make(map[string]*import_sstpb.DownloadRequest)
 	for _, files := range filesGroup {
-		for _, file := range files.Files {
+		for _, file := range files.SSTFiles {
 			req, sstMeta, err := importer.buildDownloadRequest(file, files.RewriteRules, regionInfo, cipher)
 			if err != nil {
 				return nil, errors.Trace(err)
@@ -650,13 +669,13 @@ func (importer *SnapFileImporter) downloadSST(
 func (importer *SnapFileImporter) downloadRawKVSST(
 	ctx context.Context,
 	regionInfo *split.RegionInfo,
-	filesGroup []TableIDWithFiles,
+	filesGroup []restore.RestoreFilesInfo,
 	cipher *backuppb.CipherInfo,
 	apiVersion kvrpcpb.APIVersion,
 ) ([]*import_sstpb.SSTMeta, error) {
 	downloadMetas := make([]*import_sstpb.SSTMeta, 0, len(filesGroup)*2+1)
 	for _, files := range filesGroup {
-		for _, file := range files.Files {
+		for _, file := range files.SSTFiles {
 			// Empty rule
 			var rule import_sstpb.RewriteRule
 			sstMeta, err := getSSTMetaFromFile(file, regionInfo.Region, &rule, RewriteModeLegacy)

@@ -655,7 +655,8 @@ func TestSortAndValidateFileRanges(t *testing.T) {
 	for i, cs := range cases {
 		t.Log(i)
 		createdTables := generateCreatedTables(t, cs.upstreamTableIDs, cs.upstreamPartitionIDs, downstreamID)
-		splitKeys, tableIDWithFilesGroups, err := snapclient.SortAndValidateFileRanges(createdTables, cs.files, cs.checkpointSetWithTableID, cs.splitSizeBytes, cs.splitKeyCount, cs.splitOnTable, updateCh)
+		onProgress := func(i int64) { updateCh.IncBy(i) }
+		splitKeys, tableIDWithFilesGroups, err := snapclient.SortAndValidateFileRanges(createdTables, cs.files, cs.checkpointSetWithTableID, cs.splitSizeBytes, cs.splitKeyCount, cs.splitOnTable, onProgress)
 		require.NoError(t, err)
 		require.Equal(t, cs.splitKeys, splitKeys)
 		require.Equal(t, len(cs.tableIDWithFilesGroups), len(tableIDWithFilesGroups))
@@ -666,7 +667,7 @@ func TestSortAndValidateFileRanges(t *testing.T) {
 				actualFiles := actualFilesGroup[j]
 				require.Equal(t, expectFiles.TableID, actualFiles.TableID)
 				for k, expectFile := range expectFiles.Files {
-					actualFile := actualFiles.Files[k]
+					actualFile := actualFiles.SSTFiles[k]
 					require.Equal(t, expectFile.Name, actualFile.Name)
 				}
 			}
