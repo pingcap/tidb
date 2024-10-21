@@ -28,8 +28,7 @@ import (
 // The caller should check the GetType of SchemaChange and call the corresponding
 // getter function to retrieve the needed information.
 type SchemaChangeEvent struct {
-	inner      *jsonSchemaChangeEvent
-	tableInfos []*model.TableInfo
+	inner *jsonSchemaChangeEvent
 }
 
 // String implements fmt.Stringer interface.
@@ -102,30 +101,6 @@ func NewCreateTableEvent(
 func (s *SchemaChangeEvent) GetCreateTableInfo() *model.TableInfo {
 	intest.Assert(s.inner.Tp == model.ActionCreateTable)
 	return s.inner.TableInfo
-}
-
-// NewCreateTablesEvent creates a SchemaChangeEvent whose type is
-// ActionCreateTables.
-// Note: the NewCreateTablesEvent should only be used in publisher, it will split the
-// ActionCreateTables into multiple ActionCreateTable events.
-func NewCreateTablesEvent(
-	newTableInfos []*model.TableInfo,
-) *SchemaChangeEvent {
-	return &SchemaChangeEvent{
-		inner: &jsonSchemaChangeEvent{
-			Tp: model.ActionCreateTables,
-		},
-		tableInfos: newTableInfos,
-	}
-}
-
-// GetCreateTablesInfo returns the table infos of the SchemaChangeEvent whose type
-// is ActionCreateTables.
-// Note: the GetCreatesTableInfo should only be used in publisher, it will split the
-// ActionCreateTables into multiple ActionCreateTable events.
-func (s *SchemaChangeEvent) GetCreateTablesInfo() []*model.TableInfo {
-	intest.Assert(s.inner.Tp == model.ActionCreateTables)
-	return s.tableInfos
 }
 
 // NewTruncateTableEvent creates a SchemaChangeEvent whose type is

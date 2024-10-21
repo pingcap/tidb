@@ -229,7 +229,11 @@ func (w *worker) onAddTablePartition(jobCtx *jobContext, job *model.Job) (ver in
 			return ver, errors.Trace(err)
 		}
 		addPartitionEvent := notifier.NewAddPartitionEvent(tblInfo, partInfo)
-		err = asyncNotifyEvents(jobCtx, addPartitionEvent, job, w.sess)
+		var subJobID int64 = -1
+		if job.MultiSchemaInfo != nil {
+			subJobID = int64(job.MultiSchemaInfo.Seq)
+		}
+		err = asyncNotifyEvent(jobCtx, addPartitionEvent, job, subJobID, w.sess)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
@@ -2395,7 +2399,11 @@ func (w *worker) onDropTablePartition(jobCtx *jobContext, job *model.Job) (ver i
 			tblInfo,
 			&model.PartitionInfo{Definitions: droppedDefs},
 		)
-		err = asyncNotifyEvents(jobCtx, dropPartitionEvent, job, w.sess)
+		var subJobID int64 = -1
+		if job.MultiSchemaInfo != nil {
+			subJobID = int64(job.MultiSchemaInfo.Seq)
+		}
+		err = asyncNotifyEvent(jobCtx, dropPartitionEvent, job, subJobID, w.sess)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
@@ -2493,7 +2501,11 @@ func (w *worker) onTruncateTablePartition(jobCtx *jobContext, job *model.Job) (i
 			&model.PartitionInfo{Definitions: newPartitions},
 			&model.PartitionInfo{Definitions: oldPartitions},
 		)
-		err = asyncNotifyEvents(jobCtx, truncatePartitionEvent, job, w.sess)
+		var subJobID int64 = -1
+		if job.MultiSchemaInfo != nil {
+			subJobID = int64(job.MultiSchemaInfo.Seq)
+		}
+		err = asyncNotifyEvent(jobCtx, truncatePartitionEvent, job, subJobID, w.sess)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
@@ -2638,7 +2650,11 @@ func (w *worker) onTruncateTablePartition(jobCtx *jobContext, job *model.Job) (i
 			&model.PartitionInfo{Definitions: newPartitions},
 			&model.PartitionInfo{Definitions: oldPartitions},
 		)
-		err = asyncNotifyEvents(jobCtx, truncatePartitionEvent, job, w.sess)
+		var subJobID int64 = -1
+		if job.MultiSchemaInfo != nil {
+			subJobID = int64(job.MultiSchemaInfo.Seq)
+		}
+		err = asyncNotifyEvent(jobCtx, truncatePartitionEvent, job, subJobID, w.sess)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
@@ -3024,7 +3040,11 @@ func (w *worker) onExchangeTablePartition(jobCtx *jobContext, job *model.Job) (v
 		&model.PartitionInfo{Definitions: []model.PartitionDefinition{originalPartitionDef}},
 		originalNt,
 	)
-	err = asyncNotifyEvents(jobCtx, exchangePartitionEvent, job, w.sess)
+	var subJobID int64 = -1
+	if job.MultiSchemaInfo != nil {
+		subJobID = int64(job.MultiSchemaInfo.Seq)
+	}
+	err = asyncNotifyEvent(jobCtx, exchangePartitionEvent, job, subJobID, w.sess)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
@@ -3636,7 +3656,11 @@ func (w *worker) onReorganizePartition(jobCtx *jobContext, job *model.Job) (ver 
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
-		err = asyncNotifyEvents(jobCtx, event, job, w.sess)
+		var subJobID int64 = -1
+		if job.MultiSchemaInfo != nil {
+			subJobID = int64(job.MultiSchemaInfo.Seq)
+		}
+		err = asyncNotifyEvent(jobCtx, event, job, subJobID, w.sess)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}

@@ -55,7 +55,7 @@ import (
 
 // DANGER: it is an internal function used by onCreateTable and onCreateTables, for reusing code. Be careful.
 // 1. it expects the argument of job has been deserialized.
-// 2. it won't call updateSchemaVersion, FinishTableJob and asyncNotifyEvents.
+// 2. it won't call updateSchemaVersion, FinishTableJob and asyncNotifyEvent.
 func createTable(jobCtx *jobContext, job *model.Job, args *model.CreateTableArgs) (*model.TableInfo, error) {
 	schemaID := job.SchemaID
 	tbInfo, fkCheck := args.TableInfo, args.FKCheck
@@ -183,7 +183,11 @@ func (w *worker) onCreateTable(jobCtx *jobContext, job *model.Job) (ver int64, _
 		return ver, errors.Trace(err)
 	}
 	createTableEvent := notifier.NewCreateTableEvent(tbInfo)
-	err = asyncNotifyEvents(jobCtx, createTableEvent, job, w.sess)
+	var subJobID int64 = -1
+	if job.MultiSchemaInfo != nil {
+		subJobID = int64(job.MultiSchemaInfo.Seq)
+	}
+	err = asyncNotifyEvent(jobCtx, createTableEvent, job, subJobID, w.sess)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
@@ -218,7 +222,11 @@ func (w *worker) createTableWithForeignKeys(jobCtx *jobContext, job *model.Job, 
 			return ver, errors.Trace(err)
 		}
 		createTableEvent := notifier.NewCreateTableEvent(tbInfo)
-		err = asyncNotifyEvents(jobCtx, createTableEvent, job, w.sess)
+		var subJobID int64 = -1
+		if job.MultiSchemaInfo != nil {
+			subJobID = int64(job.MultiSchemaInfo.Seq)
+		}
+		err = asyncNotifyEvent(jobCtx, createTableEvent, job, subJobID, w.sess)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
@@ -268,15 +276,16 @@ func (w *worker) onCreateTables(jobCtx *jobContext, job *model.Job) (int64, erro
 			tableInfos = append(tableInfos, tbInfo)
 		}
 	}
-
 	ver, err = updateSchemaVersion(jobCtx, job)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
-	createTablesEvent := notifier.NewCreateTablesEvent(tableInfos)
-	err = asyncNotifyEvents(jobCtx, createTablesEvent, job, w.sess)
-	if err != nil {
-		return ver, errors.Trace(err)
+	for i := range tableInfos {
+		createTableEvent := notifier.NewCreateTableEvent(tableInfos[i])
+		err = asyncNotifyEvent(jobCtx, createTableEvent, job, int64(i), w.sess)
+		if err != nil {
+			return ver, errors.Trace(err)
+		}
 	}
 
 	job.State = model.JobStateDone

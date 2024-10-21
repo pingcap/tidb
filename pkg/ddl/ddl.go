@@ -564,24 +564,6 @@ func (d *ddl) RegisterStatsHandle(h *handle.Handle) {
 	d.ddlEventCh = h.DDLEventCh()
 }
 
-// asyncNotifyEvents wrap the asyncNotifyEvent to notify events.
-// It handles the multi schema change event and merged DDL.
-func asyncNotifyEvents(jobCtx *jobContext, e *notifier.SchemaChangeEvent, job *model.Job, sctx *sess.Session) error {
-	if job.MultiSchemaInfo != nil {
-		return asyncNotifyEvent(jobCtx, e, job, int64(job.MultiSchemaInfo.Seq), sctx)
-	} else if e.GetType() == model.ActionCreateTables {
-		// split creat tables event to multiple create table events
-		for i, tbl := range e.GetCreateTablesInfo() {
-			createTableEvent := notifier.NewCreateTableEvent(tbl)
-			if err := asyncNotifyEvent(jobCtx, createTableEvent, job, int64(i), sctx); err != nil {
-				return err
-			}
-		}
-		return nil
-	}
-	return asyncNotifyEvent(jobCtx, e, job, -1, sctx)
-}
-
 // asyncNotifyEvent will notify the ddl event to outside world, say statistic handle. When the channel is full, we may
 // give up notify and log it.
 func asyncNotifyEvent(jobCtx *jobContext, e *notifier.SchemaChangeEvent, job *model.Job, subJobID int64, sctx *sess.Session) error {
