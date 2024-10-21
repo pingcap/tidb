@@ -380,6 +380,38 @@ func (w *backfillWorker) run(d *ddlCtx, bf backfiller, job *model.Job) {
 	}
 }
 
+func splitAndValidateTableRanges(
+	ctx context.Context,
+	t table.PhysicalTable,
+	store kv.Storage,
+	startKey, endKey kv.Key,
+	limit int,
+) ([]kv.KeyRange, error) {
+	ranges, err := splitTableRanges(ctx, t, store, startKey, endKey, limit)
+	if err != nil {
+		return nil, err
+	}
+	return validateTableRanges(ranges, startKey, endKey)
+}
+
+func validateTableRanges(ranges []kv.KeyRange, start, end kv.Key) ([]kv.KeyRange, error) {
+	for i, r := range ranges {
+		if len(r.StartKey) == 0 {
+			if i != 0 {
+				return nil, errors.Errorf("get empty start key in the middle of ranges")
+			}
+			r.StartKey = start
+		}
+		if len(r.EndKey) == 0 {
+			if i != len(ranges)-1 {
+				return nil, errors.Errorf("get empty end key in the middle of ranges")
+			}
+			r.EndKey = end
+		}
+	}
+	return ranges, nil
+}
+
 // splitTableRanges uses PD region's key ranges to split the backfilling table key range space,
 // to speed up backfilling data in table with disperse handle.
 // The `t` should be a non-partitioned table or a partition.
@@ -414,6 +446,7 @@ func splitTableRanges(t table.PhysicalTable, store kv.Storage, startKey, endKey 
 	return ranges, nil
 }
 
+<<<<<<< HEAD
 type resultConsumer struct {
 	dc         *ddlCtx
 	wg         *sync.WaitGroup
@@ -537,20 +570,21 @@ func handleOneResult(result *backfillResult, scheduler backfillScheduler, consum
 
 func getBatchTasks(t table.Table, reorgInfo *reorgInfo, kvRanges []kv.KeyRange,
 	taskIDAlloc *taskIDAllocator) []*reorgBackfillTask {
+=======
+func getBatchTasks(
+	t table.Table,
+	reorgInfo *reorgInfo,
+	kvRanges []kv.KeyRange,
+	taskIDAlloc *taskIDAllocator,
+	bfWorkerTp backfillerType,
+) []*reorgBackfillTask {
+>>>>>>> eec20e67fdf (ddl: skip getting actual end key for each range in ingest mode (#54143))
 	batchTasks := make([]*reorgBackfillTask, 0, len(kvRanges))
-	var prefix kv.Key
-	if reorgInfo.mergingTmpIdx {
-		prefix = t.IndexPrefix()
-	} else {
-		prefix = t.RecordPrefix()
-	}
-	// Build reorg tasks.
-	job := reorgInfo.Job
 	//nolint:forcetypeassert
 	phyTbl := t.(table.PhysicalTable)
-	jobCtx := reorgInfo.NewJobContext()
-	for _, keyRange := range kvRanges {
+	for _, r := range kvRanges {
 		taskID := taskIDAlloc.alloc()
+<<<<<<< HEAD
 		startKey := keyRange.StartKey
 		if len(startKey) == 0 {
 			startKey = prefix
@@ -569,6 +603,11 @@ func getBatchTasks(t table.Table, reorgInfo *reorgInfo, kvRanges []kv.KeyRange,
 			endKey = endK
 		}
 
+=======
+		startKey := r.StartKey
+		endKey := r.EndKey
+		endKey = getActualEndKey(t, reorgInfo, bfWorkerTp, startKey, endKey, taskID)
+>>>>>>> eec20e67fdf (ddl: skip getting actual end key for each range in ingest mode (#54143))
 		task := &reorgBackfillTask{
 			id:            taskID,
 			jobID:         reorgInfo.Job.ID,
@@ -582,10 +621,61 @@ func getBatchTasks(t table.Table, reorgInfo *reorgInfo, kvRanges []kv.KeyRange,
 	return batchTasks
 }
 
+func getActualEndKey(
+	t table.Table,
+	reorgInfo *reorgInfo,
+	bfTp backfillerType,
+	rangeStart, rangeEnd kv.Key,
+	taskID int,
+) kv.Key {
+	job := reorgInfo.Job
+	//nolint:forcetypeassert
+	phyTbl := t.(table.PhysicalTable)
+
+	if bfTp == typeAddIndexMergeTmpWorker {
+		// Temp Index data does not grow infinitely, we can return the whole range
+		// and IndexMergeTmpWorker should still be finished in a bounded time.
+		return rangeEnd
+	}
+	if bfTp == typeAddIndexWorker && job.ReorgMeta.ReorgTp == model.ReorgTypeLitMerge {
+		// Ingest worker uses coprocessor to read table data. It is fast enough,
+		// we don't need to get the actual end key of this range.
+		return rangeEnd
+	}
+
+	// Otherwise to avoid the future data written to key range of [backfillChunkEndKey, rangeEnd) and
+	// backfill worker can't catch up, we shrink the end key to the actual written key for now.
+	jobCtx := reorgInfo.NewJobContext()
+
+	actualEndKey, err := GetRangeEndKey(jobCtx, reorgInfo.d.store, job.Priority, t.RecordPrefix(), rangeStart, rangeEnd)
+	if err != nil {
+		logutil.DDLLogger().Info("get backfill range task, get reverse key failed", zap.Error(err))
+		return rangeEnd
+	}
+	logutil.DDLLogger().Info("get backfill range task, change end key",
+		zap.Int("id", taskID),
+		zap.Int64("pTbl", phyTbl.GetPhysicalID()),
+		zap.String("end key", hex.EncodeToString(rangeEnd)),
+		zap.String("current end key", hex.EncodeToString(actualEndKey)))
+	return actualEndKey
+}
+
 // sendTasks sends tasks to workers, and returns remaining kvRanges that is not handled.
+<<<<<<< HEAD
 func sendTasks(scheduler backfillScheduler, consumer *resultConsumer,
 	t table.PhysicalTable, kvRanges []kv.KeyRange, reorgInfo *reorgInfo, taskIDAlloc *taskIDAllocator) {
 	batchTasks := getBatchTasks(t, reorgInfo, kvRanges, taskIDAlloc)
+=======
+func sendTasks(
+	scheduler backfillScheduler,
+	t table.PhysicalTable,
+	kvRanges []kv.KeyRange,
+	reorgInfo *reorgInfo,
+	taskIDAlloc *taskIDAllocator,
+	bfWorkerTp backfillerType,
+) error {
+	batchTasks := getBatchTasks(t, reorgInfo, kvRanges, taskIDAlloc, bfWorkerTp)
+>>>>>>> eec20e67fdf (ddl: skip getting actual end key for each range in ingest mode (#54143))
 	for _, task := range batchTasks {
 		if consumer.shouldAbort() {
 			return
@@ -708,8 +798,42 @@ func (dc *ddlCtx) writePhysicalTableRecord(sessPool *sess.Pool, t table.Physical
 		if err != nil {
 			return errors.Trace(err)
 		}
+<<<<<<< HEAD
 		if len(kvRanges) == 0 {
 			break
+=======
+	})
+
+	// generate task goroutine
+	eg.Go(func() error {
+		// we will modify the startKey in this goroutine, so copy them to avoid race.
+		start, end := startKey, endKey
+		taskIDAlloc := newTaskIDAllocator()
+		for {
+			kvRanges, err2 := splitAndValidateTableRanges(egCtx, t, reorgInfo.d.store, start, end, backfillTaskChanSize)
+			if err2 != nil {
+				return errors.Trace(err2)
+			}
+			if len(kvRanges) == 0 {
+				break
+			}
+			logutil.DDLLogger().Info("start backfill workers to reorg record",
+				zap.Stringer("type", bfWorkerType),
+				zap.Int("workerCnt", scheduler.currentWorkerSize()),
+				zap.Int("regionCnt", len(kvRanges)),
+				zap.String("startKey", hex.EncodeToString(start)),
+				zap.String("endKey", hex.EncodeToString(end)))
+
+			err2 = sendTasks(scheduler, t, kvRanges, reorgInfo, taskIDAlloc, bfWorkerType)
+			if err2 != nil {
+				return errors.Trace(err2)
+			}
+
+			start = kvRanges[len(kvRanges)-1].EndKey
+			if start.Cmp(end) >= 0 {
+				break
+			}
+>>>>>>> eec20e67fdf (ddl: skip getting actual end key for each range in ingest mode (#54143))
 		}
 		logutil.BgLogger().Info("start backfill workers to reorg record", zap.String("category", "ddl"),
 			zap.Stringer("type", bfWorkerType),
