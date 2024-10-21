@@ -1251,15 +1251,17 @@
       {
         "SQL": "explain select /*+ merge_join(t1, t2) */ * from t t1, t t2 where t1.a=t2.a",
         "Plan": [
-          "MergeJoin_10 12487.50 root  inner join, left key:test.t.a, right key:test.t.a",
-          "├─Projection_19(Build) 9990.00 root  test.t.a, test.t.b, test.t.c",
-          "│ └─IndexLookUp_18 9990.00 root  ",
-          "│   ├─IndexFullScan_16(Build) 9990.00 cop[tikv] table:t2, index:idx_a(a) keep order:true, stats:pseudo",
-          "│   └─TableRowIDScan_17(Probe) 9990.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
-          "└─Projection_15(Probe) 9990.00 root  test.t.a, test.t.b, test.t.c",
-          "  └─IndexLookUp_14 9990.00 root  ",
-          "    ├─IndexFullScan_12(Build) 9990.00 cop[tikv] table:t1, index:idx_a(a) keep order:true, stats:pseudo",
-          "    └─TableRowIDScan_13(Probe) 9990.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+          "MergeJoin_11 12487.50 root  inner join, left key:test.t.a, right key:test.t.a",
+          "├─Sort_49(Build) 9990.00 root  test.t.a",
+          "│ └─TableReader_45 9990.00 root  MppVersion: 2, data:ExchangeSender_44",
+          "│   └─ExchangeSender_44 9990.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "│     └─Selection_43 9990.00 mpp[tiflash]  not(isnull(test.t.a))",
+          "│       └─TableFullScan_42 10000.00 mpp[tiflash] table:t2 pushed down filter:empty, keep order:false, stats:pseudo",
+          "└─Sort_34(Probe) 9990.00 root  test.t.a",
+          "  └─TableReader_30 9990.00 root  MppVersion: 2, data:ExchangeSender_29",
+          "    └─ExchangeSender_29 9990.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "      └─Selection_28 9990.00 mpp[tiflash]  not(isnull(test.t.a))",
+          "        └─TableFullScan_27 10000.00 mpp[tiflash] table:t1 pushed down filter:empty, keep order:false, stats:pseudo"
         ],
         "Warn": [
           "MPP mode may be blocked because you have used hint to specify a join algorithm which is not supported by mpp now.",
@@ -1289,15 +1291,17 @@
       {
         "SQL": "explain select /*+ merge_join(t1, t2) */ * from t t1, t t2 where t1.a=t2.a",
         "Plan": [
-          "MergeJoin_10 12487.50 root  inner join, left key:test.t.a, right key:test.t.a",
-          "├─Projection_19(Build) 9990.00 root  test.t.a, test.t.b, test.t.c",
-          "│ └─IndexLookUp_18 9990.00 root  ",
-          "│   ├─IndexFullScan_16(Build) 9990.00 cop[tikv] table:t2, index:idx_a(a) keep order:true, stats:pseudo",
-          "│   └─TableRowIDScan_17(Probe) 9990.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
-          "└─Projection_15(Probe) 9990.00 root  test.t.a, test.t.b, test.t.c",
-          "  └─IndexLookUp_14 9990.00 root  ",
-          "    ├─IndexFullScan_12(Build) 9990.00 cop[tikv] table:t1, index:idx_a(a) keep order:true, stats:pseudo",
-          "    └─TableRowIDScan_13(Probe) 9990.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+          "MergeJoin_11 12487.50 root  inner join, left key:test.t.a, right key:test.t.a",
+          "├─Sort_49(Build) 9990.00 root  test.t.a",
+          "│ └─TableReader_45 9990.00 root  MppVersion: 2, data:ExchangeSender_44",
+          "│   └─ExchangeSender_44 9990.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "│     └─Selection_43 9990.00 mpp[tiflash]  not(isnull(test.t.a))",
+          "│       └─TableFullScan_42 10000.00 mpp[tiflash] table:t2 pushed down filter:empty, keep order:false, stats:pseudo",
+          "└─Sort_34(Probe) 9990.00 root  test.t.a",
+          "  └─TableReader_30 9990.00 root  MppVersion: 2, data:ExchangeSender_29",
+          "    └─ExchangeSender_29 9990.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "      └─Selection_28 9990.00 mpp[tiflash]  not(isnull(test.t.a))",
+          "        └─TableFullScan_27 10000.00 mpp[tiflash] table:t1 pushed down filter:empty, keep order:false, stats:pseudo"
         ],
         "Warn": null
       },
@@ -2701,8 +2705,8 @@
       },
       {
         "SQL": "select /*+ MERGE_JOIN(t1) */ t1.b, t2.b from t1 inner join t2 on t1.a = t2.a;",
-        "Plan": "MergeInnerJoin{IndexLookUp(Index(t1.idx_a)[[-inf,+inf]], Table(t1))->Projection->IndexLookUp(Index(t2.idx_a)[[-inf,+inf]], Table(t2))->Projection}(test.t1.a,test.t2.a)",
-        "Hints": "merge_join(`test`.`t1`), use_index(@`sel_1` `test`.`t1` `idx_a`), order_index(@`sel_1` `test`.`t1` `idx_a`), use_index(@`sel_1` `test`.`t2` `idx_a`), order_index(@`sel_1` `test`.`t2` `idx_a`)"
+        "Plan": "MergeInnerJoin{TableReader(Table(t1)->Sel([not(isnull(test.t1.a))]))->Sort->TableReader(Table(t2)->Sel([not(isnull(test.t2.a))]))->Sort}(test.t1.a,test.t2.a)",
+        "Hints": "merge_join(`test`.`t1`), use_index(@`sel_1` `test`.`t1` ), use_index(@`sel_1` `test`.`t2` )"
       }
     ]
   },
