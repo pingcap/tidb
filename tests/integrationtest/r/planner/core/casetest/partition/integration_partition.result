@@ -634,17 +634,7 @@ Projection	10.00	root		list_partition_pruning.trange.a
           └─TableRangeScan	10.00	cop[tikv]	table:trange, partition:p3	range:(10,+inf], keep order:true, stats:pseudo
 explain format='brief' select a from tlist use index () where b > 10 order by b limit 10;
 id	estRows	task	access object	operator info
-Projection	10.00	root		list_partition_pruning.tlist.a
-└─TopN	10.00	root		list_partition_pruning.tlist.b, offset:0, count:10
-  └─PartitionUnion	20.00	root		
-    ├─Limit	10.00	root		offset:0, count:10
-    │ └─TableReader	10.00	root		data:Limit
-    │   └─Limit	10.00	cop[tikv]		offset:0, count:10
-    │     └─TableRangeScan	10.00	cop[tikv]	table:tlist, partition:p0	range:(10,+inf], keep order:true, stats:pseudo
-    └─Limit	10.00	root		offset:0, count:10
-      └─TableReader	10.00	root		data:Limit
-        └─Limit	10.00	cop[tikv]		offset:0, count:10
-          └─TableRangeScan	10.00	cop[tikv]	table:tlist, partition:p1	range:(10,+inf], keep order:true, stats:pseudo
+TableDual	0.00	root		rows:0
 explain format='brief' select a from thash use index () where b > 10 order by b limit 10;
 id	estRows	task	access object	operator info
 Projection	10.00	root		list_partition_pruning.thash.a
