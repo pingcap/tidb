@@ -85,6 +85,21 @@ func (m *Memo) CopyIn(target *Group, lp base.LogicalPlan) *GroupExpression {
 	return groupExpr
 }
 
+// GetGroups gets all groups in the memo.
+func (m *Memo) GetGroups() *list.List {
+	return m.groups
+}
+
+// GetGroupID2Group gets the map from group id to group.
+func (m *Memo) GetGroupID2Group() map[GroupID]*list.Element {
+	return m.groupID2Group
+}
+
+// GetRootGroup gets the root group of the memo.
+func (m *Memo) GetRootGroup() *Group {
+	return m.rootGroup
+}
+
 // @bool indicates whether the groupExpr is inserted to a new group.
 func (m *Memo) insertGroupExpression(groupExpr *GroupExpression, target *Group) bool {
 	// for group merge, here groupExpr is the new groupExpr with undetermined belonged group.
@@ -108,7 +123,9 @@ func (m *Memo) NewGroup() *Group {
 }
 
 // Init initializes the memo with a logical plan, converting logical plan tree format into group tree.
-func (m *Memo) Init(plan base.LogicalPlan) {
+func (m *Memo) Init(plan base.LogicalPlan) *GroupExpression {
 	intest.Assert(m.groups.Len() == 0)
-	m.rootGroup = m.CopyIn(nil, plan).GetGroup()
+	gE := m.CopyIn(nil, plan)
+	m.rootGroup = gE.GetGroup()
+	return gE
 }
