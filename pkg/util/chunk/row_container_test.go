@@ -582,7 +582,7 @@ func benchmarkRowContainerReaderInDiskWithRowLength(b *testing.B, rowLength int)
 	rc.SpillToDisk()
 
 	// insert `b.N * 1<<10` rows (`b.N` chunks) into the rc
-	for i := 0; i < b.N; i++ {
+	for i := range b.N {
 		chk := NewChunkWithCapacity(fields, 1<<10)
 		for j := 0; j < 1<<10; j++ {
 			chk.AppendBytes(0, randomBytes)

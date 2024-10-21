@@ -184,7 +184,7 @@ func BenchmarkCopySelectedJoinRows(b *testing.B) {
 	b.ReportAllocs()
 	srcChk, dstChk, selected := getChk(true)
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for range b.N {
 		dstChk.Reset()
 		_, err := CopySelectedJoinRowsWithSameOuterRows(srcChk, 0, 3, 3, 3, selected, dstChk)
 		if err != nil {
@@ -196,7 +196,7 @@ func BenchmarkCopySelectedJoinRowsDirect(b *testing.B) {
 	b.ReportAllocs()
 	srcChk, dstChk, selected := getChk(false)
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for range b.N {
 		dstChk.Reset()
 		_, err := CopySelectedJoinRowsDirect(srcChk, selected, dstChk)
 		if err != nil {
@@ -209,7 +209,7 @@ func BenchmarkAppendSelectedRow(b *testing.B) {
 	srcChk, dstChk, selected := getChk(true)
 	numRows := srcChk.NumRows()
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for range b.N {
 		dstChk.Reset()
 		for j := 0; j < numRows; j++ {
 			if !selected[j] {
