@@ -206,6 +206,11 @@ type Range struct {
 	end   []byte
 }
 
+type RangeAndRegion struct {
+	r       Range
+	regions map[uint64]int
+}
+
 type encodingBuilder struct {
 	metrics *metric.Metrics
 }
@@ -1294,6 +1299,117 @@ func (local *local) readAndSplitIntoRange(ctx context.Context, engine *Engine, r
 	return ranges, nil
 }
 
+func (local *local) scanRegion(
+	ctxt context.Context,
+	engine *Engine,
+	start, end []byte,
+) ([]*split.RegionInfo, error) {
+	ito := &pebble.IterOptions{
+		LowerBound: start,
+		UpperBound: end,
+	}
+
+	iter := engine.newKVIter(ctxt, ito)
+	//nolint: errcheck
+	defer iter.Close()
+	// Needs seek to first because NewIter returns an iterator that is unpositioned
+	hasKey := iter.First()
+	if iter.Error() != nil {
+		return nil, errors.Annotate(iter.Error(), "failed to read the first key")
+	}
+	if !hasKey {
+		log.FromContext(ctxt).Info("There is no pairs in iterator",
+			logutil.Key("start", start),
+			logutil.Key("end", end))
+		engine.finishedRanges.add(Range{start: start, end: end})
+		return nil, nil
+	}
+	pairStart := append([]byte{}, iter.Key()...)
+	iter.Last()
+	if iter.Error() != nil {
+		return nil, errors.Annotate(iter.Error(), "failed to seek to the last key")
+	}
+	pairEnd := append([]byte{}, iter.Key()...)
+
+	var regions []*split.RegionInfo
+	var err error
+	ctx, cancel := context.WithCancel(ctxt)
+	defer cancel()
+
+WriteAndIngest:
+	for retry := 0; retry < maxRetryTimes; {
+		if retry != 0 {
+			select {
+			case <-time.After(time.Second):
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			}
+		}
+		startKey := codec.EncodeBytes([]byte{}, pairStart)
+		endKey := codec.EncodeBytes([]byte{}, nextKey(pairEnd))
+		regions, err = split.PaginateScanRegion(ctx, local.splitCli, startKey, endKey, scanRegionLimit)
+		if err != nil || len(regions) == 0 {
+			log.FromContext(ctx).Warn("scan region failed", log.ShortError(err), zap.Int("region_len", len(regions)),
+				logutil.Key("startKey", startKey), logutil.Key("endKey", endKey), zap.Int("retry", retry))
+			retry++
+			continue WriteAndIngest
+		}
+		return regions, nil
+	}
+
+	return nil, err
+}
+
+func pickRanges(rangeAndRegions map[int]RangeAndRegion, regionProcessingMap *sync.Map) *RangeAndRegion {
+	minScore := math.MaxInt64
+	var bestRangeIdx int
+	for i, rangeAndRegion := range rangeAndRegions {
+		score := 0
+		for store, val := range rangeAndRegion.regions {
+			// lower score mean less threads are processing its stores
+			score = score + val*getValue(regionProcessingMap, store)
+		}
+		if score == 0 {
+			// break early since no threads is importing its stores
+			bestRangeIdx = i
+			break
+		} else if minScore > score {
+			minScore = score
+			bestRangeIdx = i
+		}
+	}
+	bestRange := rangeAndRegions[bestRangeIdx]
+	for store, count := range bestRange.regions {
+		increaseByKey(regionProcessingMap, store, count)
+	}
+	delete(rangeAndRegions, bestRangeIdx)
+	return &bestRange
+}
+
+func getValue(m *sync.Map, key interface{}) int {
+	if value, ok := m.Load(key); ok {
+		return value.(int)
+	}
+	return 0
+}
+
+func increaseByKey(m *sync.Map, key interface{}, x int) {
+	for {
+		value, loaded := m.LoadOrStore(key, x)
+		if loaded {
+			// Key exists, increase the value by x
+			newValue := value.(int) + x
+			if m.CompareAndSwap(key, value, newValue) {
+				// Successfully updated the value, exit the loop
+				break
+			}
+		} else {
+			// Key didn't exist, set it to x, exit the loop
+			break
+		}
+	}
+}
+
 func (local *local) writeAndIngestByRange(
 	ctxt context.Context,
 	engine *Engine,
@@ -1541,19 +1657,49 @@ func (local *local) writeAndIngestByRanges(ctx context.Context, engine *Engine, 
 	var allErr error
 	var wg sync.WaitGroup
 	metErr := atomic.NewBool(false)
+	rangeAndRegions := make(map[int]RangeAndRegion)
+	regionProcessingMap := sync.Map{}
 
-	for _, r := range ranges {
+	for i, r := range ranges {
 		startKey := r.start
 		endKey := r.end
+		regions, err := local.scanRegion(ctx, engine, startKey, endKey)
+		if err != nil {
+			log.FromContext(ctx).Warn("scaen regino failed", zap.Error(err))
+			return err
+		}
+		rr := RangeAndRegion{
+			r:       r,
+			regions: make(map[uint64]int),
+		}
+		for _, region := range regions {
+			for _, peer := range region.Region.Peers {
+				rr.regions[peer.StoreId]++
+			}
+		}
+		rangeAndRegions[i] = rr
+	}
+
+	finished := 0
+outerLoop:
+	for finished < len(rangeAndRegions) {
+		rr := pickRanges(rangeAndRegions, &regionProcessingMap)
+		startKey := rr.r.start
+		endKey := rr.r.end
+		processingRegions := rr.regions
 		w := local.rangeConcurrency.Apply()
 		// if meet error here, skip try more here to allow fail fast.
 		if metErr.Load() {
 			local.rangeConcurrency.Recycle(w)
-			break
+			break outerLoop
 		}
 		wg.Add(1)
 		go func(w *worker.Worker) {
 			defer func() {
+				for store, count := range processingRegions {
+					// when we finish importing ranges, remove store count in the map
+					increaseByKey(&regionProcessingMap, store, count*-1)
+				}
 				local.rangeConcurrency.Recycle(w)
 				wg.Done()
 			}()
@@ -1588,6 +1734,7 @@ func (local *local) writeAndIngestByRanges(ctx context.Context, engine *Engine, 
 				metErr.Store(true)
 			}
 		}(w)
+		finished += 1
 	}
 
 	// wait for all sub tasks finish to avoid panic. if we return on the first error,
