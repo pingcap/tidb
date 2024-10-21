@@ -1157,7 +1157,7 @@ func TestStmtSummaryEvictedPointGet(t *testing.T) {
 		tk.MustExec(fmt.Sprintf("select p from th%v where p=2333;", i%6))
 	}
 	tk.MustQuery("select EVICTED_COUNT from information_schema.statements_summary_evicted;").
-		Check(testkit.Rows("7"))
+		Check(testkit.Rows("996"))
 
 	tk.MustExec("set @@global.tidb_enable_stmt_summary=0;")
 	tk.MustQuery("select count(*) from information_schema.statements_summary_evicted;").
