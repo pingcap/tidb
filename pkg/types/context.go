@@ -64,6 +64,9 @@ const (
 	FlagSkipUTF8MB4Check
 	// FlagCastTimeToYearThroughConcat indicates to cast time to year through concatenation. For example, `00:19:59` will be converted to '1959'
 	FlagCastTimeToYearThroughConcat
+	// FlagTimeTruncateFractional indicates time fsp should be truncated instead of rounded.
+	// See TIME_TRUNCATE_FRACTIONAL SQL Mode
+	FlagTimeTruncateFractional
 )
 
 // AllowNegativeToUnsigned indicates whether the flag `FlagAllowNegativeToUnsigned` is set
@@ -194,6 +197,19 @@ func (f Flags) WithCastTimeToYearThroughConcat(flag bool) Flags {
 		return f | FlagCastTimeToYearThroughConcat
 	}
 	return f &^ FlagCastTimeToYearThroughConcat
+}
+
+// TimeTruncateFractional indicates whether the flag `FlagTimeTruncateFractional` is set
+func (f Flags) TimeTruncateFractional() bool {
+	return f&FlagTimeTruncateFractional != 0
+}
+
+// WithTimeTruncateFractional returns a new flags with `FlagTimeTruncateFractional` set/unset according to the skip parameter
+func (f Flags) WithTimeTruncateFractional(set bool) Flags {
+	if set {
+		return f | FlagTimeTruncateFractional
+	}
+	return f &^ FlagTimeTruncateFractional
 }
 
 // Context provides the information when converting between different types.
