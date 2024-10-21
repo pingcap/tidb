@@ -66,8 +66,9 @@ const (
 	strictPlacementPolicyMode = "STRICT"
 	ignorePlacementPolicyMode = "IGNORE"
 
-	defaultDDLConcurrency = 16
-	maxSplitKeysOnce      = 10240
+	defaultDDLConcurrency     = 16
+	maxSplitKeysOnce          = 10240
+	resetSpeedLimitRetryTimes = 3
 )
 
 const minBatchDdlSize = 1
@@ -948,7 +949,25 @@ func (rc *SnapClient) ExecDDLs(ctx context.Context, ddlJobs []*model.Job) error 
 	return nil
 }
 
-func (rc *SnapClient) ResetSpeedLimit(ctx context.Context) error {
+func (rc *SnapClient) resetSpeedLimit(ctx context.Context) {
+	var resetErr error
+	// In future we may need a mechanism to set speed limit in ttl. like what we do in switchmode. TODO
+	for retry := 0; retry < resetSpeedLimitRetryTimes; retry++ {
+		resetErr = rc.resetSpeedLimitInternal(ctx)
+		if resetErr != nil {
+			log.Warn("failed to reset speed limit, retry it",
+				zap.Int("retry time", retry), logutil.ShortError(resetErr))
+			time.Sleep(time.Duration(retry+3) * time.Second)
+			continue
+		}
+		break
+	}
+	if resetErr != nil {
+		log.Error("failed to reset speed limit, please reset it manually", zap.Error(resetErr))
+	}
+}
+
+func (rc *SnapClient) resetSpeedLimitInternal(ctx context.Context) error {
 	rc.hasSpeedLimited = false
 	err := rc.setSpeedLimit(ctx, 0)
 	if err != nil {
