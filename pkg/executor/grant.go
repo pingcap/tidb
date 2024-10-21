@@ -161,9 +161,10 @@ func (e *GrantExec) Next(ctx context.Context, _ *chunk.Chunk) error {
 		if err != nil {
 			return err
 		}
-		if !exists && e.Ctx().GetSessionVars().SQLMode.HasNoAutoCreateUserMode() {
-			return exeerrors.ErrCantCreateUserWithGrant
-		} else if !exists {
+		if !exists {
+			if e.Ctx().GetSessionVars().SQLMode.HasNoAutoCreateUserMode() {
+				return exeerrors.ErrCantCreateUserWithGrant
+			}
 			// This code path only applies if mode NO_AUTO_CREATE_USER is unset.
 			// It is required for compatibility with 5.7 but removed from 8.0
 			// since it results in a massive security issue:

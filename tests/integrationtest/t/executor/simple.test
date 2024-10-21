@@ -487,3 +487,26 @@ rollback;
 select * from auto_new;
 
 set autocommit = default;
+
+# TestDefaultAuthPluginForCreateUser
+
+connection default;
+set global default_authentication_plugin = 'caching_sha2_password';
+create user default_sha256_user;
+show create user default_sha256_user;
+select plugin from mysql.user where user = 'default_sha256_user';
+
+alter user default_sha256_user identified with 'tidb_sm3_password';
+show create user default_sha256_user;
+select plugin from mysql.user where user = 'default_sha256_user';
+
+alter user default_sha256_user identified with 'authentication_ldap_simple';
+show create user default_sha256_user;
+select plugin from mysql.user where user = 'default_sha256_user';
+
+alter user default_sha256_user identified with 'authentication_ldap_sasl';
+show create user default_sha256_user;
+select plugin from mysql.user where user = 'default_sha256_user';
+
+drop user default_sha256_user;
+set global default_authentication_plugin = default;
