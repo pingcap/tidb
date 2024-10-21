@@ -3054,7 +3054,7 @@ func (s *session) MatchIdentity(username, remoteHost string) (*auth.UserIdentity
 	if err == nil && variable.TiDBOptOn(varVal) {
 		skipNameResolve = true
 	}
-	user.Username, user.Hostname, success = pm.MatchIdentity(username, remoteHost, skipNameResolve)
+	user.Username, user.Hostname, success = pm.MatchIdentity(s, username, remoteHost, skipNameResolve)
 	if success {
 		return user, nil
 	}
