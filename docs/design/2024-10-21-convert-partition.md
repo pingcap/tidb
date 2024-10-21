@@ -23,16 +23,14 @@
 This design propose a new syntax for moving data in and out from table partitions, simpler to use than EXCHANGE PARTITION, more efficient for Global Index due to added restrictions by not allowing concurrent read/write for non-partitioned table during all steps of the DDL state changes, which would also introduce more complexity and risk to the core read/write path in TiDB.
 
 Proposed syntax:
-`ALTER TABLE t CONVERT PARTITION p TO TABLE t2`
-and
-`ALTER TABLE t CONVERT TABLE t2 TO <partition definition>`, example: `ALTER TABLE t CONVERT TABLE t2 TO PARTITION p VALUES LESS THAN (100)`
+- `ALTER TABLE t CONVERT PARTITION p TO TABLE t2`
+- `ALTER TABLE t CONVERT TABLE t2 TO <partition definition>`, example: `ALTER TABLE t CONVERT TABLE t2 TO PARTITION p VALUES LESS THAN (100)`
+- `ALTER TABLE t EXCHANGE PARTITION p WITH TABLE t2 [{WITH|WITHOUT} VALIDATION | UPDATE GLOBAL INDEXES]` where `UPDATE GLOBAL INDEXES` is new and have an effect on execution time etc.
 
 ## Motivation or Background
 
-The most common use case for EXCHANGE PARTITION is to either archive an old partition or to import new data into a partition. With EXCHANGE PARTITION both the partition and the table to be exchanged needs to exists, which creates extra steps for the user/DBA. See [blog post from MariaDB](https://mariadb.org/10-7-preview-feature-convert-partition/) which now supports [CONVERT PARTITION](https://mariadb.com/kb/en/partitioning-overview/#converting-partitions-tofrom-tables)
+The most common use case for EXCHANGE PARTITION is to either archive an old partition or to import new data into a partition. With EXCHANGE PARTITION both the partition and the table to be exchanged needs to exists, which creates extra steps for the user/DBA. See [blog post from MariaDB](https://mariadb.org/10-7-preview-feature-convert-partition/) which now supports [CONVERT PARTITION](https://mariadb.com/kb/en/partitioning-overview/#converting-partitions-tofrom-tables).
 With CONVERT we can create the new table or partition in the same DDL, making it easier and less prune to errors.
-
-Currently if one creates and drops indexes of a partitioned table, the internal index ids will not be consecutive, so creating a new table to be used in EXCHANGE PARTITION will not match the partitioned tables index ids, and will not be allowed to be used.
 
 Also with the introduction of [GLOBAL INDEX](2020-08-04-global-index.md) there are new compatibility issues, since a non-partitioned table cannot have global index, the comparison will always fail, thus blocking EXCHANGE PARTITION from being supported. So to add support for GLOBAL INDEX in EXCHANGE PARTITION, we need to enhance EXCHANGE PARTITION to allow handling of GLOBAL INDEXES, similar to how ALTER TABLE t PARTITION BY ... UPDATE INDEXES (...) works. Also supporting this, would need new restrictions, like not allowing WITHOUT VALIDATION as well as the operation would take much longer time, since it needs to update the Global Index by removing the entries from the exchanged partition and add the entries from the exchaned non-partitioned table. Other restrictions may be needed depending on implementation, like blocking reads and writes during some schema change states.
 
@@ -119,6 +117,7 @@ Possible other options, specifically for Global Index:
 - Should we require "local" unique indexes on the non-partitioned table matching the partitioned tables global indexes? At least no need to match the internal index ids.
   - Pro: at least there are no duplicate entries within the non-partitioned table.
   - Con: it will just be dropped, and each row will be inserted and checked into the global indexes anyway, so not technically needed.
+
 Discussion:
 - @mjonss propose extended syntax `ALTER TABLE t EXCHANGE PARTITION p WITH TABLE t2 [UPDATE GLOBAL INDEXES | {WITH | WITHOUT} VALIDATION]`, where the new `UPDATE GLOBAL INDEXES` option indicates that also partitioned tables with Global Indexes will be Exchanged, and that it is allowed to update the Global Indexes accordingly during the process, *with* new limitations that the exchanged table t2 will have restricted access during the operation.
 - @mjonss propose that all indexes of t2 must match all indexes of t, except for global indexes. If indexes in t2 matches global indexes in t, then those indexes will be recreated for the new data in t2, if an global index in t does not have a match in t2, then it will be skipped.
@@ -134,7 +133,7 @@ TODO:
   - Updating table statistics.
 
 Questions:
-- Should we also add support for `CREATE TABLE t2 FOR EXCHANGE WITH t` that Oracle supports?
+- If one creates and drops indexes of a partitioned table, the internal index ids will not be consecutive, so creating a new table to be used in EXCHANGE PARTITION will not match the partitioned tables index ids, and will not be allowed to be used. Should we also add support for `CREATE TABLE t2 FOR EXCHANGE WITH t` that Oracle supports?
   - No, `CREATE TABLE t2 LIKE t; ALTER TABLE t2 REMOVE PARTITIONING;` works.
 
 ### Physical / implementation design
