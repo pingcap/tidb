@@ -245,9 +245,9 @@ enterprise-server:
 .PHONY: server_check
 server_check:
 ifeq ($(TARGET), "")
-	$(GOBUILD) -cover $(RACE_FLAG) -ldflags '$(CHECK_LDFLAGS)' -o bin/tidb-server ./cmd/tidb-server
+	$(GOBUILD) -cover $(RACE_FLAG) -ldflags '$(CHECK_LDFLAGS)' --tags deadlock,enableassert -o bin/tidb-server ./cmd/tidb-server
 else
-	$(GOBUILD) -cover $(RACE_FLAG) -ldflags '$(CHECK_LDFLAGS)' -o '$(TARGET)' ./cmd/tidb-server
+	$(GOBUILD) -cover $(RACE_FLAG) -ldflags '$(CHECK_LDFLAGS)' --tags deadlock,enableassert -o '$(TARGET)' ./cmd/tidb-server
 endif
 
 .PHONY: linux
