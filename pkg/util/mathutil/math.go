@@ -16,7 +16,7 @@ package mathutil
 
 import (
 	"math"
-
+    "slices"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"golang.org/x/exp/constraints"
 )
@@ -42,7 +42,7 @@ var uintSizeTable = [21]uint64{
 	999999, 9999999, 99999999, 999999999, 9999999999,
 	99999999999, 999999999999, 9999999999999, 99999999999999, 999999999999999,
 	9999999999999999, 99999999999999999, 999999999999999999, 9999999999999999999,
-	math.MaxUint64,
+	^uint64(0),
 } // math.MaxUint64 is 18446744073709551615 and it has 20 digits
 
 // StrLenOfUint64Fast efficiently calculate the string character lengths of an uint64 as input
@@ -70,24 +70,12 @@ func IsFinite(f float64) bool {
 
 // Max returns the largest one from its arguments.
 func Max[T constraints.Ordered](x T, xs ...T) T {
-	maxv := x
-	for _, n := range xs {
-		if n > maxv {
-			maxv = n
-		}
-	}
-	return maxv
+	return slices.Max(append([]T{x}, xs...))
 }
 
 // Min returns the smallest one from its arguments.
 func Min[T constraints.Ordered](x T, xs ...T) T {
-	minv := x
-	for _, n := range xs {
-		if n < minv {
-			minv = n
-		}
-	}
-	return minv
+	return slices.Min(append([]T{x}, xs...))
 }
 
 // Clamp restrict a value to a certain interval.
