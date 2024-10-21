@@ -91,24 +91,14 @@
       {
         "SQL": "explain format = 'brief' select * from tlist where a not in (0, 1, 2, 3, 4, 5, 6, 7, 8)",
         "DynamicPlan": [
-          "TableReader 3583.33 root partition:all data:Selection",
+          "TableReader 3583.33 root partition:p3 data:Selection",
           "└─Selection 3583.33 cop[tikv]  not(in(list_partition_pruning.tlist.a, 0, 1, 2, 3, 4, 5, 6, 7, 8))",
           "  └─TableFullScan 10000.00 cop[tikv] table:tlist keep order:false, stats:pseudo"
         ],
         "StaticPlan": [
-          "PartitionUnion 14333.33 root  ",
-          "├─TableReader 3583.33 root  data:Selection",
-          "│ └─Selection 3583.33 cop[tikv]  not(in(list_partition_pruning.tlist.a, 0, 1, 2, 3, 4, 5, 6, 7, 8))",
-          "│   └─TableFullScan 10000.00 cop[tikv] table:tlist, partition:p0 keep order:false, stats:pseudo",
-          "├─TableReader 3583.33 root  data:Selection",
-          "│ └─Selection 3583.33 cop[tikv]  not(in(list_partition_pruning.tlist.a, 0, 1, 2, 3, 4, 5, 6, 7, 8))",
-          "│   └─TableFullScan 10000.00 cop[tikv] table:tlist, partition:p1 keep order:false, stats:pseudo",
-          "├─TableReader 3583.33 root  data:Selection",
-          "│ └─Selection 3583.33 cop[tikv]  not(in(list_partition_pruning.tlist.a, 0, 1, 2, 3, 4, 5, 6, 7, 8))",
-          "│   └─TableFullScan 10000.00 cop[tikv] table:tlist, partition:p2 keep order:false, stats:pseudo",
-          "└─TableReader 3583.33 root  data:Selection",
-          "  └─Selection 3583.33 cop[tikv]  not(in(list_partition_pruning.tlist.a, 0, 1, 2, 3, 4, 5, 6, 7, 8))",
-          "    └─TableFullScan 10000.00 cop[tikv] table:tlist, partition:p3 keep order:false, stats:pseudo"
+          "TableReader 3583.33 root  data:Selection",
+          "└─Selection 3583.33 cop[tikv]  not(in(list_partition_pruning.tlist.a, 0, 1, 2, 3, 4, 5, 6, 7, 8))",
+          "  └─TableFullScan 10000.00 cop[tikv] table:tlist, partition:p3 keep order:false, stats:pseudo"
         ]
       },
       {
@@ -125,86 +115,137 @@
         ]
       },
       {
-        "SQL": "explain format = 'brief' select * from tlist where a >= 7",
+        "SQL": "explain format = 'brief' select * from tlist where a >= 8",
         "DynamicPlan": [
-          "TableReader 3333.33 root partition:all data:Selection",
-          "└─Selection 3333.33 cop[tikv]  ge(list_partition_pruning.tlist.a, 7)",
+          "TableReader 3333.33 root partition:p2,p3 data:Selection",
+          "└─Selection 3333.33 cop[tikv]  ge(list_partition_pruning.tlist.a, 8)",
           "  └─TableFullScan 10000.00 cop[tikv] table:tlist keep order:false, stats:pseudo"
         ],
         "StaticPlan": [
-          "PartitionUnion 13333.33 root  ",
+          "PartitionUnion 6666.67 root  ",
           "├─TableReader 3333.33 root  data:Selection",
-          "│ └─Selection 3333.33 cop[tikv]  ge(list_partition_pruning.tlist.a, 7)",
-          "│   └─TableFullScan 10000.00 cop[tikv] table:tlist, partition:p0 keep order:false, stats:pseudo",
-          "├─TableReader 3333.33 root  data:Selection",
-          "│ └─Selection 3333.33 cop[tikv]  ge(list_partition_pruning.tlist.a, 7)",
-          "│   └─TableFullScan 10000.00 cop[tikv] table:tlist, partition:p1 keep order:false, stats:pseudo",
-          "├─TableReader 3333.33 root  data:Selection",
-          "│ └─Selection 3333.33 cop[tikv]  ge(list_partition_pruning.tlist.a, 7)",
+          "│ └─Selection 3333.33 cop[tikv]  ge(list_partition_pruning.tlist.a, 8)",
           "│   └─TableFullScan 10000.00 cop[tikv] table:tlist, partition:p2 keep order:false, stats:pseudo",
           "└─TableReader 3333.33 root  data:Selection",
-          "  └─Selection 3333.33 cop[tikv]  ge(list_partition_pruning.tlist.a, 7)",
+          "  └─Selection 3333.33 cop[tikv]  ge(list_partition_pruning.tlist.a, 8)",
           "    └─TableFullScan 10000.00 cop[tikv] table:tlist, partition:p3 keep order:false, stats:pseudo"
         ]
       },
       {
-        "SQL": "explain format = 'brief' select * from tcollist where a >= 7",
+        "SQL": "explain format = 'brief' select * from tcollist where a >= 8",
         "DynamicPlan": [
           "TableReader 3333.33 root partition:p2,p3 data:Selection",
-          "└─Selection 3333.33 cop[tikv]  ge(list_partition_pruning.tcollist.a, 7)",
+          "└─Selection 3333.33 cop[tikv]  ge(list_partition_pruning.tcollist.a, 8)",
           "  └─TableFullScan 10000.00 cop[tikv] table:tcollist keep order:false, stats:pseudo"
         ],
         "StaticPlan": [
           "PartitionUnion 6666.67 root  ",
           "├─TableReader 3333.33 root  data:Selection",
-          "│ └─Selection 3333.33 cop[tikv]  ge(list_partition_pruning.tcollist.a, 7)",
+          "│ └─Selection 3333.33 cop[tikv]  ge(list_partition_pruning.tcollist.a, 8)",
           "│   └─TableFullScan 10000.00 cop[tikv] table:tcollist, partition:p2 keep order:false, stats:pseudo",
           "└─TableReader 3333.33 root  data:Selection",
-          "  └─Selection 3333.33 cop[tikv]  ge(list_partition_pruning.tcollist.a, 7)",
+          "  └─Selection 3333.33 cop[tikv]  ge(list_partition_pruning.tcollist.a, 8)",
           "    └─TableFullScan 10000.00 cop[tikv] table:tcollist, partition:p3 keep order:false, stats:pseudo"
         ]
       },
       {
-        "SQL": "explain format = 'brief' select * from tlist where a <= 7",
+        "SQL": "explain format = 'brief' select * from tlist where a <= 6",
         "DynamicPlan": [
-          "TableReader 3323.33 root partition:all data:Selection",
-          "└─Selection 3323.33 cop[tikv]  le(list_partition_pruning.tlist.a, 7)",
+          "TableReader 3323.33 root partition:p0,p1,p2 data:Selection",
+          "└─Selection 3323.33 cop[tikv]  le(list_partition_pruning.tlist.a, 6)",
           "  └─TableFullScan 10000.00 cop[tikv] table:tlist keep order:false, stats:pseudo"
         ],
         "StaticPlan": [
-          "PartitionUnion 13293.33 root  ",
+          "PartitionUnion 9970.00 root  ",
           "├─TableReader 3323.33 root  data:Selection",
-          "│ └─Selection 3323.33 cop[tikv]  le(list_partition_pruning.tlist.a, 7)",
+          "│ └─Selection 3323.33 cop[tikv]  le(list_partition_pruning.tlist.a, 6)",
           "│   └─TableFullScan 10000.00 cop[tikv] table:tlist, partition:p0 keep order:false, stats:pseudo",
           "├─TableReader 3323.33 root  data:Selection",
-          "│ └─Selection 3323.33 cop[tikv]  le(list_partition_pruning.tlist.a, 7)",
+          "│ └─Selection 3323.33 cop[tikv]  le(list_partition_pruning.tlist.a, 6)",
           "│   └─TableFullScan 10000.00 cop[tikv] table:tlist, partition:p1 keep order:false, stats:pseudo",
-          "├─TableReader 3323.33 root  data:Selection",
-          "│ └─Selection 3323.33 cop[tikv]  le(list_partition_pruning.tlist.a, 7)",
-          "│   └─TableFullScan 10000.00 cop[tikv] table:tlist, partition:p2 keep order:false, stats:pseudo",
           "└─TableReader 3323.33 root  data:Selection",
-          "  └─Selection 3323.33 cop[tikv]  le(list_partition_pruning.tlist.a, 7)",
-          "    └─TableFullScan 10000.00 cop[tikv] table:tlist, partition:p3 keep order:false, stats:pseudo"
+          "  └─Selection 3323.33 cop[tikv]  le(list_partition_pruning.tlist.a, 6)",
+          "    └─TableFullScan 10000.00 cop[tikv] table:tlist, partition:p2 keep order:false, stats:pseudo"
         ]
       },
       {
-        "SQL": "explain format = 'brief' select * from tcollist where a <= 7",
+        "SQL": "explain format = 'brief' select * from tcollist where a <= 6",
         "DynamicPlan": [
           "TableReader 3323.33 root partition:p0,p1,p2 data:Selection",
-          "└─Selection 3323.33 cop[tikv]  le(list_partition_pruning.tcollist.a, 7)",
+          "└─Selection 3323.33 cop[tikv]  le(list_partition_pruning.tcollist.a, 6)",
           "  └─TableFullScan 10000.00 cop[tikv] table:tcollist keep order:false, stats:pseudo"
         ],
         "StaticPlan": [
           "PartitionUnion 9970.00 root  ",
           "├─TableReader 3323.33 root  data:Selection",
-          "│ └─Selection 3323.33 cop[tikv]  le(list_partition_pruning.tcollist.a, 7)",
+          "│ └─Selection 3323.33 cop[tikv]  le(list_partition_pruning.tcollist.a, 6)",
           "│   └─TableFullScan 10000.00 cop[tikv] table:tcollist, partition:p0 keep order:false, stats:pseudo",
           "├─TableReader 3323.33 root  data:Selection",
-          "│ └─Selection 3323.33 cop[tikv]  le(list_partition_pruning.tcollist.a, 7)",
+          "│ └─Selection 3323.33 cop[tikv]  le(list_partition_pruning.tcollist.a, 6)",
           "│   └─TableFullScan 10000.00 cop[tikv] table:tcollist, partition:p1 keep order:false, stats:pseudo",
           "└─TableReader 3323.33 root  data:Selection",
-          "  └─Selection 3323.33 cop[tikv]  le(list_partition_pruning.tcollist.a, 7)",
+          "  └─Selection 3323.33 cop[tikv]  le(list_partition_pruning.tcollist.a, 6)",
           "    └─TableFullScan 10000.00 cop[tikv] table:tcollist, partition:p2 keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "explain format = 'brief' select * from tlist where a > 8",
+        "DynamicPlan": [
+          "TableReader 3333.33 root partition:p3 data:Selection",
+          "└─Selection 3333.33 cop[tikv]  gt(list_partition_pruning.tlist.a, 8)",
+          "  └─TableFullScan 10000.00 cop[tikv] table:tlist keep order:false, stats:pseudo"
+        ],
+        "StaticPlan": [
+          "TableReader 3333.33 root  data:Selection",
+          "└─Selection 3333.33 cop[tikv]  gt(list_partition_pruning.tlist.a, 8)",
+          "  └─TableFullScan 10000.00 cop[tikv] table:tlist, partition:p3 keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "explain format = 'brief' select * from tcollist where a > 8",
+        "DynamicPlan": [
+          "TableReader 3333.33 root partition:p3 data:Selection",
+          "└─Selection 3333.33 cop[tikv]  gt(list_partition_pruning.tcollist.a, 8)",
+          "  └─TableFullScan 10000.00 cop[tikv] table:tcollist keep order:false, stats:pseudo"
+        ],
+        "StaticPlan": [
+          "TableReader 3333.33 root  data:Selection",
+          "└─Selection 3333.33 cop[tikv]  gt(list_partition_pruning.tcollist.a, 8)",
+          "  └─TableFullScan 10000.00 cop[tikv] table:tcollist, partition:p3 keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "explain format = 'brief' select * from tlist where a < 6",
+        "DynamicPlan": [
+          "TableReader 3323.33 root partition:p0,p1 data:Selection",
+          "└─Selection 3323.33 cop[tikv]  lt(list_partition_pruning.tlist.a, 6)",
+          "  └─TableFullScan 10000.00 cop[tikv] table:tlist keep order:false, stats:pseudo"
+        ],
+        "StaticPlan": [
+          "PartitionUnion 6646.67 root  ",
+          "├─TableReader 3323.33 root  data:Selection",
+          "│ └─Selection 3323.33 cop[tikv]  lt(list_partition_pruning.tlist.a, 6)",
+          "│   └─TableFullScan 10000.00 cop[tikv] table:tlist, partition:p0 keep order:false, stats:pseudo",
+          "└─TableReader 3323.33 root  data:Selection",
+          "  └─Selection 3323.33 cop[tikv]  lt(list_partition_pruning.tlist.a, 6)",
+          "    └─TableFullScan 10000.00 cop[tikv] table:tlist, partition:p1 keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "explain format = 'brief' select * from tcollist where a < 6",
+        "DynamicPlan": [
+          "TableReader 3323.33 root partition:p0,p1 data:Selection",
+          "└─Selection 3323.33 cop[tikv]  lt(list_partition_pruning.tcollist.a, 6)",
+          "  └─TableFullScan 10000.00 cop[tikv] table:tcollist keep order:false, stats:pseudo"
+        ],
+        "StaticPlan": [
+          "PartitionUnion 6646.67 root  ",
+          "├─TableReader 3323.33 root  data:Selection",
+          "│ └─Selection 3323.33 cop[tikv]  lt(list_partition_pruning.tcollist.a, 6)",
+          "│   └─TableFullScan 10000.00 cop[tikv] table:tcollist, partition:p0 keep order:false, stats:pseudo",
+          "└─TableReader 3323.33 root  data:Selection",
+          "  └─Selection 3323.33 cop[tikv]  lt(list_partition_pruning.tcollist.a, 6)",
+          "    └─TableFullScan 10000.00 cop[tikv] table:tcollist, partition:p1 keep order:false, stats:pseudo"
         ]
       },
       {
