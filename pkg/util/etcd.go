@@ -46,7 +46,7 @@ func NewSession(ctx context.Context, logPrefix string, etcdCli *clientv3.Client,
 
 	var etcdSession *concurrency.Session
 	failedCnt := 0
-	for i := 0; i < retryCnt; i++ {
+	for range retryCnt {
 		if err = contextDone(ctx, err); err != nil {
 			return etcdSession, errors.Trace(err)
 		}

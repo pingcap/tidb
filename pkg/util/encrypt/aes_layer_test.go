@@ -43,7 +43,7 @@ func testReadAtWithCase(t *testing.T, testCase readAtTestCase) {
 
 	writeString := "0123456789"
 	buf := bytes.NewBuffer(nil)
-	for i := 0; i < 510; i++ {
+	for range 510 {
 		buf.WriteString(writeString)
 	}
 
@@ -121,7 +121,7 @@ func benchmarkReadAtWithCase(b *testing.B, testCase readAtTestCase) {
 
 	writeString := "0123456789"
 	buf := bytes.NewBuffer(nil)
-	for i := 0; i < 510; i++ {
+	for range 510 {
 		buf.WriteString(writeString)
 	}
 
