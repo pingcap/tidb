@@ -20,12 +20,15 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path"
 	"runtime"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/pingcap/log"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
@@ -295,4 +298,33 @@ func TestProxyFields(t *testing.T) {
 			require.Equal(t, envPreset[idx], field.String)
 		}
 	}
+}
+
+func prepareStdoutLogger(t *testing.T) (*os.File, string) {
+	bak := os.Stdout
+	t.Cleanup(func() {
+		os.Stdout = bak
+	})
+	tempDir := t.TempDir()
+	fileName := path.Join(tempDir, "test.log")
+	file, err := os.OpenFile(fileName, os.O_CREATE|os.O_WRONLY, 0644)
+	require.NoError(t, err)
+	os.Stdout = file
+	// InitLogger contains zap.AddStacktrace(zapcore.FatalLevel), so log level
+	// below fatal will not contain stack automatically.
+	require.NoError(t, InitLogger(&LogConfig{}))
+
+	return file, fileName
+}
+
+func TestSampleLoggerFactory(t *testing.T) {
+	file, filename := prepareStdoutLogger(t)
+	fac := SampleLoggerFactory(time.Minute, 3, zap.String(LogFieldCategory, "ddl"))
+	for i := 0; i < 100; i++ {
+		fac().Info("sample log test")
+	}
+	require.NoError(t, file.Close())
+	content, err := os.ReadFile(filename)
+	require.NoError(t, err)
+	require.Equal(t, 3, strings.Count(string(content), "sample log test"))
 }

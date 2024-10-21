@@ -254,7 +254,9 @@ func (e *SetExecutor) setCharset(cs, co string, isSetName bool) error {
 	var err error
 	sessionVars := e.Ctx().GetSessionVars()
 	if co == "" {
-		if co, err = charset.GetDefaultCollation(cs); err != nil {
+		if cs == mysql.UTF8MB4Charset {
+			co = sessionVars.DefaultCollationForUTF8MB4
+		} else if co, err = charset.GetDefaultCollation(cs); err != nil {
 			return err
 		}
 	} else {
@@ -326,7 +328,11 @@ func (e *SetExecutor) loadSnapshotInfoSchemaIfNeeded(name string, snapshotTS uin
 	if name != variable.TiDBSnapshot && name != variable.TiDBTxnReadTS {
 		return nil
 	}
-	vars := e.Ctx().GetSessionVars()
+	return loadSnapshotInfoSchemaIfNeeded(e.Ctx(), snapshotTS)
+}
+
+func loadSnapshotInfoSchemaIfNeeded(sctx sessionctx.Context, snapshotTS uint64) error {
+	vars := sctx.GetSessionVars()
 	if snapshotTS == 0 {
 		vars.SnapshotInfoschema = nil
 		return nil
@@ -334,12 +340,12 @@ func (e *SetExecutor) loadSnapshotInfoSchemaIfNeeded(name string, snapshotTS uin
 	logutil.BgLogger().Info("load snapshot info schema",
 		zap.Uint64("conn", vars.ConnectionID),
 		zap.Uint64("SnapshotTS", snapshotTS))
-	dom := domain.GetDomain(e.Ctx())
+	dom := domain.GetDomain(sctx)
 	snapInfo, err := dom.GetSnapshotInfoSchema(snapshotTS)
 	if err != nil {
 		return err
 	}
 
-	vars.SnapshotInfoschema = temptable.AttachLocalTemporaryTableInfoSchema(e.Ctx(), snapInfo)
+	vars.SnapshotInfoschema = temptable.AttachLocalTemporaryTableInfoSchema(sctx, snapInfo)
 	return nil
 }

@@ -480,3 +480,7 @@ SELECT JSON_SCHEMA_VALID(CONCAT('{"foo": ',repeat('[', 1000),repeat(']', 1000),'
 # - https://bugs.mysql.com/bug.php?id=106454
 -- error 3853
 SELECT JSON_SCHEMA_VALID('{"properties": {"a": {"exclusiveMinimum": true}}}', '{}');
+
+# TestIssue54494
+# https://github.com/pingcap/tidb/issues/54494
+select json_type(cast(cast('2024' as year) as json));

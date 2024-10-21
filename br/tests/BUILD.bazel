@@ -1,0 +1,18 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_binary", "go_library")
+
+go_library(
+    name = "tests_lib",
+    srcs = ["utils.go"],
+    importpath = "github.com/pingcap/tidb/br/tests",
+    visibility = ["//visibility:public"],
+    deps = [
+        "@com_github_klauspost_compress//zstd",
+        "@com_github_spf13_cobra//:cobra",
+    ],
+)
+
+go_binary(
+    name = "tests",
+    embed = [":tests_lib"],
+    visibility = ["//visibility:public"],
+)

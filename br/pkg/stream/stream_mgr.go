@@ -16,16 +16,20 @@ package stream
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"strings"
 
 	"github.com/klauspost/compress/zstd"
 	"github.com/pingcap/errors"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
+	"github.com/pingcap/kvproto/pkg/encryptionpb"
 	"github.com/pingcap/log"
+	"github.com/pingcap/tidb/br/pkg/encryption"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/util"
 	filter "github.com/pingcap/tidb/pkg/util/table-filter"
@@ -81,7 +85,7 @@ func buildObserveTableRanges(
 	backupTS uint64,
 ) ([]kv.KeyRange, error) {
 	snapshot := storage.GetSnapshot(kv.NewVersion(backupTS))
-	m := meta.NewSnapshotMeta(snapshot)
+	m := meta.NewReader(snapshot)
 
 	dbs, err := m.ListDatabases()
 	if err != nil {
@@ -94,25 +98,18 @@ func buildObserveTableRanges(
 			continue
 		}
 
-		tables, err := m.ListTables(dbInfo.ID)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		if len(tables) == 0 {
-			log.Warn("It's not necessary to observe empty database",
-				zap.Stringer("db", dbInfo.Name))
-			continue
-		}
-
-		for _, tableInfo := range tables {
+		if err := m.IterTables(dbInfo.ID, func(tableInfo *model.TableInfo) error {
 			if !tableFilter.MatchTable(dbInfo.Name.O, tableInfo.Name.O) {
 				// Skip tables other than the given table.
-				continue
+				return nil
 			}
+			log.Info("start to observe the table", zap.Stringer("db", dbInfo.Name), zap.Stringer("table", tableInfo.Name))
 
-			log.Info("observer table schema", zap.String("table", dbInfo.Name.O+"."+tableInfo.Name.O))
 			tableRanges := buildObserveTableRange(tableInfo)
 			ranges = append(ranges, tableRanges...)
+			return nil
+		}); err != nil {
+			return nil, errors.Trace(err)
 		}
 	}
 
@@ -141,6 +138,8 @@ func BuildObserveDataRanges(
 	if len(filterStr) == 1 && filterStr[0] == string("*.*") {
 		return buildObserverAllRange(), nil
 	}
+	// TODO: currently it's a dead code, the iterator metakvs can be optimized
+	//  to marshal only necessary fields.
 	return buildObserveTableRanges(storage, tableFilter, backupTS)
 }
 
@@ -162,16 +161,31 @@ type ContentRef struct {
 
 // MetadataHelper make restore/truncate compatible with metadataV1 and metadataV2.
 type MetadataHelper struct {
-	cache   map[string]*ContentRef
-	decoder *zstd.Decoder
+	cache             map[string]*ContentRef
+	decoder           *zstd.Decoder
+	encryptionManager *encryption.Manager
 }
 
-func NewMetadataHelper() *MetadataHelper {
+type MetadataHelperOption func(*MetadataHelper)
+
+func WithEncryptionManager(manager *encryption.Manager) MetadataHelperOption {
+	return func(mh *MetadataHelper) {
+		mh.encryptionManager = manager
+	}
+}
+
+func NewMetadataHelper(opts ...MetadataHelperOption) *MetadataHelper {
 	decoder, _ := zstd.NewReader(nil)
-	return &MetadataHelper{
+	helper := &MetadataHelper{
 		cache:   make(map[string]*ContentRef),
 		decoder: decoder,
 	}
+
+	for _, opt := range opts {
+		opt(helper)
+	}
+
+	return helper
 }
 
 func (m *MetadataHelper) InitCacheEntry(path string, ref int) {
@@ -196,6 +210,35 @@ func (m *MetadataHelper) decodeCompressedData(data []byte, compressionType backu
 		"failed to decode compressed data: compression type is unimplemented. type id is %d", compressionType)
 }
 
+func (m *MetadataHelper) verifyChecksumAndDecryptIfNeeded(ctx context.Context, data []byte,
+	encryptionInfo *encryptionpb.FileEncryptionInfo) ([]byte, error) {
+	// no need to decrypt
+	if encryptionInfo == nil {
+		return data, nil
+	}
+
+	if m.encryptionManager == nil {
+		return nil, errors.New("need to decrypt data but encryption manager not set")
+	}
+
+	// Verify checksum before decryption
+	if encryptionInfo.Checksum != nil {
+		actualChecksum := sha256.Sum256(data)
+		expectedChecksumHex := hex.EncodeToString(encryptionInfo.Checksum)
+		actualChecksumHex := hex.EncodeToString(actualChecksum[:])
+		if expectedChecksumHex != actualChecksumHex {
+			return nil, errors.Errorf("checksum mismatch before decryption, expected %s, actual %s",
+				expectedChecksumHex, actualChecksumHex)
+		}
+	}
+
+	decryptedContent, err := m.encryptionManager.Decrypt(ctx, data, encryptionInfo)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	return decryptedContent, nil
+}
+
 func (m *MetadataHelper) ReadFile(
 	ctx context.Context,
 	path string,
@@ -203,6 +246,7 @@ func (m *MetadataHelper) ReadFile(
 	length uint64,
 	compressionType backuppb.CompressionType,
 	storage storage.ExternalStorage,
+	encryptionInfo *encryptionpb.FileEncryptionInfo,
 ) ([]byte, error) {
 	var err error
 	cref, exist := m.cache[path]
@@ -217,7 +261,12 @@ func (m *MetadataHelper) ReadFile(
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		return m.decodeCompressedData(data, compressionType)
+		// decrypt if needed
+		decryptedData, err := m.verifyChecksumAndDecryptIfNeeded(ctx, data, encryptionInfo)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		return m.decodeCompressedData(decryptedData, compressionType)
 	}
 
 	cref.ref -= 1
@@ -228,8 +277,12 @@ func (m *MetadataHelper) ReadFile(
 			return nil, errors.Trace(err)
 		}
 	}
-
-	buf, err := m.decodeCompressedData(cref.data[offset:offset+length], compressionType)
+	// decrypt if needed
+	decryptedData, err := m.verifyChecksumAndDecryptIfNeeded(ctx, cref.data[offset:offset+length], encryptionInfo)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	buf, err := m.decodeCompressedData(decryptedData, compressionType)
 
 	if cref.ref <= 0 {
 		// need reset reference information.
@@ -316,7 +369,7 @@ func FastUnmarshalMetaData(
 	eg, ectx := errgroup.WithContext(ctx)
 	opt := &storage.WalkOption{SubDir: GetStreamBackupMetaPrefix()}
 	err := s.WalkDir(ectx, opt, func(path string, size int64) error {
-		if !strings.HasSuffix(path, ".meta") {
+		if !strings.HasSuffix(path, metaSuffix) {
 			return nil
 		}
 		readPath := path

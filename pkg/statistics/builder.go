@@ -142,16 +142,24 @@ func BuildColumnHist(ctx sessionctx.Context, numBuckets, id int64, collector *Sa
 }
 
 // buildHist builds histogram from samples and other information.
-// It stores the built histogram in hg and return corrXYSum used for calculating the correlation.
-func buildHist(sc *stmtctx.StatementContext, hg *Histogram, samples []*SampleItem, count, ndv, numBuckets int64, memTracker *memory.Tracker) (corrXYSum float64, err error) {
+// It stores the built histogram in hg and returns corrXYSum used for calculating the correlation.
+func buildHist(
+	sc *stmtctx.StatementContext,
+	hg *Histogram,
+	samples []*SampleItem,
+	count, ndv, numBuckets int64,
+	memTracker *memory.Tracker,
+) (corrXYSum float64, err error) {
 	sampleNum := int64(len(samples))
 	// As we use samples to build the histogram, the bucket number and repeat should multiply a factor.
 	sampleFactor := float64(count) / float64(sampleNum)
+	// ndvFactor is a ratio that represents the average number of times each distinct value (NDV) should appear in the dataset.
+	// It is calculated as the total number of rows divided by the number of distinct values.
 	ndvFactor := float64(count) / float64(ndv)
 	if ndvFactor > sampleFactor {
 		ndvFactor = sampleFactor
 	}
-	// Since bucket count is increased by sampleFactor, so the actual max values per bucket is
+	// Since bucket count is increased by sampleFactor, so the actual max values per bucket are
 	// floor(valuesPerBucket/sampleFactor)*sampleFactor, which may less than valuesPerBucket,
 	// thus we need to add a sampleFactor to avoid building too many buckets.
 	valuesPerBucket := float64(count)/float64(numBuckets) + sampleFactor
@@ -159,6 +167,11 @@ func buildHist(sc *stmtctx.StatementContext, hg *Histogram, samples []*SampleIte
 	bucketIdx := 0
 	var lastCount int64
 	corrXYSum = float64(0)
+	// The underlying idea is that when a value is sampled,
+	// it does not necessarily mean that the actual row count of this value reaches the sample factor.
+	// In extreme cases, it could be that this value only appears once, and that one row happens to be sampled.
+	// Therefore, if the sample count of this value is only once, we use a more conservative ndvFactor.
+	// However, if the calculated ndvFactor is larger than the sampleFactor, we still use the sampleFactor.
 	hg.AppendBucket(&samples[0].Value, &samples[0].Value, int64(sampleFactor), int64(ndvFactor))
 	bufferedMemSize := int64(0)
 	bufferedReleaseSize := int64(0)
@@ -168,7 +181,9 @@ func buildHist(sc *stmtctx.StatementContext, hg *Histogram, samples []*SampleIte
 			memTracker.Release(bufferedReleaseSize)
 		}
 	}()
+
 	var upper = new(types.Datum)
+	// Note: Start from 1 because we have already processed the first sample.
 	for i := int64(1); i < sampleNum; i++ {
 		corrXYSum += float64(i) * float64(samples[i].Ordinal)
 		hg.UpperToDatum(bucketIdx, upper)
@@ -184,22 +199,31 @@ func buildHist(sc *stmtctx.StatementContext, hg *Histogram, samples []*SampleIte
 		}
 		totalCount := float64(i+1) * sampleFactor
 		if cmp == 0 {
-			// The new item has the same value as current bucket value, to ensure that
+			// The new item has the same value as the current bucket value, to ensure that
 			// a same value only stored in a single bucket, we do not increase bucketIdx even if it exceeds
 			// valuesPerBucket.
 			hg.Buckets[bucketIdx].Count = int64(totalCount)
+			// This means the value appears more than once in the sample, so we need to update the repeat count.
+			// Because we initialize the repeat count as ndvFactor, so we need to directly reset it to 2*sampleFactor.
+			// Refer to the comments for the first bucket for the reason why we use ndvFactor here.
 			if hg.Buckets[bucketIdx].Repeat == int64(ndvFactor) {
+				// This is a special case, the value appears twice in the sample.
+				// repeat = 2 * sampleFactor
 				hg.Buckets[bucketIdx].Repeat = int64(2 * sampleFactor)
 			} else {
+				// repeat =  3 * sampleFactor
+				// repeat =  4 * sampleFactor
+				// ...
 				hg.Buckets[bucketIdx].Repeat += int64(sampleFactor)
 			}
 		} else if totalCount-float64(lastCount) <= valuesPerBucket {
-			// The bucket still have room to store a new item, update the bucket.
+			// The bucket still has room to store a new item, update the bucket.
 			hg.updateLastBucket(&samples[i].Value, int64(totalCount), int64(ndvFactor), false)
 		} else {
 			lastCount = hg.Buckets[bucketIdx].Count
 			// The bucket is full, store the item in the next bucket.
 			bucketIdx++
+			// Refer to the comments for the first bucket for the reason why we use ndvFactor here.
 			hg.AppendBucket(&samples[i].Value, &samples[i].Value, int64(totalCount), int64(ndvFactor))
 		}
 	}

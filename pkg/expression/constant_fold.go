@@ -15,7 +15,7 @@
 package expression
 
 import (
-	"github.com/pingcap/tidb/pkg/expression/contextopt"
+	"github.com/pingcap/tidb/pkg/expression/expropt"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/types"
@@ -174,7 +174,7 @@ func getVarHandler(ctx BuildContext, expr *ScalarFunction) (Expression, bool) {
 	if err != nil {
 		return expr, false
 	}
-	sessVars, err := contextopt.SessionVarsPropReader{}.GetSessionVars(ctx.GetEvalCtx())
+	sessVars, err := expropt.SessionVarsPropReader{}.GetSessionVars(ctx.GetEvalCtx())
 	if err != nil {
 		return expr, false
 	}

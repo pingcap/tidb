@@ -65,7 +65,7 @@ set tidb_opt_limit_push_down_threshold=0;
 drop table if exists t;
 create table t(a int, b int)partition by range columns(a)(partition p0 values less than (10), partition p1 values less than(20), partition p2 values less than(30));
 insert into t values(21, 1), (22, 2), (23, 3), (24, 4), (15, 5);
-analyze table t;
+analyze table t all columns;
 explain format = 'brief' select * from t order by a;
 id	estRows	task	access object	operator info
 Sort	10005.00	root		planner__core__casetest__integration.t.a
@@ -376,9 +376,8 @@ id	estRows	task	access object	operator info
 HashJoin	10000.00	root		CARTESIAN left outer semi join, other cond:eq(2, planner__core__casetest__integration.t.b)
 ├─TableReader(Build)	10000.00	root		data:TableFullScan
 │ └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
-└─Projection(Probe)	10000.00	root		1->Column#22
-  └─TableReader	10000.00	root		data:TableFullScan
-    └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+└─TableReader(Probe)	10000.00	root		data:TableFullScan
+  └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 select (2) in (select b from t) from (select t.a < (select t.a from t t1 limit 1) from t) t;
 (2) in (select b from t)
 1
@@ -601,6 +600,13 @@ explain format = 'brief' select * from t3 where a >= 'a' and a <= 'a' and b = 'b
 id	estRows	task	access object	operator info
 IndexReader	0.33	root		index:IndexRangeScan
 └─IndexRangeScan	0.33	cop[tikv]	table:t3, index:a(a, b, c)	range:("a" "b" "c","a" "b" +inf], keep order:false, stats:pseudo
+explain format = 'brief' select * from t1 where a is null or a in (1, 2, 3);
+id	estRows	task	access object	operator info
+IndexReader	260.00	root		index:IndexRangeScan
+└─IndexRangeScan	260.00	cop[tikv]	table:t1, index:a(a, b, c)	range:[NULL,NULL], [1,3], keep order:false, stats:pseudo
+explain format = 'brief' select * from t1 where a is null and a = 1;
+id	estRows	task	access object	operator info
+TableDual	0.00	root		rows:0
 drop table if exists t1;
 CREATE TABLE t1 (
 key1 int(11) NOT NULL,
@@ -1096,9 +1102,9 @@ Note	1105	[t,f,f_g] remain after pruning paths for t given Prop{SortItems: [{pla
 Note	1105	[t] remain after pruning paths for t given Prop{SortItems: [], TaskTp: rootTask}
 explain format = 'verbose' select * from t where f > 1;
 id	estRows	estCost	task	access object	operator info
-TableReader_7	3333.33	316532.90	root		data:Selection_6
-└─Selection_6	3333.33	3269593.45	cop[tikv]		gt(planner__core__casetest__integration.t.f, 1)
-  └─TableFullScan_5	10000.00	2770593.45	cop[tikv]	table:t	keep order:false, stats:pseudo
+TableReader_7	3333.33	335003.52	root		data:Selection_6
+└─Selection_6	3333.33	3546652.80	cop[tikv]		gt(planner__core__casetest__integration.t.f, 1)
+  └─TableFullScan_5	10000.00	3047652.80	cop[tikv]	table:t	keep order:false, stats:pseudo
 Level	Code	Message
 Note	1105	[t,f,f_g] remain after pruning paths for t given Prop{SortItems: [], TaskTp: rootTask}
 explain format = 'verbose' select f from t where f > 1;
@@ -1109,21 +1115,21 @@ Level	Code	Message
 Note	1105	[f,f_g] remain after pruning paths for t given Prop{SortItems: [], TaskTp: rootTask}
 explain format = 'verbose' select * from t where f > 3 and g = 5;
 id	estRows	estCost	task	access object	operator info
-IndexLookUp_15	3.33	19551.99	root		
-├─IndexRangeScan_12(Build)	10.00	2035.00	cop[tikv]	table:t, index:g(g)	range:[5,5], keep order:false, stats:pseudo
-└─Selection_14(Probe)	3.33	3269.59	cop[tikv]		gt(planner__core__casetest__integration.t.f, 3)
-  └─TableRowIDScan_13	10.00	2770.59	cop[tikv]	table:t	keep order:false, stats:pseudo
+IndexLookUp_12	3.33	19551.99	root		
+├─IndexRangeScan_9(Build)	10.00	2035.00	cop[tikv]	table:t, index:g(g)	range:[5,5], keep order:false, stats:pseudo
+└─Selection_11(Probe)	3.33	3269.59	cop[tikv]		gt(planner__core__casetest__integration.t.f, 3)
+  └─TableRowIDScan_10	10.00	2770.59	cop[tikv]	table:t	keep order:false, stats:pseudo
 Level	Code	Message
-Note	1105	[t,f_g,g] remain after pruning paths for t given Prop{SortItems: [], TaskTp: rootTask}
+Note	1105	[f_g,g] remain after pruning paths for t given Prop{SortItems: [], TaskTp: rootTask}
 explain format = 'verbose' select * from t where g = 5 order by f;
 id	estRows	estCost	task	access object	operator info
 Sort_5	10.00	21321.97	root		planner__core__casetest__integration.t.f
-└─IndexLookUp_13	10.00	19545.34	root		
-  ├─IndexRangeScan_11(Build)	10.00	2035.00	cop[tikv]	table:t, index:g(g)	range:[5,5], keep order:false, stats:pseudo
-  └─TableRowIDScan_12(Probe)	10.00	2770.59	cop[tikv]	table:t	keep order:false, stats:pseudo
+└─IndexLookUp_10	10.00	19545.34	root		
+  ├─IndexRangeScan_8(Build)	10.00	2035.00	cop[tikv]	table:t, index:g(g)	range:[5,5], keep order:false, stats:pseudo
+  └─TableRowIDScan_9(Probe)	10.00	2770.59	cop[tikv]	table:t	keep order:false, stats:pseudo
 Level	Code	Message
+Note	1105	[g] remain after pruning paths for t given Prop{SortItems: [], TaskTp: rootTask}
 Note	1105	[t,f_g,g] remain after pruning paths for t given Prop{SortItems: [{planner__core__casetest__integration.t.f asc}], TaskTp: rootTask}
-Note	1105	[t,g] remain after pruning paths for t given Prop{SortItems: [], TaskTp: rootTask}
 explain format = 'verbose' select * from t where d = 3 order by c, e;
 id	estRows	estCost	task	access object	operator info
 IndexLookUp_15	10.00	215519.24	root		
@@ -1148,43 +1154,38 @@ TableReader_7	3.00	130.42	root		data:Selection_6
   └─TableFullScan_5	5.00	1136.54	cop[tikv]	table:t	keep order:false
 explain format = 'verbose' select * from t where b = 6 order by a limit 1;
 id	estRows	estCost	task	access object	operator info
-Limit_11	0.00	98.74	root		offset:0, count:1
-└─TableReader_24	0.00	98.74	root		data:Limit_23
-  └─Limit_23	0.00	1386.04	cop[tikv]		offset:0, count:1
-    └─Selection_22	0.00	1386.04	cop[tikv]		eq(planner__core__casetest__integration.t.b, 6)
+Limit_11	1.00	98.74	root		offset:0, count:1
+└─TableReader_24	1.00	98.74	root		data:Limit_23
+  └─Limit_23	1.00	1386.04	cop[tikv]		offset:0, count:1
+    └─Selection_22	1.00	1386.04	cop[tikv]		eq(planner__core__casetest__integration.t.b, 6)
       └─TableFullScan_21	5.00	1136.54	cop[tikv]	table:t	keep order:true
 explain format = 'verbose' select * from t where b = 6 limit 1;
 id	estRows	estCost	task	access object	operator info
-Limit_8	0.00	98.74	root		offset:0, count:1
-└─TableReader_13	0.00	98.74	root		data:Limit_12
-  └─Limit_12	0.00	1386.04	cop[tikv]		offset:0, count:1
-    └─Selection_11	0.00	1386.04	cop[tikv]		eq(planner__core__casetest__integration.t.b, 6)
+Limit_8	1.00	98.74	root		offset:0, count:1
+└─TableReader_13	1.00	98.74	root		data:Limit_12
+  └─Limit_12	1.00	1386.04	cop[tikv]		offset:0, count:1
+    └─Selection_11	1.00	1386.04	cop[tikv]		eq(planner__core__casetest__integration.t.b, 6)
       └─TableFullScan_10	5.00	1136.54	cop[tikv]	table:t	keep order:false
 set tidb_opt_prefer_range_scan = 1;
 explain format = 'verbose' select * from t where b > 5;
 id	estRows	estCost	task	access object	operator info
-IndexLookUp_7	3.00	5856.46	root		
-├─IndexRangeScan_5(Build)	3.00	610.50	cop[tikv]	table:t, index:idx_b(b)	range:(5,+inf], keep order:false
-└─TableRowIDScan_6(Probe)	3.00	681.92	cop[tikv]	table:t	keep order:false
-Level	Code	Message
-Note	1105	[idx_b] remain after pruning paths for t given Prop{SortItems: [], TaskTp: rootTask}
+TableReader_7	3.00	130.42	root		data:Selection_6
+└─Selection_6	3.00	1386.04	cop[tikv]		gt(planner__core__casetest__integration.t.b, 5)
+  └─TableFullScan_5	5.00	1136.54	cop[tikv]	table:t	keep order:false
 explain format = 'verbose' select * from t where b = 6 order by a limit 1;
 id	estRows	estCost	task	access object	operator info
-TopN_9	0.00	1956.63	root		planner__core__casetest__integration.t.a, offset:0, count:1
-└─IndexLookUp_16	0.00	1951.83	root		
-  ├─TopN_15(Build)	0.00	206.70	cop[tikv]		planner__core__casetest__integration.t.a, offset:0, count:1
-  │ └─IndexRangeScan_13	0.00	203.50	cop[tikv]	table:t, index:idx_b(b)	range:[6,6], keep order:false
-  └─TableRowIDScan_14(Probe)	0.00	186.61	cop[tikv]	table:t	keep order:false
-Level	Code	Message
-Note	1105	[idx_b] remain after pruning paths for t given Prop{SortItems: [], TaskTp: copMultiReadTask}
+Limit_11	1.00	98.74	root		offset:0, count:1
+└─TableReader_24	1.00	98.74	root		data:Limit_23
+  └─Limit_23	1.00	1386.04	cop[tikv]		offset:0, count:1
+    └─Selection_22	1.00	1386.04	cop[tikv]		eq(planner__core__casetest__integration.t.b, 6)
+      └─TableFullScan_21	5.00	1136.54	cop[tikv]	table:t	keep order:true
 explain format = 'verbose' select * from t where b = 6 limit 1;
 id	estRows	estCost	task	access object	operator info
-IndexLookUp_13	0.00	1170.97	root		limit embedded(offset:0, count:1)
-├─Limit_12(Build)	0.00	203.50	cop[tikv]		offset:0, count:1
-│ └─IndexRangeScan_10	0.00	203.50	cop[tikv]	table:t, index:idx_b(b)	range:[6,6], keep order:false
-└─TableRowIDScan_11(Probe)	0.00	186.61	cop[tikv]	table:t	keep order:false
-Level	Code	Message
-Note	1105	[idx_b] remain after pruning paths for t given Prop{SortItems: [], TaskTp: copMultiReadTask}
+Limit_8	1.00	98.74	root		offset:0, count:1
+└─TableReader_13	1.00	98.74	root		data:Limit_12
+  └─Limit_12	1.00	1386.04	cop[tikv]		offset:0, count:1
+    └─Selection_11	1.00	1386.04	cop[tikv]		eq(planner__core__casetest__integration.t.b, 6)
+      └─TableFullScan_10	5.00	1136.54	cop[tikv]	table:t	keep order:false
 set @@tidb_enable_chunk_rpc = default;
 set tidb_opt_prefer_range_scan = default;
 drop table if exists t;

@@ -402,8 +402,8 @@ c_int	c_str	c_datetime
 3	silly burnell	2020-02-25 07:43:07
 set @a = 'xx';
 select * from information_schema.COLLATIONS where IS_DEFAULT='Yes' and CHARACTER_SET_NAME='utf8mb4';
-COLLATION_NAME	CHARACTER_SET_NAME	ID	IS_DEFAULT	IS_COMPILED	SORTLEN
-utf8mb4_bin	utf8mb4	46	Yes	Yes	1
+COLLATION_NAME	CHARACTER_SET_NAME	ID	IS_DEFAULT	IS_COMPILED	SORTLEN	PAD_ATTRIBUTE
+utf8mb4_bin	utf8mb4	46	Yes	Yes	1	PAD SPACE
 select collation(_utf8mb4'12345');
 collation(_utf8mb4'12345')
 utf8mb4_bin
@@ -418,8 +418,8 @@ collation(_utf8mb4'@a' collate utf8mb4_general_ci)
 utf8mb4_general_ci
 set @@session.default_collation_for_utf8mb4='utf8mb4_0900_ai_ci';
 select * from information_schema.COLLATIONS where IS_DEFAULT='Yes' and CHARACTER_SET_NAME='utf8mb4';
-COLLATION_NAME	CHARACTER_SET_NAME	ID	IS_DEFAULT	IS_COMPILED	SORTLEN
-utf8mb4_bin	utf8mb4	46	Yes	Yes	1
+COLLATION_NAME	CHARACTER_SET_NAME	ID	IS_DEFAULT	IS_COMPILED	SORTLEN	PAD_ATTRIBUTE
+utf8mb4_bin	utf8mb4	46	Yes	Yes	1	PAD SPACE
 select collation(_utf8mb4'12345');
 collation(_utf8mb4'12345')
 utf8mb4_0900_ai_ci

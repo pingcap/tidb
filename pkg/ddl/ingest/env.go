@@ -26,8 +26,8 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
-	sess "github.com/pingcap/tidb/pkg/ddl/internal/session"
 	"github.com/pingcap/tidb/pkg/ddl/logutil"
+	sess "github.com/pingcap/tidb/pkg/ddl/session"
 	"github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/util"
@@ -175,7 +175,7 @@ func filterProcessingJobIDs(ctx context.Context, se *sess.Session, jobIDs []int6
 		sb.WriteString(strconv.FormatInt(id, 10))
 	}
 	sql := fmt.Sprintf(
-		"SELECT job_id FROM mysql.tidb_ddl_job WHERE job_id IN (%s) AND processing",
+		"SELECT job_id FROM mysql.tidb_ddl_job WHERE job_id IN (%s)",
 		sb.String())
 	rows, err := se.Execute(ctx, sql, "filter_processing_job_ids")
 	if err != nil {

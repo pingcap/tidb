@@ -21,9 +21,11 @@ import (
 	"testing"
 	"time"
 
-	exprctx "github.com/pingcap/tidb/pkg/expression/context"
+	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/expression/exprctx"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/planner/cascades/base"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/mock"
@@ -185,7 +187,7 @@ func TestConstantPropagation(t *testing.T) {
 			newConds := solver.PropagateConstant(ctx, conds)
 			var result []string
 			for _, v := range newConds {
-				result = append(result, v.StringWithCtx(ctx))
+				result = append(result, v.StringWithCtx(ctx, errors.RedactLogDisable))
 			}
 			sort.Strings(result)
 			require.Equalf(t, tt.result, strings.Join(result, ", "), "different for expr %s", tt.conditions)
@@ -253,7 +255,7 @@ func TestConstantFolding(t *testing.T) {
 			require.True(t, ctx.IsInNullRejectCheck())
 		}
 		newConds := FoldConstant(ctx, expr)
-		require.Equalf(t, tt.result, newConds.StringWithCtx(ctx.GetEvalCtx()), "different for expr %s", tt.condition)
+		require.Equalf(t, tt.result, newConds.StringWithCtx(ctx.GetEvalCtx(), errors.RedactLogDisable), "different for expr %s", tt.condition)
 	}
 }
 
@@ -315,7 +317,7 @@ func TestConstantFoldingCharsetConvert(t *testing.T) {
 	}
 	for _, tt := range tests {
 		newConds := FoldConstant(ctx, tt.condition)
-		require.Equalf(t, tt.result, newConds.StringWithCtx(ctx), "different for expr %s", tt.condition)
+		require.Equalf(t, tt.result, newConds.StringWithCtx(ctx, errors.RedactLogDisable), "different for expr %s", tt.condition)
 	}
 }
 
@@ -543,4 +545,31 @@ func TestSpecificConstant(t *testing.T) {
 	require.Equal(t, null.RetType.GetType(), mysql.TypeTiny)
 	require.Equal(t, null.RetType.GetFlen(), 1)
 	require.Equal(t, null.RetType.GetDecimal(), 0)
+}
+
+func TestConstantHashEquals(t *testing.T) {
+	// Test for Hash64 interface
+	cst1 := &Constant{Value: types.NewIntDatum(2333), RetType: newIntFieldType()}
+	cst2 := &Constant{Value: types.NewIntDatum(2333), RetType: newIntFieldType()}
+	hasher1 := base.NewHashEqualer()
+	hasher2 := base.NewHashEqualer()
+	cst1.Hash64(hasher1)
+	cst2.Hash64(hasher2)
+	require.Equal(t, hasher1.Sum64(), hasher2.Sum64())
+	require.True(t, cst1.Equals(cst2))
+
+	// test cst2 datum changes.
+	cst2.Value = types.NewIntDatum(2334)
+	hasher2.Reset()
+	cst2.Hash64(hasher2)
+	require.NotEqual(t, hasher1.Sum64(), hasher2.Sum64())
+	require.False(t, cst1.Equals(cst2))
+
+	// test cst2 type changes.
+	cst2.Value = types.NewIntDatum(2333)
+	cst2.RetType = newStringFieldType()
+	hasher2.Reset()
+	cst2.Hash64(hasher2)
+	require.NotEqual(t, hasher1.Sum64(), hasher2.Sum64())
+	require.False(t, cst1.Equals(cst2))
 }

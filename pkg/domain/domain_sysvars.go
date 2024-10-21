@@ -19,6 +19,8 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	pd "github.com/tikv/pd/client"
 )
@@ -81,6 +83,24 @@ func (do *Domain) setPDClientDynamicOption(name, sVal string) error {
 			return err
 		}
 		variable.EnablePDFollowerHandleRegion.Store(val)
+	case variable.TiDBTSOClientRPCMode:
+		var concurrency int
+
+		switch sVal {
+		case variable.TSOClientRPCModeDefault:
+			concurrency = 1
+		case variable.TSOClientRPCModeParallel:
+			concurrency = 2
+		case variable.TSOClientRPCModeParallelFast:
+			concurrency = 4
+		default:
+			return variable.ErrWrongValueForVar.GenWithStackByArgs(name, sVal)
+		}
+
+		err := do.updatePDClient(pd.TSOClientRPCConcurrency, concurrency)
+		if err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -118,8 +138,14 @@ func (do *Domain) getExternalTimestamp(ctx context.Context) (uint64, error) {
 	return do.store.GetOracle().GetExternalTimestamp(ctx)
 }
 
-func (do *Domain) changeSchemaCacheSize(size uint64) {
-	if size > 0 {
-		do.infoCache.Data.SetCacheCapacity(size)
+func (do *Domain) changeSchemaCacheSize(ctx context.Context, size uint64) error {
+	err := kv.RunInNewTxn(kv.WithInternalSourceType(ctx, kv.InternalTxnDDL), do.store, true, func(_ context.Context, txn kv.Transaction) error {
+		t := meta.NewMutator(txn)
+		return t.SetSchemaCacheSize(size)
+	})
+	if err != nil {
+		return err
 	}
+	do.infoCache.Data.SetCacheCapacity(size)
+	return nil
 }

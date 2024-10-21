@@ -327,7 +327,7 @@ func TestTiFlashReplica(t *testing.T) {
 	require.NoError(t, resp.Body.Close())
 	require.Equal(t, "[schema:1146]Table which ID = 184 does not exist.", string(body))
 
-	tbl, err := ts.domain.InfoSchema().TableByName(model.NewCIStr("tidb"), model.NewCIStr("test"))
+	tbl, err := ts.domain.InfoSchema().TableByName(context.Background(), model.NewCIStr("tidb"), model.NewCIStr("test"))
 	require.NoError(t, err)
 	req := fmt.Sprintf(`{"id":%d,"region_count":3,"flash_region_count":3}`, tbl.Meta().ID)
 	resp, err = ts.PostStatus("/tiflash/replica-deprecated", "application/json", bytes.NewBuffer([]byte(req)))
@@ -454,11 +454,10 @@ func TestDebugRoutes(t *testing.T) {
 		"/debug/pprof/block?debug=1",
 		"/debug/pprof/threadcreate?debug=1",
 		"/debug/pprof/cmdline",
-		"/debug/pprof/profile",
+		"/debug/pprof/profile?seconds=5",
 		"/debug/pprof/mutex?debug=1",
 		"/debug/pprof/symbol",
 		"/debug/pprof/trace",
-		"/debug/pprof/profile",
 		"/debug/gogc",
 		// "/debug/zip", // this creates unexpected goroutines which will make goleak complain, so we skip it for now
 		"/debug/ballast-object-sz",

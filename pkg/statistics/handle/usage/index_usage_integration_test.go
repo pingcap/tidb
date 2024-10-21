@@ -15,11 +15,12 @@
 package usage_test
 
 import (
+	"context"
 	"fmt"
 	"testing"
 
-	"github.com/pingcap/tidb/pkg/infoschema"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/statistics/handle/usage/indexusage"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/stretchr/testify/require"
@@ -50,9 +51,13 @@ func TestGCIndexUsage(t *testing.T) {
 	}
 
 	c := dom.StatsHandle().NewSessionIndexUsageCollector()
-	db, ok := tk.Session().GetDomainInfoSchema().(infoschema.InfoSchema).SchemaByName(model.NewCIStr("test"))
+	is := tk.Session().GetDomainInfoSchema()
+	db, ok := is.SchemaByName(pmodel.NewCIStr("test"))
 	require.True(t, ok)
-	for _, tbl := range db.Tables {
+
+	tblInfos, err := is.SchemaTableInfos(context.Background(), db.Name)
+	require.NoError(t, err)
+	for _, tbl := range tblInfos {
 		for _, idx := range tbl.Indices {
 			c.Update(tbl.ID, idx.ID, indexusage.NewSample(1, 2, 3, 4))
 		}
@@ -62,7 +67,7 @@ func TestGCIndexUsage(t *testing.T) {
 	dom.StatsHandle().StatsUsage.Close()
 
 	verify := func(exist func(tblPos int, tbl *model.TableInfo, idxPos int, idx *model.IndexInfo) bool) {
-		for tblPos, tbl := range db.Tables {
+		for tblPos, tbl := range tblInfos {
 			for idxPos, idx := range tbl.Indices {
 				info := dom.StatsHandle().GetIndexUsage(tbl.ID, idx.ID)
 				if exist(tblPos, tbl, idxPos, idx) {
@@ -83,7 +88,7 @@ func TestGCIndexUsage(t *testing.T) {
 	})
 
 	// drop index whose ID is greater or equal than 5
-	for _, tbl := range db.Tables {
+	for _, tbl := range tblInfos {
 		for _, idx := range tbl.Indices {
 			if idx.ID >= 5 {
 				tk.MustExec(fmt.Sprintf("DROP INDEX %s ON %s", idx.Name.String(), tbl.Name.String()))
@@ -96,7 +101,7 @@ func TestGCIndexUsage(t *testing.T) {
 	})
 
 	// drop table whose tblPos is greater or equal than 5
-	for tblPos, tbl := range db.Tables {
+	for tblPos, tbl := range tblInfos {
 		if tblPos >= 5 {
 			tk.MustExec(fmt.Sprintf("DROP TABLE %s", tbl.Name.String()))
 		}

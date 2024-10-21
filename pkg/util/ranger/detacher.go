@@ -19,8 +19,8 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/expression"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/util/fixcontrol"
 	"github.com/pingcap/tidb/pkg/types"
@@ -176,6 +176,16 @@ func getPotentialEqOrInColOffset(sctx *rangerctx.RangerContext, expr expression.
 			if _, ok := arg.(*expression.Constant); !ok {
 				return -1
 			}
+		}
+		for i, col := range cols {
+			if col.EqualColumn(c) {
+				return i
+			}
+		}
+	case ast.IsNull:
+		c, ok := f.GetArgs()[0].(*expression.Column)
+		if !ok {
+			return -1
 		}
 		for i, col := range cols {
 			if col.EqualColumn(c) {
@@ -635,27 +645,34 @@ func allEqOrIn(expr expression.Expression) bool {
 			}
 		}
 		return true
-	case ast.EQ, ast.NullEQ, ast.In:
+	case ast.EQ, ast.NullEQ, ast.In, ast.IsNull:
 		return true
 	}
 	return false
 }
 
 func extractValueInfo(expr expression.Expression) *valueInfo {
-	if f, ok := expr.(*expression.ScalarFunction); ok && (f.FuncName.L == ast.EQ || f.FuncName.L == ast.NullEQ) {
-		getValueInfo := func(c *expression.Constant) *valueInfo {
-			mutable := c.ParamMarker != nil || c.DeferredExpr != nil
-			var value *types.Datum
-			if !mutable {
-				value = &c.Value
+	if f, ok := expr.(*expression.ScalarFunction); ok {
+		if f.FuncName.L == ast.IsNull {
+			val := &types.Datum{}
+			val.SetNull()
+			return &valueInfo{value: val, mutable: false}
+		}
+		if f.FuncName.L == ast.EQ || f.FuncName.L == ast.NullEQ {
+			getValueInfo := func(c *expression.Constant) *valueInfo {
+				mutable := c.ParamMarker != nil || c.DeferredExpr != nil
+				var value *types.Datum
+				if !mutable {
+					value = &c.Value
+				}
+				return &valueInfo{value, mutable}
 			}
-			return &valueInfo{value, mutable}
-		}
-		if c, ok := f.GetArgs()[0].(*expression.Constant); ok {
-			return getValueInfo(c)
-		}
-		if c, ok := f.GetArgs()[1].(*expression.Constant); ok {
-			return getValueInfo(c)
+			if c, ok := f.GetArgs()[0].(*expression.Constant); ok {
+				return getValueInfo(c)
+			}
+			if c, ok := f.GetArgs()[1].(*expression.Constant); ok {
+				return getValueInfo(c)
+			}
 		}
 	}
 	return nil
@@ -714,8 +731,12 @@ func ExtractEqAndInCondition(sctx *rangerctx.RangerContext, conditions []express
 		if ma == nil {
 			if accesses[i] != nil {
 				if allEqOrIn(accesses[i]) {
-					newConditions = append(newConditions, accesses[i])
 					columnValues[i] = extractValueInfo(accesses[i])
+					if columnValues[i] != nil && columnValues[i].value != nil && columnValues[i].value.IsNull() {
+						accesses[i] = nil
+					} else {
+						newConditions = append(newConditions, accesses[i])
+					}
 				} else {
 					accesses[i] = nil
 				}
@@ -734,6 +755,7 @@ func ExtractEqAndInCondition(sctx *rangerctx.RangerContext, conditions []express
 			return nil, nil, nil, nil, true
 		} else {
 			// All Intervals are single points
+
 			accesses[i] = points2EqOrInCond(sctx.ExprCtx, points[i], cols[i])
 			newConditions = append(newConditions, accesses[i])
 			if f, ok := accesses[i].(*expression.ScalarFunction); ok && f.FuncName.L == ast.EQ {
@@ -777,7 +799,17 @@ func ExtractEqAndInCondition(sctx *rangerctx.RangerContext, conditions []express
 
 // detachDNFCondAndBuildRangeForIndex will detach the index filters from table filters when it's a DNF(Disjunctive Normal Form).
 // We will detach the conditions of every DNF items, then compose them to a DNF.
-func (d *rangeDetacher) detachDNFCondAndBuildRangeForIndex(condition *expression.ScalarFunction, newTpSlice []*types.FieldType) (Ranges, []expression.Expression, []*valueInfo, bool, error) {
+func (d *rangeDetacher) detachDNFCondAndBuildRangeForIndex(
+	condition *expression.ScalarFunction,
+	newTpSlice []*types.FieldType,
+) (
+	Ranges,
+	[]expression.Expression,
+	[]*valueInfo,
+	bool,
+	int,
+	error,
+) {
 	firstColumnChecker := &conditionChecker{
 		checkerCol:               d.cols[0],
 		length:                   d.lengths[0],
@@ -787,6 +819,7 @@ func (d *rangeDetacher) detachDNFCondAndBuildRangeForIndex(condition *expression
 	rb := builder{sctx: d.sctx}
 	dnfItems := expression.FlattenDNFConditions(condition)
 	newAccessItems := make([]expression.Expression, 0, len(dnfItems))
+	minAccessConds := -1
 	var (
 		totalRanges         Ranges
 		totalRangesMemUsage int64
@@ -799,7 +832,7 @@ func (d *rangeDetacher) detachDNFCondAndBuildRangeForIndex(condition *expression
 			var accesses, filters []expression.Expression
 			res, err := d.detachCNFCondAndBuildRangeForIndex(cnfItems, newTpSlice, true)
 			if err != nil {
-				return nil, nil, nil, false, err
+				return nil, nil, nil, false, -1, err
 			}
 			ranges := res.Ranges
 			// If DNF item always false, we can return ignore this DNF item.
@@ -809,7 +842,7 @@ func (d *rangeDetacher) detachDNFCondAndBuildRangeForIndex(condition *expression
 			accesses = res.AccessConds
 			filters = res.RemainedConds
 			if len(accesses) == 0 {
-				return FullRange(), nil, nil, true, nil
+				return FullRange(), nil, nil, true, -1, nil
 			}
 			if len(filters) > 0 {
 				hasResidual = true
@@ -818,7 +851,7 @@ func (d *rangeDetacher) detachDNFCondAndBuildRangeForIndex(condition *expression
 			totalRangesMemUsage += ranges.MemUsage()
 			if d.rangeMaxSize > 0 && totalRangesMemUsage > d.rangeMaxSize {
 				d.sctx.RecordRangeFallback(d.rangeMaxSize)
-				return FullRange(), nil, nil, true, nil
+				return FullRange(), nil, nil, true, -1, nil
 			}
 			newAccessItems = append(newAccessItems, expression.ComposeCNFCondition(d.sctx.ExprCtx, accesses...))
 			if res.ColumnValues != nil {
@@ -832,7 +865,7 @@ func (d *rangeDetacher) detachDNFCondAndBuildRangeForIndex(condition *expression
 						}
 						sameValue, err := isSameValue(d.sctx.TypeCtx, valInfo, res.ColumnValues[j])
 						if err != nil {
-							return nil, nil, nil, false, errors.Trace(err)
+							return nil, nil, nil, false, -1, errors.Trace(err)
 						}
 						if !sameValue {
 							columnValues[j] = nil
@@ -840,10 +873,13 @@ func (d *rangeDetacher) detachDNFCondAndBuildRangeForIndex(condition *expression
 					}
 				}
 			}
+			if minAccessConds == -1 || len(accesses) < minAccessConds {
+				minAccessConds = len(accesses)
+			}
 		} else {
 			isAccessCond, shouldReserve := firstColumnChecker.check(item)
 			if !isAccessCond {
-				return FullRange(), nil, nil, true, nil
+				return FullRange(), nil, nil, true, -1, nil
 			}
 			if shouldReserve {
 				hasResidual = true
@@ -856,17 +892,17 @@ func (d *rangeDetacher) detachDNFCondAndBuildRangeForIndex(condition *expression
 			// TODO: restrict the mem usage of ranges
 			ranges, rangeFallback, err := points2Ranges(d.sctx, points, tmpNewTp, d.rangeMaxSize)
 			if err != nil {
-				return nil, nil, nil, false, errors.Trace(err)
+				return nil, nil, nil, false, -1, errors.Trace(err)
 			}
 			if rangeFallback {
 				d.sctx.RecordRangeFallback(d.rangeMaxSize)
-				return FullRange(), nil, nil, true, nil
+				return FullRange(), nil, nil, true, -1, nil
 			}
 			totalRanges = append(totalRanges, ranges...)
 			totalRangesMemUsage += ranges.MemUsage()
 			if d.rangeMaxSize > 0 && totalRangesMemUsage > d.rangeMaxSize {
 				d.sctx.RecordRangeFallback(d.rangeMaxSize)
-				return FullRange(), nil, nil, true, nil
+				return FullRange(), nil, nil, true, -1, nil
 			}
 			newAccessItems = append(newAccessItems, item)
 			if i == 0 {
@@ -875,21 +911,29 @@ func (d *rangeDetacher) detachDNFCondAndBuildRangeForIndex(condition *expression
 				valInfo := extractValueInfo(item)
 				sameValue, err := isSameValue(d.sctx.TypeCtx, columnValues[0], valInfo)
 				if err != nil {
-					return nil, nil, nil, false, errors.Trace(err)
+					return nil, nil, nil, false, -1, errors.Trace(err)
 				}
 				if !sameValue {
 					columnValues[0] = nil
 				}
+			}
+			if minAccessConds == -1 || minAccessConds > 1 {
+				minAccessConds = 1
 			}
 		}
 	}
 
 	totalRanges, err := UnionRanges(d.sctx, totalRanges, d.mergeConsecutive)
 	if err != nil {
-		return nil, nil, nil, false, errors.Trace(err)
+		return nil, nil, nil, false, -1, errors.Trace(err)
 	}
 
-	return totalRanges, []expression.Expression{expression.ComposeDNFCondition(d.sctx.ExprCtx, newAccessItems...)}, columnValues, hasResidual, nil
+	return totalRanges,
+		[]expression.Expression{expression.ComposeDNFCondition(d.sctx.ExprCtx, newAccessItems...)},
+		columnValues,
+		hasResidual,
+		minAccessConds,
+		nil
 }
 
 // valueInfo is used for recording the constant column value in DetachCondAndBuildRangeForIndex.
@@ -931,7 +975,9 @@ type DetachRangeResult struct {
 	// EqOrInCount is the number of equal/in conditions extracted.
 	EqOrInCount int
 	// IsDNFCond indicates if the top layer of conditions are in DNF.
-	IsDNFCond bool
+	// Please see comments of planner/util/AccessPath.MinAccessCondsForDNFCond for more details.
+	IsDNFCond                bool
+	MinAccessCondsForDNFCond int
 }
 
 // DetachCondAndBuildRangeForIndex will detach the index filters from table filters.
@@ -995,7 +1041,8 @@ func (d *rangeDetacher) detachCondAndBuildRangeForCols() (*DetachRangeResult, er
 	}
 	if len(d.allConds) == 1 {
 		if sf, ok := d.allConds[0].(*expression.ScalarFunction); ok && sf.FuncName.L == ast.LogicOr {
-			ranges, accesses, columnValues, hasResidual, err := d.detachDNFCondAndBuildRangeForIndex(sf, newTpSlice)
+			ranges, accesses, columnValues, hasResidual, minAccessConds, err :=
+				d.detachDNFCondAndBuildRangeForIndex(sf, newTpSlice)
 			if err != nil {
 				return res, errors.Trace(err)
 			}
@@ -1003,6 +1050,9 @@ func (d *rangeDetacher) detachCondAndBuildRangeForCols() (*DetachRangeResult, er
 			res.AccessConds = accesses
 			res.ColumnValues = columnValues
 			res.IsDNFCond = true
+			if minAccessConds != -1 {
+				res.MinAccessCondsForDNFCond = minAccessConds
+			}
 			// If this DNF have something cannot be to calculate range, then all this DNF should be pushed as filter condition.
 			if hasResidual {
 				res.RemainedConds = d.allConds
