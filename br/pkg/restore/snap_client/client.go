@@ -1042,9 +1042,13 @@ func (rc *SnapClient) execAndValidateChecksum(
 		}
 	}
 	expectedChecksumStats := metautil.CalculateChecksumStatsOnAllFiles(tbl.OldTable.Files)
-	if item.Crc64xor != expectedChecksumStats.Crc64Xor ||
-		item.TotalKvs != expectedChecksumStats.TotalKvs ||
-		item.TotalBytes != expectedChecksumStats.TotalBytes {
+	checksumMatch := item.Crc64xor == expectedChecksumStats.Crc64Xor &&
+		item.TotalKvs == expectedChecksumStats.TotalKvs &&
+		item.TotalBytes == expectedChecksumStats.TotalBytes
+	failpoint.Inject("full-restore-validate-checksum", func(_ failpoint.Value) {
+		checksumMatch = false
+	})
+	if !checksumMatch {
 		logger.Error("failed in validate checksum",
 			zap.Uint64("origin tidb crc64", expectedChecksumStats.Crc64Xor),
 			zap.Uint64("calculated crc64", item.Crc64xor),
@@ -1055,7 +1059,7 @@ func (rc *SnapClient) execAndValidateChecksum(
 		)
 		return errors.Annotate(berrors.ErrRestoreChecksumMismatch, "failed to validate checksum")
 	}
-	logger.Info("success in validate checksum")
+	logger.Info("success in validating checksum")
 	return nil
 }
 
