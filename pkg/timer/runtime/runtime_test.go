@@ -350,6 +350,12 @@ func TestHandleHookWorkerResponse(t *testing.T) {
 }
 
 func TestNextTryTriggerDuration(t *testing.T) {
+	origMinTriggerEventInterval := minTriggerEventInterval
+	minTriggerEventInterval = time.Second
+	defer func() {
+		minTriggerEventInterval = origMinTriggerEventInterval
+	}()
+
 	now := time.Now()
 	store := api.NewMemoryTimerStore()
 	defer store.Close()
