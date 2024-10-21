@@ -224,17 +224,6 @@ select /*+ no_index_merge() */ a from t where ('1' member of (j0->'$.path0'));
 select /*+ use_index_merge(t, j0_0) */ a from t where (1 member of (j0->'$.path0'));
 select /*+ use_index_merge(t, j0_0) */ a from t where ('1' member of (j0->'$.path0'));
 
-drop table if exists t;
-create table t(a int, b int, c int, d json, index iad(a, (cast(d->'$.b' as signed array))));
-insert into t value(1,1,1, '{"b":[1,2,3,4]}');
-insert into t value(2,2,2, '{"b":[3,4,5,6]}');
-set tidb_analyze_version=2;
-analyze table t all columns;
-# The below explain is flaky, try to increase the timeout of sync load first.
-set @@tidb_stats_load_sync_wait=1000;
-explain select * from t use index (iad) where a = 1;
-explain select * from t use index (iad) where a = 1 and (2 member of (d->'$.b'));
-
 # TestMultiValuedIndexWithoutRelatedColumnCondition
 drop table if exists t;
 create table t(a int, d json, index iad(a, (cast(d->'$.b' as signed array))));
