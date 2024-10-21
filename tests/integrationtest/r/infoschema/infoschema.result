@@ -263,7 +263,7 @@ test2	fk_parent
 select CONSTRAINT_SCHEMA, CONSTRAINT_NAME from information_schema.referential_constraints where constraint_schema = 'test1';
 CONSTRAINT_SCHEMA	CONSTRAINT_NAME
 test1	fk_parent
-select CONSTRAINT_SCHEMA, CONSTRAINT_NAME from information_schema.referential_constraints where table_name = 't22';
+select CONSTRAINT_SCHEMA, CONSTRAINT_NAME from information_schema.referential_constraints where constraint_schema = 'test2' and table_name = 't22';
 CONSTRAINT_SCHEMA	CONSTRAINT_NAME
 test2	fk_parent
 select CONSTRAINT_SCHEMA, CONSTRAINT_NAME from information_schema.referential_constraints where constraint_schema = 'test1' and table_name = 't12';
