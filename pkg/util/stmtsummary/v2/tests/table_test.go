@@ -657,7 +657,7 @@ func TestPlanCacheUnqualified(t *testing.T) {
 		"select * from `t1` where `t1` . `a` > ( select ? from `t2` where `t2` . `b` < ? ) 3 3 query has uncorrelated sub-queries is un-cacheable",
 		"select database ( ) from `t1` 2 2 query has 'database' is un-cacheable"))
 
-	for i := 0; i < 100; i++ {
+	for range 100 {
 		tk.MustExec(`execute st3`)
 		tk.MustExec(`execute st4`)
 	}
@@ -669,7 +669,7 @@ func TestPlanCacheUnqualified(t *testing.T) {
 		"select database ( ) from `t1` 102 102 query has 'database' is un-cacheable"))
 
 	tk.MustExec(`set @x2=123`)
-	for i := 0; i < 20; i++ {
+	for range 20 {
 		tk.MustExec(`execute st1 using @x1`)
 		tk.MustExec(`execute st1 using @x2`)
 	}

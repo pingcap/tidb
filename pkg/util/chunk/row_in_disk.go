@@ -132,7 +132,7 @@ func (l *DataInDiskByRows) GetChunk(chkIdx int) (*Chunk, error) {
 		// for longer rows.
 		r := bufio.NewReader(l.dataFile.getSectionReader(firstRowOffset))
 		format := rowInDisk{numCol: len(l.fieldTypes)}
-		for rowIdx := 0; rowIdx < chkSize; rowIdx++ {
+		for range chkSize {
 			_, err = format.ReadFrom(r)
 			if err != nil {
 				formatChErr = err
@@ -246,7 +246,7 @@ func (chk *chunkInDisk) WriteTo(w io.Writer) (written int64, err error) {
 	numRows := chk.NumRows()
 	chk.offsetsOfRows = make([]int64, 0, numRows)
 	var format *diskFormatRow
-	for rowIdx := 0; rowIdx < numRows; rowIdx++ {
+	for rowIdx := range numRows {
 		format = convertFromRow(chk.GetRow(rowIdx), format)
 		chk.offsetsOfRows = append(chk.offsetsOfRows, chk.offWrite+written)
 
@@ -339,7 +339,7 @@ func convertFromRow(row Row, reuse *diskFormatRow) (format *diskFormatRow) {
 			cells:          make([][]byte, 0, numCols),
 		}
 	}
-	for colIdx := 0; colIdx < numCols; colIdx++ {
+	for colIdx := range numCols {
 		if row.IsNull(colIdx) {
 			format.sizesOfColumns = append(format.sizesOfColumns, -1)
 		} else {

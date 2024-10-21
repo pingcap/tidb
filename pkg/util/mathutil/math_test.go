@@ -24,7 +24,7 @@ import (
 
 func TestStrLenOfUint64Fast(t *testing.T) {
 	t.Run("RandomInput", func(t *testing.T) {
-		for i := 0; i < 1000000; i++ {
+		for range 1000000 {
 			num := rand.Uint64()
 			expected := len(strconv.FormatUint(num, 10))
 			actual := StrLenOfUint64Fast(num)

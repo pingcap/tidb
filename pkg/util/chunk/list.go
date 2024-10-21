@@ -176,9 +176,9 @@ type ListWalkFunc = func(row Row) error
 
 // Walk iterate the list and call walkFunc for each row.
 func (l *List) Walk(walkFunc ListWalkFunc) error {
-	for i := 0; i < len(l.chunks); i++ {
+	for i := range l.chunks {
 		chk := l.chunks[i]
-		for j := 0; j < chk.NumRows(); j++ {
+		for j := range chk.NumRows() {
 			err := walkFunc(chk.GetRow(j))
 			if err != nil {
 				return errors.Trace(err)

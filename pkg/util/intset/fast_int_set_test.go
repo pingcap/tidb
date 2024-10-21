@@ -242,7 +242,7 @@ func TestFastIntSet(t *testing.T) {
 					s.Remove(v)
 				}
 				empty := true
-				for j := 0; j < m; j++ {
+				for j := range m {
 					empty = empty && !in[j]
 					if in[j] != s.Has(j) {
 						t.Fatalf("incorrect result for Contains(%d), expected %t", j, in[j])
@@ -258,7 +258,7 @@ func TestFastIntSet(t *testing.T) {
 				s.ForEach(func(j int) {
 					forEachRes[j] = true
 				})
-				for j := 0; j < m; j++ {
+				for j := range m {
 					if in[j] != forEachRes[j] {
 						t.Fatalf("incorrect ForEachResult for %d (%t, expected %t)", j, forEachRes[j], in[j])
 					}
@@ -318,7 +318,7 @@ func TestFastIntSetTwoSetOps(t *testing.T) {
 			s.Insert(k)
 		}
 		p := rng.Perm(len(vals))
-		for i := 0; i < numRemoved; i++ {
+		for i := range numRemoved {
 			k := vals[p[i]]
 			s.Remove(k)
 			delete(used, k)

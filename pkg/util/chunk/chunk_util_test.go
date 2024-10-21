@@ -29,7 +29,7 @@ func getChk(isLast3ColTheSame bool) (*Chunk, *Chunk, []bool) {
 	srcChk := newChunkWithInitCap(numRows, 0, 0, 8, 8, sizeTime, 0)
 	selected := make([]bool, numRows)
 	var row Row
-	for j := 0; j < numRows; j++ {
+	for j := range numRows {
 		if isLast3ColTheSame {
 			if j%7 == 0 {
 				row = MutRowFromValues("abc", "abcdefg", nil, 123, types.ZeroDatetime, "abcdefg").ToRow()
@@ -55,7 +55,7 @@ func getChk(isLast3ColTheSame bool) (*Chunk, *Chunk, []bool) {
 func TestCopySelectedJoinRows(t *testing.T) {
 	srcChk, dstChk, selected := getChk(true)
 	numRows := srcChk.NumRows()
-	for i := 0; i < numRows; i++ {
+	for i := range numRows {
 		if !selected[i] {
 			continue
 		}
@@ -80,7 +80,7 @@ func TestCopySelectedJoinRows(t *testing.T) {
 func TestCopySelectedJoinRowsWithoutSameOuters(t *testing.T) {
 	srcChk, dstChk, selected := getChk(false)
 	numRows := srcChk.NumRows()
-	for i := 0; i < numRows; i++ {
+	for i := range numRows {
 		if !selected[i] {
 			continue
 		}
@@ -105,7 +105,7 @@ func TestCopySelectedJoinRowsWithoutSameOuters(t *testing.T) {
 func TestCopySelectedJoinRowsDirect(t *testing.T) {
 	srcChk, dstChk, selected := getChk(false)
 	numRows := srcChk.NumRows()
-	for i := 0; i < numRows; i++ {
+	for i := range numRows {
 		if !selected[i] {
 			continue
 		}
@@ -184,7 +184,7 @@ func BenchmarkCopySelectedJoinRows(b *testing.B) {
 	b.ReportAllocs()
 	srcChk, dstChk, selected := getChk(true)
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for range b.N {
 		dstChk.Reset()
 		_, err := CopySelectedJoinRowsWithSameOuterRows(srcChk, 0, 3, 3, 3, selected, dstChk)
 		if err != nil {
@@ -196,7 +196,7 @@ func BenchmarkCopySelectedJoinRowsDirect(b *testing.B) {
 	b.ReportAllocs()
 	srcChk, dstChk, selected := getChk(false)
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for range b.N {
 		dstChk.Reset()
 		_, err := CopySelectedJoinRowsDirect(srcChk, selected, dstChk)
 		if err != nil {
@@ -209,9 +209,9 @@ func BenchmarkAppendSelectedRow(b *testing.B) {
 	srcChk, dstChk, selected := getChk(true)
 	numRows := srcChk.NumRows()
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for range b.N {
 		dstChk.Reset()
-		for j := 0; j < numRows; j++ {
+		for j := range numRows {
 			if !selected[j] {
 				continue
 			}

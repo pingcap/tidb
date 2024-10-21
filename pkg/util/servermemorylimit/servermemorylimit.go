@@ -248,7 +248,7 @@ func (m *memoryOpsHistoryManager) GetRows() [][]types.Datum {
 		})
 	}
 	var zeroTime = time.Time{}
-	for i := 0; i < len(m.infos); i++ {
+	for i := range m.infos {
 		pos := (m.offsets + i) % len(m.infos)
 		info := m.infos[pos]
 		if info.killTime.Equal(zeroTime) {
