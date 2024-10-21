@@ -909,7 +909,7 @@ func genNullCols(n int) []*Column {
 	for i := range cols {
 		cols[i] = NewColumn(types.NewFieldType(mysql.TypeLonglong), 1024)
 		cols[i].ResizeInt64(1024, false)
-		for j := 0; j < 1024; j++ {
+		for j := range 1024 {
 			if rand.Intn(10) < 5 {
 				cols[i].SetNull(j, true)
 			}
