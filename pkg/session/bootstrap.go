@@ -3328,6 +3328,7 @@ func doDDLWorks(s sessiontypes.Session) {
 	mustExecute(s, CreateMDLView)
 	// create `sys.schema_unused_indexes` view
 	mustExecute(s, CreateSchemaUnusedIndexesView)
+	insertBuiltinBindInfoRow(s)
 }
 
 // DoMayPreBootstrapDDLWorks do DDL works may pre-bootstraped
@@ -3474,7 +3475,6 @@ func doBootstrapSQLFile(s sessiontypes.Session) error {
 // doDMLWorks executes DML statements in bootstrap stage.
 // All the statements run in a single transaction.
 func doDMLWorks(s sessiontypes.Session) {
-	insertBuiltinBindInfoRow(s)
 	mustExecute(s, "BEGIN")
 	if config.GetGlobalConfig().Security.SecureBootstrap {
 		// If secure bootstrap is enabled, we create a root@localhost account which can login with auth_socket.

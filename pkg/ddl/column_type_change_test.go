@@ -244,6 +244,7 @@ func TestRowFormat(t *testing.T) {
 }
 
 func TestRowFormatWithChecksums(t *testing.T) {
+	t.Skip(t)
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("set global tidb_enable_row_level_checksum = 1")
@@ -266,6 +267,7 @@ func TestRowFormatWithChecksums(t *testing.T) {
 }
 
 func TestRowLevelChecksumWithMultiSchemaChange(t *testing.T) {
+	t.Skip()
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")

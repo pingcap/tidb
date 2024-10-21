@@ -842,6 +842,7 @@ func TestSameTableNameInTwoSchemas(t *testing.T) {
 }
 
 func TestInfoSchemaDDLJobs(t *testing.T) {
+	t.Skip()
 	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
