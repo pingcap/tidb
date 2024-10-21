@@ -404,10 +404,10 @@ func (b *builtinUTCTimeWithArgSig) vecEvalDuration(ctx EvalContext, input *chunk
 		if result.IsNull(i) {
 			continue
 		}
-		if i64s[i] > int64(math.MaxInt32) || i64s[i] < int64(types.MinFsp) {
+		fsp := i64s[i]
+		if fsp > int64(math.MaxInt32) || fsp < int64(types.MinFsp) {
 			return types.ErrSyntax.GenWithStack(util.SyntaxErrorPrefix)
 		}
-		fsp := i64s[i]
 		if fsp > int64(types.MaxFsp) {
 			return types.ErrTooBigPrecision.GenWithStackByArgs(fsp, "utc_time", types.MaxFsp)
 		}
@@ -1407,10 +1407,10 @@ func (b *builtinUTCTimestampWithArgSig) vecEvalTime(ctx EvalContext, input *chun
 		if result.IsNull(i) {
 			continue
 		}
-		if i64s[i] > int64(math.MaxInt32) || i64s[i] < int64(types.MinFsp) {
+		fsp := i64s[i]
+		if fsp > int64(math.MaxInt32) || fsp < int64(types.MinFsp) {
 			return types.ErrSyntax.GenWithStack(util.SyntaxErrorPrefix)
 		}
-		fsp := i64s[i]
 		if fsp > int64(types.MaxFsp) {
 			return types.ErrTooBigPrecision.GenWithStackByArgs(fsp, "utc_timestamp", types.MaxFsp)
 		}
