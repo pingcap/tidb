@@ -25,7 +25,6 @@ import (
 	"testing"
 
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/executor"
 	"github.com/pingcap/tidb/pkg/expression"
@@ -206,19 +205,6 @@ func TestSetVar(t *testing.T) {
 	tk.MustQuery(`select @@global.avoid_temporal_upgrade;`).Check(testkit.Rows("1"))
 	tk.MustExec("set @@global.avoid_temporal_upgrade = off")
 	tk.MustQuery(`select @@global.avoid_temporal_upgrade;`).Check(testkit.Rows("0"))
-	tk.MustExec("set session sql_log_bin = on")
-	tk.MustQuery(`select @@session.sql_log_bin;`).Check(testkit.Rows("1"))
-	tk.MustExec("set sql_log_bin = off")
-	tk.MustQuery(`select @@session.sql_log_bin;`).Check(testkit.Rows("0"))
-	tk.MustExec("set @@sql_log_bin = on")
-	tk.MustQuery(`select @@session.sql_log_bin;`).Check(testkit.Rows("1"))
-
-	binlogValue := "0"
-	if config.GetGlobalConfig().Binlog.Enable {
-		binlogValue = "1"
-	}
-	tk.MustQuery(`select @@global.log_bin;`).Check(testkit.Rows(binlogValue))
-	tk.MustQuery(`select @@log_bin;`).Check(testkit.Rows(binlogValue))
 
 	tk.MustExec("set @@tidb_general_log = 1")
 	tk.MustExec("set @@tidb_general_log = 0")
@@ -382,13 +368,18 @@ func TestSetVar(t *testing.T) {
 	tk.MustQuery(`select @@session.tidb_wait_split_region_finish;`).Check(testkit.Rows("0"))
 
 	// test for tidb_scatter_region
-	tk.MustQuery(`select @@global.tidb_scatter_region;`).Check(testkit.Rows("0"))
-	tk.MustExec("set global tidb_scatter_region = 1")
-	tk.MustQuery(`select @@global.tidb_scatter_region;`).Check(testkit.Rows("1"))
-	tk.MustExec("set global tidb_scatter_region = 0")
-	tk.MustQuery(`select @@global.tidb_scatter_region;`).Check(testkit.Rows("0"))
-	require.Error(t, tk.ExecToErr("set session tidb_scatter_region = 0"))
-	require.Error(t, tk.ExecToErr(`select @@session.tidb_scatter_region;`))
+	tk.MustQuery(`select @@global.tidb_scatter_region;`).Check(testkit.Rows(""))
+	tk.MustExec("set global tidb_scatter_region = 'table'")
+	tk.MustQuery(`select @@global.tidb_scatter_region;`).Check(testkit.Rows("table"))
+	tk.MustExec("set global tidb_scatter_region = 'global'")
+	tk.MustQuery(`select @@global.tidb_scatter_region;`).Check(testkit.Rows("global"))
+	tk.MustExec("set session tidb_scatter_region = ''")
+	tk.MustQuery(`select @@session.tidb_scatter_region;`).Check(testkit.Rows(""))
+	tk.MustExec("set session tidb_scatter_region = 'table'")
+	tk.MustQuery(`select @@session.tidb_scatter_region;`).Check(testkit.Rows("table"))
+	tk.MustExec("set session tidb_scatter_region = 'global'")
+	tk.MustQuery(`select @@session.tidb_scatter_region;`).Check(testkit.Rows("global"))
+	require.Error(t, tk.ExecToErr("set session tidb_scatter_region = 'test'"))
 
 	// test for tidb_wait_split_region_timeout
 	tk.MustQuery(`select @@session.tidb_wait_split_region_timeout;`).Check(testkit.Rows(strconv.Itoa(variable.DefWaitSplitRegionTimeout)))
@@ -619,7 +610,7 @@ func TestSetVar(t *testing.T) {
 	tk.MustQuery(`select @@global.tidb_opt_limit_push_down_threshold`).Check(testkit.Rows("100"))
 	tk.MustQuery(`select @@tidb_opt_limit_push_down_threshold`).Check(testkit.Rows("20"))
 
-	tk.MustQuery("select @@tidb_opt_prefer_range_scan").Check(testkit.Rows("0"))
+	tk.MustQuery("select @@tidb_opt_prefer_range_scan").Check(testkit.Rows("1"))
 	tk.MustExec("set global tidb_opt_prefer_range_scan = 1")
 	tk.MustQuery("select @@global.tidb_opt_prefer_range_scan").Check(testkit.Rows("1"))
 	tk.MustExec("set global tidb_opt_prefer_range_scan = 0")
@@ -768,14 +759,24 @@ func TestSetVar(t *testing.T) {
 
 	// test for instance plan cache variables
 	tk.MustQuery("select @@global.tidb_enable_instance_plan_cache").Check(testkit.Rows("0")) // default 0
-	tk.MustQuery("select @@global.tidb_instance_plan_cache_target_mem_size").Check(testkit.Rows("104857600"))
-	tk.MustQuery("select @@global.tidb_instance_plan_cache_max_mem_size").Check(testkit.Rows("125829120"))
-	tk.MustExecToErr("set global tidb_instance_plan_cache_target_mem_size = 125829121") // target <= max
-	tk.MustExecToErr("set global tidb_instance_plan_cache_max_mem_size = 104857599")
-	tk.MustExec("set global tidb_instance_plan_cache_target_mem_size = 114857600")
-	tk.MustQuery("select @@global.tidb_instance_plan_cache_target_mem_size").Check(testkit.Rows("114857600"))
-	tk.MustExec("set global tidb_instance_plan_cache_max_mem_size = 135829120")
-	tk.MustQuery("select @@global.tidb_instance_plan_cache_max_mem_size").Check(testkit.Rows("135829120"))
+	tk.MustQuery("select @@global.tidb_instance_plan_cache_max_size").Check(testkit.Rows("104857600"))
+	tk.MustExec("set global tidb_instance_plan_cache_max_size = 135829120")
+	tk.MustQuery("select @@global.tidb_instance_plan_cache_max_size").Check(testkit.Rows("135829120"))
+	tk.MustExec("set global tidb_instance_plan_cache_max_size = 999999999")
+	tk.MustQuery("select @@global.tidb_instance_plan_cache_max_size").Check(testkit.Rows("999999999"))
+	tk.MustExec("set global tidb_instance_plan_cache_max_size = 1GiB")
+	tk.MustQuery("select @@global.tidb_instance_plan_cache_max_size").Check(testkit.Rows("1073741824"))
+	tk.MustExec("set global tidb_instance_plan_cache_max_size = 2GiB")
+	tk.MustQuery("select @@global.tidb_instance_plan_cache_max_size").Check(testkit.Rows("2147483648"))
+	tk.MustExecToErr("set global tidb_instance_plan_cache_max_size = 2.5GiB")
+	tk.MustQuery("select @@global.tidb_instance_plan_cache_max_size").Check(testkit.Rows("2147483648"))
+	tk.MustQuery("select @@global.tidb_instance_plan_cache_reserved_percentage").Check(testkit.Rows("0.1"))
+	tk.MustExec(`set global tidb_instance_plan_cache_reserved_percentage=1.1`)
+	tk.MustQuery("select @@global.tidb_instance_plan_cache_reserved_percentage").Check(testkit.Rows("1"))
+	tk.MustExec(`set global tidb_instance_plan_cache_reserved_percentage=-0.1`)
+	tk.MustQuery("select @@global.tidb_instance_plan_cache_reserved_percentage").Check(testkit.Rows("0"))
+	tk.MustExec(`set global tidb_instance_plan_cache_reserved_percentage=0.5`)
+	tk.MustQuery("select @@global.tidb_instance_plan_cache_reserved_percentage").Check(testkit.Rows("0.5"))
 
 	// test variables for cost model ver2
 	tk.MustQuery("select @@tidb_cost_model_version").Check(testkit.Rows(fmt.Sprintf("%v", variable.DefTiDBCostModelVer)))

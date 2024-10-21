@@ -34,6 +34,7 @@ const (
 	MaxExecTimeExceeded
 	QueryMemoryExceeded
 	ServerMemoryExceeded
+	RunawayQueryExceeded
 	// When you add a new signal, you should also modify store/driver/error/ToTidbErr,
 	// so that errors in client can be correctly converted to tidb errors.
 )
@@ -41,7 +42,7 @@ const (
 // SQLKiller is used to kill a query.
 type SQLKiller struct {
 	Signal killSignal
-	ConnID uint64
+	ConnID atomic.Uint64
 	// FinishFuncLock is used to ensure that Finish is not called and modified at the same time.
 	// An external call to the Finish function only allows when the main goroutine to be in the writeResultSet process.
 	// When the main goroutine exits the writeResultSet process, the Finish function will be cleared.
@@ -57,7 +58,7 @@ func (killer *SQLKiller) SendKillSignal(reason killSignal) {
 	if atomic.CompareAndSwapUint32(&killer.Signal, 0, reason) {
 		status := atomic.LoadUint32(&killer.Signal)
 		err := killer.getKillError(status)
-		logutil.BgLogger().Warn("kill initiated", zap.Uint64("connection ID", killer.ConnID), zap.String("reason", err.Error()))
+		logutil.BgLogger().Warn("kill initiated", zap.Uint64("connection ID", killer.ConnID.Load()), zap.String("reason", err.Error()))
 	}
 }
 
@@ -74,9 +75,12 @@ func (killer *SQLKiller) getKillError(status killSignal) error {
 	case MaxExecTimeExceeded:
 		return exeerrors.ErrMaxExecTimeExceeded.GenWithStackByArgs()
 	case QueryMemoryExceeded:
-		return exeerrors.ErrMemoryExceedForQuery.GenWithStackByArgs(killer.ConnID)
+		return exeerrors.ErrMemoryExceedForQuery.GenWithStackByArgs(killer.ConnID.Load())
 	case ServerMemoryExceeded:
-		return exeerrors.ErrMemoryExceedForInstance.GenWithStackByArgs(killer.ConnID)
+		return exeerrors.ErrMemoryExceedForInstance.GenWithStackByArgs(killer.ConnID.Load())
+	case RunawayQueryExceeded:
+		return exeerrors.ErrResourceGroupQueryRunawayInterrupted.FastGenByArgs("runaway exceed tidb side")
+	default:
 	}
 	return nil
 }
@@ -111,7 +115,7 @@ func (killer *SQLKiller) HandleSignal() error {
 	failpoint.Inject("randomPanic", func(val failpoint.Value) {
 		if p, ok := val.(int); ok {
 			if rand.Float64() > (float64)(p)/1000 {
-				if killer.ConnID != 0 {
+				if killer.ConnID.Load() != 0 {
 					targetStatus := rand.Int31n(5)
 					atomic.StoreUint32(&killer.Signal, uint32(targetStatus))
 				}
@@ -122,7 +126,7 @@ func (killer *SQLKiller) HandleSignal() error {
 	err := killer.getKillError(status)
 	if status == ServerMemoryExceeded {
 		logutil.BgLogger().Warn("global memory controller, NeedKill signal is received successfully",
-			zap.Uint64("conn", killer.ConnID))
+			zap.Uint64("conn", killer.ConnID.Load()))
 	}
 	return err
 }
@@ -130,7 +134,7 @@ func (killer *SQLKiller) HandleSignal() error {
 // Reset resets the SqlKiller.
 func (killer *SQLKiller) Reset() {
 	if atomic.LoadUint32(&killer.Signal) != 0 {
-		logutil.BgLogger().Warn("kill finished", zap.Uint64("conn", killer.ConnID))
+		logutil.BgLogger().Warn("kill finished", zap.Uint64("conn", killer.ConnID.Load()))
 	}
 	atomic.StoreUint32(&killer.Signal, 0)
 }

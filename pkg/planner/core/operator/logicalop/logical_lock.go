@@ -53,7 +53,7 @@ func (p LogicalLock) Init(ctx base.PlanContext) *LogicalLock {
 // PruneColumns implements base.LogicalPlan.<2nd> interface.
 func (p *LogicalLock) PruneColumns(parentUsedCols []*expression.Column, opt *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, error) {
 	var err error
-	if !IsSelectForUpdateLockType(p.Lock.LockType) {
+	if !IsSupportedSelectLockType(p.Lock.LockType) {
 		// when use .baseLogicalPlan to call the PruneColumns, it means current plan itself has
 		// nothing to pruning or plan change, so they resort to its children's column pruning logic.
 		// so for the returned logical plan here, p is definitely determined, we just need to collect
@@ -141,14 +141,26 @@ func (p *LogicalLock) ExhaustPhysicalPlans(prop *property.PhysicalProperty) ([]b
 // ConvertOuterToInnerJoin inherits BaseLogicalPlan.LogicalPlan.<24th> implementation.
 
 // *************************** end implementation of logicalPlan interface ***************************
-
-// IsSelectForUpdateLockType checks if the select lock type is for update type.
-func IsSelectForUpdateLockType(lockType ast.SelectLockType) bool {
+// isSelectForUpdateLockType checks if the select lock type is the supported for update type.
+func isSelectForUpdateLockType(lockType ast.SelectLockType) bool {
 	if lockType == ast.SelectLockForUpdate ||
-		lockType == ast.SelectLockForShare ||
 		lockType == ast.SelectLockForUpdateNoWait ||
 		lockType == ast.SelectLockForUpdateWaitN {
 		return true
 	}
 	return false
+}
+
+// isSelectForShareLockType checks if the select lock type is supported for  type.
+func isSelectForShareLockType(lockType ast.SelectLockType) bool {
+	if lockType == ast.SelectLockForShare ||
+		lockType == ast.SelectLockForShareNoWait {
+		return true
+	}
+	return false
+}
+
+// IsSupportedSelectLockType checks if the lockType is supported to acquire pessimsitic locks if necessary.
+func IsSupportedSelectLockType(lockType ast.SelectLockType) bool {
+	return isSelectForUpdateLockType(lockType) || isSelectForShareLockType(lockType)
 }

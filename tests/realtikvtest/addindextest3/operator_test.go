@@ -27,10 +27,12 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/ddl/copr"
 	"github.com/pingcap/tidb/pkg/ddl/ingest"
+	"github.com/pingcap/tidb/pkg/ddl/testutil"
 	"github.com/pingcap/tidb/pkg/disttask/operator"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/table/tables"
@@ -38,7 +40,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/tests/realtikvtest"
 	"github.com/stretchr/testify/require"
-	"golang.org/x/sync/errgroup"
 )
 
 func init() {
@@ -58,10 +59,10 @@ func TestBackfillOperators(t *testing.T) {
 	var opTasks []ddl.TableScanTask
 	{
 		ctx := context.Background()
-		opCtx := ddl.NewDistTaskOperatorCtx(ctx, 1, 1)
+		opCtx, cancel := ddl.NewDistTaskOperatorCtx(ctx, 1, 1)
 		pTbl := tbl.(table.PhysicalTable)
 		src := ddl.NewTableScanTaskSource(opCtx, store, pTbl, startKey, endKey, nil)
-		sink := newTestSink[ddl.TableScanTask]()
+		sink := testutil.NewOperatorTestSink[ddl.TableScanTask]()
 
 		operator.Compose[ddl.TableScanTask](src, sink)
 
@@ -71,13 +72,13 @@ func TestBackfillOperators(t *testing.T) {
 		err = pipeline.Close()
 		require.NoError(t, err)
 
-		tasks := sink.collect()
+		tasks := sink.Collect()
 		require.Len(t, tasks, 10)
-		require.Equal(t, 1, tasks[0].ID)
+		require.Equal(t, 0, tasks[0].ID)
 		require.Equal(t, startKey, tasks[0].Start)
 		require.Equal(t, endKey, tasks[9].End)
 
-		opCtx.Cancel()
+		cancel()
 		require.NoError(t, opCtx.OperatorErr())
 
 		opTasks = tasks
@@ -93,10 +94,10 @@ func TestBackfillOperators(t *testing.T) {
 		}
 
 		ctx := context.Background()
-		opCtx := ddl.NewDistTaskOperatorCtx(ctx, 1, 1)
-		src := newTestSource(opTasks...)
-		scanOp := ddl.NewTableScanOperator(opCtx, sessPool, copCtx, srcChkPool, 3, nil)
-		sink := newTestSink[ddl.IndexRecordChunk]()
+		opCtx, cancel := ddl.NewDistTaskOperatorCtx(ctx, 1, 1)
+		src := testutil.NewOperatorTestSource(opTasks...)
+		scanOp := ddl.NewTableScanOperator(opCtx, sessPool, copCtx, srcChkPool, 3, nil, 0)
+		sink := testutil.NewOperatorTestSink[ddl.IndexRecordChunk]()
 
 		operator.Compose[ddl.TableScanTask](src, scanOp)
 		operator.Compose[ddl.IndexRecordChunk](scanOp, sink)
@@ -107,7 +108,7 @@ func TestBackfillOperators(t *testing.T) {
 		err = pipeline.Close()
 		require.NoError(t, err)
 
-		results := sink.collect()
+		results := sink.Collect()
 		cnt := 0
 		for _, rs := range results {
 			require.NoError(t, rs.Err)
@@ -119,14 +120,14 @@ func TestBackfillOperators(t *testing.T) {
 		}
 		require.Equal(t, 10, cnt)
 
-		opCtx.Cancel()
+		cancel()
 		require.NoError(t, opCtx.OperatorErr())
 	}
 
 	// Test IndexIngestOperator.
 	{
 		ctx := context.Background()
-		opCtx := ddl.NewDistTaskOperatorCtx(ctx, 1, 1)
+		opCtx, cancel := ddl.NewDistTaskOperatorCtx(ctx, 1, 1)
 		var keys, values [][]byte
 		onWrite := func(key, val []byte) {
 			keys = append(keys, key)
@@ -140,12 +141,12 @@ func TestBackfillOperators(t *testing.T) {
 		mockEngine := ingest.NewMockEngineInfo(nil)
 		mockEngine.SetHook(onWrite)
 
-		src := newTestSource(chunkResults...)
+		src := testutil.NewOperatorTestSource(chunkResults...)
 		reorgMeta := ddl.NewDDLReorgMeta(tk.Session())
 		ingestOp := ddl.NewIndexIngestOperator(
 			opCtx, copCtx, mockBackendCtx, sessPool, pTbl, []table.Index{index}, []ingest.Engine{mockEngine},
 			srcChkPool, 3, reorgMeta, nil, &ddl.EmptyRowCntListener{})
-		sink := newTestSink[ddl.IndexWriteResult]()
+		sink := testutil.NewOperatorTestSink[ddl.IndexWriteResult]()
 
 		operator.Compose[ddl.IndexRecordChunk](src, ingestOp)
 		operator.Compose[ddl.IndexWriteResult](ingestOp, sink)
@@ -156,7 +157,7 @@ func TestBackfillOperators(t *testing.T) {
 		err = pipeline.Close()
 		require.NoError(t, err)
 
-		results := sink.collect()
+		results := sink.Collect()
 		cnt := 0
 		for _, rs := range results {
 			cnt += rs.Added
@@ -165,7 +166,7 @@ func TestBackfillOperators(t *testing.T) {
 		require.Len(t, values, 10)
 		require.Equal(t, 10, cnt)
 
-		opCtx.Cancel()
+		cancel()
 		require.NoError(t, opCtx.OperatorErr())
 	}
 }
@@ -178,7 +179,8 @@ func TestBackfillOperatorPipeline(t *testing.T) {
 	sessPool := newSessPoolForTest(t, store)
 
 	ctx := context.Background()
-	opCtx := ddl.NewDistTaskOperatorCtx(ctx, 1, 1)
+	opCtx, cancel := ddl.NewDistTaskOperatorCtx(ctx, 1, 1)
+	defer cancel()
 	mockBackendCtx := &ingest.MockBackendCtx{}
 	mockEngine := ingest.NewMockEngineInfo(nil)
 	mockEngine.SetHook(func(key, val []byte) {})
@@ -205,7 +207,6 @@ func TestBackfillOperatorPipeline(t *testing.T) {
 	err = pipeline.Close()
 	require.NoError(t, err)
 
-	opCtx.Cancel()
 	require.NoError(t, opCtx.OperatorErr())
 }
 
@@ -277,7 +278,8 @@ func TestBackfillOperatorPipelineException(t *testing.T) {
 			} else {
 				require.NoError(t, failpoint.Enable(tc.failPointPath, `return`))
 			}
-			opCtx := ddl.NewDistTaskOperatorCtx(ctx, 1, 1)
+			opCtx, cancel := ddl.NewDistTaskOperatorCtx(ctx, 1, 1)
+			defer cancel()
 			pipeline, err := ddl.NewAddIndexIngestPipeline(
 				opCtx, store,
 				sessPool,
@@ -300,14 +302,12 @@ func TestBackfillOperatorPipelineException(t *testing.T) {
 			err = pipeline.Close()
 			comment := fmt.Sprintf("case: %s", tc.failPointPath)
 			require.ErrorContains(t, err, tc.closeErrMsg, comment)
-			opCtx.Cancel()
 			if tc.operatorErrMsg == "" {
 				require.NoError(t, opCtx.OperatorErr())
 			} else {
 				require.Error(t, opCtx.OperatorErr())
 				require.Equal(t, tc.operatorErrMsg, opCtx.OperatorErr().Error())
 			}
-			cancel()
 		})
 	}
 }
@@ -330,7 +330,7 @@ func prepare(t *testing.T, tk *testkit.TestKit, dom *domain.Domain, regionCnt in
 	tk.MustQuery("select count(*) from t;").Check(testkit.Rows(fmt.Sprintf("%d", regionCnt)))
 
 	var err error
-	tbl, err = dom.InfoSchema().TableByName(context.Background(), model.NewCIStr("op"), model.NewCIStr("t"))
+	tbl, err = dom.InfoSchema().TableByName(context.Background(), pmodel.NewCIStr("op"), pmodel.NewCIStr("t"))
 	require.NoError(t, err)
 	start = tbl.RecordPrefix()
 	end = tbl.RecordPrefix().PrefixNext()
@@ -367,78 +367,4 @@ func (p *sessPoolForTest) Get() (sessionctx.Context, error) {
 
 func (p *sessPoolForTest) Put(sctx sessionctx.Context) {
 	p.pool.Put(sctx.(pools.Resource))
-}
-
-type testSink[T any] struct {
-	errGroup  errgroup.Group
-	ch        chan T
-	collected []T
-}
-
-func newTestSink[T any]() *testSink[T] {
-	return &testSink[T]{
-		ch: make(chan T),
-	}
-}
-
-func (s *testSink[T]) Open() error {
-	s.errGroup.Go(func() error {
-		for data := range s.ch {
-			s.collected = append(s.collected, data)
-		}
-		return nil
-	})
-	return nil
-}
-
-func (s *testSink[T]) Close() error {
-	return s.errGroup.Wait()
-}
-
-func (s *testSink[T]) SetSource(dataCh operator.DataChannel[T]) {
-	s.ch = dataCh.Channel()
-}
-
-func (s *testSink[T]) String() string {
-	return "testSink"
-}
-
-func (s *testSink[T]) collect() []T {
-	return s.collected
-}
-
-type testSource[T any] struct {
-	errGroup errgroup.Group
-	ch       chan T
-	toBeSent []T
-}
-
-func newTestSource[T any](toBeSent ...T) *testSource[T] {
-	return &testSource[T]{
-		ch:       make(chan T),
-		toBeSent: toBeSent,
-	}
-}
-
-func (s *testSource[T]) SetSink(sink operator.DataChannel[T]) {
-	s.ch = sink.Channel()
-}
-
-func (s *testSource[T]) Open() error {
-	s.errGroup.Go(func() error {
-		for _, data := range s.toBeSent {
-			s.ch <- data
-		}
-		close(s.ch)
-		return nil
-	})
-	return nil
-}
-
-func (s *testSource[T]) Close() error {
-	return s.errGroup.Wait()
-}
-
-func (s *testSource[T]) String() string {
-	return "testSource"
 }

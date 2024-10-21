@@ -30,8 +30,8 @@ import (
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/lightning/mydump"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
@@ -291,7 +291,7 @@ func initEncodeCommitWorkers(e *LoadDataWorker) (*encodeWorker, *commitWorker, e
 	if err2 != nil {
 		return nil, nil, err2
 	}
-	colAssignExprs, exprWarnings, err2 := e.controller.CreateColAssignExprs(insertValues.Ctx())
+	colAssignExprs, exprWarnings, err2 := e.controller.CreateColAssignExprs(insertValues.Ctx().GetPlanCtx())
 	if err2 != nil {
 		return nil, nil, err2
 	}
@@ -647,6 +647,11 @@ func (w *commitWorker) checkAndInsertOneBatch(ctx context.Context, rows [][]type
 	case ast.OnDuplicateKeyHandlingIgnore:
 		return w.batchCheckAndInsert(ctx, rows[0:cnt], w.addRecordLD, false)
 	case ast.OnDuplicateKeyHandlingError:
+		txn, err := w.Ctx().Txn(true)
+		if err != nil {
+			return err
+		}
+		dupKeyCheck := optimizeDupKeyCheckForNormalInsert(w.Ctx().GetSessionVars(), txn)
 		for i, row := range rows[0:cnt] {
 			sizeHintStep := int(w.Ctx().GetSessionVars().ShardAllocateStep)
 			if sizeHintStep > 0 && i%sizeHintStep == 0 {
@@ -655,9 +660,9 @@ func (w *commitWorker) checkAndInsertOneBatch(ctx context.Context, rows [][]type
 				if sizeHint > remain {
 					sizeHint = remain
 				}
-				err = w.addRecordWithAutoIDHint(ctx, row, sizeHint, table.DupKeyCheckDefault)
+				err = w.addRecordWithAutoIDHint(ctx, row, sizeHint, dupKeyCheck)
 			} else {
-				err = w.addRecord(ctx, row, table.DupKeyCheckDefault)
+				err = w.addRecord(ctx, row, dupKeyCheck)
 			}
 			if err != nil {
 				return err

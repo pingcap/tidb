@@ -52,11 +52,11 @@ func TestOptions(t *testing.T) {
 	// NewAddRecordOpt with options
 	addOpt = NewAddRecordOpt(WithCtx(ctx), IsUpdate, WithReserveAutoIDHint(12))
 	require.Equal(t, AddRecordOpt{
-		commonMutateOpt: commonMutateOpt{Ctx: ctx},
-		IsUpdate:        true,
-		ReserveAutoID:   12,
+		commonMutateOpt: commonMutateOpt{ctx: ctx},
+		isUpdate:        true,
+		reserveAutoID:   12,
 	}, *addOpt)
-	require.Equal(t, CreateIdxOpt{commonMutateOpt: commonMutateOpt{Ctx: ctx}}, *(addOpt.GetCreateIdxOpt()))
+	require.Equal(t, CreateIdxOpt{commonMutateOpt: commonMutateOpt{ctx: ctx}}, *(addOpt.GetCreateIdxOpt()))
 	// NewUpdateRecordOpt without option
 	updateOpt := NewUpdateRecordOpt()
 	require.Equal(t, UpdateRecordOpt{}, *updateOpt)
@@ -64,17 +64,17 @@ func TestOptions(t *testing.T) {
 	require.Equal(t, CreateIdxOpt{}, *(updateOpt.GetCreateIdxOpt()))
 	// NewUpdateRecordOpt with options
 	updateOpt = NewUpdateRecordOpt(WithCtx(ctx))
-	require.Equal(t, UpdateRecordOpt{commonMutateOpt: commonMutateOpt{Ctx: ctx}}, *updateOpt)
-	require.Equal(t, AddRecordOpt{commonMutateOpt: commonMutateOpt{Ctx: ctx}}, *(updateOpt.GetAddRecordOpt()))
-	require.Equal(t, CreateIdxOpt{commonMutateOpt: commonMutateOpt{Ctx: ctx}}, *(updateOpt.GetCreateIdxOpt()))
+	require.Equal(t, UpdateRecordOpt{commonMutateOpt: commonMutateOpt{ctx: ctx}}, *updateOpt)
+	require.Equal(t, AddRecordOpt{commonMutateOpt: commonMutateOpt{ctx: ctx}}, *(updateOpt.GetAddRecordOpt()))
+	require.Equal(t, CreateIdxOpt{commonMutateOpt: commonMutateOpt{ctx: ctx}}, *(updateOpt.GetCreateIdxOpt()))
 	// NewCreateIdxOpt without option
 	createIdxOpt := NewCreateIdxOpt()
 	require.Equal(t, CreateIdxOpt{}, *createIdxOpt)
 	// NewCreateIdxOpt with options
 	createIdxOpt = NewCreateIdxOpt(WithCtx(ctx), WithIgnoreAssertion, FromBackfill)
 	require.Equal(t, CreateIdxOpt{
-		commonMutateOpt: commonMutateOpt{Ctx: ctx},
-		IgnoreAssertion: true,
-		FromBackFill:    true,
+		commonMutateOpt: commonMutateOpt{ctx: ctx},
+		ignoreAssertion: true,
+		fromBackFill:    true,
 	}, *createIdxOpt)
 }

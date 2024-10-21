@@ -668,22 +668,6 @@ a
 select /*+ use_index_merge(t, j0_0) */ a from t where ('1' member of (j0->'$.path0'));
 a
 drop table if exists t;
-create table t(a int, b int, c int, d json, index iad(a, (cast(d->'$.b' as signed array))));
-insert into t value(1,1,1, '{"b":[1,2,3,4]}');
-insert into t value(2,2,2, '{"b":[3,4,5,6]}');
-set tidb_analyze_version=2;
-analyze table t all columns;
-explain select * from t use index (iad) where a = 1;
-id	estRows	task	access object	operator info
-TableReader_7	1.00	root		data:Selection_6
-└─Selection_6	1.00	cop[tikv]		eq(planner__core__indexmerge_path.t.a, 1)
-  └─TableFullScan_5	2.00	cop[tikv]	table:t	keep order:false
-explain select * from t use index (iad) where a = 1 and (2 member of (d->'$.b'));
-id	estRows	task	access object	operator info
-IndexMerge_7	1.00	root		type: union
-├─IndexRangeScan_5(Build)	1.00	cop[tikv]	table:t, index:iad(a, cast(json_extract(`d`, _utf8mb4'$.b') as signed array))	range:[1 2,1 2], keep order:false, stats:partial[d:unInitialized]
-└─TableRowIDScan_6(Probe)	1.00	cop[tikv]	table:t	keep order:false, stats:partial[d:unInitialized]
-drop table if exists t;
 create table t(a int, d json, index iad(a, (cast(d->'$.b' as signed array))));
 insert into t value(1,'{"b":[]}'), (2,'{"b":[]}');
 select * from t use index (iad) where a = 1;
@@ -712,8 +696,8 @@ alter table t add index ibb( (cast(b->'$.b' as signed array)) );
 explain select /*+ use_index_merge(t) */ * from t where 10 member of (b->'$.b');
 id	estRows	task	access object	operator info
 IndexMerge_7	1.00	root		type: union
-├─IndexRangeScan_5(Build)	1.00	cop[tikv]	table:t, index:ibb(cast(json_extract(`b`, _utf8mb4'$.b') as signed array))	range:[10,10], keep order:false, stats:partial[ibb:missing, b:unInitialized]
-└─TableRowIDScan_6(Probe)	1.00	cop[tikv]	table:t	keep order:false, stats:partial[ibb:missing, b:unInitialized]
+├─IndexRangeScan_5(Build)	1.00	cop[tikv]	table:t, index:ibb(cast(json_extract(`b`, _utf8mb4'$.b') as signed array))	range:[10,10], keep order:false, stats:partial[ibb:missing]
+└─TableRowIDScan_6(Probe)	1.00	cop[tikv]	table:t	keep order:false, stats:partial[ibb:missing]
 drop table if exists t, t1;
 create table t (j json, i bigint(20) not null primary key, key mvi((cast(j as unsigned array))));
 insert into t values ('[1,2,3]', 1);
@@ -940,11 +924,10 @@ TableReader	15.99	root		data:Selection
   └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
 explain format=brief select * from t1 where (c=1 or b=1) and (1 member of (j)) and d=1;
 id	estRows	task	access object	operator info
-IndexMerge	0.20	root		type: union
-├─IndexRangeScan(Build)	0.10	cop[tikv]	table:t1, index:d(d, c)	range:[1 1,1 1], keep order:false, stats:pseudo
-├─IndexRangeScan(Build)	0.10	cop[tikv]	table:t1, index:kb(b, cast(`j` as unsigned array))	range:[1 1,1 1], keep order:false, stats:pseudo
-└─Selection(Probe)	0.20	cop[tikv]		eq(planner__core__indexmerge_path.t1.d, 1), json_memberof(cast(1, json BINARY), planner__core__indexmerge_path.t1.j), or(eq(planner__core__indexmerge_path.t1.c, 1), eq(planner__core__indexmerge_path.t1.b, 1))
-  └─TableRowIDScan	0.20	cop[tikv]	table:t1	keep order:false, stats:pseudo
+IndexLookUp	0.02	root		
+├─IndexRangeScan(Build)	10.00	cop[tikv]	table:t1, index:d(d, c)	range:[1,1], keep order:false, stats:pseudo
+└─Selection(Probe)	0.02	cop[tikv]		json_memberof(cast(1, json BINARY), planner__core__indexmerge_path.t1.j), or(eq(planner__core__indexmerge_path.t1.c, 1), eq(planner__core__indexmerge_path.t1.b, 1))
+  └─TableRowIDScan	10.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
 drop table if exists t;
 CREATE TABLE `t` (
 `col_37` json DEFAULT NULL,

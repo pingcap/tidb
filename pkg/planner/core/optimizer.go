@@ -19,7 +19,6 @@ import (
 	"context"
 	"fmt"
 	"math"
-	"runtime"
 	"slices"
 	"strconv"
 	"time"
@@ -34,11 +33,15 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lock"
 	tablelock "github.com/pingcap/tidb/pkg/lock/context"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/auth"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
+	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/planner/core/rule"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util/debugtrace"
@@ -59,7 +62,7 @@ import (
 )
 
 // OptimizeAstNode optimizes the query to a physical plan directly.
-var OptimizeAstNode func(ctx context.Context, sctx sessionctx.Context, node ast.Node, is infoschema.InfoSchema) (base.Plan, types.NameSlice, error)
+var OptimizeAstNode func(ctx context.Context, sctx sessionctx.Context, node *resolve.NodeW, is infoschema.InfoSchema) (base.Plan, types.NameSlice, error)
 
 // AllowCartesianProduct means whether tidb allows cartesian join without equal conditions.
 var AllowCartesianProduct = atomic.NewBool(true)
@@ -67,35 +70,7 @@ var AllowCartesianProduct = atomic.NewBool(true)
 // IsReadOnly check whether the ast.Node is a read only statement.
 var IsReadOnly func(node ast.Node, vars *variable.SessionVars) bool
 
-// Note: The order of flags is same as the order of optRule in the list.
-// Do not mess up the order.
-const (
-	flagGcSubstitute uint64 = 1 << iota
-	flagPrunColumns
-	flagStabilizeResults
-	flagBuildKeyInfo
-	flagDecorrelate
-	flagSemiJoinRewrite
-	flagEliminateAgg
-	flagSkewDistinctAgg
-	flagEliminateProjection
-	flagMaxMinEliminate
-	flagConstantPropagation
-	flagConvertOuterToInnerJoin
-	flagPredicatePushDown
-	flagEliminateOuterJoin
-	flagPartitionProcessor
-	flagCollectPredicateColumnsPoint
-	flagPushDownAgg
-	flagDeriveTopNFromWindow
-	flagPredicateSimplification
-	flagPushDownTopN
-	flagSyncWaitStatsLoadPoint
-	flagJoinReOrder
-	flagPrunColumnsAgain
-	flagPushDownSequence
-	flagResolveExpand
-)
+const initialMaxCores uint64 = 10000
 
 var optRuleList = []base.LogicalOptRule{
 	&GcSubstituter{},
@@ -108,7 +83,7 @@ var optRuleList = []base.LogicalOptRule{
 	&SkewDistinctAggRewriter{},
 	&ProjectionEliminator{},
 	&MaxMinEliminator{},
-	&ConstantPropagationSolver{},
+	&rule.ConstantPropagationSolver{},
 	&ConvertOuterToInnerJoin{},
 	&PPDSolver{},
 	&OuterJoinEliminator{},
@@ -133,7 +108,7 @@ var optRuleList = []base.LogicalOptRule{
 var optInteractionRuleList = map[base.LogicalOptRule]base.LogicalOptRule{}
 
 // BuildLogicalPlanForTest builds a logical plan for testing purpose from ast.Node.
-func BuildLogicalPlanForTest(ctx context.Context, sctx sessionctx.Context, node ast.Node, infoSchema infoschema.InfoSchema) (base.Plan, error) {
+func BuildLogicalPlanForTest(ctx context.Context, sctx sessionctx.Context, node *resolve.NodeW, infoSchema infoschema.InfoSchema) (base.Plan, error) {
 	sctx.GetSessionVars().PlanID.Store(0)
 	sctx.GetSessionVars().PlanColumnID.Store(0)
 	builder, _ := NewPlanBuilder().Init(sctx.GetPlanCtx(), infoSchema, utilhint.NewQBHintHandler(nil))
@@ -235,7 +210,7 @@ func VisitInfo4PrivCheck(ctx context.Context, is infoschema.InfoSchema, node ast
 func needCheckTmpTablePriv(ctx context.Context, is infoschema.InfoSchema, v visitInfo) bool {
 	if v.db != "" && v.table != "" {
 		// Other statements on local temporary tables except `CREATE` do not check any privileges.
-		tb, err := is.TableByName(ctx, model.NewCIStr(v.db), model.NewCIStr(v.table))
+		tb, err := is.TableByName(ctx, pmodel.NewCIStr(v.db), pmodel.NewCIStr(v.table))
 		// If the table doesn't exist, we do not report errors to avoid leaking the existence of the table.
 		if err == nil && tb.Meta().TempTableType == model.TempTableLocal {
 			return false
@@ -309,21 +284,21 @@ func doOptimize(
 }
 
 func adjustOptimizationFlags(flag uint64, logic base.LogicalPlan) uint64 {
-	// If there is something after flagPrunColumns, do flagPrunColumnsAgain.
-	if flag&flagPrunColumns > 0 && flag-flagPrunColumns > flagPrunColumns {
-		flag |= flagPrunColumnsAgain
+	// If there is something after flagPrunColumns, do FlagPruneColumnsAgain.
+	if flag&rule.FlagPruneColumns > 0 && flag-rule.FlagPruneColumns > rule.FlagPruneColumns {
+		flag |= rule.FlagPruneColumnsAgain
 	}
 	if checkStableResultMode(logic.SCtx()) {
-		flag |= flagStabilizeResults
+		flag |= rule.FlagStabilizeResults
 	}
 	if logic.SCtx().GetSessionVars().StmtCtx.StraightJoinOrder {
 		// When we use the straight Join Order hint, we should disable the join reorder optimization.
-		flag &= ^flagJoinReOrder
+		flag &= ^rule.FlagJoinReOrder
 	}
-	flag |= flagCollectPredicateColumnsPoint
-	flag |= flagSyncWaitStatsLoadPoint
+	flag |= rule.FlagCollectPredicateColumnsPoint
+	flag |= rule.FlagSyncWaitStatsLoadPoint
 	if !logic.SCtx().GetSessionVars().StmtCtx.UseDynamicPruneMode {
-		flag |= flagPartitionProcessor // apply partition pruning under static mode
+		flag |= rule.FlagPartitionProcessor // apply partition pruning under static mode
 	}
 	return flag
 }
@@ -385,13 +360,13 @@ func refineCETrace(sctx base.PlanContext) {
 func mergeContinuousSelections(p base.PhysicalPlan) {
 	if sel, ok := p.(*PhysicalSelection); ok {
 		for {
-			childSel := sel.children[0]
+			childSel := sel.Children()[0]
 			tmp, ok := childSel.(*PhysicalSelection)
 			if !ok {
 				break
 			}
 			sel.Conditions = append(sel.Conditions, tmp.Conditions...)
-			sel.SetChild(0, tmp.children[0])
+			sel.SetChild(0, tmp.Children()[0])
 		}
 	}
 	for _, child := range p.Children() {
@@ -412,6 +387,7 @@ func postOptimize(ctx context.Context, sctx base.PlanContext, plan base.Physical
 	plan = InjectExtraProjection(plan)
 	mergeContinuousSelections(plan)
 	plan = eliminateUnionScanAndLock(sctx, plan)
+	plan = avoidColumnEvaluatorForProjBelowUnion(plan)
 	plan = enableParallelApply(sctx, plan)
 	handleFineGrainedShuffle(ctx, sctx, plan)
 	propagateProbeParents(plan, nil)
@@ -510,7 +486,7 @@ func countStarRewriteInternal(plan base.PhysicalPlan) {
 	default:
 		return
 	}
-	if len(physicalAgg.GroupByItems) > 0 || len(physicalAgg.children) != 1 {
+	if len(physicalAgg.GroupByItems) > 0 || len(physicalAgg.Children()) != 1 {
 		return
 	}
 	for _, aggFunc := range physicalAgg.AggFuncs {
@@ -600,7 +576,7 @@ func handleFineGrainedShuffle(ctx context.Context, sctx base.PlanContext, plan b
 func setupFineGrainedShuffle(ctx context.Context, sctx base.PlanContext, streamCountInfo *tiflashClusterInfo, tiflashServerCountInfo *tiflashClusterInfo, plan base.PhysicalPlan) {
 	if tableReader, ok := plan.(*PhysicalTableReader); ok {
 		if _, isExchangeSender := tableReader.tablePlan.(*PhysicalExchangeSender); isExchangeSender {
-			helper := fineGrainedShuffleHelper{shuffleTarget: unknown, plans: make([]*basePhysicalPlan, 1)}
+			helper := fineGrainedShuffleHelper{shuffleTarget: unknown, plans: make([]*physicalop.BasePhysicalPlan, 1)}
 			setupFineGrainedShuffleInternal(ctx, sctx, tableReader.tablePlan, &helper, streamCountInfo, tiflashServerCountInfo)
 		}
 	} else {
@@ -621,7 +597,7 @@ const (
 
 type fineGrainedShuffleHelper struct {
 	shuffleTarget shuffleTarget
-	plans         []*basePhysicalPlan
+	plans         []*physicalop.BasePhysicalPlan
 	joinKeysCount int
 }
 
@@ -644,14 +620,12 @@ func (h *fineGrainedShuffleHelper) clear() {
 	h.joinKeysCount = 0
 }
 
-func (h *fineGrainedShuffleHelper) updateTarget(t shuffleTarget, p *basePhysicalPlan) {
+func (h *fineGrainedShuffleHelper) updateTarget(t shuffleTarget, p *physicalop.BasePhysicalPlan) {
 	h.shuffleTarget = t
 	h.plans = append(h.plans, p)
 }
 
-// calculateTiFlashStreamCountUsingMinLogicalCores uses minimal logical cpu cores among tiflash servers, and divide by 2
-// return false, 0 if any err happens
-func calculateTiFlashStreamCountUsingMinLogicalCores(ctx context.Context, sctx base.PlanContext, serversInfo []infoschema.ServerInfo) (bool, uint64) {
+func getTiFlashServerMinLogicalCores(ctx context.Context, sctx base.PlanContext, serversInfo []infoschema.ServerInfo) (bool, uint64) {
 	failpoint.Inject("mockTiFlashStreamCountUsingMinLogicalCores", func(val failpoint.Value) {
 		intVal, err := strconv.Atoi(val.(string))
 		if err == nil {
@@ -664,7 +638,6 @@ func calculateTiFlashStreamCountUsingMinLogicalCores(ctx context.Context, sctx b
 	if err != nil {
 		return false, 0
 	}
-	var initialMaxCores uint64 = 10000
 	var minLogicalCores = initialMaxCores // set to a large enough value here
 	for _, row := range rows {
 		if row[4].GetString() == "cpu-logical-cores" {
@@ -675,14 +648,19 @@ func calculateTiFlashStreamCountUsingMinLogicalCores(ctx context.Context, sctx b
 		}
 	}
 	// No need to check len(serersInfo) == serverCount here, since missing some servers' info won't affect the correctness
-	if minLogicalCores > 1 && minLogicalCores != initialMaxCores {
-		if runtime.GOARCH == "amd64" {
-			// In most x86-64 platforms, `Thread(s) per core` is 2
-			return true, minLogicalCores / 2
-		}
-		// ARM cpus don't implement Hyper-threading.
+	return true, minLogicalCores
+}
+
+// calculateTiFlashStreamCountUsingMinLogicalCores uses minimal logical cpu cores among tiflash servers
+// return false, 0 if any err happens
+func calculateTiFlashStreamCountUsingMinLogicalCores(ctx context.Context, sctx base.PlanContext, serversInfo []infoschema.ServerInfo) (bool, uint64) {
+	valid, minLogicalCores := getTiFlashServerMinLogicalCores(ctx, sctx, serversInfo)
+	if !valid {
+		return false, 0
+	}
+	if minLogicalCores != initialMaxCores {
+		// use logical core number as the stream count, the same as TiFlash's default max_threads: https://github.com/pingcap/tiflash/blob/v7.5.0/dbms/src/Interpreters/SettingsCommon.h#L166
 		return true, minLogicalCores
-		// Other platforms are too rare to consider
 	}
 
 	return false, 0
@@ -800,34 +778,34 @@ func setupFineGrainedShuffleInternal(ctx context.Context, sctx base.PlanContext,
 		// Do not clear the plans because window executor will keep the data partition.
 		// For non hash partition window function, there will be a passthrough ExchangeSender to collect data,
 		// which will break data partition.
-		helper.updateTarget(window, &x.basePhysicalPlan)
-		setupFineGrainedShuffleInternal(ctx, sctx, x.children[0], helper, streamCountInfo, tiflashServerCountInfo)
+		helper.updateTarget(window, &x.BasePhysicalPlan)
+		setupFineGrainedShuffleInternal(ctx, sctx, x.Children()[0], helper, streamCountInfo, tiflashServerCountInfo)
 	case *PhysicalSort:
 		if x.IsPartialSort {
 			// Partial sort will keep the data partition.
-			helper.plans = append(helper.plans, &x.basePhysicalPlan)
+			helper.plans = append(helper.plans, &x.BasePhysicalPlan)
 		} else {
 			// Global sort will break the data partition.
 			helper.clear()
 		}
-		setupFineGrainedShuffleInternal(ctx, sctx, x.children[0], helper, streamCountInfo, tiflashServerCountInfo)
+		setupFineGrainedShuffleInternal(ctx, sctx, x.Children()[0], helper, streamCountInfo, tiflashServerCountInfo)
 	case *PhysicalSelection:
-		helper.plans = append(helper.plans, &x.basePhysicalPlan)
-		setupFineGrainedShuffleInternal(ctx, sctx, x.children[0], helper, streamCountInfo, tiflashServerCountInfo)
+		helper.plans = append(helper.plans, &x.BasePhysicalPlan)
+		setupFineGrainedShuffleInternal(ctx, sctx, x.Children()[0], helper, streamCountInfo, tiflashServerCountInfo)
 	case *PhysicalProjection:
-		helper.plans = append(helper.plans, &x.basePhysicalPlan)
-		setupFineGrainedShuffleInternal(ctx, sctx, x.children[0], helper, streamCountInfo, tiflashServerCountInfo)
+		helper.plans = append(helper.plans, &x.BasePhysicalPlan)
+		setupFineGrainedShuffleInternal(ctx, sctx, x.Children()[0], helper, streamCountInfo, tiflashServerCountInfo)
 	case *PhysicalExchangeReceiver:
-		helper.plans = append(helper.plans, &x.basePhysicalPlan)
-		setupFineGrainedShuffleInternal(ctx, sctx, x.children[0], helper, streamCountInfo, tiflashServerCountInfo)
+		helper.plans = append(helper.plans, &x.BasePhysicalPlan)
+		setupFineGrainedShuffleInternal(ctx, sctx, x.Children()[0], helper, streamCountInfo, tiflashServerCountInfo)
 	case *PhysicalHashAgg:
 		// Todo: allow hash aggregation's output still benefits from fine grained shuffle
-		aggHelper := fineGrainedShuffleHelper{shuffleTarget: hashAgg, plans: []*basePhysicalPlan{}}
-		aggHelper.plans = append(aggHelper.plans, &x.basePhysicalPlan)
-		setupFineGrainedShuffleInternal(ctx, sctx, x.children[0], &aggHelper, streamCountInfo, tiflashServerCountInfo)
+		aggHelper := fineGrainedShuffleHelper{shuffleTarget: hashAgg, plans: []*physicalop.BasePhysicalPlan{}}
+		aggHelper.plans = append(aggHelper.plans, &x.BasePhysicalPlan)
+		setupFineGrainedShuffleInternal(ctx, sctx, x.Children()[0], &aggHelper, streamCountInfo, tiflashServerCountInfo)
 	case *PhysicalHashJoin:
-		child0 := x.children[0]
-		child1 := x.children[1]
+		child0 := x.Children()[0]
+		child1 := x.Children()[1]
 		buildChild := child0
 		probChild := child1
 		joinKeys := x.LeftJoinKeys
@@ -838,12 +816,12 @@ func setupFineGrainedShuffleInternal(ctx context.Context, sctx base.PlanContext,
 			probChild = child0
 		}
 		if len(joinKeys) > 0 { // Not cross join
-			buildHelper := fineGrainedShuffleHelper{shuffleTarget: joinBuild, plans: []*basePhysicalPlan{}}
-			buildHelper.plans = append(buildHelper.plans, &x.basePhysicalPlan)
+			buildHelper := fineGrainedShuffleHelper{shuffleTarget: joinBuild, plans: []*physicalop.BasePhysicalPlan{}}
+			buildHelper.plans = append(buildHelper.plans, &x.BasePhysicalPlan)
 			buildHelper.joinKeysCount = len(joinKeys)
 			setupFineGrainedShuffleInternal(ctx, sctx, buildChild, &buildHelper, streamCountInfo, tiflashServerCountInfo)
 		} else {
-			buildHelper := fineGrainedShuffleHelper{shuffleTarget: unknown, plans: []*basePhysicalPlan{}}
+			buildHelper := fineGrainedShuffleHelper{shuffleTarget: unknown, plans: []*physicalop.BasePhysicalPlan{}}
 			setupFineGrainedShuffleInternal(ctx, sctx, buildChild, &buildHelper, streamCountInfo, tiflashServerCountInfo)
 		}
 		// don't apply fine grained shuffle for probe side
@@ -884,10 +862,10 @@ func setupFineGrainedShuffleInternal(ctx context.Context, sctx base.PlanContext,
 		}
 		// exchange sender will break the data partition.
 		helper.clear()
-		setupFineGrainedShuffleInternal(ctx, sctx, x.children[0], helper, streamCountInfo, tiflashServerCountInfo)
+		setupFineGrainedShuffleInternal(ctx, sctx, x.Children()[0], helper, streamCountInfo, tiflashServerCountInfo)
 	default:
 		for _, child := range x.Children() {
-			childHelper := fineGrainedShuffleHelper{shuffleTarget: unknown, plans: []*basePhysicalPlan{}}
+			childHelper := fineGrainedShuffleHelper{shuffleTarget: unknown, plans: []*physicalop.BasePhysicalPlan{}}
 			setupFineGrainedShuffleInternal(ctx, sctx, child, &childHelper, streamCountInfo, tiflashServerCountInfo)
 		}
 	}
@@ -1068,7 +1046,7 @@ func physicalOptimize(logic base.LogicalPlan, planCounter *base.PlanCounterTp) (
 		return nil, 0, err
 	}
 	if *planCounter > 0 {
-		logic.SCtx().GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackErrorf("The parameter of nth_plan() is out of range"))
+		logic.SCtx().GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackError("The parameter of nth_plan() is out of range"))
 	}
 	if t.Invalid() {
 		errMsg := "Can't find a proper physical plan for this query"
@@ -1083,6 +1061,22 @@ func physicalOptimize(logic base.LogicalPlan, planCounter *base.PlanCounterTp) (
 	}
 	cost, err = getPlanCost(t.Plan(), property.RootTaskType, optimizetrace.NewDefaultPlanCostOption())
 	return t.Plan(), cost, err
+}
+
+// avoidColumnEvaluatorForProjBelowUnion sets AvoidColumnEvaluator to false for the projection operator which is a child of Union operator.
+func avoidColumnEvaluatorForProjBelowUnion(p base.PhysicalPlan) base.PhysicalPlan {
+	iteratePhysicalPlan(p, func(p base.PhysicalPlan) bool {
+		x, ok := p.(*PhysicalUnionAll)
+		if ok {
+			for _, child := range x.Children() {
+				if proj, ok := child.(*PhysicalProjection); ok {
+					proj.AvoidColumnEvaluator = true
+				}
+			}
+		}
+		return true
+	})
+	return p
 }
 
 // eliminateUnionScanAndLock set lock property for PointGet and BatchPointGet and eliminates UnionScan and Lock.
@@ -1154,8 +1148,8 @@ func transformPhysicalPlan(p base.PhysicalPlan, f func(p base.PhysicalPlan) base
 }
 
 func existsCartesianProduct(p base.LogicalPlan) bool {
-	if join, ok := p.(*LogicalJoin); ok && len(join.EqualConditions) == 0 {
-		return join.JoinType == InnerJoin || join.JoinType == LeftOuterJoin || join.JoinType == RightOuterJoin
+	if join, ok := p.(*logicalop.LogicalJoin); ok && len(join.EqualConditions) == 0 {
+		return join.JoinType == logicalop.InnerJoin || join.JoinType == logicalop.LeftOuterJoin || join.JoinType == logicalop.RightOuterJoin
 	}
 	for _, child := range p.Children() {
 		if existsCartesianProduct(child) {
@@ -1206,7 +1200,7 @@ func existsOverlongType(schema *expression.Schema) bool {
 	for _, column := range schema.Columns {
 		switch column.RetType.GetType() {
 		case mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob,
-			mysql.TypeBlob, mysql.TypeJSON:
+			mysql.TypeBlob, mysql.TypeJSON, mysql.TypeTiDBVectorFloat32:
 			return true
 		case mysql.TypeVarString, mysql.TypeVarchar:
 			// if the column is varchar and the length of

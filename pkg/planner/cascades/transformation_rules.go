@@ -22,13 +22,13 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/planner/context"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	ruleutil "github.com/pingcap/tidb/pkg/planner/core/rule/util"
 	"github.com/pingcap/tidb/pkg/planner/memo"
 	"github.com/pingcap/tidb/pkg/planner/pattern"
+	"github.com/pingcap/tidb/pkg/planner/planctx"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/coreusage"
 	"github.com/pingcap/tidb/pkg/types"
@@ -197,8 +197,8 @@ func NewRulePushSelDownTableScan() Transformation {
 // Filters of the old `sel` operator are removed if they are used to calculate
 // the key ranges of the `ts` operator.
 func (*PushSelDownTableScan) OnTransform(old *memo.ExprIter) (newExprs []*memo.GroupExpr, eraseOld bool, eraseAll bool, err error) {
-	sel := old.GetExpr().ExprNode.(*plannercore.LogicalSelection)
-	ts := old.Children[0].GetExpr().ExprNode.(*plannercore.LogicalTableScan)
+	sel := old.GetExpr().ExprNode.(*logicalop.LogicalSelection)
+	ts := old.Children[0].GetExpr().ExprNode.(*logicalop.LogicalTableScan)
 	if ts.HandleCols == nil {
 		return nil, false, false, nil
 	}
@@ -206,7 +206,7 @@ func (*PushSelDownTableScan) OnTransform(old *memo.ExprIter) (newExprs []*memo.G
 	if accesses == nil {
 		return nil, false, false, nil
 	}
-	newTblScan := plannercore.LogicalTableScan{
+	newTblScan := logicalop.LogicalTableScan{
 		Source:      ts.Source,
 		HandleCols:  ts.HandleCols,
 		AccessConds: ts.AccessConds.Shallow(),
@@ -219,7 +219,7 @@ func (*PushSelDownTableScan) OnTransform(old *memo.ExprIter) (newExprs []*memo.G
 	}
 	schema := old.GetExpr().Group.Prop.Schema
 	tblScanGroup := memo.NewGroupWithSchema(tblScanExpr, schema)
-	newSel := plannercore.LogicalSelection{Conditions: remained}.Init(sel.SCtx(), sel.QueryBlockOffset())
+	newSel := logicalop.LogicalSelection{Conditions: remained}.Init(sel.SCtx(), sel.QueryBlockOffset())
 	selExpr := memo.NewGroupExpr(newSel)
 	selExpr.Children = append(selExpr.Children, tblScanGroup)
 	// `sel -> ts` is transformed to `newSel ->newTS`.
@@ -250,8 +250,8 @@ func NewRulePushSelDownIndexScan() Transformation {
 //	  `Selection -> IndexScan(with a new access range)`
 //		 or just keep the two GroupExprs unchanged.
 func (*PushSelDownIndexScan) OnTransform(old *memo.ExprIter) (newExprs []*memo.GroupExpr, eraseOld bool, eraseAll bool, err error) {
-	sel := old.GetExpr().ExprNode.(*plannercore.LogicalSelection)
-	is := old.Children[0].GetExpr().ExprNode.(*plannercore.LogicalIndexScan)
+	sel := old.GetExpr().ExprNode.(*logicalop.LogicalSelection)
+	is := old.Children[0].GetExpr().ExprNode.(*logicalop.LogicalIndexScan)
 	if len(is.IdxCols) == 0 {
 		return nil, false, false, nil
 	}
@@ -283,7 +283,7 @@ func (*PushSelDownIndexScan) OnTransform(old *memo.ExprIter) (newExprs []*memo.G
 		}
 	}
 	// TODO: `res` still has some unused fields: EqOrInCount, IsDNFCond.
-	newIs := plannercore.LogicalIndexScan{
+	newIs := logicalop.LogicalIndexScan{
 		Source:         is.Source,
 		IsDoubleRead:   is.IsDoubleRead,
 		EqCondCount:    res.EqCondCount,
@@ -302,7 +302,7 @@ func (*PushSelDownIndexScan) OnTransform(old *memo.ExprIter) (newExprs []*memo.G
 		return []*memo.GroupExpr{isExpr}, true, false, nil
 	}
 	isGroup := memo.NewGroupWithSchema(isExpr, old.Children[0].GetExpr().Group.Prop.Schema)
-	newSel := plannercore.LogicalSelection{Conditions: res.RemainedConds}.Init(sel.SCtx(), sel.QueryBlockOffset())
+	newSel := logicalop.LogicalSelection{Conditions: res.RemainedConds}.Init(sel.SCtx(), sel.QueryBlockOffset())
 	selExpr := memo.NewGroupExpr(newSel)
 	selExpr.SetChildren(isGroup)
 	return []*memo.GroupExpr{selExpr}, true, false, nil
@@ -331,16 +331,16 @@ func NewRulePushSelDownTiKVSingleGather() Transformation {
 // 1. `newTg -> pushedSel -> any`
 // 2. `remainedSel -> newTg -> pushedSel -> any`
 func (*PushSelDownTiKVSingleGather) OnTransform(old *memo.ExprIter) (newExprs []*memo.GroupExpr, eraseOld bool, eraseAll bool, err error) {
-	sel := old.GetExpr().ExprNode.(*plannercore.LogicalSelection)
-	sg := old.Children[0].GetExpr().ExprNode.(*plannercore.TiKVSingleGather)
+	sel := old.GetExpr().ExprNode.(*logicalop.LogicalSelection)
+	sg := old.Children[0].GetExpr().ExprNode.(*logicalop.TiKVSingleGather)
 	childGroup := old.Children[0].Children[0].Group
 	var pushed, remained []expression.Expression
 	sctx := sg.SCtx()
-	pushed, remained = expression.PushDownExprs(plannercore.GetPushDownCtx(sctx), sel.Conditions, kv.TiKV)
+	pushed, remained = expression.PushDownExprs(util.GetPushDownCtx(sctx), sel.Conditions, kv.TiKV)
 	if len(pushed) == 0 {
 		return nil, false, false, nil
 	}
-	pushedSel := plannercore.LogicalSelection{Conditions: pushed}.Init(sctx, sel.QueryBlockOffset())
+	pushedSel := logicalop.LogicalSelection{Conditions: pushed}.Init(sctx, sel.QueryBlockOffset())
 	pushedSelExpr := memo.NewGroupExpr(pushedSel)
 	pushedSelExpr.Children = append(pushedSelExpr.Children, childGroup)
 	pushedSelGroup := memo.NewGroupWithSchema(pushedSelExpr, childGroup.Prop.Schema).SetEngineType(childGroup.EngineType)
@@ -356,7 +356,7 @@ func (*PushSelDownTiKVSingleGather) OnTransform(old *memo.ExprIter) (newExprs []
 		return []*memo.GroupExpr{tblGatherExpr}, true, false, nil
 	}
 	tblGatherGroup := memo.NewGroupWithSchema(tblGatherExpr, pushedSelGroup.Prop.Schema)
-	remainedSel := plannercore.LogicalSelection{Conditions: remained}.Init(sel.SCtx(), sel.QueryBlockOffset())
+	remainedSel := logicalop.LogicalSelection{Conditions: remained}.Init(sel.SCtx(), sel.QueryBlockOffset())
 	remainedSelExpr := memo.NewGroupExpr(remainedSel)
 	remainedSelExpr.Children = append(remainedSelExpr.Children, tblGatherGroup)
 	// `oldSel -> oldTg -> any` is transformed to `remainedSel -> newTg -> pushedSel -> any`.
@@ -378,7 +378,7 @@ func NewRuleEnumeratePaths() Transformation {
 
 // OnTransform implements Transformation interface.
 func (*EnumeratePaths) OnTransform(old *memo.ExprIter) (newExprs []*memo.GroupExpr, eraseOld bool, eraseAll bool, err error) {
-	ds := old.GetExpr().ExprNode.(*plannercore.DataSource)
+	ds := old.GetExpr().ExprNode.(*logicalop.DataSource)
 	gathers := ds.Convert2Gathers()
 	for _, gather := range gathers {
 		expr := memo.Convert2GroupExpr(gather)
@@ -411,7 +411,7 @@ func (r *PushAggDownGather) Match(expr *memo.ExprIter) bool {
 	if expr.GetExpr().HasAppliedRule(r) {
 		return false
 	}
-	agg := expr.GetExpr().ExprNode.(*plannercore.LogicalAggregation)
+	agg := expr.GetExpr().ExprNode.(*logicalop.LogicalAggregation)
 	for _, aggFunc := range agg.AggFuncs {
 		if aggFunc.Mode != aggregation.CompleteMode {
 			return false
@@ -435,9 +435,9 @@ func (r *PushAggDownGather) Match(expr *memo.ExprIter) bool {
 // OnTransform implements Transformation interface.
 // It will transform `Agg->Gather` to `Agg(Final) -> Gather -> Agg(Partial1)`.
 func (r *PushAggDownGather) OnTransform(old *memo.ExprIter) (newExprs []*memo.GroupExpr, eraseOld bool, eraseAll bool, err error) {
-	agg := old.GetExpr().ExprNode.(*plannercore.LogicalAggregation)
+	agg := old.GetExpr().ExprNode.(*logicalop.LogicalAggregation)
 	aggSchema := old.GetExpr().Group.Prop.Schema
-	gather := old.Children[0].GetExpr().ExprNode.(*plannercore.TiKVSingleGather)
+	gather := old.Children[0].GetExpr().ExprNode.(*logicalop.TiKVSingleGather)
 	childGroup := old.Children[0].GetExpr().Children[0]
 	// The old Aggregation should stay unchanged for other transformation.
 	// So we build a new LogicalAggregation for the partialAgg.
@@ -461,13 +461,13 @@ func (r *PushAggDownGather) OnTransform(old *memo.ExprIter) (newExprs []*memo.Gr
 	partialPref.AggFuncs =
 		plannercore.RemoveUnnecessaryFirstRow(agg.SCtx(), finalPref.GroupByItems, partialPref.AggFuncs, partialPref.GroupByItems, partialPref.Schema, firstRowFuncMap)
 
-	partialAgg := plannercore.LogicalAggregation{
+	partialAgg := logicalop.LogicalAggregation{
 		AggFuncs:     partialPref.AggFuncs,
 		GroupByItems: partialPref.GroupByItems,
 	}.Init(agg.SCtx(), agg.QueryBlockOffset())
 	partialAgg.CopyAggHints(agg)
 
-	finalAgg := plannercore.LogicalAggregation{
+	finalAgg := logicalop.LogicalAggregation{
 		AggFuncs:     finalPref.AggFuncs,
 		GroupByItems: finalPref.GroupByItems,
 	}.Init(agg.SCtx(), agg.QueryBlockOffset())
@@ -507,7 +507,7 @@ func NewRulePushSelDownSort() Transformation {
 // OnTransform implements Transformation interface.
 // It will transform `sel->sort->x` to `sort->sel->x`.
 func (*PushSelDownSort) OnTransform(old *memo.ExprIter) (newExprs []*memo.GroupExpr, eraseOld bool, eraseAll bool, err error) {
-	sel := old.GetExpr().ExprNode.(*plannercore.LogicalSelection)
+	sel := old.GetExpr().ExprNode.(*logicalop.LogicalSelection)
 	sort := old.Children[0].GetExpr().ExprNode.(*logicalop.LogicalSort)
 	childGroup := old.Children[0].GetExpr().Children[0]
 
@@ -543,7 +543,7 @@ func NewRulePushSelDownProjection() Transformation {
 // 2. `selection -> projection -> selection -> x` or
 // 3. just keep unchanged.
 func (*PushSelDownProjection) OnTransform(old *memo.ExprIter) (newExprs []*memo.GroupExpr, eraseOld bool, eraseAll bool, err error) {
-	sel := old.GetExpr().ExprNode.(*plannercore.LogicalSelection)
+	sel := old.GetExpr().ExprNode.(*logicalop.LogicalSelection)
 	proj := old.Children[0].GetExpr().ExprNode.(*logicalop.LogicalProjection)
 	projSchema := old.Children[0].Prop.Schema
 	childGroup := old.Children[0].GetExpr().Children[0]
@@ -566,7 +566,7 @@ func (*PushSelDownProjection) OnTransform(old *memo.ExprIter) (newExprs []*memo.
 	if len(canBePushed) == 0 {
 		return nil, false, false, nil
 	}
-	newBottomSel := plannercore.LogicalSelection{Conditions: canBePushed}.Init(sel.SCtx(), sel.QueryBlockOffset())
+	newBottomSel := logicalop.LogicalSelection{Conditions: canBePushed}.Init(sel.SCtx(), sel.QueryBlockOffset())
 	newBottomSelExpr := memo.NewGroupExpr(newBottomSel)
 	newBottomSelExpr.SetChildren(childGroup)
 	newBottomSelGroup := memo.NewGroupWithSchema(newBottomSelExpr, childGroup.Prop.Schema)
@@ -576,7 +576,7 @@ func (*PushSelDownProjection) OnTransform(old *memo.ExprIter) (newExprs []*memo.
 		return []*memo.GroupExpr{newProjExpr}, true, false, nil
 	}
 	newProjGroup := memo.NewGroupWithSchema(newProjExpr, projSchema)
-	newTopSel := plannercore.LogicalSelection{Conditions: canNotBePushed}.Init(sel.SCtx(), sel.QueryBlockOffset())
+	newTopSel := logicalop.LogicalSelection{Conditions: canNotBePushed}.Init(sel.SCtx(), sel.QueryBlockOffset())
 	newTopSelExpr := memo.NewGroupExpr(newTopSel)
 	newTopSelExpr.SetChildren(newProjGroup)
 	return []*memo.GroupExpr{newTopSelExpr}, true, false, nil
@@ -603,8 +603,8 @@ func NewRulePushSelDownAggregation() Transformation {
 // It will transform `sel->agg->x` to `agg->sel->x` or `sel->agg->sel->x`
 // or just keep the selection unchanged.
 func (*PushSelDownAggregation) OnTransform(old *memo.ExprIter) (newExprs []*memo.GroupExpr, eraseOld bool, eraseAll bool, err error) {
-	sel := old.GetExpr().ExprNode.(*plannercore.LogicalSelection)
-	agg := old.Children[0].GetExpr().ExprNode.(*plannercore.LogicalAggregation)
+	sel := old.GetExpr().ExprNode.(*logicalop.LogicalSelection)
+	agg := old.Children[0].GetExpr().ExprNode.(*logicalop.LogicalAggregation)
 	aggSchema := old.Children[0].Prop.Schema
 	var pushedExprs []expression.Expression
 	var remainedExprs []expression.Expression
@@ -641,7 +641,7 @@ func (*PushSelDownAggregation) OnTransform(old *memo.ExprIter) (newExprs []*memo
 	}
 	sctx := sel.SCtx()
 	childGroup := old.Children[0].GetExpr().Children[0]
-	pushedSel := plannercore.LogicalSelection{Conditions: pushedExprs}.Init(sctx, sel.QueryBlockOffset())
+	pushedSel := logicalop.LogicalSelection{Conditions: pushedExprs}.Init(sctx, sel.QueryBlockOffset())
 	pushedGroupExpr := memo.NewGroupExpr(pushedSel)
 	pushedGroupExpr.SetChildren(childGroup)
 	pushedGroup := memo.NewGroupWithSchema(pushedGroupExpr, childGroup.Prop.Schema)
@@ -654,7 +654,7 @@ func (*PushSelDownAggregation) OnTransform(old *memo.ExprIter) (newExprs []*memo
 	}
 
 	aggGroup := memo.NewGroupWithSchema(aggGroupExpr, aggSchema)
-	remainedSel := plannercore.LogicalSelection{Conditions: remainedExprs}.Init(sctx, sel.QueryBlockOffset())
+	remainedSel := logicalop.LogicalSelection{Conditions: remainedExprs}.Init(sctx, sel.QueryBlockOffset())
 	remainedGroupExpr := memo.NewGroupExpr(remainedSel)
 	remainedGroupExpr.SetChildren(aggGroup)
 	return []*memo.GroupExpr{remainedGroupExpr}, true, false, nil
@@ -683,7 +683,7 @@ func NewRulePushSelDownWindow() Transformation {
 // 2. `sel -> window -> sel -> x` or
 // 3. just keep unchanged.
 func (*PushSelDownWindow) OnTransform(old *memo.ExprIter) (newExprs []*memo.GroupExpr, eraseOld bool, eraseAll bool, err error) {
-	sel := old.GetExpr().ExprNode.(*plannercore.LogicalSelection)
+	sel := old.GetExpr().ExprNode.(*logicalop.LogicalSelection)
 	window := old.Children[0].GetExpr().ExprNode.(*logicalop.LogicalWindow)
 	windowSchema := old.Children[0].Prop.Schema
 	childGroup := old.Children[0].GetExpr().Children[0]
@@ -706,7 +706,7 @@ func (*PushSelDownWindow) OnTransform(old *memo.ExprIter) (newExprs []*memo.Grou
 	}
 
 	// construct return GroupExpr
-	newBottomSel := plannercore.LogicalSelection{Conditions: canBePushed}.Init(sel.SCtx(), sel.QueryBlockOffset())
+	newBottomSel := logicalop.LogicalSelection{Conditions: canBePushed}.Init(sel.SCtx(), sel.QueryBlockOffset())
 	newBottomSelExpr := memo.NewGroupExpr(newBottomSel)
 	newBottomSelExpr.SetChildren(childGroup)
 	newBottomSelGroup := memo.NewGroupWithSchema(newBottomSelExpr, childGroup.Prop.Schema)
@@ -717,7 +717,7 @@ func (*PushSelDownWindow) OnTransform(old *memo.ExprIter) (newExprs []*memo.Grou
 	}
 
 	newWindowGroup := memo.NewGroupWithSchema(newWindowExpr, windowSchema)
-	newTopSel := plannercore.LogicalSelection{Conditions: canNotBePushed}.Init(sel.SCtx(), sel.QueryBlockOffset())
+	newTopSel := logicalop.LogicalSelection{Conditions: canNotBePushed}.Init(sel.SCtx(), sel.QueryBlockOffset())
 	newTopSelExpr := memo.NewGroupExpr(newTopSel)
 	newTopSelExpr.SetChildren(newWindowGroup)
 	return []*memo.GroupExpr{newTopSelExpr}, true, false, nil
@@ -826,7 +826,7 @@ func (r *PushLimitDownUnionAll) Match(expr *memo.ExprIter) bool {
 // It will transform `Limit->UnionAll->X` to `Limit->UnionAll->Limit->X`.
 func (r *PushLimitDownUnionAll) OnTransform(old *memo.ExprIter) (newExprs []*memo.GroupExpr, eraseOld bool, eraseAll bool, err error) {
 	limit := old.GetExpr().ExprNode.(*logicalop.LogicalLimit)
-	unionAll := old.Children[0].GetExpr().ExprNode.(*plannercore.LogicalUnionAll)
+	unionAll := old.Children[0].GetExpr().ExprNode.(*logicalop.LogicalUnionAll)
 	unionAllSchema := old.Children[0].Group.Prop.Schema
 
 	newLimit := logicalop.LogicalLimit{
@@ -853,9 +853,9 @@ type pushDownJoin struct {
 }
 
 func (*pushDownJoin) predicatePushDown(
-	sctx context.PlanContext,
+	sctx planctx.PlanContext,
 	predicates []expression.Expression,
-	join *plannercore.LogicalJoin,
+	join *logicalop.LogicalJoin,
 	leftSchema *expression.Schema,
 	rightSchema *expression.Schema,
 ) (
@@ -867,7 +867,7 @@ func (*pushDownJoin) predicatePushDown(
 	var equalCond []*expression.ScalarFunction
 	var leftPushCond, rightPushCond, otherCond []expression.Expression
 	switch join.JoinType {
-	case plannercore.SemiJoin, plannercore.InnerJoin:
+	case logicalop.SemiJoin, logicalop.InnerJoin:
 		tempCond := make([]expression.Expression, 0,
 			len(join.LeftConditions)+len(join.RightConditions)+len(join.EqualConditions)+len(join.OtherConditions)+len(predicates))
 		tempCond = append(tempCond, join.LeftConditions...)
@@ -878,7 +878,7 @@ func (*pushDownJoin) predicatePushDown(
 		tempCond = expression.ExtractFiltersFromDNFs(sctx.GetExprCtx(), tempCond)
 		tempCond = expression.PropagateConstant(sctx.GetExprCtx(), tempCond)
 		// Return table dual when filter is constant false or null.
-		dual := plannercore.Conds2TableDual(join, tempCond)
+		dual := logicalop.Conds2TableDual(join, tempCond)
 		if dual != nil {
 			return leftCond, rightCond, remainCond, dual
 		}
@@ -889,8 +889,8 @@ func (*pushDownJoin) predicatePushDown(
 		join.OtherConditions = otherCond
 		leftCond = leftPushCond
 		rightCond = rightPushCond
-	case plannercore.LeftOuterJoin, plannercore.LeftOuterSemiJoin, plannercore.AntiLeftOuterSemiJoin,
-		plannercore.RightOuterJoin:
+	case logicalop.LeftOuterJoin, logicalop.LeftOuterSemiJoin, logicalop.AntiLeftOuterSemiJoin,
+		logicalop.RightOuterJoin:
 		lenJoinConds := len(join.EqualConditions) + len(join.LeftConditions) + len(join.RightConditions) + len(join.OtherConditions)
 		joinConds := make([]expression.Expression, 0, lenJoinConds)
 		for _, equalCond := range join.EqualConditions {
@@ -905,8 +905,8 @@ func (*pushDownJoin) predicatePushDown(
 		join.OtherConditions = nil
 		remainCond = make([]expression.Expression, len(predicates))
 		copy(remainCond, predicates)
-		nullSensitive := join.JoinType == plannercore.AntiLeftOuterSemiJoin || join.JoinType == plannercore.LeftOuterSemiJoin
-		if join.JoinType == plannercore.RightOuterJoin {
+		nullSensitive := join.JoinType == logicalop.AntiLeftOuterSemiJoin || join.JoinType == logicalop.LeftOuterSemiJoin
+		if join.JoinType == logicalop.RightOuterJoin {
 			joinConds, remainCond = expression.PropConstOverOuterJoin(join.SCtx().GetExprCtx(), joinConds, remainCond, rightSchema, leftSchema, nullSensitive)
 		} else {
 			joinConds, remainCond = expression.PropConstOverOuterJoin(join.SCtx().GetExprCtx(), joinConds, remainCond, leftSchema, rightSchema, nullSensitive)
@@ -914,17 +914,17 @@ func (*pushDownJoin) predicatePushDown(
 		eq, left, right, other := join.ExtractOnCondition(joinConds, leftSchema, rightSchema, false, false)
 		join.AppendJoinConds(eq, left, right, other)
 		// Return table dual when filter is constant false or null.
-		dual := plannercore.Conds2TableDual(join, remainCond)
+		dual := logicalop.Conds2TableDual(join, remainCond)
 		if dual != nil {
 			return leftCond, rightCond, remainCond, dual
 		}
-		if join.JoinType == plannercore.RightOuterJoin {
+		if join.JoinType == logicalop.RightOuterJoin {
 			remainCond = expression.ExtractFiltersFromDNFs(join.SCtx().GetExprCtx(), remainCond)
 			// Only derive right where condition, because left where condition cannot be pushed down
 			equalCond, leftPushCond, rightPushCond, otherCond = join.ExtractOnCondition(remainCond, leftSchema, rightSchema, false, true)
 			rightCond = rightPushCond
 			// Handle join conditions, only derive left join condition, because right join condition cannot be pushed down
-			derivedLeftJoinCond, _ := plannercore.DeriveOtherConditions(join, leftSchema, rightSchema, true, false)
+			derivedLeftJoinCond, _ := logicalop.DeriveOtherConditions(join, leftSchema, rightSchema, true, false)
 			leftCond = append(join.LeftConditions, derivedLeftJoinCond...)
 			join.LeftConditions = nil
 			remainCond = append(expression.ScalarFuncs2Exprs(equalCond), otherCond...)
@@ -935,7 +935,7 @@ func (*pushDownJoin) predicatePushDown(
 			equalCond, leftPushCond, rightPushCond, otherCond = join.ExtractOnCondition(remainCond, leftSchema, rightSchema, true, false)
 			leftCond = leftPushCond
 			// Handle join conditions, only derive right join condition, because left join condition cannot be pushed down
-			_, derivedRightJoinCond := plannercore.DeriveOtherConditions(join, leftSchema, rightSchema, false, true)
+			_, derivedRightJoinCond := logicalop.DeriveOtherConditions(join, leftSchema, rightSchema, false, true)
 			rightCond = append(join.RightConditions, derivedRightJoinCond...)
 			join.RightConditions = nil
 			remainCond = append(expression.ScalarFuncs2Exprs(equalCond), otherCond...)
@@ -975,14 +975,14 @@ func (r *PushSelDownJoin) Match(expr *memo.ExprIter) bool {
 
 // buildChildSelectionGroup builds a new childGroup if the pushed down condition is not empty.
 func buildChildSelectionGroup(
-	sctx context.PlanContext,
+	sctx planctx.PlanContext,
 	qbOffset int,
 	conditions []expression.Expression,
 	childGroup *memo.Group) *memo.Group {
 	if len(conditions) == 0 {
 		return childGroup
 	}
-	newSel := plannercore.LogicalSelection{Conditions: conditions}.Init(sctx, qbOffset)
+	newSel := logicalop.LogicalSelection{Conditions: conditions}.Init(sctx, qbOffset)
 	groupExpr := memo.NewGroupExpr(newSel)
 	groupExpr.SetChildren(childGroup)
 	newChild := memo.NewGroupWithSchema(groupExpr, childGroup.Prop.Schema)
@@ -992,9 +992,9 @@ func buildChildSelectionGroup(
 // OnTransform implements Transformation interface.
 // This rule tries to pushes the Selection through Join. Besides, this rule fulfills the `XXXConditions` field of Join.
 func (r *PushSelDownJoin) OnTransform(old *memo.ExprIter) (newExprs []*memo.GroupExpr, eraseOld bool, eraseAll bool, err error) {
-	sel := old.GetExpr().ExprNode.(*plannercore.LogicalSelection)
+	sel := old.GetExpr().ExprNode.(*logicalop.LogicalSelection)
 	joinExpr := old.Children[0].GetExpr()
-	join := joinExpr.ExprNode.(*plannercore.LogicalJoin)
+	join := joinExpr.ExprNode.(*logicalop.LogicalJoin)
 	newJoin := join.Shallow()
 	sctx := sel.SCtx()
 	leftGroup := old.Children[0].GetExpr().Children[0]
@@ -1010,7 +1010,7 @@ func (r *PushSelDownJoin) OnTransform(old *memo.ExprIter) (newExprs []*memo.Grou
 	newJoinExpr := memo.NewGroupExpr(newJoin)
 	newJoinExpr.SetChildren(leftGroup, rightGroup)
 	if len(remainCond) > 0 {
-		newSel := plannercore.LogicalSelection{Conditions: remainCond}.Init(sctx, sel.QueryBlockOffset())
+		newSel := logicalop.LogicalSelection{Conditions: remainCond}.Init(sctx, sel.QueryBlockOffset())
 		newSel.Conditions = remainCond
 		newSelExpr := memo.NewGroupExpr(newSel)
 		newSelExpr.SetChildren(memo.NewGroupWithSchema(newJoinExpr, old.Children[0].Prop.Schema))
@@ -1039,7 +1039,7 @@ func (r *TransformJoinCondToSel) Match(expr *memo.ExprIter) bool {
 	if expr.GetExpr().HasAppliedRule(r) {
 		return false
 	}
-	join := expr.GetExpr().ExprNode.(*plannercore.LogicalJoin)
+	join := expr.GetExpr().ExprNode.(*logicalop.LogicalJoin)
 	return len(join.EqualConditions) > 0 || len(join.LeftConditions) > 0 ||
 		len(join.RightConditions) > 0 || len(join.OtherConditions) > 0
 }
@@ -1047,7 +1047,7 @@ func (r *TransformJoinCondToSel) Match(expr *memo.ExprIter) bool {
 // OnTransform implements Transformation interface.
 // This rule tries to transform Join conditions to Selection. Besides, this rule fulfills the `XXXConditions` field of Join.
 func (r *TransformJoinCondToSel) OnTransform(old *memo.ExprIter) (newExprs []*memo.GroupExpr, eraseOld bool, eraseAll bool, err error) {
-	join := old.GetExpr().ExprNode.(*plannercore.LogicalJoin)
+	join := old.GetExpr().ExprNode.(*logicalop.LogicalJoin)
 	newJoin := join.Shallow()
 	sctx := join.SCtx()
 	leftGroup := old.GetExpr().Children[0]
@@ -1085,8 +1085,8 @@ func NewRulePushSelDownUnionAll() Transformation {
 // OnTransform implements Transformation interface.
 // It will transform `Selection->UnionAll->x` to `UnionAll->Selection->x`.
 func (*PushSelDownUnionAll) OnTransform(old *memo.ExprIter) (newExprs []*memo.GroupExpr, eraseOld bool, eraseAll bool, err error) {
-	sel := old.GetExpr().ExprNode.(*plannercore.LogicalSelection)
-	unionAll := old.Children[0].GetExpr().ExprNode.(*plannercore.LogicalUnionAll)
+	sel := old.GetExpr().ExprNode.(*logicalop.LogicalSelection)
+	unionAll := old.Children[0].GetExpr().ExprNode.(*logicalop.LogicalUnionAll)
 	childGroups := old.Children[0].GetExpr().Children
 
 	newUnionAllExpr := memo.NewGroupExpr(unionAll)
@@ -1214,9 +1214,9 @@ func (r *PushTopNDownOuterJoin) Match(expr *memo.ExprIter) bool {
 	if expr.GetExpr().HasAppliedRule(r) {
 		return false
 	}
-	join := expr.Children[0].GetExpr().ExprNode.(*plannercore.LogicalJoin)
+	join := expr.Children[0].GetExpr().ExprNode.(*logicalop.LogicalJoin)
 	switch join.JoinType {
-	case plannercore.LeftOuterJoin, plannercore.LeftOuterSemiJoin, plannercore.AntiLeftOuterSemiJoin, plannercore.RightOuterJoin:
+	case logicalop.LeftOuterJoin, logicalop.LeftOuterSemiJoin, logicalop.AntiLeftOuterSemiJoin, logicalop.RightOuterJoin:
 		return true
 	default:
 		return false
@@ -1252,15 +1252,15 @@ func pushTopNDownOuterJoinToChild(topN *logicalop.LogicalTopN, outerGroup *memo.
 func (r *PushTopNDownOuterJoin) OnTransform(old *memo.ExprIter) (newExprs []*memo.GroupExpr, eraseOld bool, eraseAll bool, err error) {
 	topN := old.GetExpr().ExprNode.(*logicalop.LogicalTopN)
 	joinExpr := old.Children[0].GetExpr()
-	join := joinExpr.ExprNode.(*plannercore.LogicalJoin)
+	join := joinExpr.ExprNode.(*logicalop.LogicalJoin)
 	joinSchema := old.Children[0].Group.Prop.Schema
 	leftGroup := joinExpr.Children[0]
 	rightGroup := joinExpr.Children[1]
 
 	switch join.JoinType {
-	case plannercore.LeftOuterJoin, plannercore.LeftOuterSemiJoin, plannercore.AntiLeftOuterSemiJoin:
+	case logicalop.LeftOuterJoin, logicalop.LeftOuterSemiJoin, logicalop.AntiLeftOuterSemiJoin:
 		leftGroup = pushTopNDownOuterJoinToChild(topN, leftGroup)
-	case plannercore.RightOuterJoin:
+	case logicalop.RightOuterJoin:
 		rightGroup = pushTopNDownOuterJoinToChild(topN, rightGroup)
 	default:
 		return nil, false, false, nil
@@ -1365,7 +1365,7 @@ func (r *PushTopNDownUnionAll) Match(expr *memo.ExprIter) bool {
 // It will transform `TopN->UnionAll->X` to `TopN->UnionAll->TopN->X`.
 func (r *PushTopNDownUnionAll) OnTransform(old *memo.ExprIter) (newExprs []*memo.GroupExpr, eraseOld bool, eraseAll bool, err error) {
 	topN := old.GetExpr().ExprNode.(*logicalop.LogicalTopN)
-	unionAll := old.Children[0].GetExpr().ExprNode.(*plannercore.LogicalUnionAll)
+	unionAll := old.Children[0].GetExpr().ExprNode.(*logicalop.LogicalUnionAll)
 
 	newTopN := logicalop.LogicalTopN{
 		Count:   topN.Count + topN.Offset,
@@ -1416,7 +1416,7 @@ func (r *PushTopNDownTiKVSingleGather) Match(expr *memo.ExprIter) bool {
 func (r *PushTopNDownTiKVSingleGather) OnTransform(old *memo.ExprIter) (newExprs []*memo.GroupExpr, eraseOld bool, eraseAll bool, err error) {
 	topN := old.GetExpr().ExprNode.(*logicalop.LogicalTopN)
 	topNSchema := old.Children[0].Group.Prop.Schema
-	gather := old.Children[0].GetExpr().ExprNode.(*plannercore.TiKVSingleGather)
+	gather := old.Children[0].GetExpr().ExprNode.(*logicalop.TiKVSingleGather)
 	childGroup := old.Children[0].GetExpr().Children[0]
 
 	particalTopN := logicalop.LogicalTopN{
@@ -1525,7 +1525,7 @@ func (*MergeAggregationProjection) Match(old *memo.ExprIter) bool {
 // OnTransform implements Transformation interface.
 // It will transform `Aggregation->Projection->X` to `Aggregation->X`.
 func (*MergeAggregationProjection) OnTransform(old *memo.ExprIter) (newExprs []*memo.GroupExpr, eraseOld bool, eraseAll bool, err error) {
-	oldAgg := old.GetExpr().ExprNode.(*plannercore.LogicalAggregation)
+	oldAgg := old.GetExpr().ExprNode.(*logicalop.LogicalAggregation)
 	proj := old.Children[0].GetExpr().ExprNode.(*logicalop.LogicalProjection)
 	projSchema := old.Children[0].GetExpr().Schema()
 
@@ -1545,7 +1545,7 @@ func (*MergeAggregationProjection) OnTransform(old *memo.ExprIter) (newExprs []*
 		aggFuncs[i].Args = newArgs
 	}
 
-	newAgg := plannercore.LogicalAggregation{
+	newAgg := logicalop.LogicalAggregation{
 		GroupByItems: groupByItems,
 		AggFuncs:     aggFuncs,
 	}.Init(ctx, oldAgg.QueryBlockOffset())
@@ -1579,7 +1579,7 @@ func (r *EliminateSingleMaxMin) Match(expr *memo.ExprIter) bool {
 		return false
 	}
 
-	agg := expr.GetExpr().ExprNode.(*plannercore.LogicalAggregation)
+	agg := expr.GetExpr().ExprNode.(*logicalop.LogicalAggregation)
 	// EliminateSingleMaxMin only works on the complete mode.
 	if !agg.IsCompleteModeAgg() {
 		return false
@@ -1604,7 +1604,7 @@ func (r *EliminateSingleMaxMin) Match(expr *memo.ExprIter) bool {
 // OnTransform implements Transformation interface.
 // It will transform `max/min->X` to `max/min->top1->sel->X`.
 func (r *EliminateSingleMaxMin) OnTransform(old *memo.ExprIter) (newExprs []*memo.GroupExpr, eraseOld bool, eraseAll bool, err error) {
-	agg := old.GetExpr().ExprNode.(*plannercore.LogicalAggregation)
+	agg := old.GetExpr().ExprNode.(*logicalop.LogicalAggregation)
 	ectx := agg.SCtx().GetExprCtx().GetEvalCtx()
 	childGroup := old.GetExpr().Children[0]
 	ctx := agg.SCtx()
@@ -1614,7 +1614,7 @@ func (r *EliminateSingleMaxMin) OnTransform(old *memo.ExprIter) (newExprs []*mem
 	if len(expression.ExtractColumns(f.Args[0])) > 0 {
 		// If it can be NULL, we need to filter NULL out first.
 		if !mysql.HasNotNullFlag(f.Args[0].GetType(ectx).GetFlag()) {
-			sel := plannercore.LogicalSelection{}.Init(ctx, agg.QueryBlockOffset())
+			sel := logicalop.LogicalSelection{}.Init(ctx, agg.QueryBlockOffset())
 			isNullFunc := expression.NewFunctionInternal(ctx.GetExprCtx(), ast.IsNull, types.NewFieldType(mysql.TypeTiny), f.Args[0])
 			notNullFunc := expression.NewFunctionInternal(ctx.GetExprCtx(), ast.UnaryNot, types.NewFieldType(mysql.TypeTiny), isNullFunc)
 			sel.Conditions = []expression.Expression{notNullFunc}
@@ -1677,14 +1677,14 @@ func NewRuleMergeAdjacentSelection() Transformation {
 // OnTransform implements Transformation interface.
 // This rule tries to merge adjacent selection, with no simplification.
 func (*MergeAdjacentSelection) OnTransform(old *memo.ExprIter) (newExprs []*memo.GroupExpr, eraseOld bool, eraseAll bool, err error) {
-	sel := old.GetExpr().ExprNode.(*plannercore.LogicalSelection)
-	child := old.Children[0].GetExpr().ExprNode.(*plannercore.LogicalSelection)
+	sel := old.GetExpr().ExprNode.(*logicalop.LogicalSelection)
+	child := old.Children[0].GetExpr().ExprNode.(*logicalop.LogicalSelection)
 	childGroups := old.Children[0].GetExpr().Children
 
 	conditions := make([]expression.Expression, 0, len(sel.Conditions)+len(child.Conditions))
 	conditions = append(conditions, sel.Conditions...)
 	conditions = append(conditions, child.Conditions...)
-	newSel := plannercore.LogicalSelection{Conditions: conditions}.Init(sel.SCtx(), sel.QueryBlockOffset())
+	newSel := logicalop.LogicalSelection{Conditions: conditions}.Init(sel.SCtx(), sel.QueryBlockOffset())
 	newSelExpr := memo.NewGroupExpr(newSel)
 	newSelExpr.SetChildren(childGroups...)
 	return []*memo.GroupExpr{newSelExpr}, true, false, nil
@@ -1786,7 +1786,7 @@ func (r *PushLimitDownOuterJoin) Match(expr *memo.ExprIter) bool {
 	if expr.GetExpr().HasAppliedRule(r) {
 		return false
 	}
-	join := expr.Children[0].GetExpr().ExprNode.(*plannercore.LogicalJoin)
+	join := expr.Children[0].GetExpr().ExprNode.(*logicalop.LogicalJoin)
 	return join.JoinType.IsOuterJoin()
 }
 
@@ -1794,15 +1794,15 @@ func (r *PushLimitDownOuterJoin) Match(expr *memo.ExprIter) bool {
 // This rule tries to pushes the Limit through outer Join.
 func (r *PushLimitDownOuterJoin) OnTransform(old *memo.ExprIter) (newExprs []*memo.GroupExpr, eraseOld bool, eraseAll bool, err error) {
 	limit := old.GetExpr().ExprNode.(*logicalop.LogicalLimit)
-	join := old.Children[0].GetExpr().ExprNode.(*plannercore.LogicalJoin)
+	join := old.Children[0].GetExpr().ExprNode.(*logicalop.LogicalJoin)
 	joinSchema := old.Children[0].Group.Prop.Schema
 	leftGroup := old.Children[0].GetExpr().Children[0]
 	rightGroup := old.Children[0].GetExpr().Children[1]
 
 	switch join.JoinType {
-	case plannercore.LeftOuterJoin, plannercore.LeftOuterSemiJoin, plannercore.AntiLeftOuterSemiJoin:
+	case logicalop.LeftOuterJoin, logicalop.LeftOuterSemiJoin, logicalop.AntiLeftOuterSemiJoin:
 		leftGroup = r.pushLimitDownOuterJoinToChild(limit, leftGroup)
-	case plannercore.RightOuterJoin:
+	case logicalop.RightOuterJoin:
 		rightGroup = r.pushLimitDownOuterJoinToChild(limit, rightGroup)
 	default:
 		return nil, false, false, nil
@@ -1853,7 +1853,7 @@ func (r *PushLimitDownTiKVSingleGather) Match(expr *memo.ExprIter) bool {
 func (r *PushLimitDownTiKVSingleGather) OnTransform(old *memo.ExprIter) (newExprs []*memo.GroupExpr, eraseOld bool, eraseAll bool, err error) {
 	limit := old.GetExpr().ExprNode.(*logicalop.LogicalLimit)
 	limitSchema := old.Children[0].Group.Prop.Schema
-	gather := old.Children[0].GetExpr().ExprNode.(*plannercore.TiKVSingleGather)
+	gather := old.Children[0].GetExpr().ExprNode.(*logicalop.TiKVSingleGather)
 	childGroup := old.Children[0].GetExpr().Children[0]
 
 	particalLimit := logicalop.LogicalLimit{
@@ -1877,12 +1877,12 @@ type outerJoinEliminator struct {
 }
 
 func (*outerJoinEliminator) prepareForEliminateOuterJoin(joinExpr *memo.GroupExpr) (ok bool, innerChildIdx int, outerGroup *memo.Group, innerGroup *memo.Group, outerUniqueIDs set.Int64Set) {
-	join := joinExpr.ExprNode.(*plannercore.LogicalJoin)
+	join := joinExpr.ExprNode.(*logicalop.LogicalJoin)
 
 	switch join.JoinType {
-	case plannercore.LeftOuterJoin:
+	case logicalop.LeftOuterJoin:
 		innerChildIdx = 1
-	case plannercore.RightOuterJoin:
+	case logicalop.RightOuterJoin:
 		innerChildIdx = 0
 	default:
 		ok = false
@@ -1939,16 +1939,16 @@ func NewRuleEliminateOuterJoinBelowAggregation() Transformation {
 
 // Match implements Transformation interface.
 func (*EliminateOuterJoinBelowAggregation) Match(expr *memo.ExprIter) bool {
-	joinType := expr.Children[0].GetExpr().ExprNode.(*plannercore.LogicalJoin).JoinType
-	return joinType == plannercore.LeftOuterJoin || joinType == plannercore.RightOuterJoin
+	joinType := expr.Children[0].GetExpr().ExprNode.(*logicalop.LogicalJoin).JoinType
+	return joinType == logicalop.LeftOuterJoin || joinType == logicalop.RightOuterJoin
 }
 
 // OnTransform implements Transformation interface.
 // This rule tries to eliminate outer join which below aggregation.
 func (r *EliminateOuterJoinBelowAggregation) OnTransform(old *memo.ExprIter) (newExprs []*memo.GroupExpr, eraseOld bool, eraseAll bool, err error) {
-	agg := old.GetExpr().ExprNode.(*plannercore.LogicalAggregation)
+	agg := old.GetExpr().ExprNode.(*logicalop.LogicalAggregation)
 	joinExpr := old.Children[0].GetExpr()
-	join := joinExpr.ExprNode.(*plannercore.LogicalJoin)
+	join := joinExpr.ExprNode.(*logicalop.LogicalJoin)
 
 	ok, innerChildIdx, outerGroup, innerGroup, outerUniqueIDs := r.prepareForEliminateOuterJoin(joinExpr)
 	if !ok {
@@ -2001,8 +2001,8 @@ func NewRuleEliminateOuterJoinBelowProjection() Transformation {
 
 // Match implements Transformation interface.
 func (*EliminateOuterJoinBelowProjection) Match(expr *memo.ExprIter) bool {
-	joinType := expr.Children[0].GetExpr().ExprNode.(*plannercore.LogicalJoin).JoinType
-	return joinType == plannercore.LeftOuterJoin || joinType == plannercore.RightOuterJoin
+	joinType := expr.Children[0].GetExpr().ExprNode.(*logicalop.LogicalJoin).JoinType
+	return joinType == logicalop.LeftOuterJoin || joinType == logicalop.RightOuterJoin
 }
 
 // OnTransform implements Transformation interface.
@@ -2010,7 +2010,7 @@ func (*EliminateOuterJoinBelowProjection) Match(expr *memo.ExprIter) bool {
 func (r *EliminateOuterJoinBelowProjection) OnTransform(old *memo.ExprIter) (newExprs []*memo.GroupExpr, eraseOld bool, eraseAll bool, err error) {
 	proj := old.GetExpr().ExprNode.(*logicalop.LogicalProjection)
 	joinExpr := old.Children[0].GetExpr()
-	join := joinExpr.ExprNode.(*plannercore.LogicalJoin)
+	join := joinExpr.ExprNode.(*logicalop.LogicalJoin)
 
 	ok, innerChildIdx, outerGroup, innerGroup, outerUniqueIDs := r.prepareForEliminateOuterJoin(joinExpr)
 	if !ok {
@@ -2054,26 +2054,26 @@ func NewRuleTransformAggregateCaseToSelection() Transformation {
 
 // Match implements Transformation interface.
 func (r *TransformAggregateCaseToSelection) Match(expr *memo.ExprIter) bool {
-	agg := expr.GetExpr().ExprNode.(*plannercore.LogicalAggregation)
+	agg := expr.GetExpr().ExprNode.(*logicalop.LogicalAggregation)
 	return agg.IsCompleteModeAgg() && len(agg.GroupByItems) == 0 && len(agg.AggFuncs) == 1 && len(agg.AggFuncs[0].Args) == 1 && r.isTwoOrThreeArgCase(agg.AggFuncs[0].Args[0])
 }
 
 // OnTransform implements Transformation interface.
 // This rule tries to convert Agg(case when) to Agg->Selection.
 func (r *TransformAggregateCaseToSelection) OnTransform(old *memo.ExprIter) (newExprs []*memo.GroupExpr, eraseOld bool, eraseAll bool, err error) {
-	agg := old.GetExpr().ExprNode.(*plannercore.LogicalAggregation)
+	agg := old.GetExpr().ExprNode.(*logicalop.LogicalAggregation)
 
 	ok, newConditions, newAggFuncs := r.transform(agg)
 	if !ok {
 		return nil, false, false, nil
 	}
 
-	newSel := plannercore.LogicalSelection{Conditions: newConditions}.Init(agg.SCtx(), agg.QueryBlockOffset())
+	newSel := logicalop.LogicalSelection{Conditions: newConditions}.Init(agg.SCtx(), agg.QueryBlockOffset())
 	newSelExpr := memo.NewGroupExpr(newSel)
 	newSelExpr.SetChildren(old.GetExpr().Children...)
 	newSelGroup := memo.NewGroupWithSchema(newSelExpr, old.GetExpr().Children[0].Prop.Schema)
 
-	newAgg := plannercore.LogicalAggregation{
+	newAgg := logicalop.LogicalAggregation{
 		AggFuncs:     newAggFuncs,
 		GroupByItems: agg.GroupByItems,
 	}.Init(agg.SCtx(), agg.QueryBlockOffset())
@@ -2083,7 +2083,7 @@ func (r *TransformAggregateCaseToSelection) OnTransform(old *memo.ExprIter) (new
 	return []*memo.GroupExpr{newAggExpr}, true, false, nil
 }
 
-func (r *TransformAggregateCaseToSelection) transform(agg *plannercore.LogicalAggregation) (ok bool, newConditions []expression.Expression, newAggFuncs []*aggregation.AggFuncDesc) {
+func (r *TransformAggregateCaseToSelection) transform(agg *logicalop.LogicalAggregation) (ok bool, newConditions []expression.Expression, newAggFuncs []*aggregation.AggFuncDesc) {
 	aggFuncDesc := agg.AggFuncs[0]
 	aggFuncName := aggFuncDesc.Name
 	ctx := agg.SCtx()
@@ -2174,7 +2174,7 @@ func NewRuleTransformAggToProj() Transformation {
 
 // Match implements Transformation interface.
 func (*TransformAggToProj) Match(expr *memo.ExprIter) bool {
-	agg := expr.GetExpr().ExprNode.(*plannercore.LogicalAggregation)
+	agg := expr.GetExpr().ExprNode.(*logicalop.LogicalAggregation)
 
 	if !agg.IsCompleteModeAgg() {
 		return false
@@ -2203,7 +2203,7 @@ func (*TransformAggToProj) Match(expr *memo.ExprIter) bool {
 // OnTransform implements Transformation interface.
 // This rule tries to convert agg to proj.
 func (*TransformAggToProj) OnTransform(old *memo.ExprIter) (newExprs []*memo.GroupExpr, eraseOld bool, eraseAll bool, err error) {
-	agg := old.GetExpr().ExprNode.(*plannercore.LogicalAggregation)
+	agg := old.GetExpr().ExprNode.(*logicalop.LogicalAggregation)
 	if ok, proj := plannercore.ConvertAggToProj(agg, old.GetExpr().Schema()); ok {
 		newProjExpr := memo.NewGroupExpr(proj)
 		newProjExpr.SetChildren(old.GetExpr().Children...)
@@ -2333,14 +2333,14 @@ func NewRuleInjectProjectionBelowAgg() Transformation {
 
 // Match implements Transformation interface.
 func (*InjectProjectionBelowAgg) Match(expr *memo.ExprIter) bool {
-	agg := expr.GetExpr().ExprNode.(*plannercore.LogicalAggregation)
+	agg := expr.GetExpr().ExprNode.(*logicalop.LogicalAggregation)
 	return agg.IsCompleteModeAgg()
 }
 
 // OnTransform implements Transformation interface.
 // It will convert `Agg -> X` to `Agg -> Proj -> X`.
 func (*InjectProjectionBelowAgg) OnTransform(old *memo.ExprIter) (newExprs []*memo.GroupExpr, eraseOld bool, eraseAll bool, err error) {
-	agg := old.GetExpr().ExprNode.(*plannercore.LogicalAggregation)
+	agg := old.GetExpr().ExprNode.(*logicalop.LogicalAggregation)
 	ectx := agg.SCtx().GetExprCtx().GetEvalCtx()
 
 	hasScalarFunc := false
@@ -2417,7 +2417,7 @@ func (*InjectProjectionBelowAgg) OnTransform(old *memo.ExprIter) (newExprs []*me
 	projExpr.SetChildren(old.GetExpr().Children[0])
 	projGroup := memo.NewGroupWithSchema(projExpr, projSchema)
 
-	newAgg := plannercore.LogicalAggregation{
+	newAgg := logicalop.LogicalAggregation{
 		AggFuncs:     copyFuncs,
 		GroupByItems: newGroupByItems,
 	}.Init(agg.SCtx(), agg.QueryBlockOffset())
@@ -2444,7 +2444,7 @@ func NewRuleTransformApplyToJoin() Transformation {
 
 // OnTransform implements Transformation interface.
 func (r *TransformApplyToJoin) OnTransform(old *memo.ExprIter) (newExprs []*memo.GroupExpr, eraseOld bool, eraseAll bool, err error) {
-	apply := old.GetExpr().ExprNode.(*plannercore.LogicalApply)
+	apply := old.GetExpr().ExprNode.(*logicalop.LogicalApply)
 	groupExpr := old.GetExpr()
 	// It's safe to use the old apply instead of creating a new LogicalApply here,
 	// Because apply.CorCols will only be used and updated by this rule during Transformation.
@@ -2502,15 +2502,15 @@ func NewRulePullSelectionUpApply() Transformation {
 // This rule tries to pull up the inner side Selection, and add these conditions
 // to Join condition inside the Apply.
 func (*PullSelectionUpApply) OnTransform(old *memo.ExprIter) (newExprs []*memo.GroupExpr, eraseOld bool, eraseAll bool, err error) {
-	apply := old.GetExpr().ExprNode.(*plannercore.LogicalApply)
+	apply := old.GetExpr().ExprNode.(*logicalop.LogicalApply)
 	outerChildGroup := old.Children[0].Group
 	innerChildGroup := old.Children[1].Group
-	sel := old.Children[1].GetExpr().ExprNode.(*plannercore.LogicalSelection)
+	sel := old.Children[1].GetExpr().ExprNode.(*logicalop.LogicalSelection)
 	newConds := make([]expression.Expression, 0, len(sel.Conditions))
 	for _, cond := range sel.Conditions {
 		newConds = append(newConds, cond.Clone().Decorrelate(outerChildGroup.Prop.Schema))
 	}
-	newApply := plannercore.LogicalApply{
+	newApply := logicalop.LogicalApply{
 		LogicalJoin: *(apply.LogicalJoin.Shallow()),
 		CorCols:     apply.CorCols,
 	}.Init(apply.SCtx(), apply.QueryBlockOffset())

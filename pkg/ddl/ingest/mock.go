@@ -56,7 +56,8 @@ func (m *MockBackendCtxMgr) CheckMoreTasksAvailable() (bool, error) {
 }
 
 // Register implements BackendCtxMgr.Register interface.
-func (m *MockBackendCtxMgr) Register(ctx context.Context, jobID int64, unique bool, etcdClient *clientv3.Client, pdSvcDiscovery pd.ServiceDiscovery, resourceGroupName string) (BackendCtx, error) {
+func (m *MockBackendCtxMgr) Register(ctx context.Context, jobID int64, unique bool, etcdClient *clientv3.Client,
+	pdSvcDiscovery pd.ServiceDiscovery, resourceGroupName string, importConc int, initTS uint64) (BackendCtx, error) {
 	logutil.DDLIngestLogger().Info("mock backend mgr register", zap.Int64("jobID", jobID))
 	if mockCtx, ok := m.runningJobs[jobID]; ok {
 		return mockCtx, nil
@@ -133,7 +134,7 @@ func (*MockBackendCtx) CollectRemoteDuplicateRows(indexID int64, _ table.Table) 
 }
 
 // Flush implements BackendCtx.Flush interface.
-func (*MockBackendCtx) Flush(mode FlushMode) (flushed, imported bool, err error) {
+func (*MockBackendCtx) Flush(context.Context, FlushMode) (flushed, imported bool, err error) {
 	return false, false, nil
 }
 

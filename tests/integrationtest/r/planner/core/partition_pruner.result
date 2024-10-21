@@ -1950,7 +1950,6 @@ aa
 drop database if exists test_partition;
 create database test_partition;
 use test_partition;
-set @@session.tidb_enable_list_partition = ON;
 create table t1 (id int, a int, b int ) partition by list columns (b, id, a) (partition p0 values in ((1,0,2),(2,0,2),(0,1,0),(1,1,0),(2,1,0),(0,1,1),(0,1,2),(0,2,0),(1,2,0)),partition p1 values in ((1,0,1),(0,0,2),(2,1,1),(2,1,2),(2,2,1),(1,2,2),(2,2,2)),partition p2 values in ((0,0,0),(1,0,0),(2,0,0),(0,0,1),(2,0,1),(1,1,1),(1,1,2),(2,2,0),(0,2,1),(1,2,1),(0,2,2)));
 drop database if exists test_partition_1;
 create database test_partition_1;
@@ -3003,7 +3002,7 @@ a	b
 2	2
 explain format='brief' select * from t where a in (1,2) and b in (1,2);
 id	estRows	task	access object	operator info
-TableReader	3.43	root	partition:p1,p2,pDef	data:Selection
+TableReader	3.43	root	partition:all	data:Selection
 └─Selection	3.43	cop[tikv]		in(listdefaultprune.t.a, 1, 2), in(listdefaultprune.t.b, 1, 2)
   └─TableFullScan	7.00	cop[tikv]	table:t	keep order:false
 select * from t where a in (1) and b in (1);
@@ -3034,7 +3033,7 @@ a	b
 2	2
 explain format='brief' select * from t where a in (1,2) and b in (1,2);
 id	estRows	task	access object	operator info
-TableReader	3.43	root	partition:p1,p2,pDef	data:Selection
+TableReader	3.43	root	partition:all	data:Selection
 └─Selection	3.43	cop[tikv]		in(listdefaultprune.t.a, 1, 2), in(listdefaultprune.t.b, 1, 2)
   └─TableFullScan	7.00	cop[tikv]	table:t	keep order:false
 drop table t;
@@ -3120,8 +3119,8 @@ IndexReader_10	2.00	root	partition:all	index:Selection_9
   └─IndexFullScan_8	2.00	cop[tikv]	table:test1, index:PRIMARY(ID, PARTITION_NO, CREATE_TIME)	keep order:false
 explain select * from test1 where partition_no < 200000;
 id	estRows	task	access object	operator info
-IndexReader_10	0.00	root	partition:2023p1	index:Selection_9
-└─Selection_9	0.00	cop[tikv]		lt(issue43459.test1.partition_no, 200000)
+IndexReader_10	1.00	root	partition:2023p1	index:Selection_9
+└─Selection_9	1.00	cop[tikv]		lt(issue43459.test1.partition_no, 200000)
   └─IndexFullScan_8	2.00	cop[tikv]	table:test1, index:PRIMARY(ID, PARTITION_NO, CREATE_TIME)	keep order:false
 explain select * from test1 where partition_no <= 200000;
 id	estRows	task	access object	operator info
@@ -3130,8 +3129,8 @@ IndexReader_10	2.00	root	partition:all	index:Selection_9
   └─IndexFullScan_8	2.00	cop[tikv]	table:test1, index:PRIMARY(ID, PARTITION_NO, CREATE_TIME)	keep order:false
 explain select * from test1 where partition_no > 200000;
 id	estRows	task	access object	operator info
-IndexReader_10	0.00	root	partition:2023p2	index:Selection_9
-└─Selection_9	0.00	cop[tikv]		gt(issue43459.test1.partition_no, 200000)
+IndexReader_10	1.00	root	partition:2023p2	index:Selection_9
+└─Selection_9	1.00	cop[tikv]		gt(issue43459.test1.partition_no, 200000)
   └─IndexFullScan_8	2.00	cop[tikv]	table:test1, index:PRIMARY(ID, PARTITION_NO, CREATE_TIME)	keep order:false
 select * from test1 partition (2023p1);
 ID	PARTITION_NO	CREATE_TIME
@@ -3179,8 +3178,8 @@ IndexReader_10	2.00	root	partition:all	index:Selection_9
   └─IndexFullScan_8	2.00	cop[tikv]	table:test1, index:PRIMARY(ID, PARTITION_NO, CREATE_TIME)	keep order:false
 explain select * from test1 where partition_no < 200000;
 id	estRows	task	access object	operator info
-IndexReader_10	0.00	root	partition:2023p1	index:Selection_9
-└─Selection_9	0.00	cop[tikv]		lt(issue43459.test1.partition_no, 200000)
+IndexReader_10	1.00	root	partition:2023p1	index:Selection_9
+└─Selection_9	1.00	cop[tikv]		lt(issue43459.test1.partition_no, 200000)
   └─IndexFullScan_8	2.00	cop[tikv]	table:test1, index:PRIMARY(ID, PARTITION_NO, CREATE_TIME)	keep order:false
 explain select * from test1 where partition_no <= 200000;
 id	estRows	task	access object	operator info
@@ -3189,8 +3188,8 @@ IndexReader_10	2.00	root	partition:all	index:Selection_9
   └─IndexFullScan_8	2.00	cop[tikv]	table:test1, index:PRIMARY(ID, PARTITION_NO, CREATE_TIME)	keep order:false
 explain select * from test1 where partition_no > 200000;
 id	estRows	task	access object	operator info
-IndexReader_10	0.00	root	partition:2023p2	index:Selection_9
-└─Selection_9	0.00	cop[tikv]		gt(issue43459.test1.partition_no, 200000)
+IndexReader_10	1.00	root	partition:2023p2	index:Selection_9
+└─Selection_9	1.00	cop[tikv]		gt(issue43459.test1.partition_no, 200000)
   └─IndexFullScan_8	2.00	cop[tikv]	table:test1, index:PRIMARY(ID, PARTITION_NO, CREATE_TIME)	keep order:false
 select * from test1 partition (2023p1);
 ID	PARTITION_NO	CREATE_TIME

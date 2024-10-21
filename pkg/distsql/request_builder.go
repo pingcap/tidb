@@ -20,6 +20,7 @@ import (
 	"sort"
 	"sync/atomic"
 	"time"
+	"unsafe"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -29,7 +30,7 @@ import (
 	"github.com/pingcap/tidb/pkg/errctx"
 	infoschema "github.com/pingcap/tidb/pkg/infoschema/context"
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/types"
@@ -38,7 +39,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/pingcap/tidb/pkg/util/ranger"
 	"github.com/pingcap/tipb/go-tipb"
-	"github.com/tikv/client-go/v2/tikvrpc"
 )
 
 // RequestBuilder is used to build a "kv.Request".
@@ -374,7 +374,7 @@ func (builder *RequestBuilder) SetFromInfoSchema(is infoschema.MetaOnlyInfoSchem
 }
 
 // SetResourceGroupTagger sets the request resource group tagger.
-func (builder *RequestBuilder) SetResourceGroupTagger(tagger tikvrpc.ResourceGroupTagger) *RequestBuilder {
+func (builder *RequestBuilder) SetResourceGroupTagger(tagger *kv.ResourceGroupTagBuilder) *RequestBuilder {
 	builder.Request.ResourceGroupTagger = tagger
 	return builder
 }
@@ -750,6 +750,9 @@ func indexRangesToKVWithoutSplit(dctx *distsqlctx.DistSQLContext, tids []int64, 
 		krs[i] = make([]kv.KeyRange, 0, len(ranges))
 	}
 
+	if memTracker != nil {
+		memTracker.Consume(int64(unsafe.Sizeof(kv.KeyRange{})) * int64(len(ranges)))
+	}
 	const checkSignalStep = 8
 	var estimatedMemUsage int64
 	// encodeIndexKey and EncodeIndexSeekKey is time-consuming, thus we need to
@@ -777,6 +780,9 @@ func indexRangesToKVWithoutSplit(dctx *distsqlctx.DistSQLContext, tids []int64, 
 			}
 			if interruptSignal != nil && interruptSignal.Load().(bool) {
 				return kv.NewPartitionedKeyRanges(nil), nil
+			}
+			if memTracker != nil {
+				memTracker.HandleKillSignal()
 			}
 		}
 	}

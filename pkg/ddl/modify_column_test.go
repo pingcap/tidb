@@ -25,8 +25,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/meta"
-	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
@@ -51,12 +50,9 @@ func batchInsert(tk *testkit.TestKit, tbl string, start, end int) {
 func TestModifyColumnReorgInfo(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 
-	originalTimeout := ddl.ReorgWaitTimeout
-	ddl.ReorgWaitTimeout = 10 * time.Millisecond
 	limit := variable.GetDDLErrorCountLimit()
 	variable.SetDDLErrorCountLimit(5)
 	defer func() {
-		ddl.ReorgWaitTimeout = originalTimeout
 		variable.SetDDLErrorCountLimit(limit)
 	}()
 	tk := testkit.NewTestKit(t, store)
@@ -88,20 +84,7 @@ func TestModifyColumnReorgInfo(t *testing.T) {
 		if job.Type == model.ActionModifyColumn {
 			if times == 0 {
 				times++
-				return
 			}
-			currJob = job
-			var (
-				_newCol                *model.ColumnInfo
-				_oldColName            *model.CIStr
-				_pos                   = &ast.ColumnPosition{}
-				_modifyColumnTp        byte
-				_updatedAutoRandomBits uint64
-				changingCol            *model.ColumnInfo
-				changingIdxs           []*model.IndexInfo
-			)
-			checkErr = job.DecodeArgs(&_newCol, &_oldColName, _pos, &_modifyColumnTp, &_updatedAutoRandomBits, &changingCol, &changingIdxs)
-			elements = ddl.BuildElements(changingCol, changingIdxs)
 		}
 		if job.Type == model.ActionAddIndex {
 			if times == 1 {
@@ -113,6 +96,18 @@ func TestModifyColumnReorgInfo(t *testing.T) {
 			elements = []*meta.Element{{ID: indexInfo.ID, TypeKey: meta.IndexElementKey}}
 		}
 	})
+
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/modifyColumnTypeWithData", func(job *model.Job, args model.JobArgs) {
+		if tbl.Meta().ID == job.TableID &&
+			checkErr == nil &&
+			job.SchemaState == model.StateDeleteOnly &&
+			job.Type == model.ActionModifyColumn {
+			currJob = job
+			a := args.(*model.ModifyColumnArgs)
+			elements = ddl.BuildElements(a.ChangingColumn, a.ChangingIdxs)
+		}
+	})
+
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/MockGetIndexRecordErr", `return("cantDecodeRecordErr")`))
 	err := tk.ExecToErr(sql)
 	require.EqualError(t, err, "[ddl:8202]Cannot decode index value, because mock can't decode record error")

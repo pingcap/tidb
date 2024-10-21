@@ -23,6 +23,7 @@ import (
 	perrors "github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/expression/aggregation"
+	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -166,7 +167,9 @@ func (p *PhysicalTableScan) ExplainID() fmt.Stringer {
 
 // TP overrides the TP in order to match different range.
 func (p *PhysicalTableScan) TP() string {
-	if p.isChildOfIndexLookUp {
+	if infoschema.IsClusterTableByName(p.DBName.O, p.Table.Name.O) {
+		return plancodec.TypeMemTableScan
+	} else if p.isChildOfIndexLookUp {
 		return plancodec.TypeTableRowIDScan
 	} else if p.isFullScan() {
 		return plancodec.TypeTableFullScan
@@ -186,6 +189,10 @@ func (p *PhysicalTableScan) ExplainNormalizedInfo() string {
 
 // OperatorInfo implements dataAccesser interface.
 func (p *PhysicalTableScan) OperatorInfo(normalized bool) string {
+	if infoschema.IsClusterTableByName(p.DBName.O, p.Table.Name.O) {
+		return ""
+	}
+
 	ectx := p.SCtx().GetExprCtx().GetEvalCtx()
 	redact := p.SCtx().GetSessionVars().EnableRedactLog
 	var buffer strings.Builder
@@ -262,6 +269,30 @@ func (p *PhysicalTableScan) OperatorInfo(normalized bool) string {
 			}
 			buffer.WriteString(runtimeFilter.ExplainInfo(false))
 		}
+	}
+	if p.AnnIndexExtra != nil && p.AnnIndexExtra.PushDownQueryInfo != nil {
+		buffer.WriteString(", annIndex:")
+		buffer.WriteString(p.AnnIndexExtra.PushDownQueryInfo.GetDistanceMetric().String())
+		buffer.WriteString("(")
+		buffer.WriteString(p.AnnIndexExtra.PushDownQueryInfo.GetColumnName())
+		buffer.WriteString("..")
+		if normalized {
+			buffer.WriteString("[?]")
+		} else {
+			v, _, err := types.ZeroCopyDeserializeVectorFloat32(p.AnnIndexExtra.PushDownQueryInfo.RefVecF32)
+			if err != nil {
+				buffer.WriteString("[?]")
+			} else {
+				buffer.WriteString(v.String())
+			}
+		}
+		buffer.WriteString(", limit:")
+		if normalized {
+			buffer.WriteString("?")
+		} else {
+			buffer.WriteString(fmt.Sprint(p.AnnIndexExtra.PushDownQueryInfo.TopK))
+		}
+		buffer.WriteString(")")
 	}
 	return buffer.String()
 }

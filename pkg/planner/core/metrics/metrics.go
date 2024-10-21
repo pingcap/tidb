@@ -32,6 +32,7 @@ var (
 	sessionPlanCacheInstanceMemoryUsage     prometheus.Gauge
 	instancePlanCacheInstancePlanNumCounter prometheus.Gauge
 	instancePlanCacheInstanceMemoryUsage    prometheus.Gauge
+	instancePlanCacheInstanceNumEvict       prometheus.Gauge
 )
 
 func init() {
@@ -52,6 +53,7 @@ func InitMetricsVars() {
 	sessionPlanCacheInstanceMemoryUsage = metrics.PlanCacheInstanceMemoryUsage.WithLabelValues(" session-plan-cache")
 	instancePlanCacheInstancePlanNumCounter = metrics.PlanCacheInstancePlanNumCounter.WithLabelValues(" instance-plan-cache")
 	instancePlanCacheInstanceMemoryUsage = metrics.PlanCacheInstanceMemoryUsage.WithLabelValues(" instance-plan-cache")
+	instancePlanCacheInstanceNumEvict = metrics.PlanCacheInstancePlanNumCounter.WithLabelValues(" instance-plan-cache-last-evict")
 }
 
 // GetPlanCacheHitCounter get different plan cache hit counter
@@ -89,4 +91,9 @@ func GetPlanCacheInstanceMemoryUsage(instancePlanCache bool) prometheus.Gauge {
 		return instancePlanCacheInstanceMemoryUsage
 	}
 	return sessionPlanCacheInstanceMemoryUsage
+}
+
+// GetPlanCacheInstanceEvict get instance plan cache evict counter.
+func GetPlanCacheInstanceEvict() prometheus.Gauge {
+	return instancePlanCacheInstanceNumEvict
 }

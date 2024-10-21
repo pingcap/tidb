@@ -26,7 +26,7 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl/ingest"
 	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
 	"github.com/pingcap/tidb/pkg/errno"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
@@ -62,6 +62,7 @@ func TestAddIndexDistBasic(t *testing.T) {
 
 	bak := variable.GetDDLReorgWorkerCounter()
 	tk.MustExec("set global tidb_ddl_reorg_worker_cnt = 111")
+	tk.MustExec("set @@tidb_ddl_reorg_worker_cnt = 111")
 	require.Equal(t, int32(111), variable.GetDDLReorgWorkerCounter())
 	tk.MustExec("create table t(a bigint auto_random primary key) partition by hash(a) partitions 20;")
 	tk.MustExec("insert into t values (), (), (), (), (), ()")
@@ -80,6 +81,7 @@ func TestAddIndexDistBasic(t *testing.T) {
 	require.Equal(t, 1, task.Concurrency)
 
 	tk.MustExec(fmt.Sprintf("set global tidb_ddl_reorg_worker_cnt = %d", bak))
+	tk.MustExec(fmt.Sprintf("set @@tidb_ddl_reorg_worker_cnt = %d", bak))
 	require.Equal(t, bak, variable.GetDDLReorgWorkerCounter())
 
 	tk.MustExec("create table t1(a bigint auto_random primary key);")
@@ -283,4 +285,18 @@ func TestAddUKErrorMessage(t *testing.T) {
 	tk.MustExec("split table t between (1) and (100001) regions 10;")
 	err := tk.ExecToErr("alter table t add unique index uk(b);")
 	require.ErrorContains(t, err, "Duplicate entry '1' for key 't.uk'")
+}
+
+func TestAddIndexDistLockAcquireFailed(t *testing.T) {
+	store := realtikvtest.CreateMockStoreAndSetup(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set global tidb_enable_dist_task = on;")
+	t.Cleanup(func() {
+		tk.MustExec("set global tidb_enable_dist_task = off;")
+	})
+	tk.MustExec("create table t (a int, b int);")
+	tk.MustExec("insert into t values (1, 1);")
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/owner/mockAcquireDistLockFailed", "1*return(true)")
+	tk.MustExec("alter table t add index idx(b);")
 }

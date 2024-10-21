@@ -26,9 +26,8 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
@@ -137,8 +136,10 @@ type BaseKVEncoder struct {
 func NewBaseKVEncoder(config *encode.EncodingConfig) (*BaseKVEncoder, error) {
 	meta := config.Table.Meta()
 	cols := config.Table.Cols()
-	se := NewSession(&config.SessionOptions, config.Logger)
-	// Set CommonAddRecordCtx to session to reuse the slices and BufStore in AddRecord
+	se, err := NewSession(&config.SessionOptions, config.Logger)
+	if err != nil {
+		return nil, err
+	}
 
 	var autoRandomColID int64
 	autoIDFn := func(id int64) int64 { return id }
@@ -208,7 +209,7 @@ func (e *BaseKVEncoder) Record2KV(record, originalRow []types.Datum, rowID int64
 
 // AddRecord adds a record into encoder
 func (e *BaseKVEncoder) AddRecord(record []types.Datum) (kv.Handle, error) {
-	return e.table.AddRecord(e.SessionCtx.GetTableCtx(), record, table.DupKeyCheckSkip)
+	return e.table.AddRecord(e.SessionCtx.GetTableCtx(), e.SessionCtx.Txn(), record, table.DupKeyCheckSkip)
 }
 
 // TableAllocators returns the allocators of the table
@@ -254,8 +255,10 @@ func (e *BaseKVEncoder) getActualDatum(col *table.Column, rowID int64, inputDatu
 	)
 
 	isBadNullValue := false
+	exprCtx := e.SessionCtx.GetExprCtx()
+	errCtx := exprCtx.GetEvalCtx().ErrCtx()
 	if inputDatum != nil {
-		value, err = table.CastValue(e.SessionCtx, *inputDatum, col.ToInfo(), false, false)
+		value, err = table.CastColumnValue(exprCtx, *inputDatum, col.ToInfo(), false, false)
 		if err != nil {
 			return value, err
 		}
@@ -268,7 +271,7 @@ func (e *BaseKVEncoder) getActualDatum(col *table.Column, rowID int64, inputDatu
 	switch {
 	case IsAutoIncCol(col.ToInfo()):
 		// we still need a conversion, e.g. to catch overflow with a TINYINT column.
-		value, err = table.CastValue(e.SessionCtx,
+		value, err = table.CastColumnValue(exprCtx,
 			types.NewIntDatum(rowID), col.ToInfo(), false, false)
 	case e.IsAutoRandomCol(col.ToInfo()):
 		var val types.Datum
@@ -278,22 +281,14 @@ func (e *BaseKVEncoder) getActualDatum(col *table.Column, rowID int64, inputDatu
 		} else {
 			val = types.NewIntDatum(realRowID)
 		}
-		value, err = table.CastValue(e.SessionCtx, val, col.ToInfo(), false, false)
+		value, err = table.CastColumnValue(exprCtx, val, col.ToInfo(), false, false)
 	case col.IsGenerated():
 		// inject some dummy value for gen col so that MutRowFromDatums below sees a real value instead of nil.
 		// if MutRowFromDatums sees a nil it won't initialize the underlying storage and cause SetDatum to panic.
 		value = types.GetMinValue(&col.FieldType)
 	case isBadNullValue:
-		err = col.HandleBadNull(e.SessionCtx.Vars.StmtCtx.ErrCtx(), &value, 0)
+		err = col.HandleBadNull(errCtx, &value, 0)
 	default:
-		// copy from the following GetColDefaultValue function, when this is true it will use getColDefaultExprValue
-		if col.DefaultIsExpr {
-			// the expression rewriter requires a non-nil TxnCtx.
-			e.SessionCtx.Vars.TxnCtx = new(variable.TransactionContext)
-			defer func() {
-				e.SessionCtx.Vars.TxnCtx = nil
-			}()
-		}
 		value, err = table.GetColDefaultValue(e.SessionCtx.GetExprCtx(), col.ToInfo())
 	}
 	return value, err
@@ -359,7 +354,7 @@ func (e *BaseKVEncoder) LogEvalGenExprFailed(row []types.Datum, colInfo *model.C
 
 // TruncateWarns resets the warnings in session context.
 func (e *BaseKVEncoder) TruncateWarns() {
-	e.SessionCtx.Vars.StmtCtx.TruncateWarnings(0)
+	e.SessionCtx.GetExprCtx().GetEvalCtx().TruncateWarnings(0)
 }
 
 func evalGeneratedColumns(se *Session, record []types.Datum, cols []*table.Column,
@@ -371,7 +366,7 @@ func evalGeneratedColumns(se *Session, record []types.Datum, cols []*table.Colum
 		if err != nil {
 			return col, err
 		}
-		value, err := table.CastValue(se, evaluated, col, false, false)
+		value, err := table.CastColumnValue(se.GetExprCtx(), evaluated, col, false, false)
 		if err != nil {
 			return col, err
 		}

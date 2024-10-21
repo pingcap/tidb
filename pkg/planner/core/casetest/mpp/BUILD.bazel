@@ -13,8 +13,8 @@ go_test(
     deps = [
         "//pkg/config",
         "//pkg/domain",
+        "//pkg/meta/model",
         "//pkg/parser/model",
-        "//pkg/planner/util/coretestsdk",
         "//pkg/testkit",
         "//pkg/testkit/testdata",
         "//pkg/testkit/testmain",

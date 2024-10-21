@@ -15,6 +15,7 @@
 package ddl_test
 
 import (
+	"context"
 	"strconv"
 	"testing"
 
@@ -22,7 +23,7 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -809,7 +810,7 @@ func (c *cancelOnceHook) OnJobUpdated(job *model.Job) {
 		return
 	}
 	c.triggered = true
-	errs, err := ddl.CancelJobs(c.s, []int64{job.ID})
+	errs, err := ddl.CancelJobs(context.Background(), c.s, []int64{job.ID})
 	if len(errs) > 0 && errs[0] != nil {
 		c.cancelErr = errs[0]
 		return

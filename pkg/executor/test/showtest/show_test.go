@@ -25,8 +25,9 @@ import (
 	_ "github.com/pingcap/tidb/pkg/autoid_service"
 	"github.com/pingcap/tidb/pkg/executor"
 	"github.com/pingcap/tidb/pkg/infoschema"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/auth"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	parsertypes "github.com/pingcap/tidb/pkg/parser/types"
 	"github.com/pingcap/tidb/pkg/privilege/privileges"
@@ -73,9 +74,6 @@ func TestShowCreateTablePlacement(t *testing.T) {
 
 	// Partitioned tables
 	tk.MustExec(`DROP TABLE IF EXISTS t`)
-	tk.MustExec("set @old_list_part = @@tidb_enable_list_partition")
-	defer tk.MustExec("set @@tidb_enable_list_partition = @old_list_part")
-	tk.MustExec("set tidb_enable_list_partition = 1")
 	tk.MustExec("create table t(a int, b varchar(255))" +
 		"/*T![placement] PLACEMENT POLICY=\"x\" */" +
 		"PARTITION BY LIST (a)\n" +
@@ -288,7 +286,7 @@ func TestShowWarningsForExprPushdown(t *testing.T) {
 	// create tiflash replica
 	{
 		is := dom.InfoSchema()
-		tblInfo, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("show_warnings_expr_pushdown"))
+		tblInfo, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("show_warnings_expr_pushdown"))
 		require.NoError(t, err)
 		tblInfo.Meta().TiFlashReplica = &model.TiFlashReplicaInfo{
 			Count:     1,
@@ -531,7 +529,7 @@ func TestShow2(t *testing.T) {
 	tk.MustQuery("SHOW FULL TABLES in metrics_schema like 'uptime'").Check(testkit.Rows("uptime SYSTEM VIEW"))
 
 	is := dom.InfoSchema()
-	tblInfo, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
+	tblInfo, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
 	require.NoError(t, err)
 	createTime := model.TSConvert2Time(tblInfo.Meta().UpdateTS).Format(time.DateTime)
 
@@ -674,7 +672,7 @@ func TestUnprivilegedShow(t *testing.T) {
 	tk.Session().Auth(&auth.UserIdentity{Username: "lowprivuser", Hostname: "192.168.0.1", AuthUsername: "lowprivuser", AuthHostname: "%"}, nil, []byte("012345678901234567890"), nil)
 
 	is := dom.InfoSchema()
-	tblInfo, err := is.TableByName(context.Background(), model.NewCIStr("testshow"), model.NewCIStr("t1"))
+	tblInfo, err := is.TableByName(context.Background(), pmodel.NewCIStr("testshow"), pmodel.NewCIStr("t1"))
 	require.NoError(t, err)
 	createTime := model.TSConvert2Time(tblInfo.Meta().UpdateTS).Format(time.DateTime)
 
@@ -806,7 +804,7 @@ func TestAutoRandomWithLargeSignedShowTableRegions(t *testing.T) {
 	tk.MustExec("drop table if exists t;")
 
 	tk.MustExec("create table t (a bigint unsigned auto_random primary key clustered);")
-	tk.MustExec("set @@global.tidb_scatter_region=1;")
+	tk.MustExec("set @@session.tidb_scatter_region='table';")
 	// 18446744073709541615 is MaxUint64 - 10000.
 	// 18446744073709551615 is the MaxUint64.
 	tk.MustQuery("split table t between (18446744073709541615) and (18446744073709551615) regions 2;").

@@ -15,7 +15,6 @@
 package pattern
 
 import (
-	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 )
@@ -77,25 +76,25 @@ const (
 // GetOperand maps logical plan operator to Operand.
 func GetOperand(p base.LogicalPlan) Operand {
 	switch p.(type) {
-	case *plannercore.LogicalApply:
+	case *logicalop.LogicalApply:
 		return OperandApply
-	case *plannercore.LogicalJoin:
+	case *logicalop.LogicalJoin:
 		return OperandJoin
-	case *plannercore.LogicalAggregation:
+	case *logicalop.LogicalAggregation:
 		return OperandAggregation
 	case *logicalop.LogicalProjection:
 		return OperandProjection
-	case *plannercore.LogicalSelection:
+	case *logicalop.LogicalSelection:
 		return OperandSelection
 	case *logicalop.LogicalMaxOneRow:
 		return OperandMaxOneRow
 	case *logicalop.LogicalTableDual:
 		return OperandTableDual
-	case *plannercore.DataSource:
+	case *logicalop.DataSource:
 		return OperandDataSource
 	case *logicalop.LogicalUnionScan:
 		return OperandUnionScan
-	case *plannercore.LogicalUnionAll:
+	case *logicalop.LogicalUnionAll:
 		return OperandUnionAll
 	case *logicalop.LogicalSort:
 		return OperandSort
@@ -105,13 +104,13 @@ func GetOperand(p base.LogicalPlan) Operand {
 		return OperandLock
 	case *logicalop.LogicalLimit:
 		return OperandLimit
-	case *plannercore.TiKVSingleGather:
+	case *logicalop.TiKVSingleGather:
 		return OperandTiKVSingleGather
-	case *plannercore.LogicalTableScan:
+	case *logicalop.LogicalTableScan:
 		return OperandTableScan
 	case *logicalop.LogicalMemTable:
 		return OperandMemTableScan
-	case *plannercore.LogicalIndexScan:
+	case *logicalop.LogicalIndexScan:
 		return OperandIndexScan
 	case *logicalop.LogicalShow:
 		return OperandShow

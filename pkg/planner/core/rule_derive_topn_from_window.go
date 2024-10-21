@@ -16,7 +16,6 @@ package core
 
 import (
 	"context"
-	"fmt"
 
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -30,20 +29,9 @@ import (
 type DeriveTopNFromWindow struct {
 }
 
-func appendDerivedTopNTrace(topN base.LogicalPlan, opt *optimizetrace.LogicalOptimizeOp) {
-	child := topN.Children()[0]
-	action := func() string {
-		return fmt.Sprintf("%v_%v top N added below  %v_%v ", topN.TP(), topN.ID(), child.TP(), child.ID())
-	}
-	reason := func() string {
-		return fmt.Sprintf("%v filter on row number", topN.TP())
-	}
-	opt.AppendStepToCurrent(topN.ID(), topN.TP(), reason, action)
-}
-
 // checkPartitionBy mainly checks if partition by of window function is a prefix of
 // data order (clustered index) of the data source. TiFlash is allowed only for empty partition by.
-func checkPartitionBy(p *logicalop.LogicalWindow, d *DataSource) bool {
+func checkPartitionBy(p *logicalop.LogicalWindow, d *logicalop.DataSource) bool {
 	// No window partition by. We are OK.
 	if len(p.PartitionBy) == 0 {
 		return true
@@ -74,7 +62,8 @@ func checkPartitionBy(p *logicalop.LogicalWindow, d *DataSource) bool {
 	    current row is only frame applicable to row number
 	  - Child is a data source with no tiflash option.
 */
-func windowIsTopN(p *LogicalSelection) (bool, uint64) {
+func windowIsTopN(lp base.LogicalPlan) (bool, uint64) {
+	p := lp.(*logicalop.LogicalSelection)
 	// Check if child is window function.
 	child, isLogicalWindow := p.Children()[0].(*logicalop.LogicalWindow)
 	if !isLogicalWindow {
@@ -98,7 +87,7 @@ func windowIsTopN(p *LogicalSelection) (bool, uint64) {
 	}
 
 	grandChild := child.Children()[0]
-	dataSource, isDataSource := grandChild.(*DataSource)
+	dataSource, isDataSource := grandChild.(*logicalop.DataSource)
 	if !isDataSource {
 		return false, 0
 	}

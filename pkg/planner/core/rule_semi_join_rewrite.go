@@ -52,7 +52,7 @@ func (*SemiJoinRewriter) Name() string {
 }
 
 func (smj *SemiJoinRewriter) recursivePlan(p base.LogicalPlan) (base.LogicalPlan, error) {
-	if _, ok := p.(*LogicalCTE); ok {
+	if _, ok := p.(*logicalop.LogicalCTE); ok {
 		return p, nil
 	}
 	newChildren := make([]base.LogicalPlan, 0, len(p.Children()))
@@ -64,16 +64,16 @@ func (smj *SemiJoinRewriter) recursivePlan(p base.LogicalPlan) (base.LogicalPlan
 		newChildren = append(newChildren, newChild)
 	}
 	p.SetChildren(newChildren...)
-	join, ok := p.(*LogicalJoin)
+	join, ok := p.(*logicalop.LogicalJoin)
 	// If it's not a join, or not a (outer) semi join. We just return it since no optimization is needed.
 	// Actually the check of the preferRewriteSemiJoin is a superset of checking the join type. We remain them for a better understanding.
-	if !ok || !(join.JoinType == SemiJoin || join.JoinType == LeftOuterSemiJoin) || (join.PreferJoinType&h.PreferRewriteSemiJoin == 0) {
+	if !ok || !(join.JoinType == logicalop.SemiJoin || join.JoinType == logicalop.LeftOuterSemiJoin) || (join.PreferJoinType&h.PreferRewriteSemiJoin == 0) {
 		return p, nil
 	}
 	// The preferRewriteSemiJoin flag only be used here. We should reset it in order to not affect other parts.
 	join.PreferJoinType &= ^h.PreferRewriteSemiJoin
 
-	if join.JoinType == LeftOuterSemiJoin {
+	if join.JoinType == logicalop.LeftOuterSemiJoin {
 		p.SCtx().GetSessionVars().StmtCtx.SetHintWarning("SEMI_JOIN_REWRITE() is inapplicable for LeftOuterSemiJoin.")
 		return p, nil
 	}
@@ -94,13 +94,13 @@ func (smj *SemiJoinRewriter) recursivePlan(p base.LogicalPlan) (base.LogicalPlan
 	// But the aggregation we added may block the predicate push down since we've not maintained the functional dependency to pass the equiv class to guide the push down.
 	// So we create a selection before we build the aggregation.
 	if len(join.RightConditions) > 0 {
-		sel := LogicalSelection{Conditions: make([]expression.Expression, len(join.RightConditions))}.Init(p.SCtx(), innerChild.QueryBlockOffset())
+		sel := logicalop.LogicalSelection{Conditions: make([]expression.Expression, len(join.RightConditions))}.Init(p.SCtx(), innerChild.QueryBlockOffset())
 		copy(sel.Conditions, join.RightConditions)
 		sel.SetChildren(innerChild)
 		innerChild = sel
 	}
 
-	subAgg := LogicalAggregation{
+	subAgg := logicalop.LogicalAggregation{
 		AggFuncs:     make([]*aggregation.AggFuncDesc, 0, len(join.EqualConditions)),
 		GroupByItems: make([]expression.Expression, 0, len(join.EqualConditions)),
 	}.Init(p.SCtx(), p.Children()[1].QueryBlockOffset())
@@ -118,10 +118,10 @@ func (smj *SemiJoinRewriter) recursivePlan(p base.LogicalPlan) (base.LogicalPlan
 	}
 	subAgg.SetChildren(innerChild)
 	subAgg.SetSchema(expression.NewSchema(aggOutputCols...))
-	subAgg.buildSelfKeyInfo(subAgg.Schema())
+	subAgg.BuildSelfKeyInfo(subAgg.Schema())
 
-	innerJoin := LogicalJoin{
-		JoinType:        InnerJoin,
+	innerJoin := logicalop.LogicalJoin{
+		JoinType:        logicalop.InnerJoin,
 		HintInfo:        join.HintInfo,
 		PreferJoinType:  join.PreferJoinType,
 		PreferJoinOrder: join.PreferJoinOrder,

@@ -34,7 +34,8 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
@@ -54,7 +55,7 @@ import (
 
 // GetMaxRowID is used for test.
 func GetMaxRowID(store kv.Storage, priority int, t table.Table, startHandle, endHandle kv.Key) (kv.Key, error) {
-	return ddl.GetRangeEndKey(ddl.NewJobContext(), store, priority, t.RecordPrefix(), startHandle, endHandle)
+	return ddl.GetRangeEndKey(ddl.NewReorgContext(), store, priority, t.RecordPrefix(), startHandle, endHandle)
 }
 
 func TestIssue23872(t *testing.T) {
@@ -119,7 +120,7 @@ func TestCreateTableWithLike(t *testing.T) {
 	tk.MustQuery("select * from t1").Check(testkit.Rows("1 11"))
 	tk.MustQuery("select * from t2").Check(testkit.Rows("1 12"))
 	is := domain.GetDomain(tk.Session()).InfoSchema()
-	tbl1, err := is.TableByName(context.Background(), model.NewCIStr("ctwl_db"), model.NewCIStr("t1"))
+	tbl1, err := is.TableByName(context.Background(), pmodel.NewCIStr("ctwl_db"), pmodel.NewCIStr("t1"))
 	require.NoError(t, err)
 	tbl1Info := tbl1.Meta()
 	require.Nil(t, tbl1Info.ForeignKeys)
@@ -127,7 +128,7 @@ func TestCreateTableWithLike(t *testing.T) {
 	col := tbl1Info.Columns[0]
 	hasNotNull := mysql.HasNotNullFlag(col.GetFlag())
 	require.True(t, hasNotNull)
-	tbl2, err := is.TableByName(context.Background(), model.NewCIStr("ctwl_db"), model.NewCIStr("t2"))
+	tbl2, err := is.TableByName(context.Background(), pmodel.NewCIStr("ctwl_db"), pmodel.NewCIStr("t2"))
 	require.NoError(t, err)
 	tbl2Info := tbl2.Meta()
 	require.Nil(t, tbl2Info.ForeignKeys)
@@ -141,7 +142,7 @@ func TestCreateTableWithLike(t *testing.T) {
 	tk.MustExec("insert into t1 set c2=11")
 	tk.MustQuery("select * from t1").Check(testkit.Rows("1 11"))
 	is = domain.GetDomain(tk.Session()).InfoSchema()
-	tbl1, err = is.TableByName(context.Background(), model.NewCIStr("ctwl_db1"), model.NewCIStr("t1"))
+	tbl1, err = is.TableByName(context.Background(), pmodel.NewCIStr("ctwl_db1"), pmodel.NewCIStr("t1"))
 	require.NoError(t, err)
 	require.Nil(t, tbl1.Meta().ForeignKeys)
 
@@ -155,7 +156,7 @@ func TestCreateTableWithLike(t *testing.T) {
 	// Test create table like for partition table.
 	atomic.StoreUint32(&ddl.EnableSplitTableRegion, 1)
 	tk.MustExec("use test")
-	tk.MustExec("set @@global.tidb_scatter_region=1")
+	tk.MustExec("set @@session.tidb_scatter_region='table'")
 	tk.MustExec("drop table if exists partition_t")
 	tk.MustExec("create table partition_t (a int, b int,index(a)) partition by hash (a) partitions 3")
 	tk.MustExec("drop table if exists t1")
@@ -277,7 +278,7 @@ func TestCreateTableWithLikeAtTemporaryMode(t *testing.T) {
 	tk.MustExec(`create global temporary table test_gv_ddl_temp like test_gv_ddl on commit delete rows;`)
 	defer tk.MustExec("drop table if exists test_gv_ddl_temp, test_gv_ddl")
 	is := sessiontxn.GetTxnManager(tk.Session()).GetTxnInfoSchema()
-	table, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("test_gv_ddl"))
+	table, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("test_gv_ddl"))
 	require.NoError(t, err)
 	testCases := []struct {
 		generatedExprString string
@@ -306,7 +307,7 @@ func TestCreateTableWithLikeAtTemporaryMode(t *testing.T) {
 	defer tk.MustExec("drop table if exists test_foreign_key, t1")
 	tk.MustExec("create global temporary table test_foreign_key_temp like test_foreign_key on commit delete rows")
 	is = sessiontxn.GetTxnManager(tk.Session()).GetTxnInfoSchema()
-	table, err = is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("test_foreign_key_temp"))
+	table, err = is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("test_foreign_key_temp"))
 	require.NoError(t, err)
 	tableInfo := table.Meta()
 	require.Equal(t, 0, len(tableInfo.ForeignKeys))
@@ -390,7 +391,7 @@ func TestCreateTableWithLikeAtTemporaryMode(t *testing.T) {
 	tk.MustExec("create table foreign_key_table2 (c int,d int,foreign key (d) references foreign_key_table1 (b))")
 	tk.MustExec("create temporary table foreign_key_tmp like foreign_key_table2")
 	is = sessiontxn.GetTxnManager(tk.Session()).GetTxnInfoSchema()
-	table, err = is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("foreign_key_tmp"))
+	table, err = is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("foreign_key_tmp"))
 	require.NoError(t, err)
 	tableInfo = table.Meta()
 	require.Equal(t, 0, len(tableInfo.ForeignKeys))
@@ -445,9 +446,6 @@ func TestCancelAddIndexPanic(t *testing.T) {
 		tk.MustExec("insert into t values (?, ?)", i, i)
 	}
 	var checkErr error
-	oldReorgWaitTimeout := ddl.ReorgWaitTimeout
-	ddl.ReorgWaitTimeout = 50 * time.Millisecond
-	defer func() { ddl.ReorgWaitTimeout = oldReorgWaitTimeout }()
 	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunBefore", func(job *model.Job) {
 		if job.Type == model.ActionAddIndex && job.State == model.JobStateRunning && job.SchemaState == model.StateWriteReorganization && job.SnapshotVer != 0 {
 			tkCancel.MustQuery(fmt.Sprintf("admin cancel ddl jobs %d", job.ID))
@@ -818,7 +816,7 @@ func TestCanceledJobTakeTime(t *testing.T) {
 		once.Do(func() {
 			ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
 			err := kv.RunInNewTxn(ctx, store, false, func(ctx context.Context, txn kv.Transaction) error {
-				m := meta.NewMeta(txn)
+				m := meta.NewMutator(txn)
 				err := m.GetAutoIDAccessors(job.SchemaID, job.TableID).Del()
 				if err != nil {
 					return err
@@ -1107,7 +1105,7 @@ func TestAutoRandomWithPreSplitRegion(t *testing.T) {
 	origin := atomic.LoadUint32(&ddl.EnableSplitTableRegion)
 	atomic.StoreUint32(&ddl.EnableSplitTableRegion, 1)
 	defer atomic.StoreUint32(&ddl.EnableSplitTableRegion, origin)
-	tk.MustExec("set @@global.tidb_scatter_region=1")
+	tk.MustExec("set @@session.tidb_scatter_region='table'")
 
 	// Test pre-split table region for auto_random table.
 	tk.MustExec("create table t (a bigint auto_random(2) primary key clustered, b int) pre_split_regions=2")
@@ -1240,7 +1238,7 @@ func TestGetReverseKey(t *testing.T) {
 
 	// Get table ID for split.
 	is := dom.InfoSchema()
-	tbl, err := is.TableByName(context.Background(), model.NewCIStr("db_get"), model.NewCIStr("test_get"))
+	tbl, err := is.TableByName(context.Background(), pmodel.NewCIStr("db_get"), pmodel.NewCIStr("test_get"))
 	require.NoError(t, err)
 	// Split the table.
 	tableStart := tablecodec.GenTableRecordPrefix(tbl.Meta().ID)

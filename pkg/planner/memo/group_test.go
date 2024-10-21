@@ -21,11 +21,12 @@ import (
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/infoschema"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser"
-	"github.com/pingcap/tidb/pkg/parser/model"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
+	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/planner/pattern"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
@@ -71,7 +72,7 @@ func TestGroupDeleteAll(t *testing.T) {
 		do := domain.GetDomain(ctx)
 		do.StatsHandle().Close()
 	}()
-	expr := NewGroupExpr(plannercore.LogicalSelection{}.Init(ctx, 0))
+	expr := NewGroupExpr(logicalop.LogicalSelection{}.Init(ctx, 0))
 	g := NewGroupWithSchema(expr, expression.NewSchema())
 	require.True(t, g.Insert(NewGroupExpr(logicalop.LogicalLimit{}.Init(ctx, 0))))
 	require.True(t, g.Insert(NewGroupExpr(logicalop.LogicalProjection{}.Init(ctx, 0))))
@@ -107,7 +108,8 @@ func TestGroupFingerPrint(t *testing.T) {
 		do := domain.GetDomain(ctx)
 		do.StatsHandle().Close()
 	}()
-	plan, err := plannercore.BuildLogicalPlanForTest(context.Background(), ctx, stmt1, is)
+	nodeW := resolve.NewNodeW(stmt1)
+	plan, err := plannercore.BuildLogicalPlanForTest(context.Background(), ctx, nodeW, is)
 	require.NoError(t, err)
 	logic1, ok := plan.(base.LogicalPlan)
 	require.True(t, ok)
@@ -115,7 +117,7 @@ func TestGroupFingerPrint(t *testing.T) {
 	// Plan tree should be: DataSource -> Selection -> Projection
 	proj, ok := logic1.(*logicalop.LogicalProjection)
 	require.True(t, ok)
-	sel, ok := logic1.Children()[0].(*plannercore.LogicalSelection)
+	sel, ok := logic1.Children()[0].(*logicalop.LogicalSelection)
 	require.True(t, ok)
 	group1 := Convert2Group(logic1)
 	oldGroupExpr := group1.Equivalents.Front().Value.(*GroupExpr)
@@ -142,7 +144,7 @@ func TestGroupFingerPrint(t *testing.T) {
 
 	// Insert two LogicalSelections with same conditions but different order.
 	require.Len(t, sel.Conditions, 2)
-	newSelection := plannercore.LogicalSelection{
+	newSelection := logicalop.LogicalSelection{
 		Conditions: make([]expression.Expression, 2)}.Init(sel.SCtx(), sel.QueryBlockOffset())
 	newSelection.Conditions[0], newSelection.Conditions[1] = sel.Conditions[1], sel.Conditions[0]
 	newGroupExpr4 := NewGroupExpr(sel)
@@ -240,7 +242,8 @@ func TestBuildKeyInfo(t *testing.T) {
 	// case 1: primary key has constant constraint
 	stmt1, err := p.ParseOneStmt("select a from t where a = 10", "", "")
 	require.NoError(t, err)
-	p1, err := plannercore.BuildLogicalPlanForTest(context.Background(), ctx, stmt1, is)
+	nodeW1 := resolve.NewNodeW(stmt1)
+	p1, err := plannercore.BuildLogicalPlanForTest(context.Background(), ctx, nodeW1, is)
 	require.NoError(t, err)
 	logic1, ok := p1.(base.LogicalPlan)
 	require.True(t, ok)
@@ -252,7 +255,8 @@ func TestBuildKeyInfo(t *testing.T) {
 	// case 2: group by column is key
 	stmt2, err := p.ParseOneStmt("select b, sum(a) from t group by b", "", "")
 	require.NoError(t, err)
-	p2, err := plannercore.BuildLogicalPlanForTest(context.Background(), ctx, stmt2, is)
+	nodeW2 := resolve.NewNodeW(stmt2)
+	p2, err := plannercore.BuildLogicalPlanForTest(context.Background(), ctx, nodeW2, is)
 	require.NoError(t, err)
 	logic2, ok := p2.(base.LogicalPlan)
 	require.True(t, ok)
@@ -262,7 +266,7 @@ func TestBuildKeyInfo(t *testing.T) {
 	require.Len(t, group2.Prop.Schema.Keys, 1)
 
 	// case 3: build key info for new Group
-	newSel := plannercore.LogicalSelection{}.Init(ctx, 0)
+	newSel := logicalop.LogicalSelection{}.Init(ctx, 0)
 	newExpr1 := NewGroupExpr(newSel)
 	newExpr1.SetChildren(group2)
 	newGroup1 := NewGroupWithSchema(newExpr1, group2.Prop.Schema)

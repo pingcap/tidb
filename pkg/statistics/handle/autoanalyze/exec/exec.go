@@ -21,7 +21,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/metrics"
-	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/sysproctrack"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
@@ -50,9 +50,9 @@ func AutoAnalyze(
 	statsVer int,
 	sql string,
 	params ...any,
-) {
+) bool {
 	startTime := time.Now()
-	_, _, err := execAnalyzeStmt(sctx, statsHandle, sysProcTracker, statsVer, sql, params...)
+	_, _, err := RunAnalyzeStmt(sctx, statsHandle, sysProcTracker, statsVer, sql, params...)
 	dur := time.Since(startTime)
 	metrics.AutoAnalyzeHistogram.Observe(dur.Seconds())
 	if err != nil {
@@ -67,19 +67,21 @@ func AutoAnalyze(
 			zap.Error(err),
 		)
 		metrics.AutoAnalyzeCounter.WithLabelValues("failed").Inc()
-	} else {
-		metrics.AutoAnalyzeCounter.WithLabelValues("succ").Inc()
+		return false
 	}
+	metrics.AutoAnalyzeCounter.WithLabelValues("succ").Inc()
+	return true
 }
 
-func execAnalyzeStmt(
+// RunAnalyzeStmt executes the analyze statement.
+func RunAnalyzeStmt(
 	sctx sessionctx.Context,
 	statsHandle statstypes.StatsHandle,
 	sysProcTracker sysproctrack.Tracker,
 	statsVer int,
 	sql string,
 	params ...any,
-) ([]chunk.Row, []*ast.ResultField, error) {
+) ([]chunk.Row, []*resolve.ResultField, error) {
 	pruneMode := sctx.GetSessionVars().PartitionPruneMode.Load()
 	analyzeSnapshot := sctx.GetSessionVars().EnableAnalyzeSnapshot
 	autoAnalyzeTracker := statsutil.NewAutoAnalyzeTracker(sysProcTracker.Track, sysProcTracker.UnTrack)

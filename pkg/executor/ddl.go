@@ -26,11 +26,13 @@ import (
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/planner/core"
+	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/sessiontxn/staleread"
@@ -74,7 +76,7 @@ func (e *DDLExec) toErr(err error) error {
 	return err
 }
 
-func (e *DDLExec) getLocalTemporaryTable(schema model.CIStr, table model.CIStr) (table.Table, bool) {
+func (e *DDLExec) getLocalTemporaryTable(schema pmodel.CIStr, table pmodel.CIStr) (table.Table, bool) {
 	tbl, err := e.Ctx().GetInfoSchema().(infoschema.InfoSchema).TableByName(context.Background(), schema, table)
 	if infoschema.ErrTableNotExists.Equal(err) {
 		return nil, false
@@ -287,7 +289,8 @@ func (e *DDLExec) createSessionTemporaryTable(s *ast.CreateTableStmt) error {
 		return errors.Trace(err)
 	}
 
-	tbInfo, err := ddl.BuildSessionTemporaryTableInfo(e.Ctx(), is, s, dbInfo.Charset, dbInfo.Collate, dbInfo.PlacementPolicyRef)
+	tbInfo, err := ddl.BuildSessionTemporaryTableInfo(ddl.NewMetaBuildContextWithSctx(e.Ctx()), e.Ctx().GetStore(), is, s,
+		dbInfo.Charset, dbInfo.Collate, dbInfo.PlacementPolicyRef)
 	if err != nil {
 		return err
 	}
@@ -302,7 +305,8 @@ func (e *DDLExec) createSessionTemporaryTable(s *ast.CreateTableStmt) error {
 
 func (e *DDLExec) executeCreateView(ctx context.Context, s *ast.CreateViewStmt) error {
 	ret := &core.PreprocessorReturn{}
-	err := core.Preprocess(ctx, e.Ctx(), s.Select, core.WithPreprocessorReturn(ret))
+	nodeW := resolve.NewNodeW(s.Select)
+	err := core.Preprocess(ctx, e.Ctx(), nodeW, core.WithPreprocessorReturn(ret))
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -408,7 +412,7 @@ func (e *DDLExec) executeRecoverTable(s *ast.RecoverTableStmt) error {
 		return err
 	}
 	// Check the table ID was not exists.
-	tbl, ok := dom.InfoSchema().TableByID(tblInfo.ID)
+	tbl, ok := dom.InfoSchema().TableByID(context.Background(), tblInfo.ID)
 	if ok {
 		return infoschema.ErrTableExists.GenWithStack("Table '%-.192s' already been recover to '%-.192s', can't be recover repeatedly", s.Table.Name.O, tbl.Meta().Name.O)
 	}
@@ -419,7 +423,7 @@ func (e *DDLExec) executeRecoverTable(s *ast.RecoverTableStmt) error {
 		return err
 	}
 
-	recoverInfo := &ddl.RecoverInfo{
+	recoverInfo := &model.RecoverTableInfo{
 		SchemaID:      job.SchemaID,
 		TableInfo:     tblInfo,
 		DropJobID:     job.ID,
@@ -463,14 +467,18 @@ func (e *DDLExec) getRecoverTableByJobID(s *ast.RecoverTableStmt, dom *domain.Do
 		return nil, nil, err
 	}
 	// Get table meta from snapshot infoSchema.
-	table, ok := snapInfo.TableByID(job.TableID)
+	table, ok := snapInfo.TableByID(ctx, job.TableID)
 	if !ok {
 		return nil, nil, infoschema.ErrTableNotExists.GenWithStackByArgs(
 			fmt.Sprintf("(Schema ID %d)", job.SchemaID),
 			fmt.Sprintf("(Table ID %d)", job.TableID),
 		)
 	}
-	return job, table.Meta(), nil
+	// We can't return the meta directly since it will be modified outside, which may corrupt the infocache.
+	// Since only State field is changed, return a shallow copy is enough.
+	// see https://github.com/pingcap/tidb/issues/55462
+	tblInfo := *table.Meta()
+	return job, &tblInfo, nil
 }
 
 // GetDropOrTruncateTableInfoFromJobs gets the dropped/truncated table information from DDL jobs,
@@ -535,7 +543,12 @@ func (e *DDLExec) getRecoverTableByTableName(tableName *ast.TableName) (*model.J
 	if tableInfo.TempTableType == model.TempTableGlobal {
 		return nil, nil, exeerrors.ErrUnsupportedFlashbackTmpTable
 	}
-	return jobInfo, tableInfo, nil
+
+	// We can't return the meta directly since it will be modified outside, which may corrupt the infocache.
+	// Since only State field is changed, return a shallow copy is enough.
+	// see https://github.com/pingcap/tidb/issues/55462
+	tblInfo := *tableInfo
+	return jobInfo, &tblInfo, nil
 }
 
 func (e *DDLExec) executeFlashBackCluster(s *ast.FlashBackToTimestampStmt) error {
@@ -559,11 +572,11 @@ func (e *DDLExec) executeFlashbackTable(s *ast.FlashBackTableStmt) error {
 		return err
 	}
 	if len(s.NewName) != 0 {
-		tblInfo.Name = model.NewCIStr(s.NewName)
+		tblInfo.Name = pmodel.NewCIStr(s.NewName)
 	}
 	// Check the table ID was not exists.
 	is := domain.GetDomain(e.Ctx()).InfoSchema()
-	tbl, ok := is.TableByID(tblInfo.ID)
+	tbl, ok := is.TableByID(context.Background(), tblInfo.ID)
 	if ok {
 		return infoschema.ErrTableExists.GenWithStack("Table '%-.192s' already been flashback to '%-.192s', can't be flashback repeatedly", s.Table.Name.O, tbl.Meta().Name.O)
 	}
@@ -574,7 +587,7 @@ func (e *DDLExec) executeFlashbackTable(s *ast.FlashBackTableStmt) error {
 		return err
 	}
 
-	recoverInfo := &ddl.RecoverInfo{
+	recoverInfo := &model.RecoverTableInfo{
 		SchemaID:      job.SchemaID,
 		TableInfo:     tblInfo,
 		DropJobID:     job.ID,
@@ -594,7 +607,7 @@ func (e *DDLExec) executeFlashbackTable(s *ast.FlashBackTableStmt) error {
 func (e *DDLExec) executeFlashbackDatabase(s *ast.FlashBackDatabaseStmt) error {
 	dbName := s.DBName
 	if len(s.NewName) > 0 {
-		dbName = model.NewCIStr(s.NewName)
+		dbName = pmodel.NewCIStr(s.NewName)
 	}
 	// Check the Schema Name was not exists.
 	is := domain.GetDomain(e.Ctx()).InfoSchema()
@@ -615,7 +628,7 @@ func (e *DDLExec) executeFlashbackDatabase(s *ast.FlashBackDatabaseStmt) error {
 	return err
 }
 
-func (e *DDLExec) getRecoverDBByName(schemaName model.CIStr) (recoverSchemaInfo *ddl.RecoverSchemaInfo, err error) {
+func (e *DDLExec) getRecoverDBByName(schemaName pmodel.CIStr) (recoverSchemaInfo *model.RecoverSchemaInfo, err error) {
 	txn, err := e.Ctx().Txn(true)
 	if err != nil {
 		return nil, err
@@ -649,7 +662,7 @@ func (e *DDLExec) getRecoverDBByName(schemaName model.CIStr) (recoverSchemaInfo 
 			if schemaInfo.Name.L != schemaName.L {
 				continue
 			}
-			recoverSchemaInfo = &ddl.RecoverSchemaInfo{
+			recoverSchemaInfo = &model.RecoverSchemaInfo{
 				DBInfo:              schemaInfo,
 				LoadTablesOnExecute: true,
 				DropJobID:           job.ID,

@@ -35,6 +35,8 @@ const (
 
 // StaticPartitionedTableAnalysisJob is a job for analyzing a static partitioned table.
 type StaticPartitionedTableAnalysisJob struct {
+	successHook         JobHook
+	failureHook         JobHook
 	TableSchema         string
 	GlobalTableName     string
 	StaticPartitionName string
@@ -77,25 +79,59 @@ func NewStaticPartitionTableAnalysisJob(
 	}
 }
 
+// GetTableID gets the table ID of the job.
+func (j *StaticPartitionedTableAnalysisJob) GetTableID() int64 {
+	// Because we only analyze the specified static partition, the table ID is the static partition ID.
+	return j.StaticPartitionID
+}
+
 // Analyze analyzes the specified static partition or indexes.
 func (j *StaticPartitionedTableAnalysisJob) Analyze(
 	statsHandle statstypes.StatsHandle,
 	sysProcTracker sysproctrack.Tracker,
 ) error {
+	success := true
+	defer func() {
+		if success {
+			if j.successHook != nil {
+				j.successHook(j)
+			}
+		} else {
+			if j.failureHook != nil {
+				j.failureHook(j)
+			}
+		}
+	}()
+
 	return statsutil.CallWithSCtx(statsHandle.SPool(), func(sctx sessionctx.Context) error {
 		switch j.getAnalyzeType() {
 		case analyzeStaticPartition:
-			j.analyzeStaticPartition(sctx, statsHandle, sysProcTracker)
+			success = j.analyzeStaticPartition(sctx, statsHandle, sysProcTracker)
 		case analyzeStaticPartitionIndex:
-			j.analyzeStaticPartitionIndexes(sctx, statsHandle, sysProcTracker)
+			success = j.analyzeStaticPartitionIndexes(sctx, statsHandle, sysProcTracker)
 		}
 		return nil
 	})
 }
 
+// RegisterSuccessHook registers a successHook function that will be called after the job can be marked as successful.
+func (j *StaticPartitionedTableAnalysisJob) RegisterSuccessHook(hook JobHook) {
+	j.successHook = hook
+}
+
+// RegisterFailureHook registers a failureHook function that will be called after the job can be marked as failed.
+func (j *StaticPartitionedTableAnalysisJob) RegisterFailureHook(hook JobHook) {
+	j.failureHook = hook
+}
+
 // GetIndicators implements AnalysisJob.
 func (j *StaticPartitionedTableAnalysisJob) GetIndicators() Indicators {
 	return j.Indicators
+}
+
+// SetIndicators implements AnalysisJob.
+func (j *StaticPartitionedTableAnalysisJob) SetIndicators(indicators Indicators) {
+	j.Indicators = indicators
 }
 
 // HasNewlyAddedIndex implements AnalysisJob.
@@ -118,6 +154,9 @@ func (j *StaticPartitionedTableAnalysisJob) IsValidToAnalyze(
 			j.GlobalTableName,
 			partitionNames...,
 		); !valid {
+			if j.failureHook != nil {
+				j.failureHook(j)
+			}
 			return false, failReason
 		}
 	}
@@ -173,25 +212,25 @@ func (j *StaticPartitionedTableAnalysisJob) analyzeStaticPartition(
 	sctx sessionctx.Context,
 	statsHandle statstypes.StatsHandle,
 	sysProcTracker sysproctrack.Tracker,
-) {
+) bool {
 	sql, params := j.GenSQLForAnalyzeStaticPartition()
-	exec.AutoAnalyze(sctx, statsHandle, sysProcTracker, j.TableStatsVer, sql, params...)
+	return exec.AutoAnalyze(sctx, statsHandle, sysProcTracker, j.TableStatsVer, sql, params...)
 }
 
 func (j *StaticPartitionedTableAnalysisJob) analyzeStaticPartitionIndexes(
 	sctx sessionctx.Context,
 	statsHandle statstypes.StatsHandle,
 	sysProcTracker sysproctrack.Tracker,
-) {
+) bool {
 	if len(j.Indexes) == 0 {
-		return
+		return true
 	}
 	// Only analyze the first index.
 	// This is because analyzing a single index also analyzes all other indexes and columns.
 	// Therefore, to avoid redundancy, we prevent multiple analyses of the same partition.
 	firstIndex := j.Indexes[0]
 	sql, params := j.GenSQLForAnalyzeStaticPartitionIndex(firstIndex)
-	exec.AutoAnalyze(sctx, statsHandle, sysProcTracker, j.TableStatsVer, sql, params...)
+	return exec.AutoAnalyze(sctx, statsHandle, sysProcTracker, j.TableStatsVer, sql, params...)
 }
 
 // GenSQLForAnalyzeStaticPartition generates the SQL for analyzing the specified static partition.

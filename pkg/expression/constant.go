@@ -20,6 +20,7 @@ import (
 
 	perrors "github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/planner/cascades/base"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/codec"
@@ -28,6 +29,8 @@ import (
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
 )
+
+var _ base.HashEquals = &Constant{}
 
 // NewOne stands for a number 1.
 func NewOne() *Constant {
@@ -153,9 +156,9 @@ func (c *Constant) StringWithCtx(ctx ParamValues, redact string) string {
 		return c.DeferredExpr.StringWithCtx(ctx, redact)
 	}
 	if redact == perrors.RedactLogDisable {
-		return fmt.Sprintf("%v", c.Value.GetValue())
+		return c.Value.TruncatedStringify()
 	} else if redact == perrors.RedactLogMarker {
-		return fmt.Sprintf("‹%v›", c.Value.GetValue())
+		return fmt.Sprintf("‹%s›", c.Value.TruncatedStringify())
 	}
 	return "?"
 }
@@ -248,6 +251,14 @@ func (c *Constant) VecEvalJSON(ctx EvalContext, input *chunk.Chunk, result *chun
 		return genVecFromConstExpr(ctx, c, types.ETJson, input, result)
 	}
 	return c.DeferredExpr.VecEvalJSON(ctx, input, result)
+}
+
+// VecEvalVectorFloat32 evaluates this expression in a vectorized manner.
+func (c *Constant) VecEvalVectorFloat32(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
+	if c.DeferredExpr == nil {
+		return genVecFromConstExpr(ctx, c, types.ETVectorFloat32, input, result)
+	}
+	return c.DeferredExpr.VecEvalVectorFloat32(ctx, input, result)
 }
 
 func (c *Constant) getLazyDatum(ctx EvalContext, row chunk.Row) (dt types.Datum, isLazy bool, err error) {
@@ -433,6 +444,21 @@ func (c *Constant) EvalJSON(ctx EvalContext, row chunk.Row) (types.BinaryJSON, b
 	return dt.GetMysqlJSON(), false, nil
 }
 
+// EvalVectorFloat32 returns VectorFloat32 representation of Constant.
+func (c *Constant) EvalVectorFloat32(ctx EvalContext, row chunk.Row) (types.VectorFloat32, bool, error) {
+	dt, lazy, err := c.getLazyDatum(ctx, row)
+	if err != nil {
+		return types.ZeroVectorFloat32, false, err
+	}
+	if !lazy {
+		dt = c.Value
+	}
+	if c.GetType(ctx).GetType() == mysql.TypeNull || dt.IsNull() {
+		return types.ZeroVectorFloat32, true, nil
+	}
+	return dt.GetVectorFloat32(), false, nil
+}
+
 // Equal implements Expression interface.
 func (c *Constant) Equal(ctx EvalContext, b Expression) bool {
 	y, ok := b.(*Constant)
@@ -477,6 +503,50 @@ func (c *Constant) HashCode() []byte {
 // CanonicalHashCode implements Expression interface.
 func (c *Constant) CanonicalHashCode() []byte {
 	return c.getHashCode(true)
+}
+
+// Hash64 implements HashEquals.<0th> interface.
+func (c *Constant) Hash64(h base.Hasher) {
+	if c.RetType == nil {
+		h.HashByte(base.NilFlag)
+	} else {
+		h.HashByte(base.NotNilFlag)
+		c.RetType.Hash64(h)
+	}
+	c.collationInfo.Hash64(h)
+	if c.DeferredExpr != nil {
+		c.DeferredExpr.Hash64(h)
+		return
+	}
+	if c.ParamMarker != nil {
+		h.HashByte(parameterFlag)
+		h.HashInt64(int64(c.ParamMarker.order))
+		return
+	}
+	intest.Assert(c.DeferredExpr == nil && c.ParamMarker == nil)
+	h.HashByte(constantFlag)
+	c.Value.Hash64(h)
+}
+
+// Equals implements HashEquals.<1st> interface.
+func (c *Constant) Equals(other any) bool {
+	if other == nil {
+		return false
+	}
+	var c2 *Constant
+	switch x := other.(type) {
+	case *Constant:
+		c2 = x
+	case Constant:
+		c2 = &x
+	default:
+		return false
+	}
+	ok := c.RetType == nil && c2.RetType == nil || c.RetType != nil && c2.RetType != nil && c.RetType.Equals(c2.RetType)
+	ok = ok && c.collationInfo.Equals(c2.collationInfo)
+	ok = ok && (c.DeferredExpr == nil && c2.DeferredExpr == nil || c.DeferredExpr != nil && c2.DeferredExpr != nil && c.DeferredExpr.Equals(c2.DeferredExpr))
+	ok = ok && (c.ParamMarker == nil && c2.ParamMarker == nil || c.ParamMarker != nil && c2.ParamMarker != nil && c.ParamMarker.order == c2.ParamMarker.order)
+	return ok && c.Value.Equals(c2.Value)
 }
 
 func (c *Constant) getHashCode(canonical bool) []byte {
