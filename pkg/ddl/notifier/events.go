@@ -24,12 +24,12 @@ import (
 )
 
 // SchemaChangeEvent stands for a schema change event. DDL will generate one
-// event or multiple events (only for multi-schema change DDL). The caller should
-// check the GetType of SchemaChange and call the corresponding getter function
-// to retrieve the needed information.
+// event or multiple events (only for multi-schema change DDL or merged DDL).
+// The caller should check the GetType of SchemaChange and call the corresponding
+// getter function to retrieve the needed information.
 type SchemaChangeEvent struct {
 	inner      *jsonSchemaChangeEvent
-	tableInfos []*model.TableInfo // used for ActionCreateTables event.
+	tableInfos []*model.TableInfo
 }
 
 // String implements fmt.Stringer interface.
