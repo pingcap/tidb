@@ -67,7 +67,7 @@ type Histogram struct {
 	// For some types like `Int`, we do not build it because we can get them directly from `Bounds`.
 	Scalars   []scalar
 	ID        int64 // Column ID.
-	NDV       int64 // Number of distinct values.
+	NDV       int64 // Number of distinct values. Note that It contains the NDV of the TopN which is excluded from histogram.
 	NullCount int64 // Number of null values.
 	// LastUpdateVersion is the version that this histogram updated last time.
 	LastUpdateVersion uint64
@@ -978,6 +978,10 @@ func (hg *Histogram) OutOfRangeRowCount(
 	histR := convertDatumToScalar(hg.GetUpper(hg.Len()-1), commonPrefix)
 	histWidth := histR - histL
 	if histWidth <= 0 {
+		return 0
+	}
+	if math.IsInf(histWidth, 1) {
+		// The histogram is too wide. As a quick fix, we return 0 to indicate that the overlap percentage is near 0.
 		return 0
 	}
 	boundL := histL - histWidth
