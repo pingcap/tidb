@@ -675,6 +675,7 @@ func NewWriteExternalStoreOperator(
 	}
 }
 
+// Close implements operator.Operator interface.
 func (o *WriteExternalStoreOperator) Close() error {
 	o.logger.Info("write external storage operator total count",
 		zap.Int64("count", o.totalCount.Load()))
