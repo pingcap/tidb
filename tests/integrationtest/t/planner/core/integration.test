@@ -2353,14 +2353,9 @@ CREATE TABLE sbtest (
   PRIMARY KEY (id) /*T![clustered_index] CLUSTERED */,
   KEY k (k)
 );
-## cannot choose the best plan with RangeScan.
-set @@tidb_opt_fix_control = '46177:off';
+## confirm that we can choose the best plan with RangeScan.
 explain format='brief'  select row_number() over(order by a.k) from (select * from sbtest where id<10) a;
 explain format='brief' select /*+ stream_agg() */ count(1) from sbtest where id<1 group by k;
-set @@tidb_opt_fix_control = '46177:on';
-explain format='brief'  select row_number() over(order by a.k) from (select * from sbtest where id<10) a;
-explain format='brief' select /*+ stream_agg() */ count(1) from sbtest where id<1 group by k;
-set @@tidb_opt_fix_control = default;
 
 # TestSysIsAccessibleWithTiFlashReadIsolation
 create table sys.t (id int);
