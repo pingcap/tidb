@@ -42,6 +42,7 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/atomic"
+	"go.uber.org/zap"
 )
 
 type mysqlSuite struct {
@@ -895,6 +896,88 @@ func TestLogicalImportBatch(t *testing.T) {
 		require.NoError(t, err)
 		row.ClassifyAndAppend(&dataRows, &dataChecksum, &indexRows, &indexChecksum)
 	}
+
+	engine, err := backend.MakeEngineManager(ignoreBackend).OpenEngine(ctx, &backend.EngineConfig{}, "`foo`.`bar`", 1)
+	require.NoError(t, err)
+	writer, err := engine.LocalWriter(ctx, &backend.LocalWriterConfig{TableName: "`foo`.`bar`"})
+	require.NoError(t, err)
+	err = writer.AppendRows(ctx, []string{"a"}, dataRows)
+	require.NoError(t, err)
+}
+
+// TestLogicalImportBatch tests that each INSERT statement is limited by both
+// logical-import-batch-size and logical-import-batch-rows configurations. Here
+// we ensure each INSERT statement has up to 5 rows *and* ~30 bytes of values.
+// In this test, we enable the `logical-import-prep-stmt` option,
+// to verify prepared once and executed multiple times.
+func TestLogicalImportBatchPrepStmt(t *testing.T) {
+	s := createMysqlSuite(t)
+	defer s.TearDownTest(t)
+
+	query1 := "\\QINSERT INTO `foo`.`bar`(`a`) VALUES(?),(?),(?),(?),(?)\\E"
+	query2 := "\\QINSERT INTO `foo`.`bar`(`a`) VALUES(?),(?),(?),(?)\\E"
+	query3 := "\\QINSERT INTO `foo`.`bar`(`a`) VALUES(?)\\E"
+
+	// Expect the query to be prepared
+	stmt1 := s.mockDB.ExpectPrepare(query1)
+	// Set the expectation for the query execution with specific arguments
+	stmt1.ExpectExec().
+		WithArgs(1, 2, 4, 8, 16).
+		WillReturnResult(sqlmock.NewResult(1, 5)) // Simulate an insert with 5 rows affected
+	stmt1.ExpectExec().
+		//WithArgs(32, 64, 128, 256, 512).
+		WithArgs(sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg()).
+		WillReturnResult(sqlmock.NewResult(1, 5)) // Simulate an insert with 5 rows affected
+	// Expect the query to be prepared
+	stmt2 := s.mockDB.ExpectPrepare(query2)
+	// Set the expectation for the query execution with specific arguments
+	stmt2.ExpectExec().
+		WithArgs(1024, 2048, 4096, 8192).
+		WillReturnResult(sqlmock.NewResult(1, 4)) // Simulate an insert with 4 rows affected
+	stmt2.ExpectExec().
+		WithArgs(16384, 32768, 65536, 131072).
+		WillReturnResult(sqlmock.NewResult(1, 4)) // Simulate an insert with 4 rows affected
+	// Expect the query to be prepared
+	stmt3 := s.mockDB.ExpectPrepare(query3)
+	// Set the expectation for the query execution with specific arguments
+	stmt3.ExpectExec().
+		WithArgs(262144).
+		WillReturnResult(sqlmock.NewResult(1, 1)) // Simulate an insert with 1 rows affected
+
+	ctx := context.Background()
+	logger := log.L()
+
+	cfg := config.NewConfig()
+	cfg.Conflict.Strategy = config.ErrorOnDup
+	cfg.TikvImporter.LogicalImportBatchSize = 30
+	cfg.TikvImporter.LogicalImportBatchRows = 5
+	cfg.TikvImporter.LogicalImportPrepStmt = true
+	ignoreBackend := tidb.NewTiDBBackend(ctx, s.dbHandle, cfg, errormanager.New(nil, cfg, logger))
+	encBuilder := tidb.NewEncodingBuilder()
+	// add logicalImportPrepStmt to the encoding config
+	encoder, err := encBuilder.NewEncoder(context.Background(), &encode.EncodingConfig{
+		SessionOptions: encode.SessionOptions{LogicalImportPrepStmt: true},
+		Path:           "1.csv",
+		Table:          s.tbl,
+		Logger:         log.L(),
+	})
+	require.NoError(t, err)
+
+	dataRows := encBuilder.MakeEmptyRows()
+	dataChecksum := verification.MakeKVChecksum(0, 0, 0)
+	indexRows := encBuilder.MakeEmptyRows()
+	indexChecksum := verification.MakeKVChecksum(0, 0, 0)
+	for i := int64(0); i < 19; i++ { // encode rows 1, 2, 4, 8, ..., 262144.
+		row, err := encoder.Encode(
+			[]types.Datum{types.NewIntDatum(1 << i)},
+			i,
+			[]int{0, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1},
+			8*i,
+		)
+		require.NoError(t, err)
+		row.ClassifyAndAppend(&dataRows, &dataChecksum, &indexRows, &indexChecksum)
+	}
+	logger.Error("dataRows", zap.Any("dataRows", dataRows))
 
 	engine, err := backend.MakeEngineManager(ignoreBackend).OpenEngine(ctx, &backend.EngineConfig{}, "`foo`.`bar`", 1)
 	require.NoError(t, err)
