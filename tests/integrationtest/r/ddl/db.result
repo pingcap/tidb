@@ -359,7 +359,7 @@ create global temporary table global_temp_auto_id(id int primary key auto_increm
 show create table global_temp_auto_id;
 Table	Create Table
 global_temp_auto_id	CREATE GLOBAL TEMPORARY TABLE `global_temp_auto_id` (
-  `id` int(11) NOT NULL AUTO_INCREMENT,
+  `id` int NOT NULL AUTO_INCREMENT,
   PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin AUTO_INCREMENT=100 ON COMMIT DELETE ROWS
 show table global_temp_auto_id next_row_id;
@@ -380,7 +380,7 @@ commit;
 show create table global_temp_auto_id;
 Table	Create Table
 global_temp_auto_id	CREATE GLOBAL TEMPORARY TABLE `global_temp_auto_id` (
-  `id` int(11) NOT NULL AUTO_INCREMENT,
+  `id` int NOT NULL AUTO_INCREMENT,
   PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin AUTO_INCREMENT=100 ON COMMIT DELETE ROWS
 show table global_temp_auto_id next_row_id;
@@ -414,7 +414,7 @@ create temporary table local_temp_auto_id(id int primary key auto_increment) aut
 show create table local_temp_auto_id;
 Table	Create Table
 local_temp_auto_id	CREATE TEMPORARY TABLE `local_temp_auto_id` (
-  `id` int(11) NOT NULL AUTO_INCREMENT,
+  `id` int NOT NULL AUTO_INCREMENT,
   PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin AUTO_INCREMENT=100
 insert into local_temp_auto_id value(null);
@@ -427,7 +427,7 @@ id
 show create table local_temp_auto_id;
 Table	Create Table
 local_temp_auto_id	CREATE TEMPORARY TABLE `local_temp_auto_id` (
-  `id` int(11) NOT NULL AUTO_INCREMENT,
+  `id` int NOT NULL AUTO_INCREMENT,
   PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin AUTO_INCREMENT=101
 drop table if exists t_23473;
@@ -435,8 +435,8 @@ create table t_23473 (k int primary key, v int);
 alter table t_23473 change column k k bigint;
 show columns from t_23473;
 Field	Type	Null	Key	Default	Extra
-k	bigint(20)	NO	PRI	NULL	
-v	int(11)	YES		NULL	
+k	bigint	NO	PRI	NULL	
+v	int	YES		NULL	
 drop table if exists t0;
 create table t0(c0 Blob(254), c1 Blob(65534), c2 Blob(16777214), c3 Blob(4294967294));
 show columns from t0;

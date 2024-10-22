@@ -16,6 +16,7 @@ package lockstats
 
 import (
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/statistics/handle/cache"
 	statslogutil "github.com/pingcap/tidb/pkg/statistics/handle/logutil"
@@ -25,7 +26,7 @@ import (
 )
 
 const (
-	selectDeltaSQL = "SELECT count, modify_count, version FROM mysql.stats_table_locked WHERE table_id = %?"
+	selectDeltaSQL = "SELECT count, modify_count FROM mysql.stats_table_locked WHERE table_id = %?"
 	// Make sure the count won't be negative.
 	updateDeltaSQL = "UPDATE mysql.stats_meta SET version = %?, count = IF(count + %? > 0, count + %?, 0), modify_count = modify_count + %? WHERE table_id = %?"
 	// DeleteLockSQL is used to delete the locked table record.
@@ -139,7 +140,16 @@ func RemoveLockedPartitions(
 	return msg, err
 }
 
-func updateDelta(sctx sessionctx.Context, count, modifyCount int64, version uint64, tid int64) error {
+func updateDelta(sctx sessionctx.Context, count, modifyCount int64, tid int64) error {
+	version, err := util.GetStartTS(sctx)
+	if err != nil {
+		return err
+	}
+	failpoint.Inject("mockStatsVersion", func(val failpoint.Value) {
+		if val.(bool) {
+			version = 1000
+		}
+	})
 	if _, _, err := util.ExecRows(sctx,
 		updateDeltaSQL,
 		version, count, count, modifyCount, tid,
@@ -151,12 +161,12 @@ func updateDelta(sctx sessionctx.Context, count, modifyCount int64, version uint
 }
 
 func updateStatsAndUnlockTable(sctx sessionctx.Context, tid int64) error {
-	count, modifyCount, version, err := getStatsDeltaFromTableLocked(sctx, tid)
+	count, modifyCount, err := getStatsDeltaFromTableLocked(sctx, tid)
 	if err != nil {
 		return err
 	}
 
-	if err := updateDelta(sctx, count, modifyCount, version, tid); err != nil {
+	if err := updateDelta(sctx, count, modifyCount, tid); err != nil {
 		return err
 	}
 	cache.TableRowStatsCache.Invalidate(tid)
@@ -170,16 +180,16 @@ func updateStatsAndUnlockTable(sctx sessionctx.Context, tid int64) error {
 
 // updateStatsAndUnlockPartition also update the stats to the table level.
 func updateStatsAndUnlockPartition(sctx sessionctx.Context, partitionID int64, tid int64) error {
-	count, modifyCount, version, err := getStatsDeltaFromTableLocked(sctx, partitionID)
+	count, modifyCount, err := getStatsDeltaFromTableLocked(sctx, partitionID)
 	if err != nil {
 		return err
 	}
 
-	if err := updateDelta(sctx, count, modifyCount, version, partitionID); err != nil {
+	if err := updateDelta(sctx, count, modifyCount, partitionID); err != nil {
 		return err
 	}
 	cache.TableRowStatsCache.Invalidate(partitionID)
-	if err := updateDelta(sctx, count, modifyCount, version, tid); err != nil {
+	if err := updateDelta(sctx, count, modifyCount, tid); err != nil {
 		return err
 	}
 	cache.TableRowStatsCache.Invalidate(tid)
@@ -193,20 +203,20 @@ func updateStatsAndUnlockPartition(sctx sessionctx.Context, partitionID int64, t
 }
 
 // getStatsDeltaFromTableLocked get count, modify_count and version for the given table from mysql.stats_table_locked.
-func getStatsDeltaFromTableLocked(sctx sessionctx.Context, tableID int64) (count, modifyCount int64, version uint64, err error) {
+func getStatsDeltaFromTableLocked(sctx sessionctx.Context, tableID int64) (count, modifyCount int64, err error) {
 	rows, _, err := util.ExecRows(
 		sctx,
 		selectDeltaSQL, tableID,
 	)
 	if err != nil {
-		return 0, 0, 0, errors.Trace(err)
+		return 0, 0, errors.Trace(err)
 	}
 	if len(rows) == 0 {
-		return 0, 0, 0, nil
+		return 0, 0, nil
 	}
 
 	count = rows[0].GetInt64(0)
 	modifyCount = rows[0].GetInt64(1)
-	version = rows[0].GetUint64(2)
-	return count, modifyCount, version, nil
+
+	return count, modifyCount, nil
 }

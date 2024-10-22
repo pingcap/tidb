@@ -124,8 +124,8 @@ create table t(a int primary key, b int);
 set session tidb_enable_cascades_planner = 1;
 desc t;
 Field	Type	Null	Key	Default	Extra
-a	int(11)	NO	PRI	NULL	
-b	int(11)	YES		NULL	
+a	int	NO	PRI	NULL	
+b	int	YES		NULL	
 drop table if exists t;
 create table t(a int primary key, b int);
 insert into t values (1, 11), (4, 44), (2, 22), (3, 33);
@@ -437,7 +437,7 @@ approx_count_distinct(case when a > 0 and a <= 1000 then b end)
 explain select count(b), sum(b), avg(b), b, max(b), min(b), bit_and(b), bit_or(b), bit_xor(b) from t group by a having sum(b) >= 0 and count(b) >= 0 order by b;
 id	estRows	task	access object	operator info
 Projection_13	8000.00	root		Column#3->Column#11, Column#4->Column#12, Column#5->Column#13, planner__cascades__integration.t.b, Column#6->Column#15, Column#7->Column#16, Column#8->Column#17, Column#9->Column#18, Column#10->Column#19
-└─Projection_15	8000.00	root		if(isnull(planner__cascades__integration.t.b), 0, 1)->Column#3, cast(planner__cascades__integration.t.b, decimal(32,0) BINARY)->Column#4, cast(planner__cascades__integration.t.b, decimal(15,4) BINARY)->Column#5, planner__cascades__integration.t.b, planner__cascades__integration.t.b->Column#6, planner__cascades__integration.t.b->Column#7, ifnull(cast(planner__cascades__integration.t.b, bigint(21) UNSIGNED BINARY), 18446744073709551615)->Column#8, ifnull(cast(planner__cascades__integration.t.b, bigint(21) UNSIGNED BINARY), 0)->Column#9, ifnull(cast(planner__cascades__integration.t.b, bigint(21) UNSIGNED BINARY), 0)->Column#10, cast(planner__cascades__integration.t.b, decimal(32,0) BINARY)->Column#4, if(isnull(planner__cascades__integration.t.b), 0, 1)->Column#3
+└─Projection_15	8000.00	root		if(isnull(planner__cascades__integration.t.b), 0, 1)->Column#3, cast(planner__cascades__integration.t.b, decimal(32,0) BINARY)->Column#4, cast(planner__cascades__integration.t.b, decimal(15,4) BINARY)->Column#5, planner__cascades__integration.t.b, planner__cascades__integration.t.b->Column#6, planner__cascades__integration.t.b->Column#7, ifnull(cast(planner__cascades__integration.t.b, bigint UNSIGNED BINARY), 18446744073709551615)->Column#8, ifnull(cast(planner__cascades__integration.t.b, bigint UNSIGNED BINARY), 0)->Column#9, ifnull(cast(planner__cascades__integration.t.b, bigint UNSIGNED BINARY), 0)->Column#10, cast(planner__cascades__integration.t.b, decimal(32,0) BINARY)->Column#4, if(isnull(planner__cascades__integration.t.b), 0, 1)->Column#3
   └─Sort_22	8000.00	root		planner__cascades__integration.t.b
     └─TableReader_19	8000.00	root		data:Selection_20
       └─Selection_20	8000.00	cop[tikv]		ge(cast(planner__cascades__integration.t.b, decimal(32,0) BINARY), 0), ge(if(isnull(planner__cascades__integration.t.b), 0, 1), 0)

@@ -154,13 +154,12 @@ func expectedDeleteRangeCnt(ctx delRangeCntCtx, job *model.Job) (int, error) {
 		physicalCnt := mathutil.Max(len(args.PartitionIDs), 1)
 		return physicalCnt * len(args.IndexIDs), nil
 	case model.ActionModifyColumn:
-		var indexIDs []int64
-		var partitionIDs []int64
-		if err := job.DecodeArgs(&indexIDs, &partitionIDs); err != nil {
+		args, err := model.GetFinishedModifyColumnArgs(job)
+		if err != nil {
 			return 0, errors.Trace(err)
 		}
-		physicalCnt := mathutil.Max(len(partitionIDs), 1)
-		return physicalCnt * ctx.deduplicateIdxCnt(indexIDs), nil
+		physicalCnt := mathutil.Max(len(args.PartitionIDs), 1)
+		return physicalCnt * ctx.deduplicateIdxCnt(args.IndexIDs), nil
 	case model.ActionMultiSchemaChange:
 		totalExpectedCnt := 0
 		for i, sub := range job.MultiSchemaInfo.SubJobs {
