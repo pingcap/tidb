@@ -183,7 +183,7 @@ func (w *worker) onCreateTable(jobCtx *jobContext, job *model.Job) (ver int64, _
 		return ver, errors.Trace(err)
 	}
 	createTableEvent := notifier.NewCreateTableEvent(tbInfo)
-	err = asyncNotifyEvent(jobCtx, createTableEvent, job, -1, w.sess)
+	err = asyncNotifyEvent(jobCtx, createTableEvent, job, noSubJob, w.sess)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
@@ -218,7 +218,7 @@ func (w *worker) createTableWithForeignKeys(jobCtx *jobContext, job *model.Job, 
 			return ver, errors.Trace(err)
 		}
 		createTableEvent := notifier.NewCreateTableEvent(tbInfo)
-		err = asyncNotifyEvent(jobCtx, createTableEvent, job, -1, w.sess)
+		err = asyncNotifyEvent(jobCtx, createTableEvent, job, noSubJob, w.sess)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
