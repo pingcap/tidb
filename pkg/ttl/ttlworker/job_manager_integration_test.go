@@ -63,6 +63,49 @@ func sessionFactory(t *testing.T, store kv.Storage) func() session.Session {
 	}
 }
 
+<<<<<<< HEAD
+=======
+func TestGetSession(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set @@time_zone = 'Asia/Shanghai'")
+	tk.MustExec("set @@global.time_zone= 'Europe/Berlin'")
+	tk.MustExec("set @@tidb_retry_limit=1")
+	tk.MustExec("set @@tidb_enable_1pc=0")
+	tk.MustExec("set @@tidb_enable_async_commit=0")
+	tk.MustExec("set @@tidb_isolation_read_engines='tiflash,tidb'")
+	var getCnt atomic.Int32
+
+	pool := pools.NewResourcePool(func() (pools.Resource, error) {
+		if getCnt.CompareAndSwap(0, 1) {
+			return tk.Session(), nil
+		}
+		require.FailNow(t, "get session more than once")
+		return nil, nil
+	}, 1, 1, 0)
+	defer pool.Close()
+
+	se, err := ttlworker.GetSessionForTest(pool)
+	require.NoError(t, err)
+	defer se.Close()
+
+	// global time zone should not change
+	tk.MustQuery("select @@global.time_zone").Check(testkit.Rows("Europe/Berlin"))
+	tz, err := se.GlobalTimeZone(context.TODO())
+	require.NoError(t, err)
+	require.Equal(t, "Europe/Berlin", tz.String())
+
+	// session variables should be set
+	tk.MustQuery("select @@time_zone, @@tidb_retry_limit, @@tidb_enable_1pc, @@tidb_enable_async_commit, @@tidb_isolation_read_engines").
+		Check(testkit.Rows("UTC 0 1 1 tikv,tiflash,tidb"))
+
+	// all session variables should be restored after close
+	se.Close()
+	tk.MustQuery("select @@time_zone, @@tidb_retry_limit, @@tidb_enable_1pc, @@tidb_enable_async_commit, @@tidb_isolation_read_engines").
+		Check(testkit.Rows("Asia/Shanghai 1 0 0 tiflash,tidb"))
+}
+
+>>>>>>> 670e970b224 (ttl: always enable all read engines for TTL sessions (#56604))
 func TestParallelLockNewJob(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	waitAndStopTTLManager(t, dom)
