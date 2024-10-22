@@ -828,7 +828,8 @@ type indexIngestBaseWorker struct {
 
 	writers      []ingest.Writer
 	srcChunkPool chan *chunk.Chunk
-	totalCount   *atomic.Int64
+	// only available in global sort
+	totalCount *atomic.Int64
 }
 
 func (w *indexIngestBaseWorker) HandleTask(rs IndexRecordChunk) (IndexWriteResult, error) {
@@ -849,7 +850,9 @@ func (w *indexIngestBaseWorker) HandleTask(rs IndexRecordChunk) (IndexWriteResul
 		logutil.Logger(w.ctx).Info("finish a index ingest task", zap.Int("id", rs.ID))
 		return result, nil
 	}
-	w.totalCount.Add(int64(count))
+	if w.totalCount != nil {
+		w.totalCount.Add(int64(count))
+	}
 	result.Added = count
 	result.Next = nextKey
 	if ResultCounterForTest != nil {
