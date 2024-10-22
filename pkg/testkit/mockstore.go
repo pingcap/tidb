@@ -272,7 +272,7 @@ func bootstrap(t testing.TB, store kv.Storage, lease time.Duration) *domain.Doma
 	session.DisableStats4Test()
 	domain.DisablePlanReplayerBackgroundJob4Test()
 	domain.DisableDumpHistoricalStats4Test()
-	preBootstrapWithStore(t, store)
+	writeSystemTablesToKVStore(t, store)
 	dom, err := session.BootstrapSessionAfterPreInit(store)
 	require.NoError(t, err)
 
@@ -288,7 +288,7 @@ func bootstrap(t testing.TB, store kv.Storage, lease time.Duration) *domain.Doma
 	return dom
 }
 
-func preBootstrapWithStore(t testing.TB, store kv.Storage) {
+func writeSystemTablesToKVStore(t testing.TB, store kv.Storage) {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
 	err := kv.RunInNewTxn(ctx, store, false, func(ctx context.Context, txn kv.Transaction) error {
 		e, err := newKVTxnExecutor(txn)
