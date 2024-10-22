@@ -3881,6 +3881,15 @@ func TestIssue51842(t *testing.T) {
 	require.Equal(t, 0, len(res))
 	res = tk.MustQuery("SELECT f1 FROM (SELECT NULLIF(v0.c0, 1371581446) AS f1 FROM v0, t0) AS t WHERE f1 <=> cast('2024-1-1 10:10:10' as datetime);").String() // test datetime
 	require.Equal(t, 0, len(res))
+
+	// Test issue 56744
+	tk.MustExec("drop table if exists lrr;")
+	tk.MustExec("create table lrr(`COL1` time DEFAULT NULL,`COL2` time DEFAULT NULL);")
+	tk.MustExec("insert into lrr(col2) values('-229:53:34');")
+	resultRows := tk.MustQuery("select * from lrr where col1 <=> null;").Rows() // test const null
+	require.Equal(t, 1, len(resultRows))
+	resultRows = tk.MustQuery("select * from lrr where null <=> col1;").Rows() // test const null
+	require.Equal(t, 1, len(resultRows))
 }
 
 func TestIssue44706(t *testing.T) {
