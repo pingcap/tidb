@@ -37,9 +37,12 @@ type handler struct {
 
 // NewHandlerAndRegister creates a new handler and registers it to the DDL
 // notifier.
-func NewHandlerAndRegister(statsCache types.StatsCache) {
+func NewHandlerAndRegister(
+	statsCache types.StatsCache,
+	registry *notifier.DDLNotifier,
+) {
 	h := handler{statsCache: statsCache}
-	notifier.RegisterHandler(notifier.StatsMetaHandlerID, h.handle)
+	registry.RegisterHandler(notifier.StatsMetaHandlerID, h.handle)
 }
 
 func (h handler) handle(
