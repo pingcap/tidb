@@ -19,7 +19,6 @@ import (
 	"context"
 	"database/sql"
 	"encoding/hex"
-	"fmt"
 	"io"
 	"math"
 	"net"
@@ -168,7 +167,6 @@ func (f *importClientFactoryImpl) makeConn(ctx context.Context, storeID uint64) 
 	if addr == "" {
 		addr = store.GetAddress()
 	}
-	fmt.Println("xiaoyuan adjust max call size")
 	opts = append(opts,
 		grpc.WithDefaultCallOptions(grpc.MaxCallRecvMsgSize(maxMsgSize)),
 		grpc.WithDefaultCallOptions(grpc.MaxCallSendMsgSize(maxMsgSize)),
