@@ -47,7 +47,7 @@ var semiJoinRetTypes = []*types.FieldType{
 	types.NewFieldType(mysql.TypeLonglong),
 }
 
-func buildSemiDataSourceAndExpectResult(ctx sessionctx.Context, leftCols []*expression.Column, rightCols []*expression.Column, rightAsBuildSide bool, hasOtherCondition bool, hasDuplicateKey bool) (*testutil.MockDataSource, *testutil.MockDataSource, []chunk.Row) {
+func buildSemiDataSourceAndExpectResult(ctx sessionctx.Context, leftCols []*expression.Column, rightCols []*expression.Column, rightAsBuildSide bool, hasOtherCondition bool, hasDuplicateKey bool, isAntiSemiJoin bool) (*testutil.MockDataSource, *testutil.MockDataSource, []chunk.Row) {
 	leftSchema := expression.NewSchema(leftCols...)
 	rightSchema := expression.NewSchema(rightCols...)
 
@@ -77,8 +77,10 @@ func buildSemiDataSourceAndExpectResult(ctx sessionctx.Context, leftCols []*expr
 
 				canOtherConditionSuccess := rand.Int31n(10) < 5
 				if canOtherConditionSuccess {
-					expectResultChunk.AppendInt64(0, i)
-					expectResultChunk.AppendInt64(1, 1)
+					if !isAntiSemiJoin {
+						expectResultChunk.AppendInt64(0, i)
+						expectResultChunk.AppendInt64(1, 1)
+					}
 
 					otherConditionSuccessNum := rand.Int31n(singleKeyNum) + 1
 					for j := 0; j < int(singleKeyNum); j++ {
@@ -90,6 +92,11 @@ func buildSemiDataSourceAndExpectResult(ctx sessionctx.Context, leftCols []*expr
 						}
 					}
 				} else {
+					if isAntiSemiJoin {
+						expectResultChunk.AppendInt64(0, i)
+						expectResultChunk.AppendInt64(1, 1)
+					}
+
 					for j := 0; j < int(singleKeyNum); j++ {
 						rightCol0Datums = append(rightCol0Datums, i)
 						rightCol1Datums = append(rightCol1Datums, int64(1))
@@ -114,8 +121,10 @@ func buildSemiDataSourceAndExpectResult(ctx sessionctx.Context, leftCols []*expr
 						leftCol0Datums = append(leftCol0Datums, i)
 						if j < int(otherConditionSuccessNum) {
 							leftCol1Datums = append(leftCol1Datums, int64(1))
-							expectResultChunk.AppendInt64(0, i)
-							expectResultChunk.AppendInt64(1, 1)
+							if !isAntiSemiJoin {
+								expectResultChunk.AppendInt64(0, i)
+								expectResultChunk.AppendInt64(1, 1)
+							}
 						} else {
 							leftCol1Datums = append(leftCol1Datums, int64(0))
 						}
@@ -124,6 +133,10 @@ func buildSemiDataSourceAndExpectResult(ctx sessionctx.Context, leftCols []*expr
 					for j := 0; j < int(singleKeyNum); j++ {
 						leftCol0Datums = append(leftCol0Datums, i)
 						leftCol1Datums = append(leftCol1Datums, int64(0))
+						if isAntiSemiJoin {
+							expectResultChunk.AppendInt64(0, i)
+							expectResultChunk.AppendInt64(1, 0)
+						}
 					}
 				}
 			}
@@ -137,15 +150,29 @@ func buildSemiDataSourceAndExpectResult(ctx sessionctx.Context, leftCols []*expr
 				if leftCol0AppendedData%2 == 0 {
 					leftCol1Datums = append(leftCol1Datums, int64(1))
 					if leftCol0AppendedData < rowNum {
+						if !isAntiSemiJoin {
+							expectResultChunk.AppendInt64(0, int64(leftCol0AppendedData))
+							expectResultChunk.AppendInt64(1, 1)
+						}
+					} else if isAntiSemiJoin {
 						expectResultChunk.AppendInt64(0, int64(leftCol0AppendedData))
 						expectResultChunk.AppendInt64(1, 1)
 					}
 				} else {
 					leftCol1Datums = append(leftCol1Datums, int64(0))
+					if isAntiSemiJoin {
+						expectResultChunk.AppendInt64(0, int64(leftCol0AppendedData))
+						expectResultChunk.AppendInt64(1, 0)
+					}
 				}
 			} else {
 				leftCol1Datums = append(leftCol1Datums, int64(1))
 				if leftCol0AppendedData < rowNum {
+					if !isAntiSemiJoin {
+						expectResultChunk.AppendInt64(0, int64(leftCol0AppendedData))
+						expectResultChunk.AppendInt64(1, 1)
+					}
+				} else if isAntiSemiJoin {
 					expectResultChunk.AppendInt64(0, int64(leftCol0AppendedData))
 					expectResultChunk.AppendInt64(1, 1)
 				}
@@ -154,6 +181,7 @@ func buildSemiDataSourceAndExpectResult(ctx sessionctx.Context, leftCols []*expr
 			rightCol0Datums = append(rightCol0Datums, i)
 			rightCol1Datums = append(rightCol1Datums, int64(0))
 		}
+
 	}
 
 	leftLen := len(leftCol0Datums)
@@ -172,9 +200,13 @@ func buildSemiDataSourceAndExpectResult(ctx sessionctx.Context, leftCols []*expr
 		rightCol1Datums[i], rightCol1Datums[j] = rightCol1Datums[j], rightCol1Datums[i]
 	}
 
-	resultRowNum := expectResultChunk.NumRows()
-	for i := 0; i < resultRowNum; i++ {
-		expectResult = append(expectResult, expectResultChunk.GetRow(i))
+	if isAntiSemiJoin {
+		expectResult = sortRows([]*chunk.Chunk{expectResultChunk}, semiJoinRetTypes)
+	} else {
+		resultRowNum := expectResultChunk.NumRows()
+		for i := 0; i < resultRowNum; i++ {
+			expectResult = append(expectResult, expectResultChunk.GetRow(i))
+		}
 	}
 
 	leftMockSrcParm := testutil.MockDataSourceParameters{DataSchema: leftSchema, Ctx: ctx, Rows: int(leftLen), Ndvs: []int{-1, -1}, Datums: [][]any{leftCol0Datums, leftCol1Datums}, HasSel: false}
@@ -183,10 +215,14 @@ func buildSemiDataSourceAndExpectResult(ctx sessionctx.Context, leftCols []*expr
 }
 
 func testSemiJoin(t *testing.T, rightAsBuildSide bool, hasOtherCondition bool, hasDuplicateKey bool) {
+	testSemiOrAntiSemiJoin(t, rightAsBuildSide, hasOtherCondition, hasDuplicateKey, false)
+}
+
+func testSemiOrAntiSemiJoin(t *testing.T, rightAsBuildSide bool, hasOtherCondition bool, hasDuplicateKey bool, isAntiSemiJoin bool) {
 	ctx := mock.NewContext()
 	ctx.GetSessionVars().InitChunkSize = maxChunkSizeInTest
 	ctx.GetSessionVars().MaxChunkSize = maxChunkSizeInTest
-	leftDataSource, rightDataSource, expectedResult := buildSemiDataSourceAndExpectResult(ctx, semiJoinleftCols, semiJoinrightCols, rightAsBuildSide, hasOtherCondition, hasDuplicateKey)
+	leftDataSource, rightDataSource, expectedResult := buildSemiDataSourceAndExpectResult(ctx, semiJoinleftCols, semiJoinrightCols, rightAsBuildSide, hasOtherCondition, hasDuplicateKey, isAntiSemiJoin)
 
 	maxRowTableSegmentSize = 100
 
@@ -225,12 +261,19 @@ func testSemiJoin(t *testing.T, rightAsBuildSide bool, hasOtherCondition bool, h
 		otherCondition = append(otherCondition, sf)
 	}
 
+	var joinType logicalop.JoinType
+	if isAntiSemiJoin {
+		joinType = logicalop.AntiSemiJoin
+	} else {
+		joinType = logicalop.SemiJoin
+	}
+	
 	info := &hashJoinInfo{
 		ctx:                   ctx,
 		schema:                buildSchema(semiJoinRetTypes),
 		leftExec:              leftDataSource,
 		rightExec:             rightDataSource,
-		joinType:              logicalop.SemiJoin,
+		joinType:              joinType,
 		rightAsBuildSide:      rightAsBuildSide,
 		buildKeys:             buildKeys,
 		probeKeys:             probeKeys,
@@ -246,7 +289,6 @@ func testSemiJoin(t *testing.T, rightAsBuildSide bool, hasOtherCondition bool, h
 
 	hashJoinExec := buildHashJoinV2Exec(info)
 	result := getSortedResults(t, hashJoinExec, semiJoinRetTypes)
-	// printResult(result)
 	checkResults(t, semiJoinRetTypes, result, expectedResult)
 }
 

@@ -172,9 +172,9 @@ func (j *antiSemiJoinProbe) probeForLeftSideBuildHasOtherCondition(joinedChk *ch
 			}
 			j.matchedRowsHeaders[j.currentProbeRow] = getNextRowAddress(candidateRow, tagHelper, j.matchedRowsHashValue[j.currentProbeRow])
 		} else {
+			j.finishLookupCurrentProbeRow()
 			remainCap--
 			j.currentProbeRow++
-			j.finishLookupCurrentProbeRow()
 		}
 	}
 
@@ -270,7 +270,7 @@ func (j *antiSemiJoinProbe) probeForRightSideBuildHasOtherCondition(chk, joinedC
 	}
 
 	j.currentProbeRow = 0
-	for j.currentProbeRow < j.chunkRows {
+	for ; j.currentProbeRow < j.chunkRows; j.currentProbeRow++ {
 		_, ok := j.matchedProbeRowIdx[j.currentProbeRow]
 		if ok {
 			continue
@@ -301,7 +301,7 @@ func (j *antiSemiJoinProbe) probeForRightSideBuildNoOtherCondition(chk *chunk.Ch
 		} else {
 			if !matched {
 				remainCap--
-				j.matchedRowsForCurrentProbeRow++
+				j.matchedRowsForCurrentProbeRow = 1
 				j.finishLookupCurrentProbeRow()
 			}
 			matched = false // reset
