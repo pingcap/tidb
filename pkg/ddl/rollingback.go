@@ -354,8 +354,8 @@ func convertAddTablePartitionJob2RollbackJob(jobCtx *jobContext, job *model.Job,
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
-	tblInfo.Partition.DDLState = model.StateNone
-	tblInfo.Partition.DDLAction = model.ActionNone
+	//tblInfo.Partition.DDLState = model.StateNone
+	//tblInfo.Partition.DDLAction = model.ActionNone
 	job.State = model.JobStateRollingback
 	return ver, errors.Trace(otherwiseErr)
 }
@@ -384,15 +384,22 @@ func convertReorgPartitionJob2RollbackJob(jobCtx *jobContext, job *model.Job, ot
 	}
 	var dropIndices []*model.IndexInfo
 	// When Global Index is duplicated to a non Global, we later need
-	// to know if if it was Global before (marked to be dropped) or not.
+	// to know if it was Global before (marked to be dropped) or not.
 	globalToUniqueDupMap := make(map[string]int64)
 	for _, indexInfo := range tblInfo.Indices {
 		if !indexInfo.Unique {
 			continue
 		}
 		switch indexInfo.State {
-		case model.StateWriteReorganization, model.StateDeleteOnly,
-			model.StateWriteOnly:
+		case model.StateWriteOnly:
+			if pi.DDLState == model.StateDeleteReorganization {
+				// Revert the non-public state
+				indexInfo.State = model.StatePublic
+				globalToUniqueDupMap[indexInfo.Name.L] = indexInfo.ID
+			} else {
+				dropIndices = append(dropIndices, indexInfo)
+			}
+		case model.StateDeleteOnly, model.StateWriteReorganization:
 			dropIndices = append(dropIndices, indexInfo)
 		case model.StateDeleteReorganization:
 			if pi.DDLState != model.StateDeleteReorganization {
@@ -416,7 +423,7 @@ func convertReorgPartitionJob2RollbackJob(jobCtx *jobContext, job *model.Job, ot
 			// New index that became public in this state,
 			// mark it to be dropped in next schema version
 			if indexInfo.Global {
-				indexInfo.State = model.StateDeleteReorganization
+				indexInfo.State = model.StateWriteOnly
 			} else {
 				// How to know if this index was created as a duplicate or not?
 				if id, ok := globalToUniqueDupMap[indexInfo.Name.L]; ok {
@@ -424,7 +431,7 @@ func convertReorgPartitionJob2RollbackJob(jobCtx *jobContext, job *model.Job, ot
 					if id >= indexInfo.ID {
 						return ver, errors.NewNoStackErrorf("Indexes in wrong order during rollback, '%s', %d >= %d", indexInfo.Name.O, id, indexInfo.ID)
 					}
-					indexInfo.State = model.StateDeleteReorganization
+					indexInfo.State = model.StateWriteOnly
 				} else {
 					globalToUniqueDupMap[indexInfo.Name.L] = indexInfo.ID
 				}
@@ -478,13 +485,19 @@ func convertReorgPartitionJob2RollbackJob(jobCtx *jobContext, job *model.Job, ot
 				return ver, errors.Trace(errors.New("Internal error, failed to find original partition definitions"))
 			}
 			pi.Definitions = newDefs
-			pi.Num = uint64(len(pi.Definitions))
 		} else {
+			// Move back to StateWriteReorganization, i.e. use the original table
+			// (non-partitioned or differently partitioned) as the main table to use.
+			// Otherwise, the Type does not match the expression.
 			pi.Type, pi.DDLType = pi.DDLType, pi.Type
 			pi.Expr, pi.DDLExpr = pi.DDLExpr, pi.Expr
 			pi.Columns, pi.DDLColumns = pi.DDLColumns, pi.Columns
 			pi.Definitions = pi.DroppingDefinitions
 		}
+		pi.Num = uint64(len(pi.Definitions))
+		// We should move back one state, since there might be other sessions seeing the new partitions.
+		job.SchemaState = model.StateWriteReorganization
+		pi.DDLState = job.SchemaState
 	}
 
 	args, err := model.GetTablePartitionArgs(job)

@@ -237,7 +237,7 @@ func TestPartitionByFailures(t *testing.T) {
 		`delete from t where b = 102`,
 	}
 	afterResult := testkit.Rows("1 1 1", "101 101 101", "2 2 2", "3 3 3", "4 4 4", "9 9 104")
-	testReorganizePartitionFailures(t, create, alter, beforeDML, beforeResult, afterDML, afterResult)
+	testReorganizePartitionFailures(t, create, alter, beforeDML, beforeResult, afterDML, afterResult, "Cancel1", "Fail1", "Fail2")
 }
 
 func TestReorganizePartitionListFailures(t *testing.T) {
@@ -289,6 +289,7 @@ func TestPartitionByListFailures(t *testing.T) {
 	}
 	afterResult := testkit.Rows("1 1 1", "2 2 2", "6 6 9", "7 7 7", "8 8 8")
 	testReorganizePartitionFailures(t, create, alter, beforeDML, beforeResult, afterDML, afterResult)
+
 }
 
 func TestAddHashPartitionFailures(t *testing.T) {
@@ -335,6 +336,14 @@ func TestCoalesceKeyPartitionFailures(t *testing.T) {
 	}
 	afterResult := testkit.Rows("1 1 1", "2 2 2", "6 6 9", "7 7 7", "8 8 8")
 	testReorganizePartitionFailures(t, create, alter, beforeDML, beforeResult, afterDML, afterResult, "Fail4")
+}
+
+func TestPartitionByNonPartitionedTable(t *testing.T) {
+	create := `create table t (a int)`
+	alter := `alter table t partition by range (a) (partition p0 values less than (20))`
+	beforeResult := testkit.Rows()
+	afterResult := testkit.Rows()
+	testReorganizePartitionFailures(t, create, alter, nil, beforeResult, nil, afterResult, "Fail4")
 }
 
 func testReorganizePartitionFailures(t *testing.T, createSQL, alterSQL string, beforeDML []string, beforeResult [][]any, afterDML []string, afterResult [][]any, skipTests ...string) {
@@ -386,7 +395,10 @@ func testReorganizePartitionFailures(t *testing.T, createSQL, alterSQL string, b
 			}
 			tk.MustQuery(`select * from t /* ` + suffix + ` */`).Sort().Check(beforeResult)
 			tOrg := external.GetTableByName(t, tk, "test", "t")
-			idxID := tOrg.Meta().Indices[0].ID
+			var idxID int64
+			if len(tOrg.Meta().Indices) > 0 {
+				idxID = tOrg.Meta().Indices[0].ID
+			}
 			oldCreate := tk.MustQuery(`show create table t`).Rows()
 			name := "github.com/pingcap/tidb/pkg/ddl/reorgPart" + suffix
 			testfailpoint.Enable(t, name, `return(true)`)
@@ -397,11 +409,17 @@ func testReorganizePartitionFailures(t *testing.T, createSQL, alterSQL string, b
 			tk.MustQuery(`show create table t /* ` + suffix + ` */`).Check(oldCreate)
 			tt := external.GetTableByName(t, tk, "test", "t")
 			partition := tt.Meta().Partition
-			require.Equal(t, len(tOrg.Meta().Partition.Definitions), len(partition.Definitions), suffix)
-			require.Equal(t, 0, len(partition.AddingDefinitions), suffix)
-			require.Equal(t, 0, len(partition.DroppingDefinitions), suffix)
+			if partition == nil {
+				require.Nil(t, tOrg.Meta().Partition, suffix)
+			} else {
+				require.Equal(t, len(tOrg.Meta().Partition.Definitions), len(partition.Definitions), suffix)
+				require.Equal(t, 0, len(partition.AddingDefinitions), suffix)
+				require.Equal(t, 0, len(partition.DroppingDefinitions), suffix)
+			}
 			require.Equal(t, len(tOrg.Meta().Indices), len(tt.Meta().Indices), suffix)
-			require.Equal(t, idxID, tt.Meta().Indices[0].ID, suffix)
+			if idxID != 0 {
+				require.Equal(t, idxID, tt.Meta().Indices[0].ID, suffix)
+			}
 			noNewTablesAfter(t, tk, tk.Session(), tOrg, suffix)
 			tk.MustExec(`admin check table t /* ` + suffix + ` */`)
 			for _, sql := range afterDML {
@@ -917,4 +935,19 @@ func TestPartitionByColumnChecks(t *testing.T) {
 	tk.MustExec(`insert into rb64 values ` + vals)
 	tk.MustExec(`alter table rb64 partition by range(b64) (partition pMax values less than (MAXVALUE))`)
 	tk.MustExec(`insert into rb64 values ` + vals)
+}
+
+func TestPartitionIssue56634(t *testing.T) {
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/updateVersionAndTableInfoErrInStateDeleteReorganization", `return(1)`)
+	defer func() {
+		testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/updateVersionAndTableInfoErrInStateDeleteReorganization")
+	}()
+
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set global tidb_ddl_error_count_limit = 3")
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a int)")
+	tk.MustContainErrMsg("alter table t partition by range(a) (partition p1 values less than (20))", "[ddl:-1]DDL job rollback, error msg: Injected error in StateDeleteReorganization") // should NOT panic
 }

@@ -2176,8 +2176,8 @@ func (w *worker) rollbackLikeDropPartition(jobCtx *jobContext, job *model.Job) (
 	var dropIndices []*model.IndexInfo
 	for _, indexInfo := range tblInfo.Indices {
 		if indexInfo.Unique &&
-			indexInfo.State == model.StateDeleteReorganization &&
-			tblInfo.Partition.DDLState == model.StateDeleteReorganization {
+			indexInfo.State == model.StateWriteOnly &&
+			tblInfo.Partition.DDLState == model.StateWriteReorganization {
 			dropIndices = append(dropIndices, indexInfo)
 		}
 	}
@@ -3452,17 +3452,17 @@ func (w *worker) onReorganizePartition(jobCtx *jobContext, job *model.Job) (ver 
 				index.State = model.StatePublic
 			case model.StatePublic:
 				if index.Global {
-					// Mark the old global index as non-readable, and to be dropped
-					index.State = model.StateDeleteReorganization
+					// Mark the old global index as non-readable, but still writable, and to be dropped
+					index.State = model.StateWriteOnly
 				} else {
 					inAllPartitionColumns, err := checkPartitionKeysConstraint(partInfo, index.Columns, tblInfo)
 					if err != nil {
 						return rollbackReorganizePartitionWithErr(jobCtx, job, err)
 					}
 					if !inAllPartitionColumns {
-						// Mark the old unique index as non-readable, and to be dropped,
+						// Mark the old unique index as non-readable, but still writable, and to be dropped,
 						// since it is replaced by a global index
-						index.State = model.StateDeleteReorganization
+						index.State = model.StateWriteOnly
 					}
 				}
 			}
@@ -3493,9 +3493,9 @@ func (w *worker) onReorganizePartition(jobCtx *jobContext, job *model.Job) (ver 
 		// Now all the data copying is done, but we cannot simply remove the droppingDefinitions
 		// since they are a part of the normal Definitions that other nodes with
 		// the current schema version. So we need to double write for one more schema version
-		tblInfo.Partition.DDLState = model.StateDeleteReorganization
-		ver, err = updateVersionAndTableInfo(jobCtx, job, tblInfo, true)
 		job.SchemaState = model.StateDeleteReorganization
+		tblInfo.Partition.DDLState = job.SchemaState
+		ver, err = updateVersionAndTableInfo(jobCtx, job, tblInfo, true)
 
 	case model.StateDeleteReorganization:
 		// Drop the droppingDefinitions and finish the DDL
@@ -3521,7 +3521,7 @@ func (w *worker) onReorganizePartition(jobCtx *jobContext, job *model.Job) (ver 
 
 		var dropIndices []*model.IndexInfo
 		for _, indexInfo := range tblInfo.Indices {
-			if indexInfo.Unique && indexInfo.State == model.StateDeleteReorganization {
+			if indexInfo.Unique && indexInfo.State == model.StateWriteOnly {
 				// Drop the old unique (possible global) index, see onDropIndex
 				indexInfo.State = model.StateNone
 				DropIndexColumnFlag(tblInfo, indexInfo)
@@ -3591,6 +3591,9 @@ func (w *worker) onReorganizePartition(jobCtx *jobContext, job *model.Job) (ver 
 			}
 		})
 		job.CtxVars = []any{physicalTableIDs, newIDs}
+		failpoint.Inject("updateVersionAndTableInfoErrInStateDeleteReorganization", func() {
+			failpoint.Return(ver, errors.New("Injected error in StateDeleteReorganization"))
+		})
 		ver, err = updateVersionAndTableInfo(jobCtx, job, tblInfo, true)
 		if err != nil {
 			return ver, errors.Trace(err)
