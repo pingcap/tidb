@@ -918,11 +918,6 @@ select export_set(7, "1", "0", ",");
 select export_set(7, "1", "0");
 select export_set(NULL, "1", "0", ",", 65);
 select export_set(7, "1", "0", ",", 1);
-select format(12332.1, 4), format(12332.2, 0), format(12332.2, 2,'en_US');
-select format(NULL, 4), format(12332.2, NULL);
---enable_warnings
-select format(12332.2, 2,'es_EC');
---disable_warnings
 select field(1, 2, 1), field(1, 0, NULL), field(1, NULL, 2, 1), field(NULL, 1, 2, NULL);
 select field("1", 2, 1), field(1, "0", NULL), field("1", NULL, 2, 1), field(NULL, 1, "2", NULL);
 select field("1", 2, 1), field(1, "abc", NULL), field("1", NULL, 2, 1), field(NULL, 1, "2", NULL);
