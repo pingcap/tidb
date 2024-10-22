@@ -93,6 +93,20 @@ var (
 	detectJobVerInterval = 10 * time.Second
 )
 
+// StartMode is an enum type for the start mode of the DDL.
+type StartMode string
+
+const (
+	// Normal mode, cluster is in normal state.
+	Normal StartMode = "normal"
+	// Bootstrap mode, cluster is during bootstrap.
+	Bootstrap = "bootstrap"
+	// Upgrade mode, cluster is during upgrade, we will force current node to be
+	// the DDL owner, to make sure all upgrade related DDLs are run on new version
+	// TiDB instance.
+	Upgrade = "upgrade"
+)
+
 // OnExist specifies what to do when a new object has a name collision.
 type OnExist uint8
 
