@@ -3888,6 +3888,8 @@ func TestIssue51842(t *testing.T) {
 	tk.MustExec("insert into lrr(col2) values('-229:53:34');")
 	resultRows := tk.MustQuery("select * from lrr where col1 <=> null;").Rows() // test const null
 	require.Equal(t, 1, len(resultRows))
+	resultRows = tk.MustQuery("select * from lrr where null <=> col1;").Rows() // test const null
+	require.Equal(t, 1, len(resultRows))
 }
 
 func TestIssue44706(t *testing.T) {

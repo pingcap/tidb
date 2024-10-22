@@ -1632,6 +1632,10 @@ func (c *compareFunctionClass) handleDurationTypeComparison(ctx BuildContext, ar
 
 	var isNull bool
 	if arg0IsCon && arg0Const.DeferredExpr == nil && !arg1IsCon && arg1.GetType(ctx.GetEvalCtx()).GetType() == mysql.TypeDuration {
+		if arg0Const.Value.IsNull() {
+			// This is a const null, there is no need to re-write the expression
+			return nil, nil
+		}
 		isNull, err = castToDurationIsNull(ctx, arg0)
 	} else if arg1IsCon && arg1Const.DeferredExpr == nil && !arg0IsCon && arg0.GetType(ctx.GetEvalCtx()).GetType() == mysql.TypeDuration {
 		if arg1Const.Value.IsNull() {
