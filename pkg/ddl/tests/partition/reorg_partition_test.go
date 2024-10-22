@@ -237,7 +237,7 @@ func TestPartitionByFailures(t *testing.T) {
 		`delete from t where b = 102`,
 	}
 	afterResult := testkit.Rows("1 1 1", "101 101 101", "2 2 2", "3 3 3", "4 4 4", "9 9 104")
-	testReorganizePartitionFailures(t, create, alter, beforeDML, beforeResult, afterDML, afterResult, "Cancel1", "Fail1", "Fail2")
+	testReorganizePartitionFailures(t, create, alter, beforeDML, beforeResult, afterDML, afterResult)
 }
 
 func TestReorganizePartitionListFailures(t *testing.T) {
@@ -289,7 +289,6 @@ func TestPartitionByListFailures(t *testing.T) {
 	}
 	afterResult := testkit.Rows("1 1 1", "2 2 2", "6 6 9", "7 7 7", "8 8 8")
 	testReorganizePartitionFailures(t, create, alter, beforeDML, beforeResult, afterDML, afterResult)
-
 }
 
 func TestAddHashPartitionFailures(t *testing.T) {
@@ -939,9 +938,6 @@ func TestPartitionByColumnChecks(t *testing.T) {
 
 func TestPartitionIssue56634(t *testing.T) {
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/updateVersionAndTableInfoErrInStateDeleteReorganization", `return(1)`)
-	defer func() {
-		testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/updateVersionAndTableInfoErrInStateDeleteReorganization")
-	}()
 
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
