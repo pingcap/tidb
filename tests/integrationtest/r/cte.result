@@ -449,7 +449,7 @@ MergeJoin	8001.00	root		inner join, left key:cte.t1.c1, right key:cte.t1.c1
 CTE_0	8001.00	root		Recursive CTE
 ├─TableReader(Seed Part)	10000.00	root		data:TableFullScan
 │ └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
-└─Projection(Recursive Part)	8000.00	root		cast(plus(cte.t1.c1, 1), int(11))->cte.t1.c1
+└─Projection(Recursive Part)	8000.00	root		cast(plus(cte.t1.c1, 1), int)->cte.t1.c1
   └─Selection	8000.00	root		lt(cte.t1.c1, 3)
     └─CTETable	10000.00	root		Scan on CTE_0
 with recursive cte1 as (select c1 from t1 union select c1 +1 c1 from cte1 where c1 < 3) select /*+ MERGE_JOIN(dt1, dt2) */ * from t1 dt1 inner join cte1 dt2 on dt2.c1 = dt1.c1 order by 1, 2;
