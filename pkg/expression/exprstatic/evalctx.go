@@ -391,22 +391,6 @@ func (ctx *EvalContext) GetParamValue(idx int) (types.Datum, error) {
 	return ctx.paramList[idx], nil
 }
 
-// ResetReadonlyVarMap resets the readonly variable map.
-func (ctx *EvalContext) ResetReadonlyVarMap() {
-	ctx.readonlyVarMap = make(map[string]struct{})
-}
-
-// SetReadonlyVarMap sets the readonly variable map.
-func (ctx *EvalContext) SetReadonlyVarMap(m map[string]struct{}) {
-	ctx.readonlyVarMap = m
-}
-
-// IsReadonlyVar checks whether the variable is readonly.
-func (ctx *EvalContext) IsReadonlyVar(name string) bool {
-	_, ok := ctx.readonlyVarMap[name]
-	return ok
-}
-
 var _ exprctx.StaticConvertibleEvalContext = &EvalContext{}
 
 // AllParamValues implements context.StaticConvertibleEvalContext.

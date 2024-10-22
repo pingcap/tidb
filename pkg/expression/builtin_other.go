@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/collate"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/set"
 	"github.com/pingcap/tidb/pkg/util/stringutil"
 	"github.com/pingcap/tipb/go-tipb"
@@ -994,7 +995,33 @@ func BuildGetVarFunction(ctx BuildContext, expr Expression, retType *types.Field
 		RetType:  retType,
 		Function: f,
 	}
-	return FoldConstant(ctx, sf), nil
+	return optimizeReadonlyVar(ctx, sf), nil
+}
+
+// optimizeReadonlyVar tries to convert the readonly user variables to constants.
+func optimizeReadonlyVar(ctx BuildContext, getVar *ScalarFunction) Expression {
+	arg0, isConst := getVar.GetArgs()[0].(*Constant)
+	if !isConst || arg0.DeferredExpr != nil {
+		return getVar
+	}
+	isReadonly := ctx.IsReadonlyUserVar(arg0.Value.GetString())
+	if !isReadonly {
+		return getVar
+	}
+	v, err := getVar.Eval(ctx.GetEvalCtx(), chunk.Row{})
+	if err != nil {
+		intest.Assert(false, "readonly user variable should not meet error when executing.")
+		return getVar
+	}
+	d, ok := ctx.GetEvalCtx().GetUserVarsReader().GetUserVarVal(arg0.Value.GetString())
+	if ok && d.Kind() == types.KindBinaryLiteral {
+		v.SetBinaryLiteral(v.GetBytes())
+	}
+	return &Constant{
+		Value:        v,
+		RetType:      getVar.RetType,
+		DeferredExpr: nil,
+	}
 }
 
 type getVarFunctionClass struct {

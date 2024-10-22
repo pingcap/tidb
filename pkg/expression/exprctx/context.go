@@ -92,10 +92,6 @@ type EvalContext interface {
 	GetOptionalPropSet() OptionalEvalPropKeySet
 	// GetOptionalPropProvider gets the optional property provider by key
 	GetOptionalPropProvider(OptionalEvalPropKey) (OptionalEvalPropProvider, bool)
-
-	ResetReadonlyVarMap()
-	SetReadonlyVarMap(map[string]struct{})
-	IsReadonlyVar(name string) bool
 }
 
 // BuildContext is used to build an expression
@@ -132,6 +128,8 @@ type BuildContext interface {
 	// ConnectionID indicates the connection ID of the current session.
 	// If the context is not in a session, it should return 0.
 	ConnectionID() uint64
+	// IsReadonlyUserVar checks whether the user variable is readonly.
+	IsReadonlyUserVar(name string) bool
 }
 
 // ExprContext contains full context for expression building and evaluating.

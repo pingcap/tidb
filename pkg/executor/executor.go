@@ -2144,7 +2144,7 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 	vars.DurationWaitTS = 0
 	vars.CurrInsertBatchExtraCols = nil
 	vars.CurrInsertValues = chunk.Row{}
-	ctx.GetExprCtx().GetEvalCtx().ResetReadonlyVarMap()
+	ctx.GetPlanCtx().Reset()
 
 	return
 }

@@ -146,7 +146,7 @@ func Preprocess(ctx context.Context, sctx sessionctx.Context, node *resolve.Node
 	node.Node.Accept(&v)
 	// InfoSchema must be non-nil after preprocessing
 	v.ensureInfoSchema()
-	sctx.GetExprCtx().GetEvalCtx().SetReadonlyVarMap(v.varsReadonly)
+	sctx.GetPlanCtx().SetReadonlyUserVarMap(v.varsReadonly)
 	if len(v.varsReadonly) > 0 {
 		sctx.GetSessionVars().StmtCtx.SetSkipPlanCache("read-only variables are used")
 	}

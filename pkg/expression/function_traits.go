@@ -207,7 +207,6 @@ var AllowedPartition4UnaryOpMap = map[opcode.Op]struct{}{
 // inequalFunctions stores functions which cannot be propagated from column equal condition.
 var inequalFunctions = map[string]struct{}{
 	ast.IsNull: {},
-	ast.GetVar: {},
 }
 
 // mutableEffectsFunctions stores functions which are mutable or have side effects, specifically,

@@ -299,6 +299,11 @@ func (ctx *ExprContext) GetStaticConvertibleEvalContext() exprctx.StaticConverti
 	return ctx.evalCtx
 }
 
+// IsReadonlyUserVar implements the `BuildContext.IsReadonlyUserVar` and should always return false.
+func (ctx *ExprContext) IsReadonlyUserVar(name string) bool {
+	return false
+}
+
 // MakeExprContextStatic converts the `exprctx.StaticConvertibleExprContext` to `ExprContext`.
 func MakeExprContextStatic(ctx exprctx.StaticConvertibleExprContext) *ExprContext {
 	staticEvalContext := MakeEvalContextStatic(ctx.GetStaticConvertibleEvalContext())

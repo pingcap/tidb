@@ -110,6 +110,11 @@ func (ctx *litExprContext) unsetUserVar(varName string) {
 	ctx.userVars.UnsetUserVar(varName)
 }
 
+// GetUserVar implements the `exprctx.BuildContext` interface.
+func (ctx *litExprContext) IsReadonlyUserVar(name string) bool {
+	return false
+}
+
 var _ table.MutateContext = &litTableMutateContext{}
 
 // litTableMutateContext implements the `table.MutateContext` interface for lightning import.

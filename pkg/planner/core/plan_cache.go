@@ -65,6 +65,7 @@ func SetParameterValuesIntoSCtx(sctx base.PlanContext, isNonPrep bool, markers [
 		)
 		if c, ok := usingParam.(*expression.Constant); ok {
 			val = c.Value
+			intest.Assert(c.DeferredExpr == nil, "folded readonly user variable should not contain deferred expression")
 		} else {
 			val, err = usingParam.Eval(sctx.GetExprCtx().GetEvalCtx(), chunk.Row{})
 			if err != nil {
