@@ -507,7 +507,10 @@ func NewTableScanOperator(
 				cpMgr:         cpMgr,
 				hintBatchSize: hintBatchSize,
 				totalCount:    totalCount,
+<<<<<<< HEAD
 				reorgMeta:     reorgMeta,
+=======
+>>>>>>> 44f1c1408cc (disttask: print total count in log (#56759))
 			}
 		})
 	return &TableScanOperator{
@@ -836,7 +839,11 @@ type indexIngestBaseWorker struct {
 	restore  func(sessionctx.Context)
 
 	writers      []ingest.Writer
+<<<<<<< HEAD
 	srcChunkPool *sync.Pool
+=======
+	srcChunkPool chan *chunk.Chunk
+>>>>>>> 44f1c1408cc (disttask: print total count in log (#56759))
 	// only available in global sort
 	totalCount *atomic.Int64
 }
