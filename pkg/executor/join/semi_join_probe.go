@@ -202,7 +202,6 @@ func (j *semiJoinProbe) Probe(joinResult *hashjoinWorkerResult, sqlKiller *sqlki
 	return true, joinResult
 }
 
-// TODO test it in ut
 // One probe row may match multi build rows and generate multi result rows.
 // In semi join, we only need one row when left table is probe side, so we need to truncate
 // the `j.select` to meet the rule that one probe row outputs at most one result row.
@@ -329,7 +328,6 @@ func (j *semiJoinProbe) concatenateProbeAndBuildRows(joinedChk *chunk.Chunk, sql
 	return nil
 }
 
-// TODO improve when probe chunk has only few rows
 func (j *semiJoinProbe) probeForLeftSideBuildHasOtherCondition(joinedChk *chunk.Chunk, sqlKiller *sqlkiller.SQLKiller) (err error) {
 	err = j.concatenateProbeAndBuildRows(joinedChk, sqlKiller, false)
 	if err != nil {
@@ -386,7 +384,6 @@ func (j *semiJoinProbe) probeForLeftSideBuildNoOtherCondition(remainCap int, sql
 	return
 }
 
-// TODO improve when probe chunk has only few rows
 func (j *semiJoinProbe) probeForRightSideBuildHasOtherCondition(chk, joinedChk *chunk.Chunk, sqlKiller *sqlkiller.SQLKiller) (err error) {
 	err = j.concatenateProbeAndBuildRows(joinedChk, sqlKiller, true)
 	if err != nil {
