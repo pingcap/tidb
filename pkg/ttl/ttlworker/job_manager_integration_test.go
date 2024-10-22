@@ -75,6 +75,7 @@ func TestGetSession(t *testing.T) {
 	tk.MustExec("set @@tidb_retry_limit=1")
 	tk.MustExec("set @@tidb_enable_1pc=0")
 	tk.MustExec("set @@tidb_enable_async_commit=0")
+	tk.MustExec("set @@tidb_isolation_read_engines='tiflash,tidb'")
 	var getCnt atomic.Int32
 
 	pool := pools.NewResourcePool(func() (pools.Resource, error) {
@@ -97,13 +98,13 @@ func TestGetSession(t *testing.T) {
 	require.Equal(t, "Europe/Berlin", tz.String())
 
 	// session variables should be set
-	tk.MustQuery("select @@time_zone, @@tidb_retry_limit, @@tidb_enable_1pc, @@tidb_enable_async_commit").
-		Check(testkit.Rows("UTC 0 1 1"))
+	tk.MustQuery("select @@time_zone, @@tidb_retry_limit, @@tidb_enable_1pc, @@tidb_enable_async_commit, @@tidb_isolation_read_engines").
+		Check(testkit.Rows("UTC 0 1 1 tikv,tiflash,tidb"))
 
 	// all session variables should be restored after close
 	se.Close()
-	tk.MustQuery("select @@time_zone, @@tidb_retry_limit, @@tidb_enable_1pc, @@tidb_enable_async_commit").
-		Check(testkit.Rows("Asia/Shanghai 1 0 0"))
+	tk.MustQuery("select @@time_zone, @@tidb_retry_limit, @@tidb_enable_1pc, @@tidb_enable_async_commit, @@tidb_isolation_read_engines").
+		Check(testkit.Rows("Asia/Shanghai 1 0 0 tiflash,tidb"))
 }
 
 func TestParallelLockNewJob(t *testing.T) {

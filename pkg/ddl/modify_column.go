@@ -575,7 +575,7 @@ func (w *worker) doModifyColumnTypeWithData(
 			return ver, errors.Trace(err)
 		}
 		modifyColumnEvent := notifier.NewModifyColumnEvent(tblInfo, []*model.ColumnInfo{changingCol})
-		err = asyncNotifyEvent(jobCtx, modifyColumnEvent, job, w.sess)
+		err = asyncNotifyEvent(jobCtx, modifyColumnEvent, job, noSubJob, w.sess)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
