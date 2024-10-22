@@ -432,7 +432,8 @@ func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 		if node.Value != nil {
 			p.varsChanged[node.Name] = struct{}{}
 			delete(p.varsReadonly, node.Name)
-		} else {
+		} else if p.stmtTp == TypeSelect {
+			// Only check the variable in select statement.
 			_, ok := p.varsChanged[node.Name]
 			if !ok {
 				p.varsReadonly[node.Name] = struct{}{}

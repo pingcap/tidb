@@ -137,6 +137,7 @@ func (ctx *ExprContext) ConnectionID() uint64 {
 	return ctx.sctx.GetSessionVars().ConnectionID
 }
 
+// IsReadonlyUserVar checks whether the user variable is readonly.
 func (ctx *ExprContext) IsReadonlyUserVar(name string) bool {
 	m := ctx.sctx.GetPlanCtx().GetReadonlyUserVarMap()
 	_, ok := m[name]
