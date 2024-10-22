@@ -281,3 +281,7 @@ func TestTiFlashManager(t *testing.T) {
 
 	CloseTiFlashManager(ctx)
 }
+
+func TestGetMinStartTsPath(t *testing.T) {
+
+}
