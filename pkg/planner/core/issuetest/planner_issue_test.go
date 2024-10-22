@@ -244,3 +244,13 @@ UNIQUE KEY idx_5 (col_1)
 	tk.MustExec(`INSERT INTO tl75eff7ba VALUES(1),(0);`)
 	tk.MustQuery(`SELECT tl75eff7ba.col_1 AS r0 FROM tl75eff7ba WHERE ISNULL(tl75eff7ba.col_1) OR tl75eff7ba.col_1 IN (0, 0, 1, 1) GROUP BY tl75eff7ba.col_1 HAVING ISNULL(tl75eff7ba.col_1) OR tl75eff7ba.col_1 IN (0, 1, 1, 0) LIMIT 58651509;`).Check(testkit.Rows("0", "1"))
 }
+
+func TestABC(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("CREATE TABLE t0(c0 BOOL UNSIGNED NOT NULL DEFAULT false , c1 NUMERIC ZEROFILL NOT NULL , c2 TEXT(33) , c3 TINYINT ZEROFILL  AS (c0) VIRTUAL UNIQUE )PARTITION BY RANGE(c3) ( PARTITION p0 VALUES LESS THAN (910), PARTITION p1 VALUES LESS THAN (1820),PARTITION p2 VALUES LESS THAN (2730),PARTITION p23 VALUES LESS THAN MAXVALUE);")
+	tk.MustExec("INSERT IGNORE  INTO t0(c1, c0) VALUES (NULL, NULL);")
+	tk.MustExec("analyze table t0;")
+	tk.MustQuery("explain SELECT t0.c1 FROM t0 WHERE t0.c3 IN (SELECT c3 FROM t0 WHERE t0.c3 BETWEEN 12877 AND 14560) AND t0.c3 IN (SELECT c3 FROM t0 WHERE t0.c3 BETWEEN 13650 AND 15255);").Check(testkit.Rows())
+}

@@ -177,6 +177,9 @@ func enumeratePhysicalPlans4Task(
 	planCounter *base.PlanCounterTp,
 	opt *optimizetrace.PhysicalOptimizeOp,
 ) (base.Task, int64, error) {
+	if !p.SCtx().GetSessionVars().InRestrictedSQL {
+		fmt.Println("wwz")
+	}
 	var bestTask base.Task = base.InvalidTask
 	var curCntPlan, cntPlan int64
 	var err error
@@ -261,6 +264,9 @@ func iteratePhysicalPlan4BaseLogical(
 	_ *property.PhysicalProperty,
 	opt *optimizetrace.PhysicalOptimizeOp,
 ) ([]base.Task, int64, []int64, error) {
+	if !p.SCtx().GetSessionVars().InRestrictedSQL {
+		fmt.Println("bug")
+	}
 	// Find best child tasks firstly.
 	childTasks = childTasks[:0]
 	// The curCntPlan records the number of possible plans for pp
@@ -1823,6 +1829,9 @@ func setIndexMergeTableScanHandleCols(ds *logicalop.DataSource, ts *PhysicalTabl
 // Filters that cannot be pushed to TiKV are also returned, and an extra Selection above IndexMergeReader will be constructed later.
 func buildIndexMergeTableScan(ds *logicalop.DataSource, tableFilters []expression.Expression,
 	totalRowCount float64, matchProp bool) (base.PhysicalPlan, []expression.Expression, bool, error) {
+	if !ds.SCtx().GetSessionVars().InRestrictedSQL {
+		fmt.Println("wwz")
+	}
 	ts := PhysicalTableScan{
 		Table:           ds.TableInfo,
 		Columns:         slices.Clone(ds.Columns),
@@ -2025,6 +2034,9 @@ func (ts *PhysicalTableScan) appendExtraHandleCol(ds *logicalop.DataSource) (*ex
 // convertToIndexScan converts the DataSource to index scan with idx.
 func convertToIndexScan(ds *logicalop.DataSource, prop *property.PhysicalProperty,
 	candidate *candidatePath, _ *optimizetrace.PhysicalOptimizeOp) (task base.Task, err error) {
+	if !ds.SCtx().GetSessionVars().InRestrictedSQL {
+		fmt.Println("wwz")
+	}
 	if candidate.path.Index.MVIndex {
 		// MVIndex is special since different index rows may return the same _row_id and this can break some assumptions of IndexReader.
 		// Currently only support using IndexMerge to access MVIndex instead of IndexReader.
