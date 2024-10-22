@@ -68,7 +68,17 @@ type Histogram struct {
 
 	// Used for estimating fraction of the interval [lower, upper] that lies within the [lower, value].
 	// For some types like `Int`, we do not build it because we can get them directly from `Bounds`.
+<<<<<<< HEAD:statistics/histogram.go
 	scalars []scalar
+=======
+	Scalars   []scalar
+	ID        int64 // Column ID.
+	NDV       int64 // Number of distinct values. Note that It contains the NDV of the TopN which is excluded from histogram.
+	NullCount int64 // Number of null values.
+	// LastUpdateVersion is the version that this histogram updated last time.
+	LastUpdateVersion uint64
+
+>>>>>>> eebdcfebd5b (planner, stats: overflow estimation may lead to wrong join reorder (#56752)):pkg/statistics/histogram.go
 	// TotColSize is the total column size for the histogram.
 	// For unfixed-len types, it includes LEN and BYTE.
 	TotColSize int64
@@ -864,6 +874,10 @@ func (hg *Histogram) outOfRangeRowCount(lDatum, rDatum *types.Datum, modifyCount
 	histR := convertDatumToScalar(hg.GetUpper(hg.Len()-1), commonPrefix)
 	histWidth := histR - histL
 	if histWidth <= 0 {
+		return 0
+	}
+	if math.IsInf(histWidth, 1) {
+		// The histogram is too wide. As a quick fix, we return 0 to indicate that the overlap percentage is near 0.
 		return 0
 	}
 	boundL := histL - histWidth
