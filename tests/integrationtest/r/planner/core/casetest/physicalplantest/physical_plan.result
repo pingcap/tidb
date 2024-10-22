@@ -291,7 +291,7 @@ CTEFullScan	2.00	root	CTE:cte1	data:CTE_0
 CTE_0	2.00	root		Recursive CTE
 ├─Projection(Seed Part)	1.00	root		1->Column#2
 │ └─TableDual	1.00	root		rows:1
-└─Projection(Recursive Part)	0.80	root		cast(plus(Column#3, 1), bigint(1) BINARY)->Column#5
+└─Projection(Recursive Part)	0.80	root		cast(plus(Column#3, 1), bigint BINARY)->Column#5
   └─Selection	0.80	root		lt(Column#3, 100)
     └─CTETable	1.00	root		Scan on CTE_0
 show warnings;
@@ -496,7 +496,7 @@ CTEFullScan	2.00	root	CTE:cte1	data:CTE_0
 CTE_0	2.00	root		Recursive CTE
 ├─Projection(Seed Part)	1.00	root		1->Column#2
 │ └─TableDual	1.00	root		rows:1
-└─Projection(Recursive Part)	0.80	root		cast(plus(Column#3, 1), bigint(1) BINARY)->Column#5
+└─Projection(Recursive Part)	0.80	root		cast(plus(Column#3, 1), bigint BINARY)->Column#5
   └─Selection	0.80	root		lt(Column#3, 100)
     └─CTETable	1.00	root		Scan on CTE_0
 show warnings;
@@ -514,7 +514,7 @@ CTEFullScan	8001.00	root	CTE:cte2	data:CTE_0
 CTE_0	8001.00	root		Recursive CTE
 ├─TableReader(Seed Part)	10000.00	root		data:TableFullScan
 │ └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
-└─Projection(Recursive Part)	8000.00	root		cast(plus(planner__core__casetest__physicalplantest__physical_plan.t.a, 1), int(11))->planner__core__casetest__physicalplantest__physical_plan.t.a
+└─Projection(Recursive Part)	8000.00	root		cast(plus(planner__core__casetest__physicalplantest__physical_plan.t.a, 1), int)->planner__core__casetest__physicalplantest__physical_plan.t.a
   └─Selection	8000.00	root		lt(planner__core__casetest__physicalplantest__physical_plan.t.a, 100)
     └─CTETable	10000.00	root		Scan on CTE_0
 show warnings;
@@ -526,7 +526,7 @@ CTEFullScan	2.00	root	CTE:cte2	data:CTE_2
 CTE_2	2.00	root		Recursive CTE
 ├─Projection(Seed Part)	1.00	root		1->Column#9
 │ └─TableDual	1.00	root		rows:1
-└─Projection(Recursive Part)	0.80	root		cast(plus(Column#10, 1), bigint(1) BINARY)->Column#12
+└─Projection(Recursive Part)	0.80	root		cast(plus(Column#10, 1), bigint BINARY)->Column#12
   └─Selection	0.80	root		lt(Column#10, 100)
     └─CTETable	1.00	root		Scan on CTE_2
 show warnings;
@@ -552,7 +552,7 @@ CTEFullScan	2.00	root	CTE:cte1	data:CTE_0
 CTE_0	2.00	root		Recursive CTE
 ├─Projection(Seed Part)	1.00	root		1->Column#2
 │ └─TableDual	1.00	root		rows:1
-└─Projection(Recursive Part)	0.80	root		cast(plus(Column#3, 1), bigint(1) BINARY)->Column#5
+└─Projection(Recursive Part)	0.80	root		cast(plus(Column#3, 1), bigint BINARY)->Column#5
   └─Selection	0.80	root		lt(Column#3, 100)
     └─CTETable	1.00	root		Scan on CTE_0
 show warnings;
@@ -570,7 +570,7 @@ CTEFullScan	8001.00	root	CTE:cte2	data:CTE_0
 CTE_0	8001.00	root		Recursive CTE
 ├─TableReader(Seed Part)	10000.00	root		data:TableFullScan
 │ └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
-└─Projection(Recursive Part)	8000.00	root		cast(plus(planner__core__casetest__physicalplantest__physical_plan.t.a, 1), int(11))->planner__core__casetest__physicalplantest__physical_plan.t.a
+└─Projection(Recursive Part)	8000.00	root		cast(plus(planner__core__casetest__physicalplantest__physical_plan.t.a, 1), int)->planner__core__casetest__physicalplantest__physical_plan.t.a
   └─Selection	8000.00	root		lt(planner__core__casetest__physicalplantest__physical_plan.t.a, 100)
     └─CTETable	10000.00	root		Scan on CTE_0
 show warnings;
@@ -581,7 +581,7 @@ CTEFullScan	2.00	root	CTE:cte2	data:CTE_2
 CTE_2	2.00	root		Recursive CTE
 ├─Projection(Seed Part)	1.00	root		1->Column#9
 │ └─TableDual	1.00	root		rows:1
-└─Projection(Recursive Part)	0.80	root		cast(plus(Column#10, 1), bigint(1) BINARY)->Column#12
+└─Projection(Recursive Part)	0.80	root		cast(plus(Column#10, 1), bigint BINARY)->Column#12
   └─Selection	0.80	root		lt(Column#10, 100)
     └─CTETable	1.00	root		Scan on CTE_2
 show warnings;
@@ -632,7 +632,7 @@ CTEFullScan	2.00	root	CTE:cte	data:CTE_3
 CTE_3	2.00	root		Recursive CTE
 ├─Projection(Seed Part)	1.00	root		1->Column#15
 │ └─TableDual	1.00	root		rows:1
-└─Projection(Recursive Part)	1.00	root		cast(plus(Column#16, 1), bigint(1) BINARY)->Column#18
+└─Projection(Recursive Part)	1.00	root		cast(plus(Column#16, 1), bigint BINARY)->Column#18
   └─CTETable	1.00	root		Scan on CTE_3
 explain format='brief' with cte as (select 1) select * from cte; -- inline cte;
 id	estRows	task	access object	operator info
@@ -726,7 +726,7 @@ CTEFullScan	1.64	root	CTE:temp	data:CTE_4
 CTE_4	1.64	root		Recursive CTE
 ├─Projection(Seed Part)	1.00	root		1->Column#14
 │ └─TableDual	1.00	root		rows:1
-└─Projection(Recursive Part)	0.64	root		cast(plus(Column#15, 1), bigint(1) BINARY)->Column#18
+└─Projection(Recursive Part)	0.64	root		cast(plus(Column#15, 1), bigint BINARY)->Column#18
   └─HashJoin	0.64	root		CARTESIAN inner join, other cond:lt(Column#15, Column#16)
     ├─Selection(Build)	0.80	root		not(isnull(Column#16))
     │ └─CTEFullScan	1.00	root	CTE:maxa	data:CTE_1
@@ -743,7 +743,7 @@ CTE_4	20000.00	root		Recursive CTE
 ├─Projection(Seed Part)	10000.00	root		1->Column#26
 │ └─IndexReader	10000.00	root		index:IndexFullScan
 │   └─IndexFullScan	10000.00	cop[tikv]	table:t1, index:c2(c2)	keep order:false, stats:pseudo
-└─Projection(Recursive Part)	10000.00	root		cast(plus(Column#27, 1), bigint(1) BINARY)->Column#30
+└─Projection(Recursive Part)	10000.00	root		cast(plus(Column#27, 1), bigint BINARY)->Column#30
   └─HashJoin	10000.00	root		CARTESIAN inner join, other cond:lt(plus(Column#27, 1), Column#28)
     ├─CTEFullScan(Build)	1.00	root	CTE:b	data:CTE_1
     └─CTETable(Probe)	10000.00	root		Scan on CTE_4
@@ -762,7 +762,7 @@ CTE_4	1.80	root		Recursive CTE
 │   └─IndexReader	1.00	root		index:HashAgg
 │     └─HashAgg	1.00	cop[tikv]		funcs:count(1)->Column#46
 │       └─IndexFullScan	10000.00	cop[tikv]	table:t1, index:c2(c2)	keep order:false, stats:pseudo
-└─Projection(Recursive Part)	0.80	root		cast(plus(Column#38, 1), bigint(1) BINARY)->Column#40
+└─Projection(Recursive Part)	0.80	root		cast(plus(Column#38, 1), bigint BINARY)->Column#40
   └─Selection	0.80	root		lt(plus(Column#38, 1), 10)
     └─CTETable	1.00	root		Scan on CTE_4
 create table test(a int);
@@ -780,7 +780,7 @@ CTE_0	8001.00	root		Non-Recursive CTE
 └─Union_27(Seed Part)	8001.00	root		
   ├─Projection_28	1.00	root		1->Column#7
   │ └─TableDual_29	1.00	root		rows:1
-  └─Projection_30	8000.00	root		cast(planner__core__casetest__physicalplantest__physical_plan.test.a, bigint(11) BINARY)->Column#7
+  └─Projection_30	8000.00	root		cast(planner__core__casetest__physicalplantest__physical_plan.test.a, bigint BINARY)->Column#7
     └─HashAgg_35	8000.00	root		group by:planner__core__casetest__physicalplantest__physical_plan.test.a, funcs:firstrow(planner__core__casetest__physicalplantest__physical_plan.test.a)->planner__core__casetest__physicalplantest__physical_plan.test.a
       └─TableReader_36	8000.00	root		data:HashAgg_31
         └─HashAgg_31	8000.00	cop[tikv]		group by:planner__core__casetest__physicalplantest__physical_plan.test.a, 
@@ -800,7 +800,7 @@ CTE_0	8001.00	root		Non-Recursive CTE
 └─Union_29(Seed Part)	8001.00	root		
   ├─Projection_30	1.00	root		1->Column#7
   │ └─TableDual_31	1.00	root		rows:1
-  └─Projection_32	8000.00	root		cast(planner__core__casetest__physicalplantest__physical_plan.test.a, bigint(11) BINARY)->Column#7
+  └─Projection_32	8000.00	root		cast(planner__core__casetest__physicalplantest__physical_plan.test.a, bigint BINARY)->Column#7
     └─HashAgg_37	8000.00	root		group by:planner__core__casetest__physicalplantest__physical_plan.test.a, funcs:firstrow(planner__core__casetest__physicalplantest__physical_plan.test.a)->planner__core__casetest__physicalplantest__physical_plan.test.a
       └─TableReader_38	8000.00	root		data:HashAgg_33
         └─HashAgg_33	8000.00	cop[tikv]		group by:planner__core__casetest__physicalplantest__physical_plan.test.a, 
@@ -1354,7 +1354,7 @@ NULL	1	NULL
 6.0000	1	6
 explain format='brief' select date_format(d,'%Y') as df, sum(a), count(b), count(distinct c) from t group by date_format(d,'%Y');
 id	estRows	task	access object	operator info
-Projection	8000.00	root		date_format(planner__core__casetest__physicalplantest__physical_plan.t.d, %Y)->Column#9, Column#6, cast(Column#13, bigint(21) BINARY)->Column#7, Column#8
+Projection	8000.00	root		date_format(planner__core__casetest__physicalplantest__physical_plan.t.d, %Y)->Column#9, Column#6, cast(Column#13, bigint BINARY)->Column#7, Column#8
 └─HashAgg	8000.00	root		group by:Column#23, funcs:sum(Column#19)->Column#6, funcs:sum(Column#20)->Column#13, funcs:count(Column#21)->Column#8, funcs:firstrow(Column#22)->planner__core__casetest__physicalplantest__physical_plan.t.d
   └─Projection	8000.00	root		Column#11->Column#19, cast(Column#12, decimal(20,0) BINARY)->Column#20, planner__core__casetest__physicalplantest__physical_plan.t.c->Column#21, planner__core__casetest__physicalplantest__physical_plan.t.d->Column#22, date_format(planner__core__casetest__physicalplantest__physical_plan.t.d, %Y)->Column#23
     └─HashAgg	8000.00	root		group by:Column#14, planner__core__casetest__physicalplantest__physical_plan.t.c, funcs:sum(Column#15)->Column#11, funcs:count(Column#16)->Column#12, funcs:firstrow(planner__core__casetest__physicalplantest__physical_plan.t.c)->planner__core__casetest__physicalplantest__physical_plan.t.c, funcs:firstrow(Column#18)->planner__core__casetest__physicalplantest__physical_plan.t.d
@@ -1363,7 +1363,7 @@ Projection	8000.00	root		date_format(planner__core__casetest__physicalplantest__
           └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 explain format='brief' select d, a, count(*), count(b), count(distinct c) from t group by d, a;
 id	estRows	task	access object	operator info
-Projection	8000.00	root		planner__core__casetest__physicalplantest__physical_plan.t.d, planner__core__casetest__physicalplantest__physical_plan.t.a, cast(Column#10, bigint(21) BINARY)->Column#6, cast(Column#12, bigint(21) BINARY)->Column#7, Column#8
+Projection	8000.00	root		planner__core__casetest__physicalplantest__physical_plan.t.d, planner__core__casetest__physicalplantest__physical_plan.t.a, cast(Column#10, bigint BINARY)->Column#6, cast(Column#12, bigint BINARY)->Column#7, Column#8
 └─HashAgg	8000.00	root		group by:Column#21, Column#22, funcs:sum(Column#18)->Column#10, funcs:sum(Column#19)->Column#12, funcs:count(Column#20)->Column#8, funcs:firstrow(Column#21)->planner__core__casetest__physicalplantest__physical_plan.t.a, funcs:firstrow(Column#22)->planner__core__casetest__physicalplantest__physical_plan.t.d
   └─Projection	8000.00	root		cast(Column#9, decimal(20,0) BINARY)->Column#18, cast(Column#11, decimal(20,0) BINARY)->Column#19, planner__core__casetest__physicalplantest__physical_plan.t.c->Column#20, planner__core__casetest__physicalplantest__physical_plan.t.a->Column#21, planner__core__casetest__physicalplantest__physical_plan.t.d->Column#22
     └─HashAgg	8000.00	root		group by:planner__core__casetest__physicalplantest__physical_plan.t.a, planner__core__casetest__physicalplantest__physical_plan.t.c, planner__core__casetest__physicalplantest__physical_plan.t.d, funcs:count(Column#13)->Column#9, funcs:count(Column#14)->Column#11, funcs:firstrow(planner__core__casetest__physicalplantest__physical_plan.t.c)->planner__core__casetest__physicalplantest__physical_plan.t.c, funcs:firstrow(planner__core__casetest__physicalplantest__physical_plan.t.a)->planner__core__casetest__physicalplantest__physical_plan.t.a, funcs:firstrow(planner__core__casetest__physicalplantest__physical_plan.t.d)->planner__core__casetest__physicalplantest__physical_plan.t.d
@@ -1372,7 +1372,7 @@ Projection	8000.00	root		planner__core__casetest__physicalplantest__physical_pla
           └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 explain format='brief' select d, sum(a), count(b), avg(distinct c) from t group by d;
 id	estRows	task	access object	operator info
-Projection	8000.00	root		planner__core__casetest__physicalplantest__physical_plan.t.d, Column#6, cast(Column#11, bigint(21) BINARY)->Column#7, Column#8
+Projection	8000.00	root		planner__core__casetest__physicalplantest__physical_plan.t.d, Column#6, cast(Column#11, bigint BINARY)->Column#7, Column#8
 └─HashAgg	8000.00	root		group by:Column#19, funcs:sum(Column#16)->Column#6, funcs:sum(Column#17)->Column#11, funcs:avg(Column#18)->Column#8, funcs:firstrow(Column#19)->planner__core__casetest__physicalplantest__physical_plan.t.d
   └─Projection	8000.00	root		Column#9->Column#16, cast(Column#10, decimal(20,0) BINARY)->Column#17, cast(planner__core__casetest__physicalplantest__physical_plan.t.c, decimal(10,0) BINARY)->Column#18, planner__core__casetest__physicalplantest__physical_plan.t.d->Column#19
     └─HashAgg	8000.00	root		group by:planner__core__casetest__physicalplantest__physical_plan.t.c, planner__core__casetest__physicalplantest__physical_plan.t.d, funcs:sum(Column#12)->Column#9, funcs:count(Column#13)->Column#10, funcs:firstrow(planner__core__casetest__physicalplantest__physical_plan.t.c)->planner__core__casetest__physicalplantest__physical_plan.t.c, funcs:firstrow(planner__core__casetest__physicalplantest__physical_plan.t.d)->planner__core__casetest__physicalplantest__physical_plan.t.d
@@ -3776,7 +3776,7 @@ Limit	1.00	root		offset:0, count:1
     └─TableRowIDScan(Probe)	1.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 show warnings;
 Level	Code	Message
-Warning	1105	Scalar function 'json_overlaps'(signature: Unspecified, return type: bigint(20)) is not supported to push down to storage layer now.
+Warning	1105	Scalar function 'json_overlaps'(signature: Unspecified, return type: bigint) is not supported to push down to storage layer now.
 explain format = 'brief' select /*+ use_index(t, kj) */ * from t where (1 member of (j) and a=1 ) limit 1;
 id	estRows	task	access object	operator info
 Limit	0.01	root		offset:0, count:1
@@ -3811,7 +3811,7 @@ Limit	1.00	root		offset:0, count:1
       └─TableRowIDScan	3.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 show warnings;
 Level	Code	Message
-Warning	1105	Scalar function 'json_overlaps'(signature: Unspecified, return type: bigint(20)) is not supported to push down to storage layer now.
+Warning	1105	Scalar function 'json_overlaps'(signature: Unspecified, return type: bigint) is not supported to push down to storage layer now.
 set tidb_cost_model_version=DEFAULT;
 explain select /*+ USE_INDEX_MERGE(t3, aid_c1, aid_c2) */ * from t3 where (aid = 1 and c1='aaa') or (aid = 1 and c2='bbb') limit 1;
 id	estRows	task	access object	operator info
