@@ -3276,7 +3276,7 @@ execute stmt;
 show create table aaa;
 Table	Create Table
 aaa	CREATE TABLE `aaa` (
-  `id` bigint(20) NOT NULL,
+  `id` bigint NOT NULL,
   PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 PARTITION BY RANGE (`id`)
@@ -3290,7 +3290,7 @@ execute stmt2;
 show create table aaa;
 Table	Create Table
 aaa	CREATE TABLE `aaa` (
-  `id` bigint(20) NOT NULL,
+  `id` bigint NOT NULL,
   PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 PARTITION BY RANGE (`id`)
@@ -3305,7 +3305,7 @@ execute stmt3;
 show create table aaa;
 Table	Create Table
 aaa	CREATE TABLE `aaa` (
-  `id` bigint(20) NOT NULL,
+  `id` bigint NOT NULL,
   PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 PARTITION BY RANGE (`id`)
@@ -3319,7 +3319,7 @@ execute stmt;
 show create table aaa;
 Table	Create Table
 aaa	CREATE TABLE `aaa` (
-  `id` bigint(20) NOT NULL,
+  `id` bigint NOT NULL,
   PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 PARTITION BY RANGE (`id`)
@@ -3334,7 +3334,7 @@ execute stmt;
 show create table aaa;
 Table	Create Table
 aaa	CREATE TABLE `aaa` (
-  `id` bigint(20) NOT NULL,
+  `id` bigint NOT NULL,
   PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 PARTITION BY RANGE (`id`)

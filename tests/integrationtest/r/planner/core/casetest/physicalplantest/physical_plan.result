@@ -780,7 +780,7 @@ CTE_0	8001.00	root		Non-Recursive CTE
 └─Union_27(Seed Part)	8001.00	root		
   ├─Projection_28	1.00	root		1->Column#7
   │ └─TableDual_29	1.00	root		rows:1
-  └─Projection_30	8000.00	root		cast(planner__core__casetest__physicalplantest__physical_plan.test.a, bigint(11) BINARY)->Column#7
+  └─Projection_30	8000.00	root		cast(planner__core__casetest__physicalplantest__physical_plan.test.a, bigint BINARY)->Column#7
     └─HashAgg_35	8000.00	root		group by:planner__core__casetest__physicalplantest__physical_plan.test.a, funcs:firstrow(planner__core__casetest__physicalplantest__physical_plan.test.a)->planner__core__casetest__physicalplantest__physical_plan.test.a
       └─TableReader_36	8000.00	root		data:HashAgg_31
         └─HashAgg_31	8000.00	cop[tikv]		group by:planner__core__casetest__physicalplantest__physical_plan.test.a, 
@@ -800,7 +800,7 @@ CTE_0	8001.00	root		Non-Recursive CTE
 └─Union_29(Seed Part)	8001.00	root		
   ├─Projection_30	1.00	root		1->Column#7
   │ └─TableDual_31	1.00	root		rows:1
-  └─Projection_32	8000.00	root		cast(planner__core__casetest__physicalplantest__physical_plan.test.a, bigint(11) BINARY)->Column#7
+  └─Projection_32	8000.00	root		cast(planner__core__casetest__physicalplantest__physical_plan.test.a, bigint BINARY)->Column#7
     └─HashAgg_37	8000.00	root		group by:planner__core__casetest__physicalplantest__physical_plan.test.a, funcs:firstrow(planner__core__casetest__physicalplantest__physical_plan.test.a)->planner__core__casetest__physicalplantest__physical_plan.test.a
       └─TableReader_38	8000.00	root		data:HashAgg_33
         └─HashAgg_33	8000.00	cop[tikv]		group by:planner__core__casetest__physicalplantest__physical_plan.test.a, 
