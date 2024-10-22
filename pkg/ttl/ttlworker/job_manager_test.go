@@ -203,8 +203,13 @@ func (m *JobManager) ReportMetrics(se session.Session) {
 	m.reportMetrics(se)
 }
 
-func (j *ttlJob) Finish(se session.Session, now time.Time, summary *TTLSummary) {
-	j.finish(se, now, summary)
+// CheckFinishedJob is an exported version of checkFinishedJob
+func (m *JobManager) CheckFinishedJob(se session.Session) {
+	m.checkFinishedJob(se)
+}
+
+func (j *ttlJob) Finish(se session.Session, now time.Time, summary *TTLSummary) error {
+	return j.finish(se, now, summary)
 }
 
 func (j *ttlJob) ID() string {
@@ -313,7 +318,7 @@ func TestOnTimerTick(t *testing.T) {
 	require.Equal(t, now, syncTime)
 
 	// resume after a very short duration
-	now = now.Add(time.Second)
+	now = now.Add(time.Microsecond * 999)
 	se.sessionInfoSchema = newMockInfoSchemaWithVer(101, tbl.TableInfo)
 	m.onTimerTick(se, rt, syncer, now)
 	require.Same(t, innerRT, rt.rt)
@@ -321,10 +326,10 @@ func TestOnTimerTick(t *testing.T) {
 	require.Equal(t, 1, len(syncer.key2Timers))
 	syncTime, syncVer = syncer.GetLastSyncInfo()
 	require.Equal(t, int64(100), syncVer)
-	require.Equal(t, now.Add(-time.Second), syncTime)
+	require.Equal(t, now.Add(-999*time.Microsecond), syncTime)
 
 	// resume after a middle duration
-	now = now.Add(6 * time.Second)
+	now = now.Add(2 * time.Millisecond)
 	m.onTimerTick(se, rt, syncer, now)
 	require.Same(t, innerRT, rt.rt)
 	require.True(t, innerRT.Running())

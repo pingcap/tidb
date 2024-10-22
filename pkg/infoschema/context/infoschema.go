@@ -22,6 +22,79 @@ import (
 	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 )
 
+// SpecialAttributeFilter is used to filter tables with special attributes.
+type SpecialAttributeFilter func(*model.TableInfo) bool
+
+// TTLAttribute is the TTL attribute filter used by ListTablesWithSpecialAttribute.
+var TTLAttribute SpecialAttributeFilter = func(t *model.TableInfo) bool {
+	return t.State == model.StatePublic && t.TTLInfo != nil
+}
+
+// TiFlashAttribute is the TiFlashReplica attribute filter used by ListTablesWithSpecialAttribute.
+var TiFlashAttribute SpecialAttributeFilter = func(t *model.TableInfo) bool {
+	return t.TiFlashReplica != nil
+}
+
+// PlacementPolicyAttribute is the Placement Policy attribute filter used by ListTablesWithSpecialAttribute.
+var PlacementPolicyAttribute SpecialAttributeFilter = func(t *model.TableInfo) bool {
+	if t.PlacementPolicyRef != nil {
+		return true
+	}
+	if parInfo := t.GetPartitionInfo(); parInfo != nil {
+		for _, def := range parInfo.Definitions {
+			if def.PlacementPolicyRef != nil {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// AllPlacementPolicyAttribute is the Placement Policy attribute filter used by ListTablesWithSpecialAttribute.
+// Different from PlacementPolicyAttribute, Partition.Enable flag will be ignored.
+var AllPlacementPolicyAttribute SpecialAttributeFilter = func(t *model.TableInfo) bool {
+	if t.PlacementPolicyRef != nil {
+		return true
+	}
+	if t.Partition != nil {
+		for _, def := range t.Partition.Definitions {
+			if def.PlacementPolicyRef != nil {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// TableLockAttribute is the Table Lock attribute filter used by ListTablesWithSpecialAttribute.
+var TableLockAttribute SpecialAttributeFilter = func(t *model.TableInfo) bool {
+	return t.Lock != nil
+}
+
+// ForeignKeysAttribute is the ForeignKeys attribute filter used by ListTablesWithSpecialAttribute.
+var ForeignKeysAttribute SpecialAttributeFilter = func(t *model.TableInfo) bool {
+	return len(t.ForeignKeys) > 0
+}
+
+// PartitionAttribute is the Partition attribute filter used by ListTablesWithSpecialAttribute.
+var PartitionAttribute SpecialAttributeFilter = func(t *model.TableInfo) bool {
+	return t.GetPartitionInfo() != nil
+}
+
+// HasSpecialAttributes checks if a table has any special attributes.
+func HasSpecialAttributes(t *model.TableInfo) bool {
+	return TTLAttribute(t) || TiFlashAttribute(t) || PlacementPolicyAttribute(t) || PartitionAttribute(t) || TableLockAttribute(t) || ForeignKeysAttribute(t)
+}
+
+// AllSpecialAttribute marks a model.TableInfo with any special attributes.
+var AllSpecialAttribute SpecialAttributeFilter = HasSpecialAttributes
+
+// TableInfoResult is used to store the result of ListTablesWithSpecialAttribute.
+type TableInfoResult struct {
+	DBName     pmodel.CIStr
+	TableInfos []*model.TableInfo
+}
+
 // MetaOnlyInfoSchema is a workaround.
 // Due to circular dependency cannot return the complete interface.
 // But MetaOnlyInfoSchema is widely used for scenes that require meta only, so we give a convenience for that.
@@ -37,6 +110,7 @@ type MetaOnlyInfoSchema interface {
 	SchemaAndTable
 	AllSchemaNames() []pmodel.CIStr
 	SchemaSimpleTableInfos(ctx stdctx.Context, schema pmodel.CIStr) ([]*model.TableNameInfo, error)
+	ListTablesWithSpecialAttribute(filter SpecialAttributeFilter) []TableInfoResult
 	Misc
 }
 

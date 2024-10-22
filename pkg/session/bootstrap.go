@@ -37,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/infoschema"
+	infoschemacontext "github.com/pingcap/tidb/pkg/infoschema/context"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/owner"
@@ -1182,11 +1183,15 @@ const (
 	// version 216
 	//   changes variable `tidb_scatter_region` value from ON to "table" and OFF to "".
 	version216 = 216
+
+	// version 217
+	// Keep tidb_schema_cache_size to 0 if this variable does not exist (upgrading from old version pre 8.1).
+	version217 = 217
 )
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-var currentBootstrapVersion int64 = version216
+var currentBootstrapVersion int64 = version217
 
 // DDL owner key's expired time is ManagerSessionTTL seconds, we should wait the time and give more time to have a chance to finish it.
 var internalSQLTimeout = owner.ManagerSessionTTL + 15
@@ -1358,6 +1363,7 @@ var (
 		upgradeToVer214,
 		upgradeToVer215,
 		upgradeToVer216,
+		upgradeToVer217,
 	}
 )
 
@@ -3220,9 +3226,9 @@ func upgradeToVer212(s sessiontypes.Session, ver int64) {
 	// add column `repeats`.
 	doReentrantDDL(s, "ALTER TABLE mysql.tidb_runaway_queries ADD COLUMN `repeats` int DEFAULT 1 AFTER `time`;", infoschema.ErrColumnExists)
 	// rename column name from `time` to `start_time`, will auto rebuild the index.
-	doReentrantDDL(s, "ALTER TABLE mysql.tidb_runaway_queries RENAME COLUMN `time` TO `start_time`")
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_runaway_queries RENAME COLUMN `time` TO `start_time`", infoschema.ErrColumnNotExists)
 	// rename column `original_sql` to `sample_sql`.
-	doReentrantDDL(s, "ALTER TABLE mysql.tidb_runaway_queries RENAME COLUMN `original_sql` TO `sample_sql`")
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_runaway_queries RENAME COLUMN `original_sql` TO `sample_sql`", infoschema.ErrColumnNotExists)
 	// modify column type of `plan_digest`.
 	doReentrantDDL(s, "ALTER TABLE mysql.tidb_runaway_queries MODIFY COLUMN `plan_digest` varchar(64) DEFAULT '';", infoschema.ErrColumnExists)
 	// 3. modify column length of `action`.
@@ -3265,6 +3271,15 @@ func upgradeToVer216(s sessiontypes.Session, ver int64) {
 
 	mustExecute(s, "UPDATE mysql.global_variables SET VARIABLE_VALUE='' WHERE VARIABLE_NAME = 'tidb_scatter_region' AND VARIABLE_VALUE = 'OFF'")
 	mustExecute(s, "UPDATE mysql.global_variables SET VARIABLE_VALUE='table' WHERE VARIABLE_NAME = 'tidb_scatter_region' AND VARIABLE_VALUE = 'ON'")
+}
+
+func upgradeToVer217(s sessiontypes.Session, ver int64) {
+	if ver >= version217 {
+		return
+	}
+	// If tidb_schema_cache_size does not exist, insert a record and set the value to 0
+	// Otherwise do nothing.
+	mustExecute(s, "INSERT IGNORE INTO mysql.global_variables VALUES ('tidb_schema_cache_size', 0)")
 }
 
 // initGlobalVariableIfNotExists initialize a global variable with specific val if it does not exist.
@@ -3561,21 +3576,21 @@ func oldPasswordUpgrade(pass string) (string, error) {
 }
 
 // rebuildAllPartitionValueMapAndSorted rebuilds all value map and sorted info for list column partitions with InfoSchema.
-func rebuildAllPartitionValueMapAndSorted(s *session) {
+func rebuildAllPartitionValueMapAndSorted(ctx context.Context, s *session) {
 	type partitionExpr interface {
 		PartitionExpr() *tables.PartitionExpr
 	}
 
 	p := parser.New()
 	is := s.GetInfoSchema().(infoschema.InfoSchema)
-	dbs := is.ListTablesWithSpecialAttribute(infoschema.PartitionAttribute)
+	dbs := is.ListTablesWithSpecialAttribute(infoschemacontext.PartitionAttribute)
 	for _, db := range dbs {
 		for _, t := range db.TableInfos {
 			pi := t.GetPartitionInfo()
 			if pi == nil || pi.Type != model.PartitionTypeList {
 				continue
 			}
-			tbl, ok := is.TableByID(s.currentCtx, t.ID)
+			tbl, ok := is.TableByID(ctx, t.ID)
 			intest.Assert(ok, "table not found in infoschema")
 			pe := tbl.(partitionExpr).PartitionExpr()
 			for _, cp := range pe.ColPrunes {

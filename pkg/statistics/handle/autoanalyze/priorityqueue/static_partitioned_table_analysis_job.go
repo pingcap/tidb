@@ -90,18 +90,25 @@ func (j *StaticPartitionedTableAnalysisJob) Analyze(
 	statsHandle statstypes.StatsHandle,
 	sysProcTracker sysproctrack.Tracker,
 ) error {
+	success := true
 	defer func() {
-		if j.successHook != nil {
-			j.successHook(j)
+		if success {
+			if j.successHook != nil {
+				j.successHook(j)
+			}
+		} else {
+			if j.failureHook != nil {
+				j.failureHook(j)
+			}
 		}
 	}()
 
 	return statsutil.CallWithSCtx(statsHandle.SPool(), func(sctx sessionctx.Context) error {
 		switch j.getAnalyzeType() {
 		case analyzeStaticPartition:
-			j.analyzeStaticPartition(sctx, statsHandle, sysProcTracker)
+			success = j.analyzeStaticPartition(sctx, statsHandle, sysProcTracker)
 		case analyzeStaticPartitionIndex:
-			j.analyzeStaticPartitionIndexes(sctx, statsHandle, sysProcTracker)
+			success = j.analyzeStaticPartitionIndexes(sctx, statsHandle, sysProcTracker)
 		}
 		return nil
 	})
@@ -205,25 +212,25 @@ func (j *StaticPartitionedTableAnalysisJob) analyzeStaticPartition(
 	sctx sessionctx.Context,
 	statsHandle statstypes.StatsHandle,
 	sysProcTracker sysproctrack.Tracker,
-) {
+) bool {
 	sql, params := j.GenSQLForAnalyzeStaticPartition()
-	exec.AutoAnalyze(sctx, statsHandle, sysProcTracker, j.TableStatsVer, sql, params...)
+	return exec.AutoAnalyze(sctx, statsHandle, sysProcTracker, j.TableStatsVer, sql, params...)
 }
 
 func (j *StaticPartitionedTableAnalysisJob) analyzeStaticPartitionIndexes(
 	sctx sessionctx.Context,
 	statsHandle statstypes.StatsHandle,
 	sysProcTracker sysproctrack.Tracker,
-) {
+) bool {
 	if len(j.Indexes) == 0 {
-		return
+		return true
 	}
 	// Only analyze the first index.
 	// This is because analyzing a single index also analyzes all other indexes and columns.
 	// Therefore, to avoid redundancy, we prevent multiple analyses of the same partition.
 	firstIndex := j.Indexes[0]
 	sql, params := j.GenSQLForAnalyzeStaticPartitionIndex(firstIndex)
-	exec.AutoAnalyze(sctx, statsHandle, sysProcTracker, j.TableStatsVer, sql, params...)
+	return exec.AutoAnalyze(sctx, statsHandle, sysProcTracker, j.TableStatsVer, sql, params...)
 }
 
 // GenSQLForAnalyzeStaticPartition generates the SQL for analyzing the specified static partition.

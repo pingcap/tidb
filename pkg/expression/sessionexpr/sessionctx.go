@@ -160,6 +160,7 @@ func NewEvalContext(sctx sessionctx.Context) *EvalContext {
 	ctx.setOptionalProp(sequenceOperatorProp(sctx))
 	ctx.setOptionalProp(expropt.NewAdvisoryLockPropProvider(sctx))
 	ctx.setOptionalProp(expropt.DDLOwnerInfoProvider(sctx.IsDDLOwner))
+	ctx.setOptionalProp(expropt.PrivilegeCheckerProvider(func() expropt.PrivilegeChecker { return ctx }))
 	// When EvalContext is created from a session, it should contain all the optional properties.
 	intest.Assert(ctx.props.PropKeySet().IsFull())
 	return ctx
@@ -190,7 +191,7 @@ func (ctx *EvalContext) SQLMode() mysql.SQLMode {
 // TypeCtx returns the types.Context
 func (ctx *EvalContext) TypeCtx() (tc types.Context) {
 	tc = ctx.sctx.GetSessionVars().StmtCtx.TypeCtx()
-	if intest.InTest {
+	if intest.EnableAssert {
 		exprctx.AssertLocationWithSessionVars(tc.Location(), ctx.sctx.GetSessionVars())
 	}
 	return
@@ -416,36 +417,6 @@ var _ exprctx.StaticConvertibleEvalContext = &EvalContext{}
 // AllParamValues implements context.StaticConvertibleEvalContext.
 func (ctx *EvalContext) AllParamValues() []types.Datum {
 	return ctx.sctx.GetSessionVars().PlanCacheParams.AllParamValues()
-}
-
-// GetDynamicPrivCheckFn implements context.StaticConvertibleEvalContext.
-func (ctx *EvalContext) GetDynamicPrivCheckFn() func(privName string, grantable bool) bool {
-	checker := privilege.GetPrivilegeManager(ctx.sctx)
-	activeRoles := make([]*auth.RoleIdentity, len(ctx.sctx.GetSessionVars().ActiveRoles))
-	copy(activeRoles, ctx.sctx.GetSessionVars().ActiveRoles)
-
-	return func(privName string, grantable bool) bool {
-		if checker == nil {
-			return true
-		}
-
-		return checker.RequestDynamicVerification(activeRoles, privName, grantable)
-	}
-}
-
-// GetRequestVerificationFn implements context.StaticConvertibleEvalContext.
-func (ctx *EvalContext) GetRequestVerificationFn() func(db string, table string, column string, priv mysql.PrivilegeType) bool {
-	checker := privilege.GetPrivilegeManager(ctx.sctx)
-	activeRoles := make([]*auth.RoleIdentity, len(ctx.sctx.GetSessionVars().ActiveRoles))
-	copy(activeRoles, ctx.sctx.GetSessionVars().ActiveRoles)
-
-	return func(db string, table string, column string, priv mysql.PrivilegeType) bool {
-		if checker == nil {
-			return true
-		}
-
-		return checker.RequestVerification(activeRoles, db, table, column, priv)
-	}
 }
 
 // GetWarnHandler implements context.StaticConvertibleEvalContext.

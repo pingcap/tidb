@@ -20,6 +20,7 @@ import (
 	"time"
 
 	pmodel "github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/statistics/handle/autoanalyze/priorityqueue"
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -321,4 +322,239 @@ func TestProcessDMLChangesWithRunningJobs(t *testing.T) {
 	require.NoError(t, err)
 	require.NotZero(t, job1.GetWeight())
 	require.Equal(t, tbl1.Meta().ID, job1.GetTableID(), "t1 has been removed from running jobs and should be in the queue")
+}
+
+func TestRequeueFailedJobs(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	handle := dom.StatsHandle()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("create database example_schema")
+	tk.MustExec("use example_schema")
+	tk.MustExec("create table example_table (a int)")
+	initJobs(tk)
+	insertMultipleFinishedJobs(tk, "example_table", "")
+	statistics.AutoAnalyzeMinCnt = 0
+	defer func() {
+		statistics.AutoAnalyzeMinCnt = 1000
+	}()
+
+	// Insert the failed job.
+	// Just failed.
+	now := tk.MustQuery("select now()").Rows()[0][0].(string)
+	insertFailedJobWithStartTime(tk, "example_schema", "example_table", "", now)
+
+	// Insert some rows.
+	tk.MustExec("insert into example_table values (11), (12), (13), (14), (15), (16), (17), (18), (19)")
+	require.NoError(t, handle.DumpStatsDeltaToKV(true))
+	require.NoError(t, handle.Update(context.Background(), dom.InfoSchema()))
+
+	pq := priorityqueue.NewAnalysisPriorityQueueV2(handle)
+	defer pq.Close()
+	require.NoError(t, pq.Initialize())
+
+	job, err := pq.Pop()
+	require.NoError(t, err)
+	require.NotNil(t, job)
+	sctx := tk.Session().(sessionctx.Context)
+	ok, _ := job.IsValidToAnalyze(sctx)
+	require.False(t, ok)
+
+	// Insert more rows.
+	tk.MustExec("insert into example_table values (20), (21), (22), (23), (24), (25), (26), (27), (28), (29)")
+	require.NoError(t, handle.DumpStatsDeltaToKV(true))
+	require.NoError(t, handle.Update(context.Background(), dom.InfoSchema()))
+
+	// Process the DML changes.
+	pq.ProcessDMLChanges()
+	l, err := pq.Len()
+	require.NoError(t, err)
+	require.Equal(t, 0, l)
+
+	// Requeue the failed jobs.
+	pq.RequeueFailedJobs()
+	l, err = pq.Len()
+	require.NoError(t, err)
+	require.Equal(t, 1, l)
+}
+
+func TestProcessDMLChangesWithLockedTables(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	handle := dom.StatsHandle()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t1 (a int)")
+	tk.MustExec("create table t2 (a int)")
+	tk.MustExec("insert into t1 values (1)")
+	tk.MustExec("insert into t2 values (1)")
+	statistics.AutoAnalyzeMinCnt = 0
+	defer func() {
+		statistics.AutoAnalyzeMinCnt = 1000
+	}()
+
+	ctx := context.Background()
+	require.NoError(t, handle.DumpStatsDeltaToKV(true))
+	require.NoError(t, handle.Update(ctx, dom.InfoSchema()))
+
+	pq := priorityqueue.NewAnalysisPriorityQueueV2(handle)
+	defer pq.Close()
+	require.NoError(t, pq.Initialize())
+
+	schema := pmodel.NewCIStr("test")
+	tbl1, err := dom.InfoSchema().TableByName(ctx, schema, pmodel.NewCIStr("t1"))
+	require.NoError(t, err)
+	tbl2, err := dom.InfoSchema().TableByName(ctx, schema, pmodel.NewCIStr("t2"))
+	require.NoError(t, err)
+
+	// Check current jobs.
+	job, err := pq.Peek()
+	require.NoError(t, err)
+	require.Equal(t, tbl1.Meta().ID, job.GetTableID())
+
+	// Lock t1.
+	tk.MustExec("lock stats t1")
+	require.NoError(t, handle.Update(ctx, dom.InfoSchema()))
+
+	// Process the DML changes.
+	pq.ProcessDMLChanges()
+
+	// Check if the jobs have been updated.
+	job, err = pq.Peek()
+	require.NoError(t, err)
+	require.Equal(t, tbl2.Meta().ID, job.GetTableID())
+
+	// Unlock t1.
+	tk.MustExec("unlock stats t1")
+	require.NoError(t, handle.Update(ctx, dom.InfoSchema()))
+
+	// Process the DML changes.
+	pq.ProcessDMLChanges()
+
+	// Check if the jobs have been updated.
+	l, err := pq.Len()
+	require.NoError(t, err)
+	require.Equal(t, 2, l)
+}
+
+func TestProcessDMLChangesWithLockedPartitionsAndDynamicPruneMode(t *testing.T) {
+	ctx := context.Background()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	handle := dom.StatsHandle()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t1 (a int) partition by range (a) (partition p0 values less than (10), partition p1 values less than (20))")
+	tk.MustExec("insert into t1 values (1)")
+	require.NoError(t, handle.DumpStatsDeltaToKV(true))
+	require.NoError(t, handle.Update(ctx, dom.InfoSchema()))
+	tk.MustExec("analyze table t1")
+	tk.MustExec("set global tidb_partition_prune_mode = 'dynamic'")
+	statistics.AutoAnalyzeMinCnt = 0
+	defer func() {
+		statistics.AutoAnalyzeMinCnt = 1000
+	}()
+
+	// Insert more rows into partition p0.
+	tk.MustExec("insert into t1 partition (p0) values (2), (3), (4), (5), (6), (7), (8), (9)")
+	require.NoError(t, handle.DumpStatsDeltaToKV(true))
+	require.NoError(t, handle.Update(ctx, dom.InfoSchema()))
+
+	pq := priorityqueue.NewAnalysisPriorityQueueV2(handle)
+	defer pq.Close()
+	require.NoError(t, pq.Initialize())
+
+	schema := pmodel.NewCIStr("test")
+	tbl, err := dom.InfoSchema().TableByName(ctx, schema, pmodel.NewCIStr("t1"))
+	require.NoError(t, err)
+
+	// Check current jobs.
+	job, err := pq.Peek()
+	require.NoError(t, err)
+	tableID := tbl.Meta().ID
+	require.Equal(t, tableID, job.GetTableID())
+
+	// Lock the whole table.
+	tk.MustExec("lock stats t1")
+	require.NoError(t, handle.Update(ctx, dom.InfoSchema()))
+
+	// Process the DML changes.
+	pq.ProcessDMLChanges()
+
+	// No jobs should be in the queue.
+	l, err := pq.Len()
+	require.NoError(t, err)
+	require.Equal(t, 0, l)
+
+	// Unlock the whole table.
+	tk.MustExec("unlock stats t1")
+	require.NoError(t, handle.Update(ctx, dom.InfoSchema()))
+
+	// Process the DML changes.
+	pq.ProcessDMLChanges()
+
+	// Check if the jobs have been updated.
+	job, err = pq.Peek()
+	require.NoError(t, err)
+	require.Equal(t, tableID, job.GetTableID())
+}
+
+func TestProcessDMLChangesWithLockedPartitionsAndStaticPruneMode(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	handle := dom.StatsHandle()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t1 (a int) partition by range (a) (partition p0 values less than (10), partition p1 values less than (20))")
+	tk.MustExec("insert into t1 values (1)")
+	tk.MustExec("set global tidb_partition_prune_mode = 'static'")
+	statistics.AutoAnalyzeMinCnt = 0
+	defer func() {
+		statistics.AutoAnalyzeMinCnt = 1000
+	}()
+
+	ctx := context.Background()
+	require.NoError(t, handle.DumpStatsDeltaToKV(true))
+	require.NoError(t, handle.Update(ctx, dom.InfoSchema()))
+	tk.MustExec("analyze table t1")
+	require.NoError(t, handle.Update(ctx, dom.InfoSchema()))
+	schema := pmodel.NewCIStr("test")
+	tbl, err := dom.InfoSchema().TableByName(ctx, schema, pmodel.NewCIStr("t1"))
+	require.NoError(t, err)
+
+	// Insert more rows into partition p0.
+	tk.MustExec("insert into t1 partition (p0) values (2), (3), (4), (5), (6), (7), (8), (9)")
+	require.NoError(t, handle.DumpStatsDeltaToKV(true))
+	require.NoError(t, handle.Update(ctx, dom.InfoSchema()))
+
+	pq := priorityqueue.NewAnalysisPriorityQueueV2(handle)
+	defer pq.Close()
+	require.NoError(t, pq.Initialize())
+
+	// Check current jobs.
+	job, err := pq.Peek()
+	require.NoError(t, err)
+	pid := tbl.Meta().Partition.Definitions[0].ID
+	require.Equal(t, pid, job.GetTableID())
+
+	// Lock partition p0.
+	tk.MustExec("lock stats t1 partition p0")
+	require.NoError(t, handle.Update(ctx, dom.InfoSchema()))
+
+	// Process the DML changes.
+	pq.ProcessDMLChanges()
+
+	// No jobs should be in the queue.
+	l, err := pq.Len()
+	require.NoError(t, err)
+	require.Equal(t, 0, l)
+
+	// Unlock partition p0.
+	tk.MustExec("unlock stats t1 partition (p0)")
+	require.NoError(t, handle.Update(ctx, dom.InfoSchema()))
+
+	// Process the DML changes.
+	pq.ProcessDMLChanges()
+
+	// Check if the jobs have been updated.
+	job, err = pq.Peek()
+	require.NoError(t, err)
+	pid = tbl.Meta().Partition.Definitions[0].ID
+	require.Equal(t, pid, job.GetTableID())
 }

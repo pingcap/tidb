@@ -97,18 +97,25 @@ func (j *DynamicPartitionedTableAnalysisJob) Analyze(
 	statsHandle statstypes.StatsHandle,
 	sysProcTracker sysproctrack.Tracker,
 ) error {
+	success := true
 	defer func() {
-		if j.successHook != nil {
-			j.successHook(j)
+		if success {
+			if j.successHook != nil {
+				j.successHook(j)
+			}
+		} else {
+			if j.failureHook != nil {
+				j.failureHook(j)
+			}
 		}
 	}()
 
 	return statsutil.CallWithSCtx(statsHandle.SPool(), func(sctx sessionctx.Context) error {
 		switch j.getAnalyzeType() {
 		case analyzeDynamicPartition:
-			j.analyzePartitions(sctx, statsHandle, sysProcTracker)
+			success = j.analyzePartitions(sctx, statsHandle, sysProcTracker)
 		case analyzeDynamicPartitionIndex:
-			j.analyzePartitionIndexes(sctx, statsHandle, sysProcTracker)
+			success = j.analyzePartitionIndexes(sctx, statsHandle, sysProcTracker)
 		}
 		return nil
 	})
@@ -207,7 +214,7 @@ func (j *DynamicPartitionedTableAnalysisJob) analyzePartitions(
 	sctx sessionctx.Context,
 	statsHandle statstypes.StatsHandle,
 	sysProcTracker sysproctrack.Tracker,
-) {
+) bool {
 	analyzePartitionBatchSize := int(variable.AutoAnalyzePartitionBatchSize.Load())
 	needAnalyzePartitionNames := make([]any, 0, len(j.Partitions))
 	for _, partition := range j.Partitions {
@@ -222,8 +229,12 @@ func (j *DynamicPartitionedTableAnalysisJob) analyzePartitions(
 
 		sql := getPartitionSQL("analyze table %n.%n partition", "", end-start)
 		params := append([]any{j.TableSchema, j.GlobalTableName}, needAnalyzePartitionNames[start:end]...)
-		exec.AutoAnalyze(sctx, statsHandle, sysProcTracker, j.TableStatsVer, sql, params...)
+		success := exec.AutoAnalyze(sctx, statsHandle, sysProcTracker, j.TableStatsVer, sql, params...)
+		if !success {
+			return false
+		}
 	}
+	return true
 }
 
 // analyzePartitionIndexes performs analysis on the specified partition indexes.
@@ -231,7 +242,7 @@ func (j *DynamicPartitionedTableAnalysisJob) analyzePartitionIndexes(
 	sctx sessionctx.Context,
 	statsHandle statstypes.StatsHandle,
 	sysProcTracker sysproctrack.Tracker,
-) {
+) (success bool) {
 	analyzePartitionBatchSize := int(variable.AutoAnalyzePartitionBatchSize.Load())
 
 OnlyPickOneIndex:
@@ -250,13 +261,14 @@ OnlyPickOneIndex:
 			sql := getPartitionSQL("analyze table %n.%n partition", " index %n", end-start)
 			params := append([]any{j.TableSchema, j.GlobalTableName}, needAnalyzePartitionNames[start:end]...)
 			params = append(params, indexName)
-			exec.AutoAnalyze(sctx, statsHandle, sysProcTracker, j.TableStatsVer, sql, params...)
+			success = exec.AutoAnalyze(sctx, statsHandle, sysProcTracker, j.TableStatsVer, sql, params...)
 			// Halt execution after analyzing one index.
 			// This is because analyzing a single index also analyzes all other indexes and columns.
 			// Therefore, to avoid redundancy, we prevent multiple analyses of the same partition.
 			break OnlyPickOneIndex
 		}
 	}
+	return
 }
 
 func (j *DynamicPartitionedTableAnalysisJob) getAnalyzeType() analyzeType {

@@ -126,11 +126,60 @@ func (h handler) handle(
 			}
 		}
 	case model.ActionTruncateTablePartition:
-		// TODO: implement me
+		globalTableInfo, addedPartInfo, droppedPartInfo := change.GetTruncatePartitionInfo()
+		// First, add the new stats meta record for the new partitions.
+		for _, def := range addedPartInfo.Definitions {
+			if err := h.insertStats4PhysicalID(ctx, sctx, globalTableInfo, def.ID); err != nil {
+				return errors.Trace(err)
+			}
+		}
+
+		// Second, clean up the old stats meta from global stats meta for the dropped partitions.
+		if err := updateGlobalTableStats4TruncatePartition(
+			ctx,
+			sctx,
+			globalTableInfo,
+			droppedPartInfo,
+		); err != nil {
+			return errors.Trace(err)
+		}
+
+		// Third, clean up the old stats meta from partition stats meta for the dropped partitions.
+		for _, def := range droppedPartInfo.Definitions {
+			if err := h.delayedDeleteStats4PhysicalID(ctx, sctx, def.ID); err != nil {
+				return errors.Trace(err)
+			}
+		}
+
+		return nil
 	case model.ActionDropTablePartition:
-		// TODO: implement me
+		globalTableInfo, droppedPartitionInfo := change.GetDropPartitionInfo()
+		if err := updateGlobalTableStats4DropPartition(
+			ctx,
+			sctx,
+			globalTableInfo,
+			droppedPartitionInfo,
+		); err != nil {
+			return errors.Trace(err)
+		}
+
+		// Reset the partition stats.
+		for _, def := range droppedPartitionInfo.Definitions {
+			if err := h.delayedDeleteStats4PhysicalID(ctx, sctx, def.ID); err != nil {
+				return errors.Trace(err)
+			}
+		}
+
+		return nil
 	case model.ActionExchangeTablePartition:
-		// TODO: implement me
+		globalTableInfo, originalPartInfo, originalTableInfo := change.GetExchangePartitionInfo()
+		return errors.Trace(updateGlobalTableStats4ExchangePartition(
+			ctx,
+			sctx,
+			globalTableInfo,
+			originalPartInfo,
+			originalTableInfo,
+		))
 	case model.ActionReorganizePartition:
 		globalTableInfo, addedPartInfo, droppedPartitionInfo := change.GetReorganizePartitionInfo()
 		// Avoid updating global stats as the data remains unchanged.
