@@ -57,8 +57,8 @@ PARTITION BY HASH (`b`) PARTITIONS 3;
 show create table t;
 Table	Create Table
 t	CREATE TABLE `t` (
-  `a` int(11) NOT NULL,
-  `b` int(11) DEFAULT NULL,
+  `a` int NOT NULL,
+  `b` int DEFAULT NULL,
   PRIMARY KEY (`a`) /*T![clustered_index] NONCLUSTERED */ /*T![global_index] GLOBAL */
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 PARTITION BY HASH (`b`) PARTITIONS 3

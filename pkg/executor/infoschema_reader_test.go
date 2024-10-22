@@ -331,7 +331,7 @@ func TestForAnalyzeStatus(t *testing.T) {
 	tk.MustExec("insert into t1 values (1,2),(3,4)")
 	tk.MustExec("analyze table t1 all columns")
 	tk.MustQuery("show warnings").Check(testkit.Rows("Note 1105 Analyze use auto adjusted sample rate 1.000000 for table test.t1, reason to use this rate is \"use min(1, 110000/10000) as the sample-rate=1\"")) // 1 note.
-	require.NoError(t, dom.StatsHandle().LoadNeededHistograms())
+	require.NoError(t, dom.StatsHandle().LoadNeededHistograms(dom.InfoSchema()))
 	tk.MustExec("CREATE ROLE r_t1 ;")
 	tk.MustExec("GRANT ALL PRIVILEGES ON test.t1 TO r_t1;")
 	tk.MustExec("GRANT r_t1 TO analyze_tester;")
@@ -607,7 +607,7 @@ func TestColumnTable(t *testing.T) {
 		testkit.RowsWithSep("|",
 			"test|tbl1|col_2"))
 	tk.MustQuery(`select count(*) from information_schema.columns;`).Check(
-		testkit.RowsWithSep("|", "4965"))
+		testkit.RowsWithSep("|", "4983"))
 }
 
 func TestIndexUsageTable(t *testing.T) {
@@ -641,7 +641,7 @@ func TestIndexUsageTable(t *testing.T) {
 			"test|idt1|idx_2",
 			"test|idt1|idx_3"))
 	tk.MustQuery(`select TABLE_SCHEMA, TABLE_NAME, INDEX_NAME from information_schema.tidb_index_usage
-				where TABLE_SCHEMA = 'test' and INDEX_NAME = 'idx_2';`).Check(
+				where TABLE_SCHEMA = 'test' and INDEX_NAME = 'idx_2';`).Sort().Check(
 		testkit.RowsWithSep("|",
 			"test|idt1|idx_2",
 			"test|idt2|idx_2"))
@@ -654,7 +654,7 @@ func TestIndexUsageTable(t *testing.T) {
 		testkit.RowsWithSep("|",
 			"test|idt2|idx_4"))
 	tk.MustQuery(`select count(*) from information_schema.tidb_index_usage;`).Check(
-		testkit.RowsWithSep("|", "77"))
+		testkit.RowsWithSep("|", "78"))
 
 	tk.MustQuery(`select TABLE_SCHEMA, TABLE_NAME, INDEX_NAME from information_schema.tidb_index_usage
 				where TABLE_SCHEMA = 'test1';`).Check(testkit.Rows())

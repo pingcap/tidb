@@ -32,8 +32,37 @@
          "id": 2,
          "panels": [
             {
-               "columns": [ ],
                "datasource": "${DS_TEST-CLUSTER}",
+               "fieldConfig": {
+                  "overrides": [
+                     {
+                        "matcher": {
+                           "id": "byName",
+                           "options": "Burstable"
+                        },
+                        "properties": [
+                           {
+                              "id": "mappings",
+                              "value": [
+                                 {
+                                    "options": {
+                                       "0": {
+                                          "index": 1,
+                                          "text": "false"
+                                       },
+                                       "1": {
+                                          "index": 0,
+                                          "text": "true"
+                                       }
+                                    },
+                                    "type": "value"
+                                 }
+                              ]
+                           }
+                        ]
+                     }
+                  ]
+               },
                "gridPos": {
                   "h": 7,
                   "w": 24,
@@ -41,36 +70,29 @@
                   "y": 0
                },
                "id": 3,
-               "links": [ ],
-               "styles": [ ],
                "targets": [
                   {
-                     "expr": "resource_manager_server_group_config{type=\"priority\"}",
+                     "expr": "max by (resource_group, type) (resource_manager_server_group_config{type=\"priority\"})",
                      "format": "time_series",
-                     "instant": "instant",
+                     "instant": true,
                      "intervalFactor": 2,
-                     "legendFormat": "{{resource_group}}",
-                     "refId": "A"
+                     "legendFormat": "{{resource_group}}"
                   },
                   {
-                     "expr": "resource_manager_server_group_config{type=\"ru_capacity\"}",
+                     "expr": "max by (resource_group, type) (resource_manager_server_group_config{type=\"ru_capacity\"}) < bool 0",
                      "format": "time_series",
-                     "instant": "instant",
+                     "instant": true,
                      "intervalFactor": 2,
-                     "legendFormat": "{{resource_group}}",
-                     "refId": "B"
+                     "legendFormat": "{{resource_group}}"
                   },
                   {
-                     "expr": "resource_manager_server_group_config{type=\"ru_per_sec\"}",
+                     "expr": "max by (resource_group, type) (resource_manager_server_group_config{type=\"ru_per_sec\"})",
                      "format": "time_series",
-                     "instant": "instant",
+                     "instant": true,
                      "intervalFactor": 2,
-                     "legendFormat": "{{resource_group}}",
-                     "refId": "C"
+                     "legendFormat": "{{resource_group}}"
                   }
                ],
-               "timeFrom": null,
-               "timeShift": null,
                "title": "RU Config",
                "transformations": [
                   {
@@ -97,10 +119,17 @@
                            "resource_group": 4,
                            "ru_capacity": 7,
                            "ru_per_sec": 6
+                        },
+                        "renameByName": {
+                           "priority": "Priority",
+                           "resource_group": "Group Name",
+                           "ru_capacity": "Burstable",
+                           "ru_per_sec": "RU_PER_SEC"
                         }
                      }
                   }
                ],
+               "transparent": false,
                "type": "table"
             },
             {
@@ -146,7 +175,7 @@
                "steppedLine": false,
                "targets": [
                   {
-                     "expr": "sum(rate(resource_manager_resource_unit_read_request_unit_sum{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", type=~\"|tp\"}[1m])) by (resource_group) + sum(rate(resource_manager_resource_unit_write_request_unit_sum{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", type=~\"|tp\"}[1m])) by (resource_group)",
+                     "expr": "sum(rate(resource_manager_resource_unit_read_request_unit_sum{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", type=~\"|tp\", resource_group=~\"$resource_group\"}[1m])) by (resource_group) + sum(rate(resource_manager_resource_unit_write_request_unit_sum{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", type=~\"|tp\", resource_group=~\"$resource_group\"}[1m])) by (resource_group)",
                      "format": "time_series",
                      "intervalFactor": 2,
                      "legendFormat": "{{resource_group}}",
@@ -239,14 +268,14 @@
                "steppedLine": false,
                "targets": [
                   {
-                     "expr": "sum(resource_manager_resource_unit_read_request_unit_max_per_sec{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\"}) by (resource_group)",
+                     "expr": "sum(resource_manager_resource_unit_read_request_unit_max_per_sec{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", resource_group=~\"$resource_group\"}) by (resource_group)",
                      "format": "time_series",
                      "intervalFactor": 2,
                      "legendFormat": "{{resource_group}}-read",
                      "refId": "A"
                   },
                   {
-                     "expr": "sum(resource_manager_resource_unit_write_request_unit_max_per_sec{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\"}) by (resource_group)",
+                     "expr": "sum(resource_manager_resource_unit_write_request_unit_max_per_sec{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", resource_group=~\"$resource_group\"}) by (resource_group)",
                      "format": "time_series",
                      "intervalFactor": 2,
                      "legendFormat": "{{resource_group}}-write",
@@ -256,7 +285,7 @@
                "thresholds": [ ],
                "timeFrom": null,
                "timeShift": null,
-               "title": "RU (Max Cost During 20s Period)",
+               "title": "RU Max (Max Cost During 20s Period)",
                "tooltip": {
                   "shared": true,
                   "sort": 0,
@@ -332,10 +361,10 @@
                "steppedLine": false,
                "targets": [
                   {
-                     "expr": "(sum(rate(resource_manager_resource_unit_read_request_unit_sum{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", type=~\"|tp\"}[1m])) by (name) + sum(rate(resource_manager_resource_unit_write_request_unit_sum{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", type=~\"|tp\"}[1m])) by (name)) / sum(rate(tidb_session_resource_group_query_total{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\"}[1m])) by (name)",
+                     "expr": "(sum(rate(resource_manager_resource_unit_read_request_unit_sum{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", type=~\"|tp\", resource_group=~\"$resource_group\"}[1m])) by (name) + sum(rate(resource_manager_resource_unit_write_request_unit_sum{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", type=~\"|tp\", resource_group=~\"$resource_group\"}[1m])) by (resource_group)) / sum(rate(tidb_session_resource_group_query_total{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", resource_group=~\"$resource_group\"}[1m])) by (resource_group)",
                      "format": "time_series",
                      "intervalFactor": 2,
-                     "legendFormat": "{{name}}",
+                     "legendFormat": "{{resource_group}}",
                      "refId": "A"
                   },
                   {
@@ -425,10 +454,10 @@
                "steppedLine": false,
                "targets": [
                   {
-                     "expr": "sum(rate(resource_manager_resource_unit_read_request_unit_sum{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", type=~\"|tp\"}[1m])) by (name)",
+                     "expr": "sum(rate(resource_manager_resource_unit_read_request_unit_sum{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", type=~\"|tp\", resource_group=~\"$resource_group\"}[1m])) by (resource_group)",
                      "format": "time_series",
                      "intervalFactor": 2,
-                     "legendFormat": "{{name}}",
+                     "legendFormat": "{{resource_group}}",
                      "refId": "A"
                   },
                   {
@@ -518,10 +547,10 @@
                "steppedLine": false,
                "targets": [
                   {
-                     "expr": "sum(rate(resource_manager_resource_unit_read_request_unit_sum{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", type=~\"|tp\"}[1m])) by (name) / sum(rate(tidb_session_resource_group_query_total{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\"}[1m])) by (name)",
+                     "expr": "sum(rate(resource_manager_resource_unit_read_request_unit_sum{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", type=~\"|tp\", resource_group=~\"$resource_group\"}[1m])) by (name) / sum(rate(tidb_session_resource_group_query_total{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", resource_group=~\"$resource_group\"}[1m])) by (resource_group)",
                      "format": "time_series",
                      "intervalFactor": 2,
-                     "legendFormat": "{{name}}",
+                     "legendFormat": "{{resource_group}}",
                      "refId": "A"
                   },
                   {
@@ -611,10 +640,10 @@
                "steppedLine": false,
                "targets": [
                   {
-                     "expr": "sum(rate(resource_manager_resource_unit_write_request_unit_sum{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", type=~\"|tp\"}[1m])) by (name)",
+                     "expr": "sum(rate(resource_manager_resource_unit_write_request_unit_sum{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", type=~\"|tp\", resource_group=~\"$resource_group\"}[1m])) by (resource_group)",
                      "format": "time_series",
                      "intervalFactor": 2,
-                     "legendFormat": "{{name}}",
+                     "legendFormat": "{{resource_group}}",
                      "refId": "A"
                   },
                   {
@@ -704,10 +733,10 @@
                "steppedLine": false,
                "targets": [
                   {
-                     "expr": "sum(rate(resource_manager_resource_unit_write_request_unit_sum{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", type=~\"|tp\"}[1m])) by (name) / sum(rate(tidb_session_resource_group_query_total{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\"}[1m])) by (name)",
+                     "expr": "sum(rate(resource_manager_resource_unit_write_request_unit_sum{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", type=~\"|tp\", resource_group=~\"$resource_group\"}[1m])) by (resource_group) / sum(rate(tidb_session_resource_group_query_total{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", resource_group=~\"$resource_group\"}[1m])) by (resource_group)",
                      "format": "time_series",
                      "intervalFactor": 2,
-                     "legendFormat": "{{name}}",
+                     "legendFormat": "{{resource_group}}",
                      "refId": "A"
                   },
                   {
@@ -817,17 +846,17 @@
                "steppedLine": false,
                "targets": [
                   {
-                     "expr": "sum(rate(resource_manager_resource_request_count{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\"}[1m])) by (name, type)",
+                     "expr": "sum(rate(resource_manager_resource_request_count{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", resource_group=~\"$resource_group\"}[1m])) by (resource_group, type)",
                      "format": "time_series",
                      "intervalFactor": 2,
-                     "legendFormat": "{{name}}-{{type}}",
+                     "legendFormat": "{{resource_group}}-{{type}}",
                      "refId": "A"
                   },
                   {
-                     "expr": "sum(rate(resource_manager_resource_request_count{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\"}[1m])) by (name)",
+                     "expr": "sum(rate(resource_manager_resource_request_count{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", resource_group=~\"$resource_group\"}[1m])) by (resource_group)",
                      "format": "time_series",
                      "intervalFactor": 2,
-                     "legendFormat": "{{name}}-total",
+                     "legendFormat": "{{resource_group}}-total",
                      "refId": "B"
                   }
                ],
@@ -910,17 +939,17 @@
                "steppedLine": false,
                "targets": [
                   {
-                     "expr": "sum(rate(resource_manager_resource_request_count{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", type=\"read\"}[1m])) by (name) / sum(rate(tidb_session_resource_group_query_total{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\"}[1m])) by (name)",
+                     "expr": "sum(rate(resource_manager_resource_request_count{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", type=\"read\", resource_group=~\"$resource_group\"}[1m])) by (resource_group) / sum(rate(tidb_session_resource_group_query_total{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", resource_group=~\"$resource_group\"}[1m])) by (resource_group)",
                      "format": "time_series",
                      "intervalFactor": 2,
-                     "legendFormat": "{{name}}-read",
+                     "legendFormat": "{{resource_group}}-read",
                      "refId": "A"
                   },
                   {
-                     "expr": "sum(rate(resource_manager_resource_request_count{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", type=\"write\"}[1m])) by (name) / sum(rate(tidb_session_resource_group_query_total{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\"}[1m])) by (name)",
+                     "expr": "sum(rate(resource_manager_resource_request_count{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", type=\"write\", resource_group=~\"$resource_group\"}[1m])) by (resource_group) / sum(rate(tidb_session_resource_group_query_total{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", resource_group=~\"$resource_group\"}[1m])) by (resource_group)",
                      "format": "time_series",
                      "intervalFactor": 2,
-                     "legendFormat": "{{name}}-write",
+                     "legendFormat": "{{resource_group}}-write",
                      "refId": "B"
                   },
                   {
@@ -1017,10 +1046,10 @@
                "steppedLine": false,
                "targets": [
                   {
-                     "expr": "sum(rate(resource_manager_resource_read_byte_sum{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\"}[1m])) by (name)",
+                     "expr": "sum(rate(resource_manager_resource_read_byte_sum{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", resource_group=~\"$resource_group\"}[1m])) by (resource_group)",
                      "format": "time_series",
                      "intervalFactor": 2,
-                     "legendFormat": "{{name}}",
+                     "legendFormat": "{{resource_group}}",
                      "refId": "A"
                   },
                   {
@@ -1110,10 +1139,10 @@
                "steppedLine": false,
                "targets": [
                   {
-                     "expr": "sum(rate(resource_manager_resource_read_byte_sum{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\"}[1m])) by (name) / sum(rate(tidb_session_resource_group_query_total{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\"}[1m])) by (name)",
+                     "expr": "sum(rate(resource_manager_resource_read_byte_sum{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", resource_group=~\"$resource_group\"}[1m])) by (resource_group) / sum(rate(tidb_session_resource_group_query_total{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", resource_group=~\"$resource_group\"}[1m])) by (resource_group)",
                      "format": "time_series",
                      "intervalFactor": 2,
-                     "legendFormat": "{{name}}",
+                     "legendFormat": "{{resource_group}}",
                      "refId": "A"
                   },
                   {
@@ -1203,10 +1232,10 @@
                "steppedLine": false,
                "targets": [
                   {
-                     "expr": "sum(rate(resource_manager_resource_write_byte_sum{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\"}[1m])) by (name)",
+                     "expr": "sum(rate(resource_manager_resource_write_byte_sum{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", resource_group=~\"$resource_group\"}[1m])) by (resource_group)",
                      "format": "time_series",
                      "intervalFactor": 2,
-                     "legendFormat": "{{name}}",
+                     "legendFormat": "{{resource_group}}",
                      "refId": "A"
                   },
                   {
@@ -1296,10 +1325,10 @@
                "steppedLine": false,
                "targets": [
                   {
-                     "expr": "sum(rate(resource_manager_resource_write_byte_sum{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\"}[1m])) by (name) / sum(rate(tidb_session_resource_group_query_total{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\"}[1m])) by (name)",
+                     "expr": "sum(rate(resource_manager_resource_write_byte_sum{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\"}[1m])) by (name) / sum(rate(tidb_session_resource_group_query_total{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", resource_group=~\"$resource_group\"}[1m])) by (resource_group)",
                      "format": "time_series",
                      "intervalFactor": 2,
-                     "legendFormat": "{{name}}",
+                     "legendFormat": "{{resource_group}}",
                      "refId": "A"
                   },
                   {
@@ -1389,10 +1418,10 @@
                "steppedLine": false,
                "targets": [
                   {
-                     "expr": "sum(rate(resource_manager_resource_kv_cpu_time_ms_sum{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\"}[1m])) by (name)",
+                     "expr": "sum(rate(resource_manager_resource_kv_cpu_time_ms_sum{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", resource_group=~\"$resource_group\"}[1m])) by (resource_group)",
                      "format": "time_series",
                      "intervalFactor": 2,
-                     "legendFormat": "{{name}}",
+                     "legendFormat": "{{resource_group}}",
                      "refId": "A"
                   },
                   {
@@ -1482,10 +1511,10 @@
                "steppedLine": false,
                "targets": [
                   {
-                     "expr": "sum(rate(resource_manager_resource_sql_cpu_time_ms_sum{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\"}[1m])) by (name)",
+                     "expr": "sum(rate(resource_manager_resource_sql_cpu_time_ms_sum{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", resource_group=~\"$resource_group\"}[1m])) by (resource_group)",
                      "format": "time_series",
                      "intervalFactor": 2,
-                     "legendFormat": "{{name}}",
+                     "legendFormat": "{{resource_group}}",
                      "refId": "A"
                   },
                   {
@@ -1595,10 +1624,10 @@
                "steppedLine": false,
                "targets": [
                   {
-                     "expr": "resource_manager_client_resource_group_status{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$tidb_instance\"}",
+                     "expr": "resource_manager_client_resource_group_status{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$tidb_instance\", resource_group=~\"$resource_group\"}",
                      "format": "time_series",
                      "intervalFactor": 2,
-                     "legendFormat": "{{instance}}-{{name}}",
+                     "legendFormat": "{{instance}}-{{resource_group}}",
                      "refId": "A"
                   }
                ],
@@ -1774,17 +1803,18 @@
                "steppedLine": false,
                "targets": [
                   {
-                     "expr": "sum(rate(resource_manager_client_request_fail{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$tidb_instance\"}[1m])) by (instance)",
+                     "expr": "sum(rate(resource_manager_client_request_fail{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$tidb_instance\", resource_group=~\"$resource_group\"}[1m])) by (instance, resource_group, type)",
                      "format": "time_series",
                      "intervalFactor": 2,
-                     "legendFormat": "{{instance}}-total",
+                     "legendFormat": "{{resource_group}}-{{type}}-{{instance}}",
                      "refId": "A"
                   },
                   {
-                     "expr": "sum(rate(resource_manager_client_request_fail{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$tidb_instance\"}[1m])) by (instance, name)",
+                     "expr": "sum(rate(resource_manager_client_request_fail{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$tidb_instance\"}[1m])) by (instance)",
                      "format": "time_series",
+                     "hide": true,
                      "intervalFactor": 2,
-                     "legendFormat": "{{instance}}-{{name}}",
+                     "legendFormat": "{{instance}}-total",
                      "refId": "B"
                   }
                ],
@@ -1867,17 +1897,17 @@
                "steppedLine": false,
                "targets": [
                   {
-                     "expr": "histogram_quantile(0.99, sum(rate(resource_manager_client_request_success_bucket{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$tidb_instance\"}[1m])) by (instance, name, le))",
+                     "expr": "histogram_quantile(0.99, sum(rate(resource_manager_client_request_success_bucket{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$tidb_instance\", resource_group=~\"$resource_group\"}[1m])) by (instance, resource_group, le))",
                      "format": "time_series",
                      "intervalFactor": 2,
-                     "legendFormat": "{{instance}}-{{name}}-99",
+                     "legendFormat": "{{instance}}-{{resource_group}}-99",
                      "refId": "A"
                   },
                   {
-                     "expr": "histogram_quantile(0.9, sum(rate(resource_manager_client_request_success_bucket{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$tidb_instance\"}[1m])) by (instance, name, le))",
+                     "expr": "histogram_quantile(0.9, sum(rate(resource_manager_client_request_success_bucket{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$tidb_instance\", resource_group=~\"$resource_group\"}[1m])) by (instance, resource_group, le))",
                      "format": "time_series",
                      "intervalFactor": 2,
-                     "legendFormat": "{{instance}}-{{name}}-90",
+                     "legendFormat": "{{instance}}-{{resource_group}}-90",
                      "refId": "B"
                   }
                ],
@@ -1967,10 +1997,10 @@
                      "refId": "A"
                   },
                   {
-                     "expr": "sum(rate(resource_manager_client_request_success_count{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$tidb_instance\"}[1m])) by (instance, name)",
+                     "expr": "sum(rate(resource_manager_client_request_success_count{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$tidb_instance\", resource_group=~\"$resource_group\"}[1m])) by (instance, resource_group)",
                      "format": "time_series",
                      "intervalFactor": 2,
-                     "legendFormat": "{{instance}}-{{name}}",
+                     "legendFormat": "{{instance}}-{{resource_group}}",
                      "refId": "B"
                   }
                ],
@@ -2056,14 +2086,14 @@
                      "expr": "histogram_quantile(0.99, sum(rate(resource_manager_client_token_request_duration_bucket{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$tidb_instance\"}[1m])) by (instance, le))",
                      "format": "time_series",
                      "intervalFactor": 2,
-                     "legendFormat": "{{instance}}-{{name}}-99",
+                     "legendFormat": "{{instance}}-99",
                      "refId": "A"
                   },
                   {
                      "expr": "histogram_quantile(0.999, sum(rate(resource_manager_client_token_request_duration_bucket{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$tidb_instance\"}[1m])) by (instance, le))",
                      "format": "time_series",
                      "intervalFactor": 2,
-                     "legendFormat": "{{instance}}-{{name}}-999",
+                     "legendFormat": "{{instance}}-999",
                      "refId": "B"
                   }
                ],
@@ -2086,7 +2116,7 @@
                },
                "yaxes": [
                   {
-                     "format": "short",
+                     "format": "s",
                      "label": null,
                      "logBase": 1,
                      "max": null,
@@ -2094,7 +2124,7 @@
                      "show": true
                   },
                   {
-                     "format": "short",
+                     "format": "s",
                      "label": null,
                      "logBase": 1,
                      "max": null,
@@ -2167,10 +2197,10 @@
                      "refId": "C"
                   },
                   {
-                     "expr": "sum(rate(resource_manager_client_token_request_resource_group{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$tidb_instance\"}[1m])) by (instance, name)",
+                     "expr": "sum(rate(resource_manager_client_token_request_resource_group{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$tidb_instance\", resource_group=~\"$resource_group\"}[1m])) by (instance, resource_group)",
                      "format": "time_series",
                      "intervalFactor": 2,
-                     "legendFormat": "{{instance}}-{{name}}",
+                     "legendFormat": "{{instance}}-{{resource_group}}",
                      "refId": "D"
                   }
                ],
@@ -2273,7 +2303,7 @@
                "steppedLine": false,
                "targets": [
                   {
-                     "expr": "histogram_quantile(1.0, sum(rate(tidb_server_handle_query_duration_seconds_bucket{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\"}[1m])) by (le,resource_group))",
+                     "expr": "histogram_quantile(1.0, sum(rate(tidb_server_handle_query_duration_seconds_bucket{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", resource_group=~\"$resource_group\"}[1m])) by (le,resource_group))",
                      "format": "time_series",
                      "intervalFactor": 2,
                      "legendFormat": "{{resource_group}}",
@@ -2299,7 +2329,7 @@
                },
                "yaxes": [
                   {
-                     "format": "short",
+                     "format": "s",
                      "label": null,
                      "logBase": 2,
                      "max": null,
@@ -2307,7 +2337,7 @@
                      "show": true
                   },
                   {
-                     "format": "short",
+                     "format": "s",
                      "label": null,
                      "logBase": 1,
                      "max": null,
@@ -2359,14 +2389,14 @@
                "steppedLine": false,
                "targets": [
                   {
-                     "expr": "sum(rate(tidb_server_query_runaway_check{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", type=\"hit\"}[5m])) by (resource_group)",
+                     "expr": "sum(rate(tidb_server_query_runaway_check{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", type=\"hit\", resource_group=~\"$resource_group\"}[5m])) by (resource_group)",
                      "format": "time_series",
                      "intervalFactor": 2,
                      "legendFormat": "{{resource_group}}-hit",
                      "refId": "A"
                   },
                   {
-                     "expr": "sum(rate(tidb_server_query_runaway_check{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", type!=\"hit\"}[5m])) by (resource_group, type, action)",
+                     "expr": "sum(rate(tidb_server_query_runaway_check{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", type!=\"hit\", resource_group=~\"$resource_group\"}[5m])) by (resource_group, type, action)",
                      "format": "time_series",
                      "intervalFactor": 2,
                      "legendFormat": "{{resource_group}}-{{type}}-{{action}}",
@@ -2435,7 +2465,7 @@
                "dashLength": 10,
                "dashes": false,
                "datasource": "${DS_TEST-CLUSTER}",
-               "description": "The total background task's request unit cost for all resource groups.",
+               "description": "The total CPU time cost by tasks of each priority.",
                "fill": 1,
                "fillGradient": 0,
                "gridPos": {
@@ -2445,6 +2475,377 @@
                   "y": 0
                },
                "id": 32,
+               "legend": {
+                  "alignAsTable": true,
+                  "avg": false,
+                  "current": true,
+                  "max": false,
+                  "min": false,
+                  "rightSide": true,
+                  "show": true,
+                  "sideWidth": null,
+                  "total": false,
+                  "values": true
+               },
+               "lines": true,
+               "linewidth": 1,
+               "links": [ ],
+               "nullPointMode": "null",
+               "percentage": false,
+               "pointradius": 5,
+               "points": false,
+               "renderer": "flot",
+               "repeat": null,
+               "seriesOverrides": [ ],
+               "spaceLength": 10,
+               "stack": false,
+               "steppedLine": false,
+               "targets": [
+                  {
+                     "expr": "sum(rate(tikv_resource_control_priority_task_exec_duration{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$tidb_instance\"}[1m])) by (instance, priority)",
+                     "format": "time_series",
+                     "intervalFactor": 2,
+                     "legendFormat": "{{instance}}-{{priority}}",
+                     "refId": "A"
+                  }
+               ],
+               "thresholds": [ ],
+               "timeFrom": null,
+               "timeShift": null,
+               "title": "CPU Time by Priority",
+               "tooltip": {
+                  "shared": true,
+                  "sort": 0,
+                  "value_type": "individual"
+               },
+               "type": "graph",
+               "xaxis": {
+                  "buckets": null,
+                  "mode": "time",
+                  "name": null,
+                  "show": true,
+                  "values": [ ]
+               },
+               "yaxes": [
+                  {
+                     "format": "µs",
+                     "label": null,
+                     "logBase": 1,
+                     "max": null,
+                     "min": null,
+                     "show": true
+                  },
+                  {
+                     "format": "µs",
+                     "label": null,
+                     "logBase": 1,
+                     "max": null,
+                     "min": null,
+                     "show": true
+                  }
+               ]
+            },
+            {
+               "aliasColors": { },
+               "bars": false,
+               "dashLength": 10,
+               "dashes": false,
+               "datasource": "${DS_TEST-CLUSTER}",
+               "description": "The CPU quota limiter applied to each priority.",
+               "fill": 1,
+               "fillGradient": 0,
+               "gridPos": {
+                  "h": 7,
+                  "w": 12,
+                  "x": 12,
+                  "y": 0
+               },
+               "id": 33,
+               "legend": {
+                  "alignAsTable": true,
+                  "avg": false,
+                  "current": true,
+                  "max": false,
+                  "min": false,
+                  "rightSide": true,
+                  "show": true,
+                  "sideWidth": null,
+                  "total": false,
+                  "values": true
+               },
+               "lines": true,
+               "linewidth": 1,
+               "links": [ ],
+               "nullPointMode": "null",
+               "percentage": false,
+               "pointradius": 5,
+               "points": false,
+               "renderer": "flot",
+               "repeat": null,
+               "seriesOverrides": [ ],
+               "spaceLength": 10,
+               "stack": false,
+               "steppedLine": false,
+               "targets": [
+                  {
+                     "expr": "tikv_resource_control_priority_quota_limit{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$tikv_instance\"}",
+                     "format": "time_series",
+                     "intervalFactor": 2,
+                     "legendFormat": "{{instance}}-{{priority}}",
+                     "refId": "A"
+                  }
+               ],
+               "thresholds": [ ],
+               "timeFrom": null,
+               "timeShift": null,
+               "title": "CPU Quota Limit by Priority",
+               "tooltip": {
+                  "shared": true,
+                  "sort": 0,
+                  "value_type": "individual"
+               },
+               "type": "graph",
+               "xaxis": {
+                  "buckets": null,
+                  "mode": "time",
+                  "name": null,
+                  "show": true,
+                  "values": [ ]
+               },
+               "yaxes": [
+                  {
+                     "format": "µs",
+                     "label": null,
+                     "logBase": 1,
+                     "max": null,
+                     "min": null,
+                     "show": true
+                  },
+                  {
+                     "format": "µs",
+                     "label": null,
+                     "logBase": 1,
+                     "max": null,
+                     "min": null,
+                     "show": true
+                  }
+               ]
+            },
+            {
+               "aliasColors": { },
+               "bars": false,
+               "dashLength": 10,
+               "dashes": false,
+               "datasource": "${DS_TEST-CLUSTER}",
+               "description": "Tasks number per second that triggers quota limiter wait",
+               "fill": 1,
+               "fillGradient": 0,
+               "gridPos": {
+                  "h": 7,
+                  "w": 12,
+                  "x": 0,
+                  "y": 0
+               },
+               "id": 34,
+               "legend": {
+                  "alignAsTable": true,
+                  "avg": false,
+                  "current": true,
+                  "max": false,
+                  "min": false,
+                  "rightSide": true,
+                  "show": true,
+                  "sideWidth": null,
+                  "total": false,
+                  "values": true
+               },
+               "lines": true,
+               "linewidth": 1,
+               "links": [ ],
+               "nullPointMode": "null",
+               "percentage": false,
+               "pointradius": 5,
+               "points": false,
+               "renderer": "flot",
+               "repeat": null,
+               "seriesOverrides": [ ],
+               "spaceLength": 10,
+               "stack": false,
+               "steppedLine": false,
+               "targets": [
+                  {
+                     "expr": "sum(rate(tikv_resource_control_priority_wait_duration_count{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$tidb_instance\"}[1m])) by (instance, priority)",
+                     "format": "time_series",
+                     "intervalFactor": 2,
+                     "legendFormat": "{{instance}}-{{priority}}",
+                     "refId": "A"
+                  }
+               ],
+               "thresholds": [ ],
+               "timeFrom": null,
+               "timeShift": null,
+               "title": "Tasks Wait QPS by Priority",
+               "tooltip": {
+                  "shared": true,
+                  "sort": 0,
+                  "value_type": "individual"
+               },
+               "type": "graph",
+               "xaxis": {
+                  "buckets": null,
+                  "mode": "time",
+                  "name": null,
+                  "show": true,
+                  "values": [ ]
+               },
+               "yaxes": [
+                  {
+                     "format": "short",
+                     "label": null,
+                     "logBase": 1,
+                     "max": null,
+                     "min": null,
+                     "show": true
+                  },
+                  {
+                     "format": "short",
+                     "label": null,
+                     "logBase": 1,
+                     "max": null,
+                     "min": null,
+                     "show": true
+                  }
+               ]
+            },
+            {
+               "aliasColors": { },
+               "bars": false,
+               "dashLength": 10,
+               "dashes": false,
+               "datasource": "${DS_TEST-CLUSTER}",
+               "description": "The wait Duration of tasks that triggers quota limiter wait per priority",
+               "fill": 1,
+               "fillGradient": 0,
+               "gridPos": {
+                  "h": 7,
+                  "w": 12,
+                  "x": 12,
+                  "y": 0
+               },
+               "id": 35,
+               "legend": {
+                  "alignAsTable": true,
+                  "avg": true,
+                  "current": true,
+                  "max": true,
+                  "min": false,
+                  "rightSide": true,
+                  "show": true,
+                  "sideWidth": null,
+                  "total": false,
+                  "values": true
+               },
+               "lines": true,
+               "linewidth": 1,
+               "links": [ ],
+               "nullPointMode": "null",
+               "percentage": false,
+               "pointradius": 5,
+               "points": false,
+               "renderer": "flot",
+               "repeat": null,
+               "seriesOverrides": [ ],
+               "spaceLength": 10,
+               "stack": false,
+               "steppedLine": false,
+               "targets": [
+                  {
+                     "expr": "histogram_quantile(0.99, sum(rate(tikv_resource_control_priority_wait_duration_bucket{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$tikv_instance\"}[1m])) by (instance, priority, le))",
+                     "format": "time_series",
+                     "intervalFactor": 2,
+                     "legendFormat": "{{instance}}-{{priority}}-P99",
+                     "refId": "A"
+                  },
+                  {
+                     "expr": "sum(rate(tikv_resource_control_priority_wait_duration_sum{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$tikv_instance\"}[1m])) by (instance, priority) / sum(rate(tikv_resource_control_priority_wait_duration_count{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$tikv_instance\"}[1m])) by (instance, priority)",
+                     "format": "time_series",
+                     "intervalFactor": 2,
+                     "legendFormat": "{{instance}}-{{priority}}-avg",
+                     "refId": "B"
+                  }
+               ],
+               "thresholds": [ ],
+               "timeFrom": null,
+               "timeShift": null,
+               "title": "Priority Task Wait Duration",
+               "tooltip": {
+                  "shared": true,
+                  "sort": 0,
+                  "value_type": "individual"
+               },
+               "type": "graph",
+               "xaxis": {
+                  "buckets": null,
+                  "mode": "time",
+                  "name": null,
+                  "show": true,
+                  "values": [ ]
+               },
+               "yaxes": [
+                  {
+                     "format": "s",
+                     "label": null,
+                     "logBase": 2,
+                     "max": null,
+                     "min": null,
+                     "show": true
+                  },
+                  {
+                     "format": "s",
+                     "label": null,
+                     "logBase": 1,
+                     "max": null,
+                     "min": null,
+                     "show": true
+                  }
+               ]
+            }
+         ],
+         "repeat": null,
+         "repeatIteration": null,
+         "repeatRowId": null,
+         "showTitle": true,
+         "title": "Priority Task Control",
+         "titleSize": "h6",
+         "type": "row"
+      },
+      {
+         "collapse": true,
+         "collapsed": true,
+         "gridPos": {
+            "h": 1,
+            "w": 24,
+            "x": 0,
+            "y": 0
+         },
+         "id": 36,
+         "panels": [
+            {
+               "aliasColors": { },
+               "bars": false,
+               "dashLength": 10,
+               "dashes": false,
+               "datasource": "${DS_TEST-CLUSTER}",
+               "description": "The total background task's request unit cost for all resource groups.",
+               "fill": 1,
+               "fillGradient": 0,
+               "gridPos": {
+                  "h": 7,
+                  "w": 12,
+                  "x": 0,
+                  "y": 0
+               },
+               "id": 37,
                "legend": {
                   "alignAsTable": true,
                   "avg": true,
@@ -2472,10 +2873,10 @@
                "steppedLine": false,
                "targets": [
                   {
-                     "expr": "sum(rate(resource_manager_resource_unit_read_request_unit_sum{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", type=~\"background\"}[1m])) by (name) + sum(rate(resource_manager_resource_unit_write_request_unit_sum{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", type=~\"background\"}[1m])) by (name)",
+                     "expr": "sum(rate(resource_manager_resource_unit_read_request_unit_sum{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", type=~\"background\", resource_group=~\"$resource_group\"}[1m])) by (resource_group) + sum(rate(resource_manager_resource_unit_write_request_unit_sum{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", type=~\"background\", resource_group=~\"$resource_group\"}[1m])) by (resource_group)",
                      "format": "time_series",
                      "intervalFactor": 2,
-                     "legendFormat": "{{name}}",
+                     "legendFormat": "{{resource_group}}",
                      "refId": "A"
                   },
                   {
@@ -2537,7 +2938,7 @@
                   "x": 12,
                   "y": 0
                },
-               "id": 33,
+               "id": 38,
                "legend": {
                   "alignAsTable": true,
                   "avg": true,
@@ -2623,7 +3024,7 @@
                   "x": 0,
                   "y": 0
                },
-               "id": 34,
+               "id": 39,
                "legend": {
                   "alignAsTable": true,
                   "avg": true,
@@ -2651,7 +3052,7 @@
                "steppedLine": false,
                "targets": [
                   {
-                     "expr": "tikv_resource_control_background_quota_limiter{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$tikv_instance\", type=\"io\"}",
+                     "expr": "tikv_resource_control_background_quota_limiter{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$tikv_instance\", resource_group=~\"$resource_group\", type=\"io\"}",
                      "format": "time_series",
                      "intervalFactor": 2,
                      "legendFormat": "{{resource_group}}-{{instance}}",
@@ -2709,7 +3110,7 @@
                   "x": 12,
                   "y": 0
                },
-               "id": 35,
+               "id": 40,
                "legend": {
                   "alignAsTable": true,
                   "avg": true,
@@ -2737,7 +3138,7 @@
                "steppedLine": false,
                "targets": [
                   {
-                     "expr": "rate(tikv_resource_control_background_resource_consumption{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$tikv_instance\", type=\"cpu\"}[1m])",
+                     "expr": "rate(tikv_resource_control_background_resource_consumption{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$tikv_instance\", resource_group=~\"$resource_group\", type=\"cpu\"}[1m])",
                      "format": "time_series",
                      "intervalFactor": 2,
                      "legendFormat": "{{resource_group}}-{{instance}}",
@@ -2763,7 +3164,7 @@
                },
                "yaxes": [
                   {
-                     "format": "us",
+                     "format": "µs",
                      "label": null,
                      "logBase": 1,
                      "max": null,
@@ -2771,7 +3172,7 @@
                      "show": true
                   },
                   {
-                     "format": "us",
+                     "format": "µs",
                      "label": null,
                      "logBase": 1,
                      "max": null,
@@ -2795,7 +3196,7 @@
                   "x": 0,
                   "y": 0
                },
-               "id": 36,
+               "id": 41,
                "legend": {
                   "alignAsTable": true,
                   "avg": true,
@@ -2823,7 +3224,7 @@
                "steppedLine": false,
                "targets": [
                   {
-                     "expr": "tikv_resource_control_background_quota_limiter{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$tikv_instance\", type=\"cpu\"}",
+                     "expr": "tikv_resource_control_background_quota_limiter{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$tikv_instance\", resource_group=~\"$resource_group\", type=\"cpu\"}",
                      "format": "time_series",
                      "intervalFactor": 2,
                      "legendFormat": "{{resource_group}}-{{instance}}",
@@ -2881,7 +3282,7 @@
                   "x": 12,
                   "y": 0
                },
-               "id": 37,
+               "id": 42,
                "legend": {
                   "alignAsTable": true,
                   "avg": true,
@@ -2909,7 +3310,7 @@
                "steppedLine": false,
                "targets": [
                   {
-                     "expr": "rate(tikv_resource_control_background_resource_consumption{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$tikv_instance\", type=\"io\"}[1m])",
+                     "expr": "rate(tikv_resource_control_background_resource_consumption{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$tikv_instance\", resource_group=~\"$resource_group\", type=\"io\"}[1m])",
                      "format": "time_series",
                      "intervalFactor": 2,
                      "legendFormat": "{{resource_group}}-{{instance}}",
@@ -2967,7 +3368,7 @@
                   "x": 0,
                   "y": 0
                },
-               "id": 38,
+               "id": 43,
                "legend": {
                   "alignAsTable": true,
                   "avg": true,
@@ -2995,7 +3396,7 @@
                "steppedLine": false,
                "targets": [
                   {
-                     "expr": "rate(tikv_resource_control_background_task_wait_duration{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$tikv_instance\"}[1m])",
+                     "expr": "rate(tikv_resource_control_background_task_wait_duration{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$tikv_instance\", resource_group=~\"$resource_group\"}[1m])",
                      "format": "time_series",
                      "intervalFactor": 2,
                      "legendFormat": "{{resource_group}}-{{instance}}",
@@ -3021,7 +3422,7 @@
                },
                "yaxes": [
                   {
-                     "format": "us",
+                     "format": "µs",
                      "label": null,
                      "logBase": 1,
                      "max": null,
@@ -3029,7 +3430,7 @@
                      "show": true
                   },
                   {
-                     "format": "us",
+                     "format": "µs",
                      "label": null,
                      "logBase": 1,
                      "max": null,
@@ -3056,7 +3457,7 @@
             "x": 0,
             "y": 0
          },
-         "id": 39,
+         "id": 44,
          "panels": [
             {
                "aliasColors": { },
@@ -3073,7 +3474,7 @@
                   "x": 0,
                   "y": 0
                },
-               "id": 40,
+               "id": 45,
                "legend": {
                   "alignAsTable": true,
                   "avg": true,
@@ -3180,7 +3581,7 @@
                   "x": 12,
                   "y": 0
                },
-               "id": 41,
+               "id": 46,
                "legend": {
                   "alignAsTable": true,
                   "avg": false,
@@ -3211,7 +3612,7 @@
                      "expr": "sum(rate(tidb_server_query_total{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\",instance=~\"$tidb_instance\",resource_group=~\"$resource_group\"}[1m])) by (result,resource_group)",
                      "format": "time_series",
                      "intervalFactor": 2,
-                     "legendFormat": "{{resource_group}}--{{result}}",
+                     "legendFormat": "{{resource_group}}-{{result}}",
                      "refId": "A"
                   },
                   {
@@ -3219,7 +3620,7 @@
                      "format": "time_series",
                      "hide": true,
                      "intervalFactor": 2,
-                     "legendFormat": "{{resource_group}}--yesterday",
+                     "legendFormat": "{{resource_group}}-yesterday",
                      "refId": "B"
                   }
                ],
@@ -3274,7 +3675,7 @@
                   "x": 0,
                   "y": 0
                },
-               "id": 42,
+               "id": 47,
                "legend": {
                   "alignAsTable": true,
                   "avg": true,
@@ -3305,14 +3706,14 @@
                      "expr": "sum(rate(tidb_executor_statement_total{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\",instance=~\"$tidb_instance\",resource_group=~\"$resource_group\"}[1m])) by (type,resource_group)",
                      "format": "time_series",
                      "intervalFactor": 2,
-                     "legendFormat": "{{resource_group}}--{{type}}",
+                     "legendFormat": "{{resource_group}}-{{type}}",
                      "refId": "A"
                   },
                   {
                      "expr": "sum(rate(tidb_executor_statement_total{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\",instance=~\"$tidb_instance\",resource_group=~\"$resource_group\"}[1m])) by (resource_group)",
                      "format": "time_series",
                      "intervalFactor": 2,
-                     "legendFormat": "{{resource_group}}--total",
+                     "legendFormat": "{{resource_group}}-total",
                      "refId": "B"
                   }
                ],
@@ -3367,7 +3768,7 @@
                   "x": 12,
                   "y": 0
                },
-               "id": 43,
+               "id": 48,
                "legend": {
                   "alignAsTable": true,
                   "avg": false,
@@ -3460,7 +3861,7 @@
                   "x": 0,
                   "y": 0
                },
-               "id": 44,
+               "id": 49,
                "legend": {
                   "alignAsTable": true,
                   "avg": false,
@@ -3491,7 +3892,7 @@
                      "expr": "sum(increase(tidb_server_execute_error_total{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\",resource_group=~\"$resource_group\"}[1m])) by (type, instance,resource_group)",
                      "format": "time_series",
                      "intervalFactor": 2,
-                     "legendFormat": "{{type}}--{{instance}}--{{resource_group}}",
+                     "legendFormat": "{{type}}-{{instance}}-{{resource_group}}",
                      "refId": "A"
                   }
                ],
@@ -3558,7 +3959,7 @@
             "multi": false,
             "name": "tidb_cluster",
             "options": [ ],
-            "query": "label_values(pd_cluster_status{k8s_cluster=\"$kuberentes\"}, tidb_cluster)",
+            "query": "label_values(pd_cluster_status{k8s_cluster=\"$k8s_cluster\"}, tidb_cluster)",
             "refresh": 2,
             "regex": "",
             "sort": 1,

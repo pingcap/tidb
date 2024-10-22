@@ -214,8 +214,12 @@ func (rc *LogClient) CleanUpKVFiles(
 	return rc.fileImporter.ClearFiles(ctx, rc.pdClient, "v1")
 }
 
-func (rc *LogClient) StartCheckpointRunnerForLogRestore(ctx context.Context) (*checkpoint.CheckpointRunner[checkpoint.LogRestoreKeyType, checkpoint.LogRestoreValueType], error) {
-	runner, err := checkpoint.StartCheckpointRunnerForLogRestore(ctx, rc.se)
+func (rc *LogClient) StartCheckpointRunnerForLogRestore(ctx context.Context, g glue.Glue, store kv.Storage) (*checkpoint.CheckpointRunner[checkpoint.LogRestoreKeyType, checkpoint.LogRestoreValueType], error) {
+	se, err := g.CreateSession(store)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	runner, err := checkpoint.StartCheckpointRunnerForLogRestore(ctx, se)
 	return runner, errors.Trace(err)
 }
 
@@ -1167,7 +1171,7 @@ func (rc *LogClient) GenGlobalID(ctx context.Context) (int64, error) {
 		true,
 		func(ctx context.Context, txn kv.Transaction) error {
 			var e error
-			t := meta.NewMeta(txn)
+			t := meta.NewMutator(txn)
 			id, e = t.GenGlobalID()
 			return e
 		})
@@ -1187,7 +1191,7 @@ func (rc *LogClient) GenGlobalIDs(ctx context.Context, n int) ([]int64, error) {
 		true,
 		func(ctx context.Context, txn kv.Transaction) error {
 			var e error
-			t := meta.NewMeta(txn)
+			t := meta.NewMutator(txn)
 			ids, e = t.GenGlobalIDs(n)
 			return e
 		})
@@ -1206,7 +1210,7 @@ func (rc *LogClient) UpdateSchemaVersion(ctx context.Context) error {
 		storage,
 		true,
 		func(ctx context.Context, txn kv.Transaction) error {
-			t := meta.NewMeta(txn)
+			t := meta.NewMutator(txn)
 			var e error
 			// To trigger full-reload instead of diff-reload, we need to increase the schema version
 			// by at least `domain.LoadSchemaDiffVersionGapThreshold`.

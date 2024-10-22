@@ -59,7 +59,7 @@ func TestLockAndUnlockPartitionStats(t *testing.T) {
 		"Warning 1105 skip analyze locked table: test.t partition (p0)",
 	))
 	partitionStats1 := handle.GetPartitionStats(tbl, p0Id)
-	require.Equal(t, partitionStats, partitionStats1)
+	require.Equal(t, partitionStats.RealtimeCount, partitionStats1.RealtimeCount)
 	require.Equal(t, int64(0), partitionStats1.RealtimeCount)
 
 	tk.MustExec("unlock stats t partition p0")

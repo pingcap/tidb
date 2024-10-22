@@ -62,6 +62,7 @@ import (
 	infoschemactx "github.com/pingcap/tidb/pkg/infoschema/context"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
+	"github.com/pingcap/tidb/pkg/meta/metabuild"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/owner"
@@ -222,6 +223,9 @@ type session struct {
 	sandBoxMode bool
 
 	cursorTracker cursor.Tracker
+
+	// Used to wait for all async commit background jobs to finish.
+	commitWaitGroup sync.WaitGroup
 }
 
 var parserPool = &sync.Pool{New: func() any { return parser.New() }}
@@ -515,7 +519,7 @@ func (s *session) doCommit(ctx context.Context) error {
 			return plannererrors.ErrSQLInReadOnlyMode
 		}
 	}
-	err := s.checkPlacementPolicyBeforeCommit()
+	err := s.checkPlacementPolicyBeforeCommit(ctx)
 	if err != nil {
 		return err
 	}
@@ -791,7 +795,7 @@ func (s *session) doCommitWithRetry(ctx context.Context) error {
 	err = s.doCommit(ctx)
 	if err != nil {
 		// polish the Write Conflict error message
-		newErr := s.tryReplaceWriteConflictError(err)
+		newErr := s.tryReplaceWriteConflictError(ctx, err)
 		if newErr != nil {
 			err = newErr
 		}
@@ -842,7 +846,7 @@ func (s *session) doCommitWithRetry(ctx context.Context) error {
 
 // adds more information about the table in the error message
 // precondition: oldErr is a 9007:WriteConflict Error
-func (s *session) tryReplaceWriteConflictError(oldErr error) (newErr error) {
+func (s *session) tryReplaceWriteConflictError(ctx context.Context, oldErr error) (newErr error) {
 	if !kv.ErrWriteConflict.Equal(oldErr) {
 		return nil
 	}
@@ -859,11 +863,11 @@ func (s *session) tryReplaceWriteConflictError(oldErr error) (newErr error) {
 	if is == nil {
 		return nil
 	}
-	newKeyTableField, ok := addTableNameInTableIDField(args[3], is)
+	newKeyTableField, ok := addTableNameInTableIDField(ctx, args[3], is)
 	if ok {
 		args[3] = newKeyTableField
 	}
-	newPrimaryKeyTableField, ok := addTableNameInTableIDField(args[5], is)
+	newPrimaryKeyTableField, ok := addTableNameInTableIDField(ctx, args[5], is)
 	if ok {
 		args[5] = newPrimaryKeyTableField
 	}
@@ -871,7 +875,7 @@ func (s *session) tryReplaceWriteConflictError(oldErr error) (newErr error) {
 }
 
 // precondition: is != nil
-func addTableNameInTableIDField(tableIDField any, is infoschema.InfoSchema) (enhancedMsg string, done bool) {
+func addTableNameInTableIDField(ctx context.Context, tableIDField any, is infoschema.InfoSchema) (enhancedMsg string, done bool) {
 	keyTableID, ok := tableIDField.(string)
 	if !ok {
 		return "", false
@@ -886,7 +890,7 @@ func addTableNameInTableIDField(tableIDField any, is infoschema.InfoSchema) (enh
 		return "", false
 	}
 	var tableName string
-	tbl, ok := is.TableByID(context.Background(), tableID)
+	tbl, ok := is.TableByID(ctx, tableID)
 	if !ok {
 		tableName = "unknown"
 	} else {
@@ -2292,7 +2296,7 @@ func runStmt(ctx context.Context, se *session, s sqlexec.Statement) (rs sqlexec.
 		if err != nil {
 			err = se.handleAssertionFailure(ctx, err)
 		}
-		newErr := se.tryReplaceWriteConflictError(err)
+		newErr := se.tryReplaceWriteConflictError(ctx, err)
 		if newErr != nil {
 			err = newErr
 		}
@@ -3218,14 +3222,19 @@ func splitAndScatterTable(store kv.Storage, tableIDs []int64) {
 	}
 }
 
-// InitDDLJobTables is to create tidb_ddl_job, tidb_ddl_reorg and tidb_ddl_history, or tidb_background_subtask and tidb_background_subtask_history.
+// InitDDLJobTables creates system tables that DDL uses. Because CREATE TABLE is
+// also a DDL, we must directly modify KV data to create these tables.
 func InitDDLJobTables(store kv.Storage, targetVer meta.DDLTableVersion) error {
 	targetTables := DDLJobTables
 	if targetVer == meta.BackfillTableVersion {
 		targetTables = BackfillTables
+		if intest.InTest {
+			// create the system tables to test ddl notifier
+			targetTables = append(targetTables, tableBasicInfo{ddl.NotifierTableSQL, ddl.NotifierTableID})
+		}
 	}
 	return kv.RunInNewTxn(kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL), store, true, func(_ context.Context, txn kv.Transaction) error {
-		t := meta.NewMeta(txn)
+		t := meta.NewMutator(txn)
 		tableVer, err := t.CheckDDLTableVersion()
 		if err != nil || tableVer >= targetVer {
 			return errors.Trace(err)
@@ -3241,7 +3250,7 @@ func InitDDLJobTables(store kv.Storage, targetVer meta.DDLTableVersion) error {
 	})
 }
 
-func createAndSplitTables(store kv.Storage, t *meta.Meta, dbID int64, tables []tableBasicInfo) error {
+func createAndSplitTables(store kv.Storage, t *meta.Mutator, dbID int64, tables []tableBasicInfo) error {
 	tableIDs := make([]int64, 0, len(tables))
 	for _, tbl := range tables {
 		tableIDs = append(tableIDs, tbl.id)
@@ -3253,7 +3262,7 @@ func createAndSplitTables(store kv.Storage, t *meta.Meta, dbID int64, tables []t
 		if err != nil {
 			return errors.Trace(err)
 		}
-		tblInfo, err := ddl.BuildTableInfoFromAST(stmt.(*ast.CreateTableStmt))
+		tblInfo, err := ddl.BuildTableInfoFromAST(metabuild.NewContext(), stmt.(*ast.CreateTableStmt))
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -3271,7 +3280,7 @@ func createAndSplitTables(store kv.Storage, t *meta.Meta, dbID int64, tables []t
 // InitMDLTable is to create tidb_mdl_info, which is used for metadata lock.
 func InitMDLTable(store kv.Storage) error {
 	return kv.RunInNewTxn(kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL), store, true, func(_ context.Context, txn kv.Transaction) error {
-		t := meta.NewMeta(txn)
+		t := meta.NewMutator(txn)
 		ver, err := t.CheckDDLTableVersion()
 		if err != nil || ver >= meta.MDLTableVersion {
 			return errors.Trace(err)
@@ -3286,7 +3295,7 @@ func InitMDLTable(store kv.Storage) error {
 		if err != nil {
 			return errors.Trace(err)
 		}
-		tblInfo, err := ddl.BuildTableInfoFromAST(stmt.(*ast.CreateTableStmt))
+		tblInfo, err := ddl.BuildTableInfoFromAST(metabuild.NewContext(), stmt.(*ast.CreateTableStmt))
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -3305,7 +3314,7 @@ func InitMDLTable(store kv.Storage) error {
 // InitMDLVariableForBootstrap initializes the metadata lock variable.
 func InitMDLVariableForBootstrap(store kv.Storage) error {
 	err := kv.RunInNewTxn(kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL), store, true, func(_ context.Context, txn kv.Transaction) error {
-		t := meta.NewMeta(txn)
+		t := meta.NewMutator(txn)
 		return t.SetMetadataLock(true)
 	})
 	if err != nil {
@@ -3323,7 +3332,7 @@ func InitTiDBSchemaCacheSize(store kv.Storage) error {
 		err    error
 	)
 	err = kv.RunInNewTxn(kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL), store, true, func(_ context.Context, txn kv.Transaction) error {
-		t := meta.NewMeta(txn)
+		t := meta.NewMutator(txn)
 		size, isNull, err = t.GetSchemaCacheSize()
 		if err != nil {
 			return errors.Trace(err)
@@ -3347,7 +3356,7 @@ func InitMDLVariableForUpgrade(store kv.Storage) (bool, error) {
 	enable := false
 	var err error
 	err = kv.RunInNewTxn(kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL), store, true, func(_ context.Context, txn kv.Transaction) error {
-		t := meta.NewMeta(txn)
+		t := meta.NewMutator(txn)
 		enable, isNull, err = t.GetMetadataLock()
 		if err != nil {
 			return err
@@ -3368,7 +3377,7 @@ func InitMDLVariable(store kv.Storage) error {
 	enable := false
 	var err error
 	err = kv.RunInNewTxn(kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL), store, true, func(_ context.Context, txn kv.Transaction) error {
-		t := meta.NewMeta(txn)
+		t := meta.NewMutator(txn)
 		enable, isNull, err = t.GetMetadataLock()
 		if err != nil {
 			return err
@@ -3390,12 +3399,12 @@ func InitMDLVariable(store kv.Storage) error {
 
 // BootstrapSession bootstrap session and domain.
 func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
-	return bootstrapSessionImpl(store, createSessions)
+	return bootstrapSessionImpl(context.Background(), store, createSessions)
 }
 
 // BootstrapSession4DistExecution bootstrap session and dom for Distributed execution test, only for unit testing.
 func BootstrapSession4DistExecution(store kv.Storage) (*domain.Domain, error) {
-	return bootstrapSessionImpl(store, createSessions4DistExecution)
+	return bootstrapSessionImpl(context.Background(), store, createSessions4DistExecution)
 }
 
 // bootstrapSessionImpl bootstraps session and domain.
@@ -3410,8 +3419,8 @@ func BootstrapSession4DistExecution(store kv.Storage) (*domain.Domain, error) {
 // - initialization global variables from system table that's required to use sessionCtx,
 // such as system time zone
 // - start domain and other routines.
-func bootstrapSessionImpl(store kv.Storage, createSessionsImpl func(store kv.Storage, cnt int) ([]*session, error)) (*domain.Domain, error) {
-	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBootstrap)
+func bootstrapSessionImpl(ctx context.Context, store kv.Storage, createSessionsImpl func(store kv.Storage, cnt int) ([]*session, error)) (*domain.Domain, error) {
+	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnBootstrap)
 	cfg := config.GetGlobalConfig()
 	if len(cfg.Instance.PluginLoad) > 0 {
 		err := plugin.Load(context.Background(), plugin.Config{
@@ -3501,7 +3510,7 @@ func bootstrapSessionImpl(store kv.Storage, createSessionsImpl func(store kv.Sto
 	}
 
 	// To deal with the location partition failure caused by inconsistent NewCollationEnabled values(see issue #32416).
-	rebuildAllPartitionValueMapAndSorted(ses[0])
+	rebuildAllPartitionValueMapAndSorted(ctx, ses[0])
 
 	// We should make the load bind-info loop before other loops which has internal SQL.
 	// Because the internal SQL may access the global bind-info handler. As the result, the data race occurs here as the
@@ -3832,7 +3841,7 @@ func getStoreBootstrapVersion(store kv.Storage) int64 {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBootstrap)
 	err := kv.RunInNewTxn(ctx, store, false, func(_ context.Context, txn kv.Transaction) error {
 		var err error
-		t := meta.NewMeta(txn)
+		t := meta.NewMutator(txn)
 		ver, err = t.GetBootstrapVersion()
 		return err
 	})
@@ -3855,7 +3864,7 @@ func finishBootstrap(store kv.Storage) {
 
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBootstrap)
 	err := kv.RunInNewTxn(ctx, store, true, func(_ context.Context, txn kv.Transaction) error {
-		t := meta.NewMeta(txn)
+		t := meta.NewMutator(txn)
 		err := t.FinishBootstrap(currentBootstrapVersion)
 		return err
 	})
@@ -4132,7 +4141,7 @@ func (s *session) recordOnTransactionExecution(err error, counter int, duration 
 	}
 }
 
-func (s *session) checkPlacementPolicyBeforeCommit() error {
+func (s *session) checkPlacementPolicyBeforeCommit(ctx context.Context) error {
 	var err error
 	// Get the txnScope of the transaction we're going to commit.
 	txnScope := s.GetSessionVars().TxnCtx.TxnScope
@@ -4150,7 +4159,7 @@ func (s *session) checkPlacementPolicyBeforeCommit() error {
 				tableName = tblInfo.Meta().Name.String()
 				partitionName = partInfo.Name.String()
 			} else {
-				tblInfo, _ := is.TableByID(s.currentCtx, physicalTableID)
+				tblInfo, _ := is.TableByID(ctx, physicalTableID)
 				tableName = tblInfo.Meta().Name.String()
 			}
 			bundle, ok := is.PlacementBundleByPhysicalTableID(physicalTableID)
@@ -4602,4 +4611,9 @@ func GetDBNames(seVar *variable.SessionVars) []string {
 // GetCursorTracker returns the internal `cursor.Tracker`
 func (s *session) GetCursorTracker() cursor.Tracker {
 	return s.cursorTracker
+}
+
+// GetCommitWaitGroup returns the internal `sync.WaitGroup` for async commit and secondary key lock cleanup
+func (s *session) GetCommitWaitGroup() *sync.WaitGroup {
+	return &s.commitWaitGroup
 }

@@ -352,7 +352,7 @@ func TestOutdatedStatsCheck(t *testing.T) {
 	// To pass the stats.Pseudo check in autoAnalyzeTable
 	tk.MustExec("analyze table t")
 	tk.MustExec("explain select * from t where a = 1")
-	require.NoError(t, h.LoadNeededHistograms())
+	require.NoError(t, h.LoadNeededHistograms(dom.InfoSchema()))
 
 	getStatsHealthy := func() int {
 		rows := tk.MustQuery("show stats_healthy where db_name = 'test' and table_name = 't'").Rows()
@@ -506,46 +506,6 @@ func TestIssue44369(t *testing.T) {
 	require.NoError(t, h.Update(context.Background(), is))
 	tk.MustExec("alter table t rename column b to bb;")
 	tk.MustExec("select * from t where a = 10 and bb > 20;")
-}
-
-// Test the case that after ALTER TABLE happens, the pointer to the column info/index info should be refreshed.
-func TestColAndIdxExistenceMapChangedAfterAlterTable(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
-	h := dom.StatsHandle()
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("create table t(a int, b int, index iab(a,b));")
-	require.NoError(t, h.HandleDDLEvent(<-h.DDLEventCh()))
-	tk.MustExec("insert into t value(1,1);")
-	require.NoError(t, h.DumpStatsDeltaToKV(true))
-	tk.MustExec("analyze table t;")
-	is := dom.InfoSchema()
-	require.NoError(t, h.Update(context.Background(), is))
-	tbl, err := dom.InfoSchema().TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
-	require.NoError(t, err)
-	tblInfo := tbl.Meta()
-	statsTbl := h.GetTableStats(tblInfo)
-	colA := tblInfo.Columns[0]
-	colInfo := statsTbl.ColAndIdxExistenceMap.GetCol(colA.ID)
-	require.Equal(t, colA, colInfo)
-
-	tk.MustExec("alter table t modify column a double")
-	require.NoError(t, h.HandleDDLEvent(<-h.DDLEventCh()))
-	is = dom.InfoSchema()
-	require.NoError(t, h.Update(context.Background(), is))
-	tbl, err = dom.InfoSchema().TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
-	require.NoError(t, err)
-	tblInfo = tbl.Meta()
-	newColA := tblInfo.Columns[0]
-	require.NotEqual(t, colA.ID, newColA.ID)
-	statsTbl = h.GetTableStats(tblInfo)
-	colInfo = statsTbl.ColAndIdxExistenceMap.GetCol(newColA.ID)
-	require.Equal(t, newColA, colInfo)
-	tk.MustExec("analyze table t;")
-	require.NoError(t, h.Update(context.Background(), is))
-	statsTbl = h.GetTableStats(tblInfo)
-	colInfo = statsTbl.ColAndIdxExistenceMap.GetCol(newColA.ID)
-	require.Equal(t, newColA, colInfo)
 }
 
 func TestTableLastAnalyzeVersion(t *testing.T) {

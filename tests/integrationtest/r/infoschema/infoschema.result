@@ -10,14 +10,14 @@ i1 comment	10	c1
 show create table information_schema.ddl_jobs;
 Table	Create Table
 DDL_JOBS	CREATE TABLE `DDL_JOBS` (
-  `JOB_ID` bigint(21) DEFAULT NULL,
+  `JOB_ID` bigint DEFAULT NULL,
   `DB_NAME` varchar(64) DEFAULT NULL,
   `TABLE_NAME` varchar(64) DEFAULT NULL,
   `JOB_TYPE` varchar(64) DEFAULT NULL,
   `SCHEMA_STATE` varchar(64) DEFAULT NULL,
-  `SCHEMA_ID` bigint(21) DEFAULT NULL,
-  `TABLE_ID` bigint(21) DEFAULT NULL,
-  `ROW_COUNT` bigint(21) DEFAULT NULL,
+  `SCHEMA_ID` bigint DEFAULT NULL,
+  `TABLE_ID` bigint DEFAULT NULL,
+  `ROW_COUNT` bigint DEFAULT NULL,
   `CREATE_TIME` datetime(6) DEFAULT NULL,
   `START_TIME` datetime(6) DEFAULT NULL,
   `END_TIME` datetime(6) DEFAULT NULL,
@@ -134,6 +134,16 @@ engine	DATA_LENGTH
 InnoDB	8
 drop table infoschema__infoschema.t4;
 drop table infoschema__infoschema.t5;
+create table caseSensitive (a int);
+create table unrelatedTable (a int);
+select table_schema, table_name from information_schema.tables where table_schema = 'infoschema__infoschema' and table_name like '%aseSensitive';
+table_schema	table_name
+infoschema__infoschema	caseSensitive
+select table_schema, table_name, tidb_pk_type from information_schema.tables where table_schema = 'infoschema__infoschema' and table_name like '%aseSensitive';
+table_schema	table_name	tidb_pk_type
+infoschema__infoschema	caseSensitive	NONCLUSTERED
+drop table caseSensitive;
+drop table unrelatedTable;
 create table pt1(a int primary key, b int) partition by hash(a) partitions 4;
 create table pt2(a int primary key, b int) partition by hash(a) partitions 4;
 select TABLE_NAME, PARTITION_NAME from information_schema.partitions where table_schema = 'infoschema__infoschema';
@@ -477,5 +487,6 @@ Projection_4	10000.00	root		Column#2, Column#3
 └─MemTableScan_5	10000.00	root	table:SEQUENCES	sequence_schema_pattern:[%db1%]
 select sequence_schema, sequence_name from information_schema.sequences where sequence_schema like '%db1%';
 sequence_schema	sequence_name
+Db1	s1
 drop database db1;
 drop database db2;

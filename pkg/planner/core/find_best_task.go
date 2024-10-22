@@ -37,16 +37,17 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/fixcontrol"
 	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
-	"github.com/pingcap/tidb/pkg/planner/util/utilfuncp"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/types"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/collate"
 	h "github.com/pingcap/tidb/pkg/util/hint"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/ranger"
 	"github.com/pingcap/tidb/pkg/util/tracing"
+	"github.com/pingcap/tipb/go-tipb"
 	"go.uber.org/zap"
 )
 
@@ -103,7 +104,7 @@ func findBestTask4LogicalTableDual(lp base.LogicalPlan, prop *property.PhysicalP
 	}.Init(p.SCtx(), p.StatsInfo(), p.QueryBlockOffset())
 	dual.SetSchema(p.Schema())
 	planCounter.Dec(1)
-	utilfuncp.AppendCandidate4PhysicalOptimizeOp(opt, p, dual, prop)
+	appendCandidate4PhysicalOptimizeOp(opt, p, dual, prop)
 	rt := &RootTask{}
 	rt.SetPlan(dual)
 	rt.SetEmpty(p.RowCount == 0)
@@ -240,7 +241,7 @@ func enumeratePhysicalPlans4Task(
 			bestTask = curTask
 			break
 		}
-		utilfuncp.AppendCandidate4PhysicalOptimizeOp(opt, p, curTask.Plan(), prop)
+		appendCandidate4PhysicalOptimizeOp(opt, p, curTask.Plan(), prop)
 		// Get the most efficient one.
 		if curIsBetter, err := compareTaskCost(curTask, bestTask, opt); err != nil {
 			return nil, 0, err
@@ -346,11 +347,11 @@ func iterateChildPlan4LogicalSequence(
 
 // compareTaskCost compares cost of curTask and bestTask and returns whether curTask's cost is smaller than bestTask's.
 func compareTaskCost(curTask, bestTask base.Task, op *optimizetrace.PhysicalOptimizeOp) (curIsBetter bool, err error) {
-	curCost, curInvalid, err := utilfuncp.GetTaskPlanCost(curTask, op)
+	curCost, curInvalid, err := getTaskPlanCost(curTask, op)
 	if err != nil {
 		return false, err
 	}
-	bestCost, bestInvalid, err := utilfuncp.GetTaskPlanCost(bestTask, op)
+	bestCost, bestInvalid, err := getTaskPlanCost(bestTask, op)
 	if err != nil {
 		return false, err
 	}
@@ -586,7 +587,7 @@ func findBestTask(lp base.LogicalPlan, prop *property.PhysicalProperty, planCoun
 		bestTask = curTask
 		goto END
 	}
-	utilfuncp.AppendCandidate4PhysicalOptimizeOp(opt, p, curTask.Plan(), prop)
+	appendCandidate4PhysicalOptimizeOp(opt, p, curTask.Plan(), prop)
 	if curIsBetter, err := compareTaskCost(curTask, bestTask, opt); err != nil {
 		return nil, 0, err
 	} else if curIsBetter {
@@ -646,7 +647,7 @@ func findBestTask4LogicalMemTable(lp base.LogicalPlan, prop *property.PhysicalPr
 	}.Init(p.SCtx(), p.StatsInfo(), p.QueryBlockOffset())
 	memTable.SetSchema(p.Schema())
 	planCounter.Dec(1)
-	utilfuncp.AppendCandidate4PhysicalOptimizeOp(opt, p, memTable, prop)
+	appendCandidate4PhysicalOptimizeOp(opt, p, memTable, prop)
 	rt := &RootTask{}
 	rt.SetPlan(memTable)
 	return rt, 1, nil
@@ -806,6 +807,19 @@ func isMatchProp(ds *logicalop.DataSource, path *util.AccessPath, prop *property
 				break
 			}
 		}
+	}
+	if prop.VectorProp.VectorHelper != nil && path.Index.VectorInfo != nil {
+		if path.Index == nil || path.Index.VectorInfo == nil {
+			return false
+		}
+		if ds.TableInfo.Columns[path.Index.Columns[0].Offset].ID != prop.VectorProp.Column.ID {
+			return false
+		}
+
+		if model.IndexableFnNameToDistanceMetric[prop.VectorProp.DistanceFnName.L] != path.Index.VectorInfo.DistanceMetric {
+			return false
+		}
+		return true
 	}
 	return isMatchProp
 }
@@ -2504,6 +2518,31 @@ func convertToTableScan(ds *logicalop.DataSource, prop *property.PhysicalPropert
 		if prop.MPPPartitionTp != property.AnyType {
 			return base.InvalidTask, nil
 		}
+		// If it has vector property, we need to check the candidate.isMatchProp.
+		if candidate.path.Index != nil && candidate.path.Index.VectorInfo != nil && !candidate.isMatchProp {
+			return base.InvalidTask, nil
+		}
+		if candidate.path.Index != nil && candidate.path.Index.VectorInfo != nil {
+			// Only the corresponding index can generate a valid task.
+			intest.Assert(ts.Table.Columns[candidate.path.Index.Columns[0].Offset].ID == prop.VectorProp.Column.ID, "The passed vector column is not matched with the index")
+			distanceMetric := model.IndexableFnNameToDistanceMetric[prop.VectorProp.DistanceFnName.L]
+			distanceMetricPB := tipb.VectorDistanceMetric_value[string(distanceMetric)]
+			intest.Assert(distanceMetricPB != 0, "unexpected distance metric")
+
+			ts.AnnIndexExtra = &VectorIndexExtra{
+				IndexInfo: candidate.path.Index,
+				PushDownQueryInfo: &tipb.ANNQueryInfo{
+					QueryType:      tipb.ANNQueryType_OrderBy,
+					DistanceMetric: tipb.VectorDistanceMetric(distanceMetricPB),
+					TopK:           prop.VectorProp.TopK,
+					ColumnName:     ts.Table.Columns[candidate.path.Index.Columns[0].Offset].Name.L,
+					ColumnId:       prop.VectorProp.Column.ID,
+					IndexId:        candidate.path.Index.ID,
+					RefVecF32:      prop.VectorProp.Vec.SerializeTo(nil),
+				},
+			}
+			ts.SetStats(util.DeriveLimitStats(ts.StatsInfo(), float64(prop.VectorProp.TopK)))
+		}
 		// ********************************** future deprecated start **************************/
 		var hasVirtualColumn bool
 		for _, col := range ts.schema.Columns {
@@ -2872,7 +2911,7 @@ func getOriginalPhysicalTableScan(ds *logicalop.DataSource, prop *property.Physi
 	if usedStats != nil && usedStats.GetUsedInfo(ts.physicalTableID) != nil {
 		ts.usedStatsInfo = usedStats.GetUsedInfo(ts.physicalTableID)
 	}
-	if isMatchProp {
+	if isMatchProp && prop.VectorProp.VectorHelper == nil {
 		ts.Desc = prop.SortItems[0].Desc
 		ts.KeepOrder = true
 	}
@@ -2984,7 +3023,7 @@ func appendCandidate(lp base.LogicalPlan, task base.Task, prop *property.Physica
 	if task == nil || task.Invalid() {
 		return
 	}
-	utilfuncp.AppendCandidate4PhysicalOptimizeOp(opt, lp, task.Plan(), prop)
+	appendCandidate4PhysicalOptimizeOp(opt, lp, task.Plan(), prop)
 }
 
 // PushDownNot here can convert condition 'not (a != 1)' to 'a = 1'. When we build range from conds, the condition like

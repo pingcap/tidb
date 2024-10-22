@@ -18,6 +18,7 @@ package mock
 import (
 	"context"
 	"fmt"
+	"sync"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -611,8 +612,20 @@ func (*Context) GetCursorTracker() cursor.Tracker {
 	return nil
 }
 
-// NewContext creates a new mocked sessionctx.Context.
-func NewContext() *Context {
+// GetCommitWaitGroup implements the sessionctx.Context interface
+func (*Context) GetCommitWaitGroup() *sync.WaitGroup {
+	return nil
+}
+
+// NewContextDeprecated creates a new mocked sessionctx.Context.
+// Deprecated: This method is only used for some legacy code.
+// DO NOT use mock.Context in new production code, and use the real Context instead.
+func NewContextDeprecated() *Context {
+	return newContext()
+}
+
+// newContext creates a new mocked sessionctx.Context.
+func newContext() *Context {
 	ctx, cancel := context.WithCancel(context.Background())
 	sctx := &Context{
 		values: make(map[fmt.Stringer]any),

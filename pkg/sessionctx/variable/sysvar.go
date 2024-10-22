@@ -558,6 +558,22 @@ var defaultSysVars = []*SysVar{
 			return BoolToOnOff(config.GetGlobalConfig().Instance.TiDBEnableDDL.Load()), nil
 		},
 	},
+	{Scope: ScopeInstance, Name: TiDBEnableStatsOwner, Value: BoolToOnOff(config.GetGlobalConfig().Instance.TiDBEnableStatsOwner.Load()), Type: TypeBool,
+		SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
+			oldVal, newVal := config.GetGlobalConfig().Instance.TiDBEnableStatsOwner.Load(), TiDBOptOn(val)
+			if oldVal != newVal {
+				err := switchStats(newVal)
+				if err != nil {
+					return err
+				}
+				config.GetGlobalConfig().Instance.TiDBEnableStatsOwner.Store(newVal)
+			}
+			return nil
+		},
+		GetGlobal: func(_ context.Context, s *SessionVars) (string, error) {
+			return BoolToOnOff(config.GetGlobalConfig().Instance.TiDBEnableStatsOwner.Load()), nil
+		},
+	},
 	{Scope: ScopeInstance, Name: TiDBRCReadCheckTS, Value: BoolToOnOff(DefRCReadCheckTS), Type: TypeBool, SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
 		EnableRCReadCheckTS.Store(TiDBOptOn(val))
 		return nil
@@ -2378,6 +2394,9 @@ var defaultSysVars = []*SysVar{
 		return s.PartitionPruneMode.Load(), nil
 	}, SetSession: func(s *SessionVars, val string) error {
 		newMode := strings.ToLower(strings.TrimSpace(val))
+		if PartitionPruneMode(newMode) == Static {
+			s.StmtCtx.AppendWarning(ErrWarnDeprecatedSyntaxSimpleMsg.FastGen("static prune mode is deprecated and will be removed in the future release."))
+		}
 		if PartitionPruneMode(s.PartitionPruneMode.Load()) == Static && PartitionPruneMode(newMode) == Dynamic {
 			s.StmtCtx.AppendWarning(errors.NewNoStackError("Please analyze all partition tables again for consistency between partition and global stats"))
 			s.StmtCtx.AppendWarning(errors.NewNoStackError("Please avoid setting partition prune mode to dynamic at session level and set partition prune mode to dynamic at global level"))
@@ -2386,6 +2405,9 @@ var defaultSysVars = []*SysVar{
 		return nil
 	}, SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
 		newMode := strings.ToLower(strings.TrimSpace(val))
+		if PartitionPruneMode(newMode) == Static {
+			s.StmtCtx.AppendWarning(ErrWarnDeprecatedSyntaxSimpleMsg.FastGen("static prune mode is deprecated and will be removed in the future release."))
+		}
 		if PartitionPruneMode(newMode) == Dynamic {
 			s.StmtCtx.AppendWarning(errors.NewNoStackError("Please analyze all partition tables again for consistency between partition and global stats"))
 		}
@@ -3576,6 +3598,8 @@ const (
 	PluginLoad = "plugin_load"
 	// TiDBEnableDDL indicates whether the tidb-server campaigns the DDL owner,
 	TiDBEnableDDL = "tidb_enable_ddl"
+	// TiDBEnableStatsOwner indicates whether the tidb-server campaigns the Stats owner,
+	TiDBEnableStatsOwner = "tidb_enable_stats_owner"
 	// Port is the name for 'port' system variable.
 	Port = "port"
 	// DataDir is the name for 'datadir' system variable.

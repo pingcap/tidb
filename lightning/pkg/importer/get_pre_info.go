@@ -43,6 +43,7 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/mydump"
 	"github.com/pingcap/tidb/pkg/lightning/verification"
 	"github.com/pingcap/tidb/pkg/lightning/worker"
+	"github.com/pingcap/tidb/pkg/meta/metabuild"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -50,7 +51,6 @@ import (
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
-	"github.com/pingcap/tidb/pkg/util/mock"
 	pdhttp "github.com/tikv/pd/client/http"
 	"go.uber.org/zap"
 )
@@ -428,15 +428,15 @@ func newTableInfo(createTblSQL string, tableID int64) (*model.TableInfo, error) 
 		log.L().Error(errMsg, zap.Error(err), zap.String("sql", createTblSQL))
 		return nil, errors.Trace(err)
 	}
-	sctx := mock.NewContext()
 	createTableStmt, ok := astNode.(*ast.CreateTableStmt)
 	if !ok {
 		return nil, errors.New("cannot transfer the parsed SQL as an CREATE TABLE statement")
 	}
-	info, err := ddl.MockTableInfo(sctx, createTableStmt, tableID)
+	info, err := ddl.BuildTableInfoFromAST(metabuild.NewNonStrictContext(), createTableStmt)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+	info.ID = tableID
 	info.State = model.StatePublic
 	return info, nil
 }

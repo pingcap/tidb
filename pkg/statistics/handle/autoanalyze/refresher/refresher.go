@@ -17,6 +17,7 @@ package refresher
 import (
 	"time"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/sysproctrack"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
@@ -24,7 +25,6 @@ import (
 	"github.com/pingcap/tidb/pkg/statistics/handle/autoanalyze/priorityqueue"
 	statslogutil "github.com/pingcap/tidb/pkg/statistics/handle/logutil"
 	statstypes "github.com/pingcap/tidb/pkg/statistics/handle/types"
-	statsutil "github.com/pingcap/tidb/pkg/statistics/handle/util"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"go.uber.org/zap"
 )
@@ -32,17 +32,25 @@ import (
 // Refresher provides methods to refresh stats info.
 // NOTE: Refresher is not thread-safe.
 type Refresher struct {
-	statsHandle    statstypes.StatsHandle
-	sysProcTracker sysproctrack.Tracker
 	// This will be refreshed every time we rebuild the priority queue.
 	autoAnalysisTimeWindow priorityqueue.AutoAnalysisTimeWindow
 
-	// Jobs is the priority queue of analysis jobs.
-	// Exported for testing purposes.
-	Jobs *priorityqueue.AnalysisPriorityQueue
+	statsHandle    statstypes.StatsHandle
+	sysProcTracker sysproctrack.Tracker
+
+	// jobs is the priority queue of analysis jobs.
+	jobs *priorityqueue.AnalysisPriorityQueueV2
 
 	// worker is the worker that runs the analysis jobs.
 	worker *worker
+
+	// lastSeenPruneMode is the last seen value of the partition prune mode.
+	// Used to detect changes in the partition prune mode.
+	lastSeenPruneMode variable.PartitionPruneMode
+
+	// lastSeenAutoAnalyzeRatio is the last seen value of the auto analyze ratio.
+	// Used to detect changes in the auto analyze ratio.
+	lastSeenAutoAnalyzeRatio float64
 }
 
 // NewRefresher creates a new Refresher and starts the goroutine.
@@ -54,7 +62,7 @@ func NewRefresher(
 	r := &Refresher{
 		statsHandle:    statsHandle,
 		sysProcTracker: sysProcTracker,
-		Jobs:           priorityqueue.NewAnalysisPriorityQueue(),
+		jobs:           priorityqueue.NewAnalysisPriorityQueueV2(statsHandle),
 		worker:         NewWorker(statsHandle, sysProcTracker, maxConcurrency),
 	}
 
@@ -69,10 +77,6 @@ func (r *Refresher) UpdateConcurrency() {
 
 // AnalyzeHighestPriorityTables picks tables with the highest priority and analyzes them.
 func (r *Refresher) AnalyzeHighestPriorityTables() bool {
-	if !r.autoAnalysisTimeWindow.IsWithinTimeWindow(time.Now()) {
-		return false
-	}
-
 	se, err := r.statsHandle.SPool().Get()
 	if err != nil {
 		statslogutil.StatsLogger().Error("Failed to get session context", zap.Error(err))
@@ -81,6 +85,35 @@ func (r *Refresher) AnalyzeHighestPriorityTables() bool {
 	defer r.statsHandle.SPool().Put(se)
 
 	sctx := se.(sessionctx.Context)
+	parameters := exec.GetAutoAnalyzeParameters(sctx)
+	err = r.setAutoAnalysisTimeWindow(parameters)
+	if err != nil {
+		statslogutil.StatsLogger().Error("Set auto analyze time window failed", zap.Error(err))
+		return false
+	}
+	if !r.isWithinTimeWindow() {
+		return false
+	}
+	if !r.jobs.IsInitialized() {
+		if err := r.jobs.Initialize(); err != nil {
+			statslogutil.StatsLogger().Error("Failed to initialize the queue", zap.Error(err))
+			return false
+		}
+	} else {
+		// Only do this if the queue is already initialized.
+		currentAutoAnalyzeRatio := exec.ParseAutoAnalyzeRatio(parameters[variable.TiDBAutoAnalyzeRatio])
+		currentPruneMode := variable.PartitionPruneMode(sctx.GetSessionVars().PartitionPruneMode.Load())
+		if currentAutoAnalyzeRatio != r.lastSeenAutoAnalyzeRatio || currentPruneMode != r.lastSeenPruneMode {
+			r.lastSeenAutoAnalyzeRatio = currentAutoAnalyzeRatio
+			r.lastSeenPruneMode = currentPruneMode
+			err := r.jobs.Rebuild()
+			if err != nil {
+				statslogutil.StatsLogger().Error("Failed to rebuild the queue", zap.Error(err))
+				return false
+			}
+		}
+	}
+
 	// Update the concurrency to the latest value.
 	r.UpdateConcurrency()
 	// Check remaining concurrency.
@@ -93,8 +126,14 @@ func (r *Refresher) AnalyzeHighestPriorityTables() bool {
 	}
 
 	analyzedCount := 0
-	for r.Jobs.Len() > 0 && analyzedCount < remainConcurrency {
-		job := r.Jobs.Pop()
+	for analyzedCount < remainConcurrency {
+		// TODO: Change the API to avoid return error.
+		job, err := r.jobs.Pop()
+		if err != nil {
+			// No more jobs to analyze.
+			break
+		}
+
 		if _, isRunning := currentRunningJobs[job.GetTableID()]; isRunning {
 			statslogutil.StatsLogger().Debug("Job already running, skipping", zap.Int64("tableID", job.GetTableID()))
 			continue
@@ -143,41 +182,23 @@ func (r *Refresher) AnalyzeHighestPriorityTables() bool {
 	return false
 }
 
-// RebuildTableAnalysisJobQueue rebuilds the priority queue of analysis jobs.
-func (r *Refresher) RebuildTableAnalysisJobQueue() error {
-	// Reset the priority queue.
-	r.Jobs = priorityqueue.NewAnalysisPriorityQueue()
-
-	if err := statsutil.CallWithSCtx(
-		r.statsHandle.SPool(),
-		func(sctx sessionctx.Context) error {
-			parameters := exec.GetAutoAnalyzeParameters(sctx)
-			// Get the available time period for auto analyze and check if the current time is in the period.
-			start, end, err := exec.ParseAutoAnalysisWindow(
-				parameters[variable.TiDBAutoAnalyzeStartTime],
-				parameters[variable.TiDBAutoAnalyzeEndTime],
-			)
-			if err != nil {
-				statslogutil.StatsLogger().Error(
-					"parse auto analyze period failed",
-					zap.Error(err),
-				)
-				return err
-			}
-			// We will check it again when we try to execute the job.
-			// So store the time window for later use.
-			r.autoAnalysisTimeWindow = priorityqueue.NewAutoAnalysisTimeWindow(start, end)
-			if !r.autoAnalysisTimeWindow.IsWithinTimeWindow(time.Now()) {
-				return nil
-			}
-			return priorityqueue.FetchAllTablesAndBuildAnalysisJobs(sctx, parameters, r.autoAnalysisTimeWindow, r.statsHandle, r.Jobs.Push)
-		},
-		statsutil.FlagWrapTxn,
-	); err != nil {
-		return err
+func (r *Refresher) setAutoAnalysisTimeWindow(
+	parameters map[string]string,
+) error {
+	start, end, err := exec.ParseAutoAnalysisWindow(
+		parameters[variable.TiDBAutoAnalyzeStartTime],
+		parameters[variable.TiDBAutoAnalyzeEndTime],
+	)
+	if err != nil {
+		return errors.Wrap(err, "parse auto analyze period failed")
 	}
-
+	r.autoAnalysisTimeWindow = priorityqueue.NewAutoAnalysisTimeWindow(start, end)
 	return nil
+}
+
+// isWithinTimeWindow checks if the current time is within the auto analyze time window.
+func (r *Refresher) isWithinTimeWindow() bool {
+	return r.autoAnalysisTimeWindow.IsWithinTimeWindow(time.Now())
 }
 
 // WaitAutoAnalyzeFinishedForTest waits for the auto analyze job to be finished.
@@ -192,7 +213,31 @@ func (r *Refresher) GetRunningJobs() map[int64]struct{} {
 	return r.worker.GetRunningJobs()
 }
 
+// ProcessDMLChangesForTest processes DML changes for the test.
+// Only used in the test.
+func (r *Refresher) ProcessDMLChangesForTest() {
+	if r.jobs.IsInitialized() {
+		r.jobs.ProcessDMLChanges()
+	}
+}
+
+// RequeueFailedJobsForTest requeues failed jobs for the test.
+// Only used in the test.
+func (r *Refresher) RequeueFailedJobsForTest() {
+	r.jobs.RequeueFailedJobs()
+}
+
+// Len returns the length of the analysis job queue.
+func (r *Refresher) Len() int {
+	l, err := r.jobs.Len()
+	intest.Assert(err == nil, "Failed to get the queue length")
+	return l
+}
+
 // Close stops all running jobs and releases resources.
 func (r *Refresher) Close() {
 	r.worker.Stop()
+	if r.jobs != nil {
+		r.jobs.Close()
+	}
 }

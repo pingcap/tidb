@@ -27,12 +27,14 @@ go_library(
         "//pkg/util",
         "//pkg/util/channel",
         "//pkg/util/chunk",
+        "//pkg/util/dbterror/exeerrors",
         "//pkg/util/disk",
         "//pkg/util/logutil",
         "//pkg/util/memory",
         "//pkg/util/sqlkiller",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_failpoint//:failpoint",
+        "@com_github_stretchr_testify//require",
         "@org_uber_go_zap//:zap",
     ],
 )
@@ -42,7 +44,7 @@ go_test(
     timeout = "short",
     srcs = ["sort_test.go"],
     flaky = True,
-    shard_count = 16,
+    shard_count = 17,
     deps = [
         "//pkg/config",
         "//pkg/sessionctx/variable",

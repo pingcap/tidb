@@ -113,24 +113,20 @@ func expectedDeleteRangeCnt(ctx delRangeCntCtx, job *model.Job) (int, error) {
 		}
 		return len(args.OldPhysicalTblIDs), nil
 	case model.ActionAddIndex, model.ActionAddPrimaryKey:
-		indexID := make([]int64, 1)
-		ifExists := make([]bool, 1)
-		isGlobal := make([]bool, 0, 1)
-		var partitionIDs []int64
-		if err := job.DecodeArgs(&indexID[0], &ifExists[0], &partitionIDs); err != nil {
-			if err := job.DecodeArgs(&indexID, &ifExists, &partitionIDs, &isGlobal); err != nil {
-				var unique bool
-				if err := job.DecodeArgs(&unique); err == nil {
-					// The first argument is bool means nothing need to be added to delete-range table.
-					return 0, nil
-				}
-				return 0, errors.Trace(err)
+		args, err := model.GetFinishedModifyIndexArgs(job)
+		if err != nil {
+			_, err := model.GetModifyIndexArgs(job)
+			if err == nil {
+				// There are nothing need to be added to delete-range table.
+				return 0, nil
 			}
+			return 0, errors.Trace(err)
 		}
+
 		ret := 0
-		for i := 0; i < len(indexID); i++ {
-			num := mathutil.Max(len(partitionIDs), 1) // Add temporary index to del-range table.
-			if len(isGlobal) != 0 && isGlobal[i] {
+		for _, arg := range args.IndexArgs {
+			num := mathutil.Max(len(args.PartitionIDs), 1) // Add temporary index to del-range table.
+			if arg.IsGlobal {
 				num = 1 // Global index only has one del-range.
 			}
 			if job.State == model.JobStateRollbackDone {
@@ -140,18 +136,17 @@ func expectedDeleteRangeCnt(ctx delRangeCntCtx, job *model.Job) (int, error) {
 		}
 		return ret, nil
 	case model.ActionDropIndex, model.ActionDropPrimaryKey:
-		var indexName any
-		ifNotExists := make([]bool, 1)
-		indexID := make([]int64, 1)
-		var partitionIDs []int64
-		if err := job.DecodeArgs(&indexName, &ifNotExists[0], &indexID[0], &partitionIDs); err != nil {
-			if err := job.DecodeArgs(&indexName, &ifNotExists, &indexID, &partitionIDs); err != nil {
-				return 0, errors.Trace(err)
-			}
+		args, err := model.GetFinishedModifyIndexArgs(job)
+		if err != nil {
+			return 0, errors.Trace(err)
 		}
-		return mathutil.Max(len(partitionIDs), 1), nil
+		// If it's a vector index, it needn't to store key ranges to gc_delete_range.
+		if args.IndexArgs[0].IsVector {
+			return 0, nil
+		}
+		return mathutil.Max(len(args.PartitionIDs), 1), nil
 	case model.ActionDropColumn:
-		args, err := model.GetDropColumnArgs(job)
+		args, err := model.GetTableColumnArgs(job)
 		if err != nil {
 			return 0, errors.Trace(err)
 		}
@@ -159,13 +154,12 @@ func expectedDeleteRangeCnt(ctx delRangeCntCtx, job *model.Job) (int, error) {
 		physicalCnt := mathutil.Max(len(args.PartitionIDs), 1)
 		return physicalCnt * len(args.IndexIDs), nil
 	case model.ActionModifyColumn:
-		var indexIDs []int64
-		var partitionIDs []int64
-		if err := job.DecodeArgs(&indexIDs, &partitionIDs); err != nil {
+		args, err := model.GetFinishedModifyColumnArgs(job)
+		if err != nil {
 			return 0, errors.Trace(err)
 		}
-		physicalCnt := mathutil.Max(len(partitionIDs), 1)
-		return physicalCnt * ctx.deduplicateIdxCnt(indexIDs), nil
+		physicalCnt := mathutil.Max(len(args.PartitionIDs), 1)
+		return physicalCnt * ctx.deduplicateIdxCnt(args.IndexIDs), nil
 	case model.ActionMultiSchemaChange:
 		totalExpectedCnt := 0
 		for i, sub := range job.MultiSchemaInfo.SubJobs {

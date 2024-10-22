@@ -85,7 +85,7 @@ func buildObserveTableRanges(
 	backupTS uint64,
 ) ([]kv.KeyRange, error) {
 	snapshot := storage.GetSnapshot(kv.NewVersion(backupTS))
-	m := meta.NewSnapshotMeta(snapshot)
+	m := meta.NewReader(snapshot)
 
 	dbs, err := m.ListDatabases()
 	if err != nil {
@@ -369,7 +369,7 @@ func FastUnmarshalMetaData(
 	eg, ectx := errgroup.WithContext(ctx)
 	opt := &storage.WalkOption{SubDir: GetStreamBackupMetaPrefix()}
 	err := s.WalkDir(ectx, opt, func(path string, size int64) error {
-		if !strings.HasSuffix(path, ".meta") {
+		if !strings.HasSuffix(path, metaSuffix) {
 			return nil
 		}
 		readPath := path

@@ -750,6 +750,7 @@ import (
 	medium                "MEDIUM"
 	metadata              "METADATA"
 	min                   "MIN"
+	hnsw                  "HNSW"
 	next_row_id           "NEXT_ROW_ID"
 	now                   "NOW"
 	optRuleBlacklist      "OPT_RULE_BLACKLIST"
@@ -1137,6 +1138,8 @@ import (
 	Constraint                             "table constraint"
 	ConstraintElem                         "table constraint element"
 	ConstraintKeywordOpt                   "Constraint Keyword or empty"
+	ConstraintVectorIndex                  "vector index"
+	ConstraintWithVectorIndex              "table constraint with vector index"
 	CreateSequenceOptionListOpt            "create sequence list opt"
 	CreateTableOptionListOpt               "create table option list opt"
 	CreateTableSelectOpt                   "Select/Union statement in CREATE TABLE ... SELECT"
@@ -1638,6 +1641,8 @@ import (
 %precedence order
 %precedence lowerThanFunction
 %precedence function
+%precedence constraint
+%precedence vectorType
 
 /* A dummy token to force the priority of TableRef production in a join. */
 %left tableRefPriority
@@ -2119,7 +2124,6 @@ AlterTableSpecSingleOpt:
 		startOffset := parser.yyVAL.offset
 		endOffset := parser.yylval.offset
 		partitionMethod.SetText(parser.lexer.client, parser.src[startOffset:endOffset])
-		partitionMethod.SetOriginTextPosition(startOffset)
 		$$ = &ast.AlterTableSpec{
 			Tp:        ast.AlterTableReorganizeLastPartition,
 			Partition: &ast.PartitionOptions{PartitionMethod: partitionMethod},
@@ -2131,8 +2135,6 @@ AlterTableSpecSingleOpt:
 		startOffset := parser.yyVAL.offset
 		endOffset := parser.yylval.offset
 		partitionMethod.SetText(parser.lexer.client, parser.src[startOffset:endOffset])
-		// Needed for replacing syntactic sugar with generated partitioning definition string
-		partitionMethod.SetOriginTextPosition(startOffset)
 		$$ = &ast.AlterTableSpec{
 			Tp:        ast.AlterTableReorganizeFirstPartition,
 			Partition: &ast.PartitionOptions{PartitionMethod: partitionMethod},
@@ -2262,6 +2264,14 @@ AlterTableSpec:
 			Constraint: constraint,
 		}
 	}
+|	"ADD" ConstraintVectorIndex
+	{
+		constraint := $2.(*ast.Constraint)
+		$$ = &ast.AlterTableSpec{
+			Tp:         ast.AlterTableAddConstraint,
+			Constraint: constraint,
+		}
+	}
 |	"ADD" "PARTITION" IfNotExists NoWriteToBinLogAliasOpt PartitionDefinitionListOpt
 	{
 		var defs []*ast.PartitionDefinition
@@ -2305,8 +2315,6 @@ AlterTableSpec:
 		startOffset := parser.yyVAL.offset
 		endOffset := parser.yylval.offset
 		partitionMethod.SetText(parser.lexer.client, parser.src[startOffset:endOffset])
-		// Needed for replacing syntactic sugar with generated partitioning definition string
-		partitionMethod.SetOriginTextPosition(startOffset)
 		$$ = &ast.AlterTableSpec{
 			NoWriteToBinlog: noWriteToBinlog,
 			Tp:              ast.AlterTableAddLastPartition,
@@ -2393,8 +2401,6 @@ AlterTableSpec:
 		startOffset := parser.yyVAL.offset
 		endOffset := parser.yylval.offset
 		partitionMethod.SetText(parser.lexer.client, parser.src[startOffset:endOffset])
-		// Needed for replacing syntactic sugar with generated partitioning definition string
-		partitionMethod.SetOriginTextPosition(startOffset)
 		$$ = &ast.AlterTableSpec{
 			IfExists:  $8.(bool),
 			Tp:        ast.AlterTableDropFirstPartition,
@@ -4221,11 +4227,29 @@ CreateIndexStmt:
 				indexLockAndAlgorithm = nil
 			}
 		}
+
+		keyType := $2.(ast.IndexKeyType)
+		isVectorIndex := keyType == ast.IndexKeyTypeVector
+		if isVectorIndex && indexOption.Tp == model.IndexTypeInvalid {
+			indexOption.Tp = model.IndexTypeHNSW
+		}
+		if (isVectorIndex && indexOption.Tp != model.IndexTypeHNSW) || (!isVectorIndex && indexOption.Tp == model.IndexTypeHNSW) {
+			yylex.AppendError(ErrSyntax)
+			return 1
+		}
+		partSpecs := $10.([]*ast.IndexPartSpecification)
+		if keyType == ast.IndexKeyTypeVector {
+			if len(partSpecs) != 1 || partSpecs[0].Expr == nil {
+				yylex.AppendError(ErrSyntax)
+				return 1
+			}
+		}
+
 		$$ = &ast.CreateIndexStmt{
 			IfNotExists:             $4.(bool),
 			IndexName:               $5,
 			Table:                   $8.(*ast.TableName),
-			IndexPartSpecifications: $10.([]*ast.IndexPartSpecification),
+			IndexPartSpecifications: partSpecs,
 			IndexOption:             indexOption,
 			KeyType:                 $2.(ast.IndexKeyType),
 			LockAlg:                 indexLockAndAlgorithm,
@@ -4309,6 +4333,10 @@ IndexKeyTypeOpt:
 |	"FULLTEXT"
 	{
 		$$ = ast.IndexKeyTypeFullText
+	}
+|	"VECTOR"
+	{
+		$$ = ast.IndexKeyTypeVector
 	}
 
 /**************************************AlterDatabaseStmt***************************************
@@ -4678,8 +4706,6 @@ PartitionIntervalOpt:
 		startOffset := parser.yyVAL.offset
 		endOffset := parser.yylval.offset
 		partitionInterval.SetText(parser.lexer.client, parser.src[startOffset:endOffset])
-		// Needed for replacing syntactic sugar with generated partitioning definition string
-		partitionInterval.SetOriginTextPosition(startOffset)
 		$$ = partitionInterval
 	}
 
@@ -6683,6 +6709,10 @@ IndexTypeName:
 	{
 		$$ = model.IndexTypeHypo
 	}
+|	"HNSW"
+	{
+		$$ = model.IndexTypeHNSW
+	}
 
 IndexInvisible:
 	"VISIBLE"
@@ -7149,6 +7179,7 @@ NotKeywordToken:
 |	"END_TIME"
 |	"GET_FORMAT"
 |	"GROUP_CONCAT"
+|	"HNSW"
 |	"INPLACE"
 |	"INSTANT"
 |	"INTERNAL"
@@ -12329,13 +12360,66 @@ Constraint:
 		$$ = cst
 	}
 
+// ConstraintVectorIndex does not put in Constraint to resolve syntax conflicts.
+ConstraintVectorIndex:
+	"VECTOR" "INDEX" IfNotExists IndexNameAndTypeOpt '(' IndexPartSpecificationList ')' IndexOptionList
+	{
+		c := &ast.Constraint{
+			IfNotExists:  $3.(bool),
+			Tp:           ast.ConstraintVector,
+			Keys:         $6.([]*ast.IndexPartSpecification),
+			Name:         $4.([]interface{})[0].(*ast.NullString).String,
+			IsEmptyIndex: $4.([]interface{})[0].(*ast.NullString).Empty,
+		}
+
+		if $8 != nil {
+			c.Option = $8.(*ast.IndexOption)
+		}
+		if indexType := $4.([]interface{})[1]; indexType != nil {
+			if c.Option == nil {
+				c.Option = &ast.IndexOption{}
+			}
+			c.Option.Tp = indexType.(model.IndexType)
+		}
+		if c.Option == nil {
+			c.Option = &ast.IndexOption{Tp: model.IndexTypeHNSW}
+		} else if c.Option.Tp == model.IndexTypeInvalid {
+			c.Option.Tp = model.IndexTypeHNSW
+		}
+		if c.Option.Tp != model.IndexTypeHNSW {
+			yylex.AppendError(ErrSyntax)
+			return 1
+		}
+
+		if len(c.Keys) != 1 || c.Keys[0].Expr == nil {
+			yylex.AppendError(ErrSyntax)
+			return 1
+		}
+		$$ = c
+	}
+
+ConstraintWithVectorIndex:
+	ConstraintKeywordOpt ConstraintElem
+	{
+		cst := $2.(*ast.Constraint)
+		if $1 != nil {
+			cst.Name = $1.(string)
+			cst.IsEmptyIndex = len(cst.Name) == 0
+		}
+		$$ = cst
+	}
+|	ConstraintVectorIndex
+	{
+		$$ = $1.(*ast.Constraint)
+	}
+
 CheckConstraintKeyword:
 	"CHECK"
 |	"CONSTRAINT"
 
 TableElement:
 	ColumnDef
-|	Constraint
+|	ConstraintWithVectorIndex
 
 TableElementList:
 	TableElement

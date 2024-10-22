@@ -39,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl/serverstate"
 	sess "github.com/pingcap/tidb/pkg/ddl/session"
 	"github.com/pingcap/tidb/pkg/ddl/systable"
+	"github.com/pingcap/tidb/pkg/ddl/testargsv1"
 	"github.com/pingcap/tidb/pkg/ddl/util"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/scheduler"
@@ -60,6 +61,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/gcutil"
 	"github.com/pingcap/tidb/pkg/util/generic"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	atomicutil "go.uber.org/atomic"
 	"go.uber.org/zap"
@@ -87,14 +89,8 @@ const (
 )
 
 var (
-	// ForceDDLJobVersionToV1InTest is a flag to force using ddl job V1 in test.
-	// Since 8.4.0, we have a new version of DDL args, but we have to keep logics of
-	// old version for compatibility. We change this to run unit-test another round
-	// in V1 to make sure both code are working correctly.
-	// Don't use it in unit-test. It's set in Makefile.
-	ForceDDLJobVersionToV1InTest = "false"
-	jobV2FirstVer                = *semver.New("8.4.0")
-	detectJobVerInterval         = 10 * time.Second
+	jobV2FirstVer        = *semver.New("8.4.0")
+	detectJobVerInterval = 10 * time.Second
 )
 
 // OnExist specifies what to do when a new object has a name collision.
@@ -216,6 +212,7 @@ func NewJobWrapper(job *model.Job, idAllocated bool) *JobWrapper {
 	return &JobWrapper{
 		Job:         job,
 		IDAllocated: idAllocated,
+		JobArgs:     &model.EmptyArgs{},
 		ResultCh:    []chan jobSubmitResult{make(chan jobSubmitResult)},
 	}
 }
@@ -231,13 +228,24 @@ func NewJobWrapperWithArgs(job *model.Job, args model.JobArgs, idAllocated bool)
 	}
 }
 
+// FillArgsWithSubJobs fill args for job and its sub jobs
+func (jobW *JobWrapper) FillArgsWithSubJobs() {
+	if jobW.Type != model.ActionMultiSchemaChange {
+		jobW.FillArgs(jobW.JobArgs)
+	} else {
+		for _, sub := range jobW.MultiSchemaInfo.SubJobs {
+			sub.FillArgs(jobW.Version)
+		}
+	}
+}
+
 // NotifyResult notifies the job submit result.
-func (t *JobWrapper) NotifyResult(err error) {
-	merged := len(t.ResultCh) > 1
-	for _, resultCh := range t.ResultCh {
+func (jobW *JobWrapper) NotifyResult(err error) {
+	merged := len(jobW.ResultCh) > 1
+	for _, resultCh := range jobW.ResultCh {
 		resultCh <- jobSubmitResult{
 			err:    err,
-			jobID:  t.ID,
+			jobID:  jobW.ID,
 			merged: merged,
 		}
 	}
@@ -377,7 +385,7 @@ func (sv *schemaVersionManager) setSchemaVersion(job *model.Job) (schemaVersion 
 	//  without differ.
 	err = kv.RunInNewTxn(kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL), sv.store, true, func(_ context.Context, txn kv.Transaction) error {
 		var err error
-		m := meta.NewMeta(txn)
+		m := meta.NewMutator(txn)
 		schemaVersion, err = m.GenSchemaVersion()
 		return err
 	})
@@ -523,18 +531,6 @@ func (dc *ddlCtx) removeReorgCtx(jobID int64) {
 	}
 }
 
-func (dc *ddlCtx) notifyReorgWorkerJobStateChange(job *model.Job) {
-	rc := dc.getReorgCtx(job.ID)
-	if rc == nil {
-		logutil.DDLLogger().Warn("cannot find reorgCtx", zap.Int64("Job ID", job.ID))
-		return
-	}
-	logutil.DDLLogger().Info("notify reorg worker the job's state",
-		zap.Int64("Job ID", job.ID), zap.Stringer("Job State", job.State),
-		zap.Stringer("Schema State", job.SchemaState))
-	rc.notifyJobState(job.State)
-}
-
 // EnableTiFlashPoll enables TiFlash poll loop aka PollTiFlashReplicaStatus.
 func EnableTiFlashPoll(d any) {
 	if dd, ok := d.(*ddl); ok {
@@ -563,14 +559,35 @@ func (d *ddl) RegisterStatsHandle(h *handle.Handle) {
 	d.ddlEventCh = h.DDLEventCh()
 }
 
+const noSubJob int64 = -1 // noSubJob indicates the event is not a merged ddl.
+
 // asyncNotifyEvent will notify the ddl event to outside world, say statistic handle. When the channel is full, we may
 // give up notify and log it.
-func asyncNotifyEvent(jobCtx *jobContext, e *notifier.SchemaChangeEvent, job *model.Job) {
+// subJobID is used to identify the sub job in a merged ddl, such as create tables, should pass noSubJob(-1) if not a merged ddl.
+func asyncNotifyEvent(jobCtx *jobContext, e *notifier.SchemaChangeEvent, job *model.Job, subJobID int64, sctx *sess.Session) error {
 	// skip notify for system databases, system databases are expected to change at
 	// bootstrap and other nodes can also handle the changing in its bootstrap rather
 	// than be notified.
 	if tidbutil.IsMemOrSysDB(job.SchemaName) {
-		return
+		return nil
+	}
+
+	if intest.InTest && notifier.DefaultStore != nil {
+		failpoint.Inject("asyncNotifyEventError", func() {
+			failpoint.Return(errors.New("mock publish event error"))
+		})
+		if subJobID == noSubJob && job.MultiSchemaInfo != nil {
+			subJobID = int64(job.MultiSchemaInfo.Seq)
+		}
+		err := notifier.PubSchemaChange(jobCtx.ctx, sctx, job.ID, subJobID, e)
+		if err != nil {
+			logutil.DDLLogger().Error("Error publish schema change event",
+				zap.Int64("jobID", job.ID),
+				zap.Int64("subJobID", subJobID),
+				zap.String("event", e.String()), zap.Error(err))
+			return err
+		}
+		return nil
 	}
 
 	ch := jobCtx.oldDDLCtx.ddlEventCh
@@ -578,13 +595,14 @@ func asyncNotifyEvent(jobCtx *jobContext, e *notifier.SchemaChangeEvent, job *mo
 		for i := 0; i < 10; i++ {
 			select {
 			case ch <- e:
-				return
+				return nil
 			default:
 				time.Sleep(time.Microsecond * 10)
 			}
 		}
 		logutil.DDLLogger().Warn("fail to notify DDL event", zap.Stringer("event", e))
 	}
+	return nil
 }
 
 // NewDDL creates a new DDL.
@@ -805,7 +823,7 @@ func (d *ddl) Start(ctxPool *pools.ResourcePool) error {
 // to the new TiDB instance which cannot not handle existing submitted jobs of V2.
 func (d *ddl) detectAndUpdateJobVersion() {
 	if d.etcdCli == nil {
-		if ForceDDLJobVersionToV1InTest != "false" {
+		if testargsv1.ForceV1 {
 			model.SetJobVerInUse(model.JobVersion1)
 			return
 		}
@@ -1078,7 +1096,7 @@ func (d *ddl) SwitchMDL(enable bool) error {
 
 	variable.EnableMDL.Store(enable)
 	err = kv.RunInNewTxn(kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL), d.store, true, func(_ context.Context, txn kv.Transaction) error {
-		m := meta.NewMeta(txn)
+		m := meta.NewMutator(txn)
 		oldEnable, _, err := m.GetMetadataLock()
 		if err != nil {
 			return err
@@ -1192,7 +1210,7 @@ func GetDDLInfo(s sessionctx.Context) (*Info, error) {
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	t := meta.NewMeta(txn)
+	t := meta.NewMutator(txn)
 	info.Jobs = make([]*model.Job, 0, 2)
 	var generalJob, reorgJob *model.Job
 	generalJob, reorgJob, err = get2JobsFromTable(se)
@@ -1229,7 +1247,8 @@ func GetDDLInfo(s sessionctx.Context) (*Info, error) {
 
 func get2JobsFromTable(sess *sess.Session) (*model.Job, *model.Job, error) {
 	var generalJob, reorgJob *model.Job
-	jobs, err := getJobsBySQL(sess, JobTable, "not reorg order by job_id limit 1")
+	ctx := context.Background()
+	jobs, err := getJobsBySQL(ctx, sess, JobTable, "not reorg order by job_id limit 1")
 	if err != nil {
 		return nil, nil, errors.Trace(err)
 	}
@@ -1237,7 +1256,7 @@ func get2JobsFromTable(sess *sess.Session) (*model.Job, *model.Job, error) {
 	if len(jobs) != 0 {
 		generalJob = jobs[0]
 	}
-	jobs, err = getJobsBySQL(sess, JobTable, "reorg order by job_id limit 1")
+	jobs, err = getJobsBySQL(ctx, sess, JobTable, "reorg order by job_id limit 1")
 	if err != nil {
 		return nil, nil, errors.Trace(err)
 	}
@@ -1309,6 +1328,7 @@ func resumePausedJob(_ *sess.Session, job *model.Job,
 
 // processJobs command on the Job according to the process
 func processJobs(
+	ctx context.Context,
 	process func(*sess.Session, *model.Job, model.AdminCommandOperator) (err error),
 	sessCtx sessionctx.Context,
 	ids []int64,
@@ -1336,11 +1356,11 @@ func processJobs(
 			idsStr = append(idsStr, strconv.FormatInt(id, 10))
 		}
 
-		err = ns.Begin(context.Background())
+		err = ns.Begin(ctx)
 		if err != nil {
 			return nil, err
 		}
-		jobs, err := getJobsBySQL(ns, JobTable, fmt.Sprintf("job_id in (%s) order by job_id", strings.Join(idsStr, ", ")))
+		jobs, err := getJobsBySQL(ctx, ns, JobTable, fmt.Sprintf("job_id in (%s) order by job_id", strings.Join(idsStr, ", ")))
 		if err != nil {
 			ns.Rollback()
 			return nil, err
@@ -1362,7 +1382,7 @@ func processJobs(
 				continue
 			}
 
-			err = updateDDLJob2Table(ns, job, false)
+			err = updateDDLJob2Table(ctx, ns, job, false)
 			if err != nil {
 				jobErrs[i] = err
 				continue
@@ -1376,7 +1396,7 @@ func processJobs(
 		})
 
 		// There may be some conflict during the update, try it again
-		if err = ns.Commit(context.Background()); err != nil {
+		if err = ns.Commit(ctx); err != nil {
 			continue
 		}
 
@@ -1391,43 +1411,50 @@ func processJobs(
 }
 
 // CancelJobs cancels the DDL jobs according to user command.
-func CancelJobs(se sessionctx.Context, ids []int64) (errs []error, err error) {
-	return processJobs(cancelRunningJob, se, ids, model.AdminCommandByEndUser)
+func CancelJobs(ctx context.Context, se sessionctx.Context, ids []int64) (errs []error, err error) {
+	return processJobs(ctx, cancelRunningJob, se, ids, model.AdminCommandByEndUser)
 }
 
 // PauseJobs pause all the DDL jobs according to user command.
-func PauseJobs(se sessionctx.Context, ids []int64) ([]error, error) {
-	return processJobs(pauseRunningJob, se, ids, model.AdminCommandByEndUser)
+func PauseJobs(ctx context.Context, se sessionctx.Context, ids []int64) ([]error, error) {
+	return processJobs(ctx, pauseRunningJob, se, ids, model.AdminCommandByEndUser)
 }
 
 // ResumeJobs resume all the DDL jobs according to user command.
-func ResumeJobs(se sessionctx.Context, ids []int64) ([]error, error) {
-	return processJobs(resumePausedJob, se, ids, model.AdminCommandByEndUser)
+func ResumeJobs(ctx context.Context, se sessionctx.Context, ids []int64) ([]error, error) {
+	return processJobs(ctx, resumePausedJob, se, ids, model.AdminCommandByEndUser)
 }
 
 // CancelJobsBySystem cancels Jobs because of internal reasons.
 func CancelJobsBySystem(se sessionctx.Context, ids []int64) (errs []error, err error) {
-	return processJobs(cancelRunningJob, se, ids, model.AdminCommandBySystem)
+	ctx := context.Background()
+	return processJobs(ctx, cancelRunningJob, se, ids, model.AdminCommandBySystem)
 }
 
 // PauseJobsBySystem pauses Jobs because of internal reasons.
 func PauseJobsBySystem(se sessionctx.Context, ids []int64) (errs []error, err error) {
-	return processJobs(pauseRunningJob, se, ids, model.AdminCommandBySystem)
+	ctx := context.Background()
+	return processJobs(ctx, pauseRunningJob, se, ids, model.AdminCommandBySystem)
 }
 
 // ResumeJobsBySystem resumes Jobs that are paused by TiDB itself.
 func ResumeJobsBySystem(se sessionctx.Context, ids []int64) (errs []error, err error) {
-	return processJobs(resumePausedJob, se, ids, model.AdminCommandBySystem)
+	ctx := context.Background()
+	return processJobs(ctx, resumePausedJob, se, ids, model.AdminCommandBySystem)
 }
 
 // pprocessAllJobs processes all the jobs in the job table, 100 jobs at a time in case of high memory usage.
-func processAllJobs(process func(*sess.Session, *model.Job, model.AdminCommandOperator) (err error),
-	se sessionctx.Context, byWho model.AdminCommandOperator) (map[int64]error, error) {
+func processAllJobs(
+	ctx context.Context,
+	process func(*sess.Session, *model.Job, model.AdminCommandOperator) (err error),
+	se sessionctx.Context,
+	byWho model.AdminCommandOperator,
+) (map[int64]error, error) {
 	var err error
 	var jobErrs = make(map[int64]error)
 
 	ns := sess.NewSession(se)
-	err = ns.Begin(context.Background())
+	err = ns.Begin(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -1437,7 +1464,7 @@ func processAllJobs(process func(*sess.Session, *model.Job, model.AdminCommandOp
 	var limit = 100
 	for {
 		var jobs []*model.Job
-		jobs, err = getJobsBySQL(ns, JobTable,
+		jobs, err = getJobsBySQL(ctx, ns, JobTable,
 			fmt.Sprintf("job_id >= %s order by job_id asc limit %s",
 				strconv.FormatInt(jobID, 10),
 				strconv.FormatInt(int64(limit), 10)))
@@ -1453,7 +1480,7 @@ func processAllJobs(process func(*sess.Session, *model.Job, model.AdminCommandOp
 				continue
 			}
 
-			err = updateDDLJob2Table(ns, job, false)
+			err = updateDDLJob2Table(ctx, ns, job, false)
 			if err != nil {
 				jobErrs[job.ID] = err
 				continue
@@ -1473,7 +1500,7 @@ func processAllJobs(process func(*sess.Session, *model.Job, model.AdminCommandOp
 		jobID = jobIDMax + 1
 	}
 
-	err = ns.Commit(context.Background())
+	err = ns.Commit(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -1482,23 +1509,23 @@ func processAllJobs(process func(*sess.Session, *model.Job, model.AdminCommandOp
 
 // PauseAllJobsBySystem pauses all running Jobs because of internal reasons.
 func PauseAllJobsBySystem(se sessionctx.Context) (map[int64]error, error) {
-	return processAllJobs(pauseRunningJob, se, model.AdminCommandBySystem)
+	return processAllJobs(context.Background(), pauseRunningJob, se, model.AdminCommandBySystem)
 }
 
 // ResumeAllJobsBySystem resumes all paused Jobs because of internal reasons.
 func ResumeAllJobsBySystem(se sessionctx.Context) (map[int64]error, error) {
-	return processAllJobs(resumePausedJob, se, model.AdminCommandBySystem)
+	return processAllJobs(context.Background(), resumePausedJob, se, model.AdminCommandBySystem)
 }
 
 // GetAllDDLJobs get all DDL jobs and sorts jobs by job.ID.
-func GetAllDDLJobs(se sessionctx.Context) ([]*model.Job, error) {
-	return getJobsBySQL(sess.NewSession(se), JobTable, "1 order by job_id")
+func GetAllDDLJobs(ctx context.Context, se sessionctx.Context) ([]*model.Job, error) {
+	return getJobsBySQL(ctx, sess.NewSession(se), JobTable, "1 order by job_id")
 }
 
 // IterAllDDLJobs will iterates running DDL jobs first, return directly if `finishFn` return true or error,
 // then iterates history DDL jobs until the `finishFn` return true or error.
 func IterAllDDLJobs(ctx sessionctx.Context, txn kv.Transaction, finishFn func([]*model.Job) (bool, error)) error {
-	jobs, err := GetAllDDLJobs(ctx)
+	jobs, err := GetAllDDLJobs(context.Background(), ctx)
 	if err != nil {
 		return err
 	}

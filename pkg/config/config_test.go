@@ -291,7 +291,7 @@ enable-telemetry = true
 
 # deprecate-integer-display-length is used to be compatible with MySQL 8.0 in which the integer declared with display length will be returned with
 # <snip>
-deprecate-integer-display-length = false
+deprecate-integer-display-length = true
 
 # enable-enum-length-limit is used to deal with compatibility issues. When true, the enum/set element length is limited.
 # According to MySQL 8.0 Refman:
@@ -1066,7 +1066,7 @@ func TestConflictInstanceConfig(t *testing.T) {
 	_, err = f.WriteString("check-mb4-value-in-utf8 = true \nrun-ddl = true \n" +
 		"[log] \nenable-slow-log = true \n" +
 		"[performance] \nforce-priority = \"NO_PRIORITY\"\n" +
-		"[instance] \ntidb_check_mb4_value_in_utf8 = false \ntidb_enable_slow_log = false \ntidb_force_priority = \"LOW_PRIORITY\"\ntidb_enable_ddl = false")
+		"[instance] \ntidb_check_mb4_value_in_utf8 = false \ntidb_enable_slow_log = false \ntidb_force_priority = \"LOW_PRIORITY\"\ntidb_enable_ddl = false\ntidb_enable_stats_owner = false")
 	require.NoError(t, err)
 	require.NoError(t, f.Sync())
 	err = conf.Load(configFile)
@@ -1080,6 +1080,7 @@ func TestConflictInstanceConfig(t *testing.T) {
 	require.Equal(t, "LOW_PRIORITY", conf.Instance.ForcePriority)
 	require.Equal(t, true, conf.RunDDL)
 	require.Equal(t, false, conf.Instance.TiDBEnableDDL.Load())
+	require.Equal(t, false, conf.Instance.TiDBEnableStatsOwner.Load())
 	require.Equal(t, 0, len(DeprecatedOptions))
 	for _, conflictOption := range ConflictOptions {
 		expectedConflictOption, ok := expectedConflictOptions[conflictOption.SectionName]

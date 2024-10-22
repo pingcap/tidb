@@ -562,7 +562,6 @@ func TestStoreBalancerNoRace(t *testing.T) {
 	go func() {
 		// mimic that worker handles the job and send back to storeBalancer concurrently
 		for j := range b.innerJobToWorkerCh {
-			j := j
 			go func() {
 				b.releaseStoreLoad(j.region.Region.GetPeers())
 				j.done(&jobWg)

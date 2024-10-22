@@ -416,20 +416,17 @@ func (d *SchemaTracker) createIndex(
 	if err != nil {
 		return err
 	}
-	finalColumns := make([]*model.ColumnInfo, len(tblInfo.Columns), len(tblInfo.Columns)+len(hiddenCols))
-	copy(finalColumns, tblInfo.Columns)
-	finalColumns = append(finalColumns, hiddenCols...)
-
 	for _, hiddenCol := range hiddenCols {
 		ddl.InitAndAddColumnToTable(tblInfo, hiddenCol)
 	}
 
 	indexInfo, err := ddl.BuildIndexInfo(
 		ddl.NewMetaBuildContextWithSctx(ctx),
-		finalColumns,
+		tblInfo,
 		indexName,
 		false,
 		unique,
+		false,
 		indexPartSpecifications,
 		indexOption,
 		model.StatePublic,
@@ -706,7 +703,7 @@ func (d *SchemaTracker) handleModifyColumn(
 
 	schema := d.SchemaByName(ident.Schema)
 	t := tables.MockTableFromMeta(tblInfo)
-	job, err := ddl.GetModifiableColumnJob(ctx, sctx, nil, ident, originalColName, schema, t, spec)
+	jobW, err := ddl.GetModifiableColumnJob(ctx, sctx, nil, ident, originalColName, schema, t, spec)
 	if err != nil {
 		if infoschema.ErrColumnNotExists.Equal(err) && spec.IfExists {
 			sctx.GetSessionVars().StmtCtx.AppendNote(infoschema.ErrColumnNotExists.FastGenByArgs(originalColName, ident.Name))
@@ -715,10 +712,10 @@ func (d *SchemaTracker) handleModifyColumn(
 		return errors.Trace(err)
 	}
 
-	newColInfo := *job.Args[0].(**model.ColumnInfo)
-	updatedAutoRandomBits := job.Args[4].(uint64)
+	args := jobW.JobArgs.(*model.ModifyColumnArgs)
+	newColInfo := args.Column
 
-	tblInfo.AutoRandomBits = updatedAutoRandomBits
+	tblInfo.AutoRandomBits = args.NewShardBits
 	oldCol := table.FindCol(t.Cols(), originalColName.L).ColumnInfo
 
 	originDefVal, err := ddl.GetOriginDefaultValueForModifyColumn(sctx.GetExprCtx(), newColInfo, oldCol)
@@ -870,10 +867,11 @@ func (d *SchemaTracker) createPrimaryKey(
 
 	indexInfo, err := ddl.BuildIndexInfo(
 		ddl.NewMetaBuildContextWithSctx(ctx),
-		tblInfo.Columns,
+		tblInfo,
 		indexName,
 		true,
 		true,
+		false,
 		indexPartSpecifications,
 		indexOption,
 		model.StatePublic,

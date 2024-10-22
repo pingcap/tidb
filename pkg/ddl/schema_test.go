@@ -63,7 +63,7 @@ func testCreateTable(t *testing.T, ctx sessionctx.Context, d ddl.ExecutorForTest
 func testCheckTableState(t *testing.T, store kv.Storage, dbInfo *model.DBInfo, tblInfo *model.TableInfo, state model.SchemaState) {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
 	require.NoError(t, kv.RunInNewTxn(ctx, store, false, func(ctx context.Context, txn kv.Transaction) error {
-		m := meta.NewMeta(txn)
+		m := meta.NewMutator(txn)
 		info, err := m.GetTable(dbInfo.ID, tblInfo.ID)
 		require.NoError(t, err)
 
@@ -114,7 +114,7 @@ func genGlobalIDs(store kv.Storage, count int) ([]int64, error) {
 	var ret []int64
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
 	err := kv.RunInNewTxn(ctx, store, false, func(ctx context.Context, txn kv.Transaction) error {
-		m := meta.NewMeta(txn)
+		m := meta.NewMutator(txn)
 		var err error
 		ret, err = m.GenGlobalIDs(count)
 		return err
@@ -146,9 +146,8 @@ func testCreateSchema(t *testing.T, ctx sessionctx.Context, d ddl.ExecutorForTes
 			Table:    model.InvolvingAll,
 		}},
 	}
-	job.FillArgs(&model.CreateSchemaArgs{DBInfo: dbInfo})
 	ctx.SetValue(sessionctx.QueryString, "skip")
-	require.NoError(t, d.DoDDLJobWrapper(ctx, ddl.NewJobWrapper(job, true)))
+	require.NoError(t, d.DoDDLJobWrapper(ctx, ddl.NewJobWrapperWithArgs(job, &model.CreateSchemaArgs{DBInfo: dbInfo}, true)))
 
 	v := getSchemaVer(t, ctx)
 	dbInfo.State = model.StatePublic
@@ -168,20 +167,19 @@ func buildDropSchemaJob(dbInfo *model.DBInfo) *model.Job {
 			Table:    model.InvolvingAll,
 		}},
 	}
-	j.FillArgs(&model.DropSchemaArgs{FKCheck: true})
 	return j
 }
 
 func testDropSchema(t *testing.T, ctx sessionctx.Context, d ddl.ExecutorForTest, dbInfo *model.DBInfo) (*model.Job, int64) {
 	job := buildDropSchemaJob(dbInfo)
 	ctx.SetValue(sessionctx.QueryString, "skip")
-	err := d.DoDDLJobWrapper(ctx, ddl.NewJobWrapper(job, true))
+	err := d.DoDDLJobWrapper(ctx, ddl.NewJobWrapperWithArgs(job, &model.DropSchemaArgs{FKCheck: true}, true))
 	require.NoError(t, err)
 	ver := getSchemaVer(t, ctx)
 	return job, ver
 }
 
-func isDDLJobDone(test *testing.T, t *meta.Meta, store kv.Storage) bool {
+func isDDLJobDone(test *testing.T, t *meta.Mutator, store kv.Storage) bool {
 	tk := testkit.NewTestKit(test, store)
 	rows := tk.MustQuery("select * from mysql.tidb_ddl_job").Rows()
 
@@ -198,7 +196,7 @@ func testCheckSchemaState(test *testing.T, store kv.Storage, dbInfo *model.DBInf
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
 	for {
 		err := kv.RunInNewTxn(ctx, store, false, func(ctx context.Context, txn kv.Transaction) error {
-			t := meta.NewMeta(txn)
+			t := meta.NewMutator(txn)
 			info, err := t.GetDatabase(dbInfo.ID)
 			require.NoError(test, err)
 
@@ -282,7 +280,7 @@ func TestSchema(t *testing.T) {
 	}
 	ctx := testkit.NewTestKit(t, store).Session()
 	ctx.SetValue(sessionctx.QueryString, "skip")
-	err = de.DoDDLJobWrapper(ctx, ddl.NewJobWrapper(job, true))
+	err = de.DoDDLJobWrapper(ctx, ddl.NewJobWrapperWithArgs(job, &model.DropSchemaArgs{}, true))
 	require.True(t, terror.ErrorEqual(err, infoschema.ErrDatabaseDropExists), "err %v", err)
 
 	// Drop a database without a table.
@@ -339,8 +337,7 @@ func TestSchemaWaitJob(t *testing.T) {
 	schemaID := genIDs[0]
 	doDDLJobErr(t, schemaID, 0, "test_schema", "", model.ActionCreateSchema,
 		testkit.NewTestKit(t, store).Session(), det2, store, func(job *model.Job) model.JobArgs {
-			job.FillArgs(&model.CreateSchemaArgs{DBInfo: dbInfo})
-			return nil
+			return &model.CreateSchemaArgs{DBInfo: dbInfo}
 		})
 }
 

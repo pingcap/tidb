@@ -446,9 +446,6 @@ func TestCancelAddIndexPanic(t *testing.T) {
 		tk.MustExec("insert into t values (?, ?)", i, i)
 	}
 	var checkErr error
-	oldReorgWaitTimeout := ddl.ReorgWaitTimeout
-	ddl.ReorgWaitTimeout = 50 * time.Millisecond
-	defer func() { ddl.ReorgWaitTimeout = oldReorgWaitTimeout }()
 	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunBefore", func(job *model.Job) {
 		if job.Type == model.ActionAddIndex && job.State == model.JobStateRunning && job.SchemaState == model.StateWriteReorganization && job.SnapshotVer != 0 {
 			tkCancel.MustQuery(fmt.Sprintf("admin cancel ddl jobs %d", job.ID))
@@ -819,7 +816,7 @@ func TestCanceledJobTakeTime(t *testing.T) {
 		once.Do(func() {
 			ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
 			err := kv.RunInNewTxn(ctx, store, false, func(ctx context.Context, txn kv.Transaction) error {
-				m := meta.NewMeta(txn)
+				m := meta.NewMutator(txn)
 				err := m.GetAutoIDAccessors(job.SchemaID, job.TableID).Del()
 				if err != nil {
 					return err
