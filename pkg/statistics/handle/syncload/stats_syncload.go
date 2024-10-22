@@ -375,6 +375,10 @@ func (s *statsSyncLoad) handleOneItemTask(task *statstypes.NeededItemTask) (err 
 
 var errGetHistMeta = errors.New("fail to get hist meta")
 
+var (
+	sampleLoggerFactory = logutil.SampleLoggerFactory(time.Minute, 1, zap.String(logutil.LogFieldCategory, "syncload"))
+)
+
 // readStatsForOneItem reads hist for one column/index, TODO load data via kv-get asynchronously
 func (*statsSyncLoad) readStatsForOneItem(sctx sessionctx.Context, item model.TableItemID, w *statsWrapper, isPkIsHandle bool, fullLoad bool) (*statsWrapper, error) {
 	failpoint.Inject("mockReadStatsForOnePanic", nil)
@@ -392,7 +396,7 @@ func (*statsSyncLoad) readStatsForOneItem(sctx sessionctx.Context, item model.Ta
 		return nil, err
 	}
 	if hg == nil {
-		logutil.BgLogger().Warn("fail to get hist meta for this histogram, possibly a deleted one", zap.Int64("table_id", item.TableID),
+		sampleLoggerFactory().Warn("fail to get hist meta for this histogram, possibly a deleted one", zap.Int64("table_id", item.TableID),
 			zap.Int64("hist_id", item.ID), zap.Bool("is_index", item.IsIndex))
 		return nil, errGetHistMeta
 	}
