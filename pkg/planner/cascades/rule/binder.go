@@ -163,7 +163,7 @@ func NewBinder(p *pattern.Pattern, gE *memo.GroupExpression) *Binder {
 	}
 }
 
-func Match(p *pattern.Pattern, gE *memo.GroupExpression) bool {
+func match(p *pattern.Pattern, gE *memo.GroupExpression) bool {
 	if p.Operand == pattern.OperandAny {
 		return true
 	}
@@ -236,7 +236,7 @@ func (b *Binder) dfsMatch(p *pattern.Pattern, parentSub *GroupExprHolder) bool {
 	}
 	// for the root group expression, we can do the check here to when dfsMatch is first called.
 	// for the later picked group expression, do same check in pickGroupExpression ahead to avoid false entering.
-	if !Match(p, gE) {
+	if !match(p, gE) {
 		return false
 	}
 	if len(p.Children) == 0 {
@@ -270,7 +270,7 @@ func (b *Binder) dfsMatch(p *pattern.Pattern, parentSub *GroupExprHolder) bool {
 }
 
 // for a Group, any pattern should only be matched once, exactly with the first group expression in this Group.
-func (b *Binder) anyHasBeenMatched(p *pattern.Pattern, g *memo.Group, cur *list.Element) bool {
+func anyHasBeenMatched(p *pattern.Pattern, g *memo.Group, cur *list.Element) bool {
 	if p.Operand == pattern.OperandAny && g.GetFirstElem(p.Operand) != cur {
 		return true
 	}
@@ -281,7 +281,7 @@ func (b *Binder) anyHasBeenMatched(p *pattern.Pattern, g *memo.Group, cur *list.
 func (b *Binder) pickGroupExpression(p *pattern.Pattern, g *memo.Group) *memo.GroupExpression {
 	currentGroup := b.traceID
 	currentGroupElement := b.stackInfo[currentGroup]
-	if currentGroupElement == nil || !Match(p, currentGroupElement.Value.(*memo.GroupExpression)) || b.anyHasBeenMatched(p, g, currentGroupElement) {
+	if currentGroupElement == nil || !match(p, currentGroupElement.Value.(*memo.GroupExpression)) || anyHasBeenMatched(p, g, currentGroupElement) {
 		// current group has been exhausted, pop out the current group trace info(*element thing) from stackInfo.
 		b.stackInfo = b.stackInfo[:currentGroup]
 		return nil
