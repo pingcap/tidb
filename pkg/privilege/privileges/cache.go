@@ -41,6 +41,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/sem"
 	"github.com/pingcap/tidb/pkg/util/stringutil"
+	"github.com/pingcap/tidb/pkg/util/syncutil"
 	"go.uber.org/zap"
 )
 
@@ -272,10 +273,9 @@ type MySQLPrivilege struct {
 	// This means that DB-records are organized in both a
 	// slice (p.DB) and a Map (p.DBMap).
 
-	// This helps in the case that there are a number of users with
-	// non-full privileges (i.e. user.db entries).
+	// User is only exported for test. Please use UserMap to access accounts
 	User          []UserRecord
-	UserMap       map[string][]UserRecord // Accelerate User searching
+	UserMap       map[string][]*UserRecord // Accelerate User searching
 	Global        map[string][]globalPrivRecord
 	Dynamic       map[string][]dynamicPrivRecord
 	DB            []dbRecord
@@ -426,21 +426,24 @@ func (p *MySQLPrivilege) LoadUserTable(ctx sessionctx.Context) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	// See https://dev.mysql.com/doc/refman/8.0/en/connection-access.html
-	// When multiple matches are possible, the server must determine which of them to use. It resolves this issue as follows:
-	// 1. Whenever the server reads the user table into memory, it sorts the rows.
-	// 2. When a client attempts to connect, the server looks through the rows in sorted order.
-	// 3. The server uses the first row that matches the client host name and user name.
-	// The server uses sorting rules that order rows with the most-specific Host values first.
-	p.SortUserTable()
-	p.buildUserMap()
+	p.buildAndSortUserMap()
 	return nil
 }
 
-func (p *MySQLPrivilege) buildUserMap() {
-	userMap := make(map[string][]UserRecord, len(p.User))
-	for _, record := range p.User {
-		userMap[record.User] = append(userMap[record.User], record)
+// See https://dev.mysql.com/doc/refman/8.0/en/connection-access.html
+// When multiple matches are possible, the server must determine which of them to use. It resolves this issue as follows:
+// 1. Whenever the server reads the user table into memory, it sorts the rows.
+// 2. When a client attempts to connect, the server looks through the rows in sorted order.
+// 3. The server uses the first row that matches the client host name and user name.
+// The server uses sorting rules that order rows with the most-specific Host values first.
+func (p *MySQLPrivilege) buildAndSortUserMap() {
+	userMap := make(map[string][]*UserRecord, len(p.User))
+	for i, record := range p.User {
+		userMap[record.User] = append(userMap[record.User], &p.User[i])
+	}
+	for userName, records := range userMap {
+		slices.SortFunc(records, compareUserRecord)
+		userMap[userName] = records
 	}
 	p.UserMap = userMap
 }
@@ -455,7 +458,7 @@ func compareBaseRecord(x, y *baseRecord) int {
 	return cmp.Compare(x.User, y.User)
 }
 
-func compareUserRecord(x, y UserRecord) int {
+func compareUserRecord(x, y *UserRecord) int {
 	return compareBaseRecord(&x.baseRecord, &y.baseRecord)
 }
 
@@ -506,11 +509,6 @@ func compareHost(x, y string) int {
 		return 1
 	}
 	return 0
-}
-
-// SortUserTable sorts p.User in the MySQLPrivilege struct.
-func (p MySQLPrivilege) SortUserTable() {
-	slices.SortFunc(p.User, compareUserRecord)
 }
 
 // LoadGlobalPrivTable loads the mysql.global_priv table from database.
@@ -977,10 +975,9 @@ func patternMatch(str string, patChars, patTypes []byte) bool {
 // matchIdentity finds an identity to match a user + host
 // using the correct rules according to MySQL.
 func (p *MySQLPrivilege) matchIdentity(user, host string, skipNameResolve bool) *UserRecord {
-	for i := 0; i < len(p.User); i++ {
-		record := &p.User[i]
+	for i, record := range p.UserMap[user] {
 		if record.match(user, host) {
-			return record
+			return p.UserMap[user][i]
 		}
 	}
 
@@ -997,11 +994,12 @@ func (p *MySQLPrivilege) matchIdentity(user, host string, skipNameResolve bool) 
 			)
 			return nil
 		}
-		for _, addr := range addrs {
-			for i := 0; i < len(p.User); i++ {
-				record := &p.User[i]
-				if record.match(user, addr) {
-					return record
+		if records := p.UserMap[user]; len(records) > 0 {
+			for _, addr := range addrs {
+				for i := 0; i < len(records); i++ {
+					if records[i].match(user, addr) {
+						return records[i]
+					}
 				}
 			}
 		}
@@ -1009,12 +1007,13 @@ func (p *MySQLPrivilege) matchIdentity(user, host string, skipNameResolve bool) 
 	return nil
 }
 
-// matchResoureGroup finds an identity to match resource group.
-func (p *MySQLPrivilege) matchResoureGroup(resourceGroupName string) *UserRecord {
-	for i := 0; i < len(p.User); i++ {
-		record := &p.User[i]
-		if record.ResourceGroup == resourceGroupName {
-			return record
+// matchResourceGroup finds an identity to match resource group.
+func (p *MySQLPrivilege) matchResourceGroup(resourceGroupName string) *UserRecord {
+	for _, records := range p.UserMap {
+		for i := 0; i < len(records); i++ {
+			if records[i].ResourceGroup == resourceGroupName {
+				return records[i]
+			}
 		}
 	}
 	return nil
@@ -1027,9 +1026,8 @@ func (p *MySQLPrivilege) connectionVerification(user, host string) *UserRecord {
 	records, exists := p.UserMap[user]
 	if exists {
 		for i := 0; i < len(records); i++ {
-			record := &records[i]
-			if record.Host == host { // exact match
-				return record
+			if records[i].Host == host { // exact match
+				return records[i]
 			}
 		}
 	}
@@ -1054,9 +1052,8 @@ func (p *MySQLPrivilege) matchUser(user, host string) *UserRecord {
 	records, exists := p.UserMap[user]
 	if exists {
 		for i := 0; i < len(records); i++ {
-			record := &records[i]
-			if record.match(user, host) {
-				return record
+			if records[i].match(user, host) {
+				return records[i]
 			}
 		}
 	}
@@ -1270,15 +1267,17 @@ func (p *MySQLPrivilege) showGrants(ctx sessionctx.Context, user, host string, r
 		}
 	}
 	var g string
-	for _, record := range p.User {
-		if record.fullyMatch(user, host) {
-			hasGlobalGrant = true
-			currentPriv |= record.Privileges
-		} else {
-			for _, r := range allRoles {
-				if record.baseRecord.match(r.Username, r.Hostname) {
-					hasGlobalGrant = true
-					currentPriv |= record.Privileges
+	for _, records := range p.UserMap {
+		for _, record := range records {
+			if record.fullyMatch(user, host) {
+				hasGlobalGrant = true
+				currentPriv |= record.Privileges
+			} else {
+				for _, r := range allRoles {
+					if record.baseRecord.match(r.Username, r.Hostname) {
+						hasGlobalGrant = true
+						currentPriv |= record.Privileges
+					}
 				}
 			}
 		}
@@ -1556,9 +1555,11 @@ func (p *MySQLPrivilege) UserPrivilegesTable(activeRoles []*auth.RoleIdentity, u
 	// This is verified against MySQL.
 	showOtherUsers := p.RequestVerification(activeRoles, user, host, mysql.SystemDB, "", "", mysql.SelectPriv)
 	var rows [][]types.Datum
-	for _, u := range p.User {
-		if showOtherUsers || u.match(user, host) {
-			rows = appendUserPrivilegesTableRow(rows, u)
+	for _, records := range p.UserMap {
+		for _, u := range records {
+			if showOtherUsers || u.match(user, host) {
+				rows = appendUserPrivilegesTableRow(rows, u)
+			}
 		}
 	}
 	for _, dynamicPrivs := range p.Dynamic {
@@ -1581,7 +1582,7 @@ func appendDynamicPrivRecord(rows [][]types.Datum, user dynamicPrivRecord) [][]t
 	return append(rows, record)
 }
 
-func appendUserPrivilegesTableRow(rows [][]types.Datum, user UserRecord) [][]types.Datum {
+func appendUserPrivilegesTableRow(rows [][]types.Datum, user *UserRecord) [][]types.Datum {
 	var isGrantable string
 	if user.Privileges&mysql.GrantPriv > 0 {
 		isGrantable = "YES"
@@ -1633,12 +1634,14 @@ func (p *MySQLPrivilege) getAllRoles(user, host string) []*auth.RoleIdentity {
 
 // Handle wraps MySQLPrivilege providing thread safe access.
 type Handle struct {
-	priv atomic.Pointer[MySQLPrivilege]
+	priv           atomic.Pointer[MySQLPrivilege]
+	mu             syncutil.Mutex
+	lastUpdateTime time.Time
 }
 
 // NewHandle returns a Handle.
 func NewHandle() *Handle {
-	return &Handle{}
+	return &Handle{lastUpdateTime: time.Now()}
 }
 
 // Get the MySQLPrivilege for read.
@@ -1648,6 +1651,19 @@ func (h *Handle) Get() *MySQLPrivilege {
 
 // Update loads all the privilege info from kv storage.
 func (h *Handle) Update(ctx sessionctx.Context) error {
+	return h.mutexUpdate(ctx)
+}
+
+// mutexUpdate loads all the privilege info from kv storage.
+func (h *Handle) mutexUpdate(ctx sessionctx.Context) error {
+	startTime := time.Now()
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.lastUpdateTime.After(startTime) {
+		return nil
+	}
+	updateTime := time.Now()
+
 	var priv MySQLPrivilege
 	err := priv.LoadAll(ctx)
 	if err != nil {
@@ -1655,5 +1671,6 @@ func (h *Handle) Update(ctx sessionctx.Context) error {
 	}
 
 	h.priv.Store(&priv)
+	h.lastUpdateTime = updateTime
 	return nil
 }
