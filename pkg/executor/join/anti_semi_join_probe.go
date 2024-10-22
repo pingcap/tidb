@@ -27,7 +27,7 @@ type antiSemiJoinProbe struct {
 	baseJoinProbe
 	isLeftSideBuild bool
 
-	groupMark []int
+	groupMark          []int
 	matchedProbeRowIdx map[int]struct{}
 
 	// used when left side is build side
@@ -40,8 +40,7 @@ func newAntiSemiJoinProbe(base baseJoinProbe, isLeftSideBuild bool) *antiSemiJoi
 		isLeftSideBuild: isLeftSideBuild,
 	}
 
-	hasOtherCondition := ret.ctx.hasOtherCondition()
-	if ret.isLeftSideBuild && hasOtherCondition {
+	if ret.isLeftSideBuild && ret.ctx.hasOtherCondition() {
 		ret.groupMark = make([]int, 0, ret.ctx.SessCtx.GetSessionVars().MaxChunkSize)
 		ret.matchedProbeRowIdx = make(map[int]struct{})
 	}
@@ -246,21 +245,21 @@ func (j *antiSemiJoinProbe) probeForRightSideBuildHasOtherCondition(chk, joinedC
 				j.currentProbeRow++
 			}
 		}
-	
+
 		err = checkSQLKiller(sqlKiller, "killedDuringProbe")
 		if err != nil {
 			return err
 		}
-	
+
 		j.finishCurrentLookupLoop(joinedChk)
-	
+
 		if joinedChk.NumRows() > 0 {
 			j.selected = j.selected[:0]
 			j.selected, err = expression.VectorizedFilter(j.ctx.SessCtx.GetExprCtx().GetEvalCtx(), j.ctx.SessCtx.GetSessionVars().EnableVectorizedExpression, j.ctx.OtherCondition, chunk.NewIterator4Chunk(joinedChk), j.selected)
 			if err != nil {
 				return err
 			}
-	
+
 			length := len(j.selected)
 			for i := 0; i < length; i++ {
 				if j.selected[i] {
@@ -269,8 +268,18 @@ func (j *antiSemiJoinProbe) probeForRightSideBuildHasOtherCondition(chk, joinedC
 			}
 		}
 	}
-	
-	
+
+	j.currentProbeRow = 0
+	for j.currentProbeRow < j.chunkRows {
+		_, ok := j.matchedProbeRowIdx[j.currentProbeRow]
+		if ok {
+			continue
+		}
+
+		j.matchedRowsForCurrentProbeRow = 1
+		j.finishLookupCurrentProbeRow()
+	}
+	j.finishCurrentLookupLoop(chk)
 	return
 }
 
