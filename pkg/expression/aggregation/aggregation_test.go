@@ -610,6 +610,7 @@ func TestAggFuncDesc(t *testing.T) {
 		RetType: types.NewFieldType(mysql.TypeLonglong),
 	}
 	desc1, err := NewAggFuncDesc(s.ctx, ast.AggFuncSum, []expression.Expression{col}, false)
+	require.NoError(t, err)
 	desc2, err := NewAggFuncDesc(s.ctx, ast.AggFuncSum, []expression.Expression{col}, false)
 	require.NoError(t, err)
 	hasher1 := base.NewHashEqualer()
