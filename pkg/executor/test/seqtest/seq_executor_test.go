@@ -907,7 +907,7 @@ func TestBatchInsertDelete(t *testing.T) {
 		kv.TxnTotalSizeLimit.Store(originLimit)
 	}()
 	// Set the limitation to a small value, make it easier to reach the limitation.
-	kv.TxnTotalSizeLimit.Store(7000)
+	kv.TxnTotalSizeLimit.Store(8000)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
