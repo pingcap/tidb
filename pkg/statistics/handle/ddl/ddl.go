@@ -178,6 +178,7 @@ func (h *ddlHandlerImpl) HandleDDLEvent(s *notifier.SchemaChangeEvent) error {
 		}
 	case model.ActionFlashbackCluster:
 		return h.statsWriter.UpdateStatsVersion()
+	case model.ActionAddIndex:
 	default:
 		intest.Assert(false)
 		logutil.StatsLogger().Error("Unhandled schema change event", zap.Stringer("type", s))
