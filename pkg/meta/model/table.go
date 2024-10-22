@@ -752,9 +752,6 @@ type PartitionInfo struct {
 	DDLColumns []model.CIStr       `json:"ddl_columns"`
 	// For ActionAlterTablePartitioning, UPDATE INDEXES
 	DDLUpdateIndexes []UpdateIndexInfo `json:"ddl_update_indexes"`
-	// To know which DDL is ongoing. Together with DDLState one can know
-	// how to handle Global Index visible entries
-	DDLAction ActionType `json:"ddl_action"`
 }
 
 // Clone clones itself.
