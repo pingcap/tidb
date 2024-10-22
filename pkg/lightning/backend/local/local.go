@@ -19,6 +19,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/hex"
+	"fmt"
 	"io"
 	"math"
 	"net"
@@ -112,6 +113,9 @@ var (
 	// MaxWriteAndIngestRetryTimes is the max retry times for write and ingest.
 	// A large retry times is for tolerating tikv cluster failures.
 	MaxWriteAndIngestRetryTimes = 30
+
+	// TiKV may return a large response: 4K kv * each kv size about 4K+
+	maxMsgSize = 20 * units.MiB
 )
 
 // ImportClientFactory is factory to create new import client for specific store.
@@ -164,7 +168,10 @@ func (f *importClientFactoryImpl) makeConn(ctx context.Context, storeID uint64) 
 	if addr == "" {
 		addr = store.GetAddress()
 	}
+	fmt.Println("xiaoyuan adjust max call size")
 	opts = append(opts,
+		grpc.WithDefaultCallOptions(grpc.MaxCallRecvMsgSize(maxMsgSize)),
+		grpc.WithDefaultCallOptions(grpc.MaxCallSendMsgSize(maxMsgSize)),
 		grpc.WithConnectParams(grpc.ConnectParams{Backoff: bfConf}),
 		grpc.WithKeepaliveParams(keepalive.ClientParameters{
 			Time:                gRPCKeepAliveTime,
