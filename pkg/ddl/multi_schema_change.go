@@ -188,7 +188,6 @@ func appendToSubJobs(m *model.MultiSchemaInfo, jobW *JobWrapper) error {
 	m.SubJobs = append(m.SubJobs, &model.SubJob{
 		Type:        jobW.Type,
 		JobArgs:     jobW.JobArgs,
-		Args:        jobW.Args,
 		RawArgs:     jobW.RawArgs,
 		SchemaState: jobW.SchemaState,
 		SnapshotVer: jobW.SnapshotVer,
@@ -335,9 +334,7 @@ func mergeAddIndex(info *model.MultiSchemaInfo) {
 		if subJob.Type == model.ActionAddIndex {
 			mergeCnt++
 			if mergedSubJob == nil {
-				clonedSubJob := *subJob
-				mergedSubJob = &clonedSubJob
-				mergedSubJob.Args = nil
+				mergedSubJob = subJob.Clone()
 				mergedSubJob.RawArgs = nil
 			}
 		}

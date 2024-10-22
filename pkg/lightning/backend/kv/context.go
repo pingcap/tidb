@@ -111,7 +111,7 @@ func (ctx *litExprContext) unsetUserVar(varName string) {
 }
 
 // GetUserVar implements the `exprctx.BuildContext` interface.
-func (ctx *litExprContext) IsReadonlyUserVar(name string) bool {
+func (*litExprContext) IsReadonlyUserVar(string) bool {
 	return false
 }
 

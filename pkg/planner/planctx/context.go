@@ -87,7 +87,7 @@ type EmptyPlanContextExtended struct{}
 func (EmptyPlanContextExtended) AdviseTxnWarmup() error { return nil }
 
 // SetReadonlyUserVarMap sets the readonly user variable map.
-func (EmptyPlanContextExtended) SetReadonlyUserVarMap(readonlyUserVars map[string]struct{}) {}
+func (EmptyPlanContextExtended) SetReadonlyUserVarMap(map[string]struct{}) {}
 
 // GetReadonlyUserVarMap gets the readonly user variable map.
 func (EmptyPlanContextExtended) GetReadonlyUserVarMap() map[string]struct{} { return nil }

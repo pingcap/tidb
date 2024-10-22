@@ -291,7 +291,7 @@ enable-telemetry = true
 
 # deprecate-integer-display-length is used to be compatible with MySQL 8.0 in which the integer declared with display length will be returned with
 # <snip>
-deprecate-integer-display-length = false
+deprecate-integer-display-length = true
 
 # enable-enum-length-limit is used to deal with compatibility issues. When true, the enum/set element length is limited.
 # According to MySQL 8.0 Refman:

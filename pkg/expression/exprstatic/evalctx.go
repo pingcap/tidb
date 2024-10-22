@@ -83,7 +83,6 @@ type evalCtxState struct {
 	paramList             []types.Datum
 	userVars              variable.UserVarsReader
 	props                 expropt.OptionalEvalPropProviders
-	readonlyVarMap        map[string]struct{}
 }
 
 // EvalCtxOption is the option to set `EvalContext`.

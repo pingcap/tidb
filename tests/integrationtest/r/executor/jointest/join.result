@@ -936,18 +936,18 @@ create table t(c1 bigint unsigned);
 create table t1(c1 bit(64));
 insert into t value(18446744073709551615);
 insert into t1 value(-1);
-select * from t, t1 where t.c1 = t1.c1;
-c1	c1
-18446744073709551615	ÿÿÿÿÿÿÿÿ
+select hex(t1.c1), t.c1 from t, t1 where t.c1 = t1.c1;
+hex(t1.c1)	c1
+FFFFFFFFFFFFFFFF	18446744073709551615
 drop table if exists t;
 drop table if exists t1;
 create table t(c1 bigint);
 create table t1(c1 bit(64));
 insert into t value(1);
 insert into t1 value(1);
-select * from t, t1 where t.c1 = t1.c1;
-c1	c1
-1	       
+select t.c1, hex(t1.c1) from t, t1 where t.c1 = t1.c1;
+c1	hex(t1.c1)
+1	1
 drop table if exists t;
 drop table if exists t1;
 create table t(c1 bigint);
@@ -1580,16 +1580,6 @@ Error 8175 (HY000): Your query has been cancelled due to exceeding the allowed m
 set tidb_mem_quota_query = default;
 set global tidb_mem_oom_action = default;
 set global tidb_enable_tmp_storage_on_oom = default;
-SET GLOBAL tidb_mem_oom_action='LOG';
-set @@tidb_mem_quota_query=1;
-drop table if exists t, t1;
-create table t(c1 int, c2 int);
-create table t1(c1 int, c2 int);
-insert into t values(1,1),(2,2);
-insert into t1 values(2,3),(4,4);
-select /*+ TIDB_HJ(t, t2) */ * from t, t1 where t.c1 = t1.c1;
-c1	c2	c1	c2
-2	2	2	3
 drop table if exists t1,t2,t3,t4;
 create table t1 (c int, b int);
 create table t2 (a int, b int);
