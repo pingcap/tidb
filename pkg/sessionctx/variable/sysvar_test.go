@@ -1605,3 +1605,14 @@ func TestTiDBLowResTSOUpdateInterval(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "1000", val)
 }
+
+func TestEnableWindowFunction(t *testing.T) {
+	vars := NewSessionVars(nil)
+	require.Equal(t, vars.EnableWindowFunction, DefEnableWindowFunction)
+	require.NoError(t, vars.SetSystemVar(TiDBEnableWindowFunction, "on"))
+	require.Equal(t, vars.EnableWindowFunction, true)
+	require.NoError(t, vars.SetSystemVar(TiDBEnableWindowFunction, "0"))
+	require.Equal(t, vars.EnableWindowFunction, false)
+	require.NoError(t, vars.SetSystemVar(TiDBEnableWindowFunction, "1"))
+	require.Equal(t, vars.EnableWindowFunction, true)
+}
