@@ -677,11 +677,11 @@ func NewAllocatorsFromTblInfo(r Requirement, dbID int64, tblInfo *model.TableInf
 
 	hasRowID := !tblInfo.PKIsHandle && !tblInfo.IsCommonHandle
 	hasAutoIncID := tblInfo.GetAutoIncrementColInfo() != nil
-	if hasRowID || hasAutoIncID {
+	if hasRowID || (hasAutoIncID && !tblInfo.SepAutoInc()) {
 		alloc := NewAllocator(r, dbID, tblInfo.ID, tblInfo.IsAutoIncColUnsigned(), RowIDAllocType, idCacheOpt, tblVer)
 		allocs = append(allocs, alloc)
 	}
-	if hasAutoIncID {
+	if hasAutoIncID && tblInfo.SepAutoInc() {
 		alloc := NewAllocator(r, dbID, tblInfo.ID, tblInfo.IsAutoIncColUnsigned(), AutoIncrementType, idCacheOpt, tblVer)
 		allocs = append(allocs, alloc)
 	}
