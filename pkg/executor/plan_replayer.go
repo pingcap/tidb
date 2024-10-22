@@ -530,3 +530,32 @@ func (e *PlanReplayerLoadInfo) Update(data []byte) error {
 	}
 	return nil
 }
+<<<<<<< HEAD
+=======
+
+func (e *PlanReplayerLoadInfo) createTable(z *zip.Reader) error {
+	originForeignKeyChecks := e.Ctx.GetSessionVars().ForeignKeyChecks
+	originPlacementMode := e.Ctx.GetSessionVars().PlacementMode
+	// We need to disable foreign key check when we create schema and tables.
+	// because the order of creating schema and tables is not guaranteed.
+	e.Ctx.GetSessionVars().ForeignKeyChecks = false
+	e.Ctx.GetSessionVars().PlacementMode = variable.PlacementModeIgnore
+	defer func() {
+		e.Ctx.GetSessionVars().ForeignKeyChecks = originForeignKeyChecks
+		e.Ctx.GetSessionVars().PlacementMode = originPlacementMode
+	}()
+	for _, zipFile := range z.File {
+		if zipFile.Name == fmt.Sprintf("schema/%v", domain.PlanReplayerSchemaMetaFile) {
+			continue
+		}
+		path := strings.Split(zipFile.Name, "/")
+		if len(path) == 2 && strings.Compare(path[0], "schema") == 0 && zipFile.Mode().IsRegular() {
+			err := createSchemaAndItems(e.Ctx, zipFile)
+			if err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+>>>>>>> f37210f6ba8 (executor: fix plan replay cannot deal with placement mode (#56774))
