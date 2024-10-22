@@ -297,3 +297,70 @@ func TestPublishEventError(t *testing.T) {
 		tk.MustExec(sql)
 	}
 }
+
+func TestPublishTableInfoUnmarshal(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("USE test")
+	tk.MustExec("DROP TABLE IF EXISTS ddl_notifier")
+	tk.MustExec(tableStructure)
+	notifier.DefaultStore = notifier.OpenTableStore("test", "ddl_notifier")
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a int)")
+	se := sess.NewSession(tk.Session())
+	table, err := se.GetDomainInfoSchema().TableInfoByName(pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
+	require.NoError(t, err)
+
+	rows := tk.MustQuery("select schema_change from test.ddl_notifier").Rows()
+	require.Equal(t, len(rows), 1)
+	event := &notifier.SchemaChangeEvent{}
+	err = event.UnmarshalJSON([]byte(rows[0][0].(string)))
+	require.NoError(t, err)
+	require.Equal(t, event.GetCreateTableInfo(), table)
+}
+
+func TestUnmarshalPublishTableInfo(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("USE test")
+	tk.MustExec("DROP TABLE IF EXISTS ddl_notifier")
+	tk.MustExec(tableStructure)
+	tk.MustExec("DROP TABLE IF EXISTS t")
+	tk.MustExec("CREATE TABLE t1 (a int)")
+	se := sess.NewSession(tk.Session())
+	table, err := se.GetDomainInfoSchema().TableInfoByName(pmodel.NewCIStr("test"), pmodel.NewCIStr("t1"))
+	require.NoError(t, err)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	s := notifier.OpenTableStore("test", "ddl_notifier")
+	notifier.InitDDLNotifier(tk.Session(), s, 50*time.Millisecond)
+	t.Cleanup(notifier.ResetDDLNotifier)
+	var seenChangesMu sync.Mutex
+	seenChanges := make([]*notifier.SchemaChangeEvent, 0, 8)
+	testHandler := func(_ context.Context, _ sessionctx.Context, c *notifier.SchemaChangeEvent) error {
+		seenChangesMu.Lock()
+		defer seenChangesMu.Unlock()
+		seenChanges = append(seenChanges, c)
+		return nil
+	}
+	notifier.RegisterHandler(notifier.TestHandlerID, testHandler)
+	done := make(chan struct{})
+	go func() {
+		notifier.StartDDLNotifier(ctx)
+		close(done)
+	}()
+	event1 := notifier.NewCreateTableEvent(table)
+	err = notifier.PubSchemeChangeToStore(ctx, se, 1, -1, event1, s)
+	require.NoError(t, err)
+	require.Eventually(t, func() bool {
+		seenChangesMu.Lock()
+		defer seenChangesMu.Unlock()
+		return len(seenChanges) == 1
+	}, time.Second, 25*time.Millisecond)
+	require.Equal(t, event1, seenChanges[0])
+	cancel()
+	<-done
+
+	require.Equal(t, seenChanges[0].GetCreateTableInfo(), table)
+}

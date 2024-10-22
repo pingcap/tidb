@@ -167,6 +167,9 @@ func (n *ddlNotifier) processEvents(ctx context.Context) error {
 	// error for previous events it should not receive later events.
 	skipHandlers := make(map[HandlerID]struct{})
 	for _, change := range changes {
+		if err = getCompleteTableInfo(ctx, sess.NewSession(n.ownedSCtx), change.event); err != nil {
+			return errors.Trace(err)
+		}
 		for handlerID, handler := range n.handlers {
 			if _, ok := skipHandlers[handlerID]; ok {
 				continue

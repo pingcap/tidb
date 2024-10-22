@@ -130,9 +130,6 @@ func (t *tableStore) List(ctx context.Context, se *sess.Session) ([]*schemaChang
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		if err = getCompleteTableInfo(ctx, se, &event); err != nil {
-			return nil, errors.Trace(err)
-		}
 		ret = append(ret, &schemaChange{
 			ddlJobID:             row.GetInt64(0),
 			multiSchemaChangeSeq: row.GetInt64(1),
