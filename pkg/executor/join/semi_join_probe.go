@@ -56,13 +56,13 @@ type semiJoinProbe struct {
 }
 
 func newSemiJoinProbe(base baseJoinProbe, isLeftSideBuild bool) *semiJoinProbe {
-	probe := &semiJoinProbe{
+	ret := &semiJoinProbe{
 		baseJoinProbe:           base,
 		isLeftSideBuild:         isLeftSideBuild,
 		processedProbeRowIdxSet: make(map[int]struct{}),
 		skipRowIdxSet:           make(map[int]struct{}),
 	}
-	return probe
+	return ret
 }
 
 func (j *semiJoinProbe) InitForScanRowTable() {
@@ -186,7 +186,7 @@ func (j *semiJoinProbe) Probe(joinResult *hashjoinWorkerResult, sqlKiller *sqlki
 		if hasOtherCondition {
 			err = j.probeForLeftSideBuildHasOtherCondition(joinedChk, sqlKiller)
 		} else {
-			err = j.probeForLeftSideBuildNoOtherCondition(remainCap, sqlKiller)
+			err = j.probeForLeftSideBuildNoOtherCondition(sqlKiller)
 		}
 	} else {
 		if hasOtherCondition {
@@ -354,16 +354,15 @@ func (j *semiJoinProbe) probeForLeftSideBuildHasOtherCondition(joinedChk *chunk.
 	return
 }
 
-func (j *semiJoinProbe) probeForLeftSideBuildNoOtherCondition(remainCap int, sqlKiller *sqlkiller.SQLKiller) (err error) {
+func (j *semiJoinProbe) probeForLeftSideBuildNoOtherCondition(sqlKiller *sqlkiller.SQLKiller) (err error) {
 	meta := j.ctx.hashTableMeta
 	tagHelper := j.ctx.hashTableContext.tagHelper
 
-	for remainCap > 0 && j.currentProbeRow < j.chunkRows {
+	for j.currentProbeRow < j.chunkRows {
 		if j.matchedRowsHeaders[j.currentProbeRow] != 0 {
 			candidateRow := tagHelper.toUnsafePointer(j.matchedRowsHeaders[j.currentProbeRow])
 			if isKeyMatched(meta.keyMode, j.serializedKeys[j.currentProbeRow], candidateRow, meta) {
 				meta.setUsedFlag(candidateRow)
-				remainCap--
 				j.matchedRowsHeaders[j.currentProbeRow] = 0
 			} else {
 				j.probeCollision++
