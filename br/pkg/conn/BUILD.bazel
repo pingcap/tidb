@@ -51,7 +51,7 @@ go_test(
         "//br/pkg/config",
         "//br/pkg/conn/util",
         "//br/pkg/pdutil",
-        "//br/pkg/utiltest",
+        "//br/pkg/restore/split",
         "//pkg/testkit/testsetup",
         "@com_github_docker_go_units//:go-units",
         "@com_github_pingcap_errors//:errors",

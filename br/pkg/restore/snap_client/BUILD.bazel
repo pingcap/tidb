@@ -95,6 +95,7 @@ go_test(
         "//br/pkg/mock",
         "//br/pkg/restore",
         "//br/pkg/restore/internal/import_client",
+        "//br/pkg/restore/split",
         "//br/pkg/restore/utils",
         "//br/pkg/rtree",
         "//br/pkg/utils",

@@ -34,7 +34,6 @@ import (
 	"github.com/pingcap/failpoint"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/kvproto/pkg/encryptionpb"
-	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/checkpoint"
 	"github.com/pingcap/tidb/br/pkg/checksum"
@@ -64,7 +63,6 @@ import (
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
-	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	filter "github.com/pingcap/tidb/pkg/util/table-filter"
 	"github.com/tikv/client-go/v2/config"
@@ -1855,40 +1853,4 @@ func (rc *LogClient) FailpointDoChecksumForLogRestore(
 	}
 
 	return eg.Wait()
-}
-
-func GenOneStoreRegionsForTest(isRawKv bool, keys []string) (map[uint64]*split.RegionInfo, map[uint64]*metapb.Store) {
-	stores := make(map[uint64]*metapb.Store)
-	stores[1] = &metapb.Store{
-		Id: 1,
-	}
-	peers := make([]*metapb.Peer, 1)
-	peers[0] = &metapb.Peer{
-		Id:      1,
-		StoreId: 1,
-	}
-	regions := make(map[uint64]*split.RegionInfo)
-	for i := 1; i < len(keys); i++ {
-		startKey := []byte(keys[i-1])
-		if len(startKey) != 0 {
-			startKey = codec.EncodeBytesExt([]byte{}, startKey, isRawKv)
-		}
-		endKey := []byte(keys[i])
-		if len(endKey) != 0 {
-			endKey = codec.EncodeBytesExt([]byte{}, endKey, isRawKv)
-		}
-		regions[uint64(i)] = &split.RegionInfo{
-			Leader: &metapb.Peer{
-				Id:      uint64(i),
-				StoreId: 1,
-			},
-			Region: &metapb.Region{
-				Id:       uint64(i),
-				Peers:    peers,
-				StartKey: startKey,
-				EndKey:   endKey,
-			},
-		}
-	}
-	return regions, stores
 }

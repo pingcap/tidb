@@ -6,11 +6,13 @@ import (
 	"context"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/checkpoint"
 	"github.com/pingcap/tidb/br/pkg/restore/split"
 	restoreutils "github.com/pingcap/tidb/br/pkg/restore/utils"
 	"github.com/pingcap/tidb/br/pkg/summary"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
+	"go.uber.org/zap"
 )
 
 type LogSplitStrategy struct {
@@ -88,8 +90,12 @@ func (l LogSplitStrategy) ShouldSplit() bool {
 }
 
 func (l *LogSplitStrategy) ShouldSkip(file *LogDataFileInfo) bool {
+	if file.IsMeta {
+		return true
+	}
 	_, exist := l.Rules[file.TableId]
-	if file.IsMeta || !exist {
+	if !exist {
+		log.Info("skip for no rule files", zap.Int64("tableID", file.TableId))
 		return true
 	}
 

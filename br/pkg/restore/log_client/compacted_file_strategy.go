@@ -8,6 +8,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/restore/split"
 	restoreutils "github.com/pingcap/tidb/br/pkg/restore/utils"
 	"github.com/pingcap/tidb/pkg/util/codec"
+	"go.uber.org/zap"
 )
 
 type CompactedFileSplitStrategy struct {
@@ -30,14 +31,14 @@ func NewCompactedFileSplitStrategy(
 	}
 }
 
-func (l *CompactedFileSplitStrategy) Accumulate(file *backuppb.LogFileSubcompaction) {
-	splitHelper, exist := l.TableSplitter[file.Meta.TableId]
+func (l *CompactedFileSplitStrategy) Accumulate(subCompaction *backuppb.LogFileSubcompaction) {
+	splitHelper, exist := l.TableSplitter[subCompaction.Meta.TableId]
 	if !exist {
 		splitHelper = split.NewSplitHelper()
-		l.TableSplitter[file.Meta.TableId] = splitHelper
+		l.TableSplitter[subCompaction.Meta.TableId] = splitHelper
 	}
 
-	for _, f := range file.SstOutputs {
+	for _, f := range subCompaction.SstOutputs {
 		startKey := codec.EncodeBytes(nil, f.StartKey)
 		endKey := codec.EncodeBytes(nil, f.EndKey)
 		l.AccumulateCount += 1
@@ -60,9 +61,14 @@ func (l *CompactedFileSplitStrategy) ShouldSplit() bool {
 	return l.AccumulateCount > 128
 }
 
-func (l *CompactedFileSplitStrategy) ShouldSkip(file *backuppb.LogFileSubcompaction) bool {
-	sstOutputs := make([]*backuppb.File, 0, len(file.SstOutputs))
-	for _, sst := range file.SstOutputs {
+func (l *CompactedFileSplitStrategy) ShouldSkip(subCompaction *backuppb.LogFileSubcompaction) bool {
+	_, exist := l.Rules[subCompaction.Meta.TableId]
+	if !exist {
+		log.Info("skip for no rule files", zap.Int64("tableID", subCompaction.Meta.TableId))
+		return true
+	}
+	sstOutputs := make([]*backuppb.File, 0, len(subCompaction.SstOutputs))
+	for _, sst := range subCompaction.SstOutputs {
 		if _, ok := l.checkpointSets[sst.Name]; !ok {
 			sstOutputs = append(sstOutputs, sst)
 		} else {
@@ -73,9 +79,9 @@ func (l *CompactedFileSplitStrategy) ShouldSkip(file *backuppb.LogFileSubcompact
 		log.Info("all files in sub compaction skipped")
 		return true
 	}
-	if len(sstOutputs) != len(file.SstOutputs) {
+	if len(sstOutputs) != len(subCompaction.SstOutputs) {
 		log.Info("partial files in sub compaction skipped")
-		file.SstOutputs = sstOutputs
+		subCompaction.SstOutputs = sstOutputs
 		return false
 	}
 	return false

@@ -69,8 +69,7 @@ func (b *BaseSplitStrategy) AccumulationsIter() *SplitHelperIterator {
 	for tableID, splitter := range b.TableSplitter {
 		rewriteRule, exists := b.Rules[tableID]
 		if !exists {
-			log.Info("skip splitting due to no table id matched", zap.Int64("tableID", tableID))
-			continue
+			log.Fatal("[unreachable] no table id matched", zap.Int64("tableID", tableID))
 		}
 		newTableID := restoreutils.GetRewriteTableID(tableID, rewriteRule)
 		if newTableID == 0 {
@@ -168,7 +167,7 @@ func NewRegionsSplitter(
 	}
 }
 
-func (r *RegionsSplitter) ExecuteRegions(ctx context.Context, s *SplitHelperIterator) error {
+func (r *RegionsSplitter) ExecuteRegions(ctx context.Context, splitHelper *SplitHelperIterator) error {
 	var ectx context.Context
 	var wg sync.WaitGroup
 	r.eg, ectx = errgroup.WithContext(ctx)
@@ -195,7 +194,7 @@ func (r *RegionsSplitter) ExecuteRegions(ctx context.Context, s *SplitHelperIter
 		_ = r.WaitForScatterRegionsTimeout(ectx, scatterRegions, time.Minute)
 	}()
 
-	err := SplitPoint(ectx, s, r.client, r.splitRegionByPoints)
+	err := SplitPoint(ectx, splitHelper, r.client, r.splitRegionByPoints)
 	if err != nil {
 		return errors.Trace(err)
 	}

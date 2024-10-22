@@ -34,7 +34,6 @@ import (
 	logclient "github.com/pingcap/tidb/br/pkg/restore/log_client"
 	"github.com/pingcap/tidb/br/pkg/restore/split"
 	"github.com/pingcap/tidb/br/pkg/restore/utils"
-	restoreutils "github.com/pingcap/tidb/br/pkg/restore/utils"
 	"github.com/pingcap/tidb/br/pkg/stream"
 	"github.com/pingcap/tidb/br/pkg/utils/iter"
 	"github.com/pingcap/tidb/br/pkg/utiltest"
@@ -50,7 +49,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	filter "github.com/pingcap/tidb/pkg/util/table-filter"
 	"github.com/stretchr/testify/require"
-	pd "github.com/tikv/pd/client"
 	"google.golang.org/grpc/keepalive"
 )
 
@@ -98,7 +96,7 @@ func TestDeleteRangeQueryExec(t *testing.T) {
 	m := mc
 	g := gluetidb.New()
 	client := logclient.NewRestoreClient(
-		utiltest.NewFakePDClient(nil, false, nil), nil, nil, keepalive.ClientParameters{})
+		split.NewFakePDClient(nil, false, nil), nil, nil, keepalive.ClientParameters{})
 	err := client.Init(ctx, g, m.Storage, false)
 	require.NoError(t, err)
 
@@ -117,7 +115,7 @@ func TestDeleteRangeQuery(t *testing.T) {
 
 	g := gluetidb.New()
 	client := logclient.NewRestoreClient(
-		utiltest.NewFakePDClient(nil, false, nil), nil, nil, keepalive.ClientParameters{})
+		split.NewFakePDClient(nil, false, nil), nil, nil, keepalive.ClientParameters{})
 	err := client.Init(ctx, g, m.Storage, false)
 	require.NoError(t, err)
 
@@ -1347,7 +1345,7 @@ func TestLogFilesIterWithSplitHelper(t *testing.T) {
 	mockIter := &mockLogIter{}
 	ctx := context.Background()
 	w := restore.PipelineFileRestorerWrapper[*logclient.LogDataFileInfo]{
-		RegionsSplitter: split.NewRegionsSplitter(utiltest.NewFakeSplitClient(), 144*1024*1024, 1440000),
+		RegionsSplitter: split.NewRegionsSplitter(split.NewFakeSplitClient(), 144*1024*1024, 1440000),
 	}
 	s, err := logclient.NewLogSplitStrategy(ctx, false, nil, rewriteRulesMap, func(uint64, uint64) {})
 	require.NoError(t, err)
@@ -1526,16 +1524,13 @@ type mockLogStrategy struct {
 }
 
 func (m *mockLogStrategy) ShouldSplit() bool {
-	if m.accumulatedCount == m.expectSplitCount {
-		return true
-	}
 	m.accumulatedCount += 1
-	return false
+	return m.accumulatedCount == m.expectSplitCount
 }
 
-func TestSplitHelper(t *testing.T) {
+func TestLogSplitStrategy(t *testing.T) {
 	ctx := context.Background()
-	rules := map[int64]*restoreutils.RewriteRules{
+	rules := map[int64]*utils.RewriteRules{
 		1: {
 			Data: []*import_sstpb.RewriteRule{
 				{
@@ -1553,29 +1548,20 @@ func TestSplitHelper(t *testing.T) {
 			},
 		},
 	}
-	oriRegions := []string{
-		"",
-		string(tablecodec.EncodeTablePrefix(100)),
-		string(tablecodec.EncodeTablePrefix(200)),
-		string(tablecodec.EncodeTablePrefix(402)),
+	oriRegions := [][]byte{
+		{},
+		codec.EncodeBytes(nil, tablecodec.EncodeTablePrefix(100)),
+		codec.EncodeBytes(nil, tablecodec.EncodeTablePrefix(200)),
+		codec.EncodeBytes(nil, tablecodec.EncodeTablePrefix(402)),
 	}
 
-	regionsMap, storesMap := logclient.GenOneStoreRegionsForTest(false, oriRegions)
-	storeSclice := make([]*metapb.Store, 0, len(storesMap))
-	for _, store := range storesMap {
-		storeSclice = append(storeSclice, store)
+	storesMap := make(map[uint64]*metapb.Store)
+	storesMap[1] = &metapb.Store{
+		Id: 1,
 	}
-	regionSlice := make([]*pd.Region, 0, len(regionsMap))
-	for _, region := range regionsMap {
-		regionSlice = append(regionSlice, &pd.Region{
-			Meta:         region.Region,
-			Leader:       region.Leader,
-			DownPeers:    region.DownPeers,
-			PendingPeers: region.PendingPeers,
-		})
-	}
-	mockPDCli := utiltest.NewFakePDClient(storeSclice, false, nil)
-	mockPDCli.SetRegions(regionSlice)
+	mockPDCli := split.NewMockPDClientForSplit()
+	mockPDCli.SetStores(storesMap)
+	mockPDCli.SetRegions(oriRegions)
 
 	client := split.NewClient(mockPDCli, nil, nil, 100, 4)
 	mockIter := iter.FromSlice([]*backuppb.DataFileInfo{
@@ -1594,30 +1580,36 @@ func TestSplitHelper(t *testing.T) {
 	strategy, err := logclient.NewLogSplitStrategy(ctx, false, nil, rules, func(u1, u2 uint64) {})
 	require.NoError(t, err)
 
+	expectSplitCount := 3
+	nextSplitCount := 5
 	mockStrategy := &mockLogStrategy{
 		LogSplitStrategy: strategy,
-		expectSplitCount: 4,
+		// fakeFile(3, 100, 10*units.MiB, 100000) will skipped due to no rewrite rule found.
+		expectSplitCount: expectSplitCount,
 	}
 
 	helper := wrapper.WithSplit(ctx, logIter, mockStrategy)
 	// iterate the first 4 items and check
 	count := 0
-	for i := helper.TryNext(ctx); !i.Finished && count <= 4; helper.TryNext(ctx) {
+	for i := helper.TryNext(ctx); !i.Finished; i = helper.TryNext(ctx) {
+		require.NoError(t, i.Err)
 		count += 1
+		if count == expectSplitCount {
+			// expect no split because the first 4 items are belong to 3 tables, and each of them not reach the split point
+			// 4MB or 400 keys
+			regions, err := mockPDCli.ScanRegions(ctx, []byte{}, []byte{}, 0)
+			require.NoError(t, err)
+			require.Len(t, regions, 3)
+			require.Equal(t, []byte{}, regions[0].Meta.StartKey)
+			require.Equal(t, codec.EncodeBytes(nil, tablecodec.EncodeTablePrefix(100)), regions[1].Meta.StartKey)
+			require.Equal(t, codec.EncodeBytes(nil, tablecodec.EncodeTablePrefix(200)), regions[2].Meta.StartKey)
+			require.Equal(t, codec.EncodeBytes(nil, tablecodec.EncodeTablePrefix(402)), regions[2].Meta.EndKey)
+			mockStrategy.expectSplitCount = nextSplitCount
+		}
 	}
-	// different regions, no split happens
-	regions, err := mockPDCli.ScanRegions(ctx, []byte{}, []byte{}, 0)
-	require.NoError(t, err)
-	require.Len(t, regions, 3)
-	require.Equal(t, []byte{}, regions[0].Meta.StartKey)
-	require.Equal(t, codec.EncodeBytes(nil, tablecodec.EncodeTablePrefix(100)), regions[1].Meta.StartKey)
-	require.Equal(t, codec.EncodeBytes(nil, tablecodec.EncodeTablePrefix(200)), regions[2].Meta.StartKey)
-	require.Equal(t, codec.EncodeBytes(nil, tablecodec.EncodeTablePrefix(402)), regions[2].Meta.EndKey)
 
-	// iterate to the end
-	for i := helper.TryNext(ctx); !i.Finished; helper.TryNext(ctx) {
-	}
-	regions, err = mockPDCli.ScanRegions(ctx, []byte{}, []byte{}, 0)
+	// expect split on region[1], because table id i has too many files
+	regions, err := mockPDCli.ScanRegions(ctx, []byte{}, []byte{}, 0)
 	require.NoError(t, err)
 	require.Len(t, regions, 4)
 	require.Equal(t, fakeRowKey(100, 400), kv.Key(regions[1].Meta.EndKey))

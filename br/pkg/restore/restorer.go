@@ -319,12 +319,12 @@ func (p *PipelineFileRestorerWrapper[T]) WithSplit(ctx context.Context, i iter.T
 
 		// Check if the accumulated items meet the criteria for splitting.
 		if strategy.ShouldSplit() {
-			log.Info("Starting region split in pipeline")
+			log.Info("Trying to start region split with accumulations")
 			startTime := time.Now()
 
 			// Execute the split operation on the accumulated items.
-			s := strategy.AccumulationsIter()
-			err := p.ExecuteRegions(ctx, s)
+			accumulations := strategy.AccumulationsIter()
+			err := p.ExecuteRegions(ctx, accumulations)
 			if err != nil {
 				log.Error("Failed to split regions in pipeline; continuing with restore", zap.Error(err))
 			}
