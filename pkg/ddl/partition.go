@@ -2528,7 +2528,6 @@ func (w *worker) onTruncateTablePartition(jobCtx *jobContext, job *model.Job) (i
 		pi.DroppingDefinitions = truncatingDefinitions
 		pi.NewPartitionIDs = newIDs[:]
 
-		tblInfo.Partition.DDLAction = model.ActionTruncateTablePartition
 		job.SchemaState = model.StateDeleteOnly
 		pi.DDLState = job.SchemaState
 		pi.DDLAction = job.Type
