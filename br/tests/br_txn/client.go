@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"hash/crc64"
 	"math/rand"
+	"sync"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -78,20 +79,13 @@ func main() {
 
 func randGenWithDuration(client *txnkv.Client, startKey, endKey []byte,
 	maxLen int, concurrency int, duration int) error {
-	var err error
-	ok := make(chan struct{})
-	go func() {
-		err = randGen(client, startKey, endKey, maxLen, concurrency)
-		ok <- struct{}{}
-	}()
-	select {
-	case <-time.After(time.Second * time.Duration(duration)):
-	case <-ok:
-	}
-	return errors.Trace(err)
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second*time.Duration(duration))
+	defer cancel()
+
+	return randGen(ctx, client, startKey, endKey, maxLen, concurrency)
 }
 
-func randGen(client *txnkv.Client, startKey, endKey []byte, maxLen int, concurrency int) error {
+func randGen(ctx context.Context, client *txnkv.Client, startKey, endKey []byte, maxLen int, concurrency int) error {
 	log.Info("Start rand-gen", zap.Int("maxlen", maxLen),
 		zap.String("startkey", hex.EncodeToString(startKey)), zap.String("endkey", hex.EncodeToString(endKey)))
 	log.Info("Rand-gen will keep running. Please Ctrl+C to stop manually.")
@@ -108,39 +102,57 @@ func randGen(client *txnkv.Client, startKey, endKey []byte, maxLen int, concurre
 	}
 
 	const batchSize = 32
+	const numBatch = 100
 
 	errCh := make(chan error, concurrency)
+	var wg sync.WaitGroup
+
 	for i := maxLen; i <= maxLen+concurrency; i++ {
+		wg.Add(1)
 		go func(i int) {
-			for {
-				txn, err := client.Begin()
-				if err != nil {
-					errCh <- errors.Trace(err)
-				}
-				for j := 0; j < batchSize; j++ {
-					key := randKey(startKey, endKey, i)
-					// append index to avoid write conflict
-					key = appendIndex(key, i)
-					value := randValue()
-					err = txn.Set(key, value)
+			defer wg.Done()
+			for k := 0; k < numBatch; k++ {
+				select {
+				case <-ctx.Done():
+					return
+				default:
+					txn, err := client.Begin()
 					if err != nil {
 						errCh <- errors.Trace(err)
 					}
-				}
-				err = txn.Commit(context.TODO())
-				if err != nil {
-					errCh <- errors.Trace(err)
+					for j := 0; j < batchSize; j++ {
+						key := randKey(startKey, endKey, i)
+						// append index to avoid write conflict
+						key = appendIndex(key, i)
+						value := randValue()
+						err = txn.Set(key, value)
+						if err != nil {
+							errCh <- errors.Trace(err)
+						}
+					}
+					err = txn.Commit(context.TODO())
+					if err != nil {
+						errCh <- errors.Trace(err)
+					}
 				}
 			}
 		}(i)
 	}
 
-	err := <-errCh
-	if err != nil {
-		return errors.Trace(err)
-	}
+	// Use a separate goroutine to wait for all workers to finish
+	done := make(chan struct{})
+	go func() {
+		wg.Wait()
+		close(done)
+	}()
 
-	return nil
+	select {
+	case <-done:
+		return nil
+	case err := <-errCh:
+		<-done
+		return err
+	}
 }
 
 func testRandKey(startKey, endKey []byte, maxLen int) {

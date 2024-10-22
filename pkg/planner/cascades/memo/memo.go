@@ -16,7 +16,6 @@ package memo
 
 import (
 	"container/list"
-	"sync"
 
 	base2 "github.com/pingcap/tidb/pkg/planner/cascades/base"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
@@ -44,8 +43,8 @@ type Memo struct {
 	// hash2GroupExpr is the map from hash to group expression.
 	hash2GroupExpr map[uint64]*list.Element
 
-	// hasherPool is the pool of hasher.
-	hasherPool *sync.Pool
+	// hasher is the pointer of hasher.
+	hasher base2.Hasher
 }
 
 // NewMemo creates a new memo.
@@ -55,33 +54,35 @@ func NewMemo(ctx sessionctx.Context) *Memo {
 		groupIDGen:    GroupIDGenerator{id: 0},
 		groups:        list.New(),
 		groupID2Group: make(map[GroupID]*list.Element),
-		hasherPool:    &sync.Pool{New: func() any { return base2.NewHashEqualer() }},
+		hasher:        base2.NewHashEqualer(),
 	}
 }
 
+// GetHasher gets a hasher from the memo that ready to use.
+func (m *Memo) GetHasher() base2.Hasher {
+	m.hasher.Reset()
+	return m.hasher
+}
+
 // CopyIn copies a logical plan into the memo with format as GroupExpression.
-func (m *Memo) CopyIn(target *Group, lp base.LogicalPlan) (*GroupExpression, bool) {
+func (m *Memo) CopyIn(target *Group, lp base.LogicalPlan) *GroupExpression {
 	// Group the children first.
 	childGroups := make([]*Group, 0, len(lp.Children()))
 	for _, child := range lp.Children() {
 		// todo: child.getGroupExpression.GetGroup directly
-		groupExpr, ok := m.CopyIn(nil, child)
+		groupExpr := m.CopyIn(nil, child)
 		group := groupExpr.group
-		intest.Assert(ok)
 		intest.Assert(group != nil)
 		intest.Assert(group != target)
 		childGroups = append(childGroups, group)
 	}
 
-	hasher := m.hasherPool.Get().(base2.Hasher)
-	hasher.Reset()
+	hasher := m.GetHasher()
 	groupExpr := NewGroupExpression(lp, childGroups)
 	groupExpr.Init(hasher)
-	m.hasherPool.Put(hasher)
-
-	ok := m.insertGroupExpression(groupExpr, target)
+	m.insertGroupExpression(groupExpr, target)
 	// todo: new group need to derive the logical property.
-	return groupExpr, ok
+	return groupExpr
 }
 
 // @bool indicates whether the groupExpr is inserted to a new group.
@@ -104,4 +105,10 @@ func (m *Memo) NewGroup() *Group {
 	group := NewGroup(nil)
 	group.groupID = m.groupIDGen.NextGroupID()
 	return group
+}
+
+// Init initializes the memo with a logical plan, converting logical plan tree format into group tree.
+func (m *Memo) Init(plan base.LogicalPlan) {
+	intest.Assert(m.groups.Len() == 0)
+	m.rootGroup = m.CopyIn(nil, plan).GetGroup()
 }

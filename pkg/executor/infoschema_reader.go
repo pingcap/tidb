@@ -40,6 +40,7 @@ import (
 	"github.com/pingcap/tidb/pkg/executor/internal/pdhelper"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/infoschema"
+	infoschemacontext "github.com/pingcap/tidb/pkg/infoschema/context"
 	"github.com/pingcap/tidb/pkg/keyspace"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
@@ -312,7 +313,8 @@ func (e *memtableRetriever) setDataForVariablesInfo(ctx sessionctx.Context) erro
 
 func (e *memtableRetriever) setDataForUserAttributes(ctx context.Context, sctx sessionctx.Context) error {
 	exec := sctx.GetRestrictedSQLExecutor()
-	chunkRows, _, err := exec.ExecRestrictedSQL(ctx, nil, `SELECT user, host, JSON_UNQUOTE(JSON_EXTRACT(user_attributes, '$.metadata')) FROM mysql.user`)
+	wrappedCtx := kv.WithInternalSourceType(ctx, kv.InternalTxnOthers)
+	chunkRows, _, err := exec.ExecRestrictedSQL(wrappedCtx, nil, `SELECT user, host, JSON_UNQUOTE(JSON_EXTRACT(user_attributes, '$.metadata')) FROM mysql.user`)
 	if err != nil {
 		return err
 	}
@@ -2656,7 +2658,7 @@ func (e *memtableRetriever) dataForTableTiFlashReplica(_ context.Context, sctx s
 		rows          [][]types.Datum
 		tiFlashStores map[int64]pd.StoreInfo
 	)
-	rs := e.is.ListTablesWithSpecialAttribute(infoschema.TiFlashAttribute)
+	rs := e.is.ListTablesWithSpecialAttribute(infoschemacontext.TiFlashAttribute)
 	for _, schema := range rs {
 		for _, tbl := range schema.TableInfos {
 			if checker != nil && !checker.RequestVerification(sctx.GetSessionVars().ActiveRoles, schema.DBName.L, tbl.Name.L, "", mysql.AllPrivMask) {
@@ -3462,6 +3464,7 @@ func (e *TiFlashSystemTableRetriever) dataForTiFlashSystemTables(ctx context.Con
 			tiflashColIndexMap[tiFlashColIdx] = outputIdx
 		}
 	}
+	is := sessiontxn.GetTxnManager(sctx).GetTxnInfoSchema()
 	outputRows := make([][]types.Datum, 0, len(result.Data))
 	for _, rowFields := range result.Data {
 		if len(rowFields) == 0 {
@@ -3498,6 +3501,37 @@ func (e *TiFlashSystemTableRetriever) dataForTiFlashSystemTables(ctx context.Con
 			}
 		}
 		outputRow[len(e.outputCols)-1].SetString(instanceID, mysql.DefaultCollationName)
+
+		// for "tiflash_indexes", set the column_name and index_name according to the TableInfo
+		if e.table.Name.L == "tiflash_indexes" {
+			var logicalTableID = outputRow[outputColIndexMap["table_id"]].GetInt64()
+			if !outputRow[outputColIndexMap["belonging_table_id"]].IsNull() {
+				// Old TiFlash versions may not have this column. In this case we will try to get by the "table_id"
+				belongingTableID := outputRow[outputColIndexMap["belonging_table_id"]].GetInt64()
+				if belongingTableID != -1 && belongingTableID != 0 {
+					logicalTableID = belongingTableID
+				}
+			}
+			if table, ok := is.TableByID(ctx, logicalTableID); ok {
+				tableInfo := table.Meta()
+				getInt64DatumVal := func(datum_name string, default_val int64) int64 {
+					datum := outputRow[outputColIndexMap[datum_name]]
+					if !datum.IsNull() {
+						return datum.GetInt64()
+					}
+					return default_val
+				}
+				// set column_name
+				columnID := getInt64DatumVal("column_id", 0)
+				columnName := tableInfo.FindColumnNameByID(columnID)
+				outputRow[outputColIndexMap["column_name"]].SetString(columnName, mysql.DefaultCollationName)
+				// set index_name
+				indexID := getInt64DatumVal("index_id", 0)
+				indexName := tableInfo.FindIndexNameByID(indexID)
+				outputRow[outputColIndexMap["index_name"]].SetString(indexName, mysql.DefaultCollationName)
+			}
+		}
+
 		outputRows = append(outputRows, outputRow)
 	}
 	e.rowIdx += len(outputRows)
@@ -3875,7 +3909,7 @@ func checkRule(rule *label.Rule) (dbName, tableName string, partitionName string
 		err = errors.New("empty label rule type")
 		return
 	}
-	if rule.Labels == nil || len(rule.Labels) == 0 {
+	if len(rule.Labels) == 0 {
 		err = errors.New("the label rule has no label")
 		return
 	}

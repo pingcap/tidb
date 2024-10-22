@@ -93,9 +93,12 @@ func testRenameTables(t *testing.T, ctx sessionctx.Context, d ddl.ExecutorForTes
 		},
 	}
 
-	args := model.GetRenameTablesArgsFromV1(
-		oldSchemaIDs, oldSchemaNames, oldTableNames,
-		newSchemaIDs, newTableNames, oldTableIDs)
+	args := &model.RenameTablesArgs{
+		RenameTableInfos: model.GetRenameTablesArgsFromV1(
+			oldSchemaIDs, oldSchemaNames, oldTableNames,
+			newSchemaIDs, newTableNames, oldTableIDs,
+		),
+	}
 
 	ctx.SetValue(sessionctx.QueryString, "skip")
 	require.NoError(t, d.DoDDLJobWrapper(ctx, ddl.NewJobWrapperWithArgs(job, args, true)))

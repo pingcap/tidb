@@ -1056,7 +1056,7 @@ var defaultConf = Config{
 		AuthTokenRefreshInterval:    DefAuthTokenRefreshInterval.String(),
 		DisconnectOnExpiredPassword: true,
 	},
-	DeprecateIntegerDisplayWidth:         false,
+	DeprecateIntegerDisplayWidth:         true,
 	EnableEnumLengthLimit:                true,
 	StoresRefreshInterval:                defTiKVCfg.StoresRefreshInterval,
 	EnableForwarding:                     defTiKVCfg.EnableForwarding,

@@ -470,7 +470,7 @@ func (e *evalContext) decodeRelatedColumnVals(relatedColOffsets []int, value [][
 
 // flagsAndTzToSessionContext creates a StatementContext from a `tipb.SelectRequest.Flags`.
 func flagsAndTzToSessionContext(flags uint64, tz *time.Location) sessionctx.Context {
-	sctx := mock.NewContext()
+	sctx := mock.NewContextDeprecated()
 	sc := stmtctx.NewStmtCtx()
 	sc.InitFromPBFlagAndTz(flags, tz)
 	sctx.GetSessionVars().StmtCtx = sc

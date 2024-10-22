@@ -66,7 +66,7 @@ func NewStatsCacheImplForTest() (types.StatsCache, error) {
 // Update reads stats meta from store and updates the stats map.
 func (s *StatsCacheImpl) Update(ctx context.Context, is infoschema.InfoSchema) error {
 	start := time.Now()
-	lastVersion := s.getLastVersion()
+	lastVersion := s.GetNextCheckVersionWithOffset()
 	var (
 		rows []chunk.Row
 		err  error
@@ -156,7 +156,8 @@ func (s *StatsCacheImpl) Update(ctx context.Context, is infoschema.InfoSchema) e
 	return nil
 }
 
-func (s *StatsCacheImpl) getLastVersion() uint64 {
+// GetNextCheckVersionWithOffset gets the last version with offset.
+func (s *StatsCacheImpl) GetNextCheckVersionWithOffset() uint64 {
 	// Get the greatest version of the stats meta table.
 	lastVersion := s.MaxTableStatsVersion()
 	// We need this because for two tables, the smaller version may write later than the one with larger version.
@@ -257,7 +258,7 @@ func (s *StatsCacheImpl) SetStatsCacheCapacity(c int64) {
 
 // UpdateStatsHealthyMetrics updates stats healthy distribution metrics according to stats cache.
 func (s *StatsCacheImpl) UpdateStatsHealthyMetrics() {
-	distribution := make([]int64, 5)
+	distribution := make([]int64, 9)
 	uneligibleAnalyze := 0
 	for _, tbl := range s.Values() {
 		distribution[4]++ // total table count
@@ -272,16 +273,22 @@ func (s *StatsCacheImpl) UpdateStatsHealthyMetrics() {
 		}
 		if healthy < 50 {
 			distribution[0]++
-		} else if healthy < 80 {
+		} else if healthy < 55 {
 			distribution[1]++
-		} else if healthy < 100 {
+		} else if healthy < 60 {
 			distribution[2]++
-		} else {
+		} else if healthy < 70 {
 			distribution[3]++
+		} else if healthy < 80 {
+			distribution[4]++
+		} else if healthy < 100 {
+			distribution[5]++
+		} else {
+			distribution[6]++
 		}
 	}
 	for i, val := range distribution {
 		handle_metrics.StatsHealthyGauges[i].Set(float64(val))
 	}
-	handle_metrics.StatsHealthyGauges[5].Set(float64(uneligibleAnalyze))
+	handle_metrics.StatsHealthyGauges[8].Set(float64(uneligibleAnalyze))
 }

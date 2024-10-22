@@ -607,7 +607,7 @@ func TestColumnTable(t *testing.T) {
 		testkit.RowsWithSep("|",
 			"test|tbl1|col_2"))
 	tk.MustQuery(`select count(*) from information_schema.columns;`).Check(
-		testkit.RowsWithSep("|", "4978"))
+		testkit.RowsWithSep("|", "4983"))
 }
 
 func TestIndexUsageTable(t *testing.T) {
@@ -641,7 +641,7 @@ func TestIndexUsageTable(t *testing.T) {
 			"test|idt1|idx_2",
 			"test|idt1|idx_3"))
 	tk.MustQuery(`select TABLE_SCHEMA, TABLE_NAME, INDEX_NAME from information_schema.tidb_index_usage
-				where TABLE_SCHEMA = 'test' and INDEX_NAME = 'idx_2';`).Check(
+				where TABLE_SCHEMA = 'test' and INDEX_NAME = 'idx_2';`).Sort().Check(
 		testkit.RowsWithSep("|",
 			"test|idt1|idx_2",
 			"test|idt2|idx_2"))
@@ -654,7 +654,7 @@ func TestIndexUsageTable(t *testing.T) {
 		testkit.RowsWithSep("|",
 			"test|idt2|idx_4"))
 	tk.MustQuery(`select count(*) from information_schema.tidb_index_usage;`).Check(
-		testkit.RowsWithSep("|", "77"))
+		testkit.RowsWithSep("|", "78"))
 
 	tk.MustQuery(`select TABLE_SCHEMA, TABLE_NAME, INDEX_NAME from information_schema.tidb_index_usage
 				where TABLE_SCHEMA = 'test1';`).Check(testkit.Rows())

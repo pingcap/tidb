@@ -3102,6 +3102,7 @@ func TestRemovePartitioningAutoIDs(t *testing.T) {
 	tk1 := testkit.NewTestKit(t, store)
 	tk2 := testkit.NewTestKit(t, store)
 	tk3 := testkit.NewTestKit(t, store)
+	tk4 := testkit.NewTestKit(t, store)
 
 	tk1.MustExec(`create schema ` + dbName)
 	tk1.MustExec(`use ` + dbName)
@@ -3115,8 +3116,6 @@ func TestRemovePartitioningAutoIDs(t *testing.T) {
 
 	waitFor := func(col int, tableName, s string) {
 		for {
-			tk4 := testkit.NewTestKit(t, store)
-			tk4.MustExec(`use test`)
 			sql := `admin show ddl jobs where db_name = '` + strings.ToLower(dbName) + `' and table_name = '` + tableName + `' and job_type = 'alter table remove partitioning'`
 			res := tk4.MustQuery(sql).Rows()
 			if len(res) == 1 && res[0][col] == s {

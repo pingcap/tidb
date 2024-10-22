@@ -2124,7 +2124,6 @@ AlterTableSpecSingleOpt:
 		startOffset := parser.yyVAL.offset
 		endOffset := parser.yylval.offset
 		partitionMethod.SetText(parser.lexer.client, parser.src[startOffset:endOffset])
-		partitionMethod.SetOriginTextPosition(startOffset)
 		$$ = &ast.AlterTableSpec{
 			Tp:        ast.AlterTableReorganizeLastPartition,
 			Partition: &ast.PartitionOptions{PartitionMethod: partitionMethod},
@@ -2136,8 +2135,6 @@ AlterTableSpecSingleOpt:
 		startOffset := parser.yyVAL.offset
 		endOffset := parser.yylval.offset
 		partitionMethod.SetText(parser.lexer.client, parser.src[startOffset:endOffset])
-		// Needed for replacing syntactic sugar with generated partitioning definition string
-		partitionMethod.SetOriginTextPosition(startOffset)
 		$$ = &ast.AlterTableSpec{
 			Tp:        ast.AlterTableReorganizeFirstPartition,
 			Partition: &ast.PartitionOptions{PartitionMethod: partitionMethod},
@@ -2318,8 +2315,6 @@ AlterTableSpec:
 		startOffset := parser.yyVAL.offset
 		endOffset := parser.yylval.offset
 		partitionMethod.SetText(parser.lexer.client, parser.src[startOffset:endOffset])
-		// Needed for replacing syntactic sugar with generated partitioning definition string
-		partitionMethod.SetOriginTextPosition(startOffset)
 		$$ = &ast.AlterTableSpec{
 			NoWriteToBinlog: noWriteToBinlog,
 			Tp:              ast.AlterTableAddLastPartition,
@@ -2406,8 +2401,6 @@ AlterTableSpec:
 		startOffset := parser.yyVAL.offset
 		endOffset := parser.yylval.offset
 		partitionMethod.SetText(parser.lexer.client, parser.src[startOffset:endOffset])
-		// Needed for replacing syntactic sugar with generated partitioning definition string
-		partitionMethod.SetOriginTextPosition(startOffset)
 		$$ = &ast.AlterTableSpec{
 			IfExists:  $8.(bool),
 			Tp:        ast.AlterTableDropFirstPartition,
@@ -4236,7 +4229,11 @@ CreateIndexStmt:
 		}
 
 		keyType := $2.(ast.IndexKeyType)
-		if (keyType == ast.IndexKeyTypeVector && indexOption.Tp != model.IndexTypeHNSW) || (keyType != ast.IndexKeyTypeVector && indexOption.Tp == model.IndexTypeHNSW) {
+		isVectorIndex := keyType == ast.IndexKeyTypeVector
+		if isVectorIndex && indexOption.Tp == model.IndexTypeInvalid {
+			indexOption.Tp = model.IndexTypeHNSW
+		}
+		if (isVectorIndex && indexOption.Tp != model.IndexTypeHNSW) || (!isVectorIndex && indexOption.Tp == model.IndexTypeHNSW) {
 			yylex.AppendError(ErrSyntax)
 			return 1
 		}
@@ -4709,8 +4706,6 @@ PartitionIntervalOpt:
 		startOffset := parser.yyVAL.offset
 		endOffset := parser.yylval.offset
 		partitionInterval.SetText(parser.lexer.client, parser.src[startOffset:endOffset])
-		// Needed for replacing syntactic sugar with generated partitioning definition string
-		partitionInterval.SetOriginTextPosition(startOffset)
 		$$ = partitionInterval
 	}
 
@@ -12376,17 +12371,22 @@ ConstraintVectorIndex:
 			Name:         $4.([]interface{})[0].(*ast.NullString).String,
 			IsEmptyIndex: $4.([]interface{})[0].(*ast.NullString).Empty,
 		}
+
 		if $8 != nil {
 			c.Option = $8.(*ast.IndexOption)
 		}
-
 		if indexType := $4.([]interface{})[1]; indexType != nil {
 			if c.Option == nil {
 				c.Option = &ast.IndexOption{}
 			}
 			c.Option.Tp = indexType.(model.IndexType)
 		}
-		if c.Option == nil || c.Option.Tp != model.IndexTypeHNSW {
+		if c.Option == nil {
+			c.Option = &ast.IndexOption{Tp: model.IndexTypeHNSW}
+		} else if c.Option.Tp == model.IndexTypeInvalid {
+			c.Option.Tp = model.IndexTypeHNSW
+		}
+		if c.Option.Tp != model.IndexTypeHNSW {
 			yylex.AppendError(ErrSyntax)
 			return 1
 		}

@@ -34,6 +34,20 @@ const taskManagerLoopTickerInterval = time.Minute
 const ttlTaskHeartBeatTickerInterval = time.Minute
 const ttlGCInterval = time.Hour
 
+func getCheckJobInterval() time.Duration {
+	failpoint.Inject("check-job-interval", func(val failpoint.Value) time.Duration {
+		return time.Duration(val.(int))
+	})
+	return jobManagerLoopTickerInterval
+}
+
+func getJobManagerLoopSyncTimerInterval() time.Duration {
+	failpoint.Inject("sync-timer", func(val failpoint.Value) time.Duration {
+		return time.Duration(val.(int))
+	})
+	return time.Second
+}
+
 func getUpdateInfoSchemaCacheInterval() time.Duration {
 	failpoint.Inject("update-info-schema-cache-interval", func(val failpoint.Value) time.Duration {
 		return time.Duration(val.(int))
@@ -55,6 +69,13 @@ func getResizeWorkersInterval() time.Duration {
 	return resizeWorkersInterval
 }
 
+func getTaskManagerLoopCheckTaskInterval() time.Duration {
+	failpoint.Inject("check-task-interval", func(val failpoint.Value) time.Duration {
+		return time.Duration(val.(int))
+	})
+	return time.Second * 5
+}
+
 func getTaskManagerLoopTickerInterval() time.Duration {
 	failpoint.Inject("task-manager-loop-interval", func(val failpoint.Value) time.Duration {
 		return time.Duration(val.(int))
@@ -67,4 +88,11 @@ func getTaskManagerHeartBeatExpireInterval() time.Duration {
 		return time.Duration(val.(int))
 	})
 	return 2 * ttlTaskHeartBeatTickerInterval
+}
+
+func getCheckJobTriggeredInterval() time.Duration {
+	failpoint.Inject("check-job-triggered-interval", func(val failpoint.Value) time.Duration {
+		return time.Duration(val.(int))
+	})
+	return 2 * time.Second
 }

@@ -35,6 +35,8 @@ const (
 
 // NonPartitionedTableAnalysisJob is a TableAnalysisJob for analyzing the physical table.
 type NonPartitionedTableAnalysisJob struct {
+	successHook JobHook
+	failureHook JobHook
 	TableSchema string
 	TableName   string
 	// This is only for newly added indexes.
@@ -79,15 +81,38 @@ func (j *NonPartitionedTableAnalysisJob) Analyze(
 	statsHandle statstypes.StatsHandle,
 	sysProcTracker sysproctrack.Tracker,
 ) error {
+	success := true
+	defer func() {
+		if success {
+			if j.successHook != nil {
+				j.successHook(j)
+			}
+		} else {
+			if j.failureHook != nil {
+				j.failureHook(j)
+			}
+		}
+	}()
+
 	return statsutil.CallWithSCtx(statsHandle.SPool(), func(sctx sessionctx.Context) error {
 		switch j.getAnalyzeType() {
 		case analyzeTable:
-			j.analyzeTable(sctx, statsHandle, sysProcTracker)
+			success = j.analyzeTable(sctx, statsHandle, sysProcTracker)
 		case analyzeIndex:
-			j.analyzeIndexes(sctx, statsHandle, sysProcTracker)
+			success = j.analyzeIndexes(sctx, statsHandle, sysProcTracker)
 		}
 		return nil
 	})
+}
+
+// RegisterSuccessHook registers a successHook function that will be called after the job can be marked as successful.
+func (j *NonPartitionedTableAnalysisJob) RegisterSuccessHook(hook JobHook) {
+	j.successHook = hook
+}
+
+// RegisterFailureHook registers a failureHook function that will be called after the job can be marked as failed.
+func (j *NonPartitionedTableAnalysisJob) RegisterFailureHook(hook JobHook) {
+	j.failureHook = hook
 }
 
 // HasNewlyAddedIndex checks whether the table has newly added indexes.
@@ -105,6 +130,10 @@ func (j *NonPartitionedTableAnalysisJob) IsValidToAnalyze(
 		j.TableSchema,
 		j.TableName,
 	); !valid {
+		if j.failureHook != nil {
+			j.failureHook(j)
+		}
+
 		return false, failReason
 	}
 
@@ -162,9 +191,9 @@ func (j *NonPartitionedTableAnalysisJob) analyzeTable(
 	sctx sessionctx.Context,
 	statsHandle statstypes.StatsHandle,
 	sysProcTracker sysproctrack.Tracker,
-) {
+) bool {
 	sql, params := j.GenSQLForAnalyzeTable()
-	exec.AutoAnalyze(sctx, statsHandle, sysProcTracker, j.TableStatsVer, sql, params...)
+	return exec.AutoAnalyze(sctx, statsHandle, sysProcTracker, j.TableStatsVer, sql, params...)
 }
 
 // GenSQLForAnalyzeTable generates the SQL for analyzing the specified table.
@@ -179,16 +208,16 @@ func (j *NonPartitionedTableAnalysisJob) analyzeIndexes(
 	sctx sessionctx.Context,
 	statsHandle statstypes.StatsHandle,
 	sysProcTracker sysproctrack.Tracker,
-) {
+) bool {
 	if len(j.Indexes) == 0 {
-		return
+		return true
 	}
 	// Only analyze the first index.
 	// This is because analyzing a single index also analyzes all other indexes and columns.
 	// Therefore, to avoid redundancy, we prevent multiple analyses of the same table.
 	firstIndex := j.Indexes[0]
 	sql, params := j.GenSQLForAnalyzeIndex(firstIndex)
-	exec.AutoAnalyze(sctx, statsHandle, sysProcTracker, j.TableStatsVer, sql, params...)
+	return exec.AutoAnalyze(sctx, statsHandle, sysProcTracker, j.TableStatsVer, sql, params...)
 }
 
 // GenSQLForAnalyzeIndex generates the SQL for analyzing the specified index.

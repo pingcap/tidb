@@ -51,7 +51,7 @@ go_test(
     ],
     embed = [":taskexecutor"],
     flaky = True,
-    shard_count = 16,
+    shard_count = 17,
     deps = [
         "//pkg/disttask/framework/mock",
         "//pkg/disttask/framework/mock/execute",
@@ -74,5 +74,7 @@ go_test(
         "@org_golang_google_grpc//status",
         "@org_uber_go_goleak//:goleak",
         "@org_uber_go_mock//gomock",
+        "@org_uber_go_zap//:zap",
+        "@org_uber_go_zap//zaptest/observer",
     ],
 )

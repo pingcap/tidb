@@ -2394,6 +2394,9 @@ var defaultSysVars = []*SysVar{
 		return s.PartitionPruneMode.Load(), nil
 	}, SetSession: func(s *SessionVars, val string) error {
 		newMode := strings.ToLower(strings.TrimSpace(val))
+		if PartitionPruneMode(newMode) == Static {
+			s.StmtCtx.AppendWarning(ErrWarnDeprecatedSyntaxSimpleMsg.FastGen("static prune mode is deprecated and will be removed in the future release."))
+		}
 		if PartitionPruneMode(s.PartitionPruneMode.Load()) == Static && PartitionPruneMode(newMode) == Dynamic {
 			s.StmtCtx.AppendWarning(errors.NewNoStackError("Please analyze all partition tables again for consistency between partition and global stats"))
 			s.StmtCtx.AppendWarning(errors.NewNoStackError("Please avoid setting partition prune mode to dynamic at session level and set partition prune mode to dynamic at global level"))
@@ -2402,6 +2405,9 @@ var defaultSysVars = []*SysVar{
 		return nil
 	}, SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
 		newMode := strings.ToLower(strings.TrimSpace(val))
+		if PartitionPruneMode(newMode) == Static {
+			s.StmtCtx.AppendWarning(ErrWarnDeprecatedSyntaxSimpleMsg.FastGen("static prune mode is deprecated and will be removed in the future release."))
+		}
 		if PartitionPruneMode(newMode) == Dynamic {
 			s.StmtCtx.AppendWarning(errors.NewNoStackError("Please analyze all partition tables again for consistency between partition and global stats"))
 		}
