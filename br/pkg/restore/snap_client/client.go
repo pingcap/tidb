@@ -1001,8 +1001,8 @@ func (rc *SnapClient) execAndValidateChecksum(
 	)
 
 	expectedChecksumStats := metautil.CalculateChecksumStatsOnFiles(tbl.OldTable.Files)
-	if expectedChecksumStats.ChecksumExists() {
-		logger.Warn("table has no checksum, skipping checksum")
+	if !expectedChecksumStats.ChecksumExists() {
+		logger.Error("table has no checksum, skipping checksum")
 		return nil
 	}
 
