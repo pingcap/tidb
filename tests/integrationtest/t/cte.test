@@ -197,7 +197,7 @@ explain format='brief' with cte1 as (select c1 from t1 order by c1) select /*+ M
 with cte1 as (select c1 from t1 order by c1) select /*+ MERGE_JOIN(dt1, dt2) */ * from t1 dt1 inner join cte1 dt2 on dt2.c1 = dt1.c1 order by 1, 2;
 
 --echo // Expect a Sort operator on CTE. Because it's recursive.
-explain with recursive cte1 as (select c1 from t1 union select c1 +1 c1 from cte1 where c1 < 3) select /*+ MERGE_JOIN(dt1, dt2) */ * from t1 dt1 inner join cte1 dt2 on dt2.c1 = dt1.c1 order by 1, 2;
+explain format='brief' with recursive cte1 as (select c1 from t1 union select c1 +1 c1 from cte1 where c1 < 3) select /*+ MERGE_JOIN(dt1, dt2) */ * from t1 dt1 inner join cte1 dt2 on dt2.c1 = dt1.c1 order by 1, 2;
 with recursive cte1 as (select c1 from t1 union select c1 +1 c1 from cte1 where c1 < 3) select /*+ MERGE_JOIN(dt1, dt2) */ * from t1 dt1 inner join cte1 dt2 on dt2.c1 = dt1.c1 order by 1, 2;
 
 --echo // Expect a Sort operator on CTE. Because it's recursive.
