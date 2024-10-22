@@ -1603,7 +1603,7 @@ func matchRefineRule3Pattern(conEvalType types.EvalType, exprType *types.FieldTy
 		(conEvalType == types.ETReal || conEvalType == types.ETDecimal || conEvalType == types.ETInt)
 }
 
-// handleDurationTypeComparison handles comparisons between a duration type column and a non-duration type constant.
+// handleDurationTypeComparisonForNullEq handles comparisons between a duration type column and a non-duration type constant.
 // If the constant cannot be cast to a duration type and the comparison operator is `<=>`, the expression is rewritten as `0 <=> 1`.
 // This is necessary to maintain compatibility with MySQL behavior under the following conditions:
 //  1. When a duration type column is compared with a non-duration type constant, MySQL casts the duration column to the non-duration type.
@@ -1616,7 +1616,7 @@ func matchRefineRule3Pattern(conEvalType types.EvalType, exprType *types.FieldTy
 //
 // To ensure MySQL compatibility, we need to handle this case specifically. If the non-duration type constant cannot be cast to a duration type,
 // we rewrite the expression to always return false by converting it to `0 <=> 1`.
-func (c *compareFunctionClass) handleDurationTypeComparison(ctx BuildContext, arg0, arg1 Expression) (_ []Expression, err error) {
+func (c *compareFunctionClass) handleDurationTypeComparisonForNullEq(ctx BuildContext, arg0, arg1 Expression) (_ []Expression, err error) {
 	// check if a constant value becomes null after being cast to a duration type.
 	castToDurationIsNull := func(ctx BuildContext, arg Expression) (bool, error) {
 		f := WrapWithCastAsDuration(ctx, arg)
@@ -1632,8 +1632,16 @@ func (c *compareFunctionClass) handleDurationTypeComparison(ctx BuildContext, ar
 
 	var isNull bool
 	if arg0IsCon && arg0Const.DeferredExpr == nil && !arg1IsCon && arg1.GetType(ctx.GetEvalCtx()).GetType() == mysql.TypeDuration {
+		if arg0Const.Value.IsNull() {
+			// This is a const null, there is no need to re-write the expression
+			return nil, nil
+		}
 		isNull, err = castToDurationIsNull(ctx, arg0)
 	} else if arg1IsCon && arg1Const.DeferredExpr == nil && !arg0IsCon && arg0.GetType(ctx.GetEvalCtx()).GetType() == mysql.TypeDuration {
+		if arg1Const.Value.IsNull() {
+			// This is a const null, there is no need to re-write the expression
+			return nil, nil
+		}
 		isNull, err = castToDurationIsNull(ctx, arg1)
 	}
 	if err != nil {
@@ -1724,7 +1732,7 @@ func (c *compareFunctionClass) refineArgs(ctx BuildContext, args []Expression) (
 
 	// Handle comparison between a duration type column and a non-duration type constant.
 	if c.op == opcode.NullEQ {
-		if result, err := c.handleDurationTypeComparison(ctx, args[0], args[1]); err != nil || result != nil {
+		if result, err := c.handleDurationTypeComparisonForNullEq(ctx, args[0], args[1]); err != nil || result != nil {
 			return result, err
 		}
 	}

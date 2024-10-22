@@ -392,7 +392,7 @@ create table t (a int default b'1');
 show create table t;
 Table	Create Table
 t	CREATE TABLE `t` (
-  `a` int(11) DEFAULT '1'
+  `a` int DEFAULT '1'
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 drop table if exists t;
 drop table if exists t;
@@ -406,7 +406,7 @@ count(distinct c1)
 show create table t;
 Table	Create Table
 t	CREATE TABLE `t` (
-  `c` int(10) DEFAULT NULL,
+  `c` int DEFAULT NULL,
   `c1` varchar(256) DEFAULT (uuid())
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 drop table if exists t1;
@@ -667,9 +667,9 @@ alter table t add index idx((a+c));
 show create table t;
 Table	Create Table
 t	CREATE TABLE `t` (
-  `a` int(11) DEFAULT NULL,
+  `a` int DEFAULT NULL,
   `b` varchar(100) DEFAULT NULL,
-  `c` int(11) DEFAULT NULL,
+  `c` int DEFAULT NULL,
   KEY `idx` ((`a` + `c`))
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 PARTITION BY RANGE (`a`)
@@ -689,7 +689,7 @@ create table t(a int auto_increment key clustered) auto_id_cache 100;
 show create table t;
 Table	Create Table
 t	CREATE TABLE `t` (
-  `a` int(11) NOT NULL AUTO_INCREMENT,
+  `a` int NOT NULL AUTO_INCREMENT,
   PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![auto_id_cache] AUTO_ID_CACHE=100 */
 insert into t values();
@@ -733,8 +733,8 @@ alter table t1 auto_id_cache 200;
 show create table t1;
 Table	Create Table
 t1	CREATE TABLE `t1` (
-  `a` int(11) DEFAULT NULL,
-  `b` int(11) NOT NULL AUTO_INCREMENT,
+  `a` int DEFAULT NULL,
+  `b` int NOT NULL AUTO_INCREMENT,
   UNIQUE KEY `b` (`b`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin AUTO_INCREMENT=101 /*T![auto_id_cache] AUTO_ID_CACHE=200 */
 insert into t1(b) values(NULL);
@@ -754,7 +754,7 @@ create table t(a int auto_increment key clustered) auto_id_cache 3;
 show create table t;
 Table	Create Table
 t	CREATE TABLE `t` (
-  `a` int(11) NOT NULL AUTO_INCREMENT,
+  `a` int NOT NULL AUTO_INCREMENT,
   PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![auto_id_cache] AUTO_ID_CACHE=3 */
 insert into t(a) values(NULL),(NULL),(NULL);
@@ -860,26 +860,26 @@ create global temporary table db2.tplacement3 (id int) on commit delete rows;
 show create table db2.tplacement3;
 Table	Create Table
 tplacement3	CREATE GLOBAL TEMPORARY TABLE `tplacement3` (
-  `id` int(11) DEFAULT NULL
+  `id` int DEFAULT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin ON COMMIT DELETE ROWS
 create temporary table db2.tplacement4 (id int);
 show create table db2.tplacement4;
 Table	Create Table
 tplacement4	CREATE TEMPORARY TABLE `tplacement4` (
-  `id` int(11) DEFAULT NULL
+  `id` int DEFAULT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 create table db2.t1 (a int) placement policy 'default';
 create global temporary table db2.tplacement5 like db2.t1 on commit delete rows;
 show create table db2.tplacement5;
 Table	Create Table
 tplacement5	CREATE GLOBAL TEMPORARY TABLE `tplacement5` (
-  `a` int(11) DEFAULT NULL
+  `a` int DEFAULT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin ON COMMIT DELETE ROWS
 create temporary table db2.tplacement6 like db2.t1;
 show create table db2.tplacement6;
 Table	Create Table
 tplacement6	CREATE TEMPORARY TABLE `tplacement6` (
-  `a` int(11) DEFAULT NULL
+  `a` int DEFAULT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 drop table db2.tplacement6;
 drop table db2.tplacement5;

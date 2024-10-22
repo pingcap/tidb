@@ -4,23 +4,23 @@ create table t(a varchar(10), b int, c int);
 show columns from t where true;
 Field	Type	Null	Key	Default	Extra
 a	varchar(10)	YES		NULL	
-b	int(11)	YES		NULL	
-c	int(11)	YES		NULL	
+b	int	YES		NULL	
+c	int	YES		NULL	
 show columns from t where field = 'b';
 Field	Type	Null	Key	Default	Extra
-b	int(11)	YES		NULL	
+b	int	YES		NULL	
 show columns from t where field in (select 'b');
 Field	Type	Null	Key	Default	Extra
-b	int(11)	YES		NULL	
+b	int	YES		NULL	
 show columns from t where field in (select 'b') and true;
 Field	Type	Null	Key	Default	Extra
-b	int(11)	YES		NULL	
+b	int	YES		NULL	
 show columns from t where field in (select 'b') and false;
 Field	Type	Null	Key	Default	Extra
 insert into t values('c', 0, 0);
 show columns from t where field < all (select a from t);
 Field	Type	Null	Key	Default	Extra
-b	int(11)	YES		NULL	
+b	int	YES		NULL	
 a	varchar(10)	YES		NULL	
 insert into t values('b', 0, 0);
 show columns from t where field < all (select a from t);

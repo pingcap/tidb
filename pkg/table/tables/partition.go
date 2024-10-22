@@ -804,6 +804,9 @@ func extractPartitionExprColumns(ctx expression.BuildContext, expr string, partC
 	var cols []*expression.Column
 	var partExpr expression.Expression
 	if len(partCols) == 0 {
+		if expr == "" {
+			return nil, nil, nil, errors.New("expression should not be an empty string")
+		}
 		schema := expression.NewSchema(columns...)
 		expr, err := expression.ParseSimpleExpr(ctx, expr, expression.WithInputSchemaAndNames(schema, names, nil))
 		if err != nil {
@@ -1510,7 +1513,14 @@ func (t *partitionedTable) locateHashPartition(ctx expression.EvalContext, partE
 
 // GetPartition returns a Table, which is actually a partition.
 func (t *partitionedTable) GetPartition(pid int64) table.PhysicalTable {
-	return t.getPartition(pid)
+	part := t.getPartition(pid)
+
+	// Explicitly check if the partition is nil, and return a nil interface if it is
+	if part == nil {
+		return nil // Return a truly nil interface instead of an interface holding a nil pointer
+	}
+
+	return part
 }
 
 // getPartition returns a Table, which is actually a partition.

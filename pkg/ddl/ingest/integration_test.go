@@ -424,3 +424,49 @@ func TestAddIndexIngestPartitionCheckpoint(t *testing.T) {
 	require.Equal(t, 20, int(rowCnt.Load()))
 	tk.MustExec("admin check table t;")
 }
+
+func TestAddGlobalIndexInIngest(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	defer ingesttestutil.InjectMockBackendMgr(t, store)()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a int, b int) partition by hash(a) partitions 5")
+	tk.MustExec("insert into t (a, b) values (1, 1), (2, 2), (3, 3)")
+	var i atomic.Int32
+	i.Store(3)
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/writeLocalExec", func(bool) {
+		tk2 := testkit.NewTestKit(t, store)
+		tmp := i.Add(1)
+		_, err := tk2.Exec(fmt.Sprintf("insert into test.t values (%d, %d)", tmp, tmp))
+		assert.Nil(t, err)
+	})
+	tk.MustExec("alter table t add index idx_1(b), add unique index idx_2(b) global")
+	rsGlobalIndex := tk.MustQuery("select * from t use index(idx_2)").Sort()
+	rsTable := tk.MustQuery("select * from t use index()").Sort()
+	rsNormalIndex := tk.MustQuery("select * from t use index(idx_1)").Sort()
+	num := len(rsGlobalIndex.Rows())
+	require.Greater(t, num, 3)
+	require.Equal(t, rsGlobalIndex.String(), rsTable.String())
+	require.Equal(t, rsGlobalIndex.String(), rsNormalIndex.String())
+
+	// for indexes have different columns
+	tk.MustExec("alter table t add index idx_3(a), add unique index idx_4(b) global")
+	rsGlobalIndex = tk.MustQuery("select * from t use index(idx_4)").Sort()
+	rsTable = tk.MustQuery("select * from t use index()").Sort()
+	rsNormalIndex = tk.MustQuery("select * from t use index(idx_3)").Sort()
+	require.Greater(t, len(rsGlobalIndex.Rows()), num)
+	require.Equal(t, rsGlobalIndex.String(), rsTable.String())
+	require.Equal(t, rsGlobalIndex.String(), rsNormalIndex.String())
+
+	// for all global indexes
+	tk.MustExec("alter table t add unique index idx_5(b) global, add unique index idx_6(b) global")
+	rsGlobalIndex1 := tk.MustQuery("select * from t use index(idx_6)").Sort()
+	rsTable = tk.MustQuery("select * from t use index()").Sort()
+	rsGlobalIndex2 := tk.MustQuery("select * from t use index(idx_5)").Sort()
+	require.Greater(t, len(rsGlobalIndex1.Rows()), len(rsGlobalIndex.Rows()))
+	require.Equal(t, rsGlobalIndex1.String(), rsTable.String())
+	require.Equal(t, rsGlobalIndex1.String(), rsGlobalIndex2.String())
+}
