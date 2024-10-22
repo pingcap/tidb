@@ -271,6 +271,7 @@ func TestPubSub(t *testing.T) {
 func TestPublishEventError(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("USE test")
 	cases := []string{
 		// todo: will add more case after issue 56634 fixed
 		"create table t (a int)", // ActionCreateTable
