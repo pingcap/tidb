@@ -124,7 +124,7 @@ func (w *worker) onDropTableOrView(jobCtx *jobContext, job *model.Job) (ver int6
 		// tables can be flashed back or recovered, therefore it moved to doGCPlacementRules in gc_worker.go.
 		if !tblInfo.IsSequence() && !tblInfo.IsView() {
 			dropTableEvent := notifier.NewDropTableEvent(tblInfo)
-			err = asyncNotifyEvent(jobCtx, dropTableEvent, job, w.sess)
+			err = asyncNotifyEvent(jobCtx, dropTableEvent, job, noSubJob, w.sess)
 			if err != nil {
 				return ver, errors.Trace(err)
 			}
@@ -588,7 +588,7 @@ func (w *worker) onTruncateTable(jobCtx *jobContext, job *model.Job) (ver int64,
 		return ver, errors.Trace(err)
 	}
 	truncateTableEvent := notifier.NewTruncateTableEvent(tblInfo, oldTblInfo)
-	err = asyncNotifyEvent(jobCtx, truncateTableEvent, job, w.sess)
+	err = asyncNotifyEvent(jobCtx, truncateTableEvent, job, noSubJob, w.sess)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}

@@ -229,7 +229,7 @@ func (w *worker) onAddTablePartition(jobCtx *jobContext, job *model.Job) (ver in
 			return ver, errors.Trace(err)
 		}
 		addPartitionEvent := notifier.NewAddPartitionEvent(tblInfo, partInfo)
-		err = asyncNotifyEvent(jobCtx, addPartitionEvent, job, w.sess)
+		err = asyncNotifyEvent(jobCtx, addPartitionEvent, job, noSubJob, w.sess)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
@@ -2395,7 +2395,7 @@ func (w *worker) onDropTablePartition(jobCtx *jobContext, job *model.Job) (ver i
 			tblInfo,
 			&model.PartitionInfo{Definitions: droppedDefs},
 		)
-		err = asyncNotifyEvent(jobCtx, dropPartitionEvent, job, w.sess)
+		err = asyncNotifyEvent(jobCtx, dropPartitionEvent, job, noSubJob, w.sess)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
@@ -2493,7 +2493,7 @@ func (w *worker) onTruncateTablePartition(jobCtx *jobContext, job *model.Job) (i
 			&model.PartitionInfo{Definitions: newPartitions},
 			&model.PartitionInfo{Definitions: oldPartitions},
 		)
-		err = asyncNotifyEvent(jobCtx, truncatePartitionEvent, job, w.sess)
+		err = asyncNotifyEvent(jobCtx, truncatePartitionEvent, job, noSubJob, w.sess)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
@@ -2638,7 +2638,7 @@ func (w *worker) onTruncateTablePartition(jobCtx *jobContext, job *model.Job) (i
 			&model.PartitionInfo{Definitions: newPartitions},
 			&model.PartitionInfo{Definitions: oldPartitions},
 		)
-		err = asyncNotifyEvent(jobCtx, truncatePartitionEvent, job, w.sess)
+		err = asyncNotifyEvent(jobCtx, truncatePartitionEvent, job, noSubJob, w.sess)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
@@ -3024,7 +3024,7 @@ func (w *worker) onExchangeTablePartition(jobCtx *jobContext, job *model.Job) (v
 		&model.PartitionInfo{Definitions: []model.PartitionDefinition{originalPartitionDef}},
 		originalNt,
 	)
-	err = asyncNotifyEvent(jobCtx, exchangePartitionEvent, job, w.sess)
+	err = asyncNotifyEvent(jobCtx, exchangePartitionEvent, job, noSubJob, w.sess)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
@@ -3636,7 +3636,7 @@ func (w *worker) onReorganizePartition(jobCtx *jobContext, job *model.Job) (ver 
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
-		err = asyncNotifyEvent(jobCtx, event, job, w.sess)
+		err = asyncNotifyEvent(jobCtx, event, job, noSubJob, w.sess)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}

@@ -52,16 +52,15 @@ func NewDDLHandler(
 // HandleDDLEvent begins to process a ddl task.
 func (h *ddlHandlerImpl) HandleDDLEvent(s *notifier.SchemaChangeEvent) error {
 	switch s.GetType() {
-	case model.ActionCreateTables:
-		for _, newTableInfo := range s.GetCreateTablesInfo() {
-			ids, err := h.getTableIDs(newTableInfo)
-			if err != nil {
+	case model.ActionCreateTable:
+		newTableInfo := s.GetCreateTableInfo()
+		ids, err := h.getTableIDs(newTableInfo)
+		if err != nil {
+			return err
+		}
+		for _, id := range ids {
+			if err := h.statsWriter.InsertTableStats2KV(newTableInfo, id); err != nil {
 				return err
-			}
-			for _, id := range ids {
-				if err := h.statsWriter.InsertTableStats2KV(newTableInfo, id); err != nil {
-					return err
-				}
 			}
 		}
 	case model.ActionTruncateTable:
