@@ -21,6 +21,7 @@ import (
 
 	"github.com/pingcap/errors"
 	sess "github.com/pingcap/tidb/pkg/ddl/session"
+	"github.com/pingcap/tidb/pkg/infoschema"
 )
 
 // Store is the (de)serialization and persistent layer.
@@ -129,6 +130,9 @@ func (t *tableStore) List(ctx context.Context, se *sess.Session) ([]*schemaChang
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
+		if err = getCompleteTableInfo(ctx, se, &event); err != nil {
+			return nil, errors.Trace(err)
+		}
 		ret = append(ret, &schemaChange{
 			ddlJobID:             row.GetInt64(0),
 			multiSchemaChangeSeq: row.GetInt64(1),
@@ -137,6 +141,25 @@ func (t *tableStore) List(ctx context.Context, se *sess.Session) ([]*schemaChang
 		})
 	}
 	return ret, nil
+}
+
+func getCompleteTableInfo(ctx context.Context, se *sess.Session, e *SchemaChangeEvent) error {
+	is := se.Session().GetDomainInfoSchema().(infoschema.InfoSchema)
+	if e.inner.TableInfo != nil {
+		table, ok := is.TableByID(ctx, e.inner.TableInfo.ID)
+		if !ok {
+			return errors.Errorf("table not found for table ID %d", e.inner.TableInfo.ID)
+		}
+		e.inner.TableInfo = table.Meta()
+	}
+	if e.inner.OldTableInfo != nil {
+		table, ok := is.TableByID(ctx, e.inner.OldTableInfo.ID)
+		if !ok {
+			return errors.Errorf("table not found for table ID %d", e.inner.OldTableInfo.ID)
+		}
+		e.inner.OldTableInfo = table.Meta()
+	}
+	return nil
 }
 
 // OpenTableStore opens a store on a created table `db`.`table`. The table should
