@@ -21,7 +21,6 @@ import (
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	pmodel "github.com/pingcap/tidb/pkg/parser/model"
-	"github.com/pingcap/tidb/pkg/planner/util/coretestsdk"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testdata"
 	"github.com/stretchr/testify/require"
@@ -120,7 +119,7 @@ func TestPushDownProjectionForTiFlash(t *testing.T) {
 
 	// Create virtual tiflash replica info.
 	dom := domain.GetDomain(tk.Session())
-	coretestsdk.SetTiFlashReplica(t, dom, "test", "t")
+	testkit.SetTiFlashReplica(t, dom, "test", "t")
 
 	var input []string
 	var output []struct {
@@ -231,7 +230,7 @@ func TestJoinNotSupportedByTiFlash(t *testing.T) {
 
 	// Create virtual tiflash replica info.
 	dom := domain.GetDomain(tk.Session())
-	coretestsdk.SetTiFlashReplica(t, dom, "test", "table_1")
+	testkit.SetTiFlashReplica(t, dom, "test", "table_1")
 
 	tk.MustExec("set @@session.tidb_isolation_read_engines = 'tiflash'")
 	tk.MustExec("set @@session.tidb_allow_mpp = 1")

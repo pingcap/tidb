@@ -18,7 +18,6 @@ go_test(
         "//pkg/parser/model",
         "//pkg/planner/core",
         "//pkg/planner/core/base",
-        "//pkg/planner/util/coretestsdk",
         "//pkg/store/mockstore",
         "//pkg/testkit",
         "//pkg/testkit/testdata",
