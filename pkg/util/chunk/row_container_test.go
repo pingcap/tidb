@@ -320,8 +320,8 @@ func insertBytesRowsIntoRowContainer(t *testing.T, chkCount int, rowPerChk int) 
 	for range chkCount {
 		chk := NewChunkWithCapacity(fields, rowPerChk)
 		// insert rows for each chunk
-		length := rand2.Uint32()
 		for range rowPerChk {
+			length := rand2.Uint32()
 			randomBytes := make([]byte, length%4096)
 			_, err := rand.Read(randomBytes)
 			require.NoError(t, err)
@@ -348,8 +348,8 @@ func TestRowContainerReaderInDisk(t *testing.T) {
 	reader := NewRowContainerReader(rc)
 	defer reader.Close()
 	for i := range 16 {
-		row := reader.Current()
 		for j := range 16 {
+			row := reader.Current()
 			require.Equal(t, allRows[i*16+j], row.GetBytes(0))
 			reader.Next()
 		}
