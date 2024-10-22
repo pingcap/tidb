@@ -114,8 +114,8 @@ var (
 	// A large retry times is for tolerating tikv cluster failures.
 	MaxWriteAndIngestRetryTimes = 30
 
-	// TiKV may return a large response: 4K kv * each kv size about 4K+
-	maxMsgSize = 20 * units.MiB
+	// TiKV may return a large response: max 4K KV, each KV size can be about 4KiB+
+	maxMsgSize = 32 * units.MiB
 )
 
 // ImportClientFactory is factory to create new import client for specific store.
