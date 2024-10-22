@@ -295,7 +295,12 @@ func (src *TableScanTaskSource) generateTasks() error {
 	startKey := src.startKey
 	endKey := src.endKey
 	for {
+<<<<<<< HEAD
 		kvRanges, err := splitTableRanges(
+=======
+		kvRanges, err := splitAndValidateTableRanges(
+			src.ctx,
+>>>>>>> eec20e67fdf (ddl: skip getting actual end key for each range in ingest mode (#54143))
 			src.tbl,
 			src.store,
 			startKey,
