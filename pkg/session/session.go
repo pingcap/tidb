@@ -3443,10 +3443,8 @@ func bootstrapSessionImpl(ctx context.Context, store kv.Storage, createSessionsI
 		return nil, err
 	}
 	ver := getStoreBootstrapVersion(store)
-	if ver == notBootstrapped {
-		runInBootstrapSession(store, bootstrap)
-	} else if ver < currentBootstrapVersion {
-		runInBootstrapSession(store, upgrade)
+	if ver < currentBootstrapVersion {
+		runInBootstrapSession(store, getStartMode(ver))
 	} else {
 		err = InitMDLVariable(store)
 		if err != nil {
@@ -3499,7 +3497,7 @@ func bootstrapSessionImpl(ctx context.Context, store kv.Storage, createSessionsI
 
 	// only start the domain after we have initialized some global variables.
 	dom := domain.GetDomain(ses[0])
-	err = dom.Start()
+	err = dom.Start(ddl.Normal)
 	if err != nil {
 		return nil, err
 	}
@@ -3662,18 +3660,27 @@ func GetDomain(store kv.Storage) (*domain.Domain, error) {
 	return domap.Get(store)
 }
 
+func getStartMode(ver int64) ddl.StartMode {
+	if ver == notBootstrapped {
+		return ddl.Bootstrap
+	} else if ver < currentBootstrapVersion {
+		return ddl.Upgrade
+	}
+	return ddl.Normal
+}
+
 // runInBootstrapSession create a special session for bootstrap to run.
 // If no bootstrap and storage is remote, we must use a little lease time to
 // bootstrap quickly, after bootstrapped, we will reset the lease time.
 // TODO: Using a bootstrap tool for doing this may be better later.
-func runInBootstrapSession(store kv.Storage, bootstrap func(types.Session)) {
+func runInBootstrapSession(store kv.Storage, startMode ddl.StartMode) {
 	s, err := createSession(store)
 	if err != nil {
 		// Bootstrap fail will cause program exit.
 		logutil.BgLogger().Fatal("createSession error", zap.Error(err))
 	}
 	dom := domain.GetDomain(s)
-	err = dom.Start()
+	err = dom.Start(startMode)
 	if err != nil {
 		// Bootstrap fail will cause program exit.
 		logutil.BgLogger().Fatal("start domain error", zap.Error(err))
@@ -3683,7 +3690,11 @@ func runInBootstrapSession(store kv.Storage, bootstrap func(types.Session)) {
 	s.sessionVars.EnableClusteredIndex = variable.ClusteredIndexDefModeIntOnly
 
 	s.SetValue(sessionctx.Initing, true)
-	bootstrap(s)
+	if startMode == ddl.Bootstrap {
+		bootstrap(s)
+	} else {
+		upgrade(s)
+	}
 	finishBootstrap(store)
 	s.ClearValue(sessionctx.Initing)
 
