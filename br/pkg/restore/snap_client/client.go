@@ -1000,6 +1000,12 @@ func (rc *SnapClient) execAndValidateChecksum(
 		zap.String("table", tbl.OldTable.Info.Name.O),
 	)
 
+	expectedChecksumStats := metautil.CalculateChecksumStatsOnFiles(tbl.OldTable.Files)
+	if expectedChecksumStats.ChecksumExists() {
+		logger.Warn("table has no checksum, skipping checksum")
+		return nil
+	}
+
 	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
 		span1 := span.Tracer().StartSpan("Client.execAndValidateChecksum", opentracing.ChildOf(span.Context()))
 		defer span1.Finish()
@@ -1041,7 +1047,6 @@ func (rc *SnapClient) execAndValidateChecksum(
 			}
 		}
 	}
-	expectedChecksumStats := metautil.CalculateChecksumStatsOnAllFiles(tbl.OldTable.Files)
 	checksumMatch := item.Crc64xor == expectedChecksumStats.Crc64Xor &&
 		item.TotalKvs == expectedChecksumStats.TotalKvs &&
 		item.TotalBytes == expectedChecksumStats.TotalBytes
@@ -1050,11 +1055,11 @@ func (rc *SnapClient) execAndValidateChecksum(
 	})
 	if !checksumMatch {
 		logger.Error("failed in validate checksum",
-			zap.Uint64("origin tidb crc64", expectedChecksumStats.Crc64Xor),
+			zap.Uint64("expected tidb crc64", expectedChecksumStats.Crc64Xor),
 			zap.Uint64("calculated crc64", item.Crc64xor),
-			zap.Uint64("origin tidb total kvs", expectedChecksumStats.TotalKvs),
+			zap.Uint64("expected tidb total kvs", expectedChecksumStats.TotalKvs),
 			zap.Uint64("calculated total kvs", item.TotalKvs),
-			zap.Uint64("origin tidb total bytes", expectedChecksumStats.TotalBytes),
+			zap.Uint64("expected tidb total bytes", expectedChecksumStats.TotalBytes),
 			zap.Uint64("calculated total bytes", item.TotalBytes),
 		)
 		return errors.Annotate(berrors.ErrRestoreChecksumMismatch, "failed to validate checksum")
