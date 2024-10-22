@@ -46,19 +46,19 @@ count(1)
 show create table t0;
 Table	Create Table
 t0	CREATE TABLE `t0` (
-  `c` int(10) DEFAULT NULL,
+  `c` int DEFAULT NULL,
   `c1` varchar(256) DEFAULT (date_format(now(), _utf8mb4'%Y-%m'))
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 show create table t1;
 Table	Create Table
 t1	CREATE TABLE `t1` (
-  `c` int(10) DEFAULT NULL,
+  `c` int DEFAULT NULL,
   `c1` datetime DEFAULT (date_format(now(), _utf8mb4'%Y-%m-%d'))
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 show create table t2;
 Table	Create Table
 t2	CREATE TABLE `t2` (
-  `c` int(10) DEFAULT NULL,
+  `c` int DEFAULT NULL,
   `c1` varchar(256) DEFAULT (date_format(now(), _utf8mb4'%Y-%m-%d %H.%i.%s'))
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 alter table t0 add column c2 date default (date_format(now(),'%Y-%m'));
@@ -74,7 +74,7 @@ insert into t1 values (3, default);
 show create table t0;
 Table	Create Table
 t0	CREATE TABLE `t0` (
-  `c` int(10) DEFAULT NULL,
+  `c` int DEFAULT NULL,
   `c1` varchar(256) DEFAULT (date_format(now(), _utf8mb4'%Y-%m')),
   `c2` date DEFAULT (date_format(now(), _utf8mb4'%Y-%m-%d')),
   `c4` blob DEFAULT (date_format(now(), _utf8mb4'%Y-%m-%d')),
@@ -83,7 +83,7 @@ t0	CREATE TABLE `t0` (
 show create table t1;
 Table	Create Table
 t1	CREATE TABLE `t1` (
-  `c` int(10) DEFAULT NULL,
+  `c` int DEFAULT NULL,
   `c1` datetime DEFAULT (date_format(now(), _utf8mb4'%Y-%m-%d')),
   KEY `idx` (`c1`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
@@ -94,7 +94,7 @@ insert into t1 values (4, default);
 show create table t0;
 Table	Create Table
 t0	CREATE TABLE `t0` (
-  `c` int(10) DEFAULT NULL,
+  `c` int DEFAULT NULL,
   `c1` varchar(30) DEFAULT 'xx',
   `c2` date DEFAULT (date_format(now(), _utf8mb4'%Y-%m-%d')),
   `c4` blob DEFAULT (date_format(now(), _utf8mb4'%Y-%m-%d')),
@@ -103,7 +103,7 @@ t0	CREATE TABLE `t0` (
 show create table t1;
 Table	Create Table
 t1	CREATE TABLE `t1` (
-  `c` int(10) DEFAULT NULL,
+  `c` int DEFAULT NULL,
   `c1` varchar(30) DEFAULT 'xx',
   KEY `idx` (`c1`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
@@ -121,7 +121,7 @@ alter table t1 drop index idx;
 show create table t0;
 Table	Create Table
 t0	CREATE TABLE `t0` (
-  `c` int(10) DEFAULT NULL,
+  `c` int DEFAULT NULL,
   `c1` varchar(30) DEFAULT (date_format(now(), _utf8mb4'%Y-%m-%d')),
   `c2` date DEFAULT (date_format(now(), _utf8mb4'%Y-%m-%d')),
   `c4` blob DEFAULT (date_format(now(), _utf8mb4'%Y-%m-%d'))
@@ -129,7 +129,7 @@ t0	CREATE TABLE `t0` (
 show create table t1;
 Table	Create Table
 t1	CREATE TABLE `t1` (
-  `c` int(10) DEFAULT NULL,
+  `c` int DEFAULT NULL,
   `c1` datetime DEFAULT (date_format(now(), _utf8mb4'%Y-%m-%d'))
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 SELECT count(1) FROM t0 WHERE c1 = date_format(@x,'%Y-%m') OR c1 = date_format(@x,'%Y-%m-%d') OR c1 = "xx";
@@ -168,21 +168,21 @@ count(1)
 show create table t;
 Table	Create Table
 t	CREATE TABLE `t` (
-  `c` int(10) DEFAULT NULL,
+  `c` int DEFAULT NULL,
   `c1` varchar(256) DEFAULT (replace(upper(uuid()), _utf8mb4'-', _utf8mb4'')),
   KEY `idx` (`c1`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 show create table t1;
 Table	Create Table
 t1	CREATE TABLE `t1` (
-  `c` int(10) DEFAULT NULL,
-  `c1` int(11) DEFAULT (replace(upper(uuid()), _utf8mb4'-', _utf8mb4'')),
+  `c` int DEFAULT NULL,
+  `c1` int DEFAULT (replace(upper(uuid()), _utf8mb4'-', _utf8mb4'')),
   KEY `idx` (`c1`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 show create table t2;
 Table	Create Table
 t2	CREATE TABLE `t2` (
-  `c` int(10) DEFAULT NULL,
+  `c` int DEFAULT NULL,
   `c1` varchar(256) DEFAULT (replace(convert(upper(uuid()) using 'utf8mb4'), _utf8mb4'-', _utf8mb4'')),
   KEY `idx` (`c1`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
@@ -191,14 +191,14 @@ alter table t drop index idx;
 show create table t;
 Table	Create Table
 t	CREATE TABLE `t` (
-  `c` int(10) DEFAULT NULL,
+  `c` int DEFAULT NULL,
   `c1` varchar(256) DEFAULT 'xx'
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 insert into t values (5, default);
 show create table t;
 Table	Create Table
 t	CREATE TABLE `t` (
-  `c` int(10) DEFAULT NULL,
+  `c` int DEFAULT NULL,
   `c1` varchar(256) DEFAULT 'xx'
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 alter table t add unique index idx(c, c1);
@@ -210,7 +210,7 @@ count(1)
 show create table t;
 Table	Create Table
 t	CREATE TABLE `t` (
-  `c` int(10) DEFAULT NULL,
+  `c` int DEFAULT NULL,
   `c1` varchar(32) DEFAULT (replace(upper(uuid()), _utf8mb4'-', _utf8mb4'')),
   UNIQUE KEY `idx` (`c`,`c1`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
@@ -277,25 +277,25 @@ c	c1	c2
 show create table t0;
 Table	Create Table
 t0	CREATE TABLE `t0` (
-  `c` int(10) DEFAULT NULL,
+  `c` int DEFAULT NULL,
   `c1` varchar(32) DEFAULT (str_to_date(_utf8mb4'1980-01-01', _utf8mb4'%Y-%m-%d')),
   `c2` date DEFAULT (str_to_date(_utf8mb4'9999-01-01', _utf8mb4'%Y-%m-%d')),
   `c3` datetime DEFAULT (str_to_date(_utf8mb4'1980-01-01', _utf8mb4'%Y-%m-%d')),
-  `c4` int(11) DEFAULT (str_to_date(_utf8mb4'1980-01-01', _utf8mb4'%Y-%m-%d')),
+  `c4` int DEFAULT (str_to_date(_utf8mb4'1980-01-01', _utf8mb4'%Y-%m-%d')),
   KEY `idx` (`c`,`c1`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 show create table t1;
 Table	Create Table
 t1	CREATE TABLE `t1` (
-  `c` int(10) DEFAULT NULL,
-  `c1` int(11) DEFAULT (str_to_date(_utf8mb4'1980-01-01', _utf8mb4'%Y-%m-%d')),
-  `c2` int(11) DEFAULT (str_to_date(_utf8mb4'9999-01-01', _utf8mb4'%Y-%m-%d')),
+  `c` int DEFAULT NULL,
+  `c1` int DEFAULT (str_to_date(_utf8mb4'1980-01-01', _utf8mb4'%Y-%m-%d')),
+  `c2` int DEFAULT (str_to_date(_utf8mb4'9999-01-01', _utf8mb4'%Y-%m-%d')),
   UNIQUE KEY `idx` (`c`,`c1`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 show create table t2;
 Table	Create Table
 t2	CREATE TABLE `t2` (
-  `c` int(10) DEFAULT NULL,
+  `c` int DEFAULT NULL,
   `c1` blob DEFAULT (str_to_date(_utf8mb4'1980-01-01', _utf8mb4'%Y-%m-%d')),
   `c2` blob DEFAULT (str_to_date(_utf8mb4'9999-01-01', _utf8mb4'%m-%d'))
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
@@ -306,20 +306,20 @@ insert into t1 values (5, default, default);
 show create table t0;
 Table	Create Table
 t0	CREATE TABLE `t0` (
-  `c` int(10) DEFAULT NULL,
+  `c` int DEFAULT NULL,
   `c1` varchar(32) DEFAULT (str_to_date(_utf8mb4'1980-01-01', _utf8mb4'%Y-%m-%d')),
   `c2` date DEFAULT (str_to_date(_utf8mb4'9999-01-01', _utf8mb4'%Y-%m-%d')),
   `c3` datetime DEFAULT (str_to_date(_utf8mb4'1980-01-01', _utf8mb4'%Y-%m-%d')),
-  `c4` int(11) DEFAULT (str_to_date(_utf8mb4'1980-01-01', _utf8mb4'%Y-%m-%d')),
+  `c4` int DEFAULT (str_to_date(_utf8mb4'1980-01-01', _utf8mb4'%Y-%m-%d')),
   KEY `idx` (`c`,`c1`),
   KEY `idx1` (`c1`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 show create table t1;
 Table	Create Table
 t1	CREATE TABLE `t1` (
-  `c` int(10) DEFAULT NULL,
-  `c1` int(11) DEFAULT (str_to_date(_utf8mb4'1980-01-01', _utf8mb4'%Y-%m-%d')),
-  `c2` int(11) DEFAULT (str_to_date(_utf8mb4'9999-01-01', _utf8mb4'%Y-%m-%d')),
+  `c` int DEFAULT NULL,
+  `c1` int DEFAULT (str_to_date(_utf8mb4'1980-01-01', _utf8mb4'%Y-%m-%d')),
+  `c2` int DEFAULT (str_to_date(_utf8mb4'9999-01-01', _utf8mb4'%Y-%m-%d')),
   UNIQUE KEY `idx` (`c`,`c1`),
   UNIQUE KEY `idx1` (`c`,`c1`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
@@ -330,20 +330,20 @@ insert into t1 values (6, default, default);
 show create table t0;
 Table	Create Table
 t0	CREATE TABLE `t0` (
-  `c` int(10) DEFAULT NULL,
+  `c` int DEFAULT NULL,
   `c1` varchar(32) DEFAULT (str_to_date(_utf8mb4'1980-01-01', _utf8mb4'%Y-%m-%d')),
   `c2` date DEFAULT (CURRENT_DATE),
   `c3` datetime DEFAULT (str_to_date(_utf8mb4'1980-01-01', _utf8mb4'%Y-%m-%d')),
-  `c4` int(11) DEFAULT (str_to_date(_utf8mb4'1980-01-01', _utf8mb4'%Y-%m-%d')),
+  `c4` int DEFAULT (str_to_date(_utf8mb4'1980-01-01', _utf8mb4'%Y-%m-%d')),
   KEY `idx` (`c`,`c1`),
   KEY `idx1` (`c1`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 show create table t1;
 Table	Create Table
 t1	CREATE TABLE `t1` (
-  `c` int(10) DEFAULT NULL,
+  `c` int DEFAULT NULL,
   `c1` varchar(30) DEFAULT 'xx',
-  `c2` int(11) DEFAULT (str_to_date(_utf8mb4'9999-01-01', _utf8mb4'%Y-%m-%d')),
+  `c2` int DEFAULT (str_to_date(_utf8mb4'9999-01-01', _utf8mb4'%Y-%m-%d')),
   UNIQUE KEY `idx` (`c`,`c1`),
   UNIQUE KEY `idx1` (`c`,`c1`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
@@ -383,10 +383,10 @@ alter table t0 drop column c2;
 show create table t0;
 Table	Create Table
 t0	CREATE TABLE `t0` (
-  `c` int(10) DEFAULT NULL,
+  `c` int DEFAULT NULL,
   `c1` varchar(32),
   `c3` datetime DEFAULT (str_to_date(_utf8mb4'1980-01-01', _utf8mb4'%Y-%m-%d')),
-  `c4` int(11) DEFAULT (str_to_date(_utf8mb4'1980-01-01', _utf8mb4'%Y-%m-%d')),
+  `c4` int DEFAULT (str_to_date(_utf8mb4'1980-01-01', _utf8mb4'%Y-%m-%d')),
   KEY `idx` (`c`,`c1`),
   KEY `idx1` (`c1`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
@@ -411,21 +411,21 @@ Error 1292 (22007): Truncated incorrect DOUBLE value: 'ROOT'
 show create table t;
 Table	Create Table
 t	CREATE TABLE `t` (
-  `c` int(10) DEFAULT NULL,
+  `c` int DEFAULT NULL,
   `c1` varchar(256) DEFAULT (upper(substring_index(user(), _utf8mb4'@', 1))),
   UNIQUE KEY `idx` (`c`,`c1`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 show create table t1;
 Table	Create Table
 t1	CREATE TABLE `t1` (
-  `c` int(10) DEFAULT NULL,
-  `c1` int(11) DEFAULT (upper(substring_index(user(), _utf8mb4'@', 1)))
+  `c` int DEFAULT NULL,
+  `c1` int DEFAULT (upper(substring_index(user(), _utf8mb4'@', 1)))
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 alter table t1 modify column c1 varchar(30) default 'xx';
 show create table t1;
 Table	Create Table
 t1	CREATE TABLE `t1` (
-  `c` int(10) DEFAULT NULL,
+  `c` int DEFAULT NULL,
   `c1` varchar(30) DEFAULT 'xx'
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 alter table t1 modify column c1 varchar(32) default (upper(substring_index(user(),'@',1)));
@@ -433,7 +433,7 @@ alter table t1 add index idx1(c1);
 show create table t1;
 Table	Create Table
 t1	CREATE TABLE `t1` (
-  `c` int(10) DEFAULT NULL,
+  `c` int DEFAULT NULL,
   `c1` varchar(32) DEFAULT (upper(substring_index(user(), _utf8mb4'@', 1))),
   KEY `idx1` (`c1`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
@@ -471,25 +471,25 @@ c	c1
 show create table t0;
 Table	Create Table
 t0	CREATE TABLE `t0` (
-  `c` int(10) DEFAULT NULL,
+  `c` int DEFAULT NULL,
   `c1` blob DEFAULT (date_format(now(), _utf8mb4'%Y-%m-%d'))
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 show create table t1;
 Table	Create Table
 t1	CREATE TABLE `t1` (
-  `c` int(10) DEFAULT NULL,
+  `c` int DEFAULT NULL,
   `c1` json DEFAULT (date_format(now(), _utf8mb4'%Y-%m-%d'))
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 show create table t2;
 Table	Create Table
 t2	CREATE TABLE `t2` (
-  `c` int(10) DEFAULT NULL,
+  `c` int DEFAULT NULL,
   `c1` enum('y','n') DEFAULT (date_format(now(), _utf8mb4'%Y-%m-%d'))
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 show create table t3;
 Table	Create Table
 t3	CREATE TABLE `t3` (
-  `c` int(10) DEFAULT NULL,
+  `c` int DEFAULT NULL,
   `c1` set('y','n') DEFAULT (date_format(now(), _utf8mb4'%Y-%m-%d'))
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 SELECT column_default, extra FROM INFORMATION_SCHEMA.COLUMNS WHERE table_schema='test' AND TABLE_NAME='t0' AND COLUMN_NAME='c1';
@@ -521,25 +521,25 @@ INSERT INTO t0 values (3, DEFAULT);
 show create table t0;
 Table	Create Table
 t0	CREATE TABLE `t0` (
-  `c` int(10) DEFAULT NULL,
+  `c` int DEFAULT NULL,
   `c1` blob DEFAULT (date_format(now(), _utf8mb4'%Y-%m-%d'))
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 show create table t1;
 Table	Create Table
 t1	CREATE TABLE `t1` (
-  `c` int(10) DEFAULT NULL,
+  `c` int DEFAULT NULL,
   `c1` json DEFAULT (date_format(now(), _utf8mb4'%Y-%m-%d'))
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 show create table t2;
 Table	Create Table
 t2	CREATE TABLE `t2` (
-  `c` int(10) DEFAULT NULL,
+  `c` int DEFAULT NULL,
   `c1` enum('y','n') DEFAULT (date_format(now(), _utf8mb4'%Y-%m-%d'))
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 show create table t3;
 Table	Create Table
 t3	CREATE TABLE `t3` (
-  `c` int(10) DEFAULT NULL,
+  `c` int DEFAULT NULL,
   `c1` set('y','n') DEFAULT (date_format(now(), _utf8mb4'%Y-%m-%d'))
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 alter table t0 alter column c1 drop default;
@@ -549,25 +549,25 @@ alter table t3 alter column c1 drop default;
 show create table t0;
 Table	Create Table
 t0	CREATE TABLE `t0` (
-  `c` int(10) DEFAULT NULL,
+  `c` int DEFAULT NULL,
   `c1` blob
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 show create table t1;
 Table	Create Table
 t1	CREATE TABLE `t1` (
-  `c` int(10) DEFAULT NULL,
+  `c` int DEFAULT NULL,
   `c1` json
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 show create table t2;
 Table	Create Table
 t2	CREATE TABLE `t2` (
-  `c` int(10) DEFAULT NULL,
+  `c` int DEFAULT NULL,
   `c1` enum('y','n')
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 show create table t3;
 Table	Create Table
 t3	CREATE TABLE `t3` (
-  `c` int(10) DEFAULT NULL,
+  `c` int DEFAULT NULL,
   `c1` set('y','n')
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 select count(1) from t0 where c1 = date_format(now(), '%Y-%m-%d');
@@ -610,25 +610,25 @@ c	c1
 show create table t0;
 Table	Create Table
 t0	CREATE TABLE `t0` (
-  `c` int(10) DEFAULT NULL,
+  `c` int DEFAULT NULL,
   `c1` blob DEFAULT (replace(upper(uuid()), _utf8mb4'-', _utf8mb4''))
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 show create table t1;
 Table	Create Table
 t1	CREATE TABLE `t1` (
-  `c` int(10) DEFAULT NULL,
+  `c` int DEFAULT NULL,
   `c1` json DEFAULT (replace(upper(uuid()), _utf8mb4'-', _utf8mb4''))
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 show create table t2;
 Table	Create Table
 t2	CREATE TABLE `t2` (
-  `c` int(10) DEFAULT NULL,
+  `c` int DEFAULT NULL,
   `c1` enum('y','n') DEFAULT (replace(upper(uuid()), _utf8mb4'-', _utf8mb4''))
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 show create table t3;
 Table	Create Table
 t3	CREATE TABLE `t3` (
-  `c` int(10) DEFAULT NULL,
+  `c` int DEFAULT NULL,
   `c1` set('y','n') DEFAULT (replace(upper(uuid()), _utf8mb4'-', _utf8mb4''))
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 SELECT column_default, extra FROM INFORMATION_SCHEMA.COLUMNS WHERE table_schema='test' AND TABLE_NAME='t0' AND COLUMN_NAME='c1';
@@ -675,25 +675,25 @@ c	c1
 show create table t0;
 Table	Create Table
 t0	CREATE TABLE `t0` (
-  `c` int(10) DEFAULT NULL,
+  `c` int DEFAULT NULL,
   `c1` blob DEFAULT (str_to_date(_utf8mb4'1980-01-01', _utf8mb4'%Y-%m-%d'))
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 show create table t1;
 Table	Create Table
 t1	CREATE TABLE `t1` (
-  `c` int(10) DEFAULT NULL,
+  `c` int DEFAULT NULL,
   `c1` json DEFAULT (str_to_date(_utf8mb4'1980-01-01', _utf8mb4'%Y-%m-%d'))
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 show create table t2;
 Table	Create Table
 t2	CREATE TABLE `t2` (
-  `c` int(10) DEFAULT NULL,
+  `c` int DEFAULT NULL,
   `c1` enum('y','n') DEFAULT (str_to_date(_utf8mb4'1980-01-01', _utf8mb4'%Y-%m-%d'))
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 show create table t3;
 Table	Create Table
 t3	CREATE TABLE `t3` (
-  `c` int(10) DEFAULT NULL,
+  `c` int DEFAULT NULL,
   `c1` set('y','n') DEFAULT (str_to_date(_utf8mb4'1980-01-01', _utf8mb4'%Y-%m-%d'))
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 SELECT column_default, extra FROM INFORMATION_SCHEMA.COLUMNS WHERE table_schema='test' AND TABLE_NAME='t0' AND COLUMN_NAME='c1';
@@ -740,25 +740,25 @@ c	c1
 show create table t0;
 Table	Create Table
 t0	CREATE TABLE `t0` (
-  `c` int(10) DEFAULT NULL,
+  `c` int DEFAULT NULL,
   `c1` blob DEFAULT (upper(substring_index(user(), _utf8mb4'@', 1)))
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 show create table t1;
 Table	Create Table
 t1	CREATE TABLE `t1` (
-  `c` int(10) DEFAULT NULL,
+  `c` int DEFAULT NULL,
   `c1` json DEFAULT (upper(substring_index(user(), _utf8mb4'@', 1)))
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 show create table t2;
 Table	Create Table
 t2	CREATE TABLE `t2` (
-  `c` int(10) DEFAULT NULL,
+  `c` int DEFAULT NULL,
   `c1` enum('y','n') DEFAULT (upper(substring_index(user(), _utf8mb4'@', 1)))
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 show create table t3;
 Table	Create Table
 t3	CREATE TABLE `t3` (
-  `c` int(10) DEFAULT NULL,
+  `c` int DEFAULT NULL,
   `c1` set('y','n') DEFAULT (upper(substring_index(user(), _utf8mb4'@', 1)))
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 drop table t0, t1, t2, t3;
@@ -788,17 +788,17 @@ CREATE INDEX idx2 ON t1 ((c+1));
 CREATE INDEX idx3 ON t1 ((d+1));
 SHOW COLUMNS FROM t1;
 Field	Type	Null	Key	Default	Extra
-i	int(11)	YES		NULL	
-b	int(11)	YES		str_to_date(_utf8mb4'1980-01-01', _utf8mb4'%Y-%m-%d')	DEFAULT_GENERATED
-c	int(11)	YES		NULL	VIRTUAL GENERATED
-d	int(11)	YES		NULL	STORED GENERATED
+i	int	YES		NULL	
+b	int	YES		str_to_date(_utf8mb4'1980-01-01', _utf8mb4'%Y-%m-%d')	DEFAULT_GENERATED
+c	int	YES		NULL	VIRTUAL GENERATED
+d	int	YES		NULL	STORED GENERATED
 show create table t1;
 Table	Create Table
 t1	CREATE TABLE `t1` (
-  `i` int(11) DEFAULT NULL,
-  `b` int(11) DEFAULT (str_to_date(_utf8mb4'1980-01-01', _utf8mb4'%Y-%m-%d')),
-  `c` int(11) GENERATED ALWAYS AS (`b` + 2) VIRTUAL,
-  `d` int(11) GENERATED ALWAYS AS (`b` + 10) STORED,
+  `i` int DEFAULT NULL,
+  `b` int DEFAULT (str_to_date(_utf8mb4'1980-01-01', _utf8mb4'%Y-%m-%d')),
+  `c` int GENERATED ALWAYS AS (`b` + 2) VIRTUAL,
+  `d` int GENERATED ALWAYS AS (`b` + 10) STORED,
   KEY `idx1` ((`b` + 1)),
   KEY `idx2` ((`c` + 1)),
   KEY `idx3` ((`d` + 1))
@@ -820,7 +820,7 @@ c	c1
 1	19800101
 show columns from test.t0 where field='c1';
 Field	Type	Null	Key	Default	Extra
-c1	int(11)	NO	PRI	str_to_date(_utf8mb4'1980-01-01', _utf8mb4'%Y-%m-%d')	DEFAULT_GENERATED
+c1	int	NO	PRI	str_to_date(_utf8mb4'1980-01-01', _utf8mb4'%Y-%m-%d')	DEFAULT_GENERATED
 create table t1 (c int(10), c1 BLOB default (date_format(now(),'%Y-%m-%d')), c2 JSON default (str_to_date('1980-01-01','%Y-%m-%d')), primary key(c1(32), c2));
 Error 3152 (42000): JSON column 'c2' cannot be used in key specification.
 create table t1 (c int(10), c1 BLOB default (date_format(now(),'%Y-%m-%d')), c2 JSON default (str_to_date('1980-01-01','%Y-%m-%d')), primary key(c1(32)));
@@ -834,7 +834,7 @@ count(1)
 show create table t1;
 Table	Create Table
 t1	CREATE TABLE `t1` (
-  `c` int(10) DEFAULT NULL,
+  `c` int DEFAULT NULL,
   `c1` blob NOT NULL DEFAULT (date_format(now(), _utf8mb4'%Y-%m-%d')),
   `c2` json DEFAULT (str_to_date(_utf8mb4'1980-01-01', _utf8mb4'%Y-%m-%d')),
   PRIMARY KEY (`c1`(32)) /*T![clustered_index] NONCLUSTERED */,
@@ -865,7 +865,7 @@ id
 show create table t0;
 Table	Create Table
 t0	CREATE TABLE `t0` (
-  `id` int(11) NOT NULL,
+  `id` int NOT NULL,
   `c` date DEFAULT (date_format(now(), _utf8mb4'%Y-%m-%d %H:%i:%s')),
   `d` datetime DEFAULT (date_format(now(), _utf8mb4'%Y-%m-%d %H:%i:%s')),
   UNIQUE KEY `idx` (`id`,`c`),
@@ -885,7 +885,7 @@ PRIMARY KEY(id, c)
 show create table t0;
 Table	Create Table
 t0	CREATE TEMPORARY TABLE `t0` (
-  `id` bigint(20) NOT NULL,
+  `id` bigint NOT NULL,
   `c` date NOT NULL DEFAULT (date_format(now(), _utf8mb4'%Y-%m-%d %H:%i:%s')),
   PRIMARY KEY (`id`,`c`) /*T![clustered_index] NONCLUSTERED */
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
@@ -897,7 +897,7 @@ count(1)
 show create table t0;
 Table	Create Table
 t0	CREATE TEMPORARY TABLE `t0` (
-  `id` bigint(20) NOT NULL,
+  `id` bigint NOT NULL,
   `c` date NOT NULL DEFAULT (date_format(now(), _utf8mb4'%Y-%m-%d %H:%i:%s')),
   PRIMARY KEY (`id`,`c`) /*T![clustered_index] NONCLUSTERED */
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
@@ -917,7 +917,7 @@ count(1)
 show create table t0;
 Table	Create Table
 t0	CREATE TABLE `t0` (
-  `id` bigint(20) NOT NULL,
+  `id` bigint NOT NULL,
   `c` date NOT NULL DEFAULT (date_format(now(), _utf8mb4'%Y-%m-%d %H:%i:%s')),
   PRIMARY KEY (`id`,`c`) /*T![clustered_index] NONCLUSTERED */
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /* CACHED ON */
@@ -949,7 +949,7 @@ count(1)
 show create table child;
 Table	Create Table
 child	CREATE TABLE `child` (
-  `id` int(11) DEFAULT NULL,
+  `id` int DEFAULT NULL,
   `cc` date DEFAULT (date_format(now(), _utf8mb4'%Y-%m-%d')),
   KEY `idx` (`cc`),
   CONSTRAINT `fk_1` FOREIGN KEY (`cc`) REFERENCES `parent` (`c`) ON DELETE CASCADE
@@ -959,7 +959,7 @@ CREATE TABLE jd1 (id SERIAL, j JSON DEFAULT (JSON_OBJECT("foo", "bar")));
 SHOW CREATE TABLE jd1;
 Table	Create Table
 jd1	CREATE TABLE `jd1` (
-  `id` bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+  `id` bigint unsigned NOT NULL AUTO_INCREMENT,
   `j` json DEFAULT (json_object(_utf8mb4'foo', _utf8mb4'bar')),
   UNIQUE KEY `id` (`id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
@@ -987,7 +987,7 @@ CREATE TABLE jd2 (id SERIAL, j JSON DEFAULT (JSON_ARRAY("foo", "bar")));
 SHOW CREATE TABLE jd2;
 Table	Create Table
 jd2	CREATE TABLE `jd2` (
-  `id` bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+  `id` bigint unsigned NOT NULL AUTO_INCREMENT,
   `j` json DEFAULT (json_array(_utf8mb4'foo', _utf8mb4'bar')),
   UNIQUE KEY `id` (`id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
@@ -1000,7 +1000,7 @@ CREATE TABLE jd3 (id SERIAL, j JSON DEFAULT (JSON_QUOTE("foobar")));
 SHOW CREATE TABLE jd3;
 Table	Create Table
 jd3	CREATE TABLE `jd3` (
-  `id` bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+  `id` bigint unsigned NOT NULL AUTO_INCREMENT,
   `j` json DEFAULT (json_quote(_utf8mb4'foobar')),
   UNIQUE KEY `id` (`id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
@@ -1013,14 +1013,14 @@ CREATE TABLE jd4 (id SERIAL);
 SHOW CREATE TABLE jd4;
 Table	Create Table
 jd4	CREATE TABLE `jd4` (
-  `id` bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+  `id` bigint unsigned NOT NULL AUTO_INCREMENT,
   UNIQUE KEY `id` (`id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 ALTER TABLE jd4 ADD COLUMN j JSON;
 SHOW CREATE TABLE jd4;
 Table	Create Table
 jd4	CREATE TABLE `jd4` (
-  `id` bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+  `id` bigint unsigned NOT NULL AUTO_INCREMENT,
   `j` json DEFAULT NULL,
   UNIQUE KEY `id` (`id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
@@ -1028,7 +1028,7 @@ ALTER TABLE jd4 MODIFY COLUMN j JSON DEFAULT (JSON_QUOTE("foobar"));
 SHOW CREATE TABLE jd4;
 Table	Create Table
 jd4	CREATE TABLE `jd4` (
-  `id` bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+  `id` bigint unsigned NOT NULL AUTO_INCREMENT,
   `j` json DEFAULT (json_quote(_utf8mb4'foobar')),
   UNIQUE KEY `id` (`id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
@@ -1068,7 +1068,7 @@ CREATE TABLE jd6 (id INT PRIMARY KEY);
 SHOW CREATE TABLE jd6;
 Table	Create Table
 jd6	CREATE TABLE `jd6` (
-  `id` int(11) NOT NULL,
+  `id` int NOT NULL,
   PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 ALTER TABLE jd6 ADD COLUMN j JSON DEFAULT (JSON_ARRAY(41, 42, 43));
