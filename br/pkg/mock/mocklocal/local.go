@@ -5,6 +5,7 @@
 //
 //	mockgen -package mocklocal github.com/pingcap/tidb/pkg/lightning/backend/local DiskUsage,TiKVModeSwitcher,StoreHelper
 //
+
 // Package mocklocal is a generated GoMock package.
 package mocklocal
 
@@ -14,7 +15,7 @@ import (
 
 	import_sstpb "github.com/pingcap/kvproto/pkg/import_sstpb"
 	backend "github.com/pingcap/tidb/pkg/lightning/backend"
-	"github.com/tikv/client-go/v2/tikv"
+	apicodec "github.com/tikv/client-go/v2/internal/apicodec"
 	gomock "go.uber.org/mock/gomock"
 )
 
@@ -22,6 +23,7 @@ import (
 type MockDiskUsage struct {
 	ctrl     *gomock.Controller
 	recorder *MockDiskUsageMockRecorder
+	isgomock struct{}
 }
 
 // MockDiskUsageMockRecorder is the mock recorder for MockDiskUsage.
@@ -59,6 +61,7 @@ func (mr *MockDiskUsageMockRecorder) EngineFileSizes() *gomock.Call {
 type MockTiKVModeSwitcher struct {
 	ctrl     *gomock.Controller
 	recorder *MockTiKVModeSwitcherMockRecorder
+	isgomock struct{}
 }
 
 // MockTiKVModeSwitcherMockRecorder is the mock recorder for MockTiKVModeSwitcher.
@@ -79,36 +82,36 @@ func (m *MockTiKVModeSwitcher) EXPECT() *MockTiKVModeSwitcherMockRecorder {
 }
 
 // ToImportMode mocks base method.
-func (m *MockTiKVModeSwitcher) ToImportMode(arg0 context.Context, arg1 ...*import_sstpb.Range) {
+func (m *MockTiKVModeSwitcher) ToImportMode(ctx context.Context, ranges ...*import_sstpb.Range) {
 	m.ctrl.T.Helper()
-	varargs := []any{arg0}
-	for _, a := range arg1 {
+	varargs := []any{ctx}
+	for _, a := range ranges {
 		varargs = append(varargs, a)
 	}
 	m.ctrl.Call(m, "ToImportMode", varargs...)
 }
 
 // ToImportMode indicates an expected call of ToImportMode.
-func (mr *MockTiKVModeSwitcherMockRecorder) ToImportMode(arg0 any, arg1 ...any) *gomock.Call {
+func (mr *MockTiKVModeSwitcherMockRecorder) ToImportMode(ctx any, ranges ...any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	varargs := append([]any{arg0}, arg1...)
+	varargs := append([]any{ctx}, ranges...)
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ToImportMode", reflect.TypeOf((*MockTiKVModeSwitcher)(nil).ToImportMode), varargs...)
 }
 
 // ToNormalMode mocks base method.
-func (m *MockTiKVModeSwitcher) ToNormalMode(arg0 context.Context, arg1 ...*import_sstpb.Range) {
+func (m *MockTiKVModeSwitcher) ToNormalMode(ctx context.Context, ranges ...*import_sstpb.Range) {
 	m.ctrl.T.Helper()
-	varargs := []any{arg0}
-	for _, a := range arg1 {
+	varargs := []any{ctx}
+	for _, a := range ranges {
 		varargs = append(varargs, a)
 	}
 	m.ctrl.Call(m, "ToNormalMode", varargs...)
 }
 
 // ToNormalMode indicates an expected call of ToNormalMode.
-func (mr *MockTiKVModeSwitcherMockRecorder) ToNormalMode(arg0 any, arg1 ...any) *gomock.Call {
+func (mr *MockTiKVModeSwitcherMockRecorder) ToNormalMode(ctx any, ranges ...any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	varargs := append([]any{arg0}, arg1...)
+	varargs := append([]any{ctx}, ranges...)
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ToNormalMode", reflect.TypeOf((*MockTiKVModeSwitcher)(nil).ToNormalMode), varargs...)
 }
 
@@ -116,6 +119,7 @@ func (mr *MockTiKVModeSwitcherMockRecorder) ToNormalMode(arg0 any, arg1 ...any) 
 type MockStoreHelper struct {
 	ctrl     *gomock.Controller
 	recorder *MockStoreHelperMockRecorder
+	isgomock struct{}
 }
 
 // MockStoreHelperMockRecorder is the mock recorder for MockStoreHelper.
@@ -136,9 +140,9 @@ func (m *MockStoreHelper) EXPECT() *MockStoreHelperMockRecorder {
 }
 
 // GetTS mocks base method.
-func (m *MockStoreHelper) GetTS(arg0 context.Context) (int64, int64, error) {
+func (m *MockStoreHelper) GetTS(ctx context.Context) (int64, int64, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "GetTS", arg0)
+	ret := m.ctrl.Call(m, "GetTS", ctx)
 	ret0, _ := ret[0].(int64)
 	ret1, _ := ret[1].(int64)
 	ret2, _ := ret[2].(error)
@@ -146,16 +150,16 @@ func (m *MockStoreHelper) GetTS(arg0 context.Context) (int64, int64, error) {
 }
 
 // GetTS indicates an expected call of GetTS.
-func (mr *MockStoreHelperMockRecorder) GetTS(arg0 any) *gomock.Call {
+func (mr *MockStoreHelperMockRecorder) GetTS(ctx any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetTS", reflect.TypeOf((*MockStoreHelper)(nil).GetTS), arg0)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetTS", reflect.TypeOf((*MockStoreHelper)(nil).GetTS), ctx)
 }
 
 // GetTiKVCodec mocks base method.
-func (m *MockStoreHelper) GetTiKVCodec() tikv.Codec {
+func (m *MockStoreHelper) GetTiKVCodec() apicodec.Codec {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "GetTiKVCodec")
-	ret0, _ := ret[0].(tikv.Codec)
+	ret0, _ := ret[0].(apicodec.Codec)
 	return ret0
 }
 
