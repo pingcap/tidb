@@ -478,7 +478,7 @@ func (p *MySQLPrivilege) merge(diff *immutable) *MySQLPrivilege {
 	ret.TablesPriv = make([]tablesPrivRecord, 0, len(p.TablesPriv)+len(diff.TablesPriv))
 	ret.TablesPriv = append(ret.TablesPriv, p.TablesPriv...)
 	ret.TablesPriv = append(ret.TablesPriv, diff.TablesPriv...)
-	p.buildTablesPrivMap()
+	ret.buildTablesPrivMap()
 
 	ret.ColumnsPriv = make([]columnsPrivRecord, 0, len(p.ColumnsPriv)+len(diff.ColumnsPriv))
 	ret.ColumnsPriv = append(ret.ColumnsPriv, p.ColumnsPriv...)
