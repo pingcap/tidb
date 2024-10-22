@@ -50,6 +50,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/parser/terror"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/server/internal/dump"
 	"github.com/pingcap/tidb/pkg/server/internal/parse"
@@ -305,7 +306,7 @@ func (cc *clientConn) executePreparedStmtAndWriteResult(ctx context.Context, stm
 	execStmt.SetText(charset.EncodingUTF8Impl, sql)
 	rs, err := (&cc.ctx).ExecuteStmt(ctx, execStmt)
 	if rs != nil {
-		defer rs.Close()
+		defer terror.Call(rs.Close)
 	}
 	if err != nil {
 		// If error is returned during the planner phase or the executor.Open
