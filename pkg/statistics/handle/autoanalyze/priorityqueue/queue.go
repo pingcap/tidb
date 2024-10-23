@@ -43,8 +43,8 @@ const (
 	failedJobRequeueInterval            = time.Minute * 5
 )
 
-// PriorityQueueHeap is an interface that wraps the methods of a priority queue heap.
-type PriorityQueueHeap interface {
+// PQHeap is an interface that wraps the methods of a priority queue heap.
+type PQHeap interface {
 	// GetByKey returns the job by the given table ID.
 	GetByKey(tableID int64) (AnalysisJob, bool, error)
 	// AddOrUpdate adds a job to the heap or updates the job if it already exists.
@@ -83,7 +83,7 @@ type AnalysisPriorityQueue struct {
 	syncFields struct {
 		// mu is used to protect the following fields.
 		mu    sync.RWMutex
-		inner PriorityQueueHeap
+		inner PQHeap
 		// runningJobs is a map to store the running jobs. Used to avoid duplicate jobs.
 		runningJobs map[int64]struct{}
 		// lastDMLUpdateFetchTimestamp is the timestamp of the last DML update fetch.
