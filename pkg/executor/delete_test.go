@@ -21,6 +21,7 @@ import (
 
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/stretchr/testify/require"
 )
 
 func TestDeleteLockKey(t *testing.T) {
@@ -105,4 +106,48 @@ func TestDeleteLockKey(t *testing.T) {
 		}(testCase)
 	}
 	wg.Wait()
+}
+
+func TestDeleteIgnoreWithFK(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("use test")
+	tk.MustExec("create table parent (a int primary key)")
+	tk.MustExec("create table child (a int, foreign key (a) references parent(a))")
+
+	tk.MustExec("insert into parent values (1), (2)")
+	tk.MustExec("insert into child values (1)")
+
+	// Delete the row in parent table will fail
+	require.NotNil(t, tk.ExecToErr("delete from parent where a = 1"))
+
+	// Delete ignore will return no error
+	tk.MustExec("delete ignore from parent where a = 1")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1451 Cannot delete or update a parent row: a foreign key constraint fails (`test`.`child`, CONSTRAINT `fk_1` FOREIGN KEY (`a`) REFERENCES `parent` (`a`))"))
+
+	// Other rows will be deleted successfully
+	tk.MustExec("delete ignore from parent")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1451 Cannot delete or update a parent row: a foreign key constraint fails (`test`.`child`, CONSTRAINT `fk_1` FOREIGN KEY (`a`) REFERENCES `parent` (`a`))"))
+	tk.MustQuery("select * from parent").Check(testkit.Rows("1"))
+
+	tk.MustExec("insert into parent values (2)")
+	// Delete multiple tables
+	tk.MustExec("create table parent2 (a int primary key)")
+	tk.MustExec("create table child2 (a int, foreign key (a) references parent2(a))")
+	tk.MustExec("insert into parent2 values (1), (2)")
+	tk.MustExec("insert into child2 values (1)")
+	require.NotNil(t, tk.ExecToErr("delete from parent, parent2 using parent inner join parent2 where parent.a = parent2.a"))
+	tk.MustExec("delete ignore from parent, parent2 using parent inner join parent2 where parent.a = parent2.a")
+	tk.MustQuery("show warnings").Check(testkit.Rows(
+		"Warning 1451 Cannot delete or update a parent row: a foreign key constraint fails (`test`.`child`, CONSTRAINT `fk_1` FOREIGN KEY (`a`) REFERENCES `parent` (`a`))",
+		"Warning 1451 Cannot delete or update a parent row: a foreign key constraint fails (`test`.`child2`, CONSTRAINT `fk_1` FOREIGN KEY (`a`) REFERENCES `parent2` (`a`))"))
+	tk.MustQuery("select * from parent").Check(testkit.Rows("1"))
+	tk.MustQuery("select * from parent2").Check(testkit.Rows("1"))
+
+	// Test batch on delete
+	require.NotNil(t, tk.ExecToErr("batch on `a` limit 1000 delete from parent where a = 1"))
+	tk.MustExec("batch on `a` limit 1000 delete ignore from parent where a = 1")
+	tk.MustQuery("show warnings").Check(testkit.Rows(
+		"Warning 1451 Cannot delete or update a parent row: a foreign key constraint fails (`test`.`child`, CONSTRAINT `fk_1` FOREIGN KEY (`a`) REFERENCES `parent` (`a`))"))
 }

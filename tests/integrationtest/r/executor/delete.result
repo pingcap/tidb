@@ -122,3 +122,43 @@ update t set id = '1' where cast(id as unsigned) = 1;
 Level	Code	Message
 Warning	1292	Truncated incorrect INTEGER value: '18446744073709551616'
 set sql_mode=DEFAULT
+drop table if exists parent, child;
+create table parent (a int primary key);
+create table child (a int, foreign key (a) references parent(a));
+insert into parent values (1), (2);
+insert into child values (1);
+delete from parent where a = 1;
+Error 1451 (23000): Cannot delete or update a parent row: a foreign key constraint fails (`executor__delete`.`child`, CONSTRAINT `fk_1` FOREIGN KEY (`a`) REFERENCES `parent` (`a`))
+delete ignore from parent where a = 1;
+Level	Code	Message
+Warning	1451	Cannot delete or update a parent row: a foreign key constraint fails (`executor__delete`.`child`, CONSTRAINT `fk_1` FOREIGN KEY (`a`) REFERENCES `parent` (`a`))
+delete ignore from parent;
+Level	Code	Message
+Warning	1451	Cannot delete or update a parent row: a foreign key constraint fails (`executor__delete`.`child`, CONSTRAINT `fk_1` FOREIGN KEY (`a`) REFERENCES `parent` (`a`))
+select * from parent;
+a
+1
+insert into parent values (2);
+create table parent2 (a int primary key);
+create table child2 (a int, foreign key (a) references parent2(a));
+insert into parent2 values (1), (2);
+insert into child2 values (1);
+delete parent, parent2 from parent join parent2 on parent.a = parent2.a;
+Error 1451 (23000): Cannot delete or update a parent row: a foreign key constraint fails (`executor__delete`.`child`, CONSTRAINT `fk_1` FOREIGN KEY (`a`) REFERENCES `parent` (`a`))
+delete ignore parent, parent2 from parent join parent2 on parent.a = parent2.a;
+Level	Code	Message
+Warning	1451	Cannot delete or update a parent row: a foreign key constraint fails (`executor__delete`.`child2`, CONSTRAINT `fk_1` FOREIGN KEY (`a`) REFERENCES `parent2` (`a`))
+Warning	1451	Cannot delete or update a parent row: a foreign key constraint fails (`executor__delete`.`child`, CONSTRAINT `fk_1` FOREIGN KEY (`a`) REFERENCES `parent` (`a`))
+select * from parent;
+a
+1
+select * from parent2;
+a
+1
+batch on `a` limit 1000 delete from parent where a = 1;
+Error 1451 (23000): Cannot delete or update a parent row: a foreign key constraint fails (`executor__delete`.`child`, CONSTRAINT `fk_1` FOREIGN KEY (`a`) REFERENCES `parent` (`a`))
+batch on `a` limit 1000 delete ignore from parent where a = 1;
+number of jobs	job status
+1	all succeeded
+Level	Code	Message
+Warning	1451	Cannot delete or update a parent row: a foreign key constraint fails (`executor__delete`.`child`, CONSTRAINT `fk_1` FOREIGN KEY (`a`) REFERENCES `parent` (`a`))
