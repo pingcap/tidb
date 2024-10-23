@@ -424,16 +424,16 @@ func TestReadAfterSpillWithRowContainerReader(t *testing.T) {
 	reader := NewRowContainerReader(rc)
 	defer reader.Close()
 	for i := range 8 {
-		row := reader.Current()
 		for j := range 1024 {
+			row := reader.Current()
 			require.Equal(t, allRows[i*1024+j], row.GetBytes(0))
 			reader.Next()
 		}
 	}
 	rc.SpillToDisk()
 	for i := 8; i < 16; i++ {
-		row := reader.Current()
 		for j := range 1024 {
+			row := reader.Current()
 			require.Equal(t, allRows[i*1024+j], row.GetBytes(0))
 			reader.Next()
 		}
