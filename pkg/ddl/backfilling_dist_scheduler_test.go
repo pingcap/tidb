@@ -122,12 +122,10 @@ func TestCalculateRegionBatch(t *testing.T) {
 	require.Equal(t, 1, batchCnt)
 
 	// Test calculate in local storage.
+	batchCnt = ddl.CalculateRegionBatch(100000, 8, true)
+	require.Equal(t, 12500, batchCnt)
 	batchCnt = ddl.CalculateRegionBatch(100, 8, true)
-	require.Equal(t, 13, batchCnt)
-	batchCnt = ddl.CalculateRegionBatch(2, 8, true)
-	require.Equal(t, 1, batchCnt)
-	batchCnt = ddl.CalculateRegionBatch(24, 8, true)
-	require.Equal(t, 3, batchCnt)
+	require.Equal(t, 10000, batchCnt)
 }
 
 func TestBackfillingSchedulerGlobalSortMode(t *testing.T) {
