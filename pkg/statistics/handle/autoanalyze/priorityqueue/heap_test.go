@@ -19,6 +19,7 @@
 // 4. Add a test for the IsEmpty API.
 // 5. Remove concurrency and thread-safety tests.
 // 6. Add a test for the Len API.
+// 7. Remove the BulkAdd related tests.
 
 package priorityqueue
 

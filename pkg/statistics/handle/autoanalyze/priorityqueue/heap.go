@@ -19,6 +19,7 @@
 // 4. Add an IsEmpty API.
 // 5. Remove the thread-safe and blocking properties.
 // 6. Add a Len API.
+// 7. Remove the BulkAdd API.
 
 package priorityqueue
 
