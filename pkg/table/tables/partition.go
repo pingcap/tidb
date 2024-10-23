@@ -112,8 +112,7 @@ func newPartitionedTable(tbl *TableCommon, tblInfo *model.TableInfo) (table.Part
 	if pi == nil || len(pi.Definitions) == 0 {
 		return nil, table.ErrUnknownPartition
 	}
-	tblCommon := tbl.Copy()
-	ret := &partitionedTable{TableCommon: tblCommon}
+	ret := &partitionedTable{TableCommon: tbl.Copy()}
 	partitionExpr, err := newPartitionExpr(tblInfo, pi.Type, pi.Expr, pi.Columns, pi.Definitions)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -191,16 +190,14 @@ func newPartitionedTable(tbl *TableCommon, tblInfo *model.TableInfo) (table.Part
 		for _, def := range pi.AddingDefinitions {
 			ret.reorganizePartitions[def.ID] = struct{}{}
 		}
-		if len(pi.DroppingDefinitions) > 0 {
-			ret.doubleWritePartitions = make(map[int64]struct{}, len(pi.DroppingDefinitions))
-			for _, def := range pi.DroppingDefinitions {
-				p, err := initPartition(ret, def)
-				if err != nil {
-					return nil, err
-				}
-				partitions[def.ID] = p
-				ret.doubleWritePartitions[def.ID] = struct{}{}
+		ret.doubleWritePartitions = make(map[int64]struct{}, len(pi.DroppingDefinitions))
+		for _, def := range pi.DroppingDefinitions {
+			p, err := initPartition(ret, def)
+			if err != nil {
+				return nil, err
 			}
+			partitions[def.ID] = p
+			ret.doubleWritePartitions[def.ID] = struct{}{}
 		}
 	} else {
 		if len(pi.AddingDefinitions) > 0 {
