@@ -16,6 +16,7 @@ package core
 
 import (
 	"context"
+	"maps"
 	"time"
 
 	"github.com/pingcap/failpoint"
@@ -42,9 +43,17 @@ func (CollectPredicateColumnsPoint) Optimize(_ context.Context, plan base.Logica
 	}
 	syncWait := plan.SCtx().GetSessionVars().StatsLoadSyncWait.Load()
 	histNeeded := syncWait > 0
-	predicateColumns, histNeededColumns, visitedPhysTblIDs := CollectColumnStatsUsage(plan, histNeeded)
+	predicateColumns, visitedPhysTblIDs := CollectColumnStatsUsage(plan, histNeeded)
 	if len(predicateColumns) > 0 {
-		plan.SCtx().UpdateColStatsUsage(predicateColumns)
+		plan.SCtx().UpdateColStatsUsage(maps.Keys(predicateColumns))
+	}
+	markAtLeastOneFullStatsLoadForEachTable(plan.SCtx(), visitedPhysTblIDs, predicateColumns, histNeeded)
+	if syncWait == 0 {
+		return plan, planChanged, nil
+	}
+	histNeededColumns := make([]model.StatsLoadItem, 0, len(predicateColumns))
+	for item, fullLoad := range predicateColumns {
+		histNeededColumns = append(histNeededColumns, model.StatsLoadItem{TableItemID: item, FullLoad: fullLoad})
 	}
 
 	// Prepare the table metadata to avoid repeatedly fetching from the infoSchema below, and trigger extra sync/async
@@ -274,7 +283,11 @@ func collectSyncIndices(ctx base.PlanContext,
 }
 
 func collectHistNeededItems(histNeededColumns []model.StatsLoadItem, histNeededIndices map[model.TableItemID]struct{}) (histNeededItems []model.StatsLoadItem) {
-	histNeededItems = make([]model.StatsLoadItem, 0, len(histNeededColumns)+len(histNeededIndices))
+	histNeededItems = histNeededColumns
+	if cap(histNeededItems) < len(histNeededColumns)+len(histNeededIndices) {
+		histNeededItems = make([]model.StatsLoadItem, len(histNeededColumns), len(histNeededColumns)+len(histNeededIndices))
+		copy(histNeededItems, histNeededColumns)
+	}
 	for idx := range histNeededIndices {
 		histNeededItems = append(histNeededItems, model.StatsLoadItem{TableItemID: idx, FullLoad: true})
 	}
