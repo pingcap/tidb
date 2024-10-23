@@ -425,8 +425,8 @@ type ForListPruning struct {
 	PruneExpr expression.Expression
 	// PruneExprCols is the columns of PruneExpr, it has removed the duplicate columns.
 	PruneExprCols []*expression.Column
-	// valueMap is column value -> partition idx, uses to locate list partition.
-	valueMap *btree.BTreeG[*btreeListItem]
+	// valueToPartitionIdxBTree is column value -> partition idx, uses to locate list partition.
+	valueToPartitionIdxBTree *btree.BTreeG[*btreeListItem]
 	// nullPartitionIdx is the partition idx for null value.
 	nullPartitionIdx int
 	// defaultPartitionIdx is the partition idx for default value/fallback.
@@ -437,8 +437,8 @@ type ForListPruning struct {
 }
 
 type btreeListItem struct {
-	key     uint64
-	partIdx int
+	key          uint64
+	partitionIdx int
 }
 
 // btreeListColumnItem is BTree's Item that uses string to compare.
@@ -969,7 +969,7 @@ func (lp *ForListPruning) buildListColumnsPruner(ctx expression.BuildContext,
 // colIdx is the column index in the list columns.
 func (lp *ForListPruning) buildListPartitionValueMap(ctx expression.BuildContext, defs []model.PartitionDefinition,
 	schema *expression.Schema, names types.NameSlice, p *parser.Parser) error {
-	lp.valueMap = btree.NewG[*btreeListItem](btreeDegree, func(a, b *btreeListItem) bool { return a.key < b.key })
+	lp.valueToPartitionIdxBTree = btree.NewG[*btreeListItem](btreeDegree, func(a, b *btreeListItem) bool { return a.key < b.key })
 	lp.nullPartitionIdx = -1
 	lp.defaultPartitionIdx = -1
 	for partitionIdx, def := range defs {
@@ -991,9 +991,9 @@ func (lp *ForListPruning) buildListPartitionValueMap(ctx expression.BuildContext
 				continue
 			}
 			if mysql.HasUnsignedFlag(lp.PruneExpr.GetType(ctx.GetEvalCtx()).GetFlag()) {
-				lp.valueMap.ReplaceOrInsert(&btreeListItem{uint64(v), partitionIdx})
+				lp.valueToPartitionIdxBTree.ReplaceOrInsert(&btreeListItem{uint64(v), partitionIdx})
 			} else {
-				lp.valueMap.ReplaceOrInsert(&btreeListItem{codec.EncodeIntToCmpUint(v), partitionIdx})
+				lp.valueToPartitionIdxBTree.ReplaceOrInsert(&btreeListItem{codec.EncodeIntToCmpUint(v), partitionIdx})
 			}
 		}
 	}
@@ -1014,11 +1014,11 @@ func (lp *ForListPruning) LocatePartition(ctx exprctx.EvalContext, value int64, 
 	} else {
 		key = codec.EncodeIntToCmpUint(value)
 	}
-	partitionIdx, ok := lp.valueMap.Get(&btreeListItem{key: key})
+	partitionIdx, ok := lp.valueToPartitionIdxBTree.Get(&btreeListItem{key: key})
 	if !ok {
 		return lp.defaultPartitionIdx
 	}
-	return partitionIdx.partIdx
+	return partitionIdx.partitionIdx
 }
 
 // LocatePartitionByRange locates partition by the range
@@ -1052,16 +1052,16 @@ func (lp *ForListPruning) LocatePartitionByRange(ctx exprctx.EvalContext, r *ran
 	}
 
 	idxs = make(map[int]struct{})
-	lp.valueMap.AscendRange(&btreeListItem{key: lowKey}, &btreeListItem{key: highKey}, func(item *btreeListItem) bool {
+	lp.valueToPartitionIdxBTree.AscendRange(&btreeListItem{key: lowKey}, &btreeListItem{key: highKey}, func(item *btreeListItem) bool {
 		if item.key == lowKey && r.LowExclude {
 			return true
 		}
-		idxs[item.partIdx] = struct{}{}
+		idxs[item.partitionIdx] = struct{}{}
 		return true
 	})
 
-	if item, ok := lp.valueMap.Get(&btreeListItem{key: highKey}); ok && !r.HighExclude {
-		idxs[item.partIdx] = struct{}{}
+	if item, ok := lp.valueToPartitionIdxBTree.Get(&btreeListItem{key: highKey}); ok && !r.HighExclude {
+		idxs[item.partitionIdx] = struct{}{}
 	}
 
 	idxs[lp.defaultPartitionIdx] = struct{}{}
