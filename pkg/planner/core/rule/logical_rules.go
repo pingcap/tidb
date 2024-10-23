@@ -27,6 +27,7 @@ const (
 	FlagSkewDistinctAgg
 	FlagEliminateProjection
 	FlagMaxMinEliminate
+	FlagAggregationSimplifier
 	FlagConstantPropagation
 	FlagConvertOuterToInnerJoin
 	FlagPredicatePushDown
