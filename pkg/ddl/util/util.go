@@ -33,7 +33,6 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/util/chunk"
-	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/tikv/client-go/v2/tikvrpc"
 	clientv3 "go.etcd.io/etcd/client/v3"
@@ -199,30 +198,27 @@ func LoadDDLVars(ctx sessionctx.Context) error {
 // LoadGlobalVars loads global variable from mysql.global_variables.
 func LoadGlobalVars(ctx context.Context, sctx sessionctx.Context, varNames []string) error {
 	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnDDL)
-	// *mock.Context does not support SQL execution. Only do it when sctx is not `mock.Context`
-	if _, ok := sctx.(*mock.Context); !ok {
-		e := sctx.GetRestrictedSQLExecutor()
-		var buf strings.Builder
-		buf.WriteString(loadGlobalVars)
-		paramNames := make([]any, 0, len(varNames))
-		for i, name := range varNames {
-			if i > 0 {
-				buf.WriteString(", ")
-			}
-			buf.WriteString("%?")
-			paramNames = append(paramNames, name)
+	e := sctx.GetRestrictedSQLExecutor()
+	var buf strings.Builder
+	buf.WriteString(loadGlobalVars)
+	paramNames := make([]any, 0, len(varNames))
+	for i, name := range varNames {
+		if i > 0 {
+			buf.WriteString(", ")
 		}
-		buf.WriteString(")")
-		rows, _, err := e.ExecRestrictedSQL(ctx, nil, buf.String(), paramNames...)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		for _, row := range rows {
-			varName := row.GetString(0)
-			varValue := row.GetString(1)
-			if err = sctx.GetSessionVars().SetSystemVarWithoutValidation(varName, varValue); err != nil {
-				return err
-			}
+		buf.WriteString("%?")
+		paramNames = append(paramNames, name)
+	}
+	buf.WriteString(")")
+	rows, _, err := e.ExecRestrictedSQL(ctx, nil, buf.String(), paramNames...)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	for _, row := range rows {
+		varName := row.GetString(0)
+		varValue := row.GetString(1)
+		if err = sctx.GetSessionVars().SetSystemVarWithoutValidation(varName, varValue); err != nil {
+			return err
 		}
 	}
 	return nil

@@ -804,6 +804,9 @@ func extractPartitionExprColumns(ctx expression.BuildContext, expr string, partC
 	var cols []*expression.Column
 	var partExpr expression.Expression
 	if len(partCols) == 0 {
+		if expr == "" {
+			return nil, nil, nil, errors.New("expression should not be an empty string")
+		}
 		schema := expression.NewSchema(columns...)
 		expr, err := expression.ParseSimpleExpr(ctx, expr, expression.WithInputSchemaAndNames(schema, names, nil))
 		if err != nil {

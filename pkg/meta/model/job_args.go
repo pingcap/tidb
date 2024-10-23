@@ -73,15 +73,15 @@ func getOrDecodeArgsV1[T JobArgs](args T, job *Job) (T, error) {
 // and cache in job.Args.
 func getOrDecodeArgsV2[T JobArgs](job *Job) (T, error) {
 	intest.Assert(job.Version == JobVersion2, "job version is not v2")
-	if len(job.Args) > 0 {
-		intest.Assert(len(job.Args) == 1, "job args length is not 1")
-		return job.Args[0].(T), nil
+	if len(job.args) > 0 {
+		intest.Assert(len(job.args) == 1, "job args length is not 1")
+		return job.args[0].(T), nil
 	}
 	var v T
 	if err := json.Unmarshal(job.RawArgs, &v); err != nil {
 		return v, errors.Trace(err)
 	}
-	job.Args = []any{v}
+	job.args = []any{v}
 	return v, nil
 }
 
@@ -132,7 +132,7 @@ func (a *CreateSchemaArgs) getArgsV1(*Job) []any {
 
 func (a *CreateSchemaArgs) decodeV1(job *Job) error {
 	a.DBInfo = &DBInfo{}
-	return errors.Trace(job.DecodeArgs(a.DBInfo))
+	return errors.Trace(job.decodeArgs(a.DBInfo))
 }
 
 // GetCreateSchemaArgs gets the args for create schema job.
@@ -157,7 +157,7 @@ func (a *DropSchemaArgs) getFinishedArgsV1(*Job) []any {
 }
 
 func (a *DropSchemaArgs) decodeV1(job *Job) error {
-	return job.DecodeArgs(&a.FKCheck)
+	return job.decodeArgs(&a.FKCheck)
 }
 
 // GetDropSchemaArgs gets the args for drop schema job.
@@ -169,7 +169,7 @@ func GetDropSchemaArgs(job *Job) (*DropSchemaArgs, error) {
 func GetFinishedDropSchemaArgs(job *Job) (*DropSchemaArgs, error) {
 	if job.Version == JobVersion1 {
 		var physicalTableIDs []int64
-		if err := job.DecodeArgs(&physicalTableIDs); err != nil {
+		if err := job.decodeArgs(&physicalTableIDs); err != nil {
 			return nil, err
 		}
 		return &DropSchemaArgs{AllDroppedTableIDs: physicalTableIDs}, nil
@@ -196,9 +196,9 @@ func (a *ModifySchemaArgs) getArgsV1(job *Job) []any {
 
 func (a *ModifySchemaArgs) decodeV1(job *Job) error {
 	if job.Type == ActionModifySchemaCharsetAndCollate {
-		return errors.Trace(job.DecodeArgs(&a.ToCharset, &a.ToCollate))
+		return errors.Trace(job.decodeArgs(&a.ToCharset, &a.ToCollate))
 	}
-	return errors.Trace(job.DecodeArgs(&a.PolicyRef))
+	return errors.Trace(job.decodeArgs(&a.PolicyRef))
 }
 
 // GetModifySchemaArgs gets the modify schema args.
@@ -232,11 +232,11 @@ func (a *CreateTableArgs) decodeV1(job *Job) error {
 	a.TableInfo = &TableInfo{}
 	switch job.Type {
 	case ActionCreateTable:
-		return errors.Trace(job.DecodeArgs(a.TableInfo, &a.FKCheck))
+		return errors.Trace(job.decodeArgs(a.TableInfo, &a.FKCheck))
 	case ActionCreateView:
-		return errors.Trace(job.DecodeArgs(a.TableInfo, &a.OnExistReplace, &a.OldViewTblID))
+		return errors.Trace(job.decodeArgs(a.TableInfo, &a.OnExistReplace, &a.OldViewTblID))
 	case ActionCreateSequence:
-		return errors.Trace(job.DecodeArgs(a.TableInfo))
+		return errors.Trace(job.decodeArgs(a.TableInfo))
 	}
 	return nil
 }
@@ -264,7 +264,7 @@ func (a *BatchCreateTableArgs) decodeV1(job *Job) error {
 		tableInfos []*TableInfo
 		fkCheck    bool
 	)
-	if err := job.DecodeArgs(&tableInfos, &fkCheck); err != nil {
+	if err := job.decodeArgs(&tableInfos, &fkCheck); err != nil {
 		return errors.Trace(err)
 	}
 	a.Tables = make([]*CreateTableArgs, 0, len(tableInfos))
@@ -308,7 +308,7 @@ func (a *DropTableArgs) getFinishedArgsV1(*Job) []any {
 
 func (a *DropTableArgs) decodeV1(job *Job) error {
 	if job.Type == ActionDropTable {
-		return job.DecodeArgs(&a.Identifiers, &a.FKCheck)
+		return job.decodeArgs(&a.Identifiers, &a.FKCheck)
 	}
 	return nil
 }
@@ -326,7 +326,7 @@ func GetFinishedDropTableArgs(job *Job) (*DropTableArgs, error) {
 			oldPartitionIDs []int64
 			oldRuleIDs      []string
 		)
-		if err := job.DecodeArgs(&startKey, &oldPartitionIDs, &oldRuleIDs); err != nil {
+		if err := job.decodeArgs(&startKey, &oldPartitionIDs, &oldRuleIDs); err != nil {
 			return nil, errors.Trace(err)
 		}
 		return &DropTableArgs{
@@ -364,9 +364,9 @@ func (a *TruncateTableArgs) getArgsV1(job *Job) []any {
 
 func (a *TruncateTableArgs) decodeV1(job *Job) error {
 	if job.Type == ActionTruncateTable {
-		return errors.Trace(job.DecodeArgs(&a.NewTableID, &a.FKCheck, &a.NewPartitionIDs))
+		return errors.Trace(job.decodeArgs(&a.NewTableID, &a.FKCheck, &a.NewPartitionIDs))
 	}
-	return errors.Trace(job.DecodeArgs(&a.OldPartitionIDs, &a.NewPartitionIDs))
+	return errors.Trace(job.decodeArgs(&a.OldPartitionIDs, &a.NewPartitionIDs))
 }
 
 func (a *TruncateTableArgs) getFinishedArgsV1(job *Job) []any {
@@ -390,13 +390,13 @@ func GetFinishedTruncateTableArgs(job *Job) (*TruncateTableArgs, error) {
 		if job.Type == ActionTruncateTable {
 			var startKey []byte
 			var oldPartitionIDs []int64
-			if err := job.DecodeArgs(&startKey, &oldPartitionIDs); err != nil {
+			if err := job.decodeArgs(&startKey, &oldPartitionIDs); err != nil {
 				return nil, errors.Trace(err)
 			}
 			return &TruncateTableArgs{OldPartitionIDs: oldPartitionIDs}, nil
 		}
 		var oldPartitionIDs []int64
-		if err := job.DecodeArgs(&oldPartitionIDs); err != nil {
+		if err := job.decodeArgs(&oldPartitionIDs); err != nil {
 			return nil, errors.Trace(err)
 		}
 		return &TruncateTableArgs{OldPartitionIDs: oldPartitionIDs}, nil
@@ -421,6 +421,9 @@ type TablePartitionArgs struct {
 
 	// set on finished
 	OldPhysicalTblIDs []int64 `json:"old_physical_tbl_ids,omitempty"`
+
+	// runtime info
+	NewPartitionIDs []int64 `json:"-"`
 }
 
 func (a *TablePartitionArgs) getArgsV1(job *Job) []any {
@@ -445,20 +448,20 @@ func (a *TablePartitionArgs) decodeV1(job *Job) error {
 	)
 	if job.Type == ActionAddTablePartition {
 		if job.State == JobStateRollingback {
-			if err := job.DecodeArgs(&partNames); err != nil {
+			if err := job.decodeArgs(&partNames); err != nil {
 				return err
 			}
 		} else {
-			if err := job.DecodeArgs(partInfo); err != nil {
+			if err := job.decodeArgs(partInfo); err != nil {
 				return err
 			}
 		}
 	} else if job.Type == ActionDropTablePartition {
-		if err := job.DecodeArgs(&partNames); err != nil {
+		if err := job.decodeArgs(&partNames); err != nil {
 			return err
 		}
 	} else {
-		if err := job.DecodeArgs(&partNames, partInfo); err != nil {
+		if err := job.decodeArgs(&partNames, partInfo); err != nil {
 			return err
 		}
 	}
@@ -485,7 +488,7 @@ func GetTablePartitionArgs(job *Job) (*TablePartitionArgs, error) {
 func GetFinishedTablePartitionArgs(job *Job) (*TablePartitionArgs, error) {
 	if job.Version == JobVersion1 {
 		var oldPhysicalTblIDs []int64
-		if err := job.DecodeArgs(&oldPhysicalTblIDs); err != nil {
+		if err := job.decodeArgs(&oldPhysicalTblIDs); err != nil {
 			return nil, errors.Trace(err)
 		}
 		return &TablePartitionArgs{OldPhysicalTblIDs: oldPhysicalTblIDs}, nil
@@ -506,7 +509,7 @@ func FillRollbackArgsForAddPartition(job *Job, args *TablePartitionArgs) {
 	fake.FillArgs(&TablePartitionArgs{
 		PartNames: args.PartNames,
 	})
-	job.Args = fake.Args
+	job.args = fake.args
 }
 
 // ExchangeTablePartitionArgs is the arguments for exchange table partition job.
@@ -525,7 +528,7 @@ func (a *ExchangeTablePartitionArgs) getArgsV1(*Job) []any {
 }
 
 func (a *ExchangeTablePartitionArgs) decodeV1(job *Job) error {
-	return errors.Trace(job.DecodeArgs(&a.PartitionID, &a.PTSchemaID, &a.PTTableID, &a.PartitionName, &a.WithValidation))
+	return errors.Trace(job.decodeArgs(&a.PartitionID, &a.PTSchemaID, &a.PTTableID, &a.PartitionName, &a.WithValidation))
 }
 
 // GetExchangeTablePartitionArgs gets the exchange table partition args.
@@ -552,9 +555,9 @@ func (a *AlterTablePartitionArgs) getArgsV1(job *Job) []any {
 
 func (a *AlterTablePartitionArgs) decodeV1(job *Job) error {
 	if job.Type == ActionAlterTablePartitionAttributes {
-		return errors.Trace(job.DecodeArgs(&a.PartitionID, &a.LabelRule))
+		return errors.Trace(job.decodeArgs(&a.PartitionID, &a.LabelRule))
 	}
-	return errors.Trace(job.DecodeArgs(&a.PartitionID, &a.PolicyRefInfo))
+	return errors.Trace(job.decodeArgs(&a.PartitionID, &a.PolicyRefInfo))
 }
 
 // GetAlterTablePartitionArgs gets the alter table partition args.
@@ -584,7 +587,7 @@ func (rt *RenameTableArgs) getArgsV1(*Job) []any {
 }
 
 func (rt *RenameTableArgs) decodeV1(job *Job) error {
-	return errors.Trace(job.DecodeArgs(&rt.OldSchemaID, &rt.NewTableName, &rt.OldSchemaName))
+	return errors.Trace(job.decodeArgs(&rt.OldSchemaID, &rt.NewTableName, &rt.OldSchemaName))
 }
 
 // GetRenameTableArgs get the arguments from job.
@@ -620,9 +623,9 @@ func (a *ResourceGroupArgs) getArgsV1(job *Job) []any {
 func (a *ResourceGroupArgs) decodeV1(job *Job) error {
 	a.RGInfo = &ResourceGroupInfo{}
 	if job.Type == ActionCreateResourceGroup || job.Type == ActionAlterResourceGroup {
-		return errors.Trace(job.DecodeArgs(a.RGInfo))
+		return errors.Trace(job.decodeArgs(a.RGInfo))
 	} else if job.Type == ActionDropResourceGroup {
-		return errors.Trace(job.DecodeArgs(&a.RGInfo.Name))
+		return errors.Trace(job.decodeArgs(&a.RGInfo.Name))
 	}
 	return nil
 }
@@ -644,7 +647,7 @@ func (a *RebaseAutoIDArgs) getArgsV1(*Job) []any {
 }
 
 func (a *RebaseAutoIDArgs) decodeV1(job *Job) error {
-	return errors.Trace(job.DecodeArgs(&a.NewBase, &a.Force))
+	return errors.Trace(job.decodeArgs(&a.NewBase, &a.Force))
 }
 
 // GetRebaseAutoIDArgs the args for ActionRebaseAutoID/ActionRebaseAutoRandomBase ddl.
@@ -662,7 +665,7 @@ func (a *ModifyTableCommentArgs) getArgsV1(*Job) []any {
 }
 
 func (a *ModifyTableCommentArgs) decodeV1(job *Job) error {
-	return errors.Trace(job.DecodeArgs(&a.Comment))
+	return errors.Trace(job.decodeArgs(&a.Comment))
 }
 
 // GetModifyTableCommentArgs gets the args for ActionModifyTableComment.
@@ -682,7 +685,7 @@ func (a *ModifyTableCharsetAndCollateArgs) getArgsV1(*Job) []any {
 }
 
 func (a *ModifyTableCharsetAndCollateArgs) decodeV1(job *Job) error {
-	return errors.Trace(job.DecodeArgs(&a.ToCharset, &a.ToCollate, &a.NeedsOverwriteCols))
+	return errors.Trace(job.decodeArgs(&a.ToCharset, &a.ToCollate, &a.NeedsOverwriteCols))
 }
 
 // GetModifyTableCharsetAndCollateArgs gets the args for ActionModifyTableCharsetAndCollate ddl.
@@ -701,7 +704,7 @@ func (a *AlterIndexVisibilityArgs) getArgsV1(*Job) []any {
 }
 
 func (a *AlterIndexVisibilityArgs) decodeV1(job *Job) error {
-	return errors.Trace(job.DecodeArgs(&a.IndexName, &a.Invisible))
+	return errors.Trace(job.decodeArgs(&a.IndexName, &a.Invisible))
 }
 
 // GetAlterIndexVisibilityArgs gets the args for AlterIndexVisibility ddl.
@@ -720,7 +723,7 @@ func (a *AddForeignKeyArgs) getArgsV1(*Job) []any {
 }
 
 func (a *AddForeignKeyArgs) decodeV1(job *Job) error {
-	return errors.Trace(job.DecodeArgs(&a.FkInfo, &a.FkCheck))
+	return errors.Trace(job.decodeArgs(&a.FkInfo, &a.FkCheck))
 }
 
 // GetAddForeignKeyArgs get the args for AddForeignKey ddl.
@@ -738,7 +741,7 @@ func (a *DropForeignKeyArgs) getArgsV1(*Job) []any {
 }
 
 func (a *DropForeignKeyArgs) decodeV1(job *Job) error {
-	return errors.Trace(job.DecodeArgs(&a.FkName))
+	return errors.Trace(job.decodeArgs(&a.FkName))
 }
 
 // GetDropForeignKeyArgs gets the args for DropForeignKey ddl.
@@ -774,10 +777,10 @@ func (a *TableColumnArgs) decodeV1(job *Job) error {
 
 	// when rollbacking add-columm, it's arguments is same as drop-column
 	if job.Type == ActionDropColumn || job.State == JobStateRollingback {
-		return errors.Trace(job.DecodeArgs(&a.Col.Name, &a.IgnoreExistenceErr, &a.IndexIDs, &a.PartitionIDs))
+		return errors.Trace(job.decodeArgs(&a.Col.Name, &a.IgnoreExistenceErr, &a.IndexIDs, &a.PartitionIDs))
 	}
 	// for add column ddl.
-	return errors.Trace(job.DecodeArgs(a.Col, a.Pos, &a.Offset, &a.IgnoreExistenceErr))
+	return errors.Trace(job.decodeArgs(a.Col, a.Pos, &a.Offset, &a.IgnoreExistenceErr))
 }
 
 // FillRollBackArgsForAddColumn fills the args for rollback add column ddl.
@@ -788,7 +791,7 @@ func FillRollBackArgsForAddColumn(job *Job, args *TableColumnArgs) {
 		Type:    ActionDropColumn,
 	}
 	fakeJob.FillArgs(args)
-	job.Args = fakeJob.Args
+	job.args = fakeJob.args
 }
 
 // GetTableColumnArgs gets the args for dropping column ddl or Adding column ddl.
@@ -832,7 +835,7 @@ func (a *RenameTablesArgs) decodeV1(job *Job) error {
 		newTableNames  []pmodel.CIStr
 		tableIDs       []int64
 	)
-	if err := job.DecodeArgs(
+	if err := job.decodeArgs(
 		&oldSchemaIDs, &newSchemaIDs, &newTableNames,
 		&tableIDs, &oldSchemaNames, &oldTableNames); err != nil {
 		return errors.Trace(err)
@@ -885,7 +888,7 @@ func (a *AlterSequenceArgs) getArgsV1(*Job) []any {
 }
 
 func (a *AlterSequenceArgs) decodeV1(job *Job) error {
-	return errors.Trace(job.DecodeArgs(&a.Ident, &a.SeqOptions))
+	return errors.Trace(job.decodeArgs(&a.Ident, &a.SeqOptions))
 }
 
 // GetAlterSequenceArgs gets the args for alter Sequence ddl job.
@@ -903,7 +906,7 @@ func (a *ModifyTableAutoIDCacheArgs) getArgsV1(*Job) []any {
 }
 
 func (a *ModifyTableAutoIDCacheArgs) decodeV1(job *Job) error {
-	return errors.Trace(job.DecodeArgs(&a.NewCache))
+	return errors.Trace(job.decodeArgs(&a.NewCache))
 }
 
 // GetModifyTableAutoIDCacheArgs gets the args for modify table autoID cache ddl job.
@@ -921,7 +924,7 @@ func (a *ShardRowIDArgs) getArgsV1(*Job) []any {
 }
 
 func (a *ShardRowIDArgs) decodeV1(job *Job) error {
-	return errors.Trace(job.DecodeArgs(&a.ShardRowIDBits))
+	return errors.Trace(job.decodeArgs(&a.ShardRowIDBits))
 }
 
 // GetShardRowIDArgs gets the args for shard row ID ddl job.
@@ -941,7 +944,7 @@ func (a *AlterTTLInfoArgs) getArgsV1(*Job) []any {
 }
 
 func (a *AlterTTLInfoArgs) decodeV1(job *Job) error {
-	return errors.Trace(job.DecodeArgs(&a.TTLInfo, &a.TTLEnable, &a.TTLCronJobSchedule))
+	return errors.Trace(job.decodeArgs(&a.TTLInfo, &a.TTLEnable, &a.TTLCronJobSchedule))
 }
 
 // GetAlterTTLInfoArgs gets the args for alter ttl info job.
@@ -960,7 +963,7 @@ func (a *CheckConstraintArgs) getArgsV1(*Job) []any {
 }
 
 func (a *CheckConstraintArgs) decodeV1(job *Job) error {
-	return errors.Trace(job.DecodeArgs(&a.ConstraintName, &a.Enforced))
+	return errors.Trace(job.decodeArgs(&a.ConstraintName, &a.Enforced))
 }
 
 // GetCheckConstraintArgs gets the AlterCheckConstraint args.
@@ -979,7 +982,7 @@ func (a *AddCheckConstraintArgs) getArgsV1(*Job) []any {
 
 func (a *AddCheckConstraintArgs) decodeV1(job *Job) error {
 	a.Constraint = &ConstraintInfo{}
-	return errors.Trace(job.DecodeArgs(&a.Constraint))
+	return errors.Trace(job.decodeArgs(&a.Constraint))
 }
 
 // GetAddCheckConstraintArgs gets the AddCheckConstraint args.
@@ -998,7 +1001,7 @@ func (a *AlterTablePlacementArgs) getArgsV1(*Job) []any {
 
 func (a *AlterTablePlacementArgs) decodeV1(job *Job) error {
 	// when the target policy is 'default', policy info is nil
-	return errors.Trace(job.DecodeArgs(&a.PlacementPolicyRef))
+	return errors.Trace(job.decodeArgs(&a.PlacementPolicyRef))
 }
 
 // GetAlterTablePlacementArgs gets the args for alter table placements ddl job.
@@ -1016,7 +1019,7 @@ func (a *SetTiFlashReplicaArgs) getArgsV1(*Job) []any {
 }
 
 func (a *SetTiFlashReplicaArgs) decodeV1(job *Job) error {
-	return errors.Trace(job.DecodeArgs(&a.TiflashReplica))
+	return errors.Trace(job.decodeArgs(&a.TiflashReplica))
 }
 
 // GetSetTiFlashReplicaArgs gets the args for setting TiFlash replica ddl.
@@ -1035,7 +1038,7 @@ func (a *UpdateTiFlashReplicaStatusArgs) getArgsV1(*Job) []any {
 }
 
 func (a *UpdateTiFlashReplicaStatusArgs) decodeV1(job *Job) error {
-	return errors.Trace(job.DecodeArgs(&a.Available, &a.PhysicalID))
+	return errors.Trace(job.decodeArgs(&a.Available, &a.PhysicalID))
 }
 
 // GetUpdateTiFlashReplicaStatusArgs gets the args for updating TiFlash replica status ddl.
@@ -1058,7 +1061,7 @@ func (a *LockTablesArgs) getArgsV1(*Job) []any {
 }
 
 func (a *LockTablesArgs) decodeV1(job *Job) error {
-	return errors.Trace(job.DecodeArgs(a))
+	return errors.Trace(job.decodeArgs(a))
 }
 
 // GetLockTablesArgs get the LockTablesArgs argument.
@@ -1076,7 +1079,7 @@ func (a *RepairTableArgs) getArgsV1(*Job) []any {
 }
 
 func (a *RepairTableArgs) decodeV1(job *Job) error {
-	return errors.Trace(job.DecodeArgs(&a.TableInfo))
+	return errors.Trace(job.decodeArgs(&a.TableInfo))
 }
 
 // GetRepairTableArgs get the repair table args.
@@ -1095,7 +1098,7 @@ func (a *AlterTableAttributesArgs) getArgsV1(*Job) []any {
 
 func (a *AlterTableAttributesArgs) decodeV1(job *Job) error {
 	a.LabelRule = &pdhttp.LabelRule{}
-	return errors.Trace(job.DecodeArgs(a.LabelRule))
+	return errors.Trace(job.decodeArgs(a.LabelRule))
 }
 
 // GetAlterTableAttributesArgs get alter table attribute args from job.
@@ -1126,13 +1129,13 @@ func (a *RecoverArgs) decodeV1(job *Job) error {
 		recoverCheckFlag  int64
 	)
 	if job.Type == ActionRecoverTable {
-		err := job.DecodeArgs(&recoverTableInfo, &recoverCheckFlag)
+		err := job.decodeArgs(&recoverTableInfo, &recoverCheckFlag)
 		if err != nil {
 			return errors.Trace(err)
 		}
 		recoverSchemaInfo.RecoverTableInfos = []*RecoverTableInfo{recoverTableInfo}
 	} else {
-		err := job.DecodeArgs(recoverSchemaInfo, &recoverCheckFlag)
+		err := job.decodeArgs(recoverSchemaInfo, &recoverCheckFlag)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -1175,11 +1178,11 @@ func (a *PlacementPolicyArgs) decodeV1(job *Job) error {
 	a.PolicyID = job.SchemaID
 
 	if job.Type == ActionCreatePlacementPolicy {
-		return errors.Trace(job.DecodeArgs(&a.Policy, &a.ReplaceOnExist))
+		return errors.Trace(job.decodeArgs(&a.Policy, &a.ReplaceOnExist))
 	} else if job.Type == ActionAlterPlacementPolicy {
-		return errors.Trace(job.DecodeArgs(&a.Policy))
+		return errors.Trace(job.decodeArgs(&a.Policy))
 	}
-	return errors.Trace(job.DecodeArgs(&a.PolicyName))
+	return errors.Trace(job.decodeArgs(&a.PolicyName))
 }
 
 // GetPlacementPolicyArgs gets the placement policy args.
@@ -1198,7 +1201,7 @@ func (a *SetDefaultValueArgs) getArgsV1(*Job) []any {
 
 func (a *SetDefaultValueArgs) decodeV1(job *Job) error {
 	a.Col = &ColumnInfo{}
-	return errors.Trace(job.DecodeArgs(a.Col))
+	return errors.Trace(job.decodeArgs(a.Col))
 }
 
 // GetSetDefaultValueArgs get the args for setting default value ddl.
@@ -1251,7 +1254,7 @@ func (a *FlashbackClusterArgs) getArgsV1(*Job) []any {
 func (a *FlashbackClusterArgs) decodeV1(job *Job) error {
 	var autoAnalyzeValue, readOnlyValue, ttlJobEnableValue string
 
-	if err := job.DecodeArgs(
+	if err := job.decodeArgs(
 		&a.FlashbackTS, &a.PDScheduleValue, &a.EnableGC,
 		&autoAnalyzeValue, &readOnlyValue, &a.LockedRegionCnt,
 		&a.StartTS, &a.CommitTS, &ttlJobEnableValue, &a.FlashbackKeyRanges,
@@ -1417,7 +1420,7 @@ func (a *ModifyIndexArgs) decodeV1(job *Job) error {
 
 func (a *ModifyIndexArgs) decodeRenameIndexV1(job *Job) error {
 	var from, to pmodel.CIStr
-	if err := job.DecodeArgs(&from, &to); err != nil {
+	if err := job.decodeArgs(&from, &to); err != nil {
 		return errors.Trace(err)
 	}
 	a.IndexArgs = []*IndexArg{
@@ -1430,8 +1433,8 @@ func (a *ModifyIndexArgs) decodeRenameIndexV1(job *Job) error {
 func (a *ModifyIndexArgs) decodeDropIndexV1(job *Job) error {
 	indexNames := make([]pmodel.CIStr, 1)
 	ifExists := make([]bool, 1)
-	if err := job.DecodeArgs(&indexNames[0], &ifExists[0]); err != nil {
-		if err = job.DecodeArgs(&indexNames, &ifExists); err != nil {
+	if err := job.decodeArgs(&indexNames[0], &ifExists[0]); err != nil {
+		if err = job.decodeArgs(&indexNames, &ifExists); err != nil {
 			return errors.Trace(err)
 		}
 	}
@@ -1454,10 +1457,10 @@ func (a *ModifyIndexArgs) decodeAddIndexV1(job *Job) error {
 	hiddenCols := make([][]*ColumnInfo, 1)
 	globals := make([]bool, 1)
 
-	if err := job.DecodeArgs(
+	if err := job.decodeArgs(
 		&uniques, &indexNames, &indexPartSpecifications,
 		&indexOptions, &hiddenCols, &globals); err != nil {
-		if err = job.DecodeArgs(
+		if err = job.decodeArgs(
 			&uniques[0], &indexNames[0], &indexPartSpecifications[0],
 			&indexOptions[0], &hiddenCols[0], &globals[0]); err != nil {
 			return errors.Trace(err)
@@ -1480,7 +1483,7 @@ func (a *ModifyIndexArgs) decodeAddIndexV1(job *Job) error {
 func (a *ModifyIndexArgs) decodeAddPrimaryKeyV1(job *Job) error {
 	a.IndexArgs = []*IndexArg{{IsPK: true}}
 	var unused any
-	if err := job.DecodeArgs(
+	if err := job.decodeArgs(
 		&a.IndexArgs[0].Unique, &a.IndexArgs[0].IndexName, &a.IndexArgs[0].IndexPartSpecifications,
 		&a.IndexArgs[0].IndexOption, &a.IndexArgs[0].SQLMode,
 		&unused, &a.IndexArgs[0].Global); err != nil {
@@ -1497,7 +1500,7 @@ func (a *ModifyIndexArgs) decodeAddVectorIndexV1(job *Job) error {
 		funcExpr               string
 	)
 
-	if err := job.DecodeArgs(
+	if err := job.decodeArgs(
 		&indexName, &indexPartSpecification, &indexOption, &funcExpr); err != nil {
 		return errors.Trace(err)
 	}
@@ -1594,10 +1597,10 @@ func GetFinishedModifyIndexArgs(job *Job) (*ModifyIndexArgs, error) {
 
 		if job.IsRollingback() {
 			// Rollback add indexes
-			err = job.DecodeArgs(&indexNames, &ifExists, &partitionIDs, &isVector)
+			err = job.decodeArgs(&indexNames, &ifExists, &partitionIDs, &isVector)
 		} else {
 			// Finish drop index
-			err = job.DecodeArgs(&indexNames[0], &ifExists[0], &indexIDs[0], &partitionIDs, &isVector)
+			err = job.decodeArgs(&indexNames[0], &ifExists[0], &indexIDs[0], &partitionIDs, &isVector)
 		}
 		if err != nil {
 			return nil, errors.Trace(err)
@@ -1629,8 +1632,8 @@ func GetFinishedModifyIndexArgs(job *Job) (*ModifyIndexArgs, error) {
 	var partitionIDs []int64
 
 	// add vector index args doesn't store slice.
-	if err := job.DecodeArgs(&addIndexIDs[0], &ifExists[0], &partitionIDs, &isGlobals[0]); err != nil {
-		if err = job.DecodeArgs(&addIndexIDs, &ifExists, &partitionIDs, &isGlobals); err != nil {
+	if err := job.decodeArgs(&addIndexIDs[0], &ifExists[0], &partitionIDs, &isGlobals[0]); err != nil {
+		if err = job.decodeArgs(&addIndexIDs, &ifExists, &partitionIDs, &isGlobals); err != nil {
 			return nil, errors.Errorf("Failed to decode finished arguments from job version 1")
 		}
 	}
@@ -1643,4 +1646,66 @@ func GetFinishedModifyIndexArgs(job *Job) (*ModifyIndexArgs, error) {
 		})
 	}
 	return a, nil
+}
+
+// ModifyColumnArgs is the argument for modify column.
+type ModifyColumnArgs struct {
+	Column           *ColumnInfo         `json:"column,omitempty"`
+	OldColumnName    pmodel.CIStr        `json:"old_column_name,omitempty"`
+	Position         *ast.ColumnPosition `json:"position,omitempty"`
+	ModifyColumnType byte                `json:"modify_column_type,omitempty"`
+	NewShardBits     uint64              `json:"new_shard_bits,omitempty"`
+	// ChangingColumn is the temporary column derived from OldColumn
+	ChangingColumn *ColumnInfo `json:"changing_column,omitempty"`
+	// ChangingIdxs is only used in test, so don't persist it
+	ChangingIdxs []*IndexInfo `json:"-"`
+	// RedundantIdxs stores newly-created temp indexes which can be overwritten by other temp indexes.
+	// These idxs will be added to finished args after job done.
+	RedundantIdxs []int64 `json:"removed_idxs,omitempty"`
+
+	// Finished args
+	// IndexIDs stores index ids to be added to gc table.
+	IndexIDs     []int64 `json:"index_ids,omitempty"`
+	PartitionIDs []int64 `json:"partition_ids,omitempty"`
+}
+
+func (a *ModifyColumnArgs) getArgsV1(*Job) []any {
+	return []any{
+		a.Column, a.OldColumnName, a.Position, a.ModifyColumnType,
+		a.NewShardBits, a.ChangingColumn, a.ChangingIdxs, a.RedundantIdxs,
+	}
+}
+
+func (a *ModifyColumnArgs) decodeV1(job *Job) error {
+	return job.decodeArgs(
+		&a.Column, &a.OldColumnName, &a.Position, &a.ModifyColumnType,
+		&a.NewShardBits, &a.ChangingColumn, &a.ChangingIdxs, &a.RedundantIdxs,
+	)
+}
+
+func (a *ModifyColumnArgs) getFinishedArgsV1(*Job) []any {
+	return []any{a.IndexIDs, a.PartitionIDs}
+}
+
+// GetModifyColumnArgs get the modify column argument from job.
+func GetModifyColumnArgs(job *Job) (*ModifyColumnArgs, error) {
+	return getOrDecodeArgs(&ModifyColumnArgs{}, job)
+}
+
+// GetFinishedModifyColumnArgs get the finished modify column argument from job.
+func GetFinishedModifyColumnArgs(job *Job) (*ModifyColumnArgs, error) {
+	if job.Version == JobVersion1 {
+		var (
+			indexIDs     []int64
+			partitionIDs []int64
+		)
+		if err := job.decodeArgs(&indexIDs, &partitionIDs); err != nil {
+			return nil, errors.Trace(err)
+		}
+		return &ModifyColumnArgs{
+			IndexIDs:     indexIDs,
+			PartitionIDs: partitionIDs,
+		}, nil
+	}
+	return getOrDecodeArgsV2[*ModifyColumnArgs](job)
 }

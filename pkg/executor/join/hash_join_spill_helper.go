@@ -18,7 +18,11 @@ import (
 	"bytes"
 	"hash"
 	"hash/fnv"
+<<<<<<< HEAD
 	"slices"
+=======
+	"sort"
+>>>>>>> master
 	"sync"
 	"sync/atomic"
 
@@ -28,6 +32,10 @@ import (
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/disk"
+<<<<<<< HEAD
+=======
+	"github.com/pingcap/tidb/pkg/util/intest"
+>>>>>>> master
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"go.uber.org/zap"
@@ -269,14 +277,8 @@ func (h *hashJoinSpillHelper) choosePartitionsToSpill(hashTableMemUsage []int64)
 	}
 
 	// Sort partitions by memory usage in descend
-	slices.SortFunc(unspilledPartitionsAndMemory, func(i, j partIDAndMem) int {
-		if i.memoryUsage > j.memoryUsage {
-			return -1
-		}
-		if i.memoryUsage < j.memoryUsage {
-			return 1
-		}
-		return 0
+	sort.SliceStable(unspilledPartitionsAndMemory, func(i, j int) bool {
+		return unspilledPartitionsAndMemory[i].memoryUsage > unspilledPartitionsAndMemory[j].memoryUsage
 	})
 
 	// Choose more partitions to spill
@@ -389,11 +391,12 @@ func (h *hashJoinSpillHelper) spillRowTableImpl(partitionsNeedSpill []int, total
 
 	h.setPartitionSpilled(partitionsNeedSpill)
 
-	if len(partitionsNeedSpill) == int(h.hashJoinExec.partitionNumber) {
-		h.allPartitionsSpilledForTest = true
+	if intest.InTest {
+		if len(partitionsNeedSpill) == int(h.hashJoinExec.partitionNumber) {
+			h.allPartitionsSpilledForTest = true
+		}
+		h.spillTriggeredForTest = true
 	}
-
-	h.spillTriggeredForTest = true
 
 	logutil.BgLogger().Info(spillInfo, zap.Int64("consumed", h.bytesConsumed.Load()), zap.Int64("quota", h.bytesLimit.Load()))
 	for i := 0; i < workerNum; i++ {
