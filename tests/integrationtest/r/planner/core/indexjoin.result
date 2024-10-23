@@ -123,14 +123,15 @@ a	b
 1	2
 explain format='brief' select /*+ INL_JOIN(tmp) */ * from (select a, b from t where a=1 group by a, b having a>0 ) tmp, t1 where tmp.a=t1.a;
 id	estRows	task	access object	operator info
-IndexJoin	1.25	root		inner join, inner:HashAgg, outer key:planner__core__indexjoin.t1.a, inner key:planner__core__indexjoin.t.a, equal cond:eq(planner__core__indexjoin.t1.a, planner__core__indexjoin.t.a)
+IndexJoin	8.00	root		inner join, inner:Selection, outer key:planner__core__indexjoin.t1.a, inner key:planner__core__indexjoin.t.a, equal cond:eq(planner__core__indexjoin.t1.a, planner__core__indexjoin.t.a)
 ├─IndexReader(Build)	3333.33	root		index:IndexRangeScan
 │ └─IndexRangeScan	3333.33	cop[tikv]	table:t1, index:idx(a, b)	range:(0,+inf], keep order:false, stats:pseudo
-└─HashAgg(Probe)	3333.33	root		group by:planner__core__indexjoin.t.a, planner__core__indexjoin.t.b, funcs:firstrow(planner__core__indexjoin.t.a)->planner__core__indexjoin.t.a, funcs:firstrow(planner__core__indexjoin.t.b)->planner__core__indexjoin.t.b
-  └─IndexReader	3333.33	root		index:HashAgg
-    └─HashAgg	3333.33	cop[tikv]		group by:planner__core__indexjoin.t.a, planner__core__indexjoin.t.b, 
-      └─Selection	1.25	cop[tikv]		eq(planner__core__indexjoin.t.a, 1)
-        └─IndexRangeScan	1250.00	cop[tikv]	table:t, index:idx(a, b)	range: decided by [eq(planner__core__indexjoin.t.a, planner__core__indexjoin.t1.a)], keep order:false, stats:pseudo
+└─Selection(Probe)	21333.33	root		gt(planner__core__indexjoin.t.a, 0), not(isnull(planner__core__indexjoin.t.a))
+  └─HashAgg	26666.67	root		group by:planner__core__indexjoin.t.b, funcs:firstrow(Column#7)->planner__core__indexjoin.t.a, funcs:firstrow(planner__core__indexjoin.t.b)->planner__core__indexjoin.t.b
+    └─IndexReader	26666.67	root		index:HashAgg
+      └─HashAgg	26666.67	cop[tikv]		group by:planner__core__indexjoin.t.b, funcs:firstrow(planner__core__indexjoin.t.a)->Column#7
+        └─Selection	8.00	cop[tikv]		eq(planner__core__indexjoin.t.a, 1)
+          └─IndexRangeScan	8000.00	cop[tikv]	table:t, index:idx(a, b)	range: decided by [eq(planner__core__indexjoin.t.a, planner__core__indexjoin.t1.a)], keep order:false, stats:pseudo
 select /*+ INL_JOIN(tmp) */ tmp.a, t1.b from (select a, b from t where a=1 group by a, b having a>0 ) tmp, t1 where tmp.a=t1.a order by tmp.a, t1.b;
 a	b
 1	1
