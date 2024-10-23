@@ -568,8 +568,8 @@ func (h *Handle) Update(is infoschema.InfoSchema, opts ...TableStatsOpt) error {
 	// Consider the case that there are two tables A and B, their version and commit time is (A0, A1) and (B0, B1),
 	// and A0 < B0 < B1 < A1. We will first read the stats of B, and update the lastVersion to B0, but we cannot read
 	// the table stats of A0 if we read stats that greater than lastVersion which is B0.
-	// We can read the stats if the diff between commit time and version is less than three lease.
-	offset := DurationToTS(3 * h.Lease())
+	// We can read the stats if the diff between commit time and version is less than five lease.
+	offset := DurationToTS(5 * h.Lease()) // 5 lease is 15s.
 	if oldCache.version >= offset {
 		lastVersion = lastVersion - offset
 	} else {
