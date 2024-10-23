@@ -86,8 +86,8 @@ create table t(a int, b int, primary key (b) global) partition by hash(a) partit
 show create table t;
 Table	Create Table
 t	CREATE TABLE `t` (
-  `a` int(11) DEFAULT NULL,
-  `b` int(11) NOT NULL,
+  `a` int DEFAULT NULL,
+  `b` int NOT NULL,
   PRIMARY KEY (`b`) /*T![clustered_index] NONCLUSTERED */ /*T![global_index] GLOBAL */
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 PARTITION BY HASH (`a`) PARTITIONS 5
