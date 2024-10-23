@@ -917,7 +917,38 @@ func (p *UserPrivileges) ShowGrants(ctx sessionctx.Context, user *auth.UserIdent
 		u = user.AuthUsername
 		h = user.AuthHostname
 	}
-	grants = mysqlPrivilege.showGrants(ctx, u, h, roles)
+
+	// When the user privilege data is missing (not loaded in memory)
+	missing := false
+	ur := mysqlPrivilege.matchIdentity(ctx, u, h, false)
+	if ur == nil {
+		missing = true
+	} else {
+		for _, role := range roles {
+			ur = mysqlPrivilege.matchIdentity(ctx, role.Username, role.Hostname, false)
+			if ur == nil {
+				missing = true
+				break
+			}
+		}
+	}
+
+	if missing {
+		userList := make([]string, 0, 1+len(roles))
+		userList = append(userList, u)
+		for _, role := range roles {
+			userList = append(userList, role.Username)
+		}
+		var priv MySQLPrivilege
+		err := priv.loadSomeUsers(ctx, userList...)
+		if err != nil {
+			return nil, err
+		}
+		grants = priv.showGrants(ctx, u, h, roles)
+	} else {
+		grants = mysqlPrivilege.showGrants(ctx, u, h, roles)
+	}
+
 	if len(grants) == 0 {
 		err = ErrNonexistingGrant.GenWithStackByArgs(u, h)
 	}
