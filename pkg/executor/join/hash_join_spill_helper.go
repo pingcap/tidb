@@ -18,11 +18,7 @@ import (
 	"bytes"
 	"hash"
 	"hash/fnv"
-<<<<<<< HEAD
-	"slices"
-=======
 	"sort"
->>>>>>> master
 	"sync"
 	"sync/atomic"
 
@@ -32,10 +28,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/disk"
-<<<<<<< HEAD
-=======
 	"github.com/pingcap/tidb/pkg/util/intest"
->>>>>>> master
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"go.uber.org/zap"
