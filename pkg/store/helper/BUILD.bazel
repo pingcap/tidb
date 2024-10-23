@@ -9,6 +9,7 @@ go_library(
         "//pkg/infoschema/context",
         "//pkg/kv",
         "//pkg/meta/model",
+        "//pkg/resourcemanager/gpool",
         "//pkg/store/driver/error",
         "//pkg/tablecodec",
         "//pkg/util",

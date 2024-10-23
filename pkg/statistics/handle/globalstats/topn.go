@@ -20,14 +20,14 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/resourcemanager/gpool"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/util/hack"
 	"github.com/pingcap/tidb/pkg/util/sqlkiller"
-	"github.com/tiancaiamao/gp"
 )
 
-func mergeGlobalStatsTopN(gp *gp.Pool, sc sessionctx.Context, wrapper *StatsWrapper,
+func mergeGlobalStatsTopN(gp gpool.Pool, sc sessionctx.Context, wrapper *StatsWrapper,
 	timeZone *time.Location, version int, n uint32, isIndex bool) (*statistics.TopN,
 	[]statistics.TopNMeta, []*statistics.Histogram, error) {
 	if statistics.CheckEmptyTopNs(wrapper.AllTopN) {
@@ -55,7 +55,7 @@ func mergeGlobalStatsTopN(gp *gp.Pool, sc sessionctx.Context, wrapper *StatsWrap
 // mergeConcurrency is used to control the total concurrency of the running worker,
 // and mergeBatchSize is sued to control the partition size for each worker to solve it
 func MergeGlobalStatsTopNByConcurrency(
-	gp *gp.Pool,
+	gp gpool.Pool,
 	mergeConcurrency, mergeBatchSize int,
 	wrapper *StatsWrapper,
 	timeZone *time.Location,

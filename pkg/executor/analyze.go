@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/planner/core"
+	"github.com/pingcap/tidb/pkg/resourcemanager/gpool"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
@@ -45,7 +46,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/sqlescape"
 	"github.com/pingcap/tipb/go-tipb"
-	"github.com/tiancaiamao/gp"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
 )
@@ -59,7 +59,7 @@ type AnalyzeExec struct {
 	wg         *util.WaitGroupPool
 	opts       map[ast.AnalyzeOptionType]uint64
 	OptionsMap map[int64]core.V2AnalyzeOptions
-	gp         *gp.Pool
+	gp         gpool.Pool
 	// errExitCh is used to notice the worker that the whole analyze task is finished when to meet error.
 	errExitCh chan struct{}
 }

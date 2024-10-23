@@ -19,6 +19,7 @@ import (
 
 	deadlockpb "github.com/pingcap/kvproto/pkg/deadlock"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/resourcemanager/gpool"
 	"github.com/tikv/client-go/v2/oracle"
 	"github.com/tikv/client-go/v2/tikv"
 )
@@ -84,4 +85,9 @@ func (*Store) GetLockWaits() ([]*deadlockpb.WaitForEntry, error) {
 // GetCodec implements kv.Storage interface.
 func (*Store) GetCodec() tikv.Codec {
 	return nil
+}
+
+// GetGPool implements kv.Storage interface.
+func (*Store) GetGPool() gpool.Pool {
+	return gpool.MockGPool
 }

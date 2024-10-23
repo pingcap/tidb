@@ -197,11 +197,16 @@ func (e *IndexLookUpJoin) startWorkers(ctx context.Context, initBatchSize int) {
 	e.cancelFunc = cancelFunc
 	innerCh := make(chan *lookUpJoinTask, concurrency)
 	e.WorkerWg.Add(1)
-	go e.newOuterWorker(resultCh, innerCh, initBatchSize).run(workerCtx, e.WorkerWg)
+	gp := e.Ctx().GetStore().GetGPool()
+	gp.Go(func() {
+		e.newOuterWorker(resultCh, innerCh, initBatchSize).run(workerCtx, e.WorkerWg)
+	})
 	for i := 0; i < concurrency; i++ {
 		innerWorker := e.newInnerWorker(innerCh)
 		e.WorkerWg.Add(1)
-		go innerWorker.run(workerCtx, e.WorkerWg)
+		gp.Go(func() {
+			innerWorker.run(workerCtx, e.WorkerWg)
+		})
 	}
 }
 
