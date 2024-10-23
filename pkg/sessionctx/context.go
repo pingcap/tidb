@@ -241,6 +241,8 @@ const (
 	Initing basicCtxType = 2
 	// LastExecuteDDL is the key for whether the session execute a ddl command last time.
 	LastExecuteDDL basicCtxType = 3
+	// AfterPreInit is the key for whether the session is after pre-initialization.
+	AfterPreInit basicCtxType = 4
 )
 
 // ValidateSnapshotReadTS strictly validates that readTS does not exceed the PD timestamp
