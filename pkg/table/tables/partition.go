@@ -1010,7 +1010,7 @@ func (lp *ForListPruning) LocatePartition(ctx exprctx.EvalContext, value int64, 
 	}
 	var key uint64
 	if mysql.HasUnsignedFlag(lp.PruneExpr.GetType(ctx).GetFlag()) {
-		key = uint64(key)
+		key = uint64(value)
 	} else {
 		key = codec.EncodeIntToCmpUint(value)
 	}
