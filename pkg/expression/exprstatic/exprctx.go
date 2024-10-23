@@ -300,6 +300,9 @@ func (ctx *ExprContext) GetStaticConvertibleEvalContext() exprctx.StaticConverti
 }
 
 // IsReadonlyUserVar implements the `BuildContext.IsReadonlyUserVar` and should always return false.
+// We return false because the static context is only used during execution phase.
+// But we check whether the user variable is readonly in planning phase.
+// So just return false for static context.
 func (ctx *ExprContext) IsReadonlyUserVar(name string) bool {
 	return false
 }
