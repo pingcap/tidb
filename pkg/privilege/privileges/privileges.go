@@ -912,45 +912,16 @@ func (p *UserPrivileges) ShowGrants(ctx sessionctx.Context, user *auth.UserIdent
 	if SkipWithGrant {
 		return nil, ErrNonexistingGrant.GenWithStackByArgs("root", "%")
 	}
-	mysqlPrivilege := p.Handle.Get()
 	u := user.Username
 	h := user.Hostname
 	if len(user.AuthUsername) > 0 && len(user.AuthHostname) > 0 {
 		u = user.AuthUsername
 		h = user.AuthHostname
 	}
+	p.Handle.ensureActiveUser(u)
+	mysqlPrivilege := p.Handle.Get()
 
-	// When the user data is m
-	missing := false
-	ur := mysqlPrivilege.matchIdentity(ctx, u, h, false)
-	if ur == nil {
-		missing = true
-	} else {
-		for _, role := range roles {
-			ur = mysqlPrivilege.matchIdentity(ctx, role.Username, role.Hostname, false)
-			if ur == nil {
-				missing = true
-				break
-			}
-		}
-	}
-
-	if missing {
-		userList := make([]string, 0, 1+len(roles))
-		userList = append(userList, u)
-		for _, role := range roles {
-			userList = append(userList, role.Username)
-		}
-		var priv MySQLPrivilege
-		err := priv.loadSomeUsers(ctx, userList...)
-		if err != nil {
-			return nil, err
-		}
-		grants = priv.showGrants(ctx, u, h, roles)
-	} else {
-		grants = mysqlPrivilege.showGrants(ctx, u, h, roles)
-	}
-
+	grants = mysqlPrivilege.showGrants(ctx, u, h, roles)
 	if len(grants) == 0 {
 		err = ErrNonexistingGrant.GenWithStackByArgs(u, h)
 	}
