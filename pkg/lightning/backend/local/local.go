@@ -112,6 +112,9 @@ var (
 	// MaxWriteAndIngestRetryTimes is the max retry times for write and ingest.
 	// A large retry times is for tolerating tikv cluster failures.
 	MaxWriteAndIngestRetryTimes = 30
+
+	// TiKV may return a large response: max 4K KV, each KV size can be about 4KiB+
+	maxMsgSize = 32 * units.MiB
 )
 
 // ImportClientFactory is factory to create new import client for specific store.
@@ -165,6 +168,8 @@ func (f *importClientFactoryImpl) makeConn(ctx context.Context, storeID uint64) 
 		addr = store.GetAddress()
 	}
 	opts = append(opts,
+		grpc.WithDefaultCallOptions(grpc.MaxCallRecvMsgSize(maxMsgSize)),
+		grpc.WithDefaultCallOptions(grpc.MaxCallSendMsgSize(maxMsgSize)),
 		grpc.WithConnectParams(grpc.ConnectParams{Backoff: bfConf}),
 		grpc.WithKeepaliveParams(keepalive.ClientParameters{
 			Time:                gRPCKeepAliveTime,
