@@ -46,7 +46,7 @@ func (as *AggregationSimplifier) Optimize(ctx context.Context, p base.LogicalPla
 }
 
 // tryToPruneGroupByItems will eliminate constant group by items
-func (as AggregationSimplifier) tryToPruneGroupByItems(p base.LogicalPlan, opt *optimizetrace.LogicalOptimizeOp) {
+func (AggregationSimplifier) tryToPruneGroupByItems(p base.LogicalPlan, opt *optimizetrace.LogicalOptimizeOp) {
 	la := p.(*logicalop.LogicalAggregation)
 	// pull up constant predicates below this LogicalAggregation
 	candidateConstantPredicates := la.Children()[0].PullUpConstantPredicates()
@@ -94,6 +94,6 @@ func appendAggSimplifierTraceStep(la *logicalop.LogicalAggregation, prunedItem *
 }
 
 // Name implements the base.LogicalOptRule.<1st> interface.
-func (as *AggregationSimplifier) Name() string {
+func (AggregationSimplifier) Name() string {
 	return "aggregation_simplifier"
 }
