@@ -28,7 +28,7 @@ import (
 
 func TestColumnCopy(t *testing.T) {
 	col := newFixedLenColumn(8, 10)
-	for i := 0; i < 10; i++ {
+	for i := range 10 {
 		col.AppendInt64(int64(i))
 	}
 
@@ -45,7 +45,7 @@ func TestColumnCopyReconstructFixedLen(t *testing.T) {
 	results := make([]int64, 0, 1024)
 	nulls := make([]bool, 0, 1024)
 	sel := make([]int, 0, 1024)
-	for i := 0; i < 1024; i++ {
+	for i := range 1024 {
 		if rand.Intn(10) < 6 {
 			sel = append(sel, i)
 		}
@@ -76,7 +76,7 @@ func TestColumnCopyReconstructFixedLen(t *testing.T) {
 	require.Equal(t, col.nullCount(), nullCnt)
 	require.Len(t, sel, col.length)
 
-	for i := 0; i < 128; i++ {
+	for i := range 128 {
 		if i%2 == 0 {
 			col.AppendNull()
 		} else {
@@ -86,7 +86,7 @@ func TestColumnCopyReconstructFixedLen(t *testing.T) {
 
 	require.Len(t, sel, col.length-128)
 	require.Equal(t, nullCnt+128/2, col.nullCount())
-	for i := 0; i < 128; i++ {
+	for i := range 128 {
 		if i%2 == 0 {
 			require.True(t, col.IsNull(len(sel)+i))
 		} else {
@@ -101,7 +101,7 @@ func TestColumnCopyReconstructVarLen(t *testing.T) {
 	results := make([]string, 0, 1024)
 	nulls := make([]bool, 0, 1024)
 	sel := make([]int, 0, 1024)
-	for i := 0; i < 1024; i++ {
+	for i := range 1024 {
 		if rand.Intn(10) < 6 {
 			sel = append(sel, i)
 		}
@@ -132,7 +132,7 @@ func TestColumnCopyReconstructVarLen(t *testing.T) {
 	require.Equal(t, col.nullCount(), nullCnt)
 	require.Len(t, sel, col.length)
 
-	for i := 0; i < 128; i++ {
+	for i := range 128 {
 		if i%2 == 0 {
 			col.AppendNull()
 		} else {
@@ -142,7 +142,7 @@ func TestColumnCopyReconstructVarLen(t *testing.T) {
 
 	require.Len(t, sel, col.length-128)
 	require.Equal(t, nullCnt+128/2, col.nullCount())
-	for i := 0; i < 128; i++ {
+	for i := range 128 {
 		if i%2 == 0 {
 			require.True(t, col.IsNull(len(sel)+i))
 		} else {
@@ -164,12 +164,12 @@ func TestLargeStringColumnOffset(t *testing.T) {
 func TestI64Column(t *testing.T) {
 	chk := NewChunkWithCapacity([]*types.FieldType{types.NewFieldType(mysql.TypeLonglong)}, 1024)
 	col := chk.Column(0)
-	for i := 0; i < 1024; i++ {
+	for i := range 1024 {
 		col.AppendInt64(int64(i))
 	}
 
 	i64s := col.Int64s()
-	for i := 0; i < 1024; i++ {
+	for i := range 1024 {
 		require.Equal(t, int64(i), i64s[i])
 		i64s[i]++
 	}
@@ -186,12 +186,12 @@ func TestI64Column(t *testing.T) {
 func TestF64Column(t *testing.T) {
 	chk := NewChunkWithCapacity([]*types.FieldType{types.NewFieldType(mysql.TypeDouble)}, 1024)
 	col := chk.Column(0)
-	for i := 0; i < 1024; i++ {
+	for i := range 1024 {
 		col.AppendFloat64(float64(i))
 	}
 
 	f64s := col.Float64s()
-	for i := 0; i < 1024; i++ {
+	for i := range 1024 {
 		require.Equal(t, float64(i), f64s[i])
 		f64s[i] /= 2
 	}
@@ -208,12 +208,12 @@ func TestF64Column(t *testing.T) {
 func TestF32Column(t *testing.T) {
 	chk := NewChunkWithCapacity([]*types.FieldType{types.NewFieldType(mysql.TypeFloat)}, 1024)
 	col := chk.Column(0)
-	for i := 0; i < 1024; i++ {
+	for i := range 1024 {
 		col.AppendFloat32(float32(i))
 	}
 
 	f32s := col.Float32s()
-	for i := 0; i < 1024; i++ {
+	for i := range 1024 {
 		require.Equal(t, float32(i), f32s[i])
 		f32s[i] /= 2
 	}
@@ -230,12 +230,12 @@ func TestF32Column(t *testing.T) {
 func TestDurationSliceColumn(t *testing.T) {
 	chk := NewChunkWithCapacity([]*types.FieldType{types.NewFieldType(mysql.TypeDuration)}, 1024)
 	col := chk.Column(0)
-	for i := 0; i < 1024; i++ {
+	for i := range 1024 {
 		col.AppendDuration(types.Duration{Duration: time.Duration(i)})
 	}
 
 	ds := col.GoDurations()
-	for i := 0; i < 1024; i++ {
+	for i := range 1024 {
 		require.Equal(t, time.Duration(i), ds[i])
 		d := types.Duration{Duration: ds[i]}
 		d, _ = d.Add(d)
@@ -254,7 +254,7 @@ func TestDurationSliceColumn(t *testing.T) {
 func TestMyDecimal(t *testing.T) {
 	chk := NewChunkWithCapacity([]*types.FieldType{types.NewFieldType(mysql.TypeNewDecimal)}, 1024)
 	col := chk.Column(0)
-	for i := 0; i < 1024; i++ {
+	for i := range 1024 {
 		d := new(types.MyDecimal)
 		err := d.FromFloat64(float64(i) * 1.1)
 		require.NoError(t, err)
@@ -262,7 +262,7 @@ func TestMyDecimal(t *testing.T) {
 	}
 
 	ds := col.Decimals()
-	for i := 0; i < 1024; i++ {
+	for i := range 1024 {
 		d := new(types.MyDecimal)
 		err := d.FromFloat64(float64(i) * 1.1)
 		require.NoError(t, err)
@@ -294,7 +294,7 @@ func TestMyDecimal(t *testing.T) {
 func TestStringColumn(t *testing.T) {
 	chk := NewChunkWithCapacity([]*types.FieldType{types.NewFieldType(mysql.TypeVarString)}, 1024)
 	col := chk.Column(0)
-	for i := 0; i < 1024; i++ {
+	for i := range 1024 {
 		col.AppendString(fmt.Sprintf("%v", i*i))
 	}
 
@@ -310,7 +310,7 @@ func TestStringColumn(t *testing.T) {
 func TestSetColumn(t *testing.T) {
 	chk := NewChunkWithCapacity([]*types.FieldType{types.NewFieldType(mysql.TypeSet)}, 1024)
 	col := chk.Column(0)
-	for i := 0; i < 1024; i++ {
+	for i := range 1024 {
 		col.AppendSet(types.Set{Name: fmt.Sprintf("%v", i), Value: uint64(i)})
 	}
 
@@ -330,7 +330,7 @@ func TestSetColumn(t *testing.T) {
 func TestJSONColumn(t *testing.T) {
 	chk := NewChunkWithCapacity([]*types.FieldType{types.NewFieldType(mysql.TypeJSON)}, 1024)
 	col := chk.Column(0)
-	for i := 0; i < 1024; i++ {
+	for i := range 1024 {
 		j := new(types.BinaryJSON)
 		err := j.UnmarshalJSON([]byte(fmt.Sprintf(`{"%v":%v}`, i, i)))
 		require.NoError(t, err)
@@ -350,7 +350,7 @@ func TestJSONColumn(t *testing.T) {
 func TestTimeColumn(t *testing.T) {
 	chk := NewChunkWithCapacity([]*types.FieldType{types.NewFieldType(mysql.TypeDatetime)}, 1024)
 	col := chk.Column(0)
-	for i := 0; i < 1024; i++ {
+	for range 1024 {
 		col.AppendTime(types.CurrentTime(mysql.TypeDatetime))
 		time.Sleep(time.Millisecond / 10)
 	}
@@ -371,7 +371,7 @@ func TestTimeColumn(t *testing.T) {
 func TestDurationColumn(t *testing.T) {
 	chk := NewChunkWithCapacity([]*types.FieldType{types.NewFieldType(mysql.TypeDuration)}, 1024)
 	col := chk.Column(0)
-	for i := 0; i < 1024; i++ {
+	for i := range 1024 {
 		col.AppendDuration(types.Duration{Duration: time.Second * time.Duration(i)})
 	}
 
@@ -388,7 +388,7 @@ func TestDurationColumn(t *testing.T) {
 func TestEnumColumn(t *testing.T) {
 	chk := NewChunkWithCapacity([]*types.FieldType{types.NewFieldType(mysql.TypeEnum)}, 1024)
 	col := chk.Column(0)
-	for i := 0; i < 1024; i++ {
+	for i := range 1024 {
 		col.AppendEnum(types.Enum{Name: fmt.Sprintf("%v", i), Value: uint64(i)})
 	}
 
@@ -408,7 +408,7 @@ func TestEnumColumn(t *testing.T) {
 func TestNullsColumn(t *testing.T) {
 	chk := NewChunkWithCapacity([]*types.FieldType{types.NewFieldType(mysql.TypeLonglong)}, 1024)
 	col := chk.Column(0)
-	for i := 0; i < 1024; i++ {
+	for i := range 1024 {
 		if i%2 == 0 {
 			col.AppendNull()
 			continue
@@ -434,7 +434,7 @@ func TestReconstructFixedLen(t *testing.T) {
 	results := make([]int64, 0, 1024)
 	nulls := make([]bool, 0, 1024)
 	sel := make([]int, 0, 1024)
-	for i := 0; i < 1024; i++ {
+	for i := range 1024 {
 		if rand.Intn(10) < 6 {
 			sel = append(sel, i)
 		}
@@ -465,7 +465,7 @@ func TestReconstructFixedLen(t *testing.T) {
 	require.Equal(t, col.nullCount(), nullCnt)
 	require.Len(t, sel, col.length)
 
-	for i := 0; i < 128; i++ {
+	for i := range 128 {
 		if i%2 == 0 {
 			col.AppendNull()
 		} else {
@@ -475,7 +475,7 @@ func TestReconstructFixedLen(t *testing.T) {
 
 	require.Len(t, sel, col.length-128)
 	require.Equal(t, nullCnt+128/2, col.nullCount())
-	for i := 0; i < 128; i++ {
+	for i := range 128 {
 		if i%2 == 0 {
 			require.True(t, col.IsNull(len(sel)+i))
 		} else {
@@ -490,7 +490,7 @@ func TestReconstructVarLen(t *testing.T) {
 	results := make([]string, 0, 1024)
 	nulls := make([]bool, 0, 1024)
 	sel := make([]int, 0, 1024)
-	for i := 0; i < 1024; i++ {
+	for i := range 1024 {
 		if rand.Intn(10) < 6 {
 			sel = append(sel, i)
 		}
@@ -521,7 +521,7 @@ func TestReconstructVarLen(t *testing.T) {
 	require.Equal(t, col.nullCount(), nullCnt)
 	require.Len(t, sel, col.length)
 
-	for i := 0; i < 128; i++ {
+	for i := range 128 {
 		if i%2 == 0 {
 			col.AppendNull()
 		} else {
@@ -531,7 +531,7 @@ func TestReconstructVarLen(t *testing.T) {
 
 	require.Len(t, sel, col.length-128)
 	require.Equal(t, nullCnt+128/2, col.nullCount())
-	for i := 0; i < 128; i++ {
+	for i := range 128 {
 		if i%2 == 0 {
 			require.True(t, col.IsNull(len(sel)+i))
 		} else {
@@ -546,7 +546,7 @@ func TestPreAllocInt64(t *testing.T) {
 	col.ResizeInt64(256, true)
 	i64s := col.Int64s()
 	require.Equal(t, 256, len(i64s))
-	for i := 0; i < 256; i++ {
+	for i := range 256 {
 		require.True(t, col.IsNull(i))
 	}
 	col.AppendInt64(2333)
@@ -562,7 +562,7 @@ func TestPreAllocUint64(t *testing.T) {
 	col.ResizeUint64(256, true)
 	u64s := col.Uint64s()
 	require.Equal(t, 256, len(u64s))
-	for i := 0; i < 256; i++ {
+	for i := range 256 {
 		require.True(t, col.IsNull(i))
 	}
 	col.AppendUint64(2333)
@@ -576,7 +576,7 @@ func TestPreAllocFloat32(t *testing.T) {
 	col.ResizeFloat32(256, true)
 	f32s := col.Float32s()
 	require.Equal(t, 256, len(f32s))
-	for i := 0; i < 256; i++ {
+	for i := range 256 {
 		require.True(t, col.IsNull(i))
 	}
 	col.AppendFloat32(2333)
@@ -590,7 +590,7 @@ func TestPreAllocFloat64(t *testing.T) {
 	col.ResizeFloat64(256, true)
 	f64s := col.Float64s()
 	require.Equal(t, 256, len(f64s))
-	for i := 0; i < 256; i++ {
+	for i := range 256 {
 		require.True(t, col.IsNull(i))
 	}
 	col.AppendFloat64(2333)
@@ -604,7 +604,7 @@ func TestPreAllocDecimal(t *testing.T) {
 	col.ResizeDecimal(256, true)
 	ds := col.Decimals()
 	require.Equal(t, 256, len(ds))
-	for i := 0; i < 256; i++ {
+	for i := range 256 {
 		require.True(t, col.IsNull(i))
 	}
 	col.AppendMyDecimal(new(types.MyDecimal))
@@ -617,7 +617,7 @@ func TestPreAllocTime(t *testing.T) {
 	col.ResizeTime(256, true)
 	ds := col.Times()
 	require.Equal(t, 256, len(ds))
-	for i := 0; i < 256; i++ {
+	for i := range 256 {
 		require.True(t, col.IsNull(i))
 	}
 	col.AppendTime(types.ZeroDatetime)
@@ -631,7 +631,7 @@ func TestNull(t *testing.T) {
 	require.Equal(t, 1024, col.nullCount())
 
 	notNulls := make(map[int]struct{})
-	for i := 0; i < 512; i++ {
+	for range 512 {
 		idx := rand.Intn(1024)
 		notNulls[idx] = struct{}{}
 		col.SetNull(idx, false)
@@ -666,7 +666,7 @@ func TestSetNulls(t *testing.T) {
 	require.Zero(t, col.nullCount())
 
 	nullMap := make(map[int]struct{})
-	for i := 0; i < 100; i++ {
+	for range 100 {
 		begin := rand.Intn(1024)
 		l := rand.Intn(37)
 		end := begin + l
@@ -688,7 +688,7 @@ func TestSetNulls(t *testing.T) {
 func TestResizeReserve(t *testing.T) {
 	cI64s := newFixedLenColumn(sizeInt64, 0)
 	require.Zero(t, cI64s.length)
-	for i := 0; i < 100; i++ {
+	for range 100 {
 		n := rand.Intn(1024)
 		cI64s.ResizeInt64(n, true)
 		require.Equal(t, n, cI64s.length)
@@ -699,7 +699,7 @@ func TestResizeReserve(t *testing.T) {
 	require.Zero(t, len(cI64s.Int64s()))
 
 	cStrs := newVarLenColumn(0)
-	for i := 0; i < 100; i++ {
+	for range 100 {
 		n := rand.Intn(1024)
 		cStrs.ReserveString(n)
 		require.Zero(t, cStrs.length)
@@ -711,7 +711,7 @@ func TestResizeReserve(t *testing.T) {
 func TestGetRaw(t *testing.T) {
 	chk := NewChunkWithCapacity([]*types.FieldType{types.NewFieldType(mysql.TypeFloat)}, 1024)
 	col := chk.Column(0)
-	for i := 0; i < 1024; i++ {
+	for i := range 1024 {
 		col.AppendFloat32(float32(i))
 	}
 	it := NewIterator4Chunk(chk)
@@ -726,7 +726,7 @@ func TestGetRaw(t *testing.T) {
 
 	chk = NewChunkWithCapacity([]*types.FieldType{types.NewFieldType(mysql.TypeVarString)}, 1024)
 	col = chk.Column(0)
-	for i := 0; i < 1024; i++ {
+	for i := range 1024 {
 		col.AppendString(fmt.Sprint(i))
 	}
 	it = NewIterator4Chunk(chk)
@@ -740,59 +740,59 @@ func TestGetRaw(t *testing.T) {
 
 func TestResize(t *testing.T) {
 	col := NewColumn(types.NewFieldType(mysql.TypeLonglong), 1024)
-	for i := 0; i < 1024; i++ {
+	for i := range 1024 {
 		col.AppendInt64(int64(i))
 	}
 	col.ResizeInt64(1024, false)
-	for i := 0; i < 1024; i++ {
+	for i := range 1024 {
 		require.Equal(t, int64(0), col.Int64s()[i])
 	}
 
 	col = NewColumn(types.NewFieldType(mysql.TypeFloat), 1024)
-	for i := 0; i < 1024; i++ {
+	for i := range 1024 {
 		col.AppendFloat32(float32(i))
 	}
 	col.ResizeFloat32(1024, false)
-	for i := 0; i < 1024; i++ {
+	for i := range 1024 {
 		require.Equal(t, float32(0), col.Float32s()[i])
 	}
 
 	col = NewColumn(types.NewFieldType(mysql.TypeDouble), 1024)
-	for i := 0; i < 1024; i++ {
+	for i := range 1024 {
 		col.AppendFloat64(float64(i))
 	}
 	col.ResizeFloat64(1024, false)
-	for i := 0; i < 1024; i++ {
+	for i := range 1024 {
 		require.Equal(t, float64(0), col.Float64s()[i])
 	}
 
 	col = NewColumn(types.NewFieldType(mysql.TypeNewDecimal), 1024)
-	for i := 0; i < 1024; i++ {
+	for i := range 1024 {
 		col.AppendMyDecimal(new(types.MyDecimal).FromInt(int64(i)))
 	}
 	col.ResizeDecimal(1024, false)
-	for i := 0; i < 1024; i++ {
+	for i := range 1024 {
 		var d types.MyDecimal
 		require.Equal(t, d, col.Decimals()[i])
 	}
 
 	col = NewColumn(types.NewFieldType(mysql.TypeDuration), 1024)
-	for i := 0; i < 1024; i++ {
+	for i := range 1024 {
 		col.AppendDuration(types.Duration{Duration: time.Duration(i), Fsp: i})
 	}
 	col.ResizeGoDuration(1024, false)
-	for i := 0; i < 1024; i++ {
+	for i := range 1024 {
 		require.Equal(t, time.Duration(0), col.GoDurations()[i])
 	}
 
 	col = NewColumn(types.NewFieldType(mysql.TypeDatetime), 1024)
-	for i := 0; i < 1024; i++ {
+	for range 1024 {
 		gt := types.FromDate(rand.Intn(2200), rand.Intn(10)+1, rand.Intn(20)+1, rand.Intn(12), rand.Intn(60), rand.Intn(60), rand.Intn(1000000))
 		t := types.NewTime(gt, 0, 0)
 		col.AppendTime(t)
 	}
 	col.ResizeTime(1024, false)
-	for i := 0; i < 1024; i++ {
+	for i := range 1024 {
 		var time types.Time
 		require.Equal(t, time, col.Times()[i])
 	}
@@ -801,7 +801,7 @@ func TestResize(t *testing.T) {
 func BenchmarkDurationRow(b *testing.B) {
 	chk1 := NewChunkWithCapacity([]*types.FieldType{types.NewFieldType(mysql.TypeDuration)}, 1024)
 	col1 := chk1.Column(0)
-	for i := 0; i < 1024; i++ {
+	for i := range 1024 {
 		col1.AppendDuration(types.Duration{Duration: time.Second * time.Duration(i)})
 	}
 	chk2 := chk1.CopyConstruct()
@@ -827,7 +827,7 @@ func BenchmarkDurationRow(b *testing.B) {
 func BenchmarkDurationVec(b *testing.B) {
 	chk := NewChunkWithCapacity([]*types.FieldType{types.NewFieldType(mysql.TypeDuration)}, 1024)
 	col1 := chk.Column(0)
-	for i := 0; i < 1024; i++ {
+	for i := range 1024 {
 		col1.AppendDuration(types.Duration{Duration: time.Second * time.Duration(i)})
 	}
 	col2 := col1.CopyConstruct(nil)
@@ -840,7 +840,7 @@ func BenchmarkDurationVec(b *testing.B) {
 	b.ResetTimer()
 	for k := 0; k < b.N; k++ {
 		result.ResizeGoDuration(1024, true)
-		for i := 0; i < 1024; i++ {
+		for i := range 1024 {
 			d1 := types.Duration{Duration: ds1[i]}
 			d2 := types.Duration{Duration: ds2[i]}
 			r, err := d1.Add(d2)
@@ -855,7 +855,7 @@ func BenchmarkDurationVec(b *testing.B) {
 func BenchmarkTimeRow(b *testing.B) {
 	chk1 := NewChunkWithCapacity([]*types.FieldType{types.NewFieldType(mysql.TypeDate)}, 1024)
 	col1 := chk1.Column(0)
-	for i := 0; i < 1024; i++ {
+	for range 1024 {
 		col1.AppendTime(types.ZeroDate)
 	}
 	chk2 := chk1.CopyConstruct()
@@ -881,7 +881,7 @@ func BenchmarkTimeRow(b *testing.B) {
 func BenchmarkTimeVec(b *testing.B) {
 	chk := NewChunkWithCapacity([]*types.FieldType{types.NewFieldType(mysql.TypeDate)}, 1024)
 	col1 := chk.Column(0)
-	for i := 0; i < 1024; i++ {
+	for range 1024 {
 		col1.AppendTime(types.ZeroDate)
 	}
 	col2 := col1.CopyConstruct(nil)
@@ -894,7 +894,7 @@ func BenchmarkTimeVec(b *testing.B) {
 	b.ResetTimer()
 	for k := 0; k < b.N; k++ {
 		result.ResizeTime(1024, true)
-		for i := 0; i < 1024; i++ {
+		for i := range 1024 {
 			if r := ds1[i].Compare(ds2[i]); r > 0 {
 				rs[i] = ds1[i]
 			} else {
@@ -909,7 +909,7 @@ func genNullCols(n int) []*Column {
 	for i := range cols {
 		cols[i] = NewColumn(types.NewFieldType(mysql.TypeLonglong), 1024)
 		cols[i].ResizeInt64(1024, false)
-		for j := 0; j < 1024; j++ {
+		for j := range 1024 {
 			if rand.Intn(10) < 5 {
 				cols[i].SetNull(j, true)
 			}
@@ -919,18 +919,18 @@ func genNullCols(n int) []*Column {
 }
 
 func TestVectorizedNulls(t *testing.T) {
-	for i := 0; i < 256; i++ {
+	for range 256 {
 		cols := genNullCols(4)
 		lCol, rCol := cols[0], cols[1]
 		vecResult, rowResult := cols[2], cols[3]
 		vecResult.SetNulls(0, 1024, false)
 		rowResult.SetNulls(0, 1024, false)
 		vecResult.MergeNulls(lCol, rCol)
-		for i := 0; i < 1024; i++ {
+		for i := range 1024 {
 			rowResult.SetNull(i, lCol.IsNull(i) || rCol.IsNull(i))
 		}
 
-		for i := 0; i < 1024; i++ {
+		for i := range 1024 {
 			require.Equal(t, vecResult.IsNull(i), rowResult.IsNull(i))
 		}
 	}
@@ -956,7 +956,7 @@ func TestResetColumn(t *testing.T) {
 func BenchmarkMergeNullsVectorized(b *testing.B) {
 	cols := genNullCols(3)
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for range b.N {
 		cols[0].MergeNulls(cols[1:]...)
 	}
 }
@@ -964,8 +964,8 @@ func BenchmarkMergeNullsVectorized(b *testing.B) {
 func BenchmarkMergeNullsNonVectorized(b *testing.B) {
 	cols := genNullCols(3)
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		for i := 0; i < 1024; i++ {
+	for range b.N {
+		for i := range 1024 {
 			cols[0].SetNull(i, cols[1].IsNull(i) || cols[2].IsNull(i))
 		}
 	}

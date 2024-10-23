@@ -77,7 +77,7 @@ func (p *AutoIncPool) InitExt(size uint64, checkExisted bool, tryCnt int) {
 
 // Get id by auto-increment.
 func (p *AutoIncPool) Get() (id uint64, ok bool) {
-	for i := 0; i < p.tryCnt; i++ {
+	for range p.tryCnt {
 		id := atomic.AddUint64(&p.lastID, 1)
 		if p.cap < math.MaxUint64 {
 			id = id % p.cap
@@ -166,6 +166,7 @@ func (p *LockFreeCircularPool) InitExt(size uint32, fillCount uint32) {
 
 	fillCount = mathutil.MinUint32(p.cap-1, fillCount)
 	var i uint32
+	//nolint: intrange
 	for i = 0; i < fillCount; i++ {
 		p.slots[i] = lockFreePoolItem{value: i + 1, seq: i + 1}
 	}
@@ -181,7 +182,7 @@ func (p *LockFreeCircularPool) InitExt(size uint32, fillCount uint32) {
 func (p *LockFreeCircularPool) InitForTest(head uint32, fillCount uint32) {
 	fillCount = mathutil.MinUint32(p.cap-1, fillCount)
 	var i uint32
-	for i = 0; i < fillCount; i++ {
+	for i = range fillCount {
 		p.slots[i] = lockFreePoolItem{value: i + 1, seq: head + i + 1}
 	}
 	for ; i < p.cap; i++ {

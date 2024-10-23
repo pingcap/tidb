@@ -46,7 +46,7 @@ func TestSel(t *testing.T) {
 	n := 64
 	chk := NewChunkWithCapacity(fields, sz)
 	numRows := 0
-	for i := 0; i < n-sz; i++ {
+	for i := range n - sz {
 		chk.AppendInt64(0, int64(i))
 		if chk.NumRows() == sz {
 			chk.SetSel([]int{0, 2})
@@ -93,7 +93,7 @@ func TestSpillAction(t *testing.T) {
 	rc := NewRowContainer(fields, sz)
 
 	chk := NewChunkWithCapacity(fields, sz)
-	for i := 0; i < sz; i++ {
+	for i := range sz {
 		chk.AppendInt64(0, int64(i))
 	}
 	var tracker *memory.Tracker
@@ -118,7 +118,7 @@ func TestSpillAction(t *testing.T) {
 	resChk, err := rc.GetChunk(0)
 	require.NoError(t, err)
 	require.Equal(t, chk.NumRows(), resChk.NumRows())
-	for rowIdx := 0; rowIdx < resChk.NumRows(); rowIdx++ {
+	for rowIdx := range resChk.NumRows() {
 		require.Equal(t, chk.GetRow(rowIdx).GetDatumRow(fields), resChk.GetRow(rowIdx).GetDatumRow(fields))
 	}
 	// Write again
@@ -131,7 +131,7 @@ func TestSpillAction(t *testing.T) {
 	resChk, err = rc.GetChunk(2)
 	require.NoError(t, err)
 	require.Equal(t, chk.NumRows(), resChk.NumRows())
-	for rowIdx := 0; rowIdx < resChk.NumRows(); rowIdx++ {
+	for rowIdx := range resChk.NumRows() {
 		require.Equal(t, chk.GetRow(rowIdx).GetDatumRow(fields), resChk.GetRow(rowIdx).GetDatumRow(fields))
 	}
 
@@ -155,7 +155,7 @@ func TestSortedRowContainerSortSpillAction(t *testing.T) {
 	rc := NewSortedRowContainer(fields, sz, byItemsDesc, keyColumns, keyCmpFuncs)
 
 	chk := NewChunkWithCapacity(fields, sz)
-	for i := 0; i < sz; i++ {
+	for i := range sz {
 		chk.AppendInt64(0, int64(i))
 	}
 	var tracker *memory.Tracker
@@ -176,7 +176,7 @@ func TestSortedRowContainerSortSpillAction(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, rc.AlreadySpilledSafeForTest())
 	// The result has been sorted.
-	for i := 0; i < sz*2; i++ {
+	for i := range sz * 2 {
 		row, err := rc.GetSortedRow(i)
 		require.NoError(t, err)
 		require.Equal(t, int64(i/2), row.GetInt64(0))
@@ -195,7 +195,7 @@ func TestRowContainerResetAndAction(t *testing.T) {
 	rc := NewRowContainer(fields, sz)
 
 	chk := NewChunkWithCapacity(fields, sz)
-	for i := 0; i < sz; i++ {
+	for i := range sz {
 		chk.AppendInt64(0, int64(i))
 	}
 	var tracker *memory.Tracker
@@ -240,7 +240,7 @@ func TestSpillActionDeadLock(t *testing.T) {
 	rc := NewRowContainer(fields, sz)
 
 	chk := NewChunkWithCapacity(fields, sz)
-	for i := 0; i < sz; i++ {
+	for i := range sz {
 		chk.AppendInt64(0, int64(i))
 	}
 	var tracker *memory.Tracker
@@ -266,7 +266,7 @@ func TestActionBlocked(t *testing.T) {
 	rc := NewRowContainer(fields, sz)
 
 	chk := NewChunkWithCapacity(fields, sz)
-	for i := 0; i < sz; i++ {
+	for i := range sz {
 		chk.AppendInt64(0, int64(i))
 	}
 	var tracker *memory.Tracker
@@ -276,7 +276,7 @@ func TestActionBlocked(t *testing.T) {
 	tracker.SetBytesLimit(1450)
 	ac := rc.ActionSpill()
 	tracker.FallbackOldAndSetNewAction(ac)
-	for i := 0; i < 10; i++ {
+	for range 10 {
 		err = rc.Add(chk)
 		require.NoError(t, err)
 	}
@@ -317,10 +317,10 @@ func insertBytesRowsIntoRowContainer(t *testing.T, chkCount int, rowPerChk int) 
 
 	allRows := [][]byte{}
 	// insert chunks
-	for i := 0; i < chkCount; i++ {
+	for range chkCount {
 		chk := NewChunkWithCapacity(fields, rowPerChk)
 		// insert rows for each chunk
-		for j := 0; j < rowPerChk; j++ {
+		for range rowPerChk {
 			length := rand2.Uint32()
 			randomBytes := make([]byte, length%4096)
 			_, err := rand.Read(randomBytes)
@@ -347,8 +347,8 @@ func TestRowContainerReaderInDisk(t *testing.T) {
 
 	reader := NewRowContainerReader(rc)
 	defer reader.Close()
-	for i := 0; i < 16; i++ {
-		for j := 0; j < 16; j++ {
+	for i := range 16 {
+		for j := range 16 {
 			row := reader.Current()
 			require.Equal(t, allRows[i*16+j], row.GetBytes(0))
 			reader.Next()
@@ -369,14 +369,14 @@ func TestCloseRowContainerReader(t *testing.T) {
 	// read 8.5 of these chunks
 	reader := NewRowContainerReader(rc)
 	defer reader.Close()
-	for i := 0; i < 8; i++ {
-		for j := 0; j < 16; j++ {
+	for i := range 8 {
+		for j := range 16 {
 			row := reader.Current()
 			require.Equal(t, allRows[i*16+j], row.GetBytes(0))
 			reader.Next()
 		}
 	}
-	for j := 0; j < 8; j++ {
+	for j := range 8 {
 		row := reader.Current()
 		require.Equal(t, allRows[8*16+j], row.GetBytes(0))
 		reader.Next()
@@ -400,8 +400,8 @@ func TestConcurrentSpillWithRowContainerReader(t *testing.T) {
 		reader := NewRowContainerReader(rc)
 		defer reader.Close()
 
-		for i := 0; i < 16; i++ {
-			for j := 0; j < 1024; j++ {
+		for i := range 16 {
+			for j := range 1024 {
 				row := reader.Current()
 				require.Equal(t, allRows[i*1024+j], row.GetBytes(0))
 				reader.Next()
@@ -423,8 +423,8 @@ func TestReadAfterSpillWithRowContainerReader(t *testing.T) {
 
 	reader := NewRowContainerReader(rc)
 	defer reader.Close()
-	for i := 0; i < 8; i++ {
-		for j := 0; j < 1024; j++ {
+	for i := range 8 {
+		for j := range 1024 {
 			row := reader.Current()
 			require.Equal(t, allRows[i*1024+j], row.GetBytes(0))
 			reader.Next()
@@ -432,7 +432,7 @@ func TestReadAfterSpillWithRowContainerReader(t *testing.T) {
 	}
 	rc.SpillToDisk()
 	for i := 8; i < 16; i++ {
-		for j := 0; j < 1024; j++ {
+		for j := range 1024 {
 			row := reader.Current()
 			require.Equal(t, allRows[i*1024+j], row.GetBytes(0))
 			reader.Next()
@@ -444,7 +444,7 @@ func TestPanicWhenSpillToDisk(t *testing.T) {
 	fields := []*types.FieldType{types.NewFieldType(mysql.TypeLonglong)}
 	sz := 20
 	chk := NewChunkWithCapacity(fields, sz)
-	for i := 0; i < sz; i++ {
+	for i := range sz {
 		chk.AppendInt64(0, int64(i))
 	}
 
@@ -480,7 +480,7 @@ func TestPanicDuringSortedRowContainerSpill(t *testing.T) {
 	rc := NewSortedRowContainer(fields, sz, byItemsDesc, keyColumns, keyCmpFuncs)
 
 	chk := NewChunkWithCapacity(fields, sz)
-	for i := 0; i < sz; i++ {
+	for i := range sz {
 		chk.AppendInt64(0, int64(i))
 	}
 	var tracker *memory.Tracker
@@ -524,14 +524,14 @@ func TestInterruptedDuringSpilling(t *testing.T) {
 	rc.GetMemTracker().AttachTo(rootTracker)
 	defer rc.Close()
 	chk := NewChunkWithCapacity(fields, sz)
-	for i := 0; i < sz; i++ {
+	for i := range sz {
 		chk.AppendInt64(0, int64(i))
 		chk.AppendInt64(1, int64(i))
 		chk.AppendInt64(2, int64(i))
 		chk.AppendString(3, "testtesttest")
 		chk.AppendInt64(4, int64(i))
 	}
-	for i := 0; i < 102400; i++ {
+	for range 102400 {
 		rc.Add(chk)
 	}
 	wg := sync.WaitGroup{}
@@ -582,9 +582,9 @@ func benchmarkRowContainerReaderInDiskWithRowLength(b *testing.B, rowLength int)
 	rc.SpillToDisk()
 
 	// insert `b.N * 1<<10` rows (`b.N` chunks) into the rc
-	for i := 0; i < b.N; i++ {
+	for range b.N {
 		chk := NewChunkWithCapacity(fields, 1<<10)
-		for j := 0; j < 1<<10; j++ {
+		for range 1 << 10 {
 			chk.AppendBytes(0, randomBytes)
 		}
 
@@ -595,7 +595,7 @@ func benchmarkRowContainerReaderInDiskWithRowLength(b *testing.B, rowLength int)
 	defer reader.Close()
 	b.StartTimer()
 	for n := 0; n < b.N; n++ {
-		for i := 0; i < 1<<10; i++ {
+		for range 1 << 10 {
 			reader.Next()
 		}
 	}

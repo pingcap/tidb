@@ -94,7 +94,7 @@ func ValidatePasswordLowPolicy(pwd string, globalVars *variable.GlobalVarAccesso
 func ValidatePasswordMediumPolicy(pwd string, globalVars *variable.GlobalVarAccessor) (string, error) {
 	var lowerCaseCount, upperCaseCount, numberCount, specialCharCount int64
 	runes := []rune(pwd)
-	for i := 0; i < len(runes); i++ {
+	for i := range runes {
 		if unicode.IsUpper(runes[i]) {
 			upperCaseCount++
 		} else if unicode.IsLower(runes[i]) {

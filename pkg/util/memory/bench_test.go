@@ -19,13 +19,13 @@ import (
 )
 
 func BenchmarkMemTotal(b *testing.B) {
-	for i := 0; i < b.N; i++ {
+	for range b.N {
 		_, _ = MemTotal()
 	}
 }
 
 func BenchmarkMemUsed(b *testing.B) {
-	for i := 0; i < b.N; i++ {
+	for range b.N {
 		_, _ = MemUsed()
 	}
 }

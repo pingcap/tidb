@@ -39,7 +39,7 @@ func compare(b *testing.B, collator Collator, length int) {
 	s2 := generateData(length)
 
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for range b.N {
 		collator.Compare(s1, s2)
 	}
 }
@@ -48,7 +48,7 @@ func key(b *testing.B, collator Collator, length int) {
 	s := generateData(length)
 
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for range b.N {
 		collator.Key(s)
 	}
 }

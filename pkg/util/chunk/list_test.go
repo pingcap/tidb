@@ -35,7 +35,7 @@ func TestList(t *testing.T) {
 	srcRow := srcChunk.GetRow(0)
 
 	// Test basic append.
-	for i := 0; i < 5; i++ {
+	for range 5 {
 		l.AppendRow(srcRow)
 	}
 	require.Equal(t, 3, l.NumChunks())
@@ -46,7 +46,7 @@ func TestList(t *testing.T) {
 	l.Reset()
 	require.Len(t, l.freelist, 3)
 
-	for i := 0; i < 5; i++ {
+	for range 5 {
 		l.AppendRow(srcRow)
 	}
 	require.Empty(t, l.freelist)
@@ -65,7 +65,7 @@ func TestList(t *testing.T) {
 
 	// Test iteration.
 	l.Reset()
-	for i := 0; i < 5; i++ {
+	for i := range 5 {
 		tmp := NewChunkWithCapacity(fields, 32)
 		tmp.AppendInt64(0, int64(i))
 		l.AppendRow(tmp.GetRow(0))
@@ -133,11 +133,11 @@ func BenchmarkListMemoryUsage(b *testing.B) {
 
 	initCap := 50
 	list := NewList(fieldTypes, 2, 8)
-	for i := 0; i < initCap; i++ {
+	for range initCap {
 		list.AppendRow(row)
 	}
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for range b.N {
 		list.GetMemTracker().BytesConsumed()
 	}
 }
@@ -149,7 +149,7 @@ func BenchmarkListAdd(b *testing.B) {
 	l := NewList(fields, numRow, numRow)
 
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for range b.N {
 		l.Add(chk)
 	}
 }
@@ -163,7 +163,7 @@ func BenchmarkListGetRow(b *testing.B) {
 	}
 	rnd := rand.New(rand.NewSource(0))
 	ptrs := make([]RowPtr, 0, b.N)
-	for i := 0; i < min(b.N, 10000); i++ {
+	for range min(b.N, 10000) {
 		ptrs = append(ptrs, RowPtr{
 			ChkIdx: rnd.Uint32() % uint32(numChk),
 			RowIdx: rnd.Uint32() % uint32(numRow),
@@ -173,7 +173,7 @@ func BenchmarkListGetRow(b *testing.B) {
 		ptrs = append(ptrs, ptrs[i%10000])
 	}
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for i := range b.N {
 		l.GetRow(ptrs[i])
 	}
 }
