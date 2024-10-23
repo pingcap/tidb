@@ -453,7 +453,7 @@
       "IndexLookUp(Index(t.b)[[1,1]], Table(t))",
       "IndexLookUp(Index(t.d)[[-inf,1991-09-05 00:00:00)], Table(t))",
       "IndexLookUp(Index(t.ts)[[-inf,1991-09-05 00:00:00)], Table(t))",
-      "IndexLookUp(Index(t1.idx)[[3,3]], Table(t1)->Sel([eq(test.t1.b, 100000)]))->Projection->Projection->StreamAgg->Limit"
+      "IndexLookUp(Index(t1.idx)[[3,3]], Table(t1)->Sel([eq(test.t1.b, 100000)]))->Projection->HashAgg->Limit"
     ]
   },
   {
