@@ -449,6 +449,18 @@ func (p *immutable) loadSomeUsers(ctx sessionctx.Context, userList ...string) er
 	return nil
 }
 
+func dedupSorted[S ~[]E, E any](s S, cmp func(a, b E) int) S {
+	skip := 0
+	for i := 1; i < len(s); i++ {
+		if cmp(s[i], s[i-1]) == 0 {
+			skip++
+		}
+		s[i-skip] = s[i]
+	}
+	s = s[:len(s)-skip]
+	return s
+}
+
 // merge construct a new MySQLPrivilege by merging the data of the two objects;.
 func (p *MySQLPrivilege) merge(diff *immutable) *MySQLPrivilege {
 	var ret MySQLPrivilege
@@ -458,17 +470,8 @@ func (p *MySQLPrivilege) merge(diff *immutable) *MySQLPrivilege {
 
 	// sort and dedup
 	slices.SortStableFunc(ret.User, compareUserRecord)
-	skip := 0
-	for i := 1; i < len(ret.User); i++ {
-		if compareUserRecord(ret.User[i], ret.User[i-1]) == 0 {
-			skip++
-		}
-		ret.User[i-skip] = ret.User[i]
-	}
-	ret.User = ret.User[:len(ret.User)-skip]
+	ret.User = dedupSorted(ret.User, compareUserRecord)
 	ret.buildUserMap()
-
-	fmt.Println("after merge, len(user) ==", len(ret.User))
 
 	ret.DB = make([]dbRecord, 0, len(p.DB)+len(diff.DB))
 	ret.DB = append(ret.DB, p.DB...)
@@ -483,10 +486,17 @@ func (p *MySQLPrivilege) merge(diff *immutable) *MySQLPrivilege {
 	ret.ColumnsPriv = make([]columnsPrivRecord, 0, len(p.ColumnsPriv)+len(diff.ColumnsPriv))
 	ret.ColumnsPriv = append(ret.ColumnsPriv, p.ColumnsPriv...)
 	ret.ColumnsPriv = append(ret.ColumnsPriv, diff.ColumnsPriv...)
+	slices.SortStableFunc(ret.ColumnsPriv, compareColumnsPrivRecord)
+	ret.ColumnsPriv = dedupSorted(ret.ColumnsPriv, compareColumnsPrivRecord)
 
 	ret.DefaultRoles = make([]defaultRoleRecord, 0, len(p.DefaultRoles)+len(diff.DefaultRoles))
-	ret.DefaultRoles = append(p.DefaultRoles, p.DefaultRoles...)
+	ret.DefaultRoles = append(ret.DefaultRoles, p.DefaultRoles...)
 	ret.DefaultRoles = append(ret.DefaultRoles, diff.DefaultRoles...)
+
+	ret.DynamicPriv = make([]dynamicPrivRecord, 0, len(p.DynamicPriv)+len(diff.DynamicPriv))
+	ret.DynamicPriv = append(ret.DynamicPriv, p.DynamicPriv...)
+	ret.DynamicPriv = append(ret.DynamicPriv, diff.DynamicPriv...)
+	ret.buildDynamicMap()
 
 	return &ret
 }
@@ -548,6 +558,37 @@ func compareBaseRecord(x, y *baseRecord) int {
 
 func compareUserRecord(x, y UserRecord) int {
 	return compareBaseRecord(&x.baseRecord, &y.baseRecord)
+}
+
+func compareColumnsPrivRecord(x, y columnsPrivRecord) int {
+	ret := compareColumnsPrivRecordEx(x, y)
+	return ret
+}
+
+func compareColumnsPrivRecordEx(x, y columnsPrivRecord) int {
+	cmp := compareBaseRecord(&x.baseRecord, &y.baseRecord)
+	if cmp != 0 {
+		return cmp
+	}
+	switch {
+	case x.DB > y.DB:
+		return 1
+	case x.DB < y.DB:
+		return -1
+	}
+	switch {
+	case x.TableName > y.TableName:
+		return 1
+	case x.TableName < y.TableName:
+		return -1
+	}
+	switch {
+	case x.ColumnName > y.ColumnName:
+		return 1
+	case x.ColumnName < y.ColumnName:
+		return -1
+	}
+	return 0
 }
 
 // compareHost compares two host string using some special rules, return value 1, 0, -1 means > = <.
@@ -624,12 +665,7 @@ func (p *MySQLPrivilege) LoadGlobalGrantsTable(ctx sessionctx.Context) error {
 	if err := p.loadTable(ctx, sqlLoadGlobalGrantsTable, p.decodeGlobalGrantsTableRow); err != nil {
 		return errors.Trace(err)
 	}
-	if p.Dynamic == nil {
-		p.Dynamic = make(map[string][]dynamicPrivRecord)
-	}
-	for _, value := range p.DynamicPriv {
-		p.Dynamic[value.User] = append(p.Dynamic[value.User], value)
-	}
+	p.buildDynamicMap()
 	return nil
 }
 
@@ -658,6 +694,14 @@ func (p *MySQLPrivilege) buildDBMap() {
 		slices.SortFunc(records, compareDBRecord)
 	}
 	p.DBMap = dbMap
+}
+
+func (p *MySQLPrivilege) buildDynamicMap() {
+	dynamic := make(map[string][]dynamicPrivRecord)
+	for _, value := range p.DynamicPriv {
+		dynamic[value.User] = append(dynamic[value.User], value)
+	}
+	p.Dynamic = dynamic
 }
 
 // LoadTablesPrivTable loads the mysql.tables_priv table from database.
