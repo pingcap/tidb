@@ -12,12 +12,12 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//go:build !intest
+//go:build !intest && !enableassert
 
 package intest
 
-// InTest checks if the code is running in test.
-const InTest = false
+// EnableAssert checks if the code is running in integration test.
+const EnableAssert = false
 
 // Assert is a stub function in release build.
 // See the same function in `util/intest/assert.go` for the real implement in test.

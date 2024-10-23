@@ -126,7 +126,7 @@ PARTITION p9 VALUES LESS THAN (MAXVALUE) );
 SHOW CREATE TABLE timezone_test;
 Table	Create Table
 timezone_test	CREATE TABLE `timezone_test` (
-  `id` int(11) NOT NULL,
+  `id` int NOT NULL,
   `creation_dt` timestamp DEFAULT CURRENT_TIMESTAMP
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 PARTITION BY RANGE (UNIX_TIMESTAMP(`creation_dt`))
@@ -148,7 +148,7 @@ PARTITION p9 VALUES LESS THAN (MAXVALUE) );
 SHOW CREATE TABLE timezone_test;
 Table	Create Table
 timezone_test	CREATE TABLE `timezone_test` (
-  `id` int(11) NOT NULL,
+  `id` int NOT NULL,
   `creation_dt` timestamp DEFAULT CURRENT_TIMESTAMP
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 PARTITION BY RANGE (UNIX_TIMESTAMP(`creation_dt`))
@@ -314,10 +314,10 @@ CREATE TABLE tkey1 (col1 INT NOT NULL, col2 DATE NOT NULL,col3 INT NOT NULL, col
 show create table tkey1;
 Table	Create Table
 tkey1	CREATE TABLE `tkey1` (
-  `col1` int(11) NOT NULL,
+  `col1` int NOT NULL,
   `col2` date NOT NULL,
-  `col3` int(11) NOT NULL,
-  `col4` int(11) NOT NULL,
+  `col3` int NOT NULL,
+  `col4` int NOT NULL,
   UNIQUE KEY `col3` (`col3`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 PARTITION BY KEY (`col3`) PARTITIONS 4
@@ -355,7 +355,7 @@ CREATE TABLE tkey10 (`col1` int, `col2` char(5),`col3` date)/*!50100 PARTITION B
 show create table tkey10;
 Table	Create Table
 tkey10	CREATE TABLE `tkey10` (
-  `col1` int(11) DEFAULT NULL,
+  `col1` int DEFAULT NULL,
   `col2` char(5) DEFAULT NULL,
   `col3` date DEFAULT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
@@ -369,7 +369,7 @@ PARTITION `pp3`)
 show create table tkey11;
 Table	Create Table
 tkey11	CREATE TABLE `tkey11` (
-  `col1` int(11) DEFAULT NULL,
+  `col1` int DEFAULT NULL,
   `col2` char(5) DEFAULT NULL,
   `col3` date DEFAULT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
@@ -386,7 +386,7 @@ PARTITION `pp3` comment 'suzhou');
 show create table tkey12;
 Table	Create Table
 tkey12	CREATE TABLE `tkey12` (
-  `col1` int(11) DEFAULT NULL,
+  `col1` int DEFAULT NULL,
   `col2` char(5) DEFAULT NULL,
   `col3` date DEFAULT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
@@ -402,7 +402,7 @@ PARTITION BY KEY (col1) PARTITIONS 4;
 show create table tkey13;
 Table	Create Table
 tkey13	CREATE TABLE `tkey13` (
-  `col1` int(11) DEFAULT NULL,
+  `col1` int DEFAULT NULL,
   `col2` char(5) DEFAULT NULL,
   `col3` date DEFAULT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![placement] PLACEMENT POLICY=`fivereplicas` */

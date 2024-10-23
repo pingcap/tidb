@@ -24,69 +24,69 @@ TABLE_NAME	column_name
 t	abctime
 describe t;
 Field	Type	Null	Key	Default	Extra
-id	int(11)	YES		NULL	
-abctime	int(11)	YES		NULL	
-DATETIME_PRECISION	int(11)	YES		NULL	
+id	int	YES		NULL	
+abctime	int	YES		NULL	
+DATETIME_PRECISION	int	YES		NULL	
 describe t id;
 Field	Type	Null	Key	Default	Extra
-id	int(11)	YES		NULL	
+id	int	YES		NULL	
 describe t ID;
 Field	Type	Null	Key	Default	Extra
-id	int(11)	YES		NULL	
+id	int	YES		NULL	
 describe t 'I%';
 Error 1064 (42000): You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 15 near "'I%';" 
 describe t I%;
 Error 1064 (42000): You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 13 near "%;" 
 show columns from t like 'abctime';
 Field	Type	Null	Key	Default	Extra
-abctime	int(11)	YES		NULL	
+abctime	int	YES		NULL	
 show columns from t like 'ABCTIME';
 Field	Type	Null	Key	Default	Extra
-abctime	int(11)	YES		NULL	
+abctime	int	YES		NULL	
 show columns from t like 'abc%';
 Field	Type	Null	Key	Default	Extra
-abctime	int(11)	YES		NULL	
+abctime	int	YES		NULL	
 show columns from t like 'ABC%';
 Field	Type	Null	Key	Default	Extra
-abctime	int(11)	YES		NULL	
+abctime	int	YES		NULL	
 show columns from t like '%ime';
 Field	Type	Null	Key	Default	Extra
-abctime	int(11)	YES		NULL	
+abctime	int	YES		NULL	
 show columns from t like '%IME';
 Field	Type	Null	Key	Default	Extra
-abctime	int(11)	YES		NULL	
+abctime	int	YES		NULL	
 show columns in t like '%ime';
 Field	Type	Null	Key	Default	Extra
-abctime	int(11)	YES		NULL	
+abctime	int	YES		NULL	
 show columns in t like '%IME';
 Field	Type	Null	Key	Default	Extra
-abctime	int(11)	YES		NULL	
+abctime	int	YES		NULL	
 show fields in t like '%ime';
 Field	Type	Null	Key	Default	Extra
-abctime	int(11)	YES		NULL	
+abctime	int	YES		NULL	
 show fields in t like '%IME';
 Field	Type	Null	Key	Default	Extra
-abctime	int(11)	YES		NULL	
+abctime	int	YES		NULL	
 show columns from t where field like '%time';
 Field	Type	Null	Key	Default	Extra
-abctime	int(11)	YES		NULL	
+abctime	int	YES		NULL	
 show columns from t where field = 'abctime';
 Field	Type	Null	Key	Default	Extra
-abctime	int(11)	YES		NULL	
+abctime	int	YES		NULL	
 show columns in t where field = 'abctime';
 Field	Type	Null	Key	Default	Extra
-abctime	int(11)	YES		NULL	
+abctime	int	YES		NULL	
 show fields from t where field = 'abctime';
 Field	Type	Null	Key	Default	Extra
-abctime	int(11)	YES		NULL	
+abctime	int	YES		NULL	
 show fields in t where field = 'abctime';
 Field	Type	Null	Key	Default	Extra
-abctime	int(11)	YES		NULL	
+abctime	int	YES		NULL	
 explain t;
 Field	Type	Null	Key	Default	Extra
-id	int(11)	YES		NULL	
-abctime	int(11)	YES		NULL	
-DATETIME_PRECISION	int(11)	YES		NULL	
+id	int	YES		NULL	
+abctime	int	YES		NULL	
+DATETIME_PRECISION	int	YES		NULL	
 show columns from t like id;
 Error 1054 (42S22): Unknown column 'id' in 'where clause'
 show columns from t like `id`;

@@ -2213,15 +2213,14 @@ HashJoin	15593.77	root		inner join, equal:[eq(planner__core__casetest__rule__rul
 │ └─Selection	9990.00	cop[tikv]		not(isnull(planner__core__casetest__rule__rule_join_reorder.t2.b))
 │   └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
 └─MergeJoin(Probe)	12475.01	root		inner join, left key:planner__core__casetest__rule__rule_join_reorder.t.a, right key:planner__core__casetest__rule__rule_join_reorder.t1.a
-  ├─Projection(Build)	9980.01	root		planner__core__casetest__rule__rule_join_reorder.t1.a, planner__core__casetest__rule__rule_join_reorder.t1.b
-  │ └─IndexLookUp	9980.01	root		
-  │   ├─IndexFullScan(Build)	9990.00	cop[tikv]	table:t1, index:a(a)	keep order:true, stats:pseudo
-  │   └─Selection(Probe)	9980.01	cop[tikv]		not(isnull(planner__core__casetest__rule__rule_join_reorder.t1.b))
-  │     └─TableRowIDScan	9990.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
-  └─Projection(Probe)	9990.00	root		planner__core__casetest__rule__rule_join_reorder.t.a, planner__core__casetest__rule__rule_join_reorder.t.b
-    └─IndexLookUp	9990.00	root		
-      ├─IndexFullScan(Build)	9990.00	cop[tikv]	table:t, index:a(a)	keep order:true, stats:pseudo
-      └─TableRowIDScan(Probe)	9990.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+  ├─Sort(Build)	9980.01	root		planner__core__casetest__rule__rule_join_reorder.t1.a
+  │ └─TableReader	9980.01	root		data:Selection
+  │   └─Selection	9980.01	cop[tikv]		not(isnull(planner__core__casetest__rule__rule_join_reorder.t1.a)), not(isnull(planner__core__casetest__rule__rule_join_reorder.t1.b))
+  │     └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+  └─Sort(Probe)	9990.00	root		planner__core__casetest__rule__rule_join_reorder.t.a
+    └─TableReader	9990.00	root		data:Selection
+      └─Selection	9990.00	cop[tikv]		not(isnull(planner__core__casetest__rule__rule_join_reorder.t.a))
+        └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 explain format = 'brief' select /*+ straight_join() INL_JOIN(t1) */ * from t, t1, t2 where t.a = t1.a and t1.b=t2.b;
 id	estRows	task	access object	operator info
 HashJoin	15593.77	root		inner join, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t1.b, planner__core__casetest__rule__rule_join_reorder.t2.b)]

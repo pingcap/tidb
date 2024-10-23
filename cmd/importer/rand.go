@@ -110,11 +110,11 @@ func randTime(col *column) string {
 
 	minTime, err := time.Parse(timeFormat, minv)
 	if err != nil {
-		log.Warn("parse minv time failed", zap.Error(err))
+		log.Warn("parse min time failed", zap.Error(err))
 	}
 	maxTime, err := time.Parse(timeFormat, maxv)
 	if err != nil {
-		log.Warn("parse maxv time failed", zap.Error(err))
+		log.Warn("parse max time failed", zap.Error(err))
 	}
 	seconds := int(maxTime.Sub(minTime).Seconds())
 	t := minTime.Add(time.Duration(randInt(0, seconds)) * time.Second)
@@ -138,7 +138,7 @@ func randTimestamp(col *column) string {
 
 	minTime, err := time.Parse(dateTimeFormat, minv)
 	if err != nil {
-		log.Warn("parse minv timestamp failed", zap.Error(err))
+		log.Warn("parse min timestamp failed", zap.Error(err))
 	}
 	if maxv == "" {
 		t := minTime.Add(time.Duration(randInt(0, 365)) * 24 * time.Hour) // nolint: durationcheck
@@ -147,7 +147,7 @@ func randTimestamp(col *column) string {
 
 	maxTime, err := time.Parse(dateTimeFormat, maxv)
 	if err != nil {
-		log.Warn("parse maxv timestamp failed", zap.Error(err))
+		log.Warn("parse max timestamp failed", zap.Error(err))
 	}
 	seconds := int(maxTime.Sub(minTime).Seconds())
 	t := minTime.Add(time.Duration(randInt(0, seconds)) * time.Second)
@@ -165,11 +165,11 @@ func randYear(col *column) string {
 
 	minTime, err := time.Parse(yearFormat, minv)
 	if err != nil {
-		log.Warn("parse minv year failed", zap.Error(err))
+		log.Warn("parse min year failed", zap.Error(err))
 	}
 	maxTime, err := time.Parse(yearFormat, maxv)
 	if err != nil {
-		log.Warn("parse maxv year failed", zap.Error(err))
+		log.Warn("parse max year failed", zap.Error(err))
 	}
 	seconds := int(maxTime.Sub(minTime).Seconds())
 	t := minTime.Add(time.Duration(randInt(0, seconds)) * time.Second)
