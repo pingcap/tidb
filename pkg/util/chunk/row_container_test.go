@@ -376,8 +376,8 @@ func TestCloseRowContainerReader(t *testing.T) {
 			reader.Next()
 		}
 	}
-	row := reader.Current()
 	for j := range 8 {
+		row := reader.Current()
 		require.Equal(t, allRows[8*16+j], row.GetBytes(0))
 		reader.Next()
 	}
@@ -401,8 +401,8 @@ func TestConcurrentSpillWithRowContainerReader(t *testing.T) {
 		defer reader.Close()
 
 		for i := range 16 {
-			row := reader.Current()
 			for j := range 1024 {
+				row := reader.Current()
 				require.Equal(t, allRows[i*1024+j], row.GetBytes(0))
 				reader.Next()
 			}
