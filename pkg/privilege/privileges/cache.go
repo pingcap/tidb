@@ -446,6 +446,12 @@ func (p *immutable) loadSomeUsers(ctx sessionctx.Context, userList ...string) er
 		return errors.Trace(err)
 	}
 
+	p.RoleGraph = make(map[string]roleGraphEdgesTable)
+	err = p.loadTable(ctx, sqlLoadRoleGraph, p.decodeRoleEdgesTable)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
 	return nil
 }
 
@@ -497,6 +503,8 @@ func (p *MySQLPrivilege) merge(diff *immutable) *MySQLPrivilege {
 	ret.DynamicPriv = append(ret.DynamicPriv, p.DynamicPriv...)
 	ret.DynamicPriv = append(ret.DynamicPriv, diff.DynamicPriv...)
 	ret.buildDynamicMap()
+
+	ret.RoleGraph = diff.RoleGraph
 
 	return &ret
 }
