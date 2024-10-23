@@ -800,7 +800,7 @@ func (l *listPartitionPruner) findUsedListPartitions(conds []expression.Expressi
 				return nil, err
 			}
 			idxs = make(map[int]struct{})
-			idxs[l.listPrune.LocatePartition(value, isNull)] = struct{}{}
+			idxs[l.listPrune.LocatePartition(l.ctx.GetExprCtx().GetEvalCtx(), value, isNull)] = struct{}{}
 		}
 		for idx := range idxs {
 			idx = l.pi.GetOverlappingDroppingPartitionIdx(idx)

@@ -437,7 +437,7 @@ type ForListPruning struct {
 }
 
 type btreeListItem struct {
-	key     int64
+	key     uint64
 	partIdx int
 }
 
@@ -990,21 +990,31 @@ func (lp *ForListPruning) buildListPartitionValueMap(ctx expression.BuildContext
 				lp.nullPartitionIdx = partitionIdx
 				continue
 			}
-			lp.valueMap.ReplaceOrInsert(&btreeListItem{v, partitionIdx})
+			if mysql.HasUnsignedFlag(lp.PruneExpr.GetType(ctx.GetEvalCtx()).GetFlag()) {
+				lp.valueMap.ReplaceOrInsert(&btreeListItem{uint64(v), partitionIdx})
+			} else {
+				lp.valueMap.ReplaceOrInsert(&btreeListItem{codec.EncodeIntToCmpUint(v), partitionIdx})
+			}
 		}
 	}
 	return nil
 }
 
 // LocatePartition locates partition by the column value
-func (lp *ForListPruning) LocatePartition(value int64, isNull bool) int {
+func (lp *ForListPruning) LocatePartition(ctx exprctx.EvalContext, value int64, isNull bool) int {
 	if isNull {
 		if lp.nullPartitionIdx >= 0 {
 			return lp.nullPartitionIdx
 		}
 		return lp.defaultPartitionIdx
 	}
-	partitionIdx, ok := lp.valueMap.Get(&btreeListItem{key: value})
+	var key uint64
+	if mysql.HasUnsignedFlag(lp.PruneExpr.GetType(ctx).GetFlag()) {
+		key = uint64(key)
+	} else {
+		key = codec.EncodeIntToCmpUint(value)
+	}
+	partitionIdx, ok := lp.valueMap.Get(&btreeListItem{key: key})
 	if !ok {
 		return lp.defaultPartitionIdx
 	}
@@ -1033,16 +1043,24 @@ func (lp *ForListPruning) LocatePartitionByRange(ctx exprctx.EvalContext, r *ran
 		return nil, err
 	}
 
+	var lowKey, highKey uint64
+
+	if mysql.HasUnsignedFlag(lp.PruneExpr.GetType(ctx).GetFlag()) {
+		lowKey, highKey = uint64(lowInt64), uint64(highInt64)
+	} else {
+		lowKey, highKey = codec.EncodeIntToCmpUint(lowInt64), codec.EncodeIntToCmpUint(highInt64)
+	}
+
 	idxs = make(map[int]struct{})
-	lp.valueMap.AscendRange(&btreeListItem{key: lowInt64}, &btreeListItem{key: highInt64}, func(item *btreeListItem) bool {
-		if item.key == lowInt64 && r.LowExclude {
+	lp.valueMap.AscendRange(&btreeListItem{key: lowKey}, &btreeListItem{key: highKey}, func(item *btreeListItem) bool {
+		if item.key == lowKey && r.LowExclude {
 			return true
 		}
 		idxs[item.partIdx] = struct{}{}
 		return true
 	})
 
-	if item, ok := lp.valueMap.Get(&btreeListItem{key: highInt64}); ok && !r.HighExclude {
+	if item, ok := lp.valueMap.Get(&btreeListItem{key: highKey}); ok && !r.HighExclude {
 		idxs[item.partIdx] = struct{}{}
 	}
 
@@ -1055,7 +1073,7 @@ func (lp *ForListPruning) locateListPartitionByRow(ctx expression.EvalContext, r
 	if err != nil {
 		return -1, errors.Trace(err)
 	}
-	idx := lp.LocatePartition(value, isNull)
+	idx := lp.LocatePartition(ctx, value, isNull)
 	if idx >= 0 {
 		return idx, nil
 	}
