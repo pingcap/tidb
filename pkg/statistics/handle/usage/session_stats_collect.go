@@ -16,6 +16,7 @@ package usage
 
 import (
 	"cmp"
+	"iter"
 	"slices"
 	"strings"
 	"sync"
@@ -31,6 +32,7 @@ import (
 	utilstats "github.com/pingcap/tidb/pkg/statistics/handle/util"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/sqlescape"
 )
 
@@ -316,6 +318,12 @@ func (s *SessionStatsItem) UpdateColStatsUsage(colMap map[model.TableItemID]time
 	s.statsUsage.Merge(colMap)
 }
 
+func (s *SessionStatsItem) UpdateColStatsUsagev2(colItems iter.Seq[model.TableItemID], updateTime time.Time) {
+	s.Lock()
+	defer s.Unlock()
+	s.statsUsage.MergeRawData(colItems, updateTime)
+}
+
 // SessionStatsList is a list of SessionStatsItem, which is used to collect stats usage and table delta information from sessions.
 // TODO: merge SessionIndexUsage into this list.
 /*
@@ -517,6 +525,18 @@ func (m *StatsUsage) Merge(other map[model.TableItemID]time.Time) {
 	for id, t := range other {
 		if mt, ok := m.usage[id]; !ok || mt.Before(t) {
 			m.usage[id] = t
+		}
+	}
+}
+
+func (m *StatsUsage) MergeRawData(raw iter.Seq[model.TableItemID], updateTime time.Time) {
+	m.lock.Lock()
+	defer m.lock.Unlock()
+	for item := range raw {
+		// TODO: Remove this assertion once it has been confirmed to operate correctly over a period of time.
+		intest.Assert(!item.IsIndex, "predicate column should only be table column")
+		if mt, ok := m.usage[item]; !ok || mt.Before(updateTime) {
+			m.usage[item] = updateTime
 		}
 	}
 }
