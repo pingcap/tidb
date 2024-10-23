@@ -897,7 +897,7 @@ func (r *builder) newBuildFromPatternLike(
 // collation != binary check here. We may also move it to collation related packages when NO PAD collations are
 // implemented in the future.
 func isPadSpaceCollation(collation string) bool {
-	return collation != charset.CollationBin
+	return collation != charset.CollationBin && collation != "utf8mb4_0900_ai_ci" && collation != "utf8mb4_0900_bin"
 }
 
 func (r *builder) buildFromNot(
