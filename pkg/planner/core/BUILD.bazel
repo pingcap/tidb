@@ -53,6 +53,7 @@ go_library(
         "resolve_indices.go",
         "rule_aggregation_elimination.go",
         "rule_aggregation_push_down.go",
+        "rule_aggregation_simplification.go",
         "rule_aggregation_skew_rewrite.go",
         "rule_collect_plan_stats.go",
         "rule_column_pruning.go",
