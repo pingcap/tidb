@@ -3,6 +3,7 @@
 package task
 
 import (
+	"os"
 	"testing"
 	"time"
 
@@ -221,4 +222,28 @@ func TestBackupConfigHash(t *testing.T) {
 		testCfg.CompressionConfig = CompressionConfig{CompressionType: 1}
 		hashCheck(t, &testCfg, originalHash, true)
 	}
+}
+
+func TestDefaultBackupConfigDisableChecksum(t *testing.T) {
+	// Test the default configuration
+	cfg := DefaultBackupConfig()
+
+	// Check some default values
+	require.Equal(t, uint32(4), cfg.Concurrency)
+	require.Equal(t, uint32(2), cfg.ChecksumConcurrency)
+	require.False(t, cfg.SendCreds)
+	require.False(t, cfg.Checksum)
+
+	// Test with checksum flag set
+	os.Args = []string{"cmd", "--checksum=true"}
+	cfg = DefaultBackupConfig()
+	require.True(t, cfg.Checksum)
+
+	// Test with checksum flag explicitly set to false
+	os.Args = []string{"cmd", "--checksum=false"}
+	cfg = DefaultBackupConfig()
+	require.False(t, cfg.Checksum)
+
+	// Reset os.Args
+	os.Args = []string{"cmd"}
 }
