@@ -292,7 +292,14 @@ func SchemaByTable(is InfoSchema, tableInfo *model.TableInfo) (val *model.DBInfo
 	if tableInfo == nil {
 		return nil, false
 	}
-	return is.SchemaByID(tableInfo.DBID)
+	if tableInfo.DBID > 0 {
+		return is.SchemaByID(tableInfo.DBID)
+	}
+	tbl, ok := is.TableByID(stdctx.Background(), tableInfo.ID)
+	if !ok {
+		return nil, false
+	}
+	return is.SchemaByID(tbl.Meta().DBID)
 }
 
 func (is *infoSchema) TableByID(_ stdctx.Context, id int64) (val table.Table, ok bool) {
