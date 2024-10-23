@@ -478,7 +478,7 @@ func (j *baseJoinProbe) prepareForProbe(chk *chunk.Chunk) (joinedChk *chunk.Chun
 	j.nextCachedBuildRowIndex = 0
 	j.matchedRowsForCurrentProbeRow = 0
 	joinedChk = chk
-	if j.ctx.OtherCondition != nil {
+	if j.ctx.hasOtherCondition() {
 		j.tmpChk.Reset()
 		j.rowIndexInfos = j.rowIndexInfos[:0]
 		j.selected = j.selected[:0]
@@ -747,6 +747,10 @@ func NewJoinProbe(ctx *HashJoinCtxV2, workID uint, joinType logicalop.JoinType, 
 		return newOuterJoinProbe(base, !rightAsBuildSide, rightAsBuildSide)
 	case logicalop.RightOuterJoin:
 		return newOuterJoinProbe(base, rightAsBuildSide, rightAsBuildSide)
+	case logicalop.SemiJoin:
+		return newSemiJoinProbe(base, !rightAsBuildSide)
+	case logicalop.AntiSemiJoin:
+		return newAntiSemiJoinProbe(base, !rightAsBuildSide)
 	default:
 		panic("unsupported join type")
 	}

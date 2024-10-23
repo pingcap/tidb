@@ -97,7 +97,7 @@ func (mds *MockDataSource) GenColDatums(col int) (results []any) {
 				panic("need to provid data")
 			}
 
-			datums = mds.P.Datums[col]
+			results = mds.P.Datums[col]
 		} else {
 			datumSet := make(map[string]bool, ndv)
 			for len(datums) < ndv {
@@ -109,14 +109,14 @@ func (mds *MockDataSource) GenColDatums(col int) (results []any) {
 				datumSet[str] = true
 				datums = append(datums, d)
 			}
-		}
 
-		for i := 0; i < rows; i++ {
-			val, err := rand.Int(rand.Reader, big.NewInt(int64(len(datums))))
-			if err != nil {
-				panic("Fail to generate int number")
+			for i := 0; i < rows; i++ {
+				val, err := rand.Int(rand.Reader, big.NewInt(int64(len(datums))))
+				if err != nil {
+					panic("Fail to generate int number")
+				}
+				results = append(results, datums[val.Int64()])
 			}
-			results = append(results, datums[val.Int64()])
 		}
 	}
 
