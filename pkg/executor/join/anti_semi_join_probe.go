@@ -40,7 +40,7 @@ func newAntiSemiJoinProbe(base baseJoinProbe, isLeftSideBuild bool) *antiSemiJoi
 		isLeftSideBuild: isLeftSideBuild,
 	}
 
-	if ret.isLeftSideBuild && ret.ctx.hasOtherCondition() {
+	if !ret.isLeftSideBuild && ret.ctx.hasOtherCondition() {
 		ret.groupMark = make([]int, 0, ret.ctx.SessCtx.GetSessionVars().MaxChunkSize)
 		ret.matchedProbeRowIdx = make(map[int]struct{})
 	}
@@ -166,6 +166,7 @@ func (j *antiSemiJoinProbe) probeForLeftSideBuildHasOtherCondition(joinedChk *ch
 		if j.matchedRowsHeaders[j.currentProbeRow] != 0 {
 			candidateRow := tagHelper.toUnsafePointer(j.matchedRowsHeaders[j.currentProbeRow])
 			if isKeyMatched(meta.keyMode, j.serializedKeys[j.currentProbeRow], candidateRow, meta) {
+				j.appendBuildRowToCachedBuildRowsV1(j.currentProbeRow, candidateRow, joinedChk, 0, true)
 				j.matchedRowsForCurrentProbeRow++
 			} else {
 				j.probeCollision++
@@ -228,11 +229,13 @@ func (j *antiSemiJoinProbe) probeForRightSideBuildHasOtherCondition(chk, joinedC
 	tagHelper := j.ctx.hashTableContext.tagHelper
 	for j.currentProbeRow < j.chunkRows {
 		joinedChk.Reset()
+		j.groupMark = j.groupMark[:0]
 		remainCap := joinedChk.Capacity()
 		for remainCap > 0 && j.currentProbeRow < j.chunkRows {
 			if j.matchedRowsHeaders[j.currentProbeRow] != 0 {
 				candidateRow := tagHelper.toUnsafePointer(j.matchedRowsHeaders[j.currentProbeRow])
 				if isKeyMatched(meta.keyMode, j.serializedKeys[j.currentProbeRow], candidateRow, meta) {
+					j.appendBuildRowToCachedBuildRowsV1(j.currentProbeRow, candidateRow, joinedChk, 0, true)
 					remainCap--
 					j.matchedRowsForCurrentProbeRow++
 					j.groupMark = append(j.groupMark, j.currentProbeRow)
@@ -269,17 +272,23 @@ func (j *antiSemiJoinProbe) probeForRightSideBuildHasOtherCondition(chk, joinedC
 		}
 	}
 
+	if cap(j.selected) < j.chunkRows {
+		j.selected = make([]bool, j.chunkRows)
+	} else {
+		j.selected = j.selected[:j.chunkRows]
+	}
+
 	j.currentProbeRow = 0
 	for ; j.currentProbeRow < j.chunkRows; j.currentProbeRow++ {
 		_, ok := j.matchedProbeRowIdx[j.currentProbeRow]
-		if ok {
-			continue
-		}
-
-		j.matchedRowsForCurrentProbeRow = 1
-		j.finishLookupCurrentProbeRow()
+		j.selected[j.currentProbeRow] = !ok
 	}
-	j.finishCurrentLookupLoop(chk)
+
+	for index, usedColIdx := range j.lUsed {
+		dstCol := chk.Column(index)
+		srcCol := j.currentChunk.Column(usedColIdx)
+		chunk.CopySelectedRows(dstCol, srcCol, j.selected)
+	}
 	return
 }
 

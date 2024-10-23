@@ -14,7 +14,9 @@
 
 package join
 
-import "testing"
+import (
+	"testing"
+)
 
 func testAntiSemiJoin(t *testing.T, rightAsBuildSide bool, hasOtherCondition bool, hasDuplicateKey bool) {
 	testSemiOrAntiSemiJoin(t, rightAsBuildSide, hasOtherCondition, hasDuplicateKey, true)
@@ -28,6 +30,6 @@ func TestAntiSemiJoinBasic(t *testing.T) {
 }
 
 func TestAntiSemiJoinDuplicateKeys(t *testing.T) {
-	testAntiSemiJoin(t, true, true, true)  // Right side build with other condition
+	testAntiSemiJoin(t, true, true, true) // Right side build with other condition
 	testAntiSemiJoin(t, false, true, true) // Left side build with other condition
 }
