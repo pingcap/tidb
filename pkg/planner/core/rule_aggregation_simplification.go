@@ -17,6 +17,7 @@ package core
 import (
 	"context"
 	"fmt"
+
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
@@ -80,7 +81,6 @@ func (as AggregationSimplifier) tryToPruneGroupByItems(p base.LogicalPlan, opt *
 	if len(la.GroupByItems) == 0 {
 		la.GroupByItems = []expression.Expression{expression.NewOne()}
 	}
-	return
 }
 
 func appendAggSimplifierTraceStep(la *logicalop.LogicalAggregation, prunedItem *expression.Column, opt *optimizetrace.LogicalOptimizeOp) {
