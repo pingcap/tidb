@@ -102,8 +102,8 @@ type Heap struct {
 	data *heapData
 }
 
-// Add adds an object or updates it if it already exists.
-func (h *Heap) Add(obj AnalysisJob) error {
+// AddOrUpdate adds an object or updates it if it already exists.
+func (h *Heap) AddOrUpdate(obj AnalysisJob) error {
 	if _, exists := h.data.items[obj.GetTableID()]; exists {
 		h.data.items[obj.GetTableID()].obj = obj
 		heap.Fix(h.data, h.data.items[obj.GetTableID()].index)
@@ -113,22 +113,9 @@ func (h *Heap) Add(obj AnalysisJob) error {
 	return nil
 }
 
-// BulkAdd adds a list of objects to the heap.
-func (h *Heap) BulkAdd(list []AnalysisJob) error {
-	for _, obj := range list {
-		if _, exists := h.data.items[obj.GetTableID()]; exists {
-			h.data.items[obj.GetTableID()].obj = obj
-			heap.Fix(h.data, h.data.items[obj.GetTableID()].index)
-		} else {
-			heap.Push(h.data, obj)
-		}
-	}
-	return nil
-}
-
 // Update is an alias for Add.
 func (h *Heap) Update(obj AnalysisJob) error {
-	return h.Add(obj)
+	return h.AddOrUpdate(obj)
 }
 
 // Delete removes an object from the heap.

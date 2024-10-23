@@ -43,6 +43,28 @@ const (
 	failedJobRequeueInterval            = time.Minute * 5
 )
 
+// PriorityQueueHeap is an interface that wraps the methods of a priority queue heap.
+type PriorityQueueHeap interface {
+	// GetByKey returns the job by the given table ID.
+	GetByKey(tableID int64) (AnalysisJob, bool, error)
+	// AddOrUpdate adds a job to the heap or updates the job if it already exists.
+	AddOrUpdate(job AnalysisJob) error
+	// Update updates a job in the heap.
+	Update(job AnalysisJob) error
+	// Delete deletes a job from the heap.
+	Delete(job AnalysisJob) error
+	// List returns all jobs in the heap.
+	List() []AnalysisJob
+	// Pop pops the job with the highest priority from the heap.
+	Pop() (AnalysisJob, error)
+	// Peek peeks the job with the highest priority from the heap without removing it.
+	Peek() (AnalysisJob, error)
+	// IsEmpty returns true if the heap is empty.
+	IsEmpty() bool
+	// Len returns the number of jobs in the heap.
+	Len() int
+}
+
 // AnalysisPriorityQueue is a priority queue for TableAnalysisJobs.
 // Testing shows that keeping all jobs in memory is feasible.
 // Memory usage for one million tables is approximately 300 to 500 MiB, which is acceptable.
@@ -61,7 +83,7 @@ type AnalysisPriorityQueue struct {
 	syncFields struct {
 		// mu is used to protect the following fields.
 		mu    sync.RWMutex
-		inner *Heap
+		inner PriorityQueueHeap
 		// runningJobs is a map to store the running jobs. Used to avoid duplicate jobs.
 		runningJobs map[int64]struct{}
 		// lastDMLUpdateFetchTimestamp is the timestamp of the last DML update fetch.
@@ -713,7 +735,7 @@ func (pq *AnalysisPriorityQueue) pushWithoutLock(job AnalysisJob) error {
 	if _, ok := pq.syncFields.failedJobs[job.GetTableID()]; ok {
 		return nil
 	}
-	return pq.syncFields.inner.Add(job)
+	return pq.syncFields.inner.AddOrUpdate(job)
 }
 
 // Pop pops a job from the priority queue and marks it as running.

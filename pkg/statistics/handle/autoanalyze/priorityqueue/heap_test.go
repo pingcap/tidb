@@ -79,17 +79,17 @@ func mkHeapObj(
 	}
 }
 
-func TestHeap_Add(t *testing.T) {
+func TestHeap_AddOrUpdate(t *testing.T) {
 	h := NewHeap()
-	err := h.Add(mkHeapObj(1, 10))
+	err := h.AddOrUpdate(mkHeapObj(1, 10))
 	require.NoError(t, err)
-	err = h.Add(mkHeapObj(2, 1))
+	err = h.AddOrUpdate(mkHeapObj(2, 1))
 	require.NoError(t, err)
-	err = h.Add(mkHeapObj(3, 11))
+	err = h.AddOrUpdate(mkHeapObj(3, 11))
 	require.NoError(t, err)
-	err = h.Add(mkHeapObj(4, 30))
+	err = h.AddOrUpdate(mkHeapObj(4, 30))
 	require.NoError(t, err)
-	err = h.Add(mkHeapObj(1, 13)) // This updates object with tableID 1.
+	err = h.AddOrUpdate(mkHeapObj(1, 13)) // This updates object with tableID 1.
 	require.NoError(t, err)
 
 	item, err := h.Pop()
@@ -102,7 +102,7 @@ func TestHeap_Add(t *testing.T) {
 
 	err = h.Delete(mkHeapObj(3, 11)) // Deletes object with tableID 3.
 	require.NoError(t, err)
-	err = h.Add(mkHeapObj(1, 14)) // Updates object with tableID 1.
+	err = h.AddOrUpdate(mkHeapObj(1, 14)) // Updates object with tableID 1.
 	require.NoError(t, err)
 
 	item, err = h.Pop()
@@ -114,25 +114,6 @@ func TestHeap_Add(t *testing.T) {
 	require.Equal(t, int64(2), item.GetTableID())
 }
 
-func TestHeap_BulkAdd(t *testing.T) {
-	h := NewHeap()
-	const amount = 500
-	var l []AnalysisJob
-	for i := 1; i <= amount; i++ {
-		l = append(l, mkHeapObj(int64(i), float64(i)))
-	}
-	err := h.BulkAdd(l)
-	require.NoError(t, err)
-
-	prevID := int64(amount) + 1
-	for i := 0; i < amount; i++ {
-		obj, err := h.Pop()
-		require.NoError(t, err)
-		require.Less(t, obj.GetTableID(), prevID, "Items should be in descending order by tableID")
-		prevID = obj.GetTableID()
-	}
-}
-
 func TestHeapEmptyPop(t *testing.T) {
 	h := NewHeap()
 	_, err := h.Pop()
@@ -141,13 +122,13 @@ func TestHeapEmptyPop(t *testing.T) {
 
 func TestHeap_Delete(t *testing.T) {
 	h := NewHeap()
-	err := h.Add(mkHeapObj(1, 10))
+	err := h.AddOrUpdate(mkHeapObj(1, 10))
 	require.NoError(t, err)
-	err = h.Add(mkHeapObj(2, 1))
+	err = h.AddOrUpdate(mkHeapObj(2, 1))
 	require.NoError(t, err)
-	err = h.Add(mkHeapObj(3, 31))
+	err = h.AddOrUpdate(mkHeapObj(3, 31))
 	require.NoError(t, err)
-	err = h.Add(mkHeapObj(4, 11))
+	err = h.AddOrUpdate(mkHeapObj(4, 11))
 	require.NoError(t, err)
 
 	err = h.Delete(mkHeapObj(3, 31))
@@ -157,7 +138,7 @@ func TestHeap_Delete(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, int64(4), item.GetTableID())
 
-	err = h.Add(mkHeapObj(5, 30))
+	err = h.AddOrUpdate(mkHeapObj(5, 30))
 	require.NoError(t, err)
 
 	err = h.Delete(mkHeapObj(2, 1))
@@ -176,13 +157,13 @@ func TestHeap_Delete(t *testing.T) {
 
 func TestHeap_Update(t *testing.T) {
 	h := NewHeap()
-	err := h.Add(mkHeapObj(1, 10))
+	err := h.AddOrUpdate(mkHeapObj(1, 10))
 	require.NoError(t, err)
-	err = h.Add(mkHeapObj(2, 1))
+	err = h.AddOrUpdate(mkHeapObj(2, 1))
 	require.NoError(t, err)
-	err = h.Add(mkHeapObj(3, 31))
+	err = h.AddOrUpdate(mkHeapObj(3, 31))
 	require.NoError(t, err)
-	err = h.Add(mkHeapObj(4, 11))
+	err = h.AddOrUpdate(mkHeapObj(4, 11))
 	require.NoError(t, err)
 
 	err = h.Update(mkHeapObj(4, 50))
@@ -200,13 +181,13 @@ func TestHeap_Update(t *testing.T) {
 
 func TestHeap_Get(t *testing.T) {
 	h := NewHeap()
-	err := h.Add(mkHeapObj(1, 10))
+	err := h.AddOrUpdate(mkHeapObj(1, 10))
 	require.NoError(t, err)
-	err = h.Add(mkHeapObj(2, 1))
+	err = h.AddOrUpdate(mkHeapObj(2, 1))
 	require.NoError(t, err)
-	err = h.Add(mkHeapObj(3, 31))
+	err = h.AddOrUpdate(mkHeapObj(3, 31))
 	require.NoError(t, err)
-	err = h.Add(mkHeapObj(4, 11))
+	err = h.AddOrUpdate(mkHeapObj(4, 11))
 	require.NoError(t, err)
 
 	obj, exists, err := h.Get(mkHeapObj(4, 0))
@@ -221,13 +202,13 @@ func TestHeap_Get(t *testing.T) {
 
 func TestHeap_GetByKey(t *testing.T) {
 	h := NewHeap()
-	err := h.Add(mkHeapObj(1, 10))
+	err := h.AddOrUpdate(mkHeapObj(1, 10))
 	require.NoError(t, err)
-	err = h.Add(mkHeapObj(2, 1))
+	err = h.AddOrUpdate(mkHeapObj(2, 1))
 	require.NoError(t, err)
-	err = h.Add(mkHeapObj(3, 31))
+	err = h.AddOrUpdate(mkHeapObj(3, 31))
 	require.NoError(t, err)
-	err = h.Add(mkHeapObj(4, 11))
+	err = h.AddOrUpdate(mkHeapObj(4, 11))
 	require.NoError(t, err)
 
 	obj, exists, err := h.GetByKey(4)
@@ -253,7 +234,7 @@ func TestHeap_List(t *testing.T) {
 		5: 30,
 	}
 	for k, v := range items {
-		h.Add(mkHeapObj(k, v))
+		h.AddOrUpdate(mkHeapObj(k, v))
 	}
 	list = h.List()
 	require.Len(t, list, len(items))
@@ -275,7 +256,7 @@ func TestHeap_ListKeys(t *testing.T) {
 		5: 30,
 	}
 	for k, v := range items {
-		h.Add(mkHeapObj(k, v))
+		h.AddOrUpdate(mkHeapObj(k, v))
 	}
 	list = h.ListKeys()
 	require.Len(t, list, len(items))
@@ -290,13 +271,13 @@ func TestHeap_Peek(t *testing.T) {
 	_, err := h.Peek()
 	require.EqualError(t, err, "heap is empty")
 
-	err = h.Add(mkHeapObj(1, 10))
+	err = h.AddOrUpdate(mkHeapObj(1, 10))
 	require.NoError(t, err)
-	err = h.Add(mkHeapObj(2, 1))
+	err = h.AddOrUpdate(mkHeapObj(2, 1))
 	require.NoError(t, err)
-	err = h.Add(mkHeapObj(3, 31))
+	err = h.AddOrUpdate(mkHeapObj(3, 31))
 	require.NoError(t, err)
-	err = h.Add(mkHeapObj(4, 11))
+	err = h.AddOrUpdate(mkHeapObj(4, 11))
 	require.NoError(t, err)
 
 	item, err := h.Peek()
@@ -312,7 +293,7 @@ func TestHeap_IsEmpty(t *testing.T) {
 	h := NewHeap()
 	require.True(t, h.IsEmpty())
 
-	err := h.Add(mkHeapObj(1, 10))
+	err := h.AddOrUpdate(mkHeapObj(1, 10))
 	require.NoError(t, err)
 	require.False(t, h.IsEmpty())
 
@@ -325,7 +306,7 @@ func TestHeap_Len(t *testing.T) {
 	h := NewHeap()
 	require.Zero(t, h.Len())
 
-	err := h.Add(mkHeapObj(1, 10))
+	err := h.AddOrUpdate(mkHeapObj(1, 10))
 	require.NoError(t, err)
 	require.Equal(t, 1, h.Len())
 
