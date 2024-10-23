@@ -92,6 +92,11 @@ func (h *heapData) Pop() any {
 	return item.obj
 }
 
+var (
+	// ErrHeapIsEmpty is returned when the heap is empty.
+	ErrHeapIsEmpty = errors.New("heap is empty")
+)
+
 // Heap is a producer/consumer queue that implements a heap data structure.
 type Heap struct {
 	data *heapData
@@ -138,7 +143,7 @@ func (h *Heap) Delete(obj AnalysisJob) error {
 // Peek returns the top object from the heap without removing it.
 func (h *Heap) Peek() (AnalysisJob, error) {
 	if len(h.data.queue) == 0 {
-		return nil, errors.New("heap is empty")
+		return nil, ErrHeapIsEmpty
 	}
 	return h.data.items[h.data.queue[0]].obj, nil
 }
@@ -146,7 +151,7 @@ func (h *Heap) Peek() (AnalysisJob, error) {
 // Pop removes the top object from the heap and returns it.
 func (h *Heap) Pop() (AnalysisJob, error) {
 	if len(h.data.queue) == 0 {
-		return nil, errors.New("heap is empty")
+		return nil, ErrHeapIsEmpty
 	}
 	obj := heap.Pop(h.data)
 	if obj == nil {
