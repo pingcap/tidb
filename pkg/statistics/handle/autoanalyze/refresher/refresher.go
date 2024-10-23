@@ -127,7 +127,6 @@ func (r *Refresher) AnalyzeHighestPriorityTables() bool {
 
 	analyzedCount := 0
 	for analyzedCount < remainConcurrency {
-		// TODO: Change the API to avoid return error.
 		job, err := r.jobs.Pop()
 		if err != nil {
 			// No more jobs to analyze.
