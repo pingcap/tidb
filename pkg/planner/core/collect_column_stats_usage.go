@@ -15,15 +15,10 @@
 package core
 
 import (
-	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/expression"
-	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
-	"github.com/pingcap/tidb/pkg/planner/planctx"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
-	"github.com/pingcap/tidb/pkg/statistics/asyncload"
 	"github.com/pingcap/tidb/pkg/util/filter"
 	"github.com/pingcap/tidb/pkg/util/intset"
 )
@@ -295,85 +290,4 @@ func CollectColumnStatsUsage(lp base.LogicalPlan, histNeeded bool) (
 		physTblIDsWithNeededCols.Insert(int(neededCol.TableID))
 	}
 	return collector.predicateCols, collector.visitedPhysTblIDs
-}
-
-// markAtLeastOneFullStatsLoadForEachTable marks at least one full stats load for each table.
-// It should be called after we use c.predicateCols to update the usage of predicate columns.
-func markAtLeastOneFullStatsLoadForEachTable(
-	sctx planctx.PlanContext,
-	visitedPhysTblIDs *intset.FastIntSet,
-	predicateCols map[model.TableItemID]bool,
-	histNeeded bool,
-) {
-	is := sctx.GetDomainInfoSchema().(infoschema.InfoSchema)
-	statsHandle := domain.GetDomain(sctx).StatsHandle()
-	physTblIDsWithNeededCols := intset.NewFastIntSet()
-	for neededCol, fullLoad := range predicateCols {
-		if !fullLoad {
-			continue
-		}
-		physTblIDsWithNeededCols.Insert(int(neededCol.TableID))
-	}
-	visitedPhysTblIDs.ForEach(func(physicalTblID int) {
-		// 1. collect table metadata
-		tbl, _ := infoschema.FindTableByTblOrPartID(is, int64(physicalTblID))
-		if tbl == nil {
-			return
-		}
-
-		// 2. handle extra sync/async stats loading for the determinate mode
-
-		// If we visited a table without getting any columns need stats (likely because there are no pushed down
-		// predicates), and we are in the determinate mode, we need to make sure we are able to get the "analyze row
-		// count" in getStatsTable(), which means any column/index stats are available.
-		if sctx.GetSessionVars().GetOptObjective() != variable.OptObjectiveDeterminate ||
-			// If we already collected some columns that need trigger sync laoding on this table, we don't need to
-			// additionally do anything for determinate mode.
-			physTblIDsWithNeededCols.Has(physicalTblID) ||
-			statsHandle == nil {
-			return
-		}
-		tblStats := statsHandle.GetTableStats(tbl.Meta())
-		if tblStats == nil || tblStats.Pseudo {
-			return
-		}
-		var colToTriggerLoad *model.TableItemID
-		for _, col := range tbl.Cols() {
-			if col.State != model.StatePublic || (col.IsGenerated() && !col.GeneratedStored) || !tblStats.ColAndIdxExistenceMap.HasAnalyzed(col.ID, false) {
-				continue
-			}
-			if colStats := tblStats.GetCol(col.ID); colStats != nil {
-				// If any stats are already full loaded, we don't need to trigger stats loading on this table.
-				if colStats.IsFullLoad() {
-					colToTriggerLoad = nil
-					break
-				}
-			}
-			// Choose the first column we meet to trigger stats loading.
-			if colToTriggerLoad == nil {
-				colToTriggerLoad = &model.TableItemID{TableID: int64(physicalTblID), ID: col.ID, IsIndex: false}
-			}
-		}
-		if colToTriggerLoad == nil {
-			return
-		}
-		for _, idx := range tbl.Indices() {
-			if idx.Meta().State != model.StatePublic || idx.Meta().MVIndex {
-				continue
-			}
-			// If any stats are already full loaded, we don't need to trigger stats loading on this table.
-			if idxStats := tblStats.GetIdx(idx.Meta().ID); idxStats != nil && idxStats.IsFullLoad() {
-				colToTriggerLoad = nil
-				break
-			}
-		}
-		if colToTriggerLoad == nil {
-			return
-		}
-		if histNeeded {
-			predicateCols[*colToTriggerLoad] = true
-		} else {
-			asyncload.AsyncLoadHistogramNeededItems.Insert(*colToTriggerLoad, true)
-		}
-	})
 }
