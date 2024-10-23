@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/privilege"
 	"github.com/pingcap/tidb/pkg/privilege/conn"
 	"github.com/pingcap/tidb/pkg/privilege/privileges/ldap"
@@ -219,6 +220,7 @@ func (p *UserPrivileges) RequestVerificationWithUser(db, table, column string, p
 		return true
 	}
 
+	terror.Log(p.Handle.ensureActiveUser(user.Username))
 	mysqlPriv := p.Handle.Get()
 	roles := mysqlPriv.getDefaultRoles(user.Username, user.Hostname)
 	return mysqlPriv.RequestVerification(roles, user.Username, user.Hostname, db, table, column, priv)
@@ -379,7 +381,7 @@ func (p *UserPrivileges) MatchIdentity(sctx sessionctx.Context, user, host strin
 	if SkipWithGrant {
 		return user, host, true
 	}
-	if err := p.Handle.ensureActiveUser(sctx, user); err != nil {
+	if err := p.Handle.ensureActiveUser(user); err != nil {
 		logutil.BgLogger().Error("ensure user data fail",
 			zap.String("user", user))
 	}
@@ -918,7 +920,7 @@ func (p *UserPrivileges) ShowGrants(ctx sessionctx.Context, user *auth.UserIdent
 		h = user.AuthHostname
 	}
 
-	// When the user privilege data is missing (not loaded in memory)
+	// When the user data is m
 	missing := false
 	ur := mysqlPrivilege.matchIdentity(ctx, u, h, false)
 	if ur == nil {

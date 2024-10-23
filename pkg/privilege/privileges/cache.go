@@ -1807,6 +1807,7 @@ func (p *MySQLPrivilege) getAllRoles(user, host string) []*auth.RoleIdentity {
 
 // Handle wraps MySQLPrivilege providing thread safe access.
 type Handle struct {
+	sctx sessionctx.Context
 	priv atomic.Pointer[MySQLPrivilege]
 	// Only load the active user's data to save memory
 	mu struct {
@@ -1816,16 +1817,17 @@ type Handle struct {
 }
 
 // NewHandle returns a Handle.
-func NewHandle() *Handle {
+func NewHandle(sctx sessionctx.Context) *Handle {
 	var priv MySQLPrivilege
 	ret := &Handle{}
+	ret.sctx = sctx
 	ret.priv.Store(&priv)
 	ret.mu.activeUsers = make(map[string]struct{})
 	return ret
 }
 
 // ensureActiveUser ensure that the specific user data is loaded in-memory.
-func (h *Handle) ensureActiveUser(sctx sessionctx.Context, user string) error {
+func (h *Handle) ensureActiveUser(user string) error {
 	h.mu.RLock()
 	_, exist := h.mu.activeUsers[user]
 	h.mu.RUnlock()
@@ -1834,7 +1836,7 @@ func (h *Handle) ensureActiveUser(sctx sessionctx.Context, user string) error {
 	}
 
 	var data immutable
-	err := data.loadSomeUsers(sctx, user)
+	err := data.loadSomeUsers(h.sctx, user)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -1855,9 +1857,9 @@ func (h *Handle) Get() *MySQLPrivilege {
 }
 
 // Update loads all the privilege info from kv storage.
-func (h *Handle) Update(ctx sessionctx.Context) error {
+func (h *Handle) Update() error {
 	var priv MySQLPrivilege
-	err := priv.LoadAll(ctx)
+	err := priv.LoadAll(h.sctx)
 	if err != nil {
 		return err
 	}
