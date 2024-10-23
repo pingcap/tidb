@@ -1108,8 +1108,9 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 	errCh := make(chan error, 32)
 	postHandleCh := afterTableRestoredCh(ctx, createdTables)
 
-	// pipeline checksum
-	if cfg.Checksum {
+	// pipeline checksum only when enabled and is not incremental snapshot repair mode cuz incremental doesn't have
+	// enough information in backup meta to validate checksum
+	if cfg.Checksum && !client.IsIncremental() {
 		postHandleCh = client.GoValidateChecksum(
 			ctx, postHandleCh, mgr.GetStorage().GetClient(), errCh, updateCh, cfg.ChecksumConcurrency)
 	}
