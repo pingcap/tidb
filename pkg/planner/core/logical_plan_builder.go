@@ -258,6 +258,8 @@ func (b *PlanBuilder) buildAggregation(ctx context.Context, p base.LogicalPlan, 
 	b.optFlag |= rule.FlagEliminateAgg
 	b.optFlag |= rule.FlagEliminateProjection
 
+	b.optFlag |= rule.FlagAggregationSimplifier
+	
 	if b.ctx.GetSessionVars().EnableSkewDistinctAgg {
 		b.optFlag |= rule.FlagSkewDistinctAgg
 	}
