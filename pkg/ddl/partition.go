@@ -3142,6 +3142,9 @@ func getReorgPartitionInfo(t *meta.Mutator, job *model.Job, args *model.TablePar
 //
 //	Everything now looks as it should, no memory of old partitions/indexes,
 //	and no more double writing, since the previous state is only reading the new partitions/indexes.
+//
+// Note: Special handling is also required in tables.newPartitionedTable(),
+// to get per partition indexes in the right state.
 func (w *worker) onReorganizePartition(jobCtx *jobContext, job *model.Job) (ver int64, _ error) {
 	args, err := model.GetTablePartitionArgs(job)
 	if err != nil {
@@ -3253,6 +3256,9 @@ func (w *worker) onReorganizePartition(jobCtx *jobContext, job *model.Job) (ver 
 			if err != nil {
 				return ver, errors.Trace(err)
 			}
+			if tblInfo.Partition.DDLChangedIndex == nil {
+				tblInfo.Partition.DDLChangedIndex = make(map[int64]bool)
+			}
 			if !inAllPartitionColumns {
 				// Currently only support Explicit Global indexes.
 				if !newGlobal {
@@ -3270,6 +3276,8 @@ func (w *worker) onReorganizePartition(jobCtx *jobContext, job *model.Job) (ver 
 				newIndex := index.Clone()
 				newIndex.State = model.StateDeleteOnly
 				newIndex.ID = AllocateIndexID(tblInfo)
+				tblInfo.Partition.DDLChangedIndex[index.ID] = false
+				tblInfo.Partition.DDLChangedIndex[newIndex.ID] = true
 				newIndex.Global = true
 				tblInfo.Indices = append(tblInfo.Indices, newIndex)
 			} else {
@@ -3282,6 +3290,8 @@ func (w *worker) onReorganizePartition(jobCtx *jobContext, job *model.Job) (ver 
 					newIndex := index.Clone()
 					newIndex.State = model.StateDeleteOnly
 					newIndex.ID = AllocateIndexID(tblInfo)
+					tblInfo.Partition.DDLChangedIndex[index.ID] = false
+					tblInfo.Partition.DDLChangedIndex[newIndex.ID] = true
 					newIndex.Global = false
 					tblInfo.Indices = append(tblInfo.Indices, newIndex)
 				}
@@ -3477,26 +3487,18 @@ func (w *worker) onReorganizePartition(jobCtx *jobContext, job *model.Job) (ver 
 			if !index.Unique {
 				continue
 			}
-			switch index.State {
-			case model.StateWriteReorganization:
+			isNew, ok := tblInfo.Partition.DDLChangedIndex[index.ID]
+			if !ok {
+				continue
+			}
+			if isNew {
 				// Newly created index, replacing old unique/global index
 				index.State = model.StatePublic
-			case model.StatePublic:
-				if index.Global {
-					// Mark the old global index as non-readable, but still writable, and to be dropped
-					index.State = model.StateWriteOnly
-				} else {
-					inAllPartitionColumns, err := checkPartitionKeysConstraint(partInfo, index.Columns, tblInfo)
-					if err != nil {
-						return rollbackReorganizePartitionWithErr(jobCtx, job, err)
-					}
-					if !inAllPartitionColumns {
-						// Mark the old unique index as non-readable, but still writable, and to be dropped,
-						// since it is replaced by a global index
-						index.State = model.StateWriteOnly
-					}
-				}
+				continue
 			}
+			// Old index, should not be visible any longer,
+			// but needs to be kept up-to-date in case rollback happens.
+			index.State = model.StateWriteOnly
 		}
 		firstPartIdx, lastPartIdx, idMap, err2 := getReplacedPartitionIDs(partNames, tblInfo.Partition)
 		if err2 != nil {

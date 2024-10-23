@@ -16,6 +16,8 @@ package tables
 
 import (
 	"context"
+	"github.com/pingcap/tidb/pkg/util/logutil"
+	"go.uber.org/zap"
 	"sync"
 	"time"
 
@@ -280,6 +282,7 @@ func (c *index) create(sctx table.MutateContext, txn kv.Transaction, indexedValu
 			continue
 		}
 
+		logutil.BgLogger().Info("create key", zap.Binary("key", key), zap.String("handle as string", h.String()), zap.Int64("tableID", c.tblInfo.ID), zap.Int64("physID", c.phyTblID), zap.Int64("indexID", c.idxInfo.ID), zap.Bool("global", c.idxInfo.Global))
 		var value []byte
 		if c.tblInfo.TempTableType != model.TempTableNone {
 			// Always check key for temporary table because it does not write to TiKV

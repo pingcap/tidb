@@ -99,9 +99,9 @@ type partitionedTable struct {
 
 	// Only used during Reorganize partition
 	// reorganizePartitions is the currently used partitions that are reorganized
-	reorganizePartitions map[int64]any
+	reorganizePartitions map[int64]struct{}
 	// doubleWritePartitions are the partitions not visible, but we should double write to
-	doubleWritePartitions map[int64]any
+	doubleWritePartitions map[int64]struct{}
 	reorgPartitionExpr    *PartitionExpr
 }
 
@@ -112,7 +112,8 @@ func newPartitionedTable(tbl *TableCommon, tblInfo *model.TableInfo) (table.Part
 	if pi == nil || len(pi.Definitions) == 0 {
 		return nil, table.ErrUnknownPartition
 	}
-	ret := &partitionedTable{TableCommon: tbl.Copy()}
+	tblCommon := tbl.Copy()
+	ret := &partitionedTable{TableCommon: tblCommon}
 	partitionExpr, err := newPartitionExpr(tblInfo, pi.Type, pi.Expr, pi.Columns, pi.Definitions)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -127,6 +128,20 @@ func newPartitionedTable(tbl *TableCommon, tblInfo *model.TableInfo) (table.Part
 	if err := initTableIndices(&ret.TableCommon); err != nil {
 		return nil, errors.Trace(err)
 	}
+	origIndices := ret.meta.Indices
+	currIndices := make([]*model.IndexInfo, 0, len(origIndices))
+	useNew := false
+	if pi.DDLState == model.StateDeleteReorganization {
+		useNew = true
+	}
+	for _, idx := range origIndices {
+		// Filter out so only the old OR new indexes are used.
+		if newIdx, ok := pi.DDLChangedIndex[idx.ID]; !ok || newIdx == useNew {
+			currIndices = append(currIndices, idx)
+		}
+	}
+	tblInfo.Indices = currIndices
+	defer func() { ret.meta.Indices = origIndices }()
 	partitions := make(map[int64]*partition, len(pi.Definitions))
 	for _, p := range pi.Definitions {
 		var t partition
@@ -149,10 +164,18 @@ func newPartitionedTable(tbl *TableCommon, tblInfo *model.TableInfo) (table.Part
 	// In StateDeleteReorganization we are using the 'new' partition definitions
 	// and if any new change happens in AddingDefinitions, it needs to be done
 	// also in DroppingDefinitions (since session running on schema version -1)
-	// should also see the changes
+	// should also see the changes.
+	useNew = !useNew
+	currIndices = currIndices[:0]
+	for _, idx := range origIndices {
+		// Filter out the opposite changed indexes from above,
+		// so the reorganized partition (not visible) have the matching indices.
+		if newIdx, ok := pi.DDLChangedIndex[idx.ID]; !ok || newIdx == useNew {
+			currIndices = append(currIndices, idx)
+		}
+	}
+	ret.meta.Indices = currIndices
 	if pi.DDLState == model.StateDeleteReorganization {
-		origIdx := setIndexesState(ret, pi.DDLState)
-		defer unsetIndexesState(ret, origIdx)
 		// TODO: Explicitly explain the different DDL/New fields!
 		if pi.NewTableID != 0 {
 			ret.reorgPartitionExpr, err = newPartitionExpr(tblInfo, pi.DDLType, pi.DDLExpr, pi.DDLColumns, pi.DroppingDefinitions)
@@ -162,23 +185,25 @@ func newPartitionedTable(tbl *TableCommon, tblInfo *model.TableInfo) (table.Part
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		ret.reorganizePartitions = make(map[int64]any, len(pi.AddingDefinitions))
+		ret.reorganizePartitions = make(map[int64]struct{}, len(pi.AddingDefinitions))
 		for _, def := range pi.AddingDefinitions {
-			ret.reorganizePartitions[def.ID] = nil
+			ret.reorganizePartitions[def.ID] = struct{}{}
 		}
-		ret.doubleWritePartitions = make(map[int64]any, len(pi.DroppingDefinitions))
-		for _, def := range pi.DroppingDefinitions {
-			p, err := initPartition(ret, def)
-			if err != nil {
-				return nil, err
+		if len(pi.DroppingDefinitions) > 0 {
+			ret.doubleWritePartitions = make(map[int64]struct{}, len(pi.DroppingDefinitions))
+			for _, def := range pi.DroppingDefinitions {
+				p, err := initPartition(ret, def)
+				if err != nil {
+					return nil, err
+				}
+				partitions[def.ID] = p
+				ret.doubleWritePartitions[def.ID] = struct{}{}
 			}
-			partitions[def.ID] = p
-			ret.doubleWritePartitions[def.ID] = nil
 		}
 	} else {
 		if len(pi.AddingDefinitions) > 0 {
-			origIdx := setIndexesState(ret, pi.DDLState)
-			defer unsetIndexesState(ret, origIdx)
+			//origIdx := setIndexesState(ret, pi.DDLState)
+			//defer unsetIndexesState(ret, origIdx)
 			if pi.NewTableID != 0 {
 				// REMOVE PARTITIONING or PARTITION BY
 				ret.reorgPartitionExpr, err = newPartitionExpr(tblInfo, pi.DDLType, pi.DDLExpr, pi.DDLColumns, pi.AddingDefinitions)
@@ -189,9 +214,9 @@ func newPartitionedTable(tbl *TableCommon, tblInfo *model.TableInfo) (table.Part
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
-			ret.doubleWritePartitions = make(map[int64]any, len(pi.AddingDefinitions))
+			ret.doubleWritePartitions = make(map[int64]struct{}, len(pi.AddingDefinitions))
 			for _, def := range pi.AddingDefinitions {
-				ret.doubleWritePartitions[def.ID] = nil
+				ret.doubleWritePartitions[def.ID] = struct{}{}
 				p, err := initPartition(ret, def)
 				if err != nil {
 					return nil, err
@@ -200,21 +225,24 @@ func newPartitionedTable(tbl *TableCommon, tblInfo *model.TableInfo) (table.Part
 			}
 		}
 		if len(pi.DroppingDefinitions) > 0 {
-			ret.reorganizePartitions = make(map[int64]any, len(pi.DroppingDefinitions))
+			ret.reorganizePartitions = make(map[int64]struct{}, len(pi.DroppingDefinitions))
 			for _, def := range pi.DroppingDefinitions {
-				ret.reorganizePartitions[def.ID] = nil
+				ret.reorganizePartitions[def.ID] = struct{}{}
 			}
 		}
 	}
 	return ret, nil
 }
 
+// setIndexesState is used to alter the index schema state for non-public partitions,
+// during reorganize partition.
 func setIndexesState(t *partitionedTable, state model.SchemaState) []*model.IndexInfo {
 	orig := t.meta.Indices
 	t.meta.Indices = make([]*model.IndexInfo, 0, len(orig))
 	for i := range orig {
 		t.meta.Indices = append(t.meta.Indices, orig[i].Clone())
-		if t.meta.Indices[i].State == model.StatePublic {
+		switch t.meta.Indices[i].State {
+		case model.StatePublic:
 			switch state {
 			case model.StateDeleteOnly, model.StateNone:
 				t.meta.Indices[i].State = model.StateDeleteOnly
