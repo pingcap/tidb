@@ -174,8 +174,7 @@ restart_services
 
 file_corruption() {
     echo "corrupt the whole log files"
-    filenames=$(find $TEST_DIR/$PREFIX/log -regex ".*\.log" | grep -v "schema-meta")
-    for filename in "${filenames[@]}"; do
+    for filename in $(find $TEST_DIR/$PREFIX/log -regex ".*\.log" | grep -v "schema-meta"); do
         echo "corrupt the log file $filename"
         filename_temp=$filename"_temp"
         echo "corruption" > $filename_temp
@@ -198,8 +197,7 @@ fi
 
 file_lost() {
     echo "lost the whole log files"
-    filenames=$(find $TEST_DIR/$PREFIX/log -regex ".*\.log" | grep -v "schema-meta")
-    for filename in "${filenames[@]}"; do
+    for filename in $(find $TEST_DIR/$PREFIX/log -regex ".*\.log" | grep -v "schema-meta"); do
         echo "lost the log file $filename"
         filename_temp=$filename"_temp"
         mv $filename $filename_temp
