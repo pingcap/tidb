@@ -26,7 +26,6 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/statistics/handle/autoanalyze/exec"
-	"github.com/pingcap/tidb/pkg/statistics/handle/autoanalyze/internal/heap"
 	"github.com/pingcap/tidb/pkg/statistics/handle/lockstats"
 	statslogutil "github.com/pingcap/tidb/pkg/statistics/handle/logutil"
 	statstypes "github.com/pingcap/tidb/pkg/statistics/handle/types"
@@ -62,7 +61,7 @@ type AnalysisPriorityQueue struct {
 	syncFields struct {
 		// mu is used to protect the following fields.
 		mu    sync.RWMutex
-		inner *heap.Heap[int64, AnalysisJob]
+		inner *Heap
 		// runningJobs is a map to store the running jobs. Used to avoid duplicate jobs.
 		runningJobs map[int64]struct{}
 		// lastDMLUpdateFetchTimestamp is the timestamp of the last DML update fetch.
@@ -147,14 +146,7 @@ func (pq *AnalysisPriorityQueue) Rebuild() error {
 // rebuildWithoutLock rebuilds the priority queue without holding the lock.
 // Note: Please hold the lock before calling this function.
 func (pq *AnalysisPriorityQueue) rebuildWithoutLock() error {
-	keyFunc := func(job AnalysisJob) (int64, error) {
-		return job.GetTableID(), nil
-	}
-	// We want the job with the highest weight to be at the top of the priority queue.
-	lessFunc := func(a, b AnalysisJob) bool {
-		return a.GetWeight() > b.GetWeight()
-	}
-	pq.syncFields.inner = heap.NewHeap(keyFunc, lessFunc)
+	pq.syncFields.inner = NewHeap()
 
 	// We need to fetch the next check version with offset before fetching all tables and building analysis jobs.
 	// Otherwise, we may miss some DML changes happened during the process because this operation takes time.

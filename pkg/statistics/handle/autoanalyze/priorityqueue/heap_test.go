@@ -1,0 +1,335 @@
+// Copyright 2017 The Kubernetes Authors.
+// Copyright 2024 PingCAP, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//	http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+// Modifications:
+// 1. Use "github.com/stretchr/testify/require" to do assertions.
+// 2. Test max heap instead of min heap.
+// 3. Add a test for the peak API.
+// 4. Add a test for the IsEmpty API.
+// 5. Remove concurrency and thread-safety tests.
+// 6. Add a test for the Len API.
+
+package priorityqueue
+
+import (
+	"testing"
+
+	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/sysproctrack"
+	statstypes "github.com/pingcap/tidb/pkg/statistics/handle/types"
+	"github.com/stretchr/testify/require"
+)
+
+type testHeapObject struct {
+	tableID int64
+	val     float64
+}
+
+func (t testHeapObject) IsValidToAnalyze(sctx sessionctx.Context) (bool, string) {
+	panic("implement me")
+}
+func (t testHeapObject) Analyze(statsHandle statstypes.StatsHandle, sysProcTracker sysproctrack.Tracker) error {
+	panic("implement me")
+}
+func (t testHeapObject) SetWeight(weight float64) {
+	panic("implement me")
+}
+func (t testHeapObject) GetWeight() float64 {
+	return t.val
+}
+func (t testHeapObject) HasNewlyAddedIndex() bool {
+	panic("implement me")
+}
+func (t testHeapObject) GetIndicators() Indicators {
+	panic("implement me")
+}
+func (t testHeapObject) SetIndicators(indicators Indicators) {
+	panic("implement me")
+}
+func (t testHeapObject) GetTableID() int64 {
+	return t.tableID
+}
+func (t testHeapObject) RegisterSuccessHook(hook JobHook) {
+	panic("implement me")
+}
+func (t testHeapObject) RegisterFailureHook(hook JobHook) {
+	panic("implement me")
+}
+func (t testHeapObject) String() string {
+	panic("implement me")
+}
+func mkHeapObj(
+	tableID int64,
+	val float64,
+) testHeapObject {
+	return testHeapObject{
+		tableID: tableID,
+		val:     val,
+	}
+}
+
+func TestHeap_Add(t *testing.T) {
+	h := NewHeap()
+	err := h.Add(mkHeapObj(1, 10))
+	require.NoError(t, err)
+	err = h.Add(mkHeapObj(2, 1))
+	require.NoError(t, err)
+	err = h.Add(mkHeapObj(3, 11))
+	require.NoError(t, err)
+	err = h.Add(mkHeapObj(4, 30))
+	require.NoError(t, err)
+	err = h.Add(mkHeapObj(1, 13)) // This updates object with tableID 1.
+	require.NoError(t, err)
+
+	item, err := h.Pop()
+	require.NoError(t, err)
+	require.Equal(t, int64(4), item.GetTableID())
+
+	item, err = h.Pop()
+	require.NoError(t, err)
+	require.Equal(t, int64(1), item.GetTableID())
+
+	err = h.Delete(mkHeapObj(3, 11)) // Deletes object with tableID 3.
+	require.NoError(t, err)
+	err = h.Add(mkHeapObj(1, 14)) // Updates object with tableID 1.
+	require.NoError(t, err)
+
+	item, err = h.Pop()
+	require.NoError(t, err)
+	require.Equal(t, int64(1), item.GetTableID())
+
+	item, err = h.Pop()
+	require.NoError(t, err)
+	require.Equal(t, int64(2), item.GetTableID())
+}
+
+func TestHeap_BulkAdd(t *testing.T) {
+	h := NewHeap()
+	const amount = 500
+	var l []AnalysisJob
+	for i := 1; i <= amount; i++ {
+		l = append(l, mkHeapObj(int64(i), float64(i)))
+	}
+	err := h.BulkAdd(l)
+	require.NoError(t, err)
+
+	prevID := int64(amount) + 1
+	for i := 0; i < amount; i++ {
+		obj, err := h.Pop()
+		require.NoError(t, err)
+		require.Less(t, obj.GetTableID(), prevID, "Items should be in descending order by tableID")
+		prevID = obj.GetTableID()
+	}
+}
+
+func TestHeapEmptyPop(t *testing.T) {
+	h := NewHeap()
+	_, err := h.Pop()
+	require.EqualError(t, err, "heap is empty")
+}
+
+func TestHeap_Delete(t *testing.T) {
+	h := NewHeap()
+	err := h.Add(mkHeapObj(1, 10))
+	require.NoError(t, err)
+	err = h.Add(mkHeapObj(2, 1))
+	require.NoError(t, err)
+	err = h.Add(mkHeapObj(3, 31))
+	require.NoError(t, err)
+	err = h.Add(mkHeapObj(4, 11))
+	require.NoError(t, err)
+
+	err = h.Delete(mkHeapObj(3, 31))
+	require.NoError(t, err)
+
+	item, err := h.Pop()
+	require.NoError(t, err)
+	require.Equal(t, int64(4), item.GetTableID())
+
+	err = h.Add(mkHeapObj(5, 30))
+	require.NoError(t, err)
+
+	err = h.Delete(mkHeapObj(2, 1))
+	require.NoError(t, err)
+
+	item, err = h.Pop()
+	require.NoError(t, err)
+	require.Equal(t, int64(5), item.GetTableID())
+
+	item, err = h.Pop()
+	require.NoError(t, err)
+	require.Equal(t, int64(1), item.GetTableID())
+
+	require.Equal(t, 0, h.Len())
+}
+
+func TestHeap_Update(t *testing.T) {
+	h := NewHeap()
+	err := h.Add(mkHeapObj(1, 10))
+	require.NoError(t, err)
+	err = h.Add(mkHeapObj(2, 1))
+	require.NoError(t, err)
+	err = h.Add(mkHeapObj(3, 31))
+	require.NoError(t, err)
+	err = h.Add(mkHeapObj(4, 11))
+	require.NoError(t, err)
+
+	err = h.Update(mkHeapObj(4, 50))
+	require.NoError(t, err)
+	require.Equal(t, int64(4), h.data.queue[0])
+
+	item, err := h.Pop()
+	require.NoError(t, err)
+	require.Equal(t, int64(4), item.GetTableID())
+
+	err = h.Update(mkHeapObj(2, 100))
+	require.NoError(t, err)
+	require.Equal(t, int64(2), h.data.queue[0])
+}
+
+func TestHeap_Get(t *testing.T) {
+	h := NewHeap()
+	err := h.Add(mkHeapObj(1, 10))
+	require.NoError(t, err)
+	err = h.Add(mkHeapObj(2, 1))
+	require.NoError(t, err)
+	err = h.Add(mkHeapObj(3, 31))
+	require.NoError(t, err)
+	err = h.Add(mkHeapObj(4, 11))
+	require.NoError(t, err)
+
+	obj, exists, err := h.Get(mkHeapObj(4, 0))
+	require.NoError(t, err)
+	require.True(t, exists)
+	require.Equal(t, int64(4), obj.GetTableID())
+
+	_, exists, err = h.Get(mkHeapObj(5, 0))
+	require.NoError(t, err)
+	require.False(t, exists)
+}
+
+func TestHeap_GetByKey(t *testing.T) {
+	h := NewHeap()
+	err := h.Add(mkHeapObj(1, 10))
+	require.NoError(t, err)
+	err = h.Add(mkHeapObj(2, 1))
+	require.NoError(t, err)
+	err = h.Add(mkHeapObj(3, 31))
+	require.NoError(t, err)
+	err = h.Add(mkHeapObj(4, 11))
+	require.NoError(t, err)
+
+	obj, exists, err := h.GetByKey(4)
+	require.NoError(t, err)
+	require.True(t, exists)
+	require.Equal(t, int64(4), obj.GetTableID())
+
+	_, exists, err = h.GetByKey(5)
+	require.NoError(t, err)
+	require.False(t, exists)
+}
+
+func TestHeap_List(t *testing.T) {
+	h := NewHeap()
+	list := h.List()
+	require.Empty(t, list)
+
+	items := map[int64]float64{
+		1: 10,
+		2: 1,
+		3: 30,
+		4: 11,
+		5: 30,
+	}
+	for k, v := range items {
+		h.Add(mkHeapObj(k, v))
+	}
+	list = h.List()
+	require.Len(t, list, len(items))
+	for _, obj := range list {
+		require.Equal(t, items[obj.GetTableID()], obj.GetWeight())
+	}
+}
+
+func TestHeap_ListKeys(t *testing.T) {
+	h := NewHeap()
+	list := h.ListKeys()
+	require.Empty(t, list)
+
+	items := map[int64]float64{
+		1: 10,
+		2: 1,
+		3: 30,
+		4: 11,
+		5: 30,
+	}
+	for k, v := range items {
+		h.Add(mkHeapObj(k, v))
+	}
+	list = h.ListKeys()
+	require.Len(t, list, len(items))
+	for _, key := range list {
+		_, ok := items[key]
+		require.True(t, ok)
+	}
+}
+
+func TestHeap_Peek(t *testing.T) {
+	h := NewHeap()
+	_, err := h.Peek()
+	require.EqualError(t, err, "heap is empty")
+
+	err = h.Add(mkHeapObj(1, 10))
+	require.NoError(t, err)
+	err = h.Add(mkHeapObj(2, 1))
+	require.NoError(t, err)
+	err = h.Add(mkHeapObj(3, 31))
+	require.NoError(t, err)
+	err = h.Add(mkHeapObj(4, 11))
+	require.NoError(t, err)
+
+	item, err := h.Peek()
+	require.NoError(t, err)
+	require.Equal(t, int64(3), item.GetTableID())
+
+	item, err = h.Pop()
+	require.NoError(t, err)
+	require.Equal(t, int64(3), item.GetTableID())
+}
+
+func TestHeap_IsEmpty(t *testing.T) {
+	h := NewHeap()
+	require.True(t, h.IsEmpty())
+
+	err := h.Add(mkHeapObj(1, 10))
+	require.NoError(t, err)
+	require.False(t, h.IsEmpty())
+
+	_, err = h.Pop()
+	require.NoError(t, err)
+	require.True(t, h.IsEmpty())
+}
+
+func TestHeap_Len(t *testing.T) {
+	h := NewHeap()
+	require.Zero(t, h.Len())
+
+	err := h.Add(mkHeapObj(1, 10))
+	require.NoError(t, err)
+	require.Equal(t, 1, h.Len())
+
+	_, err = h.Pop()
+	require.NoError(t, err)
+	require.Zero(t, h.Len())
+}
