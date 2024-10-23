@@ -201,7 +201,6 @@ func TestPubSub(t *testing.T) {
 	events := make([]*notifier.SchemaChangeEvent, 0, 32)
 	eventsLock := sync.Mutex{}
 	handler := func(_ context.Context, _ sessionctx.Context, c *notifier.SchemaChangeEvent) error {
-		println("lance test handler called", c.String())
 		eventsLock.Lock()
 		defer eventsLock.Unlock()
 		events = append(events, c)

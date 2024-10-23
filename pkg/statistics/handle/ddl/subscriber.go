@@ -234,6 +234,7 @@ func (h handler) handle(
 	case model.ActionFlashbackCluster:
 		return errors.Trace(storage.UpdateStatsVersion(ctx, sctx))
 	case model.ActionAddIndex:
+		// No need to update the stats meta for the adding index event.
 	default:
 		intest.Assert(false)
 		logutil.StatsLogger().Error("Unhandled schema change event",

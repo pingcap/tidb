@@ -131,8 +131,6 @@ func (n *DDLNotifier) Start(ctx context.Context) {
 		n.handlersBitMap |= 1 << id
 	}
 
-	println("lance test handlersBitMap", n.handlersBitMap)
-
 	ctx = kv.WithInternalSourceType(ctx, kv.InternalDDLNotifier)
 	ctx = logutil.WithCategory(ctx, "ddl-notifier")
 	ticker := time.NewTicker(n.pollInterval)
@@ -179,7 +177,9 @@ func (n *DDLNotifier) processEvents(ctx context.Context) error {
 
 		if intest.InTest {
 			if n.handlersBitMap == 0 {
-				// drop delete events, we will manually SEELCT table in unit tests.
+				// There are unit tests that directly check the system table while no subscriber
+				// is registered. We continue the loop to skip DELETE the events in table so
+				// tests can check them.
 				continue
 			}
 		}
