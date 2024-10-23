@@ -1570,6 +1570,10 @@ func isSingleIntPK(constr *ast.Constraint, lastCol *model.ColumnInfo) bool {
 // ShouldBuildClusteredIndex is used to determine whether the CREATE TABLE statement should build a clustered index table.
 func ShouldBuildClusteredIndex(mode variable.ClusteredIndexDefMode, opt *ast.IndexOption, isSingleIntPK bool) bool {
 	if opt == nil || opt.PrimaryKeyTp == pmodel.PrimaryKeyTypeDefault {
+		// The primary key is also a global index, shouldn't be a clustered index.
+		if opt != nil && opt.Global {
+			return false
+		}
 		switch mode {
 		case variable.ClusteredIndexDefModeOn:
 			return true
