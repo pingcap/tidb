@@ -176,6 +176,8 @@ func newPartitionedTable(tbl *TableCommon, tblInfo *model.TableInfo) (table.Part
 	}
 	ret.meta.Indices = currIndices
 	if pi.DDLState == model.StateDeleteReorganization {
+		origIdx := setIndexesState(ret, pi.DDLState)
+		defer unsetIndexesState(ret, origIdx)
 		// TODO: Explicitly explain the different DDL/New fields!
 		if pi.NewTableID != 0 {
 			ret.reorgPartitionExpr, err = newPartitionExpr(tblInfo, pi.DDLType, pi.DDLExpr, pi.DDLColumns, pi.DroppingDefinitions)
@@ -202,8 +204,8 @@ func newPartitionedTable(tbl *TableCommon, tblInfo *model.TableInfo) (table.Part
 		}
 	} else {
 		if len(pi.AddingDefinitions) > 0 {
-			//origIdx := setIndexesState(ret, pi.DDLState)
-			//defer unsetIndexesState(ret, origIdx)
+			origIdx := setIndexesState(ret, pi.DDLState)
+			defer unsetIndexesState(ret, origIdx)
 			if pi.NewTableID != 0 {
 				// REMOVE PARTITIONING or PARTITION BY
 				ret.reorgPartitionExpr, err = newPartitionExpr(tblInfo, pi.DDLType, pi.DDLExpr, pi.DDLColumns, pi.AddingDefinitions)
@@ -235,14 +237,13 @@ func newPartitionedTable(tbl *TableCommon, tblInfo *model.TableInfo) (table.Part
 }
 
 // setIndexesState is used to alter the index schema state for non-public partitions,
-// during reorganize partition.
+// during reorganize partition, so they don't trigger assertions during partition DDL state DeleteOnly.
 func setIndexesState(t *partitionedTable, state model.SchemaState) []*model.IndexInfo {
 	orig := t.meta.Indices
 	t.meta.Indices = make([]*model.IndexInfo, 0, len(orig))
 	for i := range orig {
 		t.meta.Indices = append(t.meta.Indices, orig[i].Clone())
-		switch t.meta.Indices[i].State {
-		case model.StatePublic:
+		if t.meta.Indices[i].State == model.StatePublic {
 			switch state {
 			case model.StateDeleteOnly, model.StateNone:
 				t.meta.Indices[i].State = model.StateDeleteOnly

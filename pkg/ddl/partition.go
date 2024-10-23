@@ -3562,6 +3562,10 @@ func (w *worker) onReorganizePartition(jobCtx *jobContext, job *model.Job) (ver 
 				dropIndices = append(dropIndices, indexInfo)
 			}
 		}
+		// TODO: verify that the indexes are dropped,
+		// and that StateDeleteOnly+StateDeleteReorganization is not needed.
+		// local indexes is not an issue, since they will be gone with the dropped
+		// partitions, but replaced global indexes should be checked!
 		for _, indexInfo := range dropIndices {
 			removeIndexInfo(tblInfo, indexInfo)
 		}

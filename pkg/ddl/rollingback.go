@@ -369,58 +369,25 @@ func convertReorgPartitionJob2RollbackJob(jobCtx *jobContext, job *model.Job, ot
 		partNames = append(partNames, pd.Name.L)
 	}
 	var dropIndices []*model.IndexInfo
-	// When Global Index is duplicated to a non Global, we later need
-	// to know if it was Global before (marked to be dropped) or not.
-	globalToUniqueDupMap := make(map[string]int64)
 	for _, indexInfo := range tblInfo.Indices {
 		if !indexInfo.Unique {
 			continue
 		}
-		switch indexInfo.State {
-		case model.StateWriteOnly:
+		isNew, ok := pi.DDLChangedIndex[indexInfo.ID]
+		if !ok {
+			// non-changed index
+			continue
+		}
+		if !isNew {
 			if pi.DDLState == model.StateDeleteReorganization {
 				// Revert the non-public state
 				indexInfo.State = model.StatePublic
-				globalToUniqueDupMap[indexInfo.Name.L] = indexInfo.ID
-			} else {
-				dropIndices = append(dropIndices, indexInfo)
 			}
-		case model.StateDeleteOnly, model.StateWriteReorganization:
-			dropIndices = append(dropIndices, indexInfo)
-		case model.StateDeleteReorganization:
-			if pi.DDLState != model.StateDeleteReorganization {
-				continue
-			}
-			// Old index marked to be dropped, rollback by making it public again
-			indexInfo.State = model.StatePublic
-			if indexInfo.Global {
-				if id, ok := globalToUniqueDupMap[indexInfo.Name.L]; ok {
-					return ver, errors.NewNoStackErrorf("Duplicate global index names '%s', %d != %d", indexInfo.Name.O, indexInfo.ID, id)
-				}
-				globalToUniqueDupMap[indexInfo.Name.L] = indexInfo.ID
-			}
-		case model.StatePublic:
-			if pi.DDLState != model.StateDeleteReorganization {
-				continue
-			}
-			// We cannot drop the index here, we need to wait until
-			// the next schema version
-			// i.e. rollback in rollbackLikeDropPartition
-			// New index that became public in this state,
-			// mark it to be dropped in next schema version
-			if indexInfo.Global {
+		} else {
+			if pi.DDLState == model.StateDeleteReorganization {
 				indexInfo.State = model.StateWriteOnly
 			} else {
-				// How to know if this index was created as a duplicate or not?
-				if id, ok := globalToUniqueDupMap[indexInfo.Name.L]; ok {
-					// The original index
-					if id >= indexInfo.ID {
-						return ver, errors.NewNoStackErrorf("Indexes in wrong order during rollback, '%s', %d >= %d", indexInfo.Name.O, id, indexInfo.ID)
-					}
-					indexInfo.State = model.StateWriteOnly
-				} else {
-					globalToUniqueDupMap[indexInfo.Name.L] = indexInfo.ID
-				}
+				dropIndices = append(dropIndices, indexInfo)
 			}
 		}
 	}
