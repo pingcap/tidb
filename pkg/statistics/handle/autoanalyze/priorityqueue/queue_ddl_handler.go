@@ -80,7 +80,7 @@ func (pq *AnalysisPriorityQueue) HandleDDLEvent(_ context.Context, sctx sessionc
 
 // getAndDeleteJob tries to get a job from the priority queue and delete it if it exists.
 func (pq *AnalysisPriorityQueue) getAndDeleteJob(tableID int64) error {
-	job, ok, err := pq.syncFields.inner.GetByKey(tableID)
+	job, ok, err := pq.syncFields.inner.getByKey(tableID)
 	if err != nil {
 		statslogutil.StatsLogger().Error(
 			"Failed to get the job from priority queue",
@@ -90,7 +90,7 @@ func (pq *AnalysisPriorityQueue) getAndDeleteJob(tableID int64) error {
 		return errors.Trace(err)
 	}
 	if ok {
-		err := pq.syncFields.inner.Delete(job)
+		err := pq.syncFields.inner.delete(job)
 		if err != nil {
 			statslogutil.StatsLogger().Error(
 				"Failed to delete table from priority queue",
