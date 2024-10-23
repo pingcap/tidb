@@ -23,7 +23,9 @@ import (
 	"github.com/pingcap/errors"
 	sess "github.com/pingcap/tidb/pkg/ddl/session"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/session/types"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
 )
@@ -39,8 +41,8 @@ import (
 // SchemaChangeEvent happening time.
 //
 // The handler function must be registered by RegisterHandler before the
-// ddlNotifier is started. If the handler can't immediately serve the handling
-// after registering, it can return nil to tell the ddlNotifier to act like the
+// DDLNotifier is started. If the handler can't immediately serve the handling
+// after registering, it can return nil to tell the DDLNotifier to act like the
 // change has been handled, or return ErrNotReadyRetryLater to hold the change
 // and re-handle later.
 type SchemaChangeHandler func(
@@ -77,27 +79,9 @@ func (id HandlerID) String() string {
 	}
 }
 
-// RegisterHandler must be called with an exclusive and fixed HandlerID for each
-// handler to register the handler. Illegal ID will panic. RegisterHandler should
-// not be called after the global ddlNotifier is started.
-//
-// RegisterHandler is not concurrency-safe.
-func RegisterHandler(id HandlerID, handler SchemaChangeHandler) {
-	intID := int(id)
-	// the ID is used by bit operation in processedByFlag. We use BIGINT UNSIGNED to
-	// store it so only 64 IDs are allowed.
-	if intID < 0 || intID >= 64 {
-		panic(fmt.Sprintf("illegal HandlerID: %d", id))
-	}
-
-	if _, ok := globalDDLNotifier.handlers[id]; ok {
-		panic(fmt.Sprintf("HandlerID %d already registered", id))
-	}
-	globalDDLNotifier.handlers[id] = handler
-}
-
-type ddlNotifier struct {
-	ownedSCtx    sessionctx.Context
+// DDLNotifier implements the subscription on DDL events.
+type DDLNotifier struct {
+	ownedSess    types.Session
 	store        Store
 	handlers     map[HandlerID]SchemaChangeHandler
 	pollInterval time.Duration
@@ -106,37 +90,43 @@ type ddlNotifier struct {
 	handlersBitMap uint64
 }
 
-// TODO(lance6716): remove this global variable. Move it into Domain and make
-// related functions a member of it.
-var globalDDLNotifier *ddlNotifier
-
-// InitDDLNotifier initializes the global ddlNotifier. It should be called only
+// NewDDLNotifier initializes the global DDLNotifier. It should be called only
 // once and before any RegisterHandler call. The ownership of the sctx is passed
-// to the ddlNotifier.
-func InitDDLNotifier(
-	sctx sessionctx.Context,
+// to the DDLNotifier.
+func NewDDLNotifier(
+	sess types.Session,
 	store Store,
 	pollInterval time.Duration,
-) {
-	globalDDLNotifier = &ddlNotifier{
-		ownedSCtx:    sctx,
+) *DDLNotifier {
+	return &DDLNotifier{
+		ownedSess:    sess,
 		store:        store,
 		handlers:     make(map[HandlerID]SchemaChangeHandler),
 		pollInterval: pollInterval,
 	}
 }
 
-// ResetDDLNotifier is used for testing only.
-func ResetDDLNotifier() { globalDDLNotifier = nil }
+// RegisterHandler must be called with an exclusive and fixed HandlerID for each
+// handler to register the handler. Illegal ID will panic. RegisterHandler should
+// not be called after the global DDLNotifier is started.
+//
+// RegisterHandler is not concurrency-safe.
+func (n *DDLNotifier) RegisterHandler(id HandlerID, handler SchemaChangeHandler) {
+	intID := int(id)
+	// the ID is used by bit operation in processedByFlag. We use BIGINT UNSIGNED to
+	// store it so only 64 IDs are allowed.
+	if intID < 0 || intID >= 64 {
+		panic(fmt.Sprintf("illegal HandlerID: %d", id))
+	}
 
-// StartDDLNotifier starts the global ddlNotifier. It will block until the
-// context is canceled.
-func StartDDLNotifier(ctx context.Context) {
-	globalDDLNotifier.Start(ctx)
+	if _, ok := n.handlers[id]; ok {
+		panic(fmt.Sprintf("HandlerID %d already registered", id))
+	}
+	n.handlers[id] = handler
 }
 
-// Start starts the ddlNotifier. It will block until the context is canceled.
-func (n *ddlNotifier) Start(ctx context.Context) {
+// Start starts the DDLNotifier. It will block until the context is canceled.
+func (n *DDLNotifier) Start(ctx context.Context) {
 	for id := range n.handlers {
 		n.handlersBitMap |= 1 << id
 	}
@@ -157,8 +147,8 @@ func (n *ddlNotifier) Start(ctx context.Context) {
 	}
 }
 
-func (n *ddlNotifier) processEvents(ctx context.Context) error {
-	changes, err := n.store.List(ctx, sess.NewSession(n.ownedSCtx))
+func (n *DDLNotifier) processEvents(ctx context.Context) error {
+	changes, err := n.store.List(ctx, sess.NewSession(n.ownedSess))
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -185,10 +175,19 @@ func (n *ddlNotifier) processEvents(ctx context.Context) error {
 			}
 		}
 
+		if intest.InTest {
+			if n.handlersBitMap == 0 {
+				// There are unit tests that directly check the system table while no subscriber
+				// is registered. We continue the loop to skip DELETE the events in table so
+				// tests can check them.
+				continue
+			}
+		}
+
 		if change.processedByFlag == n.handlersBitMap {
 			if err2 := n.store.DeleteAndCommit(
 				ctx,
-				sess.NewSession(n.ownedSCtx),
+				sess.NewSession(n.ownedSess),
 				change.ddlJobID,
 				int(change.multiSchemaChangeSeq),
 			); err2 != nil {
@@ -205,7 +204,7 @@ func (n *ddlNotifier) processEvents(ctx context.Context) error {
 
 const slowHandlerLogThreshold = time.Second * 5
 
-func (n *ddlNotifier) processEventForHandler(
+func (n *DDLNotifier) processEventForHandler(
 	ctx context.Context,
 	change *schemaChange,
 	handlerID HandlerID,
@@ -215,7 +214,7 @@ func (n *ddlNotifier) processEventForHandler(
 		return nil
 	}
 
-	se := sess.NewSession(n.ownedSCtx)
+	se := sess.NewSession(n.ownedSess)
 
 	if err = se.Begin(ctx); err != nil {
 		return errors.Trace(err)
@@ -229,7 +228,7 @@ func (n *ddlNotifier) processEventForHandler(
 	}()
 
 	now := time.Now()
-	if err = handler(ctx, n.ownedSCtx, change.event); err != nil {
+	if err = handler(ctx, n.ownedSess, change.event); err != nil {
 		return errors.Trace(err)
 	}
 	if time.Since(now) > slowHandlerLogThreshold {
@@ -254,4 +253,9 @@ func (n *ddlNotifier) processEventForHandler(
 	change.processedByFlag = newFlag
 
 	return nil
+}
+
+// Close releases the resources.
+func (n *DDLNotifier) Close() {
+	n.ownedSess.Close()
 }

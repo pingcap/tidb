@@ -1095,14 +1095,17 @@ SwitchIndexState:
 		}
 		job.FillFinishedArgs(a)
 
+		addIndexEvent := notifier.NewAddIndexEvent(tblInfo, allIndexInfos)
+		err2 := asyncNotifyEvent(jobCtx, addIndexEvent, job, noSubJob, w.sess)
+		if err2 != nil {
+			return ver, errors.Trace(err2)
+		}
+
 		// Finish this job.
 		job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
 		if !job.ReorgMeta.IsDistReorg && job.ReorgMeta.ReorgTp == model.ReorgTypeLitMerge {
 			ingest.LitBackCtxMgr.Unregister(job.ID)
 		}
-		// TODO: store this event to the notifier.
-		// For now, it is not used and just for placeholder.
-		_ = notifier.NewAddIndexEvent(tblInfo, allIndexInfos)
 		logutil.DDLLogger().Info("run add index job done",
 			zap.String("charset", job.Charset),
 			zap.String("collation", job.Collate))

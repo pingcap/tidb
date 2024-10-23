@@ -37,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/pkg/bindinfo"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/ddl"
+	"github.com/pingcap/tidb/pkg/ddl/notifier"
 	"github.com/pingcap/tidb/pkg/ddl/placement"
 	"github.com/pingcap/tidb/pkg/ddl/schematracker"
 	"github.com/pingcap/tidb/pkg/ddl/systable"
@@ -64,6 +65,7 @@ import (
 	metrics2 "github.com/pingcap/tidb/pkg/planner/core/metrics"
 	"github.com/pingcap/tidb/pkg/privilege/privileges"
 	"github.com/pingcap/tidb/pkg/resourcegroup/runaway"
+	sessiontypes "github.com/pingcap/tidb/pkg/session/types"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/sessionstates"
 	"github.com/pingcap/tidb/pkg/sessionctx/sysproctrack"
@@ -148,6 +150,7 @@ type Domain struct {
 	statsLease      time.Duration
 	ddl             ddl.DDL
 	ddlExecutor     ddl.Executor
+	ddlNotifier     *notifier.DDLNotifier
 	info            *infosync.InfoSyncer
 	globalCfgSyncer *globalconfigsync.GlobalConfigSyncer
 	m               syncutil.Mutex
@@ -1373,6 +1376,24 @@ func (do *Domain) Init(
 	do.cancelFns.mu.Lock()
 	do.cancelFns.fns = append(do.cancelFns.fns, cancelFunc)
 	do.cancelFns.mu.Unlock()
+
+	var ddlNotifierStore notifier.Store
+	if intest.InTest {
+		ddlNotifierStore = notifier.OpenTableStore("mysql", ddl.NotifierTableName)
+		se, err := do.sysExecutorFactory(do)
+		if err != nil {
+			return err
+		}
+		do.ddlNotifier = notifier.NewDDLNotifier(
+			se.(sessiontypes.Session),
+			ddlNotifierStore,
+			time.Second,
+		)
+
+		// TODO(lance6716): find a more representative place for subscriber
+		failpoint.InjectCall("afterDDLNotifierCreated", do.ddlNotifier)
+	}
+
 	d := do.ddl
 	eBak := do.ddlExecutor
 	do.ddl, do.ddlExecutor = ddl.NewDDL(
@@ -1383,6 +1404,7 @@ func (do *Domain) Init(
 		ddl.WithInfoCache(do.infoCache),
 		ddl.WithLease(do.schemaLease),
 		ddl.WithSchemaLoader(do),
+		ddl.WithEventPublishStore(ddlNotifierStore),
 	)
 
 	failpoint.Inject("MockReplaceDDL", func(val failpoint.Value) {
@@ -1489,6 +1511,12 @@ func (do *Domain) Start() error {
 		return err
 	}
 	do.minJobIDRefresher = do.ddl.GetMinJobIDRefresher()
+	if intest.InTest {
+		do.wg.Run(func() {
+			do.ddlNotifier.Start(do.ctx)
+			do.ddlNotifier.Close()
+		}, "ddlNotifier")
+	}
 
 	// Local store needs to get the change information for every DDL state in each session.
 	do.wg.Run(func() {
