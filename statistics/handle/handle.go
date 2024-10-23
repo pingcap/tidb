@@ -1729,6 +1729,15 @@ func SaveTableStatsToStorage(sctx sessionctx.Context, results *statistics.Analyz
 				zap.Int64("results.Count", results.Count),
 				zap.Int64("count", cnt))
 		}
+		if cnt == 625 && modifyCnt == 0 {
+			delay := time.Duration(10 * time.Second)
+			logutil.BgLogger().Info("Injecting random delay before transaction commit",
+				zap.Int64("tableID", tableID),
+				zap.Int64("count", cnt),
+				zap.Int64("modifyCount", modifyCnt),
+				zap.Duration("delay", delay))
+			time.Sleep(delay)
+		}
 		if _, err = exec.ExecuteInternal(ctx, "update mysql.stats_meta set version=%?, modify_count=%?, count=%?, snapshot=%? where table_id=%?", version, modifyCnt, cnt, results.Snapshot, tableID); err != nil {
 			return err
 		}
