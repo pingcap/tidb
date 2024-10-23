@@ -24,10 +24,13 @@ import (
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/planctx"
 	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/statistics"
+	"github.com/pingcap/tidb/pkg/statistics/asyncload"
 	"github.com/pingcap/tidb/pkg/table"
+	"github.com/pingcap/tidb/pkg/util/intset"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
 )
@@ -36,7 +39,7 @@ import (
 type CollectPredicateColumnsPoint struct{}
 
 // Optimize implements LogicalOptRule.<0th> interface.
-func (CollectPredicateColumnsPoint) Optimize(_ context.Context, plan base.LogicalPlan, _ *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, bool, error) {
+func (c *CollectPredicateColumnsPoint) Optimize(_ context.Context, plan base.LogicalPlan, _ *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, bool, error) {
 	planChanged := false
 	if plan.SCtx().GetSessionVars().InRestrictedSQL {
 		return plan, planChanged, nil
@@ -47,7 +50,7 @@ func (CollectPredicateColumnsPoint) Optimize(_ context.Context, plan base.Logica
 	if len(predicateColumns) > 0 {
 		plan.SCtx().UpdateColStatsUsage(maps.Keys(predicateColumns))
 	}
-	markAtLeastOneFullStatsLoadForEachTable(plan.SCtx(), visitedPhysTblIDs, predicateColumns, histNeeded)
+	c.markAtLeastOneFullStatsLoadForEachTable(plan.SCtx(), visitedPhysTblIDs, predicateColumns, histNeeded)
 	if syncWait == 0 {
 		return plan, planChanged, nil
 	}
@@ -81,6 +84,87 @@ func (CollectPredicateColumnsPoint) Optimize(_ context.Context, plan base.Logica
 		return plan, planChanged, err
 	}
 	return plan, planChanged, nil
+}
+
+// markAtLeastOneFullStatsLoadForEachTable marks at least one full stats load for each table.
+// It should be called after we use c.predicateCols to update the usage of predicate columns.
+func (*CollectPredicateColumnsPoint) markAtLeastOneFullStatsLoadForEachTable(
+	sctx planctx.PlanContext,
+	visitedPhysTblIDs *intset.FastIntSet,
+	predicateCols map[model.TableItemID]bool,
+	histNeeded bool,
+) {
+	is := sctx.GetDomainInfoSchema().(infoschema.InfoSchema)
+	statsHandle := domain.GetDomain(sctx).StatsHandle()
+	physTblIDsWithNeededCols := intset.NewFastIntSet()
+	for neededCol, fullLoad := range predicateCols {
+		if !fullLoad {
+			continue
+		}
+		physTblIDsWithNeededCols.Insert(int(neededCol.TableID))
+	}
+	visitedPhysTblIDs.ForEach(func(physicalTblID int) {
+		// 1. collect table metadata
+		tbl, _ := infoschema.FindTableByTblOrPartID(is, int64(physicalTblID))
+		if tbl == nil {
+			return
+		}
+
+		// 2. handle extra sync/async stats loading for the determinate mode
+
+		// If we visited a table without getting any columns need stats (likely because there are no pushed down
+		// predicates), and we are in the determinate mode, we need to make sure we are able to get the "analyze row
+		// count" in getStatsTable(), which means any column/index stats are available.
+		if sctx.GetSessionVars().GetOptObjective() != variable.OptObjectiveDeterminate ||
+			// If we already collected some columns that need trigger sync laoding on this table, we don't need to
+			// additionally do anything for determinate mode.
+			physTblIDsWithNeededCols.Has(physicalTblID) ||
+			statsHandle == nil {
+			return
+		}
+		tblStats := statsHandle.GetTableStats(tbl.Meta())
+		if tblStats == nil || tblStats.Pseudo {
+			return
+		}
+		var colToTriggerLoad *model.TableItemID
+		for _, col := range tbl.Cols() {
+			if col.State != model.StatePublic || (col.IsGenerated() && !col.GeneratedStored) || !tblStats.ColAndIdxExistenceMap.HasAnalyzed(col.ID, false) {
+				continue
+			}
+			if colStats := tblStats.GetCol(col.ID); colStats != nil {
+				// If any stats are already full loaded, we don't need to trigger stats loading on this table.
+				if colStats.IsFullLoad() {
+					colToTriggerLoad = nil
+					break
+				}
+			}
+			// Choose the first column we meet to trigger stats loading.
+			if colToTriggerLoad == nil {
+				colToTriggerLoad = &model.TableItemID{TableID: int64(physicalTblID), ID: col.ID, IsIndex: false}
+			}
+		}
+		if colToTriggerLoad == nil {
+			return
+		}
+		for _, idx := range tbl.Indices() {
+			if idx.Meta().State != model.StatePublic || idx.Meta().MVIndex {
+				continue
+			}
+			// If any stats are already full loaded, we don't need to trigger stats loading on this table.
+			if idxStats := tblStats.GetIdx(idx.Meta().ID); idxStats != nil && idxStats.IsFullLoad() {
+				colToTriggerLoad = nil
+				break
+			}
+		}
+		if colToTriggerLoad == nil {
+			return
+		}
+		if histNeeded {
+			predicateCols[*colToTriggerLoad] = true
+		} else {
+			asyncload.AsyncLoadHistogramNeededItems.Insert(*colToTriggerLoad, true)
+		}
+	})
 }
 
 // Name implements the base.LogicalOptRule.<1st> interface.
