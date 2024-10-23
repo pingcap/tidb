@@ -1501,13 +1501,13 @@ func (d *Datum) convertToMysqlDuration(typeCtx Context, target *FieldType) (Datu
 			ret.SetMysqlDuration(dur)
 			return ret, errors.Trace(err)
 		}
-		dur, err = dur.RoundFrac(fsp, typeCtx.Location())
+		dur, err = dur.RoundFrac(fsp)
 		ret.SetMysqlDuration(dur)
 		if err != nil {
 			return ret, errors.Trace(err)
 		}
 	case KindMysqlDuration:
-		dur, err := d.GetMysqlDuration().RoundFrac(fsp, typeCtx.Location())
+		dur, err := d.GetMysqlDuration().RoundFrac(fsp)
 		ret.SetMysqlDuration(dur)
 		if err != nil {
 			return ret, errors.Trace(err)
@@ -2037,7 +2037,7 @@ func (d *Datum) toSignedInteger(ctx Context, tp byte) (int64, error) {
 	case KindMysqlDuration:
 		// 11:11:11.999999 -> 111112
 		// 11:59:59.999999 -> 120000
-		dur, err := d.GetMysqlDuration().RoundFrac(DefaultFsp, ctx.Location())
+		dur, err := d.GetMysqlDuration().RoundFrac(DefaultFsp)
 		if err != nil {
 			return 0, errors.Trace(err)
 		}
