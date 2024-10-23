@@ -645,6 +645,7 @@ func (pq *AnalysisPriorityQueue) RefreshLastAnalysisDuration() {
 			return errors.Trace(err)
 		}
 		jobFactory := NewAnalysisJobFactory(sctx, 0, currentTs)
+		// TODO: We can directly rebuild the priority queue instead of updating the indicators of each job.
 		for _, job := range jobs {
 			indicators := job.GetIndicators()
 			tableStats, ok := pq.statsHandle.Get(job.GetTableID())
