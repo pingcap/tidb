@@ -98,13 +98,13 @@ var (
 	ErrHeapIsEmpty = errors.New("heap is empty")
 )
 
-// Heap is a producer/consumer queue that implements a heap data structure.
-type Heap struct {
+// pqHeapImpl is a producer/consumer queue that implements a heap data structure.
+type pqHeapImpl struct {
 	data *heapData
 }
 
-// AddOrUpdate adds an object or updates it if it already exists.
-func (h *Heap) AddOrUpdate(obj AnalysisJob) error {
+// addOrUpdate adds an object or updates it if it already exists.
+func (h *pqHeapImpl) addOrUpdate(obj AnalysisJob) error {
 	if _, exists := h.data.items[obj.GetTableID()]; exists {
 		h.data.items[obj.GetTableID()].obj = obj
 		heap.Fix(h.data, h.data.items[obj.GetTableID()].index)
@@ -114,13 +114,13 @@ func (h *Heap) AddOrUpdate(obj AnalysisJob) error {
 	return nil
 }
 
-// Update is an alias for Add.
-func (h *Heap) Update(obj AnalysisJob) error {
-	return h.AddOrUpdate(obj)
+// update is an alias for Add.
+func (h *pqHeapImpl) update(obj AnalysisJob) error {
+	return h.addOrUpdate(obj)
 }
 
-// Delete removes an object from the heap.
-func (h *Heap) Delete(obj AnalysisJob) error {
+// delete removes an object from the heap.
+func (h *pqHeapImpl) delete(obj AnalysisJob) error {
 	if item, ok := h.data.items[obj.GetTableID()]; ok {
 		heap.Remove(h.data, item.index)
 		return nil
@@ -128,16 +128,16 @@ func (h *Heap) Delete(obj AnalysisJob) error {
 	return errors.New("object not found")
 }
 
-// Peek returns the top object from the heap without removing it.
-func (h *Heap) Peek() (AnalysisJob, error) {
+// peek returns the top object from the heap without removing it.
+func (h *pqHeapImpl) peek() (AnalysisJob, error) {
 	if len(h.data.queue) == 0 {
 		return nil, ErrHeapIsEmpty
 	}
 	return h.data.items[h.data.queue[0]].obj, nil
 }
 
-// Pop removes the top object from the heap and returns it.
-func (h *Heap) Pop() (AnalysisJob, error) {
+// pop removes the top object from the heap and returns it.
+func (h *pqHeapImpl) pop() (AnalysisJob, error) {
 	if len(h.data.queue) == 0 {
 		return nil, ErrHeapIsEmpty
 	}
@@ -148,8 +148,8 @@ func (h *Heap) Pop() (AnalysisJob, error) {
 	return obj.(AnalysisJob), nil
 }
 
-// List returns a list of all objects in the heap.
-func (h *Heap) List() []AnalysisJob {
+// list returns a list of all objects in the heap.
+func (h *pqHeapImpl) list() []AnalysisJob {
 	list := make([]AnalysisJob, 0, len(h.data.items))
 	for _, item := range h.data.items {
 		list = append(list, item.obj)
@@ -157,13 +157,13 @@ func (h *Heap) List() []AnalysisJob {
 	return list
 }
 
-// Len returns the number of objects in the heap.
-func (h *Heap) Len() int {
+// len returns the number of objects in the heap.
+func (h *pqHeapImpl) len() int {
 	return h.data.Len()
 }
 
 // ListKeys returns a list of all keys in the heap.
-func (h *Heap) ListKeys() []int64 {
+func (h *pqHeapImpl) ListKeys() []int64 {
 	list := make([]int64, 0, len(h.data.items))
 	for key := range h.data.items {
 		list = append(list, key)
@@ -172,12 +172,12 @@ func (h *Heap) ListKeys() []int64 {
 }
 
 // Get returns an object from the heap.
-func (h *Heap) Get(obj AnalysisJob) (AnalysisJob, bool, error) {
-	return h.GetByKey(obj.GetTableID())
+func (h *pqHeapImpl) Get(obj AnalysisJob) (AnalysisJob, bool, error) {
+	return h.getByKey(obj.GetTableID())
 }
 
-// GetByKey returns an object from the heap by key.
-func (h *Heap) GetByKey(key int64) (AnalysisJob, bool, error) {
+// getByKey returns an object from the heap by key.
+func (h *pqHeapImpl) getByKey(key int64) (AnalysisJob, bool, error) {
 	item, exists := h.data.items[key]
 	if !exists {
 		return nil, false, nil
@@ -185,14 +185,14 @@ func (h *Heap) GetByKey(key int64) (AnalysisJob, bool, error) {
 	return item.obj, true, nil
 }
 
-// IsEmpty returns true if the heap is empty.
-func (h *Heap) IsEmpty() bool {
+// isEmpty returns true if the heap is empty.
+func (h *pqHeapImpl) isEmpty() bool {
 	return len(h.data.queue) == 0
 }
 
-// NewHeap returns a Heap which can be used to queue up items to process.
-func NewHeap() *Heap {
-	h := &Heap{
+// newHeap returns a Heap which can be used to queue up items to process.
+func newHeap() *pqHeapImpl {
+	h := &pqHeapImpl{
 		data: &heapData{
 			items: map[int64]*heapItem{},
 			queue: []int64{},
