@@ -146,7 +146,6 @@ func (n *DDLNotifier) Start() {
 		n.handlersBitMap |= 1 << id
 	}
 
-	n.ctx, n.cancel = context.WithCancel(context.Background())
 	ctx := kv.WithInternalSourceType(n.ctx, kv.InternalDDLNotifier)
 	ctx = logutil.WithCategory(ctx, "ddl-notifier")
 	ticker := time.NewTicker(n.pollInterval)
@@ -292,6 +291,7 @@ func (n *DDLNotifier) Stop() {
 // OnBecomeOwner implements the owner.Listener interface.
 // We need to make sure only one DDLNotifier is running at any time.
 func (n *DDLNotifier) OnBecomeOwner() {
+	n.ctx, n.cancel = context.WithCancel(context.Background())
 	n.wg.RunWithRecover(n.Start, func(r any) {
 		if r == nil {
 			return
