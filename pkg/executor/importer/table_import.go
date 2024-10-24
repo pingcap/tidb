@@ -55,7 +55,6 @@ import (
 	"github.com/pingcap/tidb/pkg/table/tables"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/etcd"
-	"github.com/pingcap/tidb/pkg/util/mathutil"
 	"github.com/pingcap/tidb/pkg/util/promutil"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/pingcap/tidb/pkg/util/sqlkiller"
@@ -897,7 +896,7 @@ func checksumTable(ctx context.Context, se sessionctx.Context, plan *Plan, logge
 				logger.Warn("set tidb_backoff_weight failed", zap.Error(err))
 			}
 
-			newConcurrency := mathutil.Max(plan.DistSQLScanConcurrency/distSQLScanConcurrencyFactor, local.MinDistSQLScanConcurrency)
+			newConcurrency := max(plan.DistSQLScanConcurrency/distSQLScanConcurrencyFactor, local.MinDistSQLScanConcurrency)
 			logger.Info("checksum with adjusted distsql scan concurrency", zap.Int("concurrency", newConcurrency))
 			se.GetSessionVars().SetDistSQLScanConcurrency(newConcurrency)
 

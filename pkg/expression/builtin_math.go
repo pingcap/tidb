@@ -281,7 +281,7 @@ func (c *roundFunctionClass) getFunction(ctx BuildContext, args []Expression) (b
 		if bf.tp.GetDecimal() != types.UnspecifiedLength {
 			if argFieldTp.GetDecimal() != types.UnspecifiedLength {
 				decimalDelta := bf.tp.GetDecimal() - argFieldTp.GetDecimal()
-				bf.tp.SetFlenUnderLimit(bf.tp.GetFlen() + mathutil.Max(decimalDelta, 0))
+				bf.tp.SetFlenUnderLimit(bf.tp.GetFlen() + max(decimalDelta, 0))
 			} else {
 				bf.tp.SetFlenUnderLimit(argFieldTp.GetFlen() + bf.tp.GetDecimal())
 			}
@@ -470,7 +470,7 @@ func (b *builtinRoundWithFracDecSig) evalDecimal(ctx EvalContext, row chunk.Row)
 		return nil, isNull, err
 	}
 	to := new(types.MyDecimal)
-	if err = val.Round(to, mathutil.Min(int(frac), b.tp.GetDecimal()), types.ModeHalfUp); err != nil {
+	if err = val.Round(to, min(int(frac), b.tp.GetDecimal()), types.ModeHalfUp); err != nil {
 		return nil, true, err
 	}
 	return to, false, nil
@@ -1970,7 +1970,7 @@ func (b *builtinTruncateDecimalSig) evalDecimal(ctx EvalContext, row chunk.Row) 
 	}
 
 	result := new(types.MyDecimal)
-	if err := x.Round(result, mathutil.Min(int(d), b.getRetTp().GetDecimal()), types.ModeTruncate); err != nil {
+	if err := x.Round(result, min(int(d), b.getRetTp().GetDecimal()), types.ModeTruncate); err != nil {
 		return nil, true, err
 	}
 	return result, false, nil

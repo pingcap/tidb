@@ -28,7 +28,6 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/util/intest"
-	"github.com/pingcap/tidb/pkg/util/mathutil"
 	"go.uber.org/zap"
 )
 
@@ -125,7 +124,7 @@ func expectedDeleteRangeCnt(ctx delRangeCntCtx, job *model.Job) (int, error) {
 
 		ret := 0
 		for _, arg := range args.IndexArgs {
-			num := mathutil.Max(len(args.PartitionIDs), 1) // Add temporary index to del-range table.
+			num := max(len(args.PartitionIDs), 1) // Add temporary index to del-range table.
 			if arg.IsGlobal {
 				num = 1 // Global index only has one del-range.
 			}
@@ -144,21 +143,21 @@ func expectedDeleteRangeCnt(ctx delRangeCntCtx, job *model.Job) (int, error) {
 		if args.IndexArgs[0].IsVector {
 			return 0, nil
 		}
-		return mathutil.Max(len(args.PartitionIDs), 1), nil
+		return max(len(args.PartitionIDs), 1), nil
 	case model.ActionDropColumn:
 		args, err := model.GetTableColumnArgs(job)
 		if err != nil {
 			return 0, errors.Trace(err)
 		}
 
-		physicalCnt := mathutil.Max(len(args.PartitionIDs), 1)
+		physicalCnt := max(len(args.PartitionIDs), 1)
 		return physicalCnt * len(args.IndexIDs), nil
 	case model.ActionModifyColumn:
 		args, err := model.GetFinishedModifyColumnArgs(job)
 		if err != nil {
 			return 0, errors.Trace(err)
 		}
-		physicalCnt := mathutil.Max(len(args.PartitionIDs), 1)
+		physicalCnt := max(len(args.PartitionIDs), 1)
 		return physicalCnt * ctx.deduplicateIdxCnt(args.IndexIDs), nil
 	case model.ActionMultiSchemaChange:
 		totalExpectedCnt := 0

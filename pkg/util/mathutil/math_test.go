@@ -49,29 +49,6 @@ func TestStrLenOfUint64Fast(t *testing.T) {
 	})
 }
 
-func TestMaxMin(t *testing.T) {
-	require.Equal(t, 1, Min(1, 2))
-	require.Equal(t, 1, Min(2, 1))
-	require.Equal(t, 1, Min(4, 2, 1, 3))
-	require.Equal(t, 1, Min(1, 1))
-
-	require.Equal(t, 2, Max(1, 2))
-	require.Equal(t, 2, Max(2, 1))
-	require.Equal(t, 4, Max(4, 2, 1, 3))
-	require.Equal(t, 1, Max(1, 1))
-
-	require.Equal(t, int64(1), Min(int64(1), int64(2)))
-	require.Equal(t, int64(2), Max(int64(2), int64(1)))
-	require.Equal(t, int64(1), Min(int64(4), int64(2), int64(1), int64(3)))
-	require.Equal(t, int64(1), Max(int64(1), int64(1)))
-	require.Equal(t, 1.0, Min(4.0, 2.0, 1.0, 3.0))
-	require.Equal(t, 4.0, Max(4.0, 2.0, 1.0, 3.0))
-
-	require.Equal(t, "ab", Min("ab", "xy"))
-	require.Equal(t, "xy", Max("ab", "xy"))
-	require.Equal(t, "ab", Max("ab", "ab"))
-}
-
 func TestClamp(t *testing.T) {
 	require.Equal(t, 3, Clamp(100, 1, 3))
 	require.Equal(t, 2.0, Clamp(float64(2), 1.0, 3.0))

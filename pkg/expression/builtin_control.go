@@ -20,7 +20,6 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
-	"github.com/pingcap/tidb/pkg/util/mathutil"
 	"github.com/pingcap/tipb/go-tipb"
 )
 
@@ -62,7 +61,7 @@ func maxlen(lhsFlen, rhsFlen int) int {
 	if lhsFlen < 0 || rhsFlen < 0 {
 		return mysql.MaxRealWidth
 	}
-	return mathutil.Max(lhsFlen, rhsFlen)
+	return max(lhsFlen, rhsFlen)
 }
 
 func setFlenFromArgs(evalType types.EvalType, resultFieldType *types.FieldType, argTps ...*types.FieldType) {
@@ -127,7 +126,7 @@ func setDecimalFromArgs(evalType types.EvalType, resultFieldType *types.FieldTyp
 				resultFieldType.SetDecimal(types.UnspecifiedLength)
 				return
 			}
-			maxDecimal = mathutil.Max(argTps[i].GetDecimal(), maxDecimal)
+			maxDecimal = max(argTps[i].GetDecimal(), maxDecimal)
 		}
 		resultFieldType.SetDecimalUnderLimit(maxDecimal)
 	}

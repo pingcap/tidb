@@ -66,7 +66,6 @@ go_library(
         "//pkg/util/filter",
         "//pkg/util/intest",
         "//pkg/util/logutil",
-        "//pkg/util/mathutil",
         "//pkg/util/promutil",
         "//pkg/util/sqlexec",
         "//pkg/util/sqlkiller",

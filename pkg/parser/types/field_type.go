@@ -21,7 +21,6 @@ import (
 	"strings"
 	"unsafe"
 
-	"github.com/cznic/mathutil"
 	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/parser/format"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -243,7 +242,7 @@ func (ft *FieldType) SetFlen(flen int) {
 // SetFlenUnderLimit sets the length of the field to the value of the argument
 func (ft *FieldType) SetFlenUnderLimit(flen int) {
 	if ft.GetType() == mysql.TypeNewDecimal {
-		ft.flen = mathutil.Min(flen, mysql.MaxDecimalWidth)
+		ft.flen = min(flen, mysql.MaxDecimalWidth)
 	} else {
 		ft.flen = flen
 	}
@@ -257,7 +256,7 @@ func (ft *FieldType) SetDecimal(decimal int) {
 // SetDecimalUnderLimit sets the decimal of the field to the value of the argument
 func (ft *FieldType) SetDecimalUnderLimit(decimal int) {
 	if ft.GetType() == mysql.TypeNewDecimal {
-		ft.decimal = mathutil.Min(decimal, mysql.MaxDecimalScale)
+		ft.decimal = min(decimal, mysql.MaxDecimalScale)
 	} else {
 		ft.decimal = decimal
 	}

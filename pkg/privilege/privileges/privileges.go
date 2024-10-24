@@ -41,7 +41,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/hack"
 	"github.com/pingcap/tidb/pkg/util/logutil"
-	"github.com/pingcap/tidb/pkg/util/mathutil"
 	"github.com/pingcap/tidb/pkg/util/sem"
 	"go.uber.org/zap"
 )
@@ -1056,7 +1055,7 @@ func (passwordLocking *PasswordLocking) ParseJSON(passwordLockingJSON types.Bina
 		return err
 	}
 	passwordLocking.FailedLoginAttempts = min(passwordLocking.FailedLoginAttempts, math.MaxInt16)
-	passwordLocking.FailedLoginAttempts = mathutil.Max(passwordLocking.FailedLoginAttempts, 0)
+	passwordLocking.FailedLoginAttempts = max(passwordLocking.FailedLoginAttempts, 0)
 
 	passwordLocking.PasswordLockTimeDays, err =
 		extractInt64FromJSON(passwordLockingJSON, "$.Password_locking.password_lock_time_days")
@@ -1064,7 +1063,7 @@ func (passwordLocking *PasswordLocking) ParseJSON(passwordLockingJSON types.Bina
 		return err
 	}
 	passwordLocking.PasswordLockTimeDays = min(passwordLocking.PasswordLockTimeDays, math.MaxInt16)
-	passwordLocking.PasswordLockTimeDays = mathutil.Max(passwordLocking.PasswordLockTimeDays, -1)
+	passwordLocking.PasswordLockTimeDays = max(passwordLocking.PasswordLockTimeDays, -1)
 
 	passwordLocking.FailedLoginCount, err =
 		extractInt64FromJSON(passwordLockingJSON, "$.Password_locking.failed_login_count")

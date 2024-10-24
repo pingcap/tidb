@@ -21,7 +21,6 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
-	"github.com/pingcap/tidb/pkg/util/mathutil"
 )
 
 type avgFunction struct {
@@ -88,7 +87,7 @@ func (af *avgFunction) GetResult(evalCtx *AggEvaluateContext) (d types.Datum) {
 		if frac == -1 {
 			frac = mysql.MaxDecimalScale
 		}
-		err = to.Round(to, mathutil.Min(frac, mysql.MaxDecimalScale), types.ModeHalfUp)
+		err = to.Round(to, min(frac, mysql.MaxDecimalScale), types.ModeHalfUp)
 		terror.Log(err)
 		d.SetMysqlDecimal(to)
 	}

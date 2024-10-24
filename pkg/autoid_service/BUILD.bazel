@@ -16,7 +16,6 @@ go_library(
         "//pkg/owner",
         "//pkg/util/etcd",
         "//pkg/util/logutil",
-        "//pkg/util/mathutil",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_failpoint//:failpoint",
         "@com_github_pingcap_kvproto//pkg/autoid",

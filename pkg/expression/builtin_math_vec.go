@@ -962,7 +962,7 @@ func (b *builtinTruncateDecimalSig) vecEvalDecimal(ctx EvalContext, input *chunk
 			continue
 		}
 		result := new(types.MyDecimal)
-		if err := ds[i].Round(result, mathutil.Min(int(i64s[i]), ft), types.ModeTruncate); err != nil {
+		if err := ds[i].Round(result, min(int(i64s[i]), ft), types.ModeTruncate); err != nil {
 			return err
 		}
 		ds[i] = *result
@@ -997,7 +997,7 @@ func (b *builtinRoundWithFracDecSig) vecEvalDecimal(ctx EvalContext, input *chun
 			continue
 		}
 		// TODO: reuse d64[i] and remove the temporary variable tmp.
-		if err := d64s[i].Round(tmp, mathutil.Min(int(i64s[i]), b.tp.GetDecimal()), types.ModeHalfUp); err != nil {
+		if err := d64s[i].Round(tmp, min(int(i64s[i]), b.tp.GetDecimal()), types.ModeHalfUp); err != nil {
 			return err
 		}
 		d64s[i] = *tmp

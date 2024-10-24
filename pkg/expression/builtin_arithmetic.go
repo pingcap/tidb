@@ -108,7 +108,7 @@ func setFlenDecimal4RealOrDecimal(ctx EvalContext, retTp *types.FieldType, arg0,
 	if a.GetDecimal() != types.UnspecifiedLength && b.GetDecimal() != types.UnspecifiedLength {
 		retTp.SetDecimalUnderLimit(a.GetDecimal() + b.GetDecimal())
 		if !isMultiply {
-			retTp.SetDecimalUnderLimit(mathutil.Max(a.GetDecimal(), b.GetDecimal()))
+			retTp.SetDecimalUnderLimit(max(a.GetDecimal(), b.GetDecimal()))
 		}
 		if !isReal && retTp.GetDecimal() > mysql.MaxDecimalScale {
 			retTp.SetDecimal(mysql.MaxDecimalScale)
@@ -121,14 +121,14 @@ func setFlenDecimal4RealOrDecimal(ctx EvalContext, retTp *types.FieldType, arg0,
 			digitsInt := a.GetFlen() - a.GetDecimal() + b.GetFlen() - b.GetDecimal()
 			retTp.SetFlenUnderLimit(digitsInt + retTp.GetDecimal())
 		} else {
-			digitsInt := mathutil.Max(a.GetFlen()-a.GetDecimal(), b.GetFlen()-b.GetDecimal())
+			digitsInt := max(a.GetFlen()-a.GetDecimal(), b.GetFlen()-b.GetDecimal())
 			retTp.SetFlenUnderLimit(digitsInt + retTp.GetDecimal() + 1)
 		}
 		if isReal {
-			retTp.SetFlen(mathutil.Min(retTp.GetFlen(), mysql.MaxRealWidth))
+			retTp.SetFlen(min(retTp.GetFlen(), mysql.MaxRealWidth))
 			return
 		}
-		retTp.SetFlenUnderLimit(mathutil.Min(retTp.GetFlen(), mysql.MaxDecimalWidth))
+		retTp.SetFlenUnderLimit(min(retTp.GetFlen(), mysql.MaxDecimalWidth))
 		return
 	}
 	if isReal {
@@ -911,18 +911,18 @@ func (c *arithmeticModFunctionClass) setType4ModRealOrDecimal(retTp, a, b *types
 	if a.GetDecimal() == types.UnspecifiedLength || b.GetDecimal() == types.UnspecifiedLength {
 		retTp.SetDecimal(types.UnspecifiedLength)
 	} else {
-		retTp.SetDecimalUnderLimit(mathutil.Max(a.GetDecimal(), b.GetDecimal()))
+		retTp.SetDecimalUnderLimit(max(a.GetDecimal(), b.GetDecimal()))
 	}
 
 	if a.GetFlen() == types.UnspecifiedLength || b.GetFlen() == types.UnspecifiedLength {
 		retTp.SetFlen(types.UnspecifiedLength)
 	} else {
-		retTp.SetFlen(mathutil.Max(a.GetFlen(), b.GetFlen()))
+		retTp.SetFlen(max(a.GetFlen(), b.GetFlen()))
 		if isDecimal {
 			retTp.SetFlenUnderLimit(retTp.GetFlen())
 			return
 		}
-		retTp.SetFlen(mathutil.Min(retTp.GetFlen(), mysql.MaxRealWidth))
+		retTp.SetFlen(min(retTp.GetFlen(), mysql.MaxRealWidth))
 	}
 }
 

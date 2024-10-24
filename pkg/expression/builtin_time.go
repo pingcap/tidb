@@ -41,7 +41,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/logutil"
-	"github.com/pingcap/tidb/pkg/util/mathutil"
 	"github.com/pingcap/tidb/pkg/util/parser"
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/tikv/client-go/v2/oracle"
@@ -422,7 +421,7 @@ func (c *timeDiffFunctionClass) getFunction(ctx BuildContext, args []Expression)
 	if err != nil {
 		return nil, err
 	}
-	fsp := mathutil.Max(arg0Dec, arg1Dec)
+	fsp := max(arg0Dec, arg1Dec)
 	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETDuration, arg0Tp, arg1Tp)
 	if err != nil {
 		return nil, err
@@ -755,7 +754,7 @@ func convertStringToDuration(tc types.Context, str string, fsp int) (d types.Dur
 	if n := strings.IndexByte(str, '.'); n >= 0 {
 		lenStrFsp := len(str[n+1:])
 		if lenStrFsp <= types.MaxFsp {
-			fsp = mathutil.Max(lenStrFsp, fsp)
+			fsp = max(lenStrFsp, fsp)
 		}
 	}
 	return types.StrToDuration(tc, str, fsp)
@@ -1667,7 +1666,7 @@ func (c *fromUnixTimeFunctionClass) getFunction(ctx BuildContext, args []Express
 			if x.FuncName.L == ast.Cast {
 				if x.RetType.GetDecimal() == 0 && (x.RetType.GetType() == mysql.TypeNewDecimal) {
 					x.RetType.SetDecimal(6)
-					fieldLen := mathutil.Min(x.RetType.GetFlen()+6, mysql.MaxDecimalWidth)
+					fieldLen := min(x.RetType.GetFlen()+6, mysql.MaxDecimalWidth)
 					x.RetType.SetFlen(fieldLen)
 				}
 			}
@@ -1684,7 +1683,7 @@ func (c *fromUnixTimeFunctionClass) getFunction(ctx BuildContext, args []Express
 	fsp := types.MaxFsp
 	if !isArg0Str {
 		if arg0Tp.GetDecimal() != types.UnspecifiedLength {
-			fsp = mathutil.Min(bf.tp.GetDecimal(), arg0Tp.GetDecimal())
+			fsp = min(bf.tp.GetDecimal(), arg0Tp.GetDecimal())
 		}
 	}
 	bf.setDecimalAndFlenForDatetime(fsp)
@@ -3647,10 +3646,10 @@ func (c *addSubDateFunctionClass) getFunction(ctx BuildContext, args []Expressio
 			if intervalEvalTp == types.ETString || intervalEvalTp == types.ETReal {
 				intervalFsp = types.MaxFsp
 			} else {
-				intervalFsp = mathutil.Min(types.MaxFsp, args[1].GetType(ctx.GetEvalCtx()).GetDecimal())
+				intervalFsp = min(types.MaxFsp, args[1].GetType(ctx.GetEvalCtx()).GetDecimal())
 			}
 		}
-		resultFsp = mathutil.Min(types.MaxFsp, mathutil.Max(args[0].GetType(ctx.GetEvalCtx()).GetDecimal(), intervalFsp))
+		resultFsp = min(types.MaxFsp, max(args[0].GetType(ctx.GetEvalCtx()).GetDecimal(), intervalFsp))
 	}
 	switch resultTp {
 	case mysql.TypeDate:
@@ -4605,9 +4604,9 @@ func getBf4TimeAddSub(ctx BuildContext, funcName string, args []Expression) (tp1
 	}
 	switch retTp {
 	case types.ETDatetime:
-		bf.setDecimalAndFlenForDatetime(mathutil.Min(mathutil.Max(arg0Dec, arg1Dec), types.MaxFsp))
+		bf.setDecimalAndFlenForDatetime(min(max(arg0Dec, arg1Dec), types.MaxFsp))
 	case types.ETDuration:
-		bf.setDecimalAndFlenForTime(mathutil.Min(mathutil.Max(arg0Dec, arg1Dec), types.MaxFsp))
+		bf.setDecimalAndFlenForTime(min(max(arg0Dec, arg1Dec), types.MaxFsp))
 	case types.ETString:
 		bf.tp.SetType(mysql.TypeString)
 		bf.tp.SetFlen(mysql.MaxDatetimeWidthWithFsp)
@@ -6587,7 +6586,7 @@ func getExpressionFsp(ctx BuildContext, expression Expression) (int, error) {
 		return types.GetFsp(str), nil
 	}
 	warpExpr := WrapWithCastAsTime(ctx, expression, types.NewFieldType(mysql.TypeDatetime))
-	return mathutil.Min(warpExpr.GetType(ctx.GetEvalCtx()).GetDecimal(), types.MaxFsp), nil
+	return min(warpExpr.GetType(ctx.GetEvalCtx()).GetDecimal(), types.MaxFsp), nil
 }
 
 // tidbParseTsoFunctionClass extracts physical time from a tso

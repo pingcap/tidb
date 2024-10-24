@@ -28,7 +28,6 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/cascades/base"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
-	"github.com/pingcap/tidb/pkg/util/mathutil"
 	"github.com/pingcap/tidb/pkg/util/size"
 )
 
@@ -246,7 +245,7 @@ func (a *baseFuncDesc) typeInfer4Sum(ctx expression.EvalContext) {
 // compatible with mysql.
 func (a *baseFuncDesc) TypeInfer4AvgSum(avgRetType *types.FieldType) {
 	if avgRetType.GetType() == mysql.TypeNewDecimal {
-		a.RetTp.SetFlen(mathutil.Min(mysql.MaxDecimalWidth, a.RetTp.GetFlen()+22))
+		a.RetTp.SetFlen(min(mysql.MaxDecimalWidth, a.RetTp.GetFlen()+22))
 	}
 }
 

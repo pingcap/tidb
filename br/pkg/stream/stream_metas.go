@@ -521,7 +521,7 @@ func MergeMigrations(m1 *pb.Migration, m2 *pb.Migration) *pb.Migration {
 	out.EditMeta = mergeMetaEdits(m1.GetEditMeta(), m2.GetEditMeta())
 	out.Compactions = append(out.Compactions, m1.GetCompactions()...)
 	out.Compactions = append(out.Compactions, m2.GetCompactions()...)
-	out.TruncatedTo = mathutil.Max(m1.GetTruncatedTo(), m2.GetTruncatedTo())
+	out.TruncatedTo = max(m1.GetTruncatedTo(), m2.GetTruncatedTo())
 	out.DestructPrefix = append(out.DestructPrefix, m1.GetDestructPrefix()...)
 	out.DestructPrefix = append(out.DestructPrefix, m2.GetDestructPrefix()...)
 	return out
@@ -583,7 +583,7 @@ func (m MigrationExt) Load(ctx context.Context) (Migrations, error) {
 			if err != nil {
 				return errors.Annotate(err, "failed to get the truncate safepoint for base migration")
 			}
-			t.Content.TruncatedTo = mathutil.Max(truncatedTs, t.Content.TruncatedTo)
+			t.Content.TruncatedTo = max(truncatedTs, t.Content.TruncatedTo)
 		}
 		return t.Content.Unmarshal(b)
 	})

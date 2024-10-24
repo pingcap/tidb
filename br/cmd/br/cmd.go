@@ -23,7 +23,6 @@ import (
 	"github.com/pingcap/tidb/pkg/config"
 	tidbutils "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/logutil"
-	"github.com/pingcap/tidb/pkg/util/mathutil"
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/pingcap/tidb/pkg/util/redact"
 	"github.com/pingcap/tidb/pkg/util/size"
@@ -205,7 +204,7 @@ func Init(cmd *cobra.Command) (err error) {
 				memlimit := calculateMemoryLimit(memleft)
 				// BR command needs 256 MiB at least, if the left memory is less than 256 MiB,
 				// the memory limit cannot limit anyway and then finally OOM.
-				memlimit = mathutil.Max(memlimit, quarterGiB)
+				memlimit = max(memlimit, quarterGiB)
 				log.Info("calculate the rest memory",
 					zap.Uint64("memtotal", memtotal), zap.Uint64("memused", memused), zap.Uint64("memlimit", memlimit))
 				// No need to set memory limit because the left memory is sufficient.

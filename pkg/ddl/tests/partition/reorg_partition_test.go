@@ -35,7 +35,6 @@ import (
 	"github.com/pingcap/tidb/pkg/testkit/external"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
-	"github.com/pingcap/tidb/pkg/util/mathutil"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
 )
@@ -67,7 +66,7 @@ func noNewTablesAfter(t *testing.T, tk *testkit.TestKit, ctx sessionctx.Context,
 		defs := pt.Meta().Partition.Definitions
 		{
 			for i := range defs {
-				tblID = mathutil.Max[int64](tblID, defs[i].ID)
+				tblID = max(tblID, defs[i].ID)
 			}
 		}
 	}
