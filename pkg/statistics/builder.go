@@ -324,6 +324,9 @@ func BuildHistAndTopN(
 	allowPruning := true
 	if numTopN != 100 {
 		allowPruning = false
+	} else if ndv > 1 && ndv <= int64(numTopN) {
+		// Don't collect all values as TopN unless there is only 1 value
+		numTopN = int(ndv) - 1
 	}
 
 	// Step1: collect topn from samples
@@ -342,7 +345,7 @@ func BuildHistAndTopN(
 		if isColumn {
 			corrXYSum += float64(i) * float64(samples[i].Ordinal)
 		}
-		if numTopN == 0 {
+		if numTopN <= 0 {
 			continue
 		}
 		sampleBytes, err := getComparedBytes(samples[i].Value)
@@ -394,7 +397,7 @@ func BuildHistAndTopN(
 
 	// Handle the counting for the last value. Basically equal to the case 2 above - including
 	// limiting addition of a value with a count of 1 (since it will be pruned anyway).
-	if numTopN != 0 && (!allowPruning || (allowPruning && (sampleFactor <= 1 || curCnt > 1))) {
+	if numTopN > 0 && (!allowPruning || (allowPruning && (sampleFactor <= 1 || curCnt > 1))) {
 		// now topn is empty: append the "current" count directly
 		if len(topNList) == 0 {
 			topNList = append(topNList, TopNMeta{Encoded: cur, Count: uint64(curCnt)})
@@ -420,7 +423,7 @@ func BuildHistAndTopN(
 	}
 
 	// Step2: exclude topn from samples
-	if numTopN != 0 {
+	if numTopN > 0 {
 		for i := int64(0); i < int64(len(samples)); i++ {
 			sampleBytes, err := getComparedBytes(samples[i].Value)
 			if err != nil {
@@ -476,8 +479,8 @@ func BuildHistAndTopN(
 		return hg, topn, nil
 	}
 
-	// Step3: build histogram with the rest samples
-	if len(samples) > 0 {
+	// Step3: build histogram with the rest samples if greater than 1
+	if len(samples) > 1 {
 		_, err = buildHist(sc, hg, samples, count-int64(topn.TotalCount()), ndv-int64(len(topn.TopN)), int64(numBuckets), memTracker)
 		if err != nil {
 			return nil, nil, err
