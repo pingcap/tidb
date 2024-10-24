@@ -1,0 +1,98 @@
+drop table if exists test;
+create table test (id int, dept_id int, value int);
+explain select id, count(1) from test where id = 10 group by id;
+id	estRows	task	access object	operator info
+Projection_5	1.00	root		planner__core__rule_aggregation_simplification.test.id, Column#5
+└─HashAgg_11	1.00	root		group by:Column#6, funcs:count(Column#7)->Column#5, funcs:firstrow(Column#8)->planner__core__rule_aggregation_simplification.test.id
+  └─TableReader_12	1.00	root		data:HashAgg_6
+    └─HashAgg_6	1.00	cop[tikv]		group by:1, funcs:count(1)->Column#7, funcs:firstrow(planner__core__rule_aggregation_simplification.test.id)->Column#8
+      └─Selection_10	10.00	cop[tikv]		eq(planner__core__rule_aggregation_simplification.test.id, 10)
+        └─TableFullScan_9	10000.00	cop[tikv]	table:test	keep order:false, stats:pseudo
+explain select id, value, count(1) from test where id = 10 group by id, value;
+id	estRows	task	access object	operator info
+Projection_5	8.00	root		planner__core__rule_aggregation_simplification.test.id, planner__core__rule_aggregation_simplification.test.value, Column#5
+└─HashAgg_8	8.00	root		group by:planner__core__rule_aggregation_simplification.test.value, funcs:count(1)->Column#5, funcs:firstrow(planner__core__rule_aggregation_simplification.test.id)->planner__core__rule_aggregation_simplification.test.id, funcs:firstrow(planner__core__rule_aggregation_simplification.test.value)->planner__core__rule_aggregation_simplification.test.value
+  └─TableReader_15	10.00	root		data:Selection_14
+    └─Selection_14	10.00	cop[tikv]		eq(planner__core__rule_aggregation_simplification.test.id, 10)
+      └─TableFullScan_13	10000.00	cop[tikv]	table:test	keep order:false, stats:pseudo
+explain select id, value, dept_id, count(1) from test where id = 10 and dept_id = 20 group by id, value, dept_id;
+id	estRows	task	access object	operator info
+Projection_5	1.00	root		planner__core__rule_aggregation_simplification.test.id, planner__core__rule_aggregation_simplification.test.value, planner__core__rule_aggregation_simplification.test.dept_id, Column#5
+└─HashAgg_8	1.00	root		group by:planner__core__rule_aggregation_simplification.test.value, funcs:count(1)->Column#5, funcs:firstrow(planner__core__rule_aggregation_simplification.test.id)->planner__core__rule_aggregation_simplification.test.id, funcs:firstrow(planner__core__rule_aggregation_simplification.test.dept_id)->planner__core__rule_aggregation_simplification.test.dept_id, funcs:firstrow(planner__core__rule_aggregation_simplification.test.value)->planner__core__rule_aggregation_simplification.test.value
+  └─TableReader_15	0.01	root		data:Selection_14
+    └─Selection_14	0.01	cop[tikv]		eq(planner__core__rule_aggregation_simplification.test.dept_id, 20), eq(planner__core__rule_aggregation_simplification.test.id, 10)
+      └─TableFullScan_13	10000.00	cop[tikv]	table:test	keep order:false, stats:pseudo
+drop table if exists test, test2;
+create table test (id int, dept_id int, value int);
+create table test2 (id int, dept_id int, value int);
+explain select * from (select id, count(1) from test2 where id = 10 group by id) t1;
+id	estRows	task	access object	operator info
+Projection_6	1.00	root		planner__core__rule_aggregation_simplification.test2.id, Column#5
+└─HashAgg_12	1.00	root		group by:Column#6, funcs:count(Column#7)->Column#5, funcs:firstrow(Column#8)->planner__core__rule_aggregation_simplification.test2.id
+  └─TableReader_13	1.00	root		data:HashAgg_7
+    └─HashAgg_7	1.00	cop[tikv]		group by:1, funcs:count(1)->Column#7, funcs:firstrow(planner__core__rule_aggregation_simplification.test2.id)->Column#8
+      └─Selection_11	10.00	cop[tikv]		eq(planner__core__rule_aggregation_simplification.test2.id, 10)
+        └─TableFullScan_10	10000.00	cop[tikv]	table:test2	keep order:false, stats:pseudo
+explain select t1.id from (select id, value from test2 where id = 10) t1 group by t1.id; -- pulling up constant predicates can go through the selection node below projection node.
+explain select t1.id, t1.value from (select id, value from test2 where id = 10) t1 where value = 20 group by t1.id, t1.value; -- only t1.value will be pruned, because t1.id won't be pulled up.
+explain select t1.id from (select id, value from test where id = 10 group by id, value) t1 group by t1.id; -- can't, because pulling up constant predicates can't go through aggregation node.
+id	estRows	task	access object	operator info
+HashAgg_12	1.00	root		group by:Column#5, funcs:firstrow(Column#6)->planner__core__rule_aggregation_simplification.test2.id
+└─TableReader_13	1.00	root		data:HashAgg_7
+  └─HashAgg_7	1.00	cop[tikv]		group by:1, funcs:firstrow(planner__core__rule_aggregation_simplification.test2.id)->Column#6
+    └─Selection_11	10.00	cop[tikv]		eq(planner__core__rule_aggregation_simplification.test2.id, 10)
+      └─TableFullScan_10	10000.00	cop[tikv]	table:test2	keep order:false, stats:pseudo
+HashAgg_10	1.00	root		group by:planner__core__rule_aggregation_simplification.test2.id, funcs:firstrow(planner__core__rule_aggregation_simplification.test2.id)->planner__core__rule_aggregation_simplification.test2.id, funcs:firstrow(planner__core__rule_aggregation_simplification.test2.value)->planner__core__rule_aggregation_simplification.test2.value
+└─TableReader_17	0.01	root		data:Selection_16
+  └─Selection_16	0.01	cop[tikv]		eq(planner__core__rule_aggregation_simplification.test2.id, 10), eq(planner__core__rule_aggregation_simplification.test2.value, 20)
+    └─TableFullScan_15	10000.00	cop[tikv]	table:test2	keep order:false, stats:pseudo
+HashAgg_8	8.00	root		group by:planner__core__rule_aggregation_simplification.test.id, funcs:firstrow(planner__core__rule_aggregation_simplification.test.id)->planner__core__rule_aggregation_simplification.test.id
+└─HashAgg_11	8.00	root		group by:planner__core__rule_aggregation_simplification.test.value, funcs:firstrow(planner__core__rule_aggregation_simplification.test.id)->planner__core__rule_aggregation_simplification.test.id
+  └─TableReader_18	10.00	root		data:Selection_17
+    └─Selection_17	10.00	cop[tikv]		eq(planner__core__rule_aggregation_simplification.test.id, 10)
+      └─TableFullScan_16	10000.00	cop[tikv]	table:test	keep order:false, stats:pseudo
+drop table if exists test, test2;
+create table test (id int, value int);
+create table test2 (id int, value int);
+explain select test.value, count(1) from test, test2 where test.id = test2.id and test.value = 10 group by test.value;
+id	estRows	task	access object	operator info
+Projection_8	1.00	root		planner__core__rule_aggregation_simplification.test.value, Column#7
+└─HashAgg_9	1.00	root		group by:1, funcs:count(1)->Column#7, funcs:firstrow(planner__core__rule_aggregation_simplification.test.value)->planner__core__rule_aggregation_simplification.test.value
+  └─HashJoin_11	12.49	root		inner join, equal:[eq(planner__core__rule_aggregation_simplification.test.id, planner__core__rule_aggregation_simplification.test2.id)]
+    ├─TableReader_14(Build)	9.99	root		data:Selection_13
+    │ └─Selection_13	9.99	cop[tikv]		eq(planner__core__rule_aggregation_simplification.test.value, 10), not(isnull(planner__core__rule_aggregation_simplification.test.id))
+    │   └─TableFullScan_12	10000.00	cop[tikv]	table:test	keep order:false, stats:pseudo
+    └─TableReader_17(Probe)	9990.00	root		data:Selection_16
+      └─Selection_16	9990.00	cop[tikv]		not(isnull(planner__core__rule_aggregation_simplification.test2.id))
+        └─TableFullScan_15	10000.00	cop[tikv]	table:test2	keep order:false, stats:pseudo
+drop table if exists test, test2;
+create table test (id int, dept_id int);
+create table test2 (id int, dept_id int);
+explain select dept_id, count(1) from test where dept_id = 10 group by dept_id
+union all
+select * from (select dept_id, count(1) from test where dept_id = 20 group by dept_id) t1
+union all
+select t2.dept_id, count(1) from test t1, test t2 where t1.dept_id = t2.dept_id and t2.dept_id = 30 group by t2.dept_id; -- this sql should match 3 times
+id	estRows	task	access object	operator info
+Union_21	3.00	root		
+├─Projection_22	1.00	root		planner__core__rule_aggregation_simplification.test.dept_id->Column#16, Column#4->Column#17
+│ └─HashAgg_28	1.00	root		group by:Column#18, funcs:count(Column#19)->Column#4, funcs:firstrow(Column#20)->planner__core__rule_aggregation_simplification.test.dept_id
+│   └─TableReader_29	1.00	root		data:HashAgg_23
+│     └─HashAgg_23	1.00	cop[tikv]		group by:1, funcs:count(1)->Column#19, funcs:firstrow(planner__core__rule_aggregation_simplification.test.dept_id)->Column#20
+│       └─Selection_27	10.00	cop[tikv]		eq(planner__core__rule_aggregation_simplification.test.dept_id, 10)
+│         └─TableFullScan_26	10000.00	cop[tikv]	table:test	keep order:false, stats:pseudo
+├─Projection_33	1.00	root		planner__core__rule_aggregation_simplification.test.dept_id->Column#16, Column#8->Column#17
+│ └─HashAgg_39	1.00	root		group by:Column#21, funcs:count(Column#22)->Column#8, funcs:firstrow(Column#23)->planner__core__rule_aggregation_simplification.test.dept_id
+│   └─TableReader_40	1.00	root		data:HashAgg_34
+│     └─HashAgg_34	1.00	cop[tikv]		group by:1, funcs:count(1)->Column#22, funcs:firstrow(planner__core__rule_aggregation_simplification.test.dept_id)->Column#23
+│       └─Selection_38	10.00	cop[tikv]		eq(planner__core__rule_aggregation_simplification.test.dept_id, 20)
+│         └─TableFullScan_37	10000.00	cop[tikv]	table:test	keep order:false, stats:pseudo
+└─Projection_44	1.00	root		planner__core__rule_aggregation_simplification.test.dept_id->Column#16, Column#15->Column#17
+  └─HashAgg_45	1.00	root		group by:1, funcs:count(1)->Column#15, funcs:firstrow(planner__core__rule_aggregation_simplification.test.dept_id)->planner__core__rule_aggregation_simplification.test.dept_id
+    └─HashJoin_46	100.00	root		CARTESIAN inner join
+      ├─TableReader_53(Build)	10.00	root		data:Selection_52
+      │ └─Selection_52	10.00	cop[tikv]		eq(planner__core__rule_aggregation_simplification.test.dept_id, 30)
+      │   └─TableFullScan_51	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
+      └─TableReader_50(Probe)	10.00	root		data:Selection_49
+        └─Selection_49	10.00	cop[tikv]		eq(planner__core__rule_aggregation_simplification.test.dept_id, 30)
+          └─TableFullScan_48	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo

@@ -1,0 +1,34 @@
+# TestAggregationSimplifier, see details at https://github.com/pingcap/tidb/issues/53994
+drop table if exists test;
+create table test (id int, dept_id int, value int);
+explain select id, count(1) from test where id = 10 group by id;
+explain select id, value, count(1) from test where id = 10 group by id, value;
+explain select id, value, dept_id, count(1) from test where id = 10 and dept_id = 20 group by id, value, dept_id;
+
+
+# TestSubquery
+drop table if exists test, test2;
+create table test (id int, dept_id int, value int);
+create table test2 (id int, dept_id int, value int);
+explain select * from (select id, count(1) from test2 where id = 10 group by id) t1;
+explain select t1.id from (select id, value from test2 where id = 10) t1 group by t1.id; -- pulling up constant predicates can go through the selection node below projection node.
+explain select t1.id, t1.value from (select id, value from test2 where id = 10) t1 where value = 20 group by t1.id, t1.value; -- only t1.value will be pruned, because t1.id won't be pulled up.
+explain select t1.id from (select id, value from test where id = 10 group by id, value) t1 group by t1.id; -- can't, because pulling up constant predicates can't go through aggregation node.
+
+
+# TestJoin
+drop table if exists test, test2;
+create table test (id int, value int);
+create table test2 (id int, value int);
+explain select test.value, count(1) from test, test2 where test.id = test2.id and test.value = 10 group by test.value;
+
+
+# TestMultiSubtreeMatch
+drop table if exists test, test2;
+create table test (id int, dept_id int);
+create table test2 (id int, dept_id int);
+explain select dept_id, count(1) from test where dept_id = 10 group by dept_id
+union all
+select * from (select dept_id, count(1) from test where dept_id = 20 group by dept_id) t1
+union all
+select t2.dept_id, count(1) from test t1, test t2 where t1.dept_id = t2.dept_id and t2.dept_id = 30 group by t2.dept_id; -- this sql should match 3 times
