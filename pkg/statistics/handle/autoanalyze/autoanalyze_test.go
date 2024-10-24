@@ -182,8 +182,9 @@ func disableAutoAnalyzeCase(t *testing.T, tk *testkit.TestKit, dom *domain.Domai
 	// Index analyze doesn't depend on auto analyze ratio. Only control by tidb_enable_auto_analyze.
 	// Even auto analyze ratio is set to 0, we still need to analyze the newly created index.
 	tk.MustExec("alter table t add index ia(a)")
-	// FIXME: Handle adding index DDL event correctly.
-	require.False(t, dom.StatsHandle().HandleAutoAnalyze())
+	require.Eventually(t, func() bool {
+		return dom.StatsHandle().HandleAutoAnalyze()
+	}, 10*time.Second, 100*time.Millisecond)
 }
 
 func TestAutoAnalyzeOnChangeAnalyzeVer(t *testing.T) {
