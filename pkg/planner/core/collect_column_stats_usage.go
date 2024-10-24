@@ -15,19 +15,12 @@
 package core
 
 import (
-	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/expression"
-	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/meta/model"
-	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
-	"github.com/pingcap/tidb/pkg/statistics/asyncload"
 	"github.com/pingcap/tidb/pkg/util/filter"
 	"github.com/pingcap/tidb/pkg/util/intset"
-	"golang.org/x/exp/maps"
 )
 
 const (
@@ -39,10 +32,12 @@ const (
 // Histogram-needed columns are the columns whose histograms are utilized when making query plans, which usually occur in the conditions pushed down to DataSource.
 // The set of histogram-needed columns is the subset of that of predicate columns.
 type columnStatsUsageCollector struct {
-	// collectMode indicates whether to collect predicate columns and/or histogram-needed columns
-	collectMode uint64
+	// histNeeded indicates whether to collect histogram-needed columns.
+	histNeeded bool
 	// predicateCols records predicate columns.
-	predicateCols map[model.TableItemID]struct{}
+	// The bool value indicates whether we need a full stats for it.
+	// If its value is false, we just need the least meta info(like NDV) of the column in this SQL.
+	predicateCols map[model.TableItemID]bool
 	// colMap maps expression.Column.UniqueID to the table columns whose statistics may be utilized to calculate statistics of the column.
 	// It is used for collecting predicate columns.
 	// For example, in `select count(distinct a, b) as e from t`, the count of column `e` is calculated as `max(ndv(t.a), ndv(t.b))` if
@@ -62,21 +57,23 @@ type columnStatsUsageCollector struct {
 	collectVisitedTable bool
 	// visitedtbls indicates the visited table
 	visitedtbls map[int64]struct{}
+
+	// It's used for tables with static pruning mode.
+	// Note that we've no longer suggested to use static pruning mode.
+	tblID2PartitionIDS map[int64][]int64
 }
 
-func newColumnStatsUsageCollector(collectMode uint64, enabledPlanCapture bool) *columnStatsUsageCollector {
+func newColumnStatsUsageCollector(histNeeded bool, enabledPlanCapture bool) *columnStatsUsageCollector {
 	set := intset.NewFastIntSet()
 	collector := &columnStatsUsageCollector{
-		collectMode: collectMode,
+		histNeeded: histNeeded,
 		// Pre-allocate a slice to reduce allocation, 8 doesn't have special meaning.
-		cols:              make([]*expression.Column, 0, 8),
-		visitedPhysTblIDs: &set,
+		cols:               make([]*expression.Column, 0, 8),
+		visitedPhysTblIDs:  &set,
+		tblID2PartitionIDS: make(map[int64][]int64),
 	}
-	collector.predicateCols = make(map[model.TableItemID]struct{})
+	collector.predicateCols = make(map[model.TableItemID]bool)
 	collector.colMap = make(map[int64]map[model.TableItemID]struct{})
-	if collectMode&collectHistNeededColumns != 0 {
-		collector.histNeededCols = make(map[model.TableItemID]bool)
-	}
 	if enabledPlanCapture {
 		collector.collectVisitedTable = true
 		collector.visitedtbls = map[int64]struct{}{}
@@ -84,21 +81,30 @@ func newColumnStatsUsageCollector(collectMode uint64, enabledPlanCapture bool) *
 	return collector
 }
 
-func (c *columnStatsUsageCollector) addPredicateColumn(col *expression.Column) {
+func (c *columnStatsUsageCollector) addPredicateColumn(col *expression.Column, needFullStats bool) {
 	tblColIDs, ok := c.colMap[col.UniqueID]
 	if !ok {
 		// It may happen if some leaf of logical plan is LogicalMemTable/LogicalShow/LogicalShowDDLJobs.
 		return
 	}
 	for tblColID := range tblColIDs {
-		c.predicateCols[tblColID] = struct{}{}
+		fullLoad, found := c.predicateCols[tblColID]
+		// It's already marked as full stats. Skip it.
+		if fullLoad {
+			continue
+		}
+		// If it's found and marked as meta stats, and the passed mark this time is also meta stats. Skip it.
+		if found && !fullLoad && !needFullStats {
+			continue
+		}
+		c.predicateCols[tblColID] = needFullStats
 	}
 }
 
-func (c *columnStatsUsageCollector) addPredicateColumnsFromExpressions(list []expression.Expression) {
+func (c *columnStatsUsageCollector) addPredicateColumnsFromExpressions(list []expression.Expression, needFullStats bool) {
 	cols := expression.ExtractColumnsAndCorColumnsFromExpressions(c.cols[:0], list)
 	for _, col := range cols {
-		c.addPredicateColumn(col)
+		c.addPredicateColumn(col, needFullStats)
 	}
 }
 
@@ -133,12 +139,15 @@ func (c *columnStatsUsageCollector) collectPredicateColumnsForDataSource(ds *log
 	if c.collectVisitedTable {
 		c.visitedtbls[tblID] = struct{}{}
 	}
+	if tblID != ds.PhysicalTableID && c.histNeeded {
+		c.tblID2PartitionIDS[tblID] = append(c.tblID2PartitionIDS[tblID], ds.PhysicalTableID)
+	}
 	for _, col := range ds.Schema().Columns {
 		tblColID := model.TableItemID{TableID: tblID, ID: col.ID, IsIndex: false}
 		c.colMap[col.UniqueID] = map[model.TableItemID]struct{}{tblColID: {}}
 	}
 	// We should use `PushedDownConds` here. `AllConds` is used for partition pruning, which doesn't need stats.
-	c.addPredicateColumnsFromExpressions(ds.PushedDownConds)
+	c.addPredicateColumnsFromExpressions(ds.PushedDownConds, true)
 }
 
 func (c *columnStatsUsageCollector) collectPredicateColumnsForJoin(p *logicalop.LogicalJoin) {
@@ -157,7 +166,8 @@ func (c *columnStatsUsageCollector) collectPredicateColumnsForJoin(p *logicalop.
 	for _, cond := range p.OtherConditions {
 		exprs = append(exprs, cond)
 	}
-	c.addPredicateColumnsFromExpressions(exprs)
+	// Currently, join predicates only need meta info like NDV.
+	c.addPredicateColumnsFromExpressions(exprs, false)
 }
 
 func (c *columnStatsUsageCollector) collectPredicateColumnsForUnionAll(p *logicalop.LogicalUnionAll) {
@@ -176,62 +186,6 @@ func (c *columnStatsUsageCollector) collectPredicateColumnsForUnionAll(p *logica
 	}
 }
 
-func (c *columnStatsUsageCollector) addHistNeededColumns(ds *logicalop.DataSource) {
-	c.visitedPhysTblIDs.Insert(int(ds.PhysicalTableID))
-	if c.collectMode&collectHistNeededColumns == 0 {
-		return
-	}
-	if c.collectVisitedTable {
-		tblID := ds.TableInfo.ID
-		c.visitedtbls[tblID] = struct{}{}
-	}
-	stats := domain.GetDomain(ds.SCtx()).StatsHandle()
-	tblStats := stats.GetPartitionStats(ds.TableInfo, ds.PhysicalTableID)
-	skipPseudoCheckForTest := false
-	failpoint.Inject("disablePseudoCheck", func() {
-		skipPseudoCheckForTest = true
-	})
-	// Since we can not get the stats tbl, this table is not analyzed. So we don't need to consider load stats.
-	if tblStats.Pseudo && !skipPseudoCheckForTest {
-		return
-	}
-	columns := expression.ExtractColumnsFromExpressions(c.cols[:0], ds.PushedDownConds, nil)
-
-	colIDSet := intset.NewFastIntSet()
-
-	for _, col := range columns {
-		// If the column is plan-generated one, Skip it.
-		// TODO: we may need to consider the ExtraHandle.
-		if col.ID < 0 {
-			continue
-		}
-		// Don't need to load stats for vector type currently.
-		if col.RetType.GetType() == mysql.TypeTiDBVectorFloat32 {
-			continue
-		}
-		tblColID := model.TableItemID{TableID: ds.PhysicalTableID, ID: col.ID, IsIndex: false}
-		colIDSet.Insert(int(col.ID))
-		c.histNeededCols[tblColID] = true
-	}
-	for _, column := range ds.TableInfo.Columns {
-		// If the column is plan-generated one, Skip it.
-		// TODO: we may need to consider the ExtraHandle.
-		if column.ID < 0 {
-			continue
-		}
-		// Don't need to load stats for vector type currently.
-		if column.FieldType.GetType() == mysql.TypeTiDBVectorFloat32 {
-			continue
-		}
-		if !column.Hidden {
-			tblColID := model.TableItemID{TableID: ds.PhysicalTableID, ID: column.ID, IsIndex: false}
-			if _, ok := c.histNeededCols[tblColID]; !ok {
-				c.histNeededCols[tblColID] = false
-			}
-		}
-	}
-}
-
 func (c *columnStatsUsageCollector) collectFromPlan(lp base.LogicalPlan) {
 	for _, child := range lp.Children() {
 		c.collectFromPlan(child)
@@ -241,10 +195,10 @@ func (c *columnStatsUsageCollector) collectFromPlan(lp base.LogicalPlan) {
 		c.collectPredicateColumnsForDataSource(x)
 	case *logicalop.LogicalIndexScan:
 		c.collectPredicateColumnsForDataSource(x.Source)
-		c.addPredicateColumnsFromExpressions(x.AccessConds)
+		c.addPredicateColumnsFromExpressions(x.AccessConds, true)
 	case *logicalop.LogicalTableScan:
 		c.collectPredicateColumnsForDataSource(x.Source)
-		c.addPredicateColumnsFromExpressions(x.AccessConds)
+		c.addPredicateColumnsFromExpressions(x.AccessConds, true)
 	case *logicalop.LogicalProjection:
 		// Schema change from children to self.
 		schema := x.Schema()
@@ -254,10 +208,10 @@ func (c *columnStatsUsageCollector) collectFromPlan(lp base.LogicalPlan) {
 	case *logicalop.LogicalSelection:
 		// Though the conditions in LogicalSelection are complex conditions which cannot be pushed down to DataSource, we still
 		// regard statistics of the columns in the conditions as needed.
-		c.addPredicateColumnsFromExpressions(x.Conditions)
+		c.addPredicateColumnsFromExpressions(x.Conditions, false)
 	case *logicalop.LogicalAggregation:
 		// Just assume statistics of all the columns in GroupByItems are needed.
-		c.addPredicateColumnsFromExpressions(x.GroupByItems)
+		c.addPredicateColumnsFromExpressions(x.GroupByItems, false)
 		// Schema change from children to self.
 		schema := x.Schema()
 		for i, aggFunc := range x.AggFuncs {
@@ -267,7 +221,7 @@ func (c *columnStatsUsageCollector) collectFromPlan(lp base.LogicalPlan) {
 		// Statistics of the columns in LogicalWindow.PartitionBy are used in optimizeByShuffle4Window.
 		// We don't use statistics of the columns in LogicalWindow.OrderBy currently.
 		for _, item := range x.PartitionBy {
-			c.addPredicateColumn(item.Col)
+			c.addPredicateColumn(item.Col, false)
 		}
 		// Schema change from children to self.
 		windowColumns := x.GetWindowResultColumns()
@@ -282,17 +236,17 @@ func (c *columnStatsUsageCollector) collectFromPlan(lp base.LogicalPlan) {
 		// Correlated columns can be found in LogicalApply.Children()[0].Schema(). Since we already visit LogicalApply.Children()[0],
 		// correlated columns must have existed in columnStatsUsageCollector.colMap.
 		for _, corCols := range x.CorCols {
-			c.addPredicateColumn(&corCols.Column)
+			c.addPredicateColumn(&corCols.Column, false)
 		}
 	case *logicalop.LogicalSort:
 		// Assume statistics of all the columns in ByItems are needed.
 		for _, item := range x.ByItems {
-			c.addPredicateColumnsFromExpressions([]expression.Expression{item.Expr})
+			c.addPredicateColumnsFromExpressions([]expression.Expression{item.Expr}, false)
 		}
 	case *logicalop.LogicalTopN:
 		// Assume statistics of all the columns in ByItems are needed.
 		for _, item := range x.ByItems {
-			c.addPredicateColumnsFromExpressions([]expression.Expression{item.Expr})
+			c.addPredicateColumnsFromExpressions([]expression.Expression{item.Expr}, false)
 		}
 	case *logicalop.LogicalUnionAll:
 		c.collectPredicateColumnsForUnionAll(x)
@@ -323,7 +277,7 @@ func (c *columnStatsUsageCollector) collectFromPlan(lp base.LogicalPlan) {
 		// statistics of all the columns are needed.
 		if x.Cte.IsDistinct {
 			for _, col := range columns {
-				c.addPredicateColumn(col)
+				c.addPredicateColumn(col, false)
 			}
 		}
 	case *logicalop.LogicalCTETable:
@@ -331,21 +285,6 @@ func (c *columnStatsUsageCollector) collectFromPlan(lp base.LogicalPlan) {
 		for i, col := range x.Schema().Columns {
 			c.updateColMap(col, []*expression.Column{x.SeedSchema.Columns[i]})
 		}
-	}
-	// Histogram-needed columns are the columns which occur in the conditions pushed down to DataSource.
-	// We don't consider LogicalCTE because seedLogicalPlan and recursiveLogicalPlan haven't got logical optimization
-	// yet(seedLogicalPlan and recursiveLogicalPlan are optimized in DeriveStats phase). Without logical optimization,
-	// there is no condition pushed down to DataSource so no histogram-needed column can be collected.
-	//
-	// Since c.visitedPhysTblIDs is also collected here and needs to be collected even collectHistNeededColumns is not set,
-	// so we do the c.collectMode check in addHistNeededColumns() after collecting c.visitedPhysTblIDs.
-	switch x := lp.(type) {
-	case *logicalop.DataSource:
-		c.addHistNeededColumns(x)
-	case *logicalop.LogicalIndexScan:
-		c.addHistNeededColumns(x.Source)
-	case *logicalop.LogicalTableScan:
-		c.addHistNeededColumns(x.Source)
 	}
 }
 
@@ -356,28 +295,15 @@ func (c *columnStatsUsageCollector) collectFromPlan(lp base.LogicalPlan) {
 // Second return value: histogram-needed columns (nil if histNeeded is false)
 // Third return value: ds.PhysicalTableID from all DataSource (always collected)
 func CollectColumnStatsUsage(lp base.LogicalPlan, histNeeded bool) (
-	[]model.TableItemID,
-	[]model.StatsLoadItem,
+	map[model.TableItemID]bool,
 	*intset.FastIntSet,
+	map[int64][]int64,
 ) {
-	var mode uint64
-	if histNeeded {
-		mode |= collectHistNeededColumns
-	}
-	collector := newColumnStatsUsageCollector(mode, lp.SCtx().GetSessionVars().IsPlanReplayerCaptureEnabled())
+	collector := newColumnStatsUsageCollector(histNeeded, lp.SCtx().GetSessionVars().IsPlanReplayerCaptureEnabled())
 	collector.collectFromPlan(lp)
 	if collector.collectVisitedTable {
 		recordTableRuntimeStats(lp.SCtx(), collector.visitedtbls)
 	}
-	itemSet2slice := func(set map[model.TableItemID]bool) []model.StatsLoadItem {
-		ret := make([]model.StatsLoadItem, 0, len(set))
-		for item, fullLoad := range set {
-			ret = append(ret, model.StatsLoadItem{TableItemID: item, FullLoad: fullLoad})
-		}
-		return ret
-	}
-	is := lp.SCtx().GetInfoSchema().(infoschema.InfoSchema)
-	statsHandle := domain.GetDomain(lp.SCtx()).StatsHandle()
 	physTblIDsWithNeededCols := intset.NewFastIntSet()
 	for neededCol, fullLoad := range collector.histNeededCols {
 		if !fullLoad {
@@ -385,75 +311,5 @@ func CollectColumnStatsUsage(lp base.LogicalPlan, histNeeded bool) (
 		}
 		physTblIDsWithNeededCols.Insert(int(neededCol.TableID))
 	}
-	collector.visitedPhysTblIDs.ForEach(func(physicalTblID int) {
-		// 1. collect table metadata
-		tbl, _ := infoschema.FindTableByTblOrPartID(is, int64(physicalTblID))
-		if tbl == nil {
-			return
-		}
-
-		// 2. handle extra sync/async stats loading for the determinate mode
-
-		// If we visited a table without getting any columns need stats (likely because there are no pushed down
-		// predicates), and we are in the determinate mode, we need to make sure we are able to get the "analyze row
-		// count" in getStatsTable(), which means any column/index stats are available.
-		if lp.SCtx().GetSessionVars().GetOptObjective() != variable.OptObjectiveDeterminate ||
-			// If we already collected some columns that need trigger sync laoding on this table, we don't need to
-			// additionally do anything for determinate mode.
-			physTblIDsWithNeededCols.Has(physicalTblID) ||
-			statsHandle == nil {
-			return
-		}
-		tblStats := statsHandle.GetTableStats(tbl.Meta())
-		if tblStats == nil || tblStats.Pseudo {
-			return
-		}
-		var colToTriggerLoad *model.TableItemID
-		for _, col := range tbl.Cols() {
-			if col.State != model.StatePublic || (col.IsGenerated() && !col.GeneratedStored) || !tblStats.ColAndIdxExistenceMap.HasAnalyzed(col.ID, false) {
-				continue
-			}
-			if colStats := tblStats.GetCol(col.ID); colStats != nil {
-				// If any stats are already full loaded, we don't need to trigger stats loading on this table.
-				if colStats.IsFullLoad() {
-					colToTriggerLoad = nil
-					break
-				}
-			}
-			// Choose the first column we meet to trigger stats loading.
-			if colToTriggerLoad == nil {
-				colToTriggerLoad = &model.TableItemID{TableID: int64(physicalTblID), ID: col.ID, IsIndex: false}
-			}
-		}
-		if colToTriggerLoad == nil {
-			return
-		}
-		for _, idx := range tbl.Indices() {
-			if idx.Meta().State != model.StatePublic || idx.Meta().MVIndex {
-				continue
-			}
-			// If any stats are already full loaded, we don't need to trigger stats loading on this table.
-			if idxStats := tblStats.GetIdx(idx.Meta().ID); idxStats != nil && idxStats.IsFullLoad() {
-				colToTriggerLoad = nil
-				break
-			}
-		}
-		if colToTriggerLoad == nil {
-			return
-		}
-		if histNeeded {
-			collector.histNeededCols[*colToTriggerLoad] = true
-		} else {
-			asyncload.AsyncLoadHistogramNeededItems.Insert(*colToTriggerLoad, true)
-		}
-	})
-	var (
-		predicateCols  []model.TableItemID
-		histNeededCols []model.StatsLoadItem
-	)
-	predicateCols = maps.Keys(collector.predicateCols)
-	if histNeeded {
-		histNeededCols = itemSet2slice(collector.histNeededCols)
-	}
-	return predicateCols, histNeededCols, collector.visitedPhysTblIDs
+	return collector.predicateCols, collector.visitedPhysTblIDs, collector.tblID2PartitionIDS
 }

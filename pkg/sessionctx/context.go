@@ -16,6 +16,7 @@ package sessionctx
 
 import (
 	"context"
+	"iter"
 	"sync"
 	"time"
 
@@ -154,7 +155,7 @@ type Context interface {
 	GetSessionPlanCache() SessionPlanCache
 
 	// UpdateColStatsUsage updates the column stats usage.
-	UpdateColStatsUsage(predicateColumns []model.TableItemID)
+	UpdateColStatsUsage(predicateColumns iter.Seq[model.TableItemID])
 
 	// HasDirtyContent checks whether there's dirty update on the given table.
 	HasDirtyContent(tid int64) bool

@@ -22,6 +22,7 @@ go_library(
         "//pkg/statistics/handle/util",
         "//pkg/types",
         "//pkg/util",
+        "//pkg/util/intest",
         "//pkg/util/sqlescape",
         "@com_github_pingcap_errors//:errors",
     ],
