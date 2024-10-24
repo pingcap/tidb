@@ -15,7 +15,16 @@
 package partition
 
 import (
+	"context"
+	"encoding/hex"
 	"fmt"
+	"github.com/pingcap/tidb/pkg/domain"
+	"github.com/pingcap/tidb/pkg/kv"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/sessiontxn"
+	"github.com/pingcap/tidb/pkg/store/gcworker"
+	"github.com/pingcap/tidb/pkg/tablecodec"
+	"math"
 	"testing"
 	"time"
 
@@ -97,7 +106,7 @@ func TestMultiSchemaDropRangePartition(t *testing.T) {
 			require.Failf(t, "unhandled schema state '%s'", schemaState)
 		}
 	}
-	runMultiSchemaTest(t, createSQL, alterSQL, initFn, func(kit *testkit.TestKit) {}, loopFn)
+	runMultiSchemaTest(t, createSQL, alterSQL, initFn, nil, loopFn)
 }
 
 func TestMultiSchemaDropListDefaultPartition(t *testing.T) {
@@ -170,7 +179,7 @@ func TestMultiSchemaDropListDefaultPartition(t *testing.T) {
 			require.Failf(t, "unhandled schema state '%s'", schemaState)
 		}
 	}
-	runMultiSchemaTest(t, createSQL, alterSQL, initFn, func(kit *testkit.TestKit) {}, loopFn)
+	runMultiSchemaTest(t, createSQL, alterSQL, initFn, nil, loopFn)
 }
 
 func TestMultiSchemaDropListColumnsDefaultPartition(t *testing.T) {
@@ -247,13 +256,32 @@ func TestMultiSchemaDropListColumnsDefaultPartition(t *testing.T) {
 			require.Failf(t, "unhandled schema state '%s'", schemaState)
 		}
 	}
-	runMultiSchemaTest(t, createSQL, alterSQL, initFn, func(kit *testkit.TestKit) {}, loopFn)
+	runMultiSchemaTest(t, createSQL, alterSQL, initFn, nil, loopFn)
 }
 
 func TestMultiSchemaReorganizePartition(t *testing.T) {
 	createSQL := `create table t (a int primary key, b varchar(255), unique index idx_b_global (b) global) partition by range (a) (partition p1 values less than (200), partition pMax values less than (maxvalue))`
+	originalPartitions := make([]int64, 0, 2)
+	originalIndexIDs := make([]int64, 0, 1)
+	originalGlobalIndexIDs := make([]int64, 0, 1)
+	tableID := int64(0)
 	initFn := func(tkO *testkit.TestKit) {
 		tkO.MustExec(`insert into t values (1,1),(2,2),(101,101),(102,102),(998,998),(999,999)`)
+		ctx := tkO.Session()
+		is := domain.GetDomain(ctx).InfoSchema()
+		tbl, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
+		require.NoError(t, err)
+		tableID = tbl.Meta().ID
+		for _, def := range tbl.Meta().Partition.Definitions {
+			originalPartitions = append(originalPartitions, def.ID)
+		}
+		for _, idx := range tbl.Meta().Indices {
+			if idx.Global {
+				originalGlobalIndexIDs = append(originalGlobalIndexIDs, idx.ID)
+				continue
+			}
+			originalIndexIDs = append(originalIndexIDs, idx.ID)
+		}
 	}
 	alterSQL := `alter table t reorganize partition p1 into (partition p0 values less than (100), partition p1 values less than (200))`
 
@@ -290,6 +318,8 @@ func TestMultiSchemaReorganizePartition(t *testing.T) {
 		testID++
 		tkO.MustExec(fmt.Sprintf(`insert into t values (%d,%d)`+dbgStr, testID, testID))
 		tkNO.MustQuery(fmt.Sprintf(`select * from t where b = "%d"`+dbgStr, testID)).Check(testkit.Rows(fmt.Sprintf("%d %d", testID, testID)))
+
+		logutil.BgLogger().Info("inserting rows", zap.Int("testID", testID))
 
 		testID++
 		tkNO.MustExec(fmt.Sprintf(`insert into t values (%d,%d)`+dbgStr, testID, testID))
@@ -345,11 +375,68 @@ func TestMultiSchemaReorganizePartition(t *testing.T) {
 			require.Failf(t, "unhandled schema state '%s'", schemaState)
 		}
 	}
-	postFn := func(tkO *testkit.TestKit) {
+	postFn := func(tkO *testkit.TestKit, store kv.Storage) {
 		tkO.MustQuery(`select * from t where b = 5`).Sort().Check(testkit.Rows("5 5"))
 		tkO.MustQuery(`select * from t where b = "5"`).Sort().Check(testkit.Rows("5 5"))
 		tkO.MustExec(`admin check table t`)
 		tkO.MustQuery(`select * from t`).Sort().Check(testkit.Rows("1 1", "10 10", "101 101", "102 102", "11 11", "12 12", "13 13", "14 14", "2 2", "5 5", "6 6", "7 7", "8 8", "9 9", "984 984", "985 985", "986 986", "987 987", "988 988", "989 989", "990 990", "991 991", "992 992", "993 993", "998 998", "999 999"))
+		// TODO: Verify that there are no KV entries for old partitions or old indexes!!!
+		gcWorker, err := gcworker.NewMockGCWorker(store)
+		require.NoError(t, err)
+		require.Nil(t, gcWorker.DeleteRanges(context.TODO(), math.MaxInt64))
+		delRange := tkO.MustQuery(`select * from mysql.gc_delete_range_done`).Rows()
+		s := ""
+		for _, row := range delRange {
+			if s != "" {
+				s += "\n"
+			}
+			for i, col := range row {
+				if i != 0 {
+					s += " "
+				}
+				s += col.(string)
+			}
+		}
+		logutil.BgLogger().Info("gc_delete_range_done", zap.String("rows", s))
+		tkO.MustQuery(`select * from mysql.gc_delete_range`).Check(testkit.Rows())
+		ctx := tkO.Session()
+		is := domain.GetDomain(ctx).InfoSchema()
+		tbl, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
+		require.NoError(t, err)
+		tableID = tbl.Meta().ID
+		// Save this for the fix of https://github.com/pingcap/tidb/issues/56822
+		//GlobalLoop:
+		//	for _, globIdx := range originalGlobalIndexIDs {
+		//		for _, idx := range tbl.Meta().Indices {
+		//			if idx.ID == globIdx {
+		//				continue GlobalLoop
+		//			}
+		//		}
+		//		// Global index removed
+		//		require.False(t, HaveEntriesForTableIndex(t, tkO, tableID, globIdx), "Global index id %d for table id %d has still entries!", globIdx, tableID)
+		//	}
+	LocalLoop:
+		for _, locIdx := range originalIndexIDs {
+			for _, idx := range tbl.Meta().Indices {
+				if idx.ID == locIdx {
+					continue LocalLoop
+				}
+			}
+			// local index removed
+			for _, part := range tbl.Meta().Partition.Definitions {
+				require.False(t, HaveEntriesForTableIndex(t, tkO, part.ID, locIdx), "Local index id %d for partition id %d has still entries!", locIdx, tableID)
+			}
+		}
+	PartitionLoop:
+		for _, partID := range originalPartitions {
+			for _, def := range tbl.Meta().Partition.Definitions {
+				if def.ID == partID {
+					continue PartitionLoop
+				}
+			}
+			// old partitions removed
+			require.False(t, HaveEntriesForTableIndex(t, tkO, partID, 0), "Reorganized partition id %d for table id %d has still entries!", partID, tableID)
+		}
 	}
 	runMultiSchemaTest(t, createSQL, alterSQL, initFn, postFn, loopFn)
 }
@@ -461,7 +548,7 @@ func TestMultiSchemaReorganizePartition(t *testing.T) {
 //	runMultiSchemaTest(t, createSQL, alterSQL, initFn, postFn, loopFn)
 //}
 
-func runMultiSchemaTest(t *testing.T, createSQL, alterSQL string, initFn, postFn func(*testkit.TestKit), loopFn func(tO, tNO *testkit.TestKit)) {
+func runMultiSchemaTest(t *testing.T, createSQL, alterSQL string, initFn func(*testkit.TestKit), postFn func(*testkit.TestKit, kv.Storage), loopFn func(tO, tNO *testkit.TestKit)) {
 	distCtx := testkit.NewDistExecutionContextWithLease(t, 2, 15*time.Second)
 	store := distCtx.Store
 	domOwner := distCtx.GetDomain(0)
@@ -544,9 +631,44 @@ func runMultiSchemaTest(t *testing.T, createSQL, alterSQL string, initFn, postFn
 		hookChan <- struct{}{}
 	}
 	logutil.BgLogger().Info("XXXXXXXXXXX states loop done")
-	postFn(tkO)
+	if postFn != nil {
+		postFn(tkO, store)
+	}
 	// NOT deferring this, since it might hang on test failures...
 	domOwner.Close()
 	domNonOwner.Close()
 	store.Close()
+}
+
+// HaveEntriesForTableIndex returns number of entries in the KV range of table+index or just the table if index is 0.
+// Also checks with gc_delete_range
+func HaveEntriesForTableIndex(t *testing.T, tk *testkit.TestKit, tableID, indexID int64) bool {
+	var start kv.Key
+	var end kv.Key
+	if indexID == 0 {
+		start = tablecodec.EncodeTablePrefix(tableID)
+		end = tablecodec.EncodeTablePrefix(tableID + 1)
+	} else {
+		start = tablecodec.EncodeTableIndexPrefix(tableID, indexID)
+		end = tablecodec.EncodeTableIndexPrefix(tableID, indexID+1)
+	}
+	ctx := tk.Session()
+	require.NoError(t, sessiontxn.NewTxn(context.Background(), ctx))
+	txn, err := ctx.Txn(true)
+	require.NoError(t, err)
+	it, err := txn.Iter(start, end)
+	require.NoError(t, err)
+	defer it.Close()
+	count := 0
+	for it.Valid() {
+		count++
+		logutil.BgLogger().Info("HaveEntriesForTableIndex", zap.String("key", hex.EncodeToString(it.Key())), zap.String("value", hex.EncodeToString(it.Value())))
+		err = it.Next()
+		require.NoError(t, err)
+	}
+	if count > 0 {
+		logutil.BgLogger().Info("HaveEntriesForTableIndex", zap.Int64("tableID", tableID), zap.Int64("indexID", indexID), zap.Int("count", count))
+		return true
+	}
+	return false
 }
