@@ -2091,8 +2091,8 @@ func TestAdminCheckGlobalIndexDuringDDL(t *testing.T) {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/mockDMLExecution"))
 		testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/onJobUpdated")
 
-		// Should have 3 different schema states, `none`, `deleteOnly`, `deleteReorg`
-		require.Len(t, schemaMap, 3)
+		// Should have 4 different schema states, `none`, `writeOnly`, `deleteOnly`, `deleteReorg`
+		require.Len(t, schemaMap, 4)
 		for ss := range schemaMap {
 			delete(schemaMap, ss)
 		}
