@@ -37,9 +37,12 @@ type handler struct {
 
 // NewHandlerAndRegister creates a new handler and registers it to the DDL
 // notifier.
-func NewHandlerAndRegister(statsCache types.StatsCache) {
+func NewHandlerAndRegister(
+	statsCache types.StatsCache,
+	registry *notifier.DDLNotifier,
+) {
 	h := handler{statsCache: statsCache}
-	notifier.RegisterHandler(notifier.StatsMetaHandlerID, h.handle)
+	registry.RegisterHandler(notifier.StatsMetaHandlerID, h.handle)
 }
 
 func (h handler) handle(
@@ -48,17 +51,16 @@ func (h handler) handle(
 	change *notifier.SchemaChangeEvent,
 ) error {
 	switch change.GetType() {
-	case model.ActionCreateTables:
-		for _, info := range change.GetCreateTablesInfo() {
-			ids, err := getPhysicalIDs(sctx, info)
+	case model.ActionCreateTable:
+		info := change.GetCreateTableInfo()
+		ids, err := getPhysicalIDs(sctx, info)
+		if err != nil {
+			return err
+		}
+		for _, id := range ids {
+			err = h.insertStats4PhysicalID(ctx, sctx, info, id)
 			if err != nil {
-				return err
-			}
-			for _, id := range ids {
-				err = h.insertStats4PhysicalID(ctx, sctx, info, id)
-				if err != nil {
-					return errors.Trace(err)
-				}
+				return errors.Trace(err)
 			}
 		}
 	case model.ActionTruncateTable:
@@ -231,6 +233,8 @@ func (h handler) handle(
 		}
 	case model.ActionFlashbackCluster:
 		return errors.Trace(storage.UpdateStatsVersion(ctx, sctx))
+	case model.ActionAddIndex:
+		// No need to update the stats meta for the adding index event.
 	default:
 		intest.Assert(false)
 		logutil.StatsLogger().Error("Unhandled schema change event",

@@ -39,10 +39,10 @@ func TestGetOrDecodeArgsV2(t *testing.T) {
 	// return existing argsV2
 	argsV2, err := getOrDecodeArgsV2[*TruncateTableArgs](j)
 	require.NoError(t, err)
-	require.Same(t, j.Args[0], argsV2)
+	require.Same(t, j.args[0], argsV2)
 	// unmarshal from json
 	var argsBak *TruncateTableArgs
-	argsBak, j.Args = j.Args[0].(*TruncateTableArgs), nil
+	argsBak, j.args = j.args[0].(*TruncateTableArgs), nil
 	argsV2, err = getOrDecodeArgsV2[*TruncateTableArgs](j)
 	require.NoError(t, err)
 	require.NotNil(t, argsV2)
@@ -346,11 +346,11 @@ func TestTablePartitionArgs(t *testing.T) {
 					{ID: 2, Name: model.NewCIStr("bbb"), LessThan: []string{"2"}},
 				}},
 			})
-		require.Len(t, j.Args, 1)
+		require.Len(t, j.args, 1)
 		if ver == JobVersion1 {
-			require.EqualValues(t, partNames, j.Args[0].([]string))
+			require.EqualValues(t, partNames, j.args[0].([]string))
 		} else {
-			args := j.Args[0].(*TablePartitionArgs)
+			args := j.args[0].(*TablePartitionArgs)
 			require.EqualValues(t, partNames, args.PartNames)
 			require.Nil(t, args.PartInfo)
 			require.Nil(t, args.OldPhysicalTblIDs)
