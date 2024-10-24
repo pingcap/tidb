@@ -66,7 +66,7 @@ func noNewTablesAfter(t *testing.T, tk *testkit.TestKit, ctx sessionctx.Context,
 		defs := pt.Meta().Partition.Definitions
 		{
 			for i := range defs {
-				tblID = max[int64](tblID, defs[i].ID)
+				tblID = max(tblID, defs[i].ID)
 			}
 		}
 	}

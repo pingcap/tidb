@@ -207,7 +207,7 @@ func SetSchemaDiffForReorganizePartition(diff *model.SchemaDiff, job *model.Job,
 	droppedIDs, addedIDs := args.OldPhysicalTblIDs, args.NewPartitionIDs
 	if len(addedIDs) > 0 {
 		// to use AffectedOpts we need both new and old to have the same length
-		maxParts := max[int](len(droppedIDs), len(addedIDs))
+		maxParts := max(len(droppedIDs), len(addedIDs))
 		// Also initialize them to 0!
 		oldIDs := make([]int64, maxParts)
 		copy(oldIDs, droppedIDs)
@@ -230,7 +230,7 @@ func SetSchemaDiffForPartitionModify(diff *model.SchemaDiff, job *model.Job, job
 		droppedIDs, addedIDs := args.OldPhysicalTblIDs, args.NewPartitionIDs
 		if len(addedIDs) > 0 {
 			// to use AffectedOpts we need both new and old to have the same length
-			maxParts := max[int](len(droppedIDs), len(addedIDs))
+			maxParts := max(len(droppedIDs), len(addedIDs))
 			// Also initialize them to 0!
 			oldIDs := make([]int64, maxParts)
 			copy(oldIDs, droppedIDs)

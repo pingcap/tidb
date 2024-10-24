@@ -2377,12 +2377,12 @@ func getReplacedPartitionIDs(names []string, pi *model.PartitionInfo) (firstPart
 		if firstPartIdx == -1 {
 			firstPartIdx = partIdx
 		} else {
-			firstPartIdx = min[int](firstPartIdx, partIdx)
+			firstPartIdx = min(firstPartIdx, partIdx)
 		}
 		if lastPartIdx == -1 {
 			lastPartIdx = partIdx
 		} else {
-			lastPartIdx = max[int](lastPartIdx, partIdx)
+			lastPartIdx = max(lastPartIdx, partIdx)
 		}
 	}
 	switch pi.Type {

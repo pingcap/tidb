@@ -3778,7 +3778,7 @@ func newReorgPartitionWorker(i int, t table.PhysicalTable, decodeColMap map[int6
 			}
 		}
 		writeColOffsetMap[id] = offset
-		maxOffset = max[int](maxOffset, offset)
+		maxOffset = max(maxOffset, offset)
 	}
 	return &reorgPartitionWorker{
 		backfillCtx:       bCtx,
