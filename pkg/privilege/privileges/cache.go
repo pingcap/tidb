@@ -501,6 +501,10 @@ func (p *MySQLPrivilege) merge(diff *immutable) *MySQLPrivilege {
 	ret.DefaultRoles = make([]defaultRoleRecord, 0, len(p.DefaultRoles)+len(diff.DefaultRoles))
 	ret.DefaultRoles = append(ret.DefaultRoles, p.DefaultRoles...)
 	ret.DefaultRoles = append(ret.DefaultRoles, diff.DefaultRoles...)
+	slices.SortStableFunc(ret.DefaultRoles, compareDefaultRoleRecord)
+	ret.DefaultRoles = dedupSorted(ret.DefaultRoles, func(x, y defaultRoleRecord) bool {
+		return x.Host == y.Host && x.User == y.User
+	})
 
 	ret.DynamicPriv = make([]dynamicPrivRecord, 0, len(p.DynamicPriv)+len(diff.DynamicPriv))
 	ret.DynamicPriv = append(ret.DynamicPriv, p.DynamicPriv...)
@@ -577,6 +581,10 @@ func compareBaseRecord(x, y *baseRecord) int {
 }
 
 func compareUserRecord(x, y UserRecord) int {
+	return compareBaseRecord(&x.baseRecord, &y.baseRecord)
+}
+
+func compareDefaultRoleRecord(x, y defaultRoleRecord) int {
 	return compareBaseRecord(&x.baseRecord, &y.baseRecord)
 }
 
