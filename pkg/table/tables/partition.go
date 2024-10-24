@@ -128,22 +128,55 @@ func newPartitionedTable(tbl *TableCommon, tblInfo *model.TableInfo) (table.Part
 		return nil, errors.Trace(err)
 	}
 	origIndices := ret.meta.Indices
-	currIndices := make([]*model.IndexInfo, 0, len(origIndices))
-	useNew := false
-	if pi.DDLState == model.StateDeleteReorganization {
-		useNew = true
-	}
+	untouchedDefinitionIndices := make([]*model.IndexInfo, 0, len(origIndices))
+	DroppingDefinitionIndices := make([]*model.IndexInfo, 0, len(origIndices))
+	AddingDefinitionIndices := make([]*model.IndexInfo, 0, len(origIndices))
 	for _, idx := range origIndices {
+		untouchedDefinitionIndices = append(untouchedDefinitionIndices, idx)
 		// Filter out so only the old OR new indexes are used.
-		if newIdx, ok := pi.DDLChangedIndex[idx.ID]; !ok || newIdx == useNew {
-			currIndices = append(currIndices, idx)
+		newIdx, ok := pi.DDLChangedIndex[idx.ID]
+		if !ok {
+			// Untouched index
+			DroppingDefinitionIndices = append(DroppingDefinitionIndices, idx)
+			idx = idx.Clone()
+			if pi.DDLState == model.StateDeleteOnly {
+				// New partition starting, treat also the index as DeleteOnly,
+				// This way it will also set correct assertions on the index.
+				idx.State = model.StateDeleteOnly
+			} else {
+				// OK to have partition level index state as WriteOnly,
+				// For reading, the table level index state will be used!
+				idx.State = model.StateWriteOnly
+			}
+			AddingDefinitionIndices = append(AddingDefinitionIndices, idx)
+			continue
+		}
+		if newIdx {
+			AddingDefinitionIndices = append(AddingDefinitionIndices, idx)
+		} else {
+			DroppingDefinitionIndices = append(DroppingDefinitionIndices, idx)
 		}
 	}
-	tblInfo.Indices = currIndices
+	tblInfo.Indices = untouchedDefinitionIndices
 	defer func() { ret.meta.Indices = origIndices }()
+	dropMap := make(map[int64]struct{})
+	for _, def := range pi.DroppingDefinitions {
+		dropMap[def.ID] = struct{}{}
+	}
+	addMap := make(map[int64]struct{})
+	for _, def := range pi.AddingDefinitions {
+		addMap[def.ID] = struct{}{}
+	}
 	partitions := make(map[int64]*partition, len(pi.Definitions))
 	for _, p := range pi.Definitions {
 		var t partition
+		if _, drop := dropMap[p.ID]; drop {
+			tblInfo.Indices = DroppingDefinitionIndices
+		} else if _, add := addMap[p.ID]; add {
+			tblInfo.Indices = AddingDefinitionIndices
+		} else {
+			tblInfo.Indices = untouchedDefinitionIndices
+		}
 		err := initTableCommonWithIndices(&t.TableCommon, tblInfo, p.ID, tbl.Columns, tbl.allocs, tbl.Constraints)
 		if err != nil {
 			return nil, errors.Trace(err)
@@ -164,27 +197,6 @@ func newPartitionedTable(tbl *TableCommon, tblInfo *model.TableInfo) (table.Part
 	// and if any new change happens in AddingDefinitions, it needs to be done
 	// also in DroppingDefinitions (since session running on schema version -1)
 	// should also see the changes.
-	useNew = !useNew
-	currIndices = currIndices[:0]
-	for _, idx := range origIndices {
-		// Filter out the opposite changed indexes from above,
-		// so the reorganized partition (not visible) have the matching indices.
-		if newIdx, ok := pi.DDLChangedIndex[idx.ID]; !ok || newIdx == useNew {
-			if !ok && idx.State == model.StatePublic {
-				idx = idx.Clone()
-				if pi.DDLState == model.StateDeleteOnly {
-					// New partition starting, treat also the index as DeleteOnly,
-					// This way it will also set correct assertions on the index.
-					idx.State = model.StateDeleteOnly
-				} else {
-					// The partition is not visible, so OK to have the index write only.
-					idx.State = model.StateWriteOnly
-				}
-			}
-			currIndices = append(currIndices, idx)
-		}
-	}
-	ret.meta.Indices = currIndices
 	if pi.DDLState == model.StateDeleteReorganization {
 		// TODO: Explicitly explain the different DDL/New fields!
 		if pi.NewTableID != 0 {
@@ -200,6 +212,7 @@ func newPartitionedTable(tbl *TableCommon, tblInfo *model.TableInfo) (table.Part
 			ret.reorganizePartitions[def.ID] = nil
 		}
 		ret.doubleWritePartitions = make(map[int64]any, len(pi.DroppingDefinitions))
+		tblInfo.Indices = DroppingDefinitionIndices
 		for _, def := range pi.DroppingDefinitions {
 			p, err := initPartition(ret, def)
 			if err != nil {
@@ -221,6 +234,7 @@ func newPartitionedTable(tbl *TableCommon, tblInfo *model.TableInfo) (table.Part
 				return nil, errors.Trace(err)
 			}
 			ret.doubleWritePartitions = make(map[int64]any, len(pi.AddingDefinitions))
+			tblInfo.Indices = AddingDefinitionIndices
 			for _, def := range pi.AddingDefinitions {
 				ret.doubleWritePartitions[def.ID] = nil
 				p, err := initPartition(ret, def)
