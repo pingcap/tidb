@@ -2256,7 +2256,6 @@ func (w *worker) onDropTablePartition(jobCtx *jobContext, job *model.Job) (ver i
 		return ver, errors.Trace(err)
 	}
 
-	var physicalTableIDs []int64
 	switch job.SchemaState {
 	case model.StatePublic:
 		// Here we mark the partitions to be dropped, so they are not read or written
@@ -2268,7 +2267,7 @@ func (w *worker) onDropTablePartition(jobCtx *jobContext, job *model.Job) (ver i
 		// Reason, see https://github.com/pingcap/tidb/issues/55888
 		// Only mark the partitions as to be dropped, so they are not used, but not yet removed.
 		originalDefs := tblInfo.Partition.Definitions
-		physicalTableIDs = updateDroppingPartitionInfo(tblInfo, partNames)
+		_ = updateDroppingPartitionInfo(tblInfo, partNames)
 		tblInfo.Partition.Definitions = originalDefs
 		tblInfo.Partition.DDLState = model.StateWriteOnly
 		tblInfo.Partition.DDLAction = model.ActionDropTablePartition
@@ -2279,7 +2278,7 @@ func (w *worker) onDropTablePartition(jobCtx *jobContext, job *model.Job) (ver i
 		// Since the previous state do not use the dropping partitions,
 		// we can now actually remove them, allowing to write into the overlapping range
 		// of the higher range partition or LIST default partition.
-		physicalTableIDs = updateDroppingPartitionInfo(tblInfo, partNames)
+		_ = updateDroppingPartitionInfo(tblInfo, partNames)
 		err = dropLabelRules(jobCtx.stepCtx, job.SchemaName, tblInfo.Name.L, partNames)
 		if err != nil {
 			// TODO: Add failpoint error/cancel injection and test failure/rollback and cancellation!
@@ -2332,7 +2331,7 @@ func (w *worker) onDropTablePartition(jobCtx *jobContext, job *model.Job) (ver i
 		tblInfo.Partition.DDLState = job.SchemaState
 		ver, err = updateVersionAndTableInfo(jobCtx, job, tblInfo, true)
 	case model.StateDeleteReorganization:
-		physicalTableIDs = getPartitionIDsFromDefinitions(tblInfo.Partition.DroppingDefinitions)
+		physicalTableIDs := getPartitionIDsFromDefinitions(tblInfo.Partition.DroppingDefinitions)
 		if hasGlobalIndex(tblInfo) {
 			oldTblInfo := getTableInfoWithDroppingPartitions(tblInfo)
 			var done bool
