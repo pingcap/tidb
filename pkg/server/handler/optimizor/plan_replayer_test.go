@@ -164,7 +164,6 @@ func TestDumpPlanReplayerAPI(t *testing.T) {
 	require.NotNil(t, fp)
 	defer func() {
 		require.NoError(t, fp.Close())
-		require.NoError(t, os.Remove(path))
 	}()
 
 	_, err = io.Copy(fp, bytes.NewReader(body))
@@ -384,7 +383,6 @@ func TestIssue43192(t *testing.T) {
 	require.NotNil(t, fp)
 	defer func() {
 		require.NoError(t, fp.Close())
-		require.NoError(t, os.Remove(path))
 	}()
 
 	_, err = io.Copy(fp, bytes.NewReader(body))
