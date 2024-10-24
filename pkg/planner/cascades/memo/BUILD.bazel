@@ -26,14 +26,19 @@ go_test(
     srcs = [
         "group_and_expr_test.go",
         "group_id_generator_test.go",
+        "main_test.go",
+        "memo_test.go",
     ],
     embed = [":memo"],
     flaky = True,
-    shard_count = 3,
+    shard_count = 5,
     deps = [
         "//pkg/expression",
         "//pkg/planner/cascades/base",
+        "//pkg/planner/core",
         "//pkg/planner/core/operator/logicalop",
+        "//pkg/testkit/testsetup",
         "@com_github_stretchr_testify//require",
+        "@org_uber_go_goleak//:goleak",
     ],
 )

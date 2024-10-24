@@ -68,7 +68,7 @@ type StepExecFrameworkInfo interface {
 	GetResource() *proto.StepResource
 }
 
-var stepExecFrameworkInfoName = reflect.TypeOf((*StepExecFrameworkInfo)(nil)).Elem().Name()
+var stepExecFrameworkInfoName = reflect.TypeFor[StepExecFrameworkInfo]().Name()
 
 type frameworkInfo struct {
 	resource *proto.StepResource

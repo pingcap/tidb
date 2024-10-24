@@ -20,6 +20,7 @@ import (
 
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/stretchr/testify/assert"
@@ -475,42 +476,60 @@ func TestDeniedByBDR(t *testing.T) {
 	}
 
 	// test special cases
+	indexArgs := &model.ModifyIndexArgs{
+		IndexArgs: []*model.IndexArg{{
+			Global:                  false,
+			IndexName:               pmodel.NewCIStr("idx1"),
+			IndexPartSpecifications: []*ast.IndexPartSpecification{{Length: 2}},
+			IndexOption:             &ast.IndexOption{},
+			HiddenCols:              nil,
+			SQLMode:                 mysql.ModeANSI,
+			IndexID:                 1,
+			IfExist:                 false,
+			IsGlobal:                false,
+		}},
+		OpType: model.OpAddIndex,
+	}
+
 	testCases2 := []struct {
 		role     ast.BDRRole
 		action   model.ActionType
-		job      *model.Job
+		unique   bool
 		expected bool
 	}{
 		{
-			role:   ast.BDRRolePrimary,
-			action: model.ActionAddPrimaryKey,
-			job: &model.Job{
-				Type: model.ActionAddPrimaryKey,
-				Args: []any{true},
-			},
+			role:     ast.BDRRolePrimary,
+			action:   model.ActionAddPrimaryKey,
+			unique:   true,
 			expected: true,
 		},
 		{
-			role:   ast.BDRRolePrimary,
-			action: model.ActionAddIndex,
-			job: &model.Job{
-				Type: model.ActionAddIndex,
-				Args: []any{true},
-			},
+			role:     ast.BDRRolePrimary,
+			action:   model.ActionAddIndex,
+			unique:   true,
 			expected: true,
 		},
 		{
-			role:   ast.BDRRolePrimary,
-			action: model.ActionAddIndex,
-			job: &model.Job{
-				Type: model.ActionAddIndex,
-				Args: []any{false},
-			},
+			role:     ast.BDRRolePrimary,
+			action:   model.ActionAddIndex,
+			unique:   false,
 			expected: false,
 		},
 	}
 
 	for _, tc := range testCases2 {
-		assert.Equal(t, tc.expected, DeniedByBDR(tc.role, tc.action, tc.job), fmt.Sprintf("role: %v, action: %v", tc.role, tc.action))
+		indexArgs.IndexArgs[0].Unique = tc.unique
+		indexArgs.IndexArgs[0].IsPK = tc.action == model.ActionAddPrimaryKey
+		for _, ver := range []model.JobVersion{model.JobVersion1, model.JobVersion2} {
+			job := &model.Job{
+				Version: ver,
+				Type:    tc.action,
+			}
+			job.FillArgs(indexArgs)
+			job.Encode(true)
+			args, err := model.GetModifyIndexArgs(job)
+			require.NoError(t, err)
+			assert.Equal(t, tc.expected, DeniedByBDR(tc.role, tc.action, args), fmt.Sprintf("role: %v, action: %v", tc.role, tc.action))
+		}
 	}
 }

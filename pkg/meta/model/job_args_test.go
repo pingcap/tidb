@@ -20,6 +20,7 @@ import (
 
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/stretchr/testify/require"
 	pdhttp "github.com/tikv/pd/client/http"
 )
@@ -38,10 +39,10 @@ func TestGetOrDecodeArgsV2(t *testing.T) {
 	// return existing argsV2
 	argsV2, err := getOrDecodeArgsV2[*TruncateTableArgs](j)
 	require.NoError(t, err)
-	require.Same(t, j.Args[0], argsV2)
+	require.Same(t, j.args[0], argsV2)
 	// unmarshal from json
 	var argsBak *TruncateTableArgs
-	argsBak, j.Args = j.Args[0].(*TruncateTableArgs), nil
+	argsBak, j.args = j.args[0].(*TruncateTableArgs), nil
 	argsV2, err = getOrDecodeArgsV2[*TruncateTableArgs](j)
 	require.NoError(t, err)
 	require.NotNil(t, argsV2)
@@ -345,11 +346,11 @@ func TestTablePartitionArgs(t *testing.T) {
 					{ID: 2, Name: model.NewCIStr("bbb"), LessThan: []string{"2"}},
 				}},
 			})
-		require.Len(t, j.Args, 1)
+		require.Len(t, j.args, 1)
 		if ver == JobVersion1 {
-			require.EqualValues(t, partNames, j.Args[0].([]string))
+			require.EqualValues(t, partNames, j.args[0].([]string))
 		} else {
-			args := j.Args[0].(*TablePartitionArgs)
+			args := j.args[0].(*TablePartitionArgs)
 			require.EqualValues(t, partNames, args.PartNames)
 			require.Nil(t, args.PartInfo)
 			require.Nil(t, args.OldPhysicalTblIDs)
@@ -461,36 +462,6 @@ func TestRenameTableArgs(t *testing.T) {
 		args, err := GetRenameTableArgs(j2)
 		require.NoError(t, err)
 		require.Equal(t, inArgs, args)
-	}
-}
-
-func TestUpdateRenameTableArgs(t *testing.T) {
-	inArgs := &RenameTableArgs{
-		OldSchemaID:   9527,
-		OldSchemaName: model.NewCIStr("old_schema_name"),
-		NewTableName:  model.NewCIStr("new_table_name"),
-	}
-
-	jobvers := []JobVersion{JobVersion1, JobVersion2}
-	for _, jobver := range jobvers {
-		job := &Job{
-			SchemaID: 9528,
-			Version:  jobver,
-			Type:     ActionRenameTable,
-		}
-		job.FillArgs(inArgs)
-
-		err := UpdateRenameTableArgs(job)
-		require.NoError(t, err)
-
-		args, err := GetRenameTableArgs(job)
-		require.NoError(t, err)
-		require.Equal(t, &RenameTableArgs{
-			OldSchemaID:   9528,
-			NewSchemaID:   9528,
-			OldSchemaName: model.NewCIStr("old_schema_name"),
-			NewTableName:  model.NewCIStr("new_table_name"),
-		}, args)
 	}
 }
 
@@ -990,5 +961,184 @@ func TestAlterTableAttributesArgs(t *testing.T) {
 		require.NoError(t, err)
 
 		require.Equal(t, *inArgs.LabelRule, *args.LabelRule)
+	}
+}
+
+func TestAddIndexArgs(t *testing.T) {
+	inArgs := &ModifyIndexArgs{
+		IndexArgs: []*IndexArg{{
+			Global:                  false,
+			Unique:                  true,
+			IndexName:               model.NewCIStr("idx1"),
+			IndexPartSpecifications: []*ast.IndexPartSpecification{{Length: 2}},
+			IndexOption:             &ast.IndexOption{},
+			HiddenCols:              []*ColumnInfo{{}, {}},
+			SQLMode:                 mysql.ModeANSI,
+			IndexID:                 1,
+			IfExist:                 false,
+			IsGlobal:                false,
+			FuncExpr:                "test_string",
+		}},
+		PartitionIDs: []int64{100, 101, 102},
+		OpType:       OpAddIndex,
+	}
+
+	for _, v := range []JobVersion{JobVersion1, JobVersion2} {
+		inArgs.IndexArgs[0].IsVector = false
+		inArgs.IndexArgs[0].IsPK = false
+		j2 := &Job{}
+		require.NoError(t, j2.Decode(getJobBytes(t, inArgs, v, ActionAddIndex)))
+
+		args, err := GetModifyIndexArgs(j2)
+		require.NoError(t, err)
+
+		a := args.IndexArgs[0]
+		require.Equal(t, inArgs.IndexArgs[0].Global, a.Global)
+		require.Equal(t, inArgs.IndexArgs[0].Unique, a.Unique)
+		require.Equal(t, inArgs.IndexArgs[0].IndexName, a.IndexName)
+		require.Equal(t, inArgs.IndexArgs[0].IndexPartSpecifications, a.IndexPartSpecifications)
+		require.Equal(t, inArgs.IndexArgs[0].IndexOption, a.IndexOption)
+		require.Equal(t, inArgs.IndexArgs[0].HiddenCols, a.HiddenCols)
+	}
+
+	for _, v := range []JobVersion{JobVersion1, JobVersion2} {
+		inArgs.IndexArgs[0].IsVector = false
+		inArgs.IndexArgs[0].IsPK = true
+		j2 := &Job{}
+		require.NoError(t, j2.Decode(getJobBytes(t, inArgs, v, ActionAddPrimaryKey)))
+
+		args, err := GetModifyIndexArgs(j2)
+		require.NoError(t, err)
+
+		a := args.IndexArgs[0]
+		require.Equal(t, inArgs.IndexArgs[0].Global, a.Global)
+		require.Equal(t, inArgs.IndexArgs[0].Unique, a.Unique)
+		require.Equal(t, inArgs.IndexArgs[0].IndexName, a.IndexName)
+		require.Equal(t, inArgs.IndexArgs[0].IndexPartSpecifications, a.IndexPartSpecifications)
+		require.Equal(t, inArgs.IndexArgs[0].SQLMode, a.SQLMode)
+		require.Equal(t, inArgs.IndexArgs[0].IndexOption, a.IndexOption)
+	}
+
+	for _, v := range []JobVersion{JobVersion1, JobVersion2} {
+		inArgs.IndexArgs[0].IsVector = true
+		inArgs.IndexArgs[0].IsPK = false
+		j2 := &Job{}
+		require.NoError(t, j2.Decode(getJobBytes(t, inArgs, v, ActionAddVectorIndex)))
+
+		args, err := GetModifyIndexArgs(j2)
+		require.NoError(t, err)
+
+		a := args.IndexArgs[0]
+		require.Equal(t, inArgs.IndexArgs[0].IndexName, a.IndexName)
+		require.Equal(t, inArgs.IndexArgs[0].IndexPartSpecifications, a.IndexPartSpecifications)
+		require.Equal(t, inArgs.IndexArgs[0].IndexOption, a.IndexOption)
+		require.Equal(t, inArgs.IndexArgs[0].FuncExpr, a.FuncExpr)
+	}
+
+	for _, v := range []JobVersion{JobVersion1, JobVersion2} {
+		j2 := &Job{}
+		require.NoError(t, j2.Decode(getFinishedJobBytes(t, inArgs, v, ActionAddIndex)))
+
+		args, err := GetFinishedModifyIndexArgs(j2)
+		require.NoError(t, err)
+
+		a := args.IndexArgs[0]
+		require.Equal(t, inArgs.IndexArgs[0].IndexID, a.IndexID)
+		require.Equal(t, inArgs.IndexArgs[0].IfExist, a.IfExist)
+		require.Equal(t, inArgs.IndexArgs[0].IsGlobal, a.IsGlobal)
+		require.Equal(t, inArgs.PartitionIDs, args.PartitionIDs)
+	}
+}
+
+func TestDropIndexArguements(t *testing.T) {
+	checkFunc := func(t *testing.T, inArgs *ModifyIndexArgs) {
+		for _, v := range []JobVersion{JobVersion1, JobVersion2} {
+			j2 := &Job{}
+			require.NoError(t, j2.Decode(getJobBytes(t, inArgs, v, ActionDropIndex)))
+			args, err := GetDropIndexArgs(j2)
+			require.NoError(t, err)
+			for i, expect := range inArgs.IndexArgs {
+				require.EqualValues(t, expect.IndexName, args.IndexArgs[i].IndexName)
+				require.EqualValues(t, expect.IfExist, args.IndexArgs[i].IfExist)
+			}
+
+			j2 = &Job{}
+			require.NoError(t, j2.Decode(getFinishedJobBytes(t, inArgs, v, ActionDropIndex)))
+			args2, err := GetFinishedModifyIndexArgs(j2)
+			require.NoError(t, err)
+			require.EqualValues(t, inArgs.IndexArgs, args2.IndexArgs)
+			require.EqualValues(t, inArgs.PartitionIDs, args2.PartitionIDs)
+		}
+	}
+
+	inArgs := &ModifyIndexArgs{
+		IndexArgs: []*IndexArg{
+			{
+				IndexName: model.NewCIStr("i2"),
+				IfExist:   true,
+				IsVector:  true,
+				IndexID:   1,
+			},
+		},
+		PartitionIDs: []int64{100, 101, 102, 103},
+		OpType:       OpDropIndex,
+	}
+	checkFunc(t, inArgs)
+}
+
+func TestGetRenameIndexArgs(t *testing.T) {
+	inArgs := &ModifyIndexArgs{
+		IndexArgs: []*IndexArg{
+			{IndexName: model.NewCIStr("old")},
+			{IndexName: model.NewCIStr("new")},
+		},
+	}
+	for _, v := range []JobVersion{JobVersion1, JobVersion2} {
+		j2 := &Job{}
+		require.NoError(t, j2.Decode(getJobBytes(t, inArgs, v, ActionRenameIndex)))
+
+		args, err := GetModifyIndexArgs(j2)
+		require.NoError(t, err)
+		require.Equal(t, inArgs, args)
+	}
+}
+
+func TestModifyColumnsArgs(t *testing.T) {
+	inArgs := &ModifyColumnArgs{
+		Column:           &ColumnInfo{ID: 111, Name: model.NewCIStr("col1")},
+		OldColumnName:    model.NewCIStr("aa"),
+		Position:         &ast.ColumnPosition{Tp: ast.ColumnPositionFirst},
+		ModifyColumnType: 1,
+		NewShardBits:     123,
+		ChangingColumn:   &ColumnInfo{ID: 222, Name: model.NewCIStr("col2")},
+		RedundantIdxs:    []int64{1, 2},
+		IndexIDs:         []int64{3, 4},
+		PartitionIDs:     []int64{5, 6},
+	}
+
+	for _, v := range []JobVersion{JobVersion1, JobVersion2} {
+		j2 := &Job{}
+		require.NoError(t, j2.Decode(getJobBytes(t, inArgs, v, ActionModifyColumn)))
+		args, err := GetModifyColumnArgs(j2)
+		require.NoError(t, err)
+
+		require.Equal(t, *inArgs.Column, *args.Column)
+		require.Equal(t, inArgs.OldColumnName, args.OldColumnName)
+		require.Equal(t, inArgs.Position, args.Position)
+		require.Equal(t, inArgs.ModifyColumnType, args.ModifyColumnType)
+		require.Equal(t, inArgs.NewShardBits, args.NewShardBits)
+		require.Equal(t, *inArgs.ChangingColumn, *args.ChangingColumn)
+		require.Equal(t, inArgs.ChangingIdxs, args.ChangingIdxs)
+		require.Equal(t, inArgs.RedundantIdxs, args.RedundantIdxs)
+	}
+
+	for _, v := range []JobVersion{JobVersion1, JobVersion2} {
+		j2 := &Job{}
+		require.NoError(t, j2.Decode(getFinishedJobBytes(t, inArgs, v, ActionModifyColumn)))
+		args, err := GetFinishedModifyColumnArgs(j2)
+		require.NoError(t, err)
+
+		require.Equal(t, inArgs.IndexIDs, args.IndexIDs)
+		require.Equal(t, inArgs.PartitionIDs, args.PartitionIDs)
 	}
 }

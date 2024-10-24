@@ -27,10 +27,7 @@ import (
 
 func init() {
 	// For code refactor init.
-	utilfuncp.FindBestTask = findBestTask
-	utilfuncp.PruneByItems = pruneByItems
-	utilfuncp.CanPushToCopImpl = canPushToCopImpl
-	utilfuncp.PushDownTopNForBaseLogicalPlan = pushDownTopNForBaseLogicalPlan
+	utilfuncp.FindBestTask4BaseLogicalPlan = findBestTask
 	utilfuncp.FindBestTask4LogicalCTE = findBestTask4LogicalCTE
 	utilfuncp.FindBestTask4LogicalShow = findBestTask4LogicalShow
 	utilfuncp.FindBestTask4LogicalCTETable = findBestTask4LogicalCTETable
@@ -68,7 +65,6 @@ func init() {
 	utilfuncp.ApplyPredicateSimplification = applyPredicateSimplification
 	utilfuncp.DeriveStats4LogicalIndexScan = deriveStats4LogicalIndexScan
 	utilfuncp.DeriveStats4LogicalTableScan = deriveStats4LogicalTableScan
-	utilfuncp.PushDownTopNForBaseLogicalPlan = pushDownTopNForBaseLogicalPlan
 
 	// For mv index init.
 	cardinality.GetTblInfoForUsedStatsByPhysicalID = getTblInfoForUsedStatsByPhysicalID

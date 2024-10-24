@@ -38,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/mathutil"
@@ -2013,7 +2014,7 @@ func (c *sysDateFunctionClass) getFunction(ctx BuildContext, args []Expression) 
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	fsp, err := getFspByIntArg(ctx, args)
+	fsp, err := getFspByIntArg(ctx, args, c.funcName)
 	if err != nil {
 		return nil, err
 	}
@@ -2138,7 +2139,7 @@ func (c *currentTimeFunctionClass) getFunction(ctx BuildContext, args []Expressi
 		return nil, err
 	}
 
-	fsp, err := getFspByIntArg(ctx, args)
+	fsp, err := getFspByIntArg(ctx, args, c.funcName)
 	if err != nil {
 		return nil, err
 	}
@@ -2383,7 +2384,7 @@ func (c *utcTimestampFunctionClass) getFunction(ctx BuildContext, args []Express
 		return nil, err
 	}
 
-	fsp, err := getFspByIntArg(ctx, args)
+	fsp, err := getFspByIntArg(ctx, args, c.funcName)
 	if err != nil {
 		return nil, err
 	}
@@ -2424,19 +2425,20 @@ func (b *builtinUTCTimestampWithArgSig) Clone() builtinFunc {
 // evalTime evals UTC_TIMESTAMP(fsp).
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_utc-timestamp
 func (b *builtinUTCTimestampWithArgSig) evalTime(ctx EvalContext, row chunk.Row) (types.Time, bool, error) {
-	num, isNull, err := b.args[0].EvalInt(ctx, row)
+	fsp, isNull, err := b.args[0].EvalInt(ctx, row)
 	if err != nil {
 		return types.ZeroTime, true, err
 	}
 
-	if !isNull && num > int64(types.MaxFsp) {
-		return types.ZeroTime, true, errors.Errorf("Too-big precision %v specified for 'utc_timestamp'. Maximum is %v", num, types.MaxFsp)
-	}
-	if !isNull && num < int64(types.MinFsp) {
-		return types.ZeroTime, true, errors.Errorf("Invalid negative %d specified, must in [0, 6]", num)
+	if !isNull {
+		if fsp > int64(math.MaxInt32) || fsp < int64(types.MinFsp) {
+			return types.ZeroTime, true, types.ErrSyntax.GenWithStack(util.SyntaxErrorPrefix)
+		} else if fsp > int64(types.MaxFsp) {
+			return types.ZeroTime, true, types.ErrTooBigPrecision.GenWithStackByArgs(fsp, "utc_timestamp", types.MaxFsp)
+		}
 	}
 
-	result, isNull, err := evalUTCTimestampWithFsp(ctx, int(num))
+	result, isNull, err := evalUTCTimestampWithFsp(ctx, int(fsp))
 	return result, isNull, err
 }
 
@@ -2474,7 +2476,7 @@ func (c *nowFunctionClass) getFunction(ctx BuildContext, args []Expression) (bui
 		return nil, err
 	}
 
-	fsp, err := getFspByIntArg(ctx, args)
+	fsp, err := getFspByIntArg(ctx, args, c.funcName)
 	if err != nil {
 		return nil, err
 	}
@@ -2553,10 +2555,10 @@ func (b *builtinNowWithArgSig) evalTime(ctx EvalContext, row chunk.Row) (types.T
 
 	if isNull {
 		fsp = 0
+	} else if fsp > int64(math.MaxInt32) || fsp < int64(types.MinFsp) {
+		return types.ZeroTime, true, types.ErrSyntax.GenWithStack(util.SyntaxErrorPrefix)
 	} else if fsp > int64(types.MaxFsp) {
-		return types.ZeroTime, true, errors.Errorf("Too-big precision %v specified for 'now'. Maximum is %v", fsp, types.MaxFsp)
-	} else if fsp < int64(types.MinFsp) {
-		return types.ZeroTime, true, errors.Errorf("Invalid negative %d specified, must in [0, 6]", fsp)
+		return types.ZeroTime, true, types.ErrTooBigPrecision.GenWithStackByArgs(fsp, "now", types.MaxFsp)
 	}
 
 	result, isNull, err := evalNowWithFsp(ctx, int(fsp))
@@ -6455,7 +6457,7 @@ func (c *utcTimeFunctionClass) getFunction(ctx BuildContext, args []Expression) 
 	if err != nil {
 		return nil, err
 	}
-	fsp, err := getFspByIntArg(ctx, args)
+	fsp, err := getFspByIntArg(ctx, args, c.funcName)
 	if err != nil {
 		return nil, err
 	}
@@ -6513,12 +6515,13 @@ func (b *builtinUTCTimeWithArgSig) evalDuration(ctx EvalContext, row chunk.Row) 
 	if isNull || err != nil {
 		return types.Duration{}, isNull, err
 	}
-	if fsp > int64(types.MaxFsp) {
-		return types.Duration{}, true, errors.Errorf("Too-big precision %v specified for 'utc_time'. Maximum is %v", fsp, types.MaxFsp)
+
+	if fsp > int64(math.MaxInt32) || fsp < int64(types.MinFsp) {
+		return types.Duration{}, true, types.ErrSyntax.GenWithStack(util.SyntaxErrorPrefix)
+	} else if fsp > int64(types.MaxFsp) {
+		return types.Duration{}, true, types.ErrTooBigPrecision.GenWithStackByArgs(fsp, "utc_time", types.MaxFsp)
 	}
-	if fsp < int64(types.MinFsp) {
-		return types.Duration{}, true, errors.Errorf("Invalid negative %d specified, must in [0, 6]", fsp)
-	}
+
 	nowTs, err := getStmtTimestamp(ctx)
 	if err != nil {
 		return types.Duration{}, true, err
@@ -6804,7 +6807,7 @@ func calAppropriateTime(minTime, maxTime, minSafeTime time.Time) time.Time {
 }
 
 // getFspByIntArg is used by some time functions to get the result fsp. If len(expr) == 0, then the fsp is not explicit set, use 0 as default.
-func getFspByIntArg(ctx BuildContext, exps []Expression) (int, error) {
+func getFspByIntArg(ctx BuildContext, exps []Expression, funcName string) (int, error) {
 	if len(exps) == 0 {
 		return 0, nil
 	}
@@ -6818,10 +6821,11 @@ func getFspByIntArg(ctx BuildContext, exps []Expression) (int, error) {
 			// If isNULL, it may be a bug of parser. Return 0 to be compatible with old version.
 			return 0, err
 		}
-		if fsp > int64(types.MaxFsp) {
-			return 0, errors.Errorf("Too-big precision %v specified for 'curtime'. Maximum is %v", fsp, types.MaxFsp)
-		} else if fsp < int64(types.MinFsp) {
-			return 0, errors.Errorf("Invalid negative %d specified, must in [0, 6]", fsp)
+
+		if fsp > int64(math.MaxInt32) || fsp < int64(types.MinFsp) {
+			return 0, types.ErrSyntax.GenWithStack(util.SyntaxErrorPrefix)
+		} else if fsp > int64(types.MaxFsp) {
+			return 0, types.ErrTooBigPrecision.GenWithStackByArgs(fsp, funcName, types.MaxFsp)
 		}
 		return int(fsp), nil
 	}
