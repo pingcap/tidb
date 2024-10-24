@@ -1839,14 +1839,39 @@ func (p *preprocessor) hasAutoConvertWarning(colDef *ast.ColumnDef) bool {
 	return false
 }
 
-func tryLockMDLAndUpdateSchemaIfNecessary(ctx context.Context, sctx base.PlanContext, dbName pmodel.CIStr, tbl table.Table, is infoschema.InfoSchema) (table.Table, error) {
+func tryLockMDLAndUpdateSchemaIfNecessary(ctx context.Context, sctx base.PlanContext, dbName pmodel.CIStr, tbl table.Table, is infoschema.InfoSchema) (retTbl table.Table, err error) {
+	skipLock := false
+	shouldLockMDL := false
+	var lockedID int64
+
+	defer func() {
+		// if the table is not in public state, avoid running any queries on it. This verification is actually
+		// not related to the MDL, but it's a good place to put it.
+		//
+		// This function may return a new table, so we need to check the return value in the `defer` block.
+		if err == nil {
+			if retTbl.Meta().State != model.StatePublic {
+				err = infoschema.ErrTableNotExists.FastGenByArgs(dbName.L, retTbl.Meta().Name.L)
+				retTbl = nil
+			}
+		}
+
+		if shouldLockMDL && err == nil && !skipLock {
+			sctx.GetSessionVars().StmtCtx.MDLRelatedTableIDs[retTbl.Meta().ID] = struct{}{}
+		}
+
+		if lockedID != 0 && err != nil {
+			// because `err != nil`, the `retTbl` is `nil` and the `tbl` can also be `nil` here. We use the `lockedID` instead.
+			sctx.GetSessionVars().GetRelatedTableForMDL().Delete(lockedID)
+		}
+	}()
+
 	if !sctx.GetSessionVars().TxnCtx.EnableMDL {
 		return tbl, nil
 	}
 	if is.SchemaMetaVersion() == 0 {
 		return tbl, nil
 	}
-	skipLock := false
 	if sctx.GetSessionVars().SnapshotInfoschema != nil {
 		return tbl, nil
 	}
@@ -1863,12 +1888,7 @@ func tryLockMDLAndUpdateSchemaIfNecessary(ctx context.Context, sctx base.PlanCon
 		return tbl, nil
 	}
 	tableInfo := tbl.Meta()
-	var err error
-	defer func() {
-		if err == nil && !skipLock {
-			sctx.GetSessionVars().StmtCtx.MDLRelatedTableIDs[tbl.Meta().ID] = struct{}{}
-		}
-	}()
+	shouldLockMDL = true
 	if _, ok := sctx.GetSessionVars().GetRelatedTableForMDL().Load(tableInfo.ID); !ok {
 		if se, ok := is.(*infoschema.SessionExtendedInfoSchema); ok && skipLock && se.MdlTables != nil {
 			if _, ok := se.MdlTables.TableByID(tableInfo.ID); ok {
@@ -1883,19 +1903,18 @@ func tryLockMDLAndUpdateSchemaIfNecessary(ctx context.Context, sctx base.PlanCon
 		// In this case, this TiDB wrongly gets the mdl lock.
 		if !skipLock {
 			sctx.GetSessionVars().GetRelatedTableForMDL().Store(tableInfo.ID, int64(0))
+			lockedID = tableInfo.ID
 		}
 		dom := domain.GetDomain(sctx)
 		domainSchema := dom.InfoSchema()
 		domainSchemaVer := domainSchema.SchemaMetaVersion()
 		tbl, err = domainSchema.TableByName(ctx, dbName, tableInfo.Name)
 		if err != nil {
-			if !skipLock {
-				sctx.GetSessionVars().GetRelatedTableForMDL().Delete(tableInfo.ID)
-			}
 			return nil, err
 		}
 		if !skipLock {
 			sctx.GetSessionVars().GetRelatedTableForMDL().Store(tbl.Meta().ID, domainSchemaVer)
+			lockedID = tbl.Meta().ID
 		}
 		// Check the table change, if adding new public index or modify a column, we need to handle them.
 		if tbl.Meta().Revision != tableInfo.Revision && !sctx.GetSessionVars().IsPessimisticReadConsistency() {
@@ -1938,9 +1957,6 @@ func tryLockMDLAndUpdateSchemaIfNecessary(ctx context.Context, sctx base.PlanCon
 					logutil.BgLogger().Info("public column changed",
 						zap.String("column", col.Name.L), zap.String("old_col", col.Name.L),
 						zap.Int64("new id", col.ID), zap.Int64("old id", col.ID))
-					if !skipLock {
-						sctx.GetSessionVars().GetRelatedTableForMDL().Delete(tableInfo.ID)
-					}
 					return nil, domain.ErrInfoSchemaChanged.GenWithStack("public column %s has changed", col.Name)
 				}
 			}

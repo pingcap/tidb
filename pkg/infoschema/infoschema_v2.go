@@ -1270,7 +1270,10 @@ func (b *Builder) applyTableUpdateV2(m meta.Reader, diff *model.SchemaDiff) ([]i
 		)
 	}
 
-	oldTableID, newTableID := b.getTableIDs(diff)
+	oldTableID, newTableID, err := b.getTableIDs(m, diff)
+	if err != nil {
+		return nil, err
+	}
 	b.updateBundleForTableUpdate(diff, newTableID, oldTableID)
 
 	tblIDs, allocs, err := dropTableForUpdate(b, newTableID, oldTableID, oldDBInfo, diff)

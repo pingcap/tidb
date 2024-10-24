@@ -323,7 +323,7 @@ func applyDefaultAction(b *Builder, m meta.Reader, diff *model.SchemaDiff) ([]in
 	return b.applyAffectedOpts(m, tblIDs, diff, diff.Type)
 }
 
-func (b *Builder) getTableIDs(diff *model.SchemaDiff) (oldTableID, newTableID int64) {
+func (b *Builder) getTableIDs(m meta.Reader, diff *model.SchemaDiff) (oldTableID, newTableID int64, err error) {
 	switch diff.Type {
 	case model.ActionCreateSequence, model.ActionRecoverTable:
 		newTableID = diff.TableID
@@ -341,6 +341,18 @@ func (b *Builder) getTableIDs(diff *model.SchemaDiff) (oldTableID, newTableID in
 		newTableID = diff.TableID
 	case model.ActionDropTable, model.ActionDropView, model.ActionDropSequence:
 		oldTableID = diff.TableID
+
+		// Still keep the table in infoschema until when the state of table reaches StateNone. This is because
+		// the `ON DELETE/UPDATE CASCADE` function of foreign key may need to find the table in infoschema. Not
+		// only the table with foreign keys are stored in the infoschema to keep a consistent behavior for all
+		// tables.
+		tblInfo, err := m.GetTable(diff.SchemaID, oldTableID)
+		if err != nil {
+			return 0, 0, err
+		}
+		if tblInfo != nil && tblInfo.State != model.StateNone {
+			newTableID = diff.TableID
+		}
 	case model.ActionTruncateTable, model.ActionCreateView,
 		model.ActionExchangeTablePartition, model.ActionAlterTablePartitioning,
 		model.ActionRemovePartitioning:
@@ -421,7 +433,10 @@ func (b *Builder) applyTableUpdate(m meta.Reader, diff *model.SchemaDiff) ([]int
 		)
 	}
 	dbInfo := b.getSchemaAndCopyIfNecessary(roDBInfo.Name.L)
-	oldTableID, newTableID := b.getTableIDs(diff)
+	oldTableID, newTableID, err := b.getTableIDs(m, diff)
+	if err != nil {
+		return nil, err
+	}
 	b.updateBundleForTableUpdate(diff, newTableID, oldTableID)
 	b.copySortedTables(oldTableID, newTableID)
 
