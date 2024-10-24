@@ -18,18 +18,16 @@ import (
 	"context"
 	"encoding/hex"
 	"fmt"
-	"github.com/pingcap/tidb/pkg/domain"
-	"github.com/pingcap/tidb/pkg/kv"
-	pmodel "github.com/pingcap/tidb/pkg/parser/model"
-	"github.com/pingcap/tidb/pkg/sessiontxn"
-	"github.com/pingcap/tidb/pkg/store/gcworker"
-	"github.com/pingcap/tidb/pkg/tablecodec"
-	"math"
 	"testing"
 	"time"
 
+	"github.com/pingcap/tidb/pkg/domain"
+	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/session"
+	"github.com/pingcap/tidb/pkg/sessiontxn"
+	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -381,9 +379,6 @@ func TestMultiSchemaReorganizePartition(t *testing.T) {
 		tkO.MustExec(`admin check table t`)
 		tkO.MustQuery(`select * from t`).Sort().Check(testkit.Rows("1 1", "10 10", "101 101", "102 102", "11 11", "12 12", "13 13", "14 14", "2 2", "5 5", "6 6", "7 7", "8 8", "9 9", "984 984", "985 985", "986 986", "987 987", "988 988", "989 989", "990 990", "991 991", "992 992", "993 993", "998 998", "999 999"))
 		// TODO: Verify that there are no KV entries for old partitions or old indexes!!!
-		gcWorker, err := gcworker.NewMockGCWorker(store)
-		require.NoError(t, err)
-		require.Nil(t, gcWorker.DeleteRanges(context.TODO(), math.MaxInt64))
 		delRange := tkO.MustQuery(`select * from mysql.gc_delete_range_done`).Rows()
 		s := ""
 		for _, row := range delRange {

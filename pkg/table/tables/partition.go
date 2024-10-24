@@ -131,20 +131,16 @@ func newPartitionedTable(tbl *TableCommon, tblInfo *model.TableInfo) (table.Part
 	DroppingDefinitionIndices := make([]*model.IndexInfo, 0, len(origIndices))
 	AddingDefinitionIndices := make([]*model.IndexInfo, 0, len(origIndices))
 	for _, idx := range origIndices {
-		// Filter out so only the old OR new indexes are used.
 		newIdx, ok := pi.DDLChangedIndex[idx.ID]
 		if !ok {
 			// Untouched index
 			DroppingDefinitionIndices = append(DroppingDefinitionIndices, idx)
-			idx = idx.Clone()
-			if pi.DDLState == model.StateDeleteOnly {
-				// New partition starting, treat also the index as DeleteOnly,
-				// This way it will also set correct assertions on the index.
-				idx.State = model.StateDeleteOnly
-			} else {
-				// OK to have partition level index state as WriteOnly,
-				// For reading, the table level index state will be used!
-				idx.State = model.StateWriteOnly
+			if pi.DDLState != model.StateDeleteReorganization {
+				// If pi.DDLState == DeleteReorg, then keep the StatePublic.
+				// Otherwise, set same state as DDLState. Like DeleteOnly is needed to
+				// set the correct assertion on the index.
+				idx = idx.Clone()
+				idx.State = pi.DDLState
 			}
 			AddingDefinitionIndices = append(AddingDefinitionIndices, idx)
 			continue
@@ -194,7 +190,7 @@ func newPartitionedTable(tbl *TableCommon, tblInfo *model.TableInfo) (table.Part
 	// In StateDeleteReorganization we are using the 'new' partition definitions
 	// and if any new change happens in AddingDefinitions, it needs to be done
 	// also in DroppingDefinitions (since session running on schema version -1)
-	// should also see the changes.
+	// should also see the changes
 	if pi.DDLState == model.StateDeleteReorganization {
 		// TODO: Explicitly explain the different DDL/New fields!
 		if pi.NewTableID != 0 {
