@@ -1804,6 +1804,11 @@ func (do *Domain) SysProcTracker() sysproctrack.Tracker {
 	return &do.sysProcesses
 }
 
+// DDLNotifier returns the DDL notifier.
+func (do *Domain) DDLNotifier() *notifier.DDLNotifier {
+	return do.ddlNotifier
+}
+
 // GetEtcdClient returns the etcd client.
 func (do *Domain) GetEtcdClient() *clientv3.Client {
 	return do.etcdClient
@@ -2288,7 +2293,17 @@ func (do *Domain) StatsHandle() *handle.Handle {
 
 // CreateStatsHandle is used only for test.
 func (do *Domain) CreateStatsHandle(ctx, initStatsCtx sessionctx.Context) error {
-	h, err := handle.NewHandle(ctx, initStatsCtx, do.statsLease, do.InfoSchema(), do.sysSessionPool, &do.sysProcesses, do.NextConnID, do.ReleaseConnID)
+	h, err := handle.NewHandle(
+		ctx,
+		initStatsCtx,
+		do.statsLease,
+		do.InfoSchema(),
+		do.sysSessionPool,
+		&do.sysProcesses,
+		do.ddlNotifier,
+		do.NextConnID,
+		do.ReleaseConnID,
+	)
 	if err != nil {
 		return err
 	}
@@ -2325,7 +2340,17 @@ func (do *Domain) LoadAndUpdateStatsLoop(ctxs []sessionctx.Context, initStatsCtx
 // It should be called only once in BootstrapSession.
 func (do *Domain) UpdateTableStatsLoop(ctx, initStatsCtx sessionctx.Context) error {
 	ctx.GetSessionVars().InRestrictedSQL = true
-	statsHandle, err := handle.NewHandle(ctx, initStatsCtx, do.statsLease, do.InfoSchema(), do.sysSessionPool, &do.sysProcesses, do.NextConnID, do.ReleaseConnID)
+	statsHandle, err := handle.NewHandle(
+		ctx,
+		initStatsCtx,
+		do.statsLease,
+		do.InfoSchema(),
+		do.sysSessionPool,
+		&do.sysProcesses,
+		do.ddlNotifier,
+		do.NextConnID,
+		do.ReleaseConnID,
+	)
 	if err != nil {
 		return err
 	}

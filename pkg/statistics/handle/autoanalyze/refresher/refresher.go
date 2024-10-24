@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/ddl/notifier"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/sysproctrack"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
@@ -57,6 +58,7 @@ type Refresher struct {
 func NewRefresher(
 	statsHandle statstypes.StatsHandle,
 	sysProcTracker sysproctrack.Tracker,
+	ddlNotifier *notifier.DDLNotifier,
 ) *Refresher {
 	maxConcurrency := int(variable.AutoAnalyzeConcurrency.Load())
 	r := &Refresher{
@@ -64,6 +66,9 @@ func NewRefresher(
 		sysProcTracker: sysProcTracker,
 		jobs:           priorityqueue.NewAnalysisPriorityQueue(statsHandle),
 		worker:         NewWorker(statsHandle, sysProcTracker, maxConcurrency),
+	}
+	if ddlNotifier != nil {
+		ddlNotifier.RegisterHandler(notifier.PriorityQueueHandlerID, r.jobs.HandleDDLEvent)
 	}
 
 	return r
