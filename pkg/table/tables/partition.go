@@ -128,11 +128,9 @@ func newPartitionedTable(tbl *TableCommon, tblInfo *model.TableInfo) (table.Part
 		return nil, errors.Trace(err)
 	}
 	origIndices := ret.meta.Indices
-	untouchedDefinitionIndices := make([]*model.IndexInfo, 0, len(origIndices))
 	DroppingDefinitionIndices := make([]*model.IndexInfo, 0, len(origIndices))
 	AddingDefinitionIndices := make([]*model.IndexInfo, 0, len(origIndices))
 	for _, idx := range origIndices {
-		untouchedDefinitionIndices = append(untouchedDefinitionIndices, idx)
 		// Filter out so only the old OR new indexes are used.
 		newIdx, ok := pi.DDLChangedIndex[idx.ID]
 		if !ok {
@@ -157,7 +155,7 @@ func newPartitionedTable(tbl *TableCommon, tblInfo *model.TableInfo) (table.Part
 			DroppingDefinitionIndices = append(DroppingDefinitionIndices, idx)
 		}
 	}
-	tblInfo.Indices = untouchedDefinitionIndices
+	tblInfo.Indices = origIndices
 	defer func() { ret.meta.Indices = origIndices }()
 	dropMap := make(map[int64]struct{})
 	for _, def := range pi.DroppingDefinitions {
@@ -175,7 +173,7 @@ func newPartitionedTable(tbl *TableCommon, tblInfo *model.TableInfo) (table.Part
 		} else if _, add := addMap[p.ID]; add {
 			tblInfo.Indices = AddingDefinitionIndices
 		} else {
-			tblInfo.Indices = untouchedDefinitionIndices
+			tblInfo.Indices = origIndices
 		}
 		err := initTableCommonWithIndices(&t.TableCommon, tblInfo, p.ID, tbl.Columns, tbl.allocs, tbl.Constraints)
 		if err != nil {
