@@ -2494,3 +2494,36 @@ func TestFKBuild(t *testing.T) {
 	tk.MustExec("delete from test.t3")
 	tk.MustQuery("select * from test.t2").Check(testkit.Rows())
 }
+
+func TestLockKeysInDML(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t1 (id int primary key);")
+	tk.MustExec("create table t2 (id int primary key, foreign key fk (id) references t1(id));")
+
+	tk.MustExec("insert into t1 values (1)")
+	tk.MustExec("BEGIN")
+	tk.MustExec("INSERT INTO t2 VALUES (1)")
+	var wg sync.WaitGroup
+	var tk2CommitTime time.Time
+	tk2StartTime := time.Now()
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		tk2 := testkit.NewTestKit(t, store)
+		tk2.MustExec("use test")
+		tk2.MustExec("BEGIN")
+		require.NotNil(t, tk2.ExecToErr("UPDATE t1 SET id = 2 WHERE id = 1"))
+		tk2.MustExec("COMMIT")
+		tk2CommitTime = time.Now()
+	}()
+	sleepDuration := 500 * time.Millisecond
+	time.Sleep(sleepDuration)
+	tk.MustExec("COMMIT")
+	wg.Wait()
+	tk.MustQuery("SELECT * FROM t2").Check(testkit.Rows("1"))
+	require.Greater(t, tk2CommitTime.Sub(tk2StartTime), sleepDuration)
+	tk.MustQuery("SELECT * FROM t1").Check(testkit.Rows("1"))
+	tk.MustQuery("SELECT * FROM t2").Check(testkit.Rows("1"))
+}
