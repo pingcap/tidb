@@ -455,10 +455,10 @@ func (p *immutable) loadSomeUsers(ctx sessionctx.Context, userList ...string) er
 	return nil
 }
 
-func dedupSorted[S ~[]E, E any](s S, cmp func(a, b E) int) S {
+func dedupSorted[S ~[]E, E any](s S, eq func(a, b E) bool) S {
 	skip := 0
 	for i := 1; i < len(s); i++ {
-		if cmp(s[i], s[i-1]) == 0 {
+		if eq(s[i], s[i-1]) {
 			skip++
 		}
 		s[i-skip] = s[i]
@@ -476,7 +476,7 @@ func (p *MySQLPrivilege) merge(diff *immutable) *MySQLPrivilege {
 
 	// sort and dedup
 	slices.SortStableFunc(ret.User, compareUserRecord)
-	ret.User = dedupSorted(ret.User, compareUserRecord)
+	ret.User = dedupSorted(ret.User, func (x, y UserRecord) bool { return x.User == y.User && x.Host == y.Host})
 	ret.buildUserMap()
 
 	ret.DB = make([]dbRecord, 0, len(p.DB)+len(diff.DB))
@@ -493,7 +493,10 @@ func (p *MySQLPrivilege) merge(diff *immutable) *MySQLPrivilege {
 	ret.ColumnsPriv = append(ret.ColumnsPriv, p.ColumnsPriv...)
 	ret.ColumnsPriv = append(ret.ColumnsPriv, diff.ColumnsPriv...)
 	slices.SortStableFunc(ret.ColumnsPriv, compareColumnsPrivRecord)
-	ret.ColumnsPriv = dedupSorted(ret.ColumnsPriv, compareColumnsPrivRecord)
+	ret.ColumnsPriv = dedupSorted(ret.ColumnsPriv, func (x, y columnsPrivRecord) bool {
+		return x.Host == y.Host && x.User == y.User &&
+		x.DB == y.DB && x.TableName == y.TableName && x.ColumnName == y.ColumnName
+	})
 
 	ret.DefaultRoles = make([]defaultRoleRecord, 0, len(p.DefaultRoles)+len(diff.DefaultRoles))
 	ret.DefaultRoles = append(ret.DefaultRoles, p.DefaultRoles...)
@@ -569,11 +572,6 @@ func compareUserRecord(x, y UserRecord) int {
 }
 
 func compareColumnsPrivRecord(x, y columnsPrivRecord) int {
-	ret := compareColumnsPrivRecordEx(x, y)
-	return ret
-}
-
-func compareColumnsPrivRecordEx(x, y columnsPrivRecord) int {
 	cmp := compareBaseRecord(&x.baseRecord, &y.baseRecord)
 	if cmp != 0 {
 		return cmp
