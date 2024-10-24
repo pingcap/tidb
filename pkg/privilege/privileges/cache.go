@@ -507,6 +507,15 @@ func (p *MySQLPrivilege) merge(diff *immutable) *MySQLPrivilege {
 	ret.DynamicPriv = append(ret.DynamicPriv, diff.DynamicPriv...)
 	ret.buildDynamicMap()
 
+	ret.GlobalPriv = make([]globalPrivRecord, 0, len(p.GlobalPriv)+len(diff.GlobalPriv))
+	ret.GlobalPriv = append(ret.GlobalPriv, p.GlobalPriv...)
+	ret.GlobalPriv = append(ret.GlobalPriv, diff.GlobalPriv...)
+	slices.SortStableFunc(ret.GlobalPriv, compareGlobalPrivRecord)
+	ret.GlobalPriv = dedupSorted(ret.GlobalPriv, func(x, y globalPrivRecord) bool {
+		return x.Host == y.Host && x.User == y.User
+	})
+	ret.buildGlobalMap()
+
 	ret.RoleGraph = diff.RoleGraph
 
 	return &ret
@@ -568,6 +577,10 @@ func compareBaseRecord(x, y *baseRecord) int {
 }
 
 func compareUserRecord(x, y UserRecord) int {
+	return compareBaseRecord(&x.baseRecord, &y.baseRecord)
+}
+
+func compareGlobalPrivRecord(x, y globalPrivRecord) int {
 	return compareBaseRecord(&x.baseRecord, &y.baseRecord)
 }
 
@@ -651,18 +664,20 @@ func (p MySQLPrivilege) SortUserTable() {
 	slices.SortFunc(p.User, compareUserRecord)
 }
 
+func (p *MySQLPrivilege) buildGlobalMap() {
+	global := make(map[string][]globalPrivRecord)
+	for _, value := range p.GlobalPriv {
+		global[value.User] = append(global[value.User], value)
+	}
+	p.Global = global
+}
+
 // LoadGlobalPrivTable loads the mysql.global_priv table from database.
 func (p *MySQLPrivilege) LoadGlobalPrivTable(ctx sessionctx.Context) error {
 	if err := p.loadTable(ctx, sqlLoadGlobalPrivTable, p.decodeGlobalPrivTableRow); err != nil {
 		return errors.Trace(err)
 	}
-
-	if p.Global == nil {
-		p.Global = make(map[string][]globalPrivRecord)
-	}
-	for _, value := range p.GlobalPriv {
-		p.Global[value.User] = append(p.Global[value.User], value)
-	}
+	p.buildGlobalMap()
 	return nil
 }
 
