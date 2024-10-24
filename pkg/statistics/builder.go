@@ -324,7 +324,7 @@ func BuildHistAndTopN(
 	allowPruning := true
 	if numTopN != 100 {
 		allowPruning = false
-	} else if ndv > 1 && ndv <= int64(numTopN) {
+	} else if numTopN > 0 && ndv > 1 && ndv <= int64(numTopN) {
 		// Don't collect all values as TopN unless there is only 1 value
 		numTopN = int(ndv) - 1
 	}
