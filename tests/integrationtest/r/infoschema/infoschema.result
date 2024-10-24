@@ -10,14 +10,14 @@ i1 comment	10	c1
 show create table information_schema.ddl_jobs;
 Table	Create Table
 DDL_JOBS	CREATE TABLE `DDL_JOBS` (
-  `JOB_ID` bigint(21) DEFAULT NULL,
+  `JOB_ID` bigint DEFAULT NULL,
   `DB_NAME` varchar(64) DEFAULT NULL,
   `TABLE_NAME` varchar(64) DEFAULT NULL,
   `JOB_TYPE` varchar(64) DEFAULT NULL,
   `SCHEMA_STATE` varchar(64) DEFAULT NULL,
-  `SCHEMA_ID` bigint(21) DEFAULT NULL,
-  `TABLE_ID` bigint(21) DEFAULT NULL,
-  `ROW_COUNT` bigint(21) DEFAULT NULL,
+  `SCHEMA_ID` bigint DEFAULT NULL,
+  `TABLE_ID` bigint DEFAULT NULL,
+  `ROW_COUNT` bigint DEFAULT NULL,
   `CREATE_TIME` datetime(6) DEFAULT NULL,
   `START_TIME` datetime(6) DEFAULT NULL,
   `END_TIME` datetime(6) DEFAULT NULL,

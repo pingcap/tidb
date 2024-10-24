@@ -13,6 +13,7 @@ go_library(
         "//pkg/timer/api",
         "//pkg/timer/metrics",
         "//pkg/util",
+        "//pkg/util/intest",
         "//pkg/util/logutil",
         "//pkg/util/timeutil",
         "@com_github_google_uuid//:uuid",

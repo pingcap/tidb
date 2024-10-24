@@ -23,7 +23,7 @@ import (
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	pmodel "github.com/pingcap/tidb/pkg/parser/model"
-	"github.com/pingcap/tidb/pkg/planner/util/coretestsdk"
+	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/external"
 	"github.com/pingcap/tidb/pkg/testkit/testdata"
@@ -55,9 +55,9 @@ func TestEnforceMPP(t *testing.T) {
 	is := dom.InfoSchema()
 	db, exists := is.SchemaByName(pmodel.NewCIStr("test"))
 	require.True(t, exists)
-	coretestsdk.SetTiFlashReplica(t, dom, db.Name.L, "t")
-	coretestsdk.SetTiFlashReplica(t, dom, db.Name.L, "s")
-	coretestsdk.SetTiFlashReplica(t, dom, db.Name.L, "t3")
+	testkit.SetTiFlashReplica(t, dom, db.Name.L, "t")
+	testkit.SetTiFlashReplica(t, dom, db.Name.L, "s")
+	testkit.SetTiFlashReplica(t, dom, db.Name.L, "t3")
 
 	var input []string
 	var output []struct {
@@ -142,7 +142,7 @@ func TestEnforceMPPWarning1(t *testing.T) {
 		if strings.HasPrefix(tt, "cmd: enable-replica") {
 			// Create virtual tiflash replica info.
 			dom := domain.GetDomain(tk.Session())
-			coretestsdk.SetTiFlashReplica(t, dom, "test", "t")
+			testkit.SetTiFlashReplica(t, dom, "test", "t")
 			continue
 		}
 		testdata.OnRecord(func() {
@@ -276,8 +276,8 @@ func TestEnforceMPPWarning4(t *testing.T) {
 
 	// Create virtual tiflash replica info.
 	dom := domain.GetDomain(tk.Session())
-	coretestsdk.SetTiFlashReplica(t, dom, "test", "t")
-	coretestsdk.SetTiFlashReplica(t, dom, "test", "s")
+	testkit.SetTiFlashReplica(t, dom, "test", "t")
+	testkit.SetTiFlashReplica(t, dom, "test", "s")
 
 	var input []string
 	var output []struct {
@@ -328,9 +328,9 @@ func TestMPP2PhaseAggPushDown(t *testing.T) {
 
 	// Create virtual tiflash replica info.
 	dom := domain.GetDomain(tk.Session())
-	coretestsdk.SetTiFlashReplica(t, dom, "test", "c")
-	coretestsdk.SetTiFlashReplica(t, dom, "test", "o")
-	coretestsdk.SetTiFlashReplica(t, dom, "test", "t")
+	testkit.SetTiFlashReplica(t, dom, "test", "c")
+	testkit.SetTiFlashReplica(t, dom, "test", "o")
+	testkit.SetTiFlashReplica(t, dom, "test", "t")
 
 	var input []string
 	var output []struct {
@@ -461,7 +461,7 @@ func TestMPPSingleDistinct3Stage(t *testing.T) {
 //
 //	since it doesn't change the schema out (index ref is still the right), so by now it's fine. SEE case: EXPLAIN select count(distinct a), count(distinct b), sum(c) from t.
 func TestMPPMultiDistinct3Stage(t *testing.T) {
-	store := testkit.CreateMockStore(t, coretestsdk.WithMockTiFlash(2))
+	store := testkit.CreateMockStore(t, mockstore.WithMockTiFlash(2))
 	tk := testkit.NewTestKit(t, store)
 
 	// test table
@@ -510,7 +510,7 @@ func TestMPPMultiDistinct3Stage(t *testing.T) {
 
 // Test null-aware semi join push down for MPP mode
 func TestMPPNullAwareSemiJoinPushDown(t *testing.T) {
-	store := testkit.CreateMockStore(t, coretestsdk.WithMockTiFlash(2))
+	store := testkit.CreateMockStore(t, mockstore.WithMockTiFlash(2))
 	tk := testkit.NewTestKit(t, store)
 
 	// test table
@@ -558,7 +558,7 @@ func TestMPPNullAwareSemiJoinPushDown(t *testing.T) {
 }
 
 func TestMPPSharedCTEScan(t *testing.T) {
-	store := testkit.CreateMockStore(t, coretestsdk.WithMockTiFlash(2))
+	store := testkit.CreateMockStore(t, mockstore.WithMockTiFlash(2))
 	tk := testkit.NewTestKit(t, store)
 
 	// test table
@@ -606,7 +606,7 @@ func TestMPPSharedCTEScan(t *testing.T) {
 }
 
 func TestRollupMPP(t *testing.T) {
-	store := testkit.CreateMockStore(t, coretestsdk.WithMockTiFlash(2))
+	store := testkit.CreateMockStore(t, mockstore.WithMockTiFlash(2))
 	tk := testkit.NewTestKit(t, store)
 
 	tk.MustExec("use test")

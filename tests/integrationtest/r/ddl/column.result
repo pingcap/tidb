@@ -43,8 +43,8 @@ CREATE TABLE t1(id INTEGER PRIMARY KEY, authorId INTEGER AUTO_INCREMENT UNIQUE);
 show create table t1;
 Table	Create Table
 t1	CREATE TABLE `t1` (
-  `id` int(11) NOT NULL,
-  `authorId` int(11) NOT NULL AUTO_INCREMENT,
+  `id` int NOT NULL,
+  `authorId` int NOT NULL AUTO_INCREMENT,
   PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */,
   UNIQUE KEY `authorId` (`authorId`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
@@ -52,8 +52,8 @@ CREATE TABLE `t2`( `id` INTEGER PRIMARY KEY, `authorId` int(11) AUTO_INCREMENT, 
 show create table t2;
 Table	Create Table
 t2	CREATE TABLE `t2` (
-  `id` int(11) NOT NULL,
-  `authorId` int(11) NOT NULL AUTO_INCREMENT,
+  `id` int NOT NULL,
+  `authorId` int NOT NULL AUTO_INCREMENT,
   PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */,
   UNIQUE KEY `authorIdx` (`authorId`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin

@@ -34,6 +34,7 @@ import (
 	ddlutil "github.com/pingcap/tidb/pkg/ddl/util"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/infoschema"
+	infoschemacontext "github.com/pingcap/tidb/pkg/infoschema/context"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/table"
@@ -451,7 +452,7 @@ func (d *ddl) refreshTiFlashTicker(ctx sessionctx.Context, pollTiFlashContext *T
 	var tableList = make([]TiFlashReplicaStatus, 0)
 
 	// Collect TiFlash Replica info, for every table.
-	ch := schema.ListTablesWithSpecialAttribute(infoschema.TiFlashAttribute)
+	ch := schema.ListTablesWithSpecialAttribute(infoschemacontext.TiFlashAttribute)
 	for _, v := range ch {
 		for _, tblInfo := range v.TableInfos {
 			LoadTiFlashReplicaInfo(tblInfo, &tableList)

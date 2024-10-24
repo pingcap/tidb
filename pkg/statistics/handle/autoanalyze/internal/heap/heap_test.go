@@ -17,13 +17,13 @@
 // 2. Test max heap instead of min heap.
 // 3. Add a test for the peak API.
 // 4. Add a test for the IsEmpty API.
+// 5. Remove concurrency and thread-safety tests.
+// 6. Add a test for the Len API.
 
 package heap
 
 import (
-	"sync"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/require"
 )
@@ -44,36 +44,6 @@ func mkHeapObj(name string, val int) testHeapObject {
 // max heap
 func compareInts(val1 testHeapObject, val2 testHeapObject) bool {
 	return val1.val > val2.val
-}
-
-func TestHeapBasic(t *testing.T) {
-	h := NewHeap(testHeapObjectKeyFunc, compareInts)
-	var wg sync.WaitGroup
-	wg.Add(2)
-	const amount = 500
-	var i, u int
-	go func() {
-		for i = 1; i <= amount; i++ {
-			h.Add(mkHeapObj(string([]rune{'a', rune(i)}), i))
-		}
-		wg.Done()
-	}()
-	go func() {
-		for u = amount; u > 0; u-- {
-			h.Add(mkHeapObj(string([]rune{'b', rune(u)}), u))
-		}
-		wg.Done()
-	}()
-	wg.Wait()
-
-	prevNum := 1000
-	for i := 0; i < amount*2; i++ {
-		obj, err := h.Pop()
-		num := obj.val
-		require.NoError(t, err)
-		require.LessOrEqual(t, num, prevNum, "Items should be in descending order")
-		prevNum = num
-	}
 }
 
 func TestHeap_Add(t *testing.T) {
@@ -107,13 +77,11 @@ func TestHeap_Add(t *testing.T) {
 func TestHeap_BulkAdd(t *testing.T) {
 	h := NewHeap(testHeapObjectKeyFunc, compareInts)
 	const amount = 500
-	go func() {
-		var l []testHeapObject
-		for i := 1; i <= amount; i++ {
-			l = append(l, mkHeapObj(string([]rune{'a', rune(i)}), i))
-		}
-		h.BulkAdd(l)
-	}()
+	var l []testHeapObject
+	for i := 1; i <= amount; i++ {
+		l = append(l, mkHeapObj(string([]rune{'a', rune(i)}), i))
+	}
+	h.BulkAdd(l)
 	prevNum := 501
 	for i := 0; i < amount; i++ {
 		obj, err := h.Pop()
@@ -126,12 +94,8 @@ func TestHeap_BulkAdd(t *testing.T) {
 
 func TestHeapEmptyPop(t *testing.T) {
 	h := NewHeap(testHeapObjectKeyFunc, compareInts)
-	go func() {
-		time.Sleep(1 * time.Second)
-		h.Close()
-	}()
 	_, err := h.Pop()
-	require.EqualError(t, err, closedMsg)
+	require.EqualError(t, err, "heap is empty")
 }
 
 func TestHeap_AddIfNotPresent(t *testing.T) {
@@ -257,16 +221,6 @@ func TestHeap_GetByKey(t *testing.T) {
 	require.False(t, exists)
 }
 
-func TestHeap_Close(t *testing.T) {
-	h := NewHeap(testHeapObjectKeyFunc, compareInts)
-	h.Add(mkHeapObj("foo", 10))
-	h.Add(mkHeapObj("bar", 1))
-
-	require.False(t, h.IsClosed())
-	h.Close()
-	require.True(t, h.IsClosed())
-}
-
 func TestHeap_List(t *testing.T) {
 	h := NewHeap(testHeapObjectKeyFunc, compareInts)
 	list := h.List()
@@ -334,19 +288,6 @@ func TestHeap_Peek(t *testing.T) {
 	require.Equal(t, 31, item.val)
 }
 
-func TestHeapAddAfterClose(t *testing.T) {
-	h := NewHeap(testHeapObjectKeyFunc, compareInts)
-	h.Close()
-	err := h.Add(mkHeapObj("test", 1))
-	require.EqualError(t, err, closedMsg)
-
-	err = h.AddIfNotPresent(mkHeapObj("test", 1))
-	require.EqualError(t, err, closedMsg)
-
-	err = h.BulkAdd([]testHeapObject{mkHeapObj("test", 1)})
-	require.EqualError(t, err, closedMsg)
-}
-
 func TestHeap_IsEmpty(t *testing.T) {
 	h := NewHeap(testHeapObjectKeyFunc, compareInts)
 	require.True(t, h.IsEmpty())
@@ -356,4 +297,15 @@ func TestHeap_IsEmpty(t *testing.T) {
 
 	h.Pop()
 	require.True(t, h.IsEmpty())
+}
+
+func TestHeap_Len(t *testing.T) {
+	h := NewHeap(testHeapObjectKeyFunc, compareInts)
+	require.Zero(t, h.Len())
+
+	h.Add(mkHeapObj("foo", 10))
+	require.Equal(t, 1, h.Len())
+
+	h.Pop()
+	require.Zero(t, h.Len())
 }

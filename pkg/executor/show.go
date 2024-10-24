@@ -1230,7 +1230,7 @@ func constructResultOfShowCreateTable(ctx sessionctx.Context, dbName *pmodel.CIS
 			cols = append(cols, colInfo)
 		}
 		if idxInfo.VectorInfo != nil {
-			funcName := model.DistanceMetricToFnName[idxInfo.VectorInfo.DistanceMetric]
+			funcName := model.IndexableDistanceMetricToFnName[idxInfo.VectorInfo.DistanceMetric]
 			fmt.Fprintf(buf, "((%s(%s)))", strings.ToUpper(funcName), strings.Join(cols, ","))
 		} else {
 			fmt.Fprintf(buf, "(%s)", strings.Join(cols, ","))
@@ -1429,7 +1429,7 @@ func constructResultOfShowCreateTable(ctx sessionctx.Context, dbName *pmodel.CIS
 			restoreCtx.WriteKeyWord("TTL_JOB_INTERVAL")
 			restoreCtx.WritePlain("=")
 			if len(tableInfo.TTLInfo.JobInterval) == 0 {
-				restoreCtx.WriteString(model.DefaultJobInterval.String())
+				restoreCtx.WriteString(model.DefaultJobIntervalStr)
 			} else {
 				restoreCtx.WriteString(tableInfo.TTLInfo.JobInterval)
 			}
@@ -1761,9 +1761,12 @@ func (e *ShowExec) fetchShowCreateUser(ctx context.Context) error {
 			fmt.Sprintf("'%s'@'%s'", e.User.Username, e.User.Hostname))
 	}
 
-	authplugin := mysql.AuthNativePassword
+	authPlugin, err := e.Ctx().GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(variable.DefaultAuthPlugin)
+	if err != nil {
+		return errors.Trace(err)
+	}
 	if len(rows) == 1 && rows[0].GetString(0) != "" {
-		authplugin = rows[0].GetString(0)
+		authPlugin = rows[0].GetString(0)
 	}
 
 	accountLockedRaw := rows[0].GetString(1)
@@ -1841,13 +1844,13 @@ func (e *ShowExec) fetchShowCreateUser(ctx context.Context) error {
 
 	authData := checker.GetEncodedPassword(e.User.Username, e.User.Hostname)
 	authStr := ""
-	if !(authplugin == mysql.AuthSocket && authData == "") {
+	if !(authPlugin == mysql.AuthSocket && authData == "") {
 		authStr = fmt.Sprintf(" AS '%s'", authData)
 	}
 
 	// FIXME: the returned string is not escaped safely
 	showStr := fmt.Sprintf("CREATE USER '%s'@'%s' IDENTIFIED WITH '%s'%s REQUIRE %s%s %s ACCOUNT %s PASSWORD HISTORY %s PASSWORD REUSE INTERVAL %s%s%s%s",
-		e.User.Username, e.User.Hostname, authplugin, authStr, require, tokenIssuer, passwordExpiredStr, accountLocked, passwordHistory, passwordReuseInterval, failedLoginAttempts, passwordLockTimeDays, userAttributes)
+		e.User.Username, e.User.Hostname, authPlugin, authStr, require, tokenIssuer, passwordExpiredStr, accountLocked, passwordHistory, passwordReuseInterval, failedLoginAttempts, passwordLockTimeDays, userAttributes)
 	e.appendRow([]any{showStr})
 	return nil
 }

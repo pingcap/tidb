@@ -236,6 +236,10 @@ func (*AnalysisJobFactory) CheckIndexesNeedAnalyze(tblInfo *model.TableInfo, tbl
 	// Check if missing index stats.
 	for _, idx := range tblInfo.Indices {
 		if idxStats := tblStats.GetIdx(idx.ID); idxStats == nil && !tblStats.ColAndIdxExistenceMap.HasAnalyzed(idx.ID, true) && idx.State == model.StatePublic {
+			// Vector index doesn't have stats currently.
+			if idx.VectorInfo != nil {
+				continue
+			}
 			indexes = append(indexes, idx.Name.O)
 		}
 	}
@@ -305,6 +309,10 @@ func (*AnalysisJobFactory) CheckNewlyAddedIndexesNeedAnalyzeForPartitionedTable(
 		// No need to analyze the index if it's not public.
 		// Special global index also no need to trigger by auto analyze.
 		if idx.State != model.StatePublic || util.IsSpecialGlobalIndex(idx, tblInfo) {
+			continue
+		}
+		// Index on vector type doesn't have stats currently.
+		if idx.VectorInfo != nil {
 			continue
 		}
 

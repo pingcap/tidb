@@ -1246,6 +1246,11 @@ func (er *expressionRewriter) handleInSubquery(ctx context.Context, planCtx *exp
 		copy(join.OutputNames(), planCtx.plan.OutputNames())
 		copy(join.OutputNames()[planCtx.plan.Schema().Len():], agg.OutputNames())
 		join.AttachOnConds(expression.SplitCNFItems(checkCondition))
+		// set FullSchema and FullNames for this join
+		if left, ok := planCtx.plan.(*logicalop.LogicalJoin); ok && left.FullSchema != nil {
+			join.FullSchema = left.FullSchema
+			join.FullNames = left.FullNames
+		}
 		// Set join hint for this join.
 		if planCtx.builder.TableHints() != nil {
 			join.SetPreferredJoinTypeAndOrder(planCtx.builder.TableHints())

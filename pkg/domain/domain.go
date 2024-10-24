@@ -37,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/pkg/bindinfo"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/ddl"
+	"github.com/pingcap/tidb/pkg/ddl/notifier"
 	"github.com/pingcap/tidb/pkg/ddl/placement"
 	"github.com/pingcap/tidb/pkg/ddl/schematracker"
 	"github.com/pingcap/tidb/pkg/ddl/systable"
@@ -64,6 +65,7 @@ import (
 	metrics2 "github.com/pingcap/tidb/pkg/planner/core/metrics"
 	"github.com/pingcap/tidb/pkg/privilege/privileges"
 	"github.com/pingcap/tidb/pkg/resourcegroup/runaway"
+	sessiontypes "github.com/pingcap/tidb/pkg/session/types"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/sessionstates"
 	"github.com/pingcap/tidb/pkg/sessionctx/sysproctrack"
@@ -148,6 +150,7 @@ type Domain struct {
 	statsLease      time.Duration
 	ddl             ddl.DDL
 	ddlExecutor     ddl.Executor
+	ddlNotifier     *notifier.DDLNotifier
 	info            *infosync.InfoSyncer
 	globalCfgSyncer *globalconfigsync.GlobalConfigSyncer
 	m               syncutil.Mutex
@@ -300,15 +303,13 @@ func (do *Domain) loadInfoSchema(startTS uint64, isSnapshot bool) (infoschema.In
 		schemaTs = 0
 	}
 
-	var oldIsV2 bool
 	enableV2 := variable.SchemaCacheSize.Load() > 0
 	currentSchemaVersion := int64(0)
-	if oldInfoSchema := do.infoCache.GetLatest(); oldInfoSchema != nil {
+	oldInfoSchema := do.infoCache.GetLatest()
+	if oldInfoSchema != nil {
 		currentSchemaVersion = oldInfoSchema.SchemaMetaVersion()
-		oldIsV2, _ = infoschema.IsV2(oldInfoSchema)
 	}
-	useV2, isV1V2Switch := shouldUseV2(enableV2, oldIsV2, isSnapshot)
-
+	useV2, isV1V2Switch := shouldUseV2(enableV2, oldInfoSchema, isSnapshot)
 	if is := do.infoCache.GetByVersion(neededSchemaVersion); is != nil {
 		isV2, raw := infoschema.IsV2(is)
 		if isV2 {
@@ -557,11 +558,18 @@ func (*Domain) fetchSchemasWithTables(ctx context.Context, schemas []*model.DBIn
 // shouldUseV2 decides whether to use infoschema v2.
 // When loading snapshot, infoschema should keep the same as before to avoid v1/v2 switch.
 // Otherwise, it is decided by enabledV2.
-func shouldUseV2(enableV2 bool, oldIsV2 bool, isSnapshot bool) (useV2 bool, isV1V2Switch bool) {
+func shouldUseV2(enableV2 bool, old infoschema.InfoSchema, isSnapshot bool) (useV2 bool, isV1V2Switch bool) {
+	// case 1: no information about old
+	if old == nil {
+		return enableV2, false
+	}
+	// case 2: snapshot load should keep the same as old
+	oldIsV2, _ := infoschema.IsV2(old)
 	if isSnapshot {
 		return oldIsV2, false
 	}
-	return enableV2, enableV2 != oldIsV2
+	// case 3: the most general case
+	return enableV2, oldIsV2 != enableV2
 }
 
 // tryLoadSchemaDiffs tries to only load latest schema changes.
@@ -1368,6 +1376,24 @@ func (do *Domain) Init(
 	do.cancelFns.mu.Lock()
 	do.cancelFns.fns = append(do.cancelFns.fns, cancelFunc)
 	do.cancelFns.mu.Unlock()
+
+	var ddlNotifierStore notifier.Store
+	if intest.InTest {
+		ddlNotifierStore = notifier.OpenTableStore("mysql", ddl.NotifierTableName)
+		se, err := do.sysExecutorFactory(do)
+		if err != nil {
+			return err
+		}
+		do.ddlNotifier = notifier.NewDDLNotifier(
+			se.(sessiontypes.Session),
+			ddlNotifierStore,
+			time.Second,
+		)
+
+		// TODO(lance6716): find a more representative place for subscriber
+		failpoint.InjectCall("afterDDLNotifierCreated", do.ddlNotifier)
+	}
+
 	d := do.ddl
 	eBak := do.ddlExecutor
 	do.ddl, do.ddlExecutor = ddl.NewDDL(
@@ -1378,6 +1404,7 @@ func (do *Domain) Init(
 		ddl.WithInfoCache(do.infoCache),
 		ddl.WithLease(do.schemaLease),
 		ddl.WithSchemaLoader(do),
+		ddl.WithEventPublishStore(ddlNotifierStore),
 	)
 
 	failpoint.Inject("MockReplaceDDL", func(val failpoint.Value) {
@@ -1484,6 +1511,12 @@ func (do *Domain) Start() error {
 		return err
 	}
 	do.minJobIDRefresher = do.ddl.GetMinJobIDRefresher()
+	if intest.InTest {
+		do.wg.Run(func() {
+			do.ddlNotifier.Start(do.ctx)
+			do.ddlNotifier.Close()
+		}, "ddlNotifier")
+	}
 
 	// Local store needs to get the change information for every DDL state in each session.
 	do.wg.Run(func() {

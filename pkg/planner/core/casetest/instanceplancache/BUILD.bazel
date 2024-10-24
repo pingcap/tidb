@@ -4,12 +4,13 @@ go_test(
     name = "instanceplancache_test",
     timeout = "short",
     srcs = [
+        "concurrency_test.go",
         "dml_test.go",
         "main_test.go",
         "others_test.go",
     ],
     flaky = True,
-    shard_count = 13,
+    shard_count = 16,
     deps = [
         "//pkg/parser/auth",
         "//pkg/testkit",

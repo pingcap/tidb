@@ -15,8 +15,11 @@
 package ddl
 
 import (
+	"context"
+
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/ddl/notifier"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/statistics/handle/lockstats"
@@ -28,43 +31,7 @@ func (h *ddlHandlerImpl) onDropPartitions(t *notifier.SchemaChangeEvent) error {
 	globalTableInfo, droppedPartitionInfo := t.GetDropPartitionInfo()
 	// Note: Put all the operations in a transaction.
 	if err := util.CallWithSCtx(h.statsHandler.SPool(), func(sctx sessionctx.Context) error {
-		count := int64(0)
-		for _, def := range droppedPartitionInfo.Definitions {
-			// Get the count and modify count of the partition.
-			tableCount, _, _, err := storage.StatsMetaCountAndModifyCount(util.StatsCtx, sctx, def.ID)
-			if err != nil {
-				return err
-			}
-			count += tableCount
-		}
-		if count != 0 {
-			lockedTables, err := lockstats.QueryLockedTables(sctx)
-			if err != nil {
-				return errors.Trace(err)
-			}
-			isLocked := false
-			if _, ok := lockedTables[globalTableInfo.ID]; ok {
-				isLocked = true
-			}
-			startTS, err := util.GetStartTS(sctx)
-			if err != nil {
-				return errors.Trace(err)
-			}
-
-			// Because we drop the partition, we should subtract the count from the global stats.
-			delta := -count
-			err = storage.UpdateStatsMeta(
-				util.StatsCtx,
-				sctx,
-				startTS,
-				variable.TableDelta{Count: count, Delta: delta},
-				globalTableInfo.ID,
-				isLocked,
-			)
-			return err
-		}
-
-		return nil
+		return updateGlobalTableStats4DropPartition(util.StatsCtx, sctx, globalTableInfo, droppedPartitionInfo)
 	}, util.FlagWrapTxn); err != nil {
 		return err
 	}
@@ -78,4 +45,48 @@ func (h *ddlHandlerImpl) onDropPartitions(t *notifier.SchemaChangeEvent) error {
 	}
 
 	return nil
+}
+
+func updateGlobalTableStats4DropPartition(
+	ctx context.Context,
+	sctx sessionctx.Context,
+	globalTableInfo *model.TableInfo,
+	droppedPartitionInfo *model.PartitionInfo,
+) error {
+	count := int64(0)
+	for _, def := range droppedPartitionInfo.Definitions {
+		// Get the count and modify count of the partition.
+		tableCount, _, _, err := storage.StatsMetaCountAndModifyCount(ctx, sctx, def.ID)
+		if err != nil {
+			return err
+		}
+		count += tableCount
+	}
+	if count == 0 {
+		return nil
+	}
+
+	lockedTables, err := lockstats.QueryLockedTables(ctx, sctx)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	isLocked := false
+	if _, ok := lockedTables[globalTableInfo.ID]; ok {
+		isLocked = true
+	}
+	startTS, err := util.GetStartTS(sctx)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	// Because we drop the partition, we should subtract the count from the global stats.
+	delta := -count
+	return errors.Trace(storage.UpdateStatsMeta(
+		ctx,
+		sctx,
+		startTS,
+		variable.TableDelta{Count: count, Delta: delta},
+		globalTableInfo.ID,
+		isLocked,
+	))
 }

@@ -72,7 +72,7 @@ echo "incremental_delete_range_count: $incremental_delete_range_count"
 # wait checkpoint advance
 echo "wait checkpoint advance"
 sleep 10
-current_ts=$(echo $(($(date +%s%3N) << 18)))
+current_ts=$(python3 -c "import time; print(int(time.time() * 1000) << 18)")
 echo "current ts: $current_ts"
 i=0
 while true; do
@@ -122,7 +122,7 @@ check_result() {
 }
 
 # start a new cluster
-echo "restart a services"
+echo "restart services"
 restart_services
 
 # non-compliant operation
@@ -130,7 +130,7 @@ echo "non compliant operation"
 restore_fail=0
 run_br --pd $PD_ADDR restore point -s "local://$TEST_DIR/$PREFIX/log" --start-ts $current_ts || restore_fail=1
 if [ $restore_fail -ne 1 ]; then
-    echo 'pitr success' 
+    echo 'pitr success on non compliant operation'
     exit 1
 fi
 
@@ -142,7 +142,7 @@ run_br --pd $PD_ADDR restore point -s "local://$TEST_DIR/$PREFIX/log" --full-bac
 check_result
 
 # start a new cluster for incremental + log
-echo "restart a services"
+echo "restart services"
 restart_services
 
 echo "run snapshot restore#2"
@@ -154,7 +154,7 @@ run_br --pd $PD_ADDR restore point -s "local://$TEST_DIR/$PREFIX/log" --full-bac
 check_result
 
 # start a new cluster for incremental + log
-echo "restart a services"
+echo "restart services"
 restart_services
 
 echo "run snapshot restore#3"
@@ -164,7 +164,7 @@ echo "run incremental restore but failed"
 restore_fail=0
 run_br --pd $PD_ADDR restore full -s "local://$TEST_DIR/$PREFIX/inc_fail" || restore_fail=1
 if [ $restore_fail -ne 1 ]; then
-    echo 'pitr success' 
+    echo 'pitr success on incremental restore'
     exit 1
 fi
 
@@ -186,7 +186,7 @@ restore_fail=0
 run_br --pd $PD_ADDR restore point -s "local://$TEST_DIR/$PREFIX/log" --full-backup-storage "local://$TEST_DIR/$PREFIX/full" || restore_fail=1
 export GO_FAILPOINTS=""
 if [ $restore_fail -ne 1 ]; then
-    echo 'pitr success' 
+    echo 'pitr success on file lost'
     exit 1
 fi
 
@@ -198,6 +198,6 @@ restore_fail=0
 run_br --pd $PD_ADDR restore point -s "local://$TEST_DIR/$PREFIX/log" --full-backup-storage "local://$TEST_DIR/$PREFIX/full" || restore_fail=1
 export GO_FAILPOINTS=""
 if [ $restore_fail -ne 1 ]; then
-    echo 'pitr success' 
+    echo 'pitr success on file corruption'
     exit 1
 fi
