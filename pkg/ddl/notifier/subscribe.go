@@ -105,8 +105,7 @@ type DDLNotifier struct {
 	handlersBitMap uint64
 }
 
-// NewDDLNotifier initializes the global DDLNotifier. It should be called only
-// once and before any RegisterHandler call.
+// NewDDLNotifier initializes the global DDLNotifier.
 func NewDDLNotifier(
 	sysSessionPool util.SessionPool,
 	store Store,
@@ -283,16 +282,21 @@ func (n *DDLNotifier) processEventForHandler(
 // Do not call this function directly. Use owner.Listener interface instead.
 func (n *DDLNotifier) Stop() {
 	// If the notifier is not started, the cancel function is nil.
-	if n.cancel != nil {
-		n.cancel()
-		n.wg.Wait()
+	if n.cancel == nil {
+		return
 	}
+	n.cancel()
+	n.wg.Wait()
 }
 
 // OnBecomeOwner implements the owner.Listener interface.
 // We need to make sure only one DDLNotifier is running at any time.
 func (n *DDLNotifier) OnBecomeOwner() {
 	n.wg.RunWithRecover(n.Start, func(r any) {
+		// In unit tests, we want to panic directly to find the root cause.
+		if intest.InTest {
+			panic(r)
+		}
 		logutil.BgLogger().Error("panic in ddl notifier", zap.Any("recover", r), zap.Stack("stack"))
 	})
 }
