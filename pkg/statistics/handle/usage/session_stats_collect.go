@@ -312,13 +312,7 @@ func (s *SessionStatsItem) ClearForTest() {
 }
 
 // UpdateColStatsUsage updates the last time when the column stats are used(needed).
-func (s *SessionStatsItem) UpdateColStatsUsage(colMap map[model.TableItemID]time.Time) {
-	s.Lock()
-	defer s.Unlock()
-	s.statsUsage.Merge(colMap)
-}
-
-func (s *SessionStatsItem) UpdateColStatsUsagev2(colItems iter.Seq[model.TableItemID], updateTime time.Time) {
+func (s *SessionStatsItem) UpdateColStatsUsage(colItems iter.Seq[model.TableItemID], updateTime time.Time) {
 	s.Lock()
 	defer s.Unlock()
 	s.statsUsage.MergeRawData(colItems, updateTime)
@@ -529,6 +523,7 @@ func (m *StatsUsage) Merge(other map[model.TableItemID]time.Time) {
 	}
 }
 
+// MergeRawData merges the new data passed by iterator.
 func (m *StatsUsage) MergeRawData(raw iter.Seq[model.TableItemID], updateTime time.Time) {
 	m.lock.Lock()
 	defer m.lock.Unlock()

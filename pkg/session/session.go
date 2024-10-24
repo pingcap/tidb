@@ -420,7 +420,7 @@ func (s *session) UpdateColStatsUsage(colStatsUsage iter.Seq[model.TableItemID])
 		return
 	}
 	t := time.Now()
-	s.statsCollector.UpdateColStatsUsagev2(colStatsUsage, t)
+	s.statsCollector.UpdateColStatsUsage(colStatsUsage, t)
 }
 
 // FieldList returns fields list of a table.
