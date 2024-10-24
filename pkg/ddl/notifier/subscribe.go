@@ -293,6 +293,9 @@ func (n *DDLNotifier) Stop() {
 // We need to make sure only one DDLNotifier is running at any time.
 func (n *DDLNotifier) OnBecomeOwner() {
 	n.wg.RunWithRecover(n.Start, func(r any) {
+		if r == nil {
+			return
+		}
 		// In unit tests, we want to panic directly to find the root cause.
 		if intest.InTest {
 			panic(r)
