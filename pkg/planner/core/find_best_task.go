@@ -2283,11 +2283,27 @@ func (is *PhysicalIndexScan) addSelectionConditionForGlobalIndex(p *logicalop.Da
 			return conditions, nil
 		}
 		needNot = true
-		for _, p := range pInfo.AddingDefinitions {
-			args = append(args, expression.NewInt64Const(p.ID))
+		// TODO: Still waiting for https://github.com/pingcap/tidb/pull/56382
+		removeAddingDefs := true
+		removeDroppingDefs := true
+		switch pInfo.DDLAction {
+		case model.ActionAlterTablePartitioning,
+			model.ActionReorganizePartition, model.ActionRemovePartitioning:
+			if pInfo.DDLState == model.StateDeleteReorganization {
+				removeAddingDefs = false
+			} else {
+				removeDroppingDefs = false
+			}
 		}
-		for _, p := range pInfo.DroppingDefinitions {
-			args = append(args, expression.NewInt64Const(p.ID))
+		if removeAddingDefs {
+			for _, p := range pInfo.AddingDefinitions {
+				args = append(args, expression.NewInt64Const(p.ID))
+			}
+		}
+		if removeDroppingDefs {
+			for _, p := range pInfo.DroppingDefinitions {
+				args = append(args, expression.NewInt64Const(p.ID))
+			}
 		}
 	} else if len(idxArr) == 0 {
 		// add an invalid pid as param for `IN` function
