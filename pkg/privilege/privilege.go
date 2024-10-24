@@ -88,7 +88,7 @@ type Manager interface {
 	GetAuthWithoutVerification(user, host string) bool
 
 	// MatchIdentity matches an identity
-	MatchIdentity(user, host string, skipNameResolve bool) (string, string, bool)
+	MatchIdentity(sctx sessionctx.Context, user, host string, skipNameResolve bool) (string, string, bool)
 
 	// MatchUserResourceGroupName matches a user with specified resource group name
 	MatchUserResourceGroupName(resourceGroupName string) (string, bool)

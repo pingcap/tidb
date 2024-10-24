@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/privilege"
 	"github.com/pingcap/tidb/pkg/privilege/conn"
 	"github.com/pingcap/tidb/pkg/privilege/privileges/ldap"
@@ -219,6 +220,7 @@ func (p *UserPrivileges) RequestVerificationWithUser(db, table, column string, p
 		return true
 	}
 
+	terror.Log(p.Handle.ensureActiveUser(user.Username))
 	mysqlPriv := p.Handle.Get()
 	roles := mysqlPriv.getDefaultRoles(user.Username, user.Hostname)
 	return mysqlPriv.RequestVerification(roles, user.Username, user.Hostname, db, table, column, priv)
@@ -375,12 +377,16 @@ func (p *UserPrivileges) GetAuthPlugin(user, host string) (string, error) {
 }
 
 // MatchIdentity implements the Manager interface.
-func (p *UserPrivileges) MatchIdentity(user, host string, skipNameResolve bool) (u string, h string, success bool) {
+func (p *UserPrivileges) MatchIdentity(sctx sessionctx.Context, user, host string, skipNameResolve bool) (u string, h string, success bool) {
 	if SkipWithGrant {
 		return user, host, true
 	}
+	if err := p.Handle.ensureActiveUser(user); err != nil {
+		logutil.BgLogger().Error("ensure user data fail",
+			zap.String("user", user))
+	}
 	mysqlPriv := p.Handle.Get()
-	record := mysqlPriv.matchIdentity(user, host, skipNameResolve)
+	record := mysqlPriv.matchIdentity(sctx, user, host, skipNameResolve)
 	if record != nil {
 		return record.User, record.Host, true
 	}
@@ -906,13 +912,17 @@ func (p *UserPrivileges) ShowGrants(ctx sessionctx.Context, user *auth.UserIdent
 	if SkipWithGrant {
 		return nil, ErrNonexistingGrant.GenWithStackByArgs("root", "%")
 	}
-	mysqlPrivilege := p.Handle.Get()
 	u := user.Username
 	h := user.Hostname
 	if len(user.AuthUsername) > 0 && len(user.AuthHostname) > 0 {
 		u = user.AuthUsername
 		h = user.AuthHostname
 	}
+	if err := p.Handle.ensureActiveUser(u); err != nil {
+		return nil, err
+	}
+	mysqlPrivilege := p.Handle.Get()
+
 	grants = mysqlPrivilege.showGrants(ctx, u, h, roles)
 	if len(grants) == 0 {
 		err = ErrNonexistingGrant.GenWithStackByArgs(u, h)

@@ -1850,11 +1850,7 @@ func (do *Domain) LoadPrivilegeLoop(sctx sessionctx.Context) error {
 	if err != nil {
 		return err
 	}
-	do.privHandle = privileges.NewHandle()
-	err = do.privHandle.Update(sctx)
-	if err != nil {
-		return err
-	}
+	do.privHandle = privileges.NewHandle(sctx)
 
 	var watchCh clientv3.WatchChan
 	duration := 5 * time.Minute
@@ -1889,7 +1885,7 @@ func (do *Domain) LoadPrivilegeLoop(sctx sessionctx.Context) error {
 			}
 
 			count = 0
-			err := do.privHandle.Update(sctx)
+			err := do.privHandle.Update()
 			metrics.LoadPrivilegeCounter.WithLabelValues(metrics.RetLabel(err)).Inc()
 			if err != nil {
 				logutil.BgLogger().Error("load privilege failed", zap.Error(err))
@@ -2783,13 +2779,7 @@ func (do *Domain) NotifyUpdatePrivilege() error {
 		return nil
 	}
 
-	// update locally
-	ctx, err := do.sysSessionPool.Get()
-	if err != nil {
-		return err
-	}
-	defer do.sysSessionPool.Put(ctx)
-	return do.PrivilegeHandle().Update(ctx.(sessionctx.Context))
+	return do.PrivilegeHandle().Update()
 }
 
 // NotifyUpdateSysVarCache updates the sysvar cache key in etcd, which other TiDB
