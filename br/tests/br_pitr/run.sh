@@ -180,7 +180,7 @@ file_corruption() {
         echo "corruption" > $filename_temp
         cat $filename >> $filename_temp
         mv $filename_temp $filename
-        truncate --size=-11 $filename
+        truncate -s -11 $filename
     done
 }
 
@@ -194,6 +194,10 @@ if [ $restore_fail -ne 1 ]; then
     echo 'pitr success on file corruption'
     exit 1
 fi
+
+# start a new cluster for corruption
+echo "restart a services"
+restart_services
 
 file_lost() {
     echo "lost the whole log files"
