@@ -25,6 +25,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/ddl/notifier"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/meta/model"
@@ -64,10 +65,11 @@ type statsAnalyze struct {
 func NewStatsAnalyze(
 	statsHandle statstypes.StatsHandle,
 	sysProcTracker sysproctrack.Tracker,
+	ddlNotifier *notifier.DDLNotifier,
 ) statstypes.StatsAnalyze {
 	// Usually, we should only create the refresher when auto-analyze priority queue is enabled.
 	// But to allow users to enable auto-analyze priority queue on the fly, we need to create the refresher here.
-	r := refresher.NewRefresher(statsHandle, sysProcTracker)
+	r := refresher.NewRefresher(statsHandle, sysProcTracker, ddlNotifier)
 	return &statsAnalyze{
 		statsHandle:    statsHandle,
 		sysProcTracker: sysProcTracker,

@@ -17,6 +17,7 @@ package handle
 import (
 	"time"
 
+	"github.com/pingcap/tidb/pkg/ddl/notifier"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -115,6 +116,7 @@ func NewHandle(
 	is infoschema.InfoSchema,
 	pool pkgutil.SessionPool,
 	tracker sysproctrack.Tracker,
+	ddlNotifier *notifier.DDLNotifier,
 	autoAnalyzeProcIDGetter func() uint64,
 	releaseAutoAnalyzeProcID func(uint64),
 ) (*Handle, error) {
@@ -137,7 +139,7 @@ func NewHandle(
 	handle.StatsCache = statsCache
 	handle.StatsHistory = history.NewStatsHistory(handle)
 	handle.StatsUsage = usage.NewStatsUsageImpl(handle)
-	handle.StatsAnalyze = autoanalyze.NewStatsAnalyze(handle, tracker)
+	handle.StatsAnalyze = autoanalyze.NewStatsAnalyze(handle, tracker, ddlNotifier)
 	handle.StatsSyncLoad = syncload.NewStatsSyncLoad(is, handle)
 	handle.StatsGlobal = globalstats.NewStatsGlobal(handle)
 	handle.DDL = ddl.NewDDLHandler(

@@ -65,7 +65,6 @@ import (
 	metrics2 "github.com/pingcap/tidb/pkg/planner/core/metrics"
 	"github.com/pingcap/tidb/pkg/privilege/privileges"
 	"github.com/pingcap/tidb/pkg/resourcegroup/runaway"
-	sessiontypes "github.com/pingcap/tidb/pkg/session/types"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/sessionstates"
 	"github.com/pingcap/tidb/pkg/sessionctx/sysproctrack"
@@ -1380,12 +1379,8 @@ func (do *Domain) Init(
 	var ddlNotifierStore notifier.Store
 	if intest.InTest {
 		ddlNotifierStore = notifier.OpenTableStore("mysql", ddl.NotifierTableName)
-		se, err := do.sysExecutorFactory(do)
-		if err != nil {
-			return err
-		}
 		do.ddlNotifier = notifier.NewDDLNotifier(
-			se.(sessiontypes.Session),
+			do.sysSessionPool,
 			ddlNotifierStore,
 			time.Second,
 		)
@@ -1511,12 +1506,6 @@ func (do *Domain) Start() error {
 		return err
 	}
 	do.minJobIDRefresher = do.ddl.GetMinJobIDRefresher()
-	if intest.InTest {
-		do.wg.Run(func() {
-			do.ddlNotifier.Start(do.ctx)
-			do.ddlNotifier.Close()
-		}, "ddlNotifier")
-	}
 
 	// Local store needs to get the change information for every DDL state in each session.
 	do.wg.Run(func() {
@@ -1813,6 +1802,11 @@ func (do *Domain) SysSessionPool() util.SessionPool {
 // SysProcTracker returns the system processes tracker.
 func (do *Domain) SysProcTracker() sysproctrack.Tracker {
 	return &do.sysProcesses
+}
+
+// DDLNotifier returns the DDL notifier.
+func (do *Domain) DDLNotifier() *notifier.DDLNotifier {
+	return do.ddlNotifier
 }
 
 // GetEtcdClient returns the etcd client.
@@ -2299,7 +2293,17 @@ func (do *Domain) StatsHandle() *handle.Handle {
 
 // CreateStatsHandle is used only for test.
 func (do *Domain) CreateStatsHandle(ctx, initStatsCtx sessionctx.Context) error {
-	h, err := handle.NewHandle(ctx, initStatsCtx, do.statsLease, do.InfoSchema(), do.sysSessionPool, &do.sysProcesses, do.NextConnID, do.ReleaseConnID)
+	h, err := handle.NewHandle(
+		ctx,
+		initStatsCtx,
+		do.statsLease,
+		do.InfoSchema(),
+		do.sysSessionPool,
+		&do.sysProcesses,
+		do.ddlNotifier,
+		do.NextConnID,
+		do.ReleaseConnID,
+	)
 	if err != nil {
 		return err
 	}
@@ -2336,7 +2340,17 @@ func (do *Domain) LoadAndUpdateStatsLoop(ctxs []sessionctx.Context, initStatsCtx
 // It should be called only once in BootstrapSession.
 func (do *Domain) UpdateTableStatsLoop(ctx, initStatsCtx sessionctx.Context) error {
 	ctx.GetSessionVars().InRestrictedSQL = true
-	statsHandle, err := handle.NewHandle(ctx, initStatsCtx, do.statsLease, do.InfoSchema(), do.sysSessionPool, &do.sysProcesses, do.NextConnID, do.ReleaseConnID)
+	statsHandle, err := handle.NewHandle(
+		ctx,
+		initStatsCtx,
+		do.statsLease,
+		do.InfoSchema(),
+		do.sysSessionPool,
+		&do.sysProcesses,
+		do.ddlNotifier,
+		do.NextConnID,
+		do.ReleaseConnID,
+	)
 	if err != nil {
 		return err
 	}
@@ -2350,6 +2364,9 @@ func (do *Domain) UpdateTableStatsLoop(ctx, initStatsCtx sessionctx.Context) err
 	variable.EnableStatsOwner = do.enableStatsOwner
 	variable.DisableStatsOwner = do.disableStatsOwner
 	do.statsOwner = do.newOwnerManager(handle.StatsPrompt, handle.StatsOwnerKey)
+	if intest.InTest {
+		do.statsOwner.SetListener(do.ddlNotifier)
+	}
 	do.wg.Run(func() {
 		do.indexUsageWorker()
 	}, "indexUsageWorker")
