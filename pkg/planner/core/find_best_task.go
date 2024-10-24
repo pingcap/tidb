@@ -2284,11 +2284,23 @@ func (is *PhysicalIndexScan) addSelectionConditionForGlobalIndex(p *logicalop.Da
 		}
 		needNot = true
 		// TODO: Still waiting for https://github.com/pingcap/tidb/pull/56382
-		if pInfo.DDLState != model.StateDeleteReorganization {
+		removeAddingDefs := true
+		removeDroppingDefs := true
+		switch pInfo.DDLAction {
+		case model.ActionAlterTablePartitioning,
+			model.ActionReorganizePartition, model.ActionRemovePartitioning:
+			if pInfo.DDLState == model.StateDeleteReorganization {
+				removeAddingDefs = false
+			} else {
+				removeDroppingDefs = false
+			}
+		}
+		if removeAddingDefs {
 			for _, p := range pInfo.AddingDefinitions {
 				args = append(args, expression.NewInt64Const(p.ID))
 			}
-		} else {
+		}
+		if removeDroppingDefs {
 			for _, p := range pInfo.DroppingDefinitions {
 				args = append(args, expression.NewInt64Const(p.ID))
 			}
