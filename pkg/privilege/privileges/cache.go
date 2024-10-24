@@ -476,7 +476,7 @@ func (p *MySQLPrivilege) merge(diff *immutable) *MySQLPrivilege {
 
 	// sort and dedup
 	slices.SortStableFunc(ret.User, compareUserRecord)
-	ret.User = dedupSorted(ret.User, func (x, y UserRecord) bool { return x.User == y.User && x.Host == y.Host})
+	ret.User = dedupSorted(ret.User, func(x, y UserRecord) bool { return x.User == y.User && x.Host == y.Host })
 	ret.buildUserMap()
 
 	ret.DB = make([]dbRecord, 0, len(p.DB)+len(diff.DB))
@@ -493,9 +493,9 @@ func (p *MySQLPrivilege) merge(diff *immutable) *MySQLPrivilege {
 	ret.ColumnsPriv = append(ret.ColumnsPriv, p.ColumnsPriv...)
 	ret.ColumnsPriv = append(ret.ColumnsPriv, diff.ColumnsPriv...)
 	slices.SortStableFunc(ret.ColumnsPriv, compareColumnsPrivRecord)
-	ret.ColumnsPriv = dedupSorted(ret.ColumnsPriv, func (x, y columnsPrivRecord) bool {
+	ret.ColumnsPriv = dedupSorted(ret.ColumnsPriv, func(x, y columnsPrivRecord) bool {
 		return x.Host == y.Host && x.User == y.User &&
-		x.DB == y.DB && x.TableName == y.TableName && x.ColumnName == y.ColumnName
+			x.DB == y.DB && x.TableName == y.TableName && x.ColumnName == y.ColumnName
 	})
 
 	ret.DefaultRoles = make([]defaultRoleRecord, 0, len(p.DefaultRoles)+len(diff.DefaultRoles))
