@@ -66,7 +66,7 @@ const (
 	TestHandlerID HandlerID = 0
 	// StatsMetaHandlerID is used to update statistics system table.
 	StatsMetaHandlerID HandlerID = 1
-	// PriorityQueueHandlerID is used to update priority queue system table.
+	// PriorityQueueHandlerID is used to update the priority queue.
 	PriorityQueueHandlerID HandlerID = 2
 )
 
