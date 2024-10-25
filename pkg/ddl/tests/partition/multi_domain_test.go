@@ -28,7 +28,6 @@ import (
 	"go.uber.org/zap"
 )
 
-
 func TestMultiSchemaDropRangePartition(t *testing.T) {
 	createSQL := `create table t (a int primary key, b varchar(255)) partition by range (a) (partition p0 values less than (100), partition p1 values less than (200))`
 	initFn := func(tkO *testkit.TestKit) {
@@ -250,8 +249,6 @@ func TestMultiSchemaDropListColumnsDefaultPartition(t *testing.T) {
 	}
 	runMultiSchemaTest(t, createSQL, alterSQL, initFn, func(kit *testkit.TestKit) {}, loopFn)
 }
-
-
 
 // TestMultiSchemaDropUniqueIndex to show behavior when
 // dropping a unique index
