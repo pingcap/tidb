@@ -1128,6 +1128,7 @@ func checkIfTableReorgWorkCanSkip(
 	}
 	ctx := NewReorgContext()
 	ctx.resourceGroupName = job.ReorgMeta.ResourceGroupName
+	ctx.setDDLLabelForTopSQL(job.Query)
 	return checkIfTableIsEmpty(ctx, store, tbl)
 }
 
@@ -1180,6 +1181,7 @@ func checkIfTempIndexReorgWorkCanSkip(
 	}
 	ctx := NewReorgContext()
 	ctx.resourceGroupName = job.ReorgMeta.ResourceGroupName
+	ctx.setDDLLabelForTopSQL(job.Query)
 	firstIdxID := allIndexInfos[0].ID
 	lastIdxID := allIndexInfos[len(allIndexInfos)-1].ID
 	var globalIdxIDs []int64
