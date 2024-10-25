@@ -140,8 +140,10 @@ type stmtSummaryByDigestElement struct {
 	maxCompileLatency time.Duration
 	// coprocessor
 	sumNumCopTasks       int64
+	sumCopProcessTime    time.Duration
 	maxCopProcessTime    time.Duration
 	maxCopProcessAddress string
+	sumCopWaitTime       time.Duration
 	maxCopWaitTime       time.Duration
 	maxCopWaitAddress    string
 	// TiKV
@@ -749,10 +751,12 @@ func (ssElement *stmtSummaryByDigestElement) add(sei *StmtExecInfo, intervalSeco
 	// coprocessor
 	numCopTasks := int64(sei.CopTasks.NumCopTasks)
 	ssElement.sumNumCopTasks += numCopTasks
+	ssElement.sumCopProcessTime += sei.CopTasks.TotProcessTime
 	if sei.CopTasks.MaxProcessTime > ssElement.maxCopProcessTime {
 		ssElement.maxCopProcessTime = sei.CopTasks.MaxProcessTime
 		ssElement.maxCopProcessAddress = sei.CopTasks.MaxProcessAddress
 	}
+	ssElement.sumCopWaitTime += sei.CopTasks.TotWaitTime
 	if sei.CopTasks.MaxWaitTime > ssElement.maxCopWaitTime {
 		ssElement.maxCopWaitTime = sei.CopTasks.MaxWaitTime
 		ssElement.maxCopWaitAddress = sei.CopTasks.MaxWaitAddress

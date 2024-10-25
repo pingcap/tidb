@@ -99,8 +99,10 @@ func TestAddStatement(t *testing.T) {
 		sumCompileLatency:    stmtExecInfo1.CompileLatency,
 		maxCompileLatency:    stmtExecInfo1.CompileLatency,
 		sumNumCopTasks:       int64(stmtExecInfo1.CopTasks.NumCopTasks),
+		sumCopProcessTime:    stmtExecInfo1.CopTasks.TotProcessTime,
 		maxCopProcessTime:    stmtExecInfo1.CopTasks.MaxProcessTime,
 		maxCopProcessAddress: stmtExecInfo1.CopTasks.MaxProcessAddress,
+		sumCopWaitTime:       stmtExecInfo1.CopTasks.TotWaitTime,
 		maxCopWaitTime:       stmtExecInfo1.CopTasks.MaxWaitTime,
 		maxCopWaitAddress:    stmtExecInfo1.CopTasks.MaxWaitAddress,
 		sumProcessTime:       stmtExecInfo1.ExecDetail.TimeDetail.ProcessTime,
@@ -187,10 +189,12 @@ func TestAddStatement(t *testing.T) {
 			P90ProcessTime:    20000,
 			MaxProcessAddress: "200",
 			MaxProcessTime:    25000,
+			TotProcessTime:    40000,
 			AvgWaitTime:       200,
 			P90WaitTime:       2000,
 			MaxWaitAddress:    "201",
 			MaxWaitTime:       2500,
+			TotWaitTime:       40000,
 		},
 		ExecDetail: &execdetails.ExecDetails{
 			BackoffTime:  180,
@@ -255,8 +259,10 @@ func TestAddStatement(t *testing.T) {
 	expectedSummaryElement.sumCompileLatency += stmtExecInfo2.CompileLatency
 	expectedSummaryElement.maxCompileLatency = stmtExecInfo2.CompileLatency
 	expectedSummaryElement.sumNumCopTasks += int64(stmtExecInfo2.CopTasks.NumCopTasks)
+	expectedSummaryElement.sumCopProcessTime += stmtExecInfo2.CopTasks.TotProcessTime
 	expectedSummaryElement.maxCopProcessTime = stmtExecInfo2.CopTasks.MaxProcessTime
 	expectedSummaryElement.maxCopProcessAddress = stmtExecInfo2.CopTasks.MaxProcessAddress
+	expectedSummaryElement.sumCopWaitTime += stmtExecInfo2.CopTasks.TotWaitTime
 	expectedSummaryElement.maxCopWaitTime = stmtExecInfo2.CopTasks.MaxWaitTime
 	expectedSummaryElement.maxCopWaitAddress = stmtExecInfo2.CopTasks.MaxWaitAddress
 	expectedSummaryElement.sumProcessTime += stmtExecInfo2.ExecDetail.TimeDetail.ProcessTime
@@ -330,10 +336,12 @@ func TestAddStatement(t *testing.T) {
 			P90ProcessTime:    300,
 			MaxProcessAddress: "300",
 			MaxProcessTime:    350,
+			TotProcessTime:    200,
 			AvgWaitTime:       20,
 			P90WaitTime:       200,
 			MaxWaitAddress:    "301",
 			MaxWaitTime:       250,
+			TotWaitTime:       40,
 		},
 		ExecDetail: &execdetails.ExecDetails{
 			BackoffTime:  18,
@@ -397,6 +405,8 @@ func TestAddStatement(t *testing.T) {
 	expectedSummaryElement.sumParseLatency += stmtExecInfo3.ParseLatency
 	expectedSummaryElement.sumCompileLatency += stmtExecInfo3.CompileLatency
 	expectedSummaryElement.sumNumCopTasks += int64(stmtExecInfo3.CopTasks.NumCopTasks)
+	expectedSummaryElement.sumCopProcessTime += stmtExecInfo3.CopTasks.TotProcessTime
+	expectedSummaryElement.sumCopWaitTime += stmtExecInfo3.CopTasks.TotWaitTime
 	expectedSummaryElement.sumProcessTime += stmtExecInfo3.ExecDetail.TimeDetail.ProcessTime
 	expectedSummaryElement.sumWaitTime += stmtExecInfo3.ExecDetail.TimeDetail.WaitTime
 	expectedSummaryElement.sumBackoffTime += stmtExecInfo3.ExecDetail.BackoffTime
@@ -535,8 +545,10 @@ func matchStmtSummaryByDigest(first, second *stmtSummaryByDigest) bool {
 			ssElement1.sumCompileLatency != ssElement2.sumCompileLatency ||
 			ssElement1.maxCompileLatency != ssElement2.maxCompileLatency ||
 			ssElement1.sumNumCopTasks != ssElement2.sumNumCopTasks ||
+			ssElement1.sumCopProcessTime != ssElement2.sumCopProcessTime ||
 			ssElement1.maxCopProcessTime != ssElement2.maxCopProcessTime ||
 			ssElement1.maxCopProcessAddress != ssElement2.maxCopProcessAddress ||
+			ssElement1.sumCopWaitTime != ssElement2.sumCopWaitTime ||
 			ssElement1.maxCopWaitTime != ssElement2.maxCopWaitTime ||
 			ssElement1.maxCopWaitAddress != ssElement2.maxCopWaitAddress ||
 			ssElement1.sumProcessTime != ssElement2.sumProcessTime ||
@@ -636,10 +648,12 @@ func generateAnyExecInfo() *StmtExecInfo {
 			P90ProcessTime:    10000,
 			MaxProcessAddress: "127",
 			MaxProcessTime:    15000,
+			TotProcessTime:    10000,
 			AvgWaitTime:       100,
 			P90WaitTime:       1000,
 			MaxWaitAddress:    "128",
 			MaxWaitTime:       1500,
+			TotWaitTime:       1000,
 		},
 		ExecDetail: &execdetails.ExecDetails{
 			BackoffTime:  80,
