@@ -23,8 +23,9 @@ import (
 	"github.com/pingcap/errors"
 	sess "github.com/pingcap/tidb/pkg/ddl/session"
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/session/types"
+	"github.com/pingcap/tidb/pkg/owner"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
@@ -79,9 +80,23 @@ func (id HandlerID) String() string {
 	}
 }
 
+// Ensure DDLNotifier implements the owner.Listener interface.
+// The DDLNotifier is started only when the stats owner is elected to ensure consistency.
+// This design is crucial because:
+//  1. The stats handler(priority queue) processes DDLNotifier events in memory.
+//  2. Keeping the stats handler and DDLNotifier on the same node maintains data integrity.
+//  3. It prevents potential race conditions or inconsistencies that could arise from
+//     distributed processing of these events across multiple nodes.
+var _ owner.Listener = (*DDLNotifier)(nil)
+
 // DDLNotifier implements the subscription on DDL events.
 type DDLNotifier struct {
-	ownedSess    types.Session
+	// The context is initialized in Start and canceled in Stop and Close.
+	ctx            context.Context
+	cancel         context.CancelFunc
+	wg             util.WaitGroupWrapper
+	sysSessionPool util.SessionPool
+
 	store        Store
 	handlers     map[HandlerID]SchemaChangeHandler
 	pollInterval time.Duration
@@ -90,19 +105,17 @@ type DDLNotifier struct {
 	handlersBitMap uint64
 }
 
-// NewDDLNotifier initializes the global DDLNotifier. It should be called only
-// once and before any RegisterHandler call. The ownership of the sctx is passed
-// to the DDLNotifier.
+// NewDDLNotifier initializes the global DDLNotifier.
 func NewDDLNotifier(
-	sess types.Session,
+	sysSessionPool util.SessionPool,
 	store Store,
 	pollInterval time.Duration,
 ) *DDLNotifier {
 	return &DDLNotifier{
-		ownedSess:    sess,
-		store:        store,
-		handlers:     make(map[HandlerID]SchemaChangeHandler),
-		pollInterval: pollInterval,
+		sysSessionPool: sysSessionPool,
+		store:          store,
+		handlers:       make(map[HandlerID]SchemaChangeHandler),
+		pollInterval:   pollInterval,
 	}
 }
 
@@ -125,13 +138,14 @@ func (n *DDLNotifier) RegisterHandler(id HandlerID, handler SchemaChangeHandler)
 	n.handlers[id] = handler
 }
 
-// Start starts the DDLNotifier. It will block until the context is canceled.
-func (n *DDLNotifier) Start(ctx context.Context) {
+// start starts the DDLNotifier. It will block until the context is canceled.
+// Do not call this function directly. Use owner.Listener interface instead.
+func (n *DDLNotifier) start() {
 	for id := range n.handlers {
 		n.handlersBitMap |= 1 << id
 	}
 
-	ctx = kv.WithInternalSourceType(ctx, kv.InternalDDLNotifier)
+	ctx := kv.WithInternalSourceType(n.ctx, kv.InternalDDLNotifier)
 	ctx = logutil.WithCategory(ctx, "ddl-notifier")
 	ticker := time.NewTicker(n.pollInterval)
 	defer ticker.Stop()
@@ -148,7 +162,14 @@ func (n *DDLNotifier) Start(ctx context.Context) {
 }
 
 func (n *DDLNotifier) processEvents(ctx context.Context) error {
-	changes, err := n.store.List(ctx, sess.NewSession(n.ownedSess))
+	sysSession, err := n.sysSessionPool.Get()
+	if err != nil {
+		return errors.Trace(err)
+	}
+	defer n.sysSessionPool.Put(sysSession)
+
+	session := sess.NewSession(sysSession.(sessionctx.Context))
+	changes, err := n.store.List(ctx, session)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -161,7 +182,7 @@ func (n *DDLNotifier) processEvents(ctx context.Context) error {
 			if _, ok := skipHandlers[handlerID]; ok {
 				continue
 			}
-			if err2 := n.processEventForHandler(ctx, change, handlerID, handler); err2 != nil {
+			if err2 := n.processEventForHandler(ctx, session, change, handlerID, handler); err2 != nil {
 				skipHandlers[handlerID] = struct{}{}
 
 				if !goerr.Is(err2, ErrNotReadyRetryLater) {
@@ -187,7 +208,7 @@ func (n *DDLNotifier) processEvents(ctx context.Context) error {
 		if change.processedByFlag == n.handlersBitMap {
 			if err2 := n.store.DeleteAndCommit(
 				ctx,
-				sess.NewSession(n.ownedSess),
+				session,
 				change.ddlJobID,
 				int(change.multiSchemaChangeSeq),
 			); err2 != nil {
@@ -206,6 +227,7 @@ const slowHandlerLogThreshold = time.Second * 5
 
 func (n *DDLNotifier) processEventForHandler(
 	ctx context.Context,
+	session *sess.Session,
 	change *schemaChange,
 	handlerID HandlerID,
 	handler SchemaChangeHandler,
@@ -214,21 +236,19 @@ func (n *DDLNotifier) processEventForHandler(
 		return nil
 	}
 
-	se := sess.NewSession(n.ownedSess)
-
-	if err = se.Begin(ctx); err != nil {
+	if err = session.Begin(ctx); err != nil {
 		return errors.Trace(err)
 	}
 	defer func() {
 		if err == nil {
-			err = errors.Trace(se.Commit(ctx))
+			err = errors.Trace(session.Commit(ctx))
 		} else {
-			se.Rollback()
+			session.Rollback()
 		}
 	}()
 
 	now := time.Now()
-	if err = handler(ctx, n.ownedSess, change.event); err != nil {
+	if err = handler(ctx, session.Context, change.event); err != nil {
 		return errors.Trace(err)
 	}
 	if time.Since(now) > slowHandlerLogThreshold {
@@ -243,7 +263,7 @@ func (n *DDLNotifier) processEventForHandler(
 	newFlag := change.processedByFlag | (1 << handlerID)
 	if err = n.store.UpdateProcessed(
 		ctx,
-		se,
+		session,
 		change.ddlJobID,
 		change.multiSchemaChangeSeq,
 		newFlag,
@@ -255,7 +275,36 @@ func (n *DDLNotifier) processEventForHandler(
 	return nil
 }
 
-// Close releases the resources.
-func (n *DDLNotifier) Close() {
-	n.ownedSess.Close()
+// Stop stops the background loop.
+// Exposed for testing.
+// Do not call this function directly. Use owner.Listener interface instead.
+func (n *DDLNotifier) Stop() {
+	// If the notifier is not started, the cancel function is nil.
+	if n.cancel == nil {
+		return
+	}
+	n.cancel()
+	n.wg.Wait()
+}
+
+// OnBecomeOwner implements the owner.Listener interface.
+// We need to make sure only one DDLNotifier is running at any time.
+func (n *DDLNotifier) OnBecomeOwner() {
+	n.ctx, n.cancel = context.WithCancel(context.Background())
+	n.wg.RunWithRecover(n.start, func(r any) {
+		if r == nil {
+			return
+		}
+		// In unit tests, we want to panic directly to find the root cause.
+		if intest.InTest {
+			panic(r)
+		}
+		logutil.BgLogger().Error("panic in ddl notifier", zap.Any("recover", r), zap.Stack("stack"))
+	})
+}
+
+// OnRetireOwner implements the owner.Listener interface.
+// After the owner is retired, we need to stop the DDLNotifier.
+func (n *DDLNotifier) OnRetireOwner() {
+	n.Stop()
 }
