@@ -1577,7 +1577,7 @@ func (b *executorBuilder) buildHashJoinV2(v *plannercore.PhysicalHashJoin) exec.
 		} else {
 			buildSideExec, buildKeys = rightExec, v.RightJoinKeys
 			e.ProbeSideTupleFetcher.ProbeSideExec, probeKeys = leftExec, v.LeftJoinKeys
-			e.HashJoinCtxV2.BuildFilter = joinRightCondition 
+			e.HashJoinCtxV2.BuildFilter = joinRightCondition
 		}
 	} else {
 		if v.InnerChildIdx == 0 {
