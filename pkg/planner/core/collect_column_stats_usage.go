@@ -58,7 +58,7 @@ type columnStatsUsageCollector struct {
 	// visitedtbls indicates the visited table
 	visitedtbls map[int64]struct{}
 
-	// It's used for tables with static pruning mode.
+	// tblID2PartitionIDs is used for tables with static pruning mode.
 	// Note that we've no longer suggested to use static pruning mode.
 	tblID2PartitionIDS map[int64][]int64
 }

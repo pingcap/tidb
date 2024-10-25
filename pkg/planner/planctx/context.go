@@ -51,6 +51,7 @@ type PlanContext interface {
 	GetDomainInfoSchema() infoschema.MetaOnlyInfoSchema
 	// GetInfoSchema returns the current infoschema
 	GetInfoSchema() infoschema.MetaOnlyInfoSchema
+	// UpdateColStatsUsage updates the column stats usage.
 	UpdateColStatsUsage(predicateColumns iter.Seq[model.TableItemID])
 	// GetClient gets a kv.Client.
 	GetClient() kv.Client

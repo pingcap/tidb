@@ -168,7 +168,7 @@ func (*CollectPredicateColumnsPoint) markAtLeastOneFullStatsLoadForEachTable(
 	})
 }
 
-func (c *CollectPredicateColumnsPoint) expandStatsNeededColumnsForStaticPruning(
+func (CollectPredicateColumnsPoint) expandStatsNeededColumnsForStaticPruning(
 	histNeededItems []model.StatsLoadItem,
 	tid2pids map[int64][]int64,
 ) []model.StatsLoadItem {
