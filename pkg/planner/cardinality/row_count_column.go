@@ -177,7 +177,7 @@ func equalRowCountOnColumn(sctx planctx.PlanContext, c *statistics.Column, val t
 		if modifyCount == 0 {
 			return 0, nil
 		}
-		return 1, nil
+		return max(1, float64(modifyCount)/float64(c.Histogram.NDV)), nil
 	}
 	return c.Histogram.NotNullCount() / histNDV, nil
 }

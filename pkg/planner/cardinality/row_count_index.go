@@ -419,7 +419,7 @@ func equalRowCountOnIndex(sctx planctx.PlanContext, idx *statistics.Index, b []b
 		if modifyCount == 0 {
 			return 0
 		}
-		return 1
+		return max(1, float64(modifyCount)/float64(idx.Histogram.NDV))
 	}
 	return idx.Histogram.NotNullCount() / histNDV
 }
