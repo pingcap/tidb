@@ -4572,6 +4572,8 @@ func (e *executor) CreatePrimaryKey(ctx sessionctx.Context, ti ast.Ident, indexN
 			}
 			validateGlobalIndexWithGeneratedColumns(ctx.GetSessionVars().StmtCtx.ErrCtx(), tblInfo, indexName.O, indexColumns)
 		}
+	} else if indexOption != nil && indexOption.Global {
+		return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("Global Index on non-partitioned table")
 	}
 
 	// May be truncate comment here, when index comment too long and sql_mode is't strict.
