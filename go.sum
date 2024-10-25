@@ -80,11 +80,18 @@ github.com/Masterminds/semver/v3 v3.1.1 h1:hLg3sBzpNErnxhQtUy/mmLR2I9foDujNK030I
 github.com/Masterminds/semver/v3 v3.1.1/go.mod h1:VPu/7SZ7ePZ3QOrcuXROw5FAcLl4a0cBrbBpGY/8hQs=
 github.com/Masterminds/sprig/v3 v3.2.2 h1:17jRggJu518dr3QaafizSXOjKYp94wKfABxUmyxvxX8=
 github.com/Masterminds/sprig/v3 v3.2.2/go.mod h1:UoaO7Yp8KlPnJIYWTFkMaqPUYKTfGFPhxNuwnnxkKlk=
+<<<<<<< Updated upstream
 github.com/Shopify/goreferrer v0.0.0-20181106222321-ec9c9a553398/go.mod h1:a1uqRtAwp2Xwc6WNPJEufxJ7fx3npB4UV/JOLmbu5I0=
 github.com/Shopify/sarama v1.29.0 h1:ARid8o8oieau9XrHI55f/L3EoRAhm9px6sonbD7yuUE=
 github.com/Shopify/sarama v1.29.0/go.mod h1:2QpgD79wpdAESqNQMxNc0KYMkycd4slxGdV3TWSVqrU=
 github.com/Shopify/toxiproxy v2.1.4+incompatible h1:TKdv8HiTLgE5wdJuEML90aBgNWsokNbMijUGhmcoBJc=
 github.com/Shopify/toxiproxy v2.1.4+incompatible/go.mod h1:OXgGpZ6Cli1/URJOF1DMxUHB2q5Ap20/P/eIdh4G0pI=
+=======
+github.com/Tema/client-go/v2 v2.0.0-20241024042603-a1b533943d5b h1:Ox6MicqtAgkIRLGqloq/Gh+awdh/IpjE89yMUuOdGZU=
+github.com/Tema/client-go/v2 v2.0.0-20241024042603-a1b533943d5b/go.mod h1:JZq2+O34RjrronQ9+sSrnPuUT0BHFMjayg11Sosi1JY=
+github.com/Tema/client-go/v2 v2.0.0-20241025024807-3a70f7ecbc23 h1:JRr5dd+9+8LEfColorgALR89bqHXJDHR8N4bbJL5fsg=
+github.com/Tema/client-go/v2 v2.0.0-20241025024807-3a70f7ecbc23/go.mod h1:JZq2+O34RjrronQ9+sSrnPuUT0BHFMjayg11Sosi1JY=
+>>>>>>> Stashed changes
 github.com/VividCortex/ewma v1.1.1/go.mod h1:2Tkkvm3sRDVXaiyucHiACn4cqf7DpdyLvmxzcbUokwA=
 github.com/VividCortex/ewma v1.2.0 h1:f58SaIzcDXrSy3kWaHNvuJgJ3Nmz59Zji6XoJR/q1ow=
 github.com/VividCortex/ewma v1.2.0/go.mod h1:nz4BbCtbLyFDeC9SUHbtcT5644juEuWfUAUnGx7j5l4=
@@ -866,10 +873,18 @@ github.com/tiancaiamao/gp v0.0.0-20221230034425-4025bc8a4d4a h1:J/YdBZ46WKpXsxsW
 github.com/tiancaiamao/gp v0.0.0-20221230034425-4025bc8a4d4a/go.mod h1:h4xBhSNtOeEosLJ4P7JyKXX7Cabg7AVkWCK5gV2vOrM=
 github.com/tidwall/btree v1.7.0 h1:L1fkJH/AuEh5zBnnBbmTwQ5Lt+bRJ5A8EWecslvo9iI=
 github.com/tidwall/btree v1.7.0/go.mod h1:twD9XRA5jj9VUQGELzDO4HPQTNJsoWWfYEL+EUQ2cKY=
+<<<<<<< Updated upstream
 github.com/tikv/client-go/v2 v2.0.8-0.20240229045805-09ecb550d383 h1:WGO0XZ138JABHm+jGGgzDrmnE9T1+VpZ9MkFecdgQd8=
 github.com/tikv/client-go/v2 v2.0.8-0.20240229045805-09ecb550d383/go.mod h1:krldO06uQxuu5z30nmG465Q99gDJAzaCW3v259nN+ps=
 github.com/tikv/pd/client v0.0.0-20240221051526-d6d9feab3e2a h1:V2lmRIYeGGIr28YoSvqXVkrvCFqqNfUNhbZqMCFa+tQ=
 github.com/tikv/pd/client v0.0.0-20240221051526-d6d9feab3e2a/go.mod h1:Z/QAgOt29zvwBTd0H6pdx45VO6KRNc/O/DzGkVmSyZg=
+=======
+github.com/tikv/client-go/v2 v2.0.8-0.20240925070302-58f3322fc39a h1:uKwqdjp/XgoziDJmu200NXwm94X7J5cDSA66cULHy9o=
+github.com/tikv/client-go/v2 v2.0.8-0.20240925070302-58f3322fc39a/go.mod h1:JZq2+O34RjrronQ9+sSrnPuUT0BHFMjayg11Sosi1JY=
+github.com/tikv/pd/client v0.0.0-20240620115049-049de1761e56/go.mod h1:EHHidLItrJGh0jqfdfFhIHG5vwkR8+43tFnp7v7iv1Q=
+github.com/tikv/pd/client v0.0.0-20240926021936-642f0e919b0d h1:iBIi3+grJWLNI5c7BLVezgOonYtL/EQqSUDsPVK2kUw=
+github.com/tikv/pd/client v0.0.0-20240926021936-642f0e919b0d/go.mod h1:uBHhxAM/SPCMabt483gI/pN/+JXIMKYXohK96s+PwT8=
+>>>>>>> Stashed changes
 github.com/timakin/bodyclose v0.0.0-20240125160201-f835fa56326a h1:A6uKudFIfAEpoPdaal3aSqGxBzLyU8TqyXImLwo6dIo=
 github.com/timakin/bodyclose v0.0.0-20240125160201-f835fa56326a/go.mod h1:mkjARE7Yr8qU23YcGMSALbIxTQ9r9QBVahQOBRfU460=
 github.com/tklauser/go-sysconf v0.3.9/go.mod h1:11DU/5sG7UexIrp/O6g35hrWzu0JxlwQ3LSFUzyeuhs=
