@@ -801,11 +801,8 @@ func DefaultBackupConfig() BackupConfig {
 		log.Panic("infallible operation failed.", zap.Error(err))
 	}
 
-	// Check if the checksum flag was set by the user
-	if !fs.Changed("checksum") {
-		// If not set, disable it for backup
-		cfg.Checksum = false
-	}
+	// disable checksum for backup by default
+	cfg.Checksum = false
 
 	return cfg
 }

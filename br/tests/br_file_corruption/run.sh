@@ -50,7 +50,7 @@ run_sql "DROP DATABASE IF EXISTS $DB;"
 # file corruption
 for filename in $(find $TEST_DIR/$DB -name "*.sst_temp"); do
     mv "$filename" "${filename%_temp}"
-    truncate -s 11 "${filename%_temp}"
+    truncate -s -11 "${filename%_temp}"
 done
 
 export GO_FAILPOINTS="github.com/pingcap/tidb/br/pkg/utils/set-import-attempt-to-one=return(true)"

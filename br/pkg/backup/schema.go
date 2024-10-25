@@ -145,7 +145,7 @@ func (ss *Schemas) BackupSchemas(
 							zap.Uint64("Crc64Xor", schema.crc64xor),
 							zap.Uint64("TotalKvs", schema.totalKvs),
 							zap.Uint64("TotalBytes", schema.totalBytes),
-							zap.Duration("Time taken", calculateCost))
+							zap.Duration("TimeTaken", calculateCost))
 					}
 				}
 				if statsHandle != nil {
