@@ -80,6 +80,7 @@ func (p *LogicalMemTable) PruneColumns(parentUsedCols []*expression.Column, opt 
 	switch p.TableInfo.Name.O {
 	case infoschema.TableStatementsSummary,
 		infoschema.TableStatementsSummaryHistory,
+		infoschema.TableTiDBStatementsStats,
 		infoschema.TableSlowQuery,
 		infoschema.ClusterTableStatementsSummary,
 		infoschema.ClusterTableStatementsSummaryHistory,
