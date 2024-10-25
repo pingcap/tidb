@@ -856,8 +856,6 @@ func (pi *PartitionInfo) ClearReorgIntermediateInfo() {
 	pi.DDLExpr = ""
 	pi.DDLColumns = nil
 	pi.NewTableID = 0
-	pi.DDLState = StateNone
-	pi.DDLAction = ActionNone
 }
 
 // FindPartitionDefinitionByName finds PartitionDefinition by name.
