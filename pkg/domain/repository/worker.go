@@ -67,7 +67,7 @@ var workloadTables = []repositoryTable{
 		"",
 	},
 	//{"INFORMATION_SCHEMA", "TIDB_INDEX_USAGE", snapshotTable, "", "", "", ""},
-	{"INFORMATION_SCHEMA", "TIDB_STATEMENTS_STATS", snapshotTable, "", "", "", ""},
+	//{"INFORMATION_SCHEMA", "TIDB_STATEMENTS_STATS", snapshotTable, "", "", "", ""},
 	{"INFORMATION_SCHEMA", "CLIENT_ERRORS_SUMMARY_BY_HOST", snapshotTable, "", "", "", ""},
 	{"INFORMATION_SCHEMA", "CLIENT_ERRORS_SUMMARY_BY_USER", snapshotTable, "", "", "", ""},
 	{"INFORMATION_SCHEMA", "CLIENT_ERRORS_SUMMARY_GLOBAL", snapshotTable, "", "", "", ""},
@@ -187,6 +187,8 @@ func (w *Worker) start(ctx context.Context) func() {
 	return func() {
 		w.owner = w.newOwner(ownerKey, promptKey)
 		ticker := time.NewTicker(time.Second)
+		w.owner.CampaignOwner()
+		defer w.owner.CampaignCancel()
 
 		for rtIdx := range workloadTables {
 			rt := &workloadTables[rtIdx]
@@ -205,6 +207,7 @@ func (w *Worker) start(ctx context.Context) func() {
 				return
 			case <-ticker.C:
 				if w.owner.IsOwner() {
+					logutil.BgLogger().Info("repository has owner!")
 					if err := w.createAllTables(ctx); err != nil {
 						logutil.BgLogger().Error("repository cannot create tables", zap.NamedError("err", err))
 					}
