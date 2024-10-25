@@ -138,10 +138,9 @@ func (n *DDLNotifier) RegisterHandler(id HandlerID, handler SchemaChangeHandler)
 	n.handlers[id] = handler
 }
 
-// Start starts the DDLNotifier. It will block until the context is canceled.
-// Exposed for testing.
+// start starts the DDLNotifier. It will block until the context is canceled.
 // Do not call this function directly. Use owner.Listener interface instead.
-func (n *DDLNotifier) Start() {
+func (n *DDLNotifier) start() {
 	for id := range n.handlers {
 		n.handlersBitMap |= 1 << id
 	}
@@ -292,7 +291,7 @@ func (n *DDLNotifier) Stop() {
 // We need to make sure only one DDLNotifier is running at any time.
 func (n *DDLNotifier) OnBecomeOwner() {
 	n.ctx, n.cancel = context.WithCancel(context.Background())
-	n.wg.RunWithRecover(n.Start, func(r any) {
+	n.wg.RunWithRecover(n.start, func(r any) {
 		if r == nil {
 			return
 		}

@@ -103,7 +103,7 @@ func TestBasicPubSub(t *testing.T) {
 
 	done := make(chan struct{})
 	go func() {
-		n.Start()
+		n.OnBecomeOwner()
 		close(done)
 	}()
 
@@ -129,7 +129,7 @@ func TestBasicPubSub(t *testing.T) {
 	require.Equal(t, event1, seenChanges[0])
 	require.Equal(t, event2, seenChanges[1])
 	require.Equal(t, event3, seenChanges[2])
-	n.Stop()
+	n.OnRetireOwner()
 	<-done
 }
 
@@ -181,7 +181,7 @@ func TestDeliverOrderAndCleanup(t *testing.T) {
 
 	done := make(chan struct{})
 	go func() {
-		n.Start()
+		n.OnBecomeOwner()
 		close(done)
 	}()
 
@@ -208,7 +208,7 @@ func TestDeliverOrderAndCleanup(t *testing.T) {
 	require.Equal(t, []int64{1000, 1001, 1002}, *id2)
 	require.Equal(t, []int64{1000, 1001, 1002}, *id3)
 
-	n.Stop()
+	n.OnRetireOwner()
 	<-done
 }
 
