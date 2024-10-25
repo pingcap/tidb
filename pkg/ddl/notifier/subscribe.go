@@ -135,6 +135,8 @@ func (n *DDLNotifier) RegisterHandler(id HandlerID, handler SchemaChangeHandler)
 	}
 
 	if _, ok := n.handlers[id]; ok {
+		// In some tests, we register the same handler multiple times because we
+		// create multiple stats handles in the same test.
 		logutil.BgLogger().Error("HandlerID already registered", zap.Int("id", int(id)))
 		return
 	}
