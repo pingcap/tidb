@@ -326,6 +326,53 @@ const (
 	ResourceGroupName                 = "RESOURCE_GROUP"
 )
 
+// Column names for the statement stats table, including columns that have been
+// renamed from their equivalent columns in the statement summary table.
+const (
+	ErrorsStr                    = "ERRORS"
+	WarningsStr                  = "WARNINGS"
+	MemStr                       = "MEM"
+	DiskStr                      = "DISK"
+	TotalTimeStr                 = "TOTAL_TIME"
+	ParseTimeStr                 = "PARSE_TIME"
+	CompileTimeStr               = "COMPILE_TIME"
+	CopTaskNumStr                = "COP_TASK_NUM"
+	CopProcessTimeStr            = "COP_PROCESS_TIME"
+	CopWaitTimeStr               = "COP_WAIT_TIME"
+	PdTimeStr                    = "PD_TIME"
+	KvTimeStr                    = "KV_TIME"
+	ProcessTimeStr               = "PROCESS_TIME"
+	WaitTimeStr                  = "WAIT_TIME"
+	BackoffTimeStr               = "BACKOFF_TIME"
+	TotalKeysStr                 = "TOTAL_KEYS"
+	ProcessedKeysStr             = "PROCESSED_KEYS"
+	RocksdbDeleteSkippedCountStr = "ROCKSDB_DELETE_SKIPPED_COUNT"
+	RocksdbKeySkippedCountStr    = "ROCKSDB_KEY_SKIPPED_COUNT"
+	RocksdbBlockCacheHitCountStr = "ROCKSDB_BLOCK_CACHE_HIT_COUNT"
+	RocksdbBlockReadCountStr     = "ROCKSDB_BLOCK_READ_COUNT"
+	RocksdbBlockReadByteStr      = "ROCKSDB_BLOCK_READ_BYTE"
+	PrewriteTimeStr              = "PREWRITE_TIME"
+	CommitTimeStr                = "COMMIT_TIME"
+	CommitTsTimeStr              = "COMMIT_TS_TIME"
+	CommitBackoffTimeStr         = "COMMIT_BACKOFF_TIME"
+	ResolveLockTimeStr           = "RESOLVE_LOCK_TIME"
+	LocalLatchWaitTimeStr        = "LOCAL_LATCH_WAIT_TIME"
+	WriteKeysStr                 = "WRITE_KEYS"
+	WriteSizeStr                 = "WRITE_SIZE"
+	PrewriteRegionsStr           = "PREWRITE_REGIONS"
+	TxnRetryStr                  = "TXN_RETRY"
+	ExecRetryStr                 = "EXEC_RETRY"
+	ExecRetryTimeStr             = "EXEC_RETRY_TIME"
+	BackoffTimesStr              = "BACKOFF_TIMES"
+	BackoffTotalTimeStr          = "BACKOFF_TOTAL_TIME"
+	WriteSQLRespTimeStr          = "WRITE_SQL_RESP_TIME"
+	ResultRowsStr                = "RESULT_ROWS"
+	AffectedRowsStr              = "AFFECTED_ROWS"
+	RequestUnitReadStr           = "REQUEST_UNIT_READ"
+	RequestUnitWriteStr          = "REQUEST_UNIT_WRITE"
+	QueuedRcTimeStr              = "QUEUED_RC_TIME"
+)
+
 type columnValueFactory func(reader *stmtSummaryReader, ssElement *stmtSummaryByDigestElement, ssbd *stmtSummaryByDigest, ssStats *stmtSummaryStats) any
 
 var columnValueFactoryMap = map[string]columnValueFactory{
