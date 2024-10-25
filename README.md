@@ -29,7 +29,7 @@ TiDB (/’taɪdiːbi:/, "Ti" stands for Titanium) is an open-source, cloud-nativ
 
 - **[Distributed Transactions](https://www.pingcap.com/blog/distributed-transactions-tidb?utm_source=github&utm_medium=tidb)**: TiDB uses a two-phase commit protocol to ensure ACID compliance, providing strong consistency. Transactions span multiple nodes, and TiDB's distributed nature ensures data correctness even in the presence of network partitions or node failures.
 
-- **[Horizontal and Vertical Scalability](https://docs.pingcap.com/tidb/stable/scale-tidb-using-tiup?utm_source=github&utm_medium=tidb)**: TiDB can be scaled horizontally by adding more nodes or vertically by increasing resources of existing nodes, all without downtime. TiDB's architecture separates computing from storage, enabling you to adjust both independently as needed for flexibility and  growth.
+- **[Horizontal and Vertical Scalability](https://docs.pingcap.com/tidb/stable/scale-tidb-using-tiup?utm_source=github&utm_medium=tidb)**: TiDB can be scaled horizontally by adding more nodes or vertically by increasing resources of existing nodes, all without downtime. TiDB's architecture separates computing from storage, enabling you to adjust both independently as needed for flexibility and growth.
 
 - **[High Availability](https://docs.pingcap.com/tidbcloud/high-availability-with-multi-az?utm_source=github&utm_medium=tidb)**: Built-in Raft consensus protocol ensures reliability and automated failover. Data is stored in multiple replicas, and transactions are committed only after writing to the majority of replicas, guaranteeing strong consistency and availability, even if some replicas fail. Geographic placement of replicas can be configured for different disaster tolerance levels.
 
@@ -58,7 +58,7 @@ TiDB (/’taɪdiːbi:/, "Ti" stands for Titanium) is an open-source, cloud-nativ
 
 3. Use MySQL Driver or ORM to [Build an App with TiDB with TiDB](https://docs.pingcap.com/tidbcloud/dev-guide-overview?utm_source=github&utm_medium=tidb).
 
-4. Explore key features, such as [data migration](https://docs.pingcap.com/tidbcloud/tidb-cloud-migration-overview?utm_source=github&utm_medium=tidb), [changefeed](https://docs.pingcap.com/tidbcloud/changefeed-overview?utm_source=github&utm_medium=tidb), [vector search](https://docs.pingcap.com/tidbcloud/vector-search-overview?utm_source=github&utm_medium=tidb), [HTAP](https://docs.pingcap.com/tidbcloud/vector-search-overview?utm_source=github&utm_medium=tidb), [disaster recovery](https://docs.pingcap.com/tidb/stable/dr-solution-introduction?utm_source=github&utm_medium=tidb), etc.
+4. Explore key features, such as [data migration](https://docs.pingcap.com/tidbcloud/tidb-cloud-migration-overview?utm_source=github&utm_medium=tidb), [changefeed](https://docs.pingcap.com/tidbcloud/changefeed-overview?utm_source=github&utm_medium=tidb), [vector search](https://docs.pingcap.com/tidbcloud/vector-search-overview?utm_source=github&utm_medium=tidb), [HTAP](https://docs.pingcap.com/tidbcloud/tidb-cloud-htap-quickstart?utm_source=github&utm_medium=tidb), [disaster recovery](https://docs.pingcap.com/tidb/stable/dr-solution-introduction?utm_source=github&utm_medium=tidb), etc.
 
 
 ## Need Help?
@@ -87,7 +87,7 @@ TiDB is built on a commitment to open source, and we welcome contributions from 
 
 - The [community repository](https://github.com/pingcap/community) contains everything else you need.
 
-- Don't forget to claim your contribution sway by filling in and submitting this [form](https://forms.pingcap.com/f/tidb-contribution-swag).
+- Don't forget to claim your contribution swag by filling in and submitting this [form](https://forms.pingcap.com/f/tidb-contribution-swag).
 
 
 <a href="https://next.ossinsight.io/widgets/official/compose-recent-active-contributors?repo_id=41986369&limit=30" target="_blank" style="display: block" align="center">
@@ -104,11 +104,11 @@ TiDB is under the Apache 2.0 license. See the [LICENSE](./LICENSE) file for deta
 ## See Also
 
 - [TiDB Online Playgroud](https://play.tidbcloud.com/?utm_source=github&utm_medium=tidb_readme)
-- TiDB Case Studies: [TiDB Customers](https://www.pingcap.com/customers/), [TiDB 事例記事](https://pingcap.co.jp/case-study/), [TiDB 中文用户案例](https://cn.pingcap.com/case/)
-- [TiDB User Documentation](https://docs.pingcap.com/tidb/stable)
+- TiDB Case Studies: [TiDB Customers](https://www.pingcap.com/customers/?utm_source=github&utm_medium=tidb), [TiDB 事例記事](https://pingcap.co.jp/case-study/?utm_source=github&utm_medium=tidb), [TiDB 中文用户案例](https://cn.pingcap.com/case/?utm_source=github&utm_medium=tidb)
+- [TiDB User Documentation](https://docs.pingcap.com/tidb/stable?utm_source=github&utm_medium=tidb)
 - [TiDB Design Docs](/docs/design)
-- [TiDB Release Notes](https://docs.pingcap.com/tidb/dev/release-notes)
-- [TiDB Blog](https://www.pingcap.com/blog/)
+- [TiDB Release Notes](https://docs.pingcap.com/tidb/dev/release-notes?utm_source=github&utm_medium=tidb)
+- [TiDB Blog](https://www.pingcap.com/blog/?utm_source=github&utm_medium=tidb)
 - [TiDB Roadmap](roadmap.md)
 
 ## Acknowledgments
