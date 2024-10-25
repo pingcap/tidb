@@ -244,10 +244,7 @@ type ChecksumStats struct {
 	TotalBytes uint64
 }
 
-func (stats *ChecksumStats) ChecksumExists() bool {
-	if stats == nil {
-		return false
-	}
+func (stats ChecksumStats) ChecksumExists() bool {
 	if stats.Crc64Xor == 0 && stats.TotalKvs == 0 && stats.TotalBytes == 0 {
 		return false
 	}
