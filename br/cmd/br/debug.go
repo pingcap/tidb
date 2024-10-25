@@ -366,6 +366,9 @@ func encodeBackupMetaCommand() *cobra.Command {
 			if err != nil {
 				return errors.Trace(err)
 			}
+			if backupMetaJSON.Version == metautil.MetaV2 {
+				return errors.Errorf("encoding backupmeta v2 is unimplemented")
+			}
 			backupMeta, err := proto.Marshal(backupMetaJSON)
 			if err != nil {
 				return errors.Trace(err)
