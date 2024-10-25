@@ -454,14 +454,18 @@ func prepareData4Issue56458(t *testing.T, client *testserverclient.TestServerCli
 	tk.MustExec("create database planReplayer")
 	tk.MustExec("create database planReplayer2")
 	tk.MustExec("use planReplayer")
-
+	tk.MustExec("create placement policy p " +
+		"LEARNERS=1 " +
+		"LEARNER_CONSTRAINTS=\"[+region=cn-west-1]\" " +
+		"FOLLOWERS=3 " +
+		"FOLLOWER_CONSTRAINTS=\"[+disk=ssd]\"")
 	tk.MustExec("CREATE TABLE v(id INT PRIMARY KEY AUTO_INCREMENT);")
 	err = h.HandleDDLEvent(<-h.DDLEventCh())
 	require.NoError(t, err)
 	tk.MustExec("create table planReplayer2.t(a int, b int, INDEX ia (a), INDEX ib (b), author_id int, FOREIGN KEY (author_id) REFERENCES planReplayer.v(id) ON DELETE CASCADE);")
 	err = h.HandleDDLEvent(<-h.DDLEventCh())
 	require.NoError(t, err)
-	tk.MustExec("create table t(a int, b int, INDEX ia (a), INDEX ib (b), author_id int, FOREIGN KEY (author_id) REFERENCES planReplayer2.t(a) ON DELETE CASCADE);")
+	tk.MustExec("create table t(a int, b int, INDEX ia (a), INDEX ib (b), author_id int, FOREIGN KEY (author_id) REFERENCES planReplayer2.t(a) ON DELETE CASCADE) placement policy p;")
 	err = h.HandleDDLEvent(<-h.DDLEventCh())
 	require.NoError(t, err)
 

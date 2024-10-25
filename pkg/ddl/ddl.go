@@ -262,6 +262,7 @@ type ddl struct {
 	enableTiFlashPoll *atomicutil.Bool
 	sysTblMgr         systable.Manager
 	minJobIDRefresher *systable.MinJobIDRefresher
+	eventPublishStore notifier.Store
 
 	executor     *executor
 	jobSubmitter *JobSubmitter
@@ -572,14 +573,35 @@ func asyncNotifyEvent(jobCtx *jobContext, e *notifier.SchemaChangeEvent, job *mo
 		return nil
 	}
 
-	if intest.InTest && notifier.DefaultStore != nil {
+	ch := jobCtx.oldDDLCtx.ddlEventCh
+	if ch != nil {
+	forLoop:
+		for i := 0; i < 10; i++ {
+			select {
+			case ch <- e:
+				break forLoop
+			default:
+				time.Sleep(time.Microsecond * 10)
+			}
+		}
+		logutil.DDLLogger().Warn("fail to notify DDL event", zap.Stringer("event", e))
+	}
+
+	if intest.InTest && jobCtx.eventPublishStore != nil {
 		failpoint.Inject("asyncNotifyEventError", func() {
 			failpoint.Return(errors.New("mock publish event error"))
 		})
 		if subJobID == noSubJob && job.MultiSchemaInfo != nil {
 			subJobID = int64(job.MultiSchemaInfo.Seq)
 		}
-		err := notifier.PubSchemaChange(jobCtx.ctx, sctx, job.ID, subJobID, e)
+		err := notifier.PubSchemeChangeToStore(
+			jobCtx.stepCtx,
+			sctx,
+			job.ID,
+			subJobID,
+			e,
+			jobCtx.eventPublishStore,
+		)
 		if err != nil {
 			logutil.DDLLogger().Error("Error publish schema change event",
 				zap.Int64("jobID", job.ID),
@@ -588,19 +610,6 @@ func asyncNotifyEvent(jobCtx *jobContext, e *notifier.SchemaChangeEvent, job *mo
 			return err
 		}
 		return nil
-	}
-
-	ch := jobCtx.oldDDLCtx.ddlEventCh
-	if ch != nil {
-		for i := 0; i < 10; i++ {
-			select {
-			case ch <- e:
-				return nil
-			default:
-				time.Sleep(time.Microsecond * 10)
-			}
-		}
-		logutil.DDLLogger().Warn("fail to notify DDL event", zap.Stringer("event", e))
 	}
 	return nil
 }
@@ -665,6 +674,7 @@ func newDDL(ctx context.Context, options ...Option) (*ddl, *executor) {
 	d := &ddl{
 		ddlCtx:            ddlCtx,
 		enableTiFlashPoll: atomicutil.NewBool(true),
+		eventPublishStore: opt.EventPublishStore,
 	}
 
 	taskexecutor.RegisterTaskType(proto.Backfill,
