@@ -29,6 +29,14 @@ import (
 
 var FilterFilesByRegion = filterFilesByRegion
 
+func (metaname *MetaName) Meta() Meta {
+	return metaname.meta
+}
+
+func newMetaName(meta Meta, name string) *MetaName {
+	return &MetaName{meta: meta, name: name}
+}
+
 func (rc *LogClient) TEST_saveIDMap(
 	ctx context.Context,
 	sr *stream.SchemasReplace,
@@ -44,7 +52,7 @@ func (rc *LogClient) TEST_initSchemasMap(
 }
 
 // readStreamMetaByTS is used for streaming task. collect all meta file by TS, it is for test usage.
-func (rc *LogFileManager) ReadStreamMeta(ctx context.Context) ([]Meta, error) {
+func (rc *LogFileManager) ReadStreamMeta(ctx context.Context) ([]*MetaName, error) {
 	metas, err := rc.streamingMeta(ctx)
 	if err != nil {
 		return nil, err

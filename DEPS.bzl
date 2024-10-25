@@ -4170,6 +4170,19 @@ def go_deps():
         ],
     )
     go_repository(
+        name = "com_github_juju_errors",
+        build_file_proto_mode = "disable_global",
+        importpath = "github.com/juju/errors",
+        sha256 = "173184fb7ca66d681a8ba3ced7446ea22a4e4fa125f0fd39c587a545e1184fcd",
+        strip_prefix = "github.com/juju/errors@v1.0.0",
+        urls = [
+            "http://bazel-cache.pingcap.net:8080/gomod/github.com/juju/errors/com_github_juju_errors-v1.0.0.zip",
+            "http://ats.apps.svc/gomod/github.com/juju/errors/com_github_juju_errors-v1.0.0.zip",
+            "https://cache.hawkingrei.com/gomod/github.com/juju/errors/com_github_juju_errors-v1.0.0.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/juju/errors/com_github_juju_errors-v1.0.0.zip",
+        ],
+    )
+    go_repository(
         name = "com_github_julienschmidt_httprouter",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/julienschmidt/httprouter",
@@ -5289,6 +5302,19 @@ def go_deps():
             "http://ats.apps.svc/gomod/github.com/ncw/directio/com_github_ncw_directio-v1.0.5.zip",
             "https://cache.hawkingrei.com/gomod/github.com/ncw/directio/com_github_ncw_directio-v1.0.5.zip",
             "https://storage.googleapis.com/pingcapmirror/gomod/github.com/ncw/directio/com_github_ncw_directio-v1.0.5.zip",
+        ],
+    )
+    go_repository(
+        name = "com_github_ngaut_log",
+        build_file_proto_mode = "disable_global",
+        importpath = "github.com/ngaut/log",
+        sha256 = "4fee22ca336773eda7c2c8030b4d8b6d32bc5a8feeba7566e76d74b5feddd30a",
+        strip_prefix = "github.com/ngaut/log@v0.0.0-20221012222132-f3329cba28a5",
+        urls = [
+            "http://bazel-cache.pingcap.net:8080/gomod/github.com/ngaut/log/com_github_ngaut_log-v0.0.0-20221012222132-f3329cba28a5.zip",
+            "http://ats.apps.svc/gomod/github.com/ngaut/log/com_github_ngaut_log-v0.0.0-20221012222132-f3329cba28a5.zip",
+            "https://cache.hawkingrei.com/gomod/github.com/ngaut/log/com_github_ngaut_log-v0.0.0-20221012222132-f3329cba28a5.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/ngaut/log/com_github_ngaut_log-v0.0.0-20221012222132-f3329cba28a5.zip",
         ],
     )
     go_repository(
@@ -9065,13 +9091,13 @@ def go_deps():
         name = "com_sourcegraph_sourcegraph_appdash_data",
         build_file_proto_mode = "disable_global",
         importpath = "sourcegraph.com/sourcegraph/appdash-data",
-        sha256 = "59b71fa8cdb0fe2b1c02739ccf2daeaf28f2e22c4b178cdc8e1b902ad1022bc0",
-        strip_prefix = "github.com/sourcegraph/appdash-data@v0.0.0-20151005221446-73f23eafcf67",
+        sha256 = "382adefecd62bb79172e2552bcfb7d45f47122f9bd22259b0566b26fb2627b87",
+        strip_prefix = "sourcegraph.com/sourcegraph/appdash-data@v0.0.0-20151005221446-73f23eafcf67",
         urls = [
-            "http://bazel-cache.pingcap.net:8080/gomod/github.com/sourcegraph/appdash-data/com_github_sourcegraph_appdash_data-v0.0.0-20151005221446-73f23eafcf67.zip",
-            "http://ats.apps.svc/gomod/github.com/sourcegraph/appdash-data/com_github_sourcegraph_appdash_data-v0.0.0-20151005221446-73f23eafcf67.zip",
-            "https://cache.hawkingrei.com/gomod/github.com/sourcegraph/appdash-data/com_github_sourcegraph_appdash_data-v0.0.0-20151005221446-73f23eafcf67.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/sourcegraph/appdash-data/com_github_sourcegraph_appdash_data-v0.0.0-20151005221446-73f23eafcf67.zip",
+            "http://bazel-cache.pingcap.net:8080/gomod/sourcegraph.com/sourcegraph/appdash-data/com_sourcegraph_sourcegraph_appdash_data-v0.0.0-20151005221446-73f23eafcf67.zip",
+            "http://ats.apps.svc/gomod/sourcegraph.com/sourcegraph/appdash-data/com_sourcegraph_sourcegraph_appdash_data-v0.0.0-20151005221446-73f23eafcf67.zip",
+            "https://cache.hawkingrei.com/gomod/sourcegraph.com/sourcegraph/appdash-data/com_sourcegraph_sourcegraph_appdash_data-v0.0.0-20151005221446-73f23eafcf67.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/sourcegraph.com/sourcegraph/appdash-data/com_sourcegraph_sourcegraph_appdash_data-v0.0.0-20151005221446-73f23eafcf67.zip",
         ],
     )
     go_repository(

@@ -121,6 +121,23 @@ func StartCheckpointLogRestoreRunnerForTest(
 }
 
 // Notice that the session is owned by the checkpoint runner, and it will be also closed by it.
+// Consider Compacted SST files as normal full backup files
+func StartCheckpointRunnerForCompactedRestore(
+	ctx context.Context,
+	se glue.Session,
+) (*CheckpointRunner[RestoreKeyType, RestoreValueType], error) {
+	runner := newCheckpointRunner[RestoreKeyType, RestoreValueType](
+		newTableCheckpointStorage(se, LogRestoreCheckpointDatabaseName),
+		nil, valueMarshalerForRestore)
+
+	// for restore, no need to set lock
+	runner.startCheckpointMainLoop(
+		ctx,
+		defaultTickDurationForFlush, defaultTickDurationForChecksum, 0, defaultRetryDuration)
+	return runner, nil
+}
+
+// Notice that the session is owned by the checkpoint runner, and it will be also closed by it.
 func StartCheckpointRunnerForLogRestore(
 	ctx context.Context,
 	se glue.Session,
@@ -299,7 +316,7 @@ func TryToGetCheckpointTaskInfo(
 			return nil, errors.Trace(err)
 		}
 	}
-	hasSnapshotMetadata := ExistsSnapshotRestoreCheckpoint(ctx, dom)
+	hasSnapshotMetadata := ExistsSstRestoreCheckpoint(ctx, dom, SnapshotRestoreCheckpointDatabaseName)
 
 	return &CheckpointTaskInfoForLogRestore{
 		Metadata:            metadata,
