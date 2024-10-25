@@ -148,7 +148,7 @@ func (ssr *stmtSummaryReader) getStmtByDigestElementRow(ssElement *stmtSummaryBy
 
 	datums := make([]types.Datum, len(ssr.columnValueFactories))
 	for i, factory := range ssr.columnValueFactories {
-		datums[i] = types.NewDatum(factory(ssr, ssElement, ssbd))
+		datums[i] = types.NewDatum(factory(ssr, ssElement, ssbd, &ssElement.stmtSummaryStats))
 	}
 	return datums
 }
@@ -326,354 +326,354 @@ const (
 	ResourceGroupName                 = "RESOURCE_GROUP"
 )
 
-type columnValueFactory func(reader *stmtSummaryReader, ssElement *stmtSummaryByDigestElement, ssbd *stmtSummaryByDigest) any
+type columnValueFactory func(reader *stmtSummaryReader, ssElement *stmtSummaryByDigestElement, ssbd *stmtSummaryByDigest, ssStats *stmtSummaryStats) any
 
 var columnValueFactoryMap = map[string]columnValueFactory{
-	ClusterTableInstanceColumnNameStr: func(reader *stmtSummaryReader, _ *stmtSummaryByDigestElement, _ *stmtSummaryByDigest) any {
+	ClusterTableInstanceColumnNameStr: func(reader *stmtSummaryReader, _ *stmtSummaryByDigestElement, _ *stmtSummaryByDigest, _ *stmtSummaryStats) any {
 		return reader.instanceAddr
 	},
-	SummaryBeginTimeStr: func(reader *stmtSummaryReader, ssElement *stmtSummaryByDigestElement, _ *stmtSummaryByDigest) any {
+	SummaryBeginTimeStr: func(reader *stmtSummaryReader, ssElement *stmtSummaryByDigestElement, _ *stmtSummaryByDigest, _ *stmtSummaryStats) any {
 		beginTime := time.Unix(ssElement.beginTime, 0)
 		if beginTime.Location() != reader.tz {
 			beginTime = beginTime.In(reader.tz)
 		}
 		return types.NewTime(types.FromGoTime(beginTime), mysql.TypeTimestamp, 0)
 	},
-	SummaryEndTimeStr: func(reader *stmtSummaryReader, ssElement *stmtSummaryByDigestElement, _ *stmtSummaryByDigest) any {
+	SummaryEndTimeStr: func(reader *stmtSummaryReader, ssElement *stmtSummaryByDigestElement, _ *stmtSummaryByDigest, _ *stmtSummaryStats) any {
 		endTime := time.Unix(ssElement.endTime, 0)
 		if endTime.Location() != reader.tz {
 			endTime = endTime.In(reader.tz)
 		}
 		return types.NewTime(types.FromGoTime(endTime), mysql.TypeTimestamp, 0)
 	},
-	StmtTypeStr: func(_ *stmtSummaryReader, _ *stmtSummaryByDigestElement, ssbd *stmtSummaryByDigest) any {
+	StmtTypeStr: func(_ *stmtSummaryReader, _ *stmtSummaryByDigestElement, ssbd *stmtSummaryByDigest, _ *stmtSummaryStats) any {
 		return ssbd.stmtType
 	},
-	SchemaNameStr: func(_ *stmtSummaryReader, _ *stmtSummaryByDigestElement, ssbd *stmtSummaryByDigest) any {
+	SchemaNameStr: func(_ *stmtSummaryReader, _ *stmtSummaryByDigestElement, ssbd *stmtSummaryByDigest, _ *stmtSummaryStats) any {
 		return convertEmptyToNil(ssbd.schemaName)
 	},
-	DigestStr: func(_ *stmtSummaryReader, _ *stmtSummaryByDigestElement, ssbd *stmtSummaryByDigest) any {
+	DigestStr: func(_ *stmtSummaryReader, _ *stmtSummaryByDigestElement, ssbd *stmtSummaryByDigest, _ *stmtSummaryStats) any {
 		return convertEmptyToNil(ssbd.digest)
 	},
-	DigestTextStr: func(_ *stmtSummaryReader, _ *stmtSummaryByDigestElement, ssbd *stmtSummaryByDigest) any {
+	DigestTextStr: func(_ *stmtSummaryReader, _ *stmtSummaryByDigestElement, ssbd *stmtSummaryByDigest, _ *stmtSummaryStats) any {
 		return ssbd.normalizedSQL
 	},
-	TableNamesStr: func(_ *stmtSummaryReader, _ *stmtSummaryByDigestElement, ssbd *stmtSummaryByDigest) any {
+	TableNamesStr: func(_ *stmtSummaryReader, _ *stmtSummaryByDigestElement, ssbd *stmtSummaryByDigest, _ *stmtSummaryStats) any {
 		return convertEmptyToNil(ssbd.tableNames)
 	},
-	IndexNamesStr: func(_ *stmtSummaryReader, ssElement *stmtSummaryByDigestElement, _ *stmtSummaryByDigest) any {
-		return convertEmptyToNil(strings.Join(ssElement.indexNames, ","))
+	IndexNamesStr: func(_ *stmtSummaryReader, _ *stmtSummaryByDigestElement, _ *stmtSummaryByDigest, ssStats *stmtSummaryStats) any {
+		return convertEmptyToNil(strings.Join(ssStats.indexNames, ","))
 	},
-	SampleUserStr: func(_ *stmtSummaryReader, ssElement *stmtSummaryByDigestElement, _ *stmtSummaryByDigest) any {
+	SampleUserStr: func(_ *stmtSummaryReader, _ *stmtSummaryByDigestElement, _ *stmtSummaryByDigest, ssStats *stmtSummaryStats) any {
 		sampleUser := ""
-		for key := range ssElement.authUsers {
+		for key := range ssStats.authUsers {
 			sampleUser = key
 			break
 		}
 		return convertEmptyToNil(sampleUser)
 	},
-	ExecCountStr: func(_ *stmtSummaryReader, ssElement *stmtSummaryByDigestElement, _ *stmtSummaryByDigest) any {
-		return ssElement.execCount
+	ExecCountStr: func(_ *stmtSummaryReader, _ *stmtSummaryByDigestElement, _ *stmtSummaryByDigest, ssStats *stmtSummaryStats) any {
+		return ssStats.execCount
 	},
-	SumErrorsStr: func(_ *stmtSummaryReader, ssElement *stmtSummaryByDigestElement, _ *stmtSummaryByDigest) any {
-		return ssElement.sumErrors
+	SumErrorsStr: func(_ *stmtSummaryReader, _ *stmtSummaryByDigestElement, _ *stmtSummaryByDigest, ssStats *stmtSummaryStats) any {
+		return ssStats.sumErrors
 	},
-	SumWarningsStr: func(_ *stmtSummaryReader, ssElement *stmtSummaryByDigestElement, _ *stmtSummaryByDigest) any {
-		return ssElement.sumWarnings
+	SumWarningsStr: func(_ *stmtSummaryReader, _ *stmtSummaryByDigestElement, _ *stmtSummaryByDigest, ssStats *stmtSummaryStats) any {
+		return ssStats.sumWarnings
 	},
-	SumLatencyStr: func(_ *stmtSummaryReader, ssElement *stmtSummaryByDigestElement, _ *stmtSummaryByDigest) any {
-		return int64(ssElement.sumLatency)
+	SumLatencyStr: func(_ *stmtSummaryReader, _ *stmtSummaryByDigestElement, _ *stmtSummaryByDigest, ssStats *stmtSummaryStats) any {
+		return int64(ssStats.sumLatency)
 	},
-	MaxLatencyStr: func(_ *stmtSummaryReader, ssElement *stmtSummaryByDigestElement, _ *stmtSummaryByDigest) any {
-		return int64(ssElement.maxLatency)
+	MaxLatencyStr: func(_ *stmtSummaryReader, _ *stmtSummaryByDigestElement, _ *stmtSummaryByDigest, ssStats *stmtSummaryStats) any {
+		return int64(ssStats.maxLatency)
 	},
-	MinLatencyStr: func(_ *stmtSummaryReader, ssElement *stmtSummaryByDigestElement, _ *stmtSummaryByDigest) any {
-		return int64(ssElement.minLatency)
+	MinLatencyStr: func(_ *stmtSummaryReader, _ *stmtSummaryByDigestElement, _ *stmtSummaryByDigest, ssStats *stmtSummaryStats) any {
+		return int64(ssStats.minLatency)
 	},
-	AvgLatencyStr: func(_ *stmtSummaryReader, ssElement *stmtSummaryByDigestElement, _ *stmtSummaryByDigest) any {
-		return avgInt(int64(ssElement.sumLatency), ssElement.execCount)
+	AvgLatencyStr: func(_ *stmtSummaryReader, _ *stmtSummaryByDigestElement, _ *stmtSummaryByDigest, ssStats *stmtSummaryStats) any {
+		return avgInt(int64(ssStats.sumLatency), ssStats.execCount)
 	},
-	AvgParseLatencyStr: func(_ *stmtSummaryReader, ssElement *stmtSummaryByDigestElement, _ *stmtSummaryByDigest) any {
-		return avgInt(int64(ssElement.sumParseLatency), ssElement.execCount)
+	AvgParseLatencyStr: func(_ *stmtSummaryReader, _ *stmtSummaryByDigestElement, _ *stmtSummaryByDigest, ssStats *stmtSummaryStats) any {
+		return avgInt(int64(ssStats.sumParseLatency), ssStats.execCount)
 	},
-	MaxParseLatencyStr: func(_ *stmtSummaryReader, ssElement *stmtSummaryByDigestElement, _ *stmtSummaryByDigest) any {
-		return int64(ssElement.maxParseLatency)
+	MaxParseLatencyStr: func(_ *stmtSummaryReader, _ *stmtSummaryByDigestElement, _ *stmtSummaryByDigest, ssStats *stmtSummaryStats) any {
+		return int64(ssStats.maxParseLatency)
 	},
-	AvgCompileLatencyStr: func(_ *stmtSummaryReader, ssElement *stmtSummaryByDigestElement, _ *stmtSummaryByDigest) any {
-		return avgInt(int64(ssElement.sumCompileLatency), ssElement.execCount)
+	AvgCompileLatencyStr: func(_ *stmtSummaryReader, _ *stmtSummaryByDigestElement, _ *stmtSummaryByDigest, ssStats *stmtSummaryStats) any {
+		return avgInt(int64(ssStats.sumCompileLatency), ssStats.execCount)
 	},
-	MaxCompileLatencyStr: func(_ *stmtSummaryReader, ssElement *stmtSummaryByDigestElement, _ *stmtSummaryByDigest) any {
-		return int64(ssElement.maxCompileLatency)
+	MaxCompileLatencyStr: func(_ *stmtSummaryReader, _ *stmtSummaryByDigestElement, _ *stmtSummaryByDigest, ssStats *stmtSummaryStats) any {
+		return int64(ssStats.maxCompileLatency)
 	},
-	SumCopTaskNumStr: func(_ *stmtSummaryReader, ssElement *stmtSummaryByDigestElement, _ *stmtSummaryByDigest) any {
-		return ssElement.sumNumCopTasks
+	SumCopTaskNumStr: func(_ *stmtSummaryReader, _ *stmtSummaryByDigestElement, _ *stmtSummaryByDigest, ssStats *stmtSummaryStats) any {
+		return ssStats.sumNumCopTasks
 	},
-	MaxCopProcessTimeStr: func(_ *stmtSummaryReader, ssElement *stmtSummaryByDigestElement, _ *stmtSummaryByDigest) any {
-		return int64(ssElement.maxCopProcessTime)
+	MaxCopProcessTimeStr: func(_ *stmtSummaryReader, _ *stmtSummaryByDigestElement, _ *stmtSummaryByDigest, ssStats *stmtSummaryStats) any {
+		return int64(ssStats.maxCopProcessTime)
 	},
-	MaxCopProcessAddressStr: func(_ *stmtSummaryReader, ssElement *stmtSummaryByDigestElement, _ *stmtSummaryByDigest) any {
-		return convertEmptyToNil(ssElement.maxCopProcessAddress)
+	MaxCopProcessAddressStr: func(_ *stmtSummaryReader, _ *stmtSummaryByDigestElement, _ *stmtSummaryByDigest, ssStats *stmtSummaryStats) any {
+		return convertEmptyToNil(ssStats.maxCopProcessAddress)
 	},
-	MaxCopWaitTimeStr: func(_ *stmtSummaryReader, ssElement *stmtSummaryByDigestElement, _ *stmtSummaryByDigest) any {
-		return int64(ssElement.maxCopWaitTime)
+	MaxCopWaitTimeStr: func(_ *stmtSummaryReader, _ *stmtSummaryByDigestElement, _ *stmtSummaryByDigest, ssStats *stmtSummaryStats) any {
+		return int64(ssStats.maxCopWaitTime)
 	},
-	MaxCopWaitAddressStr: func(_ *stmtSummaryReader, ssElement *stmtSummaryByDigestElement, _ *stmtSummaryByDigest) any {
-		return convertEmptyToNil(ssElement.maxCopWaitAddress)
+	MaxCopWaitAddressStr: func(_ *stmtSummaryReader, _ *stmtSummaryByDigestElement, _ *stmtSummaryByDigest, ssStats *stmtSummaryStats) any {
+		return convertEmptyToNil(ssStats.maxCopWaitAddress)
 	},
-	AvgProcessTimeStr: func(_ *stmtSummaryReader, ssElement *stmtSummaryByDigestElement, _ *stmtSummaryByDigest) any {
-		return avgInt(int64(ssElement.sumProcessTime), ssElement.execCount)
+	AvgProcessTimeStr: func(_ *stmtSummaryReader, _ *stmtSummaryByDigestElement, _ *stmtSummaryByDigest, ssStats *stmtSummaryStats) any {
+		return avgInt(int64(ssStats.sumProcessTime), ssStats.execCount)
 	},
-	MaxProcessTimeStr: func(_ *stmtSummaryReader, ssElement *stmtSummaryByDigestElement, _ *stmtSummaryByDigest) any {
-		return int64(ssElement.maxProcessTime)
+	MaxProcessTimeStr: func(_ *stmtSummaryReader, _ *stmtSummaryByDigestElement, _ *stmtSummaryByDigest, ssStats *stmtSummaryStats) any {
+		return int64(ssStats.maxProcessTime)
 	},
-	AvgWaitTimeStr: func(_ *stmtSummaryReader, ssElement *stmtSummaryByDigestElement, _ *stmtSummaryByDigest) any {
-		return avgInt(int64(ssElement.sumWaitTime), ssElement.execCount)
+	AvgWaitTimeStr: func(_ *stmtSummaryReader, _ *stmtSummaryByDigestElement, _ *stmtSummaryByDigest, ssStats *stmtSummaryStats) any {
+		return avgInt(int64(ssStats.sumWaitTime), ssStats.execCount)
 	},
-	MaxWaitTimeStr: func(_ *stmtSummaryReader, ssElement *stmtSummaryByDigestElement, _ *stmtSummaryByDigest) any {
-		return int64(ssElement.maxWaitTime)
+	MaxWaitTimeStr: func(_ *stmtSummaryReader, _ *stmtSummaryByDigestElement, _ *stmtSummaryByDigest, ssStats *stmtSummaryStats) any {
+		return int64(ssStats.maxWaitTime)
 	},
-	AvgBackoffTimeStr: func(_ *stmtSummaryReader, ssElement *stmtSummaryByDigestElement, _ *stmtSummaryByDigest) any {
-		return avgInt(int64(ssElement.sumBackoffTime), ssElement.execCount)
+	AvgBackoffTimeStr: func(_ *stmtSummaryReader, _ *stmtSummaryByDigestElement, _ *stmtSummaryByDigest, ssStats *stmtSummaryStats) any {
+		return avgInt(int64(ssStats.sumBackoffTime), ssStats.execCount)
 	},
-	MaxBackoffTimeStr: func(_ *stmtSummaryReader, ssElement *stmtSummaryByDigestElement, _ *stmtSummaryByDigest) any {
-		return int64(ssElement.maxBackoffTime)
+	MaxBackoffTimeStr: func(_ *stmtSummaryReader, _ *stmtSummaryByDigestElement, _ *stmtSummaryByDigest, ssStats *stmtSummaryStats) any {
+		return int64(ssStats.maxBackoffTime)
 	},
-	AvgTotalKeysStr: func(_ *stmtSummaryReader, ssElement *stmtSummaryByDigestElement, _ *stmtSummaryByDigest) any {
-		return avgInt(ssElement.sumTotalKeys, ssElement.execCount)
+	AvgTotalKeysStr: func(_ *stmtSummaryReader, _ *stmtSummaryByDigestElement, _ *stmtSummaryByDigest, ssStats *stmtSummaryStats) any {
+		return avgInt(ssStats.sumTotalKeys, ssStats.execCount)
 	},
-	MaxTotalKeysStr: func(_ *stmtSummaryReader, ssElement *stmtSummaryByDigestElement, _ *stmtSummaryByDigest) any {
-		return ssElement.maxTotalKeys
+	MaxTotalKeysStr: func(_ *stmtSummaryReader, _ *stmtSummaryByDigestElement, _ *stmtSummaryByDigest, ssStats *stmtSummaryStats) any {
+		return ssStats.maxTotalKeys
 	},
-	AvgProcessedKeysStr: func(_ *stmtSummaryReader, ssElement *stmtSummaryByDigestElement, _ *stmtSummaryByDigest) any {
-		return avgInt(ssElement.sumProcessedKeys, ssElement.execCount)
+	AvgProcessedKeysStr: func(_ *stmtSummaryReader, _ *stmtSummaryByDigestElement, _ *stmtSummaryByDigest, ssStats *stmtSummaryStats) any {
+		return avgInt(ssStats.sumProcessedKeys, ssStats.execCount)
 	},
-	MaxProcessedKeysStr: func(_ *stmtSummaryReader, ssElement *stmtSummaryByDigestElement, _ *stmtSummaryByDigest) any {
-		return ssElement.maxProcessedKeys
+	MaxProcessedKeysStr: func(_ *stmtSummaryReader, _ *stmtSummaryByDigestElement, _ *stmtSummaryByDigest, ssStats *stmtSummaryStats) any {
+		return ssStats.maxProcessedKeys
 	},
-	AvgRocksdbDeleteSkippedCountStr: func(_ *stmtSummaryReader, ssElement *stmtSummaryByDigestElement, _ *stmtSummaryByDigest) any {
-		return avgInt(int64(ssElement.sumRocksdbDeleteSkippedCount), ssElement.execCount)
+	AvgRocksdbDeleteSkippedCountStr: func(_ *stmtSummaryReader, _ *stmtSummaryByDigestElement, _ *stmtSummaryByDigest, ssStats *stmtSummaryStats) any {
+		return avgInt(int64(ssStats.sumRocksdbDeleteSkippedCount), ssStats.execCount)
 	},
-	MaxRocksdbDeleteSkippedCountStr: func(_ *stmtSummaryReader, ssElement *stmtSummaryByDigestElement, _ *stmtSummaryByDigest) any {
-		return ssElement.maxRocksdbDeleteSkippedCount
+	MaxRocksdbDeleteSkippedCountStr: func(_ *stmtSummaryReader, _ *stmtSummaryByDigestElement, _ *stmtSummaryByDigest, ssStats *stmtSummaryStats) any {
+		return ssStats.maxRocksdbDeleteSkippedCount
 	},
-	AvgRocksdbKeySkippedCountStr: func(_ *stmtSummaryReader, ssElement *stmtSummaryByDigestElement, _ *stmtSummaryByDigest) any {
-		return avgInt(int64(ssElement.sumRocksdbKeySkippedCount), ssElement.execCount)
+	AvgRocksdbKeySkippedCountStr: func(_ *stmtSummaryReader, _ *stmtSummaryByDigestElement, _ *stmtSummaryByDigest, ssStats *stmtSummaryStats) any {
+		return avgInt(int64(ssStats.sumRocksdbKeySkippedCount), ssStats.execCount)
 	},
-	MaxRocksdbKeySkippedCountStr: func(_ *stmtSummaryReader, ssElement *stmtSummaryByDigestElement, _ *stmtSummaryByDigest) any {
-		return ssElement.maxRocksdbKeySkippedCount
+	MaxRocksdbKeySkippedCountStr: func(_ *stmtSummaryReader, _ *stmtSummaryByDigestElement, _ *stmtSummaryByDigest, ssStats *stmtSummaryStats) any {
+		return ssStats.maxRocksdbKeySkippedCount
 	},
-	AvgRocksdbBlockCacheHitCountStr: func(_ *stmtSummaryReader, ssElement *stmtSummaryByDigestElement, _ *stmtSummaryByDigest) any {
-		return avgInt(int64(ssElement.sumRocksdbBlockCacheHitCount), ssElement.execCount)
+	AvgRocksdbBlockCacheHitCountStr: func(_ *stmtSummaryReader, _ *stmtSummaryByDigestElement, _ *stmtSummaryByDigest, ssStats *stmtSummaryStats) any {
+		return avgInt(int64(ssStats.sumRocksdbBlockCacheHitCount), ssStats.execCount)
 	},
-	MaxRocksdbBlockCacheHitCountStr: func(_ *stmtSummaryReader, ssElement *stmtSummaryByDigestElement, _ *stmtSummaryByDigest) any {
-		return ssElement.maxRocksdbBlockCacheHitCount
+	MaxRocksdbBlockCacheHitCountStr: func(_ *stmtSummaryReader, _ *stmtSummaryByDigestElement, _ *stmtSummaryByDigest, ssStats *stmtSummaryStats) any {
+		return ssStats.maxRocksdbBlockCacheHitCount
 	},
-	AvgRocksdbBlockReadCountStr: func(_ *stmtSummaryReader, ssElement *stmtSummaryByDigestElement, _ *stmtSummaryByDigest) any {
-		return avgInt(int64(ssElement.sumRocksdbBlockReadCount), ssElement.execCount)
+	AvgRocksdbBlockReadCountStr: func(_ *stmtSummaryReader, _ *stmtSummaryByDigestElement, _ *stmtSummaryByDigest, ssStats *stmtSummaryStats) any {
+		return avgInt(int64(ssStats.sumRocksdbBlockReadCount), ssStats.execCount)
 	},
-	MaxRocksdbBlockReadCountStr: func(_ *stmtSummaryReader, ssElement *stmtSummaryByDigestElement, _ *stmtSummaryByDigest) any {
-		return ssElement.maxRocksdbBlockReadCount
+	MaxRocksdbBlockReadCountStr: func(_ *stmtSummaryReader, _ *stmtSummaryByDigestElement, _ *stmtSummaryByDigest, ssStats *stmtSummaryStats) any {
+		return ssStats.maxRocksdbBlockReadCount
 	},
-	AvgRocksdbBlockReadByteStr: func(_ *stmtSummaryReader, ssElement *stmtSummaryByDigestElement, _ *stmtSummaryByDigest) any {
-		return avgInt(int64(ssElement.sumRocksdbBlockReadByte), ssElement.execCount)
+	AvgRocksdbBlockReadByteStr: func(_ *stmtSummaryReader, _ *stmtSummaryByDigestElement, _ *stmtSummaryByDigest, ssStats *stmtSummaryStats) any {
+		return avgInt(int64(ssStats.sumRocksdbBlockReadByte), ssStats.execCount)
 	},
-	MaxRocksdbBlockReadByteStr: func(_ *stmtSummaryReader, ssElement *stmtSummaryByDigestElement, _ *stmtSummaryByDigest) any {
-		return ssElement.maxRocksdbBlockReadByte
+	MaxRocksdbBlockReadByteStr: func(_ *stmtSummaryReader, _ *stmtSummaryByDigestElement, _ *stmtSummaryByDigest, ssStats *stmtSummaryStats) any {
+		return ssStats.maxRocksdbBlockReadByte
 	},
-	AvgPrewriteTimeStr: func(_ *stmtSummaryReader, ssElement *stmtSummaryByDigestElement, _ *stmtSummaryByDigest) any {
-		return avgInt(int64(ssElement.sumPrewriteTime), ssElement.commitCount)
+	AvgPrewriteTimeStr: func(_ *stmtSummaryReader, _ *stmtSummaryByDigestElement, _ *stmtSummaryByDigest, ssStats *stmtSummaryStats) any {
+		return avgInt(int64(ssStats.sumPrewriteTime), ssStats.commitCount)
 	},
-	MaxPrewriteTimeStr: func(_ *stmtSummaryReader, ssElement *stmtSummaryByDigestElement, _ *stmtSummaryByDigest) any {
-		return int64(ssElement.maxPrewriteTime)
+	MaxPrewriteTimeStr: func(_ *stmtSummaryReader, _ *stmtSummaryByDigestElement, _ *stmtSummaryByDigest, ssStats *stmtSummaryStats) any {
+		return int64(ssStats.maxPrewriteTime)
 	},
-	AvgCommitTimeStr: func(_ *stmtSummaryReader, ssElement *stmtSummaryByDigestElement, _ *stmtSummaryByDigest) any {
-		return avgInt(int64(ssElement.sumCommitTime), ssElement.commitCount)
+	AvgCommitTimeStr: func(_ *stmtSummaryReader, _ *stmtSummaryByDigestElement, _ *stmtSummaryByDigest, ssStats *stmtSummaryStats) any {
+		return avgInt(int64(ssStats.sumCommitTime), ssStats.commitCount)
 	},
-	MaxCommitTimeStr: func(_ *stmtSummaryReader, ssElement *stmtSummaryByDigestElement, _ *stmtSummaryByDigest) any {
-		return int64(ssElement.maxCommitTime)
+	MaxCommitTimeStr: func(_ *stmtSummaryReader, _ *stmtSummaryByDigestElement, _ *stmtSummaryByDigest, ssStats *stmtSummaryStats) any {
+		return int64(ssStats.maxCommitTime)
 	},
-	AvgGetCommitTsTimeStr: func(_ *stmtSummaryReader, ssElement *stmtSummaryByDigestElement, _ *stmtSummaryByDigest) any {
-		return avgInt(int64(ssElement.sumGetCommitTsTime), ssElement.commitCount)
+	AvgGetCommitTsTimeStr: func(_ *stmtSummaryReader, _ *stmtSummaryByDigestElement, _ *stmtSummaryByDigest, ssStats *stmtSummaryStats) any {
+		return avgInt(int64(ssStats.sumGetCommitTsTime), ssStats.commitCount)
 	},
-	MaxGetCommitTsTimeStr: func(_ *stmtSummaryReader, ssElement *stmtSummaryByDigestElement, _ *stmtSummaryByDigest) any {
-		return int64(ssElement.maxGetCommitTsTime)
+	MaxGetCommitTsTimeStr: func(_ *stmtSummaryReader, _ *stmtSummaryByDigestElement, _ *stmtSummaryByDigest, ssStats *stmtSummaryStats) any {
+		return int64(ssStats.maxGetCommitTsTime)
 	},
-	AvgCommitBackoffTimeStr: func(_ *stmtSummaryReader, ssElement *stmtSummaryByDigestElement, _ *stmtSummaryByDigest) any {
-		return avgInt(ssElement.sumCommitBackoffTime, ssElement.commitCount)
+	AvgCommitBackoffTimeStr: func(_ *stmtSummaryReader, _ *stmtSummaryByDigestElement, _ *stmtSummaryByDigest, ssStats *stmtSummaryStats) any {
+		return avgInt(ssStats.sumCommitBackoffTime, ssStats.commitCount)
 	},
-	MaxCommitBackoffTimeStr: func(_ *stmtSummaryReader, ssElement *stmtSummaryByDigestElement, _ *stmtSummaryByDigest) any {
-		return ssElement.maxCommitBackoffTime
+	MaxCommitBackoffTimeStr: func(_ *stmtSummaryReader, _ *stmtSummaryByDigestElement, _ *stmtSummaryByDigest, ssStats *stmtSummaryStats) any {
+		return ssStats.maxCommitBackoffTime
 	},
-	AvgResolveLockTimeStr: func(_ *stmtSummaryReader, ssElement *stmtSummaryByDigestElement, _ *stmtSummaryByDigest) any {
-		return avgInt(ssElement.sumResolveLockTime, ssElement.commitCount)
+	AvgResolveLockTimeStr: func(_ *stmtSummaryReader, _ *stmtSummaryByDigestElement, _ *stmtSummaryByDigest, ssStats *stmtSummaryStats) any {
+		return avgInt(ssStats.sumResolveLockTime, ssStats.commitCount)
 	},
-	MaxResolveLockTimeStr: func(_ *stmtSummaryReader, ssElement *stmtSummaryByDigestElement, _ *stmtSummaryByDigest) any {
-		return ssElement.maxResolveLockTime
+	MaxResolveLockTimeStr: func(_ *stmtSummaryReader, _ *stmtSummaryByDigestElement, _ *stmtSummaryByDigest, ssStats *stmtSummaryStats) any {
+		return ssStats.maxResolveLockTime
 	},
-	AvgLocalLatchWaitTimeStr: func(_ *stmtSummaryReader, ssElement *stmtSummaryByDigestElement, _ *stmtSummaryByDigest) any {
-		return avgInt(int64(ssElement.sumLocalLatchTime), ssElement.commitCount)
+	AvgLocalLatchWaitTimeStr: func(_ *stmtSummaryReader, _ *stmtSummaryByDigestElement, _ *stmtSummaryByDigest, ssStats *stmtSummaryStats) any {
+		return avgInt(int64(ssStats.sumLocalLatchTime), ssStats.commitCount)
 	},
-	MaxLocalLatchWaitTimeStr: func(_ *stmtSummaryReader, ssElement *stmtSummaryByDigestElement, _ *stmtSummaryByDigest) any {
-		return int64(ssElement.maxLocalLatchTime)
+	MaxLocalLatchWaitTimeStr: func(_ *stmtSummaryReader, _ *stmtSummaryByDigestElement, _ *stmtSummaryByDigest, ssStats *stmtSummaryStats) any {
+		return int64(ssStats.maxLocalLatchTime)
 	},
-	AvgWriteKeysStr: func(_ *stmtSummaryReader, ssElement *stmtSummaryByDigestElement, _ *stmtSummaryByDigest) any {
-		return avgFloat(ssElement.sumWriteKeys, ssElement.commitCount)
+	AvgWriteKeysStr: func(_ *stmtSummaryReader, _ *stmtSummaryByDigestElement, _ *stmtSummaryByDigest, ssStats *stmtSummaryStats) any {
+		return avgFloat(ssStats.sumWriteKeys, ssStats.commitCount)
 	},
-	MaxWriteKeysStr: func(_ *stmtSummaryReader, ssElement *stmtSummaryByDigestElement, _ *stmtSummaryByDigest) any {
-		return ssElement.maxWriteKeys
+	MaxWriteKeysStr: func(_ *stmtSummaryReader, _ *stmtSummaryByDigestElement, _ *stmtSummaryByDigest, ssStats *stmtSummaryStats) any {
+		return ssStats.maxWriteKeys
 	},
-	AvgWriteSizeStr: func(_ *stmtSummaryReader, ssElement *stmtSummaryByDigestElement, _ *stmtSummaryByDigest) any {
-		return avgFloat(ssElement.sumWriteSize, ssElement.commitCount)
+	AvgWriteSizeStr: func(_ *stmtSummaryReader, _ *stmtSummaryByDigestElement, _ *stmtSummaryByDigest, ssStats *stmtSummaryStats) any {
+		return avgFloat(ssStats.sumWriteSize, ssStats.commitCount)
 	},
-	MaxWriteSizeStr: func(_ *stmtSummaryReader, ssElement *stmtSummaryByDigestElement, _ *stmtSummaryByDigest) any {
-		return ssElement.maxWriteSize
+	MaxWriteSizeStr: func(_ *stmtSummaryReader, _ *stmtSummaryByDigestElement, _ *stmtSummaryByDigest, ssStats *stmtSummaryStats) any {
+		return ssStats.maxWriteSize
 	},
-	AvgPrewriteRegionsStr: func(_ *stmtSummaryReader, ssElement *stmtSummaryByDigestElement, _ *stmtSummaryByDigest) any {
-		return avgFloat(ssElement.sumPrewriteRegionNum, ssElement.commitCount)
+	AvgPrewriteRegionsStr: func(_ *stmtSummaryReader, _ *stmtSummaryByDigestElement, _ *stmtSummaryByDigest, ssStats *stmtSummaryStats) any {
+		return avgFloat(ssStats.sumPrewriteRegionNum, ssStats.commitCount)
 	},
-	MaxPrewriteRegionsStr: func(_ *stmtSummaryReader, ssElement *stmtSummaryByDigestElement, _ *stmtSummaryByDigest) any {
-		return int(ssElement.maxPrewriteRegionNum)
+	MaxPrewriteRegionsStr: func(_ *stmtSummaryReader, _ *stmtSummaryByDigestElement, _ *stmtSummaryByDigest, ssStats *stmtSummaryStats) any {
+		return int(ssStats.maxPrewriteRegionNum)
 	},
-	AvgTxnRetryStr: func(_ *stmtSummaryReader, ssElement *stmtSummaryByDigestElement, _ *stmtSummaryByDigest) any {
-		return avgFloat(ssElement.sumTxnRetry, ssElement.commitCount)
+	AvgTxnRetryStr: func(_ *stmtSummaryReader, _ *stmtSummaryByDigestElement, _ *stmtSummaryByDigest, ssStats *stmtSummaryStats) any {
+		return avgFloat(ssStats.sumTxnRetry, ssStats.commitCount)
 	},
-	MaxTxnRetryStr: func(_ *stmtSummaryReader, ssElement *stmtSummaryByDigestElement, _ *stmtSummaryByDigest) any {
-		return ssElement.maxTxnRetry
+	MaxTxnRetryStr: func(_ *stmtSummaryReader, _ *stmtSummaryByDigestElement, _ *stmtSummaryByDigest, ssStats *stmtSummaryStats) any {
+		return ssStats.maxTxnRetry
 	},
-	SumExecRetryStr: func(_ *stmtSummaryReader, ssElement *stmtSummaryByDigestElement, _ *stmtSummaryByDigest) any {
-		return int(ssElement.execRetryCount)
+	SumExecRetryStr: func(_ *stmtSummaryReader, _ *stmtSummaryByDigestElement, _ *stmtSummaryByDigest, ssStats *stmtSummaryStats) any {
+		return int(ssStats.execRetryCount)
 	},
-	SumExecRetryTimeStr: func(_ *stmtSummaryReader, ssElement *stmtSummaryByDigestElement, _ *stmtSummaryByDigest) any {
-		return int64(ssElement.execRetryTime)
+	SumExecRetryTimeStr: func(_ *stmtSummaryReader, _ *stmtSummaryByDigestElement, _ *stmtSummaryByDigest, ssStats *stmtSummaryStats) any {
+		return int64(ssStats.execRetryTime)
 	},
-	SumBackoffTimesStr: func(_ *stmtSummaryReader, ssElement *stmtSummaryByDigestElement, _ *stmtSummaryByDigest) any {
-		return ssElement.sumBackoffTimes
+	SumBackoffTimesStr: func(_ *stmtSummaryReader, _ *stmtSummaryByDigestElement, _ *stmtSummaryByDigest, ssStats *stmtSummaryStats) any {
+		return ssStats.sumBackoffTimes
 	},
-	BackoffTypesStr: func(_ *stmtSummaryReader, ssElement *stmtSummaryByDigestElement, _ *stmtSummaryByDigest) any {
-		return formatBackoffTypes(ssElement.backoffTypes)
+	BackoffTypesStr: func(_ *stmtSummaryReader, _ *stmtSummaryByDigestElement, _ *stmtSummaryByDigest, ssStats *stmtSummaryStats) any {
+		return formatBackoffTypes(ssStats.backoffTypes)
 	},
-	AvgMemStr: func(_ *stmtSummaryReader, ssElement *stmtSummaryByDigestElement, _ *stmtSummaryByDigest) any {
-		return avgInt(ssElement.sumMem, ssElement.execCount)
+	AvgMemStr: func(_ *stmtSummaryReader, _ *stmtSummaryByDigestElement, _ *stmtSummaryByDigest, ssStats *stmtSummaryStats) any {
+		return avgInt(ssStats.sumMem, ssStats.execCount)
 	},
-	MaxMemStr: func(_ *stmtSummaryReader, ssElement *stmtSummaryByDigestElement, _ *stmtSummaryByDigest) any {
-		return ssElement.maxMem
+	MaxMemStr: func(_ *stmtSummaryReader, _ *stmtSummaryByDigestElement, _ *stmtSummaryByDigest, ssStats *stmtSummaryStats) any {
+		return ssStats.maxMem
 	},
-	AvgDiskStr: func(_ *stmtSummaryReader, ssElement *stmtSummaryByDigestElement, _ *stmtSummaryByDigest) any {
-		return avgInt(ssElement.sumDisk, ssElement.execCount)
+	AvgDiskStr: func(_ *stmtSummaryReader, _ *stmtSummaryByDigestElement, _ *stmtSummaryByDigest, ssStats *stmtSummaryStats) any {
+		return avgInt(ssStats.sumDisk, ssStats.execCount)
 	},
-	MaxDiskStr: func(_ *stmtSummaryReader, ssElement *stmtSummaryByDigestElement, _ *stmtSummaryByDigest) any {
-		return ssElement.maxDisk
+	MaxDiskStr: func(_ *stmtSummaryReader, _ *stmtSummaryByDigestElement, _ *stmtSummaryByDigest, ssStats *stmtSummaryStats) any {
+		return ssStats.maxDisk
 	},
-	AvgKvTimeStr: func(_ *stmtSummaryReader, ssElement *stmtSummaryByDigestElement, _ *stmtSummaryByDigest) any {
-		return avgInt(int64(ssElement.sumKVTotal), ssElement.commitCount)
+	AvgKvTimeStr: func(_ *stmtSummaryReader, _ *stmtSummaryByDigestElement, _ *stmtSummaryByDigest, ssStats *stmtSummaryStats) any {
+		return avgInt(int64(ssStats.sumKVTotal), ssStats.commitCount)
 	},
-	AvgPdTimeStr: func(_ *stmtSummaryReader, ssElement *stmtSummaryByDigestElement, _ *stmtSummaryByDigest) any {
-		return avgInt(int64(ssElement.sumPDTotal), ssElement.commitCount)
+	AvgPdTimeStr: func(_ *stmtSummaryReader, _ *stmtSummaryByDigestElement, _ *stmtSummaryByDigest, ssStats *stmtSummaryStats) any {
+		return avgInt(int64(ssStats.sumPDTotal), ssStats.commitCount)
 	},
-	AvgBackoffTotalTimeStr: func(_ *stmtSummaryReader, ssElement *stmtSummaryByDigestElement, _ *stmtSummaryByDigest) any {
-		return avgInt(int64(ssElement.sumBackoffTotal), ssElement.commitCount)
+	AvgBackoffTotalTimeStr: func(_ *stmtSummaryReader, _ *stmtSummaryByDigestElement, _ *stmtSummaryByDigest, ssStats *stmtSummaryStats) any {
+		return avgInt(int64(ssStats.sumBackoffTotal), ssStats.commitCount)
 	},
-	AvgWriteSQLRespTimeStr: func(_ *stmtSummaryReader, ssElement *stmtSummaryByDigestElement, _ *stmtSummaryByDigest) any {
-		return avgInt(int64(ssElement.sumWriteSQLRespTotal), ssElement.commitCount)
+	AvgWriteSQLRespTimeStr: func(_ *stmtSummaryReader, _ *stmtSummaryByDigestElement, _ *stmtSummaryByDigest, ssStats *stmtSummaryStats) any {
+		return avgInt(int64(ssStats.sumWriteSQLRespTotal), ssStats.commitCount)
 	},
-	AvgTidbCPUTimeStr: func(_ *stmtSummaryReader, ssElement *stmtSummaryByDigestElement, _ *stmtSummaryByDigest) any {
-		return avgInt(int64(ssElement.sumTidbCPU), ssElement.execCount)
+	AvgTidbCPUTimeStr: func(_ *stmtSummaryReader, _ *stmtSummaryByDigestElement, _ *stmtSummaryByDigest, ssStats *stmtSummaryStats) any {
+		return avgInt(int64(ssStats.sumTidbCPU), ssStats.execCount)
 	},
-	AvgTikvCPUTimeStr: func(_ *stmtSummaryReader, ssElement *stmtSummaryByDigestElement, _ *stmtSummaryByDigest) any {
-		return avgInt(int64(ssElement.sumTikvCPU), ssElement.execCount)
+	AvgTikvCPUTimeStr: func(_ *stmtSummaryReader, _ *stmtSummaryByDigestElement, _ *stmtSummaryByDigest, ssStats *stmtSummaryStats) any {
+		return avgInt(int64(ssStats.sumTikvCPU), ssStats.execCount)
 	},
-	MaxResultRowsStr: func(_ *stmtSummaryReader, ssElement *stmtSummaryByDigestElement, _ *stmtSummaryByDigest) any {
-		return ssElement.maxResultRows
+	MaxResultRowsStr: func(_ *stmtSummaryReader, _ *stmtSummaryByDigestElement, _ *stmtSummaryByDigest, ssStats *stmtSummaryStats) any {
+		return ssStats.maxResultRows
 	},
-	MinResultRowsStr: func(_ *stmtSummaryReader, ssElement *stmtSummaryByDigestElement, _ *stmtSummaryByDigest) any {
-		return ssElement.minResultRows
+	MinResultRowsStr: func(_ *stmtSummaryReader, _ *stmtSummaryByDigestElement, _ *stmtSummaryByDigest, ssStats *stmtSummaryStats) any {
+		return ssStats.minResultRows
 	},
-	AvgResultRowsStr: func(_ *stmtSummaryReader, ssElement *stmtSummaryByDigestElement, _ *stmtSummaryByDigest) any {
-		return avgInt(ssElement.sumResultRows, ssElement.execCount)
+	AvgResultRowsStr: func(_ *stmtSummaryReader, _ *stmtSummaryByDigestElement, _ *stmtSummaryByDigest, ssStats *stmtSummaryStats) any {
+		return avgInt(ssStats.sumResultRows, ssStats.execCount)
 	},
-	PreparedStr: func(_ *stmtSummaryReader, ssElement *stmtSummaryByDigestElement, _ *stmtSummaryByDigest) any {
-		return ssElement.prepared
+	PreparedStr: func(_ *stmtSummaryReader, _ *stmtSummaryByDigestElement, _ *stmtSummaryByDigest, ssStats *stmtSummaryStats) any {
+		return ssStats.prepared
 	},
-	AvgAffectedRowsStr: func(_ *stmtSummaryReader, ssElement *stmtSummaryByDigestElement, _ *stmtSummaryByDigest) any {
-		return avgFloat(int64(ssElement.sumAffectedRows), ssElement.execCount)
+	AvgAffectedRowsStr: func(_ *stmtSummaryReader, _ *stmtSummaryByDigestElement, _ *stmtSummaryByDigest, ssStats *stmtSummaryStats) any {
+		return avgFloat(int64(ssStats.sumAffectedRows), ssStats.execCount)
 	},
-	FirstSeenStr: func(reader *stmtSummaryReader, ssElement *stmtSummaryByDigestElement, _ *stmtSummaryByDigest) any {
-		firstSeen := ssElement.firstSeen
+	FirstSeenStr: func(reader *stmtSummaryReader, _ *stmtSummaryByDigestElement, _ *stmtSummaryByDigest, ssStats *stmtSummaryStats) any {
+		firstSeen := ssStats.firstSeen
 		if firstSeen.Location() != reader.tz {
 			firstSeen = firstSeen.In(reader.tz)
 		}
 		return types.NewTime(types.FromGoTime(firstSeen), mysql.TypeTimestamp, 0)
 	},
-	LastSeenStr: func(reader *stmtSummaryReader, ssElement *stmtSummaryByDigestElement, _ *stmtSummaryByDigest) any {
-		lastSeen := ssElement.lastSeen
+	LastSeenStr: func(reader *stmtSummaryReader, _ *stmtSummaryByDigestElement, _ *stmtSummaryByDigest, ssStats *stmtSummaryStats) any {
+		lastSeen := ssStats.lastSeen
 		if lastSeen.Location() != reader.tz {
 			lastSeen = lastSeen.In(reader.tz)
 		}
 		return types.NewTime(types.FromGoTime(lastSeen), mysql.TypeTimestamp, 0)
 	},
-	PlanInCacheStr: func(_ *stmtSummaryReader, ssElement *stmtSummaryByDigestElement, _ *stmtSummaryByDigest) any {
-		return ssElement.planInCache
+	PlanInCacheStr: func(_ *stmtSummaryReader, _ *stmtSummaryByDigestElement, _ *stmtSummaryByDigest, ssStats *stmtSummaryStats) any {
+		return ssStats.planInCache
 	},
-	PlanCacheHitsStr: func(_ *stmtSummaryReader, ssElement *stmtSummaryByDigestElement, _ *stmtSummaryByDigest) any {
-		return ssElement.planCacheHits
+	PlanCacheHitsStr: func(_ *stmtSummaryReader, _ *stmtSummaryByDigestElement, _ *stmtSummaryByDigest, ssStats *stmtSummaryStats) any {
+		return ssStats.planCacheHits
 	},
-	PlanInBindingStr: func(_ *stmtSummaryReader, ssElement *stmtSummaryByDigestElement, _ *stmtSummaryByDigest) any {
-		return ssElement.planInBinding
+	PlanInBindingStr: func(_ *stmtSummaryReader, _ *stmtSummaryByDigestElement, _ *stmtSummaryByDigest, ssStats *stmtSummaryStats) any {
+		return ssStats.planInBinding
 	},
-	QuerySampleTextStr: func(_ *stmtSummaryReader, ssElement *stmtSummaryByDigestElement, _ *stmtSummaryByDigest) any {
-		return ssElement.sampleSQL
+	QuerySampleTextStr: func(_ *stmtSummaryReader, _ *stmtSummaryByDigestElement, _ *stmtSummaryByDigest, ssStats *stmtSummaryStats) any {
+		return ssStats.sampleSQL
 	},
-	PrevSampleTextStr: func(_ *stmtSummaryReader, ssElement *stmtSummaryByDigestElement, _ *stmtSummaryByDigest) any {
-		return ssElement.prevSQL
+	PrevSampleTextStr: func(_ *stmtSummaryReader, _ *stmtSummaryByDigestElement, _ *stmtSummaryByDigest, ssStats *stmtSummaryStats) any {
+		return ssStats.prevSQL
 	},
-	PlanDigestStr: func(_ *stmtSummaryReader, _ *stmtSummaryByDigestElement, ssbd *stmtSummaryByDigest) any {
+	PlanDigestStr: func(_ *stmtSummaryReader, _ *stmtSummaryByDigestElement, ssbd *stmtSummaryByDigest, _ *stmtSummaryStats) any {
 		return ssbd.planDigest
 	},
-	PlanStr: func(_ *stmtSummaryReader, ssElement *stmtSummaryByDigestElement, _ *stmtSummaryByDigest) any {
-		plan, err := plancodec.DecodePlan(ssElement.samplePlan)
+	PlanStr: func(_ *stmtSummaryReader, _ *stmtSummaryByDigestElement, _ *stmtSummaryByDigest, ssStats *stmtSummaryStats) any {
+		plan, err := plancodec.DecodePlan(ssStats.samplePlan)
 		if err != nil {
-			logutil.BgLogger().Error("decode plan in statement summary failed", zap.String("plan", ssElement.samplePlan), zap.String("query", ssElement.sampleSQL), zap.Error(err))
+			logutil.BgLogger().Error("decode plan in statement summary failed", zap.String("plan", ssStats.samplePlan), zap.String("query", ssStats.sampleSQL), zap.Error(err))
 			plan = ""
 		}
 		return plan
 	},
-	BinaryPlan: func(_ *stmtSummaryReader, ssElement *stmtSummaryByDigestElement, _ *stmtSummaryByDigest) any {
-		return ssElement.sampleBinaryPlan
+	BinaryPlan: func(_ *stmtSummaryReader, _ *stmtSummaryByDigestElement, _ *stmtSummaryByDigest, ssStats *stmtSummaryStats) any {
+		return ssStats.sampleBinaryPlan
 	},
-	Charset: func(_ *stmtSummaryReader, ssElement *stmtSummaryByDigestElement, _ *stmtSummaryByDigest) any {
-		return ssElement.charset
+	Charset: func(_ *stmtSummaryReader, _ *stmtSummaryByDigestElement, _ *stmtSummaryByDigest, ssStats *stmtSummaryStats) any {
+		return ssStats.charset
 	},
-	Collation: func(_ *stmtSummaryReader, ssElement *stmtSummaryByDigestElement, _ *stmtSummaryByDigest) any {
-		return ssElement.collation
+	Collation: func(_ *stmtSummaryReader, _ *stmtSummaryByDigestElement, _ *stmtSummaryByDigest, ssStats *stmtSummaryStats) any {
+		return ssStats.collation
 	},
-	PlanHint: func(_ *stmtSummaryReader, ssElement *stmtSummaryByDigestElement, _ *stmtSummaryByDigest) any {
-		return ssElement.planHint
+	PlanHint: func(_ *stmtSummaryReader, _ *stmtSummaryByDigestElement, _ *stmtSummaryByDigest, ssStats *stmtSummaryStats) any {
+		return ssStats.planHint
 	},
-	AvgRequestUnitReadStr: func(_ *stmtSummaryReader, ssElement *stmtSummaryByDigestElement, _ *stmtSummaryByDigest) any {
-		return avgSumFloat(ssElement.SumRRU, ssElement.execCount)
+	AvgRequestUnitReadStr: func(_ *stmtSummaryReader, _ *stmtSummaryByDigestElement, _ *stmtSummaryByDigest, ssStats *stmtSummaryStats) any {
+		return avgSumFloat(ssStats.SumRRU, ssStats.execCount)
 	},
-	MaxRequestUnitReadStr: func(_ *stmtSummaryReader, ssElement *stmtSummaryByDigestElement, _ *stmtSummaryByDigest) any {
-		return ssElement.MaxRRU
+	MaxRequestUnitReadStr: func(_ *stmtSummaryReader, _ *stmtSummaryByDigestElement, _ *stmtSummaryByDigest, ssStats *stmtSummaryStats) any {
+		return ssStats.MaxRRU
 	},
-	AvgRequestUnitWriteStr: func(_ *stmtSummaryReader, ssElement *stmtSummaryByDigestElement, _ *stmtSummaryByDigest) any {
-		return avgSumFloat(ssElement.SumWRU, ssElement.execCount)
+	AvgRequestUnitWriteStr: func(_ *stmtSummaryReader, _ *stmtSummaryByDigestElement, _ *stmtSummaryByDigest, ssStats *stmtSummaryStats) any {
+		return avgSumFloat(ssStats.SumWRU, ssStats.execCount)
 	},
-	MaxRequestUnitWriteStr: func(_ *stmtSummaryReader, ssElement *stmtSummaryByDigestElement, _ *stmtSummaryByDigest) any {
-		return ssElement.MaxWRU
+	MaxRequestUnitWriteStr: func(_ *stmtSummaryReader, _ *stmtSummaryByDigestElement, _ *stmtSummaryByDigest, ssStats *stmtSummaryStats) any {
+		return ssStats.MaxWRU
 	},
-	AvgQueuedRcTimeStr: func(_ *stmtSummaryReader, ssElement *stmtSummaryByDigestElement, _ *stmtSummaryByDigest) any {
-		return avgInt(int64(ssElement.SumRUWaitDuration), ssElement.execCount)
+	AvgQueuedRcTimeStr: func(_ *stmtSummaryReader, _ *stmtSummaryByDigestElement, _ *stmtSummaryByDigest, ssStats *stmtSummaryStats) any {
+		return avgInt(int64(ssStats.SumRUWaitDuration), ssStats.execCount)
 	},
-	MaxQueuedRcTimeStr: func(_ *stmtSummaryReader, ssElement *stmtSummaryByDigestElement, _ *stmtSummaryByDigest) any {
-		return int64(ssElement.MaxRUWaitDuration)
+	MaxQueuedRcTimeStr: func(_ *stmtSummaryReader, _ *stmtSummaryByDigestElement, _ *stmtSummaryByDigest, ssStats *stmtSummaryStats) any {
+		return int64(ssStats.MaxRUWaitDuration)
 	},
-	ResourceGroupName: func(_ *stmtSummaryReader, ssElement *stmtSummaryByDigestElement, _ *stmtSummaryByDigest) any {
-		return ssElement.resourceGroupName
+	ResourceGroupName: func(_ *stmtSummaryReader, _ *stmtSummaryByDigestElement, _ *stmtSummaryByDigest, ssStats *stmtSummaryStats) any {
+		return ssStats.resourceGroupName
 	},
-	PlanCacheUnqualifiedStr: func(_ *stmtSummaryReader, ssElement *stmtSummaryByDigestElement, _ *stmtSummaryByDigest) any {
-		return ssElement.planCacheUnqualifiedCount
+	PlanCacheUnqualifiedStr: func(_ *stmtSummaryReader, _ *stmtSummaryByDigestElement, _ *stmtSummaryByDigest, ssStats *stmtSummaryStats) any {
+		return ssStats.planCacheUnqualifiedCount
 	},
-	PlanCacheUnqualifiedLastReasonStr: func(_ *stmtSummaryReader, ssElement *stmtSummaryByDigestElement, _ *stmtSummaryByDigest) any {
-		return ssElement.lastPlanCacheUnqualified
+	PlanCacheUnqualifiedLastReasonStr: func(_ *stmtSummaryReader, _ *stmtSummaryByDigestElement, _ *stmtSummaryByDigest, ssStats *stmtSummaryStats) any {
+		return ssStats.lastPlanCacheUnqualified
 	},
 }
