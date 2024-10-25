@@ -1030,6 +1030,9 @@ const (
 	TiDBRCWriteCheckTs = "tidb_rc_write_check_ts"
 	// TiDBCommitterConcurrency controls the number of running concurrent requests in the commit phase.
 	TiDBCommitterConcurrency = "tidb_committer_concurrency"
+	// TiDBPipelinedFlushConcurrency controls the number of running concurrent requests in the
+	// pipelined flush action.
+	TiDBPipelinedFlushConcurrency = "tidb_pipelined_flush_concurrency"
 	// TiDBEnableBatchDML enables batch dml.
 	TiDBEnableBatchDML = "tidb_enable_batch_dml"
 	// TiDBStatsCacheMemQuota records stats cache quota
@@ -1427,6 +1430,7 @@ const (
 	DefTiDBQueryLogMaxLen                             = 4096
 	DefRequireSecureTransport                         = false
 	DefTiDBCommitterConcurrency                       = 128
+	DefTiDBPipelinedFlushConcurrency                  = 128
 	DefTiDBBatchDMLIgnoreError                        = false
 	DefTiDBMemQuotaAnalyze                            = -1
 	DefTiDBEnableAutoAnalyze                          = true

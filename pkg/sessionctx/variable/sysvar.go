@@ -931,6 +931,23 @@ var defaultSysVars = []*SysVar{
 		return nil
 	}},
 	{Scope: ScopeGlobal, Name: TiDBEnableHistoricalStats, Value: Off, Type: TypeBool, Depended: true},
+	{
+		Scope: ScopeGlobal,
+		Name:  TiDBPipelinedFlushConcurrency,
+		Value: strconv.Itoa(DefTiDBPipelinedFlushConcurrency),
+		Type:  TypeUnsigned,
+		SetGlobal: func(_ context.Context, _ *SessionVars, val string) error {
+			tikvcfg.PipelinedFlushConcurrency.Store(
+				uint32(
+					tidbOptPositiveInt32(
+						val,
+						DefTiDBPipelinedFlushConcurrency,
+					),
+				),
+			)
+			return nil
+		},
+	},
 	/* tikv gc metrics */
 	{Scope: ScopeGlobal, Name: TiDBGCEnable, Value: On, Type: TypeBool, GetGlobal: func(_ context.Context, s *SessionVars) (string, error) {
 		return getTiDBTableValue(s, "tikv_gc_enable", On)
