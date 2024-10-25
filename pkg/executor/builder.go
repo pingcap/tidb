@@ -1523,6 +1523,11 @@ func (b *executorBuilder) buildHashJoinV2(v *plannercore.PhysicalHashJoin) exec.
 			OtherCondition: v.OtherConditions,
 		},
 	}
+	if len(v.OtherConditions) == 0 {
+		// sometimes the OtherCondtition could be a not nil slice with length = 0
+		// in HashJoinV2, it is assumed that if there is no other condition, e.HashJoinCtxV2.OtherCondition should be nil
+		e.HashJoinCtxV2.OtherCondition = nil
+	}
 	e.HashJoinCtxV2.SessCtx = b.ctx
 	e.HashJoinCtxV2.JoinType = v.JoinType
 	e.HashJoinCtxV2.Concurrency = v.Concurrency
@@ -1558,21 +1563,29 @@ func (b *executorBuilder) buildHashJoinV2(v *plannercore.PhysicalHashJoin) exec.
 		if v.InnerChildIdx == 1 {
 			buildSideExec, buildKeys = leftExec, v.LeftJoinKeys
 			e.ProbeSideTupleFetcher.ProbeSideExec, probeKeys = rightExec, v.RightJoinKeys
-			e.HashJoinCtxV2.BuildFilter = v.LeftConditions
+			if len(v.LeftConditions) > 0 {
+				e.HashJoinCtxV2.BuildFilter = v.LeftConditions
+			}
 		} else {
 			buildSideExec, buildKeys = rightExec, v.RightJoinKeys
 			e.ProbeSideTupleFetcher.ProbeSideExec, probeKeys = leftExec, v.LeftJoinKeys
-			e.HashJoinCtxV2.BuildFilter = v.RightConditions
+			if len(v.RightConditions) > 0 {
+				e.HashJoinCtxV2.BuildFilter = v.RightConditions
+			}
 		}
 	} else {
 		if v.InnerChildIdx == 0 {
 			buildSideExec, buildKeys = leftExec, v.LeftJoinKeys
 			e.ProbeSideTupleFetcher.ProbeSideExec, probeKeys = rightExec, v.RightJoinKeys
-			e.HashJoinCtxV2.ProbeFilter = v.RightConditions
+			if len(v.RightConditions) > 0 {
+				e.HashJoinCtxV2.ProbeFilter = v.RightConditions
+			}
 		} else {
 			buildSideExec, buildKeys = rightExec, v.RightJoinKeys
 			e.ProbeSideTupleFetcher.ProbeSideExec, probeKeys = leftExec, v.LeftJoinKeys
-			e.HashJoinCtxV2.ProbeFilter = v.LeftConditions
+			if len(v.LeftConditions) > 0 {
+				e.HashJoinCtxV2.ProbeFilter = v.LeftConditions
+			}
 		}
 	}
 	probeKeyColIdx := make([]int, len(probeKeys))
