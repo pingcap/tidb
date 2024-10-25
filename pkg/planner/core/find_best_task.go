@@ -2287,11 +2287,11 @@ func (is *PhysicalIndexScan) addSelectionConditionForGlobalIndex(p *logicalop.Da
 		}
 		for _, idx := range idxArr {
 			id := pInfo.Definitions[idx].ID
-			if _, ok := ignoreMap[id]; !ok {
+			_, ok := ignoreMap[id]
+			if !ok {
 				args = append(args, expression.NewInt64Const(id))
-			} else if intest.InTest {
-				panic("PartitionPruning returns partitions which should be ignored!")
 			}
+			intest.Assert(!ok, "PartitionPruning returns partitions which should be ignored!")
 		}
 	}
 	if len(args) == 1 {
