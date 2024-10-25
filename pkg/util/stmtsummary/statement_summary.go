@@ -99,6 +99,7 @@ type stmtSummaryByDigest struct {
 	// Mutex is only used to lock `history`.
 	sync.Mutex
 	initialized bool
+	cumulative  stmtSummaryStats
 	// Each element in history is a summary in one interval.
 	history *list.List
 	// Following fields are common for each summary element.
@@ -573,6 +574,8 @@ func (ssbd *stmtSummaryByDigest) init(sei *StmtExecInfo, _ int64, _ int64, _ int
 	}
 	tableNames := buffer.String()
 
+	ssbd.cumulative = *newStmtSummaryStats(sei)
+
 	planDigest := sei.PlanDigest
 	if sei.PlanDigestGen != nil && len(planDigest) == 0 {
 		// It comes here only when the plan is 'Point_Get'.
@@ -597,6 +600,7 @@ func (ssbd *stmtSummaryByDigest) add(sei *StmtExecInfo, beginTime int64, interva
 		if !ssbd.initialized {
 			ssbd.init(sei, beginTime, intervalSeconds, historySize)
 		}
+		ssbd.cumulative.add(sei)
 
 		var ssElement *stmtSummaryByDigestElement
 		isElementNew := true
