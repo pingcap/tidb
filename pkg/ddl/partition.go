@@ -2107,34 +2107,6 @@ func getTableInfoWithDroppingPartitions(t *model.TableInfo) *model.TableInfo {
 	return nt
 }
 
-// getTableInfoWithOriginalPartitions builds oldTableInfo including truncating partitions, only used by onTruncateTablePartition.
-func getTableInfoWithOriginalPartitions(t *model.TableInfo, oldIDs []int64, newIDs []int64) *model.TableInfo {
-	nt := t.Clone()
-	np := nt.Partition
-
-	// reconstruct original definitions
-	for _, oldDef := range np.DroppingDefinitions {
-		var newID int64
-		for i := range newIDs {
-			if oldDef.ID == oldIDs[i] {
-				newID = newIDs[i]
-				break
-			}
-		}
-		for i := range np.Definitions {
-			newDef := &np.Definitions[i]
-			if newDef.ID == newID {
-				newDef.ID = oldDef.ID
-				break
-			}
-		}
-	}
-
-	np.DroppingDefinitions = nil
-	np.NewPartitionIDs = nil
-	return nt
-}
-
 func dropLabelRules(ctx context.Context, schemaName, tableName string, partNames []string) error {
 	deleteRules := make([]string, 0, len(partNames))
 	for _, partName := range partNames {
@@ -2547,10 +2519,10 @@ func (w *worker) onTruncateTablePartition(jobCtx *jobContext, job *model.Job) (i
 		if hasGlobalIndex(tblInfo) {
 			// This work as a flag to ignore Global Index entries from the new partitions!
 			pi.NewPartitionIDs = newIDs[:]
-			pi.DDLState = model.StateWriteOnly
 			pi.DDLAction = model.ActionTruncateTablePartition
 
 			job.SchemaState = model.StateWriteOnly
+			pi.DDLState = job.SchemaState
 			return updateVersionAndTableInfo(jobCtx, job, tblInfo, true)
 		}
 		// Here we can optimize and do a single state change DDL
@@ -2576,9 +2548,9 @@ func (w *worker) onTruncateTablePartition(jobCtx *jobContext, job *model.Job) (i
 		pi.DroppingDefinitions = oldDefinitions
 		// And we don't need to filter for new partitions any longer
 		tblInfo.Partition.NewPartitionIDs = nil
-		pi.DDLState = model.StateDeleteOnly
 
 		job.SchemaState = model.StateDeleteOnly
+		pi.DDLState = job.SchemaState
 		return updateVersionAndTableInfo(jobCtx, job, tblInfo, true)
 	case model.StateDeleteOnly:
 		// Now we don't see the old partitions, but other sessions may still use them.
@@ -2586,7 +2558,7 @@ func (w *worker) onTruncateTablePartition(jobCtx *jobContext, job *model.Job) (i
 		// the old partitions, as well as the new partitions.
 
 		job.SchemaState = model.StateDeleteReorganization
-		pi.DDLState = model.StateDeleteReorganization
+		pi.DDLState = job.SchemaState
 		return updateVersionAndTableInfo(jobCtx, job, tblInfo, true)
 	case model.StateDeleteReorganization:
 		// Now the old partitions are no longer accessible, but they are still referenced in
@@ -2618,7 +2590,7 @@ func (w *worker) onTruncateTablePartition(jobCtx *jobContext, job *model.Job) (i
 	}
 
 	// used by ApplyDiff in updateSchemaVersion
-	job.CtxVars = []any{oldIDs, newIDs}
+	args.ShouldUpdateAffectedPartitions = true
 	ver, err = updateVersionAndTableInfo(jobCtx, job, tblInfo, true)
 	if err != nil {
 		return ver, errors.Trace(err)
