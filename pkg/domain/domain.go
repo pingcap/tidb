@@ -65,7 +65,6 @@ import (
 	metrics2 "github.com/pingcap/tidb/pkg/planner/core/metrics"
 	"github.com/pingcap/tidb/pkg/privilege/privileges"
 	"github.com/pingcap/tidb/pkg/resourcegroup/runaway"
-	sessiontypes "github.com/pingcap/tidb/pkg/session/types"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/sessionstates"
 	"github.com/pingcap/tidb/pkg/sessionctx/sysproctrack"
@@ -1380,12 +1379,8 @@ func (do *Domain) Init(
 	var ddlNotifierStore notifier.Store
 	if intest.InTest {
 		ddlNotifierStore = notifier.OpenTableStore("mysql", ddl.NotifierTableName)
-		se, err := do.sysExecutorFactory(do)
-		if err != nil {
-			return err
-		}
 		do.ddlNotifier = notifier.NewDDLNotifier(
-			se.(sessiontypes.Session),
+			do.sysSessionPool,
 			ddlNotifierStore,
 			time.Second,
 		)
@@ -1511,12 +1506,6 @@ func (do *Domain) Start() error {
 		return err
 	}
 	do.minJobIDRefresher = do.ddl.GetMinJobIDRefresher()
-	if intest.InTest {
-		do.wg.Run(func() {
-			do.ddlNotifier.Start(do.ctx)
-			do.ddlNotifier.Close()
-		}, "ddlNotifier")
-	}
 
 	// Local store needs to get the change information for every DDL state in each session.
 	do.wg.Run(func() {
@@ -2350,6 +2339,9 @@ func (do *Domain) UpdateTableStatsLoop(ctx, initStatsCtx sessionctx.Context) err
 	variable.EnableStatsOwner = do.enableStatsOwner
 	variable.DisableStatsOwner = do.disableStatsOwner
 	do.statsOwner = do.newOwnerManager(handle.StatsPrompt, handle.StatsOwnerKey)
+	if intest.InTest {
+		do.statsOwner.SetListener(do.ddlNotifier)
+	}
 	do.wg.Run(func() {
 		do.indexUsageWorker()
 	}, "indexUsageWorker")

@@ -22,6 +22,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/ngaut/pools"
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/ddl/notifier"
 	sess "github.com/pingcap/tidb/pkg/ddl/session"
@@ -30,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
+	"github.com/pingcap/tidb/pkg/util"
 	"github.com/stretchr/testify/require"
 )
 
@@ -61,10 +63,17 @@ func TestBasicPubSub(t *testing.T) {
 	tk.MustExec("DROP TABLE IF EXISTS " + ddl.NotifierTableName)
 	tk.MustExec(ddl.NotifierTableSQL)
 
-	ctx, cancel := context.WithCancel(context.Background())
 	s := notifier.OpenTableStore("test", ddl.NotifierTableName)
+	sessionPool := util.NewSessionPool(
+		1,
+		func() (pools.Resource, error) {
+			return tk.Session(), nil
+		},
+		nil,
+		nil,
+	)
 
-	n := notifier.NewDDLNotifier(tk.Session(), s, 50*time.Millisecond)
+	n := notifier.NewDDLNotifier(sessionPool, s, 50*time.Millisecond)
 
 	var seenChangesMu sync.Mutex
 	seenChanges := make([]*notifier.SchemaChangeEvent, 0, 8)
@@ -94,12 +103,13 @@ func TestBasicPubSub(t *testing.T) {
 
 	done := make(chan struct{})
 	go func() {
-		n.Start(ctx)
+		n.OnBecomeOwner()
 		close(done)
 	}()
 
 	tk2 := testkit.NewTestKit(t, store)
 	se := sess.NewSession(tk2.Session())
+	ctx := context.Background()
 	event1 := notifier.NewCreateTableEvent(&model.TableInfo{ID: 1000, Name: pmodel.NewCIStr("t1")})
 	err := notifier.PubSchemeChangeToStore(ctx, se, 1, -1, event1, s)
 	require.NoError(t, err)
@@ -119,8 +129,7 @@ func TestBasicPubSub(t *testing.T) {
 	require.Equal(t, event1, seenChanges[0])
 	require.Equal(t, event2, seenChanges[1])
 	require.Equal(t, event3, seenChanges[2])
-
-	cancel()
+	n.OnRetireOwner()
 	<-done
 }
 
@@ -131,10 +140,16 @@ func TestDeliverOrderAndCleanup(t *testing.T) {
 	tk.MustExec("DROP TABLE IF EXISTS " + ddl.NotifierTableName)
 	tk.MustExec(ddl.NotifierTableSQL)
 
-	ctx, cancel := context.WithCancel(context.Background())
 	s := notifier.OpenTableStore("test", ddl.NotifierTableName)
-
-	n := notifier.NewDDLNotifier(tk.Session(), s, 50*time.Millisecond)
+	sessionPool := util.NewSessionPool(
+		1,
+		func() (pools.Resource, error) {
+			return tk.Session(), nil
+		},
+		nil,
+		nil,
+	)
+	n := notifier.NewDDLNotifier(sessionPool, s, 50*time.Millisecond)
 
 	newRndFailHandler := func() (notifier.SchemaChangeHandler, *[]int64) {
 		maxFail := 5
@@ -166,13 +181,13 @@ func TestDeliverOrderAndCleanup(t *testing.T) {
 
 	done := make(chan struct{})
 	go func() {
-		n.Start(ctx)
+		n.OnBecomeOwner()
 		close(done)
 	}()
 
 	tk2 := testkit.NewTestKit(t, store)
 	se := sess.NewSession(tk2.Session())
-
+	ctx := context.Background()
 	event1 := notifier.NewCreateTableEvent(&model.TableInfo{ID: 1000, Name: pmodel.NewCIStr("t1")})
 	err := notifier.PubSchemeChangeToStore(ctx, se, 1, -1, event1, s)
 	require.NoError(t, err)
@@ -193,7 +208,7 @@ func TestDeliverOrderAndCleanup(t *testing.T) {
 	require.Equal(t, []int64{1000, 1001, 1002}, *id2)
 	require.Equal(t, []int64{1000, 1001, 1002}, *id3)
 
-	cancel()
+	n.OnRetireOwner()
 	<-done
 }
 
