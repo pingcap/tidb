@@ -346,7 +346,8 @@ func isClusterTable(originalTableName string) bool {
 	switch originalTableName {
 	case infoschema.ClusterTableStatementsSummary,
 		infoschema.ClusterTableStatementsSummaryHistory,
-		infoschema.ClusterTableStatementsSummaryEvicted:
+		infoschema.ClusterTableStatementsSummaryEvicted,
+		infoschema.ClusterTableTiDBStatementsStats:
 		return true
 	}
 
@@ -354,7 +355,13 @@ func isClusterTable(originalTableName string) bool {
 }
 
 func isCumulativeTable(originalTableName string) bool {
-	return originalTableName == infoschema.TableTiDBStatementsStats
+	switch originalTableName {
+	case infoschema.TableTiDBStatementsStats,
+		infoschema.ClusterTableTiDBStatementsStats:
+		return true
+	}
+
+	return false
 }
 
 func isCurrentTable(originalTableName string) bool {

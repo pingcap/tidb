@@ -345,6 +345,7 @@ var tableIDMap = map[string]int64{
 	TableTiDBPlanCache:                   autoid.InformationSchemaDBID + 96,
 	ClusterTableTiDBPlanCache:            autoid.InformationSchemaDBID + 97,
 	TableTiDBStatementsStats:             autoid.InformationSchemaDBID + 98,
+	ClusterTableTiDBStatementsStats:      autoid.InformationSchemaDBID + 99,
 }
 
 // columnInfo represents the basic column information of all kinds of INFORMATION_SCHEMA tables
