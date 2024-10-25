@@ -1173,7 +1173,7 @@ func getMaxReplica(ctx context.Context, mgr *conn.Mgr) (cnt uint64, err error) {
 	err = utils.WithRetry(ctx, func() error {
 		resp, err = mgr.GetPDHTTPClient().GetReplicateConfig(ctx)
 		return err
-	}, utils.NewPDReqBackoffer())
+	}, utils.NewAggressivePDBackoffStrategy())
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
@@ -1190,7 +1190,7 @@ func getStores(ctx context.Context, mgr *conn.Mgr) (stores *http.StoresInfo, err
 	err = utils.WithRetry(ctx, func() error {
 		stores, err = mgr.GetPDHTTPClient().GetStores(ctx)
 		return err
-	}, utils.NewPDReqBackoffer())
+	}, utils.NewAggressivePDBackoffStrategy())
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -1298,7 +1298,7 @@ func checkDiskSpace(ctx context.Context, mgr *conn.Mgr, files []*backuppb.File, 
 			}
 		}
 		return nil
-	}, utils.NewDiskCheckBackoffer())
+	}, utils.NewDiskCheckBackoffStrategy())
 	if err != nil {
 		return errors.Trace(err)
 	}

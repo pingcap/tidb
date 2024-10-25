@@ -137,8 +137,8 @@ func (importer *LogFileImporter) ImportKVFiles(
 
 	// This RetryState will retry 45 time, about 10 min.
 	rs := utils.InitialRetryState(45, 100*time.Millisecond, 15*time.Second)
-	ctl := OverRegionsInRange(startKey, endKey, importer.metaClient, &rs)
-	err = ctl.Run(ctx, func(ctx context.Context, r *split.RegionInfo) RPCResult {
+	ctl := CreateRangeController(startKey, endKey, importer.metaClient, &rs)
+	err = ctl.ApplyFuncToRange(ctx, func(ctx context.Context, r *split.RegionInfo) RPCResult {
 		subfiles, errFilter := filterFilesByRegion(files, ranges, r)
 		if errFilter != nil {
 			return RPCResultFromError(errFilter)
