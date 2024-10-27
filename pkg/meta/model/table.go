@@ -1013,6 +1013,7 @@ func (pi *PartitionInfo) SetOriginalPartitionIDs() {
 // session should not see (may be duplicate errors on insert/update though)
 // For example during truncate or drop partition.
 func (pi *PartitionInfo) IDsInDDLToIgnore() []int64 {
+	// TODO:
 	// Truncate partition:
 	// write only => should not see NewPartitionIDs
 	// delete only => should not see DroppingPartitions

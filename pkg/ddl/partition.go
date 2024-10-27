@@ -61,7 +61,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/hack"
-	"github.com/pingcap/tidb/pkg/util/mathutil"
 	decoder "github.com/pingcap/tidb/pkg/util/rowDecoder"
 	"github.com/pingcap/tidb/pkg/util/slice"
 	"github.com/pingcap/tidb/pkg/util/stringutil"
@@ -1917,7 +1916,7 @@ func formatListPartitionValue(ctx expression.BuildContext, tblInfo *model.TableI
 
 	haveDefault := false
 	exprStrs := make([]string, 0)
-	inValueStrs := make([]string, 0, mathutil.Max(len(pi.Columns), 1))
+	inValueStrs := make([]string, 0, max(len(pi.Columns), 1))
 	for i := range defs {
 	inValuesLoop:
 		for j, vs := range defs[i].InValues {
@@ -2241,10 +2240,10 @@ func (w *worker) onDropTablePartition(jobCtx *jobContext, job *model.Job) (ver i
 		originalDefs := tblInfo.Partition.Definitions
 		_ = updateDroppingPartitionInfo(tblInfo, partNames)
 		tblInfo.Partition.Definitions = originalDefs
-		tblInfo.Partition.DDLState = model.StateWriteOnly
-		tblInfo.Partition.DDLAction = model.ActionDropTablePartition
-
 		job.SchemaState = model.StateWriteOnly
+		tblInfo.Partition.DDLState = job.SchemaState
+		tblInfo.Partition.DDLAction = job.Type
+
 		ver, err = updateVersionAndTableInfo(jobCtx, job, tblInfo, true)
 	case model.StateWriteOnly:
 		// Since the previous state do not use the dropping partitions,
@@ -2289,16 +2288,13 @@ func (w *worker) onDropTablePartition(jobCtx *jobContext, job *model.Job) (ver i
 			return ver, err
 		}
 
-		tblInfo.Partition.DDLState = model.StateDeleteOnly
 		job.SchemaState = model.StateDeleteOnly
 		tblInfo.Partition.DDLState = job.SchemaState
-		tblInfo.Partition.DDLAction = job.Type
 		ver, err = updateVersionAndTableInfo(jobCtx, job, tblInfo, true)
 	case model.StateDeleteOnly:
 		// This state is not a real 'DeleteOnly' state, because tidb does not maintain the state check in partitionDefinition.
 		// Insert this state to confirm all servers can not see the old partitions when reorg is running,
 		// so that no new data will be inserted into old partitions when reorganizing.
-		tblInfo.Partition.DDLState = model.StateDeleteReorganization
 		job.SchemaState = model.StateDeleteReorganization
 		tblInfo.Partition.DDLState = job.SchemaState
 		ver, err = updateVersionAndTableInfo(jobCtx, job, tblInfo, true)
@@ -2315,7 +2311,8 @@ func (w *worker) onDropTablePartition(jobCtx *jobContext, job *model.Job) (ver i
 		removeTiFlashAvailablePartitionIDs(tblInfo, physicalTableIDs)
 		droppedDefs := tblInfo.Partition.DroppingDefinitions
 		tblInfo.Partition.DroppingDefinitions = nil
-		tblInfo.Partition.DDLState = model.StateNone
+		job.SchemaState = model.StateNone
+		tblInfo.Partition.DDLState = job.SchemaState
 		tblInfo.Partition.DDLAction = model.ActionNone
 		// used by ApplyDiff in updateSchemaVersion
 		args.OldPhysicalTblIDs = physicalTableIDs
@@ -2548,6 +2545,8 @@ func (w *worker) onTruncateTablePartition(jobCtx *jobContext, job *model.Job) (i
 		pi.DroppingDefinitions = oldDefinitions
 		// And we don't need to filter for new partitions any longer
 		tblInfo.Partition.NewPartitionIDs = nil
+		tblInfo.Partition.DDLAction = model.ActionNone
+		tblInfo.Partition.DDLState = model.StateNone
 
 		job.SchemaState = model.StateDeleteOnly
 		pi.DDLState = job.SchemaState
@@ -2899,9 +2898,9 @@ func (w *worker) onExchangeTablePartition(jobCtx *jobContext, job *model.Job) (v
 	// TODO: Fix the issue of big transactions during EXCHANGE PARTITION with AutoID.
 	// Similar to https://github.com/pingcap/tidb/issues/46904
 	newAutoIDs := model.AutoIDGroup{
-		RowID:       mathutil.Max(ptAutoIDs.RowID, ntAutoIDs.RowID),
-		IncrementID: mathutil.Max(ptAutoIDs.IncrementID, ntAutoIDs.IncrementID),
-		RandomID:    mathutil.Max(ptAutoIDs.RandomID, ntAutoIDs.RandomID),
+		RowID:       max(ptAutoIDs.RowID, ntAutoIDs.RowID),
+		IncrementID: max(ptAutoIDs.IncrementID, ntAutoIDs.IncrementID),
+		RandomID:    max(ptAutoIDs.RandomID, ntAutoIDs.RandomID),
 	}
 	err = metaMut.GetAutoIDAccessors(ptSchemaID, pt.ID).Put(newAutoIDs)
 	if err != nil {
@@ -3742,7 +3741,7 @@ func newReorgPartitionWorker(i int, t table.PhysicalTable, decodeColMap map[int6
 			}
 		}
 		writeColOffsetMap[id] = offset
-		maxOffset = mathutil.Max[int](maxOffset, offset)
+		maxOffset = max(maxOffset, offset)
 	}
 	return &reorgPartitionWorker{
 		backfillCtx:       bCtx,
