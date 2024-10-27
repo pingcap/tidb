@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/pkg/errctx"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
+	"github.com/pingcap/tidb/pkg/planner/cascades/base"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/collate"
@@ -1292,4 +1293,43 @@ func TestHashChunkColumns(t *testing.T) {
 		require.Equal(t, rowHash[1].Sum64(), vecHash[1].Sum64())
 		require.Equal(t, rowHash[2].Sum64(), vecHash[2].Sum64())
 	}
+}
+
+func TestDatumHashEquals(t *testing.T) {
+	now := time.Now()
+	tests := []struct {
+		d1 types.Datum
+		d2 types.Datum
+	}{
+		{types.NewIntDatum(1), types.NewIntDatum(1)},
+		{types.NewUintDatum(1), types.NewUintDatum(1)},
+		{types.NewFloat64Datum(1.1), types.NewFloat64Datum(1.1)},
+		{types.NewStringDatum("abc"), types.NewStringDatum("abc")},
+		{types.NewBytesDatum([]byte("abc")), types.NewBytesDatum([]byte("abc"))},
+		{types.NewMysqlEnumDatum(types.Enum{Name: "a", Value: 1}), types.NewMysqlEnumDatum(types.Enum{Name: "a", Value: 1})},
+		{types.NewMysqlSetDatum(types.Set{Name: "a", Value: 1}, "a"), types.NewMysqlSetDatum(types.Set{Name: "a", Value: 1}, "a")},
+		{types.NewBinaryLiteralDatum([]byte{0x01}), types.NewBinaryLiteralDatum([]byte{0x01})},
+		{types.NewMysqlBitDatum(types.NewBinaryLiteralFromUint(1, -1)), types.NewMysqlBitDatum(types.NewBinaryLiteralFromUint(1, -1))},
+		{types.NewTimeDatum(types.NewTime(types.FromGoTime(now), mysql.TypeDatetime, 6)), types.NewTimeDatum(types.NewTime(types.FromGoTime(now), mysql.TypeDatetime, 6))},
+		{types.NewDurationDatum(types.Duration{Duration: time.Second}), types.NewDurationDatum(types.Duration{Duration: time.Second})},
+		{types.NewJSONDatum(types.CreateBinaryJSON("a")), types.NewJSONDatum(types.CreateBinaryJSON("a"))},
+		{types.NewTimeDatum(types.NewTime(types.FromGoTime(now), mysql.TypeDatetime, 6)), types.NewTimeDatum(types.NewTime(types.FromGoTime(time.Now()), mysql.TypeDatetime, 6))},
+	}
+	hasher1 := base.NewHashEqualer()
+	hasher2 := base.NewHashEqualer()
+	for _, tt := range tests[:(len(tests) - 1)] {
+		hasher1.Reset()
+		hasher2.Reset()
+		tt.d1.Hash64(hasher1)
+		tt.d2.Hash64(hasher2)
+		require.Equal(t, hasher1.Sum64(), hasher2.Sum64())
+		require.True(t, tt.d1.Equals(tt.d2))
+	}
+	// the last test case is for the case that two datums are not equal
+	hasher1.Reset()
+	hasher2.Reset()
+	tests[len(tests)-1].d1.Hash64(hasher1)
+	tests[len(tests)-1].d2.Hash64(hasher2)
+	require.NotEqual(t, hasher1.Sum64(), hasher2.Sum64())
+	require.False(t, tests[len(tests)-1].d1.Equals(tests[len(tests)-1].d2))
 }

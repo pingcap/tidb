@@ -21,9 +21,11 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/ngaut/pools"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/util"
@@ -54,12 +56,12 @@ func init() {
 	}
 	dbInfo := &model.DBInfo{
 		ID:      dbID,
-		Name:    model.NewCIStr(util.MetricSchemaName.O),
+		Name:    pmodel.NewCIStr(util.MetricSchemaName.O),
 		Charset: mysql.DefaultCharset,
 		Collate: mysql.DefaultCollationName,
-		Tables:  metricTables,
 	}
-	RegisterVirtualTable(dbInfo, tableFromMeta)
+	dbInfo.Deprecated.Tables = metricTables
+	RegisterVirtualTable(dbInfo, tableFromMetaForMetricsTable)
 }
 
 // MetricTableDef is the metric table define.
@@ -146,7 +148,7 @@ type metricSchemaTable struct {
 	infoschemaTable
 }
 
-func tableFromMeta(alloc autoid.Allocators, meta *model.TableInfo) (table.Table, error) {
+func tableFromMetaForMetricsTable(_ autoid.Allocators, _ func() (pools.Resource, error), meta *model.TableInfo) (table.Table, error) {
 	columns := make([]*table.Column, 0, len(meta.Columns))
 	for _, colInfo := range meta.Columns {
 		col := table.ToColumn(colInfo)

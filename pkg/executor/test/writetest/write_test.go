@@ -339,7 +339,7 @@ func TestReplaceLog(t *testing.T) {
 	is := domain.InfoSchema()
 	dbName := model.NewCIStr("test")
 	tblName := model.NewCIStr("testLog")
-	tbl, err := is.TableByName(dbName, tblName)
+	tbl, err := is.TableByName(context.Background(), dbName, tblName)
 	require.NoError(t, err)
 	tblInfo := tbl.Meta()
 	idxInfo := tblInfo.FindIndexByName("b")
@@ -370,14 +370,14 @@ func TestRebaseIfNeeded(t *testing.T) {
 
 	ctx := mock.NewContext()
 	ctx.Store = store
-	tbl, err := domain.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	tbl, err := domain.InfoSchema().TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
 	require.Nil(t, sessiontxn.NewTxn(context.Background(), ctx))
+	txn, err := ctx.Txn(true)
+	require.NoError(t, err)
 	// AddRecord directly here will skip to rebase the auto ID in the insert statement,
 	// which could simulate another TiDB adds a large auto ID.
-	_, err = tbl.AddRecord(ctx.GetTableCtx(), types.MakeDatums(30001, 2))
-	require.NoError(t, err)
-	txn, err := ctx.Txn(true)
+	_, err = tbl.AddRecord(ctx.GetTableCtx(), txn, types.MakeDatums(30001, 2))
 	require.NoError(t, err)
 	require.NoError(t, txn.Commit(context.Background()))
 

@@ -15,6 +15,7 @@
 package mockstore
 
 import (
+	"fmt"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -22,6 +23,7 @@ import (
 
 	cp "github.com/otiai10/copy"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/store/mockstore/unistore"
@@ -175,6 +177,26 @@ func WithDDLChecker() MockTiKVStoreOption {
 	return func(c *mockOptions) {
 		c.ddlCheckerHijack = true
 	}
+}
+
+// WithMockTiFlash sets the mockStore to have N TiFlash stores (naming as tiflash0, tiflash1, ...).
+func WithMockTiFlash(nodes int) MockTiKVStoreOption {
+	return WithMultipleOptions(
+		WithClusterInspector(func(c testutils.Cluster) {
+			mockCluster := c.(*unistore.Cluster)
+			_, _, region1 := BootstrapWithSingleStore(c)
+			tiflashIdx := 0
+			for tiflashIdx < nodes {
+				store2 := c.AllocID()
+				peer2 := c.AllocID()
+				addr2 := fmt.Sprintf("tiflash%d", tiflashIdx)
+				mockCluster.AddStore(store2, addr2, &metapb.StoreLabel{Key: "engine", Value: "tiflash"})
+				mockCluster.AddPeer(region1, store2, peer2)
+				tiflashIdx++
+			}
+		}),
+		WithStoreType(EmbedUnistore),
+	)
 }
 
 // DDLCheckerInjector is used to break import cycle.

@@ -12,6 +12,7 @@ go_library(
         "//pkg/config",
         "//pkg/disttask/framework/proto",
         "//pkg/disttask/framework/storage",
+        "//pkg/kv",
         "//pkg/sessionctx",
     ],
 )

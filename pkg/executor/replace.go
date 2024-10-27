@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/types"
@@ -62,7 +63,7 @@ func (e *ReplaceExec) Open(ctx context.Context) error {
 }
 
 // replaceRow removes all duplicate rows for one row, then inserts it.
-func (e *ReplaceExec) replaceRow(ctx context.Context, r toBeCheckedRow) error {
+func (e *ReplaceExec) replaceRow(ctx context.Context, r toBeCheckedRow, dupKeyCheck table.DupKeyCheckMode) error {
 	txn, err := e.Ctx().Txn(true)
 	if err != nil {
 		return err
@@ -105,7 +106,7 @@ func (e *ReplaceExec) replaceRow(ctx context.Context, r toBeCheckedRow) error {
 	}
 
 	// No duplicated rows now, insert the row.
-	err = e.addRecord(ctx, r.row)
+	err = e.addRecord(ctx, r.row, dupKeyCheck)
 	if err != nil {
 		return err
 	}
@@ -120,7 +121,7 @@ func (e *ReplaceExec) replaceRow(ctx context.Context, r toBeCheckedRow) error {
 //  3. error: the error.
 func (e *ReplaceExec) removeIndexRow(ctx context.Context, txn kv.Transaction, r toBeCheckedRow) (rowUnchanged, foundDupKey bool, err error) {
 	for _, uk := range r.uniqueKeys {
-		_, handle, err := tables.FetchDuplicatedHandle(ctx, uk.newKey, true, txn, e.Table.Meta().ID, uk.commonHandle)
+		_, handle, err := tables.FetchDuplicatedHandle(ctx, uk.newKey, true, txn, e.Table.Meta().ID)
 		if err != nil {
 			return false, false, err
 		}
@@ -161,7 +162,6 @@ func (e *ReplaceExec) exec(ctx context.Context, newRows [][]types.Datum) error {
 	if err != nil {
 		return err
 	}
-	txnSize := txn.Size()
 
 	if e.collectRuntimeStatsEnabled() {
 		if snapshot := txn.GetSnapshot(); snapshot != nil {
@@ -180,14 +180,16 @@ func (e *ReplaceExec) exec(ctx context.Context, newRows [][]types.Datum) error {
 	if e.stats != nil {
 		e.stats.Prefetch = time.Since(prefetchStart)
 	}
-	e.Ctx().GetSessionVars().StmtCtx.AddRecordRows(uint64(len(newRows)))
+	sessionVars := e.Ctx().GetSessionVars()
+	sessionVars.StmtCtx.AddRecordRows(uint64(len(newRows)))
+	// TODO: seems we can optimize it to `DupKeyCheckSkip` because all conflict rows are deleted in previous steps.
+	dupKeyCheck := optimizeDupKeyCheckForNormalInsert(sessionVars, txn)
 	for _, r := range toBeCheckedRows {
-		err = e.replaceRow(ctx, r)
+		err = e.replaceRow(ctx, r, dupKeyCheck)
 		if err != nil {
 			return err
 		}
 	}
-	e.memTracker.Consume(int64(txn.Size() - txnSize))
 	return txn.MayFlush()
 }
 

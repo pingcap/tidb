@@ -22,7 +22,6 @@ import (
 	"net"
 	"strconv"
 	"strings"
-	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -39,13 +38,12 @@ import (
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/statistics/handle"
+	statstypes "github.com/pingcap/tidb/pkg/statistics/handle/types"
 	handleutil "github.com/pingcap/tidb/pkg/statistics/handle/util"
-	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/sqlescape"
-	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/tiancaiamao/gp"
 	"go.uber.org/zap"
@@ -102,33 +100,35 @@ func (e *AnalyzeExec) Next(ctx context.Context, _ *chunk.Chunk) error {
 	}
 
 	// Get the min number of goroutines for parallel execution.
-	concurrency, err := getBuildStatsConcurrency(e.Ctx())
+	buildStatsConcurrency, err := getBuildStatsConcurrency(e.Ctx())
 	if err != nil {
 		return err
 	}
-	concurrency = min(len(tasks), concurrency)
+	buildStatsConcurrency = min(len(tasks), buildStatsConcurrency)
 
 	// Start workers with channel to collect results.
-	taskCh := make(chan *analyzeTask, concurrency)
+	taskCh := make(chan *analyzeTask, buildStatsConcurrency)
 	resultsCh := make(chan *statistics.AnalyzeResults, 1)
-	for i := 0; i < concurrency; i++ {
+	for i := 0; i < buildStatsConcurrency; i++ {
 		e.wg.Run(func() { e.analyzeWorker(taskCh, resultsCh) })
 	}
 	pruneMode := variable.PartitionPruneMode(sessionVars.PartitionPruneMode.Load())
 	// needGlobalStats used to indicate whether we should merge the partition-level stats to global-level stats.
 	needGlobalStats := pruneMode == variable.Dynamic
-	globalStatsMap := make(map[globalStatsKey]globalStatsInfo)
+	globalStatsMap := make(map[globalStatsKey]statstypes.GlobalStatsInfo)
 	g, gctx := errgroup.WithContext(ctx)
 	g.Go(func() error {
-		return e.handleResultsError(ctx, concurrency, needGlobalStats, globalStatsMap, resultsCh, len(tasks))
+		return e.handleResultsError(buildStatsConcurrency, needGlobalStats, globalStatsMap, resultsCh, len(tasks))
 	})
 	for _, task := range tasks {
-		prepareV2AnalyzeJobInfo(task.colExec, false)
+		prepareV2AnalyzeJobInfo(task.colExec)
 		AddNewAnalyzeJob(e.Ctx(), task.job)
 	}
 	failpoint.Inject("mockKillPendingAnalyzeJob", func() {
 		dom := domain.GetDomain(e.Ctx())
-		dom.SysProcTracker().KillSysProcess(dom.GetAutoAnalyzeProcID())
+		for _, id := range handleutil.GlobalAutoAnalyzeProcessList.All() {
+			dom.SysProcTracker().KillSysProcess(id)
+		}
 	})
 TASKLOOP:
 	for _, task := range tasks {
@@ -156,11 +156,13 @@ TASKLOOP:
 
 	failpoint.Inject("mockKillFinishedAnalyzeJob", func() {
 		dom := domain.GetDomain(e.Ctx())
-		dom.SysProcTracker().KillSysProcess(dom.GetAutoAnalyzeProcID())
+		for _, id := range handleutil.GlobalAutoAnalyzeProcessList.All() {
+			dom.SysProcTracker().KillSysProcess(id)
+		}
 	})
 	// If we enabled dynamic prune mode, then we need to generate global stats here for partition tables.
 	if needGlobalStats {
-		err = e.handleGlobalStats(ctx, globalStatsMap)
+		err = e.handleGlobalStats(statsHandle, globalStatsMap)
 		if err != nil {
 			return err
 		}
@@ -171,7 +173,7 @@ TASKLOOP:
 	if err != nil {
 		sessionVars.StmtCtx.AppendWarning(err)
 	}
-	return statsHandle.Update(infoSchema)
+	return statsHandle.Update(ctx, infoSchema)
 }
 
 func (e *AnalyzeExec) waitFinish(ctx context.Context, g *errgroup.Group, resultsCh chan *statistics.AnalyzeResults) error {
@@ -241,7 +243,7 @@ func filterAndCollectTasks(tasks []*analyzeTask, statsHandle *handle.Handle, is 
 						skippedTables = append(skippedTables, fmt.Sprintf("%s.%s partition (%s)", schema.Name, tbl.Meta().Name.O, def.Name.O))
 					}
 				} else {
-					tbl, ok := is.TableByID(physicalTableID)
+					tbl, ok := is.TableByID(context.Background(), physicalTableID)
 					if !ok {
 						logutil.BgLogger().Warn("Unknown table ID in analyze task", zap.Int64("tid", physicalTableID))
 					} else {
@@ -366,8 +368,7 @@ func recordHistoricalStats(sctx sessionctx.Context, tableID int64) error {
 
 // handleResultsError will handle the error fetch from resultsCh and record it in log
 func (e *AnalyzeExec) handleResultsError(
-	ctx context.Context,
-	concurrency int,
+	buildStatsConcurrency int,
 	needGlobalStats bool,
 	globalStatsMap globalStatsMap,
 	resultsCh <-chan *statistics.AnalyzeResults,
@@ -383,91 +384,48 @@ func (e *AnalyzeExec) handleResultsError(
 			}
 		}
 	}()
-	partitionStatsConcurrency := e.Ctx().GetSessionVars().AnalyzePartitionConcurrency
-	// the concurrency of handleResultsError cannot be more than partitionStatsConcurrency
-	partitionStatsConcurrency = min(taskNum, partitionStatsConcurrency)
-	// If partitionStatsConcurrency > 1, we will try to demand extra session from Domain to save Analyze results in concurrency.
-	// If there is no extra session we can use, we will save analyze results in single-thread.
-	if partitionStatsConcurrency > 1 {
-		dom := domain.GetDomain(e.Ctx())
-		subSctxs := dom.FetchAnalyzeExec(partitionStatsConcurrency)
-		if len(subSctxs) > 0 {
-			defer func() {
-				dom.ReleaseAnalyzeExec(subSctxs)
-			}()
-			internalCtx := kv.WithInternalSourceType(ctx, kv.InternalTxnStats)
-			err := e.handleResultsErrorWithConcurrency(internalCtx, concurrency, needGlobalStats, subSctxs, globalStatsMap, resultsCh)
-			return err
-		}
+	saveStatsConcurrency := e.Ctx().GetSessionVars().AnalyzePartitionConcurrency
+	// The buildStatsConcurrency of saving partition-level stats should not exceed the total number of tasks.
+	saveStatsConcurrency = min(taskNum, saveStatsConcurrency)
+	if saveStatsConcurrency > 1 {
+		logutil.BgLogger().Info("save analyze results concurrently",
+			zap.Int("buildStatsConcurrency", buildStatsConcurrency),
+			zap.Int("saveStatsConcurrency", saveStatsConcurrency),
+		)
+		return e.handleResultsErrorWithConcurrency(buildStatsConcurrency, saveStatsConcurrency, needGlobalStats, globalStatsMap, resultsCh)
 	}
+	logutil.BgLogger().Info("save analyze results in single-thread",
+		zap.Int("buildStatsConcurrency", buildStatsConcurrency),
+		zap.Int("saveStatsConcurrency", saveStatsConcurrency),
+	)
 	failpoint.Inject("handleResultsErrorSingleThreadPanic", nil)
-	tableIDs := map[int64]struct{}{}
-
-	// save analyze results in single-thread.
-	statsHandle := domain.GetDomain(e.Ctx()).StatsHandle()
-	panicCnt := 0
-	for panicCnt < concurrency {
-		results, ok := <-resultsCh
-		if !ok {
-			break
-		}
-		if results.Err != nil {
-			err = results.Err
-			if isAnalyzeWorkerPanic(err) {
-				panicCnt++
-			} else {
-				logutil.Logger(ctx).Error("analyze failed", zap.Error(err))
-			}
-			finishJobWithLog(e.Ctx(), results.Job, err)
-			continue
-		}
-		handleGlobalStats(needGlobalStats, globalStatsMap, results)
-		tableIDs[results.TableID.GetStatisticsID()] = struct{}{}
-
-		if err1 := statsHandle.SaveTableStatsToStorage(results, e.Ctx().GetSessionVars().EnableAnalyzeSnapshot, handleutil.StatsMetaHistorySourceAnalyze); err1 != nil {
-			tableID := results.TableID.TableID
-			err = err1
-			logutil.Logger(ctx).Error("save table stats to storage failed", zap.Error(err), zap.Int64("tableID", tableID))
-			finishJobWithLog(e.Ctx(), results.Job, err)
-		} else {
-			finishJobWithLog(e.Ctx(), results.Job, nil)
-		}
-		if err := e.Ctx().GetSessionVars().SQLKiller.HandleSignal(); err != nil {
-			finishJobWithLog(e.Ctx(), results.Job, err)
-			results.DestroyAndPutToPool()
-			return err
-		}
-		results.DestroyAndPutToPool()
-	}
-	// Dump stats to historical storage.
-	for tableID := range tableIDs {
-		if err := recordHistoricalStats(e.Ctx(), tableID); err != nil {
-			logutil.BgLogger().Error("record historical stats failed", zap.Error(err))
-		}
-	}
-
-	return err
+	return e.handleResultsErrorWithConcurrency(buildStatsConcurrency, saveStatsConcurrency, needGlobalStats, globalStatsMap, resultsCh)
 }
 
-func (e *AnalyzeExec) handleResultsErrorWithConcurrency(ctx context.Context, statsConcurrency int, needGlobalStats bool,
-	subSctxs []sessionctx.Context,
-	globalStatsMap globalStatsMap, resultsCh <-chan *statistics.AnalyzeResults) error {
-	partitionStatsConcurrency := len(subSctxs)
-
+func (e *AnalyzeExec) handleResultsErrorWithConcurrency(
+	buildStatsConcurrency int,
+	saveStatsConcurrency int,
+	needGlobalStats bool,
+	globalStatsMap globalStatsMap,
+	resultsCh <-chan *statistics.AnalyzeResults,
+) error {
+	statsHandle := domain.GetDomain(e.Ctx()).StatsHandle()
 	wg := util.NewWaitGroupPool(e.gp)
-	saveResultsCh := make(chan *statistics.AnalyzeResults, partitionStatsConcurrency)
-	errCh := make(chan error, partitionStatsConcurrency)
-	for i := 0; i < partitionStatsConcurrency; i++ {
-		worker := newAnalyzeSaveStatsWorker(saveResultsCh, subSctxs[i], errCh, &e.Ctx().GetSessionVars().SQLKiller)
+	saveResultsCh := make(chan *statistics.AnalyzeResults, saveStatsConcurrency)
+	errCh := make(chan error, saveStatsConcurrency)
+	enableAnalyzeSnapshot := e.Ctx().GetSessionVars().EnableAnalyzeSnapshot
+	for i := 0; i < saveStatsConcurrency; i++ {
+		worker := newAnalyzeSaveStatsWorker(saveResultsCh, errCh, &e.Ctx().GetSessionVars().SQLKiller)
 		ctx1 := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
 		wg.Run(func() {
-			worker.run(ctx1, e.Ctx().GetSessionVars().EnableAnalyzeSnapshot)
+			worker.run(ctx1, statsHandle, enableAnalyzeSnapshot)
 		})
 	}
 	tableIDs := map[int64]struct{}{}
 	panicCnt := 0
 	var err error
-	for panicCnt < statsConcurrency {
+	// Only if all the analyze workers exit can we close the saveResultsCh.
+	for panicCnt < buildStatsConcurrency {
 		if err := e.Ctx().GetSessionVars().SQLKiller.HandleSignal(); err != nil {
 			close(saveResultsCh)
 			return err
@@ -481,9 +439,9 @@ func (e *AnalyzeExec) handleResultsErrorWithConcurrency(ctx context.Context, sta
 			if isAnalyzeWorkerPanic(err) {
 				panicCnt++
 			} else {
-				logutil.Logger(ctx).Error("analyze failed", zap.Error(err))
+				logutil.BgLogger().Error("receive error when saving analyze results", zap.Error(err))
 			}
-			finishJobWithLog(e.Ctx(), results.Job, err)
+			finishJobWithLog(statsHandle, results.Job, err)
 			continue
 		}
 		handleGlobalStats(needGlobalStats, globalStatsMap, results)
@@ -511,6 +469,7 @@ func (e *AnalyzeExec) handleResultsErrorWithConcurrency(ctx context.Context, sta
 
 func (e *AnalyzeExec) analyzeWorker(taskCh <-chan *analyzeTask, resultsCh chan<- *statistics.AnalyzeResults) {
 	var task *analyzeTask
+	statsHandle := domain.GetDomain(e.Ctx()).StatsHandle()
 	defer func() {
 		if r := recover(); r != nil {
 			logutil.BgLogger().Error("analyze worker panicked", zap.Any("recover", r), zap.Stack("stack"))
@@ -534,7 +493,7 @@ func (e *AnalyzeExec) analyzeWorker(taskCh <-chan *analyzeTask, resultsCh chan<-
 			break
 		}
 		failpoint.Inject("handleAnalyzeWorkerPanic", nil)
-		StartAnalyzeJob(e.Ctx(), task.job)
+		statsHandle.StartAnalyzeJob(task.job)
 		switch task.taskType {
 		case colTask:
 			select {
@@ -589,147 +548,8 @@ func AddNewAnalyzeJob(ctx sessionctx.Context, job *statistics.AnalyzeJob) {
 	}
 }
 
-// StartAnalyzeJob marks the state of the analyze job as running and sets the start time.
-func StartAnalyzeJob(sctx sessionctx.Context, job *statistics.AnalyzeJob) {
-	if job == nil || job.ID == nil {
-		return
-	}
-	job.StartTime = time.Now()
-	job.Progress.SetLastDumpTime(job.StartTime)
-	exec := sctx.GetRestrictedSQLExecutor()
-	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
-	const sql = "UPDATE mysql.analyze_jobs SET start_time = CONVERT_TZ(%?, '+00:00', @@TIME_ZONE), state = %? WHERE id = %?"
-	_, _, err := exec.ExecRestrictedSQL(ctx, []sqlexec.OptionFuncAlias{sqlexec.ExecOptionUseSessionPool}, sql, job.StartTime.UTC().Format(types.TimeFormat), statistics.AnalyzeRunning, *job.ID)
-	if err != nil {
-		logutil.BgLogger().Warn("failed to update analyze job", zap.String("update", fmt.Sprintf("%s->%s", statistics.AnalyzePending, statistics.AnalyzeRunning)), zap.Error(err))
-	}
-	failpoint.Inject("DebugAnalyzeJobOperations", func(val failpoint.Value) {
-		if val.(bool) {
-			logutil.BgLogger().Info("StartAnalyzeJob",
-				zap.Time("start_time", job.StartTime),
-				zap.Uint64("job id", *job.ID),
-			)
-		}
-	})
-}
-
-// UpdateAnalyzeJob updates count of the processed rows when increment reaches a threshold.
-func UpdateAnalyzeJob(sctx sessionctx.Context, job *statistics.AnalyzeJob, rowCount int64) {
-	if job == nil || job.ID == nil {
-		return
-	}
-	delta := job.Progress.Update(rowCount)
-	if delta == 0 {
-		return
-	}
-	exec := sctx.GetRestrictedSQLExecutor()
-	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
-	const sql = "UPDATE mysql.analyze_jobs SET processed_rows = processed_rows + %? WHERE id = %?"
-	_, _, err := exec.ExecRestrictedSQL(ctx, []sqlexec.OptionFuncAlias{sqlexec.ExecOptionUseSessionPool}, sql, delta, *job.ID)
-	if err != nil {
-		logutil.BgLogger().Warn("failed to update analyze job", zap.String("update", fmt.Sprintf("process %v rows", delta)), zap.Error(err))
-	}
-	failpoint.Inject("DebugAnalyzeJobOperations", func(val failpoint.Value) {
-		if val.(bool) {
-			logutil.BgLogger().Info("UpdateAnalyzeJob",
-				zap.Int64("increase processed_rows", delta),
-				zap.Uint64("job id", *job.ID),
-			)
-		}
-	})
-}
-
-// FinishAnalyzeMergeJob finishes analyze merge job
-func FinishAnalyzeMergeJob(sctx sessionctx.Context, job *statistics.AnalyzeJob, analyzeErr error) {
-	if job == nil || job.ID == nil {
-		return
-	}
-
-	job.EndTime = time.Now()
-	var sql string
-	var args []any
-	if analyzeErr != nil {
-		failReason := analyzeErr.Error()
-		const textMaxLength = 65535
-		if len(failReason) > textMaxLength {
-			failReason = failReason[:textMaxLength]
-		}
-		sql = "UPDATE mysql.analyze_jobs SET end_time = CONVERT_TZ(%?, '+00:00', @@TIME_ZONE), state = %?, fail_reason = %?, process_id = NULL WHERE id = %?"
-		args = []any{job.EndTime.UTC().Format(types.TimeFormat), statistics.AnalyzeFailed, failReason, *job.ID}
-	} else {
-		sql = "UPDATE mysql.analyze_jobs SET end_time = CONVERT_TZ(%?, '+00:00', @@TIME_ZONE), state = %?, process_id = NULL WHERE id = %?"
-		args = []any{job.EndTime.UTC().Format(types.TimeFormat), statistics.AnalyzeFinished, *job.ID}
-	}
-	exec := sctx.GetRestrictedSQLExecutor()
-	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
-	_, _, err := exec.ExecRestrictedSQL(ctx, []sqlexec.OptionFuncAlias{sqlexec.ExecOptionUseSessionPool}, sql, args...)
-	if err != nil {
-		var state string
-		if analyzeErr != nil {
-			state = statistics.AnalyzeFailed
-		} else {
-			state = statistics.AnalyzeFinished
-		}
-		logutil.BgLogger().Warn("failed to update analyze job", zap.String("update", fmt.Sprintf("%s->%s", statistics.AnalyzeRunning, state)), zap.Error(err))
-	}
-	failpoint.Inject("DebugAnalyzeJobOperations", func(val failpoint.Value) {
-		if val.(bool) {
-			logutil.BgLogger().Info("FinishAnalyzeMergeJob",
-				zap.Time("end_time", job.EndTime),
-				zap.Uint64("job id", *job.ID),
-			)
-		}
-	})
-}
-
-// FinishAnalyzeJob updates the state of the analyze job to finished/failed according to `meetError` and sets the end time.
-func FinishAnalyzeJob(sctx sessionctx.Context, job *statistics.AnalyzeJob, analyzeErr error) {
-	if job == nil || job.ID == nil {
-		return
-	}
-	job.EndTime = time.Now()
-	var sql string
-	var args []any
-	// process_id is used to see which process is running the analyze job and kill the analyze job. After the analyze job
-	// is finished(or failed), process_id is useless and we set it to NULL to avoid `kill tidb process_id` wrongly.
-	if analyzeErr != nil {
-		failReason := analyzeErr.Error()
-		const textMaxLength = 65535
-		if len(failReason) > textMaxLength {
-			failReason = failReason[:textMaxLength]
-		}
-		sql = "UPDATE mysql.analyze_jobs SET processed_rows = processed_rows + %?, end_time = CONVERT_TZ(%?, '+00:00', @@TIME_ZONE), state = %?, fail_reason = %?, process_id = NULL WHERE id = %?"
-		args = []any{job.Progress.GetDeltaCount(), job.EndTime.UTC().Format(types.TimeFormat), statistics.AnalyzeFailed, failReason, *job.ID}
-	} else {
-		sql = "UPDATE mysql.analyze_jobs SET processed_rows = processed_rows + %?, end_time = CONVERT_TZ(%?, '+00:00', @@TIME_ZONE), state = %?, process_id = NULL WHERE id = %?"
-		args = []any{job.Progress.GetDeltaCount(), job.EndTime.UTC().Format(types.TimeFormat), statistics.AnalyzeFinished, *job.ID}
-	}
-	exec := sctx.GetRestrictedSQLExecutor()
-	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
-	_, _, err := exec.ExecRestrictedSQL(ctx, []sqlexec.OptionFuncAlias{sqlexec.ExecOptionUseSessionPool}, sql, args...)
-	if err != nil {
-		var state string
-		if analyzeErr != nil {
-			state = statistics.AnalyzeFailed
-		} else {
-			state = statistics.AnalyzeFinished
-		}
-		logutil.BgLogger().Warn("failed to update analyze job", zap.String("update", fmt.Sprintf("%s->%s", statistics.AnalyzeRunning, state)), zap.Error(err))
-	}
-	failpoint.Inject("DebugAnalyzeJobOperations", func(val failpoint.Value) {
-		if val.(bool) {
-			logutil.BgLogger().Info("FinishAnalyzeJob",
-				zap.Int64("increase processed_rows", job.Progress.GetDeltaCount()),
-				zap.Time("end_time", job.EndTime),
-				zap.Uint64("job id", *job.ID),
-				zap.Error(analyzeErr),
-			)
-		}
-	})
-}
-
-func finishJobWithLog(sctx sessionctx.Context, job *statistics.AnalyzeJob, analyzeErr error) {
-	FinishAnalyzeJob(sctx, job, analyzeErr)
+func finishJobWithLog(statsHandle *handle.Handle, job *statistics.AnalyzeJob, analyzeErr error) {
+	statsHandle.FinishAnalyzeJob(job, analyzeErr, statistics.TableAnalysisJob)
 	if job != nil {
 		var state string
 		if analyzeErr != nil {
@@ -769,11 +589,11 @@ func handleGlobalStats(needGlobalStats bool, globalStatsMap globalStatsMap, resu
 					}
 					histIDs = append(histIDs, hg.ID)
 				}
-				globalStatsMap[globalStatsID] = globalStatsInfo{isIndex: result.IsIndex, histIDs: histIDs, statsVersion: results.StatsVer}
+				globalStatsMap[globalStatsID] = statstypes.GlobalStatsInfo{IsIndex: result.IsIndex, HistIDs: histIDs, StatsVersion: results.StatsVer}
 			} else {
 				for _, hg := range result.Hist {
 					globalStatsID := globalStatsKey{tableID: results.TableID.TableID, indexID: hg.ID}
-					globalStatsMap[globalStatsID] = globalStatsInfo{isIndex: result.IsIndex, histIDs: []int64{hg.ID}, statsVersion: results.StatsVer}
+					globalStatsMap[globalStatsID] = statstypes.GlobalStatsInfo{IsIndex: result.IsIndex, HistIDs: []int64{hg.ID}, StatsVersion: results.StatsVer}
 				}
 			}
 		}

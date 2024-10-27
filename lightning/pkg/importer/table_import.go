@@ -47,7 +47,7 @@ import (
 	verify "github.com/pingcap/tidb/pkg/lightning/verification"
 	"github.com/pingcap/tidb/pkg/lightning/worker"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/table/tables"
@@ -645,10 +645,9 @@ func (tr *TableImporter) preprocessEngine(
 	hasAutoIncrementAutoID := common.TableHasAutoRowID(tr.tableInfo.Core) &&
 		tr.tableInfo.Core.AutoRandomBits == 0 && tr.tableInfo.Core.ShardRowIDBits == 0 &&
 		tr.tableInfo.Core.Partition == nil
-	dataWriterCfg := &backend.LocalWriterConfig{
-		IsKVSorted: hasAutoIncrementAutoID,
-		TableName:  tr.tableName,
-	}
+	dataWriterCfg := &backend.LocalWriterConfig{}
+	dataWriterCfg.Local.IsKVSorted = hasAutoIncrementAutoID
+	dataWriterCfg.TiDB.TableName = tr.tableName
 
 	logTask := tr.logger.With(zap.Int32("engineNumber", engineID)).Begin(zap.InfoLevel, "encode kv data and write")
 	dataEngineCfg := &backend.EngineConfig{
@@ -758,7 +757,9 @@ ChunkLoop:
 			break
 		}
 
-		indexWriter, err := indexEngine.LocalWriter(ctx, &backend.LocalWriterConfig{TableName: tr.tableName})
+		writerCfg := &backend.LocalWriterConfig{}
+		writerCfg.TiDB.TableName = tr.tableName
+		indexWriter, err := indexEngine.LocalWriter(ctx, writerCfg)
 		if err != nil {
 			_, _ = dataWriter.Close(ctx)
 			setError(err)
@@ -1188,7 +1189,9 @@ func getChunkCompressedSizeForParquet(
 	chunk *checkpoints.ChunkCheckpoint,
 	store storage.ExternalStorage,
 ) (int64, error) {
-	reader, err := mydump.OpenReader(ctx, &chunk.FileMeta, store, storage.DecompressConfig{})
+	reader, err := mydump.OpenReader(ctx, &chunk.FileMeta, store, storage.DecompressConfig{
+		ZStdDecodeConcurrency: 1,
+	})
 	if err != nil {
 		return 0, errors.Trace(err)
 	}

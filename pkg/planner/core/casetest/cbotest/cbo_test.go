@@ -24,9 +24,11 @@ import (
 
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/executor"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/planner"
 	"github.com/pingcap/tidb/pkg/planner/core"
+	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/statistics"
@@ -68,7 +70,7 @@ func TestCBOWithoutAnalyze(t *testing.T) {
 	testKit.MustExec("insert into t1 values (1), (2), (3), (4), (5), (6)")
 	testKit.MustExec("insert into t2 values (1), (2), (3), (4), (5), (6)")
 	require.NoError(t, h.DumpStatsDeltaToKV(true))
-	require.NoError(t, h.Update(dom.InfoSchema()))
+	require.NoError(t, h.Update(context.Background(), dom.InfoSchema()))
 	var input []string
 	var output []struct {
 		SQL  string
@@ -118,7 +120,7 @@ func TestTableDual(t *testing.T) {
 	require.NoError(t, h.HandleDDLEvent(<-h.DDLEventCh()))
 
 	require.NoError(t, h.DumpStatsDeltaToKV(true))
-	require.NoError(t, h.Update(dom.InfoSchema()))
+	require.NoError(t, h.Update(context.Background(), dom.InfoSchema()))
 	var input []string
 	var output []struct {
 		SQL  string
@@ -150,12 +152,12 @@ func TestEstimation(t *testing.T) {
 	h := dom.StatsHandle()
 	require.NoError(t, h.HandleDDLEvent(<-h.DDLEventCh()))
 	require.NoError(t, h.DumpStatsDeltaToKV(true))
-	testKit.MustExec("analyze table t")
+	testKit.MustExec("analyze table t all columns")
 	for i := 1; i <= 8; i++ {
 		testKit.MustExec("delete from t where a = ?", i)
 	}
 	require.NoError(t, h.DumpStatsDeltaToKV(true))
-	require.NoError(t, h.Update(dom.InfoSchema()))
+	require.NoError(t, h.Update(context.Background(), dom.InfoSchema()))
 	var input []string
 	var output []struct {
 		SQL  string
@@ -212,9 +214,10 @@ func TestIndexRead(t *testing.T) {
 		require.Len(t, stmts, 1)
 		stmt := stmts[0]
 		ret := &core.PreprocessorReturn{}
-		err = core.Preprocess(context.Background(), ctx, stmt, core.WithPreprocessorReturn(ret))
+		nodeW := resolve.NewNodeW(stmt)
+		err = core.Preprocess(context.Background(), ctx, nodeW, core.WithPreprocessorReturn(ret))
 		require.NoError(t, err)
-		p, _, err := planner.Optimize(context.TODO(), ctx, stmt, ret.InfoSchema)
+		p, _, err := planner.Optimize(context.TODO(), ctx, nodeW, ret.InfoSchema)
 		require.NoError(t, err)
 		planString := core.ToString(p)
 		testdata.OnRecord(func() {
@@ -243,9 +246,10 @@ func TestEmptyTable(t *testing.T) {
 		require.Len(t, stmts, 1)
 		stmt := stmts[0]
 		ret := &core.PreprocessorReturn{}
-		err = core.Preprocess(context.Background(), ctx, stmt, core.WithPreprocessorReturn(ret))
+		nodeW := resolve.NewNodeW(stmt)
+		err = core.Preprocess(context.Background(), ctx, nodeW, core.WithPreprocessorReturn(ret))
 		require.NoError(t, err)
-		p, _, err := planner.Optimize(context.TODO(), ctx, stmt, ret.InfoSchema)
+		p, _, err := planner.Optimize(context.TODO(), ctx, nodeW, ret.InfoSchema)
 		require.NoError(t, err)
 		planString := core.ToString(p)
 		testdata.OnRecord(func() {
@@ -310,9 +314,10 @@ func TestAnalyze(t *testing.T) {
 		err = executor.ResetContextOfStmt(ctx, stmt)
 		require.NoError(t, err)
 		ret := &core.PreprocessorReturn{}
-		err = core.Preprocess(context.Background(), ctx, stmt, core.WithPreprocessorReturn(ret))
+		nodeW := resolve.NewNodeW(stmt)
+		err = core.Preprocess(context.Background(), ctx, nodeW, core.WithPreprocessorReturn(ret))
 		require.NoError(t, err)
-		p, _, err := planner.Optimize(context.TODO(), ctx, stmt, ret.InfoSchema)
+		p, _, err := planner.Optimize(context.TODO(), ctx, nodeW, ret.InfoSchema)
 		require.NoError(t, err)
 		planString := core.ToString(p)
 		testdata.OnRecord(func() {
@@ -333,12 +338,12 @@ func TestOutdatedAnalyze(t *testing.T) {
 	h := dom.StatsHandle()
 	require.NoError(t, h.HandleDDLEvent(<-h.DDLEventCh()))
 	require.NoError(t, h.DumpStatsDeltaToKV(true))
-	testKit.MustExec("analyze table t")
+	testKit.MustExec("analyze table t all columns")
 	testKit.MustExec("insert into t select * from t")
 	testKit.MustExec("insert into t select * from t")
 	testKit.MustExec("insert into t select * from t")
 	require.NoError(t, h.DumpStatsDeltaToKV(true))
-	require.NoError(t, h.Update(dom.InfoSchema()))
+	require.NoError(t, h.Update(context.Background(), dom.InfoSchema()))
 	var input []struct {
 		SQL                          string
 		EnablePseudoForOutdatedStats bool
@@ -373,7 +378,7 @@ func TestNullCount(t *testing.T) {
 	testKit.MustExec("drop table if exists t")
 	testKit.MustExec("create table t (a int, b int, index idx(a))")
 	testKit.MustExec("insert into t values (null, null), (null, null)")
-	testKit.MustExec("analyze table t")
+	testKit.MustExec("analyze table t all columns")
 	var input []string
 	var output [][]string
 	analyzeSuiteData := GetAnalyzeSuiteData()
@@ -386,7 +391,7 @@ func TestNullCount(t *testing.T) {
 	}
 	h := dom.StatsHandle()
 	h.Clear()
-	require.NoError(t, h.Update(dom.InfoSchema()))
+	require.NoError(t, h.Update(context.Background(), dom.InfoSchema()))
 	for i := 2; i < 4; i++ {
 		testdata.OnRecord(func() {
 			output[i] = testdata.ConvertRowsToStrings(testKit.MustQuery(input[i]).Rows())
@@ -433,7 +438,7 @@ func TestInconsistentEstimation(t *testing.T) {
 	// Force using the histogram to estimate.
 	tk.MustExec("update mysql.stats_histograms set stats_ver = 0")
 	dom.StatsHandle().Clear()
-	require.NoError(t, dom.StatsHandle().Update(dom.InfoSchema()))
+	require.NoError(t, dom.StatsHandle().Update(context.Background(), dom.InfoSchema()))
 	var input []string
 	var output []struct {
 		SQL  string
@@ -554,7 +559,7 @@ func TestTiFlashCostModel(t *testing.T) {
 	tk.MustExec("create table t (a int, b int, c int, primary key(a))")
 	tk.MustExec("insert into t values(1,1,1), (2,2,2), (3,3,3)")
 
-	tbl, err := dom.InfoSchema().TableByName(model.CIStr{O: "test", L: "test"}, model.CIStr{O: "t", L: "t"})
+	tbl, err := dom.InfoSchema().TableByName(context.Background(), pmodel.CIStr{O: "test", L: "test"}, pmodel.CIStr{O: "t", L: "t"})
 	require.NoError(t, err)
 	// Set the hacked TiFlash replica for explain tests.
 	tbl.Meta().TiFlashReplica = &model.TiFlashReplicaInfo{Count: 1, Available: true}

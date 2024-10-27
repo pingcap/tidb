@@ -27,7 +27,8 @@ import (
 	tidbkv "github.com/pingcap/tidb/pkg/lightning/backend/kv"
 	"github.com/pingcap/tidb/pkg/lightning/config"
 	"github.com/pingcap/tidb/pkg/lightning/log"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/types"
@@ -67,6 +68,8 @@ func TestInit(t *testing.T) {
 		WillReturnResult(sqlmock.NewResult(1, 1))
 	mock.ExpectExec("CREATE TABLE IF NOT EXISTS `lightning_errors`\\.conflict_error_v3.*").
 		WillReturnResult(sqlmock.NewResult(2, 1))
+	mock.ExpectExec("CREATE OR REPLACE VIEW `lightning_errors`\\.conflict_view.*").
+		WillReturnResult(sqlmock.NewResult(3, 1))
 	err = em.Init(ctx)
 	require.NoError(t, err)
 	require.NoError(t, mock.ExpectationsWereMet())
@@ -160,7 +163,7 @@ func (c mockConn) QueryContext(_ context.Context, query string, args []driver.Na
 func TestReplaceConflictOneKey(t *testing.T) {
 	column1 := &model.ColumnInfo{
 		ID:           1,
-		Name:         model.NewCIStr("a"),
+		Name:         pmodel.NewCIStr("a"),
 		Offset:       0,
 		DefaultValue: 0,
 		FieldType:    *types.NewFieldType(mysql.TypeLong),
@@ -171,7 +174,7 @@ func TestReplaceConflictOneKey(t *testing.T) {
 
 	column2 := &model.ColumnInfo{
 		ID:           2,
-		Name:         model.NewCIStr("b"),
+		Name:         pmodel.NewCIStr("b"),
 		Offset:       1,
 		DefaultValue: 0,
 		FieldType:    *types.NewFieldType(mysql.TypeLong),
@@ -181,7 +184,7 @@ func TestReplaceConflictOneKey(t *testing.T) {
 
 	column3 := &model.ColumnInfo{
 		ID:           3,
-		Name:         model.NewCIStr("c"),
+		Name:         pmodel.NewCIStr("c"),
 		Offset:       2,
 		DefaultValue: 0,
 		FieldType:    *types.NewFieldType(mysql.TypeBlob),
@@ -191,11 +194,11 @@ func TestReplaceConflictOneKey(t *testing.T) {
 
 	index := &model.IndexInfo{
 		ID:    1,
-		Name:  model.NewCIStr("key_b"),
-		Table: model.NewCIStr(""),
+		Name:  pmodel.NewCIStr("key_b"),
+		Table: pmodel.NewCIStr(""),
 		Columns: []*model.IndexColumn{
 			{
-				Name:   model.NewCIStr("b"),
+				Name:   pmodel.NewCIStr("b"),
 				Offset: 1,
 				Length: -1,
 			}},
@@ -206,7 +209,7 @@ func TestReplaceConflictOneKey(t *testing.T) {
 
 	table := &model.TableInfo{
 		ID:         104,
-		Name:       model.NewCIStr("a"),
+		Name:       pmodel.NewCIStr("a"),
 		Charset:    "utf8mb4",
 		Collate:    "utf8mb4_bin",
 		Columns:    []*model.ColumnInfo{column1, column2, column3},
@@ -229,7 +232,7 @@ func TestReplaceConflictOneKey(t *testing.T) {
 		Logger:         log.L(),
 	})
 	require.NoError(t, err)
-	encoder.SessionCtx.GetSessionVars().RowEncoder.Enable = true
+	encoder.SessionCtx.GetTableCtx().GetRowEncodingConfig().RowEncoder.Enable = true
 
 	data1 := []types.Datum{
 		types.NewIntDatum(1),
@@ -256,16 +259,15 @@ func TestReplaceConflictOneKey(t *testing.T) {
 		types.NewIntDatum(4),
 		types.NewStringDatum("5.csv"),
 	}
-	tctx := encoder.SessionCtx.GetTableCtx()
-	_, err = encoder.Table.AddRecord(tctx, data1)
+	_, err = encoder.AddRecord(data1)
 	require.NoError(t, err)
-	_, err = encoder.Table.AddRecord(tctx, data2)
+	_, err = encoder.AddRecord(data2)
 	require.NoError(t, err)
-	_, err = encoder.Table.AddRecord(tctx, data3)
+	_, err = encoder.AddRecord(data3)
 	require.NoError(t, err)
-	_, err = encoder.Table.AddRecord(tctx, data4)
+	_, err = encoder.AddRecord(data4)
 	require.NoError(t, err)
-	_, err = encoder.Table.AddRecord(tctx, data5)
+	_, err = encoder.AddRecord(data5)
 	require.NoError(t, err)
 	kvPairs := encoder.SessionCtx.TakeKvPairs()
 
@@ -288,6 +290,8 @@ func TestReplaceConflictOneKey(t *testing.T) {
 		WillReturnResult(sqlmock.NewResult(1, 1))
 	mockDB.ExpectExec("CREATE TABLE IF NOT EXISTS `lightning_task_info`\\.conflict_error_v3.*").
 		WillReturnResult(sqlmock.NewResult(2, 1))
+	mockDB.ExpectExec("CREATE OR REPLACE VIEW `lightning_task_info`\\.conflict_view.*").
+		WillReturnResult(sqlmock.NewResult(3, 1))
 	mockDB.ExpectQuery("\\QSELECT _tidb_rowid, raw_key, index_name, raw_value, raw_handle FROM `lightning_task_info`.conflict_error_v3 WHERE table_name = ? AND kv_type = 0 AND _tidb_rowid >= ? and _tidb_rowid < ? ORDER BY _tidb_rowid LIMIT ?\\E").
 		WillReturnRows(sqlmock.NewRows([]string{"_tidb_rowid", "raw_key", "index_name", "raw_value", "raw_handle"}))
 	mockDB.ExpectQuery("\\QSELECT _tidb_rowid, raw_key, raw_value FROM `lightning_task_info`.conflict_error_v3 WHERE table_name = ? AND kv_type <> 0 AND _tidb_rowid >= ? and _tidb_rowid < ? ORDER BY _tidb_rowid LIMIT ?\\E").
@@ -347,7 +351,7 @@ func TestReplaceConflictOneKey(t *testing.T) {
 func TestReplaceConflictOneUniqueKey(t *testing.T) {
 	column1 := &model.ColumnInfo{
 		ID:           1,
-		Name:         model.NewCIStr("a"),
+		Name:         pmodel.NewCIStr("a"),
 		Offset:       0,
 		DefaultValue: 0,
 		FieldType:    *types.NewFieldType(mysql.TypeLong),
@@ -358,7 +362,7 @@ func TestReplaceConflictOneUniqueKey(t *testing.T) {
 
 	column2 := &model.ColumnInfo{
 		ID:           2,
-		Name:         model.NewCIStr("b"),
+		Name:         pmodel.NewCIStr("b"),
 		Offset:       1,
 		DefaultValue: 0,
 		FieldType:    *types.NewFieldType(mysql.TypeLong),
@@ -369,7 +373,7 @@ func TestReplaceConflictOneUniqueKey(t *testing.T) {
 
 	column3 := &model.ColumnInfo{
 		ID:           3,
-		Name:         model.NewCIStr("c"),
+		Name:         pmodel.NewCIStr("c"),
 		Offset:       2,
 		DefaultValue: 0,
 		FieldType:    *types.NewFieldType(mysql.TypeBlob),
@@ -379,11 +383,11 @@ func TestReplaceConflictOneUniqueKey(t *testing.T) {
 
 	index := &model.IndexInfo{
 		ID:    1,
-		Name:  model.NewCIStr("uni_b"),
-		Table: model.NewCIStr(""),
+		Name:  pmodel.NewCIStr("uni_b"),
+		Table: pmodel.NewCIStr(""),
 		Columns: []*model.IndexColumn{
 			{
-				Name:   model.NewCIStr("b"),
+				Name:   pmodel.NewCIStr("b"),
 				Offset: 1,
 				Length: -1,
 			}},
@@ -394,7 +398,7 @@ func TestReplaceConflictOneUniqueKey(t *testing.T) {
 
 	table := &model.TableInfo{
 		ID:         104,
-		Name:       model.NewCIStr("a"),
+		Name:       pmodel.NewCIStr("a"),
 		Charset:    "utf8mb4",
 		Collate:    "utf8mb4_bin",
 		Columns:    []*model.ColumnInfo{column1, column2, column3},
@@ -417,7 +421,7 @@ func TestReplaceConflictOneUniqueKey(t *testing.T) {
 		Logger:         log.L(),
 	})
 	require.NoError(t, err)
-	encoder.SessionCtx.GetSessionVars().RowEncoder.Enable = true
+	encoder.SessionCtx.GetTableCtx().GetRowEncodingConfig().RowEncoder.Enable = true
 
 	data1 := []types.Datum{
 		types.NewIntDatum(1),
@@ -444,16 +448,15 @@ func TestReplaceConflictOneUniqueKey(t *testing.T) {
 		types.NewIntDatum(4),
 		types.NewStringDatum("5.csv"),
 	}
-	tctx := encoder.SessionCtx.GetTableCtx()
-	_, err = encoder.Table.AddRecord(tctx, data1)
+	_, err = encoder.AddRecord(data1)
 	require.NoError(t, err)
-	_, err = encoder.Table.AddRecord(tctx, data2)
+	_, err = encoder.AddRecord(data2)
 	require.NoError(t, err)
-	_, err = encoder.Table.AddRecord(tctx, data3)
+	_, err = encoder.AddRecord(data3)
 	require.NoError(t, err)
-	_, err = encoder.Table.AddRecord(tctx, data4)
+	_, err = encoder.AddRecord(data4)
 	require.NoError(t, err)
-	_, err = encoder.Table.AddRecord(tctx, data5)
+	_, err = encoder.AddRecord(data5)
 	require.NoError(t, err)
 	kvPairs := encoder.SessionCtx.TakeKvPairs()
 
@@ -485,6 +488,8 @@ func TestReplaceConflictOneUniqueKey(t *testing.T) {
 		WillReturnResult(sqlmock.NewResult(1, 1))
 	mockDB.ExpectExec("CREATE TABLE IF NOT EXISTS `lightning_task_info`\\.conflict_error_v3.*").
 		WillReturnResult(sqlmock.NewResult(2, 1))
+	mockDB.ExpectExec("CREATE OR REPLACE VIEW `lightning_task_info`\\.conflict_view.*").
+		WillReturnResult(sqlmock.NewResult(3, 1))
 	mockDB.ExpectQuery("\\QSELECT _tidb_rowid, raw_key, index_name, raw_value, raw_handle FROM `lightning_task_info`.conflict_error_v3 WHERE table_name = ? AND kv_type = 0 AND _tidb_rowid >= ? and _tidb_rowid < ? ORDER BY _tidb_rowid LIMIT ?\\E").
 		WillReturnRows(sqlmock.NewRows([]string{"_tidb_rowid", "raw_key", "index_name", "raw_value", "raw_handle"}).
 			AddRow(1, data1IndexKey, "uni_b", data1IndexValue, data1RowKey).
@@ -663,14 +668,14 @@ func TestErrorMgrErrorOutput(t *testing.T) {
 	output = em.Output()
 	expected = "\n" +
 		"Import Data Error Summary: \n" +
-		"+---+---------------------+-------------+----------------------------------+\n" +
-		"| # | ERROR TYPE          | ERROR COUNT | ERROR DATA TABLE                 |\n" +
-		"+---+---------------------+-------------+----------------------------------+\n" +
-		"|\x1b[31m 1 \x1b[0m|\x1b[31m Data Type           \x1b[0m|\x1b[31m         100 \x1b[0m|\x1b[31m `error_info`.`type_error_v1`     \x1b[0m|\n" +
-		"|\x1b[31m 2 \x1b[0m|\x1b[31m Data Syntax         \x1b[0m|\x1b[31m         100 \x1b[0m|\x1b[31m `error_info`.`syntax_error_v1`   \x1b[0m|\n" +
-		"|\x1b[31m 3 \x1b[0m|\x1b[31m Charset Error       \x1b[0m|\x1b[31m         100 \x1b[0m|\x1b[31m                                  \x1b[0m|\n" +
-		"|\x1b[31m 4 \x1b[0m|\x1b[31m Unique Key Conflict \x1b[0m|\x1b[31m         100 \x1b[0m|\x1b[31m `error_info`.`conflict_error_v3` \x1b[0m|\n" +
-		"+---+---------------------+-------------+----------------------------------+\n"
+		"+---+---------------------+-------------+--------------------------------+\n" +
+		"| # | ERROR TYPE          | ERROR COUNT | ERROR DATA TABLE               |\n" +
+		"+---+---------------------+-------------+--------------------------------+\n" +
+		"|\x1b[31m 1 \x1b[0m|\x1b[31m Data Type           \x1b[0m|\x1b[31m         100 \x1b[0m|\x1b[31m `error_info`.`type_error_v1`   \x1b[0m|\n" +
+		"|\x1b[31m 2 \x1b[0m|\x1b[31m Data Syntax         \x1b[0m|\x1b[31m         100 \x1b[0m|\x1b[31m `error_info`.`syntax_error_v1` \x1b[0m|\n" +
+		"|\x1b[31m 3 \x1b[0m|\x1b[31m Charset Error       \x1b[0m|\x1b[31m         100 \x1b[0m|\x1b[31m                                \x1b[0m|\n" +
+		"|\x1b[31m 4 \x1b[0m|\x1b[31m Unique Key Conflict \x1b[0m|\x1b[31m         100 \x1b[0m|\x1b[31m `error_info`.`conflict_view`   \x1b[0m|\n" +
+		"+---+---------------------+-------------+--------------------------------+\n"
 	require.Equal(t, expected, output)
 
 	em.conflictV2Enabled = true
@@ -678,14 +683,14 @@ func TestErrorMgrErrorOutput(t *testing.T) {
 	output = em.Output()
 	expected = "\n" +
 		"Import Data Error Summary: \n" +
-		"+---+---------------------+-------------+---------------------------------+\n" +
-		"| # | ERROR TYPE          | ERROR COUNT | ERROR DATA TABLE                |\n" +
-		"+---+---------------------+-------------+---------------------------------+\n" +
-		"|\x1b[31m 1 \x1b[0m|\x1b[31m Data Type           \x1b[0m|\x1b[31m         100 \x1b[0m|\x1b[31m `error_info`.`type_error_v1`    \x1b[0m|\n" +
-		"|\x1b[31m 2 \x1b[0m|\x1b[31m Data Syntax         \x1b[0m|\x1b[31m         100 \x1b[0m|\x1b[31m `error_info`.`syntax_error_v1`  \x1b[0m|\n" +
-		"|\x1b[31m 3 \x1b[0m|\x1b[31m Charset Error       \x1b[0m|\x1b[31m         100 \x1b[0m|\x1b[31m                                 \x1b[0m|\n" +
-		"|\x1b[31m 4 \x1b[0m|\x1b[31m Unique Key Conflict \x1b[0m|\x1b[31m         100 \x1b[0m|\x1b[31m `error_info`.`conflict_records` \x1b[0m|\n" +
-		"+---+---------------------+-------------+---------------------------------+\n"
+		"+---+---------------------+-------------+--------------------------------+\n" +
+		"| # | ERROR TYPE          | ERROR COUNT | ERROR DATA TABLE               |\n" +
+		"+---+---------------------+-------------+--------------------------------+\n" +
+		"|\x1b[31m 1 \x1b[0m|\x1b[31m Data Type           \x1b[0m|\x1b[31m         100 \x1b[0m|\x1b[31m `error_info`.`type_error_v1`   \x1b[0m|\n" +
+		"|\x1b[31m 2 \x1b[0m|\x1b[31m Data Syntax         \x1b[0m|\x1b[31m         100 \x1b[0m|\x1b[31m `error_info`.`syntax_error_v1` \x1b[0m|\n" +
+		"|\x1b[31m 3 \x1b[0m|\x1b[31m Charset Error       \x1b[0m|\x1b[31m         100 \x1b[0m|\x1b[31m                                \x1b[0m|\n" +
+		"|\x1b[31m 4 \x1b[0m|\x1b[31m Unique Key Conflict \x1b[0m|\x1b[31m         100 \x1b[0m|\x1b[31m `error_info`.`conflict_view`   \x1b[0m|\n" +
+		"+---+---------------------+-------------+--------------------------------+\n"
 	require.Equal(t, expected, output)
 
 	em.conflictV2Enabled = true

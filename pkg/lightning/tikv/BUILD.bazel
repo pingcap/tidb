@@ -12,7 +12,7 @@ go_library(
         "//pkg/lightning/common",
         "//pkg/lightning/config",
         "//pkg/lightning/log",
-        "//pkg/parser/model",
+        "//pkg/meta/model",
         "@com_github_coreos_go_semver//semver",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_kvproto//pkg/debugpb",

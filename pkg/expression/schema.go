@@ -18,7 +18,7 @@ import (
 	"strings"
 	"unsafe"
 
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/util/size"
 )
 
@@ -67,6 +67,9 @@ func (s *Schema) String() string {
 
 // Clone copies the total schema.
 func (s *Schema) Clone() *Schema {
+	if s == nil {
+		return nil
+	}
 	cols := make([]*Column, 0, s.Len())
 	keys := make([]KeyInfo, 0, len(s.Keys))
 	for _, col := range s.Columns {
@@ -78,6 +81,24 @@ func (s *Schema) Clone() *Schema {
 	schema := NewSchema(cols...)
 	schema.SetUniqueKeys(keys)
 	return schema
+}
+
+// ExprReferenceSchema checks if any column of this expression are from the schema.
+func ExprReferenceSchema(expr Expression, schema *Schema) bool {
+	switch v := expr.(type) {
+	case *Column:
+		return schema.Contains(v)
+	case *ScalarFunction:
+		for _, arg := range v.GetArgs() {
+			if ExprReferenceSchema(arg, schema) {
+				return true
+			}
+		}
+		return false
+	case *CorrelatedColumn, *Constant:
+		return false
+	}
+	return false
 }
 
 // ExprFromSchema checks if all columns of this expression are from the same schema.

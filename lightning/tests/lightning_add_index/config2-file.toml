@@ -1,0 +1,8 @@
+[checkpoint]
+enable = true
+driver = "file"
+dsn = "/tmp/add-index-by-sql-checkpoint.pb"
+
+[tikv-importer]
+backend = 'local'
+add-index-by-sql = true

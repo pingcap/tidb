@@ -112,7 +112,7 @@ func (msm *MockSessionManager) GetConAttrs(user *auth.UserIdentity) map[uint64]m
 }
 
 // Kill implements the SessionManager.Kill interface.
-func (*MockSessionManager) Kill(uint64, bool, bool) {
+func (*MockSessionManager) Kill(uint64, bool, bool, bool) {
 }
 
 // KillAllConnections implements the SessionManager.KillAllConnections interface.
@@ -126,11 +126,6 @@ func (*MockSessionManager) UpdateTLSConfig(*tls.Config) {
 // ServerID get server id.
 func (msm *MockSessionManager) ServerID() uint64 {
 	return msm.SerID
-}
-
-// GetAutoAnalyzeProcID implement SessionManager interface.
-func (msm *MockSessionManager) GetAutoAnalyzeProcID() uint64 {
-	return uint64(1)
 }
 
 // StoreInternalSession is to store internal session.
@@ -156,6 +151,17 @@ func (msm *MockSessionManager) GetInternalSessionStartTSList() []uint64 {
 	defer msm.mu.Unlock()
 	ret := make([]uint64, 0, len(msm.internalSessions))
 	for internalSess := range msm.internalSessions {
+		// Ref the implementation of `GetInternalSessionStartTSList` on the real session manager. The `TxnInfo` is more
+		// accurate, because if a session is pending, the `StartTS` in `sessVars.TxnCtx` will not be updated. For example,
+		// if there is not DDL for a long time, the minimal internal session start ts will not have any progress.
+		if se, ok := internalSess.(interface{ TxnInfo() *txninfo.TxnInfo }); ok {
+			txn := se.TxnInfo()
+			if txn != nil {
+				ret = append(ret, txn.StartTS)
+			}
+			continue
+		}
+
 		se := internalSess.(sessionctx.Context)
 		sessVars := se.GetSessionVars()
 		sessVars.TxnCtxMu.Lock()
@@ -172,12 +178,12 @@ func (msm *MockSessionManager) KillNonFlashbackClusterConn() {
 		processInfo := se.ShowProcess()
 		ddl, ok := processInfo.StmtCtx.GetPlan().(*core.DDL)
 		if !ok {
-			msm.Kill(se.GetSessionVars().ConnectionID, false, false)
+			msm.Kill(se.GetSessionVars().ConnectionID, false, false, false)
 			continue
 		}
 		_, ok = ddl.Statement.(*ast.FlashBackToTimestampStmt)
 		if !ok {
-			msm.Kill(se.GetSessionVars().ConnectionID, false, false)
+			msm.Kill(se.GetSessionVars().ConnectionID, false, false, false)
 			continue
 		}
 	}

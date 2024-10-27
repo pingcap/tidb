@@ -28,39 +28,39 @@ import (
 	"go.uber.org/zap"
 )
 
-func intRangeValue(column *column, min int64, max int64) (maxInt int64, minInt int64) {
+func intRangeValue(column *column, minv, maxv int64) (maxInt, minInt int64) {
 	var err error
 	if len(column.min) > 0 {
-		min, err = strconv.ParseInt(column.min, 10, 64)
+		minv, err = strconv.ParseInt(column.min, 10, 64)
 		if err != nil {
 			log.Fatal("intRangeValue", zap.Error(err))
 		}
 
 		if len(column.max) > 0 {
-			max, err = strconv.ParseInt(column.max, 10, 64)
+			maxv, err = strconv.ParseInt(column.max, 10, 64)
 			if err != nil {
 				log.Fatal("intRangeValue", zap.Error(err))
 			}
 		}
 	}
 
-	return min, max
+	return minv, maxv
 }
 
-func randInt64Value(column *column, min int64, max int64) int64 {
+func randInt64Value(column *column, minv, maxv int64) int64 {
 	if len(column.set) > 0 {
 		idx := randInt(0, len(column.set)-1)
 		data, _ := strconv.ParseInt(column.set[idx], 10, 64)
 		return data
 	}
 
-	min, max = intRangeValue(column, min, max)
-	return randInt64(min, max)
+	minv, maxv = intRangeValue(column, minv, maxv)
+	return randInt64(minv, maxv)
 }
 
-func uniqInt64Value(column *column, min int64, max int64) int64 {
-	min, max = intRangeValue(column, min, max)
-	column.data.setInitInt64Value(column.step, min, max)
+func uniqInt64Value(column *column, minv int64, maxv int64) int64 {
+	minv, maxv = intRangeValue(column, minv, maxv)
+	column.data.setInitInt64Value(column.step, minv, maxv)
 	return column.data.uniqInt64()
 }
 

@@ -15,6 +15,7 @@
 package priorityqueue_test
 
 import (
+	"context"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/parser/model"
@@ -43,7 +44,7 @@ func TestAnalyzeDynamicPartitionedTable(t *testing.T) {
 	handle := dom.StatsHandle()
 	// Check the result of analyze.
 	is := dom.InfoSchema()
-	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	tbl, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
 	pid := tbl.Meta().GetPartitionInfo().Definitions[0].ID
 	tblStats := handle.GetPartitionStats(tbl.Meta(), pid)
@@ -52,7 +53,7 @@ func TestAnalyzeDynamicPartitionedTable(t *testing.T) {
 	job.Analyze(handle, dom.SysProcTracker())
 	// Check the result of analyze.
 	is = dom.InfoSchema()
-	tbl, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	tbl, err = is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
 	pid = tbl.Meta().GetPartitionInfo().Definitions[0].ID
 	tblStats = handle.GetPartitionStats(tbl.Meta(), pid)
@@ -81,34 +82,34 @@ func TestAnalyzeDynamicPartitionedTableIndexes(t *testing.T) {
 	handle := dom.StatsHandle()
 	// Check the result of analyze index.
 	is := dom.InfoSchema()
-	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	tbl, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
 	pid := tbl.Meta().GetPartitionInfo().Definitions[0].ID
 	tblStats := handle.GetPartitionStats(tbl.Meta(), pid)
 	require.True(t, tblStats.Pseudo)
-	require.NotNil(t, tblStats.Indices[1])
-	require.False(t, tblStats.Indices[1].IsAnalyzed())
+	require.NotNil(t, tblStats.GetIdx(1))
+	require.False(t, tblStats.GetIdx(1).IsAnalyzed())
 
 	job.Analyze(handle, dom.SysProcTracker())
 	// Check the result of analyze index.
 	is = dom.InfoSchema()
-	tbl, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	tbl, err = is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
 	pid = tbl.Meta().GetPartitionInfo().Definitions[0].ID
 	tblStats = handle.GetPartitionStats(tbl.Meta(), pid)
 	require.False(t, tblStats.Pseudo)
-	require.NotNil(t, tblStats.Indices[1])
-	require.True(t, tblStats.Indices[1].IsAnalyzed())
-	require.NotNil(t, tblStats.Indices[2])
-	require.True(t, tblStats.Indices[2].IsAnalyzed())
+	require.NotNil(t, tblStats.GetIdx(1))
+	require.True(t, tblStats.GetIdx(1).IsAnalyzed())
+	require.NotNil(t, tblStats.GetIdx(2))
+	require.True(t, tblStats.GetIdx(2).IsAnalyzed())
 	// partition p1
 	pid = tbl.Meta().GetPartitionInfo().Definitions[1].ID
 	tblStats = handle.GetPartitionStats(tbl.Meta(), pid)
 	require.False(t, tblStats.Pseudo)
-	require.NotNil(t, tblStats.Indices[1])
-	require.True(t, tblStats.Indices[1].IsAnalyzed())
-	require.NotNil(t, tblStats.Indices[2])
-	require.True(t, tblStats.Indices[2].IsAnalyzed())
+	require.NotNil(t, tblStats.GetIdx(1))
+	require.True(t, tblStats.GetIdx(1).IsAnalyzed())
+	require.NotNil(t, tblStats.GetIdx(2))
+	require.True(t, tblStats.GetIdx(2).IsAnalyzed())
 	// Check analyze jobs are created.
 	rows := tk.MustQuery("select * from mysql.analyze_jobs").Rows()
 	// Because analyze one index will analyze all indexes and all columns together, so there are 5 jobs.

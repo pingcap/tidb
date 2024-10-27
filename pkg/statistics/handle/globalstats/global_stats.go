@@ -19,11 +19,13 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/infoschema"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/statistics"
+	statslogutil "github.com/pingcap/tidb/pkg/statistics/handle/logutil"
 	statstypes "github.com/pingcap/tidb/pkg/statistics/handle/types"
+	"github.com/pingcap/tidb/pkg/statistics/handle/util"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/tiancaiamao/gp"
@@ -48,11 +50,18 @@ func NewStatsGlobal(statsHandler statstypes.StatsHandle) statstypes.StatsGlobal 
 // MergePartitionStats2GlobalStatsByTableID merge the partition-level stats to global-level stats based on the tableID.
 func (sg *statsGlobalImpl) MergePartitionStats2GlobalStatsByTableID(sc sessionctx.Context,
 	opts map[ast.AnalyzeOptionType]uint64, is infoschema.InfoSchema,
+	info *statstypes.GlobalStatsInfo,
 	physicalID int64,
-	isIndex bool,
-	histIDs []int64,
-) (globalStats any, err error) {
-	return MergePartitionStats2GlobalStatsByTableID(sc, sg.statsHandler, opts, is, physicalID, isIndex, histIDs)
+) (err error) {
+	globalStats, err := MergePartitionStats2GlobalStatsByTableID(sc, sg.statsHandler, opts, is, physicalID, info.IsIndex == 1, info.HistIDs)
+	if err != nil {
+		if types.ErrPartitionStatsMissing.Equal(err) || types.ErrPartitionColumnStatsMissing.Equal(err) {
+			// When we find some partition-level stats are missing, we need to report warning.
+			sc.GetSessionVars().StmtCtx.AppendWarning(err)
+		}
+		return err
+	}
+	return WriteGlobalStatsToStorage(sg.statsHandler, globalStats, info, physicalID)
 }
 
 // GlobalStats is used to store the statistics contained in the global-level stats
@@ -94,6 +103,10 @@ func MergePartitionStats2GlobalStats(
 	histIDs []int64,
 ) (globalStats *GlobalStats, err error) {
 	if sc.GetSessionVars().EnableAsyncMergeGlobalStats {
+		statslogutil.SingletonStatsSamplerLogger().Info("use async merge global stats",
+			zap.Int64("tableID", globalTableInfo.ID),
+			zap.String("table", globalTableInfo.Name.L),
+		)
 		worker, err := NewAsyncMergePartitionStats2GlobalStats(statsHandle, globalTableInfo, histIDs, is)
 		if err != nil {
 			return nil, errors.Trace(err)
@@ -104,6 +117,10 @@ func MergePartitionStats2GlobalStats(
 		}
 		return worker.Result(), nil
 	}
+	statslogutil.SingletonStatsSamplerLogger().Info("use blocking merge global stats",
+		zap.Int64("tableID", globalTableInfo.ID),
+		zap.String("table", globalTableInfo.Name.L),
+	)
 	return blockingMergePartitionStats2GlobalStats(sc, statsHandle.GPool(), opts, is, globalTableInfo, isIndex, histIDs, nil, statsHandle)
 }
 
@@ -296,10 +313,15 @@ func blockingMergePartitionStats2GlobalStats(
 		}
 		// FMSketch use many memory, so we first deal with it and then destroy it.
 		// Merge FMSketch.
+		// NOTE: allFms maybe contain empty.
 		globalStats.Fms[i] = allFms[i][0]
 		for j := 1; j < len(allFms[i]); j++ {
-			globalStats.Fms[i].MergeFMSketch(allFms[i][j])
-			allFms[i][j].DestroyAndPutToPool()
+			if globalStats.Fms[i] == nil {
+				globalStats.Fms[i] = allFms[i][j]
+			} else {
+				globalStats.Fms[i].MergeFMSketch(allFms[i][j])
+				allFms[i][j].DestroyAndPutToPool()
+			}
 		}
 
 		// Update the global NDV.
@@ -345,4 +367,34 @@ func blockingMergePartitionStats2GlobalStats(
 		globalStats.Hg[i].NDV = globalStatsNDV
 	}
 	return
+}
+
+// WriteGlobalStatsToStorage is to write global stats to storage
+func WriteGlobalStatsToStorage(statsHandle statstypes.StatsHandle, globalStats *GlobalStats, info *statstypes.GlobalStatsInfo, gid int64) (err error) {
+	// Dump global-level stats to kv.
+	for i := 0; i < globalStats.Num; i++ {
+		hg, cms, topN := globalStats.Hg[i], globalStats.Cms[i], globalStats.TopN[i]
+		if hg == nil {
+			// All partitions have no stats so global stats are not created.
+			continue
+		}
+		// fms for global stats doesn't need to dump to kv.
+		err = statsHandle.SaveStatsToStorage(gid,
+			globalStats.Count,
+			globalStats.ModifyCount,
+			info.IsIndex,
+			hg,
+			cms,
+			topN,
+			info.StatsVersion,
+			1,
+			true,
+			util.StatsMetaHistorySourceAnalyze,
+		)
+		if err != nil {
+			statslogutil.StatsLogger().Error("save global-level stats to storage failed",
+				zap.Int64("histID", hg.ID), zap.Error(err), zap.Int64("tableID", gid))
+		}
+	}
+	return err
 }

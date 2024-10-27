@@ -267,7 +267,7 @@ func (e *countOriginalWithDistinct4String) AppendFinalResult2Chunk(_ AggFuncUpda
 
 func (e *countOriginalWithDistinct4String) UpdatePartialResult(sctx AggFuncUpdateContext, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {
 	p := (*partialResult4CountDistinctString)(pr)
-	collator := collate.GetCollator(e.args[0].GetType().GetCollate())
+	collator := collate.GetCollator(e.args[0].GetType(sctx).GetCollate())
 
 	for _, row := range rowsInGroup {
 		input, isNull, err := e.args[0].EvalString(sctx, row)
@@ -322,7 +322,7 @@ func (e *countOriginalWithDistinct) UpdatePartialResult(sctx AggFuncUpdateContex
 	encodedBytes := make([]byte, 0)
 	collators := make([]collate.Collator, 0, len(e.args))
 	for _, arg := range e.args {
-		collators = append(collators, collate.GetCollator(arg.GetType().GetCollate()))
+		collators = append(collators, collate.GetCollator(arg.GetType(sctx).GetCollate()))
 	}
 	// decimal struct is the biggest type we will use.
 	buf := make([]byte, types.MyDecimalStructSize)
@@ -358,7 +358,7 @@ func evalAndEncode(
 	sctx expression.EvalContext, arg expression.Expression, collator collate.Collator,
 	row chunk.Row, buf, encodedBytes []byte,
 ) (_ []byte, isNull bool, err error) {
-	switch tp := arg.GetType().EvalType(); tp {
+	switch tp := arg.GetType(sctx).EvalType(); tp {
 	case types.ETInt:
 		var val int64
 		val, isNull, err = arg.EvalInt(sctx, row)
@@ -401,6 +401,13 @@ func evalAndEncode(
 			break
 		}
 		encodedBytes = val.HashValue(encodedBytes)
+	case types.ETVectorFloat32:
+		var val types.VectorFloat32
+		val, isNull, err = arg.EvalVectorFloat32(sctx, row)
+		if err != nil || isNull {
+			break
+		}
+		encodedBytes = val.SerializeTo(encodedBytes)
 	case types.ETString:
 		var val string
 		val, isNull, err = arg.EvalString(sctx, row)
@@ -778,7 +785,7 @@ func (e *approxCountDistinctOriginal) UpdatePartialResult(sctx AggFuncUpdateCont
 	buf := make([]byte, types.MyDecimalStructSize)
 	collators := make([]collate.Collator, 0, len(e.args))
 	for _, arg := range e.args {
-		collators = append(collators, collate.GetCollator(arg.GetType().GetCollate()))
+		collators = append(collators, collate.GetCollator(arg.GetType(sctx).GetCollate()))
 	}
 
 	for _, row := range rowsInGroup {

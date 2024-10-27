@@ -26,7 +26,9 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
+	"github.com/pingcap/tidb/pkg/util/ppcpuusage"
 	"github.com/pingcap/tidb/pkg/util/stmtsummary"
+	"github.com/pingcap/tidb/pkg/util/stringutil"
 	"github.com/tikv/client-go/v2/util"
 )
 
@@ -129,6 +131,8 @@ type StmtRecord struct {
 	SumPDTotal           time.Duration `json:"sum_pd_total"`
 	SumBackoffTotal      time.Duration `json:"sum_backoff_total"`
 	SumWriteSQLRespTotal time.Duration `json:"sum_write_sql_resp_total"`
+	SumTidbCPU           time.Duration `json:"sum_tidb_cpu"`
+	SumTikvCPU           time.Duration `json:"sum_tikv_cpu"`
 	SumResultRows        int64         `json:"sum_result_rows"`
 	MaxResultRows        int64         `json:"max_result_rows"`
 	MinResultRows        int64         `json:"min_result_rows"`
@@ -151,8 +155,8 @@ type StmtRecord struct {
 	ResourceGroupName string `json:"resource_group_name"`
 	stmtsummary.StmtRUSummary
 
-	PlanCacheUnqualifiedCount int64  `json:"plan_cache_unqualified_count"`
-	LastPlanCacheUnqualified  string `json:"last_plan_cache_unqualified"` // the reason why this query is unqualified for the plan cache
+	PlanCacheUnqualifiedCount      int64  `json:"plan_cache_unqualified_count"`
+	PlanCacheUnqualifiedLastReason string `json:"plan_cache_unqualified_last_reason"` // the reason why this query is unqualified for the plan cache
 }
 
 // NewStmtRecord creates a new StmtRecord from StmtExecInfo.
@@ -182,7 +186,7 @@ func NewStmtRecord(info *stmtsummary.StmtExecInfo) *StmtRecord {
 	}
 	// sampleSQL / authUsers(sampleUser) / samplePlan / prevSQL / indexNames store the values shown at the first time,
 	// because it compacts performance to update every time.
-	samplePlan, planHint := info.PlanGenerator()
+	samplePlan, planHint, _ := info.PlanGenerator()
 	if len(samplePlan) > MaxEncodedPlanSizeInBytes {
 		samplePlan = plancodec.PlanDiscardedEncoded
 	}
@@ -201,7 +205,7 @@ func NewStmtRecord(info *stmtsummary.StmtExecInfo) *StmtRecord {
 		NormalizedSQL: info.NormalizedSQL,
 		TableNames:    tableNames,
 		IsInternal:    info.IsInternal,
-		SampleSQL:     formatSQL(info.OriginalSQL),
+		SampleSQL:     formatSQL(info.OriginalSQL.String()),
 		Charset:       info.Charset,
 		Collation:     info.Collation,
 		// PrevSQL is already truncated to cfg.Log.QueryLogMaxLen.
@@ -373,7 +377,7 @@ func (r *StmtRecord) Add(info *stmtsummary.StmtExecInfo) {
 	}
 	if info.PlanCacheUnqualified != "" {
 		r.PlanCacheUnqualifiedCount++
-		r.LastPlanCacheUnqualified = info.PlanCacheUnqualified
+		r.PlanCacheUnqualifiedLastReason = info.PlanCacheUnqualified
 	}
 	// SPM
 	if info.PlanInBinding {
@@ -416,6 +420,8 @@ func (r *StmtRecord) Add(info *stmtsummary.StmtExecInfo) {
 	r.SumPDTotal += time.Duration(atomic.LoadInt64(&info.TiKVExecDetails.WaitPDRespDuration))
 	r.SumBackoffTotal += time.Duration(atomic.LoadInt64(&info.TiKVExecDetails.BackoffDuration))
 	r.SumWriteSQLRespTotal += info.StmtExecDetails.WriteSQLRespDuration
+	r.SumTidbCPU += info.CPUUsages.TidbCPUTime
+	r.SumTikvCPU += info.CPUUsages.TikvCPUTime
 	// RU
 	r.StmtRUSummary.Add(info.RUDetail)
 }
@@ -550,8 +556,8 @@ func (r *StmtRecord) Merge(other *StmtRecord) {
 	// Plan cache
 	r.PlanCacheHits += other.PlanCacheHits
 	r.PlanCacheUnqualifiedCount += other.PlanCacheUnqualifiedCount
-	if other.LastPlanCacheUnqualified != "" {
-		r.LastPlanCacheUnqualified = other.LastPlanCacheUnqualified
+	if other.PlanCacheUnqualifiedLastReason != "" {
+		r.PlanCacheUnqualifiedLastReason = other.PlanCacheUnqualifiedLastReason
 	}
 	// Other
 	r.SumAffectedRows += other.SumAffectedRows
@@ -575,6 +581,8 @@ func (r *StmtRecord) Merge(other *StmtRecord) {
 	r.SumPDTotal += other.SumPDTotal
 	r.SumBackoffTotal += other.SumBackoffTotal
 	r.SumWriteSQLRespTotal += other.SumWriteSQLRespTotal
+	r.SumTidbCPU += other.SumTidbCPU
+	r.SumTikvCPU += other.SumTikvCPU
 	r.SumErrors += other.SumErrors
 	r.StmtRUSummary.Merge(&other.StmtRUSummary)
 }
@@ -610,11 +618,11 @@ func GenerateStmtExecInfo4Test(digest string) *stmtsummary.StmtExecInfo {
 
 	stmtExecInfo := &stmtsummary.StmtExecInfo{
 		SchemaName:     "schema_name",
-		OriginalSQL:    "original_sql1",
+		OriginalSQL:    stringutil.StringerStr("original_sql1"),
 		NormalizedSQL:  "normalized_sql",
 		Digest:         digest,
 		PlanDigest:     "plan_digest",
-		PlanGenerator:  func() (string, string) { return "", "" },
+		PlanGenerator:  func() (string, string, any) { return "", "", nil },
 		User:           "user",
 		TotalLatency:   10000,
 		ParseLatency:   100,
@@ -686,6 +694,7 @@ func GenerateStmtExecInfo4Test(digest string) *stmtsummary.StmtExecInfo {
 		KeyspaceID:        1,
 		ResourceGroupName: "rg1",
 		RUDetail:          util.NewRUDetailsWith(1.2, 3.4, 2*time.Millisecond),
+		CPUUsages:         ppcpuusage.CPUUsages{TidbCPUTime: time.Duration(20), TikvCPUTime: time.Duration(10000)},
 	}
 	stmtExecInfo.StmtCtx.AddAffectedRows(10000)
 	return stmtExecInfo

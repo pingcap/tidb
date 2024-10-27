@@ -84,21 +84,6 @@ func GetJSON(client *http.Client, url string, v any) error {
 	return errors.Trace(json.NewDecoder(resp.Body).Decode(v))
 }
 
-// ChanMap creates a channel which applies the function over the input Channel.
-// Hint of Resource Leakage:
-// In golang, channel isn't an interface so we must create a goroutine for handling the inputs.
-// Hence the input channel must be closed properly or this function may leak a goroutine.
-func ChanMap[T, R any](c <-chan T, f func(T) R) <-chan R {
-	outCh := make(chan R)
-	go func() {
-		defer close(outCh)
-		for item := range c {
-			outCh <- f(item)
-		}
-	}()
-	return outCh
-}
-
 // Str2Int64Map converts a string to a map[int64]struct{}.
 func Str2Int64Map(str string) map[int64]struct{} {
 	strs := strings.Split(str, ",")
@@ -121,9 +106,8 @@ func GenLogFields(costTime time.Duration, info *ProcessInfo, needTruncateSQL boo
 	logFields = append(logFields, zap.String("cost_time", strconv.FormatFloat(costTime.Seconds(), 'f', -1, 64)+"s"))
 	execDetail := info.StmtCtx.GetExecDetails()
 	logFields = append(logFields, execDetail.ToZapFields()...)
-	if copTaskInfo := info.StmtCtx.CopTasksDetails(); copTaskInfo != nil {
-		logFields = append(logFields, copTaskInfo.ToZapFields()...)
-	}
+	copTaskInfo := info.StmtCtx.CopTasksDetails()
+	logFields = append(logFields, copTaskInfo.ToZapFields()...)
 	if statsInfo := info.StatsInfo(info.Plan); len(statsInfo) > 0 {
 		var buf strings.Builder
 		firstComma := false

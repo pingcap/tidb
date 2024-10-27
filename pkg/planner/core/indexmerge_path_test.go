@@ -20,7 +20,10 @@ import (
 	"math/rand"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/pingcap/tidb/pkg/domain"
+	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/parser"
@@ -28,8 +31,12 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
+	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
+	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/util/hint"
 	"github.com/stretchr/testify/require"
 )
@@ -56,22 +63,23 @@ func TestCollectFilters4MVIndexMutations(t *testing.T) {
 	require.NoError(t, err)
 	tk.Session().GetSessionVars().PlanID.Store(0)
 	tk.Session().GetSessionVars().PlanColumnID.Store(0)
-	err = core.Preprocess(context.Background(), tk.Session(), stmt, core.WithPreprocessorReturn(&core.PreprocessorReturn{InfoSchema: is}))
+	nodeW := resolve.NewNodeW(stmt)
+	err = core.Preprocess(context.Background(), tk.Session(), nodeW, core.WithPreprocessorReturn(&core.PreprocessorReturn{InfoSchema: is}))
 	require.NoError(t, err)
 	require.NoError(t, sessiontxn.GetTxnManager(tk.Session()).AdviseWarmup())
 	builder, _ := core.NewPlanBuilder().Init(tk.Session().GetPlanCtx(), is, hint.NewQBHintHandler(nil))
-	p, err := builder.Build(context.TODO(), stmt)
+	p, err := builder.Build(context.TODO(), nodeW)
 	require.NoError(t, err)
 	logicalP, err := core.LogicalOptimizeTest(context.TODO(), builder.GetOptFlag(), p.(base.LogicalPlan))
 	require.NoError(t, err)
 
-	ds, ok := logicalP.(*core.DataSource)
+	ds, ok := logicalP.(*logicalop.DataSource)
 	for !ok {
 		p := logicalP.Children()[0]
-		ds, ok = p.(*core.DataSource)
+		ds, ok = p.(*logicalop.DataSource)
 	}
-	cnfs := ds.GetAllConds()
-	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	cnfs := ds.AllConds
+	tbl, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
 	idxCols, ok := core.PrepareIdxColsAndUnwrapArrayType(
 		tbl.Meta(),
@@ -432,4 +440,59 @@ func randMVIndexValue(opts randMVIndexValOpts) string {
 		return fmt.Sprintf(`"2000-01-%v"`, rand.Intn(opts.distinct)+1)
 	}
 	return ""
+}
+
+func TestAnalyzeVectorIndex(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomainWithSchemaLease(t, 200*time.Millisecond, mockstore.WithMockTiFlash(2))
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t;")
+
+	tiflash := infosync.NewMockTiFlash()
+	infosync.SetMockTiFlash(tiflash)
+	defer func() {
+		tiflash.Lock()
+		tiflash.StatusServer.Close()
+		tiflash.Unlock()
+	}()
+	tk.MustExec(`create table t(a int, b vector(2), c vector(3), j json, index(a))`)
+	tk.MustExec("alter table t set tiflash replica 2 location labels 'a','b';")
+	tblInfo, err := dom.InfoSchema().TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
+	require.NoError(t, err)
+	err = domain.GetDomain(tk.Session()).DDLExecutor().UpdateTableReplicaInfo(tk.Session(), tblInfo.Meta().ID, true)
+	require.NoError(t, err)
+
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/MockCheckVectorIndexProcess", `return(1)`)
+	tk.MustExec("alter table t add vector index idx((VEC_COSINE_DISTANCE(b))) USING HNSW")
+	tk.MustExec("alter table t add vector index idx2((VEC_COSINE_DISTANCE(c))) USING HNSW")
+
+	tk.MustExec("set tidb_analyze_version=2")
+	tk.MustExec("analyze table t")
+	tk.MustQuery("show warnings").Sort().Check(testkit.Rows(
+		"Note 1105 Analyze use auto adjusted sample rate 1.000000 for table test.t, reason to use this rate is \"use min(1, 110000/10000) as the sample-rate=1\"",
+		"Warning 1105 No predicate column has been collected yet for table test.t, so only indexes and the columns composing the indexes will be analyzed",
+		"Warning 1105 analyzing vector index is not supported, skip idx",
+		"Warning 1105 analyzing vector index is not supported, skip idx2"))
+	tk.MustExec("analyze table t index idx")
+	tk.MustQuery("show warnings").Sort().Check(testkit.Rows(
+		"Note 1105 Analyze use auto adjusted sample rate 1.000000 for table test.t, reason to use this rate is \"TiDB assumes that the table is empty, use sample-rate=1\"",
+		"Warning 1105 No predicate column has been collected yet for table test.t, so only indexes and the columns composing the indexes will be analyzed",
+		"Warning 1105 The version 2 would collect all statistics not only the selected indexes",
+		"Warning 1105 analyzing vector index is not supported, skip idx",
+		"Warning 1105 analyzing vector index is not supported, skip idx2"))
+
+	tk.MustExec("set tidb_analyze_version=1")
+	tk.MustExec("analyze table t")
+	tk.MustQuery("show warnings").Sort().Check(testkit.Rows(
+		"Warning 1105 analyzing vector index is not supported, skip idx",
+		"Warning 1105 analyzing vector index is not supported, skip idx2"))
+	tk.MustExec("analyze table t index idx")
+	tk.MustQuery("show warnings").Sort().Check(testkit.Rows(
+		"Warning 1105 analyzing vector index is not supported, skip idx"))
+	tk.MustExec("analyze table t index a")
+	tk.MustQuery("show warnings").Sort().Check(testkit.Rows())
+	tk.MustExec("analyze table t index a, idx, idx2")
+	tk.MustQuery("show warnings").Sort().Check(testkit.Rows(
+		"Warning 1105 analyzing vector index is not supported, skip idx",
+		"Warning 1105 analyzing vector index is not supported, skip idx2"))
 }

@@ -581,8 +581,6 @@ func (c *pdClient) SplitKeysAndScatter(ctx context.Context, sortedSplitKeys [][]
 		workerPool := tidbutil.NewWorkerPool(uint(c.splitConcurrency), "split keys")
 		eg, eCtx := errgroup.WithContext(ctx)
 		for region, splitKeys := range splitKeyMap {
-			region := region
-			splitKeys := splitKeys
 			workerPool.ApplyOnErrorGroup(eg, func() error {
 				// TODO(lance6716): add error handling to retry from scan or retry from split
 				newRegions, err2 := c.SplitWaitAndScatter(eCtx, region, splitKeys)
@@ -769,6 +767,7 @@ func (c *pdClient) ScanRegions(ctx context.Context, key, endKey []byte, limit in
 		failpoint.Return(nil, status.Error(codes.Unavailable, "not leader"))
 	})
 
+	//nolint:staticcheck
 	regions, err := c.client.ScanRegions(ctx, key, endKey, limit)
 	if err != nil {
 		return nil, errors.Trace(err)

@@ -450,7 +450,7 @@ func (c *isTrueOrFalseFunctionClass) getFunction(ctx BuildContext, args []Expres
 		return nil, err
 	}
 
-	argTp := args[0].GetType().EvalType()
+	argTp := args[0].GetType(ctx.GetEvalCtx()).EvalType()
 	if argTp == types.ETTimestamp || argTp == types.ETDatetime || argTp == types.ETDuration || argTp == types.ETJson || argTp == types.ETString {
 		argTp = types.ETReal
 	}
@@ -486,6 +486,13 @@ func (c *isTrueOrFalseFunctionClass) getFunction(ctx BuildContext, args []Expres
 			} else {
 				sig.setPbCode(tipb.ScalarFuncSig_IntIsTrue)
 			}
+		case types.ETVectorFloat32:
+			sig = &builtinVectorFloat32IsTrueSig{bf, c.keepNull}
+			// if c.keepNull {
+			// 	sig.setPbCode(tipb.ScalarFuncSig_VectorFloat32IsTrueWithNull)
+			// } else {
+			// 	sig.setPbCode(tipb.ScalarFuncSig_VectorFloat32IsTrue)
+			// }
 		default:
 			return nil, errors.Errorf("unexpected types.EvalType %v", argTp)
 		}
@@ -512,6 +519,13 @@ func (c *isTrueOrFalseFunctionClass) getFunction(ctx BuildContext, args []Expres
 			} else {
 				sig.setPbCode(tipb.ScalarFuncSig_IntIsFalse)
 			}
+		case types.ETVectorFloat32:
+			sig = &builtinVectorFloat32IsFalseSig{bf, c.keepNull}
+			// if c.keepNull {
+			// 	sig.setPbCode(tipb.ScalarFuncSig_VectorFloat32IsFalseWithNull)
+			// } else {
+			// 	sig.setPbCode(tipb.ScalarFuncSig_VectorFloat32IsFalse)
+			// }
 		default:
 			return nil, errors.Errorf("unexpected types.EvalType %v", argTp)
 		}
@@ -594,6 +608,31 @@ func (b *builtinIntIsTrueSig) evalInt(ctx EvalContext, row chunk.Row) (int64, bo
 	return 1, false, nil
 }
 
+type builtinVectorFloat32IsTrueSig struct {
+	baseBuiltinFunc
+	keepNull bool
+}
+
+func (b *builtinVectorFloat32IsTrueSig) Clone() builtinFunc {
+	newSig := &builtinVectorFloat32IsTrueSig{keepNull: b.keepNull}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
+func (b *builtinVectorFloat32IsTrueSig) evalInt(ctx EvalContext, row chunk.Row) (int64, bool, error) {
+	input, isNull, err := b.args[0].EvalVectorFloat32(ctx, row)
+	if err != nil {
+		return 0, true, err
+	}
+	if b.keepNull && isNull {
+		return 0, true, nil
+	}
+	if isNull || input.IsZeroValue() {
+		return 0, false, nil
+	}
+	return 1, false, nil
+}
+
 type builtinRealIsFalseSig struct {
 	baseBuiltinFunc
 	keepNull bool
@@ -669,6 +708,31 @@ func (b *builtinIntIsFalseSig) evalInt(ctx EvalContext, row chunk.Row) (int64, b
 	return 1, false, nil
 }
 
+type builtinVectorFloat32IsFalseSig struct {
+	baseBuiltinFunc
+	keepNull bool
+}
+
+func (b *builtinVectorFloat32IsFalseSig) Clone() builtinFunc {
+	newSig := &builtinVectorFloat32IsFalseSig{keepNull: b.keepNull}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
+func (b *builtinVectorFloat32IsFalseSig) evalInt(ctx EvalContext, row chunk.Row) (int64, bool, error) {
+	input, isNull, err := b.args[0].EvalVectorFloat32(ctx, row)
+	if err != nil {
+		return 0, true, err
+	}
+	if b.keepNull && isNull {
+		return 0, true, nil
+	}
+	if isNull || !input.IsZeroValue() {
+		return 0, false, nil
+	}
+	return 1, false, nil
+}
+
 type bitNegFunctionClass struct {
 	baseFunctionClass
 }
@@ -714,7 +778,7 @@ func (c *unaryNotFunctionClass) getFunction(ctx BuildContext, args []Expression)
 		return nil, err
 	}
 
-	argTp := args[0].GetType().EvalType()
+	argTp := args[0].GetType(ctx.GetEvalCtx()).EvalType()
 	if argTp == types.ETTimestamp || argTp == types.ETDatetime || argTp == types.ETDuration {
 		argTp = types.ETInt
 	} else if argTp == types.ETString {
@@ -743,7 +807,7 @@ func (c *unaryNotFunctionClass) getFunction(ctx BuildContext, args []Expression)
 		sig = &builtinUnaryNotJSONSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_UnaryNotJSON)
 	default:
-		return nil, errors.Errorf("unexpected types.EvalType %v", argTp)
+		return nil, errors.Errorf("%s is not supported for unary not operator", argTp)
 	}
 	return sig, nil
 }
@@ -837,8 +901,8 @@ type unaryMinusFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *unaryMinusFunctionClass) handleIntOverflow(arg *Constant) (overflow bool) {
-	if mysql.HasUnsignedFlag(arg.GetType().GetFlag()) {
+func (c *unaryMinusFunctionClass) handleIntOverflow(ctx EvalContext, arg *Constant) (overflow bool) {
+	if mysql.HasUnsignedFlag(arg.GetType(ctx).GetFlag()) {
 		uval := arg.Value.GetUint64()
 		// -math.MinInt64 is 9223372036854775808, so if uval is more than 9223372036854775808, like
 		// 9223372036854775809, -9223372036854775809 is less than math.MinInt64, overflow occurs.
@@ -858,8 +922,8 @@ func (c *unaryMinusFunctionClass) handleIntOverflow(arg *Constant) (overflow boo
 
 // typeInfer infers unaryMinus function return type. when the arg is an int constant and overflow,
 // typerInfer will infers the return type as types.ETDecimal, not types.ETInt.
-func (c *unaryMinusFunctionClass) typeInfer(argExpr Expression) (types.EvalType, bool) {
-	tp := argExpr.GetType().EvalType()
+func (c *unaryMinusFunctionClass) typeInfer(ctx EvalContext, argExpr Expression) (types.EvalType, bool) {
+	tp := argExpr.GetType(ctx).EvalType()
 	if tp != types.ETInt && tp != types.ETDecimal {
 		tp = types.ETReal
 	}
@@ -867,7 +931,7 @@ func (c *unaryMinusFunctionClass) typeInfer(argExpr Expression) (types.EvalType,
 	overflow := false
 	// TODO: Handle float overflow.
 	if arg, ok := argExpr.(*Constant); ok && tp == types.ETInt {
-		overflow = c.handleIntOverflow(arg)
+		overflow = c.handleIntOverflow(ctx, arg)
 		if overflow {
 			tp = types.ETDecimal
 		}
@@ -880,8 +944,8 @@ func (c *unaryMinusFunctionClass) getFunction(ctx BuildContext, args []Expressio
 		return nil, err
 	}
 
-	argExpr, argExprTp := args[0], args[0].GetType()
-	_, intOverflow := c.typeInfer(argExpr)
+	argExpr, argExprTp := args[0], args[0].GetType(ctx.GetEvalCtx())
+	_, intOverflow := c.typeInfer(ctx.GetEvalCtx(), argExpr)
 
 	var bf baseBuiltinFunc
 	evalType := argExprTp.EvalType()
@@ -956,7 +1020,7 @@ func (b *builtinUnaryMinusIntSig) evalInt(ctx EvalContext, row chunk.Row) (res i
 		return val, isNull, err
 	}
 
-	if mysql.HasUnsignedFlag(b.args[0].GetType().GetFlag()) {
+	if mysql.HasUnsignedFlag(b.args[0].GetType(ctx).GetFlag()) {
 		uval := uint64(val)
 		if uval > uint64(-math.MinInt64) {
 			return 0, false, types.ErrOverflow.GenWithStackByArgs("BIGINT", fmt.Sprintf("-%v", uval))
@@ -1012,7 +1076,7 @@ func (c *isNullFunctionClass) getFunction(ctx BuildContext, args []Expression) (
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	argTp := args[0].GetType().EvalType()
+	argTp := args[0].GetType(ctx.GetEvalCtx()).EvalType()
 	if argTp == types.ETTimestamp {
 		argTp = types.ETDatetime
 	} else if argTp == types.ETJson {
@@ -1043,8 +1107,11 @@ func (c *isNullFunctionClass) getFunction(ctx BuildContext, args []Expression) (
 	case types.ETString:
 		sig = &builtinStringIsNullSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_StringIsNull)
+	case types.ETVectorFloat32:
+		sig = &builtinVectorFloat32IsNullSig{bf}
+		sig.setPbCode(tipb.ScalarFuncSig_VectorFloat32IsNull)
 	default:
-		panic("unexpected types.EvalType")
+		return nil, errors.Errorf("%s is not supported for ISNULL()", argTp)
 	}
 	return sig, nil
 }
@@ -1131,6 +1198,21 @@ func (b *builtinStringIsNullSig) Clone() builtinFunc {
 
 func (b *builtinStringIsNullSig) evalInt(ctx EvalContext, row chunk.Row) (int64, bool, error) {
 	_, isNull, err := b.args[0].EvalString(ctx, row)
+	return evalIsNull(isNull, err)
+}
+
+type builtinVectorFloat32IsNullSig struct {
+	baseBuiltinFunc
+}
+
+func (b *builtinVectorFloat32IsNullSig) Clone() builtinFunc {
+	newSig := &builtinVectorFloat32IsNullSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
+func (b *builtinVectorFloat32IsNullSig) evalInt(ctx EvalContext, row chunk.Row) (int64, bool, error) {
+	_, isNull, err := b.args[0].EvalVectorFloat32(ctx, row)
 	return evalIsNull(isNull, err)
 }
 

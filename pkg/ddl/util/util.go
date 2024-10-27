@@ -19,6 +19,7 @@ import (
 	"context"
 	"encoding/hex"
 	"fmt"
+	"os"
 	"strings"
 	"time"
 
@@ -26,11 +27,12 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/ddl/logutil"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/util/chunk"
-	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/tikv/client-go/v2/tikvrpc"
 	clientv3 "go.etcd.io/etcd/client/v3"
@@ -55,6 +57,7 @@ const (
 	// DDLAllSchemaVersions is the path on etcd that is used to store all servers current schema versions.
 	DDLAllSchemaVersions = "/tidb/ddl/all_schema_versions"
 	// DDLAllSchemaVersionsByJob is the path on etcd that is used to store all servers current schema versions.
+	// /tidb/ddl/all_schema_by_job_versions/<job-id>/<tidb-id> ---> <schema-version>
 	DDLAllSchemaVersionsByJob = "/tidb/ddl/all_schema_by_job_versions"
 	// DDLGlobalSchemaVersion is the path on etcd that is used to store the latest schema versions.
 	DDLGlobalSchemaVersion = "/tidb/ddl/global_schema_version"
@@ -195,30 +198,27 @@ func LoadDDLVars(ctx sessionctx.Context) error {
 // LoadGlobalVars loads global variable from mysql.global_variables.
 func LoadGlobalVars(ctx context.Context, sctx sessionctx.Context, varNames []string) error {
 	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnDDL)
-	// *mock.Context does not support SQL execution. Only do it when sctx is not `mock.Context`
-	if _, ok := sctx.(*mock.Context); !ok {
-		e := sctx.GetRestrictedSQLExecutor()
-		var buf strings.Builder
-		buf.WriteString(loadGlobalVars)
-		paramNames := make([]any, 0, len(varNames))
-		for i, name := range varNames {
-			if i > 0 {
-				buf.WriteString(", ")
-			}
-			buf.WriteString("%?")
-			paramNames = append(paramNames, name)
+	e := sctx.GetRestrictedSQLExecutor()
+	var buf strings.Builder
+	buf.WriteString(loadGlobalVars)
+	paramNames := make([]any, 0, len(varNames))
+	for i, name := range varNames {
+		if i > 0 {
+			buf.WriteString(", ")
 		}
-		buf.WriteString(")")
-		rows, _, err := e.ExecRestrictedSQL(ctx, nil, buf.String(), paramNames...)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		for _, row := range rows {
-			varName := row.GetString(0)
-			varValue := row.GetString(1)
-			if err = sctx.GetSessionVars().SetSystemVarWithoutValidation(varName, varValue); err != nil {
-				return err
-			}
+		buf.WriteString("%?")
+		paramNames = append(paramNames, name)
+	}
+	buf.WriteString(")")
+	rows, _, err := e.ExecRestrictedSQL(ctx, nil, buf.String(), paramNames...)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	for _, row := range rows {
+		varName := row.GetString(0)
+		varValue := row.GetString(1)
+		if err = sctx.GetSessionVars().SetSystemVarWithoutValidation(varName, varValue); err != nil {
+			return err
 		}
 	}
 	return nil
@@ -402,4 +402,22 @@ func IsRaftKv2(ctx context.Context, sctx sessionctx.Context) (bool, error) {
 	// All nodes should have the same type of engine
 	raftVersion := rows[0].GetString(0)
 	return raftVersion == raftKv2, nil
+}
+
+// FolderNotEmpty returns true only when the folder is not empty.
+func FolderNotEmpty(path string) bool {
+	entries, _ := os.ReadDir(path)
+	return len(entries) > 0
+}
+
+// GenKeyExistsErr builds a ErrKeyExists error.
+func GenKeyExistsErr(key, value []byte, idxInfo *model.IndexInfo, tblInfo *model.TableInfo) error {
+	indexName := fmt.Sprintf("%s.%s", tblInfo.Name.String(), idxInfo.Name.String())
+	valueStr, err := tables.GenIndexValueFromIndex(key, value, tblInfo, idxInfo)
+	if err != nil {
+		logutil.DDLLogger().Warn("decode index key value / column value failed", zap.String("index", indexName),
+			zap.String("key", hex.EncodeToString(key)), zap.String("value", hex.EncodeToString(value)), zap.Error(err))
+		return errors.Trace(kv.ErrKeyExists.FastGenByArgs(key, indexName))
+	}
+	return kv.GenKeyExistsErr(valueStr, indexName)
 }

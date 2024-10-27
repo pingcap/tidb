@@ -24,7 +24,7 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/tablecodec"
@@ -51,7 +51,7 @@ func TestEncodeLargeSmallReuseBug(t *testing.T) {
 	colFt := types.NewFieldType(mysql.TypeString)
 
 	largeColID := int64(300)
-	b, err := encoder.Encode(nil, []int64{largeColID}, []types.Datum{types.NewBytesDatum([]byte(""))}, nil)
+	b, err := encoder.Encode(nil, []int64{largeColID}, []types.Datum{types.NewBytesDatum([]byte(""))}, nil, nil)
 	require.NoError(t, err)
 
 	bDecoder := rowcodec.NewDatumMapDecoder([]rowcodec.ColInfo{
@@ -66,7 +66,7 @@ func TestEncodeLargeSmallReuseBug(t *testing.T) {
 
 	colFt = types.NewFieldType(mysql.TypeLonglong)
 	smallColID := int64(1)
-	b, err = encoder.Encode(nil, []int64{smallColID}, []types.Datum{types.NewIntDatum(2)}, nil)
+	b, err = encoder.Encode(nil, []int64{smallColID}, []types.Datum{types.NewIntDatum(2)}, nil, nil)
 	require.NoError(t, err)
 
 	bDecoder = rowcodec.NewDatumMapDecoder([]rowcodec.ColInfo{
@@ -162,7 +162,7 @@ func TestDecodeRowWithHandle(t *testing.T) {
 
 			// test encode input.
 			var encoder rowcodec.Encoder
-			newRow, err := encoder.Encode(time.UTC, colIDs, dts, nil)
+			newRow, err := encoder.Encode(time.UTC, colIDs, dts, nil, nil)
 			require.NoError(t, err)
 
 			// decode to datum map.
@@ -228,7 +228,7 @@ func TestEncodeKindNullDatum(t *testing.T) {
 	dts := []types.Datum{nilDt, types.NewIntDatum(2)}
 	ft := types.NewFieldType(mysql.TypeLonglong)
 	fts := []*types.FieldType{ft, ft}
-	newRow, err := encoder.Encode(time.UTC, colIDs, dts, nil)
+	newRow, err := encoder.Encode(time.UTC, colIDs, dts, nil, nil)
 	require.NoError(t, err)
 
 	cols := []rowcodec.ColInfo{{ID: 1, Ft: ft}, {ID: 2, Ft: ft}}
@@ -253,7 +253,7 @@ func TestDecodeDecimalFspNotMatch(t *testing.T) {
 	ft := types.NewFieldType(mysql.TypeNewDecimal)
 	ft.SetDecimal(4)
 	fts := []*types.FieldType{ft}
-	newRow, err := encoder.Encode(time.UTC, colIDs, dts, nil)
+	newRow, err := encoder.Encode(time.UTC, colIDs, dts, nil, nil)
 	require.NoError(t, err)
 
 	// decode to chunk.
@@ -509,7 +509,7 @@ func TestTypesNewRowCodec(t *testing.T) {
 			}
 
 			// test encode input.
-			newRow, err := encoder.Encode(time.UTC, colIDs, dts, nil)
+			newRow, err := encoder.Encode(time.UTC, colIDs, dts, nil, nil)
 			require.NoError(t, err)
 
 			// decode to datum map.
@@ -622,7 +622,7 @@ func TestNilAndDefault(t *testing.T) {
 
 	// test encode input.
 	var encoder rowcodec.Encoder
-	newRow, err := encoder.Encode(time.UTC, colIDs, dts, nil)
+	newRow, err := encoder.Encode(time.UTC, colIDs, dts, nil, nil)
 	require.NoError(t, err)
 
 	// decode to datum map.
@@ -730,7 +730,7 @@ func TestVarintCompatibility(t *testing.T) {
 
 	// test encode input.
 	var encoder rowcodec.Encoder
-	newRow, err := encoder.Encode(time.UTC, colIDs, dts, nil)
+	newRow, err := encoder.Encode(time.UTC, colIDs, dts, nil, nil)
 	require.NoError(t, err)
 
 	decoder := rowcodec.NewByteDecoder(cols, []int64{-1}, nil, time.UTC)
@@ -840,7 +840,7 @@ func Test65535Bug(t *testing.T) {
 	tps[0] = types.NewFieldType(mysql.TypeString)
 	text65535 := strings.Repeat("a", 65535)
 	encode := rowcodec.Encoder{}
-	bd, err := encode.Encode(time.UTC, colIds, []types.Datum{types.NewStringDatum(text65535)}, nil)
+	bd, err := encode.Encode(time.UTC, colIds, []types.Datum{types.NewStringDatum(text65535)}, nil, nil)
 	require.NoError(t, err)
 
 	cols := make([]rowcodec.ColInfo, 1)
@@ -1197,88 +1197,36 @@ func TestRowChecksum(t *testing.T) {
 func TestEncodeDecodeRowWithChecksum(t *testing.T) {
 	enc := rowcodec.Encoder{}
 
-	for _, tt := range []struct {
-		name      string
-		checksums []uint32
-	}{
-		{"NoChecksum", nil},
-		{"OneChecksum", []uint32{1}},
-		{"TwoChecksum", []uint32{1, 2}},
-		{"ThreeChecksum", []uint32{1, 2, 3}},
-	} {
-		t.Run(tt.name, func(t *testing.T) {
-			raw, err := enc.Encode(time.UTC, nil, nil, nil, tt.checksums...)
-			require.NoError(t, err)
-			dec := rowcodec.NewDatumMapDecoder([]rowcodec.ColInfo{}, time.UTC)
-			_, err = dec.DecodeToDatumMap(raw, nil)
-			require.NoError(t, err)
-			v1, ok1 := enc.GetChecksum()
-			v2, ok2 := enc.GetExtraChecksum()
-			v3, ok3 := dec.GetChecksum()
-			v4, ok4 := dec.GetExtraChecksum()
-			if len(tt.checksums) == 0 {
-				require.False(t, ok1)
-				require.False(t, ok2)
-				require.False(t, ok3)
-				require.False(t, ok4)
-			} else if len(tt.checksums) == 1 {
-				require.True(t, ok1)
-				require.False(t, ok2)
-				require.True(t, ok3)
-				require.False(t, ok4)
-				require.Equal(t, tt.checksums[0], v1)
-				require.Equal(t, tt.checksums[0], v3)
-				require.Zero(t, v2)
-				require.Zero(t, v4)
-			} else {
-				require.True(t, ok1)
-				require.True(t, ok2)
-				require.True(t, ok3)
-				require.True(t, ok4)
-				require.Equal(t, tt.checksums[0], v1)
-				require.Equal(t, tt.checksums[1], v2)
-				require.Equal(t, tt.checksums[0], v3)
-				require.Equal(t, tt.checksums[1], v4)
-			}
-		})
+	raw, err := enc.Encode(time.UTC, nil, nil, nil, nil)
+	require.NoError(t, err)
+
+	dec := rowcodec.NewDatumMapDecoder([]rowcodec.ColInfo{}, time.UTC)
+	_, err = dec.DecodeToDatumMap(raw, nil)
+	require.NoError(t, err)
+
+	checksum, ok := dec.GetChecksum()
+	require.False(t, ok)
+	require.Zero(t, checksum)
+
+	rawChecksum := rowcodec.RawChecksum{
+		Key: []byte("0x1"),
 	}
+	raw, err = enc.Encode(time.UTC, nil, nil, rawChecksum, nil)
+	require.NoError(t, err)
 
-	t.Run("ReuseDecoder", func(t *testing.T) {
-		dec := rowcodec.NewDatumMapDecoder([]rowcodec.ColInfo{}, time.UTC)
+	expected, ok := enc.GetChecksum()
+	require.True(t, ok)
+	require.NotZero(t, expected)
 
-		raw1, err := enc.Encode(time.UTC, nil, nil, nil)
-		require.NoError(t, err)
-		_, err = dec.DecodeToDatumMap(raw1, nil)
-		require.NoError(t, err)
-		v1, ok1 := dec.GetChecksum()
-		v2, ok2 := dec.GetExtraChecksum()
-		require.False(t, ok1)
-		require.False(t, ok2)
-		require.Zero(t, v1)
-		require.Zero(t, v2)
+	_, err = dec.DecodeToDatumMap(raw, nil)
+	require.NoError(t, err)
 
-		raw2, err := enc.Encode(time.UTC, nil, nil, nil, 1, 2)
-		require.NoError(t, err)
-		_, err = dec.DecodeToDatumMap(raw2, nil)
-		require.NoError(t, err)
-		v1, ok1 = dec.GetChecksum()
-		v2, ok2 = dec.GetExtraChecksum()
-		require.True(t, ok1)
-		require.True(t, ok2)
-		require.Equal(t, uint32(1), v1)
-		require.Equal(t, uint32(2), v2)
+	checksum, ok = dec.GetChecksum()
+	require.True(t, ok)
+	require.Equal(t, expected, checksum)
 
-		raw3, err := enc.Encode(time.UTC, nil, nil, nil, 1)
-		require.NoError(t, err)
-		_, err = dec.DecodeToDatumMap(raw3, nil)
-		require.NoError(t, err)
-		v1, ok1 = dec.GetChecksum()
-		v2, ok2 = dec.GetExtraChecksum()
-		require.True(t, ok1)
-		require.False(t, ok2)
-		require.Equal(t, uint32(1), v1)
-		require.Zero(t, v2)
-	})
+	version := dec.ChecksumVersion()
+	require.Equal(t, 1, version)
 }
 
 var (

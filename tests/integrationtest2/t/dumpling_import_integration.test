@@ -1,0 +1,10 @@
+# Test Lightning and AutoRandom
+
+CREATE TABLE t2(c BIGINT AUTO_RANDOM PRIMARY KEY, a INT, b INT);
+INSERT INTO t2(a, b) VALUES (1, 1), (2, 2), (3, 3);
+SELECT (c & 31) as inc FROM t2 ORDER BY inc;
+
+--dump_and_import t2 AS tt2
+
+INSERT INTO tt2(a, b) VALUES (1, 1), (2, 2), (3, 3);
+SELECT (c & 31) as inc FROM tt2 ORDER BY inc;

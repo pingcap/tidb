@@ -13,6 +13,7 @@ go_library(
         "//pkg/domain/infosync",
         "//pkg/infoschema",
         "//pkg/kv",
+        "//pkg/meta/model",
         "//pkg/parser/model",
         "//pkg/parser/terror",
         "//pkg/session",

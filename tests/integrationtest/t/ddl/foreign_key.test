@@ -213,4 +213,24 @@ select * from t1;
 select * from t2;
 admin check table t1,t2;
 
+# TestCheckFKDatabaseRefWithSchemaSimpleTableInfos
+create database test_db_1;
+create database test_db_2;
+create database test_db_3;
+use test_db_1;
+create table t1 (id int primary key);
+use test_db_2;
+create table t2 (id int primary key, b int, foreign key (b) references test_db_1.t1(id));
+use test_db_3;
+create table t3 (id int primary key);
+-- error 3730
+drop table test_db_1.t1;
+-- error 3730
+drop database test_db_1;
+drop table test_db_3.t3;
+drop database test_db_3;
+## clean up
+drop database test_db_2;
+drop database test_db_1;
+
 set @@foreign_key_checks=default;

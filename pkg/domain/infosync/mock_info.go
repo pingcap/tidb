@@ -22,7 +22,6 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/sessionctx/binloginfo"
 	"github.com/pingcap/tidb/pkg/util/versioninfo"
 )
 
@@ -91,7 +90,6 @@ func (m *MockGlobalServerInfoManager) getServerInfo(id string, serverIDGetter fu
 		Port:           m.mockServerPort,
 		StatusPort:     cfg.Status.StatusPort,
 		Lease:          cfg.Lease,
-		BinlogStatus:   binloginfo.GetStatus().String(),
 		StartTimestamp: time.Now().Unix(),
 		Labels:         cfg.Labels,
 		ServerIDGetter: serverIDGetter,

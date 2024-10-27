@@ -17,7 +17,7 @@ linters:
     - gosec
     - asciicheck
     - bodyclose
-    - exportloopref
+    - copyloopvar
     - rowserrcheck
     - makezero
     - durationcheck

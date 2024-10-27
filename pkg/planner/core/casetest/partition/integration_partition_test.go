@@ -34,7 +34,6 @@ func TestListPartitionPruning(t *testing.T) {
 	tk.MustExec("create database list_partition_pruning")
 	tk.MustExec("use list_partition_pruning")
 	tk.MustExec("drop table if exists tlist")
-	tk.MustExec(`set tidb_enable_list_partition = 1`)
 	tk.MustExec(`create table tlist (a int) partition by list (a) (
     partition p0 values in (0, 1, 2),
     partition p1 values in (3, 4, 5),
@@ -82,7 +81,7 @@ func TestPartitionTableExplain(t *testing.T) {
 	tk.MustExec(`create table t2 (a int, b int)`)
 	tk.MustExec(`insert into t values (1,1),(2,2),(3,3)`)
 	tk.MustExec(`insert into t2 values (1,1),(2,2),(3,3)`)
-	tk.MustExec(`analyze table t, t2`)
+	tk.MustExec(`analyze table t, t2 all columns`)
 
 	var input []string
 	var output []struct {

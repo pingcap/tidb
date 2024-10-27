@@ -63,6 +63,8 @@ const (
 	NormalVersionChecker VersionCheckerType = iota
 	// version checker for PiTR
 	StreamVersionChecker
+	// no check
+	NoVersionChecker
 )
 
 // Mgr manages connections to a TiDB cluster.
@@ -91,17 +93,23 @@ func GetAllTiKVStoresWithRetry(ctx context.Context,
 				logutil.CL(ctx).Debug("failpoint hint-GetAllTiKVStores-error injected.")
 				if val.(bool) {
 					err = status.Error(codes.Unknown, "Retryable error")
-				} else {
-					err = context.Canceled
+					failpoint.Return(err)
 				}
 			})
 
-			failpoint.Inject("hint-GetAllTiKVStores-cancel", func(val failpoint.Value) {
-				logutil.CL(ctx).Debug("failpoint hint-GetAllTiKVStores-cancel injected.")
+			failpoint.Inject("hint-GetAllTiKVStores-grpc-cancel", func(val failpoint.Value) {
+				logutil.CL(ctx).Debug("failpoint hint-GetAllTiKVStores-grpc-cancel injected.")
 				if val.(bool) {
 					err = status.Error(codes.Canceled, "Cancel Retry")
-				} else {
+					failpoint.Return(err)
+				}
+			})
+
+			failpoint.Inject("hint-GetAllTiKVStores-ctx-cancel", func(val failpoint.Value) {
+				logutil.CL(ctx).Debug("failpoint hint-GetAllTiKVStores-ctx-cancel injected.")
+				if val.(bool) {
 					err = context.Canceled
+					failpoint.Return(err)
 				}
 			})
 
@@ -164,17 +172,18 @@ func NewMgr(
 		return nil, errors.Trace(err)
 	}
 	if checkRequirements {
-		var checker version.VerChecker
+		var versionErr error
 		switch versionCheckerType {
 		case NormalVersionChecker:
-			checker = version.CheckVersionForBR
+			versionErr = version.CheckClusterVersion(ctx, controller.GetPDClient(), version.CheckVersionForBR)
 		case StreamVersionChecker:
-			checker = version.CheckVersionForBRPiTR
+			versionErr = version.CheckClusterVersion(ctx, controller.GetPDClient(), version.CheckVersionForBRPiTR)
+		case NoVersionChecker:
+			versionErr = nil
 		default:
 			return nil, errors.Errorf("unknown command type, comman code is %d", versionCheckerType)
 		}
-		err = version.CheckClusterVersion(ctx, controller.GetPDClient(), checker)
-		if err != nil {
+		if versionErr != nil {
 			return nil, errors.Annotate(err, "running BR in incompatible version of cluster, "+
 				"if you believe it's OK, use --check-requirements=false to skip.")
 		}
@@ -290,8 +299,8 @@ func (mgr *Mgr) Close() {
 	mgr.PdController.Close()
 }
 
-// GetTS gets current ts from pd.
-func (mgr *Mgr) GetTS(ctx context.Context) (uint64, error) {
+// GetCurrentTsFromPD gets current ts from PD.
+func (mgr *Mgr) GetCurrentTsFromPD(ctx context.Context) (uint64, error) {
 	p, l, err := mgr.GetPDClient().GetTS(ctx)
 	if err != nil {
 		return 0, errors.Trace(err)

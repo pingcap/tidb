@@ -16,15 +16,16 @@ package tiflashrec
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/pkg/infoschema"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/format"
-	"github.com/pingcap/tidb/pkg/parser/model"
 	"go.uber.org/zap"
 )
 
@@ -90,7 +91,7 @@ func (r *TiFlashRecorder) Rewrite(oldID int64, newID int64) {
 func (r *TiFlashRecorder) GenerateResetAlterTableDDLs(info infoschema.InfoSchema) []string {
 	items := make([]string, 0, len(r.items))
 	r.Iterate(func(id int64, replica model.TiFlashReplicaInfo) {
-		table, ok := info.TableByID(id)
+		table, ok := info.TableByID(context.Background(), id)
 		if !ok {
 			log.Warn("Table do not exist, skipping", zap.Int64("id", id))
 			return
@@ -130,7 +131,7 @@ func (r *TiFlashRecorder) GenerateResetAlterTableDDLs(info infoschema.InfoSchema
 func (r *TiFlashRecorder) GenerateAlterTableDDLs(info infoschema.InfoSchema) []string {
 	items := make([]string, 0, len(r.items))
 	r.Iterate(func(id int64, replica model.TiFlashReplicaInfo) {
-		table, ok := info.TableByID(id)
+		table, ok := info.TableByID(context.Background(), id)
 		if !ok {
 			log.Warn("Table do not exist, skipping", zap.Int64("id", id))
 			return

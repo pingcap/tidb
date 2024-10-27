@@ -16,8 +16,11 @@ package util
 
 import (
 	"fmt"
+	"strings"
 
+	perrors "github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/expression"
+	"github.com/pingcap/tidb/pkg/planner/cascades/base"
 	"github.com/pingcap/tidb/pkg/util/size"
 )
 
@@ -27,12 +30,30 @@ type ByItems struct {
 	Desc bool
 }
 
-// String implements fmt.Stringer interface.
-func (by *ByItems) String() string {
-	if by.Desc {
-		return fmt.Sprintf("%s true", by.Expr)
+// Hash64 implements the base.Hasher interface.
+func (by *ByItems) Hash64(h base.Hasher) {
+	by.Expr.Hash64(h)
+	h.HashBool(by.Desc)
+}
+
+// Equals implements the base.Equaler interface.
+func (by *ByItems) Equals(other any) bool {
+	if other == nil {
+		return false
 	}
-	return by.Expr.String()
+	otherBy, ok := other.(*ByItems)
+	if !ok {
+		return false
+	}
+	return by.Desc == otherBy.Desc && by.Expr.Equals(otherBy.Expr)
+}
+
+// StringWithCtx implements expression.StringerWithCtx interface.
+func (by *ByItems) StringWithCtx(ctx expression.ParamValues, redact string) string {
+	if by.Desc {
+		return fmt.Sprintf("%s true", by.Expr.StringWithCtx(ctx, redact))
+	}
+	return by.Expr.StringWithCtx(ctx, redact)
 }
 
 // Clone makes a copy of ByItems.
@@ -56,4 +77,18 @@ func (by *ByItems) MemoryUsage() (sum int64) {
 		sum += by.Expr.MemoryUsage()
 	}
 	return sum
+}
+
+// StringifyByItemsWithCtx is used to print ByItems slice.
+func StringifyByItemsWithCtx(ctx expression.EvalContext, byItems []*ByItems) string {
+	sb := strings.Builder{}
+	sb.WriteString("[")
+	for i, item := range byItems {
+		sb.WriteString(item.StringWithCtx(ctx, perrors.RedactLogDisable))
+		if i != len(byItems)-1 {
+			sb.WriteString(" ")
+		}
+	}
+	sb.WriteString("]")
+	return sb.String()
 }

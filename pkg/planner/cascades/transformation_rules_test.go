@@ -20,10 +20,11 @@ import (
 
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/infoschema"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser"
-	"github.com/pingcap/tidb/pkg/parser/model"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/planner/memo"
 	"github.com/pingcap/tidb/pkg/planner/pattern"
 	"github.com/pingcap/tidb/pkg/testkit/testdata"
@@ -46,7 +47,8 @@ func testGroupToString(t *testing.T, input []string, output []struct {
 		stmt, err := p.ParseOneStmt(sql, "", "")
 		require.NoError(t, err)
 
-		plan, err := plannercore.BuildLogicalPlanForTest(context.Background(), ctx, stmt, is)
+		nodeW := resolve.NewNodeW(stmt)
+		plan, err := plannercore.BuildLogicalPlanForTest(context.Background(), ctx, nodeW, is)
 		require.NoError(t, err)
 
 		logic, ok := plan.(base.LogicalPlan)
@@ -60,9 +62,9 @@ func testGroupToString(t *testing.T, input []string, output []struct {
 		require.NoError(t, err)
 		testdata.OnRecord(func() {
 			output[i].SQL = sql
-			output[i].Result = ToString(group)
+			output[i].Result = ToString(ctx, group)
 		})
-		require.Equalf(t, output[i].Result, ToString(group), "case:%v, sql:%s", i, sql)
+		require.Equalf(t, output[i].Result, ToString(ctx, group), "case:%v, sql:%s", i, sql)
 	}
 }
 
@@ -98,7 +100,8 @@ func TestAggPushDownGather(t *testing.T) {
 		stmt, err := p.ParseOneStmt(sql, "", "")
 		require.NoError(t, err)
 
-		plan, err := plannercore.BuildLogicalPlanForTest(context.Background(), ctx, stmt, is)
+		nodeW := resolve.NewNodeW(stmt)
+		plan, err := plannercore.BuildLogicalPlanForTest(context.Background(), ctx, nodeW, is)
 		require.NoError(t, err)
 
 		logic, ok := plan.(base.LogicalPlan)
@@ -115,9 +118,9 @@ func TestAggPushDownGather(t *testing.T) {
 		group.BuildKeyInfo()
 		testdata.OnRecord(func() {
 			output[i].SQL = sql
-			output[i].Result = ToString(group)
+			output[i].Result = ToString(ctx, group)
 		})
-		require.Equalf(t, output[i].Result, ToString(group), "case:%v, sql:%s", i, sql)
+		require.Equalf(t, output[i].Result, ToString(ctx, group), "case:%v, sql:%s", i, sql)
 	}
 }
 

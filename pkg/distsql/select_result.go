@@ -19,6 +19,7 @@ import (
 	"container/heap"
 	"context"
 	"fmt"
+	"maps"
 	"strconv"
 	"sync/atomic"
 	"time"
@@ -46,7 +47,6 @@ import (
 	"github.com/tikv/client-go/v2/tikv"
 	clientutil "github.com/tikv/client-go/v2/util"
 	"go.uber.org/zap"
-	"golang.org/x/exp/maps"
 )
 
 var (
@@ -100,14 +100,14 @@ func (h *chunkRowHeap) Pop() any {
 
 // NewSortedSelectResults is only for partition table
 // If schema == nil, sort by first few columns.
-func NewSortedSelectResults(selectResult []SelectResult, schema *expression.Schema, byitems []*util.ByItems, memTracker *memory.Tracker) SelectResult {
+func NewSortedSelectResults(ectx expression.EvalContext, selectResult []SelectResult, schema *expression.Schema, byitems []*util.ByItems, memTracker *memory.Tracker) SelectResult {
 	s := &sortedSelectResults{
 		schema:       schema,
 		selectResult: selectResult,
 		byItems:      byitems,
 		memTracker:   memTracker,
 	}
-	s.initCompareFuncs()
+	s.initCompareFuncs(ectx)
 	s.buildKeyColumns()
 	s.heap = &chunkRowHeap{s}
 	s.cachedChunks = make([]*chunk.Chunk, len(selectResult))
@@ -141,10 +141,10 @@ func (ssr *sortedSelectResults) updateCachedChunk(ctx context.Context, idx uint3
 	return nil
 }
 
-func (ssr *sortedSelectResults) initCompareFuncs() {
+func (ssr *sortedSelectResults) initCompareFuncs(ectx expression.EvalContext) {
 	ssr.compareFuncs = make([]chunk.CompareFunc, len(ssr.byItems))
 	for i, item := range ssr.byItems {
-		keyType := item.Expr.GetType()
+		keyType := item.Expr.GetType(ectx)
 		ssr.compareFuncs[i] = chunk.GetCompareFunc(keyType)
 	}
 }
@@ -546,6 +546,9 @@ func (r *selectResult) updateCopRuntimeStats(ctx context.Context, copStats *copr
 		if err = execdetails.MergeTiFlashRUConsumption(r.selectResp.GetExecutionSummaries(), ruDetailsRaw.(*clientutil.RUDetails)); err != nil {
 			return err
 		}
+	}
+	if copStats.TimeDetail.ProcessTime > 0 {
+		r.ctx.CPUUsage.MergeTikvCPUTime(copStats.TimeDetail.ProcessTime)
 	}
 	if hasExecutor {
 		recordExecutionSummariesForTiFlashTasks(r.ctx.RuntimeStatsColl, r.selectResp.GetExecutionSummaries(), callee, r.storeType.Name(), r.copPlanIDs)
