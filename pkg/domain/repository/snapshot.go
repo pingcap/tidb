@@ -23,20 +23,14 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/sqlescape"
 	clientv3 "go.etcd.io/etcd/client/v3"
-	"go.uber.org/atomic"
 	"go.uber.org/zap"
 )
 
-var (
-	snapshotInterval = atomic.NewInt32(int32(variable.DefTiDBWorkloadRepositorySnapshotInterval))
-)
-
-func (w *Worker) etcdCreate(ctx context.Context, key, val string) error {
+func (w *worker) etcdCreate(ctx context.Context, key, val string) error {
 	ctx, cancel := context.WithTimeout(ctx, etcdOpTimeout)
 	defer cancel()
 	res, err := w.etcdClient.Txn(ctx).
@@ -52,7 +46,7 @@ func (w *Worker) etcdCreate(ctx context.Context, key, val string) error {
 	return nil
 }
 
-func (w *Worker) etcdGet(_ctx context.Context, key, defval string) (string, error) {
+func (w *worker) etcdGet(_ctx context.Context, key, defval string) (string, error) {
 	ctx, cancel := context.WithTimeout(_ctx, etcdOpTimeout)
 	defer cancel()
 	res, err := w.etcdClient.Get(ctx, key)
@@ -67,7 +61,7 @@ func (w *Worker) etcdGet(_ctx context.Context, key, defval string) (string, erro
 	return string(res.Kvs[len(res.Kvs)-1].Value), nil
 }
 
-func (w *Worker) etcdCAS(ctx context.Context, key, oval, nval string) error {
+func (w *worker) etcdCAS(ctx context.Context, key, oval, nval string) error {
 	ctx, cancel := context.WithTimeout(ctx, etcdOpTimeout)
 	defer cancel()
 	res, err := w.etcdClient.Txn(ctx).
@@ -83,7 +77,7 @@ func (w *Worker) etcdCAS(ctx context.Context, key, oval, nval string) error {
 	return nil
 }
 
-func (w *Worker) getSnapID(ctx context.Context) (uint64, error) {
+func (w *worker) getSnapID(ctx context.Context) (uint64, error) {
 	snapIDStr, err := w.etcdGet(ctx, snapIDKey, "0")
 	if err != nil {
 		return 0, err
@@ -91,13 +85,13 @@ func (w *Worker) getSnapID(ctx context.Context) (uint64, error) {
 	return strconv.ParseUint(snapIDStr, 10, 64)
 }
 
-func (w *Worker) updateSnapID(ctx context.Context, oid, nid uint64) error {
+func (w *worker) updateSnapID(ctx context.Context, oid, nid uint64) error {
 	return w.etcdCAS(ctx, snapIDKey,
 		strconv.FormatUint(oid, 10),
 		strconv.FormatUint(nid, 10))
 }
 
-func (w *Worker) upsertHistSnapshot(ctx context.Context, sctx sessionctx.Context, snapID uint64) error {
+func (w *worker) upsertHistSnapshot(ctx context.Context, sctx sessionctx.Context, snapID uint64) error {
 	// TODO: fill DB_VER, WR_VER
 	snapshotsInsert := sqlescape.MustEscapeSQL("INSERT INTO %n.%n (`BEGIN_TIME`, `SNAP_ID`) VALUES (now(), %%?) ON DUPLICATE KEY UPDATE `BEGIN_TIME` = now()",
 		WorkloadSchema, histSnapshotsTable)
@@ -105,7 +99,7 @@ func (w *Worker) upsertHistSnapshot(ctx context.Context, sctx sessionctx.Context
 	return err
 }
 
-func (w *Worker) updateHistSnapshot(ctx context.Context, sctx sessionctx.Context, snapID uint64, errs []error) error {
+func (w *worker) updateHistSnapshot(ctx context.Context, sctx sessionctx.Context, snapID uint64, errs []error) error {
 	var nerr any
 	if err := stderrors.Join(errs...); err != nil {
 		nerr = err.Error()
@@ -116,7 +110,7 @@ func (w *Worker) updateHistSnapshot(ctx context.Context, sctx sessionctx.Context
 	return err
 }
 
-func (w *Worker) snapshotTable(ctx context.Context, snapID uint64, rt *repositoryTable) error {
+func (w *worker) snapshotTable(ctx context.Context, snapID uint64, rt *repositoryTable) error {
 	_sessctx := w.getSessionWithRetry()
 	defer w.sesspool.Put(_sessctx)
 	sess := _sessctx.(sessionctx.Context)
@@ -134,9 +128,11 @@ func (w *Worker) snapshotTable(ctx context.Context, snapID uint64, rt *repositor
 	return nil
 }
 
-func (w *Worker) startSnapshot(_ctx context.Context) func() {
+func (w *worker) startSnapshot(_ctx context.Context) func() {
 	return func() {
-		w.ResetSnapshotInterval(snapshotInterval.Load())
+		w.Lock()
+		w.resetSnapshotInterval(w.snapshotInterval)
+		w.Unlock()
 
 		_sessctx := w.getSessionWithRetry()
 		defer w.sesspool.Put(_sessctx)
@@ -150,8 +146,6 @@ func (w *Worker) startSnapshot(_ctx context.Context) func() {
 
 		for {
 			select {
-			case <-w.exit:
-				return
 			case <-ctx.Done():
 				return
 			case <-w.snapshotTicker.C:
@@ -229,13 +223,29 @@ func (w *Worker) startSnapshot(_ctx context.Context) func() {
 	}
 }
 
-// SetSnapshotInterval will set the snapshot interval rate in seconds.
-func SetSnapshotInterval(newRate int32) bool {
-	old := snapshotInterval.Swap(newRate)
-	return old != newRate
+func (w *worker) resetSnapshotInterval(newRate int32) {
+	if newRate == -1 {
+		panic("Variable " + repositorySnapshotInterval + " was not set before repository was started.")
+	}
+
+	w.snapshotTicker.Reset(time.Duration(newRate) * time.Second)
 }
 
-// ResetSnapshotInterval restarts the snapshot routine with the new interval.
-func (w *Worker) ResetSnapshotInterval(newRate int32) {
-	w.snapshotTicker.Reset(time.Duration(newRate) * time.Second)
+func (w *worker) changeSnapshotInterval(_ context.Context, d string) error {
+	n, err := strconv.Atoi(d)
+	if err != nil {
+		return err
+	}
+
+	w.Lock()
+	defer w.Unlock()
+
+	if int32(n) != w.snapshotInterval {
+		w.snapshotInterval = int32(n)
+		if w.cancel != nil {
+			w.resetSnapshotInterval(w.snapshotInterval)
+		}
+	}
+
+	return nil
 }

@@ -59,8 +59,7 @@ func generatePartitionRanges(sb *strings.Builder, tbInfo *model.TableInfo) bool 
 	return allExisted
 }
 
-// SetRetentionDays will set retention days.
-func SetRetentionDays(_ context.Context, d string) error {
+func setRetentionDays(_ context.Context, d string) error {
 	n, err := strconv.Atoi(d)
 	if err != nil {
 		return err
@@ -69,8 +68,7 @@ func SetRetentionDays(_ context.Context, d string) error {
 	return nil
 }
 
-// ValidateDest will validate destination url, and normalize it.
-func ValidateDest(orig string) (string, error) {
+func validateDest(orig string) (string, error) {
 	// validate S3 URL, etc...
 	return strings.ToLower(orig), nil
 }

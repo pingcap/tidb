@@ -29,7 +29,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/sqlescape"
 )
 
-func (w *Worker) buildCreateQuery(ctx context.Context, sess sessionctx.Context, rt *repositoryTable) (string, error) {
+func (w *worker) buildCreateQuery(ctx context.Context, sess sessionctx.Context, rt *repositoryTable) (string, error) {
 	is := sessiontxn.GetTxnManager(sess).GetTxnInfoSchema()
 	tbl, err := is.TableByName(ctx, model.NewCIStr(rt.schema), model.NewCIStr(rt.table))
 	if err != nil {
@@ -57,7 +57,7 @@ func (w *Worker) buildCreateQuery(ctx context.Context, sess sessionctx.Context, 
 	return sb.String(), nil
 }
 
-func (w *Worker) buildInsertQuery(ctx context.Context, sess sessionctx.Context, rt *repositoryTable) error {
+func (w *worker) buildInsertQuery(ctx context.Context, sess sessionctx.Context, rt *repositoryTable) error {
 	is := sessiontxn.GetTxnManager(sess).GetTxnInfoSchema()
 	tbl, err := is.TableByName(ctx, model.NewCIStr(rt.schema), model.NewCIStr(rt.table))
 	if err != nil {
@@ -99,7 +99,7 @@ func (w *Worker) buildInsertQuery(ctx context.Context, sess sessionctx.Context, 
 	return nil
 }
 
-func (w *Worker) createAllTables(ctx context.Context) error {
+func (w *worker) createAllTables(ctx context.Context) error {
 	_sessctx := w.getSessionWithRetry()
 	sess := _sessctx.(sessionctx.Context)
 	defer w.sesspool.Put(_sessctx)
@@ -145,7 +145,7 @@ func (w *Worker) createAllTables(ctx context.Context) error {
 	return w.createAllPartitions(ctx, sess, is)
 }
 
-func (w *Worker) checkTablesExists(ctx context.Context) bool {
+func (w *worker) checkTablesExists(ctx context.Context) bool {
 	_sessctx := w.getSessionWithRetry()
 	sess := _sessctx.(sessionctx.Context)
 	defer w.sesspool.Put(_sessctx)
@@ -156,7 +156,7 @@ func (w *Worker) checkTablesExists(ctx context.Context) bool {
 	})
 }
 
-func (w *Worker) checkTableExistsByIS(ctx context.Context, is infoschema.InfoSchema, tblName string, now time.Time) bool {
+func (w *worker) checkTableExistsByIS(ctx context.Context, is infoschema.InfoSchema, tblName string, now time.Time) bool {
 	if now == zeroTime {
 		return is.TableExists(workloadSchemaCIStr, model.NewCIStr(tblName))
 	}

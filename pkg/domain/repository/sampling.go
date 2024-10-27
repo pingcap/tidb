@@ -16,21 +16,16 @@ package repository
 
 import (
 	"context"
+	"strconv"
 	"time"
 
 	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/logutil"
-	"go.uber.org/atomic"
 	"go.uber.org/zap"
 )
 
-var (
-	samplingInterval = atomic.NewInt32(int32(variable.DefTiDBWorkloadRepositoryActiveSamplingInterval))
-)
-
-func (w *Worker) samplingTable(ctx context.Context, rt *repositoryTable) {
+func (w *worker) samplingTable(ctx context.Context, rt *repositoryTable) {
 	_sessctx := w.getSessionWithRetry()
 	defer w.sesspool.Put(_sessctx)
 	sess := _sessctx.(sessionctx.Context)
@@ -47,14 +42,14 @@ func (w *Worker) samplingTable(ctx context.Context, rt *repositoryTable) {
 	}
 }
 
-func (w *Worker) startSample(ctx context.Context) func() {
+func (w *worker) startSample(ctx context.Context) func() {
 	return func() {
-		w.ResetSamplingInterval(samplingInterval.Load())
+		w.Lock()
+		w.resetSamplingInterval(w.samplingInterval)
+		w.Unlock()
 
 		for {
 			select {
-			case <-w.exit:
-				return
 			case <-ctx.Done():
 				return
 			case <-w.samplingTicker.C:
@@ -77,17 +72,31 @@ func (w *Worker) startSample(ctx context.Context) func() {
 	}
 }
 
-// SetSamplingInterval will set the sampling interval rate in seconds.
-func SetSamplingInterval(newRate int32) bool {
-	old := samplingInterval.Swap(newRate)
-	return old != newRate
-}
-
-// ResetSamplingInterval restarts the sampling routine with the new interval.
-func (w *Worker) ResetSamplingInterval(newRate int32) {
-	if newRate == 0 {
+func (w *worker) resetSamplingInterval(newRate int32) {
+	if newRate == -1 {
+		panic("Variable " + repositorySamplingInterval + " was not set before repository was started.")
+	} else if newRate == 0 {
 		w.samplingTicker.Stop()
 	} else {
 		w.samplingTicker.Reset(time.Duration(newRate) * time.Second)
 	}
+}
+
+func (w *worker) changeSamplingInterval(_ context.Context, d string) error {
+	n, err := strconv.Atoi(d)
+	if err != nil {
+		return err
+	}
+
+	w.Lock()
+	defer w.Unlock()
+
+	if int32(n) != w.samplingInterval {
+		w.samplingInterval = int32(n)
+		if w.cancel != nil {
+			w.resetSamplingInterval(w.samplingInterval)
+		}
+	}
+
+	return nil
 }

@@ -17,13 +17,16 @@ package repository
 import (
 	"context"
 	"errors"
+	"sync"
 	"time"
 
 	"github.com/ngaut/pools"
+	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/owner"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -48,6 +51,13 @@ type repositoryTable struct {
 	createStmt string
 	insertStmt string
 }
+
+var (
+	repositoryDest             = "tidb_workload_repository_dest"
+	repositoryRetentionDays    = "tidb_workload_repository_retention_days"
+	repositorySamplingInterval = "tidb_workload_repository_active_sampling_interval"
+	repositorySnapshotInterval = "tidb_workload_repository_snapshot_interval"
+)
 
 var workloadTables = []repositoryTable{
 	{
@@ -90,48 +100,113 @@ type sessionPool interface {
 	Put(resource pools.Resource)
 }
 
-// Worker is the main struct for repository.
-type Worker struct {
-	etcdClient   *clientv3.Client
-	exit         chan struct{}
-	sesspool     sessionPool
-	cancel       context.CancelFunc
-	getGlobalVar func(string) (string, error)
-	newOwner     func(string, string) owner.Manager
-	owner        owner.Manager
-	wg           *util.WaitGroupEnhancedWrapper
-	instanceID   string
+// worker is the main struct for repository.
+type worker struct {
+	sync.Mutex
+	etcdClient *clientv3.Client
+	sesspool   sessionPool
+	cancel     context.CancelFunc
+	newOwner   func(string, string) owner.Manager
+	owner      owner.Manager
+	wg         *util.WaitGroupEnhancedWrapper
+	instanceID string
+	enabled    bool
 
-	samplingTicker *time.Ticker
-	snapshotTicker *time.Ticker
+	samplingInterval int32
+	samplingTicker   *time.Ticker
+	snapshotInterval int32
+	snapshotTicker   *time.Ticker
 }
 
-// NewWorker creates a new repository worker.
-func NewWorker(
-	etcdClient *clientv3.Client,
-	getGlobalVar func(string) (string, error),
-	newOwner func(string, string) owner.Manager,
-	sesspool sessionPool,
-	exit chan struct{},
-) *Worker {
-	w := &Worker{
-		etcdClient:   etcdClient,
-		exit:         exit,
-		getGlobalVar: getGlobalVar,
-		sesspool:     sesspool,
-		newOwner:     newOwner,
-		wg:           util.NewWaitGroupEnhancedWrapper("repository", exit, false),
+var workerCtx = worker{
+	samplingInterval: -1,
+	snapshotInterval: -1,
+}
+
+func init() {
+	workerCtx.samplingTicker = time.NewTicker(time.Second)
+	workerCtx.snapshotTicker = time.NewTicker(time.Second)
+	workerCtx.samplingTicker.Stop()
+	workerCtx.snapshotTicker.Stop()
+
+	variable.RegisterSysVar(&variable.SysVar{
+		Scope: variable.ScopeGlobal,
+		Name:  repositoryDest,
+		Type:  variable.TypeStr,
+		Value: "",
+		SetGlobal: func(ctx context.Context, s *variable.SessionVars, val string) error {
+			return workerCtx.setRepositoryDest(ctx, val)
+		},
+		Validation: func(_ *variable.SessionVars, norm, _ string, _ variable.ScopeFlag) (string, error) {
+			return validateDest(norm)
+		},
+	})
+	variable.RegisterSysVar(&variable.SysVar{
+		Scope:    variable.ScopeGlobal,
+		Name:     repositoryRetentionDays,
+		Type:     variable.TypeInt,
+		Value:    "7",
+		MinValue: 0,
+		MaxValue: 365,
+		SetGlobal: func(ctx context.Context, s *variable.SessionVars, val string) error {
+			return setRetentionDays(ctx, val)
+		},
+	})
+	variable.RegisterSysVar(&variable.SysVar{
+		Scope:    variable.ScopeGlobal,
+		Name:     repositorySamplingInterval,
+		Type:     variable.TypeInt,
+		Value:    "5",
+		MinValue: 0,
+		MaxValue: 365,
+		SetGlobal: func(ctx context.Context, s *variable.SessionVars, val string) error {
+			return workerCtx.changeSamplingInterval(ctx, val)
+		},
+	})
+	variable.RegisterSysVar(&variable.SysVar{
+		Scope:    variable.ScopeGlobal,
+		Name:     repositorySnapshotInterval,
+		Type:     variable.TypeInt,
+		Value:    "3600",
+		MinValue: 900,
+		MaxValue: 7200,
+		SetGlobal: func(ctx context.Context, s *variable.SessionVars, val string) error {
+			return workerCtx.changeSnapshotInterval(ctx, val)
+		},
+	})
+}
+
+// SetupRepository finishes the initialization of the workload repository.
+func SetupRepository(d *domain.Domain) {
+	workerCtx.Lock()
+	defer workerCtx.Unlock()
+
+	workerCtx.etcdClient = d.GetEtcdClient()
+	workerCtx.sesspool = d.SysSessionPool()
+	workerCtx.newOwner = d.NewOwnerManager
+	workerCtx.wg = util.NewWaitGroupEnhancedWrapper("repository", nil, false)
+
+	if workerCtx.enabled {
+		if err := workerCtx.start(); err != nil {
+			logutil.BgLogger().Info("repository could not be started", zap.Any("err", err))
+			workerCtx.enabled = false
+		}
 	}
-
-	w.samplingTicker = time.NewTicker(time.Second)
-	w.samplingTicker.Stop()
-	w.snapshotTicker = time.NewTicker(time.Second)
-	w.snapshotTicker.Stop()
-
-	return w
 }
 
-func (w *Worker) runQuery(ctx context.Context, sctx sessionctx.Context, sql string, args ...interface{}) (v []chunk.Row, e error) {
+// StopRepository stops any the go routines for the repository.
+func StopRepository() {
+	workerCtx.Lock()
+	workerCtx.stop()
+	workerCtx.sesspool = nil // prevent the repository from being restarted
+	workerCtx.Unlock()
+}
+
+func (w *worker) initialized() bool {
+	return w.sesspool != nil
+}
+
+func (w *worker) runQuery(ctx context.Context, sctx sessionctx.Context, sql string, args ...interface{}) (v []chunk.Row, e error) {
 	defer func() {
 		logutil.BgLogger().Debug("repository execute SQL", zap.String("sql", sql), zap.NamedError("err", e))
 	}()
@@ -147,7 +222,7 @@ func (w *Worker) runQuery(ctx context.Context, sctx sessionctx.Context, sql stri
 	return nil, err
 }
 
-func (w *Worker) execRetry(ctx context.Context, sctx sessionctx.Context, sql string, args ...interface{}) ([]chunk.Row, error) {
+func (w *worker) execRetry(ctx context.Context, sctx sessionctx.Context, sql string, args ...interface{}) ([]chunk.Row, error) {
 	var errs [5]error
 	for i := 0; i < len(errs); i++ {
 		res, err := w.runQuery(ctx, sctx, sql, args...)
@@ -159,7 +234,7 @@ func (w *Worker) execRetry(ctx context.Context, sctx sessionctx.Context, sql str
 	return nil, errors.Join(errs[:]...)
 }
 
-func (w *Worker) getSessionWithRetry() pools.Resource {
+func (w *worker) getSessionWithRetry() pools.Resource {
 	for {
 		_sessctx, err := w.sesspool.Get()
 		if err != nil {
@@ -171,7 +246,7 @@ func (w *Worker) getSessionWithRetry() pools.Resource {
 	}
 }
 
-func (w *Worker) readInstanceID() error {
+func (w *worker) readInstanceID() error {
 	serverInfo, err := infosync.GetServerInfo()
 	if err != nil {
 		return err
@@ -181,7 +256,7 @@ func (w *Worker) readInstanceID() error {
 	return nil
 }
 
-func (w *Worker) start(ctx context.Context) func() {
+func (w *worker) startRepository(ctx context.Context) func() {
 	// TODO: add another txn type
 	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnOthers)
 	return func() {
@@ -201,8 +276,6 @@ func (w *Worker) start(ctx context.Context) func() {
 
 		for {
 			select {
-			case <-w.exit:
-				return
 			case <-ctx.Done():
 				return
 			case <-ticker.C:
@@ -239,28 +312,58 @@ func (w *Worker) start(ctx context.Context) func() {
 	}
 }
 
-// Start will start the worker.
-func (w *Worker) Start(ctx context.Context) {
+func (w *worker) start() error {
 	if w.cancel != nil {
-		return
+		return nil
 	}
 
-	nctx, cancel := context.WithCancel(context.Background())
+	w.enabled = true
+	if !w.initialized() {
+		// setup isn't finished, just set enabled and return
+		return nil
+	}
+
+	if w.etcdClient == nil {
+		return errors.New("etcd client required for workload repository")
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
 	w.cancel = cancel
-	w.wg.RunWithRecover(w.start(nctx), func(err interface{}) {
+	w.wg.RunWithRecover(w.startRepository(ctx), func(err interface{}) {
 		logutil.BgLogger().Info("repository prestart panic", zap.Any("err", err), zap.Stack("stack"))
 	}, "prestart")
+
+	return nil
 }
 
-// Stop will stop the worker.
-func (w *Worker) Stop() {
+func (w *worker) stop() error {
+	w.enabled = false
+	if w.cancel == nil {
+		// Worker was not started, just clear enabled and return
+		return nil
+	}
+
 	if w.owner != nil {
 		w.owner.Cancel()
 		w.owner = nil
 	}
-	if w.cancel != nil {
-		w.cancel()
-		w.cancel = nil
-	}
+
+	w.cancel()
+	w.cancel = nil
+
 	w.wg.Wait()
+	return nil
+}
+
+func (w *worker) setRepositoryDest(_ context.Context, dst string) error {
+	w.Lock()
+	defer w.Unlock()
+
+	switch {
+	case dst == "table":
+		return w.start()
+	default:
+		w.stop()
+		return nil
+	}
 }

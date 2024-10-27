@@ -19,8 +19,6 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/pkg/domain/repository"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
@@ -40,12 +38,6 @@ func (do *Domain) initDomainSysVars() {
 
 	variable.SetExternalTimestamp = do.setExternalTimestamp
 	variable.GetExternalTimestamp = do.getExternalTimestamp
-
-	variable.SetRepositoryDest = do.setRepositoryDest
-	variable.ValidateRepositoryDest = repository.ValidateDest
-	variable.SetRepositoryRetentionDays = repository.SetRetentionDays
-	variable.SetRepositorySamplingInterval = do.setSamplingInterval
-	variable.SetRepositorySnapshotInterval = do.setSnapshotInterval
 
 	setGlobalResourceControlFunc := do.setGlobalResourceControl
 	variable.SetGlobalResourceControl.Store(&setGlobalResourceControlFunc)
@@ -155,62 +147,5 @@ func (do *Domain) changeSchemaCacheSize(ctx context.Context, size uint64) error 
 		return err
 	}
 	do.infoCache.Data.SetCacheCapacity(size)
-	return nil
-}
-
-func (do *Domain) setRepositoryDest(ctx context.Context, dst string) error {
-	switch {
-	case dst == "table":
-		return do.startRepositoryWorker(ctx)
-	default:
-		return do.stopRepositoryWorker()
-	}
-}
-
-func (do *Domain) startRepositoryWorker(_ context.Context) error {
-	if do.repositoryWorker == nil {
-		if do.etcdClient == nil {
-			return errors.Errorf("etcd client required for workload repository")
-		}
-		do.repositoryWorker = repository.NewWorker(do.etcdClient, do.GetGlobalVar, do.newOwnerManager, do.SysSessionPool(), do.exit)
-	}
-	do.repositoryWorker.Start(context.Background())
-	return nil
-}
-
-func (do *Domain) stopRepositoryWorker() error {
-	if do.repositoryWorker == nil {
-		return nil
-	}
-	do.repositoryWorker.Stop()
-	do.repositoryWorker = nil
-	return nil
-}
-
-func (do *Domain) setSamplingInterval(_ context.Context, d string) error {
-	n, err := strconv.Atoi(d)
-	if err != nil {
-		return err
-	}
-
-	reset := repository.SetSamplingInterval(int32(n))
-	if do.repositoryWorker != nil && reset {
-		do.repositoryWorker.ResetSamplingInterval(int32(n))
-	}
-
-	return nil
-}
-
-func (do *Domain) setSnapshotInterval(_ context.Context, d string) error {
-	n, err := strconv.Atoi(d)
-	if err != nil {
-		return err
-	}
-
-	reset := repository.SetSnapshotInterval(int32(n))
-	if do.repositoryWorker != nil && reset {
-		do.repositoryWorker.ResetSnapshotInterval(int32(n))
-	}
-
 	return nil
 }

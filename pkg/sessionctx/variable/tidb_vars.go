@@ -156,16 +156,6 @@ const (
 	// TiDBRetryLimit is the maximum number of retries when committing a transaction.
 	TiDBRetryLimit = "tidb_retry_limit"
 
-	// TiDBWorkloadRepositoryDest is the destination of workload repository.
-	TiDBWorkloadRepositoryDest = "tidb_workload_repository_dest"
-
-	// TiDBWorkloadRepositoryRetentionDays will be used to drop expired statistics.
-	TiDBWorkloadRepositoryRetentionDays = "tidb_workload_repository_retention_days"
-	// TiDBWorkloadRepositoryActiveSamplingInterval is the workload sampling frequency in seconds.
-	TiDBWorkloadRepositoryActiveSamplingInterval = "tidb_workload_repository_active_sampling_interval"
-	// TiDBWorkloadRepositorySnapshotInterval is the workload snapshot frequency in seconds.
-	TiDBWorkloadRepositorySnapshotInterval = "tidb_workload_repository_snapshot_interval"
-
 	// TiDBDisableTxnAutoRetry disables transaction auto retry.
 	// Deprecated: This variable is deprecated, please do not use this variable.
 	TiDBDisableTxnAutoRetry = "tidb_disable_txn_auto_retry"
@@ -1390,100 +1380,97 @@ const (
 	DefTiDBGuaranteeLinearizability         = true
 	DefTiDBAnalyzeVersion                   = 2
 	// Deprecated: This variable is deprecated, please do not use this variable.
-	DefTiDBAutoAnalyzePartitionBatchSize                   = mysql.PartitionCountLimit
-	DefTiDBEnableIndexMergeJoin                            = false
-	DefTiDBTrackAggregateMemoryUsage                       = true
-	DefCTEMaxRecursionDepth                                = 1000
-	DefTiDBTmpTableMaxSize                                 = 64 << 20 // 64MB.
-	DefTiDBEnableLocalTxn                                  = false
-	DefTiDBTSOClientBatchMaxWaitTime                       = 0.0 // 0ms
-	DefTiDBEnableTSOFollowerProxy                          = false
-	DefPDEnableFollowerHandleRegion                        = false
-	DefTiDBEnableOrderedResultMode                         = false
-	DefTiDBEnablePseudoForOutdatedStats                    = false
-	DefTiDBRegardNULLAsPoint                               = true
-	DefEnablePlacementCheck                                = true
-	DefTimestamp                                           = "0"
-	DefTimestampFloat                                      = 0.0
-	DefTiDBEnableStmtSummary                               = true
-	DefTiDBStmtSummaryInternalQuery                        = false
-	DefTiDBStmtSummaryRefreshInterval                      = 1800
-	DefTiDBStmtSummaryHistorySize                          = 24
-	DefTiDBStmtSummaryMaxStmtCount                         = 3000
-	DefTiDBStmtSummaryMaxSQLLength                         = 4096
-	DefTiDBCapturePlanBaseline                             = Off
-	DefTiDBIgnoreInlistPlanDigest                          = false
-	DefTiDBEnableIndexMerge                                = true
-	DefEnableLegacyInstanceScope                           = true
-	DefTiDBTableCacheLease                                 = 3 // 3s
-	DefTiDBPersistAnalyzeOptions                           = true
-	DefTiDBStatsLoadSyncWait                               = 100
-	DefTiDBStatsLoadPseudoTimeout                          = true
-	DefSysdateIsNow                                        = false
-	DefTiDBEnableParallelHashaggSpill                      = true
-	DefTiDBEnableMutationChecker                           = false
-	DefTiDBTxnAssertionLevel                               = AssertionOffStr
-	DefTiDBIgnorePreparedCacheCloseStmt                    = false
-	DefTiDBBatchPendingTiFlashCount                        = 4000
-	DefRCReadCheckTS                                       = false
-	DefTiDBRemoveOrderbyInSubquery                         = true
-	DefTiDBSkewDistinctAgg                                 = false
-	DefTiDB3StageDistinctAgg                               = true
-	DefTiDB3StageMultiDistinctAgg                          = false
-	DefTiDBOptExplainEvaledSubquery                        = false
-	DefTiDBReadStaleness                                   = 0
-	DefTiDBGCMaxWaitTime                                   = 24 * 60 * 60
-	DefMaxAllowedPacket                             uint64 = 67108864
-	DefTiDBEnableBatchDML                                  = false
-	DefTiDBMemQuotaQuery                                   = memory.DefMemQuotaQuery // 1GB
-	DefTiDBStatsCacheMemQuota                              = 0
-	MaxTiDBStatsCacheMemQuota                              = 1024 * 1024 * 1024 * 1024 // 1TB
-	DefTiDBQueryLogMaxLen                                  = 4096
-	DefRequireSecureTransport                              = false
-	DefTiDBCommitterConcurrency                            = 128
-	DefTiDBBatchDMLIgnoreError                             = false
-	DefTiDBMemQuotaAnalyze                                 = -1
-	DefTiDBEnableAutoAnalyze                               = true
-	DefTiDBEnableAutoAnalyzePriorityQueue                  = true
-	DefTiDBAnalyzeColumnOptions                            = "PREDICATE"
-	DefTiDBMemOOMAction                                    = "CANCEL"
-	DefTiDBMaxAutoAnalyzeTime                              = 12 * 60 * 60
-	DefTiDBAutoAnalyzeConcurrency                          = 1
-	DefTiDBEnablePrepPlanCache                             = true
-	DefTiDBPrepPlanCacheSize                               = 100
-	DefTiDBSessionPlanCacheSize                            = 100
-	DefTiDBWorkloadRepositoryRetentionDays                 = 7
-	DefTiDBWorkloadRepositoryActiveSamplingInterval        = 5
-	DefTiDBWorkloadRepositorySnapshotInterval              = 3600
-	DefTiDBEnablePrepPlanCacheMemoryMonitor                = true
-	DefTiDBPrepPlanCacheMemoryGuardRatio                   = 0.1
-	DefTiDBEnableDistTask                                  = true
-	DefTiDBEnableFastCreateTable                           = true
-	DefTiDBSimplifiedMetrics                               = false
-	DefTiDBEnablePaging                                    = true
-	DefTiFlashFineGrainedShuffleStreamCount                = 0
-	DefStreamCountWhenMaxThreadsNotSet                     = 8
-	DefTiFlashFineGrainedShuffleBatchSize                  = 8192
-	DefAdaptiveClosestReadThreshold                        = 4096
-	DefTiDBEnableAnalyzeSnapshot                           = false
-	DefTiDBGenerateBinaryPlan                              = true
-	DefEnableTiDBGCAwareMemoryTrack                        = false
-	DefTiDBDefaultStrMatchSelectivity                      = 0.8
-	DefTiDBEnableTmpStorageOnOOM                           = true
-	DefTiDBEnableMDL                                       = true
-	DefTiFlashFastScan                                     = false
-	DefMemoryUsageAlarmRatio                               = 0.7
-	DefMemoryUsageAlarmKeepRecordNum                       = 5
-	DefTiDBEnableFastReorg                                 = true
-	DefTiDBDDLDiskQuota                                    = 100 * 1024 * 1024 * 1024 // 100GB
-	DefExecutorConcurrency                                 = 5
-	DefTiDBEnableNonPreparedPlanCache                      = false
-	DefTiDBEnableNonPreparedPlanCacheForDML                = false
-	DefTiDBNonPreparedPlanCacheSize                        = 100
-	DefTiDBPlanCacheMaxPlanSize                            = 2 * size.MB
-	DefTiDBInstancePlanCacheMaxMemSize                     = 100 * size.MB
-	MinTiDBInstancePlanCacheMemSize                        = 100 * size.MB
-	DefTiDBInstancePlanCacheReservedPercentage             = 0.1
+	DefTiDBAutoAnalyzePartitionBatchSize              = mysql.PartitionCountLimit
+	DefTiDBEnableIndexMergeJoin                       = false
+	DefTiDBTrackAggregateMemoryUsage                  = true
+	DefCTEMaxRecursionDepth                           = 1000
+	DefTiDBTmpTableMaxSize                            = 64 << 20 // 64MB.
+	DefTiDBEnableLocalTxn                             = false
+	DefTiDBTSOClientBatchMaxWaitTime                  = 0.0 // 0ms
+	DefTiDBEnableTSOFollowerProxy                     = false
+	DefPDEnableFollowerHandleRegion                   = false
+	DefTiDBEnableOrderedResultMode                    = false
+	DefTiDBEnablePseudoForOutdatedStats               = false
+	DefTiDBRegardNULLAsPoint                          = true
+	DefEnablePlacementCheck                           = true
+	DefTimestamp                                      = "0"
+	DefTimestampFloat                                 = 0.0
+	DefTiDBEnableStmtSummary                          = true
+	DefTiDBStmtSummaryInternalQuery                   = false
+	DefTiDBStmtSummaryRefreshInterval                 = 1800
+	DefTiDBStmtSummaryHistorySize                     = 24
+	DefTiDBStmtSummaryMaxStmtCount                    = 3000
+	DefTiDBStmtSummaryMaxSQLLength                    = 4096
+	DefTiDBCapturePlanBaseline                        = Off
+	DefTiDBIgnoreInlistPlanDigest                     = false
+	DefTiDBEnableIndexMerge                           = true
+	DefEnableLegacyInstanceScope                      = true
+	DefTiDBTableCacheLease                            = 3 // 3s
+	DefTiDBPersistAnalyzeOptions                      = true
+	DefTiDBStatsLoadSyncWait                          = 100
+	DefTiDBStatsLoadPseudoTimeout                     = true
+	DefSysdateIsNow                                   = false
+	DefTiDBEnableParallelHashaggSpill                 = true
+	DefTiDBEnableMutationChecker                      = false
+	DefTiDBTxnAssertionLevel                          = AssertionOffStr
+	DefTiDBIgnorePreparedCacheCloseStmt               = false
+	DefTiDBBatchPendingTiFlashCount                   = 4000
+	DefRCReadCheckTS                                  = false
+	DefTiDBRemoveOrderbyInSubquery                    = true
+	DefTiDBSkewDistinctAgg                            = false
+	DefTiDB3StageDistinctAgg                          = true
+	DefTiDB3StageMultiDistinctAgg                     = false
+	DefTiDBOptExplainEvaledSubquery                   = false
+	DefTiDBReadStaleness                              = 0
+	DefTiDBGCMaxWaitTime                              = 24 * 60 * 60
+	DefMaxAllowedPacket                        uint64 = 67108864
+	DefTiDBEnableBatchDML                             = false
+	DefTiDBMemQuotaQuery                              = memory.DefMemQuotaQuery // 1GB
+	DefTiDBStatsCacheMemQuota                         = 0
+	MaxTiDBStatsCacheMemQuota                         = 1024 * 1024 * 1024 * 1024 // 1TB
+	DefTiDBQueryLogMaxLen                             = 4096
+	DefRequireSecureTransport                         = false
+	DefTiDBCommitterConcurrency                       = 128
+	DefTiDBBatchDMLIgnoreError                        = false
+	DefTiDBMemQuotaAnalyze                            = -1
+	DefTiDBEnableAutoAnalyze                          = true
+	DefTiDBEnableAutoAnalyzePriorityQueue             = true
+	DefTiDBAnalyzeColumnOptions                       = "PREDICATE"
+	DefTiDBMemOOMAction                               = "CANCEL"
+	DefTiDBMaxAutoAnalyzeTime                         = 12 * 60 * 60
+	DefTiDBAutoAnalyzeConcurrency                     = 1
+	DefTiDBEnablePrepPlanCache                        = true
+	DefTiDBPrepPlanCacheSize                          = 100
+	DefTiDBSessionPlanCacheSize                       = 100
+	DefTiDBEnablePrepPlanCacheMemoryMonitor           = true
+	DefTiDBPrepPlanCacheMemoryGuardRatio              = 0.1
+	DefTiDBEnableDistTask                             = true
+	DefTiDBEnableFastCreateTable                      = true
+	DefTiDBSimplifiedMetrics                          = false
+	DefTiDBEnablePaging                               = true
+	DefTiFlashFineGrainedShuffleStreamCount           = 0
+	DefStreamCountWhenMaxThreadsNotSet                = 8
+	DefTiFlashFineGrainedShuffleBatchSize             = 8192
+	DefAdaptiveClosestReadThreshold                   = 4096
+	DefTiDBEnableAnalyzeSnapshot                      = false
+	DefTiDBGenerateBinaryPlan                         = true
+	DefEnableTiDBGCAwareMemoryTrack                   = false
+	DefTiDBDefaultStrMatchSelectivity                 = 0.8
+	DefTiDBEnableTmpStorageOnOOM                      = true
+	DefTiDBEnableMDL                                  = true
+	DefTiFlashFastScan                                = false
+	DefMemoryUsageAlarmRatio                          = 0.7
+	DefMemoryUsageAlarmKeepRecordNum                  = 5
+	DefTiDBEnableFastReorg                            = true
+	DefTiDBDDLDiskQuota                               = 100 * 1024 * 1024 * 1024 // 100GB
+	DefExecutorConcurrency                            = 5
+	DefTiDBEnableNonPreparedPlanCache                 = false
+	DefTiDBEnableNonPreparedPlanCacheForDML           = false
+	DefTiDBNonPreparedPlanCacheSize                   = 100
+	DefTiDBPlanCacheMaxPlanSize                       = 2 * size.MB
+	DefTiDBInstancePlanCacheMaxMemSize                = 100 * size.MB
+	MinTiDBInstancePlanCacheMemSize                   = 100 * size.MB
+	DefTiDBInstancePlanCacheReservedPercentage        = 0.1
 	// MaxDDLReorgBatchSize is exported for testing.
 	MaxDDLReorgBatchSize                  int32  = 10240
 	MinDDLReorgBatchSize                  int32  = 32
@@ -1722,18 +1709,6 @@ var (
 	DisableDDL func() error = nil
 	// SwitchFastCreateTable is the func registered by DDL to switch fast create table.
 	SwitchFastCreateTable func(val bool) error
-	// SetRepositoryDest is the func registered by domain to notify repository worker in this instance.
-	SetRepositoryDest func(context.Context, string) error = nil
-	// ValidateRepositoryDest is the func registered by domain to notify repository worker in this instance.
-	ValidateRepositoryDest func(string) (string, error) = nil
-	// SetRepositoryRetentionDays is the func registered by domain to set retention days for repository worker.
-	SetRepositoryRetentionDays func(context.Context, string) error = nil
-	// SetRepositorySamplingInterval is the func registered by domain to set
-	// the sampling period in seconds for repository worker.
-	SetRepositorySamplingInterval func(context.Context, string) error = nil
-	// SetRepositorySnapshotInterval is the func registered by domain to set
-	// the snapshot period in seconds for repository worker.
-	SetRepositorySnapshotInterval func(context.Context, string) error = nil
 	// SetExternalTimestamp is the func registered by staleread to set externaltimestamp in pd
 	SetExternalTimestamp func(ctx context.Context, ts uint64) error
 	// GetExternalTimestamp is the func registered by staleread to get externaltimestamp from pd

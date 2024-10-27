@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/domain"
+	"github.com/pingcap/tidb/pkg/domain/repository"
 	"github.com/pingcap/tidb/pkg/executor"
 	"github.com/pingcap/tidb/pkg/executor/mppcoordmanager"
 	"github.com/pingcap/tidb/pkg/extension"
@@ -318,6 +319,7 @@ func main() {
 	executor.Start()
 	resourcemanager.InstanceResourceManager.Start()
 	storage, dom := createStoreDDLOwnerMgrAndDomain(keyspaceName)
+	repository.SetupRepository(dom)
 	svr := createServer(storage, dom)
 
 	exited := make(chan struct{})
@@ -921,6 +923,7 @@ func cleanup(svr *server.Server, storage kv.Storage, dom *domain.Domain) {
 	// See https://github.com/pingcap/tidb/issues/40038 for details.
 	svr.KillSysProcesses()
 	plugin.Shutdown(context.Background())
+	repository.StopRepository()
 	closeDDLOwnerMgrDomainAndStorage(storage, dom)
 	disk.CleanUp()
 	closeStmtSummary()

@@ -23,7 +23,6 @@ import (
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/sqlescape"
@@ -32,7 +31,7 @@ import (
 )
 
 var (
-	retentionDays = atomic.NewInt32(int32(variable.DefTiDBWorkloadRepositoryRetentionDays))
+	retentionDays = atomic.NewInt32(-1)
 )
 
 func calcNextTick(now time.Time) time.Duration {
@@ -44,7 +43,7 @@ func calcNextTick(now time.Time) time.Duration {
 	return next.Sub(now)
 }
 
-func (w *Worker) createAllPartitions(ctx context.Context, sess sessionctx.Context, is infoschema.InfoSchema) error {
+func (w *worker) createAllPartitions(ctx context.Context, sess sessionctx.Context, is infoschema.InfoSchema) error {
 	sb := &strings.Builder{}
 	for _, tbl := range workloadTables {
 		tbSchema, err := is.TableByName(ctx, workloadSchemaCIStr, model.NewCIStr(tbl.destTable))
@@ -68,9 +67,11 @@ func (w *Worker) createAllPartitions(ctx context.Context, sess sessionctx.Contex
 	return nil
 }
 
-func (w *Worker) dropOldPartitions(ctx context.Context, sess sessionctx.Context, is infoschema.InfoSchema, now time.Time) error {
+func (w *worker) dropOldPartitions(ctx context.Context, sess sessionctx.Context, is infoschema.InfoSchema, now time.Time) error {
 	retention := int(retentionDays.Load())
-	if retention == 0 {
+	if retention == -1 {
+		panic("Variable " + repositoryRetentionDays + " was not set before repository was started.")
+	} else if retention == 0 {
 		// disabled housekeeping
 		return nil
 	}
@@ -105,7 +106,7 @@ func (w *Worker) dropOldPartitions(ctx context.Context, sess sessionctx.Context,
 	return nil
 }
 
-func (w *Worker) startHouseKeeper(ctx context.Context) func() {
+func (w *worker) startHouseKeeper(ctx context.Context) func() {
 	return func() {
 		now := time.Now()
 		timer := time.NewTimer(calcNextTick(now))
@@ -116,8 +117,6 @@ func (w *Worker) startHouseKeeper(ctx context.Context) func() {
 		sess := _sessctx.(sessionctx.Context)
 		for {
 			select {
-			case <-w.exit:
-				return
 			case <-ctx.Done():
 				return
 			case now := <-timer.C:
