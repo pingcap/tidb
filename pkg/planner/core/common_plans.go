@@ -464,7 +464,7 @@ type Update struct {
 
 	// TblColPosInfos is for multi-table update statement.
 	// It records the column position of each related table.
-	TblColPosInfos TblColPosInfoSlice `plan-cache-clone:"shallow"`
+	TblColPosInfos util.TblColPosInfoSlice `plan-cache-clone:"shallow"`
 
 	// Used when partition sets are given.
 	// e.g. update t partition(p0) set a = 1;
@@ -513,7 +513,7 @@ type Delete struct {
 
 	SelectPlan base.PhysicalPlan
 
-	TblColPosInfos TblColPosInfoSlice `plan-cache-clone:"shallow"`
+	TblColPosInfos util.TblColPosInfoSlice `plan-cache-clone:"shallow"`
 
 	FKChecks   map[int64][]*FKCheck   `plan-cache-clone:"must-nil"`
 	FKCascades map[int64][]*FKCascade `plan-cache-clone:"must-nil"`

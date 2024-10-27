@@ -15,12 +15,13 @@
 package indexadvisor
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"math"
-	"sort"
+	"slices"
 	"strings"
 	"time"
 
@@ -243,8 +244,8 @@ func prepareRecommendation(indexes s.Set[Index], queries s.Set[Query], optimizer
 			})
 		}
 
-		sort.Slice(impacts, func(i, j int) bool {
-			return impacts[i].Improvement > impacts[j].Improvement
+		slices.SortFunc(impacts, func(x, y *ImpactedQuery) int {
+			return cmp.Compare(x.Improvement, y.Improvement)
 		})
 
 		topN := 3

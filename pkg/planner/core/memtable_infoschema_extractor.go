@@ -223,7 +223,7 @@ func (e *InfoSchemaBaseExtractor) ExplainInfo(_ base.PhysicalPlan) string {
 
 	r := new(bytes.Buffer)
 	colNames := maps.Keys(e.ColPredicates)
-	sort.Strings(colNames)
+	slices.Sort(colNames)
 	for _, colName := range colNames {
 		preds := e.ColPredicates[colName]
 		if len(preds) > 0 {
@@ -232,7 +232,7 @@ func (e *InfoSchemaBaseExtractor) ExplainInfo(_ base.PhysicalPlan) string {
 	}
 
 	colNames = maps.Keys(e.LikePatterns)
-	sort.Strings(colNames)
+	slices.Sort(colNames)
 	for _, colName := range colNames {
 		patterns := e.LikePatterns[colName]
 		if len(patterns) > 0 {

@@ -16,7 +16,7 @@ package core
 
 import (
 	"fmt"
-	"sort"
+	"slices"
 	"sync"
 	"time"
 
@@ -198,8 +198,8 @@ func (pc *instancePlanCache) calcEvictionThreshold(lastUsedTimes []time.Time) (t
 	if numToEvict <= 0 {
 		return
 	}
-	sort.Slice(lastUsedTimes, func(i, j int) bool {
-		return lastUsedTimes[i].Before(lastUsedTimes[j])
+	slices.SortFunc(lastUsedTimes, func(x, y time.Time) int {
+		return x.Compare(y)
 	})
 	if len(lastUsedTimes) < int(numToEvict) {
 		return // for safety, avoid index-of-range panic
