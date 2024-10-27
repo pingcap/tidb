@@ -281,7 +281,8 @@ type TableName struct {
 	PartitionNames []model.CIStr
 	TableSample    *TableSample
 	// AS OF is used to see the data as it was at a specific point in time.
-	AsOf *AsOfClause
+	AsOf    *AsOfClause
+	IsAlias bool
 }
 
 func (*TableName) resultSet() {}
@@ -293,7 +294,7 @@ func (n *TableName) restoreName(ctx *format.RestoreCtx) {
 		if n.Schema.String() != "" {
 			ctx.WriteName(n.Schema.String())
 			ctx.WritePlain(".")
-		} else if ctx.DefaultDB != "" {
+		} else if ctx.DefaultDB != "" && !n.IsAlias {
 			// Try CTE, for a CTE table name, we shouldn't write the database name.
 			if !ctx.IsCTETableName(n.Name.L) {
 				ctx.WriteName(ctx.DefaultDB)
