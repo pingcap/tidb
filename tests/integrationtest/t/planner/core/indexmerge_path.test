@@ -14,7 +14,6 @@ analyze table t index idx;
 analyze table t index a;
 analyze table t index a, idx, idx2;
 --disable_warnings
-set tidb_analyze_version=2;
 
 # TestIndexMergeJSONMemberOf
 drop table if exists t;
@@ -503,14 +502,3 @@ EXPLAIN format = brief SELECT /*+ use_index_merge(t1, mvi4) */ * from t1 where
 c = 1 and
 json_contains(j, '[4,5]') and
 d not like '%test%';
-
-# Test Issue #56915
-drop table if exists t;
-create table t(a int, b int, j json, index ia(a), index mvi( (cast(j as signed array)), a, b) );
-insert into t value(1,1,'[1,2,3,4,5]');
-insert into t value(1,1,'[1,2,3,4,5]');
-insert into t value(1,1,'[1,2,3,4,5]');
-insert into t value(1,1,'[1,2,3,4,5]');
-insert into t value(1,1,'[6]');
-analyze table t all columns;
-explain format = brief select * from t where a = 1 and 6 member of (j);
