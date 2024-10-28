@@ -157,25 +157,50 @@ func (p LogicalJoin) Init(ctx base.PlanContext, offset int) *LogicalJoin {
 func (p *LogicalJoin) Hash64(h base2.Hasher) {
 	h.HashString(plancodec.TypeJoin)
 	h.HashInt(int(p.JoinType))
-	h.HashInt(len(p.EqualConditions))
-	for _, oneCond := range p.EqualConditions {
-		oneCond.Hash64(h)
+	if p.EqualConditions == nil {
+		h.HashByte(base2.NilFlag)
+	} else {
+		h.HashByte(base2.NotNilFlag)
+		h.HashInt(len(p.EqualConditions))
+		for _, oneCond := range p.EqualConditions {
+			oneCond.Hash64(h)
+		}
 	}
-	h.HashInt(len(p.NAEQConditions))
-	for _, oneCond := range p.NAEQConditions {
-		oneCond.Hash64(h)
+	if p.NAEQConditions == nil {
+		h.HashByte(base2.NilFlag)
+	} else {
+		h.HashByte(base2.NotNilFlag)
+		h.HashInt(len(p.NAEQConditions))
+		for _, oneCond := range p.NAEQConditions {
+			oneCond.Hash64(h)
+		}
 	}
-	h.HashInt(len(p.LeftConditions))
-	for _, oneCond := range p.LeftConditions {
-		oneCond.Hash64(h)
+	if p.LeftConditions == nil {
+		h.HashByte(base2.NilFlag)
+	} else {
+		h.HashByte(base2.NotNilFlag)
+		h.HashInt(len(p.LeftConditions))
+		for _, oneCond := range p.LeftConditions {
+			oneCond.Hash64(h)
+		}
 	}
-	h.HashInt(len(p.RightConditions))
-	for _, oneCond := range p.RightConditions {
-		oneCond.Hash64(h)
+	if p.RightConditions == nil {
+		h.HashByte(base2.NilFlag)
+	} else {
+		h.HashByte(base2.NotNilFlag)
+		h.HashInt(len(p.RightConditions))
+		for _, oneCond := range p.RightConditions {
+			oneCond.Hash64(h)
+		}
 	}
-	h.HashInt(len(p.OtherConditions))
-	for _, oneCond := range p.OtherConditions {
-		oneCond.Hash64(h)
+	if p.OtherConditions == nil {
+		h.HashByte(base2.NilFlag)
+	} else {
+		h.HashByte(base2.NotNilFlag)
+		h.HashInt(len(p.OtherConditions))
+		for _, oneCond := range p.OtherConditions {
+			oneCond.Hash64(h)
+		}
 	}
 }
 
