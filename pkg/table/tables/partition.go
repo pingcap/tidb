@@ -184,13 +184,13 @@ func newPartitionedTable(tbl *TableCommon, tblInfo *model.TableInfo) (table.Part
 		pi.DDLAction != model.ActionAlterTablePartitioning {
 		return ret, nil
 	}
-	// In StateWriteReorganization we are using the 'old' partition definitions
+	// In WriteReorganization we are using the 'old' partition definitions
 	// and if any new change happens in DroppingDefinitions, it needs to be done
 	// also in AddingDefinitions (with new evaluation of the new expression)
-	// In StateDeleteReorganization we are using the 'new' partition definitions
+	// In DeleteReorganization/Public we are using the 'new' partition definitions
 	// and if any new change happens in AddingDefinitions, it needs to be done
 	// also in DroppingDefinitions (since session running on schema version -1)
-	// should also see the changes
+	// should also see the changes.
 	if pi.DDLState == model.StateDeleteReorganization || pi.DDLState == model.StatePublic {
 		// TODO: Explicitly explain the different DDL/New fields!
 		if pi.NewTableID != 0 {
@@ -212,6 +212,7 @@ func newPartitionedTable(tbl *TableCommon, tblInfo *model.TableInfo) (table.Part
 			if err != nil {
 				return nil, err
 			}
+			p.skipAssert = true
 			partitions[def.ID] = p
 			ret.doubleWritePartitions[def.ID] = nil
 		}
@@ -235,6 +236,7 @@ func newPartitionedTable(tbl *TableCommon, tblInfo *model.TableInfo) (table.Part
 				if err != nil {
 					return nil, err
 				}
+				p.skipAssert = true
 				partitions[def.ID] = p
 			}
 		}
