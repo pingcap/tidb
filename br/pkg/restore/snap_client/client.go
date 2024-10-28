@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
+	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/checkpoint"
 	"github.com/pingcap/tidb/br/pkg/checksum"
@@ -66,15 +67,16 @@ const (
 	strictPlacementPolicyMode = "STRICT"
 	ignorePlacementPolicyMode = "IGNORE"
 
-	defaultDDLConcurrency = 16
-	maxSplitKeysOnce      = 10240
+	resetSpeedLimitRetryTimes = 3
+	defaultDDLConcurrency     = 16
+	maxSplitKeysOnce          = 10240
 )
 
 const minBatchDdlSize = 1
 
 type SnapClient struct {
-	// Tool clients used by SnapClient
 	fileImporter *SnapFileImporter
+	// Tool clients used by SnapClient
 	pdClient     pd.Client
 	pdHTTPClient pdhttp.Client
 
@@ -183,7 +185,7 @@ func (rc *SnapClient) Close() {
 	rc.closeConn()
 
 	if err := rc.fileImporter.Close(); err != nil {
-		log.Warn("failed to close file improter")
+		log.Warn("failed to close file importer")
 	}
 
 	log.Info("Restore client closed")
@@ -445,6 +447,28 @@ func (rc *SnapClient) Init(g glue.Glue, store kv.Storage) error {
 	return errors.Trace(err)
 }
 
+func SetSpeedLimitFn(ctx context.Context, stores []*metapb.Store, pool *tidbutil.WorkerPool) func(*SnapFileImporter, uint64) error {
+	return func(importer *SnapFileImporter, limit uint64) error {
+		eg, ectx := errgroup.WithContext(ctx)
+		for _, store := range stores {
+			if err := ectx.Err(); err != nil {
+				return errors.Trace(err)
+			}
+
+			finalStore := store
+			pool.ApplyOnErrorGroup(eg,
+				func() error {
+					err := importer.SetDownloadSpeedLimit(ectx, finalStore.GetId(), limit)
+					if err != nil {
+						return errors.Trace(err)
+					}
+					return nil
+				})
+		}
+		return eg.Wait()
+	}
+}
+
 func (rc *SnapClient) initClients(ctx context.Context, backend *backuppb.StorageBackend, isRawKvMode bool, isTxnKvMode bool) error {
 	stores, err := conn.GetAllTiKVStoresWithRetry(ctx, rc.pdClient, util.SkipTiFlash)
 	if err != nil {
@@ -457,6 +481,7 @@ func (rc *SnapClient) initClients(ctx context.Context, backend *backuppb.Storage
 	if isRawKvMode {
 		splitClientOpts = append(splitClientOpts, split.WithRawKV())
 	}
+
 	metaClient := split.NewClient(rc.pdClient, rc.pdHTTPClient, rc.tlsConf, maxSplitKeysOnce, rc.storeCount+1, splitClientOpts...)
 	importCli := importclient.NewImportClient(metaClient, rc.tlsConf, rc.keepaliveConf)
 	rc.fileImporter, err = NewSnapFileImporter(ctx, metaClient, importCli, backend, isRawKvMode, isTxnKvMode, stores, rc.rewriteMode, rc.concurrencyPerStore)

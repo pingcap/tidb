@@ -1,5 +1,5 @@
 // Copyright 2022 PingCAP, Inc. Licensed under Apache-2.0.
-package logsplit
+package split
 
 import (
 	"bytes"
@@ -202,3 +202,4 @@ func checkOverlaps(a, ap Span) bool {
 	}
 	return bytes.Compare(a.StartKey, ap.EndKey) < 0 && bytes.Compare(ap.StartKey, a.EndKey) < 0
 }
+
