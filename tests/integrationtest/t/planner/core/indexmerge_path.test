@@ -514,5 +514,6 @@ insert into t value(1,1,'[1,2,3,4,5]');
 insert into t value(1,1,'[6]');
 select @@tidb_enable_analyze_snapshot;
 analyze table t all columns;
+explain format = brief select * from t where a = 1 and 6 member of (j);
 trace plan target = 'debug' select * from t where a = 1 and 6 member of (j);
 explain format = brief select * from t where a = 1 and 6 member of (j);
