@@ -216,8 +216,6 @@ func (cfg *BackupConfig) ParseFromFlags(flags *pflag.FlagSet, skipCommonConfig b
 		if err = cfg.Config.ParseFromFlags(flags); err != nil {
 			return errors.Trace(err)
 		}
-		// override common config specifically for backup use case
-		cfg.OverrideDefaultForBackup()
 	}
 
 	cfg.RemoveSchedulers, err = flags.GetBool(flagRemoveSchedulers)
