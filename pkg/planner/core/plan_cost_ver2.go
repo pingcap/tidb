@@ -104,9 +104,12 @@ func (p *PhysicalProjection) GetPlanCostVer2(taskType property.TaskType, option 
 }
 
 const (
-	// MinNumRows provides a minimum to avoid underestimation
+	// MinNumRows provides a minimum to avoid underestimation. As selectivity estimation approaches
+	// zero, all plan choices result in a low cost - making it difficult to differentiate plan choices.
+	// A low value of 1.0 here is used for most (non probe acceses) to reduce this risk.
 	MinNumRows = 1.0
-	// MinRowSize provides a minimum to avoid underestimation
+	// MinRowSize provides a minimum column length to ensure that any adjustment or calculation
+	// in costing does not go below this value. 2.0 is used as a reasonable lowest column length.
 	MinRowSize = 2.0
 	// TiFlashStartupRowPenalty applies a startup penalty for TiFlash scan to encourage TiKV usage for small scans
 	TiFlashStartupRowPenalty = 10000
