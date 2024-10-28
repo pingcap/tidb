@@ -234,12 +234,7 @@ func (jobW *JobWrapper) FillArgsWithSubJobs() {
 		jobW.FillArgs(jobW.JobArgs)
 	} else {
 		for _, sub := range jobW.MultiSchemaInfo.SubJobs {
-			fakeJob := model.Job{
-				Version: jobW.Version,
-				Type:    sub.Type,
-			}
-			fakeJob.FillArgs(sub.JobArgs)
-			sub.Args = fakeJob.Args
+			sub.FillArgs(jobW.Version)
 		}
 	}
 }
@@ -267,6 +262,7 @@ type ddl struct {
 	enableTiFlashPoll *atomicutil.Bool
 	sysTblMgr         systable.Manager
 	minJobIDRefresher *systable.MinJobIDRefresher
+	eventPublishStore notifier.Store
 
 	executor     *executor
 	jobSubmitter *JobSubmitter
@@ -564,9 +560,12 @@ func (d *ddl) RegisterStatsHandle(h *handle.Handle) {
 	d.ddlEventCh = h.DDLEventCh()
 }
 
+const noSubJob int64 = -1 // noSubJob indicates the event is not a merged ddl.
+
 // asyncNotifyEvent will notify the ddl event to outside world, say statistic handle. When the channel is full, we may
 // give up notify and log it.
-func asyncNotifyEvent(jobCtx *jobContext, e *notifier.SchemaChangeEvent, job *model.Job, sctx *sess.Session) error {
+// subJobID is used to identify the sub job in a merged ddl, such as create tables, should pass noSubJob(-1) if not a merged ddl.
+func asyncNotifyEvent(jobCtx *jobContext, e *notifier.SchemaChangeEvent, job *model.Job, subJobID int64, sctx *sess.Session) error {
 	// skip notify for system databases, system databases are expected to change at
 	// bootstrap and other nodes can also handle the changing in its bootstrap rather
 	// than be notified.
@@ -574,36 +573,43 @@ func asyncNotifyEvent(jobCtx *jobContext, e *notifier.SchemaChangeEvent, job *mo
 		return nil
 	}
 
-	if intest.InTest && notifier.DefaultStore != nil {
-		failpoint.Inject("asyncNotifyEventError", func() {
-			failpoint.Return(errors.New("mock publish event error"))
-		})
-		var multiSchemaChangeSeq int64 = -1
-		if job.MultiSchemaInfo != nil {
-			multiSchemaChangeSeq = int64(job.MultiSchemaInfo.Seq)
-		}
-		err := notifier.PubSchemaChange(jobCtx.ctx, sctx, job.ID, multiSchemaChangeSeq, e)
-		if err != nil {
-			logutil.DDLLogger().Error("Error publish schema change event",
-				zap.Int64("jobID", job.ID),
-				zap.Int64("multiSchemaChangeSeq", multiSchemaChangeSeq),
-				zap.String("event", e.String()), zap.Error(err))
-			return err
-		}
-		return nil
-	}
-
 	ch := jobCtx.oldDDLCtx.ddlEventCh
 	if ch != nil {
+	forLoop:
 		for i := 0; i < 10; i++ {
 			select {
 			case ch <- e:
-				return nil
+				break forLoop
 			default:
 				time.Sleep(time.Microsecond * 10)
 			}
 		}
 		logutil.DDLLogger().Warn("fail to notify DDL event", zap.Stringer("event", e))
+	}
+
+	if intest.InTest && jobCtx.eventPublishStore != nil {
+		failpoint.Inject("asyncNotifyEventError", func() {
+			failpoint.Return(errors.New("mock publish event error"))
+		})
+		if subJobID == noSubJob && job.MultiSchemaInfo != nil {
+			subJobID = int64(job.MultiSchemaInfo.Seq)
+		}
+		err := notifier.PubSchemeChangeToStore(
+			jobCtx.stepCtx,
+			sctx,
+			job.ID,
+			subJobID,
+			e,
+			jobCtx.eventPublishStore,
+		)
+		if err != nil {
+			logutil.DDLLogger().Error("Error publish schema change event",
+				zap.Int64("jobID", job.ID),
+				zap.Int64("subJobID", subJobID),
+				zap.String("event", e.String()), zap.Error(err))
+			return err
+		}
+		return nil
 	}
 	return nil
 }
@@ -668,6 +674,7 @@ func newDDL(ctx context.Context, options ...Option) (*ddl, *executor) {
 	d := &ddl{
 		ddlCtx:            ddlCtx,
 		enableTiFlashPoll: atomicutil.NewBool(true),
+		eventPublishStore: opt.EventPublishStore,
 	}
 
 	taskexecutor.RegisterTaskType(proto.Backfill,
@@ -1394,12 +1401,14 @@ func processJobs(
 
 		failpoint.Inject("mockCommitFailedOnDDLCommand", func(val failpoint.Value) {
 			if val.(bool) {
+				ns.Rollback()
 				failpoint.Return(jobErrs, errors.New("mock commit failed on admin command on ddl jobs"))
 			}
 		})
 
 		// There may be some conflict during the update, try it again
 		if err = ns.Commit(ctx); err != nil {
+			ns.Rollback()
 			continue
 		}
 

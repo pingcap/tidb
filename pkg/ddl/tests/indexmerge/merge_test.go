@@ -122,6 +122,7 @@ func TestAddIndexMergeVersionIndexValue(t *testing.T) {
 	tk2 := testkit.NewTestKit(t, store)
 	tk2.MustExec("use test")
 	tk.MustExec("create table t (c1 int);")
+	tk.MustExec("insert into t values (1);")
 	// Force onCreateIndex use the txn-merge process.
 	ingest.LitInitialized = false
 	tk.MustExec("set @@global.tidb_ddl_enable_fast_reorg = 1;")
@@ -138,7 +139,7 @@ func TestAddIndexMergeVersionIndexValue(t *testing.T) {
 			runDML = true
 			tblID = job.TableID
 			idxID = idx.ID
-			_, checkErr = tk2.Exec("insert into t values (1);")
+			_, checkErr = tk2.Exec("insert into t values (2);")
 		}
 	})
 	tk.MustExec("alter table t add unique index idx(c1);")
@@ -146,8 +147,8 @@ func TestAddIndexMergeVersionIndexValue(t *testing.T) {
 	require.True(t, runDML)
 	require.NoError(t, checkErr)
 	tk.MustExec("admin check table t;")
-	tk.MustQuery("select * from t use index (idx);").Check(testkit.Rows("1"))
-	tk.MustQuery("select * from t ignore index (idx);").Check(testkit.Rows("1"))
+	tk.MustQuery("select * from t use index (idx);").Check(testkit.Rows("1", "2"))
+	tk.MustQuery("select * from t ignore index (idx);").Check(testkit.Rows("1", "2"))
 
 	snap := store.GetSnapshot(kv.MaxVersion)
 	iter, err := snap.Iter(tablecodec.GetTableIndexKeyRange(tblID, idxID))
@@ -595,6 +596,8 @@ func TestAddIndexMergeReplaceDelete(t *testing.T) {
 
 	tk1 := testkit.NewTestKit(t, store)
 	tk1.MustExec("use test")
+	// Don't skip merging temp index, otherwise MockDMLExecutionMerging will not execute.
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/skipReorgWorkForTempIndex", "return(false)")
 
 	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobUpdated", func(job *model.Job) {
 		if t.Failed() {

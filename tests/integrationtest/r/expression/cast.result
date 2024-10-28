@@ -69,15 +69,15 @@ select cast(col1 as time), cast(col2 as time), cast(col3 as time), cast(col4 as 
 cast(col1 as time)	cast(col2 as time)	cast(col3 as time)	cast(col4 as time)	cast(col5 as time)
 NULL	NULL	NULL	NULL	NULL
 select cast(col1 as time(31)) from t where col1 is null;
-Error 1426 (42000): Too big precision 31 specified for column 'CAST'. Maximum is 6.
+Error 1426 (42000): Too-big precision 31 specified for 'CAST'. Maximum is 6.
 select cast(col2 as time(31)) from t where col1 is null;
-Error 1426 (42000): Too big precision 31 specified for column 'CAST'. Maximum is 6.
+Error 1426 (42000): Too-big precision 31 specified for 'CAST'. Maximum is 6.
 select cast(col3 as time(31)) from t where col1 is null;
-Error 1426 (42000): Too big precision 31 specified for column 'CAST'. Maximum is 6.
+Error 1426 (42000): Too-big precision 31 specified for 'CAST'. Maximum is 6.
 select cast(col4 as time(31)) from t where col1 is null;
-Error 1426 (42000): Too big precision 31 specified for column 'CAST'. Maximum is 6.
+Error 1426 (42000): Too-big precision 31 specified for 'CAST'. Maximum is 6.
 select cast(col5 as time(31)) from t where col1 is null;
-Error 1426 (42000): Too big precision 31 specified for column 'CAST'. Maximum is 6.
+Error 1426 (42000): Too-big precision 31 specified for 'CAST'. Maximum is 6.
 drop table if exists t;
 create table t(a varchar(50));
 insert into t values ('2020-01-01 12:00:00.123456 +0600 PST');

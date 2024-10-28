@@ -936,7 +936,7 @@ func TestAddStatementParallel(t *testing.T) {
 		stmtExecInfo1 := generateAnyExecInfo()
 
 		// Add 32 times with different digest.
-		for i := 0; i < loops; i++ {
+		for i := range loops {
 			stmtExecInfo1.Digest = fmt.Sprintf("digest%d", i)
 			ssMap.AddStatement(stmtExecInfo1)
 		}
@@ -946,7 +946,7 @@ func TestAddStatementParallel(t *testing.T) {
 		require.Len(t, datums, loops)
 	}
 
-	for i := 0; i < threads; i++ {
+	for range threads {
 		go addStmtFunc()
 	}
 	wg.Wait()
@@ -975,7 +975,7 @@ func TestMaxStmtCount(t *testing.T) {
 	// 100 digests
 	stmtExecInfo1 := generateAnyExecInfo()
 	loops := 100
-	for i := 0; i < loops; i++ {
+	for i := range loops {
 		stmtExecInfo1.Digest = fmt.Sprintf("digest%d", i)
 		ssMap.AddStatement(stmtExecInfo1)
 	}
@@ -998,7 +998,7 @@ func TestMaxStmtCount(t *testing.T) {
 
 	// Change to a bigger value.
 	require.Nil(t, ssMap.SetMaxStmtCount(50))
-	for i := 0; i < loops; i++ {
+	for i := range loops {
 		stmtExecInfo1.Digest = fmt.Sprintf("digest%d", i)
 		ssMap.AddStatement(stmtExecInfo1)
 	}
@@ -1006,7 +1006,7 @@ func TestMaxStmtCount(t *testing.T) {
 
 	// Change to a smaller value.
 	require.Nil(t, ssMap.SetMaxStmtCount(10))
-	for i := 0; i < loops; i++ {
+	for i := range loops {
 		stmtExecInfo1.Digest = fmt.Sprintf("digest%d", i)
 		ssMap.AddStatement(stmtExecInfo1)
 	}
@@ -1072,12 +1072,12 @@ func TestSetMaxStmtCountParallel(t *testing.T) {
 		stmtExecInfo1 := generateAnyExecInfo()
 
 		// Add 32 times with different digest.
-		for i := 0; i < loops; i++ {
+		for i := range loops {
 			stmtExecInfo1.Digest = fmt.Sprintf("digest%d", i)
 			ssMap.AddStatement(stmtExecInfo1)
 		}
 	}
-	for i := 0; i < threads; i++ {
+	for range threads {
 		wg.Run(addStmtFunc)
 	}
 
@@ -1176,7 +1176,7 @@ func TestEnableSummaryParallel(t *testing.T) {
 		stmtExecInfo1 := generateAnyExecInfo()
 
 		// Add 32 times with same digest.
-		for i := 0; i < loops; i++ {
+		for i := range loops {
 			// Sometimes enable it and sometimes disable it.
 			err := ssMap.SetEnabled(i%2 == 0)
 			require.NoError(t, err)
@@ -1188,7 +1188,7 @@ func TestEnableSummaryParallel(t *testing.T) {
 		require.NoError(t, err)
 	}
 
-	for i := 0; i < threads; i++ {
+	for range threads {
 		go addStmtFunc()
 	}
 	// Ensure that there's no deadlocks.
@@ -1299,7 +1299,7 @@ func TestSummaryHistory(t *testing.T) {
 		planDigest:        stmtExecInfo1.PlanDigest,
 		resourceGroupName: stmtExecInfo1.ResourceGroupName,
 	}
-	for i := 0; i < 11; i++ {
+	for i := range 11 {
 		ssMap.beginTimeForCurInterval = now + int64(i+1)*10
 		ssMap.AddStatement(stmtExecInfo1)
 		require.Equal(t, 1, ssMap.summaryMap.Size())
@@ -1337,7 +1337,7 @@ func TestSummaryHistory(t *testing.T) {
 		require.NoError(t, err)
 	}()
 	// insert first digest
-	for i := 0; i < 6; i++ {
+	for i := range 6 {
 		ssMap.beginTimeForCurInterval = now + int64(i)*10
 		ssMap.AddStatement(stmtExecInfo1)
 		require.Equal(t, 1, ssMap.summaryMap.Size())
@@ -1472,7 +1472,7 @@ func TestAccessPrivilege(t *testing.T) {
 	loops := 32
 	stmtExecInfo1 := generateAnyExecInfo()
 
-	for i := 0; i < loops; i++ {
+	for i := range loops {
 		stmtExecInfo1.Digest = fmt.Sprintf("digest%d", i)
 		ssMap.AddStatement(stmtExecInfo1)
 	}

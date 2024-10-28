@@ -20,30 +20,11 @@ import (
 	sess "github.com/pingcap/tidb/pkg/ddl/session"
 )
 
-// PubSchemaChange publishes schema changes to the cluster to notify other
-// components. It stages changes in given `se` so they will be visible when `se`
-// further commits. When the schema change is not from multi-schema change DDL,
-// `multiSchemaChangeSeq` is -1. Otherwise, `multiSchemaChangeSeq` is the sub-job
-// index of the multi-schema change DDL.
-func PubSchemaChange(
-	ctx context.Context,
-	se *sess.Session,
-	ddlJobID int64,
-	multiSchemaChangeSeq int64,
-	event *SchemaChangeEvent,
-) error {
-	return PubSchemeChangeToStore(
-		ctx,
-		se,
-		ddlJobID,
-		multiSchemaChangeSeq,
-		event,
-		DefaultStore,
-	)
-}
-
-// PubSchemeChangeToStore is exposed for testing. Caller should use
-// PubSchemaChange instead.
+// PubSchemeChangeToStore publishes schema changes to the store to notify
+// subscribers on the Store. It stages changes in given `se` so they will be
+// visible when `se` further commits. When the schema change is not from
+// multi-schema change DDL, `multiSchemaChangeSeq` is -1. Otherwise,
+// `multiSchemaChangeSeq` is the sub-job index of the multi-schema change DDL.
 func PubSchemeChangeToStore(
 	ctx context.Context,
 	se *sess.Session,

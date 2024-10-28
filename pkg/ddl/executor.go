@@ -67,7 +67,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/domainutil"
 	"github.com/pingcap/tidb/pkg/util/generic"
-	"github.com/pingcap/tidb/pkg/util/mathutil"
 	"github.com/pingcap/tidb/pkg/util/stringutil"
 	"github.com/tikv/client-go/v2/oracle"
 	pdhttp "github.com/tikv/pd/client/http"
@@ -1028,8 +1027,8 @@ func (e *executor) CreateTable(ctx sessionctx.Context, s *ast.CreateTableStmt) (
 		return errors.Trace(err)
 	}
 
-	if s.Partition != nil {
-		rewritePartitionQueryString(ctx, s.Partition, tbInfo)
+	if err = rewritePartitionQueryString(ctx, s.Partition, tbInfo); err != nil {
+		return err
 	}
 
 	if err = checkTableInfoValidWithStmt(metaBuildCtx, tbInfo, s); err != nil {
@@ -2013,7 +2012,6 @@ func (e *executor) multiSchemaChange(ctx sessionctx.Context, ti ast.Ident, info 
 		TableName:           t.Meta().Name.L,
 		Type:                model.ActionMultiSchemaChange,
 		BinlogInfo:          &model.HistoryInfo{},
-		Args:                nil,
 		MultiSchemaInfo:     info,
 		ReorgMeta:           nil,
 		CDCWriteSource:      ctx.GetSessionVars().CDCWriteSource,
@@ -2120,7 +2118,7 @@ func adjustNewBaseToNextGlobalID(ctx table.AllocatorContext, t table.Table, tp a
 	// If the user sends SQL `alter table t1 auto_increment = 100` to TiDB-B,
 	// and TiDB-B finds 100 < 30001 but returns without any handling,
 	// then TiDB-A may still allocate 99 for auto_increment column. This doesn't make sense for the user.
-	return int64(mathutil.Max(uint64(newBase), uint64(autoID))), nil
+	return int64(max(uint64(newBase), uint64(autoID))), nil
 }
 
 // ShardRowID shards the implicit row ID by adding shard value to the row ID's first few bits.
@@ -2314,7 +2312,12 @@ func (e *executor) AddTablePartitions(ctx sessionctx.Context, ident ast.Ident, s
 			AppendPartitionDefs(partInfo, &buf, sqlMode)
 
 			syntacticSugar := spec.Partition.PartitionMethod.OriginalText()
-			syntacticStart := spec.Partition.PartitionMethod.OriginTextPosition()
+			syntacticStart := strings.Index(query, syntacticSugar)
+			if syntacticStart == -1 {
+				logutil.DDLLogger().Error("Can't find related PARTITION definition in prepare stmt",
+					zap.String("PARTITION definition", syntacticSugar), zap.String("prepare stmt", query))
+				return errors.Errorf("Can't find related PARTITION definition in PREPARE STMT")
+			}
 			newQuery := query[:syntacticStart] + "ADD PARTITION (" + buf.String() + ")" + query[syntacticStart+len(syntacticSugar):]
 			defer ctx.SetValue(sessionctx.QueryString, query)
 			ctx.SetValue(sessionctx.QueryString, newQuery)
@@ -2374,12 +2377,12 @@ func getReplacedPartitionIDs(names []string, pi *model.PartitionInfo) (firstPart
 		if firstPartIdx == -1 {
 			firstPartIdx = partIdx
 		} else {
-			firstPartIdx = mathutil.Min[int](firstPartIdx, partIdx)
+			firstPartIdx = min(firstPartIdx, partIdx)
 		}
 		if lastPartIdx == -1 {
 			lastPartIdx = partIdx
 		} else {
-			lastPartIdx = mathutil.Max[int](lastPartIdx, partIdx)
+			lastPartIdx = max(lastPartIdx, partIdx)
 		}
 	}
 	switch pi.Type {
@@ -2438,7 +2441,9 @@ func (e *executor) AlterTablePartitioning(ctx sessionctx.Context, ident ast.Iden
 	}
 
 	newPartInfo := newMeta.Partition
-	rewritePartitionQueryString(ctx, spec.Partition, newMeta)
+	if err = rewritePartitionQueryString(ctx, spec.Partition, newMeta); err != nil {
+		return errors.Trace(err)
+	}
 
 	if err = handlePartitionPlacement(ctx, newPartInfo); err != nil {
 		return errors.Trace(err)
@@ -2866,7 +2871,12 @@ func (e *executor) DropTablePartition(ctx sessionctx.Context, ident ast.Ident, s
 				partNames = append(partNames, stringutil.Escape(spec.PartitionNames[i].O, sqlMode))
 			}
 			syntacticSugar := spec.Partition.PartitionMethod.OriginalText()
-			syntacticStart := spec.Partition.PartitionMethod.OriginTextPosition()
+			syntacticStart := strings.Index(query, syntacticSugar)
+			if syntacticStart == -1 {
+				logutil.DDLLogger().Error("Can't find related PARTITION definition in prepare stmt",
+					zap.String("PARTITION definition", syntacticSugar), zap.String("prepare stmt", query))
+				return errors.Errorf("Can't find related PARTITION definition in PREPARE STMT")
+			}
 			newQuery := query[:syntacticStart] + "DROP PARTITION " + strings.Join(partNames, ", ") + query[syntacticStart+len(syntacticSugar):]
 			defer ctx.SetValue(sessionctx.QueryString, query)
 			ctx.SetValue(sessionctx.QueryString, newQuery)
@@ -4562,6 +4572,8 @@ func (e *executor) CreatePrimaryKey(ctx sessionctx.Context, ti ast.Ident, indexN
 			}
 			validateGlobalIndexWithGeneratedColumns(ctx.GetSessionVars().StmtCtx.ErrCtx(), tblInfo, indexName.O, indexColumns)
 		}
+	} else if indexOption != nil && indexOption.Global {
+		return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("Global Index on non-partitioned table")
 	}
 
 	// May be truncate comment here, when index comment too long and sql_mode is't strict.
@@ -5620,8 +5632,8 @@ func (e *executor) RepairTable(ctx sessionctx.Context, createStmt *ast.CreateTab
 	if err != nil {
 		return errors.Trace(err)
 	}
-	if createStmt.Partition != nil {
-		rewritePartitionQueryString(ctx, createStmt.Partition, newTableInfo)
+	if err = rewritePartitionQueryString(ctx, createStmt.Partition, newTableInfo); err != nil {
+		return errors.Trace(err)
 	}
 	// Override newTableInfo with oldTableInfo's element necessary.
 	// TODO: There may be more element assignments here, and the new TableInfo should be verified with the actual data.

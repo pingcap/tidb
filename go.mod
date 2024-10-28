@@ -26,6 +26,7 @@ require (
 	github.com/charithe/durationcheck v0.0.10
 	github.com/cheggaaa/pb/v3 v3.0.8
 	github.com/cheynewallace/tabby v1.1.1
+	github.com/ckaznocha/intrange v0.2.1
 	github.com/cloudfoundry/gosigar v1.3.6
 	github.com/cockroachdb/pebble v1.1.0
 	github.com/coocood/freecache v1.2.1
@@ -136,7 +137,7 @@ require (
 	golang.org/x/sys v0.26.0
 	golang.org/x/term v0.25.0
 	golang.org/x/text v0.19.0
-	golang.org/x/time v0.5.0
+	golang.org/x/time v0.7.0
 	golang.org/x/tools v0.26.0
 	google.golang.org/api v0.169.0
 	google.golang.org/grpc v1.63.2
