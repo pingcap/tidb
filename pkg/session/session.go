@@ -3206,6 +3206,11 @@ var (
 		table_ids text(65535),
 		owner_id varchar(64) NOT NULL DEFAULT ''
 	);`
+	// DDLNotifierTables contains the table definitions used in DDL notifier.
+	// It only contains the notifier table. Put it here to reuse a unified initialization function.
+	DDLNotifierTables = []tableBasicInfo{
+		{ddl.NotifierTableSQL, ddl.NotifierTableID},
+	}
 )
 
 func splitAndScatterTable(store kv.Storage, tableIDs []int64) {
@@ -3228,7 +3233,9 @@ func InitDDLJobTables(store kv.Storage, targetVer meta.DDLTableVersion) error {
 	targetTables := DDLJobTables
 	if targetVer == meta.BackfillTableVersion {
 		targetTables = BackfillTables
-		targetTables = append(targetTables, tableBasicInfo{ddl.NotifierTableSQL, ddl.NotifierTableID})
+	}
+	if targetVer == meta.DDLNotifierTableVersion {
+		targetTables = DDLNotifierTables
 	}
 	return kv.RunInNewTxn(kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL), store, true, func(_ context.Context, txn kv.Transaction) error {
 		t := meta.NewMutator(txn)
@@ -3437,6 +3444,10 @@ func bootstrapSessionImpl(ctx context.Context, store kv.Storage, createSessionsI
 		return nil, err
 	}
 	err = InitDDLJobTables(store, meta.BackfillTableVersion)
+	if err != nil {
+		return nil, err
+	}
+	err = InitDDLJobTables(store, meta.DDLNotifierTableVersion)
 	if err != nil {
 		return nil, err
 	}
