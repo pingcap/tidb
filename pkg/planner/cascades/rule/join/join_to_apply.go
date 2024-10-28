@@ -30,7 +30,7 @@ func NewJoinToApply() *JoinToApply {
 	pa := pattern.NewPattern(pattern.OperandJoin, pattern.EngineTiDBOnly)
 	pa.SetChildren(pattern.NewPattern(pattern.OperandAny, pattern.EngineAll), pattern.NewPattern(pattern.OperandJoin, pattern.EngineTiDBOnly))
 	return &JoinToApply{
-		BaseRule: rule.NewBaseRule(rule.JOIN_TO_APPLY, pa),
+		BaseRule: rule.NewBaseRule(rule.XFJoinToApply, pa),
 	}
 }
 
