@@ -233,7 +233,7 @@ func testJoinProbe(t *testing.T, withSel bool, leftKeyIndex []int, rightKeyIndex
 	leftTypes []*types.FieldType, rightTypes []*types.FieldType, rightAsBuildSide bool, leftUsed []int, rightUsed []int,
 	leftUsedByOtherCondition []int, rightUsedByOtherCondition []int, leftFilter expression.CNFExprs, rightFilter expression.CNFExprs,
 	otherCondition expression.CNFExprs, partitionNumber int, joinType logicalop.JoinType, inputRowNumber int) {
-	// adjust leftUsed and rightUsed
+	// leftUsed/rightUsed is nil, it means select all columns
 	if leftUsed == nil {
 		leftUsed = make([]int, 0)
 		for index := range leftTypes {
