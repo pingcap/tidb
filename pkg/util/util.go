@@ -179,7 +179,7 @@ func PrintableASCII(b byte) bool {
 func FmtNonASCIIPrintableCharToHex(str string) string {
 	var b bytes.Buffer
 	b.Grow(len(str) * 2)
-	for i := 0; i < len(str); i++ {
+	for i := range len(str) {
 		if PrintableASCII(str[i]) {
 			b.WriteByte(str[i])
 			continue
