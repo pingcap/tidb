@@ -3207,7 +3207,8 @@ var (
 		owner_id varchar(64) NOT NULL DEFAULT ''
 	);`
 	// DDLNotifierTables contains the table definitions used in DDL notifier.
-	// It only contains the notifier table. Put it here to reuse a unified initialization function.
+	// It only contains the notifier table.
+	// Put it here to reuse a unified initialization function and make it easier to find.
 	DDLNotifierTables = []tableBasicInfo{
 		{ddl.NotifierTableSQL, ddl.NotifierTableID},
 	}
