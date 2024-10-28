@@ -8,11 +8,22 @@ go_test(
         "main_test.go",
     ],
     flaky = True,
+<<<<<<< HEAD:executor/kvtest/BUILD.bazel
     race = "on",
     deps = [
         "//config",
         "//meta/autoid",
         "//testkit",
+=======
+    shard_count = 11,
+    deps = [
+        "//pkg/config",
+        "//pkg/errno",
+        "//pkg/meta/autoid",
+        "//pkg/testkit",
+        "//pkg/testkit/testfailpoint",
+        "@com_github_pingcap_failpoint//:failpoint",
+>>>>>>> 38187e5b1d6 (txn: fix issue innodb_lock_wait_timeout doesn't work in some case (#56847)):pkg/executor/test/txn/BUILD.bazel
         "@com_github_stretchr_testify//require",
         "@com_github_tikv_client_go_v2//tikv",
         "@org_uber_go_goleak//:goleak",
