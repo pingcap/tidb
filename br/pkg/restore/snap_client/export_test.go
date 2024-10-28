@@ -20,7 +20,6 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/import_sstpb"
-	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/br/pkg/metautil"
 	importclient "github.com/pingcap/tidb/br/pkg/restore/internal/import_client"
 	restoreutils "github.com/pingcap/tidb/br/pkg/restore/utils"
@@ -50,7 +49,7 @@ func MockClient(dbs map[string]*metautil.Database) *SnapClient {
 func MockCallSetSpeedLimit(ctx context.Context, fakeImportClient importclient.ImporterClient, rc *SnapClient, concurrency uint) (err error) {
 	rc.SetRateLimit(42)
 	rc.workerPool = tidbutil.NewWorkerPool(128, "set-speed-limit")
-	rc.fileImporter, err = NewSnapFileImporter(ctx, nil, kvrpcpb.APIVersion(0), nil, fakeImportClient, nil, false, false, nil, rc.rewriteMode)
+	rc.fileImporter, err = NewSnapFileImporter(ctx, nil, fakeImportClient, nil, false, false, nil, rc.rewriteMode, 128)
 	if err != nil {
 		return errors.Trace(err)
 	}
