@@ -262,6 +262,8 @@ func fillMultiSchemaInfo(info *model.MultiSchemaInfo, job *JobWrapper) error {
 			Name: fkInfo.Name,
 			Cols: fkInfo.Cols,
 		})
+	case model.ActionDropForeignKey:
+		// there is nothing to verify for `DROP FOREIGN KEY`
 	default:
 		return dbterror.ErrRunMultiSchemaChanges.FastGenByArgs(job.Type.String())
 	}
