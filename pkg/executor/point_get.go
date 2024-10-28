@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"sort"
 	"strconv"
+	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -672,7 +673,13 @@ func (e *PointGetExecutor) get(ctx context.Context, key kv.Key) ([]byte, error) 
 		}
 	}
 	// if not read lock or table was unlock then snapshot get
-	return e.snapshot.Get(ctx, key)
+	if e.Ctx().GetSessionVars().MaxExecutionTime > 0 {
+		// if the query has max execution time set, we need to set the context deadline for the get request
+		ctxWithTimeout, _ := context.WithTimeout(ctx, time.Duration(e.Ctx().GetSessionVars().MaxExecutionTime)*time.Millisecond)
+		return e.snapshot.Get(ctxWithTimeout, key)
+	} else {
+		return e.snapshot.Get(ctx, key)
+	}
 }
 
 func (e *PointGetExecutor) verifyTxnScope() error {
