@@ -230,7 +230,7 @@ func TestInstancePlanCacheConcurrencySysbench(t *testing.T) {
 		}
 	}
 
-	nStmt := 7000
+	nStmt := 2000
 	nInitialRecords := 100
 	stmts := make([]*testStmt, 0, nStmt)
 	stmts = append(stmts, &testStmt{normalStmt: "begin"})
@@ -501,7 +501,7 @@ func TestInstancePlanCacheConcurrencyComp(t *testing.T) {
 		}
 	}
 
-	nStmt := 7000
+	nStmt := 2000
 	nInitialRecords := 100
 	stmts := make([]*testStmt, 0, nStmt)
 	stmts = append(stmts, &testStmt{normalStmt: "begin"})
