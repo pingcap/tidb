@@ -223,6 +223,12 @@ func (c *CopClient) BuildCopIterator(ctx context.Context, req *kv.Request, vars 
 		it.concurrency = 1
 	}
 
+	// issue56916 is about the cooldown of the runaway checker may block the SQL execution.
+	failpoint.Inject("issue56916", func(_ failpoint.Value) {
+		it.concurrency = 1
+		it.smallTaskConcurrency = 0
+	})
+
 	// if the request is triggered cool down by the runaway checker, we need to adjust the concurrency, let the sql run slowly.
 	if req.RunawayChecker != nil && req.RunawayChecker.CheckAction() == rmpb.RunawayAction_CoolDown {
 		it.concurrency = 1
@@ -800,6 +806,7 @@ func init() {
 func (worker *copIteratorWorker) run(ctx context.Context) {
 	defer func() {
 		failpoint.Inject("ticase-4169", func(val failpoint.Value) {
+			logutil.BgLogger().Info("cool down query for issue56916", zap.Bool("is-cool-down", val.(bool)))
 			if val.(bool) {
 				worker.memTracker.Consume(10 * MockResponseSizeForTest)
 				worker.memTracker.Consume(10 * MockResponseSizeForTest)
@@ -835,9 +842,12 @@ func (worker *copIteratorWorker) run(ctx context.Context) {
 // open starts workers and sender goroutines.
 func (it *copIterator) open(ctx context.Context, enabledRateLimitAction, enableCollectExecutionInfo bool) {
 	taskCh := make(chan *copTask, 1)
-	smallTaskCh := make(chan *copTask, 1)
 	it.unconsumedStats = &unconsumedCopRuntimeStats{}
 	it.wg.Add(it.concurrency + it.smallTaskConcurrency)
+	var smallTaskCh chan *copTask
+	if it.smallTaskConcurrency > 0 {
+		smallTaskCh = make(chan *copTask, 1)
+	}
 	// Start it.concurrency number of workers to handle cop requests.
 	for i := 0; i < it.concurrency+it.smallTaskConcurrency; i++ {
 		var ch chan *copTask
@@ -897,7 +907,7 @@ func (sender *copIteratorTaskSender) run(connID uint64, checker resourcegroup.Ru
 			break
 		}
 		var sendTo chan<- *copTask
-		if isSmallTask(t) {
+		if isSmallTask(t) && sender.smallTaskCh != nil {
 			sendTo = sender.smallTaskCh
 		} else {
 			sendTo = sender.taskCh
@@ -911,7 +921,9 @@ func (sender *copIteratorTaskSender) run(connID uint64, checker resourcegroup.Ru
 		}
 	}
 	close(sender.taskCh)
-	close(sender.smallTaskCh)
+	if sender.smallTaskCh != nil {
+		close(sender.smallTaskCh)
+	}
 
 	// Wait for worker goroutines to exit.
 	sender.wg.Wait()
