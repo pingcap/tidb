@@ -8,11 +8,7 @@ go_test(
         "txn_test.go",
     ],
     flaky = True,
-<<<<<<< HEAD
-    shard_count = 9,
-=======
-    shard_count = 11,
->>>>>>> 38187e5b1d6 (txn: fix issue innodb_lock_wait_timeout doesn't work in some case (#56847))
+    shard_count = 10,
     deps = [
         "//pkg/config",
         "//pkg/errno",
