@@ -778,17 +778,21 @@ func TestInnodbLockWaitTimeout(t *testing.T) {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/store/mockstore/unistore/tikv/pessimisticLockReturnWriteConflict"))
 	}()
 	tk.MustExec("set @@innodb_lock_wait_timeout=1")
-	tk.MustExec("begin")
-	start := time.Now()
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second*5)
-	defer cancel()
-	res, err := tk.ExecWithContext(ctx, "update t use index (idx) set k=k+1 where id >0;")
-	if res != nil {
-		require.NoError(t, res.Close())
+	isolations := []string{"REPEATABLE READ", "READ COMMITTED"}
+	for _, isolation := range isolations {
+		tk.MustExec("SET SESSION TRANSACTION ISOLATION LEVEL " + isolation)
+		tk.MustExec("begin")
+		start := time.Now()
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second*5)
+		res, err := tk.ExecWithContext(ctx, "update t use index (idx) set k=k+1 where id >0;")
+		cancel()
+		if res != nil {
+			require.NoError(t, res.Close())
+		}
+		require.Error(t, err)
+		msg := fmt.Sprintf("cost: %v", time.Since(start))
+		require.Equal(t, "lock wait timeout", err.Error(), msg)
+		require.Less(t, time.Since(start), time.Second*2)
+		tk.MustExec("commit")
 	}
-	require.Error(t, err)
-	msg := fmt.Sprintf("cost: %v", time.Since(start))
-	require.Equal(t, "lock wait timeout", err.Error(), msg)
-	require.Less(t, time.Since(start), time.Second*2)
-	tk.MustExec("commit")
 }
