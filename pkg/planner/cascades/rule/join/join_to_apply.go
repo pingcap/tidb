@@ -21,6 +21,9 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx"
 )
 
+// JoinToApply is a type of rule that aims to convert a join into apply mode,
+// allowing runtime scalar attributes to be passed to the apply's probe side,
+// thereby enhancing the likelihood of better index scans.
 type JoinToApply struct {
 	*rule.BaseRule
 }
@@ -35,11 +38,11 @@ func NewJoinToApply() *JoinToApply {
 }
 
 // Match implements the Rule interface.
-func (r *JoinToApply) Match(holder *rule.GroupExprHolder, sctx sessionctx.Context) bool {
+func (*JoinToApply) Match(holder *rule.GroupExprHolder, sctx sessionctx.Context) bool {
 	return true
 }
 
-func (r *JoinToApply) XForm(holder *rule.GroupExprHolder, sctx sessionctx.Context) ([]*memo.GroupExpr, error) {
+func (*JoinToApply) XForm(holder *rule.GroupExprHolder, sctx sessionctx.Context) ([]*memo.GroupExpr, error) {
 	// Check whether the join can be converted to apply.
 	return nil, nil
 }
