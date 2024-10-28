@@ -641,20 +641,19 @@ func registerTaskToPD(ctx context.Context, etcdCLI *clientv3.Client) (closeF fun
 	return register.Close, errors.Trace(err)
 }
 
-func DefaultRestoreConfig() RestoreConfig {
+func DefaultRestoreConfig(commonConfig Config) RestoreConfig {
 	fs := pflag.NewFlagSet("dummy", pflag.ContinueOnError)
-	DefineCommonFlags(fs)
 	DefineRestoreFlags(fs)
 	cfg := RestoreConfig{}
 	err := multierr.Combine(
 		cfg.ParseFromFlags(fs),
 		cfg.RestoreCommonConfig.ParseFromFlags(fs),
-		cfg.Config.ParseFromFlags(fs),
 	)
 	if err != nil {
 		log.Panic("infallible failed.", zap.Error(err))
 	}
 
+	cfg.Config = commonConfig
 	return cfg
 }
 

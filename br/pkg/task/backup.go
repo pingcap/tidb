@@ -212,9 +212,13 @@ func (cfg *BackupConfig) ParseFromFlags(flags *pflag.FlagSet) error {
 	}
 	cfg.CompressionConfig = *compressionCfg
 
+	// parse common flags
 	if err = cfg.Config.ParseFromFlags(flags); err != nil {
 		return errors.Trace(err)
 	}
+	// override common config specifically for backup use case
+	cfg.OverrideDefaultForBackup()
+
 	cfg.RemoveSchedulers, err = flags.GetBool(flagRemoveSchedulers)
 	if err != nil {
 		return errors.Trace(err)
@@ -788,22 +792,17 @@ func ParseTSString(ts string, tzCheck bool) (uint64, error) {
 	return oracle.GoTimeToTS(t1), nil
 }
 
-func DefaultBackupConfig() BackupConfig {
+func DefaultBackupConfig(commonConfig Config) BackupConfig {
 	fs := pflag.NewFlagSet("dummy", pflag.ContinueOnError)
-	DefineCommonFlags(fs)
 	DefineBackupFlags(fs)
 	cfg := BackupConfig{}
 	err := multierr.Combine(
 		cfg.ParseFromFlags(fs),
-		cfg.Config.ParseFromFlags(fs),
 	)
 	if err != nil {
 		log.Panic("infallible operation failed.", zap.Error(err))
 	}
-
-	// disable checksum for backup by default
-	cfg.Checksum = false
-
+	cfg.Config = commonConfig
 	return cfg
 }
 

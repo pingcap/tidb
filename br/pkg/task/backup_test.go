@@ -222,11 +222,3 @@ func TestBackupConfigHash(t *testing.T) {
 		hashCheck(t, &testCfg, originalHash, true)
 	}
 }
-
-func TestDefaultBackupConfigDisableChecksum(t *testing.T) {
-	backupCfg := DefaultBackupConfig()
-	require.False(t, backupCfg.Checksum)
-
-	restoreCfg := DefaultRestoreConfig()
-	require.True(t, restoreCfg.Checksum)
-}
