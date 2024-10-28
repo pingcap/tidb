@@ -27,6 +27,7 @@ go_library(
         "//pkg/bindinfo",
         "//pkg/config",
         "//pkg/ddl",
+        "//pkg/ddl/notifier",
         "//pkg/ddl/placement",
         "//pkg/ddl/schematracker",
         "//pkg/ddl/systable",

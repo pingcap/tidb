@@ -18,14 +18,14 @@ partition by range( a ) (
 partition p1 values less than (10),
 partition p2 values less than (20)
 );
-Error 1503 (HY000): A CLUSTERED INDEX must include all columns in the table's partitioning function
+Error 8200 (HY000): Unsupported create an index that is both a global index and a clustered index
 drop table if exists test_global;
 create table test_global ( a int, b int, c int, primary key p_b_c(b, c) /*T![clustered_index] CLUSTERED */ GLOBAL)
 partition by range( a ) (
 partition p1 values less than (10),
 partition p2 values less than (20)
 );
-Error 1503 (HY000): A CLUSTERED INDEX must include all columns in the table's partitioning function
+Error 8200 (HY000): Unsupported create an index that is both a global index and a clustered index
 drop table if exists test_global;
 create table test_global ( a int, b int, c int, primary key (b) /*T![clustered_index] NONCLUSTERED */ GLOBAL)
 partition by range( a ) (

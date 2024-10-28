@@ -149,6 +149,15 @@ func TestBasic(t *testing.T) {
 	require.True(t, ok)
 	require.NotNil(t, schema)
 
+	b, err := json.Marshal(tblInfo)
+	require.NoError(t, err)
+	tblUnmarshal := &model.TableInfo{}
+	err = json.Unmarshal(b, tblUnmarshal)
+	require.NoError(t, err)
+	schema2, ok := infoschema.SchemaByTable(is, tblUnmarshal)
+	require.True(t, ok)
+	require.Equal(t, schema, schema2)
+
 	noexistTblInfo := &model.TableInfo{ID: 12345, Name: tblInfo.Name}
 	schema, ok = infoschema.SchemaByTable(is, noexistTblInfo)
 	require.False(t, ok)
