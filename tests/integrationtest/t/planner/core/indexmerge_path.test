@@ -504,6 +504,7 @@ c = 1 and
 json_contains(j, '[4,5]') and
 d not like '%test%';
 
+# Test Issue #56915
 drop table if exists t;
 create table t(a int, b int, j json, index ia(a), index mvi( (cast(j as signed array)), a, b) );
 insert into t value(1,1,'[1,2,3,4,5]');
