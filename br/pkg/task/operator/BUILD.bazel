@@ -4,10 +4,10 @@ go_library(
     name = "operator",
     srcs = [
         "base64ify.go",
-        "cmd.go",
         "config.go",
         "list_migration.go",
         "migrate_to.go",
+        "prepare_snap.go",
     ],
     importpath = "github.com/pingcap/tidb/br/pkg/task/operator",
     visibility = ["//visibility:public"],
