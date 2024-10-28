@@ -8,13 +8,18 @@ go_test(
         "txn_test.go",
     ],
     flaky = True,
+<<<<<<< HEAD
     shard_count = 9,
+=======
+    shard_count = 11,
+>>>>>>> 38187e5b1d6 (txn: fix issue innodb_lock_wait_timeout doesn't work in some case (#56847))
     deps = [
         "//pkg/config",
         "//pkg/errno",
         "//pkg/meta/autoid",
         "//pkg/testkit",
         "//pkg/testkit/testfailpoint",
+        "@com_github_pingcap_failpoint//:failpoint",
         "@com_github_stretchr_testify//require",
         "@com_github_tikv_client_go_v2//tikv",
         "@io_opencensus_go//stats/view",
