@@ -2,12 +2,17 @@ load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 
 go_library(
     name = "rule",
-    srcs = ["binder.go"],
+    srcs = [
+        "binder.go",
+        "rule.go",
+        "rule_type.go",
+    ],
     importpath = "github.com/pingcap/tidb/pkg/planner/cascades/rule",
     visibility = ["//visibility:public"],
     deps = [
         "//pkg/planner/cascades/memo",
         "//pkg/planner/pattern",
+        "//pkg/sessionctx",
     ],
 )
 

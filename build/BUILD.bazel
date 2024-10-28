@@ -157,6 +157,7 @@ nogo(
                "//build/linter/gci",
                "//build/linter/gosec",
                "//build/linter/ineffassign",
+               "//build/linter/intrange",
                "//build/linter/makezero",
                "//build/linter/mirror",
                "//build/linter/misspell",

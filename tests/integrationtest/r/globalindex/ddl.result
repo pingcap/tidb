@@ -41,7 +41,7 @@ Error 8200 (HY000): Unsupported GLOBAL IndexOption on non-unique index
 create table t (a int not null, b int, primary key(a) nonclustered, unique idx_b(b) global) partition by hash(a) partitions 3;
 drop table t;
 create table t (a int key global, b int) partition by hash(b) partitions 3;
-Error 1503 (HY000): A CLUSTERED INDEX must include all columns in the table's partitioning function
+Error 8200 (HY000): Unsupported create an index that is both a global index and a clustered index
 create table t (a int unique, b int) partition by hash(b) partitions 3;
 Error 8264 (HY000): Global Index is needed for index 'a', since the unique index is not including all partitioning columns, and GLOBAL is not given as IndexOption
 create table t (a int unique key, b int) partition by hash(b) partitions 3;
@@ -77,3 +77,15 @@ Error 8200 (HY000): Unsupported Global IndexOption on non-unique index
 create unique index idxOK2 on t (a) global;
 create unique index idxErr on t (b) global;
 Error 8200 (HY000): Unsupported Global IndexOption on index including all columns in the partitioning expression
+drop table t;
+create table t(a int, b int, primary key (a) nonclustered global);
+Error 8200 (HY000): Unsupported Global Index on non-partitioned table
+create table t(a int, b int, primary key (a) global);
+Error 8200 (HY000): Unsupported create an index that is both a global index and a clustered index
+create table t(a int, b int, primary key (a) global) partition by hash(a) partitions 5;
+Error 8200 (HY000): Unsupported create an index that is both a global index and a clustered index
+create table t(a int, b int, primary key (b) global) partition by hash(a) partitions 5;
+Error 8200 (HY000): Unsupported create an index that is both a global index and a clustered index
+create table t(a int, b int);
+alter table t add primary key (a) global;
+Error 8200 (HY000): Unsupported Global Index on non-partitioned table

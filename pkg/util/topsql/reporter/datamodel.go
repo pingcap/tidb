@@ -114,7 +114,7 @@ func (ts tsItems) Swap(i, j int) {
 }
 
 func (ts tsItems) sorted() bool {
-	for n := 0; n < len(ts)-1; n++ {
+	for n := range len(ts) - 1 {
 		if ts[n].timestamp > ts[n+1].timestamp {
 			return false
 		}

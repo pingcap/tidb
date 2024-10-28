@@ -66,6 +66,8 @@ const (
 	TestHandlerID HandlerID = 0
 	// StatsMetaHandlerID is used to update statistics system table.
 	StatsMetaHandlerID HandlerID = 1
+	// PriorityQueueHandlerID is used to update the priority queue.
+	PriorityQueueHandlerID HandlerID = 2
 )
 
 // String implements fmt.Stringer interface.
@@ -133,7 +135,10 @@ func (n *DDLNotifier) RegisterHandler(id HandlerID, handler SchemaChangeHandler)
 	}
 
 	if _, ok := n.handlers[id]; ok {
-		panic(fmt.Sprintf("HandlerID %d already registered", id))
+		// In some tests, we register the same handler multiple times because we
+		// create multiple stats handles in the same test.
+		logutil.BgLogger().Error("HandlerID already registered", zap.Int("id", int(id)))
+		return
 	}
 	n.handlers[id] = handler
 }
