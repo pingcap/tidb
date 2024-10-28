@@ -11,7 +11,6 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//pkg/planner/cascades/memo",
-        "//pkg/planner/memo",
         "//pkg/planner/pattern",
         "//pkg/sessionctx",
     ],

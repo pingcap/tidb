@@ -6,8 +6,8 @@ go_library(
     importpath = "github.com/pingcap/tidb/pkg/planner/cascades/rule/join",
     visibility = ["//visibility:public"],
     deps = [
+        "//pkg/planner/cascades/memo",
         "//pkg/planner/cascades/rule",
-        "//pkg/planner/memo",
         "//pkg/planner/pattern",
         "//pkg/sessionctx",
     ],
