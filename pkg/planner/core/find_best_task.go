@@ -2289,7 +2289,7 @@ func (is *PhysicalIndexScan) addSelectionConditionForGlobalIndex(p *logicalop.Da
 		switch pInfo.DDLAction {
 		case model.ActionAlterTablePartitioning,
 			model.ActionReorganizePartition, model.ActionRemovePartitioning:
-			if pInfo.DDLState == model.StateDeleteReorganization {
+			if pInfo.DDLState == model.StateDeleteReorganization || pInfo.DDLState == model.StatePublic {
 				removeAddingDefs = false
 			} else {
 				removeDroppingDefs = false

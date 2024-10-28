@@ -3531,6 +3531,38 @@ func (w *worker) onReorganizePartition(jobCtx *jobContext, job *model.Job) (ver 
 		ver, err = updateVersionAndTableInfo(jobCtx, job, tblInfo, true)
 
 	case model.StateDeleteReorganization:
+		// Need to have one more state before completing, due to:
+		// - DeleteRanges could possibly start directly after DDL causing
+		//   inserts during previous state (DeleteReorg) could insert after the cleanup
+		//   leaving data in dropped partitions/indexes that will not be cleaned up again.
+		// - Updates in previous state (DeleteReorg) could have duplicate errors, if the row
+		//   was deleted or updated in after finish (so here we need to have DeleteOnly index state!
+		// And we cannot rollback in this state!
+
+		// Stop double writing to the indexes, only do Deletes!
+		// so that previous could do inserts, we do delete and allow second insert for
+		// previous state clients!
+		for _, index := range tblInfo.Indices {
+			isNew, ok := tblInfo.Partition.DDLChangedIndex[index.ID]
+			if !ok || isNew {
+				continue
+			}
+			// Old index, should not be visible any longer,
+			// but needs to be deleted, in case previous state clients inserts.
+			index.State = model.StateDeleteOnly
+			//index.State = model.StateDeleteReorganization
+		}
+		failpoint.Inject("reorgPartFail3", func(val failpoint.Value) {
+			if val.(bool) {
+				job.ErrorCount += variable.GetDDLErrorCountLimit() / 2
+				failpoint.Return(ver, errors.New("Injected error by reorgPartFail3"))
+			}
+		})
+		job.SchemaState = model.StatePublic
+		tblInfo.Partition.DDLState = job.SchemaState
+		ver, err = updateVersionAndTableInfo(jobCtx, job, tblInfo, true)
+
+	case model.StatePublic:
 		// Drop the droppingDefinitions and finish the DDL
 		// This state is needed for the case where client A sees the schema
 		// with version of StateWriteReorg and would not see updates of
@@ -3554,7 +3586,7 @@ func (w *worker) onReorganizePartition(jobCtx *jobContext, job *model.Job) (ver 
 
 		var dropIndices []*model.IndexInfo
 		for _, indexInfo := range tblInfo.Indices {
-			if indexInfo.Unique && indexInfo.State == model.StateWriteOnly {
+			if indexInfo.Unique && indexInfo.State == model.StateDeleteReorganization {
 				// Drop the old unique (possible global) index, see onDropIndex
 				indexInfo.State = model.StateNone
 				DropIndexColumnFlag(tblInfo, indexInfo)
@@ -3569,10 +3601,10 @@ func (w *worker) onReorganizePartition(jobCtx *jobContext, job *model.Job) (ver 
 		for _, indexInfo := range dropIndices {
 			removeIndexInfo(tblInfo, indexInfo)
 		}
-		failpoint.Inject("reorgPartFail3", func(val failpoint.Value) {
+		failpoint.Inject("reorgPartFail4", func(val failpoint.Value) {
 			if val.(bool) {
 				job.ErrorCount += variable.GetDDLErrorCountLimit() / 2
-				failpoint.Return(ver, errors.New("Injected error by reorgPartFail3"))
+				failpoint.Return(ver, errors.New("Injected error by reorgPartFail4"))
 			}
 		})
 		var oldTblID int64
@@ -3606,10 +3638,10 @@ func (w *worker) onReorganizePartition(jobCtx *jobContext, job *model.Job) (ver 
 				// ALTER TABLE ... PARTITION BY
 				tblInfo.Partition.ClearReorgIntermediateInfo()
 			}
-			failpoint.Inject("reorgPartFail4", func(val failpoint.Value) {
+			failpoint.Inject("reorgPartFail5", func(val failpoint.Value) {
 				if val.(bool) {
 					job.ErrorCount += variable.GetDDLErrorCountLimit() / 2
-					failpoint.Return(ver, errors.New("Injected error by reorgPartFail4"))
+					failpoint.Return(ver, errors.New("Injected error by reorgPartFail5"))
 				}
 			})
 			err = metaMut.GetAutoIDAccessors(job.SchemaID, tblInfo.ID).Put(autoIDs)
@@ -3621,10 +3653,10 @@ func (w *worker) onReorganizePartition(jobCtx *jobContext, job *model.Job) (ver 
 				return ver, errors.Trace(err)
 			}
 		}
-		failpoint.Inject("reorgPartFail5", func(val failpoint.Value) {
+		failpoint.Inject("reorgPartFail6", func(val failpoint.Value) {
 			if val.(bool) {
 				job.ErrorCount += variable.GetDDLErrorCountLimit() / 2
-				failpoint.Return(ver, errors.New("Injected error by reorgPartFail5"))
+				failpoint.Return(ver, errors.New("Injected error by reorgPartFail6"))
 			}
 		})
 		failpoint.Inject("updateVersionAndTableInfoErrInStateDeleteReorganization", func() {

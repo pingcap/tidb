@@ -317,11 +317,27 @@ func TestMultiSchemaReorganizePartition(t *testing.T) {
 		tkO.MustExec(fmt.Sprintf(`insert into t values (%d,%d)`+dbgStr, testID, testID))
 		tkNO.MustQuery(fmt.Sprintf(`select * from t where b = "%d"`+dbgStr, testID)).Check(testkit.Rows(fmt.Sprintf("%d %d", testID, testID)))
 
-		logutil.BgLogger().Info("inserting rows", zap.Int("testID", testID))
+		logutil.BgLogger().Info("inserting rows", zap.Int("testID", testID), zap.String("state", schemaState))
 
 		testID++
 		tkNO.MustExec(fmt.Sprintf(`insert into t values (%d,%d)`+dbgStr, testID, testID))
+		//if testID == 14 {
+		//	tkO.MustQuery(fmt.Sprintf(`explain select * from t where b = "%d"`+dbgStr, testID)).Check(testkit.Rows(fmt.Sprintf("%d %d", testID, testID)))
+		//}
 		tkO.MustQuery(fmt.Sprintf(`select * from t where b = "%d"`+dbgStr, testID)).Check(testkit.Rows(fmt.Sprintf("%d %d", testID, testID)))
+
+		// Test for Index, specially between WriteOnly and DeleteOnly, but better to test all states.
+		// if tkNO (DeleteOnly) updates a row, the new index should be deleted, but not inserted.
+		// It will be inserted by backfill in WriteReorganize.
+		// If not deleted, then there would be an orphan entry in the index!
+		tkO.MustExec(fmt.Sprintf(`update t set b = %d where a = %d`+dbgStr, testID+100, testID))
+		tkNO.MustQuery(fmt.Sprintf(`select a, b from t where a = %d`+dbgStr, testID)).Check(testkit.Rows(fmt.Sprintf("%d %d", testID, testID+100)))
+		tkNO.MustQuery(fmt.Sprintf(`select a, b from t where b = "%d"`+dbgStr, testID+100)).Check(testkit.Rows(fmt.Sprintf("%d %d", testID, testID+100)))
+		tkNO.MustExec(fmt.Sprintf(`update t set b = %d where a = %d`+dbgStr, testID+99, testID-1))
+		tkO.MustQuery(fmt.Sprintf(`select a, b from t where a = %d`+dbgStr, testID-1)).Check(testkit.Rows(fmt.Sprintf("%d %d", testID-1, testID+99)))
+		tkO.MustQuery(fmt.Sprintf(`select a, b from t where b = "%d"`+dbgStr, testID+99)).Check(testkit.Rows(fmt.Sprintf("%d %d", testID-1, testID+99)))
+		tkNO.MustExec(fmt.Sprintf(`update t set b = %d where a = %d`+dbgStr, testID, testID))
+		tkO.MustExec(fmt.Sprintf(`update t set b = %d where a = %d`+dbgStr, testID-1, testID-1))
 
 		switch schemaState {
 		case model.StateDeleteOnly.String():
@@ -369,6 +385,8 @@ func TestMultiSchemaReorganizePartition(t *testing.T) {
 				" PARTITION `p1` VALUES LESS THAN (200),\n" +
 				" PARTITION `pMax` VALUES LESS THAN (MAXVALUE))"))
 		case model.StateNone.String():
+			logutil.BgLogger().Info("Can this happen?")
+		case model.StatePublic.String():
 		default:
 			require.Failf(t, "unhandled schema state '%s'", schemaState)
 		}
@@ -377,7 +395,7 @@ func TestMultiSchemaReorganizePartition(t *testing.T) {
 		tkO.MustQuery(`select * from t where b = 5`).Sort().Check(testkit.Rows("5 5"))
 		tkO.MustQuery(`select * from t where b = "5"`).Sort().Check(testkit.Rows("5 5"))
 		tkO.MustExec(`admin check table t`)
-		tkO.MustQuery(`select * from t`).Sort().Check(testkit.Rows("1 1", "10 10", "101 101", "102 102", "11 11", "12 12", "13 13", "14 14", "2 2", "5 5", "6 6", "7 7", "8 8", "9 9", "984 984", "985 985", "986 986", "987 987", "988 988", "989 989", "990 990", "991 991", "992 992", "993 993", "998 998", "999 999"))
+		tkO.MustQuery(`select * from t`).Sort().Check(testkit.Rows("1 1", "10 10", "101 101", "102 102", "11 11", "12 12", "13 13", "14 14", "15 15", "16 16", "2 2", "5 5", "6 6", "7 7", "8 8", "9 9", "984 984", "985 985", "986 986", "987 987", "988 988", "989 989", "990 990", "991 991", "992 992", "993 993", "994 994", "995 995", "998 998", "999 999"))
 		// TODO: Verify that there are no KV entries for old partitions or old indexes!!!
 		delRange := tkO.MustQuery(`select * from mysql.gc_delete_range_done`).Rows()
 		s := ""
@@ -545,7 +563,8 @@ func TestMultiSchemaReorganizePartition(t *testing.T) {
 //}
 
 func runMultiSchemaTest(t *testing.T, createSQL, alterSQL string, initFn func(*testkit.TestKit), postFn func(*testkit.TestKit, kv.Storage), loopFn func(tO, tNO *testkit.TestKit)) {
-	distCtx := testkit.NewDistExecutionContextWithLease(t, 2, 15*time.Second)
+	//distCtx := testkit.NewDistExecutionContextWithLease(t, 2, 15*time.Second)
+	distCtx := testkit.NewDistExecutionContextWithLease(t, 2, 1500*time.Second)
 	store := distCtx.Store
 	domOwner := distCtx.GetDomain(0)
 	domNonOwner := distCtx.GetDomain(1)

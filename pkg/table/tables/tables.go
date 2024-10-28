@@ -417,14 +417,34 @@ func (t *TableCommon) shouldAssert(level variable.AssertionLevel) bool {
 		switch level {
 		case variable.AssertionLevelFast:
 			// Fast option, just skip assertion for all partitions.
-			if p.DDLState != model.StateNone && p.DDLState != model.StatePublic {
-				return false
+			switch p.DDLAction {
+			case model.ActionAlterTablePartitioning, model.ActionReorganizePartition, model.ActionRemovePartitioning:
+				switch p.DDLState {
+				case model.StateDeleteOnly, model.StateWriteOnly, model.StateDeleteReorganization, model.StatePublic:
+					return false
+				}
+			case model.ActionNone:
+				// no ddl ongoing, normal assertions.
+				return true
+			default:
+				if p.DDLState != model.StateNone && p.DDLState != model.StatePublic {
+					return false
+				}
 			}
 		case variable.AssertionLevelStrict:
 			// Strict, only disable assertion for intermediate partitions.
-			// If there were an easy way to get from a TableCommon back to the partitioned table...
-			for i := range p.AddingDefinitions {
-				if t.physicalTableID == p.AddingDefinitions[i].ID {
+			defs := p.AddingDefinitions
+			switch p.DDLAction {
+			case model.ActionAlterTablePartitioning, model.ActionReorganizePartition, model.ActionRemovePartitioning:
+				switch p.DDLState {
+				case model.StateDeleteOnly:
+					defs = p.AddingDefinitions
+				case model.StateDeleteReorganization, model.StatePublic:
+					defs = p.DroppingDefinitions
+				}
+			}
+			for i := range defs {
+				if t.physicalTableID == defs[i].ID {
 					return false
 				}
 			}
