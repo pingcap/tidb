@@ -1014,9 +1014,6 @@ func (pi *PartitionInfo) SetOriginalPartitionIDs() {
 // For example during truncate or drop partition.
 func (pi *PartitionInfo) IDsInDDLToIgnore() []int64 {
 	// TODO:
-	// Truncate partition:
-	// write only => should not see NewPartitionIDs
-	// delete only => should not see DroppingPartitions
 	// Drop partition:
 	// TODO: Make similar changes as in Truncate Partition:
 	// Add a state blocking read and write in the partitions to be dropped,

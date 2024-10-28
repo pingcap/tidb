@@ -2445,33 +2445,38 @@ func (w *worker) cleanGlobalIndexEntriesFromDroppedPartitions(jobCtx *jobContext
 }
 
 // onTruncateTablePartition truncates old partition meta.
-// If there are no global index, it will be a single state change.
-// For GLOBAL INDEX it will be several state changes:
-// StateNone - unaware of DDL
 //
-// StateWriteOnly
+// # StateNone
 //
-//	still sees and uses the old partition, but should filter out index reads of
-//		global index which has ids from pi.NewPartitionIDs.
-//		Allow duplicate key even if one cannot access the global index entry by reading!
+// Unaware of DDL.
 //
-// StateDeleteOnly
+// # StateWriteOnly
 //
-//	sees new partition, but should filter out index reads of global index which
-//		has ids from pi.DroppingDefinitions.
-//		Allow duplicate key even if one cannot access the global index entry
+// Still sees and uses the old partition, but should filter out index reads of
+// global index which has ids from pi.NewPartitionIDs.
+// Allow duplicate key errors even if one cannot access the global index entry by reading!
+// This state is not really needed if there are no global indexes, but used for consistency.
 //
-// StateDeleteReorganization
+// # StateDeleteOnly
 //
-//	now no other session has access to the old partition,
-//		but there are global index entries left pointing to the old partition,
-//		so they should be filtered out (see pi.DroppingDefinitions) and on write (insert/update)
-//		the old partition's row should be deleted and the global index key allowed
-//		to be overwritten.
-//		During this time the old partition is read and removing matching entries in
-//		smaller batches.
+// Sees new partition, but should filter out index reads of global index which
+// has ids from pi.DroppingDefinitions.
+// Allow duplicate key errors even if one cannot access the global index entry by reading!
 //
-// StatePublic - DDL done
+// # StateDeleteReorganization
+//
+// Now no other session has access to the old partition,
+// but there are global index entries left pointing to the old partition,
+// so they should be filtered out (see pi.DroppingDefinitions) and on write (insert/update)
+// the old partition's row should be deleted and the global index key allowed
+// to be overwritten.
+// During this time the old partition is read and removing matching entries in
+// smaller batches.
+// This state is not really needed if there are no global indexes, but used for consistency.
+//
+// # StatePublic
+//
+// DDL done.
 func (w *worker) onTruncateTablePartition(jobCtx *jobContext, job *model.Job) (int64, error) {
 	var ver int64
 	canCancel := false
@@ -2513,28 +2518,13 @@ func (w *worker) onTruncateTablePartition(jobCtx *jobContext, job *model.Job) (i
 
 	switch job.SchemaState {
 	case model.StatePublic:
-		if hasGlobalIndex(tblInfo) {
-			// This work as a flag to ignore Global Index entries from the new partitions!
-			pi.NewPartitionIDs = newIDs[:]
-			pi.DDLAction = model.ActionTruncateTablePartition
+		// This work as a flag to ignore Global Index entries from the new partitions!
+		pi.NewPartitionIDs = newIDs[:]
+		pi.DDLAction = model.ActionTruncateTablePartition
 
-			job.SchemaState = model.StateWriteOnly
-			pi.DDLState = job.SchemaState
-			return updateVersionAndTableInfo(jobCtx, job, tblInfo, true)
-		}
-		// Here we can optimize and do a single state change DDL
-
-		oldDefinitions, newDefinitions, err = replaceTruncatePartitions(job, jobCtx.metaMut, tblInfo, oldIDs, newIDs)
-		if err != nil {
-			job.State = model.JobStateCancelled
-			return ver, errors.Trace(err)
-		}
-		if len(newDefinitions) == 0 {
-			job.State = model.JobStateCancelled
-			return ver, table.ErrUnknownPartition.GenWithStackByArgs(fmt.Sprintf("pid:%v", oldIDs), tblInfo.Name.O)
-		}
-		preSplitAndScatter(w.sess.Context, jobCtx.store, tblInfo, newDefinitions)
-		// continue after job.SchemaState switch!
+		job.SchemaState = model.StateWriteOnly
+		pi.DDLState = job.SchemaState
+		return updateVersionAndTableInfo(jobCtx, job, tblInfo, true)
 	case model.StateWriteOnly:
 		oldDefinitions, newDefinitions, err = replaceTruncatePartitions(job, jobCtx.metaMut, tblInfo, oldIDs, newIDs)
 		if err != nil {
@@ -2544,10 +2534,6 @@ func (w *worker) onTruncateTablePartition(jobCtx *jobContext, job *model.Job) (i
 		// This work as a flag to ignore Global Index entries from the old partitions!
 		pi.DroppingDefinitions = oldDefinitions
 		// And we don't need to filter for new partitions any longer
-		tblInfo.Partition.NewPartitionIDs = nil
-		tblInfo.Partition.DDLAction = model.ActionNone
-		tblInfo.Partition.DDLState = model.StateNone
-
 		job.SchemaState = model.StateDeleteOnly
 		pi.DDLState = job.SchemaState
 		return updateVersionAndTableInfo(jobCtx, job, tblInfo, true)
@@ -2555,6 +2541,7 @@ func (w *worker) onTruncateTablePartition(jobCtx *jobContext, job *model.Job) (i
 		// Now we don't see the old partitions, but other sessions may still use them.
 		// So to keep the Global Index consistent, we will still keep it up-to-date with
 		// the old partitions, as well as the new partitions.
+		// Also ensures that no writes will happen after GC in DeleteRanges.
 
 		job.SchemaState = model.StateDeleteReorganization
 		pi.DDLState = job.SchemaState
@@ -2570,7 +2557,7 @@ func (w *worker) onTruncateTablePartition(jobCtx *jobContext, job *model.Job) (i
 			return ver, errors.Trace(err)
 		}
 		// For the truncatePartitionEvent
-		oldDefinitions = tblInfo.Partition.DroppingDefinitions
+		oldDefinitions = pi.DroppingDefinitions
 		newDefinitions = make([]model.PartitionDefinition, 0, len(oldIDs))
 		for i, def := range oldDefinitions {
 			newDef := def.Clone()
@@ -2579,10 +2566,10 @@ func (w *worker) onTruncateTablePartition(jobCtx *jobContext, job *model.Job) (i
 		}
 		// TODO: Test injecting failure
 
-		tblInfo.Partition.DroppingDefinitions = nil
-		tblInfo.Partition.NewPartitionIDs = nil
-		tblInfo.Partition.DDLState = model.StateNone
-		tblInfo.Partition.DDLAction = model.ActionNone
+		pi.DroppingDefinitions = nil
+		pi.NewPartitionIDs = nil
+		pi.DDLState = model.StateNone
+		pi.DDLAction = model.ActionNone
 		// Done, continue after the SchemaState switch!
 	default:
 		return ver, dbterror.ErrInvalidDDLState.GenWithStackByArgs("partition", job.SchemaState)
