@@ -44,11 +44,6 @@ var truncateTests = FailureTest{
 			Rollback:    true,
 		},
 		{
-			Name:        "Cancel2",
-			Recoverable: false,
-			Rollback:    true,
-		},
-		{
 			Name:        "Fail1",
 			Recoverable: true,
 			Rollback:    true,

@@ -61,7 +61,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/hack"
-	"github.com/pingcap/tidb/pkg/util/mathutil"
 	decoder "github.com/pingcap/tidb/pkg/util/rowDecoder"
 	"github.com/pingcap/tidb/pkg/util/slice"
 	"github.com/pingcap/tidb/pkg/util/stringutil"
@@ -1917,7 +1916,7 @@ func formatListPartitionValue(ctx expression.BuildContext, tblInfo *model.TableI
 
 	haveDefault := false
 	exprStrs := make([]string, 0)
-	inValueStrs := make([]string, 0, mathutil.Max(len(pi.Columns), 1))
+	inValueStrs := make([]string, 0, max(len(pi.Columns), 1))
 	for i := range defs {
 	inValuesLoop:
 		for j, vs := range defs[i].InValues {
@@ -2241,10 +2240,10 @@ func (w *worker) onDropTablePartition(jobCtx *jobContext, job *model.Job) (ver i
 		originalDefs := tblInfo.Partition.Definitions
 		_ = updateDroppingPartitionInfo(tblInfo, partNames)
 		tblInfo.Partition.Definitions = originalDefs
-		tblInfo.Partition.DDLState = model.StateWriteOnly
-		tblInfo.Partition.DDLAction = model.ActionDropTablePartition
-
 		job.SchemaState = model.StateWriteOnly
+		tblInfo.Partition.DDLState = job.SchemaState
+		tblInfo.Partition.DDLAction = job.Type
+
 		ver, err = updateVersionAndTableInfo(jobCtx, job, tblInfo, true)
 	case model.StateWriteOnly:
 		// Since the previous state do not use the dropping partitions,
@@ -2289,16 +2288,13 @@ func (w *worker) onDropTablePartition(jobCtx *jobContext, job *model.Job) (ver i
 			return ver, err
 		}
 
-		tblInfo.Partition.DDLState = model.StateDeleteOnly
 		job.SchemaState = model.StateDeleteOnly
 		tblInfo.Partition.DDLState = job.SchemaState
-		tblInfo.Partition.DDLAction = job.Type
 		ver, err = updateVersionAndTableInfo(jobCtx, job, tblInfo, true)
 	case model.StateDeleteOnly:
 		// This state is not a real 'DeleteOnly' state, because tidb does not maintain the state check in partitionDefinition.
 		// Insert this state to confirm all servers can not see the old partitions when reorg is running,
 		// so that no new data will be inserted into old partitions when reorganizing.
-		tblInfo.Partition.DDLState = model.StateDeleteReorganization
 		job.SchemaState = model.StateDeleteReorganization
 		tblInfo.Partition.DDLState = job.SchemaState
 		ver, err = updateVersionAndTableInfo(jobCtx, job, tblInfo, true)
@@ -2315,7 +2311,8 @@ func (w *worker) onDropTablePartition(jobCtx *jobContext, job *model.Job) (ver i
 		removeTiFlashAvailablePartitionIDs(tblInfo, physicalTableIDs)
 		droppedDefs := tblInfo.Partition.DroppingDefinitions
 		tblInfo.Partition.DroppingDefinitions = nil
-		tblInfo.Partition.DDLState = model.StateNone
+		job.SchemaState = model.StateNone
+		tblInfo.Partition.DDLState = job.SchemaState
 		tblInfo.Partition.DDLAction = model.ActionNone
 		// used by ApplyDiff in updateSchemaVersion
 		args.OldPhysicalTblIDs = physicalTableIDs
@@ -2448,33 +2445,38 @@ func (w *worker) cleanGlobalIndexEntriesFromDroppedPartitions(jobCtx *jobContext
 }
 
 // onTruncateTablePartition truncates old partition meta.
-// If there are no global index, it will be a single state change.
-// For GLOBAL INDEX it will be several state changes:
-// StateNone - unaware of DDL
 //
-// StateWriteOnly
+// # StateNone
 //
-//	still sees and uses the old partition, but should filter out index reads of
-//		global index which has ids from pi.NewPartitionIDs.
-//		Allow duplicate key even if one cannot access the global index entry by reading!
+// Unaware of DDL.
 //
-// StateDeleteOnly
+// # StateWriteOnly
 //
-//	sees new partition, but should filter out index reads of global index which
-//		has ids from pi.DroppingDefinitions.
-//		Allow duplicate key even if one cannot access the global index entry
+// Still sees and uses the old partition, but should filter out index reads of
+// global index which has ids from pi.NewPartitionIDs.
+// Allow duplicate key errors even if one cannot access the global index entry by reading!
+// This state is not really needed if there are no global indexes, but used for consistency.
 //
-// StateDeleteReorganization
+// # StateDeleteOnly
 //
-//	now no other session has access to the old partition,
-//		but there are global index entries left pointing to the old partition,
-//		so they should be filtered out (see pi.DroppingDefinitions) and on write (insert/update)
-//		the old partition's row should be deleted and the global index key allowed
-//		to be overwritten.
-//		During this time the old partition is read and removing matching entries in
-//		smaller batches.
+// Sees new partition, but should filter out index reads of global index which
+// has ids from pi.DroppingDefinitions.
+// Allow duplicate key errors even if one cannot access the global index entry by reading!
 //
-// StatePublic - DDL done
+// # StateDeleteReorganization
+//
+// Now no other session has access to the old partition,
+// but there are global index entries left pointing to the old partition,
+// so they should be filtered out (see pi.DroppingDefinitions) and on write (insert/update)
+// the old partition's row should be deleted and the global index key allowed
+// to be overwritten.
+// During this time the old partition is read and removing matching entries in
+// smaller batches.
+// This state is not really needed if there are no global indexes, but used for consistency.
+//
+// # StatePublic
+//
+// DDL done.
 func (w *worker) onTruncateTablePartition(jobCtx *jobContext, job *model.Job) (int64, error) {
 	var ver int64
 	canCancel := false
@@ -2528,36 +2530,13 @@ func (w *worker) onTruncateTablePartition(jobCtx *jobContext, job *model.Job) (i
 
 	switch job.SchemaState {
 	case model.StatePublic:
-		if hasGlobalIndex(tblInfo) {
-			// This work as a flag to ignore Global Index entries from the new partitions!
-			pi.NewPartitionIDs = newIDs[:]
-			pi.DDLAction = model.ActionTruncateTablePartition
+		// This work as a flag to ignore Global Index entries from the new partitions!
+		pi.NewPartitionIDs = newIDs[:]
+		pi.DDLAction = model.ActionTruncateTablePartition
 
-			job.SchemaState = model.StateWriteOnly
-			pi.DDLState = job.SchemaState
-			return updateVersionAndTableInfo(jobCtx, job, tblInfo, true)
-		}
-		// Here we can optimize and do a single state change DDL
-
-		oldDefinitions, newDefinitions, err = replaceTruncatePartitions(job, jobCtx.metaMut, tblInfo, oldIDs, newIDs)
-		if err != nil {
-			job.State = model.JobStateCancelled
-			return ver, errors.Trace(err)
-		}
-		if len(newDefinitions) == 0 {
-			job.State = model.JobStateCancelled
-			return ver, table.ErrUnknownPartition.GenWithStackByArgs(fmt.Sprintf("pid:%v", oldIDs), tblInfo.Name.O)
-		}
-
-		failpoint.Inject("truncatePartCancel2", func(val failpoint.Value) {
-			if val.(bool) {
-				job.State = model.JobStateCancelled
-				err = errors.New("Injected error by truncatePartCancel2")
-				failpoint.Return(ver, err)
-			}
-		})
-		preSplitAndScatter(w.sess.Context, jobCtx.store, tblInfo, newDefinitions)
-		// continue after job.SchemaState switch!
+		job.SchemaState = model.StateWriteOnly
+		pi.DDLState = job.SchemaState
+		return updateVersionAndTableInfo(jobCtx, job, tblInfo, true)
 	case model.StateWriteOnly:
 		// We can still rollback here, since we have not yet started to write to the new partitions!
 		oldDefinitions, newDefinitions, err = replaceTruncatePartitions(job, jobCtx.metaMut, tblInfo, oldIDs, newIDs)
@@ -2575,8 +2554,6 @@ func (w *worker) onTruncateTablePartition(jobCtx *jobContext, job *model.Job) (i
 		// This work as a flag to ignore Global Index entries from the old partitions!
 		pi.DroppingDefinitions = oldDefinitions
 		// And we don't need to filter for new partitions any longer
-		tblInfo.Partition.NewPartitionIDs = nil
-
 		job.SchemaState = model.StateDeleteOnly
 		pi.DDLState = job.SchemaState
 		return updateVersionAndTableInfo(jobCtx, job, tblInfo, true)
@@ -2584,6 +2561,7 @@ func (w *worker) onTruncateTablePartition(jobCtx *jobContext, job *model.Job) (i
 		// Now we don't see the old partitions, but other sessions may still use them.
 		// So to keep the Global Index consistent, we will still keep it up-to-date with
 		// the old partitions, as well as the new partitions.
+		// Also ensures that no writes will happen after GC in DeleteRanges.
 
 		job.SchemaState = model.StateDeleteReorganization
 		pi.DDLState = job.SchemaState
@@ -2606,7 +2584,7 @@ func (w *worker) onTruncateTablePartition(jobCtx *jobContext, job *model.Job) (i
 			}
 		})
 		// For the truncatePartitionEvent
-		oldDefinitions = tblInfo.Partition.DroppingDefinitions
+		oldDefinitions = pi.DroppingDefinitions
 		newDefinitions = make([]model.PartitionDefinition, 0, len(oldIDs))
 		for i, def := range oldDefinitions {
 			newDef := def.Clone()
@@ -2614,10 +2592,10 @@ func (w *worker) onTruncateTablePartition(jobCtx *jobContext, job *model.Job) (i
 			newDefinitions = append(newDefinitions, newDef)
 		}
 
-		tblInfo.Partition.DroppingDefinitions = nil
-		tblInfo.Partition.NewPartitionIDs = nil
-		tblInfo.Partition.DDLState = model.StateNone
-		tblInfo.Partition.DDLAction = model.ActionNone
+		pi.DroppingDefinitions = nil
+		pi.NewPartitionIDs = nil
+		pi.DDLState = model.StateNone
+		pi.DDLAction = model.ActionNone
 		// Done, continue after the SchemaState switch!
 	default:
 		return ver, dbterror.ErrInvalidDDLState.GenWithStackByArgs("partition", job.SchemaState)
@@ -2940,9 +2918,9 @@ func (w *worker) onExchangeTablePartition(jobCtx *jobContext, job *model.Job) (v
 	// TODO: Fix the issue of big transactions during EXCHANGE PARTITION with AutoID.
 	// Similar to https://github.com/pingcap/tidb/issues/46904
 	newAutoIDs := model.AutoIDGroup{
-		RowID:       mathutil.Max(ptAutoIDs.RowID, ntAutoIDs.RowID),
-		IncrementID: mathutil.Max(ptAutoIDs.IncrementID, ntAutoIDs.IncrementID),
-		RandomID:    mathutil.Max(ptAutoIDs.RandomID, ntAutoIDs.RandomID),
+		RowID:       max(ptAutoIDs.RowID, ntAutoIDs.RowID),
+		IncrementID: max(ptAutoIDs.IncrementID, ntAutoIDs.IncrementID),
+		RandomID:    max(ptAutoIDs.RandomID, ntAutoIDs.RandomID),
 	}
 	err = metaMut.GetAutoIDAccessors(ptSchemaID, pt.ID).Put(newAutoIDs)
 	if err != nil {
@@ -3783,7 +3761,7 @@ func newReorgPartitionWorker(i int, t table.PhysicalTable, decodeColMap map[int6
 			}
 		}
 		writeColOffsetMap[id] = offset
-		maxOffset = mathutil.Max[int](maxOffset, offset)
+		maxOffset = max(maxOffset, offset)
 	}
 	return &reorgPartitionWorker{
 		backfillCtx:       bCtx,

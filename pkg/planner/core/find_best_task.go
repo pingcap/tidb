@@ -1480,17 +1480,6 @@ func findBestTask4LogicalDataSource(lp base.LogicalPlan, prop *property.Physical
 			if canConvertPointGet && path.IsIntHandlePath && !ds.Table.Meta().PKIsHandle && len(ds.PartitionNames) != 1 {
 				canConvertPointGet = false
 			}
-			if canConvertPointGet {
-				if path != nil && path.Index != nil && path.Index.Global {
-					// Don't convert to point get during ddl
-					// TODO: Revisit truncate partition and global index
-					if len(ds.TableInfo.GetPartitionInfo().DroppingDefinitions) > 0 ||
-						len(ds.TableInfo.GetPartitionInfo().NewPartitionIDs) > 0 ||
-						len(ds.TableInfo.GetPartitionInfo().AddingDefinitions) > 0 {
-						canConvertPointGet = false
-					}
-				}
-			}
 		}
 		if canConvertPointGet {
 			allRangeIsPoint := true
@@ -2299,9 +2288,11 @@ func (is *PhysicalIndexScan) addSelectionConditionForGlobalIndex(p *logicalop.Da
 		}
 		for _, idx := range idxArr {
 			id := pInfo.Definitions[idx].ID
-			if _, ok := ignoreMap[id]; !ok {
+			_, ok := ignoreMap[id]
+			if !ok {
 				args = append(args, expression.NewInt64Const(id))
 			}
+			intest.Assert(!ok, "PartitionPruning returns partitions which should be ignored!")
 		}
 	}
 	if len(args) == 1 {

@@ -637,10 +637,15 @@ func (r *reorgInfo) String() string {
 		"Ingest mode:" + strconv.FormatBool(isEnabled)
 }
 
-func constructDescTableScanPB(physicalTableID int64, tblInfo *model.TableInfo, handleCols []*model.ColumnInfo) *tipb.Executor {
+func constructOneRowTableScanPB(
+	physicalTableID int64,
+	tblInfo *model.TableInfo,
+	handleCols []*model.ColumnInfo,
+	desc bool,
+) *tipb.Executor {
 	tblScan := tables.BuildTableScanFromInfos(tblInfo, handleCols, false)
 	tblScan.TableId = physicalTableID
-	tblScan.Desc = true
+	tblScan.Desc = desc
 	return &tipb.Executor{Tp: tipb.ExecType_TypeTableScan, TblScan: tblScan}
 }
 
@@ -651,7 +656,13 @@ func constructLimitPB(count uint64) *tipb.Executor {
 	return &tipb.Executor{Tp: tipb.ExecType_TypeLimit, Limit: limitExec}
 }
 
-func buildDescTableScanDAG(distSQLCtx *distsqlctx.DistSQLContext, tbl table.PhysicalTable, handleCols []*model.ColumnInfo, limit uint64) (*tipb.DAGRequest, error) {
+func buildOneRowTableScanDAG(
+	distSQLCtx *distsqlctx.DistSQLContext,
+	tbl table.PhysicalTable,
+	handleCols []*model.ColumnInfo,
+	limit uint64,
+	desc bool,
+) (*tipb.DAGRequest, error) {
 	dagReq := &tipb.DAGRequest{}
 	_, timeZoneOffset := time.Now().In(time.UTC).Zone()
 	dagReq.TimeZoneOffset = int64(timeZoneOffset)
@@ -660,7 +671,7 @@ func buildDescTableScanDAG(distSQLCtx *distsqlctx.DistSQLContext, tbl table.Phys
 	}
 	dagReq.Flags |= model.FlagInSelectStmt
 
-	tblScanExec := constructDescTableScanPB(tbl.GetPhysicalID(), tbl.Meta(), handleCols)
+	tblScanExec := constructOneRowTableScanPB(tbl.GetPhysicalID(), tbl.Meta(), handleCols, desc)
 	dagReq.Executors = append(dagReq.Executors, tblScanExec)
 	dagReq.Executors = append(dagReq.Executors, constructLimitPB(limit))
 	distsql.SetEncodeType(distSQLCtx, dagReq)
@@ -675,11 +686,18 @@ func getColumnsTypes(columns []*model.ColumnInfo) []*types.FieldType {
 	return colTypes
 }
 
-// buildDescTableScan builds a desc table scan upon tblInfo.
-func buildDescTableScan(ctx *ReorgContext, store kv.Storage, startTS uint64, tbl table.PhysicalTable,
-	handleCols []*model.ColumnInfo, limit uint64) (distsql.SelectResult, error) {
+// buildOneRowTableScan builds a table scan that only return one row upon tblInfo.
+func buildOneRowTableScan(
+	ctx *ReorgContext,
+	store kv.Storage,
+	startTS uint64,
+	tbl table.PhysicalTable,
+	handleCols []*model.ColumnInfo,
+	limit uint64,
+	desc bool,
+) (distsql.SelectResult, error) {
 	distSQLCtx := newDefaultReorgDistSQLCtx(store.GetClient(), contextutil.NewStaticWarnHandler(0))
-	dagPB, err := buildDescTableScanDAG(distSQLCtx, tbl, handleCols, limit)
+	dagPB, err := buildOneRowTableScanDAG(distSQLCtx, tbl, handleCols, limit, desc)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -696,7 +714,7 @@ func buildDescTableScan(ctx *ReorgContext, store kv.Storage, startTS uint64, tbl
 		SetStartTS(startTS).
 		SetKeepOrder(true).
 		SetConcurrency(1).
-		SetDesc(true).
+		SetDesc(desc).
 		SetResourceGroupTagger(ctx.getResourceGroupTaggerForTopSQL()).
 		SetResourceGroupName(ctx.resourceGroupName)
 
@@ -719,6 +737,54 @@ func buildDescTableScan(ctx *ReorgContext, store kv.Storage, startTS uint64, tbl
 
 // GetTableMaxHandle gets the max handle of a PhysicalTable.
 func GetTableMaxHandle(ctx *ReorgContext, store kv.Storage, startTS uint64, tbl table.PhysicalTable) (maxHandle kv.Handle, emptyTable bool, err error) {
+	tblInfo := tbl.Meta()
+	handleCols := buildHandleCols(tbl)
+
+	// build a desc scan of tblInfo, which limit is 1, we can use it to retrieve the last handle of the table.
+	result, err := buildOneRowTableScan(ctx, store, startTS, tbl, handleCols, 1, true)
+	if err != nil {
+		return nil, false, errors.Trace(err)
+	}
+	defer terror.Call(result.Close)
+
+	chk := chunk.New(getColumnsTypes(handleCols), 1, 1)
+	err = result.Next(ctx.ddlJobCtx, chk)
+	if err != nil {
+		return nil, false, errors.Trace(err)
+	}
+
+	if chk.NumRows() == 0 {
+		// empty table
+		return nil, true, nil
+	}
+	row := chk.GetRow(0)
+	if tblInfo.IsCommonHandle {
+		pkIdx := tables.FindPrimaryIndex(tblInfo)
+		maxHandle, err = buildCommonHandleFromChunkRow(time.UTC, tblInfo, pkIdx, handleCols, row)
+		return maxHandle, false, err
+	}
+	return kv.IntHandle(row.GetInt64(0)), false, nil
+}
+
+// ExistsTableRow checks if there is at least one row in the specified table.
+// In case of an error during the operation, it returns false along with the error.
+func ExistsTableRow(ctx *ReorgContext, store kv.Storage, startTS uint64, tbl table.PhysicalTable) (bool, error) {
+	handleCols := buildHandleCols(tbl)
+	result, err := buildOneRowTableScan(ctx, store, startTS, tbl, handleCols, 1, false)
+	if err != nil {
+		return false, errors.Trace(err)
+	}
+	defer terror.Call(result.Close)
+
+	chk := chunk.New(getColumnsTypes(handleCols), 1, 1)
+	err = result.Next(ctx.ddlJobCtx, chk)
+	if err != nil {
+		return false, errors.Trace(err)
+	}
+	return chk.NumRows() != 0, nil
+}
+
+func buildHandleCols(tbl table.PhysicalTable) []*model.ColumnInfo {
 	var handleCols []*model.ColumnInfo
 	var pkIdx *model.IndexInfo
 	tblInfo := tbl.Meta()
@@ -739,30 +805,7 @@ func GetTableMaxHandle(ctx *ReorgContext, store kv.Storage, startTS uint64, tbl 
 	default:
 		handleCols = []*model.ColumnInfo{model.NewExtraHandleColInfo()}
 	}
-
-	// build a desc scan of tblInfo, which limit is 1, we can use it to retrieve the last handle of the table.
-	result, err := buildDescTableScan(ctx, store, startTS, tbl, handleCols, 1)
-	if err != nil {
-		return nil, false, errors.Trace(err)
-	}
-	defer terror.Call(result.Close)
-
-	chk := chunk.New(getColumnsTypes(handleCols), 1, 1)
-	err = result.Next(ctx.ddlJobCtx, chk)
-	if err != nil {
-		return nil, false, errors.Trace(err)
-	}
-
-	if chk.NumRows() == 0 {
-		// empty table
-		return nil, true, nil
-	}
-	row := chk.GetRow(0)
-	if tblInfo.IsCommonHandle {
-		maxHandle, err = buildCommonHandleFromChunkRow(time.UTC, tblInfo, pkIdx, handleCols, row)
-		return maxHandle, false, err
-	}
-	return kv.IntHandle(row.GetInt64(0)), false, nil
+	return handleCols
 }
 
 func buildCommonHandleFromChunkRow(loc *time.Location, tblInfo *model.TableInfo, idxInfo *model.IndexInfo,
@@ -876,10 +919,7 @@ func getReorgInfo(ctx *ReorgContext, jobCtx *jobContext, rh *reorgHandler, job *
 					pid = tblInfo.ID
 				}
 			}
-			firstElemTempID := tablecodec.TempIndexPrefix | elements[0].ID
-			lastElemTempID := tablecodec.TempIndexPrefix | elements[len(elements)-1].ID
-			start = tablecodec.EncodeIndexSeekKey(pid, firstElemTempID, nil)
-			end = tablecodec.EncodeIndexSeekKey(pid, lastElemTempID, []byte{255})
+			start, end = encodeTempIndexRange(pid, elements[0].ID, elements[len(elements)-1].ID)
 		} else {
 			start, end, err = getTableRange(ctx, jobCtx.store, tb, ver.Ver, job.Priority)
 			if err != nil {
@@ -940,6 +980,14 @@ func getReorgInfo(ctx *ReorgContext, jobCtx *jobContext, rh *reorgHandler, job *
 	info.dbInfo = dbInfo
 
 	return &info, nil
+}
+
+func encodeTempIndexRange(physicalID, firstIdxID, lastIdxID int64) (start kv.Key, end kv.Key) {
+	firstElemTempID := tablecodec.TempIndexPrefix | firstIdxID
+	lastElemTempID := tablecodec.TempIndexPrefix | lastIdxID
+	start = tablecodec.EncodeIndexSeekKey(physicalID, firstElemTempID, nil)
+	end = tablecodec.EncodeIndexSeekKey(physicalID, lastElemTempID, []byte{255})
+	return start, end
 }
 
 func getReorgInfoFromPartitions(ctx *ReorgContext, jobCtx *jobContext, rh *reorgHandler, job *model.Job, dbInfo *model.DBInfo, tbl table.PartitionedTable, partitionIDs []int64, elements []*meta.Element) (*reorgInfo, error) {

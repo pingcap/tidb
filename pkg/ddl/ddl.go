@@ -1401,12 +1401,14 @@ func processJobs(
 
 		failpoint.Inject("mockCommitFailedOnDDLCommand", func(val failpoint.Value) {
 			if val.(bool) {
+				ns.Rollback()
 				failpoint.Return(jobErrs, errors.New("mock commit failed on admin command on ddl jobs"))
 			}
 		})
 
 		// There may be some conflict during the update, try it again
 		if err = ns.Commit(ctx); err != nil {
+			ns.Rollback()
 			continue
 		}
 
