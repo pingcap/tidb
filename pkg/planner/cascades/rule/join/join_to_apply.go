@@ -15,34 +15,35 @@
 package join
 
 import (
+	"github.com/pingcap/tidb/pkg/planner/cascades/memo"
 	"github.com/pingcap/tidb/pkg/planner/cascades/rule"
-	"github.com/pingcap/tidb/pkg/planner/memo"
 	"github.com/pingcap/tidb/pkg/planner/pattern"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 )
 
-// JoinToApply is a type of rule that aims to convert a join into apply mode,
+// XFJoinToApply is a type of rule that aims to convert a join into apply mode,
 // allowing runtime scalar attributes to be passed to the apply's probe side,
 // thereby enhancing the likelihood of better index scans.
-type JoinToApply struct {
+type XFJoinToApply struct {
 	*rule.BaseRule
 }
 
 // NewJoinToApply creates a new JoinToApply rule.
-func NewJoinToApply() *JoinToApply {
+func NewJoinToApply() *XFJoinToApply {
 	pa := pattern.NewPattern(pattern.OperandJoin, pattern.EngineTiDBOnly)
 	pa.SetChildren(pattern.NewPattern(pattern.OperandAny, pattern.EngineAll), pattern.NewPattern(pattern.OperandJoin, pattern.EngineTiDBOnly))
-	return &JoinToApply{
+	return &XFJoinToApply{
 		BaseRule: rule.NewBaseRule(rule.XFJoinToApply, pa),
 	}
 }
 
 // Match implements the Rule interface.
-func (*JoinToApply) Match(holder *rule.GroupExprHolder, sctx sessionctx.Context) bool {
+func (*XFJoinToApply) Match(_ *rule.GroupExprHolder, _ sessionctx.Context) bool {
 	return true
 }
 
-func (*JoinToApply) XForm(holder *rule.GroupExprHolder, sctx sessionctx.Context) ([]*memo.GroupExpr, error) {
+// XForm implements thr Rule interface.
+func (*XFJoinToApply) XForm(_ *rule.GroupExprHolder, _ sessionctx.Context) ([]*memo.GroupExpression, error) {
 	// Check whether the join can be converted to apply.
 	return nil, nil
 }
