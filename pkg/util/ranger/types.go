@@ -269,7 +269,7 @@ func (ran *Range) Encode(ec errctx.Context, loc *time.Location, lowBuffer, highB
 // e.g. If this range is (1 2 3, 1 2 +inf), then the return value is 2.
 func (ran *Range) PrefixEqualLen(tc types.Context) (int, error) {
 	// Here, len(ran.LowVal) always equal to len(ran.HighVal)
-	for i := 0; i < len(ran.LowVal); i++ {
+	for i := range len(ran.LowVal) {
 		cmp, err := ran.LowVal[i].Compare(tc, &ran.HighVal[i], ran.Collators[i])
 		if err != nil {
 			return 0, errors.Trace(err)
@@ -343,7 +343,7 @@ func compareLexicographically(tc types.Context, bound1, bound2 []types.Datum, co
 	n2 := len(bound2)
 	n := min(n1, n2)
 
-	for i := 0; i < n; i++ {
+	for i := range n {
 		cmp, err := bound1[i].Compare(tc, &bound2[i], collators[i])
 		if err != nil {
 			return 0, err
@@ -400,7 +400,7 @@ func compareLexicographically(tc types.Context, bound1, bound2 []types.Datum, co
 // Check if a list of Datum is a prefix of another list of Datum. This is useful for checking if
 // lower/upper bound of a range is a subset of another.
 func prefix(tc types.Context, superValue []types.Datum, supValue []types.Datum, length int, collators []collate.Collator) bool {
-	for i := 0; i < length; i++ {
+	for i := range length {
 		cmp, err := superValue[i].Compare(tc, &supValue[i], collators[i])
 		if (err != nil) || (cmp != 0) {
 			return false
@@ -435,7 +435,7 @@ func (rs Ranges) Subset(tc types.Context, superRanges Ranges) bool {
 			return false
 		}
 	}
-	for i := 0; i < len(superRangesCovered); i++ {
+	for i := range superRangesCovered {
 		if !superRangesCovered[i] {
 			return false
 		}
@@ -449,7 +449,7 @@ func checkCollators(ran1 *Range, ran2 *Range, length int) bool {
 	// The current code path for this function always will have same collation
 	// for ran and superRange. It is added here for future
 	// use of the function.
-	for i := 0; i < length; i++ {
+	for i := range length {
 		if ran1.Collators[i] != ran2.Collators[i] {
 			return false
 		}

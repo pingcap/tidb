@@ -172,32 +172,49 @@ fi
 echo "restart a services"
 restart_services
 
-echo "corrupt a log file"
-filename=$(find $TEST_DIR/$PREFIX/log -regex ".*\.log" | grep -v "schema-meta" | tail -n 1)
-filename_temp=$filename"_temp"
-filename_bak=$filename"_bak"
-echo "corruption" > $filename_temp
-cat $filename >> $filename_temp
-
-# file lost
-mv $filename $filename_bak
-export GO_FAILPOINTS="github.com/pingcap/tidb/br/pkg/utils/set-import-attempt-to-one=return(true)"
-restore_fail=0
-run_br --pd $PD_ADDR restore point -s "local://$TEST_DIR/$PREFIX/log" --full-backup-storage "local://$TEST_DIR/$PREFIX/full" || restore_fail=1
-export GO_FAILPOINTS=""
-if [ $restore_fail -ne 1 ]; then
-    echo 'pitr success on file lost'
-    exit 1
-fi
+file_corruption() {
+    echo "corrupt the whole log files"
+    for filename in $(find $TEST_DIR/$PREFIX/log -regex ".*\.log" | grep -v "schema-meta"); do
+        echo "corrupt the log file $filename"
+        filename_temp=$filename"_temp"
+        echo "corruption" > $filename_temp
+        cat $filename >> $filename_temp
+        mv $filename_temp $filename
+        truncate -s -11 $filename
+    done
+}
 
 # file corruption
-mv $filename_temp $filename
-truncate --size=-11 $filename
+file_corruption
 export GO_FAILPOINTS="github.com/pingcap/tidb/br/pkg/utils/set-import-attempt-to-one=return(true)"
 restore_fail=0
 run_br --pd $PD_ADDR restore point -s "local://$TEST_DIR/$PREFIX/log" --full-backup-storage "local://$TEST_DIR/$PREFIX/full" || restore_fail=1
 export GO_FAILPOINTS=""
 if [ $restore_fail -ne 1 ]; then
     echo 'pitr success on file corruption'
+    exit 1
+fi
+
+# start a new cluster for corruption
+echo "restart a services"
+restart_services
+
+file_lost() {
+    echo "lost the whole log files"
+    for filename in $(find $TEST_DIR/$PREFIX/log -regex ".*\.log" | grep -v "schema-meta"); do
+        echo "lost the log file $filename"
+        filename_temp=$filename"_temp"
+        mv $filename $filename_temp
+    done
+}
+
+# file lost
+file_lost
+export GO_FAILPOINTS="github.com/pingcap/tidb/br/pkg/utils/set-import-attempt-to-one=return(true)"
+restore_fail=0
+run_br --pd $PD_ADDR restore point -s "local://$TEST_DIR/$PREFIX/log" --full-backup-storage "local://$TEST_DIR/$PREFIX/full" || restore_fail=1
+export GO_FAILPOINTS=""
+if [ $restore_fail -ne 1 ]; then
+    echo 'pitr success on file lost'
     exit 1
 fi
