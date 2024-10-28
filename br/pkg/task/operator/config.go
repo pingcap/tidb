@@ -55,9 +55,9 @@ type Base64ifyConfig struct {
 
 func DefineFlagsForBase64ifyConfig(flags *pflag.FlagSet) {
 	storage.DefineFlags(flags)
-	flags.Bool("revert", false, "Do the revert operation.")
-	flags.String("storage", "", "the external storage input.")
-	flags.Bool("load-creds", false, "whether loading the credientials from current environment and marshal them to the base64 string. [!]")
+	flags.BoolP("revert", "r", false, "Do the revert operation.")
+	flags.StringP("storage", "s", "", "The external storage input.")
+	flags.BoolP("load-creds", "c", false, "whether loading the credientials from current environment and marshal them to the base64 string. [!]")
 }
 
 func (cfg *Base64ifyConfig) ParseFromFlags(flags *pflag.FlagSet) error {

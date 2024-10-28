@@ -124,7 +124,7 @@ func RunMigrateTo(ctx context.Context, cfg MigrateToConfig) error {
 
 	return run(func(est stream.MigrationExt) stream.MergeAndMigratedTo {
 		return est.MergeAndMigrateTo(ctx, targetVersion, stream.MMOptInteractiveCheck(func(ctx context.Context, m *backup.Migration) bool {
-			return cfg.Yes && cx.askForContinue(m)
+			return cfg.Yes || cx.askForContinue(m)
 		}))
 	})
 }
