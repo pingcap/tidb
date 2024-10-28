@@ -15,6 +15,8 @@
 package cardinality
 
 import (
+	"math"
+
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/planner/planctx"
 	"github.com/pingcap/tidb/pkg/planner/util/debugtrace"
@@ -177,7 +179,15 @@ func equalRowCountOnColumn(sctx planctx.PlanContext, c *statistics.Column, val t
 		if modifyCount == 0 {
 			return 0, nil
 		}
-		return max(1, float64(modifyCount)/float64(c.Histogram.NDV)), nil
+		// Use sqrt to create an NDV if one doesn't already exist, or reset to the original NDV
+		if c.Histogram.NDV <= 0 {
+			histNDV = math.Sqrt(max(c.Histogram.NotNullCount(), float64(modifyCount)))
+		} else {
+			histNDV = float64(c.Histogram.NDV)
+		}
+		// Return the min of the original notNullCount or the modifyCount/NDV. This is to reduce the
+		// risk of too large or too small an estimate if modifyCount is large or NotNullCount is small
+		return max(1, min(c.Histogram.NotNullCount(), float64(modifyCount)/histNDV)), nil
 	}
 	return c.Histogram.NotNullCount() / histNDV, nil
 }
