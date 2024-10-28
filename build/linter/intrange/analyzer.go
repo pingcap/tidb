@@ -1,4 +1,4 @@
-// Copyright 2023 PingCAP, Inc.
+// Copyright 2024 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -12,27 +12,17 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package backoff
+package intrange
 
 import (
-	"testing"
-	"time"
-
-	"github.com/stretchr/testify/require"
+	"github.com/ckaznocha/intrange"
+	"github.com/pingcap/tidb/build/linter/util"
 )
 
-func TestExponential(t *testing.T) {
-	backoffer := NewExponential(1, 1, 1)
-	for i := range 10 {
-		require.Equal(t, time.Duration(1), backoffer.Backoff(i))
-	}
-	backoffer = NewExponential(1, 1, 10)
-	for i := range 10 {
-		require.Equal(t, time.Duration(1), backoffer.Backoff(i))
-	}
-	backoffer = NewExponential(1, 2, 10)
-	res := []time.Duration{1, 2, 4, 8, 10, 10, 10, 10, 10, 10}
-	for i := range 10 {
-		require.Equal(t, res[i], backoffer.Backoff(i))
-	}
+// Analyzer is the analyzer struct of ineffassign.
+var Analyzer = intrange.Analyzer
+
+func init() {
+	util.SkipAnalyzerByConfig(Analyzer)
+	util.SkipAnalyzer(Analyzer)
 }

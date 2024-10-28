@@ -167,7 +167,7 @@ func GetBinaryCollatorSlice(n int) []Collator {
 		return binCollatorInstanceSliceWithLen1
 	}
 	collators := make([]Collator, n)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		collators[i] = binCollatorInstance
 	}
 	return collators
