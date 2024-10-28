@@ -17,9 +17,8 @@ import (
 
 type LogSplitStrategy struct {
 	*split.BaseSplitStrategy
-	// skip checkpoint files
-	skipMap        *LogFilesSkipMap
-	updateStatusFn func(uint64, uint64)
+	checkpointSkipMap        *LogFilesSkipMap
+	checkpointFileProgressFn func(uint64, uint64)
 }
 
 var _ split.SplitStrategy[*LogDataFileInfo] = &LogSplitStrategy{}
@@ -55,22 +54,22 @@ func NewLogSplitStrategy(
 		summary.AdjustStartTimeToEarlierTime(t)
 	}
 	return &LogSplitStrategy{
-		BaseSplitStrategy: split.NewBaseSplitStrategy(rules),
-		skipMap:           skipMap,
-		updateStatusFn:    updateStatsFn,
+		BaseSplitStrategy:        split.NewBaseSplitStrategy(rules),
+		checkpointSkipMap:        skipMap,
+		checkpointFileProgressFn: updateStatsFn,
 	}, nil
 }
 
 const splitFileThreshold = 1024 * 1024 // 1 MB
 
-func (l *LogSplitStrategy) Accumulate(file *LogDataFileInfo) {
+func (ls *LogSplitStrategy) Accumulate(file *LogDataFileInfo) {
 	if file.Length > splitFileThreshold {
-		l.AccumulateCount += 1
+		ls.AccumulateCount += 1
 	}
-	splitHelper, exist := l.TableSplitter[file.TableId]
+	splitHelper, exist := ls.TableSplitter[file.TableId]
 	if !exist {
 		splitHelper = split.NewSplitHelper()
-		l.TableSplitter[file.TableId] = splitHelper
+		ls.TableSplitter[file.TableId] = splitHelper
 	}
 
 	splitHelper.Merge(split.Valued{
@@ -85,23 +84,23 @@ func (l *LogSplitStrategy) Accumulate(file *LogDataFileInfo) {
 	})
 }
 
-func (l LogSplitStrategy) ShouldSplit() bool {
-	return l.AccumulateCount > 4096
+func (ls *LogSplitStrategy) ShouldSplit() bool {
+	return ls.AccumulateCount > 4096
 }
 
-func (l *LogSplitStrategy) ShouldSkip(file *LogDataFileInfo) bool {
+func (ls *LogSplitStrategy) ShouldSkip(file *LogDataFileInfo) bool {
 	if file.IsMeta {
 		return true
 	}
-	_, exist := l.Rules[file.TableId]
+	_, exist := ls.Rules[file.TableId]
 	if !exist {
 		log.Info("skip for no rule files", zap.Int64("tableID", file.TableId))
 		return true
 	}
 
-	if l.skipMap.NeedSkip(file.MetaDataGroupName, file.OffsetInMetaGroup, file.OffsetInMergedGroup) {
-		//onProgress()
-		l.updateStatusFn(uint64(file.NumberOfEntries), file.Length)
+	if ls.checkpointSkipMap.NeedSkip(file.MetaDataGroupName, file.OffsetInMetaGroup, file.OffsetInMergedGroup) {
+		//onPcheckpointSkipMaprogress()
+		ls.checkpointFileProgressFn(uint64(file.NumberOfEntries), file.Length)
 		return true
 	}
 	return false

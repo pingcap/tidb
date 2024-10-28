@@ -90,6 +90,8 @@ func (b *BaseSplitStrategy) AccumulationsIter() *SplitHelperIterator {
 }
 
 func (b *BaseSplitStrategy) ResetAccumulations() {
+	// always assume all previous files has been processed
+	// so we should reset after handling one batch accumulations
 	log.Info("reset accumulations")
 	clear(b.TableSplitter)
 	b.AccumulateCount = 0
