@@ -29,7 +29,6 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
-	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/checkpoint"
 	"github.com/pingcap/tidb/br/pkg/checksum"
@@ -445,28 +444,6 @@ func (rc *SnapClient) Init(g glue.Glue, store kv.Storage) error {
 		)
 	}
 	return errors.Trace(err)
-}
-
-func SetSpeedLimitFn(ctx context.Context, stores []*metapb.Store, pool *tidbutil.WorkerPool) func(*SnapFileImporter, uint64) error {
-	return func(importer *SnapFileImporter, limit uint64) error {
-		eg, ectx := errgroup.WithContext(ctx)
-		for _, store := range stores {
-			if err := ectx.Err(); err != nil {
-				return errors.Trace(err)
-			}
-
-			finalStore := store
-			pool.ApplyOnErrorGroup(eg,
-				func() error {
-					err := importer.SetDownloadSpeedLimit(ectx, finalStore.GetId(), limit)
-					if err != nil {
-						return errors.Trace(err)
-					}
-					return nil
-				})
-		}
-		return eg.Wait()
-	}
 }
 
 func (rc *SnapClient) initClients(ctx context.Context, backend *backuppb.StorageBackend, isRawKvMode bool, isTxnKvMode bool) error {

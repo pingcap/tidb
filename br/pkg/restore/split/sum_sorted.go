@@ -202,4 +202,3 @@ func checkOverlaps(a, ap Span) bool {
 	}
 	return bytes.Compare(a.StartKey, ap.EndKey) < 0 && bytes.Compare(ap.StartKey, a.EndKey) < 0
 }
-
