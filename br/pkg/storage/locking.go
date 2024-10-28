@@ -22,15 +22,16 @@ import (
 	"go.uber.org/zap"
 )
 
-// ExclusiveWrite is a write that in a strong consistency storage.
+// ConditionalPut is a write that in a strong consistency storage.
 //
-// It is pretty like a "write if not exist", but it is atomic:
+// It provides a `Verify` hook and a `VerifyWriteContext`, you may check
+// the conditions you wanting there.
 //
-// if the write is success and the file wasn't deleted, no other `ExclusiveWrite`
+// if the write is success and the file wasn't deleted, no other `ConditionalPut`
 // over the same file was success.
 //
 // For more details, check docs/design/2024-10-11-put-and-verify-transactions-for-external-storages.md.
-type ExclusiveWrite struct {
+type ConditionalPut struct {
 	// Target is the target file of this txn.
 	// There shouldn't be other files shares this prefix with this file, or the txn will fail.
 	Target string
@@ -61,7 +62,7 @@ func (cx *VerifyWriteContext) IntentFileName() string {
 // In each phase, before writing, it will verify whether the storage is suitable for writing, that is:
 // - There shouldn't be any other intention files.
 // - Verify() returns no error. (If there is one.)
-func (w ExclusiveWrite) CommitTo(ctx context.Context, s ExternalStorage) (uuid.UUID, error) {
+func (w ConditionalPut) CommitTo(ctx context.Context, s ExternalStorage) (uuid.UUID, error) {
 	txnID := uuid.New()
 	cx := VerifyWriteContext{
 		Context: ctx,
@@ -194,7 +195,7 @@ func tryFetchRemoteLock(ctx context.Context, storage ExternalStorage, path strin
 // This isn't a strict lock like flock in linux: that means, the lock might be forced removed by
 // manually deleting the "lock file" in external storage.
 func TryLockRemote(ctx context.Context, storage ExternalStorage, path, hint string) (lock RemoteLock, err error) {
-	writer := ExclusiveWrite{
+	writer := ConditionalPut{
 		Target: path,
 		Content: func(txnID uuid.UUID) []byte {
 			meta := MakeLockMeta(hint)
@@ -243,9 +244,18 @@ func (l RemoteLock) Unlock(ctx context.Context) error {
 	return nil
 }
 
+func writeLockName(path string) string {
+	return fmt.Sprintf("%s.WRIT", path)
+}
+
+func newReadLockName(path string) string {
+	readID := rand.Int63()
+	return fmt.Sprintf("%s.READ.%016x", path, readID)
+}
+
 func TryLockRemoteWrite(ctx context.Context, storage ExternalStorage, path, hint string) (lock RemoteLock, err error) {
-	target := fmt.Sprintf("%s.WRIT", path)
-	writer := ExclusiveWrite{
+	target := writeLockName(path)
+	writer := ConditionalPut{
 		Target: target,
 		Content: func(txnID uuid.UUID) []byte {
 			meta := MakeLockMeta(hint)
@@ -253,7 +263,7 @@ func TryLockRemoteWrite(ctx context.Context, storage ExternalStorage, path, hint
 			res, err := json.Marshal(meta)
 			if err != nil {
 				log.Panic(
-					"Unreachable: a trivial object cannot be marshaled to JSON.",
+					"Unreachable: a plain object cannot be marshaled to JSON.",
 					zap.String("path", path),
 					logutil.ShortError(err),
 				)
@@ -275,10 +285,9 @@ func TryLockRemoteWrite(ctx context.Context, storage ExternalStorage, path, hint
 }
 
 func TryLockRemoteRead(ctx context.Context, storage ExternalStorage, path, hint string) (lock RemoteLock, err error) {
-	readID := rand.Int63()
-	target := fmt.Sprintf("%s.READ.%016x", path, readID)
-	writeLock := fmt.Sprintf("%s.WRIT", target)
-	writer := ExclusiveWrite{
+	target := newReadLockName(path)
+	writeLock := writeLockName(path)
+	writer := ConditionalPut{
 		Target: target,
 		Content: func(txnID uuid.UUID) []byte {
 			meta := MakeLockMeta(hint)
@@ -302,7 +311,8 @@ func TryLockRemoteRead(ctx context.Context, storage ExternalStorage, path, hint 
 	lock.path = target
 	lock.txnID, err = writer.CommitTo(ctx, storage)
 	if err != nil {
-		err = errors.Annotatef(err, "there is something about the lock: %s", tryFetchRemoteLock(ctx, storage, writeLock))
+		err = errors.Annotatef(err, "failed to commit the lock due to existing lock: "+
+			"there is something about the lock: %s", tryFetchRemoteLock(ctx, storage, writeLock))
 	}
 
 	return

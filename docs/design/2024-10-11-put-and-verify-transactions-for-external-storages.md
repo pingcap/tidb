@@ -9,10 +9,10 @@ Sometimes, we need to control concurrency access to the same backup archive, lik
 
 - When compacting / restoring, we want to block migrating to a new version. 
 - When migrating the backup storage to a new version, we want to forbid reading.
-- When truncating the storage, we don't want another trancating operation happen.
+- When truncating the storage, we don't want another truncating operation happen.
 - When backing up, we don't want another backup uses the same storage.
 
-But external storage locking isn't trivial. Simply putting a lock file isn't safe enough: because after checking there isn't such a lock file, another one may write it immediately. Object locks provide stronger consistency, but also require extra configuration and permissions.
+But external storage locking isn't trivial. Simply putting a lock file isn't safe enough: because after checking there isn't such a lock file, another one may write it immediately. Object locks provide stronger consistency, but also require extra configuration and permissions. Most object storages also support "conditional write", which is lighter-weighted than object locks in the concurrency control scenario. But both object locks and conditional write are focus on "entities", the available conditions are restricted: you cannot say, "if the prefix `/competitor` doesn't contain any file, write `/me`.", at least for now (mid 2024).
 
 This proposal will propose a new procedure for locking / unlocking, which is safe in all object storages that have a *strong consistency* guarantee over its PUT, GET and LIST API. This has been promised in:
 
