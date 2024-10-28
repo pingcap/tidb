@@ -22,16 +22,16 @@ import (
 	"go.uber.org/zap"
 )
 
-// ConditionalPut is a write that in a strong consistency storage.
+// conditionalPut is a write that in a strong consistency storage.
 //
 // It provides a `Verify` hook and a `VerifyWriteContext`, you may check
 // the conditions you wanting there.
 //
-// if the write is success and the file wasn't deleted, no other `ConditionalPut`
+// if the write is success and the file wasn't deleted, no other `conditionalPut`
 // over the same file was success.
 //
 // For more details, check docs/design/2024-10-11-put-and-verify-transactions-for-external-storages.md.
-type ConditionalPut struct {
+type conditionalPut struct {
 	// Target is the target file of this txn.
 	// There shouldn't be other files shares this prefix with this file, or the txn will fail.
 	Target string
@@ -62,7 +62,7 @@ func (cx *VerifyWriteContext) IntentFileName() string {
 // In each phase, before writing, it will verify whether the storage is suitable for writing, that is:
 // - There shouldn't be any other intention files.
 // - Verify() returns no error. (If there is one.)
-func (w ConditionalPut) CommitTo(ctx context.Context, s ExternalStorage) (uuid.UUID, error) {
+func (w conditionalPut) CommitTo(ctx context.Context, s ExternalStorage) (uuid.UUID, error) {
 	txnID := uuid.New()
 	cx := VerifyWriteContext{
 		Context: ctx,
@@ -195,7 +195,7 @@ func tryFetchRemoteLock(ctx context.Context, storage ExternalStorage, path strin
 // This isn't a strict lock like flock in linux: that means, the lock might be forced removed by
 // manually deleting the "lock file" in external storage.
 func TryLockRemote(ctx context.Context, storage ExternalStorage, path, hint string) (lock RemoteLock, err error) {
-	writer := ConditionalPut{
+	writer := conditionalPut{
 		Target: path,
 		Content: func(txnID uuid.UUID) []byte {
 			meta := MakeLockMeta(hint)
@@ -255,7 +255,7 @@ func newReadLockName(path string) string {
 
 func TryLockRemoteWrite(ctx context.Context, storage ExternalStorage, path, hint string) (lock RemoteLock, err error) {
 	target := writeLockName(path)
-	writer := ConditionalPut{
+	writer := conditionalPut{
 		Target: target,
 		Content: func(txnID uuid.UUID) []byte {
 			meta := MakeLockMeta(hint)
@@ -287,7 +287,7 @@ func TryLockRemoteWrite(ctx context.Context, storage ExternalStorage, path, hint
 func TryLockRemoteRead(ctx context.Context, storage ExternalStorage, path, hint string) (lock RemoteLock, err error) {
 	target := newReadLockName(path)
 	writeLock := writeLockName(path)
-	writer := ConditionalPut{
+	writer := conditionalPut{
 		Target: target,
 		Content: func(txnID uuid.UUID) []byte {
 			meta := MakeLockMeta(hint)
