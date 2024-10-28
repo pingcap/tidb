@@ -139,7 +139,7 @@ func TestPhysicalOptimizerTrace(t *testing.T) {
 	require.NoError(t, err)
 	flag := uint64(0)
 	// flagGcSubstitute | flagStabilizeResults | flagSkewDistinctAgg | flagEliminateOuterJoin | flagPushDownAgg
-	flag |= flag | 1<<1 | 1<<3 | 1<<8 | 1<<14 | 1<<17
+	flag |= flag | 1<<1 | 1<<3 | 1<<8 | 1<<15 | 1<<18
 	_, _, err = core.DoOptimize(context.TODO(), sctx, flag, plan.(base.LogicalPlan))
 	require.NoError(t, err)
 	otrace := sctx.GetSessionVars().StmtCtx.OptimizeTracer.Physical
