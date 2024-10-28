@@ -782,33 +782,20 @@ func (p *immutable) loadTable(sctx sessionctx.Context, sql string,
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnPrivilege)
 
 	sql = addUserFilterCondition(sql, userList)
-	rs, err := sctx.GetSQLExecutor().ExecuteInternal(ctx, sql)
+	rows, fs, err := sctx.GetRestrictedSQLExecutor().ExecRestrictedSQL(ctx, nil, sql)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	defer terror.Call(rs.Close)
-	fs := rs.Fields()
-	req := rs.NewChunk(nil)
-	for {
-		err = rs.Next(context.TODO(), req)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		if req.NumRows() == 0 {
-			return nil
-		}
-		it := chunk.NewIterator4Chunk(req)
-		for row := it.Begin(); row != it.End(); row = it.Next() {
-			err = decodeTableRow(row, fs)
-			if err != nil {
-				return errors.Trace(err)
-			}
-		}
+	for _, row := range rows {
 		// NOTE: decodeTableRow decodes data from a chunk Row, that is a shallow copy.
 		// The result will reference memory in the chunk, so the chunk must not be reused
 		// here, otherwise some werid bug will happen!
-		req = chunk.Renew(req, sctx.GetSessionVars().MaxChunkSize)
+		err = decodeTableRow(row, fs)
+		if err != nil {
+			return errors.Trace(err)
+		}
 	}
+	return nil
 }
 
 // parseHostIPNet parses an IPv4 address and its subnet mask (e.g. `127.0.0.0/255.255.255.0`),
