@@ -8,13 +8,22 @@ go_test(
         "main_test.go",
     ],
     flaky = True,
+<<<<<<< HEAD:pkg/statistics/handle/handletest/initstats/BUILD.bazel
+=======
+    shard_count = 11,
+>>>>>>> 38187e5b1d6 (txn: fix issue innodb_lock_wait_timeout doesn't work in some case (#56847)):pkg/executor/test/txn/BUILD.bazel
     deps = [
         "//pkg/config",
         "//pkg/parser/model",
         "//pkg/statistics/handle",
         "//pkg/statistics/handle/util",
         "//pkg/testkit",
+<<<<<<< HEAD:pkg/statistics/handle/handletest/initstats/BUILD.bazel
         "//pkg/testkit/testsetup",
+=======
+        "//pkg/testkit/testfailpoint",
+        "@com_github_pingcap_failpoint//:failpoint",
+>>>>>>> 38187e5b1d6 (txn: fix issue innodb_lock_wait_timeout doesn't work in some case (#56847)):pkg/executor/test/txn/BUILD.bazel
         "@com_github_stretchr_testify//require",
         "@org_uber_go_goleak//:goleak",
     ],
