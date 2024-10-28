@@ -58,7 +58,8 @@ func TestOptionalPropKeySet(t *testing.T) {
 		Add(OptPropKVStore).
 		Add(OptPropSQLExecutor).
 		Add(OptPropSequenceOperator).
-		Add(OptPropAdvisoryLock)
+		Add(OptPropAdvisoryLock).
+		Add(OptPropPrivilegeChecker)
 	require.True(t, keySet4.IsFull())
 	require.False(t, keySet4.IsEmpty())
 }

@@ -22,7 +22,6 @@ import (
 	"time"
 
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/ddl/testutil"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/errno"
@@ -262,7 +261,6 @@ func TestCancelVariousJobs(t *testing.T) {
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/MockCheckVectorIndexProcess", `return(2048)`)
 
 	// Change some configurations.
-	ddl.ReorgWaitTimeout = 10 * time.Millisecond
 	tk.MustExec("set @@tidb_ddl_reorg_batch_size = 8")
 	tk.MustExec("set @@tidb_ddl_reorg_worker_cnt = 1")
 	tk = testkit.NewTestKit(t, store)

@@ -262,6 +262,58 @@ func TestInstancePlanCachePrivilegeChanges(t *testing.T) {
 	u1.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1")) // hit the cache again
 }
 
+func TestInstancePlanCacheDifferentCollation(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`use test`)
+	tk.MustExec(`set global tidb_enable_instance_plan_cache=1`)
+	tk.MustExec(`create table t (a int, b int)`)
+
+	u1 := testkit.NewTestKit(t, store)
+	u1.MustExec(`use test`)
+	u1.MustExec(`prepare st from 'select a from t where a=1'`)
+	u1.MustExec(`execute st`)
+	u1.MustExec(`execute st`)
+	u1.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
+	u2 := testkit.NewTestKit(t, store)
+	u2.MustExec(`use test`)
+	u2.MustExec(`set @@collation_connection=utf8mb4_0900_ai_ci`)
+	u2.MustExec(`prepare st from 'select a from t where a=1'`)
+	u2.MustExec(`execute st`)
+	u2.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0"))
+	u3 := testkit.NewTestKit(t, store)
+	u3.MustExec(`use test`)
+	u3.MustExec(`prepare st from 'select a from t where a=1'`)
+	u3.MustExec(`execute st`)
+	u3.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
+}
+
+func TestInstancePlanCacheDifferentCharset(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`use test`)
+	tk.MustExec(`set global tidb_enable_instance_plan_cache=1`)
+	tk.MustExec(`create table t (a int, b int)`)
+
+	u1 := testkit.NewTestKit(t, store)
+	u1.MustExec(`use test`)
+	u1.MustExec(`prepare st from 'select a from t where a=1'`)
+	u1.MustExec(`execute st`)
+	u1.MustExec(`execute st`)
+	u1.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
+	u2 := testkit.NewTestKit(t, store)
+	u2.MustExec(`use test`)
+	u2.MustExec(`set @@character_set_connection=latin1`)
+	u2.MustExec(`prepare st from 'select a from t where a=1'`)
+	u2.MustExec(`execute st`)
+	u2.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0"))
+	u3 := testkit.NewTestKit(t, store)
+	u3.MustExec(`use test`)
+	u3.MustExec(`prepare st from 'select a from t where a=1'`)
+	u3.MustExec(`execute st`)
+	u3.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
+}
+
 func TestInstancePlanCacheDifferentUsers(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)

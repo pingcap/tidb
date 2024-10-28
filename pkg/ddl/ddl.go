@@ -61,6 +61,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/gcutil"
 	"github.com/pingcap/tidb/pkg/util/generic"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	atomicutil "go.uber.org/atomic"
 	"go.uber.org/zap"
@@ -211,6 +212,7 @@ func NewJobWrapper(job *model.Job, idAllocated bool) *JobWrapper {
 	return &JobWrapper{
 		Job:         job,
 		IDAllocated: idAllocated,
+		JobArgs:     &model.EmptyArgs{},
 		ResultCh:    []chan jobSubmitResult{make(chan jobSubmitResult)},
 	}
 }
@@ -226,13 +228,24 @@ func NewJobWrapperWithArgs(job *model.Job, args model.JobArgs, idAllocated bool)
 	}
 }
 
+// FillArgsWithSubJobs fill args for job and its sub jobs
+func (jobW *JobWrapper) FillArgsWithSubJobs() {
+	if jobW.Type != model.ActionMultiSchemaChange {
+		jobW.FillArgs(jobW.JobArgs)
+	} else {
+		for _, sub := range jobW.MultiSchemaInfo.SubJobs {
+			sub.FillArgs(jobW.Version)
+		}
+	}
+}
+
 // NotifyResult notifies the job submit result.
-func (t *JobWrapper) NotifyResult(err error) {
-	merged := len(t.ResultCh) > 1
-	for _, resultCh := range t.ResultCh {
+func (jobW *JobWrapper) NotifyResult(err error) {
+	merged := len(jobW.ResultCh) > 1
+	for _, resultCh := range jobW.ResultCh {
 		resultCh <- jobSubmitResult{
 			err:    err,
-			jobID:  t.ID,
+			jobID:  jobW.ID,
 			merged: merged,
 		}
 	}
@@ -249,6 +262,7 @@ type ddl struct {
 	enableTiFlashPoll *atomicutil.Bool
 	sysTblMgr         systable.Manager
 	minJobIDRefresher *systable.MinJobIDRefresher
+	eventPublishStore notifier.Store
 
 	executor     *executor
 	jobSubmitter *JobSubmitter
@@ -518,18 +532,6 @@ func (dc *ddlCtx) removeReorgCtx(jobID int64) {
 	}
 }
 
-func (dc *ddlCtx) notifyReorgWorkerJobStateChange(job *model.Job) {
-	rc := dc.getReorgCtx(job.ID)
-	if rc == nil {
-		logutil.DDLLogger().Warn("cannot find reorgCtx", zap.Int64("Job ID", job.ID))
-		return
-	}
-	logutil.DDLLogger().Info("notify reorg worker the job's state",
-		zap.Int64("Job ID", job.ID), zap.Stringer("Job State", job.State),
-		zap.Stringer("Schema State", job.SchemaState))
-	rc.notifyJobState(job.State)
-}
-
 // EnableTiFlashPoll enables TiFlash poll loop aka PollTiFlashReplicaStatus.
 func EnableTiFlashPoll(d any) {
 	if dd, ok := d.(*ddl); ok {
@@ -558,28 +560,58 @@ func (d *ddl) RegisterStatsHandle(h *handle.Handle) {
 	d.ddlEventCh = h.DDLEventCh()
 }
 
+const noSubJob int64 = -1 // noSubJob indicates the event is not a merged ddl.
+
 // asyncNotifyEvent will notify the ddl event to outside world, say statistic handle. When the channel is full, we may
 // give up notify and log it.
-func asyncNotifyEvent(jobCtx *jobContext, e *notifier.SchemaChangeEvent, job *model.Job) {
+// subJobID is used to identify the sub job in a merged ddl, such as create tables, should pass noSubJob(-1) if not a merged ddl.
+func asyncNotifyEvent(jobCtx *jobContext, e *notifier.SchemaChangeEvent, job *model.Job, subJobID int64, sctx *sess.Session) error {
 	// skip notify for system databases, system databases are expected to change at
 	// bootstrap and other nodes can also handle the changing in its bootstrap rather
 	// than be notified.
 	if tidbutil.IsMemOrSysDB(job.SchemaName) {
-		return
+		return nil
 	}
 
 	ch := jobCtx.oldDDLCtx.ddlEventCh
 	if ch != nil {
+	forLoop:
 		for i := 0; i < 10; i++ {
 			select {
 			case ch <- e:
-				return
+				break forLoop
 			default:
 				time.Sleep(time.Microsecond * 10)
 			}
 		}
 		logutil.DDLLogger().Warn("fail to notify DDL event", zap.Stringer("event", e))
 	}
+
+	if intest.InTest && jobCtx.eventPublishStore != nil {
+		failpoint.Inject("asyncNotifyEventError", func() {
+			failpoint.Return(errors.New("mock publish event error"))
+		})
+		if subJobID == noSubJob && job.MultiSchemaInfo != nil {
+			subJobID = int64(job.MultiSchemaInfo.Seq)
+		}
+		err := notifier.PubSchemeChangeToStore(
+			jobCtx.stepCtx,
+			sctx,
+			job.ID,
+			subJobID,
+			e,
+			jobCtx.eventPublishStore,
+		)
+		if err != nil {
+			logutil.DDLLogger().Error("Error publish schema change event",
+				zap.Int64("jobID", job.ID),
+				zap.Int64("subJobID", subJobID),
+				zap.String("event", e.String()), zap.Error(err))
+			return err
+		}
+		return nil
+	}
+	return nil
 }
 
 // NewDDL creates a new DDL.
@@ -642,6 +674,7 @@ func newDDL(ctx context.Context, options ...Option) (*ddl, *executor) {
 	d := &ddl{
 		ddlCtx:            ddlCtx,
 		enableTiFlashPoll: atomicutil.NewBool(true),
+		eventPublishStore: opt.EventPublishStore,
 	}
 
 	taskexecutor.RegisterTaskType(proto.Backfill,
@@ -1368,12 +1401,14 @@ func processJobs(
 
 		failpoint.Inject("mockCommitFailedOnDDLCommand", func(val failpoint.Value) {
 			if val.(bool) {
+				ns.Rollback()
 				failpoint.Return(jobErrs, errors.New("mock commit failed on admin command on ddl jobs"))
 			}
 		})
 
 		// There may be some conflict during the update, try it again
 		if err = ns.Commit(ctx); err != nil {
+			ns.Rollback()
 			continue
 		}
 

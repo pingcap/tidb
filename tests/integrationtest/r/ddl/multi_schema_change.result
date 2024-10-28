@@ -432,7 +432,7 @@ alter table t add index i(a), add primary key (a);
 show create table t;
 Table	Create Table
 t	CREATE TABLE `t` (
-  `a` int(11) NOT NULL,
+  `a` int NOT NULL,
   KEY `i` (`a`),
   PRIMARY KEY (`a`) /*T![clustered_index] NONCLUSTERED */
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin

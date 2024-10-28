@@ -250,6 +250,8 @@ func TestDDLTableCreateBackfillTable(t *testing.T) {
 	m.SetDDLTables(meta.MDLTableVersion)
 	MustExec(t, se, "drop table mysql.tidb_background_subtask")
 	MustExec(t, se, "drop table mysql.tidb_background_subtask_history")
+	// TODO(lance6716): remove it after tidb_ddl_notifier GA
+	MustExec(t, se, "drop table mysql.tidb_ddl_notifier")
 	err = txn.Commit(context.Background())
 	require.NoError(t, err)
 
@@ -269,12 +271,6 @@ func revertVersionAndVariables(t *testing.T, se sessiontypes.Session, ver int) {
 	if ver <= version195 {
 		// for version <= version195, tidb_enable_dist_task should be disabled before upgrade
 		MustExec(t, se, "update mysql.global_variables set variable_value='off' where variable_name='tidb_enable_dist_task'")
-	}
-	if ver < version212 && ver >= version172 {
-		// for version < version212, revert column changes related to function `upgradeToVer212`.
-		// related tables created after version172.
-		MustExec(t, se, "ALTER TABLE mysql.tidb_runaway_queries RENAME COLUMN `start_time` TO `time`")
-		MustExec(t, se, "ALTER TABLE mysql.tidb_runaway_queries RENAME COLUMN `sample_sql` TO `original_sql`")
 	}
 }
 
@@ -2433,8 +2429,6 @@ func TestTiDBUpgradeToVer212(t *testing.T) {
 	err = m.FinishBootstrap(int64(ver198))
 	require.NoError(t, err)
 	revertVersionAndVariables(t, seV198, ver198)
-	// simulate a real ver198 where mysql.tidb_runaway_queries` doesn't have `start_time`/`sample_sql` columns yet.
-	MustExec(t, seV198, "select original_sql, time from mysql.tidb_runaway_queries")
 	err = txn.Commit(context.Background())
 	require.NoError(t, err)
 	unsetStoreBootstrapped(store.UUID())

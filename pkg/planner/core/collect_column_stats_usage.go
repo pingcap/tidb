@@ -31,8 +31,7 @@ import (
 )
 
 const (
-	collectPredicateColumns uint64 = 1 << iota
-	collectHistNeededColumns
+	collectHistNeededColumns uint64 = 1 << iota
 )
 
 // columnStatsUsageCollector collects predicate columns and/or histogram-needed columns from logical plan.
@@ -73,10 +72,8 @@ func newColumnStatsUsageCollector(collectMode uint64, enabledPlanCapture bool) *
 		cols:              make([]*expression.Column, 0, 8),
 		visitedPhysTblIDs: &set,
 	}
-	if collectMode&collectPredicateColumns != 0 {
-		collector.predicateCols = make(map[model.TableItemID]struct{})
-		collector.colMap = make(map[int64]map[model.TableItemID]struct{})
-	}
+	collector.predicateCols = make(map[model.TableItemID]struct{})
+	collector.colMap = make(map[int64]map[model.TableItemID]struct{})
 	if collectMode&collectHistNeededColumns != 0 {
 		collector.histNeededCols = make(map[model.TableItemID]bool)
 	}
@@ -239,102 +236,100 @@ func (c *columnStatsUsageCollector) collectFromPlan(lp base.LogicalPlan) {
 	for _, child := range lp.Children() {
 		c.collectFromPlan(child)
 	}
-	if c.collectMode&collectPredicateColumns != 0 {
-		switch x := lp.(type) {
-		case *logicalop.DataSource:
-			c.collectPredicateColumnsForDataSource(x)
-		case *logicalop.LogicalIndexScan:
-			c.collectPredicateColumnsForDataSource(x.Source)
-			c.addPredicateColumnsFromExpressions(x.AccessConds)
-		case *logicalop.LogicalTableScan:
-			c.collectPredicateColumnsForDataSource(x.Source)
-			c.addPredicateColumnsFromExpressions(x.AccessConds)
-		case *logicalop.LogicalProjection:
-			// Schema change from children to self.
-			schema := x.Schema()
-			for i, expr := range x.Exprs {
-				c.updateColMapFromExpressions(schema.Columns[i], []expression.Expression{expr})
+	switch x := lp.(type) {
+	case *logicalop.DataSource:
+		c.collectPredicateColumnsForDataSource(x)
+	case *logicalop.LogicalIndexScan:
+		c.collectPredicateColumnsForDataSource(x.Source)
+		c.addPredicateColumnsFromExpressions(x.AccessConds)
+	case *logicalop.LogicalTableScan:
+		c.collectPredicateColumnsForDataSource(x.Source)
+		c.addPredicateColumnsFromExpressions(x.AccessConds)
+	case *logicalop.LogicalProjection:
+		// Schema change from children to self.
+		schema := x.Schema()
+		for i, expr := range x.Exprs {
+			c.updateColMapFromExpressions(schema.Columns[i], []expression.Expression{expr})
+		}
+	case *logicalop.LogicalSelection:
+		// Though the conditions in LogicalSelection are complex conditions which cannot be pushed down to DataSource, we still
+		// regard statistics of the columns in the conditions as needed.
+		c.addPredicateColumnsFromExpressions(x.Conditions)
+	case *logicalop.LogicalAggregation:
+		// Just assume statistics of all the columns in GroupByItems are needed.
+		c.addPredicateColumnsFromExpressions(x.GroupByItems)
+		// Schema change from children to self.
+		schema := x.Schema()
+		for i, aggFunc := range x.AggFuncs {
+			c.updateColMapFromExpressions(schema.Columns[i], aggFunc.Args)
+		}
+	case *logicalop.LogicalWindow:
+		// Statistics of the columns in LogicalWindow.PartitionBy are used in optimizeByShuffle4Window.
+		// We don't use statistics of the columns in LogicalWindow.OrderBy currently.
+		for _, item := range x.PartitionBy {
+			c.addPredicateColumn(item.Col)
+		}
+		// Schema change from children to self.
+		windowColumns := x.GetWindowResultColumns()
+		for i, col := range windowColumns {
+			c.updateColMapFromExpressions(col, x.WindowFuncDescs[i].Args)
+		}
+	case *logicalop.LogicalJoin:
+		c.collectPredicateColumnsForJoin(x)
+	case *logicalop.LogicalApply:
+		c.collectPredicateColumnsForJoin(&x.LogicalJoin)
+		// Assume statistics of correlated columns are needed.
+		// Correlated columns can be found in LogicalApply.Children()[0].Schema(). Since we already visit LogicalApply.Children()[0],
+		// correlated columns must have existed in columnStatsUsageCollector.colMap.
+		for _, corCols := range x.CorCols {
+			c.addPredicateColumn(&corCols.Column)
+		}
+	case *logicalop.LogicalSort:
+		// Assume statistics of all the columns in ByItems are needed.
+		for _, item := range x.ByItems {
+			c.addPredicateColumnsFromExpressions([]expression.Expression{item.Expr})
+		}
+	case *logicalop.LogicalTopN:
+		// Assume statistics of all the columns in ByItems are needed.
+		for _, item := range x.ByItems {
+			c.addPredicateColumnsFromExpressions([]expression.Expression{item.Expr})
+		}
+	case *logicalop.LogicalUnionAll:
+		c.collectPredicateColumnsForUnionAll(x)
+	case *logicalop.LogicalPartitionUnionAll:
+		c.collectPredicateColumnsForUnionAll(&x.LogicalUnionAll)
+	case *logicalop.LogicalCTE:
+		// Visit SeedPartLogicalPlan and RecursivePartLogicalPlan first.
+		c.collectFromPlan(x.Cte.SeedPartLogicalPlan)
+		if x.Cte.RecursivePartLogicalPlan != nil {
+			c.collectFromPlan(x.Cte.RecursivePartLogicalPlan)
+		}
+		// Schema change from seedPlan/recursivePlan to self.
+		columns := x.Schema().Columns
+		seedColumns := x.Cte.SeedPartLogicalPlan.Schema().Columns
+		var recursiveColumns []*expression.Column
+		if x.Cte.RecursivePartLogicalPlan != nil {
+			recursiveColumns = x.Cte.RecursivePartLogicalPlan.Schema().Columns
+		}
+		relatedCols := make([]*expression.Column, 0, 2)
+		for i, col := range columns {
+			relatedCols = append(relatedCols[:0], seedColumns[i])
+			if recursiveColumns != nil {
+				relatedCols = append(relatedCols, recursiveColumns[i])
 			}
-		case *logicalop.LogicalSelection:
-			// Though the conditions in LogicalSelection are complex conditions which cannot be pushed down to DataSource, we still
-			// regard statistics of the columns in the conditions as needed.
-			c.addPredicateColumnsFromExpressions(x.Conditions)
-		case *logicalop.LogicalAggregation:
-			// Just assume statistics of all the columns in GroupByItems are needed.
-			c.addPredicateColumnsFromExpressions(x.GroupByItems)
-			// Schema change from children to self.
-			schema := x.Schema()
-			for i, aggFunc := range x.AggFuncs {
-				c.updateColMapFromExpressions(schema.Columns[i], aggFunc.Args)
+			c.updateColMap(col, relatedCols)
+		}
+		// If IsDistinct is true, then we use getColsNDV to calculate row count(see (*LogicalCTE).DeriveStat). In this case
+		// statistics of all the columns are needed.
+		if x.Cte.IsDistinct {
+			for _, col := range columns {
+				c.addPredicateColumn(col)
 			}
-		case *logicalop.LogicalWindow:
-			// Statistics of the columns in LogicalWindow.PartitionBy are used in optimizeByShuffle4Window.
-			// We don't use statistics of the columns in LogicalWindow.OrderBy currently.
-			for _, item := range x.PartitionBy {
-				c.addPredicateColumn(item.Col)
-			}
-			// Schema change from children to self.
-			windowColumns := x.GetWindowResultColumns()
-			for i, col := range windowColumns {
-				c.updateColMapFromExpressions(col, x.WindowFuncDescs[i].Args)
-			}
-		case *logicalop.LogicalJoin:
-			c.collectPredicateColumnsForJoin(x)
-		case *logicalop.LogicalApply:
-			c.collectPredicateColumnsForJoin(&x.LogicalJoin)
-			// Assume statistics of correlated columns are needed.
-			// Correlated columns can be found in LogicalApply.Children()[0].Schema(). Since we already visit LogicalApply.Children()[0],
-			// correlated columns must have existed in columnStatsUsageCollector.colMap.
-			for _, corCols := range x.CorCols {
-				c.addPredicateColumn(&corCols.Column)
-			}
-		case *logicalop.LogicalSort:
-			// Assume statistics of all the columns in ByItems are needed.
-			for _, item := range x.ByItems {
-				c.addPredicateColumnsFromExpressions([]expression.Expression{item.Expr})
-			}
-		case *logicalop.LogicalTopN:
-			// Assume statistics of all the columns in ByItems are needed.
-			for _, item := range x.ByItems {
-				c.addPredicateColumnsFromExpressions([]expression.Expression{item.Expr})
-			}
-		case *logicalop.LogicalUnionAll:
-			c.collectPredicateColumnsForUnionAll(x)
-		case *logicalop.LogicalPartitionUnionAll:
-			c.collectPredicateColumnsForUnionAll(&x.LogicalUnionAll)
-		case *logicalop.LogicalCTE:
-			// Visit SeedPartLogicalPlan and RecursivePartLogicalPlan first.
-			c.collectFromPlan(x.Cte.SeedPartLogicalPlan)
-			if x.Cte.RecursivePartLogicalPlan != nil {
-				c.collectFromPlan(x.Cte.RecursivePartLogicalPlan)
-			}
-			// Schema change from seedPlan/recursivePlan to self.
-			columns := x.Schema().Columns
-			seedColumns := x.Cte.SeedPartLogicalPlan.Schema().Columns
-			var recursiveColumns []*expression.Column
-			if x.Cte.RecursivePartLogicalPlan != nil {
-				recursiveColumns = x.Cte.RecursivePartLogicalPlan.Schema().Columns
-			}
-			relatedCols := make([]*expression.Column, 0, 2)
-			for i, col := range columns {
-				relatedCols = append(relatedCols[:0], seedColumns[i])
-				if recursiveColumns != nil {
-					relatedCols = append(relatedCols, recursiveColumns[i])
-				}
-				c.updateColMap(col, relatedCols)
-			}
-			// If IsDistinct is true, then we use getColsNDV to calculate row count(see (*LogicalCTE).DeriveStat). In this case
-			// statistics of all the columns are needed.
-			if x.Cte.IsDistinct {
-				for _, col := range columns {
-					c.addPredicateColumn(col)
-				}
-			}
-		case *logicalop.LogicalCTETable:
-			// Schema change from seedPlan to self.
-			for i, col := range x.Schema().Columns {
-				c.updateColMap(col, []*expression.Column{x.SeedSchema.Columns[i]})
-			}
+		}
+	case *logicalop.LogicalCTETable:
+		// Schema change from seedPlan to self.
+		for i, col := range x.Schema().Columns {
+			c.updateColMap(col, []*expression.Column{x.SeedSchema.Columns[i]})
 		}
 	}
 	// Histogram-needed columns are the columns which occur in the conditions pushed down to DataSource.
@@ -356,6 +351,7 @@ func (c *columnStatsUsageCollector) collectFromPlan(lp base.LogicalPlan) {
 
 // CollectColumnStatsUsage collects column stats usage from logical plan.
 // predicate indicates whether to collect predicate columns and histNeeded indicates whether to collect histogram-needed columns.
+// The predicate columns are always collected while the histNeeded columns are depending on whether we use sync load.
 // First return value: predicate columns
 // Second return value: histogram-needed columns (nil if histNeeded is false)
 // Third return value: ds.PhysicalTableID from all DataSource (always collected)
@@ -365,8 +361,6 @@ func CollectColumnStatsUsage(lp base.LogicalPlan, histNeeded bool) (
 	*intset.FastIntSet,
 ) {
 	var mode uint64
-	// Always collect predicate columns.
-	mode |= collectPredicateColumns
 	if histNeeded {
 		mode |= collectHistNeededColumns
 	}
