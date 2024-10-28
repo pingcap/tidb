@@ -182,8 +182,8 @@ func (w *worker) onCreateTable(jobCtx *jobContext, job *model.Job) (ver int64, _
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
-	createTableEvent := notifier.NewCreateTablesEvent([]*model.TableInfo{tbInfo})
-	err = asyncNotifyEvent(jobCtx, createTableEvent, job, w.sess)
+	createTableEvent := notifier.NewCreateTableEvent(tbInfo)
+	err = asyncNotifyEvent(jobCtx, createTableEvent, job, noSubJob, w.sess)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
@@ -217,8 +217,8 @@ func (w *worker) createTableWithForeignKeys(jobCtx *jobContext, job *model.Job, 
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
-		createTableEvent := notifier.NewCreateTablesEvent([]*model.TableInfo{tbInfo})
-		err = asyncNotifyEvent(jobCtx, createTableEvent, job, w.sess)
+		createTableEvent := notifier.NewCreateTableEvent(tbInfo)
+		err = asyncNotifyEvent(jobCtx, createTableEvent, job, noSubJob, w.sess)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
@@ -247,7 +247,6 @@ func (w *worker) onCreateTables(jobCtx *jobContext, job *model.Job) (int64, erro
 	//
 	// it clones a stub job from the ActionCreateTables job
 	stubJob := job.Clone()
-	stubJob.Args = make([]any, 1)
 	for i := range args.Tables {
 		tblArgs := args.Tables[i]
 		tableInfo := tblArgs.TableInfo
@@ -268,15 +267,16 @@ func (w *worker) onCreateTables(jobCtx *jobContext, job *model.Job) (int64, erro
 			tableInfos = append(tableInfos, tbInfo)
 		}
 	}
-
 	ver, err = updateSchemaVersion(jobCtx, job)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
-	createTablesEvent := notifier.NewCreateTablesEvent(tableInfos)
-	err = asyncNotifyEvent(jobCtx, createTablesEvent, job, w.sess)
-	if err != nil {
-		return ver, errors.Trace(err)
+	for i := range tableInfos {
+		createTableEvent := notifier.NewCreateTableEvent(tableInfos[i])
+		err = asyncNotifyEvent(jobCtx, createTableEvent, job, int64(i), w.sess)
+		if err != nil {
+			return ver, errors.Trace(err)
+		}
 	}
 
 	job.State = model.JobStateDone
@@ -1274,10 +1274,14 @@ func BuildTableInfo(
 					tbInfo.CommonHandleVersion = 1
 				}
 			}
-			if tbInfo.HasClusteredIndex() {
+			if tbInfo.HasClusteredIndex() && constr.Option != nil {
 				// Primary key cannot be invisible.
-				if constr.Option != nil && constr.Option.Visibility == ast.IndexVisibilityInvisible {
+				if constr.Option.Visibility == ast.IndexVisibilityInvisible {
 					return nil, dbterror.ErrPKIndexCantBeInvisible
+				}
+				// A clustered index cannot be a global index.
+				if constr.Option.Global {
+					return nil, dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("create an index that is both a global index and a clustered index")
 				}
 			}
 			if tbInfo.PKIsHandle {

@@ -100,6 +100,12 @@ func detachColumnDNFConditions(sctx expression.BuildContext, conditions []expres
 // in function which is `column in (constant list)`.
 // If so, it will return the offset of this column in the slice, otherwise return -1 for not found.
 // Since combining `x >= 2` and `x <= 2` can lead to an eq condition `x = 2`, we take le/ge/lt/gt into consideration.
+//
+// Notice: in points2EqOrInCond, when we convert points to acess condition reversely,
+// we will build isnull func again from a single point range with null value,
+// when we find the ref col is with not null flag, it will output zero constant
+// which breaks the function check outside. That's why we abandon the nulleq range detecting,
+// treat it as non-eq-in condition for later range build.
 func getPotentialEqOrInColOffset(sctx *rangerctx.RangerContext, expr expression.Expression, cols []*expression.Column) int {
 	evalCtx := sctx.ExprCtx.GetEvalCtx()
 	f, ok := expr.(*expression.ScalarFunction)
@@ -132,7 +138,7 @@ func getPotentialEqOrInColOffset(sctx *rangerctx.RangerContext, expr expression.
 			}
 			if constVal, ok := f.GetArgs()[1].(*expression.Constant); ok {
 				val, err := constVal.Eval(evalCtx, chunk.Row{})
-				if err != nil || (!sctx.RegardNULLAsPoint && val.IsNull()) {
+				if err != nil || (!sctx.RegardNULLAsPoint && val.IsNull()) || (f.FuncName.L == ast.NullEQ && val.IsNull()) {
 					// treat col<=>null as range scan instead of point get to avoid incorrect results
 					// when nullable unique index has multiple matches for filter x is null
 					return -1

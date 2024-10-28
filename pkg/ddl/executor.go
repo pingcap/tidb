@@ -67,7 +67,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/domainutil"
 	"github.com/pingcap/tidb/pkg/util/generic"
-	"github.com/pingcap/tidb/pkg/util/mathutil"
 	"github.com/pingcap/tidb/pkg/util/stringutil"
 	"github.com/tikv/client-go/v2/oracle"
 	pdhttp "github.com/tikv/pd/client/http"
@@ -2013,7 +2012,6 @@ func (e *executor) multiSchemaChange(ctx sessionctx.Context, ti ast.Ident, info 
 		TableName:           t.Meta().Name.L,
 		Type:                model.ActionMultiSchemaChange,
 		BinlogInfo:          &model.HistoryInfo{},
-		Args:                nil,
 		MultiSchemaInfo:     info,
 		ReorgMeta:           nil,
 		CDCWriteSource:      ctx.GetSessionVars().CDCWriteSource,
@@ -2120,7 +2118,7 @@ func adjustNewBaseToNextGlobalID(ctx table.AllocatorContext, t table.Table, tp a
 	// If the user sends SQL `alter table t1 auto_increment = 100` to TiDB-B,
 	// and TiDB-B finds 100 < 30001 but returns without any handling,
 	// then TiDB-A may still allocate 99 for auto_increment column. This doesn't make sense for the user.
-	return int64(mathutil.Max(uint64(newBase), uint64(autoID))), nil
+	return int64(max(uint64(newBase), uint64(autoID))), nil
 }
 
 // ShardRowID shards the implicit row ID by adding shard value to the row ID's first few bits.
@@ -2379,12 +2377,12 @@ func getReplacedPartitionIDs(names []string, pi *model.PartitionInfo) (firstPart
 		if firstPartIdx == -1 {
 			firstPartIdx = partIdx
 		} else {
-			firstPartIdx = mathutil.Min[int](firstPartIdx, partIdx)
+			firstPartIdx = min(firstPartIdx, partIdx)
 		}
 		if lastPartIdx == -1 {
 			lastPartIdx = partIdx
 		} else {
-			lastPartIdx = mathutil.Max[int](lastPartIdx, partIdx)
+			lastPartIdx = max(lastPartIdx, partIdx)
 		}
 	}
 	switch pi.Type {
@@ -4574,6 +4572,8 @@ func (e *executor) CreatePrimaryKey(ctx sessionctx.Context, ti ast.Ident, indexN
 			}
 			validateGlobalIndexWithGeneratedColumns(ctx.GetSessionVars().StmtCtx.ErrCtx(), tblInfo, indexName.O, indexColumns)
 		}
+	} else if indexOption != nil && indexOption.Global {
+		return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("Global Index on non-partitioned table")
 	}
 
 	// May be truncate comment here, when index comment too long and sql_mode is't strict.

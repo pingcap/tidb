@@ -79,7 +79,7 @@ func TestTruncateTable(t *testing.T) {
 		statistics.AutoAnalyzeMinCnt = 1000
 	}()
 
-	pq := priorityqueue.NewAnalysisPriorityQueueV2(h)
+	pq := priorityqueue.NewAnalysisPriorityQueue(h)
 	defer pq.Close()
 	require.NoError(t, pq.Initialize())
 	isEmpty, err := pq.IsEmpty()
@@ -143,7 +143,7 @@ func testTruncatePartitionedTable(
 		statistics.AutoAnalyzeMinCnt = 1000
 	}()
 
-	pq := priorityqueue.NewAnalysisPriorityQueueV2(h)
+	pq := priorityqueue.NewAnalysisPriorityQueue(h)
 	defer pq.Close()
 	require.NoError(t, pq.Initialize())
 	isEmpty, err := pq.IsEmpty()
@@ -190,7 +190,7 @@ func TestDropTable(t *testing.T) {
 		statistics.AutoAnalyzeMinCnt = 1000
 	}()
 
-	pq := priorityqueue.NewAnalysisPriorityQueueV2(h)
+	pq := priorityqueue.NewAnalysisPriorityQueue(h)
 	defer pq.Close()
 	require.NoError(t, pq.Initialize())
 	isEmpty, err := pq.IsEmpty()
@@ -254,7 +254,7 @@ func testDropPartitionedTable(
 		statistics.AutoAnalyzeMinCnt = 1000
 	}()
 
-	pq := priorityqueue.NewAnalysisPriorityQueueV2(h)
+	pq := priorityqueue.NewAnalysisPriorityQueue(h)
 	defer pq.Close()
 	require.NoError(t, pq.Initialize())
 	isEmpty, err := pq.IsEmpty()
@@ -304,7 +304,7 @@ func TestTruncateTablePartition(t *testing.T) {
 		statistics.AutoAnalyzeMinCnt = 1000
 	}()
 
-	pq := priorityqueue.NewAnalysisPriorityQueueV2(h)
+	pq := priorityqueue.NewAnalysisPriorityQueue(h)
 	defer pq.Close()
 	require.NoError(t, pq.Initialize())
 	isEmpty, err := pq.IsEmpty()
@@ -362,7 +362,7 @@ func TestDropTablePartition(t *testing.T) {
 		statistics.AutoAnalyzeMinCnt = 1000
 	}()
 
-	pq := priorityqueue.NewAnalysisPriorityQueueV2(h)
+	pq := priorityqueue.NewAnalysisPriorityQueue(h)
 	defer pq.Close()
 	require.NoError(t, pq.Initialize())
 	isEmpty, err := pq.IsEmpty()
@@ -426,7 +426,7 @@ func TestExchangeTablePartition(t *testing.T) {
 		statistics.AutoAnalyzeMinCnt = 1000
 	}()
 
-	pq := priorityqueue.NewAnalysisPriorityQueueV2(h)
+	pq := priorityqueue.NewAnalysisPriorityQueue(h)
 	defer pq.Close()
 	require.NoError(t, pq.Initialize())
 	isEmpty, err := pq.IsEmpty()
@@ -487,7 +487,7 @@ func TestReorganizeTablePartition(t *testing.T) {
 		statistics.AutoAnalyzeMinCnt = 1000
 	}()
 
-	pq := priorityqueue.NewAnalysisPriorityQueueV2(h)
+	pq := priorityqueue.NewAnalysisPriorityQueue(h)
 	defer pq.Close()
 	require.NoError(t, pq.Initialize())
 	isEmpty, err := pq.IsEmpty()
@@ -545,7 +545,7 @@ func TestAlterTablePartitioning(t *testing.T) {
 		statistics.AutoAnalyzeMinCnt = 1000
 	}()
 
-	pq := priorityqueue.NewAnalysisPriorityQueueV2(h)
+	pq := priorityqueue.NewAnalysisPriorityQueue(h)
 	defer pq.Close()
 	require.NoError(t, pq.Initialize())
 	isEmpty, err := pq.IsEmpty()
@@ -603,7 +603,7 @@ func TestRemovePartitioning(t *testing.T) {
 		statistics.AutoAnalyzeMinCnt = 1000
 	}()
 
-	pq := priorityqueue.NewAnalysisPriorityQueueV2(h)
+	pq := priorityqueue.NewAnalysisPriorityQueue(h)
 	defer pq.Close()
 	require.NoError(t, pq.Initialize())
 	isEmpty, err := pq.IsEmpty()
@@ -664,7 +664,7 @@ func TestVectorIndexTriggerAutoAnalyze(t *testing.T) {
 		statistics.AutoAnalyzeMinCnt = 1000
 	}()
 
-	pq := priorityqueue.NewAnalysisPriorityQueueV2(h)
+	pq := priorityqueue.NewAnalysisPriorityQueue(h)
 	tk.MustExec("alter table t set tiflash replica 1;")
 	testkit.SetTiFlashReplica(t, dom, "test", "t")
 	defer pq.Close()

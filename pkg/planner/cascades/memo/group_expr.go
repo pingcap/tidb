@@ -15,6 +15,8 @@
 package memo
 
 import (
+	"io"
+
 	base2 "github.com/pingcap/tidb/pkg/planner/cascades/base"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/pattern"
@@ -30,7 +32,7 @@ type GroupExpression struct {
 	group *Group
 
 	// inputs stores the Groups that this GroupExpression based on.
-	inputs []*Group
+	Inputs []*Group
 
 	// logicalPlan is internal logical expression stands for this groupExpr.
 	logicalPlan base.LogicalPlan
@@ -39,9 +41,27 @@ type GroupExpression struct {
 	hash64 uint64
 }
 
+// GetLogicalPlan returns the logical plan of the GroupExpression.
+func (e *GroupExpression) GetLogicalPlan() base.LogicalPlan {
+	return e.logicalPlan
+}
+
 // GetGroup returns the Group that this GroupExpression belongs to.
 func (e *GroupExpression) GetGroup() *Group {
 	return e.group
+}
+
+// String implements the fmt.Stringer interface.
+func (e *GroupExpression) String(w io.Writer) {
+	e.GetLogicalPlan().ExplainID()
+	_, _ = w.Write([]byte("GE:" + e.GetLogicalPlan().ExplainID().String() + "{"))
+	for i, input := range e.Inputs {
+		if i != 0 {
+			_, _ = w.Write([]byte(", "))
+		}
+		input.String(w)
+	}
+	_, _ = w.Write([]byte("}"))
 }
 
 // Sum64 returns the cached hash64 of the GroupExpression.
@@ -55,7 +75,7 @@ func (e *GroupExpression) Hash64(h base2.Hasher) {
 	// logical plan hash.
 	e.logicalPlan.Hash64(h)
 	// children group hash.
-	for _, child := range e.inputs {
+	for _, child := range e.Inputs {
 		child.Hash64(h)
 	}
 }
@@ -74,7 +94,7 @@ func (e *GroupExpression) Equals(other any) bool {
 	default:
 		return false
 	}
-	if len(e.inputs) != len(e2.inputs) {
+	if len(e.Inputs) != len(e2.Inputs) {
 		return false
 	}
 	if pattern.GetOperand(e.logicalPlan) != pattern.GetOperand(e2.logicalPlan) {
@@ -86,8 +106,8 @@ func (e *GroupExpression) Equals(other any) bool {
 		return false
 	}
 	// if one of the children is different, then the two GroupExpressions are different.
-	for i, one := range e.inputs {
-		if !one.Equals(e2.inputs[i]) {
+	for i, one := range e.Inputs {
+		if !one.Equals(e2.Inputs[i]) {
 			return false
 		}
 	}
@@ -98,7 +118,7 @@ func (e *GroupExpression) Equals(other any) bool {
 func NewGroupExpression(lp base.LogicalPlan, inputs []*Group) *GroupExpression {
 	return &GroupExpression{
 		group:       nil,
-		inputs:      inputs,
+		Inputs:      inputs,
 		logicalPlan: lp,
 		hash64:      0,
 	}

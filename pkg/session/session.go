@@ -3222,11 +3222,16 @@ func splitAndScatterTable(store kv.Storage, tableIDs []int64) {
 	}
 }
 
-// InitDDLJobTables is to create tidb_ddl_job, tidb_ddl_reorg and tidb_ddl_history, or tidb_background_subtask and tidb_background_subtask_history.
+// InitDDLJobTables creates system tables that DDL uses. Because CREATE TABLE is
+// also a DDL, we must directly modify KV data to create these tables.
 func InitDDLJobTables(store kv.Storage, targetVer meta.DDLTableVersion) error {
 	targetTables := DDLJobTables
 	if targetVer == meta.BackfillTableVersion {
 		targetTables = BackfillTables
+		if intest.InTest {
+			// create the system tables to test ddl notifier
+			targetTables = append(targetTables, tableBasicInfo{ddl.NotifierTableSQL, ddl.NotifierTableID})
+		}
 	}
 	return kv.RunInNewTxn(kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL), store, true, func(_ context.Context, txn kv.Transaction) error {
 		t := meta.NewMutator(txn)

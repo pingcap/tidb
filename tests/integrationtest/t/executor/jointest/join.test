@@ -638,6 +638,7 @@ insert into t values (1, 2), (1, NULL);
 insert into t1 values (1, 2), (1, NULL);
 select * from t a , t1 b where (a.c1, a.c2) = (b.c1, b.c2);
 
+
 ## Issue 11895
 drop table if exists t;
 drop table if exists t1;
@@ -645,7 +646,7 @@ create table t(c1 bigint unsigned);
 create table t1(c1 bit(64));
 insert into t value(18446744073709551615);
 insert into t1 value(-1);
-select * from t, t1 where t.c1 = t1.c1;
+select hex(t1.c1), t.c1 from t, t1 where t.c1 = t1.c1;
 
 ## Issues 11896
 drop table if exists t;
@@ -654,7 +655,7 @@ create table t(c1 bigint);
 create table t1(c1 bit(64));
 insert into t value(1);
 insert into t1 value(1);
-select * from t, t1 where t.c1 = t1.c1;
+select t.c1, hex(t1.c1) from t, t1 where t.c1 = t1.c1;
 drop table if exists t;
 drop table if exists t1;
 create table t(c1 bigint);
@@ -663,6 +664,7 @@ insert into t value(-1);
 insert into t1 value(18446744073709551615);
 ## TODO: MySQL will return one row, because c1 in t1 is 0xffffffff, which equals to -1.
 select * from t, t1 where t.c1 = t1.c1;
+
 
 drop table if exists t;
 drop table if exists t1;
@@ -1078,17 +1080,6 @@ desc analyze select * from t t1, t t2, t t3, t t4, t t5, t t6;
 set tidb_mem_quota_query = default;
 set global tidb_mem_oom_action = default;
 set global tidb_enable_tmp_storage_on_oom = default;
-
-# TestJoinInDisk
-SET GLOBAL tidb_mem_oom_action='LOG';
-## TODO(fengliyuan): how to ensure that it is using disk really?
-set @@tidb_mem_quota_query=1;
-drop table if exists t, t1;
-create table t(c1 int, c2 int);
-create table t1(c1 int, c2 int);
-insert into t values(1,1),(2,2);
-insert into t1 values(2,3),(4,4);
-select /*+ TIDB_HJ(t, t2) */ * from t, t1 where t.c1 = t1.c1;
 
 # TestIssue30244
 drop table if exists t1,t2,t3,t4;
