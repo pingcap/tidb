@@ -806,7 +806,6 @@ func init() {
 func (worker *copIteratorWorker) run(ctx context.Context) {
 	defer func() {
 		failpoint.Inject("ticase-4169", func(val failpoint.Value) {
-			logutil.BgLogger().Info("cool down query for issue56916", zap.Bool("is-cool-down", val.(bool)))
 			if val.(bool) {
 				worker.memTracker.Consume(10 * MockResponseSizeForTest)
 				worker.memTracker.Consume(10 * MockResponseSizeForTest)
@@ -850,10 +849,8 @@ func (it *copIterator) open(ctx context.Context, enabledRateLimitAction, enableC
 	}
 	// Start it.concurrency number of workers to handle cop requests.
 	for i := 0; i < it.concurrency+it.smallTaskConcurrency; i++ {
-		var ch chan *copTask
-		if i < it.concurrency {
-			ch = taskCh
-		} else {
+		ch := taskCh
+		if i >= it.concurrency && smallTaskCh != nil {
 			ch = smallTaskCh
 		}
 		worker := &copIteratorWorker{
