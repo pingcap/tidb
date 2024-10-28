@@ -17,14 +17,16 @@ package rule
 type ruleType int
 
 const (
-	DEFAULT_NONE ruleType = iota
-	JOIN_TO_APPLY
+	// DefaultNone indicates this is none rule.
+	DefaultNone ruleType = iota
+	// XFJoinToApply refers to join to a apply rule.
+	XFJoinToApply
 )
 
 // String implements the fmt.Stringer interface.
 func (tp *ruleType) String() string {
 	switch *tp {
-	case JOIN_TO_APPLY:
+	case XFJoinToApply:
 		return "join_to_apply"
 	default:
 		return "default_none"

@@ -40,6 +40,7 @@ type Rule interface {
 	XFrom(holder *GroupExprHolder, sctx sessionctx.Context) ([]*memo.GroupExpr, error)
 }
 
+// BaseRule is the abstract parent class of rule.
 type BaseRule struct {
 	tp      ruleType
 	pattern *pattern.Pattern
