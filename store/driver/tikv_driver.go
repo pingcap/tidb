@@ -18,11 +18,8 @@ import (
 	"context"
 	"crypto/tls"
 	"fmt"
-<<<<<<< HEAD:store/driver/tikv_driver.go
-	"math/rand"
-=======
 	"math"
->>>>>>> a5e07a2ed36 (store/driver: set `MaxCallRecvMsgSize` to `MaxInt32` for pd client (#56278)):pkg/store/driver/tikv_driver.go
+	"math/rand"
 	"net/url"
 	"strings"
 	"sync"
