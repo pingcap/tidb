@@ -109,6 +109,7 @@ ROW:
 			if found {
 				tblmsg = fmt.Sprintf(" Table name: %s", tbl.Meta().Name.O)
 			}
+			//tk.MustQuery(fmt.Sprintf(`select tidb_decode_key("%s") as 'Found table data after highest physical Table ID %d < %d (%s) %s'`, it.Key(), tblID, foundTblID, it.Key(), msg+tblmsg)).Check(testkit.Rows())
 			require.False(t, true, "Found table data after highest physical Table ID %d < %d (%s) "+msg+tblmsg, tblID, foundTblID, it.Key())
 		}
 		break
@@ -187,7 +188,7 @@ func TestReorgPartitionFailures(t *testing.T) {
 	afterResult := testkit.Rows(
 		"1 1 1", "12 12 21", "13 13 13", "17 17 17", "18 18 18", "2 2 2", "23 23 32", "45 45 54", "5 5 5",
 	)
-	testReorganizePartitionFailures(t, create, alter, beforeDML, beforeResult, afterDML, afterResult, "Fail4")
+	testReorganizePartitionFailures(t, create, alter, beforeDML, beforeResult, afterDML, afterResult)
 }
 
 func TestRemovePartitionFailures(t *testing.T) {
@@ -212,7 +213,7 @@ func TestRemovePartitionFailures(t *testing.T) {
 		`delete from t where b = 102`,
 	}
 	afterResult := testkit.Rows("1 1 1", "101 101 101", "2 2 2", "3 3 3", "4 4 4", "9 9 104")
-	testReorganizePartitionFailures(t, create, alter, beforeDML, beforeResult, afterDML, afterResult, "Fail4")
+	testReorganizePartitionFailures(t, create, alter, beforeDML, beforeResult, afterDML, afterResult)
 }
 
 func TestPartitionByFailures(t *testing.T) {
@@ -263,7 +264,7 @@ func TestReorganizePartitionListFailures(t *testing.T) {
 		`delete from t where b = 3`,
 	}
 	afterResult := testkit.Rows("1 1 1", "2 2 2", "6 6 9", "7 7 7", "8 8 8")
-	testReorganizePartitionFailures(t, create, alter, beforeDML, beforeResult, afterDML, afterResult, "Fail4")
+	testReorganizePartitionFailures(t, create, alter, beforeDML, beforeResult, afterDML, afterResult)
 }
 
 func TestPartitionByListFailures(t *testing.T) {
@@ -311,7 +312,7 @@ func TestAddHashPartitionFailures(t *testing.T) {
 		`delete from t where b = 3`,
 	}
 	afterResult := testkit.Rows("1 1 1", "2 2 2", "6 6 9", "7 7 7", "8 8 8")
-	testReorganizePartitionFailures(t, create, alter, beforeDML, beforeResult, afterDML, afterResult, "Fail4")
+	testReorganizePartitionFailures(t, create, alter, beforeDML, beforeResult, afterDML, afterResult)
 }
 
 func TestCoalesceKeyPartitionFailures(t *testing.T) {
@@ -334,7 +335,7 @@ func TestCoalesceKeyPartitionFailures(t *testing.T) {
 		`delete from t where b = 3`,
 	}
 	afterResult := testkit.Rows("1 1 1", "2 2 2", "6 6 9", "7 7 7", "8 8 8")
-	testReorganizePartitionFailures(t, create, alter, beforeDML, beforeResult, afterDML, afterResult, "Fail4")
+	testReorganizePartitionFailures(t, create, alter, beforeDML, beforeResult, afterDML, afterResult)
 }
 
 func TestPartitionByNonPartitionedTable(t *testing.T) {
@@ -342,7 +343,7 @@ func TestPartitionByNonPartitionedTable(t *testing.T) {
 	alter := `alter table t partition by range (a) (partition p0 values less than (20))`
 	beforeResult := testkit.Rows()
 	afterResult := testkit.Rows()
-	testReorganizePartitionFailures(t, create, alter, nil, beforeResult, nil, afterResult, "Fail4")
+	testReorganizePartitionFailures(t, create, alter, nil, beforeResult, nil, afterResult)
 }
 
 func testReorganizePartitionFailures(t *testing.T, createSQL, alterSQL string, beforeDML []string, beforeResult [][]any, afterDML []string, afterResult [][]any, skipTests ...string) {
@@ -358,20 +359,24 @@ func testReorganizePartitionFailures(t *testing.T, createSQL, alterSQL string, b
 	// Cancel means we set job.State = JobStateCancelled, as in no need to do more
 	// Rollback means we do full rollback before returning error.
 	tests := []struct {
-		name  string
-		count int
+		name            string
+		count           int
+		rollForwardFrom int
 	}{
 		{
 			"Cancel",
 			1,
+			-1,
 		},
 		{
 			"Fail",
 			5,
+			4,
 		},
 		{
 			"Rollback",
 			4,
+			-1,
 		},
 	}
 	oldWaitTimeWhenErrorOccurred := ddl.WaitTimeWhenErrorOccurred
@@ -388,44 +393,53 @@ func testReorganizePartitionFailures(t *testing.T, createSQL, alterSQL string, b
 					continue SUBTEST
 				}
 			}
-			tk.MustExec(createSQL)
+			suffixComment := ` /* ` + suffix + ` */`
+			tk.MustExec(createSQL + suffixComment)
 			for _, sql := range beforeDML {
-				tk.MustExec(sql + ` /* ` + suffix + ` */`)
+				tk.MustExec(sql + suffixComment)
 			}
-			tk.MustQuery(`select * from t /* ` + suffix + ` */`).Sort().Check(beforeResult)
+			tk.MustQuery(`select * from t ` + suffixComment).Sort().Check(beforeResult)
 			tOrg := external.GetTableByName(t, tk, "test", "t")
 			var idxID int64
 			if len(tOrg.Meta().Indices) > 0 {
 				idxID = tOrg.Meta().Indices[0].ID
 			}
-			oldCreate := tk.MustQuery(`show create table t`).Rows()
+			oldCreate := tk.MustQuery(`show create table t` + suffixComment).Rows()
 			name := "github.com/pingcap/tidb/pkg/ddl/reorgPart" + suffix
-			testfailpoint.Enable(t, name, `return(true)`)
-			err := tk.ExecToErr(alterSQL)
-			require.Error(t, err, "failpoint reorgPart"+suffix)
-			require.ErrorContains(t, err, "Injected error by reorgPart"+suffix)
-			testfailpoint.Disable(t, name)
-			tk.MustQuery(`show create table t /* ` + suffix + ` */`).Check(oldCreate)
+			term := "return(true)"
+			if test.rollForwardFrom > 0 && test.rollForwardFrom <= i {
+				term = "10*" + term
+			}
+			testfailpoint.Enable(t, name, term)
+			err := tk.ExecToErr(alterSQL + suffixComment)
 			tt := external.GetTableByName(t, tk, "test", "t")
 			partition := tt.Meta().Partition
-			if partition == nil {
-				require.Nil(t, tOrg.Meta().Partition, suffix)
+			if test.rollForwardFrom > 0 && test.rollForwardFrom <= i {
+				require.NoError(t, err)
 			} else {
-				require.Equal(t, len(tOrg.Meta().Partition.Definitions), len(partition.Definitions), suffix)
-				require.Equal(t, 0, len(partition.AddingDefinitions), suffix)
-				require.Equal(t, 0, len(partition.DroppingDefinitions), suffix)
+				require.Error(t, err, "failpoint reorgPart"+suffix)
+				require.ErrorContains(t, err, "Injected error by reorgPart"+suffix)
+				tk.MustQuery(`show create table t` + suffixComment).Check(oldCreate)
+				if partition == nil {
+					require.Nil(t, tOrg.Meta().Partition, suffix)
+				} else {
+					require.Equal(t, len(tOrg.Meta().Partition.Definitions), len(partition.Definitions), suffix)
+					require.Equal(t, 0, len(partition.AddingDefinitions), suffix)
+					require.Equal(t, 0, len(partition.DroppingDefinitions), suffix)
+				}
+				noNewTablesAfter(t, tk, tk.Session(), tOrg, suffix)
 			}
+			testfailpoint.Disable(t, name)
 			require.Equal(t, len(tOrg.Meta().Indices), len(tt.Meta().Indices), suffix)
 			if idxID != 0 {
 				require.Equal(t, idxID, tt.Meta().Indices[0].ID, suffix)
 			}
-			noNewTablesAfter(t, tk, tk.Session(), tOrg, suffix)
-			tk.MustExec(`admin check table t /* ` + suffix + ` */`)
+			tk.MustExec(`admin check table t` + suffixComment)
 			for _, sql := range afterDML {
-				tk.MustExec(sql + " /* " + suffix + " */")
+				tk.MustExec(sql + suffixComment)
 			}
-			tk.MustQuery(`select * from t /* ` + suffix + ` */`).Sort().Check(afterResult)
-			tk.MustExec(`drop table t /* ` + suffix + ` */`)
+			tk.MustQuery(`select * from t` + suffixComment).Sort().Check(afterResult)
+			tk.MustExec(`drop table t` + suffixComment)
 			// TODO: Check TiFlash replicas
 			// TODO: Check Label rules
 			// TODO: Check bundles

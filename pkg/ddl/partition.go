@@ -3045,36 +3045,29 @@ func getNewGlobal(partInfo *model.PartitionInfo, idx *model.IndexInfo) bool {
 	return idx.Global
 }
 
-func getReorgPartitionInfo(t *meta.Mutator, job *model.Job, args *model.TablePartitionArgs) (*model.TableInfo, []string, *model.PartitionInfo, []model.PartitionDefinition, []model.PartitionDefinition, error) {
+func getReorgPartitionInfo(t *meta.Mutator, job *model.Job, args *model.TablePartitionArgs) (*model.TableInfo, []string, *model.PartitionInfo, error) {
 	schemaID := job.SchemaID
 	tblInfo, err := GetTableInfoAndCancelFaultJob(t, job, schemaID)
 	if err != nil {
-		return nil, nil, nil, nil, nil, errors.Trace(err)
+		return nil, nil, nil, errors.Trace(err)
 	}
 	partNames, partInfo := args.PartNames, args.PartInfo
-	var addingDefs, droppingDefs []model.PartitionDefinition
-	if tblInfo.Partition != nil {
-		addingDefs = tblInfo.Partition.AddingDefinitions
-		droppingDefs = tblInfo.Partition.DroppingDefinitions
-		tblInfo.Partition.NewTableID = partInfo.NewTableID
-		tblInfo.Partition.DDLType = partInfo.Type
-		tblInfo.Partition.DDLExpr = partInfo.Expr
-		tblInfo.Partition.DDLColumns = partInfo.Columns
-	} else {
-		tblInfo.Partition = getPartitionInfoTypeNone()
-		tblInfo.Partition.NewTableID = partInfo.NewTableID
-		tblInfo.Partition.Definitions[0].ID = tblInfo.ID
-		tblInfo.Partition.DDLType = partInfo.Type
-		tblInfo.Partition.DDLExpr = partInfo.Expr
-		tblInfo.Partition.DDLColumns = partInfo.Columns
+	if job.SchemaState == model.StateNone {
+		if tblInfo.Partition != nil {
+			tblInfo.Partition.NewTableID = partInfo.NewTableID
+			tblInfo.Partition.DDLType = partInfo.Type
+			tblInfo.Partition.DDLExpr = partInfo.Expr
+			tblInfo.Partition.DDLColumns = partInfo.Columns
+		} else {
+			tblInfo.Partition = getPartitionInfoTypeNone()
+			tblInfo.Partition.NewTableID = partInfo.NewTableID
+			tblInfo.Partition.Definitions[0].ID = tblInfo.ID
+			tblInfo.Partition.DDLType = partInfo.Type
+			tblInfo.Partition.DDLExpr = partInfo.Expr
+			tblInfo.Partition.DDLColumns = partInfo.Columns
+		}
 	}
-	if len(addingDefs) == 0 {
-		addingDefs = []model.PartitionDefinition{}
-	}
-	if len(droppingDefs) == 0 {
-		droppingDefs = []model.PartitionDefinition{}
-	}
-	return tblInfo, partNames, partInfo, droppingDefs, addingDefs, nil
+	return tblInfo, partNames, partInfo, nil
 }
 
 // onReorganizePartition reorganized the partitioning of a table including its indexes.
@@ -3161,7 +3154,7 @@ func (w *worker) onReorganizePartition(jobCtx *jobContext, job *model.Job) (ver 
 		return ver, nil
 	}
 
-	tblInfo, partNames, partInfo, _, addingDefinitions, err := getReorgPartitionInfo(jobCtx.metaMut, job, args)
+	tblInfo, partNames, partInfo, err := getReorgPartitionInfo(jobCtx.metaMut, job, args)
 	if err != nil {
 		return ver, err
 	}
@@ -3403,7 +3396,7 @@ func (w *worker) onReorganizePartition(jobCtx *jobContext, job *model.Job) (ver 
 			// For available state, the new added partition should wait its replica to
 			// be finished, otherwise the query to this partition will be blocked.
 			count := tblInfo.TiFlashReplica.Count
-			needRetry, err := checkPartitionReplica(count, addingDefinitions, jobCtx)
+			needRetry, err := checkPartitionReplica(count, tblInfo.Partition.AddingDefinitions, jobCtx)
 			if err != nil {
 				return rollbackReorganizePartitionWithErr(jobCtx, job, err)
 			}
@@ -3417,7 +3410,7 @@ func (w *worker) onReorganizePartition(jobCtx *jobContext, job *model.Job) (ver 
 
 			// When TiFlash Replica is ready, we must move them into `AvailablePartitionIDs`.
 			// Since onUpdateFlashReplicaStatus cannot see the partitions yet (not public)
-			for _, d := range addingDefinitions {
+			for _, d := range tblInfo.Partition.AddingDefinitions {
 				tblInfo.TiFlashReplica.AvailablePartitionIDs = append(tblInfo.TiFlashReplica.AvailablePartitionIDs, d.ID)
 			}
 		}
@@ -3638,12 +3631,6 @@ func (w *worker) onReorganizePartition(jobCtx *jobContext, job *model.Job) (ver 
 				// ALTER TABLE ... PARTITION BY
 				tblInfo.Partition.ClearReorgIntermediateInfo()
 			}
-			failpoint.Inject("reorgPartFail5", func(val failpoint.Value) {
-				if val.(bool) {
-					job.ErrorCount += variable.GetDDLErrorCountLimit() / 2
-					failpoint.Return(ver, errors.New("Injected error by reorgPartFail5"))
-				}
-			})
 			err = metaMut.GetAutoIDAccessors(job.SchemaID, tblInfo.ID).Put(autoIDs)
 			if err != nil {
 				return ver, errors.Trace(err)
@@ -3653,7 +3640,7 @@ func (w *worker) onReorganizePartition(jobCtx *jobContext, job *model.Job) (ver 
 				return ver, errors.Trace(err)
 			}
 		}
-		failpoint.Inject("reorgPartFail6", func(val failpoint.Value) {
+		failpoint.Inject("reorgPartFail5", func(val failpoint.Value) {
 			if val.(bool) {
 				job.ErrorCount += variable.GetDDLErrorCountLimit() / 2
 				failpoint.Return(ver, errors.New("Injected error by reorgPartFail6"))
@@ -3664,6 +3651,7 @@ func (w *worker) onReorganizePartition(jobCtx *jobContext, job *model.Job) (ver 
 		})
 		args.OldPhysicalTblIDs = physicalTableIDs
 		args.NewPartitionIDs = newIDs
+		job.SchemaState = model.StateNone
 		ver, err = updateVersionAndTableInfo(jobCtx, job, tblInfo, true)
 		if err != nil {
 			return ver, errors.Trace(err)
