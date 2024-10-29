@@ -165,11 +165,7 @@ type mockSession struct {
 	resetTimeZoneCalls int
 	closed             bool
 	commitErr          error
-<<<<<<< HEAD
-=======
-	killed             chan struct{}
 	pool               *mockSessionPool
->>>>>>> 50d73f80c42 (ttl: fix some memory leak in TTL (#56935))
 }
 
 func newMockSession(t *testing.T, tbl ...*cache.PhysicalTable) *mockSession {
