@@ -302,7 +302,7 @@ func cmdRun(args ...string) bool {
 	taskCh := make(chan task, 100)
 	works := make([]numa, p)
 	var wg sync.WaitGroup
-	for range p {
+	for i := 0; i < p; i++ {
 		wg.Add(1)
 		go works[i].worker(&wg, taskCh)
 	}
@@ -427,7 +427,7 @@ func handleFlags(flag string) string {
 
 func handleFlag(f string) (found bool) {
 	tmp := os.Args[:0]
-	for range len(os.Args) {
+	for i := 0; i < len(os.Args); i++ {
 		if os.Args[i] == f {
 			found = true
 			continue
@@ -1009,7 +1009,7 @@ func filter(input []string, f func(string) bool) []string {
 }
 
 func shuffle(tasks []task) {
-	for range len(tasks) {
+	for i := 0; i < len(tasks); i++ {
 		pos := rand.Intn(len(tasks))
 		tasks[i], tasks[pos] = tasks[pos], tasks[i]
 	}

@@ -49,7 +49,7 @@ func TestLoadUserTable(t *testing.T) {
 
 	p = privileges.MySQLPrivilege{}
 	require.NoError(t, p.LoadUserTable(tk.Session()))
-	require.Len(t, p.User, len(p.UserMap))
+	require.Len(t, p.User(), len(p.UserMap))
 
 	user := p.User()
 	require.Equal(t, "root", user[0].User)
