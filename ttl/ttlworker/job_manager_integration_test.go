@@ -918,7 +918,7 @@ func TestGetSession(t *testing.T) {
 		return nil, nil
 	}, 1, 1, 0)
 	defer pool.Close()
-	se, err := ttlworker.GetSession(pool)
+	se, err := ttlworker.GetSessionForTest(pool)
 	require.NoError(t, err)
 	defer se.Close()
 

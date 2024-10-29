@@ -360,5 +360,5 @@ func TestValidateTTLWork(t *testing.T) {
 	require.EqualError(t, err, "physical id changed")
 }
 
-// GetSession is an exported version of `getSession`
-var GetSession = getSession
+// GetSessionForTest is used for test
+var GetSessionForTest = getSession
