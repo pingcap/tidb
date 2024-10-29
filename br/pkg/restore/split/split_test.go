@@ -23,7 +23,6 @@ import (
 	restoreutils "github.com/pingcap/tidb/br/pkg/restore/utils"
 	"github.com/pingcap/tidb/br/pkg/rtree"
 	"github.com/pingcap/tidb/br/pkg/utils"
-	"github.com/pingcap/tidb/br/pkg/utiltest"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/store/pdtypes"
 	"github.com/pingcap/tidb/pkg/tablecodec"
@@ -931,7 +930,7 @@ func TestSplitPoint(t *testing.T) {
 	splitHelper.Merge(Valued{Key: Span{StartKey: keyWithTablePrefix(oldTableID, "b"), EndKey: keyWithTablePrefix(oldTableID, "c")}, Value: Value{Size: 100, Number: 100}})
 	splitHelper.Merge(Valued{Key: Span{StartKey: keyWithTablePrefix(oldTableID, "d"), EndKey: keyWithTablePrefix(oldTableID, "e")}, Value: Value{Size: 200, Number: 200}})
 	splitHelper.Merge(Valued{Key: Span{StartKey: keyWithTablePrefix(oldTableID, "g"), EndKey: keyWithTablePrefix(oldTableID, "i")}, Value: Value{Size: 300, Number: 300}})
-	client := utiltest.NewFakeSplitClient()
+	client := NewFakeSplitClient()
 	client.AppendRegion(keyWithTablePrefix(tableID, "a"), keyWithTablePrefix(tableID, "f"))
 	client.AppendRegion(keyWithTablePrefix(tableID, "f"), keyWithTablePrefix(tableID, "h"))
 	client.AppendRegion(keyWithTablePrefix(tableID, "h"), keyWithTablePrefix(tableID, "j"))
@@ -983,7 +982,7 @@ func TestSplitPoint2(t *testing.T) {
 	splitHelper.Merge(Valued{Key: Span{StartKey: keyWithTablePrefix(oldTableID, "f"), EndKey: keyWithTablePrefix(oldTableID, "i")}, Value: Value{Size: 300, Number: 300}})
 	splitHelper.Merge(Valued{Key: Span{StartKey: keyWithTablePrefix(oldTableID, "j"), EndKey: keyWithTablePrefix(oldTableID, "k")}, Value: Value{Size: 200, Number: 200}})
 	splitHelper.Merge(Valued{Key: Span{StartKey: keyWithTablePrefix(oldTableID, "l"), EndKey: keyWithTablePrefix(oldTableID, "n")}, Value: Value{Size: 200, Number: 200}})
-	client := utiltest.NewFakeSplitClient()
+	client := NewFakeSplitClient()
 	client.AppendRegion(keyWithTablePrefix(tableID, "a"), keyWithTablePrefix(tableID, "g"))
 	client.AppendRegion(keyWithTablePrefix(tableID, "g"), keyWithTablePrefix(tableID, getCharFromNumber("g", 0)))
 	for i := 0; i < 256; i++ {
@@ -996,7 +995,7 @@ func TestSplitPoint2(t *testing.T) {
 
 	firstSplit := true
 	iter := NewSplitHelperIteratorForTest(splitHelper, tableID, rewriteRules)
-	err := SplitPoint(ctx, iter, *client, func(ctx context.Context, rs *RegionSplitter, u uint64, o int64, ri *RegionInfo, v []Valued) error {
+	err := SplitPoint(ctx, iter, client, func(ctx context.Context, rs *RegionSplitter, u uint64, o int64, ri *RegionInfo, v []Valued) error {
 		if firstSplit {
 			require.Equal(t, u, uint64(0))
 			require.Equal(t, o, int64(0))
