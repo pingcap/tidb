@@ -17,6 +17,7 @@ package executor_test
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"sync"
 	"testing"
 	"time"
@@ -26,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
@@ -129,6 +131,27 @@ func TestRecoverTable(t *testing.T) {
 	tk.MustExec("flashback table t_recover to t_recover_tmp")
 	err = tk.ExecToErr("recover table t_recover")
 	require.True(t, infoschema.ErrTableExists.Equal(err))
+
+	// Test drop table failed and then recover the table should also be failed.
+	tk.MustExec("drop table if exists t_recover2")
+	tk.MustExec("create table t_recover2 (a int);")
+	tk.MustExec("insert into t_recover2 values (1),(2),(3)")
+	tk2 := testkit.NewTestKit(t, store)
+	tk2.MustExec("use test_recover")
+	jobID := int64(0)
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunBefore", func(job *model.Job) {
+		if job.Type == model.ActionDropTable && jobID == 0 {
+			tk2.MustExec(fmt.Sprintf("admin cancel ddl jobs %d", job.ID))
+			jobID = job.ID
+		}
+	})
+	defer testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunBefore")
+	err = tk.ExecToErr("drop table t_recover2")
+	require.Error(t, err)
+	err = tk.ExecToErr("recover table by job " + strconv.Itoa(int(jobID)))
+	require.Error(t, err)
+	require.Equal(t, "[schema:1050]Table 't_recover2' already been recover to 't_recover2', can't be recover repeatedly", err.Error())
+	tk.MustQuery("select * from t_recover2 order by a").Check(testkit.Rows("1", "2", "3"))
 
 	gcEnable, err := gcutil.CheckGCEnable(tk.Session())
 	require.NoError(t, err)
