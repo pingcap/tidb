@@ -28,6 +28,70 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestLogicalJoinHash64Equals(t *testing.T) {
+	col1 := &expression.Column{
+		ID:      1,
+		Index:   0,
+		RetType: types.NewFieldType(mysql.TypeLonglong),
+	}
+	col2 := &expression.Column{
+		ID:      2,
+		Index:   1,
+		RetType: types.NewFieldType(mysql.TypeLonglong),
+	}
+	ctx := mock.NewContext()
+	eq, err := expression.NewFunction(ctx, ast.EQ, types.NewFieldType(mysql.TypeLonglong), col1, col2)
+	require.Nil(t, err)
+	la1 := &logicalop.LogicalJoin{
+		JoinType:        logicalop.InnerJoin,
+		EqualConditions: []*expression.ScalarFunction{eq.(*expression.ScalarFunction)},
+	}
+	la2 := &logicalop.LogicalJoin{
+		JoinType:        logicalop.InnerJoin,
+		EqualConditions: []*expression.ScalarFunction{eq.(*expression.ScalarFunction)},
+	}
+	hasher1 := base.NewHashEqualer()
+	hasher2 := base.NewHashEqualer()
+	la1.Hash64(hasher1)
+	la2.Hash64(hasher2)
+	require.Equal(t, hasher1.Sum64(), hasher2.Sum64())
+
+	la2.JoinType = logicalop.AntiSemiJoin
+	hasher2.Reset()
+	la2.Hash64(hasher2)
+	require.NotEqual(t, hasher1.Sum64(), hasher2.Sum64())
+
+	la2.JoinType = logicalop.InnerJoin
+	eq2, err2 := expression.NewFunction(ctx, ast.EQ, types.NewFieldType(mysql.TypeLonglong), col2, col1)
+	require.Nil(t, err2)
+	la2.EqualConditions = []*expression.ScalarFunction{eq2.(*expression.ScalarFunction)}
+	hasher2.Reset()
+	la2.Hash64(hasher2)
+	require.NotEqual(t, hasher1.Sum64(), hasher2.Sum64())
+
+	la2.EqualConditions = nil
+	gt, err3 := expression.NewFunction(ctx, ast.EQ, types.NewFieldType(mysql.TypeLonglong), col1, col2)
+	require.Nil(t, err3)
+	la2.OtherConditions = []expression.Expression{gt}
+	hasher2.Reset()
+	la2.Hash64(hasher2)
+	require.NotEqual(t, hasher1.Sum64(), hasher2.Sum64())
+
+	la1.EqualConditions = []*expression.ScalarFunction{}
+	la2.OtherConditions = nil
+	la2.EqualConditions = nil
+	hasher1.Reset()
+	hasher2.Reset()
+	la1.Hash64(hasher1)
+	la2.Hash64(hasher2)
+	require.NotEqual(t, hasher1.Sum64(), hasher2.Sum64())
+
+	la2.EqualConditions = []*expression.ScalarFunction{}
+	hasher2.Reset()
+	la2.Hash64(hasher2)
+	require.Equal(t, hasher1.Sum64(), hasher2.Sum64())
+}
+
 func TestLogicalAggregationHash64Equals(t *testing.T) {
 	col := &expression.Column{
 		Index:   0,

@@ -102,7 +102,7 @@ func TestMapToEvictedCountDatum(t *testing.T) {
 
 	ssMap.beginTimeForCurInterval = now + interval
 	// insert one statement per interval.
-	for i := 0; i < 50; i++ {
+	for range 50 {
 		ssMap.AddStatement(generateAnyExecInfo())
 		ssMap.beginTimeForCurInterval += interval * 2
 	}
@@ -261,7 +261,7 @@ func TestEvictedCountDetailed(t *testing.T) {
 	require.NoError(t, err)
 
 	// test stmtSummaryByDigest's history length
-	for i := 0; i < 100; i++ {
+	for i := range 100 {
 		if i == 0 {
 			require.Equal(t, 0, ssMap.summaryMap.Size())
 		} else {

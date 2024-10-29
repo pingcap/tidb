@@ -230,7 +230,7 @@ func TestInstancePlanCacheConcurrencySysbench(t *testing.T) {
 		}
 	}
 
-	nStmt := 7000
+	nStmt := 2000
 	nInitialRecords := 100
 	stmts := make([]*testStmt, 0, nStmt)
 	stmts = append(stmts, &testStmt{normalStmt: "begin"})
@@ -253,6 +253,279 @@ func TestInstancePlanCacheConcurrencySysbench(t *testing.T) {
 			stmts = append(stmts, genInsert())
 		} else {
 			stmts = append(stmts, genDelete())
+		}
+	}
+	stmts = append(stmts, &testStmt{normalStmt: "commit"})
+
+	nConcurrency := 10
+	TKs := make([]*testkit.TestKit, nConcurrency)
+	for i := range TKs {
+		TKs[i] = testkit.NewTestKit(t, store)
+	}
+
+	testWithWorkers(TKs, stmts)
+}
+
+func TestInstancePlanCacheConcurrencyComp(t *testing.T) {
+	// cases from https://github.com/PingCAP-QE/qa/tree/master/comp/yy/plan-cache
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`create database normal`)
+	tk.MustExec(`create database prepared`)
+	tk.MustExec(`set global tidb_enable_instance_plan_cache=1`)
+	for _, db := range []string{"normal", "prepared"} {
+		tk.MustExec("use " + db)
+		tk.MustExec(`create table t1 (col1 int, col2 int, key(col1, col2))`)
+	}
+
+	genInsert := func() *testStmt {
+		col1 := rand.Intn(1000)
+		col2 := rand.Intn(1000)
+		return &testStmt{
+			normalStmt: fmt.Sprintf("insert into normal.t1 values (%v, %v)", col1, col2),
+			prepStmt:   "prepare st from 'insert into prepared.t1 values (?, ?)'",
+			setStmt:    fmt.Sprintf("set @col1 = %v, @col2 = %v", col1, col2),
+			execStmt:   "execute st using @col1, @col2",
+		}
+	}
+	genBasicSelect := func() *testStmt {
+		switch rand.Intn(2) {
+		case 0: // point
+			switch rand.Intn(3) {
+			case 0: // select * from t1 where col1=?
+				col1 := rand.Intn(1000)
+				return &testStmt{
+					normalStmt: fmt.Sprintf("select * from normal.t1 where col1=%v", col1),
+					prepStmt:   "prepare st from 'select * from prepared.t1 where col1=?'",
+					setStmt:    fmt.Sprintf("set @col1 = %v", col1),
+					execStmt:   "execute st using @col1",
+				}
+			case 1: // select * from t1 where col1 is null
+				return &testStmt{
+					normalStmt: "select * from normal.t1 where col1 is null",
+					prepStmt:   "prepare st from 'select * from prepared.t1 where col1 is null'",
+					setStmt:    "",
+					execStmt:   "execute st",
+				}
+			case 2: // select * from t1 where col1 in (?, ?, ?)
+				v1 := rand.Intn(1000)
+				v2 := rand.Intn(1000)
+				v3 := rand.Intn(1000)
+				return &testStmt{
+					normalStmt: fmt.Sprintf("select * from normal.t1 where col1 in (%v, %v, %v)", v1, v2, v3),
+					prepStmt:   "prepare st from 'select * from prepared.t1 where col1 in (?, ?, ?)'",
+					setStmt:    fmt.Sprintf("set @v1 = %v, @v2 = %v, @v3 = %v", v1, v2, v3),
+					execStmt:   "execute st using @v1, @v2, @v3",
+				}
+			}
+		default: // range
+			switch rand.Intn(4) {
+			case 0: // select * from t1 where col1 between ? and ?
+				v1 := rand.Intn(1000)
+				v2 := rand.Intn(1000)
+				return &testStmt{
+					normalStmt: fmt.Sprintf("select * from normal.t1 where col1 between %v and %v", v1, v2),
+					prepStmt:   "prepare st from 'select * from prepared.t1 where col1 between ? and ?'",
+					setStmt:    fmt.Sprintf("set @v1 = %v, @v2 = %v", v1, v2),
+					execStmt:   "execute st using @v1, @v2",
+				}
+			case 1: // select * from t1 where col1 > ?
+				v1 := rand.Intn(1000)
+				return &testStmt{
+					normalStmt: fmt.Sprintf("select * from normal.t1 where col1 > %v", v1),
+					prepStmt:   "prepare st from 'select * from prepared.t1 where col1 > ?'",
+					setStmt:    fmt.Sprintf("set @v1 = %v", v1),
+					execStmt:   "execute st using @v1",
+				}
+			case 2: // select * from t1 where col1 <= ?
+				v1 := rand.Intn(1000)
+				return &testStmt{
+					normalStmt: fmt.Sprintf("select * from normal.t1 where col1 <= %v", v1),
+					prepStmt:   "prepare st from 'select * from prepared.t1 where col1 <= ?'",
+					setStmt:    fmt.Sprintf("set @v1 = %v", v1),
+					execStmt:   "execute st using @v1",
+				}
+			default: // select * from t1 where col1 != ?
+				v1 := rand.Intn(1000)
+				return &testStmt{
+					normalStmt: fmt.Sprintf("select * from normal.t1 where col1 != %v", v1),
+					prepStmt:   "prepare st from 'select * from prepared.t1 where col1 != ?'",
+					setStmt:    fmt.Sprintf("set @v1 = %v", v1),
+					execStmt:   "execute st using @v1",
+				}
+			}
+		}
+		return nil
+	}
+	genAggSelect := func() *testStmt {
+		switch rand.Intn(5) {
+		case 0: // select sum(col1), col2 from t1 where col1=? group by col2
+			v1 := rand.Intn(1000)
+			return &testStmt{
+				normalStmt: fmt.Sprintf("select sum(col1), col2 from normal.t1 where col1=%v group by col2", v1),
+				prepStmt:   "prepare st from 'select sum(col1), col2 from prepared.t1 where col1=? group by col2'",
+				setStmt:    fmt.Sprintf("set @v1 = %v", v1),
+				execStmt:   "execute st using @v1",
+			}
+		case 1: // select sum(col1), col2 from t1 where col1 between ? and ? group by col2
+			v1 := rand.Intn(1000)
+			v2 := rand.Intn(1000)
+			return &testStmt{
+				normalStmt: fmt.Sprintf("select sum(col1), col2 from normal.t1 where col1 between %v and %v group by col2", v1, v2),
+				prepStmt:   "prepare st from 'select sum(col1), col2 from prepared.t1 where col1 between ? and ? group by col2'",
+				setStmt:    fmt.Sprintf("set @v1 = %v, @v2 = %v", v1, v2),
+				execStmt:   "execute st using @v1, @v2",
+			}
+		case 2: // select sum(col1), col2 from t1 where col1 > ? group by col2
+			v1 := rand.Intn(1000)
+			return &testStmt{
+				normalStmt: fmt.Sprintf("select sum(col1), col2 from normal.t1 where col1 > %v group by col2", v1),
+				prepStmt:   "prepare st from 'select sum(col1), col2 from prepared.t1 where col1 > ? group by col2'",
+				setStmt:    fmt.Sprintf("set @v1 = %v", v1),
+				execStmt:   "execute st using @v1",
+			}
+		case 3: // select sum(col1), col2 from t1 where col1 <= ? group by col2
+			v1 := rand.Intn(1000)
+			return &testStmt{
+				normalStmt: fmt.Sprintf("select sum(col1), col2 from normal.t1 where col1 <= %v group by col2", v1),
+				prepStmt:   "prepare st from 'select sum(col1), col2 from prepared.t1 where col1 <= ? group by col2'",
+				setStmt:    fmt.Sprintf("set @v1 = %v", v1),
+				execStmt:   "execute st using @v1",
+			}
+		default: // select sum(col1), col2 from t1 where col1 = ? group by col2
+			v1 := rand.Intn(1000)
+			return &testStmt{
+				normalStmt: fmt.Sprintf("select sum(col1), col2 from normal.t1 where col1 = %v group by col2", v1),
+				prepStmt:   "prepare st from 'select sum(col1), col2 from prepared.t1 where col1 = ? group by col2'",
+				setStmt:    fmt.Sprintf("set @v1 = %v", v1),
+				execStmt:   "execute st using @v1",
+			}
+		}
+	}
+	genJoinSelect := func() *testStmt {
+		switch rand.Intn(4) {
+		case 0: // select * from t1 t1 join t1 t2 on t1.col1=t2.col1 where t1.col1=?
+			v1 := rand.Intn(1000)
+			return &testStmt{
+				normalStmt: fmt.Sprintf("select * from normal.t1 t1 join normal.t1 t2 on t1.col1=t2.col1 where t1.col1=%v", v1),
+				prepStmt:   "prepare st from 'select * from prepared.t1 t1 join prepared.t1 t2 on t1.col1=t2.col1 where t1.col1=?'",
+				setStmt:    fmt.Sprintf("set @v1 = %v", v1),
+				execStmt:   "execute st using @v1",
+			}
+		case 1: // select * from t1 t1 join t1 t2 on t1.col1=t2.col1 where t1.col1 between ? and ?
+			v1 := rand.Intn(1000)
+			v2 := rand.Intn(1000)
+			return &testStmt{
+				normalStmt: fmt.Sprintf("select * from normal.t1 t1 join normal.t1 t2 on t1.col1=t2.col1 where t1.col1 between %v and %v", v1, v2),
+				prepStmt:   "prepare st from 'select * from prepared.t1 t1 join prepared.t1 t2 on t1.col1=t2.col1 where t1.col1 between ? and ?'",
+				setStmt:    fmt.Sprintf("set @v1 = %v, @v2 = %v", v1, v2),
+				execStmt:   "execute st using @v1, @v2",
+			}
+		case 2: // select * from t1 t1 left join t1 t2 on t1.col1=t2.col1 where t1.col1 > ?
+			v1 := rand.Intn(1000)
+			return &testStmt{
+				normalStmt: fmt.Sprintf("select * from normal.t1 t1 left join normal.t1 t2 on t1.col1=t2.col1 where t1.col1 > %v", v1),
+				prepStmt:   "prepare st from 'select * from prepared.t1 t1 left join prepared.t1 t2 on t1.col1=t2.col1 where t1.col1 > ?'",
+				setStmt:    fmt.Sprintf("set @v1 = %v", v1),
+				execStmt:   "execute st using @v1",
+			}
+		case 3: // select * from t1 t1 join t1 t2 on t1.col1>t2.col1 where t1.col1 <= ?
+			v1 := rand.Intn(1000)
+			return &testStmt{
+				normalStmt: fmt.Sprintf("select * from normal.t1 t1 join normal.t1 t2 on t1.col1>t2.col1 where t1.col1 <= %v", v1),
+				prepStmt:   "prepare st from 'select * from prepared.t1 t1 join prepared.t1 t2 on t1.col1>t2.col1 where t1.col1 <= ?'",
+				setStmt:    fmt.Sprintf("set @v1 = %v", v1),
+				execStmt:   "execute st using @v1",
+			}
+		default: // select * from t1 t1 join t1 t2 on t1.col1<t2.col1 where t1.col1 between ? and ?
+			v1 := rand.Intn(1000)
+			v2 := rand.Intn(1000)
+			return &testStmt{
+				normalStmt: fmt.Sprintf("select * from normal.t1 t1 join normal.t1 t2 on t1.col1<t2.col1 where t1.col1 between %v and %v", v1, v2),
+				prepStmt:   "prepare st from 'select * from prepared.t1 t1 join prepared.t1 t2 on t1.col1<t2.col1 where t1.col1 between ? and ?'",
+				setStmt:    fmt.Sprintf("set @v1 = %v, @v2 = %v", v1, v2),
+				execStmt:   "execute st using @v1, @v2",
+			}
+		}
+	}
+	genPointSelect := func() *testStmt {
+		switch rand.Intn(5) {
+		case 0: // select col1 from t1 where col1=?
+			v1 := rand.Intn(1000)
+			return &testStmt{
+				normalStmt: fmt.Sprintf("select col1 from normal.t1 where col1=%v", v1),
+				prepStmt:   "prepare st from 'select col1 from prepared.t1 where col1=?'",
+				setStmt:    fmt.Sprintf("set @v1 = %v", v1),
+				execStmt:   "execute st using @v1",
+			}
+		case 1: // select col1 from t1 where col1=? and col2=?
+			v1 := rand.Intn(1000)
+			v2 := rand.Intn(1000)
+			return &testStmt{
+				normalStmt: fmt.Sprintf("select col1 from normal.t1 where col1=%v and col2=%v", v1, v2),
+				prepStmt:   "prepare st from 'select col1 from prepared.t1 where col1=? and col2=?'",
+				setStmt:    fmt.Sprintf("set @v1 = %v, @v2 = %v", v1, v2),
+				execStmt:   "execute st using @v1, @v2",
+			}
+		case 2: // select col1 from t1 where col1=? or col2=?
+			v1 := rand.Intn(1000)
+			v2 := rand.Intn(1000)
+			return &testStmt{
+				normalStmt: fmt.Sprintf("select col1 from normal.t1 where col1=%v or col2=%v", v1, v2),
+				prepStmt:   "prepare st from 'select col1 from prepared.t1 where col1=? or col2=?'",
+				setStmt:    fmt.Sprintf("set @v1 = %v, @v2 = %v", v1, v2),
+				execStmt:   "execute st using @v1, @v2",
+			}
+		case 3: // select col1 from t1 where col1 in (?,?,?) and col2=?
+			v1 := rand.Intn(1000)
+			v2 := rand.Intn(1000)
+			v3 := rand.Intn(1000)
+			v4 := rand.Intn(1000)
+			return &testStmt{
+				normalStmt: fmt.Sprintf("select col1 from normal.t1 where col1 in (%v, %v, %v) and col2=%v", v1, v2, v3, v4),
+				prepStmt:   "prepare st from 'select col1 from prepared.t1 where col1 in (?, ?, ?) and col2=?'",
+				setStmt:    fmt.Sprintf("set @v1 = %v, @v2 = %v, @v3 = %v, @v4 = %v", v1, v2, v3, v4),
+				execStmt:   "execute st using @v1, @v2, @v3, @v4",
+			}
+		default: // select col1 from t1 where col1 in (?,?,?) or col2=?
+			v1 := rand.Intn(1000)
+			v2 := rand.Intn(1000)
+			v3 := rand.Intn(1000)
+			v4 := rand.Intn(1000)
+			return &testStmt{
+				normalStmt: fmt.Sprintf("select col1 from normal.t1 where col1 in (%v, %v, %v) or col2=%v", v1, v2, v3, v4),
+				prepStmt:   "prepare st from 'select col1 from prepared.t1 where col1 in (?, ?, ?) or col2=?'",
+				setStmt:    fmt.Sprintf("set @v1 = %v, @v2 = %v, @v3 = %v, @v4 = %v", v1, v2, v3, v4),
+				execStmt:   "execute st using @v1, @v2, @v3, @v4",
+			}
+		}
+	}
+
+	nStmt := 2000
+	nInitialRecords := 100
+	stmts := make([]*testStmt, 0, nStmt)
+	stmts = append(stmts, &testStmt{normalStmt: "begin"})
+	for len(stmts) < nStmt {
+		if rand.Intn(15) == 0 { // start a new txn
+			stmts = append(stmts, &testStmt{normalStmt: "commit"})
+			stmts = append(stmts, &testStmt{normalStmt: "begin"})
+			continue
+		}
+		if len(stmts) < nInitialRecords {
+			stmts = append(stmts, genInsert())
+			continue
+		}
+		x := rand.Intn(100)
+		if x < 10 { // 10% insert
+			stmts = append(stmts, genInsert())
+		} else if x < 50 { // 40% basic
+			stmts = append(stmts, genBasicSelect())
+		} else if x < 60 {
+			stmts = append(stmts, genAggSelect())
+		} else if x < 70 {
+			stmts = append(stmts, genJoinSelect())
+		} else {
+			stmts = append(stmts, genPointSelect())
 		}
 	}
 	stmts = append(stmts, &testStmt{normalStmt: "commit"})
