@@ -1172,26 +1172,23 @@ func skylinePruning(ds *logicalop.DataSource, prop *property.PhysicalProperty) [
 		}
 	}
 
-	preferRange := ds.SCtx().GetSessionVars().GetAllowPreferRangeScan() && (ds.HasForce || (ds.TableStats.HistColl.Pseudo || ds.TableStats.RowCount < 1))
 	// If we've forced an index merge - we want to keep these plans
 	preferMerge := len(ds.IndexMergeHints) > 0 || fixcontrol.GetBoolWithDefault(
 		ds.SCtx().GetSessionVars().GetOptimizerFixControlMap(),
 		fixcontrol.Fix52869,
 		false,
 	)
+	// tidb_opt_prefer_range_scan is the master switch to control index preferencing
+	preferRange := ds.SCtx().GetSessionVars().GetAllowPreferRangeScan() &&
+		(preferMerge || ds.HasForce || (ds.TableStats.HistColl.Pseudo || ds.TableStats.RowCount < 1))
 	if preferRange && len(candidates) > 1 {
-		// If a candidate path is TiFlash-path or forced-path or MV index, we just keep them. For other candidate paths, if there exists
-		// any range scan path, we remove full scan paths and keep range scan paths.
 		preferredPaths := make([]*candidatePath, 0, len(candidates))
 		var hasRangeScanPath bool
 		for _, c := range candidates {
-			// Preference plans with equals/IN predicates or where there is more filtering in the index than against the table
-			indexFilters := c.path.EqCondCount > 0 || c.path.EqOrInCondCount > 0 || len(c.path.TableFilters) < len(c.path.IndexFilters)
+			// If a candidate path is TiFlash-path or forced-path or MV index, we just keep them. For other candidate paths, if there exists
+			// any range scan path, we remove full scan paths and keep range scan paths.
 			if c.path.StoreType == kv.TiFlash || c.path.Forced || (c.path.Index != nil && c.path.Index.MVIndex) {
 				preferredPaths = append(preferredPaths, c)
-				if c.path.Forced && indexFilters {
-					hasRangeScanPath = true
-				}
 				continue
 			}
 			var unsignedIntHandle bool
@@ -1201,6 +1198,8 @@ func skylinePruning(ds *logicalop.DataSource, prop *property.PhysicalProperty) [
 				}
 			}
 			if !ranger.HasFullRange(c.path.Ranges, unsignedIntHandle) {
+				// Preference plans with equals/IN predicates or where there is more filtering in the index than against the table
+				indexFilters := c.path.EqCondCount > 0 || c.path.EqOrInCondCount > 0 || len(c.path.TableFilters) < len(c.path.IndexFilters)
 				if preferMerge || (indexFilters && (prop.IsSortItemEmpty() || c.isMatchProp)) {
 					preferredPaths = append(preferredPaths, c)
 					hasRangeScanPath = true
