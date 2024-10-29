@@ -79,10 +79,6 @@ func (j *leftOuterSemiJoinProbe) InitForScanRowTable() {
 	panic("should not reach here")
 }
 
-func (j *leftOuterSemiJoinProbe) ClearProbeState() {
-	j.baseJoinProbe.ClearProbeState()
-}
-
 func (j *leftOuterSemiJoinProbe) ScanRowTable(joinResult *hashjoinWorkerResult, sqlKiller *sqlkiller.SQLKiller) *hashjoinWorkerResult {
 	return joinResult
 }
