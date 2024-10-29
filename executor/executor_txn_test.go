@@ -813,9 +813,9 @@ func TestInnodbLockWaitTimeout(t *testing.T) {
 	tk.MustExec("update t set k= id, c = id")
 	tk.MustExec("split table t by (0), (50), (100);")
 	tk.MustExec("split table t index idx by (0), (50), (100);")
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/store/mockstore/unistore/tikv/pessimisticLockReturnWriteConflict", `return(true)`))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/store/mockstore/unistore/tikv/pessimisticLockReturnWriteConflict", `return(true)`))
 	defer func() {
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/store/mockstore/unistore/tikv/pessimisticLockReturnWriteConflict"))
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/store/mockstore/unistore/tikv/pessimisticLockReturnWriteConflict"))
 	}()
 	tk.MustExec("set @@innodb_lock_wait_timeout=1")
 	isolations := []string{"REPEATABLE READ", "READ COMMITTED"}
