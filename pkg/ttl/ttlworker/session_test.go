@@ -126,20 +126,30 @@ type mockSessionPool struct {
 	t           *testing.T
 	se          *mockSession
 	lastSession *mockSession
+	inuse       atomic.Int64
 }
 
 func (p *mockSessionPool) Get() (pools.Resource, error) {
 	se := *(p.se)
 	p.lastSession = &se
+	p.lastSession.pool = p
+	p.inuse.Add(1)
 	return p.lastSession, nil
 }
 
-func (p *mockSessionPool) Put(pools.Resource) {}
+func (p *mockSessionPool) Put(pools.Resource) {
+	p.inuse.Add(-1)
+}
+
+func (p *mockSessionPool) AssertNoSessionInUse() {
+	require.Equal(p.t, int64(0), p.inuse.Load())
+}
 
 func (p *mockSessionPool) Close() {}
 
 func newMockSessionPool(t *testing.T, tbl ...*cache.PhysicalTable) *mockSessionPool {
 	return &mockSessionPool{
+		t:  t,
 		se: newMockSession(t, tbl...),
 	}
 }
@@ -155,6 +165,11 @@ type mockSession struct {
 	resetTimeZoneCalls int
 	closed             bool
 	commitErr          error
+<<<<<<< HEAD
+=======
+	killed             chan struct{}
+	pool               *mockSessionPool
+>>>>>>> 50d73f80c42 (ttl: fix some memory leak in TTL (#56935))
 }
 
 func newMockSession(t *testing.T, tbl ...*cache.PhysicalTable) *mockSession {
@@ -226,6 +241,9 @@ func (s *mockSession) GlobalTimeZone(_ context.Context) (*time.Location, error) 
 
 func (s *mockSession) Close() {
 	s.closed = true
+	if s.pool != nil {
+		s.pool.Put(s)
+	}
 }
 
 func (s *mockSession) Now() time.Time {
