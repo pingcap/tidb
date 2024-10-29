@@ -1259,3 +1259,21 @@ func (a *managerJobAdapter) GetJob(ctx context.Context, tableID, physicalID int6
 
 	return &jobTrace, nil
 }
+<<<<<<< HEAD
+=======
+
+func (a *managerJobAdapter) Now() (time.Time, error) {
+	se, err := getSession(a.sessPool)
+	if err != nil {
+		return time.Time{}, err
+	}
+	defer se.Close()
+
+	tz, err := se.GlobalTimeZone(context.TODO())
+	if err != nil {
+		return time.Time{}, err
+	}
+
+	return se.Now().In(tz), nil
+}
+>>>>>>> 50d73f80c42 (ttl: fix some memory leak in TTL (#56935))

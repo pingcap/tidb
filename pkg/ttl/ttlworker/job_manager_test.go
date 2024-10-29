@@ -285,6 +285,7 @@ func TestOnTimerTick(t *testing.T) {
 
 	now := time.UnixMilli(3600 * 24)
 	syncer := NewTTLTimerSyncer(m.sessPool, timerapi.NewDefaultTimerClient(timerStore))
+	defer m.sessPool.(*mockSessionPool).AssertNoSessionInUse()
 	syncer.nowFunc = func() time.Time {
 		return now
 	}
