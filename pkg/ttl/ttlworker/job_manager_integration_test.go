@@ -42,7 +42,6 @@ import (
 	"github.com/pingcap/tidb/pkg/ttl/metrics"
 	"github.com/pingcap/tidb/pkg/ttl/session"
 	"github.com/pingcap/tidb/pkg/ttl/ttlworker"
-	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	dto "github.com/prometheus/client_model/go"
 	"github.com/stretchr/testify/require"
@@ -1064,17 +1063,22 @@ func TestDelayMetrics(t *testing.T) {
 	checkRecord(records, "t5", emptyTime)
 }
 
+type sessionPool interface {
+	Get() (pools.Resource, error)
+	Put(pools.Resource)
+}
+
 type poolTestWrapper struct {
-	util.SessionPool
+	sessionPool
 	inuse atomic.Int64
 }
 
-func wrapPoolForTest(pool util.SessionPool) *poolTestWrapper {
-	return &poolTestWrapper{SessionPool: pool}
+func wrapPoolForTest(pool sessionPool) *poolTestWrapper {
+	return &poolTestWrapper{sessionPool: pool}
 }
 
 func (w *poolTestWrapper) Get() (pools.Resource, error) {
-	r, err := w.SessionPool.Get()
+	r, err := w.sessionPool.Get()
 	if err == nil {
 		w.inuse.Add(1)
 	}
@@ -1083,7 +1087,7 @@ func (w *poolTestWrapper) Get() (pools.Resource, error) {
 
 func (w *poolTestWrapper) Put(r pools.Resource) {
 	w.inuse.Add(-1)
-	w.SessionPool.Put(r)
+	w.sessionPool.Put(r)
 }
 
 func (w *poolTestWrapper) AssertNoSessionInUse(t *testing.T) {
