@@ -14,6 +14,7 @@ exports_files([
 # gazelle:exclude build/linter/staticcheck
 # gazelle:exclude vendor
 # gazelle:exclude tools/patch-go
+# gazelle:exclude tools/check
 # gazelle:resolve go github.com/bazelbuild/buildtools/build @com_github_bazelbuild_buildtools//build:go_default_library
 gazelle(name = "gazelle")
 
