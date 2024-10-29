@@ -208,7 +208,7 @@ func testMatch(t *testing.T, s Selector) {
 	for _, mc := range ts.matchCase {
 		rules := s.Match(mc.schema, mc.table)
 		expectedRules := make(RuleSet, 0, mc.matchedNum)
-		for i := 0; i < mc.matchedNum; i++ {
+		for i := range mc.matchedNum {
 			rule := &dummyRule{quoteSchemaTable(mc.matchedRules[2*i], mc.matchedRules[2*i+1])}
 			expectedRules = append(expectedRules, rule)
 		}

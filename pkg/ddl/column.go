@@ -56,11 +56,11 @@ func InitAndAddColumnToTable(tblInfo *model.TableInfo, colInfo *model.ColumnInfo
 	cols := tblInfo.Columns
 	colInfo.ID = AllocateColumnID(tblInfo)
 	colInfo.State = model.StateNone
-	// To support add column asynchronous, we should mark its offset as the last column.
+	// To support add column asynchronously, we should mark its offset as the last column.
 	// So that we can use origin column offset to get value from row.
 	colInfo.Offset = len(cols)
 	// Append the column info to the end of the tblInfo.Columns.
-	// It will reorder to the right offset in "Columns" when it state change to public.
+	// It will be reordered to the right offset in "Columns" when its state is changed to public.
 	tblInfo.Columns = append(cols, colInfo)
 	return colInfo
 }

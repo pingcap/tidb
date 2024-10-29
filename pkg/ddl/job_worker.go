@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/pkg/ddl/logutil"
+	"github.com/pingcap/tidb/pkg/ddl/notifier"
 	"github.com/pingcap/tidb/pkg/ddl/schemaver"
 	sess "github.com/pingcap/tidb/pkg/ddl/session"
 	"github.com/pingcap/tidb/pkg/ddl/systable"
@@ -81,11 +82,12 @@ type jobContext struct {
 	*schemaVersionManager
 	// ctx is the context of job scheduler. When worker is running the job, it should
 	// use stepCtx instead.
-	ctx             context.Context
-	infoCache       *infoschema.InfoCache
-	autoidCli       *autoid.ClientDiscover
-	store           kv.Storage
-	schemaVerSyncer schemaver.Syncer
+	ctx               context.Context
+	infoCache         *infoschema.InfoCache
+	autoidCli         *autoid.ClientDiscover
+	store             kv.Storage
+	schemaVerSyncer   schemaver.Syncer
+	eventPublishStore notifier.Store
 
 	// per job fields, they are not changed in the life cycle of this context.
 
@@ -372,7 +374,7 @@ func (w *worker) finishDDLJob(jobCtx *jobContext, job *model.Job) (err error) {
 		if job.IsCancelled() {
 			// it may be too large that it can not be added to the history queue, so
 			// delete its arguments
-			job.Args = nil
+			job.ClearDecodedArgs()
 		}
 	}
 	if err != nil {
@@ -615,7 +617,7 @@ func (w *worker) transitOneJobStep(
 	jobCtx.addUnSynced(job.ID)
 
 	// If error is non-retryable, we can ignore the sleep.
-	if runJobErr != nil && errorIsRetryable(runJobErr, job) {
+	if runJobErr != nil && isRetryableJobError(runJobErr, job.ErrorCount) {
 		jobCtx.logger.Info("run DDL job failed, sleeps a while then retries it.",
 			zap.Duration("waitTime", GetWaitTimeWhenErrorOccurred()), zap.Error(runJobErr))
 		// wait a while to retry again. If we don't wait here, DDL will retry this job immediately,
@@ -887,15 +889,15 @@ func (w *worker) runOneJobStep(
 	case model.ActionModifySchemaDefaultPlacement:
 		ver, err = onModifySchemaDefaultPlacement(jobCtx, job)
 	case model.ActionCreateTable:
-		ver, err = onCreateTable(jobCtx, job)
+		ver, err = w.onCreateTable(jobCtx, job)
 	case model.ActionCreateTables:
-		ver, err = onCreateTables(jobCtx, job)
+		ver, err = w.onCreateTables(jobCtx, job)
 	case model.ActionRepairTable:
 		ver, err = onRepairTable(jobCtx, job)
 	case model.ActionCreateView:
 		ver, err = onCreateView(jobCtx, job)
 	case model.ActionDropTable, model.ActionDropView, model.ActionDropSequence:
-		ver, err = onDropTableOrView(jobCtx, job)
+		ver, err = w.onDropTableOrView(jobCtx, job)
 	case model.ActionDropTablePartition:
 		ver, err = w.onDropTablePartition(jobCtx, job)
 	case model.ActionTruncateTablePartition:
@@ -903,7 +905,7 @@ func (w *worker) runOneJobStep(
 	case model.ActionExchangeTablePartition:
 		ver, err = w.onExchangeTablePartition(jobCtx, job)
 	case model.ActionAddColumn:
-		ver, err = onAddColumn(jobCtx, job)
+		ver, err = w.onAddColumn(jobCtx, job)
 	case model.ActionDropColumn:
 		ver, err = onDropColumn(jobCtx, job)
 	case model.ActionModifyColumn:

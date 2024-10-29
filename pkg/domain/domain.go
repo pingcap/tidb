@@ -37,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/pkg/bindinfo"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/ddl"
+	"github.com/pingcap/tidb/pkg/ddl/notifier"
 	"github.com/pingcap/tidb/pkg/ddl/placement"
 	"github.com/pingcap/tidb/pkg/ddl/schematracker"
 	"github.com/pingcap/tidb/pkg/ddl/systable"
@@ -148,6 +149,7 @@ type Domain struct {
 	statsLease      time.Duration
 	ddl             ddl.DDL
 	ddlExecutor     ddl.Executor
+	ddlNotifier     *notifier.DDLNotifier
 	info            *infosync.InfoSyncer
 	globalCfgSyncer *globalconfigsync.GlobalConfigSyncer
 	m               syncutil.Mutex
@@ -1373,6 +1375,16 @@ func (do *Domain) Init(
 	do.cancelFns.mu.Lock()
 	do.cancelFns.fns = append(do.cancelFns.fns, cancelFunc)
 	do.cancelFns.mu.Unlock()
+
+	ddlNotifierStore := notifier.OpenTableStore("mysql", ddl.NotifierTableName)
+	do.ddlNotifier = notifier.NewDDLNotifier(
+		do.sysSessionPool,
+		ddlNotifierStore,
+		time.Second,
+	)
+	// TODO(lance6716): find a more representative place for subscriber
+	failpoint.InjectCall("afterDDLNotifierCreated", do.ddlNotifier)
+
 	d := do.ddl
 	eBak := do.ddlExecutor
 	do.ddl, do.ddlExecutor = ddl.NewDDL(
@@ -1383,6 +1395,7 @@ func (do *Domain) Init(
 		ddl.WithInfoCache(do.infoCache),
 		ddl.WithLease(do.schemaLease),
 		ddl.WithSchemaLoader(do),
+		ddl.WithEventPublishStore(ddlNotifierStore),
 	)
 
 	failpoint.Inject("MockReplaceDDL", func(val failpoint.Value) {
@@ -1785,6 +1798,11 @@ func (do *Domain) SysSessionPool() util.SessionPool {
 // SysProcTracker returns the system processes tracker.
 func (do *Domain) SysProcTracker() sysproctrack.Tracker {
 	return &do.sysProcesses
+}
+
+// DDLNotifier returns the DDL notifier.
+func (do *Domain) DDLNotifier() *notifier.DDLNotifier {
+	return do.ddlNotifier
 }
 
 // GetEtcdClient returns the etcd client.
@@ -2271,7 +2289,17 @@ func (do *Domain) StatsHandle() *handle.Handle {
 
 // CreateStatsHandle is used only for test.
 func (do *Domain) CreateStatsHandle(ctx, initStatsCtx sessionctx.Context) error {
-	h, err := handle.NewHandle(ctx, initStatsCtx, do.statsLease, do.InfoSchema(), do.sysSessionPool, &do.sysProcesses, do.NextConnID, do.ReleaseConnID)
+	h, err := handle.NewHandle(
+		ctx,
+		initStatsCtx,
+		do.statsLease,
+		do.InfoSchema(),
+		do.sysSessionPool,
+		&do.sysProcesses,
+		do.ddlNotifier,
+		do.NextConnID,
+		do.ReleaseConnID,
+	)
 	if err != nil {
 		return err
 	}
@@ -2308,7 +2336,17 @@ func (do *Domain) LoadAndUpdateStatsLoop(ctxs []sessionctx.Context, initStatsCtx
 // It should be called only once in BootstrapSession.
 func (do *Domain) UpdateTableStatsLoop(ctx, initStatsCtx sessionctx.Context) error {
 	ctx.GetSessionVars().InRestrictedSQL = true
-	statsHandle, err := handle.NewHandle(ctx, initStatsCtx, do.statsLease, do.InfoSchema(), do.sysSessionPool, &do.sysProcesses, do.NextConnID, do.ReleaseConnID)
+	statsHandle, err := handle.NewHandle(
+		ctx,
+		initStatsCtx,
+		do.statsLease,
+		do.InfoSchema(),
+		do.sysSessionPool,
+		&do.sysProcesses,
+		do.ddlNotifier,
+		do.NextConnID,
+		do.ReleaseConnID,
+	)
 	if err != nil {
 		return err
 	}
@@ -2322,6 +2360,7 @@ func (do *Domain) UpdateTableStatsLoop(ctx, initStatsCtx sessionctx.Context) err
 	variable.EnableStatsOwner = do.enableStatsOwner
 	variable.DisableStatsOwner = do.disableStatsOwner
 	do.statsOwner = do.newOwnerManager(handle.StatsPrompt, handle.StatsOwnerKey)
+	do.statsOwner.SetListener(do.ddlNotifier)
 	do.wg.Run(func() {
 		do.indexUsageWorker()
 	}, "indexUsageWorker")

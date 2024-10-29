@@ -6,6 +6,7 @@ go_library(
     importpath = "github.com/pingcap/tidb/pkg/statistics/handle/autoanalyze",
     visibility = ["//visibility:public"],
     deps = [
+        "//pkg/ddl/notifier",
         "//pkg/domain/infosync",
         "//pkg/infoschema",
         "//pkg/meta/model",
@@ -55,6 +56,7 @@ go_test(
         "//pkg/testkit/testfailpoint",
         "//pkg/types",
         "//pkg/util/chunk",
+        "//pkg/util/mock",
         "//pkg/util/sqlexec/mock",
         "@com_github_pingcap_failpoint//:failpoint",
         "@com_github_stretchr_testify//require",

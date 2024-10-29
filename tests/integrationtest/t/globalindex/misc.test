@@ -16,7 +16,7 @@ insert into test_global(a,c) values (1,2);
 insert into test_global(a,c) values (11,2);
 
 drop table if exists test_global;
--- error 1503
+-- error 8200
 create table test_global ( a int, b int, c int, primary key p_b(b) /*T![clustered_index] CLUSTERED */ GLOBAL)
 partition by range( a ) (
 	partition p1 values less than (10),
@@ -24,7 +24,7 @@ partition by range( a ) (
 );
 
 drop table if exists test_global;
--- error 1503
+-- error 8200
 create table test_global ( a int, b int, c int, primary key p_b_c(b, c) /*T![clustered_index] CLUSTERED */ GLOBAL)
 partition by range( a ) (
 	partition p1 values less than (10),

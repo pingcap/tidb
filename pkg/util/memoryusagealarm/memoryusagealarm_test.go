@@ -101,7 +101,7 @@ func TestGetTop10Sql(t *testing.T) {
 
 func genMockProcessInfoList(memConsumeList []int64, startTimeList []time.Time, size int) []*util.ProcessInfo {
 	processInfoList := make([]*util.ProcessInfo, 0, size)
-	for i := 0; i < size; i++ {
+	for i := range size {
 		tracker := memory.NewTracker(0, 0)
 		tracker.Consume(memConsumeList[i])
 		var stmtCtxRefCount stmtctx.ReferenceCount = 0

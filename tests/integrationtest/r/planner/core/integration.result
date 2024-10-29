@@ -4,23 +4,23 @@ create table t(a varchar(10), b int, c int);
 show columns from t where true;
 Field	Type	Null	Key	Default	Extra
 a	varchar(10)	YES		NULL	
-b	int(11)	YES		NULL	
-c	int(11)	YES		NULL	
+b	int	YES		NULL	
+c	int	YES		NULL	
 show columns from t where field = 'b';
 Field	Type	Null	Key	Default	Extra
-b	int(11)	YES		NULL	
+b	int	YES		NULL	
 show columns from t where field in (select 'b');
 Field	Type	Null	Key	Default	Extra
-b	int(11)	YES		NULL	
+b	int	YES		NULL	
 show columns from t where field in (select 'b') and true;
 Field	Type	Null	Key	Default	Extra
-b	int(11)	YES		NULL	
+b	int	YES		NULL	
 show columns from t where field in (select 'b') and false;
 Field	Type	Null	Key	Default	Extra
 insert into t values('c', 0, 0);
 show columns from t where field < all (select a from t);
 Field	Type	Null	Key	Default	Extra
-b	int(11)	YES		NULL	
+b	int	YES		NULL	
 a	varchar(10)	YES		NULL	
 insert into t values('b', 0, 0);
 show columns from t where field < all (select a from t);
@@ -4268,22 +4268,6 @@ pad char(60) NOT NULL DEFAULT '',
 PRIMARY KEY (id) /*T![clustered_index] CLUSTERED */,
 KEY k (k)
 );
-set @@tidb_opt_fix_control = '46177:off';
-explain format='brief'  select row_number() over(order by a.k) from (select * from sbtest where id<10) a;
-id	estRows	task	access object	operator info
-Projection	10.00	root		Column#6->Column#7
-└─Window	10.00	root		row_number()->Column#6 over(order by planner__core__integration.sbtest.k rows between current row and current row)
-  └─IndexReader	10.00	root		index:Selection
-    └─Selection	10.00	cop[tikv]		lt(planner__core__integration.sbtest.id, 10)
-      └─IndexFullScan	10000.00	cop[tikv]	table:sbtest, index:k(k)	keep order:true, stats:pseudo
-explain format='brief' select /*+ stream_agg() */ count(1) from sbtest where id<1 group by k;
-id	estRows	task	access object	operator info
-StreamAgg	1.00	root		group by:planner__core__integration.sbtest.k, funcs:count(Column#6)->Column#5
-└─IndexReader	1.00	root		index:StreamAgg
-  └─StreamAgg	1.00	cop[tikv]		group by:planner__core__integration.sbtest.k, funcs:count(1)->Column#6
-    └─Selection	1.00	cop[tikv]		lt(planner__core__integration.sbtest.id, 1)
-      └─IndexFullScan	10000.00	cop[tikv]	table:sbtest, index:k(k)	keep order:true, stats:pseudo
-set @@tidb_opt_fix_control = '46177:on';
 explain format='brief'  select row_number() over(order by a.k) from (select * from sbtest where id<10) a;
 id	estRows	task	access object	operator info
 Projection	10.00	root		Column#6->Column#7
@@ -4297,7 +4281,6 @@ StreamAgg	1.00	root		group by:planner__core__integration.sbtest.k, funcs:count(1
 └─Sort	1.00	root		planner__core__integration.sbtest.k
   └─TableReader	1.00	root		data:TableRangeScan
     └─TableRangeScan	1.00	cop[tikv]	table:sbtest	range:[0,1), keep order:false, stats:pseudo
-set @@tidb_opt_fix_control = default;
 create table sys.t (id int);
 insert into sys.t values (1),(2);
 set tidb_isolation_read_engines='tiflash';

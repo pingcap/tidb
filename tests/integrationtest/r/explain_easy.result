@@ -528,27 +528,27 @@ Projection	10000.00	root		ifnull(explain_easy.t.a, 0)->Column#5
   └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 explain format = 'brief' select ifnull(nb, 0) from t;
 id	estRows	task	access object	operator info
-Projection	10000.00	root		cast(explain_easy.t.nb, bigint(11) BINARY)->Column#5
+Projection	10000.00	root		cast(explain_easy.t.nb, bigint BINARY)->Column#5
 └─TableReader	10000.00	root		data:TableFullScan
   └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 explain format = 'brief' select ifnull(nb, 0), ifnull(nc, 0) from t;
 id	estRows	task	access object	operator info
-Projection	10000.00	root		cast(explain_easy.t.nb, bigint(11) BINARY)->Column#5, cast(explain_easy.t.nc, bigint(11) BINARY)->Column#6
+Projection	10000.00	root		cast(explain_easy.t.nb, bigint BINARY)->Column#5, cast(explain_easy.t.nc, bigint BINARY)->Column#6
 └─TableReader	10000.00	root		data:TableFullScan
   └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 explain format = 'brief' select ifnull(a, 0), ifnull(nb, 0) from t;
 id	estRows	task	access object	operator info
-Projection	10000.00	root		ifnull(explain_easy.t.a, 0)->Column#5, cast(explain_easy.t.nb, bigint(11) BINARY)->Column#6
+Projection	10000.00	root		ifnull(explain_easy.t.a, 0)->Column#5, cast(explain_easy.t.nb, bigint BINARY)->Column#6
 └─TableReader	10000.00	root		data:TableFullScan
   └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 explain format = 'brief' select ifnull(nb, 0), ifnull(nb, 0) from t;
 id	estRows	task	access object	operator info
-Projection	10000.00	root		cast(explain_easy.t.nb, bigint(11) BINARY)->Column#5, cast(explain_easy.t.nb, bigint(11) BINARY)->Column#6
+Projection	10000.00	root		cast(explain_easy.t.nb, bigint BINARY)->Column#5, cast(explain_easy.t.nb, bigint BINARY)->Column#6
 └─TableReader	10000.00	root		data:TableFullScan
   └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 explain format = 'brief' select 1+ifnull(nb, 0) from t;
 id	estRows	task	access object	operator info
-Projection	10000.00	root		plus(1, cast(explain_easy.t.nb, bigint(11) BINARY))->Column#5
+Projection	10000.00	root		plus(1, cast(explain_easy.t.nb, bigint BINARY))->Column#5
 └─TableReader	10000.00	root		data:TableFullScan
   └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 explain format = 'brief' select 1+ifnull(a, 0) from t;
@@ -558,7 +558,7 @@ Projection	10000.00	root		plus(1, ifnull(explain_easy.t.a, 0))->Column#5
   └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 explain format = 'brief' select 1+ifnull(nb, 0) from t where nb=1;
 id	estRows	task	access object	operator info
-Projection	10.00	root		plus(1, cast(explain_easy.t.nb, bigint(11) BINARY))->Column#5
+Projection	10.00	root		plus(1, cast(explain_easy.t.nb, bigint BINARY))->Column#5
 └─TableReader	10.00	root		data:Selection
   └─Selection	10.00	cop[tikv]		eq(explain_easy.t.nb, 1)
     └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
@@ -566,34 +566,34 @@ explain format = 'brief' select * from t ta left outer join t tb on ta.nb = tb.n
 id	estRows	task	access object	operator info
 HashJoin	10000.00	root		left outer join, equal:[eq(explain_easy.t.nb, explain_easy.t.nb)], left cond:[gt(explain_easy.t.a, 1)]
 ├─TableReader(Build)	8000.00	root		data:Selection
-│ └─Selection	8000.00	cop[tikv]		or(cast(explain_easy.t.nb, bigint(11) BINARY), 0)
+│ └─Selection	8000.00	cop[tikv]		or(cast(explain_easy.t.nb, bigint BINARY), 0)
 │   └─TableFullScan	10000.00	cop[tikv]	table:tb	keep order:false, stats:pseudo
 └─TableReader(Probe)	8000.00	root		data:Selection
-  └─Selection	8000.00	cop[tikv]		or(cast(explain_easy.t.nb, bigint(11) BINARY), 0)
+  └─Selection	8000.00	cop[tikv]		or(cast(explain_easy.t.nb, bigint BINARY), 0)
     └─TableFullScan	10000.00	cop[tikv]	table:ta	keep order:false, stats:pseudo
 explain format = 'brief' select * from t ta right outer join t tb on ta.nb = tb.nb and ta.a > 1 where ifnull(tb.nb, 1) or tb.nb is null;
 id	estRows	task	access object	operator info
 HashJoin	8000.00	root		right outer join, equal:[eq(explain_easy.t.nb, explain_easy.t.nb)]
 ├─TableReader(Build)	2666.67	root		data:Selection
-│ └─Selection	2666.67	cop[tikv]		cast(explain_easy.t.nb, bigint(11) BINARY), gt(explain_easy.t.a, 1)
+│ └─Selection	2666.67	cop[tikv]		cast(explain_easy.t.nb, bigint BINARY), gt(explain_easy.t.a, 1)
 │   └─TableFullScan	10000.00	cop[tikv]	table:ta	keep order:false, stats:pseudo
 └─TableReader(Probe)	8000.00	root		data:Selection
-  └─Selection	8000.00	cop[tikv]		or(cast(explain_easy.t.nb, bigint(11) BINARY), 0)
+  └─Selection	8000.00	cop[tikv]		or(cast(explain_easy.t.nb, bigint BINARY), 0)
     └─TableFullScan	10000.00	cop[tikv]	table:tb	keep order:false, stats:pseudo
 explain format = 'brief' select * from t ta inner join t tb on ta.nb = tb.nb and ta.a > 1 where ifnull(tb.nb, 1) or tb.nb is null;
 id	estRows	task	access object	operator info
 HashJoin	3333.33	root		inner join, equal:[eq(explain_easy.t.nb, explain_easy.t.nb)]
 ├─TableReader(Build)	2666.67	root		data:Selection
-│ └─Selection	2666.67	cop[tikv]		cast(explain_easy.t.nb, bigint(11) BINARY), gt(explain_easy.t.a, 1)
+│ └─Selection	2666.67	cop[tikv]		cast(explain_easy.t.nb, bigint BINARY), gt(explain_easy.t.a, 1)
 │   └─TableFullScan	10000.00	cop[tikv]	table:ta	keep order:false, stats:pseudo
 └─TableReader(Probe)	8000.00	root		data:Selection
-  └─Selection	8000.00	cop[tikv]		or(cast(explain_easy.t.nb, bigint(11) BINARY), 0)
+  └─Selection	8000.00	cop[tikv]		or(cast(explain_easy.t.nb, bigint BINARY), 0)
     └─TableFullScan	10000.00	cop[tikv]	table:tb	keep order:false, stats:pseudo
 explain format = 'brief' select ifnull(t.nc, 1) in (select count(*) from t s , t t1 where s.a = t.a and s.a = t1.a) from t;
 id	estRows	task	access object	operator info
 Projection	10000.00	root		Column#22
 └─Apply	10000.00	root		left outer semi join, equal:[eq(Column#23, Column#21)]
-  ├─Projection(Build)	10000.00	root		explain_easy.t.a, cast(explain_easy.t.nc, bigint(11) BINARY)->Column#23
+  ├─Projection(Build)	10000.00	root		explain_easy.t.a, cast(explain_easy.t.nc, bigint BINARY)->Column#23
   │ └─TableReader	10000.00	root		data:TableFullScan
   │   └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
   └─HashAgg(Probe)	10000.00	root		funcs:count(Column#25)->Column#21
