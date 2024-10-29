@@ -33,8 +33,8 @@ func (mk *mockCacheKey) Hash() []byte {
 		return mk.hash
 	}
 	mk.hash = make([]byte, 8)
-	for i := uint(0); i < 8; i++ {
-		mk.hash[i] = byte((mk.key >> ((i - 1) * 8)) & 0xff)
+	for i := range 8 {
+		mk.hash[i] = byte((mk.key >> ((uint(i) - 1) * 8)) & 0xff)
 	}
 	return mk.hash
 }
@@ -67,7 +67,7 @@ func TestPut(t *testing.T) {
 	lruZeroQuota.SetOnEvict(func(key Key, value Value) {
 		zeroQuotaDroppedKv[key] = value
 	})
-	for i := 0; i < 5; i++ {
+	for i := range 5 {
 		keys[i] = newMockHashKey(int64(i))
 		vals[i] = int64(i)
 		lruMaxMem.Put(keys[i], vals[i])
@@ -80,7 +80,7 @@ func TestPut(t *testing.T) {
 
 	// test for non-existent elements
 	require.Len(t, maxMemDroppedKv, 2)
-	for i := 0; i < 2; i++ {
+	for i := range 2 {
 		element, exists := lruMaxMem.elements[string(keys[i].Hash())]
 		require.False(t, exists)
 		require.Nil(t, element)
@@ -125,7 +125,7 @@ func TestZeroQuota(t *testing.T) {
 	keys := make([]*mockCacheKey, 100)
 	vals := make([]int64, 100)
 
-	for i := 0; i < 100; i++ {
+	for i := range 100 {
 		keys[i] = newMockHashKey(int64(i))
 		vals[i] = int64(i)
 		lru.Put(keys[i], vals[i])
@@ -144,7 +144,7 @@ func TestOOMGuard(t *testing.T) {
 	keys := make([]*mockCacheKey, 5)
 	vals := make([]int64, 5)
 
-	for i := 0; i < 5; i++ {
+	for i := range 5 {
 		keys[i] = newMockHashKey(int64(i))
 		vals[i] = int64(i)
 		lru.Put(keys[i], vals[i])
@@ -152,7 +152,7 @@ func TestOOMGuard(t *testing.T) {
 	require.Equal(t, uint(0), lru.size)
 
 	// test for non-existent elements
-	for i := 0; i < 5; i++ {
+	for i := range 5 {
 		element, exists := lru.elements[string(keys[i].Hash())]
 		require.False(t, exists)
 		require.Nil(t, element)
@@ -168,14 +168,14 @@ func TestGet(t *testing.T) {
 	keys := make([]*mockCacheKey, 5)
 	vals := make([]int64, 5)
 
-	for i := 0; i < 5; i++ {
+	for i := range 5 {
 		keys[i] = newMockHashKey(int64(i))
 		vals[i] = int64(i)
 		lru.Put(keys[i], vals[i])
 	}
 
 	// test for non-existent elements
-	for i := 0; i < 2; i++ {
+	for i := range 2 {
 		value, exists := lru.Get(keys[i])
 		require.False(t, exists)
 		require.Nil(t, value)
@@ -211,7 +211,7 @@ func TestDelete(t *testing.T) {
 	keys := make([]*mockCacheKey, 3)
 	vals := make([]int64, 3)
 
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		keys[i] = newMockHashKey(int64(i))
 		vals[i] = int64(i)
 		lru.Put(keys[i], vals[i])
@@ -240,7 +240,7 @@ func TestDeleteAll(t *testing.T) {
 	keys := make([]*mockCacheKey, 3)
 	vals := make([]int64, 3)
 
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		keys[i] = newMockHashKey(int64(i))
 		vals[i] = int64(i)
 		lru.Put(keys[i], vals[i])
@@ -249,7 +249,7 @@ func TestDeleteAll(t *testing.T) {
 
 	lru.DeleteAll()
 
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		value, exists := lru.Get(keys[i])
 		require.False(t, exists)
 		require.Nil(t, value)
@@ -266,7 +266,7 @@ func TestValues(t *testing.T) {
 	keys := make([]*mockCacheKey, 5)
 	vals := make([]int64, 5)
 
-	for i := 0; i < 5; i++ {
+	for i := range 5 {
 		keys[i] = newMockHashKey(int64(i))
 		vals[i] = int64(i)
 		lru.Put(keys[i], vals[i])
@@ -274,7 +274,7 @@ func TestValues(t *testing.T) {
 
 	values := lru.Values()
 	require.Equal(t, 5, len(values))
-	for i := 0; i < 5; i++ {
+	for i := range 5 {
 		require.Equal(t, int64(4-i), values[i])
 	}
 }
@@ -285,7 +285,7 @@ func TestPutProfileName(t *testing.T) {
 	tem := reflect.TypeOf(*lru)
 	pt := reflect.TypeOf(lru)
 	functionName := ""
-	for i := 0; i < pt.NumMethod(); i++ {
+	for i := range pt.NumMethod() {
 		if pt.Method(i).Name == "Put" {
 			functionName = "Put"
 		}

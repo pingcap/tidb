@@ -1,0 +1,19 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "ut_lib",
+    srcs = ["ut.go"],
+    importpath = "github.com/pingcap/tidb/cmd/tidb-server",
+    visibility = ["//visibility:private"],
+    deps = [
+        "@org_golang_x_tools//cover:go_default_library",
+        "@org_uber_go_automaxprocs//maxprocs",
+    ],
+)
+
+go_library(
+    name = "xprog_lib",
+    srcs = ["xprog.go"],
+    importpath = "github.com/pingcap/tidb/cmd/tidb-server",
+    visibility = ["//visibility:private"],
+)

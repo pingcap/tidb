@@ -126,20 +126,30 @@ type mockSessionPool struct {
 	t           *testing.T
 	se          *mockSession
 	lastSession *mockSession
+	inuse       atomic.Int64
 }
 
 func (p *mockSessionPool) Get() (pools.Resource, error) {
 	se := *(p.se)
 	p.lastSession = &se
+	p.lastSession.pool = p
+	p.inuse.Add(1)
 	return p.lastSession, nil
 }
 
-func (p *mockSessionPool) Put(pools.Resource) {}
+func (p *mockSessionPool) Put(pools.Resource) {
+	p.inuse.Add(-1)
+}
+
+func (p *mockSessionPool) AssertNoSessionInUse() {
+	require.Equal(p.t, int64(0), p.inuse.Load())
+}
 
 func (p *mockSessionPool) Close() {}
 
 func newMockSessionPool(t *testing.T, tbl ...*cache.PhysicalTable) *mockSessionPool {
 	return &mockSessionPool{
+		t:  t,
 		se: newMockSession(t, tbl...),
 	}
 }
@@ -156,6 +166,7 @@ type mockSession struct {
 	closed             bool
 	commitErr          error
 	killed             chan struct{}
+	pool               *mockSessionPool
 }
 
 func newMockSession(t *testing.T, tbl ...*cache.PhysicalTable) *mockSession {
@@ -233,6 +244,9 @@ func (s *mockSession) KillStmt() {
 
 func (s *mockSession) Close() {
 	s.closed = true
+	if s.pool != nil {
+		s.pool.Put(s)
+	}
 }
 
 func (s *mockSession) Now() time.Time {

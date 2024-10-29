@@ -71,6 +71,40 @@ var (
 		c_data VARCHAR(500),
 		PRIMARY KEY(c_w_id, c_d_id, c_id) /*T![clustered_index] CLUSTERED */,
 		INDEX idx_customer (c_w_id, c_d_id, c_last, c_first))`
+	tpccStock = `CREATE TABLE IF NOT EXISTS stock (
+		s_i_id INT NOT NULL,
+		s_w_id INT NOT NULL,
+		s_quantity INT,
+		s_dist_01 CHAR(24),
+		s_dist_02 CHAR(24),
+		s_dist_03 CHAR(24),
+		s_dist_04 CHAR(24),
+		s_dist_05 CHAR(24),
+		s_dist_06 CHAR(24),
+		s_dist_07 CHAR(24),
+		s_dist_08 CHAR(24),
+		s_dist_09 CHAR(24),
+		s_dist_10 CHAR(24),
+		s_ytd INT,
+		s_order_cnt INT,
+		s_remote_cnt INT,
+		s_data VARCHAR(50),
+		PRIMARY KEY(s_w_id, s_i_id) /*T![clustered_index] CLUSTERED */)`
+	tpccOrders = `CREATE TABLE IF NOT EXISTS orders (
+		o_id INT NOT NULL,
+		o_d_id INT NOT NULL,
+		o_w_id INT NOT NULL,
+		o_c_id INT,
+		o_entry_d TIMESTAMP,
+		o_carrier_id INT,
+		o_ol_cnt INT,
+		o_all_local INT,
+		PRIMARY KEY(o_w_id, o_d_id, o_id))`
+	tpccNewOrder = `CREATE TABLE IF NOT EXISTS new_order (
+		no_o_id INT NOT NULL,
+		no_d_id INT NOT NULL,
+		no_w_id INT NOT NULL,
+		PRIMARY KEY(no_w_id, no_d_id, no_o_id) /*T![clustered_index] CLUSTERED */)`
 )
 
 func TestInstancePlanCacheDMLTPCC(t *testing.T) {

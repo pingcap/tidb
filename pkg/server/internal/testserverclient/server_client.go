@@ -1245,7 +1245,7 @@ func (cli *TestServerClient) RunTestLoadData(t *testing.T, server *server.Server
 
 	originalTxnTotalSizeLimit := kv.TxnTotalSizeLimit.Load()
 	// If the MemBuffer can't be committed once in each batch, it will return an error like "transaction is too large".
-	kv.TxnTotalSizeLimit.Store(10240)
+	kv.TxnTotalSizeLimit.Store(12000)
 	defer func() { kv.TxnTotalSizeLimit.Store(originalTxnTotalSizeLimit) }()
 
 	// support ClientLocalFiles capability

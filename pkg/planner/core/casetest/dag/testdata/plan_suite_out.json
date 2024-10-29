@@ -241,11 +241,11 @@
       },
       {
         "SQL": "select /*+ TIDB_SMJ(t1,t2,t3)*/ * from t t1, t t2, t t3 where t1.c = t2.c and t1.d = t2.d and t3.c = t1.c and t3.d = t1.d",
-        "Best": "MergeInnerJoin{MergeInnerJoin{IndexLookUp(Index(t.c_d_e)[[NULL,+inf]], Table(t))->IndexLookUp(Index(t.c_d_e)[[NULL,+inf]], Table(t))}(test.t.c,test.t.c)(test.t.d,test.t.d)->IndexLookUp(Index(t.c_d_e)[[NULL,+inf]], Table(t))}(test.t.c,test.t.c)(test.t.d,test.t.d)"
+        "Best": "MergeInnerJoin{MergeInnerJoin{TableReader(Table(t))->Sort->TableReader(Table(t))->Sort}(test.t.c,test.t.c)(test.t.d,test.t.d)->TableReader(Table(t))->Sort}(test.t.c,test.t.c)(test.t.d,test.t.d)"
       },
       {
         "SQL": "select /*+ TIDB_SMJ(t1,t2,t3)*/ * from t t1, t t2, t t3 where t1.c = t2.c and t1.d = t2.d and t3.c = t1.c and t3.d = t1.d order by t1.c",
-        "Best": "MergeInnerJoin{MergeInnerJoin{IndexLookUp(Index(t.c_d_e)[[NULL,+inf]], Table(t))->IndexLookUp(Index(t.c_d_e)[[NULL,+inf]], Table(t))}(test.t.c,test.t.c)(test.t.d,test.t.d)->IndexLookUp(Index(t.c_d_e)[[NULL,+inf]], Table(t))}(test.t.c,test.t.c)(test.t.d,test.t.d)"
+        "Best": "MergeInnerJoin{MergeInnerJoin{TableReader(Table(t))->Sort->TableReader(Table(t))->Sort}(test.t.c,test.t.c)(test.t.d,test.t.d)->TableReader(Table(t))->Sort}(test.t.c,test.t.c)(test.t.d,test.t.d)"
       },
       {
         "SQL": "select /*+ TIDB_SMJ(t1,t2,t3)*/ * from t t1 left outer join t t2 on t1.a = t2.a left outer join t t3 on t2.a = t3.a",
@@ -436,8 +436,8 @@
       },
       {
         "SQL": "delete /*+ TIDB_SMJ(t1, t2) */ from t1 using t t1, t t2 where t1.c=t2.c",
-        "Best": "MergeInnerJoin{IndexLookUp(Index(t.c_d_e)[[NULL,+inf]], Table(t))->IndexLookUp(Index(t.c_d_e)[[NULL,+inf]], Table(t))}(test.t.c,test.t.c)->Delete",
-        "Hints": "merge_join(`test`.`t1`), use_index(@`del_1` `test`.`t1` `c_d_e`), order_index(@`del_1` `test`.`t1` `c_d_e`), use_index(@`del_1` `test`.`t2` `c_d_e`), order_index(@`del_1` `test`.`t2` `c_d_e`)"
+        "Best": "MergeInnerJoin{TableReader(Table(t))->Sort->TableReader(Table(t))->Sort}(test.t.c,test.t.c)->Delete",
+        "Hints": "merge_join(`test`.`t1`), use_index(@`del_1` `test`.`t1` ), no_order_index(@`del_1` `test`.`t1` `primary`), use_index(@`del_1` `test`.`t2` ), no_order_index(@`del_1` `test`.`t2` `primary`)"
       },
       {
         "SQL": "update /*+ TIDB_SMJ(t1, t2) */ t t1, t t2 set t1.c=1, t2.c=1 where t1.a=t2.a",

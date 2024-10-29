@@ -85,7 +85,7 @@ func IndentFormatter(w io.Writer, indent string) Formatter {
 
 func (f *indentFormatter) format(flat bool, format string, args ...any) (n int, errno error) {
 	var buf = make([]byte, 0)
-	for i := 0; i < len(format); i++ {
+	for i := range len(format) {
 		c := format[i]
 		switch f.state {
 		case st0:
@@ -114,7 +114,7 @@ func (f *indentFormatter) format(flat bool, format string, args ...any) (n int, 
 				f.state = stBOLPERC
 			default:
 				if !flat {
-					for i := 0; i < f.indentLevel; i++ {
+					for range f.indentLevel {
 						buf = append(buf, f.indent...)
 					}
 				}
@@ -131,7 +131,7 @@ func (f *indentFormatter) format(flat bool, format string, args ...any) (n int, 
 				f.state = stBOL
 			default:
 				if !flat {
-					for i := 0; i < f.indentLevel; i++ {
+					for range f.indentLevel {
 						buf = append(buf, f.indent...)
 					}
 				}
