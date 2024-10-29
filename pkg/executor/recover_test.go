@@ -135,7 +135,6 @@ func TestRecoverTable(t *testing.T) {
 	// Test drop table failed and then recover the table should also be failed.
 	tk.MustExec("drop table if exists t_recover2")
 	tk.MustExec("create table t_recover2 (a int);")
-	tk.MustExec("insert into t_recover2 values (1),(2),(3)")
 	jobID := int64(0)
 	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunBefore", func(job *model.Job) {
 		if job.Type == model.ActionDropTable && jobID == 0 {
