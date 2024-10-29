@@ -418,30 +418,30 @@ func TestJWKSImpl(t *testing.T) {
 	require.Error(t, err)
 }
 
-func (i *immutable) User() []UserRecord {
-	return i.user
+func (p *immutable) User() []UserRecord {
+	return p.user
 }
 
-func (i *immutable) SetUser(user []UserRecord) {
-	i.user = user
+func (p *immutable) SetUser(user []UserRecord) {
+	p.user = user
 }
 
-func (i *immutable) DB() []dbRecord {
-	return i.db
+func (p *immutable) DB() []dbRecord {
+	return p.db
 }
 
-func (i *immutable) TablesPriv() []tablesPrivRecord {
-	return i.tablesPriv
+func (p *immutable) TablesPriv() []tablesPrivRecord {
+	return p.tablesPriv
 }
 
-func (i *immutable) ColumnsPriv() []columnsPrivRecord {
-	return i.columnsPriv
+func (p *immutable) ColumnsPriv() []columnsPrivRecord {
+	return p.columnsPriv
 }
 
-func (i *immutable) DefaultRoles() []defaultRoleRecord {
-	return i.defaultRoles
+func (p *immutable) DefaultRoles() []defaultRoleRecord {
+	return p.defaultRoles
 }
 
-func (i *immutable) RoleGraph() map[string]roleGraphEdgesTable {
-	return i.roleGraph
+func (p *immutable) RoleGraph() map[string]roleGraphEdgesTable {
+	return p.roleGraph
 }
