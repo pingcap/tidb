@@ -282,7 +282,7 @@ func TestLoadRoleGraph(t *testing.T) {
 
 	var p privileges.MySQLPrivilege
 	require.NoError(t, p.LoadDBTable(tk.Session()))
-	require.Len(t, p.User, 0)
+	require.Len(t, p.User(), 0)
 
 	tk.MustExec(`INSERT INTO mysql.role_edges (FROM_HOST, FROM_USER, TO_HOST, TO_USER) VALUES ("%", "r_1", "%", "user2")`)
 	tk.MustExec(`INSERT INTO mysql.role_edges (FROM_HOST, FROM_USER, TO_HOST, TO_USER) VALUES ("%", "r_2", "%", "root")`)
