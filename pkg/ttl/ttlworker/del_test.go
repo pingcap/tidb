@@ -320,6 +320,7 @@ func TestTTLDeleteTaskWorker(t *testing.T) {
 	s := newMockSession(t)
 	pool := newMockSessionPool(t)
 	pool.se = s
+	defer pool.AssertNoSessionInUse()
 
 	sqlMap := make(map[string]struct{})
 	s.executeSQL = func(ctx context.Context, sql string, args ...any) ([]chunk.Row, error) {

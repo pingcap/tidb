@@ -266,6 +266,7 @@ func (w *ttlDeleteWorker) loop() error {
 	if err != nil {
 		return err
 	}
+	defer se.Close()
 
 	ctx := metrics.CtxWithPhaseTracer(w.baseWorker.ctx, tracer)
 
