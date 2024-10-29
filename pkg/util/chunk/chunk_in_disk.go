@@ -213,7 +213,7 @@ func (d *DataInDiskByChunks) serializeChunkData(pos *int64, chk *Chunk, selSize 
 	d.buf = d.buf[:*pos+selSize]
 
 	selLen := len(chk.sel)
-	for i := 0; i < selLen; i++ {
+	for i := range selLen {
 		*(*int)(unsafe.Pointer(&d.buf[*pos])) = chk.sel[i]
 		*pos += intLen
 	}
@@ -288,7 +288,7 @@ func (d *DataInDiskByChunks) deserializeSel(chk *Chunk, pos *int64, selSize int)
 	} else {
 		chk.sel = chk.sel[:selLen]
 	}
-	for i := int64(0); i < selLen; i++ {
+	for i := range selLen {
 		chk.sel[i] = *(*int)(unsafe.Pointer(&d.buf[*pos]))
 		*pos += intLen
 	}
@@ -313,7 +313,7 @@ func (d *DataInDiskByChunks) deserializeChunkData(chk *Chunk, pos *int64) {
 
 func (d *DataInDiskByChunks) deserializeOffsets(dst []int64, pos *int64) {
 	offsetNum := len(dst)
-	for i := 0; i < offsetNum; i++ {
+	for i := range offsetNum {
 		dst[i] = *(*int64)(unsafe.Pointer(&d.buf[*pos]))
 		*pos += int64Len
 	}

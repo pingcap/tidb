@@ -587,29 +587,27 @@ func asyncNotifyEvent(jobCtx *jobContext, e *notifier.SchemaChangeEvent, job *mo
 		logutil.DDLLogger().Warn("fail to notify DDL event", zap.Stringer("event", e))
 	}
 
-	if intest.InTest && jobCtx.eventPublishStore != nil {
-		failpoint.Inject("asyncNotifyEventError", func() {
-			failpoint.Return(errors.New("mock publish event error"))
-		})
-		if subJobID == noSubJob && job.MultiSchemaInfo != nil {
-			subJobID = int64(job.MultiSchemaInfo.Seq)
-		}
-		err := notifier.PubSchemeChangeToStore(
-			jobCtx.stepCtx,
-			sctx,
-			job.ID,
-			subJobID,
-			e,
-			jobCtx.eventPublishStore,
-		)
-		if err != nil {
-			logutil.DDLLogger().Error("Error publish schema change event",
-				zap.Int64("jobID", job.ID),
-				zap.Int64("subJobID", subJobID),
-				zap.String("event", e.String()), zap.Error(err))
-			return err
-		}
-		return nil
+	intest.Assert(jobCtx.eventPublishStore != nil, "eventPublishStore should not be nil")
+	failpoint.Inject("asyncNotifyEventError", func() {
+		failpoint.Return(errors.New("mock publish event error"))
+	})
+	if subJobID == noSubJob && job.MultiSchemaInfo != nil {
+		subJobID = int64(job.MultiSchemaInfo.Seq)
+	}
+	err := notifier.PubSchemeChangeToStore(
+		jobCtx.stepCtx,
+		sctx,
+		job.ID,
+		subJobID,
+		e,
+		jobCtx.eventPublishStore,
+	)
+	if err != nil {
+		logutil.DDLLogger().Error("Error publish schema change event",
+			zap.Int64("jobID", job.ID),
+			zap.Int64("subJobID", subJobID),
+			zap.String("event", e.String()), zap.Error(err))
+		return err
 	}
 	return nil
 }
@@ -1401,12 +1399,14 @@ func processJobs(
 
 		failpoint.Inject("mockCommitFailedOnDDLCommand", func(val failpoint.Value) {
 			if val.(bool) {
+				ns.Rollback()
 				failpoint.Return(jobErrs, errors.New("mock commit failed on admin command on ddl jobs"))
 			}
 		})
 
 		// There may be some conflict during the update, try it again
 		if err = ns.Commit(ctx); err != nil {
+			ns.Rollback()
 			continue
 		}
 

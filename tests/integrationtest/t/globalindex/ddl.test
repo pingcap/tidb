@@ -41,7 +41,7 @@ create table t (a int, b int, index idx(a) global);
 create table t (a int, b int, index idx(a) global) partition by hash(b) partitions 3;
 create table t (a int not null, b int, primary key(a) nonclustered, unique idx_b(b) global) partition by hash(a) partitions 3;
 drop table t;
--- error 1503
+-- error 8200
 create table t (a int key global, b int) partition by hash(b) partitions 3;
 -- error 8264
 create table t (a int unique, b int) partition by hash(b) partitions 3;
@@ -71,3 +71,18 @@ create index idxErr on t (b) global;
 create unique index idxOK2 on t (a) global;
 -- error 8200
 create unique index idxErr on t (b) global;
+
+drop table t;
+--error 8200
+create table t(a int, b int, primary key (a) nonclustered global);
+--error 8200
+create table t(a int, b int, primary key (a) global);
+--error 8200
+create table t(a int, b int, primary key (a) global) partition by hash(a) partitions 5;
+--error 8200
+create table t(a int, b int, primary key (b) global) partition by hash(a) partitions 5;
+
+create table t(a int, b int);
+--error 8200
+alter table t add primary key (a) global;
+

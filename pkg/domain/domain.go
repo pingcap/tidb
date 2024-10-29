@@ -1376,18 +1376,14 @@ func (do *Domain) Init(
 	do.cancelFns.fns = append(do.cancelFns.fns, cancelFunc)
 	do.cancelFns.mu.Unlock()
 
-	var ddlNotifierStore notifier.Store
-	if intest.InTest {
-		ddlNotifierStore = notifier.OpenTableStore("mysql", ddl.NotifierTableName)
-		do.ddlNotifier = notifier.NewDDLNotifier(
-			do.sysSessionPool,
-			ddlNotifierStore,
-			time.Second,
-		)
-
-		// TODO(lance6716): find a more representative place for subscriber
-		failpoint.InjectCall("afterDDLNotifierCreated", do.ddlNotifier)
-	}
+	ddlNotifierStore := notifier.OpenTableStore("mysql", ddl.NotifierTableName)
+	do.ddlNotifier = notifier.NewDDLNotifier(
+		do.sysSessionPool,
+		ddlNotifierStore,
+		time.Second,
+	)
+	// TODO(lance6716): find a more representative place for subscriber
+	failpoint.InjectCall("afterDDLNotifierCreated", do.ddlNotifier)
 
 	d := do.ddl
 	eBak := do.ddlExecutor
@@ -1802,6 +1798,11 @@ func (do *Domain) SysSessionPool() util.SessionPool {
 // SysProcTracker returns the system processes tracker.
 func (do *Domain) SysProcTracker() sysproctrack.Tracker {
 	return &do.sysProcesses
+}
+
+// DDLNotifier returns the DDL notifier.
+func (do *Domain) DDLNotifier() *notifier.DDLNotifier {
+	return do.ddlNotifier
 }
 
 // GetEtcdClient returns the etcd client.
@@ -2288,7 +2289,17 @@ func (do *Domain) StatsHandle() *handle.Handle {
 
 // CreateStatsHandle is used only for test.
 func (do *Domain) CreateStatsHandle(ctx, initStatsCtx sessionctx.Context) error {
-	h, err := handle.NewHandle(ctx, initStatsCtx, do.statsLease, do.InfoSchema(), do.sysSessionPool, &do.sysProcesses, do.NextConnID, do.ReleaseConnID)
+	h, err := handle.NewHandle(
+		ctx,
+		initStatsCtx,
+		do.statsLease,
+		do.InfoSchema(),
+		do.sysSessionPool,
+		&do.sysProcesses,
+		do.ddlNotifier,
+		do.NextConnID,
+		do.ReleaseConnID,
+	)
 	if err != nil {
 		return err
 	}
@@ -2325,7 +2336,17 @@ func (do *Domain) LoadAndUpdateStatsLoop(ctxs []sessionctx.Context, initStatsCtx
 // It should be called only once in BootstrapSession.
 func (do *Domain) UpdateTableStatsLoop(ctx, initStatsCtx sessionctx.Context) error {
 	ctx.GetSessionVars().InRestrictedSQL = true
-	statsHandle, err := handle.NewHandle(ctx, initStatsCtx, do.statsLease, do.InfoSchema(), do.sysSessionPool, &do.sysProcesses, do.NextConnID, do.ReleaseConnID)
+	statsHandle, err := handle.NewHandle(
+		ctx,
+		initStatsCtx,
+		do.statsLease,
+		do.InfoSchema(),
+		do.sysSessionPool,
+		&do.sysProcesses,
+		do.ddlNotifier,
+		do.NextConnID,
+		do.ReleaseConnID,
+	)
 	if err != nil {
 		return err
 	}
@@ -2339,9 +2360,7 @@ func (do *Domain) UpdateTableStatsLoop(ctx, initStatsCtx sessionctx.Context) err
 	variable.EnableStatsOwner = do.enableStatsOwner
 	variable.DisableStatsOwner = do.disableStatsOwner
 	do.statsOwner = do.newOwnerManager(handle.StatsPrompt, handle.StatsOwnerKey)
-	if intest.InTest {
-		do.statsOwner.SetListener(do.ddlNotifier)
-	}
+	do.statsOwner.SetListener(do.ddlNotifier)
 	do.wg.Run(func() {
 		do.indexUsageWorker()
 	}, "indexUsageWorker")

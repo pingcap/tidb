@@ -1296,3 +1296,25 @@ explain select *,_tidb_rowid from t partition(p0,p1) where _tidb_rowid=1;
 id	estRows	task	access object	operator info
 TableReader_6	10000.00	root	partition:p0,p1	data:TableRangeScan_5
 └─TableRangeScan_5	10000.00	cop[tikv]	table:t	range:[1,1], keep order:false, stats:pseudo
+drop table if exists t;
+CREATE TABLE `t` (
+`a` bigint unsigned
+)
+PARTITION BY LIST (`a`)
+(PARTITION `p0` VALUES IN (18446744073709551610,1),
+PARTITION `p1` VALUES IN (2,3));
+explain select * from t where a < 18446744073709551610 and a > 2;
+id	estRows	task	access object	operator info
+TableReader_7	250.00	root	partition:p1	data:Selection_6
+└─Selection_6	250.00	cop[tikv]		gt(planner__core__integration_partition.t.a, 2), lt(planner__core__integration_partition.t.a, 18446744073709551610)
+  └─TableFullScan_5	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+explain select * from t where a < 18446744073709551610;
+id	estRows	task	access object	operator info
+TableReader_7	3323.33	root	partition:all	data:Selection_6
+└─Selection_6	3323.33	cop[tikv]		lt(planner__core__integration_partition.t.a, 18446744073709551610)
+  └─TableFullScan_5	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+explain select * from t where a not in (18446744073709551610, 1);
+id	estRows	task	access object	operator info
+TableReader_7	3833.33	root	partition:p1	data:Selection_6
+└─Selection_6	3833.33	cop[tikv]		not(in(planner__core__integration_partition.t.a, 18446744073709551610, 1))
+  └─TableFullScan_5	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
