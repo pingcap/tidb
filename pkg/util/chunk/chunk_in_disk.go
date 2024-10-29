@@ -128,10 +128,9 @@ func (d *DataInDiskByChunks) getChunkSize(chkIdx int) int64 {
 	return d.offsetOfEachChunk[chkIdx+1] - d.offsetOfEachChunk[chkIdx]
 }
 
-// GetChunk gets a Chunk from the DataInDiskByChunks by chkIdx.
-func (d *DataInDiskByChunks) GetChunk(chkIdx int) (*Chunk, error) {
+func (d *DataInDiskByChunks) readFromFisk(chkIdx int) error {
 	if err := injectChunkInDiskRandomError(); err != nil {
-		return nil, err
+		return err
 	}
 
 	reader := d.dataFile.getSectionReader(d.offsetOfEachChunk[chkIdx])
@@ -145,17 +144,37 @@ func (d *DataInDiskByChunks) GetChunk(chkIdx int) (*Chunk, error) {
 
 	readByteNum, err := io.ReadFull(reader, d.buf)
 	if err != nil {
-		return nil, err
+		return err
 	}
 
 	if int64(readByteNum) != chkSize {
-		return nil, errors2.New("Fail to restore the spilled chunk")
+		return errors2.New("Fail to restore the spilled chunk")
+	}
+
+	return nil
+}
+
+// GetChunk gets a Chunk from the DataInDiskByChunks by chkIdx.
+func (d *DataInDiskByChunks) GetChunk(chkIdx int) (*Chunk, error) {
+	err := d.readFromFisk(chkIdx)
+	if err != nil {
+		return nil, err
 	}
 
 	chk := NewEmptyChunk(d.fieldTypes)
 	d.deserializeDataToChunk(chk)
-
 	return chk, nil
+}
+
+// FillChunk fills a Chunk from the DataInDiskByChunks by chkIdx.
+func (d *DataInDiskByChunks) FillChunk(chkIdx int, chk *Chunk) error {
+	err := d.readFromFisk(chkIdx)
+	if err != nil {
+		return err
+	}
+
+	d.deserializeDataToChunk(chk)
+	return nil
 }
 
 // Close releases the disk resource.
