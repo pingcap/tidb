@@ -1921,7 +1921,7 @@ func TestDoImport(t *testing.T) {
 				{
 					keyRange:   Range{start: []byte{'a'}, end: []byte{'b'}},
 					engine:     &Engine{},
-					retryCount: maxWriteAndIngestRetryTimes - 1,
+					retryCount: MaxWriteAndIngestRetryTimes - 1,
 					injected:   getSuccessInjectedBehaviour(),
 				},
 			},
@@ -1931,7 +1931,7 @@ func TestDoImport(t *testing.T) {
 				{
 					keyRange:   Range{start: []byte{'b'}, end: []byte{'c'}},
 					engine:     &Engine{},
-					retryCount: maxWriteAndIngestRetryTimes - 1,
+					retryCount: MaxWriteAndIngestRetryTimes - 1,
 					injected:   getSuccessInjectedBehaviour(),
 				},
 			},
@@ -1941,7 +1941,7 @@ func TestDoImport(t *testing.T) {
 				{
 					keyRange:   Range{start: []byte{'c'}, end: []byte{'d'}},
 					engine:     &Engine{},
-					retryCount: maxWriteAndIngestRetryTimes - 2,
+					retryCount: MaxWriteAndIngestRetryTimes - 2,
 					injected: []injectedBehaviour{
 						{
 							write: injectedWriteBehaviour{
@@ -1992,13 +1992,13 @@ func TestRegionJobResetRetryCounter(t *testing.T) {
 					keyRange:   Range{start: []byte{'c'}, end: []byte{'c', '2'}},
 					engine:     &Engine{},
 					injected:   getNeedRescanWhenIngestBehaviour(),
-					retryCount: maxWriteAndIngestRetryTimes,
+					retryCount: MaxWriteAndIngestRetryTimes,
 				},
 				{
 					keyRange:   Range{start: []byte{'c', '2'}, end: []byte{'d'}},
 					engine:     &Engine{},
 					injected:   getSuccessInjectedBehaviour(),
-					retryCount: maxWriteAndIngestRetryTimes,
+					retryCount: MaxWriteAndIngestRetryTimes,
 				},
 			},
 		},
