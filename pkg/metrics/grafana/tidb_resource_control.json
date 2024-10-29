@@ -32,107 +32,6 @@
          "id": 2,
          "panels": [
             {
-               "datasource": "${DS_TEST-CLUSTER}",
-               "fieldConfig": {
-                  "overrides": [
-                     {
-                        "matcher": {
-                           "id": "byName",
-                           "options": "Burstable"
-                        },
-                        "properties": [
-                           {
-                              "id": "mappings",
-                              "value": [
-                                 {
-                                    "options": {
-                                       "0": {
-                                          "index": 1,
-                                          "text": "false"
-                                       },
-                                       "1": {
-                                          "index": 0,
-                                          "text": "true"
-                                       }
-                                    },
-                                    "type": "value"
-                                 }
-                              ]
-                           }
-                        ]
-                     }
-                  ]
-               },
-               "gridPos": {
-                  "h": 7,
-                  "w": 24,
-                  "x": 0,
-                  "y": 0
-               },
-               "id": 3,
-               "targets": [
-                  {
-                     "expr": "max by (resource_group, type) (resource_manager_server_group_config{type=\"priority\"})",
-                     "format": "time_series",
-                     "instant": true,
-                     "intervalFactor": 2,
-                     "legendFormat": "{{resource_group}}"
-                  },
-                  {
-                     "expr": "max by (resource_group, type) (resource_manager_server_group_config{type=\"ru_capacity\"}) < bool 0",
-                     "format": "time_series",
-                     "instant": true,
-                     "intervalFactor": 2,
-                     "legendFormat": "{{resource_group}}"
-                  },
-                  {
-                     "expr": "max by (resource_group, type) (resource_manager_server_group_config{type=\"ru_per_sec\"})",
-                     "format": "time_series",
-                     "instant": true,
-                     "intervalFactor": 2,
-                     "legendFormat": "{{resource_group}}"
-                  }
-               ],
-               "title": "RU Config",
-               "transformations": [
-                  {
-                     "id": "labelsToFields",
-                     "options": {
-                        "valueLabel": "type"
-                     }
-                  },
-                  {
-                     "id": "organize",
-                     "options": {
-                        "excludeByName": {
-                           "Time": true,
-                           "__name__": true,
-                           "instance": true,
-                           "job": true
-                        },
-                        "indexByName": {
-                           "Time": 0,
-                           "__name__": 1,
-                           "instance": 2,
-                           "job": 3,
-                           "priority": 5,
-                           "resource_group": 4,
-                           "ru_capacity": 7,
-                           "ru_per_sec": 6
-                        },
-                        "renameByName": {
-                           "priority": "Priority",
-                           "resource_group": "Group Name",
-                           "ru_capacity": "Burstable",
-                           "ru_per_sec": "RU_PER_SEC"
-                        }
-                     }
-                  }
-               ],
-               "transparent": false,
-               "type": "table"
-            },
-            {
                "aliasColors": { },
                "bars": false,
                "dashLength": 10,
@@ -147,7 +46,7 @@
                   "x": 0,
                   "y": 0
                },
-               "id": 4,
+               "id": 3,
                "legend": {
                   "alignAsTable": true,
                   "avg": true,
@@ -240,7 +139,7 @@
                   "x": 12,
                   "y": 0
                },
-               "id": 5,
+               "id": 4,
                "legend": {
                   "alignAsTable": true,
                   "avg": false,
@@ -333,7 +232,7 @@
                   "x": 0,
                   "y": 0
                },
-               "id": 6,
+               "id": 5,
                "legend": {
                   "alignAsTable": true,
                   "avg": true,
@@ -426,7 +325,7 @@
                   "x": 12,
                   "y": 0
                },
-               "id": 7,
+               "id": 6,
                "legend": {
                   "alignAsTable": true,
                   "avg": true,
@@ -519,7 +418,7 @@
                   "x": 0,
                   "y": 0
                },
-               "id": 8,
+               "id": 7,
                "legend": {
                   "alignAsTable": true,
                   "avg": true,
@@ -612,7 +511,7 @@
                   "x": 12,
                   "y": 0
                },
-               "id": 9,
+               "id": 8,
                "legend": {
                   "alignAsTable": true,
                   "avg": true,
@@ -705,7 +604,7 @@
                   "x": 0,
                   "y": 0
                },
-               "id": 10,
+               "id": 9,
                "legend": {
                   "alignAsTable": true,
                   "avg": true,
@@ -801,7 +700,7 @@
             "x": 0,
             "y": 0
          },
-         "id": 11,
+         "id": 10,
          "panels": [
             {
                "aliasColors": { },
@@ -818,7 +717,7 @@
                   "x": 0,
                   "y": 0
                },
-               "id": 12,
+               "id": 11,
                "legend": {
                   "alignAsTable": true,
                   "avg": true,
@@ -911,7 +810,7 @@
                   "x": 12,
                   "y": 0
                },
-               "id": 13,
+               "id": 12,
                "legend": {
                   "alignAsTable": true,
                   "avg": true,
@@ -1018,7 +917,7 @@
                   "x": 0,
                   "y": 0
                },
-               "id": 14,
+               "id": 13,
                "legend": {
                   "alignAsTable": true,
                   "avg": true,
@@ -1111,7 +1010,7 @@
                   "x": 12,
                   "y": 0
                },
-               "id": 15,
+               "id": 14,
                "legend": {
                   "alignAsTable": true,
                   "avg": true,
@@ -1204,7 +1103,7 @@
                   "x": 0,
                   "y": 0
                },
-               "id": 16,
+               "id": 15,
                "legend": {
                   "alignAsTable": true,
                   "avg": true,
@@ -1297,7 +1196,7 @@
                   "x": 12,
                   "y": 0
                },
-               "id": 17,
+               "id": 16,
                "legend": {
                   "alignAsTable": true,
                   "avg": true,
@@ -1390,7 +1289,7 @@
                   "x": 0,
                   "y": 0
                },
-               "id": 18,
+               "id": 17,
                "legend": {
                   "alignAsTable": true,
                   "avg": true,
@@ -1483,7 +1382,7 @@
                   "x": 12,
                   "y": 0
                },
-               "id": 19,
+               "id": 18,
                "legend": {
                   "alignAsTable": true,
                   "avg": true,
@@ -1579,7 +1478,7 @@
             "x": 0,
             "y": 0
          },
-         "id": 20,
+         "id": 19,
          "panels": [
             {
                "aliasColors": { },
@@ -1596,7 +1495,7 @@
                   "x": 0,
                   "y": 0
                },
-               "id": 21,
+               "id": 20,
                "legend": {
                   "alignAsTable": true,
                   "avg": false,
@@ -1682,7 +1581,7 @@
                   "x": 0,
                   "y": 0
                },
-               "id": 22,
+               "id": 21,
                "legend": {
                   "alignAsTable": true,
                   "avg": false,
@@ -1775,7 +1674,7 @@
                   "x": 12,
                   "y": 0
                },
-               "id": 23,
+               "id": 22,
                "legend": {
                   "alignAsTable": true,
                   "avg": false,
@@ -1869,7 +1768,7 @@
                   "x": 0,
                   "y": 0
                },
-               "id": 24,
+               "id": 23,
                "legend": {
                   "alignAsTable": true,
                   "avg": true,
@@ -1962,7 +1861,7 @@
                   "x": 12,
                   "y": 0
                },
-               "id": 25,
+               "id": 24,
                "legend": {
                   "alignAsTable": true,
                   "avg": false,
@@ -2055,7 +1954,7 @@
                   "x": 0,
                   "y": 0
                },
-               "id": 26,
+               "id": 25,
                "legend": {
                   "alignAsTable": true,
                   "avg": false,
@@ -2148,7 +2047,7 @@
                   "x": 12,
                   "y": 0
                },
-               "id": 27,
+               "id": 26,
                "legend": {
                   "alignAsTable": true,
                   "avg": false,
@@ -2258,7 +2157,7 @@
             "x": 0,
             "y": 0
          },
-         "id": 28,
+         "id": 27,
          "panels": [
             {
                "aliasColors": { },
@@ -2275,7 +2174,7 @@
                   "x": 0,
                   "y": 0
                },
-               "id": 29,
+               "id": 28,
                "legend": {
                   "alignAsTable": true,
                   "avg": true,
@@ -2361,7 +2260,7 @@
                   "x": 12,
                   "y": 0
                },
-               "id": 30,
+               "id": 29,
                "legend": {
                   "alignAsTable": true,
                   "avg": true,
@@ -2457,7 +2356,7 @@
             "x": 0,
             "y": 0
          },
-         "id": 31,
+         "id": 30,
          "panels": [
             {
                "aliasColors": { },
@@ -2474,7 +2373,7 @@
                   "x": 0,
                   "y": 0
                },
-               "id": 32,
+               "id": 31,
                "legend": {
                   "alignAsTable": true,
                   "avg": false,
@@ -2560,7 +2459,7 @@
                   "x": 12,
                   "y": 0
                },
-               "id": 33,
+               "id": 32,
                "legend": {
                   "alignAsTable": true,
                   "avg": false,
@@ -2646,7 +2545,7 @@
                   "x": 0,
                   "y": 0
                },
-               "id": 34,
+               "id": 33,
                "legend": {
                   "alignAsTable": true,
                   "avg": false,
@@ -2732,7 +2631,7 @@
                   "x": 12,
                   "y": 0
                },
-               "id": 35,
+               "id": 34,
                "legend": {
                   "alignAsTable": true,
                   "avg": true,
@@ -2828,7 +2727,7 @@
             "x": 0,
             "y": 0
          },
-         "id": 36,
+         "id": 35,
          "panels": [
             {
                "aliasColors": { },
@@ -2845,7 +2744,7 @@
                   "x": 0,
                   "y": 0
                },
-               "id": 37,
+               "id": 36,
                "legend": {
                   "alignAsTable": true,
                   "avg": true,
@@ -2929,7 +2828,7 @@
                "dashLength": 10,
                "dashes": false,
                "datasource": "${DS_TEST-CLUSTER}",
-               "description": "The resource(CPU, IO) utilization percentage and limit of background tasks.",
+               "description": "The total background task's io limit for all resource groups.",
                "fill": 1,
                "fillGradient": 0,
                "gridPos": {
@@ -2938,93 +2837,7 @@
                   "x": 12,
                   "y": 0
                },
-               "id": 38,
-               "legend": {
-                  "alignAsTable": true,
-                  "avg": true,
-                  "current": true,
-                  "max": true,
-                  "min": true,
-                  "rightSide": true,
-                  "show": true,
-                  "sideWidth": null,
-                  "total": false,
-                  "values": true
-               },
-               "lines": true,
-               "linewidth": 1,
-               "links": [ ],
-               "nullPointMode": "null",
-               "percentage": false,
-               "pointradius": 5,
-               "points": false,
-               "renderer": "flot",
-               "repeat": null,
-               "seriesOverrides": [ ],
-               "spaceLength": 10,
-               "stack": false,
-               "steppedLine": false,
-               "targets": [
-                  {
-                     "expr": "tikv_resource_control_bg_resource_utilization{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$tikv_instance\"}",
-                     "format": "time_series",
-                     "intervalFactor": 2,
-                     "legendFormat": "{{instance}}-{{type}}",
-                     "refId": "A"
-                  }
-               ],
-               "thresholds": [ ],
-               "timeFrom": null,
-               "timeShift": null,
-               "title": "Background Task Resource Utilization",
-               "tooltip": {
-                  "shared": true,
-                  "sort": 0,
-                  "value_type": "individual"
-               },
-               "type": "graph",
-               "xaxis": {
-                  "buckets": null,
-                  "mode": "time",
-                  "name": null,
-                  "show": true,
-                  "values": [ ]
-               },
-               "yaxes": [
-                  {
-                     "format": "percent",
-                     "label": null,
-                     "logBase": 1,
-                     "max": null,
-                     "min": null,
-                     "show": true
-                  },
-                  {
-                     "format": "percent",
-                     "label": null,
-                     "logBase": 1,
-                     "max": null,
-                     "min": null,
-                     "show": true
-                  }
-               ]
-            },
-            {
-               "aliasColors": { },
-               "bars": false,
-               "dashLength": 10,
-               "dashes": false,
-               "datasource": "${DS_TEST-CLUSTER}",
-               "description": "The total background task's io limit for all resource groups.",
-               "fill": 1,
-               "fillGradient": 0,
-               "gridPos": {
-                  "h": 7,
-                  "w": 12,
-                  "x": 0,
-                  "y": 0
-               },
-               "id": 39,
+               "id": 37,
                "legend": {
                   "alignAsTable": true,
                   "avg": true,
@@ -3107,10 +2920,10 @@
                "gridPos": {
                   "h": 7,
                   "w": 12,
-                  "x": 12,
+                  "x": 0,
                   "y": 0
                },
-               "id": 40,
+               "id": 38,
                "legend": {
                   "alignAsTable": true,
                   "avg": true,
@@ -3193,10 +3006,10 @@
                "gridPos": {
                   "h": 7,
                   "w": 12,
-                  "x": 0,
+                  "x": 12,
                   "y": 0
                },
-               "id": 41,
+               "id": 39,
                "legend": {
                   "alignAsTable": true,
                   "avg": true,
@@ -3279,10 +3092,10 @@
                "gridPos": {
                   "h": 7,
                   "w": 12,
-                  "x": 12,
+                  "x": 0,
                   "y": 0
                },
-               "id": 42,
+               "id": 40,
                "legend": {
                   "alignAsTable": true,
                   "avg": true,
@@ -3365,10 +3178,10 @@
                "gridPos": {
                   "h": 7,
                   "w": 12,
-                  "x": 0,
+                  "x": 12,
                   "y": 0
                },
-               "id": 43,
+               "id": 41,
                "legend": {
                   "alignAsTable": true,
                   "avg": true,
@@ -3457,7 +3270,7 @@
             "x": 0,
             "y": 0
          },
-         "id": 44,
+         "id": 42,
          "panels": [
             {
                "aliasColors": { },
@@ -3474,7 +3287,7 @@
                   "x": 0,
                   "y": 0
                },
-               "id": 45,
+               "id": 43,
                "legend": {
                   "alignAsTable": true,
                   "avg": true,
@@ -3581,7 +3394,7 @@
                   "x": 12,
                   "y": 0
                },
-               "id": 46,
+               "id": 44,
                "legend": {
                   "alignAsTable": true,
                   "avg": false,
@@ -3675,7 +3488,7 @@
                   "x": 0,
                   "y": 0
                },
-               "id": 47,
+               "id": 45,
                "legend": {
                   "alignAsTable": true,
                   "avg": true,
@@ -3768,7 +3581,7 @@
                   "x": 12,
                   "y": 0
                },
-               "id": 48,
+               "id": 46,
                "legend": {
                   "alignAsTable": true,
                   "avg": false,
@@ -3861,7 +3674,7 @@
                   "x": 0,
                   "y": 0
                },
-               "id": 49,
+               "id": 47,
                "legend": {
                   "alignAsTable": true,
                   "avg": false,

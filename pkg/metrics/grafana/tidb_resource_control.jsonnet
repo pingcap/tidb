@@ -120,86 +120,9 @@ local TiDBResourceControlDash = dashboard.new(
 //*  ==============Panel (Resource Unit)==================
 //*  Panel Title: Resource Unit
 //*  Description: The metrics about request unit(abstract unit) cost for all resource groups.
-//*  Panels: 7
+//*  Panels: 6
 //*  ==============Panel (Resource Unit)==================
 local ruRow = row.new(collapse=true, title="Resource Unit");
-
-local ConfigPanel = tableNewPanel.new(
-  title="RU Config",
-  datasource=myDS,
-).addTarget(
-  prometheus.target(
-    'max by (resource_group, type) (resource_manager_server_group_config{type="priority"})',
-    legendFormat="{{resource_group}}",
-    instant=true,
-  )
-).addTarget(
-  prometheus.target(
-    'max by (resource_group, type) (resource_manager_server_group_config{type="ru_capacity"}) < bool 0',
-    legendFormat="{{resource_group}}",
-    instant=true,
-  )
-).addTarget(
-  prometheus.target(
-    'max by (resource_group, type) (resource_manager_server_group_config{type="ru_per_sec"})',
-    legendFormat="{{resource_group}}",
-    instant=true,
-  )
-).addTransformation(
-  transformation.new("labelsToFields", options={
-    valueLabel: "type",
-  })
-).addTransformation(
-  transformation.new("organize", options={
-    excludeByName: {
-      Time: true,
-      __name__: true,
-      instance: true,
-      job: true,
-    },
-    indexByName: {
-      Time: 0,
-      __name__: 1,
-      instance: 2,
-      job: 3,
-      resource_group: 4,
-      priority: 5,
-      ru_per_sec: 6,
-      ru_capacity: 7,
-    },
-    renameByName: {
-      priority: "Priority",
-      ru_per_sec: "RU_PER_SEC",
-      resource_group: "Group Name",
-      ru_capacity: "Burstable",
-    },
-  })
-).addOverride(
-  matcher={
-    id: "byName",
-    options: "Burstable",
-  },
-  properties=[
-    {
-      id: "mappings",
-      value: [
-        {
-          options: {
-            "0": {
-              index: 1,
-              text: "false",
-            },
-            "1": {
-              index: 0,
-              text: "true",
-            },
-          },
-          type: "value",
-        },
-      ],
-    },
-  ],
-);
 
 local RUPanel = graphPanel.new(
   title="RU",
@@ -904,7 +827,7 @@ local PriorityTaskWaitDurationPanel = graphPanel.new(
 //*  ==============Panel (Background Task Control)==================
 //*  Row Title: Background Task Control
 //*  Description: The metrics about Background Task Control resource control
-//*  Panels: 7
+//*  Panels: 6
 //*  ==============Panel (Background Task Control)==================
 
 local backgroundTaskRow = row.new(collapse=true, title="Background Task Control");
@@ -932,27 +855,6 @@ local BackgroundTaskRUPanel = graphPanel.new(
   prometheus.target(
     'sum(rate(resource_manager_resource_unit_read_request_unit_sum{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", type=~"background"}[1m])) + sum(rate(resource_manager_resource_unit_write_request_unit_sum{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", type=~"background"}[1m]))',
     legendFormat="total",
-  )
-);
-
-// Background Task Resource Utilization
-local BackgroundTaskResourceUtilizationPanel = graphPanel.new(
-  title="Background Task Resource Utilization",
-  datasource=myDS,
-  legend_rightSide=true,
-  legend_min=true,
-  legend_max=true,
-  legend_avg=true,
-  legend_current=true,
-  legend_alignAsTable=true,
-  legend_values=true,
-  format="percent",
-  logBase1Y=1,
-  description="The resource(CPU, IO) utilization percentage and limit of background tasks.",
-).addTarget(
-  prometheus.target(
-    'tikv_resource_control_bg_resource_utilization{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$tikv_instance"}',
-    legendFormat="{{instance}}-{{type}}",
   )
 );
 
@@ -1209,7 +1111,6 @@ local fullPanelPos = { x: 0, y: 0, w: rowW, h: panelH };
 TiDBResourceControlDash
 .addPanel(
   ruRow/* Resource Unit */
-  .addPanel(ConfigPanel, gridPos=fullPanelPos)
   .addPanel(RUPanel, gridPos=leftPanelPos)
   .addPanel(RUMaxPanel, gridPos=rightPanelPos)
   .addPanel(RUPerQueryPanel, gridPos=leftPanelPos)
@@ -1259,12 +1160,11 @@ TiDBResourceControlDash
 ).addPanel(
   backgroundTaskRow/* Background Task Control */
   .addPanel(BackgroundTaskRUPanel, gridPos=leftPanelPos)
-  .addPanel(BackgroundTaskResourceUtilizationPanel, gridPos=rightPanelPos)
-  .addPanel(BackgroundTaskIOLimitPanel, gridPos=leftPanelPos)
-  .addPanel(BackgroundTaskCPUConsumptionPanel, gridPos=rightPanelPos)
-  .addPanel(BackgroundTaskCPULimitPanel, gridPos=leftPanelPos)
-  .addPanel(BackgroundTaskIOConsumptionPanel, gridPos=rightPanelPos)
-  .addPanel(BackgroundTaskTotalWaitDurationPanel, gridPos=leftPanelPos)
+  .addPanel(BackgroundTaskIOLimitPanel, gridPos=rightPanelPos)
+  .addPanel(BackgroundTaskCPUConsumptionPanel, gridPos=leftPanelPos)
+  .addPanel(BackgroundTaskCPULimitPanel, gridPos=rightPanelPos)
+  .addPanel(BackgroundTaskIOConsumptionPanel, gridPos=leftPanelPos)
+  .addPanel(BackgroundTaskTotalWaitDurationPanel, gridPos=rightPanelPos)
   ,
   gridPos=rowPos
 ).addPanel(
