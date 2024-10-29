@@ -56,6 +56,7 @@ import (
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/engine"
+	"github.com/pingcap/tidb/util/intest"
 	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/tikv/client-go/v2/oracle"
 	tikvclient "github.com/tikv/client-go/v2/tikv"
@@ -1524,28 +1525,24 @@ func (local *Backend) doImport(ctx context.Context, engine *Engine, regionRanges
 			switch job.stage {
 			case regionScanned, wrote:
 				job.retryCount++
-<<<<<<< HEAD:br/pkg/lightning/backend/local/local.go
-				if job.retryCount > maxWriteAndIngestRetryTimes {
-					firstErr.Set(job.lastRetryableErr)
-					workerCancel()
-					jobWg.Done()
-					continue
-=======
 				if job.retryCount > MaxWriteAndIngestRetryTimes {
-					job.done(&jobWg)
 					lastErr := job.lastRetryableErr
-					intest.Assert(lastErr != nil, "lastRetryableErr should not be nil")
 					if lastErr == nil {
+						if intest.InTest {
+							panic("lastRetryableErr should not be nil")
+						}
 						lastErr = errors.New("retry limit exceeded")
 						log.FromContext(ctx).Error(
 							"lastRetryableErr should not be nil",
-							logutil.Key("startKey", job.keyRange.Start),
-							logutil.Key("endKey", job.keyRange.End),
+							logutil.Key("startKey", job.keyRange.start),
+							logutil.Key("endKey", job.keyRange.end),
 							zap.Stringer("stage", job.stage),
 							zap.Error(lastErr))
 					}
-					return lastErr
->>>>>>> 448d56910cd (lightning: fix forget to set lastRetryableErr when ingest RPC fail (#56345)):pkg/lightning/backend/local/local.go
+					firstErr.Set(lastErr)
+					workerCancel()
+					jobWg.Done()
+					continue
 				}
 				// max retry backoff time: 2+4+8+16+30*26=810s
 				sleepSecond := math.Pow(2, float64(job.retryCount))

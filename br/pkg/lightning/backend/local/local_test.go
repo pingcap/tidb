@@ -1919,15 +1919,9 @@ func TestDoImport(t *testing.T) {
 		{"a", "b"}: {
 			jobs: []*regionJob{
 				{
-<<<<<<< HEAD:br/pkg/lightning/backend/local/local_test.go
 					keyRange:   Range{start: []byte{'a'}, end: []byte{'b'}},
 					engine:     &Engine{},
-					retryCount: maxWriteAndIngestRetryTimes - 1,
-=======
-					keyRange:   common.Range{Start: []byte{'a'}, End: []byte{'b'}},
-					ingestData: &Engine{},
 					retryCount: MaxWriteAndIngestRetryTimes - 1,
->>>>>>> 448d56910cd (lightning: fix forget to set lastRetryableErr when ingest RPC fail (#56345)):pkg/lightning/backend/local/local_test.go
 					injected:   getSuccessInjectedBehaviour(),
 				},
 			},
@@ -1935,15 +1929,9 @@ func TestDoImport(t *testing.T) {
 		{"b", "c"}: {
 			jobs: []*regionJob{
 				{
-<<<<<<< HEAD:br/pkg/lightning/backend/local/local_test.go
 					keyRange:   Range{start: []byte{'b'}, end: []byte{'c'}},
 					engine:     &Engine{},
-					retryCount: maxWriteAndIngestRetryTimes - 1,
-=======
-					keyRange:   common.Range{Start: []byte{'b'}, End: []byte{'c'}},
-					ingestData: &Engine{},
 					retryCount: MaxWriteAndIngestRetryTimes - 1,
->>>>>>> 448d56910cd (lightning: fix forget to set lastRetryableErr when ingest RPC fail (#56345)):pkg/lightning/backend/local/local_test.go
 					injected:   getSuccessInjectedBehaviour(),
 				},
 			},
@@ -1951,15 +1939,9 @@ func TestDoImport(t *testing.T) {
 		{"c", "d"}: {
 			jobs: []*regionJob{
 				{
-<<<<<<< HEAD:br/pkg/lightning/backend/local/local_test.go
 					keyRange:   Range{start: []byte{'c'}, end: []byte{'d'}},
 					engine:     &Engine{},
-					retryCount: maxWriteAndIngestRetryTimes - 2,
-=======
-					keyRange:   common.Range{Start: []byte{'c'}, End: []byte{'d'}},
-					ingestData: &Engine{},
 					retryCount: MaxWriteAndIngestRetryTimes - 2,
->>>>>>> 448d56910cd (lightning: fix forget to set lastRetryableErr when ingest RPC fail (#56345)):pkg/lightning/backend/local/local_test.go
 					injected: []injectedBehaviour{
 						{
 							write: injectedWriteBehaviour{
@@ -2010,39 +1992,13 @@ func TestRegionJobResetRetryCounter(t *testing.T) {
 					keyRange:   Range{start: []byte{'c'}, end: []byte{'c', '2'}},
 					engine:     &Engine{},
 					injected:   getNeedRescanWhenIngestBehaviour(),
-<<<<<<< HEAD:br/pkg/lightning/backend/local/local_test.go
-					retryCount: maxWriteAndIngestRetryTimes,
-=======
 					retryCount: MaxWriteAndIngestRetryTimes,
-					region: &split.RegionInfo{
-						Region: &metapb.Region{
-							Peers: []*metapb.Peer{
-								{Id: 1, StoreId: 1},
-								{Id: 2, StoreId: 2},
-								{Id: 3, StoreId: 3},
-							},
-						},
-					},
->>>>>>> 448d56910cd (lightning: fix forget to set lastRetryableErr when ingest RPC fail (#56345)):pkg/lightning/backend/local/local_test.go
 				},
 				{
 					keyRange:   Range{start: []byte{'c', '2'}, end: []byte{'d'}},
 					engine:     &Engine{},
 					injected:   getSuccessInjectedBehaviour(),
-<<<<<<< HEAD:br/pkg/lightning/backend/local/local_test.go
-					retryCount: maxWriteAndIngestRetryTimes,
-=======
 					retryCount: MaxWriteAndIngestRetryTimes,
-					region: &split.RegionInfo{
-						Region: &metapb.Region{
-							Peers: []*metapb.Peer{
-								{Id: 4, StoreId: 4},
-								{Id: 5, StoreId: 5},
-								{Id: 6, StoreId: 6},
-							},
-						},
-					},
->>>>>>> 448d56910cd (lightning: fix forget to set lastRetryableErr when ingest RPC fail (#56345)):pkg/lightning/backend/local/local_test.go
 				},
 			},
 		},
