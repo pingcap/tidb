@@ -131,6 +131,7 @@ func TestScanWorkerSchedule(t *testing.T) {
 
 	tbl := newMockTTLTbl(t, "t1")
 	w := NewMockScanWorker(t)
+	defer w.sessPoll.AssertNoSessionInUse()
 	w.setOneRowResult(tbl, 7)
 	defer w.stopWithWait()
 
@@ -180,6 +181,7 @@ func TestScanWorkerScheduleWithFailedTask(t *testing.T) {
 
 	tbl := newMockTTLTbl(t, "t1")
 	w := NewMockScanWorker(t)
+	defer w.sessPoll.AssertNoSessionInUse()
 	w.clearInfoSchema()
 	defer w.stopWithWait()
 
@@ -392,6 +394,7 @@ func (t *mockScanTask) execSQL(_ context.Context, sql string, _ ...any) ([]chunk
 
 func TestScanTaskDoScan(t *testing.T) {
 	task := newMockScanTask(t, 3)
+	defer task.sessPool.AssertNoSessionInUse()
 	task.ctx = cache.SetMockExpireTime(task.ctx, time.Now())
 	task.sqlRetry[1] = scanTaskExecuteSQLMaxRetry
 	task.runDoScanForTest(3, "")
@@ -413,6 +416,7 @@ func TestScanTaskDoScan(t *testing.T) {
 func TestScanTaskCheck(t *testing.T) {
 	tbl := newMockTTLTbl(t, "t1")
 	pool := newMockSessionPool(t, tbl)
+	defer pool.AssertNoSessionInUse()
 	pool.se.rows = newMockRows(t, types.NewFieldType(mysql.TypeInt24)).Append(12).Rows()
 	ctx := cache.SetMockExpireTime(context.Background(), time.Unix(100, 0))
 
@@ -446,3 +450,55 @@ func TestScanTaskCheck(t *testing.T) {
 	require.Equal(t, 1, len(ch))
 	require.Equal(t, "Total Rows: 1, Success Rows: 0, Error Rows: 0", task.statistics.String())
 }
+<<<<<<< HEAD
+=======
+
+func TestScanTaskCancelStmt(t *testing.T) {
+	task := &ttlScanTask{
+		ctx: context.Background(),
+		tbl: newMockTTLTbl(t, "t1"),
+		TTLTask: &cache.TTLTask{
+			ExpireTime:     time.UnixMilli(0),
+			ScanRangeStart: []types.Datum{types.NewIntDatum(0)},
+		},
+		statistics: &ttlStatistics{},
+	}
+
+	testCancel := func(ctx context.Context, doCancel func()) {
+		mockPool := newMockSessionPool(t)
+		defer mockPool.AssertNoSessionInUse()
+		startExec := make(chan struct{})
+		mockPool.se.sessionInfoSchema = newMockInfoSchema(task.tbl.TableInfo)
+		mockPool.se.executeSQL = func(_ context.Context, _ string, _ ...any) ([]chunk.Row, error) {
+			close(startExec)
+			select {
+			case <-mockPool.se.killed:
+				return nil, errors.New("killed")
+			case <-time.After(10 * time.Second):
+				return nil, errors.New("timeout")
+			}
+		}
+		wg := util.WaitGroupWrapper{}
+		wg.Run(func() {
+			select {
+			case <-startExec:
+			case <-time.After(10 * time.Second):
+				require.FailNow(t, "timeout")
+			}
+			doCancel()
+		})
+		r := task.doScan(ctx, nil, mockPool)
+		require.NotNil(t, r)
+		require.EqualError(t, r.err, "killed")
+		wg.Wait()
+	}
+
+	// test cancel with input context
+	ctx, cancel := context.WithCancel(context.Background())
+	testCancel(ctx, cancel)
+
+	// test cancel with task context
+	task.ctx, cancel = context.WithCancel(context.Background())
+	testCancel(context.Background(), cancel)
+}
+>>>>>>> 50d73f80c42 (ttl: fix some memory leak in TTL (#56935))
