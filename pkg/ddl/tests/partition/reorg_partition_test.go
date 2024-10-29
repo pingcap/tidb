@@ -414,9 +414,11 @@ func testReorganizePartitionFailures(t *testing.T, createSQL, alterSQL string, b
 			err := tk.ExecToErr(alterSQL + suffixComment)
 			tt := external.GetTableByName(t, tk, "test", "t")
 			partition := tt.Meta().Partition
+			rollback := false
 			if test.rollForwardFrom > 0 && test.rollForwardFrom <= i {
 				require.NoError(t, err)
 			} else {
+				rollback = true
 				require.Error(t, err, "failpoint reorgPart"+suffix)
 				require.ErrorContains(t, err, "Injected error by reorgPart"+suffix)
 				tk.MustQuery(`show create table t` + suffixComment).Check(oldCreate)
@@ -431,7 +433,7 @@ func testReorganizePartitionFailures(t *testing.T, createSQL, alterSQL string, b
 			}
 			testfailpoint.Disable(t, name)
 			require.Equal(t, len(tOrg.Meta().Indices), len(tt.Meta().Indices), suffix)
-			if idxID != 0 {
+			if rollback && idxID != 0 {
 				require.Equal(t, idxID, tt.Meta().Indices[0].ID, suffix)
 			}
 			tk.MustExec(`admin check table t` + suffixComment)
@@ -477,7 +479,8 @@ func TestReorgPartitionConcurrent(t *testing.T) {
 			(job.SchemaState == model.StateDeleteOnly ||
 				job.SchemaState == model.StateWriteOnly ||
 				job.SchemaState == model.StateWriteReorganization ||
-				job.SchemaState == model.StateDeleteReorganization) &&
+				job.SchemaState == model.StateDeleteReorganization ||
+				job.SchemaState == model.StatePublic) &&
 			currState != job.SchemaState {
 			currState = job.SchemaState
 			<-wait
@@ -573,6 +576,60 @@ func TestReorgPartitionConcurrent(t *testing.T) {
 		"15 15 15",
 		"16 16 16"))
 	currTbl.Meta().Partition = currPart
+	tk.MustQuery(`show create table t`).Check(testkit.Rows("" +
+		"t CREATE TABLE `t` (\n" +
+		"  `a` int(10) unsigned NOT NULL,\n" +
+		"  `b` varchar(255) DEFAULT NULL,\n" +
+		"  `c` int(11) DEFAULT NULL,\n" +
+		"  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */,\n" +
+		"  KEY `b` (`b`),\n" +
+		"  KEY `c` (`c`,`b`)\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+		"PARTITION BY RANGE (`a`)\n" +
+		"(PARTITION `p0` VALUES LESS THAN (10),\n" +
+		" PARTITION `p1a` VALUES LESS THAN (15),\n" +
+		" PARTITION `p1b` VALUES LESS THAN (20),\n" +
+		" PARTITION `pMax` VALUES LESS THAN (MAXVALUE))"))
+	wait <- true
+
+	// StatePublic
+	wait <- true
+	tk.MustQuery(`select * from t where c between 10 and 22`).Sort().Check(testkit.Rows(""+
+		"10 10 10",
+		"12 12b 12",
+		"14 14 14",
+		"15 15 15",
+		"16 16 16"))
+	publicInfoSchema := sessiontxn.GetTxnManager(tk.Session()).GetTxnInfoSchema()
+	require.Equal(t, int64(1), publicInfoSchema.SchemaMetaVersion()-deleteReorgInfoSchema.SchemaMetaVersion())
+	tk.MustExec(`insert into t values (17, "17", 17)`)
+	oldTbl, err = deleteReorgInfoSchema.TableByName(context.Background(), pmodel.NewCIStr(schemaName), pmodel.NewCIStr("t"))
+	require.NoError(t, err)
+	partDef = oldTbl.Meta().Partition.Definitions[1]
+	require.Equal(t, "p1a", partDef.Name.O)
+	rows = getNumRowsFromPartitionDefs(t, tk, oldTbl, oldTbl.Meta().Partition.Definitions[1:2])
+	require.Equal(t, 3, rows)
+	tk.MustQuery(`select * from t partition (p1a)`).Sort().Check(testkit.Rows("10 10 10", "12 12b 12", "14 14 14"))
+	currTbl, err = publicInfoSchema.TableByName(context.Background(), pmodel.NewCIStr(schemaName), pmodel.NewCIStr("t"))
+	require.NoError(t, err)
+	currPart = currTbl.Meta().Partition
+	currTbl.Meta().Partition = oldTbl.Meta().Partition
+	tk.MustQuery(`select * from t where b = "17"`).Sort().Check(testkit.Rows("17 17 17"))
+	tk.MustExec(`admin check table t`)
+	tk.MustQuery(`show create table t`).Check(testkit.Rows("" +
+		"t CREATE TABLE `t` (\n" +
+		"  `a` int(10) unsigned NOT NULL,\n" +
+		"  `b` varchar(255) DEFAULT NULL,\n" +
+		"  `c` int(11) DEFAULT NULL,\n" +
+		"  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */,\n" +
+		"  KEY `b` (`b`),\n" +
+		"  KEY `c` (`c`,`b`)\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+		"PARTITION BY RANGE (`a`)\n" +
+		"(PARTITION `p0` VALUES LESS THAN (10),\n" +
+		" PARTITION `p1a` VALUES LESS THAN (15),\n" +
+		" PARTITION `p1b` VALUES LESS THAN (20),\n" +
+		" PARTITION `pMax` VALUES LESS THAN (MAXVALUE))"))
 	wait <- true
 	syncOnChanged <- true
 	// This reads the new schema (Schema update completed)
@@ -581,11 +638,12 @@ func TestReorgPartitionConcurrent(t *testing.T) {
 		"12 12b 12",
 		"14 14 14",
 		"15 15 15",
-		"16 16 16"))
+		"16 16 16",
+		"17 17 17"))
 	tk.MustExec(`admin check table t`)
 	newInfoSchema := sessiontxn.GetTxnManager(tk.Session()).GetTxnInfoSchema()
-	require.Equal(t, int64(1), newInfoSchema.SchemaMetaVersion()-deleteReorgInfoSchema.SchemaMetaVersion())
-	oldTbl, err = deleteReorgInfoSchema.TableByName(context.Background(), pmodel.NewCIStr(schemaName), pmodel.NewCIStr("t"))
+	require.Equal(t, int64(1), newInfoSchema.SchemaMetaVersion()-publicInfoSchema.SchemaMetaVersion())
+	oldTbl, err = publicInfoSchema.TableByName(context.Background(), pmodel.NewCIStr(schemaName), pmodel.NewCIStr("t"))
 	require.NoError(t, err)
 	partDef = oldTbl.Meta().Partition.Definitions[1]
 	require.Equal(t, "p1a", partDef.Name.O)
@@ -603,7 +661,7 @@ func TestReorgPartitionConcurrent(t *testing.T) {
 		" PARTITION `p1a` VALUES LESS THAN (15),\n" +
 		" PARTITION `p1b` VALUES LESS THAN (20),\n" +
 		" PARTITION `pMax` VALUES LESS THAN (MAXVALUE))"))
-	newTbl, err := deleteReorgInfoSchema.TableByName(context.Background(), pmodel.NewCIStr(schemaName), pmodel.NewCIStr("t"))
+	newTbl, err := newInfoSchema.TableByName(context.Background(), pmodel.NewCIStr(schemaName), pmodel.NewCIStr("t"))
 	require.NoError(t, err)
 	newPart := newTbl.Meta().Partition
 	newTbl.Meta().Partition = oldTbl.Meta().Partition
@@ -948,16 +1006,4 @@ func TestPartitionByColumnChecks(t *testing.T) {
 	tk.MustExec(`insert into rb64 values ` + vals)
 	tk.MustExec(`alter table rb64 partition by range(b64) (partition pMax values less than (MAXVALUE))`)
 	tk.MustExec(`insert into rb64 values ` + vals)
-}
-
-func TestPartitionIssue56634(t *testing.T) {
-	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/updateVersionAndTableInfoErrInStateDeleteReorganization", `return(1)`)
-
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("set global tidb_ddl_error_count_limit = 3")
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t (a int)")
-	tk.MustContainErrMsg("alter table t partition by range(a) (partition p1 values less than (20))", "[ddl:-1]DDL job rollback, error msg: Injected error in StateDeleteReorganization") // should NOT panic
 }

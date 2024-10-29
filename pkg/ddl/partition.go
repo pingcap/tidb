@@ -3579,7 +3579,7 @@ func (w *worker) onReorganizePartition(jobCtx *jobContext, job *model.Job) (ver 
 
 		var dropIndices []*model.IndexInfo
 		for _, indexInfo := range tblInfo.Indices {
-			if indexInfo.Unique && indexInfo.State == model.StateDeleteReorganization {
+			if indexInfo.Unique && indexInfo.State == model.StateDeleteOnly {
 				// Drop the old unique (possible global) index, see onDropIndex
 				indexInfo.State = model.StateNone
 				DropIndexColumnFlag(tblInfo, indexInfo)
@@ -3643,11 +3643,8 @@ func (w *worker) onReorganizePartition(jobCtx *jobContext, job *model.Job) (ver 
 		failpoint.Inject("reorgPartFail5", func(val failpoint.Value) {
 			if val.(bool) {
 				job.ErrorCount += variable.GetDDLErrorCountLimit() / 2
-				failpoint.Return(ver, errors.New("Injected error by reorgPartFail6"))
+				failpoint.Return(ver, errors.New("Injected error by reorgPartFail5"))
 			}
-		})
-		failpoint.Inject("updateVersionAndTableInfoErrInStateDeleteReorganization", func() {
-			failpoint.Return(ver, errors.New("Injected error in StateDeleteReorganization"))
 		})
 		args.OldPhysicalTblIDs = physicalTableIDs
 		args.NewPartitionIDs = newIDs
