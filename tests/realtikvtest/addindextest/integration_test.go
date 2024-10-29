@@ -565,85 +565,6 @@ func TestAddUniqueIndexDuplicatedError(t *testing.T) {
 	tk.MustExec("INSERT INTO `b1cce552` (`f5d9aecb`, `d9337060`, `4c74082f`, `9215adc3`, `85ad5a07`, `8c60260f`, `8069da7b`, `91e218e1`) VALUES ('2031-12-22 06:44:52', 'duplicatevalue', 2028, NULL, 846, 'N6QD1=@ped@owVoJx', '9soPM2d6H', 'Tv%'), ('2031-12-22 06:44:52', 'duplicatevalue', 2028, NULL, 9052, '_HWaf#gD!bw', '9soPM2d6H', 'Tv%');")
 	tk.MustGetErrCode("ALTER TABLE `b1cce552` ADD unique INDEX `65290727` (`4c74082f`, `d9337060`, `8069da7b`);", errno.ErrDupEntry)
 }
-<<<<<<< HEAD:tests/realtikvtest/addindextest/integration_test.go
-=======
-
-func TestFirstLitSlowStart(t *testing.T) {
-	store := realtikvtest.CreateMockStoreAndSetup(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("drop database if exists addindexlit;")
-	tk.MustExec("create database addindexlit;")
-	tk.MustExec("use addindexlit;")
-	tk.MustExec(`set global tidb_ddl_enable_fast_reorg=on;`)
-	tk.MustExec(`set global tidb_enable_dist_task=off;`)
-
-	tk.MustExec("create table t(a int, b int);")
-	tk.MustExec("insert into t values (1, 1), (2, 2), (3, 3);")
-	tk.MustExec("create table t2(a int, b int);")
-	tk.MustExec("insert into t2 values (1, 1), (2, 2), (3, 3);")
-
-	tk1 := testkit.NewTestKit(t, store)
-	tk1.MustExec("use addindexlit;")
-
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/ingest/beforeCreateLocalBackend", "1*return()"))
-	t.Cleanup(func() {
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/ingest/beforeCreateLocalBackend"))
-	})
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/ownerResignAfterDispatchLoopCheck", "return()"))
-	t.Cleanup(func() {
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/ownerResignAfterDispatchLoopCheck"))
-	})
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/lightning/backend/local/slowCreateFS", "return()"))
-	t.Cleanup(func() {
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/lightning/backend/local/slowCreateFS"))
-	})
-
-	var wg sync.WaitGroup
-	wg.Add(2)
-	go func() {
-		defer wg.Done()
-		tk.MustExec("alter table t add unique index idx(a);")
-	}()
-	go func() {
-		defer wg.Done()
-		tk1.MustExec("alter table t2 add unique index idx(a);")
-	}()
-	wg.Wait()
-}
-
-func TestConcFastReorg(t *testing.T) {
-	store := realtikvtest.CreateMockStoreAndSetup(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("drop database if exists addindexlit;")
-	tk.MustExec("create database addindexlit;")
-	tk.MustExec("use addindexlit;")
-	tk.MustExec(`set global tidb_ddl_enable_fast_reorg=on;`)
-
-	tblNum := 10
-	for i := 0; i < tblNum; i++ {
-		tk.MustExec(fmt.Sprintf("create table t%d(a int);", i))
-	}
-
-	var wg sync.WaitGroup
-	wg.Add(tblNum)
-	for i := 0; i < tblNum; i++ {
-		i := i
-		go func() {
-			defer wg.Done()
-			tk2 := testkit.NewTestKit(t, store)
-			tk2.MustExec("use addindexlit;")
-			tk2.MustExec(fmt.Sprintf("insert into t%d values (1), (2), (3);", i))
-
-			if i%2 == 0 {
-				tk2.MustExec(fmt.Sprintf("alter table t%d add index idx(a);", i))
-			} else {
-				tk2.MustExec(fmt.Sprintf("alter table t%d add unique index idx(a);", i))
-			}
-		}()
-	}
-
-	wg.Wait()
-}
 
 func TestIssue55808(t *testing.T) {
 	store := realtikvtest.CreateMockStoreAndSetup(t)
@@ -665,8 +586,8 @@ func TestIssue55808(t *testing.T) {
 	for i := 0; i < 4; i++ {
 		tk.MustExec(fmt.Sprintf("insert into t values (%d, %d);", i*10000, i*10000))
 	}
-	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/lightning/backend/local/doIngestFailed", "return()")
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/lightning/backend/local/doIngestFailed", "return()"))
 	err := tk.ExecToErr("alter table t add index idx(a);")
 	require.ErrorContains(t, err, "injected error")
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/lightning/backend/local/doIngestFailed"))
 }
->>>>>>> 448d56910cd (lightning: fix forget to set lastRetryableErr when ingest RPC fail (#56345)):tests/realtikvtest/addindextest3/ingest_test.go
