@@ -35,7 +35,6 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/testkit"
-	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	timerapi "github.com/pingcap/tidb/pkg/timer/api"
 	timertable "github.com/pingcap/tidb/pkg/timer/tablestore"
 	"github.com/pingcap/tidb/pkg/ttl/cache"
@@ -1244,25 +1243,6 @@ func TestManagerJobAdapterGetJob(t *testing.T) {
 		tk.MustExec("delete from mysql.tidb_ttl_job_history")
 	}
 }
-<<<<<<< HEAD
-=======
-
-func TestManagerJobAdapterNow(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
-	adapter := ttlworker.NewManagerJobAdapter(store, dom.SysSessionPool(), nil)
-
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("set @@global.time_zone ='Europe/Berlin'")
-	tk.MustExec("set @@time_zone='Asia/Shanghai'")
-
-	now, err := adapter.Now()
-	require.NoError(t, err)
-	localNow := time.Now()
-
-	require.Equal(t, "Europe/Berlin", now.Location().String())
-	require.InDelta(t, now.Unix(), localNow.Unix(), 10)
-}
 
 func TestFinishAndUpdateOwnerAtSameTime(t *testing.T) {
 	// Finishing a `TTLJob` will remove all the `TTLTask` of the job, and at the same time
@@ -1277,7 +1257,7 @@ func TestFinishAndUpdateOwnerAtSameTime(t *testing.T) {
 
 	tk.MustExec("use test")
 	tk.MustExec("CREATE TABLE t (id INT PRIMARY KEY, created_at DATETIME) TTL = created_at + INTERVAL 1 HOUR")
-	testTable, err := dom.InfoSchema().TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
+	testTable, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
 
 	testTimes := 1000
@@ -1328,16 +1308,18 @@ func TestFinishError(t *testing.T) {
 
 	tk.MustExec("use test")
 	tk.MustExec("CREATE TABLE t (id INT PRIMARY KEY, created_at DATETIME) TTL = created_at + INTERVAL 1 HOUR")
-	testTable, err := dom.InfoSchema().TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
+	testTable, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
 
 	errCount := 5
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ttl/ttlworker/ttl-finish", func(err *error) {
+	ttlworker.TTLJobFinishFailpointHook = func(err *error) {
 		errCount -= 1
 		if errCount > 0 {
 			*err = errors.New("mock error")
 		}
-	})
+	}
+	failpoint.Enable("github.com/pingcap/tidb/pkg/ttl/ttlworker/ttl-finish", "return(true)")
+	defer failpoint.Disable("github.com/pingcap/tidb/pkg/ttl/ttlworker/ttl-finish")
 
 	now := se.Now()
 
@@ -1397,7 +1379,7 @@ func TestFinishError(t *testing.T) {
 	tk.MustQuery("select count(*) from mysql.tidb_ttl_task").Check(testkit.Rows("0"))
 	tk.MustExec("CREATE TABLE t (id INT PRIMARY KEY, created_at DATETIME) TTL = created_at + INTERVAL 1 HOUR")
 	require.NoError(t, m.InfoSchemaCache().Update(se))
-	testTable, err = dom.InfoSchema().TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
+	testTable, err = dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
 
 	// Teset the `updateHeartBeat` can tolerate the `job.finish` error
@@ -1411,4 +1393,3 @@ func TestFinishError(t *testing.T) {
 	m.UpdateHeartBeat(context.Background(), se, now)
 	tk.MustQuery("select count(*) from mysql.tidb_ttl_task").Check(testkit.Rows("0"))
 }
->>>>>>> 93cad31464e (ttl: use a pessimistic transaction to finish the job (#56516))
