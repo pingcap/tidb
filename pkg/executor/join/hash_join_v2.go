@@ -375,6 +375,8 @@ type ProbeWorkerV2 struct {
 	// We build individual joinProbe for each join worker when use chunk-based
 	// execution, to avoid the concurrency of joiner.chk and joiner.selected.
 	JoinProbe ProbeV2
+
+	restoredChk *chunk.Chunk
 }
 
 func (w *ProbeWorkerV2) updateProbeStatistic(start time.Time, probeTime int64) {
@@ -408,8 +410,7 @@ func (w *ProbeWorkerV2) restoreAndProbe(inDisk *chunk.DataInDiskByChunks) {
 		}
 		failpoint.Inject("ConsumeRandomPanic", nil)
 
-		// TODO reuse chunk
-		chk, err := inDisk.GetChunk(i)
+		err := inDisk.FillChunk(i, w.restoredChk)
 		if err != nil {
 			joinResult.err = err
 			break
@@ -423,7 +424,7 @@ func (w *ProbeWorkerV2) restoreAndProbe(inDisk *chunk.DataInDiskByChunks) {
 
 		start := time.Now()
 		waitTime := int64(0)
-		ok, waitTime, joinResult = w.processOneRestoredProbeChunk(chk, joinResult)
+		ok, waitTime, joinResult = w.processOneRestoredProbeChunk(joinResult)
 		probeTime += int64(time.Since(start)) - waitTime
 		if !ok {
 			break
@@ -450,7 +451,7 @@ type BuildWorkerV2 struct {
 	HasNullableKey bool
 	WorkerID       uint
 	builder        *rowTableBuilder
-	restoredChk     *chunk.Chunk
+	restoredChk    *chunk.Chunk
 }
 
 func (b *BuildWorkerV2) getSegmentsInRowTable(partID int) []*rowTableSegment {
@@ -769,12 +770,6 @@ func (e *HashJoinV2Exec) Open(ctx context.Context) error {
 		e.initMaxSpillRound()
 		e.spillAction = newHashJoinSpillAction(e.spillHelper)
 		e.Ctx().GetSessionVars().MemTracker.FallbackOldAndSetNewAction(e.spillAction)
-
-		for _, worker := range e.BuildWorkers {
-			if worker.restoredChk == nil {
-				worker.restoredChk = chunk.NewEmptyChunk(e.spillHelper.buildSpillChkFieldTypes)
-			}
-		}
 	}
 
 	e.workerWg = util.WaitGroupWrapper{}
@@ -943,8 +938,8 @@ func (w *ProbeWorkerV2) scanRowTableAfterProbeDone() {
 	}
 }
 
-func (w *ProbeWorkerV2) processOneRestoredProbeChunk(probeChunk *chunk.Chunk, joinResult *hashjoinWorkerResult) (ok bool, waitTime int64, _ *hashjoinWorkerResult) {
-	joinResult.err = w.JoinProbe.SetRestoredChunkForProbe(probeChunk)
+func (w *ProbeWorkerV2) processOneRestoredProbeChunk(joinResult *hashjoinWorkerResult) (ok bool, waitTime int64, _ *hashjoinWorkerResult) {
+	joinResult.err = w.JoinProbe.SetRestoredChunkForProbe(w.restoredChk)
 	if joinResult.err != nil {
 		return false, 0, joinResult
 	}
