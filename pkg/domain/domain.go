@@ -1376,18 +1376,14 @@ func (do *Domain) Init(
 	do.cancelFns.fns = append(do.cancelFns.fns, cancelFunc)
 	do.cancelFns.mu.Unlock()
 
-	var ddlNotifierStore notifier.Store
-	if intest.InTest {
-		ddlNotifierStore = notifier.OpenTableStore("mysql", ddl.NotifierTableName)
-		do.ddlNotifier = notifier.NewDDLNotifier(
-			do.sysSessionPool,
-			ddlNotifierStore,
-			time.Second,
-		)
-
-		// TODO(lance6716): find a more representative place for subscriber
-		failpoint.InjectCall("afterDDLNotifierCreated", do.ddlNotifier)
-	}
+	ddlNotifierStore := notifier.OpenTableStore("mysql", ddl.NotifierTableName)
+	do.ddlNotifier = notifier.NewDDLNotifier(
+		do.sysSessionPool,
+		ddlNotifierStore,
+		time.Second,
+	)
+	// TODO(lance6716): find a more representative place for subscriber
+	failpoint.InjectCall("afterDDLNotifierCreated", do.ddlNotifier)
 
 	d := do.ddl
 	eBak := do.ddlExecutor
@@ -2364,9 +2360,7 @@ func (do *Domain) UpdateTableStatsLoop(ctx, initStatsCtx sessionctx.Context) err
 	variable.EnableStatsOwner = do.enableStatsOwner
 	variable.DisableStatsOwner = do.disableStatsOwner
 	do.statsOwner = do.newOwnerManager(handle.StatsPrompt, handle.StatsOwnerKey)
-	if intest.InTest {
-		do.statsOwner.SetListener(do.ddlNotifier)
-	}
+	do.statsOwner.SetListener(do.ddlNotifier)
 	do.wg.Run(func() {
 		do.indexUsageWorker()
 	}, "indexUsageWorker")

@@ -55,6 +55,33 @@ func TestStmtSummaryIndexAdvisor(t *testing.T) {
 			"b \"Column [b] appear in Equal or Range Predicate clause(s) in query: select `b` from `test` . `t` where `b` = ?\""))
 }
 
+func TestStmtSummaryIndexAdvisorNullSchema(t *testing.T) {
+	setupStmtSummary()
+	defer closeStmtSummary()
+	store := testkit.CreateMockStore(t)
+	tk := newTestKitWithRoot(t, store)
+	tk.MustExec(`use test`)
+	tk.MustExec(`create table t (a int, b int, c int)`)
+
+	tk.MustQueryToErr(`recommend index run`) // no query
+
+	tk = testkit.NewTestKit(t, store)
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil, nil))
+	tk.MustQuery(`select a from test.t where a=1`) // schema_name in statement_summary is NULL
+
+	rs := tk.MustQuery(`recommend index run`).Sort().Rows()
+	require.Equal(t, rs[0][2], "idx_a")
+
+	tk.MustQuery(`select b from test.t where b=1`)
+	rs = tk.MustQuery(`recommend index run`).Sort().Rows()
+	require.Equal(t, rs[0][2], "idx_a")
+	require.Equal(t, rs[1][2], "idx_b")
+
+	tk.MustQuery(`select index_columns, index_details->'$.Reason' from mysql.index_advisor_results`).Check(
+		testkit.Rows("a \"Column [a] appear in Equal or Range Predicate clause(s) in query: select `a` from `test` . `t` where `a` = ?\"",
+			"b \"Column [b] appear in Equal or Range Predicate clause(s) in query: select `b` from `test` . `t` where `b` = ?\""))
+}
+
 func TestStmtSummaryTable(t *testing.T) {
 	setupStmtSummary()
 	defer closeStmtSummary()
