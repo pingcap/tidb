@@ -66,7 +66,6 @@ import (
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/testkit"
-	"github.com/pingcap/tidb/pkg/testkit/external"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/rowcodec"
@@ -796,11 +795,10 @@ func TestGetSchema(t *testing.T) {
 	}
 	sort.Strings(names)
 	require.Equal(t, expects, names)
-	store := testkit.CreateMockStore(t)
 
-	tk := testkit.NewTestKit(t, store)
-	userTbl := external.GetTableByName(t, tk, "mysql", "user")
-	resp, err = ts.FetchStatus(fmt.Sprintf("/schema?table_id=%d", userTbl.Meta().ID))
+	userTbl, err := ts.domain.InfoSchema().TableInfoByName(pmodel.NewCIStr("mysql"), pmodel.NewCIStr("user"))
+	require.NoError(t, err)
+	resp, err = ts.FetchStatus(fmt.Sprintf("/schema?table_id=%d", userTbl.ID))
 	require.NoError(t, err)
 	var ti *model.TableInfo
 	decoder = json.NewDecoder(resp.Body)
@@ -855,7 +853,7 @@ func TestGetSchema(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, resp.Body.Close())
 
-	resp, err = ts.FetchStatus(fmt.Sprintf("/db-table/%d", userTbl.Meta().ID))
+	resp, err = ts.FetchStatus(fmt.Sprintf("/db-table/%d", userTbl.ID))
 	require.NoError(t, err)
 	var dbtbl *tikvhandler.DBTableInfo
 	decoder = json.NewDecoder(resp.Body)
