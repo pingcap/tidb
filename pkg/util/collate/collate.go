@@ -371,6 +371,11 @@ func IsBinCollation(collate string) bool {
 	// TODO: define a constant to reference collations
 }
 
+// IsPadSpaceCollation returns whether the collation is a PAD SPACE collation.
+func IsPadSpaceCollation(collation string) bool {
+	return collation != charset.CollationBin && collation != "utf8mb4_0900_ai_ci" && collation != "utf8mb4_0900_bin"
+}
+
 // CollationToProto converts collation from string to int32(used by protocol).
 func CollationToProto(c string) int32 {
 	if coll, err := charset.GetCollationByName(c); err == nil {

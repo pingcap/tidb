@@ -212,7 +212,7 @@ func TestCreateDropCreateTable(t *testing.T) {
 	var createTable bool
 
 	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobUpdated", func(job *model.Job) {
-		if job.Type == model.ActionDropTable && job.SchemaState == model.StateWriteOnly && !createTable {
+		if job.Type == model.ActionDropTable && job.SchemaState == model.StateNone && !createTable {
 			fpErr = failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/schemaver/mockOwnerCheckAllVersionSlow", fmt.Sprintf("return(%d)", job.ID))
 			wg.Add(1)
 			go func() {
@@ -226,6 +226,7 @@ func TestCreateDropCreateTable(t *testing.T) {
 	testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/onJobUpdated")
 
 	wg.Wait()
+	require.True(t, createTable)
 	require.NoError(t, createErr)
 	require.NoError(t, fpErr)
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/schemaver/mockOwnerCheckAllVersionSlow"))

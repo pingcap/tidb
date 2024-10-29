@@ -109,7 +109,7 @@ require (
 	github.com/tdakkota/asciicheck v0.2.0
 	github.com/tiancaiamao/appdash v0.0.0-20181126055449-889f96f722a2
 	github.com/tidwall/btree v1.7.0
-	github.com/tikv/client-go/v2 v2.0.8-0.20241015065014-8dfa86b5d1db
+	github.com/tikv/client-go/v2 v2.0.8-0.20241023023120-691e80ae0ea9
 	github.com/tikv/pd/client v0.0.0-20241016064947-b70107ec31e6
 	github.com/timakin/bodyclose v0.0.0-20240125160201-f835fa56326a
 	github.com/twmb/murmur3 v1.1.6
