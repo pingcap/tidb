@@ -15,14 +15,18 @@
 package notifier_test
 
 import (
+	"bytes"
 	"context"
 	"io"
 	"math/rand"
+	"os"
+	"path"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/ngaut/pools"
+	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/ddl/notifier"
 	sess "github.com/pingcap/tidb/pkg/ddl/session"
@@ -301,4 +305,78 @@ func TestPublishEventError(t *testing.T) {
 
 		tk.MustExec(sql)
 	}
+}
+
+func Test2OwnerForAShortTime(t *testing.T) {
+	conf := new(log.Config)
+	logFilename := path.Join(t.TempDir(), "/test2OwnerForAShortTime.log")
+	conf.File.Filename = logFilename
+	lg, p, e := log.InitLogger(conf)
+	require.NoError(t, e)
+	rs := log.ReplaceGlobals(lg, p)
+	defer rs()
+
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("USE test")
+	tk.MustExec("DROP TABLE IF EXISTS " + ddl.NotifierTableName)
+	tk.MustExec(ddl.NotifierTableSQL)
+	tk.MustExec("CREATE TABLE result (id INT PRIMARY KEY)")
+
+	s := notifier.OpenTableStore("test", ddl.NotifierTableName)
+	sessionPool := util.NewSessionPool(
+		1,
+		func() (pools.Resource, error) {
+			return tk.Session(), nil
+		},
+		nil,
+		nil,
+	)
+
+	n := notifier.NewDDLNotifier(sessionPool, s, 50*time.Millisecond)
+	waitCh := make(chan struct{})
+	waitCh2 := make(chan struct{})
+
+	testHandler := func(ctx context.Context, se sessionctx.Context, c *notifier.SchemaChangeEvent) error {
+		close(waitCh)
+		// mimic other owner will handle this event, wait for another session to update
+		// the processed_by_flag.
+		<-waitCh2
+		_, err := se.GetSQLExecutor().Execute(ctx, "INSERT INTO test.result VALUES(1)")
+		require.NoError(t, err)
+		return nil
+	}
+	n.RegisterHandler(notifier.TestHandlerID, testHandler)
+
+	done := make(chan struct{})
+	go func() {
+		n.OnBecomeOwner()
+		close(done)
+	}()
+
+	tk2 := testkit.NewTestKit(t, store)
+	se := sess.NewSession(tk2.Session())
+	ctx := context.Background()
+	event1 := notifier.NewCreateTableEvent(&model.TableInfo{ID: 1000, Name: pmodel.NewCIStr("t1")})
+	err := notifier.PubSchemeChangeToStore(ctx, se, 1, -1, event1, s)
+	require.NoError(t, err)
+
+	<-waitCh
+	// mimic another owner to handle the event, which is delete the record
+	tk2.MustExec("DELETE FROM test." + ddl.NotifierTableName)
+	close(waitCh2)
+
+	require.Eventually(t, func() bool {
+		content, err2 := os.ReadFile(logFilename)
+		require.NoError(t, err2)
+		if !bytes.Contains(content, []byte("Error processing change")) {
+			return false
+		}
+		return bytes.Contains(content, []byte("Write conflict"))
+	}, time.Second, 25*time.Millisecond)
+	// the handler should not commit
+	tk2.MustQuery("SELECT * FROM test.result").Check(testkit.Rows())
+
+	n.OnRetireOwner()
+	<-done
 }
