@@ -1284,6 +1284,7 @@ func (a *managerJobAdapter) Now() (time.Time, error) {
 	if err != nil {
 		return time.Time{}, err
 	}
+	defer se.Close()
 
 	tz, err := se.GlobalTimeZone(context.TODO())
 	if err != nil {

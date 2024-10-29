@@ -1063,9 +1063,42 @@ func TestDelayMetrics(t *testing.T) {
 	checkRecord(records, "t5", emptyTime)
 }
 
+type sessionPool interface {
+	Get() (pools.Resource, error)
+	Put(pools.Resource)
+}
+
+type poolTestWrapper struct {
+	sessionPool
+	inuse atomic.Int64
+}
+
+func wrapPoolForTest(pool sessionPool) *poolTestWrapper {
+	return &poolTestWrapper{sessionPool: pool}
+}
+
+func (w *poolTestWrapper) Get() (pools.Resource, error) {
+	r, err := w.sessionPool.Get()
+	if err == nil {
+		w.inuse.Add(1)
+	}
+	return r, err
+}
+
+func (w *poolTestWrapper) Put(r pools.Resource) {
+	w.inuse.Add(-1)
+	w.sessionPool.Put(r)
+}
+
+func (w *poolTestWrapper) AssertNoSessionInUse(t *testing.T) {
+	require.Zero(t, w.inuse.Load())
+}
+
 func TestManagerJobAdapterCanSubmitJob(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
-	adapter := ttlworker.NewManagerJobAdapter(store, dom.SysSessionPool(), nil)
+	pool := wrapPoolForTest(dom.SysSessionPool())
+	defer pool.AssertNoSessionInUse(t)
+	adapter := ttlworker.NewManagerJobAdapter(store, pool, nil)
 
 	// stop TTLJobManager to avoid unnecessary job schedule and make test stable
 	dom.TTLJobManager().Stop()
@@ -1194,7 +1227,9 @@ func TestManagerJobAdapterSubmitJob(t *testing.T) {
 
 func TestManagerJobAdapterGetJob(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
-	adapter := ttlworker.NewManagerJobAdapter(store, dom.SysSessionPool(), nil)
+	pool := wrapPoolForTest(dom.SysSessionPool())
+	defer pool.AssertNoSessionInUse(t)
+	adapter := ttlworker.NewManagerJobAdapter(store, pool, nil)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -1289,7 +1324,9 @@ func TestManagerJobAdapterGetJob(t *testing.T) {
 
 func TestManagerJobAdapterNow(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
-	adapter := ttlworker.NewManagerJobAdapter(store, dom.SysSessionPool(), nil)
+	pool := wrapPoolForTest(dom.SysSessionPool())
+	defer pool.AssertNoSessionInUse(t)
+	adapter := ttlworker.NewManagerJobAdapter(store, pool, nil)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
