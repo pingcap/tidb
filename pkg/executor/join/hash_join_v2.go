@@ -450,6 +450,7 @@ type BuildWorkerV2 struct {
 	HasNullableKey bool
 	WorkerID       uint
 	builder        *rowTableBuilder
+	restoredChk     *chunk.Chunk
 }
 
 func (b *BuildWorkerV2) getSegmentsInRowTable(partID int) []*rowTableSegment {
@@ -465,9 +466,9 @@ func (b *BuildWorkerV2) updatePartitionData(cost int64) {
 	setMaxValue(&b.HashJoinCtx.stats.maxPartitionData, cost)
 }
 
-func (b *BuildWorkerV2) processOneRestoredChunk(chk *chunk.Chunk, cost *int64) error {
+func (b *BuildWorkerV2) processOneRestoredChunk(cost *int64) error {
 	start := time.Now()
-	err := b.builder.processOneRestoredChunk(chk, b.HashJoinCtx, int(b.WorkerID), int(b.HashJoinCtx.partitionNumber))
+	err := b.builder.processOneRestoredChunk(b.restoredChk, b.HashJoinCtx, int(b.WorkerID), int(b.HashJoinCtx.partitionNumber))
 	if err != nil {
 		return err
 	}
@@ -492,10 +493,7 @@ func (b *BuildWorkerV2) splitPartitionAndAppendToRowTableForRestoreImpl(i int, i
 		return nil
 	}
 
-	var chk *chunk.Chunk
-
-	// TODO reuse chunk
-	chk, err = inDisk.GetChunk(i)
+	err = inDisk.FillChunk(i, b.restoredChk)
 	if err != nil {
 		return err
 	}
@@ -505,7 +503,7 @@ func (b *BuildWorkerV2) splitPartitionAndAppendToRowTableForRestoreImpl(i int, i
 		return err
 	}
 
-	err = b.processOneRestoredChunk(chk, cost)
+	err = b.processOneRestoredChunk(cost)
 	if err != nil {
 		return err
 	}
@@ -771,6 +769,12 @@ func (e *HashJoinV2Exec) Open(ctx context.Context) error {
 		e.initMaxSpillRound()
 		e.spillAction = newHashJoinSpillAction(e.spillHelper)
 		e.Ctx().GetSessionVars().MemTracker.FallbackOldAndSetNewAction(e.spillAction)
+
+		for _, worker := range e.BuildWorkers {
+			if worker.restoredChk == nil {
+				worker.restoredChk = chunk.NewEmptyChunk(e.spillHelper.buildSpillChkFieldTypes)
+			}
+		}
 	}
 
 	e.workerWg = util.WaitGroupWrapper{}
