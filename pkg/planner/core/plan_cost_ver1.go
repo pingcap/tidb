@@ -1251,10 +1251,10 @@ func getCardinality(operator base.PhysicalPlan, costFlag uint64) float64 {
 		if actualProbeCnt == 0 {
 			return 0
 		}
-		return getOperatorActRows(operator) / float64(actualProbeCnt)
+		return max(0, getOperatorActRows(operator)/float64(actualProbeCnt))
 	}
 	rows := operator.StatsCount()
-	if rows == 0 && operator.SCtx().GetSessionVars().CostModelVersion == modelVer2 {
+	if rows <= 0 && operator.SCtx().GetSessionVars().CostModelVersion == modelVer2 {
 		// 0 est-row can lead to 0 operator cost which makes plan choice unstable.
 		rows = 1
 	}
