@@ -95,6 +95,7 @@ func (j *leftOuterSemiJoinProbe) Probe(joinResult *hashjoinWorkerResult, sqlKill
 	isInCompleteChunk := joinedChk.IsInCompleteChunk()
 	// in case that virtual rows is not maintained correctly
 	joinedChk.SetNumVirtualRows(joinedChk.NumRows())
+	logutil.BgLogger().Info("Probe", zap.Int("joinedChk.NumRows()", joinedChk.NumRows()))
 	// always set in complete chunk during probe
 	joinedChk.SetInCompleteChunk(true)
 	defer joinedChk.SetInCompleteChunk(isInCompleteChunk)
@@ -201,18 +202,22 @@ func (j *leftOuterSemiJoinProbe) probeForInnerSideBuildWithoutOtherCondition(chk
 			candidateRow := tagHelper.toUnsafePointer(j.matchedRowsHeaders[j.currentProbeRow])
 			if isKeyMatched(meta.keyMode, j.serializedKeys[j.currentProbeRow], candidateRow, meta) {
 				j.appendBuildRowToCachedBuildRowsV1(j.currentProbeRow, candidateRow, joinedChk, 0, false)
+				j.matchedRowsForCurrentProbeRow++
+				j.finishLookupCurrentProbeRow()
 				j.isNotMatchedRows[j.currentProbeRow] = false
 				j.matchedRowsHeaders[j.currentProbeRow] = 0
-				j.matchedRowsForCurrentProbeRow++
+				j.currentProbeRow++
+				remainCap--
+				continue
 			} else {
 				j.probeCollision++
 			}
 			j.matchedRowsHeaders[j.currentProbeRow] = getNextRowAddress(candidateRow, tagHelper, j.matchedRowsHashValue[j.currentProbeRow])
 		} else {
 			j.finishLookupCurrentProbeRow()
+			remainCap--
 			j.currentProbeRow++
 		}
-		remainCap--
 	}
 
 	err = checkSQLKiller(sqlKiller, "killedDuringProbe")
@@ -221,7 +226,7 @@ func (j *leftOuterSemiJoinProbe) probeForInnerSideBuildWithoutOtherCondition(chk
 		return err
 	}
 
-	j.finishCurrentLookupLoop(joinedChk)
+	j.finishCurrentLookupLoop(joinedChk, startProbeRow)
 	// if no the condition, chk == joinedChk, and the matched rows are already in joinedChk
 	j.buildResultForNotMatchedRows(joinedChk, startProbeRow)
 	return nil
@@ -248,23 +253,26 @@ func (j *leftOuterSemiJoinProbe) buildResultForNotMatchedRows(chk *chunk.Chunk, 
 			}
 		}
 	}
-	if nullRows > 0 {
-		dstCol := chk.Column(len(j.probeColUsed))
-		for i := 0; i < nullRows; i++ {
-			dstCol.AppendInt64(0)
-		}
-		chk.SetNumVirtualRows(prevRows + nullRows)
+	for i := 0; i < nullRows; i++ {
+		chk.AppendInt64(len(j.probeColUsed), 0)
 	}
+	chk.SetNumVirtualRows(prevRows + nullRows)
+	logutil.BgLogger().Info("buildResultForNotMatchedRows", zap.Int("nullRows", nullRows), zap.Int("virtualRows", chk.NumRows()))
 }
 
-func (j *leftOuterSemiJoinProbe) finishCurrentLookupLoop(joinedChk *chunk.Chunk) {
+func (j *leftOuterSemiJoinProbe) finishCurrentLookupLoop(joinedChk *chunk.Chunk, startProbeRow int) {
+	logutil.BgLogger().Info("finishCurrentLookupLoop", zap.Int("startProbeRow", startProbeRow), zap.Int("j.currentProbeRow", j.currentProbeRow), zap.Int("sub", j.currentProbeRow-startProbeRow))
+	logutil.BgLogger().Info("finishCurrentLookupLoop", zap.Int("virtualRows", joinedChk.NumRows()))
 	j.baseJoinProbe.finishCurrentLookupLoop(joinedChk)
 	if !j.ctx.hasOtherCondition() {
-		for i := 0; i < j.currentProbeRow; i++ {
+		for i := startProbeRow; i < j.currentProbeRow; i++ {
 			if !j.isNotMatchedRows[i] {
 				joinedChk.AppendInt64(len(j.probeColUsed), 1)
 			}
 		}
+
+		logutil.BgLogger().Info("finishCurrentLookupLoop", zap.Int("virtualRows", joinedChk.NumRows()))
+
 	}
 }
 
@@ -323,7 +331,6 @@ func (j *leftOuterSemiJoinProbe) concatenateProbeAndBuildRows(joinedChk *chunk.C
 		return err
 	}
 
-	j.finishCurrentLookupLoop(joinedChk)
 	return nil
 }
 
