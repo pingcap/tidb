@@ -387,6 +387,7 @@ func TestTTLDeleteTaskWorker(t *testing.T) {
 	s := newMockSession(t)
 	pool := newMockSessionPool(t)
 	pool.se = s
+	defer pool.AssertNoSessionInUse()
 
 	sqlMap := make(map[string]int)
 	t3Retried := make(chan struct{})

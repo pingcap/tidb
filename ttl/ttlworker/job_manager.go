@@ -961,3 +961,180 @@ GROUP BY
 
 	return records, nil
 }
+<<<<<<< HEAD:ttl/ttlworker/job_manager.go
+=======
+
+// SubmitTTLManagerJobRequest is the request to submit a TTL job to manager
+type SubmitTTLManagerJobRequest struct {
+	// TableID indicates the parent table id
+	TableID int64
+	//  PhysicalID indicates the physical table id
+	PhysicalID int64
+	//  RequestID indicates the request id of the job
+	RequestID string
+	// RespCh indicates the channel for response
+	RespCh chan<- error
+}
+
+type managerJobAdapter struct {
+	store     kv.Storage
+	sessPool  util.SessionPool
+	requestCh chan<- *SubmitTTLManagerJobRequest
+}
+
+// NewManagerJobAdapter creates a managerJobAdapter
+func NewManagerJobAdapter(store kv.Storage, sessPool util.SessionPool, requestCh chan<- *SubmitTTLManagerJobRequest) TTLJobAdapter {
+	return &managerJobAdapter{store: store, sessPool: sessPool, requestCh: requestCh}
+}
+
+func (a *managerJobAdapter) CanSubmitJob(tableID, physicalID int64) bool {
+	se, err := getSession(a.sessPool)
+	if err != nil {
+		terror.Log(err)
+		return false
+	}
+	defer se.Close()
+
+	is := se.GetDomainInfoSchema().(infoschema.InfoSchema)
+	tbl, ok := is.TableByID(context.Background(), tableID)
+	if !ok {
+		return false
+	}
+
+	tblInfo := tbl.Meta()
+	ttlInfo := tblInfo.TTLInfo
+	if ttlInfo == nil || !ttlInfo.Enable {
+		return false
+	}
+
+	if physicalID != tableID {
+		if par := tbl.GetPartitionedTable(); par == nil || par.GetPartition(physicalID) == nil {
+			return false
+		}
+	}
+
+	ctx, cancel := context.WithTimeout(context.TODO(), 5*time.Minute)
+	defer cancel()
+
+	selectTasksCntSQL := "select LOW_PRIORITY COUNT(1) FROM mysql.tidb_ttl_task WHERE status IN ('waiting', 'running')"
+	rs, err := se.ExecuteSQL(ctx, selectTasksCntSQL)
+	if err == nil && len(rs) == 0 {
+		err = errors.New("selectTasksCntSQL returns no row")
+	}
+
+	if err != nil {
+		logutil.BgLogger().Error(
+			"error to query ttl task count",
+			zap.Error(err),
+			zap.Int64("physicalID", physicalID),
+			zap.Int64("tableID", tableID),
+			zap.String("SQL", selectTasksCntSQL),
+		)
+		return false
+	}
+
+	cnt := rs[0].GetInt64(0)
+	tasksLimit := getMaxRunningTasksLimit(a.store)
+	if cnt >= int64(tasksLimit) {
+		logutil.BgLogger().Warn(
+			"current TTL tasks count exceeds limit, delay create new job temporarily",
+			zap.Int64("physicalID", physicalID),
+			zap.Int64("tableID", tableID),
+			zap.Int64("count", cnt),
+			zap.Int("limit", tasksLimit),
+		)
+		return false
+	}
+
+	return true
+}
+
+func (a *managerJobAdapter) SubmitJob(ctx context.Context, tableID, physicalID int64, requestID string, _ time.Time) (*TTLJobTrace, error) {
+	respCh := make(chan error, 1)
+	req := &SubmitTTLManagerJobRequest{
+		TableID:    tableID,
+		PhysicalID: physicalID,
+		RequestID:  requestID,
+		RespCh:     respCh,
+	}
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	case a.requestCh <- req:
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case err := <-respCh:
+			if err != nil {
+				return nil, err
+			}
+
+			return &TTLJobTrace{
+				RequestID: requestID,
+				Finished:  false,
+			}, nil
+		}
+	}
+}
+
+func (a *managerJobAdapter) GetJob(ctx context.Context, tableID, physicalID int64, requestID string) (*TTLJobTrace, error) {
+	se, err := getSession(a.sessPool)
+	if err != nil {
+		return nil, err
+	}
+	defer se.Close()
+
+	rows, err := se.ExecuteSQL(
+		ctx,
+		"select summary_text, status from mysql.tidb_ttl_job_history where table_id=%? AND parent_table_id=%? AND job_id=%?",
+		physicalID, tableID, requestID,
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	if len(rows) == 0 {
+		return nil, nil
+	}
+
+	jobTrace := TTLJobTrace{
+		RequestID: requestID,
+	}
+
+	row := rows[0]
+	if !row.IsNull(0) {
+		if summaryBytes := row.GetBytes(0); len(summaryBytes) > 0 {
+			var ttlSummary TTLSummary
+			if err = json.Unmarshal(summaryBytes, &ttlSummary); err != nil {
+				return nil, err
+			}
+			jobTrace.Summary = &ttlSummary
+		}
+	}
+
+	if !row.IsNull(1) {
+		statusText := row.GetString(1)
+		switch cache.JobStatus(statusText) {
+		case cache.JobStatusFinished, cache.JobStatusTimeout, cache.JobStatusCancelled:
+			jobTrace.Finished = true
+		}
+	}
+
+	return &jobTrace, nil
+}
+
+func (a *managerJobAdapter) Now() (time.Time, error) {
+	se, err := getSession(a.sessPool)
+	if err != nil {
+		return time.Time{}, err
+	}
+	defer se.Close()
+
+	tz, err := se.GlobalTimeZone(context.TODO())
+	if err != nil {
+		return time.Time{}, err
+	}
+
+	return se.Now().In(tz), nil
+}
+>>>>>>> 50d73f80c42 (ttl: fix some memory leak in TTL (#56935)):pkg/ttl/ttlworker/job_manager.go
