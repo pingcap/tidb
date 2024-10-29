@@ -283,7 +283,11 @@ func (d *DataInDiskByChunks) deserializeColMeta(pos *int64) (length int64, nullM
 
 func (d *DataInDiskByChunks) deserializeSel(chk *Chunk, pos *int64, selSize int) {
 	selLen := int64(selSize) / intLen
-	chk.sel = make([]int, selLen)
+	if int64(cap(chk.sel)) < selLen {
+		chk.sel = make([]int, selLen)
+	} else {
+		chk.sel = chk.sel[:selLen]
+	}
 	for i := int64(0); i < selLen; i++ {
 		chk.sel[i] = *(*int)(unsafe.Pointer(&d.buf[*pos]))
 		*pos += intLen
@@ -318,9 +322,25 @@ func (d *DataInDiskByChunks) deserializeOffsets(dst []int64, pos *int64) {
 func (d *DataInDiskByChunks) deserializeColumns(chk *Chunk, pos *int64) {
 	for _, col := range chk.columns {
 		length, nullMapSize, dataSize, offsetSize := d.deserializeColMeta(pos)
-		col.nullBitmap = make([]byte, nullMapSize)
-		col.data = make([]byte, dataSize)
-		col.offsets = make([]int64, offsetSize/int64Len)
+
+		if int64(cap(col.nullBitmap)) < nullMapSize {
+			col.nullBitmap = make([]byte, nullMapSize)
+		} else {
+			col.nullBitmap = col.nullBitmap[:nullMapSize]
+		}
+
+		if int64(cap(col.data)) < dataSize {
+			col.data = make([]byte, dataSize)
+		} else {
+			col.data = col.data[:dataSize]
+		}
+
+		offsetsLen := offsetSize / int64Len
+		if int64(cap(col.offsets)) < offsetsLen {
+			col.offsets = make([]int64, offsetsLen)
+		} else {
+			col.offsets = col.offsets[:offsetsLen]
+		}
 
 		col.length = int(length)
 		copy(col.nullBitmap, d.buf[*pos:*pos+nullMapSize])
