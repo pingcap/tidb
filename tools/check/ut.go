@@ -302,7 +302,7 @@ func cmdRun(args ...string) bool {
 	taskCh := make(chan task, 100)
 	works := make([]numa, p)
 	var wg sync.WaitGroup
-	for range p {
+	for i := range p {
 		wg.Add(1)
 		go works[i].worker(&wg, taskCh)
 	}

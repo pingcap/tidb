@@ -168,6 +168,8 @@ func TestBootstrapWithError(t *testing.T) {
 		require.NoError(t, err)
 		err = InitDDLJobTables(store, meta.BackfillTableVersion)
 		require.NoError(t, err)
+		err = InitDDLJobTables(store, meta.DDLNotifierTableVersion)
+		require.NoError(t, err)
 		dom, err := domap.Get(store)
 		require.NoError(t, err)
 		require.NoError(t, dom.Start())
@@ -263,6 +265,34 @@ func TestDDLTableCreateBackfillTable(t *testing.T) {
 	se = CreateSessionAndSetID(t, store)
 	MustExec(t, se, "select * from mysql.tidb_background_subtask")
 	MustExec(t, se, "select * from mysql.tidb_background_subtask_history")
+	dom.Close()
+}
+
+func TestDDLTableCreateDDLNotifierTable(t *testing.T) {
+	store, dom := CreateStoreAndBootstrap(t)
+	defer func() { require.NoError(t, store.Close()) }()
+	se := CreateSessionAndSetID(t, store)
+
+	txn, err := store.Begin()
+	require.NoError(t, err)
+	m := meta.NewMutator(txn)
+	ver, err := m.CheckDDLTableVersion()
+	require.NoError(t, err)
+	require.GreaterOrEqual(t, ver, meta.DDLNotifierTableVersion)
+
+	// downgrade DDL table version
+	m.SetDDLTables(meta.BackfillTableVersion)
+	MustExec(t, se, "drop table mysql.tidb_ddl_notifier")
+	err = txn.Commit(context.Background())
+	require.NoError(t, err)
+
+	// to upgrade session for create ddl notifier table
+	dom.Close()
+	dom, err = BootstrapSession(store)
+	require.NoError(t, err)
+
+	se = CreateSessionAndSetID(t, store)
+	MustExec(t, se, "select * from mysql.tidb_ddl_notifier")
 	dom.Close()
 }
 
