@@ -31,7 +31,6 @@ import (
 	"github.com/pingcap/tidb/pkg/planner"
 	"github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
-	"github.com/pingcap/tidb/pkg/planner/util/coretestsdk"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/external"
@@ -1269,9 +1268,9 @@ func TestHJBuildAndProbeHint4TiFlash(t *testing.T) {
 	tk.MustExec("insert into t3 values(1,1),(2,1)")
 	// Create virtual tiflash replica info.
 	dom := domain.GetDomain(tk.Session())
-	coretestsdk.SetTiFlashReplica(t, dom, "test", "t1")
-	coretestsdk.SetTiFlashReplica(t, dom, "test", "t2")
-	coretestsdk.SetTiFlashReplica(t, dom, "test", "t3")
+	testkit.SetTiFlashReplica(t, dom, "test", "t1")
+	testkit.SetTiFlashReplica(t, dom, "test", "t2")
+	testkit.SetTiFlashReplica(t, dom, "test", "t3")
 
 	tk.MustExec("set @@tidb_allow_mpp=1; set @@tidb_enforce_mpp=1;")
 	for i, ts := range input {
@@ -1302,7 +1301,7 @@ func TestMPPSinglePartitionType(t *testing.T) {
 	tk.MustExec("create table employee(empid int, deptid int, salary decimal(10,2))")
 	tk.MustExec("set tidb_enforce_mpp=0")
 
-	coretestsdk.SetTiFlashReplica(t, dom, "test", "employee")
+	testkit.SetTiFlashReplica(t, dom, "test", "employee")
 
 	for i, ts := range input {
 		testdata.OnRecord(func() {
@@ -1341,8 +1340,8 @@ func TestCountStarForTiFlash(t *testing.T) {
 
 	// tiflash
 	dom := domain.GetDomain(tk.Session())
-	coretestsdk.SetTiFlashReplica(t, dom, "test", "t")
-	coretestsdk.SetTiFlashReplica(t, dom, "test", "t_pick_row_id")
+	testkit.SetTiFlashReplica(t, dom, "test", "t")
+	testkit.SetTiFlashReplica(t, dom, "test", "t_pick_row_id")
 
 	tk.MustExec("set @@tidb_allow_mpp=1; set @@tidb_enforce_mpp=1;")
 	for i, ts := range input {
@@ -1426,8 +1425,8 @@ func TestHashAggPushdownToTiFlashCompute(t *testing.T) {
 	})
 
 	dom := domain.GetDomain(tk.Session())
-	coretestsdk.SetTiFlashReplica(t, dom, "test", "tbl_15")
-	coretestsdk.SetTiFlashReplica(t, dom, "test", "tbl_16")
+	testkit.SetTiFlashReplica(t, dom, "test", "tbl_15")
+	testkit.SetTiFlashReplica(t, dom, "test", "tbl_16")
 
 	tk.MustExec("set @@tidb_allow_mpp=1; set @@tidb_enforce_mpp=1;")
 	tk.MustExec("set @@tidb_partition_prune_mode = 'static';")

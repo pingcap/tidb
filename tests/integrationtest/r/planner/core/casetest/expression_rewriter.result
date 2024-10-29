@@ -64,5 +64,5 @@ explain format = 'brief' select bit_or(a * b) from t;
 id	estRows	task	access object	operator info
 StreamAgg	1.00	root		funcs:bit_or(Column#6)->Column#4
 └─TableReader	1.00	root		data:StreamAgg
-  └─StreamAgg	1.00	cop[tikv]		funcs:bit_or(cast(mul(cast(planner__core__casetest__expression_rewriter.t.a, double BINARY), cast(planner__core__casetest__expression_rewriter.t.b, double BINARY)), bigint(20) BINARY))->Column#6
+  └─StreamAgg	1.00	cop[tikv]		funcs:bit_or(cast(mul(cast(planner__core__casetest__expression_rewriter.t.a, double BINARY), cast(planner__core__casetest__expression_rewriter.t.b, double BINARY)), bigint BINARY))->Column#6
     └─TableFullScan	1.00	cop[tikv]	table:t	keep order:false

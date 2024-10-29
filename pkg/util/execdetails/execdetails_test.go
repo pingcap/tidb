@@ -541,7 +541,7 @@ func TestCopRuntimeStats2(t *testing.T) {
 		TotalRPCWallTime: 50 * time.Millisecond,
 	}
 	stats.RecordScanDetail(tableScanID, "tikv", scanDetail)
-	for i := 0; i < 1005; i++ {
+	for range 1005 {
 		stats.RecordOneCopTask(tableScanID, "tikv", "8.8.8.9", mockExecutorExecutionSummary(2, 2, 2))
 		stats.RecordScanDetail(tableScanID, "tikv", scanDetail)
 		stats.RecordTimeDetail(tableScanID, "tikv", timeDetail)

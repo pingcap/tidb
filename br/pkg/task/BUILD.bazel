@@ -115,7 +115,7 @@ go_test(
     ],
     embed = [":task"],
     flaky = True,
-    shard_count = 38,
+    shard_count = 39,
     deps = [
         "//br/pkg/backup",
         "//br/pkg/config",

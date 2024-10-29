@@ -6,7 +6,7 @@ go_library(
         "task.go",
         "task_scheduler.go",
     ],
-    importpath = "github.com/pingcap/tidb/pkg/planner/task",
+    importpath = "github.com/pingcap/tidb/pkg/planner/cascades/task",
     visibility = ["//visibility:public"],
 )
 

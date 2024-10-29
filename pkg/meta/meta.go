@@ -164,6 +164,8 @@ const (
 	MDLTableVersion DDLTableVersion = 2
 	// BackfillTableVersion is for support distributed reorg stage, it added tidb_background_subtask, tidb_background_subtask_history.
 	BackfillTableVersion DDLTableVersion = 3
+	// DDLNotifierTableVersion is for support ddl notifier, it added tidb_ddl_notifier.
+	DDLNotifierTableVersion DDLTableVersion = 4
 )
 
 // Bytes returns the byte slice.
