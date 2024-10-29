@@ -12,11 +12,11 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+local tableNewPanel = import "grafonnet-7.0/panel/table.libsonnet";
 local grafana = import "grafonnet/grafana.libsonnet";
 local dashboard = grafana.dashboard;
 local row = grafana.row;
 local graphPanel = grafana.graphPanel;
-local tablePanel = grafana.tablePanel;
 local prometheus = grafana.prometheus;
 local template = grafana.template;
 local transformation = grafana.transformation;
@@ -49,7 +49,7 @@ local TiDBResourceControlDash = dashboard.new(
     label="tidb_cluster",
     multi=false,
     name="tidb_cluster",
-    query='label_values(pd_cluster_status{k8s_cluster="$kuberentes"}, tidb_cluster)',
+    query='label_values(pd_cluster_status{k8s_cluster="$k8s_cluster"}, tidb_cluster)',
     refresh="time",
     regex="",
     sort=1,
@@ -124,26 +124,26 @@ local TiDBResourceControlDash = dashboard.new(
 //*  ==============Panel (Resource Unit)==================
 local ruRow = row.new(collapse=true, title="Resource Unit");
 
-local ConfigPanel = tablePanel.new(
-  "RU Config",
+local ConfigPanel = tableNewPanel.new(
+  title="RU Config",
   datasource=myDS,
 ).addTarget(
   prometheus.target(
-    'resource_manager_server_group_config{type="priority"}',
+    'max by (resource_group, type) (resource_manager_server_group_config{type="priority"})',
     legendFormat="{{resource_group}}",
-    instant="instant",
+    instant=true,
   )
 ).addTarget(
   prometheus.target(
-    'resource_manager_server_group_config{type="ru_capacity"}',
+    'max by (resource_group, type) (resource_manager_server_group_config{type="ru_capacity"}) < bool 0',
     legendFormat="{{resource_group}}",
-    instant="instant",
+    instant=true,
   )
 ).addTarget(
   prometheus.target(
-    'resource_manager_server_group_config{type="ru_per_sec"}',
+    'max by (resource_group, type) (resource_manager_server_group_config{type="ru_per_sec"})',
     legendFormat="{{resource_group}}",
-    instant="instant",
+    instant=true,
   )
 ).addTransformation(
   transformation.new("labelsToFields", options={
@@ -167,7 +167,38 @@ local ConfigPanel = tablePanel.new(
       ru_per_sec: 6,
       ru_capacity: 7,
     },
+    renameByName: {
+      priority: "Priority",
+      ru_per_sec: "RU_PER_SEC",
+      resource_group: "Group Name",
+      ru_capacity: "Burstable",
+    },
   })
+).addOverride(
+  matcher={
+    id: "byName",
+    options: "Burstable",
+  },
+  properties=[
+    {
+      id: "mappings",
+      value: [
+        {
+          options: {
+            "0": {
+              index: 1,
+              text: "false",
+            },
+            "1": {
+              index: 0,
+              text: "true",
+            },
+          },
+          type: "value",
+        },
+      ],
+    },
+  ],
 );
 
 local RUPanel = graphPanel.new(
@@ -196,7 +227,7 @@ local RUPanel = graphPanel.new(
 );
 
 local RUMaxPanel = graphPanel.new(
-  title="RU (Max Cost During 20s Period)",
+  title="RU Max (Max Cost During 20s Period)",
   datasource=myDS,
   legend_rightSide=true,
   legend_current=true,
@@ -617,13 +648,14 @@ local FailedKVRequestCountPanel = graphPanel.new(
   description="The metrics about failed kv request count.",
 ).addTarget(
   prometheus.target(
-    'sum(rate(resource_manager_client_request_fail{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$tidb_instance"}[1m])) by (instance)',
-    legendFormat="{{instance}}-total",
+    'sum(rate(resource_manager_client_request_fail{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$tidb_instance"}[1m])) by (instance, name, type)',
+    legendFormat="{{name}}-{{type}}-{{instance}}",
   )
 ).addTarget(
   prometheus.target(
-    'sum(rate(resource_manager_client_request_fail{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$tidb_instance"}[1m])) by (instance, name)',
-    legendFormat="{{instance}}-{{name}}",
+    'sum(rate(resource_manager_client_request_fail{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$tidb_instance"}[1m])) by (instance)',
+    legendFormat="{{instance}}-total",
+    hide=true,
   )
 );
 
@@ -682,7 +714,8 @@ local TokenRequestHandleDurationPanel = graphPanel.new(
   legend_current=true,
   legend_alignAsTable=true,
   legend_values=true,
-  format="short",
+  format="s",
+  logBase1Y=1,
   description="The metrics about token request handle duration.",
 ).addTarget(
   prometheus.target(
@@ -745,7 +778,7 @@ local QueryMaxDurationPanel = graphPanel.new(
   legend_current=true,
   legend_alignAsTable=true,
   legend_values=true,
-  format="short",
+  format="s",
   logBase1Y=2,
   description="TiDB max durations for different resource group",
 ).addTarget(
@@ -1216,7 +1249,7 @@ TiDBResourceControlDash
   ,
   gridPos=rowPos
 ).addPanel(
-  priorityTaskRow /* Priority Task Control */
+  priorityTaskRow/* Priority Task Control */
   .addPanel(PriorityTaskCPUPanel, gridPos=leftPanelPos)
   .addPanel(PriorityTaskQuotaLimitPanel, gridPos=rightPanelPos)
   .addPanel(PriorityTaskWaitQPSPanel, gridPos=leftPanelPos)
