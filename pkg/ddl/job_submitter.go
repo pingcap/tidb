@@ -684,7 +684,6 @@ func insertDDLJobs2Table(ctx context.Context, se *sess.Session, jobWs ...*JobWra
 	sql.WriteString("insert into mysql.tidb_ddl_job(job_id, reorg, schema_ids, table_ids, job_meta, type, processing) values")
 	for i, jobW := range jobWs {
 		jobW.FillArgsWithSubJobs()
-		injectModifyJobArgFailPoint(jobWs)
 		b, err := jobW.Encode(true)
 		if err != nil {
 			return err
@@ -757,26 +756,6 @@ func job2TableIDs(jobW *JobWrapper) string {
 	default:
 		return strconv.FormatInt(jobW.TableID, 10)
 	}
-}
-
-// TODO this failpoint is only checking how job scheduler handle
-// corrupted job args, we should test it there by UT, not here.
-func injectModifyJobArgFailPoint(jobWs []*JobWrapper) {
-	failpoint.Inject("MockModifyJobArg", func(val failpoint.Value) {
-		if val.(bool) {
-			for _, jobW := range jobWs {
-				job := jobW.Job
-				// Corrupt the DDL job argument.
-				if job.Type == model.ActionMultiSchemaChange {
-					if len(job.MultiSchemaInfo.SubJobs) > 0 && len(job.MultiSchemaInfo.SubJobs[0].Args) > 0 {
-						job.MultiSchemaInfo.SubJobs[0].Args[0] = 1
-					}
-				} else if len(job.Args) > 0 {
-					job.Args[0] = 1
-				}
-			}
-		}
-	})
 }
 
 func setJobStateToQueueing(job *model.Job) {

@@ -152,7 +152,7 @@ func createTable(jobCtx *jobContext, job *model.Job, args *model.CreateTableArgs
 	}
 }
 
-func onCreateTable(jobCtx *jobContext, job *model.Job) (ver int64, _ error) {
+func (w *worker) onCreateTable(jobCtx *jobContext, job *model.Job) (ver int64, _ error) {
 	failpoint.Inject("mockExceedErrorLimit", func(val failpoint.Value) {
 		if val.(bool) {
 			failpoint.Return(ver, errors.New("mock do job error"))
@@ -170,7 +170,7 @@ func onCreateTable(jobCtx *jobContext, job *model.Job) (ver int64, _ error) {
 	tbInfo := args.TableInfo
 
 	if len(tbInfo.ForeignKeys) > 0 {
-		return createTableWithForeignKeys(jobCtx, job, args)
+		return w.createTableWithForeignKeys(jobCtx, job, args)
 	}
 
 	tbInfo, err = createTable(jobCtx, job, args)
@@ -182,15 +182,18 @@ func onCreateTable(jobCtx *jobContext, job *model.Job) (ver int64, _ error) {
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
+	createTableEvent := notifier.NewCreateTableEvent(tbInfo)
+	err = asyncNotifyEvent(jobCtx, createTableEvent, job, noSubJob, w.sess)
+	if err != nil {
+		return ver, errors.Trace(err)
+	}
 
 	// Finish this job.
 	job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tbInfo)
-	createTableEvent := notifier.NewCreateTableEvent(tbInfo)
-	asyncNotifyEvent(jobCtx, createTableEvent, job)
 	return ver, errors.Trace(err)
 }
 
-func createTableWithForeignKeys(jobCtx *jobContext, job *model.Job, args *model.CreateTableArgs) (ver int64, err error) {
+func (w *worker) createTableWithForeignKeys(jobCtx *jobContext, job *model.Job, args *model.CreateTableArgs) (ver int64, err error) {
 	tbInfo := args.TableInfo
 	switch tbInfo.State {
 	case model.StateNone, model.StatePublic:
@@ -202,21 +205,32 @@ func createTableWithForeignKeys(jobCtx *jobContext, job *model.Job, args *model.
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
-		tbInfo.State = model.StateWriteOnly
+		tbInfo.State = model.StateDeleteOnly
 		ver, err = updateVersionAndTableInfo(jobCtx, job, tbInfo, true)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
-		job.SchemaState = model.StateWriteOnly
-	case model.StateWriteOnly:
+		job.SchemaState = model.StateDeleteOnly
+	// The `tblInfo.State` should be transformed from `None/Public` to `DeleteOnly`. In the `DeleteOnly` state, the table cannot be used explicitly
+	// in any SQL statement, but if this table has a `ON DELETE CASCADE` or `ON UPDATE CASCADE`, it'll still be deleted/updated automatically to keep
+	// consistency.
+	//
+	// This branch handles both `StateDeleteOnly` and `StateWriteOnly` to avoid compatibility issues. If the TiDB is upgraded from an old version,
+	// there may be a DDL job in the `StateWriteOnly` state. Now, we handle it in the same way as the `StateDeleteOnly` state. When we believe it's
+	// impossible to upgrade from a too old version to the current version, we can remove the `StateWriteOnly` branch.
+	case model.StateDeleteOnly, model.StateWriteOnly:
 		tbInfo.State = model.StatePublic
 		ver, err = updateVersionAndTableInfo(jobCtx, job, tbInfo, true)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
-		job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tbInfo)
 		createTableEvent := notifier.NewCreateTableEvent(tbInfo)
-		asyncNotifyEvent(jobCtx, createTableEvent, job)
+		err = asyncNotifyEvent(jobCtx, createTableEvent, job, noSubJob, w.sess)
+		if err != nil {
+			return ver, errors.Trace(err)
+		}
+
+		job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tbInfo)
 		return ver, nil
 	default:
 		return ver, errors.Trace(dbterror.ErrInvalidDDLJob.GenWithStackByArgs("table", tbInfo.State))
@@ -224,7 +238,7 @@ func createTableWithForeignKeys(jobCtx *jobContext, job *model.Job, args *model.
 	return ver, errors.Trace(err)
 }
 
-func onCreateTables(jobCtx *jobContext, job *model.Job) (int64, error) {
+func (w *worker) onCreateTables(jobCtx *jobContext, job *model.Job) (int64, error) {
 	var ver int64
 
 	args, err := model.GetBatchCreateTableArgs(job)
@@ -240,7 +254,6 @@ func onCreateTables(jobCtx *jobContext, job *model.Job) (int64, error) {
 	//
 	// it clones a stub job from the ActionCreateTables job
 	stubJob := job.Clone()
-	stubJob.Args = make([]any, 1)
 	for i := range args.Tables {
 		tblArgs := args.Tables[i]
 		tableInfo := tblArgs.TableInfo
@@ -261,20 +274,21 @@ func onCreateTables(jobCtx *jobContext, job *model.Job) (int64, error) {
 			tableInfos = append(tableInfos, tbInfo)
 		}
 	}
-
 	ver, err = updateSchemaVersion(jobCtx, job)
 	if err != nil {
 		return ver, errors.Trace(err)
+	}
+	for i := range tableInfos {
+		createTableEvent := notifier.NewCreateTableEvent(tableInfos[i])
+		err = asyncNotifyEvent(jobCtx, createTableEvent, job, int64(i), w.sess)
+		if err != nil {
+			return ver, errors.Trace(err)
+		}
 	}
 
 	job.State = model.JobStateDone
 	job.SchemaState = model.StatePublic
 	job.BinlogInfo.SetTableInfos(ver, tableInfos)
-	for i := range tableInfos {
-		createTableEvent := notifier.NewCreateTableEvent(tableInfos[i])
-		asyncNotifyEvent(jobCtx, createTableEvent, job)
-	}
-
 	return ver, errors.Trace(err)
 }
 
@@ -1267,10 +1281,14 @@ func BuildTableInfo(
 					tbInfo.CommonHandleVersion = 1
 				}
 			}
-			if tbInfo.HasClusteredIndex() {
+			if tbInfo.HasClusteredIndex() && constr.Option != nil {
 				// Primary key cannot be invisible.
-				if constr.Option != nil && constr.Option.Visibility == ast.IndexVisibilityInvisible {
+				if constr.Option.Visibility == ast.IndexVisibilityInvisible {
 					return nil, dbterror.ErrPKIndexCantBeInvisible
+				}
+				// A clustered index cannot be a global index.
+				if constr.Option.Global {
+					return nil, dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("create an index that is both a global index and a clustered index")
 				}
 			}
 			if tbInfo.PKIsHandle {

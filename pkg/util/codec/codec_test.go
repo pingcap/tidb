@@ -763,7 +763,7 @@ func TestDecimal(t *testing.T) {
 		// size - 1 because the flag occupy 1 bit.
 		require.Len(t, b, size-1)
 	}
-	for i := 0; i < len(decs)-1; i++ {
+	for i := range len(decs) - 1 {
 		cmpRes := bytes.Compare(decs[i], decs[i+1])
 		require.LessOrEqual(t, cmpRes, 0)
 	}
@@ -953,7 +953,7 @@ func TestDecodeOneToChunk(t *testing.T) {
 	rowCount := 3
 	chk := chunkForTest(t, typeCtx.Location(), datums, tps, rowCount)
 	for colIdx, tp := range tps {
-		for rowIdx := 0; rowIdx < rowCount; rowIdx++ {
+		for rowIdx := range rowCount {
 			got := chk.GetRow(rowIdx).GetDatum(colIdx, tp)
 			expect := datums[colIdx]
 			if got.IsNull() {
@@ -1063,7 +1063,7 @@ func datumsForTest() ([]types.Datum, []*types.FieldType) {
 
 func chunkForTest(t *testing.T, tz *time.Location, datums []types.Datum, tps []*types.FieldType, rowCount int) *chunk.Chunk {
 	decoder := NewDecoder(chunk.New(tps, 32, 32), tz)
-	for rowIdx := 0; rowIdx < rowCount; rowIdx++ {
+	for range rowCount {
 		encoded, err := EncodeValue(tz, nil, datums...)
 		require.NoError(t, err)
 		decoder.buf = make([]byte, 0, len(encoded))
@@ -1148,7 +1148,7 @@ func TestHashChunkRow(t *testing.T) {
 	chk := chunkForTest(t, typeCtx.Location(), datums, tps, 1)
 
 	colIdx := make([]int, len(tps))
-	for i := 0; i < len(tps); i++ {
+	for i := range tps {
 		colIdx[i] = i
 	}
 	h := crc32.NewIEEE()
@@ -1236,7 +1236,7 @@ func TestHashChunkColumns(t *testing.T) {
 	chk := chunkForTest(t, typeCtx.Location(), datums, tps, 4)
 
 	colIdx := make([]int, len(tps))
-	for i := 0; i < len(tps); i++ {
+	for i := range tps {
 		colIdx[i] = i
 	}
 	hasNull := []bool{false, false, false}
@@ -1244,12 +1244,12 @@ func TestHashChunkColumns(t *testing.T) {
 	rowHash := []hash.Hash64{fnv.New64(), fnv.New64(), fnv.New64()}
 
 	sel := make([]bool, len(datums))
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		sel[i] = true
 	}
 
 	// Test hash value of the first 12 `Null` columns
-	for i := 0; i < 12; i++ {
+	for i := range 12 {
 		require.True(t, chk.GetRow(0).IsNull(i))
 		err1 := HashChunkSelected(typeCtx, vecHash, chk, tps[i], i, buf, hasNull, sel, false)
 		err2 := HashChunkRow(typeCtx, rowHash[0], chk.GetRow(0), tps[i:i+1], colIdx[i:i+1], buf)

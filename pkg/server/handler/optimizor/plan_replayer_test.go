@@ -157,13 +157,13 @@ func TestDumpPlanReplayerAPI(t *testing.T) {
 	// 3. check plan replayer load
 
 	// 3-1. write the plan replayer file from manual command to a file
-	path := "/tmp/plan_replayer.zip"
+	path := t.TempDir()
+	path = filepath.Join(path, "plan_replayer.zip")
 	fp, err := os.Create(path)
 	require.NoError(t, err)
 	require.NotNil(t, fp)
 	defer func() {
 		require.NoError(t, fp.Close())
-		require.NoError(t, os.Remove(path))
 	}()
 
 	_, err = io.Copy(fp, bytes.NewReader(body))
@@ -183,7 +183,7 @@ func TestDumpPlanReplayerAPI(t *testing.T) {
 
 	tk.MustExec("use planReplayer")
 	tk.MustExec("drop table planReplayer.t")
-	tk.MustExec(`plan replayer load "/tmp/plan_replayer.zip"`)
+	tk.MustExec(fmt.Sprintf(`plan replayer load "%s"`, path))
 
 	// 3-3. assert that the count and modify count in the stats is as expected
 	rows := tk.MustQuery("show stats_meta")
@@ -304,7 +304,8 @@ func TestPlanReplayerWithMultiForeignKey(t *testing.T) {
 
 	// 3. check plan replayer load
 	// 3-1. write the plan replayer file from manual command to a file
-	path := "/tmp/plan_replayer.zip"
+	path := t.TempDir()
+	path = filepath.Join(path, "plan_replayer.zip")
 	fp, err := os.Create(path)
 	require.NoError(t, err)
 	require.NotNil(t, fp)
@@ -331,7 +332,7 @@ func TestPlanReplayerWithMultiForeignKey(t *testing.T) {
 	tk.MustExec("drop table planReplayer.t")
 	tk.MustExec("drop table planReplayer2.t")
 	tk.MustExec("drop table planReplayer.v")
-	tk.MustExec(`plan replayer load "/tmp/plan_replayer.zip"`)
+	tk.MustExec(fmt.Sprintf(`plan replayer load "%s"`, path))
 
 	// 3-3. check whether binding takes effect
 	tk.MustExec(`select a, b from t where a in (1, 2, 3)`)
@@ -375,13 +376,13 @@ func TestIssue43192(t *testing.T) {
 
 	// 3. check plan replayer load
 	// 3-1. write the plan replayer file from manual command to a file
-	path := "/tmp/plan_replayer.zip"
+	path := t.TempDir()
+	path = filepath.Join(path, "plan_replayer.zip")
 	fp, err := os.Create(path)
 	require.NoError(t, err)
 	require.NotNil(t, fp)
 	defer func() {
 		require.NoError(t, fp.Close())
-		require.NoError(t, os.Remove(path))
 	}()
 
 	_, err = io.Copy(fp, bytes.NewReader(body))
@@ -400,7 +401,7 @@ func TestIssue43192(t *testing.T) {
 	tk := testkit.NewDBTestKit(t, db)
 	tk.MustExec("use planReplayer")
 	tk.MustExec("drop table planReplayer.t")
-	tk.MustExec(`plan replayer load "/tmp/plan_replayer.zip"`)
+	tk.MustExec(fmt.Sprintf(`plan replayer load "%s"`, path))
 
 	// 3-3. check whether binding takes effect
 	tk.MustExec(`select a, b from t where a in (1, 2, 3)`)
@@ -451,14 +452,18 @@ func prepareData4Issue56458(t *testing.T, client *testserverclient.TestServerCli
 	tk.MustExec("create database planReplayer")
 	tk.MustExec("create database planReplayer2")
 	tk.MustExec("use planReplayer")
-
+	tk.MustExec("create placement policy p " +
+		"LEARNERS=1 " +
+		"LEARNER_CONSTRAINTS=\"[+region=cn-west-1]\" " +
+		"FOLLOWERS=3 " +
+		"FOLLOWER_CONSTRAINTS=\"[+disk=ssd]\"")
 	tk.MustExec("CREATE TABLE v(id INT PRIMARY KEY AUTO_INCREMENT);")
 	err = h.HandleDDLEvent(<-h.DDLEventCh())
 	require.NoError(t, err)
 	tk.MustExec("create table planReplayer2.t(a int, b int, INDEX ia (a), INDEX ib (b), author_id int, FOREIGN KEY (author_id) REFERENCES planReplayer.v(id) ON DELETE CASCADE);")
 	err = h.HandleDDLEvent(<-h.DDLEventCh())
 	require.NoError(t, err)
-	tk.MustExec("create table t(a int, b int, INDEX ia (a), INDEX ib (b), author_id int, FOREIGN KEY (author_id) REFERENCES planReplayer2.t(a) ON DELETE CASCADE);")
+	tk.MustExec("create table t(a int, b int, INDEX ia (a), INDEX ib (b), author_id int, FOREIGN KEY (author_id) REFERENCES planReplayer2.t(a) ON DELETE CASCADE) placement policy p;")
 	err = h.HandleDDLEvent(<-h.DDLEventCh())
 	require.NoError(t, err)
 

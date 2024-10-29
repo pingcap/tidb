@@ -26,6 +26,7 @@ require (
 	github.com/charithe/durationcheck v0.0.10
 	github.com/cheggaaa/pb/v3 v3.0.8
 	github.com/cheynewallace/tabby v1.1.1
+	github.com/ckaznocha/intrange v0.2.1
 	github.com/cloudfoundry/gosigar v1.3.6
 	github.com/cockroachdb/pebble v1.1.0
 	github.com/coocood/freecache v1.2.1
@@ -108,7 +109,7 @@ require (
 	github.com/tdakkota/asciicheck v0.2.0
 	github.com/tiancaiamao/appdash v0.0.0-20181126055449-889f96f722a2
 	github.com/tidwall/btree v1.7.0
-	github.com/tikv/client-go/v2 v2.0.8-0.20241015065014-8dfa86b5d1db
+	github.com/tikv/client-go/v2 v2.0.8-0.20241023023120-691e80ae0ea9
 	github.com/tikv/pd/client v0.0.0-20241016064947-b70107ec31e6
 	github.com/timakin/bodyclose v0.0.0-20240125160201-f835fa56326a
 	github.com/twmb/murmur3 v1.1.6
@@ -136,7 +137,7 @@ require (
 	golang.org/x/sys v0.26.0
 	golang.org/x/term v0.25.0
 	golang.org/x/text v0.19.0
-	golang.org/x/time v0.5.0
+	golang.org/x/time v0.7.0
 	golang.org/x/tools v0.26.0
 	google.golang.org/api v0.169.0
 	google.golang.org/grpc v1.63.2

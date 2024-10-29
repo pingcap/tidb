@@ -209,7 +209,7 @@ Table	Create Table
 t	CREATE TABLE `t` (
   `created_at` datetime DEFAULT NULL,
   `updated_at` datetime DEFAULT NULL,
-  `wrong_type` int(11) DEFAULT NULL
+  `wrong_type` int DEFAULT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![ttl] TTL=`updated_at` + INTERVAL 2 YEAR */ /*T![ttl] TTL_ENABLE='ON' */ /*T![ttl] TTL_JOB_INTERVAL='1h' */
 ALTER TABLE t TTL_ENABLE = 'OFF';
 SHOW CREATE TABLE t;
@@ -217,7 +217,7 @@ Table	Create Table
 t	CREATE TABLE `t` (
   `created_at` datetime DEFAULT NULL,
   `updated_at` datetime DEFAULT NULL,
-  `wrong_type` int(11) DEFAULT NULL
+  `wrong_type` int DEFAULT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![ttl] TTL=`updated_at` + INTERVAL 2 YEAR */ /*T![ttl] TTL_ENABLE='OFF' */ /*T![ttl] TTL_JOB_INTERVAL='1h' */
 ALTER TABLE t TTL_JOB_INTERVAL = '1d';
 SHOW CREATE TABLE t;
@@ -225,7 +225,7 @@ Table	Create Table
 t	CREATE TABLE `t` (
   `created_at` datetime DEFAULT NULL,
   `updated_at` datetime DEFAULT NULL,
-  `wrong_type` int(11) DEFAULT NULL
+  `wrong_type` int DEFAULT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![ttl] TTL=`updated_at` + INTERVAL 2 YEAR */ /*T![ttl] TTL_ENABLE='OFF' */ /*T![ttl] TTL_JOB_INTERVAL='1d' */
 ALTER TABLE t TTL = `not_exist` + INTERVAL 2 YEAR;
 Error 1054 (42S22): Unknown column 'not_exist' in 'TTL config'
@@ -241,7 +241,7 @@ Table	Create Table
 t	CREATE TABLE `t` (
   `created_at` datetime DEFAULT NULL,
   `updated_at_2` datetime DEFAULT NULL,
-  `wrong_type` int(11) DEFAULT NULL
+  `wrong_type` int DEFAULT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![ttl] TTL=`updated_at_2` + INTERVAL 2 YEAR */ /*T![ttl] TTL_ENABLE='OFF' */ /*T![ttl] TTL_JOB_INTERVAL='1d' */
 ALTER TABLE t CHANGE `updated_at_2` `updated_at_3` date;
 SHOW CREATE TABLE t;
@@ -249,7 +249,7 @@ Table	Create Table
 t	CREATE TABLE `t` (
   `created_at` datetime DEFAULT NULL,
   `updated_at_3` date DEFAULT NULL,
-  `wrong_type` int(11) DEFAULT NULL
+  `wrong_type` int DEFAULT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![ttl] TTL=`updated_at_3` + INTERVAL 2 YEAR */ /*T![ttl] TTL_ENABLE='OFF' */ /*T![ttl] TTL_JOB_INTERVAL='1d' */
 ALTER TABLE t TTL = `updated_at_3` + INTERVAL 3 YEAR;
 SHOW CREATE TABLE t;
@@ -257,7 +257,7 @@ Table	Create Table
 t	CREATE TABLE `t` (
   `created_at` datetime DEFAULT NULL,
   `updated_at_3` date DEFAULT NULL,
-  `wrong_type` int(11) DEFAULT NULL
+  `wrong_type` int DEFAULT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![ttl] TTL=`updated_at_3` + INTERVAL 3 YEAR */ /*T![ttl] TTL_ENABLE='OFF' */ /*T![ttl] TTL_JOB_INTERVAL='1d' */
 ALTER TABLE t TTL_ENABLE = 'OFF' REMOVE TTL;
 Error 8200 (HY000): Unsupported multi schema change for alter table ttl
@@ -267,7 +267,7 @@ Table	Create Table
 t	CREATE TABLE `t` (
   `created_at` datetime DEFAULT NULL,
   `updated_at_3` date DEFAULT NULL,
-  `wrong_type` int(11) DEFAULT NULL
+  `wrong_type` int DEFAULT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 ALTER TABLE t TTL_ENABLE = 'OFF';
 Error 8150 (HY000): Cannot set TTL_ENABLE on a table without TTL config

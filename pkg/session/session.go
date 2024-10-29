@@ -3206,6 +3206,12 @@ var (
 		table_ids text(65535),
 		owner_id varchar(64) NOT NULL DEFAULT ''
 	);`
+	// DDLNotifierTables contains the table definitions used in DDL notifier.
+	// It only contains the notifier table.
+	// Put it here to reuse a unified initialization function and make it easier to find.
+	DDLNotifierTables = []tableBasicInfo{
+		{ddl.NotifierTableSQL, ddl.NotifierTableID},
+	}
 )
 
 func splitAndScatterTable(store kv.Storage, tableIDs []int64) {
@@ -3222,11 +3228,15 @@ func splitAndScatterTable(store kv.Storage, tableIDs []int64) {
 	}
 }
 
-// InitDDLJobTables is to create tidb_ddl_job, tidb_ddl_reorg and tidb_ddl_history, or tidb_background_subtask and tidb_background_subtask_history.
+// InitDDLJobTables creates system tables that DDL uses. Because CREATE TABLE is
+// also a DDL, we must directly modify KV data to create these tables.
 func InitDDLJobTables(store kv.Storage, targetVer meta.DDLTableVersion) error {
 	targetTables := DDLJobTables
 	if targetVer == meta.BackfillTableVersion {
 		targetTables = BackfillTables
+	}
+	if targetVer == meta.DDLNotifierTableVersion {
+		targetTables = DDLNotifierTables
 	}
 	return kv.RunInNewTxn(kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL), store, true, func(_ context.Context, txn kv.Transaction) error {
 		t := meta.NewMutator(txn)
@@ -3435,6 +3445,10 @@ func bootstrapSessionImpl(ctx context.Context, store kv.Storage, createSessionsI
 		return nil, err
 	}
 	err = InitDDLJobTables(store, meta.BackfillTableVersion)
+	if err != nil {
+		return nil, err
+	}
+	err = InitDDLJobTables(store, meta.DDLNotifierTableVersion)
 	if err != nil {
 		return nil, err
 	}
