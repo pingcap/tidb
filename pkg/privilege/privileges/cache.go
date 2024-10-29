@@ -41,6 +41,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/hack"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/sem"
+	"github.com/pingcap/tidb/pkg/util/sqlescape"
 	"github.com/pingcap/tidb/pkg/util/stringutil"
 	"go.uber.org/zap"
 )
@@ -262,15 +263,15 @@ func (g roleGraphEdgesTable) Find(user, host string) bool {
 }
 
 type immutable struct {
-	User         []UserRecord
-	DB           []dbRecord
-	TablesPriv   []tablesPrivRecord
-	ColumnsPriv  []columnsPrivRecord
-	DefaultRoles []defaultRoleRecord
+	user         []UserRecord
+	db           []dbRecord
+	tablesPriv   []tablesPrivRecord
+	columnsPriv  []columnsPrivRecord
+	defaultRoles []defaultRoleRecord
 
-	GlobalPriv  []globalPrivRecord
-	DynamicPriv []dynamicPrivRecord
-	RoleGraph   map[string]roleGraphEdgesTable
+	globalPriv  []globalPrivRecord
+	dynamicPriv []dynamicPrivRecord
+	roleGraph   map[string]roleGraphEdgesTable
 }
 
 type extended struct {
@@ -321,7 +322,7 @@ func (p *MySQLPrivilege) FindAllRole(activeRoles []*auth.RoleIdentity) []*auth.R
 			visited[role.String()] = true
 			ret = append(ret, role)
 			key := role.Username + "@" + role.Hostname
-			if edgeTable, ok := p.RoleGraph[key]; ok {
+			if edgeTable, ok := p.roleGraph[key]; ok {
 				for _, v := range edgeTable.roleList {
 					if _, ok := visited[v.String()]; !ok {
 						queue = append(queue, v)
@@ -340,7 +341,7 @@ func (p *MySQLPrivilege) FindRole(user string, host string, role *auth.RoleIdent
 	r := p.matchUser(role.Username, role.Hostname)
 	if rec != nil && r != nil {
 		key := rec.User + "@" + rec.Host
-		return p.RoleGraph[key].Find(role.Username, role.Hostname)
+		return p.roleGraph[key].Find(role.Username, role.Hostname)
 	}
 	return false
 }
@@ -446,7 +447,7 @@ func (p *immutable) loadSomeUsers(ctx sessionctx.Context, userList ...string) er
 		return errors.Trace(err)
 	}
 
-	p.RoleGraph = make(map[string]roleGraphEdgesTable)
+	p.roleGraph = make(map[string]roleGraphEdgesTable)
 	err = p.loadTable(ctx, sqlLoadRoleGraph, p.decodeRoleEdgesTable)
 	if err != nil {
 		return errors.Trace(err)
@@ -470,57 +471,57 @@ func dedupSorted[S ~[]E, E any](s S, eq func(a, b E) bool) S {
 // merge construct a new MySQLPrivilege by merging the data of the two objects;.
 func (p *MySQLPrivilege) merge(diff *immutable) *MySQLPrivilege {
 	var ret MySQLPrivilege
-	ret.User = make([]UserRecord, 0, len(p.User)+len(diff.User))
-	ret.User = append(ret.User, p.User...)
-	ret.User = append(ret.User, diff.User...)
+	ret.user = make([]UserRecord, 0, len(p.user)+len(diff.user))
+	ret.user = append(ret.user, p.user...)
+	ret.user = append(ret.user, diff.user...)
 
 	// sort and dedup
-	slices.SortStableFunc(ret.User, compareUserRecord)
-	ret.User = dedupSorted(ret.User, func(x, y UserRecord) bool { return x.User == y.User && x.Host == y.Host })
+	slices.SortStableFunc(ret.user, compareUserRecord)
+	ret.user = dedupSorted(ret.user, func(x, y UserRecord) bool { return x.User == y.User && x.Host == y.Host })
 	ret.buildUserMap()
 
-	ret.DB = make([]dbRecord, 0, len(p.DB)+len(diff.DB))
-	ret.DB = append(ret.DB, p.DB...)
-	ret.DB = append(ret.DB, diff.DB...)
+	ret.db = make([]dbRecord, 0, len(p.db)+len(diff.db))
+	ret.db = append(ret.db, p.db...)
+	ret.db = append(ret.db, diff.db...)
 	ret.buildDBMap()
 
-	ret.TablesPriv = make([]tablesPrivRecord, 0, len(p.TablesPriv)+len(diff.TablesPriv))
-	ret.TablesPriv = append(ret.TablesPriv, p.TablesPriv...)
-	ret.TablesPriv = append(ret.TablesPriv, diff.TablesPriv...)
+	ret.tablesPriv = make([]tablesPrivRecord, 0, len(p.tablesPriv)+len(diff.tablesPriv))
+	ret.tablesPriv = append(ret.tablesPriv, p.tablesPriv...)
+	ret.tablesPriv = append(ret.tablesPriv, diff.tablesPriv...)
 	ret.buildTablesPrivMap()
 
-	ret.ColumnsPriv = make([]columnsPrivRecord, 0, len(p.ColumnsPriv)+len(diff.ColumnsPriv))
-	ret.ColumnsPriv = append(ret.ColumnsPriv, p.ColumnsPriv...)
-	ret.ColumnsPriv = append(ret.ColumnsPriv, diff.ColumnsPriv...)
-	slices.SortStableFunc(ret.ColumnsPriv, compareColumnsPrivRecord)
-	ret.ColumnsPriv = dedupSorted(ret.ColumnsPriv, func(x, y columnsPrivRecord) bool {
+	ret.columnsPriv = make([]columnsPrivRecord, 0, len(p.columnsPriv)+len(diff.columnsPriv))
+	ret.columnsPriv = append(ret.columnsPriv, p.columnsPriv...)
+	ret.columnsPriv = append(ret.columnsPriv, diff.columnsPriv...)
+	slices.SortStableFunc(ret.columnsPriv, compareColumnsPrivRecord)
+	ret.columnsPriv = dedupSorted(ret.columnsPriv, func(x, y columnsPrivRecord) bool {
 		return x.Host == y.Host && x.User == y.User &&
 			x.DB == y.DB && x.TableName == y.TableName && x.ColumnName == y.ColumnName
 	})
 
-	ret.DefaultRoles = make([]defaultRoleRecord, 0, len(p.DefaultRoles)+len(diff.DefaultRoles))
-	ret.DefaultRoles = append(ret.DefaultRoles, p.DefaultRoles...)
-	ret.DefaultRoles = append(ret.DefaultRoles, diff.DefaultRoles...)
-	slices.SortStableFunc(ret.DefaultRoles, compareDefaultRoleRecord)
-	ret.DefaultRoles = dedupSorted(ret.DefaultRoles, func(x, y defaultRoleRecord) bool {
+	ret.defaultRoles = make([]defaultRoleRecord, 0, len(p.defaultRoles)+len(diff.defaultRoles))
+	ret.defaultRoles = append(ret.defaultRoles, p.defaultRoles...)
+	ret.defaultRoles = append(ret.defaultRoles, diff.defaultRoles...)
+	slices.SortStableFunc(ret.defaultRoles, compareDefaultRoleRecord)
+	ret.defaultRoles = dedupSorted(ret.defaultRoles, func(x, y defaultRoleRecord) bool {
 		return x.Host == y.Host && x.User == y.User
 	})
 
-	ret.DynamicPriv = make([]dynamicPrivRecord, 0, len(p.DynamicPriv)+len(diff.DynamicPriv))
-	ret.DynamicPriv = append(ret.DynamicPriv, p.DynamicPriv...)
-	ret.DynamicPriv = append(ret.DynamicPriv, diff.DynamicPriv...)
+	ret.dynamicPriv = make([]dynamicPrivRecord, 0, len(p.dynamicPriv)+len(diff.dynamicPriv))
+	ret.dynamicPriv = append(ret.dynamicPriv, p.dynamicPriv...)
+	ret.dynamicPriv = append(ret.dynamicPriv, diff.dynamicPriv...)
 	ret.buildDynamicMap()
 
-	ret.GlobalPriv = make([]globalPrivRecord, 0, len(p.GlobalPriv)+len(diff.GlobalPriv))
-	ret.GlobalPriv = append(ret.GlobalPriv, p.GlobalPriv...)
-	ret.GlobalPriv = append(ret.GlobalPriv, diff.GlobalPriv...)
-	slices.SortStableFunc(ret.GlobalPriv, compareGlobalPrivRecord)
-	ret.GlobalPriv = dedupSorted(ret.GlobalPriv, func(x, y globalPrivRecord) bool {
+	ret.globalPriv = make([]globalPrivRecord, 0, len(p.globalPriv)+len(diff.globalPriv))
+	ret.globalPriv = append(ret.globalPriv, p.globalPriv...)
+	ret.globalPriv = append(ret.globalPriv, diff.globalPriv...)
+	slices.SortStableFunc(ret.globalPriv, compareGlobalPrivRecord)
+	ret.globalPriv = dedupSorted(ret.globalPriv, func(x, y globalPrivRecord) bool {
 		return x.Host == y.Host && x.User == y.User
 	})
 	ret.buildGlobalMap()
 
-	ret.RoleGraph = diff.RoleGraph
+	ret.roleGraph = diff.roleGraph
 
 	return &ret
 }
@@ -537,7 +538,7 @@ func noSuchTable(err error) bool {
 
 // LoadRoleGraph loads the mysql.role_edges table from database.
 func (p *MySQLPrivilege) LoadRoleGraph(ctx sessionctx.Context) error {
-	p.RoleGraph = make(map[string]roleGraphEdgesTable)
+	p.roleGraph = make(map[string]roleGraphEdgesTable)
 	err := p.loadTable(ctx, sqlLoadRoleGraph, p.decodeRoleEdgesTable)
 	if err != nil {
 		return errors.Trace(err)
@@ -563,8 +564,8 @@ func (p *MySQLPrivilege) LoadUserTable(ctx sessionctx.Context) error {
 }
 
 func (p *MySQLPrivilege) buildUserMap() {
-	userMap := make(map[string][]UserRecord, len(p.User))
-	for _, record := range p.User {
+	userMap := make(map[string][]UserRecord, len(p.user))
+	for _, record := range p.user {
 		userMap[record.User] = append(userMap[record.User], record)
 	}
 	p.UserMap = userMap
@@ -669,12 +670,12 @@ func compareHost(x, y string) int {
 
 // SortUserTable sorts p.User in the MySQLPrivilege struct.
 func (p MySQLPrivilege) SortUserTable() {
-	slices.SortFunc(p.User, compareUserRecord)
+	slices.SortFunc(p.user, compareUserRecord)
 }
 
 func (p *MySQLPrivilege) buildGlobalMap() {
 	global := make(map[string][]globalPrivRecord)
-	for _, value := range p.GlobalPriv {
+	for _, value := range p.globalPriv {
 		global[value.User] = append(global[value.User], value)
 	}
 	p.Global = global
@@ -713,8 +714,8 @@ func compareDBRecord(x, y dbRecord) int {
 }
 
 func (p *MySQLPrivilege) buildDBMap() {
-	dbMap := make(map[string][]dbRecord, len(p.DB))
-	for _, record := range p.DB {
+	dbMap := make(map[string][]dbRecord, len(p.db))
+	for _, record := range p.db {
 		dbMap[record.User] = append(dbMap[record.User], record)
 	}
 
@@ -727,7 +728,7 @@ func (p *MySQLPrivilege) buildDBMap() {
 
 func (p *MySQLPrivilege) buildDynamicMap() {
 	dynamic := make(map[string][]dynamicPrivRecord)
-	for _, value := range p.DynamicPriv {
+	for _, value := range p.dynamicPriv {
 		dynamic[value.User] = append(dynamic[value.User], value)
 	}
 	p.Dynamic = dynamic
@@ -744,8 +745,8 @@ func (p *MySQLPrivilege) LoadTablesPrivTable(ctx sessionctx.Context) error {
 }
 
 func (p *MySQLPrivilege) buildTablesPrivMap() {
-	tablesPrivMap := make(map[string][]tablesPrivRecord, len(p.TablesPriv))
-	for _, record := range p.TablesPriv {
+	tablesPrivMap := make(map[string][]tablesPrivRecord, len(p.tablesPriv))
+	for _, record := range p.tablesPriv {
 		tablesPrivMap[record.User] = append(tablesPrivMap[record.User], record)
 	}
 	p.TablesPrivMap = tablesPrivMap
@@ -767,12 +768,12 @@ func addUserFilterCondition(sql string, userList []string) string {
 	}
 	var b strings.Builder
 	b.WriteString(sql)
-	b.WriteString(" where ")
+	b.WriteString(" WHERE ")
 	for i, user := range userList {
 		if i > 0 {
-			b.WriteString(" Or ")
+			b.WriteString(" OR ")
 		}
-		fmt.Fprintf(&b, "User = '%s'", user)
+		fmt.Fprintf(&b, "USER = '%s'", sqlescape.EscapeString(user))
 	}
 	return b.String()
 }
@@ -780,7 +781,6 @@ func addUserFilterCondition(sql string, userList []string) string {
 func (p *immutable) loadTable(sctx sessionctx.Context, sql string,
 	decodeTableRow func(chunk.Row, []*resolve.ResultField) error, userList ...string) error {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnPrivilege)
-
 	sql = addUserFilterCondition(sql, userList)
 	rows, fs, err := sctx.GetRestrictedSQLExecutor().ExecRestrictedSQL(ctx, nil, sql)
 	if err != nil {
@@ -923,7 +923,7 @@ func (p *immutable) decodeUserTableRow(row chunk.Row, fs []*resolve.ResultField)
 			value.assignUserOrHost(row, i, f)
 		}
 	}
-	p.User = append(p.User, value)
+	p.user = append(p.user, value)
 	return nil
 }
 
@@ -957,7 +957,7 @@ func (p *immutable) decodeGlobalPrivTableRow(row chunk.Row, fs []*resolve.Result
 			value.assignUserOrHost(row, i, f)
 		}
 	}
-	p.GlobalPriv = append(p.GlobalPriv, value)
+	p.globalPriv = append(p.globalPriv, value)
 	return nil
 }
 
@@ -973,7 +973,7 @@ func (p *immutable) decodeGlobalGrantsTableRow(row chunk.Row, fs []*resolve.Resu
 			value.assignUserOrHost(row, i, f)
 		}
 	}
-	p.DynamicPriv = append(p.DynamicPriv, value)
+	p.dynamicPriv = append(p.dynamicPriv, value)
 	return nil
 }
 
@@ -997,7 +997,7 @@ func (p *immutable) decodeDBTableRow(row chunk.Row, fs []*resolve.ResultField) e
 			value.assignUserOrHost(row, i, f)
 		}
 	}
-	p.DB = append(p.DB, value)
+	p.db = append(p.db, value)
 	return nil
 }
 
@@ -1017,7 +1017,7 @@ func (p *immutable) decodeTablesPrivTableRow(row chunk.Row, fs []*resolve.Result
 			value.assignUserOrHost(row, i, f)
 		}
 	}
-	p.TablesPriv = append(p.TablesPriv, value)
+	p.tablesPriv = append(p.tablesPriv, value)
 	return nil
 }
 
@@ -1037,10 +1037,10 @@ func (p *immutable) decodeRoleEdgesTable(row chunk.Row, fs []*resolve.ResultFiel
 	}
 	fromKey := fromUser + "@" + fromHost
 	toKey := toUser + "@" + toHost
-	roleGraph, ok := p.RoleGraph[toKey]
+	roleGraph, ok := p.roleGraph[toKey]
 	if !ok {
 		roleGraph = roleGraphEdgesTable{roleList: make(map[string]*auth.RoleIdentity)}
-		p.RoleGraph[toKey] = roleGraph
+		p.roleGraph[toKey] = roleGraph
 	}
 	roleGraph.roleList[fromKey] = &auth.RoleIdentity{Username: fromUser, Hostname: fromHost}
 	return nil
@@ -1058,7 +1058,7 @@ func (p *immutable) decodeDefaultRoleTableRow(row chunk.Row, fs []*resolve.Resul
 			value.assignUserOrHost(row, i, f)
 		}
 	}
-	p.DefaultRoles = append(p.DefaultRoles, value)
+	p.defaultRoles = append(p.defaultRoles, value)
 	return nil
 }
 
@@ -1084,7 +1084,7 @@ func (p *immutable) decodeColumnsPrivTableRow(row chunk.Row, fs []*resolve.Resul
 			value.assignUserOrHost(row, i, f)
 		}
 	}
-	p.ColumnsPriv = append(p.ColumnsPriv, value)
+	p.columnsPriv = append(p.columnsPriv, value)
 	return nil
 }
 
@@ -1159,8 +1159,8 @@ func patternMatch(str string, patChars, patTypes []byte) bool {
 // matchIdentity finds an identity to match a user + host
 // using the correct rules according to MySQL.
 func (p *MySQLPrivilege) matchIdentity(sctx sessionctx.Context, user, host string, skipNameResolve bool) *UserRecord {
-	for i := 0; i < len(p.User); i++ {
-		record := &p.User[i]
+	for i := 0; i < len(p.user); i++ {
+		record := &p.user[i]
 		if record.match(user, host) {
 			return record
 		}
@@ -1180,8 +1180,8 @@ func (p *MySQLPrivilege) matchIdentity(sctx sessionctx.Context, user, host strin
 			return nil
 		}
 		for _, addr := range addrs {
-			for i := 0; i < len(p.User); i++ {
-				record := &p.User[i]
+			for i := 0; i < len(p.user); i++ {
+				record := &p.user[i]
 				if record.match(user, addr) {
 					return record
 				}
@@ -1193,8 +1193,8 @@ func (p *MySQLPrivilege) matchIdentity(sctx sessionctx.Context, user, host strin
 
 // matchResoureGroup finds an identity to match resource group.
 func (p *MySQLPrivilege) matchResoureGroup(resourceGroupName string) *UserRecord {
-	for i := 0; i < len(p.User); i++ {
-		record := &p.User[i]
+	for i := 0; i < len(p.user); i++ {
+		record := &p.user[i]
 		if record.ResourceGroup == resourceGroupName {
 			return record
 		}
@@ -1272,8 +1272,8 @@ func (p *MySQLPrivilege) matchTables(user, host, db, table string) *tablesPrivRe
 }
 
 func (p *MySQLPrivilege) matchColumns(user, host, db, table, column string) *columnsPrivRecord {
-	for i := 0; i < len(p.ColumnsPriv); i++ {
-		record := &p.ColumnsPriv[i]
+	for i := 0; i < len(p.columnsPriv); i++ {
+		record := &p.columnsPriv[i]
 		if record.match(user, host, db, table, column) {
 			return record
 		}
@@ -1408,7 +1408,7 @@ func (p *MySQLPrivilege) DBIsVisible(user, host, db string) bool {
 		}
 	}
 
-	for _, record := range p.TablesPriv {
+	for _, record := range p.tablesPriv {
 		if record.baseRecord.match(user, host) &&
 			strings.EqualFold(record.DB, db) {
 			if record.TablePriv != 0 || record.ColumnPriv != 0 {
@@ -1417,7 +1417,7 @@ func (p *MySQLPrivilege) DBIsVisible(user, host, db string) bool {
 		}
 	}
 
-	for _, record := range p.ColumnsPriv {
+	for _, record := range p.columnsPriv {
 		if record.baseRecord.match(user, host) &&
 			strings.EqualFold(record.DB, db) {
 			if record.ColumnPriv != 0 {
@@ -1452,7 +1452,7 @@ func (p *MySQLPrivilege) showGrants(ctx sessionctx.Context, user, host string, r
 		}
 	}
 	var g string
-	for _, record := range p.User {
+	for _, record := range p.user {
 		if record.fullyMatch(user, host) {
 			hasGlobalGrant = true
 			currentPriv |= record.Privileges
@@ -1490,7 +1490,7 @@ func (p *MySQLPrivilege) showGrants(ctx sessionctx.Context, user, host string, r
 	// Show db scope grants.
 	sortFromIdx = len(gs)
 	dbPrivTable := make(map[string]mysql.PrivilegeType)
-	for _, record := range p.DB {
+	for _, record := range p.db {
 		if record.fullyMatch(user, host) {
 			dbPrivTable[record.DB] |= record.Privileges
 		} else {
@@ -1526,7 +1526,7 @@ func (p *MySQLPrivilege) showGrants(ctx sessionctx.Context, user, host string, r
 	// Show table scope grants.
 	sortFromIdx = len(gs)
 	tablePrivTable := make(map[string]mysql.PrivilegeType)
-	for _, record := range p.TablesPriv {
+	for _, record := range p.tablesPriv {
 		recordKey := stringutil.Escape(record.DB, sqlMode) + "." + stringutil.Escape(record.TableName, sqlMode)
 		if user == record.User && host == record.Host {
 			tablePrivTable[recordKey] |= record.TablePriv
@@ -1561,8 +1561,8 @@ func (p *MySQLPrivilege) showGrants(ctx sessionctx.Context, user, host string, r
 	// A map of "DB.Table" => Priv(col1, col2 ...)
 	sortFromIdx = len(gs)
 	columnPrivTable := make(map[string]privOnColumns)
-	for i := range p.ColumnsPriv {
-		record := p.ColumnsPriv[i]
+	for i := range p.columnsPriv {
+		record := p.columnsPriv[i]
 		if !collectColumnGrant(&record, user, host, columnPrivTable, sqlMode) {
 			for _, r := range allRoles {
 				collectColumnGrant(&record, r.Username, r.Hostname, columnPrivTable, sqlMode)
@@ -1578,7 +1578,7 @@ func (p *MySQLPrivilege) showGrants(ctx sessionctx.Context, user, host string, r
 
 	// Show role grants.
 	graphKey := user + "@" + host
-	edgeTable, ok := p.RoleGraph[graphKey]
+	edgeTable, ok := p.roleGraph[graphKey]
 	g = ""
 	if ok {
 		sortedRes := make([]string, 0, 10)
@@ -1738,7 +1738,7 @@ func (p *MySQLPrivilege) UserPrivilegesTable(activeRoles []*auth.RoleIdentity, u
 	// This is verified against MySQL.
 	showOtherUsers := p.RequestVerification(activeRoles, user, host, mysql.SystemDB, "", "", mysql.SelectPriv)
 	var rows [][]types.Datum
-	for _, u := range p.User {
+	for _, u := range p.user {
 		if showOtherUsers || u.match(user, host) {
 			rows = appendUserPrivilegesTableRow(rows, u)
 		}
@@ -1793,7 +1793,7 @@ func appendUserPrivilegesTableRow(rows [][]types.Datum, user UserRecord) [][]typ
 
 func (p *MySQLPrivilege) getDefaultRoles(user, host string) []*auth.RoleIdentity {
 	ret := make([]*auth.RoleIdentity, 0)
-	for _, r := range p.DefaultRoles {
+	for _, r := range p.defaultRoles {
 		if r.match(user, host) {
 			ret = append(ret, &auth.RoleIdentity{Username: r.DefaultRoleUser, Hostname: r.DefaultRoleHost})
 		}
@@ -1803,7 +1803,7 @@ func (p *MySQLPrivilege) getDefaultRoles(user, host string) []*auth.RoleIdentity
 
 func (p *MySQLPrivilege) getAllRoles(user, host string) []*auth.RoleIdentity {
 	key := user + "@" + host
-	edgeTable, ok := p.RoleGraph[key]
+	edgeTable, ok := p.roleGraph[key]
 	ret := make([]*auth.RoleIdentity, 0, len(edgeTable.roleList))
 	if ok {
 		for _, r := range edgeTable.roleList {
@@ -1818,10 +1818,8 @@ type Handle struct {
 	sctx sessionctx.Context
 	priv atomic.Pointer[MySQLPrivilege]
 	// Only load the active user's data to save memory
-	mu struct {
-		sync.RWMutex
-		activeUsers map[string]struct{}
-	}
+	// username => struct{}
+	activeUsers sync.Map
 }
 
 // NewHandle returns a Handle.
@@ -1830,15 +1828,12 @@ func NewHandle(sctx sessionctx.Context) *Handle {
 	ret := &Handle{}
 	ret.sctx = sctx
 	ret.priv.Store(&priv)
-	ret.mu.activeUsers = make(map[string]struct{})
 	return ret
 }
 
 // ensureActiveUser ensure that the specific user data is loaded in-memory.
 func (h *Handle) ensureActiveUser(user string) error {
-	h.mu.RLock()
-	_, exist := h.mu.activeUsers[user]
-	h.mu.RUnlock()
+	_, exist := h.activeUsers.Load(user)
 	if exist {
 		return nil
 	}
@@ -1851,10 +1846,7 @@ func (h *Handle) ensureActiveUser(user string) error {
 
 	old := h.Get()
 	h.priv.Store(old.merge(&data))
-
-	h.mu.Lock()
-	h.mu.activeUsers[user] = struct{}{}
-	h.mu.Unlock()
+	h.activeUsers.Store(user, struct{}{})
 
 	return nil
 }
