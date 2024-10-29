@@ -4507,14 +4507,15 @@ func GetName4AnonymousIndex(t table.Table, colName pmodel.CIStr, idxName pmodel.
 }
 
 func checkCreateUniqueGlobalIndex(ec errctx.Context, tblInfo *model.TableInfo, indexName string, indexColumns []*model.IndexColumn, isUnique bool, isGlobal bool) error {
-	if isGlobal && tblInfo.GetPartitionInfo() == nil {
+	pi := tblInfo.GetPartitionInfo()
+	if isGlobal && pi == nil {
 		return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("Global Index on non-partitioned table")
 	}
 	if isGlobal && !isUnique {
 		// TODO: remove this limitation
 		return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("Global IndexOption on non-unique index")
 	}
-	if isUnique && tblInfo.GetPartitionInfo() != nil {
+	if isUnique && pi != nil {
 		ck, err := checkPartitionKeysConstraint(tblInfo.GetPartitionInfo(), indexColumns, tblInfo)
 		if err != nil {
 			return err
