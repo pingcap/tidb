@@ -157,26 +157,33 @@ func (p LogicalJoin) Init(ctx base.PlanContext, offset int) *LogicalJoin {
 func (p *LogicalJoin) Hash64(h base2.Hasher) {
 	h.HashString(plancodec.TypeJoin)
 	h.HashInt(int(p.JoinType))
-	h.HashInt(len(p.EqualConditions))
-	for _, oneCond := range p.EqualConditions {
-		oneCond.Hash64(h)
+	hashFuncs := func(funcs []*expression.ScalarFunction) {
+		if funcs == nil {
+			h.HashByte(base2.NilFlag)
+		} else {
+			h.HashByte(base2.NotNilFlag)
+			h.HashInt(len(funcs))
+			for _, one := range funcs {
+				one.Hash64(h)
+			}
+		}
 	}
-	h.HashInt(len(p.NAEQConditions))
-	for _, oneCond := range p.NAEQConditions {
-		oneCond.Hash64(h)
+	hashExprs := func(exprs []expression.Expression) {
+		if exprs == nil {
+			h.HashByte(base2.NilFlag)
+		} else {
+			h.HashByte(base2.NotNilFlag)
+			h.HashInt(len(exprs))
+			for _, one := range exprs {
+				one.Hash64(h)
+			}
+		}
 	}
-	h.HashInt(len(p.LeftConditions))
-	for _, oneCond := range p.LeftConditions {
-		oneCond.Hash64(h)
-	}
-	h.HashInt(len(p.RightConditions))
-	for _, oneCond := range p.RightConditions {
-		oneCond.Hash64(h)
-	}
-	h.HashInt(len(p.OtherConditions))
-	for _, oneCond := range p.OtherConditions {
-		oneCond.Hash64(h)
-	}
+	hashFuncs(p.EqualConditions)
+	hashFuncs(p.NAEQConditions)
+	hashExprs(p.LeftConditions)
+	hashExprs(p.RightConditions)
+	hashExprs(p.OtherConditions)
 }
 
 // Equals implements the HashEquals.<1st> interface.

@@ -15,6 +15,7 @@
 package txn_test
 
 import (
+	"context"
 	"fmt"
 	"strconv"
 	"strings"
@@ -22,6 +23,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
@@ -756,4 +758,41 @@ func TestSavepointWithForeignKey(t *testing.T) {
 
 	wg.Wait()
 	require.Greater(t, updateTime, beforeCommitTime)
+}
+
+func TestInnodbLockWaitTimeout(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (id int auto_increment, k int,c varchar(255), unique index idx(id))")
+	tk.MustExec("insert into t (k,c) values (1,'abcdefg');")
+	for i := 0; i < 8; i++ {
+		tk.MustExec("insert into t (k,c) select k,c from t;")
+	}
+	tk.MustExec("update t set k= id, c = id")
+	tk.MustExec("split table t by (0), (50), (100);")
+	tk.MustExec("split table t index idx by (0), (50), (100);")
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/store/mockstore/unistore/tikv/pessimisticLockReturnWriteConflict", `return(true)`))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/store/mockstore/unistore/tikv/pessimisticLockReturnWriteConflict"))
+	}()
+	tk.MustExec("set @@innodb_lock_wait_timeout=1")
+	isolations := []string{"REPEATABLE READ", "READ COMMITTED"}
+	for _, isolation := range isolations {
+		tk.MustExec("SET SESSION TRANSACTION ISOLATION LEVEL " + isolation)
+		tk.MustExec("begin")
+		start := time.Now()
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second*5)
+		res, err := tk.ExecWithContext(ctx, "update t use index (idx) set k=k+1 where id >0;")
+		cancel()
+		if res != nil {
+			require.NoError(t, res.Close())
+		}
+		require.Error(t, err)
+		msg := fmt.Sprintf("cost: %v", time.Since(start))
+		require.Equal(t, "lock wait timeout", err.Error(), msg)
+		require.Less(t, time.Since(start), time.Second*2)
+		tk.MustExec("commit")
+	}
 }

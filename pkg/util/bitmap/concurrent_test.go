@@ -28,7 +28,7 @@ func TestConcurrentBitmapSet(t *testing.T) {
 
 	bm := NewConcurrentBitmap(loopCount * interval)
 	wg := &sync.WaitGroup{}
-	for i := 0; i < loopCount; i++ {
+	for i := range loopCount {
 		wg.Add(1)
 		go func(bitIndex int) {
 			bm.Set(bitIndex)
@@ -37,7 +37,7 @@ func TestConcurrentBitmapSet(t *testing.T) {
 	}
 	wg.Wait()
 
-	for i := 0; i < loopCount; i++ {
+	for i := range loopCount {
 		if i%interval == 0 {
 			assert.Equal(t, true, bm.UnsafeIsSet(i))
 		} else {
@@ -57,13 +57,13 @@ func TestConcurrentBitmapUniqueSetter(t *testing.T) {
 	var setterCounter uint64
 	var clearCounter uint64
 	// Concurrently set bit, and check if isSetter count matches zero clearing count.
-	for i := 0; i < loopCount; i++ {
+	for range loopCount {
 		// Clear bitmap to zero.
 		if atomic.CompareAndSwapUint32(&(bm.segments[0]), 0x00000001, 0x00000000) {
 			atomic.AddUint64(&clearCounter, 1)
 		}
 		// Concurrently set.
-		for j := 0; j < competitorsPerSet; j++ {
+		for range competitorsPerSet {
 			wg.Add(1)
 			go func() {
 				if bm.Set(31) {
