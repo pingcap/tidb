@@ -3449,7 +3449,7 @@ func bootstrapSessionImpl(ctx context.Context, store kv.Storage, createSessionsI
 	}
 	ver := getStoreBootstrapVersion(store)
 	if ver < currentBootstrapVersion {
-		runInBootstrapSession(store, getStartMode(ver))
+		runInBootstrapSession(store, ver)
 	} else {
 		err = InitMDLVariable(store)
 		if err != nil {
@@ -3678,11 +3678,30 @@ func getStartMode(ver int64) ddl.StartMode {
 // If no bootstrap and storage is remote, we must use a little lease time to
 // bootstrap quickly, after bootstrapped, we will reset the lease time.
 // TODO: Using a bootstrap tool for doing this may be better later.
-func runInBootstrapSession(store kv.Storage, startMode ddl.StartMode) {
+func runInBootstrapSession(store kv.Storage, ver int64) {
+	startMode := getStartMode(ver)
 	s, err := createSession(store)
 	if err != nil {
 		// Bootstrap fail will cause program exit.
 		logutil.BgLogger().Fatal("createSession error", zap.Error(err))
+	}
+	if startMode == ddl.Upgrade {
+		releaseFn, ok := acquireLock(s)
+		if !ok {
+			logutil.BgLogger().Fatal("[upgrade] get ddl owner distributed lock failed", zap.Error(err))
+		}
+		defer releaseFn()
+		ver, err = getBootstrapVersion(s)
+		terror.MustNil(err)
+		if ver >= currentBootstrapVersion {
+			// It is already bootstrapped/upgraded by another TiDB instance, but
+			// we still need to go through the following domain Start/Close code
+			// right now as we have already initialized it when creating the session,
+			// so we switch to normal mode.
+			// TODO remove this after we can refactor below code out in this case.
+			logutil.BgLogger().Info("[upgrade] already upgraded by other nodes, switch to normal mode")
+			startMode = ddl.Normal
+		}
 	}
 	dom := domain.GetDomain(s)
 	err = dom.Start(startMode)
@@ -3697,7 +3716,7 @@ func runInBootstrapSession(store kv.Storage, startMode ddl.StartMode) {
 	s.SetValue(sessionctx.Initing, true)
 	if startMode == ddl.Bootstrap {
 		bootstrap(s)
-	} else {
+	} else if startMode == ddl.Upgrade {
 		upgrade(s)
 	}
 	finishBootstrap(store)

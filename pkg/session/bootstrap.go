@@ -31,7 +31,6 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/bindinfo"
 	"github.com/pingcap/tidb/pkg/config"
-	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
@@ -1448,28 +1447,6 @@ func acquireLock(s sessiontypes.Session) (func(), bool) {
 	return releaseFn, true
 }
 
-func forceToLeader(ctx context.Context, s sessiontypes.Session) error {
-	dom := domain.GetDomain(s)
-	for !dom.DDL().OwnerManager().IsOwner() {
-		ownerID, err := dom.DDL().OwnerManager().GetOwnerID(ctx)
-		if err != nil && (errors.ErrorEqual(err, concurrency.ErrElectionNoLeader) || strings.Contains(err.Error(), "no owner")) {
-			logutil.BgLogger().Info("ddl owner not found", zap.Error(err))
-			time.Sleep(50 * time.Millisecond)
-			continue
-		} else if err != nil {
-			logutil.BgLogger().Error("unexpected error", zap.Error(err))
-			return err
-		}
-		err = owner.DeleteLeader(ctx, dom.EtcdClient(), ddl.DDLOwnerKey)
-		if err != nil {
-			logutil.BgLogger().Error("unexpected error", zap.Error(err), zap.String("ownerID", ownerID))
-			return err
-		}
-		time.Sleep(50 * time.Millisecond)
-	}
-	return nil
-}
-
 func checkDistTask(s sessiontypes.Session, ver int64) {
 	if ver > version195 {
 		// since version195 we enable dist task by default, no need to check
@@ -1526,22 +1503,11 @@ func upgrade(s sessiontypes.Session) {
 	}
 
 	var ver int64
-	releaseFn, ok := acquireLock(s)
-	if !ok {
-		logutil.BgLogger().Fatal("[upgrade] get ddl owner distributed lock failed", zap.Error(err))
-	}
 	ver, err = getBootstrapVersion(s)
 	terror.MustNil(err)
 	if ver >= currentBootstrapVersion {
 		// It is already bootstrapped/upgraded by a higher version TiDB server.
-		releaseFn()
 		return
-	}
-	defer releaseFn()
-
-	err = forceToLeader(context.Background(), s)
-	if err != nil {
-		logutil.BgLogger().Fatal("[upgrade] force to owner failed", zap.Error(err))
 	}
 
 	checkDistTask(s, ver)

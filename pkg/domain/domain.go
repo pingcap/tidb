@@ -1482,7 +1482,7 @@ func (do *Domain) Init(
 
 // Start starts the domain. After start, DDLs can be executed using session, see
 // Init also.
-func (do *Domain) Start(ddl.StartMode) error {
+func (do *Domain) Start(startMode ddl.StartMode) error {
 	gCfg := config.GetGlobalConfig()
 	if gCfg.EnableGlobalKill && do.etcdClient != nil {
 		do.wg.Add(1)
@@ -1501,7 +1501,7 @@ func (do *Domain) Start(ddl.StartMode) error {
 	sysCtxPool := pools.NewResourcePool(sysFac, 512, 512, resourceIdleTimeout)
 
 	// start the ddl after the domain reload, avoiding some internal sql running before infoSchema construction.
-	err := do.ddl.Start(sysCtxPool)
+	err := do.ddl.Start(startMode, sysCtxPool)
 	if err != nil {
 		return err
 	}
