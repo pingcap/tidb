@@ -22,17 +22,11 @@ import (
 	"testing"
 	"time"
 
-<<<<<<< HEAD:executor/executor_txn_test.go
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/sessionctx/binloginfo"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tipb/go-binlog"
-=======
-	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/pkg/errno"
-	"github.com/pingcap/tidb/pkg/testkit"
-	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
->>>>>>> 38187e5b1d6 (txn: fix issue innodb_lock_wait_timeout doesn't work in some case (#56847)):pkg/executor/test/txn/txn_test.go
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
 )
