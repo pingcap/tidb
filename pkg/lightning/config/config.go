@@ -97,6 +97,7 @@ const (
 	DefaultEngineMemCacheSize      = 512 * units.MiB
 	DefaultLocalWriterMemCacheSize = 128 * units.MiB
 	DefaultBlockSize               = 16 * units.KiB
+	defaultMaxRpcMsgSize           = 64 * units.MiB
 
 	defaultCSVDataCharacterSet       = "binary"
 	defaultCSVDataInvalidCharReplace = utf8.RuneError
@@ -1107,6 +1108,8 @@ type TikvImporter struct {
 	// default is PausePDSchedulerScopeTable to compatible with previous version(>= 6.1)
 	PausePDSchedulerScope PausePDSchedulerScope `toml:"pause-pd-scheduler-scope" json:"pause-pd-scheduler-scope"`
 	BlockSize             ByteSize              `toml:"block-size" json:"block-size"`
+
+	MaxRpcMsgSize ByteSize `toml:"max-rpc-msg-size" json:"max-rpc-msg-size"`
 }
 
 func (t *TikvImporter) adjust() error {
@@ -1152,6 +1155,9 @@ func (t *TikvImporter) adjust() error {
 		}
 		if t.BlockSize == 0 {
 			t.BlockSize = DefaultBlockSize
+		}
+		if t.MaxRpcMsgSize == 0 {
+			t.MaxRpcMsgSize = defaultMaxRpcMsgSize
 		}
 
 		if t.ParallelImport && t.AddIndexBySQL {
