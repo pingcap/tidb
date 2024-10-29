@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/statistics/handle/util"
 	"github.com/pingcap/tidb/pkg/ttl/cache"
 	"github.com/pingcap/tidb/pkg/ttl/metrics"
 	"github.com/pingcap/tidb/pkg/ttl/session"
@@ -56,22 +57,18 @@ var DetachStatsCollector = func(s sqlexec.SQLExecutor) sqlexec.SQLExecutor {
 	return s
 }
 
-<<<<<<< HEAD
-type sessionPool interface {
-	Get() (pools.Resource, error)
-	Put(pools.Resource)
-}
-
-func getSession(pool sessionPool) (session.Session, error) {
-=======
 var allIsolationReadEngines = map[kv.StoreType]struct{}{
 	kv.TiKV:    {},
 	kv.TiFlash: {},
 	kv.TiDB:    {},
 }
 
+type sessionPool interface {
+	Get() (pools.Resource, error)
+	Put(pools.Resource)
+}
+
 func getSession(pool util.SessionPool) (session.Session, error) {
->>>>>>> 670e970b224 (ttl: always enable all read engines for TTL sessions (#56604))
 	resource, err := pool.Get()
 	if err != nil {
 		return nil, err
