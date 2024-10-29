@@ -12,18 +12,18 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package logsplit
+package logclient_test
 
-import restoreutils "github.com/pingcap/tidb/br/pkg/restore/utils"
+import (
+	"testing"
 
-func NewSplitHelperIteratorForTest(helper *SplitHelper, tableID int64, rule *restoreutils.RewriteRules) *splitHelperIterator {
-	return &splitHelperIterator{
-		tableSplitters: []*rewriteSplitter{
-			{
-				tableID:  tableID,
-				rule:     rule,
-				splitter: helper,
-			},
-		},
-	}
+	logclient "github.com/pingcap/tidb/br/pkg/restore/log_client"
+)
+
+func emptyMigrations() *logclient.WithMigrations {
+	return &logclient.WithMigrations{}
+}
+
+func TestMigrations(t *testing.T) {
+
 }

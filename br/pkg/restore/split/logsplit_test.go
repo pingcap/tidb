@@ -12,22 +12,16 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package logsplit_test
+package split_test
 
 import (
 	"context"
 	"fmt"
 	"testing"
 
-	"github.com/docker/go-units"
-	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/kvproto/pkg/import_sstpb"
-	logsplit "github.com/pingcap/tidb/br/pkg/restore/internal/log_split"
-	snapsplit "github.com/pingcap/tidb/br/pkg/restore/internal/snap_split"
 	"github.com/pingcap/tidb/br/pkg/restore/split"
 	restoreutils "github.com/pingcap/tidb/br/pkg/restore/utils"
-	"github.com/pingcap/tidb/br/pkg/utiltest"
-	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/stretchr/testify/require"
@@ -55,18 +49,22 @@ func TestSplitPoint(t *testing.T) {
 	//            +---+ +---+       +---------+
 	//          +-------------+----------+---------+
 	// region:  a             f          h         j
-	splitHelper := logsplit.NewSplitHelper()
-	splitHelper.Merge(logsplit.Valued{Key: logsplit.Span{StartKey: keyWithTablePrefix(oldTableID, "b"), EndKey: keyWithTablePrefix(oldTableID, "c")}, Value: logsplit.Value{Size: 100, Number: 100}})
-	splitHelper.Merge(logsplit.Valued{Key: logsplit.Span{StartKey: keyWithTablePrefix(oldTableID, "d"), EndKey: keyWithTablePrefix(oldTableID, "e")}, Value: logsplit.Value{Size: 200, Number: 200}})
-	splitHelper.Merge(logsplit.Valued{Key: logsplit.Span{StartKey: keyWithTablePrefix(oldTableID, "g"), EndKey: keyWithTablePrefix(oldTableID, "i")}, Value: logsplit.Value{Size: 300, Number: 300}})
-	client := utiltest.NewFakeSplitClient()
+	splitHelper := split.NewSplitHelper()
+	splitHelper.Merge(split.Valued{Key: split.Span{StartKey: keyWithTablePrefix(oldTableID, "b"), EndKey: keyWithTablePrefix(oldTableID, "c")}, Value: split.Value{Size: 100, Number: 100}})
+	splitHelper.Merge(split.Valued{Key: split.Span{StartKey: keyWithTablePrefix(oldTableID, "d"), EndKey: keyWithTablePrefix(oldTableID, "e")}, Value: split.Value{Size: 200, Number: 200}})
+	splitHelper.Merge(split.Valued{Key: split.Span{StartKey: keyWithTablePrefix(oldTableID, "g"), EndKey: keyWithTablePrefix(oldTableID, "i")}, Value: split.Value{Size: 300, Number: 300}})
+	client := split.NewFakeSplitClient()
 	client.AppendRegion(keyWithTablePrefix(tableID, "a"), keyWithTablePrefix(tableID, "f"))
 	client.AppendRegion(keyWithTablePrefix(tableID, "f"), keyWithTablePrefix(tableID, "h"))
 	client.AppendRegion(keyWithTablePrefix(tableID, "h"), keyWithTablePrefix(tableID, "j"))
 	client.AppendRegion(keyWithTablePrefix(tableID, "j"), keyWithTablePrefix(tableID+1, "a"))
 
-	iter := logsplit.NewSplitHelperIteratorForTest(splitHelper, tableID, rewriteRules)
-	err := logsplit.SplitPoint(ctx, iter, client, func(ctx context.Context, rs *snapsplit.RegionSplitter, u uint64, o int64, ri *split.RegionInfo, v []logsplit.Valued) error {
+	r := split.NewRewriteSpliter(
+		codec.EncodeBytes(
+			[]byte{}, tablecodec.EncodeTablePrefix(tableID)), tableID, rewriteRules, splitHelper,
+	)
+	iter := split.NewSplitHelperIterator([]*split.RewriteSplitter{r})
+	err := split.SplitPoint(ctx, iter, client, func(ctx context.Context, u uint64, o int64, ri *split.RegionInfo, v []split.Valued) error {
 		require.Equal(t, u, uint64(0))
 		require.Equal(t, o, int64(0))
 		require.Equal(t, ri.Region.StartKey, keyWithTablePrefix(tableID, "a"))
@@ -105,13 +103,13 @@ func TestSplitPoint2(t *testing.T) {
 	//            +---+ +---+ +-----------------+ +----+ +--------+
 	//          +---------------+--+.....+----+------------+---------+
 	// region:  a               g   >128      h            m         o
-	splitHelper := logsplit.NewSplitHelper()
-	splitHelper.Merge(logsplit.Valued{Key: logsplit.Span{StartKey: keyWithTablePrefix(oldTableID, "b"), EndKey: keyWithTablePrefix(oldTableID, "c")}, Value: logsplit.Value{Size: 100, Number: 100}})
-	splitHelper.Merge(logsplit.Valued{Key: logsplit.Span{StartKey: keyWithTablePrefix(oldTableID, "d"), EndKey: keyWithTablePrefix(oldTableID, "e")}, Value: logsplit.Value{Size: 200, Number: 200}})
-	splitHelper.Merge(logsplit.Valued{Key: logsplit.Span{StartKey: keyWithTablePrefix(oldTableID, "f"), EndKey: keyWithTablePrefix(oldTableID, "i")}, Value: logsplit.Value{Size: 300, Number: 300}})
-	splitHelper.Merge(logsplit.Valued{Key: logsplit.Span{StartKey: keyWithTablePrefix(oldTableID, "j"), EndKey: keyWithTablePrefix(oldTableID, "k")}, Value: logsplit.Value{Size: 200, Number: 200}})
-	splitHelper.Merge(logsplit.Valued{Key: logsplit.Span{StartKey: keyWithTablePrefix(oldTableID, "l"), EndKey: keyWithTablePrefix(oldTableID, "n")}, Value: logsplit.Value{Size: 200, Number: 200}})
-	client := utiltest.NewFakeSplitClient()
+	splitHelper := split.NewSplitHelper()
+	splitHelper.Merge(split.Valued{Key: split.Span{StartKey: keyWithTablePrefix(oldTableID, "b"), EndKey: keyWithTablePrefix(oldTableID, "c")}, Value: split.Value{Size: 100, Number: 100}})
+	splitHelper.Merge(split.Valued{Key: split.Span{StartKey: keyWithTablePrefix(oldTableID, "d"), EndKey: keyWithTablePrefix(oldTableID, "e")}, Value: split.Value{Size: 200, Number: 200}})
+	splitHelper.Merge(split.Valued{Key: split.Span{StartKey: keyWithTablePrefix(oldTableID, "f"), EndKey: keyWithTablePrefix(oldTableID, "i")}, Value: split.Value{Size: 300, Number: 300}})
+	splitHelper.Merge(split.Valued{Key: split.Span{StartKey: keyWithTablePrefix(oldTableID, "j"), EndKey: keyWithTablePrefix(oldTableID, "k")}, Value: split.Value{Size: 200, Number: 200}})
+	splitHelper.Merge(split.Valued{Key: split.Span{StartKey: keyWithTablePrefix(oldTableID, "l"), EndKey: keyWithTablePrefix(oldTableID, "n")}, Value: split.Value{Size: 200, Number: 200}})
+	client := split.NewFakeSplitClient()
 	client.AppendRegion(keyWithTablePrefix(tableID, "a"), keyWithTablePrefix(tableID, "g"))
 	client.AppendRegion(keyWithTablePrefix(tableID, "g"), keyWithTablePrefix(tableID, getCharFromNumber("g", 0)))
 	for i := 0; i < 256; i++ {
@@ -123,8 +121,12 @@ func TestSplitPoint2(t *testing.T) {
 	client.AppendRegion(keyWithTablePrefix(tableID, "o"), keyWithTablePrefix(tableID+1, "a"))
 
 	firstSplit := true
-	iter := logsplit.NewSplitHelperIteratorForTest(splitHelper, tableID, rewriteRules)
-	err := logsplit.SplitPoint(ctx, iter, client, func(ctx context.Context, rs *snapsplit.RegionSplitter, u uint64, o int64, ri *split.RegionInfo, v []logsplit.Valued) error {
+	r := split.NewRewriteSpliter(
+		codec.EncodeBytes(
+			[]byte{}, tablecodec.EncodeTablePrefix(tableID)), tableID, rewriteRules, splitHelper,
+	)
+	iter := split.NewSplitHelperIterator([]*split.RewriteSplitter{r})
+	err := split.SplitPoint(ctx, iter, client, func(ctx context.Context, u uint64, o int64, ri *split.RegionInfo, v []split.Valued) error {
 		if firstSplit {
 			require.Equal(t, u, uint64(0))
 			require.Equal(t, o, int64(0))
@@ -156,75 +158,4 @@ func TestSplitPoint2(t *testing.T) {
 		return nil
 	})
 	require.NoError(t, err)
-}
-
-func fakeFile(tableID, rowID int64, length uint64, num int64) *backuppb.DataFileInfo {
-	return &backuppb.DataFileInfo{
-		StartKey:        fakeRowKey(tableID, rowID),
-		EndKey:          fakeRowKey(tableID, rowID+1),
-		TableId:         tableID,
-		Length:          length,
-		NumberOfEntries: num,
-	}
-}
-
-func fakeRowKey(tableID, rowID int64) kv.Key {
-	return codec.EncodeBytes(nil, tablecodec.EncodeRecordKey(tablecodec.GenTableRecordPrefix(tableID), kv.IntHandle(rowID)))
-}
-
-func TestLogSplitHelper(t *testing.T) {
-	ctx := context.Background()
-	rules := map[int64]*restoreutils.RewriteRules{
-		1: {
-			Data: []*import_sstpb.RewriteRule{
-				{
-					OldKeyPrefix: tablecodec.GenTableRecordPrefix(1),
-					NewKeyPrefix: tablecodec.GenTableRecordPrefix(100),
-				},
-			},
-		},
-		2: {
-			Data: []*import_sstpb.RewriteRule{
-				{
-					OldKeyPrefix: tablecodec.GenTableRecordPrefix(2),
-					NewKeyPrefix: tablecodec.GenTableRecordPrefix(200),
-				},
-			},
-		},
-	}
-	oriRegions := [][]byte{
-		{},
-		codec.EncodeBytes(nil, tablecodec.EncodeTablePrefix(100)),
-		codec.EncodeBytes(nil, tablecodec.EncodeTablePrefix(200)),
-		codec.EncodeBytes(nil, tablecodec.EncodeTablePrefix(402)),
-	}
-	mockPDCli := split.NewMockPDClientForSplit()
-	mockPDCli.SetRegions(oriRegions)
-	client := split.NewClient(mockPDCli, nil, nil, 100, 4)
-	helper := logsplit.NewLogSplitHelper(rules, client, 4*units.MiB, 400)
-
-	helper.Merge(fakeFile(1, 100, 100, 100))
-	helper.Merge(fakeFile(1, 200, 2*units.MiB, 200))
-	helper.Merge(fakeFile(2, 100, 3*units.MiB, 300))
-	helper.Merge(fakeFile(3, 100, 10*units.MiB, 100000))
-	// different regions, no split happens
-	err := helper.Split(ctx)
-	require.NoError(t, err)
-	regions, err := mockPDCli.ScanRegions(ctx, []byte{}, []byte{}, 0)
-	require.NoError(t, err)
-	require.Len(t, regions, 3)
-	require.Equal(t, []byte{}, regions[0].Meta.StartKey)
-	require.Equal(t, codec.EncodeBytes(nil, tablecodec.EncodeTablePrefix(100)), regions[1].Meta.StartKey)
-	require.Equal(t, codec.EncodeBytes(nil, tablecodec.EncodeTablePrefix(200)), regions[2].Meta.StartKey)
-	require.Equal(t, codec.EncodeBytes(nil, tablecodec.EncodeTablePrefix(402)), regions[2].Meta.EndKey)
-
-	helper.Merge(fakeFile(1, 300, 3*units.MiB, 10))
-	helper.Merge(fakeFile(1, 400, 4*units.MiB, 10))
-	// trigger to split regions for table 1
-	err = helper.Split(ctx)
-	require.NoError(t, err)
-	regions, err = mockPDCli.ScanRegions(ctx, []byte{}, []byte{}, 0)
-	require.NoError(t, err)
-	require.Len(t, regions, 4)
-	require.Equal(t, fakeRowKey(100, 400), kv.Key(regions[1].Meta.EndKey))
 }
