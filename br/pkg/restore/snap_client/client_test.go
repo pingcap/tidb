@@ -35,7 +35,8 @@ import (
 	importclient "github.com/pingcap/tidb/br/pkg/restore/internal/import_client"
 	snapclient "github.com/pingcap/tidb/br/pkg/restore/snap_client"
 	"github.com/pingcap/tidb/br/pkg/utiltest"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/types"
@@ -53,7 +54,7 @@ func TestCreateTables(t *testing.T) {
 
 	info, err := m.Domain.GetSnapshotInfoSchema(math.MaxUint64)
 	require.NoError(t, err)
-	dbSchema, isExist := info.SchemaByName(model.NewCIStr("test"))
+	dbSchema, isExist := info.SchemaByName(pmodel.NewCIStr("test"))
 	require.True(t, isExist)
 
 	client.SetBatchDdlSize(1)
@@ -65,10 +66,10 @@ func TestCreateTables(t *testing.T) {
 			DB: dbSchema,
 			Info: &model.TableInfo{
 				ID:   int64(i),
-				Name: model.NewCIStr("test" + strconv.Itoa(i)),
+				Name: pmodel.NewCIStr("test" + strconv.Itoa(i)),
 				Columns: []*model.ColumnInfo{{
 					ID:        1,
-					Name:      model.NewCIStr("id"),
+					Name:      pmodel.NewCIStr("id"),
 					FieldType: *intField,
 					State:     model.StatePublic,
 				}},
@@ -155,7 +156,7 @@ func TestCheckTargetClusterFresh(t *testing.T) {
 	ctx := context.Background()
 	require.NoError(t, client.CheckTargetClusterFresh(ctx))
 
-	require.NoError(t, client.CreateDatabases(ctx, []*metautil.Database{{Info: &model.DBInfo{Name: model.NewCIStr("user_db")}}}))
+	require.NoError(t, client.CreateDatabases(ctx, []*metautil.Database{{Info: &model.DBInfo{Name: pmodel.NewCIStr("user_db")}}}))
 	require.True(t, berrors.ErrRestoreNotFreshCluster.Equal(client.CheckTargetClusterFresh(ctx)))
 }
 
@@ -172,7 +173,7 @@ func TestCheckTargetClusterFreshWithTable(t *testing.T) {
 	ctx := context.Background()
 	info, err := cluster.Domain.GetSnapshotInfoSchema(math.MaxUint64)
 	require.NoError(t, err)
-	dbSchema, isExist := info.SchemaByName(model.NewCIStr("test"))
+	dbSchema, isExist := info.SchemaByName(pmodel.NewCIStr("test"))
 	require.True(t, isExist)
 	intField := types.NewFieldType(mysql.TypeLong)
 	intField.SetCharset("binary")
@@ -180,10 +181,10 @@ func TestCheckTargetClusterFreshWithTable(t *testing.T) {
 		DB: dbSchema,
 		Info: &model.TableInfo{
 			ID:   int64(1),
-			Name: model.NewCIStr("t"),
+			Name: pmodel.NewCIStr("t"),
 			Columns: []*model.ColumnInfo{{
 				ID:        1,
-				Name:      model.NewCIStr("id"),
+				Name:      pmodel.NewCIStr("id"),
 				FieldType: *intField,
 				State:     model.StatePublic,
 			}},

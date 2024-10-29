@@ -18,6 +18,7 @@ go_library(
         "//pkg/domain",
         "//pkg/kv",
         "//pkg/meta",
+        "//pkg/meta/model",
         "//pkg/parser/model",
         "//pkg/util",
         "@com_github_go_sql_driver_mysql//:mysql",

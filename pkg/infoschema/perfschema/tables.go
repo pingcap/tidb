@@ -30,7 +30,7 @@ import (
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/table"
@@ -205,6 +205,11 @@ func (vt *perfSchemaTable) Type() table.Type {
 // Indices implements table.Table Indices interface.
 func (vt *perfSchemaTable) Indices() []table.Index {
 	return vt.indices
+}
+
+// DeletableIndices implements table.Table DeletableIndices interface.
+func (vt *perfSchemaTable) DeletableIndices() []table.Index {
+	return nil
 }
 
 // GetPartitionedTable implements table.Table GetPartitionedTable interface.

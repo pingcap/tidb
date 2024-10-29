@@ -18,15 +18,21 @@ import (
 	"context"
 	"time"
 
-	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/resourcemanager/util"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/syncutil"
 	atomicutil "go.uber.org/atomic"
 )
 
+// TaskMayPanic is a type to remind the developer that need to handle panic in
+// the task.
+type TaskMayPanic interface {
+	// RecoverArgs returns the argument for pkg/util.Recover function of this task.
+	RecoverArgs() (metricsLabel string, funcInfo string, recoverFn func(), quit bool)
+}
+
 // Worker is worker interface.
-type Worker[T, R any] interface {
+type Worker[T TaskMayPanic, R any] interface {
 	// HandleTask consumes a task(T) and produces a result(R).
 	// The result is sent to the result channel by calling `send` function.
 	HandleTask(task T, send func(R))
@@ -34,7 +40,7 @@ type Worker[T, R any] interface {
 }
 
 // WorkerPool is a pool of workers.
-type WorkerPool[T, R any] struct {
+type WorkerPool[T TaskMayPanic, R any] struct {
 	ctx           context.Context
 	cancel        context.CancelFunc
 	name          string
@@ -51,7 +57,7 @@ type WorkerPool[T, R any] struct {
 }
 
 // Option is the config option for WorkerPool.
-type Option[T, R any] interface {
+type Option[T TaskMayPanic, R any] interface {
 	Apply(pool *WorkerPool[T, R])
 }
 
@@ -59,8 +65,13 @@ type Option[T, R any] interface {
 type None struct{}
 
 // NewWorkerPool creates a new worker pool.
-func NewWorkerPool[T, R any](name string, _ util.Component, numWorkers int,
-	createWorker func() Worker[T, R], opts ...Option[T, R]) *WorkerPool[T, R] {
+func NewWorkerPool[T TaskMayPanic, R any](
+	name string,
+	_ util.Component,
+	numWorkers int,
+	createWorker func() Worker[T, R],
+	opts ...Option[T, R],
+) *WorkerPool[T, R] {
 	if numWorkers <= 0 {
 		numWorkers = 1
 	}
@@ -116,7 +127,7 @@ func (p *WorkerPool[T, R]) handleTaskWithRecover(w Worker[T, R], task T) {
 	defer func() {
 		p.runningTask.Add(-1)
 	}()
-	defer tidbutil.Recover(metrics.LabelWorkerPool, "handleTaskWithRecover", nil, false)
+	defer tidbutil.Recover(task.RecoverArgs())
 
 	sendResult := func(r R) {
 		if p.resChan == nil {

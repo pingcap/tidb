@@ -724,7 +724,6 @@ func TestFlashbackClusterWithManyDBs(t *testing.T) {
 	var wg sync.WaitGroup
 	dbPerWorker := 10
 	for i := 0; i < 40; i++ {
-		i := i
 		wg.Add(1)
 		go func() {
 			defer wg.Done()

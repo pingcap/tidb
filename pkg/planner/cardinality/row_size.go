@@ -20,7 +20,7 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/planner/context"
+	"github.com/pingcap/tidb/pkg/planner/planctx"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/util/chunk"
@@ -29,7 +29,7 @@ import (
 const pseudoColSize = 8.0
 
 // GetIndexAvgRowSize computes average row size for a index scan.
-func GetIndexAvgRowSize(ctx context.PlanContext, coll *statistics.HistColl, cols []*expression.Column, isUnique bool) (size float64) {
+func GetIndexAvgRowSize(ctx planctx.PlanContext, coll *statistics.HistColl, cols []*expression.Column, isUnique bool) (size float64) {
 	size = GetAvgRowSize(ctx, coll, cols, true, true)
 	// tablePrefix(1) + tableID(8) + indexPrefix(2) + indexID(8)
 	// Because the cols for index scan always contain the handle, so we don't add the rowID here.
@@ -42,7 +42,7 @@ func GetIndexAvgRowSize(ctx context.PlanContext, coll *statistics.HistColl, cols
 }
 
 // GetTableAvgRowSize computes average row size for a table scan, exclude the index key-value pairs.
-func GetTableAvgRowSize(ctx context.PlanContext, coll *statistics.HistColl, cols []*expression.Column, storeType kv.StoreType, handleInCols bool) (size float64) {
+func GetTableAvgRowSize(ctx planctx.PlanContext, coll *statistics.HistColl, cols []*expression.Column, storeType kv.StoreType, handleInCols bool) (size float64) {
 	size = GetAvgRowSize(ctx, coll, cols, false, true)
 	switch storeType {
 	case kv.TiKV:
@@ -58,7 +58,7 @@ func GetTableAvgRowSize(ctx context.PlanContext, coll *statistics.HistColl, cols
 }
 
 // GetAvgRowSize computes average row size for given columns.
-func GetAvgRowSize(ctx context.PlanContext, coll *statistics.HistColl, cols []*expression.Column, isEncodedKey bool, isForScan bool) (size float64) {
+func GetAvgRowSize(ctx planctx.PlanContext, coll *statistics.HistColl, cols []*expression.Column, isEncodedKey bool, isForScan bool) (size float64) {
 	sessionVars := ctx.GetSessionVars()
 	if coll.Pseudo || coll.ColNum() == 0 || coll.RealtimeCount == 0 {
 		size = pseudoColSize * float64(len(cols))

@@ -12,7 +12,7 @@ go_library(
         "//pkg/lightning/log",
         "//pkg/lightning/metric",
         "//pkg/lightning/mydump",
-        "//pkg/parser/model",
+        "//pkg/meta/model",
         "@com_github_google_uuid//:uuid",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_failpoint//:failpoint",

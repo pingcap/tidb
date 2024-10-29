@@ -140,7 +140,7 @@ func (*OuterJoinEliminator) isInnerJoinKeysContainUniqueKey(innerPlan base.Logic
 
 // check whether one of index sets is contained by inner join index
 func (*OuterJoinEliminator) isInnerJoinKeysContainIndex(innerPlan base.LogicalPlan, joinKeys *expression.Schema) (bool, error) {
-	ds, ok := innerPlan.(*DataSource)
+	ds, ok := innerPlan.(*logicalop.DataSource)
 	if !ok {
 		return false, nil
 	}
@@ -198,7 +198,7 @@ func GetDupAgnosticAggCols(
 
 func (o *OuterJoinEliminator) doOptimize(p base.LogicalPlan, aggCols []*expression.Column, parentCols []*expression.Column, opt *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, error) {
 	// CTE's logical optimization is independent.
-	if _, ok := p.(*LogicalCTE); ok {
+	if _, ok := p.(*logicalop.LogicalCTE); ok {
 		return p, nil
 	}
 	var err error

@@ -128,3 +128,34 @@ func TestStringer(t *testing.T) {
 		})
 	}
 }
+
+func TestIsDynamicPartitionedTableAnalysisJob(t *testing.T) {
+	type args struct {
+		job priorityqueue.AnalysisJob
+	}
+	tests := []struct {
+		name string
+		args args
+		want bool
+	}{
+		{
+			name: "non-partitioned table",
+			args: args{
+				job: &priorityqueue.NonPartitionedTableAnalysisJob{},
+			},
+			want: false,
+		},
+		{
+			name: "dynamic partitioned table",
+			args: args{
+				job: &priorityqueue.DynamicPartitionedTableAnalysisJob{},
+			},
+			want: true,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			require.Equal(t, tt.want, priorityqueue.IsDynamicPartitionedTableAnalysisJob(tt.args.job))
+		})
+	}
+}

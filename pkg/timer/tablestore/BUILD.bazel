@@ -39,9 +39,9 @@ go_test(
     shard_count = 8,
     deps = [
         "//pkg/kv",
-        "//pkg/parser/ast",
-        "//pkg/parser/model",
+        "//pkg/meta/model",
         "//pkg/parser/mysql",
+        "//pkg/planner/core/resolve",
         "//pkg/sessionctx",
         "//pkg/sessionctx/variable",
         "//pkg/timer/api",

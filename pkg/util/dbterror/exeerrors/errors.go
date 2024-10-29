@@ -63,6 +63,7 @@ var (
 	ErrMemoryExceedForQuery                 = dbterror.ClassExecutor.NewStd(mysql.ErrMemoryExceedForQuery)
 	ErrMemoryExceedForInstance              = dbterror.ClassExecutor.NewStd(mysql.ErrMemoryExceedForInstance)
 	ErrCurrentPasswordNotRequired           = dbterror.ClassExecutor.NewStd(mysql.ErrCurrentPasswordNotRequired)
+	ErrDeleteNotFoundColumn                 = dbterror.ClassExecutor.NewStd(mysql.ErrDeleteNotFoundColumn)
 
 	ErrBRIEBackupFailed               = dbterror.ClassExecutor.NewStd(mysql.ErrBRIEBackupFailed)
 	ErrBRIERestoreFailed              = dbterror.ClassExecutor.NewStd(mysql.ErrBRIERestoreFailed)

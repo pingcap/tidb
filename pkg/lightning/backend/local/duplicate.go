@@ -42,7 +42,7 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/config"
 	"github.com/pingcap/tidb/pkg/lightning/errormanager"
 	"github.com/pingcap/tidb/pkg/lightning/log"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/table"
@@ -310,6 +310,7 @@ func getDupDetectClient(
 	importClientFactory ImportClientFactory,
 	resourceGroupName string,
 	taskType string,
+	minCommitTS uint64,
 ) (import_sstpb.ImportSST_DuplicateDetectClient, error) {
 	leader := region.Leader
 	if leader == nil {
@@ -330,9 +331,10 @@ func getDupDetectClient(
 		RequestSource: kvutil.BuildRequestSource(true, tidbkv.InternalTxnLightning, taskType),
 	}
 	req := &import_sstpb.DuplicateDetectRequest{
-		Context:  reqCtx,
-		StartKey: keyRange.StartKey,
-		EndKey:   keyRange.EndKey,
+		Context:     reqCtx,
+		StartKey:    keyRange.StartKey,
+		EndKey:      keyRange.EndKey,
+		MinCommitTs: minCommitTS,
 	}
 	cli, err := importClient.DuplicateDetect(ctx, req)
 	if err != nil {
@@ -349,9 +351,10 @@ func NewRemoteDupKVStream(
 	importClientFactory ImportClientFactory,
 	resourceGroupName string,
 	taskType string,
+	minCommitTS uint64,
 ) (*RemoteDupKVStream, error) {
 	subCtx, cancel := context.WithCancel(ctx)
-	cli, err := getDupDetectClient(subCtx, region, keyRange, importClientFactory, resourceGroupName, taskType)
+	cli, err := getDupDetectClient(subCtx, region, keyRange, importClientFactory, resourceGroupName, taskType, minCommitTS)
 	if err != nil {
 		cancel()
 		return nil, errors.Trace(err)
@@ -422,6 +425,7 @@ type dupeDetector struct {
 	indexID           int64
 	resourceGroupName string
 	taskType          string
+	minCommitTS       uint64
 }
 
 // NewDupeDetector creates a new dupeDetector.
@@ -456,6 +460,7 @@ func NewDupeDetector(
 		indexID:           sessOpts.IndexID,
 		resourceGroupName: resourceGroupName,
 		taskType:          taskType,
+		minCommitTS:       sessOpts.MinCommitTS,
 	}, nil
 }
 
@@ -723,7 +728,7 @@ func (m *dupeDetector) buildDupTasks() ([]dupTask, error) {
 		putToTaskFunc(ranges, nil)
 	})
 	for _, indexInfo := range m.tbl.Meta().Indices {
-		if indexInfo.State != model.StatePublic {
+		if indexInfo.State != model.StatePublic || !indexInfo.Unique {
 			continue
 		}
 		keyRanges, err = tableIndexKeyRanges(m.tbl.Meta(), indexInfo)
@@ -826,7 +831,6 @@ func (m *dupeDetector) CollectDuplicateRowsFromDupDB(ctx context.Context, dupDB 
 	pool := util.NewWorkerPool(uint(m.concurrency), "collect duplicate rows from duplicate db")
 	g, gCtx := errgroup.WithContext(ctx)
 	for _, task := range tasks {
-		task := task
 		pool.ApplyOnErrorGroup(g, func() error {
 			if err := common.Retry("collect local duplicate rows", logger, func() error {
 				stream := NewLocalDupKVStream(dupDB, keyAdapter, task.KeyRange)
@@ -937,7 +941,7 @@ func (m *dupeDetector) processRemoteDupTaskOnce(
 				logutil.Key("dupDetectEndKey", kr.EndKey),
 			)
 			err := func() error {
-				stream, err := NewRemoteDupKVStream(ctx, region, kr, importClientFactory, m.resourceGroupName, m.taskType)
+				stream, err := NewRemoteDupKVStream(ctx, region, kr, importClientFactory, m.resourceGroupName, m.taskType, m.minCommitTS)
 				if err != nil {
 					return errors.Annotatef(err, "failed to create remote duplicate kv stream")
 				}
@@ -1036,7 +1040,6 @@ func (m *dupeDetector) collectDuplicateRowsFromTiKV(
 	regionPool := util.NewWorkerPool(uint(m.concurrency), "collect duplicate rows from tikv by region")
 	g, gCtx := errgroup.WithContext(ctx)
 	for _, task := range tasks {
-		task := task
 		taskPool.ApplyOnErrorGroup(g, func() error {
 			taskLogger := logger.With(
 				logutil.Key("startKey", task.StartKey),

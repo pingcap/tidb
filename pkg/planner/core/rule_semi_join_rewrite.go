@@ -52,7 +52,7 @@ func (*SemiJoinRewriter) Name() string {
 }
 
 func (smj *SemiJoinRewriter) recursivePlan(p base.LogicalPlan) (base.LogicalPlan, error) {
-	if _, ok := p.(*LogicalCTE); ok {
+	if _, ok := p.(*logicalop.LogicalCTE); ok {
 		return p, nil
 	}
 	newChildren := make([]base.LogicalPlan, 0, len(p.Children()))

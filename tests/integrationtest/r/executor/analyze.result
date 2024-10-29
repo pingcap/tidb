@@ -741,8 +741,8 @@ analyze table t partition p1 index idxb;
 analyze table t partition p2 index idxc;
 show warnings;
 Level	Code	Message
-Warning	1105	The version 2 would collect all statistics not only the selected indexes
 Warning	1105	No predicate column has been collected yet for table executor__analyze.t, so only indexes and the columns composing the indexes will be analyzed
+Warning	1105	The version 2 would collect all statistics not only the selected indexes
 Note	1105	Analyze use auto adjusted sample rate 1.000000 for table executor__analyze.t's partition p2, reason to use this rate is "use min(1, 110000/10000) as the sample-rate=1"
 analyze table t partition p0;
 show warnings;

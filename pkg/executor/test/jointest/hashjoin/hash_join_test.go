@@ -411,6 +411,7 @@ func TestIssue20270(t *testing.T) {
 	tk.MustExec("create table t1(c1 int, c2 int)")
 	tk.MustExec("insert into t values(1,1),(2,2)")
 	tk.MustExec("insert into t1 values(2,3),(4,4)")
+	tk.MustExec(join.DisableHashJoinV2)
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/executor/join/killedInJoin2Chunk", "return(true)"))
 	err := tk.QueryToErr("select /*+ HASH_JOIN(t, t1) */ * from t left join t1 on t.c1 = t1.c1 where t.c1 = 1 or t1.c2 > 20")
 	require.Equal(t, exeerrors.ErrQueryInterrupted, err)
@@ -484,10 +485,7 @@ func TestFinalizeCurrentSegPanic(t *testing.T) {
 	tk.MustExec("create table t2 (a int, b int, c int)")
 	tk.MustExec("insert into t1 values (1, 1, 1), (1, 2, 2), (2, 1, 3), (2, 2, 4)")
 	tk.MustExec("insert into t2 values (1, 1, 1), (1, 2, 2), (2, 1, 3), (2, 2, 4)")
-	join.SetEnableHashJoinV2(true)
-	defer func() {
-		join.SetEnableHashJoinV2(false)
-	}()
+	tk.MustExec(join.EnableHashJoinV2)
 	fpName := "github.com/pingcap/tidb/pkg/executor/join/finalizeCurrentSegPanic"
 	require.NoError(t, failpoint.Enable(fpName, "panic(\"finalizeCurrentSegPanic\")"))
 	defer func() {
@@ -507,10 +505,7 @@ func TestSplitPartitionPanic(t *testing.T) {
 	tk.MustExec("create table t2 (a int, b int, c int)")
 	tk.MustExec("insert into t1 values (1, 1, 1), (1, 2, 2), (2, 1, 3), (2, 2, 4)")
 	tk.MustExec("insert into t2 values (1, 1, 1), (1, 2, 2), (2, 1, 3), (2, 2, 4)")
-	join.SetEnableHashJoinV2(true)
-	defer func() {
-		join.SetEnableHashJoinV2(false)
-	}()
+	tk.MustExec(join.EnableHashJoinV2)
 	fpName := "github.com/pingcap/tidb/pkg/executor/join/splitPartitionPanic"
 	require.NoError(t, failpoint.Enable(fpName, "panic(\"splitPartitionPanic\")"))
 	defer func() {
@@ -530,10 +525,7 @@ func TestProcessOneProbeChunkPanic(t *testing.T) {
 	tk.MustExec("create table t2 (a int, b int, c int)")
 	tk.MustExec("insert into t1 values (1, 1, 1), (1, 2, 2), (2, 1, 3), (2, 2, 4)")
 	tk.MustExec("insert into t2 values (1, 1, 1), (1, 2, 2), (2, 1, 3), (2, 2, 4)")
-	join.SetEnableHashJoinV2(true)
-	defer func() {
-		join.SetEnableHashJoinV2(false)
-	}()
+	tk.MustExec(join.EnableHashJoinV2)
 	fpName := "github.com/pingcap/tidb/pkg/executor/join/processOneProbeChunkPanic"
 	require.NoError(t, failpoint.Enable(fpName, "panic(\"processOneProbeChunkPanic\")"))
 	defer func() {
@@ -553,10 +545,7 @@ func TestCreateTasksPanic(t *testing.T) {
 	tk.MustExec("create table t2 (a int, b int, c int)")
 	tk.MustExec("insert into t1 values (1, 1, 1), (1, 2, 2), (2, 1, 3), (2, 2, 4)")
 	tk.MustExec("insert into t2 values (1, 1, 1), (1, 2, 2), (2, 1, 3), (2, 2, 4)")
-	join.SetEnableHashJoinV2(true)
-	defer func() {
-		join.SetEnableHashJoinV2(false)
-	}()
+	tk.MustExec(join.EnableHashJoinV2)
 	fpName := "github.com/pingcap/tidb/pkg/executor/join/createTasksPanic"
 	require.NoError(t, failpoint.Enable(fpName, "panic(\"createTasksPanic\")"))
 	defer func() {
@@ -576,10 +565,7 @@ func TestBuildHashTablePanic(t *testing.T) {
 	tk.MustExec("create table t2 (a int, b int, c int)")
 	tk.MustExec("insert into t1 values (1, 1, 1), (1, 2, 2), (2, 1, 3), (2, 2, 4)")
 	tk.MustExec("insert into t2 values (1, 1, 1), (1, 2, 2), (2, 1, 3), (2, 2, 4)")
-	join.SetEnableHashJoinV2(true)
-	defer func() {
-		join.SetEnableHashJoinV2(false)
-	}()
+	tk.MustExec(join.EnableHashJoinV2)
 	fpName := "github.com/pingcap/tidb/pkg/executor/join/buildHashTablePanic"
 	require.NoError(t, failpoint.Enable(fpName, "panic(\"buildHashTablePanic\")"))
 	defer func() {
@@ -599,10 +585,7 @@ func TestKillDuringProbe(t *testing.T) {
 	tk.MustExec("create table t1(c1 int, c2 int)")
 	tk.MustExec("insert into t values(1,1),(2,2)")
 	tk.MustExec("insert into t1 values(2,3),(4,4)")
-	join.SetEnableHashJoinV2(true)
-	defer func() {
-		join.SetEnableHashJoinV2(false)
-	}()
+	tk.MustExec(join.EnableHashJoinV2)
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/executor/join/killedDuringProbe", "return(true)"))
 	defer func() {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/executor/join/killedDuringProbe"))
@@ -632,10 +615,7 @@ func TestKillDuringBuild(t *testing.T) {
 	tk.MustExec("create table t1(c1 int, c2 int)")
 	tk.MustExec("insert into t values(1,1),(2,2)")
 	tk.MustExec("insert into t1 values(2,3),(4,4)")
-	join.SetEnableHashJoinV2(true)
-	defer func() {
-		join.SetEnableHashJoinV2(false)
-	}()
+	tk.MustExec(join.EnableHashJoinV2)
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/executor/join/killedDuringBuild", "return(true)"))
 	defer func() {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/executor/join/killedDuringBuild"))
@@ -661,10 +641,7 @@ func TestIssue54755(t *testing.T) {
 	tk.MustExec("create table t2(pk INTEGER AUTO_INCREMENT, col_int_nokey INTEGER, col_int_key INTEGER, col_varchar_key VARCHAR(1), col_varchar_nokey VARCHAR(1), PRIMARY KEY (pk), KEY (col_int_key), KEY (col_varchar_key, col_int_key))")
 	tk.MustExec("insert into t1(col_int_key, col_int_nokey,col_varchar_key, col_varchar_nokey) values(4,2,'v','v'),(62,150,'v','v')")
 	tk.MustExec("insert into t2(col_int_key, col_int_nokey,col_varchar_key, col_varchar_nokey) values(8,null,'x','x'),(7,8,'d','d')")
-	join.SetEnableHashJoinV2(true)
-	defer func() {
-		join.SetEnableHashJoinV2(false)
-	}()
+	tk.MustExec(join.EnableHashJoinV2)
 	// right join
 	tk.MustQuery("select max(SQ1_alias2.col_int_nokey) as SQ1_field1 from ( t2 as SQ1_alias1 right join t1 as SQ1_alias2 on ( SQ1_alias2.col_varchar_key = SQ1_alias1.col_varchar_nokey ))").Check(testkit.Rows("150"))
 	// left join
@@ -678,13 +655,64 @@ func TestIssue55016(t *testing.T) {
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec("create table t(a varchar(10), b char(10))")
 	tk.MustExec("insert into t values('aa','a')")
-	isHashJoinV2Enabled := join.IsHashJoinV2Enabled()
-	defer func() {
-		join.SetEnableHashJoinV2(isHashJoinV2Enabled)
-	}()
-	hashJoinV2Enable := []bool{true, false}
-	for _, enableHashJoinV2 := range hashJoinV2Enable {
-		join.SetEnableHashJoinV2(enableHashJoinV2)
+	for _, hashJoinV2 := range join.HashJoinV2Strings {
+		tk.MustExec(hashJoinV2)
 		tk.MustQuery("select count(*) from t t1 join t t2 on t1.a = t2.b and t2.a = t1.b").Check(testkit.Rows("0"))
+	}
+}
+
+func TestIssue56214(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1;")
+	tk.MustExec("drop table if exists t2;")
+	tk.MustExec("drop table if exists t3;")
+	tk.MustExec("create table t1(id int, value int)")
+	tk.MustExec("create table t2(id int, value int)")
+	tk.MustExec("create table t3(id int, value int)")
+	tk.MustExec("insert into t1 values(1,2),(2,3),(3,4)")
+	tk.MustExec("insert into t2 values(1,10),(1,1),(2,10),(2,10)")
+	tk.MustExec("insert into t3 values(1,10),(1,20)")
+	for _, hashJoinV2 := range join.HashJoinV2Strings {
+		tk.MustExec(hashJoinV2)
+		tk.MustQuery("select value, (select t1.id from t1 join t2 on t1.id = t2.id and t1.value < t2.value - t3.value + 3) d from t3 order by value").Check(testkit.Rows("10 1", "20 <nil>"))
+	}
+}
+
+func TestIssue56825(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1;")
+	tk.MustExec("drop table if exists t2;")
+	tk.MustExec("create table t1(id int, col1 int)")
+	tk.MustExec("create table t2(id int, col1 int, col2 int, col3 int, col4 int, col5 int)")
+	tk.MustExec("insert into t1 values(1,2),(2,3)")
+	tk.MustExec("insert into t2 values(1,2,3,4,5,6),(3,4,5,6,7,8),(4,5,6,7,8,9)")
+	tk.MustExec("analyze table t1")
+	tk.MustExec("analyze table t2")
+	// t1 as build side
+	for _, hashJoinV2 := range join.HashJoinV2Strings {
+		tk.MustExec(hashJoinV2)
+		tk.MustQuery("select * from t1 left join t2 on t1.id = t2.id and t1.col1 <= t2.col1 order by t1.id").Check(testkit.Rows("1 2 1 2 3 4 5 6", "2 3 <nil> <nil> <nil> <nil> <nil> <nil>"))
+		tk.MustQuery("select * from t1 right join t2 on t1.id = t2.id and t1.col1 <= t2.col1 order by t2.id").Check(testkit.Rows("1 2 1 2 3 4 5 6", "<nil> <nil> 3 4 5 6 7 8", "<nil> <nil> 4 5 6 7 8 9"))
+	}
+	tk.MustExec("insert into t1 values(10,20),(11,21),(12,22),(13,23),(14,24),(15,25)")
+	tk.MustExec("analyze table t1")
+	// t2 as build side
+	for _, hashJoinV2 := range join.HashJoinV2Strings {
+		tk.MustExec(hashJoinV2)
+		tk.MustQuery("select * from t1 left join t2 on t1.id = t2.id and t1.col1 <= t2.col1 order by t1.id").Check(testkit.Rows(
+			"1 2 1 2 3 4 5 6",
+			"2 3 <nil> <nil> <nil> <nil> <nil> <nil>",
+			"10 20 <nil> <nil> <nil> <nil> <nil> <nil>",
+			"11 21 <nil> <nil> <nil> <nil> <nil> <nil>",
+			"12 22 <nil> <nil> <nil> <nil> <nil> <nil>",
+			"13 23 <nil> <nil> <nil> <nil> <nil> <nil>",
+			"14 24 <nil> <nil> <nil> <nil> <nil> <nil>",
+			"15 25 <nil> <nil> <nil> <nil> <nil> <nil>",
+		))
+		tk.MustQuery("select * from t1 right join t2 on t1.id = t2.id and t1.col1 <= t2.col1 order by t2.id").Check(testkit.Rows("1 2 1 2 3 4 5 6", "<nil> <nil> 3 4 5 6 7 8", "<nil> <nil> 4 5 6 7 8 9"))
 	}
 }

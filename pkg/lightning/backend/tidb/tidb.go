@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	gmysql "github.com/go-sql-driver/mysql"
@@ -37,12 +38,14 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/errormanager"
 	"github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/lightning/verification"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/dbutil"
+	"github.com/pingcap/tidb/pkg/util/hack"
+	"github.com/pingcap/tidb/pkg/util/kvcache"
 	"github.com/pingcap/tidb/pkg/util/redact"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
@@ -56,12 +59,16 @@ var extraHandleTableColumn = &table.Column{
 
 const (
 	writeRowsMaxRetryTimes = 3
+	// To limit memory usage for prepared statements.
+	prepStmtCacheSize uint = 100
 )
 
 type tidbRow struct {
-	insertStmt string
-	path       string
-	offset     int64
+	insertStmt         string
+	preparedInsertStmt string
+	values             []any
+	path               string
+	offset             int64
 }
 
 var emptyTiDBRow = tidbRow{
@@ -83,7 +90,6 @@ func (rows tidbRows) MarshalLogArray(encoder zapcore.ArrayEncoder) error {
 type tidbEncoder struct {
 	mode mysql.SQLMode
 	tbl  table.Table
-	se   sessionctx.Context
 	// the index of table columns for each data field.
 	// index == len(table.columns) means this field is `_tidb_rowid`
 	columnIdx []int
@@ -92,8 +98,9 @@ type tidbEncoder struct {
 	// the there are enough columns.
 	columnCnt int
 	// data file path
-	path   string
-	logger log.Logger
+	path     string
+	logger   log.Logger
+	prepStmt bool
 }
 
 type encodingBuilder struct{}
@@ -105,19 +112,13 @@ func NewEncodingBuilder() encode.EncodingBuilder {
 
 // NewEncoder creates a KV encoder.
 // It implements the `backend.EncodingBuilder` interface.
-func (*encodingBuilder) NewEncoder(ctx context.Context, config *encode.EncodingConfig) (encode.Encoder, error) {
-	se := kv.NewSessionCtx(&config.SessionOptions, log.FromContext(ctx))
-	if config.SQLMode.HasStrictMode() {
-		se.GetSessionVars().SkipUTF8Check = false
-		se.GetSessionVars().SkipASCIICheck = false
-	}
-
+func (*encodingBuilder) NewEncoder(_ context.Context, config *encode.EncodingConfig) (encode.Encoder, error) {
 	return &tidbEncoder{
-		mode:   config.SQLMode,
-		tbl:    config.Table,
-		se:     se,
-		path:   config.Path,
-		logger: config.Logger,
+		mode:     config.SQLMode,
+		tbl:      config.Table,
+		path:     config.Path,
+		logger:   config.Logger,
+		prepStmt: config.LogicalImportPrepStmt,
 	}, nil
 }
 
@@ -161,7 +162,7 @@ func (b *targetInfoGetter) FetchRemoteDBModels(ctx context.Context) ([]*model.DB
 				return e
 			}
 			dbInfo := &model.DBInfo{
-				Name: model.NewCIStr(dbName),
+				Name: pmodel.NewCIStr(dbName),
 			}
 			results = append(results, dbInfo)
 		}
@@ -213,7 +214,7 @@ func (b *targetInfoGetter) FetchRemoteTableModels(ctx context.Context, schemaNam
 			}
 			if tableName != curTableName {
 				curTable = &model.TableInfo{
-					Name:       model.NewCIStr(tableName),
+					Name:       pmodel.NewCIStr(tableName),
 					State:      model.StatePublic,
 					PKIsHandle: true,
 				}
@@ -234,7 +235,7 @@ func (b *targetInfoGetter) FetchRemoteTableModels(ctx context.Context, schemaNam
 			ft := types.FieldType{}
 			ft.SetFlag(flag)
 			curTable.Columns = append(curTable.Columns, &model.ColumnInfo{
-				Name:                model.NewCIStr(columnName),
+				Name:                pmodel.NewCIStr(columnName),
 				Offset:              curColOffset,
 				State:               model.StatePublic,
 				FieldType:           ft,
@@ -296,6 +297,16 @@ func (*targetInfoGetter) CheckRequirements(ctx context.Context, _ *backend.Check
 	return nil
 }
 
+// stmtKey defines key for stmtCache.
+type stmtKey struct {
+	query string
+}
+
+// Hash implements SimpleLRUCache.Key.
+func (k *stmtKey) Hash() []byte {
+	return hack.Slice(k.query)
+}
+
 type tidbBackend struct {
 	db          *sql.DB
 	conflictCfg config.Conflict
@@ -309,6 +320,9 @@ type tidbBackend struct {
 	// affecting the cluster too much.
 	maxChunkSize uint64
 	maxChunkRows int
+	// implement stmtCache to improve performance
+	stmtCache      *kvcache.SimpleLRUCache
+	stmtCacheMutex sync.RWMutex
 }
 
 var _ backend.Backend = (*tidbBackend)(nil)
@@ -342,13 +356,23 @@ func NewTiDBBackend(
 		log.FromContext(ctx).Warn("unsupported conflict strategy for TiDB backend, overwrite with `error`")
 		onDuplicate = config.ErrorOnDup
 	}
+	var stmtCache *kvcache.SimpleLRUCache
+	if cfg.TikvImporter.LogicalImportPrepStmt {
+		stmtCache = kvcache.NewSimpleLRUCache(prepStmtCacheSize, 0, 0)
+		stmtCache.SetOnEvict(func(_ kvcache.Key, value kvcache.Value) {
+			stmt := value.(*sql.Stmt)
+			stmt.Close()
+		})
+	}
 	return &tidbBackend{
-		db:           db,
-		conflictCfg:  conflict,
-		onDuplicate:  onDuplicate,
-		errorMgr:     errorMgr,
-		maxChunkSize: uint64(cfg.TikvImporter.LogicalImportBatchSize),
-		maxChunkRows: cfg.TikvImporter.LogicalImportBatchRows,
+		db:             db,
+		conflictCfg:    conflict,
+		onDuplicate:    onDuplicate,
+		errorMgr:       errorMgr,
+		maxChunkSize:   uint64(cfg.TikvImporter.LogicalImportBatchSize),
+		maxChunkRows:   cfg.TikvImporter.LogicalImportBatchRows,
+		stmtCache:      stmtCache,
+		stmtCacheMutex: sync.RWMutex{},
 	}
 }
 
@@ -564,9 +588,15 @@ func (enc *tidbEncoder) Encode(row []types.Datum, _ int64, columnPermutation []i
 		return emptyTiDBRow, errors.Errorf("column count mismatch, at most %d but got %d", len(enc.columnIdx), len(row))
 	}
 
-	var encoded strings.Builder
+	var encoded, preparedInsertStmt strings.Builder
+	var values []any
 	encoded.Grow(8 * len(row))
 	encoded.WriteByte('(')
+	if enc.prepStmt {
+		preparedInsertStmt.Grow(2 * len(row))
+		preparedInsertStmt.WriteByte('(')
+		values = make([]any, 0, len(row))
+	}
 	cnt := 0
 	for i, field := range row {
 		if enc.columnIdx[i] < 0 {
@@ -574,6 +604,9 @@ func (enc *tidbEncoder) Encode(row []types.Datum, _ int64, columnPermutation []i
 		}
 		if cnt > 0 {
 			encoded.WriteByte(',')
+			if enc.prepStmt {
+				preparedInsertStmt.WriteByte(',')
+			}
 		}
 		datum := field
 		if err := enc.appendSQL(&encoded, &datum, getColumnByIndex(cols, enc.columnIdx[i])); err != nil {
@@ -584,13 +617,23 @@ func (enc *tidbEncoder) Encode(row []types.Datum, _ int64, columnPermutation []i
 			)
 			return nil, err
 		}
+		if enc.prepStmt {
+			preparedInsertStmt.WriteByte('?')
+			values = append(values, datum.GetValue())
+		}
 		cnt++
 	}
 	encoded.WriteByte(')')
+	if enc.prepStmt {
+		preparedInsertStmt.WriteByte(')')
+	}
+
 	return tidbRow{
-		insertStmt: encoded.String(),
-		path:       enc.path,
-		offset:     offset,
+		insertStmt:         encoded.String(),
+		preparedInsertStmt: preparedInsertStmt.String(),
+		values:             values,
+		path:               enc.path,
+		offset:             offset,
 	}, nil
 }
 
@@ -673,8 +716,9 @@ rowLoop:
 }
 
 type stmtTask struct {
-	rows tidbRows
-	stmt string
+	rows   tidbRows
+	stmt   string
+	values []any
 }
 
 // WriteBatchRowsToDB write rows in batch mode, which will insert multiple rows like this:
@@ -687,14 +731,23 @@ func (be *tidbBackend) WriteBatchRowsToDB(ctx context.Context, tableName string,
 	}
 	// Note: we are not going to do interpolation (prepared statements) to avoid
 	// complication arise from data length overflow of BIT and BINARY columns
+	var values []any
+	if be.stmtCache != nil && len(rows) > 0 {
+		values = make([]any, 0, len(rows[0].values)*len(rows))
+	}
 	stmtTasks := make([]stmtTask, 1)
 	for i, row := range rows {
 		if i != 0 {
 			insertStmt.WriteByte(',')
 		}
-		insertStmt.WriteString(row.insertStmt)
+		if be.stmtCache != nil {
+			insertStmt.WriteString(row.preparedInsertStmt)
+			values = append(values, row.values...)
+		} else {
+			insertStmt.WriteString(row.insertStmt)
+		}
 	}
-	stmtTasks[0] = stmtTask{rows, insertStmt.String()}
+	stmtTasks[0] = stmtTask{rows, insertStmt.String(), values}
 	return be.execStmts(ctx, stmtTasks, tableName, true)
 }
 
@@ -723,8 +776,12 @@ func (be *tidbBackend) WriteRowsToDB(ctx context.Context, tableName string, colu
 	for _, row := range rows {
 		var finalInsertStmt strings.Builder
 		finalInsertStmt.WriteString(is)
-		finalInsertStmt.WriteString(row.insertStmt)
-		stmtTasks = append(stmtTasks, stmtTask{[]tidbRow{row}, finalInsertStmt.String()})
+		if be.stmtCache != nil {
+			finalInsertStmt.WriteString(row.preparedInsertStmt)
+		} else {
+			finalInsertStmt.WriteString(row.insertStmt)
+		}
+		stmtTasks = append(stmtTasks, stmtTask{[]tidbRow{row}, finalInsertStmt.String(), row.values})
 	}
 	return be.execStmts(ctx, stmtTasks, tableName, false)
 }
@@ -762,8 +819,34 @@ stmtLoop:
 			err    error
 		)
 		for i := 0; i < writeRowsMaxRetryTimes; i++ {
-			stmt := stmtTask.stmt
-			result, err = be.db.ExecContext(ctx, stmt)
+			query := stmtTask.stmt
+			if be.stmtCache != nil {
+				var prepStmt *sql.Stmt
+				key := &stmtKey{query: query}
+				be.stmtCacheMutex.RLock()
+				stmt, ok := be.stmtCache.Get(key)
+				be.stmtCacheMutex.RUnlock()
+				if ok {
+					prepStmt = stmt.(*sql.Stmt)
+				} else if stmt, err := be.db.PrepareContext(ctx, query); err == nil {
+					be.stmtCacheMutex.Lock()
+					// check again if the key is already in the cache
+					// to avoid override existing stmt without closing it
+					if cachedStmt, ok := be.stmtCache.Get(key); !ok {
+						prepStmt = stmt
+						be.stmtCache.Put(key, stmt)
+					} else {
+						prepStmt = cachedStmt.(*sql.Stmt)
+						stmt.Close()
+					}
+					be.stmtCacheMutex.Unlock()
+				} else {
+					return errors.Trace(err)
+				}
+				result, err = prepStmt.ExecContext(ctx, stmtTask.values...)
+			} else {
+				result, err = be.db.ExecContext(ctx, query)
+			}
 			if err == nil {
 				affected, err2 := result.RowsAffected()
 				if err2 != nil {
@@ -784,7 +867,7 @@ stmtLoop:
 
 			if !common.IsContextCanceledError(err) {
 				log.FromContext(ctx).Error("execute statement failed",
-					zap.Array("rows", stmtTask.rows), zap.String("stmt", redact.Value(stmt)), zap.Error(err))
+					zap.Array("rows", stmtTask.rows), zap.String("stmt", redact.Value(query)), zap.Error(err))
 			}
 			// It's batch mode, just return the error. Caller will fall back to row-by-row mode.
 			if batch {

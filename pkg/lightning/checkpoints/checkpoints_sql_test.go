@@ -28,7 +28,8 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/checkpoints"
 	"github.com/pingcap/tidb/pkg/lightning/mydump"
 	"github.com/pingcap/tidb/pkg/lightning/verification"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/stretchr/testify/require"
 )
 
@@ -101,7 +102,7 @@ func TestNormalOperations(t *testing.T) {
 					Name: "t2",
 					ID:   2,
 					Desired: &model.TableInfo{
-						Name: model.NewCIStr("t2"),
+						Name: pmodel.NewCIStr("t2"),
 					},
 				},
 			},
@@ -190,15 +191,15 @@ func TestNormalOperationsWithAddIndexBySQL(t *testing.T) {
 	// 2. initialize with checkpoint data.
 
 	t1Info, err := json.Marshal(&model.TableInfo{
-		Name: model.NewCIStr("t1"),
+		Name: pmodel.NewCIStr("t1"),
 	})
 	require.NoError(t, err)
 	t2Info, err := json.Marshal(&model.TableInfo{
-		Name: model.NewCIStr("t2"),
+		Name: pmodel.NewCIStr("t2"),
 	})
 	require.NoError(t, err)
 	t3Info, err := json.Marshal(&model.TableInfo{
-		Name: model.NewCIStr("t3"),
+		Name: pmodel.NewCIStr("t3"),
 	})
 	require.NoError(t, err)
 
@@ -232,14 +233,14 @@ func TestNormalOperationsWithAddIndexBySQL(t *testing.T) {
 					Name: "t1",
 					ID:   1,
 					Desired: &model.TableInfo{
-						Name: model.NewCIStr("t1"),
+						Name: pmodel.NewCIStr("t1"),
 					},
 				},
 				"t2": {
 					Name: "t2",
 					ID:   2,
 					Desired: &model.TableInfo{
-						Name: model.NewCIStr("t2"),
+						Name: pmodel.NewCIStr("t2"),
 					},
 				},
 			},
@@ -251,7 +252,7 @@ func TestNormalOperationsWithAddIndexBySQL(t *testing.T) {
 					Name: "t3",
 					ID:   3,
 					Desired: &model.TableInfo{
-						Name: model.NewCIStr("t3"),
+						Name: pmodel.NewCIStr("t3"),
 					},
 				},
 			},
@@ -423,7 +424,7 @@ func TestNormalOperationsWithAddIndexBySQL(t *testing.T) {
 		AllocBase: 132861,
 		TableID:   int64(2),
 		TableInfo: &model.TableInfo{
-			Name: model.NewCIStr("t2"),
+			Name: pmodel.NewCIStr("t2"),
 		},
 		Engines: map[int32]*checkpoints.EngineCheckpoint{
 			-1: {Status: checkpoints.CheckpointStatusLoaded},

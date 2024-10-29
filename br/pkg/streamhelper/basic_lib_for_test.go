@@ -17,6 +17,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/errors"
 	backup "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/kvproto/pkg/errorpb"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
@@ -266,7 +267,7 @@ func (f *fakeCluster) BlockGCUntil(ctx context.Context, at uint64) (uint64, erro
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if f.serviceGCSafePoint > at {
-		return f.serviceGCSafePoint, nil
+		return f.serviceGCSafePoint, errors.Errorf("minimal safe point %d is greater than the target %d", f.serviceGCSafePoint, at)
 	}
 	f.serviceGCSafePoint = at
 	return at, nil
@@ -525,9 +526,10 @@ func (f *fakeCluster) advanceClusterTimeBy(duration time.Duration) uint64 {
 
 func createFakeCluster(t *testing.T, n int, simEnabled bool) *fakeCluster {
 	c := &fakeCluster{
-		stores:  map[uint64]*fakeStore{},
-		regions: []*region{},
-		testCtx: t,
+		stores:             map[uint64]*fakeStore{},
+		regions:            []*region{},
+		testCtx:            t,
+		serviceGCSafePoint: 0,
 	}
 	stores := make([]*fakeStore, 0, n)
 	for i := 0; i < n; i++ {
@@ -665,7 +667,8 @@ func newTestEnv(c *fakeCluster, t *testing.T) *testEnv {
 		Type: streamhelper.EventAdd,
 		Name: "whole",
 		Info: &backup.StreamBackupTaskInfo{
-			Name: "whole",
+			Name:    "whole",
+			StartTs: 5,
 		},
 		Ranges: rngs,
 	}

@@ -31,8 +31,8 @@ import (
 	"strings"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/pkg/expression/context"
-	"github.com/pingcap/tidb/pkg/expression/contextopt"
+	"github.com/pingcap/tidb/pkg/expression/exprctx"
+	"github.com/pingcap/tidb/pkg/expression/expropt"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
@@ -1031,8 +1031,8 @@ func (c *validatePasswordStrengthFunctionClass) getFunction(ctx BuildContext, ar
 
 type builtinValidatePasswordStrengthSig struct {
 	baseBuiltinFunc
-	contextopt.SessionVarsPropReader
-	contextopt.CurrentUserPropReader
+	expropt.SessionVarsPropReader
+	expropt.CurrentUserPropReader
 }
 
 func (b *builtinValidatePasswordStrengthSig) Clone() builtinFunc {
@@ -1042,7 +1042,7 @@ func (b *builtinValidatePasswordStrengthSig) Clone() builtinFunc {
 }
 
 // RequiredOptionalEvalProps implements the RequireOptionalEvalProps interface.
-func (b *builtinValidatePasswordStrengthSig) RequiredOptionalEvalProps() context.OptionalEvalPropKeySet {
+func (b *builtinValidatePasswordStrengthSig) RequiredOptionalEvalProps() exprctx.OptionalEvalPropKeySet {
 	return b.SessionVarsPropReader.RequiredOptionalEvalProps() |
 		b.CurrentUserPropReader.RequiredOptionalEvalProps()
 }

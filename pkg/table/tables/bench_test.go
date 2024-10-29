@@ -71,7 +71,7 @@ func BenchmarkAddRecordInPipelinedDML(b *testing.B) {
 
 		b.StartTimer()
 		for j := 0; j < batchSize; j++ {
-			_, err := tb.AddRecord(ctx.GetTableCtx(), txn, records[j])
+			_, err := tb.AddRecord(ctx.GetTableCtx(), txn, records[j], table.DupKeyCheckLazy)
 			if err != nil {
 				b.Fatal(err)
 			}

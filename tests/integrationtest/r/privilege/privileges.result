@@ -335,10 +335,10 @@ privileges
 select,update
 desc privilege__privileges.v;
 Field	Type	Null	Key	Default	Extra
-1	bigint(1)	NO		NULL	
+1	bigint	NO		NULL	
 explain privilege__privileges.v;
 Field	Type	Null	Key	Default	Extra
-1	bigint(1)	NO		NULL	
+1	bigint	NO		NULL	
 CREATE USER ucorrect1, ucorrect2;
 CREATE TABLE privilege__privileges.trigger_table (a int);
 GRANT CREATE TEMPORARY TABLES,DELETE,EXECUTE,INSERT,SELECT,SHOW VIEW,TRIGGER,UPDATE ON privilege__privileges.* TO ucorrect1;

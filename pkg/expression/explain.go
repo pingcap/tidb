@@ -21,8 +21,8 @@ import (
 	"strings"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/intest"
@@ -42,7 +42,7 @@ func (expr *ScalarFunction) explainInfo(ctx EvalContext, normalized bool) string
 	// convert `in(_tidb_tid, -1)` to `in(_tidb_tid, dual)` whether normalized equals to true or false.
 	if expr.FuncName.L == ast.In {
 		args := expr.GetArgs()
-		if len(args) == 2 && strings.HasSuffix(args[0].ExplainNormalizedInfo(), model.ExtraPhysTblIdName.L) && args[1].(*Constant).Value.GetInt64() == -1 {
+		if len(args) == 2 && strings.HasSuffix(args[0].ExplainNormalizedInfo(), model.ExtraPhysTblIDName.L) && args[1].(*Constant).Value.GetInt64() == -1 {
 			buffer.WriteString(args[0].ExplainNormalizedInfo() + ", dual)")
 			return buffer.String()
 		}
@@ -173,9 +173,9 @@ func (expr *Constant) format(dt types.Datum) string {
 		return "NULL"
 	case types.KindString, types.KindBytes, types.KindMysqlEnum, types.KindMysqlSet,
 		types.KindMysqlJSON, types.KindBinaryLiteral, types.KindMysqlBit:
-		return fmt.Sprintf("\"%v\"", dt.GetValue())
+		return fmt.Sprintf("\"%s\"", dt.TruncatedStringify())
 	}
-	return fmt.Sprintf("%v", dt.GetValue())
+	return dt.TruncatedStringify()
 }
 
 // ExplainExpressionList generates explain information for a list of expressions.
@@ -192,13 +192,7 @@ func ExplainExpressionList(ctx EvalContext, exprs []Expression, schema *Schema, 
 			}
 		case *Constant:
 			v := expr.StringWithCtx(ctx, errors.RedactLogDisable)
-			length := 64
-			if len(v) < length {
-				redact.WriteRedact(builder, v, redactMode)
-			} else {
-				redact.WriteRedact(builder, v[:length], redactMode)
-				fmt.Fprintf(builder, "(len:%d)", len(v))
-			}
+			redact.WriteRedact(builder, v, redactMode)
 			builder.WriteString("->")
 			builder.WriteString(schema.Columns[i].StringWithCtx(ctx, redactMode))
 		default:

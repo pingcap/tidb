@@ -19,6 +19,7 @@ go_library(
         "//pkg/testkit/testenv",
         "@com_github_otiai10_copy//:copy",
         "@com_github_pingcap_errors//:errors",
+        "@com_github_pingcap_kvproto//pkg/metapb",
         "@com_github_tikv_client_go_v2//testutils",
         "@com_github_tikv_client_go_v2//tikv",
         "@com_github_tikv_client_go_v2//tikvrpc",

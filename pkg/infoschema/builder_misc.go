@@ -18,11 +18,12 @@ import (
 	"fmt"
 
 	"github.com/pingcap/errors"
+	infoschemacontext "github.com/pingcap/tidb/pkg/infoschema/context"
 	"github.com/pingcap/tidb/pkg/meta"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
 )
 
-func applyCreatePolicy(b *Builder, m *meta.Meta, diff *model.SchemaDiff) error {
+func applyCreatePolicy(b *Builder, m meta.Reader, diff *model.SchemaDiff) error {
 	po, err := m.GetPolicy(diff.SchemaID)
 	if err != nil {
 		return errors.Trace(err)
@@ -43,7 +44,7 @@ func applyCreatePolicy(b *Builder, m *meta.Meta, diff *model.SchemaDiff) error {
 	return nil
 }
 
-func applyAlterPolicy(b *Builder, m *meta.Meta, diff *model.SchemaDiff) ([]int64, error) {
+func applyAlterPolicy(b *Builder, m meta.Reader, diff *model.SchemaDiff) ([]int64, error) {
 	po, err := m.GetPolicy(diff.SchemaID)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -71,7 +72,7 @@ func applyDropPolicy(b *Builder, PolicyID int64) []int64 {
 	return []int64{}
 }
 
-func applyCreateOrAlterResourceGroup(b *Builder, m *meta.Meta, diff *model.SchemaDiff) error {
+func applyCreateOrAlterResourceGroup(b *Builder, m meta.Reader, diff *model.SchemaDiff) error {
 	group, err := m.GetResourceGroup(diff.SchemaID)
 	if err != nil {
 		return errors.Trace(err)
@@ -84,7 +85,7 @@ func applyCreateOrAlterResourceGroup(b *Builder, m *meta.Meta, diff *model.Schem
 	return nil
 }
 
-func applyDropResourceGroup(b *Builder, m *meta.Meta, diff *model.SchemaDiff) []int64 {
+func applyDropResourceGroup(b *Builder, m meta.Reader, diff *model.SchemaDiff) []int64 {
 	group, ok := b.infoSchema.ResourceGroupByID(diff.SchemaID)
 	if !ok {
 		return nil
@@ -115,7 +116,7 @@ func (b *Builder) initMisc(dbInfos []*model.DBInfo, policies []*model.PolicyInfo
 
 	// Maintain foreign key reference information.
 	if b.enableV2 {
-		rs := b.ListTablesWithSpecialAttribute(ForeignKeysAttribute)
+		rs := b.ListTablesWithSpecialAttribute(infoschemacontext.ForeignKeysAttribute)
 		for _, db := range rs {
 			for _, tbl := range db.TableInfos {
 				info.addReferredForeignKeys(db.DBName, tbl)

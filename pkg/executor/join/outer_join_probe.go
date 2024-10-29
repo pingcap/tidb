@@ -59,17 +59,40 @@ func newOuterJoinProbe(base baseJoinProbe, isOuterSideBuild bool, isRightSideBui
 	return probe
 }
 
-func (j *outerJoinProbe) SetChunkForProbe(chunk *chunk.Chunk) (err error) {
-	err = j.baseJoinProbe.SetChunkForProbe(chunk)
-	if err != nil {
-		return err
-	}
+func (j *outerJoinProbe) prepareIsNotMatchedRows() {
 	if !j.isOuterSideBuild {
 		j.isNotMatchedRows = j.isNotMatchedRows[:0]
 		for i := 0; i < j.chunkRows; i++ {
 			j.isNotMatchedRows = append(j.isNotMatchedRows, true)
 		}
+
+		for _, spilledIdx := range j.spilledIdx {
+			// This may be hack.
+			// When one row is spilled to disk, we see this row
+			// can't be joined in this round though it may be
+			// joined successfully in future rounds.
+			j.isNotMatchedRows[spilledIdx] = false
+		}
 	}
+}
+
+func (j *outerJoinProbe) SetChunkForProbe(chunk *chunk.Chunk) (err error) {
+	err = j.baseJoinProbe.SetChunkForProbe(chunk)
+	if err != nil {
+		return err
+	}
+
+	j.prepareIsNotMatchedRows()
+	return nil
+}
+
+func (j *outerJoinProbe) SetRestoredChunkForProbe(chk *chunk.Chunk) error {
+	err := j.baseJoinProbe.SetRestoredChunkForProbe(chk)
+	if err != nil {
+		return err
+	}
+
+	j.prepareIsNotMatchedRows()
 	return nil
 }
 
@@ -113,7 +136,7 @@ func (j *outerJoinProbe) ScanRowTable(joinResult *hashjoinWorkerResult, sqlKille
 	if j.rowIter == nil {
 		panic("scanRowTable before init")
 	}
-	j.cachedBuildRows = j.cachedBuildRows[:0]
+	j.nextCachedBuildRowIndex = 0
 	meta := j.ctx.hashTableMeta
 	insertedRows := 0
 	remainCap := joinResult.chk.RequiredRows() - joinResult.chk.NumRows()
@@ -121,7 +144,7 @@ func (j *outerJoinProbe) ScanRowTable(joinResult *hashjoinWorkerResult, sqlKille
 		currentRow := j.rowIter.getValue()
 		if !meta.isCurrentRowUsed(currentRow) {
 			// append build side of this row
-			j.appendBuildRowToCachedBuildRowsAndConstructBuildRowsIfNeeded(createMatchRowInfo(0, currentRow), joinResult.chk, 0, false)
+			j.appendBuildRowToCachedBuildRowsV1(0, currentRow, joinResult.chk, 0, false)
 			insertedRows++
 		}
 		j.rowIter.next()
@@ -131,7 +154,7 @@ func (j *outerJoinProbe) ScanRowTable(joinResult *hashjoinWorkerResult, sqlKille
 		joinResult.err = err
 		return joinResult
 	}
-	if len(j.cachedBuildRows) > 0 {
+	if j.nextCachedBuildRowIndex > 0 {
 		j.batchConstructBuildRows(joinResult.chk, 0, false)
 	}
 	// append probe side in batch
@@ -142,7 +165,7 @@ func (j *outerJoinProbe) ScanRowTable(joinResult *hashjoinWorkerResult, sqlKille
 }
 
 func (j *outerJoinProbe) buildResultForMatchedRowsAfterOtherCondition(chk, joinedChk *chunk.Chunk) {
-	probeColOffsetInJoinedChunk, buildColOffsetInJoinedChunk := j.currentChunk.NumCols(), 0
+	probeColOffsetInJoinedChunk, buildColOffsetInJoinedChunk := j.ctx.hashTableMeta.totalColumnNumber, 0
 	if j.rightAsBuildSide {
 		probeColOffsetInJoinedChunk, buildColOffsetInJoinedChunk = 0, j.currentChunk.NumCols()
 	}
@@ -176,17 +199,17 @@ func (j *outerJoinProbe) buildResultForMatchedRowsAfterOtherCondition(chk, joine
 		}
 	}
 	if hasRemainCols {
-		j.cachedBuildRows = j.cachedBuildRows[:0]
+		j.nextCachedBuildRowIndex = 0
 		markedJoined = true
 		meta := j.ctx.hashTableMeta
 		for index, result := range j.selected {
 			if result {
 				rowIndexInfo := j.rowIndexInfos[index]
 				j.isNotMatchedRows[rowIndexInfo.probeRowIndex] = false
-				j.appendBuildRowToCachedBuildRowsAndConstructBuildRowsIfNeeded(rowIndexInfo, chk, meta.columnCountNeededForOtherCondition, false)
+				j.appendBuildRowToCachedBuildRowsV2(&rowIndexInfo, chk, meta.columnCountNeededForOtherCondition, false)
 			}
 		}
-		if len(j.cachedBuildRows) > 0 {
+		if j.nextCachedBuildRowIndex > 0 {
 			j.batchConstructBuildRows(chk, meta.columnCountNeededForOtherCondition, false)
 		}
 	}
@@ -240,14 +263,15 @@ func (j *outerJoinProbe) probeForInnerSideBuild(chk, joinedChk *chunk.Chunk, rem
 	meta := j.ctx.hashTableMeta
 	startProbeRow := j.currentProbeRow
 	hasOtherCondition := j.ctx.hasOtherCondition()
+	tagHelper := j.ctx.hashTableContext.tagHelper
 
 	for remainCap > 0 && j.currentProbeRow < j.chunkRows {
 		if j.matchedRowsHeaders[j.currentProbeRow] != 0 {
 			// hash value match
-			candidateRow := *(*unsafe.Pointer)(unsafe.Pointer(&j.matchedRowsHeaders[j.currentProbeRow]))
+			candidateRow := tagHelper.toUnsafePointer(j.matchedRowsHeaders[j.currentProbeRow])
 			if isKeyMatched(meta.keyMode, j.serializedKeys[j.currentProbeRow], candidateRow, meta) {
 				// join key match
-				j.appendBuildRowToCachedBuildRowsAndConstructBuildRowsIfNeeded(createMatchRowInfo(j.currentProbeRow, candidateRow), joinedChk, 0, hasOtherCondition)
+				j.appendBuildRowToCachedBuildRowsV1(j.currentProbeRow, candidateRow, joinedChk, 0, hasOtherCondition)
 				if !hasOtherCondition {
 					// has no other condition, key match mean join match
 					j.isNotMatchedRows[j.currentProbeRow] = false
@@ -256,11 +280,12 @@ func (j *outerJoinProbe) probeForInnerSideBuild(chk, joinedChk *chunk.Chunk, rem
 			} else {
 				j.probeCollision++
 			}
-			j.matchedRowsHeaders[j.currentProbeRow] = getNextRowAddress(candidateRow)
+			j.matchedRowsHeaders[j.currentProbeRow] = getNextRowAddress(candidateRow, tagHelper, j.matchedRowsHashValue[j.currentProbeRow])
 		} else {
 			// it could be
 			// 1. no match when lookup the hash table
 			// 2. filter by probeFilter
+			// 3. spilled to disk
 			j.finishLookupCurrentProbeRow()
 			j.currentProbeRow++
 		}
@@ -295,14 +320,15 @@ func (j *outerJoinProbe) probeForInnerSideBuild(chk, joinedChk *chunk.Chunk, rem
 func (j *outerJoinProbe) probeForOuterSideBuild(chk, joinedChk *chunk.Chunk, remainCap int, sqlKiller *sqlkiller.SQLKiller) (err error) {
 	meta := j.ctx.hashTableMeta
 	hasOtherCondition := j.ctx.hasOtherCondition()
+	tagHelper := j.ctx.hashTableContext.tagHelper
 
 	for remainCap > 0 && j.currentProbeRow < j.chunkRows {
 		if j.matchedRowsHeaders[j.currentProbeRow] != 0 {
 			// hash value match
-			candidateRow := *(*unsafe.Pointer)(unsafe.Pointer(&j.matchedRowsHeaders[j.currentProbeRow]))
+			candidateRow := tagHelper.toUnsafePointer(j.matchedRowsHeaders[j.currentProbeRow])
 			if isKeyMatched(meta.keyMode, j.serializedKeys[j.currentProbeRow], candidateRow, meta) {
 				// join key match
-				j.appendBuildRowToCachedBuildRowsAndConstructBuildRowsIfNeeded(createMatchRowInfo(j.currentProbeRow, candidateRow), joinedChk, 0, hasOtherCondition)
+				j.appendBuildRowToCachedBuildRowsV1(j.currentProbeRow, candidateRow, joinedChk, 0, hasOtherCondition)
 				if !hasOtherCondition {
 					// has no other condition, key match means join match
 					meta.setUsedFlag(candidateRow)
@@ -312,7 +338,7 @@ func (j *outerJoinProbe) probeForOuterSideBuild(chk, joinedChk *chunk.Chunk, rem
 			} else {
 				j.probeCollision++
 			}
-			j.matchedRowsHeaders[j.currentProbeRow] = getNextRowAddress(candidateRow)
+			j.matchedRowsHeaders[j.currentProbeRow] = getNextRowAddress(candidateRow, tagHelper, j.matchedRowsHashValue[j.currentProbeRow])
 		} else {
 			j.finishLookupCurrentProbeRow()
 			j.currentProbeRow++
@@ -364,4 +390,9 @@ func (j *outerJoinProbe) Probe(joinResult *hashjoinWorkerResult, sqlKiller *sqlk
 		return false, joinResult
 	}
 	return true, joinResult
+}
+
+func (j *outerJoinProbe) ResetProbe() {
+	j.rowIter = nil
+	j.baseJoinProbe.ResetProbe()
 }

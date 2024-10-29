@@ -47,6 +47,7 @@ go_test(
         "//pkg/lightning/backend/kv",
         "//pkg/lightning/config",
         "//pkg/lightning/log",
+        "//pkg/meta/model",
         "//pkg/parser",
         "//pkg/parser/ast",
         "//pkg/parser/model",

@@ -57,6 +57,10 @@ var (
 	_ builtinFunc = &builtinArithmeticModIntSignedSignedSig{}
 	_ builtinFunc = &builtinArithmeticModRealSig{}
 	_ builtinFunc = &builtinArithmeticModDecimalSig{}
+
+	_ builtinFunc = &builtinArithmeticPlusVectorFloat32Sig{}
+	_ builtinFunc = &builtinArithmeticMinusVectorFloat32Sig{}
+	_ builtinFunc = &builtinArithmeticMultiplyVectorFloat32Sig{}
 )
 
 // isConstantBinaryLiteral return true if expr is constant binary literal
@@ -104,7 +108,7 @@ func setFlenDecimal4RealOrDecimal(ctx EvalContext, retTp *types.FieldType, arg0,
 	if a.GetDecimal() != types.UnspecifiedLength && b.GetDecimal() != types.UnspecifiedLength {
 		retTp.SetDecimalUnderLimit(a.GetDecimal() + b.GetDecimal())
 		if !isMultiply {
-			retTp.SetDecimalUnderLimit(mathutil.Max(a.GetDecimal(), b.GetDecimal()))
+			retTp.SetDecimalUnderLimit(max(a.GetDecimal(), b.GetDecimal()))
 		}
 		if !isReal && retTp.GetDecimal() > mysql.MaxDecimalScale {
 			retTp.SetDecimal(mysql.MaxDecimalScale)
@@ -117,14 +121,14 @@ func setFlenDecimal4RealOrDecimal(ctx EvalContext, retTp *types.FieldType, arg0,
 			digitsInt := a.GetFlen() - a.GetDecimal() + b.GetFlen() - b.GetDecimal()
 			retTp.SetFlenUnderLimit(digitsInt + retTp.GetDecimal())
 		} else {
-			digitsInt := mathutil.Max(a.GetFlen()-a.GetDecimal(), b.GetFlen()-b.GetDecimal())
+			digitsInt := max(a.GetFlen()-a.GetDecimal(), b.GetFlen()-b.GetDecimal())
 			retTp.SetFlenUnderLimit(digitsInt + retTp.GetDecimal() + 1)
 		}
 		if isReal {
-			retTp.SetFlen(mathutil.Min(retTp.GetFlen(), mysql.MaxRealWidth))
+			retTp.SetFlen(min(retTp.GetFlen(), mysql.MaxRealWidth))
 			return
 		}
-		retTp.SetFlenUnderLimit(mathutil.Min(retTp.GetFlen(), mysql.MaxDecimalWidth))
+		retTp.SetFlenUnderLimit(min(retTp.GetFlen(), mysql.MaxDecimalWidth))
 		return
 	}
 	if isReal {
@@ -166,6 +170,15 @@ type arithmeticPlusFunctionClass struct {
 func (c *arithmeticPlusFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
+	}
+	if args[0].GetType(ctx.GetEvalCtx()).EvalType().IsVectorKind() || args[1].GetType(ctx.GetEvalCtx()).EvalType().IsVectorKind() {
+		bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETVectorFloat32, types.ETVectorFloat32, types.ETVectorFloat32)
+		if err != nil {
+			return nil, err
+		}
+		sig := &builtinArithmeticPlusVectorFloat32Sig{bf}
+		// sig.setPbCode(tipb.ScalarFuncSig_PlusVectorFloat32)
+		return sig, nil
 	}
 	lhsEvalTp, rhsEvalTp := numericContextResultType(ctx.GetEvalCtx(), args[0]), numericContextResultType(ctx.GetEvalCtx(), args[1])
 	if lhsEvalTp == types.ETReal || rhsEvalTp == types.ETReal {
@@ -316,6 +329,15 @@ type arithmeticMinusFunctionClass struct {
 func (c *arithmeticMinusFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
+	}
+	if args[0].GetType(ctx.GetEvalCtx()).EvalType().IsVectorKind() || args[1].GetType(ctx.GetEvalCtx()).EvalType().IsVectorKind() {
+		bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETVectorFloat32, types.ETVectorFloat32, types.ETVectorFloat32)
+		if err != nil {
+			return nil, err
+		}
+		sig := &builtinArithmeticMinusVectorFloat32Sig{bf}
+		// sig.setPbCode(tipb.ScalarFuncSig_PlusVectorFloat32)
+		return sig, nil
 	}
 	lhsEvalTp, rhsEvalTp := numericContextResultType(ctx.GetEvalCtx(), args[0]), numericContextResultType(ctx.GetEvalCtx(), args[1])
 	if lhsEvalTp == types.ETReal || rhsEvalTp == types.ETReal {
@@ -500,6 +522,15 @@ func (c *arithmeticMultiplyFunctionClass) getFunction(ctx BuildContext, args []E
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
+	if args[0].GetType(ctx.GetEvalCtx()).EvalType().IsVectorKind() || args[1].GetType(ctx.GetEvalCtx()).EvalType().IsVectorKind() {
+		bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETVectorFloat32, types.ETVectorFloat32, types.ETVectorFloat32)
+		if err != nil {
+			return nil, err
+		}
+		sig := &builtinArithmeticMultiplyVectorFloat32Sig{bf}
+		// sig.setPbCode(tipb.ScalarFuncSig_PlusVectorFloat32)
+		return sig, nil
+	}
 	lhsTp, rhsTp := args[0].GetType(ctx.GetEvalCtx()), args[1].GetType(ctx.GetEvalCtx())
 	lhsEvalTp, rhsEvalTp := numericContextResultType(ctx.GetEvalCtx(), args[0]), numericContextResultType(ctx.GetEvalCtx(), args[1])
 	if lhsEvalTp == types.ETReal || rhsEvalTp == types.ETReal {
@@ -646,7 +677,6 @@ func (c *arithmeticDivideFunctionClass) getFunction(ctx BuildContext, args []Exp
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	lhsTp, rhsTp := args[0].GetType(ctx.GetEvalCtx()), args[1].GetType(ctx.GetEvalCtx())
 	lhsEvalTp, rhsEvalTp := numericContextResultType(ctx.GetEvalCtx(), args[0]), numericContextResultType(ctx.GetEvalCtx(), args[1])
 	if lhsEvalTp == types.ETReal || rhsEvalTp == types.ETReal {
 		bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETReal, types.ETReal, types.ETReal)
@@ -662,6 +692,7 @@ func (c *arithmeticDivideFunctionClass) getFunction(ctx BuildContext, args []Exp
 	if err != nil {
 		return nil, err
 	}
+	lhsTp, rhsTp := args[0].GetType(ctx.GetEvalCtx()), args[1].GetType(ctx.GetEvalCtx())
 	c.setType4DivDecimal(bf.tp, lhsTp, rhsTp, ctx.GetEvalCtx().GetDivPrecisionIncrement())
 	sig := &builtinArithmeticDivideDecimalSig{bf}
 	sig.setPbCode(tipb.ScalarFuncSig_DivideDecimal)
@@ -880,18 +911,18 @@ func (c *arithmeticModFunctionClass) setType4ModRealOrDecimal(retTp, a, b *types
 	if a.GetDecimal() == types.UnspecifiedLength || b.GetDecimal() == types.UnspecifiedLength {
 		retTp.SetDecimal(types.UnspecifiedLength)
 	} else {
-		retTp.SetDecimalUnderLimit(mathutil.Max(a.GetDecimal(), b.GetDecimal()))
+		retTp.SetDecimalUnderLimit(max(a.GetDecimal(), b.GetDecimal()))
 	}
 
 	if a.GetFlen() == types.UnspecifiedLength || b.GetFlen() == types.UnspecifiedLength {
 		retTp.SetFlen(types.UnspecifiedLength)
 	} else {
-		retTp.SetFlen(mathutil.Max(a.GetFlen(), b.GetFlen()))
+		retTp.SetFlen(max(a.GetFlen(), b.GetFlen()))
 		if isDecimal {
 			retTp.SetFlenUnderLimit(retTp.GetFlen())
 			return
 		}
-		retTp.SetFlen(mathutil.Min(retTp.GetFlen(), mysql.MaxRealWidth))
+		retTp.SetFlen(min(retTp.GetFlen(), mysql.MaxRealWidth))
 	}
 }
 
@@ -1156,4 +1187,91 @@ func (s *builtinArithmeticModIntSignedSignedSig) evalInt(ctx EvalContext, row ch
 	}
 
 	return a % b, false, nil
+}
+
+type builtinArithmeticPlusVectorFloat32Sig struct {
+	baseBuiltinFunc
+}
+
+func (s *builtinArithmeticPlusVectorFloat32Sig) Clone() builtinFunc {
+	newSig := &builtinArithmeticPlusVectorFloat32Sig{}
+	newSig.cloneFrom(&s.baseBuiltinFunc)
+	return newSig
+}
+
+func (s *builtinArithmeticPlusVectorFloat32Sig) evalVectorFloat32(ctx EvalContext, row chunk.Row) (types.VectorFloat32, bool, error) {
+	a, isLHSNull, err := s.args[0].EvalVectorFloat32(ctx, row)
+	if err != nil {
+		return types.ZeroVectorFloat32, isLHSNull, err
+	}
+	b, isRHSNull, err := s.args[1].EvalVectorFloat32(ctx, row)
+	if err != nil {
+		return types.ZeroVectorFloat32, isRHSNull, err
+	}
+	if isLHSNull || isRHSNull {
+		return types.ZeroVectorFloat32, true, nil
+	}
+	v, err := a.Add(b)
+	if err != nil {
+		return types.ZeroVectorFloat32, true, err
+	}
+	return v, false, nil
+}
+
+type builtinArithmeticMinusVectorFloat32Sig struct {
+	baseBuiltinFunc
+}
+
+func (s *builtinArithmeticMinusVectorFloat32Sig) Clone() builtinFunc {
+	newSig := &builtinArithmeticMinusVectorFloat32Sig{}
+	newSig.cloneFrom(&s.baseBuiltinFunc)
+	return newSig
+}
+
+func (s *builtinArithmeticMinusVectorFloat32Sig) evalVectorFloat32(ctx EvalContext, row chunk.Row) (types.VectorFloat32, bool, error) {
+	a, isLHSNull, err := s.args[0].EvalVectorFloat32(ctx, row)
+	if err != nil {
+		return types.ZeroVectorFloat32, isLHSNull, err
+	}
+	b, isRHSNull, err := s.args[1].EvalVectorFloat32(ctx, row)
+	if err != nil {
+		return types.ZeroVectorFloat32, isRHSNull, err
+	}
+	if isLHSNull || isRHSNull {
+		return types.ZeroVectorFloat32, true, nil
+	}
+	v, err := a.Sub(b)
+	if err != nil {
+		return types.ZeroVectorFloat32, true, err
+	}
+	return v, false, nil
+}
+
+type builtinArithmeticMultiplyVectorFloat32Sig struct {
+	baseBuiltinFunc
+}
+
+func (s *builtinArithmeticMultiplyVectorFloat32Sig) Clone() builtinFunc {
+	newSig := &builtinArithmeticMultiplyVectorFloat32Sig{}
+	newSig.cloneFrom(&s.baseBuiltinFunc)
+	return newSig
+}
+
+func (s *builtinArithmeticMultiplyVectorFloat32Sig) evalVectorFloat32(ctx EvalContext, row chunk.Row) (types.VectorFloat32, bool, error) {
+	a, isLHSNull, err := s.args[0].EvalVectorFloat32(ctx, row)
+	if err != nil {
+		return types.ZeroVectorFloat32, isLHSNull, err
+	}
+	b, isRHSNull, err := s.args[1].EvalVectorFloat32(ctx, row)
+	if err != nil {
+		return types.ZeroVectorFloat32, isRHSNull, err
+	}
+	if isLHSNull || isRHSNull {
+		return types.ZeroVectorFloat32, true, nil
+	}
+	v, err := a.Mul(b)
+	if err != nil {
+		return types.ZeroVectorFloat32, true, err
+	}
+	return v, false, nil
 }

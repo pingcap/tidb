@@ -19,6 +19,7 @@ import (
 	"context"
 	"fmt"
 	"strconv"
+	"sync"
 	"testing"
 	"time"
 
@@ -29,6 +30,8 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
+	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/pingcap/tidb/tests/realtikvtest"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/tikvrpc"
@@ -531,4 +534,64 @@ func TestCheckTxnStatusOnOptimisticTxnBreakConsistency(t *testing.T) {
 	tk2.MustQuery("select * from t order by id").Check(testkit.Rows("1 11", "2 21"))
 	tk2.MustExec("admin check table t2")
 	tk2.MustQuery("select * from t2 order by id").Check(testkit.Rows("1 10", "2 11"))
+}
+
+func TestDMLWithAddForeignKey(t *testing.T) {
+	defer config.RestoreFunc()()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.TiKVClient.AsyncCommit.SafeWindow = 10 * time.Second
+		conf.TiKVClient.AsyncCommit.AllowedClockDrift = 500 * time.Millisecond
+	})
+
+	store := realtikvtest.CreateMockStoreAndSetup(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set global tidb_enable_1pc='OFF';")
+	tk.MustExec("set global tidb_enable_metadata_lock='OFF';")
+	tk.MustExec("set global tidb_enable_async_commit='ON'")
+
+	tkDML := testkit.NewTestKit(t, store)
+	tkDML.MustExec("use test")
+
+	tkDDL := testkit.NewTestKit(t, store)
+	tkDDL.MustExec("use test")
+	tkDDL.MustExec("create table parent (id int primary key, val int, index(val));")
+	tkDDL.MustExec("create table child (id int primary key, val int, index(val));")
+
+	// The fail path of this test is:
+	// tk:     INSERT -> ... -> Wait                                       -> PreWrite -> ... -> Async Commit -> Wait    -> ... -> Success.
+	// tkDDL:            DDL -> StateWriteOnly -> checkForeignKeyConstrain -> DDL                             -> Success
+	// After fixing, either the `tkDDL` or `tk` will fail.
+	testfailpoint.Enable(t, "tikvclient/beforePrewrite", "pause")
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterCheckForeignKeyConstrain", func() {
+		require.NoError(t, failpoint.Disable("tikvclient/beforePrewrite"))
+	})
+	testfailpoint.Enable(t, "tikvclient/asyncCommitDoNothing", "pause")
+
+	var wg sync.WaitGroup
+	var errDML, errDDL error
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+
+		var rs sqlexec.RecordSet
+		rs, errDML = tkDML.Exec("insert into child values (1, 1)")
+		if rs != nil {
+			rs.Close()
+		}
+	}()
+
+	go func() {
+		defer wg.Done()
+
+		var rs sqlexec.RecordSet
+		rs, errDDL = tkDDL.Exec("alter table child add foreign key fk(val) references parent (val);")
+		if rs != nil {
+			rs.Close()
+		}
+		require.NoError(t, failpoint.Disable("tikvclient/asyncCommitDoNothing"))
+	}()
+
+	wg.Wait()
+
+	require.True(t, errDML != nil || errDDL != nil)
 }

@@ -1,0 +1,34 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "rule",
+    srcs = [
+        "binder.go",
+        "rule.go",
+        "rule_type.go",
+    ],
+    importpath = "github.com/pingcap/tidb/pkg/planner/cascades/rule",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/planner/cascades/memo",
+        "//pkg/planner/pattern",
+        "//pkg/sessionctx",
+    ],
+)
+
+go_test(
+    name = "rule_test",
+    timeout = "short",
+    srcs = ["binder_test.go"],
+    embed = [":rule"],
+    flaky = True,
+    shard_count = 8,
+    deps = [
+        "//pkg/parser/model",
+        "//pkg/planner/cascades/memo",
+        "//pkg/planner/core",
+        "//pkg/planner/core/operator/logicalop",
+        "//pkg/planner/pattern",
+        "@com_github_stretchr_testify//require",
+    ],
+)
