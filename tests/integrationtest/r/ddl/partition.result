@@ -401,3 +401,12 @@ ALTER TABLE tp1 PARTITION BY RANGE (id) (PARTITION `P_LT_200` VALUES LESS THAN (
  PARTITION `P_LT_500` VALUES LESS THAN (500),
  PARTITION `P_LT_600` VALUES LESS THAN (600));
 drop table tp1;
+create table pt (a int, b int) partition by range (a) (partition p0 values less than (10), partition p1 values less than (20));
+alter table pt convert partition p0 to table nt;
+Error 8200 (HY000): Unsupported or unknown ALTER TABLE specification
+alter table pt convert table nt to partition p2 values less than (30);
+Error 1146 (42S02): Table 'ddl__partition.nt' doesn't exist
+create table nt (a int, b int);
+alter table pt convert table nt to partition p2 values less than (30);
+Error 8200 (HY000): Unsupported or unknown ALTER TABLE specification
+drop table pt,nt;
