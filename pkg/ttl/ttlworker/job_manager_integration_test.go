@@ -25,6 +25,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/ngaut/pools"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/domain"
@@ -63,8 +64,6 @@ func sessionFactory(t *testing.T, store kv.Storage) func() session.Session {
 	}
 }
 
-<<<<<<< HEAD
-=======
 func TestGetSession(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -89,23 +88,16 @@ func TestGetSession(t *testing.T) {
 	require.NoError(t, err)
 	defer se.Close()
 
-	// global time zone should not change
-	tk.MustQuery("select @@global.time_zone").Check(testkit.Rows("Europe/Berlin"))
-	tz, err := se.GlobalTimeZone(context.TODO())
-	require.NoError(t, err)
-	require.Equal(t, "Europe/Berlin", tz.String())
-
 	// session variables should be set
-	tk.MustQuery("select @@time_zone, @@tidb_retry_limit, @@tidb_enable_1pc, @@tidb_enable_async_commit, @@tidb_isolation_read_engines").
-		Check(testkit.Rows("UTC 0 1 1 tikv,tiflash,tidb"))
+	tk.MustQuery("select @@tidb_retry_limit, @@tidb_enable_1pc, @@tidb_enable_async_commit, @@tidb_isolation_read_engines").
+		Check(testkit.Rows("0 1 1 tikv,tiflash,tidb"))
 
 	// all session variables should be restored after close
 	se.Close()
-	tk.MustQuery("select @@time_zone, @@tidb_retry_limit, @@tidb_enable_1pc, @@tidb_enable_async_commit, @@tidb_isolation_read_engines").
-		Check(testkit.Rows("Asia/Shanghai 1 0 0 tiflash,tidb"))
+	tk.MustQuery("select @@tidb_retry_limit, @@tidb_enable_1pc, @@tidb_enable_async_commit, @@tidb_isolation_read_engines").
+		Check(testkit.Rows("1 0 0 tiflash,tidb"))
 }
 
->>>>>>> 670e970b224 (ttl: always enable all read engines for TTL sessions (#56604))
 func TestParallelLockNewJob(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	waitAndStopTTLManager(t, dom)

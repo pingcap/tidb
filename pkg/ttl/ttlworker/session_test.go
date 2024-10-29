@@ -363,3 +363,6 @@ func TestValidateTTLWork(t *testing.T) {
 	err = validateTTLWork(ctx, s, tbl, expire)
 	require.EqualError(t, err, "physical id changed")
 }
+
+// GetSessionForTest is used for test
+var GetSessionForTest = getSession
