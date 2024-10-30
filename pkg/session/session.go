@@ -3715,6 +3715,9 @@ func runInBootstrapSession(store kv.Storage, ver int64) {
 	if startMode == ddl.Bootstrap {
 		bootstrap(s)
 	} else if startMode == ddl.Upgrade {
+		// below sleep is used to mitigate https://github.com/pingcap/tidb/issues/57003,
+		// to let the older owner have time to notice that it's already retired.
+		time.Sleep(owner.WaitTimeOnForceOwner)
 		upgrade(s)
 	}
 	finishBootstrap(store)
