@@ -3683,9 +3683,10 @@ func runInBootstrapSession(store kv.Storage, ver int64) {
 
 	if startMode == ddl.Upgrade {
 		// TODO at this time domain hasn't created, we need to make sure this in a clear way
+		logutil.BgLogger().Info("[upgrade] get owner lock to upgrade")
 		releaseFn, err := acquireLock(store)
 		if err != nil {
-			logutil.BgLogger().Fatal("[upgrade] get ddl owner distributed lock failed", zap.Error(err))
+			logutil.BgLogger().Fatal("[upgrade] get owner lock failed", zap.Error(err))
 		}
 		defer releaseFn()
 		currVer := mustGetStoreBootstrapVersion(store)
