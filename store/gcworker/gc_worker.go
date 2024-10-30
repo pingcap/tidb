@@ -707,7 +707,9 @@ func (w *GCWorker) deleteRanges(ctx context.Context, safePoint uint64, concurren
 	startTime := time.Now()
 	for _, r := range ranges {
 		startKey, endKey := r.Range()
-
+		logutil.Logger(ctx).Info("[test] test range",
+			zap.Stringer("startKey", startKey),
+			zap.Stringer("endKey", endKey))
 		err = w.doUnsafeDestroyRangeRequest(ctx, startKey, endKey, concurrency)
 		failpoint.Inject("ignoreDeleteRangeFailed", func() {
 			err = nil
@@ -717,6 +719,24 @@ func (w *GCWorker) deleteRanges(ctx context.Context, safePoint uint64, concurren
 				zap.String("uuid", w.uuid),
 				zap.Stringer("startKey", startKey),
 				zap.Stringer("endKey", endKey),
+				zap.Error(err))
+			continue
+		}
+
+		if err := w.doGCPlacementRules(safePoint, r, gcPlacementRuleCache); err != nil {
+			logutil.Logger(ctx).Error("[gc worker] gc placement rules failed on range",
+				zap.String("uuid", w.uuid),
+				zap.Int64("jobID", r.JobID),
+				zap.Int64("elementID", r.ElementID),
+				zap.Error(err))
+			continue
+		}
+
+		if err := w.doGCLabelRules(r); err != nil {
+			logutil.Logger(ctx).Error("[gc worker] gc label rules failed on range",
+				zap.String("uuid", w.uuid),
+				zap.Int64("jobID", r.JobID),
+				zap.Int64("elementID", r.ElementID),
 				zap.Error(err))
 			continue
 		}
@@ -731,23 +751,6 @@ func (w *GCWorker) deleteRanges(ctx context.Context, safePoint uint64, concurren
 				zap.Stringer("endKey", endKey),
 				zap.Error(err))
 			metrics.GCUnsafeDestroyRangeFailuresCounterVec.WithLabelValues("save").Inc()
-		}
-
-		if err := w.doGCPlacementRules(safePoint, r, gcPlacementRuleCache); err != nil {
-			logutil.Logger(ctx).Error("[gc worker] gc placement rules failed on range",
-				zap.String("uuid", w.uuid),
-				zap.Int64("jobID", r.JobID),
-				zap.Int64("elementID", r.ElementID),
-				zap.Error(err))
-			continue
-		}
-		if err := w.doGCLabelRules(r); err != nil {
-			logutil.Logger(ctx).Error("[gc worker] gc label rules failed on range",
-				zap.String("uuid", w.uuid),
-				zap.Int64("jobID", r.JobID),
-				zap.Int64("elementID", r.ElementID),
-				zap.Error(err))
-			continue
 		}
 	}
 	logutil.Logger(ctx).Info("[gc worker] finish delete ranges",
@@ -1880,6 +1883,8 @@ func (w *GCWorker) doGCPlacementRules(safePoint uint64, dr util.DelRangeTask, gc
 			RawArgs: args,
 		}
 	})
+	logutil.BgLogger().Info("[test] doGCPlacementRules",
+		zap.Any("historyJob", historyJob))
 	if historyJob == nil {
 		err = kv.RunInNewTxn(context.Background(), w.store, false, func(ctx context.Context, txn kv.Transaction) error {
 			var err1 error
