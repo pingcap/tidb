@@ -28,6 +28,60 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestLogicalApplyHash64Equals(t *testing.T) {
+	col1 := &expression.Column{
+		ID:      1,
+		Index:   0,
+		RetType: types.NewFieldType(mysql.TypeLonglong),
+	}
+	col2 := &expression.Column{
+		ID:      2,
+		Index:   1,
+		RetType: types.NewFieldType(mysql.TypeLonglong),
+	}
+	col3 := &expression.Column{
+		ID:      3,
+		Index:   2,
+		RetType: types.NewFieldType(mysql.TypeLonglong),
+	}
+	ctx := mock.NewContext()
+	eq, err := expression.NewFunction(ctx, ast.EQ, types.NewFieldType(mysql.TypeLonglong), col1, col2)
+	require.Nil(t, err)
+	join := &logicalop.LogicalJoin{
+		JoinType:        logicalop.InnerJoin,
+		EqualConditions: []*expression.ScalarFunction{eq.(*expression.ScalarFunction)},
+	}
+	la1 := logicalop.LogicalApply{
+		LogicalJoin: *join,
+		CorCols:     []*expression.CorrelatedColumn{{Column: *col3}},
+	}
+	la2 := logicalop.LogicalApply{
+		LogicalJoin: *join,
+		CorCols:     []*expression.CorrelatedColumn{{Column: *col3}},
+	}
+	hasher1 := base.NewHashEqualer()
+	hasher2 := base.NewHashEqualer()
+	la1.Hash64(hasher1)
+	la2.Hash64(hasher2)
+	require.Equal(t, hasher1.Sum64(), hasher2.Sum64())
+
+	la2.CorCols = []*expression.CorrelatedColumn{{Column: *col2}}
+	hasher2.Reset()
+	la2.Hash64(hasher2)
+	require.NotEqual(t, hasher1.Sum64(), hasher2.Sum64())
+
+	la2.CorCols = []*expression.CorrelatedColumn{{Column: *col3}}
+	la2.NoDecorrelate = true
+	hasher2.Reset()
+	la2.Hash64(hasher2)
+	require.NotEqual(t, hasher1.Sum64(), hasher2.Sum64())
+
+	la2.NoDecorrelate = false
+	hasher2.Reset()
+	la2.Hash64(hasher2)
+	require.Equal(t, hasher1.Sum64(), hasher2.Sum64())
+}
+
 func TestLogicalJoinHash64Equals(t *testing.T) {
 	col1 := &expression.Column{
 		ID:      1,
