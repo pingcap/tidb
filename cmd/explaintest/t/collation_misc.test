@@ -86,4 +86,9 @@ select * from information_schema.COLLATION_CHARACTER_SET_APPLICABILITY where COL
 show charset;
 show collation;
 
-use test;
+# issue 52772
+drop table if exists t1;
+drop table if exists t2;
+create table t1(code varchar(32)) CHARSET=utf8 COLLATE=utf8_general_ci;
+create table t2(code varchar(32)) CHARSET=utf8 COLLATE=utf8_bin;
+desc format=brief select * from t1 join t2 on t1.code=t2.code and t1.code in ('1') and t2.code in ('1');

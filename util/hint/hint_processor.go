@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
+	"golang.org/x/exp/slices"
 )
 
 var supportedHintNameForInsertStmt = map[string]struct{}{}
@@ -91,6 +92,18 @@ func ExtractTableHintsFromStmtNode(node ast.Node, sctx sessionctx.Context) []*as
 		return x.TableHints
 	case *ast.ExplainStmt:
 		return ExtractTableHintsFromStmtNode(x.Stmt, sctx)
+	case *ast.SetOprStmt:
+		var result []*ast.TableOptimizerHint
+		if x.SelectList == nil {
+			return nil
+		}
+		for _, s := range x.SelectList.Selects {
+			tmp := ExtractTableHintsFromStmtNode(s, sctx)
+			if len(tmp) != 0 {
+				result = append(result, tmp...)
+			}
+		}
+		return result
 	default:
 		return nil
 	}
@@ -603,7 +616,9 @@ func (p *BlockHintProcessor) GetCurrentStmtHints(hints []*ast.TableOptimizerHint
 			}
 			continue
 		}
-		p.QbHints[offset] = append(p.QbHints[offset], hint)
+		if !slices.Contains(p.QbHints[offset], hint) {
+			p.QbHints[offset] = append(p.QbHints[offset], hint)
+		}
 	}
 	return p.QbHints[currentOffset]
 }

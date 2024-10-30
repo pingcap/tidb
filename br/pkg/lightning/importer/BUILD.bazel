@@ -64,6 +64,7 @@ go_library(
         "//util/collate",
         "//util/dbterror",
         "//util/engine",
+        "//util/etcd",
         "//util/mathutil",
         "//util/mock",
         "//util/regexpr-router",

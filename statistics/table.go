@@ -106,13 +106,11 @@ const (
 
 // HistColl is a collection of histogram. It collects enough information for plan to calculate the selectivity.
 type HistColl struct {
-	PhysicalID int64
+	// Note that when used in a query, Column use UniqueID as the key while Indices use the index ID in the
+	// metadata. (See GenerateHistCollFromColumnInfo() for details)
 	Columns    map[int64]*Column
 	Indices    map[int64]*Index
-	// Idx2ColumnIDs maps the index id to its column ids. It's used to calculate the selectivity in planner.
-	Idx2ColumnIDs map[int64][]int64
-	// ColID2IdxIDs maps the column id to a list index ids whose first column is it. It's used to calculate the selectivity in planner.
-	ColID2IdxIDs map[int64][]int64
+	PhysicalID int64
 	// TODO: add AnalyzeCount here
 	RealtimeCount int64 // RealtimeCount is the current table row count, maintained by applying stats delta based on AnalyzeCount.
 	ModifyCount   int64 // Total modify count in a table.
@@ -121,6 +119,18 @@ type HistColl struct {
 	// The physical id is used when try to load column stats from storage.
 	HavePhysicalID bool
 	Pseudo         bool
+
+	/*
+		Fields below are only used in a query, like for estimation, and they will be useless when stored in
+		the stats cache. (See GenerateHistCollFromColumnInfo() for details)
+	*/
+
+	// Idx2ColUniqueIDs maps the index id to its column ids. It's used to calculate the selectivity in planner.
+	Idx2ColUniqueIDs map[int64][]int64
+	// ColUniqueID2IdxIDs maps the column id to a list index ids whose first column is it. It's used to calculate the selectivity in planner.
+	ColUniqueID2IdxIDs map[int64][]int64
+	// UniqueID2colInfoID maps the column UniqueID to its ID in the metadata.
+	UniqueID2colInfoID map[int64]int64
 }
 
 // TableMemoryUsage records tbl memory usage
@@ -561,19 +571,23 @@ func (t *Table) ColumnEqualRowCount(sctx sessionctx.Context, value types.Datum, 
 }
 
 // GetRowCountByIntColumnRanges estimates the row count by a slice of IntColumnRange.
-func (coll *HistColl) GetRowCountByIntColumnRanges(sctx sessionctx.Context, colID int64, intRanges []*ranger.Range) (result float64, err error) {
+func (coll *HistColl) GetRowCountByIntColumnRanges(sctx sessionctx.Context, colUniqueID int64, intRanges []*ranger.Range) (result float64, err error) {
 	var name string
 	if sctx.GetSessionVars().StmtCtx.EnableOptimizerDebugTrace {
 		debugtrace.EnterContextCommon(sctx)
-		debugTraceGetRowCountInput(sctx, colID, intRanges)
+		debugTraceGetRowCountInput(sctx, colUniqueID, intRanges)
 		defer func() {
 			debugtrace.RecordAnyValuesWithNames(sctx, "Name", name, "Result", result)
 			debugtrace.LeaveContextCommon(sctx)
 		}()
 	}
 	sc := sctx.GetSessionVars().StmtCtx
-	c, ok := coll.Columns[colID]
-	recordUsedItemStatsStatus(sctx, c, coll.PhysicalID, colID)
+	c, ok := coll.Columns[colUniqueID]
+	colInfoID := colUniqueID
+	if len(coll.UniqueID2colInfoID) > 0 {
+		colInfoID = coll.UniqueID2colInfoID[colUniqueID]
+	}
+	recordUsedItemStatsStatus(sctx, c, coll.PhysicalID, colInfoID)
 	if c != nil && c.Info != nil {
 		name = c.Info.Name.O
 	}
@@ -606,19 +620,23 @@ func (coll *HistColl) GetRowCountByIntColumnRanges(sctx sessionctx.Context, colI
 }
 
 // GetRowCountByColumnRanges estimates the row count by a slice of Range.
-func (coll *HistColl) GetRowCountByColumnRanges(sctx sessionctx.Context, colID int64, colRanges []*ranger.Range) (result float64, err error) {
+func (coll *HistColl) GetRowCountByColumnRanges(sctx sessionctx.Context, colUniqueID int64, colRanges []*ranger.Range) (result float64, err error) {
 	var name string
 	if sctx.GetSessionVars().StmtCtx.EnableOptimizerDebugTrace {
 		debugtrace.EnterContextCommon(sctx)
-		debugTraceGetRowCountInput(sctx, colID, colRanges)
+		debugTraceGetRowCountInput(sctx, colUniqueID, colRanges)
 		defer func() {
 			debugtrace.RecordAnyValuesWithNames(sctx, "Name", name, "Result", result)
 			debugtrace.LeaveContextCommon(sctx)
 		}()
 	}
 	sc := sctx.GetSessionVars().StmtCtx
-	c, ok := coll.Columns[colID]
-	recordUsedItemStatsStatus(sctx, c, coll.PhysicalID, colID)
+	c, ok := coll.Columns[colUniqueID]
+	colInfoID := colUniqueID
+	if len(coll.UniqueID2colInfoID) > 0 {
+		colInfoID = coll.UniqueID2colInfoID[colUniqueID]
+	}
+	recordUsedItemStatsStatus(sctx, c, coll.PhysicalID, colInfoID)
 	if c != nil && c.Info != nil {
 		name = c.Info.Name.O
 	}
@@ -733,7 +751,7 @@ func (coll *HistColl) findAvailableStatsForCol(sctx sessionctx.Context, uniqueID
 		return false, uniqueID
 	}
 	// try to find available stats in single column index stats (except for prefix index)
-	for idxStatsIdx, cols := range coll.Idx2ColumnIDs {
+	for idxStatsIdx, cols := range coll.Idx2ColUniqueIDs {
 		if len(cols) == 1 && cols[0] == uniqueID {
 			idxStats, ok := coll.Indices[idxStatsIdx]
 			if ok &&
@@ -938,13 +956,15 @@ func (coll *HistColl) ID2UniqueID(columns []*expression.Column) *HistColl {
 	return newColl
 }
 
-// GenerateHistCollFromColumnInfo generates a new HistColl whose ColID2IdxIDs and IdxID2ColIDs is built from the given parameter.
+// GenerateHistCollFromColumnInfo generates a new HistColl whose ColUniqueID2IdxIDs and IdxID2ColIDs is built from the given parameter.
 func (coll *HistColl) GenerateHistCollFromColumnInfo(tblInfo *model.TableInfo, columns []*expression.Column) *HistColl {
 	newColHistMap := make(map[int64]*Column)
 	colInfoID2UniqueID := make(map[int64]int64, len(columns))
 	idxID2idxInfo := make(map[int64]*model.IndexInfo)
+	uniqueID2colInfoID := make(map[int64]int64, len(columns))
 	for _, col := range columns {
 		colInfoID2UniqueID[col.ID] = col.UniqueID
+		uniqueID2colInfoID[col.UniqueID] = col.ID
 	}
 	for id, colHist := range coll.Columns {
 		uniqueID, ok := colInfoID2UniqueID[id]
@@ -984,15 +1004,16 @@ func (coll *HistColl) GenerateHistCollFromColumnInfo(tblInfo *model.TableInfo, c
 		slices.Sort(idxIDs)
 	}
 	newColl := &HistColl{
-		PhysicalID:     coll.PhysicalID,
-		HavePhysicalID: coll.HavePhysicalID,
-		Pseudo:         coll.Pseudo,
-		RealtimeCount:  coll.RealtimeCount,
-		ModifyCount:    coll.ModifyCount,
-		Columns:        newColHistMap,
-		Indices:        newIdxHistMap,
-		ColID2IdxIDs:   colID2IdxIDs,
-		Idx2ColumnIDs:  idx2Columns,
+		PhysicalID:         coll.PhysicalID,
+		HavePhysicalID:     coll.HavePhysicalID,
+		Pseudo:             coll.Pseudo,
+		RealtimeCount:      coll.RealtimeCount,
+		ModifyCount:        coll.ModifyCount,
+		Columns:            newColHistMap,
+		Indices:            newIdxHistMap,
+		ColUniqueID2IdxIDs: colID2IdxIDs,
+		Idx2ColUniqueIDs:   idx2Columns,
+		UniqueID2colInfoID: uniqueID2colInfoID,
 	}
 	return newColl
 }
@@ -1065,7 +1086,7 @@ func (coll *HistColl) crossValidationSelectivity(
 		}()
 	}
 	minRowCount = math.MaxFloat64
-	cols := coll.Idx2ColumnIDs[idx.ID]
+	cols := coll.Idx2ColUniqueIDs[idx.ID]
 	crossValidationSelectivity = 1.0
 	totalRowCount := idx.TotalRowCount()
 	for i, colID := range cols {
@@ -1134,7 +1155,7 @@ func (coll *HistColl) getEqualCondSelectivity(sctx sessionctx.Context, idx *Inde
 			return outOfRangeEQSelectivity(sctx, idx.NDV, coll.RealtimeCount, int64(idx.TotalRowCount())), nil
 		}
 		// The equal condition only uses prefix columns of the index.
-		colIDs := coll.Idx2ColumnIDs[idx.ID]
+		colIDs := coll.Idx2ColUniqueIDs[idx.ID]
 		var ndv int64
 		for i, colID := range colIDs {
 			if i >= usedColsLen {
@@ -1236,19 +1257,19 @@ func (coll *HistColl) getIndexRowCount(sctx sessionctx.Context, idxID int64, ind
 			}
 			var count float64
 			var err error
-			colIDs := coll.Idx2ColumnIDs[idxID]
-			var colID int64
-			if rangePosition >= len(colIDs) {
-				colID = -1
+			colUniqueIDs := coll.Idx2ColUniqueIDs[idxID]
+			var colUniqueID int64
+			if rangePosition >= len(colUniqueIDs) {
+				colUniqueID = -1
 			} else {
-				colID = colIDs[rangePosition]
+				colUniqueID = colUniqueIDs[rangePosition]
 			}
 			// prefer index stats over column stats
-			if idxIDs, ok := coll.ColID2IdxIDs[colID]; ok && len(idxIDs) > 0 {
+			if idxIDs, ok := coll.ColUniqueID2IdxIDs[colUniqueID]; ok && len(idxIDs) > 0 {
 				idxID := idxIDs[0]
 				count, err = coll.GetRowCountByIndexRanges(sctx, idxID, []*ranger.Range{&rang})
 			} else {
-				count, err = coll.GetRowCountByColumnRanges(sctx, colID, []*ranger.Range{&rang})
+				count, err = coll.GetRowCountByColumnRanges(sctx, colUniqueID, []*ranger.Range{&rang})
 			}
 			if err != nil {
 				return 0, errors.Trace(err)

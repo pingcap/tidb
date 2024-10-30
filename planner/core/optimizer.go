@@ -158,6 +158,9 @@ func BuildLogicalPlanForTest(ctx context.Context, sctx sessionctx.Context, node 
 	if err != nil {
 		return nil, nil, err
 	}
+	if logic, ok := p.(LogicalPlan); ok {
+		RecheckCTE(logic)
+	}
 	return p, p.OutputNames(), err
 }
 
@@ -298,6 +301,9 @@ func DoOptimize(ctx context.Context, sctx sessionctx.Context, flag uint64, logic
 	}
 	flag |= flagCollectPredicateColumnsPoint
 	flag |= flagSyncWaitStatsLoadPoint
+	if !logic.SCtx().GetSessionVars().StmtCtx.UseDynamicPruneMode {
+		flag |= flagPartitionProcessor // apply partition pruning under static mode
+	}
 	logic, err := logicalOptimize(ctx, flag, logic)
 	if err != nil {
 		return nil, 0, err
@@ -567,7 +573,7 @@ func tryEnableLateMaterialization(sctx sessionctx.Context, plan PhysicalPlan) {
 	}
 	if sctx.GetSessionVars().EnableLateMaterialization && sctx.GetSessionVars().TiFlashFastScan {
 		sc := sctx.GetSessionVars().StmtCtx
-		sc.AppendWarning(errors.New("FastScan is not compatible with late materialization, late materialization is disabled"))
+		sc.AppendWarning(errors.NewNoStackError("FastScan is not compatible with late materialization, late materialization is disabled"))
 	}
 }
 
@@ -1060,7 +1066,7 @@ func enableParallelApply(sctx sessionctx.Context, plan PhysicalPlan) PhysicalPla
 		if noOrder && supportClone {
 			apply.Concurrency = sctx.GetSessionVars().ExecutorConcurrency
 		} else {
-			sctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("Some apply operators can not be executed in parallel"))
+			sctx.GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackErrorf("Some apply operators can not be executed in parallel"))
 		}
 
 		// because of the limitation 3, we cannot parallelize Apply operators in this Apply's inner size,
@@ -1157,7 +1163,7 @@ func physicalOptimize(logic LogicalPlan, planCounter *PlanCounterTp) (plan Physi
 		return nil, 0, err
 	}
 	if *planCounter > 0 {
-		logic.SCtx().GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("The parameter of nth_plan() is out of range"))
+		logic.SCtx().GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackErrorf("The parameter of nth_plan() is out of range"))
 	}
 	if t.invalid() {
 		return nil, 0, ErrInternal.GenWithStackByArgs("Can't find a proper physical plan for this query")

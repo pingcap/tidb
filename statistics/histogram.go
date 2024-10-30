@@ -1094,11 +1094,11 @@ func newHistogramBySelectivity(sctx sessionctx.Context, histID int64, oldHist, n
 // NewHistCollBySelectivity creates new HistColl by the given statsNodes.
 func (coll *HistColl) NewHistCollBySelectivity(sctx sessionctx.Context, statsNodes []*StatsNode) *HistColl {
 	newColl := &HistColl{
-		Columns:       make(map[int64]*Column),
-		Indices:       make(map[int64]*Index),
-		Idx2ColumnIDs: coll.Idx2ColumnIDs,
-		ColID2IdxIDs:  coll.ColID2IdxIDs,
-		RealtimeCount: coll.RealtimeCount,
+		Columns:            make(map[int64]*Column),
+		Indices:            make(map[int64]*Index),
+		Idx2ColUniqueIDs:   coll.Idx2ColUniqueIDs,
+		ColUniqueID2IdxIDs: coll.ColUniqueID2IdxIDs,
+		RealtimeCount:      coll.RealtimeCount,
 	}
 	for _, node := range statsNodes {
 		if node.Tp == IndexType {

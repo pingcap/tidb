@@ -177,8 +177,11 @@ func onCreateTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error)
 
 func createTableWithForeignKeys(d *ddlCtx, t *meta.Meta, job *model.Job, tbInfo *model.TableInfo, fkCheck bool) (ver int64, err error) {
 	switch tbInfo.State {
-	case model.StateNone:
-		// create table in non-public state
+	case model.StateNone, model.StatePublic:
+		// create table in non-public or public state. The function `createTable` will always reset
+		// the `tbInfo.State` with `model.StateNone`, so it's fine to just call the `createTable` with
+		// public state.
+		// when `br` restores table, the state of `tbInfo` will be public.
 		tbInfo, err = createTable(d, t, job, fkCheck)
 		if err != nil {
 			return ver, errors.Trace(err)
@@ -196,6 +199,7 @@ func createTableWithForeignKeys(d *ddlCtx, t *meta.Meta, job *model.Job, tbInfo 
 			return ver, errors.Trace(err)
 		}
 		job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tbInfo)
+		asyncNotifyEvent(d, &util.Event{Tp: model.ActionCreateTable, TableInfo: tbInfo})
 		return ver, nil
 	default:
 		return ver, errors.Trace(dbterror.ErrInvalidDDLJob.GenWithStackByArgs("table", tbInfo.State))
@@ -621,8 +625,8 @@ func checkSafePoint(w *worker, snapshotTS uint64) error {
 	return gcutil.ValidateSnapshot(ctx, snapshotTS)
 }
 
-func getTable(store kv.Storage, schemaID int64, tblInfo *model.TableInfo) (table.Table, error) {
-	allocs := autoid.NewAllocatorsFromTblInfo(store, schemaID, tblInfo)
+func getTable(r autoid.Requirement, schemaID int64, tblInfo *model.TableInfo) (table.Table, error) {
+	allocs := autoid.NewAllocatorsFromTblInfo(r, schemaID, tblInfo)
 	tbl, err := table.TableFromMeta(allocs, tblInfo)
 	return tbl, errors.Trace(err)
 }
@@ -834,7 +838,7 @@ func onRebaseAutoRandomType(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64,
 	return onRebaseAutoID(d, d.store, t, job, autoid.AutoRandomType)
 }
 
-func onRebaseAutoID(d *ddlCtx, store kv.Storage, t *meta.Meta, job *model.Job, tp autoid.AllocatorType) (ver int64, _ error) {
+func onRebaseAutoID(d *ddlCtx, _ kv.Storage, t *meta.Meta, job *model.Job, tp autoid.AllocatorType) (ver int64, _ error) {
 	schemaID := job.SchemaID
 	var (
 		newBase int64
@@ -857,7 +861,7 @@ func onRebaseAutoID(d *ddlCtx, store kv.Storage, t *meta.Meta, job *model.Job, t
 		return ver, errors.Trace(err)
 	}
 
-	tbl, err := getTable(store, schemaID, tblInfo)
+	tbl, err := getTable((*asAutoIDRequirement)(d), schemaID, tblInfo)
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
@@ -939,7 +943,7 @@ func (w *worker) onShardRowID(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int6
 	if shardRowIDBits < tblInfo.ShardRowIDBits {
 		tblInfo.ShardRowIDBits = shardRowIDBits
 	} else {
-		tbl, err := getTable(d.store, job.SchemaID, tblInfo)
+		tbl, err := getTable((*asAutoIDRequirement)(d), job.SchemaID, tblInfo)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}

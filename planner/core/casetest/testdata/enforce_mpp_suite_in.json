@@ -22,7 +22,9 @@
       "explain format='verbose' select count(*) from t where a=1",
       "explain format='verbose' select /*+ read_from_storage(tikv[t]) */ count(*) from t where a=1",
       "explain format='verbose' select /*+ read_from_storage(tiflash[t]) */ count(*) from t where a=1",
-      "explain select  /*+ READ_FROM_STORAGE(TIFLASH[s]) */ a from s where a = 10 and b is null; -- index path huristic rule will prune tiflash path"
+      "explain select  /*+ READ_FROM_STORAGE(TIFLASH[s]) */ a from s where a = 10 and b is null; -- index path huristic rule will prune tiflash path",
+      "explain select /*+ read_from_storage(tiflash[t3]) */ * from t3 where sala='a' and id =1; -- once hinted, walk with tiflash range scan",
+      "explain select * from t3 where sala='a' and id =1; -- once not hinted, walk with tikv point get"
     ]
   },
   {

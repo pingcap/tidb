@@ -236,6 +236,17 @@ func (tk *TestKit) HasPlan(sql string, plan string, args ...interface{}) bool {
 	return false
 }
 
+// HasNoPlan checks if the result execution plan doesn't contain specific plan.
+func (tk *TestKit) HasNoPlan(sql string, plan string, args ...interface{}) bool {
+	rs := tk.MustQuery("explain "+sql, args...)
+	for i := range rs.rows {
+		if strings.Contains(rs.rows[i][0], plan) {
+			return false
+		}
+	}
+	return true
+}
+
 // HasTiFlashPlan checks if the result execution plan contains TiFlash plan.
 func (tk *TestKit) HasTiFlashPlan(sql string, args ...interface{}) bool {
 	rs := tk.MustQuery("explain "+sql, args...)
@@ -537,4 +548,20 @@ func (c *RegionProperityClient) SendRequest(ctx context.Context, addr string, re
 		}
 	}
 	return c.Client.SendRequest(ctx, addr, req, timeout)
+}
+
+func (tk *TestKit) hasPlan(sql string, plan string, args ...any) (bool, *Result) {
+	rs := tk.MustQuery("explain "+sql, args...)
+	for i := range rs.rows {
+		if strings.Contains(rs.rows[i][0], plan) {
+			return true, rs
+		}
+	}
+	return false, rs
+}
+
+// MustHavePlan checks if the result execution plan contains specific plan.
+func (tk *TestKit) MustHavePlan(sql string, plan string, args ...any) {
+	has, rs := tk.hasPlan(sql, plan, args...)
+	tk.require.True(has, fmt.Sprintf("%s doesn't have plan %s, full plan %v", sql, plan, rs.Rows()))
 }

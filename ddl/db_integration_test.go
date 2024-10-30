@@ -1617,7 +1617,10 @@ func TestAlterColumn(t *testing.T) {
 	// tk.MustExec( "alter table test_alter_column alter column d set default null")
 	tk.MustExec("alter table test_alter_column alter column a drop default")
 	tk.MustGetErrCode("insert into test_alter_column set b = 'd', c = 'dd'", errno.ErrNoDefaultForField)
-	tk.MustQuery("select a from test_alter_column").Check(testkit.Rows("111", "222", "222", "123"))
+	tk.MustGetErrCode("insert into test_alter_column set a = DEFAULT, b = 'd', c = 'dd'", errno.ErrNoDefaultForField)
+	tk.MustGetErrCode("insert into test_alter_column values (DEFAULT, 'd', 'dd', DEFAULT)", errno.ErrNoDefaultForField)
+	tk.MustExec("insert into test_alter_column set a = NULL, b = 'd', c = 'dd'")
+	tk.MustQuery("select a from test_alter_column").Check(testkit.Rows("111", "222", "222", "123", "<nil>"))
 
 	// for failing tests
 	sql := "alter table db_not_exist.test_alter_column alter column b set default 'c'"
@@ -2091,17 +2094,17 @@ func TestDefaultColumnWithRand(t *testing.T) {
 	tk.MustQuery("show create table t").Check(testkit.Rows(
 		"t CREATE TABLE `t` (\n" +
 			"  `c` int(10) DEFAULT NULL,\n" +
-			"  `c1` int(11) DEFAULT rand()\n" +
+			"  `c1` int(11) DEFAULT (rand())\n" +
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
 	tk.MustQuery("show create table t1").Check(testkit.Rows(
 		"t1 CREATE TABLE `t1` (\n" +
 			"  `c` int(11) DEFAULT NULL,\n" +
-			"  `c1` double DEFAULT rand()\n" +
+			"  `c1` double DEFAULT (rand())\n" +
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
 	tk.MustQuery("show create table t2").Check(testkit.Rows(
 		"t2 CREATE TABLE `t2` (\n" +
 			"  `c` int(11) DEFAULT NULL,\n" +
-			"  `c1` double DEFAULT rand(1)\n" +
+			"  `c1` double DEFAULT (rand(1))\n" +
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
 
 	// use a non-existent function name
@@ -2130,8 +2133,15 @@ func TestDefaultColumnWithUUID(t *testing.T) {
 	tk.MustQuery("show create table t").Check(testkit.Rows(
 		"t CREATE TABLE `t` (\n" +
 			"  `c` int(10) DEFAULT NULL,\n" +
-			"  `c1` varchar(256) DEFAULT uuid()\n" +
+			"  `c1` varchar(256) DEFAULT (uuid())\n" +
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+
+	// test modify column
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (c int(10), c1 varchar(256) default rand());")
+	tk.MustExec("alter table t alter column c1 set default 'xx';")
+	tk.MustExec("insert into t values (1, default);")
+	tk.MustQuery("select c1 from t;").Check(testkit.Rows("xx"))
 }
 
 func TestChangingDBCharset(t *testing.T) {

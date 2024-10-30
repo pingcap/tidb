@@ -717,6 +717,16 @@ func TestPrepareCacheNow(t *testing.T) {
 	require.Equal(t, rs[0][6].(string), rs[0][1].(string))
 	require.Equal(t, rs[0][7].(string), rs[0][2].(string))
 	require.Equal(t, rs[0][8].(string), rs[0][3].(string))
+
+	tk.MustExec("create table t (a int);")
+	tk.MustExec("insert into t values(1);")
+	tk.MustExec("set @@tidb_enable_prepared_plan_cache=0;")
+	tk.MustExec("set global tidb_sysdate_is_now=0;")
+	tk.MustExec("prepare s from 'select sleep(a), now(6), sysdate(6),sysdate(6)=now(6) from t';")
+	t1 := tk.MustQuery("execute s").Rows()
+	tk.MustExec("set global tidb_sysdate_is_now=1;")
+	t2 := tk.MustQuery("execute s").Rows()
+	require.NotEqual(t, t1, t2)
 }
 
 func TestPrepareOverMaxPreparedStmtCount(t *testing.T) {
@@ -2805,4 +2815,29 @@ func TestIssue37901(t *testing.T) {
 	tk.MustExec(`set @t='2022-01-01 00:00:00.000000'`)
 	tk.MustExec(`execute st1 using @t`)
 	tk.MustQuery(`select count(*) from t4`).Check(testkit.Rows("2"))
+}
+
+func TestIssue42739(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec(`use test`)
+	tk.MustExec(`drop table if exists t0`)
+	tk.MustExec(`CREATE TABLE t0 (c1 double, c2 double);`)
+	tk.MustExec(`select
+  exists (
+    select
+          subq_2.c0 as c8
+        from
+          (select
+                ref_153.c1 as c0
+              from
+                t0 as ref_153
+              group by ref_153.c1 having 0 <> (
+                  select 1
+                    from
+                      t0 as ref_173
+                    where count(ref_153.c2) = avg(ref_153.c2)
+                    order by c1 desc limit 1)) as subq_2
+     ) as c10;`)
 }

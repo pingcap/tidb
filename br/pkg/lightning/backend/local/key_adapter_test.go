@@ -20,9 +20,14 @@ import (
 	"math"
 	"sort"
 	"testing"
+	"time"
 	"unsafe"
 
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
+	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/codec"
 	"github.com/stretchr/testify/require"
 )
 
@@ -35,8 +40,9 @@ func randBytes(n int) []byte {
 func TestNoopKeyAdapter(t *testing.T) {
 	keyAdapter := noopKeyAdapter{}
 	key := randBytes(32)
-	require.Len(t, key, keyAdapter.EncodedLen(key, ZeroRowID))
-	encodedKey := keyAdapter.Encode(nil, key, ZeroRowID)
+	rowID := randBytes(8)
+	require.Len(t, key, keyAdapter.EncodedLen(key, rowID))
+	encodedKey := keyAdapter.Encode(nil, key, rowID)
 	require.Equal(t, key, encodedKey)
 
 	decodedKey, err := keyAdapter.Decode(nil, encodedKey)
@@ -158,5 +164,52 @@ func TestDecodeKeyDstIsInsufficient(t *testing.T) {
 		require.False(t, startWithSameMemory(buf, buf2))
 		require.Equal(t, buf[:4], buf2[:4])
 		require.Equal(t, key, buf2[4:])
+	}
+}
+
+func TestMinRowID(t *testing.T) {
+	keyApapter := dupDetectKeyAdapter{}
+	key := []byte("key")
+	val := []byte("val")
+	shouldBeMin := keyApapter.Encode(key, val, MinRowID)
+
+	rowIDs := make([][]byte, 0, 20)
+
+	// DDL
+
+	rowIDs = append(rowIDs, kv.IntHandle(math.MinInt64).Encoded())
+	rowIDs = append(rowIDs, kv.IntHandle(-1).Encoded())
+	rowIDs = append(rowIDs, kv.IntHandle(0).Encoded())
+	rowIDs = append(rowIDs, kv.IntHandle(math.MaxInt64).Encoded())
+	handleData := []types.Datum{
+		types.NewIntDatum(math.MinInt64),
+		types.NewIntDatum(-1),
+		types.NewIntDatum(0),
+		types.NewIntDatum(math.MaxInt64),
+		types.NewBytesDatum(make([]byte, 1)),
+		types.NewBytesDatum(make([]byte, 7)),
+		types.NewBytesDatum(make([]byte, 8)),
+		types.NewBytesDatum(make([]byte, 9)),
+		types.NewBytesDatum(make([]byte, 100)),
+	}
+	for _, d := range handleData {
+		sc := &stmtctx.StatementContext{TimeZone: time.Local}
+		encodedKey, err := codec.EncodeKey(sc, nil, d)
+		require.NoError(t, err)
+		ch, err := kv.NewCommonHandle(encodedKey)
+		require.NoError(t, err)
+		rowIDs = append(rowIDs, ch.Encoded())
+	}
+
+	// lightning, IMPORT INTO, ...
+
+	numRowIDs := []int64{math.MinInt64, -1, 0, math.MaxInt64}
+	for _, id := range numRowIDs {
+		rowIDs = append(rowIDs, codec.EncodeComparableVarint(nil, id))
+	}
+
+	for _, id := range rowIDs {
+		bs := keyApapter.Encode(key, val, id)
+		require.True(t, bytes.Compare(bs, shouldBeMin) >= 0)
 	}
 }

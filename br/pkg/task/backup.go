@@ -10,6 +10,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/docker/go-units"
@@ -38,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/spf13/pflag"
 	"github.com/tikv/client-go/v2/oracle"
+	"go.uber.org/multierr"
 	"go.uber.org/zap"
 )
 
@@ -627,11 +629,11 @@ func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig
 			ctx, cmdName, int64(len(ranges)), !cfg.LogProgress)
 	}
 
-	progressCount := 0
+	progressCount := uint64(0)
 	progressCallBack := func(callBackUnit backup.ProgressUnit) {
 		if unit == callBackUnit {
 			updateCh.Inc()
-			progressCount++
+			atomic.AddUint64(&progressCount, 1)
 			failpoint.Inject("progress-call-back", func(v failpoint.Value) {
 				log.Info("failpoint progress-call-back injected")
 				if fileName, ok := v.(string); ok {
@@ -771,6 +773,21 @@ func ParseTSString(ts string, tzCheck bool) (uint64, error) {
 		return 0, errors.Trace(err)
 	}
 	return oracle.GoTimeToTS(t1), nil
+}
+
+func DefaultBackupConfig() BackupConfig {
+	fs := pflag.NewFlagSet("dummy", pflag.ContinueOnError)
+	DefineCommonFlags(fs)
+	DefineBackupFlags(fs)
+	cfg := BackupConfig{}
+	err := multierr.Combine(
+		cfg.ParseFromFlags(fs),
+		cfg.Config.ParseFromFlags(fs),
+	)
+	if err != nil {
+		log.Panic("infallible operation failed.", zap.Error(err))
+	}
+	return cfg
 }
 
 func parseCompressionType(s string) (backuppb.CompressionType, error) {

@@ -353,6 +353,27 @@ TableOptimizerHintOpt:
 			HintData: model.NewCIStr($4),
 		}
 	}
+|	hintIdentifier '(' QueryBlockOpt hintIntLit ')'
+	/* The hints below are pseudo hint. They are unsupported hints */
+	{
+		parser.warnUnsupportedHint($1)
+		$$ = nil
+	}
+|	hintIdentifier '(' PartitionList ')'
+	{
+		parser.warnUnsupportedHint($1)
+		$$ = nil
+	}
+|	hintIdentifier '(' PartitionList CommaOpt hintIntLit ')'
+	{
+		parser.warnUnsupportedHint($1)
+		$$ = nil
+	}
+|	hintIdentifier '(' Identifier '=' Value ')'
+	{
+		parser.warnUnsupportedHint($1)
+		$$ = nil
+	}
 
 StorageOptimizerHintOpt:
 	"READ_FROM_STORAGE" '(' QueryBlockOpt HintStorageTypeAndTableList ')'

@@ -1279,7 +1279,7 @@ type SessionVars struct {
 	ReadConsistency ReadConsistencyLevel
 
 	// StatsLoadSyncWait indicates how long to wait for stats load before timeout.
-	StatsLoadSyncWait int64
+	StatsLoadSyncWait atomic.Int64
 
 	// SysdateIsNow indicates whether Sysdate is an alias of Now function
 	SysdateIsNow bool
@@ -1493,11 +1493,16 @@ var (
 	TiDBOptFixControl44262 uint64 = 44262
 	// TiDBOptFixControl44389 controls whether to consider non-point ranges of some CNF item when building ranges.
 	TiDBOptFixControl44389 uint64 = 44389
+	// TiDBOptFixControl44830 controls whether to allow to cache Batch/PointGet from some complex scenarios.
+	// See #44830 for more details.
+	TiDBOptFixControl44830 uint64 = 44830
 	// TiDBOptFixControl44823 controls the maximum number of parameters for a query that can be cached in the Plan Cache.
 	TiDBOptFixControl44823 uint64 = 44823
 	// TiDBOptFixControl44855 controls whether to use a more accurate upper bound when estimating row count of index
 	// range scan under inner side of index join.
 	TiDBOptFixControl44855 uint64 = 44855
+	// TiDBOptFixControl46177 controls whether to explore enforced plans for DataSource if it has already found an unenforced plan.
+	TiDBOptFixControl46177 uint64 = 46177
 )
 
 // GetOptimizerFixControlValue returns the specified value of the optimizer fix control.
@@ -1939,7 +1944,6 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		TMPTableSize:                  DefTiDBTmpTableMaxSize,
 		MPPStoreFailTTL:               DefTiDBMPPStoreFailTTL,
 		Rng:                           mathutil.NewWithTime(),
-		StatsLoadSyncWait:             StatsLoadSyncWait.Load(),
 		EnableLegacyInstanceScope:     DefEnableLegacyInstanceScope,
 		RemoveOrderbyInSubquery:       DefTiDBRemoveOrderbyInSubquery,
 		EnableSkewDistinctAgg:         DefTiDBSkewDistinctAgg,
@@ -1956,6 +1960,7 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		mppVersion:                    kv.MppVersionUnspecified,
 		EnableLateMaterialization:     DefTiDBOptEnableLateMaterialization,
 		TiFlashComputeDispatchPolicy:  tiflashcompute.DispatchPolicyConsistentHash,
+		EnableWindowFunction:          DefEnableWindowFunction,
 	}
 	vars.KVVars = tikvstore.NewVariables(&vars.Killed)
 	vars.Concurrency = Concurrency{
@@ -1998,6 +2003,7 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 	vars.DiskTracker = disk.NewTracker(memory.LabelForSession, -1)
 	vars.MemTracker = memory.NewTracker(memory.LabelForSession, vars.MemQuotaQuery)
 	vars.MemTracker.IsRootTrackerOfSess = true
+	vars.StatsLoadSyncWait.Store(StatsLoadSyncWait.Load())
 
 	for _, engine := range config.GetGlobalConfig().IsolationRead.Engines {
 		switch engine {
@@ -2526,6 +2532,8 @@ func (s *SessionVars) LazyCheckKeyNotExists() bool {
 // GetTemporaryTable returns a TempTable by tableInfo.
 func (s *SessionVars) GetTemporaryTable(tblInfo *model.TableInfo) tableutil.TempTable {
 	if tblInfo.TempTableType != model.TempTableNone {
+		s.TxnCtxMu.Lock()
+		defer s.TxnCtxMu.Unlock()
 		if s.TxnCtx.TemporaryTables == nil {
 			s.TxnCtx.TemporaryTables = make(map[int64]tableutil.TempTable)
 		}

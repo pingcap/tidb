@@ -1921,7 +1921,7 @@ func TestDoImport(t *testing.T) {
 				{
 					keyRange:   Range{start: []byte{'a'}, end: []byte{'b'}},
 					engine:     &Engine{},
-					retryCount: maxWriteAndIngestRetryTimes - 1,
+					retryCount: MaxWriteAndIngestRetryTimes - 1,
 					injected:   getSuccessInjectedBehaviour(),
 				},
 			},
@@ -1931,7 +1931,7 @@ func TestDoImport(t *testing.T) {
 				{
 					keyRange:   Range{start: []byte{'b'}, end: []byte{'c'}},
 					engine:     &Engine{},
-					retryCount: maxWriteAndIngestRetryTimes - 1,
+					retryCount: MaxWriteAndIngestRetryTimes - 1,
 					injected:   getSuccessInjectedBehaviour(),
 				},
 			},
@@ -1941,7 +1941,7 @@ func TestDoImport(t *testing.T) {
 				{
 					keyRange:   Range{start: []byte{'c'}, end: []byte{'d'}},
 					engine:     &Engine{},
-					retryCount: maxWriteAndIngestRetryTimes - 2,
+					retryCount: MaxWriteAndIngestRetryTimes - 2,
 					injected: []injectedBehaviour{
 						{
 							write: injectedWriteBehaviour{
@@ -1992,13 +1992,13 @@ func TestRegionJobResetRetryCounter(t *testing.T) {
 					keyRange:   Range{start: []byte{'c'}, end: []byte{'c', '2'}},
 					engine:     &Engine{},
 					injected:   getNeedRescanWhenIngestBehaviour(),
-					retryCount: maxWriteAndIngestRetryTimes,
+					retryCount: MaxWriteAndIngestRetryTimes,
 				},
 				{
 					keyRange:   Range{start: []byte{'c', '2'}, end: []byte{'d'}},
 					engine:     &Engine{},
 					injected:   getSuccessInjectedBehaviour(),
-					retryCount: maxWriteAndIngestRetryTimes,
+					retryCount: MaxWriteAndIngestRetryTimes,
 				},
 			},
 		},
@@ -2080,6 +2080,43 @@ func TestCtxCancelIsIgnored(t *testing.T) {
 		BackendConfig: BackendConfig{
 			WorkerConcurrency: 1,
 		},
+	}
+	e := &Engine{}
+	err := l.doImport(ctx, e, initRanges, int64(config.SplitRegionSize), int64(config.SplitRegionKeys))
+	require.ErrorContains(t, err, "the remaining storage capacity of TiKV")
+}
+
+func TestWorkerFailedWhenGeneratingJobs(t *testing.T) {
+	backup := maxRetryBackoffSecond
+	maxRetryBackoffSecond = 1
+	t.Cleanup(func() {
+		maxRetryBackoffSecond = backup
+	})
+
+	_ = failpoint.Enable("github.com/pingcap/tidb/br/pkg/lightning/backend/local/skipSplitAndScatter", "return()")
+	_ = failpoint.Enable("github.com/pingcap/tidb/br/pkg/lightning/backend/local/sendDummyJob", "return()")
+	_ = failpoint.Enable("github.com/pingcap/tidb/br/pkg/lightning/backend/local/mockGetFirstAndLastKey", "return()")
+	_ = failpoint.Enable("github.com/pingcap/tidb/br/pkg/lightning/backend/local/WriteToTiKVNotEnoughDiskSpace", "return()")
+	t.Cleanup(func() {
+		_ = failpoint.Disable("github.com/pingcap/tidb/br/pkg/lightning/backend/local/skipSplitAndScatter")
+		_ = failpoint.Disable("github.com/pingcap/tidb/br/pkg/lightning/backend/local/sendDummyJob")
+		_ = failpoint.Disable("github.com/pingcap/tidb/br/pkg/lightning/backend/local/mockGetFirstAndLastKey")
+		_ = failpoint.Disable("github.com/pingcap/tidb/br/pkg/lightning/backend/local/WriteToTiKVNotEnoughDiskSpace")
+	})
+
+	initRanges := []Range{
+		{start: []byte{'c'}, end: []byte{'d'}},
+	}
+
+	ctx := context.Background()
+	l := &Backend{
+		BackendConfig: BackendConfig{
+			WorkerConcurrency: 1,
+		},
+		splitCli: initTestSplitClient(
+			[][]byte{{1}, {11}},
+			panicSplitRegionClient{},
+		),
 	}
 	e := &Engine{}
 	err := l.doImport(ctx, e, initRanges, int64(config.SplitRegionSize), int64(config.SplitRegionKeys))

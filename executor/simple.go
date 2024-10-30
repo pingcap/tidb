@@ -1094,6 +1094,9 @@ func (e *SimpleExec) executeCreateUser(ctx context.Context, s *ast.CreateUserStm
 		if !variable.EnableResourceControl.Load() {
 			return infoschema.ErrResourceGroupSupportDisabled
 		}
+		if s.IsCreateRole {
+			return infoschema.ErrResourceGroupInvalidForRole
+		}
 
 		resourceGroupName := strings.ToLower(s.ResourceGroupNameOption.Value)
 
@@ -1282,6 +1285,26 @@ func (e *SimpleExec) executeCreateUser(ctx context.Context, s *ast.CreateUserStm
 		return errors.Trace(err)
 	}
 	return domain.GetDomain(e.ctx).NotifyUpdatePrivilege()
+}
+
+func isRole(ctx context.Context, sqlExecutor sqlexec.SQLExecutor, name, host string) (bool, error) {
+	sql := new(strings.Builder)
+	sqlexec.MustFormatSQL(sql, `SELECT 1 FROM %n.%n WHERE User=%? AND Host=%? AND Account_locked="Y" AND Password_expired="Y";`,
+		mysql.SystemDB, mysql.UserTable, name, strings.ToLower(host))
+	recordSet, err := sqlExecutor.ExecuteInternal(ctx, sql.String())
+	if err != nil {
+		return false, err
+	}
+	defer func() {
+		if closeErr := recordSet.Close(); closeErr != nil {
+			err = closeErr
+		}
+	}()
+	rows, err := sqlexec.DrainRecordSet(ctx, recordSet, 1)
+	if err != nil {
+		return false, err
+	}
+	return len(rows) > 0, nil
 }
 
 func getUserPasswordLimit(ctx context.Context, sqlExecutor sqlexec.SQLExecutor, name string, host string, plOptions *passwordOrLockOptionsInfo) (pRI *passwordReuseInfo, err error) {
@@ -1905,6 +1928,13 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 		if s.ResourceGroupNameOption != nil {
 			if !variable.EnableResourceControl.Load() {
 				return infoschema.ErrResourceGroupSupportDisabled
+			}
+			is, err := isRole(ctx, sqlExecutor, spec.User.Username, spec.User.Hostname)
+			if err != nil {
+				return err
+			}
+			if is {
+				return infoschema.ErrResourceGroupInvalidForRole
 			}
 
 			// check if specified resource group exists

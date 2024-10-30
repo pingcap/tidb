@@ -674,7 +674,7 @@ func BuildBackupSchemas(
 			// Treat cached table as normal table.
 			tableInfo.TableCacheStatusType = model.TableCacheStatusDisable
 
-			if tableInfo.PKIsHandle && tableInfo.ContainsAutoRandomBits() {
+			if tableInfo.ContainsAutoRandomBits() {
 				// this table has auto_random id, we need backup and rebase in restoration
 				var globalAutoRandID int64
 				globalAutoRandID, err = autoIDAccess.RandomID().Get()
@@ -1185,17 +1185,18 @@ func OnBackupResponse(
 	backupTS uint64,
 	lockResolver *txnlock.LockResolver,
 	resp *backuppb.BackupResponse,
+	errContext *utils.ErrorContext,
 ) (*backuppb.BackupResponse, int, error) {
 	log.Debug("OnBackupResponse", zap.Reflect("resp", resp))
 	if resp.Error == nil {
 		return resp, 0, nil
 	}
 	backoffMs := 0
-	switch v := resp.Error.Detail.(type) {
+
+	err := resp.Error
+	switch v := err.Detail.(type) {
 	case *backuppb.Error_KvError:
 		if lockErr := v.KvError.Locked; lockErr != nil {
-			// Try to resolve lock.
-			log.Warn("backup occur kv error", zap.Reflect("error", v))
 			msBeforeExpired, err1 := lockResolver.ResolveLocks(
 				bo, backupTS, []*txnlock.Lock{txnlock.NewLock(lockErr)})
 			if err1 != nil {
@@ -1206,44 +1207,16 @@ func OnBackupResponse(
 			}
 			return nil, backoffMs, nil
 		}
-		// Backup should not meet error other than KeyLocked.
-		log.Error("unexpect kv error", zap.Reflect("KvError", v.KvError))
-		return nil, backoffMs, errors.Annotatef(berrors.ErrKVUnknown, "storeID: %d OnBackupResponse error %v", storeID, v)
-
-	case *backuppb.Error_RegionError:
-		regionErr := v.RegionError
-		// Ignore following errors.
-		if !(regionErr.EpochNotMatch != nil ||
-			regionErr.NotLeader != nil ||
-			regionErr.RegionNotFound != nil ||
-			regionErr.ServerIsBusy != nil ||
-			regionErr.StaleCommand != nil ||
-			regionErr.StoreNotMatch != nil ||
-			regionErr.ReadIndexNotReady != nil ||
-			regionErr.ProposalInMergingMode != nil) {
-			log.Error("unexpect region error", zap.Reflect("RegionError", regionErr))
-			return nil, backoffMs, errors.Annotatef(berrors.ErrKVUnknown, "storeID: %d OnBackupResponse error %v", storeID, v)
-		}
-		log.Warn("backup occur region error",
-			zap.Reflect("RegionError", regionErr),
-			zap.Uint64("storeID", storeID))
-		// TODO: a better backoff.
-		backoffMs = 1000 /* 1s */
-		return nil, backoffMs, nil
-	case *backuppb.Error_ClusterIdError:
-		log.Error("backup occur cluster ID error", zap.Reflect("error", v), zap.Uint64("storeID", storeID))
-		return nil, 0, errors.Annotatef(berrors.ErrKVClusterIDMismatch, "%v on storeID: %d", resp.Error, storeID)
 	default:
-		// UNSAFE! TODO: use meaningful error code instead of unstructured message to find failed to write error.
-		if utils.MessageIsRetryableStorageError(resp.GetError().GetMsg()) {
-			log.Warn("backup occur storage error", zap.String("error", resp.GetError().GetMsg()))
-			// back off 3000ms, for S3 is 99.99% available (i.e. the max outage time would less than 52.56mins per year),
-			// this time would be probably enough for s3 to resume.
+		res := errContext.HandleError(resp.Error, storeID)
+		switch res.Strategy {
+		case utils.GiveUpStrategy:
+			return nil, 0, errors.Annotatef(berrors.ErrKVUnknown, "storeID: %d OnBackupResponse error %s", storeID, res.Reason)
+		case utils.RetryStrategy:
 			return nil, 3000, nil
 		}
-		log.Error("backup occur unknown error", zap.String("error", resp.Error.GetMsg()), zap.Uint64("storeID", storeID))
-		return nil, 0, errors.Annotatef(berrors.ErrKVUnknown, "%v on storeID: %d", resp.Error, storeID)
 	}
+	return nil, 3000, errors.Annotatef(berrors.ErrKVUnknown, "unreachable")
 }
 
 func (bc *Client) handleFineGrained(
@@ -1273,12 +1246,13 @@ func (bc *Client) handleFineGrained(
 	}
 	hasProgress := false
 	backoffMill := 0
+	errContext := utils.NewErrorContext("handleFineGrainedBackup", 10)
 	err = SendBackup(
 		ctx, storeID, client, req,
 		// Handle responses with the same backoffer.
 		func(resp *backuppb.BackupResponse) error {
 			response, shouldBackoff, err1 :=
-				OnBackupResponse(storeID, bo, req.EndVersion, lockResolver, resp)
+				OnBackupResponse(storeID, bo, req.EndVersion, lockResolver, resp, errContext)
 			if err1 != nil {
 				return err1
 			}
@@ -1413,57 +1387,22 @@ func SendBackup(
 	var errReset error
 	var errBackup error
 
-	for retry := 0; retry < backupRetryTimes; retry++ {
-		logutil.CL(ctx).Info("try backup",
-			zap.Int("retry time", retry),
-		)
+	retry := -1
+	return utils.WithRetry(ctx, func() error {
+		retry += 1
+		if retry != 0 {
+			client, errReset = resetFn()
+			if errReset != nil {
+				return errors.Annotatef(errReset, "failed to reset backup connection on store:%d "+
+					"please check the tikv status", storeID)
+			}
+		}
+		logutil.CL(ctx).Info("try backup", zap.Int("retry time", retry))
 		errBackup = doSendBackup(ctx, client, req, respFn)
 		if errBackup != nil {
-			if isRetryableError(errBackup) {
-				time.Sleep(3 * time.Second)
-				client, errReset = resetFn()
-				if errReset != nil {
-					return errors.Annotatef(errReset, "failed to reset backup connection on store:%d "+
-						"please check the tikv status", storeID)
-				}
-				continue
-			}
-			logutil.CL(ctx).Error("fail to backup", zap.Uint64("StoreID", storeID), zap.Int("retry", retry))
 			return berrors.ErrFailedToConnect.Wrap(errBackup).GenWithStack("failed to create backup stream to store %d", storeID)
 		}
-		// finish backup
-		break
-	}
-	return nil
-}
 
-// gRPC communication cancelled with connection closing
-const (
-	gRPC_Cancel = "the client connection is closing"
-)
-
-// isRetryableError represents whether we should retry reset grpc connection.
-func isRetryableError(err error) bool {
-	// some errors can be retried
-	// https://github.com/pingcap/tidb/issues/34350
-	switch status.Code(err) {
-	case codes.Unavailable, codes.DeadlineExceeded,
-		codes.ResourceExhausted, codes.Aborted, codes.Internal:
-		{
-			log.Warn("backup met some errors, these errors can be retry 5 times", zap.Error(err))
-			return true
-		}
-	}
-
-	// At least, there are two possible cancel() call,
-	// one from backup range, another from gRPC, here we retry when gRPC cancel with connection closing
-	if status.Code(err) == codes.Canceled {
-		if s, ok := status.FromError(err); ok {
-			if strings.Contains(s.Message(), gRPC_Cancel) {
-				log.Warn("backup met grpc cancel error, this errors can be retry 5 times", zap.Error(err))
-				return true
-			}
-		}
-	}
-	return false
+		return nil
+	}, utils.NewBackupSSTBackoffer())
 }

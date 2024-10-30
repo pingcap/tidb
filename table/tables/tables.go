@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/meta/autoid"
+	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
@@ -64,11 +65,11 @@ type TableCommon struct {
 	// physicalTableID is a unique int64 to identify a physical table.
 	physicalTableID                 int64
 	Columns                         []*table.Column
-	PublicColumns                   []*table.Column
-	VisibleColumns                  []*table.Column
-	HiddenColumns                   []*table.Column
-	WritableColumns                 []*table.Column
-	FullHiddenColsAndVisibleColumns []*table.Column
+	publicColumns                   []*table.Column
+	visibleColumns                  []*table.Column
+	hiddenColumns                   []*table.Column
+	writableColumns                 []*table.Column
+	fullHiddenColsAndVisibleColumns []*table.Column
 	indices                         []table.Index
 	meta                            *model.TableInfo
 	allocs                          autoid.Allocators
@@ -131,15 +132,21 @@ func TableFromMeta(allocs autoid.Allocators, tblInfo *model.TableInfo) (table.Ta
 
 		col := table.ToColumn(colInfo)
 		if col.IsGenerated() {
-			expr, err := generatedexpr.ParseExpression(colInfo.GeneratedExprString)
+			genStr := colInfo.GeneratedExprString
+			expr, err := buildGeneratedExpr(tblInfo, genStr)
 			if err != nil {
 				return nil, err
 			}
-			expr, err = generatedexpr.SimpleResolveName(expr, tblInfo)
-			if err != nil {
-				return nil, err
-			}
-			col.GeneratedExpr = expr
+			col.GeneratedExpr = table.NewClonableExprNode(func() ast.ExprNode {
+				newExpr, err1 := buildGeneratedExpr(tblInfo, genStr)
+				if err1 != nil {
+					logutil.BgLogger().Warn("unexpected parse generated string error",
+						zap.String("generatedStr", genStr),
+						zap.Error(err1))
+					return expr
+				}
+				return newExpr
+			}, expr)
 		}
 		// default value is expr.
 		if col.DefaultIsExpr {
@@ -166,6 +173,18 @@ func TableFromMeta(allocs autoid.Allocators, tblInfo *model.TableInfo) (table.Ta
 	return newPartitionedTable(&t, tblInfo)
 }
 
+func buildGeneratedExpr(tblInfo *model.TableInfo, genExpr string) (ast.ExprNode, error) {
+	expr, err := generatedexpr.ParseExpression(genExpr)
+	if err != nil {
+		return nil, err
+	}
+	expr, err = generatedexpr.SimpleResolveName(expr, tblInfo)
+	if err != nil {
+		return nil, err
+	}
+	return expr, nil
+}
+
 // initTableCommon initializes a TableCommon struct.
 func initTableCommon(t *TableCommon, tblInfo *model.TableInfo, physicalTableID int64, cols []*table.Column, allocs autoid.Allocators) {
 	t.tableID = tblInfo.ID
@@ -173,11 +192,6 @@ func initTableCommon(t *TableCommon, tblInfo *model.TableInfo, physicalTableID i
 	t.allocs = allocs
 	t.meta = tblInfo
 	t.Columns = cols
-	t.PublicColumns = t.Cols()
-	t.VisibleColumns = t.VisibleCols()
-	t.HiddenColumns = t.HiddenCols()
-	t.WritableColumns = t.WritableCols()
-	t.FullHiddenColsAndVisibleColumns = t.FullHiddenColsAndVisibleCols()
 	t.recordPrefix = tablecodec.GenTableRecordPrefix(physicalTableID)
 	t.indexPrefix = tablecodec.GenTableIndexPrefix(physicalTableID)
 	if tblInfo.IsSequence() {
@@ -274,32 +288,32 @@ func (t *TableCommon) getCols(mode getColsMode) []*table.Column {
 
 // Cols implements table.Table Cols interface.
 func (t *TableCommon) Cols() []*table.Column {
-	if len(t.PublicColumns) > 0 {
-		return t.PublicColumns
+	if len(t.publicColumns) > 0 {
+		return t.publicColumns
 	}
 	return t.getCols(full)
 }
 
 // VisibleCols implements table.Table VisibleCols interface.
 func (t *TableCommon) VisibleCols() []*table.Column {
-	if len(t.VisibleColumns) > 0 {
-		return t.VisibleColumns
+	if len(t.visibleColumns) > 0 {
+		return t.visibleColumns
 	}
 	return t.getCols(visible)
 }
 
 // HiddenCols implements table.Table HiddenCols interface.
 func (t *TableCommon) HiddenCols() []*table.Column {
-	if len(t.HiddenColumns) > 0 {
-		return t.HiddenColumns
+	if len(t.hiddenColumns) > 0 {
+		return t.hiddenColumns
 	}
 	return t.getCols(hidden)
 }
 
 // WritableCols implements table WritableCols interface.
 func (t *TableCommon) WritableCols() []*table.Column {
-	if len(t.WritableColumns) > 0 {
-		return t.WritableColumns
+	if len(t.writableColumns) > 0 {
+		return t.writableColumns
 	}
 	writableColumns := make([]*table.Column, 0, len(t.Columns))
 	for _, col := range t.Columns {
@@ -318,8 +332,8 @@ func (t *TableCommon) DeletableCols() []*table.Column {
 
 // FullHiddenColsAndVisibleCols implements table FullHiddenColsAndVisibleCols interface.
 func (t *TableCommon) FullHiddenColsAndVisibleCols() []*table.Column {
-	if len(t.FullHiddenColsAndVisibleColumns) > 0 {
-		return t.FullHiddenColsAndVisibleColumns
+	if len(t.fullHiddenColsAndVisibleColumns) > 0 {
+		return t.fullHiddenColsAndVisibleColumns
 	}
 
 	cols := make([]*table.Column, 0, len(t.Columns))
@@ -1742,11 +1756,14 @@ func (t *TableCommon) calcChecksums(sctx sessionctx.Context, h kv.Handle, data [
 	}
 	checksums := make([]uint32, len(data))
 	for i, cols := range data {
-		row := rowcodec.RowData{Cols: cols, Data: buf}
+		row := rowcodec.RowData{
+			Cols: cols,
+			Data: buf,
+		}
 		if !sort.IsSorted(row) {
 			sort.Sort(row)
 		}
-		checksum, err := row.Checksum()
+		checksum, err := row.Checksum(sctx.GetSessionVars().StmtCtx.TimeZone)
 		buf = row.Data
 		if err != nil {
 			logWithContext(sctx, logutil.BgLogger().Error,

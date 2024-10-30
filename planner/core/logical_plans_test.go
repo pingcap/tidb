@@ -36,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/testkit/testdata"
 	"github.com/pingcap/tidb/util/hint"
+	"github.com/pingcap/tidb/util/mock"
 	"github.com/stretchr/testify/require"
 )
 
@@ -91,7 +92,22 @@ func createPlannerSuite() (s *plannerSuite) {
 		}
 	}
 	s.is = infoschema.MockInfoSchema(tblInfos)
-	s.ctx = MockContext()
+	ctx := mock.NewContext()
+	ctx.Store = &mock.Store{
+		Client: &mock.Client{},
+	}
+	initStatsCtx := mock.NewContext()
+	initStatsCtx.Store = &mock.Store{
+		Client: &mock.Client{},
+	}
+	ctx.GetSessionVars().CurrentDB = "test"
+	do := domain.NewMockDomain()
+	if err := do.CreateStatsHandle(ctx, initStatsCtx); err != nil {
+		panic(fmt.Sprintf("create mock context panic: %+v", err))
+	}
+	domain.BindDomain(ctx, do)
+	ctx.SetInfoSchema(s.is)
+	s.ctx = ctx
 	domain.GetDomain(s.ctx).MockInfoCacheAndLoadInfoSchema(s.is)
 	s.ctx.GetSessionVars().EnableWindowFunction = true
 	s.p = parser.New()

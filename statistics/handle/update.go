@@ -400,7 +400,7 @@ var (
 	// DumpStatsDeltaRatio is the lower bound of `Modify Count / Table Count` for stats delta to be dumped.
 	DumpStatsDeltaRatio = 1 / 10000.0
 	// dumpStatsMaxDuration is the max duration since last update.
-	dumpStatsMaxDuration = time.Hour
+	dumpStatsMaxDuration = 5 * time.Minute
 )
 
 // needDumpStatsDelta checks whether to dump stats delta.
@@ -427,7 +427,7 @@ func (h *Handle) needDumpStatsDelta(is infoschema.InfoSchema, mode dumpMode, id 
 		item.InitTime = currentTime
 	}
 	if currentTime.Sub(item.InitTime) > dumpStatsMaxDuration {
-		// Dump the stats to kv at least once an hour.
+		// Dump the stats to kv at least once 5 minutes.
 		return true
 	}
 	statsTbl := h.GetPartitionStats(tbl.Meta(), id)
@@ -1124,6 +1124,11 @@ func (h *Handle) HandleAutoAnalyze(is infoschema.InfoSchema) (analyzed bool) {
 			tbls[i], tbls[j] = tbls[j], tbls[i]
 		})
 		for _, tbl := range tbls {
+			// Sometimes the tables are too many. Auto-analyze will take too much time on it.
+			// so we need to check the available time.
+			if !timeutil.WithinDayTimePeriod(start, end, time.Now()) {
+				return false
+			}
 			//if table locked, skip analyze
 			if h.IsTableLocked(tbl.Meta().ID) {
 				continue

@@ -242,3 +242,25 @@ func TestReorganizePartitionRollback(t *testing.T) {
 	// test then add index should success
 	tk.MustExec("alter table t1 add index idx_kc (k, c)")
 }
+
+func TestPartitionExprContainsSchemaName(t *testing.T) {
+	store, _ := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("CREATE TABLE test.t1 (id1 int) PARTITION BY HASH( test.t1.id1 ) PARTITIONS 4;")
+	tk.MustExec("CREATE TABLE test.t2 (id2 int) PARTITION BY RANGE (test.t2.id2) (PARTITION p0 VALUES LESS THAN (6))")
+	tk.MustExec("CREATE TABLE test.t3 (id3 int) PARTITION BY LIST (test.t3.id3) (PARTITION p0 VALUES IN (1, 2))")
+	tk.MustQuery("show create table test.t1").Check(testkit.Rows("t1 CREATE TABLE `t1` (\n" +
+		"  `id1` int(11) DEFAULT NULL\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+		"PARTITION BY HASH (`id1`) PARTITIONS 4"))
+	tk.MustQuery("show create table test.t2").Check(testkit.Rows("t2 CREATE TABLE `t2` (\n" +
+		"  `id2` int(11) DEFAULT NULL\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+		"PARTITION BY RANGE (`id2`)\n" +
+		"(PARTITION `p0` VALUES LESS THAN (6))"))
+	tk.MustQuery("show create table test.t3").Check(testkit.Rows("t3 CREATE TABLE `t3` (\n" +
+		"  `id3` int(11) DEFAULT NULL\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+		"PARTITION BY LIST (`id3`)\n" +
+		"(PARTITION `p0` VALUES IN (1,2))"))
+}

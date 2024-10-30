@@ -517,3 +517,26 @@ func TestIssue43459(t *testing.T) {
 		"1 200000 2022-12-29",
 		"2 200000 2023-01-01"))
 }
+
+func TestIssue50082(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t(a bigint unsigned)" +
+		"PARTITION BY RANGE (`a`)" +
+		"(PARTITION `p0` VALUES LESS THAN (5086706)," +
+		" PARTITION `p1` VALUES LESS THAN (7268292)," +
+		" PARTITION `p2` VALUES LESS THAN (16545422)," +
+		" PARTITION `p3` VALUES LESS THAN (9223372036854775810));")
+	require.True(t, tk.HasNoPlan("select * from t where a BETWEEN -6895222 AND 3125507;", "TableDual"))
+
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t(a bigint)" +
+		"PARTITION BY RANGE (`a`)" +
+		"(PARTITION `p0` VALUES LESS THAN (5086706)," +
+		" PARTITION `p1` VALUES LESS THAN (7268292)," +
+		" PARTITION `p2` VALUES LESS THAN (16545422)," +
+		" PARTITION `p3` VALUES LESS THAN (9223372036854775807));")
+	require.True(t, tk.HasNoPlan("select * from t where a BETWEEN -6895222 AND 3125507;", "TableDual"))
+}

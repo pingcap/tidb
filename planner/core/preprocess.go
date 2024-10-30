@@ -139,7 +139,7 @@ func Preprocess(ctx context.Context, sctx sessionctx.Context, node ast.Node, pre
 	return errors.Trace(v.err)
 }
 
-type preprocessorFlag uint8
+type preprocessorFlag uint64
 
 const (
 	// inPrepare is set when visiting in prepare statement.
@@ -157,6 +157,8 @@ const (
 	inSequenceFunction
 	// initTxnContextProvider is set when we should init txn context in preprocess
 	initTxnContextProvider
+	// inAnalyze is set when visiting an analyze statement.
+	inAnalyze
 )
 
 // Make linter happy.
@@ -290,6 +292,9 @@ func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 		p.showTp = node.Tp
 		p.resolveShowStmt(node)
 	case *ast.SetOprSelectList:
+		if node.With != nil {
+			p.preprocessWith.cteStack = append(p.preprocessWith.cteStack, node.With.CTEs)
+		}
 		p.checkSetOprSelectList(node)
 	case *ast.DeleteTableList:
 		p.stmtTp = TypeDelete
@@ -390,6 +395,8 @@ func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 			p.sctx.GetSessionVars().StmtCtx.IsStaleness = true
 			p.IsStaleness = true
 		}
+	case *ast.AnalyzeTableStmt:
+		p.flag |= inAnalyze
 	default:
 		p.flag &= ^parentIsJoin
 	}
@@ -515,7 +522,7 @@ func (p *preprocessor) checkBindGrammar(originNode, hintedNode ast.StmtNode, def
 	}
 
 	// Check the bind operation is not on any temporary table.
-	tblNames := extractTableList(originNode, nil, false)
+	tblNames := ExtractTableList(originNode, false)
 	for _, tn := range tblNames {
 		tbl, err := p.tableByName(tn)
 		if err != nil {
@@ -636,6 +643,10 @@ func (p *preprocessor) Leave(in ast.Node) (out ast.Node, ok bool) {
 			p.preprocessWith.cteStack = p.preprocessWith.cteStack[0 : len(p.preprocessWith.cteStack)-1]
 		}
 	case *ast.SetOprStmt:
+		if x.With != nil {
+			p.preprocessWith.cteStack = p.preprocessWith.cteStack[0 : len(p.preprocessWith.cteStack)-1]
+		}
+	case *ast.SetOprSelectList:
 		if x.With != nil {
 			p.preprocessWith.cteStack = p.preprocessWith.cteStack[0 : len(p.preprocessWith.cteStack)-1]
 		}
@@ -1561,10 +1572,12 @@ func (p *preprocessor) handleTableName(tn *ast.TableName) {
 	if tn.Schema.String() != "" {
 		currentDB = tn.Schema.L
 	}
-	table, err = tryLockMDLAndUpdateSchemaIfNecessary(p.sctx, model.NewCIStr(currentDB), table, p.ensureInfoSchema())
-	if err != nil {
-		p.err = err
-		return
+	if !p.skipLockMDL() {
+		table, err = tryLockMDLAndUpdateSchemaIfNecessary(p.sctx, model.NewCIStr(currentDB), table, p.ensureInfoSchema())
+		if err != nil {
+			p.err = err
+			return
+		}
 	}
 
 	tableInfo := table.Meta()
@@ -1768,9 +1781,9 @@ func (p *preprocessor) hasAutoConvertWarning(colDef *ast.ColumnDef) bool {
 	if !sessVars.SQLMode.HasStrictMode() && colDef.Tp.GetType() == mysql.TypeVarchar {
 		colDef.Tp.SetType(mysql.TypeBlob)
 		if colDef.Tp.GetCharset() == charset.CharsetBin {
-			sessVars.StmtCtx.AppendWarning(dbterror.ErrAutoConvert.GenWithStackByArgs(colDef.Name.Name.O, "VARBINARY", "BLOB"))
+			sessVars.StmtCtx.AppendWarning(dbterror.ErrAutoConvert.FastGenByArgs(colDef.Name.Name.O, "VARBINARY", "BLOB"))
 		} else {
-			sessVars.StmtCtx.AppendWarning(dbterror.ErrAutoConvert.GenWithStackByArgs(colDef.Name.Name.O, "VARCHAR", "TEXT"))
+			sessVars.StmtCtx.AppendWarning(dbterror.ErrAutoConvert.FastGenByArgs(colDef.Name.Name.O, "VARCHAR", "TEXT"))
 		}
 		return true
 	}
@@ -1816,7 +1829,8 @@ func tryLockMDLAndUpdateSchemaIfNecessary(sctx sessionctx.Context, dbName model.
 		if !skipLock {
 			sctx.GetSessionVars().GetRelatedTableForMDL().Store(tableInfo.ID, int64(0))
 		}
-		domainSchema := domain.GetDomain(sctx).InfoSchema()
+		dom := domain.GetDomain(sctx)
+		domainSchema := dom.InfoSchema()
 		domainSchemaVer := domainSchema.SchemaMetaVersion()
 		var err error
 		tbl, err = domainSchema.TableByName(dbName, tableInfo.Name)
@@ -1849,7 +1863,7 @@ func tryLockMDLAndUpdateSchemaIfNecessary(sctx sessionctx.Context, dbName model.
 					}
 					copyTableInfo.Indices[i].State = model.StateWriteReorganization
 					dbInfo, _ := domainSchema.SchemaByName(dbName)
-					allocs := autoid.NewAllocatorsFromTblInfo(sctx.GetStore(), dbInfo.ID, copyTableInfo)
+					allocs := autoid.NewAllocatorsFromTblInfo(dom, dbInfo.ID, copyTableInfo)
 					tbl, err = table.TableFromMeta(allocs, copyTableInfo)
 					if err != nil {
 						return nil, err
@@ -1898,4 +1912,12 @@ func tryLockMDLAndUpdateSchemaIfNecessary(sctx sessionctx.Context, dbName model.
 		return tbl, nil
 	}
 	return tbl, nil
+}
+
+// skipLockMDL returns true if the preprocessor should skip the lock of MDL.
+func (p *preprocessor) skipLockMDL() bool {
+	// skip lock mdl for IMPORT INTO statement,
+	// because it's a batch process and will do both DML and DDL.
+	// skip lock mdl for ANALYZE statement.
+	return p.flag&inAnalyze > 0
 }

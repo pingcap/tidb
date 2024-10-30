@@ -130,3 +130,17 @@ func PanicToErr(err *error) {
 		log.Warn("PanicToErr: panicked, recovering and returning error", zap.StackSkip("stack", 1), logutil.ShortError(*err))
 	}
 }
+
+// CatchAndLogPanic recovers when the execution get panicked, and log the panic.
+// generally, this would be used with `defer`, like:
+//
+//	func foo() {
+//	  defer utils.CatchAndLogPanic()
+//	  maybePanic()
+//	}
+func CatchAndLogPanic() {
+	item := recover()
+	if item != nil {
+		log.Warn("CatchAndLogPanic: panicked, but ignored.", zap.StackSkip("stack", 1), zap.Any("panic", item))
+	}
+}

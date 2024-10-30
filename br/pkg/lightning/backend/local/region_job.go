@@ -17,6 +17,7 @@ package local
 import (
 	"container/heap"
 	"context"
+	goerrors "errors"
 	"strings"
 	"sync"
 	"time"
@@ -159,7 +160,7 @@ func (j *regionJob) convertStageTo(stage jobStageTp) {
 // we don't need to do cleanup for the pairs written to tikv if encounters an error,
 // tikv will take the responsibility to do so.
 // TODO: let client-go provide a high-level write interface.
-func (local *Backend) writeToTiKV(ctx context.Context, j *regionJob) error {
+func (local *Backend) writeToTiKV(pCtx context.Context, j *regionJob) (errRet error) {
 	if j.stage != regionScanned {
 		return nil
 	}
@@ -174,6 +175,19 @@ func (local *Backend) writeToTiKV(ctx context.Context, j *regionJob) error {
 		}
 		failpoint.Return(err)
 	})
+
+	ctx, cancel := context.WithTimeout(pCtx, 15*time.Minute)
+	defer cancel()
+	defer func() {
+		deadline, ok := ctx.Deadline()
+		if !ok {
+			// should not happen
+			return
+		}
+		if goerrors.Is(errRet, context.DeadlineExceeded) && time.Now().After(deadline) {
+			errRet = common.ErrWriteTooSlow
+		}
+	}()
 
 	apiVersion := local.tikvCodec.GetAPIVersion()
 	clientFactory := local.importClientFactory
@@ -437,6 +451,7 @@ func (local *Backend) ingest(ctx context.Context, j *regionJob) (err error) {
 			log.FromContext(ctx).Warn("meet underlying error, will retry ingest",
 				log.ShortError(err), logutil.SSTMetas(j.writeResult.sstMeta),
 				logutil.Region(j.region.Region), logutil.Leader(j.region.Leader))
+			j.lastRetryableErr = err
 			continue
 		}
 		canContinue, err := j.convertStageOnIngestError(resp)
@@ -487,6 +502,9 @@ func (local *Backend) checkWriteStall(
 // doIngest send ingest commands to TiKV based on regionJob.writeResult.sstMeta.
 // When meet error, it will remove finished sstMetas before return.
 func (local *Backend) doIngest(ctx context.Context, j *regionJob) (*sst.IngestResponse, error) {
+	failpoint.Inject("doIngestFailed", func() {
+		failpoint.Return(nil, errors.New("injected error"))
+	})
 	clientFactory := local.importClientFactory
 	supportMultiIngest := local.supportMultiIngest
 	shouldCheckWriteStall := local.ShouldCheckWriteStall

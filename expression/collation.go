@@ -177,6 +177,8 @@ func deriveCoercibilityForColumn(c *Column) Coercibility {
 	// For specified type null, it should return CoercibilityIgnorable, which means it got the lowest priority in DeriveCollationFromExprs.
 	if c.RetType.GetType() == mysql.TypeNull {
 		return CoercibilityIgnorable
+	} else if types.IsTypeBit(c.RetType) {
+		return CoercibilityImplicit
 	}
 
 	switch c.RetType.EvalType() {
@@ -374,6 +376,8 @@ func inferCollation(exprs ...Expression) *ExprCollation {
 	dstCharset, dstCollation := exprs[0].GetType().GetCharset(), exprs[0].GetType().GetCollate()
 	if exprs[0].GetType().EvalType() == types.ETJson {
 		dstCharset, dstCollation = charset.CharsetUTF8MB4, charset.CollationUTF8MB4
+	} else if types.IsTypeBit(exprs[0].GetType()) {
+		dstCharset, dstCollation = charset.CharsetBin, charset.CollationBin
 	}
 	unknownCS := false
 
@@ -384,6 +388,8 @@ func inferCollation(exprs ...Expression) *ExprCollation {
 		// see details https://github.com/pingcap/tidb/issues/31320#issuecomment-1010599311
 		if arg.GetType().EvalType() == types.ETJson {
 			argCharset, argCollation = charset.CharsetUTF8MB4, charset.CollationUTF8MB4
+		} else if types.IsTypeBit(arg.GetType()) {
+			argCharset, argCollation = charset.CharsetBin, charset.CollationBin
 		}
 		// If one of the arguments is binary charset, we allow it can be used with other charsets.
 		// If they have the same coercibility, let the binary charset one to be the winner because binary has more precedence.

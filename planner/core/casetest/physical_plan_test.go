@@ -1432,6 +1432,8 @@ func TestSingleConsumerCTE(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec("CREATE TABLE `t` (`a` int(11));")
+	tk.MustExec("create table t1 (c1 int primary key, c2 int, index c2 (c2));")
+	tk.MustExec("create table t2 (c1 int unique, c2 int);")
 	tk.MustExec("insert into t values (1), (5), (10), (15), (20), (30), (50);")
 
 	var (
@@ -2422,6 +2424,32 @@ func TestCountStarForTiFlash(t *testing.T) {
 	}
 
 	tk.MustExec("set @@tidb_allow_mpp=1; set @@tidb_enforce_mpp=1;")
+	for i, ts := range input {
+		testdata.OnRecord(func() {
+			output[i].SQL = ts
+			output[i].Plan = testdata.ConvertRowsToStrings(tk.MustQuery("explain format = 'brief' " + ts).Rows())
+		})
+		tk.MustQuery("explain format = 'brief' " + ts).Check(testkit.Rows(output[i].Plan...))
+	}
+}
+
+func TestIssues49377Plan(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists employee")
+	tk.MustExec("create table employee (employee_id int, name varchar(20), dept_id int)")
+
+	var (
+		input  []string
+		output []struct {
+			SQL     string
+			Plan    []string
+			Warning []string
+		}
+	)
+	planSuiteData := GetPlanSuiteData()
+	planSuiteData.LoadTestCases(t, &input, &output)
 	for i, ts := range input {
 		testdata.OnRecord(func() {
 			output[i].SQL = ts

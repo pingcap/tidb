@@ -57,7 +57,7 @@ func BenchmarkAllocator_Alloc(b *testing.B) {
 	if err != nil {
 		return
 	}
-	alloc := autoid.NewAllocator(store, 1, 2, false, autoid.RowIDAllocType)
+	alloc := autoid.NewAllocator(mockRequirement{store}, 1, 2, false, autoid.RowIDAllocType)
 	b.StartTimer()
 	for i := 0; i < b.N; i++ {
 		_, _, err := alloc.Alloc(ctx, 1, 1, 1)

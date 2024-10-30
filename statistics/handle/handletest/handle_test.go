@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
@@ -455,6 +456,39 @@ func TestInitStats(t *testing.T) {
 	table1 := h.GetTableStats(tbl.Meta())
 	internal.AssertTableEqual(t, table0, table1)
 	h.SetLease(0)
+}
+
+func TestInitStats51358(t *testing.T) {
+	originValue := config.GetGlobalConfig().Performance.LiteInitStats
+	defer func() {
+		config.GetGlobalConfig().Performance.LiteInitStats = originValue
+	}()
+	config.GetGlobalConfig().Performance.LiteInitStats = false
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	testKit := testkit.NewTestKit(t, store)
+	testKit.MustExec("use test")
+	testKit.MustExec("set @@session.tidb_analyze_version = 1")
+	testKit.MustExec("create table t(a int, b int, c int, primary key(a), key idx(b))")
+	testKit.MustExec("insert into t values (1,1,1),(2,2,2),(3,3,3),(4,4,4),(5,5,5),(6,7,8)")
+	testKit.MustExec("analyze table t")
+	h := dom.StatsHandle()
+	is := dom.InfoSchema()
+	// `Update` will not use load by need strategy when `Lease` is 0, and `InitStats` is only called when
+	// `Lease` is not 0, so here we just change it.
+	h.SetLease(time.Millisecond)
+
+	h.Clear()
+	require.NoError(t, h.InitStats(is))
+	tbl, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	require.NoError(t, err)
+	stats := h.GetTableStats(tbl.Meta())
+	for _, column := range stats.Columns {
+		if mysql.HasPriKeyFlag(column.Info.GetFlag()) {
+			// primary key column has no stats info, because primary key's is_index is false. so it cannot load the topn
+			require.Nil(t, column.TopN)
+		}
+		require.False(t, column.IsFullLoad())
+	}
 }
 
 func TestInitStatsVer2(t *testing.T) {
@@ -3063,24 +3097,6 @@ func TestStatsCacheUpdateSkip(t *testing.T) {
 	h.Update(is)
 	statsTbl2 := h.GetTableStats(tableInfo)
 	require.Equal(t, statsTbl2, statsTbl1)
-}
-
-func TestIssues24349(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	testKit := testkit.NewTestKit(t, store)
-	testKit.MustExec("use test")
-	testKit.MustExec("set @@tidb_partition_prune_mode='dynamic'")
-	testKit.MustExec("set @@tidb_analyze_version=2")
-	defer testKit.MustExec("set @@tidb_analyze_version=1")
-	defer testKit.MustExec("set @@tidb_partition_prune_mode='static'")
-	testKit.MustExec("create table t (a int, b int) partition by hash(a) partitions 3")
-	testKit.MustExec("insert into t values (0, 3), (0, 3), (0, 3), (0, 2), (1, 1), (1, 2), (1, 2), (1, 2), (1, 3), (1, 4), (2, 1), (2, 1)")
-	testKit.MustExec("analyze table t with 1 topn, 3 buckets")
-	testKit.MustQuery("show stats_buckets where partition_name='global'").Check(testkit.Rows(
-		"test t global a 0 0 2 2 0 2 0",
-		"test t global b 0 0 3 1 1 2 0",
-		"test t global b 0 1 10 1 4 4 0",
-	))
 }
 
 func TestIssues24401(t *testing.T) {

@@ -8,7 +8,7 @@ go_test(
         "mdl_test.go",
     ],
     flaky = True,
-    shard_count = 32,
+    shard_count = 34,
     deps = [
         "//config",
         "//ddl",

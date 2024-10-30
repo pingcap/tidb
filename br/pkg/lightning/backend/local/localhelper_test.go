@@ -249,6 +249,10 @@ func (c *testSplitClient) GetOperator(ctx context.Context, regionID uint64) (*pd
 }
 
 func (c *testSplitClient) ScanRegions(ctx context.Context, key, endKey []byte, limit int) ([]*split.RegionInfo, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+
 	if c.hook != nil {
 		key, endKey, limit = c.hook.BeforeScanRegions(ctx, key, endKey, limit)
 	}
@@ -477,7 +481,7 @@ func doTestBatchSplitRegionByRanges(ctx context.Context, t *testing.T, hook clie
 		start = end
 	}
 
-	err = local.SplitAndScatterRegionByRanges(ctx, ranges, nil, true, 1000)
+	err = local.SplitAndScatterRegionByRanges(ctx, ranges, true)
 	if len(errPat) == 0 {
 		require.NoError(t, err)
 	} else {
@@ -569,7 +573,7 @@ func TestMissingScatter(t *testing.T) {
 		start = end
 	}
 
-	err = local.SplitAndScatterRegionByRanges(ctx, ranges, nil, true, 1000)
+	err = local.SplitAndScatterRegionByRanges(ctx, ranges, true)
 	require.NoError(t, err)
 
 	splitHook.check(t, client)
@@ -732,7 +736,7 @@ func TestSplitAndScatterRegionInBatches(t *testing.T) {
 		})
 	}
 
-	err := local.SplitAndScatterRegionInBatches(ctx, ranges, nil, true, 1000, 4)
+	err := local.SplitAndScatterRegionInBatches(ctx, ranges, true, 4)
 	require.NoError(t, err)
 
 	rangeStart := codec.EncodeBytes([]byte{}, []byte("a"))
@@ -828,7 +832,7 @@ func doTestBatchSplitByRangesWithClusteredIndex(t *testing.T, hook clientHook) {
 		start = e
 	}
 
-	err := local.SplitAndScatterRegionByRanges(ctx, ranges, nil, true, 1000)
+	err := local.SplitAndScatterRegionByRanges(ctx, ranges, true)
 	require.NoError(t, err)
 
 	startKey := codec.EncodeBytes([]byte{}, rangeKeys[0])

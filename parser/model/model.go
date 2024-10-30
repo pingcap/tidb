@@ -1712,6 +1712,11 @@ type TableItemID struct {
 	IsIndex bool
 }
 
+// Key is used to generate unique key for TableItemID to use in the syncload
+func (t TableItemID) Key() string {
+	return fmt.Sprintf("%d#%d#%t", t.ID, t.TableID, t.IsIndex)
+}
+
 // PolicyRefInfo is the struct to refer the placement policy.
 type PolicyRefInfo struct {
 	ID   int64 `json:"id"`
@@ -1751,6 +1756,9 @@ func (p *PolicyInfo) Clone() *PolicyInfo {
 
 // DefaultJobInterval sets the default interval between TTL jobs
 const DefaultJobInterval = time.Hour
+
+// DefaultJobIntervalStr is the string representation of DefaultJobInterval
+const DefaultJobIntervalStr = "1h"
 
 // TTLInfo records the TTL config
 type TTLInfo struct {
@@ -1840,6 +1848,10 @@ func (p *PlacementSettings) String() string {
 
 	if len(p.LearnerConstraints) > 0 {
 		writeSettingStringToBuilder(sb, "LEARNER_CONSTRAINTS", p.LearnerConstraints)
+	}
+
+	if len(p.SurvivalPreferences) > 0 {
+		writeSettingStringToBuilder(sb, "SURVIVAL_PREFERENCES", p.SurvivalPreferences)
 	}
 
 	return sb.String()

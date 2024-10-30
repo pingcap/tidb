@@ -204,7 +204,7 @@ func (is *infoSchema) TableByName(schema, table model.CIStr) (t table.Table, err
 			return
 		}
 	}
-	return nil, ErrTableNotExists.GenWithStackByArgs(schema, table)
+	return nil, ErrTableNotExists.FastGenByArgs(schema, table)
 }
 
 func (is *infoSchema) TableIsView(schema, table model.CIStr) bool {

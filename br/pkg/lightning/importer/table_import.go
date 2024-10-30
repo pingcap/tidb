@@ -51,6 +51,7 @@ import (
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/mathutil"
+	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.uber.org/multierr"
 	"go.uber.org/zap"
 	"golang.org/x/exp/slices"
@@ -69,6 +70,8 @@ type TableImporter struct {
 	alloc     autoid.Allocators
 	logger    log.Logger
 	kvStore   tidbkv.Storage
+	etcdCli   *clientv3.Client
+	autoidCli *autoid.ClientDiscover
 
 	ignoreColumns map[string]struct{}
 }
@@ -82,13 +85,15 @@ func NewTableImporter(
 	cp *checkpoints.TableCheckpoint,
 	ignoreColumns map[string]struct{},
 	kvStore tidbkv.Storage,
+	etcdCli *clientv3.Client,
 	logger log.Logger,
 ) (*TableImporter, error) {
-	idAlloc := kv.NewPanickingAllocators(cp.AllocBase)
+	idAlloc := kv.NewPanickingAllocators(tableInfo.Core.SepAutoInc(), cp.AllocBase)
 	tbl, err := tables.TableFromMeta(idAlloc, tableInfo.Core)
 	if err != nil {
 		return nil, errors.Annotatef(err, "failed to tables.TableFromMeta %s", tableName)
 	}
+	autoidCli := autoid.NewClientDiscover(etcdCli)
 
 	return &TableImporter{
 		tableName:     tableName,
@@ -98,6 +103,8 @@ func NewTableImporter(
 		encTable:      tbl,
 		alloc:         idAlloc,
 		kvStore:       kvStore,
+		etcdCli:       etcdCli,
+		autoidCli:     autoidCli,
 		logger:        logger.With(zap.String("table", tableName)),
 		ignoreColumns: ignoreColumns,
 	}, nil
@@ -266,6 +273,19 @@ func (tr *TableImporter) populateChunks(ctx context.Context, rc *Controller, cp 
 		zap.Int("filesCnt", len(tableRegions)),
 	)
 	return err
+}
+
+// AutoIDRequirement implements autoid.Requirement.
+var _ autoid.Requirement = &TableImporter{}
+
+// Store implements the autoid.Requirement interface.
+func (tr *TableImporter) Store() tidbkv.Storage {
+	return tr.kvStore
+}
+
+// AutoIDClient implements the autoid.Requirement interface.
+func (tr *TableImporter) AutoIDClient() *autoid.ClientDiscover {
+	return tr.autoidCli
 }
 
 // RebaseChunkRowIDs rebase the row id of the chunks.
@@ -876,32 +896,34 @@ func (tr *TableImporter) postProcess(
 
 	// alter table set auto_increment
 	if cp.Status < checkpoints.CheckpointStatusAlteredAutoInc {
-		rc.alterTableLock.Lock()
 		tblInfo := tr.tableInfo.Core
 		var err error
+		// TODO why we have to rebase id for tidb backend??? remove it later.
 		if tblInfo.ContainsAutoRandomBits() {
 			ft := &common.GetAutoRandomColumn(tblInfo).FieldType
 			shardFmt := autoid.NewShardIDFormat(ft, tblInfo.AutoRandomBits, tblInfo.AutoRandomRangeBits)
 			maxCap := shardFmt.IncrementalBitsCapacity()
 			err = AlterAutoRandom(ctx, rc.db, tr.tableName, uint64(tr.alloc.Get(autoid.AutoRandomType).Base())+1, maxCap)
 		} else if common.TableHasAutoRowID(tblInfo) || tblInfo.GetAutoIncrementColInfo() != nil {
-			// only alter auto increment id iff table contains auto-increment column or generated handle.
-			// ALTER TABLE xxx AUTO_INCREMENT = yyy has a bad naming.
-			// if a table has implicit _tidb_rowid column & tbl.SepAutoID=false, then it works on _tidb_rowid
-			// allocator, even if the table has NO auto-increment column.
-			newBase := uint64(tr.alloc.Get(autoid.RowIDAllocType).Base()) + 1
-			err = AlterAutoIncrement(ctx, rc.db, tr.tableName, newBase)
-
-			if err == nil && isLocalBackend(rc.cfg) {
+			if isLocalBackend(rc.cfg) {
 				// for TiDB version >= 6.5.0, a table might have separate allocators for auto_increment column and _tidb_rowid,
 				// especially when a table has auto_increment non-clustered PK, it will use both allocators.
 				// And in this case, ALTER TABLE xxx AUTO_INCREMENT = xxx only works on the allocator of auto_increment column,
 				// not for allocator of _tidb_rowid.
 				// So we need to rebase IDs for those 2 allocators explicitly.
-				err = common.RebaseGlobalAutoID(ctx, adjustIDBase(newBase), tr.kvStore, tr.dbInfo.ID, tr.tableInfo.Core)
+				err = common.RebaseTableAllocators(ctx, map[autoid.AllocatorType]int64{
+					autoid.RowIDAllocType:    tr.alloc.Get(autoid.RowIDAllocType).Base(),
+					autoid.AutoIncrementType: tr.alloc.Get(autoid.AutoIncrementType).Base(),
+				}, tr, tr.dbInfo.ID, tr.tableInfo.Core)
+			} else {
+				// only alter auto increment id iff table contains auto-increment column or generated handle.
+				// ALTER TABLE xxx AUTO_INCREMENT = yyy has a bad naming.
+				// if a table has implicit _tidb_rowid column & tbl.SepAutoID=false, then it works on _tidb_rowid
+				// allocator, even if the table has NO auto-increment column.
+				newBase := uint64(tr.alloc.Get(autoid.RowIDAllocType).Base()) + 1
+				err = AlterAutoIncrement(ctx, rc.db, tr.tableName, newBase)
 			}
 		}
-		rc.alterTableLock.Unlock()
 		saveCpErr := rc.saveStatusCheckpoint(ctx, tr.tableName, checkpoints.WholeTableEngineID, err, checkpoints.CheckpointStatusAlteredAutoInc)
 		if err = firstErr(err, saveCpErr); err != nil {
 			return false, err

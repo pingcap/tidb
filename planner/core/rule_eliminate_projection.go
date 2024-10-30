@@ -130,7 +130,11 @@ func doPhysicalProjectionElimination(p PhysicalPlan) PhysicalPlan {
 	}
 	child := p.Children()[0]
 	if childProj, ok := child.(*PhysicalProjection); ok {
-		childProj.SetSchema(p.Schema())
+		// when current projection is an empty projection(schema pruned by column pruner), no need to reset child's schema
+		// TODO: avoid producing empty projection in column pruner.
+		if p.Schema().Len() != 0 {
+			childProj.SetSchema(p.Schema())
+		}
 	}
 	return child
 }

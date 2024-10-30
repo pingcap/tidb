@@ -237,3 +237,16 @@ with recursive cte1 as (select /*+ use_index_merge(t1) */ c1 from t1 where c1 < 
 explain with recursive cte1 as (select 1 c1, 1 c2, 1 c3 UNION ALL select /*+ use_index_merge(t_alias) */ c1 + 1, c2 + 1, c3 + 1 from cte1 t_alias where c1 < 10 or c2 < 10 and c3 < 10) select * from cte1 order by 1;
 show warnings;
 with recursive cte1 as (select 1 c1, 1 c2, 1 c3 UNION ALL select /*+ use_index_merge(t_alias) */ c1 + 1, c2 + 1, c3 + 1 from cte1 t_alias where c1 < 10 or c2 < 10 and c3 < 10) select * from cte1 order by 1;
+
+--echo # TestMultiValuedIndexWithoutRelatedColumnCondition
+drop table if exists t;
+create table t(a int, d json, index iad(a, (cast(d->'$.b' as signed array))));
+insert into t value(1,'{"b":[]}'), (2,'{"b":[]}');
+select * from t use index (iad) where a = 1;
+select * from t ignore index (iad) where a = 1;
+drop table if exists t;
+create table t (j json, key mvi( (cast(j as char(5) array)) ) );
+insert into t values ('[]');
+insert into t values ('["abc"]');
+select * from t use index (mvi) where json_contains(j, '[]');
+select * from t ignore index (mvi) where json_contains(j, '[]');

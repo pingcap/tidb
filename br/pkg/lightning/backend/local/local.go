@@ -56,6 +56,7 @@ import (
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/engine"
+	"github.com/pingcap/tidb/util/intest"
 	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/tikv/client-go/v2/oracle"
 	tikvclient "github.com/tikv/client-go/v2/tikv"
@@ -76,9 +77,6 @@ const (
 	dialTimeout             = 5 * time.Minute
 	maxRetryTimes           = 5
 	defaultRetryBackoffTime = 3 * time.Second
-	// maxWriteAndIngestRetryTimes is the max retry times for write and ingest.
-	// A large retry times is for tolerating tikv cluster failures.
-	maxWriteAndIngestRetryTimes = 30
 
 	gRPCKeepAliveTime    = 10 * time.Minute
 	gRPCKeepAliveTimeout = 5 * time.Minute
@@ -111,6 +109,10 @@ var (
 
 	errorEngineClosed     = errors.New("engine is closed")
 	maxRetryBackoffSecond = 30
+
+	// MaxWriteAndIngestRetryTimes is the max retry times for write and ingest.
+	// A large retry times is for tolerating tikv cluster failures.
+	MaxWriteAndIngestRetryTimes = 30
 )
 
 // ImportClientFactory is factory to create new import client for specific store.
@@ -277,6 +279,11 @@ func NewTargetInfoGetter(tls *common.TLS, db *sql.DB, pdCli pd.Client) backend.T
 		targetDB: db,
 		pdCli:    pdCli,
 	}
+}
+
+// FetchRemoteDBModels implements the `backend.TargetInfoGetter` interface.
+func (g *targetInfoGetter) FetchRemoteDBModels(ctx context.Context) ([]*model.DBInfo, error) {
+	return tikv.FetchRemoteDBModelsFromTLS(ctx, g.tls)
 }
 
 // FetchRemoteTableModels obtains the models of all tables given the schema name.
@@ -1086,7 +1093,7 @@ func (local *Backend) prepareAndSendJob(
 			failpoint.Break()
 		})
 
-		err = local.SplitAndScatterRegionInBatches(ctx, initialSplitRanges, engine.tableInfo, needSplit, regionSplitSize, maxBatchSplitRanges)
+		err = local.SplitAndScatterRegionInBatches(ctx, initialSplitRanges, needSplit, maxBatchSplitRanges)
 		if err == nil || common.IsContextCanceledError(err) {
 			break
 		}
@@ -1147,6 +1154,12 @@ func (local *Backend) generateAndSendJob(
 			}
 
 			failpoint.Inject("beforeGenerateJob", nil)
+			failpoint.Inject("sendDummyJob", func(_ failpoint.Value) {
+				// this is used to trigger worker failure, used together
+				// with WriteToTiKVNotEnoughDiskSpace
+				jobToWorkerCh <- &regionJob{}
+				time.Sleep(5 * time.Second)
+			})
 			jobs, err := local.generateJobForRange(egCtx, engine, r, regionSplitSize, regionSplitKeys)
 			if err != nil {
 				if common.IsContextCanceledError(err) {
@@ -1512,8 +1525,21 @@ func (local *Backend) doImport(ctx context.Context, engine *Engine, regionRanges
 			switch job.stage {
 			case regionScanned, wrote:
 				job.retryCount++
-				if job.retryCount > maxWriteAndIngestRetryTimes {
-					firstErr.Set(job.lastRetryableErr)
+				if job.retryCount > MaxWriteAndIngestRetryTimes {
+					lastErr := job.lastRetryableErr
+					if lastErr == nil {
+						if intest.InTest {
+							panic("lastRetryableErr should not be nil")
+						}
+						lastErr = errors.New("retry limit exceeded")
+						log.FromContext(ctx).Error(
+							"lastRetryableErr should not be nil",
+							logutil.Key("startKey", job.keyRange.start),
+							logutil.Key("endKey", job.keyRange.end),
+							zap.Stringer("stage", job.stage),
+							zap.Error(lastErr))
+					}
+					firstErr.Set(lastErr)
 					workerCancel()
 					jobWg.Done()
 					continue
@@ -1548,26 +1574,30 @@ func (local *Backend) doImport(ctx context.Context, engine *Engine, regionRanges
 		})
 	}
 
-	err := local.prepareAndSendJob(
-		workerCtx,
-		engine,
-		regionRanges,
-		regionSplitSize,
-		regionSplitKeys,
-		jobToWorkerCh,
-		&jobWg,
-	)
-	if err != nil {
-		firstErr.Set(err)
-		workerCancel()
-		_ = workGroup.Wait()
-		return firstErr.Get()
-	}
+	workGroup.Go(func() error {
+		err := local.prepareAndSendJob(
+			workerCtx,
+			engine,
+			regionRanges,
+			regionSplitSize,
+			regionSplitKeys,
+			jobToWorkerCh,
+			&jobWg,
+		)
+		if err != nil {
+			return err
+		}
 
-	jobWg.Wait()
-	workerCancel()
-	firstErr.Set(workGroup.Wait())
-	firstErr.Set(ctx.Err())
+		jobWg.Wait()
+		workerCancel()
+		return nil
+	})
+	if err := workGroup.Wait(); err != nil {
+		if !common.IsContextCanceledError(err) {
+			log.FromContext(ctx).Error("do import meets error", zap.Error(err))
+		}
+		firstErr.Set(err)
+	}
 	return firstErr.Get()
 }
 
