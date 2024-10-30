@@ -158,6 +158,12 @@ type StatsAnalyze interface {
 	// CheckAnalyzeVersion checks whether all the statistics versions of this table's columns and indexes are the same.
 	CheckAnalyzeVersion(tblInfo *model.TableInfo, physicalIDs []int64, version *int) bool
 
+	// OnBecomeOwner is used to handle the event when the current TiDB instance becomes the stats owner.
+	OnBecomeOwner()
+
+	// OnRetireOwner is used to handle the event when the current TiDB instance retires from being the stats owner.
+	OnRetireOwner()
+
 	// Close closes the analyze worker.
 	Close()
 }

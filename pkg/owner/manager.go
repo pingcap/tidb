@@ -554,3 +554,28 @@ func AcquireDistributedLock(
 		}
 	}, nil
 }
+
+// OwnerListeners is a list of listeners.
+// A way to broadcast events to multiple listeners.
+type OwnerListeners struct {
+	listeners []Listener
+}
+
+// OnBecomeOwner broadcasts the OnBecomeOwner event to all listeners.
+func (ol *OwnerListeners) OnBecomeOwner() {
+	for _, l := range ol.listeners {
+		l.OnBecomeOwner()
+	}
+}
+
+// OnRetireOwner broadcasts the OnRetireOwner event to all listeners.
+func (ol *OwnerListeners) OnRetireOwner() {
+	for _, l := range ol.listeners {
+		l.OnRetireOwner()
+	}
+}
+
+// NewOwnerListeners creates a new OwnerListeners.
+func NewOwnerListeners(listeners ...Listener) *OwnerListeners {
+	return &OwnerListeners{listeners: listeners}
+}
