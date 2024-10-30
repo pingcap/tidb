@@ -3682,7 +3682,8 @@ func runInBootstrapSession(store kv.Storage, ver int64) {
 	startMode := getStartMode(ver)
 
 	if startMode == ddl.Upgrade {
-		// TODO at this time domain hasn't created, we need to make sure this in a clear way
+		// TODO at this time domain must not be created, else it will register server
+		// info, and cause deadlock, we need to make sure this in a clear way
 		logutil.BgLogger().Info("[upgrade] get owner lock to upgrade")
 		releaseFn, err := acquireLock(store)
 		if err != nil {
@@ -3874,7 +3875,7 @@ func mustGetStoreBootstrapVersion(store kv.Storage) int64 {
 		return err
 	})
 	if err != nil {
-		logutil.BgLogger().Fatal("check bootstrapped failed", zap.Error(err))
+		logutil.BgLogger().Fatal("get store bootstrap version failed", zap.Error(err))
 	}
 	return ver
 }
