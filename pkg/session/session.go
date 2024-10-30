@@ -3685,6 +3685,11 @@ func runInBootstrapSession(store kv.Storage, ver int64) {
 		// Bootstrap fail will cause program exit.
 		logutil.BgLogger().Fatal("createSession error", zap.Error(err))
 	}
+	// For the bootstrap SQLs, the following variables should be compatible with old TiDB versions.
+	// TODO we should have a createBootstrapSession to init those special variables.
+	s.sessionVars.EnableClusteredIndex = variable.ClusteredIndexDefModeIntOnly
+	s.SetValue(sessionctx.Initing, true)
+
 	if startMode == ddl.Upgrade {
 		releaseFn, ok := acquireLock(s)
 		if !ok {
@@ -3710,10 +3715,6 @@ func runInBootstrapSession(store kv.Storage, ver int64) {
 		logutil.BgLogger().Fatal("start domain error", zap.Error(err))
 	}
 
-	// For the bootstrap SQLs, the following variables should be compatible with old TiDB versions.
-	s.sessionVars.EnableClusteredIndex = variable.ClusteredIndexDefModeIntOnly
-
-	s.SetValue(sessionctx.Initing, true)
 	if startMode == ddl.Bootstrap {
 		bootstrap(s)
 	} else if startMode == ddl.Upgrade {
