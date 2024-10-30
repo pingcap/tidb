@@ -51,6 +51,51 @@ var supportedPushdownFuncs = map[string]struct{}{
 	ast.Upper: {},
 }
 
+func (helper *extractHelper) rewriteExpression(
+	expr expression.Expression,
+	colName string,
+	colIDMapping map[int64]*types.FieldName,
+) expression.Expression {
+	e, ok := expr.(*expression.ScalarFunction)
+	if !ok {
+		return expr
+	}
+
+	// switch helper.getStringFunctionName(e) {
+	// case ast.EQ:
+	// 	return helper.extractFromBinaryOpConsExpr(ctx, extractCols, fn)
+	// case ast.LogicOr:
+	// 	return helper.extractFromOrExpr(ctx, extractCols, fn)
+	// case ast.In:
+	// 	return helper.extractFromInConsExpr(ctx, extractCols, fn)
+	// default:
+	// 	return "", nil
+	// }
+
+	if _, ok := supportedPushdownFuncs[e.FuncName.L]; ok {
+		args := e.GetArgs()
+		if len(args) != 1 {
+			return e
+		}
+
+		newArg := helper.rewriteExpression(args[0], colName, colIDMapping)
+		if col, ok := newArg.(*expression.Column); ok {
+			if name, ok := colIDMapping[col.ID]; ok && name.ColName.L == colName {
+				return col
+			}
+		}
+		args[0] = newArg
+		return e
+	}
+
+	args := e.GetArgs()
+	for i, arg := range args {
+		args[i] = helper.rewriteExpression(arg, colName, colIDMapping)
+	}
+
+	return e
+}
+
 // extract const datum from expression
 func extractConstant(
 	ctx base.PlanContext,
@@ -246,7 +291,7 @@ func (helper *extractHelper) extractCol(
 	names []*types.FieldName,
 	predicates []expression.Expression,
 	extractColName string,
-	valueToLower bool,
+	caseInsensitive bool,
 ) (
 	remained []expression.Expression,
 	skipRequest bool,
@@ -254,13 +299,17 @@ func (helper *extractHelper) extractCol(
 ) {
 	remained = make([]expression.Expression, 0, len(predicates))
 	result = set.NewStringSet()
-	extractCols := helper.findColumn(schema, names, extractColName)
-	if len(extractCols) == 0 {
+	extractColIDMapping := helper.findColumn(schema, names, extractColName)
+	if len(extractColIDMapping) == 0 {
 		return predicates, false, result
 	}
 
 	// We should use INTERSECTION of sets because of the predicates is CNF array
 	for _, expr := range predicates {
+		if caseInsensitive {
+			expr = helper.rewriteExpression(expr, extractColName, extractColIDMapping)
+		}
+
 		fn, ok := expr.(*expression.ScalarFunction)
 		if !ok {
 			remained = append(remained, expr)
@@ -271,15 +320,15 @@ func (helper *extractHelper) extractCol(
 		switch helper.getStringFunctionName(fn) {
 		case ast.EQ:
 			helper.enableScalarPushDown = true
-			colName, datums = helper.extractFromBinaryOpConsExpr(ctx, extractCols, fn)
+			colName, datums = helper.extractFromBinaryOpConsExpr(ctx, extractColIDMapping, fn)
 			helper.enableScalarPushDown = false
 		case ast.In:
-			colName, datums = helper.extractFromInConsExpr(ctx, extractCols, fn)
+			colName, datums = helper.extractFromInConsExpr(ctx, extractColIDMapping, fn)
 		case ast.LogicOr:
-			colName, datums = helper.extractFromOrExpr(ctx, extractCols, fn)
+			colName, datums = helper.extractFromOrExpr(ctx, extractColIDMapping, fn)
 		}
 		if colName == extractColName {
-			result = helper.merge(result, datums, valueToLower)
+			result = helper.merge(result, datums, caseInsensitive)
 			skipRequest = len(result) == 0
 		} else {
 			remained = append(remained, expr)
