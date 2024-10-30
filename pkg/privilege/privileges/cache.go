@@ -456,7 +456,7 @@ func (p *immutable) loadSomeUsers(ctx sessionctx.Context, userList ...string) er
 	return nil
 }
 
-func dedupSorted[S ~[]E, E any](s S, eq func(a, b E) bool) S {
+func dedupSortedKeepLast[S ~[]E, E any](s S, eq func(a, b E) bool) S {
 	skip := 0
 	for i := 1; i < len(s); i++ {
 		if eq(s[i], s[i-1]) {
@@ -477,7 +477,7 @@ func (p *MySQLPrivilege) merge(diff *immutable) *MySQLPrivilege {
 
 	// sort and dedup
 	slices.SortStableFunc(ret.user, compareUserRecord)
-	ret.user = dedupSorted(ret.user, func(x, y UserRecord) bool { return x.User == y.User && x.Host == y.Host })
+	ret.user = dedupSortedKeepLast(ret.user, func(x, y UserRecord) bool { return x.User == y.User && x.Host == y.Host })
 	ret.buildUserMap()
 
 	ret.db = make([]dbRecord, 0, len(p.db)+len(diff.db))
@@ -494,7 +494,7 @@ func (p *MySQLPrivilege) merge(diff *immutable) *MySQLPrivilege {
 	ret.columnsPriv = append(ret.columnsPriv, p.columnsPriv...)
 	ret.columnsPriv = append(ret.columnsPriv, diff.columnsPriv...)
 	slices.SortStableFunc(ret.columnsPriv, compareColumnsPrivRecord)
-	ret.columnsPriv = dedupSorted(ret.columnsPriv, func(x, y columnsPrivRecord) bool {
+	ret.columnsPriv = dedupSortedKeepLast(ret.columnsPriv, func(x, y columnsPrivRecord) bool {
 		return x.Host == y.Host && x.User == y.User &&
 			x.DB == y.DB && x.TableName == y.TableName && x.ColumnName == y.ColumnName
 	})
@@ -503,7 +503,7 @@ func (p *MySQLPrivilege) merge(diff *immutable) *MySQLPrivilege {
 	ret.defaultRoles = append(ret.defaultRoles, p.defaultRoles...)
 	ret.defaultRoles = append(ret.defaultRoles, diff.defaultRoles...)
 	slices.SortStableFunc(ret.defaultRoles, compareDefaultRoleRecord)
-	ret.defaultRoles = dedupSorted(ret.defaultRoles, func(x, y defaultRoleRecord) bool {
+	ret.defaultRoles = dedupSortedKeepLast(ret.defaultRoles, func(x, y defaultRoleRecord) bool {
 		return x.Host == y.Host && x.User == y.User
 	})
 
@@ -516,7 +516,7 @@ func (p *MySQLPrivilege) merge(diff *immutable) *MySQLPrivilege {
 	ret.globalPriv = append(ret.globalPriv, p.globalPriv...)
 	ret.globalPriv = append(ret.globalPriv, diff.globalPriv...)
 	slices.SortStableFunc(ret.globalPriv, compareGlobalPrivRecord)
-	ret.globalPriv = dedupSorted(ret.globalPriv, func(x, y globalPrivRecord) bool {
+	ret.globalPriv = dedupSortedKeepLast(ret.globalPriv, func(x, y globalPrivRecord) bool {
 		return x.Host == y.Host && x.User == y.User
 	})
 	ret.buildGlobalMap()
@@ -1844,8 +1844,13 @@ func (h *Handle) ensureActiveUser(user string) error {
 		return errors.Trace(err)
 	}
 
-	old := h.Get()
-	h.priv.Store(old.merge(&data))
+	for {
+		old := h.Get()
+		swapped := h.priv.CompareAndSwap(old, old.merge(&data))
+		if swapped {
+			break
+		}
+	}
 	h.activeUsers.Store(user, struct{}{})
 
 	return nil
