@@ -15,6 +15,7 @@
 package refresher
 
 import (
+	stderrors "errors"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -132,11 +133,15 @@ func (r *Refresher) AnalyzeHighestPriorityTables() bool {
 
 	analyzedCount := 0
 	for analyzedCount < remainConcurrency {
-		// TODO: Change the API to avoid return error.
 		job, err := r.jobs.Pop()
 		if err != nil {
 			// No more jobs to analyze.
-			break
+			if stderrors.Is(err, priorityqueue.ErrHeapIsEmpty) {
+				break
+			}
+			intest.Assert(false, "Failed to pop job from the queue", zap.Error(err))
+			statslogutil.StatsLogger().Error("Failed to pop job from the queue", zap.Error(err))
+			return false
 		}
 
 		if _, isRunning := currentRunningJobs[job.GetTableID()]; isRunning {
