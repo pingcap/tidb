@@ -104,5 +104,5 @@ func TestTimeoutRecvCanceled(t *testing.T) {
 
 	tctx, trecv := StartTimeoutRecv(cctx, time.Hour)
 	trecv.Stop()
-	require.Error(t, tctx.Err())
+	require.Equal(t, "context canceled", tctx.Err().Error())
 }
