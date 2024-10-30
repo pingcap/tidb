@@ -131,6 +131,7 @@ func TestScanWorkerSchedule(t *testing.T) {
 
 	tbl := newMockTTLTbl(t, "t1")
 	w := NewMockScanWorker(t)
+	defer w.sessPoll.AssertNoSessionInUse()
 	w.setOneRowResult(tbl, 7)
 	defer w.stopWithWait()
 
@@ -180,6 +181,7 @@ func TestScanWorkerScheduleWithFailedTask(t *testing.T) {
 
 	tbl := newMockTTLTbl(t, "t1")
 	w := NewMockScanWorker(t)
+	defer w.sessPoll.AssertNoSessionInUse()
 	w.clearInfoSchema()
 	defer w.stopWithWait()
 
@@ -392,6 +394,7 @@ func (t *mockScanTask) execSQL(_ context.Context, sql string, _ ...any) ([]chunk
 
 func TestScanTaskDoScan(t *testing.T) {
 	task := newMockScanTask(t, 3)
+	defer task.sessPool.AssertNoSessionInUse()
 	task.ctx = cache.SetMockExpireTime(task.ctx, time.Now())
 	task.sqlRetry[1] = scanTaskExecuteSQLMaxRetry
 	task.runDoScanForTest(3, "")
@@ -413,6 +416,7 @@ func TestScanTaskDoScan(t *testing.T) {
 func TestScanTaskCheck(t *testing.T) {
 	tbl := newMockTTLTbl(t, "t1")
 	pool := newMockSessionPool(t, tbl)
+	defer pool.AssertNoSessionInUse()
 	pool.se.rows = newMockRows(t, types.NewFieldType(mysql.TypeInt24)).Append(12).Rows()
 	ctx := cache.SetMockExpireTime(context.Background(), time.Unix(100, 0))
 
