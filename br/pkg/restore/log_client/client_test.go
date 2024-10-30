@@ -24,7 +24,6 @@ import (
 
 	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
-	backup "github.com/pingcap/kvproto/pkg/brpb"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/kvproto/pkg/import_sstpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
@@ -1936,7 +1935,7 @@ func TestCompactedSplitStrategyWithCheckpoint(t *testing.T) {
 
 func fakeSubCompactionWithMultiSsts(tableID, rowID int64, length uint64, num uint64) *backuppb.LogFileSubcompaction {
 	return &backuppb.LogFileSubcompaction{
-		Meta: &backup.LogFileSubcompactionMeta{
+		Meta: &backuppb.LogFileSubcompactionMeta{
 			TableId: tableID,
 		},
 		SstOutputs: []*backuppb.File{
@@ -1959,7 +1958,7 @@ func fakeSubCompactionWithMultiSsts(tableID, rowID int64, length uint64, num uin
 }
 func fakeSubCompactionWithOneSst(tableID, rowID int64, length uint64, num uint64) *backuppb.LogFileSubcompaction {
 	return &backuppb.LogFileSubcompaction{
-		Meta: &backup.LogFileSubcompactionMeta{
+		Meta: &backuppb.LogFileSubcompactionMeta{
 			TableId: tableID,
 		},
 		SstOutputs: []*backuppb.File{

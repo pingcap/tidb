@@ -99,7 +99,6 @@ go_test(
         "//br/pkg/restore/utils",
         "//br/pkg/rtree",
         "//br/pkg/utils",
-        "//br/pkg/utiltest",
         "//pkg/domain",
         "//pkg/kv",
         "//pkg/meta/model",
