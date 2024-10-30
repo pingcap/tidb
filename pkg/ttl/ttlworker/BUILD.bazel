@@ -86,6 +86,7 @@ go_test(
         "//pkg/statistics/handle/autoanalyze/exec",
         "//pkg/store/mockstore",
         "//pkg/testkit",
+        "//pkg/testkit/testfailpoint",
         "//pkg/timer/api",
         "//pkg/timer/tablestore",
         "//pkg/ttl/cache",
