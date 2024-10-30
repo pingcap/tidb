@@ -30,8 +30,9 @@ import (
 func TestSetDataFromCheckConstraints(t *testing.T) {
 	tblInfos := []*model.TableInfo{
 		{
-			ID:   1,
-			Name: pmodel.NewCIStr("t1"),
+			ID:    1,
+			Name:  pmodel.NewCIStr("t1"),
+			State: model.StatePublic,
 		},
 		{
 			ID:   2,
@@ -51,6 +52,7 @@ func TestSetDataFromCheckConstraints(t *testing.T) {
 					State:      model.StatePublic,
 				},
 			},
+			State: model.StatePublic,
 		},
 		{
 			ID:   3,
@@ -70,6 +72,7 @@ func TestSetDataFromCheckConstraints(t *testing.T) {
 					State:      model.StateDeleteOnly,
 				},
 			},
+			State: model.StatePublic,
 		},
 	}
 	mockIs := infoschema.MockInfoSchema(tblInfos)
@@ -91,8 +94,9 @@ func TestSetDataFromTiDBCheckConstraints(t *testing.T) {
 	sctx := defaultCtx()
 	tblInfos := []*model.TableInfo{
 		{
-			ID:   1,
-			Name: pmodel.NewCIStr("t1"),
+			ID:    1,
+			Name:  pmodel.NewCIStr("t1"),
+			State: model.StatePublic,
 		},
 		{
 			ID:   2,
@@ -112,6 +116,7 @@ func TestSetDataFromTiDBCheckConstraints(t *testing.T) {
 					State:      model.StatePublic,
 				},
 			},
+			State: model.StatePublic,
 		},
 		{
 			ID:   3,
@@ -131,6 +136,7 @@ func TestSetDataFromTiDBCheckConstraints(t *testing.T) {
 					State:      model.StateDeleteOnly,
 				},
 			},
+			State: model.StatePublic,
 		},
 	}
 	mockIs := infoschema.MockInfoSchema(tblInfos)
