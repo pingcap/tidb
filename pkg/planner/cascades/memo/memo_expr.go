@@ -27,9 +27,9 @@ import (
 //
 //	of logical plan and group expression.
 //
-// Thus, memoExpr is responsible for representing both of them, leveraging the unified portal of
+// # Thus, memoExpr is responsible for representing both of them, leveraging the unified portal of
 //
-//	managing memo group generation and hashing functionality.
+// MemoExpression managing memo group generation and hashing functionality.
 type MemoExpression struct {
 	LP base.LogicalPlan
 
