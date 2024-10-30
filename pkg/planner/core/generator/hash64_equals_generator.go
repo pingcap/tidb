@@ -15,6 +15,9 @@
 package main
 
 import (
+	"bytes"
+	"fmt"
+	"go/format"
 	"log"
 	"os"
 	"reflect"
@@ -32,7 +35,7 @@ import (
 // If a field is not tagged, then it will be skipped.
 func GenHash64Equals4LogicalOps() ([]byte, error) {
 	var structures = []any{logicalop.LogicalJoin{}}
-	c := new(codeGen)
+	c := new(cc)
 	c.write(codeGenHash64EqualsPrefix)
 	for _, s := range structures {
 		code, err := genHash64EqualsForLogicalOps(s)
@@ -47,7 +50,7 @@ func GenHash64Equals4LogicalOps() ([]byte, error) {
 var HashEqualsType = reflect.TypeOf((*base.HashEquals)(nil)).Elem()
 
 func genHash64EqualsForLogicalOps(x any) ([]byte, error) {
-	c := new(codeGen)
+	c := new(cc)
 	vType := reflect.TypeOf(x)
 	c.write("// Hash64 implements the Hash64Equals interface.")
 	c.write("func (op *%v) Hash64(h base.Hasher) {", vType.Name())
@@ -88,7 +91,7 @@ func isHash64EqualsField(fType reflect.StructField) bool {
 	return false
 }
 
-func (c *codeGen) Hash64Element(fType reflect.Type, callName string) {
+func (c *cc) Hash64Element(fType reflect.Type, callName string) {
 	switch fType.Kind() {
 	case reflect.Slice:
 		c.write("h.HashInt(len(%v))", callName)
@@ -113,6 +116,19 @@ func (c *codeGen) Hash64Element(fType reflect.Type, callName string) {
 			panic("doesn't support element type" + fType.Kind().String())
 		}
 	}
+}
+
+type cc struct {
+	buffer bytes.Buffer
+}
+
+func (c *cc) write(format string, args ...any) {
+	c.buffer.WriteString(fmt.Sprintf(format, args...))
+	c.buffer.WriteString("\n")
+}
+
+func (c *cc) format() ([]byte, error) {
+	return format.Source(c.buffer.Bytes())
 }
 
 const codeGenHash64EqualsPrefix = `// Copyright 2024 PingCAP, Inc.

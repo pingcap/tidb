@@ -241,7 +241,7 @@ func clonePhysicalPlansForPlanCache(newCtx base.PlanContext, plans []base.Physic
 }
 `
 
-func main1() {
+func main() {
 	fileData, err := GenPlanCloneForPlanCacheCode()
 	if err != nil {
 		log.Fatalln("failed to generate plan_clone_generated.go", err)
