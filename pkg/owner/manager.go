@@ -86,7 +86,8 @@ type Manager interface {
 const (
 	keyOpDefaultTimeout = 5 * time.Second
 
-	waitTimeOnForceOwner = 5 * time.Second
+	// WaitTimeOnForceOwner is the time to wait before or after force to be owner.
+	WaitTimeOnForceOwner = 5 * time.Second
 )
 
 // OpType is the owner key value operation type.
@@ -207,7 +208,7 @@ func (m *ownerManager) ForceToBeOwner(context.Context) error {
 	for i := 0; i < 3; i++ {
 		// we need to sleep in every retry, as other TiDB nodes will start campaign
 		// immediately after we delete their key.
-		time.Sleep(waitTimeOnForceOwner)
+		time.Sleep(WaitTimeOnForceOwner)
 		if err = m.tryToBeOwnerOnce(); err != nil {
 			logutil.Logger(m.logCtx).Warn("failed to retire owner on older version", zap.Error(err))
 			continue
@@ -639,13 +640,13 @@ func AcquireDistributedLock(
 		}
 		return nil, err
 	}
-	logutil.Logger(ctx).Info("acquire distributed flush lock success", zap.String("key", key))
+	logutil.Logger(ctx).Info("acquire distributed lock success", zap.String("key", key))
 	return func() {
 		err = mu.Unlock(ctx)
 		if err != nil {
-			logutil.Logger(ctx).Warn("release distributed flush lock error", zap.Error(err), zap.String("key", key))
+			logutil.Logger(ctx).Warn("release distributed lock error", zap.Error(err), zap.String("key", key))
 		} else {
-			logutil.Logger(ctx).Info("release distributed flush lock success", zap.String("key", key))
+			logutil.Logger(ctx).Info("release distributed lock success", zap.String("key", key))
 		}
 		err = se.Close()
 		if err != nil {
