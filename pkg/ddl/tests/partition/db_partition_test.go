@@ -1455,7 +1455,6 @@ func TestTruncatePartitionWithGlobalIndex(t *testing.T) {
 	tk2.MustQuery(`select c from test_global use index(idx_c) where c = 15`).Check(testkit.Rows())
 	err = tk2.ExecToErr(`insert into test_global values (15,15,15)`)
 	require.NoError(t, err)
-	//require.ErrorContains(t, err, "[kv:1062]Duplicate entry '15' for key 'test_global.idx_b'")
 	tk2.MustExec(`begin`)
 	tk3.MustExec(`commit`)
 	tk.MustExec(`commit`)
