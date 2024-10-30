@@ -12,8 +12,6 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//go:build ignore
-
 package main
 
 import (
@@ -427,7 +425,7 @@ func handleFlags(flag string) string {
 
 func handleFlag(f string) (found bool) {
 	tmp := os.Args[:0]
-	for range len(os.Args) {
+	for i := range len(os.Args) {
 		if os.Args[i] == f {
 			found = true
 			continue
@@ -1009,7 +1007,7 @@ func filter(input []string, f func(string) bool) []string {
 }
 
 func shuffle(tasks []task) {
-	for range len(tasks) {
+	for i := range len(tasks) {
 		pos := rand.Intn(len(tasks))
 		tasks[i], tasks[pos] = tasks[pos], tasks[i]
 	}
