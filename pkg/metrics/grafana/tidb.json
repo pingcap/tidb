@@ -17275,7 +17275,7 @@
           "timeFrom": null,
           "timeRegions": [],
           "timeShift": null,
-          "title": "Sync Load Latency P99.99",
+          "title": "Sync Load Latency P9999",
           "tooltip": {
             "shared": true,
             "sort": 0,
