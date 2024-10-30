@@ -29,7 +29,6 @@ import (
 	"github.com/pingcap/tidb/br/pkg/pdutil"
 	"github.com/pingcap/tidb/br/pkg/restore"
 	"github.com/pingcap/tidb/br/pkg/restore/split"
-	"github.com/pingcap/tidb/br/pkg/utiltest"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
 )
@@ -97,9 +96,9 @@ func TestRestorePreWork(t *testing.T) {
 			_, ok := pdutil.Schedulers[key]
 			require.True(t, ok)
 		}
-		require.Equal(t, len(utiltest.ExistPDCfgGeneratorBefore), len(cfg.ScheduleCfg))
+		require.Equal(t, len(split.ExistPDCfgGeneratorBefore), len(cfg.ScheduleCfg))
 		for key, value := range cfg.ScheduleCfg {
-			expectValue, ok := utiltest.ExistPDCfgGeneratorBefore[key]
+			expectValue, ok := split.ExistPDCfgGeneratorBefore[key]
 			require.True(t, ok)
 			require.Equal(t, expectValue, value)
 		}
@@ -124,9 +123,9 @@ func TestRestorePreWork(t *testing.T) {
 	{
 		cfgs, err := pdHTTPCli.GetConfig(context.TODO())
 		require.NoError(t, err)
-		require.Equal(t, len(utiltest.ExistPDCfgGeneratorBefore), len(cfg.ScheduleCfg))
+		require.Equal(t, len(split.ExistPDCfgGeneratorBefore), len(cfg.ScheduleCfg))
 		for key, value := range cfgs {
-			expectValue, ok := utiltest.ExistPDCfgGeneratorBefore[key[len("schedule."):]]
+			expectValue, ok := split.ExistPDCfgGeneratorBefore[key[len("schedule."):]]
 			require.True(t, ok)
 			require.Equal(t, expectValue, value)
 		}

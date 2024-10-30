@@ -74,8 +74,8 @@ const (
 const minBatchDdlSize = 1
 
 type SnapClient struct {
-	fileImporter *SnapFileImporter
 	// Tool clients used by SnapClient
+	fileImporter *SnapFileImporter
 	pdClient     pd.Client
 	pdHTTPClient pdhttp.Client
 

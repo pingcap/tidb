@@ -49,11 +49,12 @@ func MockClient(dbs map[string]*metautil.Database) *SnapClient {
 func MockCallSetSpeedLimit(ctx context.Context, fakeImportClient importclient.ImporterClient, rc *SnapClient, concurrency uint) (err error) {
 	rc.SetRateLimit(42)
 	rc.workerPool = tidbutil.NewWorkerPool(128, "set-speed-limit")
+	rc.hasSpeedLimited = false
 	rc.fileImporter, err = NewSnapFileImporter(ctx, nil, fakeImportClient, nil, false, false, nil, rc.rewriteMode, 128)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	return nil
+	return rc.setSpeedLimit(ctx, rc.rateLimit)
 }
 
 // CreateTables creates multiple tables, and returns their rewrite rules.
