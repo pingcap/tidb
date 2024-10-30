@@ -253,8 +253,8 @@ func (m *ownerManager) tryToBeOwnerOnce() error {
 	}
 	// Campaign will wait until there is no key with smaller create-revision, either
 	// current instance become owner or all the keys are deleted, in case other nodes
-	// put keys in between previous get and txn, we never become the owner, so we
-	// add a timeout to avoid blocking.
+	// put keys in between previous get and txn, and makes current node never become
+	// the owner, so we add a timeout to avoid blocking.
 	ctx, cancel := context.WithTimeout(m.ctx, keyOpDefaultTimeout)
 	defer cancel()
 	elec := concurrency.NewElection(m.forceOwnerSession, m.key)
