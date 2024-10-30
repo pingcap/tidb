@@ -180,19 +180,13 @@ func (c *index) create(sctx table.MutateContext, txn kv.Transaction, indexedValu
 	}
 	writeBufs := sctx.GetMutateBuffers().GetWriteStmtBufs()
 	skipCheck := opt.DupKeyCheck() == table.DupKeyCheckSkip
-	oldPartIDs := map[int64]struct{}{}
-	if c.idxInfo.Global {
-		// implicitly replace global index entries pointing to old partitions
-		// during Delete Reorganization, since it may take long time to delete
-		// all old entries.
-		if c.tblInfo.Partition.DDLState == model.StateDeleteReorganization {
-			oldIDs := c.tblInfo.Partition.IDsInDDLToIgnore()
-			if len(oldIDs) != 0 {
-				skipCheck = false
-				for _, id := range oldIDs {
-					oldPartIDs[id] = struct{}{}
-				}
-			}
+	allowOverwriteOfOldGlobalIndex := false
+	if c.idxInfo.Global && c.tblInfo.Partition.DDLState == model.StateDeleteReorganization &&
+		// TODO: Also do the same for DROP PARTITION
+		c.tblInfo.Partition.DDLAction == model.ActionTruncateTablePartition {
+		allowOverwriteOfOldGlobalIndex = true
+		if len(c.tblInfo.Partition.DroppingDefinitions) > 0 {
+			skipCheck = false
 		}
 	}
 	evalCtx := sctx.GetExprCtx().GetEvalCtx()
@@ -297,7 +291,7 @@ func (c *index) create(sctx table.MutateContext, txn kv.Transaction, indexedValu
 		}
 
 		var value []byte
-		if len(oldPartIDs) > 0 {
+		if allowOverwriteOfOldGlobalIndex {
 			// In DeleteReorganization, overwrite Global Index keys pointing to
 			// old dropped/truncated partitions.
 			// Note that a partitioned table cannot be temporary table
@@ -307,13 +301,16 @@ func (c *index) create(sctx table.MutateContext, txn kv.Transaction, indexedValu
 				if errPart != nil {
 					return nil, errPart
 				}
-				if _, found := oldPartIDs[partHandle.PartitionID]; found {
-					// Simply overwrite it
-					err = txn.SetAssertion(key, kv.SetAssertUnknown)
-					if err != nil {
-						return nil, err
+				for _, id := range c.tblInfo.Partition.IDsInDDLToIgnore() {
+					if id == partHandle.PartitionID {
+						// Simply overwrite it
+						err = txn.SetAssertion(key, kv.SetAssertUnknown)
+						if err != nil {
+							return nil, err
+						}
+						value = nil
+						break
 					}
-					value = nil
 				}
 			}
 		} else if c.tblInfo.TempTableType != model.TempTableNone {
