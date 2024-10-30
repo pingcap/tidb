@@ -812,6 +812,9 @@ func (pq *AnalysisPriorityQueue) Close() {
 		return
 	}
 
-	pq.syncFields.cancel()
+	// It is possible that the priority queue is not initialized.
+	if pq.syncFields.cancel != nil {
+		pq.syncFields.cancel()
+	}
 	pq.wg.Wait()
 }
