@@ -2360,7 +2360,7 @@ func (do *Domain) UpdateTableStatsLoop(ctx, initStatsCtx sessionctx.Context) err
 	variable.EnableStatsOwner = do.enableStatsOwner
 	variable.DisableStatsOwner = do.disableStatsOwner
 	do.statsOwner = do.newOwnerManager(handle.StatsPrompt, handle.StatsOwnerKey)
-	do.statsOwner.SetListener(owner.NewListenersWrapper(do.ddlNotifier, statsHandle))
+	do.statsOwner.SetListener(owner.NewListenersWrapper(statsHandle, do.ddlNotifier))
 	do.wg.Run(func() {
 		do.indexUsageWorker()
 	}, "indexUsageWorker")

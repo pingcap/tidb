@@ -100,7 +100,6 @@ func (r *Refresher) AnalyzeHighestPriorityTables() bool {
 	if !r.isWithinTimeWindow() {
 		return false
 	}
-	intest.Assert(r.jobs.IsInitialized(), "The queue should be initialized when the node becomes the owner")
 	if !r.jobs.IsInitialized() {
 		if err := r.jobs.Initialize(); err != nil {
 			statslogutil.StatsLogger().Error("Failed to initialize the queue", zap.Error(err))
@@ -255,7 +254,8 @@ func (r *Refresher) Close() {
 
 // OnBecomeOwner is used to handle the event when the current TiDB instance becomes the stats owner.
 func (r *Refresher) OnBecomeOwner() {
-	r.jobs.Initialize()
+	// No action is taken when becoming the stats owner.
+	// Initialization of the Refresher can fail, so operations are deferred until the first auto-analyze check.
 }
 
 // OnRetireOwner is used to handle the event when the current TiDB instance retires from being the stats owner.
