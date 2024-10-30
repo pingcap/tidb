@@ -707,7 +707,7 @@ func (w *GCWorker) deleteRanges(ctx context.Context, safePoint uint64, concurren
 	startTime := time.Now()
 	for _, r := range ranges {
 		startKey, endKey := r.Range()
-		
+
 		err = w.doUnsafeDestroyRangeRequest(ctx, startKey, endKey, concurrency)
 		failpoint.Inject("ignoreDeleteRangeFailed", func() {
 			err = nil
