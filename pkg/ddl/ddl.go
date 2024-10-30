@@ -100,11 +100,11 @@ const (
 	// Normal mode, cluster is in normal state.
 	Normal StartMode = "normal"
 	// Bootstrap mode, cluster is during bootstrap.
-	Bootstrap = "bootstrap"
+	Bootstrap StartMode = "bootstrap"
 	// Upgrade mode, cluster is during upgrade, we will force current node to be
 	// the DDL owner, to make sure all upgrade related DDLs are run on new version
 	// TiDB instance.
-	Upgrade = "upgrade"
+	Upgrade StartMode = "upgrade"
 )
 
 // OnExist specifies what to do when a new object has a name collision.
