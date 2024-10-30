@@ -135,7 +135,7 @@ create table parent2 (a int primary key);
 create table child2 (a int, foreign key (a) references parent2(a));
 insert into parent2 values (1), (2);
 insert into child2 values (1);
--- error 1451
+-- error 1451, 1451
 delete parent, parent2 from parent join parent2 on parent.a = parent2.a;
 delete ignore parent, parent2 from parent join parent2 on parent.a = parent2.a;
 select * from parent;
