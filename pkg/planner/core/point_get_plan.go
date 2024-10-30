@@ -817,8 +817,8 @@ func newBatchPointGetPlan(
 					if dval == nil {
 						return nil
 					}
-					values[permIndex] = innerX.Datum
-					pairs = append(pairs, nameValuePair{colName: whereColNames[index], value: innerX.Datum})
+					values[permIndex] = *dval
+					pairs = append(pairs, nameValuePair{colName: whereColNames[index], value: *dval})
 				case *driver.ParamMarkerExpr:
 					con, err := expression.ParamMarkerExpression(ctx, innerX, true)
 					if err != nil {
@@ -832,12 +832,12 @@ func newBatchPointGetPlan(
 					if dval == nil {
 						return nil
 					}
-					values[permIndex] = innerX.Datum
+					values[permIndex] = *dval
 					valuesParams[permIndex] = con
 					if initTypes {
 						indexTypes[permIndex] = &colInfos[index].FieldType
 					}
-					pairs = append(pairs, nameValuePair{colName: whereColNames[index], value: innerX.Datum})
+					pairs = append(pairs, nameValuePair{colName: whereColNames[index], value: *dval})
 				default:
 					return nil
 				}

@@ -185,3 +185,13 @@ drop table if exists t;
 create table t(col varchar(32) COLLATE utf8mb4_general_ci DEFAULT NULL) PARTITION BY KEY (`col`) PARTITIONS 7;
 explain format = brief select * from t where col = 'linpin';
 explain format = brief select * from t where col = 'LINPIN';
+
+# TestIssue54746
+drop table if exists t;
+CREATE TABLE `t` (`tenant_id` bigint(20) NOT NULL DEFAULT '0',`order_id` bigint(20) NOT NULL DEFAULT '0',UNIQUE KEY `uk_ten_ord` (`order_id`, `tenant_id`))  PARTITION BY HASH(`tenant_id`) PARTITIONS 32;
+INSERT INTO t(tenant_id, order_id) VALUES (123, 456);
+select * from t where (tenant_id, order_id) in (('123','456'));
+select * from t where (tenant_id, order_id) in (('0123','456'));
+alter table t remove partitioning;
+select * from t where (tenant_id, order_id) in (('123','456'));
+select * from t where (tenant_id, order_id) in (('0123','456'));
