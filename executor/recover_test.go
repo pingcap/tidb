@@ -17,10 +17,16 @@ package executor_test
 import (
 	"context"
 	"fmt"
+<<<<<<< HEAD:executor/recover_test.go
+=======
+	"strconv"
+	"sync"
+>>>>>>> 474aed53cf0 (ddl: fix issue that recover table by job id may cause panic (#56965)):pkg/executor/recover_test.go
 	"testing"
 	"time"
 
 	"github.com/pingcap/failpoint"
+<<<<<<< HEAD:executor/recover_test.go
 	ddlutil "github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/infoschema"
@@ -29,6 +35,22 @@ import (
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/gcutil"
+=======
+	ddlutil "github.com/pingcap/tidb/pkg/ddl/util"
+	"github.com/pingcap/tidb/pkg/errno"
+	"github.com/pingcap/tidb/pkg/infoschema"
+	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/parser/auth"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/store/mockstore"
+	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
+	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util"
+	"github.com/pingcap/tidb/pkg/util/dbterror"
+	"github.com/pingcap/tidb/pkg/util/gcutil"
+>>>>>>> 474aed53cf0 (ddl: fix issue that recover table by job id may cause panic (#56965)):pkg/executor/recover_test.go
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/oracle"
 	tikvutil "github.com/tikv/client-go/v2/util"
@@ -123,6 +145,21 @@ func TestRecoverTable(t *testing.T) {
 	tk.MustExec("flashback table t_recover to t_recover_tmp")
 	err = tk.ExecToErr("recover table t_recover")
 	require.True(t, infoschema.ErrTableExists.Equal(err))
+
+	// Test drop table failed and then recover the table should also be failed.
+	tk.MustExec("drop table if exists t_recover2")
+	tk.MustExec("create table t_recover2 (a int);")
+	jobID := int64(0)
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunBefore", func(job *model.Job) {
+		if job.Type == model.ActionDropTable && jobID == 0 {
+			jobID = job.ID
+		}
+	})
+	tk.MustExec("drop table t_recover2")
+	tk.MustExec("recover table by job " + strconv.Itoa(int(jobID)))
+	err = tk.ExecToErr("recover table by job " + strconv.Itoa(int(jobID)))
+	require.Error(t, err)
+	require.Equal(t, "[schema:1050]Table 't_recover2' already been recover to 't_recover2', can't be recover repeatedly", err.Error())
 
 	gcEnable, err := gcutil.CheckGCEnable(tk.Session())
 	require.NoError(t, err)
