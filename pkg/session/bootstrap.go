@@ -1425,25 +1425,28 @@ var (
 	SupportUpgradeHTTPOpVer int64 = version174
 )
 
-func acquireLock(s sessiontypes.Session) (func(), bool) {
-	dom := domain.GetDomain(s)
-	if dom == nil {
-		logutil.BgLogger().Warn("domain is nil")
-		return nil, false
+func acquireLock(store kv.Storage) (func(), error) {
+	etcdCli, err := domain.NewEtcdCli(store)
+	if err != nil {
+		return nil, errors.Trace(err)
 	}
-	cli := dom.GetEtcdClient()
-	if cli == nil {
-		logutil.BgLogger().Warn("etcd client is nil, force to acquire ddl owner lock")
+	if etcdCli == nil {
 		// Special handling for test.
+		logutil.BgLogger().Warn("skip acquire ddl owner lock for uni-store")
 		return func() {
 			// do nothing
-		}, true
+		}, nil
 	}
-	releaseFn, err := owner.AcquireDistributedLock(context.Background(), cli, bootstrapOwnerKey, 10)
+	releaseFn, err := owner.AcquireDistributedLock(context.Background(), etcdCli, bootstrapOwnerKey, 10)
 	if err != nil {
-		return nil, false
+		return nil, errors.Trace(err)
 	}
-	return releaseFn, true
+	return func() {
+		releaseFn()
+		if err2 := etcdCli.Close(); err2 != nil {
+			logutil.BgLogger().Error("failed to close etcd client", zap.Error(err2))
+		}
+	}, nil
 }
 
 func checkDistTask(s sessiontypes.Session, ver int64) {
