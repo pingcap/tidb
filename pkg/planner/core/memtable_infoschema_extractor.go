@@ -262,10 +262,6 @@ func (e *InfoSchemaBaseExtractor) filter(colName string, val string) bool {
 	}
 	predVals, ok := e.ColPredicates[colName]
 	if ok && len(predVals) > 0 {
-		fn, ok := e.pushedDownFuncs[colName]
-		if ok {
-			return !predVals.Exist(fn(val))
-		}
 		return !predVals.Exist(val)
 	}
 	// No need to filter records since no predicate for the column exists.
