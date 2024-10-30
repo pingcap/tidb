@@ -49,7 +49,6 @@ import (
 	"github.com/pingcap/tidb/pkg/store/driver/options"
 	util2 "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
-	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/pingcap/tidb/pkg/util/paging"
@@ -590,7 +589,7 @@ func buildTiDBMemCopTasks(ranges *KeyRanges, req *kv.Request) ([]*copTask, error
 		if req.TiDBServerID > 0 && req.TiDBServerID != ser.ServerIDGetter() {
 			continue
 		}
-		if len(ser.IP) == 0 && !intest.InTest {
+		if len(ser.IP) == 0 {
 			continue
 		}
 

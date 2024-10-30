@@ -208,6 +208,15 @@ func (s *mockStore) StartGCWorker() error         { panic("not implemented") }
 func (s *mockStore) Name() string                 { return "mockStore" }
 func (s *mockStore) Describe() string             { return "" }
 
+func TestSkipEmptyIPNodesForTiDBTypeCoprocessor(t *testing.T) {
+	store, _ := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	rows := tk.MustQuery("select * from information_schema.cluster_slow_query").Rows()
+	// the TiDB node is skipped because it does not has IP
+	require.Equal(t, 0, len(rows))
+}
+
 func TestTiDBClusterInfo(t *testing.T) {
 	s := createInfosSchemaClusterTableSuite(t)
 
