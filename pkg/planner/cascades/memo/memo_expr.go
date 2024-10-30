@@ -30,6 +30,8 @@ import (
 // # Thus, memoExpr is responsible for representing both of them, leveraging the unified portal of
 //
 // MemoExpression managing memo group generation and hashing functionality.
+//
+//revive:disable:exported
 type MemoExpression struct {
 	LP base.LogicalPlan
 
