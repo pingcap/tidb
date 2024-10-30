@@ -524,6 +524,7 @@
       "pkg/parser/ast/": "ignore parser/ast code",
       "pkg/parser/test_driver/": "ignore parser/test_driver code",
       "pkg/planner/core/plan_clone_generated.go": "ignore plan_clone_generated code",
+      "pkg/planner/core/operator/logicalop/hash64_equals_generated.go": "ignore hash64_equals_generated code",
       ".*_test\\.go$": "ignore generated code",
       ".*_generated\\.go$": "ignore generated code",
       ".*mock.go$": "ignore generated code",
