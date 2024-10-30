@@ -253,7 +253,7 @@ func (r *Refresher) Close() {
 }
 
 // OnBecomeOwner is used to handle the event when the current TiDB instance becomes the stats owner.
-func (r *Refresher) OnBecomeOwner() {
+func (*Refresher) OnBecomeOwner() {
 	// No action is taken when becoming the stats owner.
 	// Initialization of the Refresher can fail, so operations are deferred until the first auto-analyze check.
 }
