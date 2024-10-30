@@ -314,7 +314,7 @@
       "/rules_go_work-*": "ignore generated code",
       "tools/check/ut.go": "ignore tools/check code",
       "cmd/mirror": "ignore cmd/mirror code",
-      "tools/check/xprog.go": "ignore tools/check code",
+      "tools/check/xprog/xprog.go": "ignore tools/check code",
       "cmd/pluginpkg/pluginpkg.go": "ignore cmd/pluginpkg code",
       "tools/check/xprog.go:": "ignore tools/check code",
       "tests/integrationtest/main.go": "ignore tests/integrationtest code",
