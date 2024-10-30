@@ -2176,3 +2176,9 @@ select (cast(f1 as float) = 1) or (cast(f1 as float) = 2) from test.t;
 SHOW WARNINGS;
 select (cast(f1 as float) != 1) and (cast(f1 as float) != 2) from test.t;
 SHOW WARNINGS;
+
+# TestIssue56462
+DROP TABLE IF EXISTS test.t;
+CREATE TABLE test.t (id bigint(11) UNSIGNED PRIMARY KEY);
+INSERT INTO test.t VALUES (1234567890123456);
+SELECT IFNULL(id, 'abcdef') FROM test.t;

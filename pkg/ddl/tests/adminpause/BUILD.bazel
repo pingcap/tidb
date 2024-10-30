@@ -10,7 +10,6 @@ go_library(
     importpath = "github.com/pingcap/tidb/pkg/ddl/tests/adminpause",
     visibility = ["//visibility:public"],
     deps = [
-        "//pkg/ddl",
         "//pkg/ddl/logutil",
         "//pkg/domain",
         "//pkg/domain/infosync",

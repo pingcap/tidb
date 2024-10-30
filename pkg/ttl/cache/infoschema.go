@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/pkg/infoschema"
+	infoschemacontext "github.com/pingcap/tidb/pkg/infoschema/context"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/ttl/session"
@@ -51,7 +52,7 @@ func (isc *InfoSchemaCache) Update(se session.Session) error {
 
 	newTables := make(map[int64]*PhysicalTable, len(isc.Tables))
 
-	ch := is.ListTablesWithSpecialAttribute(infoschema.TTLAttribute)
+	ch := is.ListTablesWithSpecialAttribute(infoschemacontext.TTLAttribute)
 	for _, v := range ch {
 		for _, tblInfo := range v.TableInfos {
 			if tblInfo.TTLInfo == nil || !tblInfo.TTLInfo.Enable || tblInfo.State != model.StatePublic {

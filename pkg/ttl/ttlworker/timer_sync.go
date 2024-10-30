@@ -23,6 +23,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/infoschema"
+	infoschemacontext "github.com/pingcap/tidb/pkg/infoschema/context"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/metrics"
 	pmodel "github.com/pingcap/tidb/pkg/parser/model"
@@ -186,7 +187,7 @@ func (g *TTLTimersSyncer) SyncTimers(ctx context.Context, is infoschema.InfoSche
 	defer se.Close()
 
 	currentTimerKeys := make(map[string]struct{})
-	ch := is.ListTablesWithSpecialAttribute(infoschema.TTLAttribute)
+	ch := is.ListTablesWithSpecialAttribute(infoschemacontext.TTLAttribute)
 	for _, v := range ch {
 		for _, tblInfo := range v.TableInfos {
 			for _, key := range g.syncTimersForTable(ctx, se, v.DBName, tblInfo) {

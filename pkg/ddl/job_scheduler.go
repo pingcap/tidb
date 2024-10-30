@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/pkg/ddl/ingest"
 	"github.com/pingcap/tidb/pkg/ddl/logutil"
+	"github.com/pingcap/tidb/pkg/ddl/notifier"
 	"github.com/pingcap/tidb/pkg/ddl/schemaver"
 	"github.com/pingcap/tidb/pkg/ddl/serverstate"
 	sess "github.com/pingcap/tidb/pkg/ddl/session"
@@ -108,6 +109,7 @@ func (l *ownerListener) OnBecomeOwner() {
 		unSyncedTracker:   newUnSyncedJobTracker(),
 		schemaVerMgr:      newSchemaVersionManager(l.ddl.store),
 		schemaVerSyncer:   l.ddl.schemaVerSyncer,
+		eventPublishStore: l.ddl.eventPublishStore,
 
 		ddlCtx:         l.ddl.ddlCtx,
 		ddlJobNotifyCh: l.jobSubmitter.ddlJobNotifyCh,
@@ -129,7 +131,8 @@ func (l *ownerListener) OnRetireOwner() {
 
 // jobScheduler is used to schedule the DDL jobs, it's only run on the DDL owner.
 type jobScheduler struct {
-	// *ddlCtx already have context named as "ctx", so we use "schCtx" here to avoid confusion.
+	// schCtx is valid only when this node is DDL owner. *ddlCtx already have context
+	// named as "ctx", so we use "schCtx" here to avoid confusion.
 	schCtx            context.Context
 	cancel            context.CancelCauseFunc
 	wg                tidbutil.WaitGroupWrapper
@@ -140,6 +143,7 @@ type jobScheduler struct {
 	unSyncedTracker   *unSyncedJobTracker
 	schemaVerMgr      *schemaVersionManager
 	schemaVerSyncer   schemaver.Syncer
+	eventPublishStore notifier.Store
 
 	// those fields are created or initialized on start
 	reorgWorkerPool      *workerPool
@@ -470,6 +474,7 @@ func (s *jobScheduler) deliveryJob(wk *worker, pool *workerPool, job *model.Job)
 	s.runningJobs.addRunning(jobID, involvedSchemaInfos)
 	metrics.DDLRunningJobCount.WithLabelValues(pool.tp().String()).Inc()
 	jobCtx := s.getJobRunCtx(job.ID, job.TraceInfo)
+
 	s.wg.Run(func() {
 		defer func() {
 			r := recover()
@@ -532,6 +537,7 @@ func (s *jobScheduler) getJobRunCtx(jobID int64, traceInfo *model.TraceInfo) *jo
 		autoidCli:            s.autoidCli,
 		store:                s.store,
 		schemaVerSyncer:      s.schemaVerSyncer,
+		eventPublishStore:    s.eventPublishStore,
 
 		notifyCh: ch,
 		logger: tidblogutil.LoggerWithTraceInfo(
@@ -557,7 +563,7 @@ func (s *jobScheduler) transitOneJobStepAndWaitSync(wk *worker, jobCtx *jobConte
 		if variable.EnableMDL.Load() {
 			version, err := s.sysTblMgr.GetMDLVer(s.schCtx, job.ID)
 			if err == nil {
-				err = waitVersionSynced(jobCtx, job, version)
+				err = waitVersionSynced(s.schCtx, jobCtx, job, version)
 				if err != nil {
 					return err
 				}
@@ -567,7 +573,7 @@ func (s *jobScheduler) transitOneJobStepAndWaitSync(wk *worker, jobCtx *jobConte
 				return err
 			}
 		} else {
-			err := waitVersionSyncedWithoutMDL(jobCtx, job)
+			err := waitVersionSyncedWithoutMDL(s.schCtx, jobCtx, job)
 			if err != nil {
 				time.Sleep(time.Second)
 				return err
@@ -576,7 +582,7 @@ func (s *jobScheduler) transitOneJobStepAndWaitSync(wk *worker, jobCtx *jobConte
 		jobCtx.setAlreadyRunOnce(job.ID)
 	}
 
-	schemaVer, err := wk.transitOneJobStep(jobCtx, job)
+	schemaVer, err := wk.transitOneJobStep(jobCtx, job, s.sysTblMgr)
 	if err != nil {
 		jobCtx.logger.Info("handle ddl job failed", zap.Error(err), zap.Stringer("job", job))
 		return err
@@ -594,7 +600,7 @@ func (s *jobScheduler) transitOneJobStepAndWaitSync(wk *worker, jobCtx *jobConte
 	// Here means the job enters another state (delete only, write only, public, etc...) or is cancelled.
 	// If the job is done or still running or rolling back, we will wait 2 * lease time or util MDL synced to guarantee other servers to update
 	// the newest schema.
-	if err = updateGlobalVersionAndWaitSynced(jobCtx, schemaVer, job); err != nil {
+	if err = updateGlobalVersionAndWaitSynced(s.schCtx, jobCtx, schemaVer, job); err != nil {
 		return err
 	}
 	s.cleanMDLInfo(job, ownerID)

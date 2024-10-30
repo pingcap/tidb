@@ -54,11 +54,11 @@ show create table t;
 Table	Create Table
 t	CREATE TABLE `t` (
   `a` varchar(10) DEFAULT NULL,
-  `b` smallint(6) DEFAULT NULL,
-  `c` mediumint(9) DEFAULT NULL,
-  `d` int(11) DEFAULT NULL,
-  `e` bigint(20) DEFAULT NULL,
-  `f` bigint(20) DEFAULT NULL
+  `b` smallint DEFAULT NULL,
+  `c` mediumint DEFAULT NULL,
+  `d` int DEFAULT NULL,
+  `e` bigint DEFAULT NULL,
+  `f` bigint DEFAULT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 select a from t;
 a
@@ -69,10 +69,10 @@ Table	Create Table
 t	CREATE TABLE `t` (
   `a` varchar(10) DEFAULT NULL,
   `b` char(10) DEFAULT NULL,
-  `c` mediumint(9) DEFAULT NULL,
-  `d` int(11) DEFAULT NULL,
-  `e` bigint(20) DEFAULT NULL,
-  `f` bigint(20) DEFAULT NULL
+  `c` mediumint DEFAULT NULL,
+  `d` int DEFAULT NULL,
+  `e` bigint DEFAULT NULL,
+  `f` bigint DEFAULT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 select b from t;
 b
@@ -84,9 +84,9 @@ t	CREATE TABLE `t` (
   `a` varchar(10) DEFAULT NULL,
   `b` char(10) DEFAULT NULL,
   `c` binary(10) DEFAULT NULL,
-  `d` int(11) DEFAULT NULL,
-  `e` bigint(20) DEFAULT NULL,
-  `f` bigint(20) DEFAULT NULL
+  `d` int DEFAULT NULL,
+  `e` bigint DEFAULT NULL,
+  `f` bigint DEFAULT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 select hex(c) from t;
 hex(c)
@@ -99,8 +99,8 @@ t	CREATE TABLE `t` (
   `b` char(10) DEFAULT NULL,
   `c` binary(10) DEFAULT NULL,
   `d` varbinary(10) DEFAULT NULL,
-  `e` bigint(20) DEFAULT NULL,
-  `f` bigint(20) DEFAULT NULL
+  `e` bigint DEFAULT NULL,
+  `f` bigint DEFAULT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 select d from t;
 d
@@ -114,7 +114,7 @@ t	CREATE TABLE `t` (
   `c` binary(10) DEFAULT NULL,
   `d` varbinary(10) DEFAULT NULL,
   `e` tinyblob DEFAULT NULL,
-  `f` bigint(20) DEFAULT NULL
+  `f` bigint DEFAULT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 select e from t;
 e
@@ -141,11 +141,11 @@ show create table t;
 Table	Create Table
 t	CREATE TABLE `t` (
   `a` decimal(2,1) DEFAULT NULL,
-  `b` smallint(6) DEFAULT NULL,
-  `c` mediumint(9) DEFAULT NULL,
-  `d` int(11) DEFAULT NULL,
-  `e` bigint(20) DEFAULT NULL,
-  `f` bigint(20) DEFAULT NULL
+  `b` smallint DEFAULT NULL,
+  `c` mediumint DEFAULT NULL,
+  `d` int DEFAULT NULL,
+  `e` bigint DEFAULT NULL,
+  `f` bigint DEFAULT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 select a from t;
 a
@@ -156,10 +156,10 @@ Table	Create Table
 t	CREATE TABLE `t` (
   `a` decimal(2,1) DEFAULT NULL,
   `b` year(4) DEFAULT NULL,
-  `c` mediumint(9) DEFAULT NULL,
-  `d` int(11) DEFAULT NULL,
-  `e` bigint(20) DEFAULT NULL,
-  `f` bigint(20) DEFAULT NULL
+  `c` mediumint DEFAULT NULL,
+  `d` int DEFAULT NULL,
+  `e` bigint DEFAULT NULL,
+  `f` bigint DEFAULT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 select b from t;
 b
@@ -171,9 +171,9 @@ t	CREATE TABLE `t` (
   `a` decimal(2,1) DEFAULT NULL,
   `b` year(4) DEFAULT NULL,
   `c` time DEFAULT NULL,
-  `d` int(11) DEFAULT NULL,
-  `e` bigint(20) DEFAULT NULL,
-  `f` bigint(20) DEFAULT NULL
+  `d` int DEFAULT NULL,
+  `e` bigint DEFAULT NULL,
+  `f` bigint DEFAULT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 select c from t;
 c
@@ -186,8 +186,8 @@ t	CREATE TABLE `t` (
   `b` year(4) DEFAULT NULL,
   `c` time DEFAULT NULL,
   `d` date DEFAULT NULL,
-  `e` bigint(20) DEFAULT NULL,
-  `f` bigint(20) DEFAULT NULL
+  `e` bigint DEFAULT NULL,
+  `f` bigint DEFAULT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 select d from t;
 d
@@ -202,7 +202,7 @@ t	CREATE TABLE `t` (
   `c` time DEFAULT NULL,
   `d` date DEFAULT NULL,
   `e` timestamp NULL DEFAULT NULL,
-  `f` bigint(20) DEFAULT NULL
+  `f` bigint DEFAULT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 select e from t;
 e
@@ -229,11 +229,11 @@ show create table t;
 Table	Create Table
 t	CREATE TABLE `t` (
   `a` float DEFAULT NULL,
-  `b` smallint(6) DEFAULT NULL,
-  `c` mediumint(9) DEFAULT NULL,
-  `d` int(11) DEFAULT NULL,
-  `e` bigint(20) DEFAULT NULL,
-  `f` bigint(20) DEFAULT NULL
+  `b` smallint DEFAULT NULL,
+  `c` mediumint DEFAULT NULL,
+  `d` int DEFAULT NULL,
+  `e` bigint DEFAULT NULL,
+  `f` bigint DEFAULT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 select a from t;
 a
@@ -244,10 +244,10 @@ Table	Create Table
 t	CREATE TABLE `t` (
   `a` float DEFAULT NULL,
   `b` double DEFAULT NULL,
-  `c` mediumint(9) DEFAULT NULL,
-  `d` int(11) DEFAULT NULL,
-  `e` bigint(20) DEFAULT NULL,
-  `f` bigint(20) DEFAULT NULL
+  `c` mediumint DEFAULT NULL,
+  `d` int DEFAULT NULL,
+  `e` bigint DEFAULT NULL,
+  `f` bigint DEFAULT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 select b from t;
 b
@@ -259,9 +259,9 @@ t	CREATE TABLE `t` (
   `a` float DEFAULT NULL,
   `b` double DEFAULT NULL,
   `c` bit(10) DEFAULT NULL,
-  `d` int(11) DEFAULT NULL,
-  `e` bigint(20) DEFAULT NULL,
-  `f` bigint(20) DEFAULT NULL
+  `d` int DEFAULT NULL,
+  `e` bigint DEFAULT NULL,
+  `f` bigint DEFAULT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 select hex(c) from t;
 hex(c)
@@ -274,8 +274,8 @@ t	CREATE TABLE `t` (
   `b` double DEFAULT NULL,
   `c` bit(10) DEFAULT NULL,
   `d` json DEFAULT NULL,
-  `e` bigint(20) DEFAULT NULL,
-  `f` bigint(20) DEFAULT NULL
+  `e` bigint DEFAULT NULL,
+  `f` bigint DEFAULT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 select d from t;
 d
@@ -288,10 +288,10 @@ show create table t;
 Table	Create Table
 t	CREATE TABLE `t` (
   `a` enum('a','b') DEFAULT NULL,
-  `b` smallint(6) DEFAULT NULL,
-  `c` mediumint(9) DEFAULT NULL,
-  `d` int(11) DEFAULT NULL,
-  `e` bigint(20) DEFAULT NULL
+  `b` smallint DEFAULT NULL,
+  `c` mediumint DEFAULT NULL,
+  `d` int DEFAULT NULL,
+  `e` bigint DEFAULT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 select a from t;
 a
@@ -302,9 +302,9 @@ Table	Create Table
 t	CREATE TABLE `t` (
   `a` enum('a','b') DEFAULT NULL,
   `b` set('a','b') DEFAULT NULL,
-  `c` mediumint(9) DEFAULT NULL,
-  `d` int(11) DEFAULT NULL,
-  `e` bigint(20) DEFAULT NULL
+  `c` mediumint DEFAULT NULL,
+  `d` int DEFAULT NULL,
+  `e` bigint DEFAULT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 select b from t;
 b
@@ -2061,8 +2061,8 @@ alter table orders modify user_id int null;
 show create table orders;
 Table	Create Table
 orders	CREATE TABLE `orders` (
-  `id` int(11) NOT NULL AUTO_INCREMENT,
-  `user_id` int(11) DEFAULT NULL,
+  `id` int NOT NULL AUTO_INCREMENT,
+  `user_id` int DEFAULT NULL,
   `doc` json DEFAULT NULL,
   PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */,
   KEY `fk_user_id` (`user_id`),
@@ -2075,8 +2075,8 @@ alter table orders change user_id user_id2 int null;
 show create table orders;
 Table	Create Table
 orders	CREATE TABLE `orders` (
-  `id` int(11) NOT NULL AUTO_INCREMENT,
-  `user_id2` int(11) DEFAULT NULL,
+  `id` int NOT NULL AUTO_INCREMENT,
+  `user_id2` int DEFAULT NULL,
   `doc` json DEFAULT NULL,
   PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */,
   KEY `fk_user_id` (`user_id2`),
@@ -2089,8 +2089,8 @@ alter table orders modify user_id int default -1 comment "haha";
 show create table orders;
 Table	Create Table
 orders	CREATE TABLE `orders` (
-  `id` int(11) NOT NULL AUTO_INCREMENT,
-  `user_id` int(11) DEFAULT '-1' COMMENT 'haha',
+  `id` int NOT NULL AUTO_INCREMENT,
+  `user_id` int DEFAULT '-1' COMMENT 'haha',
   `doc` json DEFAULT NULL,
   PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */,
   KEY `fk_user_id` (`user_id`),
@@ -2217,7 +2217,7 @@ alter table t modify column a int;
 show create table t;
 Table	Create Table
 t	CREATE TABLE `t` (
-  `a` int(11) DEFAULT NULL,
+  `a` int DEFAULT NULL,
   UNIQUE KEY `idx` (`a`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 drop table if exists t;
@@ -2236,7 +2236,7 @@ show create table t;
 Table	Create Table
 t	CREATE TABLE `t` (
   `a` char(255) DEFAULT NULL,
-  `b` int(11) DEFAULT NULL,
+  `b` int DEFAULT NULL,
   UNIQUE KEY `idx` (`a`(2),`b`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 drop table if exists t;

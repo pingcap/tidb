@@ -24,6 +24,7 @@ import (
 	"time"
 
 	"github.com/pingcap/failpoint"
+	metamodel "github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -538,7 +539,8 @@ func TestTableLastAnalyzeVersion(t *testing.T) {
 	tk.MustExec("alter table t add index idx(a)")
 	is = dom.InfoSchema()
 	tbl, err = is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
-	// We don't handle the ADD INDEX event in the HandleDDLEvent.
+	e := <-h.DDLEventCh()
+	require.Equal(t, metamodel.ActionAddIndex, e.GetType())
 	require.Equal(t, 0, len(h.DDLEventCh()))
 	require.NoError(t, err)
 	require.NoError(t, h.Update(context.Background(), is))

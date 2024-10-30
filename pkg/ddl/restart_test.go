@@ -185,6 +185,7 @@ func TestTableResume(t *testing.T) {
 	testCheckTableState(t, store, dbInfo, tblInfo, model.StatePublic)
 
 	job = &model.Job{
+		Version:    model.GetJobVerInUse(),
 		SchemaID:   dbInfo.ID,
 		SchemaName: dbInfo.Name.L,
 		TableID:    tblInfo.ID,
@@ -192,6 +193,6 @@ func TestTableResume(t *testing.T) {
 		Type:       model.ActionDropTable,
 		BinlogInfo: &model.HistoryInfo{},
 	}
-	testRunInterruptedJob(t, store, dom, job, nil)
+	testRunInterruptedJob(t, store, dom, job, &model.DropTableArgs{})
 	testCheckTableState(t, store, dbInfo, tblInfo, model.StateNone)
 }

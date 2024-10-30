@@ -1115,3 +1115,60 @@ func TestMaxPreparedStmtCount(t *testing.T) {
 	err := tk.ExecToErr("prepare stmt3 from 'select ? as num from dual'")
 	require.True(t, terror.ErrorEqual(err, variable.ErrMaxPreparedStmtCountReached))
 }
+
+func TestPrepareWorkWithForeignKey(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec(`set tidb_enable_prepared_plan_cache=1`)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1, t2")
+	tk.MustExec("create table t1(a int, key(a))")
+	tk.MustExec("create table t2(a int, key(a))")
+	tk.MustExec("prepare stmt from 'insert into t2 values (0)'")
+	tk.MustExec("execute stmt")
+
+	tk.MustQuery("select * from t2").Check(testkit.Rows("0"))
+	tk.MustExec("delete from t2")
+	tk.MustExec("execute stmt")
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+	tk.MustQuery("select * from t2").Check(testkit.Rows("0"))
+	tk.MustExec("delete from t2")
+
+	// Then we create a foreign key constraint.
+	tk.MustExec("alter table t2 add constraint fk foreign key (a) references t1(a)")
+	tk.MustContainErrMsg("execute stmt", "Cannot add or update a child row: a foreign key constraint fails")
+	// As schema version increased, the plan cache should be invalidated.
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+}
+
+func TestPrepareProtocolWorkWithForeignKey(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec(`set tidb_enable_prepared_plan_cache=1`)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1, t2")
+	tk.MustExec("create table t1(a int, key(a))")
+	tk.MustExec("create table t2(a int, key(a))")
+
+	stmtID, _, _, err := tk.Session().PrepareStmt("insert into t2 values (0)")
+	require.NoError(t, err)
+	_, err = tk.Session().ExecutePreparedStmt(context.Background(), stmtID, nil)
+	require.Nil(t, err)
+
+	tk.MustQuery("select * from t2").Check(testkit.Rows("0"))
+	tk.MustExec("delete from t2")
+	_, err = tk.Session().ExecutePreparedStmt(context.Background(), stmtID, nil)
+	require.Nil(t, err)
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+	tk.MustQuery("select * from t2").Check(testkit.Rows("0"))
+	tk.MustExec("delete from t2")
+
+	// Then we create a foreign key constraint.
+	tk.MustExec("alter table t2 add constraint fk foreign key (a) references t1(a)")
+	_, err = tk.Session().ExecutePreparedStmt(context.Background(), stmtID, nil)
+	require.Contains(t, err.Error(), "Cannot add or update a child row: a foreign key constraint fails")
+	// As schema version increased, the plan cache should be invalidated.
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+}
