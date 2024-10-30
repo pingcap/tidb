@@ -250,9 +250,10 @@ func (m *ownerManager) tryToBeOwnerOnce() error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	// Campaign will wait until current instance become owner or the key is deleted,
-	// in case other nodes put keys in between previous get and txn, we never become
-	// the owner, so we add a timeout to avoid blocking.
+	// Campaign will wait until there is no key with smaller create-revision, either
+	// current instance become owner or all the keys are deleted, in case other nodes
+	// put keys in between previous get and txn, we never become the owner, so we
+	// add a timeout to avoid blocking.
 	ctx, cancel := context.WithTimeout(m.ctx, keyOpDefaultTimeout)
 	defer cancel()
 	elec := concurrency.NewElection(m.forceOwnerSession, m.key)
@@ -261,7 +262,8 @@ func (m *ownerManager) tryToBeOwnerOnce() error {
 	}
 
 	// Campaign assumes that it's the only client managing the lifecycle of the campaign
-	// key, so it will also return when the campaign key is deleted by other TiDB
+	// key, it only checks whether there are any keys with smaller create-revision,
+	// so it will also return when all the campaign keys are deleted by other TiDB
 	// instances when the distributed lock has failed to keep alive and another TiDB
 	// get the lock. It's a quite rare case, and the TiDB must be of newer version
 	// which has the fix of the issue, so it's ok to return now.

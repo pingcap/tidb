@@ -3447,7 +3447,7 @@ func bootstrapSessionImpl(ctx context.Context, store kv.Storage, createSessionsI
 	if err != nil {
 		return nil, err
 	}
-	ver := getStoreBootstrapVersion(store)
+	ver := getStoreBootstrapVersionWithCache(store)
 	if ver < currentBootstrapVersion {
 		runInBootstrapSession(store, ver)
 	} else {
@@ -3680,25 +3680,16 @@ func getStartMode(ver int64) ddl.StartMode {
 // TODO: Using a bootstrap tool for doing this may be better later.
 func runInBootstrapSession(store kv.Storage, ver int64) {
 	startMode := getStartMode(ver)
-	s, err := createSession(store)
-	if err != nil {
-		// Bootstrap fail will cause program exit.
-		logutil.BgLogger().Fatal("createSession error", zap.Error(err))
-	}
-	// For the bootstrap SQLs, the following variables should be compatible with old TiDB versions.
-	// TODO we should have a createBootstrapSession to init those special variables.
-	s.sessionVars.EnableClusteredIndex = variable.ClusteredIndexDefModeIntOnly
-	s.SetValue(sessionctx.Initing, true)
 
 	if startMode == ddl.Upgrade {
-		releaseFn, ok := acquireLock(s)
-		if !ok {
+		// TODO at this time domain hasn't created, we need to make sure this in a clear way
+		releaseFn, err := acquireLock(store)
+		if err != nil {
 			logutil.BgLogger().Fatal("[upgrade] get ddl owner distributed lock failed", zap.Error(err))
 		}
 		defer releaseFn()
-		ver, err = getBootstrapVersion(s)
-		terror.MustNil(err)
-		if ver >= currentBootstrapVersion {
+		currVer := mustGetStoreBootstrapVersion(store)
+		if currVer >= currentBootstrapVersion {
 			// It is already bootstrapped/upgraded by another TiDB instance, but
 			// we still need to go through the following domain Start/Close code
 			// right now as we have already initialized it when creating the session,
@@ -3708,6 +3699,11 @@ func runInBootstrapSession(store kv.Storage, ver int64) {
 			startMode = ddl.Normal
 		}
 	}
+	s, err := createSession(store)
+	if err != nil {
+		// Bootstrap fail will cause program exit.
+		logutil.BgLogger().Fatal("createSession error", zap.Error(err))
+	}
 	dom := domain.GetDomain(s)
 	err = dom.Start(startMode)
 	if err != nil {
@@ -3715,6 +3711,11 @@ func runInBootstrapSession(store kv.Storage, ver int64) {
 		logutil.BgLogger().Fatal("start domain error", zap.Error(err))
 	}
 
+	// For the bootstrap SQLs, the following variables should be compatible with old TiDB versions.
+	// TODO we should have a createBootstrapSession to init those special variables.
+	s.sessionVars.EnableClusteredIndex = variable.ClusteredIndexDefModeIntOnly
+
+	s.SetValue(sessionctx.Initing, true)
 	if startMode == ddl.Bootstrap {
 		bootstrap(s)
 	} else if startMode == ddl.Upgrade {
@@ -3858,7 +3859,23 @@ const (
 	notBootstrapped = 0
 )
 
-func getStoreBootstrapVersion(store kv.Storage) int64 {
+func mustGetStoreBootstrapVersion(store kv.Storage) int64 {
+	var ver int64
+	// check in kv store
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBootstrap)
+	err := kv.RunInNewTxn(ctx, store, false, func(_ context.Context, txn kv.Transaction) error {
+		var err error
+		t := meta.NewReader(txn)
+		ver, err = t.GetBootstrapVersion()
+		return err
+	})
+	if err != nil {
+		logutil.BgLogger().Fatal("check bootstrapped failed", zap.Error(err))
+	}
+	return ver
+}
+
+func getStoreBootstrapVersionWithCache(store kv.Storage) int64 {
 	storeBootstrappedLock.Lock()
 	defer storeBootstrappedLock.Unlock()
 	// check in memory
@@ -3867,19 +3884,7 @@ func getStoreBootstrapVersion(store kv.Storage) int64 {
 		return currentBootstrapVersion
 	}
 
-	var ver int64
-	// check in kv store
-	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBootstrap)
-	err := kv.RunInNewTxn(ctx, store, false, func(_ context.Context, txn kv.Transaction) error {
-		var err error
-		t := meta.NewMutator(txn)
-		ver, err = t.GetBootstrapVersion()
-		return err
-	})
-	if err != nil {
-		logutil.BgLogger().Fatal("check bootstrapped failed",
-			zap.Error(err))
-	}
+	ver := mustGetStoreBootstrapVersion(store)
 
 	if ver > notBootstrapped {
 		// here mean memory is not ok, but other server has already finished it
