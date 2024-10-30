@@ -66,9 +66,8 @@ const (
 	strictPlacementPolicyMode = "STRICT"
 	ignorePlacementPolicyMode = "IGNORE"
 
-	resetSpeedLimitRetryTimes = 3
-	defaultDDLConcurrency     = 16
-	maxSplitKeysOnce          = 10240
+	defaultDDLConcurrency = 16
+	maxSplitKeysOnce      = 10240
 )
 
 const minBatchDdlSize = 1
