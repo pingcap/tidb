@@ -629,6 +629,7 @@ func TestReorgPartitionConcurrent(t *testing.T) {
 		" PARTITION `p1a` VALUES LESS THAN (15),\n" +
 		" PARTITION `p1b` VALUES LESS THAN (20),\n" +
 		" PARTITION `pMax` VALUES LESS THAN (MAXVALUE))"))
+	currTbl.Meta().Partition = currPart
 	wait <- true
 	syncOnChanged <- true
 	// This reads the new schema (Schema update completed)
