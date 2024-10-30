@@ -16,12 +16,10 @@ alter table t partition by hash(b) partitions 3;
 alter table t partition by hash(b) partitions 3 update indexes (a global);
 -- error 8200
 alter table t add index idxErr (b) global;
--- error 8200
-alter table t add unique index idxErr (b) global;
+alter table t add unique index idxOK (b) global;
 -- error 8200
 create index idxErr on t (b) global;
--- error 8200
-create unique index idxErr on t (b) global;
+create unique index idxOK2 on t (b) global;
 alter table t remove partitioning;
 -- error 8200
 alter table t add index idxErr (b) global;
@@ -64,13 +62,11 @@ alter table t partition by hash(b) partitions 3 UPDATE INDEXES (a GLOBAL);
 -- error 8200
 alter table t add index idxErr (b) global;
 alter table t add unique index idxOK (a) global;
--- error 8200
-alter table t add unique index idxErr (b) global;
+alter table t add unique index idxOK2 (b) global;
 -- error 8200
 create index idxErr on t (b) global;
-create unique index idxOK2 on t (a) global;
--- error 8200
-create unique index idxErr on t (b) global;
+create unique index idxOK3 on t (a) global;
+create unique index idxOK4 on t (b) global;
 
 drop table t;
 --error 8200
