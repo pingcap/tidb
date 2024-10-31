@@ -323,6 +323,13 @@ func TestMultiSchemaModifyColumn(t *testing.T) {
 			// to the new type, and block writes otherwise. But then it would break the first tkO insert above...
 			tkO.MustQuery(`select * from t where a = 11`).Check(testkit.Rows("11 12"))
 			tkNO.MustQuery(`select * from t where a = 11`).Check(testkit.Rows("11  011.50 "))
+			tblO, err := tkO.Session().GetInfoSchema().TableInfoByName(parserModel.NewCIStr("test"), parserModel.NewCIStr("t"))
+			require.NoError(t, err)
+			tblNO, err := tkNO.Session().GetInfoSchema().TableInfoByName(parserModel.NewCIStr("test"), parserModel.NewCIStr("t"))
+			require.NoError(t, err)
+			require.Greater(t, tblO.Columns[1].ID, tblNO.Columns[1].ID)
+			// This also means that old copies of the columns will be left in the row, until the row is updated or deleted.
+			// But I guess that is at least documented.
 		default:
 			require.Failf(t, "unhandled schema state '%s'", schemaState)
 		}
