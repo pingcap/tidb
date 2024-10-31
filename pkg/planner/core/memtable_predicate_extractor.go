@@ -198,7 +198,7 @@ func (helper *extractHelper) extractFromBinaryOpConsExpr(
 	expr *expression.ScalarFunction,
 ) (string, []types.Datum) {
 	var (
-		scalarIdx int = 1
+		scalarIdx = 1
 		ok        bool
 		col       *expression.Column
 		v         types.Datum
