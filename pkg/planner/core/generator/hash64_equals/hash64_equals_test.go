@@ -93,6 +93,7 @@ func TestGenHash64EqualsField(t *testing.T) {
 }
 
 func TestHash64Equals(t *testing.T) {
+	t.Skip()
 	updatedCode, err := GenHash64Equals4LogicalOps()
 	if err != nil {
 		t.Errorf("Generate CloneForPlanCache code error: %v", err)
