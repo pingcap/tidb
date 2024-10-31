@@ -1845,16 +1845,20 @@ func (h *Handle) ensureActiveUser(user string) error {
 		return errors.Trace(err)
 	}
 
+	h.merge(&data)
+	h.activeUsers.Store(user, struct{}{})
+
+	return nil
+}
+
+func (h *Handle) merge(data *immutable) {
 	for {
 		old := h.Get()
-		swapped := h.priv.CompareAndSwap(old, old.merge(&data))
+		swapped := h.priv.CompareAndSwap(old, old.merge(data))
 		if swapped {
 			break
 		}
 	}
-	h.activeUsers.Store(user, struct{}{})
-
-	return nil
 }
 
 // Get the MySQLPrivilege for read.
@@ -1863,13 +1867,33 @@ func (h *Handle) Get() *MySQLPrivilege {
 }
 
 // Update loads all the privilege info from kv storage.
-func (h *Handle) Update() error {
-	var priv MySQLPrivilege
-	err := priv.LoadAll(h.sctx)
+func (h *Handle) Update(userList []string) error {
+	needReload := false
+	for _, user := range userList {
+		if _, ok := h.activeUsers.Load(user); ok {
+			needReload = true
+			break
+		}
+	}
+	if !needReload {
+		return nil
+	}
+
+	if userList == nil {
+		// Update all active users.
+		userList = make([]string, 0, 20)
+		h.activeUsers.Range(func(key, _ any) bool {
+			userList = append(userList, key.(string))
+			return true
+		})
+	}
+
+	var priv immutable
+	err := priv.loadSomeUsers(h.sctx, userList...)
 	if err != nil {
 		return err
 	}
+	h.merge(&priv)
 
-	h.priv.Store(&priv)
 	return nil
 }

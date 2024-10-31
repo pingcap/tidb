@@ -1829,6 +1829,22 @@ func (do *Domain) GetPDHTTPClient() pdhttp.Client {
 	return nil
 }
 
+func decodePrivilegeEvent(resp clientv3.WatchResponse) []string {
+	var userList []string
+	if len(resp.Events) > 0 {
+		for _, event := range resp.Events {
+			if event.Kv != nil {
+				val := event.Kv.Value
+				if len(val) > 0 {
+					users := strings.Split(string(val), ",")
+					userList = append(userList, users...)
+				}
+			}
+		}
+	}
+	return userList
+}
+
 // LoadPrivilegeLoop create a goroutine loads privilege tables in a loop, it
 // should be called only once in BootstrapSession.
 func (do *Domain) LoadPrivilegeLoop(sctx sessionctx.Context) error {
@@ -1855,11 +1871,16 @@ func (do *Domain) LoadPrivilegeLoop(sctx sessionctx.Context) error {
 
 		var count int
 		for {
+			var userList []string
+			var resp clientv3.WatchResponse
 			ok := true
 			select {
 			case <-do.exit:
 				return
-			case _, ok = <-watchCh:
+			case resp, ok = <-watchCh:
+				if ok {
+					userList = decodePrivilegeEvent(resp)
+				}
 			case <-time.After(duration):
 			}
 			if !ok {
@@ -1873,7 +1894,7 @@ func (do *Domain) LoadPrivilegeLoop(sctx sessionctx.Context) error {
 			}
 
 			count = 0
-			err := do.privHandle.Update()
+			err := do.privHandle.Update(userList)
 			metrics.LoadPrivilegeCounter.WithLabelValues(metrics.RetLabel(err)).Inc()
 			if err != nil {
 				logutil.BgLogger().Error("load privilege failed", zap.Error(err))
@@ -2820,13 +2841,23 @@ const (
 
 // NotifyUpdatePrivilege updates privilege key in etcd, TiDB client that watches
 // the key will get notification.
-func (do *Domain) NotifyUpdatePrivilege() error {
+func (do *Domain) NotifyUpdatePrivilege(userList []string) error {
+	var notifyList strings.Builder
+	for _, user := range userList {
+		if notifyList.Len() == 0 {
+			notifyList.WriteString(user)
+		} else {
+			notifyList.WriteString(",")
+			notifyList.WriteString(user)
+		}
+	}
+
 	// No matter skip-grant-table is configured or not, sending an etcd message is required.
 	// Because we need to tell other TiDB instances to update privilege data, say, we're changing the
 	// password using a special TiDB instance and want the new password to take effect.
 	if do.etcdClient != nil {
 		row := do.etcdClient.KV
-		_, err := row.Put(context.Background(), privilegeKey, "")
+		_, err := row.Put(context.Background(), privilegeKey, notifyList.String())
 		if err != nil {
 			logutil.BgLogger().Warn("notify update privilege failed", zap.Error(err))
 		}
@@ -2839,7 +2870,7 @@ func (do *Domain) NotifyUpdatePrivilege() error {
 		return nil
 	}
 
-	return do.PrivilegeHandle().Update()
+	return do.PrivilegeHandle().Update(userList)
 }
 
 // NotifyUpdateSysVarCache updates the sysvar cache key in etcd, which other TiDB
