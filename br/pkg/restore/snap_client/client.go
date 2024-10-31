@@ -66,7 +66,7 @@ const (
 	strictPlacementPolicyMode = "STRICT"
 	ignorePlacementPolicyMode = "IGNORE"
 
-	defaultDDLConcurrency = 16
+	defaultDDLConcurrency = 100
 	maxSplitKeysOnce      = 10240
 )
 

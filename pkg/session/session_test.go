@@ -12,26 +12,18 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package main
+package session
 
 import (
-	"bytes"
-	"os"
 	"testing"
+
+	"github.com/pingcap/tidb/pkg/ddl"
+	"github.com/stretchr/testify/require"
 )
 
-func TestPlanClone(t *testing.T) {
-	updatedCode, err := GenPlanCloneForPlanCacheCode()
-	if err != nil {
-		t.Errorf("Generate CloneForPlanCache code error: %v", err)
-		return
-	}
-	currentCode, err := os.ReadFile("../plan_clone_generated.go")
-	if err != nil {
-		t.Errorf("Read current plan_clone_generated.go code error: %v", err)
-		return
-	}
-	if !bytes.Equal(updatedCode, currentCode) {
-		t.Errorf("plan_clone_generated.go should be updated, please run 'make gogenerate' to update it.")
-	}
+func TestGetStartMode(t *testing.T) {
+	require.Equal(t, ddl.Normal, getStartMode(currentBootstrapVersion))
+	require.Equal(t, ddl.Normal, getStartMode(currentBootstrapVersion+1))
+	require.Equal(t, ddl.Upgrade, getStartMode(currentBootstrapVersion-1))
+	require.Equal(t, ddl.Bootstrap, getStartMode(0))
 }

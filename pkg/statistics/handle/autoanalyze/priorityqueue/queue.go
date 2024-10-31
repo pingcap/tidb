@@ -26,7 +26,6 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/statistics/handle/autoanalyze/exec"
-	"github.com/pingcap/tidb/pkg/statistics/handle/autoanalyze/internal/heap"
 	"github.com/pingcap/tidb/pkg/statistics/handle/lockstats"
 	statslogutil "github.com/pingcap/tidb/pkg/statistics/handle/logutil"
 	statstypes "github.com/pingcap/tidb/pkg/statistics/handle/types"
@@ -44,6 +43,28 @@ const (
 	failedJobRequeueInterval            = time.Minute * 5
 )
 
+// pqHeap is an interface that wraps the methods of a priority queue heap.
+type pqHeap interface {
+	// getByKey returns the job by the given table ID.
+	getByKey(tableID int64) (AnalysisJob, bool, error)
+	// addOrUpdate adds a job to the heap or updates the job if it already exists.
+	addOrUpdate(job AnalysisJob) error
+	// update updates a job in the heap.
+	update(job AnalysisJob) error
+	// delete deletes a job from the heap.
+	delete(job AnalysisJob) error
+	// list returns all jobs in the heap.
+	list() []AnalysisJob
+	// pop pops the job with the highest priority from the heap.
+	pop() (AnalysisJob, error)
+	// peek peeks the job with the highest priority from the heap without removing it.
+	peek() (AnalysisJob, error)
+	// isEmpty returns true if the heap is empty.
+	isEmpty() bool
+	// len returns the number of jobs in the heap.
+	len() int
+}
+
 // AnalysisPriorityQueue is a priority queue for TableAnalysisJobs.
 // Testing shows that keeping all jobs in memory is feasible.
 // Memory usage for one million tables is approximately 300 to 500 MiB, which is acceptable.
@@ -51,18 +72,20 @@ const (
 //
 //nolint:fieldalignment
 type AnalysisPriorityQueue struct {
+	ctx         context.Context
 	statsHandle statstypes.StatsHandle
 	calculator  *PriorityCalculator
 
-	ctx    context.Context
-	cancel context.CancelFunc
-	wg     util.WaitGroupWrapper
+	wg util.WaitGroupWrapper
 
 	// syncFields is a substructure to hold fields protected by mu.
 	syncFields struct {
 		// mu is used to protect the following fields.
-		mu    sync.RWMutex
-		inner *heap.Heap[int64, AnalysisJob]
+		mu sync.RWMutex
+		// Because the Initialize and Close functions can be called concurrently,
+		// so we need to protect the cancel function to avoid data race.
+		cancel context.CancelFunc
+		inner  pqHeap
 		// runningJobs is a map to store the running jobs. Used to avoid duplicate jobs.
 		runningJobs map[int64]struct{}
 		// lastDMLUpdateFetchTimestamp is the timestamp of the last DML update fetch.
@@ -76,19 +99,10 @@ type AnalysisPriorityQueue struct {
 
 // NewAnalysisPriorityQueue creates a new AnalysisPriorityQueue2.
 func NewAnalysisPriorityQueue(handle statstypes.StatsHandle) *AnalysisPriorityQueue {
-	ctx, cancel := context.WithCancel(context.Background())
-
 	queue := &AnalysisPriorityQueue{
 		statsHandle: handle,
 		calculator:  NewPriorityCalculator(),
-		ctx:         ctx,
-		cancel:      cancel,
 	}
-
-	queue.syncFields.mu.Lock()
-	queue.syncFields.runningJobs = make(map[int64]struct{})
-	queue.syncFields.failedJobs = make(map[int64]struct{})
-	queue.syncFields.mu.Unlock()
 
 	return queue
 }
@@ -123,6 +137,12 @@ func (pq *AnalysisPriorityQueue) Initialize() error {
 		pq.Close()
 		return errors.Trace(err)
 	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	pq.ctx = ctx
+	pq.syncFields.cancel = cancel
+	pq.syncFields.runningJobs = make(map[int64]struct{})
+	pq.syncFields.failedJobs = make(map[int64]struct{})
 	pq.syncFields.initialized = true
 	pq.syncFields.mu.Unlock()
 
@@ -147,14 +167,7 @@ func (pq *AnalysisPriorityQueue) Rebuild() error {
 // rebuildWithoutLock rebuilds the priority queue without holding the lock.
 // Note: Please hold the lock before calling this function.
 func (pq *AnalysisPriorityQueue) rebuildWithoutLock() error {
-	keyFunc := func(job AnalysisJob) (int64, error) {
-		return job.GetTableID(), nil
-	}
-	// We want the job with the highest weight to be at the top of the priority queue.
-	lessFunc := func(a, b AnalysisJob) bool {
-		return a.GetWeight() > b.GetWeight()
-	}
-	pq.syncFields.inner = heap.NewHeap(keyFunc, lessFunc)
+	pq.syncFields.inner = newHeap()
 
 	// We need to fetch the next check version with offset before fetching all tables and building analysis jobs.
 	// Otherwise, we may miss some DML changes happened during the process because this operation takes time.
@@ -390,7 +403,7 @@ func (pq *AnalysisPriorityQueue) processTableStats(
 	// This means we will always enter the tryCreateJob branch for these partitions.
 	// Since we store the stats meta for each partition and the parent table, there may be redundant calculations.
 	// This is acceptable for now, but in the future, we may consider separating the analysis job for each partition.
-	job, ok, _ := pq.syncFields.inner.GetByKey(stats.PhysicalID)
+	job, ok, _ := pq.syncFields.inner.getByKey(stats.PhysicalID)
 	if !ok {
 		job = pq.tryCreateJob(is, stats, pruneMode, jobFactory, lockedTables)
 	} else {
@@ -401,7 +414,7 @@ func (pq *AnalysisPriorityQueue) processTableStats(
 		// For dynamic partitioned tables, if the parent table is locked, we skip the whole table here as well.
 		if _, ok := lockedTables[stats.PhysicalID]; ok {
 			// Clean up the job if the table is locked.
-			err := pq.syncFields.inner.Delete(job)
+			err := pq.syncFields.inner.delete(job)
 			if err != nil {
 				statslogutil.StatsLogger().Error(
 					"Failed to delete job from priority queue",
@@ -625,12 +638,13 @@ func (pq *AnalysisPriorityQueue) RefreshLastAnalysisDuration() {
 		defer func() {
 			statslogutil.StatsLogger().Info("Last analysis duration refreshed", zap.Duration("duration", time.Since(start)))
 		}()
-		jobs := pq.syncFields.inner.List()
+		jobs := pq.syncFields.inner.list()
 		currentTs, err := statsutil.GetStartTS(sctx)
 		if err != nil {
 			return errors.Trace(err)
 		}
 		jobFactory := NewAnalysisJobFactory(sctx, 0, currentTs)
+		// TODO: We can directly rebuild the priority queue instead of updating the indicators of each job.
 		for _, job := range jobs {
 			indicators := job.GetIndicators()
 			tableStats, ok := pq.statsHandle.Get(job.GetTableID())
@@ -640,7 +654,7 @@ func (pq *AnalysisPriorityQueue) RefreshLastAnalysisDuration() {
 					zap.String("job", job.String()),
 				)
 				// TODO: Remove this after handling the DDL event.
-				err := pq.syncFields.inner.Delete(job)
+				err := pq.syncFields.inner.delete(job)
 				if err != nil {
 					statslogutil.StatsLogger().Error("Failed to delete job from priority queue",
 						zap.Error(err),
@@ -651,7 +665,7 @@ func (pq *AnalysisPriorityQueue) RefreshLastAnalysisDuration() {
 			indicators.LastAnalysisDuration = jobFactory.GetTableLastAnalyzeDuration(tableStats)
 			job.SetIndicators(indicators)
 			job.SetWeight(pq.calculator.CalculateWeight(job))
-			if err := pq.syncFields.inner.Update(job); err != nil {
+			if err := pq.syncFields.inner.update(job); err != nil {
 				statslogutil.StatsLogger().Error("Failed to add job to priority queue",
 					zap.Error(err),
 					zap.String("job", job.String()),
@@ -721,7 +735,7 @@ func (pq *AnalysisPriorityQueue) pushWithoutLock(job AnalysisJob) error {
 	if _, ok := pq.syncFields.failedJobs[job.GetTableID()]; ok {
 		return nil
 	}
-	return pq.syncFields.inner.Add(job)
+	return pq.syncFields.inner.addOrUpdate(job)
 }
 
 // Pop pops a job from the priority queue and marks it as running.
@@ -733,7 +747,7 @@ func (pq *AnalysisPriorityQueue) Pop() (AnalysisJob, error) {
 		return nil, errors.New(notInitializedErrMsg)
 	}
 
-	job, err := pq.syncFields.inner.Pop()
+	job, err := pq.syncFields.inner.pop()
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -762,7 +776,7 @@ func (pq *AnalysisPriorityQueue) Peek() (AnalysisJob, error) {
 		return nil, errors.New(notInitializedErrMsg)
 	}
 
-	return pq.syncFields.inner.Peek()
+	return pq.syncFields.inner.peek()
 }
 
 // IsEmpty checks whether the priority queue is empty.
@@ -774,7 +788,7 @@ func (pq *AnalysisPriorityQueue) IsEmpty() (bool, error) {
 		return false, errors.New(notInitializedErrMsg)
 	}
 
-	return pq.syncFields.inner.IsEmpty(), nil
+	return pq.syncFields.inner.isEmpty(), nil
 }
 
 // Len returns the number of jobs in the priority queue.
@@ -786,7 +800,7 @@ func (pq *AnalysisPriorityQueue) Len() (int, error) {
 		return 0, errors.New(notInitializedErrMsg)
 	}
 
-	return pq.syncFields.inner.Len(), nil
+	return pq.syncFields.inner.len(), nil
 }
 
 // Close closes the priority queue.
@@ -798,6 +812,9 @@ func (pq *AnalysisPriorityQueue) Close() {
 		return
 	}
 
-	pq.cancel()
+	// It is possible that the priority queue is not initialized.
+	if pq.syncFields.cancel != nil {
+		pq.syncFields.cancel()
+	}
 	pq.wg.Wait()
 }

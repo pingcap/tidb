@@ -417,3 +417,31 @@ func TestJWKSImpl(t *testing.T) {
 	_, err = jwksImpl.checkSigWithRetry(signedTokenString, 0)
 	require.Error(t, err)
 }
+
+func (p *immutable) User() []UserRecord {
+	return p.user
+}
+
+func (p *immutable) SetUser(user []UserRecord) {
+	p.user = user
+}
+
+func (p *immutable) DB() []dbRecord {
+	return p.db
+}
+
+func (p *immutable) TablesPriv() []tablesPrivRecord {
+	return p.tablesPriv
+}
+
+func (p *immutable) ColumnsPriv() []columnsPrivRecord {
+	return p.columnsPriv
+}
+
+func (p *immutable) DefaultRoles() []defaultRoleRecord {
+	return p.defaultRoles
+}
+
+func (p *immutable) RoleGraph() map[string]roleGraphEdgesTable {
+	return p.roleGraph
+}

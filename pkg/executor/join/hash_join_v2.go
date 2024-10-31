@@ -19,6 +19,7 @@ import (
 	"context"
 	"hash"
 	"math"
+	"math/bits"
 	"math/rand"
 	"runtime/trace"
 	"strconv"
@@ -311,32 +312,15 @@ func (hCtx *HashJoinCtxV2) resetHashTableContextForRestore() {
 
 // partitionNumber is always power of 2
 func genHashJoinPartitionNumber(partitionHint uint) uint {
-	prevRet := uint(16)
-	currentRet := uint(8)
-	for currentRet != 0 {
-		if currentRet < partitionHint {
-			return prevRet
-		}
-		prevRet = currentRet
-		currentRet = currentRet >> 1
+	partitionNumber := uint(1)
+	for partitionNumber < partitionHint && partitionNumber < 16 {
+		partitionNumber <<= 1
 	}
-	return 1
+	return partitionNumber
 }
 
 func getPartitionMaskOffset(partitionNumber uint) int {
-	getMSBPos := func(num uint64) int {
-		ret := 0
-		for num&1 != 1 {
-			num = num >> 1
-			ret++
-		}
-		if num != 1 {
-			// partitionNumber is always pow of 2
-			panic("should not reach here")
-		}
-		return ret
-	}
-	msbPos := getMSBPos(uint64(partitionNumber))
+	msbPos := bits.TrailingZeros64(uint64(partitionNumber))
 	// top MSB bits in hash value will be used to partition data
 	return 64 - msbPos
 }

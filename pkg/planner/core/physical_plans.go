@@ -52,7 +52,7 @@ import (
 	"github.com/pingcap/tipb/go-tipb"
 )
 
-//go:generate go run ./generator/plan_clone_generator.go -- plan_clone_generated.go
+//go:generate go run ./generator/plan_cache/plan_clone_generator.go -- plan_clone_generated.go
 
 var (
 	_ base.PhysicalPlan = &PhysicalSelection{}
