@@ -16,7 +16,6 @@ package server
 
 import (
 	"bytes"
-	"cmp"
 	"context"
 	"crypto/tls"
 	"crypto/x509"
@@ -31,7 +30,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/http/httputil"
-	"slices"
 	"sort"
 	"testing"
 	"time"
@@ -65,6 +63,7 @@ import (
 	"github.com/tikv/client-go/v2/tikv"
 	"go.etcd.io/etcd/tests/v3/integration"
 	"go.uber.org/zap"
+	"golang.org/x/exp/slices"
 )
 
 type basicHTTPHandlerTestSuite struct {
@@ -993,8 +992,8 @@ func TestAllHistory(t *testing.T) {
 	err = decoder.Decode(&jobs)
 	require.True(t, len(jobs) < ddl.DefNumGetDDLHistoryJobs)
 	// sort job.
-	slices.SortFunc(jobs, func(i, j *model.Job) int {
-		return cmp.Compare(i.ID, j.ID)
+	slices.SortFunc(jobs, func(i, j *model.Job) bool {
+		return i.ID < j.ID
 	})
 
 	require.NoError(t, err)
