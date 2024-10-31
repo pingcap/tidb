@@ -5991,8 +5991,8 @@ def go_deps():
         name = "org_golang_x_exp",
         build_file_proto_mode = "disable_global",
         importpath = "golang.org/x/exp",
-        sum = "h1:SkwG94eNiiYJhbeDE018Grw09HIN/KB9NlRmZsrzfWs=",
-        version = "v0.0.0-20221023144134-a1e5550cf13e",
+        sum = "h1:jtJma62tbqLibJ5sFQz8bKtEM8rJBtfilJ2qTU199MI=",
+        version = "v0.0.0-20231006140011-7918f672742d",
     )
     go_repository(
         name = "org_golang_x_exp_typeparams",
@@ -6027,8 +6027,8 @@ def go_deps():
         name = "org_golang_x_mod",
         build_file_proto_mode = "disable_global",
         importpath = "golang.org/x/mod",
-        sum = "h1:lFO9qtOdlre5W1jxS3r/4szv2/6iXxScdzjoBMXNhYk=",
-        version = "v0.10.0",
+        sum = "h1:I/DsJXRlw/8l/0c24sM9yb0T4z9liZTduXvdAWYiysY=",
+        version = "v0.13.0",
     )
     go_repository(
         name = "org_golang_x_net",
@@ -6048,8 +6048,8 @@ def go_deps():
         name = "org_golang_x_sync",
         build_file_proto_mode = "disable_global",
         importpath = "golang.org/x/sync",
-        sum = "h1:PUR+T4wwASmuSTYdKjYHI5TD22Wy5ogLU5qZCOLxBrI=",
-        version = "v0.2.0",
+        sum = "h1:zxkM55ReGkDlKSM+Fu41A+zmbZuaPVbGMzvvdUPznYQ=",
+        version = "v0.4.0",
     )
     go_repository(
         name = "org_golang_x_sys",
@@ -6083,8 +6083,8 @@ def go_deps():
         name = "org_golang_x_tools",
         build_file_proto_mode = "disable_global",
         importpath = "golang.org/x/tools",
-        sum = "h1:8WMNJAz3zrtPmnYC7ISf5dEn3MT0gY7jBJfw27yrrLo=",
-        version = "v0.9.1",
+        sum = "h1:jvNa2pY0M4r62jkRQ6RwEZZyPcymeL9XZMLBbV7U2nc=",
+        version = "v0.14.0",
     )
     go_repository(
         name = "org_golang_x_xerrors",
