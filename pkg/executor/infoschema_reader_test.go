@@ -1066,3 +1066,48 @@ func TestInfoschemaTablesSpecialOptimizationCovered(t *testing.T) {
 		require.Equal(t, testCase.expect, covered, testCase.sql)
 	}
 }
+
+func TestCaseInsensitiveInfoSchemaRead(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("create database Test1")
+	tk.MustExec("create table Test1.Table1(Col1 int)")
+
+	ops := []string{"=", "!=", ">", ">=", "<", "<="}
+
+	testCases := []struct {
+		colName  string
+		filter   string
+		expected []int
+	}{
+		{
+			colName:  "table_name",
+			filter:   `"Table1"`,
+			expected: []int{1, 822, 561, 562, 261, 262},
+		},
+		{
+			colName:  "table_schema",
+			filter:   `"Test1"`,
+			expected: []int{1, 822, 0, 1, 822, 823},
+		},
+	}
+
+	sqlTemplates := []string{
+		"select count(*) from information_schema.tables where %s(%s) %s %s",
+		`select count(*) from information_schema.tables where %s(%s) %s %s and table_type != ""`, // disable count(*) optimization
+	}
+	for _, tc := range testCases {
+		for i, op := range ops {
+			for _, st := range sqlTemplates {
+				for _, stringFunc := range []string{"lower", "upper", ""} {
+					res := tk.MustQuery(fmt.Sprintf(st, stringFunc, tc.colName, op, tc.filter))
+					s := res.Rows()[0][0].(string)
+					actual, err := strconv.Atoi(s)
+					require.NoError(t, err)
+					require.Equal(t, tc.expected[i], actual)
+				}
+			}
+		}
+	}
+}

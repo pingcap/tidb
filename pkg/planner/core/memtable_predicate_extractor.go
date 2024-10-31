@@ -45,55 +45,55 @@ import (
 	"go.uber.org/zap"
 )
 
-// TODO(joechenrh): Maybe we can support other simple string functions later.
 var supportedPushdownFuncs = map[string]struct{}{
 	ast.Lower: {},
 	ast.Upper: {},
 }
 
-func (helper *extractHelper) rewriteExpression(
+// convertToLowerInExpression does the following works:
+// 1. Add lower function to all columns.
+// 2. Remove all upper functions.
+// 3. Convert all string constant to lower case.
+// It's to make upper Selection Operator case insensitive.
+func (helper *extractHelper) convertToLowerInExpression(
+	ctx base.PlanContext,
 	expr expression.Expression,
-	colName string,
-	colIDMapping map[int64]*types.FieldName,
 ) expression.Expression {
-	e, ok := expr.(*expression.ScalarFunction)
-	if !ok {
-		return expr
-	}
-
-	// switch helper.getStringFunctionName(e) {
-	// case ast.EQ:
-	// 	return helper.extractFromBinaryOpConsExpr(ctx, extractCols, fn)
-	// case ast.LogicOr:
-	// 	return helper.extractFromOrExpr(ctx, extractCols, fn)
-	// case ast.In:
-	// 	return helper.extractFromInConsExpr(ctx, extractCols, fn)
-	// default:
-	// 	return "", nil
-	// }
-
-	if _, ok := supportedPushdownFuncs[e.FuncName.L]; ok {
+	switch e := expr.(type) {
+	case *expression.ScalarFunction:
+		fn := helper.getStringFunctionName(e)
 		args := e.GetArgs()
-		if len(args) != 1 {
+
+		switch fn {
+		case ast.Lower:
+			return e
+		case ast.Upper:
+			if len(args) != 1 {
+				return e
+			}
+			return helper.convertToLowerInExpression(ctx, args[0])
+		default:
+			for i, arg := range args {
+				args[i] = helper.convertToLowerInExpression(ctx, arg)
+			}
 			return e
 		}
-
-		newArg := helper.rewriteExpression(args[0], colName, colIDMapping)
-		if col, ok := newArg.(*expression.Column); ok {
-			if name, ok := colIDMapping[col.ID]; ok && name.ColName.L == colName {
-				return col
+	case *expression.Column:
+		if e.RetType.EvalType() == types.ETString {
+			if newArg, err := expression.NewFunction(ctx.GetExprCtx(), ast.Lower, e.RetType, e); err == nil {
+				return newArg
 			}
 		}
-		args[0] = newArg
+		return e
+	case *expression.Constant:
+		v := e.Value
+		if v.Kind() == types.KindString {
+			e.Value.SetString(strings.ToLower(v.GetString()), v.Collation())
+		}
 		return e
 	}
 
-	args := e.GetArgs()
-	for i, arg := range args {
-		args[i] = helper.rewriteExpression(arg, colName, colIDMapping)
-	}
-
-	return e
+	return expr
 }
 
 // extract const datum from expression
@@ -306,10 +306,6 @@ func (helper *extractHelper) extractCol(
 
 	// We should use INTERSECTION of sets because of the predicates is CNF array
 	for _, expr := range predicates {
-		if caseInsensitive {
-			expr = helper.rewriteExpression(expr, extractColName, extractColIDMapping)
-		}
-
 		fn, ok := expr.(*expression.ScalarFunction)
 		if !ok {
 			remained = append(remained, expr)
