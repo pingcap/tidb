@@ -66,6 +66,7 @@ func genLeftOuterSemiJoinResult(t *testing.T, sessCtx sessionctx.Context, leftFi
 
 			leftRow := leftChunk.GetRow(leftIndex)
 			hasMatch := false
+			hasNull := false
 
 			// For each row in right chunks
 			for _, rightChunk := range rightChunks {
@@ -82,9 +83,10 @@ func genLeftOuterSemiJoinResult(t *testing.T, sessCtx sessionctx.Context, leftFi
 					if valid && otherConditions != nil {
 						shallowRow.ShallowCopyPartialRow(0, leftRow)
 						shallowRow.ShallowCopyPartialRow(len(leftTypes), rightRow)
-						matched, _, err := expression.EvalBool(sessCtx.GetExprCtx().GetEvalCtx(), otherConditions, shallowRow.ToRow())
+						matched, null, err := expression.EvalBool(sessCtx.GetExprCtx().GetEvalCtx(), otherConditions, shallowRow.ToRow())
 						require.NoError(t, err)
 						valid = matched
+						hasNull = hasNull || null
 					}
 
 					if valid {
@@ -102,7 +104,11 @@ func genLeftOuterSemiJoinResult(t *testing.T, sessCtx sessionctx.Context, leftFi
 			if hasMatch {
 				resultChk.AppendInt64(len(leftUsedColumns), 1)
 			} else {
-				resultChk.AppendInt64(len(leftUsedColumns), 0)
+				if hasNull {
+					resultChk.AppendNull(len(leftUsedColumns))
+				} else {
+					resultChk.AppendInt64(len(leftUsedColumns), 0)
+				}
 			}
 
 			if resultChk.IsFull() {
@@ -282,8 +288,15 @@ func TestLeftOuterSemiJoinProbeOtherCondition(t *testing.T) {
 	b := &expression.Column{Index: 8, RetType: nullableIntTp}
 	sf, err := expression.NewFunction(mock.NewContext(), ast.GT, tinyTp, a, b)
 	require.NoError(t, err, "error when create other condition")
+	// test condition `a = b` from `a in (select b from t2)`
+	a2 := &expression.Column{Index: 1, RetType: nullableIntTp, InOperand: true}
+	b2 := &expression.Column{Index: 8, RetType: nullableIntTp, InOperand: true}
+	sf2, err := expression.NewFunction(mock.NewContext(), ast.EQ, tinyTp, a2, b2)
+	require.NoError(t, err, "error when create other condition")
 	otherCondition := make(expression.CNFExprs, 0)
 	otherCondition = append(otherCondition, sf)
+	otherCondition2 := make(expression.CNFExprs, 0)
+	otherCondition2 = append(otherCondition2, sf2)
 	joinType := logicalop.LeftOuterSemiJoin
 	simpleFilter := createSimpleFilter(t)
 	hasFilter := []bool{false, true}
@@ -301,6 +314,11 @@ func TestLeftOuterSemiJoinProbeOtherCondition(t *testing.T) {
 			testJoinProbe(t, false, []int{0}, []int{0}, []*types.FieldType{intTp}, []*types.FieldType{intTp}, lTypes, rTypes, rightBuild, []int{}, rightUsed, []int{1}, []int{3}, leftFilter, nil, otherCondition, partitionNumber, joinType, 200)
 			testJoinProbe(t, false, []int{0}, []int{0}, []*types.FieldType{nullableIntTp}, []*types.FieldType{nullableIntTp}, toNullableTypes(lTypes), toNullableTypes(rTypes), rightBuild, []int{1, 2, 4}, rightUsed, []int{1}, []int{3}, leftFilter, nil, otherCondition, partitionNumber, joinType, 200)
 			testJoinProbe(t, false, []int{0}, []int{0}, []*types.FieldType{nullableIntTp}, []*types.FieldType{nullableIntTp}, toNullableTypes(lTypes), toNullableTypes(rTypes), rightBuild, nil, rightUsed, []int{1}, []int{3}, leftFilter, nil, otherCondition, partitionNumber, joinType, 200)
+
+			testJoinProbe(t, false, []int{0}, []int{0}, []*types.FieldType{intTp}, []*types.FieldType{intTp}, lTypes, rTypes, rightBuild, []int{1, 2, 4}, rightUsed, []int{1}, []int{3}, leftFilter, nil, otherCondition2, partitionNumber, joinType, 200)
+			testJoinProbe(t, false, []int{0}, []int{0}, []*types.FieldType{intTp}, []*types.FieldType{intTp}, lTypes, rTypes, rightBuild, []int{}, rightUsed, []int{1}, []int{3}, leftFilter, nil, otherCondition2, partitionNumber, joinType, 200)
+			testJoinProbe(t, false, []int{0}, []int{0}, []*types.FieldType{nullableIntTp}, []*types.FieldType{nullableIntTp}, toNullableTypes(lTypes), toNullableTypes(rTypes), rightBuild, []int{1, 2, 4}, rightUsed, []int{1}, []int{3}, leftFilter, nil, otherCondition2, partitionNumber, joinType, 200)
+			testJoinProbe(t, false, []int{0}, []int{0}, []*types.FieldType{nullableIntTp}, []*types.FieldType{nullableIntTp}, toNullableTypes(lTypes), toNullableTypes(rTypes), rightBuild, nil, rightUsed, []int{1}, []int{3}, leftFilter, nil, otherCondition2, partitionNumber, joinType, 200)
 		}
 	}
 }

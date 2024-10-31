@@ -128,7 +128,7 @@ func (j *leftOuterSemiJoinProbe) probeForInnerSideBuildWithOtherCondition(chk, j
 	if joinedChk.NumRows() > 0 {
 		j.selected = j.selected[:0]
 		j.isNullRows = j.isNullRows[:0]
-		j.selected, j.isNullRows, err = expression.VectorizedFilterConsiderNull(j.ctx.SessCtx.GetExprCtx().GetEvalCtx(), j.ctx.SessCtx.GetSessionVars().EnableVectorizedExpression, j.ctx.OtherCondition, chunk.NewIterator4Chunk(joinedChk), j.selected, j.hasNullRows)
+		j.selected, j.isNullRows, err = expression.VecEvalBool(j.ctx.SessCtx.GetExprCtx().GetEvalCtx(), false, j.ctx.OtherCondition, joinedChk, j.selected, j.isNullRows)
 		if err != nil {
 			return err
 		}
