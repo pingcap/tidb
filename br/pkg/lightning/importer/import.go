@@ -1600,13 +1600,8 @@ func (rc *Controller) importTables(ctx context.Context) (finalErr error) {
 		if err != nil {
 			return errors.Trace(err)
 		}
-<<<<<<< HEAD:br/pkg/lightning/importer/import.go
-		etcdCli, err := clientv3.New(clientv3.Config{
-			Endpoints:        []string{rc.cfg.TiDB.PdAddr},
-=======
 		etcdCli, err = clientv3.New(clientv3.Config{
-			Endpoints:        urlsWithScheme,
->>>>>>> ea550644144 (lightning/importinto: set correct step to create single point allocator (#56602)):lightning/pkg/importer/import.go
+			Endpoints:        []string{rc.cfg.TiDB.PdAddr},
 			AutoSyncInterval: 30 * time.Second,
 			TLS:              rc.tls.TLSConfig(),
 		})

@@ -19,7 +19,8 @@ import (
 	"testing"
 
 	"github.com/pingcap/errors"
-<<<<<<< HEAD:br/pkg/lightning/common/common_test.go
+	// autoid1.MockForTest is init there, we need to import it to make sure it's called
+	_ "github.com/pingcap/tidb/autoid_service"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/kv"
@@ -30,20 +31,6 @@ import (
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/store/mockstore"
 	tmock "github.com/pingcap/tidb/util/mock"
-=======
-	// autoid1.MockForTest is init there, we need to import it to make sure it's called
-	_ "github.com/pingcap/tidb/pkg/autoid_service"
-	"github.com/pingcap/tidb/pkg/ddl"
-	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/lightning/common"
-	"github.com/pingcap/tidb/pkg/meta"
-	"github.com/pingcap/tidb/pkg/meta/autoid"
-	"github.com/pingcap/tidb/pkg/meta/model"
-	"github.com/pingcap/tidb/pkg/parser"
-	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/store/mockstore"
-	tmock "github.com/pingcap/tidb/pkg/util/mock"
->>>>>>> ea550644144 (lightning/importinto: set correct step to create single point allocator (#56602)):pkg/lightning/common/common_test.go
 	"github.com/stretchr/testify/require"
 )
 
