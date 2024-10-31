@@ -98,7 +98,7 @@ func TestHash64Equals(t *testing.T) {
 		t.Errorf("Generate CloneForPlanCache code error: %v", err)
 		return
 	}
-	currentCode, err := os.ReadFile("../operator/logicalop/hash64_equals_generated.go")
+	currentCode, err := os.ReadFile("../../operator/logicalop/hash64_equals_generated.go")
 	if err != nil {
 		t.Errorf("Read current hash64_equals_generated.go code error: %v", err)
 		return
