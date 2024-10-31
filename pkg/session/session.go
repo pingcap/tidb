@@ -4027,12 +4027,9 @@ func GetStartTSFromSession(se any) (startTS, processInfoID uint64) {
 	if txnInfo != nil {
 		startTS = txnInfo.StartTS
 		processInfoID = txnInfo.ConnectionID
-	} else {
-		tmp.sessionVars.TxnCtxMu.Lock()
-		startTS = tmp.sessionVars.TxnCtx.StartTS
-		tmp.sessionVars.TxnCtxMu.Unlock()
+	} else if txn, _ := tmp.Txn(false); txn != nil && txn.Valid() {
+		startTS = txn.StartTS()
 	}
-
 	logutil.BgLogger().Debug(
 		"GetStartTSFromSession getting startTS of internal session",
 		zap.Uint64("startTS", startTS), zap.Time("start time", oracle.GetTimeFromTS(startTS)))
