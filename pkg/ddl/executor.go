@@ -1404,6 +1404,21 @@ func preSplitAndScatter(ctx sessionctx.Context, store kv.Storage, tbInfo *model.
 	}
 }
 
+// preSplitAndScatterIndex performs pre-split and scatter of the index's regions.
+// If `pi` is not nil, will only split region for `pi`, this is used when add partition.
+func preSplitAndScatterIndex(store kv.Storage, tbInfo *model.TableInfo, index []*model.IndexInfo) {
+	if tbInfo.TempTableType != model.TempTableNone {
+		return
+	}
+	sp, ok := store.(kv.SplittableStore)
+	if !ok || atomic.LoadUint32(&EnableSplitTableRegion) == 0 {
+		return
+	}
+	for _, idx := range index {
+		splitOneIndexRegion(sp, tbInfo, idx)
+	}
+}
+
 func (e *executor) FlashbackCluster(ctx sessionctx.Context, flashbackTS uint64) error {
 	logutil.DDLLogger().Info("get flashback cluster job", zap.Stringer("flashbackTS", oracle.GetTimeFromTS(flashbackTS)))
 	nowTS, err := ctx.GetStore().GetOracle().GetTimestamp(e.ctx, &oracle.Option{})

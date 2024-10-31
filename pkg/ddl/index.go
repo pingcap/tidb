@@ -1028,6 +1028,7 @@ SwitchIndexState:
 			return ver, err
 		}
 		job.SchemaState = model.StateDeleteOnly
+		preSplitAndScatterIndex(w.store, tblInfo, allIndexInfos)
 	case model.StateDeleteOnly:
 		// delete only -> write only
 		for _, indexInfo := range allIndexInfos {

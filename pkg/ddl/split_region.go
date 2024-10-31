@@ -66,6 +66,19 @@ func splitTableRegion(ctx sessionctx.Context, store kv.SplittableStore, tbInfo *
 	}
 }
 
+func splitOneIndexRegion(store kv.SplittableStore, tbInfo *model.TableInfo, idxInfo *model.IndexInfo) {
+	splitKeys := make([][]byte, 0, 1)
+	indexPrefix := tablecodec.EncodeTableIndexPrefix(tbInfo.ID, idxInfo.ID)
+	splitKeys = append(splitKeys, indexPrefix)
+	tempIndexPrefix := tablecodec.EncodeTableIndexPrefix(tbInfo.ID, idxInfo.ID|tablecodec.TempIndexPrefix)
+	splitKeys = append(splitKeys, tempIndexPrefix)
+	regionIDs, err := store.SplitRegions(context.Background(), splitKeys, true, &tbInfo.ID)
+	if err != nil {
+		logutil.DDLLogger().Warn("pre split some table index regions failed",
+			zap.Stringer("table", tbInfo.Name), zap.Stringer("index", idxInfo.Name), zap.Int("successful region count", len(regionIDs)), zap.Error(err))
+	}
+}
+
 // `tID` is used to control the scope of scatter. If it is `ScatterTable`, the corresponding tableID is used.
 // If it is `ScatterGlobal`, the scatter configured at global level uniformly use -1 as `tID`.
 func getScatterConfig(scope string, tableID int64) (scatter bool, tID int64) {
