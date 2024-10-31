@@ -554,3 +554,28 @@ func AcquireDistributedLock(
 		}
 	}, nil
 }
+
+// ListenersWrapper is a list of listeners.
+// A way to broadcast events to multiple listeners.
+type ListenersWrapper struct {
+	listeners []Listener
+}
+
+// OnBecomeOwner broadcasts the OnBecomeOwner event to all listeners.
+func (ol *ListenersWrapper) OnBecomeOwner() {
+	for _, l := range ol.listeners {
+		l.OnBecomeOwner()
+	}
+}
+
+// OnRetireOwner broadcasts the OnRetireOwner event to all listeners.
+func (ol *ListenersWrapper) OnRetireOwner() {
+	for _, l := range ol.listeners {
+		l.OnRetireOwner()
+	}
+}
+
+// NewListenersWrapper creates a new OwnerListeners.
+func NewListenersWrapper(listeners ...Listener) *ListenersWrapper {
+	return &ListenersWrapper{listeners: listeners}
+}
