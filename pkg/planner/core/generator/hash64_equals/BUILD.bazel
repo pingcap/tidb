@@ -1,9 +1,9 @@
 load("@io_bazel_rules_go//go:def.bzl", "go_binary", "go_library", "go_test")
 
 go_library(
-    name = "hash64_equal_lib",
+    name = "hash64_equals_lib",
     srcs = ["hash64_equals_generator.go"],
-    importpath = "github.com/pingcap/tidb/pkg/planner/core/generator/hash64_equal",
+    importpath = "github.com/pingcap/tidb/pkg/planner/core/generator/hash64_equals",
     visibility = ["//visibility:private"],
     deps = [
         "//pkg/planner/cascades/base",
@@ -12,16 +12,16 @@ go_library(
 )
 
 go_binary(
-    name = "hash64_equal",
-    embed = [":hash64_equal_lib"],
+    name = "hash64_equals",
+    embed = [":hash64_equals_lib"],
     visibility = ["//visibility:public"],
 )
 
 go_test(
-    name = "hash64_equal_test",
+    name = "hash64_equals_test",
     timeout = "short",
     srcs = ["hash64_equals_test.go"],
-    embed = [":hash64_equal_lib"],
+    embed = [":hash64_equals_lib"],
     flaky = True,
     deps = [
         "//pkg/util",
