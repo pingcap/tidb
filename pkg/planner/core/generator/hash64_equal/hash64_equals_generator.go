@@ -47,7 +47,7 @@ func GenHash64Equals4LogicalOps() ([]byte, error) {
 	return c.format()
 }
 
-var HashEqualsType = reflect.TypeOf((*base.HashEquals)(nil)).Elem()
+var hashEqualsType = reflect.TypeOf((*base.HashEquals)(nil)).Elem()
 
 func genHash64EqualsForLogicalOps(x any) ([]byte, error) {
 	c := new(cc)
@@ -85,10 +85,7 @@ func logicalOpName2PlanCodecString(name string) string {
 }
 
 func isHash64EqualsField(fType reflect.StructField) bool {
-	if fType.Tag.Get("hash64-equals") == "true" {
-		return true // allow shallow clone for this field
-	}
-	return false
+	return fType.Tag.Get("hash64-equals") == "true"
 }
 
 func (c *cc) Hash64Element(fType reflect.Type, callName string) {
@@ -110,7 +107,7 @@ func (c *cc) Hash64Element(fType reflect.Type, callName string) {
 	case reflect.Float32, reflect.Float64:
 		c.write("h.HashFloat64(float64(%v))", callName)
 	default:
-		if fType.Implements(HashEqualsType) {
+		if fType.Implements(hashEqualsType) {
 			c.write("%v.Hash64(h)", callName)
 		} else {
 			panic("doesn't support element type" + fType.Kind().String())
