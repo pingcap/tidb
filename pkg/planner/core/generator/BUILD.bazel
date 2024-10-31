@@ -2,10 +2,17 @@ load("@io_bazel_rules_go//go:def.bzl", "go_binary", "go_library", "go_test")
 
 go_library(
     name = "generator_lib",
-    srcs = ["plan_clone_generator.go"],
+    srcs = [
+        "hash64_equals_generator.go",
+        "plan_clone_generator.go",
+    ],
     importpath = "github.com/pingcap/tidb/pkg/planner/core/generator",
     visibility = ["//visibility:private"],
-    deps = ["//pkg/planner/core"],
+    deps = [
+        "//pkg/planner/cascades/base",
+        "//pkg/planner/core",
+        "//pkg/planner/core/operator/logicalop",
+    ],
 )
 
 go_binary(
@@ -17,10 +24,18 @@ go_binary(
 go_test(
     name = "generator_test",
     timeout = "short",
-    srcs = ["plan_clone_test.go"],
+    srcs = [
+        "hash64_equals_test.go",
+        "plan_clone_test.go",
+    ],
     data = [
         "//pkg/planner/core:generator_files",
     ],
     embed = [":generator_lib"],
     flaky = True,
+    shard_count = 3,
+    deps = [
+        "//pkg/util",
+        "@com_github_stretchr_testify//require",
+    ],
 )
