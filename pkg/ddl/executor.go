@@ -1411,7 +1411,7 @@ func preSplitAndScatterIndex(store kv.Storage, tbInfo *model.TableInfo, index []
 		return
 	}
 	sp, ok := store.(kv.SplittableStore)
-	if !ok || atomic.LoadUint32(&EnableSplitTableRegion) == 0 {
+	if !ok {
 		return
 	}
 	for _, idx := range index {

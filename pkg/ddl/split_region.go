@@ -77,6 +77,8 @@ func splitOneIndexRegion(store kv.SplittableStore, tbInfo *model.TableInfo, idxI
 		logutil.DDLLogger().Warn("pre split some table index regions failed",
 			zap.Stringer("table", tbInfo.Name), zap.Stringer("index", idxInfo.Name), zap.Int("successful region count", len(regionIDs)), zap.Error(err))
 	}
+	logutil.DDLLogger().Info("pre split some table index regions success",
+		zap.Stringer("table", tbInfo.Name), zap.Stringer("index", idxInfo.Name), zap.Int("successful region count", len(regionIDs)), zap.Error(err))
 }
 
 // `tID` is used to control the scope of scatter. If it is `ScatterTable`, the corresponding tableID is used.
