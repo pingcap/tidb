@@ -1178,9 +1178,11 @@ func skylinePruning(ds *logicalop.DataSource, prop *property.PhysicalProperty) [
 		fixcontrol.Fix52869,
 		false,
 	)
+	// hasForce means there is a force or use index somewhere in the plan
+	hasForce := ds.SCtx().GetSessionVars().StmtCtx.GetHasForce()
 	// tidb_opt_prefer_range_scan is the master switch to control index preferencing
 	preferRange := ds.SCtx().GetSessionVars().GetAllowPreferRangeScan() &&
-		(preferMerge || ds.HasForce || (ds.TableStats.HistColl.Pseudo || ds.TableStats.RowCount < 1))
+		(preferMerge || hasForce || (ds.TableStats.HistColl.Pseudo || ds.TableStats.RowCount < 1))
 	if preferRange && len(candidates) > 1 {
 		preferredPaths := make([]*candidatePath, 0, len(candidates))
 		var hasRangeScanPath bool
