@@ -4068,6 +4068,10 @@ func GetStartTSFromSession(se any) (startTS, processInfoID uint64) {
 	if txnInfo != nil {
 		startTS = txnInfo.StartTS
 		processInfoID = txnInfo.ConnectionID
+	} else {
+		tmp.sessionVars.TxnCtxMu.Lock()
+		startTS = tmp.sessionVars.TxnCtx.StartTS
+		tmp.sessionVars.TxnCtxMu.Unlock()
 	}
 
 	logutil.BgLogger().Debug(

@@ -158,8 +158,8 @@ func (msm *MockSessionManager) GetInternalSessionStartTSList() []uint64 {
 			txn := se.TxnInfo()
 			if txn != nil {
 				ret = append(ret, txn.StartTS)
+				continue
 			}
-			continue
 		}
 
 		se := internalSess.(sessionctx.Context)
