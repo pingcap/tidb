@@ -1348,11 +1348,11 @@ func (v *TempIndexValueElem) Encode(buf []byte) []byte {
 			}
 			// flag + handle length + handle + [partition id] + temp key version
 			if buf == nil {
-				len := hLen + 4
+				l := hLen + 4
 				if v.Global {
-					len += 9
+					l += 9
 				}
-				buf = make([]byte, 0, len)
+				buf = make([]byte, 0, l)
 			}
 			buf = append(buf, byte(TempIndexValueFlagDeleted))
 			buf = append(buf, byte(hLen>>8), byte(hLen))
