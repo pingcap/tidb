@@ -313,16 +313,16 @@ func (hCtx *HashJoinCtxV2) resetHashTableContextForRestore() {
 // partitionNumber is always power of 2
 func genHashJoinPartitionNumber(partitionHint uint) uint {
 	partitionNumber := uint(1)
-    for partitionNumber < partitionHint && partitionNumber < 16 {
-        partitionNumber <<= 1
-    }
-    return partitionNumber
+	for partitionNumber < partitionHint && partitionNumber < 16 {
+		partitionNumber <<= 1
+	}
+	return partitionNumber
 }
 
 func getPartitionMaskOffset(partitionNumber uint) int {
 	msbPos := bits.TrailingZeros64(uint64(partitionNumber))
-    // top MSB bits in hash value will be used to partition data
-    return 64 - msbPos
+	// top MSB bits in hash value will be used to partition data
+	return 64 - msbPos
 }
 
 // SetupPartitionInfo set up partitionNumber and partitionMaskOffset based on concurrency
