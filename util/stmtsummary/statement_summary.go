@@ -16,9 +16,11 @@ package stmtsummary
 
 import (
 	"bytes"
+	"cmp"
 	"container/list"
 	"fmt"
 	"math"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -35,7 +37,6 @@ import (
 	"github.com/tikv/client-go/v2/util"
 	atomic2 "go.uber.org/atomic"
 	"golang.org/x/exp/maps"
-	"golang.org/x/exp/slices"
 )
 
 // stmtSummaryByDigestKey defines key for stmtSummaryByDigestMap.summaryMap.
@@ -919,8 +920,8 @@ func formatBackoffTypes(backoffMap map[string]int) interface{} {
 	for backoffType, count := range backoffMap {
 		backoffArray = append(backoffArray, backoffStat{backoffType, count})
 	}
-	slices.SortFunc(backoffArray, func(i, j backoffStat) bool {
-		return i.count > j.count
+	slices.SortFunc(backoffArray, func(i, j backoffStat) int {
+		return cmp.Compare(j.count, i.count)
 	})
 
 	var buffer bytes.Buffer

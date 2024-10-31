@@ -15,9 +15,11 @@
 package executor_test
 
 import (
+	"cmp"
 	"fmt"
 	"math/rand"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -30,7 +32,6 @@ import (
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/stretchr/testify/require"
-	"golang.org/x/exp/slices"
 )
 
 func TestSingleTableRead(t *testing.T) {
@@ -959,11 +960,11 @@ func getResult(values []*valueStruct, a int, b int, limit int, desc bool) []*val
 			ret = append(ret, value)
 		}
 	}
-	slices.SortFunc(ret, func(a, b *valueStruct) bool {
+	slices.SortFunc(ret, func(a, b *valueStruct) int {
 		if desc {
-			return a.c > b.c
+			return cmp.Compare(b.c, a.c)
 		}
-		return a.c < b.c
+		return cmp.Compare(a.c, b.c)
 	})
 	if len(ret) > limit {
 		return ret[:limit]

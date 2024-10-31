@@ -22,6 +22,7 @@ import (
 	"fmt"
 	"math"
 	"reflect"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -33,7 +34,6 @@ import (
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
-	"golang.org/x/exp/slices"
 )
 
 /*
@@ -835,8 +835,8 @@ func appendBinaryObject(buf []byte, x map[string]interface{}) ([]byte, error) {
 	for key, val := range x {
 		fields = append(fields, field{key: key, val: val})
 	}
-	slices.SortFunc(fields, func(i, j field) bool {
-		return i.key < j.key
+	slices.SortFunc(fields, func(i, j field) int {
+		return strings.Compare(i.key, j.key)
 	})
 	for i, field := range fields {
 		keyEntryOff := keyEntryBegin + i*keyEntrySize

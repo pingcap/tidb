@@ -18,6 +18,7 @@ import (
 	"container/heap"
 	"context"
 	"errors"
+	"slices"
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/expression"
@@ -28,7 +29,6 @@ import (
 	"github.com/pingcap/tidb/util/disk"
 	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/memory"
-	"golang.org/x/exp/slices"
 )
 
 // SortExec represents sorting executor.
@@ -267,20 +267,18 @@ func (e *SortExec) buildKeyColumns() {
 	}
 }
 
-func (e *SortExec) lessRow(rowI, rowJ chunk.Row) bool {
+func (e *SortExec) lessRow(rowI, rowJ chunk.Row) int {
 	for i, colIdx := range e.keyColumns {
 		cmpFunc := e.keyCmpFuncs[i]
 		cmp := cmpFunc(rowI, colIdx, rowJ, colIdx)
 		if e.ByItems[i].Desc {
 			cmp = -cmp
 		}
-		if cmp < 0 {
-			return true
-		} else if cmp > 0 {
-			return false
+		if cmp != 0 {
+			return cmp
 		}
 	}
-	return false
+	return 0
 }
 
 type partitionPointer struct {
@@ -290,14 +288,14 @@ type partitionPointer struct {
 }
 
 type multiWayMerge struct {
-	lessRowFunction func(rowI chunk.Row, rowJ chunk.Row) bool
+	lessRowFunction func(rowI chunk.Row, rowJ chunk.Row) int
 	elements        []partitionPointer
 }
 
 func (h *multiWayMerge) Less(i, j int) bool {
 	rowI := h.elements[i].row
 	rowJ := h.elements[j].row
-	return h.lessRowFunction(rowI, rowJ)
+	return h.lessRowFunction(rowI, rowJ) < 0
 }
 
 func (h *multiWayMerge) Len() int {
@@ -380,7 +378,7 @@ func (h *topNChunkHeap) Swap(i, j int) {
 }
 
 // keyColumnsLess is the less function for key columns.
-func (e *TopNExec) keyColumnsLess(i, j chunk.RowPtr) bool {
+func (e *TopNExec) keyColumnsLess(i, j chunk.RowPtr) int {
 	rowI := e.rowChunks.GetRow(i)
 	rowJ := e.rowChunks.GetRow(j)
 	return e.lessRow(rowI, rowJ)

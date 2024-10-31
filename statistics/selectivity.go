@@ -16,8 +16,10 @@ package statistics
 
 import (
 	"bytes"
+	"cmp"
 	"math"
 	"math/bits"
+	"slices"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/expression"
@@ -35,7 +37,6 @@ import (
 	"github.com/pingcap/tidb/util/tracing"
 	"go.uber.org/zap"
 	"golang.org/x/exp/maps"
-	"golang.org/x/exp/slices"
 )
 
 // If one condition can't be calculated, we will assume that the selectivity of this condition is 0.8.
@@ -590,11 +591,11 @@ func getMaskAndRanges(ctx sessionctx.Context, exprs []expression.Expression, ran
 
 // GetUsableSetsByGreedy will select the indices and pk used for calculate selectivity by greedy algorithm.
 func GetUsableSetsByGreedy(nodes []*StatsNode) (newBlocks []*StatsNode) {
-	slices.SortFunc(nodes, func(i, j *StatsNode) bool {
+	slices.SortFunc(nodes, func(i, j *StatsNode) int {
 		if r := compareType(i.Tp, j.Tp); r != 0 {
-			return r < 0
+			return r
 		}
-		return i.ID < j.ID
+		return cmp.Compare(i.ID, j.ID)
 	})
 	marked := make([]bool, len(nodes))
 	mask := int64(math.MaxInt64)

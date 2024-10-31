@@ -18,6 +18,7 @@ import (
 	"bytes"
 	"context"
 	"runtime/trace"
+	"slices"
 	"strconv"
 	"sync"
 	"sync/atomic"
@@ -42,7 +43,6 @@ import (
 	"github.com/pingcap/tidb/util/mvmap"
 	"github.com/pingcap/tidb/util/ranger"
 	"go.uber.org/zap"
-	"golang.org/x/exp/slices"
 )
 
 var _ Executor = &IndexLookUpJoin{}
@@ -655,12 +655,12 @@ func (iw *innerWorker) sortAndDedupLookUpContents(lookUpContents []*indexJoinLoo
 		return lookUpContents
 	}
 	sc := iw.ctx.GetSessionVars().StmtCtx
-	slices.SortFunc(lookUpContents, func(i, j *indexJoinLookUpContent) bool {
+	slices.SortFunc(lookUpContents, func(i, j *indexJoinLookUpContent) int {
 		cmp := compareRow(sc, i.keys, j.keys, iw.keyCollators)
 		if cmp != 0 || iw.nextColCompareFilters == nil {
-			return cmp < 0
+			return cmp
 		}
-		return iw.nextColCompareFilters.CompareRow(i.row, j.row) < 0
+		return iw.nextColCompareFilters.CompareRow(i.row, j.row)
 	})
 	deDupedLookupKeys := lookUpContents[:1]
 	for i := 1; i < len(lookUpContents); i++ {

@@ -15,6 +15,8 @@
 package lockwaiter
 
 import (
+	"cmp"
+	"slices"
 	"sync"
 	"time"
 
@@ -22,7 +24,6 @@ import (
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/store/mockstore/unistore/config"
 	"go.uber.org/zap"
-	"golang.org/x/exp/slices"
 )
 
 // LockNoWait is used for pessimistic lock wait time
@@ -51,8 +52,8 @@ type queue struct {
 
 func (q *queue) getOldestWaiter() (*Waiter, []*Waiter) {
 	// make the waiters in start ts order
-	slices.SortFunc(q.waiters, func(i, j *Waiter) bool {
-		return i.startTS < j.startTS
+	slices.SortFunc(q.waiters, func(i, j *Waiter) int {
+		return cmp.Compare(i.startTS, j.startTS)
 	})
 	oldestWaiter := q.waiters[0]
 	remainWaiter := q.waiters[1:]
