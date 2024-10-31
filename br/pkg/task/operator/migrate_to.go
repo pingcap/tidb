@@ -106,6 +106,7 @@ func RunMigrateTo(ctx context.Context, cfg MigrateToConfig) error {
 	targetVersion, ok := cfg.getTargetVersion(migs)
 	if !ok {
 		console.Printf("No recent migration found. Skipping.")
+		return nil
 	}
 
 	run := func(f func(stream.MigrationExt) stream.MergeAndMigratedTo) error {
