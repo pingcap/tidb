@@ -47,6 +47,7 @@ func wrapInBeginRollback(se *sess.Session, f func(startTS uint64) error) error {
 		return errors.Trace(err)
 	}
 	defer se.Rollback()
+
 	txn, err := se.Txn()
 	if err != nil {
 		return err
