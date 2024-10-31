@@ -259,8 +259,6 @@ func TestWatchOwner(t *testing.T) {
 	client, d := tInfo.client, tInfo.ddl
 	defer tInfo.Close(t)
 	ownerManager := d.OwnerManager()
-	lis := &listener{}
-	ownerManager.SetListener(lis)
 	require.NoError(t, ownerManager.CampaignOwner())
 	isOwner := checkOwner(d, true)
 	require.True(t, isOwner)
@@ -322,8 +320,6 @@ func TestWatchOwnerAfterDeleteOwnerKey(t *testing.T) {
 	client, d := tInfo.client, tInfo.ddl
 	defer tInfo.Close(t)
 	ownerManager := d.OwnerManager()
-	lis := &listener{}
-	ownerManager.SetListener(lis)
 	require.NoError(t, ownerManager.CampaignOwner())
 	isOwner := checkOwner(d, true)
 	require.True(t, isOwner)
