@@ -411,7 +411,7 @@ func (c *index) Delete(ctx table.MutateContext, txn kv.Transaction, indexedValue
 		tempValElem := tablecodec.TempIndexValueElem{Handle: h, KeyVer: tempKeyVer, Delete: true, Distinct: distinct}
 		if c.idxInfo.Global {
 			tempValElem.Global = true
-			tempValElem.PartitionID = c.phyTblID
+			tempValElem.Handle = kv.NewPartitionHandle(c.phyTblID, h)
 		}
 		if distinct {
 			if len(key) > 0 {
