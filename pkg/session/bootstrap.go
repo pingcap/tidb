@@ -74,50 +74,51 @@ const (
 	// But operations like dropping or renaming columns may break the compatibility with BR.
 	// REFERENCE ISSUE: https://github.com/pingcap/tidb/issues/38785
 	CreateUserTable = `CREATE TABLE IF NOT EXISTS mysql.user (
-		Host					CHAR(255),
-		User					CHAR(32),
-		authentication_string	TEXT,
-		plugin					CHAR(64),
-		Select_priv				ENUM('N','Y') NOT NULL DEFAULT 'N',
-		Insert_priv				ENUM('N','Y') NOT NULL DEFAULT 'N',
-		Update_priv				ENUM('N','Y') NOT NULL DEFAULT 'N',
-		Delete_priv				ENUM('N','Y') NOT NULL DEFAULT 'N',
-		Create_priv				ENUM('N','Y') NOT NULL DEFAULT 'N',
-		Drop_priv				ENUM('N','Y') NOT NULL DEFAULT 'N',
-		Process_priv			ENUM('N','Y') NOT NULL DEFAULT 'N',
-		Grant_priv				ENUM('N','Y') NOT NULL DEFAULT 'N',
-		References_priv			ENUM('N','Y') NOT NULL DEFAULT 'N',
-		Alter_priv				ENUM('N','Y') NOT NULL DEFAULT 'N',
-		Show_db_priv			ENUM('N','Y') NOT NULL DEFAULT 'N',
-		Super_priv				ENUM('N','Y') NOT NULL DEFAULT 'N',
-		Create_tmp_table_priv	ENUM('N','Y') NOT NULL DEFAULT 'N',
-		Lock_tables_priv		ENUM('N','Y') NOT NULL DEFAULT 'N',
-		Execute_priv			ENUM('N','Y') NOT NULL DEFAULT 'N',
-		Create_view_priv		ENUM('N','Y') NOT NULL DEFAULT 'N',
-		Show_view_priv			ENUM('N','Y') NOT NULL DEFAULT 'N',
-		Create_routine_priv		ENUM('N','Y') NOT NULL DEFAULT 'N',
-		Alter_routine_priv		ENUM('N','Y') NOT NULL DEFAULT 'N',
-		Index_priv				ENUM('N','Y') NOT NULL DEFAULT 'N',
-		Create_user_priv		ENUM('N','Y') NOT NULL DEFAULT 'N',
-		Event_priv				ENUM('N','Y') NOT NULL DEFAULT 'N',
-		Repl_slave_priv	    	ENUM('N','Y') NOT NULL DEFAULT 'N',
-		Repl_client_priv		ENUM('N','Y') NOT NULL DEFAULT 'N',
-		Trigger_priv			ENUM('N','Y') NOT NULL DEFAULT 'N',
-		Create_role_priv		ENUM('N','Y') NOT NULL DEFAULT 'N',
-		Drop_role_priv			ENUM('N','Y') NOT NULL DEFAULT 'N',
-		Account_locked			ENUM('N','Y') NOT NULL DEFAULT 'N',
-		Shutdown_priv			ENUM('N','Y') NOT NULL DEFAULT 'N',
-		Reload_priv				ENUM('N','Y') NOT NULL DEFAULT 'N',
-		FILE_priv				ENUM('N','Y') NOT NULL DEFAULT 'N',
-		Config_priv				ENUM('N','Y') NOT NULL DEFAULT 'N',
-		Create_Tablespace_Priv  ENUM('N','Y') NOT NULL DEFAULT 'N',
-		Password_reuse_history  smallint unsigned DEFAULT NULL,
-		Password_reuse_time     smallint unsigned DEFAULT NULL,
-		User_attributes			json,
-		Token_issuer			VARCHAR(255),
-		Password_expired		ENUM('N','Y') NOT NULL DEFAULT 'N',
-		Password_last_changed	TIMESTAMP DEFAULT CURRENT_TIMESTAMP(),
-		Password_lifetime		SMALLINT UNSIGNED DEFAULT NULL,
+		Host					 CHAR(255),
+		User					 CHAR(32),
+		authentication_string	 TEXT,
+		plugin					 CHAR(64),
+		Select_priv				 ENUM('N','Y') NOT NULL DEFAULT 'N',
+		Insert_priv				 ENUM('N','Y') NOT NULL DEFAULT 'N',
+		Update_priv				 ENUM('N','Y') NOT NULL DEFAULT 'N',
+		Delete_priv				 ENUM('N','Y') NOT NULL DEFAULT 'N',
+		Create_priv				 ENUM('N','Y') NOT NULL DEFAULT 'N',
+		Drop_priv				 ENUM('N','Y') NOT NULL DEFAULT 'N',
+		Process_priv			 ENUM('N','Y') NOT NULL DEFAULT 'N',
+		Grant_priv				 ENUM('N','Y') NOT NULL DEFAULT 'N',
+		References_priv			 ENUM('N','Y') NOT NULL DEFAULT 'N',
+		Alter_priv				 ENUM('N','Y') NOT NULL DEFAULT 'N',
+		Show_db_priv			 ENUM('N','Y') NOT NULL DEFAULT 'N',
+		Super_priv				 ENUM('N','Y') NOT NULL DEFAULT 'N',
+		Create_tmp_table_priv	 ENUM('N','Y') NOT NULL DEFAULT 'N',
+		Lock_tables_priv		 ENUM('N','Y') NOT NULL DEFAULT 'N',
+		Execute_priv			 ENUM('N','Y') NOT NULL DEFAULT 'N',
+		Create_view_priv		 ENUM('N','Y') NOT NULL DEFAULT 'N',
+		Show_view_priv			 ENUM('N','Y') NOT NULL DEFAULT 'N',
+		Create_routine_priv		 ENUM('N','Y') NOT NULL DEFAULT 'N',
+		Alter_routine_priv		 ENUM('N','Y') NOT NULL DEFAULT 'N',
+		Index_priv				 ENUM('N','Y') NOT NULL DEFAULT 'N',
+		Create_user_priv		 ENUM('N','Y') NOT NULL DEFAULT 'N',
+		Event_priv				 ENUM('N','Y') NOT NULL DEFAULT 'N',
+		Repl_slave_priv	    	 ENUM('N','Y') NOT NULL DEFAULT 'N',
+		Repl_client_priv		 ENUM('N','Y') NOT NULL DEFAULT 'N',
+		Trigger_priv			 ENUM('N','Y') NOT NULL DEFAULT 'N',
+		Create_role_priv		 ENUM('N','Y') NOT NULL DEFAULT 'N',
+		Drop_role_priv			 ENUM('N','Y') NOT NULL DEFAULT 'N',
+		Account_locked			 ENUM('N','Y') NOT NULL DEFAULT 'N',
+		Shutdown_priv			 ENUM('N','Y') NOT NULL DEFAULT 'N',
+		Reload_priv				 ENUM('N','Y') NOT NULL DEFAULT 'N',
+		FILE_priv				 ENUM('N','Y') NOT NULL DEFAULT 'N',
+		Config_priv				 ENUM('N','Y') NOT NULL DEFAULT 'N',
+		Create_Tablespace_Priv   ENUM('N','Y') NOT NULL DEFAULT 'N',
+		Password_reuse_history   smallint unsigned DEFAULT NULL,
+		Password_reuse_time      smallint unsigned DEFAULT NULL,
+		Password_require_current ENUM('N','Y') DEFAULT NULL,
+		User_attributes			 json,
+		Token_issuer			 VARCHAR(255),
+		Password_expired		 ENUM('N','Y') NOT NULL DEFAULT 'N',
+		Password_last_changed	 TIMESTAMP DEFAULT CURRENT_TIMESTAMP(),
+		Password_lifetime		 SMALLINT UNSIGNED DEFAULT NULL,
 		PRIMARY KEY (Host, User));`
 	// CreateGlobalPrivTable is the SQL statement creates Global scope privilege table in system db.
 	CreateGlobalPrivTable = "CREATE TABLE IF NOT EXISTS mysql.global_priv (" +
@@ -1157,7 +1158,6 @@ const (
 	version209 = 209
 	// version210 indicates that if TiDB is upgraded from a lower version(lower than 8.3.0), the tidb_analyze_column_options will be set to ALL.
 	version210 = 210
-
 	// version211 add column `summary` to `mysql.tidb_background_subtask_history`.
 	version211 = 211
 
@@ -1187,11 +1187,14 @@ const (
 	// version 217
 	// Keep tidb_schema_cache_size to 0 if this variable does not exist (upgrading from old version pre 8.1).
 	version217 = 217
+
+	// version218 adds the Password_require_current column to mysql.user
+	version218 = 218
 )
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-var currentBootstrapVersion int64 = version217
+var currentBootstrapVersion int64 = version218
 
 // DDL owner key's expired time is ManagerSessionTTL seconds, we should wait the time and give more time to have a chance to finish it.
 var internalSQLTimeout = owner.ManagerSessionTTL + 15
@@ -1364,6 +1367,7 @@ var (
 		upgradeToVer215,
 		upgradeToVer216,
 		upgradeToVer217,
+		upgradeToVer218,
 	}
 )
 
@@ -3280,6 +3284,13 @@ func upgradeToVer217(s sessiontypes.Session, ver int64) {
 	// If tidb_schema_cache_size does not exist, insert a record and set the value to 0
 	// Otherwise do nothing.
 	mustExecute(s, "INSERT IGNORE INTO mysql.global_variables VALUES ('tidb_schema_cache_size', 0)")
+}
+
+func upgradeToVer218(s sessiontypes.Session, ver int64) {
+	if ver >= version218 {
+		return
+	}
+	doReentrantDDL(s, "ALTER TABLE mysql.user ADD COLUMN IF NOT EXISTS `Password_require_current` enum('N','Y') DEFAULT NULL AFTER `Password_reuse_time`")
 }
 
 // initGlobalVariableIfNotExists initialize a global variable with specific val if it does not exist.

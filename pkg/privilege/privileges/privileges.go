@@ -71,6 +71,12 @@ var dynamicPrivs = []string{
 var dynamicPrivLock sync.Mutex
 var defaultTokenLife = 15 * time.Minute
 
+const (
+	pwRequireCurrent = iota
+	pwRequireCurrentOptional
+	pwRequireCurrentDefault
+)
+
 // UserPrivileges implements privilege.Manager interface.
 // This is used to check privilege for the current user.
 type UserPrivileges struct {
@@ -723,6 +729,76 @@ func (p *UserPrivileges) ConnectionVerification(user *auth.UserIdentity, authUse
 func (p *UserPrivileges) AuthSuccess(authUser, authHost string) {
 	p.user = authUser
 	p.host = authHost
+}
+
+func (p *UserPrivileges) checkPassword(password, hash, method string) bool {
+	switch method {
+	case mysql.AuthNativePassword:
+		if hash == auth.EncodePassword(password) {
+			return true
+		}
+	case mysql.AuthCachingSha2Password, mysql.AuthTiDBSM3Password:
+		authok, err := auth.CheckHashingPassword([]byte(hash), password, method)
+		if err != nil {
+			logutil.BgLogger().Error("failed to check hashing password", zap.Error(err))
+			return false
+		}
+		if authok {
+			return true
+		}
+	default:
+		logutil.BgLogger().Error("Unknown authentication method", zap.String("method", method))
+	}
+
+	return false
+}
+
+// CheckCurrentPassword checks the current password when changing the users password based on the policy
+//
+// | Account Setting                   | password_require_current sysvar | Current password required? |
+// |-----------------------------------|---------------------------------|----------------------------|
+// | PASSWORD REQUIRE CURRENT          | OFF                             | Yes                        |
+// | PASSWORD REQUIRE CURRENT          | ON                              | Yes                        |
+// | PASSWORD REQUIRE CURRENT OPTIONAL | OFF                             | No                         |
+// | PASSWORD REQUIRE CURRENT OPTIONAL | ON                              | No                         |
+// | PASSWORD REQUIRE CURRENT DEFAULT  | OFF                             | No                         |
+// | PASSWORD REQUIRE CURRENT DEFAULT  | ON                              | Yes                        |
+//
+// - If a replacement password is specified it must be correct
+// - A replacement password is only allowed when changing the current user, not when changing other users.
+func (p *UserPrivileges) CheckCurrentPassword(user, host, password string, sessionVars *variable.SessionVars) error {
+	mysqlPriv := p.Handle.Get()
+	record := mysqlPriv.connectionVerification(user, host)
+
+	switch record.PasswordRequireCurrent {
+	case pwRequireCurrentDefault:
+		requireCurrentVar, err := sessionVars.GlobalVarsAccessor.GetGlobalSysVar(variable.PasswordRequireCurrent)
+		if err != nil {
+			return err
+		}
+		if requireCurrentVar == "OFF" && password == "" {
+			return nil
+		}
+		if password == "" {
+			return ErrMissingCurrentPassword
+		}
+	case pwRequireCurrentOptional:
+		if password == "" {
+			return nil
+		}
+	case pwRequireCurrent:
+		if password == "" {
+			return ErrMissingCurrentPassword
+		}
+	default:
+		return errors.New("invalid value for Password_require_current")
+	}
+
+	if p.checkPassword(password, record.AuthenticationString, record.AuthPlugin) {
+		return nil
+	}
+
+	return ErrIncorrectCurrentPassword
 }
 
 type checkResult int

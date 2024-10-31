@@ -96,11 +96,12 @@ type FloatOpt struct {
 // AuthOption is used for parsing create use statement.
 type AuthOption struct {
 	// ByAuthString set as true, if AuthString is used for authorization. Otherwise, authorization is done by HashString.
-	ByAuthString bool
-	AuthString   string
-	ByHashString bool
-	HashString   string
-	AuthPlugin   string
+	ByAuthString  bool
+	AuthString    string
+	ByHashString  bool
+	HashString    string
+	AuthPlugin    string
+	ReplaceString string
 }
 
 // Restore implements Node interface.
@@ -116,6 +117,10 @@ func (n *AuthOption) Restore(ctx *format.RestoreCtx) error {
 	} else if n.ByHashString {
 		ctx.WriteKeyWord(" AS ")
 		ctx.WriteString(n.HashString)
+	}
+	if n.ReplaceString != "" {
+		ctx.WriteKeyWord(" REPLACE ")
+		ctx.WriteString(n.ReplaceString)
 	}
 	return nil
 }
@@ -1208,8 +1213,9 @@ func (n *SetCharsetStmt) Accept(v Visitor) (Node, bool) {
 type SetPwdStmt struct {
 	stmtNode
 
-	User     *auth.UserIdentity
-	Password string
+	User          *auth.UserIdentity
+	Password      string
+	ReplaceString string
 }
 
 // Restore implements Node interface.
@@ -1223,6 +1229,11 @@ func (n *SetPwdStmt) Restore(ctx *format.RestoreCtx) error {
 	}
 	ctx.WritePlain("=")
 	ctx.WriteString(n.Password)
+
+	if n.ReplaceString != "" {
+		ctx.WriteKeyWord("REPLACE")
+		ctx.WriteString(n.ReplaceString)
+	}
 	return nil
 }
 
@@ -1406,7 +1417,7 @@ func (n *UserSpec) Restore(ctx *format.RestoreCtx) error {
 func (n *UserSpec) SecurityString() string {
 	withPassword := false
 	if opt := n.AuthOpt; opt != nil {
-		if len(opt.AuthString) > 0 || len(opt.HashString) > 0 {
+		if len(opt.AuthString) > 0 || len(opt.HashString) > 0 || len(opt.ReplaceString) > 0 {
 			withPassword = true
 		}
 	}
@@ -1586,9 +1597,10 @@ const (
 	PasswordLockTimeUnbounded
 	UserCommentType
 	UserAttributeType
-	PasswordRequireCurrentDefault
-
 	UserResourceGroupName
+	PasswordRequireCurrent
+	PasswordRequireCurrentDefault
+	PasswordRequireCurrentOptional
 )
 
 type PasswordOrLockOption struct {
@@ -1631,6 +1643,12 @@ func (p *PasswordOrLockOption) Restore(ctx *format.RestoreCtx) error {
 		ctx.WriteKeyWord(" DAY")
 	case PasswordReuseDefault:
 		ctx.WriteKeyWord("PASSWORD REUSE INTERVAL DEFAULT")
+	case PasswordRequireCurrent:
+		ctx.WriteKeyWord("PASSWORD REQUIRE CURRENT")
+	case PasswordRequireCurrentDefault:
+		ctx.WriteKeyWord("PASSWORD REQUIRE CURRENT DEFAULT")
+	case PasswordRequireCurrentOptional:
+		ctx.WriteKeyWord("PASSWORD REQUIRE CURRENT OPTIONAL")
 	default:
 		return errors.Errorf("Unsupported PasswordOrLockOption.Type %d", p.Type)
 	}

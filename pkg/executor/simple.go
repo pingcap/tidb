@@ -97,17 +97,19 @@ type SimpleExec struct {
 }
 
 type passwordOrLockOptionsInfo struct {
-	lockAccount                 string
-	passwordExpired             string
-	passwordLifetime            any
-	passwordHistory             int64
-	passwordHistoryChange       bool
-	passwordReuseInterval       int64
-	passwordReuseIntervalChange bool
-	failedLoginAttempts         int64
-	passwordLockTime            int64
-	failedLoginAttemptsChange   bool
-	passwordLockTimeChange      bool
+	lockAccount                  string
+	passwordExpired              string
+	passwordLifetime             any
+	passwordHistory              int64
+	passwordHistoryChange        bool
+	passwordReuseInterval        int64
+	passwordReuseIntervalChange  bool
+	failedLoginAttempts          int64
+	passwordLockTime             int64
+	failedLoginAttemptsChange    bool
+	passwordLockTimeChange       bool
+	passwordRequireCurrent       string
+	passwordRequireCurrentChange bool
 }
 
 type passwordReuseInfo struct {
@@ -884,6 +886,15 @@ func (info *passwordOrLockOptionsInfo) loadOptions(plOption []*ast.PasswordOrLoc
 		case ast.PasswordReuseDefault:
 			info.passwordReuseInterval = notSpecified
 			info.passwordReuseIntervalChange = true
+		case ast.PasswordRequireCurrent:
+			info.passwordRequireCurrent = "Y"
+			info.passwordRequireCurrentChange = true
+		case ast.PasswordRequireCurrentOptional:
+			info.passwordRequireCurrent = "N"
+			info.passwordRequireCurrentChange = true
+		case ast.PasswordRequireCurrentDefault:
+			info.passwordRequireCurrent = ""
+			info.passwordRequireCurrentChange = true
 		}
 	}
 	return nil
@@ -1045,6 +1056,7 @@ func (e *SimpleExec) executeCreateUser(ctx context.Context, s *ast.CreateUserStm
 		passwordLockTimeChange:      false,
 		passwordHistoryChange:       false,
 		passwordReuseIntervalChange: false,
+		passwordRequireCurrent:      "",
 	}
 	err = plOptions.loadOptions(s.PasswordOrLockOptions)
 	if err != nil {
@@ -1103,7 +1115,7 @@ func (e *SimpleExec) executeCreateUser(ctx context.Context, s *ast.CreateUserStm
 	passwordInit := true
 	// Get changed user password reuse info.
 	savePasswdHistory := whetherSavePasswordHistory(plOptions)
-	sqlTemplate := "INSERT INTO %n.%n (Host, User, authentication_string, plugin, user_attributes, Account_locked, Token_issuer, Password_expired, Password_lifetime,  Password_reuse_time, Password_reuse_history) VALUES "
+	sqlTemplate := "INSERT INTO %n.%n (Host, User, authentication_string, plugin, user_attributes, Account_locked, Token_issuer, Password_expired, Password_lifetime,  Password_reuse_time, Password_reuse_history, Password_require_current) VALUES "
 	valueTemplate := "(%?, %?, %?, %?, %?, %?, %?, %?, %?"
 
 	sqlescape.MustFormatSQL(sql, sqlTemplate, mysql.SystemDB, mysql.UserTable)
@@ -1199,6 +1211,12 @@ func (e *SimpleExec) executeCreateUser(ctx context.Context, s *ast.CreateUserStm
 		// add Password_reuse_history value.
 		if plOptions.passwordHistoryChange && (plOptions.passwordHistory != notSpecified) {
 			sqlescape.MustFormatSQL(sql, `, %?`, plOptions.passwordHistory)
+		} else {
+			sqlescape.MustFormatSQL(sql, `, %?`, nil)
+		}
+		// Current password requirement per-user policy
+		if plOptions.passwordRequireCurrentChange {
+			sqlescape.MustFormatSQL(sql, `, %?`, plOptions.passwordRequireCurrent)
 		} else {
 			sqlescape.MustFormatSQL(sql, `, %?`, nil)
 		}
@@ -1795,7 +1813,7 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 			RequireAuthTokenOptions
 		)
 		authTokenOptionHandler := noNeedAuthTokenOptions
-		currentAuthPlugin, err := privilege.GetPrivilegeManager(e.Ctx()).GetAuthPlugin(spec.User.Username, spec.User.Hostname)
+		currentAuthPlugin, err := checker.GetAuthPlugin(spec.User.Username, spec.User.Hostname)
 		if err != nil {
 			return err
 		}
@@ -1808,7 +1826,20 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 			value any
 		}
 		var fields []alterField
+
 		if spec.AuthOpt != nil {
+			// Only use `REPLACE <pwd>` when changing the current user
+			if user != nil &&
+				(spec.User.Username == user.AuthUsername &&
+					spec.User.Hostname == user.AuthHostname) {
+				err = checker.CheckCurrentPassword(spec.User.Username, spec.User.Hostname, spec.AuthOpt.ReplaceString, e.Ctx().GetSessionVars())
+				if err != nil {
+					return err
+				}
+			} else if spec.AuthOpt.ReplaceString != "" {
+				return exeerrors.ErrCurrentPasswordNotRequired
+			}
+
 			fields = append(fields, alterField{"password_last_changed=current_timestamp()", nil})
 			if spec.AuthOpt.AuthPlugin == "" {
 				spec.AuthOpt.AuthPlugin = currentAuthPlugin
@@ -1896,6 +1927,17 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 				fields = append(fields, alterField{"Password_reuse_time = NULL ", ""})
 			} else {
 				fields = append(fields, alterField{"Password_reuse_time = %? ", strconv.FormatInt(plOptions.passwordReuseInterval, 10)})
+			}
+		}
+
+		if plOptions.passwordRequireCurrentChange {
+			switch plOptions.passwordRequireCurrent {
+			case "Y":
+				fields = append(fields, alterField{"Password_require_current = 'Y'", ""})
+			case "N":
+				fields = append(fields, alterField{"Password_require_current = 'N'", ""})
+			case "":
+				fields = append(fields, alterField{"Password_require_current = NULL", ""})
 			}
 		}
 
@@ -2008,7 +2050,8 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 
 		if len(privData) > 0 {
 			sql := new(strings.Builder)
-			sqlescape.MustFormatSQL(sql, "INSERT INTO %n.%n (Host, User, Priv) VALUES (%?,%?,%?) ON DUPLICATE KEY UPDATE Priv = values(Priv)", mysql.SystemDB, mysql.GlobalPrivTable, spec.User.Hostname, spec.User.Username, string(hack.String(privData)))
+			sqlescape.MustFormatSQL(sql, "INSERT INTO %n.%n (Host, User, Priv) VALUES (%?,%?,%?) ON DUPLICATE KEY UPDATE Priv = values(Priv)",
+				mysql.SystemDB, mysql.GlobalPrivTable, spec.User.Hostname, spec.User.Username, string(hack.String(privData)))
 			_, err := sqlExecutor.ExecuteInternal(ctx, sql.String())
 			if err != nil {
 				failedUsers = append(failedUsers, spec.User.String())
@@ -2474,6 +2517,7 @@ func (e *SimpleExec) executeSetPwd(ctx context.Context, s *ast.SetPwdStmt) error
 
 	var u, h string
 	disableSandboxMode := false
+	checker := privilege.GetPrivilegeManager(e.Ctx())
 	if s.User == nil || s.User.CurrentUser {
 		if e.Ctx().GetSessionVars().User == nil {
 			return errors.New("Session error is empty")
@@ -2484,7 +2528,6 @@ func (e *SimpleExec) executeSetPwd(ctx context.Context, s *ast.SetPwdStmt) error
 		u = s.User.Username
 		h = s.User.Hostname
 
-		checker := privilege.GetPrivilegeManager(e.Ctx())
 		activeRoles := e.Ctx().GetSessionVars().ActiveRoles
 		if checker != nil && !checker.RequestVerification(activeRoles, "", "", "", mysql.SuperPriv) {
 			currUser := e.Ctx().GetSessionVars().User
@@ -2506,7 +2549,20 @@ func (e *SimpleExec) executeSetPwd(ctx context.Context, s *ast.SetPwdStmt) error
 		disableSandboxMode = true
 	}
 
-	authplugin, err := privilege.GetPrivilegeManager(e.Ctx()).GetAuthPlugin(u, h)
+	// Check the current passsword against the policy if the user tries to change its own password
+	if e.Ctx().GetSessionVars().User != nil &&
+		(u == e.Ctx().GetSessionVars().User.AuthUsername) &&
+		(h == e.Ctx().GetSessionVars().User.AuthHostname) {
+		err = checker.CheckCurrentPassword(u, h, s.ReplaceString, e.Ctx().GetSessionVars())
+		if err != nil {
+			return err
+		}
+	} else if s.ReplaceString != "" {
+		// Don't allow the current password when changing another users password
+		return exeerrors.ErrCurrentPasswordNotRequired
+	}
+
+	authplugin, err := checker.GetAuthPlugin(u, h)
 	if err != nil {
 		return err
 	}

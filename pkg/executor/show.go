@@ -1745,11 +1745,20 @@ func (e *ShowExec) fetchShowCreateUser(ctx context.Context) error {
 	exec := e.Ctx().GetRestrictedSQLExecutor()
 
 	rows, _, err := exec.ExecRestrictedSQL(ctx, nil,
-		`SELECT plugin, Account_locked, user_attributes->>'$.metadata', Token_issuer,
-        Password_reuse_history, Password_reuse_time, Password_expired, Password_lifetime,
-        user_attributes->>'$.Password_locking.failed_login_attempts',
-        user_attributes->>'$.Password_locking.password_lock_time_days'
-		FROM %n.%n WHERE User=%? AND Host=%?`,
+		`SELECT
+			plugin,
+			Account_locked,
+			user_attributes->>'$.metadata',
+			Token_issuer,
+        	Password_reuse_history,
+			Password_reuse_time,
+			Password_expired,
+			Password_lifetime,
+			Password_require_current,
+        	user_attributes->>'$.Password_locking.failed_login_attempts',
+        	user_attributes->>'$.Password_locking.password_lock_time_days'
+		FROM %n.%n
+		WHERE User=%? AND Host=%?`,
 		mysql.SystemDB, mysql.UserTable, userName, strings.ToLower(hostName))
 	if err != nil {
 		return errors.Trace(err)
@@ -1813,12 +1822,24 @@ func (e *ShowExec) fetchShowCreateUser(ctx context.Context) error {
 		passwordExpiredStr = fmt.Sprintf("PASSWORD EXPIRE INTERVAL %d DAY", passwordLifetime)
 	}
 
-	failedLoginAttempts := rows[0].GetString(8)
+	// Password_require_current
+	passwordRequireCurrent := rows[0].GetEnum(8).String()
+	var passwordRequireCurrentStr string
+	switch passwordRequireCurrent {
+	case "Y":
+		passwordRequireCurrentStr = "PASSWORD REQUIRE CURRENT"
+	case "N":
+		passwordRequireCurrentStr = "PASSWORD REQUIRE CURRENT OPTIONAL"
+	default:
+		passwordRequireCurrentStr = "PASSWORD REQUIRE CURRENT DEFAULT"
+	}
+
+	failedLoginAttempts := rows[0].GetString(9)
 	if len(failedLoginAttempts) > 0 {
 		failedLoginAttempts = " FAILED_LOGIN_ATTEMPTS " + failedLoginAttempts
 	}
 
-	passwordLockTimeDays := rows[0].GetString(9)
+	passwordLockTimeDays := rows[0].GetString(10)
 	if len(passwordLockTimeDays) > 0 {
 		if passwordLockTimeDays == "-1" {
 			passwordLockTimeDays = " PASSWORD_LOCK_TIME UNBOUNDED"
@@ -1826,7 +1847,8 @@ func (e *ShowExec) fetchShowCreateUser(ctx context.Context) error {
 			passwordLockTimeDays = " PASSWORD_LOCK_TIME " + passwordLockTimeDays
 		}
 	}
-	rows, _, err = exec.ExecRestrictedSQL(ctx, nil, `SELECT Priv FROM %n.%n WHERE User=%? AND Host=%?`, mysql.SystemDB, mysql.GlobalPrivTable, userName, hostName)
+	rows, _, err = exec.ExecRestrictedSQL(ctx, nil, `SELECT Priv FROM %n.%n WHERE User=%? AND Host=%?`,
+		mysql.SystemDB, mysql.GlobalPrivTable, userName, hostName)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -1849,8 +1871,10 @@ func (e *ShowExec) fetchShowCreateUser(ctx context.Context) error {
 	}
 
 	// FIXME: the returned string is not escaped safely
-	showStr := fmt.Sprintf("CREATE USER '%s'@'%s' IDENTIFIED WITH '%s'%s REQUIRE %s%s %s ACCOUNT %s PASSWORD HISTORY %s PASSWORD REUSE INTERVAL %s%s%s%s",
-		e.User.Username, e.User.Hostname, authPlugin, authStr, require, tokenIssuer, passwordExpiredStr, accountLocked, passwordHistory, passwordReuseInterval, failedLoginAttempts, passwordLockTimeDays, userAttributes)
+	showStr := fmt.Sprintf(
+		"CREATE USER '%s'@'%s' IDENTIFIED WITH '%s'%s REQUIRE %s%s %s ACCOUNT %s PASSWORD HISTORY %s PASSWORD REUSE INTERVAL %s %s%s%s%s",
+		e.User.Username, e.User.Hostname, authPlugin, authStr, require, tokenIssuer, passwordExpiredStr, accountLocked,
+		passwordHistory, passwordReuseInterval, passwordRequireCurrentStr, failedLoginAttempts, passwordLockTimeDays, userAttributes)
 	e.appendRow([]any{showStr})
 	return nil
 }

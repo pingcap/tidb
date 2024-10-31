@@ -1277,6 +1277,7 @@ import (
 	PrivLevel                              "Privilege scope"
 	PrivType                               "Privilege type"
 	ReferDef                               "Reference definition"
+	ReplaceStringOpt					   "Replace current password option"
 	OnDelete                               "ON DELETE clause"
 	OnUpdate                               "ON UPDATE clause"
 	OnDeleteUpdateOpt                      "optional ON DELETE and UPDATE clause"
@@ -10695,13 +10696,20 @@ SetStmt:
 	{
 		$$ = &ast.SetStmt{Variables: $2.([]*ast.VariableAssignment)}
 	}
-|	"SET" "PASSWORD" EqOrAssignmentEq PasswordOpt
+|	"SET" "PASSWORD" EqOrAssignmentEq PasswordOpt ReplaceStringOpt
 	{
-		$$ = &ast.SetPwdStmt{Password: $4}
+		$$ = &ast.SetPwdStmt{
+			Password:      $4,
+			ReplaceString: $5.(string),
+		}
 	}
-|	"SET" "PASSWORD" "FOR" Username EqOrAssignmentEq PasswordOpt
+|	"SET" "PASSWORD" "FOR" Username EqOrAssignmentEq PasswordOpt ReplaceStringOpt
 	{
-		$$ = &ast.SetPwdStmt{User: $4.(*auth.UserIdentity), Password: $6}
+		$$ = &ast.SetPwdStmt{
+			User:          $4.(*auth.UserIdentity),
+			Password:      $6,
+			ReplaceString: $7.(string),
+		}
 	}
 |	"SET" "GLOBAL" "TRANSACTION" TransactionChars
 	{
@@ -13613,6 +13621,15 @@ CreateRoleStmt:
 		}
 	}
 
+ReplaceStringOpt:
+    {
+        $$ = ""
+    }
+|	"REPLACE" AuthString
+    {
+        $$ = $2
+    }
+
 /* See http://dev.mysql.com/doc/refman/8.0/en/alter-user.html */
 AlterUserStmt:
 	"ALTER" "USER" IfExists UserSpecList RequireClauseOpt ConnectionOptions PasswordOrLockOptions CommentOrAttributeOption ResourceGroupNameOption
@@ -13632,11 +13649,12 @@ AlterUserStmt:
 		}
 		$$ = ret
 	}
-|	"ALTER" "USER" IfExists "USER" '(' ')' "IDENTIFIED" "BY" AuthString
+|	"ALTER" "USER" IfExists "USER" '(' ')' "IDENTIFIED" "BY" AuthString ReplaceStringOpt
 	{
 		auth := &ast.AuthOption{
-			AuthString:   $9,
-			ByAuthString: true,
+			AuthString:    $9,
+			ReplaceString: $10.(string),
+			ByAuthString:  true,
 		}
 		$$ = &ast.AlterUserStmt{
 			IfExists:    $3.(bool),
@@ -13964,10 +13982,22 @@ PasswordOrLockOption:
 			Type: ast.PasswordLockTimeUnbounded,
 		}
 	}
+|	"PASSWORD" "REQUIRE" "CURRENT"
+	{
+		$$ = &ast.PasswordOrLockOption{
+			Type: ast.PasswordRequireCurrent,
+		}
+	}
 |	"PASSWORD" "REQUIRE" "CURRENT" "DEFAULT"
 	{
 		$$ = &ast.PasswordOrLockOption{
 			Type: ast.PasswordRequireCurrentDefault,
+		}
+	}
+|	"PASSWORD" "REQUIRE" "CURRENT" "OPTIONAL"
+	{
+		$$ = &ast.PasswordOrLockOption{
+			Type: ast.PasswordRequireCurrentOptional,
 		}
 	}
 
@@ -13975,11 +14005,12 @@ AuthOption:
 	{
 		$$ = nil
 	}
-|	"IDENTIFIED" "BY" AuthString
+|	"IDENTIFIED" "BY" AuthString ReplaceStringOpt
 	{
 		$$ = &ast.AuthOption{
-			AuthString:   $3,
-			ByAuthString: true,
+			AuthString:    $3,
+			ReplaceString: $4.(string),
+			ByAuthString:  true,
 		}
 	}
 |	"IDENTIFIED" "WITH" AuthPlugin
@@ -13988,12 +14019,13 @@ AuthOption:
 			AuthPlugin: $3,
 		}
 	}
-|	"IDENTIFIED" "WITH" AuthPlugin "BY" AuthString
+|	"IDENTIFIED" "WITH" AuthPlugin "BY" AuthString ReplaceStringOpt
 	{
 		$$ = &ast.AuthOption{
-			AuthPlugin:   $3,
-			AuthString:   $5,
-			ByAuthString: true,
+			AuthPlugin:    $3,
+			AuthString:    $5,
+			ReplaceString: $6.(string),
+			ByAuthString:  true,
 		}
 	}
 |	"IDENTIFIED" "WITH" AuthPlugin "AS" HashString
