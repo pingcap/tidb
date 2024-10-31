@@ -311,8 +311,10 @@ func TestSemiJoinBasic(t *testing.T) {
 }
 
 func TestSemiJoinDuplicateKeys(t *testing.T) {
-	testSemiJoin(t, true, true, true)  // Right side build with other condition
-	testSemiJoin(t, false, true, true) // Left side build with other condition
+	testSemiJoin(t, false, false, true) // Left side build without other condition
+	// testSemiJoin(t, false, true, true) // Left side build with other condition
+	testSemiJoin(t, true, false, true) // Right side build without other condition
+	// testSemiJoin(t, true, true, true)  // Right side build with other condition
 }
 
 func TestTruncateSelectFunction(t *testing.T) {

@@ -363,11 +363,10 @@ func (j *semiJoinProbe) probeForLeftSideBuildNoOtherCondition(sqlKiller *sqlkill
 			candidateRow := tagHelper.toUnsafePointer(j.matchedRowsHeaders[j.currentProbeRow])
 			if isKeyMatched(meta.keyMode, j.serializedKeys[j.currentProbeRow], candidateRow, meta) {
 				meta.setUsedFlag(candidateRow)
-				j.matchedRowsHeaders[j.currentProbeRow] = 0
 			} else {
 				j.probeCollision++
-				j.matchedRowsHeaders[j.currentProbeRow] = getNextRowAddress(candidateRow, tagHelper, j.matchedRowsHashValue[j.currentProbeRow])
 			}
+			j.matchedRowsHeaders[j.currentProbeRow] = getNextRowAddress(candidateRow, tagHelper, j.matchedRowsHashValue[j.currentProbeRow])
 		} else {
 			j.currentProbeRow++
 		}
