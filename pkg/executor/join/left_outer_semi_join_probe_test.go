@@ -111,7 +111,6 @@ func genLeftOuterSemiJoinResult(t *testing.T, sessCtx sessionctx.Context, leftFi
 			}
 		}
 	}
-
 	if resultChk.NumRows() > 0 {
 		returnChks = append(returnChks, resultChk)
 	}

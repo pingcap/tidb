@@ -17,9 +17,7 @@ package join
 import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/util/chunk"
-	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/sqlkiller"
-	"go.uber.org/zap"
 )
 
 type leftOuterSemiJoinProbe struct {
@@ -51,7 +49,6 @@ func newLeftOuterSemiJoinProbe(base baseJoinProbe) *leftOuterSemiJoinProbe {
 		skipRowIdxSet:           make(map[int]struct{}),
 	}
 	probe.probeColUsed = base.lUsed
-	logutil.BgLogger().Info("newLeftOuterSemiJoinProbe", zap.Any("probeColUsed", probe.probeColUsed))
 	return probe
 }
 
@@ -95,7 +92,6 @@ func (j *leftOuterSemiJoinProbe) Probe(joinResult *hashjoinWorkerResult, sqlKill
 	isInCompleteChunk := joinedChk.IsInCompleteChunk()
 	// in case that virtual rows is not maintained correctly
 	joinedChk.SetNumVirtualRows(joinedChk.NumRows())
-	logutil.BgLogger().Info("Probe", zap.Int("joinedChk.NumRows()", joinedChk.NumRows()))
 	// always set in complete chunk during probe
 	joinedChk.SetInCompleteChunk(true)
 	defer joinedChk.SetInCompleteChunk(isInCompleteChunk)
@@ -113,7 +109,7 @@ func (j *leftOuterSemiJoinProbe) Probe(joinResult *hashjoinWorkerResult, sqlKill
 }
 
 func (j *leftOuterSemiJoinProbe) probeForInnerSideBuildWithOtherCondition(chk, joinedChk *chunk.Chunk, remainCap int, sqlKiller *sqlkiller.SQLKiller) (err error) {
-	startProbeRow := j.currentProbeRow
+	j.nextProcessProbeRowIdx = j.currentProbeRow
 	err = j.concatenateProbeAndBuildRows(joinedChk, sqlKiller)
 	if err != nil {
 		return err
@@ -131,57 +127,35 @@ func (j *leftOuterSemiJoinProbe) probeForInnerSideBuildWithOtherCondition(chk, j
 		j.truncateSelect()
 		j.removeMatchedProbeRow()
 		j.buildResultForMatchedRowsAfterOtherCondition(chk, joinedChk)
-		j.buildResultForNotMatchedRows(chk, startProbeRow)
+	}
+
+	if j.currentProbeRow == j.chunkRows {
+		j.buildResultForNotMatchedRows(chk, 0)
 	}
 	return
 }
 
 func (j *leftOuterSemiJoinProbe) buildResultForMatchedRowsAfterOtherCondition(chk, joinedChk *chunk.Chunk) {
-	probeColOffsetInJoinedChunk := 0
 	rowCount := chk.NumRows()
-	markedJoined := false
 	for index, colIndex := range j.probeColUsed {
 		dstCol := chk.Column(index)
-		if joinedChk.Column(colIndex+probeColOffsetInJoinedChunk).Rows() > 0 {
+		if joinedChk.Column(colIndex).Rows() > 0 {
 			// probe column that is already in joinedChk
-			srcCol := joinedChk.Column(colIndex + probeColOffsetInJoinedChunk)
+			srcCol := joinedChk.Column(colIndex)
 			chunk.CopySelectedRows(dstCol, srcCol, j.selected)
 		} else {
-			markedJoined = true
 			srcCol := j.currentChunk.Column(colIndex)
 			chunk.CopySelectedRowsWithRowIDFunc(dstCol, srcCol, j.selected, 0, len(j.selected), func(i int) int {
 				ret := j.rowIndexInfos[i].probeRowIndex
-				j.isNotMatchedRows[ret] = false
 				return j.usedRows[ret]
 			})
 		}
 	}
-	hasRemainCols := false
-	if hasRemainCols {
-		j.nextCachedBuildRowIndex = 0
-		markedJoined = true
-		meta := j.ctx.hashTableMeta
-		for index, result := range j.selected {
-			if result {
-				rowIndexInfo := j.rowIndexInfos[index]
-				j.isNotMatchedRows[rowIndexInfo.probeRowIndex] = false
-				j.appendBuildRowToCachedBuildRowsV2(&rowIndexInfo, chk, meta.columnCountNeededForOtherCondition, false)
-			}
-		}
-		if j.nextCachedBuildRowIndex > 0 {
-			j.batchConstructBuildRows(chk, meta.columnCountNeededForOtherCondition, false)
-		}
-	}
-	if !markedJoined {
-		for index, result := range j.selected {
-			if result {
-				j.isNotMatchedRows[j.rowIndexInfos[index].probeRowIndex] = false
-			}
-		}
-	}
+
 	rowsAdded := 0
-	for _, result := range j.selected {
+	for i, result := range j.selected {
 		if result {
+			j.isNotMatchedRows[j.rowIndexInfos[i].probeRowIndex] = false
 			rowsAdded++
 		}
 	}
@@ -257,12 +231,9 @@ func (j *leftOuterSemiJoinProbe) buildResultForNotMatchedRows(chk *chunk.Chunk, 
 		chk.AppendInt64(len(j.probeColUsed), 0)
 	}
 	chk.SetNumVirtualRows(prevRows + nullRows)
-	logutil.BgLogger().Info("buildResultForNotMatchedRows", zap.Int("nullRows", nullRows), zap.Int("virtualRows", chk.NumRows()))
 }
 
 func (j *leftOuterSemiJoinProbe) finishCurrentLookupLoop(joinedChk *chunk.Chunk, startProbeRow int) {
-	logutil.BgLogger().Info("finishCurrentLookupLoop", zap.Int("startProbeRow", startProbeRow), zap.Int("j.currentProbeRow", j.currentProbeRow), zap.Int("sub", j.currentProbeRow-startProbeRow))
-	logutil.BgLogger().Info("finishCurrentLookupLoop", zap.Int("virtualRows", joinedChk.NumRows()))
 	j.baseJoinProbe.finishCurrentLookupLoop(joinedChk)
 	if !j.ctx.hasOtherCondition() {
 		for i := startProbeRow; i < j.currentProbeRow; i++ {
@@ -270,9 +241,6 @@ func (j *leftOuterSemiJoinProbe) finishCurrentLookupLoop(joinedChk *chunk.Chunk,
 				joinedChk.AppendInt64(len(j.probeColUsed), 1)
 			}
 		}
-
-		logutil.BgLogger().Info("finishCurrentLookupLoop", zap.Int("virtualRows", joinedChk.NumRows()))
-
 	}
 }
 
@@ -331,6 +299,7 @@ func (j *leftOuterSemiJoinProbe) concatenateProbeAndBuildRows(joinedChk *chunk.C
 		return err
 	}
 
+	j.finishCurrentLookupLoop(joinedChk, 0)
 	return nil
 }
 

@@ -29,9 +29,11 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/codec"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/pingcap/tidb/pkg/util/sqlkiller"
 	"github.com/stretchr/testify/require"
+	"go.uber.org/zap"
 )
 
 func toNullableTypes(tps []*types.FieldType) []*types.FieldType {
@@ -191,6 +193,9 @@ func checkChunksEqual(t *testing.T, expectedChunks []*chunk.Chunk, resultChunks 
 		if x != 0 {
 			// used for debug
 			x = cmp(expectedRows[i], resultRows[i])
+		}
+		if x != 0 {
+			logutil.BgLogger().Info("expected", zap.Any("expected", expectedRows[i].ToString(schema)), zap.Any("result", resultRows[i].ToString(schema)))
 		}
 		require.Equal(t, 0, x, "result index = "+strconv.Itoa(i))
 	}
