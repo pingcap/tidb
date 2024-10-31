@@ -25,7 +25,6 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/cardinality"
-	base2 "github.com/pingcap/tidb/pkg/planner/cascades/base"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/cost"
 	ruleutil "github.com/pingcap/tidb/pkg/planner/core/rule/util"
@@ -96,7 +95,7 @@ func (tp JoinType) String() string {
 type LogicalJoin struct {
 	LogicalSchemaProducer
 
-	JoinType      JoinType
+	JoinType      JoinType `hash64-equals:"true"`
 	Reordered     bool
 	CartesianJoin bool
 	StraightJoin  bool
@@ -108,12 +107,12 @@ type LogicalJoin struct {
 	LeftPreferJoinType  uint
 	RightPreferJoinType uint
 
-	EqualConditions []*expression.ScalarFunction
+	EqualConditions []*expression.ScalarFunction `hash64-equals:"true"`
 	// NAEQConditions means null aware equal conditions, which is used for null aware semi joins.
-	NAEQConditions  []*expression.ScalarFunction
-	LeftConditions  expression.CNFExprs
-	RightConditions expression.CNFExprs
-	OtherConditions expression.CNFExprs
+	NAEQConditions  []*expression.ScalarFunction `hash64-equals:"true"`
+	LeftConditions  expression.CNFExprs          `hash64-equals:"true"`
+	RightConditions expression.CNFExprs          `hash64-equals:"true"`
+	OtherConditions expression.CNFExprs          `hash64-equals:"true"`
 
 	LeftProperties  [][]*expression.Column
 	RightProperties [][]*expression.Column
@@ -152,39 +151,6 @@ func (p LogicalJoin) Init(ctx base.PlanContext, offset int) *LogicalJoin {
 }
 
 // ************************ start implementation of HashEquals interface ************************
-
-// Hash64 implements the HashEquals.<0th> interface.
-func (p *LogicalJoin) Hash64(h base2.Hasher) {
-	h.HashString(plancodec.TypeJoin)
-	h.HashInt(int(p.JoinType))
-	hashFuncs := func(funcs []*expression.ScalarFunction) {
-		if funcs == nil {
-			h.HashByte(base2.NilFlag)
-		} else {
-			h.HashByte(base2.NotNilFlag)
-			h.HashInt(len(funcs))
-			for _, one := range funcs {
-				one.Hash64(h)
-			}
-		}
-	}
-	hashExprs := func(exprs []expression.Expression) {
-		if exprs == nil {
-			h.HashByte(base2.NilFlag)
-		} else {
-			h.HashByte(base2.NotNilFlag)
-			h.HashInt(len(exprs))
-			for _, one := range exprs {
-				one.Hash64(h)
-			}
-		}
-	}
-	hashFuncs(p.EqualConditions)
-	hashFuncs(p.NAEQConditions)
-	hashExprs(p.LeftConditions)
-	hashExprs(p.RightConditions)
-	hashExprs(p.OtherConditions)
-}
 
 // Equals implements the HashEquals.<1st> interface.
 func (p *LogicalJoin) Equals(other any) bool {
