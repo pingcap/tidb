@@ -112,7 +112,7 @@ InnoDB	NONCLUSTERED
 explain select engine, tidb_pk_type from information_schema.tables where (table_name ='t4' or upper(table_name) = 'T5') and table_schema = 'infoschema__infoschema';
 id	estRows	task	access object	operator info
 Projection_4	8000.00	root		Column#5, Column#24
-└─Selection_5	8000.00	root		or(eq(Column#3, "t4"), eq(upper(Column#3), "T5"))
+└─Selection_5	8000.00	root		or(eq(lower(Column#3), "t4"), eq(lower(Column#3), "t5"))
   └─MemTableScan_6	10000.00	root	table:TABLES	table_schema:["infoschema__infoschema"]
 select engine, tidb_pk_type from information_schema.tables where lower(table_name) = 't5' and  upper(table_schema) = 'INFOSCHEMA__INFOSCHEMA';
 engine	tidb_pk_type
@@ -120,7 +120,7 @@ InnoDB	NONCLUSTERED
 explain select engine, tidb_pk_type from information_schema.tables where (table_name ='t4' or lower(table_name) = 't5') and  upper(table_schema) = 'INFOSCHEMA__INFOSCHEMA';
 id	estRows	task	access object	operator info
 Projection_4	8000.00	root		Column#5, Column#24
-└─Selection_5	8000.00	root		or(eq(Column#3, "t4"), eq(lower(Column#3), "t5"))
+└─Selection_5	8000.00	root		or(eq(lower(Column#3), "t4"), eq(lower(Column#3), "t5"))
   └─MemTableScan_6	10000.00	root	table:TABLES	table_schema:["infoschema__infoschema"]
 select engine, tidb_pk_type from information_schema.tables where (table_name ='t4' or table_name = 't5') and table_schema = 'infoschema__infoschema';
 engine	tidb_pk_type
