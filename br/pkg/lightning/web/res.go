@@ -20,5 +20,4 @@ import (
 	"net/http"
 )
 
-<<<<<<< HEAD:br/pkg/lightning/web/res.go
 var Res http.FileSystem = http.Dir("br/web/dist")
