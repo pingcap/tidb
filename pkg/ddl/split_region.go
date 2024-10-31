@@ -66,7 +66,7 @@ func splitTableRegion(ctx sessionctx.Context, store kv.SplittableStore, tbInfo *
 	}
 }
 
-func splitOneIndexRegion(store kv.SplittableStore, tbInfo *model.TableInfo, idxInfo *model.IndexInfo) {
+func splitOneIndexRegion(store kv.SplittableStore, tbInfo *model.TableInfo, idxInfo *model.IndexInfo) []uint64 {
 	splitKeys := make([][]byte, 0, 1)
 	indexPrefix := tablecodec.EncodeTableIndexPrefix(tbInfo.ID, idxInfo.ID)
 	splitKeys = append(splitKeys, indexPrefix)
@@ -76,9 +76,11 @@ func splitOneIndexRegion(store kv.SplittableStore, tbInfo *model.TableInfo, idxI
 	if err != nil {
 		logutil.DDLLogger().Warn("pre split some table index regions failed",
 			zap.Stringer("table", tbInfo.Name), zap.Stringer("index", idxInfo.Name), zap.Int("successful region count", len(regionIDs)), zap.Error(err))
+	} else {
+		logutil.DDLLogger().Info("pre split some table index regions success",
+			zap.Stringer("table", tbInfo.Name), zap.Stringer("index", idxInfo.Name), zap.Int("successful region count", len(regionIDs)), zap.Error(err))
 	}
-	logutil.DDLLogger().Info("pre split some table index regions success",
-		zap.Stringer("table", tbInfo.Name), zap.Stringer("index", idxInfo.Name), zap.Int("successful region count", len(regionIDs)), zap.Error(err))
+	return regionIDs
 }
 
 // `tID` is used to control the scope of scatter. If it is `ScatterTable`, the corresponding tableID is used.
