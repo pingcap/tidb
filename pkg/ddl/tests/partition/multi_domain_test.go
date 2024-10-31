@@ -272,6 +272,71 @@ func TestMultiSchemaDropListColumnsDefaultPartition(t *testing.T) {
 	runMultiSchemaTest(t, createSQL, alterSQL, initFn, func(kit *testkit.TestKit) {}, loopFn)
 }
 
+// TestMultiSchemaModifyColumn to show behavior when changing a column
+func TestMultiSchemaModifyColumn(t *testing.T) {
+	createSQL := `create table t (a int primary key, b varchar(255), unique key uk_b (b))`
+	initFn := func(tkO *testkit.TestKit) {
+		tkO.MustExec(`insert into t values (1,1),(2,2),(3,3),(4,4),(5,5),(6,6),(7,7),(8,8),(9,9)`)
+	}
+	alterSQL := `alter table t modify column b int unsigned not null`
+	loopFn := func(tkO, tkNO *testkit.TestKit) {
+		res := tkO.MustQuery(`select schema_state from information_schema.DDL_JOBS where table_name = 't' order by job_id desc limit 1`)
+		schemaState := res.Rows()[0][0].(string)
+		switch schemaState {
+		case model.StateDeleteOnly.String():
+			// we are only interested in StateWriteReorganization
+		case model.StateWriteOnly.String():
+			// we are only interested in StateDeleteReorganization->StatePublic
+		case model.StateWriteReorganization.String():
+		case model.StatePublic.String():
+			// tkNO sees varchar column and tkO sees int column
+			tkO.MustQuery(`show create table t`).Check(testkit.Rows("" +
+				"t CREATE TABLE `t` (\n" +
+				"  `a` int(11) NOT NULL,\n" +
+				"  `b` int(10) unsigned NOT NULL,\n" +
+				"  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */,\n" +
+				"  UNIQUE KEY `uk_b` (`b`)\n" +
+				") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+			tkNO.MustQuery(`show create table t`).Check(testkit.Rows("" +
+				"t CREATE TABLE `t` (\n" +
+				"  `a` int(11) NOT NULL,\n" +
+				"  `b` varchar(255) DEFAULT NULL,\n" +
+				"  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */,\n" +
+				"  UNIQUE KEY `uk_b` (`b`)\n" +
+				") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+
+			tkO.MustExec(`insert into t values (10, " 09.60 ")`)
+			// No warning!? Same in MySQL...
+			tkNO.MustQuery(`show warnings`).Check(testkit.Rows())
+			tkNO.MustContainErrMsg(`insert into t values (11, "09.60")`, "[kv:1062]Duplicate entry '10' for key 't._Idx$_uk_b_0'")
+			tkO.MustQuery(`select * from t where a = 10`).Check(testkit.Rows("10 10"))
+			// <nil> ?!?
+			tkNO.MustQuery(`select * from t where a = 10`).Check(testkit.Rows("10 <nil>"))
+			// If the original b was defined as 'NOT NULL', then it would give an error:
+			// [table:1364]Field 'b' doesn't have a default value
+
+			tkNO.MustExec(`insert into t values (11, " 011.50 ")`)
+			tkNO.MustQuery(`show warnings`).Check(testkit.Rows())
+			// Anomaly, the different sessions sees different data.
+			// So it should be acceptable for partitioning DDLs as well.
+			// It may be possible to check that writes from StateWriteOnly convert 1:1
+			// to the new type, and block writes otherwise. But then it would break the first tkO insert above...
+			tkO.MustQuery(`select * from t where a = 11`).Check(testkit.Rows("11 12"))
+			tkNO.MustQuery(`select * from t where a = 11`).Check(testkit.Rows("11  011.50 "))
+			tblO, err := tkO.Session().GetInfoSchema().TableInfoByName(parserModel.NewCIStr("test"), parserModel.NewCIStr("t"))
+			require.NoError(t, err)
+			tblNO, err := tkNO.Session().GetInfoSchema().TableInfoByName(parserModel.NewCIStr("test"), parserModel.NewCIStr("t"))
+			require.NoError(t, err)
+			require.Greater(t, tblO.Columns[1].ID, tblNO.Columns[1].ID)
+			// This also means that old copies of the columns will be left in the row, until the row is updated or deleted.
+			// But I guess that is at least documented.
+		default:
+			require.Failf(t, "unhandled schema state '%s'", schemaState)
+		}
+	}
+	runMultiSchemaTest(t, createSQL, alterSQL, initFn, func(kit *testkit.TestKit) {}, loopFn)
+}
+
 // TestMultiSchemaDropUniqueIndex to show behavior when
 // dropping a unique index
 func TestMultiSchemaDropUniqueIndex(t *testing.T) {
@@ -452,8 +517,8 @@ func TestMultiSchemaTruncatePartitionWithGlobalIndex(t *testing.T) {
 		case "write only":
 			// tkNO is seeing state None, so unaware of DDL
 			// tkO is seeing state write only, so using the old partition,
-			// but are aware of new ids, so should filter them or global index reads
-			// Duplicate keys (from delete only state) are allowed on insert/update,
+			// but are aware of new ids, so should filter them from global index reads.
+			// Duplicate key errors (from delete only state) are allowed on insert/update,
 			// even if it cannot read them from the global index, due to filtering.
 			rows := tkNO.MustQuery(`select * from t`).Sort().Rows()
 			tkO.MustQuery(`select * from t`).Sort().Check(rows)
@@ -469,7 +534,8 @@ func TestMultiSchemaTruncatePartitionWithGlobalIndex(t *testing.T) {
 		case "delete only":
 			// tkNO is seeing state write only, so still can access the dropped partition
 			// tkO is seeing state delete only, so cannot see the dropped partition,
-			// but must still double write to the global indexes.
+			// but must still write to the shared global indexes.
+			// So they will get errors on the same entries in the global index.
 
 			tkNO.MustContainErrMsg(`insert into t values (1,1,"Duplicate key")`, "[kv:1062]Duplicate entry '1' for key 't.uk_b'")
 			tkO.MustContainErrMsg(`insert into t values (1,1,"Duplicate key")`, "[kv:1062]Duplicate entry '1' for key 't.uk_b'")
@@ -488,6 +554,7 @@ func TestMultiSchemaTruncatePartitionWithGlobalIndex(t *testing.T) {
 			// Primary is not global, so here we can insert into the new partition, without
 			// conflicting to the old one
 			tkO.MustExec(`insert into t values (21,25,"OK")`)
+			tkO.MustExec(`insert into t values (99,99,"OK")`)
 			tkNO.MustContainErrMsg(`insert into t values (8,25,"Duplicate key")`, "[kv:1062]Duplicate entry '25' for key 't.uk_b'")
 			// type differences, cannot use index
 			tkNO.MustQuery(`select count(*) from t where b = 25`).Check(testkit.Rows("0"))
@@ -501,7 +568,8 @@ func TestMultiSchemaTruncatePartitionWithGlobalIndex(t *testing.T) {
 			require.Equal(t, uint64(0), tkNO.Session().GetSessionVars().StmtCtx.AffectedRows())
 			// Primary is not global, so here we can insert into the old partition, without
 			// conflicting to the new one
-			tkNO.MustExec(`insert into t values (25,27,"OK")`)
+			tkO.MustQuery(`select count(*) from t where a = 99`).Check(testkit.Rows("1"))
+			tkNO.MustExec(`insert into t values (99,27,"OK")`)
 
 			tkO.MustQuery(`select count(*) from t where b = "23"`).Check(testkit.Rows("0"))
 			tkO.MustExec(`update t set a = 2, c = "'a' Updated" where b = "23"`)
@@ -530,12 +598,12 @@ func TestMultiSchemaTruncatePartitionWithGlobalIndex(t *testing.T) {
 				"2 2 Filler",
 				"21 21 OK",
 				"23 23 OK",
-				"25 25 OK",
 				"3 3 Filler",
 				"4 4 Filler",
 				"5 5 Filler",
 				"6 6 Filler",
-				"7 7 Filler"))
+				"7 7 Filler",
+				"99 25 OK"))
 			tkNO.MustQuery(`select b from t order by b`).Check(testkit.Rows(""+
 				"1",
 				"2",
@@ -552,18 +620,21 @@ func TestMultiSchemaTruncatePartitionWithGlobalIndex(t *testing.T) {
 				"2 2 Filler",
 				"27 27 OK",
 				"4 4 Filler",
-				"6 6 Filler"))
+				"6 6 Filler",
+				"99 99 OK"))
 			tkO.MustQuery(`select b from t order by b`).Check(testkit.Rows(""+
 				"2",
 				"27",
 				"4",
-				"6"))
+				"6",
+				"99"))
 			// TODO: Add tests for delete
 		case "delete reorganization":
 			// tkNO is seeing state delete only, so cannot see the dropped partition,
-			// but must still double write to the global indexes.
+			// but must still must give duplicate errors when writes to the global indexes collide
+			// with the dropped partitions.
 			// tkO is seeing state delete reorganization, so cannot see the dropped partition,
-			// and should ignore the dropped partitions entries in the Global Indexes!
+			// and can ignore the dropped partitions entries in the Global Indexes, i.e. overwrite them!
 			rows := tkO.MustQuery(`select * from t`).Sort().Rows()
 			tkNO.MustQuery(`select * from t`).Sort().Check(rows)
 			rows = tkO.MustQuery(`select b from t order by b`).Rows()
@@ -621,7 +692,6 @@ func TestMultiSchemaTruncatePartitionWithGlobalIndex(t *testing.T) {
 }
 
 func TestMultiSchemaTruncatePartitionWithPKGlobal(t *testing.T) {
-	// TODO: Also test non-int PK, multi-column PK
 	createSQL := `create table t (a int primary key nonclustered global, b int, c varchar(255) default 'Filler', unique key uk_b (b)) partition by hash (b) partitions 2`
 	initFn := func(tkO *testkit.TestKit) {
 		tkO.MustExec(`insert into t (a,b) values (0,0),(1,1),(2,2),(3,3),(4,4),(5,5),(6,6),(7,7)`)
@@ -634,8 +704,8 @@ func TestMultiSchemaTruncatePartitionWithPKGlobal(t *testing.T) {
 		case "write only":
 			// tkNO is seeing state None, so unaware of DDL
 			// tkO is seeing state write only, so using the old partition,
-			// but are aware of new ids, so should filter them or global index reads
-			// Duplicate keys (from delete only state) are allowed on insert/update,
+			// but are aware of new ids, so should filter them from global index reads.
+			// Duplicate key errors (from delete only state) are allowed on insert/update,
 			// even if it cannot read them from the global index, due to filtering.
 			rows := tkNO.MustQuery(`select * from t`).Sort().Rows()
 			tkO.MustQuery(`select * from t`).Sort().Check(rows)
@@ -649,11 +719,8 @@ func TestMultiSchemaTruncatePartitionWithPKGlobal(t *testing.T) {
 		case "delete only":
 			// tkNO is seeing state write only, so still can access the dropped partition
 			// tkO is seeing state delete only, so cannot see the dropped partition,
-			// but must still double write to the global indexes.
-
-			// What do we want to test?
-			// tkNO, tkO should not be able to insert or update any PK that conflicts with any previous
-			// transactions
+			// but must still write to the shared global indexes.
+			// So they will get errors on the same entries in the global index.
 
 			tkNO.MustContainErrMsg(`insert into t values (1,1,"Duplicate key")`, "[kv:1062]Duplicate entry '1' for key 't.PRIMARY'")
 			tkNO.MustContainErrMsg(`insert into t values (11,1,"Duplicate key")`, "[kv:1062]Duplicate entry '1' for key 't.uk_b'")
@@ -759,9 +826,10 @@ func TestMultiSchemaTruncatePartitionWithPKGlobal(t *testing.T) {
 
 		case "delete reorganization":
 			// tkNO is seeing state delete only, so cannot see the dropped partition,
-			// but must still double write to the global indexes.
+			// but must still must give duplicate errors when writes to the global indexes collide
+			// with the dropped partitions.
 			// tkO is seeing state delete reorganization, so cannot see the dropped partition,
-			// and should ignore the dropped partitions entries in the Global Indexes!
+			// and can ignore the dropped partitions entries in the Global Indexes, i.e. overwrite them!
 			rows := tkO.MustQuery(`select * from t`).Sort().Rows()
 			tkNO.MustQuery(`select * from t`).Sort().Check(rows)
 			tblNO, err := tkNO.Session().GetInfoSchema().TableInfoByName(parserModel.NewCIStr("test"), parserModel.NewCIStr("t"))

@@ -326,7 +326,6 @@ func updatePartitionInfo(tblInfo *model.TableInfo) {
 	parInfo.Definitions = append(parInfo.Definitions, oldDefs...)
 	parInfo.Definitions = append(parInfo.Definitions, newDefs...)
 	tblInfo.Partition.Definitions = parInfo.Definitions
-	tblInfo.Partition.DDLAction = model.ActionNone
 	tblInfo.Partition.AddingDefinitions = nil
 }
 

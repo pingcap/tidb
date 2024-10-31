@@ -616,16 +616,6 @@ func GetPartitionHandleFromVal(val []byte) (*kv.PartitionHandle, error) {
 	return nil, nil
 }
 
-// FetchPartitionHandle is used to find the duplicated row's handle and partition id
-// for a given unique global index key.
-func FetchPartitionHandle(ctx context.Context, key kv.Key, txn kv.Transaction) (partHandle *kv.PartitionHandle, err error) {
-	val, err := getKeyInTxn(ctx, txn, key)
-	if err != nil || len(val) == 0 {
-		return nil, err
-	}
-	return GetPartitionHandleFromVal(val)
-}
-
 func fetchDuplicatedHandleForTempIndexKey(ctx context.Context, tempKey kv.Key, distinct bool,
 	txn kv.Transaction, tableID int64) (foundKey bool, dupHandle kv.Handle, err error) {
 	tempRawVal, err := getKeyInTxn(ctx, txn, tempKey)
