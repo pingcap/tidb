@@ -22,7 +22,7 @@ go_test(
     timeout = "short",
     srcs = ["hash64_equals_test.go"],
     data = [
-           "//pkg/planner/core/operator/logicalop:generator_files",
+        "//pkg/planner/core/operator/logicalop:generator_files",
     ],
     embed = [":hash64_equals_lib"],
     flaky = True,
