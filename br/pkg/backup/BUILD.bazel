@@ -70,11 +70,6 @@ go_test(
     ],
     embed = [":backup"],
     flaky = True,
-<<<<<<< HEAD
-=======
-    race = "on",
-    shard_count = 15,
->>>>>>> 790c6c07463 (br: cancel context when timer stop (#56948))
     deps = [
         "//br/pkg/conn",
         "//br/pkg/gluetidb",
