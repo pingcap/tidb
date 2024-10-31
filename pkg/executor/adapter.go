@@ -615,6 +615,7 @@ func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 	var txnStartTS uint64
 	txn, err := sctx.Txn(false)
 	if err != nil {
+		terror.Log(exec.Close(e))
 		return nil, err
 	}
 	if txn.Valid() {
