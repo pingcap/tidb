@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl/notifier"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/owner"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
@@ -119,6 +120,8 @@ type StatsHistory interface {
 
 // StatsAnalyze is used to handle auto-analyze and manage analyze jobs.
 type StatsAnalyze interface {
+	owner.Listener
+
 	// InsertAnalyzeJob inserts analyze job into mysql.analyze_jobs and gets job ID for further updating job.
 	InsertAnalyzeJob(job *statistics.AnalyzeJob, instance string, procID uint64) error
 
@@ -157,12 +160,6 @@ type StatsAnalyze interface {
 
 	// CheckAnalyzeVersion checks whether all the statistics versions of this table's columns and indexes are the same.
 	CheckAnalyzeVersion(tblInfo *model.TableInfo, physicalIDs []int64, version *int) bool
-
-	// OnBecomeOwner is used to handle the event when the current TiDB instance becomes the stats owner.
-	OnBecomeOwner()
-
-	// OnRetireOwner is used to handle the event when the current TiDB instance retires from being the stats owner.
-	OnRetireOwner()
 
 	// Close closes the analyze worker.
 	Close()
