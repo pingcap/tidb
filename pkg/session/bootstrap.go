@@ -1439,6 +1439,9 @@ func acquireLock(store kv.Storage) (func(), error) {
 	}
 	releaseFn, err := owner.AcquireDistributedLock(context.Background(), etcdCli, bootstrapOwnerKey, 10)
 	if err != nil {
+		if err2 := etcdCli.Close(); err2 != nil {
+			logutil.BgLogger().Error("failed to close etcd client", zap.Error(err2))
+		}
 		return nil, errors.Trace(err)
 	}
 	return func() {
