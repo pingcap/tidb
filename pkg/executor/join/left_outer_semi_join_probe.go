@@ -24,6 +24,10 @@ type leftOuterSemiJoinProbe struct {
 	baseJoinProbe
 	// used when use inner side to build, isNotMatchedRows is indexed by logical row index
 	isNotMatchedRows []bool
+	// used when use inner side to build, hasNullRows is indexed by logical row index
+	hasNullRows []bool
+	// used when use inner side to build, isNullRows is indexed by physical row index
+	isNullRows []bool
 	// build/probe side used columns and offset in result chunk
 	probeColUsed []int
 
@@ -60,6 +64,10 @@ func (j *leftOuterSemiJoinProbe) SetChunkForProbe(chunk *chunk.Chunk) (err error
 	j.isNotMatchedRows = j.isNotMatchedRows[:0]
 	for i := 0; i < j.chunkRows; i++ {
 		j.isNotMatchedRows = append(j.isNotMatchedRows, true)
+	}
+	j.hasNullRows = j.hasNullRows[:0]
+	for i := 0; i < j.chunkRows; i++ {
+		j.hasNullRows = append(j.hasNullRows, false)
 	}
 	return nil
 }
@@ -119,7 +127,8 @@ func (j *leftOuterSemiJoinProbe) probeForInnerSideBuildWithOtherCondition(chk, j
 	j.currentProbeRow = j.nextProcessProbeRowIdx
 	if joinedChk.NumRows() > 0 {
 		j.selected = j.selected[:0]
-		j.selected, err = expression.VectorizedFilter(j.ctx.SessCtx.GetExprCtx().GetEvalCtx(), j.ctx.SessCtx.GetSessionVars().EnableVectorizedExpression, j.ctx.OtherCondition, chunk.NewIterator4Chunk(joinedChk), j.selected)
+		j.isNullRows = j.isNullRows[:0]
+		j.selected, j.isNullRows, err = expression.VectorizedFilterConsiderNull(j.ctx.SessCtx.GetExprCtx().GetEvalCtx(), j.ctx.SessCtx.GetSessionVars().EnableVectorizedExpression, j.ctx.OtherCondition, chunk.NewIterator4Chunk(joinedChk), j.selected, j.hasNullRows)
 		if err != nil {
 			return err
 		}
@@ -159,6 +168,12 @@ func (j *leftOuterSemiJoinProbe) buildResultForMatchedRowsAfterOtherCondition(ch
 			rowsAdded++
 		}
 	}
+	for i, isNull := range j.isNullRows {
+		if isNull {
+			j.hasNullRows[j.rowIndexInfos[i].probeRowIndex] = true
+		}
+	}
+
 	chk.SetNumVirtualRows(rowCount + rowsAdded)
 	dstCol := chk.Column(len(j.probeColUsed))
 	for i := 0; i < rowsAdded; i++ {
@@ -227,8 +242,14 @@ func (j *leftOuterSemiJoinProbe) buildResultForNotMatchedRows(chk *chunk.Chunk, 
 			}
 		}
 	}
-	for i := 0; i < nullRows; i++ {
-		chk.AppendInt64(len(j.probeColUsed), 0)
+	for i := startProbeRow; i < j.currentProbeRow; i++ {
+		if j.isNotMatchedRows[i] {
+			if j.hasNullRows[i] {
+				chk.AppendNull(len(j.probeColUsed))
+			} else {
+				chk.AppendInt64(len(j.probeColUsed), 0)
+			}
+		}
 	}
 	chk.SetNumVirtualRows(prevRows + nullRows)
 }
