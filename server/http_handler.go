@@ -1296,20 +1296,13 @@ func (h tableHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 }
 
 // ServeHTTP handles request of ddl jobs history.
-<<<<<<< HEAD:server/http_handler.go
 func (h ddlHistoryJobHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
-	var jobID, limitID int
-	var err error
-	if jobValue := req.FormValue(qJobID); len(jobValue) > 0 {
-=======
-func (h DDLHistoryJobHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	var (
 		jobID   = 0
 		limitID = 0
 		err     error
 	)
-	if jobValue := req.FormValue(handler.JobID); len(jobValue) > 0 {
->>>>>>> f2856e3521f (ddl: limit the count of getting ddlhistory jobs (#55590)):pkg/server/handler/tikvhandler/tikv_handler.go
+	if jobValue := req.FormValue(qJobID); len(jobValue) > 0 {
 		jobID, err = strconv.Atoi(jobValue)
 		if err != nil {
 			writeError(w, err)
@@ -1326,14 +1319,8 @@ func (h DDLHistoryJobHandler) ServeHTTP(w http.ResponseWriter, req *http.Request
 			writeError(w, err)
 			return
 		}
-<<<<<<< HEAD:server/http_handler.go
-		if limitID < 1 {
-			writeError(w, errors.New("ddl history limit must be greater than 0"))
-=======
 		if limitID < 1 || limitID > ddl.DefNumGetDDLHistoryJobs {
-			handler.WriteError(w,
-				errors.Errorf("ddl history limit must be greater than 0 and less than or equal to %v", ddl.DefNumGetDDLHistoryJobs))
->>>>>>> f2856e3521f (ddl: limit the count of getting ddlhistory jobs (#55590)):pkg/server/handler/tikvhandler/tikv_handler.go
+			writeError(w, errors.Errorf("ddl history limit must be greater than 0 and less than or equal to %v", ddl.DefNumGetDDLHistoryJobs))
 			return
 		}
 	}
