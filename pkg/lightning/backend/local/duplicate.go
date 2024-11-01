@@ -317,7 +317,7 @@ func getDupDetectClient(
 		return nil, errors.Annotatef(berrors.ErrPDLeaderNotFound,
 			"region id %d has no leader", region.Region.Id)
 	}
-	importClient, err := importClientFactory.Create(ctx, leader.GetStoreId())
+	importClient, err := importClientFactory.create(ctx, leader.GetStoreId())
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
