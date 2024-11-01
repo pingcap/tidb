@@ -20,6 +20,7 @@ import (
 	"testing"
 
 	"github.com/cockroachdb/pebble"
+	"github.com/cockroachdb/pebble/bloom"
 	"github.com/cockroachdb/pebble/objstorage/objstorageprovider"
 	"github.com/cockroachdb/pebble/sstable"
 	"github.com/cockroachdb/pebble/vfs"
@@ -47,6 +48,22 @@ func TestGRPCWriteToTiKV(t *testing.T) {
 	}
 }
 
+type mockCollector struct {
+	name string
+}
+
+func (m mockCollector) Add(key sstable.InternalKey, value []byte) error {
+	return nil
+}
+
+func (m mockCollector) Finish(userProps map[string]string) error {
+	return nil
+}
+
+func (m mockCollector) Name() string {
+	return m.name
+}
+
 func TestPebbleWriteSST(t *testing.T) {
 	t.Skip("this is a manual test")
 
@@ -57,7 +74,16 @@ func TestPebbleWriteSST(t *testing.T) {
 	require.NoError(t, err)
 	writable := objstorageprovider.NewFileWritable(f)
 
-	writer := sstable.NewWriter(writable, sstable.WriterOptions{})
+	writer := sstable.NewWriter(writable, sstable.WriterOptions{
+		Compression:  pebble.ZstdCompression, // should read TiKV config, and CF differs
+		FilterPolicy: bloom.FilterPolicy(10),
+		MergerName:   "",
+		TablePropertyCollectors: []func() sstable.TablePropertyCollector{
+			func() sstable.TablePropertyCollector {
+				return mockCollector{name: "test-collector"}
+			},
+		},
+	})
 	for _, kv := range kvs {
 		t.Logf("key: %X\nvalue: %X", kv[0], kv[1])
 		err = writer.Set(kv[0], kv[1])
@@ -71,6 +97,7 @@ func TestPebbleReadSST(t *testing.T) {
 	t.Skip("this is a manual test")
 
 	sstPath := "/tmp/test.sst"
+	t.Logf("read sst: %s", sstPath)
 	f, err := vfs.Default.Open(sstPath)
 	require.NoError(t, err)
 	readable, err := sstable.NewSimpleReadable(f)
@@ -85,7 +112,8 @@ func TestPebbleReadSST(t *testing.T) {
 	content := &strings.Builder{}
 	layout.Describe(content, true, reader, nil)
 
-	t.Logf("layout: %s", content.String())
+	t.Logf("layout:\n %s", content.String())
+	t.Logf("properties:\n %s", reader.Properties.String())
 
 	iter, err := reader.NewIter(nil, nil)
 	require.NoError(t, err)
