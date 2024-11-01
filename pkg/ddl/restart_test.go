@@ -50,7 +50,7 @@ func restartWorkers(t *testing.T, store kv.Storage, d *domain.Domain) {
 		ddl.WithSchemaLoader(d),
 	)
 	d.SetDDL(newDDL, newDDLExecutor)
-	err = newDDL.Start(pools.NewResourcePool(func() (pools.Resource, error) {
+	err = newDDL.Start(ddl.Normal, pools.NewResourcePool(func() (pools.Resource, error) {
 		session := testkit.NewTestKit(t, store).Session()
 		session.GetSessionVars().CommonGlobalLoaded = true
 		return session, nil
