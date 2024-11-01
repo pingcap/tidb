@@ -72,18 +72,20 @@ type pqHeap interface {
 //
 //nolint:fieldalignment
 type AnalysisPriorityQueue struct {
+	ctx         context.Context
 	statsHandle statstypes.StatsHandle
 	calculator  *PriorityCalculator
 
-	ctx    context.Context
-	cancel context.CancelFunc
-	wg     util.WaitGroupWrapper
+	wg util.WaitGroupWrapper
 
 	// syncFields is a substructure to hold fields protected by mu.
 	syncFields struct {
 		// mu is used to protect the following fields.
-		mu    sync.RWMutex
-		inner pqHeap
+		mu sync.RWMutex
+		// Because the Initialize and Close functions can be called concurrently,
+		// so we need to protect the cancel function to avoid data race.
+		cancel context.CancelFunc
+		inner  pqHeap
 		// runningJobs is a map to store the running jobs. Used to avoid duplicate jobs.
 		runningJobs map[int64]struct{}
 		// lastDMLUpdateFetchTimestamp is the timestamp of the last DML update fetch.
@@ -97,19 +99,10 @@ type AnalysisPriorityQueue struct {
 
 // NewAnalysisPriorityQueue creates a new AnalysisPriorityQueue2.
 func NewAnalysisPriorityQueue(handle statstypes.StatsHandle) *AnalysisPriorityQueue {
-	ctx, cancel := context.WithCancel(context.Background())
-
 	queue := &AnalysisPriorityQueue{
 		statsHandle: handle,
 		calculator:  NewPriorityCalculator(),
-		ctx:         ctx,
-		cancel:      cancel,
 	}
-
-	queue.syncFields.mu.Lock()
-	queue.syncFields.runningJobs = make(map[int64]struct{})
-	queue.syncFields.failedJobs = make(map[int64]struct{})
-	queue.syncFields.mu.Unlock()
 
 	return queue
 }
@@ -144,6 +137,12 @@ func (pq *AnalysisPriorityQueue) Initialize() error {
 		pq.Close()
 		return errors.Trace(err)
 	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	pq.ctx = ctx
+	pq.syncFields.cancel = cancel
+	pq.syncFields.runningJobs = make(map[int64]struct{})
+	pq.syncFields.failedJobs = make(map[int64]struct{})
 	pq.syncFields.initialized = true
 	pq.syncFields.mu.Unlock()
 
@@ -813,6 +812,9 @@ func (pq *AnalysisPriorityQueue) Close() {
 		return
 	}
 
-	pq.cancel()
+	// It is possible that the priority queue is not initialized.
+	if pq.syncFields.cancel != nil {
+		pq.syncFields.cancel()
+	}
 	pq.wg.Wait()
 }

@@ -1311,6 +1311,37 @@ func NewDomain(store kv.Storage, schemaLease time.Duration, statsLease time.Dura
 
 const serverIDForStandalone = 1 // serverID for standalone deployment.
 
+// NewEtcdCli creates a new clientv3.Client from store if the store support it.
+// the returned client might be nil.
+// TODO currently uni-store/mock-tikv/tikv all implements EtcdBackend while they don't support actually.
+// refactor this part.
+func NewEtcdCli(store kv.Storage) (*clientv3.Client, error) {
+	etcdStore, addrs, err := getEtcdAddrs(store)
+	if err != nil {
+		return nil, err
+	}
+	if len(addrs) == 0 {
+		return nil, nil
+	}
+	cli, err := newEtcdCli(addrs, etcdStore)
+	if err != nil {
+		return nil, err
+	}
+	return cli, nil
+}
+
+func getEtcdAddrs(store kv.Storage) (kv.EtcdBackend, []string, error) {
+	etcdStore, ok := store.(kv.EtcdBackend)
+	if !ok {
+		return nil, nil, nil
+	}
+	addrs, err := etcdStore.EtcdAddrs()
+	if err != nil {
+		return nil, nil, err
+	}
+	return etcdStore, addrs, nil
+}
+
 func newEtcdCli(addrs []string, ebd kv.EtcdBackend) (*clientv3.Client, error) {
 	cfg := config.GetGlobalConfig()
 	etcdLogCfg := zap.NewProductionConfig()
@@ -1344,30 +1375,26 @@ func (do *Domain) Init(
 ) error {
 	do.sysExecutorFactory = sysExecutorFactory
 	perfschema.Init()
-	if ebd, ok := do.store.(kv.EtcdBackend); ok {
-		var addrs []string
-		var err error
-		if addrs, err = ebd.EtcdAddrs(); err != nil {
-			return err
+	etcdStore, addrs, err := getEtcdAddrs(do.store)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if len(addrs) > 0 {
+		cli, err2 := newEtcdCli(addrs, etcdStore)
+		if err2 != nil {
+			return errors.Trace(err2)
 		}
-		if addrs != nil {
-			cli, err := newEtcdCli(addrs, ebd)
-			if err != nil {
-				return errors.Trace(err)
-			}
+		etcd.SetEtcdCliByNamespace(cli, keyspace.MakeKeyspaceEtcdNamespace(do.store.GetCodec()))
 
-			etcd.SetEtcdCliByNamespace(cli, keyspace.MakeKeyspaceEtcdNamespace(do.store.GetCodec()))
+		do.etcdClient = cli
 
-			do.etcdClient = cli
+		do.autoidClient = autoid.NewClientDiscover(cli)
 
-			do.autoidClient = autoid.NewClientDiscover(cli)
-
-			unprefixedEtcdCli, err := newEtcdCli(addrs, ebd)
-			if err != nil {
-				return errors.Trace(err)
-			}
-			do.unprefixedEtcdCli = unprefixedEtcdCli
+		unprefixedEtcdCli, err2 := newEtcdCli(addrs, etcdStore)
+		if err2 != nil {
+			return errors.Trace(err2)
 		}
+		do.unprefixedEtcdCli = unprefixedEtcdCli
 	}
 
 	ctx, cancelFunc := context.WithCancel(context.Background())
@@ -1414,7 +1441,6 @@ func (do *Domain) Init(
 	// step 1: prepare the info/schema syncer which domain reload needed.
 	pdCli, pdHTTPCli := do.GetPDClient(), do.GetPDHTTPClient()
 	skipRegisterToDashboard := config.GetGlobalConfig().SkipRegisterToDashboard
-	var err error
 	do.info, err = infosync.GlobalInfoSyncerInit(ctx, do.ddl.GetID(), do.ServerID,
 		do.etcdClient, do.unprefixedEtcdCli, pdCli, pdHTTPCli,
 		do.Store().GetCodec(), skipRegisterToDashboard)
@@ -1478,7 +1504,7 @@ func (do *Domain) Init(
 
 // Start starts the domain. After start, DDLs can be executed using session, see
 // Init also.
-func (do *Domain) Start() error {
+func (do *Domain) Start(startMode ddl.StartMode) error {
 	gCfg := config.GetGlobalConfig()
 	if gCfg.EnableGlobalKill && do.etcdClient != nil {
 		do.wg.Add(1)
@@ -1497,7 +1523,7 @@ func (do *Domain) Start() error {
 	sysCtxPool := pools.NewResourcePool(sysFac, 512, 512, resourceIdleTimeout)
 
 	// start the ddl after the domain reload, avoiding some internal sql running before infoSchema construction.
-	err := do.ddl.Start(sysCtxPool)
+	err := do.ddl.Start(startMode, sysCtxPool)
 	if err != nil {
 		return err
 	}
@@ -2356,7 +2382,7 @@ func (do *Domain) UpdateTableStatsLoop(ctx, initStatsCtx sessionctx.Context) err
 	variable.EnableStatsOwner = do.enableStatsOwner
 	variable.DisableStatsOwner = do.disableStatsOwner
 	do.statsOwner = do.newOwnerManager(handle.StatsPrompt, handle.StatsOwnerKey)
-	do.statsOwner.SetListener(do.ddlNotifier)
+	do.statsOwner.SetListener(owner.NewListenersWrapper(statsHandle, do.ddlNotifier))
 	do.wg.Run(func() {
 		do.indexUsageWorker()
 	}, "indexUsageWorker")
