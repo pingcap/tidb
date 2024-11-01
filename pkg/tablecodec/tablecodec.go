@@ -1316,6 +1316,7 @@ type TempIndexValueElem struct {
 	Delete   bool
 	Distinct bool
 
+	// Global means it's a global Index, for partitioned tables. Only for `distinct` + `deleted` scenario right now.
 	Global bool
 }
 
