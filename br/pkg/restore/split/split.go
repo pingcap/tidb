@@ -74,7 +74,7 @@ type LogSplitHelper struct {
 	regionsCh     chan []*RegionInfo
 
 	splitThresholdSize uint64
-	splitThreSholdKeys int64
+	splitThresholdKeys int64
 }
 
 func NewLogSplitHelper(rules map[int64]*restoreutils.RewriteRules, client SplitClient, splitSize uint64, splitKeys int64) *LogSplitHelper {
@@ -85,8 +85,8 @@ func NewLogSplitHelper(rules map[int64]*restoreutils.RewriteRules, client SplitC
 		pool:          util.NewWorkerPool(128, "split region"),
 		eg:            nil,
 
-		splitThreSholdSize: splitSize,
-		splitThreSholdKeys: splitKeys,
+		splitThresholdSize: splitSize,
+		splitThresholdKeys: splitKeys,
 	}
 }
 
@@ -166,7 +166,7 @@ func (helper *LogSplitHelper) splitRegionByPoints(
 	)
 	for _, v := range valueds {
 		// decode will discard ts behind the key, which results in the same key for consecutive ranges
-		if !bytes.Equal(lastKey, v.GetStartKey()) && (v.Value.Size+length > helper.splitThreSholdSize || v.Value.Number+number > helper.splitThreSholdKeys) {
+		if !bytes.Equal(lastKey, v.GetStartKey()) && (v.Value.Size+length > helper.splitThresholdSize || v.Value.Number+number > helper.splitThresholdKeys) {
 			_, rawKey, _ := codec.DecodeBytes(v.GetStartKey(), nil)
 			splitPoints = append(splitPoints, rawKey)
 			length = 0
