@@ -48,6 +48,7 @@ go_test(
     shard_count = 7,
     deps = [
         "@com_github_cockroachdb_pebble//:pebble",
+        "@com_github_cockroachdb_pebble//bloom",
         "@com_github_cockroachdb_pebble//objstorage/objstorageprovider",
         "@com_github_cockroachdb_pebble//sstable",
         "@com_github_cockroachdb_pebble//vfs",
