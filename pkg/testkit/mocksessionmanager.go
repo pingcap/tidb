@@ -53,7 +53,7 @@ func (msm *MockSessionManager) ShowTxnList() []*txninfo.TxnInfo {
 	rs := make([]*txninfo.TxnInfo, 0, len(msm.Conn))
 	for _, se := range msm.Conn {
 		info := se.TxnInfo()
-		if info != nil {
+		if info != nil && info.Process != nil {
 			rs = append(rs, info)
 		}
 	}
