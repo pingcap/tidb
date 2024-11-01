@@ -555,6 +555,7 @@ type basicCopRuntimeStats struct {
 	procTimes  Percentile[Duration]
 	// executor extra infos
 	tiflashScanContext TiFlashScanContext
+	tiFlashWaitSummary TiFlashWaitSummary
 }
 
 type canGetFloat64 interface {
@@ -700,6 +701,7 @@ func (e *basicCopRuntimeStats) Clone() RuntimeStats {
 	stats.consume.Store(e.consume.Load())
 	stats.rows.Store(e.rows.Load())
 	stats.tiflashScanContext = e.tiflashScanContext.Clone()
+	stats.tiFlashWaitSummary = e.tiFlashWaitSummary.Clone()
 	return stats
 }
 
@@ -720,6 +722,7 @@ func (e *basicCopRuntimeStats) Merge(rs RuntimeStats) {
 		e.procTimes.MergePercentile(&tmp.procTimes)
 	}
 	e.tiflashScanContext.Merge(tmp.tiflashScanContext)
+	e.tiFlashWaitSummary.Merge(tmp.tiFlashWaitSummary)
 }
 
 // Tp implements the RuntimeStats interface.
@@ -798,6 +801,12 @@ func (crs *CopRuntimeStats) RecordOneCopTask(address string, summary *tipb.Execu
 			totalVectorIdxSearchDiscardedNodes: summary.GetTiflashScanContext().GetTotalVectorIdxSearchDiscardedNodes(),
 			totalVectorIdxReadVecTimeMs:        summary.GetTiflashScanContext().GetTotalVectorIdxReadVecTimeMs(),
 			totalVectorIdxReadOthersTimeMs:     summary.GetTiflashScanContext().GetTotalVectorIdxReadOthersTimeMs(),
+		},
+		tiFlashWaitSummary: TiFlashWaitSummary{
+			executionTime:           uint64(*summary.TimeProcessedNs),
+			minTSOWaitTime:          summary.GetTiflashWaitSummary().GetMinTSOWaitNs(),
+			pipelineBreakerWaitTime: summary.GetTiflashWaitSummary().GetPipelineBreakerWaitNs(),
+			pipelineQueueWaitTime:   summary.GetTiflashWaitSummary().GetPipelineQueueWaitNs(),
 		},
 	}
 	for _, instance := range summary.GetTiflashScanContext().GetRegionsOfInstance() {
@@ -1209,6 +1218,50 @@ func (context *TiFlashScanContext) Empty() bool {
 		context.totalVectorIdxLoadFromCache == 0 &&
 		context.totalVectorIdxLoadFromS3 == 0
 	return res
+}
+
+// TiFlashWaitSummary is used to express all kinds of wait information in tiflash
+type TiFlashWaitSummary struct {
+	// keep execution time to do merge work, always record the wait time with largest execution time
+	executionTime           uint64
+	minTSOWaitTime          uint64
+	pipelineBreakerWaitTime uint64
+	pipelineQueueWaitTime   uint64
+}
+
+// Clone implements the deep copy of * TiFlashWaitSummary
+func (waitSummary *TiFlashWaitSummary) Clone() TiFlashWaitSummary {
+	newSummary := TiFlashWaitSummary{
+		executionTime:           waitSummary.executionTime,
+		minTSOWaitTime:          waitSummary.minTSOWaitTime,
+		pipelineBreakerWaitTime: waitSummary.pipelineBreakerWaitTime,
+		pipelineQueueWaitTime:   waitSummary.pipelineQueueWaitTime,
+	}
+	return newSummary
+}
+
+// String dumps TiFlashWaitSummary info as string
+func (waitSummary *TiFlashWaitSummary) String() string {
+	output := fmt.Sprintf("tiflash_wait:{"+
+		"minTSO_wait_time:%dms, "+
+		"pipeline_b:%dms, "+
+		"mvcc_output_rows:%dms"+
+		"}",
+		time.Duration(waitSummary.minTSOWaitTime).Milliseconds(),
+		time.Duration(waitSummary.pipelineBreakerWaitTime).Milliseconds(),
+		time.Duration(waitSummary.pipelineQueueWaitTime).Milliseconds(),
+	)
+	return output
+}
+
+// Merge make sum to merge the information in TiFlashWaitSummary
+func (waitSummary *TiFlashWaitSummary) Merge(other TiFlashWaitSummary) {
+	updated := waitSummary.executionTime < other.executionTime
+	if updated {
+		waitSummary.minTSOWaitTime = other.minTSOWaitTime
+		waitSummary.pipelineBreakerWaitTime = other.pipelineBreakerWaitTime
+		waitSummary.pipelineQueueWaitTime = other.pipelineQueueWaitTime
+	}
 }
 
 // BasicRuntimeStats is the basic runtime stats.
