@@ -18,51 +18,77 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/cascades/memo"
 	"github.com/pingcap/tidb/pkg/planner/cascades/rule"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"io"
 )
 
 type ApplyRuleTask struct {
 	BaseTask
 
-	gE      *memo.GroupExpression
-	rule    rule.Rule
-	explore bool
+	gE   *memo.GroupExpression
+	rule rule.Rule
+	// currently we are all explore type tasks.
 }
 
-func (a *ApplyRuleTask) execute() error {
+// NewApplyRuleTask return a new apply rule task.
+func NewApplyRuleTask(mctx *MemoContext, gE *memo.GroupExpression, r rule.Rule) *ApplyRuleTask {
+	return &ApplyRuleTask{
+		BaseTask: BaseTask{
+			mctx: mctx,
+		},
+		gE:   gE,
+		rule: r,
+	}
+}
+
+// Execute implements the task.Execute interface.
+func (a *ApplyRuleTask) Execute() error {
 	// check whether this rule has been applied in this gE or this gE is abandoned.
 	if a.gE.IsExplored(a.rule.ID()) || a.gE.IsAbandoned() {
 		return nil
 	}
 	pa := a.rule.Pattern()
 	binder := rule.NewBinder(pa, a.gE)
-
 	for binder.Next() {
 		holder := binder.GetHolder()
 		if !a.rule.PreCheck(holder, a.ctx) {
 			continue
 		}
-		substitutions, err := a.rule.XForm(holder, a.ctx)
+		memoExprs, err := a.rule.XForm(holder, a.ctx)
 		if err != nil {
 			return err
 		}
-		for _, sub := range substitutions {
-			newGroupExpr = a.mm.CopyIn(a.gE.GetGroup(), sub)
-			if !ok {
-				continue
+		for _, me := range memoExprs {
+			newGroupExpr, err := a.mm.CopyIn(a.gE.GetGroup(), me)
+			if err != nil {
+				return err
 			}
-			// YAMS only care about logical plan.
-			a.Push(&OptExpressionTask{BaseTask{a.mm, a.mCtx}, newGroupExpr, false})
+			// YAMS only care about logical plan now.
+			a.Push(NewOptGroupExpressionTask(a.mm, a.ctx, newGroupExpr))
 		}
 	}
+	a.gE.SetExplored(a.rule.ID())
+	return nil
+}
+
+// Desc implements the task.Desc interface.
+func (a *ApplyRuleTask) Desc(w io.StringWriter) {
+	w.WriteString("ApplyRuleTask{gE:")
+	a.gE.String(w)
+	w.WriteString(", rule:")
+	a.rule.String(w)
+	w.WriteString("}")
 }
 
 type MemoContext struct {
-	sStx  sessionctx.Context
-	stack *taskStack
+	mm        *memo.Memo
+	sctx      sessionctx.Context
+	stack     *taskStack
+	originSql string
 }
 
+// NewMemoContext returns a new memo context responsible for manage all the stuff in YAMS opt.
 func NewMemoContext(sctx sessionctx.Context) *MemoContext {
-	return &MemoContext{sctx, StackTaskPool.Get().(*taskStack)}
+	return &MemoContext{sctx: sctx, stack: StackTaskPool.Get().(*taskStack), originSql: sctx.GetSessionVars().StmtCtx.OriginalSQL}
 }
 
 func (m *MemoContext) destroy() {

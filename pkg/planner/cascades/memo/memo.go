@@ -64,25 +64,61 @@ func (m *Memo) GetHasher() base2.Hasher {
 	return m.hasher
 }
 
-// CopyIn copies a logical plan into the memo with format as GroupExpression.
-func (m *Memo) CopyIn(target *Group, lp base.LogicalPlan) *GroupExpression {
+// CopyIn copies a MemoExpression representation into the memo with format as GroupExpression inside.
+// The generic logical forest inside memo is represented as memo group expression tree, while for entering
+// and re-feeding the memo, we use the memoExpression as the currency：
+//
+// entering(init memo)
+//
+//	  lp                 ME{lp}                       ┌──────────┐
+//	 /  \                /   \                        │ memo:    │
+//	lp   lp      ->  ME{lp}   ME{lp}    --copyIN->    │    GE    │
+//	    /  \                  /  \                    │   /  \   │
+//	  ...  ...             ...   ...                  │  G    G  │
+//	                                                  └──────────┘
+//
+// re-feeding (intake XForm output)
+//
+//	  GE                 ME{GE}                       ┌──────────┐
+//	 /  \                 /  \                        │ memo:    │
+//	GE  lp       ->   ME{GE}  ME{lp}    --copyIN->    │    GE    │
+//	     |                     |                      │   /  \   │
+//	    GE                    ME{GE}                  │  G    G  │
+//	                                                  └──────────┘
+func (m *Memo) CopyIn(target *Group, me *MemoExpression) (*GroupExpression, error) {
 	// Group the children first.
-	childGroups := make([]*Group, 0, len(lp.Children()))
-	for _, child := range lp.Children() {
-		// todo: child.getGroupExpression.GetGroup directly
-		groupExpr := m.CopyIn(nil, child)
-		group := groupExpr.group
-		intest.Assert(group != nil)
-		intest.Assert(group != target)
-		childGroups = append(childGroups, group)
+	childGroups := make([]*Group, 0, len(me.Inputs))
+	for _, child := range me.Inputs {
+		var (
+			currentChildG *Group
+		)
+		if child.GE != nil {
+			// which means its mixed memoExpression from rule XForm.
+			currentChildG = child.GE.GetGroup()
+		} else {
+			// here means it's a raw logical op, downward to get its input groups.
+			ge, err := m.CopyIn(nil, child)
+			if err != nil {
+				return nil, err
+			}
+			currentChildG = ge.GetGroup()
+		}
+		intest.Assert(currentChildG != nil)
+		intest.Assert(currentChildG != target)
+		childGroups = append(childGroups, currentChildG)
 	}
 
 	hasher := m.GetHasher()
-	groupExpr := NewGroupExpression(lp, childGroups)
+	groupExpr := NewGroupExpression(me.LP, childGroups)
 	groupExpr.Init(hasher)
-	m.insertGroupExpression(groupExpr, target)
-	// todo: new group need to derive the logical property.
-	return groupExpr
+	if m.InsertGroupExpression(groupExpr, target) && target == nil {
+		// derive logical property for new group.
+		err := groupExpr.DeriveLogicalProp()
+		if err != nil {
+			return nil, err
+		}
+	}
+	return groupExpr, nil
 }
 
 // GetGroups gets all groups in the memo.
@@ -100,8 +136,8 @@ func (m *Memo) GetRootGroup() *Group {
 	return m.rootGroup
 }
 
-// @bool indicates whether the groupExpr is inserted to a new group.
-func (m *Memo) insertGroupExpression(groupExpr *GroupExpression, target *Group) bool {
+// InsertGroupExpression indicates whether the groupExpr is inserted to a new group.
+func (m *Memo) InsertGroupExpression(groupExpr *GroupExpression, target *Group) bool {
 	// for group merge, here groupExpr is the new groupExpr with undetermined belonged group.
 	// we need to use groupExpr hash to find whether there is same groupExpr existed before.
 	// if existed and the existed groupExpr.Group is not same with target, we should merge them up.
@@ -123,9 +159,28 @@ func (m *Memo) NewGroup() *Group {
 }
 
 // Init initializes the memo with a logical plan, converting logical plan tree format into group tree.
-func (m *Memo) Init(plan base.LogicalPlan) *GroupExpression {
+func (m *Memo) Init(plan base.LogicalPlan) (*GroupExpression, error) {
 	intest.Assert(m.groups.Len() == 0)
-	gE := m.CopyIn(nil, plan)
+	gE, err := m.CopyIn(nil, ToMemoExprTree(plan))
+	if err != nil {
+		return nil, err
+	}
 	m.rootGroup = gE.GetGroup()
-	return gE
+	return gE, nil
+}
+
+func ToMemoExprTree(plan base.LogicalPlan) *MemoExpression {
+	if len(plan.Children()) == 0 {
+		return &MemoExpression{
+			LP: plan,
+		}
+	}
+	child := make([]*MemoExpression, 0, len(plan.Children()))
+	for _, one := range plan.Children() {
+		child = append(child, ToMemoExprTree(one))
+	}
+	return &MemoExpression{
+		LP:     plan,
+		Inputs: child,
+	}
 }

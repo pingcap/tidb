@@ -55,9 +55,9 @@ func TestBinderSuccess(t *testing.T) {
 	rootGE := mm.GetRootGroup().GetLogicalExpressions().Back().Value.(*memo.GroupExpression)
 	binder := NewBinder(pa, rootGE)
 	require.True(t, binder.Next())
-	require.True(t, binder.holder.Cur.GetLogicalPlan() == join)
-	require.True(t, binder.holder.Subs[0].Cur.GetLogicalPlan() == t1)
-	require.True(t, binder.holder.Subs[1].Cur.GetLogicalPlan() == t2)
+	require.True(t, binder.holder.GE.LogicalPlan() == join)
+	require.True(t, binder.holder.Inputs[0].GE.LogicalPlan() == t1)
+	require.True(t, binder.holder.Inputs[1].GE.LogicalPlan() == t2)
 }
 
 func TestBinderFail(t *testing.T) {
@@ -132,7 +132,7 @@ func TestBinderTopNode(t *testing.T) {
 	pa := pattern.NewPattern(pattern.OperandJoin, pattern.EngineAll)
 	binder := NewBinder(pa, mm.GetRootGroup().GetLogicalExpressions().Back().Value.(*memo.GroupExpression))
 	require.True(t, binder.Next())
-	require.Equal(t, pattern.OperandJoin, pattern.GetOperand(binder.holder.Cur.GetLogicalPlan()))
+	require.Equal(t, pattern.OperandJoin, pattern.GetOperand(binder.holder.GE.LogicalPlan()))
 }
 
 func TestBinderOneNode(t *testing.T) {
@@ -147,7 +147,7 @@ func TestBinderOneNode(t *testing.T) {
 	pa := pattern.NewPattern(pattern.OperandJoin, pattern.EngineAll)
 	binder := NewBinder(pa, mm.GetRootGroup().GetLogicalExpressions().Back().Value.(*memo.GroupExpression))
 	require.True(t, binder.Next())
-	require.Equal(t, pattern.OperandJoin, pattern.GetOperand(binder.holder.Cur.GetLogicalPlan()))
+	require.Equal(t, pattern.OperandJoin, pattern.GetOperand(binder.holder.GE.LogicalPlan()))
 }
 
 func TestBinderSubTreeMatch(t *testing.T) {
@@ -177,9 +177,9 @@ func TestBinderSubTreeMatch(t *testing.T) {
 	rootGE := mm.GetRootGroup().GetLogicalExpressions().Back().Value.(*memo.GroupExpression)
 	binder := NewBinder(pa, rootGE)
 	require.True(t, binder.Next())
-	require.True(t, binder.holder.Cur.GetLogicalPlan() == join3)
-	require.True(t, binder.holder.Subs[0].Cur.GetLogicalPlan() == join1)
-	require.True(t, binder.holder.Subs[1].Cur.GetLogicalPlan() == join2)
+	require.True(t, binder.holder.GE.LogicalPlan() == join3)
+	require.True(t, binder.holder.Inputs[0].GE.LogicalPlan() == join1)
+	require.True(t, binder.holder.Inputs[1].GE.LogicalPlan() == join2)
 	require.False(t, binder.Next())
 
 	pa2 := pattern.NewPattern(pattern.OperandJoin, pattern.EngineAll)
@@ -205,12 +205,16 @@ func TestBinderMultiNext(t *testing.T) {
 	t4 := logicalop.DataSource{TableAsName: &asT4}.Init(ctx, 0)
 
 	mm := memo.NewMemo(ctx)
-	gE := mm.Init(join1)
+	gE, err := mm.Init(join1)
+	require.Nil(t, err)
 
 	// which means t1 and t3 are equivalent class.
-	mm.CopyIn(gE.Inputs[0], t3)
+	_, err = mm.CopyIn(gE.Inputs[0], memo.NewMemoExpressionFromPlan(t3))
+	require.Nil(t, err)
 	// which means t2 and t4 are equivalent class.
-	mm.CopyIn(gE.Inputs[1], t4)
+	_, err = mm.CopyIn(gE.Inputs[1], memo.NewMemoExpressionFromPlan(t4))
+	require.Nil(t, err)
+
 	//           G1
 	//         /    \
 	//  G2{t1,t3}   G3{t2,t4}
@@ -227,44 +231,44 @@ func TestBinderMultiNext(t *testing.T) {
 	//         /    \
 	//  G2{t1,t3}   G3{t2,t4}
 	//     ▴           ▴
-	require.Equal(t, pattern.OperandJoin, pattern.GetOperand(binder.holder.Cur.GetLogicalPlan()))
-	require.Equal(t, pattern.OperandDataSource, pattern.GetOperand(binder.holder.Subs[0].Cur.GetLogicalPlan()))
-	require.Equal(t, "t1", binder.holder.Subs[0].Cur.GetLogicalPlan().(*logicalop.DataSource).TableAsName.L)
-	require.Equal(t, pattern.OperandDataSource, pattern.GetOperand(binder.holder.Subs[1].Cur.GetLogicalPlan()))
-	require.Equal(t, "t2", binder.holder.Subs[1].Cur.GetLogicalPlan().(*logicalop.DataSource).TableAsName.L)
+	require.Equal(t, pattern.OperandJoin, pattern.GetOperand(binder.holder.GE.LogicalPlan()))
+	require.Equal(t, pattern.OperandDataSource, pattern.GetOperand(binder.holder.Inputs[0].GE.LogicalPlan()))
+	require.Equal(t, "t1", binder.holder.Inputs[0].GE.LogicalPlan().(*logicalop.DataSource).TableAsName.L)
+	require.Equal(t, pattern.OperandDataSource, pattern.GetOperand(binder.holder.Inputs[1].GE.LogicalPlan()))
+	require.Equal(t, "t2", binder.holder.Inputs[1].GE.LogicalPlan().(*logicalop.DataSource).TableAsName.L)
 
 	require.True(t, binder.Next())
 	//           G1
 	//         /    \
 	//  G2{t1,t3}   G3{t2,t4}
 	//     ▴               ▴
-	require.Equal(t, pattern.OperandJoin, pattern.GetOperand(binder.holder.Cur.GetLogicalPlan()))
-	require.Equal(t, pattern.OperandDataSource, pattern.GetOperand(binder.holder.Subs[0].Cur.GetLogicalPlan()))
-	require.Equal(t, "t1", binder.holder.Subs[0].Cur.GetLogicalPlan().(*logicalop.DataSource).TableAsName.L)
-	require.Equal(t, pattern.OperandDataSource, pattern.GetOperand(binder.holder.Subs[1].Cur.GetLogicalPlan()))
-	require.Equal(t, "t4", binder.holder.Subs[1].Cur.GetLogicalPlan().(*logicalop.DataSource).TableAsName.L)
+	require.Equal(t, pattern.OperandJoin, pattern.GetOperand(binder.holder.GE.LogicalPlan()))
+	require.Equal(t, pattern.OperandDataSource, pattern.GetOperand(binder.holder.Inputs[0].GE.LogicalPlan()))
+	require.Equal(t, "t1", binder.holder.Inputs[0].GE.LogicalPlan().(*logicalop.DataSource).TableAsName.L)
+	require.Equal(t, pattern.OperandDataSource, pattern.GetOperand(binder.holder.Inputs[1].GE.LogicalPlan()))
+	require.Equal(t, "t4", binder.holder.Inputs[1].GE.LogicalPlan().(*logicalop.DataSource).TableAsName.L)
 
 	require.True(t, binder.Next())
 	//           G1
 	//         /    \
 	//  G2{t1,t3}   G3{t2,t4}
 	//        ▴        ▴
-	require.Equal(t, pattern.OperandJoin, pattern.GetOperand(binder.holder.Cur.GetLogicalPlan()))
-	require.Equal(t, pattern.OperandDataSource, pattern.GetOperand(binder.holder.Subs[0].Cur.GetLogicalPlan()))
-	require.Equal(t, "t3", binder.holder.Subs[0].Cur.GetLogicalPlan().(*logicalop.DataSource).TableAsName.L)
-	require.Equal(t, pattern.OperandDataSource, pattern.GetOperand(binder.holder.Subs[1].Cur.GetLogicalPlan()))
-	require.Equal(t, "t2", binder.holder.Subs[1].Cur.GetLogicalPlan().(*logicalop.DataSource).TableAsName.L)
+	require.Equal(t, pattern.OperandJoin, pattern.GetOperand(binder.holder.GE.LogicalPlan()))
+	require.Equal(t, pattern.OperandDataSource, pattern.GetOperand(binder.holder.Inputs[0].GE.LogicalPlan()))
+	require.Equal(t, "t3", binder.holder.Inputs[0].GE.LogicalPlan().(*logicalop.DataSource).TableAsName.L)
+	require.Equal(t, pattern.OperandDataSource, pattern.GetOperand(binder.holder.Inputs[1].GE.LogicalPlan()))
+	require.Equal(t, "t2", binder.holder.Inputs[1].GE.LogicalPlan().(*logicalop.DataSource).TableAsName.L)
 
 	require.True(t, binder.Next())
 	//           G1
 	//         /    \
 	//  G2{t1,t3}   G3{t2,t4}
 	//         ▴           ▴
-	require.Equal(t, pattern.OperandJoin, pattern.GetOperand(binder.holder.Cur.GetLogicalPlan()))
-	require.Equal(t, pattern.OperandDataSource, pattern.GetOperand(binder.holder.Subs[0].Cur.GetLogicalPlan()))
-	require.Equal(t, "t3", binder.holder.Subs[0].Cur.GetLogicalPlan().(*logicalop.DataSource).TableAsName.L)
-	require.Equal(t, pattern.OperandDataSource, pattern.GetOperand(binder.holder.Subs[1].Cur.GetLogicalPlan()))
-	require.Equal(t, "t4", binder.holder.Subs[1].Cur.GetLogicalPlan().(*logicalop.DataSource).TableAsName.L)
+	require.Equal(t, pattern.OperandJoin, pattern.GetOperand(binder.holder.GE.LogicalPlan()))
+	require.Equal(t, pattern.OperandDataSource, pattern.GetOperand(binder.holder.Inputs[0].GE.LogicalPlan()))
+	require.Equal(t, "t3", binder.holder.Inputs[0].GE.LogicalPlan().(*logicalop.DataSource).TableAsName.L)
+	require.Equal(t, pattern.OperandDataSource, pattern.GetOperand(binder.holder.Inputs[1].GE.LogicalPlan()))
+	require.Equal(t, "t4", binder.holder.Inputs[1].GE.LogicalPlan().(*logicalop.DataSource).TableAsName.L)
 
 	buf.Flush()
 	// every time when next call done, the save stack info should be next iteration starting point.
@@ -298,12 +302,15 @@ func TestBinderAny(t *testing.T) {
 	t4 := logicalop.DataSource{TableAsName: &asT4}.Init(ctx, 0)
 
 	mm := memo.NewMemo(ctx)
-	gE := mm.Init(join1)
+	gE, err := mm.Init(join1)
+	require.Nil(t, err)
 
 	// which means t1 and t3 are equivalent class.
-	mm.CopyIn(gE.Inputs[0], t3)
+	_, err = mm.CopyIn(gE.Inputs[0], memo.NewMemoExpressionFromPlan(t3))
+	require.Nil(t, err)
 	// which means t2 and t4 are equivalent class.
-	mm.CopyIn(gE.Inputs[1], t4)
+	_, err = mm.CopyIn(gE.Inputs[1], memo.NewMemoExpressionFromPlan(t4))
+	require.Nil(t, err)
 	//           G1
 	//         /    \
 	//  G2{t1,t3}   G3{t2,t4}
@@ -320,22 +327,22 @@ func TestBinderAny(t *testing.T) {
 	//         /    \
 	//  G2{t1,t3}   G3{t2,t4}
 	//     ▴           ▴
-	require.Equal(t, pattern.OperandJoin, pattern.GetOperand(binder.holder.Cur.GetLogicalPlan()))
-	require.Equal(t, pattern.OperandDataSource, pattern.GetOperand(binder.holder.Subs[0].Cur.GetLogicalPlan()))
-	require.Equal(t, "t1", binder.holder.Subs[0].Cur.GetLogicalPlan().(*logicalop.DataSource).TableAsName.L)
-	require.Equal(t, pattern.OperandDataSource, pattern.GetOperand(binder.holder.Subs[1].Cur.GetLogicalPlan()))
-	require.Equal(t, "t2", binder.holder.Subs[1].Cur.GetLogicalPlan().(*logicalop.DataSource).TableAsName.L)
+	require.Equal(t, pattern.OperandJoin, pattern.GetOperand(binder.holder.GE.LogicalPlan()))
+	require.Equal(t, pattern.OperandDataSource, pattern.GetOperand(binder.holder.Inputs[0].GE.LogicalPlan()))
+	require.Equal(t, "t1", binder.holder.Inputs[0].GE.LogicalPlan().(*logicalop.DataSource).TableAsName.L)
+	require.Equal(t, pattern.OperandDataSource, pattern.GetOperand(binder.holder.Inputs[1].GE.LogicalPlan()))
+	require.Equal(t, "t2", binder.holder.Inputs[1].GE.LogicalPlan().(*logicalop.DataSource).TableAsName.L)
 
 	require.True(t, binder.Next())
 	//           G1
 	//         /    \
 	//  G2{t1,t3}   G3{t2,t4}
 	//         ▴       ▴
-	require.Equal(t, pattern.OperandJoin, pattern.GetOperand(binder.holder.Cur.GetLogicalPlan()))
-	require.Equal(t, pattern.OperandDataSource, pattern.GetOperand(binder.holder.Subs[0].Cur.GetLogicalPlan()))
-	require.Equal(t, "t3", binder.holder.Subs[0].Cur.GetLogicalPlan().(*logicalop.DataSource).TableAsName.L)
-	require.Equal(t, pattern.OperandDataSource, pattern.GetOperand(binder.holder.Subs[1].Cur.GetLogicalPlan()))
-	require.Equal(t, "t2", binder.holder.Subs[1].Cur.GetLogicalPlan().(*logicalop.DataSource).TableAsName.L)
+	require.Equal(t, pattern.OperandJoin, pattern.GetOperand(binder.holder.GE.LogicalPlan()))
+	require.Equal(t, pattern.OperandDataSource, pattern.GetOperand(binder.holder.Inputs[0].GE.LogicalPlan()))
+	require.Equal(t, "t3", binder.holder.Inputs[0].GE.LogicalPlan().(*logicalop.DataSource).TableAsName.L)
+	require.Equal(t, pattern.OperandDataSource, pattern.GetOperand(binder.holder.Inputs[1].GE.LogicalPlan()))
+	require.Equal(t, "t2", binder.holder.Inputs[1].GE.LogicalPlan().(*logicalop.DataSource).TableAsName.L)
 
 	require.False(t, binder.Next())
 
@@ -378,13 +385,15 @@ func TestBinderMultiAny(t *testing.T) {
 	t4 := logicalop.DataSource{TableAsName: &asT4}.Init(ctx, 0)
 
 	mm := memo.NewMemo(ctx)
-	gE := mm.Init(join1)
+	gE, err := mm.Init(join1)
+	require.Nil(t, err)
 
 	// which means t1 and t3 are equivalent class.
-	mm.CopyIn(gE.Inputs[0], t3)
+	_, err = mm.CopyIn(gE.Inputs[0], memo.NewMemoExpressionFromPlan(t3))
+	require.Nil(t, err)
 	// which means t2 and t4 are equivalent class.
-	mm.CopyIn(gE.Inputs[1], t4)
-
+	_, err = mm.CopyIn(gE.Inputs[1], memo.NewMemoExpressionFromPlan(t4))
+	require.Nil(t, err)
 	//           G1
 	//         /    \
 	//  G2{t1,t3}   G3{t2,t4}
@@ -401,11 +410,11 @@ func TestBinderMultiAny(t *testing.T) {
 	//         /    \
 	//  G2{t1,t3}   G3{t2,t4}
 	//     ▴           ▴
-	require.Equal(t, pattern.OperandJoin, pattern.GetOperand(binder.holder.Cur.GetLogicalPlan()))
-	require.Equal(t, pattern.OperandDataSource, pattern.GetOperand(binder.holder.Subs[0].Cur.GetLogicalPlan()))
-	require.Equal(t, "t1", binder.holder.Subs[0].Cur.GetLogicalPlan().(*logicalop.DataSource).TableAsName.L)
-	require.Equal(t, pattern.OperandDataSource, pattern.GetOperand(binder.holder.Subs[1].Cur.GetLogicalPlan()))
-	require.Equal(t, "t2", binder.holder.Subs[1].Cur.GetLogicalPlan().(*logicalop.DataSource).TableAsName.L)
+	require.Equal(t, pattern.OperandJoin, pattern.GetOperand(binder.holder.GE.LogicalPlan()))
+	require.Equal(t, pattern.OperandDataSource, pattern.GetOperand(binder.holder.Inputs[0].GE.LogicalPlan()))
+	require.Equal(t, "t1", binder.holder.Inputs[0].GE.LogicalPlan().(*logicalop.DataSource).TableAsName.L)
+	require.Equal(t, pattern.OperandDataSource, pattern.GetOperand(binder.holder.Inputs[1].GE.LogicalPlan()))
+	require.Equal(t, "t2", binder.holder.Inputs[1].GE.LogicalPlan().(*logicalop.DataSource).TableAsName.L)
 
 	require.False(t, binder.Next())
 

@@ -16,7 +16,6 @@ package memo
 
 import (
 	"container/list"
-	"fmt"
 	"io"
 	"strconv"
 
@@ -125,9 +124,37 @@ func (g *Group) GetFirstElem(operand pattern.Operand) *list.Element {
 	return g.Operand2FirstExpr[operand]
 }
 
+// GetLogicalProperty return this group's logical property.
+func (g *Group) GetLogicalProperty() *property.LogicalProperty {
+	return g.logicalProp
+}
+
+// SetLogicalProperty set this group's logical property.
+func (g *Group) SetLogicalProperty(prop *property.LogicalProperty) {
+	g.logicalProp = prop
+}
+
+// IsExplored returns whether this group is explored.
+func (g *Group) IsExplored() bool {
+	return g.explored
+}
+
+// SetExplored set the group as tagged as explored.
+func (g *Group) SetExplored() {
+	g.explored = true
+}
+
 // String implements fmt.Stringer interface.
-func (g *Group) String(w io.Writer) {
-	fmt.Fprintf(w, "inputs:%s", strconv.Itoa(int(g.groupID)))
+func (g *Group) String(w io.StringWriter) {
+	w.WriteString(strconv.Itoa(int(g.groupID)))
+}
+
+// ForEachGE traverse the inside group expression with f call on them each.
+func (g *Group) ForEachGE(f func(ge *GroupExpression)) {
+	for elem := g.logicalExpressions.Front(); elem != nil; elem = elem.Next() {
+		expr := elem.Value.(*GroupExpression)
+		f(expr)
+	}
 }
 
 // NewGroup creates a new Group with given logical prop.

@@ -15,8 +15,8 @@
 package join
 
 import (
+	"github.com/pingcap/tidb/pkg/planner/cascades/memo"
 	"github.com/pingcap/tidb/pkg/planner/cascades/rule"
-	"github.com/pingcap/tidb/pkg/planner/memo"
 	"github.com/pingcap/tidb/pkg/planner/pattern"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 )
@@ -35,11 +35,11 @@ func NewJoinToApply() *JoinToApply {
 }
 
 // Match implements the Rule interface.
-func (r *JoinToApply) Match(holder *rule.GroupExprHolder, sctx sessionctx.Context) bool {
+func (r *JoinToApply) Match(holder *memo.MemoExpression, sctx sessionctx.Context) bool {
 	return true
 }
 
-func (r *JoinToApply) XForm(holder *rule.GroupExprHolder, sctx sessionctx.Context) ([]*memo.GroupExpr, error) {
+func (r *JoinToApply) XForm(holder *memo.MemoExpression, sctx sessionctx.Context) ([]*memo.MemoExpression, error) {
 	// Check whether the join can be converted to apply.
 	return nil, nil
 }

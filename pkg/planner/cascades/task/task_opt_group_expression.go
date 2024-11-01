@@ -15,20 +15,59 @@
 package task
 
 import (
-	"container/list"
+	"io"
+
 	"github.com/pingcap/tidb/pkg/planner/cascades/memo"
+	"github.com/pingcap/tidb/pkg/planner/cascades/rule"
+	"github.com/pingcap/tidb/pkg/planner/pattern"
 )
 
-type OptExpressionTask struct {
+type OptGroupExpressionTask struct {
 	BaseTask
 
-	elem       *list.Element
-	isExplored bool
+	groupExpression *memo.GroupExpression
+	// currently for each opt expression, it should be explore-type.
 }
 
-func NewOptExpressionTask(mm *memo.Memo, mCtx SchedulerContext, elem *list.Element) *OptExpressionTask {
-	return &OptExpressionTask{
-		BaseTask: BaseTask{mm, mCtx},
-		elem:     elem,
+// NewOptGroupExpressionTask return a targeting optimizing group expression task.
+func NewOptGroupExpressionTask(mctx *MemoContext, ge *memo.GroupExpression) *OptGroupExpressionTask {
+	return &OptGroupExpressionTask{
+		BaseTask:        BaseTask{mctx: mctx},
+		groupExpression: ge,
 	}
+}
+
+// Execute implements the task.Execute interface.
+func (ge *OptGroupExpressionTask) Execute() error {
+	ruleList := ge.getValidRules()
+	for _, one := range ruleList {
+		ge.Push(NewApplyRuleTask(ge.mctx, ge.groupExpression, one))
+	}
+	// since it's a stack-order, LUFO, when we want to apply a rule for a specific group expression,
+	// the pre-condition is that this group expression's child group has been fully explored.
+	for i := len(ge.groupExpression.Inputs) - 1; i >= 0; i-- {
+		ge.Push(NewOptGroupTask(ge.mm, ge.ctx, ge.groupExpression.Inputs[i]))
+	}
+	return nil
+}
+
+// Desc implements the task.Desc interface.
+func (ge *OptGroupExpressionTask) Desc(w io.StringWriter) {
+	w.WriteString("OptGroupExpressionTask{ge:")
+	ge.groupExpression.String(w)
+	w.WriteString("}")
+}
+
+// getValidRules filter the allowed rule from session variable, and system config.
+func (ge *OptGroupExpressionTask) getValidRules() []rule.Rule {
+	r, ok := rule.XFormRuleSet[pattern.GetOperand(ge.groupExpression.LogicalPlan())]
+	if !ok {
+		return nil
+	}
+	ruleList := make([]rule.Rule, 0, len(r))
+	for _, oneR := range r {
+		// todo: session variable control
+		ruleList = append(ruleList, oneR)
+	}
+	return ruleList
 }

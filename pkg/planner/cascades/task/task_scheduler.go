@@ -39,7 +39,7 @@ func (s *SimpleTaskScheduler) ExecuteTasks() {
 	for !stack.Empty() {
 		// when use customized stack to drive the tasks, the call-chain state is dived in the stack.
 		task := stack.Pop()
-		if err := task.execute(); err != nil {
+		if err := task.Execute(); err != nil {
 			s.Err = err
 			return
 		}

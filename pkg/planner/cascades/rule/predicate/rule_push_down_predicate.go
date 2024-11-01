@@ -43,11 +43,11 @@ func NewPushPredicateThroughProjection() *PushPredicateThroughProjection {
 // 1. `projection -> selection -> x` or
 // 2. `selection -> projection -> selection -> x` or
 // 3. just keep unchanged.
-func (*PushPredicateThroughProjection) XForm(holder *memo.MemoExpression, mm *memo.Memo) ([]*memo.MemoExpression, error) {
+func (*PushPredicateThroughProjection) XForm(holder *memo.MemoExpression) ([]*memo.MemoExpression, error) {
 	// the match function can guarantee the tree pattern is that we used as below.
-	sel := holder.GetLogicalPlan().(*logicalop.LogicalSelection)
-	projMExpr := holder.GetInputs()[0]
-	proj := projMExpr.GetLogicalPlan().(*logicalop.LogicalProjection)
+	sel := holder.GE.LogicalPlan().(*logicalop.LogicalSelection)
+	projMExpr := holder.Inputs[0]
+	proj := projMExpr.GE.LogicalPlan().(*logicalop.LogicalProjection)
 
 	for _, expr := range proj.Exprs {
 		if expression.HasAssignSetVarFunc(expr) {
@@ -60,7 +60,7 @@ func (*PushPredicateThroughProjection) XForm(holder *memo.MemoExpression, mm *me
 		return nil, nil
 	}
 	newBottomSel := logicalop.LogicalSelection{Conditions: canBePushed}.Init(sel.SCtx(), sel.QueryBlockOffset())
-	newBottomSelMExpr := memo.NewMemoExpressionFromPlanAndInputs(newBottomSel, projMExpr.GetInputs())
+	newBottomSelMExpr := memo.NewMemoExpressionFromPlanAndInputs(newBottomSel, projMExpr.Inputs)
 
 	newProjMExpr := memo.NewMemoExpressionFromPlanAndInputs(proj, []*memo.MemoExpression{newBottomSelMExpr})
 	if len(canNotBePushed) == 0 {
@@ -75,64 +75,64 @@ func (*PushPredicateThroughProjection) XForm(holder *memo.MemoExpression, mm *me
 	return []*memo.MemoExpression{newTopSelMExpr}, nil
 }
 
-func (*PushPredicateThroughProjection) XForm1(holder *rule.GroupExprHolder, mm *memo.Memo) ([]*memo.GroupExpression, error) {
-	// the match function can guarantee the tree pattern is that we used as below.
-	sel := holder.Cur.LogicalPlan().(*logicalop.LogicalSelection)
-	selGE := holder.Cur
-	proj := holder.Subs[0].Cur.LogicalPlan().(*logicalop.LogicalProjection)
-	projGE := holder.Subs[0].Cur
-
-	for _, expr := range proj.Exprs {
-		if expression.HasAssignSetVarFunc(expr) {
-			return nil, nil
-		}
-	}
-	// Same logic copied from normalized predicate_push_down rule.
-	canBePushed, canNotBePushed := logicalop.BreakDownPredicates(proj, sel.Conditions)
-	if len(canBePushed) == 0 {
-		return nil, nil
-	}
-	newBottomSel := logicalop.LogicalSelection{Conditions: canBePushed}.Init(sel.SCtx(), sel.QueryBlockOffset())
-
-	hasher := mm.GetHasher()
-	selGroupExpr := memo.NewGroupExpression(newBottomSel, projGE.Inputs)
-	selGroupExpr.Init(hasher)
-
-	// once insert fail, it means the same group expression with same input's group id already exists. Abort this XForm.
-	// here target group is nil, because we don't know what one is the logical equivalent class of the partial newBottomSel.
-	var target *memo.Group
-	if len(canNotBePushed) == 0 {
-		target = selGE.GetGroup()
-	}
-	// the logical equivalent group, we don't care about inside,
-	if !mm.InsertGroupExpression(selGroupExpr, target) {
-		return nil, nil
-	}
-
-	// get the sel's new/old group.
-	selG := selGroupExpr.GetGroup()
-	hasher = mm.GetHasher()
-	projGroupExpr := memo.NewGroupExpression(proj, []*memo.Group{selG})
-	projGroupExpr.Init(hasher)
-
-	if len(canNotBePushed) == 0 {
-		// proj is equivalent to original sel, we can add it to old selGroup, and remove old sel.
-		if !mm.InsertGroupExpression(projGroupExpr, selGE.GetGroup()) {
-			return nil, nil
-		}
-		//// todo: remove old sel.
-		return []*memo.GroupExpression{projGroupExpr}, nil
-	}
-	// if there are some conditions can not be pushed down, we need to add a new selection.
-	// for this incomplete proj, we need to add it to a new group, which means target is nil.
-	if !mm.InsertGroupExpression(projGroupExpr, nil) {
-		return nil, nil
-	}
-	// get the proj's  new group.
-	projNewGroup := projGroupExpr.GetGroup()
-	newTopSel := logicalop.LogicalSelection{Conditions: canNotBePushed}.Init(sel.SCtx(), sel.QueryBlockOffset())
-	hasher = mm.GetHasher()
-	newSelGroupExpr := memo.NewGroupExpression(newTopSel, []*memo.Group{projNewGroup})
-	newSelGroupExpr.Init(hasher)
-	return []*memo.GroupExpression{newSelGroupExpr}, nil
-}
+//func (*PushPredicateThroughProjection) XForm1(holder *rule.GroupExprHolder, mm *memo.Memo) ([]*memo.GroupExpression, error) {
+//	// the match function can guarantee the tree pattern is that we used as below.
+//	sel := holder.Cur.LogicalPlan().(*logicalop.LogicalSelection)
+//	selGE := holder.Cur
+//	proj := holder.Subs[0].Cur.LogicalPlan().(*logicalop.LogicalProjection)
+//	projGE := holder.Subs[0].Cur
+//
+//	for _, expr := range proj.Exprs {
+//		if expression.HasAssignSetVarFunc(expr) {
+//			return nil, nil
+//		}
+//	}
+//	// Same logic copied from normalized predicate_push_down rule.
+//	canBePushed, canNotBePushed := logicalop.BreakDownPredicates(proj, sel.Conditions)
+//	if len(canBePushed) == 0 {
+//		return nil, nil
+//	}
+//	newBottomSel := logicalop.LogicalSelection{Conditions: canBePushed}.Init(sel.SCtx(), sel.QueryBlockOffset())
+//
+//	hasher := mm.GetHasher()
+//	selGroupExpr := memo.NewGroupExpression(newBottomSel, projGE.Inputs)
+//	selGroupExpr.Init(hasher)
+//
+//	// once insert fail, it means the same group expression with same input's group id already exists. Abort this XForm.
+//	// here target group is nil, because we don't know what one is the logical equivalent class of the partial newBottomSel.
+//	var target *memo.Group
+//	if len(canNotBePushed) == 0 {
+//		target = selGE.GetGroup()
+//	}
+//	// the logical equivalent group, we don't care about inside,
+//	if !mm.InsertGroupExpression(selGroupExpr, target) {
+//		return nil, nil
+//	}
+//
+//	// get the sel's new/old group.
+//	selG := selGroupExpr.GetGroup()
+//	hasher = mm.GetHasher()
+//	projGroupExpr := memo.NewGroupExpression(proj, []*memo.Group{selG})
+//	projGroupExpr.Init(hasher)
+//
+//	if len(canNotBePushed) == 0 {
+//		// proj is equivalent to original sel, we can add it to old selGroup, and remove old sel.
+//		if !mm.InsertGroupExpression(projGroupExpr, selGE.GetGroup()) {
+//			return nil, nil
+//		}
+//		//// todo: remove old sel.
+//		return []*memo.GroupExpression{projGroupExpr}, nil
+//	}
+//	// if there are some conditions can not be pushed down, we need to add a new selection.
+//	// for this incomplete proj, we need to add it to a new group, which means target is nil.
+//	if !mm.InsertGroupExpression(projGroupExpr, nil) {
+//		return nil, nil
+//	}
+//	// get the proj's  new group.
+//	projNewGroup := projGroupExpr.GetGroup()
+//	newTopSel := logicalop.LogicalSelection{Conditions: canNotBePushed}.Init(sel.SCtx(), sel.QueryBlockOffset())
+//	hasher = mm.GetHasher()
+//	newSelGroupExpr := memo.NewGroupExpression(newTopSel, []*memo.Group{projNewGroup})
+//	newSelGroupExpr.Init(hasher)
+//	return []*memo.GroupExpression{newSelGroupExpr}, nil
+//}

@@ -14,11 +14,16 @@
 
 package rule
 
+import "github.com/pingcap/tidb/pkg/planner/cascades/memo"
+
 type ruleType int
 
 const (
 	DEFAULT_NONE ruleType = iota
 	JOIN_TO_APPLY
+
+	XF_PUSH_DOWN_PREDICATE_THROUGH_PROJECTION
+	MUST_BE_LAST_RULE
 )
 
 // String implements the fmt.Stringer interface.
@@ -29,4 +34,8 @@ func (tp *ruleType) String() string {
 	default:
 		return "default_none"
 	}
+}
+
+func init() {
+	memo.NumOfRuleSet = int(MUST_BE_LAST_RULE)
 }

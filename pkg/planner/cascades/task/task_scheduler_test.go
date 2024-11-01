@@ -40,7 +40,7 @@ type TestTaskImpl2 struct {
 	a int64
 }
 
-func (t *TestTaskImpl2) execute() error {
+func (t *TestTaskImpl2) Execute() error {
 	// mock error at special task
 	if t.a == 2 {
 		return errors.New("mock error at task id = 2")
@@ -48,7 +48,7 @@ func (t *TestTaskImpl2) execute() error {
 	return nil
 }
 
-func (t *TestTaskImpl2) desc() string {
+func (t *TestTaskImpl2) Desc() string {
 	return strconv.Itoa(int(t.a))
 }
 

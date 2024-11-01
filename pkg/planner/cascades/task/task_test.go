@@ -15,6 +15,8 @@
 package task
 
 import (
+	"bytes"
+	"io"
 	"strconv"
 	"testing"
 	"unsafe"
@@ -26,11 +28,11 @@ type TestTaskImpl struct {
 	a int64
 }
 
-func (t *TestTaskImpl) execute() error {
+func (t *TestTaskImpl) Execute() error {
 	return nil
 }
-func (t *TestTaskImpl) desc() string {
-	return strconv.Itoa(int(t.a))
+func (t *TestTaskImpl) Desc(w io.StringWriter) {
+	w.WriteString(strconv.Itoa(int(t.a)))
 }
 
 func TestTaskStack(t *testing.T) {
@@ -57,9 +59,13 @@ func TestTaskFunctionality(t *testing.T) {
 	ts.Push(&TestTaskImpl{a: 1})
 	ts.Push(&TestTaskImpl{a: 2})
 	one := ts.Pop()
-	require.Equal(t, one.desc(), "2")
+	buf := &bytes.Buffer{}
+	one.Desc(buf)
+	require.Equal(t, buf.String(), "2")
 	one = ts.Pop()
-	require.Equal(t, one.desc(), "1")
+	buf.Reset()
+	one.Desc(buf)
+	require.Equal(t, buf.String(), "1")
 	// empty, pop nil.
 	one = ts.Pop()
 	require.Nil(t, one)
@@ -77,13 +83,21 @@ func TestTaskFunctionality(t *testing.T) {
 	require.Equal(t, cap(ts.tasks), 4)
 	// clean the stack
 	one = ts.Pop()
-	require.Equal(t, one.desc(), "6")
+	buf.Reset()
+	one.Desc(buf)
+	require.Equal(t, buf.String(), "6")
 	one = ts.Pop()
-	require.Equal(t, one.desc(), "5")
+	buf.Reset()
+	one.Desc(buf)
+	require.Equal(t, buf.String(), "5")
 	one = ts.Pop()
-	require.Equal(t, one.desc(), "4")
+	buf.Reset()
+	one.Desc(buf)
+	require.Equal(t, buf.String(), "4")
 	one = ts.Pop()
-	require.Equal(t, one.desc(), "3")
+	buf.Reset()
+	one.Desc(buf)
+	require.Equal(t, buf.String(), "3")
 	one = ts.Pop()
 	require.Nil(t, one)
 

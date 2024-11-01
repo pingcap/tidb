@@ -12,14 +12,15 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package task
+package rule
 
-// BaseTask is base task wrapper structure for encapsulating basic things.
-type BaseTask struct {
-	mctx *MemoContext
-}
+import (
+	"github.com/pingcap/tidb/pkg/planner/pattern"
+)
 
-// Push pushes a new task into inside stack.
-func (b *BaseTask) Push(t Task) {
-	b.mctx.stack.Push(t)
+// XFormRuleSet is a batch of transformation rules.
+var XFormRuleSet map[pattern.Operand][]Rule
+
+func init() {
+	XFormRuleSet = make(map[pattern.Operand][]Rule, 2)
 }
