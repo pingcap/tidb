@@ -442,27 +442,19 @@ func SplitLargeCSV(
 		// Create a utf8mb4 convertor to encode and decode data with the charset of CSV files.
 		charsetConvertor, err := NewCharsetConvertor(cfg.DataCharacterSet, cfg.DataInvalidCharReplace)
 		if err != nil {
-<<<<<<< HEAD
-			return nil, nil, err
-=======
 			_ = r.Close()
-			return 0, nil, nil, err
->>>>>>> 87b40850785 (config: must set line terminator when use strict-format (#53444) (#53740))
+			return nil, nil, err
 		}
 		parser, err := NewCSVParser(ctx, &cfg.CSV, r, cfg.ReadBlockSize, cfg.IOWorkers, true, charsetConvertor)
 		if err != nil {
 			return nil, nil, err
 		}
 		if err = parser.ReadColumns(); err != nil {
-<<<<<<< HEAD
+			_ = parser.Close()
 			return nil, nil, err
 		}
 		if cfg.CSV.HeaderSchemaMatch {
 			columns = parser.Columns()
-=======
-			_ = parser.Close()
-			return 0, nil, nil, err
->>>>>>> 87b40850785 (config: must set line terminator when use strict-format (#53444) (#53740))
 		}
 		startOffset, _ = parser.Pos()
 		endOffset = startOffset + maxRegionSize
@@ -483,35 +475,22 @@ func SplitLargeCSV(
 			// Create a utf8mb4 convertor to encode and decode data with the charset of CSV files.
 			charsetConvertor, err := NewCharsetConvertor(cfg.DataCharacterSet, cfg.DataInvalidCharReplace)
 			if err != nil {
-<<<<<<< HEAD
-				return nil, nil, err
-=======
 				_ = r.Close()
-				return 0, nil, nil, err
->>>>>>> 87b40850785 (config: must set line terminator when use strict-format (#53444) (#53740))
+				return nil, nil, err
 			}
 			parser, err := NewCSVParser(ctx, &cfg.CSV, r, cfg.ReadBlockSize, cfg.IOWorkers, false, charsetConvertor)
 			if err != nil {
 				return nil, nil, err
 			}
-<<<<<<< HEAD
 			if err = parser.SetPos(endOffset, 0); err != nil {
+				_ = r.Close()
 				return nil, nil, err
-=======
-			if err = parser.SetPos(endOffset, prevRowIDMax); err != nil {
-				_ = parser.Close()
-				return 0, nil, nil, err
->>>>>>> 87b40850785 (config: must set line terminator when use strict-format (#53444) (#53740))
 			}
 			_, pos, err := parser.ReadUntilTerminator()
 			if err != nil {
 				if !errors.ErrorEqual(err, io.EOF) {
-<<<<<<< HEAD
+					_ = r.Close()
 					return nil, nil, err
-=======
-					_ = parser.Close()
-					return 0, nil, nil, err
->>>>>>> 87b40850785 (config: must set line terminator when use strict-format (#53444) (#53740))
 				}
 				log.FromContext(ctx).Warn("file contains no terminator at end",
 					zap.String("path", dataFile.FileMeta.Path),

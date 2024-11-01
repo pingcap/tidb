@@ -1436,16 +1436,12 @@ func (cfg *Config) AdjustCheckPoint() {
 	}
 }
 
-<<<<<<< HEAD
 // AdjustMydumper adjusts the mydumper config.
-func (cfg *Config) AdjustMydumper() {
-=======
 func (cfg *Config) AdjustMydumper() error {
 	if cfg.Mydumper.StrictFormat && len(cfg.Mydumper.CSV.Terminator) == 0 {
 		return common.ErrInvalidConfig.GenWithStack("" +
 			`mydumper.strict-format can not be used with empty mydumper.csv.terminator. Please set mydumper.csv.terminator to a non-empty value like "\r\n"`)
 	}
->>>>>>> 87b40850785 (config: must set line terminator when use strict-format (#53444) (#53740))
 	if cfg.Mydumper.BatchImportRatio < 0.0 || cfg.Mydumper.BatchImportRatio >= 1.0 {
 		cfg.Mydumper.BatchImportRatio = DefaultBatchImportRatio
 	}
