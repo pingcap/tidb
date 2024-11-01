@@ -31,7 +31,6 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/bindinfo"
 	"github.com/pingcap/tidb/pkg/config"
-	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
@@ -1427,47 +1426,31 @@ var (
 	SupportUpgradeHTTPOpVer int64 = version174
 )
 
-func acquireLock(s sessiontypes.Session) (func(), bool) {
-	dom := domain.GetDomain(s)
-	if dom == nil {
-		logutil.BgLogger().Warn("domain is nil")
-		return nil, false
+func acquireLock(store kv.Storage) (func(), error) {
+	etcdCli, err := domain.NewEtcdCli(store)
+	if err != nil {
+		return nil, errors.Trace(err)
 	}
-	cli := dom.GetEtcdClient()
-	if cli == nil {
-		logutil.BgLogger().Warn("etcd client is nil, force to acquire ddl owner lock")
+	if etcdCli == nil {
 		// Special handling for test.
+		logutil.BgLogger().Warn("skip acquire ddl owner lock for uni-store")
 		return func() {
 			// do nothing
-		}, true
+		}, nil
 	}
-	releaseFn, err := owner.AcquireDistributedLock(context.Background(), cli, bootstrapOwnerKey, 10)
+	releaseFn, err := owner.AcquireDistributedLock(context.Background(), etcdCli, bootstrapOwnerKey, 10)
 	if err != nil {
-		return nil, false
-	}
-	return releaseFn, true
-}
-
-func forceToLeader(ctx context.Context, s sessiontypes.Session) error {
-	dom := domain.GetDomain(s)
-	for !dom.DDL().OwnerManager().IsOwner() {
-		ownerID, err := dom.DDL().OwnerManager().GetOwnerID(ctx)
-		if err != nil && (errors.ErrorEqual(err, concurrency.ErrElectionNoLeader) || strings.Contains(err.Error(), "no owner")) {
-			logutil.BgLogger().Info("ddl owner not found", zap.Error(err))
-			time.Sleep(50 * time.Millisecond)
-			continue
-		} else if err != nil {
-			logutil.BgLogger().Error("unexpected error", zap.Error(err))
-			return err
+		if err2 := etcdCli.Close(); err2 != nil {
+			logutil.BgLogger().Error("failed to close etcd client", zap.Error(err2))
 		}
-		err = owner.DeleteLeader(ctx, dom.EtcdClient(), ddl.DDLOwnerKey)
-		if err != nil {
-			logutil.BgLogger().Error("unexpected error", zap.Error(err), zap.String("ownerID", ownerID))
-			return err
-		}
-		time.Sleep(50 * time.Millisecond)
+		return nil, errors.Trace(err)
 	}
-	return nil
+	return func() {
+		releaseFn()
+		if err2 := etcdCli.Close(); err2 != nil {
+			logutil.BgLogger().Error("failed to close etcd client", zap.Error(err2))
+		}
+	}, nil
 }
 
 func checkDistTask(s sessiontypes.Session, ver int64) {
@@ -1526,22 +1509,11 @@ func upgrade(s sessiontypes.Session) {
 	}
 
 	var ver int64
-	releaseFn, ok := acquireLock(s)
-	if !ok {
-		logutil.BgLogger().Fatal("[upgrade] get ddl owner distributed lock failed", zap.Error(err))
-	}
 	ver, err = getBootstrapVersion(s)
 	terror.MustNil(err)
 	if ver >= currentBootstrapVersion {
 		// It is already bootstrapped/upgraded by a higher version TiDB server.
-		releaseFn()
 		return
-	}
-	defer releaseFn()
-
-	err = forceToLeader(context.Background(), s)
-	if err != nil {
-		logutil.BgLogger().Fatal("[upgrade] force to owner failed", zap.Error(err))
 	}
 
 	checkDistTask(s, ver)
