@@ -331,21 +331,12 @@ func rollingbackTruncateTablePartition(jobCtx *jobContext, job *model.Job) (ver 
 }
 
 func convertTruncateTablePartitionJob2RollbackJob(jobCtx *jobContext, job *model.Job, otherwiseErr error, tblInfo *model.TableInfo) (ver int64, err error) {
-	okToConvert := false
-	if job.SchemaState == model.StatePublic {
-		okToConvert = true
-	}
-	if !okToConvert && job.SchemaState == model.StateWriteOnly {
-		for _, idx := range tblInfo.Indices {
-			if idx.Global {
-				okToConvert = true
-				break
-			}
-		}
-	}
-	if !okToConvert {
-		job.State = model.JobStateCancelled
-		return ver, dbterror.ErrInvalidDDLState.GenWithStackByArgs("partition", tblInfo.Partition.DDLState)
+	if job.SchemaState != model.StatePublic && job.SchemaState != model.StateWriteOnly {
+		// Only Original state and StateWrite can be rolled back, otherwise new partitions
+		// may have been used and new data would get lost.
+		// So we must continue to roll forward!
+		job.State = model.JobStateRunning
+		return ver, nil
 	}
 	pi := tblInfo.Partition
 	if len(pi.NewPartitionIDs) != 0 || pi.DDLAction != model.ActionNone || pi.DDLState != model.StateNone {
@@ -360,6 +351,7 @@ func convertTruncateTablePartitionJob2RollbackJob(jobCtx *jobContext, job *model
 		}
 		return ver, nil
 	}
+	// No change yet, just cancel the job.
 	job.State = model.JobStateCancelled
 	return ver, errors.Trace(otherwiseErr)
 }
