@@ -2088,8 +2088,8 @@ func TestExplainAnalyzeDMLWithFKInfo(t *testing.T) {
 		{
 			sql: "explain analyze insert ignore into t6 values (1,1,10)",
 			plan: "Insert_.* root  time:.* loops:.* prepare:.* check_insert.* fk_check:.*" +
-				"├─Foreign_Key_Check.* 0 root table:t5 total:0s, foreign_keys:1 foreign_key:fk_1, check_exist N/A N/A.*" +
-				"├─Foreign_Key_Check.* 0 root table:t5, index:idx2 total:0s, foreign_keys:1 foreign_key:fk_2, check_exist N/A N/A.*" +
+				"├─Foreign_Key_Check.* 0 root table:t5 total:.*, lock:.*, foreign_keys:1 foreign_key:fk_1, check_exist N/A N/A.*" +
+				"├─Foreign_Key_Check.* 0 root table:t5, index:idx2 total:.*, lock:.*, foreign_keys:1 foreign_key:fk_2, check_exist N/A N/A.*" +
 				"└─Foreign_Key_Check.* 0 root table:t5, index:idx3 total:0s, foreign_keys:1 foreign_key:fk_3, check_exist N/A N/A",
 		},
 		{
@@ -2523,6 +2523,45 @@ func TestLockKeysInDML(t *testing.T) {
 	tk.MustExec("COMMIT")
 	wg.Wait()
 	tk.MustQuery("SELECT * FROM t2").Check(testkit.Rows("1"))
+	require.Greater(t, tk2CommitTime.Sub(tk2StartTime), sleepDuration)
+	tk.MustQuery("SELECT * FROM t1").Check(testkit.Rows("1"))
+	tk.MustQuery("SELECT * FROM t2").Check(testkit.Rows("1"))
+}
+
+func TestLockKeysInInsertIgnore(t *testing.T) {
+	store := realtikvtest.CreateMockStoreAndSetup(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t1 (id int primary key);")
+	tk.MustExec("create table t2 (id int primary key, foreign key fk (id) references t1(id));")
+	tk.MustExec("insert into t1 values (1)")
+
+	tk.MustExec("BEGIN")
+	tk.MustExec("INSERT IGNORE INTO t2 VALUES (1)")
+
+	var wg sync.WaitGroup
+	var tk2CommitTime time.Time
+	tk2StartTime := time.Now()
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+
+		tk2 := testkit.NewTestKit(t, store)
+		// unistore has a bug to handle the fair locking mechanism. We need to disable it to pass this test.
+		// Ref: https://github.com/pingcap/tidb/issues/56663
+		tk2.MustExec("set tidb_pessimistic_txn_fair_locking = 'OFF'")
+		tk2.MustExec("use test")
+		tk2.MustExec("BEGIN")
+		require.NotNil(t, tk2.ExecToErr("UPDATE t1 SET id = 2 WHERE id = 1"))
+		tk2.MustExec("COMMIT")
+		tk2CommitTime = time.Now()
+	}()
+
+	sleepDuration := 500 * time.Millisecond
+	time.Sleep(sleepDuration)
+	tk.MustExec("COMMIT")
+	wg.Wait()
+
 	require.Greater(t, tk2CommitTime.Sub(tk2StartTime), sleepDuration)
 	tk.MustQuery("SELECT * FROM t1").Check(testkit.Rows("1"))
 	tk.MustQuery("SELECT * FROM t2").Check(testkit.Rows("1"))
