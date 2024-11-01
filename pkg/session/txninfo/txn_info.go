@@ -175,7 +175,11 @@ type TxnInfo struct {
 	EntriesCount uint64
 
 	// The following fields will be filled in `session` instead of `LazyTxn`
+	Process *TxnInfoProcessInfo
+}
 
+// TxnInfoProcessInfo is part of fields of txnInfo, which will be filled in `session` instead of `LazyTxn`
+type TxnInfoProcessInfo struct {
 	// Which session this transaction belongs to
 	ConnectionID uint64
 	// The user who open this session
@@ -219,13 +223,25 @@ var columnValueGetterMap = map[string]func(*TxnInfo) types.Datum{
 		return types.NewDatum(info.EntriesCount)
 	},
 	SessionIDStr: func(info *TxnInfo) types.Datum {
-		return types.NewDatum(info.ConnectionID)
+		var connectionID uint64
+		if info.Process != nil {
+			connectionID = info.Process.ConnectionID
+		}
+		return types.NewDatum(connectionID)
 	},
 	UserStr: func(info *TxnInfo) types.Datum {
-		return types.NewDatum(info.Username)
+		var userName string
+		if info.Process != nil {
+			userName = info.Process.Username
+		}
+		return types.NewDatum(userName)
 	},
 	DBStr: func(info *TxnInfo) types.Datum {
-		return types.NewDatum(info.CurrentDB)
+		var currentDB string
+		if info.Process != nil {
+			currentDB = info.Process.CurrentDB
+		}
+		return types.NewDatum(currentDB)
 	},
 	AllSQLDigestsStr: func(info *TxnInfo) types.Datum {
 		allSQLDigests := info.AllSQLDigests
@@ -241,7 +257,10 @@ var columnValueGetterMap = map[string]func(*TxnInfo) types.Datum{
 		return types.NewDatum(string(res))
 	},
 	RelatedTableIDsStr: func(info *TxnInfo) types.Datum {
-		relatedTableIDs := info.RelatedTableIDs
+		var relatedTableIDs map[int64]struct{}
+		if info.Process != nil {
+			relatedTableIDs = info.Process.RelatedTableIDs
+		}
 		str := strings.Builder{}
 		first := true
 		for tblID := range relatedTableIDs {
