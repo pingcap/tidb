@@ -501,8 +501,6 @@ func TestSplitLargeFileSeekInsideCRLF(t *testing.T) {
 	require.NoError(t, err)
 	fileSize := dataFileInfo.Size()
 	fileInfo := FileInfo{FileMeta: SourceFileMeta{Path: fileName, Type: SourceTypeCSV, FileSize: fileSize}}
-	colCnt := int64(2)
-	prevRowIdxMax := int64(0)
 	ioWorker := worker.NewPool(context.Background(), 4, "io")
 
 	store, err := storage.NewLocalStorage(dir)
@@ -528,15 +526,12 @@ func TestSplitLargeFileSeekInsideCRLF(t *testing.T) {
 	offsets := [][]int64{{0, 3}, {3, 6}, {6, 9}, {9, 12}}
 	pos := []int64{2, 5, 8, 11}
 
-	_, regions, _, err := SplitLargeFile(
+	divideConfig := NewDataDivideConfig(cfg, 2, ioWorker, store, meta)
+
+	regions, _, err := SplitLargeCSV(
 		context.Background(),
-		meta,
-		cfg,
+		divideConfig,
 		fileInfo,
-		colCnt,
-		prevRowIdxMax,
-		ioWorker,
-		store,
 	)
 	require.NoError(t, err)
 	require.Len(t, regions, len(offsets))
@@ -564,15 +559,10 @@ func TestSplitLargeFileSeekInsideCRLF(t *testing.T) {
 	expectedOffsets := [][]int64{{0, 6}, {6, 12}}
 	pos = []int64{3, 6, 9, 12}
 
-	_, regions, _, err = SplitLargeFile(
+	regions, _, err = SplitLargeCSV(
 		context.Background(),
-		meta,
-		cfg,
+		divideConfig,
 		fileInfo,
-		colCnt,
-		prevRowIdxMax,
-		ioWorker,
-		store,
 	)
 	require.NoError(t, err)
 	require.Len(t, regions, len(expectedOffsets))
