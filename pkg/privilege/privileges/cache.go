@@ -484,11 +484,17 @@ func (p *MySQLPrivilege) merge(diff *immutable) *MySQLPrivilege {
 	ret.db = make([]dbRecord, 0, len(p.db)+len(diff.db))
 	ret.db = append(ret.db, p.db...)
 	ret.db = append(ret.db, diff.db...)
+	slices.SortStableFunc(ret.db, compareDBRecord)
+	ret.db = dedupSortedKeepLast(ret.db, func(x, y dbRecord) bool { return x.User == y.User && x.Host == y.Host && x.DB == y.DB })
 	ret.buildDBMap()
 
 	ret.tablesPriv = make([]tablesPrivRecord, 0, len(p.tablesPriv)+len(diff.tablesPriv))
 	ret.tablesPriv = append(ret.tablesPriv, p.tablesPriv...)
 	ret.tablesPriv = append(ret.tablesPriv, diff.tablesPriv...)
+	slices.SortStableFunc(ret.tablesPriv, compareTablesPrivRecord)
+	ret.tablesPriv = dedupSortedKeepLast(ret.tablesPriv, func(x, y tablesPrivRecord) bool {
+		return x.User == y.User && x.Host == y.Host && x.DB == y.DB && x.TableName == y.TableName
+	})
 	ret.buildTablesPrivMap()
 
 	ret.columnsPriv = make([]columnsPrivRecord, 0, len(p.columnsPriv)+len(diff.columnsPriv))
@@ -511,6 +517,10 @@ func (p *MySQLPrivilege) merge(diff *immutable) *MySQLPrivilege {
 	ret.dynamicPriv = make([]dynamicPrivRecord, 0, len(p.dynamicPriv)+len(diff.dynamicPriv))
 	ret.dynamicPriv = append(ret.dynamicPriv, p.dynamicPriv...)
 	ret.dynamicPriv = append(ret.dynamicPriv, diff.dynamicPriv...)
+	slices.SortStableFunc(ret.dynamicPriv, compareDynamicPrivRecord)
+	ret.dynamicPriv = dedupSortedKeepLast(ret.dynamicPriv, func(x, y dynamicPrivRecord) bool {
+		return x.Host == y.Host && x.User == y.User
+	})
 	ret.buildDynamicMap()
 
 	ret.globalPriv = make([]globalPrivRecord, 0, len(p.globalPriv)+len(diff.globalPriv))
@@ -591,6 +601,10 @@ func compareDefaultRoleRecord(x, y defaultRoleRecord) int {
 }
 
 func compareGlobalPrivRecord(x, y globalPrivRecord) int {
+	return compareBaseRecord(&x.baseRecord, &y.baseRecord)
+}
+
+func compareDynamicPrivRecord(x, y dynamicPrivRecord) int {
 	return compareBaseRecord(&x.baseRecord, &y.baseRecord)
 }
 
@@ -711,7 +725,40 @@ func (p *MySQLPrivilege) LoadDBTable(ctx sqlexec.RestrictedSQLExecutor) error {
 }
 
 func compareDBRecord(x, y dbRecord) int {
-	return compareBaseRecord(&x.baseRecord, &y.baseRecord)
+	ret := compareBaseRecord(&x.baseRecord, &y.baseRecord)
+	if ret != 0 {
+		return ret
+	}
+
+	switch {
+	case x.DB > y.DB:
+		return 1
+	case x.DB < y.DB:
+		return -1
+	}
+	return 0
+}
+
+func compareTablesPrivRecord(x, y tablesPrivRecord) int {
+	ret := compareBaseRecord(&x.baseRecord, &y.baseRecord)
+	if ret != 0 {
+		return ret
+	}
+
+	switch {
+	case x.DB > y.DB:
+		return 1
+	case x.DB < y.DB:
+		return -1
+	}
+
+	switch {
+	case x.TableName > y.TableName:
+		return 1
+	case x.TableName < y.TableName:
+		return -1
+	}
+	return 0
 }
 
 func (p *MySQLPrivilege) buildDBMap() {
