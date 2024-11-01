@@ -103,11 +103,11 @@ require (
 	github.com/wangjohn/quickselect v0.0.0-20161129230411-ed8402a42d5f
 	github.com/xitongsys/parquet-go v1.5.5-0.20201110004701-b09c49d6d457
 	github.com/xitongsys/parquet-go-source v0.0.0-20200817004010-026bad9b25d0
-	go.etcd.io/etcd/api/v3 v3.5.2
-	go.etcd.io/etcd/client/pkg/v3 v3.5.2
-	go.etcd.io/etcd/client/v3 v3.5.2
-	go.etcd.io/etcd/server/v3 v3.5.2
-	go.etcd.io/etcd/tests/v3 v3.5.2
+	go.etcd.io/etcd/api/v3 v3.5.12
+	go.etcd.io/etcd/client/pkg/v3 v3.5.12
+	go.etcd.io/etcd/client/v3 v3.5.12
+	go.etcd.io/etcd/server/v3 v3.5.12
+	go.etcd.io/etcd/tests/v3 v3.5.12
 	go.opencensus.io v0.24.0
 	go.uber.org/atomic v1.11.0
 	go.uber.org/automaxprocs v1.4.0

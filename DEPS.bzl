@@ -118,8 +118,8 @@ def go_deps():
         name = "com_github_alecthomas_template",
         build_file_proto_mode = "disable",
         importpath = "github.com/alecthomas/template",
-        sum = "h1:JYp7IbQjafoB+tBA3gMyHYHrpOtNuDiK/uB5uXxq5wM=",
-        version = "v0.0.0-20190718012654-fb15b899a751",
+        sum = "h1:cAKDfWh5VpdgMhJosfJnn5/FoN2SRZ4p7fJNX58YPaU=",
+        version = "v0.0.0-20160405071501-a0175ee3bccc",
     )
 
     go_repository(
@@ -3114,8 +3114,8 @@ def go_deps():
         name = "com_github_konsorten_go_windows_terminal_sequences",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/konsorten/go-windows-terminal-sequences",
-        sum = "h1:CE8S1cTafDpPvMhIxNJKvHsGVBgn1xWYf1NbHQhywc8=",
-        version = "v1.0.3",
+        sum = "h1:mweAR1A6xJ3oS2pRaGiHgQ4OO8tzTaLawm8vnODuwDk=",
+        version = "v1.0.1",
     )
     go_repository(
         name = "com_github_kr_logfmt",
@@ -6223,19 +6223,15 @@ def go_deps():
         name = "io_etcd_go_etcd_api_v3",
         build_file_proto_mode = "disable",
         importpath = "go.etcd.io/etcd/api/v3",
-        patch_args = ["-p2"],
-        patches = [
-            "//build/patches:io_etcd_go_etcd_api_v3.patch",
-        ],
-        sum = "h1:tXok5yLlKyuQ/SXSjtqHc4uzNaMqZi2XsoSPr/LlJXI=",
-        version = "v3.5.2",
+        sum = "h1:W4sw5ZoU2Juc9gBWuLk5U6fHfNVyY1WC5g9uiXZio/c=",
+        version = "v3.5.12",
     )
     go_repository(
         name = "io_etcd_go_etcd_client_pkg_v3",
         build_file_proto_mode = "disable_global",
         importpath = "go.etcd.io/etcd/client/pkg/v3",
-        sum = "h1:4hzqQ6hIb3blLyQ8usCU4h3NghkqcsohEQ3o3VetYxE=",
-        version = "v3.5.2",
+        sum = "h1:EYDL6pWwyOsylrQyLp2w+HkQ46ATiOvoEdMarindU2A=",
+        version = "v3.5.12",
     )
     go_repository(
         name = "io_etcd_go_etcd_client_v2",
@@ -6248,8 +6244,8 @@ def go_deps():
         name = "io_etcd_go_etcd_client_v3",
         build_file_proto_mode = "disable_global",
         importpath = "go.etcd.io/etcd/client/v3",
-        sum = "h1:WdnejrUtQC4nCxK0/dLTMqKOB+U5TP/2Ya0BJL+1otA=",
-        version = "v3.5.2",
+        sum = "h1:v5lCPXn1pf1Uu3M4laUE2hp/geOTc5uPcYYsNe1lDxg=",
+        version = "v3.5.12",
     )
     go_repository(
         name = "io_etcd_go_etcd_etcdutl_v3",
@@ -6276,15 +6272,15 @@ def go_deps():
         name = "io_etcd_go_etcd_server_v3",
         build_file_proto_mode = "disable_global",
         importpath = "go.etcd.io/etcd/server/v3",
-        sum = "h1:B6ytJvS4Fmt8nkjzS2/8POf4tuPhFMluE0lWd4dx/7U=",
-        version = "v3.5.2",
+        sum = "h1:EtMjsbfyfkwZuA2JlKOiBfuGkFCekv5H178qjXypbG8=",
+        version = "v3.5.12",
     )
     go_repository(
         name = "io_etcd_go_etcd_tests_v3",
         build_file_proto_mode = "disable_global",
         importpath = "go.etcd.io/etcd/tests/v3",
-        sum = "h1:uk7/uMGVebpBDl+roivowHt6gJ5Fnqwik3syDkoSKdo=",
-        version = "v3.5.2",
+        sum = "h1:k1fG7+F87Z7zKp57EcjXu9XgOsW0sfp5USqfzmMTIwM=",
+        version = "v3.5.12",
     )
     go_repository(
         name = "io_etcd_go_gofail",
