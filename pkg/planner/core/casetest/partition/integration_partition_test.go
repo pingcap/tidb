@@ -40,7 +40,7 @@ func TestListPartitionPruning(t *testing.T) {
     partition p2 values in (6, 7, 8),
     partition p3 values in (9, 10, 11),
     partition p4 values in (-1))`)
-    tk.MustExec(`create table tcollist (a int, b int) partition by list columns(a) (
+	tk.MustExec(`create table tcollist (a int, b int) partition by list columns(a) (
     partition p0 values in (0, 1, 2),
     partition p1 values in (3, 4, 5),
     partition p2 values in (6, 7, 8),
