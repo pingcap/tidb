@@ -73,7 +73,7 @@ type LogSplitHelper struct {
 	eg            *errgroup.Group
 	regionsCh     chan []*RegionInfo
 
-	splitThreSholdSize uint64
+	splitThresholdSize uint64
 	splitThreSholdKeys int64
 }
 
