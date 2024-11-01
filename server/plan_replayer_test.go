@@ -241,3 +241,52 @@ func forEachFileInZipBytes(t *testing.T, b []byte, fn func(file *zip.File)) {
 		fn(f)
 	}
 }
+
+func TestIssue56458(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	dom, err := session.GetDomain(store)
+	require.NoError(t, err)
+	// 1. setup and prepare plan replayer files by manual command and capture
+	server, client := prepareServerAndClientForTest(t, store, dom)
+	defer server.Close()
+
+	filename := prepareData4Issue56458(t, client, dom)
+	defer os.RemoveAll(replayer.GetPlanReplayerDirName())
+
+	// 2. check the contents of the plan replayer zip files.
+	var filesInReplayer []string
+	collectFileNameAndAssertFileSize := func(f *zip.File) {
+		// collect file name
+		filesInReplayer = append(filesInReplayer, f.Name)
+	}
+
+	// 2-1. check the plan replayer file from manual command
+	resp0, err := client.FetchStatus(filepath.Join("/plan_replayer/dump/", filename))
+	require.NoError(t, err)
+	defer func() {
+		require.NoError(t, resp0.Body.Close())
+	}()
+	body, err := io.ReadAll(resp0.Body)
+	require.NoError(t, err)
+	forEachFileInZipBytes(t, body, collectFileNameAndAssertFileSize)
+	slices.Sort(filesInReplayer)
+	require.Equal(t, []string{
+		"config.toml",
+		"debug_trace/debug_trace0.json",
+		"explain.txt",
+		"global_bindings.sql",
+		"meta.txt",
+		"schema/planreplayer.t.schema.txt",
+		"schema/planreplayer.v.schema.txt",
+		"schema/schema_meta.txt",
+		"session_bindings.sql",
+		"sql/sql0.sql",
+		"sql_meta.toml",
+		"stats/planreplayer.t.json",
+		"stats/planreplayer.v.json",
+		"statsMem/planreplayer.t.txt",
+		"statsMem/planreplayer.v.txt",
+		"table_tiflash_replica.txt",
+		"variables.toml",
+	}, filesInReplayer)
+}
