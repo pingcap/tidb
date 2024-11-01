@@ -3043,9 +3043,6 @@ func (w *worker) onExchangeTablePartition(jobCtx *jobContext, job *model.Job) (v
 }
 
 func getNewGlobal(partInfo *model.PartitionInfo, idx *model.IndexInfo) bool {
-	if len(partInfo.DDLUpdateIndexes) == 0 {
-		return idx.Global
-	}
 	for _, newIdx := range partInfo.DDLUpdateIndexes {
 		if strings.EqualFold(idx.Name.L, newIdx.IndexName) {
 			return newIdx.Global
@@ -3258,46 +3255,33 @@ func (w *worker) onReorganizePartition(jobCtx *jobContext, job *model.Job) (ver 
 			if err != nil {
 				return ver, errors.Trace(err)
 			}
+			// Currently only support Explicit Global indexes.
+			if !inAllPartitionColumns && !newGlobal {
+				job.State = model.JobStateCancelled
+				return ver, dbterror.ErrGlobalIndexNotExplicitlySet.GenWithStackByArgs(index.Name.O)
+			}
+			if !index.Global && !newGlobal {
+				// still local index, no need to duplicate index.
+				continue
+			}
 			if tblInfo.Partition.DDLChangedIndex == nil {
 				tblInfo.Partition.DDLChangedIndex = make(map[int64]bool)
 			}
-			if !inAllPartitionColumns {
-				// Currently only support Explicit Global indexes.
-				if !newGlobal {
-					job.State = model.JobStateCancelled
-					return ver, dbterror.ErrGlobalIndexNotExplicitlySet.GenWithStackByArgs(index.Name.O)
-				}
-				// Duplicate the unique indexes with new index ids.
-				// If previously was Global or will be Global:
-				// it must be recreated with new index ID
-				// TODO: Could we allow that session in StateWriteReorganization, when StateDeleteReorganization
-				// has started, may not find changes through the global index that sessions in StateDeleteReorganization made?
-				// If so, then we could avoid copying the full Global Index if it has not changed from LOCAL!
-				// It might be possible to use the new, not yet public partitions to access those rows?!
-				// Just that it would not work with explicit partition select SELECT FROM t PARTITION (p,...)
-				newIndex := index.Clone()
-				newIndex.State = model.StateDeleteOnly
-				newIndex.ID = AllocateIndexID(tblInfo)
-				tblInfo.Partition.DDLChangedIndex[index.ID] = false
-				tblInfo.Partition.DDLChangedIndex[newIndex.ID] = true
-				newIndex.Global = true
-				tblInfo.Indices = append(tblInfo.Indices, newIndex)
-			} else {
-				if newGlobal {
-					// TODO: For the future loosen this restriction and allow global indexes for unique keys also including all partitioning columns
-					return ver, dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs(fmt.Sprintf("PARTITION BY, index '%v' is unique and contains all partitioning columns, but has Global Index set", index.Name.O))
-				}
-				if index.Global {
-					// Index was previously Global, now it needs to be duplicated and become a local index.
-					newIndex := index.Clone()
-					newIndex.State = model.StateDeleteOnly
-					newIndex.ID = AllocateIndexID(tblInfo)
-					tblInfo.Partition.DDLChangedIndex[index.ID] = false
-					tblInfo.Partition.DDLChangedIndex[newIndex.ID] = true
-					newIndex.Global = false
-					tblInfo.Indices = append(tblInfo.Indices, newIndex)
-				}
-			}
+			// Duplicate the unique indexes with new index ids.
+			// If previously was Global or will be Global:
+			// it must be recreated with new index ID
+			// TODO: Could we allow that session in StateWriteReorganization, when StateDeleteReorganization
+			// has started, may not find changes through the global index that sessions in StateDeleteReorganization made?
+			// If so, then we could avoid copying the full Global Index if it has not changed from LOCAL!
+			// It might be possible to use the new, not yet public partitions to access those rows?!
+			// Just that it would not work with explicit partition select SELECT FROM t PARTITION (p,...)
+			newIndex := index.Clone()
+			newIndex.State = model.StateDeleteOnly
+			newIndex.ID = AllocateIndexID(tblInfo)
+			tblInfo.Partition.DDLChangedIndex[index.ID] = false
+			tblInfo.Partition.DDLChangedIndex[newIndex.ID] = true
+			newIndex.Global = newGlobal
+			tblInfo.Indices = append(tblInfo.Indices, newIndex)
 		}
 		failpoint.Inject("reorgPartCancel1", func(val failpoint.Value) {
 			if val.(bool) {
