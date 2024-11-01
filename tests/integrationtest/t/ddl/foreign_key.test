@@ -234,3 +234,15 @@ drop database test_db_2;
 drop database test_db_1;
 
 set @@foreign_key_checks=default;
+
+# TestDonnotSupportDropForeignKeyIfExists
+create database if not exists test1;
+use test1;
+drop table if exists child, parent;
+create table parent (ref int, key(ref));
+create table child (ref int, constraint fk1 foreign key(ref) references parent(ref));
+-- error 1064
+alter table child drop foreign key if exists fk2;
+-- error 1064
+alter table child drop foreign key if exists fk1;
+drop database test1;

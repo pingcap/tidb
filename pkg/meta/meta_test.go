@@ -661,6 +661,7 @@ func TestCreateMySQLDatabase(t *testing.T) {
 func TestIsTableInfoMustLoad(t *testing.T) {
 	tableInfo := &model.TableInfo{
 		TTLInfo: &model.TTLInfo{IntervalExprStr: "1", IntervalTimeUnit: int(ast.TimeUnitDay), JobInterval: "1h"},
+		State:   model.StatePublic,
 	}
 	b, err := json.Marshal(tableInfo)
 	require.NoError(t, err)
@@ -668,6 +669,7 @@ func TestIsTableInfoMustLoad(t *testing.T) {
 
 	tableInfo = &model.TableInfo{
 		TiFlashReplica: &model.TiFlashReplicaInfo{Count: 1},
+		State:          model.StatePublic,
 	}
 	b, err = json.Marshal(tableInfo)
 	require.NoError(t, err)
@@ -675,6 +677,7 @@ func TestIsTableInfoMustLoad(t *testing.T) {
 
 	tableInfo = &model.TableInfo{
 		PlacementPolicyRef: &model.PolicyRefInfo{ID: 1},
+		State:              model.StatePublic,
 	}
 	b, err = json.Marshal(tableInfo)
 	require.NoError(t, err)
@@ -682,13 +685,15 @@ func TestIsTableInfoMustLoad(t *testing.T) {
 
 	tableInfo = &model.TableInfo{
 		Partition: &model.PartitionInfo{Expr: "a"},
+		State:     model.StatePublic,
 	}
 	b, err = json.Marshal(tableInfo)
 	require.NoError(t, err)
 	require.True(t, meta.IsTableInfoMustLoad(b))
 
 	tableInfo = &model.TableInfo{
-		Lock: &model.TableLockInfo{State: model.TableLockStatePreLock},
+		Lock:  &model.TableLockInfo{State: model.TableLockStatePreLock},
+		State: model.StatePublic,
 	}
 	b, err = json.Marshal(tableInfo)
 	require.NoError(t, err)
@@ -696,6 +701,7 @@ func TestIsTableInfoMustLoad(t *testing.T) {
 
 	tableInfo = &model.TableInfo{
 		ForeignKeys: []*model.FKInfo{{ID: 1}},
+		State:       model.StatePublic,
 	}
 	b, err = json.Marshal(tableInfo)
 	require.NoError(t, err)
@@ -703,13 +709,22 @@ func TestIsTableInfoMustLoad(t *testing.T) {
 
 	tableInfo = &model.TableInfo{
 		TempTableType: model.TempTableGlobal,
+		State:         model.StatePublic,
 	}
 	b, err = json.Marshal(tableInfo)
 	require.NoError(t, err)
 	require.True(t, meta.IsTableInfoMustLoad(b))
 
 	tableInfo = &model.TableInfo{
-		ID: 123,
+		ID:    123,
+		State: model.StatePublic,
+	}
+	b, err = json.Marshal(tableInfo)
+	require.NoError(t, err)
+	require.False(t, meta.IsTableInfoMustLoad(b))
+
+	tableInfo = &model.TableInfo{
+		State: model.StatePublic,
 	}
 	b, err = json.Marshal(tableInfo)
 	require.NoError(t, err)
