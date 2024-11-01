@@ -333,7 +333,7 @@ func (rc *LogClient) Init(ctx context.Context, g glue.Glue, store kv.Storage, us
 		if err != nil {
 			return errors.Trace(err)
 		}
-		rc.sstCheckpointRunner, err = checkpoint.StartCheckpointRunnerForRestore(ctx, sstSe)
+		rc.sstCheckpointRunner, err = checkpoint.StartCheckpointRunnerForRestore(ctx, sstSe, checkpoint.CompactedRestoreCheckpointDatabaseName)
 		if err != nil {
 			return errors.Trace(err)
 		}

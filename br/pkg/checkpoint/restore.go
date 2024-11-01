@@ -63,9 +63,10 @@ func StartCheckpointRestoreRunnerForTest(
 func StartCheckpointRunnerForRestore(
 	ctx context.Context,
 	se glue.Session,
+	dbName string,
 ) (*CheckpointRunner[RestoreKeyType, RestoreValueType], error) {
 	runner := newCheckpointRunner[RestoreKeyType, RestoreValueType](
-		newTableCheckpointStorage(se, CompactedRestoreCheckpointDatabaseName),
+		newTableCheckpointStorage(se, dbName),
 		nil, valueMarshalerForRestore)
 
 	// for restore, no need to set lock

@@ -386,7 +386,7 @@ func (rc *SnapClient) InitCheckpoint(
 	if err != nil {
 		return checkpointSetWithTableID, nil, errors.Trace(err)
 	}
-	rc.checkpointRunner, err = checkpoint.StartCheckpointRunnerForRestore(ctx, se)
+	rc.checkpointRunner, err = checkpoint.StartCheckpointRunnerForRestore(ctx, se, checkpoint.SnapshotRestoreCheckpointDatabaseName)
 	return checkpointSetWithTableID, checkpointClusterConfig, errors.Trace(err)
 }
 
