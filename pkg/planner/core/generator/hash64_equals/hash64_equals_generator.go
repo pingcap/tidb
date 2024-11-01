@@ -52,6 +52,7 @@ var hashEqualsType = reflect.TypeOf((*base.HashEquals)(nil)).Elem()
 func genHash64EqualsForLogicalOps(x any) ([]byte, error) {
 	c := new(cc)
 	vType := reflect.TypeOf(x)
+	// for Hash64 function.
 	c.write("// Hash64 implements the Hash64Equals interface.")
 	c.write("func (op *%v) Hash64(h base.Hasher) {", vType.Name())
 	c.write("h.HashString(%v)", logicalOpName2PlanCodecString(vType.Name()))
@@ -72,6 +73,23 @@ func genHash64EqualsForLogicalOps(x any) ([]byte, error) {
 		}
 	}
 	c.write("}")
+	// for Equals function.
+	c.write("// Equals implements the Hash64Equals interface, only receive *%v pointer.", vType.Name())
+	c.write("func (op *%v) Equals(other any) bool {", vType.Name())
+	c.write("if other == nil { return false }")
+	c.write("op2, ok := other.(*%v)", vType.Name())
+	c.write("if !ok { return false }")
+	for i := 0; i < vType.NumField(); i++ {
+		f := vType.Field(i)
+		if !isHash64EqualsField(f) {
+			continue
+		}
+		leftCallName := "op." + vType.Field(i).Name
+		rightCallName := "op2." + vType.Field(i).Name
+		c.EqualsElement(f.Type, leftCallName, rightCallName)
+	}
+	c.write("return true")
+	c.write("}")
 	return c.format()
 }
 
@@ -86,6 +104,30 @@ func logicalOpName2PlanCodecString(name string) string {
 
 func isHash64EqualsField(fType reflect.StructField) bool {
 	return fType.Tag.Get("hash64-equals") == "true"
+}
+
+// EqualsElement EqualsElements generate the equals function for every field inside logical op.
+func (c *cc) EqualsElement(fType reflect.Type, lhs, rhs string) {
+	switch fType.Kind() {
+	case reflect.Slice:
+		c.write("if len(%v) != len(%v) { return false }", lhs, rhs)
+		c.write("for i, one := range %v {", lhs)
+		// one more round
+		c.EqualsElement(fType.Elem(), "one", rhs+"[i]")
+		c.write("}")
+	case reflect.String, reflect.Bool, reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64,
+		reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64, reflect.Float32, reflect.Float64:
+		c.write("if %v != %v {return false}", lhs, rhs)
+	default:
+		if fType.Implements(hashEqualsType) {
+			if fType.Kind() == reflect.Struct {
+				rhs = "&" + rhs
+			}
+			c.write("if !%v.Equals(%v) {return false}", lhs, rhs)
+		} else {
+			panic("doesn't support element type" + fType.Kind().String())
+		}
+	}
 }
 
 func (c *cc) Hash64Element(fType reflect.Type, callName string) {

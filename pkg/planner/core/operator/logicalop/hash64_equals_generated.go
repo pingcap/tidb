@@ -71,3 +71,58 @@ func (op *LogicalJoin) Hash64(h base.Hasher) {
 		}
 	}
 }
+
+// Equals implements the Hash64Equals interface, only receive *LogicalJoin pointer.
+func (op *LogicalJoin) Equals(other any) bool {
+	if other == nil {
+		return false
+	}
+	op2, ok := other.(*LogicalJoin)
+	if !ok {
+		return false
+	}
+	if op.JoinType != op2.JoinType {
+		return false
+	}
+	if len(op.EqualConditions) != len(op2.EqualConditions) {
+		return false
+	}
+	for i, one := range op.EqualConditions {
+		if !one.Equals(op2.EqualConditions[i]) {
+			return false
+		}
+	}
+	if len(op.NAEQConditions) != len(op2.NAEQConditions) {
+		return false
+	}
+	for i, one := range op.NAEQConditions {
+		if !one.Equals(op2.NAEQConditions[i]) {
+			return false
+		}
+	}
+	if len(op.LeftConditions) != len(op2.LeftConditions) {
+		return false
+	}
+	for i, one := range op.LeftConditions {
+		if !one.Equals(op2.LeftConditions[i]) {
+			return false
+		}
+	}
+	if len(op.RightConditions) != len(op2.RightConditions) {
+		return false
+	}
+	for i, one := range op.RightConditions {
+		if !one.Equals(op2.RightConditions[i]) {
+			return false
+		}
+	}
+	if len(op.OtherConditions) != len(op2.OtherConditions) {
+		return false
+	}
+	for i, one := range op.OtherConditions {
+		if !one.Equals(op2.OtherConditions[i]) {
+			return false
+		}
+	}
+	return true
+}
