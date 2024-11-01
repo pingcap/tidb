@@ -16,13 +16,22 @@ package tikv
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/cockroachdb/pebble"
+	"github.com/cockroachdb/pebble/objstorage/objstorageprovider"
 	"github.com/cockroachdb/pebble/sstable"
 	"github.com/cockroachdb/pebble/vfs"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
+)
+
+var (
+	sortedKVs = [][2][]byte{
+		{[]byte("a"), []byte("1")},
+	}
+	ts uint64 = 1
 )
 
 func TestGRPCWriteToTiKV(t *testing.T) {
@@ -30,14 +39,32 @@ func TestGRPCWriteToTiKV(t *testing.T) {
 
 	ctx := context.Background()
 	pdAddrs := []string{"127.0.0.1:2379"}
-	sortedKVs := [][2][]byte{
-		{[]byte("a"), []byte("1")},
-	}
-	metas, err := Write2ImportService4Test(ctx, pdAddrs, sortedKVs, 1)
+
+	metas, err := write2ImportService4Test(ctx, pdAddrs, sortedKVs, ts)
 	require.NoError(t, err)
 	for _, meta := range metas {
 		t.Logf("meta UUID: %v", uuid.UUID(meta.Uuid).String())
 	}
+}
+
+func TestPebbleWriteSST(t *testing.T) {
+	t.Skip("this is a manual test")
+
+	kvs := encodeKVs4Test(sortedKVs, ts)
+
+	sstPath := "/tmp/test-write.sst"
+	f, err := vfs.Default.Create(sstPath)
+	require.NoError(t, err)
+	writable := objstorageprovider.NewFileWritable(f)
+
+	writer := sstable.NewWriter(writable, sstable.WriterOptions{})
+	for _, kv := range kvs {
+		t.Logf("key: %X\nvalue: %X", kv[0], kv[1])
+		err = writer.Set(kv[0], kv[1])
+		require.NoError(t, err)
+	}
+	err = writer.Close()
+	require.NoError(t, err)
 }
 
 func TestPebbleReadSST(t *testing.T) {
@@ -51,6 +78,14 @@ func TestPebbleReadSST(t *testing.T) {
 	reader, err := sstable.NewReader(readable, sstable.ReaderOptions{})
 	require.NoError(t, err)
 	defer reader.Close()
+
+	layout, err := reader.Layout()
+	require.NoError(t, err)
+
+	content := &strings.Builder{}
+	layout.Describe(content, true, reader, nil)
+
+	t.Logf("layout: %s", content.String())
 
 	iter, err := reader.NewIter(nil, nil)
 	require.NoError(t, err)

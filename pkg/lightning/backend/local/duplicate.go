@@ -307,7 +307,7 @@ func getDupDetectClient(
 	ctx context.Context,
 	region *split.RegionInfo,
 	keyRange tidbkv.KeyRange,
-	importClientFactory ImportClientFactory,
+	importClientFactory importClientFactory,
 	resourceGroupName string,
 	taskType string,
 	minCommitTS uint64,
@@ -348,7 +348,7 @@ func NewRemoteDupKVStream(
 	ctx context.Context,
 	region *split.RegionInfo,
 	keyRange tidbkv.KeyRange,
-	importClientFactory ImportClientFactory,
+	importClientFactory importClientFactory,
 	resourceGroupName string,
 	taskType string,
 	minCommitTS uint64,
@@ -902,7 +902,7 @@ func (m *dupeDetector) processRemoteDupTaskOnce(
 	ctx context.Context,
 	task dupTask,
 	logger log.Logger,
-	importClientFactory ImportClientFactory,
+	importClientFactory importClientFactory,
 	regionPool *util.WorkerPool,
 	remainKeyRanges *pendingKeyRanges,
 	algorithm config.DuplicateResolutionAlgorithm,
@@ -980,7 +980,7 @@ func (m *dupeDetector) processRemoteDupTask(
 	ctx context.Context,
 	task dupTask,
 	logger log.Logger,
-	importClientFactory ImportClientFactory,
+	importClientFactory importClientFactory,
 	regionPool *util.WorkerPool,
 	algorithm config.DuplicateResolutionAlgorithm,
 ) error {
@@ -1026,7 +1026,7 @@ func (m *dupeDetector) processRemoteDupTask(
 // records all duplicate row info into errorMgr.
 func (m *dupeDetector) collectDuplicateRowsFromTiKV(
 	ctx context.Context,
-	importClientFactory ImportClientFactory,
+	importClientFactory importClientFactory,
 	algorithm config.DuplicateResolutionAlgorithm,
 ) error {
 	tasks, err := m.buildDupTasks()
@@ -1070,7 +1070,7 @@ type DupeController struct {
 	dupeConcurrency     int
 	duplicateDB         *pebble.DB
 	keyAdapter          common.KeyAdapter
-	importClientFactory ImportClientFactory
+	importClientFactory importClientFactory
 	resourceGroupName   string
 	taskType            string
 }
