@@ -1178,11 +1178,9 @@ func skylinePruning(ds *logicalop.DataSource, prop *property.PhysicalProperty) [
 		fixcontrol.Fix52869,
 		false,
 	)
-	// hasForce means there is a force or use index somewhere in the plan
-	hasForce := ds.SCtx().GetSessionVars().StmtCtx.GetHasForce()
 	// tidb_opt_prefer_range_scan is the master switch to control index preferencing
 	preferRange := ds.SCtx().GetSessionVars().GetAllowPreferRangeScan() &&
-		(preferMerge || hasForce || (ds.TableStats.HistColl.Pseudo || ds.TableStats.RowCount < 1))
+		(preferMerge || (ds.TableStats.HistColl.Pseudo || ds.TableStats.RowCount < 1))
 	if preferRange && len(candidates) > 1 {
 		// If a candidate path is TiFlash-path or forced-path or MV index, we just keep them. For other candidate paths, if there exists
 		// any range scan path, we remove full scan paths and keep range scan paths.
