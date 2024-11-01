@@ -33,6 +33,7 @@ go_library(
         "//types",
         "//util",
         "//util/chunk",
+        "//util/cmp",
         "//util/codec",
         "//util/collate",
         "//util/mock",
@@ -48,6 +49,7 @@ go_library(
         "@com_github_pingcap_tipb//go-tipb",
         "@com_github_tikv_client_go_v2//tikvrpc",
         "@com_github_twmb_murmur3//:murmur3",
+        "@org_golang_x_exp//slices",
         "@org_uber_go_atomic//:atomic",
     ],
 )

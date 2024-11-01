@@ -19,11 +19,11 @@ package testkit
 import (
 	"bytes"
 	"fmt"
-	"slices"
 	"strings"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"golang.org/x/exp/slices"
 )
 
 // Result is the result returned by MustQuery.

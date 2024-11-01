@@ -16,11 +16,9 @@ package cophandler
 
 import (
 	"bytes"
-	"cmp"
 	"context"
 	"math"
 	"math/rand"
-	"slices"
 	"time"
 
 	"github.com/golang/protobuf/proto"
@@ -38,10 +36,12 @@ import (
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/cmp"
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/rowcodec"
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/twmb/murmur3"
+	"golang.org/x/exp/slices"
 )
 
 // handleCopAnalyzeRequest handles coprocessor analyze request.

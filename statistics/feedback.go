@@ -19,7 +19,6 @@ import (
 	"encoding/gob"
 	"math"
 	"math/rand"
-	"slices"
 	"sort"
 	goatomic "sync/atomic"
 	"time"
@@ -42,6 +41,7 @@ import (
 	"github.com/pingcap/tidb/util/ranger"
 	"go.uber.org/atomic"
 	"go.uber.org/zap"
+	"golang.org/x/exp/slices"
 )
 
 // Feedback represents the total scan count in range [lower, upper).

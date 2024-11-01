@@ -28,6 +28,7 @@ go_library(
         "//types",
         "//util",
         "//util/chunk",
+        "//util/cmp",
         "//util/dbterror",
         "//util/hack",
         "//util/logutil",
@@ -40,6 +41,7 @@ go_library(
         "@com_github_lestrrat_go_jwx_v2//jwt",
         "@com_github_lestrrat_go_jwx_v2//jwt/openid",
         "@com_github_pingcap_errors//:errors",
+        "@org_golang_x_exp//slices",
         "@org_uber_go_zap//:zap",
     ],
 )

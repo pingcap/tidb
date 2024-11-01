@@ -18,7 +18,6 @@ import (
 	"bytes"
 	"math"
 	"regexp"
-	"slices"
 	"unicode/utf8"
 
 	"github.com/pingcap/errors"
@@ -35,6 +34,7 @@ import (
 	driver "github.com/pingcap/tidb/types/parser_driver"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/collate"
+	"golang.org/x/exp/slices"
 )
 
 func validInterval(sctx sessionctx.Context, low, high *point) (bool, error) {

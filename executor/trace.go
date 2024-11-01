@@ -16,7 +16,6 @@ package executor
 
 import (
 	"archive/zip"
-	"cmp"
 	"context"
 	"crypto/rand"
 	"encoding/base64"
@@ -26,6 +25,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/pingcap/tidb/util/cmp"
 
 	"github.com/opentracing/basictracer-go"
 	"github.com/opentracing/opentracing-go"

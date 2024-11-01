@@ -15,7 +15,6 @@
 package checkpoints
 
 import (
-	"cmp"
 	"context"
 	"database/sql"
 	"encoding/json"
@@ -23,7 +22,6 @@ import (
 	"io"
 	"math"
 	"path"
-	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -39,8 +37,10 @@ import (
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/version/build"
 	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/util/cmp"
 	"github.com/pingcap/tidb/util/mathutil"
 	"go.uber.org/zap"
+	"golang.org/x/exp/slices"
 )
 
 // CheckpointStatus is the status of a checkpoint.

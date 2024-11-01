@@ -15,15 +15,15 @@
 package lockwaiter
 
 import (
-	"cmp"
-	"slices"
 	"sync"
 	"time"
 
 	"github.com/pingcap/kvproto/pkg/deadlock"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/store/mockstore/unistore/config"
+	"github.com/pingcap/tidb/util/cmp"
 	"go.uber.org/zap"
+	"golang.org/x/exp/slices"
 )
 
 // LockNoWait is used for pessimistic lock wait time

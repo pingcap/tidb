@@ -17,7 +17,6 @@ package tikv
 import (
 	"bytes"
 	"context"
-	"slices"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -39,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/tikv/client-go/v2/oracle"
 	pdclient "github.com/tikv/pd/client"
+	"golang.org/x/exp/slices"
 )
 
 // MPPTaskHandlerMap is a map of *cophandler.MPPTaskHandler.

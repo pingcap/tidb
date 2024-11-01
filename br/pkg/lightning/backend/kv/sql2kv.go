@@ -17,11 +17,9 @@
 package kv
 
 import (
-	"cmp"
 	"context"
 	"fmt"
 	"math"
-	"slices"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/encode"
@@ -37,6 +35,8 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/cmp"
+	"golang.org/x/exp/slices"
 )
 
 type tableKVEncoder struct {

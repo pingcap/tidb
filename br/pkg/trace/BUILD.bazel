@@ -11,6 +11,7 @@ go_library(
         "@com_github_pingcap_log//:log",
         "@com_sourcegraph_sourcegraph_appdash//:appdash",
         "@com_sourcegraph_sourcegraph_appdash//opentracing",
+        "@org_golang_x_exp//slices",
         "@org_uber_go_zap//:zap",
     ],
 )

@@ -18,7 +18,6 @@ import (
 	"context"
 	"fmt"
 	"runtime/trace"
-	"slices"
 	"sync"
 	"sync/atomic"
 
@@ -38,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/ranger"
 	"go.uber.org/zap"
+	"golang.org/x/exp/slices"
 )
 
 // IndexLookUpMergeJoin realizes IndexLookUpJoin by merge join

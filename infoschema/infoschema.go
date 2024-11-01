@@ -15,9 +15,7 @@
 package infoschema
 
 import (
-	"cmp"
 	"fmt"
-	"slices"
 	"sort"
 	"sync"
 
@@ -28,7 +26,9 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/util"
+	"github.com/pingcap/tidb/util/cmp"
 	"github.com/pingcap/tidb/util/mock"
+	"golang.org/x/exp/slices"
 )
 
 // InfoSchema is the interface used to retrieve the schema information.

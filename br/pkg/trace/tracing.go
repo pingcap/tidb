@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"slices"
 	"text/tabwriter"
 	"time"
 
@@ -15,6 +14,7 @@ import (
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/log"
 	"go.uber.org/zap"
+	"golang.org/x/exp/slices"
 	"sourcegraph.com/sourcegraph/appdash"
 	traceImpl "sourcegraph.com/sourcegraph/appdash/opentracing"
 )

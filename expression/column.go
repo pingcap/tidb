@@ -15,9 +15,7 @@
 package expression
 
 import (
-	"cmp"
 	"fmt"
-	"slices"
 	"strings"
 	"unsafe"
 
@@ -30,8 +28,10 @@ import (
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/cmp"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/size"
+	"golang.org/x/exp/slices"
 )
 
 // CorrelatedColumn stands for a column in a correlated sub query.

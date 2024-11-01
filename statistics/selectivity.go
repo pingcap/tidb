@@ -16,10 +16,8 @@ package statistics
 
 import (
 	"bytes"
-	"cmp"
 	"math"
 	"math/bits"
-	"slices"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/expression"
@@ -32,11 +30,13 @@ import (
 	"github.com/pingcap/tidb/types"
 	driver "github.com/pingcap/tidb/types/parser_driver"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/cmp"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tidb/util/tracing"
 	"go.uber.org/zap"
 	"golang.org/x/exp/maps"
+	"golang.org/x/exp/slices"
 )
 
 // If one condition can't be calculated, we will assume that the selectivity of this condition is 0.8.

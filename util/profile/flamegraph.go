@@ -15,14 +15,14 @@
 package profile
 
 import (
-	"cmp"
 	"fmt"
 	"math"
-	"slices"
 
 	"github.com/google/pprof/profile"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/cmp"
 	"github.com/pingcap/tidb/util/texttree"
+	"golang.org/x/exp/slices"
 )
 
 type flamegraphNode struct {

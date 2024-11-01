@@ -16,7 +16,6 @@ package executor
 
 import (
 	"context"
-	"slices"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/expression"
@@ -30,6 +29,7 @@ import (
 	decoder "github.com/pingcap/tidb/util/rowDecoder"
 	"github.com/pingcap/tidb/util/tracing"
 	"github.com/tikv/client-go/v2/tikv"
+	"golang.org/x/exp/slices"
 )
 
 var _ Executor = &TableSampleExecutor{}

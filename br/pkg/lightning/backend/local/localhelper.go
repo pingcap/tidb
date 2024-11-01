@@ -19,7 +19,6 @@ import (
 	"context"
 	"database/sql"
 	"math"
-	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -44,6 +43,7 @@ import (
 	"github.com/pingcap/tidb/util/mathutil"
 	"go.uber.org/multierr"
 	"go.uber.org/zap"
+	"golang.org/x/exp/slices"
 	"golang.org/x/sync/errgroup"
 	"golang.org/x/time/rate"
 )

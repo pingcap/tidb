@@ -18,7 +18,6 @@ import (
 	"container/heap"
 	"context"
 	"errors"
-	"slices"
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/expression"
@@ -29,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/util/disk"
 	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/memory"
+	"golang.org/x/exp/slices"
 )
 
 // SortExec represents sorting executor.

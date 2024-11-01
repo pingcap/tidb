@@ -17,9 +17,9 @@ package core
 import (
 	"bytes"
 	"encoding/binary"
-	"slices"
 
 	"github.com/pingcap/tidb/util/plancodec"
+	"golang.org/x/exp/slices"
 )
 
 func encodeIntAsUint32(result []byte, value int) []byte {

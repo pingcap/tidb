@@ -18,7 +18,6 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"slices"
 	"testing"
 
 	"github.com/pingcap/tidb/infoschema"
@@ -32,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/goleak"
+	"golang.org/x/exp/slices"
 )
 
 func TestMain(m *testing.M) {

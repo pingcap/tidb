@@ -15,12 +15,10 @@
 package memoryusagealarm
 
 import (
-	"cmp"
 	"fmt"
 	"os"
 	"path/filepath"
 	rpprof "runtime/pprof"
-	"slices"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -28,11 +26,13 @@ import (
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util"
+	"github.com/pingcap/tidb/util/cmp"
 	"github.com/pingcap/tidb/util/disk"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
+	"golang.org/x/exp/slices"
 )
 
 // Handle is the handler for expensive query.

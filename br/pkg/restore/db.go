@@ -3,10 +3,8 @@
 package restore
 
 import (
-	"cmp"
 	"context"
 	"fmt"
-	"slices"
 	"sync"
 
 	"github.com/pingcap/errors"
@@ -22,7 +20,9 @@ import (
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	tidbutil "github.com/pingcap/tidb/util"
+	"github.com/pingcap/tidb/util/cmp"
 	"go.uber.org/zap"
+	"golang.org/x/exp/slices"
 )
 
 // DB is a TiDB instance, not thread-safe.

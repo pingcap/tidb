@@ -16,13 +16,11 @@ package copr
 
 import (
 	"bytes"
-	"cmp"
 	"context"
 	"fmt"
 	"io"
 	"math"
 	"math/rand"
-	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -38,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/driver/backoff"
 	derr "github.com/pingcap/tidb/store/driver/error"
+	"github.com/pingcap/tidb/util/cmp"
 	"github.com/pingcap/tidb/util/intest"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/tiflashcompute"
@@ -46,6 +45,7 @@ import (
 	"github.com/tikv/client-go/v2/tikvrpc"
 	"github.com/twmb/murmur3"
 	"go.uber.org/zap"
+	"golang.org/x/exp/slices"
 )
 
 const fetchTopoMaxBackoff = 20000

@@ -14,7 +14,6 @@
 package charset
 
 import (
-	"slices"
 	"strings"
 
 	"github.com/pingcap/errors"
@@ -22,6 +21,7 @@ import (
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
 	"go.uber.org/zap"
+	"golang.org/x/exp/slices"
 )
 
 var (

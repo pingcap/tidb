@@ -15,7 +15,6 @@
 package lightning
 
 import (
-	"cmp"
 	"compress/gzip"
 	"context"
 	"crypto/ecdsa"
@@ -30,7 +29,6 @@ import (
 	"net/http"
 	"net/http/pprof"
 	"os"
-	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -59,6 +57,7 @@ import (
 	_ "github.com/pingcap/tidb/expression" // get rid of `import cycle`: just init expression.RewriteAstExpr,and called at package `backend.kv`.
 	_ "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/util"
+	"github.com/pingcap/tidb/util/cmp"
 	"github.com/pingcap/tidb/util/promutil"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/collectors"
@@ -67,6 +66,7 @@ import (
 	"go.uber.org/atomic"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
+	"golang.org/x/exp/slices"
 )
 
 // Lightning is the main struct of the lightning package.

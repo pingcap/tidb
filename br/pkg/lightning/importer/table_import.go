@@ -16,11 +16,9 @@ package importer
 
 import (
 	"bytes"
-	"cmp"
 	"context"
 	"database/sql"
 	"fmt"
-	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -52,10 +50,12 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/cmp"
 	"github.com/pingcap/tidb/util/mathutil"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.uber.org/multierr"
 	"go.uber.org/zap"
+	"golang.org/x/exp/slices"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )

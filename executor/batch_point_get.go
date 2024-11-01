@@ -17,7 +17,6 @@ package executor
 import (
 	"context"
 	"fmt"
-	"slices"
 	"sync/atomic"
 
 	"github.com/pingcap/failpoint"
@@ -37,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/logutil/consistency"
 	"github.com/pingcap/tidb/util/rowcodec"
+	"golang.org/x/exp/slices"
 )
 
 // BatchPointGetExec executes a bunch of point select queries.

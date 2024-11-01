@@ -15,11 +15,10 @@
 package local
 
 import (
-	"cmp"
-	"slices"
-
 	"github.com/google/uuid"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend"
+	"github.com/pingcap/tidb/util/cmp"
+	"golang.org/x/exp/slices"
 )
 
 // DiskUsage is an interface to obtain the size occupied locally of all engines

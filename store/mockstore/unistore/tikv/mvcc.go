@@ -17,12 +17,10 @@ package tikv
 import (
 	"bufio"
 	"bytes"
-	"cmp"
 	"context"
 	"fmt"
 	"math"
 	"os"
-	"slices"
 	"sort"
 	"sync/atomic"
 	"time"
@@ -42,10 +40,12 @@ import (
 	"github.com/pingcap/tidb/store/mockstore/unistore/tikv/mvcc"
 	"github.com/pingcap/tidb/store/mockstore/unistore/util/lockwaiter"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/cmp"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/rowcodec"
 	"github.com/tikv/client-go/v2/oracle"
 	"go.uber.org/zap"
+	"golang.org/x/exp/slices"
 )
 
 // MVCCStore is a wrapper of badger.DB to provide MVCC functions.

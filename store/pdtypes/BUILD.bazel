@@ -17,5 +17,6 @@ go_library(
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_kvproto//pkg/metapb",
         "@com_github_pingcap_kvproto//pkg/pdpb",
+        "@org_golang_x_exp//slices",
     ],
 )

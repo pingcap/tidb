@@ -16,12 +16,10 @@ package executor
 
 import (
 	"bytes"
-	"cmp"
 	"container/heap"
 	"context"
 	"fmt"
 	"runtime/trace"
-	"slices"
 	"sort"
 	"sync"
 	"sync/atomic"
@@ -44,6 +42,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/cmp"
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/mathutil"
@@ -51,6 +50,7 @@ import (
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tipb/go-tipb"
 	"go.uber.org/zap"
+	"golang.org/x/exp/slices"
 )
 
 var (

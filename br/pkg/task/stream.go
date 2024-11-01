@@ -21,7 +21,6 @@ import (
 	"fmt"
 	"math"
 	"net/http"
-	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -59,6 +58,7 @@ import (
 	"github.com/tikv/client-go/v2/oracle"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.uber.org/zap"
+	"golang.org/x/exp/slices"
 )
 
 const (

@@ -15,18 +15,18 @@
 package collate
 
 import (
-	"cmp"
 	"fmt"
-	"slices"
 	"sync/atomic"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/parser/charset"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
+	"github.com/pingcap/tidb/util/cmp"
 	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
+	"golang.org/x/exp/slices"
 )
 
 var (

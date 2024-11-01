@@ -18,7 +18,6 @@ import (
 	"context"
 	gjson "encoding/json"
 	"fmt"
-	"slices"
 	"strings"
 
 	"github.com/pingcap/errors"
@@ -34,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/sqlexec"
+	"golang.org/x/exp/slices"
 )
 
 type showPlacementLabelsResultBuilder struct {

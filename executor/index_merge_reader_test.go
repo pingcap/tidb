@@ -15,11 +15,9 @@
 package executor_test
 
 import (
-	"cmp"
 	"fmt"
 	"math/rand"
 	"regexp"
-	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -30,8 +28,10 @@ import (
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/testkit/testutil"
 	"github.com/pingcap/tidb/util"
+	"github.com/pingcap/tidb/util/cmp"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/stretchr/testify/require"
+	"golang.org/x/exp/slices"
 )
 
 func TestSingleTableRead(t *testing.T) {

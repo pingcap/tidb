@@ -15,13 +15,13 @@
 package schemacmp
 
 import (
-	"slices"
 	"strings"
 
 	"github.com/pingcap/tidb/parser/format"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/types"
+	"golang.org/x/exp/slices"
 )
 
 const (

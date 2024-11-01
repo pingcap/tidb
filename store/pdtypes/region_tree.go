@@ -16,9 +16,9 @@ package pdtypes
 
 import (
 	"bytes"
-	"slices"
 
 	"github.com/pingcap/kvproto/pkg/metapb"
+	"golang.org/x/exp/slices"
 )
 
 // Region is a mock of PD's core.RegionInfo. For testing purpose.
