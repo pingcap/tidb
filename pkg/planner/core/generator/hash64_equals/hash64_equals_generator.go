@@ -34,7 +34,7 @@ import (
 // If a field is tagged with `hash64-equals`, then it will be computed in hash64 and equals func.
 // If a field is not tagged, then it will be skipped.
 func GenHash64Equals4LogicalOps() ([]byte, error) {
-	var structures = []any{logicalop.LogicalJoin{}}
+	var structures = []any{logicalop.LogicalJoin{}, logicalop.LogicalAggregation{}}
 	c := new(cc)
 	c.write(codeGenHash64EqualsPrefix)
 	for _, s := range structures {
@@ -86,7 +86,7 @@ func genHash64EqualsForLogicalOps(x any) ([]byte, error) {
 		}
 		leftCallName := "op." + vType.Field(i).Name
 		rightCallName := "op2." + vType.Field(i).Name
-		c.EqualsElement(f.Type, leftCallName, rightCallName)
+		c.EqualsElement(f.Type, leftCallName, rightCallName, "i")
 	}
 	c.write("return true")
 	c.write("}")
@@ -97,6 +97,8 @@ func logicalOpName2PlanCodecString(name string) string {
 	switch name {
 	case "LogicalJoin":
 		return "plancodec.TypeJoin"
+	case "LogicalAggregation":
+		return "plancodec.TypeAgg"
 	default:
 		return ""
 	}
@@ -107,13 +109,22 @@ func isHash64EqualsField(fType reflect.StructField) bool {
 }
 
 // EqualsElement EqualsElements generate the equals function for every field inside logical op.
-func (c *cc) EqualsElement(fType reflect.Type, lhs, rhs string) {
+func (c *cc) EqualsElement(fType reflect.Type, lhs, rhs string, i string) {
 	switch fType.Kind() {
 	case reflect.Slice:
 		c.write("if len(%v) != len(%v) { return false }", lhs, rhs)
-		c.write("for i, one := range %v {", lhs)
+		c.write("for %v, one := range %v {", i, lhs)
 		// one more round
-		c.EqualsElement(fType.Elem(), "one", rhs+"[i]")
+		rhs = rhs + "[" + i + "]"
+		// for ?, one := range [][][][]...
+		// for use i for out-most ref, for each level deeper, appending another i for simple.
+		// and you will see:
+		// for i, one range := [][][]
+		//    for ii, one range :=  [][]
+		//        for iii, one := range []
+		// and so on...
+		newi := i + "i"
+		c.EqualsElement(fType.Elem(), "one", rhs, newi)
 		c.write("}")
 	case reflect.String, reflect.Bool, reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64,
 		reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64, reflect.Float32, reflect.Float64:
