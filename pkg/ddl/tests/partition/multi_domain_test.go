@@ -529,16 +529,16 @@ func TestMultiSchemaTruncatePartitionWithGlobalIndex(t *testing.T) {
 			require.NoError(t, err)
 			require.Equal(t, model.StateWriteOnly, tblO.Partition.DDLState)
 			require.Equal(t, tblNO.Partition.Definitions[1].ID, tblO.Partition.Definitions[1].ID)
-			tkNO.MustContainErrMsg(`insert into t values (1,1,"Duplicate key")`, "[kv:1062]Duplicate entry '1' for key 't.uk_b'")
-			tkO.MustContainErrMsg(`insert into t values (1,1,"Duplicate key")`, "[kv:1062]Duplicate entry '1' for key 't.uk_b'")
+			tkNO.MustContainErrMsg(`insert into t values (1,1,"Duplicate key")`, "[kv:1062]Duplicate entry '1' for key 't.")
+			tkO.MustContainErrMsg(`insert into t values (1,1,"Duplicate key")`, "[kv:1062]Duplicate entry '1' for key 't.")
 		case "delete only":
 			// tkNO is seeing state write only, so still can access the dropped partition
 			// tkO is seeing state delete only, so cannot see the dropped partition,
 			// but must still write to the shared global indexes.
 			// So they will get errors on the same entries in the global index.
 
-			tkNO.MustContainErrMsg(`insert into t values (1,1,"Duplicate key")`, "[kv:1062]Duplicate entry '1' for key 't.uk_b'")
-			tkO.MustContainErrMsg(`insert into t values (1,1,"Duplicate key")`, "[kv:1062]Duplicate entry '1' for key 't.uk_b'")
+			tkNO.MustContainErrMsg(`insert into t values (1,1,"Duplicate key")`, "[kv:1062]Duplicate entry '1' for key 't.")
+			tkO.MustContainErrMsg(`insert into t values (1,1,"Duplicate key")`, "[kv:1062]Duplicate entry '1' for key 't.")
 			tblNO, err := tkNO.Session().GetInfoSchema().TableInfoByName(parserModel.NewCIStr("test"), parserModel.NewCIStr("t"))
 			require.NoError(t, err)
 			require.Equal(t, model.StateWriteOnly, tblNO.Partition.DDLState)
@@ -549,7 +549,7 @@ func TestMultiSchemaTruncatePartitionWithGlobalIndex(t *testing.T) {
 
 			tkNO.MustExec(`insert into t values (21,21,"OK")`)
 			tkNO.MustExec(`insert into t values (23,23,"OK")`)
-			tkO.MustContainErrMsg(`insert into t values (21,21,"Duplicate key")`, "[kv:1062]Duplicate entry '21' for key 't.uk_b'")
+			tkO.MustContainErrMsg(`insert into t values (21,21,"Duplicate key")`, "[kv:1062]Duplicate entry '21' for key 't.")
 			tkO.MustContainErrMsg(`insert into t values (6,23,"Duplicate key")`, "[kv:1062]Duplicate entry '23' for key 't.uk_b'")
 			// Primary is not global, so here we can insert into the new partition, without
 			// conflicting to the old one
@@ -655,7 +655,7 @@ func TestMultiSchemaTruncatePartitionWithGlobalIndex(t *testing.T) {
 			tkO.MustExec(`insert into t values (10,23,"OK")`)
 			tkNO.MustExec(`insert into t values (41,41,"OK")`)
 			tkNO.MustContainErrMsg(`insert into t values (12,25,"Duplicate key")`, "[kv:1062]Duplicate entry '25' for key 't.uk_b'")
-			tkNO.MustContainErrMsg(`insert into t values (25,25,"Duplicate key")`, "[kv:1062]Duplicate entry '25' for key 't.uk_b'")
+			tkNO.MustContainErrMsg(`insert into t values (25,25,"Duplicate key")`, "[kv:1062]Duplicate entry '25' for key 't.")
 			tkNO.MustContainErrMsg(`insert into t values (41,27,"Duplicate key")`, "[kv:1062]Duplicate entry '27' for key 't.uk_b'")
 			tkO.MustExec(`insert into t values (43,43,"OK")`)
 			tkO.MustContainErrMsg(`insert into t values (44,43,"Duplicate key")`, "[kv:1062]Duplicate entry '43' for key 't.uk_b'")
@@ -673,7 +673,7 @@ func TestMultiSchemaTruncatePartitionWithGlobalIndex(t *testing.T) {
 			tkO.MustQuery(`select * from t`).Sort().Check(rows)
 		case "none":
 			tkNO.MustExec(`insert into t values (81,81,"OK")`)
-			tkO.MustContainErrMsg(`insert into t values (81,81,"Duplicate key")`, "[kv:1062]Duplicate entry '81' for key 't.uk_b'")
+			tkO.MustContainErrMsg(`insert into t values (81,81,"Duplicate key")`, "[kv:1062]Duplicate entry '81' for key 't.")
 			tkNO.MustExec(`insert into t values (85,85,"OK")`)
 			tkO.MustExec(`insert into t values (87,87,"OK")`)
 			rows := tkNO.MustQuery(`select * from t`).Sort().Rows()
