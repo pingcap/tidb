@@ -683,7 +683,7 @@ func (p *Percentile[valueType]) Sum() float64 {
 // String implements the RuntimeStats interface.
 func (e *basicCopRuntimeStats) String() string {
 	if e.storeType == "tiflash" {
-		return fmt.Sprintf("time:%v, loops:%d, threads:%d, ", FormatDuration(time.Duration(e.consume.Load())), e.loop.Load(), e.threads) + e.tiflashScanContext.String()
+		return fmt.Sprintf("time:%v, loops:%d, threads:%d, ", FormatDuration(time.Duration(e.consume.Load())), e.loop.Load(), e.threads) + e.tiflashScanContext.String() + e.tiFlashWaitSummary.String()
 	}
 	return fmt.Sprintf("time:%v, loops:%d", FormatDuration(time.Duration(e.consume.Load())), e.loop.Load())
 }
@@ -835,7 +835,7 @@ func (crs *CopRuntimeStats) GetTasks() (totalTasks int32) {
 }
 
 // MergeBasicStats traverses basicCopRuntimeStats in the CopRuntimeStats and collects some useful information.
-func (crs *CopRuntimeStats) MergeBasicStats() (procTimes Percentile[Duration], totalTime time.Duration, totalTasks, totalLoops, totalThreads int32, totalTiFlashScanContext TiFlashScanContext) {
+func (crs *CopRuntimeStats) MergeBasicStats() (procTimes Percentile[Duration], totalTime time.Duration, totalTasks, totalLoops, totalThreads int32, totalTiFlashScanContext TiFlashScanContext, totalTiFlashWaitSummary TiFlashWaitSummary) {
 	totalTiFlashScanContext = TiFlashScanContext{
 		regionsOfInstance: make(map[string]uint64),
 	}
@@ -845,6 +845,7 @@ func (crs *CopRuntimeStats) MergeBasicStats() (procTimes Percentile[Duration], t
 		totalLoops += instanceStats.loop.Load()
 		totalThreads += instanceStats.threads
 		totalTiFlashScanContext.Merge(instanceStats.tiflashScanContext)
+		totalTiFlashWaitSummary.Merge(instanceStats.tiFlashWaitSummary)
 		totalTasks += instanceStats.totalTasks
 	}
 	return
@@ -855,17 +856,20 @@ func (crs *CopRuntimeStats) String() string {
 		return ""
 	}
 
-	procTimes, totalTime, totalTasks, totalLoops, totalThreads, totalTiFlashScanContext := crs.MergeBasicStats()
+	procTimes, totalTime, totalTasks, totalLoops, totalThreads, totalTiFlashScanContext, totalTiFlashWaitSummary := crs.MergeBasicStats()
 	avgTime := time.Duration(totalTime.Nanoseconds() / int64(totalTasks))
 	isTiFlashCop := crs.storeType == "tiflash"
 
 	buf := bytes.NewBuffer(make([]byte, 0, 16))
 	{
-		printTiFlashScanContext := func() {
+		printTiFlashSpecificInfo := func() {
 			if isTiFlashCop {
 				fmt.Fprintf(buf, ", threads:%d}", totalThreads)
 				if !totalTiFlashScanContext.Empty() {
 					buf.WriteString(", " + totalTiFlashScanContext.String())
+				}
+				if !totalTiFlashWaitSummary.Empty() {
+					buf.WriteString(", " + totalTiFlashWaitSummary.String())
 				}
 			} else {
 				buf.WriteString("}")
@@ -873,12 +877,12 @@ func (crs *CopRuntimeStats) String() string {
 		}
 		if totalTasks == 1 {
 			fmt.Fprintf(buf, "%v_task:{time:%v, loops:%d", crs.storeType, FormatDuration(time.Duration(procTimes.GetPercentile(0))), totalLoops)
-			printTiFlashScanContext()
+			printTiFlashSpecificInfo()
 		} else {
 			fmt.Fprintf(buf, "%v_task:{proc max:%v, min:%v, avg: %v, p80:%v, p95:%v, iters:%v, tasks:%v",
 				crs.storeType, FormatDuration(time.Duration(procTimes.GetMax().GetFloat64())), FormatDuration(time.Duration(procTimes.GetMin().GetFloat64())), FormatDuration(avgTime),
 				FormatDuration(time.Duration(procTimes.GetPercentile(0.8))), FormatDuration(time.Duration(procTimes.GetPercentile(0.95))), totalLoops, totalTasks)
-			printTiFlashScanContext()
+			printTiFlashSpecificInfo()
 		}
 	}
 	if !isTiFlashCop {
@@ -1242,16 +1246,38 @@ func (waitSummary *TiFlashWaitSummary) Clone() TiFlashWaitSummary {
 
 // String dumps TiFlashWaitSummary info as string
 func (waitSummary *TiFlashWaitSummary) String() string {
-	output := fmt.Sprintf("tiflash_wait:{"+
-		"minTSO_wait_time:%dms, "+
-		"pipeline_b:%dms, "+
-		"mvcc_output_rows:%dms"+
-		"}",
-		time.Duration(waitSummary.minTSOWaitTime).Milliseconds(),
-		time.Duration(waitSummary.pipelineBreakerWaitTime).Milliseconds(),
-		time.Duration(waitSummary.pipelineQueueWaitTime).Milliseconds(),
-	)
-	return output
+	if waitSummary.Empty() {
+		return ""
+	}
+	buf := bytes.NewBuffer(make([]byte, 0, 32))
+	buf.WriteString("tiflash_wait: {")
+	empty := true
+	if waitSummary.minTSOWaitTime > 0 {
+		buf.WriteString("minTSO_wait: ")
+		buf.WriteString(strconv.FormatInt(time.Duration(waitSummary.minTSOWaitTime).Milliseconds(), 10))
+		buf.WriteString("ms")
+		empty = false
+	}
+	if waitSummary.pipelineBreakerWaitTime > 0 {
+		if !empty {
+			buf.WriteString(", ")
+		}
+		buf.WriteString("pipeline_breaker_wait: ")
+		buf.WriteString(strconv.FormatInt(time.Duration(waitSummary.pipelineBreakerWaitTime).Milliseconds(), 10))
+		buf.WriteString("ms")
+		empty = false
+	}
+	if waitSummary.pipelineQueueWaitTime > 0 {
+		if !empty {
+			buf.WriteString(", ")
+		}
+		buf.WriteString("pipeline_queue_wait: ")
+		buf.WriteString(strconv.FormatInt(time.Duration(waitSummary.pipelineQueueWaitTime).Milliseconds(), 10))
+		buf.WriteString("ms")
+		empty = false
+	}
+	buf.WriteString("}")
+	return buf.String()
 }
 
 // Merge make sum to merge the information in TiFlashWaitSummary
@@ -1262,6 +1288,14 @@ func (waitSummary *TiFlashWaitSummary) Merge(other TiFlashWaitSummary) {
 		waitSummary.pipelineBreakerWaitTime = other.pipelineBreakerWaitTime
 		waitSummary.pipelineQueueWaitTime = other.pipelineQueueWaitTime
 	}
+}
+
+// Empty check whether TiFlashWaitSummary is Empty, not all tidb executors have tiflash wait summary
+func (waitSummary *TiFlashWaitSummary) Empty() bool {
+	res := waitSummary.minTSOWaitTime == 0 &&
+		waitSummary.pipelineBreakerWaitTime == 0 &&
+		waitSummary.pipelineQueueWaitTime == 0
+	return res
 }
 
 // BasicRuntimeStats is the basic runtime stats.
