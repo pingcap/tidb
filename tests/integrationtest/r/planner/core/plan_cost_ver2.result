@@ -27,16 +27,16 @@ set @@tidb_index_lookup_concurrency=1;
 set @@tidb_cost_model_version=2;
 explain format='verbose' select /*+ use_index(t, primary) */ a from t where a<1;
 id	estRows	estCost	task	access object	operator info
-TableReader_6	1.00	23021.47	root		data:TableRangeScan_5
-└─TableRangeScan_5	1.00	22958.11	cop[tikv]	table:t	range:[-inf,1), keep order:false
+TableReader_6	1.00	290.67	root		data:TableRangeScan_5
+└─TableRangeScan_5	1.00	227.31	cop[tikv]	table:t	range:[-inf,1), keep order:false
 explain format='verbose' select /*+ use_index(t, primary) */ a from t where a<10;
 id	estRows	estCost	task	access object	operator info
-TableReader_6	10.00	25637.48	root		data:TableRangeScan_5
-└─TableRangeScan_5	10.00	25003.88	cop[tikv]	table:t	range:[-inf,10), keep order:false
+TableReader_6	10.00	2906.68	root		data:TableRangeScan_5
+└─TableRangeScan_5	10.00	2273.08	cop[tikv]	table:t	range:[-inf,10), keep order:false
 explain format='verbose' select /*+ use_index(t, primary) */ a from t where a<100;
 id	estRows	estCost	task	access object	operator info
-TableReader_6	100.00	51797.59	root		data:TableRangeScan_5
-└─TableRangeScan_5	100.00	45461.59	cop[tikv]	table:t	range:[-inf,100), keep order:false
+TableReader_6	100.00	29066.80	root		data:TableRangeScan_5
+└─TableRangeScan_5	100.00	22730.80	cop[tikv]	table:t	range:[-inf,100), keep order:false
 explain format='verbose' select /*+ use_index(t, b) */ b from t where b<1;
 id	estRows	estCost	task	access object	operator info
 IndexReader_6	1.00	226.16	root		index:IndexRangeScan_5
