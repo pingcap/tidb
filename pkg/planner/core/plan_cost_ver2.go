@@ -169,12 +169,14 @@ func (p *PhysicalTableScan) GetPlanCostVer2(taskType property.TaskType, option *
 		hasForce := sessionVars.StmtCtx.GetHasForce()
 		tblColHists := p.tblColHists
 
-		// preferRangeScan check here is same as in skylinePruning
-		preferRangeScanCondition := allowPreferRangeScan && (hasForce || tblColHists.Pseudo || tblColHists.RealtimeCount < 1)
 		// hasHighModifyCount tracks the high risk of a tablescan where auto-analyze had not yet updated the table row count
 		hasHighModifyCount := tblColHists.ModifyCount > tblColHists.RealtimeCount
 		// hasLowEstimate is a check to capture a unique customer case where modifyCount is used for tablescan estimate (but it not adequately understood why)
 		hasLowEstimate := rows > 1 && tblColHists.ModifyCount < tblColHists.RealtimeCount && int64(rows) <= tblColHists.ModifyCount
+		// hasUnreliableStats is a check for pseudo or zero stats
+		hasUnreliableStats := tblColHists.Pseudo || tblColHists.RealtimeCount < 1
+		// preferRangeScan check here is same as in skylinePruning
+		preferRangeScanCondition := allowPreferRangeScan && (hasForce || hasHighModifyCount || hasLowEstimate || hasUnreliableStats)
 		var unsignedIntHandle bool
 		if p.Table.PKIsHandle {
 			if pkColInfo := p.Table.GetPkColInfo(); pkColInfo != nil {
@@ -183,7 +185,7 @@ func (p *PhysicalTableScan) GetPlanCostVer2(taskType property.TaskType, option *
 		}
 		hasFullRangeScan := ranger.HasFullRange(p.Ranges, unsignedIntHandle)
 
-		shouldApplyPenalty := (hasForce || hasFullRangeScan) && (preferRangeScanCondition || hasHighModifyCount || hasLowEstimate)
+		shouldApplyPenalty := hasFullRangeScan && preferRangeScanCondition
 		if shouldApplyPenalty {
 			newRowCount := math.Min(MaxPenaltyRowCount, max(float64(tblColHists.ModifyCount), float64(tblColHists.RealtimeCount)))
 			p.PlanCostVer2 = costusage.SumCostVer2(p.PlanCostVer2, scanCostVer2(option, newRowCount, rowSize, scanFactor))
