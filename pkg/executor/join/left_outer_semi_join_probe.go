@@ -72,19 +72,19 @@ func (j *leftOuterSemiJoinProbe) SetChunkForProbe(chunk *chunk.Chunk) (err error
 	return nil
 }
 
-func (j *leftOuterSemiJoinProbe) NeedScanRowTable() bool {
+func (*leftOuterSemiJoinProbe) NeedScanRowTable() bool {
 	return false
 }
 
-func (j *leftOuterSemiJoinProbe) IsScanRowTableDone() bool {
+func (*leftOuterSemiJoinProbe) IsScanRowTableDone() bool {
 	panic("should not reach here")
 }
 
-func (j *leftOuterSemiJoinProbe) InitForScanRowTable() {
+func (*leftOuterSemiJoinProbe) InitForScanRowTable() {
 	panic("should not reach here")
 }
 
-func (j *leftOuterSemiJoinProbe) ScanRowTable(joinResult *hashjoinWorkerResult, sqlKiller *sqlkiller.SQLKiller) *hashjoinWorkerResult {
+func (*leftOuterSemiJoinProbe) ScanRowTable(joinResult *hashjoinWorkerResult, _ *sqlkiller.SQLKiller) *hashjoinWorkerResult {
 	return joinResult
 }
 
@@ -116,7 +116,7 @@ func (j *leftOuterSemiJoinProbe) Probe(joinResult *hashjoinWorkerResult, sqlKill
 	return true, joinResult
 }
 
-func (j *leftOuterSemiJoinProbe) probeForInnerSideBuildWithOtherCondition(chk, joinedChk *chunk.Chunk, remainCap int, sqlKiller *sqlkiller.SQLKiller) (err error) {
+func (j *leftOuterSemiJoinProbe) probeForInnerSideBuildWithOtherCondition(chk, joinedChk *chunk.Chunk, _ int, sqlKiller *sqlkiller.SQLKiller) (err error) {
 	j.nextProcessProbeRowIdx = j.currentProbeRow
 	err = j.concatenateProbeAndBuildRows(joinedChk, sqlKiller)
 	if err != nil {
@@ -181,7 +181,7 @@ func (j *leftOuterSemiJoinProbe) buildResultForMatchedRowsAfterOtherCondition(ch
 	}
 }
 
-func (j *leftOuterSemiJoinProbe) probeForInnerSideBuildWithoutOtherCondition(chk, joinedChk *chunk.Chunk, remainCap int, sqlKiller *sqlkiller.SQLKiller) (err error) {
+func (j *leftOuterSemiJoinProbe) probeForInnerSideBuildWithoutOtherCondition(_, joinedChk *chunk.Chunk, remainCap int, sqlKiller *sqlkiller.SQLKiller) (err error) {
 	meta := j.ctx.hashTableMeta
 	startProbeRow := j.currentProbeRow
 	tagHelper := j.ctx.hashTableContext.tagHelper
@@ -198,9 +198,8 @@ func (j *leftOuterSemiJoinProbe) probeForInnerSideBuildWithoutOtherCondition(chk
 				j.currentProbeRow++
 				remainCap--
 				continue
-			} else {
-				j.probeCollision++
 			}
+			j.probeCollision++
 			j.matchedRowsHeaders[j.currentProbeRow] = getNextRowAddress(candidateRow, tagHelper, j.matchedRowsHashValue[j.currentProbeRow])
 		} else {
 			j.finishLookupCurrentProbeRow()
@@ -343,8 +342,8 @@ func (j *leftOuterSemiJoinProbe) truncateSelect() {
 			// Switch to a new group
 			_, ok := j.skipRowIdxSet[currentGroupIdx]
 			if ok {
-				// When row index n is set to true in `j.selected`, it will be outputed as result.
-				// However, in semi join, rows in left side should be outputed for only once.
+				// When row index n is set to true in `j.selected`, it will be outputted as result.
+				// However, in semi join, rows in left side should be outputted for only once.
 				//
 				// When one left side row has been set to true before, we should not output it again.
 				// groupMark: | 0 | 0 | 0 | 0 | 1 | 1 | 2 | 2 | 2 | 0 | 0 | 1 | 2 |
