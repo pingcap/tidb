@@ -27,9 +27,11 @@ import (
 	"github.com/go-sql-driver/mysql"
 	"github.com/gorilla/mux"
 	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/statistics/handle"
 	"github.com/pingcap/tidb/testkit"
+	"github.com/pingcap/tidb/util/replayer"
 	"github.com/stretchr/testify/require"
 	"golang.org/x/exp/slices"
 )
@@ -242,6 +244,68 @@ func forEachFileInZipBytes(t *testing.T, b []byte, fn func(file *zip.File)) {
 	}
 }
 
+func prepareData4Issue56458(t *testing.T, client *testServerClient, dom *domain.Domain) string {
+	h := dom.StatsHandle()
+	db, err := sql.Open("mysql", client.getDSN())
+	require.NoError(t, err, "Error connecting")
+	defer func() {
+		err := db.Close()
+		require.NoError(t, err)
+	}()
+	tk := testkit.NewDBTestKit(t, db)
+
+	tk.MustExec("create database planReplayer")
+	tk.MustExec("create database planReplayer2")
+	tk.MustExec("use planReplayer")
+	tk.MustExec("create placement policy p " +
+		"LEARNERS=1 " +
+		"LEARNER_CONSTRAINTS=\"[+region=cn-west-1]\" " +
+		"FOLLOWERS=3 " +
+		"FOLLOWER_CONSTRAINTS=\"[+disk=ssd]\"")
+	tk.MustExec("CREATE TABLE v(id INT PRIMARY KEY AUTO_INCREMENT);")
+	err = h.HandleDDLEvent(<-h.DDLEventCh())
+	require.NoError(t, err)
+	tk.MustExec("create table planReplayer2.t(a int, b int, INDEX ia (a), INDEX ib (b), author_id int, FOREIGN KEY (author_id) REFERENCES planReplayer.v(id) ON DELETE CASCADE);")
+	err = h.HandleDDLEvent(<-h.DDLEventCh())
+	require.NoError(t, err)
+	tk.MustExec("create table t(a int, b int, INDEX ia (a), INDEX ib (b), author_id int, FOREIGN KEY (author_id) REFERENCES planReplayer2.t(a) ON DELETE CASCADE) placement policy p;")
+	err = h.HandleDDLEvent(<-h.DDLEventCh())
+	require.NoError(t, err)
+
+	tk.MustExec("create global binding for select a, b from t where a in (1, 2, 3) using select a, b from t use index (ib) where a in (1, 2, 3)")
+	rows := tk.MustQuery("plan replayer dump explain select a, b from t where a in (1, 2, 3)")
+	require.True(t, rows.Next(), "unexpected data")
+	var filename string
+	require.NoError(t, rows.Scan(&filename))
+	require.NoError(t, rows.Close())
+	rows = tk.MustQuery("select @@tidb_last_plan_replayer_token")
+	require.True(t, rows.Next(), "unexpected data")
+	return filename
+}
+
+func prepareServerAndClientForTest(t *testing.T, store kv.Storage, dom *domain.Domain) (srv *Server, client *testServerClient) {
+	driver := NewTiDBDriver(store)
+	client = newTestServerClient()
+
+	cfg := newTestConfig()
+	cfg.Port = client.port
+	cfg.Status.StatusPort = client.statusPort
+	cfg.Status.ReportStatus = true
+
+	srv, err := NewServer(cfg, driver)
+	srv.SetDomain(dom)
+	require.NoError(t, err)
+	go func() {
+		err := srv.Run(nil)
+		require.NoError(t, err)
+	}()
+	<-RunInGoTestChan
+	client.port = getPortFromTCPAddr(srv.listener.Addr())
+	client.statusPort = getPortFromTCPAddr(srv.statusListener.Addr())
+	client.waitUntilServerOnline()
+	return
+}
+
 func TestIssue56458(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	dom, err := session.GetDomain(store)
@@ -261,7 +325,7 @@ func TestIssue56458(t *testing.T) {
 	}
 
 	// 2-1. check the plan replayer file from manual command
-	resp0, err := client.FetchStatus(filepath.Join("/plan_replayer/dump/", filename))
+	resp0, err := client.fetchStatus(filepath.Join("/plan_replayer/dump/", filename))
 	require.NoError(t, err)
 	defer func() {
 		require.NoError(t, resp0.Body.Close())
@@ -277,15 +341,15 @@ func TestIssue56458(t *testing.T) {
 		"global_bindings.sql",
 		"meta.txt",
 		"schema/planreplayer.t.schema.txt",
-		"schema/planreplayer.v.schema.txt",
+		"schema/planreplayer2.v.schema.txt",
 		"schema/schema_meta.txt",
 		"session_bindings.sql",
 		"sql/sql0.sql",
 		"sql_meta.toml",
 		"stats/planreplayer.t.json",
-		"stats/planreplayer.v.json",
+		"stats/planreplayer2.v.json",
 		"statsMem/planreplayer.t.txt",
-		"statsMem/planreplayer.v.txt",
+		"statsMem/planreplayer2.v.txt",
 		"table_tiflash_replica.txt",
 		"variables.toml",
 	}, filesInReplayer)
