@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/planner/cascades"
 	pctx "github.com/pingcap/tidb/pkg/planner/context"
 	"github.com/pingcap/tidb/pkg/planner/core"
@@ -43,6 +44,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/topsql"
+	"github.com/pingcap/tidb/pkg/util/tracing"
 	"go.uber.org/zap"
 )
 
@@ -127,6 +129,7 @@ func getPlanFromNonPreparedPlanCache(ctx context.Context, sctx sessionctx.Contex
 
 // Optimize does optimization and creates a Plan.
 func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is infoschema.InfoSchema) (plan base.Plan, slice types.NameSlice, retErr error) {
+	defer tracing.StartRegion(ctx, "planner.Optimize").End()
 	sessVars := sctx.GetSessionVars()
 	pctx := sctx.GetPlanCtx()
 	if sessVars.StmtCtx.EnableOptimizerDebugTrace {
@@ -165,7 +168,9 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 	}
 
 	tableHints := hint.ExtractTableHintsFromStmtNode(node, sessVars.StmtCtx)
-	originStmtHints, _, warns := hint.ParseStmtHints(tableHints, setVarHintChecker, byte(kv.ReplicaReadFollower))
+	originStmtHints, _, warns := hint.ParseStmtHints(tableHints,
+		setVarHintChecker, hypoIndexChecker(ctx, is),
+		sessVars.CurrentDB, byte(kv.ReplicaReadFollower))
 	sessVars.StmtCtx.StmtHints = originStmtHints
 	for _, warn := range warns {
 		sessVars.StmtCtx.AppendWarning(warn)
@@ -297,7 +302,9 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 				core.DebugTraceTryBinding(pctx, binding.Hint)
 			}
 			hint.BindHint(stmtNode, binding.Hint)
-			curStmtHints, _, curWarns := hint.ParseStmtHints(binding.Hint.GetStmtHints(), setVarHintChecker, byte(kv.ReplicaReadFollower))
+			curStmtHints, _, curWarns := hint.ParseStmtHints(binding.Hint.GetStmtHints(),
+				setVarHintChecker, hypoIndexChecker(ctx, is),
+				sessVars.CurrentDB, byte(kv.ReplicaReadFollower))
 			sessVars.StmtCtx.StmtHints = curStmtHints
 			// update session var by hint /set_var/
 			for name, val := range sessVars.StmtCtx.StmtHints.SetVars {
@@ -488,7 +495,7 @@ func optimize(ctx context.Context, sctx pctx.PlanContext, node ast.Node, is info
 	// we need the table information to check privilege, which is collected
 	// into the visitInfo in the logical plan builder.
 	if pm := privilege.GetPrivilegeManager(sctx); pm != nil {
-		visitInfo := core.VisitInfo4PrivCheck(is, node, builder.GetVisitInfo())
+		visitInfo := core.VisitInfo4PrivCheck(ctx, is, node, builder.GetVisitInfo())
 		if err := core.CheckPrivilege(activeRoles, pm, visitInfo); err != nil {
 			return nil, nil, 0, err
 		}
@@ -576,7 +583,7 @@ func buildLogicalPlan(ctx context.Context, sctx pctx.PlanContext, node ast.Node,
 
 func handleInvalidBinding(ctx context.Context, sctx pctx.PlanContext, level string, binding bindinfo.Binding) {
 	sessionHandle := sctx.Value(bindinfo.SessionBindInfoKeyType).(bindinfo.SessionBindingHandle)
-	err := sessionHandle.DropSessionBinding(binding.SQLDigest)
+	err := sessionHandle.DropSessionBinding([]string{binding.SQLDigest})
 	if err != nil {
 		logutil.Logger(ctx).Info("drop session bindings failed")
 	}
@@ -598,6 +605,21 @@ func setVarHintChecker(varName, hint string) (ok bool, warning error) {
 		warning = plannererrors.ErrNotHintUpdatable.FastGenByArgs(varName)
 	}
 	return true, warning
+}
+
+func hypoIndexChecker(ctx context.Context, is infoschema.InfoSchema) func(db, tbl, col model.CIStr) (colOffset int, err error) {
+	return func(db, tbl, col model.CIStr) (colOffset int, err error) {
+		t, err := is.TableByName(ctx, db, tbl)
+		if err != nil {
+			return 0, errors.NewNoStackErrorf("table '%v.%v' doesn't exist", db, tbl)
+		}
+		for i, tblCol := range t.Cols() {
+			if tblCol.Name.L == col.L {
+				return i, nil
+			}
+		}
+		return 0, errors.NewNoStackErrorf("can't find column %v in table %v.%v", col, db, tbl)
+	}
 }
 
 func init() {

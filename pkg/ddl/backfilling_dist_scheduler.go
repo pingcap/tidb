@@ -248,7 +248,7 @@ func generateNonPartitionPlan(
 	useCloud bool,
 	instanceCnt int,
 ) (metas [][]byte, err error) {
-	tbl, err := getTable((*asAutoIDRequirement)(d.ddlCtx), job.SchemaID, tblInfo)
+	tbl, err := getTable(d.ddlCtx.getAutoIDRequirement(), job.SchemaID, tblInfo)
 	if err != nil {
 		return nil, err
 	}
@@ -294,7 +294,7 @@ func generateNonPartitionPlan(
 			return true, nil
 		}
 
-		regionBatch := calculateRegionBatch(len(recordRegionMetas), instanceCnt, !useCloud)
+		regionBatch := CalculateRegionBatch(len(recordRegionMetas), instanceCnt, !useCloud)
 
 		for i := 0; i < len(recordRegionMetas); i += regionBatch {
 			end := i + regionBatch
@@ -329,7 +329,8 @@ func generateNonPartitionPlan(
 	return subTaskMetas, nil
 }
 
-func calculateRegionBatch(totalRegionCnt int, instanceCnt int, useLocalDisk bool) int {
+// CalculateRegionBatch is exported for test.
+func CalculateRegionBatch(totalRegionCnt int, instanceCnt int, useLocalDisk bool) int {
 	failpoint.Inject("mockRegionBatch", func(val failpoint.Value) {
 		failpoint.Return(val.(int))
 	})

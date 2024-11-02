@@ -20,6 +20,7 @@ import (
 	"crypto/tls"
 	"fmt"
 	"math"
+	"os"
 	"slices"
 	"strconv"
 	"strings"
@@ -637,13 +638,69 @@ type FullBackupStorageConfig struct {
 
 type InitSchemaConfig struct {
 	// required
-	IsNewTask      bool
-	HasFullRestore bool
-	TableFilter    filter.Filter
+	IsNewTask   bool
+	TableFilter filter.Filter
 
 	// optional
 	TiFlashRecorder   *tiflashrec.TiFlashRecorder
 	FullBackupStorage *FullBackupStorageConfig
+}
+
+const UnsafePITRLogRestoreStartBeforeAnyUpstreamUserDDL = "UNSAFE_PITR_LOG_RESTORE_START_BEFORE_ANY_UPSTREAM_USER_DDL"
+
+func (rc *LogClient) generateDBReplacesFromFullBackupStorage(
+	ctx context.Context,
+	cfg *InitSchemaConfig,
+) (map[stream.UpstreamID]*stream.DBReplace, error) {
+	dbReplaces := make(map[stream.UpstreamID]*stream.DBReplace)
+	if cfg.FullBackupStorage == nil {
+		envVal, ok := os.LookupEnv(UnsafePITRLogRestoreStartBeforeAnyUpstreamUserDDL)
+		if ok && len(envVal) > 0 {
+			log.Info(fmt.Sprintf("the environment variable %s is active, skip loading the base schemas.", UnsafePITRLogRestoreStartBeforeAnyUpstreamUserDDL))
+			return dbReplaces, nil
+		}
+		return nil, errors.Errorf("miss upstream table information at `start-ts`(%d) but the full backup path is not specified", rc.startTS)
+	}
+	s, err := storage.New(ctx, cfg.FullBackupStorage.Backend, cfg.FullBackupStorage.Opts)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	fullBackupTables, err := initFullBackupTables(ctx, s, cfg.TableFilter)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	for _, t := range fullBackupTables {
+		dbName, _ := utils.GetSysDBCIStrName(t.DB.Name)
+		newDBInfo, exist := rc.dom.InfoSchema().SchemaByName(dbName)
+		if !exist {
+			log.Info("db not existed", zap.String("dbname", dbName.String()))
+			continue
+		}
+
+		dbReplace, exist := dbReplaces[t.DB.ID]
+		if !exist {
+			dbReplace = stream.NewDBReplace(t.DB.Name.O, newDBInfo.ID)
+			dbReplaces[t.DB.ID] = dbReplace
+		}
+
+		if t.Info == nil {
+			// If the db is empty, skip it.
+			continue
+		}
+		newTableInfo, err := restore.GetTableSchema(rc.GetDomain(), dbName, t.Info.Name)
+		if err != nil {
+			log.Info("table not existed", zap.String("tablename", dbName.String()+"."+t.Info.Name.String()))
+			continue
+		}
+
+		dbReplace.TableMap[t.Info.ID] = &stream.TableReplace{
+			Name:         newTableInfo.Name.O,
+			TableID:      newTableInfo.ID,
+			PartitionMap: restoreutils.GetPartitionIDMap(newTableInfo, t.Info),
+			IndexMap:     restoreutils.GetIndexIDMap(newTableInfo, t.Info),
+		}
+	}
+	return dbReplaces, nil
 }
 
 // InitSchemasReplaceForDDL gets schemas information Mapping from old schemas to new schemas.
@@ -658,7 +715,7 @@ func (rc *LogClient) InitSchemasReplaceForDDL(
 		// the id map doesn't need to construct only when it is not the first execution
 		needConstructIdMap bool
 
-		dbReplaces = make(map[stream.UpstreamID]*stream.DBReplace)
+		dbReplaces map[stream.UpstreamID]*stream.DBReplace
 	)
 
 	// not new task, load schemas map from external storage
@@ -673,66 +730,31 @@ func (rc *LogClient) InitSchemasReplaceForDDL(
 
 	// a new task, but without full snapshot restore, tries to load
 	// schemas map whose `restore-ts`` is the task's `start-ts`.
-	if len(dbMaps) <= 0 && !cfg.HasFullRestore {
+	if len(dbMaps) <= 0 && cfg.FullBackupStorage == nil {
 		log.Info("try to load pitr id maps of the previous task", zap.Uint64("start-ts", rc.startTS))
 		needConstructIdMap = true
 		dbMaps, err = rc.initSchemasMap(ctx, rc.GetClusterID(ctx), rc.startTS)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		info := rc.dom.InfoSchema()
-		shcemas := info.AllSchemaNames()
-		for _, schema := range shcemas {
-			for _, table := range info.SchemaTables(schema) {
-				tableInfo := table.Meta()
-				if tableInfo.TiFlashReplica != nil && tableInfo.TiFlashReplica.Count > 0 {
-					return nil, errors.Errorf("exist table(s) have tiflash replica, please remove it before restore")
-				}
+		existTiFlashTable := false
+		rc.dom.InfoSchema().ListTablesWithSpecialAttribute(func(tableInfo *model.TableInfo) bool {
+			if tableInfo.TiFlashReplica != nil && tableInfo.TiFlashReplica.Count > 0 {
+				existTiFlashTable = true
 			}
+			return false
+		})
+		if existTiFlashTable {
+			return nil, errors.Errorf("exist table(s) have tiflash replica, please remove it before restore")
 		}
 	}
 
 	if len(dbMaps) <= 0 {
 		log.Info("no id maps, build the table replaces from cluster and full backup schemas")
 		needConstructIdMap = true
-		s, err := storage.New(ctx, cfg.FullBackupStorage.Backend, cfg.FullBackupStorage.Opts)
+		dbReplaces, err = rc.generateDBReplacesFromFullBackupStorage(ctx, cfg)
 		if err != nil {
 			return nil, errors.Trace(err)
-		}
-		fullBackupTables, err := initFullBackupTables(ctx, s, cfg.TableFilter)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		for _, t := range fullBackupTables {
-			dbName, _ := utils.GetSysDBCIStrName(t.DB.Name)
-			newDBInfo, exist := rc.dom.InfoSchema().SchemaByName(dbName)
-			if !exist {
-				log.Info("db not existed", zap.String("dbname", dbName.String()))
-				continue
-			}
-
-			dbReplace, exist := dbReplaces[t.DB.ID]
-			if !exist {
-				dbReplace = stream.NewDBReplace(t.DB.Name.O, newDBInfo.ID)
-				dbReplaces[t.DB.ID] = dbReplace
-			}
-
-			if t.Info == nil {
-				// If the db is empty, skip it.
-				continue
-			}
-			newTableInfo, err := restore.GetTableSchema(rc.GetDomain(), dbName, t.Info.Name)
-			if err != nil {
-				log.Info("table not existed", zap.String("tablename", dbName.String()+"."+t.Info.Name.String()))
-				continue
-			}
-
-			dbReplace.TableMap[t.Info.ID] = &stream.TableReplace{
-				Name:         newTableInfo.Name.O,
-				TableID:      newTableInfo.ID,
-				PartitionMap: restoreutils.GetPartitionIDMap(newTableInfo, t.Info),
-				IndexMap:     restoreutils.GetIndexIDMap(newTableInfo, t.Info),
-			}
 		}
 	} else {
 		dbReplaces = stream.FromSchemaMaps(dbMaps)
@@ -1235,7 +1257,6 @@ const (
 func (rc *LogClient) generateRepairIngestIndexSQLs(
 	ctx context.Context,
 	ingestRecorder *ingestrec.IngestRecorder,
-	allSchema []*model.DBInfo,
 	taskName string,
 ) ([]checkpoint.CheckpointIngestIndexRepairSQL, bool, error) {
 	var sqls []checkpoint.CheckpointIngestIndexRepairSQL
@@ -1255,7 +1276,9 @@ func (rc *LogClient) generateRepairIngestIndexSQLs(
 		}
 	}
 
-	ingestRecorder.UpdateIndexInfo(allSchema)
+	if err := ingestRecorder.UpdateIndexInfo(rc.dom.InfoSchema()); err != nil {
+		return sqls, false, errors.Trace(err)
+	}
 	if err := ingestRecorder.Iterate(func(_, indexID int64, info *ingestrec.IngestIndexInfo) error {
 		var (
 			addSQL  strings.Builder
@@ -1319,19 +1342,18 @@ func (rc *LogClient) generateRepairIngestIndexSQLs(
 
 // RepairIngestIndex drops the indexes from IngestRecorder and re-add them.
 func (rc *LogClient) RepairIngestIndex(ctx context.Context, ingestRecorder *ingestrec.IngestRecorder, g glue.Glue, taskName string) error {
-	info := rc.dom.InfoSchema()
-
-	sqls, fromCheckpoint, err := rc.generateRepairIngestIndexSQLs(ctx, ingestRecorder, info.AllSchemas(), taskName)
+	sqls, fromCheckpoint, err := rc.generateRepairIngestIndexSQLs(ctx, ingestRecorder, taskName)
 	if err != nil {
 		return errors.Trace(err)
 	}
 
+	info := rc.dom.InfoSchema()
 	console := glue.GetConsole(g)
 NEXTSQL:
 	for _, sql := range sqls {
 		progressTitle := fmt.Sprintf("repair ingest index %s for table %s.%s", sql.IndexName, sql.SchemaName, sql.TableName)
 
-		tableInfo, err := info.TableByName(sql.SchemaName, sql.TableName)
+		tableInfo, err := info.TableByName(ctx, sql.SchemaName, sql.TableName)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -1555,7 +1577,7 @@ func (rc *LogClient) FailpointDoChecksumForLogRestore(
 		reidRules[downstreamID] = upstreamID
 	}
 	for upstreamID, downstreamID := range idrules {
-		newTable, ok := infoSchema.TableByID(downstreamID)
+		newTable, ok := infoSchema.TableByID(ctx, downstreamID)
 		if !ok {
 			// a dropped table
 			continue

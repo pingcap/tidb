@@ -5,7 +5,7 @@ create table t1(a int not null, c int not null);
 create table t2(a int not null, b int not null, c int not null, primary key(a,b));
 insert into t1 values(1,1);
 insert into t2 values(1,1,1),(1,2,1);
-analyze table t1,t2;
+analyze table t1,t2 all columns;
 explain format = 'brief' select /*+ TIDB_INLJ(t2) */ * from t1 join t2 on t1.a = t2.a and t1.c = t2.c;
 id	estRows	task	access object	operator info
 IndexJoin	2.00	root		inner join, inner:IndexLookUp, outer key:planner__core__casetest__index__index.t1.a, inner key:planner__core__casetest__index__index.t2.a, equal cond:eq(planner__core__casetest__index__index.t1.a, planner__core__casetest__index__index.t2.a), eq(planner__core__casetest__index__index.t1.c, planner__core__casetest__index__index.t2.c)
@@ -205,7 +205,7 @@ create table t1(a int not null, b int not null, c int not null);
 create table t2(a int not null, b int not null, c int not null, index idx1(a,b), index idx2(c));
 insert into t1 values(1,1,1),(1,1,1),(1,1,1);
 insert into t2 values(1,1,1),(1,1,2),(1,1,3);
-analyze table t1, t2;
+analyze table t1, t2 all columns;
 explain format = 'brief' select /*+ inl_join(t2) */ * from t1, t2 where t1.a = t2.a and t1.b = t2.b and t1.c = t2.c;
 id	estRows	task	access object	operator info
 IndexJoin	3.00	root		inner join, inner:IndexLookUp, outer key:planner__core__casetest__index__index.t1.c, inner key:planner__core__casetest__index__index.t2.c, equal cond:eq(planner__core__casetest__index__index.t1.a, planner__core__casetest__index__index.t2.a), eq(planner__core__casetest__index__index.t1.b, planner__core__casetest__index__index.t2.b), eq(planner__core__casetest__index__index.t1.c, planner__core__casetest__index__index.t2.c)
@@ -277,11 +277,11 @@ a	b	c	d	a	b	c	d
 3	333	3.3000000000	13	3	333	3.3000000000	13
 explain  format = 'brief'select /*+ inl_merge_join(t1, t2) */ * from t t1 join t t2 on t1.a = t2.a;
 id	estRows	task	access object	operator info
-IndexMergeJoin	3.00	root		inner join, inner:TableReader, outer key:planner__core__casetest__index__index.t.a, inner key:planner__core__casetest__index__index.t.a
+MergeJoin	3.00	root		inner join, left key:planner__core__casetest__index__index.t.a, right key:planner__core__casetest__index__index.t.a
 ├─TableReader(Build)	3.00	root		data:TableFullScan
-│ └─TableFullScan	3.00	cop[tikv]	table:t1	keep order:false
-└─TableReader(Probe)	3.00	root		data:TableRangeScan
-  └─TableRangeScan	3.00	cop[tikv]	table:t2	range: decided by [eq(planner__core__casetest__index__index.t.a, planner__core__casetest__index__index.t.a)], keep order:true
+│ └─TableFullScan	3.00	cop[tikv]	table:t2	keep order:true
+└─TableReader(Probe)	3.00	root		data:TableFullScan
+  └─TableFullScan	3.00	cop[tikv]	table:t1	keep order:true
 select /*+ inl_merge_join(t1, t2) */ * from t t1 join t t2 on t1.a = t2.a;
 a	b	c	d	a	b	c	d
 1	111	1.1000000000	11	1	111	1.1000000000	11
@@ -328,14 +328,12 @@ a	b	c	d	a	b	c	d
 3	333	3.3000000000	13	3	333	3.3000000000	13
 explain  format = 'brief'select /*+ inl_merge_join(t1,t2) */ t2.a, t2.c, t2.d from t t1 left join t t2 on t1.a = t2.c;
 id	estRows	task	access object	operator info
-IndexMergeJoin	3.00	root		left outer join, inner:Projection, outer key:Column#9, inner key:planner__core__casetest__index__index.t.c
+HashJoin	3.00	root		left outer join, equal:[eq(Column#9, planner__core__casetest__index__index.t.c)]
 ├─Projection(Build)	3.00	root		cast(planner__core__casetest__index__index.t.a, decimal(10,0) BINARY)->Column#9
 │ └─IndexReader	3.00	root		index:IndexFullScan
 │   └─IndexFullScan	3.00	cop[tikv]	table:t1, index:c(c)	keep order:false
-└─Projection(Probe)	3.00	root		planner__core__casetest__index__index.t.a, planner__core__casetest__index__index.t.c, planner__core__casetest__index__index.t.d
-  └─IndexLookUp	3.00	root		
-    ├─IndexRangeScan(Build)	3.00	cop[tikv]	table:t2, index:c(c)	range: decided by [eq(planner__core__casetest__index__index.t.c, Column#9)], keep order:true
-    └─TableRowIDScan(Probe)	3.00	cop[tikv]	table:t2	keep order:false
+└─TableReader(Probe)	3.00	root		data:TableFullScan
+  └─TableFullScan	3.00	cop[tikv]	table:t2	keep order:false
 select /*+ inl_merge_join(t1,t2) */ t2.a, t2.c, t2.d from t t1 left join t t2 on t1.a = t2.c;
 a	c	d
 NULL	NULL	NULL
@@ -662,7 +660,7 @@ explain format = 'verbose' insert into t3 select a, b, c from t1 where f = 2;
 id	estRows	estCost	task	access object	operator info
 Insert_1	N/A	N/A	root		N/A
 └─Projection_6	1.00	253.74	root		planner__core__casetest__index__index.t1.a, planner__core__casetest__index__index.t1.b, planner__core__casetest__index__index.t1.c
-  └─Point_Get_7	1.00	253.44	root	table:t1, index:f(f)	
+  └─Point_Get_8	1.00	253.44	root	table:t1, index:f(f)	
 show warnings;
 Level	Code	Message
 Note	1105	unique index f of t1 is selected since the path only has point ranges with double scan

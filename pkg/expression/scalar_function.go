@@ -40,7 +40,7 @@ type ScalarFunction struct {
 	FuncName model.CIStr
 	// RetType is the type that ScalarFunction returns.
 	// TODO: Implement type inference here, now we use ast's return type temporarily.
-	RetType           *types.FieldType
+	RetType           *types.FieldType `plan-cache-clone:"shallow"`
 	Function          builtinFunc
 	hashcode          []byte
 	canonicalhashcode []byte
@@ -120,19 +120,19 @@ func (sf *ScalarFunction) Vectorized() bool {
 }
 
 // StringWithCtx implements Expression interface.
-func (sf *ScalarFunction) StringWithCtx(ctx ParamValues) string {
+func (sf *ScalarFunction) StringWithCtx(ctx ParamValues, redact string) string {
 	var buffer bytes.Buffer
 	fmt.Fprintf(&buffer, "%s(", sf.FuncName.L)
 	switch sf.FuncName.L {
 	case ast.Cast:
 		for _, arg := range sf.GetArgs() {
-			buffer.WriteString(arg.StringWithCtx(ctx))
+			buffer.WriteString(arg.StringWithCtx(ctx, redact))
 			buffer.WriteString(", ")
 			buffer.WriteString(sf.RetType.String())
 		}
 	default:
 		for i, arg := range sf.GetArgs() {
-			buffer.WriteString(arg.StringWithCtx(ctx))
+			buffer.WriteString(arg.StringWithCtx(ctx, redact))
 			if i+1 != len(sf.GetArgs()) {
 				buffer.WriteString(", ")
 			}
@@ -144,7 +144,7 @@ func (sf *ScalarFunction) StringWithCtx(ctx ParamValues) string {
 
 // String returns the string representation of the function
 func (sf *ScalarFunction) String() string {
-	return sf.StringWithCtx(exprctx.EmptyParamValues)
+	return sf.StringWithCtx(exprctx.EmptyParamValues, errors.RedactLogDisable)
 }
 
 // typeInferForNull infers the NULL constants field type and set the field type
@@ -338,7 +338,15 @@ func (sf *ScalarFunction) Clone() Expression {
 		FuncName: sf.FuncName,
 		RetType:  sf.RetType,
 		Function: sf.Function.Clone(),
-		hashcode: sf.hashcode,
+	}
+	// An implicit assumption: ScalarFunc.RetType == ScalarFunc.builtinFunc.RetType
+	if sf.hashcode != nil {
+		c.hashcode = make([]byte, len(sf.hashcode))
+		copy(c.hashcode, sf.hashcode)
+	}
+	if sf.canonicalhashcode != nil {
+		c.canonicalhashcode = make([]byte, len(sf.canonicalhashcode))
+		copy(c.canonicalhashcode, sf.canonicalhashcode)
 	}
 	c.SetCharsetAndCollation(sf.CharsetAndCollation())
 	c.SetCoercibility(sf.Coercibility())

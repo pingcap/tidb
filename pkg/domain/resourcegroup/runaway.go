@@ -16,6 +16,7 @@ package resourcegroup
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -110,12 +111,13 @@ func GenRunawayQueriesStmt(records []*RunawayRecord) (string, []any) {
 type QuarantineRecord struct {
 	ID                int64
 	ResourceGroupName string
-	StartTime         time.Time
-	EndTime           time.Time
-	Watch             rmpb.RunawayWatchType
-	WatchText         string
-	Source            string
-	Action            rmpb.RunawayAction
+	// startTime and endTime are in UTC.
+	StartTime time.Time
+	EndTime   time.Time
+	Watch     rmpb.RunawayWatchType
+	WatchText string
+	Source    string
+	Action    rmpb.RunawayAction
 }
 
 // GetRecordKey is used to get the key in ttl cache.
@@ -255,7 +257,7 @@ func (rm *RunawayManager) MarkSyncerInitialized() {
 }
 
 // DeriveChecker derives a RunawayChecker from the given resource group
-func (rm *RunawayManager) DeriveChecker(resourceGroupName, originalSQL, sqlDigest, planDigest string) *RunawayChecker {
+func (rm *RunawayManager) DeriveChecker(resourceGroupName, originalSQL, sqlDigest, planDigest string, startTime time.Time) *RunawayChecker {
 	group, err := rm.resourceGroupCtl.GetResourceGroup(resourceGroupName)
 	if err != nil || group == nil {
 		logutil.BgLogger().Warn("cannot setup up runaway checker", zap.Error(err))
@@ -272,7 +274,7 @@ func (rm *RunawayManager) DeriveChecker(resourceGroupName, originalSQL, sqlDiges
 		rm.metricsMap.Store(resourceGroupName, counter)
 	}
 	counter.Inc()
-	return newRunawayChecker(rm, resourceGroupName, group.RunawaySettings, originalSQL, sqlDigest, planDigest)
+	return newRunawayChecker(rm, resourceGroupName, group.RunawaySettings, originalSQL, sqlDigest, planDigest, startTime)
 }
 
 func (rm *RunawayManager) markQuarantine(resourceGroupName, convict string, watchType rmpb.RunawayWatchType, action rmpb.RunawayAction, ttl time.Duration, now *time.Time) {
@@ -476,7 +478,7 @@ type RunawayChecker struct {
 	watchAction   rmpb.RunawayAction
 }
 
-func newRunawayChecker(manager *RunawayManager, resourceGroupName string, setting *rmpb.RunawaySettings, originalSQL, sqlDigest, planDigest string) *RunawayChecker {
+func newRunawayChecker(manager *RunawayManager, resourceGroupName string, setting *rmpb.RunawaySettings, originalSQL, sqlDigest, planDigest string, startTime time.Time) *RunawayChecker {
 	c := &RunawayChecker{
 		manager:           manager,
 		resourceGroupName: resourceGroupName,
@@ -488,7 +490,7 @@ func newRunawayChecker(manager *RunawayManager, resourceGroupName string, settin
 		markedByWatch:     false,
 	}
 	if setting != nil {
-		c.deadline = time.Now().Add(time.Duration(setting.Rule.ExecElapsedTimeMs) * time.Millisecond)
+		c.deadline = startTime.Add(time.Duration(setting.Rule.ExecElapsedTimeMs) * time.Millisecond)
 	}
 	return c
 }
@@ -522,6 +524,34 @@ func (r *RunawayChecker) BeforeExecutor() error {
 		}
 	}
 	return nil
+}
+
+// CheckKillAction checks whether the query should be killed.
+func (r *RunawayChecker) CheckKillAction() bool {
+	if r.setting == nil && !r.markedByWatch {
+		return false
+	}
+	// mark by rule
+	marked := r.markedByRule.Load()
+	if !marked {
+		now := time.Now()
+		until := r.deadline.Sub(now)
+		if until > 0 {
+			return false
+		}
+		if r.markedByRule.CompareAndSwap(false, true) {
+			r.markRunaway(RunawayMatchTypeIdentify, r.setting.Action, &now)
+			if !r.markedByWatch {
+				r.markQuarantine(&now)
+			}
+		}
+	}
+	return r.setting.Action == rmpb.RunawayAction_Kill
+}
+
+// Rule returns the rule of the runaway checker.
+func (r *RunawayChecker) Rule() string {
+	return fmt.Sprintf("execElapsedTimeMs:%s", time.Duration(r.setting.Rule.ExecElapsedTimeMs)*time.Millisecond)
 }
 
 // BeforeCopRequest checks runaway and modifies the request if necessary before sending coprocessor request.

@@ -98,7 +98,8 @@ const (
 	// EnvVarKeyspaceName is the system env name for keyspace name.
 	EnvVarKeyspaceName = "KEYSPACE_NAME"
 	// MaxTokenLimit is the max token limit value.
-	MaxTokenLimit = 1024 * 1024
+	MaxTokenLimit  = 1024 * 1024
+	DefSchemaLease = 45 * time.Second
 )
 
 // Valid config maps
@@ -711,9 +712,7 @@ type Performance struct {
 	TCPNoDelay          bool    `toml:"tcp-no-delay" json:"tcp-no-delay"`
 	CrossJoin           bool    `toml:"cross-join" json:"cross-join"`
 	DistinctAggPushDown bool    `toml:"distinct-agg-push-down" json:"distinct-agg-push-down"`
-	// Whether enable projection push down for coprocessors (both tikv & tiflash), default false.
-	ProjectionPushDown bool   `toml:"projection-push-down" json:"projection-push-down"`
-	MaxTxnTTL          uint64 `toml:"max-txn-ttl" json:"max-txn-ttl"`
+	MaxTxnTTL           uint64  `toml:"max-txn-ttl" json:"max-txn-ttl"`
 	// Deprecated
 	MemProfileInterval string `toml:"-" json:"-"`
 
@@ -754,6 +753,9 @@ type Performance struct {
 
 	// ConcurrentlyInitStats indicates whether to use concurrency to init stats.
 	ConcurrentlyInitStats bool `toml:"concurrently-init-stats" json:"concurrently-init-stats"`
+
+	// Deprecated: this config will not have any effect
+	ProjectionPushDown bool `toml:"projection-push-down" json:"projection-push-down"`
 }
 
 // PlanCache is the PlanCache section of the config.
@@ -911,7 +913,7 @@ var defaultConf = Config{
 	Path:                         "/tmp/tidb",
 	RunDDL:                       true,
 	SplitTable:                   true,
-	Lease:                        "45s",
+	Lease:                        DefSchemaLease.String(),
 	TokenLimit:                   1000,
 	OOMUseTmpStorage:             true,
 	TempDir:                      DefTempDir,
@@ -1006,7 +1008,7 @@ var defaultConf = Config{
 		TxnEntrySizeLimit:                 DefTxnEntrySizeLimit,
 		TxnTotalSizeLimit:                 DefTxnTotalSizeLimit,
 		DistinctAggPushDown:               false,
-		ProjectionPushDown:                false,
+		ProjectionPushDown:                true,
 		CommitterConcurrency:              defTiKVCfg.CommitterConcurrency,
 		MaxTxnTTL:                         defTiKVCfg.MaxTxnTTL, // 1hour
 		GOGC:                              100,

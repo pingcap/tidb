@@ -958,9 +958,9 @@ func getTableInfo(t *testing.T, dom *domain.Domain, db, tb string) *model.TableI
 	err := dom.Reload()
 	require.NoError(t, err)
 	is := dom.InfoSchema()
-	tbl, err := is.TableByName(model.NewCIStr(db), model.NewCIStr(tb))
+	tbl, err := is.TableByName(context.Background(), model.NewCIStr(db), model.NewCIStr(tb))
 	require.NoError(t, err)
-	_, exist := is.TableByID(tbl.Meta().ID)
+	_, exist := is.TableByID(context.Background(), tbl.Meta().ID)
 	require.True(t, exist)
 	return tbl.Meta()
 }

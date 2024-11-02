@@ -24,7 +24,7 @@ func getTableInfo(t *testing.T, mock *mock.Cluster, db, table string) *model.Tab
 	require.NoError(t, err)
 	cDBName := model.NewCIStr(db)
 	cTableName := model.NewCIStr(table)
-	tableInfo, err := info.TableByName(cDBName, cTableName)
+	tableInfo, err := info.TableByName(context.Background(), cDBName, cTableName)
 	require.NoError(t, err)
 	return tableInfo.Meta()
 }

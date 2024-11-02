@@ -43,13 +43,13 @@ func getDDLSchemaVer(t *testing.T, d ddl.DDL) int64 {
 func restartWorkers(t *testing.T, store kv.Storage, d *domain.Domain) {
 	err := d.DDL().Stop()
 	require.NoError(t, err)
-	newDDL := ddl.NewDDL(context.Background(),
+	newDDL, newDDLExecutor := ddl.NewDDL(context.Background(),
 		ddl.WithStore(d.Store()),
 		ddl.WithInfoCache(d.InfoCache()),
-		ddl.WithLease(d.DDL().GetLease()),
+		ddl.WithLease(d.GetSchemaLease()),
 		ddl.WithSchemaLoader(d),
 	)
-	d.SetDDL(newDDL)
+	d.SetDDL(newDDL, newDDLExecutor)
 	err = newDDL.Start(pools.NewResourcePool(func() (pools.Resource, error) {
 		session := testkit.NewTestKit(t, store).Session()
 		session.GetSessionVars().CommonGlobalLoaded = true
@@ -59,15 +59,16 @@ func restartWorkers(t *testing.T, store kv.Storage, d *domain.Domain) {
 }
 
 // runInterruptedJob should be called concurrently with restartWorkers
-func runInterruptedJob(t *testing.T, store kv.Storage, d ddl.DDL, job *model.Job, doneCh chan error) {
+func runInterruptedJob(t *testing.T, store kv.Storage, d ddl.Executor, job *model.Job, doneCh chan error) {
 	var (
 		history *model.Job
 		err     error
 	)
 
+	de := d.(ddl.ExecutorForTest)
 	ctx := testkit.NewTestKit(t, store).Session()
 	ctx.SetValue(sessionctx.QueryString, "skip")
-	err = d.DoDDLJob(ctx, job)
+	err = de.DoDDLJobWrapper(ctx, ddl.NewJobWrapper(job, true))
 	if errors.Is(err, context.Canceled) {
 		endlessLoopTime := time.Now().Add(time.Minute)
 		for history == nil {
@@ -89,9 +90,9 @@ func runInterruptedJob(t *testing.T, store kv.Storage, d ddl.DDL, job *model.Job
 
 func testRunInterruptedJob(t *testing.T, store kv.Storage, d *domain.Domain, job *model.Job) {
 	done := make(chan error, 1)
-	go runInterruptedJob(t, store, d.DDL(), job, done)
+	go runInterruptedJob(t, store, d.DDLExecutor(), job, done)
 
-	ticker := time.NewTicker(d.DDL().GetLease())
+	ticker := time.NewTicker(d.GetSchemaLease())
 	defer ticker.Stop()
 	for {
 		select {
@@ -132,13 +133,14 @@ func TestStat(t *testing.T) {
 
 	dbInfo, err := testSchemaInfo(store, "test_restart")
 	require.NoError(t, err)
-	testCreateSchema(t, testkit.NewTestKit(t, store).Session(), dom.DDL(), dbInfo)
+	de := dom.DDLExecutor().(ddl.ExecutorForTest)
+	testCreateSchema(t, testkit.NewTestKit(t, store).Session(), de, dbInfo)
 
 	job := buildDropSchemaJob(dbInfo)
 	done := make(chan error, 1)
-	go runInterruptedJob(t, store, dom.DDL(), job, done)
+	go runInterruptedJob(t, store, dom.DDLExecutor(), job, done)
 
-	ticker := time.NewTicker(dom.DDL().GetLease() * 1)
+	ticker := time.NewTicker(dom.GetSchemaLease() * 1)
 	defer ticker.Stop()
 	ver := getDDLSchemaVer(t, dom.DDL())
 LOOP:
@@ -160,9 +162,10 @@ func TestTableResume(t *testing.T) {
 
 	dbInfo, err := testSchemaInfo(store, "test_table")
 	require.NoError(t, err)
-	testCreateSchema(t, testkit.NewTestKit(t, store).Session(), dom.DDL(), dbInfo)
+	de := dom.DDLExecutor().(ddl.ExecutorForTest)
+	testCreateSchema(t, testkit.NewTestKit(t, store).Session(), de, dbInfo)
 	defer func() {
-		testDropSchema(t, testkit.NewTestKit(t, store).Session(), dom.DDL(), dbInfo)
+		testDropSchema(t, testkit.NewTestKit(t, store).Session(), de, dbInfo)
 	}()
 
 	require.True(t, dom.DDL().OwnerManager().IsOwner())

@@ -111,7 +111,7 @@ type PhysicalTable struct {
 	TimeColumn *model.ColumnInfo
 }
 
-// NewBasePhysicalTable create a new PhysicalTable with specific timeColunm.
+// NewBasePhysicalTable create a new PhysicalTable with specific timeColumn.
 func NewBasePhysicalTable(schema model.CIStr,
 	tbl *model.TableInfo,
 	partition model.CIStr,

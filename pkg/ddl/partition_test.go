@@ -15,16 +15,17 @@
 package ddl_test
 
 import (
+	"context"
 	"testing"
 	"time"
 
 	"github.com/pingcap/tidb/pkg/ddl"
-	"github.com/pingcap/tidb/pkg/ddl/util/callback"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/stretchr/testify/require"
 )
@@ -32,19 +33,19 @@ import (
 func TestDropAndTruncatePartition(t *testing.T) {
 	store, domain := testkit.CreateMockStoreAndDomainWithSchemaLease(t, testLease)
 
-	d := domain.DDL()
 	dbInfo, err := testSchemaInfo(store, "test_partition")
 	require.NoError(t, err)
-	testCreateSchema(t, testkit.NewTestKit(t, store).Session(), d, dbInfo)
+	de := domain.DDLExecutor().(ddl.ExecutorForTest)
+	testCreateSchema(t, testkit.NewTestKit(t, store).Session(), de, dbInfo)
 	// generate 5 partition in tableInfo.
 	tblInfo, partIDs := buildTableInfoWithPartition(t, store)
 	ctx := testkit.NewTestKit(t, store).Session()
-	testCreateTable(t, ctx, d, dbInfo, tblInfo)
-	testDropPartition(t, ctx, d, dbInfo, tblInfo, []string{"p0", "p1"})
+	testCreateTable(t, ctx, de, dbInfo, tblInfo)
+	testDropPartition(t, ctx, de, dbInfo, tblInfo, []string{"p0", "p1"})
 
 	newIDs, err := genGlobalIDs(store, 2)
 	require.NoError(t, err)
-	testTruncatePartition(t, ctx, d, dbInfo, tblInfo, []int64{partIDs[3], partIDs[4]}, newIDs)
+	testTruncatePartition(t, ctx, de, dbInfo, tblInfo, []int64{partIDs[3], partIDs[4]}, newIDs)
 }
 
 func buildTableInfoWithPartition(t *testing.T, store kv.Storage) (*model.TableInfo, []int64) {
@@ -117,10 +118,10 @@ func buildDropPartitionJob(dbInfo *model.DBInfo, tblInfo *model.TableInfo, partN
 	}
 }
 
-func testDropPartition(t *testing.T, ctx sessionctx.Context, d ddl.DDL, dbInfo *model.DBInfo, tblInfo *model.TableInfo, partNames []string) *model.Job {
+func testDropPartition(t *testing.T, ctx sessionctx.Context, d ddl.ExecutorForTest, dbInfo *model.DBInfo, tblInfo *model.TableInfo, partNames []string) *model.Job {
 	job := buildDropPartitionJob(dbInfo, tblInfo, partNames)
 	ctx.SetValue(sessionctx.QueryString, "skip")
-	err := d.DoDDLJob(ctx, job)
+	err := d.DoDDLJobWrapper(ctx, ddl.NewJobWrapper(job, true))
 	require.NoError(t, err)
 	v := getSchemaVer(t, ctx)
 	checkHistoryJobArgs(t, ctx, job.ID, &historyJobArgs{ver: v, tbl: tblInfo})
@@ -140,10 +141,10 @@ func buildTruncatePartitionJob(dbInfo *model.DBInfo, tblInfo *model.TableInfo, p
 	}
 }
 
-func testTruncatePartition(t *testing.T, ctx sessionctx.Context, d ddl.DDL, dbInfo *model.DBInfo, tblInfo *model.TableInfo, pids []int64, newIDs []int64) *model.Job {
+func testTruncatePartition(t *testing.T, ctx sessionctx.Context, d ddl.ExecutorForTest, dbInfo *model.DBInfo, tblInfo *model.TableInfo, pids []int64, newIDs []int64) *model.Job {
 	job := buildTruncatePartitionJob(dbInfo, tblInfo, pids, newIDs)
 	ctx.SetValue(sessionctx.QueryString, "skip")
-	err := d.DoDDLJob(ctx, job)
+	err := d.DoDDLJobWrapper(ctx, ddl.NewJobWrapper(job, true))
 	require.NoError(t, err)
 	v := getSchemaVer(t, ctx)
 	checkHistoryJobArgs(t, ctx, job.ID, &historyJobArgs{ver: v, tbl: tblInfo})
@@ -176,14 +177,12 @@ func TestReorganizePartitionRollback(t *testing.T) {
 	defer close(wait)
 	ddlDone := make(chan error)
 	defer close(ddlDone)
-	hook := &callback.TestDDLCallback{Do: do}
-	hook.OnJobRunAfterExported = func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunAfter", func(job *model.Job) {
 		if job.Type == model.ActionReorganizePartition && job.SchemaState == model.StateWriteReorganization {
 			<-wait
 			<-wait
 		}
-	}
-	do.DDL().SetHook(hook)
+	})
 
 	go func() {
 		tk2 := testkit.NewTestKit(t, store)
@@ -241,7 +240,7 @@ func TestReorganizePartitionRollback(t *testing.T) {
 		" PARTITION `p3` VALUES LESS THAN (8000000),\n" +
 		" PARTITION `p4` VALUES LESS THAN (10000000),\n" +
 		" PARTITION `p5` VALUES LESS THAN (MAXVALUE))"))
-	tbl, err := do.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t1"))
+	tbl, err := do.InfoSchema().TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t1"))
 	require.NoError(t, err)
 	require.NotNil(t, tbl.Meta().Partition)
 	require.Nil(t, tbl.Meta().Partition.AddingDefinitions)

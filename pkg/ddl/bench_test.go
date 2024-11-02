@@ -15,6 +15,7 @@
 package ddl_test
 
 import (
+	"context"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/ddl"
@@ -39,7 +40,7 @@ func BenchmarkExtractDatumByOffsets(b *testing.B) {
 	for i := 0; i < 8; i++ {
 		tk.MustExec("insert into t values (?, ?)", i, i)
 	}
-	tbl, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	tbl, err := dom.InfoSchema().TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(b, err)
 	tblInfo := tbl.Meta()
 	idxInfo := tblInfo.FindIndexByName("idx")
@@ -52,7 +53,7 @@ func BenchmarkExtractDatumByOffsets(b *testing.B) {
 	endKey := startKey.PrefixNext()
 	txn, err := store.Begin()
 	require.NoError(b, err)
-	copChunk := ddl.FetchChunk4Test(copCtx, tbl.(table.PhysicalTable), startKey, endKey, store, 10)
+	copChunk, err := FetchChunk4Test(copCtx, tbl.(table.PhysicalTable), startKey, endKey, store, 10)
 	require.NoError(b, err)
 	require.NoError(b, txn.Rollback())
 
@@ -65,7 +66,7 @@ func BenchmarkExtractDatumByOffsets(b *testing.B) {
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		ddl.ExtractDatumByOffsetsForTest(tk.Session().GetExprCtx().GetEvalCtx(), row, offsets, c.ExprColumnInfos, handleDataBuf)
+		ddl.ExtractDatumByOffsets(tk.Session().GetExprCtx().GetEvalCtx(), row, offsets, c.ExprColumnInfos, handleDataBuf)
 	}
 }
 
@@ -79,7 +80,7 @@ func BenchmarkGenerateIndexKV(b *testing.B) {
 	for i := 0; i < 8; i++ {
 		tk.MustExec("insert into t values (?, ?)", i, i)
 	}
-	tbl, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	tbl, err := dom.InfoSchema().TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(b, err)
 	tblInfo := tbl.Meta()
 	idxInfo := tblInfo.FindIndexByName("idx")

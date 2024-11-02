@@ -276,6 +276,7 @@ func SetSchemaDiffForRecoverSchema(diff *model.SchemaDiff, job *model.Job) error
 			OldTableID:  recoverTabsInfo[i].TableInfo.ID,
 		}
 	}
+	diff.ReadTableFromMeta = true
 	return nil
 }
 
@@ -371,7 +372,7 @@ func checkAllVersions(ctx context.Context, d *ddlCtx, job *model.Job, latestSche
 	})
 
 	// OwnerCheckAllVersions returns only when all TiDB schemas are synced(exclude the isolated TiDB).
-	err := d.schemaSyncer.OwnerCheckAllVersions(ctx, job.ID, latestSchemaVersion)
+	err := d.schemaVerSyncer.OwnerCheckAllVersions(ctx, job.ID, latestSchemaVersion)
 	if err != nil {
 		logutil.DDLLogger().Info("wait latest schema version encounter error", zap.Int64("ver", latestSchemaVersion),
 			zap.Int64("jobID", job.ID), zap.Duration("take time", time.Since(timeStart)), zap.Error(err))
@@ -390,7 +391,7 @@ func checkAllVersions(ctx context.Context, d *ddlCtx, job *model.Job, latestSche
 // but schema version might not sync.
 // So here we get the latest schema version to make sure all servers' schema version
 // update to the latest schema version in a cluster.
-func waitSchemaSynced(ctx context.Context, d *ddlCtx, job *model.Job, waitTime time.Duration) error {
+func waitSchemaSynced(ctx context.Context, d *ddlCtx, job *model.Job) error {
 	if !job.IsRunning() && !job.IsRollingback() && !job.IsDone() && !job.IsRollbackDone() {
 		return nil
 	}
@@ -413,5 +414,5 @@ func waitSchemaSynced(ctx context.Context, d *ddlCtx, job *model.Job, waitTime t
 		}
 	})
 
-	return waitSchemaChanged(ctx, d, waitTime, latestSchemaVersion, job)
+	return waitSchemaChanged(ctx, d, latestSchemaVersion, job)
 }

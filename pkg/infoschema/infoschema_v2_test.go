@@ -15,6 +15,7 @@
 package infoschema
 
 import (
+	"context"
 	"math"
 	"testing"
 
@@ -22,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/stretchr/testify/require"
 )
 
@@ -30,7 +32,7 @@ func TestV2Basic(t *testing.T) {
 	defer func() {
 		r.Store().Close()
 	}()
-	is := NewInfoSchemaV2(r, NewData())
+	is := NewInfoSchemaV2(r, nil, NewData())
 
 	schemaName := model.NewCIStr("testDB")
 	tableName := model.NewCIStr("test")
@@ -44,20 +46,21 @@ func TestV2Basic(t *testing.T) {
 	internal.AddTable(t, r.Store(), dbInfo, tblInfo)
 	is.base().schemaMetaVersion = 1
 	require.Equal(t, 1, len(is.AllSchemas()))
-	require.Equal(t, 0, len(is.SchemaTables(is.AllSchemas()[0].Name)))
 	ver, err := r.Store().CurrentVersion(kv.GlobalTxnScope)
 	require.NoError(t, err)
 	is.base().schemaMetaVersion = 2
 	is.ts = ver.Ver
 	require.Equal(t, 1, len(is.AllSchemas()))
-	require.Equal(t, 1, len(is.SchemaTables(is.AllSchemas()[0].Name)))
+	tblInfos, err := is.SchemaTableInfos(context.Background(), is.AllSchemas()[0].Name)
+	require.NoError(t, err)
+	require.Equal(t, 1, len(tblInfos))
 
 	getDBInfo, ok := is.SchemaByName(schemaName)
 	require.True(t, ok)
 	require.Equal(t, dbInfo, getDBInfo)
 	require.True(t, is.SchemaExists(schemaName))
 
-	getTableInfo, err := is.TableByName(schemaName, tableName)
+	getTableInfo, err := is.TableByName(context.Background(), schemaName, tableName)
 	require.NoError(t, err)
 	require.NotNil(t, getTableInfo)
 	require.True(t, is.TableExists(schemaName, tableName))
@@ -74,7 +77,7 @@ func TestV2Basic(t *testing.T) {
 	require.True(t, ok)
 	require.Equal(t, dbInfo, getDBInfo)
 
-	getTableInfo, ok = is.TableByID(tblInfo.ID)
+	getTableInfo, ok = is.TableByID(context.Background(), tblInfo.ID)
 	require.True(t, ok)
 	require.NotNil(t, getTableInfo)
 
@@ -83,7 +86,7 @@ func TestV2Basic(t *testing.T) {
 	require.Same(t, gotTblInfo, getTableInfo.Meta())
 
 	// negative id should always be seen as not exists
-	getTableInfo, ok = is.TableByID(-1)
+	getTableInfo, ok = is.TableByID(context.Background(), -1)
 	require.False(t, ok)
 	require.Nil(t, getTableInfo)
 	gotTblInfo, ok = is.TableInfoByID(-1)
@@ -97,18 +100,22 @@ func TestV2Basic(t *testing.T) {
 	require.False(t, ok)
 	require.Nil(t, gotTblInfo)
 
-	tables := is.SchemaTables(schemaName)
+	tables, err := is.SchemaTableInfos(context.Background(), schemaName)
+	require.NoError(t, err)
 	require.Equal(t, 1, len(tables))
-	require.Equal(t, tblInfo.ID, tables[0].Meta().ID)
+	require.Equal(t, tblInfo.ID, tables[0].ID)
 
-	tblInfos := is.SchemaTableInfos(schemaName)
+	tblInfos, err1 := is.SchemaTableInfos(context.Background(), schemaName)
+	require.NoError(t, err1)
 	require.Equal(t, 1, len(tblInfos))
-	require.Equal(t, tables[0].Meta(), tblInfos[0])
+	require.Equal(t, tables[0], tblInfos[0])
 
-	tables = is.SchemaTables(model.NewCIStr("notexist"))
+	tables, err = is.SchemaTableInfos(context.Background(), model.NewCIStr("notexist"))
+	require.NoError(t, err)
 	require.Equal(t, 0, len(tables))
 
-	tblInfos = is.SchemaTableInfos(model.NewCIStr("notexist"))
+	tblInfos, err = is.SchemaTableInfos(context.Background(), model.NewCIStr("notexist"))
+	require.NoError(t, err)
 	require.Equal(t, 0, len(tblInfos))
 
 	require.Equal(t, int64(2), is.SchemaMetaVersion())
@@ -121,7 +128,8 @@ func TestMisc(t *testing.T) {
 		r.Store().Close()
 	}()
 
-	builder, err := NewBuilder(r, nil, NewData()).InitWithDBInfos(nil, nil, nil, 1)
+	builder := NewBuilder(r, nil, NewData(), variable.SchemaCacheSize.Load() > 0)
+	err := builder.InitWithDBInfos(nil, nil, nil, 1)
 	require.NoError(t, err)
 	is := builder.Build(math.MaxUint64)
 	require.Len(t, is.AllResourceGroups(), 0)
@@ -243,7 +251,8 @@ func TestBundles(t *testing.T) {
 
 	schemaName := model.NewCIStr("testDB")
 	tableName := model.NewCIStr("test")
-	builder, err := NewBuilder(r, nil, NewData()).InitWithDBInfos(nil, nil, nil, 1)
+	builder := NewBuilder(r, nil, NewData(), variable.SchemaCacheSize.Load() > 0)
+	err := builder.InitWithDBInfos(nil, nil, nil, 1)
 	require.NoError(t, err)
 	is := builder.Build(math.MaxUint64)
 	require.Equal(t, 2, len(is.AllSchemas()))
@@ -268,7 +277,9 @@ func TestBundles(t *testing.T) {
 	_, err = builder.ApplyDiff(meta.NewMeta(txn), &model.SchemaDiff{Type: model.ActionCreateTable, Version: 2, SchemaID: dbInfo.ID, TableID: tblInfo.ID})
 	require.NoError(t, err)
 	is = builder.Build(math.MaxUint64)
-	require.Equal(t, 1, len(is.SchemaTables(dbInfo.Name)))
+	tblInfos, err := is.SchemaTableInfos(context.Background(), dbInfo.Name)
+	require.NoError(t, err)
+	require.Equal(t, 1, len(tblInfos))
 	require.NoError(t, txn.Rollback())
 
 	// test create policy
@@ -295,7 +306,7 @@ func TestBundles(t *testing.T) {
 	_, err = builder.ApplyDiff(meta.NewMeta(txn), &model.SchemaDiff{Type: model.ActionAlterTablePlacement, Version: 4, SchemaID: dbInfo.ID, TableID: tblInfo.ID})
 	require.NoError(t, err)
 	is = builder.Build(math.MaxUint64)
-	getTableInfo, err := is.TableByName(schemaName, tableName)
+	getTableInfo, err := is.TableByName(context.Background(), schemaName, tableName)
 	require.NoError(t, err)
 	require.Equal(t, policyRefInfo, getTableInfo.Meta().PlacementPolicyRef)
 	require.NoError(t, txn.Rollback())
@@ -309,7 +320,7 @@ func TestBundles(t *testing.T) {
 	_, err = builder.ApplyDiff(meta.NewMeta(txn), &model.SchemaDiff{Type: model.ActionAlterPlacementPolicy, Version: 5, SchemaID: policyInfo.ID})
 	require.NoError(t, err)
 	is = builder.Build(math.MaxUint64)
-	getTableInfo, err = is.TableByName(schemaName, tableName)
+	getTableInfo, err = is.TableByName(context.Background(), schemaName, tableName)
 	require.NoError(t, err)
 	getPolicyInfo, ok = is.PolicyByName(getTableInfo.Meta().PlacementPolicyRef.Name)
 	require.True(t, ok)

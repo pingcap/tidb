@@ -75,10 +75,10 @@ type ExtractHandle struct {
 	worker *extractWorker
 }
 
-// NewExtractHandler new extract handler
-func NewExtractHandler(sctxs []sessionctx.Context) *ExtractHandle {
+// newExtractHandler new extract handler
+func newExtractHandler(ctx context.Context, sctxs []sessionctx.Context) *ExtractHandle {
 	h := &ExtractHandle{}
-	h.worker = newExtractWorker(sctxs[0], false)
+	h.worker = newExtractWorker(ctx, sctxs[0], false)
 	return h
 }
 
@@ -121,8 +121,13 @@ func NewExtractPlanTask(begin, end time.Time) *ExtractTask {
 	}
 }
 
-func newExtractWorker(sctx sessionctx.Context, isBackgroundWorker bool) *extractWorker {
+func newExtractWorker(
+	ctx context.Context,
+	sctx sessionctx.Context,
+	isBackgroundWorker bool,
+) *extractWorker {
 	return &extractWorker{
+		ctx:                ctx,
 		sctx:               sctx,
 		isBackgroundWorker: isBackgroundWorker,
 	}
@@ -211,7 +216,7 @@ func (w *extractWorker) handleTableNames(tableNames string, record *stmtSummaryH
 		if !exists {
 			return false, nil
 		}
-		t, err := is.TableByName(model.NewCIStr(dbName), model.NewCIStr(tblName))
+		t, err := is.TableByName(w.ctx, model.NewCIStr(dbName), model.NewCIStr(tblName))
 		if err != nil {
 			return false, err
 		}
@@ -270,7 +275,7 @@ func (w *extractWorker) handleIsView(ctx context.Context, p *extractPlanPackage)
 	}
 	for v := range p.tables {
 		if v.IsView {
-			v, err := is.TableByName(model.NewCIStr(v.DBName), model.NewCIStr(v.TableName))
+			v, err := is.TableByName(w.ctx, model.NewCIStr(v.DBName), model.NewCIStr(v.TableName))
 			if err != nil {
 				return err
 			}
