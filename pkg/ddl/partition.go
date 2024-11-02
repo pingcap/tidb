@@ -2191,10 +2191,16 @@ func (w *worker) rollbackLikeDropPartition(jobCtx *jobContext, job *model.Job) (
 			dropIndices = append(dropIndices, indexInfo)
 		}
 	}
+	var deleteIndices []model.TableIDIndexID
 	for _, indexInfo := range dropIndices {
 		DropIndexColumnFlag(tblInfo, indexInfo)
 		RemoveDependentHiddenColumns(tblInfo, indexInfo)
 		removeIndexInfo(tblInfo, indexInfo)
+		if indexInfo.Global {
+			deleteIndices = append(deleteIndices, model.TableIDIndexID{tblInfo.ID, indexInfo.ID})
+		}
+		// All other indexes has only been applied to new partitions, that is deleted in whole,
+		// including indexes.
 	}
 	if tblInfo.Partition != nil {
 		tblInfo.Partition.ClearReorgIntermediateInfo()
@@ -2206,6 +2212,7 @@ func (w *worker) rollbackLikeDropPartition(jobCtx *jobContext, job *model.Job) (
 	}
 	job.FinishTableJob(model.JobStateRollbackDone, model.StateNone, ver, tblInfo)
 	args.OldPhysicalTblIDs = physicalTableIDs
+	args.OldIndexes = deleteIndices
 	job.FillFinishedArgs(args)
 	return ver, nil
 }
@@ -3588,6 +3595,9 @@ func (w *worker) onReorganizePartition(jobCtx *jobContext, job *model.Job) (ver 
 		// partitions, but replaced global indexes should be checked!
 		for _, indexInfo := range dropIndices {
 			removeIndexInfo(tblInfo, indexInfo)
+			if indexInfo.Global {
+				args.OldIndexes = append(args.OldIndexes, model.TableIDIndexID{tblInfo.ID, indexInfo.ID})
+			}
 		}
 		failpoint.Inject("reorgPartFail4", func(val failpoint.Value) {
 			if val.(bool) {

@@ -58,7 +58,7 @@ func TestMultiSchemaReorganizePartitionIssue56819(t *testing.T) {
 }
 
 func TestMultiSchemaDropRangePartition(t *testing.T) {
-	createSQL := `create table t (a int primary key, b varchar(255)) partition by range (a) (partition p0 values less than (100), partition p1 values less than (200))`
+	createSQL := `create table t (a int primary key, b varchar(255), unique key (b) global, unique key (b,a) global, unique key (b,a)) partition by range (a) (partition p0 values less than (100), partition p1 values less than (200))`
 	initFn := func(tkO *testkit.TestKit) {
 		tkO.MustExec(`insert into t values (1,1),(2,2),(101,101),(102,102)`)
 	}
@@ -73,39 +73,42 @@ func TestMultiSchemaDropRangePartition(t *testing.T) {
 			// tkO see non-readable/non-writable p0 partition, and should try to read from p1
 			// in case there is something written to overlapping p1
 			tkO.MustContainErrMsg(`insert into t values (1,1)`, "[table:1526]Table has no partition for value matching a partition being dropped, 'p0'")
-			tkNO.MustContainErrMsg(`insert into t values (1,1)`, "[kv:1062]Duplicate entry '1' for key 't.PRIMARY'")
-			tkO.MustContainErrMsg(`insert into t values (101,101)`, "[kv:1062]Duplicate entry '101' for key 't.PRIMARY'")
-			tkNO.MustContainErrMsg(`insert into t values (101,101)`, "[kv:1062]Duplicate entry '101' for key 't.PRIMARY'")
+			tkNO.MustContainErrMsg(`insert into t values (1,1)`, "[kv:1062]Duplicate entry '1' for key 't.")
+			tkO.MustContainErrMsg(`insert into t values (101,101)`, "[kv:1062]Duplicate entry '101' for key 't.")
+			tkNO.MustContainErrMsg(`insert into t values (101,101)`, "[kv:1062]Duplicate entry '101' for key 't.")
 			tkNO.MustQuery(`select * from t`).Sort().Check(testkit.Rows("1 1", "101 101", "102 102", "2 2"))
 			tkO.MustQuery(`select * from t`).Sort().Check(testkit.Rows("101 101", "102 102"))
 		case "delete only":
 			// tkNO see non-readable/non-writable p0 partition, and should try to read from p1
 			// in case there is something written to overlapping p1
 			// tkO is not aware of p0.
-			tkO.MustExec(`insert into t values (1,2)`)
-			tkNO.MustContainErrMsg(`insert into t values (1,2)`, "[table:1526]Table has no partition for value matching a partition being dropped, 'p0'")
-			tkO.MustContainErrMsg(`insert into t values (101,101)`, "[kv:1062]Duplicate entry '101' for key 't.PRIMARY'")
-			tkNO.MustContainErrMsg(`insert into t values (101,101)`, "[kv:1062]Duplicate entry '101' for key 't.PRIMARY'")
-			tkNO.MustQuery(`select * from t`).Sort().Check(testkit.Rows("1 2", "101 101", "102 102"))
+			tkO.MustExec(`insert into t values (1,20)`)
+			tkNO.MustContainErrMsg(`insert into t values (1,20)`, "[table:1526]Table has no partition for value matching a partition being dropped, 'p0'")
+			tkO.MustContainErrMsg(`insert into t values (101,101)`, "[kv:1062]Duplicate entry '101' for key 't.")
+			tkNO.MustContainErrMsg(`insert into t values (101,101)`, "[kv:1062]Duplicate entry '101' for key 't.")
+			tkNO.MustQuery(`select * from t`).Sort().Check(testkit.Rows("1 20", "101 101", "102 102"))
 			// Original row should not be seen in StateWriteOnly
 			tkNO.MustQuery(`select * from t partition (p0)`).Sort().Check(testkit.Rows())
 			tkNO.MustContainErrMsg(`select * from t partition (pNonExisting)`, "[table:1735]Unknown partition 'pnonexisting' in table 't'")
-			tkNO.MustQuery(`select * from t partition (p1)`).Sort().Check(testkit.Rows("1 2", "101 101", "102 102"))
-			tkNO.MustQuery(`select * from t where a < 1000`).Sort().Check(testkit.Rows("1 2", "101 101", "102 102"))
-			tkNO.MustQuery(`select * from t where a > 0`).Sort().Check(testkit.Rows("1 2", "101 101", "102 102"))
-			tkNO.MustQuery(`select * from t where a = 1`).Sort().Check(testkit.Rows("1 2"))
-			tkNO.MustQuery(`select * from t where a = 1 or a = 2 or a = 3`).Sort().Check(testkit.Rows("1 2"))
-			tkNO.MustQuery(`select * from t where a in (1,2,3)`).Sort().Check(testkit.Rows("1 2"))
-			tkNO.MustQuery(`select * from t where a < 100`).Sort().Check(testkit.Rows("1 2"))
+			tkNO.MustQuery(`select * from t partition (p1)`).Sort().Check(testkit.Rows("1 20", "101 101", "102 102"))
+			tkNO.MustQuery(`select * from t where a < 1000`).Sort().Check(testkit.Rows("1 20", "101 101", "102 102"))
+			tkNO.MustQuery(`select * from t where a > 0`).Sort().Check(testkit.Rows("1 20", "101 101", "102 102"))
+			tkNO.MustQuery(`select * from t where a = 1`).Sort().Check(testkit.Rows("1 20"))
+			tkNO.MustQuery(`select * from t where a = 1 or a = 2 or a = 3`).Sort().Check(testkit.Rows("1 20"))
+			tkNO.MustQuery(`select * from t where a in (1,2,3)`).Sort().Check(testkit.Rows("1 20"))
+			tkNO.MustQuery(`select * from t where a < 100`).Sort().Check(testkit.Rows("1 20"))
 
-			tkNO.MustQuery(`select * from t where b = 2`).Sort().Check(testkit.Rows("1 2"))
+			tkNO.MustQuery(`select * from t where b = 20`).Sort().Check(testkit.Rows("1 20"))
 			// TODO: Test update and delete!
 			// TODO: test key, hash and list partition without default partition :)
 			tkNO.MustQuery(`show create table t`).Check(testkit.Rows("" +
 				"t CREATE TABLE `t` (\n" +
 				"  `a` int(11) NOT NULL,\n" +
 				"  `b` varchar(255) DEFAULT NULL,\n" +
-				"  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */\n" +
+				"  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */,\n" +
+				"  UNIQUE KEY `b` (`b`) /*T![global_index] GLOBAL */,\n" +
+				"  UNIQUE KEY `b_2` (`b`,`a`) /*T![global_index] GLOBAL */,\n" +
+				"  UNIQUE KEY `b_3` (`b`,`a`)\n" +
 				") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
 				"PARTITION BY RANGE (`a`)\n" +
 				"(PARTITION `p0` VALUES LESS THAN (100),\n" +
@@ -114,7 +117,10 @@ func TestMultiSchemaDropRangePartition(t *testing.T) {
 				"t CREATE TABLE `t` (\n" +
 				"  `a` int(11) NOT NULL,\n" +
 				"  `b` varchar(255) DEFAULT NULL,\n" +
-				"  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */\n" +
+				"  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */,\n" +
+				"  UNIQUE KEY `b` (`b`) /*T![global_index] GLOBAL */,\n" +
+				"  UNIQUE KEY `b_2` (`b`,`a`) /*T![global_index] GLOBAL */,\n" +
+				"  UNIQUE KEY `b_3` (`b`,`a`)\n" +
 				") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
 				"PARTITION BY RANGE (`a`)\n" +
 				"(PARTITION `p1` VALUES LESS THAN (200))"))
@@ -130,7 +136,7 @@ func TestMultiSchemaDropRangePartition(t *testing.T) {
 }
 
 func TestMultiSchemaDropListDefaultPartition(t *testing.T) {
-	createSQL := `create table t (a int primary key, b varchar(255)) partition by list (a) (partition p0 values in (1,2,3), partition p1 values in (100,101,102,DEFAULT))`
+	createSQL := `create table t (a int primary key, b varchar(255), unique key (b) global, unique key (b,a) global, unique key (b,a)) partition by list (a) (partition p0 values in (1,2,3), partition p1 values in (100,101,102,DEFAULT))`
 	initFn := func(tkO *testkit.TestKit) {
 		tkO.MustExec(`insert into t values (1,1),(2,2),(101,101),(102,102)`)
 	}
@@ -145,32 +151,32 @@ func TestMultiSchemaDropListDefaultPartition(t *testing.T) {
 			// tkO see non-readable/non-writable p0 partition, and should try to read from p1
 			// in case there is something written to overlapping p1
 			tkO.MustContainErrMsg(`insert into t values (1,1)`, "[table:1526]Table has no partition for value matching a partition being dropped, 'p0'")
-			tkNO.MustContainErrMsg(`insert into t values (1,1)`, "[kv:1062]Duplicate entry '1' for key 't.PRIMARY'")
-			tkO.MustContainErrMsg(`insert into t values (101,101)`, "[kv:1062]Duplicate entry '101' for key 't.PRIMARY'")
-			tkNO.MustContainErrMsg(`insert into t values (101,101)`, "[kv:1062]Duplicate entry '101' for key 't.PRIMARY'")
+			tkNO.MustContainErrMsg(`insert into t values (1,1)`, "[kv:1062]Duplicate entry '1' for key 't.")
+			tkO.MustContainErrMsg(`insert into t values (101,101)`, "[kv:1062]Duplicate entry '101' for key 't.")
+			tkNO.MustContainErrMsg(`insert into t values (101,101)`, "[kv:1062]Duplicate entry '101' for key 't.")
 			tkNO.MustQuery(`select * from t`).Sort().Check(testkit.Rows("1 1", "101 101", "102 102", "2 2"))
 			tkO.MustQuery(`select * from t`).Sort().Check(testkit.Rows("101 101", "102 102"))
 		case "delete only":
 			// tkNO see non-readable/non-writable p0 partition, and should try to read from p1
 			// in case there is something written to overlapping p1
 			// tkO is not aware of p0.
-			tkO.MustExec(`insert into t values (1,2)`)
-			tkNO.MustContainErrMsg(`insert into t values (1,2)`, "[table:1526]Table has no partition for value matching a partition being dropped, 'p0'")
-			tkO.MustContainErrMsg(`insert into t values (101,101)`, "[kv:1062]Duplicate entry '101' for key 't.PRIMARY'")
-			tkNO.MustContainErrMsg(`insert into t values (101,101)`, "[kv:1062]Duplicate entry '101' for key 't.PRIMARY'")
-			tkNO.MustQuery(`select * from t`).Sort().Check(testkit.Rows("1 2", "101 101", "102 102"))
+			tkO.MustExec(`insert into t values (1,20)`)
+			tkNO.MustContainErrMsg(`insert into t values (1,20)`, "[table:1526]Table has no partition for value matching a partition being dropped, 'p0'")
+			tkO.MustContainErrMsg(`insert into t values (101,101)`, "[kv:1062]Duplicate entry '101' for key 't.")
+			tkNO.MustContainErrMsg(`insert into t values (101,101)`, "[kv:1062]Duplicate entry '101' for key 't.")
+			tkNO.MustQuery(`select * from t`).Sort().Check(testkit.Rows("1 20", "101 101", "102 102"))
 			// Original row should not be seen in StateWriteOnly
 			tkNO.MustQuery(`select * from t partition (p0)`).Sort().Check(testkit.Rows())
 			tkNO.MustContainErrMsg(`select * from t partition (pNonExisting)`, "[table:1735]Unknown partition 'pnonexisting' in table 't'")
-			tkNO.MustQuery(`select * from t partition (p1)`).Sort().Check(testkit.Rows("1 2", "101 101", "102 102"))
-			tkNO.MustQuery(`select * from t where a < 1000`).Sort().Check(testkit.Rows("1 2", "101 101", "102 102"))
-			tkNO.MustQuery(`select * from t where a > 0`).Sort().Check(testkit.Rows("1 2", "101 101", "102 102"))
-			tkNO.MustQuery(`select * from t where a = 1`).Sort().Check(testkit.Rows("1 2"))
-			tkNO.MustQuery(`select * from t where a = 1 or a = 2 or a = 3`).Sort().Check(testkit.Rows("1 2"))
-			tkNO.MustQuery(`select * from t where a in (1,2,3)`).Sort().Check(testkit.Rows("1 2"))
-			tkNO.MustQuery(`select * from t where a < 100`).Sort().Check(testkit.Rows("1 2"))
+			tkNO.MustQuery(`select * from t partition (p1)`).Sort().Check(testkit.Rows("1 20", "101 101", "102 102"))
+			tkNO.MustQuery(`select * from t where a < 1000`).Sort().Check(testkit.Rows("1 20", "101 101", "102 102"))
+			tkNO.MustQuery(`select * from t where a > 0`).Sort().Check(testkit.Rows("1 20", "101 101", "102 102"))
+			tkNO.MustQuery(`select * from t where a = 1`).Sort().Check(testkit.Rows("1 20"))
+			tkNO.MustQuery(`select * from t where a = 1 or a = 2 or a = 3`).Sort().Check(testkit.Rows("1 20"))
+			tkNO.MustQuery(`select * from t where a in (1,2,3)`).Sort().Check(testkit.Rows("1 20"))
+			tkNO.MustQuery(`select * from t where a < 100`).Sort().Check(testkit.Rows("1 20"))
 
-			tkNO.MustQuery(`select * from t where b = 2`).Sort().Check(testkit.Rows("1 2"))
+			tkNO.MustQuery(`select * from t where b = 20`).Sort().Check(testkit.Rows("1 20"))
 			// TODO: Test update and delete!
 			// TODO: test key, hash and list partition without default partition :)
 			// Should we see the partition or not?!?
@@ -178,7 +184,10 @@ func TestMultiSchemaDropListDefaultPartition(t *testing.T) {
 				"t CREATE TABLE `t` (\n" +
 				"  `a` int(11) NOT NULL,\n" +
 				"  `b` varchar(255) DEFAULT NULL,\n" +
-				"  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */\n" +
+				"  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */,\n" +
+				"  UNIQUE KEY `b` (`b`) /*T![global_index] GLOBAL */,\n" +
+				"  UNIQUE KEY `b_2` (`b`,`a`) /*T![global_index] GLOBAL */,\n" +
+				"  UNIQUE KEY `b_3` (`b`,`a`)\n" +
 				") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
 				"PARTITION BY LIST (`a`)\n" +
 				"(PARTITION `p0` VALUES IN (1,2,3),\n" +
@@ -187,7 +196,10 @@ func TestMultiSchemaDropListDefaultPartition(t *testing.T) {
 				"t CREATE TABLE `t` (\n" +
 				"  `a` int(11) NOT NULL,\n" +
 				"  `b` varchar(255) DEFAULT NULL,\n" +
-				"  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */\n" +
+				"  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */,\n" +
+				"  UNIQUE KEY `b` (`b`) /*T![global_index] GLOBAL */,\n" +
+				"  UNIQUE KEY `b_2` (`b`,`a`) /*T![global_index] GLOBAL */,\n" +
+				"  UNIQUE KEY `b_3` (`b`,`a`)\n" +
 				") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
 				"PARTITION BY LIST (`a`)\n" +
 				"(PARTITION `p1` VALUES IN (100,101,102,DEFAULT))"))
@@ -203,7 +215,7 @@ func TestMultiSchemaDropListDefaultPartition(t *testing.T) {
 }
 
 func TestMultiSchemaDropListColumnsDefaultPartition(t *testing.T) {
-	createSQL := `create table t (a int, b varchar(255), c varchar (255), primary key (a,b)) partition by list columns (a,b) (partition p0 values in ((1,"1"),(2,"2"),(3,"3")), partition p1 values in ((100,"100"),(101,"101"),(102,"102"),DEFAULT))`
+	createSQL := `create table t (a int, b varchar(255), c varchar (255), primary key (a,b), unique key (a) global, unique key (b,a) global, unique key (c) global, unique key (b,a)) partition by list columns (a,b) (partition p0 values in ((1,"1"),(2,"2"),(3,"3")), partition p1 values in ((100,"100"),(101,"101"),(102,"102"),DEFAULT))`
 	initFn := func(tkO *testkit.TestKit) {
 		tkO.MustExec(`insert into t values (1,1,1),(2,2,2),(101,101,101),(102,102,102)`)
 	}
@@ -218,9 +230,9 @@ func TestMultiSchemaDropListColumnsDefaultPartition(t *testing.T) {
 			// tkO see non-readable/non-writable p0 partition, and should try to read from p1
 			// in case there is something written to overlapping p1
 			tkO.MustContainErrMsg(`insert into t values (1,1,1)`, "[table:1526]Table has no partition for value matching a partition being dropped, 'p0'")
-			tkNO.MustContainErrMsg(`insert into t values (1,1,1)`, "[kv:1062]Duplicate entry '1-1' for key 't.PRIMARY'")
-			tkO.MustContainErrMsg(`insert into t values (101,101,101)`, "[kv:1062]Duplicate entry '101-101' for key 't.PRIMARY'")
-			tkNO.MustContainErrMsg(`insert into t values (101,101,101)`, "[kv:1062]Duplicate entry '101-101' for key 't.PRIMARY'")
+			tkNO.MustContainErrMsg(`insert into t values (1,1,1)`, "[kv:1062]Duplicate entry '1' for key 't.a_2'")
+			tkO.MustContainErrMsg(`insert into t values (101,101,101)`, "[kv:1062]Duplicate entry '101' for key 't.a_2'")
+			tkNO.MustContainErrMsg(`insert into t values (101,101,101)`, "[kv:1062]Duplicate entry '101' for key 't.a_2'")
 			tkNO.MustQuery(`select * from t`).Sort().Check(testkit.Rows("1 1 1", "101 101 101", "102 102 102", "2 2 2"))
 			tkO.MustQuery(`select * from t`).Sort().Check(testkit.Rows("101 101 101", "102 102 102"))
 		case "delete only":
@@ -281,27 +293,8 @@ func TestMultiSchemaDropListColumnsDefaultPartition(t *testing.T) {
 
 func TestMultiSchemaReorganizePartition(t *testing.T) {
 	createSQL := `create table t (a int primary key, b varchar(255), unique index idx_b_global (b) global) partition by range (a) (partition p1 values less than (200), partition pMax values less than (maxvalue))`
-	originalPartitions := make([]int64, 0, 2)
-	originalIndexIDs := make([]int64, 0, 1)
-	originalGlobalIndexIDs := make([]int64, 0, 1)
-	tableID := int64(0)
 	initFn := func(tkO *testkit.TestKit) {
 		tkO.MustExec(`insert into t values (1,1),(2,2),(101,101),(102,102),(998,998),(999,999)`)
-		ctx := tkO.Session()
-		is := domain.GetDomain(ctx).InfoSchema()
-		tbl, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
-		require.NoError(t, err)
-		tableID = tbl.Meta().ID
-		for _, def := range tbl.Meta().Partition.Definitions {
-			originalPartitions = append(originalPartitions, def.ID)
-		}
-		for _, idx := range tbl.Meta().Indices {
-			if idx.Global {
-				originalGlobalIndexIDs = append(originalGlobalIndexIDs, idx.ID)
-				continue
-			}
-			originalIndexIDs = append(originalIndexIDs, idx.ID)
-		}
 	}
 	alterSQL := `alter table t reorganize partition p1 into (partition p0 values less than (100), partition p1 values less than (200))`
 
@@ -418,61 +411,7 @@ func TestMultiSchemaReorganizePartition(t *testing.T) {
 		tkO.MustQuery(`select * from t where b = "5"`).Sort().Check(testkit.Rows("5 5"))
 		tkO.MustExec(`admin check table t`)
 		tkO.MustQuery(`select * from t`).Sort().Check(testkit.Rows("1 1", "10 10", "101 101", "102 102", "11 11", "12 12", "13 13", "14 14", "15 15", "16 16", "2 2", "5 5", "6 6", "7 7", "8 8", "9 9", "984 984", "985 985", "986 986", "987 987", "988 988", "989 989", "990 990", "991 991", "992 992", "993 993", "994 994", "995 995", "998 998", "999 999"))
-		// TODO: Verify that there are no KV entries for old partitions or old indexes!!!
-		delRange := tkO.MustQuery(`select * from mysql.gc_delete_range_done`).Rows()
-		s := ""
-		for _, row := range delRange {
-			if s != "" {
-				s += "\n"
-			}
-			for i, col := range row {
-				if i != 0 {
-					s += " "
-				}
-				s += col.(string)
-			}
-		}
-		logutil.BgLogger().Info("gc_delete_range_done", zap.String("rows", s))
-		tkO.MustQuery(`select * from mysql.gc_delete_range`).Check(testkit.Rows())
-		ctx := tkO.Session()
-		is := domain.GetDomain(ctx).InfoSchema()
-		tbl, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
-		require.NoError(t, err)
-		tableID = tbl.Meta().ID
-		// Save this for the fix of https://github.com/pingcap/tidb/issues/56822
-		//GlobalLoop:
-		//	for _, globIdx := range originalGlobalIndexIDs {
-		//		for _, idx := range tbl.Meta().Indices {
-		//			if idx.ID == globIdx {
-		//				continue GlobalLoop
-		//			}
-		//		}
-		//		// Global index removed
-		//		require.False(t, HaveEntriesForTableIndex(t, tkO, tableID, globIdx), "Global index id %d for table id %d has still entries!", globIdx, tableID)
-		//	}
-	LocalLoop:
-		for _, locIdx := range originalIndexIDs {
-			for _, idx := range tbl.Meta().Indices {
-				if idx.ID == locIdx {
-					continue LocalLoop
-				}
-			}
-			// local index removed
-			for _, part := range tbl.Meta().Partition.Definitions {
-				require.False(t, HaveEntriesForTableIndex(t, tkO, part.ID, locIdx), "Local index id %d for partition id %d has still entries!", locIdx, tableID)
-			}
-		}
-		// TODO: Fix cleanup issues, most likely it needs one more SchemaState in onReorganizePartition
-		//PartitionLoop:
-		//	for _, partID := range originalPartitions {
-		//		for _, def := range tbl.Meta().Partition.Definitions {
-		//			if def.ID == partID {
-		//				continue PartitionLoop
-		//			}
-		//		}
-		//		// old partitions removed
-		//		require.False(t, HaveEntriesForTableIndex(t, tkO, partID, 0), "Reorganized partition id %d for table id %d has still entries!", partID, tableID)
-		//	}
+
 	}
 	runMultiSchemaTest(t, createSQL, alterSQL, initFn, postFn, loopFn)
 }
@@ -612,7 +551,28 @@ func runMultiSchemaTest(t *testing.T, createSQL, alterSQL string, initFn func(*t
 	tkDDLOwner.MustExec(createSQL)
 	domOwner.Reload()
 	domNonOwner.Reload()
+
+	originalPartitions := make([]int64, 0, 2)
+	originalIndexIDs := make([]int64, 0, 1)
+	originalGlobalIndexIDs := make([]int64, 0, 1)
+	ctx := tkO.Session()
+	is := domain.GetDomain(ctx).InfoSchema()
+	tbl, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
+	require.NoError(t, err)
+	tableID := tbl.Meta().ID
+	for _, def := range tbl.Meta().Partition.Definitions {
+		originalPartitions = append(originalPartitions, def.ID)
+	}
+	for _, idx := range tbl.Meta().Indices {
+		if idx.Global {
+			originalGlobalIndexIDs = append(originalGlobalIndexIDs, idx.ID)
+			continue
+		}
+		originalIndexIDs = append(originalIndexIDs, idx.ID)
+	}
+
 	initFn(tkO)
+
 	verStart := domNonOwner.InfoSchema().SchemaMetaVersion()
 	hookChan := make(chan struct{})
 	hookFunc := func(job *model.Job) {
@@ -668,6 +628,62 @@ func runMultiSchemaTest(t *testing.T, createSQL, alterSQL string, initFn func(*t
 		hookChan <- struct{}{}
 	}
 	logutil.BgLogger().Info("XXXXXXXXXXX states loop done")
+	// TODO: Verify that there are no KV entries for old partitions or old indexes!!!
+	delRange := tkO.MustQuery(`select * from mysql.gc_delete_range_done`).Rows()
+	s := ""
+	for _, row := range delRange {
+		if s != "" {
+			s += "\n"
+		}
+		for i, col := range row {
+			if i != 0 {
+				s += " "
+			}
+			s += col.(string)
+		}
+	}
+	logutil.BgLogger().Info("gc_delete_range_done", zap.String("rows", s))
+	tkO.MustQuery(`select * from mysql.gc_delete_range`).Check(testkit.Rows())
+	ctx = tkO.Session()
+	is = domain.GetDomain(ctx).InfoSchema()
+	tbl, err = is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
+	require.NoError(t, err)
+	newTableID := tbl.Meta().ID
+	if tableID != newTableID {
+		require.False(t, HaveEntriesForTableIndex(t, tkO, tableID, 0), "Old table id %d has still entries!", tableID)
+	}
+GlobalLoop:
+	for _, globIdx := range originalGlobalIndexIDs {
+		for _, idx := range tbl.Meta().Indices {
+			if idx.ID == globIdx {
+				continue GlobalLoop
+			}
+		}
+		// Global index removed
+		require.False(t, HaveEntriesForTableIndex(t, tkO, tableID, globIdx), "Global index id %d for table id %d has still entries!", globIdx, tableID)
+	}
+LocalLoop:
+	for _, locIdx := range originalIndexIDs {
+		for _, idx := range tbl.Meta().Indices {
+			if idx.ID == locIdx {
+				continue LocalLoop
+			}
+		}
+		// local index removed
+		for _, part := range tbl.Meta().Partition.Definitions {
+			require.False(t, HaveEntriesForTableIndex(t, tkO, part.ID, locIdx), "Local index id %d for partition id %d has still entries!", locIdx, tableID)
+		}
+	}
+PartitionLoop:
+	for _, partID := range originalPartitions {
+		for _, def := range tbl.Meta().Partition.Definitions {
+			if def.ID == partID {
+				continue PartitionLoop
+			}
+		}
+		// old partitions removed
+		require.False(t, HaveEntriesForTableIndex(t, tkO, partID, 0), "Reorganized partition id %d for table id %d has still entries!", partID, tableID)
+	}
 	if postFn != nil {
 		postFn(tkO, store)
 	}

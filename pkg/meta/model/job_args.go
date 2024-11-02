@@ -405,6 +405,12 @@ func GetFinishedTruncateTableArgs(job *Job) (*TruncateTableArgs, error) {
 	return getOrDecodeArgsV2[*TruncateTableArgs](job)
 }
 
+// TableIDIndexID contains TableID+IndexID of index ranges to be deleted
+type TableIDIndexID struct {
+	TableID int64
+	IndexID int64
+}
+
 // TablePartitionArgs is the arguments for table partition related jobs, including:
 //   - ActionAlterTablePartitioning
 //   - ActionRemovePartitioning
@@ -420,7 +426,8 @@ type TablePartitionArgs struct {
 	PartInfo  *PartitionInfo `json:"part_info,omitempty"`
 
 	// set on finished
-	OldPhysicalTblIDs []int64 `json:"old_physical_tbl_ids,omitempty"`
+	OldPhysicalTblIDs []int64          `json:"old_physical_tbl_ids,omitempty"`
+	OldIndexes        []TableIDIndexID `json:"old_indexes,omitempty"`
 
 	// runtime info
 	NewPartitionIDs []int64 `json:"-"`
