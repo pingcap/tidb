@@ -5945,6 +5945,7 @@ func (b *PlanBuilder) buildDelete(ctx context.Context, ds *ast.DeleteStmt) (base
 
 	del := Delete{
 		IsMultiTable: ds.IsMultiTable,
+		IgnoreErr:    ds.IgnoreErr,
 	}.Init(b.ctx)
 
 	localResolveCtx := resolve.NewContext()

@@ -5,12 +5,13 @@ go_test(
     timeout = "short",
     srcs = [
         "concurrency_test.go",
+        "concurrency_tpcc_test.go",
         "dml_test.go",
         "main_test.go",
         "others_test.go",
     ],
     flaky = True,
-    shard_count = 16,
+    shard_count = 18,
     deps = [
         "//pkg/parser/auth",
         "//pkg/testkit",

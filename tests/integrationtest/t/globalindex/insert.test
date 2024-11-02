@@ -2,3 +2,9 @@ drop table if exists t;
 create table t(a int, b int, unique index idx(a) global) partition by hash(b) partitions 5;
 insert into t values (1, 1), (1, 2) on duplicate key update a=1, b=3;
 select * from t use index (idx);
+
+alter table t add unique index idx1(b) global;
+insert into t values (2, 4), (3, 4) on duplicate key update a=2, b=5;
+select * from t use index (idx1);
+
+

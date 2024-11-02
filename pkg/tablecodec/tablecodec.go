@@ -1307,7 +1307,7 @@ func (v TempIndexValue) FilterOverwritten() TempIndexValue {
 // A temp index value element is encoded as one of:
 //   - [flag 1 byte][value_length 2 bytes ] [value value_len bytes]   [key_version 1 byte] {distinct normal}
 //   - [flag 1 byte][value value_len bytes]                           [key_version 1 byte] {non-distinct normal}
-//   - [flag 1 byte][handle_length 2 bytes] [handle handle_len bytes] [key_version 1 byte] {distinct deleted}
+//   - [flag 1 byte][handle_length 2 bytes] [handle handle_len bytes] [partitionIdFlag 1 byte] [partitionID 8 bytes] [key_version 1 byte] {distinct deleted}
 //   - [flag 1 byte]                                                  [key_version 1 byte] {non-distinct deleted}
 type TempIndexValueElem struct {
 	Value    []byte
@@ -1315,7 +1315,23 @@ type TempIndexValueElem struct {
 	KeyVer   byte
 	Delete   bool
 	Distinct bool
+
+	// Global means it's a global Index, for partitioned tables. Currently only used in `distinct` + `deleted` scenarios.
+	Global bool
 }
+
+const (
+	// TempIndexKeyTypeNone means the key is not a temporary index key.
+	TempIndexKeyTypeNone byte = 0
+	// TempIndexKeyTypeDelete indicates this value is written in the delete-only stage.
+	TempIndexKeyTypeDelete byte = 'd'
+	// TempIndexKeyTypeBackfill indicates this value is written in the backfill stage.
+	TempIndexKeyTypeBackfill byte = 'b'
+	// TempIndexKeyTypeMerge indicates this value is written in the merge stage.
+	TempIndexKeyTypeMerge byte = 'm'
+	// TempIndexKeyTypePartitionIDFlag indicates the following value is partition id.
+	TempIndexKeyTypePartitionIDFlag byte = 'p'
+)
 
 // Encode encodes the temp index value.
 func (v *TempIndexValueElem) Encode(buf []byte) []byte {
@@ -1331,13 +1347,21 @@ func (v *TempIndexValueElem) Encode(buf []byte) []byte {
 				hEncoded = handle.Encoded()
 				hLen = uint16(len(hEncoded))
 			}
-			// flag + handle length + handle + temp key version
+			// flag + handle length + handle + [partition id] + temp key version
 			if buf == nil {
-				buf = make([]byte, 0, hLen+4)
+				l := hLen + 4
+				if v.Global {
+					l += 9
+				}
+				buf = make([]byte, 0, l)
 			}
 			buf = append(buf, byte(TempIndexValueFlagDeleted))
 			buf = append(buf, byte(hLen>>8), byte(hLen))
 			buf = append(buf, hEncoded...)
+			if v.Global {
+				buf = append(buf, TempIndexKeyTypePartitionIDFlag)
+				buf = append(buf, codec.EncodeInt(nil, v.Handle.(kv.PartitionHandle).PartitionID)...)
+			}
 			buf = append(buf, v.KeyVer)
 			return buf
 		}
@@ -1415,6 +1439,16 @@ func (v *TempIndexValueElem) DecodeOne(b []byte) (remain []byte, err error) {
 			v.Handle, _ = kv.NewCommonHandle(b[:hLen])
 		}
 		b = b[hLen:]
+		if b[0] == TempIndexKeyTypePartitionIDFlag {
+			v.Global = true
+			var pid int64
+			_, pid, err = codec.DecodeInt(b[1:9])
+			if err != nil {
+				return nil, err
+			}
+			v.Handle = kv.NewPartitionHandle(pid, v.Handle)
+			b = b[9:]
+		}
 		v.KeyVer = b[0]
 		b = b[1:]
 		v.Distinct = true

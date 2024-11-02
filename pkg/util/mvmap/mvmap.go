@@ -158,7 +158,7 @@ func (m *MVMap) Get(key []byte, values [][]byte) [][]byte {
 		values = append(values, val)
 	}
 	// Keep the order of input.
-	for i := 0; i < len(values)/2; i++ {
+	for i := range len(values) / 2 {
 		j := len(values) - 1 - i
 		values[i], values[j] = values[j], values[i]
 	}

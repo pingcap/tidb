@@ -593,6 +593,8 @@ type azblobObjectReader struct {
 	ctx context.Context
 
 	cpkInfo *blob.CPKInfo
+	// opened lazily
+	reader io.ReadCloser
 }
 
 // Read implement the io.Reader interface.
@@ -604,30 +606,27 @@ func (r *azblobObjectReader) Read(p []byte) (n int, err error) {
 	if maxCnt == 0 {
 		return 0, io.EOF
 	}
-	resp, err := r.blobClient.DownloadStream(r.ctx, &blob.DownloadStreamOptions{
-		Range: blob.HTTPRange{
-			Offset: r.pos,
-			Count:  maxCnt,
-		},
-
-		CPKInfo: r.cpkInfo,
-	})
-	if err != nil {
-		return 0, errors.Annotatef(err, "Failed to read data from azure blob, data info: pos='%d', count='%d'", r.pos, maxCnt)
+	if r.reader == nil {
+		if err2 := r.reopenReader(); err2 != nil {
+			return 0, err2
+		}
 	}
-	body := resp.NewRetryReader(r.ctx, &blob.RetryReaderOptions{
-		MaxRetries: azblobRetryTimes,
-	})
-	n, err = body.Read(p)
+	buf := p[:maxCnt]
+	n, err = r.reader.Read(buf)
 	if err != nil && err != io.EOF {
 		return 0, errors.Annotatef(err, "Failed to read data from azure blob response, data info: pos='%d', count='%d'", r.pos, maxCnt)
 	}
 	r.pos += int64(n)
-	return n, body.Close()
+	return n, nil
 }
 
 // Close implement the io.Closer interface.
-func (*azblobObjectReader) Close() error {
+func (r *azblobObjectReader) Close() error {
+	if r.reader != nil {
+		err := errors.Trace(r.reader.Close())
+		r.reader = nil
+		return err
+	}
 	return nil
 }
 
@@ -653,11 +652,42 @@ func (r *azblobObjectReader) Seek(offset int64, whence int) (int64, error) {
 		return 0, errors.Annotatef(berrors.ErrStorageUnknown, "Seek: invalid whence '%d'", whence)
 	}
 
-	if realOffset < 0 {
+	if realOffset < 0 || realOffset > r.totalSize {
 		return 0, errors.Annotatef(berrors.ErrInvalidArgument, "Seek: offset is %d, but length of content is only %d", realOffset, r.totalSize)
 	}
+	if realOffset == r.pos {
+		return r.pos, nil
+	}
 	r.pos = realOffset
+	// azblob reader can only read forward, so we need to reopen the reader
+	if err := r.reopenReader(); err != nil {
+		return 0, err
+	}
 	return r.pos, nil
+}
+
+func (r *azblobObjectReader) reopenReader() error {
+	if r.reader != nil {
+		err := errors.Trace(r.reader.Close())
+		if err != nil {
+			log.Warn("failed to close azblob reader", zap.Error(err))
+		}
+	}
+
+	resp, err := r.blobClient.DownloadStream(r.ctx, &blob.DownloadStreamOptions{
+		Range: blob.HTTPRange{
+			Offset: r.pos,
+		},
+		CPKInfo: r.cpkInfo,
+	})
+	if err != nil {
+		return errors.Annotatef(err, "Failed to read data from azure blob, data info: pos='%d'", r.pos)
+	}
+	body := resp.NewRetryReader(r.ctx, &blob.RetryReaderOptions{
+		MaxRetries: azblobRetryTimes,
+	})
+	r.reader = body
+	return nil
 }
 
 func (r *azblobObjectReader) GetFileSize() (int64, error) {
