@@ -1162,7 +1162,7 @@ func (c *Column) IsInvalid(sctx sessionctx.Context, collPseudo bool) bool {
 
 // IsHistNeeded checks if this column needs histogram to be loaded
 func (c *Column) IsHistNeeded(collPseudo bool) bool {
-	return (!collPseudo || !c.NotAccurate()) && !c.IsLoaded()
+	return (!collPseudo || !c.NotAccurate()) || !c.IsLoaded()
 }
 
 func (c *Column) equalRowCount(sctx sessionctx.Context, val types.Datum, encodedVal []byte, realtimeRowCount int64) (float64, error) {
