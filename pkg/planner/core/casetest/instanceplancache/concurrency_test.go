@@ -266,6 +266,33 @@ func TestInstancePlanCacheConcurrencySysbench(t *testing.T) {
 	testWithWorkers(TKs, stmts)
 }
 
+func TestInstancePlanCacheConcurrencyPoint2(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`use test`)
+	tk.MustExec(`create table t (a int, b int, primary key(a))`)
+	for i := 0; i < 1000; i++ {
+		tk.MustExec(fmt.Sprintf("insert into t values (%v, %v)", i, i))
+	}
+
+	var wg sync.WaitGroup
+	for i := 0; i < 20; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			tki := testkit.NewTestKit(t, store)
+			tki.MustExec(`use test`)
+			tki.MustExec(`prepare st from 'select * from t where a=?'`)
+			for k := 0; k < 1000; k++ {
+				a := rand.Intn(1000)
+				tki.MustExec("set @a = ?", a)
+				tki.MustQuery("execute st using @a").Check(testkit.Rows(fmt.Sprintf("%v %v", a, a)))
+			}
+		}()
+	}
+	wg.Wait()
+}
+
 func TestInstancePlanCacheConcurrencyPoint(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
