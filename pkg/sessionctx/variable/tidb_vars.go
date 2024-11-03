@@ -1616,7 +1616,7 @@ var (
 	MaxAutoAnalyzeTime                   = atomic.NewInt64(DefTiDBMaxAutoAnalyzeTime)
 	// variables for plan cache
 	PreparedPlanCacheMemoryGuardRatio   = atomic.NewFloat64(DefTiDBPrepPlanCacheMemoryGuardRatio)
-	EnableInstancePlanCache             = atomic.NewBool(false)
+	EnableInstancePlanCache             = atomic.NewBool(true)
 	InstancePlanCacheReservedPercentage = atomic.NewFloat64(0.1)
 	InstancePlanCacheMaxMemSize         = atomic.NewInt64(int64(DefTiDBInstancePlanCacheMaxMemSize))
 	EnableDistTask                      = atomic.NewBool(DefTiDBEnableDistTask)

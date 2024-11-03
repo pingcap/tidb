@@ -266,6 +266,64 @@ func TestInstancePlanCacheConcurrencySysbench(t *testing.T) {
 	testWithWorkers(TKs, stmts)
 }
 
+func TestInstancePlanCacheConcurrencyPoint(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`create database normal`)
+	tk.MustExec(`create database prepared`)
+	tk.MustExec(`set global tidb_enable_instance_plan_cache=1`)
+	for _, db := range []string{"normal", "prepared"} {
+		tk.MustExec("use " + db)
+		tk.MustExec(`create table t1 (col1 int, col2 int, primary key(col1))`)
+		for i := 0; i < 1000; i++ {
+			tk.MustExec(fmt.Sprintf("insert into t1 values (%v, %v)", i, i))
+		}
+	}
+
+	genPointSelect := func() *testStmt {
+		switch rand.Intn(2) {
+		case 0: // select col1 from t1 where col1=?
+			v1 := rand.Intn(1000)
+			return &testStmt{
+				normalStmt: fmt.Sprintf("select col1 from normal.t1 where col1=%v", v1),
+				prepStmt:   "prepare st from 'select col1 from prepared.t1 where col1=?'",
+				setStmt:    fmt.Sprintf("set @v1 = %v", v1),
+				execStmt:   "execute st using @v1",
+			}
+		default: // select col1 from t1 where col1=? and col2=?
+			v1 := rand.Intn(1000)
+			v2 := rand.Intn(1000)
+			return &testStmt{
+				normalStmt: fmt.Sprintf("select col1 from normal.t1 where col1=%v and col2=%v", v1, v2),
+				prepStmt:   "prepare st from 'select col1 from prepared.t1 where col1=? and col2=?'",
+				setStmt:    fmt.Sprintf("set @v1 = %v, @v2 = %v", v1, v2),
+				execStmt:   "execute st using @v1, @v2",
+			}
+		}
+	}
+
+	nStmt := 2000
+	stmts := make([]*testStmt, 0, nStmt)
+	stmts = append(stmts, &testStmt{normalStmt: "begin"})
+	for len(stmts) < nStmt {
+		if rand.Intn(15) == 0 { // start a new txn
+			stmts = append(stmts, &testStmt{normalStmt: "commit"})
+			stmts = append(stmts, &testStmt{normalStmt: "begin"})
+			continue
+		}
+		stmts = append(stmts, genPointSelect())
+	}
+	stmts = append(stmts, &testStmt{normalStmt: "commit"})
+
+	nConcurrency := 10
+	TKs := make([]*testkit.TestKit, nConcurrency)
+	for i := range TKs {
+		TKs[i] = testkit.NewTestKit(t, store)
+	}
+
+	testWithWorkers(TKs, stmts)
+}
+
 func TestInstancePlanCacheConcurrencyComp(t *testing.T) {
 	// cases from https://github.com/PingCAP-QE/qa/tree/master/comp/yy/plan-cache
 	store := testkit.CreateMockStore(t)
