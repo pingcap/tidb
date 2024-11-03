@@ -173,7 +173,7 @@ func (p *PhysicalTableScan) GetPlanCostVer2(taskType property.TaskType, option *
 		// hasHighModifyCount tracks the high risk of a tablescan where auto-analyze had not yet updated the table row count
 		hasHighModifyCount := tblColHists.ModifyCount > tblColHists.RealtimeCount
 		// hasLowEstimate is a check to capture a unique customer case where modifyCount is used for tablescan estimate (but it not adequately understood why)
-		hasLowEstimate := rows > 1 && int64(rows) < tblColHists.RealtimeCount && int64(rows) <= tblColHists.ModifyCount
+		hasLowEstimate := rows > 1 && tblColHists.ModifyCount < tblColHists.RealtimeCount && int64(rows) <= tblColHists.ModifyCount
 		var unsignedIntHandle bool
 		if p.Table.PKIsHandle {
 			if pkColInfo := p.Table.GetPkColInfo(); pkColInfo != nil {
@@ -184,7 +184,7 @@ func (p *PhysicalTableScan) GetPlanCostVer2(taskType property.TaskType, option *
 
 		shouldApplyPenalty := hasFullRangeScan && (preferRangeScanCondition || hasHighModifyCount || hasLowEstimate)
 		if shouldApplyPenalty {
-			newRowCount := math.Min(MaxPenaltyRowCount, max(float64(tblColHists.ModifyCount), float64(tblColHists.RealtimeCount)))
+			newRowCount := max(MaxPenaltyRowCount, max(float64(tblColHists.ModifyCount), float64(tblColHists.RealtimeCount)))
 			p.PlanCostVer2 = costusage.SumCostVer2(p.PlanCostVer2, scanCostVer2(option, newRowCount, rowSize, scanFactor))
 		}
 	}
