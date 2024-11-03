@@ -83,6 +83,27 @@ type tidbTestSuite struct {
 }
 
 func createTidbTestSuite(t *testing.T) *tidbTestSuite {
+	cfg := newTestConfig()
+	cfg.Port = 0
+	cfg.Status.ReportStatus = true
+	cfg.Status.StatusPort = 0
+	cfg.Performance.TCPKeepAlive = true
+	return createTidbTestSuiteWithCfg(t, cfg)
+}
+
+// parseDuration parses lease argument string.
+func parseDuration(lease string) (time.Duration, error) {
+	dur, err := time.ParseDuration(lease)
+	if err != nil {
+		dur, err = time.ParseDuration(lease + "s")
+	}
+	if err != nil || dur < 0 {
+		return 0, errors.Errorf("invalid lease duration: %v", lease)
+	}
+	return dur, nil
+}
+
+func createTidbTestSuiteWithCfg(t *testing.T, cfg *config.Config) *tidbTestSuite {
 	ts := &tidbTestSuite{testServerClient: newTestServerClient()}
 
 	// setup tidbTestSuite
@@ -90,14 +111,12 @@ func createTidbTestSuite(t *testing.T) *tidbTestSuite {
 	ts.store, err = mockstore.NewMockStore()
 	session.DisableStats4Test()
 	require.NoError(t, err)
+	ddlLeaseDuration, err := parseDuration(cfg.Lease)
+	require.NoError(t, err)
+	session.SetSchemaLease(ddlLeaseDuration)
 	ts.domain, err = session.BootstrapSession(ts.store)
 	require.NoError(t, err)
 	ts.tidbdrv = NewTiDBDriver(ts.store)
-	cfg := newTestConfig()
-	cfg.Port = ts.port
-	cfg.Status.ReportStatus = true
-	cfg.Status.StatusPort = ts.statusPort
-	cfg.Performance.TCPKeepAlive = true
 	RunInGoTestChan = make(chan struct{})
 	server, err := NewServer(cfg, ts.tidbdrv)
 	require.NoError(t, err)
@@ -3188,7 +3207,7 @@ func TestProxyProtocolWithIpFallbackable(t *testing.T) {
 
 func TestProxyProtocolWithIpNoFallbackable(t *testing.T) {
 	cfg := newTestConfig()
-	cfg.Port = 4000
+	cfg.Port = 4005
 	cfg.Status.ReportStatus = false
 	// Setup proxy protocol config
 	cfg.ProxyProtocol.Networks = "*"
@@ -3228,4 +3247,18 @@ func TestLoadData(t *testing.T) {
 	ts := createTidbTestSuite(t)
 	ts.runTestLoadDataReplace(t)
 	ts.runTestLoadDataReplaceNonclusteredPK(t)
+}
+
+func TestIssue53634(t *testing.T) {
+	if !variable.DefTiDBEnableConcurrentDDL {
+		t.Skip("skip this mdl test when DefTiDBEnableConcurrentDDL is false")
+	}
+
+	cfg := newTestConfig()
+	cfg.Lease = "20s"
+	cfg.Port = 4123
+	cfg.Status.StatusPort = 10088
+	ts := createTidbTestSuiteWithCfg(t, cfg)
+
+	ts.runTestIssue53634(t, ts, ts.domain)
 }
