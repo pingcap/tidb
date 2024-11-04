@@ -87,7 +87,7 @@ func genBuiltinThreadSafeCode(dir string) []byte {
 		"builtin_time.go",
 	}
 
-	var threadSafeFuncs []string
+	threadSafeFuncs := make([]string, 0, 32)
 	for _, file := range files {
 		funcNames := collectThreadSafeBuiltinFuncs(path.Join(dir, file))
 		threadSafeFuncs = append(threadSafeFuncs, funcNames...)
