@@ -13,7 +13,6 @@ go_library(
     deps = [
         "//pkg/planner/cascades/memo",
         "//pkg/planner/pattern",
-        "//pkg/sessionctx",
     ],
 )
 

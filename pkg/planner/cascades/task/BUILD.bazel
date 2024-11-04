@@ -32,6 +32,8 @@ go_test(
     shard_count = 3,
     deps = [
         "//pkg/planner/cascades/base",
+        "//pkg/planner/cascades/memo",
+        "//pkg/util/mock",
         "@com_github_stretchr_testify//require",
     ],
 )
