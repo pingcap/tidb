@@ -271,18 +271,25 @@ func (j *semiJoinProbe) matchMultiBuildRows(joinedChk *chunk.Chunk, joinedChkRem
 	meta := j.ctx.hashTableMeta
 	for j.matchedRowsHeaders[j.currentProbeRow] != 0 && *joinedChkRemainCap > 0 && j.matchedRowsForCurrentProbeRow < maxMatchedRowNum {
 		candidateRow := tagHelper.toUnsafePointer(j.matchedRowsHeaders[j.currentProbeRow])
-		if isKeyMatched(meta.keyMode, j.serializedKeys[j.currentProbeRow], candidateRow, meta) {
-			if isRightSideBuild || !meta.isCurrentRowUsedWithAtomic(candidateRow) {
+		if isRightSideBuild {
+			if isKeyMatched(meta.keyMode, j.serializedKeys[j.currentProbeRow], candidateRow, meta) {
 				j.appendBuildRowToCachedBuildRowsV1(j.currentProbeRow, candidateRow, joinedChk, 0, true)
 				j.matchedRowsForCurrentProbeRow++
 				*joinedChkRemainCap--
-
-				if isRightSideBuild {
-					j.groupMark = append(j.groupMark, j.currentProbeRow)
-				}
+				j.groupMark = append(j.groupMark, j.currentProbeRow)
+			} else {
+				j.probeCollision++
 			}
 		} else {
-			j.probeCollision++
+			if !meta.isCurrentRowUsedWithAtomic(candidateRow) {
+				if isKeyMatched(meta.keyMode, j.serializedKeys[j.currentProbeRow], candidateRow, meta) {
+					j.appendBuildRowToCachedBuildRowsV1(j.currentProbeRow, candidateRow, joinedChk, 0, true)
+					j.matchedRowsForCurrentProbeRow++
+					*joinedChkRemainCap--
+				} else {
+					j.probeCollision++
+				}
+			}
 		}
 		j.matchedRowsHeaders[j.currentProbeRow] = getNextRowAddress(candidateRow, tagHelper, j.matchedRowsHashValue[j.currentProbeRow])
 	}
@@ -358,6 +365,8 @@ func (j *semiJoinProbe) probeForLeftSideBuildNoOtherCondition(sqlKiller *sqlkill
 	meta := j.ctx.hashTableMeta
 	tagHelper := j.ctx.hashTableContext.tagHelper
 
+	loopCnt := 0
+
 	for j.currentProbeRow < j.chunkRows {
 		if j.matchedRowsHeaders[j.currentProbeRow] != 0 {
 			candidateRow := tagHelper.toUnsafePointer(j.matchedRowsHeaders[j.currentProbeRow])
@@ -369,6 +378,14 @@ func (j *semiJoinProbe) probeForLeftSideBuildNoOtherCondition(sqlKiller *sqlkill
 			j.matchedRowsHeaders[j.currentProbeRow] = getNextRowAddress(candidateRow, tagHelper, j.matchedRowsHashValue[j.currentProbeRow])
 		} else {
 			j.currentProbeRow++
+		}
+
+		loopCnt++
+		if loopCnt%2000 == 0 {
+			err = checkSQLKiller(sqlKiller, "killedDuringProbe")
+			if err != nil {
+				return err
+			}
 		}
 	}
 
