@@ -47,81 +47,69 @@ func newAntiSemiJoinProbe(base baseJoinProbe, isLeftSideBuild bool) *antiSemiJoi
 	return ret
 }
 
-func (j *antiSemiJoinProbe) InitForScanRowTable() {
-	if !j.isLeftSideBuild {
+func (a *antiSemiJoinProbe) InitForScanRowTable() {
+	if !a.isLeftSideBuild {
 		panic("should not reach here")
 	}
-	totalRowCount := j.ctx.hashTableContext.hashTable.totalRowCount()
-	concurrency := j.ctx.Concurrency
-	workID := uint64(j.workID)
-	avgRowPerWorker := totalRowCount / uint64(concurrency)
-	startIndex := workID * avgRowPerWorker
-	endIndex := (workID + 1) * avgRowPerWorker
-	if workID == uint64(concurrency-1) {
-		endIndex = totalRowCount
-	}
-	if endIndex > totalRowCount {
-		endIndex = totalRowCount
-	}
-	j.rowIter = j.ctx.hashTableContext.hashTable.createRowIter(startIndex, endIndex)
+	a.rowIter = commonInitForScanRowTable(&a.baseJoinProbe)
 }
 
-func (j *antiSemiJoinProbe) NeedScanRowTable() bool {
-	return j.isLeftSideBuild
+func (a *antiSemiJoinProbe) NeedScanRowTable() bool {
+	return a.isLeftSideBuild
 }
 
-func (j *antiSemiJoinProbe) IsScanRowTableDone() bool {
-	if !j.isLeftSideBuild {
+func (a *antiSemiJoinProbe) IsScanRowTableDone() bool {
+	if !a.isLeftSideBuild {
 		panic("should not reach here")
 	}
-	return j.rowIter.isEnd()
+	return a.rowIter.isEnd()
 }
 
-func (j *antiSemiJoinProbe) ScanRowTable(joinResult *hashjoinWorkerResult, sqlKiller *sqlkiller.SQLKiller) *hashjoinWorkerResult {
-	if !j.isLeftSideBuild {
+func (a *antiSemiJoinProbe) ScanRowTable(joinResult *hashjoinWorkerResult, sqlKiller *sqlkiller.SQLKiller) *hashjoinWorkerResult {
+	if !a.isLeftSideBuild {
 		panic("should not reach here")
 	}
 	if joinResult.chk.IsFull() {
 		return joinResult
 	}
-	if j.rowIter == nil {
+	if a.rowIter == nil {
 		panic("scanRowTable before init")
 	}
-	j.nextCachedBuildRowIndex = 0
-	meta := j.ctx.hashTableMeta
+	a.nextCachedBuildRowIndex = 0
+	meta := a.ctx.hashTableMeta
 	insertedRows := 0
 	remainCap := joinResult.chk.RequiredRows() - joinResult.chk.NumRows()
-	for insertedRows < remainCap && !j.rowIter.isEnd() {
-		currentRow := j.rowIter.getValue()
+	for insertedRows < remainCap && !a.rowIter.isEnd() {
+		currentRow := a.rowIter.getValue()
 		if !meta.isCurrentRowUsed(currentRow) {
 			// append build side of this row
-			j.appendBuildRowToCachedBuildRowsV1(0, currentRow, joinResult.chk, 0, false)
+			a.appendBuildRowToCachedBuildRowsV1(0, currentRow, joinResult.chk, 0, false)
 			insertedRows++
 		}
-		j.rowIter.next()
+		a.rowIter.next()
 	}
 	err := checkSQLKiller(sqlKiller, "killedDuringProbe")
 	if err != nil {
 		joinResult.err = err
 		return joinResult
 	}
-	if j.nextCachedBuildRowIndex > 0 {
-		j.batchConstructBuildRows(joinResult.chk, 0, false)
+	if a.nextCachedBuildRowIndex > 0 {
+		a.batchConstructBuildRows(joinResult.chk, 0, false)
 	}
 	return joinResult
 }
 
-func (j *antiSemiJoinProbe) ResetProbe() {
-	j.rowIter = nil
-	j.baseJoinProbe.ResetProbe()
+func (a *antiSemiJoinProbe) ResetProbe() {
+	a.rowIter = nil
+	a.baseJoinProbe.ResetProbe()
 }
 
-func (j *antiSemiJoinProbe) Probe(joinResult *hashjoinWorkerResult, sqlKiller *sqlkiller.SQLKiller) (ok bool, _ *hashjoinWorkerResult) {
+func (a *antiSemiJoinProbe) Probe(joinResult *hashjoinWorkerResult, sqlKiller *sqlkiller.SQLKiller) (ok bool, _ *hashjoinWorkerResult) {
 	if joinResult.chk.IsFull() {
 		return true, joinResult
 	}
 
-	joinedChk, remainCap, err := j.prepareForProbe(joinResult.chk)
+	joinedChk, remainCap, err := a.prepareForProbe(joinResult.chk)
 	if err != nil {
 		joinResult.err = err
 		return false, joinResult
@@ -134,20 +122,20 @@ func (j *antiSemiJoinProbe) Probe(joinResult *hashjoinWorkerResult, sqlKiller *s
 	joinedChk.SetInCompleteChunk(true)
 	defer joinedChk.SetInCompleteChunk(isInCompleteChunk)
 
-	hasOtherCondition := j.ctx.hasOtherCondition()
-	if j.isLeftSideBuild {
+	hasOtherCondition := a.ctx.hasOtherCondition()
+	if a.isLeftSideBuild {
 		if hasOtherCondition {
-			err = j.probeForLeftSideBuildHasOtherCondition(joinedChk, sqlKiller)
+			err = a.probeForLeftSideBuildHasOtherCondition(joinedChk, sqlKiller)
 		} else {
-			err = j.probeForLeftSideBuildNoOtherCondition(sqlKiller)
+			err = a.probeForLeftSideBuildNoOtherCondition(sqlKiller)
 		}
 	} else {
 		if hasOtherCondition {
-			j.groupMark = j.groupMark[:0]
-			clear(j.matchedProbeRowIdx)
-			err = j.probeForRightSideBuildHasOtherCondition(joinResult.chk, joinedChk, sqlKiller)
+			a.groupMark = a.groupMark[:0]
+			clear(a.matchedProbeRowIdx)
+			err = a.probeForRightSideBuildHasOtherCondition(joinResult.chk, joinedChk, sqlKiller)
 		} else {
-			err = j.probeForRightSideBuildNoOtherCondition(joinResult.chk, remainCap, sqlKiller)
+			err = a.probeForRightSideBuildNoOtherCondition(joinResult.chk, remainCap, sqlKiller)
 		}
 	}
 	if err != nil {
@@ -157,25 +145,25 @@ func (j *antiSemiJoinProbe) Probe(joinResult *hashjoinWorkerResult, sqlKiller *s
 	return true, joinResult
 }
 
-func (j *antiSemiJoinProbe) probeForLeftSideBuildHasOtherCondition(joinedChk *chunk.Chunk, sqlKiller *sqlkiller.SQLKiller) (err error) {
-	meta := j.ctx.hashTableMeta
-	tagHelper := j.ctx.hashTableContext.tagHelper
+func (a *antiSemiJoinProbe) probeForLeftSideBuildHasOtherCondition(joinedChk *chunk.Chunk, sqlKiller *sqlkiller.SQLKiller) (err error) {
+	meta := a.ctx.hashTableMeta
+	tagHelper := a.ctx.hashTableContext.tagHelper
 	remainCap := joinedChk.Capacity()
 
-	for remainCap > 0 && j.currentProbeRow < j.chunkRows {
-		if j.matchedRowsHeaders[j.currentProbeRow] != 0 {
-			candidateRow := tagHelper.toUnsafePointer(j.matchedRowsHeaders[j.currentProbeRow])
-			if isKeyMatched(meta.keyMode, j.serializedKeys[j.currentProbeRow], candidateRow, meta) {
-				j.appendBuildRowToCachedBuildRowsV1(j.currentProbeRow, candidateRow, joinedChk, 0, true)
-				j.matchedRowsForCurrentProbeRow++
+	for remainCap > 0 && a.currentProbeRow < a.chunkRows {
+		if a.matchedRowsHeaders[a.currentProbeRow] != 0 {
+			candidateRow := tagHelper.toUnsafePointer(a.matchedRowsHeaders[a.currentProbeRow])
+			if isKeyMatched(meta.keyMode, a.serializedKeys[a.currentProbeRow], candidateRow, meta) {
+				a.appendBuildRowToCachedBuildRowsV1(a.currentProbeRow, candidateRow, joinedChk, 0, true)
+				a.matchedRowsForCurrentProbeRow++
 			} else {
-				j.probeCollision++
+				a.probeCollision++
 			}
-			j.matchedRowsHeaders[j.currentProbeRow] = getNextRowAddress(candidateRow, tagHelper, j.matchedRowsHashValue[j.currentProbeRow])
+			a.matchedRowsHeaders[a.currentProbeRow] = getNextRowAddress(candidateRow, tagHelper, a.matchedRowsHashValue[a.currentProbeRow])
 		} else {
-			j.finishLookupCurrentProbeRow()
+			a.finishLookupCurrentProbeRow()
 			remainCap--
-			j.currentProbeRow++
+			a.currentProbeRow++
 		}
 	}
 
@@ -183,17 +171,17 @@ func (j *antiSemiJoinProbe) probeForLeftSideBuildHasOtherCondition(joinedChk *ch
 	if err != nil {
 		return err
 	}
-	j.finishCurrentLookupLoop(joinedChk)
+	a.finishCurrentLookupLoop(joinedChk)
 
 	if joinedChk.NumRows() > 0 {
-		j.selected, err = expression.VectorizedFilter(j.ctx.SessCtx.GetExprCtx().GetEvalCtx(), j.ctx.SessCtx.GetSessionVars().EnableVectorizedExpression, j.ctx.OtherCondition, chunk.NewIterator4Chunk(joinedChk), j.selected)
+		a.selected, err = expression.VectorizedFilter(a.ctx.SessCtx.GetExprCtx().GetEvalCtx(), a.ctx.SessCtx.GetSessionVars().EnableVectorizedExpression, a.ctx.OtherCondition, chunk.NewIterator4Chunk(joinedChk), a.selected)
 		if err != nil {
 			return err
 		}
 
-		for index, result := range j.selected {
+		for index, result := range a.selected {
 			if result {
-				meta.setUsedFlag(*(*unsafe.Pointer)(unsafe.Pointer(&j.rowIndexInfos[index].buildRowStart)))
+				meta.setUsedFlag(*(*unsafe.Pointer)(unsafe.Pointer(&a.rowIndexInfos[index].buildRowStart)))
 			}
 		}
 	}
@@ -201,21 +189,21 @@ func (j *antiSemiJoinProbe) probeForLeftSideBuildHasOtherCondition(joinedChk *ch
 	return
 }
 
-func (j *antiSemiJoinProbe) probeForLeftSideBuildNoOtherCondition(sqlKiller *sqlkiller.SQLKiller) (err error) {
-	meta := j.ctx.hashTableMeta
-	tagHelper := j.ctx.hashTableContext.tagHelper
+func (a *antiSemiJoinProbe) probeForLeftSideBuildNoOtherCondition(sqlKiller *sqlkiller.SQLKiller) (err error) {
+	meta := a.ctx.hashTableMeta
+	tagHelper := a.ctx.hashTableContext.tagHelper
 
-	for j.currentProbeRow < j.chunkRows {
-		if j.matchedRowsHeaders[j.currentProbeRow] != 0 {
-			candidateRow := tagHelper.toUnsafePointer(j.matchedRowsHeaders[j.currentProbeRow])
-			if isKeyMatched(meta.keyMode, j.serializedKeys[j.currentProbeRow], candidateRow, meta) {
+	for a.currentProbeRow < a.chunkRows {
+		if a.matchedRowsHeaders[a.currentProbeRow] != 0 {
+			candidateRow := tagHelper.toUnsafePointer(a.matchedRowsHeaders[a.currentProbeRow])
+			if isKeyMatched(meta.keyMode, a.serializedKeys[a.currentProbeRow], candidateRow, meta) {
 				meta.setUsedFlag(candidateRow)
 			} else {
-				j.probeCollision++
+				a.probeCollision++
 			}
-			j.matchedRowsHeaders[j.currentProbeRow] = getNextRowAddress(candidateRow, tagHelper, j.matchedRowsHashValue[j.currentProbeRow])
+			a.matchedRowsHeaders[a.currentProbeRow] = getNextRowAddress(candidateRow, tagHelper, a.matchedRowsHashValue[a.currentProbeRow])
 		} else {
-			j.currentProbeRow++
+			a.currentProbeRow++
 		}
 	}
 
@@ -223,28 +211,28 @@ func (j *antiSemiJoinProbe) probeForLeftSideBuildNoOtherCondition(sqlKiller *sql
 	return err
 }
 
-func (j *antiSemiJoinProbe) probeForRightSideBuildHasOtherCondition(chk, joinedChk *chunk.Chunk, sqlKiller *sqlkiller.SQLKiller) (err error) {
-	meta := j.ctx.hashTableMeta
-	tagHelper := j.ctx.hashTableContext.tagHelper
-	for j.currentProbeRow < j.chunkRows {
+func (a *antiSemiJoinProbe) probeForRightSideBuildHasOtherCondition(chk, joinedChk *chunk.Chunk, sqlKiller *sqlkiller.SQLKiller) (err error) {
+	meta := a.ctx.hashTableMeta
+	tagHelper := a.ctx.hashTableContext.tagHelper
+	for a.currentProbeRow < a.chunkRows {
 		joinedChk.Reset()
-		j.groupMark = j.groupMark[:0]
+		a.groupMark = a.groupMark[:0]
 		remainCap := joinedChk.Capacity()
-		for remainCap > 0 && j.currentProbeRow < j.chunkRows {
-			if j.matchedRowsHeaders[j.currentProbeRow] != 0 {
-				candidateRow := tagHelper.toUnsafePointer(j.matchedRowsHeaders[j.currentProbeRow])
-				if isKeyMatched(meta.keyMode, j.serializedKeys[j.currentProbeRow], candidateRow, meta) {
-					j.appendBuildRowToCachedBuildRowsV1(j.currentProbeRow, candidateRow, joinedChk, 0, true)
+		for remainCap > 0 && a.currentProbeRow < a.chunkRows {
+			if a.matchedRowsHeaders[a.currentProbeRow] != 0 {
+				candidateRow := tagHelper.toUnsafePointer(a.matchedRowsHeaders[a.currentProbeRow])
+				if isKeyMatched(meta.keyMode, a.serializedKeys[a.currentProbeRow], candidateRow, meta) {
+					a.appendBuildRowToCachedBuildRowsV1(a.currentProbeRow, candidateRow, joinedChk, 0, true)
 					remainCap--
-					j.matchedRowsForCurrentProbeRow++
-					j.groupMark = append(j.groupMark, j.currentProbeRow)
+					a.matchedRowsForCurrentProbeRow++
+					a.groupMark = append(a.groupMark, a.currentProbeRow)
 				} else {
-					j.probeCollision++
+					a.probeCollision++
 				}
-				j.matchedRowsHeaders[j.currentProbeRow] = getNextRowAddress(candidateRow, tagHelper, j.matchedRowsHashValue[j.currentProbeRow])
+				a.matchedRowsHeaders[a.currentProbeRow] = getNextRowAddress(candidateRow, tagHelper, a.matchedRowsHashValue[a.currentProbeRow])
 			} else {
-				j.finishLookupCurrentProbeRow()
-				j.currentProbeRow++
+				a.finishLookupCurrentProbeRow()
+				a.currentProbeRow++
 			}
 		}
 
@@ -253,67 +241,67 @@ func (j *antiSemiJoinProbe) probeForRightSideBuildHasOtherCondition(chk, joinedC
 			return err
 		}
 
-		j.finishCurrentLookupLoop(joinedChk)
+		a.finishCurrentLookupLoop(joinedChk)
 
 		if joinedChk.NumRows() > 0 {
-			j.selected = j.selected[:0]
-			j.selected, err = expression.VectorizedFilter(j.ctx.SessCtx.GetExprCtx().GetEvalCtx(), j.ctx.SessCtx.GetSessionVars().EnableVectorizedExpression, j.ctx.OtherCondition, chunk.NewIterator4Chunk(joinedChk), j.selected)
+			a.selected = a.selected[:0]
+			a.selected, err = expression.VectorizedFilter(a.ctx.SessCtx.GetExprCtx().GetEvalCtx(), a.ctx.SessCtx.GetSessionVars().EnableVectorizedExpression, a.ctx.OtherCondition, chunk.NewIterator4Chunk(joinedChk), a.selected)
 			if err != nil {
 				return err
 			}
 
-			length := len(j.selected)
+			length := len(a.selected)
 			for i := 0; i < length; i++ {
-				if j.selected[i] {
-					j.matchedProbeRowIdx[j.groupMark[i]] = struct{}{}
+				if a.selected[i] {
+					a.matchedProbeRowIdx[a.groupMark[i]] = struct{}{}
 				}
 			}
 		}
 	}
 
-	if cap(j.selected) < j.chunkRows {
-		j.selected = make([]bool, j.chunkRows)
+	if cap(a.selected) < a.chunkRows {
+		a.selected = make([]bool, a.chunkRows)
 	} else {
-		j.selected = j.selected[:j.chunkRows]
+		a.selected = a.selected[:a.chunkRows]
 	}
 
-	j.currentProbeRow = 0
-	for ; j.currentProbeRow < j.chunkRows; j.currentProbeRow++ {
-		_, ok := j.matchedProbeRowIdx[j.currentProbeRow]
-		j.selected[j.currentProbeRow] = !ok
+	a.currentProbeRow = 0
+	for ; a.currentProbeRow < a.chunkRows; a.currentProbeRow++ {
+		_, ok := a.matchedProbeRowIdx[a.currentProbeRow]
+		a.selected[a.currentProbeRow] = !ok
 	}
 
-	for index, usedColIdx := range j.lUsed {
+	for index, usedColIdx := range a.lUsed {
 		dstCol := chk.Column(index)
-		srcCol := j.currentChunk.Column(usedColIdx)
-		chunk.CopySelectedRows(dstCol, srcCol, j.selected)
+		srcCol := a.currentChunk.Column(usedColIdx)
+		chunk.CopySelectedRows(dstCol, srcCol, a.selected)
 	}
 	return
 }
 
-func (j *antiSemiJoinProbe) probeForRightSideBuildNoOtherCondition(chk *chunk.Chunk, remainCap int, sqlKiller *sqlkiller.SQLKiller) (err error) {
-	meta := j.ctx.hashTableMeta
-	tagHelper := j.ctx.hashTableContext.tagHelper
+func (a *antiSemiJoinProbe) probeForRightSideBuildNoOtherCondition(chk *chunk.Chunk, remainCap int, sqlKiller *sqlkiller.SQLKiller) (err error) {
+	meta := a.ctx.hashTableMeta
+	tagHelper := a.ctx.hashTableContext.tagHelper
 	matched := false
 
-	for remainCap > 0 && j.currentProbeRow < j.chunkRows {
-		if j.matchedRowsHeaders[j.currentProbeRow] != 0 {
-			candidateRow := tagHelper.toUnsafePointer(j.matchedRowsHeaders[j.currentProbeRow])
-			if isKeyMatched(meta.keyMode, j.serializedKeys[j.currentProbeRow], candidateRow, meta) {
+	for remainCap > 0 && a.currentProbeRow < a.chunkRows {
+		if a.matchedRowsHeaders[a.currentProbeRow] != 0 {
+			candidateRow := tagHelper.toUnsafePointer(a.matchedRowsHeaders[a.currentProbeRow])
+			if isKeyMatched(meta.keyMode, a.serializedKeys[a.currentProbeRow], candidateRow, meta) {
 				matched = true
-				j.matchedRowsHeaders[j.currentProbeRow] = 0
+				a.matchedRowsHeaders[a.currentProbeRow] = 0
 			} else {
-				j.probeCollision++
-				j.matchedRowsHeaders[j.currentProbeRow] = getNextRowAddress(candidateRow, tagHelper, j.matchedRowsHashValue[j.currentProbeRow])
+				a.probeCollision++
+				a.matchedRowsHeaders[a.currentProbeRow] = getNextRowAddress(candidateRow, tagHelper, a.matchedRowsHashValue[a.currentProbeRow])
 			}
 		} else {
 			if !matched {
 				remainCap--
-				j.matchedRowsForCurrentProbeRow = 1
-				j.finishLookupCurrentProbeRow()
+				a.matchedRowsForCurrentProbeRow = 1
+				a.finishLookupCurrentProbeRow()
 			}
 			matched = false // reset
-			j.currentProbeRow++
+			a.currentProbeRow++
 		}
 	}
 
@@ -322,6 +310,6 @@ func (j *antiSemiJoinProbe) probeForRightSideBuildNoOtherCondition(chk *chunk.Ch
 		return err
 	}
 
-	j.finishCurrentLookupLoop(chk)
+	a.finishCurrentLookupLoop(chk)
 	return
 }
