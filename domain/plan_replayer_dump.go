@@ -114,7 +114,7 @@ func (tne *tableNameExtractor) getTablesAndViews() (map[tableNamePair]struct{}, 
 }
 
 func findFK(is infoschema.InfoSchema, dbName, tableName string, tableMap map[tableNamePair]struct{}) error {
-	tblInfo, err := is.TableByName(context.Background(), model.NewCIStr(dbName), model.NewCIStr(tableName))
+	tblInfo, err := is.TableByName(model.NewCIStr(dbName), model.NewCIStr(tableName))
 	if err != nil {
 		return err
 	}
