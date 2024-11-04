@@ -175,8 +175,11 @@ func NewLocalMPPCoordinator(ctx context.Context, sctx sessionctx.Context, is inf
 		reqMap:          make(map[int64]*mppRequestReport),
 	}
 
-	if len(coordinatorAddr) > 0 && needReportExecutionSummary(coord.originalPlan) {
-		coord.reportExecutionInfo = true
+	p := sctx.ShowProcess().Plan
+	if pp, ok := p.(base.PhysicalPlan); ok {
+		if len(coordinatorAddr) > 0 && needReportExecutionSummary(pp, coord.originalPlan.ID(), false) {
+			coord.reportExecutionInfo = true
+		}
 	}
 	return coord
 }
@@ -336,14 +339,18 @@ func (c *localMppCoordinator) fixTaskForCTEStorageAndReader(exec *tipb.Executor,
 }
 
 // DFS to check if plan needs report execution summary through ReportMPPTaskStatus mpp service
-// Currently, return true if plan contains limit operator
-func needReportExecutionSummary(plan base.PhysicalPlan) bool {
+// Currently, return true if there is a limit operator in the path from current TableReader to root
+func needReportExecutionSummary(plan base.PhysicalPlan, destTablePlanID int, foundLimit bool) bool {
 	switch x := plan.(type) {
 	case *plannercore.PhysicalLimit:
-		return true
+		return needReportExecutionSummary(x.Children()[0], destTablePlanID, true)
+	case *plannercore.PhysicalTableReader:
+		if foundLimit {
+			return x.GetTablePlan().ID() == destTablePlanID
+		}
 	default:
 		for _, child := range x.Children() {
-			if needReportExecutionSummary(child) {
+			if needReportExecutionSummary(child, destTablePlanID, foundLimit) {
 				return true
 			}
 		}
