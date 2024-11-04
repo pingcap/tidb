@@ -8087,3 +8087,15 @@ func TestCastAsStringExplicitCharSet(t *testing.T) {
 	tk.MustExec("insert into test values(1,'张三'), (2,'李四'), (3,'张三'), (4,'李四')")
 	tk.MustQuery("select id from test order by cast(update_user as char) desc , id limit 3").Check(testkit.Rows("2", "4", "1"))
 }
+
+func TestIssue53580(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("use test")
+	tk.MustExec("create table t (col TEXT);")
+	tk.MustQuery(`select 1 from (select t.col as c0, 46578369 as c1 from t) as t where
+		case when (
+			t.c0 in (t.c0, cast((cast(1 as unsigned) - cast(t.c1 as signed)) as char))
+		) then 1 else 2 end;`).Check(testkit.Rows())
+}
