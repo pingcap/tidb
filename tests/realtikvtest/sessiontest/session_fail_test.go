@@ -127,13 +127,6 @@ func TestKillFlagInBackoff(t *testing.T) {
 }
 
 func TestClusterTableSendError(t *testing.T) {
-	gconf := config.GetGlobalConfig()
-	originIP := gconf.AdvertiseAddress
-	defer func() {
-		gconf.AdvertiseAddress = originIP
-	}()
-	// Set an unavailable IP to prevent the coprocessor task from being skipped
-	gconf.AdvertiseAddress = "<nil>"
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 
 	tk := testkit.NewTestKit(t, store)
