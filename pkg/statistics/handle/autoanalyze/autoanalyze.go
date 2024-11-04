@@ -333,7 +333,7 @@ func (sa *statsAnalyze) handleAutoAnalyze(sctx sessionctx.Context) bool {
 			sa.refresher.ProcessDMLChangesForTest()
 			sa.refresher.RequeueFailedJobsForTest()
 		}
-		analyzed := sa.refresher.AnalyzeHighestPriorityTables()
+		analyzed := sa.refresher.AnalyzeHighestPriorityTables(sctx)
 		// During the test, we need to wait for the auto analyze job to be finished.
 		if intest.InTest {
 			sa.refresher.WaitAutoAnalyzeFinishedForTest()
