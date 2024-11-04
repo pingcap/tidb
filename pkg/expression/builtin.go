@@ -64,7 +64,7 @@ type baseBuiltinFunc struct {
 }
 
 // SafeToShareAcrossSession implements the builtinFunc interface.
-func (b *baseBuiltinFunc) SafeToShareAcrossSession() bool {
+func (*baseBuiltinFunc) SafeToShareAcrossSession() bool {
 	return false
 }
 
