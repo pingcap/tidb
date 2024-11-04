@@ -291,9 +291,9 @@ func (idx *Index) GetRowCount(sctx sessionctx.Context, coll *HistColl, indexRang
 						}
 						continue
 					}
-					totalCount = float64(idx.NullCount)
+					totalCount = mathutil.Max(1, float64(idx.NullCount))
 					if debugTrace {
-						debugTraceEndEstimateRange(sctx, float64(idx.NullCount), debugTraceUniquePoint)
+						debugTraceEndEstimateRange(sctx, totalCount, debugTraceUniquePoint)
 					}
 					continue
 				}
