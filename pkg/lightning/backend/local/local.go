@@ -112,6 +112,9 @@ var (
 	// MaxWriteAndIngestRetryTimes is the max retry times for write and ingest.
 	// A large retry times is for tolerating tikv cluster failures.
 	MaxWriteAndIngestRetryTimes = 30
+
+	// Unlimited RPC receive message size for TiKV importer
+	unlimitedRPCRecvMsgSize = math.MaxInt32
 )
 
 // ImportClientFactory is factory to create new import client for specific store.
@@ -126,7 +129,6 @@ type importClientFactoryImpl struct {
 	tls             *common.TLS
 	tcpConcurrency  int
 	compressionType config.CompressionType
-	maxRpcMsgSize   int
 }
 
 func newImportClientFactoryImpl(
@@ -134,7 +136,6 @@ func newImportClientFactoryImpl(
 	tls *common.TLS,
 	tcpConcurrency int,
 	compressionType config.CompressionType,
-	maxRpcMsgSize int,
 ) *importClientFactoryImpl {
 	return &importClientFactoryImpl{
 		conns:           common.NewGRPCConns(),
@@ -142,7 +143,6 @@ func newImportClientFactoryImpl(
 		tls:             tls,
 		tcpConcurrency:  tcpConcurrency,
 		compressionType: compressionType,
-		maxRpcMsgSize:   maxRpcMsgSize,
 	}
 }
 
@@ -168,8 +168,7 @@ func (f *importClientFactoryImpl) makeConn(ctx context.Context, storeID uint64) 
 		addr = store.GetAddress()
 	}
 	opts = append(opts,
-		grpc.WithDefaultCallOptions(grpc.MaxCallSendMsgSize(f.maxRpcMsgSize)),
-		grpc.WithDefaultCallOptions(grpc.MaxCallRecvMsgSize(f.maxRpcMsgSize)),
+		grpc.WithDefaultCallOptions(grpc.MaxCallRecvMsgSize(unlimitedRPCRecvMsgSize)),
 		grpc.WithConnectParams(grpc.ConnectParams{Backoff: bfConf}),
 		grpc.WithKeepaliveParams(keepalive.ClientParameters{
 			Time:                gRPCKeepAliveTime,
@@ -448,8 +447,6 @@ type BackendConfig struct {
 	// default true.
 	DisableAutomaticCompactions bool
 	BlockSize                   int
-	// max size in bytes for sending and receiving rpc message with importer.
-	MaxRpcMsgSize int
 }
 
 // NewBackendConfig creates a new BackendConfig.
@@ -467,7 +464,6 @@ func NewBackendConfig(cfg *config.Config, maxOpenFiles int, keyspaceName, resour
 		CheckpointEnabled:           cfg.Checkpoint.Enable,
 		MemTableSize:                int(cfg.TikvImporter.EngineMemCacheSize),
 		LocalWriterMemCacheSize:     int64(cfg.TikvImporter.LocalWriterMemCacheSize),
-		MaxRpcMsgSize:               int(cfg.TikvImporter.MaxRpcMsgSize),
 		ShouldCheckTiKV:             cfg.App.CheckRequirements,
 		DupeDetectEnabled:           cfg.Conflict.Strategy != config.NoneOnDup,
 		DuplicateDetectOpt:          common.DupDetectOpt{ReportErrOnDup: cfg.Conflict.Strategy == config.ErrorOnDup},
@@ -615,7 +611,7 @@ func NewBackend(
 		pdhttp.WithTLSConfig(tls.TLSConfig()),
 	).WithBackoffer(retry.InitialBackoffer(time.Second, time.Second, pdutil.PDRequestRetryTime*time.Second))
 	splitCli := split.NewClient(pdCli, pdHTTPCli, tls.TLSConfig(), config.RegionSplitBatchSize, config.RegionSplitConcurrency)
-	importClientFactory = newImportClientFactoryImpl(splitCli, tls, config.MaxConnPerStore, config.ConnCompressType, config.MaxRpcMsgSize)
+	importClientFactory = newImportClientFactoryImpl(splitCli, tls, config.MaxConnPerStore, config.ConnCompressType)
 
 	multiIngestSupported, err = checkMultiIngestSupport(ctx, pdCli, importClientFactory)
 	if err != nil {
