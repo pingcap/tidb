@@ -33,12 +33,8 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	dbsession "github.com/pingcap/tidb/pkg/session"
-<<<<<<< HEAD
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
-	"github.com/pingcap/tidb/pkg/statistics/handle/autoanalyze/exec"
-=======
 	"github.com/pingcap/tidb/pkg/statistics"
->>>>>>> 7e73ddc91b5 (statistics: add metrics for unneeded analyze table (#54822))
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	timerapi "github.com/pingcap/tidb/pkg/timer/api"
