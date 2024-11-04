@@ -44,8 +44,6 @@ type columnStatsUsageCollector struct {
 	// we don't know `ndv(t.a, t.b)`(see (*LogicalAggregation).DeriveStats and getColsNDV for details). So when calculating the statistics
 	// of column `e`, we may use the statistics of column `t.a` and `t.b`.
 	colMap map[int64]map[model.TableItemID]struct{}
-	// histNeededCols records histogram-needed columns. The value field of the map indicates that whether we need to load the full stats of the time or not.
-	histNeededCols map[model.TableItemID]bool
 	// cols is used to store columns collected from expressions and saves some allocation.
 	cols []*expression.Column
 
@@ -60,7 +58,7 @@ type columnStatsUsageCollector struct {
 
 	// tblID2PartitionIDs is used for tables with static pruning mode.
 	// Note that we've no longer suggested to use static pruning mode.
-	tblID2PartitionIDS map[int64][]int64
+	tblID2PartitionIDs map[int64][]int64
 }
 
 func newColumnStatsUsageCollector(histNeeded bool, enabledPlanCapture bool) *columnStatsUsageCollector {
@@ -70,7 +68,7 @@ func newColumnStatsUsageCollector(histNeeded bool, enabledPlanCapture bool) *col
 		// Pre-allocate a slice to reduce allocation, 8 doesn't have special meaning.
 		cols:               make([]*expression.Column, 0, 8),
 		visitedPhysTblIDs:  &set,
-		tblID2PartitionIDS: make(map[int64][]int64),
+		tblID2PartitionIDs: make(map[int64][]int64),
 	}
 	collector.predicateCols = make(map[model.TableItemID]bool)
 	collector.colMap = make(map[int64]map[model.TableItemID]struct{})
@@ -139,8 +137,9 @@ func (c *columnStatsUsageCollector) collectPredicateColumnsForDataSource(ds *log
 	if c.collectVisitedTable {
 		c.visitedtbls[tblID] = struct{}{}
 	}
+	c.visitedPhysTblIDs.Insert(int(ds.PhysicalTableID))
 	if tblID != ds.PhysicalTableID && c.histNeeded {
-		c.tblID2PartitionIDS[tblID] = append(c.tblID2PartitionIDS[tblID], ds.PhysicalTableID)
+		c.tblID2PartitionIDs[tblID] = append(c.tblID2PartitionIDs[tblID], ds.PhysicalTableID)
 	}
 	for _, col := range ds.Schema().Columns {
 		tblColID := model.TableItemID{TableID: tblID, ID: col.ID, IsIndex: false}
@@ -304,12 +303,5 @@ func CollectColumnStatsUsage(lp base.LogicalPlan, histNeeded bool) (
 	if collector.collectVisitedTable {
 		recordTableRuntimeStats(lp.SCtx(), collector.visitedtbls)
 	}
-	physTblIDsWithNeededCols := intset.NewFastIntSet()
-	for neededCol, fullLoad := range collector.histNeededCols {
-		if !fullLoad {
-			continue
-		}
-		physTblIDsWithNeededCols.Insert(int(neededCol.TableID))
-	}
-	return collector.predicateCols, collector.visitedPhysTblIDs, collector.tblID2PartitionIDS
+	return collector.predicateCols, collector.visitedPhysTblIDs, collector.tblID2PartitionIDs
 }
