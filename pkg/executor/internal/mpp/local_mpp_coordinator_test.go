@@ -18,6 +18,7 @@ import (
 	"testing"
 
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
+	"github.com/pingcap/tipb/go-tipb"
 	"github.com/stretchr/testify/require"
 )
 
