@@ -316,10 +316,7 @@ type Column struct {
 
 // SafeToShareAcrossSession returns if the function can be shared across different sessions.
 func (col *Column) SafeToShareAcrossSession() bool {
-	if col.VirtualExpr == nil {
-		return true // for safety
-	}
-	return false
+	return col.VirtualExpr == nil // for safety
 }
 
 // Equal implements Expression interface.
