@@ -22,7 +22,7 @@ import (
 )
 
 // EnableAssert checks if the assert function should work.
-const EnableAssert = false
+const EnableAssert = true
 
 // Assert asserts a condition is true
 func Assert(cond bool, msgAndArgs ...any) {
