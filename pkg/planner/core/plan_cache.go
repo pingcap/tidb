@@ -17,6 +17,7 @@ package core
 import (
 	"context"
 	"math"
+	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/domain"
@@ -267,7 +268,13 @@ func instancePlanCacheEnabled(ctx context.Context) bool {
 }
 
 func lookupPlanCache(ctx context.Context, sctx sessionctx.Context, cacheKey string, paramTypes []*types.FieldType) (cachedVal *PlanCacheValue, hit bool) {
-	if instancePlanCacheEnabled(ctx) {
+	useInstanceCache := instancePlanCacheEnabled(ctx)
+	defer func(begin time.Time) {
+		if hit {
+			core_metrics.GetPlanCacheLookupDuration(useInstanceCache).Observe(time.Since(begin).Seconds())
+		}
+	}(time.Now())
+	if useInstanceCache {
 		if v, hit := domain.GetDomain(sctx).GetInstancePlanCache().Get(cacheKey, paramTypes); hit {
 			cachedVal = v.(*PlanCacheValue)
 			return cachedVal.CloneForInstancePlanCache(ctx, sctx.GetPlanCtx()) // clone the value to solve concurrency problem
