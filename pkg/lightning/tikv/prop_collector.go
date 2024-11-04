@@ -29,12 +29,12 @@ type mockCollector struct {
 var _ rockssst.TablePropertyCollector = mockCollector{}
 
 // Add implements the TablePropertyCollector interface.
-func (m mockCollector) Add(rockssst.InternalKey, []byte) error {
+func (mockCollector) Add(rockssst.InternalKey, []byte) error {
 	return nil
 }
 
 // Finish implements the TablePropertyCollector interface.
-func (m mockCollector) Finish(map[string]string) error {
+func (mockCollector) Finish(map[string]string) error {
 	return nil
 }
 
@@ -133,7 +133,7 @@ func (m *mvccPropCollector) Finish(userProps map[string]string) error {
 }
 
 // Name implements the TablePropertyCollector interface.
-func (m *mvccPropCollector) Name() string {
+func (*mvccPropCollector) Name() string {
 	return "tikv.mvcc-properties-collector"
 }
 
