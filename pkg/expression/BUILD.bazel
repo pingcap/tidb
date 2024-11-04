@@ -40,6 +40,7 @@ go_library(
         "builtin_string.go",
         "builtin_string_vec.go",
         "builtin_string_vec_generated.go",
+        "builtin_threadsafe_generated.go",
         "builtin_time.go",
         "builtin_time_vec.go",
         "builtin_time_vec_generated.go",
@@ -261,4 +262,10 @@ go_test(
         "@org_uber_go_atomic//:atomic",
         "@org_uber_go_goleak//:goleak",
     ],
+)
+
+filegroup(
+    name = "threadsafe_gened_file",
+    srcs = ["builtin_threadsafe_generated.go"],
+    visibility = ["//visibility:public"],
 )

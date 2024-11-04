@@ -46,6 +46,12 @@ type CorrelatedColumn struct {
 	Data *types.Datum
 }
 
+// SafeToShareAcrossSession returns if the function can be shared across different sessions.
+func (col *CorrelatedColumn) SafeToShareAcrossSession() bool {
+	// TODO: optimize this to make it's safe.
+	return false // due to col.Data
+}
+
 // Clone implements Expression interface.
 func (col *CorrelatedColumn) Clone() Expression {
 	return &CorrelatedColumn{
@@ -306,6 +312,14 @@ type Column struct {
 	collationInfo
 
 	CorrelatedColUniqueID int64
+}
+
+// SafeToShareAcrossSession returns if the function can be shared across different sessions.
+func (col *Column) SafeToShareAcrossSession() bool {
+	if col.VirtualExpr != nil {
+		return false // for safety
+	}
+	return true
 }
 
 // Equal implements Expression interface.

@@ -62,8 +62,22 @@ func CloneExprs(exprs []expression.Expression) []expression.Expression {
 	if exprs == nil {
 		return nil
 	}
+	allSafeToShare := true
+	for _, e := range exprs {
+		if !e.SafeToShareAcrossSession() {
+			allSafeToShare = false
+		}
+	}
+	if allSafeToShare {
+		return exprs
+	}
+
 	cloned := make([]expression.Expression, 0, len(exprs))
 	for _, e := range exprs {
+		if e.SafeToShareAcrossSession() {
+			cloned = append(cloned, e)
+			continue
+		}
 		cloned = append(cloned, e.Clone())
 	}
 	return cloned
