@@ -67,11 +67,14 @@ var _ base.Task = &ApplyRuleTask{}
 // is called from the outside, this stack running will be stopped.
 //
 // State Flow:
-//     ┌────────────────┐            ┌────────────────────────┐            ┌───────────────┐
+//                                                ┌── Opt 4 New Group Expression ──┐
+//                                                │                                │
+//     ┌────────────────┐            ┌────────────▼───────────┐            ┌───────┴───────┐
 //     │ optGroupTask   │  ───────►  │ optGroupExpressionTask │  ───────►  │ ApplyRuleTask │
 //     └──────▲─────────┘            └────────────┬───────────┘            └───────────────┘
 //            │                                   │
 //            └───── Child Opt Group Trigger ─────┘
+//
 
 // ApplyRuleTask is basic logic union of scheduling apply rule.
 type ApplyRuleTask struct {
