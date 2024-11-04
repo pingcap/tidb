@@ -202,3 +202,45 @@ func (op *LogicalAggregation) Equals(other any) bool {
 	}
 	return true
 }
+
+// Hash64 implements the Hash64Equals interface.
+func (op *LogicalApply) Hash64(h base.Hasher) {
+	h.HashString(plancodec.TypeApply)
+	op.LogicalJoin.Hash64(h)
+	if op.CorCols == nil {
+		h.HashByte(base.NilFlag)
+	} else {
+		h.HashByte(base.NotNilFlag)
+		h.HashInt(len(op.CorCols))
+		for _, one := range op.CorCols {
+			one.Hash64(h)
+		}
+	}
+	h.HashBool(op.NoDecorrelate)
+}
+
+// Equals implements the Hash64Equals interface, only receive *LogicalApply pointer.
+func (op *LogicalApply) Equals(other any) bool {
+	if other == nil {
+		return false
+	}
+	op2, ok := other.(*LogicalApply)
+	if !ok {
+		return false
+	}
+	if !op.LogicalJoin.Equals(&op2.LogicalJoin) {
+		return false
+	}
+	if len(op.CorCols) != len(op2.CorCols) {
+		return false
+	}
+	for i, one := range op.CorCols {
+		if !one.Equals(op2.CorCols[i]) {
+			return false
+		}
+	}
+	if op.NoDecorrelate != op2.NoDecorrelate {
+		return false
+	}
+	return true
+}
