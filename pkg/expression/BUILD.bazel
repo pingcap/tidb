@@ -289,7 +289,7 @@ filegroup(
         "builtin_regexp_util.go",
         "builtin_string.go",
         "builtin_threadsafe_generated.go",
-        "builtin_threadunsafe_generated",
+        "builtin_threadunsafe_generated.go",
         "builtin_time.go",
     ],
     visibility = ["//visibility:public"],
