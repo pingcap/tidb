@@ -51,8 +51,10 @@ func collectThreadSafeBuiltinFuncs(file string) (safeFuncNames, unsafeFuncNames 
 						if len(structType.Fields.List) != 1 { // this structure only has 1 field
 							return true
 						}
-						// this builtinXSig has only 1 field and this field is `baseBuiltinFunc`.
-						if ident, ok := structType.Fields.List[0].Type.(*ast.Ident); ok && ident.Name == "baseBuiltinFunc" {
+						// this builtinXSig has only 1 field and this field is
+						// `baseBuiltinFunc` or `baseBuiltinCastFunc`.
+						if ident, ok := structType.Fields.List[0].Type.(*ast.Ident); ok &&
+							(ident.Name == "baseBuiltinFunc" || ident.Name == "baseBuiltinCastFunc") {
 							safeFuncNames = append(safeFuncNames, typeName)
 						}
 					}
