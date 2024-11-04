@@ -2185,9 +2185,7 @@ func (w *worker) rollbackLikeDropPartition(jobCtx *jobContext, job *model.Job) (
 
 	var dropIndices []*model.IndexInfo
 	for _, indexInfo := range tblInfo.Indices {
-		if indexInfo.Unique &&
-			indexInfo.State == model.StateWriteOnly &&
-			tblInfo.Partition.DDLState == model.StateWriteReorganization {
+		if indexInfo.State == model.StateWriteOnly {
 			dropIndices = append(dropIndices, indexInfo)
 		}
 	}
