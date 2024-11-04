@@ -11,7 +11,7 @@ go_test(
         "others_test.go",
     ],
     flaky = True,
-    shard_count = 18,
+    shard_count = 20,
     deps = [
         "//pkg/parser/auth",
         "//pkg/testkit",
