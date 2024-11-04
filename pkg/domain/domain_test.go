@@ -94,7 +94,7 @@ func TestInfo(t *testing.T) {
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/domain/MockReplaceDDL", `return(true)`))
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/NoDDLDispatchLoop", `return(true)`))
 	require.NoError(t, dom.Init(sysMockFactory, nil))
-	require.NoError(t, dom.Start())
+	require.NoError(t, dom.Start(ddl.Bootstrap))
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/NoDDLDispatchLoop"))
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/domain/MockReplaceDDL"))
 
@@ -485,4 +485,20 @@ func TestDeferFn(t *testing.T) {
 	require.False(t, c)
 	require.True(t, d)
 	require.Len(t, df.data, 1)
+}
+
+func TestNewEtcdCliGetEtcdAddrs(t *testing.T) {
+	etcdStore, addrs, err := getEtcdAddrs(nil)
+	require.NoError(t, err)
+	require.Empty(t, addrs)
+	require.Nil(t, etcdStore)
+
+	etcdStore, addrs, err = getEtcdAddrs(&mockEtcdBackend{pdAddrs: []string{"localhost:2379"}})
+	require.NoError(t, err)
+	require.Equal(t, []string{"localhost:2379"}, addrs)
+	require.NotNil(t, etcdStore)
+
+	cli, err := NewEtcdCli(nil)
+	require.NoError(t, err)
+	require.Nil(t, cli)
 }
