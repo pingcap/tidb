@@ -77,7 +77,7 @@ func TestPlanStatsLoad(t *testing.T) {
 				switch pp := p.(type) {
 				case *plannercore.PhysicalTableReader:
 					stats := pp.StatsInfo().HistColl
-					require.Equal(t, 0, countFullStats(stats, tableInfo.Columns[1].ID))
+					require.Equal(t, -1, countFullStats(stats, tableInfo.Columns[1].ID))
 					require.Greater(t, countFullStats(stats, tableInfo.Columns[2].ID), 0)
 				default:
 					t.Error("unexpected plan:", pp)
@@ -483,5 +483,6 @@ func TestPartialStatsInExplain(t *testing.T) {
 			output[i].Result = testdata.ConvertRowsToStrings(tk.MustQuery(sql).Rows())
 		})
 		tk.MustQuery(sql).Check(testkit.Rows(output[i].Result...))
+		require.NoError(t, dom.StatsHandle().LoadNeededHistograms(dom.InfoSchema()))
 	}
 }
