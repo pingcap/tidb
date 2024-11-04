@@ -482,14 +482,14 @@ func (s *session) TxnInfo() *txninfo.TxnInfo {
 	if processInfo == nil {
 		return &txnInfo
 	}
-	txnInfo.Process = &txninfo.TxnInfoProcessInfo{
+	txnInfo.ProcessInfo = &txninfo.ProcessInfo{
 		ConnectionID:    processInfo.ID,
 		Username:        processInfo.User,
 		CurrentDB:       processInfo.DB,
 		RelatedTableIDs: make(map[int64]struct{}),
 	}
 	s.GetSessionVars().GetRelatedTableForMDL().Range(func(key, _ any) bool {
-		txnInfo.Process.RelatedTableIDs[key.(int64)] = struct{}{}
+		txnInfo.ProcessInfo.RelatedTableIDs[key.(int64)] = struct{}{}
 		return true
 	})
 	return &txnInfo
@@ -4069,8 +4069,8 @@ func GetStartTSFromSession(se any) (startTS, processInfoID uint64) {
 	txnInfo := tmp.TxnInfo()
 	if txnInfo != nil {
 		startTS = txnInfo.StartTS
-		if txnInfo.Process != nil {
-			processInfoID = txnInfo.Process.ConnectionID
+		if txnInfo.ProcessInfo != nil {
+			processInfoID = txnInfo.ProcessInfo.ConnectionID
 		}
 	}
 	logutil.BgLogger().Debug(

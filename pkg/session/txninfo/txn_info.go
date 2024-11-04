@@ -174,12 +174,12 @@ type TxnInfo struct {
 	// How many entries are in MemDB
 	EntriesCount uint64
 
-	// The following fields will be filled in `session` instead of `LazyTxn`
-	Process *TxnInfoProcessInfo
+	// The following field will be filled in `session` instead of `LazyTxn`
+	ProcessInfo *ProcessInfo
 }
 
-// TxnInfoProcessInfo is part of fields of txnInfo, which will be filled in `session` instead of `LazyTxn`
-type TxnInfoProcessInfo struct {
+// ProcessInfo is part of fields of txnInfo, which will be filled in `session` instead of `LazyTxn`
+type ProcessInfo struct {
 	// Which session this transaction belongs to
 	ConnectionID uint64
 	// The user who open this session
@@ -224,22 +224,22 @@ var columnValueGetterMap = map[string]func(*TxnInfo) types.Datum{
 	},
 	SessionIDStr: func(info *TxnInfo) types.Datum {
 		var connectionID uint64
-		if info.Process != nil {
-			connectionID = info.Process.ConnectionID
+		if info.ProcessInfo != nil {
+			connectionID = info.ProcessInfo.ConnectionID
 		}
 		return types.NewDatum(connectionID)
 	},
 	UserStr: func(info *TxnInfo) types.Datum {
 		var userName string
-		if info.Process != nil {
-			userName = info.Process.Username
+		if info.ProcessInfo != nil {
+			userName = info.ProcessInfo.Username
 		}
 		return types.NewDatum(userName)
 	},
 	DBStr: func(info *TxnInfo) types.Datum {
 		var currentDB string
-		if info.Process != nil {
-			currentDB = info.Process.CurrentDB
+		if info.ProcessInfo != nil {
+			currentDB = info.ProcessInfo.CurrentDB
 		}
 		return types.NewDatum(currentDB)
 	},
@@ -258,8 +258,8 @@ var columnValueGetterMap = map[string]func(*TxnInfo) types.Datum{
 	},
 	RelatedTableIDsStr: func(info *TxnInfo) types.Datum {
 		var relatedTableIDs map[int64]struct{}
-		if info.Process != nil {
-			relatedTableIDs = info.Process.RelatedTableIDs
+		if info.ProcessInfo != nil {
+			relatedTableIDs = info.ProcessInfo.RelatedTableIDs
 		}
 		str := strings.Builder{}
 		first := true

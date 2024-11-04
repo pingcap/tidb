@@ -848,7 +848,7 @@ func (s *Server) ShowTxnList() []*txninfo.TxnInfo {
 	for _, client := range s.clients {
 		if client.ctx.Session != nil {
 			info := client.ctx.Session.TxnInfo()
-			if info != nil && info.Process != nil {
+			if info != nil && info.ProcessInfo != nil {
 				rs = append(rs, info)
 			}
 		}
