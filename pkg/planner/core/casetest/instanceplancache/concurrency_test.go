@@ -266,7 +266,7 @@ func TestInstancePlanCacheConcurrencySysbench(t *testing.T) {
 	testWithWorkers(TKs, stmts)
 }
 
-func TestInstancePlanCacheConcurrencyPoint2(t *testing.T) {
+func TestInstancePlanCacheConcurrencyPointNoTxn(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec(`use test`)
@@ -301,7 +301,7 @@ func TestInstancePlanCacheConcurrencyPoint(t *testing.T) {
 	tk.MustExec(`set global tidb_enable_instance_plan_cache=1`)
 	for _, db := range []string{"normal", "prepared"} {
 		tk.MustExec("use " + db)
-		tk.MustExec(`create table t1 (col1 int, col2 int, primary key(col1))`)
+		tk.MustExec(`create table t1 (col1 int, col2 int, primary key(col1), unique key(col2))`)
 		for i := 0; i < 1000; i++ {
 			tk.MustExec(fmt.Sprintf("insert into t1 values (%v, %v)", i, i))
 		}
