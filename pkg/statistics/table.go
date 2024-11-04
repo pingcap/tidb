@@ -825,9 +825,6 @@ func (t *Table) ColumnIsLoadNeeded(id int64, fullLoad bool) (*Column, bool, bool
 	if !ok {
 		return nil, true, true
 	}
-	if !t.ColAndIdxExistenceMap.Checked() {
-		return nil, true, true
-	}
 	hasAnalyzed := t.ColAndIdxExistenceMap.HasAnalyzed(id, false)
 
 	// If it's not analyzed yet.
