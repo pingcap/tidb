@@ -22,6 +22,7 @@ import (
 	"net"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -167,6 +168,10 @@ TASKLOOP:
 			return err
 		}
 	}
+
+	failpoint.Inject("mockStuckAnalyze", func() {
+		time.Sleep(time.Second * 3)
+	})
 
 	// Update analyze options to mysql.analyze_options for auto analyze.
 	err = e.saveV2AnalyzeOpts()
