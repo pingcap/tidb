@@ -32,6 +32,7 @@ go_library(
         "//store/mockstore/unistore/util/lockwaiter",
         "//tablecodec",
         "//types",
+        "//util/cmp",
         "//util/codec",
         "//util/mathutil",
         "//util/rowcodec",

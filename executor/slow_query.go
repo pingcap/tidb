@@ -42,6 +42,7 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
+	"github.com/pingcap/tidb/util/cmp"
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/logutil"
@@ -1008,8 +1009,8 @@ func (e *slowQueryRetriever) getAllFiles(ctx context.Context, sctx sessionctx.Co
 		}
 	}
 	// Sort by start time
-	slices.SortFunc(logFiles, func(i, j logFile) bool {
-		return i.start.Before(j.start)
+	slices.SortFunc(logFiles, func(i, j logFile) int {
+		return cmp.Compare(i.start.UnixNano(), j.start.UnixNano())
 	})
 	return logFiles, err
 }

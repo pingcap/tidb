@@ -35,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/cmp"
 	"golang.org/x/exp/slices"
 )
 
@@ -126,8 +127,8 @@ func CollectGeneratedColumns(se *Session, meta *model.TableInfo, cols []*table.C
 	}
 
 	// order the result by column offset so they match the evaluation order.
-	slices.SortFunc(genCols, func(i, j GeneratedCol) bool {
-		return cols[i.Index].Offset < cols[j.Index].Offset
+	slices.SortFunc(genCols, func(i, j GeneratedCol) int {
+		return cmp.Compare(cols[i.Index].Offset, cols[j.Index].Offset)
 	})
 	return genCols, nil
 }

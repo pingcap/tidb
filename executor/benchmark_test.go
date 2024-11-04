@@ -40,6 +40,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/cmp"
 	"github.com/pingcap/tidb/util/disk"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/mock"
@@ -1027,8 +1028,8 @@ func markChildrenUsedColsForTest(outputSchema *expression.Schema, childSchemas .
 			}
 		}
 		// sort the used idxes according their original indexes derived after resolveIndex.
-		slices.SortFunc(usedIdxPair, func(a, b intPair) bool {
-			return a.first < b.first
+		slices.SortFunc(usedIdxPair, func(a, b intPair) int {
+			return cmp.Compare(a.first, b.first)
 		})
 		usedIdx := make([]int, 0, len(childSchema.Columns))
 		for _, one := range usedIdxPair {
