@@ -38,14 +38,15 @@ func collectThreadSafeBuiltinFuncs(file string) (funcNames []string) {
 	ast.Inspect(f, func(n ast.Node) bool {
 		if n != nil {
 			switch x := n.(type) {
-			case *ast.TypeSpec:
+			case *ast.TypeSpec: // get all type definitions
 				typeName := x.Name.Name
-				if strings.HasPrefix(typeName, "builtin") && strings.HasSuffix(typeName, "Sig") {
+				if strings.HasPrefix(typeName, "builtin") && // type name is "builtin*Sig"
+					strings.HasSuffix(typeName, "Sig") {
 					if x.Type == nil {
 						return true
 					}
-					if structType, ok := x.Type.(*ast.StructType); ok {
-						if len(structType.Fields.List) != 1 {
+					if structType, ok := x.Type.(*ast.StructType); ok { // this type is a structure
+						if len(structType.Fields.List) != 1 { // this structure only has 1 field
 							return true
 						}
 						// this builtinXSig has only 1 field and this field is `baseBuiltinFunc`.
