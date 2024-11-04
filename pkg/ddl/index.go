@@ -2691,13 +2691,6 @@ func (w *worker) updateDistTaskRowCount(taskKey string, jobID int64) {
 		logutil.DDLLogger().Warn("cannot get subtask row count", zap.String("task_key", taskKey), zap.Error(err))
 		return
 	}
-	rowCountFromHistory, _ := taskMgr.GetSubtaskRowCountFromHistory(w.workCtx, task.ID, proto.BackfillStepReadIndex)
-	if err != nil {
-		logutil.DDLLogger().Warn("cannot get subtask row count from tidb_background_subtask_history ", zap.String("task_key", taskKey), zap.Error(err))
-		return
-	}
-	logutil.DDLLogger().Warn("get rowCount success", zap.String("task_key", taskKey),
-		zap.Int64("row_count", rowCount), zap.Int64("row_count_from", rowCountFromHistory))
 	w.getReorgCtx(jobID).setRowCount(rowCount)
 }
 

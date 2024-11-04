@@ -17,11 +17,9 @@ package storage
 import (
 	"context"
 	"fmt"
-	"go.uber.org/zap"
 	"strings"
 
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/pkg/ddl/logutil"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
@@ -78,7 +76,6 @@ func (mgr *TaskManager) TransferTasks2History(ctx context.Context, tasks []*prot
 				return err
 			}
 		}
-		logutil.DDLLogger().Warn("TransferTasks2History tansfer task", zap.String("task_ids", strings.Join(taskIDStrs, `, `)))
 		return err
 	})
 }
