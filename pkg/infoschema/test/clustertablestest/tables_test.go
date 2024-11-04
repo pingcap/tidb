@@ -1232,7 +1232,7 @@ func TestTiDBTrx(t *testing.T) {
 		CurrentSQLDigest: digest.String(),
 		State:            txninfo.TxnIdle,
 		EntriesCount:     1,
-		Process: &txninfo.TxnInfoProcessInfo{
+		ProcessInfo: &txninfo.ProcessInfo{
 			ConnectionID: 2,
 			Username:     "root",
 			CurrentDB:    "test",
@@ -1245,7 +1245,7 @@ func TestTiDBTrx(t *testing.T) {
 		CurrentSQLDigest: "",
 		AllSQLDigests:    []string{"sql1", "sql2", digest.String()},
 		State:            txninfo.TxnLockAcquiring,
-		Process: &txninfo.TxnInfoProcessInfo{
+		ProcessInfo: &txninfo.ProcessInfo{
 			ConnectionID: 10,
 			Username:     "user1",
 			CurrentDB:    "db1",
