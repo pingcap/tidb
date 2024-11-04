@@ -102,6 +102,16 @@ func (*CollectPredicateColumnsPoint) markAtLeastOneFullStatsLoadForEachTable(
 		if !fullLoad {
 			continue
 		}
+		if statsHandle == nil {
+			continue
+		}
+		tableStats := statsHandle.GetTableStats(tblID2TblInfo[neededCol.TableID])
+		if tableStats == nil || tableStats.Pseudo {
+			continue
+		}
+		if !tableStats.ColAndIdxExistenceMap.HasAnalyzed(neededCol.ID, neededCol.IsIndex) {
+			continue
+		}
 		physTblIDsWithNeededCols.Insert(int(neededCol.TableID))
 	}
 	visitedPhysTblIDs.ForEach(func(physicalTblID int) {
@@ -111,15 +121,11 @@ func (*CollectPredicateColumnsPoint) markAtLeastOneFullStatsLoadForEachTable(
 			return
 		}
 
-		// 2. handle extra sync/async stats loading for the determinate mode
+		// 2. get the stats table
 
-		// If we visited a table without getting any columns need stats (likely because there are no pushed down
-		// predicates), and we are in the determinate mode, we need to make sure we are able to get the "analyze row
-		// count" in getStatsTable(), which means any column/index stats are available.
-		if sctx.GetSessionVars().GetOptObjective() != variable.OptObjectiveDeterminate ||
-			// If we already collected some columns that need trigger sync laoding on this table, we don't need to
-			// additionally do anything for determinate mode.
-			physTblIDsWithNeededCols.Has(physicalTblID) ||
+		// If we already collected some columns that need trigger sync laoding on this table, we don't need to
+		// additionally do anything for determinate mode.
+		if physTblIDsWithNeededCols.Has(physicalTblID) ||
 			statsHandle == nil {
 			return
 		}
