@@ -28,7 +28,6 @@ import (
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
-	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/rowcodec"
 	"github.com/pingcap/tidb/pkg/util/tracing"
@@ -297,19 +296,21 @@ func (c *index) create(sctx table.MutateContext, txn kv.Transaction, indexedValu
 			// Note that a partitioned table cannot be temporary table
 			value, err = txn.Get(ctx, key)
 			if err == nil && len(value) != 0 {
-				partHandle, errPart := GetPartitionHandleFromVal(value)
+				handle, errPart := tablecodec.DecodeHandleInIndexValue(value)
 				if errPart != nil {
 					return nil, errPart
 				}
-				for _, id := range c.tblInfo.Partition.IDsInDDLToIgnore() {
-					if id == partHandle.PartitionID {
-						// Simply overwrite it
-						err = txn.SetAssertion(key, kv.SetAssertUnknown)
-						if err != nil {
-							return nil, err
+				if partHandle, ok := handle.(kv.PartitionHandle); ok {
+					for _, id := range c.tblInfo.Partition.IDsInDDLToIgnore() {
+						if id == partHandle.PartitionID {
+							// Simply overwrite it
+							err = txn.SetAssertion(key, kv.SetAssertUnknown)
+							if err != nil {
+								return nil, err
+							}
+							value = nil
+							break
 						}
-						value = nil
-						break
 					}
 				}
 			}
@@ -581,32 +582,6 @@ func FetchDuplicatedHandle(ctx context.Context, key kv.Key, distinct bool,
 		return true, h, err
 	}
 	return true, nil, nil
-}
-
-// GetPartitionHandleFromVal creates a PartitionHandle from a global index value
-func GetPartitionHandleFromVal(val []byte) (*kv.PartitionHandle, error) {
-	seg := tablecodec.SplitIndexValue(val)
-	var handle kv.Handle
-	if len(seg.IntHandle) != 0 {
-		handle = tablecodec.DecodeIntHandleInIndexValue(seg.IntHandle)
-	}
-	if len(seg.CommonHandle) != 0 {
-		var err error
-		handle, err = kv.NewCommonHandle(seg.CommonHandle)
-		if err != nil {
-			return nil, err
-		}
-	}
-	if len(seg.PartitionID) != 0 {
-		_, pid, err := codec.DecodeInt(seg.PartitionID)
-		if err != nil {
-			return nil, err
-		}
-		partHandle := kv.NewPartitionHandle(pid, handle)
-		return &partHandle, nil
-	}
-
-	return nil, nil
 }
 
 func fetchDuplicatedHandleForTempIndexKey(ctx context.Context, tempKey kv.Key, distinct bool,

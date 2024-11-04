@@ -2035,8 +2035,8 @@ func CheckDropTablePartition(meta *model.TableInfo, partLowerNames []string) err
 	return nil
 }
 
-// updateDroppingPartitionInfo move dropping partitions to DroppingDefinitions, and return partitionIDs
-func updateDroppingPartitionInfo(tblInfo *model.TableInfo, partLowerNames []string) []int64 {
+// updateDroppingPartitionInfo move dropping partitions to DroppingDefinitions
+func updateDroppingPartitionInfo(tblInfo *model.TableInfo, partLowerNames []string) {
 	oldDefs := tblInfo.Partition.Definitions
 	newDefs := make([]model.PartitionDefinition, 0, len(oldDefs)-len(partLowerNames))
 	droppingDefs := make([]model.PartitionDefinition, 0, len(partLowerNames))
@@ -2061,7 +2061,6 @@ func updateDroppingPartitionInfo(tblInfo *model.TableInfo, partLowerNames []stri
 
 	tblInfo.Partition.Definitions = newDefs
 	tblInfo.Partition.DroppingDefinitions = droppingDefs
-	return pids
 }
 
 func getPartitionDef(tblInfo *model.TableInfo, partName string) (index int, def *model.PartitionDefinition, _ error) {
@@ -2237,7 +2236,7 @@ func (w *worker) onDropTablePartition(jobCtx *jobContext, job *model.Job) (ver i
 		// Reason, see https://github.com/pingcap/tidb/issues/55888
 		// Only mark the partitions as to be dropped, so they are not used, but not yet removed.
 		originalDefs := tblInfo.Partition.Definitions
-		_ = updateDroppingPartitionInfo(tblInfo, partNames)
+		updateDroppingPartitionInfo(tblInfo, partNames)
 		tblInfo.Partition.Definitions = originalDefs
 		job.SchemaState = model.StateWriteOnly
 		tblInfo.Partition.DDLState = job.SchemaState
@@ -2248,7 +2247,7 @@ func (w *worker) onDropTablePartition(jobCtx *jobContext, job *model.Job) (ver i
 		// Since the previous state do not use the dropping partitions,
 		// we can now actually remove them, allowing to write into the overlapping range
 		// of the higher range partition or LIST default partition.
-		_ = updateDroppingPartitionInfo(tblInfo, partNames)
+		updateDroppingPartitionInfo(tblInfo, partNames)
 		err = dropLabelRules(jobCtx.stepCtx, job.SchemaName, tblInfo.Name.L, partNames)
 		if err != nil {
 			// TODO: Add failpoint error/cancel injection and test failure/rollback and cancellation!
@@ -3197,7 +3196,7 @@ func (w *worker) onReorganizePartition(jobCtx *jobContext, job *model.Job) (ver 
 		// move the adding definition into tableInfo.
 		updateAddingPartitionInfo(partInfo, tblInfo)
 		orgDefs := tblInfo.Partition.Definitions
-		_ = updateDroppingPartitionInfo(tblInfo, partNames)
+		updateDroppingPartitionInfo(tblInfo, partNames)
 		// Reset original partitions, and keep DroppedDefinitions
 		tblInfo.Partition.Definitions = orgDefs
 
