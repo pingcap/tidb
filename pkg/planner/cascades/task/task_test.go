@@ -21,6 +21,7 @@ import (
 	"testing"
 	"unsafe"
 
+	"github.com/pingcap/tidb/pkg/planner/cascades/base"
 	"github.com/stretchr/testify/require"
 )
 
@@ -52,10 +53,10 @@ func TestTaskStack(t *testing.T) {
 }
 
 func TestTaskFunctionality(t *testing.T) {
-	taskTaskPool := StackTaskPool.Get()
-	require.Equal(t, len(taskTaskPool.(*taskStack).tasks), 0)
-	require.Equal(t, cap(taskTaskPool.(*taskStack).tasks), 4)
-	ts := taskTaskPool.(*taskStack)
+	taskTaskPool := stackPool.Get()
+	require.Equal(t, len(taskTaskPool.(*TaskStack).tasks), 0)
+	require.Equal(t, cap(taskTaskPool.(*TaskStack).tasks), 4)
+	ts := taskTaskPool.(*TaskStack)
 	ts.Push(&TestTaskImpl{a: 1})
 	ts.Push(&TestTaskImpl{a: 2})
 	one := ts.Pop()
@@ -75,10 +76,10 @@ func TestTaskFunctionality(t *testing.T) {
 	ts.Push(&TestTaskImpl{a: 5})
 	ts.Push(&TestTaskImpl{a: 6})
 	// no clean, put it back
-	StackTaskPool.Put(taskTaskPool)
+	stackPool.Put(taskTaskPool)
 
 	// require again.
-	ts = StackTaskPool.Get().(*taskStack)
+	ts = stackPool.Get().(*TaskStack)
 	require.Equal(t, len(ts.tasks), 4)
 	require.Equal(t, cap(ts.tasks), 4)
 	// clean the stack
@@ -103,25 +104,25 @@ func TestTaskFunctionality(t *testing.T) {
 
 	// self destroy.
 	ts.Destroy()
-	ts = StackTaskPool.Get().(*taskStack)
+	ts = stackPool.Get().(*TaskStack)
 	require.Equal(t, len(ts.tasks), 0)
 	require.Equal(t, cap(ts.tasks), 4)
 }
 
 // TaskStack2 is used to store the optimizing tasks created before or during the optimizing process.
 type taskStackForBench struct {
-	tasks []*Task
+	tasks []base.Task
 }
 
 func newTaskStackForBenchWithCap(c int) *taskStackForBench {
 	return &taskStackForBench{
-		tasks: make([]*Task, 0, c),
+		tasks: make([]base.Task, 0, c),
 	}
 }
 
 // Push indicates to push one task into the stack.
-func (ts *taskStackForBench) Push(one Task) {
-	ts.tasks = append(ts.tasks, &one)
+func (ts *taskStackForBench) Push(one base.Task) {
+	ts.tasks = append(ts.tasks, one)
 }
 
 // Len indicates the length of current stack.
@@ -129,17 +130,17 @@ func (ts *taskStackForBench) Len() int {
 	return len(ts.tasks)
 }
 
-// Empty indicates whether taskStack is empty.
+// Empty indicates whether TaskStack is empty.
 func (ts *taskStackForBench) Empty() bool {
 	return ts.Len() == 0
 }
 
 // Pop indicates to pop one task out of the stack.
-func (ts *taskStackForBench) Pop() Task {
+func (ts *taskStackForBench) Pop() base.Task {
 	if !ts.Empty() {
 		tmp := ts.tasks[len(ts.tasks)-1]
 		ts.tasks = ts.tasks[:len(ts.tasks)-1]
-		return *tmp
+		return tmp
 	}
 	return nil
 }

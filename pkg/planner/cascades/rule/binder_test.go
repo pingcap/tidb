@@ -30,11 +30,14 @@ import (
 func TestBinderSuccess(t *testing.T) {
 	ctx := plannercore.MockContext()
 	t1 := logicalop.DataSource{}.Init(ctx, 0)
+	t1.SetID(-1)
 	t2 := logicalop.DataSource{}.Init(ctx, 0)
+	t2.SetID(-2)
 	join := logicalop.LogicalJoin{}.Init(ctx, 0)
+	join.SetID(-3)
 	join.SetChildren(t1, t2)
 
-	mm := memo.NewMemo(ctx)
+	mm := memo.NewMemo()
 	mm.Init(join)
 	require.Equal(t, 3, mm.GetGroups().Len())
 	require.Equal(t, 3, len(mm.GetGroupID2Group()))
@@ -63,11 +66,14 @@ func TestBinderSuccess(t *testing.T) {
 func TestBinderFail(t *testing.T) {
 	ctx := plannercore.MockContext()
 	t1 := logicalop.DataSource{}.Init(ctx, 0)
+	t1.SetID(-1)
 	t2 := logicalop.DataSource{}.Init(ctx, 0)
+	t2.SetID(-2)
 	join := logicalop.LogicalJoin{}.Init(ctx, 0)
+	join.SetID(-3)
 	join.SetChildren(t1, t2)
 
-	mm := memo.NewMemo(ctx)
+	mm := memo.NewMemo()
 	mm.Init(join)
 	require.Equal(t, 3, mm.GetGroups().Len())
 	require.Equal(t, 3, len(mm.GetGroupID2Group()))
@@ -81,14 +87,16 @@ func TestBinderFail(t *testing.T) {
 	binder := NewBinder(pa, rootGE)
 	b := bytes.Buffer{}
 	buf := bufio.NewWriter(&b)
-	binder.w = buf
+	binder.sw = buf
 	require.False(t, binder.Next())
 	buf.Flush()
-	require.Equal(t, b.String(), "GE:DataSource_1{}\n")
+	require.Equal(t, b.String(), "GE:DataSource_-1{}\n")
 
 	s1 := logicalop.LogicalLimit{}.Init(ctx, 0)
+	s1.SetID(-4)
 	s1.SetChildren(t1)
 	p1 := logicalop.LogicalProjection{}.Init(ctx, 0)
+	p1.SetID(-5)
 	p1.SetChildren(s1)
 
 	p2 := pattern.NewPattern(pattern.OperandLimit, pattern.EngineAll)
@@ -98,32 +106,35 @@ func TestBinderFail(t *testing.T) {
 	binder = NewBinder(pa, rootGE)
 	b.Reset()
 	buf = bufio.NewWriter(&b)
-	binder.w = buf
+	binder.sw = buf
 	require.False(t, binder.Next())
 	buf.Flush()
 	require.Equal(t, b.String(), "")
 
 	// renew memo
-	mm = memo.NewMemo(ctx)
+	mm = memo.NewMemo()
 	mm.Init(p1)
 	rootGE = mm.GetRootGroup().GetLogicalExpressions().Back().Value.(*memo.GroupExpression)
 	binder = NewBinder(pa, rootGE)
 	b.Reset()
 	buf = bufio.NewWriter(&b)
-	binder.w = buf
+	binder.sw = buf
 	require.False(t, binder.Next())
 	buf.Flush()
-	require.Equal(t, b.String(), "GE:Limit_4{inputs:1}\n")
+	require.Equal(t, b.String(), "GE:Limit_-4{1}\n")
 }
 
 func TestBinderTopNode(t *testing.T) {
 	ctx := plannercore.MockContext()
 	t1 := logicalop.DataSource{}.Init(ctx, 0)
+	t1.SetID(-1)
 	t2 := logicalop.DataSource{}.Init(ctx, 0)
+	t2.SetID(-2)
 	join := logicalop.LogicalJoin{}.Init(ctx, 0)
+	join.SetID(-3)
 	join.SetChildren(t1, t2)
 
-	mm := memo.NewMemo(ctx)
+	mm := memo.NewMemo()
 	mm.Init(join)
 	require.Equal(t, 3, mm.GetGroups().Len())
 	require.Equal(t, 3, len(mm.GetGroupID2Group()))
@@ -138,8 +149,9 @@ func TestBinderTopNode(t *testing.T) {
 func TestBinderOneNode(t *testing.T) {
 	ctx := plannercore.MockContext()
 	join := logicalop.LogicalJoin{}.Init(ctx, 0)
+	join.SetID(-1)
 
-	mm := memo.NewMemo(ctx)
+	mm := memo.NewMemo()
 	mm.Init(join)
 	require.Equal(t, 1, mm.GetGroups().Len())
 	require.Equal(t, 1, len(mm.GetGroupID2Group()))
@@ -153,19 +165,26 @@ func TestBinderOneNode(t *testing.T) {
 func TestBinderSubTreeMatch(t *testing.T) {
 	ctx := plannercore.MockContext()
 	t1 := logicalop.DataSource{}.Init(ctx, 0)
+	t1.SetID(-1)
 	t2 := logicalop.DataSource{}.Init(ctx, 0)
+	t2.SetID(-2)
 	join1 := logicalop.LogicalJoin{}.Init(ctx, 0)
+	join1.SetID(-3)
 	join1.SetChildren(t1, t2)
 
 	t3 := logicalop.DataSource{}.Init(ctx, 0)
+	t3.SetID(-4)
 	t4 := logicalop.DataSource{}.Init(ctx, 0)
+	t4.SetID(-5)
 	join2 := logicalop.LogicalJoin{}.Init(ctx, 0)
+	join2.SetID(-6)
 	join2.SetChildren(t3, t4)
 
 	join3 := logicalop.LogicalJoin{}.Init(ctx, 0)
+	join3.SetID(-7)
 	join3.SetChildren(join1, join2)
 
-	mm := memo.NewMemo(ctx)
+	mm := memo.NewMemo()
 	mm.Init(join3)
 	require.Equal(t, 7, mm.GetGroups().Len())
 	require.Equal(t, 7, len(mm.GetGroupID2Group()))
@@ -195,16 +214,21 @@ func TestBinderMultiNext(t *testing.T) {
 	asT1 := pmodel.NewCIStr("t1")
 	asT2 := pmodel.NewCIStr("t2")
 	t1 := logicalop.DataSource{TableAsName: &asT1}.Init(ctx, 0)
+	t1.SetID(-1)
 	t2 := logicalop.DataSource{TableAsName: &asT2}.Init(ctx, 0)
+	t2.SetID(-2)
 	join1 := logicalop.LogicalJoin{}.Init(ctx, 0)
+	join1.SetID(-3)
 	join1.SetChildren(t1, t2)
 
 	asT3 := pmodel.NewCIStr("t3")
 	asT4 := pmodel.NewCIStr("t4")
 	t3 := logicalop.DataSource{TableAsName: &asT3}.Init(ctx, 0)
+	t3.SetID(-4)
 	t4 := logicalop.DataSource{TableAsName: &asT4}.Init(ctx, 0)
+	t4.SetID(-5)
 
-	mm := memo.NewMemo(ctx)
+	mm := memo.NewMemo()
 	gE, err := mm.Init(join1)
 	require.Nil(t, err)
 
@@ -224,7 +248,7 @@ func TestBinderMultiNext(t *testing.T) {
 	binder := NewBinder(pa, gE)
 	b := bytes.Buffer{}
 	buf := bufio.NewWriter(&b)
-	binder.w = buf
+	binder.sw = buf
 
 	require.True(t, binder.Next())
 	//           G1
@@ -280,11 +304,11 @@ func TestBinderMultiNext(t *testing.T) {
 	// when G3 is exhausted, and next gE will be nil, and next() loop will enter next round with stack info popped as
 	// G2(id(1)) which is what the third line comes from, and the next round will start from G2.next element starting
 	// as G2(id(4)) which is the prefix of the fourth and fifth stack info.
-	require.Equal(t, b.String(), "GE:DataSource_1{} -> GE:DataSource_2{}\n"+
-		"GE:DataSource_1{} -> GE:DataSource_5{}\n"+
-		"GE:DataSource_1{}\n"+
-		"GE:DataSource_4{} -> GE:DataSource_2{}\n"+
-		"GE:DataSource_4{} -> GE:DataSource_5{}\n")
+	require.Equal(t, b.String(), "GE:DataSource_-1{} -> GE:DataSource_-2{}\n"+
+		"GE:DataSource_-1{} -> GE:DataSource_-5{}\n"+
+		"GE:DataSource_-1{}\n"+
+		"GE:DataSource_-4{} -> GE:DataSource_-2{}\n"+
+		"GE:DataSource_-4{} -> GE:DataSource_-5{}\n")
 }
 
 func TestBinderAny(t *testing.T) {
@@ -292,16 +316,21 @@ func TestBinderAny(t *testing.T) {
 	asT1 := pmodel.NewCIStr("t1")
 	asT2 := pmodel.NewCIStr("t2")
 	t1 := logicalop.DataSource{TableAsName: &asT1}.Init(ctx, 0)
+	t1.SetID(-1)
 	t2 := logicalop.DataSource{TableAsName: &asT2}.Init(ctx, 0)
+	t2.SetID(-2)
 	join1 := logicalop.LogicalJoin{}.Init(ctx, 0)
+	join1.SetID(-3)
 	join1.SetChildren(t1, t2)
 
 	asT3 := pmodel.NewCIStr("t3")
 	asT4 := pmodel.NewCIStr("t4")
 	t3 := logicalop.DataSource{TableAsName: &asT3}.Init(ctx, 0)
+	t3.SetID(-4)
 	t4 := logicalop.DataSource{TableAsName: &asT4}.Init(ctx, 0)
+	t4.SetID(-5)
 
-	mm := memo.NewMemo(ctx)
+	mm := memo.NewMemo()
 	gE, err := mm.Init(join1)
 	require.Nil(t, err)
 
@@ -320,7 +349,7 @@ func TestBinderAny(t *testing.T) {
 	binder := NewBinder(pa, gE)
 	b := bytes.Buffer{}
 	buf := bufio.NewWriter(&b)
-	binder.w = buf
+	binder.sw = buf
 
 	require.True(t, binder.Next())
 	//           G1
@@ -364,10 +393,10 @@ func TestBinderAny(t *testing.T) {
 	// In a conclusion: the Group matched with Any pattern only generate the first group expression since we don't
 	// care what the concrete group expression it is. Because the final generated group expression if any, will be
 	// substituted ANY pattern with the referred group at last not a concrete one group expression inside.
-	require.Equal(t, b.String(), "GE:DataSource_1{} -> GE:DataSource_2{}\n"+
-		"GE:DataSource_1{}\n"+
-		"GE:DataSource_4{} -> GE:DataSource_2{}\n"+
-		"GE:DataSource_4{}\n")
+	require.Equal(t, b.String(), "GE:DataSource_-1{} -> GE:DataSource_-2{}\n"+
+		"GE:DataSource_-1{}\n"+
+		"GE:DataSource_-4{} -> GE:DataSource_-2{}\n"+
+		"GE:DataSource_-4{}\n")
 }
 
 func TestBinderMultiAny(t *testing.T) {
@@ -375,8 +404,11 @@ func TestBinderMultiAny(t *testing.T) {
 	asT1 := pmodel.NewCIStr("t1")
 	asT2 := pmodel.NewCIStr("t2")
 	t1 := logicalop.DataSource{TableAsName: &asT1}.Init(ctx, 0)
+	t1.SetID(-1)
 	t2 := logicalop.DataSource{TableAsName: &asT2}.Init(ctx, 0)
+	t2.SetID(-2)
 	join1 := logicalop.LogicalJoin{}.Init(ctx, 0)
+	join1.SetID(-3)
 	join1.SetChildren(t1, t2)
 
 	asT3 := pmodel.NewCIStr("t3")
@@ -384,7 +416,7 @@ func TestBinderMultiAny(t *testing.T) {
 	t3 := logicalop.DataSource{TableAsName: &asT3}.Init(ctx, 0)
 	t4 := logicalop.DataSource{TableAsName: &asT4}.Init(ctx, 0)
 
-	mm := memo.NewMemo(ctx)
+	mm := memo.NewMemo()
 	gE, err := mm.Init(join1)
 	require.Nil(t, err)
 
@@ -403,7 +435,7 @@ func TestBinderMultiAny(t *testing.T) {
 	binder := NewBinder(pa, gE)
 	b := bytes.Buffer{}
 	buf := bufio.NewWriter(&b)
-	binder.w = buf
+	binder.sw = buf
 
 	require.True(t, binder.Next())
 	//           G1
@@ -435,6 +467,6 @@ func TestBinderMultiAny(t *testing.T) {
 	//  G2{t1,t3}   G3{t2,t4}
 	//        ▴ (already matched, pop stack)
 	// final state: empty stack
-	require.Equal(t, b.String(), "GE:DataSource_1{} -> GE:DataSource_2{}\n"+
-		"GE:DataSource_1{}\n")
+	require.Equal(t, b.String(), "GE:DataSource_-1{} -> GE:DataSource_-2{}\n"+
+		"GE:DataSource_-1{}\n")
 }

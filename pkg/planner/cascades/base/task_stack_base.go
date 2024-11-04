@@ -12,19 +12,23 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package task
+package base
 
-import (
-	"github.com/pingcap/tidb/pkg/planner/cascades/base"
-	"github.com/pingcap/tidb/pkg/planner/cascades/memo"
-)
+import "io"
 
-// BaseTask is base task wrapper structure for encapsulating basic things.
-type BaseTask struct {
-	mctx *memo.MemoContext
+// Stack is abstract definition of task container.(TaskStack is a kind of array stack implementation of it)
+type Stack interface {
+	Push(one Task)
+	Pop() Task
+	Empty() bool
+	Destroy()
 }
 
-// Push pushes a new task into inside stack.
-func (b *BaseTask) Push(t base.Task) {
-	b.mctx.PushTask(t)
+// Task is an interface defined for all type of optimizing work: exploring, implementing,
+// deriving-stats, join-reordering and so on.
+type Task interface {
+	// Execute task self executing logic
+	Execute() error
+	// Desc task self description string.
+	Desc(w io.StringWriter)
 }

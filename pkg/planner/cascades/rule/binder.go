@@ -16,7 +16,6 @@ package rule
 
 import (
 	"container/list"
-	"fmt"
 	"io"
 
 	"github.com/pingcap/tidb/pkg/planner/cascades/memo"
@@ -140,8 +139,8 @@ type Binder struct {
 	// holder is the current matched expression dynamically decided during the binder process, lp is unused now.
 	holder *memo.MemoExpression
 
-	// w is only for test stack print usage.
-	w io.Writer
+	// sw is only for test stack print usage.
+	sw io.StringWriter
 }
 
 // NewBinder creates a new Binder.
@@ -213,8 +212,8 @@ func (b *Binder) Next() bool {
 			b.stackInfo[continueGroup] = continueGroupElement.Next()
 		}
 		ok = b.dfsMatch(b.p, b.holder)
-		if b.w != nil {
-			b.printStackInfo(b.w)
+		if b.sw != nil {
+			b.printStackInfo(b.sw)
 		}
 		if ok || len(b.stackInfo) == 0 {
 			break
@@ -295,15 +294,15 @@ func (b *Binder) traceIn(p *pattern.Pattern, g *memo.Group) {
 	}
 }
 
-func (b *Binder) printStackInfo(w io.Writer) {
+func (b *Binder) printStackInfo(sw io.StringWriter) {
 	for i, one := range b.stackInfo {
 		if i != 0 {
-			fmt.Fprintf(w, " -> ")
+			sw.WriteString(" -> ")
 		}
-		one.Value.(*memo.GroupExpression).String(w)
+		one.Value.(*memo.GroupExpression).String(sw)
 	}
 	if len(b.stackInfo) != 0 {
-		fmt.Fprintf(w, "\n")
+		sw.WriteString("\n")
 	}
 }
 

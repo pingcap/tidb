@@ -15,11 +15,14 @@
 package task
 
 import (
+	"io"
+
+	"github.com/pingcap/tidb/pkg/planner/cascades/base"
 	"github.com/pingcap/tidb/pkg/planner/cascades/memo"
 	"github.com/pingcap/tidb/pkg/planner/cascades/rule"
-	"github.com/pingcap/tidb/pkg/sessionctx"
-	"io"
 )
+
+var _ base.Task = &ApplyRuleTask{}
 
 type ApplyRuleTask struct {
 	BaseTask
@@ -30,7 +33,7 @@ type ApplyRuleTask struct {
 }
 
 // NewApplyRuleTask return a new apply rule task.
-func NewApplyRuleTask(mctx *MemoContext, gE *memo.GroupExpression, r rule.Rule) *ApplyRuleTask {
+func NewApplyRuleTask(mctx *memo.MemoContext, gE *memo.GroupExpression, r rule.Rule) *ApplyRuleTask {
 	return &ApplyRuleTask{
 		BaseTask: BaseTask{
 			mctx: mctx,
@@ -50,20 +53,20 @@ func (a *ApplyRuleTask) Execute() error {
 	binder := rule.NewBinder(pa, a.gE)
 	for binder.Next() {
 		holder := binder.GetHolder()
-		if !a.rule.PreCheck(holder, a.ctx) {
+		if !a.rule.PreCheck(holder, a.mctx) {
 			continue
 		}
-		memoExprs, err := a.rule.XForm(holder, a.ctx)
+		memoExprs, err := a.rule.XForm(holder, a.mctx)
 		if err != nil {
 			return err
 		}
 		for _, me := range memoExprs {
-			newGroupExpr, err := a.mm.CopyIn(a.gE.GetGroup(), me)
+			newGroupExpr, err := a.mctx.GetMemo().CopyIn(a.gE.GetGroup(), me)
 			if err != nil {
 				return err
 			}
 			// YAMS only care about logical plan now.
-			a.Push(NewOptGroupExpressionTask(a.mm, a.ctx, newGroupExpr))
+			a.Push(NewOptGroupExpressionTask(a.mctx, newGroupExpr))
 		}
 	}
 	a.gE.SetExplored(a.rule.ID())
@@ -77,28 +80,4 @@ func (a *ApplyRuleTask) Desc(w io.StringWriter) {
 	w.WriteString(", rule:")
 	a.rule.String(w)
 	w.WriteString("}")
-}
-
-type MemoContext struct {
-	mm        *memo.Memo
-	sctx      sessionctx.Context
-	stack     *taskStack
-	originSql string
-}
-
-// NewMemoContext returns a new memo context responsible for manage all the stuff in YAMS opt.
-func NewMemoContext(sctx sessionctx.Context) *MemoContext {
-	return &MemoContext{sctx: sctx, stack: StackTaskPool.Get().(*taskStack), originSql: sctx.GetSessionVars().StmtCtx.OriginalSQL}
-}
-
-func (m *MemoContext) destroy() {
-	m.stack.Destroy()
-}
-
-func (m *MemoContext) getStack() Stack {
-	return m.stack
-}
-
-func (m *MemoContext) pushTask(task Task) {
-	m.stack.Push(task)
 }

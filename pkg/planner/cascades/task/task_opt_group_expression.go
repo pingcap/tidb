@@ -17,10 +17,13 @@ package task
 import (
 	"io"
 
+	"github.com/pingcap/tidb/pkg/planner/cascades/base"
 	"github.com/pingcap/tidb/pkg/planner/cascades/memo"
 	"github.com/pingcap/tidb/pkg/planner/cascades/rule"
 	"github.com/pingcap/tidb/pkg/planner/pattern"
 )
+
+var _ base.Task = &OptGroupTask{}
 
 type OptGroupExpressionTask struct {
 	BaseTask
@@ -30,7 +33,7 @@ type OptGroupExpressionTask struct {
 }
 
 // NewOptGroupExpressionTask return a targeting optimizing group expression task.
-func NewOptGroupExpressionTask(mctx *MemoContext, ge *memo.GroupExpression) *OptGroupExpressionTask {
+func NewOptGroupExpressionTask(mctx *memo.MemoContext, ge *memo.GroupExpression) *OptGroupExpressionTask {
 	return &OptGroupExpressionTask{
 		BaseTask:        BaseTask{mctx: mctx},
 		groupExpression: ge,
@@ -46,7 +49,7 @@ func (ge *OptGroupExpressionTask) Execute() error {
 	// since it's a stack-order, LUFO, when we want to apply a rule for a specific group expression,
 	// the pre-condition is that this group expression's child group has been fully explored.
 	for i := len(ge.groupExpression.Inputs) - 1; i >= 0; i-- {
-		ge.Push(NewOptGroupTask(ge.mm, ge.ctx, ge.groupExpression.Inputs[i]))
+		ge.Push(NewOptGroupTask(ge.mctx, ge.groupExpression.Inputs[i]))
 	}
 	return nil
 }

@@ -16,20 +16,36 @@ package memo
 
 import (
 	"container/list"
+	"sync"
 
 	base2 "github.com/pingcap/tidb/pkg/planner/cascades/base"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
-	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/util/intest"
 )
 
+// MemoPool is initialized for memory saving by reusing TaskStack.
+var MemoPool = sync.Pool{
+	New: func() any {
+		return NewMemo()
+	},
+}
+
+// Destroy indicates that when stack itself is useless like in the end of optimizing phase, we can destroy ourselves.
+func (mm *Memo) Destroy() {
+	// when a TaskStack itself is useless, we can destroy itself actively.
+	mm.groupIDGen.id = 0
+	mm.rootGroup = nil
+	mm.groups.Init()
+	clear(mm.groupID2Group)
+	clear(mm.hash2GroupExpr)
+	mm.hasher.Reset()
+	MemoPool.Put(mm)
+}
+
 // Memo is the main structure of the memo package.
 type Memo struct {
-	// ctx is the context of the memo.
-	sCtx sessionctx.Context
-
 	// groupIDGen is the incremental group id for internal usage.
-	groupIDGen GroupIDGenerator
+	groupIDGen *GroupIDGenerator
 
 	// rootGroup is the root group of the memo.
 	rootGroup *Group
@@ -48,10 +64,9 @@ type Memo struct {
 }
 
 // NewMemo creates a new memo.
-func NewMemo(ctx sessionctx.Context) *Memo {
+func NewMemo() *Memo {
 	return &Memo{
-		sCtx:          ctx,
-		groupIDGen:    GroupIDGenerator{id: 0},
+		groupIDGen:    &GroupIDGenerator{id: 0},
 		groups:        list.New(),
 		groupID2Group: make(map[GroupID]*list.Element),
 		hasher:        base2.NewHashEqualer(),

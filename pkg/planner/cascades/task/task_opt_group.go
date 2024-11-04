@@ -17,8 +17,11 @@ package task
 import (
 	"io"
 
+	"github.com/pingcap/tidb/pkg/planner/cascades/base"
 	"github.com/pingcap/tidb/pkg/planner/cascades/memo"
 )
+
+var _ base.Task = &OptGroupTask{}
 
 type OptGroupTask struct {
 	BaseTask
@@ -27,7 +30,7 @@ type OptGroupTask struct {
 }
 
 // NewOptGroupTask returns a new optimizing group task.
-func NewOptGroupTask(mctx *MemoContext, g *memo.Group) Task {
+func NewOptGroupTask(mctx *memo.MemoContext, g *memo.Group) base.Task {
 	return &OptGroupTask{BaseTask: BaseTask{
 		mctx: mctx,
 	}, group: g}

@@ -198,7 +198,7 @@ func CollationID2Name(id int32) string {
 		// logutil.BgLogger().Warn(
 		// 	"Unable to get collation name from ID, use default collation instead.",
 		// 	zap.Int32("ID", id),
-		// 	zap.Stack("stack"))
+		// 	zap.stack("stack"))
 		return mysql.DefaultCollationName
 	}
 	return collation.Name
