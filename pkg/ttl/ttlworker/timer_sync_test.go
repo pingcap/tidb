@@ -45,7 +45,9 @@ func TestTTLManualTriggerOneTimer(t *testing.T) {
 	defer timerStore.Close()
 	var zeroWatermark time.Time
 	cli := timerapi.NewDefaultTimerClient(timerStore)
-	sync := ttlworker.NewTTLTimerSyncer(do.SysSessionPool(), cli)
+	pool := wrapPoolForTest(do.SysSessionPool())
+	defer pool.AssertNoSessionInUse(t)
+	sync := ttlworker.NewTTLTimerSyncer(pool, cli)
 
 	tk.MustExec("set @@global.tidb_ttl_job_enable=0")
 	tk.MustExec("create table tp1(a int, t timestamp) TTL=`t`+interval 1 HOUR ttl_job_interval='3h' partition by range(a) (" +
@@ -237,7 +239,9 @@ func TestTTLTimerSync(t *testing.T) {
 	insertTTLTableStatusWatermark(t, do, tk, "test", "tp1", "p1", wm2, true)
 
 	cli := timerapi.NewDefaultTimerClient(timerStore)
-	sync := ttlworker.NewTTLTimerSyncer(do.SysSessionPool(), cli)
+	pool := wrapPoolForTest(do.SysSessionPool())
+	defer pool.AssertNoSessionInUse(t)
+	sync := ttlworker.NewTTLTimerSyncer(pool, cli)
 
 	lastSyncTime, lastSyncVer := sync.GetLastSyncInfo()
 	require.True(t, lastSyncTime.IsZero())

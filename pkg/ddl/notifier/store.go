@@ -37,9 +37,6 @@ type Store interface {
 	List(ctx context.Context, se *sess.Session) ([]*schemaChange, error)
 }
 
-// DefaultStore is the system table store. Still WIP now.
-var DefaultStore Store
-
 type tableStore struct {
 	db    string
 	table string

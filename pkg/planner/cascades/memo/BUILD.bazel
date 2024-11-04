@@ -7,6 +7,7 @@ go_library(
         "group_expr.go",
         "group_id_generator.go",
         "memo.go",
+        "memo_expr.go",
     ],
     importpath = "github.com/pingcap/tidb/pkg/planner/cascades/memo",
     visibility = ["//visibility:public"],

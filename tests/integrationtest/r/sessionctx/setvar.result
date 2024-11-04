@@ -1685,13 +1685,13 @@ select /*+ set_var(tidb_hash_join_version=optimized) */ @@tidb_hash_join_version
 optimized
 select @@tidb_hash_join_version;
 @@tidb_hash_join_version
-legacy
+optimized
 select /*+ set_var(tidb_hash_join_version=legacy) */ @@tidb_hash_join_version;
 @@tidb_hash_join_version
 legacy
 select @@tidb_hash_join_version;
 @@tidb_hash_join_version
-legacy
+optimized
 set @@global.max_execution_time=1000;
 select @@max_execution_time;
 @@max_execution_time

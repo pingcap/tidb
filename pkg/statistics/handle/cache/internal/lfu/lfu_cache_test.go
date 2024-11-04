@@ -310,6 +310,7 @@ func TestMemoryControlWithUpdate(t *testing.T) {
 		t1 := testutil.NewMockStatisticsTable(i, 1, true, false, false)
 		lfu.Put(1, t1)
 	}
-	time.Sleep(1 * time.Second)
-	require.Equal(t, int64(0), lfu.Cost())
+	require.Eventually(t, func() bool {
+		return int64(0) == lfu.Cost()
+	}, 5*time.Second, 100*time.Millisecond)
 }

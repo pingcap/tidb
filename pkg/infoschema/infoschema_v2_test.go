@@ -695,15 +695,34 @@ func TestDataStructFieldsCorrectnessInSchemaChange(t *testing.T) {
 	// verify table and partition related fields after drop table
 	txn, err = r.Store().Begin()
 	require.NoError(t, err)
-	_, err = builder.ApplyDiff(meta.NewMutator(txn), &model.SchemaDiff{Type: model.ActionDropTable, Version: 5, SchemaID: dbInfo.ID, TableID: tblInfo.ID})
+	m := meta.NewMutator(txn)
+	_, err = builder.ApplyDiff(m, &model.SchemaDiff{Type: model.ActionDropTable, Version: 5, SchemaID: dbInfo.ID, TableID: tblInfo.ID})
 	require.NoError(t, err)
+	// at first, the table will not be removed
+	tblItem, ok = v2.Data.byName.Get(tableItem{dbName: dbInfo.Name, tableName: tblInfo.Name, schemaVersion: 5})
+	require.True(t, ok)
+	require.False(t, tblItem.tomb)
+	tblItem, ok = v2.Data.byID.Get(tableItem{tableID: tblInfo.ID, schemaVersion: 5})
+	require.True(t, ok)
+	require.False(t, tblItem.tomb)
+	_, ok = v2.Data.tableCache.Get(tableCacheKey{tableID: tblInfo.ID, schemaVersion: 5})
+	require.True(t, ok)
+	require.Equal(t, v2.Data.pid2tid.Len(), 5) // tomb partition info
+	tblInfoItem, ok = v2.Data.pid2tid.Get(partitionItem{partitionID: 1, schemaVersion: 5})
+	require.True(t, ok)
+	require.False(t, tblInfoItem.tomb)
+	// after actually drop the table, the info will be tomb
+	m.DropTableOrView(dbInfo.ID, tblInfo.ID)
+	_, err = builder.ApplyDiff(m, &model.SchemaDiff{Type: model.ActionDropTable, Version: 5, SchemaID: dbInfo.ID, TableID: tblInfo.ID})
+	require.NoError(t, err)
+	// at first, the table will not be removed
 	tblItem, ok = v2.Data.byName.Get(tableItem{dbName: dbInfo.Name, tableName: tblInfo.Name, schemaVersion: 5})
 	require.True(t, ok)
 	require.True(t, tblItem.tomb)
 	tblItem, ok = v2.Data.byID.Get(tableItem{tableID: tblInfo.ID, schemaVersion: 5})
 	require.True(t, ok)
 	require.True(t, tblItem.tomb)
-	tbl, ok = v2.Data.tableCache.Get(tableCacheKey{tableID: tblInfo.ID, schemaVersion: 5})
+	_, ok = v2.Data.tableCache.Get(tableCacheKey{tableID: tblInfo.ID, schemaVersion: 5})
 	require.False(t, ok)
 	require.Equal(t, v2.Data.pid2tid.Len(), 5) // tomb partition info
 	tblInfoItem, ok = v2.Data.pid2tid.Get(partitionItem{partitionID: 1, schemaVersion: 5})

@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/pkg/ddl/ingest"
 	"github.com/pingcap/tidb/pkg/ddl/logutil"
+	"github.com/pingcap/tidb/pkg/ddl/notifier"
 	"github.com/pingcap/tidb/pkg/ddl/schemaver"
 	"github.com/pingcap/tidb/pkg/ddl/serverstate"
 	sess "github.com/pingcap/tidb/pkg/ddl/session"
@@ -108,6 +109,7 @@ func (l *ownerListener) OnBecomeOwner() {
 		unSyncedTracker:   newUnSyncedJobTracker(),
 		schemaVerMgr:      newSchemaVersionManager(l.ddl.store),
 		schemaVerSyncer:   l.ddl.schemaVerSyncer,
+		eventPublishStore: l.ddl.eventPublishStore,
 
 		ddlCtx:         l.ddl.ddlCtx,
 		ddlJobNotifyCh: l.jobSubmitter.ddlJobNotifyCh,
@@ -141,6 +143,7 @@ type jobScheduler struct {
 	unSyncedTracker   *unSyncedJobTracker
 	schemaVerMgr      *schemaVersionManager
 	schemaVerSyncer   schemaver.Syncer
+	eventPublishStore notifier.Store
 
 	// those fields are created or initialized on start
 	reorgWorkerPool      *workerPool
@@ -534,6 +537,7 @@ func (s *jobScheduler) getJobRunCtx(jobID int64, traceInfo *model.TraceInfo) *jo
 		autoidCli:            s.autoidCli,
 		store:                s.store,
 		schemaVerSyncer:      s.schemaVerSyncer,
+		eventPublishStore:    s.eventPublishStore,
 
 		notifyCh: ch,
 		logger: tidblogutil.LoggerWithTraceInfo(
