@@ -50,10 +50,10 @@ func BenchmarkSysbenchSelectRandomRanges(b *testing.B) {
 	tk := testkit.NewTestKit(b, store)
 	prepareSysbenchData(tk, 1000)
 
-	selectRandomRangesStmt := `select count(k) from sbtest1 where k between ? and ? or
+	selectRandomRangesStmt := `prepare st from 'select count(k) from sbtest1 where k between ? and ? or
                                k between ? and ? or k between ? and ? or k between ? and ? or
                                k between ? and ? or k between ? and ? or k between ? and ? or
-                               k between ? and ? or k between ? and ? or k between ? and ?`
+                               k between ? and ? or k between ? and ? or k between ? and ?'`
 	params := make([]string, 0, 20)
 	execParms := make([]string, 0, 20)
 	for i := 0; i < 20; i++ {
@@ -61,7 +61,7 @@ func BenchmarkSysbenchSelectRandomRanges(b *testing.B) {
 		execParms = append(execParms, fmt.Sprintf("@k%d", i))
 	}
 	setParamStmt := fmt.Sprintf("set %s", strings.Join(params, ","))
-	execStmt := fmt.Sprintf("execute stmt using %s", strings.Join(execParms, ","))
+	execStmt := fmt.Sprintf("execute st using %s", strings.Join(execParms, ","))
 	tk.MustExec(selectRandomRangesStmt)
 	tk.MustExec(setParamStmt)
 	tk.MustQueryWithContext(context.Background(), execStmt) // no error
