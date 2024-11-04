@@ -35,20 +35,19 @@ func getTblInfoByPhyID(t *testing.T, is infoschema.InfoSchema, physicalTblID int
 	if tbl, ok := is.TableByID(context.Background(), physicalTblID); ok {
 		tblInfo := tbl.Meta()
 		return tblInfo, tblInfo.Name.L
-	} else {
-		db, exists := is.SchemaByName(pmodel.NewCIStr("test"))
-		require.True(t, exists)
-		tblInfos, err := is.SchemaTableInfos(context.Background(), db.Name)
-		require.NoError(t, err)
-		for _, tbl := range tblInfos {
-			pi := tbl.GetPartitionInfo()
-			if pi == nil {
-				continue
-			}
-			for _, def := range pi.Definitions {
-				if def.ID == int64(physicalTblID) {
-					return tbl, tbl.Name.L + "." + def.Name.L
-				}
+	}
+	db, exists := is.SchemaByName(pmodel.NewCIStr("test"))
+	require.True(t, exists)
+	tblInfos, err := is.SchemaTableInfos(context.Background(), db.Name)
+	require.NoError(t, err)
+	for _, tbl := range tblInfos {
+		pi := tbl.GetPartitionInfo()
+		if pi == nil {
+			continue
+		}
+		for _, def := range pi.Definitions {
+			if def.ID == physicalTblID {
+				return tbl, tbl.Name.L + "." + def.Name.L
 			}
 		}
 	}
@@ -83,7 +82,7 @@ func getStatsLoadItem(t *testing.T, is infoschema.InfoSchema, item model.StatsLo
 func checkColumnStatsUsageForPredicates(t *testing.T, is infoschema.InfoSchema, lp base.LogicalPlan, expected []string, comment string) {
 	tblColIDs, _, _ := CollectColumnStatsUsage(lp, false)
 	cols := make([]string, 0, len(tblColIDs))
-	for tblColID, _ := range tblColIDs {
+	for tblColID := range tblColIDs {
 		col := getColumnName(t, is, tblColID, comment)
 		cols = append(cols, col)
 	}
@@ -92,8 +91,8 @@ func checkColumnStatsUsageForPredicates(t *testing.T, is infoschema.InfoSchema, 
 }
 
 func checkColumnStatsUsageForStatsLoad(t *testing.T, is infoschema.InfoSchema, lp base.LogicalPlan, expectedCols []string, expectedParts map[string][]string, comment string) {
-	var loadItems []model.StatsLoadItem
 	predicateCols, _, expandedPartitions := CollectColumnStatsUsage(lp, true)
+	loadItems := make([]model.StatsLoadItem, 0, len(predicateCols))
 	for tblColID, fullLoad := range predicateCols {
 		loadItems = append(loadItems, model.StatsLoadItem{TableItemID: tblColID, FullLoad: fullLoad})
 	}
