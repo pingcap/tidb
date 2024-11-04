@@ -449,6 +449,7 @@ func VecEvalBool(ctx EvalContext, vecEnabled bool, exprList CNFExprs, input *chu
 			}
 
 			if isZero[i] == 0 {
+				nulls[sel[i]] = false
 				continue
 			}
 			sel[j] = sel[i] // this row passes this filter

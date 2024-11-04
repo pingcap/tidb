@@ -113,7 +113,7 @@ func (j *leftOuterSemiJoinProbe) probeForInnerSideBuildWithOtherCondition(chk, j
 	// To avoid `Previous chunk is not probed yet` error
 	j.currentProbeRow = j.nextProcessProbeRowIdx
 	if joinedChk.NumRows() > 0 {
-		j.selected, j.isNulls, err = expression.VecEvalBool(j.ctx.SessCtx.GetExprCtx().GetEvalCtx(), false, j.ctx.OtherCondition, joinedChk, j.selected, j.isNulls)
+		j.selected, j.isNulls, err = expression.VecEvalBool(j.ctx.SessCtx.GetExprCtx().GetEvalCtx(), j.ctx.SessCtx.GetSessionVars().EnableVectorizedExpression, j.ctx.OtherCondition, joinedChk, j.selected, j.isNulls)
 		if err != nil {
 			return err
 		}
@@ -245,4 +245,11 @@ func (j *leftOuterSemiJoinProbe) concatenateProbeAndBuildRows(joinedChk *chunk.C
 
 	j.finishCurrentLookupLoop(joinedChk)
 	return nil
+}
+
+func (j *leftOuterSemiJoinProbe) IsCurrentChunkProbeDone() bool {
+	if len(j.processedProbeRowIdxSet) > 0 {
+		return false
+	}
+	return j.baseJoinProbe.IsCurrentChunkProbeDone()
 }
