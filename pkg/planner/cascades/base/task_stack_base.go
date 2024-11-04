@@ -12,32 +12,23 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package rule
+package base
 
-import "github.com/pingcap/tidb/pkg/planner/cascades/memo"
+import "io"
 
-type ruleType int
-
-const (
-	// DEFAULT_NONE indicates this is none rule.
-	DEFAULT_NONE ruleType = iota
-	// XFJoinToApply refers to join to a apply rule.
-	XFJoinToApply
-
-	XF_PUSH_DOWN_PREDICATE_THROUGH_PROJECTION
-	MUST_BE_LAST_RULE
-)
-
-// String implements the fmt.Stringer interface.
-func (tp *ruleType) String() string {
-	switch *tp {
-	case XFJoinToApply:
-		return "join_to_apply"
-	default:
-		return "default_none"
-	}
+// Stack is abstract definition of task container.(TaskStack is a kind of array stack implementation of it)
+type Stack interface {
+	Push(one Task)
+	Pop() Task
+	Empty() bool
+	Destroy()
 }
 
-func init() {
-	memo.NumOfRuleSet = int(MUST_BE_LAST_RULE)
+// Task is an interface defined for all type of optimizing work: exploring, implementing,
+// deriving-stats, join-reordering and so on.
+type Task interface {
+	// Execute task self executing logic
+	Execute() error
+	// Desc task self description string.
+	Desc(w io.StringWriter)
 }

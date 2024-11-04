@@ -14,30 +14,13 @@
 
 package rule
 
-import "github.com/pingcap/tidb/pkg/planner/cascades/memo"
-
-type ruleType int
-
-const (
-	// DEFAULT_NONE indicates this is none rule.
-	DEFAULT_NONE ruleType = iota
-	// XFJoinToApply refers to join to a apply rule.
-	XFJoinToApply
-
-	XF_PUSH_DOWN_PREDICATE_THROUGH_PROJECTION
-	MUST_BE_LAST_RULE
+import (
+	"github.com/pingcap/tidb/pkg/planner/pattern"
 )
 
-// String implements the fmt.Stringer interface.
-func (tp *ruleType) String() string {
-	switch *tp {
-	case XFJoinToApply:
-		return "join_to_apply"
-	default:
-		return "default_none"
-	}
-}
+// XFormRuleSet is a batch of transformation rules.
+var XFormRuleSet map[pattern.Operand][]Rule
 
 func init() {
-	memo.NumOfRuleSet = int(MUST_BE_LAST_RULE)
+	XFormRuleSet = make(map[pattern.Operand][]Rule, 2)
 }

@@ -16,31 +16,22 @@ package task
 
 import (
 	"errors"
+	"io"
 	"strconv"
 	"testing"
 
+	"github.com/pingcap/tidb/pkg/planner/cascades/memo"
+	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/stretchr/testify/require"
 )
-
-// TestSchedulerContext is defined to test scheduling logic here.
-type TestSchedulerContext struct {
-	ts *taskStack
-}
-
-func (t *TestSchedulerContext) getStack() Stack {
-	return t.ts
-}
-
-func (t *TestSchedulerContext) pushTask(task Task) {
-	t.ts.Push(task)
-}
 
 // TestSchedulerContext is defined to mock special error state in specified task.
 type TestTaskImpl2 struct {
 	a int64
 }
 
-func (t *TestTaskImpl2) execute() error {
+// Execute implements the base.Task interface.
+func (t *TestTaskImpl2) Execute() error {
 	// mock error at special task
 	if t.a == 2 {
 		return errors.New("mock error at task id = 2")
@@ -48,20 +39,20 @@ func (t *TestTaskImpl2) execute() error {
 	return nil
 }
 
-func (t *TestTaskImpl2) desc() string {
-	return strconv.Itoa(int(t.a))
+// Desc implements the base.Task interface.
+func (t *TestTaskImpl2) Desc(writer io.StringWriter) {
+	writer.WriteString(strconv.Itoa(int(t.a)))
 }
 
 func TestSimpleTaskScheduler(t *testing.T) {
-	testSchedulerContext := &TestSchedulerContext{
-		newTaskStack(),
-	}
+	sctx := mock.NewContext()
+	testMemoCtx := memo.NewMemoContext(sctx)
 	testScheduler := &SimpleTaskScheduler{
-		SchedulerCtx: testSchedulerContext,
+		mCtx: testMemoCtx,
 	}
-	testScheduler.SchedulerCtx.pushTask(&TestTaskImpl2{a: 1})
-	testScheduler.SchedulerCtx.pushTask(&TestTaskImpl2{a: 2})
-	testScheduler.SchedulerCtx.pushTask(&TestTaskImpl2{a: 3})
+	testScheduler.mCtx.PushTask(&TestTaskImpl2{a: 1})
+	testScheduler.mCtx.PushTask(&TestTaskImpl2{a: 2})
+	testScheduler.mCtx.PushTask(&TestTaskImpl2{a: 3})
 
 	var testTaskScheduler Scheduler = testScheduler
 	testTaskScheduler.ExecuteTasks()

@@ -38,12 +38,12 @@ func NewJoinToApply() *XFJoinToApply {
 }
 
 // Match implements the Rule interface.
-func (*XFJoinToApply) Match(_ *rule.GroupExprHolder, _ sessionctx.Context) bool {
+func (*XFJoinToApply) Match(_ *memo.MemoExpression, _ sessionctx.Context) bool {
 	return true
 }
 
 // XForm implements thr Rule interface.
-func (*XFJoinToApply) XForm(_ *rule.GroupExprHolder, _ sessionctx.Context) ([]*memo.GroupExpression, error) {
+func (*XFJoinToApply) XForm(_ *memo.MemoExpression, _ sessionctx.Context) ([]*memo.MemoExpression, error) {
 	// Check whether the join can be converted to apply.
 	return nil, nil
 }

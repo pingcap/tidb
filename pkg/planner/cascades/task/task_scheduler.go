@@ -14,6 +14,8 @@
 
 package task
 
+import "github.com/pingcap/tidb/pkg/planner/cascades/memo"
+
 var _ Scheduler = &SimpleTaskScheduler{}
 
 // Scheduler is a scheduling interface defined for serializing(single thread)/concurrent(multi thread) running.
@@ -23,13 +25,13 @@ type Scheduler interface {
 
 // SimpleTaskScheduler is defined for serializing scheduling of memo tasks.
 type SimpleTaskScheduler struct {
-	Err          error
-	SchedulerCtx SchedulerContext
+	Err  error
+	mCtx *memo.MemoContext
 }
 
 // ExecuteTasks implements the interface of TaskScheduler.
 func (s *SimpleTaskScheduler) ExecuteTasks() {
-	stack := s.SchedulerCtx.getStack()
+	stack := s.mCtx.GetStack()
 	defer func() {
 		// when step out of the scheduler, if the stack is empty, clean and release it.
 		if !stack.Empty() {
@@ -39,17 +41,9 @@ func (s *SimpleTaskScheduler) ExecuteTasks() {
 	for !stack.Empty() {
 		// when use customized stack to drive the tasks, the call-chain state is dived in the stack.
 		task := stack.Pop()
-		if err := task.execute(); err != nil {
+		if err := task.Execute(); err != nil {
 			s.Err = err
 			return
 		}
 	}
-}
-
-// SchedulerContext is defined for scheduling logic calling, also facilitate interface-oriented coding and testing.
-type SchedulerContext interface {
-	// we exported the Stack interface here rather than the basic stack implementation.
-	getStack() Stack
-	// we exported the only one push action to user, Task is an interface definition.
-	pushTask(task Task)
 }

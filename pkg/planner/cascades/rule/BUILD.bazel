@@ -5,6 +5,7 @@ go_library(
     srcs = [
         "binder.go",
         "rule.go",
+        "rule_set.go",
         "rule_type.go",
     ],
     importpath = "github.com/pingcap/tidb/pkg/planner/cascades/rule",

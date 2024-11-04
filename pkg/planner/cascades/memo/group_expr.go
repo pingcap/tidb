@@ -17,11 +17,16 @@ package memo
 import (
 	"io"
 
+	"github.com/bits-and-blooms/bitset"
+	"github.com/pingcap/tidb/pkg/expression"
 	base2 "github.com/pingcap/tidb/pkg/planner/cascades/base"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/pattern"
+	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/util/intest"
 )
+
+var NumOfRuleSet int
 
 // GroupExpression is a single expression from the equivalent list classes inside a group.
 // it is a node in the expression tree, while it takes groups as inputs. This kind of loose
@@ -39,10 +44,19 @@ type GroupExpression struct {
 
 	// hash64 is the unique fingerprint of the GroupExpression.
 	hash64 uint64
+
+	// mask indicate what rules have been applied in this group expression.
+	mask *bitset.BitSet
+
+	// abandoned is used in a case, when this gE has been encapsulated (say) 3 tasks
+	// and pushed into the task, this 3 task are all referring to this same gE, one
+	// of them has been substituted halfway, the successive task waiting on the task
+	// should feel this gE is out of date, and this task is abandoned.
+	abandoned bool
 }
 
-// GetLogicalPlan returns the logical plan of the GroupExpression.
-func (e *GroupExpression) GetLogicalPlan() base.LogicalPlan {
+// LogicalPlan returns the logical plan of the GroupExpression.
+func (e *GroupExpression) LogicalPlan() base.LogicalPlan {
 	return e.logicalPlan
 }
 
@@ -52,16 +66,16 @@ func (e *GroupExpression) GetGroup() *Group {
 }
 
 // String implements the fmt.Stringer interface.
-func (e *GroupExpression) String(w io.Writer) {
-	e.GetLogicalPlan().ExplainID()
-	_, _ = w.Write([]byte("GE:" + e.GetLogicalPlan().ExplainID().String() + "{"))
+func (e *GroupExpression) String(w io.StringWriter) {
+	e.LogicalPlan().ExplainID()
+	_, _ = w.WriteString("GE:" + e.LogicalPlan().ExplainID().String() + "{")
 	for i, input := range e.Inputs {
 		if i != 0 {
-			_, _ = w.Write([]byte(", "))
+			_, _ = w.WriteString(", ")
 		}
 		input.String(w)
 	}
-	_, _ = w.Write([]byte("}"))
+	_, _ = w.WriteString("}")
 }
 
 // Sum64 returns the cached hash64 of the GroupExpression.
@@ -121,6 +135,7 @@ func NewGroupExpression(lp base.LogicalPlan, inputs []*Group) *GroupExpression {
 		Inputs:      inputs,
 		logicalPlan: lp,
 		hash64:      0,
+		mask:        bitset.New(uint(NumOfRuleSet)),
 	}
 }
 
@@ -128,4 +143,53 @@ func NewGroupExpression(lp base.LogicalPlan, inputs []*Group) *GroupExpression {
 func (e *GroupExpression) Init(h base2.Hasher) {
 	e.Hash64(h)
 	e.hash64 = h.Sum64()
+}
+
+// IsExplored return whether this gE has explored rule i.
+func (e *GroupExpression) IsExplored(i uint) bool {
+	return e.mask.Test(i)
+}
+
+// SetExplored set this gE as explored in rule i.
+func (e *GroupExpression) SetExplored(i uint) {
+	e.mask.Set(i)
+}
+
+// IsAbandoned returns whether this gE is abandoned.
+func (e *GroupExpression) IsAbandoned() bool {
+	return e.abandoned
+}
+
+// SetAbandoned set this gE as abandoned.
+func (e *GroupExpression) SetAbandoned() {
+	e.abandoned = true
+}
+
+// DeriveLogicalProp derive the new group's logical property from a specific GE.
+// DeriveLogicalProp is not called with recursive, because we only examine and
+// init new group from bottom-up, so we can sure that this new group's
+// children has always gotten is logical prop already.
+func (e *GroupExpression) DeriveLogicalProp() error {
+	if e.GetGroup().GetLogicalProperty() != nil {
+		return nil
+	}
+	childStats := make([]*property.StatsInfo, len(e.Inputs))
+	childSchema := make([]*expression.Schema, len(e.Inputs))
+	for _, childG := range e.Inputs {
+		childStats = append(childStats, childG.GetLogicalProperty().Stats)
+		childSchema = append(childSchema, childG.GetLogicalProperty().Schema)
+	}
+	e.GetGroup().SetLogicalProperty(property.NewLogicalProp())
+	// currently the schemaProducer side logical op is still usefully for source of group schema.
+	// just add this check for passing unit test --- mock logical plan with the id less than 0.
+	if e.logicalPlan.ID() > 0 {
+		e.GetGroup().GetLogicalProperty().Schema = e.logicalPlan.Schema()
+		// here can only derive the basic stats from leaves up, we can't pass any colGroups required by parents.
+		tmpStats, err := e.logicalPlan.DeriveStats(childStats, e.GetGroup().logicalProp.Schema, childSchema, nil)
+		if err != nil {
+			return err
+		}
+		e.GetGroup().GetLogicalProperty().Stats = tmpStats
+	}
+	return nil
 }
