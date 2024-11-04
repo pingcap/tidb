@@ -63,6 +63,7 @@ go_library(
         "//store/pdtypes",
         "//tablecodec",
         "//util",
+        "//util/cmp",
         "//util/codec",
         "//util/collate",
         "//util/hack",

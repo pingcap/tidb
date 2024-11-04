@@ -343,8 +343,8 @@ func (e *IndexReaderExecutor) open(ctx context.Context, kvRanges []kv.KeyRange) 
 		e.memTracker = memory.NewTracker(e.id, -1)
 	}
 	e.memTracker.AttachTo(e.ctx.GetSessionVars().StmtCtx.MemTracker)
-	slices.SortFunc(kvRanges, func(i, j kv.KeyRange) bool {
-		return bytes.Compare(i.StartKey, j.StartKey) < 0
+	slices.SortFunc(kvRanges, func(i, j kv.KeyRange) int {
+		return bytes.Compare(i.StartKey, j.StartKey)
 	})
 	// use sortedSelectResults only when byItems pushed down and partition numbers > 1
 	if e.byItems == nil || len(e.partitions) <= 1 {
@@ -547,7 +547,11 @@ func (e *IndexLookUpExecutor) open(ctx context.Context) error {
 	// constructed by a "IndexLookUpJoin" and "Open" will not be called in that
 	// situation.
 	e.initRuntimeStats()
-	e.memTracker = memory.NewTracker(e.id, -1)
+	if e.memTracker != nil {
+		e.memTracker.Reset()
+	} else {
+		e.memTracker = memory.NewTracker(e.id, -1)
+	}
 	e.memTracker.AttachTo(e.ctx.GetSessionVars().StmtCtx.MemTracker)
 
 	e.finished = make(chan struct{})
@@ -681,8 +685,8 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, workCh chan<
 
 			// init kvReq, result and worker for this partition
 			// The key ranges should be ordered.
-			slices.SortFunc(kvRange, func(i, j kv.KeyRange) bool {
-				return bytes.Compare(i.StartKey, j.StartKey) < 0
+			slices.SortFunc(kvRange, func(i, j kv.KeyRange) int {
+				return bytes.Compare(i.StartKey, j.StartKey)
 			})
 			kvReq, err := builder.SetKeyRanges(kvRange).Build()
 			if err != nil {
@@ -805,7 +809,6 @@ func (e *IndexLookUpExecutor) Close() error {
 	e.tblWorkerWg.Wait()
 	e.finished = nil
 	e.workerStarted = false
-	e.memTracker = nil
 	e.resultCurr = nil
 	return nil
 }

@@ -169,10 +169,11 @@ func convertPoint(sctx sessionctx.Context, point *point, tp *types.FieldType) (*
 			// see issue #20101: overflow when converting integer to year
 		} else if tp.GetType() == mysql.TypeBit && terror.ErrorEqual(err, types.ErrDataTooLong) {
 			// see issue #19067: we should ignore the types.ErrDataTooLong when we convert value to TypeBit value
-		} else if tp.GetType() == mysql.TypeNewDecimal && terror.ErrorEqual(err, types.ErrOverflow) {
-			// Ignore the types.ErrOverflow when we convert TypeNewDecimal values.
+		} else if (tp.GetType() == mysql.TypeNewDecimal || tp.GetType() == mysql.TypeLonglong) && terror.ErrorEqual(err, types.ErrOverflow) {
+			// Ignore the types.ErrOverflow when we convert TypeNewDecimal/TypeLonglong values.
 			// A trimmed valid boundary point value would be returned then. Accordingly, the `excl` of the point
 			// would be adjusted. Impossible ranges would be skipped by the `validInterval` call later.
+			// tests in TestIndexRange/TestIndexRangeForDecimal
 		} else if point.value.Kind() == types.KindMysqlTime && tp.GetType() == mysql.TypeTimestamp && terror.ErrorEqual(err, types.ErrWrongValue) {
 			// See issue #28424: query failed after add index
 			// Ignore conversion from Date[Time] to Timestamp since it must be either out of range or impossible date, which will not match a point select
@@ -587,8 +588,8 @@ func UnionRanges(sctx sessionctx.Context, ranges Ranges, mergeConsecutive bool) 
 		}
 		objects = append(objects, &sortRange{originalValue: ran, encodedStart: left, encodedEnd: right})
 	}
-	slices.SortFunc(objects, func(i, j *sortRange) bool {
-		return bytes.Compare(i.encodedStart, j.encodedStart) < 0
+	slices.SortFunc(objects, func(i, j *sortRange) int {
+		return bytes.Compare(i.encodedStart, j.encodedStart)
 	})
 	ranges = ranges[:0]
 	lastRange := objects[0]

@@ -47,6 +47,7 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
+	"github.com/pingcap/tidb/util/cmp"
 	"github.com/pingcap/tidb/util/deadlockhistory"
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/logutil"
@@ -2332,7 +2333,7 @@ func FetchClusterServerInfoWithoutPrivilegeCheck(ctx context.Context, sctx sessi
 		}
 		results = append(results, result)
 	}
-	slices.SortFunc(results, func(i, j result) bool { return i.idx < j.idx })
+	slices.SortFunc(results, func(i, j result) int { return cmp.Compare(i.idx, j.idx) })
 	for _, result := range results {
 		finalRows = append(finalRows, result.rows...)
 	}
