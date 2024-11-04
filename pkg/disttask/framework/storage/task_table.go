@@ -490,21 +490,6 @@ func (mgr *TaskManager) GetSubtaskRowCount(ctx context.Context, taskID int64, st
 	return rs[0].GetInt64(0), nil
 }
 
-// GetSubtaskRowCountFromHistory gets the subtask row count.
-func (mgr *TaskManager) GetSubtaskRowCountFromHistory(ctx context.Context, taskID int64, step proto.Step) (int64, error) {
-	rs, err := mgr.ExecuteSQLWithNewSession(ctx, `select
-    	cast(sum(json_extract(summary, '$.row_count')) as signed) as row_count
-		from mysql.tidb_background_subtask_history where task_key = %? and step = %?`,
-		taskID, step)
-	if err != nil {
-		return 0, err
-	}
-	if len(rs) == 0 {
-		return 0, nil
-	}
-	return rs[0].GetInt64(0), nil
-}
-
 // UpdateSubtaskRowCount updates the subtask row count.
 func (mgr *TaskManager) UpdateSubtaskRowCount(ctx context.Context, subtaskID int64, rowCount int64) error {
 	_, err := mgr.ExecuteSQLWithNewSession(ctx,
