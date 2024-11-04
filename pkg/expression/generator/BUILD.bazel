@@ -18,7 +18,7 @@ go_test(
     timeout = "short",
     srcs = ["builtin_threadsafe_test.go"],
     data = [
-        "//pkg/expression:threadsafe_gened_file"
+        "//pkg/expression:threadsafe_gened_file",
     ],
     embed = [":generator_lib"],
     flaky = True,

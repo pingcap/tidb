@@ -21,13 +21,22 @@ import (
 )
 
 func TestBuiltinThreadSafeGenCode(t *testing.T) {
-	genCode := genBuiltinThreadSafeCode("../")
+	safeCode, unsafeCode := genBuiltinThreadSafeCode("../")
 	currentCode, err := os.ReadFile("../builtin_threadsafe_generated.go")
 	if err != nil {
-		t.Errorf("Read current plan_clone_generated.go code error: %v", err)
+		t.Errorf("Read current builtin_threadsafe_generated.go code error: %v", err)
 		return
 	}
-	if !bytes.Equal(genCode, currentCode) {
+	if !bytes.Equal(safeCode, currentCode) {
 		t.Errorf("builtin_threadsafe_generated.go should be updated, please run 'make gogenerate' to update it.")
+	}
+
+	currentCode, err = os.ReadFile("../builtin_threadunsafe_generated.go")
+	if err != nil {
+		t.Errorf("Read current builtin_threadunsafe_generated.go code error: %v", err)
+		return
+	}
+	if !bytes.Equal(unsafeCode, currentCode) {
+		t.Errorf("builtin_threadunsafe_generated.go should be updated, please run 'make gogenerate' to update it.")
 	}
 }

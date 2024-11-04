@@ -28,13 +28,14 @@ import (
 	"strings"
 )
 
-func collectThreadSafeBuiltinFuncs(file string) (funcNames []string) {
+func collectThreadSafeBuiltinFuncs(file string) (safeFuncNames, unsafeFuncNames []string) {
 	fset := token.NewFileSet()
 	f, err := parser.ParseFile(fset, file, nil, 0)
 	if err != nil {
 		panic(err)
 	}
 
+	allFuncNames := make([]string, 0, 32)
 	ast.Inspect(f, func(n ast.Node) bool {
 		if n != nil {
 			switch x := n.(type) {
@@ -46,12 +47,13 @@ func collectThreadSafeBuiltinFuncs(file string) (funcNames []string) {
 						return true
 					}
 					if structType, ok := x.Type.(*ast.StructType); ok { // this type is a structure
+						allFuncNames = append(allFuncNames, typeName)
 						if len(structType.Fields.List) != 1 { // this structure only has 1 field
 							return true
 						}
 						// this builtinXSig has only 1 field and this field is `baseBuiltinFunc`.
 						if ident, ok := structType.Fields.List[0].Type.(*ast.Ident); ok && ident.Name == "baseBuiltinFunc" {
-							funcNames = append(funcNames, typeName)
+							safeFuncNames = append(safeFuncNames, typeName)
 						}
 					}
 				}
@@ -59,10 +61,21 @@ func collectThreadSafeBuiltinFuncs(file string) (funcNames []string) {
 		}
 		return true
 	})
-	return funcNames
+
+	safeFuncMap := make(map[string]struct{}, len(safeFuncNames))
+	for _, name := range safeFuncNames {
+		safeFuncMap[name] = struct{}{}
+	}
+	for _, fName := range allFuncNames {
+		if _, ok := safeFuncMap[fName]; !ok {
+			unsafeFuncNames = append(unsafeFuncNames, fName)
+		}
+	}
+
+	return safeFuncNames, unsafeFuncNames
 }
 
-func genBuiltinThreadSafeCode(dir string) []byte {
+func genBuiltinThreadSafeCode(dir string) (safe, unsafe []byte) {
 	files := []string{
 		"builtin.go",
 		"builtin_arithmetic.go",
@@ -87,40 +100,61 @@ func genBuiltinThreadSafeCode(dir string) []byte {
 		"builtin_time.go",
 	}
 
-	threadSafeFuncs := make([]string, 0, 32)
+	safeFuncs := make([]string, 0, 32)
+	unsafeFuncs := make([]string, 0, 32)
 	for _, file := range files {
-		funcNames := collectThreadSafeBuiltinFuncs(path.Join(dir, file))
-		threadSafeFuncs = append(threadSafeFuncs, funcNames...)
+		safeNames, unsafeNames := collectThreadSafeBuiltinFuncs(path.Join(dir, file))
+		safeFuncs = append(safeFuncs, safeNames...)
+		unsafeFuncs = append(unsafeFuncs, unsafeNames...)
 	}
-	sort.Strings(threadSafeFuncs)
+	sort.Strings(safeFuncs)
 
 	var buffer bytes.Buffer
-	buffer.WriteString(header)
-	for _, funcName := range threadSafeFuncs {
-		buffer.WriteString(fmt.Sprintf(funcTemp, funcName))
+	buffer.WriteString(safeHeader)
+	for _, funcName := range safeFuncs {
+		buffer.WriteString(fmt.Sprintf(safeFuncTemp, funcName))
 	}
 
-	formatted, err := format.Source(buffer.Bytes())
+	formattedSafe, err := format.Source(buffer.Bytes())
 	if err != nil {
 		panic(err)
 	}
-	return formatted
+
+	buffer.Reset()
+	buffer.WriteString(unsafeHeader)
+	for _, funcName := range unsafeFuncs {
+		buffer.WriteString(fmt.Sprintf(unsafeFuncTemp, funcName))
+	}
+	formattedUnsafe, err := format.Source(buffer.Bytes())
+	if err != nil {
+		panic(err)
+	}
+
+	return formattedSafe, formattedUnsafe
 }
 
 func main() {
-	genCode := genBuiltinThreadSafeCode(".")
-	if err := os.WriteFile("./builtin_threadsafe_generated.go", genCode, 0644); err != nil {
+	safeCode, unsafeCode := genBuiltinThreadSafeCode(".")
+	if err := os.WriteFile("./builtin_threadsafe_generated.go", safeCode, 0644); err != nil {
+		log.Fatalln("failed to write plan_clone_generated.go", err)
+	}
+	if err := os.WriteFile("./builtin_threadunsafe_generated.go", unsafeCode, 0644); err != nil {
 		log.Fatalln("failed to write plan_clone_generated.go", err)
 	}
 }
 
 const (
-	funcTemp = `// SafeToShareAcrossSession implements BuiltinFunc.SafeToShareAcrossSession.
+	safeFuncTemp = `// SafeToShareAcrossSession implements BuiltinFunc.SafeToShareAcrossSession.
 func (s *%s) SafeToShareAcrossSession() bool {
 	return safeToShareAcrossSession(&s.safeToShareAcrossSessionFlag, s.args)
 }
 `
-	header = `// Copyright 2024 PingCAP, Inc.
+	unsafeFuncTemp = `// SafeToShareAcrossSession implements BuiltinFunc.SafeToShareAcrossSession.
+func (s *%s) SafeToShareAcrossSession() bool {
+	return false
+}
+`
+	safeHeader = `// Copyright 2024 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -160,6 +194,26 @@ func safeToShareAcrossSession(flag *uint32, args []Expression) bool {
 	}
 	return allArgsSafe
 }
+
+`
+
+	unsafeHeader = `// Copyright 2024 PingCAP, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+// Code generated by go generate in expression/generator; DO NOT EDIT.
+
+package expression
 
 `
 )
