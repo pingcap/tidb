@@ -2556,7 +2556,6 @@ func (w *worker) executeDistTask(t table.Table, reorgInfo *reorgInfo) error {
 		for {
 			select {
 			case <-done:
-				logutil.DDLLogger().Warn("task done chan", zap.String("task_key", taskKey))
 				w.updateDistTaskRowCount(taskKey, reorgInfo.Job.ID)
 				return nil
 			case <-checkFinishTk.C:
@@ -2578,7 +2577,6 @@ func (w *worker) executeDistTask(t table.Table, reorgInfo *reorgInfo) error {
 					}
 				}
 			case <-updateRowCntTk.C:
-				logutil.DDLLogger().Warn("updateRowCntTk chan", zap.String("task_key", taskKey))
 				w.updateDistTaskRowCount(taskKey, reorgInfo.Job.ID)
 			}
 		}
