@@ -832,6 +832,12 @@ func reEncodeHandleConsiderNewCollation(handle kv.Handle, columns []rowcodec.Col
 	if len(restoreData) == 0 {
 		return cHandleBytes, nil
 	}
+	// Remove global index extra column,
+	// because the type of `model.ExtraPhysTblID` always is int
+	// which means docode restore is not needed.
+	if len(columns) > 0 && columns[len(columns)-1].ID == model.ExtraPhysTblID {
+		columns = columns[:len(columns)-1]
+	}
 	return decodeRestoredValuesV5(columns, cHandleBytes, restoreData)
 }
 
