@@ -18,7 +18,6 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	base2 "github.com/pingcap/tidb/pkg/planner/cascades/base"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	fd "github.com/pingcap/tidb/pkg/planner/funcdep"
 	"github.com/pingcap/tidb/pkg/planner/property"
@@ -33,50 +32,17 @@ import (
 
 // LogicalApply gets one row from outer executor and gets one row from inner executor according to outer row.
 type LogicalApply struct {
-	LogicalJoin
+	LogicalJoin `hash64-equals:"true"`
 
-	CorCols []*expression.CorrelatedColumn
+	CorCols []*expression.CorrelatedColumn `hash64-equals:"true"`
 	// NoDecorrelate is from /*+ no_decorrelate() */ hint.
-	NoDecorrelate bool
+	NoDecorrelate bool `hash64-equals:"true"`
 }
 
 // Init initializes LogicalApply.
 func (la LogicalApply) Init(ctx base.PlanContext, offset int) *LogicalApply {
 	la.BaseLogicalPlan = NewBaseLogicalPlan(ctx, plancodec.TypeApply, &la, offset)
 	return &la
-}
-
-// *************************** start implementation of HashEquals interface ****************************
-
-// Hash64 implements the base.Hash64.<0th> interface.
-func (la *LogicalApply) Hash64(h base2.Hasher) {
-	la.LogicalJoin.Hash64(h)
-	h.HashInt(len(la.CorCols))
-	for _, one := range la.CorCols {
-		one.Hash64(h)
-	}
-	h.HashBool(la.NoDecorrelate)
-}
-
-// Equals implements the base.HashEquals.<1st> interface.
-func (la *LogicalApply) Equals(other any) bool {
-	if other == nil {
-		return false
-	}
-	la2, ok := other.(*LogicalApply)
-	if !ok {
-		return false
-	}
-	ok = la.LogicalJoin.Equals(&la2.LogicalJoin) && len(la.CorCols) == len(la2.CorCols) && la.NoDecorrelate == la2.NoDecorrelate
-	if !ok {
-		return false
-	}
-	for i, one := range la.CorCols {
-		if !one.Equals(la2.CorCols[i]) {
-			return false
-		}
-	}
-	return true
 }
 
 // *************************** start implementation of Plan interface ***************************

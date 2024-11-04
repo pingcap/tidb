@@ -34,7 +34,7 @@ import (
 // If a field is tagged with `hash64-equals`, then it will be computed in hash64 and equals func.
 // If a field is not tagged, then it will be skipped.
 func GenHash64Equals4LogicalOps() ([]byte, error) {
-	var structures = []any{logicalop.LogicalJoin{}, logicalop.LogicalAggregation{}}
+	var structures = []any{logicalop.LogicalJoin{}, logicalop.LogicalAggregation{}, logicalop.LogicalApply{}}
 	c := new(cc)
 	c.write(codeGenHash64EqualsPrefix)
 	for _, s := range structures {
@@ -99,6 +99,8 @@ func logicalOpName2PlanCodecString(name string) string {
 		return "plancodec.TypeJoin"
 	case "LogicalAggregation":
 		return "plancodec.TypeAgg"
+	case "LogicalApply":
+		return "plancodec.TypeApply"
 	default:
 		return ""
 	}
@@ -130,7 +132,7 @@ func (c *cc) EqualsElement(fType reflect.Type, lhs, rhs string, i string) {
 		reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64, reflect.Float32, reflect.Float64:
 		c.write("if %v != %v {return false}", lhs, rhs)
 	default:
-		if fType.Implements(hashEqualsType) {
+		if fType.Implements(hashEqualsType) || reflect.PtrTo(fType).Implements(hashEqualsType) {
 			if fType.Kind() == reflect.Struct {
 				rhs = "&" + rhs
 			}
@@ -160,7 +162,7 @@ func (c *cc) Hash64Element(fType reflect.Type, callName string) {
 	case reflect.Float32, reflect.Float64:
 		c.write("h.HashFloat64(float64(%v))", callName)
 	default:
-		if fType.Implements(hashEqualsType) {
+		if fType.Implements(hashEqualsType) || reflect.PtrTo(fType).Implements(hashEqualsType) {
 			c.write("%v.Hash64(h)", callName)
 		} else {
 			panic("doesn't support element type" + fType.Kind().String())
