@@ -103,6 +103,7 @@ func (p *UserPrivileges) RequestDynamicVerificationWithUser(privName string, gra
 		return false
 	}
 
+	terror.Log(p.Handle.ensureActiveUser(user.Username))
 	mysqlPriv := p.Handle.Get()
 	roles := mysqlPriv.getDefaultRoles(user.Username, user.Hostname)
 	return mysqlPriv.RequestDynamicVerification(roles, user.Username, user.Hostname, privName, grantable)
@@ -954,6 +955,8 @@ func (p *UserPrivileges) FindEdge(ctx sessionctx.Context, role *auth.RoleIdentit
 	if SkipWithGrant {
 		return false
 	}
+	p.Handle.ensureActiveUser(user.Username)
+	p.Handle.ensureActiveUser(role.Username)
 	mysqlPrivilege := p.Handle.Get()
 	ok := mysqlPrivilege.FindRole(user.Username, user.Hostname, role)
 	if !ok {

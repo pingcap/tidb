@@ -453,87 +453,81 @@ func (p *immutable) loadSomeUsers(ctx sqlexec.RestrictedSQLExecutor, userList ..
 	if err != nil {
 		return errors.Trace(err)
 	}
-
 	return nil
 }
 
-func dedupSortedKeepLast[S ~[]E, E any](s S, eq func(a, b E) bool) S {
-	skip := 0
-	for i := 1; i < len(s); i++ {
-		if eq(s[i], s[i-1]) {
-			skip++
-		}
-		s[i-skip] = s[i]
-	}
-	s = s[:len(s)-skip]
-	return s
-}
-
 // merge construct a new MySQLPrivilege by merging the data of the two objects;.
-func (p *MySQLPrivilege) merge(diff *immutable) *MySQLPrivilege {
+func (p *MySQLPrivilege) merge(diff *immutable, userList []string) *MySQLPrivilege {
 	var ret MySQLPrivilege
 	ret.user = make([]UserRecord, 0, len(p.user)+len(diff.user))
-	ret.user = append(ret.user, p.user...)
+	for _, v := range p.user {
+		if !slices.ContainsFunc(userList, func(usr string) bool { return usr == v.User }) {
+			ret.user = append(ret.user, v)
+		}
+	}
 	ret.user = append(ret.user, diff.user...)
-
-	// sort and dedup
-	slices.SortStableFunc(ret.user, compareUserRecord)
-	ret.user = dedupSortedKeepLast(ret.user, func(x, y UserRecord) bool { return x.User == y.User && x.Host == y.Host })
+	slices.SortFunc(ret.user, compareUserRecord)
 	ret.buildUserMap()
 
 	ret.db = make([]dbRecord, 0, len(p.db)+len(diff.db))
-	ret.db = append(ret.db, p.db...)
+	for _, v := range p.db {
+		if !slices.ContainsFunc(userList, func(user string) bool { return user == v.User }) {
+			ret.db = append(ret.db, v)
+		}
+	}
 	ret.db = append(ret.db, diff.db...)
-	slices.SortStableFunc(ret.db, compareDBRecord)
-	ret.db = dedupSortedKeepLast(ret.db, func(x, y dbRecord) bool { return x.User == y.User && x.Host == y.Host && x.DB == y.DB })
+	slices.SortFunc(ret.db, compareDBRecord)
 	ret.buildDBMap()
 
 	ret.tablesPriv = make([]tablesPrivRecord, 0, len(p.tablesPriv)+len(diff.tablesPriv))
-	ret.tablesPriv = append(ret.tablesPriv, p.tablesPriv...)
+	for _, v := range p.tablesPriv {
+		if !slices.ContainsFunc(userList, func(user string) bool { return user == v.User }) {
+			ret.tablesPriv = append(ret.tablesPriv, v)
+		}
+	}
 	ret.tablesPriv = append(ret.tablesPriv, diff.tablesPriv...)
-	slices.SortStableFunc(ret.tablesPriv, compareTablesPrivRecord)
-	ret.tablesPriv = dedupSortedKeepLast(ret.tablesPriv, func(x, y tablesPrivRecord) bool {
-		return x.User == y.User && x.Host == y.Host && x.DB == y.DB && x.TableName == y.TableName
-	})
+	slices.SortFunc(ret.tablesPriv, compareTablesPrivRecord)
 	ret.buildTablesPrivMap()
 
 	ret.columnsPriv = make([]columnsPrivRecord, 0, len(p.columnsPriv)+len(diff.columnsPriv))
-	ret.columnsPriv = append(ret.columnsPriv, p.columnsPriv...)
+	for _, v := range p.columnsPriv {
+		if !slices.ContainsFunc(userList, func(user string) bool { return user == v.User }) {
+			ret.columnsPriv = append(ret.columnsPriv, v)
+		}
+	}
 	ret.columnsPriv = append(ret.columnsPriv, diff.columnsPriv...)
-	slices.SortStableFunc(ret.columnsPriv, compareColumnsPrivRecord)
-	ret.columnsPriv = dedupSortedKeepLast(ret.columnsPriv, func(x, y columnsPrivRecord) bool {
-		return x.Host == y.Host && x.User == y.User &&
-			x.DB == y.DB && x.TableName == y.TableName && x.ColumnName == y.ColumnName
-	})
+	slices.SortFunc(ret.columnsPriv, compareColumnsPrivRecord)
 
 	ret.defaultRoles = make([]defaultRoleRecord, 0, len(p.defaultRoles)+len(diff.defaultRoles))
-	ret.defaultRoles = append(ret.defaultRoles, p.defaultRoles...)
+	for _, v := range p.defaultRoles {
+		if !slices.ContainsFunc(userList, func(user string) bool { return user == v.User }) {
+			ret.defaultRoles = append(ret.defaultRoles, v)
+		}
+	}
 	ret.defaultRoles = append(ret.defaultRoles, diff.defaultRoles...)
-	slices.SortStableFunc(ret.defaultRoles, compareDefaultRoleRecord)
-	ret.defaultRoles = dedupSortedKeepLast(ret.defaultRoles, func(x, y defaultRoleRecord) bool {
-		return x.Host == y.Host && x.User == y.User
-	})
+	slices.SortFunc(ret.defaultRoles, compareDefaultRoleRecord)
 
 	ret.dynamicPriv = make([]dynamicPrivRecord, 0, len(p.dynamicPriv)+len(diff.dynamicPriv))
-	ret.dynamicPriv = append(ret.dynamicPriv, p.dynamicPriv...)
+	for _, v := range p.dynamicPriv {
+		if !slices.ContainsFunc(userList, func(user string) bool { return user == v.User }) {
+			ret.dynamicPriv = append(ret.dynamicPriv, v)
+		}
+	}
 	ret.dynamicPriv = append(ret.dynamicPriv, diff.dynamicPriv...)
-	slices.SortStableFunc(ret.dynamicPriv, compareDynamicPrivRecord)
-	ret.dynamicPriv = dedupSortedKeepLast(ret.dynamicPriv, func(x, y dynamicPrivRecord) bool {
-		return x.Host == y.Host && x.User == y.User
-	})
+	slices.SortFunc(ret.dynamicPriv, compareDynamicPrivRecord)
 	ret.buildDynamicMap()
 
 	ret.globalPriv = make([]globalPrivRecord, 0, len(p.globalPriv)+len(diff.globalPriv))
-	ret.globalPriv = append(ret.globalPriv, p.globalPriv...)
+	for _, v := range p.globalPriv {
+		if !slices.ContainsFunc(userList, func(user string) bool { return user == v.User }) {
+			ret.globalPriv = append(ret.globalPriv, v)
+		}
+	}
 	ret.globalPriv = append(ret.globalPriv, diff.globalPriv...)
-	slices.SortStableFunc(ret.globalPriv, compareGlobalPrivRecord)
-	ret.globalPriv = dedupSortedKeepLast(ret.globalPriv, func(x, y globalPrivRecord) bool {
-		return x.Host == y.Host && x.User == y.User
-	})
+	slices.SortFunc(ret.globalPriv, compareGlobalPrivRecord)
 	ret.buildGlobalMap()
 
 	ret.roleGraph = diff.roleGraph
-
 	return &ret
 }
 
@@ -1892,16 +1886,16 @@ func (h *Handle) ensureActiveUser(user string) error {
 		return errors.Trace(err)
 	}
 
-	h.merge(&data)
+	h.merge(&data, []string{user})
 	h.activeUsers.Store(user, struct{}{})
 
 	return nil
 }
 
-func (h *Handle) merge(data *immutable) {
+func (h *Handle) merge(data *immutable, userList []string) {
 	for {
 		old := h.Get()
-		swapped := h.priv.CompareAndSwap(old, old.merge(data))
+		swapped := h.priv.CompareAndSwap(old, old.merge(data, userList))
 		if swapped {
 			break
 		}
@@ -1940,7 +1934,7 @@ func (h *Handle) Update(userList []string) error {
 	if err != nil {
 		return err
 	}
-	h.merge(&priv)
+	h.merge(&priv, userList)
 
 	return nil
 }
