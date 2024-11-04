@@ -375,7 +375,7 @@ func TestPlanReplayerWithMultiForeignKey(t *testing.T) {
 	require.NoError(t, fp.Sync())
 
 	// 3-2. connect to tidb and use PLAN REPLAYER LOAD to load this file
-	db, err := sql.Open("mysql", client.GetDSN(func(config *mysql.Config) {
+	db, err := sql.Open("mysql", client.getDSN(func(config *mysql.Config) {
 		config.AllowAllFiles = true
 	}))
 	require.NoError(t, err, "Error connecting")
