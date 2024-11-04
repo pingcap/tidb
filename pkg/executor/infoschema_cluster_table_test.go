@@ -209,6 +209,9 @@ func (s *mockStore) Name() string                 { return "mockStore" }
 func (s *mockStore) Describe() string             { return "" }
 
 func TestSkipEmptyIPNodesForTiDBTypeCoprocessor(t *testing.T) {
+	originIP := config.GetGlobalConfig().AdvertiseAddress
+	config.GetGlobalConfig().AdvertiseAddress = config.UnavailableIP
+	defer func() { config.GetGlobalConfig().AdvertiseAddress = originIP }()
 	store, _ := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
