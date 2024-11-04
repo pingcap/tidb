@@ -137,7 +137,7 @@ func (c *columnStatsUsageCollector) collectPredicateColumnsForDataSource(ds *log
 	if c.collectVisitedTable {
 		c.visitedtbls[tblID] = struct{}{}
 	}
-	c.visitedPhysTblIDs.Insert(int(ds.PhysicalTableID))
+	c.visitedPhysTblIDs.Insert(int(tblID))
 	if tblID != ds.PhysicalTableID && c.histNeeded {
 		c.tblID2PartitionIDs[tblID] = append(c.tblID2PartitionIDs[tblID], ds.PhysicalTableID)
 	}
