@@ -51,85 +51,96 @@ func buildSemiDataSourceAndExpectResult(ctx sessionctx.Context, leftCols []*expr
 	leftSchema := expression.NewSchema(leftCols...)
 	rightSchema := expression.NewSchema(rightCols...)
 
-	rowNum := int64(500)
+	rowNum := int64(50000)
 	leftCol0Datums := make([]any, 0, rowNum)
 	leftCol1Datums := make([]any, 0, rowNum)
 	rightCol0Datums := make([]any, 0, rowNum)
 	rightCol1Datums := make([]any, 0, rowNum)
 
-	leftCol0StartNum := int64(300)
+	leftCol0StartNum := int64(30000)
 
 	intTp := types.NewFieldType(mysql.TypeLonglong)
 	expectResultChunk := chunk.NewChunkWithCapacity([]*types.FieldType{intTp, intTp}, 10000)
-	expectResult := make([]chunk.Row, 0, 10000)
+	expectResult := make([]chunk.Row, 0, 100000)
 
 	if hasDuplicateKey {
-		if rightAsBuildSide {
-			differentKeyNum := int64(100)
-			for i := int64(0); i < differentKeyNum; i++ {
-				leftCol0Datums = append(leftCol0Datums, i)
-				leftCol1Datums = append(leftCol1Datums, int64(1))
+		if hasOtherCondition {
+			if rightAsBuildSide {
+				differentKeyNum := int64(10000)
+				for i := int64(0); i < differentKeyNum; i++ {
+					leftCol0Datums = append(leftCol0Datums, i)
+					leftCol1Datums = append(leftCol1Datums, int64(1))
 
-				singleKeyNum := rand.Int31n(2 * maxChunkSizeInTest)
-				if singleKeyNum == 0 {
-					if isAntiSemiJoin {
-						expectResultChunk.AppendInt64(0, i)
-						expectResultChunk.AppendInt64(1, 1)
-					}
-					continue
-				}
-
-				canOtherConditionSuccess := rand.Int31n(10) < 5
-				if canOtherConditionSuccess {
-					if !isAntiSemiJoin {
-						expectResultChunk.AppendInt64(0, i)
-						expectResultChunk.AppendInt64(1, 1)
+					singleKeyNum := rand.Int31n(2 * maxChunkSizeInTest)
+					if singleKeyNum == 0 {
+						if isAntiSemiJoin {
+							expectResultChunk.AppendInt64(0, i)
+							expectResultChunk.AppendInt64(1, 1)
+						}
+						continue
 					}
 
-					otherConditionSuccessNum := rand.Int31n(singleKeyNum) + 1
-					for j := 0; j < int(singleKeyNum); j++ {
-						rightCol0Datums = append(rightCol0Datums, i)
-						if j < int(otherConditionSuccessNum) {
-							rightCol1Datums = append(rightCol1Datums, int64(0))
-						} else {
+					canOtherConditionSuccess := rand.Int31n(10) < 5
+					if canOtherConditionSuccess {
+						if !isAntiSemiJoin {
+							expectResultChunk.AppendInt64(0, i)
+							expectResultChunk.AppendInt64(1, 1)
+						}
+
+						otherConditionSuccessNum := rand.Int31n(singleKeyNum) + 1
+						for j := 0; j < int(singleKeyNum); j++ {
+							rightCol0Datums = append(rightCol0Datums, i)
+							if j < int(otherConditionSuccessNum) {
+								rightCol1Datums = append(rightCol1Datums, int64(0))
+							} else {
+								rightCol1Datums = append(rightCol1Datums, int64(1))
+							}
+						}
+					} else {
+						if isAntiSemiJoin {
+							expectResultChunk.AppendInt64(0, i)
+							expectResultChunk.AppendInt64(1, 1)
+						}
+
+						for j := 0; j < int(singleKeyNum); j++ {
+							rightCol0Datums = append(rightCol0Datums, i)
 							rightCol1Datums = append(rightCol1Datums, int64(1))
 						}
 					}
-				} else {
-					if isAntiSemiJoin {
-						expectResultChunk.AppendInt64(0, i)
-						expectResultChunk.AppendInt64(1, 1)
+				}
+			} else {
+				differentKeyNum := int64(100)
+				for i := int64(0); i < differentKeyNum; i++ {
+					rightCol0Datums = append(rightCol0Datums, i)
+					rightCol1Datums = append(rightCol1Datums, int64(0))
+
+					singleKeyNum := rand.Int31n(2 * maxChunkSizeInTest)
+					if singleKeyNum == 0 {
+						continue
 					}
 
-					for j := 0; j < int(singleKeyNum); j++ {
-						rightCol0Datums = append(rightCol0Datums, i)
-						rightCol1Datums = append(rightCol1Datums, int64(1))
-					}
-				}
-			}
-		} else {
-			differentKeyNum := int64(100)
-			for i := int64(0); i < differentKeyNum; i++ {
-				rightCol0Datums = append(rightCol0Datums, i)
-				rightCol1Datums = append(rightCol1Datums, int64(0))
-
-				singleKeyNum := rand.Int31n(2 * maxChunkSizeInTest)
-				if singleKeyNum == 0 {
-					continue
-				}
-
-				canOtherConditionSuccess := rand.Int31n(10) < 5
-				if canOtherConditionSuccess {
-					otherConditionSuccessNum := rand.Int31n(singleKeyNum) + 1
-					for j := 0; j < int(singleKeyNum); j++ {
-						leftCol0Datums = append(leftCol0Datums, i)
-						if j < int(otherConditionSuccessNum) {
-							leftCol1Datums = append(leftCol1Datums, int64(1))
-							if !isAntiSemiJoin {
-								expectResultChunk.AppendInt64(0, i)
-								expectResultChunk.AppendInt64(1, 1)
+					canOtherConditionSuccess := rand.Int31n(10) < 5
+					if canOtherConditionSuccess {
+						otherConditionSuccessNum := rand.Int31n(singleKeyNum) + 1
+						for j := 0; j < int(singleKeyNum); j++ {
+							leftCol0Datums = append(leftCol0Datums, i)
+							if j < int(otherConditionSuccessNum) {
+								leftCol1Datums = append(leftCol1Datums, int64(1))
+								if !isAntiSemiJoin {
+									expectResultChunk.AppendInt64(0, i)
+									expectResultChunk.AppendInt64(1, 1)
+								}
+							} else {
+								leftCol1Datums = append(leftCol1Datums, int64(0))
+								if isAntiSemiJoin {
+									expectResultChunk.AppendInt64(0, i)
+									expectResultChunk.AppendInt64(1, 0)
+								}
 							}
-						} else {
+						}
+					} else {
+						for j := 0; j < int(singleKeyNum); j++ {
+							leftCol0Datums = append(leftCol0Datums, i)
 							leftCol1Datums = append(leftCol1Datums, int64(0))
 							if isAntiSemiJoin {
 								expectResultChunk.AppendInt64(0, i)
@@ -137,11 +148,34 @@ func buildSemiDataSourceAndExpectResult(ctx sessionctx.Context, leftCols []*expr
 							}
 						}
 					}
+				}
+			}
+		} else {
+			differentKeyNum := int64(1000)
+			for i := int64(0); i < differentKeyNum; i++ {
+				leftSingleKeyNum := rand.Int31n(2*maxChunkSizeInTest) + 1
+				rightSingleKeyNum := rand.Int31n(2*maxChunkSizeInTest) + 1
+
+				for j := 0; j < int(leftSingleKeyNum); j++ {
+					leftCol0Datums = append(leftCol0Datums, i)
+					leftCol1Datums = append(leftCol1Datums, int64(0))
+				}
+
+				if i%2 == 0 {
+					for j := 0; j < int(rightSingleKeyNum); j++ {
+						rightCol0Datums = append(rightCol0Datums, i)
+						rightCol1Datums = append(rightCol1Datums, int64(0))
+					}
+
+					if !isAntiSemiJoin {
+						for j := 0; j < int(leftSingleKeyNum); j++ {
+							expectResultChunk.AppendInt64(0, i)
+							expectResultChunk.AppendInt64(1, 0)
+						}
+					}
 				} else {
-					for j := 0; j < int(singleKeyNum); j++ {
-						leftCol0Datums = append(leftCol0Datums, i)
-						leftCol1Datums = append(leftCol1Datums, int64(0))
-						if isAntiSemiJoin {
+					if isAntiSemiJoin {
+						for j := 0; j < int(leftSingleKeyNum); j++ {
 							expectResultChunk.AppendInt64(0, i)
 							expectResultChunk.AppendInt64(1, 0)
 						}
@@ -312,9 +346,9 @@ func TestSemiJoinBasic(t *testing.T) {
 
 func TestSemiJoinDuplicateKeys(t *testing.T) {
 	testSemiJoin(t, false, false, true) // Left side build without other condition
-	// testSemiJoin(t, false, true, true) // Left side build with other condition
-	testSemiJoin(t, true, false, true) // Right side build without other condition
-	// testSemiJoin(t, true, true, true)  // Right side build with other condition
+	testSemiJoin(t, false, true, true)  // Left side build with other condition
+	testSemiJoin(t, true, false, true)  // Right side build without other condition
+	testSemiJoin(t, true, true, true)   // Right side build with other condition
 }
 
 func TestTruncateSelectFunction(t *testing.T) {

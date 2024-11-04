@@ -30,6 +30,8 @@ func TestAntiSemiJoinBasic(t *testing.T) {
 }
 
 func TestAntiSemiJoinDuplicateKeys(t *testing.T) {
-	testAntiSemiJoin(t, true, true, true) // Right side build with other condition
-	testAntiSemiJoin(t, false, true, true) // Left side build with other condition
+	testAntiSemiJoin(t, false, false, true) // Left side build without other condition
+	testAntiSemiJoin(t, false, true, true)  // Left side build with other condition
+	testAntiSemiJoin(t, true, false, true)  // Right side build without other condition
+	testAntiSemiJoin(t, true, true, true)   // Right side build with other condition
 }
