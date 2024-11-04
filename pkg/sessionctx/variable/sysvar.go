@@ -932,10 +932,12 @@ var defaultSysVars = []*SysVar{
 	}},
 	{Scope: ScopeGlobal, Name: TiDBEnableHistoricalStats, Value: Off, Type: TypeBool, Depended: true},
 	{
-		Scope: ScopeGlobal,
-		Name:  TiDBPipelinedFlushConcurrency,
-		Value: strconv.Itoa(DefTiDBPipelinedFlushConcurrency),
-		Type:  TypeUnsigned,
+		Scope:    ScopeGlobal,
+		Name:     TiDBPipelinedFlushConcurrency,
+		Value:    strconv.Itoa(DefTiDBPipelinedFlushConcurrency),
+		Type:     TypeUnsigned,
+		MinValue: 1,
+		MaxValue: 65536,
 		SetGlobal: func(_ context.Context, _ *SessionVars, val string) error {
 			tikvcfg.PipelinedFlushConcurrency.Store(
 				uint32(
