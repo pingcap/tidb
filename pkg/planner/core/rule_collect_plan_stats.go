@@ -406,7 +406,6 @@ func collectHistNeededItems(histNeededColumns []model.StatsLoadItem, histNeededI
 	for idx := range histNeededIndices {
 		histNeededItems = append(histNeededItems, model.StatsLoadItem{TableItemID: idx, FullLoad: true})
 	}
-	histNeededItems = append(histNeededItems, histNeededColumns...)
 	return
 }
 
