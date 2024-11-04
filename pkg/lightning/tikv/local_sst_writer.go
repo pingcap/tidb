@@ -156,7 +156,8 @@ func newWriteCFWriter(
 	writable := objstorageprovider.NewFileWritable(f)
 	writer := rockssst.NewWriter(writable, rockssst.WriterOptions{
 		// TODO(lance6716): should read TiKV config to know compression algorithm.
-		Compression:  rocks.ZstdCompression,
+		Compression: rocks.ZstdCompression,
+		// TODO(lance6716): should check the behaviour is the exactly same.
 		FilterPolicy: rocksbloom.FilterPolicy(10),
 		MergerName:   "nullptr",
 		TablePropertyCollectors: []func() rockssst.TablePropertyCollector{
@@ -166,7 +167,7 @@ func newWriteCFWriter(
 			func() rockssst.TablePropertyCollector {
 				return newRangePropertiesCollector()
 			},
-			// TODO(lance6716): check if we should trigger titan
+			// titan is only triggered when SST compaction at TiKV side.
 			func() rockssst.TablePropertyCollector {
 				return mockCollector{name: "BlobFileSizeCollector"}
 			},
