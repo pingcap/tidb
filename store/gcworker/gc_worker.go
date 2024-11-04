@@ -892,16 +892,6 @@ func (w *GCWorker) deleteRanges(ctx context.Context, safePoint uint64, concurren
 			continue
 		}
 
-		err = util.CompleteDeleteRange(se, r, !v2)
-		if err != nil {
-			logutil.Logger(ctx).Error("[gc worker] failed to mark delete range task done",
-				zap.String("uuid", w.uuid),
-				zap.Stringer("startKey", startKey),
-				zap.Stringer("endKey", endKey),
-				zap.Error(err))
-			metrics.GCUnsafeDestroyRangeFailuresCounterVec.WithLabelValues("save").Inc()
-		}
-
 		if err := w.doGCPlacementRules(se, safePoint, r, gcPlacementRuleCache); err != nil {
 			logutil.Logger(ctx).Error("[gc worker] gc placement rules failed on range",
 				zap.String("uuid", w.uuid),
@@ -917,6 +907,16 @@ func (w *GCWorker) deleteRanges(ctx context.Context, safePoint uint64, concurren
 				zap.Int64("elementID", r.ElementID),
 				zap.Error(err))
 			continue
+		}
+
+		err = util.CompleteDeleteRange(se, r, !v2)
+		if err != nil {
+			logutil.Logger(ctx).Error("[gc worker] failed to mark delete range task done",
+				zap.String("uuid", w.uuid),
+				zap.Stringer("startKey", startKey),
+				zap.Stringer("endKey", endKey),
+				zap.Error(err))
+			metrics.GCUnsafeDestroyRangeFailuresCounterVec.WithLabelValues("save").Inc()
 		}
 	}
 	logutil.Logger(ctx).Info("[gc worker] finish delete ranges",
@@ -1411,8 +1411,8 @@ func (w *GCWorker) checkLockObservers(ctx context.Context, safePoint uint64, sto
 			for i, lockInfo := range respInner.Locks {
 				locks[i] = txnlock.NewLock(lockInfo)
 			}
-			slices.SortFunc(locks, func(i, j *txnlock.Lock) bool {
-				return bytes.Compare(i.Key, j.Key) < 0
+			slices.SortFunc(locks, func(i, j *txnlock.Lock) int {
+				return bytes.Compare(i.Key, j.Key)
 			})
 			err = w.resolveLocksAcrossRegions(ctx, locks)
 

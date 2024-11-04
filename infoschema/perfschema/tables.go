@@ -399,7 +399,7 @@ func dataForRemoteProfile(ctx sessionctx.Context, nodeType, uri string, isGorout
 		}
 		results = append(results, result)
 	}
-	slices.SortFunc(results, func(i, j result) bool { return i.addr < j.addr })
+	slices.SortFunc(results, func(i, j result) int { return strings.Compare(i.addr, j.addr) })
 	var finalRows [][]types.Datum
 	for _, result := range results {
 		addr := types.NewStringDatum(result.addr)
