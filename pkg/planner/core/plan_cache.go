@@ -64,22 +64,16 @@ func SetParameterValuesIntoSCtx(sctx base.PlanContext, isNonPrep bool, markers [
 			val types.Datum
 			err error
 		)
-		if c, ok := usingParam.(*expression.Constant); ok {
-			// If the variable is readonly, it's folded to a constant value.
-			val = c.Value
-			intest.Assert(c.DeferredExpr == nil, "folded readonly user variable should not contain deferred expression")
-		} else {
-			val, err = usingParam.Eval(sctx.GetExprCtx().GetEvalCtx(), chunk.Row{})
-			if err != nil {
-				return err
+		val, err = usingParam.Eval(sctx.GetExprCtx().GetEvalCtx(), chunk.Row{})
+		if err != nil {
+			return err
+		}
+		if isGetVarBinaryLiteral(sctx, usingParam) {
+			binVal, convErr := val.ToBytes()
+			if convErr != nil {
+				return convErr
 			}
-			if isGetVarBinaryLiteral(sctx, usingParam) {
-				binVal, convErr := val.ToBytes()
-				if convErr != nil {
-					return convErr
-				}
-				val.SetBinaryLiteral(binVal)
-			}
+			val.SetBinaryLiteral(binVal)
 		}
 		if markers != nil {
 			param := markers[i].(*driver.ParamMarkerExpr)
