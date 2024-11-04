@@ -515,3 +515,22 @@ func TestIndexMergeJSONMemberOf2FlakyPart(t *testing.T) {
 		"└─TableRowIDScan_6(Probe) 1.00 cop[tikv] table:t keep order:false, stats:partial[d:unInitialized]",
 	))
 }
+
+func TestIssue56915(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`use test`)
+	tk.MustExec(`drop table if exists t`)
+	tk.MustExec(`create table t(a int, b int, j json, index ia(a), index mvi( (cast(j as signed array)), a, b) );`)
+	tk.MustExec(`insert into t value(1,1,'[1,2,3,4,5]');`)
+	tk.MustExec(`insert into t value(1,1,'[1,2,3,4,5]');`)
+	tk.MustExec(`insert into t value(1,1,'[1,2,3,4,5]');`)
+	tk.MustExec(`insert into t value(1,1,'[1,2,3,4,5]');`)
+	tk.MustExec(`insert into t value(1,1,'[6]');`)
+	tk.MustExec(`analyze table t all columns;`)
+	tk.MustQuery("explain format = brief select * from t where a = 1 and 6 member of (j);").Check(testkit.Rows(
+		"IndexMerge 1.00 root  type: union",
+		"├─IndexRangeScan(Build) 1.00 cop[tikv] table:t, index:mvi(cast(`j` as signed array), a, b) range:[6 1,6 1], keep order:false, stats:partial[j:unInitialized]",
+		"└─TableRowIDScan(Probe) 1.00 cop[tikv] table:t keep order:false, stats:partial[j:unInitialized]",
+	))
+}

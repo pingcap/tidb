@@ -470,3 +470,30 @@ func TestAddGlobalIndexInIngest(t *testing.T) {
 	require.Equal(t, rsGlobalIndex1.String(), rsTable.String())
 	require.Equal(t, rsGlobalIndex1.String(), rsGlobalIndex2.String())
 }
+
+func TestAddGlobalIndexInIngestWithUpdate(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	defer ingesttestutil.InjectMockBackendMgr(t, store)()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a int, b int) partition by hash(a) partitions 5")
+	tk.MustExec("insert into t (a, b) values (1, 1), (2, 2), (3, 3)")
+	var i atomic.Int32
+	i.Store(3)
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobUpdated", func(job *model.Job) {
+		tk2 := testkit.NewTestKit(t, store)
+		tmp := i.Add(1)
+		_, err := tk2.Exec(fmt.Sprintf("insert into test.t values (%d, %d)", tmp, tmp))
+		assert.Nil(t, err)
+
+		_, err = tk2.Exec(fmt.Sprintf("update test.t set b = b + 11, a = b where b = %d", tmp-1))
+		assert.Nil(t, err)
+	})
+	tk.MustExec("alter table t add unique index idx(b) global")
+	rsGlobalIndex := tk.MustQuery("select *,_tidb_rowid from t use index(idx)").Sort()
+	rsTable := tk.MustQuery("select *,_tidb_rowid from t use index()").Sort()
+	require.Equal(t, rsGlobalIndex.String(), rsTable.String())
+}

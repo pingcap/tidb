@@ -33,7 +33,7 @@ go_test(
     ],
     embed = [":notifier"],
     flaky = True,
-    shard_count = 6,
+    shard_count = 7,
     deps = [
         "//pkg/ddl",
         "//pkg/ddl/session",
@@ -44,6 +44,7 @@ go_test(
         "//pkg/testkit/testfailpoint",
         "//pkg/util",
         "@com_github_ngaut_pools//:pools",
+        "@com_github_pingcap_log//:log",
         "@com_github_stretchr_testify//require",
     ],
 )
