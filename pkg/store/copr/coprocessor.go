@@ -589,7 +589,8 @@ func buildTiDBMemCopTasks(ranges *KeyRanges, req *kv.Request) ([]*copTask, error
 		if req.TiDBServerID > 0 && req.TiDBServerID != ser.ServerIDGetter() {
 			continue
 		}
-		if len(ser.IP) == 0 {
+		// skip some nodes, such as BR created when backup/restore
+		if ser.IP == config.UnavailableIP {
 			continue
 		}
 
