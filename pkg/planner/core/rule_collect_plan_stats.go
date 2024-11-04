@@ -105,7 +105,11 @@ func (*CollectPredicateColumnsPoint) markAtLeastOneFullStatsLoadForEachTable(
 		if statsHandle == nil {
 			continue
 		}
-		tableStats := statsHandle.GetTableStats(tblID2TblInfo[neededCol.TableID])
+		tblInfo := tblID2TblInfo[neededCol.TableID]
+		if tblInfo == nil {
+			continue
+		}
+		tableStats := statsHandle.GetTableStats(tblInfo)
 		if tableStats == nil || tableStats.Pseudo {
 			continue
 		}
