@@ -955,8 +955,8 @@ func (p *UserPrivileges) FindEdge(ctx sessionctx.Context, role *auth.RoleIdentit
 	if SkipWithGrant {
 		return false
 	}
-	p.Handle.ensureActiveUser(user.Username)
-	p.Handle.ensureActiveUser(role.Username)
+	terror.Log(p.Handle.ensureActiveUser(user.Username))
+	terror.Log(p.Handle.ensureActiveUser(role.Username))
 	mysqlPrivilege := p.Handle.Get()
 	ok := mysqlPrivilege.FindRole(user.Username, user.Hostname, role)
 	if !ok {
