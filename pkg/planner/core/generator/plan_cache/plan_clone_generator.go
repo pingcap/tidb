@@ -42,7 +42,7 @@ func GenPlanCloneForPlanCacheCode() ([]byte, error) {
 		core.PhysicalIndexJoin{}, core.PhysicalIndexHashJoin{}, core.PhysicalIndexLookUpReader{}, core.PhysicalIndexMergeReader{},
 		core.Update{}, core.Delete{}, core.Insert{}, core.PhysicalLock{}, core.PhysicalUnionScan{}, core.PhysicalUnionAll{}}
 	c := new(codeGen)
-	c.write(codeGenPrefix)
+	c.write(codeGenPlanCachePrefix)
 	for _, s := range structures {
 		code, err := genPlanCloneForPlanCache(s)
 		if err != nil {
@@ -204,7 +204,7 @@ func (c *codeGen) format() ([]byte, error) {
 	return format.Source(c.buffer.Bytes())
 }
 
-const codeGenPrefix = `// Copyright 2024 PingCAP, Inc.
+const codeGenPlanCachePrefix = `// Copyright 2024 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.

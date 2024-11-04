@@ -27,6 +27,28 @@ import (
 	"go.uber.org/zap"
 )
 
+func TestMultiSchemaReorganizePartitionIssue56819(t *testing.T) {
+	createSQL := `create table t (a int primary key, b varchar(255), unique index idx_b_global (b) global) partition by range (a) (partition p1 values less than (200), partition pMax values less than (maxvalue))`
+	initFn := func(tkO *testkit.TestKit) {
+		tkO.MustExec(`insert into t values (1,1),(2,2)`)
+	}
+	alterSQL := `alter table t reorganize partition p1 into (partition p0 values less than (100), partition p1 values less than (200))`
+	loopFn := func(tkO, tkNO *testkit.TestKit) {
+		res := tkO.MustQuery(`select schema_state from information_schema.DDL_JOBS where table_name = 't' order by job_id desc limit 1`)
+		schemaState := res.Rows()[0][0].(string)
+		switch schemaState {
+		case model.StateDeleteOnly.String():
+			tkNO.MustExec(`insert into t values (4,4)`)
+			tkNO.MustQuery(`select * from t where b = "4"`).Sort().Check(testkit.Rows("4 4"))
+			tkO.MustQuery(`select * from t where b = "4"`).Sort().Check(testkit.Rows("4 4"))
+		}
+	}
+	postFn := func(tkO *testkit.TestKit) {
+		// nothing
+	}
+	runMultiSchemaTest(t, createSQL, alterSQL, initFn, postFn, loopFn)
+}
+
 func TestMultiSchemaDropRangePartition(t *testing.T) {
 	createSQL := `create table t (a int primary key, b varchar(255)) partition by range (a) (partition p0 values less than (100), partition p1 values less than (200))`
 	initFn := func(tkO *testkit.TestKit) {

@@ -451,8 +451,12 @@ select 7;`
 			{
 				startTime: "",
 				endTime:   "",
-				files:     []string{fileName3},
+				files:     []string{fileName1, fileName2, fileName3},
 				querys: []string{
+					"select 1;",
+					"select 2;",
+					"select 3;",
+					"select 4;",
 					"select 5;",
 					"select 6;",
 					"select 7;",

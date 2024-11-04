@@ -752,7 +752,7 @@ func TestVarintCompatibility(t *testing.T) {
 func TestCodecUtil(t *testing.T) {
 	colIDs := []int64{1, 2, 3, 4}
 	tps := make([]*types.FieldType, 4)
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		tps[i] = types.NewFieldType(mysql.TypeLonglong)
 	}
 	tps[3] = types.NewFieldType(mysql.TypeNull)
@@ -802,7 +802,7 @@ func TestCodecUtil(t *testing.T) {
 func TestOldRowCodec(t *testing.T) {
 	colIDs := []int64{1, 2, 3, 4}
 	tps := make([]*types.FieldType, 4)
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		tps[i] = types.NewFieldType(mysql.TypeLonglong)
 	}
 	tps[3] = types.NewFieldType(mysql.TypeNull)
@@ -829,7 +829,7 @@ func TestOldRowCodec(t *testing.T) {
 	err = rd.DecodeToChunk(newRow, kv.IntHandle(-1), chk)
 	require.NoError(t, err)
 	row := chk.GetRow(0)
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		require.Equal(t, int64(i+1), row.GetInt64(i))
 	}
 }

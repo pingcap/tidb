@@ -65,7 +65,6 @@ import (
 	metrics2 "github.com/pingcap/tidb/pkg/planner/core/metrics"
 	"github.com/pingcap/tidb/pkg/privilege/privileges"
 	"github.com/pingcap/tidb/pkg/resourcegroup/runaway"
-	sessiontypes "github.com/pingcap/tidb/pkg/session/types"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/sessionstates"
 	"github.com/pingcap/tidb/pkg/sessionctx/sysproctrack"
@@ -1312,6 +1311,37 @@ func NewDomain(store kv.Storage, schemaLease time.Duration, statsLease time.Dura
 
 const serverIDForStandalone = 1 // serverID for standalone deployment.
 
+// NewEtcdCli creates a new clientv3.Client from store if the store support it.
+// the returned client might be nil.
+// TODO currently uni-store/mock-tikv/tikv all implements EtcdBackend while they don't support actually.
+// refactor this part.
+func NewEtcdCli(store kv.Storage) (*clientv3.Client, error) {
+	etcdStore, addrs, err := getEtcdAddrs(store)
+	if err != nil {
+		return nil, err
+	}
+	if len(addrs) == 0 {
+		return nil, nil
+	}
+	cli, err := newEtcdCli(addrs, etcdStore)
+	if err != nil {
+		return nil, err
+	}
+	return cli, nil
+}
+
+func getEtcdAddrs(store kv.Storage) (kv.EtcdBackend, []string, error) {
+	etcdStore, ok := store.(kv.EtcdBackend)
+	if !ok {
+		return nil, nil, nil
+	}
+	addrs, err := etcdStore.EtcdAddrs()
+	if err != nil {
+		return nil, nil, err
+	}
+	return etcdStore, addrs, nil
+}
+
 func newEtcdCli(addrs []string, ebd kv.EtcdBackend) (*clientv3.Client, error) {
 	cfg := config.GetGlobalConfig()
 	etcdLogCfg := zap.NewProductionConfig()
@@ -1345,30 +1375,26 @@ func (do *Domain) Init(
 ) error {
 	do.sysExecutorFactory = sysExecutorFactory
 	perfschema.Init()
-	if ebd, ok := do.store.(kv.EtcdBackend); ok {
-		var addrs []string
-		var err error
-		if addrs, err = ebd.EtcdAddrs(); err != nil {
-			return err
+	etcdStore, addrs, err := getEtcdAddrs(do.store)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if len(addrs) > 0 {
+		cli, err2 := newEtcdCli(addrs, etcdStore)
+		if err2 != nil {
+			return errors.Trace(err2)
 		}
-		if addrs != nil {
-			cli, err := newEtcdCli(addrs, ebd)
-			if err != nil {
-				return errors.Trace(err)
-			}
+		etcd.SetEtcdCliByNamespace(cli, keyspace.MakeKeyspaceEtcdNamespace(do.store.GetCodec()))
 
-			etcd.SetEtcdCliByNamespace(cli, keyspace.MakeKeyspaceEtcdNamespace(do.store.GetCodec()))
+		do.etcdClient = cli
 
-			do.etcdClient = cli
+		do.autoidClient = autoid.NewClientDiscover(cli)
 
-			do.autoidClient = autoid.NewClientDiscover(cli)
-
-			unprefixedEtcdCli, err := newEtcdCli(addrs, ebd)
-			if err != nil {
-				return errors.Trace(err)
-			}
-			do.unprefixedEtcdCli = unprefixedEtcdCli
+		unprefixedEtcdCli, err2 := newEtcdCli(addrs, etcdStore)
+		if err2 != nil {
+			return errors.Trace(err2)
 		}
+		do.unprefixedEtcdCli = unprefixedEtcdCli
 	}
 
 	ctx, cancelFunc := context.WithCancel(context.Background())
@@ -1377,22 +1403,14 @@ func (do *Domain) Init(
 	do.cancelFns.fns = append(do.cancelFns.fns, cancelFunc)
 	do.cancelFns.mu.Unlock()
 
-	var ddlNotifierStore notifier.Store
-	if intest.InTest {
-		ddlNotifierStore = notifier.OpenTableStore("mysql", ddl.NotifierTableName)
-		se, err := do.sysExecutorFactory(do)
-		if err != nil {
-			return err
-		}
-		do.ddlNotifier = notifier.NewDDLNotifier(
-			se.(sessiontypes.Session),
-			ddlNotifierStore,
-			time.Second,
-		)
-
-		// TODO(lance6716): find a more representative place for subscriber
-		failpoint.InjectCall("afterDDLNotifierCreated", do.ddlNotifier)
-	}
+	ddlNotifierStore := notifier.OpenTableStore("mysql", ddl.NotifierTableName)
+	do.ddlNotifier = notifier.NewDDLNotifier(
+		do.sysSessionPool,
+		ddlNotifierStore,
+		time.Second,
+	)
+	// TODO(lance6716): find a more representative place for subscriber
+	failpoint.InjectCall("afterDDLNotifierCreated", do.ddlNotifier)
 
 	d := do.ddl
 	eBak := do.ddlExecutor
@@ -1423,7 +1441,6 @@ func (do *Domain) Init(
 	// step 1: prepare the info/schema syncer which domain reload needed.
 	pdCli, pdHTTPCli := do.GetPDClient(), do.GetPDHTTPClient()
 	skipRegisterToDashboard := config.GetGlobalConfig().SkipRegisterToDashboard
-	var err error
 	do.info, err = infosync.GlobalInfoSyncerInit(ctx, do.ddl.GetID(), do.ServerID,
 		do.etcdClient, do.unprefixedEtcdCli, pdCli, pdHTTPCli,
 		do.Store().GetCodec(), skipRegisterToDashboard)
@@ -1487,7 +1504,7 @@ func (do *Domain) Init(
 
 // Start starts the domain. After start, DDLs can be executed using session, see
 // Init also.
-func (do *Domain) Start() error {
+func (do *Domain) Start(startMode ddl.StartMode) error {
 	gCfg := config.GetGlobalConfig()
 	if gCfg.EnableGlobalKill && do.etcdClient != nil {
 		do.wg.Add(1)
@@ -1506,17 +1523,11 @@ func (do *Domain) Start() error {
 	sysCtxPool := pools.NewResourcePool(sysFac, 512, 512, resourceIdleTimeout)
 
 	// start the ddl after the domain reload, avoiding some internal sql running before infoSchema construction.
-	err := do.ddl.Start(sysCtxPool)
+	err := do.ddl.Start(startMode, sysCtxPool)
 	if err != nil {
 		return err
 	}
 	do.minJobIDRefresher = do.ddl.GetMinJobIDRefresher()
-	if intest.InTest {
-		do.wg.Run(func() {
-			do.ddlNotifier.Start(do.ctx)
-			do.ddlNotifier.Close()
-		}, "ddlNotifier")
-	}
 
 	// Local store needs to get the change information for every DDL state in each session.
 	do.wg.Run(func() {
@@ -1815,6 +1826,11 @@ func (do *Domain) SysProcTracker() sysproctrack.Tracker {
 	return &do.sysProcesses
 }
 
+// DDLNotifier returns the DDL notifier.
+func (do *Domain) DDLNotifier() *notifier.DDLNotifier {
+	return do.ddlNotifier
+}
+
 // GetEtcdClient returns the etcd client.
 func (do *Domain) GetEtcdClient() *clientv3.Client {
 	return do.etcdClient
@@ -1850,11 +1866,7 @@ func (do *Domain) LoadPrivilegeLoop(sctx sessionctx.Context) error {
 	if err != nil {
 		return err
 	}
-	do.privHandle = privileges.NewHandle()
-	err = do.privHandle.Update(sctx)
-	if err != nil {
-		return err
-	}
+	do.privHandle = privileges.NewHandle(sctx.GetRestrictedSQLExecutor())
 
 	var watchCh clientv3.WatchChan
 	duration := 5 * time.Minute
@@ -1889,7 +1901,7 @@ func (do *Domain) LoadPrivilegeLoop(sctx sessionctx.Context) error {
 			}
 
 			count = 0
-			err := do.privHandle.Update(sctx)
+			err := do.privHandle.Update()
 			metrics.LoadPrivilegeCounter.WithLabelValues(metrics.RetLabel(err)).Inc()
 			if err != nil {
 				logutil.BgLogger().Error("load privilege failed", zap.Error(err))
@@ -2299,7 +2311,17 @@ func (do *Domain) StatsHandle() *handle.Handle {
 
 // CreateStatsHandle is used only for test.
 func (do *Domain) CreateStatsHandle(ctx, initStatsCtx sessionctx.Context) error {
-	h, err := handle.NewHandle(ctx, initStatsCtx, do.statsLease, do.InfoSchema(), do.sysSessionPool, &do.sysProcesses, do.NextConnID, do.ReleaseConnID)
+	h, err := handle.NewHandle(
+		ctx,
+		initStatsCtx,
+		do.statsLease,
+		do.InfoSchema(),
+		do.sysSessionPool,
+		&do.sysProcesses,
+		do.ddlNotifier,
+		do.NextConnID,
+		do.ReleaseConnID,
+	)
 	if err != nil {
 		return err
 	}
@@ -2336,7 +2358,17 @@ func (do *Domain) LoadAndUpdateStatsLoop(ctxs []sessionctx.Context, initStatsCtx
 // It should be called only once in BootstrapSession.
 func (do *Domain) UpdateTableStatsLoop(ctx, initStatsCtx sessionctx.Context) error {
 	ctx.GetSessionVars().InRestrictedSQL = true
-	statsHandle, err := handle.NewHandle(ctx, initStatsCtx, do.statsLease, do.InfoSchema(), do.sysSessionPool, &do.sysProcesses, do.NextConnID, do.ReleaseConnID)
+	statsHandle, err := handle.NewHandle(
+		ctx,
+		initStatsCtx,
+		do.statsLease,
+		do.InfoSchema(),
+		do.sysSessionPool,
+		&do.sysProcesses,
+		do.ddlNotifier,
+		do.NextConnID,
+		do.ReleaseConnID,
+	)
 	if err != nil {
 		return err
 	}
@@ -2350,6 +2382,7 @@ func (do *Domain) UpdateTableStatsLoop(ctx, initStatsCtx sessionctx.Context) err
 	variable.EnableStatsOwner = do.enableStatsOwner
 	variable.DisableStatsOwner = do.disableStatsOwner
 	do.statsOwner = do.newOwnerManager(handle.StatsPrompt, handle.StatsOwnerKey)
+	do.statsOwner.SetListener(owner.NewListenersWrapper(statsHandle, do.ddlNotifier))
 	do.wg.Run(func() {
 		do.indexUsageWorker()
 	}, "indexUsageWorker")
@@ -2783,13 +2816,7 @@ func (do *Domain) NotifyUpdatePrivilege() error {
 		return nil
 	}
 
-	// update locally
-	ctx, err := do.sysSessionPool.Get()
-	if err != nil {
-		return err
-	}
-	defer do.sysSessionPool.Put(ctx)
-	return do.PrivilegeHandle().Update(ctx.(sessionctx.Context))
+	return do.PrivilegeHandle().Update()
 }
 
 // NotifyUpdateSysVarCache updates the sysvar cache key in etcd, which other TiDB
