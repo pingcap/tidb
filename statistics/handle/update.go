@@ -39,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/cmp"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/logutil"
@@ -400,7 +401,7 @@ var (
 	// DumpStatsDeltaRatio is the lower bound of `Modify Count / Table Count` for stats delta to be dumped.
 	DumpStatsDeltaRatio = 1 / 10000.0
 	// dumpStatsMaxDuration is the max duration since last update.
-	dumpStatsMaxDuration = time.Hour
+	dumpStatsMaxDuration = 5 * time.Minute
 )
 
 // needDumpStatsDelta checks whether to dump stats delta.
@@ -427,7 +428,7 @@ func (h *Handle) needDumpStatsDelta(is infoschema.InfoSchema, mode dumpMode, id 
 		item.InitTime = currentTime
 	}
 	if currentTime.Sub(item.InitTime) > dumpStatsMaxDuration {
-		// Dump the stats to kv at least once an hour.
+		// Dump the stats to kv at least once 5 minutes.
 		return true
 	}
 	statsTbl := h.GetPartitionStats(tbl.Meta(), id)
@@ -947,11 +948,11 @@ func (h *Handle) DumpColStatsUsageToKV() error {
 	for id, t := range colMap {
 		pairs = append(pairs, pair{tblColID: id, lastUsedAt: t.UTC().Format(types.TimeFormat)})
 	}
-	slices.SortFunc(pairs, func(i, j pair) bool {
+	slices.SortFunc(pairs, func(i, j pair) int {
 		if i.tblColID.TableID == j.tblColID.TableID {
-			return i.tblColID.ID < j.tblColID.ID
+			return cmp.Compare(i.tblColID.ID, j.tblColID.ID)
 		}
-		return i.tblColID.TableID < j.tblColID.TableID
+		return cmp.Compare(i.tblColID.TableID, j.tblColID.TableID)
 	})
 	// Use batch insert to reduce cost.
 	for i := 0; i < len(pairs); i += batchInsertSize {

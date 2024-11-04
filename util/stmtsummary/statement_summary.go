@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/cmp"
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/kvcache"
@@ -919,8 +920,8 @@ func formatBackoffTypes(backoffMap map[string]int) interface{} {
 	for backoffType, count := range backoffMap {
 		backoffArray = append(backoffArray, backoffStat{backoffType, count})
 	}
-	slices.SortFunc(backoffArray, func(i, j backoffStat) bool {
-		return i.count > j.count
+	slices.SortFunc(backoffArray, func(i, j backoffStat) int {
+		return cmp.Compare(j.count, i.count)
 	})
 
 	var buffer bytes.Buffer

@@ -2541,3 +2541,14 @@ func BenchmarkNonPreparedPlanCacheDML(b *testing.B) {
 		tk.MustExec("delete from t where a = 2")
 	}
 }
+
+func TestIndexRange(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`use test`)
+
+	tk.MustExec(`CREATE TABLE posts (id bigint NOT NULL AUTO_INCREMENT PRIMARY KEY)`)
+	tk.MustExec(`INSERT INTO posts (id) VALUES (1),(2),(3),(4),(5),(6),(7),(8),(9),(10),(11);`)
+	tk.MustExec(`set tidb_enable_non_prepared_plan_cache=1;`)
+	tk.MustQuery(`SELECT posts.* FROM posts WHERE (id = 1 or id = 9223372036854775808);`).Check(testkit.Rows("1"))
+}

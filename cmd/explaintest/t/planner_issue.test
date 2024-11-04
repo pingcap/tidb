@@ -8,3 +8,9 @@ select *,length(a) from t1 where a like '测试 %';
 select *,length(a) from t1 where a like '测试';
 explain format = brief select * from t1 use index (ia) where a like 'xxx_';
 select * from t1 use index (ia) where a like 'xxx_';
+
+# TestIssue53766
+drop table if exists t0, t1;
+CREATE TABLE t0(c0 int);
+CREATE TABLE t1(c0 int);
+SELECT t0.c0, t1.c0 FROM t0 NATURAL JOIN t1 WHERE '1' AND (t0.c0 IN (SELECT c0 FROM t0));
