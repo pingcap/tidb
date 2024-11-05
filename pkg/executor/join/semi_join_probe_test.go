@@ -57,8 +57,6 @@ func buildSemiDataSourceAndExpectResult(ctx sessionctx.Context, leftCols []*expr
 	rightCol0Datums := make([]any, 0, rowNum)
 	rightCol1Datums := make([]any, 0, rowNum)
 
-	leftCol0StartNum := int64(30000)
-
 	intTp := types.NewFieldType(mysql.TypeLonglong)
 	expectResultChunk := chunk.NewChunkWithCapacity([]*types.FieldType{intTp, intTp}, 10000)
 	expectResult := make([]chunk.Row, 0, 100000)
@@ -109,7 +107,7 @@ func buildSemiDataSourceAndExpectResult(ctx sessionctx.Context, leftCols []*expr
 					}
 				}
 			} else {
-				differentKeyNum := int64(100)
+				differentKeyNum := int64(10000)
 				for i := int64(0); i < differentKeyNum; i++ {
 					rightCol0Datums = append(rightCol0Datums, i)
 					rightCol1Datums = append(rightCol1Datums, int64(0))
@@ -151,7 +149,7 @@ func buildSemiDataSourceAndExpectResult(ctx sessionctx.Context, leftCols []*expr
 				}
 			}
 		} else {
-			differentKeyNum := int64(1000)
+			differentKeyNum := int64(10000)
 			for i := int64(0); i < differentKeyNum; i++ {
 				leftSingleKeyNum := rand.Int31n(2*maxChunkSizeInTest) + 1
 				rightSingleKeyNum := rand.Int31n(2*maxChunkSizeInTest) + 1
@@ -184,6 +182,7 @@ func buildSemiDataSourceAndExpectResult(ctx sessionctx.Context, leftCols []*expr
 			}
 		}
 	} else {
+		leftCol0StartNum := int64(30000)
 		for i := int64(0); i < rowNum; i++ {
 			leftCol0AppendedData := leftCol0StartNum + i
 			leftCol0Datums = append(leftCol0Datums, leftCol0AppendedData)
@@ -353,8 +352,8 @@ func TestSemiJoinDuplicateKeys(t *testing.T) {
 
 func TestTruncateSelectFunction(t *testing.T) {
 	semiJoin := &semiJoinProbe{
-		skipRowIdxSet: make(map[int]struct{}),
-		groupMark:     make([]int, 0, 200),
+		otherConditionSuccessSet: make(map[int][]int),
+		groupMark:                make([]int, 0, 200),
 		baseJoinProbe: baseJoinProbe{
 			selected: make([]bool, 0, 200),
 		},
