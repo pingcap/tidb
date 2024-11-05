@@ -69,10 +69,25 @@ type Manager interface {
 	CampaignCancel()
 	// SetListener sets the listener, set before CampaignOwner.
 	SetListener(listener Listener)
+	// ForceToBeOwner restart the owner election and trying to be the new owner by
+	// end campaigns of all candidates and start a new campaign in a single transaction.
+	//
+	// This method is only used during upgrade and try to make node of newer version
+	// to be the DDL owner, to mitigate the issue https://github.com/pingcap/tidb/issues/54689,
+	// current instance shouldn't call CampaignOwner before calling this method.
+	// don't use it in other cases.
+	//
+	// Note: only one instance can call this method at a time, so you have to use
+	// a distributed lock when there are multiple instances of new version TiDB trying
+	// to be the owner. See runInBootstrapSession for where we lock it in DDL.
+	ForceToBeOwner(ctx context.Context) error
 }
 
 const (
 	keyOpDefaultTimeout = 5 * time.Second
+
+	// WaitTimeOnForceOwner is the time to wait before or after force to be owner.
+	WaitTimeOnForceOwner = 5 * time.Second
 )
 
 // OpType is the owner key value operation type.
@@ -120,7 +135,8 @@ type ownerManager struct {
 	wg             sync.WaitGroup
 	campaignCancel context.CancelFunc
 
-	listener Listener
+	listener          Listener
+	forceOwnerSession *concurrency.Session
 }
 
 // NewOwnerManager creates a new Manager.
@@ -165,6 +181,96 @@ func (m *ownerManager) SetListener(listener Listener) {
 	m.listener = listener
 }
 
+func (m *ownerManager) ForceToBeOwner(context.Context) error {
+	logPrefix := fmt.Sprintf("[%s] %s", m.prompt, m.key)
+	logutil.BgLogger().Info("force to be owner", zap.String("ownerInfo", logPrefix))
+	session, err := util2.NewSession(m.ctx, logPrefix, m.etcdCli, util2.NewSessionDefaultRetryCnt, ManagerSessionTTL)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	m.forceOwnerSession = session
+	m.sessionLease.Store(int64(m.forceOwnerSession.Lease()))
+
+	// due to issue https://github.com/pingcap/tidb/issues/54689, if the cluster
+	// version before upgrade don't have fix, when retire owners runs on older version
+	// and trying to be the new owner, it's possible that multiple owner exist at
+	// the same time, it cannot be avoided completely, but we can use below 2 strategies
+	// to mitigate this issue:
+	//   1. when trying to be owner, we delete all existing owner related keys and
+	//      put new key in a single txn, if we delete the key one by one, other node
+	//      might become the owner, it will have more chances to trigger previous issue.
+	//   2. sleep for a while before trying to be owner to make sure there is an owner in
+	//      the cluster, and it has started watching. in the case of upgrade using
+	//      tiup, tiup might restart current owner node to do rolling upgrade.
+	//      before the restarted node force owner, another node might try to be
+	//      the new owner too, it's still possible to trigger the issue. so we
+	//      sleep a while to wait the cluster have a new owner and start watching.
+	for i := 0; i < 3; i++ {
+		// we need to sleep in every retry, as other TiDB nodes will start campaign
+		// immediately after we delete their key.
+		time.Sleep(WaitTimeOnForceOwner)
+		if err = m.tryToBeOwnerOnce(); err != nil {
+			logutil.Logger(m.logCtx).Warn("failed to retire owner on older version", zap.Error(err))
+			continue
+		}
+		break
+	}
+	return nil
+}
+
+func (m *ownerManager) tryToBeOwnerOnce() error {
+	lease := m.forceOwnerSession.Lease()
+	keyPrefix := m.key + "/"
+
+	getResp, err := m.etcdCli.Get(m.ctx, keyPrefix, clientv3.WithPrefix())
+	if err != nil {
+		return err
+	}
+
+	// modifications to the same key multiple times within a single transaction are
+	// forbidden in etcd, so we cannot use delete by prefix and put in a single txn.
+	// it will report "duplicate key given in txn request" error.
+	// It's possible that other nodes put campaign keys between we get the keys and
+	// the txn to put new key, we relay on the sleep before calling this method to
+	// make sure all TiDBs have already put the key, and the distributed lock inside
+	// bootstrap to make sure no concurrent ForceToBeOwner is called.
+	txnOps := make([]clientv3.Op, 0, len(getResp.Kvs)+1)
+	// below key structure is copied from Election.Campaign.
+	campaignKey := fmt.Sprintf("%s%x", keyPrefix, lease)
+	for _, kv := range getResp.Kvs {
+		key := string(kv.Key)
+		if key == campaignKey {
+			// if below campaign failed, it will resign automatically, but if resign
+			// also failed, the old key might already exist
+			continue
+		}
+		txnOps = append(txnOps, clientv3.OpDelete(key))
+	}
+	txnOps = append(txnOps, clientv3.OpPut(campaignKey, m.id, clientv3.WithLease(lease)))
+	_, err = m.etcdCli.Txn(m.ctx).Then(txnOps...).Commit()
+	if err != nil {
+		return errors.Trace(err)
+	}
+	// Campaign will wait until there is no key with smaller create-revision, either
+	// current instance become owner or all the keys are deleted, in case other nodes
+	// put keys in between previous get and txn, and makes current node never become
+	// the owner, so we add a timeout to avoid blocking.
+	ctx, cancel := context.WithTimeout(m.ctx, keyOpDefaultTimeout)
+	defer cancel()
+	elec := concurrency.NewElection(m.forceOwnerSession, m.key)
+	if err = elec.Campaign(ctx, m.id); err != nil {
+		return errors.Trace(err)
+	}
+
+	// Campaign assumes that it's the only client managing the lifecycle of the campaign
+	// key, it only checks whether there are any keys with smaller create-revision,
+	// so it will also return when all the campaign keys are deleted by other TiDB
+	// instances when the distributed lock has failed to keep alive and another TiDB
+	// get the lock. It's a quite rare case, and the TiDB must be of newer version
+	// which has the fix of the issue, so it's ok to return now.
+	return nil
+}
+
 // ManagerSessionTTL is the etcd session's TTL in seconds. It's exported for testing.
 var ManagerSessionTTL = 60
 
@@ -190,15 +296,19 @@ func (m *ownerManager) CampaignOwner(withTTL ...int) error {
 	}
 	logPrefix := fmt.Sprintf("[%s] %s", m.prompt, m.key)
 	logutil.BgLogger().Info("start campaign owner", zap.String("ownerInfo", logPrefix))
-	session, err := util2.NewSession(m.ctx, logPrefix, m.etcdCli, util2.NewSessionDefaultRetryCnt, ttl)
-	if err != nil {
-		return errors.Trace(err)
+	campaignSession := m.forceOwnerSession
+	if campaignSession == nil {
+		session, err := util2.NewSession(m.ctx, logPrefix, m.etcdCli, util2.NewSessionDefaultRetryCnt, ttl)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		m.sessionLease.Store(int64(session.Lease()))
+		campaignSession = session
 	}
-	m.sessionLease.Store(int64(session.Lease()))
 	m.wg.Add(1)
 	var campaignContext context.Context
 	campaignContext, m.campaignCancel = context.WithCancel(m.ctx)
-	go m.campaignLoop(campaignContext, session)
+	go m.campaignLoop(campaignContext, campaignSession)
 	return nil
 }
 
@@ -500,16 +610,6 @@ func init() {
 	}
 }
 
-// DeleteLeader deletes the leader key.
-func DeleteLeader(ctx context.Context, cli *clientv3.Client, key string) error {
-	ownerKey, _, _, _, _, err := getOwnerInfo(ctx, ctx, cli, key)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	_, err = cli.Delete(ctx, ownerKey)
-	return err
-}
-
 // AcquireDistributedLock creates a mutex with ETCD client, and returns a mutex release function.
 func AcquireDistributedLock(
 	ctx context.Context,
@@ -540,17 +640,42 @@ func AcquireDistributedLock(
 		}
 		return nil, err
 	}
-	logutil.Logger(ctx).Info("acquire distributed flush lock success", zap.String("key", key))
+	logutil.Logger(ctx).Info("acquire distributed lock success", zap.String("key", key))
 	return func() {
 		err = mu.Unlock(ctx)
 		if err != nil {
-			logutil.Logger(ctx).Warn("release distributed flush lock error", zap.Error(err), zap.String("key", key))
+			logutil.Logger(ctx).Warn("release distributed lock error", zap.Error(err), zap.String("key", key))
 		} else {
-			logutil.Logger(ctx).Info("release distributed flush lock success", zap.String("key", key))
+			logutil.Logger(ctx).Info("release distributed lock success", zap.String("key", key))
 		}
 		err = se.Close()
 		if err != nil {
 			logutil.Logger(ctx).Warn("close session error", zap.Error(err))
 		}
 	}, nil
+}
+
+// ListenersWrapper is a list of listeners.
+// A way to broadcast events to multiple listeners.
+type ListenersWrapper struct {
+	listeners []Listener
+}
+
+// OnBecomeOwner broadcasts the OnBecomeOwner event to all listeners.
+func (ol *ListenersWrapper) OnBecomeOwner() {
+	for _, l := range ol.listeners {
+		l.OnBecomeOwner()
+	}
+}
+
+// OnRetireOwner broadcasts the OnRetireOwner event to all listeners.
+func (ol *ListenersWrapper) OnRetireOwner() {
+	for _, l := range ol.listeners {
+		l.OnRetireOwner()
+	}
+}
+
+// NewListenersWrapper creates a new OwnerListeners.
+func NewListenersWrapper(listeners ...Listener) *ListenersWrapper {
+	return &ListenersWrapper{listeners: listeners}
 }

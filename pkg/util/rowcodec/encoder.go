@@ -140,7 +140,7 @@ func (encoder *Encoder) reformatCols() (numCols, notNullIdx int) {
 func (encoder *Encoder) encodeRowCols(loc *time.Location, numCols, notNullIdx int) error {
 	r := &encoder.row
 	var errs error
-	for i := 0; i < notNullIdx; i++ {
+	for i := range notNullIdx {
 		d := encoder.values[i]
 		var err error
 		r.data, err = encodeValueDatum(loc, d, r.data)
@@ -150,7 +150,7 @@ func (encoder *Encoder) encodeRowCols(loc *time.Location, numCols, notNullIdx in
 		// handle convert to large
 		if len(r.data) > math.MaxUint16 && !r.large() {
 			r.initColIDs32()
-			for j := 0; j < numCols; j++ {
+			for j := range numCols {
 				r.colIDs32[j] = uint32(r.colIDs[j])
 			}
 			r.initOffsets32()

@@ -679,3 +679,40 @@ func TestIssue56214(t *testing.T) {
 		tk.MustQuery("select value, (select t1.id from t1 join t2 on t1.id = t2.id and t1.value < t2.value - t3.value + 3) d from t3 order by value").Check(testkit.Rows("10 1", "20 <nil>"))
 	}
 }
+
+func TestIssue56825(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1;")
+	tk.MustExec("drop table if exists t2;")
+	tk.MustExec("create table t1(id int, col1 int)")
+	tk.MustExec("create table t2(id int, col1 int, col2 int, col3 int, col4 int, col5 int)")
+	tk.MustExec("insert into t1 values(1,2),(2,3)")
+	tk.MustExec("insert into t2 values(1,2,3,4,5,6),(3,4,5,6,7,8),(4,5,6,7,8,9)")
+	tk.MustExec("analyze table t1")
+	tk.MustExec("analyze table t2")
+	// t1 as build side
+	for _, hashJoinV2 := range join.HashJoinV2Strings {
+		tk.MustExec(hashJoinV2)
+		tk.MustQuery("select * from t1 left join t2 on t1.id = t2.id and t1.col1 <= t2.col1 order by t1.id").Check(testkit.Rows("1 2 1 2 3 4 5 6", "2 3 <nil> <nil> <nil> <nil> <nil> <nil>"))
+		tk.MustQuery("select * from t1 right join t2 on t1.id = t2.id and t1.col1 <= t2.col1 order by t2.id").Check(testkit.Rows("1 2 1 2 3 4 5 6", "<nil> <nil> 3 4 5 6 7 8", "<nil> <nil> 4 5 6 7 8 9"))
+	}
+	tk.MustExec("insert into t1 values(10,20),(11,21),(12,22),(13,23),(14,24),(15,25)")
+	tk.MustExec("analyze table t1")
+	// t2 as build side
+	for _, hashJoinV2 := range join.HashJoinV2Strings {
+		tk.MustExec(hashJoinV2)
+		tk.MustQuery("select * from t1 left join t2 on t1.id = t2.id and t1.col1 <= t2.col1 order by t1.id").Check(testkit.Rows(
+			"1 2 1 2 3 4 5 6",
+			"2 3 <nil> <nil> <nil> <nil> <nil> <nil>",
+			"10 20 <nil> <nil> <nil> <nil> <nil> <nil>",
+			"11 21 <nil> <nil> <nil> <nil> <nil> <nil>",
+			"12 22 <nil> <nil> <nil> <nil> <nil> <nil>",
+			"13 23 <nil> <nil> <nil> <nil> <nil> <nil>",
+			"14 24 <nil> <nil> <nil> <nil> <nil> <nil>",
+			"15 25 <nil> <nil> <nil> <nil> <nil> <nil>",
+		))
+		tk.MustQuery("select * from t1 right join t2 on t1.id = t2.id and t1.col1 <= t2.col1 order by t2.id").Check(testkit.Rows("1 2 1 2 3 4 5 6", "<nil> <nil> 3 4 5 6 7 8", "<nil> <nil> 4 5 6 7 8 9"))
+	}
+}

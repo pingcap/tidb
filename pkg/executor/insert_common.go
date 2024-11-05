@@ -95,6 +95,8 @@ type InsertValues struct {
 	// fkChecks contains the foreign key checkers.
 	fkChecks   []*FKCheckExec
 	fkCascades []*FKCascadeExec
+
+	ignoreErr bool
 }
 
 type defaultVal struct {
@@ -1370,7 +1372,7 @@ func (e *InsertValues) removeRow(
 	if err != nil {
 		return false, err
 	}
-	err = onRemoveRowForFK(e.Ctx(), oldRow, e.fkChecks, e.fkCascades)
+	err = onRemoveRowForFK(e.Ctx(), oldRow, e.fkChecks, e.fkCascades, e.ignoreErr)
 	if err != nil {
 		return false, err
 	}

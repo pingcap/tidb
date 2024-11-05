@@ -27,6 +27,7 @@ go_library(
         "//pkg/bindinfo",
         "//pkg/config",
         "//pkg/ddl",
+        "//pkg/ddl/notifier",
         "//pkg/ddl/placement",
         "//pkg/ddl/schematracker",
         "//pkg/ddl/systable",
@@ -135,7 +136,7 @@ go_test(
     ],
     embed = [":domain"],
     flaky = True,
-    shard_count = 30,
+    shard_count = 31,
     deps = [
         "//pkg/config",
         "//pkg/ddl",

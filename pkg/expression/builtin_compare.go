@@ -184,6 +184,9 @@ func (c *coalesceFunctionClass) getFunction(ctx BuildContext, args []Expression)
 // See http://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html#function_coalesce
 type builtinCoalesceIntSig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinCoalesceIntSig) Clone() builtinFunc {
@@ -206,6 +209,9 @@ func (b *builtinCoalesceIntSig) evalInt(ctx EvalContext, row chunk.Row) (res int
 // See http://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html#function_coalesce
 type builtinCoalesceRealSig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinCoalesceRealSig) Clone() builtinFunc {
@@ -228,6 +234,9 @@ func (b *builtinCoalesceRealSig) evalReal(ctx EvalContext, row chunk.Row) (res f
 // See http://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html#function_coalesce
 type builtinCoalesceDecimalSig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinCoalesceDecimalSig) Clone() builtinFunc {
@@ -250,6 +259,9 @@ func (b *builtinCoalesceDecimalSig) evalDecimal(ctx EvalContext, row chunk.Row) 
 // See http://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html#function_coalesce
 type builtinCoalesceStringSig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinCoalesceStringSig) Clone() builtinFunc {
@@ -272,6 +284,9 @@ func (b *builtinCoalesceStringSig) evalString(ctx EvalContext, row chunk.Row) (r
 // See http://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html#function_coalesce
 type builtinCoalesceTimeSig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinCoalesceTimeSig) Clone() builtinFunc {
@@ -296,6 +311,9 @@ func (b *builtinCoalesceTimeSig) evalTime(ctx EvalContext, row chunk.Row) (res t
 // See http://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html#function_coalesce
 type builtinCoalesceDurationSig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinCoalesceDurationSig) Clone() builtinFunc {
@@ -319,6 +337,9 @@ func (b *builtinCoalesceDurationSig) evalDuration(ctx EvalContext, row chunk.Row
 // See http://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html#function_coalesce
 type builtinCoalesceJSONSig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinCoalesceJSONSig) Clone() builtinFunc {
@@ -341,6 +362,9 @@ func (b *builtinCoalesceJSONSig) evalJSON(ctx EvalContext, row chunk.Row) (res t
 // See http://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html#function_coalesce
 type builtinCoalesceVectorFloat32Sig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinCoalesceVectorFloat32Sig) Clone() builtinFunc {
@@ -556,6 +580,9 @@ func fixFlenAndDecimalForGreatestAndLeast(ctx EvalContext, args []Expression) (f
 
 type builtinGreatestIntSig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinGreatestIntSig) Clone() builtinFunc {
@@ -586,6 +613,9 @@ func (b *builtinGreatestIntSig) evalInt(ctx EvalContext, row chunk.Row) (maxv in
 
 type builtinGreatestRealSig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinGreatestRealSig) Clone() builtinFunc {
@@ -616,6 +646,9 @@ func (b *builtinGreatestRealSig) evalReal(ctx EvalContext, row chunk.Row) (maxv 
 
 type builtinGreatestDecimalSig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinGreatestDecimalSig) Clone() builtinFunc {
@@ -646,6 +679,9 @@ func (b *builtinGreatestDecimalSig) evalDecimal(ctx EvalContext, row chunk.Row) 
 
 type builtinGreatestStringSig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinGreatestStringSig) Clone() builtinFunc {
@@ -764,6 +800,9 @@ func (b *builtinGreatestTimeSig) evalTime(ctx EvalContext, row chunk.Row) (res t
 
 type builtinGreatestDurationSig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinGreatestDurationSig) Clone() builtinFunc {
@@ -787,6 +826,9 @@ func (b *builtinGreatestDurationSig) evalDuration(ctx EvalContext, row chunk.Row
 
 type builtinGreatestVectorFloat32Sig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinGreatestVectorFloat32Sig) Clone() builtinFunc {
@@ -882,6 +924,9 @@ func (c *leastFunctionClass) getFunction(ctx BuildContext, args []Expression) (s
 
 type builtinLeastIntSig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinLeastIntSig) Clone() builtinFunc {
@@ -912,6 +957,9 @@ func (b *builtinLeastIntSig) evalInt(ctx EvalContext, row chunk.Row) (minv int64
 
 type builtinLeastRealSig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinLeastRealSig) Clone() builtinFunc {
@@ -942,6 +990,9 @@ func (b *builtinLeastRealSig) evalReal(ctx EvalContext, row chunk.Row) (minv flo
 
 type builtinLeastDecimalSig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinLeastDecimalSig) Clone() builtinFunc {
@@ -972,6 +1023,9 @@ func (b *builtinLeastDecimalSig) evalDecimal(ctx EvalContext, row chunk.Row) (mi
 
 type builtinLeastStringSig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinLeastStringSig) Clone() builtinFunc {
@@ -1075,6 +1129,9 @@ func getAccurateTimeTypeForGLRet(cmpAsDate bool) byte {
 
 type builtinLeastDurationSig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinLeastDurationSig) Clone() builtinFunc {
@@ -1098,6 +1155,9 @@ func (b *builtinLeastDurationSig) evalDuration(ctx EvalContext, row chunk.Row) (
 
 type builtinLeastVectorFloat32Sig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinLeastVectorFloat32Sig) Clone() builtinFunc {
@@ -1603,7 +1663,7 @@ func matchRefineRule3Pattern(conEvalType types.EvalType, exprType *types.FieldTy
 		(conEvalType == types.ETReal || conEvalType == types.ETDecimal || conEvalType == types.ETInt)
 }
 
-// handleDurationTypeComparison handles comparisons between a duration type column and a non-duration type constant.
+// handleDurationTypeComparisonForNullEq handles comparisons between a duration type column and a non-duration type constant.
 // If the constant cannot be cast to a duration type and the comparison operator is `<=>`, the expression is rewritten as `0 <=> 1`.
 // This is necessary to maintain compatibility with MySQL behavior under the following conditions:
 //  1. When a duration type column is compared with a non-duration type constant, MySQL casts the duration column to the non-duration type.
@@ -1616,7 +1676,7 @@ func matchRefineRule3Pattern(conEvalType types.EvalType, exprType *types.FieldTy
 //
 // To ensure MySQL compatibility, we need to handle this case specifically. If the non-duration type constant cannot be cast to a duration type,
 // we rewrite the expression to always return false by converting it to `0 <=> 1`.
-func (c *compareFunctionClass) handleDurationTypeComparison(ctx BuildContext, arg0, arg1 Expression) (_ []Expression, err error) {
+func (c *compareFunctionClass) handleDurationTypeComparisonForNullEq(ctx BuildContext, arg0, arg1 Expression) (_ []Expression, err error) {
 	// check if a constant value becomes null after being cast to a duration type.
 	castToDurationIsNull := func(ctx BuildContext, arg Expression) (bool, error) {
 		f := WrapWithCastAsDuration(ctx, arg)
@@ -1632,8 +1692,16 @@ func (c *compareFunctionClass) handleDurationTypeComparison(ctx BuildContext, ar
 
 	var isNull bool
 	if arg0IsCon && arg0Const.DeferredExpr == nil && !arg1IsCon && arg1.GetType(ctx.GetEvalCtx()).GetType() == mysql.TypeDuration {
+		if arg0Const.Value.IsNull() {
+			// This is a const null, there is no need to re-write the expression
+			return nil, nil
+		}
 		isNull, err = castToDurationIsNull(ctx, arg0)
 	} else if arg1IsCon && arg1Const.DeferredExpr == nil && !arg0IsCon && arg0.GetType(ctx.GetEvalCtx()).GetType() == mysql.TypeDuration {
+		if arg1Const.Value.IsNull() {
+			// This is a const null, there is no need to re-write the expression
+			return nil, nil
+		}
 		isNull, err = castToDurationIsNull(ctx, arg1)
 	}
 	if err != nil {
@@ -1724,7 +1792,7 @@ func (c *compareFunctionClass) refineArgs(ctx BuildContext, args []Expression) (
 
 	// Handle comparison between a duration type column and a non-duration type constant.
 	if c.op == opcode.NullEQ {
-		if result, err := c.handleDurationTypeComparison(ctx, args[0], args[1]); err != nil || result != nil {
+		if result, err := c.handleDurationTypeComparisonForNullEq(ctx, args[0], args[1]); err != nil || result != nil {
 			return result, err
 		}
 	}
@@ -2133,6 +2201,9 @@ func (c *compareFunctionClass) generateCmpSigs(ctx BuildContext, args []Expressi
 
 type builtinLTIntSig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinLTIntSig) Clone() builtinFunc {
@@ -2147,6 +2218,9 @@ func (b *builtinLTIntSig) evalInt(ctx EvalContext, row chunk.Row) (val int64, is
 
 type builtinLTRealSig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinLTRealSig) Clone() builtinFunc {
@@ -2161,6 +2235,9 @@ func (b *builtinLTRealSig) evalInt(ctx EvalContext, row chunk.Row) (val int64, i
 
 type builtinLTDecimalSig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinLTDecimalSig) Clone() builtinFunc {
@@ -2175,6 +2252,9 @@ func (b *builtinLTDecimalSig) evalInt(ctx EvalContext, row chunk.Row) (val int64
 
 type builtinLTStringSig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinLTStringSig) Clone() builtinFunc {
@@ -2189,6 +2269,9 @@ func (b *builtinLTStringSig) evalInt(ctx EvalContext, row chunk.Row) (val int64,
 
 type builtinLTDurationSig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinLTDurationSig) Clone() builtinFunc {
@@ -2203,6 +2286,9 @@ func (b *builtinLTDurationSig) evalInt(ctx EvalContext, row chunk.Row) (val int6
 
 type builtinLTTimeSig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinLTTimeSig) Clone() builtinFunc {
@@ -2217,6 +2303,9 @@ func (b *builtinLTTimeSig) evalInt(ctx EvalContext, row chunk.Row) (val int64, i
 
 type builtinLTJSONSig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinLTJSONSig) Clone() builtinFunc {
@@ -2231,6 +2320,9 @@ func (b *builtinLTJSONSig) evalInt(ctx EvalContext, row chunk.Row) (val int64, i
 
 type builtinLTVectorFloat32Sig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinLTVectorFloat32Sig) Clone() builtinFunc {
@@ -2245,6 +2337,9 @@ func (b *builtinLTVectorFloat32Sig) evalInt(ctx EvalContext, row chunk.Row) (val
 
 type builtinLEIntSig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinLEIntSig) Clone() builtinFunc {
@@ -2259,6 +2354,9 @@ func (b *builtinLEIntSig) evalInt(ctx EvalContext, row chunk.Row) (val int64, is
 
 type builtinLERealSig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinLERealSig) Clone() builtinFunc {
@@ -2273,6 +2371,9 @@ func (b *builtinLERealSig) evalInt(ctx EvalContext, row chunk.Row) (val int64, i
 
 type builtinLEDecimalSig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinLEDecimalSig) Clone() builtinFunc {
@@ -2287,6 +2388,9 @@ func (b *builtinLEDecimalSig) evalInt(ctx EvalContext, row chunk.Row) (val int64
 
 type builtinLEStringSig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinLEStringSig) Clone() builtinFunc {
@@ -2301,6 +2405,9 @@ func (b *builtinLEStringSig) evalInt(ctx EvalContext, row chunk.Row) (val int64,
 
 type builtinLEDurationSig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinLEDurationSig) Clone() builtinFunc {
@@ -2315,6 +2422,9 @@ func (b *builtinLEDurationSig) evalInt(ctx EvalContext, row chunk.Row) (val int6
 
 type builtinLETimeSig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinLETimeSig) Clone() builtinFunc {
@@ -2329,6 +2439,9 @@ func (b *builtinLETimeSig) evalInt(ctx EvalContext, row chunk.Row) (val int64, i
 
 type builtinLEJSONSig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinLEJSONSig) Clone() builtinFunc {
@@ -2343,6 +2456,9 @@ func (b *builtinLEJSONSig) evalInt(ctx EvalContext, row chunk.Row) (val int64, i
 
 type builtinLEVectorFloat32Sig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinLEVectorFloat32Sig) Clone() builtinFunc {
@@ -2357,6 +2473,9 @@ func (b *builtinLEVectorFloat32Sig) evalInt(ctx EvalContext, row chunk.Row) (val
 
 type builtinGTIntSig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinGTIntSig) Clone() builtinFunc {
@@ -2371,6 +2490,9 @@ func (b *builtinGTIntSig) evalInt(ctx EvalContext, row chunk.Row) (val int64, is
 
 type builtinGTRealSig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinGTRealSig) Clone() builtinFunc {
@@ -2385,6 +2507,9 @@ func (b *builtinGTRealSig) evalInt(ctx EvalContext, row chunk.Row) (val int64, i
 
 type builtinGTDecimalSig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinGTDecimalSig) Clone() builtinFunc {
@@ -2399,6 +2524,9 @@ func (b *builtinGTDecimalSig) evalInt(ctx EvalContext, row chunk.Row) (val int64
 
 type builtinGTStringSig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinGTStringSig) Clone() builtinFunc {
@@ -2413,6 +2541,9 @@ func (b *builtinGTStringSig) evalInt(ctx EvalContext, row chunk.Row) (val int64,
 
 type builtinGTDurationSig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinGTDurationSig) Clone() builtinFunc {
@@ -2427,6 +2558,9 @@ func (b *builtinGTDurationSig) evalInt(ctx EvalContext, row chunk.Row) (val int6
 
 type builtinGTTimeSig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinGTTimeSig) Clone() builtinFunc {
@@ -2441,6 +2575,9 @@ func (b *builtinGTTimeSig) evalInt(ctx EvalContext, row chunk.Row) (val int64, i
 
 type builtinGTJSONSig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinGTJSONSig) Clone() builtinFunc {
@@ -2455,6 +2592,9 @@ func (b *builtinGTJSONSig) evalInt(ctx EvalContext, row chunk.Row) (val int64, i
 
 type builtinGTVectorFloat32Sig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinGTVectorFloat32Sig) Clone() builtinFunc {
@@ -2469,6 +2609,9 @@ func (b *builtinGTVectorFloat32Sig) evalInt(ctx EvalContext, row chunk.Row) (val
 
 type builtinGEIntSig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinGEIntSig) Clone() builtinFunc {
@@ -2483,6 +2626,9 @@ func (b *builtinGEIntSig) evalInt(ctx EvalContext, row chunk.Row) (val int64, is
 
 type builtinGERealSig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinGERealSig) Clone() builtinFunc {
@@ -2497,6 +2643,9 @@ func (b *builtinGERealSig) evalInt(ctx EvalContext, row chunk.Row) (val int64, i
 
 type builtinGEDecimalSig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinGEDecimalSig) Clone() builtinFunc {
@@ -2511,6 +2660,9 @@ func (b *builtinGEDecimalSig) evalInt(ctx EvalContext, row chunk.Row) (val int64
 
 type builtinGEStringSig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinGEStringSig) Clone() builtinFunc {
@@ -2525,6 +2677,9 @@ func (b *builtinGEStringSig) evalInt(ctx EvalContext, row chunk.Row) (val int64,
 
 type builtinGEDurationSig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinGEDurationSig) Clone() builtinFunc {
@@ -2539,6 +2694,9 @@ func (b *builtinGEDurationSig) evalInt(ctx EvalContext, row chunk.Row) (val int6
 
 type builtinGETimeSig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinGETimeSig) Clone() builtinFunc {
@@ -2553,6 +2711,9 @@ func (b *builtinGETimeSig) evalInt(ctx EvalContext, row chunk.Row) (val int64, i
 
 type builtinGEJSONSig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinGEJSONSig) Clone() builtinFunc {
@@ -2567,6 +2728,9 @@ func (b *builtinGEJSONSig) evalInt(ctx EvalContext, row chunk.Row) (val int64, i
 
 type builtinGEVectorFloat32Sig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinGEVectorFloat32Sig) Clone() builtinFunc {
@@ -2581,6 +2745,9 @@ func (b *builtinGEVectorFloat32Sig) evalInt(ctx EvalContext, row chunk.Row) (val
 
 type builtinEQIntSig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinEQIntSig) Clone() builtinFunc {
@@ -2595,6 +2762,9 @@ func (b *builtinEQIntSig) evalInt(ctx EvalContext, row chunk.Row) (val int64, is
 
 type builtinEQRealSig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinEQRealSig) Clone() builtinFunc {
@@ -2609,6 +2779,9 @@ func (b *builtinEQRealSig) evalInt(ctx EvalContext, row chunk.Row) (val int64, i
 
 type builtinEQDecimalSig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinEQDecimalSig) Clone() builtinFunc {
@@ -2623,6 +2796,9 @@ func (b *builtinEQDecimalSig) evalInt(ctx EvalContext, row chunk.Row) (val int64
 
 type builtinEQStringSig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinEQStringSig) Clone() builtinFunc {
@@ -2637,6 +2813,9 @@ func (b *builtinEQStringSig) evalInt(ctx EvalContext, row chunk.Row) (val int64,
 
 type builtinEQDurationSig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinEQDurationSig) Clone() builtinFunc {
@@ -2651,6 +2830,9 @@ func (b *builtinEQDurationSig) evalInt(ctx EvalContext, row chunk.Row) (val int6
 
 type builtinEQTimeSig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinEQTimeSig) Clone() builtinFunc {
@@ -2665,6 +2847,9 @@ func (b *builtinEQTimeSig) evalInt(ctx EvalContext, row chunk.Row) (val int64, i
 
 type builtinEQJSONSig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinEQJSONSig) Clone() builtinFunc {
@@ -2679,6 +2864,9 @@ func (b *builtinEQJSONSig) evalInt(ctx EvalContext, row chunk.Row) (val int64, i
 
 type builtinEQVectorFloat32Sig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinEQVectorFloat32Sig) Clone() builtinFunc {
@@ -2693,6 +2881,9 @@ func (b *builtinEQVectorFloat32Sig) evalInt(ctx EvalContext, row chunk.Row) (val
 
 type builtinNEIntSig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinNEIntSig) Clone() builtinFunc {
@@ -2707,6 +2898,9 @@ func (b *builtinNEIntSig) evalInt(ctx EvalContext, row chunk.Row) (val int64, is
 
 type builtinNERealSig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinNERealSig) Clone() builtinFunc {
@@ -2721,6 +2915,9 @@ func (b *builtinNERealSig) evalInt(ctx EvalContext, row chunk.Row) (val int64, i
 
 type builtinNEDecimalSig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinNEDecimalSig) Clone() builtinFunc {
@@ -2735,6 +2932,9 @@ func (b *builtinNEDecimalSig) evalInt(ctx EvalContext, row chunk.Row) (val int64
 
 type builtinNEStringSig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinNEStringSig) Clone() builtinFunc {
@@ -2749,6 +2949,9 @@ func (b *builtinNEStringSig) evalInt(ctx EvalContext, row chunk.Row) (val int64,
 
 type builtinNEDurationSig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinNEDurationSig) Clone() builtinFunc {
@@ -2763,6 +2966,9 @@ func (b *builtinNEDurationSig) evalInt(ctx EvalContext, row chunk.Row) (val int6
 
 type builtinNETimeSig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinNETimeSig) Clone() builtinFunc {
@@ -2777,6 +2983,9 @@ func (b *builtinNETimeSig) evalInt(ctx EvalContext, row chunk.Row) (val int64, i
 
 type builtinNEJSONSig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinNEJSONSig) Clone() builtinFunc {
@@ -2791,6 +3000,9 @@ func (b *builtinNEJSONSig) evalInt(ctx EvalContext, row chunk.Row) (val int64, i
 
 type builtinNEVectorFloat32Sig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinNEVectorFloat32Sig) Clone() builtinFunc {
@@ -2805,6 +3017,9 @@ func (b *builtinNEVectorFloat32Sig) evalInt(ctx EvalContext, row chunk.Row) (val
 
 type builtinNullEQIntSig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinNullEQIntSig) Clone() builtinFunc {
@@ -2839,6 +3054,9 @@ func (b *builtinNullEQIntSig) evalInt(ctx EvalContext, row chunk.Row) (val int64
 
 type builtinNullEQRealSig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinNullEQRealSig) Clone() builtinFunc {
@@ -2870,6 +3088,9 @@ func (b *builtinNullEQRealSig) evalInt(ctx EvalContext, row chunk.Row) (val int6
 
 type builtinNullEQDecimalSig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinNullEQDecimalSig) Clone() builtinFunc {
@@ -2901,6 +3122,9 @@ func (b *builtinNullEQDecimalSig) evalInt(ctx EvalContext, row chunk.Row) (val i
 
 type builtinNullEQStringSig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinNullEQStringSig) Clone() builtinFunc {
@@ -2932,6 +3156,9 @@ func (b *builtinNullEQStringSig) evalInt(ctx EvalContext, row chunk.Row) (val in
 
 type builtinNullEQDurationSig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinNullEQDurationSig) Clone() builtinFunc {
@@ -2963,6 +3190,9 @@ func (b *builtinNullEQDurationSig) evalInt(ctx EvalContext, row chunk.Row) (val 
 
 type builtinNullEQTimeSig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinNullEQTimeSig) Clone() builtinFunc {
@@ -2994,6 +3224,9 @@ func (b *builtinNullEQTimeSig) evalInt(ctx EvalContext, row chunk.Row) (val int6
 
 type builtinNullEQJSONSig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinNullEQJSONSig) Clone() builtinFunc {
@@ -3028,6 +3261,9 @@ func (b *builtinNullEQJSONSig) evalInt(ctx EvalContext, row chunk.Row) (val int6
 
 type builtinNullEQVectorFloat32Sig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinNullEQVectorFloat32Sig) Clone() builtinFunc {

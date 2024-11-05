@@ -138,6 +138,14 @@ type ParamMarker struct {
 	order int
 }
 
+// SafeToShareAcrossSession returns if the function can be shared across different sessions.
+func (c *Constant) SafeToShareAcrossSession() bool {
+	if c.DeferredExpr != nil {
+		return c.DeferredExpr.SafeToShareAcrossSession()
+	}
+	return true
+}
+
 // GetUserVar returns the corresponding user variable presented in the `EXECUTE` statement or `COM_EXECUTE` command.
 func (d *ParamMarker) GetUserVar(ctx ParamValues) (types.Datum, error) {
 	return ctx.GetParamValue(d.order)

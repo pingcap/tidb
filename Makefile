@@ -302,9 +302,9 @@ tools/bin/ut: tools/check/ut.go
 	$(GO) build -o ../bin/ut ut.go
 
 .PHONY: tools/bin/xprog
-tools/bin/xprog: tools/check/xprog.go
-	cd tools/check; \
-	$(GO) build -o ../bin/xprog xprog.go
+tools/bin/xprog: tools/check/xprog/xprog.go
+	cd tools/check/xprog; \
+	$(GO) build -o ../../bin/xprog xprog.go
 
 .PHONY: tools/bin/revive
 tools/bin/revive:

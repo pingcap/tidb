@@ -476,9 +476,6 @@ func expBackoffEstimation(sctx planctx.PlanContext, idx *statistics.Index, coll 
 			// `GetRowCountByIndexRanges()` when the input `indexRange` is a multi-column range. This
 			// check avoids infinite recursion.
 			for _, idxID := range idxIDs {
-				if idxID == idx.Histogram.ID {
-					continue
-				}
 				idxStats := coll.GetIdx(idxID)
 				if idxStats == nil || statistics.IndexStatsIsInvalid(sctx, idxStats, coll, idxID) {
 					continue
