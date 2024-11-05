@@ -19,6 +19,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"runtime/trace"
+	"strings"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -28,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
@@ -36,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/pingcap/tidb/pkg/util/stringutil"
@@ -193,7 +196,16 @@ func (e *InsertValues) prefetchDataCache(ctx context.Context, txn kv.Transaction
 }
 
 // updateDupRow updates a duplicate row to a new row.
-func (e *InsertExec) updateDupRow(ctx context.Context, idxInBatch int, txn kv.Transaction, row toBeCheckedRow, handle kv.Handle, _ []*expression.Assignment, dupKeyCheck table.DupKeyCheckMode, autoColIdx int) error {
+func (e *InsertExec) updateDupRow(
+	ctx context.Context,
+	idxInBatch int,
+	txn kv.Transaction,
+	row toBeCheckedRow,
+	handle kv.Handle,
+	_ []*expression.Assignment,
+	dupKeyCheck table.DupKeyCheckMode,
+	autoColIdx int,
+) error {
 	oldRow, err := getOldRow(ctx, e.Ctx(), txn, row.t, handle, e.GenExprs)
 	if err != nil {
 		return err
@@ -430,8 +442,15 @@ func (e *InsertExec) initEvalBuffer4Dup() {
 }
 
 // doDupRowUpdate updates the duplicate row.
-func (e *InsertExec) doDupRowUpdate(ctx context.Context, handle kv.Handle, oldRow []types.Datum, newRow []types.Datum,
-	extraCols []types.Datum, cols []*expression.Assignment, idxInBatch int, dupKeyMode table.DupKeyCheckMode, autoColIdx int) error {
+func (e *InsertExec) doDupRowUpdate(
+	ctx context.Context,
+	handle kv.Handle,
+	oldRow, newRow, extraCols []types.Datum,
+	assigns []*expression.Assignment,
+	idxInBatch int,
+	dupKeyMode table.DupKeyCheckMode,
+	autoColIdx int,
+) error {
 	assignFlag := make([]bool, len(e.Table.WritableCols()))
 	// See http://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_values
 	e.curInsertVals.SetDatums(newRow...)
@@ -445,23 +464,39 @@ func (e *InsertExec) doDupRowUpdate(ctx context.Context, handle kv.Handle, oldRo
 	e.row4Update = append(e.row4Update, extraCols...)
 	e.row4Update = append(e.row4Update, newRow...)
 
+	// We need to evaluate columns in the following order:
+	// 1. non-generated columns
+	// 2. on-update-now columns if non-generated columns are changed
+	// 3. generated columns if non-generated columns are changed
+	var generated, nonGenerated []*expression.Assignment
+	cols := e.Table.Cols()
+	for _, assign := range assigns {
+		if cols[assign.Col.Index].IsGenerated() {
+			generated = append(generated, assign)
+		} else {
+			nonGenerated = append(nonGenerated, assign)
+		}
+	}
+
 	// Update old row when the key is duplicated.
 	e.evalBuffer4Dup.SetDatums(e.row4Update...)
 	sctx := e.Ctx()
 	evalCtx := sctx.GetExprCtx().GetEvalCtx()
 	sc := sctx.GetSessionVars().StmtCtx
 	warnCnt := int(sc.WarningCount())
-	for _, col := range cols {
-		if col.LazyErr != nil {
-			return col.LazyErr
+
+	assignFunc := func(assign *expression.Assignment) error {
+		if assign.LazyErr != nil {
+			return assign.LazyErr
 		}
-		val, err1 := col.Expr.Eval(evalCtx, e.evalBuffer4Dup.ToRow())
+		val, err1 := assign.Expr.Eval(evalCtx, e.evalBuffer4Dup.ToRow())
 		if err1 != nil {
 			return err1
 		}
-		c := col.Col.ToInfo()
-		c.Name = col.ColName
-		e.row4Update[col.Col.Index], err1 = table.CastValue(sctx, val, c, false, false)
+		c := assign.Col.ToInfo()
+		idx := assign.Col.Index
+		c.Name = assign.ColName
+		e.row4Update[idx], err1 = table.CastValue(sctx, val, c, false, false)
 		if err1 != nil {
 			return err1
 		}
@@ -473,8 +508,52 @@ func (e *InsertExec) doDupRowUpdate(ctx context.Context, handle kv.Handle, oldRo
 			sc.AppendWarnings(newWarnings)
 			warnCnt += len(newWarnings)
 		}
-		e.evalBuffer4Dup.SetDatum(col.Col.Index, e.row4Update[col.Col.Index])
-		assignFlag[col.Col.Index] = true
+		e.evalBuffer4Dup.SetDatum(idx, e.row4Update[idx])
+		assignFlag[idx] = true
+		return nil
+	}
+
+	// Update non-generated columns
+	for _, assign := range nonGenerated {
+		if err := assignFunc(assign); err != nil {
+			return errors.Trace(err)
+		}
+	}
+
+	// Check if columns are changed
+	changed := false
+	for i, col := range cols {
+		if mysql.HasOnUpdateNowFlag(col.GetFlag()) || col.IsGenerated() {
+			continue
+		}
+		cmp, err := e.row4Update[i].Compare(sc.TypeCtx(), &oldRow[i], collate.GetBinaryCollator())
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if cmp != 0 {
+			changed = true
+			break
+		}
+	}
+
+	// Update on-update-now and generated columns if necessary
+	if changed {
+		for i, col := range e.Table.Cols() {
+			if mysql.HasOnUpdateNowFlag(col.GetFlag()) {
+				v, err := expression.GetTimeValue(sctx.GetExprCtx(), strings.ToUpper(ast.CurrentTimestamp), col.GetType(), col.GetDecimal(), nil)
+				if err != nil {
+					return errors.Trace(err)
+				}
+				e.row4Update[i] = v
+				e.evalBuffer4Dup.SetDatum(i, e.row4Update[i])
+				assignFlag[i] = true
+			}
+		}
+		for _, assign := range generated {
+			if err := assignFunc(assign); err != nil {
+				return errors.Trace(err)
+			}
+		}
 	}
 
 	newData := e.row4Update[:len(oldRow)]
@@ -489,9 +568,12 @@ func (e *InsertExec) doDupRowUpdate(ctx context.Context, handle kv.Handle, oldRo
 			return nil
 		}
 	}
-	_, err := updateRecord(ctx, e.Ctx(), handle, oldRow, newData, assignFlag, e.Table, true, e.memTracker, e.fkChecks, e.fkCascades, dupKeyMode, e.ignoreErr)
-	if err != nil {
-		return err
+
+	if _, err := updateRecord(
+		ctx, e.Ctx(), handle,
+		oldRow, newData, assignFlag, e.Table,
+		true, e.memTracker, e.fkChecks, e.fkCascades, dupKeyMode, e.ignoreErr); err != nil {
+		return errors.Trace(err)
 	}
 
 	if autoColIdx >= 0 {
