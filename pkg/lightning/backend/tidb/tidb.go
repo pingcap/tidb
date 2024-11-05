@@ -207,6 +207,7 @@ func (b *targetInfoGetter) FetchRemoteTableModels(
 					for _, tableName := range tableNames[start:end] {
 						args = append(args, tableName)
 					}
+					//nolint:gosec
 					rows, e := tx.Query(`
 						SELECT table_name, column_name, column_type, generation_expression, extra
 						FROM information_schema.columns
