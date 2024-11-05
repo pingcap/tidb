@@ -17,6 +17,11 @@
 package expression
 
 // SafeToShareAcrossSession implements BuiltinFunc.SafeToShareAcrossSession.
+func (s *builtinArithmeticMultiplyRealSig) SafeToShareAcrossSession() bool {
+	return false
+}
+
+// SafeToShareAcrossSession implements BuiltinFunc.SafeToShareAcrossSession.
 func (s *builtinGreatestCmpStringAsTimeSig) SafeToShareAcrossSession() bool {
 	return false
 }

@@ -94,6 +94,7 @@ func genBuiltinThreadSafeCode(exprCodeDir string) (safe, unsafe []byte) {
 			files = append(files, entry.Name())
 		}
 	}
+	sort.Strings(files)
 
 	safeFuncs := make([]string, 0, 32)
 	unsafeFuncs := make([]string, 0, 32)
