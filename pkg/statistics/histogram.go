@@ -1511,7 +1511,7 @@ func MergePartitionHist2GlobalHist(sc *stmtctx.StatementContext, hists []*Histog
 			// We need to re-sort this part.
 			mergeBuffer = mergeBuffer[:0]
 			cutAndFixBuffer = cutAndFixBuffer[:0]
-			origI := i
+			leftMostValidPosForNonOverlapping := i
 			for ; i > 0; i-- {
 				res, err := buckets[i-1].upper.Compare(sc.TypeCtx(), currentLeftMost, collate.GetBinaryCollator())
 				if err != nil {
@@ -1521,7 +1521,7 @@ func MergePartitionHist2GlobalHist(sc *stmtctx.StatementContext, hists []*Histog
 				if res < 0 {
 					break
 				}
-				// Now the bucket[i-1].upper > currentLeftMost, they are overlapped.
+				// Now the bucket[i-1].upper >= currentLeftMost, they are overlapped.
 				res, err = buckets[i-1].lower.Compare(sc.TypeCtx(), currentLeftMost, collate.GetBinaryCollator())
 				if err != nil {
 					return nil, err
@@ -1556,18 +1556,37 @@ func MergePartitionHist2GlobalHist(sc *stmtctx.StatementContext, hists []*Histog
 			if len(cutAndFixBuffer) == 0 {
 				merged, err = mergePartitionBuckets(sc, buckets[i:r])
 			} else {
-				// The buckets in buckets[i:origI] needs a re-sort.
-				err = sortBucketsByUpperBound(sc.TypeCtx(), buckets[i:origI])
-				if err != nil {
-					return nil, err
-				}
 				// The content in the merge buffer don't need a re-sort since we just fix some lower bound for them.
-				mergeBuffer = append(mergeBuffer, buckets[origI:r]...)
+				mergeBuffer = append(mergeBuffer, buckets[leftMostValidPosForNonOverlapping:r]...)
 				merged, err = mergePartitionBuckets(sc, mergeBuffer)
 				for _, bkt := range cutAndFixBuffer {
 					releasebucket4MergingForRecycle(bkt)
 				}
-				i = origI
+				// The buckets in buckets[i:origI] needs a re-sort.
+				err = sortBucketsByUpperBound(sc.TypeCtx(), buckets[i:leftMostValidPosForNonOverlapping])
+				if err != nil {
+					return nil, err
+				}
+				// After the operation, the buckets in buckets[i:origI] contains two kinds of buckets:
+				// 1. The buckets that are totally inside the merged bucket. => lower_bound >= currentLeftMost
+				//    It's not changed. [lower_bound_i, upper_bound_i] with lower_bound_i >= currentLeftMost
+				// 2. The buckets that are overlapped with the merged bucket. lower_bound < currentLeftMost < upper_bound
+				//    After cutting, the remained part is [lower_bound_i, currentLeftMost]
+				// To do the next round of merging, we need to kick out the 1st kind of buckets.
+				// And after the re-sort, the 2nd kind of buckets will be in the front.
+				leftMostInvalidPosForNextRound := leftMostValidPosForNonOverlapping
+				for ; leftMostInvalidPosForNextRound > i; leftMostInvalidPosForNextRound-- {
+					res, err := buckets[leftMostInvalidPosForNextRound-1].lower.Compare(sc.TypeCtx(), currentLeftMost, collate.GetBinaryCollator())
+					if err != nil {
+						return nil, err
+					}
+					// Once the lower bound < currentLeftMost, we'll skip all the 1st kind of bucket.
+					// We can break here.
+					if res < 0 {
+						break
+					}
+				}
+				i = leftMostInvalidPosForNextRound
 			}
 			if err != nil {
 				return nil, err
