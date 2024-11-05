@@ -3244,7 +3244,7 @@ id	store_id
 1	1
 select *,_tidb_rowid from t;
 id	store_id	_tidb_rowid
-0	18	30257
+0	18	30002
 1	1	30001
 drop table t, t1;
 create table t (id int not null, store_id int not null )  partition by range (store_id) (partition p0 values less than (6), partition p1 values less than (11), partition p2 values less than (16), partition p3 values less than (21));
@@ -3267,7 +3267,7 @@ id	store_id
 1	1
 select *,_tidb_rowid from t;
 id	store_id	_tidb_rowid
-0	18	30257
+0	18	30002
 1	1	30001
 drop table t, t1;
 drop table if exists aaa;
