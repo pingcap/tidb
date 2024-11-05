@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/cmp"
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/plancodec"
@@ -1934,8 +1935,8 @@ func appendMakeUnionAllChildrenTranceStep(origin *DataSource, usedMap map[int64]
 	for _, def := range usedMap {
 		used = append(used, def)
 	}
-	slices.SortFunc(used, func(i, j model.PartitionDefinition) bool {
-		return i.ID < j.ID
+	slices.SortFunc(used, func(i, j model.PartitionDefinition) int {
+		return cmp.Compare(i.ID, j.ID)
 	})
 	if len(children) == 1 {
 		newDS := plan.(*DataSource)

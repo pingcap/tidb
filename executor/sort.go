@@ -172,7 +172,7 @@ func (e *SortExec) externalSorting(req *chunk.Chunk) (err error) {
 	return nil
 }
 
-func (e *SortExec) fetchRowChunks(ctx context.Context) error {
+func (e *SortExec) fetchRowChunks(ctx context.Context) (err error) {
 	fields := retTypes(e)
 	byItemsDesc := make([]bool, len(e.ByItems))
 	for i, byItem := range e.ByItems {
@@ -193,9 +193,24 @@ func (e *SortExec) fetchRowChunks(ctx context.Context) error {
 		e.rowChunks.GetDiskTracker().AttachTo(e.diskTracker)
 		e.rowChunks.GetDiskTracker().SetLabel(memory.LabelForRowChunks)
 	}
+	defer func() {
+		if e.rowChunks.NumRow() > 0 {
+			if err == nil {
+				err = e.rowChunks.Sort()
+			}
+			e.partitionList = append(e.partitionList, e.rowChunks)
+		}
+	}()
 	for {
 		chk := tryNewCacheChunk(e.children[0])
 		err := Next(ctx, e.children[0], chk)
+		failpoint.Inject("errInSortExecFetchRowChunks", func(val failpoint.Value) {
+			switch val.(int) {
+			case 1:
+				err = errors.New("mockError")
+			default:
+			}
+		})
 		if err != nil {
 			return err
 		}
@@ -233,13 +248,6 @@ func (e *SortExec) fetchRowChunks(ctx context.Context) error {
 			}
 		}
 	})
-	if e.rowChunks.NumRow() > 0 {
-		err := e.rowChunks.Sort()
-		if err != nil {
-			return err
-		}
-		e.partitionList = append(e.partitionList, e.rowChunks)
-	}
 	return nil
 }
 
@@ -259,20 +267,18 @@ func (e *SortExec) buildKeyColumns() {
 	}
 }
 
-func (e *SortExec) lessRow(rowI, rowJ chunk.Row) bool {
+func (e *SortExec) lessRow(rowI, rowJ chunk.Row) int {
 	for i, colIdx := range e.keyColumns {
 		cmpFunc := e.keyCmpFuncs[i]
 		cmp := cmpFunc(rowI, colIdx, rowJ, colIdx)
 		if e.ByItems[i].Desc {
 			cmp = -cmp
 		}
-		if cmp < 0 {
-			return true
-		} else if cmp > 0 {
-			return false
+		if cmp != 0 {
+			return cmp
 		}
 	}
-	return false
+	return 0
 }
 
 type partitionPointer struct {
@@ -282,14 +288,14 @@ type partitionPointer struct {
 }
 
 type multiWayMerge struct {
-	lessRowFunction func(rowI chunk.Row, rowJ chunk.Row) bool
+	lessRowFunction func(rowI chunk.Row, rowJ chunk.Row) int
 	elements        []partitionPointer
 }
 
 func (h *multiWayMerge) Less(i, j int) bool {
 	rowI := h.elements[i].row
 	rowJ := h.elements[j].row
-	return h.lessRowFunction(rowI, rowJ)
+	return h.lessRowFunction(rowI, rowJ) < 0
 }
 
 func (h *multiWayMerge) Len() int {
@@ -372,7 +378,7 @@ func (h *topNChunkHeap) Swap(i, j int) {
 }
 
 // keyColumnsLess is the less function for key columns.
-func (e *TopNExec) keyColumnsLess(i, j chunk.RowPtr) bool {
+func (e *TopNExec) keyColumnsLess(i, j chunk.RowPtr) int {
 	rowI := e.rowChunks.GetRow(i)
 	rowJ := e.rowChunks.GetRow(j)
 	return e.lessRow(rowI, rowJ)
