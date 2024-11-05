@@ -1025,7 +1025,7 @@ func (lp *ForListPruning) LocatePartition(ctx exprctx.EvalContext, value int64, 
 // Only could process `column op value` right now.
 func (lp *ForListPruning) LocatePartitionByRange(ctx exprctx.EvalContext, r *ranger.Range) (idxs map[int]struct{}, err error) {
 	lowVal, highVal := r.LowVal[0], r.HighVal[0]
-	if r.LowVal[0].Kind() == types.KindMinNotNull {
+	if r.LowVal[0].Kind() == types.KindMinNotNull || r.LowVal[0].Kind() == types.KindNull {
 		lowVal = types.GetMinValue(lp.PruneExpr.GetType(ctx))
 	}
 
