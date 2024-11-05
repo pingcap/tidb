@@ -567,6 +567,9 @@ func (er *expressionRewriter) Enter(inNode ast.Node) (ast.Node, bool) {
 			return er.handleExistSubquery(er.ctx, planCtx, v)
 		})
 	case *ast.PatternInExpr:
+		if len(v.List) > 0 {
+			er.asScalar = true
+		}
 		if v.Sel != nil {
 			return enterWithPlanCtx(func(planCtx *exprRewriterPlanCtx) (ast.Node, bool) {
 				return er.handleInSubquery(er.ctx, planCtx, v)
