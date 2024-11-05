@@ -1095,19 +1095,34 @@ func (p *LogicalJoin) pushDownTopNToChild(topN *LogicalTopN, idx int, opt *optim
 	if p.JoinType == LeftOuterJoin {
 		innerChild := p.Children()[1]
 		innerJoinKey := make([]*expression.Column, 0, len(p.EqualConditions))
+		isNullEQ := false
 		for _, eqCond := range p.EqualConditions {
 			innerJoinKey = append(innerJoinKey, eqCond.GetArgs()[1].(*expression.Column))
+			if eqCond.FuncName.L == ast.NullEQ {
+				isNullEQ = true
+			}
 		}
-		if innerChild.Schema().IsUniqueKey(innerJoinKey...) || innerChild.Schema().IsUnique(innerJoinKey...) {
+		if !isNullEQ && (innerChild.Schema().IsUniqueKey(innerJoinKey...) || innerChild.Schema().IsUnique(innerJoinKey...)) {
+			// If the inner side is unique key, whatever they are nullable or not, we can push the offset down.
+			// This is because that if there's nulls in the inner side, they will not  match any row from outer side.
+			count, offset = topN.Count, topN.Offset
+		} else if isNullEQ && innerChild.Schema().IsUnique(innerJoinKey...) {
+			// But if there's nulleq, we must check unique && not null.
 			count, offset = topN.Count, topN.Offset
 		}
 	} else if p.JoinType == RightOuterJoin {
 		innerChild := p.Children()[0]
 		innerJoinKey := make([]*expression.Column, 0, len(p.EqualConditions))
+		isNullEQ := false
 		for _, eqCond := range p.EqualConditions {
 			innerJoinKey = append(innerJoinKey, eqCond.GetArgs()[0].(*expression.Column))
+			if eqCond.FuncName.L == ast.NullEQ {
+				isNullEQ = true
+			}
 		}
-		if innerChild.Schema().IsUniqueKey(innerJoinKey...) || innerChild.Schema().IsUnique(innerJoinKey...) {
+		if !isNullEQ && (innerChild.Schema().IsUniqueKey(innerJoinKey...) || innerChild.Schema().IsUnique(innerJoinKey...)) {
+			count, offset = topN.Count, topN.Offset
+		} else if isNullEQ && innerChild.Schema().IsUnique(innerJoinKey...) {
 			count, offset = topN.Count, topN.Offset
 		}
 	}
