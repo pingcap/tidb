@@ -347,6 +347,13 @@ func (p *MySQLPrivilege) FindRole(user string, host string, role *auth.RoleIdent
 	return false
 }
 
+func findRole(h *Handle, user string, host string, role *auth.RoleIdentity) bool {
+	terror.Log(h.ensureActiveUser(user))
+	terror.Log(h.ensureActiveUser(role.Username))
+	mysqlPrivilege := h.Get()
+	return mysqlPrivilege.FindRole(user, host, role)
+}
+
 // LoadAll loads the tables from database to memory.
 func (p *MySQLPrivilege) LoadAll(ctx sqlexec.RestrictedSQLExecutor) error {
 	err := p.LoadUserTable(ctx)
@@ -1909,17 +1916,6 @@ func (h *Handle) Get() *MySQLPrivilege {
 
 // Update loads all the privilege info from kv storage.
 func (h *Handle) Update(userList []string) error {
-	needReload := false
-	for _, user := range userList {
-		if _, ok := h.activeUsers.Load(user); ok {
-			needReload = true
-			break
-		}
-	}
-	if !needReload {
-		return nil
-	}
-
 	if userList == nil {
 		// Update all active users.
 		userList = make([]string, 0, 20)
@@ -1927,6 +1923,17 @@ func (h *Handle) Update(userList []string) error {
 			userList = append(userList, key.(string))
 			return true
 		})
+	} else {
+		needReload := false
+		for _, user := range userList {
+			if _, ok := h.activeUsers.Load(user); ok {
+				needReload = true
+				break
+			}
+		}
+		if !needReload {
+			return nil
+		}
 	}
 
 	var priv immutable
