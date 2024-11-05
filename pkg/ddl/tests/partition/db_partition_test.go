@@ -1336,14 +1336,32 @@ func TestGlobalIndexInsertInDropPartition(t *testing.T) {
 		partition p3 values less than (30)
 	);`)
 	tk.MustExec("alter table test_global add unique index idx_b (b) global")
-	tk.MustExec("insert into test_global values (1, 1, 1), (8, 8, 8), (11, 11, 11), (12, 12, 12);")
+	tk.MustExec("insert into test_global values (1, 1, 1), (2, 2, 2), (11, 11, 11), (12, 12, 12)")
 
+	doneMap := make(map[model.SchemaState]struct{})
 	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunBefore", func(job *model.Job) {
 		assert.Equal(t, model.ActionDropTablePartition, job.Type)
-		if job.SchemaState == model.StateDeleteOnly {
-			tk2 := testkit.NewTestKit(t, store)
-			tk2.MustExec("use test")
-			tk2.MustExec("insert into test_global values (9, 9, 9)")
+		if _, ok := doneMap[job.SchemaState]; ok {
+			return
+		}
+		doneMap[job.SchemaState] = struct{}{}
+		tk2 := testkit.NewTestKit(t, store)
+		tk2.MustExec("use test")
+		switch job.SchemaState {
+		case model.StatePublic:
+			tk2.MustExec("insert into test_global values (3, 3, 3)")
+			tk2.MustExec("insert into test_global values (13, 13, 13)")
+		case model.StateWriteOnly:
+			tk2.MustContainErrMsg("insert into test_global values (4, 4, 4)", "[table:1526]Table has no partition for value matching a partition being dropped, 'p1'")
+			tk2.MustExec("insert into test_global values (14, 14, 14)")
+		case model.StateDeleteOnly:
+			tk2.MustExec("insert into test_global values (5, 5, 5)")
+			tk2.MustExec("insert into test_global values (15, 15, 15)")
+		case model.StateDeleteReorganization:
+			tk2.MustExec("insert into test_global values (6, 6, 6)")
+			tk2.MustExec("insert into test_global values (16, 16, 16)")
+		default:
+			require.Fail(t, "invalid schema state '%s'", job.SchemaState.String())
 		}
 	})
 
@@ -1352,7 +1370,7 @@ func TestGlobalIndexInsertInDropPartition(t *testing.T) {
 	tk1.MustExec("alter table test_global drop partition p1")
 
 	tk.MustExec("analyze table test_global")
-	tk.MustQuery("select * from test_global use index(idx_b) order by a").Check(testkit.Rows("9 9 9", "11 11 11", "12 12 12"))
+	tk.MustQuery("select * from test_global use index(idx_b) order by a").Check(testkit.Rows("5 5 5", "6 6 6", "11 11 11", "12 12 12", "13 13 13", "14 14 14", "15 15 15", "16 16 16"))
 }
 
 func TestGlobalIndexUpdateInDropPartition(t *testing.T) {
@@ -3176,30 +3194,30 @@ func TestRemovePartitioningAutoIDs(t *testing.T) {
 	tk3.MustExec(`COMMIT`)
 	tk2.MustQuery(`select _tidb_rowid, a, b from t`).Sort().Check(testkit.Rows(
 		"27 26 8",
-		"30016 12 12",
-		"30017 18 4",
-		"30018 24 7",
-		"30272 16 18",
-		"30273 22 6",
-		"30274 28 9",
-		"30528 11 11",
-		"30529 2 2",
-		"30530 20 5",
+		"30012 12 12",
+		"30013 18 4",
+		"30014 24 7",
+		"30015 16 18",
+		"30016 22 6",
+		"30017 28 9",
+		"30018 11 11",
+		"30019 2 2",
+		"30020 20 5",
 		"31 30 10",
 		"35 34 22",
 		"39 38 24",
 		"43 42 26"))
 	tk3.MustQuery(`select _tidb_rowid, a, b from t`).Sort().Check(testkit.Rows(
 		"27 26 8",
-		"30016 12 12",
-		"30017 18 4",
-		"30018 24 7",
-		"30272 16 18",
-		"30273 22 6",
-		"30274 28 9",
-		"30528 11 11",
-		"30529 2 2",
-		"30530 20 5",
+		"30012 12 12",
+		"30013 18 4",
+		"30014 24 7",
+		"30015 16 18",
+		"30016 22 6",
+		"30017 28 9",
+		"30018 11 11",
+		"30019 2 2",
+		"30020 20 5",
 		"31 30 10",
 		"33 32 21",
 		"35 34 22",
@@ -3210,15 +3228,15 @@ func TestRemovePartitioningAutoIDs(t *testing.T) {
 	tk2.MustExec(`commit`)
 	tk3.MustQuery(`select _tidb_rowid, a, b from t`).Sort().Check(testkit.Rows(
 		"27 26 8",
-		"30016 12 12",
-		"30017 18 4",
-		"30018 24 7",
-		"30272 16 18",
-		"30273 22 6",
-		"30274 28 9",
-		"30528 11 11",
-		"30529 2 2",
-		"30530 20 5",
+		"30012 12 12",
+		"30013 18 4",
+		"30014 24 7",
+		"30015 16 18",
+		"30016 22 6",
+		"30017 28 9",
+		"30018 11 11",
+		"30019 2 2",
+		"30020 20 5",
 		"31 30 10",
 		"33 32 21",
 		"35 34 22",
