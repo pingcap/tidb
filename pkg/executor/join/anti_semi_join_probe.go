@@ -32,6 +32,8 @@ type antiSemiJoinProbe struct {
 
 	// used when left side is build side
 	rowIter *rowIter
+
+	isNulls []bool
 }
 
 func newAntiSemiJoinProbe(base baseJoinProbe, isLeftSideBuild bool) *antiSemiJoinProbe {
@@ -42,6 +44,7 @@ func newAntiSemiJoinProbe(base baseJoinProbe, isLeftSideBuild bool) *antiSemiJoi
 
 	if !ret.isLeftSideBuild && ret.ctx.hasOtherCondition() {
 		ret.groupMark = make([]int, 0, ret.ctx.SessCtx.GetSessionVars().MaxChunkSize)
+		ret.isNulls = make([]bool, 0, ret.ctx.SessCtx.GetSessionVars().MaxChunkSize)
 		ret.matchedProbeRowIdx = make(map[int]struct{})
 	}
 	return ret
@@ -244,8 +247,7 @@ func (a *antiSemiJoinProbe) probeForRightSideBuildHasOtherCondition(chk, joinedC
 		a.finishCurrentLookupLoop(joinedChk)
 
 		if joinedChk.NumRows() > 0 {
-			a.selected = a.selected[:0]
-			a.selected, err = expression.VectorizedFilter(a.ctx.SessCtx.GetExprCtx().GetEvalCtx(), a.ctx.SessCtx.GetSessionVars().EnableVectorizedExpression, a.ctx.OtherCondition, chunk.NewIterator4Chunk(joinedChk), a.selected)
+			a.selected, a.isNulls, err = expression.VecEvalBool(a.ctx.SessCtx.GetExprCtx().GetEvalCtx(), a.ctx.SessCtx.GetSessionVars().EnableVectorizedExpression, a.ctx.OtherCondition, joinedChk, a.selected, a.isNulls)
 			if err != nil {
 				return err
 			}
@@ -253,6 +255,10 @@ func (a *antiSemiJoinProbe) probeForRightSideBuildHasOtherCondition(chk, joinedC
 			length := len(a.selected)
 			for i := 0; i < length; i++ {
 				if a.selected[i] {
+					a.matchedProbeRowIdx[a.groupMark[i]] = struct{}{}
+				}
+
+				if a.isNulls[i] {
 					a.matchedProbeRowIdx[a.groupMark[i]] = struct{}{}
 				}
 			}
