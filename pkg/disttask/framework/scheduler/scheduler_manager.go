@@ -16,6 +16,7 @@ package scheduler
 
 import (
 	"context"
+	ddllogutil "github.com/pingcap/tidb/pkg/ddl/logutil"
 	"slices"
 	"time"
 
@@ -472,6 +473,7 @@ func (sm *Manager) collect() {
 	}
 
 	subtaskCollector.subtaskInfo.Store(&subtasks)
+	ddllogutil.DDLLogger().Info("collect subtask count in loop", zap.Int("subtask-count", len(subtasks)))
 }
 
 // MockScheduler mock one scheduler for one task, only used for tests.
