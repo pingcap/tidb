@@ -539,6 +539,9 @@ func (c *versionFunctionClass) getFunction(ctx BuildContext, args []Expression) 
 
 type builtinVersionSig struct {
 	baseBuiltinFunc
+
+	// NOTE: New fields should be thread-safe or immutable during the execution phase, as the expression may be shared
+	// across different sessions. If any field cannot meet this requirement, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinVersionSig) Clone() builtinFunc {
@@ -572,6 +575,9 @@ func (c *tidbVersionFunctionClass) getFunction(ctx BuildContext, args []Expressi
 
 type builtinTiDBVersionSig struct {
 	baseBuiltinFunc
+
+	// NOTE: New fields should be thread-safe or immutable during the execution phase, as the expression may be shared
+	// across different sessions. If any field cannot meet this requirement, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinTiDBVersionSig) Clone() builtinFunc {
@@ -1384,6 +1390,9 @@ func (c *tidbEncodeSQLDigestFunctionClass) getFunction(ctx BuildContext, args []
 
 type builtinTiDBEncodeSQLDigestSig struct {
 	baseBuiltinFunc
+
+	// NOTE: New fields should be thread-safe or immutable during the execution phase, as the expression may be shared
+	// across different sessions. If any field cannot meet this requirement, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinTiDBEncodeSQLDigestSig) Clone() builtinFunc {
@@ -1425,6 +1434,9 @@ func (c *tidbDecodePlanFunctionClass) getFunction(ctx BuildContext, args []Expre
 
 type builtinTiDBDecodePlanSig struct {
 	baseBuiltinFunc
+
+	// NOTE: New fields should be thread-safe or immutable during the execution phase, as the expression may be shared
+	// across different sessions. If any field cannot meet this requirement, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinTiDBDecodePlanSig) Clone() builtinFunc {
@@ -1447,6 +1459,9 @@ func (b *builtinTiDBDecodePlanSig) evalString(ctx EvalContext, row chunk.Row) (s
 
 type builtinTiDBDecodeBinaryPlanSig struct {
 	baseBuiltinFunc
+
+	// NOTE: New fields should be thread-safe or immutable during the execution phase, as the expression may be shared
+	// across different sessions. If any field cannot meet this requirement, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinTiDBDecodeBinaryPlanSig) Clone() builtinFunc {

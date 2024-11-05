@@ -748,6 +748,9 @@ func (c *rowFunctionClass) getFunction(ctx BuildContext, args []Expression) (sig
 
 type builtinRowSig struct {
 	baseBuiltinFunc
+
+	// NOTE: New fields should be thread-safe or immutable during the execution phase, as the expression may be shared
+	// across different sessions. If any field cannot meet this requirement, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinRowSig) Clone() builtinFunc {
