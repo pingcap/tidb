@@ -448,7 +448,7 @@ func TestMultiSchemaReorganizePartition(t *testing.T) {
 	runMultiSchemaTest(t, createSQL, alterSQL, initFn, postFn, loopFn)
 }
 
-// TODO: complete this test, so that we test all four changes:
+// Also tests for conversions of unique indexes
 // 1 unique non-global - to become global
 // 2 unique global - to become non-global
 // 3 unique non-global - to stay non-global
