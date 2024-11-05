@@ -53,6 +53,8 @@ type MockDataSourceParameters struct {
 	// and he can save provided test data at here.
 	Datums [][]any
 
+	Nulls [][]bool
+
 	Rows   int
 	HasSel bool
 }
@@ -257,8 +259,9 @@ func BuildMockDataSource(opt MockDataSourceParameters) *MockDataSource {
 		Chunks:       nil,
 	}
 	rTypes := exec.RetTypes(m)
-	colData := make([][]any, len(rTypes))
-	for i := 0; i < len(rTypes); i++ {
+	colNum := len(rTypes)
+	colData := make([][]any, colNum)
+	for i := 0; i < colNum; i++ {
 		colData[i] = m.GenColDatums(i)
 	}
 
@@ -267,10 +270,27 @@ func BuildMockDataSource(opt MockDataSourceParameters) *MockDataSource {
 		m.GenData[i] = chunk.NewChunkWithCapacity(exec.RetTypes(m), m.MaxChunkSize())
 	}
 
+	nulls := opt.Nulls
+	if nulls == nil {
+		nulls = make([][]bool, colNum)
+		for i := range colNum {
+			rowNum := len(colData[i])
+			nulls[i] = make([]bool, rowNum)
+			for j := range rowNum {
+				nulls[i][j] = false
+			}
+		}
+	}
+
 	for i := 0; i < m.P.Rows; i++ {
 		idx := i / m.MaxChunkSize()
 		retTypes := exec.RetTypes(m)
-		for colIdx := 0; colIdx < len(rTypes); colIdx++ {
+		for colIdx := 0; colIdx < colNum; colIdx++ {
+			if nulls[colIdx][i] {
+				m.GenData[idx].AppendNull(colIdx)
+				continue
+			}
+
 			switch retTypes[colIdx].GetType() {
 			case mysql.TypeLong, mysql.TypeLonglong:
 				m.GenData[idx].AppendInt64(colIdx, colData[colIdx][i].(int64))
