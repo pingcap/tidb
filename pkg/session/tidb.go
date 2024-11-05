@@ -26,7 +26,6 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/ddl/schematracker"
 	"github.com/pingcap/tidb/pkg/domain"
@@ -40,7 +39,6 @@ import (
 	"github.com/pingcap/tidb/pkg/session/types"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
-	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
@@ -264,7 +262,10 @@ func finishStmt(ctx context.Context, se *session, meetsErr error, sql sqlexec.St
 	if err != nil {
 		return err
 	}
-	return checkStmtLimit(ctx, se, true)
+
+	// Call GetHistory here to initialize the txnCtx.history if needed, which is used by canReuseTxnWhenExplicitBegin.
+	_ = GetHistory(se)
+	return nil
 }
 
 func autoCommitAfterStmt(ctx context.Context, se *session, meetsErr error, sql sqlexec.Statement) error {
@@ -296,39 +297,6 @@ func autoCommitAfterStmt(ctx context.Context, se *session, meetsErr error, sql s
 		return nil
 	}
 	return nil
-}
-
-func checkStmtLimit(ctx context.Context, se *session, isFinish bool) error {
-	// If the user insert, insert, insert ... but never commit, TiDB would OOM.
-	// So we limit the statement count in a transaction here.
-	var err error
-	sessVars := se.GetSessionVars()
-	history := GetHistory(se)
-	stmtCount := history.Count()
-	if !isFinish {
-		// history stmt count + current stmt, since current stmt is not finish, it has not add to history.
-		stmtCount++
-	}
-	if stmtCount > int(config.GetGlobalConfig().Performance.StmtCountLimit) {
-		if !sessVars.BatchCommit {
-			se.RollbackTxn(ctx)
-			return errors.Errorf("statement count %d exceeds the transaction limitation, transaction has been rollback, autocommit = %t",
-				stmtCount, sessVars.IsAutocommit())
-		}
-		if !isFinish {
-			// if the stmt is not finish execute, then just return, since some work need to be done such as StmtCommit.
-			return nil
-		}
-		// If the stmt is finish execute, and exceed the StmtCountLimit, and BatchCommit is true,
-		// then commit the current transaction and create a new transaction.
-		err = sessiontxn.NewTxn(ctx, se)
-		// The transaction does not committed yet, we need to keep it in transaction.
-		// The last history could not be "commit"/"rollback" statement.
-		// It means it is impossible to start a new transaction at the end of the transaction.
-		// Because after the server executed "commit"/"rollback" statement, the session is out of the transaction.
-		sessVars.SetInTxn(true)
-	}
-	return err
 }
 
 // GetHistory get all stmtHistory in current txn. Exported only for test.
