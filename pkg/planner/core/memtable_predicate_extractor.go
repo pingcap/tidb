@@ -1305,22 +1305,19 @@ func (e *SlowQueryExtractor) Extract(ctx base.PlanContext,
 }
 
 func (e *SlowQueryExtractor) setTimeRange(start, end int64) {
-	const defaultSlowQueryDuration = 24 * time.Hour
-	var startTime, endTime time.Time
 	if start == 0 && end == 0 {
 		return
 	}
+	var startTime, endTime time.Time
 	if start != 0 {
 		startTime = e.convertToTime(start)
+	} else {
+		startTime, _ = types.MinDatetime.GoTime(time.UTC)
 	}
 	if end != 0 {
 		endTime = e.convertToTime(end)
-	}
-	if start == 0 {
-		startTime = endTime.Add(-defaultSlowQueryDuration)
-	}
-	if end == 0 {
-		endTime = startTime.Add(defaultSlowQueryDuration)
+	} else {
+		endTime, _ = types.MaxDatetime.GoTime(time.UTC)
 	}
 	timeRange := &TimeRange{
 		StartTime: startTime,

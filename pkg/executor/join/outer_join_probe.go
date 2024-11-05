@@ -165,7 +165,7 @@ func (j *outerJoinProbe) ScanRowTable(joinResult *hashjoinWorkerResult, sqlKille
 }
 
 func (j *outerJoinProbe) buildResultForMatchedRowsAfterOtherCondition(chk, joinedChk *chunk.Chunk) {
-	probeColOffsetInJoinedChunk, buildColOffsetInJoinedChunk := j.currentChunk.NumCols(), 0
+	probeColOffsetInJoinedChunk, buildColOffsetInJoinedChunk := j.ctx.hashTableMeta.totalColumnNumber, 0
 	if j.rightAsBuildSide {
 		probeColOffsetInJoinedChunk, buildColOffsetInJoinedChunk = 0, j.currentChunk.NumCols()
 	}

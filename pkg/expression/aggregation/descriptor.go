@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/planner/cascades/base"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/collate"
@@ -57,6 +58,38 @@ func NewAggFuncDescForWindowFunc(ctx expression.BuildContext, desc *WindowFuncDe
 		return NewAggFuncDesc(ctx, desc.Name, desc.Args, hasDistinct)
 	}
 	return &AggFuncDesc{baseFuncDesc: baseFuncDesc{desc.Name, desc.Args, desc.RetTp}, HasDistinct: hasDistinct}, nil
+}
+
+// Hash64 returns the hash64 for the aggregation function signature.
+func (a *AggFuncDesc) Hash64(h base.Hasher) {
+	a.baseFuncDesc.Hash64(h)
+	h.HashInt(int(a.Mode))
+	h.HashBool(a.HasDistinct)
+	h.HashInt(len(a.OrderByItems))
+	for _, item := range a.OrderByItems {
+		item.Hash64(h)
+	}
+	// groupingID will be deprecated soon.
+}
+
+// Equals checks whether two aggregation function signatures are equal.
+func (a *AggFuncDesc) Equals(other any) bool {
+	if other == nil {
+		return false
+	}
+	otherAgg, ok := other.(*AggFuncDesc)
+	if !ok {
+		return false
+	}
+	if a.Mode != otherAgg.Mode || a.HasDistinct != otherAgg.HasDistinct || len(a.OrderByItems) != len(otherAgg.OrderByItems) {
+		return false
+	}
+	for i := range a.OrderByItems {
+		if !a.OrderByItems[i].Equals(otherAgg.OrderByItems[i]) {
+			return false
+		}
+	}
+	return a.baseFuncDesc.Equals(otherAgg.baseFuncDesc)
 }
 
 // StringWithCtx returns the string representation within given ctx.

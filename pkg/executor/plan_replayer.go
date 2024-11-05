@@ -524,12 +524,15 @@ func (e *PlanReplayerLoadInfo) Update(data []byte) error {
 }
 
 func (e *PlanReplayerLoadInfo) createTable(z *zip.Reader) error {
-	origin := e.Ctx.GetSessionVars().ForeignKeyChecks
+	originForeignKeyChecks := e.Ctx.GetSessionVars().ForeignKeyChecks
+	originPlacementMode := e.Ctx.GetSessionVars().PlacementMode
 	// We need to disable foreign key check when we create schema and tables.
 	// because the order of creating schema and tables is not guaranteed.
 	e.Ctx.GetSessionVars().ForeignKeyChecks = false
+	e.Ctx.GetSessionVars().PlacementMode = variable.PlacementModeIgnore
 	defer func() {
-		e.Ctx.GetSessionVars().ForeignKeyChecks = origin
+		e.Ctx.GetSessionVars().ForeignKeyChecks = originForeignKeyChecks
+		e.Ctx.GetSessionVars().PlacementMode = originPlacementMode
 	}()
 	for _, zipFile := range z.File {
 		if zipFile.Name == fmt.Sprintf("schema/%v", domain.PlanReplayerSchemaMetaFile) {

@@ -51,6 +51,7 @@ import (
 	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
+	parser_types "github.com/pingcap/tidb/pkg/parser/types"
 	"github.com/pingcap/tidb/pkg/privilege"
 	rg "github.com/pingcap/tidb/pkg/resourcegroup"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -67,7 +68,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/domainutil"
 	"github.com/pingcap/tidb/pkg/util/generic"
-	"github.com/pingcap/tidb/pkg/util/mathutil"
 	"github.com/pingcap/tidb/pkg/util/stringutil"
 	"github.com/tikv/client-go/v2/oracle"
 	pdhttp "github.com/tikv/pd/client/http"
@@ -961,15 +961,6 @@ func checkGlobalIndex(ec errctx.Context, tblInfo *model.TableInfo, indexInfo *mo
 		// TODO: remove limitation
 		if !indexInfo.Unique {
 			return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("GLOBAL IndexOption on non-unique index")
-		}
-		// TODO: remove limitation
-		// check that not all partitioned columns are included.
-		inAllPartitionColumns, err := checkPartitionKeysConstraint(pi, indexInfo.Columns, tblInfo)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		if inAllPartitionColumns {
-			return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("Global Index including all columns in the partitioning expression")
 		}
 		validateGlobalIndexWithGeneratedColumns(ec, tblInfo, indexInfo.Name.O, indexInfo.Columns)
 	}
@@ -2013,7 +2004,6 @@ func (e *executor) multiSchemaChange(ctx sessionctx.Context, ti ast.Ident, info 
 		TableName:           t.Meta().Name.L,
 		Type:                model.ActionMultiSchemaChange,
 		BinlogInfo:          &model.HistoryInfo{},
-		Args:                nil,
 		MultiSchemaInfo:     info,
 		ReorgMeta:           nil,
 		CDCWriteSource:      ctx.GetSessionVars().CDCWriteSource,
@@ -2120,7 +2110,7 @@ func adjustNewBaseToNextGlobalID(ctx table.AllocatorContext, t table.Table, tp a
 	// If the user sends SQL `alter table t1 auto_increment = 100` to TiDB-B,
 	// and TiDB-B finds 100 < 30001 but returns without any handling,
 	// then TiDB-A may still allocate 99 for auto_increment column. This doesn't make sense for the user.
-	return int64(mathutil.Max(uint64(newBase), uint64(autoID))), nil
+	return int64(max(uint64(newBase), uint64(autoID))), nil
 }
 
 // ShardRowID shards the implicit row ID by adding shard value to the row ID's first few bits.
@@ -2379,12 +2369,12 @@ func getReplacedPartitionIDs(names []string, pi *model.PartitionInfo) (firstPart
 		if firstPartIdx == -1 {
 			firstPartIdx = partIdx
 		} else {
-			firstPartIdx = mathutil.Min[int](firstPartIdx, partIdx)
+			firstPartIdx = min(firstPartIdx, partIdx)
 		}
 		if lastPartIdx == -1 {
 			lastPartIdx = partIdx
 		} else {
-			lastPartIdx = mathutil.Max[int](lastPartIdx, partIdx)
+			lastPartIdx = max(lastPartIdx, partIdx)
 		}
 	}
 	switch pi.Type {
@@ -3973,6 +3963,10 @@ func checkAlterTableCharset(tblInfo *model.TableInfo, dbInfo *model.DBInfo, toCh
 		return doNothing, nil
 	}
 
+	if err = checkIndexLengthWithNewCharset(tblInfo, toCharset, toCollate); err != nil {
+		return doNothing, err
+	}
+
 	for _, col := range tblInfo.Columns {
 		if col.GetType() == mysql.TypeVarchar {
 			if err = types.IsVarcharTooBigFieldLength(col.GetFlen(), col.Name.O, toCharset); err != nil {
@@ -3994,6 +3988,30 @@ func checkAlterTableCharset(tblInfo *model.TableInfo, dbInfo *model.DBInfo, toCh
 		}
 	}
 	return doNothing, nil
+}
+
+func checkIndexLengthWithNewCharset(tblInfo *model.TableInfo, toCharset, toCollate string) error {
+	// Copy all columns and replace the charset and collate.
+	columns := make([]*model.ColumnInfo, 0, len(tblInfo.Columns))
+	for _, col := range tblInfo.Columns {
+		newCol := col.Clone()
+		if parser_types.HasCharset(&newCol.FieldType) {
+			newCol.SetCharset(toCharset)
+			newCol.SetCollate(toCollate)
+		} else {
+			newCol.SetCharset(charset.CharsetBin)
+			newCol.SetCollate(charset.CharsetBin)
+		}
+		columns = append(columns, newCol)
+	}
+
+	for _, indexInfo := range tblInfo.Indices {
+		err := checkIndexPrefixLength(columns, indexInfo.Columns)
+		if err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // RenameIndex renames an index.
@@ -4517,6 +4535,29 @@ func GetName4AnonymousIndex(t table.Table, colName pmodel.CIStr, idxName pmodel.
 	return indexName
 }
 
+func checkCreateUniqueGlobalIndex(ec errctx.Context, tblInfo *model.TableInfo, indexName string, indexColumns []*model.IndexColumn, isUnique bool, isGlobal bool) error {
+	pi := tblInfo.GetPartitionInfo()
+	if isGlobal && pi == nil {
+		return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("Global Index on non-partitioned table")
+	}
+	if isGlobal && !isUnique {
+		// TODO: remove this limitation
+		return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("Global IndexOption on non-unique index")
+	}
+	if isUnique && pi != nil {
+		ck, err := checkPartitionKeysConstraint(tblInfo.GetPartitionInfo(), indexColumns, tblInfo)
+		if err != nil {
+			return err
+		}
+		if !ck && !isGlobal {
+			// index columns does not contain all partition columns, must be global
+			return dbterror.ErrGlobalIndexNotExplicitlySet.GenWithStackByArgs(indexName)
+		}
+		validateGlobalIndexWithGeneratedColumns(ec, tblInfo, indexName, indexColumns)
+	}
+	return nil
+}
+
 func (e *executor) CreatePrimaryKey(ctx sessionctx.Context, ti ast.Ident, indexName pmodel.CIStr,
 	indexPartSpecifications []*ast.IndexPartSpecification, indexOption *ast.IndexOption) error {
 	if indexOption != nil && indexOption.PrimaryKeyTp == pmodel.PrimaryKeyTypeClustered {
@@ -4562,18 +4603,8 @@ func (e *executor) CreatePrimaryKey(ctx sessionctx.Context, ti ast.Ident, indexN
 		return err
 	}
 
-	if tblInfo.GetPartitionInfo() != nil {
-		ck, err := checkPartitionKeysConstraint(tblInfo.GetPartitionInfo(), indexColumns, tblInfo)
-		if err != nil {
-			return err
-		}
-		if !ck {
-			// index columns does not contain all partition columns, must be global
-			if indexOption == nil || !indexOption.Global {
-				return dbterror.ErrGlobalIndexNotExplicitlySet.GenWithStackByArgs("PRIMARY")
-			}
-			validateGlobalIndexWithGeneratedColumns(ctx.GetSessionVars().StmtCtx.ErrCtx(), tblInfo, indexName.O, indexColumns)
-		}
+	if err = checkCreateUniqueGlobalIndex(ctx.GetSessionVars().StmtCtx.ErrCtx(), tblInfo, "PRIMARY", indexColumns, true, indexOption != nil && indexOption.Global); err != nil {
+		return err
 	}
 
 	// May be truncate comment here, when index comment too long and sql_mode is't strict.
@@ -4852,35 +4883,10 @@ func (e *executor) createIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast
 		return errors.Trace(err)
 	}
 
-	globalIndex := false
-	if indexOption != nil && indexOption.Global {
-		globalIndex = true
+	if err = checkCreateUniqueGlobalIndex(ctx.GetSessionVars().StmtCtx.ErrCtx(), tblInfo, indexName.O, indexColumns, unique, indexOption != nil && indexOption.Global); err != nil {
+		return err
 	}
-	if globalIndex {
-		if tblInfo.GetPartitionInfo() == nil {
-			return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("Global Index on non-partitioned table")
-		}
-		if !unique {
-			// TODO: remove this limitation
-			return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("Global IndexOption on non-unique index")
-		}
-	}
-	if unique && tblInfo.GetPartitionInfo() != nil {
-		ck, err := checkPartitionKeysConstraint(tblInfo.GetPartitionInfo(), indexColumns, tblInfo)
-		if err != nil {
-			return err
-		}
-		if !ck {
-			// index columns does not contain all partition columns, must be global
-			if !globalIndex {
-				return dbterror.ErrGlobalIndexNotExplicitlySet.GenWithStackByArgs(indexName.O)
-			}
-			validateGlobalIndexWithGeneratedColumns(ctx.GetSessionVars().StmtCtx.ErrCtx(), tblInfo, indexName.O, indexColumns)
-		} else if globalIndex {
-			// TODO: remove this restriction
-			return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("Global IndexOption on index including all columns in the partitioning expression")
-		}
-	}
+
 	// May be truncate comment here, when index comment too long and sql_mode is't strict.
 	if indexOption != nil {
 		sessionVars := ctx.GetSessionVars()
@@ -5161,6 +5167,17 @@ func (e *executor) DropForeignKey(ctx sessionctx.Context, ti ast.Ident, fkName p
 	t, err := is.TableByName(context.Background(), ti.Schema, ti.Name)
 	if err != nil {
 		return errors.Trace(infoschema.ErrTableNotExists.GenWithStackByArgs(ti.Schema, ti.Name))
+	}
+
+	foundFK := false
+	for _, fk := range t.Meta().ForeignKeys {
+		if fk.Name.L == fkName.L {
+			foundFK = true
+			break
+		}
+	}
+	if !foundFK {
+		return infoschema.ErrForeignKeyNotExists.GenWithStackByArgs(fkName)
 	}
 
 	job := &model.Job{

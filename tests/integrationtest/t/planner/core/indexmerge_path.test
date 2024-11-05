@@ -15,7 +15,6 @@ analyze table t index a;
 analyze table t index a, idx, idx2;
 --disable_warnings
 
-
 # TestIndexMergeJSONMemberOf
 drop table if exists t;
 create table t(
@@ -503,4 +502,3 @@ EXPLAIN format = brief SELECT /*+ use_index_merge(t1, mvi4) */ * from t1 where
 c = 1 and
 json_contains(j, '[4,5]') and
 d not like '%test%';
-
