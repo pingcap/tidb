@@ -209,6 +209,11 @@ func (pi *PhysPlanPartInfo) MemoryUsage() (sum int64) {
 	return
 }
 
+// SetTablePlanForTest sets tablePlan field for test usage only
+func (p *PhysicalTableReader) SetTablePlanForTest(pp base.PhysicalPlan) {
+	p.tablePlan = pp
+}
+
 // GetTablePlan exports the tablePlan.
 func (p *PhysicalTableReader) GetTablePlan() base.PhysicalPlan {
 	return p.tablePlan
