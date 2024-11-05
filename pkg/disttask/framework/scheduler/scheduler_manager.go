@@ -16,6 +16,7 @@ package scheduler
 
 import (
 	"context"
+	"fmt"
 	ddllogutil "github.com/pingcap/tidb/pkg/ddl/logutil"
 	"slices"
 	"time"
@@ -457,7 +458,7 @@ func (sm *Manager) collectLoop() {
 	for {
 		select {
 		case <-sm.ctx.Done():
-			sm.collect()
+			//sm.collect()
 			sm.logger.Info("collect loop exits")
 			return
 		case <-ticker.C:
@@ -474,12 +475,9 @@ func (sm *Manager) collect() {
 	}
 
 	subtaskCollector.subtaskInfo.Store(&subtasks)
-	for _, subtask := range subtasks {
-		ddllogutil.DDLLogger().Info("collect subtask duration in loop",
-			zap.Int64("subtask-id", subtask.ID),
-			zap.String("state", subtask.State.String()),
-			zap.String("task_key", subtask.String()))
-	}
+	ddllogutil.DDLLogger().Info("collect subtask from table:",
+		zap.Int64("subtask-count", int64(len(subtasks))),
+		zap.String("subtask", fmt.Sprint(subtasks)))
 }
 
 // MockScheduler mock one scheduler for one task, only used for tests.
