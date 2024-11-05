@@ -3897,7 +3897,7 @@ func (c *instrFunctionClass) getFunction(ctx BuildContext, args []Expression) (b
 	return sig, nil
 }
 
-type builtinInstrUTF8Sig struct{
+type builtinInstrUTF8Sig struct {
 	baseBuiltinFunc
 
 	// NOTE: New fields should be thread-safe or immutable during the execution phase, as the expression may be shared
@@ -3910,7 +3910,7 @@ func (b *builtinInstrUTF8Sig) Clone() builtinFunc {
 	return newSig
 }
 
-type builtinInstrSig struct{
+type builtinInstrSig struct {
 	baseBuiltinFunc
 
 	// NOTE: New fields should be thread-safe or immutable during the execution phase, as the expression may be shared

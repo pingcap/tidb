@@ -585,7 +585,7 @@ func (c *arithmeticMultiplyFunctionClass) getFunction(ctx BuildContext, args []E
 	return sig, nil
 }
 
-type builtinArithmeticMultiplyRealSig struct{
+type builtinArithmeticMultiplyRealSig struct {
 	baseBuiltinFunc
 
 	// NOTE: New fields should be thread-safe or immutable during the execution phase, as the expression may be shared
@@ -598,7 +598,7 @@ func (s *builtinArithmeticMultiplyRealSig) Clone() builtinFunc {
 	return newSig
 }
 
-type builtinArithmeticMultiplyDecimalSig struct{
+type builtinArithmeticMultiplyDecimalSig struct {
 	baseBuiltinFunc
 
 	// NOTE: New fields should be thread-safe or immutable during the execution phase, as the expression may be shared
@@ -611,7 +611,7 @@ func (s *builtinArithmeticMultiplyDecimalSig) Clone() builtinFunc {
 	return newSig
 }
 
-type builtinArithmeticMultiplyIntUnsignedSig struct{
+type builtinArithmeticMultiplyIntUnsignedSig struct {
 	baseBuiltinFunc
 
 	// NOTE: New fields should be thread-safe or immutable during the execution phase, as the expression may be shared
@@ -624,7 +624,7 @@ func (s *builtinArithmeticMultiplyIntUnsignedSig) Clone() builtinFunc {
 	return newSig
 }
 
-type builtinArithmeticMultiplyIntSig struct{
+type builtinArithmeticMultiplyIntSig struct {
 	baseBuiltinFunc
 
 	// NOTE: New fields should be thread-safe or immutable during the execution phase, as the expression may be shared
@@ -737,7 +737,7 @@ func (c *arithmeticDivideFunctionClass) getFunction(ctx BuildContext, args []Exp
 	return sig, nil
 }
 
-type builtinArithmeticDivideRealSig struct{
+type builtinArithmeticDivideRealSig struct {
 	baseBuiltinFunc
 
 	// NOTE: New fields should be thread-safe or immutable during the execution phase, as the expression may be shared
@@ -750,7 +750,7 @@ func (s *builtinArithmeticDivideRealSig) Clone() builtinFunc {
 	return newSig
 }
 
-type builtinArithmeticDivideDecimalSig struct{
+type builtinArithmeticDivideDecimalSig struct {
 	baseBuiltinFunc
 
 	// NOTE: New fields should be thread-safe or immutable during the execution phase, as the expression may be shared
@@ -845,7 +845,7 @@ func (c *arithmeticIntDivideFunctionClass) getFunction(ctx BuildContext, args []
 	return sig, nil
 }
 
-type builtinArithmeticIntDivideIntSig struct{
+type builtinArithmeticIntDivideIntSig struct {
 	baseBuiltinFunc
 
 	// NOTE: New fields should be thread-safe or immutable during the execution phase, as the expression may be shared
@@ -858,7 +858,7 @@ func (s *builtinArithmeticIntDivideIntSig) Clone() builtinFunc {
 	return newSig
 }
 
-type builtinArithmeticIntDivideDecimalSig struct{
+type builtinArithmeticIntDivideDecimalSig struct {
 	baseBuiltinFunc
 
 	// NOTE: New fields should be thread-safe or immutable during the execution phase, as the expression may be shared
