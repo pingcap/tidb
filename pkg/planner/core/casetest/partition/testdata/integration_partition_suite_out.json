@@ -91,14 +91,18 @@
       {
         "SQL": "explain format = 'brief' select * from tlist where a not in (0, 1, 2, 3, 4, 5, 6, 7, 8)",
         "DynamicPlan": [
-          "TableReader 3583.33 root partition:p3 data:Selection",
+          "TableReader 3583.33 root partition:p3,p4 data:Selection",
           "└─Selection 3583.33 cop[tikv]  not(in(list_partition_pruning.tlist.a, 0, 1, 2, 3, 4, 5, 6, 7, 8))",
           "  └─TableFullScan 10000.00 cop[tikv] table:tlist keep order:false, stats:pseudo"
         ],
         "StaticPlan": [
-          "TableReader 3583.33 root  data:Selection",
-          "└─Selection 3583.33 cop[tikv]  not(in(list_partition_pruning.tlist.a, 0, 1, 2, 3, 4, 5, 6, 7, 8))",
-          "  └─TableFullScan 10000.00 cop[tikv] table:tlist, partition:p3 keep order:false, stats:pseudo"
+          "PartitionUnion 7166.67 root  ",
+          "├─TableReader 3583.33 root  data:Selection",
+          "│ └─Selection 3583.33 cop[tikv]  not(in(list_partition_pruning.tlist.a, 0, 1, 2, 3, 4, 5, 6, 7, 8))",
+          "│   └─TableFullScan 10000.00 cop[tikv] table:tlist, partition:p3 keep order:false, stats:pseudo",
+          "└─TableReader 3583.33 root  data:Selection",
+          "  └─Selection 3583.33 cop[tikv]  not(in(list_partition_pruning.tlist.a, 0, 1, 2, 3, 4, 5, 6, 7, 8))",
+          "    └─TableFullScan 10000.00 cop[tikv] table:tlist, partition:p4 keep order:false, stats:pseudo"
         ]
       },
       {
