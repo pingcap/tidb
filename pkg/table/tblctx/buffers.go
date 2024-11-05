@@ -52,7 +52,7 @@ func (b *EncodeRowBuffer) AddColVal(colID int64, val types.Datum) {
 // WriteMemBufferEncoded writes the encoded row to the memBuffer.
 func (b *EncodeRowBuffer) WriteMemBufferEncoded(
 	cfg RowEncodingConfig, loc *time.Location, ec errctx.Context,
-	memBuffer kv.MemBuffer, handle kv.Handle, flags ...kv.FlagsOp,
+	memBuffer kv.MemBuffer, key kv.Key, handle kv.Handle, flags ...kv.FlagsOp,
 ) error {
 	var checksum rowcodec.Checksum
 	if cfg.IsRowLevelChecksumEnabled {
