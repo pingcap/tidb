@@ -557,7 +557,7 @@ func (c *arithmeticMultiplyFunctionClass) getFunction(ctx BuildContext, args []E
 			return nil, err
 		}
 		setFlenDecimal4RealOrDecimal(ctx.GetEvalCtx(), bf.tp, args[0], args[1], true, true)
-		sig := &builtinArithmeticMultiplyRealSig{bf}
+		sig := &builtinArithmeticMultiplyRealSig{bf, false}
 		sig.setPbCode(tipb.ScalarFuncSig_MultiplyReal)
 		return sig, nil
 	} else if lhsEvalTp == types.ETDecimal || rhsEvalTp == types.ETDecimal {
@@ -588,7 +588,7 @@ func (c *arithmeticMultiplyFunctionClass) getFunction(ctx BuildContext, args []E
 type builtinArithmeticMultiplyRealSig struct {
 	baseBuiltinFunc
 
-	test int
+	test bool
 	// NOTE: New fields should be thread-safe or immutable during the execution phase, as the expression may be shared
 	// across different sessions. If any field cannot meet this requirement, set SafeToShareAcrossSession to false.
 }
