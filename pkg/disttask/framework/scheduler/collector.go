@@ -104,23 +104,7 @@ func (c *collector) Collect(ch chan<- prometheus.Metric) {
 		}
 	}
 	if len(subtaskCnt) == 0 {
-		//states := []proto.SubtaskState{
-		//	proto.SubtaskStatePending,
-		//	proto.SubtaskStateRunning,
-		//	proto.SubtaskStateSucceed,
-		//	proto.SubtaskStateFailed,
-		//	proto.SubtaskStateCanceled,
-		//	proto.SubtaskStatePaused}
-		//for _, state := range states {
-		//	ch <- prometheus.MustNewConstMetric(c.subtasks, prometheus.GaugeValue, 0, "", "", state.String(), "")
-		//}
-		//c.subtasks = prometheus.NewDesc(
-		//	"tidb_disttask_subtasks",
-		//	"Number of subtasks.",
-		//	[]string{"task_type", "task_id", "status", "exec_id"}, nil,
-		//)
 		logutil.DDLLogger().Info("set subtask count to 0")
-		//return
 	}
 	logutil.DDLLogger().Info("subTask count collect:", zap.String("subtaskCnt", fmt.Sprint(subtaskCnt)))
 }
