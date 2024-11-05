@@ -1571,9 +1571,11 @@ func TestTiDBTrx(t *testing.T) {
 		CurrentSQLDigest: digest.String(),
 		State:            txninfo.TxnIdle,
 		EntriesCount:     1,
-		ConnectionID:     2,
-		Username:         "root",
-		CurrentDB:        "test",
+		ProcessInfo: &txninfo.ProcessInfo{
+			ConnectionID: 2,
+			Username:     "root",
+			CurrentDB:    "test",
+		},
 	}
 
 	blockTime2 := time.Date(2021, 05, 20, 13, 18, 30, 123456000, time.Local)
@@ -1582,9 +1584,11 @@ func TestTiDBTrx(t *testing.T) {
 		CurrentSQLDigest: "",
 		AllSQLDigests:    []string{"sql1", "sql2", digest.String()},
 		State:            txninfo.TxnLockAcquiring,
-		ConnectionID:     10,
-		Username:         "user1",
-		CurrentDB:        "db1",
+		ProcessInfo: &txninfo.ProcessInfo{
+			ConnectionID: 10,
+			Username:     "user1",
+			CurrentDB:    "db1",
+		},
 	}
 	sm.TxnInfo[1].BlockStartTime.Valid = true
 	sm.TxnInfo[1].BlockStartTime.Time = blockTime2

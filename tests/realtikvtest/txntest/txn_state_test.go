@@ -74,9 +74,9 @@ func TestBasicTxnState(t *testing.T) {
 	require.Equal(t, []string{beginDigest.String(), selectTSDigest.String(), expectedDigest.String()}, info.AllSQLDigests)
 
 	// len and size will be covered in TestLenAndSize
-	require.Equal(t, tk.Session().GetSessionVars().ConnectionID, info.ConnectionID)
-	require.Equal(t, "", info.Username)
-	require.Equal(t, "test", info.CurrentDB)
+	require.Equal(t, tk.Session().GetSessionVars().ConnectionID, info.ProcessInfo.ConnectionID)
+	require.Equal(t, "", info.ProcessInfo.Username)
+	require.Equal(t, "test", info.ProcessInfo.CurrentDB)
 	require.Equal(t, startTS, info.StartTS)
 
 	require.NoError(t, failpoint.Enable("tikvclient/beforePrewrite", "pause"))
