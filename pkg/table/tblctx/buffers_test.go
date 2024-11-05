@@ -125,7 +125,7 @@ func TestEncodeRow(t *testing.T) {
 		}
 		err = buffer.WriteMemBufferEncoded(
 			cfg, c.loc, errctx.StrictNoWarningContext,
-			memBuffer, kv.IntHandle(1), c.flags...,
+			memBuffer, kv.Key("key1"), kv.IntHandle(1), c.flags...,
 		)
 		require.NoError(t, err)
 		memBuffer.AssertExpectations(t)
@@ -166,7 +166,7 @@ func TestEncodeBufferReserve(t *testing.T) {
 	require.Equal(t, 2, len(buffer.row))
 	require.NoError(t, buffer.WriteMemBufferEncoded(RowEncodingConfig{
 		RowEncoder: &rowcodec.Encoder{Enable: true},
-	}, time.UTC, errctx.StrictNoWarningContext, mb, kv.IntHandle(1)))
+	}, time.UTC, errctx.StrictNoWarningContext, mb, kv.Key("key1"), kv.IntHandle(1)))
 	encodedCap := cap(buffer.writeStmtBufs.RowValBuf)
 	require.Greater(t, encodedCap, 0)
 	require.Equal(t, 4, len(buffer.writeStmtBufs.AddRowValues))
