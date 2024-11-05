@@ -152,3 +152,11 @@ show create table t;
 alter table t partition by key (b) partitions 3;
 show create table t;
 drop table t;
+
+# TestRestoreValuedWithGlobalIndex
+drop table if exists t;
+create table t (a int, b varchar(255), c varchar (255), primary key (a,b), unique key (c) global) partition by list columns (a,b) (partition p0 values in ((1,"1"),(2,"2"),(3,"3")), partition p1 values in ((100,"100"),(101,"101"),(102,"102"),DEFAULT));
+insert into t values (1,1,1),(2,2,2),(101,101,101),(102,102,102);
+--sorted_result
+select * from t;
+

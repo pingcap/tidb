@@ -214,6 +214,10 @@ func (c *arithmeticPlusFunctionClass) getFunction(ctx BuildContext, args []Expre
 
 type builtinArithmeticPlusIntSig struct {
 	baseBuiltinFunc
+
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (s *builtinArithmeticPlusIntSig) Clone() builtinFunc {
@@ -266,6 +270,10 @@ func (s *builtinArithmeticPlusIntSig) evalInt(ctx EvalContext, row chunk.Row) (v
 
 type builtinArithmeticPlusDecimalSig struct {
 	baseBuiltinFunc
+
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (s *builtinArithmeticPlusDecimalSig) Clone() builtinFunc {
@@ -296,6 +304,10 @@ func (s *builtinArithmeticPlusDecimalSig) evalDecimal(ctx EvalContext, row chunk
 
 type builtinArithmeticPlusRealSig struct {
 	baseBuiltinFunc
+
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (s *builtinArithmeticPlusRealSig) Clone() builtinFunc {
@@ -373,6 +385,10 @@ func (c *arithmeticMinusFunctionClass) getFunction(ctx BuildContext, args []Expr
 
 type builtinArithmeticMinusRealSig struct {
 	baseBuiltinFunc
+
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (s *builtinArithmeticMinusRealSig) Clone() builtinFunc {
@@ -398,6 +414,10 @@ func (s *builtinArithmeticMinusRealSig) evalReal(ctx EvalContext, row chunk.Row)
 
 type builtinArithmeticMinusDecimalSig struct {
 	baseBuiltinFunc
+
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (s *builtinArithmeticMinusDecimalSig) Clone() builtinFunc {
@@ -428,6 +448,10 @@ func (s *builtinArithmeticMinusDecimalSig) evalDecimal(ctx EvalContext, row chun
 
 type builtinArithmeticMinusIntSig struct {
 	baseBuiltinFunc
+
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (s *builtinArithmeticMinusIntSig) Clone() builtinFunc {
@@ -539,7 +563,7 @@ func (c *arithmeticMultiplyFunctionClass) getFunction(ctx BuildContext, args []E
 			return nil, err
 		}
 		setFlenDecimal4RealOrDecimal(ctx.GetEvalCtx(), bf.tp, args[0], args[1], true, true)
-		sig := &builtinArithmeticMultiplyRealSig{bf}
+		sig := &builtinArithmeticMultiplyRealSig{bf, false}
 		sig.setPbCode(tipb.ScalarFuncSig_MultiplyReal)
 		return sig, nil
 	} else if lhsEvalTp == types.ETDecimal || rhsEvalTp == types.ETDecimal {
@@ -567,7 +591,14 @@ func (c *arithmeticMultiplyFunctionClass) getFunction(ctx BuildContext, args []E
 	return sig, nil
 }
 
-type builtinArithmeticMultiplyRealSig struct{ baseBuiltinFunc }
+type builtinArithmeticMultiplyRealSig struct {
+	baseBuiltinFunc
+
+	test bool
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
+}
 
 func (s *builtinArithmeticMultiplyRealSig) Clone() builtinFunc {
 	newSig := &builtinArithmeticMultiplyRealSig{}
@@ -575,7 +606,13 @@ func (s *builtinArithmeticMultiplyRealSig) Clone() builtinFunc {
 	return newSig
 }
 
-type builtinArithmeticMultiplyDecimalSig struct{ baseBuiltinFunc }
+type builtinArithmeticMultiplyDecimalSig struct {
+	baseBuiltinFunc
+
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
+}
 
 func (s *builtinArithmeticMultiplyDecimalSig) Clone() builtinFunc {
 	newSig := &builtinArithmeticMultiplyDecimalSig{}
@@ -583,7 +620,13 @@ func (s *builtinArithmeticMultiplyDecimalSig) Clone() builtinFunc {
 	return newSig
 }
 
-type builtinArithmeticMultiplyIntUnsignedSig struct{ baseBuiltinFunc }
+type builtinArithmeticMultiplyIntUnsignedSig struct {
+	baseBuiltinFunc
+
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
+}
 
 func (s *builtinArithmeticMultiplyIntUnsignedSig) Clone() builtinFunc {
 	newSig := &builtinArithmeticMultiplyIntUnsignedSig{}
@@ -591,7 +634,13 @@ func (s *builtinArithmeticMultiplyIntUnsignedSig) Clone() builtinFunc {
 	return newSig
 }
 
-type builtinArithmeticMultiplyIntSig struct{ baseBuiltinFunc }
+type builtinArithmeticMultiplyIntSig struct {
+	baseBuiltinFunc
+
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
+}
 
 func (s *builtinArithmeticMultiplyIntSig) Clone() builtinFunc {
 	newSig := &builtinArithmeticMultiplyIntSig{}
@@ -699,7 +748,13 @@ func (c *arithmeticDivideFunctionClass) getFunction(ctx BuildContext, args []Exp
 	return sig, nil
 }
 
-type builtinArithmeticDivideRealSig struct{ baseBuiltinFunc }
+type builtinArithmeticDivideRealSig struct {
+	baseBuiltinFunc
+
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
+}
 
 func (s *builtinArithmeticDivideRealSig) Clone() builtinFunc {
 	newSig := &builtinArithmeticDivideRealSig{}
@@ -707,7 +762,13 @@ func (s *builtinArithmeticDivideRealSig) Clone() builtinFunc {
 	return newSig
 }
 
-type builtinArithmeticDivideDecimalSig struct{ baseBuiltinFunc }
+type builtinArithmeticDivideDecimalSig struct {
+	baseBuiltinFunc
+
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
+}
 
 func (s *builtinArithmeticDivideDecimalSig) Clone() builtinFunc {
 	newSig := &builtinArithmeticDivideDecimalSig{}
@@ -797,7 +858,13 @@ func (c *arithmeticIntDivideFunctionClass) getFunction(ctx BuildContext, args []
 	return sig, nil
 }
 
-type builtinArithmeticIntDivideIntSig struct{ baseBuiltinFunc }
+type builtinArithmeticIntDivideIntSig struct {
+	baseBuiltinFunc
+
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
+}
 
 func (s *builtinArithmeticIntDivideIntSig) Clone() builtinFunc {
 	newSig := &builtinArithmeticIntDivideIntSig{}
@@ -805,7 +872,13 @@ func (s *builtinArithmeticIntDivideIntSig) Clone() builtinFunc {
 	return newSig
 }
 
-type builtinArithmeticIntDivideDecimalSig struct{ baseBuiltinFunc }
+type builtinArithmeticIntDivideDecimalSig struct {
+	baseBuiltinFunc
+
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
+}
 
 func (s *builtinArithmeticIntDivideDecimalSig) Clone() builtinFunc {
 	newSig := &builtinArithmeticIntDivideDecimalSig{}
@@ -988,6 +1061,10 @@ func (c *arithmeticModFunctionClass) getFunction(ctx BuildContext, args []Expres
 
 type builtinArithmeticModRealSig struct {
 	baseBuiltinFunc
+
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (s *builtinArithmeticModRealSig) Clone() builtinFunc {
@@ -1020,6 +1097,10 @@ func (s *builtinArithmeticModRealSig) evalReal(ctx EvalContext, row chunk.Row) (
 
 type builtinArithmeticModDecimalSig struct {
 	baseBuiltinFunc
+
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (s *builtinArithmeticModDecimalSig) Clone() builtinFunc {
@@ -1047,6 +1128,10 @@ func (s *builtinArithmeticModDecimalSig) evalDecimal(ctx EvalContext, row chunk.
 
 type builtinArithmeticModIntUnsignedUnsignedSig struct {
 	baseBuiltinFunc
+
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (s *builtinArithmeticModIntUnsignedUnsignedSig) Clone() builtinFunc {
@@ -1081,6 +1166,10 @@ func (s *builtinArithmeticModIntUnsignedUnsignedSig) evalInt(ctx EvalContext, ro
 
 type builtinArithmeticModIntUnsignedSignedSig struct {
 	baseBuiltinFunc
+
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (s *builtinArithmeticModIntUnsignedSignedSig) Clone() builtinFunc {
@@ -1120,6 +1209,10 @@ func (s *builtinArithmeticModIntUnsignedSignedSig) evalInt(ctx EvalContext, row 
 
 type builtinArithmeticModIntSignedUnsignedSig struct {
 	baseBuiltinFunc
+
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (s *builtinArithmeticModIntSignedUnsignedSig) Clone() builtinFunc {
@@ -1159,6 +1252,10 @@ func (s *builtinArithmeticModIntSignedUnsignedSig) evalInt(ctx EvalContext, row 
 
 type builtinArithmeticModIntSignedSignedSig struct {
 	baseBuiltinFunc
+
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (s *builtinArithmeticModIntSignedSignedSig) Clone() builtinFunc {
@@ -1191,6 +1288,10 @@ func (s *builtinArithmeticModIntSignedSignedSig) evalInt(ctx EvalContext, row ch
 
 type builtinArithmeticPlusVectorFloat32Sig struct {
 	baseBuiltinFunc
+
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (s *builtinArithmeticPlusVectorFloat32Sig) Clone() builtinFunc {
@@ -1220,6 +1321,10 @@ func (s *builtinArithmeticPlusVectorFloat32Sig) evalVectorFloat32(ctx EvalContex
 
 type builtinArithmeticMinusVectorFloat32Sig struct {
 	baseBuiltinFunc
+
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (s *builtinArithmeticMinusVectorFloat32Sig) Clone() builtinFunc {
@@ -1249,6 +1354,10 @@ func (s *builtinArithmeticMinusVectorFloat32Sig) evalVectorFloat32(ctx EvalConte
 
 type builtinArithmeticMultiplyVectorFloat32Sig struct {
 	baseBuiltinFunc
+
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (s *builtinArithmeticMultiplyVectorFloat32Sig) Clone() builtinFunc {

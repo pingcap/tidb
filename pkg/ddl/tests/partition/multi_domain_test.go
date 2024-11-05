@@ -356,9 +356,6 @@ func TestMultiSchemaReorganizePartition(t *testing.T) {
 
 		testID++
 		tkNO.MustExec(fmt.Sprintf(`insert into t values (%d,%d)`+dbgStr, testID, testID))
-		//if testID == 14 {
-		//	tkO.MustQuery(fmt.Sprintf(`explain select * from t where b = "%d"`+dbgStr, testID)).Check(testkit.Rows(fmt.Sprintf("%d %d", testID, testID)))
-		//}
 		tkO.MustQuery(fmt.Sprintf(`select * from t where b = "%d"`+dbgStr, testID)).Check(testkit.Rows(fmt.Sprintf("%d %d", testID, testID)))
 
 		// Test for Index, specially between WriteOnly and DeleteOnly, but better to test all states.

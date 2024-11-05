@@ -108,7 +108,6 @@ ROW:
 			if found {
 				tblmsg = fmt.Sprintf(" Table name: %s", tbl.Meta().Name.O)
 			}
-			//tk.MustQuery(fmt.Sprintf(`select tidb_decode_key("%s") as 'Found table data after highest physical Table ID %d < %d (%s) %s'`, it.Key(), tblID, foundTblID, it.Key(), msg+tblmsg)).Check(testkit.Rows())
 			require.False(t, true, "Found table data after highest physical Table ID %d < %d (%s) "+msg+tblmsg, tblID, foundTblID, it.Key())
 		}
 		break
