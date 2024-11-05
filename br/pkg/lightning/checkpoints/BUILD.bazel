@@ -22,6 +22,7 @@ go_library(
         "//parser/model",
         "//types",
         "//util/chunk",
+        "//util/cmp",
         "//util/mathutil",
         "//util/sqlexec",
         "@com_github_joho_sqltocsv//:sqltocsv",

@@ -34,6 +34,7 @@ go_library(
         "//tablecodec",
         "//types",
         "//util/chunk",
+        "//util/cmp",
         "//util/codec",
         "//util/mathutil",
         "//util/topsql/stmtstats",

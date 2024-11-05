@@ -453,7 +453,8 @@ func ColumnSubstituteImpl(expr Expression, schema *Schema, newExprs []Expression
 			}
 			if substituted {
 				flag := v.RetType.GetFlag()
-				e := BuildCastFunction(v.GetCtx(), newArg, v.RetType)
+				e, err := BuildCastFunctionWithCheck(v.GetCtx(), newArg, v.RetType, v.Function.IsExplicitCharset())
+				terror.Log(err)
 				e.SetCoercibility(v.Coercibility())
 				e.GetType().SetFlag(flag)
 				return true, false, e
@@ -512,7 +513,11 @@ func ColumnSubstituteImpl(expr Expression, schema *Schema, newExprs []Expression
 			}
 		}
 		if substituted {
-			return true, hasFail, NewFunctionInternal(v.GetCtx(), v.FuncName.L, v.RetType, refExprArr.Result()...)
+			newFunc, err := NewFunction(v.GetCtx(), v.FuncName.L, v.RetType, refExprArr.Result()...)
+			if err != nil {
+				return true, true, v
+			}
+			return true, hasFail, newFunc
 		}
 	}
 	return false, false, expr
