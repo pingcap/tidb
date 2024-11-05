@@ -1024,9 +1024,9 @@ func (lp *ForListPruning) LocatePartition(ctx exprctx.EvalContext, value int64, 
 // LocatePartitionByRange locates partition by the range
 // Only could process `column op value` right now.
 func (lp *ForListPruning) LocatePartitionByRange(ctx exprctx.EvalContext, r *ranger.Range) (idxs map[int]struct{}, err error) {
+	idxs = make(map[int]struct{})
 	lowVal, highVal := r.LowVal[0], r.HighVal[0]
-	// [null, null] range already excluded by `IsPointNullable` function, so could set it to minValue here.
-	if r.LowVal[0].Kind() == types.KindMinNotNull || r.LowVal[0].Kind() == types.KindNull {
+	if r.LowVal[0].Kind() == types.KindMinNotNull {
 		lowVal = types.GetMinValue(lp.PruneExpr.GetType(ctx))
 	}
 
@@ -1042,9 +1042,18 @@ func (lp *ForListPruning) LocatePartitionByRange(ctx exprctx.EvalContext, r *ran
 		return nil, errors.Errorf("Internal error, `r.HighVal` cannot be null")
 	}
 
-	lowInt64, _, err := lp.PruneExpr.EvalInt(ctx, chunk.MutRowFromDatums([]types.Datum{lowVal}).ToRow())
+	lowInt64, isNull, err := lp.PruneExpr.EvalInt(ctx, chunk.MutRowFromDatums([]types.Datum{lowVal}).ToRow())
 	if err != nil {
 		return nil, err
+	}
+	if isNull {
+		// If low value is null, add `lp.nullPartitionIdx` into idxs map.
+		if !r.LowExclude && lp.nullPartitionIdx != -1 {
+			idxs[lp.nullPartitionIdx] = struct{}{}
+		} else {
+			dt := types.GetMinValue(lp.PruneExpr.GetType(ctx))
+			lowInt64 = dt.GetInt64()
+		}
 	}
 
 	var lowKey, highKey uint64
@@ -1055,7 +1064,6 @@ func (lp *ForListPruning) LocatePartitionByRange(ctx exprctx.EvalContext, r *ran
 		lowKey, highKey = codec.EncodeIntToCmpUint(lowInt64), codec.EncodeIntToCmpUint(highInt64)
 	}
 
-	idxs = make(map[int]struct{})
 	lp.valueToPartitionIdxBTree.AscendRange(&btreeListItem{key: lowKey}, &btreeListItem{key: highKey}, func(item *btreeListItem) bool {
 		if item.key == lowKey && r.LowExclude {
 			return true
