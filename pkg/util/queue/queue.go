@@ -24,7 +24,7 @@ func (r *Queue[T]) Push(element T) {
 	if r.size == len(r.elements) {
 		// Double capacity when full
 		newElements := make([]T, len(r.elements)*2)
-		for i := 0; i < r.size; i++ {
+		for i := range r.size {
 			newElements[i] = r.elements[(r.head+i)%len(r.elements)]
 		}
 		r.elements = newElements
