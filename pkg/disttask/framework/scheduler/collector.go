@@ -103,11 +103,20 @@ func (c *collector) Collect(ch chan<- prometheus.Metric) {
 			}
 		}
 	}
-	//if len(subtaskCnt) == 0 {
-	//	ch <- prometheus.MustNewConstMetric(c.subtasks, prometheus.GaugeValue, 0, "", "", "", "")
-	//	logutil.DDLLogger().Info("set subtask count to 0")
-	//	return
-	//}
+	if len(subtaskCnt) == 0 {
+		states := []proto.SubtaskState{
+			proto.SubtaskStatePending,
+			proto.SubtaskStateRunning,
+			proto.SubtaskStateSucceed,
+			proto.SubtaskStateFailed,
+			proto.SubtaskStateCanceled,
+			proto.SubtaskStatePaused}
+		for _, state := range states {
+			ch <- prometheus.MustNewConstMetric(c.subtasks, prometheus.GaugeValue, 0, "", "", state.String(), "")
+		}
+		logutil.DDLLogger().Info("set subtask count to 0")
+		return
+	}
 	logutil.DDLLogger().Info("subTask count collect:", zap.String("subtaskCnt", fmt.Sprint(subtaskCnt)))
 }
 
