@@ -1744,7 +1744,6 @@ func partitionedTableAddRecord(ctx table.MutateContext, txn kv.Transaction, t *p
 		}
 	}
 	tbl := t.getPartition(pid)
-	logutil.BgLogger().Info("adding Partition record MJONSS", zap.Any("record", r), zap.Int64("pid", tbl.GetPhysicalID()))
 	recordID, err = tbl.addRecord(ctx, txn, r, opt)
 	if err != nil {
 		return
@@ -1759,7 +1758,6 @@ func partitionedTableAddRecord(ctx table.MutateContext, txn kv.Transaction, t *p
 			return nil, errors.Trace(err)
 		}
 		tbl = t.getPartition(pid)
-		logutil.BgLogger().Info("adding reorganized record MJONSS", zap.Any("record", r))
 		if !tbl.Meta().PKIsHandle && !tbl.Meta().IsCommonHandle {
 			// Preserve the _tidb_rowid also in the new partition!
 			r = append(r, types.NewIntDatum(recordID.IntValue()))
@@ -1887,7 +1885,6 @@ func partitionedTableUpdateRecord(ctx table.MutateContext, txn kv.Transaction, t
 		}
 	}
 
-	logutil.BgLogger().Info("updating Partition record MJONSS", zap.Any("from record", currData), zap.Any("to record", newData), zap.Int64("from pid", from), zap.Int64("to pid", to), zap.String("handle", h.String()))
 	memBuffer := txn.GetMemBuffer()
 	sh := memBuffer.Staging()
 	defer memBuffer.Cleanup(sh)
@@ -1921,7 +1918,6 @@ func partitionedTableUpdateRecord(ctx table.MutateContext, txn kv.Transaction, t
 				return errors.Trace(err)
 			}
 		}
-		logutil.BgLogger().Info("updating record MJONSS", zap.Int64("new from pid", newFrom), zap.Int64("new to pid", newTo), zap.String("handle", h.String()))
 		if newTo == newFrom && newTo != 0 {
 			// Update needs to be done in StateDeleteOnly as well
 			err = t.getPartition(newTo).updateRecord(ctx, txn, h, currData, newData, touched, opt)

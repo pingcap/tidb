@@ -3885,10 +3885,8 @@ func (w *reorgPartitionWorker) BackfillData(handleRange reorgBackfillTask) (task
 			if len(w.oldKeys) > 0 {
 				if _, ok := found[string(w.oldKeys[i])]; ok {
 					// Alredy filled
-					logutil.DDLLogger().Info("Backfill not needed, key FOUND!!! MJONSS", zap.Int64("pid", w.newPids[i]), zap.String("key", w.oldKeys[i].String()))
 					continue
 				}
-				logutil.DDLLogger().Info("Backfill IS needed, key NOT FOUND!!! MJONSS", zap.Int64("pid", w.newPids[i]), zap.String("key", w.oldKeys[i].String()))
 				tbl := w.reorgedTbl.GetPartition(w.newPids[i])
 				if tbl == nil {
 					return dbterror.ErrUnsupportedReorganizePartition.GenWithStackByArgs()
@@ -4022,9 +4020,6 @@ func (w *reorgPartitionWorker) fetchRowColVals(txn kv.Transaction, taskRange reo
 		taskDone = true
 	}
 
-	for i := 1; i < w.records; i++ {
-		logutil.DDLLogger().Info("ZZZZZZZ MJONSS w.rows", zap.Any("w.rows", w.rows[i]), zap.Int("i", i))
-	}
 	logutil.DDLLogger().Debug("txn fetches handle info",
 		zap.Uint64("txnStartTS", txn.StartTS()),
 		zap.Stringer("taskRange", &taskRange),

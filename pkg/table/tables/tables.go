@@ -494,9 +494,6 @@ func (t *TableCommon) updateRecord(sctx table.MutateContext, txn kv.Transaction,
 	}
 
 	key := t.RecordKey(h)
-	if t.GetPhysicalID() == 0 || (t.GetPhysicalID() > 100 && t.GetPhysicalID() < 1000) {
-		logutil.BgLogger().Info("updateRecord MJONSS", zap.String("record key", key.String()))
-	}
 	tc, ec := evalCtx.TypeCtx(), evalCtx.ErrCtx()
 	err = encodeRowBuffer.WriteMemBufferEncoded(sctx.GetRowEncodingConfig(), tc.Location(), ec, memBuffer, key)
 	if err != nil {
@@ -766,14 +763,8 @@ func (t *TableCommon) addRecord(sctx table.MutateContext, txn kv.Transaction, r 
 		if err != nil {
 			return nil, err
 		}
-		if t.GetPhysicalID() == 0 || (t.GetPhysicalID() > 100 && t.GetPhysicalID() < 1000) {
-			logutil.BgLogger().Info("AllocHandle MJONSS", zap.Int64("recordID", recordID.IntValue()))
-		}
 	}
 
-	if t.GetPhysicalID() == 0 || (t.GetPhysicalID() > 100 && t.GetPhysicalID() < 1000) {
-		logutil.BgLogger().Info("addRecord MJONSS (TableCommon)", zap.Any("recordID", recordID), zap.Any("record", r), zap.Int64("tableID", t.physicalTableID))
-	}
 	// a reusable buffer to save malloc
 	// Note: The buffer should not be referenced or modified outside this function.
 	// It can only act as a temporary buffer for the current function call.
@@ -839,7 +830,6 @@ func (t *TableCommon) addRecord(sctx table.MutateContext, txn kv.Transaction, r 
 		return nil, err
 	}
 	key := t.RecordKey(recordID)
-	logutil.BgLogger().Info("addRecord key", zap.String("key", key.String()))
 	var setPresume bool
 	if opt.DupKeyCheck() != table.DupKeyCheckSkip {
 		if t.meta.TempTableType != model.TempTableNone {
@@ -898,9 +888,6 @@ func (t *TableCommon) addRecord(sctx table.MutateContext, txn kv.Transaction, r 
 		return nil, err
 	}
 
-	if t.GetPhysicalID() == 0 || (t.GetPhysicalID() > 100 && t.GetPhysicalID() < 1000) {
-		logutil.BgLogger().Info("addRecord addIndices MJONSS")
-	}
 	// Insert new entries into indices.
 	h, err := t.addIndices(sctx, recordID, r, txn, opt.GetCreateIdxOpt())
 	if err != nil {
@@ -1411,18 +1398,12 @@ func AllocHandle(ctx context.Context, mctx table.MutateContext, t table.Table) (
 		if reserved, ok := mctx.GetReservedRowIDAlloc(); ok {
 			// First try to alloc if the statement has reserved auto ID.
 			if rowID, ok := reserved.Consume(); ok {
-				if t.Meta().ID == 0 || (t.Meta().ID > 100 && t.Meta().ID < 1000) {
-					logutil.BgLogger().Info("AllocHandle reserved MJONSS", zap.Int64("rowID", rowID), zap.Stack("stack"))
-				}
 				return kv.IntHandle(rowID), nil
 			}
 		}
 	}
 
 	_, rowID, err := AllocHandleIDs(ctx, mctx, t, 1)
-	if t.Meta().ID == 0 || (t.Meta().ID > 100 && t.Meta().ID < 1000) {
-		logutil.BgLogger().Info("AllocHandle allocated MJONSS", zap.Int64("rowID", rowID), zap.Stack("stack"))
-	}
 	return kv.IntHandle(rowID), err
 }
 

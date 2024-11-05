@@ -2036,7 +2036,6 @@ func (w *addIndexTxnWorker) checkHandleExists(i int, key kv.Key, value []byte, h
 			return nil
 		}
 	}
-	logutil.DDLLogger().Info("not same handle MJONSS", zap.String("found handle", handle.String()), zap.String("Decoded handle", h.String()), zap.Int("i", i), zap.Int64("indexID", idxInfo.ID), zap.String("key", key.String()), zap.Stack("stack"))
 	return ddlutil.GenKeyExistsErr(key, value, idxInfo, tblInfo)
 }
 
@@ -2082,7 +2081,6 @@ func (w *addIndexTxnWorker) batchCheckUniqueKey(txn kv.Transaction, idxRecords [
 			w.distinctCheckFlags = append(w.distinctCheckFlags, distinct)
 			w.recordIdx = append(w.recordIdx, i)
 			uniqueBatchKeys = append(uniqueBatchKeys, key)
-			logutil.DDLLogger().Info("uniqueBatchKeys added MJONSS", zap.Any("val", val), zap.String("key", kv.Key(key).String()), zap.Int("i", i))
 		}
 	}
 
