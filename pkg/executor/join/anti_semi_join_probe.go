@@ -148,6 +148,7 @@ func (a *antiSemiJoinProbe) Probe(joinResult *hashjoinWorkerResult, sqlKiller *s
 	return true, joinResult
 }
 
+// TODO maybe have bug
 func (a *antiSemiJoinProbe) probeForLeftSideBuildHasOtherCondition(joinedChk *chunk.Chunk, sqlKiller *sqlkiller.SQLKiller) (err error) {
 	meta := a.ctx.hashTableMeta
 	tagHelper := a.ctx.hashTableContext.tagHelper
