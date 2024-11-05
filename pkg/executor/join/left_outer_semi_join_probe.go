@@ -41,7 +41,7 @@ var _ ProbeV2 = &leftOuterSemiJoinProbe{}
 func newLeftOuterSemiJoinProbe(base baseJoinProbe) *leftOuterSemiJoinProbe {
 	probe := &leftOuterSemiJoinProbe{
 		baseJoinProbe:             base,
-		processedProbeRowIdxQueue: queue.NewQueue[int](1024),
+		processedProbeRowIdxQueue: queue.NewQueue[int](32),
 	}
 	return probe
 }
