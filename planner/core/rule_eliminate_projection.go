@@ -72,7 +72,6 @@ func canProjectionBeEliminatedStrict(p *PhysicalProjection) bool {
 	if p.Schema().Len() != child.Schema().Len() {
 		return false
 	}
-<<<<<<< HEAD:planner/core/rule_eliminate_projection.go
 	for _, ref := range p.ctx.GetSessionVars().StmtCtx.ColRefFromUpdatePlan {
 		for _, one := range p.Schema().Columns {
 			if ref == one.UniqueID {
@@ -80,8 +79,6 @@ func canProjectionBeEliminatedStrict(p *PhysicalProjection) bool {
 			}
 		}
 	}
-=======
->>>>>>> acdb6f58e3b (planner: UPDATE's select plan's output col IDs should be stable (#53268)):pkg/planner/core/rule_eliminate_projection.go
 	for i, expr := range p.Exprs {
 		col, ok := expr.(*expression.Column)
 		if !ok || !col.Equal(nil, child.Schema().Columns[i]) {
@@ -134,11 +131,6 @@ func doPhysicalProjectionElimination(p PhysicalPlan) PhysicalPlan {
 	child := p.Children()[0]
 	if childProj, ok := child.(*PhysicalProjection); ok {
 		childProj.SetSchema(p.Schema())
-	}
-	for i, col := range p.Schema().Columns {
-		if p.SCtx().GetSessionVars().StmtCtx.ColRefFromUpdatePlan.Has(int(col.UniqueID)) && !child.Schema().Columns[i].Equal(nil, col) {
-			return p
-		}
 	}
 	return child
 }

@@ -150,13 +150,5 @@ nogo(
                    "//build/linter/revive",
                ],
                "//conditions:default": [],
-<<<<<<< HEAD
-=======
-           }) +
-           select({
-               "//build:without_rbe": [
-               ],
-               "//conditions:default": [],
->>>>>>> acdb6f58e3b (planner: UPDATE's select plan's output col IDs should be stable (#53268))
            }),
 )

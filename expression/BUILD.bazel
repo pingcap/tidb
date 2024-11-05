@@ -118,11 +118,8 @@ go_library(
         "@com_github_pingcap_tipb//go-tipb",
         "@com_github_pkg_errors//:errors",
         "@com_github_tikv_client_go_v2//oracle",
-<<<<<<< HEAD:expression/BUILD.bazel
         "@org_golang_x_exp//slices",
         "@org_golang_x_tools//container/intsets",
-=======
->>>>>>> acdb6f58e3b (planner: UPDATE's select plan's output col IDs should be stable (#53268)):pkg/expression/BUILD.bazel
         "@org_uber_go_atomic//:atomic",
         "@org_uber_go_zap//:zap",
     ],

@@ -26,7 +26,6 @@ import (
 	"sync/atomic"
 	"time"
 
-<<<<<<< HEAD:sessionctx/stmtctx/stmtctx.go
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/parser"
@@ -40,30 +39,6 @@ import (
 	"github.com/pingcap/tidb/util/resourcegrouptag"
 	"github.com/pingcap/tidb/util/topsql/stmtstats"
 	"github.com/pingcap/tidb/util/tracing"
-=======
-	distsqlctx "github.com/pingcap/tidb/pkg/distsql/context"
-	"github.com/pingcap/tidb/pkg/domain/resourcegroup"
-	"github.com/pingcap/tidb/pkg/errctx"
-	"github.com/pingcap/tidb/pkg/parser"
-	"github.com/pingcap/tidb/pkg/parser/model"
-	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/parser/terror"
-	"github.com/pingcap/tidb/pkg/statistics/handle/usage/indexusage"
-	"github.com/pingcap/tidb/pkg/types"
-	contextutil "github.com/pingcap/tidb/pkg/util/context"
-	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
-	"github.com/pingcap/tidb/pkg/util/disk"
-	"github.com/pingcap/tidb/pkg/util/execdetails"
-	"github.com/pingcap/tidb/pkg/util/hint"
-	"github.com/pingcap/tidb/pkg/util/intest"
-	"github.com/pingcap/tidb/pkg/util/intset"
-	"github.com/pingcap/tidb/pkg/util/linter/constructor"
-	"github.com/pingcap/tidb/pkg/util/memory"
-	"github.com/pingcap/tidb/pkg/util/nocopy"
-	"github.com/pingcap/tidb/pkg/util/resourcegrouptag"
-	"github.com/pingcap/tidb/pkg/util/topsql/stmtstats"
-	"github.com/pingcap/tidb/pkg/util/tracing"
->>>>>>> acdb6f58e3b (planner: UPDATE's select plan's output col IDs should be stable (#53268)):pkg/sessionctx/stmtctx/stmtctx.go
 	"github.com/tikv/client-go/v2/tikvrpc"
 	"github.com/tikv/client-go/v2/util"
 	atomic2 "go.uber.org/atomic"
@@ -396,7 +371,7 @@ type StatementContext struct {
 	// UseDynamicPruneMode indicates whether use UseDynamicPruneMode in query stmt
 	UseDynamicPruneMode bool
 	// ColRefFromPlan mark the column ref used by assignment in update statement.
-	ColRefFromUpdatePlan intset.FastIntSet
+	ColRefFromUpdatePlan []int64
 
 	// RangeFallback indicates that building complete ranges exceeds the memory limit so it falls back to less accurate ranges such as full range.
 	RangeFallback bool
