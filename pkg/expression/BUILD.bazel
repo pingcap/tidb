@@ -264,33 +264,3 @@ go_test(
         "@org_uber_go_goleak//:goleak",
     ],
 )
-
-filegroup(
-    name = "threadsafe_gened_file",
-    srcs = [
-        "builtin.go",
-        "builtin_arithmetic.go",
-        "builtin_cast.go",
-        "builtin_compare.go",
-        "builtin_control.go",
-        "builtin_convert_charset.go",
-        "builtin_encryption.go",
-        "builtin_func_param.go",
-        "builtin_grouping.go",
-        "builtin_ilike.go",
-        "builtin_info.go",
-        "builtin_json.go",
-        "builtin_like.go",
-        "builtin_math.go",
-        "builtin_miscellaneous.go",
-        "builtin_op.go",
-        "builtin_other.go",
-        "builtin_regexp.go",
-        "builtin_regexp_util.go",
-        "builtin_string.go",
-        "builtin_threadsafe_generated.go",
-        "builtin_threadunsafe_generated.go",
-        "builtin_time.go",
-    ],
-    visibility = ["//visibility:public"],
-)

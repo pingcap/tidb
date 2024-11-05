@@ -78,35 +78,27 @@ func collectThreadSafeBuiltinFuncs(file string) (safeFuncNames, unsafeFuncNames 
 	return safeFuncNames, unsafeFuncNames
 }
 
-func genBuiltinThreadSafeCode(dir string) (safe, unsafe []byte) {
-	files := []string{
-		"builtin.go",
-		"builtin_arithmetic.go",
-		"builtin_cast.go",
-		"builtin_compare.go",
-		"builtin_control.go",
-		"builtin_convert_charset.go",
-		"builtin_encryption.go",
-		"builtin_func_param.go",
-		"builtin_grouping.go",
-		"builtin_ilike.go",
-		"builtin_info.go",
-		"builtin_json.go",
-		"builtin_like.go",
-		"builtin_math.go",
-		"builtin_miscellaneous.go",
-		"builtin_op.go",
-		"builtin_other.go",
-		"builtin_regexp.go",
-		"builtin_regexp_util.go",
-		"builtin_string.go",
-		"builtin_time.go",
+func genBuiltinThreadSafeCode(exprCodeDir string) (safe, unsafe []byte) {
+	entries, err := os.ReadDir(exprCodeDir)
+	if err != nil {
+		panic(err)
+	}
+	files := make([]string, 0, 16)
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		if strings.HasPrefix(entry.Name(), "builtin_") &&
+			strings.HasSuffix(entry.Name(), ".go") &&
+			!strings.Contains(entry.Name(), "_test") {
+			files = append(files, entry.Name())
+		}
 	}
 
 	safeFuncs := make([]string, 0, 32)
 	unsafeFuncs := make([]string, 0, 32)
 	for _, file := range files {
-		safeNames, unsafeNames := collectThreadSafeBuiltinFuncs(path.Join(dir, file))
+		safeNames, unsafeNames := collectThreadSafeBuiltinFuncs(path.Join(exprCodeDir, file))
 		safeFuncs = append(safeFuncs, safeNames...)
 		unsafeFuncs = append(unsafeFuncs, unsafeNames...)
 	}
