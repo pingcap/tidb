@@ -50,7 +50,6 @@ type indexHandleKV struct {
 }
 
 // mvccPropCollector is a specialized version of TiKV's `MvccPropertiesCollector`.
-// ref https://github.com/tikv/tikv/blob/7793f1d5dc40206fe406ca001be1e0d7f1b83a8f/components/engine_rocks/src/properties.rs#L380C12-L380C35.
 type mvccPropCollector struct {
 	props struct {
 		minTS          uint64
@@ -80,7 +79,8 @@ func newMVCCPropCollector(ts uint64) *mvccPropCollector {
 	return ret
 }
 
-// Add implements the TablePropertyCollector interface.
+// Add implements the TablePropertyCollector interface. It mimics
+// https://github.com/tikv/tikv/blob/7793f1d5dc40206fe406ca001be1e0d7f1b83a8f/components/engine_rocks/src/properties.rs#L407.
 func (m *mvccPropCollector) Add(key rockssst.InternalKey, _ []byte) error {
 	m.props.numVersions++
 	m.props.numRows++
@@ -101,7 +101,8 @@ func (m *mvccPropCollector) Add(key rockssst.InternalKey, _ []byte) error {
 	return nil
 }
 
-// Finish implements the TablePropertyCollector interface.
+// Finish implements the TablePropertyCollector interface. It mimics
+// https://github.com/tikv/tikv/blob/7793f1d5dc40206fe406ca001be1e0d7f1b83a8f/components/engine_rocks/src/properties.rs#L505.
 func (m *mvccPropCollector) Finish(userProps map[string]string) error {
 	userProps["tikv.min_ts"] = string(binary.BigEndian.AppendUint64(nil, m.props.minTS))
 	userProps["tikv.max_ts"] = string(binary.BigEndian.AppendUint64(nil, m.props.maxTS))
@@ -162,7 +163,6 @@ func (r rangeProperties) encode() []byte {
 }
 
 // rangePropertiesCollector is a specialized version of TiKV's `RangePropertiesCollector`.
-// ref https://github.com/tikv/tikv/blob/7793f1d5dc40206fe406ca001be1e0d7f1b83a8f/components/engine_rocks/src/properties.rs#L283.
 type rangePropertiesCollector struct {
 	props               rangeProperties
 	lastOffsets         rangeOffsets
@@ -193,7 +193,8 @@ func (c *rangePropertiesCollector) insertNewPoint(key []byte) {
 	c.props = append(c.props, rangeProperty{key: append([]byte{}, key...), rangeOffsets: c.currentOffsets})
 }
 
-// Add implements the TablePropertyCollector interface.
+// Add implements the TablePropertyCollector interface. It mimics
+// https://github.com/tikv/tikv/blob/7793f1d5dc40206fe406ca001be1e0d7f1b83a8f/components/engine_rocks/src/properties.rs#L329.
 func (c *rangePropertiesCollector) Add(key rockssst.InternalKey, value []byte) error {
 	c.currentOffsets.size += uint64(len(value)) + uint64(len(key.UserKey))
 	c.currentOffsets.keyCount++
@@ -205,7 +206,8 @@ func (c *rangePropertiesCollector) Add(key rockssst.InternalKey, value []byte) e
 	return nil
 }
 
-// Finish implements the TablePropertyCollector interface.
+// Finish implements the TablePropertyCollector interface. It mimics
+// https://github.com/tikv/tikv/blob/7793f1d5dc40206fe406ca001be1e0d7f1b83a8f/components/engine_rocks/src/properties.rs#L349.
 func (c *rangePropertiesCollector) Finish(userProps map[string]string) error {
 	if c.sizeInLastRange() > 0 || c.keysInLastRange() > 0 {
 		c.insertNewPoint(c.lastKey)
