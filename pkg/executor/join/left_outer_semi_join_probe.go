@@ -91,7 +91,7 @@ func (j *leftOuterSemiJoinProbe) Probe(joinResult *hashjoinWorkerResult, sqlKill
 	}
 
 	if j.ctx.hasOtherCondition() {
-		err = j.probeWithOtherCondition(joinResult.chk, joinedChk, sqlKiller)
+		err = j.probeWithOtherCondition(joinResult.chk, joinedChk, remainCap, sqlKiller)
 	} else {
 		err = j.probeWithoutOtherCondition(joinResult.chk, joinedChk, remainCap, sqlKiller)
 	}
@@ -102,11 +102,13 @@ func (j *leftOuterSemiJoinProbe) Probe(joinResult *hashjoinWorkerResult, sqlKill
 	return true, joinResult
 }
 
-func (j *leftOuterSemiJoinProbe) probeWithOtherCondition(chk, joinedChk *chunk.Chunk, sqlKiller *sqlkiller.SQLKiller) (err error) {
+func (j *leftOuterSemiJoinProbe) probeWithOtherCondition(chk, joinedChk *chunk.Chunk, remainCap int, sqlKiller *sqlkiller.SQLKiller) (err error) {
+	nextProcessProbeRowIdx := j.currentProbeRow
 	err = j.concatenateProbeAndBuildRows(joinedChk, sqlKiller)
 	if err != nil {
 		return err
 	}
+	j.currentProbeRow = nextProcessProbeRowIdx
 
 	// To avoid `Previous chunk is not probed yet` error
 	if joinedChk.NumRows() > 0 {
@@ -126,8 +128,8 @@ func (j *leftOuterSemiJoinProbe) probeWithOtherCondition(chk, joinedChk *chunk.C
 	}
 
 	if j.processedProbeRowIdxQueue.IsEmpty() {
-		j.currentProbeRow = j.chunkRows
-		j.buildResult(chk, 0)
+		j.currentProbeRow = min(nextProcessProbeRowIdx+remainCap, j.chunkRows)
+		j.buildResult(chk, nextProcessProbeRowIdx)
 	}
 	return
 }
