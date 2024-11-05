@@ -457,6 +457,7 @@ func (sm *Manager) collectLoop() {
 	for {
 		select {
 		case <-sm.ctx.Done():
+			sm.collect()
 			sm.logger.Info("collect loop exits")
 			return
 		case <-ticker.C:
