@@ -27,10 +27,8 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/backend/external"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/meta/model"
-	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/table"
-	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/tikv/client-go/v2/tikv"
 	"go.uber.org/zap"
 )
@@ -161,19 +159,13 @@ func (s *backfillDistExecutor) getBackendCtx() (ingest.BackendCtx, error) {
 }
 
 func hasUniqueIndex(job *model.Job) (bool, error) {
-	var unique bool
-	err := job.DecodeArgs(&unique)
-	if err == nil {
-		return unique, nil
-	}
-
-	var uniques []bool
-	err = job.DecodeArgs(&uniques)
+	args, err := model.GetModifyIndexArgs(job)
 	if err != nil {
 		return false, errors.Trace(err)
 	}
-	for _, b := range uniques {
-		if b {
+
+	for _, a := range args.IndexArgs {
+		if a.Unique {
 			return true, nil
 		}
 	}
@@ -227,17 +219,6 @@ func (s *backfillDistExecutor) GetStepExecutor(task *proto.Task) (execute.StepEx
 
 func (*backfillDistExecutor) IsIdempotent(*proto.Subtask) bool {
 	return true
-}
-
-func isRetryableError(err error) bool {
-	originErr := errors.Cause(err)
-	if tErr, ok := originErr.(*terror.Error); ok {
-		sqlErr := terror.ToSQLError(tErr)
-		_, ok := dbterror.ReorgRetryableErrCodes[sqlErr.Code]
-		return ok
-	}
-	// can't retry Unknown err.
-	return false
 }
 
 func (*backfillDistExecutor) IsRetryableError(err error) bool {

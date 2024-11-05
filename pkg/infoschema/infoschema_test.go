@@ -102,7 +102,7 @@ func TestBasic(t *testing.T) {
 
 	dbInfos := []*model.DBInfo{dbInfo}
 	internal.AddDB(t, re.Store(), dbInfo)
-	internal.AddTable(t, re.Store(), dbInfo, tblInfo)
+	internal.AddTable(t, re.Store(), dbInfo.ID, tblInfo)
 
 	builder := infoschema.NewBuilder(re, nil, infoschema.NewData(), variable.SchemaCacheSize.Load() > 0)
 	err = builder.InitWithDBInfos(dbInfos, nil, nil, 1)
@@ -148,6 +148,15 @@ func TestBasic(t *testing.T) {
 	schema, ok = infoschema.SchemaByTable(is, tblInfo)
 	require.True(t, ok)
 	require.NotNil(t, schema)
+
+	b, err := json.Marshal(tblInfo)
+	require.NoError(t, err)
+	tblUnmarshal := &model.TableInfo{}
+	err = json.Unmarshal(b, tblUnmarshal)
+	require.NoError(t, err)
+	schema2, ok := infoschema.SchemaByTable(is, tblUnmarshal)
+	require.True(t, ok)
+	require.Equal(t, schema, schema2)
 
 	noexistTblInfo := &model.TableInfo{ID: 12345, Name: tblInfo.Name}
 	schema, ok = infoschema.SchemaByTable(is, noexistTblInfo)
@@ -1143,7 +1152,7 @@ func (tc *infoschemaTestContext) runCreateTable(tblName string) int64 {
 	}
 	// create table
 	tblInfo := internal.MockTableInfo(tc.t, tc.re.Store(), tblName)
-	internal.AddTable(tc.t, tc.re.Store(), tc.dbInfo, tblInfo)
+	internal.AddTable(tc.t, tc.re.Store(), tc.dbInfo.ID, tblInfo)
 
 	tc.applyDiffAndCheck(&model.SchemaDiff{Type: model.ActionCreateTable, SchemaID: tc.dbInfo.ID, TableID: tblInfo.ID}, func(tc *infoschemaTestContext) {
 		tbl, ok := tc.is.TableByID(context.Background(), tblInfo.ID)
@@ -1161,7 +1170,7 @@ func (tc *infoschemaTestContext) runCreateTables(tblNames []string) {
 	diff.AffectedOpts = make([]*model.AffectedOption, len(tblNames))
 	for i, tblName := range tblNames {
 		tblInfo := internal.MockTableInfo(tc.t, tc.re.Store(), tblName)
-		internal.AddTable(tc.t, tc.re.Store(), tc.dbInfo, tblInfo)
+		internal.AddTable(tc.t, tc.re.Store(), tc.dbInfo.ID, tblInfo)
 		diff.AffectedOpts[i] = &model.AffectedOption{
 			SchemaID: tc.dbInfo.ID,
 			TableID:  tblInfo.ID,

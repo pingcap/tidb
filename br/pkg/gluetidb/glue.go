@@ -111,7 +111,7 @@ func (g Glue) startDomainAsNeeded(store kv.Storage) error {
 	if err != nil {
 		return err
 	}
-	return dom.Start()
+	return dom.Start(ddl.Normal)
 }
 
 func (g Glue) createTypesSession(store kv.Storage) (sessiontypes.Session, error) {

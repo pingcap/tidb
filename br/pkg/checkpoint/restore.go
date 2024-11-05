@@ -56,6 +56,7 @@ func StartCheckpointRestoreRunnerForTest(
 	return runner, nil
 }
 
+// Notice that the session is owned by the checkpoint runner, and it will be also closed by it.
 func StartCheckpointRunnerForRestore(
 	ctx context.Context,
 	se glue.Session,

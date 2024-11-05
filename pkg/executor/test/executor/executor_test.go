@@ -757,6 +757,7 @@ func TestUnreasonablyClose(t *testing.T) {
 	for i, tc := range []string{
 		"select /*+ hash_join(t1)*/ * from t t1 join t t2 on t1.a = t2.a",
 		"select /*+ merge_join(t1)*/ * from t t1 join t t2 on t1.f = t2.f",
+		"select /*+ merge_join(t1)*/ t1.f, t2.f from t t1 join t t2 on t1.f = t2.f",
 		"select t.f from t use index(f)",
 		"select /*+ inl_join(t1) */ * from t t1 join t t2 on t1.f=t2.f",
 		"select /*+ inl_hash_join(t1) */ * from t t1 join t t2 on t1.f=t2.f",

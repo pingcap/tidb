@@ -168,9 +168,11 @@ func TestBootstrapWithError(t *testing.T) {
 		require.NoError(t, err)
 		err = InitDDLJobTables(store, meta.BackfillTableVersion)
 		require.NoError(t, err)
+		err = InitDDLJobTables(store, meta.DDLNotifierTableVersion)
+		require.NoError(t, err)
 		dom, err := domap.Get(store)
 		require.NoError(t, err)
-		require.NoError(t, dom.Start())
+		require.NoError(t, dom.Start(ddl.Bootstrap))
 		domain.BindDomain(se, dom)
 		b, err := checkBootstrapped(se)
 		require.False(t, b)
@@ -250,6 +252,8 @@ func TestDDLTableCreateBackfillTable(t *testing.T) {
 	m.SetDDLTables(meta.MDLTableVersion)
 	MustExec(t, se, "drop table mysql.tidb_background_subtask")
 	MustExec(t, se, "drop table mysql.tidb_background_subtask_history")
+	// TODO(lance6716): remove it after tidb_ddl_notifier GA
+	MustExec(t, se, "drop table mysql.tidb_ddl_notifier")
 	err = txn.Commit(context.Background())
 	require.NoError(t, err)
 
@@ -264,17 +268,39 @@ func TestDDLTableCreateBackfillTable(t *testing.T) {
 	dom.Close()
 }
 
+func TestDDLTableCreateDDLNotifierTable(t *testing.T) {
+	store, dom := CreateStoreAndBootstrap(t)
+	defer func() { require.NoError(t, store.Close()) }()
+	se := CreateSessionAndSetID(t, store)
+
+	txn, err := store.Begin()
+	require.NoError(t, err)
+	m := meta.NewMutator(txn)
+	ver, err := m.CheckDDLTableVersion()
+	require.NoError(t, err)
+	require.GreaterOrEqual(t, ver, meta.DDLNotifierTableVersion)
+
+	// downgrade DDL table version
+	m.SetDDLTables(meta.BackfillTableVersion)
+	MustExec(t, se, "drop table mysql.tidb_ddl_notifier")
+	err = txn.Commit(context.Background())
+	require.NoError(t, err)
+
+	// to upgrade session for create ddl notifier table
+	dom.Close()
+	dom, err = BootstrapSession(store)
+	require.NoError(t, err)
+
+	se = CreateSessionAndSetID(t, store)
+	MustExec(t, se, "select * from mysql.tidb_ddl_notifier")
+	dom.Close()
+}
+
 func revertVersionAndVariables(t *testing.T, se sessiontypes.Session, ver int) {
 	MustExec(t, se, fmt.Sprintf("update mysql.tidb set variable_value='%d' where variable_name='tidb_server_version'", ver))
 	if ver <= version195 {
 		// for version <= version195, tidb_enable_dist_task should be disabled before upgrade
 		MustExec(t, se, "update mysql.global_variables set variable_value='off' where variable_name='tidb_enable_dist_task'")
-	}
-	if ver < version212 && ver >= version172 {
-		// for version < version212, revert column changes related to function `upgradeToVer212`.
-		// related tables created after version172.
-		MustExec(t, se, "ALTER TABLE mysql.tidb_runaway_queries RENAME COLUMN `start_time` TO `time`")
-		MustExec(t, se, "ALTER TABLE mysql.tidb_runaway_queries RENAME COLUMN `sample_sql` TO `original_sql`")
 	}
 }
 
@@ -743,7 +769,7 @@ func TestIndexMergeInNewCluster(t *testing.T) {
 	store, err := mockstore.NewMockStore(mockstore.WithStoreType(mockstore.EmbedUnistore))
 	require.NoError(t, err)
 	// Indicates we are in a new cluster.
-	require.Equal(t, int64(notBootstrapped), getStoreBootstrapVersion(store))
+	require.Equal(t, int64(notBootstrapped), getStoreBootstrapVersionWithCache(store))
 	dom, err := BootstrapSession(store)
 	require.NoError(t, err)
 	defer func() { require.NoError(t, store.Close()) }()
@@ -1063,7 +1089,7 @@ func TestTiDBOptAdvancedJoinHintInNewCluster(t *testing.T) {
 	store, err := mockstore.NewMockStore(mockstore.WithStoreType(mockstore.EmbedUnistore))
 	require.NoError(t, err)
 	// Indicates we are in a new cluster.
-	require.Equal(t, int64(notBootstrapped), getStoreBootstrapVersion(store))
+	require.Equal(t, int64(notBootstrapped), getStoreBootstrapVersionWithCache(store))
 	dom, err := BootstrapSession(store)
 	require.NoError(t, err)
 	defer func() { require.NoError(t, store.Close()) }()
@@ -1089,7 +1115,7 @@ func TestTiDBCostModelInNewCluster(t *testing.T) {
 	store, err := mockstore.NewMockStore(mockstore.WithStoreType(mockstore.EmbedUnistore))
 	require.NoError(t, err)
 	// Indicates we are in a new cluster.
-	require.Equal(t, int64(notBootstrapped), getStoreBootstrapVersion(store))
+	require.Equal(t, int64(notBootstrapped), getStoreBootstrapVersionWithCache(store))
 	dom, err := BootstrapSession(store)
 	require.NoError(t, err)
 	defer func() { require.NoError(t, store.Close()) }()
@@ -2433,8 +2459,6 @@ func TestTiDBUpgradeToVer212(t *testing.T) {
 	err = m.FinishBootstrap(int64(ver198))
 	require.NoError(t, err)
 	revertVersionAndVariables(t, seV198, ver198)
-	// simulate a real ver198 where mysql.tidb_runaway_queries` doesn't have `start_time`/`sample_sql` columns yet.
-	MustExec(t, seV198, "select original_sql, time from mysql.tidb_runaway_queries")
 	err = txn.Commit(context.Background())
 	require.NoError(t, err)
 	unsetStoreBootstrapped(store.UUID())

@@ -1433,10 +1433,8 @@ func TestTruncatePartitionWithGlobalIndex(t *testing.T) {
 	tk3 := testkit.NewTestKit(t, store)
 	tk3.MustExec(`begin`)
 	tk3.MustExec(`use test`)
-	tk3.MustQuery(`explain format='brief' select b from test_global use index(idx_b) where b = 15`).CheckContain("IndexRangeScan")
-	tk3.MustQuery(`explain format='brief' select b from test_global use index(idx_b) where b = 15`).CheckContain("Selection")
-	tk3.MustQuery(`explain format='brief' select c from test_global use index(idx_c) where c = 15`).CheckContain("IndexRangeScan")
-	tk3.MustQuery(`explain format='brief' select c from test_global use index(idx_c) where c = 15`).CheckContain("Selection")
+	tk3.MustQuery(`explain format='brief' select b from test_global use index(idx_b) where b = 15`).CheckContain("Point_Get")
+	tk3.MustQuery(`explain format='brief' select c from test_global use index(idx_c) where c = 15`).CheckContain("Point_Get")
 	tk3.MustQuery(`select b from test_global use index(idx_b) where b = 15`).Check(testkit.Rows())
 	tk3.MustQuery(`select c from test_global use index(idx_c) where c = 15`).Check(testkit.Rows())
 	// Here it will fail with
@@ -3104,6 +3102,7 @@ func TestRemovePartitioningAutoIDs(t *testing.T) {
 	tk1 := testkit.NewTestKit(t, store)
 	tk2 := testkit.NewTestKit(t, store)
 	tk3 := testkit.NewTestKit(t, store)
+	tk4 := testkit.NewTestKit(t, store)
 
 	tk1.MustExec(`create schema ` + dbName)
 	tk1.MustExec(`use ` + dbName)
@@ -3117,8 +3116,6 @@ func TestRemovePartitioningAutoIDs(t *testing.T) {
 
 	waitFor := func(col int, tableName, s string) {
 		for {
-			tk4 := testkit.NewTestKit(t, store)
-			tk4.MustExec(`use test`)
 			sql := `admin show ddl jobs where db_name = '` + strings.ToLower(dbName) + `' and table_name = '` + tableName + `' and job_type = 'alter table remove partitioning'`
 			res := tk4.MustQuery(sql).Rows()
 			if len(res) == 1 && res[0][col] == s {

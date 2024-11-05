@@ -327,24 +327,24 @@ func TestVectorConstantExplain(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("CREATE TABLE t(c VECTOR);")
-	tk.MustQuery(`EXPLAIN SELECT VEC_COSINE_DISTANCE(c, '[1,2,3,4,5,6,7,8,9,10,11]') FROM t;`).Check(testkit.Rows(
-		"Projection_3 10000.00 root  vec_cosine_distance(test.t.c, [1,2,3,4,5,(6 more)...])->Column#3",
-		"└─TableReader_5 10000.00 root  data:TableFullScan_4",
-		"  └─TableFullScan_4 10000.00 cop[tikv] table:t keep order:false, stats:pseudo",
+	tk.MustQuery(`EXPLAIN format='brief' SELECT VEC_COSINE_DISTANCE(c, '[1,2,3,4,5,6,7,8,9,10,11]') FROM t;`).Check(testkit.Rows(
+		"Projection 10000.00 root  vec_cosine_distance(test.t.c, [1,2,3,4,5,(6 more)...])->Column#3",
+		"└─TableReader 10000.00 root  data:TableFullScan",
+		"  └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo",
 	))
-	tk.MustQuery(`EXPLAIN SELECT VEC_COSINE_DISTANCE(c, VEC_FROM_TEXT('[1,2,3,4,5,6,7,8,9,10,11]')) FROM t;`).Check(testkit.Rows(
-		"Projection_3 10000.00 root  vec_cosine_distance(test.t.c, [1,2,3,4,5,(6 more)...])->Column#3",
-		"└─TableReader_5 10000.00 root  data:TableFullScan_4",
-		"  └─TableFullScan_4 10000.00 cop[tikv] table:t keep order:false, stats:pseudo",
+	tk.MustQuery(`EXPLAIN format='brief' SELECT VEC_COSINE_DISTANCE(c, VEC_FROM_TEXT('[1,2,3,4,5,6,7,8,9,10,11]')) FROM t;`).Check(testkit.Rows(
+		"Projection 10000.00 root  vec_cosine_distance(test.t.c, [1,2,3,4,5,(6 more)...])->Column#3",
+		"└─TableReader 10000.00 root  data:TableFullScan",
+		"  └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo",
 	))
-	tk.MustQuery(`EXPLAIN SELECT VEC_COSINE_DISTANCE(c, '[1,2,3,4,5,6,7,8,9,10,11]') AS d FROM t ORDER BY d LIMIT 10;`).Check(testkit.Rows(
-		"Projection_6 10.00 root  vec_cosine_distance(test.t.c, [1,2,3,4,5,(6 more)...])->Column#3",
-		"└─Projection_13 10.00 root  test.t.c",
-		"  └─TopN_7 10.00 root  Column#4, offset:0, count:10",
-		"    └─Projection_14 10.00 root  test.t.c, vec_cosine_distance(test.t.c, [1,2,3,4,5,(6 more)...])->Column#4",
-		"      └─TableReader_12 10.00 root  data:TopN_11",
-		"        └─TopN_11 10.00 cop[tikv]  vec_cosine_distance(test.t.c, [1,2,3,4,5,(6 more)...]), offset:0, count:10",
-		"          └─TableFullScan_10 10000.00 cop[tikv] table:t keep order:false, stats:pseudo",
+	tk.MustQuery(`EXPLAIN format = 'brief' SELECT VEC_COSINE_DISTANCE(c, '[1,2,3,4,5,6,7,8,9,10,11]') AS d FROM t ORDER BY d LIMIT 10;`).Check(testkit.Rows(
+		"Projection 10.00 root  vec_cosine_distance(test.t.c, [1,2,3,4,5,(6 more)...])->Column#3",
+		"└─Projection 10.00 root  test.t.c",
+		"  └─TopN 10.00 root  Column#4, offset:0, count:10",
+		"    └─Projection 10.00 root  test.t.c, vec_cosine_distance(test.t.c, [1,2,3,4,5,(6 more)...])->Column#4",
+		"      └─TableReader 10.00 root  data:TopN",
+		"        └─TopN 10.00 cop[tikv]  vec_cosine_distance(test.t.c, [1,2,3,4,5,(6 more)...]), offset:0, count:10",
+		"          └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo",
 	))
 
 	// Prepare a large Vector string
@@ -3881,6 +3881,15 @@ func TestIssue51842(t *testing.T) {
 	require.Equal(t, 0, len(res))
 	res = tk.MustQuery("SELECT f1 FROM (SELECT NULLIF(v0.c0, 1371581446) AS f1 FROM v0, t0) AS t WHERE f1 <=> cast('2024-1-1 10:10:10' as datetime);").String() // test datetime
 	require.Equal(t, 0, len(res))
+
+	// Test issue 56744
+	tk.MustExec("drop table if exists lrr;")
+	tk.MustExec("create table lrr(`COL1` time DEFAULT NULL,`COL2` time DEFAULT NULL);")
+	tk.MustExec("insert into lrr(col2) values('-229:53:34');")
+	resultRows := tk.MustQuery("select * from lrr where col1 <=> null;").Rows() // test const null
+	require.Equal(t, 1, len(resultRows))
+	resultRows = tk.MustQuery("select * from lrr where null <=> col1;").Rows() // test const null
+	require.Equal(t, 1, len(resultRows))
 }
 
 func TestIssue44706(t *testing.T) {

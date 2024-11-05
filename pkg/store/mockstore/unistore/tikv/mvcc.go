@@ -293,7 +293,8 @@ func (store *MVCCStore) pessimisticLockInner(reqCtx *requestCtx, req *kvrpcpb.Pe
 	}
 	if !dup {
 		for i, m := range mutations {
-			lock, lockedWithConflictTS, err1 := store.buildPessimisticLock(m, items[i], req)
+			latestExtraMeta := store.getLatestExtraMetaForKey(reqCtx, m)
+			lock, lockedWithConflictTS, err1 := store.buildPessimisticLock(m, items[i], latestExtraMeta, req)
 			lockedWithConflictTSList = append(lockedWithConflictTSList, lockedWithConflictTS)
 			if err1 != nil {
 				return nil, err1
@@ -666,15 +667,19 @@ func (store *MVCCStore) handleCheckPessimisticErr(startTS uint64, err error, isF
 
 // buildPessimisticLock builds the lock according to the request and the current state of the key.
 // Returns the built lock, and the LockedWithConflictTS (if any, otherwise 0).
-func (store *MVCCStore) buildPessimisticLock(m *kvrpcpb.Mutation, item *badger.Item,
+func (store *MVCCStore) buildPessimisticLock(m *kvrpcpb.Mutation, item *badger.Item, latestExtraMeta mvcc.DBUserMeta,
 	req *kvrpcpb.PessimisticLockRequest) (*mvcc.Lock, uint64, error) {
 	var lockedWithConflictTS uint64 = 0
 
 	var writeConflictError error
 
 	if item != nil {
-		userMeta := mvcc.DBUserMeta(item.UserMeta())
 		if !req.Force {
+			userMeta := mvcc.DBUserMeta(item.UserMeta())
+			if latestExtraMeta != nil && latestExtraMeta.CommitTS() > userMeta.CommitTS() {
+				userMeta = latestExtraMeta
+			}
+
 			if userMeta.CommitTS() > req.ForUpdateTs {
 				writeConflictError = &kverrors.ErrConflict{
 					StartTS:          req.StartVersion,
@@ -732,6 +737,31 @@ func (store *MVCCStore) buildPessimisticLock(m *kvrpcpb.Mutation, item *badger.I
 		Primary: req.PrimaryLock,
 	}
 	return lock, lockedWithConflictTS, nil
+}
+
+// getLatestExtraMetaForKey returns the userMeta of the extra txn status key with the biggest commit ts.
+// It's used to assert whether a key has been written / locked by another transaction in the fair locking mechanism.
+// Theoretically, the rollback record should be ignored. But we have no way to check the rollback record in the
+// unistore. Returning record with a bigger commit ts may cause extra retry, but it's safe.
+func (store *MVCCStore) getLatestExtraMetaForKey(reqCtx *requestCtx, m *kvrpcpb.Mutation) mvcc.DBUserMeta {
+	it := reqCtx.getDBReader().GetExtraIter()
+	rbStartKey := mvcc.EncodeExtraTxnStatusKey(m.Key, math.MaxUint64)
+	rbEndKey := mvcc.EncodeExtraTxnStatusKey(m.Key, 0)
+
+	for it.Seek(rbStartKey); it.Valid(); it.Next() {
+		item := it.Item()
+		if len(rbEndKey) != 0 && bytes.Compare(item.Key(), rbEndKey) > 0 {
+			break
+		}
+		key := item.Key()
+		if len(key) == 0 || (key[0] != tableExtraPrefix && key[0] != metaExtraPrefix) {
+			continue
+		}
+
+		meta := mvcc.DBUserMeta(item.UserMeta())
+		return meta
+	}
+	return nil
 }
 
 // Prewrite implements the MVCCStore interface.

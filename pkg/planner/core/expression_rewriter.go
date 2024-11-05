@@ -472,6 +472,8 @@ func (er *expressionRewriter) buildSubquery(ctx context.Context, planCtx *exprRe
 		b.outerSchemas = append(b.outerSchemas, outerSchema)
 		b.outerNames = append(b.outerNames, er.names)
 		b.outerBlockExpand = append(b.outerBlockExpand, b.currentBlockExpand)
+		// set it to nil, otherwise, inner qb will use outer expand meta to rewrite expressions.
+		b.currentBlockExpand = nil
 		defer func() {
 			b.outerSchemas = b.outerSchemas[0 : len(b.outerSchemas)-1]
 			b.outerNames = b.outerNames[0 : len(b.outerNames)-1]
@@ -1244,6 +1246,11 @@ func (er *expressionRewriter) handleInSubquery(ctx context.Context, planCtx *exp
 		copy(join.OutputNames(), planCtx.plan.OutputNames())
 		copy(join.OutputNames()[planCtx.plan.Schema().Len():], agg.OutputNames())
 		join.AttachOnConds(expression.SplitCNFItems(checkCondition))
+		// set FullSchema and FullNames for this join
+		if left, ok := planCtx.plan.(*logicalop.LogicalJoin); ok && left.FullSchema != nil {
+			join.FullSchema = left.FullSchema
+			join.FullNames = left.FullNames
+		}
 		// Set join hint for this join.
 		if planCtx.builder.TableHints() != nil {
 			join.SetPreferredJoinTypeAndOrder(planCtx.builder.TableHints())

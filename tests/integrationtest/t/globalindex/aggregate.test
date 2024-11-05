@@ -20,3 +20,13 @@ select avg(id), max(id), min(id) from p use index(idx) group by c;
 explain format='brief' select avg(id), max(id), min(id) from p partition(p0) use index(idx) group by c;
 select avg(id), max(id), min(id) from p partition(p0) use index(idx) group by c;
 
+
+alter table p add unique index idx1(c, id) global;
+
+explain format='brief' select count(*), max(id), min(id) from p use index(idx1);
+select count(*), max(id), min(id) from p use index(idx1);
+
+explain format='brief' select avg(id), max(id), min(id) from p use index(idx1) group by c;
+--sorted_result
+select avg(id), max(id), min(id) from p use index(idx1) group by c;
+

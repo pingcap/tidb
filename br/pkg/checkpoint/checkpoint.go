@@ -262,6 +262,7 @@ func (r *CheckpointRunner[K, V]) WaitForFinish(ctx context.Context, flush bool) 
 	r.wg.Wait()
 	// remove the checkpoint lock
 	r.checkpointStorage.deleteLock(ctx)
+	r.checkpointStorage.close()
 }
 
 // Send the checksum to the flush goroutine, and reset the CheckpointRunner's checksum

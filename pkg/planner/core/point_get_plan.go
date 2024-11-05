@@ -401,25 +401,11 @@ func (p *PointGetPlan) PrunePartitions(sctx sessionctx.Context) bool {
 		dVal.Copy(&row[p.HandleColOffset])
 	}
 	partIdx, err := pt.GetPartitionIdxByRow(sctx.GetExprCtx().GetEvalCtx(), row)
-	if err != nil {
+	partIdx, err = pt.Meta().Partition.ReplaceWithOverlappingPartitionIdx(partIdx, err)
+	if err != nil || !isInExplicitPartitions(pi, partIdx, p.PartitionNames) {
 		partIdx = -1
 		p.PartitionIdx = &partIdx
 		return true
-	}
-	if len(p.PartitionNames) > 0 {
-		found := false
-		partName := pi.Definitions[partIdx].Name.L
-		for _, name := range p.PartitionNames {
-			if name.L == partName {
-				found = true
-				break
-			}
-		}
-		if !found {
-			partIdx = -1
-			p.PartitionIdx = &partIdx
-			return true
-		}
 	}
 	p.PartitionIdx = &partIdx
 	return false
@@ -684,6 +670,7 @@ func (p *BatchPointGetPlan) getPartitionIdxs(sctx sessionctx.Context) []int {
 			rows[i][j].Copy(&r[p.IndexInfo.Columns[j].Offset])
 		}
 		pIdx, err := pTbl.GetPartitionIdxByRow(sctx.GetExprCtx().GetEvalCtx(), r)
+		pIdx, err = pTbl.Meta().Partition.ReplaceWithOverlappingPartitionIdx(pIdx, err)
 		if err != nil {
 			// Skip on any error, like:
 			// No matching partition, overflow etc.
@@ -782,6 +769,7 @@ func (p *BatchPointGetPlan) PrunePartitionsAndValues(sctx sessionctx.Context) ([
 				}
 				d.Copy(&r[p.HandleColOffset])
 				pIdx, err := pTbl.GetPartitionIdxByRow(sctx.GetExprCtx().GetEvalCtx(), r)
+				pIdx, err = pi.ReplaceWithOverlappingPartitionIdx(pIdx, err)
 				if err != nil ||
 					!isInExplicitPartitions(pi, pIdx, p.PartitionNames) ||
 					(p.SinglePartition &&
@@ -2052,18 +2040,18 @@ func tryDeletePointPlan(ctx base.PlanContext, delStmt *ast.DeleteStmt, resolveCt
 		if ctx.GetSessionVars().TxnCtx.IsPessimistic {
 			pointGet.Lock, pointGet.LockWaitTime = getLockWaitTime(ctx, &ast.SelectLockInfo{LockType: ast.SelectLockForUpdate})
 		}
-		return buildPointDeletePlan(ctx, pointGet, pointGet.dbName, pointGet.TblInfo)
+		return buildPointDeletePlan(ctx, pointGet, pointGet.dbName, pointGet.TblInfo, delStmt.IgnoreErr)
 	}
 	if batchPointGet := tryWhereIn2BatchPointGet(ctx, selStmt, resolveCtx); batchPointGet != nil {
 		if ctx.GetSessionVars().TxnCtx.IsPessimistic {
 			batchPointGet.Lock, batchPointGet.LockWaitTime = getLockWaitTime(ctx, &ast.SelectLockInfo{LockType: ast.SelectLockForUpdate})
 		}
-		return buildPointDeletePlan(ctx, batchPointGet, batchPointGet.dbName, batchPointGet.TblInfo)
+		return buildPointDeletePlan(ctx, batchPointGet, batchPointGet.dbName, batchPointGet.TblInfo, delStmt.IgnoreErr)
 	}
 	return nil
 }
 
-func buildPointDeletePlan(ctx base.PlanContext, pointPlan base.PhysicalPlan, dbName string, tbl *model.TableInfo) base.Plan {
+func buildPointDeletePlan(ctx base.PlanContext, pointPlan base.PhysicalPlan, dbName string, tbl *model.TableInfo, ignoreErr bool) base.Plan {
 	if checkFastPlanPrivilege(ctx, dbName, tbl.Name.L, mysql.SelectPriv, mysql.DeletePriv) != nil {
 		return nil
 	}
@@ -2083,6 +2071,7 @@ func buildPointDeletePlan(ctx base.PlanContext, pointPlan base.PhysicalPlan, dbN
 	delPlan := Delete{
 		SelectPlan:     pointPlan,
 		TblColPosInfos: []TblColPosInfo{colPosInfo},
+		IgnoreErr:      ignoreErr,
 	}.Init(ctx)
 	tblID2Table := map[int64]table.Table{tbl.ID: t}
 	err = delPlan.buildOnDeleteFKTriggers(ctx, is, tblID2Table)

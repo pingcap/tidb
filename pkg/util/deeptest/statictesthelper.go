@@ -68,7 +68,7 @@ func (h *staticTestHelper) assertRecursivelyNotEqual(t require.TestingT, valA, v
 	// This function assumes that `a` and `b` are the same type
 	switch valA.Type().Kind() {
 	case reflect.Struct:
-		for i := 0; i < valA.NumField(); i++ {
+		for i := range valA.NumField() {
 			h.assertRecursivelyNotEqual(t, valA.Field(i), valB.Field(i), path+"."+valA.Type().Field(i).Name)
 		}
 	case reflect.Ptr:
@@ -82,13 +82,13 @@ func (h *staticTestHelper) assertRecursivelyNotEqual(t require.TestingT, valA, v
 
 		if !h.shouldComparePointer(path) {
 			minLen := min(valA.Len(), valB.Len())
-			for i := 0; i < minLen; i++ {
+			for i := range minLen {
 				h.assertRecursivelyNotEqual(t, valA.Index(i), valB.Index(i), path+fmt.Sprintf("[%d]", i))
 			}
 		}
 	case reflect.Array:
 		minLen := min(valA.Len(), valB.Len())
-		for i := 0; i < minLen; i++ {
+		for i := range minLen {
 			h.assertRecursivelyNotEqual(t, valA.Index(i), valB.Index(i), path+fmt.Sprintf("[%d]", i))
 		}
 	case reflect.Bool:
@@ -139,7 +139,7 @@ func (h *staticTestHelper) assertDeepClonedEqual(t require.TestingT, valA, valB 
 	// This function assumes that `a` and `b` are the same type
 	switch valA.Type().Kind() {
 	case reflect.Struct:
-		for i := 0; i < valA.NumField(); i++ {
+		for i := range valA.NumField() {
 			h.assertDeepClonedEqual(t, valA.Field(i), valB.Field(i), path+"."+valA.Type().Field(i).Name)
 		}
 	case reflect.Ptr:
@@ -166,13 +166,13 @@ func (h *staticTestHelper) assertDeepClonedEqual(t require.TestingT, valA, valB 
 			require.Equal(t, valA.Pointer(), valB.Pointer(), path+" should be the same")
 		} else {
 			require.NotEqual(t, valA.Pointer(), valB.Pointer(), path+" should not be the same")
-			for i := 0; i < valA.Len(); i++ {
+			for i := range valA.Len() {
 				h.assertDeepClonedEqual(t, valA.Index(i), valB.Index(i), path+fmt.Sprintf("[%d]", i))
 			}
 		}
 	case reflect.Array:
 		require.Equal(t, valA.Len(), valB.Len(), path+" should have the same length")
-		for i := 0; i < valA.Len(); i++ {
+		for i := range valA.Len() {
 			h.assertDeepClonedEqual(t, valA.Index(i), valB.Index(i), path+fmt.Sprintf("[%d]", i))
 		}
 	case reflect.Bool:

@@ -37,15 +37,15 @@ const (
 	DistanceMetricInnerProduct DistanceMetric = "INNER_PRODUCT"
 )
 
-// FnNameToDistanceMetric maps a distance function name to the distance metric.
+// IndexableFnNameToDistanceMetric maps a distance function name to the distance metric.
 // Only indexable distance functions should be listed here!
-var FnNameToDistanceMetric = map[string]DistanceMetric{
+var IndexableFnNameToDistanceMetric = map[string]DistanceMetric{
 	ast.VecCosineDistance: DistanceMetricCosine,
 	ast.VecL2Distance:     DistanceMetricL2,
 }
 
-// DistanceMetricToFnName maps a distance metric to the distance function name.
-var DistanceMetricToFnName = map[DistanceMetric]string{
+// IndexableDistanceMetricToFnName maps a distance metric to the distance function name.
+var IndexableDistanceMetricToFnName = map[DistanceMetric]string{
 	DistanceMetricCosine: ast.VecCosineDistance,
 	DistanceMetricL2:     ast.VecL2Distance,
 }
@@ -53,7 +53,7 @@ var DistanceMetricToFnName = map[DistanceMetric]string{
 // VectorIndexInfo is the information of vector index of a column.
 type VectorIndexInfo struct {
 	// Dimension is the dimension of the vector.
-	Dimension uint64 `json:"dimension"` // Set to 0 when initially parsed from comment. Will be assigned to flen later.
+	Dimension uint64 `json:"dimension"`
 	// DistanceMetric is the distance metric used by the index.
 	DistanceMetric DistanceMetric `json:"distance_metric"`
 }

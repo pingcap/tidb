@@ -3002,7 +3002,7 @@ a	b
 2	2
 explain format='brief' select * from t where a in (1,2) and b in (1,2);
 id	estRows	task	access object	operator info
-TableReader	3.43	root	partition:p1,p2,pDef	data:Selection
+TableReader	3.43	root	partition:all	data:Selection
 └─Selection	3.43	cop[tikv]		in(listdefaultprune.t.a, 1, 2), in(listdefaultprune.t.b, 1, 2)
   └─TableFullScan	7.00	cop[tikv]	table:t	keep order:false
 select * from t where a in (1) and b in (1);
@@ -3033,7 +3033,7 @@ a	b
 2	2
 explain format='brief' select * from t where a in (1,2) and b in (1,2);
 id	estRows	task	access object	operator info
-TableReader	3.43	root	partition:p1,p2,pDef	data:Selection
+TableReader	3.43	root	partition:all	data:Selection
 └─Selection	3.43	cop[tikv]		in(listdefaultprune.t.a, 1, 2), in(listdefaultprune.t.b, 1, 2)
   └─TableFullScan	7.00	cop[tikv]	table:t	keep order:false
 drop table t;

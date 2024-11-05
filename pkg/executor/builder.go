@@ -957,12 +957,11 @@ func (b *executorBuilder) buildInsert(v *plannercore.Insert) exec.Executor {
 	if b.err != nil {
 		return nil
 	}
-	var baseExec exec.BaseExecutor
+	var children []exec.Executor
 	if selectExec != nil {
-		baseExec = exec.NewBaseExecutor(b.ctx, nil, v.ID(), selectExec)
-	} else {
-		baseExec = exec.NewBaseExecutor(b.ctx, nil, v.ID())
+		children = append(children, selectExec)
 	}
+	baseExec := exec.NewBaseExecutor(b.ctx, nil, v.ID(), children...)
 	baseExec.SetInitCap(chunk.ZeroCapacity)
 
 	ivs := &InsertValues{
@@ -975,6 +974,7 @@ func (b *executorBuilder) buildInsert(v *plannercore.Insert) exec.Executor {
 		hasRefCols:                v.NeedFillDefaultValue,
 		SelectExec:                selectExec,
 		rowLen:                    v.RowLen,
+		ignoreErr:                 v.IgnoreErr,
 	}
 	err := ivs.initInsertColumns()
 	if err != nil {
@@ -996,7 +996,6 @@ func (b *executorBuilder) buildInsert(v *plannercore.Insert) exec.Executor {
 	insert := &InsertExec{
 		InsertValues: ivs,
 		OnDuplicate:  append(v.OnDuplicate, v.GenCols.OnDuplicates...),
-		IgnoreErr:    v.IgnoreErr,
 	}
 	return insert
 }
@@ -1016,17 +1015,16 @@ func (b *executorBuilder) buildImportInto(v *plannercore.ImportInto) exec.Execut
 
 	var (
 		selectExec exec.Executor
-		base       exec.BaseExecutor
+		children   []exec.Executor
 	)
 	if v.SelectPlan != nil {
 		selectExec = b.build(v.SelectPlan)
 		if b.err != nil {
 			return nil
 		}
-		base = exec.NewBaseExecutor(b.ctx, v.Schema(), v.ID(), selectExec)
-	} else {
-		base = exec.NewBaseExecutor(b.ctx, v.Schema(), v.ID())
+		children = append(children, selectExec)
 	}
+	base := exec.NewBaseExecutor(b.ctx, v.Schema(), v.ID(), children...)
 	executor, err := newImportIntoExec(base, selectExec, b.ctx, v, tbl)
 	if err != nil {
 		b.err = err
@@ -1516,13 +1514,28 @@ func (b *executorBuilder) buildHashJoinV2(v *plannercore.PhysicalHashJoin) exec.
 		return nil
 	}
 
+	joinOtherCondition := v.OtherConditions
+	joinLeftCondition := v.LeftConditions
+	joinRightCondition := v.RightConditions
+	if len(joinOtherCondition) == 0 {
+		// sometimes the OtherCondtition could be a not nil slice with length = 0
+		// in HashJoinV2, it is assumed that if there is no other condition, e.HashJoinCtxV2.OtherCondition should be nil
+		joinOtherCondition = nil
+	}
+	if len(joinLeftCondition) == 0 {
+		joinLeftCondition = nil
+	}
+	if len(joinRightCondition) == 0 {
+		joinRightCondition = nil
+	}
+
 	e := &join.HashJoinV2Exec{
 		BaseExecutor:          exec.NewBaseExecutor(b.ctx, v.Schema(), v.ID(), leftExec, rightExec),
 		ProbeSideTupleFetcher: &join.ProbeSideTupleFetcherV2{},
 		ProbeWorkers:          make([]*join.ProbeWorkerV2, v.Concurrency),
 		BuildWorkers:          make([]*join.BuildWorkerV2, v.Concurrency),
 		HashJoinCtxV2: &join.HashJoinCtxV2{
-			OtherCondition: v.OtherConditions,
+			OtherCondition: joinOtherCondition,
 		},
 	}
 	e.HashJoinCtxV2.SessCtx = b.ctx
@@ -1543,12 +1556,12 @@ func (b *executorBuilder) buildHashJoinV2(v *plannercore.PhysicalHashJoin) exec.
 	joinedTypes = append(joinedTypes, rhsTypes...)
 
 	if v.InnerChildIdx == 1 {
-		if len(v.RightConditions) > 0 {
+		if joinRightCondition != nil {
 			b.err = errors.Annotate(exeerrors.ErrBuildExecutor, "join's inner condition should be empty")
 			return nil
 		}
 	} else {
-		if len(v.LeftConditions) > 0 {
+		if joinLeftCondition != nil {
 			b.err = errors.Annotate(exeerrors.ErrBuildExecutor, "join's inner condition should be empty")
 			return nil
 		}
@@ -1560,21 +1573,21 @@ func (b *executorBuilder) buildHashJoinV2(v *plannercore.PhysicalHashJoin) exec.
 		if v.InnerChildIdx == 1 {
 			buildSideExec, buildKeys = leftExec, v.LeftJoinKeys
 			e.ProbeSideTupleFetcher.ProbeSideExec, probeKeys = rightExec, v.RightJoinKeys
-			e.HashJoinCtxV2.BuildFilter = v.LeftConditions
+			e.HashJoinCtxV2.BuildFilter = joinLeftCondition
 		} else {
 			buildSideExec, buildKeys = rightExec, v.RightJoinKeys
 			e.ProbeSideTupleFetcher.ProbeSideExec, probeKeys = leftExec, v.LeftJoinKeys
-			e.HashJoinCtxV2.BuildFilter = v.RightConditions
+			e.HashJoinCtxV2.BuildFilter = joinRightCondition
 		}
 	} else {
 		if v.InnerChildIdx == 0 {
 			buildSideExec, buildKeys = leftExec, v.LeftJoinKeys
 			e.ProbeSideTupleFetcher.ProbeSideExec, probeKeys = rightExec, v.RightJoinKeys
-			e.HashJoinCtxV2.ProbeFilter = v.RightConditions
+			e.HashJoinCtxV2.ProbeFilter = joinRightCondition
 		} else {
 			buildSideExec, buildKeys = rightExec, v.RightJoinKeys
 			e.ProbeSideTupleFetcher.ProbeSideExec, probeKeys = leftExec, v.LeftJoinKeys
-			e.HashJoinCtxV2.ProbeFilter = v.LeftConditions
+			e.HashJoinCtxV2.ProbeFilter = joinLeftCondition
 		}
 	}
 	probeKeyColIdx := make([]int, len(probeKeys))
@@ -1600,9 +1613,9 @@ func (b *executorBuilder) buildHashJoinV2(v *plannercore.PhysicalHashJoin) exec.
 	e.LUsed = append(e.LUsed, childrenUsedSchema[0]...)
 	e.RUsed = make([]int, 0, len(childrenUsedSchema[1]))
 	e.RUsed = append(e.RUsed, childrenUsedSchema[1]...)
-	if v.OtherConditions != nil {
+	if joinOtherCondition != nil {
 		leftColumnSize := v.Children()[0].Schema().Len()
-		e.LUsedInOtherCondition, e.RUsedInOtherCondition = extractUsedColumnsInJoinOtherCondition(v.OtherConditions, leftColumnSize)
+		e.LUsedInOtherCondition, e.RUsedInOtherCondition = extractUsedColumnsInJoinOtherCondition(joinOtherCondition, leftColumnSize)
 	}
 	// todo add partition hash join exec
 	executor_metrics.ExecutorCountHashJoinExec.Inc()
@@ -2689,6 +2702,7 @@ func (b *executorBuilder) buildDelete(v *plannercore.Delete) exec.Executor {
 		tblID2Table:    tblID2table,
 		IsMultiTable:   v.IsMultiTable,
 		tblColPosInfos: v.TblColPosInfos,
+		ignoreErr:      v.IgnoreErr,
 	}
 	deleteExec.fkChecks, b.err = buildTblID2FKCheckExecs(b.ctx, tblID2table, v.FKChecks)
 	if b.err != nil {

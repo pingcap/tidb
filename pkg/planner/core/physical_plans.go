@@ -21,6 +21,7 @@ import (
 	"unsafe"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/executor/join/joinversion"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/expression/aggregation"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -51,6 +52,8 @@ import (
 	"github.com/pingcap/tidb/pkg/util/tracing"
 	"github.com/pingcap/tipb/go-tipb"
 )
+
+//go:generate go run ./generator/plan_cache/plan_clone_generator.go -- plan_clone_generated.go
 
 var (
 	_ base.PhysicalPlan = &PhysicalSelection{}
@@ -204,6 +207,11 @@ func (pi *PhysPlanPartInfo) MemoryUsage() (sum int64) {
 		sum += colName.MemoryUsage()
 	}
 	return
+}
+
+// SetTablePlanForTest sets tablePlan field for test usage only
+func (p *PhysicalTableReader) SetTablePlanForTest(pp base.PhysicalPlan) {
+	p.tablePlan = pp
 }
 
 // GetTablePlan exports the tablePlan.
@@ -955,6 +963,19 @@ type PhysicalTableScan struct {
 	// for runtime filter
 	runtimeFilterList []*RuntimeFilter `plan-cache-clone:"must-nil"` // plan with runtime filter is not cached
 	maxWaitTimeMs     int
+
+	AnnIndexExtra *VectorIndexExtra `plan-cache-clone:"must-nil"` // MPP plan should not be cached.
+}
+
+// VectorIndexExtra is the extra information for vector index.
+type VectorIndexExtra struct {
+	// Note: Even if IndexInfo is not nil, it doesn't mean the VectorSearch push down
+	// will happen because optimizer will explore all available vector indexes and fill them
+	// in IndexInfo, and later invalid plans are filtered out according to a topper executor.
+	IndexInfo *model.IndexInfo
+
+	// Not nil if there is an VectorSearch push down.
+	PushDownQueryInfo *tipb.ANNQueryInfo
 }
 
 // Clone implements op.PhysicalPlan interface.
@@ -1457,8 +1478,34 @@ type PhysicalHashJoin struct {
 	runtimeFilterList []*RuntimeFilter `plan-cache-clone:"must-nil"` // plan with runtime filter is not cached
 }
 
+func (p *PhysicalHashJoin) isGAForHashJoinV2() bool {
+	// nullaware join
+	if len(p.LeftNAJoinKeys) > 0 {
+		return false
+	}
+	// cross join
+	if len(p.LeftJoinKeys) == 0 {
+		return false
+	}
+	// join with null equal condition
+	for _, value := range p.IsNullEQ {
+		if value {
+			return false
+		}
+	}
+	switch p.JoinType {
+	case logicalop.LeftOuterJoin, logicalop.RightOuterJoin, logicalop.InnerJoin:
+		return true
+	default:
+		return false
+	}
+}
+
 // CanUseHashJoinV2 returns true if current join is supported by hash join v2
 func (p *PhysicalHashJoin) CanUseHashJoinV2() bool {
+	if !p.isGAForHashJoinV2() && !joinversion.UseHashJoinV2ForNonGAJoin {
+		return false
+	}
 	switch p.JoinType {
 	case logicalop.LeftOuterJoin, logicalop.RightOuterJoin, logicalop.InnerJoin:
 		// null aware join is not supported yet

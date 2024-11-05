@@ -3,6 +3,7 @@ drop table if exists t;
 CREATE TABLE `t` (
 `a` int(11) DEFAULT NULL,
 `b` int(11) DEFAULT NULL,
+UNIQUE KEY `idx` (`a`) GLOBAL,
 UNIQUE KEY `idx1` (`b`) GLOBAL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 PARTITION BY HASH (`a`) PARTITIONS 5;
@@ -41,12 +42,43 @@ select b from t partition(p0, p1) use index(idx1) where b <= 2;
 b
 1
 2
+explain select a from t use index(idx) where a > 2;
+id	estRows	task	access object	operator info
+Projection_5	3333.33	root		globalindex__mem_index_reader.t.a
+└─UnionScan_6	3333.33	root		gt(globalindex__mem_index_reader.t.a, 2)
+  └─IndexReader_9	3333.33	root	partition:all	index:IndexRangeScan_7
+    └─IndexRangeScan_7	3333.33	cop[tikv]	table:t, index:idx(a)	range:(2,+inf], keep order:false, stats:pseudo
+select a from t use index(idx) where a > 2;
+a
+3
+4
+5
+explain select a from t partition(p0) use index(idx) where a <= 2;
+id	estRows	task	access object	operator info
+Projection_5	3323.33	root	NULL	globalindex__mem_index_reader.t.a
+└─UnionScan_6	3323.33	root	NULL	le(globalindex__mem_index_reader.t.a, 2)
+  └─IndexReader_10	3323.33	root	partition:p0	index:Selection_9
+    └─Selection_9	3323.33	cop[tikv]	NULL	in(globalindex__mem_index_reader.t._tidb_tid, tid0)
+      └─IndexRangeScan_7	3323.33	cop[tikv]	table:t, index:idx(a)	range:[-inf,2], keep order:false, stats:pseudo
+select a from t partition(p0) use index(idx) where a <= 2;
+a
+explain select a from t partition(p0, p1) use index(idx) where a <= 2;
+id	estRows	task	access object	operator info
+Projection_5	3323.33	root	NULL	globalindex__mem_index_reader.t.a
+└─UnionScan_6	3323.33	root	NULL	le(globalindex__mem_index_reader.t.a, 2)
+  └─IndexReader_10	3323.33	root	partition:p0,p1	index:Selection_9
+    └─Selection_9	3323.33	cop[tikv]	NULL	in(globalindex__mem_index_reader.t._tidb_tid, tid0, tid1)
+      └─IndexRangeScan_7	3323.33	cop[tikv]	table:t, index:idx(a)	range:[-inf,2], keep order:false, stats:pseudo
+select a from t partition(p0, p1) use index(idx) where a <= 2;
+a
+1
 rollback;
 # CommonHandle
 drop table if exists t;
 CREATE TABLE `t` (
 `a` year(4) primary key CLUSTERED,
 `b` int(11) DEFAULT NULL,
+UNIQUE KEY `idx` (`a`) GLOBAL,
 UNIQUE KEY `idx1` (`b`) GLOBAL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 PARTITION BY HASH (`a`) PARTITIONS 5;
@@ -85,4 +117,34 @@ select b from t partition(p0, p1) use index(idx1) where b <= 2;
 b
 1
 2
+explain select a from t use index(idx) where a > 2002;
+id	estRows	task	access object	operator info
+Projection_5	3333.33	root		globalindex__mem_index_reader.t.a
+└─UnionScan_6	3333.33	root		gt(globalindex__mem_index_reader.t.a, 2002)
+  └─IndexReader_9	3333.33	root	partition:all	index:IndexRangeScan_7
+    └─IndexRangeScan_7	3333.33	cop[tikv]	table:t, index:idx(a)	range:(2002,+inf], keep order:false, stats:pseudo
+select a from t use index(idx) where a > 2002;
+a
+2003
+2004
+2005
+explain select a from t partition(p0) use index(idx) where a <= 2002;
+id	estRows	task	access object	operator info
+Projection_5	3323.33	root	NULL	globalindex__mem_index_reader.t.a
+└─UnionScan_6	3323.33	root	NULL	le(globalindex__mem_index_reader.t.a, 2002)
+  └─IndexReader_10	3323.33	root	partition:p0	index:Selection_9
+    └─Selection_9	3323.33	cop[tikv]	NULL	in(globalindex__mem_index_reader.t._tidb_tid, tid0)
+      └─IndexRangeScan_7	3323.33	cop[tikv]	table:t, index:idx(a)	range:[-inf,2002], keep order:false, stats:pseudo
+select a from t partition(p0) use index(idx) where a <= 2002;
+a
+explain select a from t partition(p0, p1) use index(idx) where a <= 2002;
+id	estRows	task	access object	operator info
+Projection_5	3323.33	root	NULL	globalindex__mem_index_reader.t.a
+└─UnionScan_6	3323.33	root	NULL	le(globalindex__mem_index_reader.t.a, 2002)
+  └─IndexReader_10	3323.33	root	partition:p0,p1	index:Selection_9
+    └─Selection_9	3323.33	cop[tikv]	NULL	in(globalindex__mem_index_reader.t._tidb_tid, tid0, tid1)
+      └─IndexRangeScan_7	3323.33	cop[tikv]	table:t, index:idx(a)	range:[-inf,2002], keep order:false, stats:pseudo
+select a from t partition(p0, p1) use index(idx) where a <= 2002;
+a
+2001
 rollback;

@@ -187,7 +187,7 @@ func TestSetLevel(t *testing.T) {
 func TestSlowQueryLoggerAndGeneralLoggerCreation(t *testing.T) {
 	var prop *log.ZapProperties
 	var err error
-	for i := 0; i < 2; i++ {
+	for i := range 2 {
 		level := "Error"
 		conf := NewLogConfig(level, DefaultLogFormat, "", "", EmptyFileLogConfig, false)
 		if i == 0 {
@@ -285,7 +285,7 @@ func TestProxyFields(t *testing.T) {
 			require.NoError(t, os.Unsetenv(env))
 		}
 
-		for i := 0; i < 3; i++ {
+		for i := range 3 {
 			if (1<<i)&mask != 0 {
 				require.NoError(t, os.Setenv(envs[i], envPreset[i]))
 			}
@@ -320,7 +320,7 @@ func prepareStdoutLogger(t *testing.T) (*os.File, string) {
 func TestSampleLoggerFactory(t *testing.T) {
 	file, filename := prepareStdoutLogger(t)
 	fac := SampleLoggerFactory(time.Minute, 3, zap.String(LogFieldCategory, "ddl"))
-	for i := 0; i < 100; i++ {
+	for range 100 {
 		fac().Info("sample log test")
 	}
 	require.NoError(t, file.Close())

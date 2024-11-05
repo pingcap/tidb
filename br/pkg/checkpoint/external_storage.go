@@ -57,6 +57,8 @@ func newExternalCheckpointStorage(
 	return checkpointStorage, nil
 }
 
+func (s *externalCheckpointStorage) close() {}
+
 func (s *externalCheckpointStorage) flushCheckpointData(ctx context.Context, data []byte) error {
 	fname := fmt.Sprintf("%s/%x.cpt", s.CheckpointDataDir, uuid.New())
 	return s.storage.WriteFile(ctx, fname, data)

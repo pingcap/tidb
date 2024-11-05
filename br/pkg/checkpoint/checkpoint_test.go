@@ -326,6 +326,8 @@ func TestCheckpointRestoreRunner(t *testing.T) {
 
 	checkpointRunner.WaitForFinish(ctx, true)
 
+	se, err = g.CreateSession(s.Mock.Storage)
+	require.NoError(t, err)
 	respCount := 0
 	checker := func(tableID int64, resp checkpoint.RestoreValueType) {
 		require.NotNil(t, resp)
@@ -395,6 +397,8 @@ func TestCheckpointRunnerRetry(t *testing.T) {
 	err = checkpointRunner.FlushChecksum(ctx, 3, 3, 3, 3)
 	require.NoError(t, err)
 	checkpointRunner.WaitForFinish(ctx, true)
+	se, err = g.CreateSession(s.Mock.Storage)
+	require.NoError(t, err)
 	recordSet := make(map[string]int)
 	_, err = checkpoint.LoadCheckpointDataForSnapshotRestore(ctx, se.GetSessionCtx().GetRestrictedSQLExecutor(),
 		func(tableID int64, rangeKey checkpoint.RestoreValueType) {
@@ -433,6 +437,8 @@ func TestCheckpointRunnerNoRetry(t *testing.T) {
 	require.NoError(t, err)
 	time.Sleep(time.Second)
 	checkpointRunner.WaitForFinish(ctx, true)
+	se, err = g.CreateSession(s.Mock.Storage)
+	require.NoError(t, err)
 	recordSet := make(map[string]int)
 	_, err = checkpoint.LoadCheckpointDataForSnapshotRestore(ctx, se.GetSessionCtx().GetRestrictedSQLExecutor(),
 		func(tableID int64, rangeKey checkpoint.RestoreValueType) {
@@ -501,6 +507,8 @@ func TestCheckpointLogRestoreRunner(t *testing.T) {
 
 	checkpointRunner.WaitForFinish(ctx, true)
 
+	se, err = g.CreateSession(s.Mock.Storage)
+	require.NoError(t, err)
 	respCount := 0
 	checker := func(metaKey string, resp checkpoint.LogRestoreValueMarshaled) {
 		require.NotNil(t, resp)

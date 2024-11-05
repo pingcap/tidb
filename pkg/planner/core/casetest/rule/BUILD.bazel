@@ -21,7 +21,6 @@ go_test(
         "//pkg/expression/exprstatic",
         "//pkg/parser/ast",
         "//pkg/parser/mysql",
-        "//pkg/planner/util/coretestsdk",
         "//pkg/planner/util/coreusage",
         "//pkg/testkit",
         "//pkg/testkit/testdata",

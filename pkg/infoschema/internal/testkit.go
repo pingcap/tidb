@@ -223,10 +223,10 @@ func MockPolicyRefInfo(t *testing.T, store kv.Storage, policyName string) *model
 }
 
 // AddTable add mock table for testing.
-func AddTable(t testing.TB, store kv.Storage, dbInfo *model.DBInfo, tblInfo *model.TableInfo) {
+func AddTable(t testing.TB, store kv.Storage, dbID int64, tblInfo *model.TableInfo) {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
 	err := kv.RunInNewTxn(ctx, store, true, func(ctx context.Context, txn kv.Transaction) error {
-		err := meta.NewMutator(txn).CreateTableOrView(dbInfo.ID, tblInfo)
+		err := meta.NewMutator(txn).CreateTableOrView(dbID, tblInfo)
 		require.NoError(t, err)
 		return errors.Trace(err)
 	})

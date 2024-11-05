@@ -140,6 +140,18 @@ drop table if exists t;
 create table t (a blob(10000), b timestamp, index idx(a(3069), b));
 create table t (a blob(10000), b timestamp, index idx(a(3068), b));
 drop table if exists t;
+create table posts (id int auto_increment primary key, title varchar(500) character set utf8, subtitle varchar(500) character set utf8, unique key(title, subtitle));
+-- error 1071
+alter table posts convert to character set utf8mb4;
+drop table if exists posts;
+create table t(a varchar(1000) character set utf8, primary key(a));
+-- error 1071
+alter table t convert to character set utf8mb4;
+drop table if exists t;
+create table t(a varchar(1000) character set utf8, key(a));
+-- error 1071
+alter table t convert to character set utf8mb4;
+drop table if exists t;
 
 # TestMultiStmts
 drop table if exists t1; create table t1(id int ); insert into t1 values (1);

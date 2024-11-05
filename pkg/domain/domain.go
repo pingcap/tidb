@@ -37,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/pkg/bindinfo"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/ddl"
+	"github.com/pingcap/tidb/pkg/ddl/notifier"
 	"github.com/pingcap/tidb/pkg/ddl/placement"
 	"github.com/pingcap/tidb/pkg/ddl/schematracker"
 	"github.com/pingcap/tidb/pkg/ddl/systable"
@@ -148,6 +149,7 @@ type Domain struct {
 	statsLease      time.Duration
 	ddl             ddl.DDL
 	ddlExecutor     ddl.Executor
+	ddlNotifier     *notifier.DDLNotifier
 	info            *infosync.InfoSyncer
 	globalCfgSyncer *globalconfigsync.GlobalConfigSyncer
 	m               syncutil.Mutex
@@ -300,15 +302,13 @@ func (do *Domain) loadInfoSchema(startTS uint64, isSnapshot bool) (infoschema.In
 		schemaTs = 0
 	}
 
-	var oldIsV2 bool
 	enableV2 := variable.SchemaCacheSize.Load() > 0
 	currentSchemaVersion := int64(0)
-	if oldInfoSchema := do.infoCache.GetLatest(); oldInfoSchema != nil {
+	oldInfoSchema := do.infoCache.GetLatest()
+	if oldInfoSchema != nil {
 		currentSchemaVersion = oldInfoSchema.SchemaMetaVersion()
-		oldIsV2, _ = infoschema.IsV2(oldInfoSchema)
 	}
-	useV2, isV1V2Switch := shouldUseV2(enableV2, oldIsV2, isSnapshot)
-
+	useV2, isV1V2Switch := shouldUseV2(enableV2, oldInfoSchema, isSnapshot)
 	if is := do.infoCache.GetByVersion(neededSchemaVersion); is != nil {
 		isV2, raw := infoschema.IsV2(is)
 		if isV2 {
@@ -557,11 +557,18 @@ func (*Domain) fetchSchemasWithTables(ctx context.Context, schemas []*model.DBIn
 // shouldUseV2 decides whether to use infoschema v2.
 // When loading snapshot, infoschema should keep the same as before to avoid v1/v2 switch.
 // Otherwise, it is decided by enabledV2.
-func shouldUseV2(enableV2 bool, oldIsV2 bool, isSnapshot bool) (useV2 bool, isV1V2Switch bool) {
+func shouldUseV2(enableV2 bool, old infoschema.InfoSchema, isSnapshot bool) (useV2 bool, isV1V2Switch bool) {
+	// case 1: no information about old
+	if old == nil {
+		return enableV2, false
+	}
+	// case 2: snapshot load should keep the same as old
+	oldIsV2, _ := infoschema.IsV2(old)
 	if isSnapshot {
 		return oldIsV2, false
 	}
-	return enableV2, enableV2 != oldIsV2
+	// case 3: the most general case
+	return enableV2, oldIsV2 != enableV2
 }
 
 // tryLoadSchemaDiffs tries to only load latest schema changes.
@@ -1272,8 +1279,12 @@ func NewDomain(store kv.Storage, schemaLease time.Duration, statsLease time.Dura
 				infosync.StoreInternalSession(r)
 			},
 			func(r pools.Resource) {
-				_, ok := r.(sessionctx.Context)
+				sctx, ok := r.(sessionctx.Context)
 				intest.Assert(ok)
+				intest.AssertFunc(func() bool {
+					txn, _ := sctx.Txn(false)
+					return txn == nil || !txn.Valid()
+				})
 				infosync.DeleteInternalSession(r)
 			},
 		),
@@ -1303,6 +1314,37 @@ func NewDomain(store kv.Storage, schemaLease time.Duration, statsLease time.Dura
 }
 
 const serverIDForStandalone = 1 // serverID for standalone deployment.
+
+// NewEtcdCli creates a new clientv3.Client from store if the store support it.
+// the returned client might be nil.
+// TODO currently uni-store/mock-tikv/tikv all implements EtcdBackend while they don't support actually.
+// refactor this part.
+func NewEtcdCli(store kv.Storage) (*clientv3.Client, error) {
+	etcdStore, addrs, err := getEtcdAddrs(store)
+	if err != nil {
+		return nil, err
+	}
+	if len(addrs) == 0 {
+		return nil, nil
+	}
+	cli, err := newEtcdCli(addrs, etcdStore)
+	if err != nil {
+		return nil, err
+	}
+	return cli, nil
+}
+
+func getEtcdAddrs(store kv.Storage) (kv.EtcdBackend, []string, error) {
+	etcdStore, ok := store.(kv.EtcdBackend)
+	if !ok {
+		return nil, nil, nil
+	}
+	addrs, err := etcdStore.EtcdAddrs()
+	if err != nil {
+		return nil, nil, err
+	}
+	return etcdStore, addrs, nil
+}
 
 func newEtcdCli(addrs []string, ebd kv.EtcdBackend) (*clientv3.Client, error) {
 	cfg := config.GetGlobalConfig()
@@ -1337,30 +1379,26 @@ func (do *Domain) Init(
 ) error {
 	do.sysExecutorFactory = sysExecutorFactory
 	perfschema.Init()
-	if ebd, ok := do.store.(kv.EtcdBackend); ok {
-		var addrs []string
-		var err error
-		if addrs, err = ebd.EtcdAddrs(); err != nil {
-			return err
+	etcdStore, addrs, err := getEtcdAddrs(do.store)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if len(addrs) > 0 {
+		cli, err2 := newEtcdCli(addrs, etcdStore)
+		if err2 != nil {
+			return errors.Trace(err2)
 		}
-		if addrs != nil {
-			cli, err := newEtcdCli(addrs, ebd)
-			if err != nil {
-				return errors.Trace(err)
-			}
+		etcd.SetEtcdCliByNamespace(cli, keyspace.MakeKeyspaceEtcdNamespace(do.store.GetCodec()))
 
-			etcd.SetEtcdCliByNamespace(cli, keyspace.MakeKeyspaceEtcdNamespace(do.store.GetCodec()))
+		do.etcdClient = cli
 
-			do.etcdClient = cli
+		do.autoidClient = autoid.NewClientDiscover(cli)
 
-			do.autoidClient = autoid.NewClientDiscover(cli)
-
-			unprefixedEtcdCli, err := newEtcdCli(addrs, ebd)
-			if err != nil {
-				return errors.Trace(err)
-			}
-			do.unprefixedEtcdCli = unprefixedEtcdCli
+		unprefixedEtcdCli, err2 := newEtcdCli(addrs, etcdStore)
+		if err2 != nil {
+			return errors.Trace(err2)
 		}
+		do.unprefixedEtcdCli = unprefixedEtcdCli
 	}
 
 	ctx, cancelFunc := context.WithCancel(context.Background())
@@ -1368,6 +1406,16 @@ func (do *Domain) Init(
 	do.cancelFns.mu.Lock()
 	do.cancelFns.fns = append(do.cancelFns.fns, cancelFunc)
 	do.cancelFns.mu.Unlock()
+
+	ddlNotifierStore := notifier.OpenTableStore("mysql", ddl.NotifierTableName)
+	do.ddlNotifier = notifier.NewDDLNotifier(
+		do.sysSessionPool,
+		ddlNotifierStore,
+		time.Second,
+	)
+	// TODO(lance6716): find a more representative place for subscriber
+	failpoint.InjectCall("afterDDLNotifierCreated", do.ddlNotifier)
+
 	d := do.ddl
 	eBak := do.ddlExecutor
 	do.ddl, do.ddlExecutor = ddl.NewDDL(
@@ -1378,6 +1426,7 @@ func (do *Domain) Init(
 		ddl.WithInfoCache(do.infoCache),
 		ddl.WithLease(do.schemaLease),
 		ddl.WithSchemaLoader(do),
+		ddl.WithEventPublishStore(ddlNotifierStore),
 	)
 
 	failpoint.Inject("MockReplaceDDL", func(val failpoint.Value) {
@@ -1396,7 +1445,6 @@ func (do *Domain) Init(
 	// step 1: prepare the info/schema syncer which domain reload needed.
 	pdCli, pdHTTPCli := do.GetPDClient(), do.GetPDHTTPClient()
 	skipRegisterToDashboard := config.GetGlobalConfig().SkipRegisterToDashboard
-	var err error
 	do.info, err = infosync.GlobalInfoSyncerInit(ctx, do.ddl.GetID(), do.ServerID,
 		do.etcdClient, do.unprefixedEtcdCli, pdCli, pdHTTPCli,
 		do.Store().GetCodec(), skipRegisterToDashboard)
@@ -1460,7 +1508,7 @@ func (do *Domain) Init(
 
 // Start starts the domain. After start, DDLs can be executed using session, see
 // Init also.
-func (do *Domain) Start() error {
+func (do *Domain) Start(startMode ddl.StartMode) error {
 	gCfg := config.GetGlobalConfig()
 	if gCfg.EnableGlobalKill && do.etcdClient != nil {
 		do.wg.Add(1)
@@ -1479,7 +1527,7 @@ func (do *Domain) Start() error {
 	sysCtxPool := pools.NewResourcePool(sysFac, 512, 512, resourceIdleTimeout)
 
 	// start the ddl after the domain reload, avoiding some internal sql running before infoSchema construction.
-	err := do.ddl.Start(sysCtxPool)
+	err := do.ddl.Start(startMode, sysCtxPool)
 	if err != nil {
 		return err
 	}
@@ -1782,6 +1830,11 @@ func (do *Domain) SysProcTracker() sysproctrack.Tracker {
 	return &do.sysProcesses
 }
 
+// DDLNotifier returns the DDL notifier.
+func (do *Domain) DDLNotifier() *notifier.DDLNotifier {
+	return do.ddlNotifier
+}
+
 // GetEtcdClient returns the etcd client.
 func (do *Domain) GetEtcdClient() *clientv3.Client {
 	return do.etcdClient
@@ -1817,11 +1870,7 @@ func (do *Domain) LoadPrivilegeLoop(sctx sessionctx.Context) error {
 	if err != nil {
 		return err
 	}
-	do.privHandle = privileges.NewHandle()
-	err = do.privHandle.Update(sctx)
-	if err != nil {
-		return err
-	}
+	do.privHandle = privileges.NewHandle(sctx.GetRestrictedSQLExecutor())
 
 	var watchCh clientv3.WatchChan
 	duration := 5 * time.Minute
@@ -1856,7 +1905,7 @@ func (do *Domain) LoadPrivilegeLoop(sctx sessionctx.Context) error {
 			}
 
 			count = 0
-			err := do.privHandle.Update(sctx)
+			err := do.privHandle.Update()
 			metrics.LoadPrivilegeCounter.WithLabelValues(metrics.RetLabel(err)).Inc()
 			if err != nil {
 				logutil.BgLogger().Error("load privilege failed", zap.Error(err))
@@ -2266,7 +2315,17 @@ func (do *Domain) StatsHandle() *handle.Handle {
 
 // CreateStatsHandle is used only for test.
 func (do *Domain) CreateStatsHandle(ctx, initStatsCtx sessionctx.Context) error {
-	h, err := handle.NewHandle(ctx, initStatsCtx, do.statsLease, do.InfoSchema(), do.sysSessionPool, &do.sysProcesses, do.NextConnID, do.ReleaseConnID)
+	h, err := handle.NewHandle(
+		ctx,
+		initStatsCtx,
+		do.statsLease,
+		do.InfoSchema(),
+		do.sysSessionPool,
+		&do.sysProcesses,
+		do.ddlNotifier,
+		do.NextConnID,
+		do.ReleaseConnID,
+	)
 	if err != nil {
 		return err
 	}
@@ -2303,7 +2362,17 @@ func (do *Domain) LoadAndUpdateStatsLoop(ctxs []sessionctx.Context, initStatsCtx
 // It should be called only once in BootstrapSession.
 func (do *Domain) UpdateTableStatsLoop(ctx, initStatsCtx sessionctx.Context) error {
 	ctx.GetSessionVars().InRestrictedSQL = true
-	statsHandle, err := handle.NewHandle(ctx, initStatsCtx, do.statsLease, do.InfoSchema(), do.sysSessionPool, &do.sysProcesses, do.NextConnID, do.ReleaseConnID)
+	statsHandle, err := handle.NewHandle(
+		ctx,
+		initStatsCtx,
+		do.statsLease,
+		do.InfoSchema(),
+		do.sysSessionPool,
+		&do.sysProcesses,
+		do.ddlNotifier,
+		do.NextConnID,
+		do.ReleaseConnID,
+	)
 	if err != nil {
 		return err
 	}
@@ -2317,6 +2386,7 @@ func (do *Domain) UpdateTableStatsLoop(ctx, initStatsCtx sessionctx.Context) err
 	variable.EnableStatsOwner = do.enableStatsOwner
 	variable.DisableStatsOwner = do.disableStatsOwner
 	do.statsOwner = do.newOwnerManager(handle.StatsPrompt, handle.StatsOwnerKey)
+	do.statsOwner.SetListener(owner.NewListenersWrapper(statsHandle, do.ddlNotifier))
 	do.wg.Run(func() {
 		do.indexUsageWorker()
 	}, "indexUsageWorker")
@@ -2750,13 +2820,7 @@ func (do *Domain) NotifyUpdatePrivilege() error {
 		return nil
 	}
 
-	// update locally
-	ctx, err := do.sysSessionPool.Get()
-	if err != nil {
-		return err
-	}
-	defer do.sysSessionPool.Put(ctx)
-	return do.PrivilegeHandle().Update(ctx.(sessionctx.Context))
+	return do.PrivilegeHandle().Update()
 }
 
 // NotifyUpdateSysVarCache updates the sysvar cache key in etcd, which other TiDB
@@ -2981,8 +3045,8 @@ func (do *Domain) releaseServerID(context.Context) {
 // propose server ID by random.
 func (*Domain) proposeServerID(ctx context.Context, conflictCnt int) (uint64, error) {
 	// get a random server ID in range [min, max]
-	randomServerID := func(min uint64, max uint64) uint64 {
-		return uint64(rand.Int63n(int64(max-min+1)) + int64(min)) // #nosec G404
+	randomServerID := func(minv uint64, maxv uint64) uint64 {
+		return uint64(rand.Int63n(int64(maxv-minv+1)) + int64(minv)) // #nosec G404
 	}
 
 	if conflictCnt < acquire32BitsServerIDRetryCnt {

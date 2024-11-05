@@ -318,7 +318,7 @@ func (w *worker) onRecoverSchema(jobCtx *jobContext, job *model.Job) (ver int64,
 				// force disable TTL job schedule for recovered table
 				recoverInfo.TableInfo.TTLInfo.Enable = false
 			}
-			ver, err = w.recoverTable(jobCtx.metaMut, job, recoverInfo)
+			ver, err = w.recoverTable(jobCtx.stepCtx, jobCtx.metaMut, job, recoverInfo)
 			if err != nil {
 				return ver, errors.Trace(err)
 			}

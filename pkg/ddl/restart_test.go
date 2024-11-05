@@ -50,7 +50,7 @@ func restartWorkers(t *testing.T, store kv.Storage, d *domain.Domain) {
 		ddl.WithSchemaLoader(d),
 	)
 	d.SetDDL(newDDL, newDDLExecutor)
-	err = newDDL.Start(pools.NewResourcePool(func() (pools.Resource, error) {
+	err = newDDL.Start(ddl.Normal, pools.NewResourcePool(func() (pools.Resource, error) {
 		session := testkit.NewTestKit(t, store).Session()
 		session.GetSessionVars().CommonGlobalLoaded = true
 		return session, nil
@@ -185,6 +185,7 @@ func TestTableResume(t *testing.T) {
 	testCheckTableState(t, store, dbInfo, tblInfo, model.StatePublic)
 
 	job = &model.Job{
+		Version:    model.GetJobVerInUse(),
 		SchemaID:   dbInfo.ID,
 		SchemaName: dbInfo.Name.L,
 		TableID:    tblInfo.ID,
@@ -192,6 +193,6 @@ func TestTableResume(t *testing.T) {
 		Type:       model.ActionDropTable,
 		BinlogInfo: &model.HistoryInfo{},
 	}
-	testRunInterruptedJob(t, store, dom, job, nil)
+	testRunInterruptedJob(t, store, dom, job, &model.DropTableArgs{})
 	testCheckTableState(t, store, dbInfo, tblInfo, model.StateNone)
 }

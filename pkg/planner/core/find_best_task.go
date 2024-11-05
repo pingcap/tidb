@@ -43,9 +43,11 @@ import (
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/collate"
 	h "github.com/pingcap/tidb/pkg/util/hint"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/ranger"
 	"github.com/pingcap/tidb/pkg/util/tracing"
+	"github.com/pingcap/tipb/go-tipb"
 	"go.uber.org/zap"
 )
 
@@ -806,6 +808,19 @@ func isMatchProp(ds *logicalop.DataSource, path *util.AccessPath, prop *property
 			}
 		}
 	}
+	if prop.VectorProp.VectorHelper != nil && path.Index.VectorInfo != nil {
+		if path.Index == nil || path.Index.VectorInfo == nil {
+			return false
+		}
+		if ds.TableInfo.Columns[path.Index.Columns[0].Offset].ID != prop.VectorProp.Column.ID {
+			return false
+		}
+
+		if model.IndexableFnNameToDistanceMetric[prop.VectorProp.DistanceFnName.L] != path.Index.VectorInfo.DistanceMetric {
+			return false
+		}
+		return true
+	}
 	return isMatchProp
 }
 
@@ -1258,8 +1273,8 @@ func isPointGetConvertableSchema(ds *logicalop.DataSource) bool {
 // exploreEnforcedPlan determines whether to explore enforced plans for this DataSource if it has already found an unenforced plan.
 // See #46177 for more information.
 func exploreEnforcedPlan(ds *logicalop.DataSource) bool {
-	// default value is false to keep it compatible with previous versions.
-	return fixcontrol.GetBoolWithDefault(ds.SCtx().GetSessionVars().GetOptimizerFixControlMap(), fixcontrol.Fix46177, false)
+	// default value is true which is different than original implementation.
+	return fixcontrol.GetBoolWithDefault(ds.SCtx().GetSessionVars().GetOptimizerFixControlMap(), fixcontrol.Fix46177, true)
 }
 
 func findBestTask4LogicalDataSource(lp base.LogicalPlan, prop *property.PhysicalProperty, planCounter *base.PlanCounterTp, opt *optimizetrace.PhysicalOptimizeOp) (t base.Task, cntPlan int64, err error) {
@@ -1464,16 +1479,6 @@ func findBestTask4LogicalDataSource(lp base.LogicalPlan, prop *property.Physical
 			// Partition table can't use `_tidb_rowid` to generate PointGet Plan unless one partition is explicitly specified.
 			if canConvertPointGet && path.IsIntHandlePath && !ds.Table.Meta().PKIsHandle && len(ds.PartitionNames) != 1 {
 				canConvertPointGet = false
-			}
-			if canConvertPointGet {
-				if path != nil && path.Index != nil && path.Index.Global {
-					// Don't convert to point get during ddl
-					// TODO: Revisit truncate partition and global index
-					if len(ds.TableInfo.GetPartitionInfo().DroppingDefinitions) > 0 ||
-						len(ds.TableInfo.GetPartitionInfo().AddingDefinitions) > 0 {
-						canConvertPointGet = false
-					}
-				}
 			}
 		}
 		if canConvertPointGet {
@@ -2263,25 +2268,34 @@ func (is *PhysicalIndexScan) addSelectionConditionForGlobalIndex(p *logicalop.Da
 	needNot := false
 	pInfo := p.TableInfo.GetPartitionInfo()
 	if len(idxArr) == 1 && idxArr[0] == FullRange {
-		// Only filter adding and dropping partitions.
-		if len(pInfo.AddingDefinitions) == 0 && len(pInfo.DroppingDefinitions) == 0 {
-			return conditions, nil
-		}
+		// Filter away partitions that may exists in Global Index,
+		// but should not be seen.
 		needNot = true
-		for _, p := range pInfo.AddingDefinitions {
-			args = append(args, expression.NewInt64Const(p.ID))
-		}
-		for _, p := range pInfo.DroppingDefinitions {
-			args = append(args, expression.NewInt64Const(p.ID))
+		for _, id := range pInfo.IDsInDDLToIgnore() {
+			args = append(args, expression.NewInt64Const(id))
 		}
 	} else if len(idxArr) == 0 {
-		// add an invalid pid as param for `IN` function
+		// TODO: Can we change to Table Dual somehow?
+		// Add an invalid pid as param for `IN` function
 		args = append(args, expression.NewInt64Const(-1))
 	} else {
-		// `PartitionPruning`` func does not return adding and dropping partitions
-		for _, idx := range idxArr {
-			args = append(args, expression.NewInt64Const(pInfo.Definitions[idx].ID))
+		// TODO: When PartitionPruning is guaranteed to not
+		// return old/blocked partition ids then ignoreMap can be removed.
+		ignoreMap := make(map[int64]struct{})
+		for _, id := range pInfo.IDsInDDLToIgnore() {
+			ignoreMap[id] = struct{}{}
 		}
+		for _, idx := range idxArr {
+			id := pInfo.Definitions[idx].ID
+			_, ok := ignoreMap[id]
+			if !ok {
+				args = append(args, expression.NewInt64Const(id))
+			}
+			intest.Assert(!ok, "PartitionPruning returns partitions which should be ignored!")
+		}
+	}
+	if len(args) == 1 {
+		return conditions, nil
 	}
 	condition, err := expression.NewFunction(p.SCtx().GetExprCtx(), ast.In, types.NewFieldType(mysql.TypeLonglong), args...)
 	if err != nil {
@@ -2502,6 +2516,31 @@ func convertToTableScan(ds *logicalop.DataSource, prop *property.PhysicalPropert
 		}
 		if prop.MPPPartitionTp != property.AnyType {
 			return base.InvalidTask, nil
+		}
+		// If it has vector property, we need to check the candidate.isMatchProp.
+		if candidate.path.Index != nil && candidate.path.Index.VectorInfo != nil && !candidate.isMatchProp {
+			return base.InvalidTask, nil
+		}
+		if candidate.path.Index != nil && candidate.path.Index.VectorInfo != nil {
+			// Only the corresponding index can generate a valid task.
+			intest.Assert(ts.Table.Columns[candidate.path.Index.Columns[0].Offset].ID == prop.VectorProp.Column.ID, "The passed vector column is not matched with the index")
+			distanceMetric := model.IndexableFnNameToDistanceMetric[prop.VectorProp.DistanceFnName.L]
+			distanceMetricPB := tipb.VectorDistanceMetric_value[string(distanceMetric)]
+			intest.Assert(distanceMetricPB != 0, "unexpected distance metric")
+
+			ts.AnnIndexExtra = &VectorIndexExtra{
+				IndexInfo: candidate.path.Index,
+				PushDownQueryInfo: &tipb.ANNQueryInfo{
+					QueryType:      tipb.ANNQueryType_OrderBy,
+					DistanceMetric: tipb.VectorDistanceMetric(distanceMetricPB),
+					TopK:           prop.VectorProp.TopK,
+					ColumnName:     ts.Table.Columns[candidate.path.Index.Columns[0].Offset].Name.L,
+					ColumnId:       prop.VectorProp.Column.ID,
+					IndexId:        candidate.path.Index.ID,
+					RefVecF32:      prop.VectorProp.Vec.SerializeTo(nil),
+				},
+			}
+			ts.SetStats(util.DeriveLimitStats(ts.StatsInfo(), float64(prop.VectorProp.TopK)))
 		}
 		// ********************************** future deprecated start **************************/
 		var hasVirtualColumn bool
@@ -2871,7 +2910,7 @@ func getOriginalPhysicalTableScan(ds *logicalop.DataSource, prop *property.Physi
 	if usedStats != nil && usedStats.GetUsedInfo(ts.physicalTableID) != nil {
 		ts.usedStatsInfo = usedStats.GetUsedInfo(ts.physicalTableID)
 	}
-	if isMatchProp {
+	if isMatchProp && prop.VectorProp.VectorHelper == nil {
 		ts.Desc = prop.SortItems[0].Desc
 		ts.KeepOrder = true
 	}
