@@ -41,6 +41,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/memory"
+	"github.com/pingcap/tidb/pkg/util/set"
 	"github.com/pingcap/tidb/pkg/util/stringutil"
 	"github.com/pingcap/tidb/pkg/util/tracing"
 	"go.uber.org/zap"
@@ -513,33 +514,28 @@ func (e *InsertExec) doDupRowUpdate(
 		return nil
 	}
 
-	// Update non-generated columns
+	// Update non-generated columns and check if columns are changed
+	changed := false
+	updatedCols := set.NewIntSet()
 	for _, assign := range nonGenerated {
 		if err := assignFunc(assign); err != nil {
 			return errors.Trace(err)
 		}
-	}
-
-	// Check if columns are changed
-	changed := false
-	for i, col := range cols {
-		if mysql.HasOnUpdateNowFlag(col.GetFlag()) || col.IsGenerated() {
-			continue
-		}
-		cmp, err := e.row4Update[i].Compare(sc.TypeCtx(), &oldRow[i], collate.GetBinaryCollator())
+		idx := assign.Col.Index
+		cmp, err := e.row4Update[idx].Compare(sc.TypeCtx(), &oldRow[idx], collate.GetBinaryCollator())
 		if err != nil {
 			return errors.Trace(err)
 		}
 		if cmp != 0 {
 			changed = true
-			break
 		}
+		updatedCols.Insert(idx)
 	}
 
 	// Update on-update-now and generated columns if necessary
 	if changed {
 		for i, col := range e.Table.Cols() {
-			if mysql.HasOnUpdateNowFlag(col.GetFlag()) {
+			if mysql.HasOnUpdateNowFlag(col.GetFlag()) && !updatedCols.Exist(i) {
 				v, err := expression.GetTimeValue(sctx.GetExprCtx(), strings.ToUpper(ast.CurrentTimestamp), col.GetType(), col.GetDecimal(), nil)
 				if err != nil {
 					return errors.Trace(err)
