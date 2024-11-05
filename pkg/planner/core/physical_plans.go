@@ -1472,6 +1472,7 @@ type PhysicalHashJoin struct {
 	// for runtime filter
 	runtimeFilterList []*RuntimeFilter `plan-cache-clone:"must-nil"` // plan with runtime filter is not cached
 }
+
 func (p *PhysicalHashJoin) isGAForHashJoinV2() bool {
 	// nullaware join
 	if len(p.LeftNAJoinKeys) > 0 {
@@ -1488,10 +1489,10 @@ func (p *PhysicalHashJoin) isGAForHashJoinV2() bool {
 		}
 	}
 	switch p.JoinType {
-		case logicalop.LeftOuterJoin, logicalop.RightOuterJoin, logicalop.InnerJoin:
-			return true
-		default:
-			return false
+	case logicalop.LeftOuterJoin, logicalop.RightOuterJoin, logicalop.InnerJoin:
+		return true
+	default:
+		return false
 	}
 }
 
