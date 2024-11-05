@@ -215,6 +215,9 @@ func (j *leftOuterSemiJoinProbe) concatenateProbeAndBuildRows(joinedChk *chunk.C
 
 	for joinedChkRemainCap > 0 && !j.processedProbeRowIdxQueue.IsEmpty() {
 		probeRowIdx := j.processedProbeRowIdxQueue.Pop()
+		if j.isMatchedRows[probeRowIdx] {
+			continue
+		}
 		j.currentProbeRow = probeRowIdx
 		j.matchMultiBuildRows(joinedChk, &joinedChkRemainCap)
 		if j.matchedRowsHeaders[probeRowIdx] == 0 {
