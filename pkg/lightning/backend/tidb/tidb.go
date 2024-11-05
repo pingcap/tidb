@@ -171,9 +171,10 @@ func (b *targetInfoGetter) FetchRemoteDBModels(ctx context.Context) ([]*model.DB
 	return results, err
 }
 
-const (
-	fetchRemoteTableModelsConcurrency = 8
-	fetchRemoteTableModelsBatchSize   = 32
+// exported for test.
+var (
+	FetchRemoteTableModelsConcurrency = 8
+	FetchRemoteTableModelsBatchSize   = 32
 )
 
 // FetchRemoteTableModels implements the `backend.TargetInfoGetter` interface.
@@ -190,10 +191,10 @@ func (b *targetInfoGetter) FetchRemoteTableModels(
 	}
 
 	eg, egCtx := util.NewErrorGroupWithRecoverWithCtx(ctx)
-	eg.SetLimit(fetchRemoteTableModelsConcurrency)
-	for i := 0; i < len(tableNames); i += fetchRemoteTableModelsBatchSize {
+	eg.SetLimit(FetchRemoteTableModelsConcurrency)
+	for i := 0; i < len(tableNames); i += FetchRemoteTableModelsBatchSize {
 		start := i
-		end := i + fetchRemoteTableModelsBatchSize
+		end := i + FetchRemoteTableModelsBatchSize
 		if end > len(tableNames) {
 			end = len(tableNames)
 		}
