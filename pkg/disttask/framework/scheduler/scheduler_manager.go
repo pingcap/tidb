@@ -473,7 +473,12 @@ func (sm *Manager) collect() {
 	}
 
 	subtaskCollector.subtaskInfo.Store(&subtasks)
-	ddllogutil.DDLLogger().Info("collect subtask count in loop", zap.Int("subtask-count", len(subtasks)))
+	for _, subtask := range subtasks {
+		ddllogutil.DDLLogger().Info("collect subtask duration in loop",
+			zap.Int64("subtask-id", subtask.ID),
+			zap.String("state", subtask.State.String()),
+			zap.String("task_key", subtask.String()))
+	}
 }
 
 // MockScheduler mock one scheduler for one task, only used for tests.
