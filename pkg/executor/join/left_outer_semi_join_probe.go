@@ -22,12 +22,10 @@ import (
 
 type leftOuterSemiJoinProbe struct {
 	baseJoinProbe
-	// left side used columns and offset in result chunk
-	leftColUsed []int
 
 	// isMatchedRows marks whether the left side row is matched
 	isMatchedRows []bool
-	// isNullRows marks whether the left side row is null
+	// isNullRows marks whether the left side row matched result is null
 	isNullRows []bool
 
 	// buffer isNull for other condition evaluation
@@ -44,7 +42,6 @@ func newLeftOuterSemiJoinProbe(base baseJoinProbe) *leftOuterSemiJoinProbe {
 		baseJoinProbe:             base,
 		processedProbeRowIdxQueue: NewRing[int](1024),
 	}
-	probe.leftColUsed = base.lUsed
 	return probe
 }
 
@@ -94,9 +91,9 @@ func (j *leftOuterSemiJoinProbe) Probe(joinResult *hashjoinWorkerResult, sqlKill
 	}
 
 	if j.ctx.hasOtherCondition() {
-		err = j.probeForInnerSideBuildWithOtherCondition(joinResult.chk, joinedChk, sqlKiller)
+		err = j.probeWithOtherCondition(joinResult.chk, joinedChk, sqlKiller)
 	} else {
-		err = j.probeForInnerSideBuildWithoutOtherCondition(joinResult.chk, joinedChk, remainCap, sqlKiller)
+		err = j.probeWithoutOtherCondition(joinResult.chk, joinedChk, remainCap, sqlKiller)
 	}
 	if err != nil {
 		joinResult.err = err
@@ -105,7 +102,7 @@ func (j *leftOuterSemiJoinProbe) Probe(joinResult *hashjoinWorkerResult, sqlKill
 	return true, joinResult
 }
 
-func (j *leftOuterSemiJoinProbe) probeForInnerSideBuildWithOtherCondition(chk, joinedChk *chunk.Chunk, sqlKiller *sqlkiller.SQLKiller) (err error) {
+func (j *leftOuterSemiJoinProbe) probeWithOtherCondition(chk, joinedChk *chunk.Chunk, sqlKiller *sqlkiller.SQLKiller) (err error) {
 	err = j.concatenateProbeAndBuildRows(joinedChk, sqlKiller)
 	if err != nil {
 		return err
@@ -135,7 +132,7 @@ func (j *leftOuterSemiJoinProbe) probeForInnerSideBuildWithOtherCondition(chk, j
 	return
 }
 
-func (j *leftOuterSemiJoinProbe) probeForInnerSideBuildWithoutOtherCondition(_, joinedChk *chunk.Chunk, remainCap int, sqlKiller *sqlkiller.SQLKiller) (err error) {
+func (j *leftOuterSemiJoinProbe) probeWithoutOtherCondition(_, joinedChk *chunk.Chunk, remainCap int, sqlKiller *sqlkiller.SQLKiller) (err error) {
 	meta := j.ctx.hashTableMeta
 	startProbeRow := j.currentProbeRow
 	tagHelper := j.ctx.hashTableContext.tagHelper
@@ -170,7 +167,7 @@ func (j *leftOuterSemiJoinProbe) buildResult(chk *chunk.Chunk, startProbeRow int
 	for i := startProbeRow; i < j.currentProbeRow; i++ {
 		selected[i] = true
 	}
-	for index, colIndex := range j.leftColUsed {
+	for index, colIndex := range j.lUsed {
 		dstCol := chk.Column(index)
 		srcCol := j.currentChunk.Column(colIndex)
 		chunk.CopySelectedRowsWithRowIDFunc(dstCol, srcCol, selected, 0, len(selected), func(i int) int {
@@ -180,11 +177,11 @@ func (j *leftOuterSemiJoinProbe) buildResult(chk *chunk.Chunk, startProbeRow int
 
 	for i := startProbeRow; i < j.currentProbeRow; i++ {
 		if j.isMatchedRows[i] {
-			chk.AppendInt64(len(j.leftColUsed), 1)
+			chk.AppendInt64(len(j.lUsed), 1)
 		} else if j.isNullRows[i] {
-			chk.AppendNull(len(j.leftColUsed))
+			chk.AppendNull(len(j.lUsed))
 		} else {
-			chk.AppendInt64(len(j.leftColUsed), 0)
+			chk.AppendInt64(len(j.lUsed), 0)
 		}
 	}
 	chk.SetNumVirtualRows(chk.NumRows())

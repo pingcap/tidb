@@ -748,7 +748,10 @@ func NewJoinProbe(ctx *HashJoinCtxV2, workID uint, joinType logicalop.JoinType, 
 	case logicalop.RightOuterJoin:
 		return newOuterJoinProbe(base, rightAsBuildSide, rightAsBuildSide)
 	case logicalop.LeftOuterSemiJoin:
-		return newLeftOuterSemiJoinProbe(base)
+		if rightAsBuildSide {
+			return newLeftOuterSemiJoinProbe(base)
+		}
+		fallthrough
 	default:
 		panic("unsupported join type")
 	}
