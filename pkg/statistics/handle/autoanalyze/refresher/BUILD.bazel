@@ -33,7 +33,7 @@ go_test(
         "worker_test.go",
     ],
     flaky = True,
-    shard_count = 8,
+    shard_count = 9,
     deps = [
         ":refresher",
         "//pkg/parser/model",
@@ -42,6 +42,7 @@ go_test(
         "//pkg/statistics",
         "//pkg/statistics/handle/autoanalyze/priorityqueue",
         "//pkg/statistics/handle/types",
+        "//pkg/statistics/handle/util",
         "//pkg/testkit",
         "//pkg/testkit/testsetup",
         "@com_github_stretchr_testify//require",

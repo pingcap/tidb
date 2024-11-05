@@ -167,21 +167,37 @@ func TestRefreshLastAnalysisDuration(t *testing.T) {
 	require.Len(t, runningJobs, 2)
 }
 
-func TestProcessDMLChanges(t *testing.T) {
+func testProcessDMLChanges(t *testing.T, partitioned bool) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	handle := dom.StatsHandle()
 	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("create table t1 (a int)")
-	tk.MustExec("create table t2 (a int)")
+	ctx := context.Background()
+	if partitioned {
+		tk.MustExec("use test")
+		tk.MustExec("create table t1 (a int) partition by range (a) (partition p0 values less than (10), partition p1 values less than (20))")
+		tk.MustExec("create table t2 (a int) partition by range (a) (partition p0 values less than (10), partition p1 values less than (20))")
+		// Because we don't handle the DDL events in unit tests by default,
+		// we need to use this way to make sure the stats record for the global table is created.
+		// Insert some rows into the tables.
+		tk.MustExec("insert into t1 values (11)")
+		tk.MustExec("insert into t2 values (12)")
+		require.NoError(t, handle.DumpStatsDeltaToKV(true))
+		// Analyze the tables.
+		tk.MustExec("analyze table t1")
+		tk.MustExec("analyze table t2")
+		require.NoError(t, handle.Update(ctx, dom.InfoSchema()))
+	} else {
+		tk.MustExec("use test")
+		tk.MustExec("create table t1 (a int)")
+		tk.MustExec("create table t2 (a int)")
+	}
 	tk.MustExec("insert into t1 values (1)")
-	tk.MustExec("insert into t2 values (1)")
+	tk.MustExec("insert into t2 values (1), (2)")
 	statistics.AutoAnalyzeMinCnt = 0
 	defer func() {
 		statistics.AutoAnalyzeMinCnt = 1000
 	}()
 
-	ctx := context.Background()
 	require.NoError(t, handle.DumpStatsDeltaToKV(true))
 	require.NoError(t, handle.Update(ctx, dom.InfoSchema()))
 	schema := pmodel.NewCIStr("test")
@@ -205,10 +221,10 @@ func TestProcessDMLChanges(t *testing.T) {
 	require.NoError(t, job2.Analyze(handle, dom.SysProcTracker()))
 	require.NoError(t, handle.Update(ctx, dom.InfoSchema()))
 
-	// Insert 10 rows into t1.
-	tk.MustExec("insert into t1 values (2), (3), (4), (5), (6), (7), (8), (9), (10), (11)")
-	// Insert 2 rows into t2.
-	tk.MustExec("insert into t2 values (2), (3)")
+	// Insert 9 rows into t1.
+	tk.MustExec("insert into t1 values (3), (4), (5), (6), (7), (8), (9), (10), (11)")
+	// Insert 1 row into t2.
+	tk.MustExec("insert into t2 values (3)")
 
 	// Dump the stats to kv.
 	require.NoError(t, handle.DumpStatsDeltaToKV(true))
@@ -240,6 +256,14 @@ func TestProcessDMLChanges(t *testing.T) {
 	require.NoError(t, err)
 	require.NotZero(t, updatedJob2.GetWeight())
 	require.Equal(t, tbl2.Meta().ID, updatedJob2.GetTableID(), "t2 should have higher weight due to smaller table size")
+}
+
+func TestProcessDMLChanges(t *testing.T) {
+	testProcessDMLChanges(t, false)
+}
+
+func TestProcessDMLChangesPartitioned(t *testing.T) {
+	testProcessDMLChanges(t, true)
 }
 
 func TestProcessDMLChangesWithRunningJobs(t *testing.T) {
