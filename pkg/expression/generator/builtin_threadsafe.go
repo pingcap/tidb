@@ -37,29 +37,30 @@ func collectThreadSafeBuiltinFuncs(file string) (safeFuncNames, unsafeFuncNames 
 
 	allFuncNames := make([]string, 0, 32)
 	ast.Inspect(f, func(n ast.Node) bool {
-		if n != nil {
-			switch x := n.(type) {
-			case *ast.TypeSpec: // get all type definitions
-				typeName := x.Name.Name
-				if strings.HasPrefix(typeName, "builtin") && // type name is "builtin*Sig"
-					strings.HasSuffix(typeName, "Sig") {
-					if x.Type == nil {
-						return true
-					}
-					if structType, ok := x.Type.(*ast.StructType); ok { // this type is a structure
-						allFuncNames = append(allFuncNames, typeName)
-						if len(structType.Fields.List) != 1 { // this structure only has 1 field
-							return true
-						}
-						// this builtinXSig has only 1 field and this field is
-						// `baseBuiltinFunc` or `baseBuiltinCastFunc`.
-						if ident, ok := structType.Fields.List[0].Type.(*ast.Ident); ok &&
-							(ident.Name == "baseBuiltinFunc" || ident.Name == "baseBuiltinCastFunc") {
-							safeFuncNames = append(safeFuncNames, typeName)
-						}
-					}
-				}
-			}
+		x, ok := n.(*ast.TypeSpec) // get all type definitions
+		if !ok {
+			return true
+		}
+		typeName := x.Name.Name
+		if !strings.HasPrefix(typeName, "builtin") ||
+			!strings.HasSuffix(typeName, "Sig") {
+			return true // the type name should be "builtin*Sig"
+		}
+		if x.Type == nil {
+			return true
+		}
+		structType, ok := x.Type.(*ast.StructType)
+		if !ok { // the type must be a structure
+			return true
+		}
+		allFuncNames = append(allFuncNames, typeName)
+		if len(structType.Fields.List) != 1 { // this structure only has 1 field
+			return true
+		}
+		// this builtinXSig has only 1 field and this field is `baseBuiltinFunc` or `baseBuiltinCastFunc`.
+		if ident, ok := structType.Fields.List[0].Type.(*ast.Ident); ok &&
+			(ident.Name == "baseBuiltinFunc" || ident.Name == "baseBuiltinCastFunc") {
+			safeFuncNames = append(safeFuncNames, typeName)
 		}
 		return true
 	})
