@@ -54,9 +54,16 @@ var (
 //  1. changed (bool) : does the update really change the row values. e.g. update set i = 1 where i = 1;
 //  2. err (error) : error in the update.
 func updateRecord(
-	ctx context.Context, sctx sessionctx.Context, h kv.Handle, oldData, newData []types.Datum, modified []bool,
+	ctx context.Context, sctx sessionctx.Context, h kv.Handle,
+	oldData, newData []types.Datum,
+	modified []bool,
 	t table.Table,
-	onDup bool, _ *memory.Tracker, fkChecks []*FKCheckExec, fkCascades []*FKCascadeExec, dupKeyMode table.DupKeyCheckMode, ignoreErr bool,
+	onDup bool,
+	_ *memory.Tracker,
+	fkChecks []*FKCheckExec,
+	fkCascades []*FKCascadeExec,
+	dupKeyMode table.DupKeyCheckMode,
+	ignoreErr bool,
 ) (bool, error) {
 	r, ctx := tracing.StartRegionEx(ctx, "executor.updateRecord")
 	defer r.End()
