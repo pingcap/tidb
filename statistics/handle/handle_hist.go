@@ -34,7 +34,13 @@ import (
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"go.uber.org/zap"
+	"golang.org/x/sync/singleflight"
 )
+
+// RetryCount is the max retry count for a sync load task.
+const RetryCount = 3
+
+var globalStatsSyncLoadSingleFlight singleflight.Group
 
 type statsWrapper struct {
 	col *statistics.Column
@@ -47,7 +53,7 @@ type StatsLoad struct {
 	SubCtxs        []sessionctx.Context
 	NeededItemsCh  chan *NeededItemTask
 	TimeoutItemsCh chan *NeededItemTask
-	WorkingColMap  map[model.TableItemID][]chan stmtctx.StatsLoadResult
+	Singleflight   singleflight.Group
 }
 
 // NeededItemTask represents one needed column/indices with expire time.
@@ -55,6 +61,7 @@ type NeededItemTask struct {
 	TableItemID model.TableItemID
 	ToTimeout   time.Time
 	ResultCh    chan stmtctx.StatsLoadResult
+	Retry       int
 }
 
 // SendLoadRequests send neededColumns requests
@@ -75,25 +82,26 @@ func (h *Handle) SendLoadRequests(sc *stmtctx.StatementContext, neededHistItems 
 	}
 	sc.StatsLoad.Timeout = timeout
 	sc.StatsLoad.NeededItems = remainedItems
-	sc.StatsLoad.ResultCh = make(chan stmtctx.StatsLoadResult, len(remainedItems))
-	tasks := make([]*NeededItemTask, 0)
+	sc.StatsLoad.ResultCh = make([]<-chan singleflight.Result, 0, len(remainedItems))
 	for _, item := range remainedItems {
-		task := &NeededItemTask{
-			TableItemID: item,
-			ToTimeout:   time.Now().Local().Add(timeout),
-			ResultCh:    sc.StatsLoad.ResultCh,
-		}
-		tasks = append(tasks, task)
-	}
-	timer := time.NewTimer(timeout)
-	defer timer.Stop()
-	for _, task := range tasks {
-		select {
-		case h.StatsLoad.NeededItemsCh <- task:
-			continue
-		case <-timer.C:
-			return errors.New("sync load stats channel is full and timeout sending task to channel")
-		}
+		localItem := item
+		resultCh := globalStatsSyncLoadSingleFlight.DoChan(localItem.Key(), func() (any, error) {
+			timer := time.NewTimer(timeout)
+			defer timer.Stop()
+			task := &NeededItemTask{
+				TableItemID: localItem,
+				ToTimeout:   time.Now().Local().Add(timeout),
+				ResultCh:    make(chan stmtctx.StatsLoadResult, 1),
+			}
+			select {
+			case h.StatsLoad.NeededItemsCh <- task:
+				result := <-task.ResultCh
+				return result, nil
+			case <-timer.C:
+				return nil, errors.New("sync load stats channel is full and timeout sending task to channel")
+			}
+		})
+		sc.StatsLoad.ResultCh = append(sc.StatsLoad.ResultCh, resultCh)
 	}
 	sc.StatsLoad.LoadStartTime = time.Now()
 	return nil
@@ -119,26 +127,34 @@ func (h *Handle) SyncWaitStatsLoad(sc *stmtctx.StatementContext) error {
 	metrics.SyncLoadCounter.Inc()
 	timer := time.NewTimer(sc.StatsLoad.Timeout)
 	defer timer.Stop()
-	for {
+	for _, resultCh := range sc.StatsLoad.ResultCh {
 		select {
-		case result, ok := <-sc.StatsLoad.ResultCh:
-			if ok {
-				if result.HasError() {
-					errorMsgs = append(errorMsgs, result.ErrorMsg())
-				}
-				delete(resultCheckMap, result.Item)
-				if len(resultCheckMap) == 0 {
-					metrics.SyncLoadHistogram.Observe(float64(time.Since(sc.StatsLoad.LoadStartTime).Milliseconds()))
-					return nil
-				}
-			} else {
+		case result, ok := <-resultCh:
+			if !ok {
 				return errors.New("sync load stats channel closed unexpectedly")
+			}
+			// this error is from statsSyncLoad.SendLoadRequests which start to task and send task into worker,
+			// not the stats loading error
+			if result.Err != nil {
+				errorMsgs = append(errorMsgs, result.Err.Error())
+			} else {
+				val := result.Val.(stmtctx.StatsLoadResult)
+				// this error is from the stats loading error
+				if val.HasError() {
+					errorMsgs = append(errorMsgs, val.ErrorMsg())
+				}
+				delete(resultCheckMap, val.Item)
 			}
 		case <-timer.C:
 			metrics.SyncLoadTimeoutCounter.Inc()
 			return errors.New("sync load stats timeout")
 		}
 	}
+	if len(resultCheckMap) == 0 {
+		metrics.SyncLoadHistogram.Observe(float64(time.Since(sc.StatsLoad.LoadStartTime).Milliseconds()))
+		return nil
+	}
+	return nil
 }
 
 // removeHistLoadedColumns removed having-hist columns based on neededColumns and statsCache.
@@ -216,6 +232,9 @@ func (h *Handle) SubLoadWorker(ctx sessionctx.Context, exit chan struct{}, exitW
 }
 
 // HandleOneTask handles last task if not nil, else handle a new task from chan, and return current task if fail somewhere.
+//   - If the task is handled successfully, return nil, nil.
+//   - If the task is timeout, return the task and nil. The caller should retry the timeout task without sleep.
+//   - If the task is failed, return the task, error. The caller should retry the timeout task with sleep.
 func (h *Handle) HandleOneTask(sctx sessionctx.Context, lastTask *NeededItemTask, readerCtx *StatsReaderContext, ctx sqlexec.RestrictedSQLExecutor, exit chan struct{}) (task *NeededItemTask, err error) {
 	defer func() {
 		// recover for each task, worker keeps working
@@ -235,40 +254,62 @@ func (h *Handle) HandleOneTask(sctx sessionctx.Context, lastTask *NeededItemTask
 	} else {
 		task = lastTask
 	}
-	return h.handleOneItemTask(task, readerCtx, ctx)
+	result := stmtctx.StatsLoadResult{Item: task.TableItemID}
+	resultChan := h.StatsLoad.Singleflight.DoChan(task.TableItemID.Key(), func() (any, error) {
+		err := h.handleOneItemTask(task, readerCtx, ctx)
+		return nil, err
+	})
+	timeout := time.Until(task.ToTimeout)
+	select {
+	case sr := <-resultChan:
+		// sr.Val is always nil.
+		if sr.Err == nil {
+			task.ResultCh <- result
+			return nil, nil
+		}
+		if !isVaildForRetry(task) {
+			result.Error = sr.Err
+			task.ResultCh <- result
+			return nil, nil
+		}
+		return task, sr.Err
+	case <-time.After(timeout):
+		return task, nil
+	}
 }
 
-func (h *Handle) handleOneItemTask(task *NeededItemTask, readerCtx *StatsReaderContext, ctx sqlexec.RestrictedSQLExecutor) (*NeededItemTask, error) {
-	result := stmtctx.StatsLoadResult{Item: task.TableItemID}
-	item := result.Item
+func isVaildForRetry(task *NeededItemTask) bool {
+	task.Retry++
+	return task.Retry <= RetryCount
+}
+
+func (h *Handle) handleOneItemTask(task *NeededItemTask, readerCtx *StatsReaderContext, ctx sqlexec.RestrictedSQLExecutor) (err error) {
+	defer func() {
+		// recover for each task, worker keeps working
+		if r := recover(); r != nil {
+			logutil.BgLogger().Error("handleOneItemTask panicked", zap.Any("recover", r), zap.Stack("stack"))
+			err = errors.Errorf("stats loading panicked: %v", r)
+		}
+	}()
+	item := task.TableItemID
 	oldCache := h.statsCache.Load().(statsCache)
 	tbl, ok := oldCache.Get(item.TableID)
 	if !ok {
-		h.writeToResultChan(task.ResultCh, result)
-		return nil, nil
+		return nil
 	}
-	var err error
 	wrapper := &statsWrapper{}
 	if item.IsIndex {
 		index, ok := tbl.Indices[item.ID]
 		if !ok || index.IsFullLoad() {
-			h.writeToResultChan(task.ResultCh, result)
-			return nil, nil
+			return nil
 		}
 		wrapper.idx = index
 	} else {
 		col, ok := tbl.Columns[item.ID]
 		if !ok || col.IsFullLoad() {
-			h.writeToResultChan(task.ResultCh, result)
-			return nil, nil
+			return nil
 		}
 		wrapper.col = col
-	}
-	// to avoid duplicated handling in concurrent scenario
-	working := h.setWorking(result.Item, task.ResultCh)
-	if !working {
-		h.writeToResultChan(task.ResultCh, result)
-		return nil, nil
 	}
 	// refresh statsReader to get latest stats
 	h.loadFreshStatsReader(readerCtx, ctx)
@@ -276,8 +317,7 @@ func (h *Handle) handleOneItemTask(task *NeededItemTask, readerCtx *StatsReaderC
 	needUpdate := false
 	wrapper, err = h.readStatsForOneItem(item, wrapper, readerCtx.reader)
 	if err != nil {
-		result.Error = err
-		return task, err
+		return err
 	}
 	if item.IsIndex {
 		if wrapper.idx != nil {
@@ -289,11 +329,10 @@ func (h *Handle) handleOneItemTask(task *NeededItemTask, readerCtx *StatsReaderC
 		}
 	}
 	metrics.ReadStatsHistogram.Observe(float64(time.Since(t).Milliseconds()))
-	if needUpdate && h.updateCachedItem(item, wrapper.col, wrapper.idx) {
-		h.writeToResultChan(task.ResultCh, result)
+	if needUpdate {
+		h.updateCachedItem(item, wrapper.col, wrapper.idx)
 	}
-	h.finishWorking(result)
-	return nil, nil
+	return nil
 }
 
 func (h *Handle) loadFreshStatsReader(readerCtx *StatsReaderContext, ctx sqlexec.RestrictedSQLExecutor) {
@@ -490,12 +529,12 @@ func (h *Handle) updateCachedItem(item model.TableItemID, colHist *statistics.Co
 	oldCache := h.statsCache.Load().(statsCache)
 	tbl, ok := oldCache.Get(item.TableID)
 	if !ok {
-		return true
+		return false
 	}
 	if !item.IsIndex && colHist != nil {
 		c, ok := tbl.Columns[item.ID]
 		if !ok || c.IsFullLoad() {
-			return true
+			return false
 		}
 		tbl = tbl.Copy()
 		tbl.Columns[c.ID] = colHist
@@ -508,33 +547,4 @@ func (h *Handle) updateCachedItem(item model.TableItemID, colHist *statistics.Co
 		tbl.Indices[item.ID] = idxHist
 	}
 	return h.updateStatsCache(oldCache.update([]*statistics.Table{tbl}, nil, oldCache.version, WithTableStatsByQuery()))
-}
-
-func (h *Handle) setWorking(item model.TableItemID, resultCh chan stmtctx.StatsLoadResult) bool {
-	h.StatsLoad.Lock()
-	defer h.StatsLoad.Unlock()
-	chList, ok := h.StatsLoad.WorkingColMap[item]
-	if ok {
-		if chList[0] == resultCh {
-			return true // just return for duplicate setWorking
-		}
-		h.StatsLoad.WorkingColMap[item] = append(chList, resultCh)
-		return false
-	}
-	chList = []chan stmtctx.StatsLoadResult{}
-	chList = append(chList, resultCh)
-	h.StatsLoad.WorkingColMap[item] = chList
-	return true
-}
-
-func (h *Handle) finishWorking(result stmtctx.StatsLoadResult) {
-	h.StatsLoad.Lock()
-	defer h.StatsLoad.Unlock()
-	if chList, ok := h.StatsLoad.WorkingColMap[result.Item]; ok {
-		list := chList[1:]
-		for _, ch := range list {
-			h.writeToResultChan(ch, result)
-		}
-	}
-	delete(h.StatsLoad.WorkingColMap, result.Item)
 }

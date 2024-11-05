@@ -506,3 +506,25 @@ func TestModifyFromNullToNotNull(t *testing.T) {
 	tblInfo := mustTableByName(t, tracker, "test", "t")
 	require.Len(t, tblInfo.Columns, 2)
 }
+
+func TestDropListPartition(t *testing.T) {
+	sql := `
+CREATE TABLE test.employees11 (
+id INT NOT NULL,
+hired DATE NOT NULL DEFAULT '1970-01-01',
+store_id INT,
+PRIMARY KEY (id,store_id)
+)
+PARTITION BY LIST (store_id) (
+PARTITION pNorth VALUES IN (1, 2, 3, 4, 5),
+PARTITION pEast VALUES IN (6, 7, 8, 9, 10),
+PARTITION pWest VALUES IN (11, 12, 13, 14, 15),
+PARTITION pCentral VALUES IN (16, 17, 18, 19, 20)
+);`
+	tracker := schematracker.NewSchemaTracker(2)
+	tracker.CreateTestDB()
+	execCreate(t, tracker, sql)
+
+	sql = "ALTER TABLE test.employees11 DROP PARTITION pEast;"
+	execAlter(t, tracker, sql)
+}
