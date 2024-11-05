@@ -782,6 +782,12 @@ var defaultSysVars = []*SysVar{
 		SetDDLReorgBatchSize(int32(tidbOptPositiveInt32(val, DefTiDBDDLReorgBatchSize)))
 		return nil
 	}},
+	{Scope: ScopeGlobal, Name: TiDBDDLReorgWriteLimit, Value: strconv.Itoa(DefTiDBDDLReorgWriteLimit), Type: TypeUnsigned, MinValue: 0, MaxValue: math.MaxInt64, SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
+		DDLReorgWriteLimit.Store(TidbOptInt64(val, DefTiDBDDLReorgWriteLimit))
+		return nil
+	}, GetGlobal: func(_ context.Context, sv *SessionVars) (string, error) {
+		return strconv.FormatInt(DDLReorgWriteLimit.Load(), 10), nil
+	}},
 	{Scope: ScopeGlobal, Name: TiDBDDLErrorCountLimit, Value: strconv.Itoa(DefTiDBDDLErrorCountLimit), Type: TypeUnsigned, MinValue: 0, MaxValue: math.MaxInt64, SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
 		SetDDLErrorCountLimit(TidbOptInt64(val, DefTiDBDDLErrorCountLimit))
 		return nil
