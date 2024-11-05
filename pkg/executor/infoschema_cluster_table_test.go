@@ -216,6 +216,7 @@ func TestSkipEmptyIPNodesForTiDBTypeCoprocessor(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	rows := tk.MustQuery("select * from information_schema.cluster_slow_query").Rows()
+	require.Equal(t, tk.Session().GetSessionVars().StmtCtx.WarningCount(), uint16(0))
 	// the TiDB node is skipped because it does not has IP
 	require.Equal(t, 0, len(rows))
 }
