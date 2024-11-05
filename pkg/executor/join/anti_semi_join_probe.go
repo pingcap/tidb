@@ -42,11 +42,14 @@ func newAntiSemiJoinProbe(base baseJoinProbe, isLeftSideBuild bool) *antiSemiJoi
 		isLeftSideBuild: isLeftSideBuild,
 	}
 
-	if !ret.isLeftSideBuild && ret.ctx.hasOtherCondition() {
-		ret.groupMark = make([]int, 0, ret.ctx.SessCtx.GetSessionVars().MaxChunkSize)
+	if ret.ctx.hasOtherCondition() {
 		ret.isNulls = make([]bool, 0, ret.ctx.SessCtx.GetSessionVars().MaxChunkSize)
-		ret.matchedProbeRowIdx = make(map[int]struct{})
+		if !ret.isLeftSideBuild {
+			ret.groupMark = make([]int, 0, ret.ctx.SessCtx.GetSessionVars().MaxChunkSize)
+			ret.matchedProbeRowIdx = make(map[int]struct{})
+		}
 	}
+
 	return ret
 }
 
@@ -148,7 +151,6 @@ func (a *antiSemiJoinProbe) Probe(joinResult *hashjoinWorkerResult, sqlKiller *s
 	return true, joinResult
 }
 
-// TODO maybe have bug
 func (a *antiSemiJoinProbe) probeForLeftSideBuildHasOtherCondition(joinedChk *chunk.Chunk, sqlKiller *sqlkiller.SQLKiller) (err error) {
 	meta := a.ctx.hashTableMeta
 	tagHelper := a.ctx.hashTableContext.tagHelper
@@ -178,13 +180,13 @@ func (a *antiSemiJoinProbe) probeForLeftSideBuildHasOtherCondition(joinedChk *ch
 	a.finishCurrentLookupLoop(joinedChk)
 
 	if joinedChk.NumRows() > 0 {
-		a.selected, err = expression.VectorizedFilter(a.ctx.SessCtx.GetExprCtx().GetEvalCtx(), a.ctx.SessCtx.GetSessionVars().EnableVectorizedExpression, a.ctx.OtherCondition, chunk.NewIterator4Chunk(joinedChk), a.selected)
+		a.selected, a.isNulls, err = expression.VecEvalBool(a.ctx.SessCtx.GetExprCtx().GetEvalCtx(), a.ctx.SessCtx.GetSessionVars().EnableVectorizedExpression, a.ctx.OtherCondition, joinedChk, a.selected, a.isNulls)
 		if err != nil {
 			return err
 		}
 
 		for index, result := range a.selected {
-			if result {
+			if result || a.isNulls[index] {
 				meta.setUsedFlag(*(*unsafe.Pointer)(unsafe.Pointer(&a.rowIndexInfos[index].buildRowStart)))
 			}
 		}
