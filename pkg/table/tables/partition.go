@@ -1025,6 +1025,7 @@ func (lp *ForListPruning) LocatePartition(ctx exprctx.EvalContext, value int64, 
 // Only could process `column op value` right now.
 func (lp *ForListPruning) LocatePartitionByRange(ctx exprctx.EvalContext, r *ranger.Range) (idxs map[int]struct{}, err error) {
 	lowVal, highVal := r.LowVal[0], r.HighVal[0]
+	// [null, null] range already excluded by `IsPointNullable` function, so could set it to minValue here.
 	if r.LowVal[0].Kind() == types.KindMinNotNull || r.LowVal[0].Kind() == types.KindNull {
 		lowVal = types.GetMinValue(lp.PruneExpr.GetType(ctx))
 	}
@@ -1033,9 +1034,12 @@ func (lp *ForListPruning) LocatePartitionByRange(ctx exprctx.EvalContext, r *ran
 		highVal = types.GetMaxValue(lp.PruneExpr.GetType(ctx))
 	}
 
-	highInt64, _, err := lp.PruneExpr.EvalInt(ctx, chunk.MutRowFromDatums([]types.Datum{highVal}).ToRow())
+	highInt64, isNull, err := lp.PruneExpr.EvalInt(ctx, chunk.MutRowFromDatums([]types.Datum{highVal}).ToRow())
 	if err != nil {
 		return nil, err
+	}
+	if isNull {
+		return nil, errors.Errorf("Internal error, `r.HighVal` cannot be null")
 	}
 
 	lowInt64, _, err := lp.PruneExpr.EvalInt(ctx, chunk.MutRowFromDatums([]types.Datum{lowVal}).ToRow())
