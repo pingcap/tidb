@@ -1098,9 +1098,9 @@ func (b *builtinUnaryMinusDecimalSig) evalDecimal(ctx EvalContext, row chunk.Row
 type builtinUnaryMinusRealSig struct {
 	baseBuiltinFunc
 
-// NOTE: Any new fields added here must be thread-safe or immutable during execution, 
-// as this expression may be shared across sessions. 
-// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinUnaryMinusRealSig) Clone() builtinFunc {
