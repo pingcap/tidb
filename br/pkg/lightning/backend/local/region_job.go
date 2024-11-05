@@ -30,6 +30,7 @@ import (
 	sst "github.com/pingcap/kvproto/pkg/import_sstpb"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
+	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
@@ -451,6 +452,7 @@ func (local *Backend) ingest(ctx context.Context, j *regionJob) (err error) {
 			log.FromContext(ctx).Warn("meet underlying error, will retry ingest",
 				log.ShortError(err), logutil.SSTMetas(j.writeResult.sstMeta),
 				logutil.Region(j.region.Region), logutil.Leader(j.region.Leader))
+			j.lastRetryableErr = err
 			continue
 		}
 		canContinue, err := j.convertStageOnIngestError(resp)
@@ -501,6 +503,9 @@ func (local *Backend) checkWriteStall(
 // doIngest send ingest commands to TiKV based on regionJob.writeResult.sstMeta.
 // When meet error, it will remove finished sstMetas before return.
 func (local *Backend) doIngest(ctx context.Context, j *regionJob) (*sst.IngestResponse, error) {
+	failpoint.Inject("doIngestFailed", func() {
+		failpoint.Return(nil, errors.New("injected error"))
+	})
 	clientFactory := local.importClientFactory
 	supportMultiIngest := local.supportMultiIngest
 	shouldCheckWriteStall := local.ShouldCheckWriteStall
@@ -554,7 +559,8 @@ func (local *Backend) doIngest(ctx context.Context, j *regionJob) (*sst.IngestRe
 
 		leader := j.region.Leader
 		if leader == nil {
-			leader = j.region.Region.GetPeers()[0]
+			return nil, errors.Annotatef(berrors.ErrPDLeaderNotFound,
+				"region id %d has no leader", j.region.Region.Id)
 		}
 
 		cli, err := clientFactory.Create(ctx, leader.StoreId)

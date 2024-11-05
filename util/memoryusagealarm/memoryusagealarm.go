@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util"
+	"github.com/pingcap/tidb/util/cmp"
 	"github.com/pingcap/tidb/util/disk"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
@@ -263,7 +264,7 @@ func (record *memoryUsageAlarm) printTop10SqlInfo(pinfo []*util.ProcessInfo, f *
 	}
 }
 
-func (record *memoryUsageAlarm) getTop10SqlInfo(cmp func(i, j *util.ProcessInfo) bool, pinfo []*util.ProcessInfo) strings.Builder {
+func (record *memoryUsageAlarm) getTop10SqlInfo(cmp func(i, j *util.ProcessInfo) int, pinfo []*util.ProcessInfo) strings.Builder {
 	slices.SortFunc(pinfo, cmp)
 	list := pinfo
 	var buf strings.Builder
@@ -302,14 +303,14 @@ func (record *memoryUsageAlarm) getTop10SqlInfo(cmp func(i, j *util.ProcessInfo)
 }
 
 func (record *memoryUsageAlarm) getTop10SqlInfoByMemoryUsage(pinfo []*util.ProcessInfo) strings.Builder {
-	return record.getTop10SqlInfo(func(i, j *util.ProcessInfo) bool {
-		return i.MemTracker.MaxConsumed() > j.MemTracker.MaxConsumed()
+	return record.getTop10SqlInfo(func(i, j *util.ProcessInfo) int {
+		return cmp.Compare(j.MemTracker.MaxConsumed(), i.MemTracker.MaxConsumed())
 	}, pinfo)
 }
 
 func (record *memoryUsageAlarm) getTop10SqlInfoByCostTime(pinfo []*util.ProcessInfo) strings.Builder {
-	return record.getTop10SqlInfo(func(i, j *util.ProcessInfo) bool {
-		return i.Time.Before(j.Time)
+	return record.getTop10SqlInfo(func(i, j *util.ProcessInfo) int {
+		return cmp.Compare(i.Time.UnixNano(), j.Time.UnixNano())
 	}, pinfo)
 }
 

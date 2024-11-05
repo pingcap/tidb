@@ -20,6 +20,7 @@ go_library(
         "//parser/charset",
         "//parser/mysql",
         "//parser/terror",
+        "//util/cmp",
         "//util/dbterror",
         "//util/hack",
         "//util/logutil",
