@@ -82,8 +82,9 @@ func (c *tidbToBinaryFunctionClass) getFunction(ctx BuildContext, args []Express
 type builtinInternalToBinarySig struct {
 	baseBuiltinFunc
 
-	// NOTE: New fields should be thread-safe or immutable during the execution phase, as the expression may be shared
-	// across different sessions. If any field cannot meet this requirement, set SafeToShareAcrossSession to false.
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinInternalToBinarySig) Clone() builtinFunc {
