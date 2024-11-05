@@ -2266,7 +2266,11 @@ func (w *worker) updateJobRowCount(taskKey string, jobID int64) {
 		logutil.DDLLogger().Warn("cannot get task manager", zap.String("task_key", taskKey), zap.Error(err))
 		return
 	}
+<<<<<<< HEAD
 	task, err := taskMgr.GetTaskByKey(w.ctx, taskKey)
+=======
+	task, err := taskMgr.GetTaskByKeyWithHistory(w.workCtx, taskKey)
+>>>>>>> 7e491c3357f (dxf: get task from both `mysql.tidb_global_task` and `mysql.tidb_global_task_history` (#57063))
 	if err != nil {
 		logutil.DDLLogger().Warn("cannot get task", zap.String("task_key", taskKey), zap.Error(err))
 		return
