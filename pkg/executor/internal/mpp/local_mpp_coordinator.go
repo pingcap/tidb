@@ -175,8 +175,13 @@ func NewLocalMPPCoordinator(ctx context.Context, sctx sessionctx.Context, is inf
 		reqMap:          make(map[int64]*mppRequestReport),
 	}
 
-	if len(coordinatorAddr) > 0 && needReportExecutionSummary(coord.originalPlan) {
-		coord.reportExecutionInfo = true
+	value := sctx.GetSessionVars().StmtCtx.GetPlan()
+	p := value.(base.Plan)
+	pp := getActualPhysicalPlan(p)
+	if pp != nil {
+		if len(coordinatorAddr) > 0 && needReportExecutionSummary(pp, coord.originalPlan.ID(), false) {
+			coord.reportExecutionInfo = true
+		}
 	}
 	return coord
 }
@@ -335,15 +340,54 @@ func (c *localMppCoordinator) fixTaskForCTEStorageAndReader(exec *tipb.Executor,
 	return nil
 }
 
+func getActualPhysicalPlan(plan base.Plan) base.PhysicalPlan {
+	if plan == nil {
+		return nil
+	}
+	if pp, ok := plan.(base.PhysicalPlan); ok {
+		return pp
+	}
+	switch x := plan.(type) {
+	case *plannercore.Explain:
+		return getActualPhysicalPlan(x.TargetPlan)
+	case *plannercore.SelectInto:
+		return getActualPhysicalPlan(x.TargetPlan)
+	case *plannercore.Insert:
+		return x.SelectPlan
+	case *plannercore.ImportInto:
+		return x.SelectPlan
+	case *plannercore.Update:
+		return x.SelectPlan
+	case *plannercore.Delete:
+		return x.SelectPlan
+	case *plannercore.Execute:
+		return getActualPhysicalPlan(x.Plan)
+	}
+	return nil
+}
+
 // DFS to check if plan needs report execution summary through ReportMPPTaskStatus mpp service
-// Currently, return true if plan contains limit operator
-func needReportExecutionSummary(plan base.PhysicalPlan) bool {
+// Currently, return true if there is a limit operator in the path from current TableReader to root
+func needReportExecutionSummary(plan base.PhysicalPlan, destTablePlanID int, foundLimit bool) bool {
 	switch x := plan.(type) {
 	case *plannercore.PhysicalLimit:
-		return true
+		return needReportExecutionSummary(x.Children()[0], destTablePlanID, true)
+	case *plannercore.PhysicalTableReader:
+		if foundLimit {
+			return x.GetTablePlan().ID() == destTablePlanID
+		}
+	case *plannercore.PhysicalShuffleReceiverStub:
+		return needReportExecutionSummary(x.DataSource, destTablePlanID, foundLimit)
+	case *plannercore.PhysicalCTE:
+		if needReportExecutionSummary(x.SeedPlan, destTablePlanID, foundLimit) {
+			return true
+		}
+		if x.RecurPlan != nil {
+			return needReportExecutionSummary(x.RecurPlan, destTablePlanID, foundLimit)
+		}
 	default:
 		for _, child := range x.Children() {
-			if needReportExecutionSummary(child) {
+			if needReportExecutionSummary(child, destTablePlanID, foundLimit) {
 				return true
 			}
 		}
