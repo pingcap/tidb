@@ -16,8 +16,10 @@ package metrics
 
 import (
 	"fmt"
+	"go.uber.org/zap"
 	"time"
 
+	"github.com/pingcap/tidb/pkg/ddl/logutil"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/prometheus/client_golang/prometheus"
 )
@@ -77,6 +79,9 @@ func InitDistTaskMetrics() {
 func UpdateMetricsForAddTask(task *proto.TaskBase) {
 	DistTaskGauge.WithLabelValues(task.Type.String(), WaitingStatus).Inc()
 	DistTaskStartTimeGauge.WithLabelValues(task.Type.String(), WaitingStatus, fmt.Sprint(task.ID)).Set(float64(time.Now().UnixMicro()))
+	logutil.DDLLogger().Info("grafana metrics dxf add:", zap.Stringer("state", task.State),
+		zap.Int64("task_id", task.ID), zap.String("task_type", task.Type.String()), zap.String("task_key", task.Key))
+
 }
 
 // UpdateMetricsForScheduleTask update metrics when a task is added
@@ -84,6 +89,8 @@ func UpdateMetricsForScheduleTask(id int64, taskType proto.TaskType) {
 	DistTaskGauge.WithLabelValues(taskType.String(), WaitingStatus).Dec()
 	DistTaskStartTimeGauge.DeleteLabelValues(taskType.String(), WaitingStatus, fmt.Sprint(id))
 	DistTaskStartTimeGauge.WithLabelValues(taskType.String(), SchedulingStatus, fmt.Sprint(id)).SetToCurrentTime()
+	logutil.DDLLogger().Info("grafana metrics dxf schedule:", zap.String("task_type", taskType.String()), zap.Int64("task_id", id))
+
 }
 
 // UpdateMetricsForRunTask update metrics when a task starts running
@@ -91,10 +98,15 @@ func UpdateMetricsForRunTask(task *proto.Task) {
 	DistTaskStartTimeGauge.DeleteLabelValues(task.Type.String(), SchedulingStatus, fmt.Sprint(task.ID))
 	DistTaskGauge.WithLabelValues(task.Type.String(), SchedulingStatus).Dec()
 	DistTaskGauge.WithLabelValues(task.Type.String(), RunningStatus).Inc()
+	logutil.DDLLogger().Info("grafana metrics dxf run:", zap.Stringer("state", task.State),
+		zap.Int64("task_id", task.ID), zap.String("task_type", task.Type.String()), zap.String("task_key", task.Key))
+
 }
 
 // UpdateMetricsForFinishTask update metrics when a task is finished
 func UpdateMetricsForFinishTask(task *proto.Task) {
 	DistTaskGauge.WithLabelValues(task.Type.String(), RunningStatus).Dec()
 	DistTaskGauge.WithLabelValues(task.Type.String(), CompletedStatus).Inc()
+	logutil.DDLLogger().Info("grafana metrics dxf finish:", zap.Stringer("state", task.State),
+		zap.Int64("task_id", task.ID), zap.String("task_type", task.Type.String()), zap.String("task_key", task.Key))
 }
