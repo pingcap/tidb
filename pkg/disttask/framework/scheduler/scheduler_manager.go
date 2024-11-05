@@ -458,7 +458,6 @@ func (sm *Manager) collectLoop() {
 	for {
 		select {
 		case <-sm.ctx.Done():
-			//sm.collect()
 			sm.logger.Info("collect loop exits")
 			return
 		case <-ticker.C:
@@ -469,15 +468,15 @@ func (sm *Manager) collectLoop() {
 
 func (sm *Manager) collect() {
 	subtasks, err := sm.taskMgr.GetAllSubtasks(sm.ctx)
+	ddllogutil.DDLLogger().Info("collect subtask from table:",
+		zap.Int64("subtask-count", int64(len(subtasks))),
+		zap.String("subtask", fmt.Sprint(subtasks)))
 	if err != nil {
 		sm.logger.Warn("get all subtasks failed", zap.Error(err))
 		return
 	}
 
 	subtaskCollector.subtaskInfo.Store(&subtasks)
-	ddllogutil.DDLLogger().Info("collect subtask from table:",
-		zap.Int64("subtask-count", int64(len(subtasks))),
-		zap.String("subtask", fmt.Sprint(subtasks)))
 }
 
 // MockScheduler mock one scheduler for one task, only used for tests.
