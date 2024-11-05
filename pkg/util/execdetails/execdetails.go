@@ -683,7 +683,11 @@ func (p *Percentile[valueType]) Sum() float64 {
 // String implements the RuntimeStats interface.
 func (e *basicCopRuntimeStats) String() string {
 	if e.storeType == "tiflash" {
-		return fmt.Sprintf("time:%v, loops:%d, threads:%d, ", FormatDuration(time.Duration(e.consume.Load())), e.loop.Load(), e.threads) + e.tiflashScanContext.String() + e.tiFlashWaitSummary.String()
+		if e.tiFlashWaitSummary.CanBeIgnored() {
+			return fmt.Sprintf("time:%v, loops:%d, threads:%d, %s", FormatDuration(time.Duration(e.consume.Load())), e.loop.Load(), e.threads, e.tiflashScanContext.String())
+		} else {
+			return fmt.Sprintf("time:%v, loops:%d, threads:%d, %s, %s", FormatDuration(time.Duration(e.consume.Load())), e.loop.Load(), e.threads, e.tiflashScanContext.String(), e.tiFlashWaitSummary.String())
+		}
 	}
 	return fmt.Sprintf("time:%v, loops:%d", FormatDuration(time.Duration(e.consume.Load())), e.loop.Load())
 }
@@ -809,6 +813,7 @@ func (crs *CopRuntimeStats) RecordOneCopTask(address string, summary *tipb.Execu
 			pipelineQueueWaitTime:   summary.GetTiflashWaitSummary().GetPipelineQueueWaitNs(),
 		},
 	}
+
 	for _, instance := range summary.GetTiflashScanContext().GetRegionsOfInstance() {
 		data.tiflashScanContext.regionsOfInstance[instance.GetInstanceId()] = instance.GetRegionNum()
 	}
@@ -868,7 +873,7 @@ func (crs *CopRuntimeStats) String() string {
 				if !totalTiFlashScanContext.Empty() {
 					buf.WriteString(", " + totalTiFlashScanContext.String())
 				}
-				if !totalTiFlashWaitSummary.Empty() {
+				if !totalTiFlashWaitSummary.CanBeIgnored() {
 					buf.WriteString(", " + totalTiFlashWaitSummary.String())
 				}
 			} else {
@@ -1246,7 +1251,7 @@ func (waitSummary *TiFlashWaitSummary) Clone() TiFlashWaitSummary {
 
 // String dumps TiFlashWaitSummary info as string
 func (waitSummary *TiFlashWaitSummary) String() string {
-	if waitSummary.Empty() {
+	if waitSummary.CanBeIgnored() {
 		return ""
 	}
 	buf := bytes.NewBuffer(make([]byte, 0, 32))
@@ -1283,17 +1288,18 @@ func (waitSummary *TiFlashWaitSummary) String() string {
 func (waitSummary *TiFlashWaitSummary) Merge(other TiFlashWaitSummary) {
 	updated := waitSummary.executionTime < other.executionTime
 	if updated {
+		waitSummary.executionTime = other.executionTime
 		waitSummary.minTSOWaitTime = other.minTSOWaitTime
 		waitSummary.pipelineBreakerWaitTime = other.pipelineBreakerWaitTime
 		waitSummary.pipelineQueueWaitTime = other.pipelineQueueWaitTime
 	}
 }
 
-// Empty check whether TiFlashWaitSummary is Empty, not all tidb executors have tiflash wait summary
-func (waitSummary *TiFlashWaitSummary) Empty() bool {
-	res := waitSummary.minTSOWaitTime == 0 &&
-		waitSummary.pipelineBreakerWaitTime == 0 &&
-		waitSummary.pipelineQueueWaitTime == 0
+// CanBeIgnored check whether TiFlashWaitSummary can be ignored, not all tidb executors have significant tiflash wait summary
+func (waitSummary *TiFlashWaitSummary) CanBeIgnored() bool {
+	res := waitSummary.minTSOWaitTime < 1e6 &&
+		waitSummary.pipelineBreakerWaitTime < 1e6 &&
+		waitSummary.pipelineQueueWaitTime < 1e6
 	return res
 }
 
