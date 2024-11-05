@@ -2842,20 +2842,20 @@ const (
 // NotifyUpdatePrivilege updates privilege key in etcd, TiDB client that watches
 // the key will get notification.
 func (do *Domain) NotifyUpdatePrivilege(userList []string) error {
-	var notifyList strings.Builder
-	for _, user := range userList {
-		if notifyList.Len() == 0 {
-			notifyList.WriteString(user)
-		} else {
-			notifyList.WriteString(",")
-			notifyList.WriteString(user)
-		}
-	}
-
 	// No matter skip-grant-table is configured or not, sending an etcd message is required.
 	// Because we need to tell other TiDB instances to update privilege data, say, we're changing the
 	// password using a special TiDB instance and want the new password to take effect.
 	if do.etcdClient != nil {
+		var notifyList strings.Builder
+		for _, user := range userList {
+			if notifyList.Len() == 0 {
+				notifyList.WriteString(user)
+			} else {
+				notifyList.WriteString(",")
+				notifyList.WriteString(user)
+			}
+		}
+
 		row := do.etcdClient.KV
 		_, err := row.Put(context.Background(), privilegeKey, notifyList.String())
 		if err != nil {

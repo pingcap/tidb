@@ -936,11 +936,10 @@ func (p *UserPrivileges) ActiveRoles(ctx sessionctx.Context, roleList []*auth.Ro
 	if SkipWithGrant {
 		return true, ""
 	}
-	mysqlPrivilege := p.Handle.Get()
 	u := p.user
 	h := p.host
 	for _, r := range roleList {
-		ok := mysqlPrivilege.FindRole(u, h, r)
+		ok := findRole(p.Handle, u, h, r)
 		if !ok {
 			logutil.BgLogger().Error("find role failed", zap.Stringer("role", r))
 			return false, r.String()
@@ -955,10 +954,7 @@ func (p *UserPrivileges) FindEdge(ctx sessionctx.Context, role *auth.RoleIdentit
 	if SkipWithGrant {
 		return false
 	}
-	terror.Log(p.Handle.ensureActiveUser(user.Username))
-	terror.Log(p.Handle.ensureActiveUser(role.Username))
-	mysqlPrivilege := p.Handle.Get()
-	ok := mysqlPrivilege.FindRole(user.Username, user.Hostname, role)
+	ok := findRole(p.Handle, user.Username, user.Hostname, role)
 	if !ok {
 		logutil.BgLogger().Error("find role failed", zap.Stringer("role", role))
 		return false
