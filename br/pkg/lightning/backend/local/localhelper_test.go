@@ -206,6 +206,7 @@ func (c *testSplitClient) BatchSplitRegionsWithOrigin(
 				StartKey: startKey,
 				EndKey:   key,
 			},
+			Leader: target.Leader,
 		}
 		c.regions[c.nextRegionID] = newRegion
 		c.regionsInfo.SetRegion(pdtypes.NewRegionInfo(newRegion.Region, newRegion.Leader))

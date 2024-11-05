@@ -37,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/tablecodec"
+	"github.com/pingcap/tidb/util/cmp"
 	"github.com/pingcap/tidb/util/filter"
 	"github.com/pingcap/tidb/util/gcutil"
 	"github.com/pingcap/tidb/util/logutil"
@@ -328,8 +329,8 @@ func GetTableDataKeyRanges(nonFlashbackTableIDs []int64) []kv.KeyRange {
 
 	nonFlashbackTableIDs = append(nonFlashbackTableIDs, -1)
 
-	slices.SortFunc(nonFlashbackTableIDs, func(a, b int64) bool {
-		return a < b
+	slices.SortFunc(nonFlashbackTableIDs, func(a, b int64) int {
+		return cmp.Compare(a, b)
 	})
 
 	for i := 1; i < len(nonFlashbackTableIDs); i++ {
