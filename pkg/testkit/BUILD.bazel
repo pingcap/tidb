@@ -26,7 +26,11 @@ go_library(
         "//pkg/resourcemanager",
         "//pkg/session",
         "//pkg/session/txninfo",
+<<<<<<< HEAD
         "//pkg/sessionctx",
+=======
+        "//pkg/session/types",
+>>>>>>> 865213c94e2 (session: make `TxnInfo()` return even if process info is empty (#57044))
         "//pkg/sessionctx/variable",
         "//pkg/store/driver",
         "//pkg/store/mockstore",

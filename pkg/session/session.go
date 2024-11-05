@@ -507,6 +507,7 @@ func (s *session) FieldList(tableName string) ([]*ast.ResultField, error) {
 }
 
 // TxnInfo returns a pointer to a *copy* of the internal TxnInfo, thus is *read only*
+// Process field may not initialize if this is a session used internally.
 func (s *session) TxnInfo() *txninfo.TxnInfo {
 	s.txn.mu.RLock()
 	// Copy on read to get a snapshot, this API shouldn't be frequently called.
@@ -519,17 +520,27 @@ func (s *session) TxnInfo() *txninfo.TxnInfo {
 
 	processInfo := s.ShowProcess()
 	if processInfo == nil {
-		return nil
+		return &txnInfo
 	}
+	txnInfo.ProcessInfo = &txninfo.ProcessInfo{
+		ConnectionID:    processInfo.ID,
+		Username:        processInfo.User,
+		CurrentDB:       processInfo.DB,
+		RelatedTableIDs: make(map[int64]struct{}),
+	}
+<<<<<<< HEAD
 	txnInfo.ConnectionID = processInfo.ID
 	txnInfo.Username = processInfo.User
 	txnInfo.CurrentDB = processInfo.DB
 	txnInfo.RelatedTableIDs = make(map[int64]struct{})
 	s.GetSessionVars().GetRelatedTableForMDL().Range(func(key, value interface{}) bool {
 		txnInfo.RelatedTableIDs[key.(int64)] = struct{}{}
+=======
+	s.GetSessionVars().GetRelatedTableForMDL().Range(func(key, _ any) bool {
+		txnInfo.ProcessInfo.RelatedTableIDs[key.(int64)] = struct{}{}
+>>>>>>> 865213c94e2 (session: make `TxnInfo()` return even if process info is empty (#57044))
 		return true
 	})
-
 	return &txnInfo
 }
 
@@ -3853,9 +3864,10 @@ func GetStartTSFromSession(se interface{}) (startTS, processInfoID uint64) {
 	txnInfo := tmp.TxnInfo()
 	if txnInfo != nil {
 		startTS = txnInfo.StartTS
-		processInfoID = txnInfo.ConnectionID
+		if txnInfo.ProcessInfo != nil {
+			processInfoID = txnInfo.ProcessInfo.ConnectionID
+		}
 	}
-
 	logutil.BgLogger().Debug(
 		"GetStartTSFromSession getting startTS of internal session",
 		zap.Uint64("startTS", startTS), zap.Time("start time", oracle.GetTimeFromTS(startTS)))
