@@ -189,8 +189,8 @@ func (c *index) create(sctx table.MutateContext, txn kv.Transaction, indexedValu
 		if err != nil {
 			return nil, err
 		}
-		if c.phyTblID > 100 {
-			logutil.BgLogger().Info("XXXXXX MJONSS Inserting key", zap.String("key", fmt.Sprintf("%x", key)), zap.Any("value", value), zap.Int64("physTblID", c.phyTblID), zap.Int64("idxID", c.idxInfo.ID))
+		if c.phyTblID == 0 || (c.phyTblID > 100 && c.phyTblID < 1000) {
+			logutil.BgLogger().Info("XXXXXX MJONSS Inserting key", zap.String("key", fmt.Sprintf("%x", key)), zap.Int64("physTblID", c.phyTblID), zap.Int64("idxID", c.idxInfo.ID), zap.Bool("Global", c.idxInfo.Global), zap.Any("value", value), zap.Any("indexedValue", indexedValue))
 		}
 
 		var (
@@ -332,6 +332,9 @@ func (c *index) create(sctx table.MutateContext, txn kv.Transaction, indexedValu
 			} else {
 				err = txn.GetMemBuffer().Set(key, val)
 			}
+			if c.phyTblID == 0 || (c.phyTblID > 100 && c.phyTblID < 1000) {
+				logutil.BgLogger().Info("XXXXXXX MJONSS Set index", zap.String("key", fmt.Sprintf("%x", key)), zap.String("val", fmt.Sprintf("%x", val)))
+			}
 			if err != nil {
 				return nil, err
 			}
@@ -370,7 +373,7 @@ func (c *index) create(sctx table.MutateContext, txn kv.Transaction, indexedValu
 		return handle, kv.ErrKeyExists
 	}
 	// TODO: remove debug print
-	if c.phyTblID > 100 {
+	if c.phyTblID == 0 || (c.phyTblID > 100 && c.phyTblID < 1000) {
 		logutil.BgLogger().Info("XXXXXXXX MJONSS created index entry", zap.String("handle", h.String()), zap.Int64("physTblID", c.phyTblID), zap.Int64("indexID", c.idxInfo.ID))
 	}
 	return nil, nil

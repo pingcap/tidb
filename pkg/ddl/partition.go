@@ -3749,7 +3749,7 @@ func doPartitionReorgWork(w *worker, jobCtx *jobContext, job *model.Job, tbl tab
 	if err != nil {
 		return false, ver, errors.Trace(err)
 	}
-	elements := BuildElements(tbl.Meta().Columns[0], nil)
+	elements := BuildElements(tbl.Meta().Columns[0], reorgTblInfo.Indices)
 	partTbl, ok := reorgTbl.(table.PartitionedTable)
 	if !ok {
 		return false, ver, dbterror.ErrUnsupportedReorganizePartition.GenWithStackByArgs()
@@ -3958,14 +3958,19 @@ func (w *reorgPartitionWorker) fetchRowColVals(txn kv.Transaction, taskRange reo
 				return false, errors.Trace(err)
 			}
 			var newKey kv.Key
+			var recordID kv.Handle
 			if w.reorgedTbl.Meta().PKIsHandle || w.reorgedTbl.Meta().IsCommonHandle {
+				// TODO: check if record is written or not already?
 				// Skip batching and write the row directly to the buffer
 				// TODO: check how this works with pessimistic foreground sessions
 				// TODO: check that this is not doing any synchronous index lookups
-				_, err = p.AddRecord(w.tblCtx, txn, tmpRow)
-				if err != nil {
-					return false, errors.Trace(err)
-				}
+				/*
+					_, err = p.AddRecord(w.tblCtx, txn, tmpRow)
+					if err != nil {
+						return false, errors.Trace(err)
+					}
+				*/
+				recordID = handle
 				// TODO: See how we could skip this?
 				newKey = tablecodec.EncodeTablePrefix(p.GetPhysicalID())
 				newKey = append(newKey, recordKey[tablecodec.TableSplitKeyLen:]...)
@@ -3985,23 +3990,23 @@ func (w *reorgPartitionWorker) fetchRowColVals(txn kv.Transaction, taskRange reo
 					}
 					reserved.Reset(baseRowID, maxRowID)
 				}
-				recordID, err := tables.AllocHandle(w.ctx, w.tblCtx, w.reorgedTbl)
+				recordID, err = tables.AllocHandle(w.ctx, w.tblCtx, w.reorgedTbl)
 				if err != nil {
 					return false, errors.Trace(err)
 				}
-
-				// TODO: Will this just use the same row over and over again, so we need
-				// to copy each datum in the tmpRow slice?
-				if cap(w.rows[w.records]) < len(tmpRow) {
-					w.rows[w.records] = make([]types.Datum, len(tmpRow))
-				}
-				copy(w.rows[w.records], tmpRow)
-				w.newPids = append(w.newPids, p.GetPhysicalID())
-				newKey = tablecodec.EncodeRecordKey(p.RecordPrefix(), recordID)
-				oldKey := tablecodec.EncodeTablePrefix(p.GetPhysicalID())
-				oldKey = append(oldKey, recordKey[tablecodec.TableSplitKeyLen:]...)
-				w.oldKeys = append(w.oldKeys, oldKey)
 			}
+
+			// TODO: Will this just use the same row over and over again, so we need
+			// to copy each datum in the tmpRow slice?
+			if cap(w.rows[w.records]) < len(tmpRow) {
+				w.rows[w.records] = make([]types.Datum, len(tmpRow))
+			}
+			copy(w.rows[w.records], tmpRow)
+			w.newPids = append(w.newPids, p.GetPhysicalID())
+			newKey = tablecodec.EncodeRecordKey(p.RecordPrefix(), recordID)
+			oldKey := tablecodec.EncodeTablePrefix(p.GetPhysicalID())
+			oldKey = append(oldKey, recordKey[tablecodec.TableSplitKeyLen:]...)
+			w.oldKeys = append(w.oldKeys, oldKey)
 			w.records++
 
 			w.cleanRowMap()
@@ -4061,6 +4066,7 @@ func (w *worker) reorgPartitionDataAndIndex(
 
 	// Copy the data from the DroppingDefinitions to the AddingDefinitions
 	if bytes.Equal(reorgInfo.currElement.TypeKey, meta.ColumnElementKey) {
+		// if non-clustered table it will also create its indexes!
 		err = w.updatePhysicalTableRow(ctx, t, reorgInfo)
 		if err != nil {
 			return errors.Trace(err)
@@ -4120,9 +4126,13 @@ func (w *worker) reorgPartitionDataAndIndex(
 	pi := t.Meta().GetPartitionInfo()
 	if _, err = findNextPartitionID(reorgInfo.PhysicalTableID, pi.AddingDefinitions); err == nil {
 		// Now build all the indexes in the new partitions
-		err = w.addTableIndex(ctx, t, reorgInfo)
-		if err != nil {
-			return errors.Trace(err)
+		if false {
+			//if t.Meta().PKIsHandle || t.Meta().IsCommonHandle {
+			// new partitions already created its indexes together with the table records
+			err = w.addTableIndex(ctx, t, reorgInfo)
+			if err != nil {
+				return errors.Trace(err)
+			}
 		}
 		// All indexes are up-to-date for new partitions,
 		// now we only need to add the existing non-touched partitions

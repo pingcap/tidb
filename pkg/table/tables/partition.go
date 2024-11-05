@@ -1640,7 +1640,9 @@ func GetReorganizedPartitionedTable(t table.Table) (table.PartitionedTable, erro
 	pi.Type = pi.DDLType
 	pi.Expr = pi.DDLExpr
 	pi.Columns = pi.DDLColumns
-	tblInfo.ID = pi.NewTableID
+	if pi.NewTableID != 0 {
+		tblInfo.ID = pi.NewTableID
+	}
 
 	constraints, err := table.LoadCheckConstraint(tblInfo)
 	if err != nil {
