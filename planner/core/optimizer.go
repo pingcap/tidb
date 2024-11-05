@@ -1178,8 +1178,8 @@ func physicalOptimize(logic LogicalPlan, planCounter *PlanCounterTp) (plan Physi
 }
 
 // avoidColumnEvaluatorForProjBelowUnion sets AvoidColumnEvaluator to false for the projection operator which is a child of Union operator.
-func avoidColumnEvaluatorForProjBelowUnion(p base.PhysicalPlan) base.PhysicalPlan {
-	iteratePhysicalPlan(p, func(p base.PhysicalPlan) bool {
+func avoidColumnEvaluatorForProjBelowUnion(p PhysicalPlan) PhysicalPlan {
+	iteratePhysicalPlan(p, func(p PhysicalPlan) bool {
 		x, ok := p.(*PhysicalUnionAll)
 		if ok {
 			for _, child := range x.Children() {
