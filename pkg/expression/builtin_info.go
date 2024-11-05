@@ -117,6 +117,9 @@ func (c *databaseFunctionClass) getFunction(ctx BuildContext, args []Expression)
 
 type builtinDatabaseSig struct {
 	baseBuiltinFunc
+
+	// NOTE: New fields should be thread-safe or immutable during the execution phase, as the expression may be shared
+	// across different sessions. If any field cannot meet this requirement, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinDatabaseSig) Clone() builtinFunc {
@@ -779,6 +782,9 @@ func (c *charsetFunctionClass) getFunction(ctx BuildContext, args []Expression) 
 
 type builtinCharsetSig struct {
 	baseBuiltinFunc
+
+	// NOTE: New fields should be thread-safe or immutable during the execution phase, as the expression may be shared
+	// across different sessions. If any field cannot meet this requirement, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinCharsetSig) Clone() builtinFunc {
@@ -810,6 +816,9 @@ func (c *coercibilityFunctionClass) getFunction(ctx BuildContext, args []Express
 
 type builtinCoercibilitySig struct {
 	baseBuiltinFunc
+
+	// NOTE: New fields should be thread-safe or immutable during the execution phase, as the expression may be shared
+	// across different sessions. If any field cannot meet this requirement, set SafeToShareAcrossSession to false.
 }
 
 func (c *builtinCoercibilitySig) evalInt(ctx EvalContext, row chunk.Row) (val int64, isNull bool, err error) {
@@ -848,6 +857,9 @@ func (c *collationFunctionClass) getFunction(ctx BuildContext, args []Expression
 
 type builtinCollationSig struct {
 	baseBuiltinFunc
+
+	// NOTE: New fields should be thread-safe or immutable during the execution phase, as the expression may be shared
+	// across different sessions. If any field cannot meet this requirement, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinCollationSig) Clone() builtinFunc {
@@ -1697,6 +1709,9 @@ func (c *formatBytesFunctionClass) getFunction(ctx BuildContext, args []Expressi
 
 type builtinFormatBytesSig struct {
 	baseBuiltinFunc
+
+	// NOTE: New fields should be thread-safe or immutable during the execution phase, as the expression may be shared
+	// across different sessions. If any field cannot meet this requirement, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinFormatBytesSig) Clone() builtinFunc {
@@ -1736,6 +1751,9 @@ func (c *formatNanoTimeFunctionClass) getFunction(ctx BuildContext, args []Expre
 
 type builtinFormatNanoTimeSig struct {
 	baseBuiltinFunc
+
+	// NOTE: New fields should be thread-safe or immutable during the execution phase, as the expression may be shared
+	// across different sessions. If any field cannot meet this requirement, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinFormatNanoTimeSig) Clone() builtinFunc {

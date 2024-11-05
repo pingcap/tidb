@@ -384,6 +384,9 @@ func (c *anyValueFunctionClass) getFunction(ctx BuildContext, args []Expression)
 
 type builtinDecimalAnyValueSig struct {
 	baseBuiltinFunc
+
+	// NOTE: New fields should be thread-safe or immutable during the execution phase, as the expression may be shared
+	// across different sessions. If any field cannot meet this requirement, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinDecimalAnyValueSig) Clone() builtinFunc {
@@ -400,6 +403,9 @@ func (b *builtinDecimalAnyValueSig) evalDecimal(ctx EvalContext, row chunk.Row) 
 
 type builtinDurationAnyValueSig struct {
 	baseBuiltinFunc
+
+	// NOTE: New fields should be thread-safe or immutable during the execution phase, as the expression may be shared
+	// across different sessions. If any field cannot meet this requirement, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinDurationAnyValueSig) Clone() builtinFunc {
@@ -1543,6 +1549,9 @@ func (c *binToUUIDFunctionClass) getFunction(ctx BuildContext, args []Expression
 
 type builtinBinToUUIDSig struct {
 	baseBuiltinFunc
+
+	// NOTE: New fields should be thread-safe or immutable during the execution phase, as the expression may be shared
+	// across different sessions. If any field cannot meet this requirement, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinBinToUUIDSig) Clone() builtinFunc {

@@ -397,6 +397,9 @@ func (c *decodeFunctionClass) getFunction(ctx BuildContext, args []Expression) (
 
 type builtinDecodeSig struct {
 	baseBuiltinFunc
+
+	// NOTE: New fields should be thread-safe or immutable during the execution phase, as the expression may be shared
+	// across different sessions. If any field cannot meet this requirement, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinDecodeSig) Clone() builtinFunc {
@@ -460,6 +463,9 @@ func (c *encodeFunctionClass) getFunction(ctx BuildContext, args []Expression) (
 
 type builtinEncodeSig struct {
 	baseBuiltinFunc
+
+	// NOTE: New fields should be thread-safe or immutable during the execution phase, as the expression may be shared
+	// across different sessions. If any field cannot meet this requirement, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinEncodeSig) Clone() builtinFunc {
@@ -862,6 +868,9 @@ func (c *compressFunctionClass) getFunction(ctx BuildContext, args []Expression)
 
 type builtinCompressSig struct {
 	baseBuiltinFunc
+
+	// NOTE: New fields should be thread-safe or immutable during the execution phase, as the expression may be shared
+	// across different sessions. If any field cannot meet this requirement, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinCompressSig) Clone() builtinFunc {

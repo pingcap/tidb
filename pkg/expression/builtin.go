@@ -61,6 +61,9 @@ type baseBuiltinFunc struct {
 	safeToShareAcrossSessionFlag uint32 // 0 not-initialized, 1 safe, 2 unsafe
 
 	collationInfo
+
+	// NOTE: New fields should be thread-safe or immutable during the execution phase, as the expression may be shared
+	// across different sessions. If any field cannot meet this requirement, set SafeToShareAcrossSession to false.
 }
 
 // SafeToShareAcrossSession implements the builtinFunc interface.
