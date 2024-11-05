@@ -106,10 +106,10 @@ func genPlanCloneForPlanCache(x any) ([]byte, error) {
 		case "[]expression.Expression", "[]*expression.Column",
 			"[]*expression.Constant", "[]*expression.ScalarFunction":
 			structureName := strings.Split(f.Type.String(), ".")[1] + "s"
-			c.write("cloned.%v = clone%v(op.%v)ForPlanCache", f.Name, structureName, f.Name)
+			c.write("cloned.%v = clone%vForPlanCache(op.%v)", f.Name, structureName, f.Name)
 		case "[][]*expression.Constant", "[][]expression.Expression":
 			structureName := strings.Split(f.Type.String(), ".")[1]
-			c.write("cloned.%v = util.clone%v2D(op.%v)ForPlanCache", f.Name, structureName, f.Name)
+			c.write("cloned.%v = clone%v2DForPlanCache(op.%v)", f.Name, structureName, f.Name)
 		case "[]*ranger.Range", "[]*util.ByItems", "[]model.CIStr", "[]property.SortItem",
 			"[]types.Datum", "[]kv.Handle", "[]*expression.Assignment":
 			structureName := strings.Split(f.Type.String(), ".")[1] + "s"
@@ -244,6 +244,132 @@ func clonePhysicalPlansForPlanCache(newCtx base.PlanContext, plans []base.Physic
 		clonedPlans[i] = cloned.(base.PhysicalPlan)
 	}
 	return clonedPlans, true
+}
+
+func cloneExpressionsForPlanCache(exprs []expression.Expression) []expression.Expression {
+	if exprs == nil {
+		return nil
+	}
+	allSafe := true
+	for _, e := range exprs {
+		if !e.SafeToShareAcrossSession() {
+			allSafe = false
+			break
+		}
+	}
+	if allSafe {
+		return exprs
+	}
+	cloned := make([]expression.Expression, 0, len(exprs))
+	for _, e := range exprs {
+		if e.SafeToShareAcrossSession() {
+			cloned = append(cloned, e)
+		} else {
+			cloned = append(cloned, e.Clone())
+		}
+	}
+	return cloned
+}
+
+func cloneExpression2DForPlanCache(exprs [][]expression.Expression) [][]expression.Expression {
+	if exprs == nil {
+		return nil
+	}
+	cloned := make([][]expression.Expression, 0, len(exprs))
+	for _, e := range exprs {
+		cloned = append(cloned, cloneExpressionsForPlanCache(e))
+	}
+	return cloned
+}
+
+func cloneScalarFunctionsForPlanCache(scalarFuncs []*expression.ScalarFunction) []*expression.ScalarFunction {
+	if scalarFuncs == nil {
+		return nil
+	}
+	allSafe := true
+	for _, f := range scalarFuncs {
+		if !f.SafeToShareAcrossSession() {
+			allSafe = false
+			break
+		}
+	}
+	if allSafe {
+		return scalarFuncs
+	}
+	cloned := make([]*expression.ScalarFunction, 0, len(scalarFuncs))
+	for _, f := range scalarFuncs {
+		if f.SafeToShareAcrossSession() {
+			cloned = append(cloned, f)
+		} else {
+			cloned = append(cloned, f.Clone().(*expression.ScalarFunction))
+		}
+	}
+	return cloned
+}
+
+func cloneColumnsForPlanCache(cols []*expression.Column) []*expression.Column {
+	if cols == nil {
+		return nil
+	}
+	allSafe := true
+	for _, c := range cols {
+		if !c.SafeToShareAcrossSession() {
+			allSafe = false
+			break
+		}
+	}
+	if allSafe {
+		return cols
+	}
+	cloned := make([]*expression.Column, 0, len(cols))
+	for _, c := range cols {
+		if c == nil {
+			cloned = append(cloned, nil)
+			continue
+		}
+		if c.SafeToShareAcrossSession() {
+			cloned = append(cloned, c)
+		} else {
+			cloned = append(cloned, c.Clone().(*expression.Column))
+		}
+	}
+	return cloned
+}
+
+func cloneConstantsForPlanCache(constants []*expression.Constant) []*expression.Constant {
+	if constants == nil {
+		return nil
+	}
+	allSafe := true
+	for _, c := range constants {
+		if !c.SafeToShareAcrossSession() {
+			allSafe = false
+			break
+		}
+	}
+	if allSafe {
+		return constants
+	}
+	cloned := make([]*expression.Constant, 0, len(constants))
+	for _, c := range constants {
+		if c.SafeToShareAcrossSession() {
+			cloned = append(cloned, c)
+		} else {
+			cloned = append(cloned, c.Clone().(*expression.Constant))
+		}
+	}
+	return cloned
+}
+
+func cloneConstant2DForPlanCache(constants [][]*expression.Constant) [][]*expression.Constant {
+	if constants == nil {
+		return nil
+	}
+	cloned := make([][]*expression.Constant, 0, len(constants))
+	for _, c := range constants {
+		cloned = append(cloned, cloneConstantsForPlanCache(c))
+	}
+	return cloned
 }
 `
 
