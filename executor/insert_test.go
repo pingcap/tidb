@@ -1593,3 +1593,25 @@ func TestInsertLockUnchangedKeys(t *testing.T) {
 		}
 	}
 }
+
+// see issue https://github.com/pingcap/tidb/issues/47787
+func TestInsertBigScientificNotation(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`use test`)
+	tk.MustExec("create table t1(id int, a int)")
+
+	tk.MustExec("set @@SQL_MODE='STRICT_TRANS_TABLES'")
+	err := tk.ExecToErr("insert into t1 values(1, '1e100')")
+	require.EqualError(t, err, "[types:1264]Out of range value for column 'a' at row 1")
+	err = tk.ExecToErr("insert into t1 values(2, '-1e100')")
+	require.EqualError(t, err, "[types:1264]Out of range value for column 'a' at row 1")
+	tk.MustQuery("select id, a from t1").Check(testkit.Rows())
+
+	tk.MustExec("set @@SQL_MODE=''")
+	tk.MustExec("insert into t1 values(1, '1e100')")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1264 Out of range value for column 'a' at row 1"))
+	tk.MustExec("insert into t1 values(2, '-1e100')")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1264 Out of range value for column 'a' at row 1"))
+	tk.MustQuery("select id, a from t1 order by id asc").Check(testkit.Rows("1 2147483647", "2 -2147483648"))
+}

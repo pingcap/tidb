@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/cmp"
 	"github.com/stretchr/testify/require"
 	"golang.org/x/exp/slices"
 )
@@ -111,8 +112,8 @@ func TestGetDDLJobsIsSort(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, currJobs, 15)
 
-	isSort := slices.IsSortedFunc(currJobs, func(i, j *model.Job) bool {
-		return i.ID <= j.ID
+	isSort := slices.IsSortedFunc(currJobs, func(i, j *model.Job) int {
+		return cmp.Compare(i.ID, j.ID)
 	})
 	require.True(t, isSort)
 

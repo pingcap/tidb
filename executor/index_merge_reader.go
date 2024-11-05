@@ -42,6 +42,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/cmp"
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/mathutil"
@@ -409,8 +410,8 @@ func (e *IndexMergeReaderExecutor) startPartialIndexWorker(ctx context.Context, 
 
 					// init kvReq and worker for this partition
 					// The key ranges should be ordered.
-					slices.SortFunc(keyRange, func(i, j kv.KeyRange) bool {
-						return bytes.Compare(i.StartKey, j.StartKey) < 0
+					slices.SortFunc(keyRange, func(i, j kv.KeyRange) int {
+						return bytes.Compare(i.StartKey, j.StartKey)
 					})
 					kvReq, err := builder.SetKeyRanges(keyRange).Build()
 					if err != nil {
@@ -508,8 +509,8 @@ func (e *IndexMergeReaderExecutor) startPartialTableWorker(ctx context.Context, 
 				}
 
 				if len(e.prunedPartitions) != 0 && len(e.byItems) != 0 {
-					slices.SortFunc(worker.prunedPartitions, func(i, j table.PhysicalTable) bool {
-						return i.GetPhysicalID() < j.GetPhysicalID()
+					slices.SortFunc(worker.prunedPartitions, func(i, j table.PhysicalTable) int {
+						return cmp.Compare(i.GetPhysicalID(), j.GetPhysicalID())
 					})
 					partialTableReader.kvRangeBuilder = kvRangeBuilderFromRangeAndPartition{
 						sctx:       e.ctx,
