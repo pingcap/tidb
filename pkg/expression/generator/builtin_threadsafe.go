@@ -135,7 +135,7 @@ func main() {
 		log.Fatalln("failed to write builtin_threadsafe_generated.go", err)
 	}
 	if err := os.WriteFile("./builtin_threadunsafe_generated.go", unsafeCode, 0644); err != nil {
-		log.Fatalln("failed to write plan_clone_generated.go", err)
+		log.Fatalln("failed to write builtin_threadunsafe_generated.go", err)
 	}
 }
 
