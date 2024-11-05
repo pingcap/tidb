@@ -2196,7 +2196,7 @@ func (w *worker) rollbackLikeDropPartition(jobCtx *jobContext, job *model.Job) (
 		RemoveDependentHiddenColumns(tblInfo, indexInfo)
 		removeIndexInfo(tblInfo, indexInfo)
 		if indexInfo.Global {
-			deleteIndices = append(deleteIndices, model.TableIDIndexID{tblInfo.ID, indexInfo.ID})
+			deleteIndices = append(deleteIndices, model.TableIDIndexID{TableID: tblInfo.ID, IndexID: indexInfo.ID})
 		}
 		// All other indexes has only been applied to new partitions, that is deleted in whole,
 		// including indexes.
@@ -3595,7 +3595,7 @@ func (w *worker) onReorganizePartition(jobCtx *jobContext, job *model.Job) (ver 
 		for _, indexInfo := range dropIndices {
 			removeIndexInfo(tblInfo, indexInfo)
 			if indexInfo.Global {
-				args.OldIndexes = append(args.OldIndexes, model.TableIDIndexID{tblInfo.ID, indexInfo.ID})
+				args.OldIndexes = append(args.OldIndexes, model.TableIDIndexID{TableID: tblInfo.ID, IndexID: indexInfo.ID})
 			}
 		}
 		failpoint.Inject("reorgPartFail4", func(val failpoint.Value) {

@@ -18,7 +18,6 @@ import (
 	"context"
 	"encoding/hex"
 	"fmt"
-	"github.com/pingcap/tidb/pkg/store/gcworker"
 	"math"
 	"testing"
 	"time"
@@ -29,6 +28,7 @@ import (
 	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
+	"github.com/pingcap/tidb/pkg/store/gcworker"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
@@ -443,7 +443,6 @@ func TestMultiSchemaReorganizePartition(t *testing.T) {
 			"(PARTITION `p0` VALUES LESS THAN (100),\n" +
 			" PARTITION `p1` VALUES LESS THAN (200),\n" +
 			" PARTITION `pMax` VALUES LESS THAN (MAXVALUE))"))
-
 	}
 	runMultiSchemaTest(t, createSQL, alterSQL, initFn, postFn, loopFn)
 }
