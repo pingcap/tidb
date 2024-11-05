@@ -526,7 +526,7 @@ func TestSplitLargeFileSeekInsideCRLF(t *testing.T) {
 	offsets := [][]int64{{0, 3}, {3, 6}, {6, 9}, {9, 12}}
 	pos := []int64{2, 5, 8, 11}
 
-	divideConfig := NewDataDivideConfig(cfg, 2, ioWorker, store, meta)
+	divideConfig := NewDataDivideConfig(cfg, 1, ioWorker, store, meta)
 
 	regions, _, err := SplitLargeCSV(
 		context.Background(),
@@ -556,7 +556,7 @@ func TestSplitLargeFileSeekInsideCRLF(t *testing.T) {
 
 	cfg.Mydumper.CSV.Terminator = "\r\n"
 	// pos is contained in expectedOffsets
-	expectedOffsets := [][]int64{{0, 6}, {6, 12}}
+	expectedOffsets := [][]int64{{0, 3}, {3, 6}, {6, 9}, {9, 12}}
 	pos = []int64{3, 6, 9, 12}
 
 	regions, _, err = SplitLargeCSV(
