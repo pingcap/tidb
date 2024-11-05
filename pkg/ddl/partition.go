@@ -3093,8 +3093,9 @@ func getReorgPartitionInfo(t *meta.Mutator, job *model.Job, args *model.TablePar
 //
 // job.SchemaState goes through the following SchemaState(s):
 // StateNone -> StateDeleteOnly -> StateWriteOnly -> StateWriteReorganization
-// -> StateDeleteOrganization -> StatePublic
+// -> StateDeleteOrganization -> StatePublic -> Done
 // There are more details embedded in the implementation, but the high level changes are:
+//
 // StateNone -> StateDeleteOnly:
 //
 //	Various checks and validations.
@@ -3120,12 +3121,19 @@ func getReorgPartitionInfo(t *meta.Mutator, job *model.Job, args *model.TablePar
 //	and if new unique indexes are added, it also updates them with the rest of data from
 //	the non-touched partitions.
 //	For indexes that are to be replaced with new ones (old/new global index),
-//	mark the old indexes as StateDeleteReorganization and new ones as StatePublic
+//	mark the old indexes as StateWriteOnly and new ones as StatePublic
 //	Finally make the table visible with the new partition definitions.
 //	I.e. in this state clients will read from the old set of partitions,
-//	and will read the new set of partitions in StateDeleteReorganization.
+//	and next state will read the new set of partitions in StateDeleteReorganization.
 //
 // StateDeleteOrganization -> StatePublic:
+//
+//	Now we mark all replaced (old) indexes as StateDeleteOnly
+//	in case DeleteRange would be called directly after the DDL,
+//	this way there will be no orphan records inserted after DeleteRanges
+//	has cleaned up the old partitions and old global indexes.
+//
+// StatePublic -> Done:
 //
 //	Now all heavy lifting is done, and we just need to finalize and drop things, while still doing
 //	double writes, since previous state sees the old partitions/indexes.
@@ -3135,10 +3143,10 @@ func getReorgPartitionInfo(t *meta.Mutator, job *model.Job, args *model.TablePar
 //	if ALTER TABLE t PARTITION BY/REMOVE PARTITIONING:
 //	  Recreate the table with the new TableID, by DropTableOrView+CreateTableOrView
 //
-// StatePublic:
+// Done:
 //
 //	Everything now looks as it should, no memory of old partitions/indexes,
-//	and no more double writing, since the previous state is only reading the new partitions/indexes.
+//	and no more double writing, since the previous state is only using the new partitions/indexes.
 //
 // Note: Special handling is also required in tables.newPartitionedTable(),
 // to get per partition indexes in the right state.
@@ -3535,7 +3543,6 @@ func (w *worker) onReorganizePartition(jobCtx *jobContext, job *model.Job) (ver 
 			// Old index, should not be visible any longer,
 			// but needs to be deleted, in case previous state clients inserts.
 			index.State = model.StateDeleteOnly
-			//index.State = model.StateDeleteReorganization
 		}
 		failpoint.Inject("reorgPartFail3", func(val failpoint.Value) {
 			if val.(bool) {
