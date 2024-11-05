@@ -803,7 +803,7 @@ func (crs *CopRuntimeStats) RecordOneCopTask(address string, summary *tipb.Execu
 			totalVectorIdxReadOthersTimeMs:     summary.GetTiflashScanContext().GetTotalVectorIdxReadOthersTimeMs(),
 		},
 		tiFlashWaitSummary: TiFlashWaitSummary{
-			executionTime:           uint64(*summary.TimeProcessedNs),
+			executionTime:           *summary.TimeProcessedNs,
 			minTSOWaitTime:          summary.GetTiflashWaitSummary().GetMinTSOWaitNs(),
 			pipelineBreakerWaitTime: summary.GetTiflashWaitSummary().GetPipelineBreakerWaitNs(),
 			pipelineQueueWaitTime:   summary.GetTiflashWaitSummary().GetPipelineQueueWaitNs(),
@@ -1274,7 +1274,6 @@ func (waitSummary *TiFlashWaitSummary) String() string {
 		buf.WriteString("pipeline_queue_wait: ")
 		buf.WriteString(strconv.FormatInt(time.Duration(waitSummary.pipelineQueueWaitTime).Milliseconds(), 10))
 		buf.WriteString("ms")
-		empty = false
 	}
 	buf.WriteString("}")
 	return buf.String()
