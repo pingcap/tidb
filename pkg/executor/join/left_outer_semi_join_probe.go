@@ -17,6 +17,7 @@ package join
 import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/queue"
 	"github.com/pingcap/tidb/pkg/util/sqlkiller"
 )
 
@@ -32,7 +33,7 @@ type leftOuterSemiJoinProbe struct {
 	isNulls []bool
 
 	// used in other condition to record which rows are being processed now
-	processedProbeRowIdxQueue *Ring[int]
+	processedProbeRowIdxQueue *queue.Queue[int]
 }
 
 var _ ProbeV2 = &leftOuterSemiJoinProbe{}
@@ -40,7 +41,7 @@ var _ ProbeV2 = &leftOuterSemiJoinProbe{}
 func newLeftOuterSemiJoinProbe(base baseJoinProbe) *leftOuterSemiJoinProbe {
 	probe := &leftOuterSemiJoinProbe{
 		baseJoinProbe:             base,
-		processedProbeRowIdxQueue: NewRing[int](1024),
+		processedProbeRowIdxQueue: queue.NewQueue[int](1024),
 	}
 	return probe
 }
@@ -236,69 +237,4 @@ func (j *leftOuterSemiJoinProbe) IsCurrentChunkProbeDone() bool {
 		return false
 	}
 	return j.baseJoinProbe.IsCurrentChunkProbeDone()
-}
-
-// Ring is a circular buffer with a fixed capacity.
-type Ring[T any] struct {
-	elements []T
-	head     int
-	tail     int
-	size     int
-}
-
-// NewRing creates a new ring with the given capacity.
-func NewRing[T any](capacity int) *Ring[T] {
-	return &Ring[T]{
-		elements: make([]T, capacity),
-	}
-}
-
-// Push pushes an element to the ring.
-func (r *Ring[T]) Push(element T) {
-	if r.elements == nil {
-		r.elements = make([]T, 1)
-	}
-
-	if r.size == len(r.elements) {
-		// Double capacity when full
-		newElements := make([]T, len(r.elements)*2)
-		for i := 0; i < r.size; i++ {
-			newElements[i] = r.elements[(r.head+i)%len(r.elements)]
-		}
-		r.elements = newElements
-		r.head = 0
-		r.tail = r.size
-	}
-
-	r.elements[r.tail] = element
-	r.tail = (r.tail + 1) % len(r.elements)
-	r.size++
-}
-
-// Pop pops an element from the ring.
-func (r *Ring[T]) Pop() T {
-	if r.size == 0 {
-		panic("Ring is empty")
-	}
-	element := r.elements[r.head]
-	r.head = (r.head + 1) % len(r.elements)
-	r.size--
-	return element
-}
-
-// Len returns the number of elements in the ring.
-func (r *Ring[T]) Len() int {
-	return r.size
-}
-
-// IsEmpty returns true if the ring is empty.
-func (r *Ring[T]) IsEmpty() bool {
-	return r.size == 0
-}
-
-// Clear clears the ring.
-func (r *Ring[T]) Clear() {
-	r.head = 0
-	r.tail = 0
-	r.size = 0
 }
