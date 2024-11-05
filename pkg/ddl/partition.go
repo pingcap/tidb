@@ -47,7 +47,6 @@ import (
 	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/opcode"
-	"github.com/pingcap/tidb/pkg/parser/terror"
 	field_types "github.com/pingcap/tidb/pkg/parser/types"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
@@ -3726,16 +3725,32 @@ func doPartitionReorgWork(w *worker, jobCtx *jobContext, job *model.Job, tbl tab
 	}
 	defer w.sessPool.Put(sctx)
 	rh := newReorgHandler(sess.NewSession(sctx))
-	indices := make([]*model.IndexInfo, 0, len(tbl.Meta().Indices))
+	/*
+		indices := make([]*model.IndexInfo, 0, len(tbl.Meta().Indices))
+		for _, index := range tbl.Meta().Indices {
+			if isNew, ok := tbl.Meta().GetPartitionInfo().DDLChangedIndex[index.ID]; ok && !isNew {
+				// Skip old replaced indexes, but rebuild all other indexes
+				continue
+			}
+			indices = append(indices, index)
+		}
+				elements := BuildElements(tbl.Meta().Columns[0], indices)
+	*/
+	reorgTblInfo := tbl.Meta().Clone()
+	reorgTblInfo.Indices = reorgTblInfo.Indices[:0]
 	for _, index := range tbl.Meta().Indices {
-		if index.Global && index.State == model.StatePublic {
-			// Skip old global indexes, but rebuild all other indexes
+		if isNew, ok := tbl.Meta().GetPartitionInfo().DDLChangedIndex[index.ID]; ok && !isNew {
+			// Skip old replaced indexes, but rebuild all other indexes
 			continue
 		}
-		indices = append(indices, index)
+		reorgTblInfo.Indices = append(reorgTblInfo.Indices, index)
 	}
-	elements := BuildElements(tbl.Meta().Columns[0], indices)
-	partTbl, ok := tbl.(table.PartitionedTable)
+	reorgTbl, err := getTable(jobCtx.getAutoIDRequirement(), job.SchemaID, reorgTblInfo)
+	if err != nil {
+		return false, ver, errors.Trace(err)
+	}
+	elements := BuildElements(tbl.Meta().Columns[0], nil)
+	partTbl, ok := reorgTbl.(table.PartitionedTable)
 	if !ok {
 		return false, ver, dbterror.ErrUnsupportedReorganizePartition.GenWithStackByArgs()
 	}
@@ -3744,12 +3759,12 @@ func doPartitionReorgWork(w *worker, jobCtx *jobContext, job *model.Job, tbl tab
 		return false, ver, errors.Trace(err)
 	}
 	reorgInfo, err := getReorgInfoFromPartitions(jobCtx.oldDDLCtx.jobContext(job.ID, job.ReorgMeta), jobCtx, rh, job, dbInfo, partTbl, physTblIDs, elements)
-	err = w.runReorgJob(reorgInfo, tbl.Meta(), func() (reorgErr error) {
+	err = w.runReorgJob(reorgInfo, reorgTbl.Meta(), func() (reorgErr error) {
 		defer tidbutil.Recover(metrics.LabelDDL, "doPartitionReorgWork",
 			func() {
 				reorgErr = dbterror.ErrCancelledDDLJob.GenWithStack("reorganize partition for table `%v` panic", tbl.Meta().Name)
 			}, false)
-		return w.reorgPartitionDataAndIndex(jobCtx.stepCtx, tbl, reorgInfo)
+		return w.reorgPartitionDataAndIndex(jobCtx.stepCtx, reorgTbl, reorgInfo)
 	})
 	if err != nil {
 		if dbterror.ErrPausedDDLJob.Equal(err) {
@@ -3776,13 +3791,22 @@ func doPartitionReorgWork(w *worker, jobCtx *jobContext, job *model.Job, tbl tab
 
 type reorgPartitionWorker struct {
 	*backfillCtx
+	records int
 	// Static allocated to limit memory allocations
-	rowRecords        []*rowRecord
 	rowDecoder        *decoder.RowDecoder
 	rowMap            map[int64]types.Datum
 	writeColOffsetMap map[int64]int
 	maxOffset         int
 	reorgedTbl        table.PartitionedTable
+	// Only used for non-clustered tables, since we need to re-generate _tidb_rowid,
+	// and check if the old _tidb_rowid was already written or not.
+	// If the old _tidb_rowid already exists, then the row is already backfilled (double written)
+	// and can be skipped. Otherwise, we will insert it and generate index entries.
+	rows [][]types.Datum
+	// The original _tidb_rowids, used to check if already backfilled (double written).
+	oldKeys []kv.Key
+	// partition ids of the new rows
+	newPids []int64
 }
 
 func newReorgPartitionWorker(i int, t table.PhysicalTable, decodeColMap map[int64]decoder.Column, reorgInfo *reorgInfo, jc *ReorgContext) (*reorgPartitionWorker, error) {
@@ -3835,42 +3859,49 @@ func (w *reorgPartitionWorker) BackfillData(handleRange reorgBackfillTask) (task
 		}
 		txn.SetOption(kv.ResourceGroupName, w.jobContext.resourceGroupName)
 
-		rowRecords, nextKey, taskDone, err := w.fetchRowColVals(txn, handleRange)
+		nextKey, taskDone, err := w.fetchRowColVals(txn, handleRange)
 		if err != nil {
 			return errors.Trace(err)
 		}
 		taskCtx.nextKey = nextKey
 		taskCtx.done = taskDone
 
-		warningsMap := make(map[errors.ErrorID]*terror.Error)
-		warningsCountMap := make(map[errors.ErrorID]int64)
-		for _, prr := range rowRecords {
-			taskCtx.scanCount++
-
-			err = txn.Set(prr.key, prr.vals)
+		var found map[string][]byte
+		if len(w.oldKeys) > 0 {
+			// we must check if old IDs already been written,
+			//i.e. double written by StateWriteOnly or StateWriteReorganization.
+			// The good thing is that we can then also skip the index generation for that row and we don't need to
+			// check if duplicate index entries was already copied either!
+			found, err = txn.BatchGet(ctx, w.oldKeys)
 			if err != nil {
 				return errors.Trace(err)
 			}
-			taskCtx.addedCount++
-			if prr.warning != nil {
-				if _, ok := warningsCountMap[prr.warning.ID()]; ok {
-					warningsCountMap[prr.warning.ID()]++
-				} else {
-					warningsCountMap[prr.warning.ID()] = 1
-					warningsMap[prr.warning.ID()] = prr.warning
-				}
-			}
-			// TODO: Future optimization: also write the indexes here?
-			// What if the transaction limit is just enough for a single row, without index?
-			// Hmm, how could that be in the first place?
-			// For now, implement the batch-txn w.addTableIndex,
-			// since it already exists and is in use
 		}
 
-		// Collect the warnings.
-		taskCtx.warnings, taskCtx.warningsCount = warningsMap, warningsCountMap
+		for i := 0; i < w.records; i++ {
+			taskCtx.scanCount++
 
-		// also add the index entries here? And make sure they are not added somewhere else
+			if len(w.oldKeys) > 0 {
+				if _, ok := found[string(w.oldKeys[i])]; ok r().Info("Backfill not needed, key already existMs aJONSS", zp[rr.waritten
+					logutil.DDLLogge				// Already filled / t64("pIwrnind",w.newPids[i]), zap.String("key", w.oldKeys[i].String()))
+					continue
+				}
+				logutil.DDLLogger().Info("Backfill IS needed, key NOT FOUND!!! MJONSS", zap.Int64("pid", w.newPids[i]), zap.String("key", w.oldKeys[i].String()))
+				tbl := w.reorgedTbl.GetPartition(w.newPids[i])
+				if tbl == nil {
+					return dbterror.ErrUnsupportedReorganizePartition.GenWithStackByArgs()
+				}
+				// TODO: is this looking up each index entry at a time or in an optimistic way and only checks
+				// at commit time?
+				_, err = tbl.AddRecord(w.tblCtx, txn, w.rows[i])
+				if err != nil {
+					return errors.Trace(err)
+				}
+				// } else {
+				// already done AddRecord in fetchRowColVals, to avoid copying
+			}
+			taskCtx.addedCount++
+		}
 
 		return nil
 	})
@@ -3879,15 +3910,20 @@ func (w *reorgPartitionWorker) BackfillData(handleRange reorgBackfillTask) (task
 	return
 }
 
-func (w *reorgPartitionWorker) fetchRowColVals(txn kv.Transaction, taskRange reorgBackfillTask) ([]*rowRecord, kv.Key, bool, error) {
-	w.rowRecords = w.rowRecords[:0]
+func (w *reorgPartitionWorker) fetchRowColVals(txn kv.Transaction, taskRange reorgBackfillTask) (kv.Key, bool, error) {
+	w.records = 0
+	if cap(w.rows) < w.batchCnt {
+		w.rows = make([][]types.Datum, w.batchCnt)
+	}
+	w.oldKeys = w.oldKeys[:0]
+	w.newPids = w.newPids[:0]
 	startTime := time.Now()
 
 	// taskDone means that the added handle is out of taskRange.endHandle.
 	taskDone := false
 	sysTZ := w.loc
 
-	tmpRow := make([]types.Datum, w.maxOffset+1)
+	tmpRow := make([]types.Datum, len(w.reorgedTbl.Cols()))
 	var lastAccessedHandle kv.Key
 	oprStartTime := startTime
 	err := iterateSnapshotKeys(w.jobContext, w.ddlCtx.store, taskRange.priority, w.table.RecordPrefix(), txn.StartTS(), taskRange.startKey, taskRange.endKey,
@@ -3898,7 +3934,7 @@ func (w *reorgPartitionWorker) fetchRowColVals(txn kv.Transaction, taskRange reo
 
 			taskDone = recordKey.Cmp(taskRange.endKey) >= 0
 
-			if taskDone || len(w.rowRecords) >= w.batchCnt {
+			if taskDone || w.records >= w.batchCnt {
 				return false, nil
 			}
 
@@ -3907,13 +3943,13 @@ func (w *reorgPartitionWorker) fetchRowColVals(txn kv.Transaction, taskRange reo
 				return false, errors.Trace(err)
 			}
 
-			// Set the partitioning columns and calculate which partition to write to
-			for colID, offset := range w.writeColOffsetMap {
-				d, ok := w.rowMap[colID]
+			// Set all columns and calculate which partition to write to
+			for _, col := range w.reorgedTbl.WritableCols() {
+				d, ok := w.rowMap[col.ID]
 				if !ok {
 					return false, dbterror.ErrUnsupportedReorganizePartition.GenWithStackByArgs()
 				}
-				tmpRow[offset] = d
+				tmpRow[col.Offset] = d
 			}
 			p, err := w.reorgedTbl.GetPartitionByRow(w.exprCtx.GetEvalCtx(), tmpRow)
 			if err != nil {
@@ -3921,16 +3957,24 @@ func (w *reorgPartitionWorker) fetchRowColVals(txn kv.Transaction, taskRange reo
 			}
 			var newKey kv.Key
 			if w.reorgedTbl.Meta().PKIsHandle || w.reorgedTbl.Meta().IsCommonHandle {
-				pid := p.GetPhysicalID()
-				newKey = tablecodec.EncodeTablePrefix(pid)
-				newKey = append(newKey, recordKey[len(newKey):]...)
+				// Skip batching and write the row directly to the buffer
+				// TODO: check how this works with pessimistic foreground sessions
+				// TODO: check that this is not doing any synchronous index lookups
+				_, err = p.AddRecord(w.tblCtx, txn, tmpRow)
+				if err != nil {
+					return false, errors.Trace(err)
+				}
+				// TODO: See how we could skip this?
+				newKey = tablecodec.EncodeTablePrefix(p.GetPhysicalID())
+				newKey = append(newKey, recordKey[tablecodec.TableSplitKeyLen:]...)
 			} else {
+				// TODO: while waiting for BatchGet to check for duplicate, do another round of reads in parallel?
 				// Non-clustered table / not unique _tidb_rowid for the whole table
 				// Generate new _tidb_rowid if exists.
 				// Due to EXCHANGE PARTITION, the existing _tidb_rowid may collide between partitions!
 				if reserved, ok := w.tblCtx.GetReservedRowIDAlloc(); ok && reserved.Exhausted() {
 					// TODO: Which autoid allocator to use?
-					ids := uint64(max(1, w.batchCnt-len(w.rowRecords)))
+					ids := uint64(max(1, w.batchCnt-w.records))
 					// Keep using the original table's allocator
 					var baseRowID, maxRowID int64
 					baseRowID, maxRowID, err = tables.AllocHandleIDs(w.ctx, w.tblCtx, w.reorgedTbl, ids)
@@ -3943,11 +3987,20 @@ func (w *reorgPartitionWorker) fetchRowColVals(txn kv.Transaction, taskRange reo
 				if err != nil {
 					return false, errors.Trace(err)
 				}
+
+				// TODO: Will this just use the same row over and over again, so we need
+				// to copy each datum in the tmpRow slice?
+				if cap(w.rows[w.records]) < len(tmpRow) {
+					w.rows[w.records] = make([]types.Datum, len(tmpRow))
+				}
+				copy(w.rows[w.records], tmpRow)
+				w.newPids = append(w.newPids, p.GetPhysicalID())
 				newKey = tablecodec.EncodeRecordKey(p.RecordPrefix(), recordID)
+				oldKey := tablecodec.EncodeTablePrefix(p.GetPhysicalID())
+				oldKey = append(oldKey, recordKey[tablecodec.TableSplitKeyLen:]...)
+				w.oldKeys = append(w.oldKeys, oldKey)
 			}
-			w.rowRecords = append(w.rowRecords, &rowRecord{
-				key: newKey, vals: rawRow,
-			})
+			w.records++
 
 			w.cleanRowMap()
 			lastAccessedHandle = recordKey
@@ -3958,15 +4011,18 @@ func (w *reorgPartitionWorker) fetchRowColVals(txn kv.Transaction, taskRange reo
 			return true, nil
 		})
 
-	if len(w.rowRecords) == 0 {
+	if w.records == 0 {
 		taskDone = true
 	}
 
+	for i := 1; i < w.records; i++ {
+		logutil.DDLLogger().Info("ZZZZZZZ MJONSS w.rows", zap.Any("w.rows", w.rows[i]), zap.Int("i", i))
+	}
 	logutil.DDLLogger().Debug("txn fetches handle info",
 		zap.Uint64("txnStartTS", txn.StartTS()),
 		zap.Stringer("taskRange", &taskRange),
 		zap.Duration("takeTime", time.Since(startTime)))
-	return w.rowRecords, getNextHandleKey(taskRange, taskDone, lastAccessedHandle), taskDone, errors.Trace(err)
+	return getNextHandleKey(taskRange, taskDone, lastAccessedHandle), taskDone, errors.Trace(err)
 }
 
 func (w *reorgPartitionWorker) cleanRowMap() {

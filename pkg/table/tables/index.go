@@ -16,6 +16,9 @@ package tables
 
 import (
 	"context"
+	"fmt"
+	"github.com/pingcap/tidb/pkg/util/logutil"
+	"go.uber.org/zap"
 	"sync"
 	"time"
 
@@ -185,6 +188,9 @@ func (c *index) create(sctx table.MutateContext, txn kv.Transaction, indexedValu
 		key, distinct, err := c.GenIndexKey(ec, loc, value, h, writeBufs.IndexKeyBuf)
 		if err != nil {
 			return nil, err
+		}
+		if c.phyTblID > 100 {
+			logutil.BgLogger().Info("XXXXXX MJONSS Inserting key", zap.String("key", fmt.Sprintf("%x", key)), zap.Any("value", value), zap.Int64("physTblID", c.phyTblID), zap.Int64("idxID", c.idxInfo.ID))
 		}
 
 		var (
@@ -363,6 +369,10 @@ func (c *index) create(sctx table.MutateContext, txn kv.Transaction, indexedValu
 		}
 		return handle, kv.ErrKeyExists
 	}
+	// TODO: remove debug print
+	if c.phyTblID > 100 {
+		logutil.BgLogger().Info("XXXXXXXX MJONSS created index entry", zap.String("handle", h.String()), zap.Int64("physTblID", c.phyTblID), zap.Int64("indexID", c.idxInfo.ID))
+	}
 	return nil, nil
 }
 
@@ -413,6 +423,7 @@ func (c *index) Delete(ctx table.MutateContext, txn kv.Transaction, indexedValue
 			tempValElem.Global = true
 			tempValElem.Handle = kv.NewPartitionHandle(c.phyTblID, h)
 		}
+		logutil.BgLogger().Info("Delete Index entry", zap.String("key", kv.Key(key).String()), zap.String("tempKey", tempKey.String()), zap.Any("tempValElem", tempValElem))
 		if distinct {
 			if len(key) > 0 {
 				okToDelete := true

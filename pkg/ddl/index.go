@@ -2013,8 +2013,12 @@ func (w *addIndexTxnWorker) initBatchCheckBufs(batchCount int) {
 	w.recordIdx = w.recordIdx[:0]
 }
 
-func (w *addIndexTxnWorker) checkHandleExists(idxInfo *model.IndexInfo, key kv.Key, value []byte, handle kv.Handle) error {
+// if err := w.checkHandleExists(idx.Meta(), key, val, idxRecords[w.recordIdx[i]].handle); err != nil {
+// func (w *addIndexTxnWorker) checkHandleExists(idxInfo *model.IndexInfo, key kv.Key, value []byte, handle kv.Handle) error {
+func (w *addIndexTxnWorker) checkHandleExists(i int, key kv.Key, value []byte, handle kv.Handle) error {
 	tblInfo := w.table.Meta()
+	idx := w.indexes[i%len(w.indexes)]
+	idxInfo := idx.Meta()
 	idxColLen := len(idxInfo.Columns)
 	h, err := tablecodec.DecodeIndexHandle(key, value, idxColLen)
 	if err != nil {
@@ -2032,6 +2036,7 @@ func (w *addIndexTxnWorker) checkHandleExists(idxInfo *model.IndexInfo, key kv.K
 			return nil
 		}
 	}
+	logutil.DDLLogger().Info("not same handle MJONSS", zap.String("found handle", handle.String()), zap.String("Decoded handle", h.String()), zap.Int("i", i), zap.Int64("indexID", idxInfo.ID), zap.String("key", key.String()), zap.Stack("stack"))
 	return ddlutil.GenKeyExistsErr(key, value, idxInfo, tblInfo)
 }
 
@@ -2077,6 +2082,7 @@ func (w *addIndexTxnWorker) batchCheckUniqueKey(txn kv.Transaction, idxRecords [
 			w.distinctCheckFlags = append(w.distinctCheckFlags, distinct)
 			w.recordIdx = append(w.recordIdx, i)
 			uniqueBatchKeys = append(uniqueBatchKeys, key)
+			logutil.DDLLogger().Info("uniqueBatchKeys added MJONSS", zap.Any("val", val), zap.String("key", kv.Key(key).String()), zap.Int("i", i))
 		}
 	}
 
@@ -2096,11 +2102,11 @@ func (w *addIndexTxnWorker) batchCheckUniqueKey(txn kv.Transaction, idxRecords [
 		if len(key) == 0 {
 			continue
 		}
-		idx := w.indexes[i%len(w.indexes)]
 		val, found := batchVals[string(key)]
 		if found {
 			if w.distinctCheckFlags[i] {
-				if err := w.checkHandleExists(idx.Meta(), key, val, idxRecords[w.recordIdx[i]].handle); err != nil {
+				if err := w.checkHandleExists(i, key, val, idxRecords[w.recordIdx[i]].handle); err != nil {
+					//if err := w.checkHandleExists(idx.Meta(), key, val, idxRecords[w.recordIdx[i]].handle); err != nil {
 					return errors.Trace(err)
 				}
 			}

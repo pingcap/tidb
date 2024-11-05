@@ -46,8 +46,13 @@ func (e *executor) checkDeleteRangeCnt(job *model.Job) {
 		panic(err)
 	}
 	if actualCnt != expectedCnt {
-		if job.Type != model.ActionReorganizePartition || actualCnt < expectedCnt {
-			panic(fmt.Sprintf("expect delete range count %d, actual count %d", expectedCnt, actualCnt))
+		switch job.Type {
+		case model.ActionReorganizePartition, model.ActionRemovePartitioning, model.ActionAlterTablePartitioning:
+			if actualCnt < expectedCnt {
+				panic(fmt.Sprintf("expect delete range count %d, actual count %d for job type '%s'", expectedCnt, actualCnt, job.Type.String()))
+			}
+		default:
+			panic(fmt.Sprintf("expect delete range count %d, actual count %d for job type '%s'", expectedCnt, actualCnt, job.Type.String()))
 		}
 	}
 }
