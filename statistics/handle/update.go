@@ -39,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/cmp"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/logutil"
@@ -947,11 +948,11 @@ func (h *Handle) DumpColStatsUsageToKV() error {
 	for id, t := range colMap {
 		pairs = append(pairs, pair{tblColID: id, lastUsedAt: t.UTC().Format(types.TimeFormat)})
 	}
-	slices.SortFunc(pairs, func(i, j pair) bool {
+	slices.SortFunc(pairs, func(i, j pair) int {
 		if i.tblColID.TableID == j.tblColID.TableID {
-			return i.tblColID.ID < j.tblColID.ID
+			return cmp.Compare(i.tblColID.ID, j.tblColID.ID)
 		}
-		return i.tblColID.TableID < j.tblColID.TableID
+		return cmp.Compare(i.tblColID.TableID, j.tblColID.TableID)
 	})
 	// Use batch insert to reduce cost.
 	for i := 0; i < len(pairs); i += batchInsertSize {

@@ -588,6 +588,11 @@ func (e *memtableRetriever) setDataForStatisticsInTable(schema *model.DBInfo, ta
 				expression = tblCol.GeneratedExprString
 			}
 
+			var subPart any
+			if key.Length != types.UnspecifiedLength {
+				subPart = key.Length
+			}
+
 			record := types.MakeDatums(
 				infoschema.CatalogVal, // TABLE_CATALOG
 				schema.Name.O,         // TABLE_SCHEMA
@@ -599,7 +604,7 @@ func (e *memtableRetriever) setDataForStatisticsInTable(schema *model.DBInfo, ta
 				colName,               // COLUMN_NAME
 				"A",                   // COLLATION
 				0,                     // CARDINALITY
-				nil,                   // SUB_PART
+				subPart,               // SUB_PART
 				nil,                   // PACKED
 				nullable,              // NULLABLE
 				"BTREE",               // INDEX_TYPE
@@ -2966,8 +2971,8 @@ func (e *hugeMemTableRetriever) retrieve(ctx context.Context, sctx sessionctx.Co
 	if !e.initialized {
 		is := sctx.GetInfoSchema().(infoschema.InfoSchema)
 		dbs := is.AllSchemas()
-		slices.SortFunc(dbs, func(i, j *model.DBInfo) bool {
-			return i.Name.L < j.Name.L
+		slices.SortFunc(dbs, func(i, j *model.DBInfo) int {
+			return strings.Compare(i.Name.L, j.Name.L)
 		})
 		e.dbs = dbs
 		e.initialized = true
