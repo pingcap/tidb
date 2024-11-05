@@ -173,6 +173,9 @@ func (s *BaseScheduler) scheduleTask() {
 				if errors.Cause(err) == storage.ErrTaskNotFound {
 					// this can happen when task is reverted/succeed, but before
 					// we reach here, cleanup routine move it to history.
+					s.logger.Debug("task not found, might be reverted/succeed, update metrics", zap.Int64("task_id", s.GetTask().ID),
+						zap.String("task_key", s.GetTask().Key))
+					s.onFinished()
 					return
 				}
 				s.logger.Error("refresh task failed", zap.Error(err))
