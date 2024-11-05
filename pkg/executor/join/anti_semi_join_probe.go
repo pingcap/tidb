@@ -310,6 +310,7 @@ func (a *antiSemiJoinProbe) probeForRightSideBuildNoOtherCondition(chk *chunk.Ch
 		return err
 	}
 
-	a.finishCurrentLookupLoop(chk)
+	a.finishLookupCurrentProbeRow()
+	generateResultChk(chk, a.currentChunk, a.lUsed, a.offsetAndLengthArray)
 	return
 }

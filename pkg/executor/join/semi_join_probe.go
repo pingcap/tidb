@@ -147,10 +147,6 @@ func (s *semiJoinProbe) ResetProbe() {
 	s.baseJoinProbe.ResetProbe()
 }
 
-func (s *semiJoinProbe) IsCurrentChunkProbeDone() bool {
-	return s.currentChunk == nil || s.currentProbeRow >= s.chunkRows
-}
-
 func (s *semiJoinProbe) Probe(joinResult *hashjoinWorkerResult, sqlKiller *sqlkiller.SQLKiller) (ok bool, _ *hashjoinWorkerResult) {
 	if joinResult.chk.IsFull() {
 		return true, joinResult
@@ -399,8 +395,17 @@ func (s *semiJoinProbe) probeForRightSideBuildNoOtherCondition(chk *chunk.Chunk,
 		return err
 	}
 
-	// TODO write a new framework for semi join
-	s.finishCurrentLookupLoop(chk)
-
+	s.finishLookupCurrentProbeRow()
+	generateResultChk(chk, s.currentChunk, s.lUsed, s.offsetAndLengthArray)
 	return
+}
+
+func  generateResultChk(resultChk *chunk.Chunk, probeChk *chunk.Chunk, lUsed []int, offsetAndLengthArray []offsetAndLength) {
+	for index, colIndex := range lUsed {
+		srcCol := probeChk.Column(colIndex)
+		dstCol := resultChk.Column(index)
+		for _, offsetAndLength := range offsetAndLengthArray {
+			dstCol.AppendCellNTimes(srcCol, offsetAndLength.offset, offsetAndLength.length)
+		}
+	}
 }
