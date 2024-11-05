@@ -103,12 +103,18 @@ func genPlanCloneForPlanCache(x any) ([]byte, error) {
 							cloned.%v = *basePlan`, fieldName, fieldName)
 		case "baseimpl.Plan", "core.baseSchemaProducer":
 			c.write("cloned.%v = *op.%v.CloneWithNewCtx(newCtx)", f.Name, f.Name)
-		case "[]expression.Expression", "[]*ranger.Range", "[]*util.ByItems", "[]*expression.Column", "[]model.CIStr",
-			"[]*expression.Constant", "[]*expression.ScalarFunction", "[]property.SortItem", "[]types.Datum",
-			"[]kv.Handle", "[]*expression.Assignment":
+		case "[]expression.Expression", "[]*expression.Column",
+			"[]*expression.Constant", "[]*expression.ScalarFunction":
+			structureName := strings.Split(f.Type.String(), ".")[1] + "s"
+			c.write("cloned.%v = clone%v(op.%v)ForPlanCache", f.Name, structureName, f.Name)
+		case "[][]*expression.Constant", "[][]expression.Expression":
+			structureName := strings.Split(f.Type.String(), ".")[1]
+			c.write("cloned.%v = util.clone%v2D(op.%v)ForPlanCache", f.Name, structureName, f.Name)
+		case "[]*ranger.Range", "[]*util.ByItems", "[]model.CIStr", "[]property.SortItem",
+			"[]types.Datum", "[]kv.Handle", "[]*expression.Assignment":
 			structureName := strings.Split(f.Type.String(), ".")[1] + "s"
 			c.write("cloned.%v = util.Clone%v(op.%v)", f.Name, structureName, f.Name)
-		case "[][]*expression.Constant", "[][]types.Datum", "[][]expression.Expression":
+		case "[][]types.Datum":
 			structureName := strings.Split(f.Type.String(), ".")[1]
 			c.write("cloned.%v = util.Clone%v2D(op.%v)", f.Name, structureName, f.Name)
 		case "planctx.PlanContext":
