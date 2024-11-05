@@ -152,16 +152,9 @@ func (*ImplProjection) OnImplement(expr *memo.GroupExpr, reqProp *property.Physi
 		return nil, nil
 	}
 	proj := plannercore.PhysicalProjection{
-<<<<<<< HEAD:planner/cascades/implementation_rules.go
-		Exprs:                logicProj.Exprs,
-		CalculateNoDelay:     logicProj.CalculateNoDelay,
-		AvoidColumnEvaluator: logicProj.AvoidColumnEvaluator,
-	}.Init(logicProj.SCtx(), logicProp.Stats.ScaleByExpectCnt(reqProp.ExpectedCnt), logicProj.SelectBlockOffset(), childProp)
-=======
 		Exprs:            logicProj.Exprs,
 		CalculateNoDelay: logicProj.CalculateNoDelay,
-	}.Init(logicProj.SCtx(), logicProp.Stats.ScaleByExpectCnt(reqProp.ExpectedCnt), logicProj.QueryBlockOffset(), childProp)
->>>>>>> 004b442fb9a (pkg/planner: set proj.AvoidColumnEvaluator in postOptimize (#55333)):pkg/planner/cascades/implementation_rules.go
+	}.Init(logicProj.SCtx(), logicProp.Stats.ScaleByExpectCnt(reqProp.ExpectedCnt), logicProj.SelectBlockOffset(), childProp)
 	proj.SetSchema(logicProp.Schema)
 	return []memo.Implementation{impl.NewProjectionImpl(proj)}, nil
 }
