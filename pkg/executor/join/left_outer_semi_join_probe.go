@@ -33,19 +33,16 @@ type leftOuterSemiJoinProbe struct {
 	// buffer isNull for other condition evaluation
 	isNulls []bool
 
-	// record the next probe row index to process
-	nextProcessProbeRowIdx int
-
 	// used in other condition to record which rows are being processed now
-	processedProbeRowIdxSet map[int]struct{}
+	processedProbeRowIdxQueue *Ring[int]
 }
 
 var _ ProbeV2 = &leftOuterSemiJoinProbe{}
 
 func newLeftOuterSemiJoinProbe(base baseJoinProbe) *leftOuterSemiJoinProbe {
 	probe := &leftOuterSemiJoinProbe{
-		baseJoinProbe:           base,
-		processedProbeRowIdxSet: make(map[int]struct{}),
+		baseJoinProbe:             base,
+		processedProbeRowIdxQueue: NewRing[int](1024),
 	}
 	probe.leftColUsed = base.lUsed
 	return probe
@@ -63,6 +60,12 @@ func (j *leftOuterSemiJoinProbe) SetChunkForProbe(chunk *chunk.Chunk) (err error
 	j.isNullRows = j.isNullRows[:0]
 	for i := 0; i < j.chunkRows; i++ {
 		j.isNullRows = append(j.isNullRows, false)
+	}
+	if j.ctx.hasOtherCondition() {
+		j.processedProbeRowIdxQueue.Clear()
+		for i := 0; i < j.chunkRows; i++ {
+			j.processedProbeRowIdxQueue.Push(i)
+		}
 	}
 	return nil
 }
@@ -103,14 +106,12 @@ func (j *leftOuterSemiJoinProbe) Probe(joinResult *hashjoinWorkerResult, sqlKill
 }
 
 func (j *leftOuterSemiJoinProbe) probeForInnerSideBuildWithOtherCondition(chk, joinedChk *chunk.Chunk, sqlKiller *sqlkiller.SQLKiller) (err error) {
-	j.nextProcessProbeRowIdx = j.currentProbeRow
 	err = j.concatenateProbeAndBuildRows(joinedChk, sqlKiller)
 	if err != nil {
 		return err
 	}
 
 	// To avoid `Previous chunk is not probed yet` error
-	j.currentProbeRow = j.nextProcessProbeRowIdx
 	if joinedChk.NumRows() > 0 {
 		j.selected, j.isNulls, err = expression.VecEvalBool(j.ctx.SessCtx.GetExprCtx().GetEvalCtx(), j.ctx.SessCtx.GetSessionVars().EnableVectorizedExpression, j.ctx.OtherCondition, joinedChk, j.selected, j.isNulls)
 		if err != nil {
@@ -127,7 +128,8 @@ func (j *leftOuterSemiJoinProbe) probeForInnerSideBuildWithOtherCondition(chk, j
 		}
 	}
 
-	if j.currentProbeRow == j.chunkRows && len(j.processedProbeRowIdxSet) == 0 {
+	if j.processedProbeRowIdxQueue.IsEmpty() {
+		j.currentProbeRow = j.chunkRows
 		j.buildResult(chk, 0)
 	}
 	return
@@ -211,33 +213,14 @@ func (j *leftOuterSemiJoinProbe) matchMultiBuildRows(joinedChk *chunk.Chunk, joi
 func (j *leftOuterSemiJoinProbe) concatenateProbeAndBuildRows(joinedChk *chunk.Chunk, sqlKiller *sqlkiller.SQLKiller) error {
 	joinedChkRemainCap := joinedChk.Capacity()
 
-	for joinedChkRemainCap > 0 && (len(j.processedProbeRowIdxSet) > 0 || j.nextProcessProbeRowIdx < j.chunkRows) {
-		for probeRowIdx := range j.processedProbeRowIdxSet {
-			if j.isMatchedRows[probeRowIdx] {
-				delete(j.processedProbeRowIdxSet, probeRowIdx)
-				continue
-			}
-			j.currentProbeRow = probeRowIdx
-			j.matchMultiBuildRows(joinedChk, &joinedChkRemainCap)
-
-			if j.matchedRowsHeaders[probeRowIdx] == 0 {
-				delete(j.processedProbeRowIdxSet, probeRowIdx)
-			}
-
-			if joinedChkRemainCap == 0 {
-				break
-			}
+	for joinedChkRemainCap > 0 && !j.processedProbeRowIdxQueue.IsEmpty() {
+		probeRowIdx := j.processedProbeRowIdxQueue.Pop()
+		j.currentProbeRow = probeRowIdx
+		j.matchMultiBuildRows(joinedChk, &joinedChkRemainCap)
+		if j.matchedRowsHeaders[probeRowIdx] == 0 {
+			continue
 		}
-
-		for joinedChkRemainCap > 0 && j.nextProcessProbeRowIdx < j.chunkRows {
-			j.currentProbeRow = j.nextProcessProbeRowIdx
-			j.matchMultiBuildRows(joinedChk, &joinedChkRemainCap)
-
-			if j.matchedRowsHeaders[j.currentProbeRow] != 0 {
-				j.processedProbeRowIdxSet[j.currentProbeRow] = struct{}{}
-			}
-			j.nextProcessProbeRowIdx++
-		}
+		j.processedProbeRowIdxQueue.Push(probeRowIdx)
 	}
 
 	err := checkSQLKiller(sqlKiller, "killedDuringProbe")
@@ -250,8 +233,73 @@ func (j *leftOuterSemiJoinProbe) concatenateProbeAndBuildRows(joinedChk *chunk.C
 }
 
 func (j *leftOuterSemiJoinProbe) IsCurrentChunkProbeDone() bool {
-	if len(j.processedProbeRowIdxSet) > 0 {
+	if !j.processedProbeRowIdxQueue.IsEmpty() {
 		return false
 	}
 	return j.baseJoinProbe.IsCurrentChunkProbeDone()
+}
+
+// Ring is a circular buffer with a fixed capacity.
+type Ring[T any] struct {
+	elements []T
+	head     int
+	tail     int
+	size     int
+}
+
+// NewRing creates a new ring with the given capacity.
+func NewRing[T any](capacity int) *Ring[T] {
+	return &Ring[T]{
+		elements: make([]T, capacity),
+	}
+}
+
+// Push pushes an element to the ring.
+func (r *Ring[T]) Push(element T) {
+	if r.elements == nil {
+		r.elements = make([]T, 1)
+	}
+
+	if r.size == len(r.elements) {
+		// Double capacity when full
+		newElements := make([]T, len(r.elements)*2)
+		for i := 0; i < r.size; i++ {
+			newElements[i] = r.elements[(r.head+i)%len(r.elements)]
+		}
+		r.elements = newElements
+		r.head = 0
+		r.tail = r.size
+	}
+
+	r.elements[r.tail] = element
+	r.tail = (r.tail + 1) % len(r.elements)
+	r.size++
+}
+
+// Pop pops an element from the ring.
+func (r *Ring[T]) Pop() T {
+	if r.size == 0 {
+		panic("Ring is empty")
+	}
+	element := r.elements[r.head]
+	r.head = (r.head + 1) % len(r.elements)
+	r.size--
+	return element
+}
+
+// Len returns the number of elements in the ring.
+func (r *Ring[T]) Len() int {
+	return r.size
+}
+
+// IsEmpty returns true if the ring is empty.
+func (r *Ring[T]) IsEmpty() bool {
+	return r.size == 0
+}
+
+// Clear clears the ring.
+func (r *Ring[T]) Clear() {
+	r.head = 0
+	r.tail = 0
+	r.size = 0
 }
