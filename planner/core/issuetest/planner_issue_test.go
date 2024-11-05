@@ -244,21 +244,17 @@ func TestIssue50614(t *testing.T) {
 		testkit.Rows(
 			"Update N/A root  N/A",
 			"└─Projection 0.00 root  test.tt.a, test.tt.b, test.tt.c, test.tt.d, test.tt.e, Column#18, Column#19, Column#20, Column#21",
-			"  └─Projection 0.00 root  test.tt.a, test.tt.b, test.tt.c, test.tt.d, test.tt.e, Column#18, Column#19, Column#20, Column#21",
-			"    └─IndexJoin 0.00 root  inner join, inner:TableReader, outer key:Column#20, Column#21, inner key:test.tt.c, test.tt.d, equal cond:eq(Column#20, test.tt.c), eq(Column#21, test.tt.d), other cond:or(or(and(eq(Column#20, 11), eq(test.tt.d, 111)), and(eq(Column#20, 22), eq(test.tt.d, 222))), or(and(eq(Column#20, 33), eq(test.tt.d, 333)), and(eq(Column#20, 44), eq(test.tt.d, 444)))), or(or(and(eq(test.tt.c, 11), eq(Column#21, 111)), and(eq(test.tt.c, 22), eq(Column#21, 222))), or(and(eq(test.tt.c, 33), eq(Column#21, 333)), and(eq(test.tt.c, 44), eq(Column#21, 444))))",
-			"      ├─Union(Build) 0.00 root  ",
-			"      │ ├─Projection 0.00 root  Column#6, Column#7, Column#8, Column#9",
-			"      │ │ └─Projection 0.00 root  1->Column#6, 2->Column#7, 3->Column#8, 4->Column#9",
-			"      │ │   └─TableDual 0.00 root  rows:0",
-			"      │ ├─Projection 0.00 root  Column#10, Column#11, Column#12, Column#13",
-			"      │ │ └─Projection 0.00 root  2->Column#10, 3->Column#11, 4->Column#12, 5->Column#13",
-			"      │ │   └─TableDual 0.00 root  rows:0",
-			"      │ └─Projection 0.00 root  Column#14, Column#15, Column#16, Column#17",
-			"      │   └─Projection 0.00 root  3->Column#14, 4->Column#15, 5->Column#16, 6->Column#17",
-			"      │     └─TableDual 0.00 root  rows:0",
-			"      └─TableReader(Probe) 0.00 root  data:Selection",
-			"        └─Selection 0.00 cop[tikv]  or(or(and(eq(test.tt.c, 11), eq(test.tt.d, 111)), and(eq(test.tt.c, 22), eq(test.tt.d, 222))), or(and(eq(test.tt.c, 33), eq(test.tt.d, 333)), and(eq(test.tt.c, 44), eq(test.tt.d, 444)))), or(or(eq(test.tt.c, 11), eq(test.tt.c, 22)), or(eq(test.tt.c, 33), eq(test.tt.c, 44))), or(or(eq(test.tt.d, 111), eq(test.tt.d, 222)), or(eq(test.tt.d, 333), eq(test.tt.d, 444)))",
-			"          └─TableRangeScan 0.00 cop[tikv] table:tt range: decided by [eq(test.tt.c, Column#20) eq(test.tt.d, Column#21)], keep order:false, stats:pseudo",
+			"  └─IndexJoin 0.00 root  inner join, inner:TableReader, outer key:Column#20, Column#21, inner key:test.tt.c, test.tt.d, equal cond:eq(Column#20, test.tt.c), eq(Column#21, test.tt.d), other cond:or(or(and(eq(Column#20, 11), eq(test.tt.d, 111)), and(eq(Column#20, 22), eq(test.tt.d, 222))), or(and(eq(Column#20, 33), eq(test.tt.d, 333)), and(eq(Column#20, 44), eq(test.tt.d, 444)))), or(or(and(eq(test.tt.c, 11), eq(Column#21, 111)), and(eq(test.tt.c, 22), eq(Column#21, 222))), or(and(eq(test.tt.c, 33), eq(Column#21, 333)), and(eq(test.tt.c, 44), eq(Column#21, 444))))",
+			"    ├─Union(Build) 0.00 root  ",
+			"    │ ├─Projection 0.00 root  1->Column#18, 2->Column#19, 3->Column#20, 4->Column#21",
+			"    │ │ └─TableDual 0.00 root  rows:0",
+			"    │ ├─Projection 0.00 root  2->Column#18, 3->Column#19, 4->Column#20, 5->Column#21",
+			"    │ │ └─TableDual 0.00 root  rows:0",
+			"    │ └─Projection 0.00 root  3->Column#18, 4->Column#19, 5->Column#20, 6->Column#21",
+			"    │   └─TableDual 0.00 root  rows:0",
+			"    └─TableReader(Probe) 0.00 root  data:Selection",
+			"      └─Selection 0.00 cop[tikv]  or(or(and(eq(test.tt.c, 11), eq(test.tt.d, 111)), and(eq(test.tt.c, 22), eq(test.tt.d, 222))), or(and(eq(test.tt.c, 33), eq(test.tt.d, 333)), and(eq(test.tt.c, 44), eq(test.tt.d, 444)))), or(or(eq(test.tt.c, 11), eq(test.tt.c, 22)), or(eq(test.tt.c, 33), eq(test.tt.c, 44))), or(or(eq(test.tt.d, 111), eq(test.tt.d, 222)), or(eq(test.tt.d, 333), eq(test.tt.d, 444)))",
+			"        └─TableRangeScan 0.00 cop[tikv] table:tt range: decided by [eq(test.tt.c, Column#20) eq(test.tt.d, Column#21)], keep order:false, stats:pseudo",
 		),
 	)
 }
@@ -338,4 +334,34 @@ WHERE
 		"    ├─IndexRangeScan_29(Build) 10000.00 cop[tikv] table:g, index:k1(parentid) range: decided by [eq(test.g.parentid, test.p.groupid)], keep order:false, stats:pseudo",
 		"    └─TableRowIDScan_30(Probe) 10000.00 cop[tikv] table:g keep order:false, stats:pseudo"))
 	tk.MustQuery(`show warnings`).Check(testkit.Rows())
+}
+
+// https://github.com/pingcap/tidb/issues/53236
+func TestIssue53236(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("use test;")
+	tk.MustExec("create table t1(id int primary key, a varchar(128));")
+	tk.MustExec("create table t2(id int primary key, b varchar(128), c varchar(128));")
+	tk.MustExec(`UPDATE
+    t1
+SET
+    t1.a = IFNULL(
+            (
+                SELECT
+                    t2.c
+                FROM
+                    t2
+                WHERE
+                    t2.b = t1.a
+                ORDER BY
+                    t2.b DESC,
+                    t2.c DESC
+                LIMIT
+                    1
+            ), ''
+        )
+WHERE
+    t1.id = 1;`)
 }
