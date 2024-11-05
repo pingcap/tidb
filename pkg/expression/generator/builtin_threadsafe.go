@@ -105,28 +105,26 @@ func genBuiltinThreadSafeCode(exprCodeDir string) (safe, unsafe []byte) {
 	}
 	sort.Strings(safeFuncs)
 
-	var buffer bytes.Buffer
-	buffer.WriteString(safeHeader)
-	for _, funcName := range safeFuncs {
-		buffer.WriteString(fmt.Sprintf(safeFuncTemp, funcName))
-	}
-
-	formattedSafe, err := format.Source(buffer.Bytes())
+	formattedSafe, err := generateCode(safeFuncs, safeHeader, safeFuncTemp)
 	if err != nil {
 		panic(err)
 	}
 
-	buffer.Reset()
-	buffer.WriteString(unsafeHeader)
-	for _, funcName := range unsafeFuncs {
-		buffer.WriteString(fmt.Sprintf(unsafeFuncTemp, funcName))
-	}
-	formattedUnsafe, err := format.Source(buffer.Bytes())
+	formattedUnsafe, err := generateCode(unsafeFuncs, unsafeHeader, unsafeFuncTemp)
 	if err != nil {
 		panic(err)
 	}
 
 	return formattedSafe, formattedUnsafe
+}
+
+func generateCode(funcNames []string, header, template string) ([]byte, error) {
+	var buffer bytes.Buffer
+	buffer.WriteString(header)
+	for _, funcName := range funcNames {
+		buffer.WriteString(fmt.Sprintf(template, funcName))
+	}
+	return format.Source(buffer.Bytes())
 }
 
 func main() {
