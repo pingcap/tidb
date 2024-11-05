@@ -15,6 +15,7 @@
 package privileges
 
 import (
+	"context"
 	"crypto/tls"
 	"crypto/x509"
 	"errors"
@@ -29,6 +30,7 @@ import (
 	"github.com/lestrrat-go/jwx/v2/jwt/openid"
 	"github.com/pingcap/tidb/pkg/extension"
 	"github.com/pingcap/tidb/pkg/infoschema"
+	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
@@ -43,6 +45,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/hack"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/sem"
+	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"go.uber.org/zap"
 )
 
@@ -394,11 +397,16 @@ func (p *UserPrivileges) MatchIdentity(user, host string, skipNameResolve bool) 
 }
 
 // MatchUserResourceGroupName implements the Manager interface.
-func (p *UserPrivileges) MatchUserResourceGroupName(resourceGroupName string) (u string, success bool) {
-	mysqlPriv := p.Handle.Get()
-	record := mysqlPriv.matchResoureGroup(resourceGroupName)
-	if record != nil {
-		return record.User, true
+func (p *UserPrivileges) MatchUserResourceGroupName(exec sqlexec.RestrictedSQLExecutor, resourceGroupName string) (u string, success bool) {
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnPrivilege)
+	sql := "SELECT user FROM mysql.user WHERE json_extract(user_attributes, '$.resource_group') = %? LIMIT 1"
+	rows, _, err := exec.ExecRestrictedSQL(ctx, nil, sql, resourceGroupName)
+	if err != nil {
+		logutil.BgLogger().Error("execute sql error", zap.String("sql", sql), zap.Error(err))
+		return "", false
+	}
+	if len(rows) > 0 {
+		return rows[0].GetString(0), true
 	}
 	return "", false
 }
