@@ -16,13 +16,13 @@ package rowcodec
 
 import (
 	"encoding/binary"
-	"github.com/pingcap/tidb/pkg/kv"
 	"hash/crc32"
 	"math"
 	"sort"
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/codec"
