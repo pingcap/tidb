@@ -208,14 +208,14 @@ func (b *targetInfoGetter) FetchRemoteTableModels(
 						args = append(args, tableName)
 					}
 					//nolint:gosec
-					rows, e := tx.Query(`
+					rows, err := tx.Query(`
 						SELECT table_name, column_name, column_type, generation_expression, extra
 						FROM information_schema.columns
 						WHERE table_schema = ? AND table_name IN (?`+strings.Repeat(",?", end-start-1)+`)
 						ORDER BY table_name, ordinal_position;
 					`, args...)
-					if e != nil {
-						return e
+					if err != nil {
+						return err
 					}
 					defer rows.Close()
 
@@ -227,8 +227,8 @@ func (b *targetInfoGetter) FetchRemoteTableModels(
 					)
 					for rows.Next() {
 						var tableName, columnName, columnType, generationExpr, columnExtra string
-						if e := rows.Scan(&tableName, &columnName, &columnType, &generationExpr, &columnExtra); e != nil {
-							return e
+						if err2 := rows.Scan(&tableName, &columnName, &columnType, &generationExpr, &columnExtra); err2 != nil {
+							return err2
 						}
 						if tableName != curTableName {
 							tableIdx++
