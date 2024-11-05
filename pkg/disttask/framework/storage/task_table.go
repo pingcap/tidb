@@ -783,7 +783,9 @@ func (mgr *TaskManager) GetSubtasksWithHistory(ctx context.Context, taskID int64
 
 // GetAllSubtasks gets all subtasks with basic columns.
 func (mgr *TaskManager) GetAllSubtasks(ctx context.Context) ([]*proto.SubtaskBase, error) {
-	rs, err := mgr.ExecuteSQLWithNewSession(ctx, `select `+basicSubtaskColumns+` from mysql.tidb_background_subtask`)
+	rs, err := mgr.ExecuteSQLWithNewSession(ctx, `select `+basicSubtaskColumns+` from mysql.tidb_background_subtask
+		union all
+		select `+basicSubtaskColumns+` from mysql.tidb_background_subtask_history`)
 	if err != nil {
 		return nil, err
 	}
