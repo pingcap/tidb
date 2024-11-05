@@ -29,6 +29,7 @@ go_library(
         "//expression",
         "//planner/core",
         "//util",
+        "//util/cmp",
         "//util/promutil",
         "@com_github_go_sql_driver_mysql//:mysql",
         "@com_github_google_uuid//:uuid",

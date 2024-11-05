@@ -3220,3 +3220,74 @@ func TestProxyProtocolWithIpNoFallbackable(t *testing.T) {
 	require.NotNil(t, err)
 	db.Close()
 }
+
+func TestAuthSocket(t *testing.T) {
+	defer mockOSUserForAuthSocketTest.Store(nil)
+
+	cfg := newTestConfig()
+	cfg.Socket = filepath.Join(t.TempDir(), "authsock.sock")
+	cfg.Port = 0
+	cfg.Status.StatusPort = 0
+	ts := createTidbTestSuiteWithCfg(t, cfg)
+
+	ts.waitUntilServerCanConnect()
+
+	ts.runTests(t, nil, func(dbt *testkit.DBTestKit) {
+		dbt.MustExec("CREATE USER 'u1'@'%' IDENTIFIED WITH auth_socket;")
+		dbt.MustExec("CREATE USER 'u2'@'%' IDENTIFIED WITH auth_socket AS 'sockuser'")
+		dbt.MustExec("CREATE USER 'sockuser'@'%' IDENTIFIED WITH auth_socket;")
+	})
+
+	// network login should be denied
+	for _, uname := range []string{"u1", "u2", "u3"} {
+		mockOSUserForAuthSocketTest.Store(&uname)
+		db, err := sql.Open("mysql", ts.getDSN(func(config *mysql.Config) {
+			config.User = uname
+		}))
+		require.NoError(t, err)
+		_, err = db.Conn(context.TODO())
+		require.EqualError(t,
+			err,
+			fmt.Sprintf("Error 1045 (28000): Access denied for user '%s'@'127.0.0.1' (using password: NO)", uname),
+		)
+		require.NoError(t, db.Close())
+	}
+
+	socketAuthConf := func(user string) func(*mysql.Config) {
+		return func(config *mysql.Config) {
+			config.User = user
+			config.Net = "unix"
+			config.Addr = cfg.Socket
+			config.DBName = ""
+		}
+	}
+
+	mockUser := "sockuser"
+	mockOSUserForAuthSocketTest.Store(&mockUser)
+	// mysql username that is different with the OS user should be rejected.
+	db, err := sql.Open("mysql", ts.getDSN(socketAuthConf("u1")))
+	require.NoError(t, err)
+	_, err = db.Conn(context.TODO())
+	require.EqualError(t, err, "Error 1045 (28000): Access denied for user 'u1'@'localhost' (using password: YES)")
+	require.NoError(t, db.Close())
+
+	// mysql username that is the same with the OS user should be accepted.
+	ts.runTests(t, socketAuthConf("sockuser"), func(dbt *testkit.DBTestKit) {
+		rows := dbt.MustQuery("select current_user();")
+		ts.checkRows(t, rows, "sockuser@%")
+	})
+
+	// When a user is created with `IDENTIFIED WITH auth_socket AS ...`.
+	// It should be accepted when username or as string is the same with OS user.
+	ts.runTests(t, socketAuthConf("u2"), func(dbt *testkit.DBTestKit) {
+		rows := dbt.MustQuery("select current_user();")
+		ts.checkRows(t, rows, "u2@%")
+	})
+
+	mockUser = "u2"
+	mockOSUserForAuthSocketTest.Store(&mockUser)
+	ts.runTests(t, socketAuthConf("u2"), func(dbt *testkit.DBTestKit) {
+		rows := dbt.MustQuery("select current_user();")
+		ts.checkRows(t, rows, "u2@%")
+	})
+}

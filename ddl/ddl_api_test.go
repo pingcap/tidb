@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/cmp"
 	"github.com/stretchr/testify/require"
 	"golang.org/x/exp/slices"
 )
@@ -111,8 +112,8 @@ func TestGetDDLJobsIsSort(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, currJobs, 15)
 
-	isSort := slices.IsSortedFunc(currJobs, func(i, j *model.Job) bool {
-		return i.ID <= j.ID
+	isSort := slices.IsSortedFunc(currJobs, func(i, j *model.Job) int {
+		return cmp.Compare(i.ID, j.ID)
 	})
 	require.True(t, isSort)
 
@@ -169,7 +170,7 @@ func TestCreateDropCreateTable(t *testing.T) {
 	originHook := dom.DDL().GetHook()
 	onJobUpdated := func(job *model.Job) {
 		if job.Type == model.ActionDropTable && job.SchemaState == model.StateWriteOnly && !createTable {
-			fpErr = failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/mockOwnerCheckAllVersionSlow", fmt.Sprintf("return(%d)", job.ID))
+			fpErr = failpoint.Enable("github.com/pingcap/tidb/ddl/mockOwnerCheckAllVersionSlow", fmt.Sprintf("return(%d)", job.ID))
 			wg.Add(1)
 			go func() {
 				_, createErr = tk1.Exec("create table t (b int);")
@@ -187,7 +188,7 @@ func TestCreateDropCreateTable(t *testing.T) {
 	wg.Wait()
 	require.NoError(t, createErr)
 	require.NoError(t, fpErr)
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/mockOwnerCheckAllVersionSlow"))
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/mockOwnerCheckAllVersionSlow"))
 
 	rs := tk.MustQuery("admin show ddl jobs 3;").Rows()
 	create1JobID := rs[0][0].(string)
