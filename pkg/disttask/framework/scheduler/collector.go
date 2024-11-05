@@ -103,6 +103,10 @@ func (c *collector) Collect(ch chan<- prometheus.Metric) {
 			}
 		}
 	}
+	if len(subtaskCnt) == 0 {
+		ch <- prometheus.MustNewConstMetric(c.subtasks, prometheus.GaugeValue, 0, "", "", "", "")
+		logutil.DDLLogger().Info("set subtask count to 0")
+	}
 	logutil.DDLLogger().Info("subTask count collect:", zap.String("subtaskCnt", fmt.Sprint(subtaskCnt)))
 }
 
