@@ -68,7 +68,7 @@ const (
 	ignorePlacementPolicyMode = "IGNORE"
 
 	resetSpeedLimitRetryTimes = 3
-	defaultDDLConcurrency     = 16
+	defaultDDLConcurrency     = 100
 	maxSplitKeysOnce          = 10240
 )
 

@@ -48,25 +48,19 @@ func (cfg *PauseGcConfig) ParseFromFlags(flags *pflag.FlagSet) error {
 
 type Base64ifyConfig struct {
 	storage.BackendOptions
-	Revert     bool
 	StorageURI string
 	LoadCerd   bool
 }
 
 func DefineFlagsForBase64ifyConfig(flags *pflag.FlagSet) {
 	storage.DefineFlags(flags)
-	flags.Bool("revert", false, "Do the revert operation.")
-	flags.String("storage", "", "the external storage input.")
+	flags.StringP("storage", "s", "", "The external storage input.")
 	flags.Bool("load-creds", false, "whether loading the credientials from current environment and marshal them to the base64 string. [!]")
 }
 
 func (cfg *Base64ifyConfig) ParseFromFlags(flags *pflag.FlagSet) error {
 	var err error
 	err = cfg.BackendOptions.ParseFromFlags(flags)
-	if err != nil {
-		return err
-	}
-	cfg.Revert, err = flags.GetBool("revert")
 	if err != nil {
 		return err
 	}
