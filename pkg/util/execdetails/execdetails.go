@@ -685,9 +685,8 @@ func (e *basicCopRuntimeStats) String() string {
 	if e.storeType == "tiflash" {
 		if e.tiFlashWaitSummary.CanBeIgnored() {
 			return fmt.Sprintf("time:%v, loops:%d, threads:%d, %s", FormatDuration(time.Duration(e.consume.Load())), e.loop.Load(), e.threads, e.tiflashScanContext.String())
-		} else {
-			return fmt.Sprintf("time:%v, loops:%d, threads:%d, %s, %s", FormatDuration(time.Duration(e.consume.Load())), e.loop.Load(), e.threads, e.tiflashScanContext.String(), e.tiFlashWaitSummary.String())
 		}
+		return fmt.Sprintf("time:%v, loops:%d, threads:%d, %s, %s", FormatDuration(time.Duration(e.consume.Load())), e.loop.Load(), e.threads, e.tiflashScanContext.String(), e.tiFlashWaitSummary.String())
 	}
 	return fmt.Sprintf("time:%v, loops:%d", FormatDuration(time.Duration(e.consume.Load())), e.loop.Load())
 }
