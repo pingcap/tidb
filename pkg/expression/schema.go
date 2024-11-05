@@ -135,13 +135,15 @@ func (s *Schema) IsUniqueKey(cols ...*Column) bool {
 			continue
 		}
 		allFound := true
+	nextKeyCol:
 		for _, keyCols := range key {
 			for _, col := range cols {
-				if !keyCols.EqualColumn(col) {
-					allFound = false
-					break
+				if keyCols.EqualColumn(col) {
+					continue nextKeyCol
 				}
 			}
+			allFound = false
+			break
 		}
 		if !allFound {
 			continue
@@ -158,13 +160,15 @@ func (s *Schema) IsUnique(cols ...*Column) bool {
 			continue
 		}
 		allFound := true
+	nextKeyCol:
 		for _, keyCols := range key {
 			for _, col := range cols {
-				if !keyCols.EqualColumn(col) {
-					allFound = false
-					break
+				if keyCols.EqualColumn(col) {
+					continue nextKeyCol
 				}
 			}
+			allFound = false
+			break
 		}
 		if !allFound {
 			continue
