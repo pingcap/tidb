@@ -3154,10 +3154,10 @@ func TestRemovePartitioningAutoIDs(t *testing.T) {
 	tk3.MustExec(`COMMIT`)
 	tk3.MustQuery(`select _tidb_rowid, a, b from t`).Sort().Check(testkit.Rows(
 		"13 11 11", "14 2 2", "15 12 12", "17 16 18",
-		"19 18 4", "21 20 5", "23 22 6", "25 24 7", "30 29 9"))
+		"19 18 4", "21 20 5", "23 22 6", "25 24 7", "29 28 9"))
 	tk2.MustQuery(`select _tidb_rowid, a, b from t`).Sort().Check(testkit.Rows(
 		"13 11 11", "14 2 2", "15 12 12", "17 16 18",
-		"19 18 4", "23 22 6", "27 26 8", "32 31 10"))
+		"19 18 4", "23 22 6", "27 26 8", "31 30 10"))
 
 	waitFor(4, "t", "write reorganization")
 	tk3.MustExec(`BEGIN`)
@@ -3167,28 +3167,66 @@ func TestRemovePartitioningAutoIDs(t *testing.T) {
 	tk3.MustExec(`insert into t values (null, 23)`)
 	tk2.MustExec(`COMMIT`)
 
-	/*
-		waitFor(4, "t", "delete reorganization")
-		tk2.MustExec(`BEGIN`)
-		tk2.MustExec(`insert into t values (null, 24)`)
+	waitFor(4, "t", "delete reorganization")
+	tk2.MustExec(`BEGIN`)
+	tk2.MustExec(`insert into t values (null, 24)`)
 
-		tk3.MustExec(`insert into t values (null, 25)`)
-		tk2.MustExec(`insert into t values (null, 26)`)
-	*/
+	tk3.MustExec(`insert into t values (null, 25)`)
+	tk2.MustExec(`insert into t values (null, 26)`)
 	tk3.MustExec(`COMMIT`)
+	tk2.MustQuery(`select _tidb_rowid, a, b from t`).Sort().Check(testkit.Rows(
+		"27 26 8",
+		"30016 12 12",
+		"30017 18 4",
+		"30018 24 7",
+		"30272 16 18",
+		"30273 22 6",
+		"30274 28 9",
+		"30528 11 11",
+		"30529 2 2",
+		"30530 20 5",
+		"31 30 10",
+		"35 34 22",
+		"39 38 24",
+		"43 42 26"))
 	tk3.MustQuery(`select _tidb_rowid, a, b from t`).Sort().Check(testkit.Rows(
-		"13 11 11", "14 2 2", "15 12 12", "17 16 18",
-		"19 18 4", "21 20 5", "23 22 6", "25 24 7", "27 26 8", "30 29 9",
-		"32 31 10", "35 34 21", "38 37 22", "41 40 23"))
+		"27 26 8",
+		"30016 12 12",
+		"30017 18 4",
+		"30018 24 7",
+		"30272 16 18",
+		"30273 22 6",
+		"30274 28 9",
+		"30528 11 11",
+		"30529 2 2",
+		"30530 20 5",
+		"31 30 10",
+		"33 32 21",
+		"35 34 22",
+		"37 36 23",
+		"41 40 25"))
 
-	//waitFor(4, "t", "public")
-	//tk2.MustExec(`commit`)
-	// TODO: Investigate and fix, but it is also related to https://github.com/pingcap/tidb/issues/46904
-	require.ErrorContains(t, <-alterChan, "[kv:1062]Duplicate entry '31' for key 't.PRIMARY'")
+	waitFor(4, "t", "public")
+	tk2.MustExec(`commit`)
 	tk3.MustQuery(`select _tidb_rowid, a, b from t`).Sort().Check(testkit.Rows(
-		"13 11 11", "14 2 2", "15 12 12", "17 16 18",
-		"19 18 4", "21 20 5", "23 22 6", "25 24 7", "27 26 8", "30 29 9",
-		"32 31 10", "35 34 21", "38 37 22", "41 40 23"))
+		"27 26 8",
+		"30016 12 12",
+		"30017 18 4",
+		"30018 24 7",
+		"30272 16 18",
+		"30273 22 6",
+		"30274 28 9",
+		"30528 11 11",
+		"30529 2 2",
+		"30530 20 5",
+		"31 30 10",
+		"33 32 21",
+		"35 34 22",
+		"37 36 23",
+		"39 38 24",
+		"41 40 25",
+		"43 42 26"))
+	require.NoError(t, <-alterChan)
 }
 
 func TestAlterLastIntervalPartition(t *testing.T) {
