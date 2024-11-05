@@ -126,3 +126,121 @@ func (op *LogicalJoin) Equals(other any) bool {
 	}
 	return true
 }
+
+// Hash64 implements the Hash64Equals interface.
+func (op *LogicalAggregation) Hash64(h base.Hasher) {
+	h.HashString(plancodec.TypeAgg)
+	if op.AggFuncs == nil {
+		h.HashByte(base.NilFlag)
+	} else {
+		h.HashByte(base.NotNilFlag)
+		h.HashInt(len(op.AggFuncs))
+		for _, one := range op.AggFuncs {
+			one.Hash64(h)
+		}
+	}
+	if op.GroupByItems == nil {
+		h.HashByte(base.NilFlag)
+	} else {
+		h.HashByte(base.NotNilFlag)
+		h.HashInt(len(op.GroupByItems))
+		for _, one := range op.GroupByItems {
+			one.Hash64(h)
+		}
+	}
+	if op.PossibleProperties == nil {
+		h.HashByte(base.NilFlag)
+	} else {
+		h.HashByte(base.NotNilFlag)
+		h.HashInt(len(op.PossibleProperties))
+		for _, one := range op.PossibleProperties {
+			h.HashInt(len(one))
+			for _, one := range one {
+				one.Hash64(h)
+			}
+		}
+	}
+}
+
+// Equals implements the Hash64Equals interface, only receive *LogicalAggregation pointer.
+func (op *LogicalAggregation) Equals(other any) bool {
+	if other == nil {
+		return false
+	}
+	op2, ok := other.(*LogicalAggregation)
+	if !ok {
+		return false
+	}
+	if len(op.AggFuncs) != len(op2.AggFuncs) {
+		return false
+	}
+	for i, one := range op.AggFuncs {
+		if !one.Equals(op2.AggFuncs[i]) {
+			return false
+		}
+	}
+	if len(op.GroupByItems) != len(op2.GroupByItems) {
+		return false
+	}
+	for i, one := range op.GroupByItems {
+		if !one.Equals(op2.GroupByItems[i]) {
+			return false
+		}
+	}
+	if len(op.PossibleProperties) != len(op2.PossibleProperties) {
+		return false
+	}
+	for i, one := range op.PossibleProperties {
+		if len(one) != len(op2.PossibleProperties[i]) {
+			return false
+		}
+		for ii, one := range one {
+			if !one.Equals(op2.PossibleProperties[i][ii]) {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+// Hash64 implements the Hash64Equals interface.
+func (op *LogicalApply) Hash64(h base.Hasher) {
+	h.HashString(plancodec.TypeApply)
+	op.LogicalJoin.Hash64(h)
+	if op.CorCols == nil {
+		h.HashByte(base.NilFlag)
+	} else {
+		h.HashByte(base.NotNilFlag)
+		h.HashInt(len(op.CorCols))
+		for _, one := range op.CorCols {
+			one.Hash64(h)
+		}
+	}
+	h.HashBool(op.NoDecorrelate)
+}
+
+// Equals implements the Hash64Equals interface, only receive *LogicalApply pointer.
+func (op *LogicalApply) Equals(other any) bool {
+	if other == nil {
+		return false
+	}
+	op2, ok := other.(*LogicalApply)
+	if !ok {
+		return false
+	}
+	if !op.LogicalJoin.Equals(&op2.LogicalJoin) {
+		return false
+	}
+	if len(op.CorCols) != len(op2.CorCols) {
+		return false
+	}
+	for i, one := range op.CorCols {
+		if !one.Equals(op2.CorCols[i]) {
+			return false
+		}
+	}
+	if op.NoDecorrelate != op2.NoDecorrelate {
+		return false
+	}
+	return true
+}
