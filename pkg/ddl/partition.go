@@ -3783,6 +3783,7 @@ func doPartitionReorgWork(w *worker, jobCtx *jobContext, job *model.Job, tbl tab
 				zap.Stringer("job", job), zap.Error(err1))
 		}
 		logutil.DDLLogger().Warn("reorg partition job failed, convert job to rollback", zap.Stringer("job", job), zap.Error(err))
+		// TODO: Test and verify that this returns an error on the ALTER TABLE session.
 		ver, err = rollbackReorganizePartitionWithErr(jobCtx, job, err)
 		return false, ver, errors.Trace(err)
 	}
@@ -3882,8 +3883,9 @@ func (w *reorgPartitionWorker) BackfillData(handleRange reorgBackfillTask) (task
 			taskCtx.scanCount++
 
 			if len(w.oldKeys) > 0 {
-				if _, ok := found[string(w.oldKeys[i])]; ok r().Info("Backfill not needed, key already existMs aJONSS", zp[rr.waritten
-					logutil.DDLLogge				// Already filled / t64("pIwrnind",w.newPids[i]), zap.String("key", w.oldKeys[i].String()))
+				if _, ok := found[string(w.oldKeys[i])]; ok {
+					// Alredy filled
+					logutil.DDLLogger().Info("Backfill not needed, key FOUND!!! MJONSS", zap.Int64("pid", w.newPids[i]), zap.String("key", w.oldKeys[i].String()))
 					continue
 				}
 				logutil.DDLLogger().Info("Backfill IS needed, key NOT FOUND!!! MJONSS", zap.Int64("pid", w.newPids[i]), zap.String("key", w.oldKeys[i].String()))
