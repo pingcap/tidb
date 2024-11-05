@@ -77,9 +77,6 @@ var (
 	SuppressErrorTooLongKeyKey stringutil.StringerStr = "suppressErrorTooLongKeyKey"
 )
 
-<<<<<<< HEAD
-func buildIndexColumns(ctx sessionctx.Context, columns []*model.ColumnInfo, indexPartSpecifications []*ast.IndexPartSpecification) ([]*model.IndexColumn, bool, error) {
-=======
 func suppressErrorTooLongKeyForSchemaTracker(sctx sessionctx.Context) bool {
 	if sctx == nil {
 		return false
@@ -90,8 +87,7 @@ func suppressErrorTooLongKeyForSchemaTracker(sctx sessionctx.Context) bool {
 	return false
 }
 
-func buildIndexColumns(ctx sessionctx.Context, columns []*model.ColumnInfo, indexPartSpecifications []*ast.IndexPartSpecification) ([]*model.IndexColumn, error) {
->>>>>>> 1211fb2156d (ddl: improve priority of suppressErrorTooLongKeyKey for DM (#55164) (#55772))
+func buildIndexColumns(ctx sessionctx.Context, columns []*model.ColumnInfo, indexPartSpecifications []*ast.IndexPartSpecification) ([]*model.IndexColumn, bool, error) {
 	// Build offsets.
 	idxParts := make([]*model.IndexColumn, 0, len(indexPartSpecifications))
 	var col *model.ColumnInfo
@@ -234,17 +230,11 @@ func checkIndexColumn(ctx sessionctx.Context, col *model.ColumnInfo, indexColumn
 	}
 	// Specified length must be shorter than the max length for prefix.
 	maxIndexLength := config.GetGlobalConfig().MaxIndexLength
-<<<<<<< HEAD
-	if indexColumnLen > maxIndexLength && (ctx == nil || ctx.GetSessionVars().StrictSQLMode) {
-		// return error in strict sql mode
-		return dbterror.ErrTooLongKey.GenWithStackByArgs(indexColumnLen, maxIndexLength)
-=======
 	if indexColumnLen > maxIndexLength {
 		if ctx == nil || (ctx.GetSessionVars().StrictSQLMode && !suppressErrorTooLongKeyForSchemaTracker(ctx)) {
 			// return error in strict sql mode
-			return dbterror.ErrTooLongKey.GenWithStackByArgs(maxIndexLength)
+			return dbterror.ErrTooLongKey.GenWithStackByArgs(indexColumnLen, maxIndexLength)
 		}
->>>>>>> 1211fb2156d (ddl: improve priority of suppressErrorTooLongKeyKey for DM (#55164) (#55772))
 	}
 	return nil
 }
