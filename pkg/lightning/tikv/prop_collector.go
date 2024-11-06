@@ -64,6 +64,7 @@ type mvccPropCollector struct {
 			minExpireTS *uint64
 		}
 	}
+	lastRow         []byte
 	curIndexSize    uint64
 	curIndexOffset  uint64
 	rowIndexHandles []indexHandleKV
@@ -88,10 +89,10 @@ func (m *mvccPropCollector) Add(key rockssst.InternalKey, _ []byte) error {
 
 	m.curIndexSize++
 	m.curIndexOffset++
+	m.lastRow = key.UserKey[:len(key.UserKey)-8]
 	if m.curIndexOffset == 1 || m.curIndexSize >= 10000 {
-		keyWithoutTS := key.UserKey[:len(key.UserKey)-8]
 		m.rowIndexHandles = append(m.rowIndexHandles, indexHandleKV{
-			key:    keyWithoutTS,
+			key:    m.lastRow,
 			size:   m.curIndexSize,
 			offset: m.curIndexOffset,
 		})
@@ -104,6 +105,14 @@ func (m *mvccPropCollector) Add(key rockssst.InternalKey, _ []byte) error {
 // Finish implements the TablePropertyCollector interface. It mimics
 // https://github.com/tikv/tikv/blob/7793f1d5dc40206fe406ca001be1e0d7f1b83a8f/components/engine_rocks/src/properties.rs#L505.
 func (m *mvccPropCollector) Finish(userProps map[string]string) error {
+	if m.curIndexSize > 0 {
+		m.rowIndexHandles = append(m.rowIndexHandles, indexHandleKV{
+			key:    m.lastRow,
+			size:   m.curIndexSize,
+			offset: m.curIndexOffset,
+		})
+	}
+
 	userProps["tikv.min_ts"] = string(binary.BigEndian.AppendUint64(nil, m.props.minTS))
 	userProps["tikv.max_ts"] = string(binary.BigEndian.AppendUint64(nil, m.props.maxTS))
 	userProps["tikv.num_rows"] = string(binary.BigEndian.AppendUint64(nil, m.props.numRows))

@@ -158,8 +158,6 @@ After the test is finished, find the SST files in the import directory of the Ti
 }
 
 func TestPebbleWriteSST(t *testing.T) {
-	//t.Skip("this is a manual test")
-
 	sstPath := "/tmp/test-write.sst"
 	writer, err := newWriteCFWriter(sstPath, ts, &rockssst.Identity{
 		DB:                 "SST Writer",
