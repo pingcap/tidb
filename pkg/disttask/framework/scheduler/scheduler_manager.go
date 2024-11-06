@@ -16,8 +16,6 @@ package scheduler
 
 import (
 	"context"
-	"fmt"
-	ddllogutil "github.com/pingcap/tidb/pkg/ddl/logutil"
 	"slices"
 	"time"
 
@@ -468,9 +466,6 @@ func (sm *Manager) collectLoop() {
 
 func (sm *Manager) collect() {
 	subtasks, err := sm.taskMgr.GetAllSubtasks(sm.ctx)
-	ddllogutil.DDLLogger().Info("collect subtask from table:",
-		zap.Int64("subtask-count", int64(len(subtasks))),
-		zap.String("subtask", fmt.Sprint(subtasks)))
 	if err != nil {
 		sm.logger.Warn("get all subtasks failed", zap.Error(err))
 		return
