@@ -2098,3 +2098,43 @@ func TestAdminCheckGlobalIndexDuringDDL(t *testing.T) {
 		}
 	}
 }
+
+func TestAdminCheckGeneratedColumns(t *testing.T) {
+	store, domain := testkit.CreateMockStoreAndDomain(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("DROP TABLE IF EXISTS t")
+	tk.MustExec("CREATE TABLE t(pk int PRIMARY KEY CLUSTERED, gen int GENERATED ALWAYS AS (pk * pk) VIRTUAL, KEY idx_gen(gen))")
+	tk.MustExec("INSERT INTO t(pk) VALUES (2)")
+	tk.MustExec("ADMIN CHECK TABLE t")
+
+	// Make some corrupted index. Build the index information.
+	sctx := mock.NewContext()
+	sctx.Store = store
+	ctx := sctx.GetTableCtx()
+	is := domain.InfoSchema()
+	dbName := pmodel.NewCIStr("test")
+	tblName := pmodel.NewCIStr("t")
+	tbl, err := is.TableByName(context.Background(), dbName, tblName)
+	require.NoError(t, err)
+	tblInfo := tbl.Meta()
+	idxInfo := tblInfo.Indices[0]
+	tk.Session().GetSessionVars().IndexLookupSize = 3
+	tk.Session().GetSessionVars().MaxChunkSize = 3
+
+	indexOpr := tables.NewIndex(tblInfo.ID, tblInfo, idxInfo)
+
+	txn, err := store.Begin()
+	require.NoError(t, err)
+	err = indexOpr.Delete(ctx, txn, types.MakeDatums(4), kv.IntHandle(2))
+	require.NoError(t, err)
+	err = txn.Commit(context.Background())
+	require.NoError(t, err)
+
+	for _, enabled := range []bool{false, true} {
+		tk.MustExec(fmt.Sprintf("set tidb_enable_fast_table_check = %v", enabled))
+		err = tk.ExecToErr("admin check table t")
+		require.Error(t, err)
+	}
+}
