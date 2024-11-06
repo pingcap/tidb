@@ -2105,8 +2105,8 @@ func TestAdminCheckGeneratedColumns(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("DROP TABLE IF EXISTS t")
-	tk.MustExec("CREATE TABLE t(pk int PRIMARY KEY CLUSTERED, gen int GENERATED ALWAYS AS (pk * pk) VIRTUAL, KEY idx_gen(gen))")
-	tk.MustExec("INSERT INTO t(pk) VALUES (2)")
+	tk.MustExec("CREATE TABLE t(pk int PRIMARY KEY CLUSTERED, val int, gen int GENERATED ALWAYS AS (val * pk) VIRTUAL, KEY idx_gen(gen))")
+	tk.MustExec("INSERT INTO t(pk, val) VALUES (2, 5)")
 	tk.MustExec("ADMIN CHECK TABLE t")
 
 	// Make some corrupted index. Build the index information.
@@ -2123,11 +2123,13 @@ func TestAdminCheckGeneratedColumns(t *testing.T) {
 	tk.Session().GetSessionVars().IndexLookupSize = 3
 	tk.Session().GetSessionVars().MaxChunkSize = 3
 
+	// Simulate inconsistent index column
 	indexOpr := tables.NewIndex(tblInfo.ID, tblInfo, idxInfo)
-
 	txn, err := store.Begin()
 	require.NoError(t, err)
-	err = indexOpr.Delete(ctx, txn, types.MakeDatums(4), kv.IntHandle(2))
+	err = indexOpr.Delete(ctx, txn, types.MakeDatums(10), kv.IntHandle(2))
+	require.NoError(t, err)
+	_, err = indexOpr.Create(ctx, txn, types.MakeDatums(5), kv.IntHandle(2), nil)
 	require.NoError(t, err)
 	err = txn.Commit(context.Background())
 	require.NoError(t, err)
