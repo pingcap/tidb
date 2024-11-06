@@ -3593,9 +3593,7 @@ func (w *worker) onReorganizePartition(jobCtx *jobContext, job *model.Job) (ver 
 				dropIndices = append(dropIndices, indexInfo)
 			}
 		}
-		// TODO: verify that the indexes are dropped,
-		// and that StateDeleteOnly+StateDeleteReorganization is not needed.
-		// local indexes is not an issue, since they will be gone with the dropped
+		// Local indexes is not an issue, since they will be gone with the dropped
 		// partitions, but replaced global indexes should be checked!
 		for _, indexInfo := range dropIndices {
 			removeIndexInfo(tblInfo, indexInfo)
@@ -3953,8 +3951,11 @@ func (w *reorgPartitionWorker) BackfillData(handleRange reorgBackfillTask) (task
 func (w *reorgPartitionWorker) fetchRowColVals(txn kv.Transaction, taskRange reorgBackfillTask) (kv.Key, bool, error) {
 	w.rowRecords = w.rowRecords[:0]
 	w.records = 0
-	if cap(w.rows) < w.batchCnt {
-		w.rows = make([][]types.Datum, w.batchCnt)
+	isClustered := w.reorgedTbl.Meta().IsCommonHandle || w.reorgedTbl.Meta().PKIsHandle
+	if !isClustered {
+		if cap(w.rows) < w.batchCnt {
+			w.rows = make([][]types.Datum, w.batchCnt)
+		}
 	}
 	w.oldKeys = w.oldKeys[:0]
 	w.newPids = w.newPids[:0]
@@ -3984,7 +3985,6 @@ func (w *reorgPartitionWorker) fetchRowColVals(txn kv.Transaction, taskRange reo
 				return false, errors.Trace(err)
 			}
 
-			isClustered := w.reorgedTbl.Meta().IsCommonHandle || w.reorgedTbl.Meta().PKIsHandle
 			if isClustered {
 				// Set all partitioning columns and calculate which partition to write to
 				for colID, offset := range w.writeColOffsetMap {

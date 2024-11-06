@@ -235,9 +235,6 @@ func TestMultiSchemaDropListColumnsDefaultPartition(t *testing.T) {
 			tkNO.MustContainErrMsg(`insert into t values (1,1,1)`, "[kv:1062]Duplicate entry '1' for key 't.a_2'")
 			tkO.MustContainErrMsg(`insert into t values (101,101,101)`, "[kv:1062]Duplicate entry '101' for key 't.a_2'")
 			tkNO.MustContainErrMsg(`insert into t values (101,101,101)`, "[kv:1062]Duplicate entry '101' for key 't.a_2'")
-			// TODO: after https://github.com/pingcap/tidb/pull/57104 remove the analyze table
-			tkNO.MustExec(`analyze table t`)
-			//tkNO.MustQuery(`explain select * from t`).Check(testkit.Rows())
 			tkNO.MustQuery(`select * from t`).Sort().Check(testkit.Rows("1 1 1", "101 101 101", "102 102 102", "2 2 2"))
 			tkO.MustQuery(`select * from t`).Sort().Check(testkit.Rows("101 101 101", "102 102 102"))
 		case "delete only":
@@ -260,8 +257,7 @@ func TestMultiSchemaDropListColumnsDefaultPartition(t *testing.T) {
 			tkNO.MustQuery(`select * from t where a = 3`).Sort().Check(testkit.Rows("3 3 3"))
 			tkNO.MustQuery(`select * from t where a = 1 or a = 2 or a = 3`).Sort().Check(testkit.Rows("3 3 3"))
 			tkNO.MustQuery(`select * from t where a in (1,2,3) or b in ("1","2")`).Sort().Check(testkit.Rows("3 3 3"))
-			// TODO: after https://github.com/pingcap/tidb/pull/57104 enable these tests
-			//tkNO.MustQuery(`select * from t where a in (1,2,3)`).Sort().Check(testkit.Rows("3 3 3"))
+			tkNO.MustQuery(`select * from t where a in (1,2,3)`).Sort().Check(testkit.Rows("3 3 3"))
 			tkNO.MustQuery(`select * from t where a < 100`).Sort().Check(testkit.Rows("3 3 3"))
 
 			tkNO.MustQuery(`select * from t where c = "2"`).Sort().Check(testkit.Rows("2 2 2"))
@@ -581,8 +577,8 @@ func TestMultiSchemaPartitionByGlobalIndex(t *testing.T) {
 }
 
 func runMultiSchemaTest(t *testing.T, createSQL, alterSQL string, initFn func(*testkit.TestKit), postFn func(*testkit.TestKit, kv.Storage), loopFn func(tO, tNO *testkit.TestKit)) {
-	//distCtx := testkit.NewDistExecutionContextWithLease(t, 2, 15*time.Second)
-	distCtx := testkit.NewDistExecutionContextWithLease(t, 2, 1500*time.Second)
+	// When debugging, increase the lease, so the schema does not auto reload :)
+	distCtx := testkit.NewDistExecutionContextWithLease(t, 2, 15*time.Second)
 	store := distCtx.Store
 	domOwner := distCtx.GetDomain(0)
 	domNonOwner := distCtx.GetDomain(1)
