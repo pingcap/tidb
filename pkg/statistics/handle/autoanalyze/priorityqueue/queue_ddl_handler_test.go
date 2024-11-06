@@ -111,11 +111,10 @@ func TestHandleDDLEventsWithRunningJobs(t *testing.T) {
 	runningJobs = pq.GetRunningJobs()
 	require.Len(t, runningJobs, 1)
 
-	// Run the analyze job in separate goroutine.
-	done := make(chan struct{})
+	down := make(chan struct{})
+	fp := "github.com/pingcap/tidb/pkg/executor/mockStuckAnalyze"
 	go func() {
-		defer close(done)
-		fp := "github.com/pingcap/tidb/pkg/executor/mockStuckAnalyze"
+		defer close(down)
 		require.NoError(t, failpoint.Enable(fp, "return(1)"))
 		require.NoError(t, job1.Analyze(handle, dom.SysProcTracker()))
 	}()
@@ -148,8 +147,9 @@ func TestHandleDDLEventsWithRunningJobs(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, isEmpty)
 
+	require.NoError(t, failpoint.Disable(fp))
 	// Wait for the analyze job to finish.
-	<-done
+	<-down
 
 	// Requeue the running jobs again.
 	pq.RequeueMustRetryJobs()

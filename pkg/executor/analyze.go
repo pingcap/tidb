@@ -22,7 +22,6 @@ import (
 	"net"
 	"strconv"
 	"strings"
-	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -43,6 +42,7 @@ import (
 	handleutil "github.com/pingcap/tidb/pkg/statistics/handle/util"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/sqlescape"
 	"github.com/pingcap/tipb/go-tipb"
@@ -169,9 +169,17 @@ TASKLOOP:
 		}
 	}
 
-	failpoint.Inject("mockStuckAnalyze", func() {
-		time.Sleep(time.Second * 3)
-	})
+	if intest.InTest {
+		for {
+			stop := true
+			failpoint.Inject("mockStuckAnalyze", func() {
+				stop = false
+			})
+			if stop {
+				break
+			}
+		}
+	}
 
 	// Update analyze options to mysql.analyze_options for auto analyze.
 	err = e.saveV2AnalyzeOpts()
