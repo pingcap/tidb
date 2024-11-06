@@ -32,6 +32,7 @@ import (
 	statsutil "github.com/pingcap/tidb/pkg/statistics/handle/util"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/intest"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
 )
 
@@ -45,6 +46,9 @@ const (
 
 // If the process takes longer than this threshold, we will log it as a slow log.
 const slowLogThreshold = 150 * time.Millisecond
+
+// Every 15 minutes, at most 1 log will be output.
+var queueSamplerLogger = logutil.SampleLoggerFactory(15*time.Minute, 1, zap.String(logutil.LogFieldCategory, "stats"))
 
 // pqHeap is an interface that wraps the methods of a priority queue heap.
 type pqHeap interface {
@@ -315,13 +319,13 @@ func (pq *AnalysisPriorityQueue) run() {
 			statslogutil.StatsLogger().Info("Priority queue stopped")
 			return
 		case <-dmlChangesFetchInterval.C:
-			statslogutil.SingletonStatsSamplerLogger().Info("Start to fetch DML changes of jobs")
+			queueSamplerLogger().Info("Start to fetch DML changes of tables")
 			pq.ProcessDMLChanges()
 		case <-timeRefreshInterval.C:
-			statslogutil.SingletonStatsSamplerLogger().Info("Start to refresh last analysis durations of jobs")
+			queueSamplerLogger().Info("Start to refresh last analysis durations of jobs")
 			pq.RefreshLastAnalysisDuration()
 		case <-mustRetryJobRequeueInterval.C:
-			statslogutil.SingletonStatsSamplerLogger().Info("Start to request must retry jobs")
+			queueSamplerLogger().Info("Start to requeue must retry jobs")
 			pq.RequeueMustRetryJobs()
 		}
 	}
@@ -339,7 +343,7 @@ func (pq *AnalysisPriorityQueue) ProcessDMLChanges() {
 		defer func() {
 			duration := time.Since(start)
 			if duration > slowLogThreshold {
-				statslogutil.SingletonStatsSamplerLogger().Info("DML changes processed", zap.Duration("duration", duration))
+				queueSamplerLogger().Info("DML changes processed", zap.Duration("duration", duration))
 			}
 		}()
 
@@ -617,7 +621,7 @@ func (pq *AnalysisPriorityQueue) RequeueMustRetryJobs() {
 		defer func() {
 			duration := time.Since(start)
 			if duration > slowLogThreshold {
-				statslogutil.SingletonStatsSamplerLogger().Info("Must retry jobs requeued", zap.Duration("duration", duration))
+				queueSamplerLogger().Info("Must retry jobs requeued", zap.Duration("duration", duration))
 			}
 		}()
 
@@ -653,7 +657,7 @@ func (pq *AnalysisPriorityQueue) RefreshLastAnalysisDuration() {
 		defer func() {
 			duration := time.Since(start)
 			if duration > slowLogThreshold {
-				statslogutil.SingletonStatsSamplerLogger().Info("Last analysis duration refreshed", zap.Duration("duration", duration))
+				queueSamplerLogger().Info("Last analysis duration refreshed", zap.Duration("duration", duration))
 			}
 		}()
 		jobs := pq.syncFields.inner.list()
