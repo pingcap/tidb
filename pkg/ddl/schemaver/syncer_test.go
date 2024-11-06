@@ -81,7 +81,7 @@ func TestSyncerSimple(t *testing.T) {
 	go func() {
 		require.NoError(t, d.OwnerManager().CampaignOwner())
 	}()
-	defer d.OwnerManager().Cancel()
+	defer d.OwnerManager().Close()
 
 	// for init function
 	require.NoError(t, d.SchemaSyncer().Init(ctx))
@@ -107,7 +107,7 @@ func TestSyncerSimple(t *testing.T) {
 	go func() {
 		require.NoError(t, d1.OwnerManager().CampaignOwner())
 	}()
-	defer d1.OwnerManager().Cancel()
+	defer d1.OwnerManager().Close()
 	require.NoError(t, d1.SchemaSyncer().Init(ctx))
 	defer d.SchemaSyncer().Close()
 

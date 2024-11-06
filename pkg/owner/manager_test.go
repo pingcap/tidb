@@ -125,7 +125,7 @@ func TestSingle(t *testing.T) {
 	require.True(t, isOwner)
 
 	// The test is used to exit campaign loop.
-	ownerManager.Cancel()
+	ownerManager.Close()
 	isOwner = checkOwner(d, false)
 	require.False(t, isOwner)
 	require.False(t, lis.val.Load())
@@ -274,7 +274,7 @@ func TestCluster(t *testing.T) {
 	isOwner = checkOwner(d, false)
 	require.False(t, isOwner)
 
-	d.OwnerManager().Cancel()
+	d.OwnerManager().Close()
 	// d3 (not owner) stop
 	cli3 := cluster.Client(3)
 	ic3 := infoschema.NewCache(nil, 2)
@@ -291,9 +291,9 @@ func TestCluster(t *testing.T) {
 	isOwner = checkOwner(d3, false)
 	require.False(t, isOwner)
 
-	d3.OwnerManager().Cancel()
+	d3.OwnerManager().Close()
 	// Cancel the owner context, there is no owner.
-	d1.OwnerManager().Cancel()
+	d1.OwnerManager().Close()
 
 	logPrefix := fmt.Sprintf("[ddl] %s ownerManager %s", DDLOwnerKey, "useless id")
 	logCtx := logutil.WithKeyValue(context.Background(), "owner info", logPrefix)
