@@ -17,7 +17,6 @@ package store
 import (
 	"time"
 
-	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/kv"
 	clientv3 "go.etcd.io/etcd/client/v3"
@@ -39,9 +38,6 @@ func NewEtcdCli(store kv.Storage) (*clientv3.Client, error) {
 	if len(addrs) == 0 {
 		return nil, nil
 	}
-	failpoint.Inject("mockNewEtcdCliWithAddrs", func() {
-		failpoint.Return(&clientv3.Client{}, nil)
-	})
 	cli, err := NewEtcdCliWithAddrs(addrs, etcdStore)
 	if err != nil {
 		return nil, err
