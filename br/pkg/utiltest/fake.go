@@ -273,9 +273,10 @@ func (f *FakeSplitClient) AppendPdRegion(region *pd.Region) {
 }
 
 func (f *FakeSplitClient) ScanRegions(
-	ctx context.Context,
+	_ context.Context,
 	startKey, endKey []byte,
 	limit int,
+	_ ...pd.GetRegionOption,
 ) ([]*split.RegionInfo, error) {
 	result := make([]*split.RegionInfo, 0)
 	count := 0
