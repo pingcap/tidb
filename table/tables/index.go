@@ -431,21 +431,6 @@ func (c *index) Delete(sc *stmtctx.StatementContext, txn kv.Transaction, indexed
 
 		if distinct {
 			if len(key) > 0 {
-				err = txn.GetMemBuffer().DeleteWithFlags(key, kv.SetNeedLocked)
-				if err != nil {
-					return err
-				}
-			}
-			if len(tempKey) > 0 {
-				// Append to the end of the origin value for distinct value.
-				tempVal := tempValElem.Encode(originTempVal)
-				err = txn.GetMemBuffer().Set(tempKey, tempVal)
-				if err != nil {
-					return err
-				}
-			}
-		} else {
-			if len(key) > 0 {
 				okToDelete := true
 				if c.idxInfo.BackfillState != model.BackfillStateInapplicable {
 					// #52914: the delete key is covered by the new ingested key, which shouldn't be deleted.
@@ -468,6 +453,21 @@ func (c *index) Delete(sc *stmtctx.StatementContext, txn kv.Transaction, indexed
 					if err != nil {
 						return err
 					}
+				}
+			}
+			if len(tempKey) > 0 {
+				// Append to the end of the origin value for distinct value.
+				tempVal := tempValElem.Encode(originTempVal)
+				err = txn.GetMemBuffer().Set(tempKey, tempVal)
+				if err != nil {
+					return err
+				}
+			}
+		} else {
+			if len(key) > 0 {
+				err = txn.GetMemBuffer().Delete(key)
+				if err != nil {
+					return err
 				}
 			}
 			if len(tempKey) > 0 {
