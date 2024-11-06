@@ -181,8 +181,8 @@ func (s *semiJoinProbe) truncateSelect() {
 			continue
 		}
 
-		groupId := s.groupMark[i]
-		s.otherConditionSuccessSet[groupId] = append(s.otherConditionSuccessSet[groupId], i)
+		groupID := s.groupMark[i]
+		s.otherConditionSuccessSet[groupID] = append(s.otherConditionSuccessSet[groupID], i)
 	}
 
 	for _, idxs := range s.otherConditionSuccessSet {

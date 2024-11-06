@@ -84,7 +84,6 @@ func (b *baseSemiJoin) matchMultiBuildRows(joinedChk *chunk.Chunk, joinedChkRema
 func (b *baseSemiJoin) concatenateProbeAndBuildRows(joinedChk *chunk.Chunk, sqlKiller *sqlkiller.SQLKiller, isRightSideBuild bool) error {
 	b.groupMark = b.groupMark[:0]
 	joinedChkRemainCap := joinedChk.Capacity()
-	joinedChkRemainCap = 30
 
 	for joinedChkRemainCap > 0 && len(b.undeterminedProbeRowsIdx) != 0 {
 		for probeRowIdx := range b.undeterminedProbeRowsIdx {
