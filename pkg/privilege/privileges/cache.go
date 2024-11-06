@@ -419,48 +419,88 @@ func (p *MySQLPrivilege) LoadAll(ctx sqlexec.RestrictedSQLExecutor) error {
 	return nil
 }
 
-func (p *immutable) loadSomeUsers(ctx sqlexec.RestrictedSQLExecutor, userList ...string) error {
-	err := p.loadTable(ctx, sqlLoadUserTable, p.decodeUserTableRow, userList...)
+func findUserAndAllRoles(all map[string]struct{}, roleGraph map[string]roleGraphEdgesTable) {
+	for ;; {
+		before := len(all)
+
+		for userHost, value := range roleGraph {
+			user, _, found := strings.Cut(userHost, "@")
+			if !found {
+				// this should never happen
+				continue
+			}
+			if _, ok := all[user]; ok {
+				// If a user is in map, all its role should also added
+				for _, role := range value.roleList {
+					all[role.Username] = struct{}{}
+				}
+			}
+		}
+
+		// loop until the map does not expand
+		after := len(all)
+		if before == after {
+			break
+		}
+	}
+}
+
+func (p *immutable) loadSomeUsers(ctx sqlexec.RestrictedSQLExecutor, userList ...string) ([]string, error) {
+	// Load the full role edge table first.
+	p.roleGraph = make(map[string]roleGraphEdgesTable)
+	err := p.loadTable(ctx, sqlLoadRoleGraph, p.decodeRoleEdgesTable)
 	if err != nil {
-		return errors.Trace(err)
+		return nil, errors.Trace(err)
+	}
+
+	// Including the user list and also their roles
+	extendedUserList := make(map[string]struct{}, len(userList))
+	for _, user := range userList {
+		extendedUserList[user] = struct{}{}
+	}
+	findUserAndAllRoles(extendedUserList, p.roleGraph)
+	// Re-generate the user list.
+	userList = userList[:0]
+	for user, _ := range extendedUserList {
+		userList = append(userList, user)
+	}
+
+	err = p.loadTable(ctx, sqlLoadUserTable, p.decodeUserTableRow, userList...)
+	if err != nil {
+		return nil, errors.Trace(err)
 	}
 
 	err = p.loadTable(ctx, sqlLoadGlobalPrivTable, p.decodeGlobalPrivTableRow, userList...)
 	if err != nil {
-		return errors.Trace(err)
+		return nil, errors.Trace(err)
 	}
 
 	err = p.loadTable(ctx, sqlLoadGlobalGrantsTable, p.decodeGlobalGrantsTableRow, userList...)
 	if err != nil {
-		return errors.Trace(err)
+		return nil, errors.Trace(err)
 	}
 
 	err = p.loadTable(ctx, sqlLoadDBTable, p.decodeDBTableRow, userList...)
 	if err != nil {
-		return errors.Trace(err)
+		return nil, errors.Trace(err)
 	}
 
 	err = p.loadTable(ctx, sqlLoadTablePrivTable, p.decodeTablesPrivTableRow, userList...)
 	if err != nil {
-		return errors.Trace(err)
+		return nil, errors.Trace(err)
 	}
 
 	err = p.loadTable(ctx, sqlLoadDefaultRoles, p.decodeDefaultRoleTableRow, userList...)
 	if err != nil {
-		return errors.Trace(err)
+		return nil, errors.Trace(err)
 	}
 
 	err = p.loadTable(ctx, sqlLoadColumnsPrivTable, p.decodeColumnsPrivTableRow, userList...)
 	if err != nil {
-		return errors.Trace(err)
+		return nil, errors.Trace(err)
 	}
 
-	p.roleGraph = make(map[string]roleGraphEdgesTable)
-	err = p.loadTable(ctx, sqlLoadRoleGraph, p.decodeRoleEdgesTable)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	return nil
+	return userList, nil
 }
 
 // merge construct a new MySQLPrivilege by merging the data of the two objects;.
@@ -1877,13 +1917,15 @@ func (h *Handle) ensureActiveUser(user string) error {
 	}
 
 	var data immutable
-	err := data.loadSomeUsers(h.sctx, user)
+	userList, err := data.loadSomeUsers(h.sctx, user)
 	if err != nil {
 		return errors.Trace(err)
 	}
 
-	h.merge(&data, []string{user})
-	h.activeUsers.Store(user, struct{}{})
+	h.merge(&data, userList)
+	for _, user := range userList {
+		h.activeUsers.Store(user, struct{}{})
+	}
 
 	return nil
 }
@@ -1926,7 +1968,7 @@ func (h *Handle) Update(userList []string) error {
 	}
 
 	var priv immutable
-	err := priv.loadSomeUsers(h.sctx, userList...)
+	userList, err := priv.loadSomeUsers(h.sctx, userList...)
 	if err != nil {
 		return err
 	}

@@ -930,7 +930,6 @@ func (p *UserPrivileges) ShowGrants(ctx sessionctx.Context, user *auth.UserIdent
 		return nil, err
 	}
 	mysqlPrivilege := p.Handle.Get()
-
 	grants = mysqlPrivilege.showGrants(ctx, u, h, roles)
 	if len(grants) == 0 {
 		err = ErrNonexistingGrant.GenWithStackByArgs(u, h)
