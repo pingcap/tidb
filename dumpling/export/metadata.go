@@ -68,7 +68,9 @@ func (m *globalMetadata) recordGlobalMetaData(db *sql.Conn, serverInfo version.S
 func recordGlobalMetaData(tctx *tcontext.Context, db *sql.Conn, buffer *bytes.Buffer, serverInfo version.ServerInfo, afterConn bool, snapshot string) error { // revive:disable-line:flag-parameter
 	serverType := serverInfo.ServerType
 	writeMasterStatusHeader := func() {
-		if serverInfo.ServerVersion.LessThan(*minNewTerminologyMySQL) {
+		if serverInfo.ServerVersion == nil {
+			buffer.WriteString("SHOW MASTER STATUS:")
+		} else if serverInfo.ServerVersion.LessThan(*minNewTerminologyMySQL) {
 			buffer.WriteString("SHOW MASTER STATUS:")
 		} else {
 			buffer.WriteString("SHOW BINARY LOG STATUS:")
@@ -173,6 +175,8 @@ func recordGlobalMetaData(tctx *tcontext.Context, db *sql.Conn, buffer *bytes.Bu
 	}
 	if isms {
 		query = "SHOW ALL SLAVES STATUS" // MariaDB
+	} else if serverInfo.ServerVersion == nil {
+		query = "SHOW SLAVE STATUS" // Unknown version
 	} else if serverInfo.ServerType == version.ServerTypeMySQL &&
 		!serverInfo.ServerVersion.LessThan(*minNewTerminologyMySQL) {
 		query = "SHOW REPLICA STATUS" // MySQL 8.4.0 and newer
