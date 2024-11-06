@@ -420,5 +420,5 @@ FROM (
 ) AS res
 WHERE res.state != 2
 ORDER BY res.branch_id;
-`, errno.ErrNotSupportedYet)
+`, core.ErrNotSupportedYet)
 }
