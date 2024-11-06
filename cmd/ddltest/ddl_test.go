@@ -121,6 +121,7 @@ func createDDLSuite(t *testing.T) (s *ddlSuite) {
 	err = domain.GetDomain(s.ctx).DDL().Stop()
 	require.NoError(t, err)
 	config.GetGlobalConfig().Instance.TiDBEnableDDL.Store(false)
+	ddl.CloseOwnerManager()
 	session.ResetStoreForWithTiKVTest(s.store)
 	s.dom.Close()
 	require.NoError(t, s.store.Close())
@@ -188,7 +189,6 @@ func (s *ddlSuite) teardown(t *testing.T) {
 		case <-quitCh:
 		}
 	}()
-	ddl.CloseOwnerManager()
 	err := s.store.Close()
 	require.NoError(t, err)
 	close(quitCh)
