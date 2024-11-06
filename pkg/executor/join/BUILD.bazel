@@ -5,6 +5,7 @@ go_library(
     srcs = [
         "anti_semi_join_probe.go",
         "base_join_probe.go",
+        "base_semi_join.go",
         "concurrent_map.go",
         "hash_join_base.go",
         "hash_join_spill.go",
@@ -122,6 +123,7 @@ go_test(
         "//pkg/util/sqlkiller",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_failpoint//:failpoint",
+        "@com_github_pingcap_log//:log",
         "@com_github_stretchr_testify//require",
     ],
 )

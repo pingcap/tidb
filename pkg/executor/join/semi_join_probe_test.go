@@ -352,11 +352,13 @@ func TestSemiJoinDuplicateKeys(t *testing.T) {
 
 func TestTruncateSelectFunction(t *testing.T) {
 	semiJoin := &semiJoinProbe{
-		otherConditionSuccessSet: make(map[int][]int),
-		groupMark:                make([]int, 0, 200),
-		baseJoinProbe: baseJoinProbe{
-			selected: make([]bool, 0, 200),
+		baseSemiJoin: baseSemiJoin{
+			baseJoinProbe: baseJoinProbe{
+				selected: make([]bool, 0, 200),
+			},
+			groupMark: make([]int, 0, 200),
 		},
+		otherConditionSuccessSet: make(map[int][]int),
 	}
 
 	totalIndexNum := 10
