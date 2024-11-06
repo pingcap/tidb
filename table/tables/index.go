@@ -446,9 +446,28 @@ func (c *index) Delete(sc *stmtctx.StatementContext, txn kv.Transaction, indexed
 			}
 		} else {
 			if len(key) > 0 {
-				err = txn.GetMemBuffer().Delete(key)
-				if err != nil {
-					return err
+				okToDelete := true
+				if c.idxInfo.BackfillState != model.BackfillStateInapplicable {
+					// #52914: the delete key is covered by the new ingested key, which shouldn't be deleted.
+					originVal, err := getKeyInTxn(context.TODO(), txn, key)
+					if err != nil {
+						return err
+					}
+					if len(originVal) > 0 {
+						oh, err := tablecodec.DecodeHandleInUniqueIndexValue(originVal, c.tblInfo.IsCommonHandle)
+						if err != nil {
+							return err
+						}
+						if !h.Equal(oh) {
+							okToDelete = false
+						}
+					}
+				}
+				if okToDelete {
+					err = txn.GetMemBuffer().DeleteWithFlags(key, kv.SetNeedLocked)
+					if err != nil {
+						return err
+					}
 				}
 			}
 			if len(tempKey) > 0 {
