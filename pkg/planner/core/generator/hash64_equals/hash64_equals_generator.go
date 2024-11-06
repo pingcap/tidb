@@ -17,13 +17,14 @@ package main
 import (
 	"bytes"
 	"fmt"
-	"github.com/pingcap/tidb/pkg/planner/cascades/base"
-	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"go/format"
 	"log"
 	"os"
 	"reflect"
 	"strings"
+
+	"github.com/pingcap/tidb/pkg/planner/cascades/base"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 )
 
 // GenHash64Equals4LogicalOps generates Hash64(xxx) and Equals(xxx) for all logical plan nodes in hash64_equals_generated.go.
