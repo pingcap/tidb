@@ -24,6 +24,7 @@ import (
 	"time"
 
 	"github.com/pingcap/log"
+	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/session"
@@ -99,6 +100,7 @@ func newBenchDB() *benchDB {
 	terror.MustNil(err)
 	// maybe close below components, but it's for test anyway.
 	ctx := context.Background()
+	config.GetGlobalConfig().Store = "tikv"
 	err = ddl.StartOwnerManager(ctx, store)
 	terror.MustNil(err)
 	_, err = session.BootstrapSession(store)

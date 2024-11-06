@@ -25,6 +25,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/ddl/schematracker"
 	"github.com/pingcap/tidb/pkg/domain"
@@ -54,6 +55,7 @@ func CreateMockStore(t testing.TB, opts ...mockstore.MockTiKVStoreOption) kv.Sto
 		var err error
 		store, err := d.Open("tikv://" + *WithTiKV)
 		require.NoError(t, err)
+		config.GetGlobalConfig().Store = "tikv"
 		require.NoError(t, ddl.StartOwnerManager(context.Background(), store))
 		var dom *domain.Domain
 		dom, err = session.BootstrapSession(store)

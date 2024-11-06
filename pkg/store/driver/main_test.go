@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"testing"
 
+	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -62,6 +63,7 @@ func createTiKVStore(t *testing.T) (kv.Storage, *domain.Domain) {
 	var d TiKVDriver
 	store, err := d.Open(fmt.Sprintf("tikv://%s", *pdAddrs))
 	require.NoError(t, err)
+	config.GetGlobalConfig().Store = "tikv"
 	require.NoError(t, ddl.StartOwnerManager(context.Background(), store))
 	// clear storage
 	txn, err := store.Begin()

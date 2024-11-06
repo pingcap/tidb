@@ -210,6 +210,7 @@ func NewMgr(
 		return nil, berrors.ErrKVNotTiKV
 	}
 
+	config.GetGlobalConfig().Store = "tikv"
 	if err = ddl.StartOwnerManager(ctx, storage); err != nil {
 		return nil, errors.Trace(err)
 	}
