@@ -192,19 +192,19 @@ func buildSemiDataSourceAndExpectResult(ctx sessionctx.Context, leftCols []*expr
 					leftCol1Datums = append(leftCol1Datums, int64(1))
 					if isAntiSemiJoin {
 						if leftCol0AppendedData >= rowNum {
-							expectResultChunk.AppendInt64(0, int64(leftCol0AppendedData))
+							expectResultChunk.AppendInt64(0, leftCol0AppendedData)
 							expectResultChunk.AppendInt64(1, 1)
 						}
 					} else {
 						if leftCol0AppendedData < rowNum {
-							expectResultChunk.AppendInt64(0, int64(leftCol0AppendedData))
+							expectResultChunk.AppendInt64(0, leftCol0AppendedData)
 							expectResultChunk.AppendInt64(1, 1)
 						}
 					}
 				} else {
 					leftCol1Datums = append(leftCol1Datums, int64(0))
 					if isAntiSemiJoin {
-						expectResultChunk.AppendInt64(0, int64(leftCol0AppendedData))
+						expectResultChunk.AppendInt64(0, leftCol0AppendedData)
 						expectResultChunk.AppendInt64(1, 0)
 					}
 				}
@@ -212,12 +212,12 @@ func buildSemiDataSourceAndExpectResult(ctx sessionctx.Context, leftCols []*expr
 				leftCol1Datums = append(leftCol1Datums, int64(1))
 				if isAntiSemiJoin {
 					if leftCol0AppendedData >= rowNum {
-						expectResultChunk.AppendInt64(0, int64(leftCol0AppendedData))
+						expectResultChunk.AppendInt64(0, leftCol0AppendedData)
 						expectResultChunk.AppendInt64(1, 1)
 					}
 				} else {
 					if leftCol0AppendedData < rowNum {
-						expectResultChunk.AppendInt64(0, int64(leftCol0AppendedData))
+						expectResultChunk.AppendInt64(0, leftCol0AppendedData)
 						expectResultChunk.AppendInt64(1, 1)
 					}
 				}
@@ -253,8 +253,8 @@ func buildSemiDataSourceAndExpectResult(ctx sessionctx.Context, leftCols []*expr
 		}
 	}
 
-	leftMockSrcParm := testutil.MockDataSourceParameters{DataSchema: leftSchema, Ctx: ctx, Rows: int(leftLen), Ndvs: []int{-1, -1}, Datums: [][]any{leftCol0Datums, leftCol1Datums}, HasSel: false}
-	rightMockSrcParm := testutil.MockDataSourceParameters{DataSchema: rightSchema, Ctx: ctx, Rows: int(rightLen), Ndvs: []int{-1, -1}, Datums: [][]any{rightCol0Datums, rightCol1Datums}, HasSel: false}
+	leftMockSrcParm := testutil.MockDataSourceParameters{DataSchema: leftSchema, Ctx: ctx, Rows: leftLen, Ndvs: []int{-1, -1}, Datums: [][]any{leftCol0Datums, leftCol1Datums}, HasSel: false}
+	rightMockSrcParm := testutil.MockDataSourceParameters{DataSchema: rightSchema, Ctx: ctx, Rows: rightLen, Ndvs: []int{-1, -1}, Datums: [][]any{rightCol0Datums, rightCol1Datums}, HasSel: false}
 	return testutil.BuildMockDataSource(leftMockSrcParm), testutil.BuildMockDataSource(rightMockSrcParm), expectResult
 }
 
