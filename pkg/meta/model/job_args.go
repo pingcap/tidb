@@ -445,7 +445,7 @@ func (a *TablePartitionArgs) getArgsV1(job *Job) []any {
 func (a *TablePartitionArgs) getFinishedArgsV1(job *Job) []any {
 	intest.Assert(job.Type != ActionAddTablePartition || job.State == JobStateRollbackDone,
 		"add table partition job should not call getFinishedArgsV1 if not rollback")
-	return []any{a.OldPhysicalTblIDs}
+	return []any{a.OldPhysicalTblIDs, a.OldIndexes}
 }
 
 func (a *TablePartitionArgs) decodeV1(job *Job) error {
@@ -495,10 +495,11 @@ func GetTablePartitionArgs(job *Job) (*TablePartitionArgs, error) {
 func GetFinishedTablePartitionArgs(job *Job) (*TablePartitionArgs, error) {
 	if job.Version == JobVersion1 {
 		var oldPhysicalTblIDs []int64
-		if err := job.decodeArgs(&oldPhysicalTblIDs); err != nil {
+		var oldIndexes []TableIDIndexID
+		if err := job.decodeArgs(&oldPhysicalTblIDs, &oldIndexes); err != nil {
 			return nil, errors.Trace(err)
 		}
-		return &TablePartitionArgs{OldPhysicalTblIDs: oldPhysicalTblIDs}, nil
+		return &TablePartitionArgs{OldPhysicalTblIDs: oldPhysicalTblIDs, OldIndexes: oldIndexes}, nil
 	}
 	return getOrDecodeArgsV2[*TablePartitionArgs](job)
 }
