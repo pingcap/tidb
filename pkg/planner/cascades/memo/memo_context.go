@@ -18,7 +18,7 @@ import (
 	"sync"
 
 	"github.com/pingcap/tidb/pkg/planner/cascades/base"
-	"github.com/pingcap/tidb/pkg/sessionctx"
+	base2 "github.com/pingcap/tidb/pkg/planner/core/base"
 )
 
 // StackPoolRef is introduced to avoid
@@ -27,7 +27,7 @@ var StackPoolRef *sync.Pool
 // MemoContext includes all the context stuff when go through memo optimizing.
 type MemoContext struct {
 	// sctx variable awareness.
-	sctx sessionctx.Context
+	pctx base2.PlanContext
 	// memo pool management.
 	mm *Memo
 	// task pool management.
@@ -37,15 +37,15 @@ type MemoContext struct {
 }
 
 // NewMemoContext returns a new memo context responsible for manage all the stuff in YAMS opt.
-func NewMemoContext(sctx sessionctx.Context) *MemoContext {
+func NewMemoContext(pctx base2.PlanContext) *MemoContext {
 	return &MemoContext{
-		sctx: sctx,
+		pctx: pctx,
 		// memo pool management.
 		mm: MemoPool.Get().(*Memo),
 		// task pool management.
 		stack: StackPoolRef.Get().(base.Stack),
 		// originalSql for debug facility.
-		originSql: sctx.GetSessionVars().StmtCtx.OriginalSQL,
+		originSql: pctx.GetSessionVars().StmtCtx.OriginalSQL,
 	}
 }
 

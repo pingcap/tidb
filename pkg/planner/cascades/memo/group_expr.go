@@ -26,21 +26,23 @@ import (
 	"github.com/pingcap/tidb/pkg/util/intest"
 )
 
-var NumOfRuleSet int
+var (
+	NumOfRuleSet int
+	_            base.LogicalPlan = &GroupExpression{}
+)
 
 // GroupExpression is a single expression from the equivalent list classes inside a group.
 // it is a node in the expression tree, while it takes groups as inputs. This kind of loose
 // coupling between Group and GroupExpression is the key to the success of the memory compact
 // of representing a forest.
 type GroupExpression struct {
+	base.LogicalPlan
+
 	// group is the Group that this GroupExpression belongs to.
 	group *Group
 
 	// inputs stores the Groups that this GroupExpression based on.
 	Inputs []*Group
-
-	// logicalPlan is internal logical expression stands for this groupExpr.
-	logicalPlan base.LogicalPlan
 
 	// hash64 is the unique fingerprint of the GroupExpression.
 	hash64 uint64
@@ -55,11 +57,6 @@ type GroupExpression struct {
 	abandoned bool
 }
 
-// LogicalPlan returns the logical plan of the GroupExpression.
-func (e *GroupExpression) LogicalPlan() base.LogicalPlan {
-	return e.logicalPlan
-}
-
 // GetGroup returns the Group that this GroupExpression belongs to.
 func (e *GroupExpression) GetGroup() *Group {
 	return e.group
@@ -67,8 +64,8 @@ func (e *GroupExpression) GetGroup() *Group {
 
 // String implements the fmt.Stringer interface.
 func (e *GroupExpression) String(w io.StringWriter) {
-	e.LogicalPlan().ExplainID()
-	_, _ = w.WriteString("GE:" + e.LogicalPlan().ExplainID().String() + "{")
+	e.LogicalPlan.ExplainID()
+	_, _ = w.WriteString("GE:" + e.LogicalPlan.ExplainID().String() + "{")
 	for i, input := range e.Inputs {
 		if i != 0 {
 			_, _ = w.WriteString(", ")
@@ -87,7 +84,7 @@ func (e *GroupExpression) Sum64() uint64 {
 // Hash64 implements the Hash64 interface.
 func (e *GroupExpression) Hash64(h base2.Hasher) {
 	// logical plan hash.
-	e.logicalPlan.Hash64(h)
+	e.LogicalPlan.Hash64(h)
 	// children group hash.
 	for _, child := range e.Inputs {
 		child.Hash64(h)
@@ -111,12 +108,12 @@ func (e *GroupExpression) Equals(other any) bool {
 	if len(e.Inputs) != len(e2.Inputs) {
 		return false
 	}
-	if pattern.GetOperand(e.logicalPlan) != pattern.GetOperand(e2.logicalPlan) {
+	if pattern.GetOperand(e.LogicalPlan) != pattern.GetOperand(e2.LogicalPlan) {
 		return false
 	}
 	// current logical operator meta cmp, logical plan don't care logicalPlan's children.
 	// when we convert logicalPlan to GroupExpression, we will set children to nil.
-	if !e.logicalPlan.Equals(e2.logicalPlan) {
+	if !e.LogicalPlan.Equals(e2.LogicalPlan) {
 		return false
 	}
 	// if one of the children is different, then the two GroupExpressions are different.
@@ -133,7 +130,7 @@ func NewGroupExpression(lp base.LogicalPlan, inputs []*Group) *GroupExpression {
 	return &GroupExpression{
 		group:       nil,
 		Inputs:      inputs,
-		logicalPlan: lp,
+		LogicalPlan: lp,
 		hash64:      0,
 		mask:        bitset.New(uint(NumOfRuleSet)),
 	}
@@ -182,10 +179,10 @@ func (e *GroupExpression) DeriveLogicalProp() error {
 	e.GetGroup().SetLogicalProperty(property.NewLogicalProp())
 	// currently the schemaProducer side logical op is still usefully for source of group schema.
 	// just add this check for passing unit test --- mock logical plan with the id less than 0.
-	if e.logicalPlan.ID() > 0 {
-		e.GetGroup().GetLogicalProperty().Schema = e.logicalPlan.Schema()
+	if e.LogicalPlan.ID() > 0 {
+		e.GetGroup().GetLogicalProperty().Schema = e.LogicalPlan.Schema()
 		// here can only derive the basic stats from leaves up, we can't pass any colGroups required by parents.
-		tmpStats, err := e.logicalPlan.DeriveStats(childStats, e.GetGroup().logicalProp.Schema, childSchema, nil)
+		tmpStats, err := e.LogicalPlan.DeriveStats(childStats, e.GetGroup().logicalProp.Schema, childSchema, nil)
 		if err != nil {
 			return err
 		}

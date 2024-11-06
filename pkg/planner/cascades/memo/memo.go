@@ -100,16 +100,16 @@ func (m *Memo) GetHasher() base2.Hasher {
 //	     |                     |                      │   /  \   │
 //	    GE                    ME{GE}                  │  G    G  │
 //	                                                  └──────────┘
-func (m *Memo) CopyIn(target *Group, me *MemoExpression) (*GroupExpression, error) {
+func (m *Memo) CopyIn(target *Group, lp base.LogicalPlan) (*GroupExpression, error) {
 	// Group the children first.
-	childGroups := make([]*Group, 0, len(me.Inputs))
-	for _, child := range me.Inputs {
+	childGroups := make([]*Group, 0, len(lp.Children()))
+	for _, child := range lp.Children() {
 		var (
 			currentChildG *Group
 		)
-		if child.GE != nil {
+		if ge, ok := child.(*GroupExpression); ok {
 			// which means its mixed memoExpression from rule XForm.
-			currentChildG = child.GE.GetGroup()
+			currentChildG = ge.GetGroup()
 		} else {
 			// here means it's a raw logical op, downward to get its input groups.
 			ge, err := m.CopyIn(nil, child)
@@ -123,8 +123,10 @@ func (m *Memo) CopyIn(target *Group, me *MemoExpression) (*GroupExpression, erro
 		childGroups = append(childGroups, currentChildG)
 	}
 
+	// lp's original children is useless since now, prepare it as nil for later appending as group expressions if any.
+	lp.SetChildren(nil)
 	hasher := m.GetHasher()
-	groupExpr := NewGroupExpression(me.LP, childGroups)
+	groupExpr := NewGroupExpression(lp, childGroups)
 	groupExpr.Init(hasher)
 	if m.InsertGroupExpression(groupExpr, target) && target == nil {
 		// derive logical property for new group.

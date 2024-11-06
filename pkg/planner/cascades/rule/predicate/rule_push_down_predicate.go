@@ -18,9 +18,12 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/planner/cascades/memo"
 	"github.com/pingcap/tidb/pkg/planner/cascades/rule"
+	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/pattern"
 )
+
+var _ rule.Rule = &PushPredicateThroughProjection{}
 
 type PushPredicateThroughProjection struct {
 	*rule.BaseRule
@@ -43,11 +46,12 @@ func NewPushPredicateThroughProjection() *PushPredicateThroughProjection {
 // 1. `projection -> selection -> x` or
 // 2. `selection -> projection -> selection -> x` or
 // 3. just keep unchanged.
-func (*PushPredicateThroughProjection) XForm(holder *memo.MemoExpression) ([]*memo.MemoExpression, error) {
+func (*PushPredicateThroughProjection) XForm(holder base.LogicalPlan) ([]base.LogicalPlan, error) {
 	// the match function can guarantee the tree pattern is that we used as below.
-	sel := holder.GE.LogicalPlan().(*logicalop.LogicalSelection)
-	projMExpr := holder.Inputs[0]
-	proj := projMExpr.GE.LogicalPlan().(*logicalop.LogicalProjection)
+	sel := holder.(*memo.GroupExpression).LogicalPlan.(*logicalop.LogicalSelection)
+	projGE := holder.Children()[0]
+	proj := projGE.(*memo.GroupExpression).LogicalPlan.(*logicalop.LogicalProjection)
+	projChildGEs := projGE.Children()
 
 	for _, expr := range proj.Exprs {
 		if expression.HasAssignSetVarFunc(expr) {
@@ -60,17 +64,17 @@ func (*PushPredicateThroughProjection) XForm(holder *memo.MemoExpression) ([]*me
 		return nil, nil
 	}
 	newBottomSel := logicalop.LogicalSelection{Conditions: canBePushed}.Init(sel.SCtx(), sel.QueryBlockOffset())
-	newBottomSelMExpr := memo.NewMemoExpressionFromPlanAndInputs(newBottomSel, projMExpr.Inputs)
+	newBottomSel.SetChildren(projChildGEs...)
 
-	newProjMExpr := memo.NewMemoExpressionFromPlanAndInputs(proj, []*memo.MemoExpression{newBottomSelMExpr})
+	proj.SetChildren(newBottomSel)
 	if len(canNotBePushed) == 0 {
 		// proj is equivalent to original sel, we can add it to old selGroup, and remove old sel.
 		// todo: remove old sel.
-		return []*memo.MemoExpression{newProjMExpr}, nil
+		return []base.LogicalPlan{proj}, nil
 	}
 	// if there are some conditions can not be pushed down, we need to add a new selection.
 	// for this incomplete proj, we need to add it to a new group, which means target is nil.
 	newTopSel := logicalop.LogicalSelection{Conditions: canNotBePushed}.Init(sel.SCtx(), sel.QueryBlockOffset())
-	newTopSelMExpr := memo.NewMemoExpressionFromPlanAndInputs(newTopSel, []*memo.MemoExpression{newProjMExpr})
-	return []*memo.MemoExpression{newTopSelMExpr}, nil
+	newTopSel.SetChildren(proj)
+	return []base.LogicalPlan{newTopSel}, nil
 }

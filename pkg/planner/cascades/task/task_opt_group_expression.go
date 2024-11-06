@@ -63,7 +63,7 @@ func (ge *OptGroupExpressionTask) Desc(w io.StringWriter) {
 
 // getValidRules filter the allowed rule from session variable, and system config.
 func (ge *OptGroupExpressionTask) getValidRules() []rule.Rule {
-	r, ok := rule.XFormRuleSet[pattern.GetOperand(ge.groupExpression.LogicalPlan())]
+	r, ok := rule.XFormRuleSet[pattern.GetOperand(ge.groupExpression.LogicalPlan)]
 	if !ok {
 		return nil
 	}

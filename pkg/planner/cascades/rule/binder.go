@@ -16,6 +16,7 @@ package rule
 
 import (
 	"container/list"
+	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"io"
 
 	"github.com/pingcap/tidb/pkg/planner/cascades/memo"
@@ -136,8 +137,8 @@ type Binder struct {
 	// value, which is used to tell iterator where to start the next iteration.
 	stackInfo []*list.Element
 
-	// holder is the current matched expression dynamically decided during the binder process, lp is unused now.
-	holder *memo.MemoExpression
+	// holder is the current matched expression dynamically decided during the binder process.
+	holder base.LogicalPlan
 
 	// sw is only for test stack print usage.
 	sw io.StringWriter
@@ -152,9 +153,7 @@ func NewBinder(p *pattern.Pattern, gE *memo.GroupExpression) *Binder {
 		// empty stack info, means the toppest loop.
 		// pre-set nil is for later alignment with the traceID indexing.
 		stackInfo: []*list.Element{},
-		holder: &memo.MemoExpression{
-			GE: gE,
-		},
+		holder:    gE,
 	}
 }
 
@@ -162,7 +161,7 @@ func match(p *pattern.Pattern, gE *memo.GroupExpression) bool {
 	if p.Operand == pattern.OperandAny {
 		return true
 	}
-	return pattern.GetOperand(gE.LogicalPlan()).Match(p.Operand)
+	return pattern.GetOperand(gE.LogicalPlan).Match(p.Operand)
 }
 
 // Next tries to find the next matched group expression from the Binder structure.
@@ -223,8 +222,8 @@ func (b *Binder) Next() bool {
 }
 
 // dfsMatch tries to match the pattern with the group expression and input groups recursively.
-func (b *Binder) dfsMatch(p *pattern.Pattern, parentHolder *memo.MemoExpression) bool {
-	gE := parentHolder.GE
+func (b *Binder) dfsMatch(p *pattern.Pattern, parentHolder base.LogicalPlan) bool {
+	gE := parentHolder.(*memo.GroupExpression)
 	// quick return for nil group expression, which may come from the upper pickGroupExpression exhaustion.
 	if gE == nil {
 		return false
@@ -244,20 +243,17 @@ func (b *Binder) dfsMatch(p *pattern.Pattern, parentHolder *memo.MemoExpression)
 	}
 	// since different group expression may have different children len, we need to make sure the Subs
 	// is long enough to hold all the children group expression.
-	if len(parentHolder.Inputs) < len(p.Children) {
-		parentHolder.Inputs = append(parentHolder.Inputs, make([]*memo.MemoExpression, len(p.Children)-len(parentHolder.Inputs))...)
+	if len(parentHolder.Children()) < len(p.Children) {
+		parentHolder.SetChildren(append(parentHolder.Children(), make([]base.LogicalPlan, len(p.Children)-len(parentHolder.Children()))...)...)
 	}
 	for i, childPattern := range p.Children {
 		// we ensure that pattern len is equal to input child groups len.
 		childGroup := gE.Inputs[i]
 		b.traceIn(childPattern, childGroup)
 		// rebound the dynamic placeholder no matter whether it is CHANGED or NOT or NIL.
-		if parentHolder.Inputs[i] == nil {
-			parentHolder.Inputs[i] = &memo.MemoExpression{}
-		}
-		parentHolder.Inputs[i].GE = b.pickGroupExpression(childPattern, childGroup)
+		parentHolder.SetChild(i, b.pickGroupExpression(childPattern, childGroup))
 		// we can sure that childPattern and element in Subs[i] is match when arrive here, recursive for child.
-		if !b.dfsMatch(childPattern, parentHolder.Inputs[i]) {
+		if !b.dfsMatch(childPattern, parentHolder.Children()[i]) {
 			return false
 		}
 	}
@@ -307,6 +303,6 @@ func (b *Binder) printStackInfo(sw io.StringWriter) {
 }
 
 // GetHolder returns the current group expression stored in dynamic placeholder element field.
-func (b *Binder) GetHolder() *memo.MemoExpression {
+func (b *Binder) GetHolder() base.LogicalPlan {
 	return b.holder
 }
