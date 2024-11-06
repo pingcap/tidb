@@ -315,6 +315,9 @@ func (sf *ScalarFunction) Equal(ctx sessionctx.Context, e Expression) bool {
 	if sf.FuncName.L != fun.FuncName.L {
 		return false
 	}
+	if !sf.RetType.Equal(fun.RetType) {
+		return false
+	}
 	return sf.Function.equal(fun.Function)
 }
 
