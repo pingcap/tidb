@@ -29,7 +29,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// generate inner join result using nested loop
+// generate left outer semi join result using nested loop
 func genLeftOuterSemiJoinResult(t *testing.T, sessCtx sessionctx.Context, leftFilter expression.CNFExprs, leftChunks []*chunk.Chunk, rightChunks []*chunk.Chunk, leftKeyIndex []int, rightKeyIndex []int,
 	leftTypes []*types.FieldType, rightTypes []*types.FieldType, leftKeyTypes []*types.FieldType, rightKeyTypes []*types.FieldType, leftUsedColumns []int, rightUsedColumns []int,
 	otherConditions expression.CNFExprs, resultTypes []*types.FieldType) []*chunk.Chunk {
