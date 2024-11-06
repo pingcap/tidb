@@ -3,6 +3,7 @@ drop database if exists cte;
 create database cte;
 drop database if exists cte1;
 create database cte1;
+use test;
 # case 1
 drop table if exists tbl_0;
 create table tbl_0(a int);
