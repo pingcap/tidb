@@ -176,6 +176,11 @@ func (m *JobManager) ReportMetrics(se session.Session) {
 	m.reportMetrics(se)
 }
 
+// ReportMetrics is an exported version of reportMetrics
+func (m *JobManager) CheckFinishedJob(se session.Session) {
+	m.checkFinishedJob(se)
+}
+
 func (j *ttlJob) Finish(se session.Session, now time.Time, summary *TTLSummary) {
 	j.finish(se, now, summary)
 }

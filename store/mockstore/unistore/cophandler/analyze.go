@@ -36,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/cmp"
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/rowcodec"
 	"github.com/pingcap/tipb/go-tipb"
@@ -112,13 +113,12 @@ func handleAnalyzeIndexReq(dbReader *dbreader.DBReader, rans []kv.KeyRange, anal
 		if processor.topNCurValuePair.Count != 0 {
 			processor.topNValuePairs = append(processor.topNValuePairs, processor.topNCurValuePair)
 		}
-		slices.SortFunc(processor.topNValuePairs, func(i, j statistics.TopNMeta) bool {
-			if i.Count > j.Count {
-				return true
-			} else if i.Count < j.Count {
-				return false
+		slices.SortFunc(processor.topNValuePairs, func(i, j statistics.TopNMeta) int {
+			c := cmp.Compare(j.Count, i.Count)
+			if c != 0 {
+				return c
 			}
-			return bytes.Compare(i.Encoded, j.Encoded) < 0
+			return bytes.Compare(i.Encoded, j.Encoded)
 		})
 		if len(processor.topNValuePairs) > int(processor.topNCount) {
 			processor.topNValuePairs = processor.topNValuePairs[:processor.topNCount]
@@ -564,13 +564,12 @@ func handleAnalyzeMixedReq(dbReader *dbreader.DBReader, rans []kv.KeyRange, anal
 		if e.topNCurValuePair.Count != 0 {
 			e.topNValuePairs = append(e.topNValuePairs, e.topNCurValuePair)
 		}
-		slices.SortFunc(e.topNValuePairs, func(i, j statistics.TopNMeta) bool {
-			if i.Count > j.Count {
-				return true
-			} else if i.Count < j.Count {
-				return false
+		slices.SortFunc(e.topNValuePairs, func(i, j statistics.TopNMeta) int {
+			c := cmp.Compare(j.Count, i.Count)
+			if c != 0 {
+				return c
 			}
-			return bytes.Compare(i.Encoded, j.Encoded) < 0
+			return bytes.Compare(i.Encoded, j.Encoded)
 		})
 		if len(e.topNValuePairs) > int(e.topNCount) {
 			e.topNValuePairs = e.topNValuePairs[:e.topNCount]
