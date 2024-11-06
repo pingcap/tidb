@@ -177,16 +177,23 @@ func (j *leftOuterSemiJoinProbe) probeWithoutOtherCondition(_, joinedChk *chunk.
 }
 
 func (j *leftOuterSemiJoinProbe) buildResult(chk *chunk.Chunk, startProbeRow int) {
-	selected := make([]bool, j.chunkRows)
-	for i := startProbeRow; i < j.currentProbeRow; i++ {
-		selected[i] = true
-	}
-	for index, colIndex := range j.lUsed {
-		dstCol := chk.Column(index)
-		srcCol := j.currentChunk.Column(colIndex)
-		chunk.CopySelectedRowsWithRowIDFunc(dstCol, srcCol, selected, 0, len(selected), func(i int) int {
-			return j.usedRows[i]
-		})
+	if startProbeRow == 0 && j.currentProbeRow == j.chunkRows && j.currentChunk.Sel() == nil {
+		// TODO: Can do a shallow copy by directly copying the Column pointers
+		for index, colIndex := range j.lUsed {
+			chk.SetCol(index, j.currentChunk.Column(colIndex).CopyConstruct(nil))
+		}
+	} else {
+		selected := make([]bool, j.chunkRows)
+		for i := startProbeRow; i < j.currentProbeRow; i++ {
+			selected[i] = true
+		}
+		for index, colIndex := range j.lUsed {
+			dstCol := chk.Column(index)
+			srcCol := j.currentChunk.Column(colIndex)
+			chunk.CopySelectedRowsWithRowIDFunc(dstCol, srcCol, selected, 0, len(selected), func(i int) int {
+				return j.usedRows[i]
+			})
+		}
 	}
 
 	for i := startProbeRow; i < j.currentProbeRow; i++ {
