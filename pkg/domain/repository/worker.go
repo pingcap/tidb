@@ -206,7 +206,7 @@ func (w *worker) initialized() bool {
 	return w.sesspool != nil
 }
 
-func (w *worker) runQuery(ctx context.Context, sctx sessionctx.Context, sql string, args ...interface{}) (v []chunk.Row, e error) {
+func (w *worker) runQuery(ctx context.Context, sctx sessionctx.Context, sql string, args ...any) (v []chunk.Row, e error) {
 	defer func() {
 		logutil.BgLogger().Debug("repository execute SQL", zap.String("sql", sql), zap.NamedError("err", e))
 	}()
@@ -222,7 +222,7 @@ func (w *worker) runQuery(ctx context.Context, sctx sessionctx.Context, sql stri
 	return nil, err
 }
 
-func (w *worker) execRetry(ctx context.Context, sctx sessionctx.Context, sql string, args ...interface{}) ([]chunk.Row, error) {
+func (w *worker) execRetry(ctx context.Context, sctx sessionctx.Context, sql string, args ...any) ([]chunk.Row, error) {
 	var errs [5]error
 	for i := 0; i < len(errs); i++ {
 		res, err := w.runQuery(ctx, sctx, sql, args...)
@@ -296,13 +296,13 @@ func (w *worker) startRepository(ctx context.Context) func() {
 					continue
 				}
 
-				w.wg.RunWithRecover(w.startSample(ctx), func(err interface{}) {
+				w.wg.RunWithRecover(w.startSample(ctx), func(err any) {
 					logutil.BgLogger().Info("repository sample panic", zap.Any("err", err), zap.Stack("stack"))
 				}, "sample")
-				w.wg.RunWithRecover(w.startSnapshot(ctx), func(err interface{}) {
+				w.wg.RunWithRecover(w.startSnapshot(ctx), func(err any) {
 					logutil.BgLogger().Info("repository snapshot panic", zap.Any("err", err), zap.Stack("stack"))
 				}, "snapshot")
-				w.wg.RunWithRecover(w.startHouseKeeper(ctx), func(err interface{}) {
+				w.wg.RunWithRecover(w.startHouseKeeper(ctx), func(err any) {
 					logutil.BgLogger().Info("repository housekeeper panic", zap.Any("err", err), zap.Stack("stack"))
 				}, "housekeeper")
 
@@ -329,7 +329,7 @@ func (w *worker) start() error {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	w.cancel = cancel
-	w.wg.RunWithRecover(w.startRepository(ctx), func(err interface{}) {
+	w.wg.RunWithRecover(w.startRepository(ctx), func(err any) {
 		logutil.BgLogger().Info("repository prestart panic", zap.Any("err", err), zap.Stack("stack"))
 	}, "prestart")
 
