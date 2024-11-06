@@ -32,7 +32,7 @@ type leftOuterSemiJoinProbe struct {
 	// buffer isNull for other condition evaluation
 	isNulls []bool
 
-	// used in other condition to record which rows are being processed now
+	// used in other condition to record which rows need to be processed
 	processedProbeRowIdxQueue *queue.Queue[int]
 }
 
@@ -40,8 +40,10 @@ var _ ProbeV2 = &leftOuterSemiJoinProbe{}
 
 func newLeftOuterSemiJoinProbe(base baseJoinProbe) *leftOuterSemiJoinProbe {
 	probe := &leftOuterSemiJoinProbe{
-		baseJoinProbe:             base,
-		processedProbeRowIdxQueue: queue.NewQueue[int](32),
+		baseJoinProbe: base,
+	}
+	if base.ctx.hasOtherCondition() {
+		probe.processedProbeRowIdxQueue = queue.NewQueue[int](32)
 	}
 	return probe
 }
@@ -104,14 +106,28 @@ func (j *leftOuterSemiJoinProbe) Probe(joinResult *hashjoinWorkerResult, sqlKill
 }
 
 func (j *leftOuterSemiJoinProbe) probeWithOtherCondition(chk, joinedChk *chunk.Chunk, remainCap int, sqlKiller *sqlkiller.SQLKiller) (err error) {
-	nextProcessProbeRowIdx := j.currentProbeRow
+	if !j.processedProbeRowIdxQueue.IsEmpty() {
+		err = j.produceResult(joinedChk, sqlKiller)
+		if err != nil {
+			return err
+		}
+		j.currentProbeRow = 0
+	}
+
+	if j.processedProbeRowIdxQueue.IsEmpty() {
+		startProbeRow := j.currentProbeRow
+		j.currentProbeRow = min(startProbeRow+remainCap, j.chunkRows)
+		j.buildResult(chk, startProbeRow)
+	}
+	return
+}
+
+func (j *leftOuterSemiJoinProbe) produceResult(joinedChk *chunk.Chunk, sqlKiller *sqlkiller.SQLKiller) (err error) {
 	err = j.concatenateProbeAndBuildRows(joinedChk, sqlKiller)
 	if err != nil {
 		return err
 	}
-	j.currentProbeRow = nextProcessProbeRowIdx
 
-	// To avoid `Previous chunk is not probed yet` error
 	if joinedChk.NumRows() > 0 {
 		j.selected, j.isNulls, err = expression.VecEvalBool(j.ctx.SessCtx.GetExprCtx().GetEvalCtx(), j.ctx.SessCtx.GetSessionVars().EnableVectorizedExpression, j.ctx.OtherCondition, joinedChk, j.selected, j.isNulls)
 		if err != nil {
@@ -127,12 +143,7 @@ func (j *leftOuterSemiJoinProbe) probeWithOtherCondition(chk, joinedChk *chunk.C
 			}
 		}
 	}
-
-	if j.processedProbeRowIdxQueue.IsEmpty() {
-		j.currentProbeRow = min(nextProcessProbeRowIdx+remainCap, j.chunkRows)
-		j.buildResult(chk, nextProcessProbeRowIdx)
-	}
-	return
+	return nil
 }
 
 func (j *leftOuterSemiJoinProbe) probeWithoutOtherCondition(_, joinedChk *chunk.Chunk, remainCap int, sqlKiller *sqlkiller.SQLKiller) (err error) {
@@ -236,7 +247,7 @@ func (j *leftOuterSemiJoinProbe) concatenateProbeAndBuildRows(joinedChk *chunk.C
 }
 
 func (j *leftOuterSemiJoinProbe) IsCurrentChunkProbeDone() bool {
-	if !j.processedProbeRowIdxQueue.IsEmpty() {
+	if j.ctx.hasOtherCondition() && !j.processedProbeRowIdxQueue.IsEmpty() {
 		return false
 	}
 	return j.baseJoinProbe.IsCurrentChunkProbeDone()
