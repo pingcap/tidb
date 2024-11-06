@@ -25,6 +25,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/ddl/schematracker"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -53,11 +54,12 @@ func CreateMockStore(t testing.TB, opts ...mockstore.MockTiKVStoreOption) kv.Sto
 		var err error
 		store, err := d.Open("tikv://" + *WithTiKV)
 		require.NoError(t, err)
-
+		require.NoError(t, ddl.StartOwnerManager(context.Background(), store))
 		var dom *domain.Domain
 		dom, err = session.BootstrapSession(store)
 		t.Cleanup(func() {
 			dom.Close()
+			ddl.CloseOwnerManager()
 			err := store.Close()
 			require.NoError(t, err)
 			view.Stop()

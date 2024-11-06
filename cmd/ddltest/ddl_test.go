@@ -33,7 +33,9 @@ import (
 	_ "github.com/go-sql-driver/mysql"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
+	"github.com/pingcap/tidb/dumpling/context"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/model"
@@ -100,7 +102,7 @@ func createDDLSuite(t *testing.T) (s *ddlSuite) {
 
 	// Make sure the schema lease of this session is equal to other TiDB servers'.
 	session.SetSchemaLease(time.Duration(*lease) * time.Second)
-
+	require.NoError(t, ddl.StartOwnerManager(context.Background(), s.store))
 	s.dom, err = session.BootstrapSession(s.store)
 	require.NoError(t, err)
 
@@ -185,6 +187,7 @@ func (s *ddlSuite) teardown(t *testing.T) {
 		case <-quitCh:
 		}
 	}()
+	ddl.CloseOwnerManager()
 	err := s.store.Close()
 	require.NoError(t, err)
 	close(quitCh)

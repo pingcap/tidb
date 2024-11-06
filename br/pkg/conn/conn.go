@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/br/pkg/version"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/tikv/client-go/v2/oracle"
@@ -209,6 +210,9 @@ func NewMgr(
 		return nil, berrors.ErrKVNotTiKV
 	}
 
+	if err = ddl.StartOwnerManager(ctx, storage); err != nil {
+		return nil, errors.Trace(err)
+	}
 	var dom *domain.Domain
 	if needDomain {
 		dom, err = g.GetDomain(storage)
@@ -292,6 +296,7 @@ func (mgr *Mgr) Close() {
 		if mgr.dom != nil {
 			mgr.dom.Close()
 		}
+		ddl.CloseOwnerManager()
 		tikv.StoreShuttingDown(1)
 		_ = mgr.storage.Close()
 	}

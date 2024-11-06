@@ -17,6 +17,7 @@
 package realtikvtest
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"strings"
@@ -25,6 +26,7 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/session"
@@ -124,7 +126,7 @@ func CreateMockStoreAndDomainAndSetup(t *testing.T, opts ...mockstore.MockTiKVSt
 		})
 		store, err = d.Open(*TiKVPath)
 		require.NoError(t, err)
-
+		require.NoError(t, ddl.StartOwnerManager(context.Background(), store))
 		dom, err = session.BootstrapSession(store)
 		require.NoError(t, err)
 		sm := testkit.MockSessionManager{}
@@ -158,6 +160,7 @@ func CreateMockStoreAndDomainAndSetup(t *testing.T, opts ...mockstore.MockTiKVSt
 
 	t.Cleanup(func() {
 		dom.Close()
+		ddl.CloseOwnerManager()
 		require.NoError(t, store.Close())
 		transaction.PrewriteMaxBackoff.Store(20000)
 		view.Stop()

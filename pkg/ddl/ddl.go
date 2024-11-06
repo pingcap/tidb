@@ -73,7 +73,8 @@ const (
 	ddlSchemaVersionKeyLock = "/tidb/ddl/schema_version_lock"
 	// addingDDLJobPrefix is the path prefix used to record the newly added DDL job, and it's saved to etcd.
 	addingDDLJobPrefix = "/tidb/ddl/add_ddl_job_"
-	Prompt             = "ddl"
+	// Prompt is the prompt for ddl owner manager.
+	Prompt = "ddl"
 
 	batchAddingJobs = 100
 
