@@ -176,11 +176,13 @@ func NewLocalMPPCoordinator(ctx context.Context, sctx sessionctx.Context, is inf
 	}
 
 	value := sctx.GetSessionVars().StmtCtx.GetPlan()
-	p := value.(base.Plan)
-	pp := getActualPhysicalPlan(p)
-	if pp != nil {
-		if len(coordinatorAddr) > 0 && needReportExecutionSummary(pp, coord.originalPlan.ID(), false) {
-			coord.reportExecutionInfo = true
+	if value != nil {
+		p := value.(base.Plan)
+		pp := getActualPhysicalPlan(p)
+		if pp != nil {
+			if len(coordinatorAddr) > 0 && needReportExecutionSummary(pp, coord.originalPlan.ID(), false) {
+				coord.reportExecutionInfo = true
+			}
 		}
 	}
 	return coord
