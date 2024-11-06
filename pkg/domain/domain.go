@@ -74,6 +74,7 @@ import (
 	"github.com/pingcap/tidb/pkg/statistics/handle/initstats"
 	statslogutil "github.com/pingcap/tidb/pkg/statistics/handle/logutil"
 	handleutil "github.com/pingcap/tidb/pkg/statistics/handle/util"
+	"github.com/pingcap/tidb/pkg/store"
 	"github.com/pingcap/tidb/pkg/store/helper"
 	"github.com/pingcap/tidb/pkg/ttl/ttlworker"
 	"github.com/pingcap/tidb/pkg/types"
@@ -104,9 +105,6 @@ import (
 	"go.etcd.io/etcd/client/v3/concurrency"
 	atomicutil "go.uber.org/atomic"
 	"go.uber.org/zap"
-	"google.golang.org/grpc"
-	"google.golang.org/grpc/backoff"
-	"google.golang.org/grpc/keepalive"
 )
 
 var (
@@ -193,6 +191,7 @@ type Domain struct {
 		expiredTimeStamp types.Time
 	}
 
+	brOwnerMgr               owner.Manager
 	logBackupAdvancer        *daemon.OwnerDaemon
 	historicalStatsWorker    *HistoricalStatsWorker
 	ttlJobManager            atomic.Pointer[ttlworker.JobManager]
@@ -1237,6 +1236,9 @@ func (do *Domain) Close() {
 	}
 
 	do.slowQuery.Close()
+	if do.brOwnerMgr != nil {
+		do.brOwnerMgr.Close()
+	}
 	do.cancelFns.mu.Lock()
 	for _, f := range do.cancelFns.fns {
 		f()
@@ -1311,62 +1313,6 @@ func NewDomain(store kv.Storage, schemaLease time.Duration, statsLease time.Dura
 
 const serverIDForStandalone = 1 // serverID for standalone deployment.
 
-// NewEtcdCli creates a new clientv3.Client from store if the store support it.
-// the returned client might be nil.
-// TODO currently uni-store/mock-tikv/tikv all implements EtcdBackend while they don't support actually.
-// refactor this part.
-func NewEtcdCli(store kv.Storage) (*clientv3.Client, error) {
-	etcdStore, addrs, err := getEtcdAddrs(store)
-	if err != nil {
-		return nil, err
-	}
-	if len(addrs) == 0 {
-		return nil, nil
-	}
-	cli, err := newEtcdCli(addrs, etcdStore)
-	if err != nil {
-		return nil, err
-	}
-	return cli, nil
-}
-
-func getEtcdAddrs(store kv.Storage) (kv.EtcdBackend, []string, error) {
-	etcdStore, ok := store.(kv.EtcdBackend)
-	if !ok {
-		return nil, nil, nil
-	}
-	addrs, err := etcdStore.EtcdAddrs()
-	if err != nil {
-		return nil, nil, err
-	}
-	return etcdStore, addrs, nil
-}
-
-func newEtcdCli(addrs []string, ebd kv.EtcdBackend) (*clientv3.Client, error) {
-	cfg := config.GetGlobalConfig()
-	etcdLogCfg := zap.NewProductionConfig()
-	etcdLogCfg.Level = zap.NewAtomicLevelAt(zap.ErrorLevel)
-	backoffCfg := backoff.DefaultConfig
-	backoffCfg.MaxDelay = 3 * time.Second
-	cli, err := clientv3.New(clientv3.Config{
-		LogConfig:        &etcdLogCfg,
-		Endpoints:        addrs,
-		AutoSyncInterval: 30 * time.Second,
-		DialTimeout:      5 * time.Second,
-		DialOptions: []grpc.DialOption{
-			grpc.WithConnectParams(grpc.ConnectParams{
-				Backoff: backoffCfg,
-			}),
-			grpc.WithKeepaliveParams(keepalive.ClientParameters{
-				Time:    time.Duration(cfg.TiKVClient.GrpcKeepAliveTime) * time.Second,
-				Timeout: time.Duration(cfg.TiKVClient.GrpcKeepAliveTimeout) * time.Second,
-			}),
-		},
-		TLS: ebd.TLSConfig(),
-	})
-	return cli, err
-}
-
 // Init initializes a domain. after return, session can be used to do DMLs but not
 // DDLs which can be used after domain Start.
 func (do *Domain) Init(
@@ -1375,12 +1321,12 @@ func (do *Domain) Init(
 ) error {
 	do.sysExecutorFactory = sysExecutorFactory
 	perfschema.Init()
-	etcdStore, addrs, err := getEtcdAddrs(do.store)
+	etcdStore, addrs, err := store.GetEtcdAddrs(do.store)
 	if err != nil {
 		return errors.Trace(err)
 	}
 	if len(addrs) > 0 {
-		cli, err2 := newEtcdCli(addrs, etcdStore)
+		cli, err2 := store.NewEtcdCliWithAddrs(addrs, etcdStore)
 		if err2 != nil {
 			return errors.Trace(err2)
 		}
@@ -1390,7 +1336,7 @@ func (do *Domain) Init(
 
 		do.autoidClient = autoid.NewClientDiscover(cli)
 
-		unprefixedEtcdCli, err2 := newEtcdCli(addrs, etcdStore)
+		unprefixedEtcdCli, err2 := store.NewEtcdCliWithAddrs(addrs, etcdStore)
 		if err2 != nil {
 			return errors.Trace(err2)
 		}
@@ -1589,7 +1535,8 @@ func (do *Domain) initLogBackup(ctx context.Context, pdClient pd.Client) error {
 		return err
 	}
 	adv := streamhelper.NewCheckpointAdvancer(env)
-	do.logBackupAdvancer = daemon.New(adv, streamhelper.OwnerManagerForLogBackup(ctx, do.etcdClient), adv.Config().TickDuration)
+	do.brOwnerMgr = streamhelper.OwnerManagerForLogBackup(ctx, do.etcdClient)
+	do.logBackupAdvancer = daemon.New(adv, do.brOwnerMgr, adv.Config().TickDuration)
 	loop, err := do.logBackupAdvancer.Begin(ctx)
 	if err != nil {
 		return err
@@ -2066,6 +2013,7 @@ func (do *Domain) LoadBindInfoLoop(ctxForHandle sessionctx.Context, ctxForEvolve
 func (do *Domain) globalBindHandleWorkerLoop(owner owner.Manager) {
 	do.wg.Run(func() {
 		defer func() {
+			owner.Close()
 			logutil.BgLogger().Info("globalBindHandleWorkerLoop exited.")
 		}()
 		defer util.Recover(metrics.LabelDomain, "globalBindHandleWorkerLoop", nil, false)
