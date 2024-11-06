@@ -180,10 +180,10 @@ func (pi *PhysPlanPartInfo) Clone() *PhysPlanPartInfo {
 		return nil
 	}
 	cloned := new(PhysPlanPartInfo)
-	cloned.PruningConds = util.CloneExprs(pi.PruningConds)
-	cloned.PartitionNames = util.CloneCIStrs(pi.PartitionNames)
-	cloned.Columns = util.CloneCols(pi.Columns)
-	cloned.ColumnNames = util.CloneFieldNames(pi.ColumnNames)
+	cloned.PruningConds = cloneExpressionsForPlanCache(pi.PruningConds)
+	cloned.PartitionNames = pi.PartitionNames
+	cloned.Columns = cloneColumnsForPlanCache(pi.Columns)
+	cloned.ColumnNames = pi.ColumnNames
 	return cloned
 }
 
