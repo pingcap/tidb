@@ -164,7 +164,7 @@ func TestCheckpointManagerResumeReorg(t *testing.T) {
 	require.EqualValues(t, []byte{'1', '9'}, globalNextKey)
 
 	createDummyFile(t, tmpFolder)
-	mgr2, err := ingest.NewCheckpointManager(ctx, flushCtrl, sessPool, 1, []int64{1}, tmpFolder)
+	mgr2, err := ingest.NewCheckpointManager(ctx, flushCtrl, sessPool, 1, 1, tmpFolder)
 	require.NoError(t, err)
 	defer mgr2.Close()
 	require.True(t, mgr2.IsKeyProcessed([]byte{'1', '9'}))
