@@ -227,10 +227,10 @@ func (r *Refresher) ProcessDMLChangesForTest() {
 	}
 }
 
-// RequeueFailedJobsForTest requeues failed jobs for the test.
+// RequeueMustRetryJobsForTest requeues must retry jobs for the test.
 // Only used in the test.
-func (r *Refresher) RequeueFailedJobsForTest() {
-	r.jobs.RequeueFailedJobs()
+func (r *Refresher) RequeueMustRetryJobsForTest() {
+	r.jobs.RequeueMustRetryJobs()
 }
 
 // Len returns the length of the analysis job queue.
