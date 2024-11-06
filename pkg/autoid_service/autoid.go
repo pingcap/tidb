@@ -379,7 +379,7 @@ func MockForTest(store kv.Storage) autoid.AutoIDAllocClient {
 
 // Close closes the Service and clean up resource.
 func (s *Service) Close() {
-	if s.leaderShip != nil && s.leaderShip.IsOwner() {
+	if s.leaderShip != nil {
 		s.leaderShip.Close()
 	}
 }

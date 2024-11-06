@@ -136,7 +136,6 @@ type ownerManager struct {
 	logPrefix      string
 	logCtx         context.Context
 	etcdCli        *clientv3.Client
-	cancel         context.CancelFunc
 	elec           atomic.Pointer[concurrency.Election]
 	sessionLease   *atomicutil.Int64
 	wg             sync.WaitGroup
@@ -149,14 +148,12 @@ type ownerManager struct {
 // NewOwnerManager creates a new Manager.
 func NewOwnerManager(ctx context.Context, etcdCli *clientv3.Client, prompt, id, key string) Manager {
 	logPrefix := fmt.Sprintf("[%s] %s ownerManager %s", prompt, key, id)
-	ctx, cancelFunc := context.WithCancel(ctx)
 	return &ownerManager{
 		etcdCli:      etcdCli,
 		id:           id,
 		key:          key,
 		ctx:          ctx,
 		prompt:       prompt,
-		cancel:       cancelFunc,
 		logPrefix:    logPrefix,
 		logCtx:       logutil.WithKeyValue(context.Background(), "owner info", logPrefix),
 		sessionLease: atomicutil.NewInt64(0),
@@ -175,9 +172,8 @@ func (m *ownerManager) IsOwner() bool {
 
 // Close implements Manager.Close interface.
 func (m *ownerManager) Close() {
-	m.cancel()
-	m.wg.Wait()
-	m.closeSession()
+	// same as CampaignCancel
+	m.CampaignCancel()
 }
 
 func (m *ownerManager) SetListener(listener Listener) {
@@ -187,7 +183,7 @@ func (m *ownerManager) SetListener(listener Listener) {
 func (m *ownerManager) ForceToBeOwner(context.Context) error {
 	logPrefix := fmt.Sprintf("[%s] %s", m.prompt, m.key)
 	logutil.BgLogger().Info("force to be owner", zap.String("ownerInfo", logPrefix))
-	if err := m.refreshSession(m.ctx, util2.NewSessionDefaultRetryCnt, ManagerSessionTTL); err != nil {
+	if err := m.refreshSession(util2.NewSessionDefaultRetryCnt, ManagerSessionTTL); err != nil {
 		return errors.Trace(err)
 	}
 
@@ -297,7 +293,7 @@ func (m *ownerManager) CampaignOwner(withTTL ...int) error {
 	logPrefix := fmt.Sprintf("[%s] %s", m.prompt, m.key)
 	if m.etcdSes == nil {
 		logutil.BgLogger().Info("start campaign owner", zap.String("ownerInfo", logPrefix))
-		if err := m.refreshSession(m.ctx, util2.NewSessionDefaultRetryCnt, ttl); err != nil {
+		if err := m.refreshSession(util2.NewSessionDefaultRetryCnt, ttl); err != nil {
 			return errors.Trace(err)
 		}
 	} else {
@@ -354,7 +350,9 @@ func (m *ownerManager) CampaignCancel() {
 }
 
 func (m *ownerManager) BreakCampaignLoop() {
-	m.campaignCancel()
+	if m.campaignCancel != nil {
+		m.campaignCancel()
+	}
 	m.wg.Wait()
 }
 
@@ -379,13 +377,13 @@ func (m *ownerManager) campaignLoop(campaignContext context.Context) {
 		select {
 		case <-m.etcdSes.Done():
 			logutil.Logger(logCtx).Info("etcd session done, refresh it")
-			if err2 := m.refreshSession(campaignContext, util2.NewSessionRetryUnlimited, ManagerSessionTTL); err2 != nil {
+			if err2 := m.refreshSession(util2.NewSessionRetryUnlimited, ManagerSessionTTL); err2 != nil {
 				logutil.Logger(logCtx).Info("break campaign loop, refresh session failed", zap.Error(err2))
 				return
 			}
 		case <-leaseNotFoundCh:
 			logutil.Logger(logCtx).Info("meet lease not found error, refresh session")
-			if err2 := m.refreshSession(campaignContext, util2.NewSessionRetryUnlimited, ManagerSessionTTL); err2 != nil {
+			if err2 := m.refreshSession(util2.NewSessionRetryUnlimited, ManagerSessionTTL); err2 != nil {
 				logutil.Logger(logCtx).Info("break campaign loop, refresh session failed", zap.Error(err2))
 				return
 			}
@@ -440,9 +438,15 @@ func (m *ownerManager) closeSession() {
 	}
 }
 
-func (m *ownerManager) refreshSession(ctx context.Context, retryCnt, ttl int) error {
+func (m *ownerManager) refreshSession(retryCnt, ttl int) error {
 	m.closeSession()
-	sess, err2 := util2.NewSession(ctx, m.logPrefix, m.etcdCli, retryCnt, ttl)
+	// Note: we must use manager's context to create session. If we use campaign
+	// context and the context is cancelled, the created session cannot be closed
+	// as session close depends on the context.
+	// One drawback is that when you want to break the campaign loop, and the campaign
+	// loop is refreshing the session, it might wait for a long time to return, it
+	// should be fine as long as network is ok, and acceptable to wait when not.
+	sess, err2 := util2.NewSession(m.ctx, m.logPrefix, m.etcdCli, retryCnt, ttl)
 	if err2 != nil {
 		return errors.Trace(err2)
 	}
@@ -451,7 +455,7 @@ func (m *ownerManager) refreshSession(ctx context.Context, retryCnt, ttl int) er
 	return nil
 }
 
-func (m *ownerManager) revokeSession(_ string, leaseID clientv3.LeaseID) {
+func (m *ownerManager) revokeSession(leaseID clientv3.LeaseID) {
 	// Revoke the session lease.
 	// If revoke takes longer than the ttl, lease is expired anyway.
 	cancelCtx, cancel := context.WithTimeout(context.Background(),

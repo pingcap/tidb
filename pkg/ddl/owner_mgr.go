@@ -19,9 +19,9 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/owner"
+	storepkg "github.com/pingcap/tidb/pkg/store"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.uber.org/zap"
@@ -40,7 +40,7 @@ func CloseOwnerManager() {
 }
 
 // ownerManager is used to manage lifecycle of a global DDL owner manager which
-// we only want it to start once, but Domain might start twice
+// we only want it to init session once, to avoid DDL owner change after upgrade.
 type ownerManager struct {
 	etcdCli  *clientv3.Client
 	id       string
@@ -50,7 +50,7 @@ type ownerManager struct {
 // Start starts the TiDBInstance.
 func (om *ownerManager) Start(ctx context.Context, store kv.Storage) error {
 	om.id = uuid.New().String()
-	cli, err := domain.NewEtcdCli(store)
+	cli, err := storepkg.NewEtcdCli(store)
 	if err != nil {
 		return errors.Trace(err)
 	}
