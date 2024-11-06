@@ -285,8 +285,7 @@ func (sm *Manager) startSchedulers(schedulableTasks []*proto.TaskBase) error {
 				zap.Int64("task-id", task.ID), zap.Stringer("state", task.State))
 		}
 
-		metrics.DistTaskGauge.WithLabelValues(task.Type.String(), metrics.SchedulingStatus).Inc()
-		metrics.UpdateMetricsForScheduleTask(task.ID, task.Type)
+		metrics.UpdateMetricsForScheduleTask(task)
 		sm.startScheduler(task, allocateSlots, reservedExecID)
 	}
 	return nil
