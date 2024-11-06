@@ -423,11 +423,11 @@ func equalRowCountOnIndex(sctx planctx.PlanContext, idx *statistics.Index, b []b
 		if idx.Histogram.NDV > 0 {
 			histNDV = float64(idx.Histogram.NDV)
 		} else {
-			histNDV = math.Sqrt(max(idx.Histogram.NotNullCount(), float64(modifyCount)))
+			histNDV = math.Sqrt(max(idx.TotalRowCount(), float64(realtimeRowCount)))
 		}
-		// Return the min of the original notNullCount or the modifyCount/NDV. This is to reduce the
-		// risk of too large or too small an estimate if modifyCount is large or NotNullCount is small
-		return max(1, min(idx.Histogram.NotNullCount(), float64(modifyCount)/histNDV))
+		// As a conservative estimate - take the smaller of the orignal totalRows or the difference
+		totalRowCount := min(idx.TotalRowCount(), float64(realtimeRowCount)-idx.TotalRowCount())
+		return max(1, totalRowCount/histNDV)
 	}
 	return idx.Histogram.NotNullCount() / histNDV
 }
