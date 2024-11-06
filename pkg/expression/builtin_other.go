@@ -215,6 +215,10 @@ type baseInSig struct {
 	// It works with builtinInXXXSig.hashset to accelerate 'eval'.
 	nonConstArgsIdx []int
 	hasNull         bool
+
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 // builtinInIntSig see https://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html#function_in
@@ -222,6 +226,10 @@ type builtinInIntSig struct {
 	baseInSig
 	// the bool value in the map is used to identify whether the constant stored in key is signed or unsigned
 	hashSet map[int64]bool
+
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinInIntSig) buildHashMapForConstArgs(ctx BuildContext) error {
@@ -314,6 +322,10 @@ func (b *builtinInIntSig) evalInt(ctx EvalContext, row chunk.Row) (int64, bool, 
 type builtinInStringSig struct {
 	baseInSig
 	hashSet set.StringSet
+
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinInStringSig) buildHashMapForConstArgs(ctx BuildContext) error {
@@ -388,6 +400,10 @@ func (b *builtinInStringSig) evalInt(ctx EvalContext, row chunk.Row) (int64, boo
 type builtinInRealSig struct {
 	baseInSig
 	hashSet set.Float64Set
+
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinInRealSig) buildHashMapForConstArgs(ctx BuildContext) error {
@@ -459,6 +475,10 @@ func (b *builtinInRealSig) evalInt(ctx EvalContext, row chunk.Row) (int64, bool,
 type builtinInDecimalSig struct {
 	baseInSig
 	hashSet set.StringSet
+
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinInDecimalSig) buildHashMapForConstArgs(ctx BuildContext) error {
@@ -539,6 +559,10 @@ func (b *builtinInDecimalSig) evalInt(ctx EvalContext, row chunk.Row) (int64, bo
 type builtinInTimeSig struct {
 	baseInSig
 	hashSet map[types.CoreTime]struct{}
+
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinInTimeSig) buildHashMapForConstArgs(ctx BuildContext) error {
@@ -610,6 +634,10 @@ func (b *builtinInTimeSig) evalInt(ctx EvalContext, row chunk.Row) (int64, bool,
 type builtinInDurationSig struct {
 	baseInSig
 	hashSet map[time.Duration]struct{}
+
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinInDurationSig) buildHashMapForConstArgs(ctx BuildContext) error {
