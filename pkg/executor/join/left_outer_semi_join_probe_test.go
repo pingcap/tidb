@@ -17,6 +17,7 @@ package join
 import (
 	"testing"
 
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -424,5 +425,47 @@ func TestLeftOuterSemiJoinBuildResultFastPath(t *testing.T) {
 			testJoinProbe(t, true, []int{0}, []int{0}, []*types.FieldType{nullableIntTp}, []*types.FieldType{nullableIntTp}, toNullableTypes(lTypes), toNullableTypes(rTypes), rightBuild, []int{1, 2, 4}, rightUsed, []int{1}, []int{3}, leftFilter, nil, nil, partitionNumber, joinType, 30)
 			testJoinProbe(t, true, []int{0}, []int{0}, []*types.FieldType{nullableIntTp}, []*types.FieldType{nullableIntTp}, toNullableTypes(lTypes), toNullableTypes(rTypes), rightBuild, nil, rightUsed, []int{1}, []int{3}, leftFilter, nil, nil, partitionNumber, joinType, 30)
 		}
+	}
+}
+
+func TestLeftOuterSemiJoinSpillBasic(t *testing.T) {
+	ctx := mock.NewContext()
+	ctx.GetSessionVars().InitChunkSize = 32
+	ctx.GetSessionVars().MaxChunkSize = 32
+	leftDataSource, rightDataSource := buildLeftAndRightDataSource(ctx, leftCols, rightCols, false)
+
+	intTp := types.NewFieldType(mysql.TypeLonglong)
+	intTp.AddFlag(mysql.NotNullFlag)
+	stringTp := types.NewFieldType(mysql.TypeVarString)
+	stringTp.AddFlag(mysql.NotNullFlag)
+
+	leftTypes := []*types.FieldType{intTp, intTp, intTp, stringTp, intTp}
+	rightTypes := []*types.FieldType{intTp, intTp, stringTp, intTp, intTp}
+
+	leftKeys := []*expression.Column{
+		{Index: 1, RetType: intTp},
+		{Index: 3, RetType: stringTp},
+	}
+	rightKeys := []*expression.Column{
+		{Index: 0, RetType: intTp},
+		{Index: 2, RetType: stringTp},
+	}
+
+	params := []spillTestParam{
+		// rightUsed is empty
+		{true, leftKeys, rightKeys, leftTypes, rightTypes, []int{0, 1, 3, 4}, []int{}, nil, nil, nil, []int64{3000000, 1700000, 3500000, 750000, 10000}},
+	}
+
+	err := failpoint.Enable("github.com/pingcap/tidb/pkg/executor/join/slowWorkers", `return(true)`)
+	require.NoError(t, err)
+	defer failpoint.Disable("github.com/pingcap/tidb/pkg/executor/join/slowWorkers")
+
+	maxRowTableSegmentSize = 100
+	spillChunkSize = 100
+
+	joinType := logicalop.LeftOuterSemiJoin
+
+	for _, param := range params {
+		testSpill(t, ctx, joinType, leftDataSource, rightDataSource, param)
 	}
 }
