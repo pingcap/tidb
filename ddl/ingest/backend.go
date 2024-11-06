@@ -67,6 +67,9 @@ const (
 	FlushModeForceFlushNoImport
 	// FlushModeForceFlushAndImport means flush and import all data to TiKV.
 	FlushModeForceFlushAndImport
+	// FlushModeForceLocalAndCheckDiskQuota means flush all data to local storage and
+	// check disk quota to decide import.
+	FlushModeForceLocalAndCheckDiskQuota
 )
 
 // litBackendCtx store a backend info for add index reorg task.
@@ -238,6 +241,9 @@ func (bc *litBackendCtx) checkFlush(mode FlushMode) (shouldFlush bool, shouldImp
 	}
 	bc.diskRoot.UpdateUsage()
 	shouldImport = bc.diskRoot.ShouldImport()
+	if mode == FlushModeForceLocalAndCheckDiskQuota {
+		return true, shouldImport
+	}
 	interval := bc.updateInterval
 	shouldFlush = shouldImport ||
 		time.Since(bc.timeOfLastFlush.Load()) >= interval
