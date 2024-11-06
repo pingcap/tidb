@@ -420,7 +420,7 @@ func (p *MySQLPrivilege) LoadAll(ctx sqlexec.RestrictedSQLExecutor) error {
 }
 
 func findUserAndAllRoles(all map[string]struct{}, roleGraph map[string]roleGraphEdgesTable) {
-	for ;; {
+	for {
 		before := len(all)
 
 		for userHost, value := range roleGraph {
@@ -461,7 +461,7 @@ func (p *immutable) loadSomeUsers(ctx sqlexec.RestrictedSQLExecutor, userList ..
 	findUserAndAllRoles(extendedUserList, p.roleGraph)
 	// Re-generate the user list.
 	userList = userList[:0]
-	for user, _ := range extendedUserList {
+	for user := range extendedUserList {
 		userList = append(userList, user)
 	}
 
