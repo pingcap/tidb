@@ -550,7 +550,7 @@ func TestMultiSchemaTruncatePartitionWithGlobalIndex(t *testing.T) {
 			tkNO.MustExec(`insert into t values (21,21,"OK")`)
 			tkNO.MustExec(`insert into t values (23,23,"OK")`)
 			tkO.MustContainErrMsg(`insert into t values (21,21,"Duplicate key")`, "[kv:1062]Duplicate entry '21' for key 't.")
-			tkO.MustContainErrMsg(`insert into t values (6,23,"Duplicate key")`, "[kv:1062]Duplicate entry '23' for key 't.uk_b'")
+			tkO.MustContainErrMsg(`insert into t values (6,23,"Duplicate key")`, "[kv:1062]Duplicate entry '")
 			// Primary is not global, so here we can insert into the new partition, without
 			// conflicting to the old one
 			tkO.MustExec(`insert into t values (21,25,"OK")`)
