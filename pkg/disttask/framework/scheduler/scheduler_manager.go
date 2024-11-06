@@ -436,7 +436,6 @@ func (sm *Manager) cleanupFinishedTasks(tasks []*proto.Task) error {
 			// if task doesn't register cleanup function, mark it as cleaned.
 			cleanedTasks = append(cleanedTasks, task)
 		}
-		// update metrics
 		metrics.UpdateMetricsForFinishTask(task)
 	}
 	if firstErr != nil {
