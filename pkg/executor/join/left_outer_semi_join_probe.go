@@ -199,15 +199,19 @@ func (j *leftOuterSemiJoinProbe) probeWithoutOtherCondition(_, joinedChk *chunk.
 }
 
 func (j *leftOuterSemiJoinProbe) buildResult(chk *chunk.Chunk, startProbeRow int) {
-	if startProbeRow == 0 && j.currentProbeRow == j.chunkRows && j.currentChunk.Sel() == nil && chk.NumRows() == 0 {
+	var selected []bool
+	if startProbeRow == 0 && j.currentProbeRow == j.chunkRows && j.currentChunk.Sel() == nil && chk.NumRows() == 0 && len(j.spilledIdx) == 0 {
 		// TODO: Can do a shallow copy by directly copying the Column pointers
 		for index, colIndex := range j.lUsed {
 			chk.SetCol(index, j.currentChunk.Column(colIndex).CopyConstruct(nil))
 		}
 	} else {
-		selected := make([]bool, j.chunkRows)
+		selected = make([]bool, j.chunkRows)
 		for i := startProbeRow; i < j.currentProbeRow; i++ {
 			selected[i] = true
+		}
+		for _, spilledIdx := range j.spilledIdx {
+			selected[spilledIdx] = false // ignore spilled rows
 		}
 		for index, colIndex := range j.lUsed {
 			dstCol := chk.Column(index)
@@ -219,6 +223,9 @@ func (j *leftOuterSemiJoinProbe) buildResult(chk *chunk.Chunk, startProbeRow int
 	}
 
 	for i := startProbeRow; i < j.currentProbeRow; i++ {
+		if selected != nil && !selected[i] {
+			continue
+		}
 		if j.isMatchedRows[i] {
 			chk.AppendInt64(len(j.lUsed), 1)
 		} else if j.isNullRows[i] {
