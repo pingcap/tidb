@@ -21,6 +21,7 @@ import (
 	"unsafe"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/executor/join/joinversion"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/expression/aggregation"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -206,6 +207,11 @@ func (pi *PhysPlanPartInfo) MemoryUsage() (sum int64) {
 		sum += colName.MemoryUsage()
 	}
 	return
+}
+
+// SetTablePlanForTest sets tablePlan field for test usage only
+func (p *PhysicalTableReader) SetTablePlanForTest(pp base.PhysicalPlan) {
+	p.tablePlan = pp
 }
 
 // GetTablePlan exports the tablePlan.
@@ -1472,8 +1478,34 @@ type PhysicalHashJoin struct {
 	runtimeFilterList []*RuntimeFilter `plan-cache-clone:"must-nil"` // plan with runtime filter is not cached
 }
 
+func (p *PhysicalHashJoin) isGAForHashJoinV2() bool {
+	// nullaware join
+	if len(p.LeftNAJoinKeys) > 0 {
+		return false
+	}
+	// cross join
+	if len(p.LeftJoinKeys) == 0 {
+		return false
+	}
+	// join with null equal condition
+	for _, value := range p.IsNullEQ {
+		if value {
+			return false
+		}
+	}
+	switch p.JoinType {
+	case logicalop.LeftOuterJoin, logicalop.RightOuterJoin, logicalop.InnerJoin:
+		return true
+	default:
+		return false
+	}
+}
+
 // CanUseHashJoinV2 returns true if current join is supported by hash join v2
 func (p *PhysicalHashJoin) CanUseHashJoinV2() bool {
+	if !p.isGAForHashJoinV2() && !joinversion.UseHashJoinV2ForNonGAJoin {
+		return false
+	}
 	switch p.JoinType {
 	case logicalop.LeftOuterJoin, logicalop.RightOuterJoin, logicalop.InnerJoin:
 		// null aware join is not supported yet

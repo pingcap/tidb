@@ -100,6 +100,7 @@ const (
 	// MaxTokenLimit is the max token limit value.
 	MaxTokenLimit  = 1024 * 1024
 	DefSchemaLease = 45 * time.Second
+	UnavailableIP  = "<nil>"
 )
 
 // Valid config maps

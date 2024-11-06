@@ -19,6 +19,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/ddl/notifier"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
@@ -57,6 +58,107 @@ func findEventWithTimeout(eventCh <-chan *notifier.SchemaChangeEvent, eventType 
 			return nil
 		}
 	}
+}
+
+func TestHandleDDLEventsWithRunningJobs(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	handle := dom.StatsHandle()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t1 (a int)")
+	tk.MustExec("insert into t1 values (1)")
+	statistics.AutoAnalyzeMinCnt = 0
+	defer func() {
+		statistics.AutoAnalyzeMinCnt = 1000
+	}()
+
+	ctx := context.Background()
+	require.NoError(t, handle.DumpStatsDeltaToKV(true))
+	require.NoError(t, handle.Update(ctx, dom.InfoSchema()))
+	schema := pmodel.NewCIStr("test")
+	tbl1, err := dom.InfoSchema().TableByName(ctx, schema, pmodel.NewCIStr("t1"))
+	require.NoError(t, err)
+	tk.MustExec("analyze table t1")
+	require.NoError(t, handle.Update(ctx, dom.InfoSchema()))
+
+	pq := priorityqueue.NewAnalysisPriorityQueue(handle)
+	defer pq.Close()
+	require.NoError(t, pq.Initialize())
+
+	// Check there are no running jobs.
+	runningJobs := pq.GetRunningJobs()
+	require.Len(t, runningJobs, 0)
+	// Check no jobs are in the queue.
+	isEmpty, err := pq.IsEmpty()
+	require.NoError(t, err)
+	require.True(t, isEmpty)
+
+	// Insert 10 rows into t1.
+	tk.MustExec("insert into t1 values (2), (3)")
+	// Dump the stats to kv.
+	require.NoError(t, handle.DumpStatsDeltaToKV(true))
+	require.NoError(t, handle.Update(ctx, dom.InfoSchema()))
+
+	// Process the DML changes.
+	pq.ProcessDMLChanges()
+
+	// Pop the t1 job.
+	job1, err := pq.Pop()
+	require.NoError(t, err)
+	require.Equal(t, tbl1.Meta().ID, job1.GetTableID())
+
+	// Check if the running job is still in the queue.
+	runningJobs = pq.GetRunningJobs()
+	require.Len(t, runningJobs, 1)
+
+	down := make(chan struct{})
+	fp := "github.com/pingcap/tidb/pkg/executor/mockStuckAnalyze"
+	go func() {
+		defer close(down)
+		require.NoError(t, failpoint.Enable(fp, "return(1)"))
+		require.NoError(t, job1.Analyze(handle, dom.SysProcTracker()))
+	}()
+
+	// Create a new index on t1.
+	tk.MustExec("alter table t1 add index idx (a)")
+
+	// Find the add index event.
+	addIndexEvent := findEvent(handle.DDLEventCh(), model.ActionAddIndex)
+
+	// Handle the add index event.
+	require.NoError(t, handle.HandleDDLEvent(addIndexEvent))
+
+	// Handle the add index event in priority queue.
+
+	require.NoError(t, statsutil.CallWithSCtx(handle.SPool(), func(sctx sessionctx.Context) error {
+		return pq.HandleDDLEvent(ctx, sctx, addIndexEvent)
+	}, statsutil.FlagWrapTxn))
+
+	// Check the queue is empty.
+	isEmpty, err = pq.IsEmpty()
+	require.NoError(t, err)
+	require.True(t, isEmpty)
+
+	// Requeue the running jobs.
+	pq.RequeueMustRetryJobs()
+
+	// Still no jobs in the queue.
+	isEmpty, err = pq.IsEmpty()
+	require.NoError(t, err)
+	require.True(t, isEmpty)
+
+	require.NoError(t, failpoint.Disable(fp))
+	// Wait for the analyze job to finish.
+	<-down
+
+	// Requeue the running jobs again.
+	pq.RequeueMustRetryJobs()
+
+	// Check the job is in the queue.
+	job, err := pq.Pop()
+	require.NoError(t, err)
+	require.Equal(t, tbl1.Meta().ID, job.GetTableID())
+	require.True(t, job.HasNewlyAddedIndex())
 }
 
 func TestTruncateTable(t *testing.T) {

@@ -2855,13 +2855,13 @@ def go_deps():
         name = "com_github_golang_jwt_jwt_v4",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/golang-jwt/jwt/v4",
-        sha256 = "fdb3b9c078eba9a2bd437c1b3acdf98ee09d276121a97b4bc7f6d870eb5ff75b",
-        strip_prefix = "github.com/golang-jwt/jwt/v4@v4.5.0",
+        sha256 = "a05e4849f6b52d84154e9bc37fca7f340bb85d9cce2ce180a09ae70758f6890c",
+        strip_prefix = "github.com/golang-jwt/jwt/v4@v4.5.1",
         urls = [
-            "http://bazel-cache.pingcap.net:8080/gomod/github.com/golang-jwt/jwt/v4/com_github_golang_jwt_jwt_v4-v4.5.0.zip",
-            "http://ats.apps.svc/gomod/github.com/golang-jwt/jwt/v4/com_github_golang_jwt_jwt_v4-v4.5.0.zip",
-            "https://cache.hawkingrei.com/gomod/github.com/golang-jwt/jwt/v4/com_github_golang_jwt_jwt_v4-v4.5.0.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/golang-jwt/jwt/v4/com_github_golang_jwt_jwt_v4-v4.5.0.zip",
+            "http://bazel-cache.pingcap.net:8080/gomod/github.com/golang-jwt/jwt/v4/com_github_golang_jwt_jwt_v4-v4.5.1.zip",
+            "http://ats.apps.svc/gomod/github.com/golang-jwt/jwt/v4/com_github_golang_jwt_jwt_v4-v4.5.1.zip",
+            "https://cache.hawkingrei.com/gomod/github.com/golang-jwt/jwt/v4/com_github_golang_jwt_jwt_v4-v4.5.1.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/golang-jwt/jwt/v4/com_github_golang_jwt_jwt_v4-v4.5.1.zip",
         ],
     )
     go_repository(
@@ -4574,6 +4574,19 @@ def go_deps():
             "http://ats.apps.svc/gomod/github.com/labstack/gommon/com_github_labstack_gommon-v0.4.0.zip",
             "https://cache.hawkingrei.com/gomod/github.com/labstack/gommon/com_github_labstack_gommon-v0.4.0.zip",
             "https://storage.googleapis.com/pingcapmirror/gomod/github.com/labstack/gommon/com_github_labstack_gommon-v0.4.0.zip",
+        ],
+    )
+    go_repository(
+        name = "com_github_lance6716_pebble",
+        build_file_proto_mode = "disable_global",
+        importpath = "github.com/lance6716/pebble",
+        sha256 = "fad807913eaf5ff14651929475dda5e5c6f6838dbaeef11b7eddefe771f01f1e",
+        strip_prefix = "github.com/lance6716/pebble@v0.0.0-20241104073946-6f55c09bd183",
+        urls = [
+            "http://bazel-cache.pingcap.net:8080/gomod/github.com/lance6716/pebble/com_github_lance6716_pebble-v0.0.0-20241104073946-6f55c09bd183.zip",
+            "http://ats.apps.svc/gomod/github.com/lance6716/pebble/com_github_lance6716_pebble-v0.0.0-20241104073946-6f55c09bd183.zip",
+            "https://cache.hawkingrei.com/gomod/github.com/lance6716/pebble/com_github_lance6716_pebble-v0.0.0-20241104073946-6f55c09bd183.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/lance6716/pebble/com_github_lance6716_pebble-v0.0.0-20241104073946-6f55c09bd183.zip",
         ],
     )
     go_repository(
