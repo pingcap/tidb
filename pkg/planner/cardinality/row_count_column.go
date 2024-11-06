@@ -175,6 +175,9 @@ func equalRowCountOnColumn(sctx planctx.PlanContext, c *statistics.Column, val t
 	// 3. use uniform distribution assumption for the rest (even when this value is not covered by the range of stats)
 	histNDV := float64(c.Histogram.NDV - int64(c.TopN.Num()))
 	if histNDV <= 0 {
+		// If histNDV is zero - we have all NDV's in TopN - and no histograms. This function uses
+		// c.NotNullCount rather than c.Histogram.NotNullCount() since the histograms are empty.
+		//
 		// If the table hasn't been modified, it's safe to return 0.
 		if modifyCount == 0 {
 			return 0, nil
