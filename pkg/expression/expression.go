@@ -167,11 +167,19 @@ const (
 	ConstStrict
 )
 
+// SafeToShareAcrossSession indicates whether the expression can be shared across different sessions.
+// In Instance Plan Cache, we'll share the same Plan/Expression across different sessions, and this interface
+// is used to check whether the expression is safe to share without cloning.
+type SafeToShareAcrossSession interface {
+	SafeToShareAcrossSession() bool
+}
+
 // Expression represents all scalar expression in SQL.
 type Expression interface {
 	VecExpr
 	CollationInfo
 	base.HashEquals
+	SafeToShareAcrossSession
 
 	Traverse(TraverseAction) Expression
 

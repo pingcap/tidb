@@ -82,17 +82,11 @@ func (r *Refresher) UpdateConcurrency() {
 }
 
 // AnalyzeHighestPriorityTables picks tables with the highest priority and analyzes them.
-func (r *Refresher) AnalyzeHighestPriorityTables() bool {
-	se, err := r.statsHandle.SPool().Get()
-	if err != nil {
-		statslogutil.StatsLogger().Error("Failed to get session context", zap.Error(err))
-		return false
-	}
-	defer r.statsHandle.SPool().Put(se)
-
-	sctx := se.(sessionctx.Context)
+// Note: Make sure the session has the latest variable values.
+// Usually, this is done by the caller through `util.CallWithSCtx`.
+func (r *Refresher) AnalyzeHighestPriorityTables(sctx sessionctx.Context) bool {
 	parameters := exec.GetAutoAnalyzeParameters(sctx)
-	err = r.setAutoAnalysisTimeWindow(parameters)
+	err := r.setAutoAnalysisTimeWindow(parameters)
 	if err != nil {
 		statslogutil.StatsLogger().Error("Set auto analyze time window failed", zap.Error(err))
 		return false
@@ -100,15 +94,17 @@ func (r *Refresher) AnalyzeHighestPriorityTables() bool {
 	if !r.isWithinTimeWindow() {
 		return false
 	}
+	currentAutoAnalyzeRatio := exec.ParseAutoAnalyzeRatio(parameters[variable.TiDBAutoAnalyzeRatio])
+	currentPruneMode := variable.PartitionPruneMode(sctx.GetSessionVars().PartitionPruneMode.Load())
 	if !r.jobs.IsInitialized() {
 		if err := r.jobs.Initialize(); err != nil {
 			statslogutil.StatsLogger().Error("Failed to initialize the queue", zap.Error(err))
 			return false
 		}
+		r.lastSeenAutoAnalyzeRatio = currentAutoAnalyzeRatio
+		r.lastSeenPruneMode = currentPruneMode
 	} else {
 		// Only do this if the queue is already initialized.
-		currentAutoAnalyzeRatio := exec.ParseAutoAnalyzeRatio(parameters[variable.TiDBAutoAnalyzeRatio])
-		currentPruneMode := variable.PartitionPruneMode(sctx.GetSessionVars().PartitionPruneMode.Load())
 		if currentAutoAnalyzeRatio != r.lastSeenAutoAnalyzeRatio || currentPruneMode != r.lastSeenPruneMode {
 			r.lastSeenAutoAnalyzeRatio = currentAutoAnalyzeRatio
 			r.lastSeenPruneMode = currentPruneMode

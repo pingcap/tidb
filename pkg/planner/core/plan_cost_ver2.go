@@ -162,29 +162,31 @@ func (p *PhysicalTableScan) GetPlanCostVer2(taskType property.TaskType, option *
 	// Apply TiFlash startup cost to prefer TiKV for small table scans
 	if p.StoreType == kv.TiFlash {
 		p.PlanCostVer2 = costusage.SumCostVer2(p.PlanCostVer2, scanCostVer2(option, TiFlashStartupRowPenalty, rowSize, scanFactor))
-	} else {
+	} else if !p.isChildOfIndexLookUp {
 		// Apply cost penalty for full scans that carry high risk of underestimation
 		sessionVars := p.SCtx().GetSessionVars()
 		allowPreferRangeScan := sessionVars.GetAllowPreferRangeScan()
 		tblColHists := p.tblColHists
 
-		// preferRangeScan check here is same as in skylinePruning
-		preferRangeScanCondition := allowPreferRangeScan && (tblColHists.Pseudo || tblColHists.RealtimeCount < 1)
+		// hasUnreliableStats is a check for pseudo or zero stats
+		hasUnreliableStats := tblColHists.Pseudo || tblColHists.RealtimeCount < 1
 		// hasHighModifyCount tracks the high risk of a tablescan where auto-analyze had not yet updated the table row count
 		hasHighModifyCount := tblColHists.ModifyCount > tblColHists.RealtimeCount
 		// hasLowEstimate is a check to capture a unique customer case where modifyCount is used for tablescan estimate (but it not adequately understood why)
-		hasLowEstimate := rows > 1 && int64(rows) < tblColHists.RealtimeCount && int64(rows) <= tblColHists.ModifyCount
+		hasLowEstimate := rows > 1 && tblColHists.ModifyCount < tblColHists.RealtimeCount && int64(rows) <= tblColHists.ModifyCount
+		// preferRangeScan check here is same as in skylinePruning
+		preferRangeScanCondition := allowPreferRangeScan && (hasUnreliableStats || hasHighModifyCount || hasLowEstimate)
 		var unsignedIntHandle bool
 		if p.Table.PKIsHandle {
 			if pkColInfo := p.Table.GetPkColInfo(); pkColInfo != nil {
 				unsignedIntHandle = mysql.HasUnsignedFlag(pkColInfo.GetFlag())
 			}
 		}
-		hasFullRangeScan := !p.isChildOfIndexLookUp && ranger.HasFullRange(p.Ranges, unsignedIntHandle)
+		hasFullRangeScan := ranger.HasFullRange(p.Ranges, unsignedIntHandle)
 
-		shouldApplyPenalty := hasFullRangeScan && (preferRangeScanCondition || hasHighModifyCount || hasLowEstimate)
+		shouldApplyPenalty := hasFullRangeScan && preferRangeScanCondition
 		if shouldApplyPenalty {
-			newRowCount := math.Min(MaxPenaltyRowCount, max(float64(tblColHists.ModifyCount), float64(tblColHists.RealtimeCount)))
+			newRowCount := max(MaxPenaltyRowCount, max(float64(tblColHists.ModifyCount), float64(tblColHists.RealtimeCount)))
 			p.PlanCostVer2 = costusage.SumCostVer2(p.PlanCostVer2, scanCostVer2(option, newRowCount, rowSize, scanFactor))
 		}
 	}
