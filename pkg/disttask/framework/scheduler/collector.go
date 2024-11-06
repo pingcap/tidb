@@ -15,13 +15,10 @@
 package scheduler
 
 import (
-	"fmt"
-	"go.uber.org/zap"
 	"strconv"
 	"sync/atomic"
 	"time"
 
-	"github.com/pingcap/tidb/pkg/ddl/logutil"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/prometheus/client_golang/prometheus"
 )
@@ -103,7 +100,6 @@ func (c *collector) Collect(ch chan<- prometheus.Metric) {
 			}
 		}
 	}
-	logutil.DDLLogger().Debug("subTask count collect:", zap.String("subtaskCnt", fmt.Sprint(subtaskCnt)))
 }
 
 func (c *collector) setDistSubtaskDuration(ch chan<- prometheus.Metric, subtask *proto.SubtaskBase) {
