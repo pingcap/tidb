@@ -97,6 +97,7 @@ func createDDLSuite(t *testing.T) (s *ddlSuite) {
 
 	s.quit = make(chan struct{})
 
+	config.GetGlobalConfig().Store = "tikv"
 	s.store, err = store.New(fmt.Sprintf("tikv://%s%s", *etcd, *tikvPath))
 	require.NoError(t, err)
 
