@@ -337,7 +337,14 @@ func overwriteReorgInfoFromGlobalCheckpoint(w *worker, sess *sess.Session, job *
 	if ok {
 		// We create the checkpoint manager here because we need to wait for the reorg meta to be initialized.
 		if bc.GetCheckpointManager() == nil {
-			mgr, err := ingest.NewCheckpointManager(w.ctx, bc, w.sessPool, job.ID, reorgInfo.currElement.ID)
+			mgr, err := ingest.NewCheckpointManager(
+				w.ctx,
+				bc,
+				w.sessPool,
+				job.ID,
+				reorgInfo.currElement.ID,
+				bc.GetLocalBackend().LocalStoreDir,
+			)
 			if err != nil {
 				logutil.BgLogger().Warn("[ddl-ingest] create checkpoint manager failed", zap.Error(err))
 			}
