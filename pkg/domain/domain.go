@@ -1225,8 +1225,8 @@ func (do *Domain) Close() {
 	}
 	do.releaseServerID(context.Background())
 	close(do.exit)
-	if do.etcdClient != nil {
-		terror.Log(errors.Trace(do.etcdClient.Close()))
+	if do.brOwnerMgr != nil {
+		do.brOwnerMgr.Close()
 	}
 
 	do.runawayManager.Stop()
@@ -1236,15 +1236,15 @@ func (do *Domain) Close() {
 	}
 
 	do.slowQuery.Close()
-	if do.brOwnerMgr != nil {
-		do.brOwnerMgr.Close()
-	}
 	do.cancelFns.mu.Lock()
 	for _, f := range do.cancelFns.fns {
 		f()
 	}
 	do.cancelFns.mu.Unlock()
 	do.wg.Wait()
+	if do.etcdClient != nil {
+		terror.Log(errors.Trace(do.etcdClient.Close()))
+	}
 	do.sysSessionPool.Close()
 	variable.UnregisterStatistics(do.BindHandle())
 	if do.onClose != nil {
@@ -2013,7 +2013,6 @@ func (do *Domain) LoadBindInfoLoop(ctxForHandle sessionctx.Context, ctxForEvolve
 func (do *Domain) globalBindHandleWorkerLoop(owner owner.Manager) {
 	do.wg.Run(func() {
 		defer func() {
-			owner.Close()
 			logutil.BgLogger().Info("globalBindHandleWorkerLoop exited.")
 		}()
 		defer util.Recover(metrics.LabelDomain, "globalBindHandleWorkerLoop", nil, false)
