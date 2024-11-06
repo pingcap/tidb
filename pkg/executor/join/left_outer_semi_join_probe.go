@@ -177,7 +177,7 @@ func (j *leftOuterSemiJoinProbe) probeWithoutOtherCondition(_, joinedChk *chunk.
 }
 
 func (j *leftOuterSemiJoinProbe) buildResult(chk *chunk.Chunk, startProbeRow int) {
-	if startProbeRow == 0 && j.currentProbeRow == j.chunkRows && j.currentChunk.Sel() == nil {
+	if startProbeRow == 0 && j.currentProbeRow == j.chunkRows && j.currentChunk.Sel() == nil && chk.NumRows() == 0 {
 		// TODO: Can do a shallow copy by directly copying the Column pointers
 		for index, colIndex := range j.lUsed {
 			chk.SetCol(index, j.currentChunk.Column(colIndex).CopyConstruct(nil))

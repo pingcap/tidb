@@ -366,3 +366,63 @@ func TestLeftOuterSemiJoinProbeWithSel(t *testing.T) {
 		}
 	}
 }
+
+func TestLeftOuterSemiJoinBuildResultFastPath(t *testing.T) {
+	intTp := types.NewFieldType(mysql.TypeLonglong)
+	intTp.AddFlag(mysql.NotNullFlag)
+	nullableIntTp := types.NewFieldType(mysql.TypeLonglong)
+	uintTp := types.NewFieldType(mysql.TypeLonglong)
+	uintTp.AddFlag(mysql.NotNullFlag)
+	uintTp.AddFlag(mysql.UnsignedFlag)
+	stringTp := types.NewFieldType(mysql.TypeVarString)
+	stringTp.AddFlag(mysql.NotNullFlag)
+
+	lTypes := []*types.FieldType{intTp, intTp, stringTp, uintTp, stringTp}
+	rTypes := []*types.FieldType{intTp, intTp, stringTp, uintTp, stringTp}
+	rTypes = append(rTypes, rTypes...)
+
+	tinyTp := types.NewFieldType(mysql.TypeTiny)
+	a := &expression.Column{Index: 1, RetType: nullableIntTp}
+	b := &expression.Column{Index: 8, RetType: nullableIntTp}
+	sf, err := expression.NewFunction(mock.NewContext(), ast.GT, tinyTp, a, b)
+	require.NoError(t, err, "error when create other condition")
+	// test condition `a = b` from `a in (select b from t2)`
+	a2 := &expression.Column{Index: 1, RetType: nullableIntTp, InOperand: true}
+	b2 := &expression.Column{Index: 8, RetType: nullableIntTp, InOperand: true}
+	sf2, err := expression.NewFunction(mock.NewContext(), ast.EQ, tinyTp, a2, b2)
+	require.NoError(t, err, "error when create other condition")
+	otherCondition := make(expression.CNFExprs, 0)
+	otherCondition = append(otherCondition, sf)
+	otherCondition2 := make(expression.CNFExprs, 0)
+	otherCondition2 = append(otherCondition2, sf2)
+	joinType := logicalop.LeftOuterSemiJoin
+	simpleFilter := createSimpleFilter(t)
+	hasFilter := []bool{false, true}
+	rightAsBuildSide := []bool{true}
+	partitionNumber := 4
+	rightUsed := []int{}
+
+	for _, rightBuild := range rightAsBuildSide {
+		for _, testFilter := range hasFilter {
+			leftFilter := simpleFilter
+			if !testFilter {
+				leftFilter = nil
+			}
+			// MockContext set MaxChunkSize to 32, input chunk size should be less than 32 to test fast path
+			testJoinProbe(t, false, []int{0}, []int{0}, []*types.FieldType{intTp}, []*types.FieldType{intTp}, lTypes, rTypes, rightBuild, []int{1, 2, 4}, rightUsed, []int{1}, []int{3}, leftFilter, nil, otherCondition, partitionNumber, joinType, 30)
+			testJoinProbe(t, false, []int{0}, []int{0}, []*types.FieldType{intTp}, []*types.FieldType{intTp}, lTypes, rTypes, rightBuild, []int{}, rightUsed, []int{1}, []int{3}, leftFilter, nil, otherCondition, partitionNumber, joinType, 30)
+			testJoinProbe(t, true, []int{0}, []int{0}, []*types.FieldType{nullableIntTp}, []*types.FieldType{nullableIntTp}, toNullableTypes(lTypes), toNullableTypes(rTypes), rightBuild, []int{1, 2, 4}, rightUsed, []int{1}, []int{3}, leftFilter, nil, otherCondition, partitionNumber, joinType, 30)
+			testJoinProbe(t, true, []int{0}, []int{0}, []*types.FieldType{nullableIntTp}, []*types.FieldType{nullableIntTp}, toNullableTypes(lTypes), toNullableTypes(rTypes), rightBuild, nil, rightUsed, []int{1}, []int{3}, leftFilter, nil, otherCondition, partitionNumber, joinType, 30)
+
+			testJoinProbe(t, false, []int{0}, []int{0}, []*types.FieldType{intTp}, []*types.FieldType{intTp}, lTypes, rTypes, rightBuild, []int{1, 2, 4}, rightUsed, []int{1}, []int{3}, leftFilter, nil, otherCondition2, partitionNumber, joinType, 30)
+			testJoinProbe(t, false, []int{0}, []int{0}, []*types.FieldType{intTp}, []*types.FieldType{intTp}, lTypes, rTypes, rightBuild, []int{}, rightUsed, []int{1}, []int{3}, leftFilter, nil, otherCondition2, partitionNumber, joinType, 30)
+			testJoinProbe(t, true, []int{0}, []int{0}, []*types.FieldType{nullableIntTp}, []*types.FieldType{nullableIntTp}, toNullableTypes(lTypes), toNullableTypes(rTypes), rightBuild, []int{1, 2, 4}, rightUsed, []int{1}, []int{3}, leftFilter, nil, otherCondition2, partitionNumber, joinType, 30)
+			testJoinProbe(t, true, []int{0}, []int{0}, []*types.FieldType{nullableIntTp}, []*types.FieldType{nullableIntTp}, toNullableTypes(lTypes), toNullableTypes(rTypes), rightBuild, nil, rightUsed, []int{1}, []int{3}, leftFilter, nil, otherCondition2, partitionNumber, joinType, 30)
+
+			testJoinProbe(t, false, []int{0}, []int{0}, []*types.FieldType{intTp}, []*types.FieldType{intTp}, lTypes, rTypes, rightBuild, []int{1, 2, 4}, rightUsed, []int{1}, []int{3}, leftFilter, nil, nil, partitionNumber, joinType, 30)
+			testJoinProbe(t, false, []int{0}, []int{0}, []*types.FieldType{intTp}, []*types.FieldType{intTp}, lTypes, rTypes, rightBuild, []int{}, rightUsed, []int{1}, []int{3}, leftFilter, nil, nil, partitionNumber, joinType, 30)
+			testJoinProbe(t, true, []int{0}, []int{0}, []*types.FieldType{nullableIntTp}, []*types.FieldType{nullableIntTp}, toNullableTypes(lTypes), toNullableTypes(rTypes), rightBuild, []int{1, 2, 4}, rightUsed, []int{1}, []int{3}, leftFilter, nil, nil, partitionNumber, joinType, 30)
+			testJoinProbe(t, true, []int{0}, []int{0}, []*types.FieldType{nullableIntTp}, []*types.FieldType{nullableIntTp}, toNullableTypes(lTypes), toNullableTypes(rTypes), rightBuild, nil, rightUsed, []int{1}, []int{3}, leftFilter, nil, nil, partitionNumber, joinType, 30)
+		}
+	}
+}
