@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/config"
 	sess "github.com/pingcap/tidb/ddl/internal/session"
+	"github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/util/logutil"
@@ -38,22 +39,14 @@ import (
 // "flush"ed to local storage and "import"ed to TiKV. The checkpoint is saved in
 // a table in the TiDB cluster.
 type CheckpointManager struct {
-<<<<<<< HEAD:ddl/ingest/checkpoint.go
-	ctx       context.Context
-	flushCtrl FlushController
-	sessPool  *sess.Pool
-	jobID     int64
-	indexID   int64
-=======
 	ctx           context.Context
 	cancel        context.CancelFunc
 	flushCtrl     FlushController
 	sessPool      *sess.Pool
 	jobID         int64
-	indexIDs      []int64
+	indexID       int64
 	localStoreDir string
 	logger        *zap.Logger
->>>>>>> b1b09954485 (ddl: check local file existence before resume checkpoint (#53072)):pkg/ddl/ingest/checkpoint.go
 
 	// Derived and unchanged after the initialization.
 	instanceAddr     string
@@ -100,40 +93,29 @@ type FlushController interface {
 }
 
 // NewCheckpointManager creates a new checkpoint manager.
-<<<<<<< HEAD:ddl/ingest/checkpoint.go
-func NewCheckpointManager(ctx context.Context, flushCtrl FlushController,
-	sessPool *sess.Pool, jobID, indexID int64) (*CheckpointManager, error) {
-	instanceAddr := InitInstanceAddr()
-=======
 func NewCheckpointManager(
 	ctx context.Context,
 	flushCtrl FlushController,
 	sessPool *sess.Pool,
-	jobID int64,
-	indexIDs []int64,
+	jobID, indexID int64,
 	localStoreDir string,
 ) (*CheckpointManager, error) {
 	instanceAddr := InstanceAddr()
 	ctx2, cancel := context.WithCancel(ctx)
-	logger := logutil.DDLIngestLogger().With(
-		zap.Int64("jobID", jobID), zap.Int64s("indexIDs", indexIDs))
+	logger := logutil.BgLogger().With(
+		zap.String("category", "ddl-ingest"),
+		zap.Int64("jobID", jobID), zap.Int64("indexID", indexID))
 
->>>>>>> b1b09954485 (ddl: check local file existence before resume checkpoint (#53072)):pkg/ddl/ingest/checkpoint.go
 	cm := &CheckpointManager{
 		ctx:           ctx2,
 		cancel:        cancel,
 		flushCtrl:     flushCtrl,
 		sessPool:      sessPool,
 		jobID:         jobID,
-<<<<<<< HEAD:ddl/ingest/checkpoint.go
 		indexID:       indexID,
-		checkpoints:   make(map[int]*TaskCheckpoint, 16),
-=======
-		indexIDs:      indexIDs,
 		localStoreDir: localStoreDir,
 		logger:        logger,
 		checkpoints:   make(map[int]*taskCheckpoint, 16),
->>>>>>> b1b09954485 (ddl: check local file existence before resume checkpoint (#53072)):pkg/ddl/ingest/checkpoint.go
 		mu:            sync.Mutex{},
 		instanceAddr:  instanceAddr,
 		updaterWg:     sync.WaitGroup{},
@@ -148,12 +130,7 @@ func NewCheckpointManager(
 		cm.updateCheckpointLoop()
 		cm.updaterWg.Done()
 	}()
-<<<<<<< HEAD:ddl/ingest/checkpoint.go
-	logutil.BgLogger().Info("[ddl-ingest] create checkpoint manager",
-		zap.Int64("jobID", jobID), zap.Int64("indexID", indexID))
-=======
 	logger.Info("create checkpoint manager")
->>>>>>> b1b09954485 (ddl: check local file existence before resume checkpoint (#53072)):pkg/ddl/ingest/checkpoint.go
 	return cm, nil
 }
 
@@ -258,27 +235,15 @@ func (s *CheckpointManager) afterFlush() {
 func (s *CheckpointManager) Close() {
 	s.cancel()
 	s.updaterWg.Wait()
-<<<<<<< HEAD:ddl/ingest/checkpoint.go
-	logutil.BgLogger().Info("[ddl-ingest] close checkpoint manager",
-		zap.Int64("jobID", s.jobID), zap.Int64("indexID", s.indexID))
-}
-
-// Sync syncs the checkpoint.
-func (s *CheckpointManager) Sync() {
-	_, _, err := s.flushCtrl.Flush(s.indexID, FlushModeForceLocal)
-	if err != nil {
-		logutil.BgLogger().Warn("[ddl-ingest] flush local engine failed", zap.Error(err))
-=======
 	s.logger.Info("close checkpoint manager")
 }
 
 // Flush flushed the data and updates checkpoint.
 func (s *CheckpointManager) Flush() {
 	// use FlushModeForceFlushNoImport to finish the flush process timely.
-	_, _, _, err := TryFlushAllIndexes(s.flushCtrl, FlushModeForceFlushNoImport, s.indexIDs)
+	_, _, err := s.flushCtrl.Flush(s.indexID, FlushModeForceFlushNoImport)
 	if err != nil {
 		s.logger.Warn("flush local engine failed", zap.Error(err))
->>>>>>> b1b09954485 (ddl: check local file existence before resume checkpoint (#53072)):pkg/ddl/ingest/checkpoint.go
 	}
 	s.mu.Lock()
 	s.afterFlush()
@@ -301,19 +266,6 @@ func (s *CheckpointManager) Flush() {
 func (s *CheckpointManager) Reset(newPhysicalID int64, start, end kv.Key) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-<<<<<<< HEAD:ddl/ingest/checkpoint.go
-	logutil.BgLogger().Info("[ddl-ingest] reset checkpoint manager",
-		zap.Int64("newPhysicalID", newPhysicalID), zap.Int64("oldPhysicalID", s.pidLocal),
-		zap.Int64("indexID", s.indexID), zap.Int64("jobID", s.jobID), zap.Int("localCnt", s.localCnt))
-	if s.pidLocal != newPhysicalID {
-		s.minKeySyncLocal = nil
-		s.minKeySyncGlobal = nil
-		s.minTaskIDSynced = 0
-		s.pidLocal = newPhysicalID
-		s.startLocal = start
-		s.endLocal = end
-=======
-
 	s.logger.Info("reset checkpoint manager",
 		zap.Int64("newPhysicalID", newPhysicalID),
 		zap.Int64("oldPhysicalID", s.pidFlushed),
@@ -325,7 +277,6 @@ func (s *CheckpointManager) Reset(newPhysicalID int64, start, end kv.Key) {
 		s.pidFlushed = newPhysicalID
 		s.startKeyFlushed = start
 		s.endKeyFlushed = end
->>>>>>> b1b09954485 (ddl: check local file existence before resume checkpoint (#53072)):pkg/ddl/ingest/checkpoint.go
 	}
 }
 
@@ -391,27 +342,15 @@ func (s *CheckpointManager) resumeCheckpoint() error {
 				s.minFlushedKey = cp.LocalSyncKey
 				s.flushedKeyCnt = cp.LocalKeyCount
 			}
-<<<<<<< HEAD:ddl/ingest/checkpoint.go
-			logutil.BgLogger().Info("[ddl-ingest] resume checkpoint",
-				zap.Int64("job ID", s.jobID), zap.Int64("index ID", s.indexID),
-				zap.String("local checkpoint", hex.EncodeToString(s.minKeySyncLocal)),
-				zap.String("global checkpoint", hex.EncodeToString(s.minKeySyncGlobal)),
-=======
 			s.logger.Info("resume checkpoint",
 				zap.String("minimum flushed key", hex.EncodeToString(s.minFlushedKey)),
 				zap.String("minimum imported key", hex.EncodeToString(s.minImportedKey)),
->>>>>>> b1b09954485 (ddl: check local file existence before resume checkpoint (#53072)):pkg/ddl/ingest/checkpoint.go
 				zap.Int64("physical table ID", cp.PhysicalID),
 				zap.String("previous instance", cp.InstanceAddr),
 				zap.String("current instance", s.instanceAddr))
 			return nil
 		}
-<<<<<<< HEAD:ddl/ingest/checkpoint.go
-		logutil.BgLogger().Info("[ddl-ingest] checkpoint is empty",
-			zap.Int64("job ID", s.jobID), zap.Int64("index ID", s.indexID))
-=======
 		s.logger.Info("checkpoint is empty")
->>>>>>> b1b09954485 (ddl: check local file existence before resume checkpoint (#53072)):pkg/ddl/ingest/checkpoint.go
 		return nil
 	})
 }
@@ -462,18 +401,10 @@ func (s *CheckpointManager) updateCheckpoint() error {
 		s.mu.Unlock()
 		return nil
 	})
-<<<<<<< HEAD:ddl/ingest/checkpoint.go
-	logutil.BgLogger().Info("[ddl-ingest] update checkpoint",
-		zap.Int64("job ID", s.jobID), zap.Int64("index ID", s.indexID),
-		zap.String("local checkpoint", hex.EncodeToString(currentLocalKey)),
-		zap.String("global checkpoint", hex.EncodeToString(currentGlobalKey)),
-		zap.Int64("global physical ID", currentGlobalPID),
-=======
 	s.logger.Info("update checkpoint",
 		zap.String("local checkpoint", hex.EncodeToString(minKeyFlushed)),
 		zap.String("global checkpoint", hex.EncodeToString(minKeyImported)),
 		zap.Int64("global physical ID", pidImported),
->>>>>>> b1b09954485 (ddl: check local file existence before resume checkpoint (#53072)):pkg/ddl/ingest/checkpoint.go
 		zap.Error(err))
 	return err
 }
@@ -486,11 +417,7 @@ func (s *CheckpointManager) updateCheckpointLoop() {
 		case finishCh := <-s.updaterCh:
 			err := s.updateCheckpoint()
 			if err != nil {
-<<<<<<< HEAD:ddl/ingest/checkpoint.go
-				logutil.BgLogger().Error("[ddl-ingest] update checkpoint failed", zap.Error(err))
-=======
 				s.logger.Error("update checkpoint failed", zap.Error(err))
->>>>>>> b1b09954485 (ddl: check local file existence before resume checkpoint (#53072)):pkg/ddl/ingest/checkpoint.go
 			}
 			close(finishCh)
 		case <-ticker.C:
@@ -502,11 +429,7 @@ func (s *CheckpointManager) updateCheckpointLoop() {
 			s.mu.Unlock()
 			err := s.updateCheckpoint()
 			if err != nil {
-<<<<<<< HEAD:ddl/ingest/checkpoint.go
-				logutil.BgLogger().Error("[ddl-ingest] update checkpoint failed", zap.Error(err))
-=======
 				s.logger.Error("periodically update checkpoint failed", zap.Error(err))
->>>>>>> b1b09954485 (ddl: check local file existence before resume checkpoint (#53072)):pkg/ddl/ingest/checkpoint.go
 			}
 		case <-s.ctx.Done():
 			return

@@ -36,12 +36,8 @@ go_test(
     embed = [":util"],
     flaky = True,
     deps = [
-<<<<<<< HEAD:ddl/util/BUILD.bazel
         "//testkit/testsetup",
-=======
-        "//pkg/testkit/testsetup",
         "@com_github_stretchr_testify//require",
->>>>>>> b1b09954485 (ddl: check local file existence before resume checkpoint (#53072)):pkg/ddl/util/BUILD.bazel
         "@org_uber_go_goleak//:goleak",
     ],
 )

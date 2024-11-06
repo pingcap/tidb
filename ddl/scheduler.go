@@ -163,7 +163,7 @@ func (b *backfillSchedulerHandle) InitSubtaskExecEnv(ctx context.Context) error 
 	}
 	b.bc = bc
 	if b.stepForImport {
-		return b.doFlushAndHandleError(ingest.FlushModeForceGlobal)
+		return b.doFlushAndHandleError(ingest.FlushModeForceFlushAndImport)
 	}
 	b.ctx = ctx
 
@@ -301,7 +301,7 @@ func (b *backfillSchedulerHandle) SplitSubtask(ctx context.Context, subtask []by
 	}
 
 	if b.isPartition {
-		return nil, b.doFlushAndHandleError(ingest.FlushModeForceGlobal)
+		return nil, b.doFlushAndHandleError(ingest.FlushModeForceFlushAndImport)
 	}
 	return nil, b.doFlushAndHandleError(ingest.FlushModeForceLocalAndCheckDiskQuota)
 }

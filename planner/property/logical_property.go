@@ -14,7 +14,6 @@
 
 package property
 
-<<<<<<< HEAD:planner/property/logical_property.go
 import (
 	"github.com/pingcap/tidb/expression"
 )
@@ -26,20 +25,4 @@ type LogicalProperty struct {
 	Stats     *StatsInfo
 	Schema    *expression.Schema
 	MaxOneRow bool
-=======
-// TryFlushAllIndexes tries to flush and import all indexes.
-func TryFlushAllIndexes(flushCtrl FlushController, mode FlushMode, indexIDs []int64) (flushed, imported bool, failedIdxID int64, err error) {
-	allFlushed := true
-	allImported := true
-	for _, idxID := range indexIDs {
-		// TODO(lance6716): use flushCtrl.Flush(indexIDs, mode)
-		flushed, imported, err := flushCtrl.Flush(idxID, mode)
-		if err != nil {
-			return false, false, idxID, err
-		}
-		allFlushed = allFlushed && flushed
-		allImported = allImported && imported
-	}
-	return allFlushed, allImported, -1, nil
->>>>>>> b1b09954485 (ddl: check local file existence before resume checkpoint (#53072)):pkg/ddl/ingest/flush.go
 }

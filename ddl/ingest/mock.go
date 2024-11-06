@@ -16,15 +16,12 @@ package ingest
 
 import (
 	"context"
-<<<<<<< HEAD:ddl/ingest/mock.go
-=======
-	"encoding/hex"
 	"os"
 	"path/filepath"
 	"strconv"
->>>>>>> b1b09954485 (ddl: check local file existence before resume checkpoint (#53072)):pkg/ddl/ingest/mock.go
 	"sync"
 
+	"github.com/pingcap/tidb/br/pkg/lightning/backend/local"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
@@ -149,8 +146,6 @@ func (m *MockBackendCtx) GetCheckpointManager() *CheckpointManager {
 	return m.checkpointMgr
 }
 
-<<<<<<< HEAD:ddl/ingest/mock.go
-=======
 // GetLocalBackend returns the local backend.
 func (m *MockBackendCtx) GetLocalBackend() *local.Backend {
 	b := &local.Backend{}
@@ -158,10 +153,6 @@ func (m *MockBackendCtx) GetLocalBackend() *local.Backend {
 	return b
 }
 
-// MockWriteHook the hook for write in mock engine.
-type MockWriteHook func(key, val []byte)
-
->>>>>>> b1b09954485 (ddl: check local file existence before resume checkpoint (#53072)):pkg/ddl/ingest/mock.go
 // MockEngineInfo is a mock engine info.
 type MockEngineInfo struct {
 	sessCtx sessionctx.Context

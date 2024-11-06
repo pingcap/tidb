@@ -46,13 +46,9 @@ func TestCheckpointManager(t *testing.T) {
 	ctx := context.Background()
 	sessPool := session.NewSessionPool(rs, store)
 	flushCtrl := &dummyFlushCtrl{imported: false}
-<<<<<<< HEAD:ddl/ingest/checkpoint_test.go
-	mgr, err := ingest.NewCheckpointManager(ctx, flushCtrl, sessPool, 1, 1)
-=======
 	tmpFolder := t.TempDir()
 	createDummyFile(t, tmpFolder)
-	mgr, err := ingest.NewCheckpointManager(ctx, flushCtrl, sessPool, 1, []int64{1}, tmpFolder)
->>>>>>> b1b09954485 (ddl: check local file existence before resume checkpoint (#53072)):pkg/ddl/ingest/checkpoint_test.go
+	mgr, err := ingest.NewCheckpointManager(ctx, flushCtrl, sessPool, 1, 1, tmpFolder)
 	require.NoError(t, err)
 	defer mgr.Close()
 
@@ -105,13 +101,9 @@ func TestCheckpointManagerUpdateReorg(t *testing.T) {
 	ctx := context.Background()
 	sessPool := session.NewSessionPool(rs, store)
 	flushCtrl := &dummyFlushCtrl{imported: true}
-<<<<<<< HEAD:ddl/ingest/checkpoint_test.go
-	mgr, err := ingest.NewCheckpointManager(ctx, flushCtrl, sessPool, 1, 1)
-=======
 	tmpFolder := t.TempDir()
 	createDummyFile(t, tmpFolder)
-	mgr, err := ingest.NewCheckpointManager(ctx, flushCtrl, sessPool, 1, []int64{1}, tmpFolder)
->>>>>>> b1b09954485 (ddl: check local file existence before resume checkpoint (#53072)):pkg/ddl/ingest/checkpoint_test.go
+	mgr, err := ingest.NewCheckpointManager(ctx, flushCtrl, sessPool, 1, 1, tmpFolder)
 	require.NoError(t, err)
 	defer mgr.Close()
 
@@ -160,13 +152,9 @@ func TestCheckpointManagerResumeReorg(t *testing.T) {
 	ctx := context.Background()
 	sessPool := session.NewSessionPool(rs, store)
 	flushCtrl := &dummyFlushCtrl{imported: false}
-<<<<<<< HEAD:ddl/ingest/checkpoint_test.go
-	mgr, err := ingest.NewCheckpointManager(ctx, flushCtrl, sessPool, 1, 1)
-=======
 	tmpFolder := t.TempDir()
 	// checkpoint manager should not use local checkpoint if the folder is empty
-	mgr, err := ingest.NewCheckpointManager(ctx, flushCtrl, sessPool, 1, []int64{1}, tmpFolder)
->>>>>>> b1b09954485 (ddl: check local file existence before resume checkpoint (#53072)):pkg/ddl/ingest/checkpoint_test.go
+	mgr, err := ingest.NewCheckpointManager(ctx, flushCtrl, sessPool, 1, 1, tmpFolder)
 	require.NoError(t, err)
 	defer mgr.Close()
 	require.True(t, mgr.IsKeyProcessed([]byte{'1', '9'}))
