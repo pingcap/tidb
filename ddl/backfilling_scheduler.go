@@ -331,7 +331,7 @@ func (b *ingestBackfillScheduler) close(force bool) {
 		b.writerPool.ReleaseAndWait()
 	}
 	if b.checkpointMgr != nil {
-		b.checkpointMgr.Sync()
+		b.checkpointMgr.Flush()
 		// Get the latest status after all workers are closed so that the result is more accurate.
 		cnt, nextKey := b.checkpointMgr.Status()
 		b.resultCh <- &backfillResult{
@@ -483,7 +483,7 @@ func (w *addIndexIngestWorker) HandleTask(rs idxRecResult) {
 		cnt, nextKey := w.checkpointMgr.Status()
 		result.totalCount = cnt
 		result.nextKey = nextKey
-		result.err = w.checkpointMgr.UpdateCurrent(rs.id, count)
+		result.err = w.checkpointMgr.UpdateWrittenKeys(rs.id, count)
 	} else {
 		result.addedCount = count
 		result.scanCount = count
