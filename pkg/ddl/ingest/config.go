@@ -68,7 +68,7 @@ func genConfig(
 		PausePDSchedulerScope:       lightning.PausePDSchedulerScopeTable,
 		TaskType:                    kvutil.ExplicitTypeDDL,
 		DisableAutomaticCompactions: true,
-		StoreWriteBWLimit:           int(variable.DDLReorgWriteLimit.Load()),
+		StoreWriteBWLimit:           int(variable.DDLReorgMaxWriteSpeed.Load()),
 	}
 	// Each backend will build a single dir in lightning dir.
 	if ImporterRangeConcurrencyForTest != nil {
