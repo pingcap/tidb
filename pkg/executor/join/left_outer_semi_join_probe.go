@@ -70,6 +70,28 @@ func (j *leftOuterSemiJoinProbe) SetChunkForProbe(chunk *chunk.Chunk) (err error
 	return nil
 }
 
+func (j *leftOuterSemiJoinProbe) SetRestoredChunkForProbe(chunk *chunk.Chunk) (err error) {
+	err = j.baseJoinProbe.SetRestoredChunkForProbe(chunk)
+	if err != nil {
+		return err
+	}
+	j.isMatchedRows = j.isMatchedRows[:0]
+	for i := 0; i < j.chunkRows; i++ {
+		j.isMatchedRows = append(j.isMatchedRows, false)
+	}
+	j.isNullRows = j.isNullRows[:0]
+	for i := 0; i < j.chunkRows; i++ {
+		j.isNullRows = append(j.isNullRows, false)
+	}
+	if j.ctx.hasOtherCondition() {
+		j.processedProbeRowIdxQueue.Clear()
+		for i := 0; i < j.chunkRows; i++ {
+			j.processedProbeRowIdxQueue.Push(i)
+		}
+	}
+	return nil
+}
+
 func (*leftOuterSemiJoinProbe) NeedScanRowTable() bool {
 	return false
 }
