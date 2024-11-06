@@ -888,6 +888,29 @@ func TestSetDDLErrorCountLimit(t *testing.T) {
 	res.Check(testkit.Rows("100"))
 }
 
+func TestSetDDLReorgWriteLimit(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	require.Equal(t, int64(variable.DefTiDBDDLReorgWriteLimit), variable.DDLReorgWriteLimit.Load())
+
+	// valid values
+	for _, val := range []int64{1, 0, 100, 1024 * 1024, math.MaxInt64} {
+		tk.MustExec(fmt.Sprintf("set @@global.tidb_ddl_reorg_write_limit = %d", val))
+		require.Equal(t, val, variable.DDLReorgWriteLimit.Load())
+		tk.MustQuery("select @@global.tidb_ddl_reorg_write_limit").Check(testkit.Rows(strconv.FormatInt(val, 10)))
+	}
+
+	// invalid values
+	tk.MustExec("set @@global.tidb_ddl_reorg_write_limit = -1")
+	tk.MustQuery("SHOW WARNINGS").Check(testkit.Rows("Warning 1292 Truncated incorrect tidb_ddl_reorg_write_limit value: '-1'"))
+	require.Equal(t, int64(0), variable.DDLReorgWriteLimit.Load())
+	tk.MustQuery("select @@global.tidb_ddl_reorg_write_limit").Check(testkit.Rows("0"))
+
+	tk.MustGetDBError("set @@global.tidb_ddl_reorg_write_limit = invalid_val", variable.ErrWrongTypeForVar)
+	require.Equal(t, int64(0), variable.DDLReorgWriteLimit.Load())
+	tk.MustQuery("select @@global.tidb_ddl_reorg_write_limit").Check(testkit.Rows("0"))
+}
+
 func TestLoadDDLDistributeVars(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
