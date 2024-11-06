@@ -560,3 +560,19 @@ func TestAcquireDistributedLock(t *testing.T) {
 		release2()
 	})
 }
+
+func TestListenersWrapper(t *testing.T) {
+	lis1 := &listener{}
+	lis2 := &listener{}
+	wrapper := owner.NewListenersWrapper(lis1, lis2)
+
+	// Test OnBecomeOwner
+	wrapper.OnBecomeOwner()
+	require.True(t, lis1.val.Load())
+	require.True(t, lis2.val.Load())
+
+	// Test OnRetireOwner
+	wrapper.OnRetireOwner()
+	require.False(t, lis1.val.Load())
+	require.False(t, lis2.val.Load())
+}

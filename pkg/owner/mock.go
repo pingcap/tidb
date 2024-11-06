@@ -181,6 +181,10 @@ func (m *mockManager) SetListener(listener Listener) {
 	m.listener = listener
 }
 
+func (*mockManager) ForceToBeOwner(context.Context) error {
+	return nil
+}
+
 // CampaignCancel implements Manager.CampaignCancel interface
 func (m *mockManager) CampaignCancel() {
 	m.campaignDone <- struct{}{}

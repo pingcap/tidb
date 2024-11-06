@@ -78,7 +78,7 @@ start_services() {
 
 start_pd() {
     echo "Starting PD..."
-    mkdir -p "$TEST_DIR/pd" -m 700
+    mkdir -m 700 -p "$TEST_DIR/pd"
     pd-server \
         --client-urls "https://$PD_ADDR" \
         --peer-urls "https://$PD_PEER_ADDR" \

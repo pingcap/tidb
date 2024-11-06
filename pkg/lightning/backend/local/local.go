@@ -286,8 +286,27 @@ func (g *targetInfoGetter) FetchRemoteDBModels(ctx context.Context) ([]*model.DB
 
 // FetchRemoteTableModels obtains the models of all tables given the schema name.
 // It implements the `TargetInfoGetter` interface.
-func (g *targetInfoGetter) FetchRemoteTableModels(ctx context.Context, schemaName string) ([]*model.TableInfo, error) {
-	return tikv.FetchRemoteTableModelsFromTLS(ctx, g.tls, schemaName)
+func (g *targetInfoGetter) FetchRemoteTableModels(
+	ctx context.Context,
+	schemaName string,
+	tableNames []string,
+) (map[string]*model.TableInfo, error) {
+	allTablesInDB, err := tikv.FetchRemoteTableModelsFromTLS(ctx, g.tls, schemaName)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	tableNamesSet := make(map[string]struct{}, len(tableNames))
+	for _, name := range tableNames {
+		tableNamesSet[strings.ToLower(name)] = struct{}{}
+	}
+	ret := make(map[string]*model.TableInfo, len(tableNames))
+	for _, tbl := range allTablesInDB {
+		if _, ok := tableNamesSet[tbl.Name.L]; ok {
+			ret[tbl.Name.L] = tbl
+		}
+	}
+	return ret, nil
 }
 
 // CheckRequirements performs the check whether the backend satisfies the version requirements.
