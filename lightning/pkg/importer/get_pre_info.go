@@ -94,7 +94,7 @@ type TargetInfoGetter interface {
 	// FetchRemoteDBModels fetches the database structures from the remote target.
 	FetchRemoteDBModels(ctx context.Context) ([]*model.DBInfo, error)
 	// FetchRemoteTableModels fetches the table structures from the remote target.
-	FetchRemoteTableModels(ctx context.Context, schemaName string) ([]*model.TableInfo, error)
+	FetchRemoteTableModels(ctx context.Context, schemaName string, tableNames []string) (map[string]*model.TableInfo, error)
 	// CheckVersionRequirements performs the check whether the target satisfies the version requirements.
 	CheckVersionRequirements(ctx context.Context) error
 	// IsTableEmpty checks whether the specified table on the target DB contains data or not.
@@ -162,8 +162,12 @@ func (g *TargetInfoGetterImpl) FetchRemoteDBModels(ctx context.Context) ([]*mode
 
 // FetchRemoteTableModels fetches the table structures from the remote target.
 // It implements the TargetInfoGetter interface.
-func (g *TargetInfoGetterImpl) FetchRemoteTableModels(ctx context.Context, schemaName string) ([]*model.TableInfo, error) {
-	return g.backend.FetchRemoteTableModels(ctx, schemaName)
+func (g *TargetInfoGetterImpl) FetchRemoteTableModels(
+	ctx context.Context,
+	schemaName string,
+	tableNames []string,
+) (map[string]*model.TableInfo, error) {
+	return g.backend.FetchRemoteTableModels(ctx, schemaName, tableNames)
 }
 
 // CheckVersionRequirements performs the check whether the target satisfies the version requirements.
@@ -365,6 +369,10 @@ func (p *PreImportInfoGetterImpl) GetAllTableStructures(ctx context.Context, opt
 
 func (p *PreImportInfoGetterImpl) getTableStructuresByFileMeta(ctx context.Context, dbSrcFileMeta *mydump.MDDatabaseMeta, getPreInfoCfg *ropts.GetPreInfoConfig) ([]*model.TableInfo, error) {
 	dbName := dbSrcFileMeta.Name
+	tableNames := make([]string, 0, len(dbSrcFileMeta.Tables))
+	for _, tableFileMeta := range dbSrcFileMeta.Tables {
+		tableNames = append(tableNames, tableFileMeta.Name)
+	}
 	failpoint.Inject(
 		"getTableStructuresByFileMeta_BeforeFetchRemoteTableModels",
 		func(v failpoint.Value) {
@@ -378,7 +386,7 @@ func (p *PreImportInfoGetterImpl) getTableStructuresByFileMeta(ctx context.Conte
 			failpoint.Enable("github.com/pingcap/tidb/pkg/lightning/backend/tidb/FetchRemoteTableModels_BeforeFetchTableAutoIDInfos", fmt.Sprintf("sleep(%d)", sleepMilliSeconds))
 		},
 	)
-	currentTableInfosFromDB, err := p.targetInfoGetter.FetchRemoteTableModels(ctx, dbName)
+	currentTableInfosMap, err := p.targetInfoGetter.FetchRemoteTableModels(ctx, dbName, tableNames)
 	if err != nil {
 		if getPreInfoCfg != nil && getPreInfoCfg.IgnoreDBNotExist {
 			dbNotExistErr := dbterror.ClassSchema.NewStd(errno.ErrBadDB).FastGenByArgs(dbName)
@@ -394,10 +402,6 @@ func (p *PreImportInfoGetterImpl) getTableStructuresByFileMeta(ctx context.Conte
 		return nil, errors.Trace(err)
 	}
 get_struct_from_src:
-	currentTableInfosMap := make(map[string]*model.TableInfo)
-	for _, tblInfo := range currentTableInfosFromDB {
-		currentTableInfosMap[tblInfo.Name.L] = tblInfo
-	}
 	resultInfos := make([]*model.TableInfo, len(dbSrcFileMeta.Tables))
 	for i, tableFileMeta := range dbSrcFileMeta.Tables {
 		if curTblInfo, ok := currentTableInfosMap[strings.ToLower(tableFileMeta.Name)]; ok {
@@ -804,8 +808,12 @@ func (p *PreImportInfoGetterImpl) FetchRemoteDBModels(ctx context.Context) ([]*m
 
 // FetchRemoteTableModels fetches the table structures from the remote target.
 // It implements the PreImportInfoGetter interface.
-func (p *PreImportInfoGetterImpl) FetchRemoteTableModels(ctx context.Context, schemaName string) ([]*model.TableInfo, error) {
-	return p.targetInfoGetter.FetchRemoteTableModels(ctx, schemaName)
+func (p *PreImportInfoGetterImpl) FetchRemoteTableModels(
+	ctx context.Context,
+	schemaName string,
+	tableNames []string,
+) (map[string]*model.TableInfo, error) {
+	return p.targetInfoGetter.FetchRemoteTableModels(ctx, schemaName, tableNames)
 }
 
 // CheckVersionRequirements performs the check whether the target satisfies the version requirements.
