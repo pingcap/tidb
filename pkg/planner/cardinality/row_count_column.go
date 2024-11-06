@@ -175,20 +175,24 @@ func equalRowCountOnColumn(sctx planctx.PlanContext, c *statistics.Column, val t
 	// 3. use uniform distribution assumption for the rest (even when this value is not covered by the range of stats)
 	histNDV := float64(c.Histogram.NDV - int64(c.TopN.Num()))
 	if histNDV <= 0 {
-		// If the table hasn't been modified, it's safe to return 0. Otherwise, the TopN could be stale - return 1.
+		// If the table hasn't been modified, it's safe to return 0.
 		if modifyCount == 0 {
 			return 0, nil
 		}
+		// ELSE calculate an approximate estimate based upon newly inserted rows.
+		//
 		// Reset to the original NDV, or if no NDV - derive an NDV using sqrt
 		if c.Histogram.NDV > 0 {
 			histNDV = float64(c.Histogram.NDV)
 		} else {
-			histNDV = math.Sqrt(max(c.Histogram.NotNullCount(), float64(modifyCount)))
+			histNDV = math.Sqrt(max(c.NotNullCount(), float64(realtimeRowCount)))
 		}
-		// Return the min of the original notNullCount or the modifyCount/NDV. This is to reduce the
-		// risk of too large or too small an estimate if modifyCount is large or NotNullCount is small
-		return max(1, min(c.Histogram.NotNullCount(), float64(modifyCount)/histNDV)), nil
+		// As a conservative estimate - take the smaller of the orignal totalRows or the additions.
+		// "realtimeRowCount - original count" is a better measure of inserts than modifyCount
+		totalRowCount := min(c.NotNullCount(), float64(realtimeRowCount)-c.NotNullCount())
+		return max(1, totalRowCount/histNDV), nil
 	}
+	// return the average histogram rows (which excludes topN) and NDV that excluded topN
 	return c.Histogram.NotNullCount() / histNDV, nil
 }
 
