@@ -38,7 +38,6 @@ go_library(
         "//pkg/domain/globalconfigsync",
         "//pkg/domain/infosync",
         "//pkg/domain/metrics",
-        "//pkg/domain/repository",
         "//pkg/errno",
         "//pkg/infoschema",
         "//pkg/infoschema/metrics",
