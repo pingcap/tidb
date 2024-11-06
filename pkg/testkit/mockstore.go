@@ -154,16 +154,6 @@ func (d *DistExecutionContext) TriggerOwnerChange() {
 	}
 }
 
-// AddDomain add 1 domain which is not ddl owner.
-func (d *DistExecutionContext) AddDomain() {
-	d.mu.Lock()
-	defer d.mu.Unlock()
-	dom := bootstrap4DistExecution(d.t, d.Store, 500*time.Millisecond)
-	dom.InfoSyncer().SetSessionManager(d.domains[0].InfoSyncer().GetSessionManager())
-	dom.DDL().OwnerManager().RetireOwner()
-	d.domains = append(d.domains, dom)
-}
-
 // Close cleanup running goroutines, release resources used.
 func (d *DistExecutionContext) Close() {
 	d.t.Cleanup(func() {
@@ -189,11 +179,6 @@ func (d *DistExecutionContext) Close() {
 // GetDomain get domain by index.
 func (d *DistExecutionContext) GetDomain(idx int) *domain.Domain {
 	return d.domains[idx]
-}
-
-// GetDomainCnt get domain count.
-func (d *DistExecutionContext) GetDomainCnt() int {
-	return len(d.domains)
 }
 
 // NewDistExecutionContext create DistExecutionContext for testing.

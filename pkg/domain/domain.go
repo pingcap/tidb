@@ -2079,7 +2079,7 @@ func (do *Domain) globalBindHandleWorkerLoop(owner owner.Manager) {
 		for {
 			select {
 			case <-do.exit:
-				owner.Cancel()
+				owner.Close()
 				return
 			case <-bindWorkerTicker.C:
 				bindHandle := do.BindHandle()
@@ -2470,7 +2470,7 @@ func (do *Domain) disableStatsOwner() error {
 
 func quitStatsOwner(do *Domain, mgr owner.Manager) {
 	<-do.exit
-	mgr.Cancel()
+	mgr.Close()
 }
 
 // StartLoadStatsSubWorkers starts sub workers with new sessions to load stats concurrently.
@@ -2591,7 +2591,7 @@ func (do *Domain) updateStatsWorkerExitPreprocessing(statsHandle *handle.Handle)
 		logutil.BgLogger().Info("updateStatsWorker is going to exit, start to flush stats")
 		statsHandle.FlushStats()
 		logutil.BgLogger().Info("updateStatsWorker ready to release owner")
-		do.statsOwner.Cancel()
+		do.statsOwner.Close()
 		ch <- struct{}{}
 	}()
 	select {

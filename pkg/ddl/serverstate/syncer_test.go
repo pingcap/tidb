@@ -84,7 +84,7 @@ func TestStateSyncerSimple(t *testing.T) {
 	wg.Run(func() {
 		require.NoError(t, d.OwnerManager().CampaignOwner())
 	})
-	defer d.OwnerManager().Cancel()
+	defer d.OwnerManager().Close()
 	// TODO: We can remove it when we call it in newDDL.
 	require.NoError(t, d.StateSyncer().Init(ctx))
 
