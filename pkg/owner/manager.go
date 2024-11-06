@@ -425,7 +425,7 @@ func (m *ownerManager) campaignLoop(campaignContext context.Context) {
 		m.RetireOwner()
 
 		metrics.CampaignOwnerCounter.WithLabelValues(m.prompt, metrics.NoLongerOwner).Inc()
-		logutil.Logger(logCtx).Warn("is not the owner")
+		logutil.Logger(logCtx).Info("is not the owner")
 	}
 }
 
