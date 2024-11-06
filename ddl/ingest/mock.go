@@ -46,11 +46,7 @@ func (m *MockBackendCtxMgr) CheckAvailable() (bool, error) {
 }
 
 // Register implements BackendCtxMgr.Register interface.
-<<<<<<< HEAD:ddl/ingest/mock.go
-func (m *MockBackendCtxMgr) Register(_ context.Context, _ bool, jobID int64, _ *clientv3.Client) (BackendCtx, error) {
-=======
-func (m *MockBackendCtxMgr) Register(_ context.Context, _ bool, jobID int64, _ *clientv3.Client, _ string, _ string) (BackendCtx, error) {
->>>>>>> 6260e66ad8f (ddl: use latest PD address to register lightning (#48687)):pkg/ddl/ingest/mock.go
+func (m *MockBackendCtxMgr) Register(_ context.Context, _ bool, jobID int64, _ *clientv3.Client, _ string) (BackendCtx, error) {
 	logutil.BgLogger().Info("mock backend mgr register", zap.Int64("jobID", jobID))
 	if mockCtx, ok := m.runningJobs[jobID]; ok {
 		return mockCtx, nil
