@@ -767,9 +767,11 @@ func ShowMasterStatus(db *sql.Conn, serverInfo version.ServerInfo) ([]string, er
 	// MySQL 8.4.0 and newer: SHOW BINARY LOG STATUS
 	// TiDB, MariaDB, Old MySQL: SHOW MASTER STATUS
 	showMasterStatusQuery := "SHOW BINARY LOG STATUS"
-	if serverInfo.ServerVersion.LessThan(*minNewTerminologyMySQL) ||
-		serverInfo.ServerType != version.ServerTypeMySQL {
-		showMasterStatusQuery = "SHOW MASTER STATUS"
+	if serverInfo.ServerVersion != nil {
+		if serverInfo.ServerVersion.LessThan(*minNewTerminologyMySQL) ||
+			serverInfo.ServerType != version.ServerTypeMySQL {
+			showMasterStatusQuery = "SHOW MASTER STATUS"
+		}
 	}
 
 	err := simpleQuery(db, showMasterStatusQuery, handleOneRow)
