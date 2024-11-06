@@ -58,6 +58,7 @@ func GetEtcdAddrs(store kv.Storage) (kv.EtcdBackend, []string, error) {
 	return etcdStore, addrs, nil
 }
 
+// NewEtcdCliWithAddrs creates a new clientv3.Client with specified addrs and etcd backend.
 func NewEtcdCliWithAddrs(addrs []string, ebd kv.EtcdBackend) (*clientv3.Client, error) {
 	cfg := config.GetGlobalConfig()
 	etcdLogCfg := zap.NewProductionConfig()

@@ -21,6 +21,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/disttask/framework/handle"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/scheduler"
@@ -113,11 +114,12 @@ func prepareForBenchTest(b *testing.B) {
 	var err error
 	store, err := d.Open("tikv://" + *testkit.WithTiKV)
 	require.NoError(b, err)
-
+	require.NoError(b, ddl.StartOwnerManager(context.Background(), store))
 	var dom *domain.Domain
 	dom, err = session.BootstrapSession(store)
 	defer func() {
 		dom.Close()
+		ddl.CloseOwnerManager()
 		err := store.Close()
 		require.NoError(b, err)
 		view.Stop()
