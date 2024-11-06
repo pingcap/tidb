@@ -365,6 +365,7 @@ go_test(
         "//ddl/schematracker",
         "//ddl/testutil",
         "//ddl/util",
+        "//ddl/util/callback",
         "//distsql",
         "//domain",
         "//domain/infosync",
