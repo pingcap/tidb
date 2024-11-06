@@ -19,6 +19,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/owner"
 	storepkg "github.com/pingcap/tidb/pkg/store"
@@ -49,7 +50,9 @@ type ownerManager struct {
 
 // Start starts the TiDBInstance.
 func (om *ownerManager) Start(ctx context.Context, store kv.Storage) error {
-	om.id = uuid.New().String()
+	if config.GetGlobalConfig().Store != "tikv" {
+		return nil
+	}
 	cli, err := storepkg.NewEtcdCli(store)
 	if err != nil {
 		return errors.Trace(err)
@@ -57,6 +60,7 @@ func (om *ownerManager) Start(ctx context.Context, store kv.Storage) error {
 	if cli == nil {
 		return errors.New("etcd client is nil, maybe the server is not started with PD")
 	}
+	om.id = uuid.New().String()
 	om.etcdCli = cli
 	om.ownerMgr = owner.NewOwnerManager(ctx, om.etcdCli, Prompt, om.id, DDLOwnerKey)
 	return nil

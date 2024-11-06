@@ -1006,7 +1006,7 @@ func (d *ddl) close() {
 	startTime := time.Now()
 	d.cancel()
 	d.wg.Wait()
-	// when run with real-tikv, the lifecycle of ownerManager is managed by tidbInstance,
+	// when run with real-tikv, the lifecycle of ownerManager is managed by globalOwnerManager,
 	// when run with uni-store BreakCampaignLoop is same as Close.
 	// hope we can unify it after refactor to let some components only start once.
 	d.ownerManager.BreakCampaignLoop()
