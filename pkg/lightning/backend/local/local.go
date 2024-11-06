@@ -114,10 +114,10 @@ var (
 	MaxWriteAndIngestRetryTimes = 30
 )
 
-// ImportClientFactory is factory to create new import client for specific store.
-type ImportClientFactory interface {
-	Create(ctx context.Context, storeID uint64) (sst.ImportSSTClient, error)
-	Close()
+// importClientFactory is factory to create new import client for specific store.
+type importClientFactory interface {
+	create(ctx context.Context, storeID uint64) (sst.ImportSSTClient, error)
+	close()
 }
 
 type importClientFactoryImpl struct {
@@ -209,8 +209,8 @@ func (f *importClientFactoryImpl) getGrpcConn(ctx context.Context, storeID uint6
 		})
 }
 
-// Create creates a new import client for specific store.
-func (f *importClientFactoryImpl) Create(ctx context.Context, storeID uint64) (sst.ImportSSTClient, error) {
+// create creates a new import client for specific store.
+func (f *importClientFactoryImpl) create(ctx context.Context, storeID uint64) (sst.ImportSSTClient, error) {
 	conn, err := f.getGrpcConn(ctx, storeID)
 	if err != nil {
 		return nil, err
@@ -218,8 +218,8 @@ func (f *importClientFactoryImpl) Create(ctx context.Context, storeID uint64) (s
 	return sst.NewImportSSTClient(conn), nil
 }
 
-// Close closes the factory.
-func (f *importClientFactoryImpl) Close() {
+// close closes the factory.
+func (f *importClientFactoryImpl) close() {
 	f.conns.Close()
 }
 
@@ -511,7 +511,7 @@ type Backend struct {
 	engineMgr *engineManager
 
 	supportMultiIngest  bool
-	importClientFactory ImportClientFactory
+	importClientFactory importClientFactory
 
 	metrics      *metric.Common
 	writeLimiter StoreWriteLimiter
@@ -557,7 +557,7 @@ func NewBackend(
 			return
 		}
 		if importClientFactory != nil {
-			importClientFactory.Close()
+			importClientFactory.close()
 		}
 		if pdHTTPCli != nil {
 			pdHTTPCli.Close()
@@ -692,7 +692,7 @@ func (local *Backend) TotalMemoryConsume() int64 {
 	return local.engineMgr.totalMemoryConsume()
 }
 
-func checkMultiIngestSupport(ctx context.Context, pdCli pd.Client, importClientFactory ImportClientFactory) (bool, error) {
+func checkMultiIngestSupport(ctx context.Context, pdCli pd.Client, factory importClientFactory) (bool, error) {
 	stores, err := pdCli.GetAllStores(ctx, pd.WithExcludeTombstone())
 	if err != nil {
 		return false, errors.Trace(err)
@@ -720,7 +720,7 @@ func checkMultiIngestSupport(ctx context.Context, pdCli pd.Client, importClientF
 					return false, ctx.Err()
 				}
 			}
-			client, err1 := importClientFactory.Create(ctx, s.Id)
+			client, err1 := factory.create(ctx, s.Id)
 			if err1 != nil {
 				err = err1
 				log.FromContext(ctx).Warn("get import client failed", zap.Error(err), zap.String("store", s.Address))
@@ -782,7 +782,7 @@ func (local *Backend) tikvSideCheckFreeSpace(ctx context.Context) {
 // Close the local backend.
 func (local *Backend) Close() {
 	local.engineMgr.close()
-	local.importClientFactory.Close()
+	local.importClientFactory.close()
 
 	_ = local.tikvCli.Close()
 	local.pdHTTPCli.Close()
@@ -820,7 +820,7 @@ func (local *Backend) CloseEngine(ctx context.Context, cfg *backend.EngineConfig
 }
 
 func (local *Backend) getImportClient(ctx context.Context, storeID uint64) (sst.ImportSSTClient, error) {
-	return local.importClientFactory.Create(ctx, storeID)
+	return local.importClientFactory.create(ctx, storeID)
 }
 
 func splitRangeBySizeProps(fullRange common.Range, sizeProps *sizeProperties, sizeLimit int64, keysLimit int64) []common.Range {
