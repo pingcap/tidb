@@ -43,6 +43,9 @@ const (
 	mustRetryJobRequeueInterval         = time.Minute * 5
 )
 
+// If the process takes longer than this threshold, we will log it as a slow log.
+const slowLogThreshold = 150 * time.Millisecond
+
 // pqHeap is an interface that wraps the methods of a priority queue heap.
 type pqHeap interface {
 	// getByKey returns the job by the given table ID.
@@ -312,13 +315,13 @@ func (pq *AnalysisPriorityQueue) run() {
 			statslogutil.StatsLogger().Info("Priority queue stopped")
 			return
 		case <-dmlChangesFetchInterval.C:
-			statslogutil.StatsLogger().Info("Start to fetch DML changes of jobs")
+			statslogutil.SingletonStatsSamplerLogger().Info("Start to fetch DML changes of jobs")
 			pq.ProcessDMLChanges()
 		case <-timeRefreshInterval.C:
-			statslogutil.StatsLogger().Info("Start to refresh last analysis durations of jobs")
+			statslogutil.SingletonStatsSamplerLogger().Info("Start to refresh last analysis durations of jobs")
 			pq.RefreshLastAnalysisDuration()
 		case <-mustRetryJobRequeueInterval.C:
-			statslogutil.StatsLogger().Info("Start to request must retry jobs")
+			statslogutil.SingletonStatsSamplerLogger().Info("Start to request must retry jobs")
 			pq.RequeueMustRetryJobs()
 		}
 	}
@@ -334,7 +337,10 @@ func (pq *AnalysisPriorityQueue) ProcessDMLChanges() {
 	if err := statsutil.CallWithSCtx(pq.statsHandle.SPool(), func(sctx sessionctx.Context) error {
 		start := time.Now()
 		defer func() {
-			statslogutil.StatsLogger().Info("DML changes processed", zap.Duration("duration", time.Since(start)))
+			duration := time.Since(start)
+			if duration > slowLogThreshold {
+				statslogutil.SingletonStatsSamplerLogger().Info("DML changes processed", zap.Duration("duration", duration))
+			}
 		}()
 
 		parameters := exec.GetAutoAnalyzeParameters(sctx)
@@ -609,7 +615,10 @@ func (pq *AnalysisPriorityQueue) RequeueMustRetryJobs() {
 	if err := statsutil.CallWithSCtx(pq.statsHandle.SPool(), func(sctx sessionctx.Context) error {
 		start := time.Now()
 		defer func() {
-			statslogutil.StatsLogger().Info("Must retry jobs requeued", zap.Duration("duration", time.Since(start)))
+			duration := time.Since(start)
+			if duration > slowLogThreshold {
+				statslogutil.SingletonStatsSamplerLogger().Info("Must retry jobs requeued", zap.Duration("duration", duration))
+			}
 		}()
 
 		is := sctx.GetDomainInfoSchema().(infoschema.InfoSchema)
@@ -642,7 +651,10 @@ func (pq *AnalysisPriorityQueue) RefreshLastAnalysisDuration() {
 	if err := statsutil.CallWithSCtx(pq.statsHandle.SPool(), func(sctx sessionctx.Context) error {
 		start := time.Now()
 		defer func() {
-			statslogutil.StatsLogger().Info("Last analysis duration refreshed", zap.Duration("duration", time.Since(start)))
+			duration := time.Since(start)
+			if duration > slowLogThreshold {
+				statslogutil.SingletonStatsSamplerLogger().Info("Last analysis duration refreshed", zap.Duration("duration", duration))
+			}
 		}()
 		jobs := pq.syncFields.inner.list()
 		currentTs, err := statsutil.GetStartTS(sctx)
