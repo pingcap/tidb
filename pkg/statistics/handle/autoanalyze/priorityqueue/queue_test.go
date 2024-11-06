@@ -348,7 +348,7 @@ func TestProcessDMLChangesWithRunningJobs(t *testing.T) {
 	require.Equal(t, tbl1.Meta().ID, job1.GetTableID(), "t1 has been removed from running jobs and should be in the queue")
 }
 
-func TestRequeueFailedJobs(t *testing.T) {
+func TestRequeueMustRetryJobs(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	handle := dom.StatsHandle()
 	tk := testkit.NewTestKit(t, store)
@@ -395,7 +395,7 @@ func TestRequeueFailedJobs(t *testing.T) {
 	require.Equal(t, 0, l)
 
 	// Requeue the failed jobs.
-	pq.RequeueFailedJobs()
+	pq.RequeueMustRetryJobs()
 	l, err = pq.Len()
 	require.NoError(t, err)
 	require.Equal(t, 1, l)
