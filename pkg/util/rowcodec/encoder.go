@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/codec"
@@ -242,7 +243,7 @@ const checksumVersionRaw byte = 1
 
 // RawChecksum indicates encode the raw bytes checksum and append it to the raw bytes.
 type RawChecksum struct {
-	Key []byte
+	Handle kv.Handle
 }
 
 func (c RawChecksum) encode(encoder *Encoder, buf []byte) ([]byte, error) {
@@ -253,7 +254,7 @@ func (c RawChecksum) encode(encoder *Encoder, buf []byte) ([]byte, error) {
 	valueBytes := encoder.toBytes(buf)
 	valueBytes = append(valueBytes, encoder.checksumHeader)
 	encoder.checksum1 = crc32.Checksum(valueBytes, crc32.IEEETable)
-	encoder.checksum1 = crc32.Update(encoder.checksum1, crc32.IEEETable, c.Key)
+	encoder.checksum1 = crc32.Update(encoder.checksum1, crc32.IEEETable, c.Handle.Encoded())
 	valueBytes = binary.LittleEndian.AppendUint32(valueBytes, encoder.checksum1)
 	return valueBytes, nil
 }
