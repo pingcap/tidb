@@ -2671,7 +2671,7 @@ func TestSandBoxMode(t *testing.T) {
 		"alter user current_user() identified by '1234';",
 	}
 
-	for i, alterPwdStmt := range alterPwdStmts {
+	for _, alterPwdStmt := range alterPwdStmts {
 		require.False(t, qctx.Session.InSandBoxMode())
 		_, err = Execute(context.Background(), qctx, "select 1;")
 		require.NoError(t, err)
