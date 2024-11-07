@@ -2663,7 +2663,7 @@ func TestSandBoxMode(t *testing.T) {
 	require.NoError(t, err)
 	_, err = Execute(context.Background(), qctx, "create user testuser;")
 	require.NoError(t, err)
-	qctx.Session.GetSessionVars().User = &auth.UserIdentity{Username: "testuser", AuthUsername: "testuser", AuthHostname: "%"}
+	qctx.Session.Auth(&auth.UserIdentity{Username: "testuser", AuthUsername: "testuser", AuthHostname: "%"}, nil, nil, nil)
 
 	alterPwdStmts := []string{
 		"set password = '1234';",
@@ -2671,7 +2671,7 @@ func TestSandBoxMode(t *testing.T) {
 		"alter user current_user() identified by '1234';",
 	}
 
-	for _, alterPwdStmt := range alterPwdStmts {
+	for i, alterPwdStmt := range alterPwdStmts {
 		require.False(t, qctx.Session.InSandBoxMode())
 		_, err = Execute(context.Background(), qctx, "select 1;")
 		require.NoError(t, err)
