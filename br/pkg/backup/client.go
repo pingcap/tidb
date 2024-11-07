@@ -1317,6 +1317,7 @@ func (trecv *timeoutRecv) Refresh() {
 func (trecv *timeoutRecv) Stop() {
 	close(trecv.refresh)
 	trecv.wg.Wait()
+	trecv.cancel(nil)
 }
 
 var TimeoutOneResponse = time.Hour
