@@ -89,6 +89,8 @@ func RunTestMain(m *testing.M) {
 		// backoff function will lead to sleep, so there is a high probability of goroutine leak while it's doing backoff.
 		goleak.IgnoreTopFunction("github.com/tikv/client-go/v2/config/retry.(*Config).createBackoffFn.newBackoffFn.func2"),
 		goleak.IgnoreTopFunction("go.opencensus.io/stats/view.(*worker).start"),
+		// the resolveFlushedLocks goroutine runs in the background to commit or rollback locks.
+		goleak.IgnoreAnyFunction("github.com/tikv/client-go/v2/txnkv/transaction.(*twoPhaseCommitter).resolveFlushedLocks.func1"),
 	}
 	callback := func(i int) int {
 		// wait for MVCCLevelDB to close, MVCCLevelDB will be closed in one second

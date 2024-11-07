@@ -844,4 +844,14 @@ func (pq *AnalysisPriorityQueue) Close() {
 		pq.syncFields.cancel()
 	}
 	pq.wg.Wait()
+
+	// Reset the initialized flag to allow the priority queue to be closed and re-initialized.
+	pq.syncFields.initialized = false
+	// The rest fields will be reset when the priority queue is initialized.
+	// But we do it here for double safety.
+	pq.syncFields.inner = nil
+	pq.syncFields.runningJobs = nil
+	pq.syncFields.mustRetryJobs = nil
+	pq.syncFields.lastDMLUpdateFetchTimestamp = 0
+	pq.syncFields.cancel = nil
 }
