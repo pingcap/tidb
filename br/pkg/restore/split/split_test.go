@@ -772,7 +772,7 @@ func TestScanEmptyRegion(t *testing.T) {
 	regionSplitter := NewRegionSplitter(client)
 
 	ctx := context.Background()
-	err := regionSplitter.ExecuteSplit(ctx, keys)
+	err := regionSplitter.ExecuteSortedKeys(ctx, keys)
 	// should not return error with only one range entry
 	require.NoError(t, err)
 }
@@ -782,7 +782,7 @@ func TestSplitEmptyRegion(t *testing.T) {
 	mockPDCli.SetRegions([][]byte{{}, {12}, {34}, {}})
 	client := split.NewClient(mockPDCli, nil, nil, 100, 4)
 	regionSplitter := NewRegionSplitter(client)
-	err := regionSplitter.ExecuteSplit(context.Background(), nil)
+	err := regionSplitter.ExecuteSortedKeys(context.Background(), nil)
 	require.NoError(t, err)
 }
 
@@ -813,7 +813,7 @@ func TestSplitAndScatter(t *testing.T) {
 	sort.Slice(splitKeys, func(i, j int) bool {
 		return bytes.Compare(splitKeys[i], splitKeys[j]) < 0
 	})
-	err := regionSplitter.ExecuteSplit(ctx, splitKeys)
+	err := regionSplitter.ExecuteSortedKeys(ctx, splitKeys)
 	require.NoError(t, err)
 	regions := mockPDCli.Regions.ScanRange(nil, nil, 100)
 	expected := [][]byte{[]byte(""), []byte("aay"), []byte("bba"), []byte("bbf"), []byte("bbh"), []byte("bbj"), []byte("cca"), []byte("xxe"), []byte("xxz"), []byte("")}
@@ -844,7 +844,7 @@ func TestRawSplit(t *testing.T) {
 	client := split.NewClient(mockPDCli, nil, nil, 100, 4, split.WithRawKV())
 
 	regionSplitter := NewRegionSplitter(client)
-	err := regionSplitter.ExecuteSplit(ctx, splitKeys)
+	err := regionSplitter.ExecuteSortedKeys(ctx, splitKeys)
 	require.NoError(t, err)
 
 	regions := mockPDCli.Regions.ScanRange(nil, nil, 100)

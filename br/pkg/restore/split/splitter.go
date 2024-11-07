@@ -21,9 +21,9 @@ import (
 
 // Splitter defines the interface for basic splitting strategies.
 type Splitter interface {
-	// ExecuteOneRegion splits the keys within a single region and initiates scattering
+	// ExecuteSortedKeysOnRegion splits the keys within a single region and initiates scattering
 	// after the region has been successfully split.
-	ExecuteOneRegion(ctx context.Context, region *RegionInfo, keys [][]byte) ([]*RegionInfo, error)
+	ExecuteSortedKeysOnRegion(ctx context.Context, region *RegionInfo, keys [][]byte) ([]*RegionInfo, error)
 
 	// ExecuteSortedKeys splits all provided keys while ensuring that the newly created
 	// regions are balanced. It first applies the rewrite rules, then splits regions
@@ -380,7 +380,7 @@ func (r *RegionsSplitter) splitRegionByPoints(
 	}
 
 	r.pool.ApplyOnErrorGroup(r.eg, func() error {
-		newRegions, errSplit := r.ExecuteOneRegion(ctx, region, splitPoints)
+		newRegions, errSplit := r.ExecuteSortedKeysOnRegion(ctx, region, splitPoints)
 		if errSplit != nil {
 			log.Warn("failed to split the scaned region", zap.Error(errSplit))
 			sort.Slice(splitPoints, func(i, j int) bool {
