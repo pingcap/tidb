@@ -319,7 +319,7 @@ func (p *UserPrivileges) isValidHash(record *UserRecord) bool {
 
 // GetEncodedPassword implements the Manager interface.
 func (p *UserPrivileges) GetEncodedPassword(user, host string) string {
-	p.Handle.ensureActiveUser(user)
+	terror.Log(p.Handle.ensureActiveUser(user))
 	mysqlPriv := p.Handle.Get()
 	record := mysqlPriv.connectionVerification(user, host)
 	if record == nil {
