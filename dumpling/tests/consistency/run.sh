@@ -35,7 +35,7 @@ sleep 2
 if [[ $versioninfo =~ (Ti|Maria)DB ]]; then
 	metadata=`run_sql "show master status;"`
 else
-	if [[ $versioninfo =~ "VERSION(): "[89] ]]; then
+	if [[ $versioninfo =~ "VERSION(): "(8.4|9) ]]; then
 		# MySQL 8.4.0 and newer no longer support SHOW MASTER STATUS
 		# and only support SHOW BINARY LOG STATUS
 		metadata=`run_sql "show binary log status;"`
