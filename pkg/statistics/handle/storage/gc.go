@@ -266,7 +266,7 @@ func deleteHistStatsFromKV(sctx sessionctx.Context, physicalID int64, histID int
 
 // removeDeletedExtendedStats removes deleted extended stats.
 func removeDeletedExtendedStats(sctx sessionctx.Context, version uint64) (err error) {
-	const sql = "delete from mysql.stats_extended where status = %? and version < %?"
+	const sql = "delete low_priority from mysql.stats_extended where status = %? and version < %?"
 	_, err = util.Exec(sctx, sql, statistics.ExtendedStatsDeleted, version)
 	return
 }
@@ -275,14 +275,14 @@ func removeDeletedExtendedStats(sctx sessionctx.Context, version uint64) (err er
 func gcTableStats(sctx sessionctx.Context,
 	statsHandler types.StatsHandle,
 	is infoschema.InfoSchema, physicalID int64) error {
-	rows, _, err := util.ExecRows(sctx, "select is_index, hist_id from mysql.stats_histograms where table_id = %?", physicalID)
+	rows, _, err := util.ExecRows(sctx, "select low_priority is_index, hist_id from mysql.stats_histograms where table_id = %?", physicalID)
 	if err != nil {
 		return errors.Trace(err)
 	}
 	// The table has already been deleted in stats and acknowledged to all tidb,
 	// we can safely remove the meta info now.
 	if len(rows) == 0 {
-		_, _, err = util.ExecRows(sctx, "delete from mysql.stats_meta where table_id = %?", physicalID)
+		_, _, err = util.ExecRows(sctx, "delete low_priority from mysql.stats_meta where table_id = %?", physicalID)
 		if err != nil {
 			return errors.Trace(err)
 		}
