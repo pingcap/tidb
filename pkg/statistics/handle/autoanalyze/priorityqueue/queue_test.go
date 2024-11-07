@@ -217,6 +217,10 @@ func testProcessDMLChanges(t *testing.T, partitioned bool) {
 	job2, err := pq.Pop()
 	require.NoError(t, err)
 	require.Equal(t, tbl2.Meta().ID, job2.GetTableID())
+	valid, _ := job1.ValidateAndPrepare(tk.Session())
+	require.True(t, valid)
+	valid, _ = job2.ValidateAndPrepare(tk.Session())
+	require.True(t, valid)
 	require.NoError(t, job1.Analyze(handle, dom.SysProcTracker()))
 	require.NoError(t, job2.Analyze(handle, dom.SysProcTracker()))
 	require.NoError(t, handle.Update(ctx, dom.InfoSchema()))
@@ -330,6 +334,8 @@ func TestProcessDMLChangesWithRunningJobs(t *testing.T) {
 	require.Equal(t, tbl2.Meta().ID, job2.GetTableID(), "t1 should not be in the queue since it's a running job")
 
 	// Analyze the job.
+	valid, _ := job1.ValidateAndPrepare(tk.Session())
+	require.True(t, valid)
 	require.NoError(t, job1.Analyze(handle, dom.SysProcTracker()))
 
 	// Add more rows to t1.
@@ -380,7 +386,7 @@ func TestRequeueMustRetryJobs(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, job)
 	sctx := tk.Session().(sessionctx.Context)
-	ok, _ := job.IsValidToAnalyze(sctx)
+	ok, _ := job.ValidateAndPrepare(sctx)
 	require.False(t, ok)
 
 	// Insert more rows.
