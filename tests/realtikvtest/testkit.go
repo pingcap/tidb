@@ -120,6 +120,7 @@ func CreateMockStoreAndDomainAndSetup(t *testing.T, opts ...mockstore.MockTiKVSt
 
 	if *WithRealTiKV {
 		var d driver.TiKVDriver
+		storeBak := config.GetGlobalConfig().Store
 		config.UpdateGlobal(func(conf *config.Config) {
 			conf.TxnLocalLatches.Enabled = false
 			conf.KeyspaceName = *KeyspaceName
@@ -130,6 +131,10 @@ func CreateMockStoreAndDomainAndSetup(t *testing.T, opts ...mockstore.MockTiKVSt
 		require.NoError(t, ddl.StartOwnerManager(context.Background(), store))
 		dom, err = session.BootstrapSession(store)
 		require.NoError(t, err)
+		// TestGetTSFailDirtyState depends on the dirty state to work, i.e. some
+		// special branch on uni-store, else it causes DATA RACE, so we need to switch
+		// back to make sure it works, see https://github.com/pingcap/tidb/issues/57221
+		config.GetGlobalConfig().Store = storeBak
 		sm := testkit.MockSessionManager{}
 		dom.InfoSyncer().SetSessionManager(&sm)
 		tk := testkit.NewTestKit(t, store)
