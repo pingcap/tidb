@@ -35,14 +35,10 @@ func TestMain(m *testing.M) {
 	testDataMap.LoadTestSuiteData("testdata", "plan_suite_unexported")
 	testDataMap.LoadTestSuiteData("testdata", "index_merge_suite")
 	testDataMap.LoadTestSuiteData("testdata", "join_reorder_suite")
-<<<<<<< HEAD:planner/core/main_test.go
 	testDataMap.LoadTestSuiteData("testdata", "plan_stats_suite")
 
 	indexMergeSuiteData = testDataMap["index_merge_suite"]
 	planSuiteUnexportedData = testDataMap["plan_suite_unexported"]
-=======
-	testDataMap.LoadTestSuiteData("testdata", "predicate_pushdown_suite")
->>>>>>> 521c99967d5 (planner: The length function could not be substitute when collation of mapped column is utfxxx_bin (#54179)):pkg/planner/core/casetest/rule/main_test.go
 	opts := []goleak.Option{
 		goleak.IgnoreTopFunction("github.com/golang/glog.(*loggingT).flushDaemon"),
 		goleak.IgnoreTopFunction("github.com/lestrrat-go/httprc.runFetchWorker"),
@@ -68,11 +64,6 @@ func GetJoinReorderData() testdata.TestData {
 	return testDataMap["join_reorder_suite"]
 }
 
-<<<<<<< HEAD:planner/core/main_test.go
 func GetPlanStatsData() testdata.TestData {
 	return testDataMap["plan_stats_suite"]
-=======
-func GetPredicatePushdownSuiteData() testdata.TestData {
-	return testDataMap["predicate_pushdown_suite"]
->>>>>>> 521c99967d5 (planner: The length function could not be substitute when collation of mapped column is utfxxx_bin (#54179)):pkg/planner/core/casetest/rule/main_test.go
 }
