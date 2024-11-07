@@ -101,8 +101,10 @@ func genPlanCloneForPlanCache(x any) ([]byte, error) {
 			c.write(`basePlan, baseOK := op.%v.CloneForPlanCacheWithSelf(newCtx, cloned)
 							if !baseOK {return nil, false}
 							cloned.%v = *basePlan`, fieldName, fieldName)
-		case "baseimpl.Plan", "core.baseSchemaProducer":
+		case "baseimpl.Plan":
 			c.write("cloned.%v = *op.%v.CloneWithNewCtx(newCtx)", f.Name, f.Name)
+		case "core.baseSchemaProducer":
+			c.write("cloned.%v = *op.%v.cloneForPlanCache(newCtx)", f.Name, f.Name)
 		case "[]expression.Expression", "[]*expression.Column",
 			"[]*expression.Constant", "[]*expression.ScalarFunction":
 			structureName := strings.Split(f.Type.String(), ".")[1] + "s"
@@ -123,17 +125,21 @@ func genPlanCloneForPlanCache(x any) ([]byte, error) {
 			c.write("if op.%v != nil {", f.Name)
 			c.write("cloned.%v = op.%v.Clone(newCtx.GetSessionVars().StmtCtx)", f.Name, f.Name)
 			c.write("}")
-		case "*core.PhysPlanPartInfo", "*core.PushedDownLimit", "*expression.Schema":
+		case "*core.PushedDownLimit":
 			c.write("cloned.%v = op.%v.Clone()", f.Name, f.Name)
+		case "*core.PhysPlanPartInfo", "*core.ColWithCmpFuncManager", "core.InsertGeneratedColumns":
+			c.write("cloned.%v = op.%v.cloneForPlanCache()", f.Name, f.Name)
 		case "kv.Handle":
 			c.write("if op.%v != nil {", f.Name)
 			c.write("cloned.%v = op.%v.Copy()", f.Name, f.Name)
 			c.write("}")
-		case "*core.ColWithCmpFuncManager", "core.InsertGeneratedColumns":
-			c.write("cloned.%v = op.%v.Copy()", f.Name, f.Name)
 		case "*expression.Column", "*expression.Constant":
 			c.write("if op.%v != nil {", f.Name)
+			c.write("if op.%v.SafeToShareAcrossSession() {", f.Name)
+			c.write("cloned.%v = op.%v", f.Name, f.Name)
+			c.write("} else {")
 			c.write("cloned.%v = op.%v.Clone().(%v)", f.Name, f.Name, f.Type.String())
+			c.write("}")
 			c.write("}")
 		case "core.PhysicalIndexJoin":
 			c.write("inlj, ok := op.%v.CloneForPlanCache(newCtx)", f.Name)
