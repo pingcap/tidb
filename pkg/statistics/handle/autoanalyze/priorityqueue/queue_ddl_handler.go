@@ -71,6 +71,8 @@ func (pq *AnalysisPriorityQueue) HandleDDLEvent(_ context.Context, sctx sessionc
 		err = pq.handleAlterTablePartitioningEvent(sctx, event)
 	case model.ActionRemovePartitioning:
 		err = pq.handleRemovePartitioningEvent(sctx, event)
+	case model.ActionDropSchema:
+		err = pq.handleDropSchemaEvent(sctx, event)
 	default:
 		// Ignore other DDL events.
 	}
@@ -405,4 +407,32 @@ func (pq *AnalysisPriorityQueue) handleRemovePartitioningEvent(sctx sessionctx.C
 	// Currently, the stats meta for the new single table is not updated.
 	// This might be improved in the future.
 	return pq.recreateAndPushJobForTable(sctx, newSingleTableInfo)
+}
+
+func (pq *AnalysisPriorityQueue) handleDropSchemaEvent(_ sessionctx.Context, event *notifier.SchemaChangeEvent) error {
+	dbInfo, tables := event.GetDropSchemaInfo()
+	for _, tbl := range tables {
+		// For static partitioned tables.
+		partitionInfo := tbl.GetPartitionInfo()
+		if partitionInfo != nil {
+			for _, def := range partitionInfo.Definitions {
+				err := pq.getAndDeleteJob(def.ID)
+				if err != nil {
+					return err
+				}
+			}
+		}
+		// For non-partitioned tables or dynamic partitioned tables.
+		if err := pq.getAndDeleteJob(tbl.ID); err != nil {
+			// Try best to delete as many tables as possible.
+			statslogutil.StatsLogger().Error(
+				"Failed to delete table from priority queue",
+				zap.Error(err),
+				zap.String("db", dbInfo.Name.O),
+				zap.Int64("tableID", tbl.ID),
+				zap.String("tableName", tbl.Name.O),
+			)
+		}
+	}
+	return nil
 }

@@ -20,6 +20,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/ddl/label"
+	"github.com/pingcap/tidb/pkg/ddl/notifier"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -153,7 +154,7 @@ func onModifySchemaDefaultPlacement(jobCtx *jobContext, job *model.Job) (ver int
 	return ver, nil
 }
 
-func onDropSchema(jobCtx *jobContext, job *model.Job) (ver int64, _ error) {
+func (w *worker) onDropSchema(jobCtx *jobContext, job *model.Job) (ver int64, _ error) {
 	metaMut := jobCtx.metaMut
 	dbInfo, err := checkSchemaExistAndCancelNotExistJob(metaMut, job)
 	if err != nil {
@@ -218,6 +219,11 @@ func onDropSchema(jobCtx *jobContext, job *model.Job) (ver int64, _ error) {
 			break
 		}
 
+		dropSchemaEvent := notifier.NewDropSchemaEvent(dbInfo, tables)
+		err = asyncNotifyEvent(jobCtx, dropSchemaEvent, job, noSubJob, w.sess)
+		if err != nil {
+			return ver, errors.Trace(err)
+		}
 		// Finish this job.
 		job.FillFinishedArgs(&model.DropSchemaArgs{
 			AllDroppedTableIDs: getIDs(tables),
