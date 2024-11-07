@@ -582,3 +582,23 @@ func TestProcessDMLChangesWithLockedPartitionsAndStaticPruneMode(t *testing.T) {
 	pid = tbl.Meta().Partition.Definitions[0].ID
 	require.Equal(t, pid, job.GetTableID())
 }
+
+func TestPQCanBeClosedAndReInitialized(t *testing.T) {
+	_, dom := testkit.CreateMockStoreAndDomain(t)
+	handle := dom.StatsHandle()
+	pq := priorityqueue.NewAnalysisPriorityQueue(handle)
+	defer pq.Close()
+	require.NoError(t, pq.Initialize())
+
+	// Close the priority queue.
+	pq.Close()
+
+	// Check if the priority queue is closed.
+	require.False(t, pq.IsInitialized())
+
+	// Re-initialize the priority queue.
+	require.NoError(t, pq.Initialize())
+
+	// Check if the priority queue is initialized.
+	require.True(t, pq.IsInitialized())
+}
