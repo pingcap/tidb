@@ -23,16 +23,15 @@ import (
 	"github.com/pingcap/tidb/pkg/util/intset"
 )
 
-const (
-	collectHistNeededColumns uint64 = 1 << iota
-)
-
 // columnStatsUsageCollector collects predicate columns and/or histogram-needed columns from logical plan.
 // Predicate columns are the columns whose statistics are utilized when making query plans, which usually occur in where conditions, join conditions and so on.
 // Histogram-needed columns are the columns whose histograms are utilized when making query plans, which usually occur in the conditions pushed down to DataSource.
 // The set of histogram-needed columns is the subset of that of predicate columns.
+// TODO: The collected predicate columns will be used to decide whether to load statistics for the columns. And we need some special handling for partition table
+// when the prune mode is static. We can remove such handling when the static partition pruning is totally deprecated.
 type columnStatsUsageCollector struct {
 	// histNeeded indicates whether to collect histogram-needed columns.
+	// TODO: It's used for the special handling for partition table when the prune mode is static. We can remove such handling when the static partition pruning is totally deprecated.
 	histNeeded bool
 	// predicateCols records predicate columns.
 	// The bool value indicates whether we need a full stats for it.
@@ -291,8 +290,9 @@ func (c *columnStatsUsageCollector) collectFromPlan(lp base.LogicalPlan) {
 // predicate indicates whether to collect predicate columns and histNeeded indicates whether to collect histogram-needed columns.
 // The predicate columns are always collected while the histNeeded columns are depending on whether we use sync load.
 // First return value: predicate columns
-// Second return value: histogram-needed columns (nil if histNeeded is false)
-// Third return value: ds.PhysicalTableID from all DataSource (always collected)
+// Second return value: the visited table IDs(For partition table, we only record its global meta ID. The meta ID of each partition will be recorded in tblID2PartitionIDs)
+// Third return value: the visited partition IDs. Used for static partition pruning.
+// TODO: remove the third return value when the static partition pruning is totally deprecated.
 func CollectColumnStatsUsage(lp base.LogicalPlan, histNeeded bool) (
 	map[model.TableItemID]bool,
 	*intset.FastIntSet,

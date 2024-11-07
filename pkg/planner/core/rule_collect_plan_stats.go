@@ -402,11 +402,8 @@ func collectSyncIndices(ctx base.PlanContext,
 }
 
 func collectHistNeededItems(histNeededColumns []model.StatsLoadItem, histNeededIndices map[model.TableItemID]struct{}) (histNeededItems []model.StatsLoadItem) {
-	histNeededItems = histNeededColumns
-	if cap(histNeededItems) < len(histNeededColumns)+len(histNeededIndices) {
-		histNeededItems = make([]model.StatsLoadItem, len(histNeededColumns), len(histNeededColumns)+len(histNeededIndices))
-		copy(histNeededItems, histNeededColumns)
-	}
+	histNeededItems = make([]model.StatsLoadItem, len(histNeededColumns), len(histNeededColumns)+len(histNeededIndices))
+	copy(histNeededItems, histNeededColumns)
 	for idx := range histNeededIndices {
 		histNeededItems = append(histNeededItems, model.StatsLoadItem{TableItemID: idx, FullLoad: true})
 	}
