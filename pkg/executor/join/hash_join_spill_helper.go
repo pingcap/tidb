@@ -81,6 +81,7 @@ type hashJoinSpillHelper struct {
 	spillTriggedInBuildingStageForTest           bool
 	spillTriggeredBeforeBuildingHashTableForTest bool
 	allPartitionsSpilledForTest                  bool
+	skipProbeInRestoreForTest                    bool
 }
 
 func newHashJoinSpillHelper(hashJoinExec *HashJoinV2Exec, partitionNum int, probeFieldTypes []*types.FieldType) *hashJoinSpillHelper {
@@ -550,6 +551,10 @@ func (h *hashJoinSpillHelper) initTmpSpillBuildSideChunks() {
 			h.tmpSpillBuildSideChunks = append(h.tmpSpillBuildSideChunks, chunk.NewChunkWithCapacity(h.buildSpillChkFieldTypes, spillChunkSize))
 		}
 	}
+}
+
+func (h *hashJoinSpillHelper) isProbeSkippedInRestoreForTest() bool {
+	return h.skipProbeInRestoreForTest
 }
 
 func (h *hashJoinSpillHelper) isRespillTriggeredForTest() bool {

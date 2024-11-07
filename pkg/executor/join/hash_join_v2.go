@@ -42,6 +42,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/disk"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/memory"
 )
 
@@ -940,6 +941,9 @@ func (w *ProbeWorkerV2) processOneProbeChunk(probeChunk *chunk.Chunk, joinResult
 
 func (w *ProbeWorkerV2) probeAndSendResult(joinResult *hashjoinWorkerResult) (bool, int64, *hashjoinWorkerResult) {
 	if w.HashJoinCtx.spillHelper.areAllPartitionsSpilled() {
+		if intest.InTest && w.HashJoinCtx.spillHelper.hashJoinExec.inRestore {
+			w.HashJoinCtx.spillHelper.skipProbeInRestoreForTest = true
+		}
 		return true, 0, joinResult
 	}
 

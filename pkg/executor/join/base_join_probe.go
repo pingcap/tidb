@@ -312,6 +312,14 @@ func (j *baseJoinProbe) SetChunkForProbe(chk *chunk.Chunk) (err error) {
 }
 
 func (j *baseJoinProbe) SetRestoredChunkForProbe(chk *chunk.Chunk) error {
+	defer func() {
+		if j.ctx.spillHelper.areAllPartitionsSpilled() {
+			// We will not call `Probe` function when all partitions are spilled.
+			// So it's necessary to manually set `currentProbeRow` to avoid check fail.
+			j.currentProbeRow = j.chunkRows
+		}
+	}()
+
 	hashValueCol := chk.Column(0)
 	serializedKeysCol := chk.Column(1)
 	colNum := chk.NumCols()
