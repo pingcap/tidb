@@ -1205,7 +1205,7 @@ func TestIgnoreRealtimeStats(t *testing.T) {
 	testKit := testkit.NewTestKit(t, store)
 	testKit.MustExec("use test")
 	testKit.MustExec("drop table if exists t")
-	testKit.MustExec("create table t(a int, b int, index ib(b))")
+	testKit.MustExec("create table t(a int, b int)")
 	h := dom.StatsHandle()
 	require.NoError(t, h.HandleDDLEvent(<-h.DDLEventCh()))
 
