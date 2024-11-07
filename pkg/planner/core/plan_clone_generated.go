@@ -382,9 +382,7 @@ func (op *PointGetPlan) specialCloneForPlanCache(newCtx base.PlanContext, cloned
 		cloned.PartitionIdx = new(int)
 		*cloned.PartitionIdx = *op.PartitionIdx
 	}
-	if op.Handle != nil {
-		cloned.Handle = op.Handle.Copy()
-	}
+	cloned.Handle = nil
 	if op.HandleConstant != nil {
 		if op.HandleConstant.SafeToShareAcrossSession() {
 			cloned.HandleConstant = op.HandleConstant
@@ -392,14 +390,16 @@ func (op *PointGetPlan) specialCloneForPlanCache(newCtx base.PlanContext, cloned
 			cloned.HandleConstant = op.HandleConstant.Clone().(*expression.Constant)
 		}
 	}
-	cloned.IndexValues = make([]types.Datum, 0, len(op.IndexValues))
+	if len(cloned.IndexValues) >= len(op.IndexValues) {
+		cloned.IndexValues = cloned.IndexValues[:len(op.IndexValues)]
+	} else {
+		cloned.IndexValues = make([]types.Datum, len(op.IndexValues))
+	}
 	cloned.IndexConstants = cloneConstantsForPlanCacheX(op.IndexConstants, cloned.IndexConstants)
 	cloned.IdxCols = cloneColumnsForPlanCacheX(op.IdxCols, cloned.IdxCols)
-	cloned.IdxColLens = make([]int, len(op.IdxColLens))
-	copy(cloned.IdxColLens, op.IdxColLens)
 	cloned.AccessConditions = cloneExpressionsForPlanCacheX(op.AccessConditions, cloned.AccessConditions)
-	cloned.ctx = newCtx
 	cloned.accessCols = cloneColumnsForPlanCacheX(op.accessCols, cloned.accessCols)
+	cloned.ctx = newCtx
 }
 
 func cloneExpressionsForPlanCacheX(exprs, cloned []expression.Expression) []expression.Expression {
