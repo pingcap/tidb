@@ -144,3 +144,24 @@ func (wi *withIndex[T]) TryNext(ctx context.Context) IterResult[Indexed[T]] {
 	wi.index += 1
 	return res
 }
+
+type filterMap[T, R any] struct {
+	inner TryNextor[T]
+
+	mapper func(T) (R, bool)
+}
+
+func (f filterMap[T, R]) TryNext(ctx context.Context) IterResult[R] {
+	for {
+		r := f.inner.TryNext(ctx)
+
+		if r.FinishedOrError() {
+			return DoneBy[R](r)
+		}
+
+		res, skip := f.mapper(r.Item)
+		if !skip {
+			return Emit(res)
+		}
+	}
+}

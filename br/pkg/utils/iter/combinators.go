@@ -96,3 +96,10 @@ func ConcatAll[T any](items ...TryNextor[T]) TryNextor[T] {
 func Enumerate[T any](it TryNextor[T]) TryNextor[Indexed[T]] {
 	return &withIndex[T]{inner: it, index: 0}
 }
+
+func MapFilter[T, R any](it TryNextor[T], mapper func(T) (R, bool)) TryNextor[R] {
+	return filterMap[T, R]{
+		inner:  it,
+		mapper: mapper,
+	}
+}
