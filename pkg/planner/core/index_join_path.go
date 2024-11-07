@@ -636,27 +636,29 @@ type ColWithCmpFuncManager struct {
 	OpType            []string
 	opArg             []expression.Expression
 	TmpConstant       []*expression.Constant
-	affectedColSchema *expression.Schema
-	compareFuncs      []chunk.CompareFunc
+	affectedColSchema *expression.Schema  `plan-cache-clone:"shallow"`
+	compareFuncs      []chunk.CompareFunc `plan-cache-clone:"shallow"`
 }
 
-// Copy clones the ColWithCmpFuncManager.
-func (cwc *ColWithCmpFuncManager) Copy() *ColWithCmpFuncManager {
+func (cwc *ColWithCmpFuncManager) cloneForPlanCache() *ColWithCmpFuncManager {
 	if cwc == nil {
 		return nil
 	}
 	cloned := new(ColWithCmpFuncManager)
 	if cwc.TargetCol != nil {
-		cloned.TargetCol = cwc.TargetCol.Clone().(*expression.Column)
+		if cwc.TargetCol.SafeToShareAcrossSession() {
+			cloned.TargetCol = cwc.TargetCol
+		} else {
+			cloned.TargetCol = cwc.TargetCol.Clone().(*expression.Column)
+		}
 	}
 	cloned.colLength = cwc.colLength
 	cloned.OpType = make([]string, len(cwc.OpType))
 	copy(cloned.OpType, cwc.OpType)
-	cloned.opArg = util.CloneExpressions(cwc.opArg)
-	cloned.TmpConstant = util.CloneConstants(cwc.TmpConstant)
-	cloned.affectedColSchema = cwc.affectedColSchema.Clone()
-	cloned.compareFuncs = make([]chunk.CompareFunc, len(cwc.compareFuncs))
-	copy(cloned.compareFuncs, cwc.compareFuncs)
+	cloned.opArg = cloneExpressionsForPlanCache(cwc.opArg)
+	cloned.TmpConstant = cloneConstantsForPlanCache(cwc.TmpConstant)
+	cloned.affectedColSchema = cwc.affectedColSchema
+	cloned.compareFuncs = cwc.compareFuncs
 	return cloned
 }
 
