@@ -223,7 +223,7 @@ func (fkc *FKCheckExec) doCheck(ctx context.Context) error {
 		fkc.stats = &FKCheckRuntimeStats{}
 		defer fkc.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(fkc.ID(), fkc.stats)
 	}
-	if len(fkc.toBeCheckedKeys) == 0 && len(fkc.toBeCheckedPrefixKeys) == 0 {
+	if len(fkc.toBeCheckedKeys) == 0 && len(fkc.toBeCheckedPrefixKeys) == 0 && len(fkc.toBeLockedKeys) == 0 {
 		return nil
 	}
 	start := time.Now()
@@ -248,6 +248,7 @@ func (fkc *FKCheckExec) doCheck(ctx context.Context) error {
 	if fkc.stats != nil {
 		fkc.stats.Check = time.Since(start)
 	}
+
 	if len(fkc.toBeLockedKeys) == 0 {
 		return nil
 	}
@@ -542,7 +543,7 @@ type fkCheckKey struct {
 	isPrefix bool
 }
 
-func (fkc FKCheckExec) checkRows(ctx context.Context, sc *stmtctx.StatementContext, txn kv.Transaction, rows []toBeCheckedRow) error {
+func (fkc *FKCheckExec) checkRows(ctx context.Context, sc *stmtctx.StatementContext, txn kv.Transaction, rows []toBeCheckedRow) error {
 	if fkc.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl != nil {
 		fkc.stats = &FKCheckRuntimeStats{}
 		defer fkc.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(fkc.ID(), fkc.stats)

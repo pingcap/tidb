@@ -184,7 +184,7 @@ func NewMgr(
 			return nil, errors.Errorf("unknown command type, comman code is %d", versionCheckerType)
 		}
 		if versionErr != nil {
-			return nil, errors.Annotate(err, "running BR in incompatible version of cluster, "+
+			return nil, errors.Annotate(versionErr, "running BR in incompatible version of cluster, "+
 				"if you believe it's OK, use --check-requirements=false to skip.")
 		}
 	}

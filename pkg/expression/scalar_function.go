@@ -49,6 +49,11 @@ type ScalarFunction struct {
 	canonicalhashcode []byte
 }
 
+// SafeToShareAcrossSession returns if the function can be shared across different sessions.
+func (sf *ScalarFunction) SafeToShareAcrossSession() bool {
+	return sf.Function.SafeToShareAcrossSession()
+}
+
 // VecEvalInt evaluates this expression in a vectorized manner.
 func (sf *ScalarFunction) VecEvalInt(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	intest.Assert(ctx != nil)

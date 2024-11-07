@@ -32,6 +32,8 @@ go_library(
         "//pkg/util/hack",
         "//pkg/util/logutil",
         "//pkg/util/sem",
+        "//pkg/util/sqlescape",
+        "//pkg/util/sqlexec",
         "//pkg/util/stringutil",
         "@com_github_lestrrat_go_jwx_v2//jwk",
         "@com_github_lestrrat_go_jwx_v2//jws",

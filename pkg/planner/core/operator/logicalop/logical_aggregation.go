@@ -23,7 +23,6 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/planner/cardinality"
-	base2 "github.com/pingcap/tidb/pkg/planner/cascades/base"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	ruleutil "github.com/pingcap/tidb/pkg/planner/core/rule/util"
 	fd "github.com/pingcap/tidb/pkg/planner/funcdep"
@@ -41,15 +40,15 @@ import (
 type LogicalAggregation struct {
 	LogicalSchemaProducer
 
-	AggFuncs     []*aggregation.AggFuncDesc
-	GroupByItems []expression.Expression
+	AggFuncs     []*aggregation.AggFuncDesc `hash64-equals:"true"`
+	GroupByItems []expression.Expression    `hash64-equals:"true"`
 
 	// PreferAggType And PreferAggToCop stores aggregation hint information.
 	PreferAggType  uint
 	PreferAggToCop bool
 
-	PossibleProperties [][]*expression.Column
-	InputCount         float64 // InputCount is the input count of this plan.
+	PossibleProperties [][]*expression.Column `hash64-equals:"true"`
+	InputCount         float64                // InputCount is the input count of this plan.
 
 	// NoCopPushDown indicates if planner must not push this agg down to coprocessor.
 	// It is true when the agg is in the outer child tree of apply.
@@ -60,62 +59,6 @@ type LogicalAggregation struct {
 func (la LogicalAggregation) Init(ctx base.PlanContext, offset int) *LogicalAggregation {
 	la.BaseLogicalPlan = NewBaseLogicalPlan(ctx, plancodec.TypeAgg, &la, offset)
 	return &la
-}
-
-// *************************** start implementation of HashEquals interface ****************************
-
-// Hash64 implements the base.Hash64.<0th> interface.
-func (la *LogicalAggregation) Hash64(h base2.Hasher) {
-	h.HashInt(len(la.AggFuncs))
-	for _, one := range la.AggFuncs {
-		one.Hash64(h)
-	}
-	h.HashInt(len(la.GroupByItems))
-	for _, one := range la.GroupByItems {
-		one.Hash64(h)
-	}
-	h.HashInt(len(la.PossibleProperties))
-	for _, one := range la.PossibleProperties {
-		h.HashInt(len(one))
-		for _, col := range one {
-			col.Hash64(h)
-		}
-	}
-}
-
-// Equals implements the base.HashEquals.<1st> interface.
-func (la *LogicalAggregation) Equals(other any) bool {
-	if other == nil {
-		return false
-	}
-	la2, ok := other.(*LogicalAggregation)
-	if !ok {
-		return false
-	}
-	if len(la.AggFuncs) != len(la2.AggFuncs) || len(la.GroupByItems) != len(la2.GroupByItems) || len(la.PossibleProperties) != len(la2.PossibleProperties) {
-		return false
-	}
-	for i := range la.AggFuncs {
-		if !la.AggFuncs[i].Equals(la2.AggFuncs[i]) {
-			return false
-		}
-	}
-	for i := range la.GroupByItems {
-		if !la.GroupByItems[i].Equals(la2.GroupByItems[i]) {
-			return false
-		}
-	}
-	for i := range la.PossibleProperties {
-		if len(la.PossibleProperties[i]) != len(la2.PossibleProperties[i]) {
-			return false
-		}
-		for j := range la.PossibleProperties[i] {
-			if !la.PossibleProperties[i][j].Equals(la2.PossibleProperties[i][j]) {
-				return false
-			}
-		}
-	}
-	return true
 }
 
 // *************************** start implementation of Plan interface ***************************

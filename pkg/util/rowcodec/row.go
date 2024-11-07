@@ -303,7 +303,7 @@ func (r *row) initOffsets32() {
 // CalculateRawChecksum calculates the bytes-level checksum by using the given elements.
 // this is mainly used by the TiCDC to implement E2E checksum functionality.
 func (r *row) CalculateRawChecksum(
-	loc *time.Location, colIDs []int64, values []*types.Datum, key kv.Key, buf []byte,
+	loc *time.Location, colIDs []int64, values []*types.Datum, handle kv.Handle, buf []byte,
 ) (uint32, error) {
 	r.flags |= rowFlagChecksum
 	r.checksumHeader &^= checksumFlagExtra   // revert extra checksum flag
@@ -325,6 +325,6 @@ func (r *row) CalculateRawChecksum(
 	buf = r.toBytes(buf)
 	buf = append(buf, r.checksumHeader)
 	rawChecksum := crc32.Checksum(buf, crc32.IEEETable)
-	rawChecksum = crc32.Update(rawChecksum, crc32.IEEETable, key)
+	rawChecksum = crc32.Update(rawChecksum, crc32.IEEETable, handle.Encoded())
 	return rawChecksum, nil
 }

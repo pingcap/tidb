@@ -37,7 +37,7 @@ go_test(
     ],
     embed = [":owner"],
     flaky = True,
-    shard_count = 9,
+    shard_count = 10,
     deps = [
         "//pkg/ddl",
         "//pkg/infoschema",
