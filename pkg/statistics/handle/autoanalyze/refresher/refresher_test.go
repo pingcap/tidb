@@ -19,11 +19,65 @@ import (
 	"testing"
 
 	pmodel "github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/statistics/handle/autoanalyze/refresher"
+	"github.com/pingcap/tidb/pkg/statistics/handle/util"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/stretchr/testify/require"
 )
+
+func TestChangePruneMode(t *testing.T) {
+	statistics.AutoAnalyzeMinCnt = 0
+	defer func() {
+		statistics.AutoAnalyzeMinCnt = 1000
+	}()
+
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	handle := dom.StatsHandle()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t1 (a int, b int, index idx(a)) partition by range (a) (partition p0 values less than (10), partition p1 values less than (140))")
+	tk.MustExec("insert into t1 values (0, 0)")
+	require.NoError(t, handle.DumpStatsDeltaToKV(true))
+	require.NoError(t, handle.Update(context.Background(), dom.InfoSchema()))
+	tk.MustExec("analyze table t1")
+	r := refresher.NewRefresher(handle, dom.SysProcTracker(), dom.DDLNotifier())
+	defer r.Close()
+
+	// Insert more data to each partition.
+	tk.MustExec("insert into t1 values (1, 1), (11, 11)")
+	require.NoError(t, handle.DumpStatsDeltaToKV(true))
+	require.NoError(t, handle.Update(context.Background(), dom.InfoSchema()))
+
+	// Two jobs are added because the prune mode is static.
+	tk.MustExec("set global tidb_partition_prune_mode = 'static'")
+	require.NoError(t, util.CallWithSCtx(handle.SPool(), func(sctx sessionctx.Context) error {
+		require.True(t, handle.HandleAutoAnalyze())
+		return nil
+	}))
+	r.WaitAutoAnalyzeFinishedForTest()
+	require.NoError(t, util.CallWithSCtx(handle.SPool(), func(sctx sessionctx.Context) error {
+		require.True(t, r.AnalyzeHighestPriorityTables(sctx))
+		return nil
+	}))
+	r.WaitAutoAnalyzeFinishedForTest()
+	require.Equal(t, 0, r.Len())
+
+	// Insert more data to each partition.
+	tk.MustExec("insert into t1 values (2, 2), (3, 3), (4, 4), (12, 12), (13, 13), (14, 14)")
+	require.NoError(t, handle.DumpStatsDeltaToKV(true))
+	require.NoError(t, handle.Update(context.Background(), dom.InfoSchema()))
+
+	// One job is added because the prune mode is dynamic.
+	tk.MustExec("set global tidb_partition_prune_mode = 'dynamic'")
+	require.NoError(t, util.CallWithSCtx(handle.SPool(), func(sctx sessionctx.Context) error {
+		require.True(t, r.AnalyzeHighestPriorityTables(sctx))
+		return nil
+	}))
+	r.WaitAutoAnalyzeFinishedForTest()
+	require.Equal(t, 0, r.Len())
+}
 
 func TestSkipAnalyzeTableWhenAutoAnalyzeRatioIsZero(t *testing.T) {
 	statistics.AutoAnalyzeMinCnt = 0
@@ -67,12 +121,19 @@ func TestSkipAnalyzeTableWhenAutoAnalyzeRatioIsZero(t *testing.T) {
 	r := refresher.NewRefresher(handle, sysProcTracker, dom.DDLNotifier())
 	defer r.Close()
 	// No jobs are added.
-	require.False(t, r.AnalyzeHighestPriorityTables())
+	require.NoError(t, util.CallWithSCtx(handle.SPool(), func(sctx sessionctx.Context) error {
+		require.False(t, r.AnalyzeHighestPriorityTables(sctx))
+		return nil
+	}))
 	require.Equal(t, 0, r.Len())
 	// Enable the auto analyze.
 	tk.MustExec("set global tidb_auto_analyze_ratio = 0.2")
 	// Jobs are added.
-	require.True(t, r.AnalyzeHighestPriorityTables())
+	require.NoError(t, util.CallWithSCtx(handle.SPool(), func(sctx sessionctx.Context) error {
+		require.True(t, r.AnalyzeHighestPriorityTables(sctx))
+		return nil
+	}))
+	require.Equal(t, 0, r.Len())
 }
 
 func TestIgnoreNilOrPseudoStatsOfPartitionedTable(t *testing.T) {
@@ -92,7 +153,10 @@ func TestIgnoreNilOrPseudoStatsOfPartitionedTable(t *testing.T) {
 	sysProcTracker := dom.SysProcTracker()
 	r := refresher.NewRefresher(handle, sysProcTracker, dom.DDLNotifier())
 	defer r.Close()
-	require.False(t, r.AnalyzeHighestPriorityTables())
+	require.NoError(t, util.CallWithSCtx(handle.SPool(), func(sctx sessionctx.Context) error {
+		require.False(t, r.AnalyzeHighestPriorityTables(sctx))
+		return nil
+	}))
 	require.Equal(t, 0, r.Len(), "No jobs are added because table stats are nil")
 }
 
@@ -113,7 +177,10 @@ func TestIgnoreNilOrPseudoStatsOfNonPartitionedTable(t *testing.T) {
 	sysProcTracker := dom.SysProcTracker()
 	r := refresher.NewRefresher(handle, sysProcTracker, dom.DDLNotifier())
 	defer r.Close()
-	require.False(t, r.AnalyzeHighestPriorityTables())
+	require.NoError(t, util.CallWithSCtx(handle.SPool(), func(sctx sessionctx.Context) error {
+		require.False(t, r.AnalyzeHighestPriorityTables(sctx))
+		return nil
+	}))
 	require.Equal(t, 0, r.Len(), "No jobs are added because table stats are nil")
 }
 
@@ -158,7 +225,10 @@ func TestIgnoreTinyTable(t *testing.T) {
 	sysProcTracker := dom.SysProcTracker()
 	r := refresher.NewRefresher(handle, sysProcTracker, dom.DDLNotifier())
 	defer r.Close()
-	require.True(t, r.AnalyzeHighestPriorityTables())
+	require.NoError(t, util.CallWithSCtx(handle.SPool(), func(sctx sessionctx.Context) error {
+		require.True(t, r.AnalyzeHighestPriorityTables(sctx))
+		return nil
+	}))
 	require.Equal(t, 0, r.Len(), "Only t1 is added to the job queue, because t2 is a tiny table(not enough data)")
 }
 
@@ -194,7 +264,10 @@ func TestAnalyzeHighestPriorityTables(t *testing.T) {
 	r := refresher.NewRefresher(handle, sysProcTracker, dom.DDLNotifier())
 	defer r.Close()
 	// Analyze t1 first.
-	require.True(t, r.AnalyzeHighestPriorityTables())
+	require.NoError(t, util.CallWithSCtx(handle.SPool(), func(sctx sessionctx.Context) error {
+		require.True(t, r.AnalyzeHighestPriorityTables(sctx))
+		return nil
+	}))
 	r.WaitAutoAnalyzeFinishedForTest()
 	require.NoError(t, handle.DumpStatsDeltaToKV(true))
 	require.NoError(t, handle.Update(context.Background(), dom.InfoSchema()))
@@ -212,7 +285,10 @@ func TestAnalyzeHighestPriorityTables(t *testing.T) {
 	tblStats2 := handle.GetPartitionStats(tbl2.Meta(), pid2)
 	require.Equal(t, int64(6), tblStats2.ModifyCount)
 	// Do one more round.
-	require.True(t, r.AnalyzeHighestPriorityTables())
+	require.NoError(t, util.CallWithSCtx(handle.SPool(), func(sctx sessionctx.Context) error {
+		require.True(t, r.AnalyzeHighestPriorityTables(sctx))
+		return nil
+	}))
 	r.WaitAutoAnalyzeFinishedForTest()
 	// t2 is analyzed.
 	pid2 = tbl2.Meta().GetPartitionInfo().Definitions[1].ID
@@ -257,7 +333,10 @@ func TestAnalyzeHighestPriorityTablesConcurrently(t *testing.T) {
 	r := refresher.NewRefresher(handle, sysProcTracker, dom.DDLNotifier())
 	defer r.Close()
 	// Analyze tables concurrently.
-	require.True(t, r.AnalyzeHighestPriorityTables())
+	require.NoError(t, util.CallWithSCtx(handle.SPool(), func(sctx sessionctx.Context) error {
+		require.True(t, r.AnalyzeHighestPriorityTables(sctx))
+		return nil
+	}))
 	r.WaitAutoAnalyzeFinishedForTest()
 	require.NoError(t, handle.DumpStatsDeltaToKV(true))
 	require.NoError(t, handle.Update(context.Background(), dom.InfoSchema()))
@@ -284,7 +363,10 @@ func TestAnalyzeHighestPriorityTablesConcurrently(t *testing.T) {
 	require.Equal(t, int64(4), tblStats3.ModifyCount)
 
 	// Do one more round to analyze t3.
-	require.True(t, r.AnalyzeHighestPriorityTables())
+	require.NoError(t, util.CallWithSCtx(handle.SPool(), func(sctx sessionctx.Context) error {
+		require.True(t, r.AnalyzeHighestPriorityTables(sctx))
+		return nil
+	}))
 	r.WaitAutoAnalyzeFinishedForTest()
 	require.NoError(t, handle.DumpStatsDeltaToKV(true))
 	require.NoError(t, handle.Update(context.Background(), dom.InfoSchema()))
@@ -322,7 +404,10 @@ func TestAnalyzeHighestPriorityTablesWithFailedAnalysis(t *testing.T) {
 	r := refresher.NewRefresher(handle, sysProcTracker, dom.DDLNotifier())
 	defer r.Close()
 
-	r.AnalyzeHighestPriorityTables()
+	require.NoError(t, util.CallWithSCtx(handle.SPool(), func(sctx sessionctx.Context) error {
+		require.True(t, r.AnalyzeHighestPriorityTables(sctx))
+		return nil
+	}))
 	r.WaitAutoAnalyzeFinishedForTest()
 
 	is := dom.InfoSchema()
