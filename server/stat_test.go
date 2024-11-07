@@ -76,6 +76,7 @@ func TestInitStatsSessionBlockGC(t *testing.T) {
 		require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/statistics/handle/beforeInitStatsLite", "pause"))
 		newConfig.Performance.LiteInitStats = lite
 		config.StoreGlobalConfig(&newConfig)
+		session.SetStatsLease(3 * time.Second)
 
 		store, err := mockstore.NewMockStore()
 		require.NoError(t, err)
