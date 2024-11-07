@@ -6,7 +6,6 @@ go_library(
     importpath = "github.com/pingcap/tidb/pkg/lightning/backend/tidb",
     visibility = ["//visibility:public"],
     deps = [
-        "//br/pkg/version",
         "//pkg/errno",
         "//pkg/lightning/backend",
         "//pkg/lightning/backend/encode",
@@ -21,6 +20,7 @@ go_library(
         "//pkg/parser/mysql",
         "//pkg/table",
         "//pkg/types",
+        "//pkg/util",
         "//pkg/util/dbutil",
         "//pkg/util/hack",
         "//pkg/util/kvcache",

@@ -1534,7 +1534,6 @@ func upgrade(s sessiontypes.Session) {
 		upgradeToVer99After(s)
 	}
 
-	variable.DDLForce2Queue.Store(false)
 	updateBootstrapVer(s)
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBootstrap)
 	_, err = s.ExecuteInternal(ctx, "COMMIT")

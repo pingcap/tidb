@@ -73,6 +73,7 @@ require (
 	github.com/kisielk/errcheck v1.7.0
 	github.com/klauspost/compress v1.17.9
 	github.com/ks3sdklib/aws-sdk-go v1.2.9
+	github.com/lance6716/pebble v0.0.0-20241104073946-6f55c09bd183
 	github.com/lestrrat-go/jwx/v2 v2.0.21
 	github.com/mgechev/revive v1.4.0
 	github.com/ngaut/pools v0.0.0-20180318154953-b7bc8c42aac7
@@ -210,7 +211,7 @@ require (
 	github.com/go-logr/stdr v1.2.2 // indirect
 	github.com/go-ole/go-ole v1.3.0 // indirect
 	github.com/goccy/go-json v0.10.2 // indirect
-	github.com/golang-jwt/jwt/v4 v4.5.0 // indirect
+	github.com/golang-jwt/jwt/v4 v4.5.1 // indirect
 	github.com/golang-jwt/jwt/v5 v5.2.1 // indirect
 	github.com/golang/glog v1.2.0 // indirect
 	github.com/golang/groupcache v0.0.0-20210331224755-41bb18bfe9da // indirect
