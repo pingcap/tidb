@@ -2063,6 +2063,11 @@ func (do *Domain) LoadBindInfoLoop(ctxForHandle sessionctx.Context, ctxForEvolve
 	}
 
 	owner := do.newOwnerManager(bindinfo.Prompt, bindinfo.OwnerKey)
+	err = owner.CampaignOwner()
+	if err != nil {
+		logutil.BgLogger().Warn("campaign owner failed", zap.Error(err))
+		return err
+	}
 	do.globalBindHandleWorkerLoop(owner)
 	return nil
 }
@@ -2387,6 +2392,13 @@ func (do *Domain) UpdateTableStatsLoop(ctx, initStatsCtx sessionctx.Context) err
 	variable.DisableStatsOwner = do.disableStatsOwner
 	do.statsOwner = do.newOwnerManager(handle.StatsPrompt, handle.StatsOwnerKey)
 	do.statsOwner.SetListener(owner.NewListenersWrapper(statsHandle, do.ddlNotifier))
+	if config.GetGlobalConfig().Instance.TiDBEnableStatsOwner.Load() {
+		err := do.statsOwner.CampaignOwner()
+		if err != nil {
+			logutil.BgLogger().Warn("campaign owner failed", zap.Error(err))
+			return err
+		}
+	}
 	do.wg.Run(func() {
 		do.indexUsageWorker()
 	}, "indexUsageWorker")
@@ -2494,13 +2506,6 @@ func (do *Domain) newOwnerManager(prompt, ownerKey string) owner.Manager {
 		statsOwner = owner.NewMockManager(context.Background(), id, do.store, ownerKey)
 	} else {
 		statsOwner = owner.NewOwnerManager(context.Background(), do.etcdClient, prompt, id, ownerKey)
-	}
-	// TODO: Need to do something when err is not nil.
-	if ownerKey == handle.StatsOwnerKey && config.GetGlobalConfig().Instance.TiDBEnableStatsOwner.Load() {
-		err := statsOwner.CampaignOwner()
-		if err != nil {
-			logutil.BgLogger().Warn("campaign owner failed", zap.Error(err))
-		}
 	}
 	return statsOwner
 }
