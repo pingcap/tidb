@@ -184,7 +184,7 @@ func (p *PhysicalTableScan) GetPlanCostVer2(taskType property.TaskType, option *
 		}
 		hasFullRangeScan := ranger.HasFullRange(p.Ranges, unsignedIntHandle)
 
-		shouldApplyPenalty := hasFullRangeScan && preferRangeScanCondition
+		shouldApplyPenalty := hasFullRangeScan && (sessionVars.StmtCtx.GetHasForce() || preferRangeScanCondition)
 		if shouldApplyPenalty {
 			newRowCount := max(MaxPenaltyRowCount, max(float64(tblColHists.ModifyCount), float64(tblColHists.RealtimeCount)))
 			p.PlanCostVer2 = costusage.SumCostVer2(p.PlanCostVer2, scanCostVer2(option, newRowCount, rowSize, scanFactor))
