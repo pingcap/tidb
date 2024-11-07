@@ -24,8 +24,8 @@ import (
 	"github.com/pingcap/kvproto/pkg/metapb"
 	importclient "github.com/pingcap/tidb/br/pkg/restore/internal/import_client"
 	snapclient "github.com/pingcap/tidb/br/pkg/restore/snap_client"
+	"github.com/pingcap/tidb/br/pkg/restore/split"
 	restoreutils "github.com/pingcap/tidb/br/pkg/restore/utils"
-	"github.com/pingcap/tidb/br/pkg/utiltest"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/stretchr/testify/require"
 )
@@ -156,7 +156,7 @@ func (client *fakeImporterClient) MultiIngest(
 
 func TestSnapImporter(t *testing.T) {
 	ctx := context.Background()
-	splitClient := utiltest.NewFakeSplitClient()
+	splitClient := split.NewFakeSplitClient()
 	for _, region := range generateRegions() {
 		splitClient.AppendPdRegion(region)
 	}
@@ -180,7 +180,7 @@ func TestSnapImporter(t *testing.T) {
 
 func TestSnapImporterRaw(t *testing.T) {
 	ctx := context.Background()
-	splitClient := utiltest.NewFakeSplitClient()
+	splitClient := split.NewFakeSplitClient()
 	for _, region := range generateRegions() {
 		splitClient.AppendPdRegion(region)
 	}

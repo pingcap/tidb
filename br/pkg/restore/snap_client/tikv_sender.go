@@ -370,7 +370,7 @@ func (rc *SnapClient) SplitPoints(
 		splitClientOpts = append(splitClientOpts, split.WithRawKV())
 	}
 
-	splitter := snapsplit.NewRegionSplitter(split.NewClient(
+	splitter := split.NewRegionSplitter(split.NewClient(
 		rc.pdClient,
 		rc.pdHTTPClient,
 		rc.tlsConf,
@@ -379,7 +379,7 @@ func (rc *SnapClient) SplitPoints(
 		splitClientOpts...,
 	))
 
-	return splitter.ExecuteSplit(ctx, sortedSplitKeys)
+	return splitter.ExecuteSortedKeys(ctx, sortedSplitKeys)
 }
 
 func getFileRangeKey(f string) string {
