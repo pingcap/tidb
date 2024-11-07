@@ -568,6 +568,10 @@ func (c *isTrueOrFalseFunctionClass) getFunction(ctx BuildContext, args []Expres
 type builtinRealIsTrueSig struct {
 	baseBuiltinFunc
 	keepNull bool
+
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinRealIsTrueSig) Clone() builtinFunc {
@@ -593,6 +597,10 @@ func (b *builtinRealIsTrueSig) evalInt(ctx EvalContext, row chunk.Row) (int64, b
 type builtinDecimalIsTrueSig struct {
 	baseBuiltinFunc
 	keepNull bool
+
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinDecimalIsTrueSig) Clone() builtinFunc {
@@ -618,6 +626,10 @@ func (b *builtinDecimalIsTrueSig) evalInt(ctx EvalContext, row chunk.Row) (int64
 type builtinIntIsTrueSig struct {
 	baseBuiltinFunc
 	keepNull bool
+
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinIntIsTrueSig) Clone() builtinFunc {
@@ -668,6 +680,10 @@ func (b *builtinVectorFloat32IsTrueSig) evalInt(ctx EvalContext, row chunk.Row) 
 type builtinRealIsFalseSig struct {
 	baseBuiltinFunc
 	keepNull bool
+
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinRealIsFalseSig) Clone() builtinFunc {
@@ -693,6 +709,10 @@ func (b *builtinRealIsFalseSig) evalInt(ctx EvalContext, row chunk.Row) (int64, 
 type builtinDecimalIsFalseSig struct {
 	baseBuiltinFunc
 	keepNull bool
+
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinDecimalIsFalseSig) Clone() builtinFunc {
@@ -718,6 +738,10 @@ func (b *builtinDecimalIsFalseSig) evalInt(ctx EvalContext, row chunk.Row) (int6
 type builtinIntIsFalseSig struct {
 	baseBuiltinFunc
 	keepNull bool
+
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinIntIsFalseSig) Clone() builtinFunc {
