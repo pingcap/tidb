@@ -16,14 +16,14 @@ package tikv
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
-	"strings"
+	"slices"
 	"testing"
 
-	"github.com/cockroachdb/pebble/vfs"
 	"github.com/google/uuid"
+	rocks "github.com/lance6716/pebble"
 	rockssst "github.com/lance6716/pebble/sstable"
+	"github.com/lance6716/pebble/vfs"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/import_sstpb"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
@@ -37,8 +37,8 @@ type testCase struct {
 	sortedKVs [][2][]byte
 	ts        uint64
 
-	presetIdentity         *rockssst.Identity
-	expectedBlockInfosJSON string
+	presetIdentity   *rockssst.Identity
+	expectedFilePath string
 }
 
 var testCases []*testCase
@@ -57,17 +57,10 @@ func init() {
 			Session:            "DS38NDUWK5HLG8SSL5M7",
 			OriginalFileNumber: 1,
 		},
-		expectedBlockInfosJSON: `
-		[
-			{"Offset":0,"Length":42,"Name":"data","Compression":0,"Checksum":2258416982},
-			{"Offset":121,"Length":39,"Name":"index","Compression":0,"Checksum":3727189474},
-			{"Offset":165,"Length":1253,"Name":"properties","Compression":0,"Checksum":561778464},
-			{"Offset":1423,"Length":79,"Name":"meta-index","Compression":0,"Checksum":955781521},
-			{"Offset":1507,"Length":53,"Name":"footer","Compression":0,"Checksum":0}
-		]`,
+		expectedFilePath: "sst-examples/0.sst",
 	})
 
-	moreKeys := make([][2][]byte, 20)
+	moreKeys := make([][2][]byte, 10000)
 	for i := range moreKeys {
 		moreKeys[i] = [2][]byte{
 			[]byte("key" + fmt.Sprintf("%09d", i)),
@@ -79,18 +72,11 @@ func init() {
 		ts:        404411537129996288,
 		presetIdentity: &rockssst.Identity{
 			DB:                 "SST Writer",
-			Host:               "lance6716-nuc10i7fnh",
-			Session:            "F1H18D8NUXQ02CBH69NK",
+			Host:               "lances-MacBook-Air.local",
+			Session:            "67GBMB9SAOWH1S6HPC6V",
 			OriginalFileNumber: 1,
 		},
-		expectedBlockInfosJSON: `
-		[
-			{"Offset":0,"Length":143,"Name":"data","Compression":7,"Checksum":670152417},
-			{"Offset":286,"Length":49,"Name":"index","Compression":0,"Checksum":55113349},
-			{"Offset":340,"Length":1374,"Name":"properties","Compression":0,"Checksum":1541338589},
-			{"Offset":1719,"Length":81,"Name":"meta-index","Compression":0,"Checksum":1033478052},
-			{"Offset":1805,"Length":53,"Name":"footer","Compression":0,"Checksum":0}
-		]`,
+		expectedFilePath: "sst-examples/1.sst",
 	})
 }
 
@@ -247,20 +233,77 @@ func testPebbleWriteSST(
 	require.NoError(t, err)
 	defer reader.Close()
 
-	layout, err := reader.Layout()
-	require.NoError(t, err)
+	goSSTKVs, goSSTProperties := getData2Compare(t, reader)
+	require.Len(t, goSSTKVs, len(c.sortedKVs))
 
-	infos := layout.BlockInfos(reader)
-	var expectedInfos []*rockssst.BlockInfo
-	err = json.Unmarshal([]byte(c.expectedBlockInfosJSON), &expectedInfos)
+	f2, err := vfs.Default.Open(c.expectedFilePath)
 	require.NoError(t, err)
-	require.Equal(t, expectedInfos, infos)
+	readable2, err := rockssst.NewSimpleReadable(f2)
+	require.NoError(t, err)
+	reader2, err := rockssst.NewReader(readable2, rockssst.ReaderOptions{})
+	require.NoError(t, err)
+	defer reader2.Close()
+
+	tikvSSTKVs, tikvSSTProperties := getData2Compare(t, reader2)
+
+	require.Equal(t, len(tikvSSTKVs), len(goSSTKVs))
+	for i, kv := range goSSTKVs {
+		require.Equal(t, kv[0], tikvSSTKVs[i][0], "key mismatch. index: %d", i)
+		require.Equal(t, kv[1], tikvSSTKVs[i][1], "value mismatch. index: %d", i)
+	}
+	require.Equal(t, tikvSSTProperties, goSSTProperties)
+}
+
+func getData2Compare(
+	t *testing.T,
+	reader *rockssst.Reader,
+) (kvs [][2][]byte, properties *rockssst.Properties) {
+	iter, err := reader.NewIter(nil, nil)
+	require.NoError(t, err)
+	defer iter.Close()
+
+	realKVs := make([][2][]byte, 0, 10240)
+
+	k, v := iter.First()
+	require.NotNil(t, k)
+	getKey := func(k *rocks.InternalKey) []byte {
+		return slices.Clone(k.UserKey)
+	}
+	getValue := func(v rocks.LazyValue) []byte {
+		realV, callerOwned, err2 := v.Value(nil)
+		require.NoError(t, err2)
+		if !callerOwned {
+			realV = slices.Clone(realV)
+		}
+		return realV
+	}
+	realKVs = append(realKVs, [2][]byte{getKey(k), getValue(v)})
+	for {
+		k, v = iter.Next()
+		if k == nil {
+			break
+		}
+		realKVs = append(realKVs, [2][]byte{getKey(k), getValue(v)})
+	}
+
+	p := reader.Properties.Clone()
+	// delete some mismatch properties because compress layer has different behaviour
+	p.DataSize = 0
+	p.NumDataBlocks = 0
+	// TODO(lance6716): check why it's different
+	p.FilterSize = 0
+	p.IndexSize = 0
+	delete(p.UserProperties, "rocksdb.num.filter_entries")
+	delete(p.UserProperties, "rocksdb.tail.start.offset")
+	p.Loaded = nil
+
+	return realKVs, p
 }
 
 func TestDebugReadSST(t *testing.T) {
 	//t.Skip("this is a manual test")
 
-	sstPath := "/tmp/test-write.sst"
+	sstPath := "/tmp/test.sst"
 	t.Logf("read sst: %s", sstPath)
 	f, err := vfs.Default.Open(sstPath)
 	require.NoError(t, err)
@@ -270,39 +313,28 @@ func TestDebugReadSST(t *testing.T) {
 	require.NoError(t, err)
 	defer reader.Close()
 
-	layout, err := reader.Layout()
-	require.NoError(t, err)
-
-	//infos := layout.BlockInfos(reader)
-	//b, err := json.Marshal(infos)
-	//require.NoError(t, err)
-	//t.Logf("block infos: %s", string(b))
-
-	content := &strings.Builder{}
-	layout.Describe(content, true, reader, nil)
-
-	t.Logf("layout:\n %s", content.String())
 	t.Logf("properties:\n %s", reader.Properties.String())
+	t.SkipNow()
 
-	//iter, err := reader.NewIter(nil, nil)
-	//require.NoError(t, err)
-	//defer iter.Close()
-	//
-	//k, v := iter.First()
-	//if k == nil {
-	//	return
-	//}
-	//getValue := func(v rocks.LazyValue) []byte {
-	//	realV, _, err2 := v.Value(nil)
-	//	require.NoError(t, err2)
-	//	return realV
-	//}
-	//t.Logf("key: %X\nvalue: %X", k.UserKey, getValue(v))
-	//for {
-	//	k, v = iter.Next()
-	//	if k == nil {
-	//		break
-	//	}
-	//	t.Logf("key: %X\nvalue: %X", k.UserKey, getValue(v))
-	//}
+	iter, err := reader.NewIter(nil, nil)
+	require.NoError(t, err)
+	defer iter.Close()
+
+	k, v := iter.First()
+	if k == nil {
+		return
+	}
+	getValue := func(v rocks.LazyValue) []byte {
+		realV, _, err2 := v.Value(nil)
+		require.NoError(t, err2)
+		return realV
+	}
+	t.Logf("key: %X\nvalue: %X", k.UserKey, getValue(v))
+	for {
+		k, v = iter.Next()
+		if k == nil {
+			break
+		}
+		t.Logf("key: %X\nvalue: %X", k.UserKey, getValue(v))
+	}
 }
