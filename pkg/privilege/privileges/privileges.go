@@ -339,6 +339,7 @@ func (p *UserPrivileges) GetAuthPluginForConnection(user, host string) (string, 
 		return mysql.AuthNativePassword, nil
 	}
 
+	terror.Log(p.Handle.ensureActiveUser(user))
 	mysqlPriv := p.Handle.Get()
 	record := mysqlPriv.connectionVerification(user, host)
 	if record == nil {
@@ -369,6 +370,8 @@ func (p *UserPrivileges) GetAuthPlugin(user, host string) (string, error) {
 	if SkipWithGrant {
 		return mysql.AuthNativePassword, nil
 	}
+
+	terror.Log(p.Handle.ensureActiveUser(user))
 	mysqlPriv := p.Handle.Get()
 	record := mysqlPriv.connectionVerification(user, host)
 	if record == nil {
