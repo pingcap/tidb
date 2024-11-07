@@ -261,9 +261,10 @@ func (w *worker) startRepository(ctx context.Context) func() {
 	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnOthers)
 	return func() {
 		w.owner = w.newOwner(ownerKey, promptKey)
+		if err := w.owner.CampaignOwner(); err != nil {
+			logutil.BgLogger().Error("repository could not campaign for owner", zap.NamedError("err", err))
+		}
 		ticker := time.NewTicker(time.Second)
-		w.owner.CampaignOwner()
-		defer w.owner.CampaignCancel()
 
 		for rtIdx := range workloadTables {
 			rt := &workloadTables[rtIdx]
