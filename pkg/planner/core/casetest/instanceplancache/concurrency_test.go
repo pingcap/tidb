@@ -454,6 +454,66 @@ func TestInstancePlanCacheConcurrencyPoint(t *testing.T) {
 	testWithWorkers(TKs, stmts)
 }
 
+func TestInstancePlanCacheConcurrencyPartitioning(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`use test`)
+	tk.MustExec(`set global tidb_enable_instance_plan_cache=1`)
+	tk.MustExec(`create table t (a int) partition by range (a) (
+    			partition p0 values less than (10),
+    			partition p1 values less than (20),
+    			partition p2 values less than (30),
+    			partition p3 values less than (40),
+    			partition p4 values less than (50),
+    			partition p5 values less than (60),
+    			partition p6 values less than (70),
+    			partition p7 values less than (80),
+    			partition p8 values less than (90),
+    			partition p9 values less than (100))`)
+	for i := 0; i < 100; i++ {
+		tk.MustExec(fmt.Sprintf("insert into t values (%v)", i))
+	}
+	var wg sync.WaitGroup
+	for i := 0; i < 10; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			tki := testkit.NewTestKit(t, store)
+			tki.MustExec(`use test`)
+
+			for k := 0; k < 100; k++ {
+				switch rand.Intn(3) {
+				case 0: // point get
+					tki.MustExec(`prepare st from 'select * from t where a=?'`)
+					v := rand.Intn(100)
+					tki.MustExec("set @v = ?", v)
+					tki.MustQuery("execute st using @v").Check(testkit.Rows(fmt.Sprintf("%v", v)))
+				case 1: // batch get
+					tki.MustExec(`prepare st from 'select * from t where a in (?, ?)'`)
+					v1, v2 := rand.Intn(50), 50+rand.Intn(50)
+					tki.MustExec("set @v1 = ?, @v2 = ?", v1, v2)
+					v1s, v2s := fmt.Sprintf("%v", v1), fmt.Sprintf("%v", v2)
+					if v1s > v2s {
+						v1s, v2s = v2s, v1s
+					}
+					tki.MustQuery("execute st using @v1, @v2").Sort().Check(testkit.Rows(v1s, v2s))
+				case 2: // range scan
+					tki.MustExec(`prepare st from 'select * from t where a between ? and ?'`)
+					v1, v2 := rand.Intn(50), 50+rand.Intn(50)
+					tki.MustExec("set @v1 = ?, @v2 = ?", v1, v2)
+					expected := make([]string, 0, v2-v1+1)
+					for v := v1; v <= v2; v++ {
+						expected = append(expected, fmt.Sprintf("%v", v))
+					}
+					sort.Strings(expected)
+					tki.MustQuery("execute st using @v1, @v2").Sort().Check(testkit.Rows(expected...))
+				}
+			}
+		}()
+	}
+	wg.Wait()
+}
+
 func TestInstancePlanCacheConcurrencyComp(t *testing.T) {
 	// cases from https://github.com/PingCAP-QE/qa/tree/master/comp/yy/plan-cache
 	store := testkit.CreateMockStore(t)
