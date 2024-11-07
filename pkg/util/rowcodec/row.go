@@ -307,8 +307,6 @@ func (r *row) initOffsets32() {
 func (r *row) CalculateRawChecksum(
 	loc *time.Location, colIDs []int64, values []*types.Datum, key kv.Key, handle kv.Handle, buf []byte,
 ) (uint32, error) {
-	r.flags |= rowFlagChecksum
-	r.checksumHeader &^= checksumFlagExtra // revert extra checksum flag
 	for idx, colID := range colIDs {
 		data, err := encodeValueDatum(loc, values[idx], nil)
 		if err != nil {
