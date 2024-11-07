@@ -136,11 +136,11 @@ func DeleteTableStatsFromKV(sctx sessionctx.Context, statsIDs []int64, lowPriori
 	if err != nil {
 		return errors.Trace(err)
 	}
-	updataStmt := "update"
-	deleteStmt := "delete"
+	updataStmt := "update "
+	deleteStmt := "delete "
 	if lowPriority {
-		updataStmt += " LOW_PRIORITY "
-		deleteStmt += " LOW_PRIORITY "
+		updataStmt += "LOW_PRIORITY "
+		deleteStmt += "LOW_PRIORITY "
 	}
 	for _, statsID := range statsIDs {
 		// We only update the version so that other tidb will know that this table is deleted.
