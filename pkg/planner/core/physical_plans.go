@@ -174,16 +174,15 @@ type PhysPlanPartInfo struct {
 
 const emptyPartitionInfoSize = int64(unsafe.Sizeof(PhysPlanPartInfo{}))
 
-// Clone clones the PhysPlanPartInfo.
-func (pi *PhysPlanPartInfo) Clone() *PhysPlanPartInfo {
+func (pi *PhysPlanPartInfo) cloneForPlanCache() *PhysPlanPartInfo {
 	if pi == nil {
 		return nil
 	}
 	cloned := new(PhysPlanPartInfo)
-	cloned.PruningConds = util.CloneExprs(pi.PruningConds)
-	cloned.PartitionNames = util.CloneCIStrs(pi.PartitionNames)
-	cloned.Columns = util.CloneCols(pi.Columns)
-	cloned.ColumnNames = util.CloneFieldNames(pi.ColumnNames)
+	cloned.PruningConds = cloneExpressionsForPlanCache(pi.PruningConds)
+	cloned.PartitionNames = pi.PartitionNames
+	cloned.Columns = cloneColumnsForPlanCache(pi.Columns)
+	cloned.ColumnNames = pi.ColumnNames
 	return cloned
 }
 
@@ -737,7 +736,7 @@ type PhysicalIndexScan struct {
 	Index      *model.IndexInfo `plan-cache-clone:"shallow"`
 	IdxCols    []*expression.Column
 	IdxColLens []int
-	Ranges     []*ranger.Range
+	Ranges     []*ranger.Range     `plan-cache-clone:"shallow"`
 	Columns    []*model.ColumnInfo `plan-cache-clone:"shallow"`
 	DBName     pmodel.CIStr        `plan-cache-clone:"shallow"`
 
@@ -913,7 +912,7 @@ type PhysicalTableScan struct {
 	Table   *model.TableInfo    `plan-cache-clone:"shallow"`
 	Columns []*model.ColumnInfo `plan-cache-clone:"shallow"`
 	DBName  pmodel.CIStr        `plan-cache-clone:"shallow"`
-	Ranges  []*ranger.Range
+	Ranges  []*ranger.Range     `plan-cache-clone:"shallow"`
 
 	TableAsName *pmodel.CIStr `plan-cache-clone:"shallow"`
 
@@ -1354,21 +1353,21 @@ func (p *basePhysicalJoin) cloneForPlanCacheWithSelf(newCtx base.PlanContext, ne
 	}
 	cloned.physicalSchemaProducer = *base
 	cloned.JoinType = p.JoinType
-	cloned.LeftConditions = util.CloneExprs(p.LeftConditions)
-	cloned.RightConditions = util.CloneExprs(p.RightConditions)
-	cloned.OtherConditions = util.CloneExprs(p.OtherConditions)
+	cloned.LeftConditions = cloneExpressionsForPlanCache(p.LeftConditions)
+	cloned.RightConditions = cloneExpressionsForPlanCache(p.RightConditions)
+	cloned.OtherConditions = cloneExpressionsForPlanCache(p.OtherConditions)
 	cloned.InnerChildIdx = p.InnerChildIdx
-	cloned.OuterJoinKeys = util.CloneCols(p.OuterJoinKeys)
-	cloned.InnerJoinKeys = util.CloneCols(p.InnerJoinKeys)
-	cloned.LeftJoinKeys = util.CloneCols(p.LeftJoinKeys)
-	cloned.RightJoinKeys = util.CloneCols(p.RightJoinKeys)
+	cloned.OuterJoinKeys = cloneColumnsForPlanCache(p.OuterJoinKeys)
+	cloned.InnerJoinKeys = cloneColumnsForPlanCache(p.InnerJoinKeys)
+	cloned.LeftJoinKeys = cloneColumnsForPlanCache(p.LeftJoinKeys)
+	cloned.RightJoinKeys = cloneColumnsForPlanCache(p.RightJoinKeys)
 	cloned.IsNullEQ = make([]bool, len(p.IsNullEQ))
 	copy(cloned.IsNullEQ, p.IsNullEQ)
 	for _, d := range p.DefaultValues {
 		cloned.DefaultValues = append(cloned.DefaultValues, *d.Clone())
 	}
-	cloned.LeftNAJoinKeys = util.CloneCols(p.LeftNAJoinKeys)
-	cloned.RightNAJoinKeys = util.CloneCols(p.RightNAJoinKeys)
+	cloned.LeftNAJoinKeys = cloneColumnsForPlanCache(p.LeftNAJoinKeys)
+	cloned.RightNAJoinKeys = cloneColumnsForPlanCache(p.RightNAJoinKeys)
 	return cloned, true
 }
 

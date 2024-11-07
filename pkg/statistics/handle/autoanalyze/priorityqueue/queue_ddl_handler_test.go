@@ -518,7 +518,7 @@ func TestExchangeTablePartition(t *testing.T) {
 	testKit.MustExec("analyze table t2")
 	require.NoError(t, h.Update(context.Background(), do.InfoSchema()))
 	// Insert some data.
-	testKit.MustExec("insert into t1 values (1,2),(2,2)")
+	testKit.MustExec("insert into t1 values (1,2),(2,2),(3,3),(4,4)")
 	testKit.MustExec("insert into t2 values (1,2)")
 	require.NoError(t, h.DumpStatsDeltaToKV(true))
 	require.NoError(t, h.Update(context.Background(), do.InfoSchema()))
