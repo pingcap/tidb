@@ -2062,6 +2062,7 @@ func (do *Domain) LoadBindInfoLoop(ctxForHandle sessionctx.Context, ctxForEvolve
 	err = owner.CampaignOwner()
 	if err != nil {
 		logutil.BgLogger().Warn("campaign owner failed", zap.Error(err))
+		return err
 	}
 	do.globalBindHandleWorkerLoop(owner)
 	return nil
@@ -2391,6 +2392,7 @@ func (do *Domain) UpdateTableStatsLoop(ctx, initStatsCtx sessionctx.Context) err
 		err := do.statsOwner.CampaignOwner()
 		if err != nil {
 			logutil.BgLogger().Warn("campaign owner failed", zap.Error(err))
+			return err
 		}
 	}
 	do.wg.Run(func() {
