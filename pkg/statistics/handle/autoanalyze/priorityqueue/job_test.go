@@ -44,9 +44,12 @@ func TestStringer(t *testing.T) {
 		{
 			name: "analyze non-partitioned table index",
 			job: &priorityqueue.NonPartitionedTableAnalysisJob{
-				TableID:       2,
-				TableSchema:   "test_schema",
-				TableName:     "test_table",
+				TableID:     2,
+				TableSchema: "test_schema",
+				TableName:   "test_table",
+				IndexIDs: map[int64]struct{}{
+					1: {},
+				},
 				Indexes:       []string{"idx"},
 				TableStatsVer: 1,
 				Weight:        1.999999,
@@ -63,8 +66,12 @@ func TestStringer(t *testing.T) {
 				TableSchema:     "test_schema",
 				GlobalTableName: "test_table",
 				Partitions:      []string{"p0", "p1"},
-				TableStatsVer:   1,
-				Weight:          1.999999,
+				PartitionIDs: map[int64]struct{}{
+					1: {},
+					2: {},
+				},
+				TableStatsVer: 1,
+				Weight:        1.999999,
 				Indicators: priorityqueue.Indicators{
 					ChangePercentage: 0.5,
 				},
@@ -79,6 +86,10 @@ func TestStringer(t *testing.T) {
 				GlobalTableName: "test_table",
 				PartitionIndexes: map[string][]string{
 					"idx": {"p0", "p1"},
+				},
+				PartitionIndexIDs: map[int64][]int64{
+					1: {1, 2},
+					2: {1, 2},
 				},
 				TableStatsVer: 1,
 				Weight:        1.999999,
@@ -114,7 +125,10 @@ func TestStringer(t *testing.T) {
 				StaticPartitionID:   8,
 				TableStatsVer:       1,
 				Weight:              1.999999,
-				Indexes:             []string{"idx"},
+				IndexIDs: map[int64]struct{}{
+					1: {},
+				},
+				Indexes: []string{"idx"},
 				Indicators: priorityqueue.Indicators{
 					ChangePercentage: 0.5,
 				},

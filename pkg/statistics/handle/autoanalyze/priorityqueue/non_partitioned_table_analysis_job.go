@@ -34,34 +34,37 @@ const (
 )
 
 // NonPartitionedTableAnalysisJob is a TableAnalysisJob for analyzing the physical table.
+//
+//nolint:fieldalignment
 type NonPartitionedTableAnalysisJob struct {
-	successHook JobHook
-	failureHook JobHook
-	TableSchema string
-	TableName   string
-	// This is only for newly added indexes.
-	Indexes []string
+	successHook SuccessJobHook
+	failureHook FailureJobHook
+
+	TableID  int64
+	IndexIDs map[int64]struct{}
+
 	Indicators
-	TableID       int64
 	TableStatsVer int
 	Weight        float64
+
+	// Lazy initialized.
+	TableSchema string
+	TableName   string
+	Indexes     []string
 }
 
 // NewNonPartitionedTableAnalysisJob creates a new TableAnalysisJob for analyzing the physical table.
 func NewNonPartitionedTableAnalysisJob(
-	schema, tableName string,
 	tableID int64,
-	indexes []string,
+	indexIDs map[int64]struct{},
 	tableStatsVer int,
 	changePercentage float64,
 	tableSize float64,
 	lastAnalysisDuration time.Duration,
 ) *NonPartitionedTableAnalysisJob {
 	return &NonPartitionedTableAnalysisJob{
-		TableSchema:   schema,
-		TableName:     tableName,
 		TableID:       tableID,
-		Indexes:       indexes,
+		IndexIDs:      indexIDs,
 		TableStatsVer: tableStatsVer,
 		Indicators: Indicators{
 			ChangePercentage:     changePercentage,
@@ -89,7 +92,7 @@ func (j *NonPartitionedTableAnalysisJob) Analyze(
 			}
 		} else {
 			if j.failureHook != nil {
-				j.failureHook(j)
+				j.failureHook(j, true)
 			}
 		}
 	}()
@@ -106,34 +109,62 @@ func (j *NonPartitionedTableAnalysisJob) Analyze(
 }
 
 // RegisterSuccessHook registers a successHook function that will be called after the job can be marked as successful.
-func (j *NonPartitionedTableAnalysisJob) RegisterSuccessHook(hook JobHook) {
+func (j *NonPartitionedTableAnalysisJob) RegisterSuccessHook(hook SuccessJobHook) {
 	j.successHook = hook
 }
 
 // RegisterFailureHook registers a failureHook function that will be called after the job can be marked as failed.
-func (j *NonPartitionedTableAnalysisJob) RegisterFailureHook(hook JobHook) {
+func (j *NonPartitionedTableAnalysisJob) RegisterFailureHook(hook FailureJobHook) {
 	j.failureHook = hook
 }
 
 // HasNewlyAddedIndex checks whether the table has newly added indexes.
 func (j *NonPartitionedTableAnalysisJob) HasNewlyAddedIndex() bool {
-	return len(j.Indexes) > 0
+	return len(j.IndexIDs) > 0
 }
 
-// IsValidToAnalyze checks whether the table is valid to analyze.
-// We will check the last failed job and average analyze duration to determine whether the table is valid to analyze.
-func (j *NonPartitionedTableAnalysisJob) IsValidToAnalyze(
+// ValidateAndPrepare validates if the analysis job can run and prepares it for execution.
+// For non-partitioned tables, it checks:
+// - Schema exists
+// - Table exists
+// - No recent failed analysis to avoid queue blocking
+func (j *NonPartitionedTableAnalysisJob) ValidateAndPrepare(
 	sctx sessionctx.Context,
 ) (bool, string) {
+	callFailureHook := func(needRetry bool) {
+		if j.failureHook != nil {
+			j.failureHook(j, needRetry)
+		}
+	}
+	is := sctx.GetDomainInfoSchema()
+	tableInfo, ok := is.TableInfoByID(j.TableID)
+	if !ok {
+		callFailureHook(false)
+		return false, tableNotExist
+	}
+	dbID := tableInfo.DBID
+	schema, ok := is.SchemaByID(dbID)
+	if !ok {
+		callFailureHook(false)
+		return false, schemaNotExist
+	}
+	tableName := tableInfo.Name.O
+	indexes := make([]string, 0, len(j.IndexIDs))
+	for _, index := range tableInfo.Indices {
+		if _, ok := j.IndexIDs[index.ID]; ok {
+			indexes = append(indexes, index.Name.O)
+		}
+	}
+
+	j.TableSchema = schema.Name.O
+	j.TableName = tableName
+	j.Indexes = indexes
 	if valid, failReason := isValidToAnalyze(
 		sctx,
 		j.TableSchema,
 		j.TableName,
 	); !valid {
-		if j.failureHook != nil {
-			j.failureHook(j)
-		}
-
+		callFailureHook(true)
 		return false, failReason
 	}
 
