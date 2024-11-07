@@ -9,9 +9,9 @@ DB_NAME="mysql_consistency"
 TABLE_NAME="t"
 
 # get version info
-# MySQL:   9.1.0
-# MariaDB: 11.4.2-MariaDB-ubu2404
-# TiDB:    8.0.11-TiDB-v8.3.0
+# MySQL:   VERSION(): 9.1.0
+# MariaDB: VERSION(): 11.4.2-MariaDB-ubu2404
+# TiDB:    VERSION(): 8.0.11-TiDB-v8.3.0
 versioninfo=`run_sql "SELECT VERSION();"`
 
 # drop database on mysql
@@ -35,7 +35,7 @@ sleep 2
 if [[ $versioninfo =~ (Ti|Maria)DB ]]; then
 	metadata=`run_sql "show master status;"`
 else
-	if [[ $versioninfo =~ ^[89] ]]; then
+	if [[ $versioninfo =~ "VERSION(): "[89] ]]; then
 		# MySQL 8.4.0 and newer no longer support SHOW MASTER STATUS
 		# and only support SHOW BINARY LOG STATUS
 		metadata=`run_sql "show binary log status;"`
