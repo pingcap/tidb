@@ -20,6 +20,7 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/util"
+	"github.com/pingcap/tidb/pkg/types"
 )
 
 func clonePhysicalPlansForPlanCache(newCtx base.PlanContext, plans []base.PhysicalPlan) ([]base.PhysicalPlan, bool) {
@@ -372,6 +373,112 @@ func (op *PhysicalIndexReader) CloneForPlanCache(newCtx base.PlanContext) (base.
 	cloned.OutputColumns = cloneColumnsForPlanCache(op.OutputColumns)
 	cloned.PlanPartInfo = op.PlanPartInfo.cloneForPlanCache()
 	return cloned, true
+}
+
+func (op *PointGetPlan) specialCloneForPlanCache(newCtx base.PlanContext, cloned *PointGetPlan) {
+	*cloned = *op
+	cloned.Plan.SetSCtx(newCtx)
+	if op.PartitionIdx != nil {
+		cloned.PartitionIdx = new(int)
+		*cloned.PartitionIdx = *op.PartitionIdx
+	}
+	if op.Handle != nil {
+		cloned.Handle = op.Handle.Copy()
+	}
+	if op.HandleConstant != nil {
+		if op.HandleConstant.SafeToShareAcrossSession() {
+			cloned.HandleConstant = op.HandleConstant
+		} else {
+			cloned.HandleConstant = op.HandleConstant.Clone().(*expression.Constant)
+		}
+	}
+	cloned.IndexValues = make([]types.Datum, 0, len(op.IndexValues))
+	cloned.IndexConstants = cloneConstantsForPlanCacheX(op.IndexConstants, cloned.IndexConstants)
+	cloned.IdxCols = cloneColumnsForPlanCacheX(op.IdxCols, cloned.IdxCols)
+	cloned.IdxColLens = make([]int, len(op.IdxColLens))
+	copy(cloned.IdxColLens, op.IdxColLens)
+	cloned.AccessConditions = cloneExpressionsForPlanCacheX(op.AccessConditions, cloned.AccessConditions)
+	cloned.ctx = newCtx
+	cloned.accessCols = cloneColumnsForPlanCacheX(op.accessCols, cloned.accessCols)
+}
+
+func cloneExpressionsForPlanCacheX(exprs, cloned []expression.Expression) []expression.Expression {
+	if exprs == nil {
+		return nil
+	}
+	allSafe := true
+	for _, e := range exprs {
+		if !e.SafeToShareAcrossSession() {
+			allSafe = false
+			break
+		}
+	}
+	if allSafe {
+		return exprs
+	}
+	cloned = cloned[:0]
+	for _, e := range exprs {
+		if e.SafeToShareAcrossSession() {
+			cloned = append(cloned, e)
+		} else {
+			cloned = append(cloned, e.Clone())
+		}
+	}
+	return cloned
+}
+
+func cloneColumnsForPlanCacheX(cols, cloned []*expression.Column) []*expression.Column {
+	if cols == nil {
+		return nil
+	}
+	allSafe := true
+	for _, c := range cols {
+		if !c.SafeToShareAcrossSession() {
+			allSafe = false
+			break
+		}
+	}
+	if allSafe {
+		return cols
+	}
+	cloned = cloned[:0]
+	for _, c := range cols {
+		if c == nil {
+			cloned = append(cloned, nil)
+			continue
+		}
+		if c.SafeToShareAcrossSession() {
+			cloned = append(cloned, c)
+		} else {
+			cloned = append(cloned, c.Clone().(*expression.Column))
+		}
+	}
+	return cloned
+}
+
+func cloneConstantsForPlanCacheX(constants, cloned []*expression.Constant) []*expression.Constant {
+	if constants == nil {
+		return nil
+	}
+	allSafe := true
+	for _, c := range constants {
+		if !c.SafeToShareAcrossSession() {
+			allSafe = false
+			break
+		}
+	}
+	if allSafe {
+		return constants
+	}
+	cloned = cloned[:0]
+	for _, c := range constants {
+		if c.SafeToShareAcrossSession() {
+			cloned = append(cloned, c)
+		} else {
+			cloned = append(cloned, c.Clone().(*expression.Constant))
+		}
+	}
+	return cloned
 }
 
 // CloneForPlanCache implements the base.Plan interface.
