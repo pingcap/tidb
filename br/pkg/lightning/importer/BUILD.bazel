@@ -61,6 +61,7 @@ go_library(
         "//table",
         "//table/tables",
         "//types",
+        "//util/cmp",
         "//util/collate",
         "//util/dbterror",
         "//util/engine",

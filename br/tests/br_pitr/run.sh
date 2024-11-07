@@ -96,7 +96,6 @@ done
 echo "restart a services"
 restart_services
 
-<<<<<<< HEAD
 # PITR restore
 echo "run pitr"
 run_br --pd $PD_ADDR restore point -s "local://$TEST_DIR/$PREFIX/log" --full-backup-storage "local://$TEST_DIR/$PREFIX/full" > $res_file 2>&1
@@ -115,7 +114,11 @@ expect_delete_range=$(($incremental_delete_range_count-$prepare_delete_range_cou
 check_contains "DELETE_RANGE_CNT: $expect_delete_range"
 ## check feature compatibility between PITR and accelerate indexing
 bash $CUR/check/check_ingest_repair.sh
-=======
+
+# start a new cluster for corruption
+echo "restart a services"
+restart_services
+
 file_corruption() {
     echo "corrupt the whole log files"
     for filename in $(find $TEST_DIR/$PREFIX/log -regex ".*\.log" | grep -v "schema-meta"); do
@@ -162,4 +165,3 @@ if [ $restore_fail -ne 1 ]; then
     echo 'pitr success on file lost'
     exit 1
 fi
->>>>>>> c7d09e6fa1e (br: fix br integration test file corruption (#56799))
