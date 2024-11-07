@@ -33,7 +33,7 @@ type leftOuterSemiJoinProbe struct {
 	isNulls []bool
 
 	// used in other condition to record which rows need to be processed
-	processedProbeRowIdxQueue *queue.Queue[int]
+	unFinishedProbeRowIdxQueue *queue.Queue[int]
 }
 
 var _ ProbeV2 = &leftOuterSemiJoinProbe{}
@@ -43,7 +43,7 @@ func newLeftOuterSemiJoinProbe(base baseJoinProbe) *leftOuterSemiJoinProbe {
 		baseJoinProbe: base,
 	}
 	if base.ctx.hasOtherCondition() {
-		probe.processedProbeRowIdxQueue = queue.NewQueue[int](32)
+		probe.unFinishedProbeRowIdxQueue = queue.NewQueue[int](32)
 	}
 	return probe
 }
@@ -53,20 +53,7 @@ func (j *leftOuterSemiJoinProbe) SetChunkForProbe(chunk *chunk.Chunk) (err error
 	if err != nil {
 		return err
 	}
-	j.isMatchedRows = j.isMatchedRows[:0]
-	for i := 0; i < j.chunkRows; i++ {
-		j.isMatchedRows = append(j.isMatchedRows, false)
-	}
-	j.isNullRows = j.isNullRows[:0]
-	for i := 0; i < j.chunkRows; i++ {
-		j.isNullRows = append(j.isNullRows, false)
-	}
-	if j.ctx.hasOtherCondition() {
-		j.processedProbeRowIdxQueue.Clear()
-		for i := 0; i < j.chunkRows; i++ {
-			j.processedProbeRowIdxQueue.Push(i)
-		}
-	}
+	j.resetProbeState()
 	return nil
 }
 
@@ -75,6 +62,11 @@ func (j *leftOuterSemiJoinProbe) SetRestoredChunkForProbe(chunk *chunk.Chunk) (e
 	if err != nil {
 		return err
 	}
+	j.resetProbeState()
+	return nil
+}
+
+func (j *leftOuterSemiJoinProbe) resetProbeState() {
 	j.isMatchedRows = j.isMatchedRows[:0]
 	for i := 0; i < j.chunkRows; i++ {
 		j.isMatchedRows = append(j.isMatchedRows, false)
@@ -84,12 +76,13 @@ func (j *leftOuterSemiJoinProbe) SetRestoredChunkForProbe(chunk *chunk.Chunk) (e
 		j.isNullRows = append(j.isNullRows, false)
 	}
 	if j.ctx.hasOtherCondition() {
-		j.processedProbeRowIdxQueue.Clear()
+		j.unFinishedProbeRowIdxQueue.Clear()
 		for i := 0; i < j.chunkRows; i++ {
-			j.processedProbeRowIdxQueue.Push(i)
+			if j.matchedRowsHeaders[i] != 0 {
+				j.unFinishedProbeRowIdxQueue.Push(i)
+			}
 		}
 	}
-	return nil
 }
 
 func (*leftOuterSemiJoinProbe) NeedScanRowTable() bool {
@@ -128,7 +121,7 @@ func (j *leftOuterSemiJoinProbe) Probe(joinResult *hashjoinWorkerResult, sqlKill
 }
 
 func (j *leftOuterSemiJoinProbe) probeWithOtherCondition(chk, joinedChk *chunk.Chunk, remainCap int, sqlKiller *sqlkiller.SQLKiller) (err error) {
-	if !j.processedProbeRowIdxQueue.IsEmpty() {
+	if !j.unFinishedProbeRowIdxQueue.IsEmpty() {
 		err = j.produceResult(joinedChk, sqlKiller)
 		if err != nil {
 			return err
@@ -136,7 +129,7 @@ func (j *leftOuterSemiJoinProbe) probeWithOtherCondition(chk, joinedChk *chunk.C
 		j.currentProbeRow = 0
 	}
 
-	if j.processedProbeRowIdxQueue.IsEmpty() {
+	if j.unFinishedProbeRowIdxQueue.IsEmpty() {
 		startProbeRow := j.currentProbeRow
 		j.currentProbeRow = min(startProbeRow+remainCap, j.chunkRows)
 		j.buildResult(chk, startProbeRow)
@@ -203,7 +196,7 @@ func (j *leftOuterSemiJoinProbe) buildResult(chk *chunk.Chunk, startProbeRow int
 	if startProbeRow == 0 && j.currentProbeRow == j.chunkRows && j.currentChunk.Sel() == nil && chk.NumRows() == 0 && len(j.spilledIdx) == 0 {
 		// TODO: Can do a shallow copy by directly copying the Column pointers
 		for index, colIndex := range j.lUsed {
-			chk.SetCol(index, j.currentChunk.Column(colIndex).CopyConstruct(nil))
+			j.currentChunk.Column(colIndex).CopyConstruct(chk.Column(index))
 		}
 	} else {
 		selected = make([]bool, j.chunkRows)
@@ -258,10 +251,10 @@ func (j *leftOuterSemiJoinProbe) matchMultiBuildRows(joinedChk *chunk.Chunk, joi
 }
 
 func (j *leftOuterSemiJoinProbe) concatenateProbeAndBuildRows(joinedChk *chunk.Chunk, sqlKiller *sqlkiller.SQLKiller) error {
-	joinedChkRemainCap := joinedChk.Capacity()
+	joinedChkRemainCap := joinedChk.Capacity() - joinedChk.NumRows()
 
-	for joinedChkRemainCap > 0 && !j.processedProbeRowIdxQueue.IsEmpty() {
-		probeRowIdx := j.processedProbeRowIdxQueue.Pop()
+	for joinedChkRemainCap > 0 && !j.unFinishedProbeRowIdxQueue.IsEmpty() {
+		probeRowIdx := j.unFinishedProbeRowIdxQueue.Pop()
 		if j.isMatchedRows[probeRowIdx] {
 			continue
 		}
@@ -270,7 +263,7 @@ func (j *leftOuterSemiJoinProbe) concatenateProbeAndBuildRows(joinedChk *chunk.C
 		if j.matchedRowsHeaders[probeRowIdx] == 0 {
 			continue
 		}
-		j.processedProbeRowIdxQueue.Push(probeRowIdx)
+		j.unFinishedProbeRowIdxQueue.Push(probeRowIdx)
 	}
 
 	err := checkSQLKiller(sqlKiller, "killedDuringProbe")
@@ -283,7 +276,7 @@ func (j *leftOuterSemiJoinProbe) concatenateProbeAndBuildRows(joinedChk *chunk.C
 }
 
 func (j *leftOuterSemiJoinProbe) IsCurrentChunkProbeDone() bool {
-	if j.ctx.hasOtherCondition() && !j.processedProbeRowIdxQueue.IsEmpty() {
+	if j.ctx.hasOtherCondition() && !j.unFinishedProbeRowIdxQueue.IsEmpty() {
 		return false
 	}
 	return j.baseJoinProbe.IsCurrentChunkProbeDone()

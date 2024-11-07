@@ -17,7 +17,6 @@ package join
 import (
 	"testing"
 
-	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -428,11 +427,12 @@ func TestLeftOuterSemiJoinBuildResultFastPath(t *testing.T) {
 	}
 }
 
-func TestLeftOuterSemiJoinSpillBasic(t *testing.T) {
+func TestLeftOuterSemiJoinSpill(t *testing.T) {
 	ctx := mock.NewContext()
 	ctx.GetSessionVars().InitChunkSize = 32
 	ctx.GetSessionVars().MaxChunkSize = 32
 	leftDataSource, rightDataSource := buildLeftAndRightDataSource(ctx, leftCols, rightCols, false)
+	leftDataSourceWithSel, rightDataSourceWithSel := buildLeftAndRightDataSource(ctx, leftCols, rightCols, true)
 
 	intTp := types.NewFieldType(mysql.TypeLonglong)
 	intTp.AddFlag(mysql.NotNullFlag)
@@ -451,21 +451,37 @@ func TestLeftOuterSemiJoinSpillBasic(t *testing.T) {
 		{Index: 2, RetType: stringTp},
 	}
 
-	params := []spillTestParam{
-		// rightUsed is empty
-		{true, leftKeys, rightKeys, leftTypes, rightTypes, []int{0, 1, 3, 4}, []int{}, nil, nil, nil, []int64{3000000, 1700000, 3500000, 750000, 10000}},
-	}
-
-	err := failpoint.Enable("github.com/pingcap/tidb/pkg/executor/join/slowWorkers", `return(true)`)
-	require.NoError(t, err)
-	defer failpoint.Disable("github.com/pingcap/tidb/pkg/executor/join/slowWorkers")
+	tinyTp := types.NewFieldType(mysql.TypeTiny)
+	a := &expression.Column{Index: 1, RetType: intTp}
+	b := &expression.Column{Index: 8, RetType: intTp}
+	sf, err := expression.NewFunction(mock.NewContext(), ast.GT, tinyTp, a, b)
+	require.NoError(t, err, "error when create other condition")
+	otherCondition := make(expression.CNFExprs, 0)
+	otherCondition = append(otherCondition, sf)
 
 	maxRowTableSegmentSize = 100
 	spillChunkSize = 100
 
 	joinType := logicalop.LeftOuterSemiJoin
+	params := []spillTestParam{
+		// basic case
+		{true, leftKeys, rightKeys, leftTypes, rightTypes, []int{0, 1, 3, 4}, []int{}, nil, nil, nil, []int64{3000000, 1700000, 3500000, 750000, 10000}},
+		// with other condition
+		{true, leftKeys, rightKeys, leftTypes, rightTypes, []int{0, 1, 3, 4}, []int{}, otherCondition, []int{1}, []int{3}, []int64{3000000, 1700000, 4000000, 750000, 10000}},
+	}
 
 	for _, param := range params {
 		testSpill(t, ctx, joinType, leftDataSource, rightDataSource, param)
+	}
+
+	params2 := []spillTestParam{
+		// basic case with sel
+		{true, leftKeys, rightKeys, leftTypes, rightTypes, []int{0, 1, 3, 4}, []int{}, nil, nil, nil, []int64{1000000, 900000, 1700000, 100000, 10000}},
+		// with other condition with sel
+		{true, leftKeys, rightKeys, leftTypes, rightTypes, []int{0, 1, 3, 4}, []int{}, otherCondition, []int{1}, []int{3}, []int64{1000000, 900000, 2000000, 100000, 10000}},
+	}
+
+	for _, param := range params2 {
+		testSpill(t, ctx, joinType, leftDataSourceWithSel, rightDataSourceWithSel, param)
 	}
 }
