@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/parser/mysql"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessiontxn"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
@@ -116,7 +117,7 @@ func (e *PrepareExec) Next(ctx context.Context, req *chunk.Chunk) error {
 			return err
 		}
 	}
-	stmt, p, paramCnt, err := plannercore.GeneratePlanCacheStmtWithAST(ctx, e.ctx, true, stmt0.Text(), stmt0, sessiontxn.GetTxnManager(e.Ctx()).GetTxnInfoSchema())
+	stmt, p, paramCnt, err := plannercore.GeneratePlanCacheStmtWithAST(ctx, e.ctx, true, stmt0.Text(), stmt0, sessiontxn.GetTxnManager(e.ctx).GetTxnInfoSchema())
 	if err != nil {
 		return err
 	}
