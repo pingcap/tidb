@@ -8,6 +8,12 @@ cur=$(cd `dirname $0`; pwd)
 DB_NAME="mysql_consistency"
 TABLE_NAME="t"
 
+# get version info
+# MySQL:   9.1.0
+# MariaDB: 11.4.2-MariaDB-ubu2404
+# TiDB:    8.0.11-TiDB-v8.3.0
+versioninfo=`run_sql "SELECT VERSION()"`
+
 # drop database on mysql
 run_sql "drop database if exists \`$DB_NAME\`;"
 
@@ -26,7 +32,19 @@ run_dumpling &
 sleep 2
 
 # record metadata info
-metadata=`run_sql "show master status;"`
+echo $versioninfo | grep -E '(Ti|Maria)DB'
+if [ $? -eq 0 ]; then
+	metadata=`run_sql "show master status;"`
+else
+	echo $versioninfo | grep -E '^[89]'
+	if [ $? -eq 0 ]; then
+		# MySQL 8.4.0 and newer no longer support SHOW MASTER STATUS
+		# and only support SHOW BINARY LOG STATUS
+		metadata=`run_sql "show binary log status;"`
+	else
+		metadata=`run_sql "show master status;"`
+	fi
+fi
 metaLog=`echo $metadata | awk -F 'File:' '{print $2}' | awk '{print $1}'`
 metaPos=`echo $metadata | awk -F 'Position:' '{print $2}' | awk '{print $1}'`
 metaGTID=`echo $metadata | awk -F 'Executed_Gtid_Set:' '{print $2}' | awk '{print $1}'`
