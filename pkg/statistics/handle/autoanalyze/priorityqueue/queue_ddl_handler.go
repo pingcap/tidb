@@ -416,9 +416,17 @@ func (pq *AnalysisPriorityQueue) handleDropSchemaEvent(_ sessionctx.Context, eve
 		partitionInfo := tbl.GetPartitionInfo()
 		if partitionInfo != nil {
 			for _, def := range partitionInfo.Definitions {
-				err := pq.getAndDeleteJob(def.ID)
-				if err != nil {
-					return err
+				if err := pq.getAndDeleteJob(def.ID); err != nil {
+					// Try best to delete as many tables as possible.
+					statslogutil.StatsLogger().Error(
+						"Failed to delete table from priority queue",
+						zap.Error(err),
+						zap.String("db", dbInfo.Name.O),
+						zap.Int64("tableID", tbl.ID),
+						zap.String("tableName", tbl.Name.O),
+						zap.Int64("partitionID", def.ID),
+						zap.String("partitionName", def.Name.O),
+					)
 				}
 			}
 		}
