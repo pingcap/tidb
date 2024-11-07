@@ -96,6 +96,7 @@ go_library(
         "//pkg/distsql",
         "//pkg/domain",
         "//pkg/errctx",
+        "//pkg/executor/join/joinversion",
         "//pkg/expression",
         "//pkg/expression/aggregation",
         "//pkg/expression/exprctx",

@@ -21,6 +21,7 @@ import (
 	"log"
 	"os"
 	"reflect"
+	"strings"
 
 	"github.com/pingcap/tidb/pkg/planner/cascades/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
@@ -34,7 +35,7 @@ import (
 // If a field is tagged with `hash64-equals`, then it will be computed in hash64 and equals func.
 // If a field is not tagged, then it will be skipped.
 func GenHash64Equals4LogicalOps() ([]byte, error) {
-	var structures = []any{logicalop.LogicalJoin{}, logicalop.LogicalAggregation{}, logicalop.LogicalApply{}}
+	var structures = []any{logicalop.LogicalJoin{}, logicalop.LogicalAggregation{}, logicalop.LogicalApply{}, logicalop.LogicalExpand{}}
 	c := new(cc)
 	c.write(codeGenHash64EqualsPrefix)
 	for _, s := range structures {
@@ -101,6 +102,8 @@ func logicalOpName2PlanCodecString(name string) string {
 		return "plancodec.TypeAgg"
 	case "LogicalApply":
 		return "plancodec.TypeApply"
+	case "LogicalExpand":
+		return "plancodec.TypeExpand"
 	default:
 		return ""
 	}
@@ -115,7 +118,11 @@ func (c *cc) EqualsElement(fType reflect.Type, lhs, rhs string, i string) {
 	switch fType.Kind() {
 	case reflect.Slice:
 		c.write("if len(%v) != len(%v) { return false }", lhs, rhs)
-		c.write("for %v, one := range %v {", i, lhs)
+		itemName := "one"
+		if strings.HasPrefix(lhs, "one") {
+			itemName = lhs + "e"
+		}
+		c.write("for %v, %v := range %v {", i, itemName, lhs)
 		// one more round
 		rhs = rhs + "[" + i + "]"
 		// for ?, one := range [][][][]...
@@ -126,7 +133,7 @@ func (c *cc) EqualsElement(fType reflect.Type, lhs, rhs string, i string) {
 		//        for iii, one := range []
 		// and so on...
 		newi := i + "i"
-		c.EqualsElement(fType.Elem(), "one", rhs, newi)
+		c.EqualsElement(fType.Elem(), itemName, rhs, newi)
 		c.write("}")
 	case reflect.String, reflect.Bool, reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64,
 		reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64, reflect.Float32, reflect.Float64:
@@ -147,9 +154,13 @@ func (c *cc) Hash64Element(fType reflect.Type, callName string) {
 	switch fType.Kind() {
 	case reflect.Slice:
 		c.write("h.HashInt(len(%v))", callName)
-		c.write("for _, one := range %v {", callName)
+		itemName := "one"
+		if strings.HasPrefix(callName, "one") {
+			itemName = callName + "e"
+		}
+		c.write("for _, %v := range %v {", itemName, callName)
 		// one more round
-		c.Hash64Element(fType.Elem(), "one")
+		c.Hash64Element(fType.Elem(), itemName)
 		c.write("}")
 	case reflect.String:
 		c.write("h.HashString(%v)", callName)
