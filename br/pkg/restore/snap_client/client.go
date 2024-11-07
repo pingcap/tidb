@@ -183,7 +183,7 @@ func (rc *SnapClient) Close() {
 	rc.closeConn()
 
 	if err := rc.fileImporter.Close(); err != nil {
-		log.Warn("failed to close file improter")
+		log.Warn("failed to close file importer")
 	}
 
 	log.Info("Restore client closed")
@@ -457,6 +457,7 @@ func (rc *SnapClient) initClients(ctx context.Context, backend *backuppb.Storage
 	if isRawKvMode {
 		splitClientOpts = append(splitClientOpts, split.WithRawKV())
 	}
+
 	metaClient := split.NewClient(rc.pdClient, rc.pdHTTPClient, rc.tlsConf, maxSplitKeysOnce, rc.storeCount+1, splitClientOpts...)
 	importCli := importclient.NewImportClient(metaClient, rc.tlsConf, rc.keepaliveConf)
 	rc.fileImporter, err = NewSnapFileImporter(ctx, metaClient, importCli, backend, isRawKvMode, isTxnKvMode, stores, rc.rewriteMode, rc.concurrencyPerStore)

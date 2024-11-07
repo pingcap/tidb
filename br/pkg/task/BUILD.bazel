@@ -126,6 +126,7 @@ go_test(
         "//br/pkg/metautil",
         "//br/pkg/mock",
         "//br/pkg/restore/snap_client",
+        "//br/pkg/restore/split",
         "//br/pkg/restore/tiflashrec",
         "//br/pkg/storage",
         "//br/pkg/stream",

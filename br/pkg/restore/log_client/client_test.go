@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/gluetidb"
 	"github.com/pingcap/tidb/br/pkg/mock"
 	logclient "github.com/pingcap/tidb/br/pkg/restore/log_client"
+	"github.com/pingcap/tidb/br/pkg/restore/split"
 	"github.com/pingcap/tidb/br/pkg/restore/utils"
 	"github.com/pingcap/tidb/br/pkg/stream"
 	"github.com/pingcap/tidb/br/pkg/utils/iter"
@@ -90,7 +91,7 @@ func TestDeleteRangeQueryExec(t *testing.T) {
 	m := mc
 	g := gluetidb.New()
 	client := logclient.NewRestoreClient(
-		utiltest.NewFakePDClient(nil, false, nil), nil, nil, keepalive.ClientParameters{})
+		split.NewFakePDClient(nil, false, nil), nil, nil, keepalive.ClientParameters{})
 	err := client.Init(g, m.Storage)
 	require.NoError(t, err)
 
@@ -109,7 +110,7 @@ func TestDeleteRangeQuery(t *testing.T) {
 
 	g := gluetidb.New()
 	client := logclient.NewRestoreClient(
-		utiltest.NewFakePDClient(nil, false, nil), nil, nil, keepalive.ClientParameters{})
+		split.NewFakePDClient(nil, false, nil), nil, nil, keepalive.ClientParameters{})
 	err := client.Init(g, m.Storage)
 	require.NoError(t, err)
 
@@ -1338,7 +1339,7 @@ func TestLogFilesIterWithSplitHelper(t *testing.T) {
 	}
 	mockIter := &mockLogIter{}
 	ctx := context.Background()
-	logIter := logclient.NewLogFilesIterWithSplitHelper(mockIter, rewriteRulesMap, utiltest.NewFakeSplitClient(), 144*1024*1024, 1440000)
+	logIter := logclient.NewLogFilesIterWithSplitHelper(mockIter, rewriteRulesMap, split.NewFakeSplitClient(), 144*1024*1024, 1440000)
 	next := 0
 	for r := logIter.TryNext(ctx); !r.Finished; r = logIter.TryNext(ctx) {
 		require.NoError(t, r.Err)

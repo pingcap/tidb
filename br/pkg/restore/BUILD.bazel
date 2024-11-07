@@ -52,7 +52,7 @@ go_test(
         "//br/pkg/conn",
         "//br/pkg/mock",
         "//br/pkg/pdutil",
-        "//br/pkg/utiltest",
+        "//br/pkg/restore/split",
         "//pkg/kv",
         "//pkg/parser/model",
         "//pkg/session",
