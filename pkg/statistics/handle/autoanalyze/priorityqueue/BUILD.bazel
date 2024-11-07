@@ -31,6 +31,7 @@ go_library(
         "//pkg/statistics/handle/util",
         "//pkg/util",
         "//pkg/util/intest",
+        "//pkg/util/logutil",
         "//pkg/util/timeutil",
         "@com_github_pingcap_errors//:errors",
         "@com_github_tikv_client_go_v2//oracle",
