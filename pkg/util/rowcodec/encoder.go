@@ -239,7 +239,7 @@ func (NoChecksum) encode(encoder *Encoder, buf []byte) ([]byte, error) {
 	return encoder.toBytes(buf), nil
 }
 
-const checksumVersionRaw byte = 1
+const checksumVersionRaw byte = 2
 
 // RawChecksum indicates encode the raw bytes checksum and append it to the raw bytes.
 type RawChecksum struct {
