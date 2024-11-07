@@ -12,14 +12,14 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package rule
+package casetest
 
 import (
 	"strings"
 	"testing"
 
-	"github.com/pingcap/tidb/pkg/testkit"
-	"github.com/pingcap/tidb/pkg/testkit/testdata"
+	"github.com/pingcap/tidb/testkit"
+	"github.com/pingcap/tidb/testkit/testdata"
 	"github.com/stretchr/testify/require"
 )
 

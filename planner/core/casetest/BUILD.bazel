@@ -21,6 +21,7 @@ go_test(
         "rule_inject_extra_projection_test.go",
         "rule_join_reorder_test.go",
         "rule_result_reorder_test.go",
+        "rule_predicate_pushdown_test.go",
         "stats_test.go",
         "tiflash_selection_late_materialization_test.go",
         "widow_with_exist_subquery_test.go",
@@ -29,7 +30,7 @@ go_test(
     data = glob(["testdata/**"]),
     flaky = True,
     race = "on",
-    shard_count = 50,
+    shard_count = 51,
     deps = [
         "//config",
         "//domain",
