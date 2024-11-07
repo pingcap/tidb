@@ -239,6 +239,9 @@ func (NoChecksum) encode(encoder *Encoder, buf []byte) ([]byte, error) {
 	return encoder.toBytes(buf), nil
 }
 
+// introduced since v7.1.0
+// bumped to 1 since v8.3.0
+// bumped to 2 since v8.4.0
 const checksumVersionRaw byte = 2
 
 // RawChecksum indicates encode the raw bytes checksum and append it to the raw bytes.

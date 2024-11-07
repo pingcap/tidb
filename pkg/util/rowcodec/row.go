@@ -327,6 +327,7 @@ func (r *row) CalculateRawChecksum(
 	buf = r.toBytes(buf)
 	buf = append(buf, r.checksumHeader)
 	rawChecksum := crc32.Checksum(buf, crc32.IEEETable)
+	// keep backward compatibility to v8.3.0
 	if checksumVersionRaw == 1 {
 		rawChecksum = crc32.Update(rawChecksum, crc32.IEEETable, key)
 	} else {
