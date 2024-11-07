@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/restore/ingestrec"
 	rawclient "github.com/pingcap/tidb/br/pkg/restore/internal/rawkv"
 	logclient "github.com/pingcap/tidb/br/pkg/restore/log_client"
+	"github.com/pingcap/tidb/br/pkg/restore/split"
 	"github.com/pingcap/tidb/br/pkg/restore/utils"
 	"github.com/pingcap/tidb/br/pkg/stream"
 	"github.com/pingcap/tidb/br/pkg/utils/iter"
@@ -97,8 +98,13 @@ func TestDeleteRangeQueryExec(t *testing.T) {
 	m := mc
 	g := gluetidb.New()
 	client := logclient.NewRestoreClient(
+<<<<<<< HEAD
 		utiltest.NewFakePDClient(nil, false, nil), nil, nil, keepalive.ClientParameters{})
 	err := client.Init(ctx, g, m.Storage)
+=======
+		split.NewFakePDClient(nil, false, nil), nil, nil, keepalive.ClientParameters{})
+	err := client.Init(g, m.Storage)
+>>>>>>> ef6662ed352 (Restore: refine split code for both compacted sst files and logs (#56917))
 	require.NoError(t, err)
 
 	client.RunGCRowsLoader(ctx)
@@ -116,8 +122,13 @@ func TestDeleteRangeQuery(t *testing.T) {
 
 	g := gluetidb.New()
 	client := logclient.NewRestoreClient(
+<<<<<<< HEAD
 		utiltest.NewFakePDClient(nil, false, nil), nil, nil, keepalive.ClientParameters{})
 	err := client.Init(ctx, g, m.Storage)
+=======
+		split.NewFakePDClient(nil, false, nil), nil, nil, keepalive.ClientParameters{})
+	err := client.Init(g, m.Storage)
+>>>>>>> ef6662ed352 (Restore: refine split code for both compacted sst files and logs (#56917))
 	require.NoError(t, err)
 
 	client.RunGCRowsLoader(ctx)
@@ -1345,7 +1356,7 @@ func TestLogFilesIterWithSplitHelper(t *testing.T) {
 	}
 	mockIter := &mockLogIter{}
 	ctx := context.Background()
-	logIter := logclient.NewLogFilesIterWithSplitHelper(mockIter, rewriteRulesMap, utiltest.NewFakeSplitClient(), 144*1024*1024, 1440000)
+	logIter := logclient.NewLogFilesIterWithSplitHelper(mockIter, rewriteRulesMap, split.NewFakeSplitClient(), 144*1024*1024, 1440000)
 	next := 0
 	for r := logIter.TryNext(ctx); !r.Finished; r = logIter.TryNext(ctx) {
 		require.NoError(t, r.Err)
