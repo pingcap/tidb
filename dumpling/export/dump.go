@@ -202,7 +202,7 @@ func (d *Dumper) Dump() (dumpErr error) {
 	// for consistency none, the binlog pos in metadata might be earlier than dumped data. We need to enable safe-mode to assure data safety.
 	err = m.recordGlobalMetaData(metaConn, conf.ServerInfo.ServerType, false)
 	if err != nil {
-		tctx.L().Info("get global metadata failed", log.ShortError(err))
+		tctx.L().Warn("get global metadata failed", log.ShortError(err))
 	}
 
 	if d.conf.CollationCompatible == StrictCollationCompatible {
