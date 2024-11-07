@@ -1226,7 +1226,7 @@ func TestEncodeDecodeRowWithChecksum(t *testing.T) {
 	require.Equal(t, expected, checksum)
 
 	version := dec.ChecksumVersion()
-	require.Equal(t, 1, version)
+	require.Equal(t, 2, version)
 }
 
 var (
