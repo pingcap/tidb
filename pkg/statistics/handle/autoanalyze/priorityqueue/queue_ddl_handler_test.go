@@ -780,9 +780,9 @@ func TestDropSchemaEventWithDynamicPartition(t *testing.T) {
 	job, err := pq.Peek()
 	require.NoError(t, err)
 	require.Equal(t, tableInfo.ID, job.GetTableID())
-	len, err := pq.Len()
+	l, err := pq.Len()
 	require.NoError(t, err)
-	require.Equal(t, len, 2)
+	require.Equal(t, l, 2)
 
 	// Drop schema.
 	testKit.MustExec("drop database test")
@@ -832,9 +832,9 @@ func TestDropSchemaEventWithStaticPartition(t *testing.T) {
 	isEmpty, err := pq.IsEmpty()
 	require.NoError(t, err)
 	require.False(t, isEmpty)
-	len, err := pq.Len()
+	l, err := pq.Len()
 	require.NoError(t, err)
-	require.Equal(t, len, 2)
+	require.Equal(t, l, 2)
 
 	// Drop schema.
 	testKit.MustExec("drop database test")
