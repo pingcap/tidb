@@ -768,8 +768,8 @@ func ShowMasterStatus(db *sql.Conn, serverInfo version.ServerInfo) ([]string, er
 	// TiDB, MariaDB, Old MySQL: SHOW MASTER STATUS
 	showMasterStatusQuery := "SHOW MASTER STATUS"
 	if serverInfo.ServerVersion != nil {
-		if !serverInfo.ServerVersion.LessThan(*minNewTerminologyMySQL) &&
-			serverInfo.ServerType == version.ServerTypeMySQL {
+		if serverInfo.ServerType == version.ServerTypeMySQL &&
+			!serverInfo.ServerVersion.LessThan(*minNewTerminologyMySQL) {
 			showMasterStatusQuery = "SHOW BINARY LOG STATUS"
 		}
 	}
