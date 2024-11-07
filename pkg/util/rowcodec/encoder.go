@@ -240,9 +240,13 @@ func (NoChecksum) encode(encoder *Encoder, buf []byte) ([]byte, error) {
 }
 
 // introduced since v7.1.0
-// bumped to 1 since v8.3.0
-// bumped to 2 since v8.4.0
-const checksumVersionRaw byte = 2
+const checksumVersionColumn byte = 0
+
+// introduced since v8.3.0
+const checksumVersionRawKey byte = 1
+
+// introduced since v8.4.0
+const checksumVersionRawHandle byte = 2
 
 // RawChecksum indicates encode the raw bytes checksum and append it to the raw bytes.
 type RawChecksum struct {
@@ -251,9 +255,9 @@ type RawChecksum struct {
 
 func (c RawChecksum) encode(encoder *Encoder, buf []byte) ([]byte, error) {
 	encoder.flags |= rowFlagChecksum
-	encoder.checksumHeader &^= checksumFlagExtra   // revert extra checksum flag
-	encoder.checksumHeader &^= checksumMaskVersion // revert checksum version
-	encoder.checksumHeader |= checksumVersionRaw   // set checksum version
+	encoder.checksumHeader &^= checksumFlagExtra       // revert extra checksum flag
+	encoder.checksumHeader &^= checksumMaskVersion     // revert checksum version
+	encoder.checksumHeader |= checksumVersionRawHandle // set checksum version
 	valueBytes := encoder.toBytes(buf)
 	valueBytes = append(valueBytes, encoder.checksumHeader)
 	encoder.checksum1 = crc32.Checksum(valueBytes, crc32.IEEETable)

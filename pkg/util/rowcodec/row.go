@@ -308,9 +308,7 @@ func (r *row) CalculateRawChecksum(
 	loc *time.Location, colIDs []int64, values []*types.Datum, key kv.Key, handle kv.Handle, buf []byte,
 ) (uint32, error) {
 	r.flags |= rowFlagChecksum
-	r.checksumHeader &^= checksumFlagExtra   // revert extra checksum flag
-	r.checksumHeader &^= checksumMaskVersion // revert checksum version
-	r.checksumHeader |= checksumVersionRaw   // set checksum version
+	r.checksumHeader &^= checksumFlagExtra // revert extra checksum flag
 	for idx, colID := range colIDs {
 		data, err := encodeValueDatum(loc, values[idx], nil)
 		if err != nil {
@@ -328,7 +326,7 @@ func (r *row) CalculateRawChecksum(
 	buf = append(buf, r.checksumHeader)
 	rawChecksum := crc32.Checksum(buf, crc32.IEEETable)
 	// keep backward compatibility to v8.3.0
-	if checksumVersionRaw == 1 {
+	if r.ChecksumVersion() == int(checksumVersionRawKey) {
 		rawChecksum = crc32.Update(rawChecksum, crc32.IEEETable, key)
 	} else {
 		rawChecksum = crc32.Update(rawChecksum, crc32.IEEETable, handle.Encoded())
