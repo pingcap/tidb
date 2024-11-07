@@ -18,6 +18,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/hex"
+	"os"
 	"strings"
 	"time"
 
@@ -363,4 +364,10 @@ func IsContextDone(ctx context.Context) bool {
 	default:
 	}
 	return false
+}
+
+// FolderNotEmpty returns true only when the folder is not empty.
+func FolderNotEmpty(path string) bool {
+	entries, _ := os.ReadDir(path)
+	return len(entries) > 0
 }
