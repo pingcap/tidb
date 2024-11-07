@@ -69,11 +69,7 @@ go_test(
     embed = [":backup"],
     flaky = True,
     race = "on",
-<<<<<<< HEAD
-    shard_count = 9,
-=======
     shard_count = 14,
->>>>>>> d04299ef627 (br: resolve stuck in backup (#54736))
     deps = [
         "//br/pkg/conn",
         "//br/pkg/gluetidb",
