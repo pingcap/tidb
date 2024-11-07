@@ -975,6 +975,7 @@ func (p *UserPrivileges) GetDefaultRoles(user, host string) []*auth.RoleIdentity
 	if SkipWithGrant {
 		return make([]*auth.RoleIdentity, 0, 10)
 	}
+	terror.Log(p.Handle.ensureActiveUser(user))
 	mysqlPrivilege := p.Handle.Get()
 	ret := mysqlPrivilege.getDefaultRoles(user, host)
 	return ret
