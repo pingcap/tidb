@@ -89,7 +89,6 @@ func TestIsInvisibleSysVar(t *testing.T) {
 	assert.True(IsInvisibleSysVar(variable.TiDBExpensiveQueryTimeThreshold))
 	assert.True(IsInvisibleSysVar(variable.TiDBForcePriority))
 	assert.True(IsInvisibleSysVar(variable.TiDBGeneralLog))
-	assert.True(IsInvisibleSysVar(variable.TiDBDeferGeneralLog))
 	assert.True(IsInvisibleSysVar(variable.TiDBMetricSchemaRangeDuration))
 	assert.True(IsInvisibleSysVar(variable.TiDBMetricSchemaStep))
 	assert.True(IsInvisibleSysVar(variable.TiDBOptWriteRowID))

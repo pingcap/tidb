@@ -453,12 +453,6 @@ var defaultSysVars = []*SysVar{
 	}, GetGlobal: func(_ context.Context, s *SessionVars) (string, error) {
 		return BoolToOnOff(ProcessGeneralLog.Load()), nil
 	}},
-	{Scope: ScopeInstance, Name: TiDBDeferGeneralLog, Value: BoolToOnOff(DefTiDBDeferGeneralLog), Type: TypeBool, SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
-		ProcessDeferGeneralLog.Store(TiDBOptOn(val))
-		return nil
-	}, GetGlobal: func(_ context.Context, s *SessionVars) (string, error) {
-		return BoolToOnOff(ProcessDeferGeneralLog.Load()), nil
-	}},
 	{Scope: ScopeSession, Name: TiDBSlowTxnLogThreshold, Value: strconv.Itoa(logutil.DefaultSlowTxnThreshold),
 		Type: TypeUnsigned, MinValue: 0, MaxValue: math.MaxInt64, SetSession: func(s *SessionVars, val string) error {
 			s.SlowTxnThreshold = TidbOptUint64(val, logutil.DefaultSlowTxnThreshold)

@@ -394,10 +394,6 @@ func TestInstanceScopedVars(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, BoolToOnOff(ProcessGeneralLog.Load()), val)
 
-	val, err = vars.GetSessionOrGlobalSystemVar(context.Background(), TiDBDeferGeneralLog)
-	require.NoError(t, err)
-	require.Equal(t, BoolToOnOff(ProcessDeferGeneralLog.Load()), val)
-
 	val, err = vars.GetSessionOrGlobalSystemVar(context.Background(), TiDBPProfSQLCPU)
 	require.NoError(t, err)
 	expected := "0"

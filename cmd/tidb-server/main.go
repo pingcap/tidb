@@ -739,7 +739,6 @@ func setGlobalVars() {
 	variable.ForcePriority = int32(priority)
 
 	variable.ProcessGeneralLog.Store(cfg.Instance.TiDBGeneralLog)
-	variable.ProcessDeferGeneralLog.Store(cfg.Instance.TiDBDeferGeneralLog)
 	variable.EnablePProfSQLCPU.Store(cfg.Instance.EnablePProfSQLCPU)
 	variable.EnableRCReadCheckTS.Store(cfg.Instance.TiDBRCReadCheckTS)
 	variable.IsSandBoxModeEnabled.Store(!cfg.Security.DisconnectOnExpiredPassword)

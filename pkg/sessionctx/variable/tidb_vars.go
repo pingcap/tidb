@@ -147,9 +147,6 @@ const (
 	// TiDBGeneralLog is used to log every query in the server in info level.
 	TiDBGeneralLog = "tidb_general_log"
 
-	// TiDBDeferGeneralLog is used to log the query after it is executed.
-	TiDBDeferGeneralLog = "tidb_defer_general_log"
-
 	// TiDBLogFileMaxDays is used to log every query in the server in info level.
 	TiDBLogFileMaxDays = "tidb_log_file_max_days"
 
@@ -1291,7 +1288,6 @@ const (
 	DefTiDBMemQuotaApplyCache               = 32 << 20 // 32MB.
 	DefTiDBMemQuotaBindingCache             = 64 << 20 // 64MB.
 	DefTiDBGeneralLog                       = false
-	DefTiDBDeferGeneralLog                  = false
 	DefTiDBPProfSQLCPU                      = 0
 	DefTiDBRetryLimit                       = 10
 	DefTiDBDisableTxnAutoRetry              = true
@@ -1573,7 +1569,6 @@ const (
 // Process global variables.
 var (
 	ProcessGeneralLog              = atomic.NewBool(false)
-	ProcessDeferGeneralLog         = atomic.NewBool(false)
 	RunAutoAnalyze                 = atomic.NewBool(DefTiDBEnableAutoAnalyze)
 	EnableAutoAnalyzePriorityQueue = atomic.NewBool(DefTiDBEnableAutoAnalyzePriorityQueue)
 	// AnalyzeColumnOptions is a global variable that indicates the default column choice for ANALYZE.

@@ -143,7 +143,6 @@ func IsInvisibleSysVar(varNameInLower string) bool {
 		variable.TiDBExpensiveQueryTimeThreshold,
 		variable.TiDBForcePriority,
 		variable.TiDBGeneralLog,
-		variable.TiDBDeferGeneralLog,
 		variable.TiDBMetricSchemaRangeDuration,
 		variable.TiDBMetricSchemaStep,
 		variable.TiDBOptWriteRowID,
