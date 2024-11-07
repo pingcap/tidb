@@ -16,6 +16,7 @@ package core
 
 import (
 	"context"
+	"github.com/pingcap/tidb/pkg/util/hint"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -223,10 +224,11 @@ func GetPlanFromPlanCache(ctx context.Context, sctx sessionctx.Context,
 
 	paramTypes := parseParamTypes(sctx, params)
 	if stmtCtx.UseCache() {
-		cachedVal, hit := lookupPlanCache(ctx, sctx, cacheKey, paramTypes)
+		plan, outputCols, stmtHints, hit := lookupPlanCache(ctx, sctx, cacheKey, paramTypes)
 		skipPrivCheck := stmt.PointGet.Executor != nil // this case is specially handled
 		if hit {
-			if plan, names, ok, err := adjustCachedPlan(ctx, sctx, cachedVal, isNonPrepared, skipPrivCheck, binding, is, stmt); err != nil || ok {
+			if plan, names, ok, err := adjustCachedPlan(ctx, sctx, plan, outputCols, stmtHints,
+				isNonPrepared, skipPrivCheck, binding, is, stmt); err != nil || ok {
 				return plan, names, err
 			}
 		}
@@ -243,7 +245,8 @@ func instancePlanCacheEnabled(ctx context.Context) bool {
 	return enableInstancePlanCache
 }
 
-func lookupPlanCache(ctx context.Context, sctx sessionctx.Context, cacheKey string, paramTypes []*types.FieldType) (cachedVal *PlanCacheValue, hit bool) {
+func lookupPlanCache(ctx context.Context, sctx sessionctx.Context, cacheKey string,
+	paramTypes []*types.FieldType) (plan base.Plan, outputCols types.NameSlice, stmtHints *hint.StmtHints, hit bool) {
 	useInstanceCache := instancePlanCacheEnabled(ctx)
 	defer func(begin time.Time) {
 		if hit {
@@ -252,18 +255,24 @@ func lookupPlanCache(ctx context.Context, sctx sessionctx.Context, cacheKey stri
 	}(time.Now())
 	if useInstanceCache {
 		if v, hit := domain.GetDomain(sctx).GetInstancePlanCache().Get(cacheKey, paramTypes); hit {
-			cachedVal = v.(*PlanCacheValue)
-			return cachedVal.CloneForInstancePlanCache(ctx, sctx.GetPlanCtx()) // clone the value to solve concurrency problem
+			pcV := v.(*PlanCacheValue)
+			clonedPlan, ok := pcV.Plan.CloneForPlanCache(sctx.GetPlanCtx())
+			if !ok { // clone the value to solve concurrency problem
+				return nil, nil, nil, false
+			}
+			return clonedPlan, pcV.OutputColumns, pcV.stmtHints, true
 		}
 	} else {
 		if v, hit := sctx.GetSessionPlanCache().Get(cacheKey, paramTypes); hit {
-			return v.(*PlanCacheValue), true
+			pcV := v.(*PlanCacheValue)
+			return pcV.Plan, pcV.OutputColumns, pcV.stmtHints, true
 		}
 	}
-	return nil, false
+	return nil, nil, nil, false
 }
 
-func adjustCachedPlan(ctx context.Context, sctx sessionctx.Context, cachedVal *PlanCacheValue, isNonPrepared, skipPrivCheck bool,
+func adjustCachedPlan(ctx context.Context, sctx sessionctx.Context, plan base.Plan,
+	outputCols types.NameSlice, stmtHints *hint.StmtHints, isNonPrepared, skipPrivCheck bool,
 	bindSQL string, is infoschema.InfoSchema, stmt *PlanCacheStmt) (base.Plan,
 	[]*types.FieldName, bool, error) {
 	sessVars := sctx.GetSessionVars()
@@ -273,7 +282,7 @@ func adjustCachedPlan(ctx context.Context, sctx sessionctx.Context, cachedVal *P
 			return nil, nil, false, err
 		}
 	}
-	if !RebuildPlan4CachedPlan(cachedVal.Plan) {
+	if !RebuildPlan4CachedPlan(plan) {
 		return nil, nil, false, nil
 	}
 	sessVars.FoundInPlanCache = true
@@ -286,8 +295,8 @@ func adjustCachedPlan(ctx context.Context, sctx sessionctx.Context, cachedVal *P
 		core_metrics.GetPlanCacheHitCounter(isNonPrepared).Inc()
 	}
 	stmtCtx.SetPlanDigest(stmt.NormalizedPlan, stmt.PlanDigest)
-	stmtCtx.StmtHints = *cachedVal.stmtHints
-	return cachedVal.Plan, cachedVal.OutputColumns, true, nil
+	stmtCtx.StmtHints = *stmtHints
+	return plan, outputCols, true, nil
 }
 
 // generateNewPlan call the optimizer to generate a new plan for current statement
