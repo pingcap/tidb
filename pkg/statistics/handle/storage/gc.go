@@ -69,7 +69,7 @@ func (gc *statsGCImpl) ClearOutdatedHistoryStats() error {
 // A statsID refers to statistic of a table or a partition.
 func (gc *statsGCImpl) DeleteTableStatsFromKV(statsIDs []int64) (err error) {
 	return util.CallWithSCtx(gc.statsHandle.SPool(), func(sctx sessionctx.Context) error {
-		return DeleteTableStatsFromKV(sctx, statsIDs)
+		return DeleteTableStatsFromKV(sctx, statsIDs, false)
 	}, util.FlagWrapTxn)
 }
 
@@ -131,35 +131,41 @@ func GCStats(
 
 // DeleteTableStatsFromKV deletes table statistics from kv.
 // A statsID refers to statistic of a table or a partition.
-func DeleteTableStatsFromKV(sctx sessionctx.Context, statsIDs []int64) (err error) {
+func DeleteTableStatsFromKV(sctx sessionctx.Context, statsIDs []int64, lowPriority bool) (err error) {
 	startTS, err := util.GetStartTS(sctx)
 	if err != nil {
 		return errors.Trace(err)
 	}
+	updataStmt := "update"
+	deleteStmt := "delete"
+	if lowPriority {
+		updataStmt += " LOW_PRIORITY "
+		deleteStmt += " LOW_PRIORITY "
+	}
 	for _, statsID := range statsIDs {
 		// We only update the version so that other tidb will know that this table is deleted.
-		if _, err = util.Exec(sctx, "update mysql.stats_meta set version = %? where table_id = %? ", startTS, statsID); err != nil {
+		if _, err = util.Exec(sctx, updataStmt+"mysql.stats_meta set version = %? where table_id = %? ", startTS, statsID); err != nil {
 			return err
 		}
-		if _, err = util.Exec(sctx, "delete from mysql.stats_histograms where table_id = %?", statsID); err != nil {
+		if _, err = util.Exec(sctx, deleteStmt+"from mysql.stats_histograms where table_id = %?", statsID); err != nil {
 			return err
 		}
-		if _, err = util.Exec(sctx, "delete from mysql.stats_buckets where table_id = %?", statsID); err != nil {
+		if _, err = util.Exec(sctx, deleteStmt+"from mysql.stats_buckets where table_id = %?", statsID); err != nil {
 			return err
 		}
-		if _, err = util.Exec(sctx, "delete from mysql.stats_top_n where table_id = %?", statsID); err != nil {
+		if _, err = util.Exec(sctx, deleteStmt+"from mysql.stats_top_n where table_id = %?", statsID); err != nil {
 			return err
 		}
-		if _, err = util.Exec(sctx, "update mysql.stats_extended set version = %?, status = %? where table_id = %? and status in (%?, %?)", startTS, statistics.ExtendedStatsDeleted, statsID, statistics.ExtendedStatsAnalyzed, statistics.ExtendedStatsInited); err != nil {
+		if _, err = util.Exec(sctx, updataStmt+"mysql.stats_extended set version = %?, status = %? where table_id = %? and status in (%?, %?)", startTS, statistics.ExtendedStatsDeleted, statsID, statistics.ExtendedStatsAnalyzed, statistics.ExtendedStatsInited); err != nil {
 			return err
 		}
-		if _, err = util.Exec(sctx, "delete from mysql.stats_fm_sketch where table_id = %?", statsID); err != nil {
+		if _, err = util.Exec(sctx, deleteStmt+"from mysql.stats_fm_sketch where table_id = %?", statsID); err != nil {
 			return err
 		}
-		if _, err = util.Exec(sctx, "delete from mysql.column_stats_usage where table_id = %?", statsID); err != nil {
+		if _, err = util.Exec(sctx, deleteStmt+"from mysql.column_stats_usage where table_id = %?", statsID); err != nil {
 			return err
 		}
-		if _, err = util.Exec(sctx, "delete from mysql.analyze_options where table_id = %?", statsID); err != nil {
+		if _, err = util.Exec(sctx, deleteStmt+"from mysql.analyze_options where table_id = %?", statsID); err != nil {
 			return err
 		}
 		if _, err = util.Exec(sctx, lockstats.DeleteLockSQL, statsID); err != nil {
@@ -286,7 +292,7 @@ func gcTableStats(sctx sessionctx.Context,
 	if !ok {
 		logutil.BgLogger().Info("remove stats in GC due to dropped table", zap.Int64("table_id", physicalID))
 		return util.WrapTxn(sctx, func(sctx sessionctx.Context) error {
-			return errors.Trace(DeleteTableStatsFromKV(sctx, []int64{physicalID}))
+			return errors.Trace(DeleteTableStatsFromKV(sctx, []int64{physicalID}, true))
 		})
 	}
 	tblInfo := tbl.Meta()
