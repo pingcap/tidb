@@ -401,8 +401,8 @@ func (rm *MockRegionManager) SplitRegion(req *kvrpcpb.SplitRegionRequest) *kvrpc
 	for _, rawKey := range req.SplitKeys {
 		splitKeys = append(splitKeys, codec.EncodeBytes(nil, rawKey))
 	}
-	slices.SortFunc(splitKeys, func(i, j []byte) bool {
-		return bytes.Compare(i, j) < 0
+	slices.SortFunc(splitKeys, func(i, j []byte) int {
+		return bytes.Compare(i, j)
 	})
 
 	newRegions, err := rm.splitKeys(splitKeys)

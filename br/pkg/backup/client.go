@@ -44,6 +44,7 @@ import (
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/ranger"
 	filter "github.com/pingcap/tidb/util/table-filter"
 	"github.com/tikv/client-go/v2/oracle"
@@ -1015,12 +1016,15 @@ func (bc *Client) findTargetPeer(ctx context.Context, key []byte, isRawKv bool, 
 	// Keys are saved in encoded format in TiKV, so the key must be encoded
 	// in order to find the correct region.
 	key = codec.EncodeBytesExt([]byte{}, key, isRawKv)
-	for i := 0; i < 5; i++ {
+	for i := 1; i < 100; i++ {
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
 		// better backoff.
 		region, err := bc.mgr.GetPDClient().GetRegion(ctx, key)
 		if err != nil || region == nil {
 			logutil.CL(ctx).Error("find region failed", zap.Error(err), zap.Reflect("region", region))
-			time.Sleep(time.Millisecond * time.Duration(100*i))
+			time.Sleep(time.Millisecond * time.Duration(mathutil.Min(i*100, 3000)))
 			continue
 		}
 		if len(targetStoreIds) == 0 {
@@ -1043,9 +1047,8 @@ func (bc *Client) findTargetPeer(ctx context.Context, key []byte, isRawKv bool, 
 				return peer, nil
 			}
 		}
-
 		logutil.CL(ctx).Warn("fail to find a target peer", logutil.Key("key", key))
-		time.Sleep(time.Millisecond * time.Duration(1000*i))
+		time.Sleep(time.Millisecond * time.Duration(mathutil.Min(i*100, 3000)))
 		continue
 	}
 	logutil.CL(ctx).Error("can not find a valid target peer", logutil.Key("key", key))
@@ -1293,12 +1296,73 @@ func (bc *Client) handleFineGrained(
 	return backoffMill, nil
 }
 
+// timeoutRecv cancel the context if `Refresh()` is not called within the specified time `timeout`.
+type timeoutRecv struct {
+	wg        sync.WaitGroup
+	parentCtx context.Context
+	cancel    context.CancelCauseFunc
+
+	refresh chan struct{}
+}
+
+// Refresh the timeout ticker
+func (trecv *timeoutRecv) Refresh() {
+	select {
+	case <-trecv.parentCtx.Done():
+	case trecv.refresh <- struct{}{}:
+	}
+}
+
+// Stop the timeout ticker
+func (trecv *timeoutRecv) Stop() {
+	close(trecv.refresh)
+	trecv.wg.Wait()
+}
+
+var TimeoutOneResponse = time.Hour
+
+func (trecv *timeoutRecv) loop(timeout time.Duration) {
+	defer trecv.wg.Done()
+	ticker := time.NewTicker(timeout)
+	defer ticker.Stop()
+	for {
+		ticker.Reset(timeout)
+		select {
+		case <-trecv.parentCtx.Done():
+			return
+		case _, ok := <-trecv.refresh:
+			if !ok {
+				return
+			}
+		case <-ticker.C:
+			log.Warn("receive a backup response timeout")
+			trecv.cancel(errors.Errorf("receive a backup response timeout"))
+		}
+	}
+}
+
+func StartTimeoutRecv(ctx context.Context, timeout time.Duration) (context.Context, *timeoutRecv) {
+	cctx, cancel := context.WithCancelCause(ctx)
+	trecv := &timeoutRecv{
+		parentCtx: ctx,
+		cancel:    cancel,
+		refresh:   make(chan struct{}),
+	}
+	trecv.wg.Add(1)
+	go trecv.loop(timeout)
+	return cctx, trecv
+}
+
 func doSendBackup(
-	ctx context.Context,
+	pctx context.Context,
 	client backuppb.BackupClient,
 	req backuppb.BackupRequest,
 	respFn func(*backuppb.BackupResponse) error,
 ) error {
+	// Backup might be stuck on GRPC `waitonHeader`, so start a timeout ticker to
+	// terminate the backup if it does not receive any new response for a long time.
+	ctx, timerecv := StartTimeoutRecv(pctx, TimeoutOneResponse)
+	defer timerecv.Stop()
 	failpoint.Inject("hint-backup-start", func(v failpoint.Value) {
 		logutil.CL(ctx).Info("failpoint hint-backup-start injected, " +
 			"process will notify the shell.")
@@ -1343,6 +1407,7 @@ func doSendBackup(
 
 	for {
 		resp, err := bCli.Recv()
+		timerecv.Refresh()
 		if err != nil {
 			if errors.Cause(err) == io.EOF { // nolint:errorlint
 				logutil.CL(ctx).Debug("backup streaming finish",

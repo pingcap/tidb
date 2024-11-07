@@ -348,8 +348,8 @@ func (hg *Histogram) RemoveVals(valCntPairs []TopNMeta) {
 // AddIdxVals adds the given values to the histogram.
 func (hg *Histogram) AddIdxVals(idxValCntPairs []TopNMeta) {
 	totalAddCnt := int64(0)
-	slices.SortFunc(idxValCntPairs, func(i, j TopNMeta) bool {
-		return bytes.Compare(i.Encoded, j.Encoded) < 0
+	slices.SortFunc(idxValCntPairs, func(i, j TopNMeta) int {
+		return bytes.Compare(i.Encoded, j.Encoded)
 	})
 	for bktIdx, pairIdx := 0, 0; bktIdx < hg.Len(); bktIdx++ {
 		for pairIdx < len(idxValCntPairs) {
@@ -917,6 +917,10 @@ func (hg *Histogram) outOfRangeRowCount(sctx sessionctx.Context, lDatum, rDatum 
 	histR := convertDatumToScalar(hg.GetUpper(hg.Len()-1), commonPrefix)
 	histWidth := histR - histL
 	if histWidth <= 0 {
+		return 0
+	}
+	if math.IsInf(histWidth, 1) {
+		// The histogram is too wide. As a quick fix, we return 0 to indicate that the overlap percentage is near 0.
 		return 0
 	}
 	boundL := histL - histWidth
@@ -1540,19 +1544,19 @@ func MergePartitionHist2GlobalHist(sc *stmtctx.StatementContext, hists []*Histog
 	buckets = buckets[:tail]
 
 	var sortError error
-	slices.SortFunc(buckets, func(i, j *bucket4Merging) bool {
+	slices.SortFunc(buckets, func(i, j *bucket4Merging) int {
 		res, err := i.upper.Compare(sc, j.upper, collate.GetBinaryCollator())
 		if err != nil {
 			sortError = err
 		}
 		if res != 0 {
-			return res < 0
+			return res
 		}
 		res, err = i.lower.Compare(sc, j.lower, collate.GetBinaryCollator())
 		if err != nil {
 			sortError = err
 		}
-		return res < 0
+		return res
 	})
 	if sortError != nil {
 		return nil, sortError
