@@ -12,7 +12,7 @@ TABLE_NAME="t"
 # MySQL:   9.1.0
 # MariaDB: 11.4.2-MariaDB-ubu2404
 # TiDB:    8.0.11-TiDB-v8.3.0
-versioninfo=`run_sql "SELECT VERSION()"`
+versioninfo=`run_sql "SELECT VERSION();"`
 
 # drop database on mysql
 run_sql "drop database if exists \`$DB_NAME\`;"
@@ -32,12 +32,10 @@ run_dumpling &
 sleep 2
 
 # record metadata info
-echo $versioninfo | grep -E '(Ti|Maria)DB'
-if [ $? -eq 0 ]; then
+if [[ $versioninfo =~ (Ti|Maria)DB ]]; then
 	metadata=`run_sql "show master status;"`
 else
-	echo $versioninfo | grep -E '^[89]'
-	if [ $? -eq 0 ]; then
+	if [[ $versioninfo =~ ^[89] ]]; then
 		# MySQL 8.4.0 and newer no longer support SHOW MASTER STATUS
 		# and only support SHOW BINARY LOG STATUS
 		metadata=`run_sql "show binary log status;"`
