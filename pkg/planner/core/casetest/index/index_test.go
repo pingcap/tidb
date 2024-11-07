@@ -93,15 +93,15 @@ func TestInvisibleIndex(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("CREATE TABLE t1 ( a INT, KEY( a ) INVISIBLE );")
 	tk.MustExec("INSERT INTO t1 VALUES (1), (2), (3), (4), (5), (6), (7), (8), (9), (10);")
-	tk.MustQuery(`EXPLAIN format='brief' SELECT a FROM t1;`).Check(
+	tk.MustQuery(`EXPLAIN SELECT a FROM t1;`).Check(
 		testkit.Rows(
-			`TableReader 10000.00 root  data:TableFullScan`,
-			`└─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo`))
+			`TableReader_5 10000.00 root  data:TableFullScan_4`,
+			`└─TableFullScan_4 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo`))
 	tk.MustExec("set session tidb_opt_use_invisible_indexes=on;")
-	tk.MustQuery(`EXPLAIN format='brief' SELECT a FROM t1;`).Check(
+	tk.MustQuery(`EXPLAIN SELECT a FROM t1;`).Check(
 		testkit.Rows(
-			`IndexReader 10000.00 root  index:IndexFullScan`,
-			`└─IndexFullScan 10000.00 cop[tikv] table:t1, index:a(a) keep order:false, stats:pseudo`))
+			`IndexReader_7 10000.00 root  index:IndexFullScan_6`,
+			`└─IndexFullScan_6 10000.00 cop[tikv] table:t1, index:a(a) keep order:false, stats:pseudo`))
 }
 
 func TestRangeDerivation(t *testing.T) {
