@@ -2063,6 +2063,10 @@ func (do *Domain) LoadBindInfoLoop(ctxForHandle sessionctx.Context, ctxForEvolve
 	}
 
 	owner := do.newOwnerManager(bindinfo.Prompt, bindinfo.OwnerKey)
+	err = do.statsOwner.CampaignOwner()
+	if err != nil {
+		logutil.BgLogger().Warn("campaign owner failed", zap.Error(err))
+	}
 	do.globalBindHandleWorkerLoop(owner)
 	return nil
 }
