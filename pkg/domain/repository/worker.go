@@ -71,7 +71,7 @@ var workloadTables = []repositoryTable{
 			BEGIN_TIME DATETIME NOT NULL COMMENT 'Datetime that TiDB begins taking this snapshot.',
 			END_TIME DATETIME NULL COMMENT 'Datetime that TiDB finish taking this snapshot.',
 			DB_VER JSON NULL COMMENT 'Versions of TiDB, TiKV, PD at the moment',
-			WR_VER int unsigned NULL COMMENT 'Version to identifiy the compatibility of workload schema between releases.',
+			WR_VER int unsigned NULL COMMENT 'Version to identify the compatibility of workload schema between releases.',
 			SOURCE VARCHAR(20) NULL COMMENT 'The program that initializes the snaphost. ',
 			ERROR TEXT DEFAULT NULL COMMENT 'extra messages are written if anything happens to block that snapshots.')`, WorkloadSchema, histSnapshotsTable),
 		"",
