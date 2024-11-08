@@ -189,6 +189,7 @@ go_test(
         "//util",
         "//util/arena",
         "//util/chunk",
+        "//util/cmp",
         "//util/codec",
         "//util/cpuprofile",
         "//util/deadlockhistory",
