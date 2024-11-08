@@ -488,12 +488,8 @@ func (b *Builder) applyTableUpdate(m *meta.Meta, diff *model.SchemaDiff) ([]int6
 	b.copySortedTables(oldTableID, newTableID)
 
 	tblIDs := make([]int64, 0, 2)
-<<<<<<< HEAD:infoschema/builder.go
-=======
 	var keptAllocs autoid.Allocators
->>>>>>> c24dca58f5e (infoschema: load auto id related changes for multi-schema-change diff (#52967)):pkg/infoschema/builder.go
 	// We try to reuse the old allocator, so the cached auto ID can be reused.
-	var allocs autoid.Allocators
 	if tableIDIsValid(oldTableID) {
 		if oldTableID == newTableID && (diff.Type != model.ActionRenameTable && diff.Type != model.ActionRenameTables) &&
 			// For repairing table in TiDB cluster, given 2 normal node and 1 repair node.
@@ -503,27 +499,18 @@ func (b *Builder) applyTableUpdate(m *meta.Meta, diff *model.SchemaDiff) ([]int6
 			diff.Type != model.ActionRepairTable &&
 			// Alter sequence will change the sequence info in the allocator, so the old allocator is not valid any more.
 			diff.Type != model.ActionAlterSequence {
-<<<<<<< HEAD:infoschema/builder.go
-			oldAllocs, _ := b.is.AllocByID(oldTableID)
-			allocs = filterAllocators(diff, oldAllocs)
-=======
 			// TODO: Check how this would work with ADD/REMOVE Partitioning,
 			// which may have AutoID not connected to tableID
 			// TODO: can there be _tidb_rowid AutoID per partition?
-			oldAllocs, _ := allocByID(b, oldTableID)
+			oldAllocs, _ := b.is.AllocByID(oldTableID)
 			keptAllocs = getKeptAllocators(diff, oldAllocs)
->>>>>>> c24dca58f5e (infoschema: load auto id related changes for multi-schema-change diff (#52967)):pkg/infoschema/builder.go
 		}
 
 		tmpIDs := tblIDs
 		if (diff.Type == model.ActionRenameTable || diff.Type == model.ActionRenameTables) && diff.OldSchemaID != diff.SchemaID {
 			oldRoDBInfo, ok := b.is.SchemaByID(diff.OldSchemaID)
 			if !ok {
-<<<<<<< HEAD:infoschema/builder.go
 				return nil, ErrDatabaseNotExists.GenWithStackByArgs(
-=======
-				return nil, keptAllocs, ErrDatabaseNotExists.GenWithStackByArgs(
->>>>>>> c24dca58f5e (infoschema: load auto id related changes for multi-schema-change diff (#52967)):pkg/infoschema/builder.go
 					fmt.Sprintf("(Schema ID %d)", diff.OldSchemaID),
 				)
 			}
@@ -538,33 +525,10 @@ func (b *Builder) applyTableUpdate(m *meta.Meta, diff *model.SchemaDiff) ([]int6
 			tblIDs = tmpIDs
 		}
 	}
-<<<<<<< HEAD:infoschema/builder.go
-=======
-	return tblIDs, keptAllocs, nil
-}
-
-func (b *Builder) applyTableUpdate(m *meta.Meta, diff *model.SchemaDiff) ([]int64, error) {
-	roDBInfo, ok := b.infoSchema.SchemaByID(diff.SchemaID)
-	if !ok {
-		return nil, ErrDatabaseNotExists.GenWithStackByArgs(
-			fmt.Sprintf("(Schema ID %d)", diff.SchemaID),
-		)
-	}
-	dbInfo := b.getSchemaAndCopyIfNecessary(roDBInfo.Name.L)
-	oldTableID, newTableID := b.getTableIDs(diff)
-	b.updateBundleForTableUpdate(diff, newTableID, oldTableID)
-	b.copySortedTables(oldTableID, newTableID)
-
-	tblIDs, allocs, err := dropTableForUpdate(b, newTableID, oldTableID, dbInfo, diff)
-	if err != nil {
-		return nil, err
-	}
-
->>>>>>> c24dca58f5e (infoschema: load auto id related changes for multi-schema-change diff (#52967)):pkg/infoschema/builder.go
 	if tableIDIsValid(newTableID) {
 		// All types except DropTableOrView.
 		var err error
-		tblIDs, err = b.applyCreateTable(m, dbInfo, newTableID, allocs, diff.Type, tblIDs)
+		tblIDs, err = b.applyCreateTable(m, dbInfo, newTableID, keptAllocs, diff.Type, tblIDs)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
