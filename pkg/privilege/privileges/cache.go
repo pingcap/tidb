@@ -1923,10 +1923,6 @@ func (h *Handle) ensureActiveUser(user string) error {
 	}
 
 	h.merge(&data, userList)
-	for _, user := range userList {
-		h.activeUsers.Store(user, struct{}{})
-	}
-
 	return nil
 }
 
@@ -1937,6 +1933,9 @@ func (h *Handle) merge(data *immutable, userList []string) {
 		if swapped {
 			break
 		}
+	}
+	for _, user := range userList {
+		h.activeUsers.Store(user, struct{}{})
 	}
 }
 
@@ -1973,6 +1972,5 @@ func (h *Handle) Update(userList []string) error {
 		return err
 	}
 	h.merge(&priv, userList)
-
 	return nil
 }
