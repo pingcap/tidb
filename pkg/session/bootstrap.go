@@ -3269,7 +3269,7 @@ func upgradeToVer218(s sessiontypes.Session, ver int64) {
 	if ver >= version218 {
 		return
 	}
-	mustExecute(s, "UPDATE mysql.global_variables SET VARIABLE_VALUE='ON' WHERE VARIABLE_NAME = 'tidb_enable_fast_create_table' AND VARIABLE_VALUE = 'OFF'")
+	// empty, just make lint happy.
 }
 
 // initGlobalVariableIfNotExists initialize a global variable with specific val if it does not exist.
