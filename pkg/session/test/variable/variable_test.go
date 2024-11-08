@@ -402,9 +402,9 @@ func TestMockZapCore(t *testing.T) {
 	zl.Info("GENERAL_LOG")                      // no fields
 	sql := zap.String("sql", "select 1111")     // 1 field
 	zl.Info("GENERAL_LOG", sql)
-	require.Equal(t, 2, len(mzc.fields))
-	require.Equal(t, 0, len(mzc.fields[0]))
-	require.Equal(t, 1, len(mzc.fields[1]))
+	require.Len(t, mzc.fields, 2)
+	require.Len(t, mzc.fields[0], 0)
+	require.Len(t, mzc.fields[1], 1)
 	require.True(t, sql.Equals(mzc.fields[1]["sql"]))
 }
 
