@@ -323,7 +323,7 @@ func getData2Compare(
 }
 
 func TestDebugReadSST(t *testing.T) {
-	//t.Skip("this is a manual test")
+	t.Skip("this is a manual test")
 
 	sstPath := "/tmp/test.sst"
 	t.Logf("read sst: %s", sstPath)
