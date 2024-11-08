@@ -11,6 +11,7 @@ import (
 	"github.com/pingcap/errors"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/kvproto/pkg/errorpb"
+	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/tikv"
@@ -48,6 +49,29 @@ func TestRetryAdapter(t *testing.T) {
 	req.ErrorContains(bo.BackOff(), "everything is alright", "total = %d / %d", bo.TotalSleepInMS(), bo.MaxSleepInMS())
 
 	req.Greater(time.Since(begin), 200*time.Millisecond)
+}
+
+func TestFailNowIf(t *testing.T) {
+	mockBO := utils.InitialRetryState(100, time.Second, time.Second)
+	err1 := errors.New("error1")
+	err2 := errors.New("error2")
+	assert := require.New(t)
+
+	bo := utils.GiveUpRetryOn(&mockBO, err1)
+
+	// Test NextBackoff with an error that is not in failedOn
+	assert.Equal(time.Second, bo.NextBackoff(err2))
+	assert.NotEqualValues(0, bo.Attempt())
+
+	annotatedErr := errors.Annotate(errors.Annotate(err1, "meow?"), "nya?")
+	assert.Equal(time.Duration(0), bo.NextBackoff(annotatedErr))
+	assert.Equal(0, bo.Attempt())
+
+	mockBO = utils.InitialRetryState(100, time.Second, time.Second)
+	bo = utils.GiveUpRetryOn(&mockBO, berrors.ErrBackupNoLeader)
+	annotatedErr = berrors.ErrBackupNoLeader.FastGen("leader is taking an adventure")
+	assert.Equal(time.Duration(0), bo.NextBackoff(annotatedErr))
+	assert.Equal(0, bo.Attempt())
 }
 
 func TestHandleError(t *testing.T) {
