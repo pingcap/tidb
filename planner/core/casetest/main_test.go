@@ -138,3 +138,7 @@ func GetDerivedTopNSuiteData() testdata.TestData {
 func GetPredicateSimplificationTestData() testdata.TestData {
 	return testDataMap["predicate_simplification"]
 }
+
+func GetPredicatePushdownSuiteData() testdata.TestData {
+	return testDataMap["predicate_pushdown_suite"]
+}

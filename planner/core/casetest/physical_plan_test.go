@@ -2562,3 +2562,34 @@ func TestIndexMergeOrderPushDown(t *testing.T) {
 		tk.MustQuery("show warnings").Check(testkit.Rows(output[i].Warning...))
 	}
 }
+
+func TestConstantPropagateWithCollation(t *testing.T) {
+	var input []string
+	var output []struct {
+		SQL     string
+		Plan    []string
+		Warning []string
+	}
+	planSuiteData := GetPlanSuiteData()
+	planSuiteData.LoadTestCases(t, &input, &output)
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	// create table
+	tk.MustExec("use test")
+	tk.MustExec("create table t (id int primary key, name varchar(20));")
+	require.Equal(t, len(input), len(output))
+
+	for i := range input {
+		if strings.Contains(input[i], "set") {
+			tk.MustExec(input[i])
+			continue
+		}
+		testdata.OnRecord(func() {
+			output[i].SQL = input[i]
+			output[i].Plan = testdata.ConvertRowsToStrings(tk.MustQuery("explain format = 'brief' " + input[i]).Rows())
+			output[i].Warning = testdata.ConvertRowsToStrings(tk.MustQuery("show warnings").Rows())
+		})
+		tk.MustQuery("explain format = 'brief' " + input[i]).Check(testkit.Rows(output[i].Plan...))
+		tk.MustQuery("show warnings").Check(testkit.Rows(output[i].Warning...))
+	}
+}
