@@ -142,8 +142,8 @@ func buildNotInAntiSemiDataSourceAndExpectResult(ctx sessionctx.Context, leftCol
 	}
 
 	expectResult := sortRows([]*chunk.Chunk{expectResultChunk}, semiJoinRetTypes)
-	leftMockSrcParm := testutil.MockDataSourceParameters{DataSchema: leftSchema, Ctx: ctx, Rows: leftLen, Ndvs: []int{-1, -1}, Datums: [][]any{leftCol0Datums, leftCol1Datums}, Nulls: [][]bool{leftCol0Nulls, leftCol1Nulls}, HasSel: false}
-	rightMockSrcParm := testutil.MockDataSourceParameters{DataSchema: rightSchema, Ctx: ctx, Rows: rightLen, Ndvs: []int{-1, -1}, Datums: [][]any{rightCol0Datums, rightCol1Datums}, Nulls: [][]bool{rightCol0Nulls, rightCol1Nulls}, HasSel: false}
+	leftMockSrcParm := testutil.MockDataSourceParameters{DataSchema: leftSchema, Ctx: ctx, Rows: leftLen, Ndvs: []int{-2, -2}, Datums: [][]any{leftCol0Datums, leftCol1Datums}, Nulls: [][]bool{leftCol0Nulls, leftCol1Nulls}, HasSel: false}
+	rightMockSrcParm := testutil.MockDataSourceParameters{DataSchema: rightSchema, Ctx: ctx, Rows: rightLen, Ndvs: []int{-2, -2}, Datums: [][]any{rightCol0Datums, rightCol1Datums}, Nulls: [][]bool{rightCol0Nulls, rightCol1Nulls}, HasSel: false}
 	return testutil.BuildMockDataSource(leftMockSrcParm), testutil.BuildMockDataSource(rightMockSrcParm), expectResult
 }
 
