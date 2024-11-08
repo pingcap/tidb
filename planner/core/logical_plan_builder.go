@@ -66,6 +66,7 @@ import (
 	"github.com/pingcap/tidb/util/plancodec"
 	"github.com/pingcap/tidb/util/set"
 	"github.com/pingcap/tidb/util/size"
+	"go.uber.org/zap"
 )
 
 const (
@@ -226,7 +227,7 @@ func (b *PlanBuilder) buildAggregation(ctx context.Context, p LogicalPlan, aggFu
 
 	// flag it if cte contain aggregation
 	if b.buildingCTE {
-		b.outerCTEs[len(b.outerCTEs)-1].containAggOrWindow = true
+		b.outerCTEs[len(b.outerCTEs)-1].containRecursiveForbiddenOperator = true
 	}
 
 	plan4Agg := LogicalAggregation{AggFuncs: make([]*aggregation.AggFuncDesc, 0, len(aggFuncList))}.Init(b.ctx, b.getSelectOffset())
@@ -1708,6 +1709,10 @@ func (b *PlanBuilder) buildProjection(ctx context.Context, p LogicalPlan, fields
 func (b *PlanBuilder) buildDistinct(child LogicalPlan, length int) (*LogicalAggregation, error) {
 	b.optFlag = b.optFlag | flagBuildKeyInfo
 	b.optFlag = b.optFlag | flagPushDownAgg
+	// flag it if cte contain distinct
+	if b.buildingCTE {
+		b.outerCTEs[len(b.outerCTEs)-1].containRecursiveForbiddenOperator = true
+	}
 	plan4Agg := LogicalAggregation{
 		AggFuncs:     make([]*aggregation.AggFuncDesc, 0, child.Schema().Len()),
 		GroupByItems: expression.Column2Exprs(child.Schema().Clone().Columns[:length]),
@@ -1829,7 +1834,7 @@ func (b *PlanBuilder) buildProjection4Union(_ context.Context, u *LogicalUnionAl
 			}
 		}
 		b.optFlag |= flagEliminateProjection
-		proj := LogicalProjection{Exprs: exprs, AvoidColumnEvaluator: true}.Init(b.ctx, b.getSelectOffset())
+		proj := LogicalProjection{Exprs: exprs}.Init(b.ctx, b.getSelectOffset())
 		proj.SetSchema(u.schema.Clone())
 		// reset the schema type to make the "not null" flag right.
 		for i, expr := range exprs {
@@ -2293,6 +2298,10 @@ func extractLimitCountOffset(ctx sessionctx.Context, limit *ast.Limit) (count ui
 
 func (b *PlanBuilder) buildLimit(src LogicalPlan, limit *ast.Limit) (LogicalPlan, error) {
 	b.optFlag = b.optFlag | flagPushDownTopN
+	// flag it if cte contain limit
+	if b.buildingCTE {
+		b.outerCTEs[len(b.outerCTEs)-1].containRecursiveForbiddenOperator = true
+	}
 	var (
 		offset, count uint64
 		err           error
@@ -3079,7 +3088,7 @@ func (g *gbyResolver) Enter(inNode ast.Node) (ast.Node, bool) {
 		return inNode, true
 	case *driver.ParamMarkerExpr:
 		g.isParam = true
-		if g.exprDepth == 1 {
+		if g.exprDepth == 1 && !n.UseAsValueInGbyByClause {
 			_, isNull, isExpectedType := getUintFromNode(g.ctx, n, false)
 			// For constant uint expression in top level, it should be treated as position expression.
 			if !isNull && isExpectedType {
@@ -3117,6 +3126,9 @@ func (g *gbyResolver) Leave(inNode ast.Node) (ast.Node, bool) {
 				} else if ast.HasWindowFlag(ret) {
 					err = ErrIllegalReference.GenWithStackByArgs(v.Name.OrigColName(), "reference to window function")
 				} else {
+					if isParam, ok := ret.(*driver.ParamMarkerExpr); ok {
+						isParam.UseAsValueInGbyByClause = true
+					}
 					return ret, true
 				}
 			}
@@ -4363,6 +4375,10 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p L
 	}
 
 	if sel.OrderBy != nil {
+		// flag it if cte contain order by
+		if b.buildingCTE {
+			b.outerCTEs[len(b.outerCTEs)-1].containRecursiveForbiddenOperator = true
+		}
 		// We need to keep the ORDER BY clause for the following cases:
 		// 1. The select is top level query, order should be honored
 		// 2. The query has LIMIT clause
@@ -4579,9 +4595,9 @@ func (b *PlanBuilder) tryBuildCTE(ctx context.Context, tn *ast.TableName, asName
 			prevSchema := cte.seedLP.Schema().Clone()
 			lp.SetSchema(getResultCTESchema(cte.seedLP.Schema(), b.ctx.GetSessionVars()))
 
-			// If current CTE query contain another CTE which 'containAggOrWindow' is true, current CTE 'containAggOrWindow' will be true
+			// If current CTE query contain another CTE which 'containRecursiveForbiddenOperator' is true, current CTE 'containRecursiveForbiddenOperator' will be true
 			if b.buildingCTE {
-				b.outerCTEs[len(b.outerCTEs)-1].containAggOrWindow = cte.containAggOrWindow || b.outerCTEs[len(b.outerCTEs)-1].containAggOrWindow
+				b.outerCTEs[len(b.outerCTEs)-1].containRecursiveForbiddenOperator = cte.containRecursiveForbiddenOperator || b.outerCTEs[len(b.outerCTEs)-1].containRecursiveForbiddenOperator
 			}
 			// Compute cte inline
 			b.computeCTEInlineFlag(cte)
@@ -4639,13 +4655,22 @@ func (b *PlanBuilder) computeCTEInlineFlag(cte *cteInfo) {
 			b.ctx.GetSessionVars().StmtCtx.AppendWarning(
 				ErrInternal.GenWithStack("Recursive CTE %s can not be inlined by merge() or tidb_opt_force_inline_cte.", cte.def.Name))
 		}
-	} else if cte.containAggOrWindow && b.buildingRecursivePartForCTE {
+		cte.isInline = false
+	} else if cte.containRecursiveForbiddenOperator && b.buildingRecursivePartForCTE {
 		if cte.forceInlineByHintOrVar {
 			b.ctx.GetSessionVars().StmtCtx.AppendWarning(ErrCTERecursiveForbidsAggregation.FastGenByArgs(cte.def.Name))
 		}
-	} else if cte.consumerCount > 1 {
+		cte.isInline = false
+	} else if cte.consumerCount != 1 {
+		// If hint or session variable is set, it can be inlined by user.
 		if cte.forceInlineByHintOrVar {
 			cte.isInline = true
+		} else {
+			// Consumer count > 1 or = 0, CTE can not be inlined by default.
+			// Case the consumer count = 0 (issue #56582)
+			// It means that CTE maybe inside of view and the UpdateCTEConsumerCount(preprocess phase) is skipped
+			// So all of CTE.consumerCount is not updated, and we can not use it to determine whether CTE can be inlined.
+			cte.isInline = false
 		}
 	} else {
 		cte.isInline = true
@@ -5407,6 +5432,7 @@ func (b *PlanBuilder) BuildDataSourceFromView(ctx context.Context, dbName model.
 	}()
 	selectLogicalPlan, err := b.Build(ctx, selectNode)
 	if err != nil {
+		logutil.BgLogger().Error("build plan for view failed", zap.Error(err))
 		if terror.ErrorNotEqual(err, ErrViewRecursive) &&
 			terror.ErrorNotEqual(err, ErrNoSuchTable) &&
 			terror.ErrorNotEqual(err, ErrInternal) &&
@@ -6009,7 +6035,7 @@ func (b *PlanBuilder) buildUpdateLists(ctx context.Context, tableList []*ast.Tab
 			if expr := extractDefaultExpr(assign.Expr); expr != nil {
 				expr.Name = assign.Column
 			}
-			newExpr, np, err = b.rewrite(ctx, assign.Expr, p, nil, false)
+			newExpr, np, err = b.rewrite(ctx, assign.Expr, p, nil, true)
 			if err != nil {
 				return nil, nil, false, err
 			}
@@ -6033,7 +6059,7 @@ func (b *PlanBuilder) buildUpdateLists(ctx context.Context, tableList []*ast.Tab
 
 			o := b.allowBuildCastArray
 			b.allowBuildCastArray = true
-			newExpr, np, err = b.rewriteWithPreprocess(ctx, assign.Expr, p, nil, nil, false, rewritePreprocess(assign))
+			newExpr, np, err = b.rewriteWithPreprocess(ctx, assign.Expr, p, nil, nil, true, rewritePreprocess(assign))
 			b.allowBuildCastArray = o
 			if err != nil {
 				return nil, nil, false, err
@@ -6686,7 +6712,7 @@ func sortWindowSpecs(groupedFuncs map[*ast.WindowSpec][]*ast.WindowFuncExpr, ord
 
 func (b *PlanBuilder) buildWindowFunctions(ctx context.Context, p LogicalPlan, groupedFuncs map[*ast.WindowSpec][]*ast.WindowFuncExpr, orderedSpec []*ast.WindowSpec, aggMap map[*ast.AggregateFuncExpr]int) (LogicalPlan, map[*ast.WindowFuncExpr]int, error) {
 	if b.buildingCTE {
-		b.outerCTEs[len(b.outerCTEs)-1].containAggOrWindow = true
+		b.outerCTEs[len(b.outerCTEs)-1].containRecursiveForbiddenOperator = true
 	}
 	args := make([]ast.ExprNode, 0, 4)
 	windowMap := make(map[*ast.WindowFuncExpr]int)
@@ -7664,7 +7690,7 @@ func (b *PlanBuilder) buildProjection4CTEUnion(_ context.Context, seed LogicalPl
 		}
 	}
 	b.optFlag |= flagEliminateProjection
-	proj := LogicalProjection{Exprs: exprs, AvoidColumnEvaluator: true}.Init(b.ctx, b.getSelectOffset())
+	proj := LogicalProjection{Exprs: exprs}.Init(b.ctx, b.getSelectOffset())
 	proj.SetSchema(resSchema)
 	proj.SetChildren(recur)
 	return proj, nil

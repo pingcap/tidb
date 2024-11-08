@@ -51,20 +51,25 @@ type BackendCtx interface {
 
 	AttachCheckpointManager(*CheckpointManager)
 	GetCheckpointManager() *CheckpointManager
+
+	GetLocalBackend() *local.Backend
 }
 
 // FlushMode is used to control how to flush.
 type FlushMode byte
 
 const (
-	// FlushModeAuto means flush when the memory table size reaches the threshold.
+	// FlushModeAuto means caller does not enforce any flush, the implementation can
+	// decide it.
 	FlushModeAuto FlushMode = iota
-	// FlushModeForceLocal means flush all data to local storage.
-	FlushModeForceLocal
-	// FlushModeForceLocalAndCheckDiskQuota means flush all data to local storage and check disk quota.
+	// FlushModeForceFlushNoImport means flush all data to local storage, but don't
+	// import the data to TiKV.
+	FlushModeForceFlushNoImport
+	// FlushModeForceFlushAndImport means flush and import all data to TiKV.
+	FlushModeForceFlushAndImport
+	// FlushModeForceLocalAndCheckDiskQuota means flush all data to local storage and
+	// check disk quota to decide import.
 	FlushModeForceLocalAndCheckDiskQuota
-	// FlushModeForceGlobal means import all data in local storage to global storage.
-	FlushModeForceGlobal
 )
 
 // litBackendCtx store a backend info for add index reorg task.
@@ -169,7 +174,7 @@ func (bc *litBackendCtx) Flush(indexID int64, mode FlushMode) (flushed, imported
 		return false, false, dbterror.ErrIngestFailed.FastGenByArgs("ingest engine not found")
 	}
 
-	shouldFlush, shouldImport := bc.ShouldSync(mode)
+	shouldFlush, shouldImport := bc.checkFlush(mode)
 	if !shouldFlush {
 		return false, false, nil
 	}
@@ -227,21 +232,21 @@ func (bc *litBackendCtx) Flush(indexID int64, mode FlushMode) (flushed, imported
 // ForceSyncFlagForTest is a flag to force sync only for test.
 var ForceSyncFlagForTest = false
 
-func (bc *litBackendCtx) ShouldSync(mode FlushMode) (shouldFlush bool, shouldImport bool) {
-	if mode == FlushModeForceGlobal || ForceSyncFlagForTest {
+func (bc *litBackendCtx) checkFlush(mode FlushMode) (shouldFlush bool, shouldImport bool) {
+	if mode == FlushModeForceFlushAndImport || ForceSyncFlagForTest {
 		return true, true
 	}
-	if mode == FlushModeForceLocal {
+	if mode == FlushModeForceFlushNoImport {
 		return true, false
 	}
 	bc.diskRoot.UpdateUsage()
 	shouldImport = bc.diskRoot.ShouldImport()
 	if mode == FlushModeForceLocalAndCheckDiskQuota {
-		shouldFlush = true
-	} else {
-		shouldFlush = shouldImport ||
-			time.Since(bc.timeOfLastFlush.Load()) >= bc.updateInterval
+		return true, shouldImport
 	}
+	interval := bc.updateInterval
+	shouldFlush = shouldImport ||
+		time.Since(bc.timeOfLastFlush.Load()) >= interval
 	return shouldFlush, shouldImport
 }
 
@@ -263,4 +268,9 @@ func (bc *litBackendCtx) AttachCheckpointManager(mgr *CheckpointManager) {
 // GetCheckpointManager returns the checkpoint manager attached to the backend context.
 func (bc *litBackendCtx) GetCheckpointManager() *CheckpointManager {
 	return bc.checkpointMgr
+}
+
+// GetLocalBackend returns the local backend.
+func (bc *litBackendCtx) GetLocalBackend() *local.Backend {
+	return bc.backend
 }
