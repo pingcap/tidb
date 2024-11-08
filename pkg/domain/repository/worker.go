@@ -214,8 +214,9 @@ func (w *worker) runQuery(ctx context.Context, sctx sessionctx.Context, sql stri
 	res, err := exec.ExecuteInternal(ctx, sql, args...)
 	if err == nil {
 		if res != nil {
-			defer res.Close()
-			return sqlexec.DrainRecordSet(ctx, res, 256)
+			rs, err := sqlexec.DrainRecordSet(ctx, res, 256)
+			err = errors.Join(err, res.Close())
+			return rs, err
 		}
 		return nil, nil
 	}
