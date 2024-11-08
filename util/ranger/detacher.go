@@ -491,7 +491,9 @@ func (d *rangeDetacher) detachCNFCondAndBuildRangeForIndex(conditions []expressi
 // excludeToIncludeForIntPoint converts `(i` to `[i+1` and `i)` to `i-1]` if `i` is integer.
 // For example, if p is `(3`, i.e., point { value: int(3), excl: true, start: true }, it is equal to `[4`, i.e., point { value: int(4), excl: false, start: true }.
 // Similarly, if p is `8)`, i.e., point { value: int(8), excl: true, start: false}, it is equal to `7]`, i.e., point { value: int(7), excl: false, start: false }.
-// If return value is nil, it means p is unsatisfiable. For example, `(MaxInt64` is unsatisfiable.
+// If return value is nil, it means p is unsatisfiable. For example, `(MaxUint64` is unsatisfiable.
+// The boundary value will be treated as the bigger type: For example, `(MaxInt64` of type KindInt64 will become `[MaxInt64+1` of type KindUint64,
+// and vice versa for `0)` of type KindUint64 will become `-1]` of type KindInt64.
 func excludeToIncludeForIntPoint(p *point) *point {
 	if !p.excl {
 		return p
@@ -500,9 +502,10 @@ func excludeToIncludeForIntPoint(p *point) *point {
 		val := p.value.GetInt64()
 		if p.start {
 			if val == math.MaxInt64 {
-				return nil
+				p.value.SetUint64(uint64(val + 1))
+			} else {
+				p.value.SetInt64(val + 1)
 			}
-			p.value.SetInt64(val + 1)
 			p.excl = false
 		} else {
 			if val == math.MinInt64 {
@@ -521,9 +524,10 @@ func excludeToIncludeForIntPoint(p *point) *point {
 			p.excl = false
 		} else {
 			if val == 0 {
-				return nil
+				p.value.SetInt64(int64(val - 1))
+			} else {
+				p.value.SetUint64(val - 1)
 			}
-			p.value.SetUint64(val - 1)
 			p.excl = false
 		}
 	}
@@ -710,7 +714,7 @@ func ExtractEqAndInCondition(sctx sessionctx.Context, conditions []expression.Ex
 	return accesses, filters, newConditions, columnValues, false
 }
 
-// detachDNFCondAndBuildRangeForIndex will detach the index filters from table filters when it's a DNF.
+// detachDNFCondAndBuildRangeForIndex will detach the index filters from table filters when it's a DNF(Disjunctive Normal Form).
 // We will detach the conditions of every DNF items, then compose them to a DNF.
 func (d *rangeDetacher) detachDNFCondAndBuildRangeForIndex(condition *expression.ScalarFunction, newTpSlice []*types.FieldType) (Ranges, []expression.Expression, []*valueInfo, bool, error) {
 	firstColumnChecker := &conditionChecker{
@@ -721,8 +725,10 @@ func (d *rangeDetacher) detachDNFCondAndBuildRangeForIndex(condition *expression
 	rb := builder{sc: d.sctx.GetSessionVars().StmtCtx}
 	dnfItems := expression.FlattenDNFConditions(condition)
 	newAccessItems := make([]expression.Expression, 0, len(dnfItems))
-	var totalRanges Ranges
-	var totalRangesMemUsage int64
+	var (
+		totalRanges         Ranges
+		totalRangesMemUsage int64
+	)
 	columnValues := make([]*valueInfo, len(d.cols))
 	hasResidual := false
 	for i, item := range dnfItems {
@@ -734,6 +740,10 @@ func (d *rangeDetacher) detachDNFCondAndBuildRangeForIndex(condition *expression
 				return nil, nil, nil, false, err
 			}
 			ranges := res.Ranges
+			// If DNF item always false, we can return ignore this DNF item.
+			if len(ranges) == 0 {
+				continue
+			}
 			accesses = res.AccessConds
 			filters = res.RemainedConds
 			if len(accesses) == 0 {

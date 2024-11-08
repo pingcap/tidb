@@ -16,8 +16,12 @@ package ingest
 
 import (
 	"context"
+	"os"
+	"path/filepath"
+	"strconv"
 	"sync"
 
+	"github.com/pingcap/tidb/br/pkg/lightning/backend/local"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
@@ -46,7 +50,7 @@ func (m *MockBackendCtxMgr) CheckAvailable() (bool, error) {
 }
 
 // Register implements BackendCtxMgr.Register interface.
-func (m *MockBackendCtxMgr) Register(_ context.Context, _ bool, jobID int64, _ *clientv3.Client) (BackendCtx, error) {
+func (m *MockBackendCtxMgr) Register(_ context.Context, _ bool, jobID int64, _ *clientv3.Client, _ string) (BackendCtx, error) {
 	logutil.BgLogger().Info("mock backend mgr register", zap.Int64("jobID", jobID))
 	if mockCtx, ok := m.runningJobs[jobID]; ok {
 		return mockCtx, nil
@@ -55,6 +59,7 @@ func (m *MockBackendCtxMgr) Register(_ context.Context, _ bool, jobID int64, _ *
 	mockCtx := &MockBackendCtx{
 		mu:      sync.Mutex{},
 		sessCtx: sessCtx,
+		jobID:   jobID,
 	}
 	m.runningJobs[jobID] = mockCtx
 	return mockCtx, nil
@@ -86,6 +91,7 @@ func (m *MockBackendCtxMgr) Load(jobID int64) (BackendCtx, bool) {
 type MockBackendCtx struct {
 	sessCtx       sessionctx.Context
 	mu            sync.Mutex
+	jobID         int64
 	checkpointMgr *CheckpointManager
 }
 
@@ -138,6 +144,13 @@ func (m *MockBackendCtx) AttachCheckpointManager(mgr *CheckpointManager) {
 // GetCheckpointManager returns the checkpoint manager attached to the backend context.
 func (m *MockBackendCtx) GetCheckpointManager() *CheckpointManager {
 	return m.checkpointMgr
+}
+
+// GetLocalBackend returns the local backend.
+func (m *MockBackendCtx) GetLocalBackend() *local.Backend {
+	b := &local.Backend{}
+	b.LocalStoreDir = filepath.Join(os.TempDir(), "mock_backend", strconv.FormatInt(m.jobID, 10))
+	return b
 }
 
 // MockEngineInfo is a mock engine info.

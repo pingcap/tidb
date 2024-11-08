@@ -13,6 +13,7 @@ go_test(
         "//config",
         "//domain",
         "//parser/model",
+        "//parser/mysql",
         "//session",
         "//sessionctx/variable",
         "//statistics",

@@ -19,6 +19,8 @@ import (
 	"testing"
 
 	"github.com/pingcap/errors"
+	// autoid1.MockForTest is init there, we need to import it to make sure it's called
+	_ "github.com/pingcap/tidb/autoid_service"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/kv"

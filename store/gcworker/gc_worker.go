@@ -892,16 +892,6 @@ func (w *GCWorker) deleteRanges(ctx context.Context, safePoint uint64, concurren
 			continue
 		}
 
-		err = util.CompleteDeleteRange(se, r, !v2)
-		if err != nil {
-			logutil.Logger(ctx).Error("[gc worker] failed to mark delete range task done",
-				zap.String("uuid", w.uuid),
-				zap.Stringer("startKey", startKey),
-				zap.Stringer("endKey", endKey),
-				zap.Error(err))
-			metrics.GCUnsafeDestroyRangeFailuresCounterVec.WithLabelValues("save").Inc()
-		}
-
 		if err := w.doGCPlacementRules(se, safePoint, r, gcPlacementRuleCache); err != nil {
 			logutil.Logger(ctx).Error("[gc worker] gc placement rules failed on range",
 				zap.String("uuid", w.uuid),
@@ -917,6 +907,16 @@ func (w *GCWorker) deleteRanges(ctx context.Context, safePoint uint64, concurren
 				zap.Int64("elementID", r.ElementID),
 				zap.Error(err))
 			continue
+		}
+
+		err = util.CompleteDeleteRange(se, r, !v2)
+		if err != nil {
+			logutil.Logger(ctx).Error("[gc worker] failed to mark delete range task done",
+				zap.String("uuid", w.uuid),
+				zap.Stringer("startKey", startKey),
+				zap.Stringer("endKey", endKey),
+				zap.Error(err))
+			metrics.GCUnsafeDestroyRangeFailuresCounterVec.WithLabelValues("save").Inc()
 		}
 	}
 	logutil.Logger(ctx).Info("[gc worker] finish delete ranges",
@@ -979,7 +979,7 @@ func (w *GCWorker) redoDeleteRanges(ctx context.Context, safePoint uint64, concu
 	return nil
 }
 
-func (w *GCWorker) doUnsafeDestroyRangeRequest(ctx context.Context, startKey []byte, endKey []byte, concurrency int) error {
+func (w *GCWorker) doUnsafeDestroyRangeRequest(ctx context.Context, startKey []byte, endKey []byte, _ int) error {
 	// Get all stores every time deleting a region. So the store list is less probably to be stale.
 	stores, err := w.getStoresForGC(ctx)
 	if err != nil {
@@ -1411,8 +1411,8 @@ func (w *GCWorker) checkLockObservers(ctx context.Context, safePoint uint64, sto
 			for i, lockInfo := range respInner.Locks {
 				locks[i] = txnlock.NewLock(lockInfo)
 			}
-			slices.SortFunc(locks, func(i, j *txnlock.Lock) bool {
-				return bytes.Compare(i.Key, j.Key) < 0
+			slices.SortFunc(locks, func(i, j *txnlock.Lock) int {
+				return bytes.Compare(i.Key, j.Key)
 			})
 			err = w.resolveLocksAcrossRegions(ctx, locks)
 
@@ -1970,16 +1970,8 @@ func (w *GCWorker) doGCPlacementRules(se session.Session, safePoint uint64, dr u
 		return
 	}
 
-	for _, id := range physicalTableIDs {
-		// Delete pd rule
-		failpoint.Inject("gcDeletePlacementRuleCounter", func() {})
-		logutil.BgLogger().Info("try delete TiFlash pd rule",
-			zap.Int64("tableID", id), zap.String("endKey", string(dr.EndKey)), zap.Uint64("safePoint", safePoint))
-		ruleID := infosync.MakeRuleID(id)
-		if err := infosync.DeleteTiFlashPlacementRule(context.Background(), "tiflash", ruleID); err != nil {
-			logutil.BgLogger().Error("delete TiFlash pd rule failed when gc",
-				zap.Error(err), zap.String("ruleID", ruleID), zap.Uint64("safePoint", safePoint))
-		}
+	if err := infosync.DeleteTiFlashPlacementRules(context.Background(), physicalTableIDs); err != nil {
+		logutil.BgLogger().Error("delete placement rules failed", zap.Error(err), zap.Int64s("tableIDs", physicalTableIDs))
 	}
 	bundles := make([]*placement.Bundle, 0, len(physicalTableIDs))
 	for _, id := range physicalTableIDs {
