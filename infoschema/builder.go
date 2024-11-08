@@ -489,8 +489,8 @@ func (b *Builder) applyTableUpdate(m *meta.Meta, diff *model.SchemaDiff) ([]int6
 	b.copySortedTables(oldTableID, newTableID)
 
 	tblIDs := make([]int64, 0, 2)
+	var keptAllocs autoid.Allocators
 	// We try to reuse the old allocator, so the cached auto ID can be reused.
-	var allocs autoid.Allocators
 	if tableIDIsValid(oldTableID) {
 		if oldTableID == newTableID && (diff.Type != model.ActionRenameTable && diff.Type != model.ActionRenameTables) &&
 			// For repairing table in TiDB cluster, given 2 normal node and 1 repair node.
@@ -500,8 +500,11 @@ func (b *Builder) applyTableUpdate(m *meta.Meta, diff *model.SchemaDiff) ([]int6
 			diff.Type != model.ActionRepairTable &&
 			// Alter sequence will change the sequence info in the allocator, so the old allocator is not valid any more.
 			diff.Type != model.ActionAlterSequence {
+			// TODO: Check how this would work with ADD/REMOVE Partitioning,
+			// which may have AutoID not connected to tableID
+			// TODO: can there be _tidb_rowid AutoID per partition?
 			oldAllocs, _ := b.is.AllocByID(oldTableID)
-			allocs = filterAllocators(diff, oldAllocs)
+			keptAllocs = getKeptAllocators(diff, oldAllocs)
 		}
 
 		tmpIDs := tblIDs
@@ -526,7 +529,7 @@ func (b *Builder) applyTableUpdate(m *meta.Meta, diff *model.SchemaDiff) ([]int6
 	if tableIDIsValid(newTableID) {
 		// All types except DropTableOrView.
 		var err error
-		tblIDs, err = b.applyCreateTable(m, dbInfo, newTableID, allocs, diff.Type, tblIDs)
+		tblIDs, err = b.applyCreateTable(m, dbInfo, newTableID, keptAllocs, diff.Type, tblIDs)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -534,16 +537,33 @@ func (b *Builder) applyTableUpdate(m *meta.Meta, diff *model.SchemaDiff) ([]int6
 	return tblIDs, nil
 }
 
-func filterAllocators(diff *model.SchemaDiff, oldAllocs autoid.Allocators) autoid.Allocators {
-	var newAllocs autoid.Allocators
+// getKeptAllocators get allocators that is not changed by the DDL.
+func getKeptAllocators(diff *model.SchemaDiff, oldAllocs autoid.Allocators) autoid.Allocators {
+	var autoIDChanged, autoRandomChanged bool
 	switch diff.Type {
 	case model.ActionRebaseAutoID, model.ActionModifyTableAutoIdCache:
+		autoIDChanged = true
+	case model.ActionRebaseAutoRandomBase:
+		autoRandomChanged = true
+	case model.ActionMultiSchemaChange:
+		for _, t := range diff.SubActionTypes {
+			switch t {
+			case model.ActionRebaseAutoID, model.ActionModifyTableAutoIdCache:
+				autoIDChanged = true
+			case model.ActionRebaseAutoRandomBase:
+				autoRandomChanged = true
+			}
+		}
+	}
+	var newAllocs autoid.Allocators
+	switch {
+	case autoIDChanged:
 		// Only drop auto-increment allocator.
 		newAllocs = oldAllocs.Filter(func(a autoid.Allocator) bool {
 			tp := a.GetType()
 			return tp != autoid.RowIDAllocType && tp != autoid.AutoIncrementType
 		})
-	case model.ActionRebaseAutoRandomBase:
+	case autoRandomChanged:
 		// Only drop auto-random allocator.
 		newAllocs = oldAllocs.Filter(func(a autoid.Allocator) bool {
 			tp := a.GetType()
