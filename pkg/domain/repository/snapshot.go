@@ -95,7 +95,7 @@ func (w *worker) upsertHistSnapshot(ctx context.Context, sctx sessionctx.Context
 	// TODO: fill DB_VER, WR_VER
 	snapshotsInsert := sqlescape.MustEscapeSQL("INSERT INTO %n.%n (`BEGIN_TIME`, `SNAP_ID`) VALUES (now(), %%?) ON DUPLICATE KEY UPDATE `BEGIN_TIME` = now()",
 		WorkloadSchema, histSnapshotsTable)
-	_, err := w.runQuery(ctx, sctx, snapshotsInsert, snapID)
+	_, err := runQuery(ctx, sctx, snapshotsInsert, snapID)
 	return err
 }
 
@@ -106,7 +106,7 @@ func (w *worker) updateHistSnapshot(ctx context.Context, sctx sessionctx.Context
 	}
 
 	snapshotsUpdate := sqlescape.MustEscapeSQL("UPDATE %n.%n SET `END_TIME` = now(), `ERROR` = COALESCE(CONCAT(ERROR, %%?), ERROR, %%?) WHERE `SNAP_ID` = %%?", WorkloadSchema, histSnapshotsTable)
-	_, err := w.runQuery(ctx, sctx, snapshotsUpdate, nerr, nerr, snapID)
+	_, err := runQuery(ctx, sctx, snapshotsUpdate, nerr, nerr, snapID)
 	return err
 }
 
@@ -116,12 +116,12 @@ func (w *worker) snapshotTable(ctx context.Context, snapID uint64, rt *repositor
 	sess := _sessctx.(sessionctx.Context)
 
 	if rt.insertStmt == "" {
-		if err := w.buildInsertQuery(ctx, sess, rt); err != nil {
+		if err := buildInsertQuery(ctx, sess, rt); err != nil {
 			return fmt.Errorf("could not generate insert statement for `%s`: %v", rt.destTable, err)
 		}
 	}
 
-	if _, err := w.runQuery(ctx, sess, rt.insertStmt, snapID, w.instanceID); err != nil {
+	if _, err := runQuery(ctx, sess, rt.insertStmt, snapID, w.instanceID); err != nil {
 		return fmt.Errorf("could not run insert statement for `%s`: %v", rt.destTable, err)
 	}
 

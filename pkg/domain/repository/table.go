@@ -29,7 +29,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/sqlescape"
 )
 
-func (w *worker) buildCreateQuery(ctx context.Context, sess sessionctx.Context, rt *repositoryTable) (string, error) {
+func buildCreateQuery(ctx context.Context, sess sessionctx.Context, rt *repositoryTable) (string, error) {
 	is := sessiontxn.GetTxnManager(sess).GetTxnInfoSchema()
 	tbl, err := is.TableByName(ctx, model.NewCIStr(rt.schema), model.NewCIStr(rt.table))
 	if err != nil {
@@ -57,7 +57,7 @@ func (w *worker) buildCreateQuery(ctx context.Context, sess sessionctx.Context, 
 	return sb.String(), nil
 }
 
-func (w *worker) buildInsertQuery(ctx context.Context, sess sessionctx.Context, rt *repositoryTable) error {
+func buildInsertQuery(ctx context.Context, sess sessionctx.Context, rt *repositoryTable) error {
 	is := sessiontxn.GetTxnManager(sess).GetTxnInfoSchema()
 	tbl, err := is.TableByName(ctx, model.NewCIStr(rt.schema), model.NewCIStr(rt.table))
 	if err != nil {
@@ -105,20 +105,20 @@ func (w *worker) createAllTables(ctx context.Context) error {
 	defer w.sesspool.Put(_sessctx)
 	is := sess.GetDomainInfoSchema().(infoschema.InfoSchema)
 	if !is.SchemaExists(workloadSchemaCIStr) {
-		_, err := w.execRetry(ctx, sess, "create database if not exists "+WorkloadSchema)
+		_, err := execRetry(ctx, sess, "create database if not exists "+WorkloadSchema)
 		if err != nil {
 			return err
 		}
 	}
 
 	for _, tbl := range workloadTables {
-		if w.checkTableExistsByIS(ctx, is, tbl.destTable, zeroTime) {
+		if checkTableExistsByIS(ctx, is, tbl.destTable, zeroTime) {
 			continue
 		}
 
 		createStmt := tbl.createStmt
 		if createStmt == "" {
-			cs, err := w.buildCreateQuery(ctx, sess, &tbl)
+			cs, err := buildCreateQuery(ctx, sess, &tbl)
 			if err != nil {
 				return err
 			}
@@ -137,12 +137,12 @@ func (w *worker) createAllTables(ctx context.Context) error {
 			createStmt = sb.String()
 		}
 
-		if _, err := w.execRetry(ctx, sess, createStmt); err != nil {
+		if _, err := execRetry(ctx, sess, createStmt); err != nil {
 			return err
 		}
 	}
 
-	return w.createAllPartitions(ctx, sess, is)
+	return createAllPartitions(ctx, sess, is)
 }
 
 func (w *worker) checkTablesExists(ctx context.Context) bool {
@@ -152,11 +152,11 @@ func (w *worker) checkTablesExists(ctx context.Context) bool {
 	is := sess.GetDomainInfoSchema().(infoschema.InfoSchema)
 	now := time.Now()
 	return slice.AllOf(workloadTables, func(i int) bool {
-		return w.checkTableExistsByIS(ctx, is, workloadTables[i].destTable, now)
+		return checkTableExistsByIS(ctx, is, workloadTables[i].destTable, now)
 	})
 }
 
-func (w *worker) checkTableExistsByIS(ctx context.Context, is infoschema.InfoSchema, tblName string, now time.Time) bool {
+func checkTableExistsByIS(ctx context.Context, is infoschema.InfoSchema, tblName string, now time.Time) bool {
 	if now == zeroTime {
 		return is.TableExists(workloadSchemaCIStr, model.NewCIStr(tblName))
 	}

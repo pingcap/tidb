@@ -43,7 +43,7 @@ func calcNextTick(now time.Time) time.Duration {
 	return next.Sub(now)
 }
 
-func (w *worker) createAllPartitions(ctx context.Context, sess sessionctx.Context, is infoschema.InfoSchema) error {
+func createAllPartitions(ctx context.Context, sess sessionctx.Context, is infoschema.InfoSchema) error {
 	sb := &strings.Builder{}
 	for _, tbl := range workloadTables {
 		tbSchema, err := is.TableByName(ctx, workloadSchemaCIStr, model.NewCIStr(tbl.destTable))
@@ -57,7 +57,7 @@ func (w *worker) createAllPartitions(ctx context.Context, sess sessionctx.Contex
 		sqlescape.MustFormatSQL(sb, "ALTER TABLE %n.%n ADD PARTITION (", WorkloadSchema, tbl.destTable)
 		if !generatePartitionRanges(sb, tbInfo) {
 			fmt.Fprintf(sb, ")")
-			_, err = w.execRetry(ctx, sess, sb.String())
+			_, err = execRetry(ctx, sess, sb.String())
 			if err != nil {
 				logutil.BgLogger().Info("repository cannot add partitions", zap.String("parts", sb.String()), zap.NamedError("err", err))
 				return err
@@ -67,7 +67,7 @@ func (w *worker) createAllPartitions(ctx context.Context, sess sessionctx.Contex
 	return nil
 }
 
-func (w *worker) dropOldPartitions(ctx context.Context, sess sessionctx.Context, is infoschema.InfoSchema, now time.Time) error {
+func dropOldPartitions(ctx context.Context, sess sessionctx.Context, is infoschema.InfoSchema, now time.Time) error {
 	retention := int(retentionDays.Load())
 	if retention == -1 {
 		panic("Variable " + repositoryRetentionDays + " was not set before repository was started.")
@@ -96,7 +96,7 @@ func (w *worker) dropOldPartitions(ctx context.Context, sess sessionctx.Context,
 			sb.Reset()
 			sqlescape.MustFormatSQL(sb, "ALTER TABLE %s.%s DROP PARTITION %s",
 				WorkloadSchema, tbl.destTable, pt.Name.L)
-			_, err = w.execRetry(ctx, sess, sb.String())
+			_, err = execRetry(ctx, sess, sb.String())
 			if err != nil {
 				logutil.BgLogger().Info("repository cannot drop partition", zap.String("part", pt.Name.L), zap.NamedError("err", err))
 				break
@@ -129,12 +129,12 @@ func (w *worker) startHouseKeeper(ctx context.Context) func() {
 				is := sessiontxn.GetTxnManager(sess).GetTxnInfoSchema()
 
 				// create new partitions
-				if err := w.createAllPartitions(ctx, sess, is); err != nil {
+				if err := createAllPartitions(ctx, sess, is); err != nil {
 					continue
 				}
 
 				// drop old partitions
-				if err := w.dropOldPartitions(ctx, sess, is, now); err != nil {
+				if err := dropOldPartitions(ctx, sess, is, now); err != nil {
 					continue
 				}
 

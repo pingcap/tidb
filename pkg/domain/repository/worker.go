@@ -206,7 +206,7 @@ func (w *worker) initialized() bool {
 	return w.sesspool != nil
 }
 
-func (w *worker) runQuery(ctx context.Context, sctx sessionctx.Context, sql string, args ...any) (v []chunk.Row, e error) {
+func runQuery(ctx context.Context, sctx sessionctx.Context, sql string, args ...any) (v []chunk.Row, e error) {
 	defer func() {
 		logutil.BgLogger().Debug("repository execute SQL", zap.String("sql", sql), zap.NamedError("err", e))
 	}()
@@ -223,10 +223,10 @@ func (w *worker) runQuery(ctx context.Context, sctx sessionctx.Context, sql stri
 	return nil, err
 }
 
-func (w *worker) execRetry(ctx context.Context, sctx sessionctx.Context, sql string, args ...any) ([]chunk.Row, error) {
+func execRetry(ctx context.Context, sctx sessionctx.Context, sql string, args ...any) ([]chunk.Row, error) {
 	var errs [5]error
 	for i := 0; i < len(errs); i++ {
-		res, err := w.runQuery(ctx, sctx, sql, args...)
+		res, err := runQuery(ctx, sctx, sql, args...)
 		if err == nil {
 			return res, nil
 		}
