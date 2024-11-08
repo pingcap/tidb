@@ -41,6 +41,7 @@ func New() Glue {
 		conf.SkipRegisterToDashboard = true
 		conf.Log.EnableSlowLog.Store(false)
 		conf.TiKVClient.CoprReqTimeout = 1800 * time.Second
+		conf.Store = "tikv"
 	})
 	return Glue{
 		startDomainMu: &sync.Mutex{},
@@ -62,6 +63,11 @@ type tidbSession struct {
 // GetDomain implements glue.Glue.
 func (g Glue) GetDomain(store kv.Storage) (*domain.Domain, error) {
 	existDom, _ := session.GetDomain(nil)
+	if existDom == nil {
+		if err := ddl.StartOwnerManager(context.Background(), store); err != nil {
+			return nil, errors.Trace(err)
+		}
+	}
 	initStatsSe, err := g.createTypesSession(store)
 	if err != nil {
 		return nil, errors.Trace(err)
