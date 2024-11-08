@@ -919,6 +919,10 @@ func (hg *Histogram) outOfRangeRowCount(sctx sessionctx.Context, lDatum, rDatum 
 	if histWidth <= 0 {
 		return 0
 	}
+	if math.IsInf(histWidth, 1) {
+		// The histogram is too wide. As a quick fix, we return 0 to indicate that the overlap percentage is near 0.
+		return 0
+	}
 	boundL := histL - histWidth
 	boundR := histR + histWidth
 
