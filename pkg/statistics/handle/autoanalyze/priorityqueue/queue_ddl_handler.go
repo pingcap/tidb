@@ -410,8 +410,8 @@ func (pq *AnalysisPriorityQueue) handleRemovePartitioningEvent(sctx sessionctx.C
 }
 
 func (pq *AnalysisPriorityQueue) handleDropSchemaEvent(_ sessionctx.Context, event *notifier.SchemaChangeEvent) error {
-	dbInfo, tables := event.GetDropSchemaInfo()
-	for _, tbl := range tables {
+	dbInfo := event.GetDropSchemaInfo()
+	for _, tbl := range dbInfo.Tables {
 		// For static partitioned tables.
 		for _, partition := range tbl.Partitions {
 			if err := pq.getAndDeleteJob(partition.ID); err != nil {

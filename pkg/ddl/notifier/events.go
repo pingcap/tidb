@@ -446,17 +446,26 @@ func NewDropSchemaEvent(dbInfo *model.DBInfo, tables []*model.TableInfo) *Schema
 	}
 	return &SchemaChangeEvent{
 		inner: &jsonSchemaChangeEvent{
-			Tp:     model.ActionDropSchema,
-			DBInfo: dbInfo,
-			Tables: miniTables,
+			Tp: model.ActionDropSchema,
+			DBInfo: &MiniDBInfoForSchemaEvent{
+				ID:     dbInfo.ID,
+				Name:   dbInfo.Name,
+				Tables: miniTables,
+			},
 		},
 	}
 }
 
 // GetDropSchemaInfo returns the database info and tables of the SchemaChangeEvent whose type is ActionDropSchema.
-func (s *SchemaChangeEvent) GetDropSchemaInfo() (dbInfo *model.DBInfo, tables []*MiniTableInfoForSchemaEvent) {
+func (s *SchemaChangeEvent) GetDropSchemaInfo() (dbInfo *MiniDBInfoForSchemaEvent) {
 	intest.Assert(s.inner.Tp == model.ActionDropSchema)
-	return s.inner.DBInfo, s.inner.Tables
+	return s.inner.DBInfo
+}
+
+type MiniDBInfoForSchemaEvent struct {
+	ID     int64                          `json:"id"`
+	Name   pmodel.CIStr                   `json:"name"`
+	Tables []*MiniTableInfoForSchemaEvent `json:"tables,omitempty"`
 }
 
 // MiniTableInfoForSchemaEvent is a mini version of TableInfo for DropSchemaEvent only.
@@ -481,14 +490,13 @@ type MiniPartitionInfoForSchemaEvent struct {
 // jsonSchemaChangeEvent is used by SchemaChangeEvent when needed to (un)marshal data,
 // we want to hide the details to subscribers, so SchemaChangeEvent contain this struct.
 type jsonSchemaChangeEvent struct {
-	DBInfo          *model.DBInfo                  `json:"db_info,omitempty"`
-	Tables          []*MiniTableInfoForSchemaEvent `json:"tables,omitempty"`
-	TableInfo       *model.TableInfo               `json:"table_info,omitempty"`
-	OldTableInfo    *model.TableInfo               `json:"old_table_info,omitempty"`
-	AddedPartInfo   *model.PartitionInfo           `json:"added_partition_info,omitempty"`
-	DroppedPartInfo *model.PartitionInfo           `json:"dropped_partition_info,omitempty"`
-	Columns         []*model.ColumnInfo            `json:"columns,omitempty"`
-	Indexes         []*model.IndexInfo             `json:"indexes,omitempty"`
+	DBInfo          *MiniDBInfoForSchemaEvent `json:"db_info,omitempty"`
+	TableInfo       *model.TableInfo          `json:"table_info,omitempty"`
+	OldTableInfo    *model.TableInfo          `json:"old_table_info,omitempty"`
+	AddedPartInfo   *model.PartitionInfo      `json:"added_partition_info,omitempty"`
+	DroppedPartInfo *model.PartitionInfo      `json:"dropped_partition_info,omitempty"`
+	Columns         []*model.ColumnInfo       `json:"columns,omitempty"`
+	Indexes         []*model.IndexInfo        `json:"indexes,omitempty"`
 	// OldTableID4Partition is used to store the table ID when a table transitions from being partitioned to non-partitioned,
 	// or vice versa.
 	OldTableID4Partition int64 `json:"old_table_id_for_partition,omitempty"`
