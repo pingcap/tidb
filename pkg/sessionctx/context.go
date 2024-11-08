@@ -16,7 +16,8 @@ package sessionctx
 
 import (
 	"context"
-	"github.com/pingcap/errors"
+	"sync"
+
 	distsqlctx "github.com/pingcap/tidb/pkg/distsql/context"
 	"github.com/pingcap/tidb/pkg/expression/exprctx"
 	"github.com/pingcap/tidb/pkg/extension"
@@ -24,7 +25,6 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	tablelock "github.com/pingcap/tidb/pkg/lock/context"
 	"github.com/pingcap/tidb/pkg/meta/model"
-	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/planner/planctx"
 	"github.com/pingcap/tidb/pkg/session/cursor"
 	"github.com/pingcap/tidb/pkg/sessionctx/sessionstates"
@@ -38,7 +38,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/pingcap/tidb/pkg/util/topsql/stmtstats"
 	"github.com/tikv/client-go/v2/oracle"
-	"sync"
 )
 
 // SessionStatesHandler is an interface for encoding and decoding session states.
@@ -242,17 +241,5 @@ const (
 
 // ValidateSnapshotReadTS strictly validates that readTS does not exceed the PD timestamp
 func ValidateSnapshotReadTS(ctx context.Context, store kv.Storage, readTS uint64) error {
-	latestTS, err := store.GetOracle().GetLowResolutionTimestamp(ctx, &oracle.Option{TxnScope: oracle.GlobalTxnScope})
-	// If we fail to get latestTS or the readTS exceeds it, get a timestamp from PD to double check
-	if err != nil || readTS > latestTS {
-		metrics.ValidateReadTSFromPDCount.Inc()
-		currentVer, err := store.CurrentVersion(oracle.GlobalTxnScope)
-		if err != nil {
-			return errors.Errorf("fail to validate read timestamp: %v", err)
-		}
-		if readTS > currentVer.Ver {
-			return errors.Errorf("cannot set read timestamp to a future time")
-		}
-	}
-	return nil
+	return store.GetOracle().ValidateSnapshotReadTS(ctx, readTS, &oracle.Option{TxnScope: oracle.GlobalTxnScope})
 }
