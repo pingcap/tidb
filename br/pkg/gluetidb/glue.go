@@ -41,7 +41,6 @@ func New() Glue {
 		conf.SkipRegisterToDashboard = true
 		conf.Log.EnableSlowLog.Store(false)
 		conf.TiKVClient.CoprReqTimeout = 1800 * time.Second
-		conf.Store = "tikv"
 	})
 	return Glue{
 		startDomainMu: &sync.Mutex{},
