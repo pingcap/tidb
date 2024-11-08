@@ -18,6 +18,7 @@ import (
 	"container/heap"
 	"context"
 	goerrors "errors"
+	"io"
 	"strings"
 	"sync"
 	"time"
@@ -156,12 +157,29 @@ func (j *regionJob) convertStageTo(stage jobStageTp) {
 }
 
 // writeToTiKV writes the data to TiKV and mark this job as wrote stage.
-// if any write logic has error, writeToTiKV will set job to a proper stage and return nil. TODO: <-check this
+// if any write logic has error, writeToTiKV will set job to a proper stage and return nil.
 // if any underlying logic has error, writeToTiKV will return an error.
 // we don't need to do cleanup for the pairs written to tikv if encounters an error,
 // tikv will take the responsibility to do so.
 // TODO: let client-go provide a high-level write interface.
-func (local *Backend) writeToTiKV(pCtx context.Context, j *regionJob) (errRet error) {
+func (local *Backend) writeToTiKV(ctx context.Context, j *regionJob) (errRet error) {
+	err := local.doWrite(ctx, j)
+	if err == nil {
+		return nil
+	}
+	if !common.IsRetryableError(err) {
+		return err
+	}
+	// currently only one case will restart write
+	if strings.Contains(err.Error(), "RequestTooNew") {
+		j.convertStageTo(regionScanned)
+		return err
+	}
+	j.convertStageTo(needRescan)
+	return err
+}
+
+func (local *Backend) doWrite(pCtx context.Context, j *regionJob) (errRet error) {
 	if j.stage != regionScanned {
 		return nil
 	}
@@ -228,9 +246,25 @@ func (local *Backend) writeToTiKV(pCtx context.Context, j *regionJob) (errRet er
 		ApiVersion: apiVersion,
 	}
 
-	annotateErr := func(in error, peer *metapb.Peer) error {
+	failpoint.Inject("changeEpochVersion", func(val failpoint.Value) {
+		cloned := *meta.RegionEpoch
+		meta.RegionEpoch = &cloned
+		i := val.(int)
+		if i >= 0 {
+			meta.RegionEpoch.Version += uint64(i)
+		} else {
+			meta.RegionEpoch.ConfVer -= uint64(-i)
+		}
+	})
+
+	annotateErr := func(in error, peer *metapb.Peer, msg string) error {
 		// annotate the error with peer/store/region info to help debug.
-		return errors.Annotatef(in, "peer %d, store %d, region %d, epoch %s", peer.Id, peer.StoreId, region.Id, region.RegionEpoch.String())
+		return errors.Annotatef(
+			in,
+			"peer %d, store %d, region %d, epoch %s, %s",
+			peer.Id, peer.StoreId, region.Id, region.RegionEpoch.String(),
+			msg,
+		)
 	}
 
 	leaderID := j.region.Leader.GetId()
@@ -240,12 +274,12 @@ func (local *Backend) writeToTiKV(pCtx context.Context, j *regionJob) (errRet er
 	for _, peer := range region.GetPeers() {
 		cli, err := clientFactory.Create(ctx, peer.StoreId)
 		if err != nil {
-			return annotateErr(err, peer)
+			return annotateErr(err, peer, "when create client")
 		}
 
 		wstream, err := cli.Write(ctx)
 		if err != nil {
-			return annotateErr(err, peer)
+			return annotateErr(err, peer, "when open write stream")
 		}
 
 		// Bind uuid for this write request
@@ -255,7 +289,7 @@ func (local *Backend) writeToTiKV(pCtx context.Context, j *regionJob) (errRet er
 			},
 		}
 		if err = wstream.Send(req); err != nil {
-			return annotateErr(err, peer)
+			return annotateErr(err, peer, "when send meta")
 		}
 		req.Chunk = &sst.WriteRequest_Batch{
 			Batch: &sst.WriteBatch{
@@ -290,7 +324,12 @@ func (local *Backend) writeToTiKV(pCtx context.Context, j *regionJob) (errRet er
 			}
 			requests[i].Chunk.(*sst.WriteRequest_Batch).Batch.Pairs = pairs[:count]
 			if err := clients[i].Send(requests[i]); err != nil {
-				return annotateErr(err, allPeers[i])
+				if err == io.EOF {
+					// if it's EOF, need RecvMsg to get the error
+					dummy := &sst.WriteResponse{}
+					err = clients[i].RecvMsg(dummy)
+				}
+				return annotateErr(err, allPeers[i], "when send data")
 			}
 		}
 		return nil
@@ -362,10 +401,10 @@ func (local *Backend) writeToTiKV(pCtx context.Context, j *regionJob) (errRet er
 	for i, wStream := range clients {
 		resp, closeErr := wStream.CloseAndRecv()
 		if closeErr != nil {
-			return annotateErr(closeErr, allPeers[i])
+			return annotateErr(closeErr, allPeers[i], "when close write stream")
 		}
 		if resp.Error != nil {
-			return annotateErr(errors.New(resp.Error.Message), allPeers[i])
+			return annotateErr(errors.New("resp error: "+resp.Error.Message), allPeers[i], "when close write stream")
 		}
 		if leaderID == region.Peers[i].GetId() {
 			leaderPeerMetas = resp.Metas
