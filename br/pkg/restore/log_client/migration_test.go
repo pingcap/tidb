@@ -29,56 +29,54 @@ func emptyMigrations() *logclient.WithMigrations {
 	return &logclient.WithMigrations{}
 }
 
-func nameFromID(prefix string, id int) string {
+func nameFromID(prefix string, id uint64) string {
 	return fmt.Sprintf("%s_%d", prefix, id)
 }
 
-func phyNameFromID(metaid, phyLen int) string {
+func phyNameFromID(metaid, phyLen uint64) string {
 	return fmt.Sprintf("meta_%d_phy_%d", metaid, phyLen)
 }
 
-func generateSpans(metaid, physicalLength, spanLength int) []*backuppb.Span {
+func generateSpans(metaid, physicalLength, spanLength uint64) []*backuppb.Span {
 	spans := make([]*backuppb.Span, 0, spanLength)
-	for i := 0; i < spanLength; i += 1 {
+	for i := uint64(0); i < spanLength; i += 1 {
 		spans = append(spans, &backuppb.Span{
-			Offset: lfl(uint64(metaid), uint64(physicalLength), uint64(spanLength)),
+			Offset: lfl(metaid, physicalLength, i),
 			Length: 1,
 		})
 	}
 	return spans
 }
 
-func generateDeleteLogicalFiles(metaid, physicalLength, logicalLength int) []*backuppb.DeleteSpansOfFile {
+func generateDeleteLogicalFiles(metaid, physicalLength, logicalLength uint64) []*backuppb.DeleteSpansOfFile {
 	spans := make([]*backuppb.DeleteSpansOfFile, 0, logicalLength)
-	for i := 0; i < physicalLength; i += 1 {
-		spans = append(spans, &backuppb.DeleteSpansOfFile{
-			Path:  phyNameFromID(metaid, i),
-			Spans: generateSpans(metaid, physicalLength, logicalLength),
-		})
-	}
+	spans = append(spans, &backuppb.DeleteSpansOfFile{
+		Path:  phyNameFromID(metaid, physicalLength),
+		Spans: generateSpans(metaid, physicalLength, logicalLength),
+	})
 	return spans
 }
 
-func generateDeletePhysicalFiles(metaid, physicalLength int) []string {
+func generateDeletePhysicalFiles(metaid, physicalLength uint64) []string {
 	names := make([]string, 0, physicalLength)
-	for i := 0; i < physicalLength; i += 1 {
+	for i := uint64(0); i < physicalLength; i += 1 {
 		names = append(names, phyNameFromID(metaid, i))
 	}
 	return names
 }
 
-func generateMigrationMeta(metaid int) *backuppb.MetaEdit {
+func generateMigrationMeta(metaid uint64) *backuppb.MetaEdit {
 	return &backuppb.MetaEdit{
 		Path:         nameFromID("meta", metaid),
 		DestructSelf: true,
 	}
 }
 
-func generateMigrationFile(metaid, physicalLength, logicalLength int) *backuppb.MetaEdit {
+func generateMigrationFile(metaid, physicalLength, physicalOffset, logicalLength uint64) *backuppb.MetaEdit {
 	return &backuppb.MetaEdit{
 		Path:                nameFromID("meta", metaid),
 		DeletePhysicalFiles: generateDeletePhysicalFiles(metaid, physicalLength),
-		DeleteLogicalFiles:  generateDeleteLogicalFiles(metaid, physicalLength, logicalLength),
+		DeleteLogicalFiles:  generateDeleteLogicalFiles(metaid, physicalOffset, logicalLength),
 		DestructSelf:        false,
 	}
 }
@@ -97,23 +95,29 @@ func gfl(storeId, length uint64) uint64 {
 	return storeId*100000 + length*100
 }
 
-func gfls(m [][]uint64) []uint64 {
-	glens := make([]uint64, 3*len(m))
+func gfls(m [][]uint64) [][]uint64 {
+	glenss := make([][]uint64, 0, len(m))
 	for storeId, gs := range m {
+		if len(gs) == 0 {
+			continue
+		}
+		glens := make([]uint64, 0, len(gs))
 		for _, glen := range gs {
 			glens = append(glens, gfl(uint64(storeId), glen))
 		}
+		glenss = append(glenss, glens)
 	}
-	return glens
+	return glenss
 }
 
 // mark the length of group file as test id identity
-func generateGroupFiles(storeId, length uint64) []*backuppb.DataFileGroup {
+func generateGroupFiles(metaId, length uint64) []*backuppb.DataFileGroup {
 	groupFiles := make([]*backuppb.DataFileGroup, 0, length)
 	for i := uint64(0); i < length; i += 1 {
 		groupFiles = append(groupFiles, &backuppb.DataFileGroup{
-			Length:        gfl(storeId, i),
-			DataFilesInfo: generateDataFiles(storeId, i, 3),
+			Path:          phyNameFromID(metaId, i),
+			Length:        gfl(metaId, i),
+			DataFilesInfo: generateDataFiles(metaId, i, 3),
 		})
 	}
 	return groupFiles
@@ -124,23 +128,35 @@ func lfl(storeId, glen, plen uint64) uint64 {
 	return storeId*100000 + glen*100 + plen
 }
 
-func lfls(m [][][]uint64) []uint64 {
-	flens := make([]uint64, 0, 9*len(m))
+func lfls(m [][][]uint64) [][][]uint64 {
+	flensss := make([][][]uint64, 0, len(m))
 	for storeId, glens := range m {
-		for glen, flens := range glens {
-			for _, flen := range flens {
+		if len(glens) == 0 {
+			continue
+		}
+		flenss := make([][]uint64, 0, len(glens))
+		for glen, fs := range glens {
+			if len(fs) == 0 {
+				continue
+			}
+			flens := make([]uint64, 0, len(fs))
+			for _, flen := range fs {
 				flens = append(flens, lfl(uint64(storeId), uint64(glen), flen))
 			}
+			flenss = append(flenss, flens)
 		}
+		flensss = append(flensss, flenss)
 	}
-	return flens
+	return flensss
 }
 
-func generateDataFiles(storeId, glen, plen uint64) []*backuppb.DataFileInfo {
+func generateDataFiles(metaId, glen, plen uint64) []*backuppb.DataFileInfo {
 	files := make([]*backuppb.DataFileInfo, 0, plen)
 	for i := uint64(0); i < plen; i += 1 {
 		files = append(files, &backuppb.DataFileInfo{
-			Length: lfl(storeId, glen, i),
+			Path:        phyNameFromID(metaId, glen),
+			RangeOffset: lfl(metaId, glen, i),
+			Length:      lfl(metaId, glen, i),
 		})
 	}
 	return files
@@ -187,15 +203,15 @@ func TestMigrations(t *testing.T) {
 		migrations []*backuppb.Migration
 		// test meta name iter
 		expectStoreIds   []int64
-		expectPhyLengths []uint64
-		expectLogLengths []uint64
+		expectPhyLengths [][]uint64
+		expectLogLengths [][][]uint64
 	}{
 		{
 			migrations: []*backuppb.Migration{
 				{
 					EditMeta: []*backuppb.MetaEdit{
 						generateMigrationMeta(0),
-						generateMigrationFile(2, 2, 2),
+						generateMigrationFile(2, 1, 2, 2),
 					},
 					Compactions: []*backuppb.LogFileCompaction{
 						{
@@ -215,6 +231,101 @@ func TestMigrations(t *testing.T) {
 				{{0, 1, 2}, {0, 1, 2}, {0, 1, 2}},
 			}),
 		},
+		{
+			migrations: []*backuppb.Migration{
+				{
+					EditMeta: []*backuppb.MetaEdit{
+						generateMigrationMeta(0),
+						generateMigrationFile(2, 1, 2, 2),
+					},
+					Compactions: []*backuppb.LogFileCompaction{
+						{
+							CompactionFromTs:  50,
+							CompactionUntilTs: 52,
+						},
+					},
+				},
+			},
+			expectStoreIds: []int64{1, 2},
+			expectPhyLengths: gfls([][]uint64{
+				{ /*0, 1, 2*/ }, {0, 1, 2}, { /*0 */ 1, 2},
+			}),
+			expectLogLengths: lfls([][][]uint64{
+				{ /*{0, 1, 2}, {0, 1, 2}, {0, 1, 2}*/ },
+				{{0, 1, 2}, {0, 1, 2}, {0, 1, 2}},
+				{{ /*0, 1, 2*/ }, {0, 1, 2}, { /*0, 1 */ 2}},
+			}),
+		},
+		{
+			migrations: []*backuppb.Migration{
+				{
+					EditMeta: []*backuppb.MetaEdit{
+						generateMigrationMeta(0),
+					},
+					Compactions: []*backuppb.LogFileCompaction{
+						{
+							CompactionFromTs:  50,
+							CompactionUntilTs: 52,
+						},
+					},
+				},
+				{
+					EditMeta: []*backuppb.MetaEdit{
+						generateMigrationFile(2, 1, 2, 2),
+					},
+					Compactions: []*backuppb.LogFileCompaction{
+						{
+							CompactionFromTs:  120,
+							CompactionUntilTs: 140,
+						},
+					},
+				},
+			},
+			expectStoreIds: []int64{1, 2},
+			expectPhyLengths: gfls([][]uint64{
+				{ /*0, 1, 2*/ }, {0, 1, 2}, { /*0 */ 1, 2},
+			}),
+			expectLogLengths: lfls([][][]uint64{
+				{ /*{0, 1, 2}, {0, 1, 2}, {0, 1, 2}*/ },
+				{{0, 1, 2}, {0, 1, 2}, {0, 1, 2}},
+				{{ /*0, 1, 2*/ }, {0, 1, 2}, { /*0, 1 */ 2}},
+			}),
+		},
+		{
+			migrations: []*backuppb.Migration{
+				{
+					EditMeta: []*backuppb.MetaEdit{
+						generateMigrationMeta(0),
+					},
+					Compactions: []*backuppb.LogFileCompaction{
+						{
+							CompactionFromTs:  50,
+							CompactionUntilTs: 52,
+						},
+					},
+				},
+				{
+					EditMeta: []*backuppb.MetaEdit{
+						generateMigrationFile(2, 1, 2, 2),
+					},
+					Compactions: []*backuppb.LogFileCompaction{
+						{
+							CompactionFromTs:  1200,
+							CompactionUntilTs: 1400,
+						},
+					},
+				},
+			},
+			expectStoreIds: []int64{1, 2},
+			expectPhyLengths: gfls([][]uint64{
+				{ /*0, 1, 2*/ }, {0, 1, 2}, {0, 1, 2},
+			}),
+			expectLogLengths: lfls([][][]uint64{
+				{ /*{0, 1, 2}, {0, 1, 2}, {0, 1, 2}*/ },
+				{{0, 1, 2}, {0, 1, 2}, {0, 1, 2}},
+				{{0, 1, 2}, {0, 1, 2}, {0, 1, 2}},
+			}),
+		},
 	}
 
 	ctx := context.Background()
@@ -226,15 +337,15 @@ func TestMigrations(t *testing.T) {
 		it = withMigrations.Metas(generateMetaNameIter())
 		collect := iter.CollectAll(ctx, it)
 		require.NoError(t, collect.Err)
-		for _, meta := range collect.Item {
+		for j, meta := range collect.Item {
 			physicalIter := generatePhysicalIter(meta)
-			checkPhysicalIter(t, cs.expectPhyLengths, physicalIter)
+			checkPhysicalIter(t, cs.expectPhyLengths[j], physicalIter)
 			physicalIter = generatePhysicalIter(meta)
 			collect := iter.CollectAll(ctx, physicalIter)
 			require.NoError(t, collect.Err)
-			for _, phy := range collect.Item {
+			for k, phy := range collect.Item {
 				logicalIter := generateLogicalIter(phy)
-				checkLogicalIter(t, cs.expectLogLengths, logicalIter)
+				checkLogicalIter(t, cs.expectLogLengths[j][k], logicalIter)
 			}
 		}
 	}
