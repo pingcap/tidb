@@ -234,8 +234,11 @@ func testCachedPlanClone(t *testing.T, tk1, tk2 *testkit.TestKit, prep, set, exe
 	ctx = context.WithValue(ctx, core.PlanCacheKeyTestClone{}, func(plan, cloned base.Plan) {
 		checked = true
 		require.NoError(t, checkUnclearPlanCacheClone(plan, cloned,
-			".ctx",
-			"*collate"))
+			".ctx", ".AccessCondition", ".filterCondition", ".Conditions", ".Exprs", ".IndexConstants",
+			"*collate", ".IdxCols", ".OutputColumns", ".EqualConditions", ".OuterHashKeys", ".InnerHashKeys",
+			".HandleParams", ".IndexValueParams", ".Insert.Lists", ".accessCols", ".physicalSchemaProducer.schema",
+			".PruningConds", ".PlanPartInfo.Columns", ".PlanPartInfo.ColumnNames", ".baseSchemaProducer.schema",
+			".pkIsHandleCol", "JoinKeys", ".OtherConditions", ".ExtraHandleCol", ".PointGetPlan.HandleConstant"))
 	})
 	if isDML {
 		tk2.MustExecWithContext(ctx, exec2)
