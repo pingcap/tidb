@@ -219,10 +219,21 @@ func (w *worker) onDropSchema(jobCtx *jobContext, job *model.Job) (ver int64, _ 
 			break
 		}
 
-		dropSchemaEvent := notifier.NewDropSchemaEvent(dbInfo, tables)
-		err = asyncNotifyEvent(jobCtx, dropSchemaEvent, job, noSubJob, w.sess)
-		if err != nil {
-			return ver, errors.Trace(err)
+		// Split tables into multiple jobs to avoid too big transaction.
+		tablesPerJob := 100
+		if len(tables) > 100000 {
+			tablesPerJob = 500
+		}
+		for i := 0; i < len(tables); i += tablesPerJob {
+			end := i + tablesPerJob
+			if end > len(tables) {
+				end = len(tables)
+			}
+			dropSchemaEvent := notifier.NewDropSchemaEvent(dbInfo, tables[i:end])
+			err = asyncNotifyEvent(jobCtx, dropSchemaEvent, job, int64(i/tablesPerJob), w.sess)
+			if err != nil {
+				return ver, errors.Trace(err)
+			}
 		}
 		// Finish this job.
 		job.FillFinishedArgs(&model.DropSchemaArgs{

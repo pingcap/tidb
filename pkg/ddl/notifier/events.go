@@ -20,6 +20,7 @@ import (
 	"strings"
 
 	"github.com/pingcap/tidb/pkg/meta/model"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/util/intest"
 )
 
@@ -428,26 +429,54 @@ func NewFlashbackClusterEvent() *SchemaChangeEvent {
 
 // NewDropSchemaEvent creates a schema change event whose type is ActionDropSchema.
 func NewDropSchemaEvent(dbInfo *model.DBInfo, tables []*model.TableInfo) *SchemaChangeEvent {
+	miniTables := make([]*MiniTableInfo, len(tables))
+	for i, table := range tables {
+		miniTables[i] = &MiniTableInfo{
+			ID:   table.ID,
+			Name: table.Name,
+		}
+		if table.Partition != nil {
+			for _, part := range table.Partition.Definitions {
+				miniTables[i].Partitions = append(miniTables[i].Partitions, &MiniPartitionInfo{
+					ID:   part.ID,
+					Name: part.Name,
+				})
+			}
+		}
+	}
 	return &SchemaChangeEvent{
 		inner: &jsonSchemaChangeEvent{
 			Tp:     model.ActionDropSchema,
 			DBInfo: dbInfo,
-			Tables: tables,
+			Tables: miniTables,
 		},
 	}
 }
 
 // GetDropSchemaInfo returns the database info and tables of the SchemaChangeEvent whose type is ActionDropSchema.
-func (s *SchemaChangeEvent) GetDropSchemaInfo() (dbInfo *model.DBInfo, tables []*model.TableInfo) {
+func (s *SchemaChangeEvent) GetDropSchemaInfo() (dbInfo *model.DBInfo, tables []*MiniTableInfo) {
 	intest.Assert(s.inner.Tp == model.ActionDropSchema)
 	return s.inner.DBInfo, s.inner.Tables
+}
+
+// MiniTableInfo is a mini version of TableInfo for DropSchemaEvent only.
+type MiniTableInfo struct {
+	ID         int64                `json:"id"`
+	Name       pmodel.CIStr         `json:"name"`
+	Partitions []*MiniPartitionInfo `json:"partitions,omitempty"`
+}
+
+// MiniPartitionInfo is a mini version of PartitionInfo for DropSchemaEvent only.
+type MiniPartitionInfo struct {
+	ID   int64        `json:"id"`
+	Name pmodel.CIStr `json:"name"`
 }
 
 // jsonSchemaChangeEvent is used by SchemaChangeEvent when needed to (un)marshal data,
 // we want to hide the details to subscribers, so SchemaChangeEvent contain this struct.
 type jsonSchemaChangeEvent struct {
 	DBInfo          *model.DBInfo        `json:"db_info,omitempty"`
-	Tables          []*model.TableInfo   `json:"tables,omitempty"`
+	Tables          []*MiniTableInfo     `json:"tables,omitempty"`
 	TableInfo       *model.TableInfo     `json:"table_info,omitempty"`
 	OldTableInfo    *model.TableInfo     `json:"old_table_info,omitempty"`
 	AddedPartInfo   *model.PartitionInfo `json:"added_partition_info,omitempty"`
