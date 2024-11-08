@@ -59,9 +59,9 @@ for prefix in go tikv; do
     f2 { print > \"/tmp/$prefix-write-cf-properties.txt\" }
   " /tmp/$prefix-write-cf-scan.txt
   # filter some properties that are not deterministic by logical content
-  grep -v -e "data block size" -e "index block size" -e "entries for filter" -e "(estimated) table size" \
+  grep -v -F -e "data block size" -e "index block size" -e "entries for filter" -e "(estimated) table size" \
     -e "DB identity" -e "DB session identity" -e "DB host id" -e "original file number" -e "unique ID" \
-    /tmp/$prefix-write-cf-properties.txt > $prefix-write-cf-properties.txt.filtered
+    /tmp/$prefix-write-cf-properties.txt > /tmp/$prefix-write-cf-properties.txt.filtered
 done
 
 diff /tmp/tikv-write-cf-data.txt /tmp/go-write-cf-data.txt
