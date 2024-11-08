@@ -134,7 +134,7 @@ func init() {
 		Name:  repositoryDest,
 		Type:  variable.TypeStr,
 		Value: "",
-		SetGlobal: func(ctx context.Context, s *variable.SessionVars, val string) error {
+		SetGlobal: func(ctx context.Context, _ *variable.SessionVars, val string) error {
 			return workerCtx.setRepositoryDest(ctx, val)
 		},
 		Validation: func(_ *variable.SessionVars, norm, _ string, _ variable.ScopeFlag) (string, error) {
@@ -148,7 +148,7 @@ func init() {
 		Value:    "7",
 		MinValue: 0,
 		MaxValue: 365,
-		SetGlobal: func(ctx context.Context, s *variable.SessionVars, val string) error {
+		SetGlobal: func(ctx context.Context, _ *variable.SessionVars, val string) error {
 			return setRetentionDays(ctx, val)
 		},
 	})
@@ -159,7 +159,7 @@ func init() {
 		Value:    "5",
 		MinValue: 0,
 		MaxValue: 365,
-		SetGlobal: func(ctx context.Context, s *variable.SessionVars, val string) error {
+		SetGlobal: func(ctx context.Context, _ *variable.SessionVars, val string) error {
 			return workerCtx.changeSamplingInterval(ctx, val)
 		},
 	})
@@ -170,7 +170,7 @@ func init() {
 		Value:    "3600",
 		MinValue: 900,
 		MaxValue: 7200,
-		SetGlobal: func(ctx context.Context, s *variable.SessionVars, val string) error {
+		SetGlobal: func(ctx context.Context, _ *variable.SessionVars, val string) error {
 			return workerCtx.changeSnapshotInterval(ctx, val)
 		},
 	})
