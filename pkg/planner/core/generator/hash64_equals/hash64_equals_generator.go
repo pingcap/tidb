@@ -35,7 +35,7 @@ import (
 // If a field is tagged with `hash64-equals`, then it will be computed in hash64 and equals func.
 // If a field is not tagged, then it will be skipped.
 func GenHash64Equals4LogicalOps() ([]byte, error) {
-	var structures = []any{logicalop.LogicalJoin{}, logicalop.LogicalAggregation{}, logicalop.LogicalApply{}, logicalop.LogicalExpand{}}
+	var structures = []any{logicalop.LogicalJoin{}, logicalop.LogicalAggregation{}, logicalop.LogicalApply{}, logicalop.LogicalExpand{}, logicalop.LogicalLimit{}}
 	c := new(cc)
 	c.write(codeGenHash64EqualsPrefix)
 	for _, s := range structures {
@@ -104,6 +104,8 @@ func logicalOpName2PlanCodecString(name string) string {
 		return "plancodec.TypeApply"
 	case "LogicalExpand":
 		return "plancodec.TypeExpand"
+	case "LogicalLimit":
+		return "plancodec.TypeLimit"
 	default:
 		return ""
 	}
