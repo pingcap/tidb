@@ -15,7 +15,6 @@
 package logicalop
 
 import (
-	"github.com/pingcap/tidb/pkg/planner/property"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/expression"
@@ -24,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/cascades/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
+	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/stretchr/testify/require"
