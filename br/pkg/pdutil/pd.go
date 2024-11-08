@@ -53,10 +53,6 @@ const (
 
 	// pd request retry time when connection fail
 	pdRequestRetryTime = 120
-<<<<<<< HEAD
-=======
-
->>>>>>> fe6837a8c93 (br/pdutils: retry when encountered dns error (#53005))
 	// set max-pending-peer-count to a large value to avoid scatter region failed.
 	maxPendingPeerUnlimited uint64 = math.MaxInt32
 )

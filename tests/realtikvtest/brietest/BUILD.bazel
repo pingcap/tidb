@@ -7,21 +7,12 @@ go_test(
         "backup_restore_test.go",
         "binlog_test.go",
         "main_test.go",
-<<<<<<< HEAD
-=======
-        "operator_test.go",
         "pdutil_test.go",
->>>>>>> fe6837a8c93 (br/pdutils: retry when encountered dns error (#53005))
     ],
     flaky = True,
     race = "on",
     deps = [
-<<<<<<< HEAD
-=======
         "//br/pkg/pdutil",
-        "//br/pkg/task",
-        "//br/pkg/task/operator",
->>>>>>> fe6837a8c93 (br/pdutils: retry when encountered dns error (#53005))
         "//config",
         "//parser/mysql",
         "//sessionctx/binloginfo",
@@ -29,8 +20,10 @@ go_test(
         "//testkit",
         "//testkit/testsetup",
         "//tests/realtikvtest",
+        "@com_github_pingcap_failpoint//:failpoint",
         "@com_github_pingcap_tipb//go-binlog",
         "@com_github_stretchr_testify//require",
+        "@com_github_tikv_pd_client//:client",
         "@org_golang_google_grpc//:grpc",
         "@org_uber_go_goleak//:goleak",
     ],
