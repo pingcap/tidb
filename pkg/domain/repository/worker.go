@@ -337,11 +337,11 @@ func (w *worker) start() error {
 	return nil
 }
 
-func (w *worker) stop() error {
+func (w *worker) stop() {
 	w.enabled = false
 	if w.cancel == nil {
 		// Worker was not started, just clear enabled and return
-		return nil
+		return
 	}
 
 	if w.owner != nil {
@@ -353,7 +353,7 @@ func (w *worker) stop() error {
 	w.cancel = nil
 
 	w.wg.Wait()
-	return nil
+	return
 }
 
 func (w *worker) setRepositoryDest(_ context.Context, dst string) error {
