@@ -1555,10 +1555,16 @@ func MergePartitionHist2GlobalHist(sc *stmtctx.StatementContext, hists []*Histog
 			var merged *bucket4Merging
 			if len(cutAndFixBuffer) == 0 {
 				merged, err = mergePartitionBuckets(sc, buckets[i:r])
+				if err != nil {
+					return nil, err
+				}
 			} else {
 				// The content in the merge buffer don't need a re-sort since we just fix some lower bound for them.
 				mergeBuffer = append(mergeBuffer, buckets[leftMostValidPosForNonOverlapping:r]...)
 				merged, err = mergePartitionBuckets(sc, mergeBuffer)
+				if err != nil {
+					return nil, err
+				}
 				for _, bkt := range cutAndFixBuffer {
 					releasebucket4MergingForRecycle(bkt)
 				}
@@ -1588,9 +1594,6 @@ func MergePartitionHist2GlobalHist(sc *stmtctx.StatementContext, hists []*Histog
 				}
 				i = leftMostInvalidPosForNextRound
 			}
-			if err != nil {
-				return nil, err
-			}
 			currentLeftMost.Copy(merged.lower)
 			currentLeftMost = nil
 			globalBuckets = append(globalBuckets, merged)
@@ -1600,10 +1603,8 @@ func MergePartitionHist2GlobalHist(sc *stmtctx.StatementContext, hists []*Histog
 		}
 	}
 	if r > 0 {
-		bucketSum := int64(0)
 		leftMost := buckets[0].lower
 		for i, b := range buckets[:r] {
-			bucketSum += b.Count
 			if i == 0 {
 				continue
 			}
