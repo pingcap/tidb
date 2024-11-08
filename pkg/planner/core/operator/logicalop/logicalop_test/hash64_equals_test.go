@@ -41,12 +41,12 @@ func TestLogicalLimitHash64Equals(t *testing.T) {
 		RetType: types.NewFieldType(mysql.TypeLonglong),
 	}
 	limit1 := &logicalop.LogicalLimit{
-		PartitionBy: []property.SortItem{{col1, true}},
+		PartitionBy: []property.SortItem{{Col: col1, Desc: true}},
 		Offset:      1,
 		Count:       1,
 	}
 	limit2 := &logicalop.LogicalLimit{
-		PartitionBy: []property.SortItem{{col1, true}},
+		PartitionBy: []property.SortItem{{Col: col1, Desc: true}},
 		Offset:      1,
 		Count:       1,
 	}
@@ -56,12 +56,12 @@ func TestLogicalLimitHash64Equals(t *testing.T) {
 	limit2.Hash64(hasher2)
 	require.Equal(t, hasher1.Sum64(), hasher2.Sum64())
 
-	limit2.PartitionBy = []property.SortItem{{col2, true}}
+	limit2.PartitionBy = []property.SortItem{{Col: col2, Desc: true}}
 	hasher2.Reset()
 	limit2.Hash64(hasher2)
 	require.NotEqual(t, hasher1.Sum64(), hasher2.Sum64())
 
-	limit2.PartitionBy = []property.SortItem{{col1, true}}
+	limit2.PartitionBy = []property.SortItem{{Col: col1, Desc: true}}
 	limit2.Offset = 2
 	hasher2.Reset()
 	limit2.Hash64(hasher2)
