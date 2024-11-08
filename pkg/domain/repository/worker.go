@@ -360,8 +360,8 @@ func (w *worker) setRepositoryDest(_ context.Context, dst string) error {
 	w.Lock()
 	defer w.Unlock()
 
-	switch {
-	case dst == "table":
+	switch dst {
+	case "table":
 		return w.start()
 	default:
 		w.stop()
