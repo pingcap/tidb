@@ -436,6 +436,7 @@ func NewDropSchemaEvent(dbInfo *model.DBInfo, tables []*model.TableInfo) *Schema
 			Name: table.Name,
 		}
 		if table.Partition != nil {
+			miniTables[i].Partitions = make([]*MiniPartitionInfoForSchemaEvent, 0, len(table.Partition.Definitions))
 			for _, part := range table.Partition.Definitions {
 				miniTables[i].Partitions = append(miniTables[i].Partitions, &MiniPartitionInfoForSchemaEvent{
 					ID:   part.ID,
