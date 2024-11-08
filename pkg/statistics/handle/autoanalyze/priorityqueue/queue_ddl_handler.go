@@ -410,8 +410,8 @@ func (pq *AnalysisPriorityQueue) handleRemovePartitioningEvent(sctx sessionctx.C
 }
 
 func (pq *AnalysisPriorityQueue) handleDropSchemaEvent(_ sessionctx.Context, event *notifier.SchemaChangeEvent) error {
-	dbInfo := event.GetDropSchemaInfo()
-	for _, tbl := range dbInfo.Tables {
+	miniDBInfo := event.GetDropSchemaInfo()
+	for _, tbl := range miniDBInfo.Tables {
 		// For static partitioned tables.
 		for _, partition := range tbl.Partitions {
 			if err := pq.getAndDeleteJob(partition.ID); err != nil {
@@ -419,7 +419,7 @@ func (pq *AnalysisPriorityQueue) handleDropSchemaEvent(_ sessionctx.Context, eve
 				statslogutil.StatsLogger().Error(
 					"Failed to delete table from priority queue",
 					zap.Error(err),
-					zap.String("db", dbInfo.Name.O),
+					zap.String("db", miniDBInfo.Name.O),
 					zap.Int64("tableID", tbl.ID),
 					zap.String("tableName", tbl.Name.O),
 					zap.Int64("partitionID", partition.ID),
@@ -433,7 +433,7 @@ func (pq *AnalysisPriorityQueue) handleDropSchemaEvent(_ sessionctx.Context, eve
 			statslogutil.StatsLogger().Error(
 				"Failed to delete table from priority queue",
 				zap.Error(err),
-				zap.String("db", dbInfo.Name.O),
+				zap.String("db", miniDBInfo.Name.O),
 				zap.Int64("tableID", tbl.ID),
 				zap.String("tableName", tbl.Name.O),
 			)

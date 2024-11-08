@@ -447,7 +447,7 @@ func NewDropSchemaEvent(dbInfo *model.DBInfo, tables []*model.TableInfo) *Schema
 	return &SchemaChangeEvent{
 		inner: &jsonSchemaChangeEvent{
 			Tp: model.ActionDropSchema,
-			DBInfo: &MiniDBInfoForSchemaEvent{
+			MiniDBInfo: &MiniDBInfoForSchemaEvent{
 				ID:     dbInfo.ID,
 				Name:   dbInfo.Name,
 				Tables: miniTables,
@@ -457,9 +457,9 @@ func NewDropSchemaEvent(dbInfo *model.DBInfo, tables []*model.TableInfo) *Schema
 }
 
 // GetDropSchemaInfo returns the database info and tables of the SchemaChangeEvent whose type is ActionDropSchema.
-func (s *SchemaChangeEvent) GetDropSchemaInfo() (dbInfo *MiniDBInfoForSchemaEvent) {
+func (s *SchemaChangeEvent) GetDropSchemaInfo() (miniDBInfo *MiniDBInfoForSchemaEvent) {
 	intest.Assert(s.inner.Tp == model.ActionDropSchema)
-	return s.inner.DBInfo
+	return s.inner.MiniDBInfo
 }
 
 // MiniDBInfoForSchemaEvent is a mini version of DBInfo for DropSchemaEvent only.
@@ -491,7 +491,7 @@ type MiniPartitionInfoForSchemaEvent struct {
 // jsonSchemaChangeEvent is used by SchemaChangeEvent when needed to (un)marshal data,
 // we want to hide the details to subscribers, so SchemaChangeEvent contain this struct.
 type jsonSchemaChangeEvent struct {
-	DBInfo          *MiniDBInfoForSchemaEvent `json:"db_info,omitempty"`
+	MiniDBInfo      *MiniDBInfoForSchemaEvent `json:"mini_db_info,omitempty"`
 	TableInfo       *model.TableInfo          `json:"table_info,omitempty"`
 	OldTableInfo    *model.TableInfo          `json:"old_table_info,omitempty"`
 	AddedPartInfo   *model.PartitionInfo      `json:"added_partition_info,omitempty"`
