@@ -17,12 +17,8 @@ package local
 import (
 	"container/heap"
 	"context"
-<<<<<<< HEAD
 	goerrors "errors"
-=======
-	"fmt"
 	"io"
->>>>>>> 926a1e5acfc (lightning: adapt new behaviour that "write" may return epoch error (#47667))
 	"strings"
 	"sync"
 	"time"
@@ -165,10 +161,7 @@ func (j *regionJob) convertStageTo(stage jobStageTp) {
 // we don't need to do cleanup for the pairs written to tikv if encounters an error,
 // tikv will take the responsibility to do so.
 // TODO: let client-go provide a high-level write interface.
-<<<<<<< HEAD
-func (local *Backend) writeToTiKV(pCtx context.Context, j *regionJob) (errRet error) {
-=======
-func (local *Backend) writeToTiKV(ctx context.Context, j *regionJob) error {
+func (local *Backend) writeToTiKV(ctx context.Context, j *regionJob) (errRet error) {
 	err := local.doWrite(ctx, j)
 	if err == nil {
 		return nil
@@ -185,8 +178,7 @@ func (local *Backend) writeToTiKV(ctx context.Context, j *regionJob) error {
 	return err
 }
 
-func (local *Backend) doWrite(ctx context.Context, j *regionJob) error {
->>>>>>> 926a1e5acfc (lightning: adapt new behaviour that "write" may return epoch error (#47667))
+func (local *Backend) doWrite(pCtx context.Context, j *regionJob) (errRet error) {
 	if j.stage != regionScanned {
 		return nil
 	}
@@ -329,19 +321,14 @@ func (local *Backend) doWrite(ctx context.Context, j *regionJob) error {
 			if err := writeLimiter.WaitN(ctx, allPeers[i].StoreId, int(size)); err != nil {
 				return errors.Trace(err)
 			}
-<<<<<<< HEAD
 			requests[i].Chunk.(*sst.WriteRequest_Batch).Batch.Pairs = pairs[:count]
 			if err := clients[i].Send(requests[i]); err != nil {
-				return annotateErr(err, allPeers[i])
-=======
-			if err := clients[i].SendMsg(preparedMsg); err != nil {
 				if err == io.EOF {
 					// if it's EOF, need RecvMsg to get the error
 					dummy := &sst.WriteResponse{}
 					err = clients[i].RecvMsg(dummy)
 				}
 				return annotateErr(err, allPeers[i], "when send data")
->>>>>>> 926a1e5acfc (lightning: adapt new behaviour that "write" may return epoch error (#47667))
 			}
 		}
 		return nil
