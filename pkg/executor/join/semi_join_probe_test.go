@@ -15,11 +15,9 @@
 package join
 
 import (
-	"fmt"
 	"math/rand"
 	"testing"
 
-	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/executor/internal/testutil"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -49,36 +47,14 @@ var semiJoinRetTypes = []*types.FieldType{
 	types.NewFieldType(mysql.TypeLonglong),
 }
 
-func buildSemiJoinLeftKeyIntDatums() []any {
-	num := 1000
-	datums := make([]any, 0, num)
-	for i := 0; i < num; i += 2 {
-		datums = append(datums, int64(i))
-	}
-	return datums
-}
-
-func buildSemiJoinRightKeyIntDatums() []any {
-	num := 2000
-	datums := make([]any, 0, num)
-	for i := 0; i < num; i++ {
-		datums = append(datums, int64(i))
-	}
-	return datums
-}
-
 func buildLeftAndRightSemiDataSource(ctx sessionctx.Context, leftCols []*expression.Column, rightCols []*expression.Column, hasSel bool) (*testutil.MockDataSource, *testutil.MockDataSource) {
 	leftSchema := expression.NewSchema(leftCols...)
 	rightSchema := expression.NewSchema(rightCols...)
 
-	// joinKeyleftIntDatums := buildJoinKeyIntDatums(10000)
-	// joinKeyrightIntDatums := buildJoinKeyIntDatums(10000)
-	joinKeyleftIntDatums := buildSemiJoinLeftKeyIntDatums()
-	joinKeyrightIntDatums := buildSemiJoinRightKeyIntDatums()
-	// leftMockSrcParm := testutil.MockDataSourceParameters{DataSchema: leftSchema, Ctx: ctx, Rows: 50000, Ndvs: []int{-1, -1}, Datums: [][]any{joinKeyleftIntDatums, joinKeyleftIntDatums}, HasSel: hasSel}
-	// rightMockSrcParm := testutil.MockDataSourceParameters{DataSchema: rightSchema, Ctx: ctx, Rows: 50000, Ndvs: []int{-1, -1}, Datums: [][]any{joinKeyrightIntDatums, joinKeyrightIntDatums}, HasSel: hasSel}
-	leftMockSrcParm := testutil.MockDataSourceParameters{DataSchema: leftSchema, Ctx: ctx, Rows: 500, Ndvs: []int{-2, -2}, Datums: [][]any{joinKeyleftIntDatums, joinKeyleftIntDatums}, HasSel: hasSel}
-	rightMockSrcParm := testutil.MockDataSourceParameters{DataSchema: rightSchema, Ctx: ctx, Rows: 2000, Ndvs: []int{-2, -2}, Datums: [][]any{joinKeyrightIntDatums, joinKeyrightIntDatums}, HasSel: hasSel}
+	joinKeyleftIntDatums := buildJoinKeyIntDatums(10000)
+	joinKeyrightIntDatums := buildJoinKeyIntDatums(10000)
+	leftMockSrcParm := testutil.MockDataSourceParameters{DataSchema: leftSchema, Ctx: ctx, Rows: 50000, Ndvs: []int{-1, -1}, Datums: [][]any{joinKeyleftIntDatums, joinKeyleftIntDatums}, HasSel: hasSel}
+	rightMockSrcParm := testutil.MockDataSourceParameters{DataSchema: rightSchema, Ctx: ctx, Rows: 50000, Ndvs: []int{-1, -1}, Datums: [][]any{joinKeyrightIntDatums, joinKeyrightIntDatums}, HasSel: hasSel}
 	return testutil.BuildMockDataSource(leftMockSrcParm), testutil.BuildMockDataSource(rightMockSrcParm)
 }
 
@@ -425,22 +401,19 @@ func TestSemiAndAntiSemiJoinSpill(t *testing.T) {
 	maxRowTableSegmentSize = 100
 	spillChunkSize = 100
 
-	joinTypes := []logicalop.JoinType{logicalop.AntiSemiJoin}
-	// joinTypes := []logicalop.JoinType{logicalop.SemiJoin, logicalop.AntiSemiJoin}
+	joinTypes := []logicalop.JoinType{logicalop.SemiJoin, logicalop.AntiSemiJoin}
 	params := []spillTestParam{
 		// basic case
-		// {true, leftKeys, rightKeys, leftTypes, rightTypes, []int{0, 1}, []int{}, nil, nil, nil, []int64{1800000, 1000000, 3000000, 600000, 10000}},
-		{true, leftKeys, rightKeys, leftTypes, rightTypes, []int{0, 1}, []int{}, nil, nil, nil, []int64{60000, 1000000, 3000000, 600000, 10000}},
+		{true, leftKeys, rightKeys, leftTypes, rightTypes, []int{0, 1}, []int{}, nil, nil, nil, []int64{1800000, 1000000, 3000000, 600000, 10000}},
+		{false, leftKeys, rightKeys, leftTypes, rightTypes, []int{0, 1}, []int{}, nil, nil, nil, []int64{1800000, 1000000, 3500000, 600000, 10000}},
 		// with other condition
-		// {true, leftKeys, rightKeys, leftTypes, rightTypes, []int{0, 1}, []int{}, otherCondition, []int{1}, []int{1}, []int64{1800000, 1000000, 3500000, 600000, 10000}},
+		{true, leftKeys, rightKeys, leftTypes, rightTypes, []int{0, 1}, []int{}, otherCondition, []int{1}, []int{1}, []int64{1800000, 1000000, 3500000, 600000, 10000}},
+		{false, leftKeys, rightKeys, leftTypes, rightTypes, []int{0, 1}, []int{}, otherCondition, []int{1}, []int{1}, []int64{1800000, 1000000, 3500000, 600000, 10000}},
 	}
 
 	for _, joinType := range joinTypes {
-		for idx, param := range params {
-			log.Info(fmt.Sprintf("idx: %d", idx))
-			for range 10 {
-				testSpill(t, ctx, joinType, leftDataSource, rightDataSource, param)
-			}
+		for _, param := range params {
+			testSpill(t, ctx, joinType, leftDataSource, rightDataSource, param)
 		}
 	}
 }
