@@ -22,15 +22,18 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
+	"github.com/pingcap/tidb/pkg/extension"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
+	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/privilege"
 	"github.com/pingcap/tidb/pkg/privilege/privileges"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/util"
@@ -158,23 +161,31 @@ func (e *GrantExec) Next(ctx context.Context, _ *chunk.Chunk) error {
 		if err != nil {
 			return err
 		}
-		if !exists && e.Ctx().GetSessionVars().SQLMode.HasNoAutoCreateUserMode() {
-			return exeerrors.ErrCantCreateUserWithGrant
-		} else if !exists {
+		if !exists {
+			if e.Ctx().GetSessionVars().SQLMode.HasNoAutoCreateUserMode() {
+				return exeerrors.ErrCantCreateUserWithGrant
+			}
 			// This code path only applies if mode NO_AUTO_CREATE_USER is unset.
 			// It is required for compatibility with 5.7 but removed from 8.0
 			// since it results in a massive security issue:
 			// spelling errors will create users with no passwords.
-			authPlugin := mysql.AuthNativePassword
+			authPlugin, err := e.Ctx().GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(variable.DefaultAuthPlugin)
+			if err != nil {
+				return err
+			}
 			if user.AuthOpt != nil && user.AuthOpt.AuthPlugin != "" {
 				authPlugin = user.AuthOpt.AuthPlugin
 			}
-			authPluginImpl, _ := e.Ctx().GetExtensions().GetAuthPlugin(authPlugin)
+			extensions, extErr := extension.GetExtensions()
+			if extErr != nil {
+				return exeerrors.ErrPluginIsNotLoaded.GenWithStackByArgs(extErr.Error())
+			}
+			authPluginImpl := extensions.GetAuthPlugins()[authPlugin]
 			pwd, ok := encodePassword(user, authPluginImpl)
 			if !ok {
 				return errors.Trace(exeerrors.ErrPasswordFormat)
 			}
-			_, err := internalSession.GetSQLExecutor().ExecuteInternal(internalCtx,
+			_, err = internalSession.GetSQLExecutor().ExecuteInternal(internalCtx,
 				`INSERT INTO %n.%n (Host, User, authentication_string, plugin) VALUES (%?, %?, %?, %?);`,
 				mysql.SystemDB, mysql.UserTable, user.User.Hostname, user.User.Username, pwd, authPlugin)
 			if err != nil {
@@ -779,7 +790,7 @@ func getTargetSchemaAndTable(ctx context.Context, sctx sessionctx.Context, dbNam
 }
 
 // getRowsAndFields is used to extract rows from record sets.
-func getRowsAndFields(sctx sessionctx.Context, rs sqlexec.RecordSet) ([]chunk.Row, []*ast.ResultField, error) {
+func getRowsAndFields(sctx sessionctx.Context, rs sqlexec.RecordSet) ([]chunk.Row, []*resolve.ResultField, error) {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnPrivilege)
 	if rs == nil {
 		return nil, nil, errors.Errorf("nil recordset")

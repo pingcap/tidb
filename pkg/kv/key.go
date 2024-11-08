@@ -312,6 +312,9 @@ func NewCommonHandle(encoded []byte) (*CommonHandle, error) {
 
 // Copy implements the Handle interface.
 func (ch *CommonHandle) Copy() Handle {
+	if ch == nil {
+		return nil
+	}
 	encoded := make([]byte, len(ch.encoded))
 	copy(encoded, ch.encoded)
 	colEndOffsets := make([]uint16, len(ch.colEndOffsets))
@@ -680,9 +683,9 @@ func (m *MemAwareHandleMap[V]) Range(fn func(h Handle, val V) bool) {
 			return
 		}
 	}
-	for _, v := range m.partitionInts {
+	for pid, v := range m.partitionInts {
 		for h, val := range v.M {
-			if !fn(IntHandle(h), val) {
+			if !fn(NewPartitionHandle(pid, IntHandle(h)), val) {
 				return
 			}
 		}

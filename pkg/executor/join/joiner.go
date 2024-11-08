@@ -16,7 +16,7 @@ package join
 
 import (
 	"github.com/pingcap/tidb/pkg/expression"
-	plannercore "github.com/pingcap/tidb/pkg/planner/core"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
@@ -116,27 +116,27 @@ type Joiner interface {
 }
 
 // JoinerType returns the join type of a Joiner.
-func JoinerType(j Joiner) plannercore.JoinType {
+func JoinerType(j Joiner) logicalop.JoinType {
 	switch j.(type) {
 	case *semiJoiner:
-		return plannercore.SemiJoin
+		return logicalop.SemiJoin
 	case *antiSemiJoiner:
-		return plannercore.AntiSemiJoin
+		return logicalop.AntiSemiJoin
 	case *leftOuterSemiJoiner:
-		return plannercore.LeftOuterSemiJoin
+		return logicalop.LeftOuterSemiJoin
 	case *antiLeftOuterSemiJoiner:
-		return plannercore.AntiLeftOuterSemiJoin
+		return logicalop.AntiLeftOuterSemiJoin
 	case *leftOuterJoiner:
-		return plannercore.LeftOuterJoin
+		return logicalop.LeftOuterJoin
 	case *rightOuterJoiner:
-		return plannercore.RightOuterJoin
+		return logicalop.RightOuterJoin
 	default:
-		return plannercore.InnerJoin
+		return logicalop.InnerJoin
 	}
 }
 
 // NewJoiner create a joiner
-func NewJoiner(ctx sessionctx.Context, joinType plannercore.JoinType,
+func NewJoiner(ctx sessionctx.Context, joinType logicalop.JoinType,
 	outerIsRight bool, defaultInner []types.Datum, filter []expression.Expression,
 	lhsColTypes, rhsColTypes []*types.FieldType, childrenUsed [][]int, isNA bool) Joiner {
 	base := baseJoiner{
@@ -159,7 +159,7 @@ func NewJoiner(ctx sessionctx.Context, joinType plannercore.JoinType,
 			zap.Ints("lUsed", base.lUsed), zap.Ints("rUsed", base.rUsed),
 			zap.Int("lCount", len(lhsColTypes)), zap.Int("rCount", len(rhsColTypes)))
 	}
-	if joinType == plannercore.LeftOuterJoin || joinType == plannercore.RightOuterJoin {
+	if joinType == logicalop.LeftOuterJoin || joinType == logicalop.RightOuterJoin {
 		innerColTypes := lhsColTypes
 		if !outerIsRight {
 			innerColTypes = rhsColTypes
@@ -173,34 +173,34 @@ func NewJoiner(ctx sessionctx.Context, joinType plannercore.JoinType,
 	shallowRowType = append(shallowRowType, lhsColTypes...)
 	shallowRowType = append(shallowRowType, rhsColTypes...)
 	switch joinType {
-	case plannercore.SemiJoin:
+	case logicalop.SemiJoin:
 		base.shallowRow = chunk.MutRowFromTypes(shallowRowType)
 		return &semiJoiner{base}
-	case plannercore.AntiSemiJoin:
+	case logicalop.AntiSemiJoin:
 		base.shallowRow = chunk.MutRowFromTypes(shallowRowType)
 		if isNA {
 			return &nullAwareAntiSemiJoiner{baseJoiner: base}
 		}
 		return &antiSemiJoiner{base}
-	case plannercore.LeftOuterSemiJoin:
+	case logicalop.LeftOuterSemiJoin:
 		base.shallowRow = chunk.MutRowFromTypes(shallowRowType)
 		return &leftOuterSemiJoiner{base}
-	case plannercore.AntiLeftOuterSemiJoin:
+	case logicalop.AntiLeftOuterSemiJoin:
 		base.shallowRow = chunk.MutRowFromTypes(shallowRowType)
 		if isNA {
 			return &nullAwareAntiLeftOuterSemiJoiner{baseJoiner: base}
 		}
 		return &antiLeftOuterSemiJoiner{base}
-	case plannercore.LeftOuterJoin, plannercore.RightOuterJoin, plannercore.InnerJoin:
+	case logicalop.LeftOuterJoin, logicalop.RightOuterJoin, logicalop.InnerJoin:
 		if len(base.conditions) > 0 {
 			base.chk = chunk.NewChunkWithCapacity(shallowRowType, ctx.GetSessionVars().MaxChunkSize)
 		}
 		switch joinType {
-		case plannercore.LeftOuterJoin:
+		case logicalop.LeftOuterJoin:
 			return &leftOuterJoiner{base}
-		case plannercore.RightOuterJoin:
+		case logicalop.RightOuterJoin:
 			return &rightOuterJoiner{base}
-		case plannercore.InnerJoin:
+		case logicalop.InnerJoin:
 			return &innerJoiner{base}
 		}
 	}

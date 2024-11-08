@@ -16,7 +16,7 @@ package context
 
 import (
 	"github.com/pingcap/tidb/pkg/errctx"
-	exprctx "github.com/pingcap/tidb/pkg/expression/context"
+	"github.com/pingcap/tidb/pkg/expression/exprctx"
 	"github.com/pingcap/tidb/pkg/types"
 	contextutil "github.com/pingcap/tidb/pkg/util/context"
 )
@@ -33,4 +33,19 @@ type RangerContext struct {
 	InPreparedPlanBuilding   bool
 	RegardNULLAsPoint        bool
 	OptPrefixIndexSingleScan bool
+}
+
+// Detach detaches this context from the session context.
+//
+// NOTE: Though this session context can be used parallelly with this context after calling
+// it, the `StatementContext` cannot. The session context should create a new `StatementContext`
+// before executing another statement.
+func (r *RangerContext) Detach(staticExprCtx exprctx.BuildContext) *RangerContext {
+	newCtx := *r
+	newCtx.ExprCtx = staticExprCtx
+	newCtx.OptimizerFixControl = make(map[uint64]string, len(r.OptimizerFixControl))
+	for k, v := range r.OptimizerFixControl {
+		newCtx.OptimizerFixControl[k] = v
+	}
+	return &newCtx
 }

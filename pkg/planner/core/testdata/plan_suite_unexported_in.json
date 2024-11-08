@@ -595,5 +595,16 @@
       "select * from t as t1 left join t as t2 on t1.b = t2.b where (t1.c=1 and (t1.a=3 or t2.a=3)) or (t1.a=2 and t2.a=2)",
       "select * from t as t1 left join t as t2 on t1.b = t2.b where (t1.c=1 and ((t1.a=3 and t2.a=3) or (t1.a=4 and t2.a=4))) or (t1.a=2 and t2.a is null)"
     ]
+  },
+  {
+    "name": "TestPruneColumnsForDelete",
+    "cases": [
+      "delete from t where a = 1",
+      "delete from t where a in (1, 2, 3)",
+      "delete from t where a > 1",
+      "delete from t3 where b = 1",
+      "delete from pt2",
+      "delete t, t3 from t, t3 where t.a = t3.a"
+    ]
   }
 ]

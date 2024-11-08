@@ -84,21 +84,6 @@ func GetJSON(client *http.Client, url string, v any) error {
 	return errors.Trace(json.NewDecoder(resp.Body).Decode(v))
 }
 
-// ChanMap creates a channel which applies the function over the input Channel.
-// Hint of Resource Leakage:
-// In golang, channel isn't an interface so we must create a goroutine for handling the inputs.
-// Hence the input channel must be closed properly or this function may leak a goroutine.
-func ChanMap[T, R any](c <-chan T, f func(T) R) <-chan R {
-	outCh := make(chan R)
-	go func() {
-		defer close(outCh)
-		for item := range c {
-			outCh <- f(item)
-		}
-	}()
-	return outCh
-}
-
 // Str2Int64Map converts a string to a map[int64]struct{}.
 func Str2Int64Map(str string) map[int64]struct{} {
 	strs := strings.Split(str, ",")
@@ -194,7 +179,7 @@ func PrintableASCII(b byte) bool {
 func FmtNonASCIIPrintableCharToHex(str string) string {
 	var b bytes.Buffer
 	b.Grow(len(str) * 2)
-	for i := 0; i < len(str); i++ {
+	for i := range len(str) {
 		if PrintableASCII(str[i]) {
 			b.WriteByte(str[i])
 			continue
@@ -270,7 +255,7 @@ func ReadLine(reader *bufio.Reader, maxLineSize int) ([]byte, error) {
 // maxLineSize specifies the maximum size of a single line.
 func ReadLines(reader *bufio.Reader, count int, maxLineSize int) ([][]byte, error) {
 	lines := make([][]byte, 0, count)
-	for i := 0; i < count; i++ {
+	for range count {
 		line, err := ReadLine(reader, maxLineSize)
 		if err == io.EOF && len(lines) > 0 {
 			return lines, nil

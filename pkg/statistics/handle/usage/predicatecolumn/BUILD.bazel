@@ -1,0 +1,21 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "predicatecolumn",
+    srcs = ["predicate_column.go"],
+    importpath = "github.com/pingcap/tidb/pkg/statistics/handle/usage/predicatecolumn",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/infoschema",
+        "//pkg/meta/model",
+        "//pkg/parser/mysql",
+        "//pkg/sessionctx",
+        "//pkg/statistics",
+        "//pkg/statistics/handle/types",
+        "//pkg/statistics/handle/util",
+        "//pkg/types",
+        "//pkg/util/logutil",
+        "@com_github_pingcap_errors//:errors",
+        "@org_uber_go_zap//:zap",
+    ],
+)

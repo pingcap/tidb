@@ -22,20 +22,22 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/ddl/copr"
-	sess "github.com/pingcap/tidb/pkg/ddl/internal/session"
 	ddllogutil "github.com/pingcap/tidb/pkg/ddl/logutil"
+	sess "github.com/pingcap/tidb/pkg/ddl/session"
 	distsqlctx "github.com/pingcap/tidb/pkg/distsql/context"
 	"github.com/pingcap/tidb/pkg/errctx"
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/resourcegroup"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/table"
 	contextutil "github.com/pingcap/tidb/pkg/util/context"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/memory"
-	"github.com/pingcap/tidb/pkg/util/mock"
+	"github.com/pingcap/tidb/pkg/util/ppcpuusage"
 	decoder "github.com/pingcap/tidb/pkg/util/rowDecoder"
 	"github.com/pingcap/tidb/pkg/util/sqlkiller"
 	"github.com/pingcap/tidb/pkg/util/tiflash"
@@ -68,7 +70,7 @@ type txnBackfillScheduler struct {
 	tp           backfillerType
 	tbl          table.PhysicalTable
 	decodeColMap map[int64]decoder.Column
-	jobCtx       *JobContext
+	jobCtx       *ReorgContext
 
 	workers []*backfillWorker
 	wg      sync.WaitGroup
@@ -80,11 +82,12 @@ type txnBackfillScheduler struct {
 
 func newTxnBackfillScheduler(ctx context.Context, info *reorgInfo, sessPool *sess.Pool,
 	tp backfillerType, tbl table.PhysicalTable,
-	jobCtx *JobContext) (backfillScheduler, error) {
+	jobCtx *ReorgContext) (backfillScheduler, error) {
 	decColMap, err := makeupDecodeColMap(info.dbInfo.Name, tbl)
 	if err != nil {
 		return nil, err
 	}
+	workerCnt := info.ReorgMeta.GetConcurrencyOrDefault(int(variable.GetDDLReorgWorkerCounter()))
 	return &txnBackfillScheduler{
 		ctx:          ctx,
 		reorgInfo:    info,
@@ -93,7 +96,7 @@ func newTxnBackfillScheduler(ctx context.Context, info *reorgInfo, sessPool *ses
 		tbl:          tbl,
 		decodeColMap: decColMap,
 		jobCtx:       jobCtx,
-		workers:      make([]*backfillWorker, 0, variable.GetDDLReorgWorkerCounter()),
+		workers:      make([]*backfillWorker, 0, workerCnt),
 		taskCh:       make(chan *reorgBackfillTask, backfillTaskChanSize),
 		resultCh:     make(chan *backfillResult, backfillTaskChanSize),
 	}, nil
@@ -124,32 +127,37 @@ func NewReorgCopContext(
 	allIdxInfo []*model.IndexInfo,
 	requestSource string,
 ) (copr.CopContext, error) {
-	sessCtx, err := newSessCtx(store, reorgMeta)
+	warnHandler := contextutil.NewStaticWarnHandler(0)
+	distSQLCtx, err := newReorgDistSQLCtxWithReorgMeta(store.GetClient(), reorgMeta, warnHandler)
 	if err != nil {
 		return nil, err
 	}
+
+	exprCtx, err := newReorgExprCtxWithReorgMeta(reorgMeta, warnHandler)
+	if err != nil {
+		return nil, err
+	}
+
+	evalCtx := exprCtx.GetEvalCtx()
+	tc, ec := evalCtx.TypeCtx(), evalCtx.ErrCtx()
+	pushDownFlags := stmtctx.PushDownFlagsWithTypeFlagsAndErrLevels(tc.Flags(), ec.LevelMap())
+
 	return copr.NewCopContext(
-		sessCtx.GetExprCtx(),
-		sessCtx.GetDistSQLCtx(),
-		sessCtx.GetSessionVars().StmtCtx.PushDownFlags(),
+		exprCtx,
+		distSQLCtx,
+		pushDownFlags,
 		tblInfo,
 		allIdxInfo,
 		requestSource,
 	)
 }
 
-func newSessCtx(store kv.Storage, reorgMeta *model.DDLReorgMeta) (sessionctx.Context, error) {
-	sessCtx := newReorgSessCtx(store)
-	if err := initSessCtx(sessCtx, reorgMeta); err != nil {
-		return nil, errors.Trace(err)
-	}
-	return sessCtx, nil
-}
-
-func newDefaultReorgDistSQLCtx(kvClient kv.Client) *distsqlctx.DistSQLContext {
-	warnHandler := contextutil.NewStaticWarnHandler(0)
+func newDefaultReorgDistSQLCtx(kvClient kv.Client, warnHandler contextutil.WarnAppender) *distsqlctx.DistSQLContext {
+	intest.AssertNotNil(kvClient)
+	intest.AssertNotNil(warnHandler)
 	var sqlKiller sqlkiller.SQLKiller
 	var execDetails execdetails.SyncExecDetails
+	var cpuUsages ppcpuusage.SQLCPUUsages
 	return &distsqlctx.DistSQLContext{
 		WarnHandler:                          warnHandler,
 		Client:                               kvClient,
@@ -159,6 +167,7 @@ func newDefaultReorgDistSQLCtx(kvClient kv.Client) *distsqlctx.DistSQLContext {
 		SessionMemTracker:                    memory.NewTracker(memory.LabelForSession, -1),
 		Location:                             time.UTC,
 		SQLKiller:                            &sqlKiller,
+		CPUUsage:                             &cpuUsages,
 		ErrCtx:                               errctx.NewContextWithLevels(stmtctx.DefaultStmtErrLevels, warnHandler),
 		TiFlashReplicaRead:                   tiflash.GetTiFlashReplicaReadByStr(variable.DefTiFlashReplicaRead),
 		TiFlashMaxThreads:                    variable.DefTiFlashMaxThreads,
@@ -167,8 +176,21 @@ func newDefaultReorgDistSQLCtx(kvClient kv.Client) *distsqlctx.DistSQLContext {
 		TiFlashMaxBytesBeforeExternalSort:    variable.DefTiFlashMaxBytesBeforeExternalSort,
 		TiFlashMaxQueryMemoryPerNode:         variable.DefTiFlashMemQuotaQueryPerNode,
 		TiFlashQuerySpillRatio:               variable.DefTiFlashQuerySpillRatio,
+		ResourceGroupName:                    resourcegroup.DefaultResourceGroupName,
 		ExecDetails:                          &execDetails,
 	}
+}
+
+func newReorgDistSQLCtxWithReorgMeta(kvClient kv.Client, reorgMeta *model.DDLReorgMeta, warnHandler contextutil.WarnAppender) (*distsqlctx.DistSQLContext, error) {
+	loc, err := reorgTimeZoneWithTzLoc(reorgMeta.Location)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	ctx := newDefaultReorgDistSQLCtx(kvClient, warnHandler)
+	ctx.Location = loc
+	ctx.ErrCtx = errctx.NewContextWithLevels(reorgErrLevelsWithSQLMode(reorgMeta.SQLMode), ctx.WarnHandler)
+	ctx.ResourceGroupName = reorgMeta.ResourceGroupName
+	return ctx, nil
 }
 
 // initSessCtx initializes the session context. Be careful to the timezone.
@@ -197,12 +219,6 @@ func initSessCtx(sessCtx sessionctx.Context, reorgMeta *model.DDLReorgMeta) erro
 	typeFlags := reorgTypeFlagsWithSQLMode(sqlMode)
 	sessCtx.GetSessionVars().StmtCtx.SetTypeFlags(typeFlags)
 	sessCtx.GetSessionVars().StmtCtx.ResourceGroupName = reorgMeta.ResourceGroupName
-
-	// Prevent initializing the mock context in the workers concurrently.
-	// For details, see https://github.com/pingcap/tidb/issues/40879.
-	if _, ok := sessCtx.(*mock.Context); ok {
-		_ = sessCtx.GetDomainInfoSchema()
-	}
 	return nil
 }
 
@@ -230,8 +246,8 @@ func restoreSessCtx(sessCtx sessionctx.Context) func(sessCtx sessionctx.Context)
 	}
 }
 
-func (*txnBackfillScheduler) expectedWorkerSize() (size int) {
-	workerCnt := int(variable.GetDDLReorgWorkerCounter())
+func (b *txnBackfillScheduler) expectedWorkerSize() (size int) {
+	workerCnt := b.reorgInfo.ReorgMeta.GetConcurrencyOrDefault(int(variable.GetDDLReorgWorkerCounter()))
 	return min(workerCnt, maxBackfillWorkerSize)
 }
 
@@ -255,7 +271,7 @@ func (b *txnBackfillScheduler) adjustWorkerSize() error {
 		)
 		switch b.tp {
 		case typeAddIndexWorker:
-			backfillCtx, err := newBackfillCtx(i, reorgInfo, job.SchemaName, b.tbl, jc, "add_idx_rate", false)
+			backfillCtx, err := newBackfillCtx(i, reorgInfo, job.SchemaName, b.tbl, jc, "add_idx_rate", false, false)
 			if err != nil {
 				return err
 			}
@@ -268,7 +284,7 @@ func (b *txnBackfillScheduler) adjustWorkerSize() error {
 			runner = newBackfillWorker(b.ctx, idxWorker)
 			worker = idxWorker
 		case typeAddIndexMergeTmpWorker:
-			backfillCtx, err := newBackfillCtx(i, reorgInfo, job.SchemaName, b.tbl, jc, "merge_tmp_idx_rate", false)
+			backfillCtx, err := newBackfillCtx(i, reorgInfo, job.SchemaName, b.tbl, jc, "merge_tmp_idx_rate", false, false)
 			if err != nil {
 				return err
 			}
@@ -304,7 +320,7 @@ func (b *txnBackfillScheduler) adjustWorkerSize() error {
 		runner.wg = &b.wg
 		b.workers = append(b.workers, runner)
 		b.wg.Add(1)
-		go runner.run(reorgInfo.d, worker, job)
+		go runner.run(reorgInfo.jobCtx.oldDDLCtx, worker, job)
 	}
 	// Decrease the worker.
 	if len(b.workers) > workerCnt {
@@ -359,6 +375,7 @@ func newTaskIDAllocator() *taskIDAllocator {
 }
 
 func (a *taskIDAllocator) alloc() int {
+	ret := a.id
 	a.id++
-	return a.id
+	return ret
 }

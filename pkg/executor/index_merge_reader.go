@@ -35,7 +35,7 @@ import (
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
@@ -221,7 +221,7 @@ func (e *IndexMergeReaderExecutor) rebuildRangeForCorCol() (err error) {
 		if e.isCorColInPartialAccess[i] {
 			switch x := plan[0].(type) {
 			case *plannercore.PhysicalIndexScan:
-				e.ranges[i], err = rebuildIndexRanges(e.Ctx(), x, x.IdxCols, x.IdxColLens)
+				e.ranges[i], err = rebuildIndexRanges(e.Ctx().GetExprCtx(), e.Ctx().GetRangerCtx(), x, x.IdxCols, x.IdxColLens)
 			case *plannercore.PhysicalTableScan:
 				e.ranges[i], err = x.ResolveCorrelatedColumns()
 			default:
@@ -928,12 +928,12 @@ func (e *IndexMergeReaderExecutor) Close() error {
 	}
 	if e.indexUsageReporter != nil {
 		for _, p := range e.partialPlans {
-			is, ok := p[0].(*plannercore.PhysicalIndexScan)
-			if !ok {
-				continue
+			switch p := p[0].(type) {
+			case *plannercore.PhysicalTableScan:
+				e.indexUsageReporter.ReportCopIndexUsageForHandle(e.table, p.ID())
+			case *plannercore.PhysicalIndexScan:
+				e.indexUsageReporter.ReportCopIndexUsageForTable(e.table, p.Index.ID, p.ID())
 			}
-
-			e.indexUsageReporter.ReportCopIndexUsageForTable(e.table, is.Index.ID, is.ID())
 		}
 	}
 	if e.finished == nil {

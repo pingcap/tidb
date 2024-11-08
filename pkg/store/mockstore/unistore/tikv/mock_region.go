@@ -113,9 +113,9 @@ func (rm *MockRegionManager) AllocID() uint64 {
 
 // AllocIDs allocs ids with the given number n.
 func (rm *MockRegionManager) AllocIDs(n int) []uint64 {
-	max := atomic.AddUint64(&rm.id, uint64(n))
+	maxID := atomic.AddUint64(&rm.id, uint64(n))
 	ids := make([]uint64, n)
-	base := max - uint64(n-1)
+	base := maxID - uint64(n-1)
 	for i := range ids {
 		ids[i] = base + uint64(i)
 	}

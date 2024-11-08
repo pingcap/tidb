@@ -35,7 +35,7 @@ type Worker struct {
 // NewWorkerPool returns a WorkPool.
 func NewWorkerPool(limit uint, name string) *WorkerPool {
 	workers := make(chan *Worker, limit)
-	for i := uint(0); i < limit; i++ {
+	for i := range limit {
 		workers <- &Worker{ID: uint64(i + 1)}
 	}
 	return &WorkerPool{

@@ -36,13 +36,13 @@ type Operator interface {
 // Eg: The sink of AsyncOperator op1 and the source of op2
 // use the same channel, Then op2's worker will handle
 // the result from op1.
-type AsyncOperator[T, R any] struct {
+type AsyncOperator[T workerpool.TaskMayPanic, R any] struct {
 	ctx  context.Context
 	pool *workerpool.WorkerPool[T, R]
 }
 
 // NewAsyncOperatorWithTransform create an AsyncOperator with a transform function.
-func NewAsyncOperatorWithTransform[T, R any](
+func NewAsyncOperatorWithTransform[T workerpool.TaskMayPanic, R any](
 	ctx context.Context,
 	name string,
 	workerNum int,
@@ -53,7 +53,7 @@ func NewAsyncOperatorWithTransform[T, R any](
 }
 
 // NewAsyncOperator create an AsyncOperator.
-func NewAsyncOperator[T, R any](ctx context.Context, pool *workerpool.WorkerPool[T, R]) *AsyncOperator[T, R] {
+func NewAsyncOperator[T workerpool.TaskMayPanic, R any](ctx context.Context, pool *workerpool.WorkerPool[T, R]) *AsyncOperator[T, R] {
 	return &AsyncOperator[T, R]{
 		ctx:  ctx,
 		pool: pool,
@@ -97,7 +97,7 @@ type asyncWorker[T, R any] struct {
 	transform func(T) R
 }
 
-func newAsyncWorkerCtor[T, R any](transform func(T) R) func() workerpool.Worker[T, R] {
+func newAsyncWorkerCtor[T workerpool.TaskMayPanic, R any](transform func(T) R) func() workerpool.Worker[T, R] {
 	return func() workerpool.Worker[T, R] {
 		return &asyncWorker[T, R]{
 			transform: transform,

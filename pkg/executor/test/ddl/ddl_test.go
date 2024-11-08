@@ -539,7 +539,7 @@ func TestShardRowIDBits(t *testing.T) {
 
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
 	err = kv.RunInNewTxn(ctx, store, false, func(ctx context.Context, txn kv.Transaction) error {
-		m := meta.NewMeta(txn)
+		m := meta.NewMutator(txn)
 		_, err = m.GenSchemaVersion()
 		require.NoError(t, err)
 		require.Nil(t, m.UpdateTable(db.ID, tblInfo))
@@ -813,6 +813,11 @@ func TestSetDDLReorgWorkerCnt(t *testing.T) {
 	tk.MustExec("set @@global.tidb_ddl_reorg_worker_cnt = 257")
 	tk.MustQuery("SHOW WARNINGS").Check(testkit.Rows("Warning 1292 Truncated incorrect tidb_ddl_reorg_worker_cnt value: '257'"))
 	tk.MustQuery("select @@global.tidb_ddl_reorg_worker_cnt").Check(testkit.Rows("256"))
+
+	tk.MustExec("set @@tidb_ddl_reorg_worker_cnt = 10;")
+	tk.MustQuery("select @@tidb_ddl_reorg_worker_cnt;").Check(testkit.Rows("10"))
+	tk.MustQuery("select @@global.tidb_ddl_reorg_worker_cnt;").Check(testkit.Rows("256"))
+	require.Equal(t, int32(256), variable.GetDDLReorgWorkerCounter())
 }
 
 func TestSetDDLReorgBatchSize(t *testing.T) {
@@ -850,6 +855,10 @@ func TestSetDDLReorgBatchSize(t *testing.T) {
 	tk.MustExec("set @@global.tidb_ddl_reorg_batch_size = 1000")
 	res = tk.MustQuery("select @@global.tidb_ddl_reorg_batch_size")
 	res.Check(testkit.Rows("1000"))
+
+	tk.MustExec("set @@tidb_ddl_reorg_batch_size = 256;")
+	tk.MustQuery("select @@tidb_ddl_reorg_batch_size").Check(testkit.Rows("256"))
+	tk.MustQuery("select @@global.tidb_ddl_reorg_batch_size").Check(testkit.Rows("1000"))
 }
 
 func TestSetDDLErrorCountLimit(t *testing.T) {
@@ -891,6 +900,86 @@ func TestLoadDDLDistributeVars(t *testing.T) {
 	require.Equal(t, true, variable.EnableDistTask.Load())
 	tk.MustExec(fmt.Sprintf("set @@global.tidb_enable_dist_task = %v", false))
 	require.Equal(t, false, variable.EnableDistTask.Load())
+}
+
+func forceFullReload(t *testing.T, store kv.Storage, dom *domain.Domain) {
+	prev := domain.LoadSchemaDiffVersionGapThreshold
+	domain.LoadSchemaDiffVersionGapThreshold = 0
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("create database if not exists test")
+	tk.MustExec("create table test.forcereload(id int)")
+	tk.MustExec("drop table test.forcereload")
+	dom.Reload()
+
+	domain.LoadSchemaDiffVersionGapThreshold = prev
+}
+
+func TestRenameWithSmallAutoIDStep(t *testing.T) {
+	store := testkit.CreateMockStore(t, mockstore.WithDDLChecker())
+
+	prev := autoid.GetStep()
+	autoid.SetStep(1)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("drop database if exists rename1")
+	tk.MustExec("drop database if exists rename2")
+	tk.MustExec("drop database if exists rename3")
+
+	tk.MustExec("create database rename1")
+	tk.MustExec("create database rename2")
+	tk.MustExec("create database rename3")
+	tk.MustExec("create table rename1.t (a int primary key auto_increment)")
+	tk.MustExec("insert rename1.t values ()")
+	tk.MustExec("rename table rename1.t to rename2.t")
+	// Make sure the drop old database doesn't affect the rename3.t's operations.
+	tk.MustExec("drop database rename1")
+
+	tk.MustExec("insert rename2.t values ()")
+	tk.MustExec("rename table rename2.t to rename3.t")
+	tk.MustExec("insert rename3.t values ()")
+	tk.MustQuery("select * from rename3.t").Check(testkit.Rows("1", "2", "3"))
+	// Make sure the drop old database doesn't affect the rename3.t's operations.
+	tk.MustExec("drop database rename2")
+	tk.MustExec("insert rename3.t values ()")
+	tk.MustQuery("select * from rename3.t").Check(testkit.Rows("1", "2", "3", "4"))
+	tk.MustExec("drop database rename3")
+
+	autoid.SetStep(prev)
+}
+
+func TestRenameTableWithReload(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t, mockstore.WithDDLChecker())
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("drop database if exists rename1")
+	tk.MustExec("drop database if exists rename2")
+	tk.MustExec("drop database if exists rename3")
+
+	tk.MustExec("create database rename1")
+	tk.MustExec("create database rename2")
+	tk.MustExec("create database rename3")
+	tk.MustExec("create table rename1.t (a int primary key auto_increment)")
+	tk.MustExec("insert rename1.t values ()")
+	tk.MustExec("rename table rename1.t to rename2.t")
+	// Make sure the drop old database doesn't affect the rename3.t's operations.
+	tk.MustExec("drop database rename1")
+
+	forceFullReload(t, store, dom)
+
+	tk.MustExec("insert rename2.t values ()")
+	tk.MustExec("rename table rename2.t to rename3.t")
+	tk.MustExec("insert rename3.t values ()")
+	// After reload, autoid will start from 5000, not 0
+	tk.MustQuery("select * from rename3.t").Check(testkit.Rows("1", "5001", "5002"))
+	// Make sure the drop old database doesn't affect the rename3.t's operations.
+	tk.MustExec("drop database rename2")
+
+	forceFullReload(t, store, dom)
+
+	tk.MustExec("insert rename3.t values ()")
+	tk.MustQuery("select * from rename3.t").Check(testkit.Rows("1", "5001", "5002", "10001"))
+	tk.MustExec("drop database rename3")
 }
 
 // this test will change the fail-point `mockAutoIDChange`, so we move it to the `testRecoverTable` suite
@@ -1016,4 +1105,42 @@ func TestRenameMultiTables(t *testing.T) {
 	tk.MustExec("drop database rename1")
 	tk.MustExec("drop database rename2")
 	tk.MustExec("drop database rename3")
+}
+
+func TestDefShardTables(t *testing.T) {
+	store := testkit.CreateMockStore(t, mockstore.WithDDLChecker())
+
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("set @@session.tidb_enable_clustered_index = off")
+	tk.MustExec("set @@session.tidb_shard_row_id_bits = 4")
+	tk.MustExec("set @@session.tidb_pre_split_regions = 4")
+	tk.MustExec("use test")
+	tk.MustExec("create table t (i int primary key)")
+	result := tk.MustQuery("show create table t")
+	createSQL := result.Rows()[0][1]
+	expected := "CREATE TABLE `t` (\n  `i` int(11) NOT NULL,\n  PRIMARY KEY (`i`) /*T![clustered_index] NONCLUSTERED */\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T! SHARD_ROW_ID_BITS=4 PRE_SPLIT_REGIONS=4 */"
+	require.Equal(t, expected, createSQL)
+
+	// test for manual setup shard_row_id_bits and pre_split_regions
+	tk.MustExec("create table t0 (i int primary key) /*T! SHARD_ROW_ID_BITS=2 PRE_SPLIT_REGIONS=2 */")
+	result = tk.MustQuery("show create table t0")
+	createSQL = result.Rows()[0][1]
+	expected = "CREATE TABLE `t0` (\n  `i` int(11) NOT NULL,\n  PRIMARY KEY (`i`) /*T![clustered_index] NONCLUSTERED */\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T! SHARD_ROW_ID_BITS=2 PRE_SPLIT_REGIONS=2 */"
+	require.Equal(t, expected, createSQL)
+
+	// test for clustered index table
+	tk.MustExec("set @@session.tidb_enable_clustered_index = on")
+	tk.MustExec("create table t1 (i int primary key)")
+	result = tk.MustQuery("show create table t1")
+	createSQL = result.Rows()[0][1]
+	expected = "CREATE TABLE `t1` (\n  `i` int(11) NOT NULL,\n  PRIMARY KEY (`i`) /*T![clustered_index] CLUSTERED */\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"
+	require.Equal(t, expected, createSQL)
+
+	// test for global temporary table
+	tk.MustExec("create global temporary table tengine (id int) engine = 'innodb' on commit delete rows")
+	result = tk.MustQuery("show create table tengine")
+	createSQL = result.Rows()[0][1]
+	expected = "CREATE GLOBAL TEMPORARY TABLE `tengine` (\n  `id` int(11) DEFAULT NULL\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin ON COMMIT DELETE ROWS"
+	require.Equal(t, expected, createSQL)
 }

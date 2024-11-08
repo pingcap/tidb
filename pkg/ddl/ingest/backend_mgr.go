@@ -17,6 +17,7 @@ package ingest
 import (
 	"context"
 	"math"
+	"net"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -24,11 +25,11 @@ import (
 	"time"
 
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/config"
 	ddllogutil "github.com/pingcap/tidb/pkg/ddl/logutil"
 	"github.com/pingcap/tidb/pkg/lightning/backend/local"
-	"github.com/pingcap/tidb/pkg/lightning/config"
+	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/util/logutil"
-	kvutil "github.com/tikv/client-go/v2/util"
 	pd "github.com/tikv/pd/client"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.uber.org/atomic"
@@ -49,6 +50,8 @@ type BackendCtxMgr interface {
 		etcdClient *clientv3.Client,
 		pdSvcDiscovery pd.ServiceDiscovery,
 		resourceGroupName string,
+		importConc int,
+		initTS uint64,
 	) (BackendCtx, error)
 	Unregister(jobID int64)
 	// EncodeJobSortPath encodes the job ID to the local disk sort path.
@@ -114,6 +117,8 @@ func (m *litBackendCtxMgr) Register(
 	etcdClient *clientv3.Client,
 	pdSvcDiscovery pd.ServiceDiscovery,
 	resourceGroupName string,
+	concurrency int,
+	initTS uint64,
 ) (BackendCtx, error) {
 	bc, exist := m.Load(jobID)
 	if exist {
@@ -131,7 +136,7 @@ func (m *litBackendCtxMgr) Register(
 		logutil.Logger(ctx).Error(LitErrCreateDirFail, zap.Error(err))
 		return nil, err
 	}
-	cfg, err := genConfig(ctx, sortPath, m.memRoot, hasUnique, resourceGroupName)
+	cfg, err := genConfig(ctx, sortPath, m.memRoot, hasUnique, resourceGroupName, concurrency)
 	if err != nil {
 		logutil.Logger(ctx).Warn(LitWarnConfigError, zap.Int64("job ID", jobID), zap.Error(err))
 		return nil, err
@@ -150,7 +155,7 @@ func (m *litBackendCtxMgr) Register(
 		return nil, err
 	}
 
-	bcCtx := newBackendContext(ctx, jobID, bd, cfg.lightning, defaultImportantVariables, m.memRoot, m.diskRoot, etcdClient)
+	bcCtx := newBackendContext(ctx, jobID, bd, cfg, defaultImportantVariables, m.memRoot, m.diskRoot, etcdClient, initTS)
 	m.backends.m[jobID] = bcCtx
 	m.memRoot.Consume(structSizeBackendCtx)
 	m.backends.mu.Unlock()
@@ -169,23 +174,26 @@ func (m *litBackendCtxMgr) EncodeJobSortPath(jobID int64) string {
 
 func createLocalBackend(
 	ctx context.Context,
-	cfg *litConfig,
+	cfg *local.BackendConfig,
 	pdSvcDiscovery pd.ServiceDiscovery,
 ) (*local.Backend, error) {
-	tls, err := cfg.lightning.ToTLS()
+	tidbCfg := config.GetGlobalConfig()
+	tls, err := common.NewTLS(
+		tidbCfg.Security.ClusterSSLCA,
+		tidbCfg.Security.ClusterSSLCert,
+		tidbCfg.Security.ClusterSSLKey,
+		net.JoinHostPort("127.0.0.1", strconv.Itoa(int(tidbCfg.Status.StatusPort))),
+		nil, nil, nil,
+	)
 	if err != nil {
 		logutil.Logger(ctx).Error(LitErrCreateBackendFail, zap.Error(err))
 		return nil, err
 	}
 
 	ddllogutil.DDLIngestLogger().Info("create local backend for adding index",
-		zap.String("sortDir", cfg.lightning.TikvImporter.SortedKVDir),
-		zap.String("keyspaceName", cfg.keyspaceName))
-	// We disable the switch TiKV mode feature for now,
-	// because the impact is not fully tested.
-	var raftKV2SwitchModeDuration time.Duration
-	backendConfig := local.NewBackendConfig(cfg.lightning, int(litRLimit), cfg.keyspaceName, cfg.resourceGroup, kvutil.ExplicitTypeDDL, raftKV2SwitchModeDuration)
-	return local.NewBackend(ctx, tls, backendConfig, pdSvcDiscovery)
+		zap.String("sortDir", cfg.LocalStoreDir),
+		zap.String("keyspaceName", cfg.KeyspaceName))
+	return local.NewBackend(ctx, tls, *cfg, pdSvcDiscovery)
 }
 
 const checkpointUpdateInterval = 10 * time.Minute
@@ -194,11 +202,12 @@ func newBackendContext(
 	ctx context.Context,
 	jobID int64,
 	be *local.Backend,
-	cfg *config.Config,
+	cfg *local.BackendConfig,
 	vars map[string]string,
 	memRoot MemRoot,
 	diskRoot DiskRoot,
 	etcdClient *clientv3.Client,
+	initTS uint64,
 ) *litBackendCtx {
 	bCtx := &litBackendCtx{
 		engines:        make(map[int64]*engineInfo, 10),
@@ -211,6 +220,7 @@ func newBackendContext(
 		sysVars:        vars,
 		updateInterval: checkpointUpdateInterval,
 		etcdClient:     etcdClient,
+		initTS:         initTS,
 	}
 	bCtx.timeOfLastFlush.Store(time.Now())
 	return bCtx
@@ -231,11 +241,8 @@ func (m *litBackendCtxMgr) Unregister(jobID int64) {
 	if !exist {
 		return
 	}
-	_ = bc.FinishAndUnregisterEngines()
+	_ = bc.FinishAndUnregisterEngines(OptCloseEngines)
 	bc.backend.Close()
-	if bc.checkpointMgr != nil {
-		bc.checkpointMgr.Close()
-	}
 	m.memRoot.Release(structSizeBackendCtx)
 	m.memRoot.ReleaseWithTag(encodeBackendTag(jobID))
 	logutil.Logger(bc.ctx).Info(LitInfoCloseBackend, zap.Int64("job ID", jobID),

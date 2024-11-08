@@ -21,13 +21,13 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	gmysql "github.com/go-sql-driver/mysql"
 	"github.com/google/uuid"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/br/pkg/version"
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/lightning/backend"
 	"github.com/pingcap/tidb/pkg/lightning/backend/encode"
@@ -37,12 +37,15 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/errormanager"
 	"github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/lightning/verification"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/dbutil"
+	"github.com/pingcap/tidb/pkg/util/hack"
+	"github.com/pingcap/tidb/pkg/util/kvcache"
 	"github.com/pingcap/tidb/pkg/util/redact"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
@@ -56,12 +59,16 @@ var extraHandleTableColumn = &table.Column{
 
 const (
 	writeRowsMaxRetryTimes = 3
+	// To limit memory usage for prepared statements.
+	prepStmtCacheSize uint = 100
 )
 
 type tidbRow struct {
-	insertStmt string
-	path       string
-	offset     int64
+	insertStmt         string
+	preparedInsertStmt string
+	values             []any
+	path               string
+	offset             int64
 }
 
 var emptyTiDBRow = tidbRow{
@@ -83,7 +90,6 @@ func (rows tidbRows) MarshalLogArray(encoder zapcore.ArrayEncoder) error {
 type tidbEncoder struct {
 	mode mysql.SQLMode
 	tbl  table.Table
-	se   sessionctx.Context
 	// the index of table columns for each data field.
 	// index == len(table.columns) means this field is `_tidb_rowid`
 	columnIdx []int
@@ -92,8 +98,9 @@ type tidbEncoder struct {
 	// the there are enough columns.
 	columnCnt int
 	// data file path
-	path   string
-	logger log.Logger
+	path     string
+	logger   log.Logger
+	prepStmt bool
 }
 
 type encodingBuilder struct{}
@@ -105,19 +112,13 @@ func NewEncodingBuilder() encode.EncodingBuilder {
 
 // NewEncoder creates a KV encoder.
 // It implements the `backend.EncodingBuilder` interface.
-func (*encodingBuilder) NewEncoder(ctx context.Context, config *encode.EncodingConfig) (encode.Encoder, error) {
-	se := kv.NewSessionCtx(&config.SessionOptions, log.FromContext(ctx))
-	if config.SQLMode.HasStrictMode() {
-		se.GetSessionVars().SkipUTF8Check = false
-		se.GetSessionVars().SkipASCIICheck = false
-	}
-
+func (*encodingBuilder) NewEncoder(_ context.Context, config *encode.EncodingConfig) (encode.Encoder, error) {
 	return &tidbEncoder{
-		mode:   config.SQLMode,
-		tbl:    config.Table,
-		se:     se,
-		path:   config.Path,
-		logger: config.Logger,
+		mode:     config.SQLMode,
+		tbl:      config.Table,
+		path:     config.Path,
+		logger:   config.Logger,
+		prepStmt: config.LogicalImportPrepStmt,
 	}, nil
 }
 
@@ -161,7 +162,7 @@ func (b *targetInfoGetter) FetchRemoteDBModels(ctx context.Context) ([]*model.DB
 				return e
 			}
 			dbInfo := &model.DBInfo{
-				Name: model.NewCIStr(dbName),
+				Name: pmodel.NewCIStr(dbName),
 			}
 			results = append(results, dbInfo)
 		}
@@ -170,123 +171,154 @@ func (b *targetInfoGetter) FetchRemoteDBModels(ctx context.Context) ([]*model.DB
 	return results, err
 }
 
-// FetchRemoteTableModels obtains the models of all tables given the schema name.
-// It implements the `backend.TargetInfoGetter` interface.
-// TODO: refactor
-func (b *targetInfoGetter) FetchRemoteTableModels(ctx context.Context, schemaName string) ([]*model.TableInfo, error) {
-	var err error
-	results := []*model.TableInfo{}
+// exported for test.
+var (
+	FetchRemoteTableModelsConcurrency = 8
+	FetchRemoteTableModelsBatchSize   = 32
+)
+
+// FetchRemoteTableModels implements the `backend.TargetInfoGetter` interface.
+func (b *targetInfoGetter) FetchRemoteTableModels(
+	ctx context.Context,
+	schemaName string,
+	tableNames []string,
+) (map[string]*model.TableInfo, error) {
+	tableInfos := make([]*model.TableInfo, len(tableNames))
 	logger := log.FromContext(ctx)
 	s := common.SQLWithRetry{
 		DB:     b.db,
 		Logger: logger,
 	}
 
-	err = s.Transact(ctx, "fetch table columns", func(_ context.Context, tx *sql.Tx) error {
-		var versionStr string
-		if versionStr, err = version.FetchVersion(ctx, tx); err != nil {
-			return err
+	eg, egCtx := util.NewErrorGroupWithRecoverWithCtx(ctx)
+	eg.SetLimit(FetchRemoteTableModelsConcurrency)
+	for i := 0; i < len(tableNames); i += FetchRemoteTableModelsBatchSize {
+		start := i
+		end := i + FetchRemoteTableModelsBatchSize
+		if end > len(tableNames) {
+			end = len(tableNames)
 		}
-		serverInfo := version.ParseServerInfo(versionStr)
+		eg.Go(func() error {
+			return s.Transact(
+				egCtx, "fetch table columns",
+				func(_ context.Context, tx *sql.Tx) error {
+					args := make([]any, 0, 1+end-start)
+					args = append(args, schemaName)
+					for _, tableName := range tableNames[start:end] {
+						args = append(args, tableName)
+					}
+					//nolint:gosec
+					rows, err := tx.Query(`
+						SELECT table_name, column_name, column_type, generation_expression, extra
+						FROM information_schema.columns
+						WHERE table_schema = ? AND table_name IN (?`+strings.Repeat(",?", end-start-1)+`)
+						ORDER BY table_name, ordinal_position;
+					`, args...)
+					if err != nil {
+						return err
+					}
+					defer rows.Close()
 
-		rows, e := tx.Query(`
-			SELECT table_name, column_name, column_type, generation_expression, extra
-			FROM information_schema.columns
-			WHERE table_schema = ?
-			ORDER BY table_name, ordinal_position;
-		`, schemaName)
-		if e != nil {
-			return e
-		}
-		defer rows.Close()
+					var (
+						curTableName string
+						curColOffset int
+						curTable     *model.TableInfo
+						tableIdx     = start - 1
+					)
+					for rows.Next() {
+						var tableName, columnName, columnType, generationExpr, columnExtra string
+						if err2 := rows.Scan(&tableName, &columnName, &columnType, &generationExpr, &columnExtra); err2 != nil {
+							return err2
+						}
+						if tableName != curTableName {
+							tableIdx++
+							curTable = &model.TableInfo{
+								Name:       pmodel.NewCIStr(tableName),
+								State:      model.StatePublic,
+								PKIsHandle: true,
+							}
+							tableInfos[tableIdx] = curTable
+							curTableName = tableName
+							curColOffset = 0
+						}
 
-		var (
-			curTableName string
-			curColOffset int
-			curTable     *model.TableInfo
-		)
-		tables := []*model.TableInfo{}
-		for rows.Next() {
-			var tableName, columnName, columnType, generationExpr, columnExtra string
-			if e := rows.Scan(&tableName, &columnName, &columnType, &generationExpr, &columnExtra); e != nil {
-				return e
-			}
-			if tableName != curTableName {
-				curTable = &model.TableInfo{
-					Name:       model.NewCIStr(tableName),
-					State:      model.StatePublic,
-					PKIsHandle: true,
-				}
-				tables = append(tables, curTable)
-				curTableName = tableName
-				curColOffset = 0
-			}
+						// see: https://github.com/pingcap/parser/blob/3b2fb4b41d73710bc6c4e1f4e8679d8be6a4863e/types/field_type.go#L185-L191
+						var flag uint
+						if strings.HasSuffix(columnType, "unsigned") {
+							flag |= mysql.UnsignedFlag
+						}
+						if strings.Contains(columnExtra, "auto_increment") {
+							flag |= mysql.AutoIncrementFlag
+						}
 
-			// see: https://github.com/pingcap/parser/blob/3b2fb4b41d73710bc6c4e1f4e8679d8be6a4863e/types/field_type.go#L185-L191
-			var flag uint
-			if strings.HasSuffix(columnType, "unsigned") {
-				flag |= mysql.UnsignedFlag
-			}
-			if strings.Contains(columnExtra, "auto_increment") {
-				flag |= mysql.AutoIncrementFlag
-			}
+						ft := types.FieldType{}
+						ft.SetFlag(flag)
+						curTable.Columns = append(curTable.Columns, &model.ColumnInfo{
+							Name:                pmodel.NewCIStr(columnName),
+							Offset:              curColOffset,
+							State:               model.StatePublic,
+							FieldType:           ft,
+							GeneratedExprString: generationExpr,
+						})
+						curColOffset++
+					}
+					if err := rows.Err(); err != nil {
+						return err
+					}
 
-			ft := types.FieldType{}
-			ft.SetFlag(flag)
-			curTable.Columns = append(curTable.Columns, &model.ColumnInfo{
-				Name:                model.NewCIStr(columnName),
-				Offset:              curColOffset,
-				State:               model.StatePublic,
-				FieldType:           ft,
-				GeneratedExprString: generationExpr,
-			})
-			curColOffset++
-		}
-		if err := rows.Err(); err != nil {
-			return err
-		}
-		// shard_row_id/auto random is only available after tidb v4.0.0
-		// `show table next_row_id` is also not available before tidb v4.0.0
-		if serverInfo.ServerType != version.ServerTypeTiDB || serverInfo.ServerVersion.Major < 4 {
-			results = tables
-			return nil
-		}
+					failpoint.Inject(
+						"FetchRemoteTableModels_BeforeFetchTableAutoIDInfos",
+						func() {
+							fmt.Println("failpoint: FetchRemoteTableModels_BeforeFetchTableAutoIDInfos")
+						},
+					)
 
-		failpoint.Inject(
-			"FetchRemoteTableModels_BeforeFetchTableAutoIDInfos",
-			func() {
-				fmt.Println("failpoint: FetchRemoteTableModels_BeforeFetchTableAutoIDInfos")
-			},
-		)
-
-		// init auto id column for each table
-		for _, tbl := range tables {
-			tblName := common.UniqueTable(schemaName, tbl.Name.O)
-			autoIDInfos, err := FetchTableAutoIDInfos(ctx, tx, tblName)
-			if err != nil {
-				logger.Warn("fetch table auto ID infos error. Ignore this table and continue.", zap.String("table_name", tblName), zap.Error(err))
-				continue
-			}
-			for _, info := range autoIDInfos {
-				for _, col := range tbl.Columns {
-					if col.Name.O == info.Column {
-						switch info.Type {
-						case "AUTO_INCREMENT":
-							col.AddFlag(mysql.AutoIncrementFlag)
-						case "AUTO_RANDOM":
-							col.AddFlag(mysql.PriKeyFlag)
-							tbl.PKIsHandle = true
-							// set a stub here, since we don't really need the real value
-							tbl.AutoRandomBits = 1
+					// init auto id column for each table
+					for idx := start; idx <= tableIdx; idx++ {
+						tbl := tableInfos[idx]
+						tblName := common.UniqueTable(schemaName, tbl.Name.O)
+						autoIDInfos, err := FetchTableAutoIDInfos(ctx, tx, tblName)
+						if err != nil {
+							logger.Warn(
+								"fetch table auto ID infos error. Ignore this table and continue.",
+								zap.String("table_name", tblName),
+								zap.Error(err),
+							)
+							tableInfos[idx] = nil
+							continue
+						}
+						for _, info := range autoIDInfos {
+							for _, col := range tbl.Columns {
+								if col.Name.O == info.Column {
+									switch info.Type {
+									case "AUTO_INCREMENT":
+										col.AddFlag(mysql.AutoIncrementFlag)
+									case "AUTO_RANDOM":
+										col.AddFlag(mysql.PriKeyFlag)
+										tbl.PKIsHandle = true
+										// set a stub here, since we don't really need the real value
+										tbl.AutoRandomBits = 1
+									}
+								}
+							}
 						}
 					}
-				}
-			}
-			results = append(results, tbl)
+					return nil
+				})
+		})
+	}
+	if err := eg.Wait(); err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	ret := make(map[string]*model.TableInfo, len(tableInfos))
+	for _, tbl := range tableInfos {
+		if tbl != nil {
+			ret[tbl.Name.L] = tbl
 		}
-		return nil
-	})
-	return results, err
+	}
+
+	return ret, nil
 }
 
 // CheckRequirements performs the check whether the backend satisfies the version requirements.
@@ -294,6 +326,16 @@ func (b *targetInfoGetter) FetchRemoteTableModels(ctx context.Context, schemaNam
 func (*targetInfoGetter) CheckRequirements(ctx context.Context, _ *backend.CheckCtx) error {
 	log.FromContext(ctx).Info("skipping check requirements for tidb backend")
 	return nil
+}
+
+// stmtKey defines key for stmtCache.
+type stmtKey struct {
+	query string
+}
+
+// Hash implements SimpleLRUCache.Key.
+func (k *stmtKey) Hash() []byte {
+	return hack.Slice(k.query)
 }
 
 type tidbBackend struct {
@@ -309,6 +351,9 @@ type tidbBackend struct {
 	// affecting the cluster too much.
 	maxChunkSize uint64
 	maxChunkRows int
+	// implement stmtCache to improve performance
+	stmtCache      *kvcache.SimpleLRUCache
+	stmtCacheMutex sync.RWMutex
 }
 
 var _ backend.Backend = (*tidbBackend)(nil)
@@ -342,13 +387,23 @@ func NewTiDBBackend(
 		log.FromContext(ctx).Warn("unsupported conflict strategy for TiDB backend, overwrite with `error`")
 		onDuplicate = config.ErrorOnDup
 	}
+	var stmtCache *kvcache.SimpleLRUCache
+	if cfg.TikvImporter.LogicalImportPrepStmt {
+		stmtCache = kvcache.NewSimpleLRUCache(prepStmtCacheSize, 0, 0)
+		stmtCache.SetOnEvict(func(_ kvcache.Key, value kvcache.Value) {
+			stmt := value.(*sql.Stmt)
+			stmt.Close()
+		})
+	}
 	return &tidbBackend{
-		db:           db,
-		conflictCfg:  conflict,
-		onDuplicate:  onDuplicate,
-		errorMgr:     errorMgr,
-		maxChunkSize: uint64(cfg.TikvImporter.LogicalImportBatchSize),
-		maxChunkRows: cfg.TikvImporter.LogicalImportBatchRows,
+		db:             db,
+		conflictCfg:    conflict,
+		onDuplicate:    onDuplicate,
+		errorMgr:       errorMgr,
+		maxChunkSize:   uint64(cfg.TikvImporter.LogicalImportBatchSize),
+		maxChunkRows:   cfg.TikvImporter.LogicalImportBatchRows,
+		stmtCache:      stmtCache,
+		stmtCacheMutex: sync.RWMutex{},
 	}
 }
 
@@ -564,9 +619,15 @@ func (enc *tidbEncoder) Encode(row []types.Datum, _ int64, columnPermutation []i
 		return emptyTiDBRow, errors.Errorf("column count mismatch, at most %d but got %d", len(enc.columnIdx), len(row))
 	}
 
-	var encoded strings.Builder
+	var encoded, preparedInsertStmt strings.Builder
+	var values []any
 	encoded.Grow(8 * len(row))
 	encoded.WriteByte('(')
+	if enc.prepStmt {
+		preparedInsertStmt.Grow(2 * len(row))
+		preparedInsertStmt.WriteByte('(')
+		values = make([]any, 0, len(row))
+	}
 	cnt := 0
 	for i, field := range row {
 		if enc.columnIdx[i] < 0 {
@@ -574,6 +635,9 @@ func (enc *tidbEncoder) Encode(row []types.Datum, _ int64, columnPermutation []i
 		}
 		if cnt > 0 {
 			encoded.WriteByte(',')
+			if enc.prepStmt {
+				preparedInsertStmt.WriteByte(',')
+			}
 		}
 		datum := field
 		if err := enc.appendSQL(&encoded, &datum, getColumnByIndex(cols, enc.columnIdx[i])); err != nil {
@@ -584,13 +648,23 @@ func (enc *tidbEncoder) Encode(row []types.Datum, _ int64, columnPermutation []i
 			)
 			return nil, err
 		}
+		if enc.prepStmt {
+			preparedInsertStmt.WriteByte('?')
+			values = append(values, datum.GetValue())
+		}
 		cnt++
 	}
 	encoded.WriteByte(')')
+	if enc.prepStmt {
+		preparedInsertStmt.WriteByte(')')
+	}
+
 	return tidbRow{
-		insertStmt: encoded.String(),
-		path:       enc.path,
-		offset:     offset,
+		insertStmt:         encoded.String(),
+		preparedInsertStmt: preparedInsertStmt.String(),
+		values:             values,
+		path:               enc.path,
+		offset:             offset,
 	}, nil
 }
 
@@ -673,8 +747,9 @@ rowLoop:
 }
 
 type stmtTask struct {
-	rows tidbRows
-	stmt string
+	rows   tidbRows
+	stmt   string
+	values []any
 }
 
 // WriteBatchRowsToDB write rows in batch mode, which will insert multiple rows like this:
@@ -687,14 +762,23 @@ func (be *tidbBackend) WriteBatchRowsToDB(ctx context.Context, tableName string,
 	}
 	// Note: we are not going to do interpolation (prepared statements) to avoid
 	// complication arise from data length overflow of BIT and BINARY columns
+	var values []any
+	if be.stmtCache != nil && len(rows) > 0 {
+		values = make([]any, 0, len(rows[0].values)*len(rows))
+	}
 	stmtTasks := make([]stmtTask, 1)
 	for i, row := range rows {
 		if i != 0 {
 			insertStmt.WriteByte(',')
 		}
-		insertStmt.WriteString(row.insertStmt)
+		if be.stmtCache != nil {
+			insertStmt.WriteString(row.preparedInsertStmt)
+			values = append(values, row.values...)
+		} else {
+			insertStmt.WriteString(row.insertStmt)
+		}
 	}
-	stmtTasks[0] = stmtTask{rows, insertStmt.String()}
+	stmtTasks[0] = stmtTask{rows, insertStmt.String(), values}
 	return be.execStmts(ctx, stmtTasks, tableName, true)
 }
 
@@ -723,8 +807,12 @@ func (be *tidbBackend) WriteRowsToDB(ctx context.Context, tableName string, colu
 	for _, row := range rows {
 		var finalInsertStmt strings.Builder
 		finalInsertStmt.WriteString(is)
-		finalInsertStmt.WriteString(row.insertStmt)
-		stmtTasks = append(stmtTasks, stmtTask{[]tidbRow{row}, finalInsertStmt.String()})
+		if be.stmtCache != nil {
+			finalInsertStmt.WriteString(row.preparedInsertStmt)
+		} else {
+			finalInsertStmt.WriteString(row.insertStmt)
+		}
+		stmtTasks = append(stmtTasks, stmtTask{[]tidbRow{row}, finalInsertStmt.String(), row.values})
 	}
 	return be.execStmts(ctx, stmtTasks, tableName, false)
 }
@@ -762,8 +850,34 @@ stmtLoop:
 			err    error
 		)
 		for i := 0; i < writeRowsMaxRetryTimes; i++ {
-			stmt := stmtTask.stmt
-			result, err = be.db.ExecContext(ctx, stmt)
+			query := stmtTask.stmt
+			if be.stmtCache != nil {
+				var prepStmt *sql.Stmt
+				key := &stmtKey{query: query}
+				be.stmtCacheMutex.RLock()
+				stmt, ok := be.stmtCache.Get(key)
+				be.stmtCacheMutex.RUnlock()
+				if ok {
+					prepStmt = stmt.(*sql.Stmt)
+				} else if stmt, err := be.db.PrepareContext(ctx, query); err == nil {
+					be.stmtCacheMutex.Lock()
+					// check again if the key is already in the cache
+					// to avoid override existing stmt without closing it
+					if cachedStmt, ok := be.stmtCache.Get(key); !ok {
+						prepStmt = stmt
+						be.stmtCache.Put(key, stmt)
+					} else {
+						prepStmt = cachedStmt.(*sql.Stmt)
+						stmt.Close()
+					}
+					be.stmtCacheMutex.Unlock()
+				} else {
+					return errors.Trace(err)
+				}
+				result, err = prepStmt.ExecContext(ctx, stmtTask.values...)
+			} else {
+				result, err = be.db.ExecContext(ctx, query)
+			}
 			if err == nil {
 				affected, err2 := result.RowsAffected()
 				if err2 != nil {
@@ -784,7 +898,7 @@ stmtLoop:
 
 			if !common.IsContextCanceledError(err) {
 				log.FromContext(ctx).Error("execute statement failed",
-					zap.Array("rows", stmtTask.rows), zap.String("stmt", redact.Value(stmt)), zap.Error(err))
+					zap.Array("rows", stmtTask.rows), zap.String("stmt", redact.Value(query)), zap.Error(err))
 			}
 			// It's batch mode, just return the error. Caller will fall back to row-by-row mode.
 			if batch {

@@ -12,7 +12,9 @@ import (
 
 	"github.com/pingcap/errors"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
+	"github.com/pingcap/kvproto/pkg/encryptionpb"
 	"github.com/pingcap/log"
+	"github.com/pingcap/tidb/br/pkg/encryption"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/stream"
@@ -74,6 +76,7 @@ type streamMetadataHelper interface {
 		length uint64,
 		compressionType backuppb.CompressionType,
 		storage storage.ExternalStorage,
+		encryptionInfo *encryptionpb.FileEncryptionInfo,
 	) ([]byte, error)
 	ParseToMetadata(rawMetaData []byte) (*backuppb.Metadata, error)
 }
@@ -108,6 +111,7 @@ type LogFileManagerInit struct {
 
 	Migrations                *WithMigrations
 	MetadataDownloadBatchSize uint
+	EncryptionManager         *encryption.Manager
 }
 
 type DDLMetaGroup struct {
@@ -122,7 +126,7 @@ func CreateLogFileManager(ctx context.Context, init LogFileManagerInit) (*LogFil
 		startTS:   init.StartTS,
 		restoreTS: init.RestoreTS,
 		storage:   init.Storage,
-		helper:    stream.NewMetadataHelper(),
+		helper:    stream.NewMetadataHelper(stream.WithEncryptionManager(init.EncryptionManager)),
 
 		metadataDownloadBatchSize: init.MetadataDownloadBatchSize,
 	}
@@ -355,7 +359,8 @@ func (rc *LogFileManager) ReadAllEntries(
 	kvEntries := make([]*KvEntryWithTS, 0)
 	nextKvEntries := make([]*KvEntryWithTS, 0)
 
-	buff, err := rc.helper.ReadFile(ctx, file.Path, file.RangeOffset, file.RangeLength, file.CompressionType, rc.storage)
+	buff, err := rc.helper.ReadFile(ctx, file.Path, file.RangeOffset, file.RangeLength, file.CompressionType,
+		rc.storage, file.FileEncryptionInfo)
 	if err != nil {
 		return nil, nil, errors.Trace(err)
 	}

@@ -31,8 +31,8 @@ import (
 	"strings"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/pkg/expression/context"
-	"github.com/pingcap/tidb/pkg/expression/contextopt"
+	"github.com/pingcap/tidb/pkg/expression/exprctx"
+	"github.com/pingcap/tidb/pkg/expression/expropt"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
@@ -397,6 +397,9 @@ func (c *decodeFunctionClass) getFunction(ctx BuildContext, args []Expression) (
 
 type builtinDecodeSig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinDecodeSig) Clone() builtinFunc {
@@ -460,6 +463,9 @@ func (c *encodeFunctionClass) getFunction(ctx BuildContext, args []Expression) (
 
 type builtinEncodeSig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinEncodeSig) Clone() builtinFunc {
@@ -521,6 +527,9 @@ func (c *passwordFunctionClass) getFunction(ctx BuildContext, args []Expression)
 
 type builtinPasswordSig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinPasswordSig) Clone() builtinFunc {
@@ -569,6 +578,9 @@ func (c *randomBytesFunctionClass) getFunction(ctx BuildContext, args []Expressi
 
 type builtinRandomBytesSig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinRandomBytesSig) Clone() builtinFunc {
@@ -620,6 +632,9 @@ func (c *md5FunctionClass) getFunction(ctx BuildContext, args []Expression) (bui
 
 type builtinMD5Sig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinMD5Sig) Clone() builtinFunc {
@@ -664,6 +679,9 @@ func (c *sha1FunctionClass) getFunction(ctx BuildContext, args []Expression) (bu
 
 type builtinSHA1Sig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinSHA1Sig) Clone() builtinFunc {
@@ -711,6 +729,9 @@ func (c *sha2FunctionClass) getFunction(ctx BuildContext, args []Expression) (bu
 
 type builtinSHA2Sig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinSHA2Sig) Clone() builtinFunc {
@@ -741,6 +762,9 @@ func (c *sm3FunctionClass) getFunction(ctx BuildContext, args []Expression) (bui
 
 type builtinSM3Sig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinSM3Sig) Clone() builtinFunc {
@@ -862,6 +886,9 @@ func (c *compressFunctionClass) getFunction(ctx BuildContext, args []Expression)
 
 type builtinCompressSig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinCompressSig) Clone() builtinFunc {
@@ -928,6 +955,9 @@ func (c *uncompressFunctionClass) getFunction(ctx BuildContext, args []Expressio
 
 type builtinUncompressSig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinUncompressSig) Clone() builtinFunc {
@@ -985,6 +1015,9 @@ func (c *uncompressedLengthFunctionClass) getFunction(ctx BuildContext, args []E
 
 type builtinUncompressedLengthSig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinUncompressedLengthSig) Clone() builtinFunc {
@@ -1031,8 +1064,8 @@ func (c *validatePasswordStrengthFunctionClass) getFunction(ctx BuildContext, ar
 
 type builtinValidatePasswordStrengthSig struct {
 	baseBuiltinFunc
-	contextopt.SessionVarsPropReader
-	contextopt.CurrentUserPropReader
+	expropt.SessionVarsPropReader
+	expropt.CurrentUserPropReader
 }
 
 func (b *builtinValidatePasswordStrengthSig) Clone() builtinFunc {
@@ -1042,7 +1075,7 @@ func (b *builtinValidatePasswordStrengthSig) Clone() builtinFunc {
 }
 
 // RequiredOptionalEvalProps implements the RequireOptionalEvalProps interface.
-func (b *builtinValidatePasswordStrengthSig) RequiredOptionalEvalProps() context.OptionalEvalPropKeySet {
+func (b *builtinValidatePasswordStrengthSig) RequiredOptionalEvalProps() exprctx.OptionalEvalPropKeySet {
 	return b.SessionVarsPropReader.RequiredOptionalEvalProps() |
 		b.CurrentUserPropReader.RequiredOptionalEvalProps()
 }

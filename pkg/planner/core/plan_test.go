@@ -16,6 +16,7 @@ package core_test
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"testing"
 	"time"
@@ -25,8 +26,9 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/expression/aggregation"
 	"github.com/pingcap/tidb/pkg/infoschema"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
@@ -369,16 +371,11 @@ func TestExplainFormatHintRecoverableForTiFlashReplica(t *testing.T) {
 	tk.MustExec("create table t(a int)")
 	// Create virtual `tiflash` replica info.
 	is := dom.InfoSchema()
-	db, exists := is.SchemaByName(model.NewCIStr("test"))
-	require.True(t, exists)
-	for _, tbl := range is.SchemaTables(db.Name) {
-		tblInfo := tbl.Meta()
-		if tblInfo.Name.L == "t" {
-			tblInfo.TiFlashReplica = &model.TiFlashReplicaInfo{
-				Count:     1,
-				Available: true,
-			}
-		}
+	tblInfo, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
+	require.NoError(t, err)
+	tblInfo.Meta().TiFlashReplica = &model.TiFlashReplicaInfo{
+		Count:     1,
+		Available: true,
 	}
 
 	rows := tk.MustQuery("explain select * from t").Rows()
@@ -430,7 +427,6 @@ func BenchmarkEncodePlan(b *testing.B) {
 	tk := testkit.NewTestKit(b, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists th")
-	tk.MustExec("set @@session.tidb_enable_table_partition = 1")
 	tk.MustExec(`set @@tidb_partition_prune_mode='` + string(variable.Static) + `'`)
 	tk.MustExec("create table th (i int, a int,b int, c int, index (a)) partition by hash (a) partitions 8192;")
 	tk.MustExec("set @@tidb_slow_log_threshold=200000")
@@ -454,7 +450,6 @@ func BenchmarkEncodeFlatPlan(b *testing.B) {
 	tk := testkit.NewTestKit(b, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists th")
-	tk.MustExec("set @@session.tidb_enable_table_partition = 1")
 	tk.MustExec(`set @@tidb_partition_prune_mode='` + string(variable.Static) + `'`)
 	tk.MustExec("create table th (i int, a int,b int, c int, index (a)) partition by hash (a) partitions 8192;")
 	tk.MustExec("set @@tidb_slow_log_threshold=200000")
@@ -487,7 +482,7 @@ func TestCopPaging(t *testing.T) {
 	for i := 0; i < 1024; i++ {
 		tk.MustExec("insert into t values(?, ?, ?)", i, i, i)
 	}
-	tk.MustExec("analyze table t")
+	tk.MustExec("analyze table t all columns")
 
 	// limit 960 should go paging
 	for i := 0; i < 10; i++ {

@@ -36,7 +36,7 @@ func addAuxDataForChunks(chunks []*Chunk) {
 
 		selLen := rand.Intn(50) + 1
 		chk.sel = make([]int, selLen)
-		for i := 0; i < selLen; i++ {
+		for i := range selLen {
 			chk.sel[i] = rand.Int()
 		}
 	}
@@ -49,7 +49,7 @@ func checkAuxDataForChunk(t *testing.T, chk1, chk2 *Chunk) {
 	require.Equal(t, len(chk1.sel), len(chk2.sel))
 
 	length := len(chk1.sel)
-	for i := 0; i < length; i++ {
+	for i := range length {
 		require.Equal(t, chk1.sel[i], chk2.sel[i])
 	}
 }
@@ -61,7 +61,7 @@ func checkChunk(t *testing.T, chk1, chk2 *Chunk) {
 
 	require.Equal(t, chk1.NumRows(), chk2.NumRows())
 	numRows := chk1.NumRows()
-	for i := 0; i < numRows; i++ {
+	for i := range numRows {
 		checkRow(t, chk1.GetRow(i), chk2.GetRow(i))
 	}
 }
@@ -78,7 +78,7 @@ func TestDataInDiskByChunks(t *testing.T) {
 		require.NoError(t, err)
 	}
 
-	for i := 0; i < numChk; i++ {
+	for i := range numChk {
 		chk, err := dataInDiskByChunks.GetChunk(i)
 		require.NoError(t, err)
 		checkChunk(t, chk, chks[i])

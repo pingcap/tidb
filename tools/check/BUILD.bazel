@@ -11,25 +11,8 @@ go_library(
     ],
 )
 
-go_library(
-    name = "xprog_lib",
-    srcs = ["xprog.go"],
-    importpath = "github.com/pingcap/tidb/tools/check",
-    visibility = ["//visibility:private"],
-    deps = [
-        "@org_golang_x_tools//cover",
-        "@org_uber_go_automaxprocs//:automaxprocs",
-    ],
-)
-
 go_binary(
-    name = "ut",
+    name = "ut-server",
     embed = [":ut_lib"],
-    visibility = ["//visibility:public"],
-)
-
-go_binary(
-    name = "xprog",
-    embed = [":xprog_lib"],
     visibility = ["//visibility:public"],
 )

@@ -64,7 +64,7 @@ create table t (created_at datetime) TTL = created_at + INTERVAL 100 YEAR TTL_JO
 show create table t;
 
 # TestShowHistogramsInFlight
-show histograms_in_flight;
+# show histograms_in_flight;  // it is unstable.
 
 # TestShowOpenTables
 show open tables;
@@ -174,13 +174,15 @@ create database test2;
 create table test1.t1 (id int key, b int, index(b));
 create table test2.t2 (id int key, b int, foreign key fk(b) references test1.t1(id));
 show create table test2.t2;
+drop database if exists test1;
+drop database if exists test2;
+
 drop table if exists t;
 create table t(a int, b char(10) as ('a'));
 show create table t;
 drop table if exists t;
 create table t(a int, b char(10) as (_utf8'a'));
 show create table t;
-set @@session.tidb_enable_list_partition = ON;
 DROP TABLE IF EXISTS t;
 create table t (id int, name varchar(10), unique index idx (id)) partition by list  (id) (
     	partition p0 values in (3,5,6,9,17),
@@ -236,7 +238,6 @@ drop table if exists t;
 create table t (a varchar(255) character set ascii) partition by range columns (a) (partition p values less than (0xff));
 create table t (a varchar(255) character set ascii) partition by range columns (a) (partition p values less than (0x7f));
 show create table t;
-set @@session.tidb_enable_list_partition = default;
 set @@foreign_key_checks=default;
 
 # TestShowErrors

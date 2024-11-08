@@ -29,7 +29,8 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl/placement"
 	"github.com/pingcap/tidb/pkg/ddl/util"
 	"github.com/pingcap/tidb/pkg/keyspace"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/testkit/testsetup"
 	util2 "github.com/pingcap/tidb/pkg/util"
 	"github.com/stretchr/testify/require"
@@ -258,12 +259,12 @@ func TestTiFlashManager(t *testing.T) {
 	ConfigureTiFlashPDForPartitions(true, &[]model.PartitionDefinition{
 		{
 			ID:       2,
-			Name:     model.NewCIStr("p1"),
+			Name:     pmodel.NewCIStr("p1"),
 			LessThan: []string{},
 		},
 		{
 			ID:       3,
-			Name:     model.NewCIStr("p2"),
+			Name:     pmodel.NewCIStr("p2"),
 			LessThan: []string{},
 		},
 	}, 3, &[]string{}, 100)

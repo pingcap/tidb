@@ -21,12 +21,14 @@ import (
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/statistics/handle/syncload"
 	"github.com/pingcap/tidb/pkg/statistics/handle/types"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/testkit/analyzehelper"
 	"github.com/pingcap/tidb/pkg/util/mathutil"
 	"github.com/stretchr/testify/require"
 )
@@ -60,7 +62,7 @@ func TestConcurrentLoadHist(t *testing.T) {
 	testKit.MustExec("use test")
 	testKit.MustExec("drop table if exists t")
 	testKit.MustExec("set @@session.tidb_analyze_version=2")
-	testKit.MustExec("create table t(a int, b int, c int, primary key(a), key idx(b))")
+	testKit.MustExec("create table t(a int, b int, c int, primary key(a), key idx(b,c))")
 	testKit.MustExec("insert into t values (1,1,1),(2,2,2),(3,3,3)")
 
 	oriLease := dom.StatsHandle().Lease()
@@ -71,7 +73,7 @@ func TestConcurrentLoadHist(t *testing.T) {
 	testKit.MustExec("analyze table t")
 
 	is := dom.InfoSchema()
-	tbl, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
+	tbl, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
 	require.NoError(t, err)
 	tableInfo := tbl.Meta()
 	h := dom.StatsHandle()
@@ -114,7 +116,7 @@ func TestConcurrentLoadHistTimeout(t *testing.T) {
 	testKit.MustExec("analyze table t")
 
 	is := dom.InfoSchema()
-	tbl, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
+	tbl, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
 	require.NoError(t, err)
 	tableInfo := tbl.Meta()
 	h := dom.StatsHandle()
@@ -156,6 +158,7 @@ func TestConcurrentLoadHistWithPanicAndFail(t *testing.T) {
 	testKit.MustExec("set @@session.tidb_analyze_version=2")
 	testKit.MustExec("create table t(a int, b int, c int, primary key(a), key idx(b))")
 	testKit.MustExec("insert into t values (1,1,1),(2,2,2),(3,3,3)")
+	analyzehelper.TriggerPredicateColumnsCollection(t, testKit, store, "t", "c")
 
 	oriLease := dom.StatsHandle().Lease()
 	dom.StatsHandle().SetLease(1)
@@ -165,7 +168,7 @@ func TestConcurrentLoadHistWithPanicAndFail(t *testing.T) {
 	testKit.MustExec("analyze table t")
 
 	is := dom.InfoSchema()
-	tbl, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
+	tbl, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
 	require.NoError(t, err)
 	tableInfo := tbl.Meta()
 	h := dom.StatsHandle()
@@ -191,7 +194,7 @@ func TestConcurrentLoadHistWithPanicAndFail(t *testing.T) {
 	for _, fp := range failpoints {
 		// clear statsCache
 		h.Clear()
-		require.NoError(t, dom.StatsHandle().Update(is))
+		require.NoError(t, dom.StatsHandle().Update(context.Background(), is))
 
 		// no stats at beginning
 		stat := h.GetTableStats(tableInfo)
@@ -270,6 +273,7 @@ func TestRetry(t *testing.T) {
 	testKit.MustExec("set @@session.tidb_analyze_version=2")
 	testKit.MustExec("create table t(a int, b int, c int, primary key(a), key idx(b))")
 	testKit.MustExec("insert into t values (1,1,1),(2,2,2),(3,3,3)")
+	analyzehelper.TriggerPredicateColumnsCollection(t, testKit, store, "t", "c")
 
 	oriLease := dom.StatsHandle().Lease()
 	dom.StatsHandle().SetLease(1)
@@ -279,7 +283,7 @@ func TestRetry(t *testing.T) {
 	testKit.MustExec("analyze table t")
 
 	is := dom.InfoSchema()
-	tbl, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
+	tbl, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
 	require.NoError(t, err)
 	tableInfo := tbl.Meta()
 
@@ -291,7 +295,7 @@ func TestRetry(t *testing.T) {
 
 	// clear statsCache
 	h.Clear()
-	require.NoError(t, dom.StatsHandle().Update(is))
+	require.NoError(t, dom.StatsHandle().Update(context.Background(), is))
 
 	// no stats at beginning
 	stat := h.GetTableStats(tableInfo)

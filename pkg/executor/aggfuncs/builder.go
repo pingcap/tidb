@@ -19,7 +19,7 @@ import (
 
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/expression/aggregation"
-	exprctx "github.com/pingcap/tidb/pkg/expression/context"
+	"github.com/pingcap/tidb/pkg/expression/exprctx"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/types"
@@ -251,6 +251,8 @@ func buildCount(ctx expression.EvalContext, aggFuncDesc *aggregation.AggFuncDesc
 			return &countOriginal4Duration{baseCount{base}}
 		case types.ETJson:
 			return &countOriginal4JSON{baseCount{base}}
+		case types.ETVectorFloat32:
+			return &countOriginal4VectorFloat32{baseCount{base}}
 		case types.ETString:
 			return &countOriginal4String{baseCount{base}}
 		}
@@ -378,6 +380,8 @@ func buildFirstRow(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
 			return &firstRow4String{base}
 		case types.ETJson:
 			return &firstRow4JSON{base}
+		case types.ETVectorFloat32:
+			return &firstRow4VectorFloat32{base}
 		}
 	}
 	return nil
@@ -431,6 +435,8 @@ func buildMaxMin(aggFuncDesc *aggregation.AggFuncDesc, ordinal int, isMax bool) 
 			return &maxMin4Duration{base}
 		case types.ETJson:
 			return &maxMin4JSON{base}
+		case types.ETVectorFloat32:
+			return &maxMin4VectorFloat32{base}
 		}
 	}
 	return nil

@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/privilege"
 	"github.com/pingcap/tidb/pkg/privilege/conn"
 	"github.com/pingcap/tidb/pkg/privilege/privileges/ldap"
@@ -41,7 +42,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/hack"
 	"github.com/pingcap/tidb/pkg/util/logutil"
-	"github.com/pingcap/tidb/pkg/util/mathutil"
 	"github.com/pingcap/tidb/pkg/util/sem"
 	"go.uber.org/zap"
 )
@@ -219,6 +219,7 @@ func (p *UserPrivileges) RequestVerificationWithUser(db, table, column string, p
 		return true
 	}
 
+	terror.Log(p.Handle.ensureActiveUser(user.Username))
 	mysqlPriv := p.Handle.Get()
 	roles := mysqlPriv.getDefaultRoles(user.Username, user.Hostname)
 	return mysqlPriv.RequestVerification(roles, user.Username, user.Hostname, db, table, column, priv)
@@ -379,8 +380,12 @@ func (p *UserPrivileges) MatchIdentity(user, host string, skipNameResolve bool) 
 	if SkipWithGrant {
 		return user, host, true
 	}
+	if err := p.Handle.ensureActiveUser(user); err != nil {
+		logutil.BgLogger().Error("ensure user data fail",
+			zap.String("user", user))
+	}
 	mysqlPriv := p.Handle.Get()
-	record := mysqlPriv.matchIdentity(user, host, skipNameResolve)
+	record := mysqlPriv.matchIdentity(p.Handle.sctx, user, host, skipNameResolve)
 	if record != nil {
 		return record.User, record.Host, true
 	}
@@ -906,13 +911,17 @@ func (p *UserPrivileges) ShowGrants(ctx sessionctx.Context, user *auth.UserIdent
 	if SkipWithGrant {
 		return nil, ErrNonexistingGrant.GenWithStackByArgs("root", "%")
 	}
-	mysqlPrivilege := p.Handle.Get()
 	u := user.Username
 	h := user.Hostname
 	if len(user.AuthUsername) > 0 && len(user.AuthHostname) > 0 {
 		u = user.AuthUsername
 		h = user.AuthHostname
 	}
+	if err := p.Handle.ensureActiveUser(u); err != nil {
+		return nil, err
+	}
+	mysqlPrivilege := p.Handle.Get()
+
 	grants = mysqlPrivilege.showGrants(ctx, u, h, roles)
 	if len(grants) == 0 {
 		err = ErrNonexistingGrant.GenWithStackByArgs(u, h)
@@ -1056,7 +1065,7 @@ func (passwordLocking *PasswordLocking) ParseJSON(passwordLockingJSON types.Bina
 		return err
 	}
 	passwordLocking.FailedLoginAttempts = min(passwordLocking.FailedLoginAttempts, math.MaxInt16)
-	passwordLocking.FailedLoginAttempts = mathutil.Max(passwordLocking.FailedLoginAttempts, 0)
+	passwordLocking.FailedLoginAttempts = max(passwordLocking.FailedLoginAttempts, 0)
 
 	passwordLocking.PasswordLockTimeDays, err =
 		extractInt64FromJSON(passwordLockingJSON, "$.Password_locking.password_lock_time_days")
@@ -1064,7 +1073,7 @@ func (passwordLocking *PasswordLocking) ParseJSON(passwordLockingJSON types.Bina
 		return err
 	}
 	passwordLocking.PasswordLockTimeDays = min(passwordLocking.PasswordLockTimeDays, math.MaxInt16)
-	passwordLocking.PasswordLockTimeDays = mathutil.Max(passwordLocking.PasswordLockTimeDays, -1)
+	passwordLocking.PasswordLockTimeDays = max(passwordLocking.PasswordLockTimeDays, -1)
 
 	passwordLocking.FailedLoginCount, err =
 		extractInt64FromJSON(passwordLockingJSON, "$.Password_locking.failed_login_count")

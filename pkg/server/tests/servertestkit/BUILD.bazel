@@ -19,9 +19,8 @@ go_library(
         "//pkg/util/cpuprofile",
         "//pkg/util/topsql/collector/mock",
         "//pkg/util/topsql/state",
-        "@com_github_cockroachdb_errors//:errors",
+        "@com_github_pingcap_errors//:errors",
         "@com_github_stretchr_testify//require",
         "@io_opencensus_go//stats/view",
-        "@org_uber_go_zap//:zap",
     ],
 )

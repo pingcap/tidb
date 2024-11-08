@@ -156,7 +156,7 @@ func renewEmpty(chk *Chunk) *Chunk {
 }
 
 func (c *Chunk) resetForReuse() {
-	for i := 0; i < len(c.columns); i++ {
+	for i := range len(c.columns) {
 		c.columns[i] = nil
 	}
 	columns := c.columns[:0]
@@ -187,8 +187,7 @@ func (c *Chunk) MemoryUsage() (sum int64) {
 		return 0
 	}
 	for _, col := range c.columns {
-		curColMemUsage := int64(unsafe.Sizeof(*col)) + int64(cap(col.nullBitmap)) + int64(cap(col.offsets)*8) + int64(cap(col.data)) + int64(cap(col.elemBuf))
-		sum += curColMemUsage
+		sum += int64(unsafe.Sizeof(*col)) + int64(cap(col.nullBitmap)) + int64(cap(col.offsets)*8) + int64(cap(col.data)) + int64(cap(col.elemBuf))
 	}
 	return
 }
@@ -246,12 +245,12 @@ func (c *Chunk) SwapColumn(colIdx int, other *Chunk, otherIdx int) error {
 	}
 	// Find the leftmost Column of the reference which is the actual Column to
 	// be swapped.
-	for i := 0; i < colIdx; i++ {
+	for i := range colIdx {
 		if c.columns[i] == c.columns[colIdx] {
 			colIdx = i
 		}
 	}
-	for i := 0; i < otherIdx; i++ {
+	for i := range otherIdx {
 		if other.columns[i] == other.columns[otherIdx] {
 			otherIdx = i
 		}
@@ -612,6 +611,12 @@ func (c *Chunk) AppendJSON(colIdx int, j types.BinaryJSON) {
 	c.columns[colIdx].AppendJSON(j)
 }
 
+// AppendVectorFloat32 appends a VectorFloat32 value to the chunk.
+func (c *Chunk) AppendVectorFloat32(colIdx int, v types.VectorFloat32) {
+	c.appendSel(colIdx)
+	c.columns[colIdx].AppendVectorFloat32(v)
+}
+
 func (c *Chunk) appendSel(colIdx int) {
 	if colIdx == 0 && c.sel != nil { // use column 0 as standard
 		c.sel = append(c.sel, c.columns[0].length)
@@ -645,6 +650,8 @@ func (c *Chunk) AppendDatum(colIdx int, d *types.Datum) {
 		c.AppendTime(colIdx, d.GetMysqlTime())
 	case types.KindMysqlJSON:
 		c.AppendJSON(colIdx, d.GetMysqlJSON())
+	case types.KindVectorFloat32:
+		c.AppendVectorFloat32(colIdx, d.GetVectorFloat32())
 	}
 }
 
@@ -692,8 +699,8 @@ func (c *Chunk) Reconstruct() {
 
 // ToString returns all the values in a chunk.
 func (c *Chunk) ToString(ft []*types.FieldType) string {
-	var buf []byte
-	for rowIdx := 0; rowIdx < c.NumRows(); rowIdx++ {
+	buf := make([]byte, 0, c.NumRows()*2)
+	for rowIdx := range c.NumRows() {
 		row := c.GetRow(rowIdx)
 		buf = append(buf, row.ToString(ft)...)
 		buf = append(buf, '\n')

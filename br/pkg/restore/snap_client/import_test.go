@@ -24,8 +24,8 @@ import (
 	"github.com/pingcap/kvproto/pkg/metapb"
 	importclient "github.com/pingcap/tidb/br/pkg/restore/internal/import_client"
 	snapclient "github.com/pingcap/tidb/br/pkg/restore/snap_client"
+	"github.com/pingcap/tidb/br/pkg/restore/split"
 	restoreutils "github.com/pingcap/tidb/br/pkg/restore/utils"
-	"github.com/pingcap/tidb/br/pkg/utiltest"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/stretchr/testify/require"
 )
@@ -103,7 +103,7 @@ func TestGetSSTMetaFromFile(t *testing.T) {
 		StartKey: []byte("t2abc"),
 		EndKey:   []byte("t3a"),
 	}
-	sstMeta, err := snapclient.GetSSTMetaFromFile([]byte{}, file, region, rule, snapclient.RewriteModeLegacy)
+	sstMeta, err := snapclient.GetSSTMetaFromFile(file, region, rule, snapclient.RewriteModeLegacy)
 	require.Nil(t, err)
 	require.Equal(t, "t2abc", string(sstMeta.GetRange().GetStart()))
 	require.Equal(t, "t2\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff", string(sstMeta.GetRange().GetEnd()))
@@ -156,7 +156,7 @@ func (client *fakeImporterClient) MultiIngest(
 
 func TestSnapImporter(t *testing.T) {
 	ctx := context.Background()
-	splitClient := utiltest.NewFakeSplitClient()
+	splitClient := split.NewFakeSplitClient()
 	for _, region := range generateRegions() {
 		splitClient.AppendPdRegion(region)
 	}
@@ -171,7 +171,7 @@ func TestSnapImporter(t *testing.T) {
 	files, rules := generateFiles()
 	for _, file := range files {
 		importer.WaitUntilUnblock()
-		err = importer.ImportSSTFiles(ctx, []*backuppb.File{file}, rules, nil, kvrpcpb.APIVersion_V1)
+		err = importer.ImportSSTFiles(ctx, []snapclient.TableIDWithFiles{{Files: []*backuppb.File{file}, RewriteRules: rules}}, nil, kvrpcpb.APIVersion_V1)
 		require.NoError(t, err)
 	}
 	err = importer.Close()
@@ -180,7 +180,7 @@ func TestSnapImporter(t *testing.T) {
 
 func TestSnapImporterRaw(t *testing.T) {
 	ctx := context.Background()
-	splitClient := utiltest.NewFakeSplitClient()
+	splitClient := split.NewFakeSplitClient()
 	for _, region := range generateRegions() {
 		splitClient.AppendPdRegion(region)
 	}
@@ -192,7 +192,7 @@ func TestSnapImporterRaw(t *testing.T) {
 	files, rules := generateFiles()
 	for _, file := range files {
 		importer.WaitUntilUnblock()
-		err = importer.ImportSSTFiles(ctx, []*backuppb.File{file}, rules, nil, kvrpcpb.APIVersion_V1)
+		err = importer.ImportSSTFiles(ctx, []snapclient.TableIDWithFiles{{Files: []*backuppb.File{file}, RewriteRules: rules}}, nil, kvrpcpb.APIVersion_V1)
 		require.NoError(t, err)
 	}
 	err = importer.Close()
