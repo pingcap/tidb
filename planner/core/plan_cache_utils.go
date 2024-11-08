@@ -16,7 +16,6 @@ package core
 
 import (
 	"context"
-	"go.uber.org/zap"
 	"math"
 	"sort"
 	"strconv"
@@ -48,6 +47,7 @@ import (
 	utilpc "github.com/pingcap/tidb/util/plancache"
 	"github.com/pingcap/tidb/util/size"
 	atomic2 "go.uber.org/atomic"
+	"go.uber.org/zap"
 	"golang.org/x/exp/slices"
 )
 
