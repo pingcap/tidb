@@ -16,9 +16,11 @@ package tikv
 
 import (
 	"context"
+	"flag"
 	"fmt"
 	"slices"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	rocks "github.com/lance6716/pebble"
@@ -37,7 +39,6 @@ type testCase struct {
 	sortedKVs [][2][]byte
 	ts        uint64
 
-	presetIdentity   *rockssst.Identity
 	expectedFilePath string
 }
 
@@ -50,13 +51,7 @@ func init() {
 		sortedKVs: [][2][]byte{
 			{[]byte("a"), []byte("1")},
 		},
-		ts: 1,
-		presetIdentity: &rockssst.Identity{
-			DB:                 "SST Writer",
-			Host:               "lance6716-nuc10i7fnh",
-			Session:            "DS38NDUWK5HLG8SSL5M7",
-			OriginalFileNumber: 1,
-		},
+		ts:               1,
 		expectedFilePath: "sst-examples/0.sst",
 	})
 
@@ -68,14 +63,8 @@ func init() {
 		}
 	}
 	testCases = append(testCases, &testCase{
-		sortedKVs: moreKeys,
-		ts:        404411537129996288,
-		presetIdentity: &rockssst.Identity{
-			DB:                 "SST Writer",
-			Host:               "lances-MacBook-Air.local",
-			Session:            "67GBMB9SAOWH1S6HPC6V",
-			OriginalFileNumber: 1,
-		},
+		sortedKVs:        moreKeys,
+		ts:               404411537129996288,
 		expectedFilePath: "sst-examples/1.sst",
 	})
 }
@@ -182,28 +171,58 @@ func write2ImportService4Test(
 	return resp.Metas, nil
 }
 
-func TestGRPCWriteToTiKV(t *testing.T) {
-	//	t.Skip(`This is a manual test. You can use tiup playground and run this test.
-	//After the test is finished, find the SST files in the import directory of the TiKV node.`)
+var tikvWriteTest = flag.Bool("tikv-write-test", false, "run TestIntegrationTest")
+
+func TestIntegrationTest(t *testing.T) {
+	if !*tikvWriteTest {
+		t.Skip(`This is a manual test. You can use tiup playground and run this test. After the test is finished, find the SST files in the import directory of the TiKV node.`)
+	}
 
 	ctx := context.Background()
 	pdAddrs := []string{"127.0.0.1:2379"}
-	caseIdx := 1
-	sortedKVs := testCases[caseIdx].sortedKVs
-	ts := testCases[caseIdx].ts
+	sortedKVs := make([][2][]byte, 1_000_000)
+	for i := range sortedKVs {
+		sortedKVs[i] = [2][]byte{
+			[]byte("key" + fmt.Sprintf("%09d", i)),
+			[]byte("1"),
+		}
+	}
+	ts := uint64(404411537129996288)
 
+	sstPath := "/tmp/go-write-cf.sst"
+	now := time.Now()
+	pebbleWriteSST(t, sstPath, sortedKVs, ts)
+	t.Logf("write to SST takes %v", time.Since(now))
+
+	now = time.Now()
 	metas, err := write2ImportService4Test(ctx, pdAddrs, sortedKVs, ts)
+	t.Logf("write to TiKV takes %v", time.Since(now))
 	require.NoError(t, err)
 	for _, meta := range metas {
 		t.Logf("meta UUID: %v", uuid.UUID(meta.Uuid).String())
 	}
 }
 
+func pebbleWriteSST(
+	t *testing.T,
+	path string,
+	sortedKVs [][2][]byte,
+	ts uint64,
+) {
+	writer, err := newWriteCFWriter(path, ts)
+	require.NoError(t, err)
+
+	for _, kv := range sortedKVs {
+		err = writer.set(kv[0], kv[1])
+		require.NoError(t, err)
+	}
+
+	err = writer.close()
+	require.NoError(t, err)
+}
+
 func TestPebbleWriteSST(t *testing.T) {
 	for i, c := range testCases {
-		if i == 0 {
-			continue
-		}
 		t.Logf("start test case %d", i)
 		testPebbleWriteSST(t, c)
 	}
@@ -214,16 +233,7 @@ func testPebbleWriteSST(
 	c *testCase,
 ) {
 	sstPath := "/tmp/test-write.sst"
-	writer, err := newWriteCFWriter(sstPath, c.ts, c.presetIdentity)
-	require.NoError(t, err)
-
-	for _, kv := range c.sortedKVs {
-		err = writer.set(kv[0], kv[1])
-		require.NoError(t, err)
-	}
-
-	err = writer.close()
-	require.NoError(t, err)
+	pebbleWriteSST(t, sstPath, c.sortedKVs, c.ts)
 
 	f, err := vfs.Default.Open(sstPath)
 	require.NoError(t, err)
@@ -287,13 +297,25 @@ func getData2Compare(
 	}
 
 	p := reader.Properties.Clone()
+
+	// delete the identity properties
+	delete(p.UserProperties, "rocksdb.creating.db.identity")
+	delete(p.UserProperties, "rocksdb.creating.host.identity")
+	delete(p.UserProperties, "rocksdb.creating.session.identity")
+	delete(p.UserProperties, "rocksdb.original.file.number")
+
 	// delete some mismatch properties because compress layer has different behaviour
 	p.DataSize = 0
 	p.NumDataBlocks = 0
-	// TODO(lance6716): check why it's different
-	p.FilterSize = 0
 	p.IndexSize = 0
+
+	// TODO(lance6716): check why it's different, can we tune bloomfilter to get the
+	// same behaviour?
+	p.FilterSize = 0
 	delete(p.UserProperties, "rocksdb.num.filter_entries")
+
+	// TODO(lance6716): in integration tests we need to check
+	// rocksdb.tail.start.offset equals to rocksdb.data.size
 	delete(p.UserProperties, "rocksdb.tail.start.offset")
 	p.Loaded = nil
 
