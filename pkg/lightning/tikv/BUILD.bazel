@@ -47,6 +47,7 @@ go_test(
         "local_sst_writer_test.go",
         "tikv_test.go",
     ],
+    data = glob(["sst-examples/**"]),
     embed = [":tikv"],
     flaky = True,
     shard_count = 7,
