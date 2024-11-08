@@ -56,6 +56,7 @@ import (
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/testkit/external"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/cmp"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/deadlockhistory"
 	"github.com/pingcap/tidb/util/rowcodec"
@@ -992,8 +993,8 @@ func TestAllHistory(t *testing.T) {
 	err = decoder.Decode(&jobs)
 	require.True(t, len(jobs) < ddl.DefNumGetDDLHistoryJobs)
 	// sort job.
-	slices.SortFunc(jobs, func(i, j *model.Job) bool {
-		return i.ID < j.ID
+	slices.SortFunc(jobs, func(i, j *model.Job) int {
+		return cmp.Compare(i.ID, j.ID)
 	})
 
 	require.NoError(t, err)
