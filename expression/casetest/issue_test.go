@@ -55,3 +55,31 @@ func TestIssue49440(t *testing.T) {
 	tk.MustExec("insert into t3fa8f3ec values('1982-03-19 16:00:00', 23424, null, '09:49:41', 628.79083, 3.1, 0x00307831);")
 	tk.MustQuery("select t047d7221.col_14_1, t3fa8f3ec.col_36 from t047d7221 left join t3fa8f3ec on t047d7221.col_14_1 = t3fa8f3ec.col_36 where t047d7221.col_14_1 in ( 'Charlie' );").Check(testkit.Rows("Charlie 3.0000000000", "Charlie 3.0000000000", "Charlie 3.0000000000", "Charlie 3.0000000000", "Charlie 3.0000000000", "Charlie 3.0000000000"))
 }
+
+func Test53726(t *testing.T) {
+	// test for RemoveUnnecessaryFirstRow
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t7(c int); ")
+	tk.MustExec("insert into t7 values (575932053), (-258025139);")
+	tk.MustQuery("select distinct cast(c as decimal), cast(c as signed) from t7").
+		Sort().Check(testkit.Rows("-258025139 -258025139", "575932053 575932053"))
+	tk.MustQuery("explain select distinct cast(c as decimal), cast(c as signed) from t7").
+		Check(testkit.Rows(
+			"HashAgg_8 8000.00 root  group by:Column#7, Column#8, funcs:firstrow(Column#7)->Column#3, funcs:firstrow(Column#8)->Column#4",
+			"└─TableReader_9 8000.00 root  data:HashAgg_4",
+			"  └─HashAgg_4 8000.00 cop[tikv]  group by:cast(test.t7.c, bigint(22) BINARY), cast(test.t7.c, decimal(10,0) BINARY), ",
+			"    └─TableFullScan_7 10000.00 cop[tikv] table:t7 keep order:false, stats:pseudo"))
+
+	tk.MustExec("analyze table t7")
+	tk.MustQuery("select distinct cast(c as decimal), cast(c as signed) from t7").
+		Sort().
+		Check(testkit.Rows("-258025139 -258025139", "575932053 575932053"))
+	tk.MustQuery("explain select distinct cast(c as decimal), cast(c as signed) from t7").
+		Check(testkit.Rows(
+			"HashAgg_6 2.00 root  group by:Column#13, Column#14, funcs:firstrow(Column#11)->Column#3, funcs:firstrow(Column#12)->Column#4",
+			"└─Projection_12 2.00 root  cast(test.t7.c, decimal(10,0) BINARY)->Column#11, cast(test.t7.c, bigint(22) BINARY)->Column#12, cast(test.t7.c, decimal(10,0) BINARY)->Column#13, cast(test.t7.c, bigint(22) BINARY)->Column#14",
+			"  └─TableReader_11 2.00 root  data:TableFullScan_10",
+			"    └─TableFullScan_10 2.00 cop[tikv] table:t7 keep order:false"))
+}

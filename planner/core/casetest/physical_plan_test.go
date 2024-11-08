@@ -1435,6 +1435,7 @@ func TestSingleConsumerCTE(t *testing.T) {
 	tk.MustExec("create table t1 (c1 int primary key, c2 int, index c2 (c2));")
 	tk.MustExec("create table t2 (c1 int unique, c2 int);")
 	tk.MustExec("insert into t values (1), (5), (10), (15), (20), (30), (50);")
+	tk.MustExec("create table test(a int);")
 
 	var (
 		input  []string
@@ -1451,7 +1452,7 @@ func TestSingleConsumerCTE(t *testing.T) {
 		testdata.OnRecord(func() {
 			output[i].SQL = ts
 		})
-		if strings.HasPrefix(ts, "set") {
+		if strings.HasPrefix(ts, "set") || strings.HasPrefix(ts, "create") {
 			tk.MustExec(ts)
 			continue
 		}
@@ -2558,6 +2559,37 @@ func TestIndexMergeOrderPushDown(t *testing.T) {
 			output[i].Warning = testdata.ConvertRowsToStrings(tk.MustQuery("show warnings").Rows())
 		})
 		tk.MustQuery("explain format = 'brief' " + ts).Check(testkit.Rows(output[i].Plan...))
+		tk.MustQuery("show warnings").Check(testkit.Rows(output[i].Warning...))
+	}
+}
+
+func TestConstantPropagateWithCollation(t *testing.T) {
+	var input []string
+	var output []struct {
+		SQL     string
+		Plan    []string
+		Warning []string
+	}
+	planSuiteData := GetPlanSuiteData()
+	planSuiteData.LoadTestCases(t, &input, &output)
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	// create table
+	tk.MustExec("use test")
+	tk.MustExec("create table t (id int primary key, name varchar(20));")
+	require.Equal(t, len(input), len(output))
+
+	for i := range input {
+		if strings.Contains(input[i], "set") {
+			tk.MustExec(input[i])
+			continue
+		}
+		testdata.OnRecord(func() {
+			output[i].SQL = input[i]
+			output[i].Plan = testdata.ConvertRowsToStrings(tk.MustQuery("explain format = 'brief' " + input[i]).Rows())
+			output[i].Warning = testdata.ConvertRowsToStrings(tk.MustQuery("show warnings").Rows())
+		})
+		tk.MustQuery("explain format = 'brief' " + input[i]).Check(testkit.Rows(output[i].Plan...))
 		tk.MustQuery("show warnings").Check(testkit.Rows(output[i].Warning...))
 	}
 }

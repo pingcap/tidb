@@ -258,7 +258,7 @@ func TestSubstituteCorCol2Constant(t *testing.T) {
 	ret, err = SubstituteCorCol2Constant(plus3)
 	require.NoError(t, err)
 	ans3 := newFunction(ast.Plus, ans1, col1)
-	require.True(t, ret.Equal(ctx, ans3))
+	require.False(t, ret.Equal(ctx, ans3))
 }
 
 func TestPushDownNot(t *testing.T) {
@@ -588,6 +588,8 @@ func (m *MockExpr) Coercibility() Coercibility                                  
 func (m *MockExpr) SetCoercibility(Coercibility)                                  {}
 func (m *MockExpr) Repertoire() Repertoire                                        { return UNICODE }
 func (m *MockExpr) SetRepertoire(Repertoire)                                      {}
+func (m *MockExpr) IsExplicitCharset() bool                                       { return false }
+func (m *MockExpr) SetExplicitCharset(bool)                                       {}
 
 func (m *MockExpr) CharsetAndCollation() (string, string) {
 	return "", ""
