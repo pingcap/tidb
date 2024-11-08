@@ -462,6 +462,7 @@ func (s *SchemaChangeEvent) GetDropSchemaInfo() (dbInfo *MiniDBInfoForSchemaEven
 	return s.inner.DBInfo
 }
 
+// MiniDBInfoForSchemaEvent is a mini version of DBInfo for DropSchemaEvent only.
 type MiniDBInfoForSchemaEvent struct {
 	ID     int64                          `json:"id"`
 	Name   pmodel.CIStr                   `json:"name"`
