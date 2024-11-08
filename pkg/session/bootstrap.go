@@ -3264,7 +3264,7 @@ func upgradeToVer217(s sessiontypes.Session, ver int64) {
 	mustExecute(s, "INSERT IGNORE INTO mysql.global_variables VALUES ('tidb_schema_cache_size', 0)")
 }
 
-func upgradeToVer218(s sessiontypes.Session, ver int64) {
+func upgradeToVer218(_ sessiontypes.Session, ver int64) {
 	if ver >= version218 {
 		return
 	}
