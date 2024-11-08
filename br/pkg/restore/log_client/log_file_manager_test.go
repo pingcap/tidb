@@ -538,7 +538,7 @@ func TestFilterDataFiles(t *testing.T) {
 		m2(wr(1, 1, 1), wr(2, 2, 2)),
 	}
 	metaIter := iter.Map(iter.FromSlice(metas), func(meta logclient.Meta) *logclient.MetaName {
-		return nil
+		return logclient.NewMetaName(meta, "")
 	})
 	files := iter.CollectAll(ctx, fm.FilterDataFiles(metaIter)).Item
 	check := func(file *logclient.LogDataFileInfo, metaKey string, goff, foff int) {

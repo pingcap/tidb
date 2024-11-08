@@ -31,13 +31,13 @@ type physicalFileSkipMap struct {
 }
 type metaSkipMap map[string]*physicalFileSkipMap
 
-func (skipmap metaSkipMap) SkipMeta(metaPath string) {
+func (skipmap metaSkipMap) skipMeta(metaPath string) {
 	skipmap[metaPath] = &physicalFileSkipMap{
 		skip: true,
 	}
 }
 
-func (skipmap metaSkipMap) SkipPhysical(metaPath, physicalPath string) {
+func (skipmap metaSkipMap) skipPhysical(metaPath, physicalPath string) {
 	metaMap, exists := skipmap[metaPath]
 	if !exists {
 		metaMap = &physicalFileSkipMap{
@@ -52,7 +52,7 @@ func (skipmap metaSkipMap) SkipPhysical(metaPath, physicalPath string) {
 	}
 }
 
-func (skipmap metaSkipMap) SkipLogical(metaPath, physicalPath string, offset uint64) {
+func (skipmap metaSkipMap) skipLogical(metaPath, physicalPath string, offset uint64) {
 	metaMap, exists := skipmap[metaPath]
 	if !exists {
 		metaMap = &physicalFileSkipMap{
@@ -102,15 +102,15 @@ type WithMigrationsBuilder struct {
 func (builder *WithMigrationsBuilder) updateSkipMap(skipmap metaSkipMap, metas []*backuppb.MetaEdit) {
 	for _, meta := range metas {
 		if meta.DestructSelf {
-			skipmap.SkipMeta(meta.Path)
+			skipmap.skipMeta(meta.Path)
 			continue
 		}
 		for _, path := range meta.DeletePhysicalFiles {
-			skipmap.SkipPhysical(meta.Path, path)
+			skipmap.skipPhysical(meta.Path, path)
 		}
 		for _, filesInPhysical := range meta.DeleteLogicalFiles {
 			for _, span := range filesInPhysical.Spans {
-				skipmap.SkipLogical(meta.Path, filesInPhysical.Path, span.Offset)
+				skipmap.skipLogical(meta.Path, filesInPhysical.Path, span.Offset)
 			}
 		}
 	}
@@ -143,10 +143,7 @@ func (builder *WithMigrationsBuilder) Build(migs []*backuppb.Migration) WithMigr
 		}
 		builder.updateSkipMap(skipmap, mig.EditMeta)
 	}
-	withMigrations := WithMigrations{
-		skipmap: skipmap,
-	}
-	return withMigrations
+	return WithMigrations(skipmap)
 }
 
 type PhysicalMigrationsIter = iter.TryNextor[*PhysicalWithMigrations]
@@ -193,15 +190,13 @@ func (mwm *MetaWithMigrations) Physicals(groupIndexIter GroupIndexIter) Physical
 	})
 }
 
-type WithMigrations struct {
-	skipmap metaSkipMap
-}
+type WithMigrations metaSkipMap
 
 func (wm WithMigrations) Metas(metaNameIter MetaNameIter) MetaMigrationsIter {
 	return iter.MapFilter(metaNameIter, func(mname *MetaName) (*MetaWithMigrations, bool) {
 		var phySkipmap physicalSkipMap = nil
-		if wm.skipmap != nil {
-			skipmap := wm.skipmap[mname.name]
+		if wm != nil {
+			skipmap := wm[mname.name]
 			if skipmap != nil {
 				if skipmap.skip {
 					return nil, true
@@ -214,17 +209,4 @@ func (wm WithMigrations) Metas(metaNameIter MetaNameIter) MetaMigrationsIter {
 			meta:    mname.meta,
 		}, false
 	})
-}
-
-// Filter out logs that deleted by migrations.
-func (m WithMigrations) WrapLogIter(l LogIter) LogIter {
-	return nil
-}
-
-type CompactionIter *int
-
-// Fetch compactions that may contain file less than the TS.
-func (m WithMigrations) OpenCompactionIter(forTS uint64) CompactionIter {
-
-	return nil
 }
