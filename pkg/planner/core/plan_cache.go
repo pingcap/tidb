@@ -259,6 +259,9 @@ func lookupPlanCache(ctx context.Context, sctx sessionctx.Context, cacheKey stri
 			if !ok { // clone the value to solve concurrency problem
 				return nil, nil, nil, false
 			}
+			if intest.InTest && ctx.Value(PlanCacheKeyTestClone{}) != nil {
+				ctx.Value(PlanCacheKeyTestClone{}).(func(plan, cloned base.Plan))(pcv.Plan, clonedPlan)
+			}
 			return clonedPlan, pcv.OutputColumns, pcv.stmtHints, true
 		}
 	} else {
