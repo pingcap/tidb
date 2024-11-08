@@ -872,7 +872,7 @@ func (p *mockPDClient) GetAllStores(ctx context.Context, opts ...pd.GetStoreOpti
 	return []*metapb.Store{
 		{
 			Id:      1,
-			Address: "127.0.0.1"
+			Address: "127.0.0.1",
 		},
 	}, nil
 }
