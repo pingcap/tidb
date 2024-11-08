@@ -220,8 +220,9 @@ func (w *worker) onDropSchema(jobCtx *jobContext, job *model.Job) (ver int64, _ 
 		}
 
 		// Split tables into multiple jobs to avoid too big transaction.
+		const tooManyTablesThreshold = 100000
 		tablesPerJob := 100
-		if len(tables) > 100000 {
+		if len(tables) > tooManyTablesThreshold {
 			tablesPerJob = 500
 		}
 		for i := 0; i < len(tables); i += tablesPerJob {
