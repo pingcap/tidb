@@ -73,7 +73,7 @@ require (
 	github.com/kisielk/errcheck v1.7.0
 	github.com/klauspost/compress v1.17.9
 	github.com/ks3sdklib/aws-sdk-go v1.2.9
-	github.com/lance6716/pebble v0.0.0-20241107085915-bf90c69f23ce
+	github.com/lance6716/pebble v0.0.0-20241108073934-da961314c63f
 	github.com/lestrrat-go/jwx/v2 v2.0.21
 	github.com/mgechev/revive v1.4.0
 	github.com/ngaut/pools v0.0.0-20180318154953-b7bc8c42aac7
@@ -321,7 +321,6 @@ require (
 
 replace (
 	github.com/go-ldap/ldap/v3 => github.com/YangKeao/ldap/v3 v3.4.5-0.20230421065457-369a3bab1117
-	github.com/lance6716/pebble => /home/lance/Projects/pebble
 	github.com/pingcap/tidb/pkg/parser => ./pkg/parser
 
 	// TODO: `sourcegraph.com/sourcegraph/appdash` has been archived, and the original host has been removed.
