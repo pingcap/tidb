@@ -609,7 +609,7 @@ func TestAvoidColumnEvaluatorForProjBelowUnion(t *testing.T) {
 				}
 			}
 		default:
-			for _, child := range p.(base.PhysicalPlan).Children() {
+			for _, child := range p.(core.PhysicalPlan).Children() {
 				if proj, ok := child.(*core.PhysicalProjection); ok {
 					normalProjs = append(normalProjs, proj)
 				}
