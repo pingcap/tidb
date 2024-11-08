@@ -47,10 +47,16 @@ type ownerManager struct {
 	etcdCli  *clientv3.Client
 	id       string
 	ownerMgr owner.Manager
+	started  bool
 }
 
 // Start starts the TiDBInstance.
 func (om *ownerManager) Start(ctx context.Context, store kv.Storage) error {
+	// BR might start domain multiple times, we need to avoid it. when BR have refactored
+	// this part, we can remove this.
+	if om.started {
+		return nil
+	}
 	if config.GetGlobalConfig().Store != "tikv" {
 		return nil
 	}
@@ -65,6 +71,7 @@ func (om *ownerManager) Start(ctx context.Context, store kv.Storage) error {
 	om.id = uuid.New().String()
 	om.etcdCli = cli
 	om.ownerMgr = owner.NewOwnerManager(ctx, om.etcdCli, Prompt, om.id, DDLOwnerKey)
+	om.started = true
 	return nil
 }
 
@@ -78,6 +85,7 @@ func (om *ownerManager) Close() {
 			logutil.BgLogger().Error("close etcd client failed", zap.Error(err))
 		}
 	}
+	om.started = false
 }
 
 func (om *ownerManager) ID() string {
