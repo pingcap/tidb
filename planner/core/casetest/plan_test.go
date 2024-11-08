@@ -19,6 +19,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/testkit"
@@ -420,5 +421,5 @@ FROM (
 ) AS res
 WHERE res.state != 2
 ORDER BY res.branch_id;
-`, core.ErrNotSupportedYet)
+`, errno.ErrNotSupportedYet)
 }
