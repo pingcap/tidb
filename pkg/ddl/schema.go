@@ -219,7 +219,7 @@ func (w *worker) onDropSchema(jobCtx *jobContext, job *model.Job) (ver int64, _ 
 			break
 		}
 
-		// Split tables into multiple jobs to avoid too big transaction.
+		// Split tables into multiple jobs to avoid too big records in the notifier.
 		const tooManyTablesThreshold = 100000
 		tablesPerJob := 100
 		if len(tables) > tooManyTablesThreshold {
