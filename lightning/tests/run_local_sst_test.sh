@@ -66,3 +66,6 @@ done
 
 diff /tmp/tikv-write-cf-data.txt /tmp/go-write-cf-data.txt
 diff /tmp/tikv-write-cf-properties.txt.filtered /tmp/go-write-cf-properties.txt.filtered
+
+# clean tikv-ctl temporary files
+rm -rf ctl-engine-info-log || true
