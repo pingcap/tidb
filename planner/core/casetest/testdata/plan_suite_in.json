@@ -1361,5 +1361,13 @@
       "select * from t where name='a' and length(name)=1; -- without constant propagated",
       "select * from (select 'test' as b from t) n where length(b) > 2; -- can be substituted"
     ]
+  },
+  {
+    "name": "TestAlwaysTruePredicateWithSubquery",
+    "cases" : [
+      "SHOW ERRORS WHERE TRUE = ALL ( SELECT TRUE GROUP BY 1 LIMIT 1 ) IS NULL IS NOT NULL;",
+      "explain select * from t WHERE TRUE = ALL ( SELECT TRUE GROUP BY 1 LIMIT 1 ) IS NULL IS NOT NULL;",
+      "explain select * from t WHERE TRUE = ALL ( SELECT TRUE from t GROUP BY 1 LIMIT 1 ) is null is not null;"
+    ]
   }
 ]
