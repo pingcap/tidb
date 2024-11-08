@@ -393,7 +393,7 @@ type InsertGeneratedColumns struct {
 
 func (i InsertGeneratedColumns) cloneForPlanCache() InsertGeneratedColumns {
 	return InsertGeneratedColumns{
-		Exprs:        cloneExpressionsForPlanCache(i.Exprs),
+		Exprs:        cloneExpressionsForPlanCache(i.Exprs, nil),
 		OnDuplicates: util.CloneAssignments(i.OnDuplicates),
 	}
 }
