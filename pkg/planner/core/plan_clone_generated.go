@@ -241,11 +241,6 @@ func (op *PointGetPlan) CloneForPlanCache(newCtx base.PlanContext) (base.Plan, b
 	cloned := new(PointGetPlan)
 	*cloned = *op
 	cloned.Plan = *op.Plan.CloneWithNewCtx(newCtx)
-	probeParents, ok := clonePhysicalPlansForPlanCache(newCtx, op.probeParents)
-	if !ok {
-		return nil, false
-	}
-	cloned.probeParents = probeParents
 	if op.PartitionIdx != nil {
 		cloned.PartitionIdx = new(int)
 		*cloned.PartitionIdx = *op.PartitionIdx
