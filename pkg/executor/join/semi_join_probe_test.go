@@ -15,9 +15,11 @@
 package join
 
 import (
+	"fmt"
 	"math/rand"
 	"testing"
 
+	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/executor/internal/testutil"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -45,6 +47,17 @@ var semiJoinrightCols = []*expression.Column{
 var semiJoinRetTypes = []*types.FieldType{
 	types.NewFieldType(mysql.TypeLonglong),
 	types.NewFieldType(mysql.TypeLonglong),
+}
+
+func buildLeftAndRightSemiDataSource(ctx sessionctx.Context, leftCols []*expression.Column, rightCols []*expression.Column, hasSel bool) (*testutil.MockDataSource, *testutil.MockDataSource) {
+	leftSchema := expression.NewSchema(leftCols...)
+	rightSchema := expression.NewSchema(rightCols...)
+
+	joinKeyleftIntDatums := buildJoinKeyIntDatums(10000)
+	joinKeyrightIntDatums := buildJoinKeyIntDatums(10000)
+	leftMockSrcParm := testutil.MockDataSourceParameters{DataSchema: leftSchema, Ctx: ctx, Rows: 50000, Ndvs: []int{-1, -1}, Datums: [][]any{joinKeyleftIntDatums, joinKeyleftIntDatums}, HasSel: hasSel}
+	rightMockSrcParm := testutil.MockDataSourceParameters{DataSchema: rightSchema, Ctx: ctx, Rows: 50000, Ndvs: []int{-1, -1}, Datums: [][]any{joinKeyrightIntDatums, joinKeyrightIntDatums}, HasSel: hasSel}
+	return testutil.BuildMockDataSource(leftMockSrcParm), testutil.BuildMockDataSource(rightMockSrcParm)
 }
 
 func buildSemiDataSourceAndExpectResult(ctx sessionctx.Context, leftCols []*expression.Column, rightCols []*expression.Column, rightAsBuildSide bool, hasOtherCondition bool, hasDuplicateKey bool, isAntiSemiJoin bool) (*testutil.MockDataSource, *testutil.MockDataSource, []chunk.Row) {
@@ -348,6 +361,65 @@ func TestSemiJoinDuplicateKeys(t *testing.T) {
 	testSemiJoin(t, false, true, true)  // Left side build with other condition
 	testSemiJoin(t, true, false, true)  // Right side build without other condition
 	testSemiJoin(t, true, true, true)   // Right side build with other condition
+}
+
+// Here is just a simple spill test, more complicated semi and anti semi join tests are placed in endless
+func TestSemiAndAntiSemiJoinSpill(t *testing.T) {
+	var leftCols = []*expression.Column{
+		{Index: 0, RetType: types.NewFieldType(mysql.TypeLonglong)},
+		{Index: 1, RetType: types.NewFieldType(mysql.TypeLonglong)},
+	}
+
+	var rightCols = []*expression.Column{
+		{Index: 0, RetType: types.NewFieldType(mysql.TypeLonglong)},
+		{Index: 1, RetType: types.NewFieldType(mysql.TypeLonglong)},
+	}
+
+	ctx := mock.NewContext()
+	ctx.GetSessionVars().InitChunkSize = 32
+	ctx.GetSessionVars().MaxChunkSize = 32
+	leftDataSource, rightDataSource := buildLeftAndRightSemiDataSource(ctx, leftCols, rightCols, false)
+
+	intTp := types.NewFieldType(mysql.TypeLonglong)
+
+	leftTypes := []*types.FieldType{intTp, intTp}
+	rightTypes := []*types.FieldType{intTp, intTp}
+
+	leftKeys := []*expression.Column{
+		{Index: 0, RetType: intTp},
+	}
+	rightKeys := []*expression.Column{
+		{Index: 0, RetType: intTp},
+	}
+
+	tinyTp := types.NewFieldType(mysql.TypeTiny)
+	a := &expression.Column{Index: 1, RetType: intTp}
+	b := &expression.Column{Index: 3, RetType: intTp}
+	sf, err := expression.NewFunction(mock.NewContext(), ast.GT, tinyTp, a, b)
+	require.NoError(t, err, "error when create other condition")
+	otherCondition := make(expression.CNFExprs, 0)
+	otherCondition = append(otherCondition, sf)
+
+	maxRowTableSegmentSize = 100
+	spillChunkSize = 100
+
+	joinTypes := []logicalop.JoinType{logicalop.SemiJoin}
+	// joinTypes := []logicalop.JoinType{logicalop.SemiJoin, logicalop.AntiSemiJoin}
+	params := []spillTestParam{
+		// basic case
+		{true, leftKeys, rightKeys, leftTypes, rightTypes, []int{0, 1}, []int{}, nil, nil, nil, []int64{1800000, 1000000, 3000000, 600000, 10000}},
+		// with other condition
+		{true, leftKeys, rightKeys, leftTypes, rightTypes, []int{0, 1}, []int{}, otherCondition, []int{1}, []int{1}, []int64{1800000, 1000000, 3500000, 600000, 10000}},
+	}
+
+	for _, joinType := range joinTypes {
+		for idx, param := range params {
+			log.Info(fmt.Sprintf("idx: %d", idx))
+			for range 10 {
+				testSpill(t, ctx, joinType, leftDataSource, rightDataSource, param)
+			}
+		}
+	}
 }
 
 func TestTruncateSelectFunction(t *testing.T) {

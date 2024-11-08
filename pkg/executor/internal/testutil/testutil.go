@@ -282,9 +282,8 @@ func BuildMockDataSource(opt MockDataSourceParameters) *MockDataSource {
 	if nulls == nil {
 		nulls = make([][]bool, colNum)
 		for i := range colNum {
-			rowNum := len(colData[i])
-			nulls[i] = make([]bool, rowNum)
-			for j := range rowNum {
+			nulls[i] = make([]bool, m.P.Rows)
+			for j := range m.P.Rows {
 				nulls[i][j] = false
 			}
 		}
