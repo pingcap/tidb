@@ -150,13 +150,5 @@ nogo(
                    "//build/linter/revive",
                ],
                "//conditions:default": [],
-<<<<<<< HEAD
-=======
-           }) +
-           select({
-               "//build:without_rbe": [
-               ],
-               "//conditions:default": [],
->>>>>>> 51f1a828e47 (statistics: record last gc ts to avoid huge read on stats table (#46138))
            }),
 )
