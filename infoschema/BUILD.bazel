@@ -120,7 +120,6 @@ go_test(
         "@com_github_pingcap_fn//:fn",
         "@com_github_pingcap_kvproto//pkg/deadlock",
         "@com_github_pingcap_kvproto//pkg/metapb",
-        "@com_github_pingcap_tidb_pkg_parser//model:go_default_library",
         "@com_github_pingcap_tipb//go-tipb",
         "@com_github_prometheus_prometheus//promql",
         "@com_github_stretchr_testify//require",
