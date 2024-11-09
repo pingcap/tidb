@@ -445,7 +445,7 @@ type visit struct {
 	typ reflect.Type
 }
 
-func BenchmarkFastPointClone(b *testing.B) {
+func BenchmarkPointGetCloneFast(b *testing.B) {
 	store, domain := testkit.CreateMockStoreAndDomain(b)
 	tk := testkit.NewTestKit(b, store)
 	tk.MustExec(`use test`)
@@ -464,5 +464,26 @@ func BenchmarkFastPointClone(b *testing.B) {
 	sctx := tk.Session().GetPlanCtx()
 	for i := 0; i < b.N; i++ {
 		core.FastClonePointGetForPlanCache(sctx, src, dst)
+	}
+}
+
+func BenchmarkPointGetClone(b *testing.B) {
+	store, domain := testkit.CreateMockStoreAndDomain(b)
+	tk := testkit.NewTestKit(b, store)
+	tk.MustExec(`use test`)
+	tk.MustExec(`create table t (a int, b int, primary key(a, b))`)
+
+	p := parser.New()
+	stmt, err := p.ParseOneStmt("select a, b from t where a=1 and b=1", "", "")
+	require.NoError(b, err)
+	nodeW := resolve.NewNodeW(stmt)
+	plan, _, err := planner.Optimize(context.TODO(), tk.Session(), nodeW, domain.InfoSchema())
+	require.NoError(b, err)
+
+	b.ResetTimer()
+	src := plan.(*core.PointGetPlan)
+	sctx := tk.Session().GetPlanCtx()
+	for i := 0; i < b.N; i++ {
+		src.CloneForPlanCache(sctx)
 	}
 }
