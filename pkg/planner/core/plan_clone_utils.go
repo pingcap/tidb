@@ -200,7 +200,7 @@ func FastClonePointGetForPlanCache(newCtx base.PlanContext, src, dst *PointGetPl
 	}
 	dst.handleFieldType = src.handleFieldType
 	dst.HandleColOffset = src.HandleColOffset
-	if len(dst.IndexValues) <= len(src.IndexValues) { // actually set during rebuild phase
+	if len(dst.IndexValues) < len(src.IndexValues) { // actually set during rebuild phase
 		dst.IndexValues = make([]types.Datum, len(src.IndexValues))
 	} else {
 		dst.IndexValues = dst.IndexValues[:len(src.IndexValues)]
