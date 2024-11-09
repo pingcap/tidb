@@ -335,6 +335,34 @@ func TestInstancePlanCacheTableIndexScan(t *testing.T) {
 	wg.Wait()
 }
 
+func TestInstancePlanCacheConcurrencyPointMultipleColPKNoTxn(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`use test`)
+	tk.MustExec(`create table t (a int, b int, primary key(a, b))`)
+	tk.MustExec(`set global tidb_enable_instance_plan_cache=1`)
+	for i := 0; i < 100; i++ {
+		tk.MustExec(fmt.Sprintf("insert into t values (%v, %v)", i, i))
+	}
+
+	var wg sync.WaitGroup
+	for i := 0; i < 10; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			tki := testkit.NewTestKit(t, store)
+			tki.MustExec(`use test`)
+			tki.MustExec(`prepare st from 'select * from t where a=? and b=?'`)
+			for k := 0; k < 100; k++ {
+				a := rand.Intn(100)
+				tki.MustExec("set @a = ?, @b = ?", a, a)
+				tki.MustQuery("execute st using @a, @b").Check(testkit.Rows(fmt.Sprintf("%v %v", a, a)))
+			}
+		}()
+	}
+	wg.Wait()
+}
+
 func TestInstancePlanCacheConcurrencyPointNoTxn(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
