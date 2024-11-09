@@ -296,7 +296,7 @@ func RegisterMetrics() {
 	prometheus.MustRegister(BindingCacheNumBindings)
 	prometheus.MustRegister(InternalSessions)
 
-	tikvmetrics.InitMetrics(TiDB, TiKVClient)
+	tikvmetrics.InitMetricsWithConstLabels(TiDB, TiKVClient, GetConstLabels())
 	tikvmetrics.RegisterMetrics()
 	tikvmetrics.TiKVPanicCounter = PanicCounter // reset tidb metrics for tikv metrics
 }

@@ -747,7 +747,7 @@ func buildRowsRecordSet(ctx context.Context, rs sqlexec.RecordSet) sqlexec.Recor
 // MockTiDBStatusPort mock the TiDB server status port to have metrics.
 func MockTiDBStatusPort(ctx context.Context, b *testing.B, port string) *util.WaitGroupWrapper {
 	var wg util.WaitGroupWrapper
-	err := metricsutil.RegisterMetrics()
+	err := metricsutil.RegisterMetricsWithLabels(nil)
 	terror.MustNil(err)
 	router := mux.NewRouter()
 	router.Handle("/metrics", promhttp.Handler())

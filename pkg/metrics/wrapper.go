@@ -15,23 +15,19 @@
 package metrics
 
 import (
-	"fmt"
-	"strings"
-
 	"github.com/prometheus/client_golang/prometheus"
 )
 
 var constLabels prometheus.Labels
 
 // SetConstLabels sets constant labels for metrics.
-func SetConstLabels(kv ...string) {
-	if len(kv)%2 == 1 {
-		panic(fmt.Sprintf("got the odd number of inputs for const labels: %d", len(kv)))
-	}
-	constLabels = make(prometheus.Labels, len(kv)/2)
-	for i := 0; i < len(kv); i += 2 {
-		constLabels[strings.ToLower(kv[i])] = kv[i+1]
-	}
+func SetConstLabels(labels prometheus.Labels) {
+	constLabels = labels
+}
+
+// GetConstLabels returns constant labels for metrics.
+func GetConstLabels() prometheus.Labels {
+	return constLabels
 }
 
 // NewCounter wraps a prometheus.NewCounter.

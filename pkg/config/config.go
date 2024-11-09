@@ -244,6 +244,8 @@ type Config struct {
 	// 2. 'zone' is a special key that indicates the DC location of this tidb-server. If it is set, the value for this
 	// key will be the default value of the session variable `txn_scope` for this tidb-server.
 	Labels map[string]string `toml:"labels" json:"labels"`
+	// MetricsLabels indicates the labels set for the metrics, the labels describe some specific properties for the metrics.
+	MetricsLabels map[string]string `toml:"metrics-labels" json:"metrics-labels"`
 
 	// EnableGlobalIndex is deprecated.
 	EnableGlobalIndex bool `toml:"enable-global-index" json:"enable-global-index"`
