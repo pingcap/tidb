@@ -17,6 +17,9 @@ package core_test
 import (
 	"context"
 	"fmt"
+	"github.com/pingcap/tidb/pkg/parser"
+	"github.com/pingcap/tidb/pkg/planner"
+	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"math/rand"
 	"reflect"
 	"strings"
@@ -440,4 +443,26 @@ type visit struct {
 	a1  unsafe.Pointer
 	a2  unsafe.Pointer
 	typ reflect.Type
+}
+
+func BenchmarkFastPointClone(b *testing.B) {
+	store, domain := testkit.CreateMockStoreAndDomain(b)
+	tk := testkit.NewTestKit(b, store)
+	tk.MustExec(`use test`)
+	tk.MustExec(`create table t (a int, b int, primary key(a, b))`)
+
+	p := parser.New()
+	stmt, err := p.ParseOneStmt("select a, b from t where a=1 and b=1", "", "")
+	require.NoError(b, err)
+	nodeW := resolve.NewNodeW(stmt)
+	plan, _, err := planner.Optimize(context.TODO(), tk.Session(), nodeW, domain.InfoSchema())
+	require.NoError(b, err)
+
+	b.ResetTimer()
+	src := plan.(*core.PointGetPlan)
+	dst := new(core.PointGetPlan)
+	sctx := tk.Session().GetPlanCtx()
+	for i := 0; i < b.N; i++ {
+		core.FastClonePointGetForPlanCache(sctx, src, dst)
+	}
 }

@@ -174,7 +174,8 @@ func cloneConstant2DForPlanCache(constants [][]*expression.Constant) [][]*expres
 	return cloned
 }
 
-func fastClonePointGetForPlanCache(newCtx base.PlanContext, src, dst *PointGetPlan) *PointGetPlan {
+// FastClonePointGetForPlanCache is a fast path to clone a PointGetPlan for plan cache.
+func FastClonePointGetForPlanCache(newCtx base.PlanContext, src, dst *PointGetPlan) *PointGetPlan {
 	if dst == nil {
 		dst = new(PointGetPlan)
 	}

@@ -248,7 +248,7 @@ func clonePlanForInstancePlanCache(ctx context.Context, sctx sessionctx.Context,
 		if stmt.PointGet.FastPlan == nil {
 			stmt.PointGet.FastPlan = new(PointGetPlan)
 		}
-		fastClonePointGetForPlanCache(sctx.GetPlanCtx(), pointPlan, stmt.PointGet.FastPlan)
+		FastClonePointGetForPlanCache(sctx.GetPlanCtx(), pointPlan, stmt.PointGet.FastPlan)
 		clonedPlan = stmt.PointGet.FastPlan
 	} else {
 		clonedPlan, ok = plan.CloneForPlanCache(sctx.GetPlanCtx())
