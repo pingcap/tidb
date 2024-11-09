@@ -84,7 +84,7 @@ func (op *LogicalJoin) Equals(other any) bool {
 	if op.JoinType != op2.JoinType {
 		return false
 	}
-	if len(op.EqualConditions) != len(op2.EqualConditions) {
+	if (op.EqualConditions == nil && op2.EqualConditions != nil) || (op.EqualConditions != nil && op2.EqualConditions == nil) || len(op.EqualConditions) != len(op2.EqualConditions) {
 		return false
 	}
 	for i, one := range op.EqualConditions {
@@ -92,7 +92,7 @@ func (op *LogicalJoin) Equals(other any) bool {
 			return false
 		}
 	}
-	if len(op.NAEQConditions) != len(op2.NAEQConditions) {
+	if (op.NAEQConditions == nil && op2.NAEQConditions != nil) || (op.NAEQConditions != nil && op2.NAEQConditions == nil) || len(op.NAEQConditions) != len(op2.NAEQConditions) {
 		return false
 	}
 	for i, one := range op.NAEQConditions {
@@ -100,7 +100,7 @@ func (op *LogicalJoin) Equals(other any) bool {
 			return false
 		}
 	}
-	if len(op.LeftConditions) != len(op2.LeftConditions) {
+	if (op.LeftConditions == nil && op2.LeftConditions != nil) || (op.LeftConditions != nil && op2.LeftConditions == nil) || len(op.LeftConditions) != len(op2.LeftConditions) {
 		return false
 	}
 	for i, one := range op.LeftConditions {
@@ -108,7 +108,7 @@ func (op *LogicalJoin) Equals(other any) bool {
 			return false
 		}
 	}
-	if len(op.RightConditions) != len(op2.RightConditions) {
+	if (op.RightConditions == nil && op2.RightConditions != nil) || (op.RightConditions != nil && op2.RightConditions == nil) || len(op.RightConditions) != len(op2.RightConditions) {
 		return false
 	}
 	for i, one := range op.RightConditions {
@@ -116,7 +116,7 @@ func (op *LogicalJoin) Equals(other any) bool {
 			return false
 		}
 	}
-	if len(op.OtherConditions) != len(op2.OtherConditions) {
+	if (op.OtherConditions == nil && op2.OtherConditions != nil) || (op.OtherConditions != nil && op2.OtherConditions == nil) || len(op.OtherConditions) != len(op2.OtherConditions) {
 		return false
 	}
 	for i, one := range op.OtherConditions {
@@ -171,7 +171,7 @@ func (op *LogicalAggregation) Equals(other any) bool {
 	if !ok {
 		return false
 	}
-	if len(op.AggFuncs) != len(op2.AggFuncs) {
+	if (op.AggFuncs == nil && op2.AggFuncs != nil) || (op.AggFuncs != nil && op2.AggFuncs == nil) || len(op.AggFuncs) != len(op2.AggFuncs) {
 		return false
 	}
 	for i, one := range op.AggFuncs {
@@ -179,7 +179,7 @@ func (op *LogicalAggregation) Equals(other any) bool {
 			return false
 		}
 	}
-	if len(op.GroupByItems) != len(op2.GroupByItems) {
+	if (op.GroupByItems == nil && op2.GroupByItems != nil) || (op.GroupByItems != nil && op2.GroupByItems == nil) || len(op.GroupByItems) != len(op2.GroupByItems) {
 		return false
 	}
 	for i, one := range op.GroupByItems {
@@ -187,11 +187,11 @@ func (op *LogicalAggregation) Equals(other any) bool {
 			return false
 		}
 	}
-	if len(op.PossibleProperties) != len(op2.PossibleProperties) {
+	if (op.PossibleProperties == nil && op2.PossibleProperties != nil) || (op.PossibleProperties != nil && op2.PossibleProperties == nil) || len(op.PossibleProperties) != len(op2.PossibleProperties) {
 		return false
 	}
 	for i, one := range op.PossibleProperties {
-		if len(one) != len(op2.PossibleProperties[i]) {
+		if (one == nil && op2.PossibleProperties[i] != nil) || (one != nil && op2.PossibleProperties[i] == nil) || len(one) != len(op2.PossibleProperties[i]) {
 			return false
 		}
 		for ii, onee := range one {
@@ -231,7 +231,7 @@ func (op *LogicalApply) Equals(other any) bool {
 	if !op.LogicalJoin.Equals(&op2.LogicalJoin) {
 		return false
 	}
-	if len(op.CorCols) != len(op2.CorCols) {
+	if (op.CorCols == nil && op2.CorCols != nil) || (op.CorCols != nil && op2.CorCols == nil) || len(op.CorCols) != len(op2.CorCols) {
 		return false
 	}
 	for i, one := range op.CorCols {
@@ -317,7 +317,7 @@ func (op *LogicalExpand) Equals(other any) bool {
 	if !ok {
 		return false
 	}
-	if len(op.DistinctGroupByCol) != len(op2.DistinctGroupByCol) {
+	if (op.DistinctGroupByCol == nil && op2.DistinctGroupByCol != nil) || (op.DistinctGroupByCol != nil && op2.DistinctGroupByCol == nil) || len(op.DistinctGroupByCol) != len(op2.DistinctGroupByCol) {
 		return false
 	}
 	for i, one := range op.DistinctGroupByCol {
@@ -325,7 +325,7 @@ func (op *LogicalExpand) Equals(other any) bool {
 			return false
 		}
 	}
-	if len(op.DistinctGbyExprs) != len(op2.DistinctGbyExprs) {
+	if (op.DistinctGbyExprs == nil && op2.DistinctGbyExprs != nil) || (op.DistinctGbyExprs != nil && op2.DistinctGbyExprs == nil) || len(op.DistinctGbyExprs) != len(op2.DistinctGbyExprs) {
 		return false
 	}
 	for i, one := range op.DistinctGbyExprs {
@@ -336,15 +336,15 @@ func (op *LogicalExpand) Equals(other any) bool {
 	if op.DistinctSize != op2.DistinctSize {
 		return false
 	}
-	if len(op.RollupGroupingSets) != len(op2.RollupGroupingSets) {
+	if (op.RollupGroupingSets == nil && op2.RollupGroupingSets != nil) || (op.RollupGroupingSets != nil && op2.RollupGroupingSets == nil) || len(op.RollupGroupingSets) != len(op2.RollupGroupingSets) {
 		return false
 	}
 	for i, one := range op.RollupGroupingSets {
-		if len(one) != len(op2.RollupGroupingSets[i]) {
+		if (one == nil && op2.RollupGroupingSets[i] != nil) || (one != nil && op2.RollupGroupingSets[i] == nil) || len(one) != len(op2.RollupGroupingSets[i]) {
 			return false
 		}
 		for ii, onee := range one {
-			if len(onee) != len(op2.RollupGroupingSets[i][ii]) {
+			if (onee == nil && op2.RollupGroupingSets[i][ii] != nil) || (onee != nil && op2.RollupGroupingSets[i][ii] == nil) || len(onee) != len(op2.RollupGroupingSets[i][ii]) {
 				return false
 			}
 			for iii, oneee := range onee {
@@ -354,11 +354,11 @@ func (op *LogicalExpand) Equals(other any) bool {
 			}
 		}
 	}
-	if len(op.LevelExprs) != len(op2.LevelExprs) {
+	if (op.LevelExprs == nil && op2.LevelExprs != nil) || (op.LevelExprs != nil && op2.LevelExprs == nil) || len(op.LevelExprs) != len(op2.LevelExprs) {
 		return false
 	}
 	for i, one := range op.LevelExprs {
-		if len(one) != len(op2.LevelExprs[i]) {
+		if (one == nil && op2.LevelExprs[i] != nil) || (one != nil && op2.LevelExprs[i] == nil) || len(one) != len(op2.LevelExprs[i]) {
 			return false
 		}
 		for ii, onee := range one {
@@ -401,7 +401,7 @@ func (op *LogicalLimit) Equals(other any) bool {
 	if !ok {
 		return false
 	}
-	if len(op.PartitionBy) != len(op2.PartitionBy) {
+	if (op.PartitionBy == nil && op2.PartitionBy != nil) || (op.PartitionBy != nil && op2.PartitionBy == nil) || len(op.PartitionBy) != len(op2.PartitionBy) {
 		return false
 	}
 	for i, one := range op.PartitionBy {
@@ -415,5 +415,23 @@ func (op *LogicalLimit) Equals(other any) bool {
 	if op.Count != op2.Count {
 		return false
 	}
+	return true
+}
+
+// Hash64 implements the Hash64Equals interface.
+func (op *LogicalMaxOneRow) Hash64(h base.Hasher) {
+	h.HashString(plancodec.TypeMaxOneRow)
+}
+
+// Equals implements the Hash64Equals interface, only receive *LogicalMaxOneRow pointer.
+func (op *LogicalMaxOneRow) Equals(other any) bool {
+	if other == nil {
+		return false
+	}
+	op2, ok := other.(*LogicalMaxOneRow)
+	if !ok {
+		return false
+	}
+	_ = op2
 	return true
 }
