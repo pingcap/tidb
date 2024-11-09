@@ -77,7 +77,6 @@ func TestLogicalLimitHash64Equals(t *testing.T) {
 	hasher2.Reset()
 	limit2.Hash64(hasher2)
 	require.Equal(t, hasher1.Sum64(), hasher2.Sum64())
-
 }
 
 func TestLogicalExpandHash64Equals(t *testing.T) {
