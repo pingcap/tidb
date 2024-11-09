@@ -54,6 +54,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/version/build"
 	tidbconfig "github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/errno"
+	"github.com/pingcap/tidb/keyspace"
 	tidbkv "github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/parser"
@@ -62,12 +63,14 @@ import (
 	"github.com/pingcap/tidb/store/driver"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/collate"
+	"github.com/pingcap/tidb/util/etcd"
 	"github.com/pingcap/tidb/util/mathutil"
 	regexprrouter "github.com/pingcap/tidb/util/regexpr-router"
 	"github.com/pingcap/tidb/util/set"
 	"github.com/prometheus/client_golang/prometheus"
 	tikvconfig "github.com/tikv/client-go/v2/config"
 	pd "github.com/tikv/pd/client"
+	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.uber.org/atomic"
 	"go.uber.org/multierr"
 	"go.uber.org/zap"
@@ -203,11 +206,11 @@ type Controller struct {
 	engineMgr     backend.EngineManager
 	backend       backend.Backend
 	db            *sql.DB
+	pdCli         pd.Client
 
-	alterTableLock sync.Mutex
-	sysVars        map[string]string
-	tls            *common.TLS
-	checkTemplate  Template
+	sysVars       map[string]string
+	tls           *common.TLS
+	checkTemplate Template
 
 	errorSummaries errorSummaries
 
@@ -332,6 +335,7 @@ func NewImportControllerWithPauser(
 
 	var encodingBuilder encode.EncodingBuilder
 	var backendObj backend.Backend
+	var pdCli pd.Client
 	switch cfg.TikvImporter.Backend {
 	case config.BackendTiDB:
 		encodingBuilder = tidb.NewEncodingBuilder()
@@ -347,9 +351,13 @@ func NewImportControllerWithPauser(
 		if maxOpenFiles < 0 {
 			maxOpenFiles = math.MaxInt32
 		}
+		pdCli, err = pd.NewClientWithContext(ctx, []string{cfg.TiDB.PdAddr}, tls.ToPDSecurityOption())
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
 
 		if cfg.TikvImporter.DuplicateResolution != config.DupeResAlgNone {
-			if err := tikv.CheckTiKVVersion(ctx, tls, cfg.TiDB.PdAddr, minTiKVVersionForDuplicateResolution, maxTiKVVersionForDuplicateResolution); err != nil {
+			if err := tikv.CheckTiKVVersion(ctx, tls, pdCli.GetLeaderAddr(), minTiKVVersionForDuplicateResolution, maxTiKVVersionForDuplicateResolution); err != nil {
 				if berrors.Is(err, berrors.ErrVersionMismatch) {
 					log.FromContext(ctx).Warn("TiKV version doesn't support duplicate resolution. The resolution algorithm will fall back to 'none'", zap.Error(err))
 					cfg.TikvImporter.DuplicateResolution = config.DupeResAlgNone
@@ -399,7 +407,7 @@ func NewImportControllerWithPauser(
 
 	var wrapper backend.TargetInfoGetter
 	if cfg.TikvImporter.Backend == config.BackendLocal {
-		wrapper = local.NewTargetInfoGetter(tls, db, cfg.TiDB.PdAddr)
+		wrapper = local.NewTargetInfoGetter(tls, db, pdCli)
 	} else {
 		wrapper = tidb.NewTargetInfoGetter(db)
 	}
@@ -409,6 +417,7 @@ func NewImportControllerWithPauser(
 		db:      db,
 		tls:     tls,
 		backend: wrapper,
+		pdCli:   pdCli,
 	}
 	preInfoGetter, err := NewPreImportInfoGetter(
 		cfg,
@@ -423,7 +432,7 @@ func NewImportControllerWithPauser(
 	}
 
 	preCheckBuilder := NewPrecheckItemBuilder(
-		cfg, p.DBMetas, preInfoGetter, cpdb,
+		cfg, p.DBMetas, preInfoGetter, cpdb, pdCli,
 	)
 
 	rc := &Controller{
@@ -438,6 +447,7 @@ func NewImportControllerWithPauser(
 		pauser:        p.Pauser,
 		engineMgr:     backend.MakeEngineManager(backendObj),
 		backend:       backendObj,
+		pdCli:         pdCli,
 		db:            db,
 		sysVars:       common.DefaultImportantVariables,
 		tls:           tls,
@@ -473,10 +483,15 @@ func NewImportControllerWithPauser(
 func (rc *Controller) Close() {
 	rc.backend.Close()
 	_ = rc.db.Close()
+	if rc.pdCli != nil {
+		rc.pdCli.Close()
+	}
 }
 
 // Run starts the restore task.
 func (rc *Controller) Run(ctx context.Context) error {
+	failpoint.Inject("beforeRun", func() {})
+
 	opts := []func(context.Context) error{
 		rc.setGlobalVariables,
 		rc.restoreSchema,
@@ -565,29 +580,47 @@ type restoreSchemaWorker struct {
 func (worker *restoreSchemaWorker) addJob(sqlStr string, job *schemaJob) error {
 	stmts, err := createIfNotExistsStmt(worker.parser, sqlStr, job.dbName, job.tblName)
 	if err != nil {
-		worker.logger.Warn("failed to rewrite statement, will use raw input instead",
-			zap.String("db", job.dbName),
-			zap.String("table", job.tblName),
-			zap.String("statement", sqlStr),
-			zap.Error(err))
-		job.stmts = []string{sqlStr}
-	} else {
-		job.stmts = stmts
+		return errors.Trace(err)
 	}
+	job.stmts = stmts
 	return worker.appendJob(job)
 }
 
 func (worker *restoreSchemaWorker) makeJobs(
 	dbMetas []*mydump.MDDatabaseMeta,
+	getDBs func(context.Context) ([]*model.DBInfo, error),
 	getTables func(context.Context, string) ([]*model.TableInfo, error),
 ) error {
 	defer func() {
 		close(worker.jobCh)
 		worker.quit()
 	}()
-	var err error
+
+	if len(dbMetas) == 0 {
+		return nil
+	}
+
 	// 1. restore databases, execute statements concurrency
+
+	dbs, err := getDBs(worker.ctx)
+	if err != nil {
+		worker.logger.Warn("get databases from downstream failed", zap.Error(err))
+	}
+	dbSet := make(set.StringSet, len(dbs))
+	for _, db := range dbs {
+		dbSet.Insert(db.Name.L)
+	}
+
 	for _, dbMeta := range dbMetas {
+		// if downstream already has this database, we can skip ddl job
+		if dbSet.Exist(strings.ToLower(dbMeta.Name)) {
+			worker.logger.Info(
+				"database already exists in downstream, skip processing the source file",
+				zap.String("db", dbMeta.Name),
+			)
+			continue
+		}
+
 		sql := dbMeta.GetSchema(worker.ctx, worker.store)
 		err = worker.addJob(sql, &schemaJob{
 			dbName:   dbMeta.Name,
@@ -602,18 +635,28 @@ func (worker *restoreSchemaWorker) makeJobs(
 	if err != nil {
 		return err
 	}
+
 	// 2. restore tables, execute statements concurrency
+
 	for _, dbMeta := range dbMetas {
 		// we can ignore error here, and let check failed later if schema not match
-		tables, _ := getTables(worker.ctx, dbMeta.Name)
-		tableMap := make(map[string]struct{})
+		tables, err := getTables(worker.ctx, dbMeta.Name)
+		if err != nil {
+			worker.logger.Warn("get tables from downstream failed", zap.Error(err))
+		}
+		tableSet := make(set.StringSet, len(tables))
 		for _, t := range tables {
-			tableMap[t.Name.L] = struct{}{}
+			tableSet.Insert(t.Name.L)
 		}
 		for _, tblMeta := range dbMeta.Tables {
-			if _, ok := tableMap[strings.ToLower(tblMeta.Name)]; ok {
+			if tableSet.Exist(strings.ToLower(tblMeta.Name)) {
 				// we already has this table in TiDB.
 				// we should skip ddl job and let SchemaValid check.
+				worker.logger.Info(
+					"table already exists in downstream, skip processing the source file",
+					zap.String("db", dbMeta.Name),
+					zap.String("table", tblMeta.Name),
+				)
 				continue
 			} else if tblMeta.SchemaFile.FileMeta.Path == "" {
 				return common.ErrSchemaNotExists.GenWithStackByArgs(dbMeta.Name, tblMeta.Name)
@@ -688,7 +731,6 @@ loop:
 			var err error
 			if session == nil {
 				session, err = func() (*sql.Conn, error) {
-					// TODO: support lightning in SQL
 					return worker.db.Conn(worker.ctx)
 				}()
 				if err != nil {
@@ -811,7 +853,7 @@ func (rc *Controller) restoreSchema(ctx context.Context) error {
 	for i := 0; i < concurrency; i++ {
 		go worker.doJob()
 	}
-	err := worker.makeJobs(rc.dbMetas, rc.preInfoGetter.FetchRemoteTableModels)
+	err := worker.makeJobs(rc.dbMetas, rc.preInfoGetter.FetchRemoteDBModels, rc.preInfoGetter.FetchRemoteTableModels)
 	logTask.End(zap.ErrorLevel, err)
 	if err != nil {
 		return err
@@ -1384,7 +1426,7 @@ const (
 
 func (rc *Controller) keepPauseGCForDupeRes(ctx context.Context) (<-chan struct{}, error) {
 	tlsOpt := rc.tls.ToPDSecurityOption()
-	pdCli, err := pd.NewClientWithContext(ctx, []string{rc.cfg.TiDB.PdAddr}, tlsOpt)
+	pdCli, err := pd.NewClientWithContext(ctx, []string{rc.pdCli.GetLeaderAddr()}, tlsOpt)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -1504,6 +1546,7 @@ func (rc *Controller) importTables(ctx context.Context) (finalErr error) {
 	cleanup := false
 	postProgress := func() error { return nil }
 	var kvStore tidbkv.Storage
+	var etcdCli *clientv3.Client
 
 	if isLocalBackend(rc.cfg) {
 		var (
@@ -1545,13 +1588,28 @@ func (rc *Controller) importTables(ctx context.Context) (finalErr error) {
 		}
 
 		// Disable GC because TiDB enables GC already.
+
+		currentLeaderAddr := rc.pdCli.GetLeaderAddr()
+		// remove URL scheme
+		currentLeaderAddr = strings.TrimPrefix(currentLeaderAddr, "http://")
+		currentLeaderAddr = strings.TrimPrefix(currentLeaderAddr, "https://")
 		kvStore, err = driver.TiKVDriver{}.OpenWithOptions(
-			fmt.Sprintf("tikv://%s?disableGC=true&keyspaceName=%s", rc.cfg.TiDB.PdAddr, rc.keyspaceName),
+			fmt.Sprintf("tikv://%s?disableGC=true&keyspaceName=%s", currentLeaderAddr, rc.keyspaceName),
 			driver.WithSecurity(rc.tls.ToTiKVSecurityConfig()),
 		)
 		if err != nil {
 			return errors.Trace(err)
 		}
+		etcdCli, err = clientv3.New(clientv3.Config{
+			Endpoints:        []string{rc.cfg.TiDB.PdAddr},
+			AutoSyncInterval: 30 * time.Second,
+			TLS:              rc.tls.TLSConfig(),
+		})
+		if err != nil {
+			return errors.Trace(err)
+		}
+		etcd.SetEtcdCliByNamespace(etcdCli, keyspace.MakeKeyspaceEtcdNamespace(kvStore.GetCodec()))
+
 		manager, err := NewChecksumManager(ctx, rc, kvStore)
 		if err != nil {
 			return errors.Trace(err)
@@ -1619,6 +1677,11 @@ func (rc *Controller) importTables(ctx context.Context) (finalErr error) {
 				logTask.Warn("failed to close kv store", zap.Error(err))
 			}
 		}
+		if etcdCli != nil {
+			if err := etcdCli.Close(); err != nil {
+				logTask.Warn("failed to close etcd client", zap.Error(err))
+			}
+		}
 	}()
 
 	taskCh := make(chan task, rc.cfg.App.IndexConcurrency)
@@ -1668,7 +1731,7 @@ func (rc *Controller) importTables(ctx context.Context) (finalErr error) {
 			if err != nil {
 				return errors.Trace(err)
 			}
-			tr, err := NewTableImporter(tableName, tableMeta, dbInfo, tableInfo, cp, igCols.ColumnsMap(), kvStore, log.FromContext(ctx))
+			tr, err := NewTableImporter(tableName, tableMeta, dbInfo, tableInfo, cp, igCols.ColumnsMap(), kvStore, etcdCli, log.FromContext(ctx))
 			if err != nil {
 				return errors.Trace(err)
 			}
@@ -1758,7 +1821,7 @@ func (rc *Controller) importTables(ctx context.Context) (finalErr error) {
 }
 
 func (rc *Controller) registerTaskToPD(ctx context.Context) (undo func(), _ error) {
-	etcdCli, err := dialEtcdWithCfg(ctx, rc.cfg)
+	etcdCli, err := dialEtcdWithCfg(ctx, rc.cfg, rc.pdCli.GetLeaderAddr())
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -1925,7 +1988,7 @@ func (rc *Controller) fullCompact(ctx context.Context) error {
 }
 
 func (rc *Controller) doCompact(ctx context.Context, level int32) error {
-	tls := rc.tls.WithHost(rc.cfg.TiDB.PdAddr)
+	tls := rc.tls.WithHost(rc.pdCli.GetLeaderAddr())
 	return tikv.ForAllStores(
 		ctx,
 		tls,
@@ -2170,7 +2233,7 @@ func (rc *Controller) preCheckRequirements(ctx context.Context) error {
 		rc.status.TotalFileSize.Store(estimatedSizeResult.SizeWithoutIndex)
 	}
 	if isLocalBackend(rc.cfg) {
-		pdController, err := pdutil.NewPdController(ctx, rc.cfg.TiDB.PdAddr,
+		pdController, err := pdutil.NewPdController(ctx, rc.pdCli.GetLeaderAddr(),
 			rc.tls.TLSConfig(), rc.tls.ToPDSecurityOption())
 		if err != nil {
 			return common.NormalizeOrWrapErr(common.ErrCreatePDClient, err)

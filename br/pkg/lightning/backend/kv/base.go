@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/codec"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 )
@@ -204,7 +205,7 @@ func (e *BaseKVEncoder) Record2KV(record, originalRow []types.Datum, rowID int64
 	kvPairs := e.SessionCtx.TakeKvPairs()
 	for i := 0; i < len(kvPairs.Pairs); i++ {
 		var encoded [9]byte // The max length of encoded int64 is 9.
-		kvPairs.Pairs[i].RowID = common.EncodeIntRowIDToBuf(encoded[:0], rowID)
+		kvPairs.Pairs[i].RowID = codec.EncodeComparableVarint(encoded[:0], rowID)
 	}
 	e.recordCache = record[:0]
 	return kvPairs, nil
@@ -227,6 +228,7 @@ func (e *BaseKVEncoder) ProcessColDatum(col *table.Column, rowID int64, inputDat
 		}
 	}
 	if IsAutoIncCol(col.ToInfo()) {
+		// same as RowIDAllocType, since SepAutoInc is always false when initializing allocators of Table.
 		alloc := e.Table.Allocators(e.SessionCtx).Get(autoid.AutoIncrementType)
 		if err := alloc.Rebase(context.Background(), GetAutoRecordID(value, &col.FieldType), false); err != nil {
 			return value, errors.Trace(err)

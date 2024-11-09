@@ -15,6 +15,7 @@
 package core
 
 import (
+	"bytes"
 	"context"
 
 	"github.com/pingcap/errors"
@@ -46,6 +47,8 @@ import (
 var (
 	// PlanCacheKeyTestIssue43667 is for test.
 	PlanCacheKeyTestIssue43667 struct{}
+	// PlanCacheKeyTestIssue46760 is only for test.
+	PlanCacheKeyTestIssue46760 struct{}
 )
 
 // SetParameterValuesIntoSCtx sets these parameters into session context.
@@ -107,6 +110,7 @@ func planCachePreprocess(ctx context.Context, sctx sessionctx.Context, isNonPrep
 		stmtAst.CachedPlan = nil
 		stmt.Executor = nil
 		stmt.ColumnInfos = nil
+		stmt.planCacheKey = nil
 		// If the schema version has changed we need to preprocess it again,
 		// if this time it failed, the real reason for the error is schema changed.
 		// Example:
@@ -150,13 +154,16 @@ func GetPlanFromSessionPlanCache(ctx context.Context, sctx sessionctx.Context,
 	sessVars := sctx.GetSessionVars()
 	stmtCtx := sessVars.StmtCtx
 	stmtAst := stmt.PreparedAst
-	stmtCtx.UseCache = stmt.StmtCacheable
+	cacheEnabled := false
 	if isNonPrepared {
 		stmtCtx.CacheType = stmtctx.SessionNonPrepared
+		cacheEnabled = sctx.GetSessionVars().EnableNonPreparedPlanCache // plan-cache might be disabled after prepare.
 	} else {
 		stmtCtx.CacheType = stmtctx.SessionPrepared
+		cacheEnabled = sctx.GetSessionVars().EnablePreparedPlanCache
 	}
-	if !stmt.StmtCacheable {
+	stmtCtx.UseCache = stmt.StmtCacheable && cacheEnabled
+	if !stmt.StmtCacheable && stmt.UncacheableReason != "" {
 		stmtCtx.SetSkipPlanCache(errors.New(stmt.UncacheableReason))
 	}
 
@@ -186,7 +193,7 @@ func GetPlanFromSessionPlanCache(ctx context.Context, sctx sessionctx.Context,
 		}
 	}
 
-	if stmtCtx.UseCache && stmtAst.CachedPlan != nil { // special code path for fast point plan
+	if stmtCtx.UseCache && stmtAst.CachedPlan != nil && bytes.Equal(stmt.planCacheKey.Hash(), cacheKey.Hash()) { // special code path for fast point plan
 		if plan, names, ok, err := getCachedPointPlan(stmtAst, sessVars, stmtCtx); ok {
 			return plan, names, err
 		}
@@ -245,6 +252,9 @@ func getCachedPointPlan(stmt *ast.Prepared, sessVars *variable.SessionVars, stmt
 	}
 	sessVars.FoundInPlanCache = true
 	stmtCtx.PointExec = true
+	if pointGetPlan, ok := plan.(*PointGetPlan); ok && pointGetPlan != nil && pointGetPlan.stmtHints != nil {
+		sessVars.StmtCtx.StmtHints = *pointGetPlan.stmtHints
+	}
 	return plan, names, true, nil
 }
 
@@ -285,6 +295,7 @@ func getCachedPlan(sctx sessionctx.Context, isNonPrepared bool, cacheKey kvcache
 		core_metrics.GetPlanCacheHitCounter(isNonPrepared).Inc()
 	}
 	stmtCtx.SetPlanDigest(stmt.NormalizedPlan, stmt.PlanDigest)
+	stmtCtx.StmtHints = *cachedVal.stmtHints
 	return cachedVal.Plan, cachedVal.OutPutNames, true, nil
 }
 
@@ -327,8 +338,9 @@ func generateNewPlan(ctx context.Context, sctx sessionctx.Context, isNonPrepared
 			}
 			sessVars.IsolationReadEngines[kv.TiFlash] = struct{}{}
 		}
-		cached := NewPlanCacheValue(p, names, stmtCtx.TblInfo2UnionScan, matchOpts)
+		cached := NewPlanCacheValue(p, names, stmtCtx.TblInfo2UnionScan, matchOpts, &stmtCtx.StmtHints)
 		stmt.NormalizedPlan, stmt.PlanDigest = NormalizePlan(p)
+		stmt.planCacheKey = cacheKey
 		stmtCtx.SetPlan(p)
 		stmtCtx.SetPlanDigest(stmt.NormalizedPlan, stmt.PlanDigest)
 		sctx.GetSessionPlanCache().Put(cacheKey, cached, matchOpts)
@@ -347,7 +359,7 @@ func RebuildPlan4CachedPlan(p Plan) (ok bool) {
 	sc.InPreparedPlanBuilding = true
 	defer func() { sc.InPreparedPlanBuilding = false }()
 	if err := rebuildRange(p); err != nil {
-		// TODO: log or warn this error.
+		sc.AppendWarning(errors.NewNoStackErrorf("skip plan-cache: plan rebuild failed, %s", err.Error()))
 		return false // fail to rebuild ranges
 	}
 	if !sc.UseCache {
@@ -442,7 +454,7 @@ func rebuildRange(p Plan) error {
 				if err != nil {
 					return err
 				}
-				if !isSafeRange(x.AccessConditions, ranges, false, nil) {
+				if len(ranges.Ranges) != 1 || !isSafeRange(x.AccessConditions, ranges, false, nil) {
 					return errors.New("rebuild to get an unsafe range")
 				}
 				for i := range x.IndexValues {
@@ -464,7 +476,7 @@ func rebuildRange(p Plan) error {
 					if err != nil {
 						return err
 					}
-					if !isSafeRange(x.AccessConditions, &ranger.DetachRangeResult{
+					if len(ranges) != 1 || !isSafeRange(x.AccessConditions, &ranger.DetachRangeResult{
 						Ranges:        ranges,
 						AccessConds:   accessConds,
 						RemainedConds: remainingConds,
@@ -533,7 +545,7 @@ func rebuildRange(p Plan) error {
 					if err != nil {
 						return err
 					}
-					if len(ranges) != len(x.Handles) && !isSafeRange(x.AccessConditions, &ranger.DetachRangeResult{
+					if len(ranges) != len(x.Handles) || !isSafeRange(x.AccessConditions, &ranger.DetachRangeResult{
 						Ranges:        ranges,
 						AccessConds:   accessConds,
 						RemainedConds: remainingConds,
@@ -757,11 +769,14 @@ func tryCachePointPlan(_ context.Context, sctx sessionctx.Context,
 		names   types.NameSlice
 	)
 
-	if _, _ok := p.(*PointGetPlan); _ok {
+	if plan, _ok := p.(*PointGetPlan); _ok {
 		ok, err = IsPointGetWithPKOrUniqueKeyByAutoCommit(sctx, p)
 		names = p.OutputNames()
 		if err != nil {
 			return err
+		}
+		if ok {
+			plan.stmtHints = sctx.GetSessionVars().StmtCtx.StmtHints.Clone()
 		}
 	}
 
@@ -825,6 +840,7 @@ func IsPointPlanShortPathOK(sctx sessionctx.Context, is infoschema.InfoSchema, s
 	if stmtAst.SchemaVersion != is.SchemaMetaVersion() {
 		stmtAst.CachedPlan = nil
 		stmt.ColumnInfos = nil
+		stmt.planCacheKey = nil
 		return false, nil
 	}
 	// maybe we'd better check cached plan type here, current

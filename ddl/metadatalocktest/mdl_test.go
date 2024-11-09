@@ -432,6 +432,90 @@ func TestMDLAutoCommitReadOnly(t *testing.T) {
 	require.Greater(t, ts1, ts2)
 }
 
+func TestMDLAnalyze(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	sv := server.CreateMockServer(t, store)
+
+	sv.SetDomain(dom)
+	dom.InfoSyncer().SetSessionManager(sv)
+	defer sv.Close()
+
+	conn1 := server.CreateMockConn(t, sv)
+	tk := testkit.NewTestKitWithSession(t, store, conn1.Context().Session)
+	conn2 := server.CreateMockConn(t, sv)
+	tkDDL := testkit.NewTestKitWithSession(t, store, conn2.Context().Session)
+	tk.MustExec("use test")
+	tk.MustExec("set global tidb_enable_metadata_lock=1")
+	tk.MustExec("create table t(a int);")
+	tk.MustExec("insert into t values(1);")
+
+	var wg sync.WaitGroup
+	wg.Add(2)
+	var ts2 time.Time
+	var ts1 time.Time
+
+	go func() {
+		tk.MustExec("begin")
+		tk.MustExec("analyze table t;")
+		tk.MustQuery("select sleep(2);")
+		tk.MustExec("commit")
+		ts1 = time.Now()
+		wg.Done()
+	}()
+
+	go func() {
+		tkDDL.MustExec("alter table test.t add column b int;")
+		ts2 = time.Now()
+		wg.Done()
+	}()
+
+	wg.Wait()
+	require.Greater(t, ts1, ts2)
+}
+
+func TestMDLAnalyzePartition(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	sv := server.CreateMockServer(t, store)
+
+	sv.SetDomain(dom)
+	dom.InfoSyncer().SetSessionManager(sv)
+	defer sv.Close()
+
+	conn1 := server.CreateMockConn(t, sv)
+	tk := testkit.NewTestKitWithSession(t, store, conn1.Context().Session)
+	conn2 := server.CreateMockConn(t, sv)
+	tkDDL := testkit.NewTestKitWithSession(t, store, conn2.Context().Session)
+	tk.MustExec("use test")
+	tk.MustExec("set @@tidb_partition_prune_mode='dynamic'")
+	tk.MustExec("set global tidb_enable_metadata_lock=1")
+	tk.MustExec("create table t(a int) partition by range(a) ( PARTITION p0 VALUES LESS THAN (0), PARTITION p1 VALUES LESS THAN (100), PARTITION p2 VALUES LESS THAN MAXVALUE );")
+	tk.MustExec("insert into t values(1), (2), (3), (4);")
+
+	var wg sync.WaitGroup
+	wg.Add(2)
+	var ts2 time.Time
+	var ts1 time.Time
+
+	go func() {
+		tk.MustExec("begin")
+		tk.MustExec("analyze table t;")
+		tk.MustExec("analyze table t partition p1;")
+		tk.MustQuery("select sleep(2);")
+		tk.MustExec("commit")
+		ts1 = time.Now()
+		wg.Done()
+	}()
+
+	go func() {
+		tkDDL.MustExec("alter table test.t drop partition p2;")
+		ts2 = time.Now()
+		wg.Done()
+	}()
+
+	wg.Wait()
+	require.Greater(t, ts1, ts2)
+}
+
 func TestMDLAutoCommitNonReadOnly(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	sv := server.CreateMockServer(t, store)

@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/testkit/testutil"
 	"github.com/pingcap/tidb/util"
+	"github.com/pingcap/tidb/util/cmp"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/stretchr/testify/require"
 	"golang.org/x/exp/slices"
@@ -568,22 +569,26 @@ func TestPessimisticLockOnPartitionForIndexMerge(t *testing.T) {
 		"      ├─IndexReader(Build) 3.00 root  index:IndexFullScan",
 		"      │ └─IndexFullScan 3.00 cop[tikv] table:t2, index:c_datetime(c_datetime) keep order:false",
 		"      └─PartitionUnion(Probe) 5545.21 root  ",
-		"        ├─IndexMerge 5542.21 root  type: union",
-		"        │ ├─IndexRangeScan(Build) 3323.33 cop[tikv] table:t1, partition:p0, index:c1(c1) range:[-inf,10), keep order:false, stats:pseudo",
-		"        │ ├─IndexRangeScan(Build) 3323.33 cop[tikv] table:t1, partition:p0, index:c2(c2) range:[-inf,10), keep order:false, stats:pseudo",
-		"        │ └─TableRowIDScan(Probe) 5542.21 cop[tikv] table:t1, partition:p0 keep order:false, stats:pseudo",
-		"        ├─IndexMerge 1.00 root  type: union",
-		"        │ ├─IndexRangeScan(Build) 1.00 cop[tikv] table:t1, partition:p1, index:c1(c1) range:[-inf,10), keep order:false",
-		"        │ ├─IndexRangeScan(Build) 1.00 cop[tikv] table:t1, partition:p1, index:c2(c2) range:[-inf,10), keep order:false",
-		"        │ └─TableRowIDScan(Probe) 1.00 cop[tikv] table:t1, partition:p1 keep order:false",
-		"        ├─IndexMerge 1.00 root  type: union",
-		"        │ ├─IndexRangeScan(Build) 1.00 cop[tikv] table:t1, partition:p2, index:c1(c1) range:[-inf,10), keep order:false",
-		"        │ ├─IndexRangeScan(Build) 1.00 cop[tikv] table:t1, partition:p2, index:c2(c2) range:[-inf,10), keep order:false",
-		"        │ └─TableRowIDScan(Probe) 1.00 cop[tikv] table:t1, partition:p2 keep order:false",
-		"        └─IndexMerge 1.00 root  type: union",
-		"          ├─IndexRangeScan(Build) 1.00 cop[tikv] table:t1, partition:p3, index:c1(c1) range:[-inf,10), keep order:false",
-		"          ├─IndexRangeScan(Build) 1.00 cop[tikv] table:t1, partition:p3, index:c2(c2) range:[-inf,10), keep order:false",
-		"          └─TableRowIDScan(Probe) 1.00 cop[tikv] table:t1, partition:p3 keep order:false",
+		"        ├─Projection 5542.21 root  test.t1.c_datetime, test.t1.c1, test.t1._tidb_rowid, test.t1._tidb_tid",
+		"        │ └─IndexMerge 5542.21 root  type: union",
+		"        │   ├─IndexRangeScan(Build) 3323.33 cop[tikv] table:t1, partition:p0, index:c1(c1) range:[-inf,10), keep order:false, stats:pseudo",
+		"        │   ├─IndexRangeScan(Build) 3323.33 cop[tikv] table:t1, partition:p0, index:c2(c2) range:[-inf,10), keep order:false, stats:pseudo",
+		"        │   └─TableRowIDScan(Probe) 5542.21 cop[tikv] table:t1, partition:p0 keep order:false, stats:pseudo",
+		"        ├─Projection 1.00 root  test.t1.c_datetime, test.t1.c1, test.t1._tidb_rowid, test.t1._tidb_tid",
+		"        │ └─IndexMerge 1.00 root  type: union",
+		"        │   ├─IndexRangeScan(Build) 1.00 cop[tikv] table:t1, partition:p1, index:c1(c1) range:[-inf,10), keep order:false",
+		"        │   ├─IndexRangeScan(Build) 1.00 cop[tikv] table:t1, partition:p1, index:c2(c2) range:[-inf,10), keep order:false",
+		"        │   └─TableRowIDScan(Probe) 1.00 cop[tikv] table:t1, partition:p1 keep order:false",
+		"        ├─Projection 1.00 root  test.t1.c_datetime, test.t1.c1, test.t1._tidb_rowid, test.t1._tidb_tid",
+		"        │ └─IndexMerge 1.00 root  type: union",
+		"        │   ├─IndexRangeScan(Build) 1.00 cop[tikv] table:t1, partition:p2, index:c1(c1) range:[-inf,10), keep order:false",
+		"        │   ├─IndexRangeScan(Build) 1.00 cop[tikv] table:t1, partition:p2, index:c2(c2) range:[-inf,10), keep order:false",
+		"        │   └─TableRowIDScan(Probe) 1.00 cop[tikv] table:t1, partition:p2 keep order:false",
+		"        └─Projection 1.00 root  test.t1.c_datetime, test.t1.c1, test.t1._tidb_rowid, test.t1._tidb_tid",
+		"          └─IndexMerge 1.00 root  type: union",
+		"            ├─IndexRangeScan(Build) 1.00 cop[tikv] table:t1, partition:p3, index:c1(c1) range:[-inf,10), keep order:false",
+		"            ├─IndexRangeScan(Build) 1.00 cop[tikv] table:t1, partition:p3, index:c2(c2) range:[-inf,10), keep order:false",
+		"            └─TableRowIDScan(Probe) 1.00 cop[tikv] table:t1, partition:p3 keep order:false",
 	))
 	tk.MustQuery(`select /*+ use_index_merge(t1) */ c1 from t1 join t2
 			on t1.c_datetime >= t2.c_datetime
@@ -710,20 +715,21 @@ func TestIntersectionWithDifferentConcurrency(t *testing.T) {
 		for _, concurrency := range execCon {
 			tk.MustExec(fmt.Sprintf("set tidb_executor_concurrency = %d", concurrency))
 			for i := 0; i < 2; i++ {
+				sql := "select /*+ use_index_merge(t1, primary, c2, c3) */ c1 from t1 where c2 < 1024 and c3 > 1024"
 				if i == 0 {
 					// Dynamic mode.
 					tk.MustExec("set tidb_partition_prune_mode = 'dynamic'")
-					res := tk.MustQuery("explain select /*+ use_index_merge(t1, primary, c2, c3) */ c1 from t1 where c2 < 1024 and c3 > 1024")
-					require.Contains(t, res.Rows()[1][0], "IndexMerge")
+					require.True(t, tk.HasPlan(sql, "IndexMerge"))
+					require.True(t, tk.HasNoPlan(sql, "PartitionUnion"))
 				} else {
 					tk.MustExec("set tidb_partition_prune_mode = 'static'")
-					res := tk.MustQuery("explain select /*+ use_index_merge(t1, primary, c2, c3) */ c1 from t1 where c2 < 1024 and c3 > 1024")
 					if tblIdx == 0 {
 						// partition table
-						require.Contains(t, res.Rows()[1][0], "PartitionUnion")
-						require.Contains(t, res.Rows()[2][0], "IndexMerge")
+						require.True(t, tk.HasPlan(sql, "IndexMerge"))
+						require.True(t, tk.HasPlan(sql, "PartitionUnion"))
 					} else {
-						require.Contains(t, res.Rows()[1][0], "IndexMerge")
+						require.True(t, tk.HasPlan(sql, "IndexMerge"))
+						require.True(t, tk.HasNoPlan(sql, "PartitionUnion"))
 					}
 				}
 				for i := 0; i < queryCnt; i++ {
@@ -954,11 +960,11 @@ func getResult(values []*valueStruct, a int, b int, limit int, desc bool) []*val
 			ret = append(ret, value)
 		}
 	}
-	slices.SortFunc(ret, func(a, b *valueStruct) bool {
+	slices.SortFunc(ret, func(a, b *valueStruct) int {
 		if desc {
-			return a.c > b.c
+			return cmp.Compare(b.c, a.c)
 		}
-		return a.c < b.c
+		return cmp.Compare(a.c, b.c)
 	})
 	if len(ret) > limit {
 		return ret[:limit]
@@ -1075,6 +1081,33 @@ func TestOrderByWithLimit(t *testing.T) {
 	}
 }
 
+func TestIndexMergeIssue49605(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test;")
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("CREATE TABLE `t` (`a` mediumint(9) NOT NULL,`b` year(4) NOT NULL,`c` varbinary(62) NOT NULL,`d` text COLLATE utf8mb4_unicode_ci NOT NULL,`e` tinyint(4) NOT NULL DEFAULT '115',`f` smallint(6) DEFAULT '2675',`g` date DEFAULT '1981-09-17',`h` mediumint(8) unsigned NOT NULL,`i` varchar(384) CHARACTER SET gbk COLLATE gbk_bin DEFAULT NULL,UNIQUE KEY `idx_23` (`h`,`f`),PRIMARY KEY (`h`,`a`) /*T![clustered_index] CLUSTERED */,UNIQUE KEY `idx_25` (`h`,`i`(5),`e`)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin PARTITION BY HASH (`h`) PARTITIONS 1;")
+	tk.MustExec("INSERT INTO `t` VALUES (2065948,1999,_binary '8jxN','rf',-54,-5656,'1987-07-03',259254,'7me坨'),(-8248164,2024,_binary 'zA5A','s)DAkX3',-93,-12983,'2027-12-18',299573,'LUf咲'),(-6131509,2023,_binary 'xdex#Y2','1th%h',-51,19149,'2013-10-28',428279,'矷莒X'),(7545837,1998,_binary 'PCVO','&(lJw6',30,4093,'1987-07-03',736235,'腏@TOIJ'),(-7449472,2029,_binary 'B7&jrl','EjbFfX!',80,-7590,'2011-11-03',765580,'堮ZQF_'),(-7176200,1988,_binary 'tiPglv7mX_#','CnCtNb',-25,NULL,'1987-07-03',842956,'Gq羣嗳殓'),(-115168,2036,_binary 'BqmX$-4It','!8#dvH',82,18787,'1991-09-20',921706,'椉2庘v'),(6665100,1987,_binary '4IJgk0fr4','(D',-73,28628,'1987-07-03',1149668,'摔玝S渉'),(-4065661,2021,_binary '8G%','xDO39xw#',-107,17356,'1970-12-20',1316239,'+0c35掬-阗'),(7622462,1990,_binary '&o+)s)D0','kjoS9Dzld',84,688,'1987-07-03',1403663,'$H鍿_M~'),(5269354,2018,_binary 'wq9hC8','s8XPrN+',-2,-31272,'2008-05-26',1534517,'y椁n躁Q'),(2065948,1982,_binary '8jxNjbksV','g$+i4dg',11,19800,'1987-07-03',1591457,'z^+H~薼A'),(4076971,2024,_binary '&!RrsH','7Mpvk',-63,-632,'2032-10-28',1611011,'鬰+EXmx'),(3522062,1981,_binary ')nq#!UiHKk8','j~wFe77ai',50,6951,'1987-07-03',1716854,'J'),(7859777,2012,_binary 'PBA5xgJ&G&','UM7o!u',18,-5978,'1987-07-03',1967012,'e)浢L獹'),(2065948,2028,_binary '8jxNjbk','JmsEki9t4',51,12002,'2017-12-23',1981288,'mp氏襚');")
+	tk.MustQuery("explain format='brief' SELECT /*+ AGG_TO_COP() STREAM_AGG()*/ (NOT (`t`.`i`>=_UTF8MB4'j筧8') OR NOT (`t`.`i`=_UTF8MB4'暈lH忧ll6')) IS TRUE,MAX(`t`.`e`) AS `r0`,QUOTE(`t`.`i`) AS `r1` FROM `t` WHERE `t`.`h`>240817 OR `t`.`i` BETWEEN _UTF8MB4'WVz' AND _UTF8MB4'G#駧褉ZC領*lov' GROUP BY `t`.`i`;").Check(
+		testkit.Rows("Projection 2666.67 root  istrue(or(not(ge(test.t.i, j筧8)), not(eq(test.t.i, 暈lH忧ll6))))->Column#11, Column#10, quote(test.t.i)->Column#12",
+			"└─StreamAgg 2666.67 root  group by:test.t.i, funcs:max(test.t.e)->Column#10, funcs:firstrow(test.t.i)->test.t.i",
+			"  └─Sort 3333.33 root  test.t.i",
+			"    └─TableReader 3333.33 root  data:Selection",
+			"      └─Selection 3333.33 cop[tikv]  or(gt(test.t.h, 240817), and(ge(test.t.i, \"WVz\"), le(test.t.i, \"G#駧褉ZC領*lov\")))",
+			"        └─TableFullScan 10000.00 cop[tikv] table:t, partition:p0 keep order:false, stats:pseudo"))
+	tk.MustQuery("select count(*) from (SELECT /*+ AGG_TO_COP() STREAM_AGG()*/ (NOT (`t`.`i`>=_UTF8MB4'j筧8') OR NOT (`t`.`i`=_UTF8MB4'暈lH忧ll6')) IS TRUE,MAX(`t`.`e`) AS `r0`,QUOTE(`t`.`i`) AS `r1` FROM `t` WHERE `t`.`h`>240817 OR `t`.`i` BETWEEN _UTF8MB4'WVz' AND _UTF8MB4'G#駧褉ZC領*lov' GROUP BY `t`.`i`) derived;").Check(
+		testkit.Rows("16"))
+	tk.MustQuery("explain format='brief' SELECT /*+ AGG_TO_COP() */ (NOT (`t`.`i`>=_UTF8MB4'j筧8') OR NOT (`t`.`i`=_UTF8MB4'暈lH忧ll6')) IS TRUE,MAX(`t`.`e`) AS `r0`,QUOTE(`t`.`i`) AS `r1` FROM `t` WHERE `t`.`h`>240817 OR `t`.`i` BETWEEN _UTF8MB4'WVz' AND _UTF8MB4'G#駧褉ZC領*lov' GROUP BY `t`.`i`;").Check(
+		testkit.Rows("Projection 2666.67 root  istrue(or(not(ge(test.t.i, j筧8)), not(eq(test.t.i, 暈lH忧ll6))))->Column#11, Column#10, quote(test.t.i)->Column#12",
+			"└─HashAgg 2666.67 root  group by:test.t.i, funcs:max(Column#15)->Column#10, funcs:firstrow(test.t.i)->test.t.i",
+			"  └─TableReader 2666.67 root  data:HashAgg",
+			"    └─HashAgg 2666.67 cop[tikv]  group by:test.t.i, funcs:max(test.t.e)->Column#15",
+			"      └─Selection 3333.33 cop[tikv]  or(gt(test.t.h, 240817), and(ge(test.t.i, \"WVz\"), le(test.t.i, \"G#駧褉ZC領*lov\")))",
+			"        └─TableFullScan 10000.00 cop[tikv] table:t, partition:p0 keep order:false, stats:pseudo"))
+	tk.MustQuery("select count(*) from (SELECT /*+ AGG_TO_COP() */ (NOT (`t`.`i`>=_UTF8MB4'j筧8') OR NOT (`t`.`i`=_UTF8MB4'暈lH忧ll6')) IS TRUE,MAX(`t`.`e`) AS `r0`,QUOTE(`t`.`i`) AS `r1` FROM `t` WHERE `t`.`h`>240817 OR `t`.`i` BETWEEN _UTF8MB4'WVz' AND _UTF8MB4'G#駧褉ZC領*lov' GROUP BY `t`.`i`) derived;").Check(
+		testkit.Rows("16"))
+}
+
 func TestProcessInfoRaceWithIndexScan(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -1104,4 +1137,17 @@ func TestProcessInfoRaceWithIndexScan(t *testing.T) {
 		tk.MustQuery("select /*+ use_index(t1, c1) */ c1 from t1 where c1 = 0 union all select /*+ use_index(t1, c2) */ c2 from t1 where c2 = 0 union all select /*+ use_index(t1, c3) */ c3 from t1 where c3 = 0 ")
 	}
 	wg.Wait()
+}
+
+func TestIssues46005(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set tidb_index_lookup_size = 1024")
+	tk.MustExec("create table t(a int, b int, c int, index idx1(a, c), index idx2(b, c))")
+	for i := 0; i < 1500; i++ {
+		tk.MustExec(fmt.Sprintf("insert into t(a,b,c) values (1, 1, %d)", i))
+	}
+
+	tk.MustQuery("select /*+ USE_INDEX_MERGE(t, idx1, idx2) */ * from t where a = 1 or b = 1 order by c limit 1025")
 }

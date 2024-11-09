@@ -17,14 +17,17 @@ package executor_test
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"testing"
 	"time"
 
 	"github.com/pingcap/failpoint"
 	ddlutil "github.com/pingcap/tidb/ddl/util"
+	"github.com/pingcap/tidb/ddl/util/callback"
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/parser/auth"
+	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/util/dbterror"
@@ -40,7 +43,7 @@ func TestRecoverTable(t *testing.T) {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/meta/autoid/mockAutoIDChange"))
 	}()
 
-	store := testkit.CreateMockStore(t)
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create database if not exists test_recover")
 	tk.MustExec("use test_recover")
@@ -92,6 +95,11 @@ func TestRecoverTable(t *testing.T) {
 	err := tk.ExecToErr(fmt.Sprintf("recover table by job %d", 10000000))
 	require.Error(t, err)
 
+	// recover table by zero JobID.
+	// related issue: https://github.com/pingcap/tidb/issues/46296
+	err = tk.ExecToErr(fmt.Sprintf("recover table by job %d", 0))
+	require.Error(t, err)
+
 	// Disable GC by manual first, then after recover table, the GC enable status should also be disabled.
 	require.NoError(t, gcutil.DisableGC(tk.Session()))
 
@@ -118,6 +126,24 @@ func TestRecoverTable(t *testing.T) {
 	tk.MustExec("flashback table t_recover to t_recover_tmp")
 	err = tk.ExecToErr("recover table t_recover")
 	require.True(t, infoschema.ErrTableExists.Equal(err))
+
+	// Test drop table failed and then recover the table should also be failed.
+	tk.MustExec("drop table if exists t_recover2")
+	tk.MustExec("create table t_recover2 (a int);")
+	jobID := int64(0)
+	hook := &callback.TestDDLCallback{Do: dom}
+	hook.OnJobRunBeforeExported = func(job *model.Job) {
+		if job.Type == model.ActionDropTable && jobID == 0 {
+			jobID = job.ID
+		}
+	}
+	dom.DDL().SetHook(hook)
+
+	tk.MustExec("drop table t_recover2")
+	tk.MustExec("recover table by job " + strconv.Itoa(int(jobID)))
+	err = tk.ExecToErr("recover table by job " + strconv.Itoa(int(jobID)))
+	require.Error(t, err)
+	require.Equal(t, "[schema:1050]Table 't_recover2' already been recover to 't_recover2', can't be recover repeatedly", err.Error())
 
 	gcEnable, err := gcutil.CheckGCEnable(tk.Session())
 	require.NoError(t, err)
@@ -423,6 +449,67 @@ func TestFlashbackWithSafeTs(t *testing.T) {
 		{
 			name:              "5 seconds ago to now, safeTS 10 secs ago",
 			sql:               fmt.Sprintf("flashback cluster to timestamp '%s'", flashbackTs),
+			injectSafeTS:      oracle.GoTimeToTS(flashbackTs.Add(-10 * time.Second)),
+			compareWithSafeTS: 1,
+		},
+	}
+	for _, testcase := range testcases {
+		t.Log(testcase.name)
+		require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/injectSafeTS",
+			fmt.Sprintf("return(%v)", testcase.injectSafeTS)))
+		if testcase.compareWithSafeTS == 1 {
+			start := time.Now()
+			tk.MustContainErrMsg(testcase.sql,
+				"cannot set flashback timestamp after min-resolved-ts")
+			// When set `flashbackGetMinSafeTimeTimeout` = 0, no retry for `getStoreGlobalMinSafeTS`.
+			require.Less(t, time.Since(start), time.Second)
+		} else {
+			tk.MustExec(testcase.sql)
+		}
+	}
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/injectSafeTS"))
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/mockFlashbackTest"))
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/changeFlashbackGetMinSafeTimeTimeout"))
+}
+
+func TestFlashbackTSOWithSafeTs(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/mockFlashbackTest", `return(true)`))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/changeFlashbackGetMinSafeTimeTimeout", `return(0)`))
+
+	timeBeforeDrop, _, safePointSQL, resetGC := MockGC(tk)
+	defer resetGC()
+
+	// Set GC safe point.
+	tk.MustExec(fmt.Sprintf(safePointSQL, timeBeforeDrop))
+
+	time.Sleep(time.Second)
+	ts, _ := tk.Session().GetStore().GetOracle().GetTimestamp(context.Background(), &oracle.Option{})
+	flashbackTs := oracle.GetTimeFromTS(ts)
+	testcases := []struct {
+		name         string
+		sql          string
+		injectSafeTS uint64
+		// compareWithSafeTS will be 0 if FlashbackTS==SafeTS, -1 if FlashbackTS < SafeTS, and +1 if FlashbackTS > SafeTS.
+		compareWithSafeTS int
+	}{
+		{
+			name:              "5 seconds ago to now, safeTS 5 secs ago",
+			sql:               fmt.Sprintf("flashback cluster to tso %d", ts),
+			injectSafeTS:      oracle.GoTimeToTS(flashbackTs),
+			compareWithSafeTS: 0,
+		},
+		{
+			name:              "10 seconds ago to now, safeTS 5 secs ago",
+			sql:               fmt.Sprintf("flashback cluster to tso %d", ts),
+			injectSafeTS:      oracle.GoTimeToTS(flashbackTs.Add(10 * time.Second)),
+			compareWithSafeTS: -1,
+		},
+		{
+			name:              "5 seconds ago to now, safeTS 10 secs ago",
+			sql:               fmt.Sprintf("flashback cluster to tso %d", ts),
 			injectSafeTS:      oracle.GoTimeToTS(flashbackTs.Add(-10 * time.Second)),
 			compareWithSafeTS: 1,
 		},

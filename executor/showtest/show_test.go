@@ -156,7 +156,7 @@ func TestShowCreateTable(t *testing.T) {
 			"  `e` varchar(20) DEFAULT 'cUrrent_tImestamp',\n"+
 			"  `f` datetime(2) DEFAULT CURRENT_TIMESTAMP(2) ON UPDATE CURRENT_TIMESTAMP(2),\n"+
 			"  `g` timestamp(2) DEFAULT CURRENT_TIMESTAMP(2) ON UPDATE CURRENT_TIMESTAMP(2),\n"+
-			"  `h` date DEFAULT CURRENT_DATE\n"+
+			"  `h` date DEFAULT (CURRENT_DATE)\n"+
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
 	))
 	tk.MustExec("drop table t")
@@ -317,7 +317,7 @@ func TestShowCreateTable(t *testing.T) {
 	tk.MustQuery("show create table default_sequence").Check(testkit.RowsWithSep("|",
 		""+
 			"default_sequence CREATE TABLE `default_sequence` (\n"+
-			"  `a` int(11) DEFAULT nextval(`test`.`seq`)\n"+
+			"  `a` int(11) DEFAULT (nextval(`test`.`seq`))\n"+
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
 	))
 
@@ -488,7 +488,7 @@ func TestShowCreateTable(t *testing.T) {
 	tk.MustExec(`create table t(a bit default (rand()))`)
 	tk.MustQuery(`show create table t`).Check(testkit.RowsWithSep("|", ""+
 		"t CREATE TABLE `t` (\n"+
-		"  `a` bit(1) DEFAULT rand()\n"+
+		"  `a` bit(1) DEFAULT (rand())\n"+
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
 
 	tk.MustExec(`drop table if exists t`)
@@ -1741,12 +1741,17 @@ func TestShowCreatePlacementPolicy(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("CREATE PLACEMENT POLICY xyz PRIMARY_REGION='us-east-1' REGIONS='us-east-1,us-east-2' FOLLOWERS=4")
 	tk.MustQuery("SHOW CREATE PLACEMENT POLICY xyz").Check(testkit.Rows("xyz CREATE PLACEMENT POLICY `xyz` PRIMARY_REGION=\"us-east-1\" REGIONS=\"us-east-1,us-east-2\" FOLLOWERS=4"))
+	tk.MustExec("CREATE PLACEMENT POLICY xyz2 FOLLOWERS=1 SURVIVAL_PREFERENCES=\"[zone, dc, host]\"")
+	tk.MustQuery("SHOW CREATE PLACEMENT POLICY xyz2").Check(testkit.Rows("xyz2 CREATE PLACEMENT POLICY `xyz2` FOLLOWERS=1 SURVIVAL_PREFERENCES=\"[zone, dc, host]\""))
+	tk.MustExec("DROP PLACEMENT POLICY xyz2")
 	// non existent policy
 	err := tk.QueryToErr("SHOW CREATE PLACEMENT POLICY doesnotexist")
 	require.Equal(t, infoschema.ErrPlacementPolicyNotExists.GenWithStackByArgs("doesnotexist").Error(), err.Error())
 	// alter and try second example
 	tk.MustExec("ALTER PLACEMENT POLICY xyz FOLLOWERS=4")
 	tk.MustQuery("SHOW CREATE PLACEMENT POLICY xyz").Check(testkit.Rows("xyz CREATE PLACEMENT POLICY `xyz` FOLLOWERS=4"))
+	tk.MustExec("ALTER PLACEMENT POLICY xyz FOLLOWERS=4 SURVIVAL_PREFERENCES=\"[zone, dc, host]\"")
+	tk.MustQuery("SHOW CREATE PLACEMENT POLICY xyz").Check(testkit.Rows("xyz CREATE PLACEMENT POLICY `xyz` FOLLOWERS=4 SURVIVAL_PREFERENCES=\"[zone, dc, host]\""))
 	tk.MustExec("DROP PLACEMENT POLICY xyz")
 }
 

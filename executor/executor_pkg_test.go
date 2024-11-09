@@ -16,13 +16,17 @@ package executor
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"runtime"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 	"unsafe"
 
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/executor/aggfuncs"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
@@ -31,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/collate"
+	"github.com/pingcap/tidb/util/disk"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/ranger"
@@ -71,6 +76,63 @@ func TestBuildKvRangesForIndexJoinWithoutCwc(t *testing.T) {
 			require.True(t, kvRange.StartKey.Cmp(kvRanges[i-1].EndKey) >= 0)
 		}
 	}
+}
+
+func TestBuildKvRangesForIndexJoinWithoutCwcAndWithMemoryTracker(t *testing.T) {
+	indexRanges := make([]*ranger.Range, 0, 6)
+	indexRanges = append(indexRanges, generateIndexRange(1, 1, 1, 1, 1))
+	indexRanges = append(indexRanges, generateIndexRange(1, 1, 2, 1, 1))
+	indexRanges = append(indexRanges, generateIndexRange(1, 1, 2, 1, 2))
+	indexRanges = append(indexRanges, generateIndexRange(1, 1, 3, 1, 1))
+	indexRanges = append(indexRanges, generateIndexRange(2, 1, 1, 1, 1))
+	indexRanges = append(indexRanges, generateIndexRange(2, 1, 2, 1, 1))
+
+	bytesConsumed1 := int64(0)
+	{
+		joinKeyRows := make([]*indexJoinLookUpContent, 0, 10)
+		for i := int64(0); i < 10; i++ {
+			joinKeyRows = append(joinKeyRows, &indexJoinLookUpContent{keys: generateDatumSlice(1, i)})
+		}
+
+		keyOff2IdxOff := []int{1, 3}
+		ctx := mock.NewContext()
+		memTracker := memory.NewTracker(memory.LabelForIndexWorker, -1)
+		kvRanges, err := buildKvRangesForIndexJoin(ctx, 0, 0, joinKeyRows, indexRanges, keyOff2IdxOff, nil, memTracker, nil)
+		require.NoError(t, err)
+		// Check the kvRanges is in order.
+		for i, kvRange := range kvRanges {
+			require.True(t, kvRange.StartKey.Cmp(kvRange.EndKey) < 0)
+			if i > 0 {
+				require.True(t, kvRange.StartKey.Cmp(kvRanges[i-1].EndKey) >= 0)
+			}
+		}
+		bytesConsumed1 = memTracker.BytesConsumed()
+	}
+
+	bytesConsumed2 := int64(0)
+	{
+		joinKeyRows := make([]*indexJoinLookUpContent, 0, 20)
+		for i := int64(0); i < 20; i++ {
+			joinKeyRows = append(joinKeyRows, &indexJoinLookUpContent{keys: generateDatumSlice(1, i)})
+		}
+
+		keyOff2IdxOff := []int{1, 3}
+		ctx := mock.NewContext()
+		memTracker := memory.NewTracker(memory.LabelForIndexWorker, -1)
+		kvRanges, err := buildKvRangesForIndexJoin(ctx, 0, 0, joinKeyRows, indexRanges, keyOff2IdxOff, nil, memTracker, nil)
+		require.NoError(t, err)
+		// Check the kvRanges is in order.
+		for i, kvRange := range kvRanges {
+			require.True(t, kvRange.StartKey.Cmp(kvRange.EndKey) < 0)
+			if i > 0 {
+				require.True(t, kvRange.StartKey.Cmp(kvRanges[i-1].EndKey) >= 0)
+			}
+		}
+		bytesConsumed2 = memTracker.BytesConsumed()
+	}
+
+	require.Equal(t, 2*bytesConsumed1, bytesConsumed2)
+	require.Equal(t, int64(25570), bytesConsumed1)
 }
 
 func generateIndexRange(vals ...int64) *ranger.Range {
@@ -349,5 +411,75 @@ func TestSortSpillDisk(t *testing.T) {
 	// Don't spill too many partitions.
 	require.True(t, len(exec.partitionList) <= 4)
 	err = exec.Close()
+	require.NoError(t, err)
+}
+
+func TestSortSpillDiskReturnErrAndClearFile(t *testing.T) {
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/executor/testSortedRowContainerSpill", "return(true)"))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/executor/testSortedRowContainerSpill"))
+	}()
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/executor/errInSortExecFetchRowChunks", "1*return(0)->1*return(1)->return(2)"))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/executor/errInSortExecFetchRowChunks"))
+	}()
+	disk.InitializeTempDir() // Clear all files
+	ctx := mock.NewContext()
+	ctx.GetSessionVars().MemQuota.MemQuotaQuery = 1
+	ctx.GetSessionVars().InitChunkSize = variable.DefMaxChunkSize
+	ctx.GetSessionVars().MaxChunkSize = variable.DefMaxChunkSize
+	ctx.GetSessionVars().MemTracker = memory.NewTracker(memory.LabelForSession, 1)
+	ctx.GetSessionVars().StmtCtx.MemTracker = memory.NewTracker(memory.LabelForSQLText, -1)
+	ctx.GetSessionVars().StmtCtx.MemTracker.AttachTo(ctx.GetSessionVars().MemTracker)
+	cas := &sortCase{rows: 20480, orderByIdx: []int{0, 1}, ndvs: []int{0, 0}, ctx: ctx}
+	opt := mockDataSourceParameters{
+		schema: expression.NewSchema(cas.columns()...),
+		rows:   cas.rows,
+		ctx:    cas.ctx,
+		ndvs:   cas.ndvs,
+	}
+	dataSource := buildMockDataSource(opt)
+	exec := &SortExec{
+		baseExecutor: newBaseExecutor(cas.ctx, dataSource.schema, 0, dataSource),
+		ByItems:      make([]*plannerutil.ByItems, 0, len(cas.orderByIdx)),
+		schema:       dataSource.schema,
+	}
+	for _, idx := range cas.orderByIdx {
+		exec.ByItems = append(exec.ByItems, &plannerutil.ByItems{Expr: cas.columns()[idx]})
+	}
+	tmpCtx := context.Background()
+	chk := newFirstChunk(exec)
+	dataSource.prepareChunks()
+	err := exec.Open(tmpCtx)
+	require.NoError(t, err)
+
+	for {
+		err = exec.Next(tmpCtx, chk)
+		if chk.NumRows() == 0 || err != nil {
+			break
+		}
+	}
+	require.ErrorContains(t, err, "mockError")
+
+	err = exec.Close()
+	require.NoError(t, err)
+
+	// Check the temp files are deleted.
+	path := config.GetGlobalConfig().TempStoragePath
+	// Path is existed.
+	_, err = os.Stat(path)
+	require.False(t, os.IsNotExist(err))
+
+	err = filepath.Walk(path, func(filePath string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+
+		if !info.IsDir() {
+			require.False(t, strings.Contains(filePath, "chunk")) // Check the temp files chunk.ListInDisk are deleted.
+		}
+		return nil
+	})
+
 	require.NoError(t, err)
 }

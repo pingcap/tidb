@@ -1241,6 +1241,35 @@ func TestAggPushDownCountStar(t *testing.T) {
 	tk.MustQuery("select count(*) from c, o where c.c_id=o.c_id").Check(testkit.Rows("5"))
 }
 
+func TestAggPushDownUnionAndMPP(t *testing.T) {
+	store := testkit.CreateMockStore(t, withMockTiFlash(2))
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("use test")
+	tk.MustExec("create table t (a int, b int)")
+	tk.MustExec("alter table t set tiflash replica 1")
+	tk.MustExec("insert into t values (1, 1);")
+	tk.MustExec("insert into t values (1, 1);")
+	tk.MustExec("insert into t values (1, 1);")
+	tk.MustExec("insert into t values (1, 1);")
+	tk.MustExec("insert into t values (1, 1);")
+	tk.MustExec("set @@tidb_allow_mpp=1;")
+	tk.MustExec("set @@tidb_enforce_mpp=1;")
+	tk.MustExec("set @@tidb_opt_agg_push_down=1")
+
+	tk.MustExec("create table c(c_id int)")
+	tk.MustExec("create table o(o_id int, c_id int)")
+	tk.MustExec("insert into c values(1),(1),(1),(1)")
+	tk.MustExec("insert into o values(1,1),(1,1),(1,2)")
+	tk.MustExec("alter table c set tiflash replica 1")
+	tk.MustExec("alter table o set tiflash replica 1")
+
+	tk.MustQuery("select a, count(1) from (select a, b from t union all select a, " +
+		"b from t) s group by a order by a").Check(testkit.Rows("1 10"))
+
+	tk.MustQuery("select o.o_id, count(*) from c, o where c.c_id=o.o_id group by o.o_id").Check(testkit.Rows("1 12"))
+}
+
 func TestGroupStreamAggOnTiFlash(t *testing.T) {
 	store := testkit.CreateMockStore(t, withMockTiFlash(2))
 	tk := testkit.NewTestKit(t, store)
@@ -1420,19 +1449,19 @@ func TestDisaggregatedTiFlashQuery(t *testing.T) {
 	err = domain.GetDomain(tk.Session()).DDL().UpdateTableReplicaInfo(tk.Session(), tb.Meta().ID, true)
 	require.NoError(t, err)
 	tk.MustQuery("explain select * from t1 where c1 < 2").Check(testkit.Rows(
-		"PartitionUnion_10 9970.00 root  ",
-		"├─TableReader_15 3323.33 root  MppVersion: 1, data:ExchangeSender_14",
-		"│ └─ExchangeSender_14 3323.33 mpp[tiflash]  ExchangeType: PassThrough",
-		"│   └─Selection_13 3323.33 mpp[tiflash]  lt(test.t1.c1, 2)",
-		"│     └─TableFullScan_12 10000.00 mpp[tiflash] table:t1, partition:p0 pushed down filter:empty, keep order:false, stats:pseudo",
-		"├─TableReader_19 3323.33 root  MppVersion: 1, data:ExchangeSender_18",
-		"│ └─ExchangeSender_18 3323.33 mpp[tiflash]  ExchangeType: PassThrough",
-		"│   └─Selection_17 3323.33 mpp[tiflash]  lt(test.t1.c1, 2)",
-		"│     └─TableFullScan_16 10000.00 mpp[tiflash] table:t1, partition:p1 pushed down filter:empty, keep order:false, stats:pseudo",
-		"└─TableReader_23 3323.33 root  MppVersion: 1, data:ExchangeSender_22",
-		"  └─ExchangeSender_22 3323.33 mpp[tiflash]  ExchangeType: PassThrough",
-		"    └─Selection_21 3323.33 mpp[tiflash]  lt(test.t1.c1, 2)",
-		"      └─TableFullScan_20 10000.00 mpp[tiflash] table:t1, partition:p2 pushed down filter:empty, keep order:false, stats:pseudo"))
+		"PartitionUnion_11 9970.00 root  ",
+		"├─TableReader_16 3323.33 root  MppVersion: 1, data:ExchangeSender_15",
+		"│ └─ExchangeSender_15 3323.33 mpp[tiflash]  ExchangeType: PassThrough",
+		"│   └─Selection_14 3323.33 mpp[tiflash]  lt(test.t1.c1, 2)",
+		"│     └─TableFullScan_13 10000.00 mpp[tiflash] table:t1, partition:p0 pushed down filter:empty, keep order:false, stats:pseudo",
+		"├─TableReader_20 3323.33 root  MppVersion: 1, data:ExchangeSender_19",
+		"│ └─ExchangeSender_19 3323.33 mpp[tiflash]  ExchangeType: PassThrough",
+		"│   └─Selection_18 3323.33 mpp[tiflash]  lt(test.t1.c1, 2)",
+		"│     └─TableFullScan_17 10000.00 mpp[tiflash] table:t1, partition:p1 pushed down filter:empty, keep order:false, stats:pseudo",
+		"└─TableReader_24 3323.33 root  MppVersion: 1, data:ExchangeSender_23",
+		"  └─ExchangeSender_23 3323.33 mpp[tiflash]  ExchangeType: PassThrough",
+		"    └─Selection_22 3323.33 mpp[tiflash]  lt(test.t1.c1, 2)",
+		"      └─TableFullScan_21 10000.00 mpp[tiflash] table:t1, partition:p2 pushed down filter:empty, keep order:false, stats:pseudo"))
 }
 
 func TestMPPMemoryTracker(t *testing.T) {

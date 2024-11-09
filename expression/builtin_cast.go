@@ -272,14 +272,15 @@ func (c *castAsDecimalFunctionClass) getFunction(ctx sessionctx.Context, args []
 type castAsStringFunctionClass struct {
 	baseFunctionClass
 
-	tp *types.FieldType
+	tp                *types.FieldType
+	isExplicitCharset bool
 }
 
 func (c *castAsStringFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (sig builtinFunc, err error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	bf, err := newBaseBuiltinFunc(ctx, c.funcName, args, c.tp)
+	bf, err := newBaseBuiltinCastFunc4String(ctx, c.funcName, args, c.tp, c.isExplicitCharset)
 	if err != nil {
 		return nil, err
 	}
@@ -874,7 +875,7 @@ func (b *builtinCastStringAsJSONSig) evalJSON(row chunk.Row) (res types.BinaryJS
 	typ := b.args[0].GetType()
 	if types.IsBinaryStr(typ) {
 		buf := []byte(val)
-		if typ.GetType() == mysql.TypeString {
+		if typ.GetType() == mysql.TypeString && typ.GetFlen() > 0 {
 			// the tailing zero should also be in the opaque json
 			buf = make([]byte, typ.GetFlen())
 			copy(buf, val)
@@ -2080,13 +2081,13 @@ func BuildCastCollationFunction(ctx sessionctx.Context, expr Expression, ec *Exp
 
 // BuildCastFunction builds a CAST ScalarFunction from the Expression.
 func BuildCastFunction(ctx sessionctx.Context, expr Expression, tp *types.FieldType) (res Expression) {
-	res, err := BuildCastFunctionWithCheck(ctx, expr, tp)
+	res, err := BuildCastFunctionWithCheck(ctx, expr, tp, false)
 	terror.Log(err)
 	return
 }
 
 // BuildCastFunctionWithCheck builds a CAST ScalarFunction from the Expression and return error if any.
-func BuildCastFunctionWithCheck(ctx sessionctx.Context, expr Expression, tp *types.FieldType) (res Expression, err error) {
+func BuildCastFunctionWithCheck(ctx sessionctx.Context, expr Expression, tp *types.FieldType, isExplicitCharset bool) (res Expression, err error) {
 	argType := expr.GetType()
 	// If source argument's nullable, then target type should be nullable
 	if !mysql.HasNotNullFlag(argType.GetFlag()) {
@@ -2112,7 +2113,7 @@ func BuildCastFunctionWithCheck(ctx sessionctx.Context, expr Expression, tp *typ
 			fc = &castAsJSONFunctionClass{baseFunctionClass{ast.Cast, 1, 1}, tp}
 		}
 	case types.ETString:
-		fc = &castAsStringFunctionClass{baseFunctionClass{ast.Cast, 1, 1}, tp}
+		fc = &castAsStringFunctionClass{baseFunctionClass{ast.Cast, 1, 1}, tp, isExplicitCharset}
 		if expr.GetType().GetType() == mysql.TypeBit {
 			tp.SetFlen((expr.GetType().GetFlen() + 7) / 8)
 		}
@@ -2254,6 +2255,10 @@ func WrapWithCastAsString(ctx sessionctx.Context, expr Expression) Expression {
 		charset, collate := expr.CharsetAndCollation()
 		tp.SetCharset(charset)
 		tp.SetCollate(collate)
+	} else if exprTp.GetType() == mysql.TypeBit {
+		// Implicitly casting BIT to string will make it a binary
+		tp.SetCharset(charset.CharsetBin)
+		tp.SetCollate(charset.CollationBin)
 	} else {
 		charset, collate := ctx.GetSessionVars().GetCharsetInfo()
 		tp.SetCharset(charset)

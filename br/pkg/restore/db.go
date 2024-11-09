@@ -20,6 +20,7 @@ import (
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	tidbutil "github.com/pingcap/tidb/util"
+	"github.com/pingcap/tidb/util/cmp"
 	"go.uber.org/zap"
 	"golang.org/x/exp/slices"
 )
@@ -254,7 +255,7 @@ func (db *DB) CreateTablePostRestore(ctx context.Context, table *metautil.Table,
 				utils.EncloseName(table.DB.Name.O),
 				utils.EncloseName(table.Info.Name.O),
 				table.Info.AutoIncID)
-		} else if table.Info.PKIsHandle && table.Info.ContainsAutoRandomBits() {
+		} else if table.Info.ContainsAutoRandomBits() {
 			restoreMetaSQL = fmt.Sprintf(
 				"alter table %s.%s auto_random_base = %d",
 				utils.EncloseName(table.DB.Name.O),
@@ -404,8 +405,8 @@ func (db *DB) ensureTablePlacementPolicies(ctx context.Context, tableInfo *model
 // FilterDDLJobs filters ddl jobs.
 func FilterDDLJobs(allDDLJobs []*model.Job, tables []*metautil.Table) (ddlJobs []*model.Job) {
 	// Sort the ddl jobs by schema version in descending order.
-	slices.SortFunc(allDDLJobs, func(i, j *model.Job) bool {
-		return i.BinlogInfo.SchemaVersion > j.BinlogInfo.SchemaVersion
+	slices.SortFunc(allDDLJobs, func(i, j *model.Job) int {
+		return cmp.Compare(j.BinlogInfo.SchemaVersion, i.BinlogInfo.SchemaVersion)
 	})
 	dbs := getDatabases(tables)
 	for _, db := range dbs {

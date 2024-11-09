@@ -18,6 +18,7 @@ import (
 	"context"
 	"crypto/tls"
 	"fmt"
+	"math"
 	"math/rand"
 	"net/url"
 	"strings"
@@ -106,7 +107,7 @@ func TrySetupGlobalResourceController(ctx context.Context, serverID uint64, s kv
 		return errors.New("cannot setup up resource controller, should use tikv storage")
 	}
 
-	control, err := rmclient.NewResourceGroupController(ctx, serverID, store.GetPDClient(), nil, rmclient.WithMaxWaitDuration(time.Second*30))
+	control, err := rmclient.NewResourceGroupController(ctx, serverID, store.GetPDClient(), nil)
 	if err != nil {
 		return err
 	}
@@ -183,6 +184,9 @@ func (d TiKVDriver) OpenWithOptions(path string, options ...Option) (resStore kv
 		KeyPath:  d.security.ClusterSSLKey,
 	},
 		pd.WithGRPCDialOptions(
+			// keep the same with etcd, see
+			// https://github.com/etcd-io/etcd/blob/5704c6148d798ea444db26a966394406d8c10526/server/etcdserver/api/v3rpc/grpc.go#L34
+			grpc.WithDefaultCallOptions(grpc.MaxCallRecvMsgSize(math.MaxInt32)),
 			grpc.WithKeepaliveParams(keepalive.ClientParameters{
 				Time:    time.Duration(d.tikvConfig.GrpcKeepAliveTime) * time.Second,
 				Timeout: time.Duration(d.tikvConfig.GrpcKeepAliveTimeout) * time.Second,

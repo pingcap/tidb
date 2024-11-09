@@ -575,8 +575,20 @@ func (n *ColumnOption) Restore(ctx *format.RestoreCtx) error {
 		ctx.WriteKeyWord("AUTO_INCREMENT")
 	case ColumnOptionDefaultValue:
 		ctx.WriteKeyWord("DEFAULT ")
+		printOuterParentheses := false
+		if funcCallExpr, ok := n.Expr.(*FuncCallExpr); ok {
+			if name := funcCallExpr.FnName.L; name != CurrentTimestamp {
+				printOuterParentheses = true
+			}
+		}
+		if printOuterParentheses {
+			ctx.WritePlain("(")
+		}
 		if err := n.Expr.Restore(ctx); err != nil {
 			return errors.Annotate(err, "An error occurred while splicing ColumnOption DefaultValue Expr")
+		}
+		if printOuterParentheses {
+			ctx.WritePlain(")")
 		}
 	case ColumnOptionUniqKey:
 		ctx.WriteKeyWord("UNIQUE KEY")
@@ -4228,16 +4240,16 @@ type RecoverTableStmt struct {
 // Restore implements Node interface.
 func (n *RecoverTableStmt) Restore(ctx *format.RestoreCtx) error {
 	ctx.WriteKeyWord("RECOVER TABLE ")
-	if n.JobID != 0 {
-		ctx.WriteKeyWord("BY JOB ")
-		ctx.WritePlainf("%d", n.JobID)
-	} else {
+	if n.Table != nil {
 		if err := n.Table.Restore(ctx); err != nil {
 			return errors.Annotate(err, "An error occurred while splicing RecoverTableStmt Table")
 		}
 		if n.JobNum > 0 {
 			ctx.WritePlainf(" %d", n.JobNum)
 		}
+	} else {
+		ctx.WriteKeyWord("BY JOB ")
+		ctx.WritePlainf("%d", n.JobID)
 	}
 	return nil
 }
@@ -4264,9 +4276,10 @@ func (n *RecoverTableStmt) Accept(v Visitor) (Node, bool) {
 type FlashBackToTimestampStmt struct {
 	ddlNode
 
-	FlashbackTS ExprNode
-	Tables      []*TableName
-	DBName      model.CIStr
+	FlashbackTS  ExprNode
+	FlashbackTSO uint64
+	Tables       []*TableName
+	DBName       model.CIStr
 }
 
 // Restore implements Node interface
@@ -4288,9 +4301,14 @@ func (n *FlashBackToTimestampStmt) Restore(ctx *format.RestoreCtx) error {
 	} else {
 		ctx.WriteKeyWord("CLUSTER")
 	}
-	ctx.WriteKeyWord(" TO TIMESTAMP ")
-	if err := n.FlashbackTS.Restore(ctx); err != nil {
-		return errors.Annotate(err, "An error occurred while splicing FlashBackToTimestampStmt.FlashbackTS")
+	if n.FlashbackTSO == 0 {
+		ctx.WriteKeyWord(" TO TIMESTAMP ")
+		if err := n.FlashbackTS.Restore(ctx); err != nil {
+			return errors.Annotate(err, "An error occurred while splicing FlashBackToTimestampStmt.FlashbackTS")
+		}
+	} else {
+		ctx.WriteKeyWord(" TO TSO ")
+		ctx.WritePlainf("%d", n.FlashbackTSO)
 	}
 	return nil
 }
@@ -4311,11 +4329,14 @@ func (n *FlashBackToTimestampStmt) Accept(v Visitor) (Node, bool) {
 			n.Tables[i] = node.(*TableName)
 		}
 	}
-	node, ok := n.FlashbackTS.Accept(v)
-	if !ok {
-		return n, false
+
+	if n.FlashbackTSO == 0 {
+		node, ok := n.FlashbackTS.Accept(v)
+		if !ok {
+			return n, false
+		}
+		n.FlashbackTS = node.(ExprNode)
 	}
-	n.FlashbackTS = node.(ExprNode)
 	return v.Leave(n)
 }
 

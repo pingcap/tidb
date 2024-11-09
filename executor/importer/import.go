@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/mydump"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/executor/asyncloaddata"
+	"github.com/pingcap/tidb/expression"
 	tidbkv "github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/model"
@@ -39,6 +40,7 @@ import (
 	"github.com/pingcap/tidb/parser/terror"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/util/chunk"
@@ -934,6 +936,26 @@ func (e *LoadDataController) toMyDumpFiles() []mydump.FileInfo {
 		})
 	}
 	return res
+}
+
+// CreateColAssignExprs creates the column assignment expressions using session context.
+// RewriteAstExpr will write ast node in place(due to xxNode.Accept), but it doesn't change node content,
+// so we sync it.
+func (e *LoadDataController) CreateColAssignExprs(sctx sessionctx.Context) ([]expression.Expression, []stmtctx.SQLWarn, error) {
+	res := make([]expression.Expression, 0, len(e.ColumnAssignments))
+	allWarnings := []stmtctx.SQLWarn{}
+	for _, assign := range e.ColumnAssignments {
+		newExpr, err := expression.RewriteAstExpr(sctx, assign.Expr, nil, nil, false)
+		// col assign expr warnings is static, we should generate it for each row processed.
+		// so we save it and clear it here.
+		allWarnings = append(allWarnings, sctx.GetSessionVars().StmtCtx.GetWarnings()...)
+		sctx.GetSessionVars().StmtCtx.SetWarnings(nil)
+		if err != nil {
+			return nil, nil, err
+		}
+		res = append(res, newExpr)
+	}
+	return res, allWarnings, nil
 }
 
 // JobImportParam is the param of the job import.

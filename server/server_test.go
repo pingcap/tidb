@@ -15,7 +15,9 @@
 package server
 
 import (
+	"bufio"
 	"bytes"
+	"context"
 	"database/sql"
 	"encoding/json"
 	"fmt"
@@ -35,11 +37,16 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/log"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/kv"
 	tmysql "github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/testkit"
+	"github.com/pingcap/tidb/testkit/testdata"
 	"github.com/pingcap/tidb/testkit/testenv"
+	"github.com/pingcap/tidb/util/arena"
+	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/replayer"
 	"github.com/pingcap/tidb/util/versioninfo"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
@@ -1573,6 +1580,73 @@ func (cli *testServerClient) runTestLoadData(t *testing.T, server *Server) {
 		require.NoError(t, rows.Close())
 		dbt.MustExec("drop table if exists pn")
 	})
+
+	err = fp.Close()
+	require.NoError(t, err)
+	err = os.Remove(path)
+	require.NoError(t, err)
+
+	fp, err = os.Create(path)
+	require.NoError(t, err)
+	require.NotNil(t, fp)
+
+	_, err = fp.WriteString(
+		`1,2` + "\n" +
+			`1,2,,4` + "\n" +
+			`1,2,3` + "\n" +
+			`,,,` + "\n" +
+			`,,3` + "\n" +
+			`1,,,4` + "\n")
+	require.NoError(t, err)
+
+	nullInt32 := func(val int32, valid bool) sql.NullInt32 {
+		return sql.NullInt32{Int32: val, Valid: valid}
+	}
+	expects := []struct {
+		col1 sql.NullInt32
+		col2 sql.NullInt32
+		col3 sql.NullInt32
+		col4 sql.NullInt32
+	}{
+		{nullInt32(1, true), nullInt32(2, true), nullInt32(0, false), nullInt32(0, false)},
+		{nullInt32(1, true), nullInt32(2, true), nullInt32(0, false), nullInt32(4, true)},
+		{nullInt32(1, true), nullInt32(2, true), nullInt32(3, true), nullInt32(0, false)},
+		{nullInt32(0, true), nullInt32(0, false), nullInt32(0, false), nullInt32(0, false)},
+		{nullInt32(0, true), nullInt32(0, false), nullInt32(3, true), nullInt32(0, false)},
+		{nullInt32(1, true), nullInt32(0, false), nullInt32(0, false), nullInt32(4, true)},
+	}
+
+	cli.runTestsOnNewDB(t, func(config *mysql.Config) {
+		config.AllowAllFiles = true
+		config.Params["sql_mode"] = "''"
+	}, "LoadData", func(dbt *testkit.DBTestKit) {
+		dbt.MustExec("drop table if exists pn")
+		dbt.MustExec("create table pn (c1 int, c2 int, c3 int, c4 int)")
+		dbt.MustExec("set @@tidb_dml_batch_size = 1")
+		_, err1 := dbt.GetDB().Exec(fmt.Sprintf(`load data local infile %q into table pn FIELDS TERMINATED BY ',' (c1, @val2, @val3, @val4)
+							 SET c2 = NULLIF(@val2, ''), c3 = NULLIF(@val3, ''), c4 = NULLIF(@val4, '')`, path))
+		require.NoError(t, err1)
+		var (
+			a sql.NullInt32
+			b sql.NullInt32
+			c sql.NullInt32
+			d sql.NullInt32
+		)
+		rows := dbt.MustQuery("select * from pn")
+		for _, expect := range expects {
+			require.Truef(t, rows.Next(), "unexpected data")
+			err = rows.Scan(&a, &b, &c, &d)
+			require.NoError(t, err)
+			require.Equal(t, expect.col1, a)
+			require.Equal(t, expect.col2, b)
+			require.Equal(t, expect.col3, c)
+			require.Equal(t, expect.col4, d)
+		}
+
+		require.Falsef(t, rows.Next(), "unexpected data")
+		require.NoError(t, rows.Close())
+		dbt.MustExec("drop table if exists pn")
+	})
 }
 
 func (cli *testServerClient) runTestConcurrentUpdate(t *testing.T) {
@@ -2080,6 +2154,18 @@ func (cli *testServerClient) runTestMultiStatements(t *testing.T) {
 		// the create table + drop table statements will return errors.
 		dbt.MustExec("CREATE DATABASE multistmtuse")
 		dbt.MustExec("use multistmtuse; create table if not exists t1 (id int); drop table t1;")
+
+		// Test issue #50012
+		dbt.MustExec("create database if not exists test;")
+		dbt.MustExec("use test;")
+		dbt.MustExec("CREATE TABLE t (a bigint(20), b int(10), PRIMARY KEY (b, a), UNIQUE KEY uk_a (a));")
+		dbt.MustExec("insert into t values (1, 1);")
+		dbt.MustExec("begin;")
+		rs := dbt.MustQuery("delete from t where a = 1; select 1;")
+		rs.Close()
+		rs = dbt.MustQuery("update t set b = 2 where a = 1; select 1;")
+		rs.Close()
+		dbt.MustExec("commit;")
 	})
 }
 
@@ -2450,4 +2536,144 @@ func (cli *testServerClient) runTestInfoschemaClientErrors(t *testing.T) {
 			}
 		}
 	})
+}
+
+func TestIssue46197(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tidbdrv := NewTiDBDriver(store)
+	cfg := newTestConfig()
+	cfg.Port, cfg.Status.StatusPort = 0, 0
+	cfg.Status.ReportStatus = false
+	server, err := NewServer(cfg, tidbdrv)
+	require.NoError(t, err)
+	defer server.Close()
+
+	// Mock the content of the SQL file in PacketIO buffer.
+	// First 4 bytes are the header, followed by the actual content.
+	// This acts like we are sending "select * from t1;" from the client when tidb requests the "a.txt" file.
+	var inBuffer bytes.Buffer
+	_, err = inBuffer.Write([]byte{0x11, 0x00, 0x00, 0x01})
+	require.NoError(t, err)
+	_, err = inBuffer.Write([]byte("select * from t1;"))
+	require.NoError(t, err)
+
+	// clientConn setup
+	brc := newBufferedReadConn(&bytesConn{b: inBuffer})
+	pkt := newPacketIO(brc)
+	pkt.bufWriter = bufio.NewWriter(bytes.NewBuffer(nil))
+	cc := &clientConn{
+		server:     server,
+		alloc:      arena.NewAllocator(1024),
+		chunkAlloc: chunk.NewAllocator(),
+		pkt:        pkt,
+		capability: tmysql.ClientLocalFiles,
+	}
+	ctx := context.Background()
+	cc.setCtx(&TiDBContext{Session: tk.Session(), stmts: make(map[int]*TiDBStatement)})
+
+	tk.MustExec("use test")
+	tk.MustExec("create table t1 (a int, b int)")
+
+	// 3 is mysql.ComQuery, followed by the SQL text.
+	require.NoError(t, cc.dispatch(ctx, []byte("\u0003plan replayer dump explain 'a.txt'")))
+
+	// clean up
+	path := testdata.ConvertRowsToStrings(tk.MustQuery("select @@tidb_last_plan_replayer_token").Rows())
+	require.NoError(t, os.Remove(filepath.Join(replayer.GetPlanReplayerDirName(), path[0])))
+}
+
+func (cli *testServerClient) RunTestStmtCountLimit(t *testing.T) {
+	originalStmtCountLimit := config.GetGlobalConfig().Performance.StmtCountLimit
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.Performance.StmtCountLimit = 3
+	})
+	defer func() {
+		config.UpdateGlobal(func(conf *config.Config) {
+			conf.Performance.StmtCountLimit = originalStmtCountLimit
+		})
+	}()
+
+	cli.runTests(t, nil, func(dbt *testkit.DBTestKit) {
+		dbt.MustExec("create table t (id int key);")
+		dbt.MustExec("set @@tidb_disable_txn_auto_retry=0;")
+		dbt.MustExec("set autocommit=0;")
+		dbt.MustExec("begin optimistic;")
+		dbt.MustExec("insert into t values (1);")
+		dbt.MustExec("insert into t values (2);")
+		_, err := dbt.GetDB().Query("select * from t for update;")
+		require.Error(t, err)
+		require.Equal(t, "Error 1105 (HY000): statement count 4 exceeds the transaction limitation, transaction has been rollback, autocommit = false", err.Error())
+		dbt.MustExec("insert into t values (3);")
+		dbt.MustExec("commit;")
+		rows := dbt.MustQuery("select * from t;")
+		var id int
+		count := 0
+		for rows.Next() {
+			rows.Scan(&id)
+			count++
+		}
+		require.NoError(t, rows.Close())
+		require.Equal(t, 3, id)
+		require.Equal(t, 1, count)
+
+		dbt.MustExec("delete from t;")
+		dbt.MustExec("commit;")
+		dbt.MustExec("set @@tidb_disable_txn_auto_retry=0;")
+		dbt.MustExec("set autocommit=0;")
+		dbt.MustExec("begin optimistic;")
+		dbt.MustExec("insert into t values (1);")
+		dbt.MustExec("insert into t values (2);")
+		_, err = dbt.GetDB().Exec("insert into t values (3);")
+		require.Error(t, err)
+		require.Equal(t, "Error 1105 (HY000): statement count 4 exceeds the transaction limitation, transaction has been rollback, autocommit = false", err.Error())
+		dbt.MustExec("commit;")
+		rows = dbt.MustQuery("select count(*) from t;")
+		for rows.Next() {
+			rows.Scan(&count)
+		}
+		require.NoError(t, rows.Close())
+		require.Equal(t, 0, count)
+
+		dbt.MustExec("delete from t;")
+		dbt.MustExec("commit;")
+		dbt.MustExec("set @@tidb_batch_commit=1;")
+		dbt.MustExec("set @@tidb_disable_txn_auto_retry=0;")
+		dbt.MustExec("set autocommit=0;")
+		dbt.MustExec("begin optimistic;")
+		dbt.MustExec("insert into t values (1);")
+		dbt.MustExec("insert into t values (2);")
+		dbt.MustExec("insert into t values (3);")
+		dbt.MustExec("insert into t values (4);")
+		dbt.MustExec("insert into t values (5);")
+		dbt.MustExec("commit;")
+		rows = dbt.MustQuery("select count(*) from t;")
+		for rows.Next() {
+			rows.Scan(&count)
+		}
+		require.NoError(t, rows.Close())
+		require.Equal(t, 5, count)
+	})
+}
+
+func TestSeverHealth(t *testing.T) {
+	RunInGoTestChan = make(chan struct{})
+	RunInGoTest = true
+	store := testkit.CreateMockStore(t)
+	tidbdrv := NewTiDBDriver(store)
+	cfg := newTestConfig()
+	cfg.Port, cfg.Status.StatusPort = 0, 0
+	cfg.Status.ReportStatus = false
+	server, err := NewServer(cfg, tidbdrv)
+	require.NoError(t, err)
+	require.False(t, server.health.Load(), "server should not be healthy")
+	go func() {
+		err = server.Run(nil)
+		require.NoError(t, err)
+	}()
+	defer server.Close()
+	for range RunInGoTestChan {
+		// wait for server to be healthy
+	}
+	require.True(t, server.health.Load(), "server should be healthy")
 }

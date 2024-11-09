@@ -567,13 +567,6 @@ type LogicalProjection struct {
 	// Currently it is "true" only when the current sql query is a "DO" statement.
 	// See "https://dev.mysql.com/doc/refman/5.7/en/do.html" for more detail.
 	CalculateNoDelay bool
-
-	// AvoidColumnEvaluator is a temporary variable which is ONLY used to avoid
-	// building columnEvaluator for the expressions of Projection which is
-	// built by buildProjection4Union.
-	// This can be removed after column pool being supported.
-	// Related issue: TiDB#8141(https://github.com/pingcap/tidb/issues/8141)
-	AvoidColumnEvaluator bool
 }
 
 // ExtractFD implements the logical plan interface, extracting the FD from bottom up.
@@ -1142,9 +1135,13 @@ type LogicalMaxOneRow struct {
 }
 
 // LogicalTableDual represents a dual table plan.
+// Note that sometimes we don't set schema for LogicalTableDual (most notably in buildTableDual()), which means
+// outputting 0/1 row with zero column. This semantic may be different from your expectation sometimes but should not
+// cause any actual problems now.
 type LogicalTableDual struct {
 	logicalSchemaProducer
 
+	// RowCount could only be 0 or 1.
 	RowCount int
 }
 
@@ -1550,8 +1547,8 @@ func (ds *DataSource) fillIndexPath(path *util.AccessPath, conds []expression.Ex
 				path.IdxCols = append(path.IdxCols, handleCol)
 				path.IdxColLens = append(path.IdxColLens, types.UnspecifiedLength)
 				// Also updates the map that maps the index id to its prefix column ids.
-				if len(ds.tableStats.HistColl.Idx2ColumnIDs[path.Index.ID]) == len(path.Index.Columns) {
-					ds.tableStats.HistColl.Idx2ColumnIDs[path.Index.ID] = append(ds.tableStats.HistColl.Idx2ColumnIDs[path.Index.ID], handleCol.UniqueID)
+				if len(ds.tableStats.HistColl.Idx2ColUniqueIDs[path.Index.ID]) == len(path.Index.Columns) {
+					ds.tableStats.HistColl.Idx2ColUniqueIDs[path.Index.ID] = append(ds.tableStats.HistColl.Idx2ColUniqueIDs[path.Index.ID], handleCol.UniqueID)
 				}
 			}
 		}
@@ -2006,6 +2003,7 @@ type CTEClass struct {
 	// pushDownPredicates may be push-downed by different references.
 	pushDownPredicates []expression.Expression
 	ColumnMap          map[string]*expression.Column
+	isOuterMostCTE     bool
 }
 
 const emptyCTEClassSize = int64(unsafe.Sizeof(CTEClass{}))
@@ -2037,11 +2035,10 @@ func (cc *CTEClass) MemoryUsage() (sum int64) {
 type LogicalCTE struct {
 	logicalSchemaProducer
 
-	cte            *CTEClass
-	cteAsName      model.CIStr
-	cteName        model.CIStr
-	seedStat       *property.StatsInfo
-	isOuterMostCTE bool
+	cte       *CTEClass
+	cteAsName model.CIStr
+	cteName   model.CIStr
+	seedStat  *property.StatsInfo
 }
 
 // LogicalCTETable is for CTE table

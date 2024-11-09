@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/channel"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/cmp"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/disk"
 	"github.com/pingcap/tidb/util/execdetails"
@@ -1188,7 +1189,7 @@ func (*HashAggRuntimeStats) workerString(buf *bytes.Buffer, prefix string, concu
 		time.Duration(wallTime), concurrency, totalTaskNum, time.Duration(totalWait), time.Duration(totalExec), time.Duration(totalTime)))
 	n := len(workerStats)
 	if n > 0 {
-		slices.SortFunc(workerStats, func(i, j *AggWorkerStat) bool { return i.WorkerTime < j.WorkerTime })
+		slices.SortFunc(workerStats, func(i, j *AggWorkerStat) int { return cmp.Compare(i.WorkerTime, j.WorkerTime) })
 		buf.WriteString(fmt.Sprintf(", max:%v, p95:%v",
 			time.Duration(workerStats[n-1].WorkerTime), time.Duration(workerStats[n*19/20].WorkerTime)))
 	}
@@ -1509,12 +1510,12 @@ func (e *vecGroupChecker) splitIntoGroups(chk *chunk.Chunk) (isFirstGroupSameAsP
 			return false, err
 		}
 	}
-	e.firstGroupKey, err = codec.EncodeValue(e.ctx.GetSessionVars().StmtCtx, e.firstGroupKey, e.firstRowDatums...)
+	e.firstGroupKey, err = codec.EncodeKey(e.ctx.GetSessionVars().StmtCtx, e.firstGroupKey, e.firstRowDatums...)
 	if err != nil {
 		return false, err
 	}
 
-	e.lastGroupKey, err = codec.EncodeValue(e.ctx.GetSessionVars().StmtCtx, e.lastGroupKey, e.lastRowDatums...)
+	e.lastGroupKey, err = codec.EncodeKey(e.ctx.GetSessionVars().StmtCtx, e.lastGroupKey, e.lastRowDatums...)
 	if err != nil {
 		return false, err
 	}
@@ -1901,6 +1902,7 @@ func (e *vecGroupChecker) isExhausted() bool {
 func (e *vecGroupChecker) reset() {
 	if e.groupOffset != nil {
 		e.groupOffset = e.groupOffset[:0]
+		e.groupCount = 0
 	}
 	if e.sameGroup != nil {
 		e.sameGroup = e.sameGroup[:0]

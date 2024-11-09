@@ -348,8 +348,8 @@ func (hg *Histogram) RemoveVals(valCntPairs []TopNMeta) {
 // AddIdxVals adds the given values to the histogram.
 func (hg *Histogram) AddIdxVals(idxValCntPairs []TopNMeta) {
 	totalAddCnt := int64(0)
-	slices.SortFunc(idxValCntPairs, func(i, j TopNMeta) bool {
-		return bytes.Compare(i.Encoded, j.Encoded) < 0
+	slices.SortFunc(idxValCntPairs, func(i, j TopNMeta) int {
+		return bytes.Compare(i.Encoded, j.Encoded)
 	})
 	for bktIdx, pairIdx := 0, 0; bktIdx < hg.Len(); bktIdx++ {
 		for pairIdx < len(idxValCntPairs) {
@@ -919,6 +919,10 @@ func (hg *Histogram) outOfRangeRowCount(sctx sessionctx.Context, lDatum, rDatum 
 	if histWidth <= 0 {
 		return 0
 	}
+	if math.IsInf(histWidth, 1) {
+		// The histogram is too wide. As a quick fix, we return 0 to indicate that the overlap percentage is near 0.
+		return 0
+	}
 	boundL := histL - histWidth
 	boundR := histR + histWidth
 
@@ -1094,11 +1098,11 @@ func newHistogramBySelectivity(sctx sessionctx.Context, histID int64, oldHist, n
 // NewHistCollBySelectivity creates new HistColl by the given statsNodes.
 func (coll *HistColl) NewHistCollBySelectivity(sctx sessionctx.Context, statsNodes []*StatsNode) *HistColl {
 	newColl := &HistColl{
-		Columns:       make(map[int64]*Column),
-		Indices:       make(map[int64]*Index),
-		Idx2ColumnIDs: coll.Idx2ColumnIDs,
-		ColID2IdxIDs:  coll.ColID2IdxIDs,
-		RealtimeCount: coll.RealtimeCount,
+		Columns:            make(map[int64]*Column),
+		Indices:            make(map[int64]*Index),
+		Idx2ColUniqueIDs:   coll.Idx2ColUniqueIDs,
+		ColUniqueID2IdxIDs: coll.ColUniqueID2IdxIDs,
+		RealtimeCount:      coll.RealtimeCount,
 	}
 	for _, node := range statsNodes {
 		if node.Tp == IndexType {
@@ -1540,19 +1544,19 @@ func MergePartitionHist2GlobalHist(sc *stmtctx.StatementContext, hists []*Histog
 	buckets = buckets[:tail]
 
 	var sortError error
-	slices.SortFunc(buckets, func(i, j *bucket4Merging) bool {
+	slices.SortFunc(buckets, func(i, j *bucket4Merging) int {
 		res, err := i.upper.Compare(sc, j.upper, collate.GetBinaryCollator())
 		if err != nil {
 			sortError = err
 		}
 		if res != 0 {
-			return res < 0
+			return res
 		}
 		res, err = i.lower.Compare(sc, j.lower, collate.GetBinaryCollator())
 		if err != nil {
 			sortError = err
 		}
-		return res < 0
+		return res
 	})
 	if sortError != nil {
 		return nil, sortError

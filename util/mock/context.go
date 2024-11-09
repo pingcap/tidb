@@ -453,6 +453,11 @@ func (c *Context) InSandBoxMode() bool {
 	return c.inSandBoxMode
 }
 
+// SetInfoSchema is to set info shema for the test.
+func (c *Context) SetInfoSchema(is sessionctx.InfoschemaMetaVersion) {
+	c.is = is
+}
+
 // Close implements the sessionctx.Context interface.
 func (*Context) Close() {}
 
@@ -479,6 +484,7 @@ func NewContext() *Context {
 	vars.MinPagingSize = variable.DefMinPagingSize
 	vars.CostModelVersion = variable.DefTiDBCostModelVer
 	vars.EnableChunkRPC = true
+	vars.EnableListTablePartition = true
 	if err := sctx.GetSessionVars().SetSystemVar(variable.MaxAllowedPacket, "67108864"); err != nil {
 		panic(err)
 	}

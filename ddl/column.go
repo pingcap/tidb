@@ -754,7 +754,7 @@ func (w *worker) doModifyColumnTypeWithData(
 		job.SnapshotVer = 0
 		job.SchemaState = model.StateWriteReorganization
 	case model.StateWriteReorganization:
-		tbl, err := getTable(d.store, dbInfo.ID, tblInfo)
+		tbl, err := getTable((*asAutoIDRequirement)(d), dbInfo.ID, tblInfo)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
@@ -1402,7 +1402,7 @@ func (w *updateColumnWorker) calcChecksums() []uint32 {
 		if !sort.IsSorted(w.checksumBuffer) {
 			sort.Sort(w.checksumBuffer)
 		}
-		checksum, err := w.checksumBuffer.Checksum()
+		checksum, err := w.checksumBuffer.Checksum(w.sessCtx.GetSessionVars().StmtCtx.TimeZone)
 		if err != nil {
 			logutil.BgLogger().Warn("skip checksum in update-column backfill due to encode error", zap.Error(err))
 			return nil
@@ -1681,6 +1681,18 @@ func checkNewAutoRandomBits(idAccessors meta.AutoIDAccessors, oldCol *model.Colu
 	return nil
 }
 
+type asAutoIDRequirement ddlCtx
+
+var _ autoid.Requirement = &asAutoIDRequirement{}
+
+func (r *asAutoIDRequirement) Store() kv.Storage {
+	return r.store
+}
+
+func (r *asAutoIDRequirement) AutoIDClient() *autoid.ClientDiscover {
+	return r.autoidCli
+}
+
 // applyNewAutoRandomBits set auto_random bits to TableInfo and
 // migrate auto_increment ID to auto_random ID if possible.
 func applyNewAutoRandomBits(d *ddlCtx, m *meta.Meta, dbInfo *model.DBInfo,
@@ -1690,7 +1702,7 @@ func applyNewAutoRandomBits(d *ddlCtx, m *meta.Meta, dbInfo *model.DBInfo,
 	if !needMigrateFromAutoIncToAutoRand {
 		return nil
 	}
-	autoRandAlloc := autoid.NewAllocatorsFromTblInfo(d.store, dbInfo.ID, tblInfo).Get(autoid.AutoRandomType)
+	autoRandAlloc := autoid.NewAllocatorsFromTblInfo((*asAutoIDRequirement)(d), dbInfo.ID, tblInfo).Get(autoid.AutoRandomType)
 	if autoRandAlloc == nil {
 		errMsg := fmt.Sprintf(autoid.AutoRandomAllocatorNotFound, dbInfo.Name.O, tblInfo.Name.O)
 		return dbterror.ErrInvalidAutoRandom.GenWithStackByArgs(errMsg)
@@ -2023,6 +2035,15 @@ func getChangingIndexOriginName(changingIdx *model.IndexInfo) string {
 
 func getChangingColumnOriginName(changingColumn *model.ColumnInfo) string {
 	columnName := strings.TrimPrefix(changingColumn.Name.O, changingColumnPrefix)
+	var pos int
+	if pos = strings.LastIndex(columnName, "_"); pos == -1 {
+		return columnName
+	}
+	return columnName[:pos]
+}
+
+func getExpressionIndexOriginName(expressionIdx *model.ColumnInfo) string {
+	columnName := strings.TrimPrefix(expressionIdx.Name.O, expressionIndexPrefix+"_")
 	var pos int
 	if pos = strings.LastIndex(columnName, "_"); pos == -1 {
 		return columnName

@@ -61,8 +61,13 @@ import (
 
 const defaultStatusPort = 10080
 
-func (s *Server) startStatusHTTP() {
+func (s *Server) startStatusHTTP() error {
+	err := s.initHTTPListener()
+	if err != nil {
+		return err
+	}
 	go s.startHTTPServer()
+	return nil
 }
 
 func serveError(w http.ResponseWriter, status int, txt string) {
@@ -238,6 +243,9 @@ func (s *Server) startHTTPServer() {
 	router.Handle("/db-table/{tableID}", dbTableHandler{tikvHandlerTool})
 	// HTTP path for get table tiflash replica info.
 	router.Handle("/tiflash/replica-deprecated", flashReplicaHandler{tikvHandlerTool})
+
+	// HTTP path for upgrade operations.
+	router.Handle("/upgrade/{op}", NewClusterUpgradeHandler(tikvHandlerTool.Store.(kv.Storage))).Name("upgrade operations")
 
 	if s.cfg.Store == "tikv" {
 		// HTTP path for tikv.

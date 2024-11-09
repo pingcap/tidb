@@ -1461,3 +1461,36 @@ func TestIssue42662(t *testing.T) {
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/executor/issue42662_1"))
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/util/servermemorylimit/issue42662_2"))
 }
+
+func TestIssue49369(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists issue49369;")
+	tk.MustExec("CREATE TABLE `issue49369` (\n" +
+		"`x` varchar(32) COLLATE utf8mb4_bin DEFAULT NULL\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;")
+	err := tk.ExecToErr("insert into issue49369   select round(cast('88888899999999999888888888888888888888888888888888888.11111111111111111111' as decimal(18,12)) * cast('88888899999999999888888888888888888888888888888888888.11111111111111111111' as decimal(42,18)) );")
+	require.EqualError(t, err, "[types:1690]DECIMAL value is out of range in '(18, 12)'")
+	tk.MustExec("set @@sql_mode = ''")
+	tk.MustExec("insert into issue49369   select round(cast('88888899999999999888888888888888888888888888888888888.11111111111111111111' as decimal(18,12)) * cast('88888899999999999888888888888888888888888888888888888.11111111111111111111' as decimal(42,18)) );")
+	tk.MustQuery("select * from issue49369").Check(testkit.Rows("999999999999999999000000000000"))
+	tk.MustExec("set @@sql_mode = default")
+}
+
+func TestIssue49902(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set @@tidb_max_chunk_size = 32;")
+	tk.MustExec("drop table if exists t, s;")
+	tk.MustExec("CREATE TABLE `t` (`c` char(1)) COLLATE=utf8_general_ci ;")
+	tk.MustExec("insert into t values(\"V\"),(\"v\");")
+	tk.MustExec("insert into t values(\"V\"),(\"v\"),(\"v\");")
+	tk.MustExec("CREATE TABLE `s` (`col_61` int);")
+	tk.MustExec("insert into s values(1),(1),(1),(1),(1),(1),(1),(1),(1),(1),(1),(1),(1),(1),(1),(1),(1);")
+	tk.MustExec("insert into s values(1),(1),(1),(1),(1),(1),(1),(1),(1),(1),(1),(1),(1),(1),(1),(1),(1);")
+	tk.MustQuery("SELECT /*+ stream_agg()*/ count(`t`.`c`) FROM (`s`) JOIN `t` GROUP BY `t`.`c`;").Check(testkit.Rows("170"))
+	tk.MustQuery("SELECT count(`t`.`c`) FROM (`s`) JOIN `t` GROUP BY `t`.`c`;").Check(testkit.Rows("170"))
+	tk.MustExec("set @@tidb_max_chunk_size = default;")
+}

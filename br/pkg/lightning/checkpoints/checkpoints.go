@@ -37,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/version/build"
 	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/util/cmp"
 	"github.com/pingcap/tidb/util/mathutil"
 	"go.uber.org/zap"
 	"golang.org/x/exp/slices"
@@ -69,7 +70,7 @@ const WholeTableEngineID = math.MaxInt32
 // remember to increase the version number in case of incompatible change.
 const (
 	CheckpointTableNameTask   = "task_v2"
-	CheckpointTableNameTable  = "table_v8"
+	CheckpointTableNameTable  = "table_v9"
 	CheckpointTableNameEngine = "engine_v5"
 	CheckpointTableNameChunk  = "chunk_v5"
 )
@@ -106,7 +107,7 @@ const (
 			status tinyint unsigned DEFAULT 30,
 			alloc_base bigint NOT NULL DEFAULT 0,
 			table_id bigint NOT NULL DEFAULT 0,
-		    table_info text NOT NULL,
+		    table_info longtext NOT NULL,
 			create_time timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
 			update_time timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
 			kv_bytes bigint unsigned NOT NULL DEFAULT 0,
@@ -242,6 +243,13 @@ type ChunkCheckpointKey struct {
 // String implements fmt.Stringer.
 func (key *ChunkCheckpointKey) String() string {
 	return fmt.Sprintf("%s:%d", key.Path, key.Offset)
+}
+
+func (key *ChunkCheckpointKey) compare(other *ChunkCheckpointKey) int {
+	if c := cmp.Compare(key.Path, other.Path); c != 0 {
+		return c
+	}
+	return cmp.Compare(key.Offset, other.Offset)
 }
 
 func (key *ChunkCheckpointKey) less(other *ChunkCheckpointKey) bool {
@@ -1349,8 +1357,8 @@ func (cpdb *FileCheckpointsDB) Get(_ context.Context, tableName string) (*TableC
 			})
 		}
 
-		slices.SortFunc(engine.Chunks, func(i, j *ChunkCheckpoint) bool {
-			return i.Key.less(&j.Key)
+		slices.SortFunc(engine.Chunks, func(i, j *ChunkCheckpoint) int {
+			return i.Key.compare(&j.Key)
 		})
 
 		cp.Engines[engineID] = engine

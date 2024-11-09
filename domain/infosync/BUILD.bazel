@@ -43,6 +43,7 @@ go_library(
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_failpoint//:failpoint",
         "@com_github_pingcap_kvproto//pkg/kvrpcpb",
+        "@com_github_pingcap_kvproto//pkg/meta_storagepb",
         "@com_github_pingcap_kvproto//pkg/metapb",
         "@com_github_pingcap_kvproto//pkg/resource_manager",
         "@com_github_pingcap_log//:log",

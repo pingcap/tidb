@@ -187,8 +187,7 @@ func InjectProjBelowAgg(aggPlan PhysicalPlan, aggFuncs []*aggregation.AggFuncDes
 	child := aggPlan.Children()[0]
 	prop := aggPlan.GetChildReqProps(0).CloneEssentialFields()
 	proj := PhysicalProjection{
-		Exprs:                projExprs,
-		AvoidColumnEvaluator: false,
+		Exprs: projExprs,
 	}.Init(aggPlan.SCtx(), child.statsInfo().ScaleByExpectCnt(prop.ExpectedCnt), aggPlan.SelectBlockOffset(), prop)
 	proj.SetSchema(expression.NewSchema(projSchemaCols...))
 	proj.SetChildren(child)
@@ -221,8 +220,7 @@ func InjectProjBelowSort(p PhysicalPlan, orderByItems []*util.ByItems) PhysicalP
 		topProjExprs = append(topProjExprs, col)
 	}
 	topProj := PhysicalProjection{
-		Exprs:                topProjExprs,
-		AvoidColumnEvaluator: false,
+		Exprs: topProjExprs,
 	}.Init(p.SCtx(), p.statsInfo(), p.SelectBlockOffset(), nil)
 	topProj.SetSchema(p.Schema().Clone())
 	topProj.SetChildren(p)
@@ -254,8 +252,7 @@ func InjectProjBelowSort(p PhysicalPlan, orderByItems []*util.ByItems) PhysicalP
 
 	childProp := p.GetChildReqProps(0).CloneEssentialFields()
 	bottomProj := PhysicalProjection{
-		Exprs:                bottomProjExprs,
-		AvoidColumnEvaluator: false,
+		Exprs: bottomProjExprs,
 	}.Init(p.SCtx(), childPlan.statsInfo().ScaleByExpectCnt(childProp.ExpectedCnt), p.SelectBlockOffset(), childProp)
 	bottomProj.SetSchema(expression.NewSchema(bottomProjSchemaCols...))
 	bottomProj.SetChildren(childPlan)
@@ -264,6 +261,7 @@ func InjectProjBelowSort(p PhysicalPlan, orderByItems []*util.ByItems) PhysicalP
 	if origChildProj, isChildProj := childPlan.(*PhysicalProjection); isChildProj {
 		refine4NeighbourProj(bottomProj, origChildProj)
 	}
+	refine4NeighbourProj(topProj, bottomProj)
 
 	return topProj
 }
@@ -303,8 +301,7 @@ func TurnNominalSortIntoProj(p PhysicalPlan, onlyColumn bool, orderByItems []*ut
 
 	childProp := p.GetChildReqProps(0).CloneEssentialFields()
 	bottomProj := PhysicalProjection{
-		Exprs:                bottomProjExprs,
-		AvoidColumnEvaluator: false,
+		Exprs: bottomProjExprs,
 	}.Init(p.SCtx(), childPlan.statsInfo().ScaleByExpectCnt(childProp.ExpectedCnt), p.SelectBlockOffset(), childProp)
 	bottomProj.SetSchema(expression.NewSchema(bottomProjSchemaCols...))
 	bottomProj.SetChildren(childPlan)
@@ -316,8 +313,7 @@ func TurnNominalSortIntoProj(p PhysicalPlan, onlyColumn bool, orderByItems []*ut
 		topProjExprs = append(topProjExprs, col)
 	}
 	topProj := PhysicalProjection{
-		Exprs:                topProjExprs,
-		AvoidColumnEvaluator: false,
+		Exprs: topProjExprs,
 	}.Init(p.SCtx(), childPlan.statsInfo().ScaleByExpectCnt(childProp.ExpectedCnt), p.SelectBlockOffset(), childProp)
 	topProj.SetSchema(childPlan.Schema().Clone())
 	topProj.SetChildren(bottomProj)
@@ -325,6 +321,7 @@ func TurnNominalSortIntoProj(p PhysicalPlan, onlyColumn bool, orderByItems []*ut
 	if origChildProj, isChildProj := childPlan.(*PhysicalProjection); isChildProj {
 		refine4NeighbourProj(bottomProj, origChildProj)
 	}
+	refine4NeighbourProj(topProj, bottomProj)
 
 	return topProj
 }

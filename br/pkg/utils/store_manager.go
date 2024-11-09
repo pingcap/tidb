@@ -148,6 +148,7 @@ func (mgr *StoreManager) getGrpcConnLocked(ctx context.Context, storeID uint64) 
 	if addr == "" {
 		addr = store.GetAddress()
 	}
+	log.Info("StoreManager: dialing to store.", zap.String("address", addr), zap.Uint64("store-id", storeID))
 	conn, err := grpc.DialContext(
 		ctx,
 		addr,
@@ -161,6 +162,26 @@ func (mgr *StoreManager) getGrpcConnLocked(ctx context.Context, storeID uint64) 
 		return nil, berrors.ErrFailedToConnect.Wrap(err).GenWithStack("failed to make connection to store %d", storeID)
 	}
 	return conn, nil
+}
+
+func (mgr *StoreManager) RemoveConn(ctx context.Context, storeID uint64) error {
+	if ctx.Err() != nil {
+		return errors.Trace(ctx.Err())
+	}
+
+	mgr.grpcClis.mu.Lock()
+	defer mgr.grpcClis.mu.Unlock()
+
+	if conn, ok := mgr.grpcClis.clis[storeID]; ok {
+		// Find a cached backup client.
+		err := conn.Close()
+		if err != nil {
+			log.Warn("close backup connection failed, ignore it", zap.Uint64("storeID", storeID))
+		}
+		delete(mgr.grpcClis.clis, storeID)
+		return nil
+	}
+	return nil
 }
 
 func (mgr *StoreManager) WithConn(ctx context.Context, storeID uint64, f func(*grpc.ClientConn)) error {
@@ -189,26 +210,18 @@ func (mgr *StoreManager) WithConn(ctx context.Context, storeID uint64, f func(*g
 
 // ResetBackupClient reset the connection for backup client.
 func (mgr *StoreManager) ResetBackupClient(ctx context.Context, storeID uint64) (backuppb.BackupClient, error) {
-	if ctx.Err() != nil {
-		return nil, errors.Trace(ctx.Err())
+	var (
+		conn *grpc.ClientConn
+		err  error
+	)
+	err = mgr.RemoveConn(ctx, storeID)
+	if err != nil {
+		return nil, errors.Trace(err)
 	}
 
 	mgr.grpcClis.mu.Lock()
 	defer mgr.grpcClis.mu.Unlock()
 
-	if conn, ok := mgr.grpcClis.clis[storeID]; ok {
-		// Find a cached backup client.
-		log.Info("Reset backup client", zap.Uint64("storeID", storeID))
-		err := conn.Close()
-		if err != nil {
-			log.Warn("close backup connection failed, ignore it", zap.Uint64("storeID", storeID))
-		}
-		delete(mgr.grpcClis.clis, storeID)
-	}
-	var (
-		conn *grpc.ClientConn
-		err  error
-	)
 	for retry := 0; retry < resetRetryTimes; retry++ {
 		conn, err = mgr.getGrpcConnLocked(ctx, storeID)
 		if err != nil {

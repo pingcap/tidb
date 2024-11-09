@@ -3200,7 +3200,7 @@ func TestUnknowHintIgnore(t *testing.T) {
 	tk.MustExec("USE test")
 	tk.MustExec("create table t(a int)")
 	tk.MustQuery("select /*+ unknown_hint(c1)*/ 1").Check(testkit.Rows("1"))
-	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1064 Optimizer hint syntax error at line 1 column 23 near \"unknown_hint(c1)*/\" "))
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 8061 Optimizer hint unknown_hint is not supported by TiDB and is ignored"))
 	rs, err := tk.Exec("select 1 from /*+ test1() */ t")
 	require.NoError(t, err)
 	rs.Close()
@@ -7945,4 +7945,157 @@ func TestIfFunctionWithNull(t *testing.T) {
 	tk.MustExec("insert into orders values (20, 210802010000721168, 20000 , 2 , 1682484268727), (22, 210802010000721168, 35100 , 4 , 1650885615002);")
 	tk.MustQuery("select min(if(apply_to_now_days <= 30,loan,null)) as min, max(if(apply_to_now_days <= 720,loan,null)) as max from (select loan, datediff(from_unixtime(unix_timestamp('2023-05-18 18:43:43') + 18000), from_unixtime(apply_time/1000 + 18000)) as apply_to_now_days from orders) t1;").Sort().Check(
 		testkit.Rows("20000 35100"))
+}
+
+func TestIssue45410(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	// Issue 45410
+	tk.MustExec("create database testIssue45410")
+	defer tk.MustExec("drop database testIssue45410")
+	tk.MustExec("use testIssue45410")
+
+	tk.MustExec("DROP TABLE IF EXISTS t1;")
+	tk.MustExec("CREATE TABLE t1 (c1 TINYINT(1) UNSIGNED NOT NULL );")
+	tk.MustExec("INSERT INTO t1 VALUES (0);")
+	tk.MustQuery("SELECT c1>=CAST('-787360724' AS TIME) FROM t1;").Check(testkit.Rows("1"))
+}
+
+func TestIssue41986(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("use test")
+	tk.MustExec("CREATE TABLE poi_clearing_time_topic (effective_date datetime DEFAULT NULL , clearing_time int(11) DEFAULT NULL);")
+	tk.MustExec("insert into poi_clearing_time_topic values ('2023:08:25', 1)")
+	// shouldn't report they can't find column error and return the right result.
+	tk.MustQuery("SELECT GROUP_CONCAT(effective_date order by stlmnt_hour DESC) FROM ( SELECT (COALESCE(pct.clearing_time, 0)/3600000) AS stlmnt_hour ,COALESCE(pct.effective_date, '1970-01-01 08:00:00') AS effective_date FROM poi_clearing_time_topic pct ORDER BY pct.effective_date DESC ) a;").Check(testkit.Rows("2023-08-25 00:00:00"))
+}
+
+func TestIssue49526(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	rows := tk.MustQuery("explain select null as a union all select 'a' as a;").Rows()
+	for _, r := range rows {
+		require.NotContains(t, r[4], "from_binary")
+	}
+	tk.MustQuery("select null as a union all select 'a' as a;").Sort().Check(testkit.Rows("<nil>", "a"))
+}
+
+func TestIssue49566(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t (col bit(37) NOT NULL);")
+	tk.MustExec("insert into t (col) values(x'05d3a46d88'), (x'04dba3570c'), (x'0ed284dfee'), (x'12657141bf');")
+	tk.MustQuery("select hex(col), hex(reverse(col)) from t order by reverse(col);").Check(
+		testkit.Rows("4DBA3570C 0C57A3DB04", "5D3A46D88 886DA4D305", "12657141BF BF41716512", "ED284DFEE EEDF84D20E"))
+	tk.MustExec("drop table if exists t;")
+}
+
+func TestIssue50855(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t2;")
+	tk.MustExec("create table t2 (col bit(45) NOT NULL);")
+	tk.MustExec("insert into t2 (col) values(x'09a1441d083c');")
+	tk.MustQuery("select hex(r) from (select reverse(col) as r from t2 group by reverse(col)) as t;").Check(testkit.Rows("3C081D44A109"))
+	tk.MustQuery("select hex(r) from (select distinct reverse(col) as r from t2) as t;").Check(testkit.Rows("3C081D44A109"))
+	tk.MustExec("drop table if exists t2;")
+}
+
+func TestIssue50850(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t3;")
+	tk.MustExec("create table t3 (col1 double not null, col2 bit(8) NOT NULL);")
+	tk.MustExec("insert into t3 (col1, col2) values (2306.9705216860984, x'31'), (6779.239615471537, x'65'), (7601.530447792593, x'd5'), " +
+		"(7058.842877388801, x'a5'), (615.6011553350702, x'34'), (5613.036187642952, x'01'), (7047.649466854864, x'a6'), (8632.659024782468, x'5d'), " +
+		"(9546.629394674586, x'ff'), (2972.7118048537704, x'b1');")
+	tk.MustQuery("select hex(r) as r0 from (select ELT(2, col1, col2) as r from t3 group by ELT(2, col1, col2)) as t order by r0;").Check(
+		testkit.Rows("01", "31", "34", "5D", "65", "A5", "A6", "B1", "D5", "FF"))
+	tk.MustQuery("select hex(r) as r0 from (select distinct ELT(2, col1, col2) as r from t3) as t order by r0;").Check(
+		testkit.Rows("01", "31", "34", "5D", "65", "A5", "A6", "B1", "D5", "FF"))
+	tk.MustExec("drop table if exists t3;")
+}
+
+func TestIssue51765(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("use test")
+	tk.MustExec("create table t (id varbinary(16))")
+	tk.MustExec("create table t1(id char(16) charset utf8mb4 collate utf8mb4_general_ci)")
+	tk.MustExec("insert into t values ()")
+	tk.MustExec(`insert into t1 values ("Hello World")`)
+
+	tk.MustQuery("select collation(ifnull(concat(NULL), '~'))").Check(testkit.Rows("utf8mb4_bin"))
+	tk.MustQuery("select collation(ifnull(concat(NULL),ifnull(concat(NULL),'~')))").Check(testkit.Rows("utf8mb4_bin"))
+	tk.MustQuery("select collation(ifnull(concat(id),'~')) from t;").Check(testkit.Rows("binary"))
+	tk.MustQuery("select collation(ifnull(concat(NULL),ifnull(concat(id),'~'))) from t;").Check(testkit.Rows("binary"))
+	tk.MustQuery("select collation(ifnull(concat(id),ifnull(concat(id),'~'))) from t;").Check(testkit.Rows("binary"))
+	tk.MustQuery("select collation(ifnull(concat(NULL),id)) from t1;").Check(testkit.Rows("utf8mb4_general_ci"))
+	tk.MustQuery("select collation(ifnull(concat(NULL),ifnull(concat(NULL),id))) from t1;").Check(testkit.Rows("utf8mb4_general_ci"))
+}
+
+func TestCastBinaryStringToJSON(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustQuery("select cast(binary 'aa' as json);").Check(testkit.Rows(`"base64:type254:YWE="`))
+
+	tk.MustExec("use test")
+	tk.MustExec("create table t (vb VARBINARY(10), b BINARY(10), vc VARCHAR(10), c CHAR(10));")
+	tk.MustExec("insert into t values ('1', '1', '1', '1');")
+	tk.MustQuery("select cast(vb as json), cast(b as json), cast(vc as json), cast(c as json) from t;").Check(
+		testkit.Rows(`"base64:type15:MQ==" "base64:type254:MQAAAAAAAAAAAA==" 1 1`))
+	tk.MustQuery("select 1 from t where cast(vb as json) = '1';").Check(testkit.Rows())
+	tk.MustQuery("select 1 from t where cast(b as json) = '1';").Check(testkit.Rows())
+	tk.MustQuery("select 1 from t where cast(vc as json) = '1';").Check(testkit.Rows())
+	tk.MustQuery("select 1 from t where cast(c as json) = '1';").Check(testkit.Rows())
+	tk.MustQuery("select 1 from t where cast(BINARY vc as json) = '1';").Check(testkit.Rows())
+	tk.MustQuery("select 1 from t where cast(BINARY c as json) = '1';").Check(testkit.Rows())
+}
+
+func TestCastAsStringExplicitCharSet(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("use test")
+
+	tk.MustExec("CREATE TABLE `test` (" +
+		"	`id` bigint(20) NOT NULL," +
+		"	`update_user` varchar(32) DEFAULT NULL," +
+		"	PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin")
+	tk.MustExec("insert into test values(1,'张三'), (2,'李四'), (3,'张三'), (4,'李四')")
+	tk.MustQuery("select id from test order by cast(update_user as char character set gbk) desc , id limit 3").Check(testkit.Rows("1", "3", "2"))
+
+	tk.MustExec("drop table test")
+	tk.MustExec("create table test (`id` bigint NOT NULL," +
+		"	`update_user` varchar(32) CHARACTER SET gbk COLLATE gbk_chinese_ci DEFAULT NULL," +
+		"	PRIMARY KEY (`id`)" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin")
+	tk.MustExec("insert into test values(1,'张三'), (2,'李四'), (3,'张三'), (4,'李四')")
+	tk.MustQuery("select id from test order by cast(update_user as char) desc , id limit 3").Check(testkit.Rows("2", "4", "1"))
+}
+
+func TestIssue53580(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("use test")
+	tk.MustExec("create table t (col TEXT);")
+	tk.MustQuery(`select 1 from (select t.col as c0, 46578369 as c1 from t) as t where
+		case when (
+			t.c0 in (t.c0, cast((cast(1 as unsigned) - cast(t.c1 as signed)) as char))
+		) then 1 else 2 end;`).Check(testkit.Rows())
 }

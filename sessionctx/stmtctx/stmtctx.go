@@ -45,6 +45,7 @@ import (
 	"go.uber.org/zap"
 	"golang.org/x/exp/maps"
 	"golang.org/x/exp/slices"
+	"golang.org/x/sync/singleflight"
 )
 
 const (
@@ -151,6 +152,7 @@ type StatementContext struct {
 	// IsDDLJobInQueue is used to mark whether the DDL job is put into the queue.
 	// If IsDDLJobInQueue is true, it means the DDL job is in the queue of storage, and it can be handled by the DDL worker.
 	IsDDLJobInQueue               bool
+	IsRefineComparedConstant      bool
 	DDLJobID                      int64
 	InInsertStmt                  bool
 	InUpdateStmt                  bool
@@ -176,6 +178,7 @@ type StatementContext struct {
 	CacheType                     PlanCacheType
 	BatchCheck                    bool
 	InNullRejectCheck             bool
+	InConstantPropagateCheck      bool
 	AllowInvalidDate              bool
 	IgnoreNoPartition             bool
 	IgnoreExplainIDSuffix         bool
@@ -346,7 +349,7 @@ type StatementContext struct {
 		// NeededItems stores the columns/indices whose stats are needed for planner.
 		NeededItems []model.TableItemID
 		// ResultCh to receive stats loading results
-		ResultCh chan StatsLoadResult
+		ResultCh []<-chan singleflight.Result
 		// LoadStartTime is to record the load start time to calculate latency
 		LoadStartTime time.Time
 	}
@@ -415,7 +418,6 @@ type StatementContext struct {
 type StmtHints struct {
 	// Hint Information
 	MemQuotaQuery           int64
-	ApplyCacheCapacity      int64
 	MaxExecutionTime        uint64
 	ReplicaRead             byte
 	AllowInSubqToJoinAndAgg bool
@@ -444,6 +446,43 @@ type StmtHints struct {
 // TaskMapNeedBackUp indicates that whether we need to back up taskMap during physical optimizing.
 func (sh *StmtHints) TaskMapNeedBackUp() bool {
 	return sh.ForceNthPlan != -1
+}
+
+// Clone the StmtHints struct and returns the pointer of the new one.
+func (sh *StmtHints) Clone() *StmtHints {
+	var (
+		vars       map[string]string
+		tableHints []*ast.TableOptimizerHint
+	)
+	if len(sh.SetVars) > 0 {
+		vars = make(map[string]string, len(sh.SetVars))
+		for k, v := range sh.SetVars {
+			vars[k] = v
+		}
+	}
+	if len(sh.OriginalTableHints) > 0 {
+		tableHints = make([]*ast.TableOptimizerHint, len(sh.OriginalTableHints))
+		copy(tableHints, sh.OriginalTableHints)
+	}
+	return &StmtHints{
+		MemQuotaQuery:                  sh.MemQuotaQuery,
+		MaxExecutionTime:               sh.MaxExecutionTime,
+		ReplicaRead:                    sh.ReplicaRead,
+		AllowInSubqToJoinAndAgg:        sh.AllowInSubqToJoinAndAgg,
+		NoIndexMergeHint:               sh.NoIndexMergeHint,
+		StraightJoinOrder:              sh.StraightJoinOrder,
+		EnableCascadesPlanner:          sh.EnableCascadesPlanner,
+		ForceNthPlan:                   sh.ForceNthPlan,
+		ResourceGroup:                  sh.ResourceGroup,
+		HasAllowInSubqToJoinAndAggHint: sh.HasAllowInSubqToJoinAndAggHint,
+		HasMemQuotaHint:                sh.HasMemQuotaHint,
+		HasReplicaReadHint:             sh.HasReplicaReadHint,
+		HasMaxExecutionTime:            sh.HasMaxExecutionTime,
+		HasEnableCascadesPlannerHint:   sh.HasEnableCascadesPlannerHint,
+		HasResourceGroup:               sh.HasResourceGroup,
+		SetVars:                        vars,
+		OriginalTableHints:             tableHints,
+	}
 }
 
 // StmtCacheKey represents the key type in the StmtCache.
@@ -649,13 +688,13 @@ func (sc *StatementContext) SetSkipPlanCache(reason error) {
 	sc.UseCache = false
 	switch sc.CacheType {
 	case DefaultNoCache:
-		sc.AppendWarning(errors.New("unknown cache type"))
+		sc.AppendWarning(errors.NewNoStackError("unknown cache type"))
 	case SessionPrepared:
-		sc.AppendWarning(errors.Errorf("skip prepared plan-cache: %s", reason.Error()))
+		sc.AppendWarning(errors.NewNoStackErrorf("skip prepared plan-cache: %s", reason.Error()))
 	case SessionNonPrepared:
 		if sc.InExplainStmt && sc.ExplainFormat == "plan_cache" {
 			// use "plan_cache" rather than types.ExplainFormatPlanCache to avoid import cycle
-			sc.AppendWarning(errors.Errorf("skip non-prepared plan-cache: %s", reason.Error()))
+			sc.AppendWarning(errors.NewNoStackErrorf("skip non-prepared plan-cache: %s", reason.Error()))
 		}
 	}
 }
@@ -1061,7 +1100,7 @@ func (sc *StatementContext) GetExecDetails() execdetails.ExecDetails {
 // This is the case for `insert`, `update`, `alter table`, `create table` and `load data infile` statements, when not in strict SQL mode.
 // see https://dev.mysql.com/doc/refman/5.7/en/out-of-range-and-overflow.html
 func (sc *StatementContext) ShouldClipToZero() bool {
-	return sc.InInsertStmt || sc.InLoadDataStmt || sc.InUpdateStmt || sc.InCreateOrAlterStmt || sc.IsDDLJobInQueue
+	return sc.InInsertStmt || sc.InLoadDataStmt || sc.InUpdateStmt || sc.InCreateOrAlterStmt || sc.IsDDLJobInQueue || sc.IsRefineComparedConstant
 }
 
 // ShouldIgnoreOverflowError indicates whether we should ignore the error when type conversion overflows,

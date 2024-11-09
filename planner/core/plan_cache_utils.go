@@ -22,6 +22,7 @@ import (
 	"unsafe"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
@@ -29,11 +30,14 @@ import (
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/planner/util"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/types"
 	driver "github.com/pingcap/tidb/types/parser_driver"
+	"github.com/pingcap/tidb/util/cmp"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/hint"
@@ -87,9 +91,13 @@ func GeneratePlanCacheStmtWithAST(ctx context.Context, sctx sessionctx.Context, 
 		return nil, nil, 0, ErrPrepareDDL
 	}
 
-	switch paramStmt.(type) {
+	switch stmt := paramStmt.(type) {
 	case *ast.LoadDataStmt, *ast.PrepareStmt, *ast.ExecuteStmt, *ast.DeallocateStmt, *ast.NonTransactionalDMLStmt:
 		return nil, nil, 0, ErrUnsupportedPs
+	case *ast.SelectStmt:
+		if stmt.SelectIntoOpt != nil {
+			return nil, nil, 0, ErrUnsupportedPs
+		}
 	}
 
 	// Prepare parameters should NOT over 2 bytes(MaxUint16)
@@ -107,8 +115,8 @@ func GeneratePlanCacheStmtWithAST(ctx context.Context, sctx sessionctx.Context, 
 	// The parameter markers are appended in visiting order, which may not
 	// be the same as the position order in the query string. We need to
 	// sort it by position.
-	slices.SortFunc(extractor.markers, func(i, j ast.ParamMarkerExpr) bool {
-		return i.(*driver.ParamMarkerExpr).Offset < j.(*driver.ParamMarkerExpr).Offset
+	slices.SortFunc(extractor.markers, func(i, j ast.ParamMarkerExpr) int {
+		return cmp.Compare(i.(*driver.ParamMarkerExpr).Offset, j.(*driver.ParamMarkerExpr).Offset)
 	})
 	ParamCount := len(extractor.markers)
 	for i := 0; i < ParamCount; i++ {
@@ -135,12 +143,12 @@ func GeneratePlanCacheStmtWithAST(ctx context.Context, sctx sessionctx.Context, 
 		reason = "plan cache is disabled"
 	} else {
 		if isPrepStmt {
-			cacheable, reason = CacheableWithCtx(sctx, paramStmt, ret.InfoSchema)
+			cacheable, reason = IsASTCacheable(ctx, sctx, paramStmt, ret.InfoSchema)
 		} else {
 			cacheable = true // it is already checked here
 		}
 		if !cacheable {
-			sctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("skip prepared plan-cache: " + reason))
+			sctx.GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackErrorf("skip prepared plan-cache: " + reason))
 		}
 		selectStmtNode, normalizedSQL4PC, digest4PC, err = ExtractSelectAndNormalizeDigest(paramStmt, vars.CurrentDB)
 		if err != nil || selectStmtNode == nil {
@@ -217,12 +225,20 @@ type planCacheKey struct {
 	TiDBSuperReadOnly        bool
 	ExprBlacklistTS          int64 // expr-pushdown-blacklist can affect query optimization, so we need to consider it in plan cache.
 
+	// status related to Txn
+	inTxn          bool
+	autoCommit     bool
+	pessAutoCommit bool
+
 	memoryUsage int64 // Do not include in hash
 	hash        []byte
 }
 
 // Hash implements Key interface.
 func (key *planCacheKey) Hash() []byte {
+	if key == nil {
+		return nil
+	}
 	if len(key.hash) == 0 {
 		if key.hash == nil {
 			key.hash = make([]byte, 0, len(key.stmtText)*2)
@@ -249,8 +265,18 @@ func (key *planCacheKey) Hash() []byte {
 		key.hash = append(key.hash, hack.Slice(strconv.FormatBool(key.restrictedReadOnly))...)
 		key.hash = append(key.hash, hack.Slice(strconv.FormatBool(key.TiDBSuperReadOnly))...)
 		key.hash = codec.EncodeInt(key.hash, key.ExprBlacklistTS)
+		key.hash = append(key.hash, bool2Byte(key.inTxn))
+		key.hash = append(key.hash, bool2Byte(key.autoCommit))
+		key.hash = append(key.hash, bool2Byte(key.pessAutoCommit))
 	}
 	return key.hash
+}
+
+func bool2Byte(flag bool) byte {
+	if flag {
+		return '1'
+	}
+	return '0'
 }
 
 const emptyPlanCacheKeySize = int64(unsafe.Sizeof(planCacheKey{}))
@@ -319,6 +345,9 @@ func NewPlanCacheKey(sessionVars *variable.SessionVars, stmtText, stmtDB string,
 		restrictedReadOnly:       variable.RestrictedReadOnly.Load(),
 		TiDBSuperReadOnly:        variable.VarTiDBSuperReadOnly.Load(),
 		ExprBlacklistTS:          exprBlacklistTS,
+		inTxn:                    sessionVars.InTxn(),
+		autoCommit:               sessionVars.IsAutocommit(),
+		pessAutoCommit:           config.GetGlobalConfig().PessimisticTxn.PessimisticAutoCommit.Load(),
 	}
 	for k, v := range sessionVars.IsolationReadEngines {
 		key.isolationReadEngines[k] = v
@@ -335,6 +364,8 @@ type PlanCacheValue struct {
 
 	// matchOpts stores some fields help to choose a suitable plan
 	matchOpts *utilpc.PlanCacheMatchOpts
+	// stmtHints stores the hints which set session variables, because the hints won't be processed using cached plan.
+	stmtHints *stmtctx.StmtHints
 }
 
 func (v *PlanCacheValue) varTypesUnchanged(txtVarTps []*types.FieldType) bool {
@@ -385,7 +416,7 @@ func (v *PlanCacheValue) MemoryUsage() (sum int64) {
 
 // NewPlanCacheValue creates a SQLCacheValue.
 func NewPlanCacheValue(plan Plan, names []*types.FieldName, srcMap map[*model.TableInfo]bool,
-	matchOpts *utilpc.PlanCacheMatchOpts) *PlanCacheValue {
+	matchOpts *utilpc.PlanCacheMatchOpts, stmtHints *stmtctx.StmtHints) *PlanCacheValue {
 	dstMap := make(map[*model.TableInfo]bool)
 	for k, v := range srcMap {
 		dstMap[k] = v
@@ -399,6 +430,7 @@ func NewPlanCacheValue(plan Plan, names []*types.FieldName, srcMap map[*model.Ta
 		OutPutNames:       names,
 		TblInfo2UnionScan: dstMap,
 		matchOpts:         matchOpts,
+		stmtHints:         stmtHints.Clone(),
 	}
 }
 
@@ -457,6 +489,9 @@ type PlanCacheStmt struct {
 	//  NormalizedSQL4PC: select * from `test` . `t` where `a` > ? and `b` < ? --> schema name is added,
 	//  StmtText: select * from t where a>1 and b <? --> just format the original query;
 	StmtText string
+
+	// the cache key for point-get statement, have to check whether the cache key changes before reusing this plan for safety.
+	planCacheKey kvcache.Key
 }
 
 // GetPreparedStmt extract the prepared statement from the execute statement.
@@ -568,6 +603,93 @@ func checkTypesCompatibility4PC(tpsExpected, tpsActual []*types.FieldType) bool 
 		// We can only use the plan when both Flen and Decimal should less equal than the cached one.
 		// We assume here that there is no correctness problem when the precision of the parameters is less than the precision of the parameters in the cache.
 		if tpEqual && tpsExpected[i].GetType() == mysql.TypeNewDecimal && !(tpsExpected[i].GetFlen() >= tpsActual[i].GetFlen() && tpsExpected[i].GetDecimal() >= tpsActual[i].GetDecimal()) {
+			return false
+		}
+	}
+	return true
+}
+
+func isSafePointGetPath4PlanCache(sctx sessionctx.Context, path *util.AccessPath) bool {
+	// PointGet might contain some over-optimized assumptions, like `a>=1 and a<=1` --> `a=1`, but
+	// these assumptions may be broken after parameters change.
+
+	if isSafePointGetPath4PlanCacheScenario1(path) {
+		return true
+	}
+
+	// TODO: enable this fix control switch by default after more test cases are added.
+	if sctx != nil && sctx.GetSessionVars() != nil && sctx.GetSessionVars().OptimizerFixControl != nil {
+		v, ok := sctx.GetSessionVars().OptimizerFixControl[variable.TiDBOptFixControl44830]
+		if ok && variable.TiDBOptOn(v) && (isSafePointGetPath4PlanCacheScenario2(path) || isSafePointGetPath4PlanCacheScenario3(path)) {
+			return true
+		}
+	}
+
+	return false
+}
+
+func isSafePointGetPath4PlanCacheScenario1(path *util.AccessPath) bool {
+	// safe scenario 1: each column corresponds to a single EQ, `a=1 and b=2 and c=3` --> `[1, 2, 3]`
+	if len(path.Ranges) <= 0 || path.Ranges[0].Width() != len(path.AccessConds) {
+		return false
+	}
+	for _, accessCond := range path.AccessConds {
+		f, ok := accessCond.(*expression.ScalarFunction)
+		if !ok || f.FuncName.L != ast.EQ { // column = constant
+			return false
+		}
+	}
+	return true
+}
+
+func isSafePointGetPath4PlanCacheScenario2(path *util.AccessPath) bool {
+	// safe scenario 2: this Batch or PointGet is simply from a single IN predicate, `key in (...)`
+	if len(path.Ranges) <= 0 || len(path.AccessConds) != 1 {
+		return false
+	}
+	f, ok := path.AccessConds[0].(*expression.ScalarFunction)
+	if !ok || f.FuncName.L != ast.In {
+		return false
+	}
+	return len(path.Ranges) == len(f.GetArgs())-1 // no duplicated values in this in-list for safety.
+}
+
+func isSafePointGetPath4PlanCacheScenario3(path *util.AccessPath) bool {
+	// safe scenario 3: this Batch or PointGet is simply from a simple DNF like `key=? or key=? or key=?`
+	if len(path.Ranges) <= 0 || len(path.AccessConds) != 1 {
+		return false
+	}
+	f, ok := path.AccessConds[0].(*expression.ScalarFunction)
+	if !ok || f.FuncName.L != ast.LogicOr {
+		return false
+	}
+
+	dnfExprs := expression.FlattenDNFConditions(f)
+	if len(path.Ranges) != len(dnfExprs) {
+		// no duplicated values in this in-list for safety.
+		// e.g. `k=1 or k=2 or k=1` --> [[1, 1], [2, 2]]
+		return false
+	}
+
+	for _, expr := range dnfExprs {
+		f, ok := expr.(*expression.ScalarFunction)
+		if !ok {
+			return false
+		}
+		switch f.FuncName.L {
+		case ast.EQ: // (k=1 or k=2) --> [k=1, k=2]
+		case ast.LogicAnd: // ((k1=1 and k2=1) or (k1=2 and k2=2)) --> [k1=1 and k2=1, k2=2 and k2=2]
+			cnfExprs := expression.FlattenCNFConditions(f)
+			if path.Ranges[0].Width() != len(cnfExprs) { // not all key columns are specified
+				return false
+			}
+			for _, expr := range cnfExprs { // k1=1 and k2=1
+				f, ok := expr.(*expression.ScalarFunction)
+				if !ok || f.FuncName.L != ast.EQ {
+					return false
+				}
+			}
+		default:
 			return false
 		}
 	}

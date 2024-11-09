@@ -27,6 +27,75 @@ import (
 	"google.golang.org/grpc/backoff"
 )
 
+type RecoveryStage int
+
+const (
+	StageUnknown RecoveryStage = iota
+	StageCollectingMeta
+	StageMakingRecoveryPlan
+	StageResetPDAllocateID
+	StageRecovering
+	StageFlashback
+)
+
+func (s RecoveryStage) String() string {
+	switch s {
+	case StageCollectingMeta:
+		return "collecting meta"
+	case StageMakingRecoveryPlan:
+		return "making recovery plan"
+	case StageResetPDAllocateID:
+		return "resetting PD allocate ID"
+	case StageRecovering:
+		return "recovering"
+	case StageFlashback:
+		return "flashback"
+	default:
+		return "unknown"
+	}
+}
+
+type recoveryError struct {
+	error
+	atStage RecoveryStage
+}
+
+func FailedAt(err error) RecoveryStage {
+	if rerr, ok := err.(recoveryError); ok {
+		return rerr.atStage
+	}
+	return StageUnknown
+}
+
+type recoveryBackoffer struct {
+	state utils.RetryState
+}
+
+func newRecoveryBackoffer() *recoveryBackoffer {
+	return &recoveryBackoffer{
+		state: utils.InitialRetryState(16, 30*time.Second, 4*time.Minute),
+	}
+}
+
+func (bo *recoveryBackoffer) NextBackoff(err error) time.Duration {
+	s := FailedAt(err)
+	switch s {
+	case StageCollectingMeta, StageMakingRecoveryPlan, StageResetPDAllocateID, StageRecovering:
+		log.Info("Recovery data retrying.", zap.Error(err), zap.Stringer("stage", s))
+		return bo.state.ExponentialBackoff()
+	case StageFlashback:
+		log.Info("Giving up retry for flashback stage.", zap.Error(err), zap.Stringer("stage", s))
+		bo.state.GiveUp()
+		return 0
+	}
+	log.Warn("unknown stage of backing off.", zap.Int("val", int(s)))
+	return bo.state.ExponentialBackoff()
+}
+
+func (bo *recoveryBackoffer) Attempt() int {
+	return bo.state.Attempt()
+}
+
 // RecoverData recover the tikv cluster
 // 1. read all meta data from tikvs
 // 2. make recovery plan and then recovery max allocate ID firstly
@@ -35,39 +104,52 @@ import (
 // 5. prepare the flashback
 // 6. flashback to resolveTS
 func RecoverData(ctx context.Context, resolveTS uint64, allStores []*metapb.Store, mgr *conn.Mgr, progress glue.Progress, restoreTS uint64, concurrency uint32) (int, error) {
+	// Roughly handle the case that some TiKVs are rebooted during making plan.
+	// Generally, retry the whole procedure will be fine for most cases. But perhaps we can do finer-grained retry,
+	// say, we may reuse the recovery plan, and probably no need to rebase PD allocation ID once we have done it.
+	return utils.WithRetryV2(ctx, newRecoveryBackoffer(), func(ctx context.Context) (int, error) {
+		return doRecoveryData(ctx, resolveTS, allStores, mgr, progress, restoreTS, concurrency)
+	})
+}
+
+func doRecoveryData(ctx context.Context, resolveTS uint64, allStores []*metapb.Store, mgr *conn.Mgr, progress glue.Progress, restoreTS uint64, concurrency uint32) (int, error) {
+	var cancel context.CancelFunc
+	ctx, cancel = context.WithCancel(ctx)
+	defer cancel()
+
 	var recovery = NewRecovery(allStores, mgr, progress, concurrency)
 	if err := recovery.ReadRegionMeta(ctx); err != nil {
-		return 0, errors.Trace(err)
+		return 0, recoveryError{error: err, atStage: StageCollectingMeta}
 	}
 
 	totalRegions := recovery.GetTotalRegions()
 
 	if err := recovery.MakeRecoveryPlan(); err != nil {
-		return totalRegions, errors.Trace(err)
+		return totalRegions, recoveryError{error: err, atStage: StageMakingRecoveryPlan}
 	}
 
 	log.Info("recover the alloc id to pd", zap.Uint64("max alloc id", recovery.MaxAllocID))
 	if err := recovery.mgr.RecoverBaseAllocID(ctx, recovery.MaxAllocID); err != nil {
-		return totalRegions, errors.Trace(err)
+		return totalRegions, recoveryError{error: err, atStage: StageResetPDAllocateID}
 	}
 
 	// Once TiKV shuts down and reboot then, it may be left with no leader because of the recovery mode.
 	// This wathcher will retrigger `RecoveryRegions` for those stores.
 	recovery.SpawnTiKVShutDownWatchers(ctx)
 	if err := recovery.RecoverRegions(ctx); err != nil {
-		return totalRegions, errors.Trace(err)
+		return totalRegions, recoveryError{error: err, atStage: StageRecovering}
 	}
 
 	if err := recovery.WaitApply(ctx); err != nil {
-		return totalRegions, errors.Trace(err)
+		return totalRegions, recoveryError{error: err, atStage: StageRecovering}
 	}
 
 	if err := recovery.PrepareFlashbackToVersion(ctx, resolveTS, restoreTS-1); err != nil {
-		return totalRegions, errors.Trace(err)
+		return totalRegions, recoveryError{error: err, atStage: StageFlashback}
 	}
 
 	if err := recovery.FlashbackToVersion(ctx, resolveTS, restoreTS); err != nil {
-		return totalRegions, errors.Trace(err)
+		return totalRegions, recoveryError{error: err, atStage: StageFlashback}
 	}
 
 	return totalRegions, nil

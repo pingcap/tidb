@@ -36,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/summary"
 	"github.com/pingcap/tidb/br/pkg/utils"
+	"github.com/pingcap/tidb/br/pkg/version"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/distsql"
 	"github.com/pingcap/tidb/kv"
@@ -43,6 +44,7 @@ import (
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/ranger"
 	filter "github.com/pingcap/tidb/util/table-filter"
 	"github.com/tikv/client-go/v2/oracle"
@@ -537,6 +539,15 @@ func BuildBackupRangeAndInitSchema(
 
 		hasTable := false
 		err = m.IterTables(dbInfo.ID, func(tableInfo *model.TableInfo) error {
+			if tableInfo.Version > version.CURRENT_BACKUP_SUPPORT_TABLE_INFO_VERSION {
+				// normally this shouldn't happen in a production env.
+				// because we had a unit test to avoid table info version update silencly.
+				// and had version check before run backup.
+				return errors.Errorf("backup doesn't not support table %s with version %d, maybe try a new version of br",
+					tableInfo.Name.String(),
+					tableInfo.Version,
+				)
+			}
 			if !tableFilter.MatchTable(dbInfo.Name.O, tableInfo.Name.O) {
 				// Skip tables other than the given table.
 				return nil
@@ -633,6 +644,20 @@ func BuildBackupSchemas(
 			default:
 				if tableInfo.SepAutoInc() {
 					globalAutoID, err = autoIDAccess.IncrementID(tableInfo.Version).Get()
+					// For a nonclustered table with auto_increment column, both auto_increment_id and _tidb_rowid are required.
+					// See also https://github.com/pingcap/tidb/issues/46093
+					if rowID, err1 := autoIDAccess.RowID().Get(); err1 == nil {
+						tableInfo.AutoIncIDExtra = rowID + 1
+					} else {
+						// It is possible that the rowid meta key does not exist (i.e. table have auto_increment_id but no _rowid),
+						// so err1 != nil might be expected.
+						if globalAutoID == 0 {
+							// When both auto_increment_id and _rowid are missing, it must be something wrong.
+							return errors.Trace(err1)
+						}
+						// Print a warning in other scenes, should it be a INFO log?
+						log.Warn("get rowid error", zap.Error(err1))
+					}
 				} else {
 					globalAutoID, err = autoIDAccess.RowID().Get()
 				}
@@ -650,7 +675,7 @@ func BuildBackupSchemas(
 			// Treat cached table as normal table.
 			tableInfo.TableCacheStatusType = model.TableCacheStatusDisable
 
-			if tableInfo.PKIsHandle && tableInfo.ContainsAutoRandomBits() {
+			if tableInfo.ContainsAutoRandomBits() {
 				// this table has auto_random id, we need backup and rebase in restoration
 				var globalAutoRandID int64
 				globalAutoRandID, err = autoIDAccess.RandomID().Get()
@@ -991,12 +1016,15 @@ func (bc *Client) findTargetPeer(ctx context.Context, key []byte, isRawKv bool, 
 	// Keys are saved in encoded format in TiKV, so the key must be encoded
 	// in order to find the correct region.
 	key = codec.EncodeBytesExt([]byte{}, key, isRawKv)
-	for i := 0; i < 5; i++ {
+	for i := 1; i < 100; i++ {
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
 		// better backoff.
 		region, err := bc.mgr.GetPDClient().GetRegion(ctx, key)
 		if err != nil || region == nil {
 			logutil.CL(ctx).Error("find region failed", zap.Error(err), zap.Reflect("region", region))
-			time.Sleep(time.Millisecond * time.Duration(100*i))
+			time.Sleep(time.Millisecond * time.Duration(mathutil.Min(i*100, 3000)))
 			continue
 		}
 		if len(targetStoreIds) == 0 {
@@ -1019,9 +1047,8 @@ func (bc *Client) findTargetPeer(ctx context.Context, key []byte, isRawKv bool, 
 				return peer, nil
 			}
 		}
-
 		logutil.CL(ctx).Warn("fail to find a target peer", logutil.Key("key", key))
-		time.Sleep(time.Millisecond * time.Duration(1000*i))
+		time.Sleep(time.Millisecond * time.Duration(mathutil.Min(i*100, 3000)))
 		continue
 	}
 	logutil.CL(ctx).Error("can not find a valid target peer", logutil.Key("key", key))
@@ -1161,17 +1188,18 @@ func OnBackupResponse(
 	backupTS uint64,
 	lockResolver *txnlock.LockResolver,
 	resp *backuppb.BackupResponse,
+	errContext *utils.ErrorContext,
 ) (*backuppb.BackupResponse, int, error) {
 	log.Debug("OnBackupResponse", zap.Reflect("resp", resp))
 	if resp.Error == nil {
 		return resp, 0, nil
 	}
 	backoffMs := 0
-	switch v := resp.Error.Detail.(type) {
+
+	err := resp.Error
+	switch v := err.Detail.(type) {
 	case *backuppb.Error_KvError:
 		if lockErr := v.KvError.Locked; lockErr != nil {
-			// Try to resolve lock.
-			log.Warn("backup occur kv error", zap.Reflect("error", v))
 			msBeforeExpired, err1 := lockResolver.ResolveLocks(
 				bo, backupTS, []*txnlock.Lock{txnlock.NewLock(lockErr)})
 			if err1 != nil {
@@ -1182,44 +1210,16 @@ func OnBackupResponse(
 			}
 			return nil, backoffMs, nil
 		}
-		// Backup should not meet error other than KeyLocked.
-		log.Error("unexpect kv error", zap.Reflect("KvError", v.KvError))
-		return nil, backoffMs, errors.Annotatef(berrors.ErrKVUnknown, "storeID: %d OnBackupResponse error %v", storeID, v)
-
-	case *backuppb.Error_RegionError:
-		regionErr := v.RegionError
-		// Ignore following errors.
-		if !(regionErr.EpochNotMatch != nil ||
-			regionErr.NotLeader != nil ||
-			regionErr.RegionNotFound != nil ||
-			regionErr.ServerIsBusy != nil ||
-			regionErr.StaleCommand != nil ||
-			regionErr.StoreNotMatch != nil ||
-			regionErr.ReadIndexNotReady != nil ||
-			regionErr.ProposalInMergingMode != nil) {
-			log.Error("unexpect region error", zap.Reflect("RegionError", regionErr))
-			return nil, backoffMs, errors.Annotatef(berrors.ErrKVUnknown, "storeID: %d OnBackupResponse error %v", storeID, v)
-		}
-		log.Warn("backup occur region error",
-			zap.Reflect("RegionError", regionErr),
-			zap.Uint64("storeID", storeID))
-		// TODO: a better backoff.
-		backoffMs = 1000 /* 1s */
-		return nil, backoffMs, nil
-	case *backuppb.Error_ClusterIdError:
-		log.Error("backup occur cluster ID error", zap.Reflect("error", v), zap.Uint64("storeID", storeID))
-		return nil, 0, errors.Annotatef(berrors.ErrKVClusterIDMismatch, "%v on storeID: %d", resp.Error, storeID)
 	default:
-		// UNSAFE! TODO: use meaningful error code instead of unstructured message to find failed to write error.
-		if utils.MessageIsRetryableStorageError(resp.GetError().GetMsg()) {
-			log.Warn("backup occur storage error", zap.String("error", resp.GetError().GetMsg()))
-			// back off 3000ms, for S3 is 99.99% available (i.e. the max outage time would less than 52.56mins per year),
-			// this time would be probably enough for s3 to resume.
+		res := errContext.HandleError(resp.Error, storeID)
+		switch res.Strategy {
+		case utils.GiveUpStrategy:
+			return nil, 0, errors.Annotatef(berrors.ErrKVUnknown, "storeID: %d OnBackupResponse error %s", storeID, res.Reason)
+		case utils.RetryStrategy:
 			return nil, 3000, nil
 		}
-		log.Error("backup occur unknown error", zap.String("error", resp.Error.GetMsg()), zap.Uint64("storeID", storeID))
-		return nil, 0, errors.Annotatef(berrors.ErrKVUnknown, "%v on storeID: %d", resp.Error, storeID)
 	}
+	return nil, 3000, errors.Annotatef(berrors.ErrKVUnknown, "unreachable")
 }
 
 func (bc *Client) handleFineGrained(
@@ -1249,12 +1249,13 @@ func (bc *Client) handleFineGrained(
 	}
 	hasProgress := false
 	backoffMill := 0
+	errContext := utils.NewErrorContext("handleFineGrainedBackup", 10)
 	err = SendBackup(
 		ctx, storeID, client, req,
 		// Handle responses with the same backoffer.
 		func(resp *backuppb.BackupResponse) error {
 			response, shouldBackoff, err1 :=
-				OnBackupResponse(storeID, bo, req.EndVersion, lockResolver, resp)
+				OnBackupResponse(storeID, bo, req.EndVersion, lockResolver, resp, errContext)
 			if err1 != nil {
 				return err1
 			}
@@ -1295,12 +1296,74 @@ func (bc *Client) handleFineGrained(
 	return backoffMill, nil
 }
 
+// timeoutRecv cancel the context if `Refresh()` is not called within the specified time `timeout`.
+type timeoutRecv struct {
+	wg        sync.WaitGroup
+	parentCtx context.Context
+	cancel    context.CancelCauseFunc
+
+	refresh chan struct{}
+}
+
+// Refresh the timeout ticker
+func (trecv *timeoutRecv) Refresh() {
+	select {
+	case <-trecv.parentCtx.Done():
+	case trecv.refresh <- struct{}{}:
+	}
+}
+
+// Stop the timeout ticker
+func (trecv *timeoutRecv) Stop() {
+	close(trecv.refresh)
+	trecv.wg.Wait()
+	trecv.cancel(nil)
+}
+
+var TimeoutOneResponse = time.Hour
+
+func (trecv *timeoutRecv) loop(timeout time.Duration) {
+	defer trecv.wg.Done()
+	ticker := time.NewTicker(timeout)
+	defer ticker.Stop()
+	for {
+		ticker.Reset(timeout)
+		select {
+		case <-trecv.parentCtx.Done():
+			return
+		case _, ok := <-trecv.refresh:
+			if !ok {
+				return
+			}
+		case <-ticker.C:
+			log.Warn("receive a backup response timeout")
+			trecv.cancel(errors.Errorf("receive a backup response timeout"))
+		}
+	}
+}
+
+func StartTimeoutRecv(ctx context.Context, timeout time.Duration) (context.Context, *timeoutRecv) {
+	cctx, cancel := context.WithCancelCause(ctx)
+	trecv := &timeoutRecv{
+		parentCtx: ctx,
+		cancel:    cancel,
+		refresh:   make(chan struct{}),
+	}
+	trecv.wg.Add(1)
+	go trecv.loop(timeout)
+	return cctx, trecv
+}
+
 func doSendBackup(
-	ctx context.Context,
+	pctx context.Context,
 	client backuppb.BackupClient,
 	req backuppb.BackupRequest,
 	respFn func(*backuppb.BackupResponse) error,
 ) error {
+	// Backup might be stuck on GRPC `waitonHeader`, so start a timeout ticker to
+	// terminate the backup if it does not receive any new response for a long time.
+	ctx, timerecv := StartTimeoutRecv(pctx, TimeoutOneResponse)
+	defer timerecv.Stop()
 	failpoint.Inject("hint-backup-start", func(v failpoint.Value) {
 		logutil.CL(ctx).Info("failpoint hint-backup-start injected, " +
 			"process will notify the shell.")
@@ -1345,6 +1408,7 @@ func doSendBackup(
 
 	for {
 		resp, err := bCli.Recv()
+		timerecv.Refresh()
 		if err != nil {
 			if errors.Cause(err) == io.EOF { // nolint:errorlint
 				logutil.CL(ctx).Debug("backup streaming finish",
@@ -1389,57 +1453,22 @@ func SendBackup(
 	var errReset error
 	var errBackup error
 
-	for retry := 0; retry < backupRetryTimes; retry++ {
-		logutil.CL(ctx).Info("try backup",
-			zap.Int("retry time", retry),
-		)
+	retry := -1
+	return utils.WithRetry(ctx, func() error {
+		retry += 1
+		if retry != 0 {
+			client, errReset = resetFn()
+			if errReset != nil {
+				return errors.Annotatef(errReset, "failed to reset backup connection on store:%d "+
+					"please check the tikv status", storeID)
+			}
+		}
+		logutil.CL(ctx).Info("try backup", zap.Int("retry time", retry))
 		errBackup = doSendBackup(ctx, client, req, respFn)
 		if errBackup != nil {
-			if isRetryableError(errBackup) {
-				time.Sleep(3 * time.Second)
-				client, errReset = resetFn()
-				if errReset != nil {
-					return errors.Annotatef(errReset, "failed to reset backup connection on store:%d "+
-						"please check the tikv status", storeID)
-				}
-				continue
-			}
-			logutil.CL(ctx).Error("fail to backup", zap.Uint64("StoreID", storeID), zap.Int("retry", retry))
 			return berrors.ErrFailedToConnect.Wrap(errBackup).GenWithStack("failed to create backup stream to store %d", storeID)
 		}
-		// finish backup
-		break
-	}
-	return nil
-}
 
-// gRPC communication cancelled with connection closing
-const (
-	gRPC_Cancel = "the client connection is closing"
-)
-
-// isRetryableError represents whether we should retry reset grpc connection.
-func isRetryableError(err error) bool {
-	// some errors can be retried
-	// https://github.com/pingcap/tidb/issues/34350
-	switch status.Code(err) {
-	case codes.Unavailable, codes.DeadlineExceeded,
-		codes.ResourceExhausted, codes.Aborted, codes.Internal:
-		{
-			log.Warn("backup met some errors, these errors can be retry 5 times", zap.Error(err))
-			return true
-		}
-	}
-
-	// At least, there are two possible cancel() call,
-	// one from backup range, another from gRPC, here we retry when gRPC cancel with connection closing
-	if status.Code(err) == codes.Canceled {
-		if s, ok := status.FromError(err); ok {
-			if strings.Contains(s.Message(), gRPC_Cancel) {
-				log.Warn("backup met grpc cancel error, this errors can be retry 5 times", zap.Error(err))
-				return true
-			}
-		}
-	}
-	return false
+		return nil
+	}, utils.NewBackupSSTBackoffer())
 }

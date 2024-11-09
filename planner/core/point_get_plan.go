@@ -19,6 +19,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"unsafe"
 
 	"github.com/pingcap/errors"
@@ -96,6 +97,8 @@ type PointGetPlan struct {
 	// probeParents records the IndexJoins and Applys with this operator in their inner children.
 	// Please see comments in PhysicalPlan for details.
 	probeParents []PhysicalPlan
+	// stmtHints should restore in executing context.
+	stmtHints *stmtctx.StmtHints
 }
 
 func (p *PointGetPlan) getEstRowCountForDisplay() float64 {
@@ -539,10 +542,13 @@ func TryFastPlan(ctx sessionctx.Context, node ast.Node) (p Plan) {
 	ctx.GetSessionVars().PlanColumnID.Store(0)
 	switch x := node.(type) {
 	case *ast.SelectStmt:
+		if x.SelectIntoOpt != nil {
+			return nil
+		}
 		defer func() {
 			vars := ctx.GetSessionVars()
 			if vars.SelectLimit != math2.MaxUint64 && p != nil {
-				ctx.GetSessionVars().StmtCtx.AppendWarning(errors.New("sql_select_limit is set, so point get plan is not activated"))
+				ctx.GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackError("sql_select_limit is set, so point get plan is not activated"))
 				p = nil
 			}
 			if vars.StmtCtx.EnableOptimizeTrace && p != nil {
@@ -1012,7 +1018,7 @@ func tryWhereIn2BatchPointGet(ctx sessionctx.Context, selStmt *ast.SelectStmt) *
 // 3. All the columns must be public and not generated.
 // 4. The condition is an access path that the range is a unique key.
 func tryPointGetPlan(ctx sessionctx.Context, selStmt *ast.SelectStmt, check bool) *PointGetPlan {
-	if selStmt.Having != nil {
+	if selStmt.Having != nil || selStmt.OrderBy != nil {
 		return nil
 	} else if selStmt.Limit != nil {
 		count, offset, err := extractLimitCountOffset(ctx, selStmt.Limit)
@@ -1549,13 +1555,57 @@ func findInPairs(colName string, pairs []nameValuePair) int {
 	return -1
 }
 
-func tryUpdatePointPlan(ctx sessionctx.Context, updateStmt *ast.UpdateStmt) Plan {
-	// avoid using the point_get when assignment_list contains the subquery in the UPDATE.
-	for _, list := range updateStmt.List {
-		if _, ok := list.Expr.(*ast.SubqueryExpr); ok {
-			return nil
+// Use cache to avoid allocating memory every time.
+var subQueryCheckerPool = &sync.Pool{New: func() any { return &subQueryChecker{} }}
+
+type subQueryChecker struct {
+	hasSubQuery bool
+}
+
+func (s *subQueryChecker) Enter(in ast.Node) (node ast.Node, skipChildren bool) {
+	if s.hasSubQuery {
+		return in, true
+	}
+
+	if _, ok := in.(*ast.SubqueryExpr); ok {
+		s.hasSubQuery = true
+		return in, true
+	}
+
+	return in, false
+}
+
+func (s *subQueryChecker) Leave(in ast.Node) (ast.Node, bool) {
+	// Before we enter the sub-query, we should keep visiting its children.
+	return in, !s.hasSubQuery
+}
+
+func isExprHasSubQuery(expr ast.Node) bool {
+	checker := subQueryCheckerPool.Get().(*subQueryChecker)
+	defer func() {
+		// Do not forget to reset the flag.
+		checker.hasSubQuery = false
+		subQueryCheckerPool.Put(checker)
+	}()
+	expr.Accept(checker)
+	return checker.hasSubQuery
+}
+
+func checkIfAssignmentListHasSubQuery(list []*ast.Assignment) bool {
+	for _, a := range list {
+		if isExprHasSubQuery(a) {
+			return true
 		}
 	}
+	return false
+}
+
+func tryUpdatePointPlan(ctx sessionctx.Context, updateStmt *ast.UpdateStmt) Plan {
+	// Avoid using the point_get when assignment_list contains the sub-query in the UPDATE.
+	if checkIfAssignmentListHasSubQuery(updateStmt.List) {
+		return nil
+	}
+
 	selStmt := &ast.SelectStmt{
 		Fields:  &ast.FieldList{},
 		From:    updateStmt.TableRefs,
@@ -1609,15 +1659,14 @@ func buildPointUpdatePlan(ctx sessionctx.Context, pointPlan PhysicalPlan, dbName
 		VirtualAssignmentsOffset:  len(orderedList),
 	}.Init(ctx)
 	updatePlan.names = pointPlan.OutputNames()
-	is := ctx.GetInfoSchema().(infoschema.InfoSchema)
+	is := sessiontxn.GetTxnManager(ctx).GetTxnInfoSchema()
 	t, _ := is.TableByID(tbl.ID)
 	updatePlan.tblID2Table = map[int64]table.Table{
 		tbl.ID: t,
 	}
 	if tbl.GetPartitionInfo() != nil {
 		pt := t.(table.PartitionedTable)
-		var updateTableList []*ast.TableName
-		updateTableList = extractTableList(updateStmt.TableRefs.TableRefs, updateTableList, true)
+		updateTableList := ExtractTableList(updateStmt.TableRefs.TableRefs, true)
 		updatePlan.PartitionedTable = make([]table.PartitionedTable, 0, len(updateTableList))
 		for _, updateTable := range updateTableList {
 			if len(updateTable.PartitionNames) > 0 {

@@ -455,12 +455,6 @@ func TestHiddenColumn(t *testing.T) {
 	colInfo[1].Hidden = true
 	colInfo[3].Hidden = true
 	colInfo[5].Hidden = true
-	tc := tb.(*tables.TableCommon)
-	// Reset related caches
-	tc.VisibleColumns = nil
-	tc.WritableColumns = nil
-	tc.HiddenColumns = nil
-	tc.FullHiddenColsAndVisibleColumns = nil
 
 	// Basic test
 	cols := tb.VisibleCols()
@@ -729,12 +723,16 @@ func TestViewColumns(t *testing.T) {
 	for _, testCase := range testCases {
 		tk.MustQuery(testCase.query).Check(testkit.RowsWithSep("|", testCase.expected...))
 	}
+	tk.MustExec("create view v1 as select (select a from t) as col from dual")
+	tk.MustQuery("select column_name, table_name from information_schema.columns where table_name='v1'").Check(
+		testkit.RowsWithSep("|", "col|v1"))
 	tk.MustExec("drop table if exists t")
 	for _, testCase := range testCases {
 		require.Len(t, tk.MustQuery(testCase.query).Rows(), 0)
 		tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|",
 			"Warning|1356|View 'test.v' references invalid table(s) or column(s) or function(s) or definer/invoker of view lack rights to use them",
-			"Warning|1356|View 'test.va' references invalid table(s) or column(s) or function(s) or definer/invoker of view lack rights to use them"))
+			"Warning|1356|View 'test.va' references invalid table(s) or column(s) or function(s) or definer/invoker of view lack rights to use them",
+			"Warning|1356|View 'test.v1' references invalid table(s) or column(s) or function(s) or definer/invoker of view lack rights to use them"))
 	}
 }
 
@@ -1691,7 +1689,7 @@ func TestWriteWithChecksums(t *testing.T) {
 				}
 				data := rowcodec.RowData{Cols: cols}
 				sort.Sort(data)
-				checksum, err := data.Checksum()
+				checksum, err := data.Checksum(time.Local)
 				assert.NoError(t, err)
 				expectChecksums = append(expectChecksums, checksum)
 			}

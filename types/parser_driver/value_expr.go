@@ -183,7 +183,7 @@ func (n *ValueExpr) Format(w io.Writer) {
 }
 
 // WrapInSingleQuotes escapes single quotes and backslashs
-// and adds single quotes arond the string
+// and adds single quotes around the string
 func WrapInSingleQuotes(inStr string) string {
 	s := strings.ReplaceAll(inStr, "\\", "\\\\")
 	s = strings.ReplaceAll(s, `'`, `''`)
@@ -191,7 +191,7 @@ func WrapInSingleQuotes(inStr string) string {
 }
 
 // UnwrapFromSingleQuotes the reverse of WrapInSingleQuotes
-// but also allows non single quoted strings
+// but also allows non-single quoted strings
 func UnwrapFromSingleQuotes(inStr string) string {
 	if len(inStr) < 2 || inStr[:1] != "'" || inStr[len(inStr)-1:] != "'" {
 		return inStr
@@ -240,6 +240,14 @@ type ParamMarkerExpr struct {
 	Offset    int
 	Order     int
 	InExecute bool
+
+	// For "select ? as c from t group by c", the optimizer replaces the `c` in the by-clause to `group by ?`,
+	// but this conversion conflicts with the original semantic. The original `group by c` means grouping by the column `c`,
+	// while the converted `group by ?` means grouping by the `?-th` column in the select-list, for example, `group by 3` means
+	// grouping the result by the 3rd column.
+	// Use this flag to let the optimizer know whether `group by ?` is converted from this case and if it is, use this
+	// marker as normal value instead of column index in the by-clause.
+	UseAsValueInGbyByClause bool
 }
 
 // Restore implements Node interface.

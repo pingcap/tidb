@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/charset"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/opcode"
 	"github.com/pingcap/tidb/parser/terror"
@@ -409,6 +410,7 @@ func SetExprColumnInOperand(expr Expression) Expression {
 
 // ColumnSubstitute substitutes the columns in filter to expressions in select fields.
 // e.g. select * from (select b as a from t) k where a < 10 => select * from (select b as a from t where b < 10) k.
+// TODO: remove this function and only use ColumnSubstituteImpl since this function swallows the error, which seems unsafe.
 func ColumnSubstitute(expr Expression, schema *Schema, newExprs []Expression) Expression {
 	_, _, resExpr := ColumnSubstituteImpl(expr, schema, newExprs, false)
 	return resExpr
@@ -452,12 +454,35 @@ func ColumnSubstituteImpl(expr Expression, schema *Schema, newExprs []Expression
 			}
 			if substituted {
 				flag := v.RetType.GetFlag()
-				e := BuildCastFunction(v.GetCtx(), newArg, v.RetType)
+				e, err := BuildCastFunctionWithCheck(v.GetCtx(), newArg, v.RetType, v.Function.IsExplicitCharset())
+				terror.Log(err)
 				e.SetCoercibility(v.Coercibility())
 				e.GetType().SetFlag(flag)
 				return true, false, e
 			}
 			return false, false, v
+		}
+		// If the collation of the column is PAD SPACE,
+		// we can't propagate the constant to the length function.
+		// For example, schema = ['name'], newExprs = ['a'], v = length(name).
+		// We can't substitute name with 'a' in length(name) because the collation of name is PAD SPACE.
+		// TODO: We will fix it here temporarily, and redesign the logic if we encounter more similar functions or situations later.
+		// Fixed issue #53730
+		if v.GetCtx().GetSessionVars().StmtCtx.InConstantPropagateCheck && v.FuncName.L == ast.Length {
+			arg0, isColumn := v.GetArgs()[0].(*Column)
+			if isColumn {
+				id := schema.ColumnIndex(arg0)
+				if id != -1 {
+					_, isConstant := newExprs[id].(*Constant)
+					if isConstant {
+						mappedNewColumnCollate := schema.Columns[id].GetType().GetCollate()
+						if mappedNewColumnCollate == charset.CollationUTF8MB4 ||
+							mappedNewColumnCollate == charset.CollationUTF8 {
+							return false, false, v
+						}
+					}
+				}
+			}
 		}
 		// cowExprRef is a copy-on-write util, args array allocation happens only
 		// when expr in args is changed
@@ -511,7 +536,11 @@ func ColumnSubstituteImpl(expr Expression, schema *Schema, newExprs []Expression
 			}
 		}
 		if substituted {
-			return true, hasFail, NewFunctionInternal(v.GetCtx(), v.FuncName.L, v.RetType, refExprArr.Result()...)
+			newFunc, err := NewFunction(v.GetCtx(), v.FuncName.L, v.RetType, refExprArr.Result()...)
+			if err != nil {
+				return true, true, v
+			}
+			return true, hasFail, newFunc
 		}
 	}
 	return false, false, expr
@@ -708,6 +737,152 @@ func pushNotAcrossArgs(ctx sessionctx.Context, exprs []Expression, not bool) ([]
 	return newExprs, flag
 }
 
+// todo: consider more no precision-loss downcast cases.
+func noPrecisionLossCastCompatible(cast, argCol *types.FieldType) bool {
+	// now only consider varchar type and integer.
+	if !(types.IsTypeVarchar(cast.GetType()) && types.IsTypeVarchar(argCol.GetType())) &&
+		!(mysql.IsIntegerType(cast.GetType()) && mysql.IsIntegerType(argCol.GetType())) {
+		// varchar type and integer on the storage layer is quite same, while the char type has its padding suffix.
+		return false
+	}
+	if types.IsTypeVarchar(cast.GetType()) {
+		// cast varchar function only bear the flen extension.
+		if cast.GetFlen() < argCol.GetFlen() {
+			return false
+		}
+		if !collate.CompatibleCollate(cast.GetCollate(), argCol.GetCollate()) {
+			return false
+		}
+	} else {
+		// For integers, we should ignore the potential display length represented by flen, using the default flen of the type.
+		castFlen, _ := mysql.GetDefaultFieldLengthAndDecimal(cast.GetType())
+		originFlen, _ := mysql.GetDefaultFieldLengthAndDecimal(argCol.GetType())
+		// cast integer function only bear the flen extension and signed symbol unchanged.
+		if castFlen < originFlen {
+			return false
+		}
+		if mysql.HasUnsignedFlag(cast.GetFlag()) != mysql.HasUnsignedFlag(argCol.GetFlag()) {
+			return false
+		}
+	}
+	return true
+}
+
+func unwrapCast(sctx sessionctx.Context, parentF *ScalarFunction, castOffset int) (Expression, bool) {
+	_, collation := parentF.CharsetAndCollation()
+	cast, ok := parentF.GetArgs()[castOffset].(*ScalarFunction)
+	if !ok || cast.FuncName.L != ast.Cast {
+		return parentF, false
+	}
+	// eg: if (cast(A) EQ const) with incompatible collation, even if cast is eliminated, the condition still can not be used to build range.
+	if cast.RetType.EvalType() == types.ETString && !collate.CompatibleCollate(cast.RetType.GetCollate(), collation) {
+		return parentF, false
+	}
+	// 1-castOffset should be constant
+	if _, ok := parentF.GetArgs()[1-castOffset].(*Constant); !ok {
+		return parentF, false
+	}
+
+	// the direct args of cast function should be column.
+	c, ok := cast.GetArgs()[0].(*Column)
+	if !ok {
+		return parentF, false
+	}
+
+	// current only consider varchar and integer
+	if !noPrecisionLossCastCompatible(cast.RetType, c.RetType) {
+		return parentF, false
+	}
+
+	// the column is covered by indexes, deconstructing it out.
+	if castOffset == 0 {
+		return NewFunctionInternal(sctx, parentF.FuncName.L, parentF.RetType, c, parentF.GetArgs()[1]), true
+	}
+	return NewFunctionInternal(sctx, parentF.FuncName.L, parentF.RetType, parentF.GetArgs()[0], c), true
+}
+
+// eliminateCastFunction will detect the original arg before and the cast type after, once upon
+// there is no precision loss between them, current cast wrapper can be eliminated. For string
+// type, collation is also taken into consideration. (mainly used to build range or point)
+func eliminateCastFunction(sctx sessionctx.Context, expr Expression) (_ Expression, changed bool) {
+	f, ok := expr.(*ScalarFunction)
+	if !ok {
+		return expr, false
+	}
+	_, collation := expr.CharsetAndCollation()
+	switch f.FuncName.L {
+	case ast.LogicOr:
+		dnfItems := FlattenDNFConditions(f)
+		rmCast := false
+		rmCastItems := make([]Expression, len(dnfItems))
+		for i, dnfItem := range dnfItems {
+			newExpr, curDowncast := eliminateCastFunction(sctx, dnfItem)
+			rmCastItems[i] = newExpr
+			if curDowncast {
+				rmCast = true
+			}
+		}
+		if rmCast {
+			// compose the new DNF expression.
+			return ComposeDNFCondition(sctx, rmCastItems...), true
+		}
+		return expr, false
+	case ast.LogicAnd:
+		cnfItems := FlattenCNFConditions(f)
+		rmCast := false
+		rmCastItems := make([]Expression, len(cnfItems))
+		for i, cnfItem := range cnfItems {
+			newExpr, curDowncast := eliminateCastFunction(sctx, cnfItem)
+			rmCastItems[i] = newExpr
+			if curDowncast {
+				rmCast = true
+			}
+		}
+		if rmCast {
+			// compose the new CNF expression.
+			return ComposeCNFCondition(sctx, rmCastItems...), true
+		}
+		return expr, false
+	case ast.EQ, ast.NullEQ, ast.LE, ast.GE, ast.LT, ast.GT:
+		// for case: eq(cast(test.t2.a, varchar(100), "aaaaa"), once t2.a is covered by index or pk, try deconstructing it out.
+		if newF, ok := unwrapCast(sctx, f, 0); ok {
+			return newF, true
+		}
+		// for case: eq("aaaaa"， cast(test.t2.a, varchar(100)), once t2.a is covered by index or pk, try deconstructing it out.
+		if newF, ok := unwrapCast(sctx, f, 1); ok {
+			return newF, true
+		}
+	case ast.In:
+		// case for: cast(a<int> as bigint) in (1,2,3), we could deconstruct column 'a out directly.
+		cast, ok := f.GetArgs()[0].(*ScalarFunction)
+		if !ok || cast.FuncName.L != ast.Cast {
+			return expr, false
+		}
+		// eg: if (cast(A) IN {const}) with incompatible collation, even if cast is eliminated, the condition still can not be used to build range.
+		if cast.RetType.EvalType() == types.ETString && !collate.CompatibleCollate(cast.RetType.GetCollate(), collation) {
+			return expr, false
+		}
+		for _, arg := range f.GetArgs()[1:] {
+			if _, ok := arg.(*Constant); !ok {
+				return expr, false
+			}
+		}
+		// the direct args of cast function should be column.
+		c, ok := cast.GetArgs()[0].(*Column)
+		if !ok {
+			return expr, false
+		}
+		// current only consider varchar and integer
+		if !noPrecisionLossCastCompatible(cast.RetType, c.RetType) {
+			return expr, false
+		}
+		newArgs := []Expression{c}
+		newArgs = append(newArgs, f.GetArgs()[1:]...)
+		return NewFunctionInternal(sctx, f.FuncName.L, f.RetType, newArgs...), true
+	}
+	return expr, false
+}
+
 // pushNotAcrossExpr try to eliminate the NOT expr in expression tree.
 // Input `not` indicates whether there's a `NOT` be pushed down.
 // Output `changed` indicates whether the output expression differs from the
@@ -778,6 +953,15 @@ func GetExprInsideIsTruth(expr Expression) Expression {
 // PushDownNot pushes the `not` function down to the expression's arguments.
 func PushDownNot(ctx sessionctx.Context, expr Expression) Expression {
 	newExpr, _ := pushNotAcrossExpr(ctx, expr, false)
+	return newExpr
+}
+
+// EliminateNoPrecisionLossCast remove the redundant cast function for range build convenience.
+// 1: deeper cast embedded in other complicated function will not be considered.
+// 2: cast args should be one for original base column and one for constant.
+// 3: some collation compatibility and precision loss will be considered when remove this cast func.
+func EliminateNoPrecisionLossCast(sctx sessionctx.Context, expr Expression) Expression {
+	newExpr, _ := eliminateCastFunction(sctx, expr)
 	return newExpr
 }
 
@@ -1329,16 +1513,25 @@ func containMutableConst(ctx sessionctx.Context, exprs []Expression) bool {
 }
 
 // RemoveMutableConst used to remove the `ParamMarker` and `DeferredExpr` in the `Constant` expr.
-func RemoveMutableConst(ctx sessionctx.Context, exprs []Expression) {
+func RemoveMutableConst(ctx sessionctx.Context, exprs []Expression) (err error) {
 	for _, expr := range exprs {
 		switch v := expr.(type) {
 		case *Constant:
 			v.ParamMarker = nil
-			v.DeferredExpr = nil
+			if v.DeferredExpr != nil { // evaluate and update v.Value to convert v to a complete immutable constant.
+				// TODO: remove or hide DefferedExpr since it's too dangerous (hard to be consistent with v.Value all the time).
+				v.Value, err = v.DeferredExpr.Eval(chunk.Row{})
+				if err != nil {
+					return err
+				}
+				v.DeferredExpr = nil
+			}
+			v.DeferredExpr = nil // do nothing since v.Value has already been evaluated in this case.
 		case *ScalarFunction:
-			RemoveMutableConst(ctx, v.GetArgs())
+			return RemoveMutableConst(ctx, v.GetArgs())
 		}
 	}
+	return nil
 }
 
 const (

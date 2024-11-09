@@ -201,31 +201,6 @@ func (c *CopClient) BuildCopIterator(ctx context.Context, req *kv.Request, vars 
 	}
 
 	if it.req.KeepOrder {
-		// Don't set high concurrency for the keep order case. It wastes a lot of memory and gains nothing.
-		// TL;DR
-		// Because for a keep order coprocessor request, the cop tasks are handled one by one, if we set a
-		// higher concurrency, the data is just cached and not consumed for a while, this increase the memory usage.
-		// Set concurrency to 2 can reduce the memory usage and I've tested that it does not necessarily
-		// decrease the performance.
-		// For ReqTypeAnalyze, we keep its concurrency to avoid slow analyze(see https://github.com/pingcap/tidb/issues/40162 for details).
-		if it.concurrency > 2 && it.req.Tp != kv.ReqTypeAnalyze {
-			oldConcurrency := it.concurrency
-			partitionNum := req.KeyRanges.PartitionNum()
-			if partitionNum > it.concurrency {
-				partitionNum = it.concurrency
-			}
-			it.concurrency = 2
-			if it.concurrency < partitionNum {
-				it.concurrency = partitionNum
-			}
-
-			failpoint.Inject("testRateLimitActionMockConsumeAndAssert", func(val failpoint.Value) {
-				if val.(bool) {
-					// When the concurrency is too small, test case tests/realtikvtest/sessiontest.TestCoprocessorOOMAction can't trigger OOM condition
-					it.concurrency = oldConcurrency
-				}
-			})
-		}
 		if it.smallTaskConcurrency > 20 {
 			it.smallTaskConcurrency = 20
 		}
@@ -266,6 +241,8 @@ type copTask struct {
 	redirect2Replica *uint64
 	busyThreshold    time.Duration
 	meetLockFallback bool
+	// firstReadType is used to indicate the type of first read when retrying.
+	firstReadType string
 }
 
 type batchedCopTask struct {
@@ -897,7 +874,16 @@ func (sender *copIteratorTaskSender) run(connID uint64) {
 	}
 }
 
+// GlobalSyncChForTest is a global channel for test.
+var GlobalSyncChForTest = make(chan struct{})
+
 func (it *copIterator) recvFromRespCh(ctx context.Context, respCh <-chan *copResponse) (resp *copResponse, ok bool, exit bool) {
+	failpoint.Inject("CtxCancelBeforeReceive", func(_ failpoint.Value) {
+		if ctx.Value("TestContextCancel") == "test" {
+			GlobalSyncChForTest <- struct{}{}
+			<-GlobalSyncChForTest
+		}
+	})
 	ticker := time.NewTicker(3 * time.Second)
 	defer ticker.Stop()
 	for {
@@ -919,7 +905,12 @@ func (it *copIterator) recvFromRespCh(ctx context.Context, respCh <-chan *copRes
 			exit = true
 			return
 		case <-ticker.C:
-			if atomic.LoadUint32(it.vars.Killed) == 1 {
+			killed := atomic.LoadUint32(it.vars.Killed)
+			if killed != 0 {
+				logutil.Logger(ctx).Info(
+					"a killed signal is received",
+					zap.Uint32("signal", killed),
+				)
 				resp = &copResponse{err: derr.ErrQueryInterrupted}
 				ok = true
 				return
@@ -1029,7 +1020,7 @@ func (it *copIterator) Next(ctx context.Context) (kv.ResultSubset, error) {
 		resp, ok, closed = it.recvFromRespCh(ctx, it.respChan)
 		if !ok || closed {
 			it.actionOnExceed.close()
-			return nil, nil
+			return nil, errors.Trace(ctx.Err())
 		}
 		if resp == finCopResp {
 			it.actionOnExceed.destroyTokenIfNeeded(func() {
@@ -1047,8 +1038,8 @@ func (it *copIterator) Next(ctx context.Context) (kv.ResultSubset, error) {
 			task := it.tasks[it.curr]
 			resp, ok, closed = it.recvFromRespCh(ctx, task.respChan)
 			if closed {
-				// Close() is already called, so Next() is invalid.
-				return nil, nil
+				// Close() is called or context cancelled/timeout, so Next() is invalid.
+				return nil, errors.Trace(ctx.Err())
 			}
 			if ok {
 				break
@@ -1156,12 +1147,16 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask, ch
 		RecordTimeStat: true,
 		RecordScanStat: true,
 		TaskId:         worker.req.TaskID,
-		RequestSource:  task.requestSource.GetRequestSource(),
 		ResourceControlContext: &kvrpcpb.ResourceControlContext{
 			ResourceGroupName: worker.req.ResourceGroupName,
 		},
 		BusyThresholdMs: uint32(task.busyThreshold.Milliseconds()),
 	})
+	req.InputRequestSource = task.requestSource.GetRequestSource()
+	if task.firstReadType != "" {
+		req.ReadType = task.firstReadType
+		req.IsRetryRequest = true
+	}
 	if worker.req.ResourceGroupTagger != nil {
 		worker.req.ResourceGroupTagger(req)
 	}
@@ -1217,12 +1212,19 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask, ch
 		tidbmetrics.DistSQLCoprRespBodySize.WithLabelValues(storeAddr).Observe(float64(len(copResp.Data)))
 	}
 
+	var remains []*copTask
 	if worker.req.Paging.Enable {
-		return worker.handleCopPagingResult(bo, rpcCtx, &copResponse{pbResp: copResp}, cacheKey, cacheValue, task, ch, costTime)
+		remains, err = worker.handleCopPagingResult(bo, rpcCtx, &copResponse{pbResp: copResp}, cacheKey, cacheValue, task, ch, costTime)
+	} else {
+		// Handles the response for non-paging copTask.
+		remains, err = worker.handleCopResponse(bo, rpcCtx, &copResponse{pbResp: copResp}, cacheKey, cacheValue, task, ch, nil, costTime)
 	}
-
-	// Handles the response for non-paging copTask.
-	return worker.handleCopResponse(bo, rpcCtx, &copResponse{pbResp: copResp}, cacheKey, cacheValue, task, ch, nil, costTime)
+	if req.ReadType != "" {
+		for _, remain := range remains {
+			remain.firstReadType = req.ReadType
+		}
+	}
+	return remains, err
 }
 
 const (
@@ -1624,7 +1626,14 @@ func (worker *copIteratorWorker) handleCopCache(task *copTask, resp *copResponse
 				resp.pbResp.Range = nil
 			}
 		}
-		resp.detail.CoprCacheHit = true
+		// `worker.enableCollectExecutionInfo` is loaded from the instance's config. Because it's not related to the request,
+		// the cache key can be same when `worker.enableCollectExecutionInfo` is true or false.
+		// When `worker.enableCollectExecutionInfo` is false, the `resp.detail` is nil, and hit cache is still possible.
+		// Check `resp.detail` to avoid panic.
+		// Details: https://github.com/pingcap/tidb/issues/48212
+		if resp.detail != nil {
+			resp.detail.CoprCacheHit = true
+		}
 		return nil
 	}
 	copr_metrics.CoprCacheCounterMiss.Add(1)
@@ -1792,8 +1801,15 @@ func (worker *copIteratorWorker) calculateRemain(ranges *KeyRanges, split *copro
 
 // finished checks the flags and finished channel, it tells whether the worker is finished.
 func (worker *copIteratorWorker) finished() bool {
-	if worker.vars != nil && worker.vars.Killed != nil && atomic.LoadUint32(worker.vars.Killed) == 1 {
-		return true
+	if worker.vars != nil && worker.vars.Killed != nil {
+		killed := atomic.LoadUint32(worker.vars.Killed)
+		if killed != 0 {
+			logutil.BgLogger().Info(
+				"a killed signal is received in copIteratorWorker",
+				zap.Uint32("signal", killed),
+			)
+			return true
+		}
 	}
 	select {
 	case <-worker.finishCh:

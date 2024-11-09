@@ -358,6 +358,11 @@ func (s *propConstSolver) solve(conditions []Expression) []Expression {
 
 // PropagateConstant propagate constant values of deterministic predicates in a condition.
 func PropagateConstant(ctx sessionctx.Context, conditions []Expression) []Expression {
+	sc := ctx.GetSessionVars().StmtCtx
+	sc.InConstantPropagateCheck = true
+	defer func() {
+		sc.InConstantPropagateCheck = false
+	}()
 	return newPropConstSolver().PropagateConstant(ctx, conditions)
 }
 
@@ -384,6 +389,52 @@ func (s *propOuterJoinConstSolver) setConds2ConstFalse(filterConds bool) {
 			RetType: types.NewFieldType(mysql.TypeTiny),
 		}}
 	}
+}
+
+func (s *basePropConstSolver) dealWithPossibleHybridType(col *Column, con *Constant) (*Constant, bool) {
+	if !col.GetType().Hybrid() {
+		return con, true
+	}
+	if col.GetType().GetType() == mysql.TypeEnum {
+		d, err := con.Eval(chunk.Row{})
+		if err != nil {
+			return nil, false
+		}
+		if MaybeOverOptimized4PlanCache(s.ctx, []Expression{con}) {
+			s.ctx.GetSessionVars().StmtCtx.SetSkipPlanCache(errors.New("Skip plan cache since mutable constant is restored and propagated"))
+		}
+		switch d.Kind() {
+		case types.KindInt64:
+			enum, err := types.ParseEnumValue(col.GetType().GetElems(), uint64(d.GetInt64()))
+			if err != nil {
+				logutil.BgLogger().Debug("Invalid Enum parsed during constant propagation")
+				return nil, false
+			}
+			con = &Constant{
+				Value:         types.NewMysqlEnumDatum(enum),
+				RetType:       col.RetType.Clone(),
+				collationInfo: col.collationInfo,
+			}
+		case types.KindString:
+			enum, err := types.ParseEnumName(col.GetType().GetElems(), d.GetString(), d.Collation())
+			if err != nil {
+				logutil.BgLogger().Debug("Invalid Enum parsed during constant propagation")
+				return nil, false
+			}
+			con = &Constant{
+				Value:         types.NewMysqlEnumDatum(enum),
+				RetType:       col.RetType.Clone(),
+				collationInfo: col.collationInfo,
+			}
+		case types.KindMysqlEnum, types.KindMysqlSet:
+			// It's already a hybrid type. Just use it.
+		default:
+			// We skip other cases first.
+			return nil, false
+		}
+		return con, true
+	}
+	return nil, false
 }
 
 // pickEQCondsOnOuterCol picks constant equal expression from specified conditions.
@@ -418,6 +469,11 @@ func (s *propOuterJoinConstSolver) pickEQCondsOnOuterCol(retMapper map[int]*Cons
 				s.setConds2ConstFalse(filterConds)
 				return nil
 			}
+			continue
+		}
+		var valid bool
+		con, valid = s.dealWithPossibleHybridType(col, con)
+		if !valid {
 			continue
 		}
 		// Only extract `outerCol = const` expressions.

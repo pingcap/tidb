@@ -311,7 +311,28 @@ func ParseAutoTableIDKey(key []byte) (int64, error) {
 }
 
 func (*Meta) autoIncrementIDKey(tableID int64) []byte {
+	return AutoIncrementIDKey(tableID)
+}
+
+// AutoIncrementIDKey decodes the auto inc table key.
+func AutoIncrementIDKey(tableID int64) []byte {
 	return []byte(fmt.Sprintf("%s:%d", mIncIDPrefix, tableID))
+}
+
+// IsAutoIncrementIDKey checks whether the key is auto increment key.
+func IsAutoIncrementIDKey(key []byte) bool {
+	return strings.HasPrefix(string(key), mIncIDPrefix+":")
+}
+
+// ParseAutoIncrementIDKey decodes the tableID from the auto tableID key.
+func ParseAutoIncrementIDKey(key []byte) (int64, error) {
+	if !IsAutoIncrementIDKey(key) {
+		return 0, ErrInvalidString.GenWithStack("fail to parse autoIncrementKey")
+	}
+
+	tableID := strings.TrimPrefix(string(key), mIncIDPrefix+":")
+	id, err := strconv.Atoi(tableID)
+	return int64(id), err
 }
 
 func (*Meta) autoRandomTableIDKey(tableID int64) []byte {
@@ -740,17 +761,23 @@ func (m *Meta) GetMetadataLock() (enable bool, isNull bool, err error) {
 
 // CreateTableAndSetAutoID creates a table with tableInfo in database,
 // and rebases the table autoID.
-func (m *Meta) CreateTableAndSetAutoID(dbID int64, tableInfo *model.TableInfo, autoIncID, autoRandID int64) error {
+func (m *Meta) CreateTableAndSetAutoID(dbID int64, tableInfo *model.TableInfo, autoIDs AutoIDGroup) error {
 	err := m.CreateTableOrView(dbID, tableInfo)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	_, err = m.txn.HInc(m.dbKey(dbID), m.autoTableIDKey(tableInfo.ID), autoIncID)
+	_, err = m.txn.HInc(m.dbKey(dbID), m.autoTableIDKey(tableInfo.ID), autoIDs.RowID)
 	if err != nil {
 		return errors.Trace(err)
 	}
 	if tableInfo.AutoRandomBits > 0 {
-		_, err = m.txn.HInc(m.dbKey(dbID), m.autoRandomTableIDKey(tableInfo.ID), autoRandID)
+		_, err = m.txn.HInc(m.dbKey(dbID), m.autoRandomTableIDKey(tableInfo.ID), autoIDs.RandomID)
+		if err != nil {
+			return errors.Trace(err)
+		}
+	}
+	if tableInfo.SepAutoInc() && tableInfo.GetAutoIncrementColInfo() != nil {
+		_, err = m.txn.HInc(m.dbKey(dbID), m.autoIncrementIDKey(tableInfo.ID), autoIDs.IncrementID)
 		if err != nil {
 			return errors.Trace(err)
 		}

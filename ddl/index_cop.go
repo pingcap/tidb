@@ -113,7 +113,7 @@ func (c *copReqSender) run() {
 		if !ok {
 			return
 		}
-		if p.checkpointMgr != nil && p.checkpointMgr.IsComplete(task.endKey) {
+		if p.checkpointMgr != nil && p.checkpointMgr.IsKeyProcessed(task.endKey) {
 			logutil.BgLogger().Info("[ddl-ingest] checkpoint detected, skip a cop-request task",
 				zap.Int("task ID", task.id),
 				zap.String("task end key", hex.EncodeToString(task.endKey)))
@@ -154,7 +154,7 @@ func scanRecords(p *copReqSenderPool, task *reorgBackfillTask, se *sess.Session)
 				return err
 			}
 			if p.checkpointMgr != nil {
-				p.checkpointMgr.UpdateTotal(task.id, srcChk.NumRows(), done)
+				p.checkpointMgr.UpdateTotalKeys(task.id, srcChk.NumRows(), done)
 			}
 			idxRs := idxRecResult{id: task.id, chunk: srcChk, done: done}
 			failpoint.Inject("MockCopSenderError", func() {
@@ -482,7 +482,7 @@ func getRestoreData(tblInfo *model.TableInfo, targetIdx, pkIdx *model.IndexInfo,
 
 func buildDAGPB(sCtx sessionctx.Context, tblInfo *model.TableInfo, colInfos []*model.ColumnInfo) (*tipb.DAGRequest, error) {
 	dagReq := &tipb.DAGRequest{}
-	_, dagReq.TimeZoneOffset = timeutil.Zone(sCtx.GetSessionVars().Location())
+	dagReq.TimeZoneName, dagReq.TimeZoneOffset = timeutil.Zone(sCtx.GetSessionVars().Location())
 	sc := sCtx.GetSessionVars().StmtCtx
 	dagReq.Flags = sc.PushDownFlags()
 	for i := range colInfos {

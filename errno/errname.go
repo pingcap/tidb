@@ -1044,7 +1044,7 @@ var MySQLErrName = map[uint16]*mysql.ErrMessage{
 	ErrLoadParquetFromLocal:             mysql.Message("Do not support loading parquet files from local. Please try to load the parquet files from the cloud storage", nil),
 	ErrLoadDataEmptyPath:                mysql.Message("The value of INFILE must not be empty when LOAD DATA from LOCAL", nil),
 	ErrLoadDataUnsupportedFormat:        mysql.Message("The FORMAT '%s' is not supported", nil),
-	ErrLoadDataInvalidURI:               mysql.Message("The URI of INFILE is invalid. Reason: %s. Please provide a valid URI, such as 's3://import/test.csv?access_key_id={your_access_key_id ID}&secret_access_key={your_secret_access_key}&session_token={your_session_token}'", nil),
+	ErrLoadDataInvalidURI:               mysql.Message("The URI of INFILE is invalid. Reason: %s. Please provide a valid URI, such as 's3://import/test.csv?access-key={your_access_key_id ID}&secret-access-key={your_secret_access_key}&session-token={your_session_token}'", nil),
 	ErrLoadDataCantAccess:               mysql.Message("Access to the source file has been denied. Reason: %s. Please check the URI, access key and secret access key are correct", nil),
 	ErrLoadDataCantRead:                 mysql.Message("Failed to read source files. Reason: %s. %s", nil),
 	ErrLoadDataWrongFormatConfig:        mysql.Message("", nil),
@@ -1119,6 +1119,7 @@ var MySQLErrName = map[uint16]*mysql.ErrMessage{
 	ErrOptOnCacheTable:                 mysql.Message("'%s' is unsupported on cache tables.", nil),
 	ErrResourceGroupExists:             mysql.Message("Resource group '%-.192s' already exists", nil),
 	ErrResourceGroupNotExists:          mysql.Message("Unknown resource group '%-.192s'", nil),
+	ErrResourceGroupInvalidForRole:     mysql.Message("Cannot set resource group for a role", nil),
 
 	ErrColumnInChange:                 mysql.Message("column %s id %d does not exist, this column may have been updated by other DDL ran in parallel", nil),
 	ErrResourceGroupSupportDisabled:   mysql.Message("Resource control feature is disabled. Run `SET GLOBAL tidb_enable_resource_control='on'` to enable the feature", nil),

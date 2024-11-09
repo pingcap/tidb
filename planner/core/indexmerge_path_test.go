@@ -39,12 +39,12 @@ index idx2(a, b, (cast(j->'$.str' as char(10) array)), c))`)
 	tk.MustExec("set tidb_analyze_version=2")
 	tk.MustExec("analyze table t")
 	tk.MustQuery("show warnings").Sort().Check(testkit.Rows(
-		"Note 1105 Analyze use auto adjusted sample rate 1.000000 for table test.t",
+		"Note 1105 Analyze use auto adjusted sample rate 1.000000 for table test.t, reason to use this rate is \"use min(1, 110000/10000) as the sample-rate=1\"",
 		"Warning 1105 analyzing multi-valued indexes is not supported, skip idx",
 		"Warning 1105 analyzing multi-valued indexes is not supported, skip idx2"))
 	tk.MustExec("analyze table t index idx")
 	tk.MustQuery("show warnings").Sort().Check(testkit.Rows(
-		"Note 1105 Analyze use auto adjusted sample rate 1.000000 for table test.t",
+		"Note 1105 Analyze use auto adjusted sample rate 1.000000 for table test.t, reason to use this rate is \"TiDB assumes that the table is empty and cannot get row count from PD, use sample-rate=1\"",
 		"Warning 1105 The version 2 would collect all statistics not only the selected indexes",
 		"Warning 1105 analyzing multi-valued indexes is not supported, skip idx",
 		"Warning 1105 analyzing multi-valued indexes is not supported, skip idx2"))
@@ -298,8 +298,7 @@ func TestMVIndexFullScan(t *testing.T) {
 	tk.MustQuery(`select /*+ use_index_merge(t, kj) */ count(*) from t where json_contains((j), '[1]')`).Check(testkit.Rows("2"))
 	tk.MustQuery(`select /*+ use_index_merge(t, kj) */ count(*) from t where json_overlaps((j), '[1]')`).Check(testkit.Rows("2"))
 
-	// Forbid IndexMerge+IndexFullScan since IndexFullScan on MVIndex cannot read all rows some cases.
-	tk.MustGetErrMsg(`select /*+ use_index(t, kj) */ count(*) from t`, "[planner:1815]Internal : Can't find a proper physical plan for this query")
+	tk.MustQuery(`select /*+ use_index(t, kj) */ count(*) from t`).Check(testkit.Rows("4"))
 }
 
 func TestMVIndexEmptyArray(t *testing.T) {

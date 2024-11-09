@@ -265,19 +265,19 @@ func (s *joinReOrderSolver) optimizeRecursive(ctx sessionctx.Context, p LogicalP
 
 		leadingHintInfo, hasDiffLeadingHint := checkAndGenerateLeadingHint(joinOrderHintInfo)
 		if hasDiffLeadingHint {
-			ctx.GetSessionVars().StmtCtx.AppendWarning(ErrInternal.GenWithStack("We can only use one leading hint at most, when multiple leading hints are used, all leading hints will be invalid"))
+			ctx.GetSessionVars().StmtCtx.AppendWarning(ErrInternal.FastGen("We can only use one leading hint at most, when multiple leading hints are used, all leading hints will be invalid"))
 		}
 
 		if leadingHintInfo != nil && leadingHintInfo.leadingJoinOrder != nil {
 			if useGreedy {
 				ok, leftJoinGroup := baseGroupSolver.generateLeadingJoinGroup(curJoinGroup, leadingHintInfo, hasOuterJoin)
 				if !ok {
-					ctx.GetSessionVars().StmtCtx.AppendWarning(ErrInternal.GenWithStack("leading hint is inapplicable, check if the leading hint table is valid"))
+					ctx.GetSessionVars().StmtCtx.AppendWarning(ErrInternal.FastGen("leading hint is inapplicable, check if the leading hint table is valid"))
 				} else {
 					curJoinGroup = leftJoinGroup
 				}
 			} else {
-				ctx.GetSessionVars().StmtCtx.AppendWarning(ErrInternal.GenWithStack("leading hint is inapplicable for the DP join reorder algorithm"))
+				ctx.GetSessionVars().StmtCtx.AppendWarning(ErrInternal.FastGen("leading hint is inapplicable for the DP join reorder algorithm"))
 			}
 		}
 
@@ -311,14 +311,15 @@ func (s *joinReOrderSolver) optimizeRecursive(ctx sessionctx.Context, p LogicalP
 			proj := LogicalProjection{
 				Exprs: expression.Column2Exprs(originalSchema.Columns),
 			}.Init(p.SCtx(), p.SelectBlockOffset())
-			proj.SetSchema(originalSchema)
+			// Clone the schema here, because the schema may be changed by column pruning rules.
+			proj.SetSchema(originalSchema.Clone())
 			proj.SetChildren(p)
 			p = proj
 		}
 		return p, nil
 	}
 	if len(curJoinGroup) == 1 && joinOrderHintInfo != nil {
-		ctx.GetSessionVars().StmtCtx.AppendWarning(ErrInternal.GenWithStack("leading hint is inapplicable, check the join type or the join algorithm hint"))
+		ctx.GetSessionVars().StmtCtx.AppendWarning(ErrInternal.FastGen("leading hint is inapplicable, check the join type or the join algorithm hint"))
 	}
 	newChildren := make([]LogicalPlan, 0, len(p.Children()))
 	for _, child := range p.Children() {
@@ -394,7 +395,10 @@ func (s *baseSingleGroupJoinOrderSolver) generateLeadingJoinGroup(curJoinGroup [
 	var leadingJoinGroup []LogicalPlan
 	leftJoinGroup := make([]LogicalPlan, len(curJoinGroup))
 	copy(leftJoinGroup, curJoinGroup)
-	queryBlockNames := *(s.ctx.GetSessionVars().PlannerSelectBlockAsName.Load())
+	var queryBlockNames []ast.HintTable
+	if p := s.ctx.GetSessionVars().PlannerSelectBlockAsName.Load(); p != nil {
+		queryBlockNames = *p
+	}
 	for _, hintTbl := range hintInfo.leadingJoinOrder {
 		match := false
 		for i, joinGroup := range leftJoinGroup {
@@ -533,12 +537,17 @@ func (s *baseSingleGroupJoinOrderSolver) makeJoin(leftPlan, rightPlan LogicalPla
 	remainOtherConds, otherConds = expression.FilterOutInPlace(remainOtherConds, func(expr expression.Expression) bool {
 		return expression.ExprFromSchema(expr, mergedSchema)
 	})
-	if (joinType.JoinType == LeftOuterJoin || joinType.JoinType == RightOuterJoin || joinType.JoinType == LeftOuterSemiJoin || joinType.JoinType == AntiLeftOuterSemiJoin) && len(otherConds) > 0 {
+
+	if joinType.JoinType == LeftOuterJoin || joinType.JoinType == RightOuterJoin || joinType.JoinType == LeftOuterSemiJoin || joinType.JoinType == AntiLeftOuterSemiJoin {
 		// the original outer join's other conditions has been bound to the outer join Edge,
 		// these remained other condition here shouldn't be appended to it because on-mismatch
 		// logic will produce more append-null rows which is banned in original semantic.
 		remainOtherConds = append(remainOtherConds, otherConds...) // nozero
+		remainOtherConds = append(remainOtherConds, leftConds...)  // nozero
+		remainOtherConds = append(remainOtherConds, rightConds...) // nozero
 		otherConds = otherConds[:0]
+		leftConds = leftConds[:0]
+		rightConds = rightConds[:0]
 	}
 	if len(joinType.outerBindCondition) > 0 {
 		remainOBOtherConds := make([]expression.Expression, len(joinType.outerBindCondition))

@@ -87,7 +87,7 @@ func (*mockManager) SetOwnerOpValue(_ context.Context, op OpType) error {
 }
 
 // CampaignOwner implements Manager.CampaignOwner interface.
-func (m *mockManager) CampaignOwner() error {
+func (m *mockManager) CampaignOwner(_ ...int) error {
 	m.toBeOwner()
 	return nil
 }

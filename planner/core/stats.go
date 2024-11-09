@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/planner/property"
@@ -70,7 +71,7 @@ func (p *LogicalMemTable) DeriveStats(_ []*property.StatsInfo, selfSchema *expre
 	stats := &property.StatsInfo{
 		RowCount:     float64(statsTable.RealtimeCount),
 		ColNDVs:      make(map[int64]float64, len(p.TableInfo.Columns)),
-		HistColl:     statsTable.GenerateHistCollFromColumnInfo(p.TableInfo.Columns, p.schema.Columns),
+		HistColl:     statsTable.GenerateHistCollFromColumnInfo(p.TableInfo, p.schema.Columns),
 		StatsVersion: statistics.PseudoVersion,
 	}
 	for _, col := range selfSchema.Columns {
@@ -209,8 +210,8 @@ func (ds *DataSource) getGroupNDVs(colGroups [][]*expression.Column) []property.
 	tbl := ds.tableStats.HistColl
 	ndvs := make([]property.GroupNDV, 0, len(colGroups))
 	for idxID, idx := range tbl.Indices {
-		colsLen := len(tbl.Idx2ColumnIDs[idxID])
-		// tbl.Idx2ColumnIDs may only contain the prefix of index columns.
+		colsLen := len(tbl.Idx2ColUniqueIDs[idxID])
+		// tbl.Idx2ColUniqueIDs may only contain the prefix of index columns.
 		// But it may exceeds the total index since the index would contain the handle column if it's not a unique index.
 		// We append the handle at fillIndexPath.
 		if colsLen < len(idx.Info.Columns) {
@@ -219,7 +220,7 @@ func (ds *DataSource) getGroupNDVs(colGroups [][]*expression.Column) []property.
 			colsLen--
 		}
 		idxCols := make([]int64, colsLen)
-		copy(idxCols, tbl.Idx2ColumnIDs[idxID])
+		copy(idxCols, tbl.Idx2ColUniqueIDs[idxID])
 		slices.Sort(idxCols)
 		for _, g := range colGroups {
 			// We only want those exact matches.
@@ -289,7 +290,7 @@ func (ds *DataSource) initStats(colGroups [][]*expression.Column) {
 	tableStats := &property.StatsInfo{
 		RowCount:     float64(ds.statisticTable.RealtimeCount),
 		ColNDVs:      make(map[int64]float64, ds.schema.Len()),
-		HistColl:     ds.statisticTable.GenerateHistCollFromColumnInfo(ds.Columns, ds.schema.Columns),
+		HistColl:     ds.statisticTable.GenerateHistCollFromColumnInfo(ds.tableInfo, ds.schema.Columns),
 		StatsVersion: ds.statisticTable.Version,
 	}
 	if ds.statisticTable.Pseudo {
@@ -344,6 +345,22 @@ func (ds *DataSource) derivePathStatsAndTryHeuristics() error {
 		selected, uniqueBest, refinedBest *util.AccessPath
 		isRefinedPath                     bool
 	)
+	// step1: if user prefer tiFlash store type, tiFlash path should always be built anyway ahead.
+	var tiflashPath *util.AccessPath
+	if ds.preferStoreType&preferTiFlash != 0 {
+		for _, path := range ds.possibleAccessPaths {
+			if path.StoreType == kv.TiFlash {
+				err := ds.deriveTablePathStats(path, ds.pushedDownConds, false)
+				if err != nil {
+					return err
+				}
+				path.IsSingleScan = true
+				tiflashPath = path
+				break
+			}
+		}
+	}
+	// step2: kv path should follow the heuristic rules.
 	for _, path := range ds.possibleAccessPaths {
 		if path.IsTablePath() {
 			err := ds.deriveTablePathStats(path, ds.pushedDownConds, false)
@@ -355,7 +372,9 @@ func (ds *DataSource) derivePathStatsAndTryHeuristics() error {
 			ds.deriveIndexPathStats(path, ds.pushedDownConds, false)
 			path.IsSingleScan = ds.isSingleScan(path.FullIdxCols, path.FullIdxColLens)
 		}
+		// step: 3
 		// Try some heuristic rules to select access path.
+		// tiFlash path also have table-range-scan (range point like here) to be heuristic treated.
 		if len(path.Ranges) == 0 {
 			selected = path
 			break
@@ -415,10 +434,18 @@ func (ds *DataSource) derivePathStatsAndTryHeuristics() error {
 			selected = uniqueBest
 		}
 	}
-	// If some path matches a heuristic rule, just remove other possible paths
+	// heuristic rule pruning other path should consider hint prefer.
+	// If no hints and some path matches a heuristic rule, just remove other possible paths.
 	if selected != nil {
 		ds.possibleAccessPaths[0] = selected
 		ds.possibleAccessPaths = ds.possibleAccessPaths[:1]
+		// if user wanna tiFlash read, while current heuristic choose a TiKV path. so we shouldn't prune tiFlash path.
+		keep := ds.preferStoreType&preferTiFlash != 0 && selected.StoreType != kv.TiFlash
+		if keep {
+			// also keep tiflash path as well.
+			ds.possibleAccessPaths = append(ds.possibleAccessPaths, tiflashPath)
+			return nil
+		}
 		var tableName string
 		if ds.TableAsName.O == "" {
 			tableName = ds.tableInfo.Name.O
@@ -446,9 +473,9 @@ func (ds *DataSource) derivePathStatsAndTryHeuristics() error {
 			}
 		}
 		if ds.ctx.GetSessionVars().StmtCtx.InVerboseExplain {
-			ds.ctx.GetSessionVars().StmtCtx.AppendNote(errors.New(sb.String()))
+			ds.ctx.GetSessionVars().StmtCtx.AppendNote(errors.NewNoStackError(sb.String()))
 		} else {
-			ds.ctx.GetSessionVars().StmtCtx.AppendExtraNote(errors.New(sb.String()))
+			ds.ctx.GetSessionVars().StmtCtx.AppendExtraNote(errors.NewNoStackError(sb.String()))
 		}
 	}
 	return nil
@@ -470,9 +497,12 @@ func (ds *DataSource) DeriveStats(_ []*property.StatsInfo, _ *expression.Schema,
 		debugtrace.EnterContextCommon(ds.ctx)
 		defer debugtrace.LeaveContextCommon(ds.ctx)
 	}
-	// PushDownNot here can convert query 'not (a != 1)' to 'a = 1'.
+	// two preprocess here.
+	// 1: PushDownNot here can convert query 'not (a != 1)' to 'a = 1'.
+	// 2: EliminateNoPrecisionCast here can convert query 'cast(c<int> as bigint) = 1' to 'c = 1' to leverage access range.
 	for i, expr := range ds.pushedDownConds {
-		ds.pushedDownConds[i] = expression.PushDownNot(ds.ctx, expr)
+		ds.pushedDownConds[i] = expression.PushDownNot(ds.SCtx(), expr)
+		ds.pushedDownConds[i] = expression.EliminateNoPrecisionLossCast(ds.SCtx(), ds.pushedDownConds[i])
 	}
 	for _, path := range ds.possibleAccessPaths {
 		if path.IsTablePath() {
@@ -1131,7 +1161,7 @@ func (p *LogicalCTE) DeriveStats(_ []*property.StatsInfo, selfSchema *expression
 				return nil, err
 			}
 		}
-		recurStat := p.cte.recursivePartPhysicalPlan.Stats()
+		recurStat := p.cte.recursivePartLogicalPlan.statsInfo()
 		for i, col := range selfSchema.Columns {
 			p.stats.ColNDVs[col.UniqueID] += recurStat.ColNDVs[p.cte.recursivePartLogicalPlan.Schema().Columns[i].UniqueID]
 		}

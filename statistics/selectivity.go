@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	driver "github.com/pingcap/tidb/types/parser_driver"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/cmp"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tidb/util/tracing"
@@ -290,7 +291,7 @@ func (coll *HistColl) Selectivity(
 	slices.Sort(idxIDs)
 	for _, id := range idxIDs {
 		idxStats := coll.Indices[id]
-		idxCols := FindPrefixOfIndexByCol(extractedCols, coll.Idx2ColumnIDs[id], id2Paths[idxStats.ID])
+		idxCols := FindPrefixOfIndexByCol(extractedCols, coll.Idx2ColUniqueIDs[id], id2Paths[idxStats.ID])
 		if len(idxCols) > 0 {
 			lengths := make([]int, 0, len(idxCols))
 			for i := 0; i < len(idxCols) && i < len(idxStats.Info.Columns); i++ {
@@ -491,7 +492,7 @@ OUTER:
 		for i, scalarCond := range notCoveredStrMatch {
 			ok, sel, err := coll.GetSelectivityByFilter(ctx, []expression.Expression{scalarCond})
 			if err != nil {
-				sc.AppendWarning(errors.New("Error when using TopN-assisted estimation: " + err.Error()))
+				sc.AppendWarning(errors.NewNoStackError("Error when using TopN-assisted estimation: " + err.Error()))
 			}
 			if !ok {
 				continue
@@ -506,7 +507,7 @@ OUTER:
 		for i, scalarCond := range notCoveredNegateStrMatch {
 			ok, sel, err := coll.GetSelectivityByFilter(ctx, []expression.Expression{scalarCond})
 			if err != nil {
-				sc.AppendWarning(errors.New("Error when using TopN-assisted estimation: " + err.Error()))
+				sc.AppendWarning(errors.NewNoStackError("Error when using TopN-assisted estimation: " + err.Error()))
 			}
 			if !ok {
 				continue
@@ -590,11 +591,11 @@ func getMaskAndRanges(ctx sessionctx.Context, exprs []expression.Expression, ran
 
 // GetUsableSetsByGreedy will select the indices and pk used for calculate selectivity by greedy algorithm.
 func GetUsableSetsByGreedy(nodes []*StatsNode) (newBlocks []*StatsNode) {
-	slices.SortFunc(nodes, func(i, j *StatsNode) bool {
+	slices.SortFunc(nodes, func(i, j *StatsNode) int {
 		if r := compareType(i.Tp, j.Tp); r != 0 {
-			return r < 0
+			return r
 		}
-		return i.ID < j.ID
+		return cmp.Compare(i.ID, j.ID)
 	})
 	marked := make([]bool, len(nodes))
 	mask := int64(math.MaxInt64)

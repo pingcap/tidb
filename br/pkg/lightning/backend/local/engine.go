@@ -767,8 +767,8 @@ func (e *Engine) batchIngestSSTs(metas []*sstMeta) error {
 	if len(metas) == 0 {
 		return nil
 	}
-	slices.SortFunc(metas, func(i, j *sstMeta) bool {
-		return bytes.Compare(i.minKey, j.minKey) < 0
+	slices.SortFunc(metas, func(i, j *sstMeta) int {
+		return bytes.Compare(i.minKey, j.minKey)
 	})
 
 	// non overlapping sst is grouped, and ingested in that order
@@ -952,6 +952,9 @@ func (e *Engine) getFirstAndLastKey(lowerBound, upperBound []byte) ([]byte, []by
 		LowerBound: lowerBound,
 		UpperBound: upperBound,
 	}
+	failpoint.Inject("mockGetFirstAndLastKey", func() {
+		failpoint.Return(lowerBound, upperBound, nil)
+	})
 
 	iter := e.newKVIter(context.Background(), opt)
 	//nolint: errcheck
@@ -1175,8 +1178,8 @@ func (w *Writer) flushKVs(ctx context.Context) error {
 		return errors.Trace(err)
 	}
 	if !w.isWriteBatchSorted {
-		slices.SortFunc(w.writeBatch[:w.batchCount], func(i, j common.KvPair) bool {
-			return bytes.Compare(i.Key, j.Key) < 0
+		slices.SortFunc(w.writeBatch[:w.batchCount], func(i, j common.KvPair) int {
+			return bytes.Compare(i.Key, j.Key)
 		})
 		w.isWriteBatchSorted = true
 	}

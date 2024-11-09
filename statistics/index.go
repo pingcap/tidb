@@ -284,9 +284,16 @@ func (idx *Index) GetRowCount(sctx sessionctx.Context, coll *HistColl, indexRang
 			if fullLen {
 				// At most 1 in this case.
 				if idx.Info.Unique {
-					totalCount++
+					if !indexRange.IsOnlyNull() {
+						totalCount++
+						if debugTrace {
+							debugTraceEndEstimateRange(sctx, 1, debugTraceUniquePoint)
+						}
+						continue
+					}
+					totalCount = mathutil.Max(1, float64(idx.NullCount))
 					if debugTrace {
-						debugTraceEndEstimateRange(sctx, 1, debugTraceUniquePoint)
+						debugTraceEndEstimateRange(sctx, totalCount, debugTraceUniquePoint)
 					}
 					continue
 				}
@@ -395,7 +402,7 @@ func (idx *Index) expBackoffEstimation(sctx sessionctx.Context, coll *HistColl, 
 			Collators: make([]collate.Collator, 1),
 		},
 	}
-	colsIDs := coll.Idx2ColumnIDs[idx.Histogram.ID]
+	colsIDs := coll.Idx2ColUniqueIDs[idx.Histogram.ID]
 	singleColumnEstResults := make([]float64, 0, len(indexRange.LowVal))
 	// The following codes uses Exponential Backoff to reduce the impact of independent assumption. It works like:
 	//   1. Calc the selectivity of each column.
@@ -420,7 +427,7 @@ func (idx *Index) expBackoffEstimation(sctx sessionctx.Context, coll *HistColl, 
 			foundStats = true
 			count, err = coll.GetRowCountByColumnRanges(sctx, colID, tmpRan)
 		}
-		if idxIDs, ok := coll.ColID2IdxIDs[colID]; ok && !foundStats && len(indexRange.LowVal) > 1 {
+		if idxIDs, ok := coll.ColUniqueID2IdxIDs[colID]; ok && !foundStats && len(indexRange.LowVal) > 1 {
 			// Note the `len(indexRange.LowVal) > 1` condition here, it means we only recursively call
 			// `GetRowCountByIndexRanges()` when the input `indexRange` is a multi-column range. This
 			// check avoids infinite recursion.

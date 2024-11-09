@@ -15,12 +15,16 @@
 package executor_test
 
 import (
+	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/kvproto/pkg/meta_storagepb"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/testkit"
@@ -55,17 +59,15 @@ func TestCalibrateResource(t *testing.T) {
 	defer func() {
 		executor.SetResourceGroupController(oldResourceCtl)
 	}()
-
+	// changed in 7.5 (ref https://github.com/tikv/pd/pull/6538), but for test pass, use the old config
+	oldCfg := rmclient.DefaultConfig()
+	oldCfg.RequestUnit.ReadBaseCost = 0.25
+	oldCfg.RequestUnit.ReadCostPerByte = 0.0000152587890625
+	oldCfg.RequestUnit.WriteBaseCost = 1.0
+	oldCfg.RequestUnit.WriteCostPerByte = 0.0009765625
+	oldCfg.RequestUnit.CPUMsCost = 0.3333333333333333
 	mockPrivider := &mockResourceGroupProvider{
-		cfg: rmclient.ControllerConfig{
-			RequestUnit: rmclient.RequestUnitConfig{
-				ReadBaseCost:     0.25,
-				ReadCostPerByte:  0.0000152587890625,
-				WriteBaseCost:    1.0,
-				WriteCostPerByte: 0.0009765625,
-				CPUMsCost:        0.3333333333333333,
-			},
-		},
+		cfg: *oldCfg,
 	}
 	resourceCtl, err := rmclient.NewResourceGroupController(context.Background(), 1, mockPrivider, nil)
 	require.NoError(t, err)
@@ -76,11 +78,26 @@ func TestCalibrateResource(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, rs)
 	err = rs.Next(context.Background(), rs.NewChunk(nil))
-	require.ErrorContains(t, err, "query metric error: pd unavailable")
+	require.ErrorContains(t, err, "no server with type 'tikv' is found")
 
 	// error sql
 	_, err = tk.Exec("CALIBRATE RESOURCE WORKLOAD tpcc START_TIME '2020-02-12 10:35:00'")
 	require.Error(t, err)
+
+	// Mock for cluster info
+	// information_schema.cluster_config
+	instances := []string{
+		"pd,127.0.0.1:32379,127.0.0.1:32380,mock-version,mock-githash,0",
+		"tidb,127.0.0.1:34000,30080,mock-version,mock-githash,1001",
+		"tikv,127.0.0.1:30160,30180,mock-version,mock-githash,0",
+		"tikv,127.0.0.1:30161,30181,mock-version,mock-githash,0",
+		"tikv,127.0.0.1:30162,30182,mock-version,mock-githash,0",
+	}
+	fpExpr := `return("` + strings.Join(instances, ";") + `")`
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/infoschema/mockClusterInfo", fpExpr))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/infoschema/mockClusterInfo"))
+	}()
 
 	// Mock for metric table data.
 	fpName := "github.com/pingcap/tidb/executor/mockMetricsTableData"
@@ -95,30 +112,28 @@ func TestCalibrateResource(t *testing.T) {
 		return time
 	}
 
+	metricsData := `# HELP process_cpu_seconds_total Total user and system CPU time spent in seconds.
+# TYPE process_cpu_seconds_total counter
+process_cpu_seconds_total 49943
+# HELP tikv_server_cpu_cores_quota Total CPU cores quota for TiKV server
+# TYPE tikv_server_cpu_cores_quota gauge
+tikv_server_cpu_cores_quota 8
+`
+	// failpoint doesn't support string contains whitespaces and newline
+	encodedData := base64.StdEncoding.EncodeToString([]byte(metricsData))
+	fpExpr = `return("` + encodedData + `")`
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/executor/mockMetricsResponse", fpExpr))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/executor/mockGOMAXPROCS", "return(40)"))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/executor/mockGOMAXPROCS"))
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/executor/mockMetricsResponse"))
+	}()
 	mockData := make(map[string][][]types.Datum)
 	ctx := context.WithValue(context.Background(), "__mockMetricsTableData", mockData)
 	ctx = failpoint.WithHook(ctx, func(_ context.Context, fpname string) bool {
 		return fpName == fpname
 	})
-	rs, err = tk.Exec("CALIBRATE RESOURCE")
-	require.NoError(t, err)
-	require.NotNil(t, rs)
-	err = rs.Next(ctx, rs.NewChunk(nil))
-	// because when mock metrics is empty, error is always `pd unavailable`, don't check detail.
-	require.ErrorContains(t, err, "There is no CPU quota metrics, query metric error: pd unavailable")
 
-	mockData["tikv_cpu_quota"] = [][]types.Datum{
-		types.MakeDatums(datetime("2020-02-12 10:35:00"), "tikv-0", 8.0),
-		types.MakeDatums(datetime("2020-02-12 10:35:00"), "tikv-1", 8.0),
-		types.MakeDatums(datetime("2020-02-12 10:35:00"), "tikv-2", 8.0),
-		types.MakeDatums(datetime("2020-02-12 10:36:00"), "tikv-0", 8.0),
-		types.MakeDatums(datetime("2020-02-12 10:36:00"), "tikv-1", 8.0),
-		types.MakeDatums(datetime("2020-02-12 10:36:00"), "tikv-2", 8.0),
-	}
-	mockData["tidb_server_maxprocs"] = [][]types.Datum{
-		types.MakeDatums(datetime("2020-02-12 10:35:00"), "tidb-0", 40.0),
-		types.MakeDatums(datetime("2020-02-12 10:36:00"), "tidb-0", 40.0),
-	}
 	tk.MustQueryWithContext(ctx, "CALIBRATE RESOURCE").Check(testkit.Rows("69768"))
 	tk.MustQueryWithContext(ctx, "CALIBRATE RESOURCE WORKLOAD TPCC").Check(testkit.Rows("69768"))
 	tk.MustQueryWithContext(ctx, "CALIBRATE RESOURCE WORKLOAD OLTP_READ_WRITE").Check(testkit.Rows("55823"))
@@ -126,9 +141,7 @@ func TestCalibrateResource(t *testing.T) {
 	tk.MustQueryWithContext(ctx, "CALIBRATE RESOURCE WORKLOAD OLTP_WRITE_ONLY").Check(testkit.Rows("109776"))
 
 	// change total tidb cpu to less than tikv_cpu_quota
-	mockData["tidb_server_maxprocs"] = [][]types.Datum{
-		types.MakeDatums(datetime("2020-02-12 10:35:00"), "tidb-0", 8.0),
-	}
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/executor/mockGOMAXPROCS", "return(8)"))
 	tk.MustQueryWithContext(ctx, "CALIBRATE RESOURCE").Check(testkit.Rows("38760"))
 
 	// construct data for dynamic calibrate
@@ -527,7 +540,7 @@ func TestCalibrateResource(t *testing.T) {
 		types.MakeDatums(datetime("2020-02-12 10:45:00"), "tikv-2", "tikv", 0.281),
 	}
 
-	rs, err = tk.Exec("CALIBRATE RESOURCE START_TIME '2020-02-12 10:35:00' END_TIME '2020-02-12 10:45:00'")
+	rs, err = tk.Exec("CALIBRATE RESOURCE START_TIME '2020-02-12 10:35:00' END_TIME '2020-02-13 10:35:01'")
 	require.NoError(t, err)
 	require.NotNil(t, rs)
 	err = rs.Next(ctx, rs.NewChunk(nil))
@@ -563,16 +576,21 @@ func TestCalibrateResource(t *testing.T) {
 
 type mockResourceGroupProvider struct {
 	rmclient.ResourceGroupProvider
-	cfg rmclient.ControllerConfig
+	cfg rmclient.Config
 }
 
-func (p *mockResourceGroupProvider) LoadGlobalConfig(ctx context.Context, names []string, configPath string) ([]pd.GlobalConfigItem, int64, error) {
-	if configPath != "resource_group/controller" {
-		return nil, 0, errors.New("unsupported configPath")
+func (p *mockResourceGroupProvider) Get(ctx context.Context, key []byte, opts ...pd.OpOption) (*meta_storagepb.GetResponse, error) {
+	if !bytes.Equal(pd.ControllerConfigPathPrefixBytes, key) {
+		return nil, errors.New("unsupported configPath")
 	}
 	payload, _ := json.Marshal(&p.cfg)
-	item := pd.GlobalConfigItem{
-		PayLoad: payload,
-	}
-	return []pd.GlobalConfigItem{item}, 0, nil
+	return &meta_storagepb.GetResponse{
+		Count: 1,
+		Kvs: []*meta_storagepb.KeyValue{
+			{
+				Key:   key,
+				Value: payload,
+			},
+		},
+	}, nil
 }

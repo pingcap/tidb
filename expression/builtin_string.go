@@ -768,7 +768,7 @@ func (c *reverseFunctionClass) getFunction(ctx sessionctx.Context, args []Expres
 	bf.tp.SetFlen(args[0].GetType().GetFlen())
 	addBinFlag(bf.tp)
 	var sig builtinFunc
-	if types.IsBinaryStr(argTp) {
+	if types.IsBinaryStr(argTp) || types.IsTypeBit(argTp) {
 		sig = &builtinReverseSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_Reverse)
 	} else {
@@ -1717,6 +1717,9 @@ func (c *unhexFunctionClass) getFunction(ctx sessionctx.Context, args []Expressi
 		retFlen = (argType.GetFlen() + 1) / 2
 	default:
 		return nil, errors.Errorf("Unhex invalid args, need int or string but get %s", argType)
+	}
+	if argType.GetFlen() == types.UnspecifiedLength {
+		retFlen = types.UnspecifiedLength
 	}
 
 	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETString, types.ETString)

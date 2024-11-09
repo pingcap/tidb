@@ -402,7 +402,7 @@ func TestAggPushDownEngine(t *testing.T) {
 		"  └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"))
 }
 
-func TestIssue15110(t *testing.T) {
+func TestIssue15110And49616(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -436,6 +436,15 @@ func TestIssue15110(t *testing.T) {
 
 	tk.MustExec("set @@session.tidb_isolation_read_engines = 'tiflash'")
 	tk.MustExec("explain format = 'brief' SELECT count(*) FROM crm_rd_150m dataset_48 WHERE (CASE WHEN (month(dataset_48.customer_first_date)) <= 30 THEN '新客' ELSE NULL END) IS NOT NULL;")
+
+	// for #49616
+	tk.MustExec(`use test`)
+	tk.MustExec("set @@session.tidb_isolation_read_engines = 'tikv'")
+	tk.MustExec(`create table t1 (k int, a int)`)
+	tk.MustExec(`create table t2 (k int, b int, key(k))`)
+	require.True(t, tk.HasPlan(`select /*+ tidb_inlj(t2, t1) */ *
+  from t2 left join t1 on t1.k=t2.k
+  where a>0 or (a=0 and b>0)`, `IndexJoin`))
 }
 
 func TestIssue40910(t *testing.T) {
@@ -617,6 +626,20 @@ func TestINLJHintSmallTable(t *testing.T) {
 	tk.MustExec("insert into t2 values(1,1),(2,2),(3,3),(4,4),(5,5)")
 	tk.MustExec("analyze table t1, t2")
 	tk.MustExec("explain format = 'brief' select /*+ TIDB_INLJ(t1) */ * from t1 join t2 on t1.a = t2.a")
+}
+
+func TestIssue46580(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(`CREATE TABLE t0(c0 INT);`)
+	tk.MustExec(`CREATE TABLE t1(c0 BOOL, c1 BOOL);`)
+	tk.MustExec(`INSERT INTO t1 VALUES (false, true);`)
+	tk.MustExec(`INSERT INTO t1 VALUES (true, true);`)
+	tk.MustExec(`CREATE definer='root'@'localhost'  VIEW v0(c0, c1, c2) AS SELECT t1.c0, LOG10(t0.c0), t1.c0 FROM t0, t1;`)
+	tk.MustExec(`INSERT INTO t0(c0) VALUES (3);`)
+	tk.MustQuery(`SELECT /*+ MERGE_JOIN(t1, t0, v0)*/v0.c2, t1.c0 FROM v0,  t0 CROSS JOIN t1 ORDER BY -v0.c1;`).Sort().Check(
+		testkit.Rows(`0 0`, `0 1`, `1 0`, `1 1`))
 }
 
 func TestInvisibleIndex(t *testing.T) {
@@ -2952,7 +2975,7 @@ func TestIncrementalAnalyzeStatsVer2(t *testing.T) {
 	require.Len(t, warns, 3)
 	require.EqualError(t, warns[0].Err, "The version 2 would collect all statistics not only the selected indexes")
 	require.EqualError(t, warns[1].Err, "The version 2 stats would ignore the INCREMENTAL keyword and do full sampling")
-	require.EqualError(t, warns[2].Err, "Analyze use auto adjusted sample rate 1.000000 for table test.t")
+	require.EqualError(t, warns[2].Err, "Analyze use auto adjusted sample rate 1.000000 for table test.t, reason to use this rate is \"use min(1, 110000/3) as the sample-rate=1\"")
 	rows = tk.MustQuery(fmt.Sprintf("select distinct_count from mysql.stats_histograms where table_id = %d and is_index = 1", tblID)).Rows()
 	require.Len(t, rows, 1)
 	require.Equal(t, "6", rows[0][0])
@@ -3820,6 +3843,38 @@ func TestAggPushToCopForCachedTable(t *testing.T) {
 	tk.MustExec("drop table if exists t31202")
 }
 
+func TestIssue51873(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`create database if not exists test1`)
+	tk.MustExec(`use test1`)
+	tk.MustExec(`CREATE TABLE h1 (
+  id bigint(20) NOT NULL AUTO_INCREMENT,
+  position_date date NOT NULL,
+  asset_id varchar(32) DEFAULT NULL,
+  portfolio_code varchar(50) DEFAULT NULL,
+  PRIMARY KEY (id,position_date) /*T![clustered_index] NONCLUSTERED */,
+  UNIQUE KEY uidx_posi_asset_balance_key (position_date,portfolio_code,asset_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin AUTO_INCREMENT=30002
+PARTITION BY RANGE COLUMNS(position_date)
+(PARTITION p202401 VALUES LESS THAN ('2024-02-01'))`)
+	tk.MustExec(`create table h2 like h1`)
+	tk.MustExec(`insert into h1 values(1,'2024-01-01',1,1)`)
+	tk.MustExec(`insert into h2 values(1,'2024-01-01',1,1)`)
+	tk.MustExec(`analyze table h1`)
+	tk.MustQuery(`with assetBalance AS
+    (SELECT asset_id, portfolio_code FROM h1 pab WHERE pab.position_date = '2024-01-01' ),
+cashBalance AS (SELECT portfolio_code, asset_id
+    FROM h2 pcb WHERE pcb.position_date = '2024-01-01' ),
+assetIdList AS (SELECT DISTINCT asset_id AS assetId
+    FROM assetBalance )
+SELECT main.portfolioCode
+FROM (SELECT DISTINCT balance.portfolio_code AS portfolioCode
+    FROM assetBalance balance
+    LEFT JOIN assetIdList
+        ON balance.asset_id = assetIdList.assetId ) main`).Check(testkit.Rows("1"))
+}
+
 func TestTiFlashFineGrainedShuffleWithMaxTiFlashThreads(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
@@ -4116,6 +4171,15 @@ func TestRepeatPushDownToTiFlash(t *testing.T) {
 		{"    └─TableFullScan_7", "mpp[tiflash]", "keep order:false, stats:pseudo"},
 	}
 	tk.MustQuery("explain select repeat(a,b) from t;").CheckAt([]int{0, 2, 4}, rows)
+}
+
+func TestIssue50235(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`use test`)
+	tk.MustExec(`create table tt (c year(4) NOT NULL DEFAULT '2016', primary key(c));`)
+	tk.MustExec(`insert into tt values (2016);`)
+	tk.MustQuery(`select * from tt where c < 16212511333665770580`).Check(testkit.Rows("2016"))
 }
 
 func TestIssue36194(t *testing.T) {
@@ -5264,6 +5328,53 @@ func TestVirtualExprPushDown(t *testing.T) {
 	tk.MustQuery("explain select * from t where c2 > 1;").CheckAt([]int{0, 2, 4}, rows)
 }
 
+func TestIssue46177(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`use test`)
+	tk.MustExec(` CREATE TABLE sbtest (
+  id int(10) unsigned NOT NULL AUTO_INCREMENT,
+  k int(10) unsigned NOT NULL DEFAULT '0',
+  c char(120) NOT NULL DEFAULT '',
+  pad char(60) NOT NULL DEFAULT '',
+  PRIMARY KEY (id) /*T![clustered_index] CLUSTERED */,
+  KEY k (k)
+)`)
+
+	// cannot choose the best plan with RangeScan.
+	tk.MustExec(`set @@tidb_opt_fix_control = '46177:off'`)
+	tk.MustQuery(`explain format='brief'  select row_number() over(order by a.k) from (select * from sbtest where id<10) a`).Check(testkit.Rows(
+		`Projection 10.00 root  Column#6`,
+		`└─Window 10.00 root  row_number()->Column#6 over(order by test.sbtest.k rows between current row and current row)`,
+		`  └─IndexReader 10.00 root  index:Selection`,
+		`    └─Selection 10.00 cop[tikv]  lt(test.sbtest.id, 10)`,
+		`      └─IndexFullScan 10000.00 cop[tikv] table:sbtest, index:k(k) keep order:true, stats:pseudo`))
+
+	tk.MustExec(`set @@tidb_opt_fix_control = '46177:on'`)
+	tk.MustQuery(`explain format='brief'  select row_number() over(order by a.k) from (select * from sbtest where id<10) a`).Check(testkit.Rows(
+		`Projection 10.00 root  Column#6`,
+		`└─Window 10.00 root  row_number()->Column#6 over(order by test.sbtest.k rows between current row and current row)`,
+		`  └─Sort 10.00 root  test.sbtest.k`,
+		`    └─TableReader 10.00 root  data:TableRangeScan`,
+		`      └─TableRangeScan 10.00 cop[tikv] table:sbtest range:[0,10), keep order:false, stats:pseudo`))
+
+	// cannot choose the range scan plan.
+	tk.MustExec(`set @@tidb_opt_fix_control = '46177:off'`)
+	tk.MustQuery(`explain format='brief' select /*+ stream_agg() */ count(1) from sbtest where id<1 group by k`).Check(testkit.Rows(
+		`StreamAgg 1.00 root  group by:test.sbtest.k, funcs:count(Column#6)->Column#5`,
+		`└─IndexReader 1.00 root  index:StreamAgg`,
+		`  └─StreamAgg 1.00 cop[tikv]  group by:test.sbtest.k, funcs:count(1)->Column#6`,
+		`    └─Selection 1.00 cop[tikv]  lt(test.sbtest.id, 1)`,
+		`      └─IndexFullScan 10000.00 cop[tikv] table:sbtest, index:k(k) keep order:true, stats:pseudo`))
+
+	tk.MustExec(`set @@tidb_opt_fix_control = '46177:on'`)
+	tk.MustQuery(`explain format='brief' select /*+ stream_agg() */ count(1) from sbtest where id<1 group by k`).Check(testkit.Rows(
+		`StreamAgg 1.00 root  group by:test.sbtest.k, funcs:count(1)->Column#5`,
+		`└─Sort 1.00 root  test.sbtest.k`,
+		`  └─TableReader 1.00 root  data:TableRangeScan`,
+		`    └─TableRangeScan 1.00 cop[tikv] table:sbtest range:[0,1), keep order:false, stats:pseudo`))
+}
+
 // https://github.com/pingcap/tidb/issues/41458
 func TestIssue41458(t *testing.T) {
 	store := testkit.CreateMockStore(t)
@@ -5272,7 +5383,7 @@ func TestIssue41458(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec(`create table t (a int, b int, c int, index ia(a));`)
 	tk.MustExec("select  * from t t1 join t t2 on t1.b = t2.b join t t3 on t2.b=t3.b join t t4 on t3.b=t4.b where t3.a=1 and t2.a=2;")
-	rawRows := tk.MustQuery("select plan from information_schema.statements_summary where SCHEMA_NAME = 'test' and STMT_TYPE = 'Select';").Sort().Rows()
+	rawRows := tk.MustQuery("select plan from information_schema.statements_summary where SCHEMA_NAME = 'test' and STMT_TYPE = 'Select' and DIGEST_TEXT LIKE '%t3%';").Sort().Rows()
 	plan := rawRows[0][0].(string)
 	rows := strings.Split(plan, "\n")
 	rows = rows[1:]
@@ -5317,6 +5428,26 @@ func TestIssue43116(t *testing.T) {
 	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 Memory capacity of 111 bytes for 'tidb_opt_range_max_size' exceeded when building ranges. Less accurate ranges such as full range are chosen"))
 }
 
+func TestIssue48643(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t, tp")
+	tk.MustExec("create table t\n(pk1 varchar(128),\n pk2 varchar(128),\n pk3 varchar(128),\n data varchar(128),\n primary key (pk1, pk2, pk3))")
+	tk.MustExec("insert into t values (UUID(), UUID(), uuid(), uuid()), (uuid(), uuid(), uuid(), uuid())")
+	tk.MustExec("insert into t select uuid(), uuid(), uuid(), uuid() from t, t t2, t t3, t t4")
+	tk.MustExec("insert into t select t.pk1, uuid(), uuid(), uuid() from t, t t2, t t3, t t4")
+	tk.MustQuery("select count(*) from t;").Check(testkit.Rows("104994"))
+	tk.MustQuery("select count(distinct pk1) from t;").Check(testkit.Rows("18"))
+	res1 := tk.MustQuery("select pk1, count(*) from t group by pk1 order by count(*), pk1 limit 10;").Sort()
+
+	tk.MustExec("create table tp\n(pk1 varchar(128),\n pk2 varchar(128),\n pk3 varchar(128),\n data varchar(128),\n primary key (pk1, pk2, pk3))\npartition by key(pk1) partitions 128;")
+	tk.MustExec("insert into tp select * from t;")
+	tk.MustQuery("select count(*) from tp;").Check(testkit.Rows("104994"))
+	tk.MustQuery("select count(distinct pk1) from tp;").Check(testkit.Rows("18"))
+	tk.MustQuery("select pk1, count(*) from tp group by pk1 order by count(*), pk1 limit 10;").Sort().Check(res1.Rows())
+}
+
 func TestIssue45033(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -5344,4 +5475,21 @@ func TestIssue45033(t *testing.T) {
 				                from   (select distinct alias3.c4 as c2
 				                        from   t3 alias3) alias4
 				                where  alias4.c2 = alias2.alias_col1);`).Check(testkit.Rows("0"))
+}
+
+func TestNestedVirtualGeneratedColumnUpdate(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	tk.MustExec("CREATE TABLE test1 (\ncol1 bigint(20) NOT NULL ,\ncol2 varchar(36) NOT NULL ,\ncol3 int(11) DEFAULT NULL ,\ncol4 varchar(36) NOT NULL ,\ncol5 varchar(255) DEFAULT NULL ,\nmodify_time bigint(20) DEFAULT NULL,\ncreate_time bigint(20) DEFAULT NULL,\ncol6 json DEFAULT NULL ,\n" +
+		"col7 json DEFAULT NULL ," +
+		"col8 json GENERATED ALWAYS AS (json_merge_patch(ifnull(col6, _utf8mb4\"{}\"), ifnull(col7, _utf8mb4\"{}\"))) STORED," +
+		"col9 varchar(36) GENERATED ALWAYS AS (left(json_unquote(json_extract(col8, _utf8mb4\"$.col9[0]\")), 36)) VIRTUAL," +
+		"col10 varchar(30) GENERATED ALWAYS AS (left(json_unquote(json_extract(col8, _utf8mb4\"$.col10\")), 30)) VIRTUAL," +
+		"KEY dev_idx1 (col10)) " +
+		"ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin;")
+	tk.MustExec("INSERT INTO test1 VALUES (-100000000, \"123459789332\", 1, \"123459789332\", \"BBBBB\", 1675871896, 1675871896, '{\"col10\": \"CCCCC\",\"col9\": [\"ABCDEFG\"]}', NULL, DEFAULT, DEFAULT, DEFAULT);\n")
+	tk.MustExec("UPDATE test1 SET col7 = '{\"col10\":\"DDDDD\",\"col9\":[\"abcdefg\"]}';\n")
+	tk.MustExec("DELETE FROM test1 WHERE col1 < 0;\n")
 }

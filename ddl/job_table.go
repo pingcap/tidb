@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/ddl/syncer"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
+	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/owner"
 	"github.com/pingcap/tidb/parser/model"
@@ -58,35 +59,6 @@ func init() {
 	}
 }
 
-func (dc *ddlCtx) insertRunningDDLJobMap(id int64) {
-	dc.runningJobs.Lock()
-	defer dc.runningJobs.Unlock()
-	dc.runningJobs.ids[id] = struct{}{}
-}
-
-func (dc *ddlCtx) deleteRunningDDLJobMap(id int64) {
-	dc.runningJobs.Lock()
-	defer dc.runningJobs.Unlock()
-	delete(dc.runningJobs.ids, id)
-}
-
-func (dc *ddlCtx) excludeJobIDs() string {
-	dc.runningJobs.RLock()
-	defer dc.runningJobs.RUnlock()
-	if len(dc.runningJobs.ids) == 0 {
-		return ""
-	}
-	dc.runningJobIDs = dc.runningJobIDs[:0]
-	for id := range dc.runningJobs.ids {
-		dc.runningJobIDs = append(dc.runningJobIDs, strconv.Itoa(int(id)))
-	}
-	return fmt.Sprintf("and job_id not in (%s)", strings.Join(dc.runningJobIDs, ","))
-}
-
-const (
-	getJobSQL = "select job_meta, processing from mysql.tidb_ddl_job where job_id in (select min(job_id) from mysql.tidb_ddl_job group by schema_ids, table_ids, processing) and %s reorg %s order by processing desc, job_id"
-)
-
 type jobType int
 
 func (t jobType) String() string {
@@ -111,7 +83,14 @@ func (d *ddl) getJob(se *sess.Session, tp jobType, filter func(*model.Job) (bool
 		not = ""
 		label = "get_job_reorg"
 	}
-	sql := fmt.Sprintf(getJobSQL, not, d.excludeJobIDs())
+	const getJobSQL = `select job_meta, processing from mysql.tidb_ddl_job where job_id in
+		(select min(job_id) from mysql.tidb_ddl_job group by schema_ids, table_ids, processing)
+		and %s reorg %s order by processing desc, job_id`
+	var excludedJobIDs string
+	if ids := d.runningJobs.allIDs(); len(ids) > 0 {
+		excludedJobIDs = fmt.Sprintf("and job_id not in (%s)", ids)
+	}
+	sql := fmt.Sprintf(getJobSQL, not, excludedJobIDs)
 	rows, err := se.Execute(context.Background(), sql, label)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -158,10 +137,8 @@ func (d *ddl) getJob(se *sess.Session, tp jobType, filter func(*model.Job) (bool
 }
 
 func hasSysDB(job *model.Job) bool {
-	sNames := job2SchemaNames(job)
-	// TODO: Handle for the name is empty, like ActionCreatePlacementPolicy.
-	for _, name := range sNames {
-		if tidb_util.IsSysDB(name) {
+	for _, info := range job.GetInvolvingSchemaInfo() {
+		if tidb_util.IsSysDB(info.Database) {
 			return true
 		}
 	}
@@ -222,33 +199,37 @@ func (d *ddl) processJobDuringUpgrade(sess *sess.Session, job *model.Job) (isRun
 
 func (d *ddl) getGeneralJob(sess *sess.Session) (*model.Job, error) {
 	return d.getJob(sess, general, func(job *model.Job) (bool, error) {
+		if !d.runningJobs.checkRunnable(job) {
+			return false, nil
+		}
 		if job.Type == model.ActionDropSchema {
 			// Check if there is any reorg job on this schema.
 			sql := fmt.Sprintf("select job_id from mysql.tidb_ddl_job where CONCAT(',', schema_ids, ',') REGEXP CONCAT(',', %s, ',') != 0 and processing limit 1", strconv.Quote(strconv.FormatInt(job.SchemaID, 10)))
-			return d.NoConflictJob(sess, sql)
+			rows, err := sess.Execute(d.ctx, sql, "check conflict jobs")
+			return len(rows) == 0, err
 		}
 		// Check if there is any running job works on the same table.
 		sql := fmt.Sprintf("select job_id from mysql.tidb_ddl_job t1, (select table_ids from mysql.tidb_ddl_job where job_id = %d) t2 where "+
 			"(processing and CONCAT(',', t2.table_ids, ',') REGEXP CONCAT(',', REPLACE(t1.table_ids, ',', '|'), ',') != 0)"+
 			"or (type = %d and processing)", job.ID, model.ActionFlashbackCluster)
-		return d.NoConflictJob(sess, sql)
+		rows, err := sess.Execute(d.ctx, sql, "check conflict jobs")
+		return len(rows) == 0, err
 	})
-}
-
-func (d *ddl) NoConflictJob(se *sess.Session, sql string) (bool, error) {
-	rows, err := se.Execute(context.Background(), sql, "check conflict jobs")
-	return len(rows) == 0, err
 }
 
 func (d *ddl) getReorgJob(sess *sess.Session) (*model.Job, error) {
 	return d.getJob(sess, reorg, func(job *model.Job) (bool, error) {
+		if !d.runningJobs.checkRunnable(job) {
+			return false, nil
+		}
 		// Check if there is any block ddl running, like drop schema and flashback cluster.
 		sql := fmt.Sprintf("select job_id from mysql.tidb_ddl_job where "+
 			"(CONCAT(',', schema_ids, ',') REGEXP CONCAT(',', %s, ',') != 0 and type = %d and processing) "+
 			"or (CONCAT(',', table_ids, ',') REGEXP CONCAT(',', %s, ',') != 0 and processing) "+
 			"or (type = %d and processing) limit 1",
 			strconv.Quote(strconv.FormatInt(job.SchemaID, 10)), model.ActionDropSchema, strconv.Quote(strconv.FormatInt(job.TableID, 10)), model.ActionFlashbackCluster)
-		return d.NoConflictJob(sess, sql)
+		rows, err := sess.Execute(d.ctx, sql, "check conflict jobs")
+		return len(rows) == 0, err
 	})
 }
 
@@ -275,7 +256,7 @@ func (d *ddl) startDispatchLoop() {
 		}
 		if !d.isOwner() {
 			isOnce = true
-			d.once.Store(true)
+			d.onceMap = make(map[int64]struct{}, jobOnceCapacity)
 			time.Sleep(dispatchLoopWaitingDuration)
 			continue
 		}
@@ -373,16 +354,16 @@ func (d *ddl) loadDDLJobAndRun(se *sess.Session, pool *workerPool, getJob func(*
 // delivery2worker owns the worker, need to put it back to the pool in this function.
 func (d *ddl) delivery2worker(wk *worker, pool *workerPool, job *model.Job) {
 	injectFailPointForGetJob(job)
-	d.insertRunningDDLJobMap(job.ID)
+	d.runningJobs.add(job)
 	d.wg.Run(func() {
 		metrics.DDLRunningJobCount.WithLabelValues(pool.tp().String()).Inc()
 		defer func() {
-			d.deleteRunningDDLJobMap(job.ID)
+			d.runningJobs.remove(job)
 			asyncNotify(d.ddlJobCh)
 			metrics.DDLRunningJobCount.WithLabelValues(pool.tp().String()).Dec()
 		}()
 		// check if this ddl job is synced to all servers.
-		if !d.isSynced(job) || d.once.Load() {
+		if !job.NotStarted() && (!d.isSynced(job) || !d.maybeAlreadyRunOnce(job.ID)) {
 			if variable.EnableMDL.Load() {
 				exist, version, err := checkMDLInfo(job.ID, d.sessPool)
 				if err != nil {
@@ -397,8 +378,8 @@ func (d *ddl) delivery2worker(wk *worker, pool *workerPool, job *model.Job) {
 					if err != nil {
 						return
 					}
-					d.once.Store(false)
-					cleanMDLInfo(d.sessPool, job.ID, d.etcdCli)
+					d.setAlreadyRunOnce(job.ID)
+					cleanMDLInfo(d.sessPool, job.ID, d.etcdCli, job.State == model.JobStateSynced)
 					// Don't have a worker now.
 					return
 				}
@@ -411,7 +392,7 @@ func (d *ddl) delivery2worker(wk *worker, pool *workerPool, job *model.Job) {
 					pool.put(wk)
 					return
 				}
-				d.once.Store(false)
+				d.setAlreadyRunOnce(job.ID)
 			}
 		}
 
@@ -430,10 +411,15 @@ func (d *ddl) delivery2worker(wk *worker, pool *workerPool, job *model.Job) {
 			})
 
 			// Here means the job enters another state (delete only, write only, public, etc...) or is cancelled.
-			// If the job is done or still running or rolling back, we will wait 2 * lease time to guarantee other servers to update
+			// If the job is done or still running or rolling back, we will wait 2 * lease time or util MDL synced to guarantee other servers to update
 			// the newest schema.
-			waitSchemaChanged(d.ddlCtx, d.lease*2, schemaVer, job)
-			cleanMDLInfo(d.sessPool, job.ID, d.etcdCli)
+			err := waitSchemaChanged(d.ddlCtx, d.lease*2, schemaVer, job)
+			if err != nil {
+				// May be caused by server closing, shouldn't clean the MDL info.
+				logutil.BgLogger().Info("wait latest schema version error", zap.String("category", "ddl"), zap.Error(err))
+				return
+			}
+			cleanMDLInfo(d.sessPool, job.ID, d.etcdCli, job.State == model.JobStateSynced)
 			d.synced(job)
 
 			if RunInGoTest {
@@ -458,10 +444,10 @@ func (*ddl) markJobProcessing(se *sess.Session, job *model.Job) error {
 	return errors.Trace(err)
 }
 
-func (d *ddl) getTableByTxn(store kv.Storage, schemaID, tableID int64) (*model.DBInfo, table.Table, error) {
+func (d *ddl) getTableByTxn(r autoid.Requirement, schemaID, tableID int64) (*model.DBInfo, table.Table, error) {
 	var tbl table.Table
 	var dbInfo *model.DBInfo
-	err := kv.RunInNewTxn(d.ctx, store, false, func(ctx context.Context, txn kv.Transaction) error {
+	err := kv.RunInNewTxn(d.ctx, r.Store(), false, func(ctx context.Context, txn kv.Transaction) error {
 		t := meta.NewMeta(txn)
 		var err1 error
 		dbInfo, err1 = t.GetDatabase(schemaID)
@@ -472,7 +458,7 @@ func (d *ddl) getTableByTxn(store kv.Storage, schemaID, tableID int64) (*model.D
 		if err1 != nil {
 			return errors.Trace(err1)
 		}
-		tbl, err1 = getTable(store, schemaID, tblInfo)
+		tbl, err1 = getTable(r, schemaID, tblInfo)
 		return errors.Trace(err1)
 	})
 	return dbInfo, tbl, err
@@ -546,24 +532,6 @@ func job2UniqueIDs(job *model.Job, schema bool) string {
 		return strconv.FormatInt(job.SchemaID, 10)
 	}
 	return strconv.FormatInt(job.TableID, 10)
-}
-
-func job2SchemaNames(job *model.Job) []string {
-	if job.Type == model.ActionRenameTable {
-		var oldSchemaID int64
-		var oldSchemaName model.CIStr
-		var tableName model.CIStr
-		if err := job.DecodeArgs(&oldSchemaID, &tableName, &oldSchemaName); err != nil {
-			// TODO: Handle this error
-		}
-		names := make([]string, 0, 2)
-		names = append(names, strings.ToLower(job.SchemaName))
-		names = append(names, oldSchemaName.O)
-		return names
-	}
-	// TODO: consider about model.ActionRenameTables and model.ActionExchangeTablePartition, which need to get the schema names.
-
-	return []string{job.SchemaName}
 }
 
 func (w *worker) deleteDDLJob(job *model.Job) error {

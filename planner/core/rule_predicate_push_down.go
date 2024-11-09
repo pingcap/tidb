@@ -123,6 +123,11 @@ func (p *LogicalSelection) PredicatePushDown(predicates []expression.Expression,
 
 // PredicatePushDown implements LogicalPlan PredicatePushDown interface.
 func (p *LogicalUnionScan) PredicatePushDown(predicates []expression.Expression, opt *logicalOptimizeOp) ([]expression.Expression, LogicalPlan) {
+	if expression.ContainVirtualColumn(predicates) {
+		// predicates with virtual columns can't be pushed down to TiKV/TiFlash so they'll be put into a Projection
+		// below the UnionScan, but the current UnionScan doesn't support placing Projection below it, see #53951.
+		return predicates, p
+	}
 	retainedPredicates, _ := p.children[0].PredicatePushDown(predicates, opt)
 	p.conditions = make([]expression.Expression, 0, len(predicates))
 	p.conditions = append(p.conditions, predicates...)
@@ -394,14 +399,6 @@ func simplifyOuterJoin(p *LogicalJoin, predicates []expression.Expression) {
 		innerTable, outerTable = outerTable, innerTable
 	}
 
-	// first simplify embedded outer join.
-	if innerPlan, ok := innerTable.(*LogicalJoin); ok {
-		simplifyOuterJoin(innerPlan, predicates)
-	}
-	if outerPlan, ok := outerTable.(*LogicalJoin); ok {
-		simplifyOuterJoin(outerPlan, predicates)
-	}
-
 	if p.JoinType == InnerJoin {
 		return
 	}
@@ -439,6 +436,10 @@ func isNullRejected(ctx sessionctx.Context, schema *expression.Schema, expr expr
 		sc.InNullRejectCheck = false
 	}()
 	for _, cond := range expression.SplitCNFItems(expr) {
+		if isNullRejectedSpecially(ctx, schema, expr) {
+			return true
+		}
+
 		result := expression.EvaluateExprWithNull(ctx, schema, cond)
 		x, ok := result.(*expression.Constant)
 		if !ok {
@@ -453,6 +454,47 @@ func isNullRejected(ctx sessionctx.Context, schema *expression.Schema, expr expr
 	return false
 }
 
+// isNullRejectedSpecially handles some null-rejected cases specially, since the current in
+// EvaluateExprWithNull is too strict for some cases, e.g. #49616.
+func isNullRejectedSpecially(ctx sessionctx.Context, schema *expression.Schema, expr expression.Expression) bool {
+	return specialNullRejectedCase1(ctx, schema, expr) // only 1 case now
+}
+
+// specialNullRejectedCase1 is mainly for #49616.
+// Case1 specially handles `null-rejected OR (null-rejected AND {others})`, then no matter what the result
+// of `{others}` is (True, False or Null), the result of this predicate is null, so this predicate is null-rejected.
+func specialNullRejectedCase1(ctx sessionctx.Context, schema *expression.Schema, expr expression.Expression) bool {
+	isFunc := func(e expression.Expression, lowerFuncName string) *expression.ScalarFunction {
+		f, ok := e.(*expression.ScalarFunction)
+		if !ok {
+			return nil
+		}
+		if f.FuncName.L == lowerFuncName {
+			return f
+		}
+		return nil
+	}
+	orFunc := isFunc(expr, ast.LogicOr)
+	if orFunc == nil {
+		return false
+	}
+	for i := 0; i < 2; i++ {
+		andFunc := isFunc(orFunc.GetArgs()[i], ast.LogicAnd)
+		if andFunc == nil {
+			continue
+		}
+		if !isNullRejected(ctx, schema, orFunc.GetArgs()[1-i]) {
+			continue // the other side should be null-rejected: null-rejected OR (... AND ...)
+		}
+		for _, andItem := range expression.SplitCNFItems(andFunc) {
+			if isNullRejected(ctx, schema, andItem) {
+				return true // hit the case in the comment: null-rejected OR (null-rejected AND ...)
+			}
+		}
+	}
+	return false
+}
+
 // PredicatePushDown implements LogicalPlan PredicatePushDown interface.
 func (p *LogicalProjection) PredicatePushDown(predicates []expression.Expression, opt *logicalOptimizeOp) (ret []expression.Expression, retPlan LogicalPlan) {
 	canBePushed := make([]expression.Expression, 0, len(predicates))
@@ -461,11 +503,6 @@ func (p *LogicalProjection) PredicatePushDown(predicates []expression.Expression
 		if expression.HasAssignSetVarFunc(expr) {
 			_, child := p.baseLogicalPlan.PredicatePushDown(nil, opt)
 			return predicates, child
-		}
-	}
-	if len(p.children) == 1 {
-		if _, isDual := p.children[0].(*LogicalTableDual); isDual {
-			return predicates, p
 		}
 	}
 	for _, cond := range predicates {
@@ -985,7 +1022,7 @@ func (p *LogicalCTE) PredicatePushDown(predicates []expression.Expression, _ *lo
 		// Doesn't support recursive CTE yet.
 		return predicates, p.self
 	}
-	if !p.isOuterMostCTE {
+	if !p.cte.isOuterMostCTE {
 		return predicates, p.self
 	}
 	pushedPredicates := make([]expression.Expression, len(predicates))

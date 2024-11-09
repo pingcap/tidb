@@ -839,10 +839,7 @@
           "                      └─Selection 9990.00 mpp[tiflash]  not(isnull(test.t.a))",
           "                        └─TableFullScan 10000.00 mpp[tiflash] table:t1 pushed down filter:empty, keep order:false, stats:pseudo"
         ],
-        "Warn": [
-          "[planner:1815]There are no matching table names for (t1, t) in optimizer hint /*+ SHUFFLE_JOIN(t1, t, t1, t) */ or /*+ SHUFFLE_JOIN(t1, t, t1, t) */. Maybe you can use the table alias name",
-          "[planner:1815]There are no matching table names for (t1, t, t1, t) in optimizer hint /*+ SHUFFLE_JOIN(t1, t, t1, t, t1, t) */ or /*+ SHUFFLE_JOIN(t1, t, t1, t, t1, t) */. Maybe you can use the table alias name"
-        ]
+        "Warn": null
       },
       {
         "SQL": "WITH CTE AS (SELECT /*+ MERGE(), broadcast_join(t1, t) */ t.a, t.b FROM t join t t1 where t.a = t1.a) SELECT * FROM CTE WHERE CTE.a <18 union select * from cte where cte.b > 1;",
@@ -872,10 +869,7 @@
           "                  └─Selection(Probe) 9990.00 mpp[tiflash]  not(isnull(test.t.a))",
           "                    └─TableFullScan 10000.00 mpp[tiflash] table:t1 pushed down filter:empty, keep order:false, stats:pseudo"
         ],
-        "Warn": [
-          "[planner:1815]There are no matching table names for (t1, t) in optimizer hint /*+ BROADCAST_JOIN(t1, t, t1, t) */ or /*+ TIDB_BCJ(t1, t, t1, t) */. Maybe you can use the table alias name",
-          "[planner:1815]There are no matching table names for (t1, t, t1, t) in optimizer hint /*+ BROADCAST_JOIN(t1, t, t1, t, t1, t) */ or /*+ TIDB_BCJ(t1, t, t1, t, t1, t) */. Maybe you can use the table alias name"
-        ]
+        "Warn": null
       },
       {
         "SQL": "select /*+ read_from_storage(tiflash[t1, t2]), broadcast_join(t1, t2), hash_join_build(t2) */ * from t t1 left join t t2 on t1.a=t2.a",
@@ -2811,7 +2805,7 @@
       },
       {
         "SQL": "select a from t where c_str like 'abc_'",
-        "Best": "IndexReader(Index(t.c_d_e_str)[(\"abc\",\"abd\")]->Sel([like(test.t.c_str, abc_, 92)]))->Projection"
+        "Best": "IndexReader(Index(t.c_d_e_str)[[\"abc\",\"abd\")]->Sel([like(test.t.c_str, abc_, 92)]))->Projection"
       },
       {
         "SQL": "select a from t where c_str like 'abc%af'",
@@ -2839,7 +2833,7 @@
       },
       {
         "SQL": "select a from t where c_str like 'abc\\__'",
-        "Best": "IndexReader(Index(t.c_d_e_str)[(\"abc_\",\"abc`\")]->Sel([like(test.t.c_str, abc\\__, 92)]))->Projection"
+        "Best": "IndexReader(Index(t.c_d_e_str)[[\"abc_\",\"abc`\")]->Sel([like(test.t.c_str, abc\\__, 92)]))->Projection"
       },
       {
         "SQL": "select a from t where c_str like 123",
@@ -3390,7 +3384,7 @@
           "    └─CTETable 1.00 root  Scan on CTE_0"
         ],
         "Warning": [
-          "[planner:1815]Recursive CTE can not be inlined."
+          "[planner:1815]Recursive CTE cte1 can not be inlined by merge() or tidb_opt_force_inline_cte."
         ]
       },
       {
@@ -3639,7 +3633,9 @@
           "  └─Selection 0.80 root  lt(Column#3, 100)",
           "    └─CTETable 1.00 root  Scan on CTE_0"
         ],
-        "Warning": null
+        "Warning": [
+          "[planner:1815]Recursive CTE cte1 can not be inlined by merge() or tidb_opt_force_inline_cte."
+        ]
       },
       {
         "SQL": "with cte1 as (with cte2 as (select * from t) select * from cte2) select * from cte1; -- non-recursive 'cte2' definition inside another non-recursive 'cte1'",
@@ -3660,7 +3656,9 @@
           "  └─Selection 8000.00 root  lt(test.t.a, 100)",
           "    └─CTETable 10000.00 root  Scan on CTE_0"
         ],
-        "Warning": null
+        "Warning": [
+          "[planner:1815]Recursive CTE cte2 can not be inlined by merge() or tidb_opt_force_inline_cte."
+        ]
       },
       {
         "SQL": "with cte1 as (with recursive cte2(c1) as (select 1 union select c1 + 1 c1 from cte2 where c1 < 100) select * from cte2) select * from cte1; -- recursive 'cte2' inside non-recursive 'cte1'",
@@ -3673,7 +3671,10 @@
           "  └─Selection 0.80 root  lt(Column#10, 100)",
           "    └─CTETable 1.00 root  Scan on CTE_2"
         ],
-        "Warning": null
+        "Warning": [
+          "[planner:1815]Recursive CTE cte2 can not be inlined by merge() or tidb_opt_force_inline_cte.",
+          "[planner:1815]Recursive CTE cte2 can not be inlined by merge() or tidb_opt_force_inline_cte."
+        ]
       },
       {
         "SQL": "set tidb_opt_force_inline_cte=0; -- disable force inline CTE",
@@ -3708,7 +3709,7 @@
           "    └─CTETable 1.00 root  Scan on CTE_0"
         ],
         "Warning": [
-          "[planner:1815]Recursive CTE can not be inlined."
+          "[planner:1815]Recursive CTE cte1 can not be inlined by merge() or tidb_opt_force_inline_cte."
         ]
       },
       {
@@ -3750,6 +3751,55 @@
   {
     "Name": "TestSingleConsumerCTE",
     "Cases": [
+      {
+        "SQL": "with recursive cte1(c1) as (select c1 from t1 union select c1 from t2 limit 1) select * from cte1; -- non-recursive limit, inline cte1",
+        "Plan": [
+          "Limit 1.00 root  offset:0, count:1",
+          "└─HashAgg 1.00 root  group by:Column#18, funcs:firstrow(Column#18)->Column#18",
+          "  └─Union 20000.00 root  ",
+          "    ├─TableReader 10000.00 root  data:TableFullScan",
+          "    │ └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+          "    └─IndexReader 10000.00 root  index:IndexFullScan",
+          "      └─IndexFullScan 10000.00 cop[tikv] table:t2, index:c1(c1) keep order:false, stats:pseudo"
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "with recursive cte1(c1) as (select c1 from t1 union select c1 from t2 limit 100 offset 100) select * from cte1; -- non-recursive limit, inline cte1",
+        "Plan": [
+          "Limit 100.00 root  offset:100, count:100",
+          "└─HashAgg 200.00 root  group by:Column#18, funcs:firstrow(Column#18)->Column#18",
+          "  └─Union 20000.00 root  ",
+          "    ├─TableReader 10000.00 root  data:TableFullScan",
+          "    │ └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+          "    └─IndexReader 10000.00 root  index:IndexFullScan",
+          "      └─IndexFullScan 10000.00 cop[tikv] table:t2, index:c1(c1) keep order:false, stats:pseudo"
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "with recursive cte1(c1) as (select c1 from t1 union select c1 from t2 limit 0 offset 0) select * from cte1; -- non-recursive limit, inline cte1",
+        "Plan": [
+          "TableDual 0.00 root  rows:0"
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "with cte1 as (select 1), cte2 as (select 2) select * from cte1 union (with cte2 as (select 3) select * from cte2 union all select * from cte2) -- inline cte1, not inline cte2",
+        "Plan": [
+          "HashAgg 3.00 root  group by:Column#9, funcs:firstrow(Column#9)->Column#9",
+          "└─Union 3.00 root  ",
+          "  ├─Projection 1.00 root  1->Column#9",
+          "  │ └─TableDual 1.00 root  rows:1",
+          "  └─Union 2.00 root  ",
+          "    ├─CTEFullScan 1.00 root CTE:cte2 data:CTE_2",
+          "    └─CTEFullScan 1.00 root CTE:cte2 data:CTE_2",
+          "CTE_2 1.00 root  Non-Recursive CTE",
+          "└─Projection(Seed Part) 1.00 root  3->Column#5",
+          "  └─TableDual 1.00 root  rows:1"
+        ],
+        "Warning": null
+      },
       {
         "SQL": "with base1 as (WITH RECURSIVE cte(a) AS (with tmp as (select 1 as a) SELECT a from tmp UNION SELECT a+1 FROM cte) SELECT * FROM cte) select * from base1; -- issue #43318",
         "Plan": [
@@ -3850,8 +3900,8 @@
       {
         "SQL": "with recursive cte(a) as (select 1 union select a from cte) select * from cte; -- recursive cte cannot be inlined",
         "Plan": [
-          "CTEFullScan 1.00 root CTE:cte data:CTE_0",
-          "CTE_0 1.00 root  Recursive CTE",
+          "CTEFullScan 2.00 root CTE:cte data:CTE_0",
+          "CTE_0 2.00 root  Recursive CTE",
           "├─Projection(Seed Part) 1.00 root  1->Column#2",
           "│ └─TableDual 1.00 root  rows:1",
           "└─CTETable(Recursive Part) 1.00 root  Scan on CTE_0"
@@ -3901,6 +3951,201 @@
           "CTE_0 1.00 root  Non-Recursive CTE",
           "└─Projection(Seed Part) 1.00 root  1->Column#1",
           "  └─TableDual 1.00 root  rows:1"
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "with a as (select 8 as id from dual),maxa as (select max(id) as max_id from a),b as (with recursive temp as (select 1 as lvl from dual union all select lvl+1 from temp, maxa where lvl < max_id)select * from temp) select * from b; -- issue #47711, maxa cannot be inlined because it contains agg and in the recursive part of cte temp",
+        "Plan": [
+          "CTEFullScan 1.64 root CTE:temp data:CTE_4",
+          "CTE_4 1.64 root  Recursive CTE",
+          "├─Projection(Seed Part) 1.00 root  1->Column#14",
+          "│ └─TableDual 1.00 root  rows:1",
+          "└─Projection(Recursive Part) 0.64 root  cast(plus(Column#15, 1), bigint(1) BINARY)->Column#18",
+          "  └─HashJoin 0.64 root  CARTESIAN inner join, other cond:lt(Column#15, Column#16)",
+          "    ├─Selection(Build) 0.80 root  not(isnull(Column#16))",
+          "    │ └─CTEFullScan 1.00 root CTE:maxa data:CTE_1",
+          "    └─Selection(Probe) 0.80 root  not(isnull(Column#15))",
+          "      └─CTETable 1.00 root  Scan on CTE_4",
+          "CTE_1 1.00 root  Non-Recursive CTE",
+          "└─StreamAgg(Seed Part) 1.00 root  funcs:max(Column#3)->Column#4",
+          "  └─Projection 1.00 root  8->Column#3",
+          "    └─TableDual 1.00 root  rows:1"
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "with a as (select count(*) from t1), b as (select 2 as bb from a), c as (with recursive tmp as (select 1 as res from t1 union all select res+1 from tmp,b where res+1 < bb) select * from tmp) select * from c; -- inline a, cannot be inline b because b indirectly contains agg and in the recursive part of cte tmp",
+        "Plan": [
+          "CTEFullScan 20000.00 root CTE:tmp data:CTE_4",
+          "CTE_4 20000.00 root  Recursive CTE",
+          "├─Projection(Seed Part) 10000.00 root  1->Column#26",
+          "│ └─TableReader 10000.00 root  data:TableFullScan",
+          "│   └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+          "└─Projection(Recursive Part) 10000.00 root  cast(plus(Column#27, 1), bigint(1) BINARY)->Column#30",
+          "  └─HashJoin 10000.00 root  CARTESIAN inner join, other cond:lt(plus(Column#27, 1), Column#28)",
+          "    ├─CTEFullScan(Build) 1.00 root CTE:b data:CTE_1",
+          "    └─CTETable(Probe) 10000.00 root  Scan on CTE_4",
+          "CTE_1 1.00 root  Non-Recursive CTE",
+          "└─Projection(Seed Part) 1.00 root  2->Column#8",
+          "  └─HashAgg 1.00 root  funcs:count(Column#37)->Column#35",
+          "    └─TableReader 1.00 root  data:HashAgg",
+          "      └─HashAgg 1.00 cop[tikv]  funcs:count(1)->Column#37",
+          "        └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "with a as (select count(*) from t1), b as (select 2 as bb from a), c as (with recursive tmp as (select bb as res from b union all select res+1 from tmp where res +1 < 10) select * from tmp) select * from c; -- inline a, b, cannot be inline tmp, c",
+        "Plan": [
+          "CTEFullScan 1.80 root CTE:tmp data:CTE_4",
+          "CTE_4 1.80 root  Recursive CTE",
+          "├─Projection(Seed Part) 1.00 root  2->Column#37",
+          "│ └─HashAgg 1.00 root  funcs:count(Column#46)->Column#44",
+          "│   └─TableReader 1.00 root  data:HashAgg",
+          "│     └─HashAgg 1.00 cop[tikv]  funcs:count(1)->Column#46",
+          "│       └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+          "└─Projection(Recursive Part) 0.80 root  cast(plus(Column#38, 1), bigint(1) BINARY)->Column#40",
+          "  └─Selection 0.80 root  lt(plus(Column#38, 1), 10)",
+          "    └─CTETable 1.00 root  Scan on CTE_4"
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "with a as (select count(*) from t1), b as (select 2 as bb from a), c as (with recursive tmp as (select bb as res from b union all select res+1 from tmp where res +1 < 10) select * from tmp) select * from c; -- inline a, b, cannot be inline tmp, c",
+        "Plan": [
+          "CTEFullScan 1.80 root CTE:tmp data:CTE_4",
+          "CTE_4 1.80 root  Recursive CTE",
+          "├─Projection(Seed Part) 1.00 root  2->Column#37",
+          "│ └─HashAgg 1.00 root  funcs:count(Column#46)->Column#44",
+          "│   └─TableReader 1.00 root  data:HashAgg",
+          "│     └─HashAgg 1.00 cop[tikv]  funcs:count(1)->Column#46",
+          "│       └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+          "└─Projection(Recursive Part) 0.80 root  cast(plus(Column#38, 1), bigint(1) BINARY)->Column#40",
+          "  └─Selection 0.80 root  lt(plus(Column#38, 1), 10)",
+          "    └─CTETable 1.00 root  Scan on CTE_4"
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "WITH RECURSIVE CTE (x) AS (SELECT 1 UNION ALL SELECT distinct a FROM test), CTE1 AS (SELECT x FROM CTE UNION ALL select CTE.x from CTE join CTE1 on CTE.x=CTE1.x) SELECT * FROM CTE1; -- CTE contain distinct and ref by CET1 recursive part cannot be inlined;",
+        "Plan": [
+          "CTEFullScan 14401.80 root CTE:cte1 data:CTE_1",
+          "CTE_1 14401.80 root  Recursive CTE",
+          "├─CTEFullScan(Seed Part) 8001.00 root CTE:cte data:CTE_0",
+          "└─HashJoin(Recursive Part) 6400.80 root  inner join, equal:[eq(Column#11, Column#12)]",
+          "  ├─Selection(Build) 6400.80 root  not(isnull(Column#12))",
+          "  │ └─CTETable 8001.00 root  Scan on CTE_1",
+          "  └─Selection(Probe) 6400.80 root  not(isnull(Column#11))",
+          "    └─CTEFullScan 8001.00 root CTE:cte data:CTE_0",
+          "CTE_0 8001.00 root  Non-Recursive CTE",
+          "└─Union(Seed Part) 8001.00 root  ",
+          "  ├─Projection 1.00 root  1->Column#7",
+          "  │ └─TableDual 1.00 root  rows:1",
+          "  └─Projection 8000.00 root  cast(test.test.a, bigint(11) BINARY)->Column#7",
+          "    └─HashAgg 8000.00 root  group by:test.test.a, funcs:firstrow(test.test.a)->test.test.a",
+          "      └─TableReader 8000.00 root  data:HashAgg",
+          "        └─HashAgg 8000.00 cop[tikv]  group by:test.test.a, ",
+          "          └─TableFullScan 10000.00 cop[tikv] table:test keep order:false, stats:pseudo"
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "create definer='root'@'localhost' view test_cte(a) as WITH RECURSIVE CTE (x) AS (SELECT 1 UNION ALL SELECT distinct a FROM test) , CTE1 AS (SELECT x FROM CTE UNION ALL select CTE.x from CTE join CTE1 on CTE.x=CTE1.x) SELECT * FROM CTE1;",
+        "Plan": null,
+        "Warning": null
+      },
+      {
+        "SQL": "select * from test_cte;  -- CTE (inside of view) cannot be inlined by default;",
+        "Plan": [
+          "CTEFullScan 14401.80 root CTE:cte1 data:CTE_1",
+          "CTE_1 14401.80 root  Recursive CTE",
+          "├─CTEFullScan(Seed Part) 8001.00 root CTE:cte data:CTE_0",
+          "└─HashJoin(Recursive Part) 6400.80 root  inner join, equal:[eq(Column#11, Column#12)]",
+          "  ├─Selection(Build) 6400.80 root  not(isnull(Column#12))",
+          "  │ └─CTETable 8001.00 root  Scan on CTE_1",
+          "  └─Selection(Probe) 6400.80 root  not(isnull(Column#11))",
+          "    └─CTEFullScan 8001.00 root CTE:cte data:CTE_0",
+          "CTE_0 8001.00 root  Non-Recursive CTE",
+          "└─Union(Seed Part) 8001.00 root  ",
+          "  ├─Projection 1.00 root  1->Column#7",
+          "  │ └─TableDual 1.00 root  rows:1",
+          "  └─Projection 8000.00 root  cast(test.test.a, bigint(11) BINARY)->Column#7",
+          "    └─HashAgg 8000.00 root  group by:test.test.a, funcs:firstrow(test.test.a)->test.test.a",
+          "      └─TableReader 8000.00 root  data:HashAgg",
+          "        └─HashAgg 8000.00 cop[tikv]  group by:test.test.a, ",
+          "          └─TableFullScan 10000.00 cop[tikv] table:test keep order:false, stats:pseudo"
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "create definer='root'@'localhost' view test_inline_cte(a) as with CTE (x) as (select distinct a from test) select * from CTE;",
+        "Plan": null,
+        "Warning": null
+      },
+      {
+        "SQL": "select * from test_inline_cte; -- CTE (inside of view) cannot be inlined by default;",
+        "Plan": [
+          "CTEFullScan 8000.00 root CTE:cte data:CTE_0",
+          "CTE_0 8000.00 root  Non-Recursive CTE",
+          "└─HashAgg(Seed Part) 8000.00 root  group by:test.test.a, funcs:firstrow(test.test.a)->test.test.a",
+          "  └─TableReader 8000.00 root  data:HashAgg",
+          "    └─HashAgg 8000.00 cop[tikv]  group by:test.test.a, ",
+          "      └─TableFullScan 10000.00 cop[tikv] table:test keep order:false, stats:pseudo"
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "create definer='root'@'localhost' view test_force_inline_cte(a) as with CTE (x) as (select /*+ merge() */ distinct a from test) select * from CTE;",
+        "Plan": null,
+        "Warning": null
+      },
+      {
+        "SQL": "select * from test_force_inline_cte; -- CTE (inside of view) can be inlined by force;",
+        "Plan": [
+          "HashAgg 8000.00 root  group by:test.test.a, funcs:firstrow(test.test.a)->test.test.a",
+          "└─TableReader 8000.00 root  data:HashAgg",
+          "  └─HashAgg 8000.00 cop[tikv]  group by:test.test.a, ",
+          "    └─TableFullScan 10000.00 cop[tikv] table:test keep order:false, stats:pseudo"
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "WITH RECURSIVE CTE (x) AS (SELECT a FROM test limit 1) , CTE1(x) AS (SELECT a FROM test UNION ALL select CTE.x from CTE join CTE1 on CTE.x=CTE1.x) SELECT * FROM CTE1; -- CTE contain limit and ref by CET1 recursive part cannot be inlined;",
+        "Plan": [
+          "CTEFullScan 16400.00 root CTE:cte1 data:CTE_1",
+          "CTE_1 16400.00 root  Recursive CTE",
+          "├─TableReader(Seed Part) 10000.00 root  data:TableFullScan",
+          "│ └─TableFullScan 10000.00 cop[tikv] table:test keep order:false, stats:pseudo",
+          "└─HashJoin(Recursive Part) 6400.00 root  inner join, equal:[eq(test.test.a, test.test.a)]",
+          "  ├─Selection(Build) 0.80 root  not(isnull(test.test.a))",
+          "  │ └─CTEFullScan 1.00 root CTE:cte data:CTE_0",
+          "  └─Selection(Probe) 8000.00 root  not(isnull(test.test.a))",
+          "    └─CTETable 10000.00 root  Scan on CTE_1",
+          "CTE_0 1.00 root  Non-Recursive CTE",
+          "└─Limit(Seed Part) 1.00 root  offset:0, count:1",
+          "  └─TableReader 1.00 root  data:Limit",
+          "    └─Limit 1.00 cop[tikv]  offset:0, count:1",
+          "      └─TableFullScan 1.00 cop[tikv] table:test keep order:false, stats:pseudo"
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "WITH RECURSIVE CTE (x) AS (SELECT a FROM test order by a) , CTE1(x) AS (SELECT a FROM test UNION ALL select CTE.x from CTE join CTE1 on CTE.x=CTE1.x) SELECT * FROM CTE1; -- CTE contain order by and ref by CET1 recursive part cannot be inlined;",
+        "Plan": [
+          "CTEFullScan 20000.00 root CTE:cte1 data:CTE_1",
+          "CTE_1 20000.00 root  Recursive CTE",
+          "├─TableReader(Seed Part) 10000.00 root  data:TableFullScan",
+          "│ └─TableFullScan 10000.00 cop[tikv] table:test keep order:false, stats:pseudo",
+          "└─HashJoin(Recursive Part) 10000.00 root  inner join, equal:[eq(test.test.a, test.test.a)]",
+          "  ├─Selection(Build) 8000.00 root  not(isnull(test.test.a))",
+          "  │ └─CTEFullScan 10000.00 root CTE:cte data:CTE_0",
+          "  └─Selection(Probe) 8000.00 root  not(isnull(test.test.a))",
+          "    └─CTETable 10000.00 root  Scan on CTE_1",
+          "CTE_0 10000.00 root  Non-Recursive CTE",
+          "└─Sort(Seed Part) 10000.00 root  test.test.a",
+          "  └─TableReader 10000.00 root  data:TableFullScan",
+          "    └─TableFullScan 10000.00 cop[tikv] table:test keep order:false, stats:pseudo"
         ],
         "Warning": null
       }
@@ -8606,6 +8851,184 @@
         "Warning": [
           "Warning 1105 disable dynamic pruning due to thash has no global stats"
         ]
+      }
+    ]
+  },
+  {
+    "Name": "TestIssues49377Plan",
+    "Cases": [
+      {
+        "SQL": "select 1,1,1 union all ((select * from employee where dept_id = 1)  union all ( select * from employee where dept_id = 1 order by employee_id ) order by 1 );",
+        "Plan": [
+          "Union 21.00 root  ",
+          "├─Projection 1.00 root  1->Column#15, 1->Column#16, 1->Column#17",
+          "│ └─TableDual 1.00 root  rows:1",
+          "└─Projection 20.00 root  cast(Column#12, bigint(11) BINARY)->Column#15, Column#13, cast(Column#14, bigint(11) BINARY)->Column#17",
+          "  └─Sort 20.00 root  Column#12",
+          "    └─Union 20.00 root  ",
+          "      ├─TableReader 10.00 root  data:Selection",
+          "      │ └─Selection 10.00 cop[tikv]  eq(test.employee.dept_id, 1)",
+          "      │   └─TableFullScan 10000.00 cop[tikv] table:employee keep order:false, stats:pseudo",
+          "      └─Sort 10.00 root  test.employee.employee_id",
+          "        └─TableReader 10.00 root  data:Selection",
+          "          └─Selection 10.00 cop[tikv]  eq(test.employee.dept_id, 1)",
+          "            └─TableFullScan 10000.00 cop[tikv] table:employee keep order:false, stats:pseudo"
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "select 1,1,1 union all ((select * from employee where dept_id = 1)  union all ( select * from employee where dept_id = 1 order by employee_id ) order by 1 limit 1);",
+        "Plan": [
+          "Union 2.00 root  ",
+          "├─Projection 1.00 root  1->Column#15, 1->Column#16, 1->Column#17",
+          "│ └─TableDual 1.00 root  rows:1",
+          "└─Projection 1.00 root  cast(Column#12, bigint(11) BINARY)->Column#15, Column#13, cast(Column#14, bigint(11) BINARY)->Column#17",
+          "  └─TopN 1.00 root  Column#12, offset:0, count:1",
+          "    └─Union 2.00 root  ",
+          "      ├─TopN 1.00 root  test.employee.employee_id, offset:0, count:1",
+          "      │ └─TableReader 1.00 root  data:TopN",
+          "      │   └─TopN 1.00 cop[tikv]  test.employee.employee_id, offset:0, count:1",
+          "      │     └─Selection 10.00 cop[tikv]  eq(test.employee.dept_id, 1)",
+          "      │       └─TableFullScan 10000.00 cop[tikv] table:employee keep order:false, stats:pseudo",
+          "      └─TopN 1.00 root  test.employee.employee_id, offset:0, count:1",
+          "        └─TableReader 1.00 root  data:TopN",
+          "          └─TopN 1.00 cop[tikv]  test.employee.employee_id, offset:0, count:1",
+          "            └─Selection 10.00 cop[tikv]  eq(test.employee.dept_id, 1)",
+          "              └─TableFullScan 10000.00 cop[tikv] table:employee keep order:false, stats:pseudo"
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "select * from employee where dept_id = 1 union all ( select * from employee where dept_id = 1 order by employee_id) union all ( select * from employee where dept_id = 1 union all ( select * from employee where dept_id = 1 order by employee_id ) limit 1);",
+        "Plan": [
+          "Union 21.00 root  ",
+          "├─TableReader 10.00 root  data:Selection",
+          "│ └─Selection 10.00 cop[tikv]  eq(test.employee.dept_id, 1)",
+          "│   └─TableFullScan 10000.00 cop[tikv] table:employee keep order:false, stats:pseudo",
+          "├─Sort 10.00 root  test.employee.employee_id",
+          "│ └─TableReader 10.00 root  data:Selection",
+          "│   └─Selection 10.00 cop[tikv]  eq(test.employee.dept_id, 1)",
+          "│     └─TableFullScan 10000.00 cop[tikv] table:employee keep order:false, stats:pseudo",
+          "└─Limit 1.00 root  offset:0, count:1",
+          "  └─Union 1.00 root  ",
+          "    ├─Limit 1.00 root  offset:0, count:1",
+          "    │ └─TableReader 1.00 root  data:Limit",
+          "    │   └─Limit 1.00 cop[tikv]  offset:0, count:1",
+          "    │     └─Selection 1.00 cop[tikv]  eq(test.employee.dept_id, 1)",
+          "    │       └─TableFullScan 1000.00 cop[tikv] table:employee keep order:false, stats:pseudo",
+          "    └─TopN 1.00 root  test.employee.employee_id, offset:0, count:1",
+          "      └─TableReader 1.00 root  data:TopN",
+          "        └─TopN 1.00 cop[tikv]  test.employee.employee_id, offset:0, count:1",
+          "          └─Selection 10.00 cop[tikv]  eq(test.employee.dept_id, 1)",
+          "            └─TableFullScan 10000.00 cop[tikv] table:employee keep order:false, stats:pseudo"
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "select * from employee where dept_id = 1 union all ( select * from employee where dept_id = 1 order by employee_id) union all ( select * from employee where dept_id = 1 union all ( select * from employee where dept_id = 1 order by employee_id ) order by 1 limit 1);",
+        "Plan": [
+          "Union 21.00 root  ",
+          "├─TableReader 10.00 root  data:Selection",
+          "│ └─Selection 10.00 cop[tikv]  eq(test.employee.dept_id, 1)",
+          "│   └─TableFullScan 10000.00 cop[tikv] table:employee keep order:false, stats:pseudo",
+          "├─Sort 10.00 root  test.employee.employee_id",
+          "│ └─TableReader 10.00 root  data:Selection",
+          "│   └─Selection 10.00 cop[tikv]  eq(test.employee.dept_id, 1)",
+          "│     └─TableFullScan 10000.00 cop[tikv] table:employee keep order:false, stats:pseudo",
+          "└─TopN 1.00 root  Column#17, offset:0, count:1",
+          "  └─Union 2.00 root  ",
+          "    ├─TopN 1.00 root  test.employee.employee_id, offset:0, count:1",
+          "    │ └─TableReader 1.00 root  data:TopN",
+          "    │   └─TopN 1.00 cop[tikv]  test.employee.employee_id, offset:0, count:1",
+          "    │     └─Selection 10.00 cop[tikv]  eq(test.employee.dept_id, 1)",
+          "    │       └─TableFullScan 10000.00 cop[tikv] table:employee keep order:false, stats:pseudo",
+          "    └─TopN 1.00 root  test.employee.employee_id, offset:0, count:1",
+          "      └─TableReader 1.00 root  data:TopN",
+          "        └─TopN 1.00 cop[tikv]  test.employee.employee_id, offset:0, count:1",
+          "          └─Selection 10.00 cop[tikv]  eq(test.employee.dept_id, 1)",
+          "            └─TableFullScan 10000.00 cop[tikv] table:employee keep order:false, stats:pseudo"
+        ],
+        "Warning": null
+      }
+    ]
+  },
+  {
+    "Name": "TestConstantPropagateWithCollation",
+    "Cases": [
+      {
+        "SQL": "",
+        "Plan": null,
+        "Warning": null
+      },
+      {
+        "SQL": "select * from t where name='a' and length(name)=1; -- without constant propagated",
+        "Plan": [
+          "TableReader 8.00 root  data:Selection",
+          "└─Selection 8.00 cop[tikv]  eq(length(test.t.name), 1), eq(test.t.name, \"a\")",
+          "  └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "",
+        "Plan": null,
+        "Warning": null
+      },
+      {
+        "SQL": "select * from t where name='a' and length(name)=1; -- without constant propagated",
+        "Plan": [
+          "TableReader 8.00 root  data:Selection",
+          "└─Selection 8.00 cop[tikv]  eq(length(test.t.name), 1), eq(test.t.name, \"a\")",
+          "  └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "select * from (select 'test' as b from t) n where length(b) > 2; -- can be substituted",
+        "Plan": [
+          "Projection 10000.00 root  test->Column#3",
+          "└─TableReader 10000.00 root  data:TableFullScan",
+          "  └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
+        ],
+        "Warning": null
+      }
+    ]
+  },
+  {
+    "Name": "TestAlwaysTruePredicateWithSubquery",
+    "Cases": [
+      {
+        "SQL": "SHOW ERRORS WHERE TRUE = ALL ( SELECT TRUE GROUP BY 1 LIMIT 1 ) IS NULL IS NOT NULL;",
+        "Plan": null,
+        "Warning": null
+      },
+      {
+        "SQL": "explain select * from t WHERE TRUE = ALL ( SELECT TRUE GROUP BY 1 LIMIT 1 ) IS NULL IS NOT NULL;",
+        "Plan": [
+          "HashJoin_14 10000.00 root  CARTESIAN inner join",
+          "├─StreamAgg_19(Build) 1.00 root  funcs:count(1)->Column#13",
+          "│ └─Limit_22 1.00 root  offset:0, count:1",
+          "│   └─HashAgg_23 1.00 root  group by:1, ",
+          "│     └─TableDual_24 1.00 root  rows:1",
+          "└─TableReader_17(Probe) 10000.00 root  data:TableFullScan_16",
+          "  └─TableFullScan_16 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "explain select * from t WHERE TRUE = ALL ( SELECT TRUE from t GROUP BY 1 LIMIT 1 ) is null is not null;",
+        "Plan": [
+          "HashJoin_14 10000.00 root  CARTESIAN inner join",
+          "├─StreamAgg_19(Build) 1.00 root  funcs:count(1)->Column#16",
+          "│ └─Limit_22 1.00 root  offset:0, count:1",
+          "│   └─HashAgg_27 1.00 root  group by:Column#17, funcs:firstrow(Column#18)->test.t.a, funcs:firstrow(Column#19)->test.t.b, funcs:firstrow(Column#20)->test.t._tidb_rowid",
+          "│     └─TableReader_28 1.00 root  data:HashAgg_23",
+          "│       └─HashAgg_23 1.00 cop[tikv]  group by:1, funcs:firstrow(test.t.a)->Column#18, funcs:firstrow(test.t.b)->Column#19, funcs:firstrow(test.t._tidb_rowid)->Column#20",
+          "│         └─TableFullScan_26 10000.00 cop[tikv] table:t keep order:false, stats:pseudo",
+          "└─TableReader_17(Probe) 10000.00 root  data:TableFullScan_16",
+          "  └─TableFullScan_16 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
+        ],
+        "Warning": null
       }
     ]
   }

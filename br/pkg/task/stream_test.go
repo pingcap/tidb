@@ -155,7 +155,7 @@ func fakeCheckpointFiles(
 		filename := fmt.Sprintf("%v.ts", info.storeID)
 		buff := make([]byte, 8)
 		binary.LittleEndian.PutUint64(buff, info.global_checkpoint)
-		if _, err := s.Create(ctx, filename); err != nil {
+		if _, err := s.Create(ctx, filename, nil); err != nil {
 			return errors.Trace(err)
 		}
 		if err := s.WriteFile(ctx, filename, buff); err != nil {

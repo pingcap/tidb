@@ -574,7 +574,7 @@ func TestSelectivity(t *testing.T) {
 		sel := p.(plannercore.LogicalPlan).Children()[0].(*plannercore.LogicalSelection)
 		ds := sel.Children()[0].(*plannercore.DataSource)
 
-		histColl := statsTbl.GenerateHistCollFromColumnInfo(ds.Columns, ds.Schema().Columns)
+		histColl := statsTbl.GenerateHistCollFromColumnInfo(ds.TableInfo(), ds.Schema().Columns)
 
 		ratio, _, err := histColl.Selectivity(sctx, sel.Conditions, nil)
 		require.NoErrorf(t, err, "for %s", tt.exprs)
@@ -687,7 +687,7 @@ func TestDNFCondSelectivity(t *testing.T) {
 		sel := p.(plannercore.LogicalPlan).Children()[0].(*plannercore.LogicalSelection)
 		ds := sel.Children()[0].(*plannercore.DataSource)
 
-		histColl := statsTbl.GenerateHistCollFromColumnInfo(ds.Columns, ds.Schema().Columns)
+		histColl := statsTbl.GenerateHistCollFromColumnInfo(ds.TableInfo(), ds.Schema().Columns)
 
 		ratio, _, err := histColl.Selectivity(sctx, sel.Conditions, nil)
 		require.NoErrorf(t, err, "error %v, for expr %s", err, tt)
@@ -1106,8 +1106,8 @@ func generateMapsForMockStatsTbl(statsTbl *statistics.Table) {
 	for _, idxIDs := range colID2IdxIDs {
 		slices.Sort(idxIDs)
 	}
-	statsTbl.Idx2ColumnIDs = idx2Columns
-	statsTbl.ColID2IdxIDs = colID2IdxIDs
+	statsTbl.Idx2ColUniqueIDs = idx2Columns
+	statsTbl.ColUniqueID2IdxIDs = colID2IdxIDs
 }
 
 func TestIssue39593(t *testing.T) {

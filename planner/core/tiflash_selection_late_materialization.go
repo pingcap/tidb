@@ -19,6 +19,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/util/cmp"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
 	"golang.org/x/exp/slices"
@@ -144,8 +145,11 @@ func groupByColumnsSortBySelectivity(sctx sessionctx.Context, conds []expression
 	}
 
 	// Sort exprGroups by selectivity in ascending order
-	slices.SortStableFunc(exprGroups, func(x, y expressionGroup) bool {
-		return x.selectivity < y.selectivity || (x.selectivity == y.selectivity && len(x.exprs) < len(y.exprs))
+	slices.SortStableFunc(exprGroups, func(x, y expressionGroup) int {
+		if x.selectivity == y.selectivity && len(x.exprs) < len(y.exprs) {
+			return -1
+		}
+		return cmp.Compare(x.selectivity, y.selectivity)
 	})
 
 	return exprGroups
@@ -249,7 +253,7 @@ func predicatePushDownToTableScanImpl(sctx sessionctx.Context, physicalSelection
 	// remove the pushed down conditions from selection
 	removeSpecificExprsFromSelection(physicalSelection, selectedConds)
 	// add the pushed down conditions to table scan
-	physicalTableScan.lateMaterializationFilterCondition = selectedConds
+	physicalTableScan.LateMaterializationFilterCondition = selectedConds
 	// Update the row count of table scan after pushing down the conditions.
 	physicalTableScan.stats.RowCount *= selectedSelectivity
 }

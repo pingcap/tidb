@@ -79,7 +79,10 @@ func (s *joinReorderGreedySolver) solve(joinNodePlans []LogicalPlan, tracer *joi
 			// Getting here means that there is no join condition between the table used in the leading hint and other tables
 			// For example: select /*+ leading(t3) */ * from t1 join t2 on t1.a=t2.a cross join t3
 			// We can not let table t3 join first.
-			s.ctx.GetSessionVars().StmtCtx.AppendWarning(ErrInternal.GenWithStack("leading hint is inapplicable, check if the leading hint table has join conditions with other tables"))
+			// TODO(hawkingrei): we find the problem in the TestHint.
+			// 	`select * from t1, t2, t3 union all select /*+ leading(t3, t2) */ * from t1, t2, t3 union all select * from t1, t2, t3`
+			//  this sql should not return the warning. but It will not affect the result. so we will fix it as soon as possible.
+			s.ctx.GetSessionVars().StmtCtx.AppendWarning(ErrInternal.FastGen("leading hint is inapplicable, check if the leading hint table has join conditions with other tables"))
 		}
 		cartesianGroup = append(cartesianGroup, newNode.p)
 	}
@@ -92,9 +95,9 @@ func (s *joinReorderGreedySolver) constructConnectedJoinTree(tracer *joinReorder
 	s.curJoinGroup = s.curJoinGroup[1:]
 	for {
 		bestCost := math.MaxFloat64
-		bestIdx := -1
-		var finalRemainOthers []expression.Expression
-		var bestJoin LogicalPlan
+		bestIdx, whateverValidOneIdx := -1, -1
+		var finalRemainOthers, remainOthersOfWhateverValidOne []expression.Expression
+		var bestJoin, whateverValidOne LogicalPlan
 		for i, node := range s.curJoinGroup {
 			newJoin, remainOthers := s.checkConnectionAndMakeJoin(curJoinTree.p, node.p)
 			if newJoin == nil {
@@ -104,6 +107,9 @@ func (s *joinReorderGreedySolver) constructConnectedJoinTree(tracer *joinReorder
 			if err != nil {
 				return nil, err
 			}
+			whateverValidOne = newJoin
+			whateverValidOneIdx = i
+			remainOthersOfWhateverValidOne = remainOthers
 			curCost := s.calcJoinCumCost(newJoin, curJoinTree, node)
 			tracer.appendLogicalJoinCost(newJoin, curCost)
 			if bestCost > curCost {
@@ -115,7 +121,14 @@ func (s *joinReorderGreedySolver) constructConnectedJoinTree(tracer *joinReorder
 		}
 		// If we could find more join node, meaning that the sub connected graph have been totally explored.
 		if bestJoin == nil {
-			break
+			if whateverValidOne == nil {
+				break
+			}
+			// This branch is for the unexpected case.
+			bestJoin = whateverValidOne
+			bestCost = math.MaxFloat64
+			bestIdx = whateverValidOneIdx
+			finalRemainOthers = remainOthersOfWhateverValidOne
 		}
 		curJoinTree = &jrNode{
 			p:       bestJoin,

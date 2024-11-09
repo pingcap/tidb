@@ -458,14 +458,29 @@ type TableInfo struct {
 	// 1 for the clustered index created > 5.0.0 RC.
 	CommonHandleVersion uint16 `json:"common_handle_version"`
 
-	Comment         string `json:"comment"`
-	AutoIncID       int64  `json:"auto_inc_id"`
-	AutoIdCache     int64  `json:"auto_id_cache"` //nolint:revive
-	AutoRandID      int64  `json:"auto_rand_id"`
-	MaxColumnID     int64  `json:"max_col_id"`
-	MaxIndexID      int64  `json:"max_idx_id"`
-	MaxForeignKeyID int64  `json:"max_fk_id"`
-	MaxConstraintID int64  `json:"max_cst_id"`
+	Comment   string `json:"comment"`
+	AutoIncID int64  `json:"auto_inc_id"`
+
+	// Only used by BR when:
+	// 1. SepAutoInc() is true
+	// 2. The table is nonclustered and has auto_increment column.
+	// In that case, both auto_increment_id and tidb_rowid need to be backup & recover.
+	// See also https://github.com/pingcap/tidb/issues/46093
+	//
+	// It should have been named TiDBRowID, but for historial reasons, we do not use separate meta key for _tidb_rowid and auto_increment_id,
+	// and field `AutoIncID` is used to serve both _tidb_rowid and auto_increment_id.
+	// If we introduce a TiDBRowID here, it could make furthur misunderstanding:
+	//	in most cases, AutoIncID is _tidb_rowid and TiDBRowID is null
+	//      but in some cases, AutoIncID is auto_increment_id and TiDBRowID is _tidb_rowid
+	// So let's just use another name AutoIncIDExtra to avoid misconception.
+	AutoIncIDExtra int64 `json:"auto_inc_id_extra,omitempty"`
+
+	AutoIdCache     int64 `json:"auto_id_cache"` //nolint:revive
+	AutoRandID      int64 `json:"auto_rand_id"`
+	MaxColumnID     int64 `json:"max_col_id"`
+	MaxIndexID      int64 `json:"max_idx_id"`
+	MaxForeignKeyID int64 `json:"max_fk_id"`
+	MaxConstraintID int64 `json:"max_cst_id"`
 	// UpdateTS is used to record the timestamp of updating the table's schema information.
 	// These changing schema operations don't include 'truncate table' and 'rename table'.
 	UpdateTS uint64 `json:"update_timestamp"`
@@ -1142,9 +1157,10 @@ func (p PartitionType) String() string {
 
 // ExchangePartitionInfo provides exchange partition info.
 type ExchangePartitionInfo struct {
-	ExchangePartitionFlag  bool  `json:"exchange_partition_flag"`
 	ExchangePartitionID    int64 `json:"exchange_partition_id"`
 	ExchangePartitionDefID int64 `json:"exchange_partition_def_id"`
+	// Deprecated, not used
+	XXXExchangePartitionFlag bool `json:"exchange_partition_flag"`
 }
 
 // PartitionInfo provides table partition info.
@@ -1639,8 +1655,8 @@ func (db *DBInfo) Copy() *DBInfo {
 }
 
 // LessDBInfo is used for sorting DBInfo by DBInfo.Name.
-func LessDBInfo(a *DBInfo, b *DBInfo) bool {
-	return a.Name.L < b.Name.L
+func LessDBInfo(a *DBInfo, b *DBInfo) int {
+	return strings.Compare(a.Name.L, b.Name.L)
 }
 
 // CIStr is case insensitive string.
@@ -1696,6 +1712,11 @@ type TableItemID struct {
 	IsIndex bool
 }
 
+// Key is used to generate unique key for TableItemID to use in the syncload
+func (t TableItemID) Key() string {
+	return fmt.Sprintf("%d#%d#%t", t.ID, t.TableID, t.IsIndex)
+}
+
 // PolicyRefInfo is the struct to refer the placement policy.
 type PolicyRefInfo struct {
 	ID   int64 `json:"id"`
@@ -1735,6 +1756,9 @@ func (p *PolicyInfo) Clone() *PolicyInfo {
 
 // DefaultJobInterval sets the default interval between TTL jobs
 const DefaultJobInterval = time.Hour
+
+// DefaultJobIntervalStr is the string representation of DefaultJobInterval
+const DefaultJobIntervalStr = "1h"
 
 // TTLInfo records the TTL config
 type TTLInfo struct {
@@ -1824,6 +1848,10 @@ func (p *PlacementSettings) String() string {
 
 	if len(p.LearnerConstraints) > 0 {
 		writeSettingStringToBuilder(sb, "LEARNER_CONSTRAINTS", p.LearnerConstraints)
+	}
+
+	if len(p.SurvivalPreferences) > 0 {
+		writeSettingStringToBuilder(sb, "SURVIVAL_PREFERENCES", p.SurvivalPreferences)
 	}
 
 	return sb.String()

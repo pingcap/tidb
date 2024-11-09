@@ -219,7 +219,7 @@ func (*MemStorage) URI() string {
 // Create creates a file and returning a writer to write data into.
 // When the writer is closed, the data is stored in the file.
 // It implements the `ExternalStorage` interface
-func (s *MemStorage) Create(ctx context.Context, name string) (ExternalFileWriter, error) {
+func (s *MemStorage) Create(ctx context.Context, name string, _ *WriterOption) (ExternalFileWriter, error) {
 	select {
 	case <-ctx.Done():
 		return nil, ctx.Err()

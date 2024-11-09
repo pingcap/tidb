@@ -51,6 +51,7 @@ import (
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/deadlockhistory"
 	"github.com/stretchr/testify/require"
+	tikvcfg "github.com/tikv/client-go/v2/config"
 	"github.com/tikv/client-go/v2/oracle"
 	"github.com/tikv/client-go/v2/testutils"
 	"github.com/tikv/client-go/v2/tikv"
@@ -3565,4 +3566,38 @@ func TestIssue42937(t *testing.T) {
 		"4 41",
 		"5 11",
 	))
+}
+
+func TestEndTxnOnLockExpire(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a int, b int)")
+	tk.MustExec("prepare ps_commit from 'commit'")
+	tk.MustExec("prepare ps_rollback from 'rollback'")
+
+	defer setLockTTL(300).restore()
+	defer tikvcfg.UpdateGlobal(func(conf *tikvcfg.Config) {
+		conf.MaxTxnTTL = 500
+	})()
+
+	for _, tt := range []struct {
+		name      string
+		endTxnSQL string
+	}{
+		{"CommitTxt", "commit"},
+		{"CommitBin", "execute ps_commit"},
+		{"RollbackTxt", "rollback"},
+		{"RollbackBin", "execute ps_rollback"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			tk.Exec("delete from t")
+			tk.Exec("insert into t values (1, 1)")
+			tk.Exec("begin pessimistic")
+			tk.Exec("update t set b = 10 where a = 1")
+			time.Sleep(time.Second)
+			tk.MustContainErrMsg("select * from t", "TTL manager has timed out")
+			tk.MustExec(tt.endTxnSQL)
+		})
+	}
 }

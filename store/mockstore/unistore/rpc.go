@@ -67,6 +67,12 @@ func (c *RPCClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.R
 		}
 	})
 
+	failpoint.Inject("epochNotMatch", func(val failpoint.Value) {
+		if val.(bool) {
+			failpoint.Return(tikvrpc.GenRegionErrorResp(req, &errorpb.Error{EpochNotMatch: &errorpb.EpochNotMatch{}}))
+		}
+	})
+
 	failpoint.Inject("unistoreRPCClientSendHook", func(val failpoint.Value) {
 		if fn := UnistoreRPCClientSendHook.Load(); val.(bool) && fn != nil {
 			(*fn)(req)

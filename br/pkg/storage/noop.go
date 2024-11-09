@@ -43,7 +43,7 @@ func (*noopStorage) URI() string {
 }
 
 // Create implements ExternalStorage interface.
-func (*noopStorage) Create(_ context.Context, _ string) (ExternalFileWriter, error) {
+func (*noopStorage) Create(_ context.Context, _ string, _ *WriterOption) (ExternalFileWriter, error) {
 	return &noopWriter{}, nil
 }
 

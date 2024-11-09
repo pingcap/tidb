@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/cmp"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/plancodec"
 	"go.uber.org/zap"
@@ -483,8 +484,8 @@ func formatBackoffTypes(backoffMap map[string]int) interface{} {
 	for backoffType, count := range backoffMap {
 		backoffArray = append(backoffArray, backoffStat{backoffType, count})
 	}
-	slices.SortFunc(backoffArray, func(i, j backoffStat) bool {
-		return i.count > j.count
+	slices.SortFunc(backoffArray, func(i, j backoffStat) int {
+		return cmp.Compare(j.count, i.count)
 	})
 
 	var buffer bytes.Buffer

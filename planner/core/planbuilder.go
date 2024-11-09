@@ -488,7 +488,14 @@ type cteInfo struct {
 	// The LogicalCTEs that reference the same table should share the same CteClass.
 	cteClass *CTEClass
 
+	// isInline will determine whether it can be inlined when **CTE is used**
 	isInline bool
+	// forceInlineByHintOrVar will be true when CTE is hint by merge() or session variable "tidb_opt_force_inline_cte=true"
+	forceInlineByHintOrVar bool
+	// If CTE contain aggregation, window function, order by, distinct and limit in query (Indirect references to other cte containing those operator in the query are also counted.)
+	containRecursiveForbiddenOperator bool
+	// Compute in preprocess phase. Record how many consumers the current CTE has
+	consumerCount int
 }
 
 type subQueryCtx = uint64
@@ -521,7 +528,7 @@ type PlanBuilder struct {
 	colMapper map[*ast.ColumnNameExpr]int
 	// visitInfo is used for privilege check.
 	visitInfo     []visitInfo
-	tableHintInfo []tableHintInfo
+	tableHintInfo []*tableHintInfo
 	// optFlag indicates the flags of the optimizer rules.
 	optFlag uint64
 	// capFlag indicates the capability flags.
@@ -548,7 +555,8 @@ type PlanBuilder struct {
 	//   If it's a aggregation, we pop the map and push a nil map since no handle information left.
 	//   If it's a union, we pop all children's and push a nil map.
 	//   If it's a join, we pop its children's out then merge them and push the new map to stack.
-	//   If we meet a subquery, it's clearly that it's a independent problem so we just pop one map out when we finish building the subquery.
+	//   If we meet a subquery or CTE, it's clearly that it's an independent problem so we just pop one map out when we
+	//   finish building the subquery or CTE.
 	handleHelper *handleColHelper
 
 	hintProcessor *hint.BlockHintProcessor
@@ -1449,7 +1457,7 @@ func getPossibleAccessPaths(ctx sessionctx.Context, tableHints *tableHintInfo, i
 		for _, idxName := range hint.IndexNames {
 			path := getPathByIndexName(publicPaths, idxName, tblInfo)
 			if path == nil {
-				err := ErrKeyDoesNotExist.GenWithStackByArgs(idxName, tblInfo.Name)
+				err := ErrKeyDoesNotExist.FastGenByArgs(idxName, tblInfo.Name)
 				// if hint is from comment-style sql hints, we should throw a warning instead of error.
 				if i < indexHintsLen {
 					return nil, err
@@ -1493,6 +1501,19 @@ func getPossibleAccessPaths(ctx sessionctx.Context, tableHints *tableHintInfo, i
 	if len(available) == 0 {
 		available = append(available, tablePath)
 	}
+
+	// If all available paths are Multi-Valued Index, it's possible that the only multi-valued index is inapplicable,
+	// so that the table paths are still added here to avoid failing to find any physical plan.
+	allMVIIndexPath := true
+	for _, availablePath := range available {
+		if !isMVIndexPath(availablePath) {
+			allMVIIndexPath = false
+		}
+	}
+	if allMVIIndexPath {
+		available = append(available, tablePath)
+	}
+
 	return available, nil
 }
 
@@ -1983,7 +2004,7 @@ func (b *PlanBuilder) buildAdminCheckTable(ctx context.Context, as *ast.AdminStm
 	tableInfo := as.Tables[0].TableInfo
 	tbl, ok := b.is.TableByID(tableInfo.ID)
 	if !ok {
-		return nil, infoschema.ErrTableNotExists.GenWithStackByArgs(tblName.DBInfo.Name.O, tableInfo.Name.O)
+		return nil, infoschema.ErrTableNotExists.FastGenByArgs(tblName.DBInfo.Name.O, tableInfo.Name.O)
 	}
 	p := &CheckTable{
 		DBName: tblName.Schema.O,
@@ -2256,7 +2277,7 @@ func (b *PlanBuilder) getPredicateColumns(tbl *ast.TableName, cols *calcOnceMap)
 		return nil, err
 	}
 	if len(colList) == 0 {
-		b.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("No predicate column has been collected yet for table %s.%s so all columns are analyzed", tbl.Schema.L, tbl.Name.L))
+		b.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackErrorf("No predicate column has been collected yet for table %s.%s so all columns are analyzed", tbl.Schema.L, tbl.Name.L))
 		for _, colInfo := range tblInfo.Columns {
 			cols.data[colInfo.ID] = struct{}{}
 		}
@@ -2293,7 +2314,7 @@ func (b *PlanBuilder) getFullAnalyzeColumnsInfo(
 	warning bool,
 ) ([]*model.ColumnInfo, []*model.ColumnInfo, error) {
 	if mustAllColumns && warning && (columnChoice == model.PredicateColumns || columnChoice == model.ColumnList) {
-		b.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("Table %s.%s has version 1 statistics so all the columns must be analyzed to overwrite the current statistics", tbl.Schema.L, tbl.Name.L))
+		b.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackErrorf("Table %s.%s has version 1 statistics so all the columns must be analyzed to overwrite the current statistics", tbl.Schema.L, tbl.Name.L))
 	}
 	colSet2colList := func(colSet map[int64]struct{}) []*model.ColumnInfo {
 		colList := make([]*model.ColumnInfo, 0, len(colSet))
@@ -2350,7 +2371,7 @@ func (b *PlanBuilder) getFullAnalyzeColumnsInfo(
 						missingNames = append(missingNames, col.Name.O)
 					}
 				}
-				b.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("Columns %s are missing in ANALYZE but their stats are needed for calculating stats for indexes/primary key/extended stats", strings.Join(missingNames, ",")))
+				b.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackErrorf("Columns %s are missing in ANALYZE but their stats are needed for calculating stats for indexes/primary key/extended stats", strings.Join(missingNames, ",")))
 			}
 		}
 		for colID := range mustAnalyzed {
@@ -2387,7 +2408,7 @@ func getModifiedIndexesInfoForAnalyze(sctx sessionctx.Context, tblInfo *model.Ta
 			continue
 		}
 		if originIdx.MVIndex {
-			sctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("analyzing multi-valued indexes is not supported, skip %s", originIdx.Name.L))
+			sctx.GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackErrorf("analyzing multi-valued indexes is not supported, skip %s", originIdx.Name.L))
 			continue
 		}
 		if allColumns {
@@ -2417,7 +2438,7 @@ func (b *PlanBuilder) buildAnalyzeFullSamplingTask(
 	rsOptionsMap map[int64]V2AnalyzeOptions,
 ) ([]AnalyzeColumnsTask, error) {
 	if as.Incremental {
-		b.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("The version 2 stats would ignore the INCREMENTAL keyword and do full sampling"))
+		b.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackErrorf("The version 2 stats would ignore the INCREMENTAL keyword and do full sampling"))
 	}
 	astOpts, err := parseAnalyzeOptionsV2(as.AnalyzeOpts)
 	if err != nil {
@@ -2506,7 +2527,7 @@ func (b *PlanBuilder) genV2AnalyzeOptions(
 		astOpts = make(map[ast.AnalyzeOptionType]uint64, 0)
 		astColChoice = model.DefaultChoice
 		astColList = make([]*model.ColumnInfo, 0)
-		b.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.New("Ignore columns and options when analyze partition in dynamic mode"))
+		b.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackError("Ignore columns and options when analyze partition in dynamic mode"))
 	}
 	tblSavedOpts, tblSavedColChoice, tblSavedColList, err := b.getSavedAnalyzeOpts(tbl.TableInfo.ID, tbl.TableInfo)
 	if err != nil {
@@ -2696,7 +2717,7 @@ func (b *PlanBuilder) buildAnalyzeTable(as *ast.AnalyzeTableStmt, opts map[ast.A
 				continue
 			}
 			if idx.MVIndex {
-				b.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("analyzing multi-valued indexes is not supported, skip %s", idx.Name.L))
+				b.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackErrorf("analyzing multi-valued indexes is not supported, skip %s", idx.Name.L))
 				continue
 			}
 			for i, id := range physicalIDs {
@@ -2761,10 +2782,10 @@ func (b *PlanBuilder) buildAnalyzeIndex(as *ast.AnalyzeTableStmt, opts map[ast.A
 		if b.ctx.GetSessionVars().EnableFastAnalyze {
 			return nil, errors.Errorf("Fast analyze hasn't reached General Availability and only support analyze version 1 currently. But the existing statistics of the table is not version 1")
 		}
-		b.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("The analyze version from the session is not compatible with the existing statistics of the table. Use the existing version instead"))
+		b.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackErrorf("The analyze version from the session is not compatible with the existing statistics of the table. Use the existing version instead"))
 	}
 	if version == statistics.Version2 {
-		b.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("The version 2 would collect all statistics not only the selected indexes"))
+		b.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackErrorf("The version 2 would collect all statistics not only the selected indexes"))
 		return b.buildAnalyzeTable(as, opts, version)
 	}
 	for _, idxName := range as.IndexNames {
@@ -2793,7 +2814,7 @@ func (b *PlanBuilder) buildAnalyzeIndex(as *ast.AnalyzeTableStmt, opts map[ast.A
 			return nil, ErrAnalyzeMissIndex.GenWithStackByArgs(idxName.O, tblInfo.Name.O)
 		}
 		if idx.MVIndex {
-			b.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("analyzing multi-valued indexes is not supported, skip %s", idx.Name.L))
+			b.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackErrorf("analyzing multi-valued indexes is not supported, skip %s", idx.Name.L))
 			continue
 		}
 		for i, id := range physicalIDs {
@@ -2830,16 +2851,16 @@ func (b *PlanBuilder) buildAnalyzeAllIndex(as *ast.AnalyzeTableStmt, opts map[as
 		if b.ctx.GetSessionVars().EnableFastAnalyze {
 			return nil, errors.Errorf("Fast analyze hasn't reached General Availability and only support analyze version 1 currently. But the existing statistics of the table is not version 1")
 		}
-		b.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("The analyze version from the session is not compatible with the existing statistics of the table. Use the existing version instead"))
+		b.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackErrorf("The analyze version from the session is not compatible with the existing statistics of the table. Use the existing version instead"))
 	}
 	if version == statistics.Version2 {
-		b.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("The version 2 would collect all statistics not only the selected indexes"))
+		b.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackErrorf("The version 2 would collect all statistics not only the selected indexes"))
 		return b.buildAnalyzeTable(as, opts, version)
 	}
 	for _, idx := range tblInfo.Indices {
 		if idx.State == model.StatePublic {
 			if idx.MVIndex {
-				b.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("analyzing multi-valued indexes is not supported, skip %s", idx.Name.L))
+				b.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackErrorf("analyzing multi-valued indexes is not supported, skip %s", idx.Name.L))
 				continue
 			}
 
@@ -2884,7 +2905,7 @@ var CMSketchSizeLimit = kv.TxnEntrySizeLimit / binary.MaxVarintLen32
 
 var analyzeOptionLimit = map[ast.AnalyzeOptionType]uint64{
 	ast.AnalyzeOptNumBuckets:    1024,
-	ast.AnalyzeOptNumTopN:       1024,
+	ast.AnalyzeOptNumTopN:       16384,
 	ast.AnalyzeOptCMSketchWidth: CMSketchSizeLimit,
 	ast.AnalyzeOptCMSketchDepth: CMSketchSizeLimit,
 	ast.AnalyzeOptNumSamples:    500000,
@@ -3710,7 +3731,7 @@ func genAuthErrForGrantStmt(sctx sessionctx.Context, dbName string) error {
 	return ErrDBaccessDenied.FastGenByArgs(u, h, dbName)
 }
 
-func (b *PlanBuilder) getDefaultValue(col *table.Column) (*expression.Constant, error) {
+func (b *PlanBuilder) getDefaultValue(col *table.Column, isInsert bool) (*expression.Constant, error) {
 	var (
 		value types.Datum
 		err   error
@@ -3718,6 +3739,11 @@ func (b *PlanBuilder) getDefaultValue(col *table.Column) (*expression.Constant, 
 	if col.DefaultIsExpr && col.DefaultExpr != nil {
 		value, err = table.EvalColDefaultExpr(b.ctx, col.ToInfo(), col.DefaultExpr)
 	} else {
+		if isInsert {
+			if err := table.CheckNoDefaultValueForInsert(b.ctx.GetSessionVars().StmtCtx, col.ToInfo()); err != nil {
+				return nil, err
+			}
+		}
 		value, err = table.GetColDefaultValue(b.ctx, col.ToInfo())
 	}
 	if err != nil {
@@ -3744,7 +3770,7 @@ func (b *PlanBuilder) resolveGeneratedColumns(ctx context.Context, columns []*ta
 
 		originalVal := b.allowBuildCastArray
 		b.allowBuildCastArray = true
-		expr, _, err := b.rewrite(ctx, column.GeneratedExpr, mockPlan, nil, true)
+		expr, _, err := b.rewrite(ctx, column.GeneratedExpr.Clone(), mockPlan, nil, true)
 		b.allowBuildCastArray = originalVal
 		if err != nil {
 			return igc, err
@@ -3769,11 +3795,11 @@ func (b *PlanBuilder) resolveGeneratedColumns(ctx context.Context, columns []*ta
 func (b *PlanBuilder) buildInsert(ctx context.Context, insert *ast.InsertStmt) (Plan, error) {
 	ts, ok := insert.Table.TableRefs.Left.(*ast.TableSource)
 	if !ok {
-		return nil, infoschema.ErrTableNotExists.GenWithStackByArgs()
+		return nil, infoschema.ErrTableNotExists.FastGenByArgs()
 	}
 	tn, ok := ts.Source.(*ast.TableName)
 	if !ok {
-		return nil, infoschema.ErrTableNotExists.GenWithStackByArgs()
+		return nil, infoschema.ErrTableNotExists.FastGenByArgs()
 	}
 	tableInfo := tn.TableInfo
 	if tableInfo.IsView() {
@@ -4010,7 +4036,7 @@ func (b PlanBuilder) getInsertColExpr(ctx context.Context, insertPlan *Insert, m
 			// See note in the end of the function. Only default for generated columns are OK.
 			return nil, nil
 		}
-		outExpr, err = b.getDefaultValue(refCol)
+		outExpr, err = b.getDefaultValue(refCol, true)
 	case *driver.ValueExpr:
 		outExpr = &expression.Constant{
 			Value:   x.Datum,
@@ -4335,7 +4361,7 @@ func (b *PlanBuilder) buildLoadData(ctx context.Context, ld *ast.LoadDataStmt) (
 	tableInPlan, ok := b.is.TableByID(tableInfo.ID)
 	if !ok {
 		db := b.ctx.GetSessionVars().CurrentDB
-		return nil, infoschema.ErrTableNotExists.GenWithStackByArgs(db, tableInfo.Name.O)
+		return nil, infoschema.ErrTableNotExists.FastGenByArgs(db, tableInfo.Name.O)
 	}
 	schema, names, err := expression.TableInfo2SchemaAndNames(b.ctx, model.NewCIStr(""), tableInfo)
 	if err != nil {
@@ -4399,7 +4425,7 @@ func (b *PlanBuilder) buildSplitRegion(node *ast.SplitRegionStmt) (Plan, error) 
 func (b *PlanBuilder) buildSplitIndexRegion(node *ast.SplitRegionStmt) (Plan, error) {
 	tblInfo := node.Table.TableInfo
 	indexInfo := tblInfo.FindIndexByName(node.IndexName.L)
-	if indexInfo == nil {
+	if indexInfo == nil || indexInfo.Primary && tblInfo.IsCommonHandle {
 		return nil, ErrKeyDoesNotExist.GenWithStackByArgs(node.IndexName, tblInfo.Name)
 	}
 	mockTablePlan := LogicalTableDual{}.Init(b.ctx, b.getSelectOffset())

@@ -41,6 +41,7 @@ import (
 	"github.com/pingcap/tidb/privilege/privileges"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/copr"
 	"github.com/pingcap/tidb/store/mockstore"
@@ -967,6 +968,16 @@ func TestBatchCommit(t *testing.T) {
 	tk.MustExec("insert into t values (7)")
 	tk1.MustQuery("select * from t").Check(testkit.Rows("5", "6", "7"))
 
+	tk.MustExec("delete from t")
+	tk.MustExec("commit")
+	tk.MustExec("begin")
+	tk.MustExec("explain analyze insert into t values (5)")
+	tk1.MustQuery("select * from t").Check(testkit.Rows())
+	tk.MustExec("explain analyze insert into t values (6)")
+	tk1.MustQuery("select * from t").Check(testkit.Rows())
+	tk.MustExec("explain analyze insert into t values (7)")
+	tk1.MustQuery("select * from t").Check(testkit.Rows("5", "6", "7"))
+
 	// The session is still in transaction.
 	tk.MustExec("insert into t values (8)")
 	tk1.MustQuery("select * from t").Check(testkit.Rows("5", "6", "7"))
@@ -1200,6 +1211,11 @@ func TestCoprocessorOOMAction(t *testing.T) {
 			sql:  "select id from t5",
 		},
 	}
+
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/distsql/testRateLimitActionMockConsumeAndAssert", `return(true)`))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/distsql/testRateLimitActionMockConsumeAndAssert"))
+	}()
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/store/copr/testRateLimitActionMockConsumeAndAssert", `return(true)`))
 	defer func() {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/store/copr/testRateLimitActionMockConsumeAndAssert"))
@@ -1620,11 +1636,11 @@ func TestStmtHints(t *testing.T) {
 	val = int64(1) * 1024 * 1024
 	require.True(t, tk.Session().GetSessionVars().MemTracker.CheckBytesLimit(val))
 
-	tk.MustExec("insert /*+ MEMORY_QUOTA(1 MB) */  into t1 select /*+ MEMORY_QUOTA(3 MB) */ * from t1;")
+	tk.MustExec("insert /*+ MEMORY_QUOTA(1 MB) */  into t1 select /*+ MEMORY_QUOTA(1 MB) */ * from t1;")
 	val = int64(1) * 1024 * 1024
 	require.True(t, tk.Session().GetSessionVars().MemTracker.CheckBytesLimit(val))
-	require.Len(t, tk.Session().GetSessionVars().StmtCtx.GetWarnings(), 1)
-	require.EqualError(t, tk.Session().GetSessionVars().StmtCtx.GetWarnings()[0].Err, "[util:3126]Hint MEMORY_QUOTA(`3145728`) is ignored as conflicting/duplicated.")
+	require.Len(t, tk.Session().GetSessionVars().StmtCtx.GetWarnings(), 2)
+	require.EqualError(t, tk.Session().GetSessionVars().StmtCtx.GetWarnings()[0].Err, "[util:3126]Hint MEMORY_QUOTA(`1048576`) is ignored as conflicting/duplicated.")
 
 	// Test NO_INDEX_MERGE hint
 	tk.Session().GetSessionVars().SetEnableIndexMerge(true)
@@ -3601,4 +3617,71 @@ func TestSQLModeOp(t *testing.T) {
 
 	a = mysql.SetSQLMode(s, mysql.ModeAllowInvalidDates)
 	require.Equal(t, mysql.ModeNoBackslashEscapes|mysql.ModeOnlyFullGroupBy|mysql.ModeAllowInvalidDates, a)
+}
+
+func TestPrepareExecuteWithSQLHints(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	se := tk.Session()
+	se.SetConnectionID(1)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a int primary key)")
+
+	type hintCheck struct {
+		hint  string
+		check func(*stmtctx.StmtHints)
+	}
+
+	hintChecks := []hintCheck{
+		{
+			hint: "MEMORY_QUOTA(1024 MB)",
+			check: func(stmtHint *stmtctx.StmtHints) {
+				require.True(t, stmtHint.HasMemQuotaHint)
+				require.Equal(t, int64(1024*1024*1024), stmtHint.MemQuotaQuery)
+			},
+		},
+		{
+			hint: "READ_CONSISTENT_REPLICA()",
+			check: func(stmtHint *stmtctx.StmtHints) {
+				require.True(t, stmtHint.HasReplicaReadHint)
+				require.Equal(t, byte(kv.ReplicaReadFollower), stmtHint.ReplicaRead)
+			},
+		},
+		{
+			hint: "MAX_EXECUTION_TIME(1000)",
+			check: func(stmtHint *stmtctx.StmtHints) {
+				require.True(t, stmtHint.HasMaxExecutionTime)
+				require.Equal(t, uint64(1000), stmtHint.MaxExecutionTime)
+			},
+		},
+		{
+			hint: "USE_TOJA(TRUE)",
+			check: func(stmtHint *stmtctx.StmtHints) {
+				require.True(t, stmtHint.HasAllowInSubqToJoinAndAggHint)
+				require.True(t, stmtHint.AllowInSubqToJoinAndAgg)
+			},
+		},
+		{
+			hint: "RESOURCE_GROUP(rg1)",
+			check: func(stmtHint *stmtctx.StmtHints) {
+				require.True(t, stmtHint.HasResourceGroup)
+				require.Equal(t, "rg1", stmtHint.ResourceGroup)
+			},
+		},
+	}
+
+	for i, check := range hintChecks {
+		// common path
+		tk.MustExec(fmt.Sprintf("prepare stmt%d from 'select /*+ %s */ * from t'", i, check.hint))
+		for j := 0; j < 10; j++ {
+			tk.MustQuery(fmt.Sprintf("execute stmt%d", i))
+			check.check(&tk.Session().GetSessionVars().StmtCtx.StmtHints)
+		}
+		// fast path
+		tk.MustExec(fmt.Sprintf("prepare fast%d from 'select /*+ %s */ * from t where a = 1'", i, check.hint))
+		for j := 0; j < 10; j++ {
+			tk.MustQuery(fmt.Sprintf("execute fast%d", i))
+			check.check(&tk.Session().GetSessionVars().StmtCtx.StmtHints)
+		}
+	}
 }

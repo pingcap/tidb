@@ -17,6 +17,7 @@ package executor
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"math"
 	"strconv"
 	"strings"
@@ -58,6 +59,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/cmp"
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/cteutil"
 	"github.com/pingcap/tidb/util/dbterror/exeerrors"
@@ -754,14 +756,11 @@ func (b *executorBuilder) buildLimit(v *plannercore.PhysicalLimit) Executor {
 		end:          v.Offset + v.Count,
 	}
 
+	childUsedSchemaLen := v.Children()[0].Schema().Len()
 	childUsedSchema := markChildrenUsedCols(v.Schema().Columns, v.Children()[0].Schema())[0]
 	e.columnIdxsUsedByChild = make([]int, 0, len(childUsedSchema))
-	for i, used := range childUsedSchema {
-		if used {
-			e.columnIdxsUsedByChild = append(e.columnIdxsUsedByChild, i)
-		}
-	}
-	if len(e.columnIdxsUsedByChild) == len(childUsedSchema) {
+	e.columnIdxsUsedByChild = append(e.columnIdxsUsedByChild, childUsedSchema...)
+	if len(e.columnIdxsUsedByChild) == childUsedSchemaLen {
 		e.columnIdxsUsedByChild = nil // indicates that all columns are used. LimitExec will improve performance for this condition.
 	}
 	return e
@@ -2005,13 +2004,16 @@ func (b *executorBuilder) buildMemTable(v *plannercore.PhysicalMemTable) Executo
 			strings.ToLower(infoschema.ClusterTableMemoryUsage),
 			strings.ToLower(infoschema.ClusterTableMemoryUsageOpsHistory),
 			strings.ToLower(infoschema.TableResourceGroups):
+			memTracker := memory.NewTracker(v.ID(), -1)
+			memTracker.AttachTo(b.ctx.GetSessionVars().StmtCtx.MemTracker)
 			return &MemTableReaderExec{
 				baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ID()),
 				table:        v.Table,
 				retriever: &memtableRetriever{
-					table:     v.Table,
-					columns:   v.Columns,
-					extractor: v.Extractor,
+					table:      v.Table,
+					columns:    v.Columns,
+					extractor:  v.Extractor,
+					memTracker: memTracker,
 				},
 			}
 		case strings.ToLower(infoschema.TableTiDBTrx),
@@ -2599,32 +2601,36 @@ func (b *executorBuilder) buildAnalyzeSamplingPushdown(task plannercore.AnalyzeC
 		modifyCount = int64(val.(int))
 	})
 	sampleRate := new(float64)
+	var sampleRateReason string
 	if opts[ast.AnalyzeOptNumSamples] == 0 {
 		*sampleRate = math.Float64frombits(opts[ast.AnalyzeOptSampleRate])
 		if *sampleRate < 0 {
-			*sampleRate = b.getAdjustedSampleRate(b.ctx, task)
+			*sampleRate, sampleRateReason = b.getAdjustedSampleRate(b.ctx, task)
 			if task.PartitionName != "" {
 				sc.AppendNote(errors.Errorf(
-					"Analyze use auto adjusted sample rate %f for table %s.%s's partition %s",
+					`Analyze use auto adjusted sample rate %f for table %s.%s's partition %s, reason to use this rate is "%s"`,
 					*sampleRate,
 					task.DBName,
 					task.TableName,
 					task.PartitionName,
+					sampleRateReason,
 				))
 			} else {
 				sc.AppendNote(errors.Errorf(
-					"Analyze use auto adjusted sample rate %f for table %s.%s",
+					`Analyze use auto adjusted sample rate %f for table %s.%s, reason to use this rate is "%s"`,
 					*sampleRate,
 					task.DBName,
 					task.TableName,
+					sampleRateReason,
 				))
 			}
 		}
 	}
 	job := &statistics.AnalyzeJob{
-		DBName:        task.DBName,
-		TableName:     task.TableName,
-		PartitionName: task.PartitionName,
+		DBName:           task.DBName,
+		TableName:        task.TableName,
+		PartitionName:    task.PartitionName,
+		SampleRateReason: sampleRateReason,
 	}
 
 	base := baseAnalyzeExec{
@@ -2681,11 +2687,11 @@ func (b *executorBuilder) buildAnalyzeSamplingPushdown(task plannercore.AnalyzeC
 // If we take n = 1e12, a 300*k sample still gives <= 0.66 bin size error with probability 0.99.
 // So if we don't consider the top-n values, we can keep the sample size at 300*256.
 // But we may take some top-n before building the histogram, so we increase the sample a little.
-func (b *executorBuilder) getAdjustedSampleRate(sctx sessionctx.Context, task plannercore.AnalyzeColumnsTask) float64 {
-	statsHandle := domain.GetDomain(sctx).StatsHandle()
+func (b *executorBuilder) getAdjustedSampleRate(sctx sessionctx.Context, task plannercore.AnalyzeColumnsTask) (sampleRate float64, reason string) {
+	statsHandle := domain.GetDomain(b.ctx).StatsHandle()
 	defaultRate := 0.001
 	if statsHandle == nil {
-		return defaultRate
+		return defaultRate, fmt.Sprintf("statsHandler is nil, use the default-rate=%v", defaultRate)
 	}
 	var statsTbl *statistics.Table
 	tid := task.TableID.GetStatisticsID()
@@ -2697,11 +2703,11 @@ func (b *executorBuilder) getAdjustedSampleRate(sctx sessionctx.Context, task pl
 	approxiCount, hasPD := b.getApproximateTableCountFromStorage(sctx, tid, task)
 	// If there's no stats meta and no pd, return the default rate.
 	if statsTbl == nil && !hasPD {
-		return defaultRate
+		return defaultRate, fmt.Sprintf("TiDB cannot get the row count of the table, use the default-rate=%v", defaultRate)
 	}
 	// If the count in stats_meta is still 0 and there's no information from pd side, we scan all rows.
 	if statsTbl.RealtimeCount == 0 && !hasPD {
-		return 1
+		return 1, "TiDB assumes that the table is empty and cannot get row count from PD, use sample-rate=1"
 	}
 	// we have issue https://github.com/pingcap/tidb/issues/29216.
 	// To do a workaround for this issue, we check the approxiCount from the pd side to do a comparison.
@@ -2710,15 +2716,17 @@ func (b *executorBuilder) getAdjustedSampleRate(sctx sessionctx.Context, task pl
 	if float64(statsTbl.RealtimeCount*5) < approxiCount {
 		// Confirmed by TiKV side, the experience error rate of the approximate count is about 20%.
 		// So we increase the number to 150000 to reduce this error rate.
-		return math.Min(1, 150000/approxiCount)
+		sampleRate = math.Min(1, 150000/approxiCount)
+		return sampleRate, fmt.Sprintf("Row count in stats_meta is much smaller compared with the row count got by PD, use min(1, 15000/%v) as the sample-rate=%v", approxiCount, sampleRate)
 	}
 	// If we don't go into the above if branch and we still detect the count is zero. Return 1 to prevent the dividing zero.
 	if statsTbl.RealtimeCount == 0 {
-		return 1
+		return 1, "TiDB assumes that the table is empty, use sample-rate=1"
 	}
 	// We are expected to scan about 100000 rows or so.
 	// Since there's tiny error rate around the count from the stats meta, we use 110000 to get a little big result
-	return math.Min(1, config.DefRowsForSampleRate/float64(statsTbl.RealtimeCount))
+	sampleRate = math.Min(1, config.DefRowsForSampleRate/float64(statsTbl.RealtimeCount))
+	return sampleRate, fmt.Sprintf("use min(1, %v/%v) as the sample-rate=%v", config.DefRowsForSampleRate, statsTbl.RealtimeCount, sampleRate)
 }
 
 func (b *executorBuilder) getApproximateTableCountFromStorage(sctx sessionctx.Context, tid int64, task plannercore.AnalyzeColumnsTask) (float64, bool) {
@@ -3048,21 +3056,39 @@ func constructDistExec(sctx sessionctx.Context, plans []plannercore.PhysicalPlan
 
 // markChildrenUsedCols compares each child with the output schema, and mark
 // each column of the child is used by output or not.
-func markChildrenUsedCols(outputCols []*expression.Column, childSchemas ...*expression.Schema) (childrenUsed [][]bool) {
-	childrenUsed = make([][]bool, 0, len(childSchemas))
-	markedOffsets := make(map[int]struct{})
-	for _, col := range outputCols {
-		markedOffsets[col.Index] = struct{}{}
+func markChildrenUsedCols(outputCols []*expression.Column, childSchemas ...*expression.Schema) (childrenUsed [][]int) {
+	childrenUsed = make([][]int, 0, len(childSchemas))
+	markedOffsets := make(map[int]int)
+	// keep the original maybe reversed order.
+	for originalIdx, col := range outputCols {
+		markedOffsets[col.Index] = originalIdx
 	}
 	prefixLen := 0
+	type intPair struct {
+		first  int
+		second int
+	}
+	// for example here.
+	// left child schema: [col11]
+	// right child schema: [col21, col22]
+	// output schema is [col11, col22, col21], if not records the original derived order after physical resolve index.
+	// the lused will be [0], the rused will be [0,1], while the actual order is dismissed, [1,0] is correct for rused.
 	for _, childSchema := range childSchemas {
-		used := make([]bool, len(childSchema.Columns))
+		usedIdxPair := make([]intPair, 0, len(childSchema.Columns))
 		for i := range childSchema.Columns {
-			if _, ok := markedOffsets[prefixLen+i]; ok {
-				used[i] = true
+			if originalIdx, ok := markedOffsets[prefixLen+i]; ok {
+				usedIdxPair = append(usedIdxPair, intPair{first: originalIdx, second: i})
 			}
 		}
-		childrenUsed = append(childrenUsed, used)
+		// sort the used idxes according their original indexes derived after resolveIndex.
+		slices.SortFunc(usedIdxPair, func(a, b intPair) int {
+			return cmp.Compare(a.first, b.first)
+		})
+		usedIdx := make([]int, 0, len(childSchema.Columns))
+		for _, one := range usedIdxPair {
+			usedIdx = append(usedIdx, one.second)
+		}
+		childrenUsed = append(childrenUsed, usedIdx)
 		prefixLen += childSchema.Len()
 	}
 	return
@@ -3096,13 +3122,24 @@ func constructDAGReq(ctx sessionctx.Context, plans []plannercore.PhysicalPlan, s
 
 func (b *executorBuilder) corColInDistPlan(plans []plannercore.PhysicalPlan) bool {
 	for _, p := range plans {
-		x, ok := p.(*plannercore.PhysicalSelection)
-		if !ok {
-			continue
-		}
-		for _, cond := range x.Conditions {
-			if len(expression.ExtractCorColumns(cond)) > 0 {
-				return true
+		switch x := p.(type) {
+		case *plannercore.PhysicalSelection:
+			for _, cond := range x.Conditions {
+				if len(expression.ExtractCorColumns(cond)) > 0 {
+					return true
+				}
+			}
+		case *plannercore.PhysicalTopN:
+			for _, byItem := range x.ByItems {
+				if len(expression.ExtractCorColumns(byItem.Expr)) > 0 {
+					return true
+				}
+			}
+		case *plannercore.PhysicalTableScan:
+			for _, cond := range x.LateMaterializationFilterCondition {
+				if len(expression.ExtractCorColumns(cond)) > 0 {
+					return true
+				}
 			}
 		}
 	}
@@ -3544,6 +3581,10 @@ func (b *executorBuilder) buildTableReader(v *plannercore.PhysicalTableReader) E
 		}
 	})
 	if useMPPExecution(b.ctx, v) {
+		// https://github.com/pingcap/tidb/issues/50358
+		if len(v.Schema().Columns) == 0 && len(v.GetTablePlan().Schema().Columns) > 0 {
+			v.SetSchema(v.GetTablePlan().Schema())
+		}
 		return b.buildMPPGather(v)
 	}
 	ts, err := v.GetTableScan()
@@ -3598,8 +3639,8 @@ func (b *executorBuilder) buildTableReader(v *plannercore.PhysicalTableReader) E
 	}
 
 	// Sort the partition is necessary to make the final multiple partition key ranges ordered.
-	slices.SortFunc(partitions, func(i, j table.PhysicalTable) bool {
-		return i.GetPhysicalID() < j.GetPhysicalID()
+	slices.SortFunc(partitions, func(i, j table.PhysicalTable) int {
+		return cmp.Compare(i.GetPhysicalID(), j.GetPhysicalID())
 	})
 	ret.kvRangeBuilder = kvRangeBuilderFromRangeAndPartition{
 		sctx:       b.ctx,
@@ -3722,8 +3763,8 @@ func (builder *dataReaderBuilder) prunePartitionForInnerExecutor(tbl table.Table
 	}
 
 	// To make the final key ranges involving multiple partitions ordered.
-	slices.SortFunc(usedPartition, func(i, j table.PhysicalTable) bool {
-		return i.GetPhysicalID() < j.GetPhysicalID()
+	slices.SortFunc(usedPartition, func(i, j table.PhysicalTable) int {
+		return cmp.Compare(i.GetPhysicalID(), j.GetPhysicalID())
 	})
 	return usedPartition, true, contentPos, nil
 }
@@ -4375,8 +4416,8 @@ func (builder *dataReaderBuilder) buildTableReaderForIndexJoin(ctx context.Conte
 			}
 		}
 		// The key ranges should be ordered.
-		slices.SortFunc(kvRanges, func(i, j kv.KeyRange) bool {
-			return bytes.Compare(i.StartKey, j.StartKey) < 0
+		slices.SortFunc(kvRanges, func(i, j kv.KeyRange) int {
+			return bytes.Compare(i.StartKey, j.StartKey)
 		})
 		return builder.buildTableReaderFromKvRanges(ctx, e, kvRanges)
 	}
@@ -4413,8 +4454,8 @@ func (builder *dataReaderBuilder) buildTableReaderForIndexJoin(ctx context.Conte
 	}
 
 	// The key ranges should be ordered.
-	slices.SortFunc(kvRanges, func(i, j kv.KeyRange) bool {
-		return bytes.Compare(i.StartKey, j.StartKey) < 0
+	slices.SortFunc(kvRanges, func(i, j kv.KeyRange) int {
+		return bytes.Compare(i.StartKey, j.StartKey)
 	})
 	return builder.buildTableReaderFromKvRanges(ctx, e, kvRanges)
 }
@@ -4535,8 +4576,8 @@ func (builder *dataReaderBuilder) buildTableReaderBase(ctx context.Context, e *T
 
 func (builder *dataReaderBuilder) buildTableReaderFromHandles(ctx context.Context, e *TableReaderExecutor, handles []kv.Handle, canReorderHandles bool) (*TableReaderExecutor, error) {
 	if canReorderHandles {
-		slices.SortFunc(handles, func(i, j kv.Handle) bool {
-			return i.Compare(j) < 0
+		slices.SortFunc(handles, func(i, j kv.Handle) int {
+			return i.Compare(j)
 		})
 	}
 	var b distsql.RequestBuilder
@@ -4783,14 +4824,17 @@ func buildKvRangesForIndexJoin(ctx sessionctx.Context, tableID, indexID int64, l
 		}
 	}
 	if len(kvRanges) != 0 && memTracker != nil {
+		failpoint.Inject("testIssue49033", func() {
+			panic("testIssue49033")
+		})
 		memTracker.Consume(int64(2 * cap(kvRanges[0].StartKey) * len(kvRanges)))
 	}
 	if len(tmpDatumRanges) != 0 && memTracker != nil {
-		memTracker.Consume(2 * int64(len(tmpDatumRanges)) * types.EstimatedMemUsage(tmpDatumRanges[0].LowVal, len(tmpDatumRanges)))
+		memTracker.Consume(2 * types.EstimatedMemUsage(tmpDatumRanges[0].LowVal, len(tmpDatumRanges)))
 	}
 	if cwc == nil {
-		slices.SortFunc(kvRanges, func(i, j kv.KeyRange) bool {
-			return bytes.Compare(i.StartKey, j.StartKey) < 0
+		slices.SortFunc(kvRanges, func(i, j kv.KeyRange) int {
+			return bytes.Compare(i.StartKey, j.StartKey)
 		})
 		return kvRanges, nil
 	}
@@ -5141,16 +5185,22 @@ func (b *executorBuilder) buildBatchPointGet(plan *plannercore.BatchPointGetPlan
 		// `SELECT a FROM t WHERE a IN (1, 1, 2, 1, 2)` should not return duplicated rows
 		handles := make([]kv.Handle, 0, len(plan.Handles))
 		dedup := kv.NewHandleMap()
+		// Used for clear paritionIDs of duplicated rows.
+		dupPartPos := 0
 		if plan.IndexInfo == nil {
-			for _, handle := range plan.Handles {
+			for idx, handle := range plan.Handles {
 				if _, found := dedup.Get(handle); found {
 					continue
 				}
 				dedup.Set(handle, true)
 				handles = append(handles, handle)
+				if len(plan.PartitionIDs) > 0 {
+					e.planPhysIDs[dupPartPos] = e.planPhysIDs[idx]
+					dupPartPos++
+				}
 			}
 		} else {
-			for _, value := range plan.IndexValues {
+			for idx, value := range plan.IndexValues {
 				if datumsContainNull(value) {
 					continue
 				}
@@ -5172,9 +5222,16 @@ func (b *executorBuilder) buildBatchPointGet(plan *plannercore.BatchPointGetPlan
 				}
 				dedup.Set(handle, true)
 				handles = append(handles, handle)
+				if len(plan.PartitionIDs) > 0 {
+					e.planPhysIDs[dupPartPos] = e.planPhysIDs[idx]
+					dupPartPos++
+				}
 			}
 		}
 		e.handles = handles
+		if dupPartPos > 0 {
+			e.planPhysIDs = e.planPhysIDs[:dupPartPos]
+		}
 		capacity = len(e.handles)
 	}
 	e.base().initCap = capacity

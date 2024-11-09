@@ -140,14 +140,34 @@ func (p *PhysicalHashJoin) ResolveIndicesItself() (err error) {
 	shallowColSlice := make([]*expression.Column, p.schema.Len())
 	copy(shallowColSlice, p.schema.Columns)
 	p.schema = expression.NewSchema(shallowColSlice...)
-	for i := 0; i < colsNeedResolving; i++ {
-		newCol, err := p.schema.Columns[i].ResolveIndices(mergedSchema)
-		if err != nil {
-			return err
-		}
-		p.schema.Columns[i] = newCol.(*expression.Column)
-	}
+	foundCnt := 0
 
+	// Here we want to resolve all join schema columns directly as a merged schema, and you know same name
+	// col in join schema should be separately redirected to corresponded same col in child schema. But two
+	// column sets are **NOT** always ordered, see comment: https://github.com/pingcap/tidb/pull/45831#discussion_r1481031471
+	// we are using mapping mechanism instead of moving j forward.
+	marked := make([]bool, mergedSchema.Len())
+	for i := 0; i < colsNeedResolving; i++ {
+		findIdx := -1
+		for j := 0; j < len(mergedSchema.Columns); j++ {
+			if !p.schema.Columns[i].Equal(nil, mergedSchema.Columns[j]) || marked[j] {
+				continue
+			}
+			// resolve to a same unique id one, and it not being marked.
+			findIdx = j
+			break
+		}
+		if findIdx != -1 {
+			// valid one.
+			p.schema.Columns[i] = p.schema.Columns[i].Clone().(*expression.Column)
+			p.schema.Columns[i].Index = findIdx
+			marked[findIdx] = true
+			foundCnt++
+		}
+	}
+	if foundCnt < colsNeedResolving {
+		return errors.Errorf("Some columns of %v cannot find the reference from its child(ren)", p.ExplainID().String())
+	}
 	return
 }
 
@@ -213,12 +233,25 @@ func (p *PhysicalMergeJoin) ResolveIndices() (err error) {
 	shallowColSlice := make([]*expression.Column, p.schema.Len())
 	copy(shallowColSlice, p.schema.Columns)
 	p.schema = expression.NewSchema(shallowColSlice...)
-	for i := 0; i < colsNeedResolving; i++ {
-		newCol, err := p.schema.Columns[i].ResolveIndices(mergedSchema)
-		if err != nil {
-			return err
+	foundCnt := 0
+	// The two column sets are all ordered. And the colsNeedResolving is the subset of the mergedSchema.
+	// So we can just move forward j if there's no matching is found.
+	// We don't use the normal ResolvIndices here since there might be duplicate columns in the schema.
+	//   e.g. The schema of child_0 is [col0, col0, col1]
+	//        ResolveIndices will only resolve all col0 reference of the current plan to the first col0.
+	for i, j := 0, 0; i < colsNeedResolving && j < len(mergedSchema.Columns); {
+		if !p.schema.Columns[i].Equal(nil, mergedSchema.Columns[j]) {
+			j++
+			continue
 		}
-		p.schema.Columns[i] = newCol.(*expression.Column)
+		p.schema.Columns[i] = p.schema.Columns[i].Clone().(*expression.Column)
+		p.schema.Columns[i].Index = j
+		i++
+		j++
+		foundCnt++
+	}
+	if foundCnt < colsNeedResolving {
+		return errors.Errorf("Some columns of %v cannot find the reference from its child(ren)", p.ExplainID().String())
 	}
 	return
 }
@@ -296,12 +329,25 @@ func (p *PhysicalIndexJoin) ResolveIndices() (err error) {
 	shallowColSlice := make([]*expression.Column, p.schema.Len())
 	copy(shallowColSlice, p.schema.Columns)
 	p.schema = expression.NewSchema(shallowColSlice...)
-	for i := 0; i < colsNeedResolving; i++ {
-		newCol, err := p.schema.Columns[i].ResolveIndices(mergedSchema)
-		if err != nil {
-			return err
+	foundCnt := 0
+	// The two column sets are all ordered. And the colsNeedResolving is the subset of the mergedSchema.
+	// So we can just move forward j if there's no matching is found.
+	// We don't use the normal ResolvIndices here since there might be duplicate columns in the schema.
+	//   e.g. The schema of child_0 is [col0, col0, col1]
+	//        ResolveIndices will only resolve all col0 reference of the current plan to the first col0.
+	for i, j := 0, 0; i < colsNeedResolving && j < len(mergedSchema.Columns); {
+		if !p.schema.Columns[i].Equal(nil, mergedSchema.Columns[j]) {
+			j++
+			continue
 		}
-		p.schema.Columns[i] = newCol.(*expression.Column)
+		p.schema.Columns[i] = p.schema.Columns[i].Clone().(*expression.Column)
+		p.schema.Columns[i].Index = j
+		i++
+		j++
+		foundCnt++
+	}
+	if foundCnt < colsNeedResolving {
+		return errors.Errorf("Some columns of %v cannot find the reference from its child(ren)", p.ExplainID().String())
 	}
 
 	return
@@ -670,12 +716,25 @@ func (p *PhysicalLimit) ResolveIndices() (err error) {
 	shallowColSlice := make([]*expression.Column, p.schema.Len())
 	copy(shallowColSlice, p.schema.Columns)
 	p.schema = expression.NewSchema(shallowColSlice...)
-	for i, col := range p.schema.Columns {
-		newCol, err := col.ResolveIndices(p.children[0].Schema())
-		if err != nil {
-			return err
+	foundCnt := 0
+	// The two column sets are all ordered. And the colsNeedResolving is the subset of the mergedSchema.
+	// So we can just move forward j if there's no matching is found.
+	// We don't use the normal ResolvIndices here since there might be duplicate columns in the schema.
+	//   e.g. The schema of child_0 is [col0, col0, col1]
+	//        ResolveIndices will only resolve all col0 reference of the current plan to the first col0.
+	for i, j := 0, 0; i < p.schema.Len() && j < p.children[0].Schema().Len(); {
+		if !p.schema.Columns[i].Equal(nil, p.children[0].Schema().Columns[j]) {
+			j++
+			continue
 		}
-		p.schema.Columns[i] = newCol.(*expression.Column)
+		p.schema.Columns[i] = p.schema.Columns[i].Clone().(*expression.Column)
+		p.schema.Columns[i].Index = j
+		i++
+		j++
+		foundCnt++
+	}
+	if foundCnt < p.schema.Len() {
+		return errors.Errorf("Some columns of %v cannot find the reference from its child(ren)", p.ExplainID().String())
 	}
 	return
 }

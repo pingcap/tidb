@@ -17,6 +17,7 @@ package handle
 import (
 	"context"
 	"encoding/json"
+	"strconv"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -33,9 +34,11 @@ import (
 	"go.uber.org/zap"
 )
 
+const gcLastTSVarName = "tidb_stats_gc_last_ts"
+
 // GCStats will garbage collect the useless stats info. For dropped tables, we will first update their version so that
 // other tidb could know that table is deleted.
-func (h *Handle) GCStats(is infoschema.InfoSchema, ddlLease time.Duration) error {
+func (h *Handle) GCStats(is infoschema.InfoSchema, ddlLease time.Duration) (err error) {
 	ctx := context.Background()
 	// To make sure that all the deleted tables' schema and stats info have been acknowledged to all tidb,
 	// we only garbage collect version before 10 lease.
@@ -46,7 +49,17 @@ func (h *Handle) GCStats(is infoschema.InfoSchema, ddlLease time.Duration) error
 		return nil
 	}
 	gcVer := now - offset
-	rows, _, err := h.execRestrictedSQL(ctx, "select table_id from mysql.stats_meta where version < %?", gcVer)
+	lastGC, err := h.GetLastGCTimestamp(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if err != nil {
+			return
+		}
+		err = h.writeGCTimestampToKV(ctx, gcVer)
+	}()
+	rows, _, err := h.execRestrictedSQL(ctx, "select table_id from mysql.stats_meta where version >= %? and version < %?", lastGC, gcVer)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -67,6 +80,33 @@ func (h *Handle) GCStats(is infoschema.InfoSchema, ddlLease time.Duration) error
 			zap.Error(err))
 	}
 	return h.removeDeletedExtendedStats(gcVer)
+}
+
+// GetLastGCTimestamp loads the last gc time from mysql.tidb.
+func (h *Handle) GetLastGCTimestamp(ctx context.Context) (uint64, error) {
+	rows, _, err := h.execRestrictedSQL(ctx, "SELECT HIGH_PRIORITY variable_value FROM mysql.tidb WHERE variable_name=%?", gcLastTSVarName)
+	if err != nil {
+		return 0, errors.Trace(err)
+	}
+	if len(rows) == 0 {
+		return 0, nil
+	}
+	lastGcTSString := rows[0].GetString(0)
+	lastGcTS, err := strconv.ParseUint(lastGcTSString, 10, 64)
+	if err != nil {
+		return 0, errors.Trace(err)
+	}
+	return lastGcTS, nil
+}
+
+func (h *Handle) writeGCTimestampToKV(ctx context.Context, newTS uint64) error {
+	_, _, err := h.execRestrictedSQL(ctx,
+		"insert into mysql.tidb (variable_name, variable_value) values (%?, %?) on duplicate key update variable_value = %?",
+		gcLastTSVarName,
+		newTS,
+		newTS,
+	)
+	return err
 }
 
 func (h *Handle) gcTableStats(is infoschema.InfoSchema, physicalID int64) error {
@@ -151,6 +191,14 @@ func (h *Handle) gcTableStats(is infoschema.InfoSchema, physicalID int64) error 
 	return nil
 }
 
+func forCount(total int64, batch int64) int64 {
+	result := total / batch
+	if total%batch > 0 {
+		result++
+	}
+	return result
+}
+
 // ClearOutdatedHistoryStats clear outdated historical stats
 func (h *Handle) ClearOutdatedHistoryStats() error {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
@@ -172,15 +220,19 @@ func (h *Handle) ClearOutdatedHistoryStats() error {
 	}
 	count := rows[0].GetInt64(0)
 	if count > 0 {
-		sql = "delete from mysql.stats_meta_history use index (idx_create_time) where create_time <= NOW() - INTERVAL %? SECOND"
-		_, err = exec.ExecuteInternal(ctx, sql, variable.HistoricalStatsDuration.Load().Seconds())
-		if err != nil {
+		for n := int64(0); n < forCount(count, int64(1000)); n++ {
+			sql = "delete from mysql.stats_meta_history use index (idx_create_time) where create_time <= NOW() - INTERVAL %? SECOND limit 1000 "
+			_, err = exec.ExecuteInternal(ctx, sql, variable.HistoricalStatsDuration.Load().Seconds())
+			if err != nil {
+				return err
+			}
+		}
+		for n := int64(0); n < forCount(count, int64(50)); n++ {
+			sql = "delete from mysql.stats_history use index (idx_create_time) where create_time <= NOW() - INTERVAL %? SECOND limit 50 "
+			_, err = exec.ExecuteInternal(ctx, sql, variable.HistoricalStatsDuration.Load().Seconds())
 			return err
 		}
-		sql = "delete from mysql.stats_history use index (idx_create_time) where create_time <= NOW() - INTERVAL %? SECOND"
-		_, err = exec.ExecuteInternal(ctx, sql, variable.HistoricalStatsDuration.Load().Seconds())
 		logutil.BgLogger().Info("clear outdated historical stats")
-		return err
 	}
 	return nil
 }

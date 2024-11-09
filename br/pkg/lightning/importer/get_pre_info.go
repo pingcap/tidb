@@ -50,6 +50,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/mock"
+	pd "github.com/tikv/pd/client"
 	"go.uber.org/zap"
 	"golang.org/x/exp/maps"
 )
@@ -90,6 +91,8 @@ type PreImportInfoGetter interface {
 
 // TargetInfoGetter defines the operations to get information from target.
 type TargetInfoGetter interface {
+	// FetchRemoteDBModels fetches the database structures from the remote target.
+	FetchRemoteDBModels(ctx context.Context) ([]*model.DBInfo, error)
 	// FetchRemoteTableModels fetches the table structures from the remote target.
 	FetchRemoteTableModels(ctx context.Context, schemaName string) ([]*model.TableInfo, error)
 	// CheckVersionRequirements performs the check whether the target satisfies the version requirements.
@@ -123,12 +126,14 @@ type TargetInfoGetterImpl struct {
 	db      *sql.DB
 	tls     *common.TLS
 	backend backend.TargetInfoGetter
+	pdCli   pd.Client
 }
 
 // NewTargetInfoGetterImpl creates a TargetInfoGetterImpl object.
 func NewTargetInfoGetterImpl(
 	cfg *config.Config,
 	targetDB *sql.DB,
+	pdCli pd.Client,
 ) (*TargetInfoGetterImpl, error) {
 	tls, err := cfg.ToTLS()
 	if err != nil {
@@ -139,7 +144,10 @@ func NewTargetInfoGetterImpl(
 	case config.BackendTiDB:
 		backendTargetInfoGetter = tidb.NewTargetInfoGetter(targetDB)
 	case config.BackendLocal:
-		backendTargetInfoGetter = local.NewTargetInfoGetter(tls, targetDB, cfg.TiDB.PdAddr)
+		if pdCli == nil {
+			return nil, common.ErrUnknown.GenWithStack("pd client is required when using local backend")
+		}
+		backendTargetInfoGetter = local.NewTargetInfoGetter(tls, targetDB, pdCli)
 	default:
 		return nil, common.ErrUnknownBackend.GenWithStackByArgs(cfg.TikvImporter.Backend)
 	}
@@ -148,7 +156,13 @@ func NewTargetInfoGetterImpl(
 		tls:     tls,
 		db:      targetDB,
 		backend: backendTargetInfoGetter,
+		pdCli:   pdCli,
 	}, nil
+}
+
+// FetchRemoteDBModels implements TargetInfoGetter.
+func (g *TargetInfoGetterImpl) FetchRemoteDBModels(ctx context.Context) ([]*model.DBInfo, error) {
+	return g.backend.FetchRemoteDBModels(ctx)
 }
 
 // FetchRemoteTableModels fetches the table structures from the remote target.
@@ -229,7 +243,7 @@ func (g *TargetInfoGetterImpl) GetTargetSysVariablesForImport(ctx context.Contex
 // It uses the PD interface through TLS to get the information.
 func (g *TargetInfoGetterImpl) GetReplicationConfig(ctx context.Context) (*pdtypes.ReplicationConfig, error) {
 	result := new(pdtypes.ReplicationConfig)
-	if err := g.tls.WithHost(g.cfg.TiDB.PdAddr).GetJSON(ctx, pdReplicate, &result); err != nil {
+	if err := g.tls.WithHost(g.pdCli.GetLeaderAddr()).GetJSON(ctx, pdReplicate, &result); err != nil {
 		return nil, errors.Trace(err)
 	}
 	return result, nil
@@ -240,7 +254,7 @@ func (g *TargetInfoGetterImpl) GetReplicationConfig(ctx context.Context) (*pdtyp
 // It uses the PD interface through TLS to get the information.
 func (g *TargetInfoGetterImpl) GetStorageInfo(ctx context.Context) (*pdtypes.StoresInfo, error) {
 	result := new(pdtypes.StoresInfo)
-	if err := g.tls.WithHost(g.cfg.TiDB.PdAddr).GetJSON(ctx, pdStores, result); err != nil {
+	if err := g.tls.WithHost(g.pdCli.GetLeaderAddr()).GetJSON(ctx, pdStores, result); err != nil {
 		return nil, errors.Trace(err)
 	}
 	return result, nil
@@ -251,7 +265,7 @@ func (g *TargetInfoGetterImpl) GetStorageInfo(ctx context.Context) (*pdtypes.Sto
 // It uses the PD interface through TLS to get the information.
 func (g *TargetInfoGetterImpl) GetEmptyRegionsInfo(ctx context.Context) (*pdtypes.RegionsInfo, error) {
 	result := new(pdtypes.RegionsInfo)
-	if err := g.tls.WithHost(g.cfg.TiDB.PdAddr).GetJSON(ctx, pdEmptyRegions, &result); err != nil {
+	if err := g.tls.WithHost(g.pdCli.GetLeaderAddr()).GetJSON(ctx, pdEmptyRegions, &result); err != nil {
 		return nil, errors.Trace(err)
 	}
 	return result, nil
@@ -614,7 +628,7 @@ func (p *PreImportInfoGetterImpl) sampleDataFromTable(
 	if err != nil {
 		return 0.0, false, errors.Trace(err)
 	}
-	idAlloc := kv.NewPanickingAllocators(0)
+	idAlloc := kv.NewPanickingAllocators(tableInfo.SepAutoInc(), 0)
 	tbl, err := tables.TableFromMeta(idAlloc, tableInfo)
 	if err != nil {
 		return 0.0, false, errors.Trace(err)
@@ -791,6 +805,12 @@ func (p *PreImportInfoGetterImpl) GetEmptyRegionsInfo(ctx context.Context) (*pdt
 // It implements the PreImportInfoGetter interface.
 func (p *PreImportInfoGetterImpl) IsTableEmpty(ctx context.Context, schemaName string, tableName string) (*bool, error) {
 	return p.targetInfoGetter.IsTableEmpty(ctx, schemaName, tableName)
+}
+
+// FetchRemoteDBModels fetches the database structures from the remote target.
+// It implements the PreImportInfoGetter interface.
+func (p *PreImportInfoGetterImpl) FetchRemoteDBModels(ctx context.Context) ([]*model.DBInfo, error) {
+	return p.targetInfoGetter.FetchRemoteDBModels(ctx)
 }
 
 // FetchRemoteTableModels fetches the table structures from the remote target.

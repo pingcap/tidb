@@ -458,12 +458,12 @@ timezone.*
 
    **Note**: If you request a TiDB that is not ddl owner, the response will be `This node is not a ddl owner, can't be resigned.`
 
-1. Get all TiDB DDL job history information.
+1. Get the TiDB DDL job history information.
 
     ```shell
     curl http://{TiDBIP}:10080/ddl/history
     ```
-	**Note**: When the DDL history is very very long, it may consume a lot memory and even cause OOM. Consider adding `start_job_id` and `limit`.
+	**Note**: When the DDL history is very very long, system table may contain too many jobs. This interface will get a maximum of 2048 history ddl jobs by default. If you want get more jobs, adding `start_job_id` and `limit`.
 
 1. Get count {number} TiDB DDL job history information.
 
@@ -564,7 +564,6 @@ timezone.*
     # reset the size of the ballast object (2GB in this example)
     curl -v -X POST -d "2147483648" http://{TiDBIP}:10080/debug/ballast-object-sz
     ```
-
     
 1. Set deadlock history table capacity
 
@@ -591,3 +590,14 @@ timezone.*
     ```shell
     curl -X POST -d "transaction_summary_capacity={number}" http://{TiDBIP}:10080/settings
     ```
+
+1. Send upgrade operations to the cluster. The operations here include `start` and `finish`.
+
+   ```shell
+   curl -X POST http://{TiDBIP}:10080/upgrade/{op}
+   ```
+
+   ```shell
+   $curl -X POST http://127.0.0.1:10080/upgrade/start
+   "success!"
+   ```

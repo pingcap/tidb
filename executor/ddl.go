@@ -392,10 +392,11 @@ func (e *DDLExec) executeRecoverTable(s *ast.RecoverTableStmt) error {
 	var job *model.Job
 	var err error
 	var tblInfo *model.TableInfo
-	if s.JobID != 0 {
-		job, tblInfo, err = e.getRecoverTableByJobID(s, dom)
-	} else {
+	// Let check table first. Related isssue #46296.
+	if s.Table != nil {
 		job, tblInfo, err = e.getRecoverTableByTableName(s.Table)
+	} else {
+		job, tblInfo, err = e.getRecoverTableByJobID(s, dom)
 	}
 	if err != nil {
 		return err
@@ -403,7 +404,7 @@ func (e *DDLExec) executeRecoverTable(s *ast.RecoverTableStmt) error {
 	// Check the table ID was not exists.
 	tbl, ok := dom.InfoSchema().TableByID(tblInfo.ID)
 	if ok {
-		return infoschema.ErrTableExists.GenWithStack("Table '%-.192s' already been recover to '%-.192s', can't be recover repeatedly", s.Table.Name.O, tbl.Meta().Name.O)
+		return infoschema.ErrTableExists.GenWithStack("Table '%-.192s' already been recover to '%-.192s', can't be recover repeatedly", tblInfo.Name.O, tbl.Meta().Name.O)
 	}
 
 	m, err := domain.GetDomain(e.ctx).GetSnapshotMeta(job.StartTS)
@@ -538,6 +539,12 @@ func (e *DDLExec) getRecoverTableByTableName(tableName *ast.TableName) (*model.J
 }
 
 func (e *DDLExec) executeFlashBackCluster(s *ast.FlashBackToTimestampStmt) error {
+	// Check `TO TSO` clause
+	if s.FlashbackTSO > 0 {
+		return domain.GetDomain(e.ctx).DDL().FlashbackCluster(e.ctx, s.FlashbackTSO)
+	}
+
+	// Check `TO TIMESTAMP` clause
 	flashbackTS, err := staleread.CalculateAsOfTsExpr(context.Background(), e.ctx, s.FlashbackTS)
 	if err != nil {
 		return err

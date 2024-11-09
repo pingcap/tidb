@@ -62,6 +62,7 @@ type PlanReplayerCaptureInfo struct {
 type PlanReplayerDumpInfo struct {
 	ExecStmts []ast.StmtNode
 	Analyze   bool
+	StartTS   uint64
 	Path      string
 	File      *os.File
 	FileName  string
@@ -84,6 +85,15 @@ func (e *PlanReplayerExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	if err != nil {
 		return err
 	}
+	// Note:
+	// For the dumping for SQL file case (len(e.DumpInfo.Path) > 0), the DumpInfo.dump() is called in
+	// handleFileTransInConn(), which is after TxnManager.OnTxnEnd(), where we can't access the TxnManager anymore.
+	// So we must fetch the startTS now.
+	startTS, err := sessiontxn.GetTxnManager(e.ctx).GetStmtReadTS()
+	if err != nil {
+		return err
+	}
+	e.DumpInfo.StartTS = startTS
 	if len(e.DumpInfo.Path) > 0 {
 		err = e.prepare()
 		if err != nil {
@@ -163,12 +173,8 @@ func (e *PlanReplayerExec) createFile() error {
 func (e *PlanReplayerDumpInfo) dump(ctx context.Context) (err error) {
 	fileName := e.FileName
 	zf := e.File
-	startTS, err := sessiontxn.GetTxnManager(e.ctx).GetStmtReadTS()
-	if err != nil {
-		return err
-	}
 	task := &domain.PlanReplayerDumpTask{
-		StartTS:     startTS,
+		StartTS:     e.StartTS,
 		FileName:    fileName,
 		Zf:          zf,
 		SessionVars: e.ctx.GetSessionVars(),
@@ -472,17 +478,9 @@ func (e *PlanReplayerLoadInfo) Update(data []byte) error {
 	}
 
 	// build schema and table first
-	for _, zipFile := range z.File {
-		if zipFile.Name == fmt.Sprintf("schema/%v", domain.PlanReplayerSchemaMetaFile) {
-			continue
-		}
-		path := strings.Split(zipFile.Name, "/")
-		if len(path) == 2 && strings.Compare(path[0], "schema") == 0 {
-			err = createSchemaAndItems(e.Ctx, zipFile)
-			if err != nil {
-				return err
-			}
-		}
+	err = e.createTable(z)
+	if err != nil {
+		return err
 	}
 
 	// set tiflash replica if exists
@@ -494,7 +492,7 @@ func (e *PlanReplayerLoadInfo) Update(data []byte) error {
 	// build view next
 	for _, zipFile := range z.File {
 		path := strings.Split(zipFile.Name, "/")
-		if len(path) == 2 && strings.Compare(path[0], "view") == 0 {
+		if len(path) == 2 && strings.Compare(path[0], "view") == 0 && zipFile.Mode().IsRegular() {
 			err = createSchemaAndItems(e.Ctx, zipFile)
 			if err != nil {
 				return err
@@ -505,7 +503,7 @@ func (e *PlanReplayerLoadInfo) Update(data []byte) error {
 	// load stats
 	for _, zipFile := range z.File {
 		path := strings.Split(zipFile.Name, "/")
-		if len(path) == 2 && strings.Compare(path[0], "stats") == 0 {
+		if len(path) == 2 && strings.Compare(path[0], "stats") == 0 && zipFile.Mode().IsRegular() {
 			err = loadStats(e.Ctx, zipFile)
 			if err != nil {
 				return err
@@ -517,6 +515,32 @@ func (e *PlanReplayerLoadInfo) Update(data []byte) error {
 	if err != nil {
 		logutil.BgLogger().Warn("load bindings failed", zap.Error(err))
 		e.Ctx.GetSessionVars().StmtCtx.AppendWarning(fmt.Errorf("load bindings failed, err:%v", err))
+	}
+	return nil
+}
+
+func (e *PlanReplayerLoadInfo) createTable(z *zip.Reader) error {
+	originForeignKeyChecks := e.Ctx.GetSessionVars().ForeignKeyChecks
+	originPlacementMode := e.Ctx.GetSessionVars().PlacementMode
+	// We need to disable foreign key check when we create schema and tables.
+	// because the order of creating schema and tables is not guaranteed.
+	e.Ctx.GetSessionVars().ForeignKeyChecks = false
+	e.Ctx.GetSessionVars().PlacementMode = variable.PlacementModeIgnore
+	defer func() {
+		e.Ctx.GetSessionVars().ForeignKeyChecks = originForeignKeyChecks
+		e.Ctx.GetSessionVars().PlacementMode = originPlacementMode
+	}()
+	for _, zipFile := range z.File {
+		if zipFile.Name == fmt.Sprintf("schema/%v", domain.PlanReplayerSchemaMetaFile) {
+			continue
+		}
+		path := strings.Split(zipFile.Name, "/")
+		if len(path) == 2 && strings.Compare(path[0], "schema") == 0 && zipFile.Mode().IsRegular() {
+			err := createSchemaAndItems(e.Ctx, zipFile)
+			if err != nil {
+				return err
+			}
+		}
 	}
 	return nil
 }

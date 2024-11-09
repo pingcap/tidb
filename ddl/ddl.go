@@ -45,6 +45,7 @@ import (
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
+	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/owner"
 	"github.com/pingcap/tidb/parser/ast"
@@ -59,6 +60,7 @@ import (
 	"github.com/pingcap/tidb/table"
 	pumpcli "github.com/pingcap/tidb/tidb-binlog/pump_client"
 	tidbutil "github.com/pingcap/tidb/util"
+	"github.com/pingcap/tidb/util/cmp"
 	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/gcutil"
 	"github.com/pingcap/tidb/util/logutil"
@@ -153,6 +155,7 @@ const (
 	OnExistReplace
 
 	jobRecordCapacity = 16
+	jobOnceCapacity   = 1000
 )
 
 var (
@@ -288,14 +291,14 @@ type waitSchemaSyncedController struct {
 	mu  sync.RWMutex
 	job map[int64]struct{}
 
-	// true if this node is elected to the DDL owner, we should wait 2 * lease before it runs the first DDL job.
-	once *atomicutil.Bool
+	// Use to check if the DDL job is the first run on this owner.
+	onceMap map[int64]struct{}
 }
 
 func newWaitSchemaSyncedController() *waitSchemaSyncedController {
 	return &waitSchemaSyncedController{
-		job:  make(map[int64]struct{}, jobRecordCapacity),
-		once: atomicutil.NewBool(true),
+		job:     make(map[int64]struct{}, jobRecordCapacity),
+		onceMap: make(map[int64]struct{}, jobOnceCapacity),
 	}
 }
 
@@ -318,6 +321,25 @@ func (w *waitSchemaSyncedController) synced(job *model.Job) {
 	delete(w.job, job.ID)
 }
 
+// maybeAlreadyRunOnce returns true means that the job may be the first run on this owner.
+// Returns false means that the job must not be the first run on this owner.
+func (w *waitSchemaSyncedController) maybeAlreadyRunOnce(id int64) bool {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	_, ok := w.onceMap[id]
+	return ok
+}
+
+func (w *waitSchemaSyncedController) setAlreadyRunOnce(id int64) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if len(w.onceMap) > jobOnceCapacity {
+		// If the map is too large, we reset it. These jobs may need to check schema synced again, but it's ok.
+		w.onceMap = make(map[int64]struct{}, jobRecordCapacity)
+	}
+	w.onceMap[id] = struct{}{}
+}
+
 // ddlCtx is the context when we use worker to handle DDL jobs.
 type ddlCtx struct {
 	ctx          context.Context
@@ -335,18 +357,15 @@ type ddlCtx struct {
 	statsHandle  *handle.Handle
 	tableLockCkr util.DeadTableLockChecker
 	etcdCli      *clientv3.Client
+	autoidCli    *autoid.ClientDiscover
 	// backfillJobCh gets notification if any backfill jobs coming.
 	backfillJobCh chan struct{}
 
 	*waitSchemaSyncedController
 	*schemaVersionManager
-	// recording the running jobs.
-	runningJobs struct {
-		sync.RWMutex
-		ids map[int64]struct{}
-	}
-	// It holds the running DDL jobs ID.
-	runningJobIDs []string
+
+	runningJobs *runningJobs
+
 	// reorgCtx is used for reorganization.
 	reorgCtx reorgContexts
 	// backfillCtx is used for backfill workers.
@@ -659,9 +678,10 @@ func newDDL(ctx context.Context, options ...Option) *ddl {
 		infoCache:                  opt.InfoCache,
 		tableLockCkr:               deadLockCkr,
 		etcdCli:                    opt.EtcdCli,
+		autoidCli:                  opt.AutoIDClient,
 		schemaVersionManager:       newSchemaVersionManager(),
 		waitSchemaSyncedController: newWaitSchemaSyncedController(),
-		runningJobIDs:              make([]string, 0, jobRecordCapacity),
+		runningJobs:                newRunningJobs(),
 	}
 	ddlCtx.reorgCtx.reorgCtxMap = make(map[int64]*reorgCtx)
 	ddlCtx.jobCtx.jobCtxMap = make(map[int64]*JobContext)
@@ -669,7 +689,6 @@ func newDDL(ctx context.Context, options ...Option) *ddl {
 	ddlCtx.mu.interceptor = &BaseInterceptor{}
 	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnDDL)
 	ddlCtx.ctx, ddlCtx.cancel = context.WithCancel(ctx)
-	ddlCtx.runningJobs.ids = make(map[int64]struct{})
 
 	d := &ddl{
 		ddlCtx:            ddlCtx,
@@ -1690,6 +1709,9 @@ const DefNumHistoryJobs = 10
 
 const batchNumHistoryJobs = 128
 
+// DefNumGetDDLHistoryJobs is the max count for getting the ddl history once.
+const DefNumGetDDLHistoryJobs = 2048
+
 // GetLastNHistoryDDLJobs returns the DDL history jobs and an error.
 // The maximum count of history jobs is num.
 func GetLastNHistoryDDLJobs(t *meta.Meta, maxNumJobs int) ([]*model.Job, error) {
@@ -1758,8 +1780,8 @@ func GetAllHistoryDDLJobs(m *meta.Meta) ([]*model.Job, error) {
 		}
 	}
 	// sort job.
-	slices.SortFunc(allJobs, func(i, j *model.Job) bool {
-		return i.ID < j.ID
+	slices.SortFunc(allJobs, func(i, j *model.Job) int {
+		return cmp.Compare(i.ID, j.ID)
 	})
 	return allJobs, nil
 }
@@ -1771,8 +1793,21 @@ func ScanHistoryDDLJobs(m *meta.Meta, startJobID int64, limit int) ([]*model.Job
 	var iter meta.LastJobIterator
 	var err error
 	if startJobID == 0 {
+		// if 'start_job_id' == 0 and 'limit' == 0(default value), get the last 1024 ddl history job by defaultly.
+		if limit == 0 {
+			limit = DefNumGetDDLHistoryJobs
+
+			failpoint.Inject("history-ddl-jobs-limit", func(val failpoint.Value) {
+				injectLimit, ok := val.(int)
+				if ok {
+					logutil.BgLogger().Info("failpoint history-ddl-jobs-limit", zap.Int("limit", injectLimit))
+					limit = injectLimit
+				}
+			})
+		}
 		iter, err = m.GetLastHistoryDDLJobsIterator()
 	} else {
+		// if 'start_job_id' > 0, it must set value to 'limit'
 		if limit == 0 {
 			return nil, errors.New("when 'start_job_id' is specified, it must work with a 'limit'")
 		}

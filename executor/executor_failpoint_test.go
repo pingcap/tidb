@@ -27,9 +27,11 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl"
+	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/store/copr"
+	"github.com/pingcap/tidb/store/helper"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/util/deadlockhistory"
@@ -554,4 +556,55 @@ func TestDeadlocksTable(t *testing.T) {
 			id2+"/2022-06-11 02:03:04.987654/1/202/<nil>/<nil>/<nil>/<nil>/203",
 			id2+"/2022-06-11 02:03:04.987654/1/203/<nil>/<nil>/<nil>/<nil>/201",
 		))
+}
+
+func TestGetMvccByEncodedKeyRegionError(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	h := helper.NewHelper(store.(helper.Storage))
+	txn, err := store.Begin()
+	require.NoError(t, err)
+	m := meta.NewMeta(txn)
+	schemaVersion := tk.Session().GetDomainInfoSchema().SchemaMetaVersion()
+	key := m.EncodeSchemaDiffKey(schemaVersion)
+
+	resp, err := h.GetMvccByEncodedKey(key)
+	require.NoError(t, err)
+	require.NotNil(t, resp.Info)
+	require.Equal(t, 1, len(resp.Info.Writes))
+	require.Less(t, uint64(0), resp.Info.Writes[0].CommitTs)
+	commitTs := resp.Info.Writes[0].CommitTs
+
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/store/mockstore/unistore/epochNotMatch", "2*return(true)"))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/store/mockstore/unistore/epochNotMatch"))
+	}()
+	resp, err = h.GetMvccByEncodedKey(key)
+	require.NoError(t, err)
+	require.NotNil(t, resp.Info)
+	require.Equal(t, 1, len(resp.Info.Writes))
+	require.Equal(t, commitTs, resp.Info.Writes[0].CommitTs)
+}
+
+func TestShuffleExit(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1;")
+	tk.MustExec("create table t1(i int, j int, k int);")
+	tk.MustExec("insert into t1 VALUES (1,1,1),(2,2,2),(3,3,3),(4,4,4);")
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/executor/shuffleError", "return(true)"))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/executor/shuffleError"))
+	}()
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/executor/shuffleExecFetchDataAndSplit", "return(true)"))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/executor/shuffleExecFetchDataAndSplit"))
+	}()
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/executor/shuffleWorkerRun", "panic(\"ShufflePanic\")"))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/executor/shuffleWorkerRun"))
+	}()
+	err := tk.QueryToErr("SELECT SUM(i) OVER W FROM t1 WINDOW w AS (PARTITION BY j ORDER BY i) ORDER BY 1+SUM(i) OVER w;")
+	require.ErrorContains(t, err, "ShuffleExec.Next error")
 }

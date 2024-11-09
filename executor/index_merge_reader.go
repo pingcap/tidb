@@ -42,6 +42,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/cmp"
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/mathutil"
@@ -409,8 +410,8 @@ func (e *IndexMergeReaderExecutor) startPartialIndexWorker(ctx context.Context, 
 
 					// init kvReq and worker for this partition
 					// The key ranges should be ordered.
-					slices.SortFunc(keyRange, func(i, j kv.KeyRange) bool {
-						return bytes.Compare(i.StartKey, j.StartKey) < 0
+					slices.SortFunc(keyRange, func(i, j kv.KeyRange) int {
+						return bytes.Compare(i.StartKey, j.StartKey)
 					})
 					kvReq, err := builder.SetKeyRanges(keyRange).Build()
 					if err != nil {
@@ -508,8 +509,8 @@ func (e *IndexMergeReaderExecutor) startPartialTableWorker(ctx context.Context, 
 				}
 
 				if len(e.prunedPartitions) != 0 && len(e.byItems) != 0 {
-					slices.SortFunc(worker.prunedPartitions, func(i, j table.PhysicalTable) bool {
-						return i.GetPhysicalID() < j.GetPhysicalID()
+					slices.SortFunc(worker.prunedPartitions, func(i, j table.PhysicalTable) int {
+						return cmp.Compare(i.GetPhysicalID(), j.GetPhysicalID())
 					})
 					partialTableReader.kvRangeBuilder = kvRangeBuilderFromRangeAndPartition{
 						sctx:       e.ctx,
@@ -677,7 +678,11 @@ func (w *partialTableWorker) getDatumRow(table table.Table, row chunk.Row, handl
 func (w *partialTableWorker) extractTaskHandles(ctx context.Context, chk *chunk.Chunk, handleCols plannercore.HandleCols) (
 	handles []kv.Handle, retChk *chunk.Chunk, err error) {
 	handles = make([]kv.Handle, 0, w.batchSize)
+	if len(w.byItems) != 0 {
+		retChk = chunk.NewChunkWithCapacity(w.getRetTpsForTableScan(), w.batchSize)
+	}
 	var memUsage int64
+	var chunkRowOffset int
 	defer w.memTracker.Consume(-memUsage)
 	tbl := w.tableReader.(*TableReaderExecutor).table
 	for len(handles) < w.batchSize {
@@ -692,7 +697,7 @@ func (w *partialTableWorker) extractTaskHandles(ctx context.Context, chk *chunk.
 		start := time.Now()
 		err = errors.Trace(w.tableReader.Next(ctx, chk))
 		if err != nil {
-			return handles, nil, err
+			return nil, nil, err
 		}
 		if be := w.tableReader.base(); be != nil && be.runtimeStats != nil {
 			be.runtimeStats.Record(time.Since(start), chk.NumRows())
@@ -706,15 +711,15 @@ func (w *partialTableWorker) extractTaskHandles(ctx context.Context, chk *chunk.
 		memDelta := chk.MemoryUsage()
 		memUsage += memDelta
 		w.memTracker.Consume(memDelta)
-		for i := 0; i < chk.NumRows(); i++ {
+		for chunkRowOffset = 0; chunkRowOffset < chk.NumRows(); chunkRowOffset++ {
 			if w.pushedLimit != nil {
 				w.scannedKeys++
 				if w.scannedKeys > (w.pushedLimit.Offset + w.pushedLimit.Count) {
 					// Skip the handles after Offset+Count.
-					return handles, retChk, nil
+					break
 				}
 			}
-			r := chk.GetRow(i)
+			r := chk.GetRow(chunkRowOffset)
 			handle, err := handleCols.BuildHandleFromIndexRow(r)
 			if err != nil {
 				return nil, nil, err
@@ -729,12 +734,9 @@ func (w *partialTableWorker) extractTaskHandles(ctx context.Context, chk *chunk.
 			}
 			handles = append(handles, handle)
 		}
-		// used for limit embedded.
+		// used for order by
 		if len(w.byItems) != 0 {
-			if retChk == nil {
-				retChk = chunk.NewChunkWithCapacity(w.getRetTpsForTableScan(), w.batchSize)
-			}
-			retChk.Append(chk, 0, chk.NumRows())
+			retChk.Append(chk, 0, chunkRowOffset)
 		}
 	}
 	w.batchSize *= 2
@@ -808,7 +810,7 @@ func (e *IndexMergeReaderExecutor) buildFinalTableReader(ctx context.Context, tb
 		netDataSize:      e.dataAvgRowSize * float64(len(handles)),
 	}
 	tableReaderExec.buildVirtualColumnInfo()
-	// Reorder handles because SplitKeyRangesByLocations() requires startKey of kvRanges is ordered.
+	// Reorder handles because SplitKeyRangesByLocationsWith/WithoutBuckets() requires startKey of kvRanges is ordered.
 	// Also it's good for performance.
 	tableReader, err := e.dataReaderBuilder.buildTableReaderFromHandles(ctx, tableReaderExec, handles, true)
 	if err != nil {
@@ -1545,7 +1547,11 @@ func (w *partialIndexWorker) getRetTpsForIndexScan(handleCols plannercore.Handle
 func (w *partialIndexWorker) extractTaskHandles(ctx context.Context, chk *chunk.Chunk, idxResult distsql.SelectResult, handleCols plannercore.HandleCols) (
 	handles []kv.Handle, retChk *chunk.Chunk, err error) {
 	handles = make([]kv.Handle, 0, w.batchSize)
+	if len(w.byItems) != 0 {
+		retChk = chunk.NewChunkWithCapacity(w.getRetTpsForIndexScan(handleCols, w.hasExtralPidCol()), w.batchSize)
+	}
 	var memUsage int64
+	var chunkRowOffset int
 	defer w.memTracker.Consume(-memUsage)
 	for len(handles) < w.batchSize {
 		requiredRows := w.batchSize - len(handles)
@@ -1559,7 +1565,7 @@ func (w *partialIndexWorker) extractTaskHandles(ctx context.Context, chk *chunk.
 		start := time.Now()
 		err = errors.Trace(idxResult.Next(ctx, chk))
 		if err != nil {
-			return handles, nil, err
+			return nil, nil, err
 		}
 		if w.stats != nil && w.idxID != 0 {
 			w.sc.GetSessionVars().StmtCtx.RuntimeStatsColl.GetBasicRuntimeStats(w.idxID).Record(time.Since(start), chk.NumRows())
@@ -1573,31 +1579,28 @@ func (w *partialIndexWorker) extractTaskHandles(ctx context.Context, chk *chunk.
 		memDelta := chk.MemoryUsage()
 		memUsage += memDelta
 		w.memTracker.Consume(memDelta)
-		for i := 0; i < chk.NumRows(); i++ {
+		for chunkRowOffset = 0; chunkRowOffset < chk.NumRows(); chunkRowOffset++ {
 			if w.pushedLimit != nil {
 				w.scannedKeys++
 				if w.scannedKeys > (w.pushedLimit.Offset + w.pushedLimit.Count) {
 					// Skip the handles after Offset+Count.
-					return handles, retChk, nil
+					break
 				}
 			}
 			var handle kv.Handle
 			if w.hasExtralPidCol() {
-				handle, err = handleCols.BuildPartitionHandleFromIndexRow(chk.GetRow(i))
+				handle, err = handleCols.BuildPartitionHandleFromIndexRow(chk.GetRow(chunkRowOffset))
 			} else {
-				handle, err = handleCols.BuildHandleFromIndexRow(chk.GetRow(i))
+				handle, err = handleCols.BuildHandleFromIndexRow(chk.GetRow(chunkRowOffset))
 			}
 			if err != nil {
 				return nil, nil, err
 			}
 			handles = append(handles, handle)
 		}
-		// used for limit embedded.
+		// used for order by
 		if len(w.byItems) != 0 {
-			if retChk == nil {
-				retChk = chunk.NewChunkWithCapacity(w.getRetTpsForIndexScan(handleCols, w.hasExtralPidCol()), w.batchSize)
-			}
-			retChk.Append(chk, 0, chk.NumRows())
+			retChk.Append(chk, 0, chunkRowOffset)
 		}
 	}
 	w.batchSize *= 2

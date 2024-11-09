@@ -35,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/cmp"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/ranger"
@@ -110,7 +111,8 @@ type TableReaderExecutor struct {
 	byItems   []*util.ByItems
 	paging    bool
 	storeType kv.StoreType
-	// corColInFilter tells whether there's correlated column in filter.
+	// corColInFilter tells whether there's correlated column in filter (both conditions in PhysicalSelection and LateMaterializationFilterCondition in PhysicalTableScan)
+	// If true, we will need to revise the dagPB (fill correlated column value in filter) each time call Open().
 	corColInFilter bool
 	// corColInAccess tells whether there's correlated column in access conditions.
 	corColInAccess bool
@@ -154,6 +156,7 @@ func (e *TableReaderExecutor) Open(ctx context.Context) error {
 
 	var err error
 	if e.corColInFilter {
+		// If there's correlated column in filter, need to rewrite dagPB
 		if e.storeType == kv.TiFlash {
 			execs, err := constructDistExecForTiFlash(e.ctx, e.tablePlan)
 			if err != nil {
@@ -339,8 +342,8 @@ func (e *TableReaderExecutor) buildResp(ctx context.Context, ranges []*ranger.Ra
 	if err != nil {
 		return nil, err
 	}
-	kvReq.KeyRanges.SortByFunc(func(i, j kv.KeyRange) bool {
-		return bytes.Compare(i.StartKey, j.StartKey) < 0
+	kvReq.KeyRanges.SortByFunc(func(i, j kv.KeyRange) int {
+		return bytes.Compare(i.StartKey, j.StartKey)
 	})
 	e.kvRanges = kvReq.KeyRanges.AppendSelfTo(e.kvRanges)
 
@@ -481,9 +484,9 @@ func buildVirtualColumnIndex(schema *expression.Schema, columns []*model.ColumnI
 			virtualColumnIndex = append(virtualColumnIndex, i)
 		}
 	}
-	slices.SortFunc(virtualColumnIndex, func(i, j int) bool {
-		return plannercore.FindColumnInfoByID(columns, schema.Columns[i].ID).Offset <
-			plannercore.FindColumnInfoByID(columns, schema.Columns[j].ID).Offset
+	slices.SortFunc(virtualColumnIndex, func(i, j int) int {
+		return cmp.Compare(plannercore.FindColumnInfoByID(columns, schema.Columns[i].ID).Offset,
+			plannercore.FindColumnInfoByID(columns, schema.Columns[j].ID).Offset)
 	})
 	return virtualColumnIndex
 }

@@ -11,6 +11,8 @@ go_library(
     deps = [
         "//br/pkg/logutil",
         "//br/pkg/redact",
+        "//kv",
+        "//tablecodec",
         "@com_github_google_btree//:btree",
         "@com_github_pingcap_kvproto//pkg/brpb",
         "@com_github_pingcap_log//:log",
@@ -25,13 +27,16 @@ go_test(
     srcs = [
         "logging_test.go",
         "main_test.go",
+        "merge_fuzz_test.go",
         "rtree_test.go",
     ],
     flaky = True,
     race = "on",
-    shard_count = 3,
+    shard_count = 4,
     deps = [
         ":rtree",
+        "//kv",
+        "//tablecodec",
         "//testkit/testsetup",
         "@com_github_pingcap_kvproto//pkg/brpb",
         "@com_github_stretchr_testify//require",

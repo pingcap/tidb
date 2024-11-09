@@ -17,7 +17,9 @@ package core_test
 import (
 	"testing"
 
+	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/testkit"
+	"github.com/pingcap/tidb/testkit/testdata"
 	"github.com/stretchr/testify/require"
 )
 
@@ -82,21 +84,28 @@ func TestAdditionOtherConditionsRemained4OuterJoin(t *testing.T) {
 	tk.MustExec("INSERT  INTO queries_program(`id`, `identifier_id`) values(8, 13), (9, 14);")
 	tk.MustExec("INSERT  INTO queries_channel(`id`, `identifier_id`) values(5, 13);")
 
-	tk.MustQuery("SELECT `queries_identifier`.`id`, `queries_identifier`.`name` FROM `queries_identifier` LEFT OUTER JOIN `queries_channel` ON (`queries_identifier`.`id` = `queries_channel`.`identifier_id`) INNER JOIN `queries_program` ON (`queries_identifier`.`id` = `queries_program`.`identifier_id`) WHERE ((`queries_channel`.`id` = 5 AND `queries_program`.`id` = 9) OR `queries_program`.`id` = 8) ORDER BY `queries_identifier`.`id` ASC;").Check(testkit.Rows("" +
-		"13 i1"))
-	tk.MustQuery("SELECT `queries_identifier`.`id`, `queries_identifier`.`name` FROM `queries_identifier` RIGHT OUTER JOIN `queries_channel` ON (`queries_identifier`.`id` = `queries_channel`.`identifier_id`) INNER JOIN `queries_program` ON (`queries_identifier`.`id` = `queries_program`.`identifier_id`) WHERE ((`queries_channel`.`id` = 5 AND `queries_program`.`id` = 9) OR `queries_program`.`id` = 8) ORDER BY `queries_identifier`.`id` ASC;").Check(testkit.Rows("" +
-		"13 i1"))
-	tk.MustQuery("explain format = 'brief' SELECT `queries_identifier`.`id`, `queries_identifier`.`name` FROM `queries_identifier` LEFT OUTER JOIN `queries_channel` ON (`queries_identifier`.`id` = `queries_channel`.`identifier_id`) INNER JOIN `queries_program` ON (`queries_identifier`.`id` = `queries_program`.`identifier_id`) WHERE ((`queries_channel`.`id` = 5 AND `queries_program`.`id` = 9) OR `queries_program`.`id` = 8) ORDER BY `queries_identifier`.`id` ASC;").Check(testkit.Rows(""+
-		"Sort 2.50 root  test.queries_identifier.id",
-		"└─Projection 2.50 root  test.queries_identifier.id, test.queries_identifier.name",
-		"  └─Selection 2.50 root  or(and(eq(test.queries_channel.id, 5), eq(test.queries_program.id, 9)), eq(test.queries_program.id, 8))",
-		"    └─IndexJoin 3.12 root  left outer join, inner:IndexReader, outer key:test.queries_identifier.id, inner key:test.queries_channel.identifier_id, equal cond:eq(test.queries_identifier.id, test.queries_channel.identifier_id)",
-		"      ├─IndexHashJoin(Build) 2.50 root  inner join, inner:TableReader, outer key:test.queries_program.identifier_id, inner key:test.queries_identifier.id, equal cond:eq(test.queries_program.identifier_id, test.queries_identifier.id)",
-		"      │ ├─Batch_Point_Get(Build) 2.00 root table:queries_program handle:[8 9], keep order:false, desc:false",
-		"      │ └─TableReader(Probe) 2.00 root  data:TableRangeScan",
-		"      │   └─TableRangeScan 2.00 cop[tikv] table:queries_identifier range: decided by [test.queries_program.identifier_id], keep order:false, stats:pseudo",
-		"      └─IndexReader(Probe) 2.50 root  index:IndexRangeScan",
-		"        └─IndexRangeScan 2.50 cop[tikv] table:queries_channel, index:identifier_id(identifier_id) range: decided by [eq(test.queries_channel.identifier_id, test.queries_identifier.id)], keep order:false, stats:pseudo"))
+	tk.MustExec("create table t(a int)")
+	tk.MustExec("create table t1(a int, b int)")
+	tk.MustExec("create table t2(a int, b int, c int)")
+	tk.MustExec("create table t3(a int, b int)")
+	tk.MustExec("create table t4(a int, b int)")
+
+	testData := core.GetJoinReorderData()
+	var (
+		input  []string
+		output []struct {
+			SQL    string
+			Output []string
+		}
+	)
+	testData.LoadTestCases(t, &input, &output)
+	for i, sql := range input {
+		testdata.OnRecord(func() {
+			output[i].SQL = sql
+			output[i].Output = testdata.ConvertRowsToStrings(tk.MustQuery(sql).Rows())
+		})
+		tk.MustQuery(sql).Check(testkit.Rows(output[i].Output...))
+	}
 }
 
 func TestOuterJoinWIthEqCondCrossInnerJoin(t *testing.T) {
@@ -148,4 +157,23 @@ FROM   t3 tt
 		"    └─TableReader(Probe) 10000.00 root  data:TableFullScan",
 		"      └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
 	))
+}
+
+// https://github.com/pingcap/tidb/issues/56704
+func TestJoinReorderWithPossibleCostCalcOverflow(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("use test;")
+	tk.MustExec("CREATE TABLE `lrr_test` ( `COL102` double DEFAULT NULL, `COL1` double GENERATED ALWAYS AS (`COL102` + 10) STORED NOT NULL, PRIMARY KEY (`COL1`) /*T![clustered_index] CLUSTERED */ ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;")
+	tk.MustExec("insert into lrr_test (col102) values(-1.704648925036604e308), (-1.6888619680353582e308), (-1.6685908644498436e308), (-1.6311134967437805e308), (-1.6128280680807152e308), (-1.5899713947158026e308), (-1.5709457594070477e308), (-1.4925714566991343e308), (-1.4705985087370154e308), (-1.4451316666300040e308), (-1.3946576985986583e308), (-1.3695679630646804e308), (-1.3208992137984086e308), (-1.2887981369134862e308), (-1.2119996449796167e308), (-1.195172956104992e308), (-1.1929781068369925e308), (-1.1746351299417647e308), (-1.1237012620945195e308), (-1.1223448185004882e308), (-1.0974439629672084e308), (-1.0657654808610821e308), (-1.0582598945271716e308), (-1.0565276887850733e308), (-1.0416104832981696e308), (-1.0368741532690337e308), (-1.033521479407133e308), (-1.0232269544119505e308), (-9.31943312515408e307), (-9.05107332838438e307), (-8.276443475796885e307), (-7.845086666145396e307), (-7.664543340054255e307), (-7.235369799352141e307), (-7.047280050755922e307), (-6.62205033356235e307), (-6.35964999739255e307), (-5.989391229038818e307), (-5.974526205854541e307), (-5.798684586589338e307), (-4.98047732376121e307), (-4.4623979626128605e307), (-4.3248436443381234e307), (-3.3391152928792773e307), (-3.2694282487729395e307), (-3.2461091065368577e307), (-2.8613054009714654e307), (-2.7176814604572905e307), (-2.1301127705458223e307), (-1.7280065154718344e307), (-1.6743061442642827e307), (-4.862812928655648e306), (-3.3262533560429795e305), (4.124952267435051e305), (5.4576487694211726e306), (1.1237742400537221e307), (1.569984332645614e307), (1.7966188405412235e307), (1.8619233341238355e307), (2.1152066540419881e307), (2.1764927570795164e307), (2.99416682762135e307), (3.0545414962788647e307), (3.262967770716021e307), (3.288944887183685e307), (4.9025219351381e307), (5.250864486081297e307), (5.52054372134351e307), (6.311436996747818e307), (6.870852232080436e307), (7.501871137935436e307), (7.925709054822421e307), (8.438195254661318e307), (8.446731596918706e307), (9.43580947190119e307), (9.66735866233596e307), (1.0022043827847664e308), (1.020869767928594e308), (1.0327408606815872e308), (1.0402383684235906e308), (1.0690255622829305e308), (1.1623306052784659e308), (1.1906116361044565e308), (1.2221839628780758e308), (1.3112927565356536e308), (1.3307364382402157e308), (1.3646958839720612e308), (1.425066345632827e308), (1.4433864261103511e308), (1.5038532858735658e308), (1.5079450808097928e308), (1.553628680980576e308), (1.6241456663280369e308), (1.6295729949930798e308), (1.6328703529666413e308), (1.6832354056195887e308), (1.7017315016390902e308), (1.7134206410400048e308), (1.7240829054261275e308), (1.7257738639648862e308), (1.7262297095455299e308), (1.7905151735809062e308);")
+	tk.MustExec("analyze table lrr_test;")
+
+	result := tk.MustQuery("select t1.col1, t2.col1 from lrr_test as t1 right join lrr_test as t2 on t1.col1 = t2.col1 where t1.col1 >=0 order by t1.col1;")
+	require.Equal(t, 49, len(result.Rows()))
+	result = tk.MustQuery("explain select t1.col1, t2.col1 from lrr_test as t1 right join lrr_test as t2 on t1.col1 = t2.col1 where t1.col1 >=0 order by t1.col1;")
+	// Layout of explain: operator, estimated rows, task type, access object, operator info.
+	require.NotContains(t, "NaN", result.Rows()[0][1])
+	require.NotContains(t, "CARTEISAN", result.Rows()[0][4])
 }
