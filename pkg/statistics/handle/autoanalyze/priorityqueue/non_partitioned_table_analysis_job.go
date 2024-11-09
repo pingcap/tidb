@@ -212,6 +212,16 @@ func (j *NonPartitionedTableAnalysisJob) analyzeIndexes(
 	if len(j.Indexes) == 0 {
 		return true
 	}
+	autoAnalyzeVersion := sctx.GetSessionVars().AnalyzeVersion
+	if autoAnalyzeVersion == 1 {
+		for _, index := range j.Indexes {
+			sql, params := j.GenSQLForAnalyzeIndex(index)
+			if !exec.AutoAnalyze(sctx, statsHandle, sysProcTracker, j.TableStatsVer, sql, params...) {
+				return false
+			}
+		}
+		return true
+	}
 	// Only analyze the first index.
 	// This is because analyzing a single index also analyzes all other indexes and columns.
 	// Therefore, to avoid redundancy, we prevent multiple analyses of the same table.
