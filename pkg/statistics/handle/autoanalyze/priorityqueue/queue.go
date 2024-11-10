@@ -376,7 +376,7 @@ func (pq *AnalysisPriorityQueue) ProcessDMLChanges() {
 
 		// Only update if we've seen a newer version
 		if newMaxVersion > lastFetchTimestamp {
-			statslogutil.StatsLogger().Info("Updating last fetch timestamp", zap.Uint64("new_max_version", newMaxVersion))
+			queueSamplerLogger().Info("Updating last fetch timestamp", zap.Uint64("new_max_version", newMaxVersion))
 			pq.syncFields.lastDMLUpdateFetchTimestamp = newMaxVersion
 		}
 		return nil
