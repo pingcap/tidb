@@ -24,6 +24,7 @@ import (
 	"time"
 
 	"github.com/pingcap/log"
+	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/session"
 	sessiontypes "github.com/pingcap/tidb/pkg/session/types"
@@ -58,7 +59,7 @@ func main() {
 	flag.PrintDefaults()
 	err := logutil.InitLogger(logutil.NewLogConfig(*logLevel, logutil.DefaultLogFormat, "", "", logutil.EmptyFileLogConfig, false))
 	terror.MustNil(err)
-	err = store.Register("tikv", driver.TiKVDriver{})
+	err = store.Register(config.StoreTypeTiKV, driver.TiKVDriver{})
 	terror.MustNil(err)
 	ut := newBenchDB()
 	works := strings.Split(*runJobs, "|")

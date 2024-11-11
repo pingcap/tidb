@@ -66,7 +66,7 @@ func TestGetTSFailDirtyState(t *testing.T) {
 		return fpname == "github.com/pingcap/tidb/pkg/session/mockGetTSFail"
 	})
 	rss, err := tk.Session().Execute(ctx, "select * from t")
-	if config.GetGlobalConfig().Store == "unistore" {
+	if config.GetGlobalConfig().Store == config.StoreTypeUniStore {
 		require.Error(t, err)
 	} else {
 		for _, rs := range rss {
