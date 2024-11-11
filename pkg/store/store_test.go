@@ -740,7 +740,7 @@ func TestIsolationMultiInc(t *testing.T) {
 func TestRetryOpenStore(t *testing.T) {
 	begin := time.Now()
 	require.NoError(t, Register(config.StoreTypeMockTiKV, &brokenStore{}))
-	store, err := newStoreWithRetry("dummy://dummy-store", 3)
+	store, err := newStoreWithRetry("mocktikv://dummy-store", 3)
 	if store != nil {
 		defer func() {
 			require.NoError(t, store.Close())
