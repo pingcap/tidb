@@ -902,3 +902,48 @@ func TestVectorIndexTriggerAutoAnalyze(t *testing.T) {
 	// No event is found
 	require.Nil(t, addIndexEvent)
 }
+
+func TestAddIndexTriggerAutoAnalyzeWithStatsVersion1(t *testing.T) {
+	store, do := testkit.CreateMockStoreAndDomain(t)
+	testKit := testkit.NewTestKit(t, store)
+	testKit.MustExec("set @@global.tidb_analyze_version=1;")
+	testKit.MustExec("use test")
+	testKit.MustExec("create table t (c1 int, c2 int, index idx(c1, c2)) partition by range columns (c1) (partition p0 values less than (5), partition p1 values less than (10))")
+	is := do.InfoSchema()
+	tbl, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
+	require.NoError(t, err)
+	tableInfo := tbl.Meta()
+	h := do.StatsHandle()
+	// Analyze table.
+	testKit.MustExec("analyze table t")
+	require.NoError(t, h.Update(context.Background(), do.InfoSchema()))
+	// Insert some data.
+	testKit.MustExec("insert into t values (1,2),(2,2)")
+	require.NoError(t, h.DumpStatsDeltaToKV(true))
+	require.NoError(t, h.Update(context.Background(), do.InfoSchema()))
+	// Add two indexes.
+	testKit.MustExec("alter table t add index idx1(c1)")
+	testKit.MustExec("alter table t add index idx2(c2)")
+
+	statistics.AutoAnalyzeMinCnt = 0
+	defer func() {
+		statistics.AutoAnalyzeMinCnt = 1000
+	}()
+
+	pq := priorityqueue.NewAnalysisPriorityQueue(h)
+	defer pq.Close()
+	require.NoError(t, pq.Initialize())
+	isEmpty, err := pq.IsEmpty()
+	require.NoError(t, err)
+	require.False(t, isEmpty)
+	job, err := pq.Peek()
+	require.NoError(t, err)
+	require.Equal(t, tableInfo.ID, job.GetTableID())
+	require.NoError(t, job.Analyze(h, do.SysProcTracker()))
+
+	// Check the stats of the indexes.
+	tableStats := h.GetTableStats(tableInfo)
+	require.True(t, tableStats.GetIdx(1).IsAnalyzed())
+	require.True(t, tableStats.GetIdx(2).IsAnalyzed())
+	require.True(t, tableStats.GetIdx(3).IsAnalyzed())
+}
