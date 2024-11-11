@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"math"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -684,7 +685,7 @@ func (c *CheckpointAdvancer) asyncResolveLocksForRanges(ctx context.Context, tar
 		failpoint.Inject("AsyncResolveLocks", func() {})
 		maxTs := uint64(0)
 		for _, t := range targets {
-			maxTs = max(maxTs, t.Value)
+			maxTs = math.Max(maxTs, t.Value)
 		}
 		handler := func(ctx context.Context, r tikvstore.KeyRange) (rangetask.TaskStat, error) {
 			// we will scan all locks and try to resolve them by check txn status.
