@@ -16,15 +16,15 @@ package task
 
 import (
 	"github.com/pingcap/tidb/pkg/planner/cascades/base"
-	"github.com/pingcap/tidb/pkg/planner/cascades/memo"
+	"github.com/pingcap/tidb/pkg/planner/cascades/base/yctx"
 )
 
 // BaseTask is base task wrapper structure for encapsulating basic things.
 type BaseTask struct {
-	mctx *memo.MemoContext
+	yCtx yctx.YamsContext
 }
 
 // Push pushes a new task into inside stack.
 func (b *BaseTask) Push(t base.Task) {
-	b.mctx.PushTask(t)
+	b.yCtx.PushTask(t)
 }

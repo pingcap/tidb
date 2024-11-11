@@ -18,6 +18,7 @@ import (
 	"cmp"
 	"context"
 	"fmt"
+	"github.com/pingcap/tidb/pkg/planner/cascades"
 	"math"
 	"slices"
 	"strconv"
@@ -264,6 +265,13 @@ func doOptimize(
 	if !AllowCartesianProduct.Load() && existsCartesianProduct(logic) {
 		return nil, nil, 0, errors.Trace(plannererrors.ErrCartesianProductUnsupported)
 	}
+
+	yams := cascades.NewYams(cascades.NewYamsContext(sctx))
+	defer yams.Destroy()
+	if err := yams.Execute(); err != nil {
+		return nil, nil, 0, err
+	}
+
 	planCounter := base.PlanCounterTp(sessVars.StmtCtx.StmtHints.ForceNthPlan)
 	if planCounter == 0 {
 		planCounter = -1

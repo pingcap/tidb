@@ -18,6 +18,7 @@ import (
 	"io"
 
 	"github.com/pingcap/tidb/pkg/planner/cascades/base"
+	"github.com/pingcap/tidb/pkg/planner/cascades/base/yctx"
 	"github.com/pingcap/tidb/pkg/planner/cascades/memo"
 )
 
@@ -30,9 +31,9 @@ type OptGroupTask struct {
 }
 
 // NewOptGroupTask returns a new optimizing group task.
-func NewOptGroupTask(mctx *memo.MemoContext, g *memo.Group) base.Task {
+func NewOptGroupTask(yCtx yctx.YamsContext, g *memo.Group) base.Task {
 	return &OptGroupTask{BaseTask: BaseTask{
-		mctx: mctx,
+		yCtx: yCtx,
 	}, group: g}
 }
 
@@ -42,7 +43,7 @@ func (g *OptGroupTask) Execute() error {
 		return nil
 	}
 	g.group.ForEachGE(func(ge *memo.GroupExpression) {
-		g.Push(NewOptGroupExpressionTask(g.mctx, ge))
+		g.Push(NewOptGroupExpressionTask(g.yCtx, ge))
 	})
 	g.group.SetExplored()
 	return nil

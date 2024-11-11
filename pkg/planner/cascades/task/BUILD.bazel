@@ -14,6 +14,7 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//pkg/planner/cascades/base",
+        "//pkg/planner/cascades/base/yctx",
         "//pkg/planner/cascades/memo",
         "//pkg/planner/cascades/rule",
         "//pkg/planner/pattern",
@@ -32,8 +33,6 @@ go_test(
     shard_count = 3,
     deps = [
         "//pkg/planner/cascades/base",
-        "//pkg/planner/cascades/memo",
-        "//pkg/util/mock",
         "@com_github_stretchr_testify//require",
     ],
 )

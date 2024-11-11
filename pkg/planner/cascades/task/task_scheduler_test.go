@@ -20,8 +20,6 @@ import (
 	"strconv"
 	"testing"
 
-	"github.com/pingcap/tidb/pkg/planner/cascades/memo"
-	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/stretchr/testify/require"
 )
 
@@ -45,17 +43,12 @@ func (t *TestTaskImpl2) Desc(writer io.StringWriter) {
 }
 
 func TestSimpleTaskScheduler(t *testing.T) {
-	sctx := mock.NewContext()
-	testMemoCtx := memo.NewMemoContext(sctx)
-	testScheduler := &SimpleTaskScheduler{
-		mCtx: testMemoCtx,
-	}
-	testScheduler.mCtx.PushTask(&TestTaskImpl2{a: 1})
-	testScheduler.mCtx.PushTask(&TestTaskImpl2{a: 2})
-	testScheduler.mCtx.PushTask(&TestTaskImpl2{a: 3})
+	testScheduler := NewSimpleTaskScheduler()
+	testScheduler.PushTask(&TestTaskImpl2{a: 1})
+	testScheduler.PushTask(&TestTaskImpl2{a: 2})
+	testScheduler.PushTask(&TestTaskImpl2{a: 3})
 
-	var testTaskScheduler Scheduler = testScheduler
-	testTaskScheduler.ExecuteTasks()
-	require.NotNil(t, testScheduler.Err)
-	require.Equal(t, testScheduler.Err.Error(), "mock error at task id = 2")
+	err := testScheduler.ExecuteTasks()
+	require.NotNil(t, err)
+	require.Equal(t, err.Error(), "mock error at task id = 2")
 }

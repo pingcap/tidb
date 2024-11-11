@@ -14,18 +14,30 @@
 
 package cascades
 
+import "github.com/pingcap/tidb/pkg/planner/cascades/base/yctx"
+
 // Yams is a basic cascades search framework portal, drove by yamsContext.
 type Yams struct {
-	yCtx *YamsContext
+	yCtx yctx.YamsContext
 }
 
 // Execute run the yams search flow inside, returns error if it happened.
 func (y *Yams) Execute() error {
-	return y.yCtx.scheduler.ExecuteTasks()
+	return y.yCtx.GetScheduler().ExecuteTasks()
+}
+
+// Destroy clean and reset basic elements inside.
+func (y *Yams) Destroy() {
+	y.yCtx.Destroy()
+}
+
+// GetYCtx returns the yamsContext inside.
+func (y *Yams) GetYCtx() yctx.YamsContext {
+	return y.yCtx
 }
 
 // NewYams return a new yams struct as the memo search portal structure.
-func NewYams(ctx *YamsContext) *Yams {
+func NewYams(ctx yctx.YamsContext) *Yams {
 	return &Yams{
 		yCtx: ctx,
 	}

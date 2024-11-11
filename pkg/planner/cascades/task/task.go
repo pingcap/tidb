@@ -19,12 +19,7 @@ import (
 	"sync"
 
 	"github.com/pingcap/tidb/pkg/planner/cascades/base"
-	"github.com/pingcap/tidb/pkg/planner/cascades/memo"
 )
-
-func init() {
-	memo.StackPoolRef = stackPool
-}
 
 // stackPool is initialized for memory saving by reusing TaskStack.
 var stackPool = &sync.Pool{

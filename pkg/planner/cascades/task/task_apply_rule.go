@@ -18,6 +18,7 @@ import (
 	"io"
 
 	"github.com/pingcap/tidb/pkg/planner/cascades/base"
+	"github.com/pingcap/tidb/pkg/planner/cascades/base/yctx"
 	"github.com/pingcap/tidb/pkg/planner/cascades/memo"
 	"github.com/pingcap/tidb/pkg/planner/cascades/rule"
 )
@@ -49,8 +50,8 @@ var _ base.Task = &ApplyRuleTask{}
 //                    └────┴────┴────┘
 // Symbol means:
 // A represent OptGroupTask
-// A represent OptGroupExpressionTask
-// A represent ApplyRuleTask
+// B represent OptGroupExpressionTask
+// C represent ApplyRuleTask
 //
 // When memo init is done, the only targeted task is OptGroupTask, say we got
 // 3 group expression inside this group, it will trigger and push additional
@@ -86,10 +87,10 @@ type ApplyRuleTask struct {
 }
 
 // NewApplyRuleTask return a new apply rule task.
-func NewApplyRuleTask(mctx *memo.MemoContext, gE *memo.GroupExpression, r rule.Rule) *ApplyRuleTask {
+func NewApplyRuleTask(yCtx yctx.YamsContext, gE *memo.GroupExpression, r rule.Rule) *ApplyRuleTask {
 	return &ApplyRuleTask{
 		BaseTask: BaseTask{
-			mctx: mctx,
+			yCtx: yCtx,
 		},
 		gE:   gE,
 		rule: r,
@@ -106,20 +107,20 @@ func (a *ApplyRuleTask) Execute() error {
 	binder := rule.NewBinder(pa, a.gE)
 	for binder.Next() {
 		holder := binder.GetHolder()
-		if !a.rule.PreCheck(holder, a.mctx) {
+		if !a.rule.PreCheck(holder) {
 			continue
 		}
-		memoExprs, err := a.rule.XForm(holder, a.mctx)
+		memoExprs, err := a.rule.XForm(holder)
 		if err != nil {
 			return err
 		}
 		for _, me := range memoExprs {
-			newGroupExpr, err := a.mctx.GetMemo().CopyIn(a.gE.GetGroup(), me)
+			newGroupExpr, err := a.yCtx.GetMemo().CopyIn(a.gE.GetGroup(), me)
 			if err != nil {
 				return err
 			}
 			// YAMS only care about logical plan now.
-			a.Push(NewOptGroupExpressionTask(a.mctx, newGroupExpr))
+			a.Push(NewOptGroupExpressionTask(a.yCtx, newGroupExpr))
 		}
 	}
 	a.gE.SetExplored(a.rule.ID())

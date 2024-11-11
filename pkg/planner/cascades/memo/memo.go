@@ -85,21 +85,21 @@ func (m *Memo) GetHasher() base2.Hasher {
 //
 // entering(init memo)
 //
-//	  lp                 ME{lp}                       ┌──────────┐
-//	 /  \                /   \                        │ memo:    │
-//	lp   lp      ->  ME{lp}   ME{lp}    --copyIN->    │    GE    │
-//	    /  \                  /  \                    │   /  \   │
-//	  ...  ...             ...   ...                  │  G    G  │
-//	                                                  └──────────┘
+//	  lp                          ┌──────────┐
+//	 /  \                         │ memo:    │
+//	lp   lp       --copyIN->      │    GE    │
+//	    /  \                      │   /  \   │
+//	  ...  ...                    │  G    G  │
+//	                              └──────────┘
 //
 // re-feeding (intake XForm output)
 //
-//	  GE                 ME{GE}                       ┌──────────┐
-//	 /  \                 /  \                        │ memo:    │
-//	GE  lp       ->   ME{GE}  ME{lp}    --copyIN->    │    GE    │
-//	     |                     |                      │   /  \   │
-//	    GE                    ME{GE}                  │  G    G  │
-//	                                                  └──────────┘
+//	  GE                          ┌──────────┐
+//	 /  \                         │ memo:    │
+//	GE  lp          --copyIN->    │    GE    │
+//	     |                        │   /  \   │
+//	    GE                        │  G    G  │
+//	                              └──────────┘
 func (m *Memo) CopyIn(target *Group, lp base.LogicalPlan) (*GroupExpression, error) {
 	// Group the children first.
 	childGroups := make([]*Group, 0, len(lp.Children()))
@@ -124,7 +124,7 @@ func (m *Memo) CopyIn(target *Group, lp base.LogicalPlan) (*GroupExpression, err
 	}
 
 	// lp's original children is useless since now, prepare it as nil for later appending as group expressions if any.
-	lp.SetChildren(nil)
+	lp.ResetChild()
 	hasher := m.GetHasher()
 	groupExpr := NewGroupExpression(lp, childGroups)
 	groupExpr.Init(hasher)
@@ -178,26 +178,10 @@ func (m *Memo) NewGroup() *Group {
 // Init initializes the memo with a logical plan, converting logical plan tree format into group tree.
 func (m *Memo) Init(plan base.LogicalPlan) (*GroupExpression, error) {
 	intest.Assert(m.groups.Len() == 0)
-	gE, err := m.CopyIn(nil, ToMemoExprTree(plan))
+	gE, err := m.CopyIn(nil, plan)
 	if err != nil {
 		return nil, err
 	}
 	m.rootGroup = gE.GetGroup()
 	return gE, nil
-}
-
-func ToMemoExprTree(plan base.LogicalPlan) *MemoExpression {
-	if len(plan.Children()) == 0 {
-		return &MemoExpression{
-			LP: plan,
-		}
-	}
-	child := make([]*MemoExpression, 0, len(plan.Children()))
-	for _, one := range plan.Children() {
-		child = append(child, ToMemoExprTree(one))
-	}
-	return &MemoExpression{
-		LP:     plan,
-		Inputs: child,
-	}
 }

@@ -14,36 +14,53 @@
 
 package task
 
-import "github.com/pingcap/tidb/pkg/planner/cascades/memo"
+import (
+	"github.com/pingcap/tidb/pkg/planner/cascades/base"
+)
 
-var _ Scheduler = &SimpleTaskScheduler{}
-
-// Scheduler is a scheduling interface defined for serializing(single thread)/concurrent(multi thread) running.
-type Scheduler interface {
-	ExecuteTasks()
-}
+var _ base.Scheduler = &SimpleTaskScheduler{}
 
 // SimpleTaskScheduler is defined for serializing scheduling of memo tasks.
 type SimpleTaskScheduler struct {
-	Err  error
-	mCtx *memo.MemoContext
+	stack base.Stack
+}
+
+// NewSimpleTaskScheduler return a simple task scheduler, init logic included.
+func NewSimpleTaskScheduler() base.Scheduler {
+	return &SimpleTaskScheduler{
+		stack: stackPool.Get().(base.Stack),
+	}
 }
 
 // ExecuteTasks implements the interface of TaskScheduler.
-func (s *SimpleTaskScheduler) ExecuteTasks() {
-	stack := s.mCtx.GetStack()
-	defer func() {
-		// when step out of the scheduler, if the stack is empty, clean and release it.
-		if !stack.Empty() {
-			stack.Destroy()
-		}
-	}()
-	for !stack.Empty() {
+func (s *SimpleTaskScheduler) ExecuteTasks() error {
+	for !s.stack.Empty() {
 		// when use customized stack to drive the tasks, the call-chain state is dived in the stack.
-		task := stack.Pop()
+		task := s.stack.Pop()
 		if err := task.Execute(); err != nil {
-			s.Err = err
-			return
+			return err
 		}
 	}
+	return nil
+}
+
+// Init allocate basic elements required by the scheduler.
+func (s *SimpleTaskScheduler) Init() {
+	if s.stack == nil {
+		s.stack = stackPool.Get().(base.Stack)
+	}
+}
+
+// Destroy release all the allocated elements inside stack.
+func (s *SimpleTaskScheduler) Destroy() {
+	// when step out of the scheduler, if the stack is empty, clean and release it.
+	stack := s.stack
+	// release parent pointer ref.
+	s.stack = nil
+	stack.Destroy()
+}
+
+// PushTask implements the scheduler's interface, add another task into scheduler.
+func (s *SimpleTaskScheduler) PushTask(task base.Task) {
+	s.stack.Push(task)
 }

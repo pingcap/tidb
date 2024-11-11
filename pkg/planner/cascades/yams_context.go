@@ -16,10 +16,13 @@ package cascades
 
 import (
 	"github.com/pingcap/tidb/pkg/planner/cascades/base"
+	"github.com/pingcap/tidb/pkg/planner/cascades/base/yctx"
 	"github.com/pingcap/tidb/pkg/planner/cascades/memo"
 	"github.com/pingcap/tidb/pkg/planner/cascades/task"
 	base2 "github.com/pingcap/tidb/pkg/planner/core/base"
 )
+
+var _ yctx.YamsContext = &YamsContext{}
 
 // YamsContext includes all the context stuff when go through memo optimizing.
 type YamsContext struct {

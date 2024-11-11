@@ -17,13 +17,13 @@ package memo
 import (
 	"testing"
 
-	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
+	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/stretchr/testify/require"
 )
 
-func TestMemoExpression(t *testing.T) {
-	ctx := plannercore.MockContext()
+func TestMemo(t *testing.T) {
+	ctx := mock.NewContext()
 	t1 := logicalop.DataSource{}.Init(ctx, 0)
 	t1.SetID(-1)
 	t2 := logicalop.DataSource{}.Init(ctx, 0)
@@ -32,48 +32,7 @@ func TestMemoExpression(t *testing.T) {
 	join.SetID(-3)
 	join.SetChildren(t1, t2)
 
-	me := ToMemoExprTree(join)
-	require.NotNil(t, me)
-	require.True(t, me.IsLogicalPlan())
-	require.Equal(t, me.LP, join)
-	require.Equal(t, 2, len(me.Inputs))
-	require.True(t, me.Inputs[0].IsLogicalPlan())
-	require.Equal(t, me.Inputs[0].LP, t1)
-	require.True(t, me.Inputs[1].IsLogicalPlan())
-	require.Equal(t, me.Inputs[1].LP, t2)
-
-	memo := NewMemo(ctx)
-	ge, err := memo.CopyIn(nil, me)
-	require.Nil(t, err)
-	require.NotNil(t, ge.GetGroup())
-	require.Equal(t, 2, len(ge.Inputs))
-	require.NotNil(t, ge.Inputs[0])
-	require.Equal(t, 1, ge.Inputs[0].logicalExpressions.Len())
-	require.NotNil(t, ge.Inputs[0].logicalExpressions.Front().Value.(*GroupExpression).GetGroup())
-	require.Equal(t, 1, ge.Inputs[1].logicalExpressions.Len())
-	require.NotNil(t, ge.Inputs[1].logicalExpressions.Front().Value.(*GroupExpression).GetGroup())
-
-	require.Equal(t, 3, memo.groups.Len())
-	require.Equal(t, 3, len(memo.groupID2Group))
-
-	// iter memo.groups to assert group ids.
-	cnt := 1
-	for e := memo.groups.Front(); e != nil; e = e.Next() {
-		group := e.Value.(*Group)
-		require.NotNil(t, group)
-		require.Equal(t, GroupID(cnt), group.groupID)
-		cnt++
-	}
-}
-
-func TestMemo(t *testing.T) {
-	ctx := plannercore.MockContext()
-	t1 := logicalop.DataSource{}.Init(ctx, 0)
-	t2 := logicalop.DataSource{}.Init(ctx, 0)
-	join := logicalop.LogicalJoin{}.Init(ctx, 0)
-	join.SetChildren(t1, t2)
-
-	memo := NewMemo(ctx)
+	memo := NewMemo()
 	memo.Init(join)
 	require.Equal(t, 3, memo.groups.Len())
 	require.Equal(t, 3, len(memo.groupID2Group))
@@ -89,19 +48,23 @@ func TestMemo(t *testing.T) {
 }
 
 func TestInsertGE(t *testing.T) {
-	ctx := plannercore.MockContext()
+	ctx := mock.NewContext()
 	t1 := logicalop.DataSource{}.Init(ctx, 0)
+	t1.SetID(-1)
 	t2 := logicalop.DataSource{}.Init(ctx, 0)
+	t2.SetID(-2)
 	join := logicalop.LogicalJoin{}.Init(ctx, 0)
+	join.SetID(-3)
 	join.SetChildren(t1, t2)
 
-	memo := NewMemo(ctx)
+	memo := NewMemo()
 	memo.Init(join)
 	require.Equal(t, 3, memo.groups.Len())
 	require.Equal(t, 3, len(memo.groupID2Group))
 
 	// prepare a new group expression with join's group as its children.
 	limit := logicalop.LogicalLimit{}.Init(ctx, 0)
+	limit.SetID(-4)
 	hasher := memo.GetHasher()
 	groupExpr := NewGroupExpression(limit, []*Group{memo.rootGroup})
 	groupExpr.Init(hasher)

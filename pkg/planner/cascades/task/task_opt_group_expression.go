@@ -18,6 +18,7 @@ import (
 	"io"
 
 	"github.com/pingcap/tidb/pkg/planner/cascades/base"
+	"github.com/pingcap/tidb/pkg/planner/cascades/base/yctx"
 	"github.com/pingcap/tidb/pkg/planner/cascades/memo"
 	"github.com/pingcap/tidb/pkg/planner/cascades/rule"
 	"github.com/pingcap/tidb/pkg/planner/pattern"
@@ -33,9 +34,9 @@ type OptGroupExpressionTask struct {
 }
 
 // NewOptGroupExpressionTask return a targeting optimizing group expression task.
-func NewOptGroupExpressionTask(mctx *memo.MemoContext, ge *memo.GroupExpression) *OptGroupExpressionTask {
+func NewOptGroupExpressionTask(yCtx yctx.YamsContext, ge *memo.GroupExpression) *OptGroupExpressionTask {
 	return &OptGroupExpressionTask{
-		BaseTask:        BaseTask{mctx: mctx},
+		BaseTask:        BaseTask{yCtx: yCtx},
 		groupExpression: ge,
 	}
 }
@@ -44,12 +45,12 @@ func NewOptGroupExpressionTask(mctx *memo.MemoContext, ge *memo.GroupExpression)
 func (ge *OptGroupExpressionTask) Execute() error {
 	ruleList := ge.getValidRules()
 	for _, one := range ruleList {
-		ge.Push(NewApplyRuleTask(ge.mctx, ge.groupExpression, one))
+		ge.Push(NewApplyRuleTask(ge.yCtx, ge.groupExpression, one))
 	}
 	// since it's a stack-order, LUFO, when we want to apply a rule for a specific group expression,
 	// the pre-condition is that this group expression's child group has been fully explored.
 	for i := len(ge.groupExpression.Inputs) - 1; i >= 0; i-- {
-		ge.Push(NewOptGroupTask(ge.mctx, ge.groupExpression.Inputs[i]))
+		ge.Push(NewOptGroupTask(ge.yCtx, ge.groupExpression.Inputs[i]))
 	}
 	return nil
 }
