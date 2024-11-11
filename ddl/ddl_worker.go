@@ -705,12 +705,9 @@ func (w *JobContext) setDDLLabelForDiagnosis(jobType model.ActionType) {
 }
 
 func (w *worker) HandleJobDone(d *ddlCtx, job *model.Job, t *meta.Meta) error {
-<<<<<<< HEAD:ddl/ddl_worker.go
-=======
 	if err := w.checkBeforeCommit(); err != nil {
 		return err
 	}
->>>>>>> 601e21ca500 (ddl: add context cancel check before commit (#53134)):pkg/ddl/ddl_worker.go
 	err := w.finishDDLJob(t, job)
 	if err != nil {
 		w.sess.Rollback()
@@ -805,14 +802,11 @@ func (w *worker) HandleDDLJobTable(d *ddlCtx, job *model.Job) (int64, error) {
 		return 0, err
 	}
 
-<<<<<<< HEAD:ddl/ddl_worker.go
-=======
 	if err = w.checkBeforeCommit(); err != nil {
 		d.unlockSchemaVersion(job.ID)
 		return 0, err
 	}
 
->>>>>>> 601e21ca500 (ddl: add context cancel check before commit (#53134)):pkg/ddl/ddl_worker.go
 	if runJobErr != nil && !job.IsRollingback() && !job.IsRollbackDone() {
 		// If the running job meets an error
 		// and the job state is rolling back, it means that we have already handled this error.
@@ -866,10 +860,8 @@ func (w *worker) HandleDDLJobTable(d *ddlCtx, job *model.Job) (int64, error) {
 	return schemaVer, nil
 }
 
-<<<<<<< HEAD:ddl/ddl_worker.go
-=======
 func (w *worker) checkBeforeCommit() error {
-	if !w.ddlCtx.isOwner() && w.tp != localWorker {
+	if !w.ddlCtx.isOwner() {
 		// Since this TiDB instance is not a DDL owner anymore,
 		// it should not commit any transaction.
 		w.sess.Rollback()
@@ -883,45 +875,6 @@ func (w *worker) checkBeforeCommit() error {
 	return nil
 }
 
-// HandleLocalDDLJob handles local ddl job like fast create table.
-// Compare with normal ddl job:
-// 1. directly insert the job to history job table(incompatible with CDC).
-// 2. no need to wait schema version(only support create table now).
-// 3. no register mdl info(only support create table now).
-func (w *worker) HandleLocalDDLJob(d *ddlCtx, job *model.Job) (err error) {
-	defer func() {
-		w.unlockSeqNum(err)
-	}()
-
-	txn, err := w.prepareTxn(job)
-	if err != nil {
-		return err
-	}
-
-	t := meta.NewMeta(txn, meta.WithUpdateTableName())
-	d.mu.RLock()
-	d.mu.hook.OnJobRunBefore(job)
-	d.mu.RUnlock()
-
-	_, err = w.runDDLJob(d, t, job)
-	defer d.unlockSchemaVersion(job.ID)
-	if err != nil {
-		return err
-	}
-
-	d.mu.RLock()
-	d.mu.hook.OnJobRunAfter(job)
-	d.mu.RUnlock()
-
-	writeBinlog(d.binlogCli, txn, job)
-	// reset the SQL digest to make topsql work right.
-	w.sess.GetSessionVars().StmtCtx.ResetSQLDigest(job.Query)
-
-	job.State = model.JobStateSynced
-	return w.HandleJobDone(d, job, t)
-}
-
->>>>>>> 601e21ca500 (ddl: add context cancel check before commit (#53134)):pkg/ddl/ddl_worker.go
 func (w *JobContext) getResourceGroupTaggerForTopSQL() tikvrpc.ResourceGroupTagger {
 	if !topsqlstate.TopSQLEnabled() || w.cacheDigest == nil {
 		return nil
