@@ -1,0 +1,104 @@
+{
+ "database_name": "imdbload",
+ "table_name": "comp_cast_type",
+ "columns": {
+  "id": {
+   "histogram": {
+    "ndv": 4
+   },
+   "cm_sketch": {
+    "top_n": [
+     {
+      "data": "A4AAAAAAAAAB",
+      "count": 1
+     },
+     {
+      "data": "A4AAAAAAAAAC",
+      "count": 1
+     },
+     {
+      "data": "A4AAAAAAAAAD",
+      "count": 1
+     },
+     {
+      "data": "A4AAAAAAAAAE",
+      "count": 1
+     }
+    ],
+    "default_value": 0
+   },
+   "fm_sketch": null,
+   "null_count": 0,
+   "tot_col_size": 36,
+   "last_update_version": 431373019050934273,
+   "correlation": 1,
+   "stats_ver": 2
+  },
+  "kind": {
+   "histogram": {
+    "ndv": 4
+   },
+   "cm_sketch": {
+    "top_n": [
+     {
+      "data": "AWNhc3QAAAAA+w==",
+      "count": 1
+     },
+     {
+      "data": "AWNvbXBsZXRl/wAAAAAAAAAA9w==",
+      "count": 1
+     },
+     {
+      "data": "AWNvbXBsZXRl/yt2ZXJpZmll/2QAAAAAAAAA+A==",
+      "count": 1
+     },
+     {
+      "data": "AWNyZXcAAAAA+w==",
+      "count": 1
+     }
+    ],
+    "default_value": 0
+   },
+   "fm_sketch": null,
+   "null_count": 0,
+   "tot_col_size": 41,
+   "last_update_version": 431373019050934273,
+   "correlation": 0.4,
+   "stats_ver": 2
+  }
+ },
+ "indices": {
+  "comp_cast_type_kind": {
+   "histogram": {
+    "ndv": 3
+   },
+   "cm_sketch": {
+    "top_n": [
+     {
+      "data": "AWNhc3QAAAAA+w==",
+      "count": 1
+     },
+     {
+      "data": "AWNvbXBsAAAA/A==",
+      "count": 2
+     },
+     {
+      "data": "AWNyZXcAAAAA+w==",
+      "count": 1
+     }
+    ],
+    "default_value": 0
+   },
+   "fm_sketch": null,
+   "null_count": 0,
+   "tot_col_size": 0,
+   "last_update_version": 431373019050934273,
+   "correlation": 0,
+   "stats_ver": 2
+  }
+ },
+ "ext_stats": null,
+ "count": 4,
+ "modify_count": 0,
+ "partitions": null
+}
