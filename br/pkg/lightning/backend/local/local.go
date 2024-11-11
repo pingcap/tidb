@@ -1088,6 +1088,8 @@ func (local *Backend) prepareAndSendJob(
 		needSplit = true
 	})
 	logger := log.FromContext(ctx).With(zap.Stringer("uuid", engine.UUID)).Begin(zap.InfoLevel, "split and scatter ranges")
+	backOffTime := 10 * time.Second
+	maxbackoffTime := 120 * time.Second
 	for i := 0; i < maxRetryTimes; i++ {
 		failpoint.Inject("skipSplitAndScatter", func() {
 			failpoint.Break()
@@ -1100,6 +1102,15 @@ func (local *Backend) prepareAndSendJob(
 
 		log.FromContext(ctx).Warn("split and scatter failed in retry", zap.Stringer("uuid", engine.UUID),
 			log.ShortError(err), zap.Int("retry", i))
+		select {
+		case <-time.After(backOffTime):
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+		backOffTime *= 2
+		if backOffTime > maxbackoffTime {
+			backOffTime = maxbackoffTime
+		}
 	}
 	logger.End(zap.ErrorLevel, err)
 	if err != nil {
