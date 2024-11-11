@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
+	"github.com/pingcap/tidb/util/cmp"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/set"
 	"go.uber.org/zap"
@@ -586,8 +587,8 @@ func newStmtFiles(ctx context.Context, timeRanges []*StmtTimeRange) (*stmtFiles,
 			return nil, err
 		}
 	}
-	slices.SortFunc(files, func(i, j *stmtFile) bool {
-		return i.begin < j.begin
+	slices.SortFunc(files, func(i, j *stmtFile) int {
+		return cmp.Compare(i.begin, j.begin)
 	})
 	return &stmtFiles{files: files}, nil
 }
