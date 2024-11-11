@@ -705,6 +705,9 @@ func (w *JobContext) setDDLLabelForDiagnosis(jobType model.ActionType) {
 }
 
 func (w *worker) HandleJobDone(d *ddlCtx, job *model.Job, t *meta.Meta) error {
+	if err := w.checkBeforeCommit(); err != nil {
+		return err
+	}
 	err := w.finishDDLJob(t, job)
 	if err != nil {
 		w.sess.Rollback()
@@ -799,6 +802,11 @@ func (w *worker) HandleDDLJobTable(d *ddlCtx, job *model.Job) (int64, error) {
 		return 0, err
 	}
 
+	if err = w.checkBeforeCommit(); err != nil {
+		d.unlockSchemaVersion(job.ID)
+		return 0, err
+	}
+
 	if runJobErr != nil && !job.IsRollingback() && !job.IsRollbackDone() {
 		// If the running job meets an error
 		// and the job state is rolling back, it means that we have already handled this error.
@@ -850,6 +858,21 @@ func (w *worker) HandleDDLJobTable(d *ddlCtx, job *model.Job) (int64, error) {
 	}
 
 	return schemaVer, nil
+}
+
+func (w *worker) checkBeforeCommit() error {
+	if !w.ddlCtx.isOwner() {
+		// Since this TiDB instance is not a DDL owner anymore,
+		// it should not commit any transaction.
+		w.sess.Rollback()
+		return dbterror.ErrNotOwner
+	}
+
+	if err := w.ctx.Err(); err != nil {
+		// The worker context is canceled, it should not commit any transaction.
+		return err
+	}
+	return nil
 }
 
 func (w *JobContext) getResourceGroupTaggerForTopSQL() tikvrpc.ResourceGroupTagger {
