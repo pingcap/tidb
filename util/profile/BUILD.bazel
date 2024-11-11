@@ -10,6 +10,7 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//types",
+        "//util/cmp",
         "//util/cpuprofile",
         "//util/texttree",
         "@com_github_google_pprof//profile",

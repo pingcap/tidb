@@ -22,6 +22,7 @@ import (
 	"unsafe"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
@@ -36,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/types"
 	driver "github.com/pingcap/tidb/types/parser_driver"
+	"github.com/pingcap/tidb/util/cmp"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/hint"
@@ -113,8 +115,8 @@ func GeneratePlanCacheStmtWithAST(ctx context.Context, sctx sessionctx.Context, 
 	// The parameter markers are appended in visiting order, which may not
 	// be the same as the position order in the query string. We need to
 	// sort it by position.
-	slices.SortFunc(extractor.markers, func(i, j ast.ParamMarkerExpr) bool {
-		return i.(*driver.ParamMarkerExpr).Offset < j.(*driver.ParamMarkerExpr).Offset
+	slices.SortFunc(extractor.markers, func(i, j ast.ParamMarkerExpr) int {
+		return cmp.Compare(i.(*driver.ParamMarkerExpr).Offset, j.(*driver.ParamMarkerExpr).Offset)
 	})
 	ParamCount := len(extractor.markers)
 	for i := 0; i < ParamCount; i++ {
@@ -223,12 +225,20 @@ type planCacheKey struct {
 	TiDBSuperReadOnly        bool
 	ExprBlacklistTS          int64 // expr-pushdown-blacklist can affect query optimization, so we need to consider it in plan cache.
 
+	// status related to Txn
+	inTxn          bool
+	autoCommit     bool
+	pessAutoCommit bool
+
 	memoryUsage int64 // Do not include in hash
 	hash        []byte
 }
 
 // Hash implements Key interface.
 func (key *planCacheKey) Hash() []byte {
+	if key == nil {
+		return nil
+	}
 	if len(key.hash) == 0 {
 		if key.hash == nil {
 			key.hash = make([]byte, 0, len(key.stmtText)*2)
@@ -255,8 +265,18 @@ func (key *planCacheKey) Hash() []byte {
 		key.hash = append(key.hash, hack.Slice(strconv.FormatBool(key.restrictedReadOnly))...)
 		key.hash = append(key.hash, hack.Slice(strconv.FormatBool(key.TiDBSuperReadOnly))...)
 		key.hash = codec.EncodeInt(key.hash, key.ExprBlacklistTS)
+		key.hash = append(key.hash, bool2Byte(key.inTxn))
+		key.hash = append(key.hash, bool2Byte(key.autoCommit))
+		key.hash = append(key.hash, bool2Byte(key.pessAutoCommit))
 	}
 	return key.hash
+}
+
+func bool2Byte(flag bool) byte {
+	if flag {
+		return '1'
+	}
+	return '0'
 }
 
 const emptyPlanCacheKeySize = int64(unsafe.Sizeof(planCacheKey{}))
@@ -325,6 +345,9 @@ func NewPlanCacheKey(sessionVars *variable.SessionVars, stmtText, stmtDB string,
 		restrictedReadOnly:       variable.RestrictedReadOnly.Load(),
 		TiDBSuperReadOnly:        variable.VarTiDBSuperReadOnly.Load(),
 		ExprBlacklistTS:          exprBlacklistTS,
+		inTxn:                    sessionVars.InTxn(),
+		autoCommit:               sessionVars.IsAutocommit(),
+		pessAutoCommit:           config.GetGlobalConfig().PessimisticTxn.PessimisticAutoCommit.Load(),
 	}
 	for k, v := range sessionVars.IsolationReadEngines {
 		key.isolationReadEngines[k] = v
@@ -466,6 +489,9 @@ type PlanCacheStmt struct {
 	//  NormalizedSQL4PC: select * from `test` . `t` where `a` > ? and `b` < ? --> schema name is added,
 	//  StmtText: select * from t where a>1 and b <? --> just format the original query;
 	StmtText string
+
+	// the cache key for point-get statement, have to check whether the cache key changes before reusing this plan for safety.
+	planCacheKey kvcache.Key
 }
 
 // GetPreparedStmt extract the prepared statement from the execute statement.
