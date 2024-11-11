@@ -351,10 +351,9 @@ type InsertGeneratedColumns struct {
 	OnDuplicates []*expression.Assignment
 }
 
-// Copy clones InsertGeneratedColumns.
-func (i InsertGeneratedColumns) Copy() InsertGeneratedColumns {
+func (i InsertGeneratedColumns) cloneForPlanCache() InsertGeneratedColumns {
 	return InsertGeneratedColumns{
-		Exprs:        util.CloneExpressions(i.Exprs),
+		Exprs:        cloneExpressionsForPlanCache(i.Exprs, nil),
 		OnDuplicates: util.CloneAssignments(i.OnDuplicates),
 	}
 }
@@ -517,6 +516,8 @@ type Delete struct {
 
 	FKChecks   map[int64][]*FKCheck   `plan-cache-clone:"must-nil"`
 	FKCascades map[int64][]*FKCascade `plan-cache-clone:"must-nil"`
+
+	IgnoreErr bool
 }
 
 // MemoryUsage return the memory usage of Delete
@@ -560,6 +561,7 @@ type AnalyzeColumnsTask struct {
 	HandleCols       util.HandleCols
 	CommonHandleInfo *model.IndexInfo
 	ColsInfo         []*model.ColumnInfo
+	SkipColsInfo     []*model.ColumnInfo
 	TblInfo          *model.TableInfo
 	Indexes          []*model.IndexInfo
 	AnalyzeInfo

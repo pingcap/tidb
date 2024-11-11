@@ -430,23 +430,6 @@ type PlanCacheValue struct {
 	stmtHints     *hint.StmtHints    // read-only, hints which set session variables
 }
 
-// CloneForInstancePlanCache clones a PlanCacheValue for instance plan cache.
-// Since PlanCacheValue.Plan is not read-only, to solve the concurrency problem when sharing the same PlanCacheValue
-// across multiple sessions, we need to clone the PlanCacheValue for each session.
-func (v *PlanCacheValue) CloneForInstancePlanCache(ctx context.Context, newCtx base.PlanContext) (*PlanCacheValue, bool) {
-	clonedPlan, ok := v.Plan.CloneForPlanCache(newCtx)
-	if !ok {
-		return nil, false
-	}
-	if intest.InTest && ctx.Value(PlanCacheKeyTestClone{}) != nil {
-		ctx.Value(PlanCacheKeyTestClone{}).(func(plan, cloned base.Plan))(v.Plan, clonedPlan)
-	}
-	cloned := new(PlanCacheValue)
-	*cloned = *v
-	cloned.Plan = clonedPlan
-	return cloned, true
-}
-
 // unKnownMemoryUsage represent the memory usage of uncounted structure, maybe need implement later
 // 100 KiB is approximate consumption of a plan from our internal tests
 const unKnownMemoryUsage = int64(50 * size.KB)
@@ -540,6 +523,11 @@ type PointGetExecutorCache struct {
 	// Notice that we should only cache the PointGetExecutor that have a snapshot with MaxTS in it.
 	// If the current plan is not PointGet or does not use MaxTS optimization, this value should be nil here.
 	Executor any
+
+	// FastPlan is only used for instance plan cache.
+	// To ensure thread-safe, we have to clone each plan before reusing if using instance plan cache.
+	// To reduce the memory allocation and increase performance, we cache the FastPlan here.
+	FastPlan *PointGetPlan
 }
 
 // PlanCacheStmt store prepared ast from PrepareExec and other related fields

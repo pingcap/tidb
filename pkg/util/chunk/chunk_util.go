@@ -49,7 +49,7 @@ func CopySelectedJoinRowsDirect(src *Chunk, selected []bool, dst *Chunk) (bool, 
 	for j, srcCol := range src.columns {
 		dstCol := dst.columns[j]
 		if srcCol.isFixed() {
-			for i := 0; i < len(selected); i++ {
+			for i := range selected {
 				if !selected[i] {
 					continue
 				}
@@ -61,7 +61,7 @@ func CopySelectedJoinRowsDirect(src *Chunk, selected []bool, dst *Chunk) (bool, 
 				dstCol.data = append(dstCol.data, srcCol.data[offset:offset+elemLen]...)
 			}
 		} else {
-			for i := 0; i < len(selected); i++ {
+			for i := range selected {
 				if !selected[i] {
 					continue
 				}
@@ -180,7 +180,7 @@ func copySameOuterRows(outerColOffset, outerColLen int, src *Chunk, numRows int,
 			dstCol.data = append(dstCol.data, srcCol.data[start:end]...)
 			offsets := dstCol.offsets
 			elemLen := srcCol.offsets[row.idx+1] - srcCol.offsets[row.idx]
-			for j := 0; j < numRows; j++ {
+			for range numRows {
 				offsets = append(offsets, offsets[len(offsets)-1]+elemLen)
 			}
 			dstCol.offsets = offsets

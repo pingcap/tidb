@@ -974,6 +974,7 @@ func (b *executorBuilder) buildInsert(v *plannercore.Insert) exec.Executor {
 		hasRefCols:                v.NeedFillDefaultValue,
 		SelectExec:                selectExec,
 		rowLen:                    v.RowLen,
+		ignoreErr:                 v.IgnoreErr,
 	}
 	err := ivs.initInsertColumns()
 	if err != nil {
@@ -995,7 +996,6 @@ func (b *executorBuilder) buildInsert(v *plannercore.Insert) exec.Executor {
 	insert := &InsertExec{
 		InsertValues: ivs,
 		OnDuplicate:  append(v.OnDuplicate, v.GenCols.OnDuplicates...),
-		IgnoreErr:    v.IgnoreErr,
 	}
 	return insert
 }
@@ -2702,6 +2702,7 @@ func (b *executorBuilder) buildDelete(v *plannercore.Delete) exec.Executor {
 		tblID2Table:    tblID2table,
 		IsMultiTable:   v.IsMultiTable,
 		tblColPosInfos: v.TblColPosInfos,
+		ignoreErr:      v.IgnoreErr,
 	}
 	deleteExec.fkChecks, b.err = buildTblID2FKCheckExecs(b.ctx, tblID2table, v.FKChecks)
 	if b.err != nil {
@@ -3060,13 +3061,23 @@ func (b *executorBuilder) buildAnalyze(v *plannercore.Analyze) exec.Executor {
 	}
 	exprCtx := b.ctx.GetExprCtx()
 	for _, task := range v.ColTasks {
+		// ColumnInfos2ColumnsAndNames will use the `colInfos` to find the unique id for the column,
+		// so we need to make sure all the columns pass into it.
 		columns, _, err := expression.ColumnInfos2ColumnsAndNames(
 			exprCtx,
 			pmodel.NewCIStr(task.AnalyzeInfo.DBName),
 			task.TblInfo.Name,
-			task.ColsInfo,
+			append(task.ColsInfo, task.SkipColsInfo...),
 			task.TblInfo,
 		)
+		columns = slices.DeleteFunc(columns, func(expr *expression.Column) bool {
+			for _, col := range task.SkipColsInfo {
+				if col.ID == expr.ID {
+					return true
+				}
+			}
+			return false
+		})
 		if err != nil {
 			b.err = err
 			return nil

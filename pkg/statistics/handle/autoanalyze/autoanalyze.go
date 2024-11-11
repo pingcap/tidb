@@ -138,6 +138,16 @@ func (sa *statsAnalyze) CleanupCorruptedAnalyzeJobsOnDeadInstances() error {
 	}, statsutil.FlagWrapTxn)
 }
 
+// OnBecomeOwner is used to handle the event when the current TiDB instance becomes the stats owner.
+func (sa *statsAnalyze) OnBecomeOwner() {
+	sa.refresher.OnBecomeOwner()
+}
+
+// OnRetireOwner is used to handle the event when the current TiDB instance retires from being the stats owner.
+func (sa *statsAnalyze) OnRetireOwner() {
+	sa.refresher.OnRetireOwner()
+}
+
 // SelectAnalyzeJobsOnCurrentInstanceSQL is the SQL to select the analyze jobs whose
 // state is `pending` or `running` and the update time is more than 10 minutes ago
 // and the instance is current instance.
@@ -321,9 +331,9 @@ func (sa *statsAnalyze) handleAutoAnalyze(sctx sessionctx.Context) bool {
 		// During the test, we need to fetch all DML changes before analyzing the highest priority tables.
 		if intest.InTest {
 			sa.refresher.ProcessDMLChangesForTest()
-			sa.refresher.RequeueFailedJobsForTest()
+			sa.refresher.RequeueMustRetryJobsForTest()
 		}
-		analyzed := sa.refresher.AnalyzeHighestPriorityTables()
+		analyzed := sa.refresher.AnalyzeHighestPriorityTables(sctx)
 		// During the test, we need to wait for the auto analyze job to be finished.
 		if intest.InTest {
 			sa.refresher.WaitAutoAnalyzeFinishedForTest()

@@ -1001,6 +1001,24 @@ func TestTiFlashPartitionTableShuffledHashAggregation(t *testing.T) {
 	}
 }
 
+func TestIssue57149(t *testing.T) {
+	store := testkit.CreateMockStore(t, withMockTiFlash(1))
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t1 (pk int  NOT NULL PRIMARY KEY AUTO_INCREMENT, i INT, j JSON)")
+	tk.MustExec("alter table test.t1 set tiflash replica 1")
+	tb := external.GetTableByName(t, tk, "test", "t1")
+	err := domain.GetDomain(tk.Session()).DDLExecutor().UpdateTableReplicaInfo(tk.Session(), tb.Meta().ID, true)
+	require.NoError(t, err)
+	tk.MustExec("INSERT INTO t1(i, j) VALUES (1, '{\"a\": 2}')")
+	tk.MustExec("analyze table test.t1")
+	tk.MustExec("set @@tidb_isolation_read_engines = 'tiflash'")
+	tk.MustExec("set @@tidb_enforce_mpp = 1")
+	result := tk.MustQuery("SELECT i, (j = (SELECT j FROM t1 WHERE j = CAST('null' AS JSON))) AS c11, (j = (SELECT j FROM t1 WHERE 1<>1)) AS c13 from t1 ORDER BY i limit 1")
+	require.Len(t, result.Rows(), 1)
+}
+
 func TestTiFlashPartitionTableBroadcastJoin(t *testing.T) {
 	store := testkit.CreateMockStore(t, withMockTiFlash(2))
 	tk := testkit.NewTestKit(t, store)

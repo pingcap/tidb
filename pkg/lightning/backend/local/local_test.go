@@ -797,7 +797,7 @@ type mockImportClientFactory struct {
 	apiInvokeRecorder map[string][]uint64
 }
 
-func (f *mockImportClientFactory) Create(_ context.Context, storeID uint64) (sst.ImportSSTClient, error) {
+func (f *mockImportClientFactory) create(_ context.Context, storeID uint64) (sst.ImportSSTClient, error) {
 	for _, store := range f.stores {
 		if store.Id == storeID {
 			return f.createClientFn(store), nil
@@ -806,7 +806,7 @@ func (f *mockImportClientFactory) Create(_ context.Context, storeID uint64) (sst
 	return nil, fmt.Errorf("store %d not found", storeID)
 }
 
-func (f *mockImportClientFactory) Close() {}
+func (f *mockImportClientFactory) close() {}
 
 func TestMultiIngest(t *testing.T) {
 	allStores := []*metapb.Store{

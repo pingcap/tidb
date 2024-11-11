@@ -28,7 +28,6 @@ import (
 	"github.com/pingcap/tidb/br/pkg/checkpoint"
 	"github.com/pingcap/tidb/br/pkg/glue"
 	"github.com/pingcap/tidb/br/pkg/logutil"
-	snapsplit "github.com/pingcap/tidb/br/pkg/restore/internal/snap_split"
 	"github.com/pingcap/tidb/br/pkg/restore/split"
 	restoreutils "github.com/pingcap/tidb/br/pkg/restore/utils"
 	"github.com/pingcap/tidb/br/pkg/summary"
@@ -341,7 +340,7 @@ func (rc *SnapClient) SplitPoints(
 		splitClientOpts = append(splitClientOpts, split.WithRawKV())
 	}
 
-	splitter := snapsplit.NewRegionSplitter(split.NewClient(
+	splitter := split.NewRegionSplitter(split.NewClient(
 		rc.pdClient,
 		rc.pdHTTPClient,
 		rc.tlsConf,
@@ -350,7 +349,7 @@ func (rc *SnapClient) SplitPoints(
 		splitClientOpts...,
 	))
 
-	return splitter.ExecuteSplit(ctx, sortedSplitKeys)
+	return splitter.ExecuteSortedKeys(ctx, sortedSplitKeys)
 }
 
 func getFileRangeKey(f string) string {

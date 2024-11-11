@@ -73,7 +73,8 @@ const (
 	ddlSchemaVersionKeyLock = "/tidb/ddl/schema_version_lock"
 	// addingDDLJobPrefix is the path prefix used to record the newly added DDL job, and it's saved to etcd.
 	addingDDLJobPrefix = "/tidb/ddl/add_ddl_job_"
-	ddlPrompt          = "ddl"
+	// Prompt is the prompt for ddl owner manager.
+	Prompt = "ddl"
 
 	batchAddingJobs = 100
 
@@ -91,6 +92,20 @@ const (
 var (
 	jobV2FirstVer        = *semver.New("8.4.0")
 	detectJobVerInterval = 10 * time.Second
+)
+
+// StartMode is an enum type for the start mode of the DDL.
+type StartMode string
+
+const (
+	// Normal mode, cluster is in normal state.
+	Normal StartMode = "normal"
+	// Bootstrap mode, cluster is during bootstrap.
+	Bootstrap StartMode = "bootstrap"
+	// Upgrade mode, cluster is during upgrade, we will force current node to be
+	// the DDL owner, to make sure all upgrade related DDLs are run on new version
+	// TiDB instance.
+	Upgrade StartMode = "upgrade"
 )
 
 // OnExist specifies what to do when a new object has a name collision.
@@ -161,7 +176,7 @@ var (
 type DDL interface {
 	// Start campaigns the owner and starts workers.
 	// ctxPool is used for the worker's delRangeManager and creates sessions.
-	Start(ctxPool *pools.ResourcePool) error
+	Start(startMode StartMode, ctxPool *pools.ResourcePool) error
 	// Stats returns the DDL statistics.
 	Stats(vars *variable.SessionVars) (map[string]any, error)
 	// GetScope gets the status variables scope.
@@ -587,29 +602,27 @@ func asyncNotifyEvent(jobCtx *jobContext, e *notifier.SchemaChangeEvent, job *mo
 		logutil.DDLLogger().Warn("fail to notify DDL event", zap.Stringer("event", e))
 	}
 
-	if intest.InTest && jobCtx.eventPublishStore != nil {
-		failpoint.Inject("asyncNotifyEventError", func() {
-			failpoint.Return(errors.New("mock publish event error"))
-		})
-		if subJobID == noSubJob && job.MultiSchemaInfo != nil {
-			subJobID = int64(job.MultiSchemaInfo.Seq)
-		}
-		err := notifier.PubSchemeChangeToStore(
-			jobCtx.stepCtx,
-			sctx,
-			job.ID,
-			subJobID,
-			e,
-			jobCtx.eventPublishStore,
-		)
-		if err != nil {
-			logutil.DDLLogger().Error("Error publish schema change event",
-				zap.Int64("jobID", job.ID),
-				zap.Int64("subJobID", subJobID),
-				zap.String("event", e.String()), zap.Error(err))
-			return err
-		}
-		return nil
+	intest.Assert(jobCtx.eventPublishStore != nil, "eventPublishStore should not be nil")
+	failpoint.Inject("asyncNotifyEventError", func() {
+		failpoint.Return(errors.New("mock publish event error"))
+	})
+	if subJobID == noSubJob && job.MultiSchemaInfo != nil {
+		subJobID = int64(job.MultiSchemaInfo.Seq)
+	}
+	err := notifier.PubSchemeChangeToStore(
+		jobCtx.stepCtx,
+		sctx,
+		job.ID,
+		subJobID,
+		e,
+		jobCtx.eventPublishStore,
+	)
+	if err != nil {
+		logutil.DDLLogger().Error("Error publish schema change event",
+			zap.Int64("jobID", job.ID),
+			zap.Int64("subJobID", subJobID),
+			zap.String("event", e.String()), zap.Error(err))
+		return err
 	}
 	return nil
 }
@@ -626,19 +639,21 @@ func newDDL(ctx context.Context, options ...Option) (*ddl, *executor) {
 		o(opt)
 	}
 
-	id := uuid.New().String()
+	var id string
 	var manager owner.Manager
 	var schemaVerSyncer schemaver.Syncer
 	var serverStateSyncer serverstate.Syncer
 	var deadLockCkr util.DeadTableLockChecker
 	if etcdCli := opt.EtcdCli; etcdCli == nil {
+		id = uuid.New().String()
 		// The etcdCli is nil if the store is localstore which is only used for testing.
 		// So we use mockOwnerManager and memSyncer.
 		manager = owner.NewMockManager(ctx, id, opt.Store, DDLOwnerKey)
 		schemaVerSyncer = schemaver.NewMemSyncer()
 		serverStateSyncer = serverstate.NewMemSyncer()
 	} else {
-		manager = owner.NewOwnerManager(ctx, etcdCli, ddlPrompt, id, DDLOwnerKey)
+		id = globalOwnerManager.ID()
+		manager = globalOwnerManager.OwnerManager()
 		schemaVerSyncer = schemaver.NewEtcdSyncer(etcdCli, id)
 		serverStateSyncer = serverstate.NewEtcdSyncer(etcdCli, util.ServerGlobalState)
 		deadLockCkr = util.NewDeadTableLockChecker(etcdCli)
@@ -748,10 +763,21 @@ func (d *ddl) newDeleteRangeManager(mock bool) delRangeManager {
 }
 
 // Start implements DDL.Start interface.
-func (d *ddl) Start(ctxPool *pools.ResourcePool) error {
+func (d *ddl) Start(startMode StartMode, ctxPool *pools.ResourcePool) error {
 	d.detectAndUpdateJobVersion()
+	campaignOwner := config.GetGlobalConfig().Instance.TiDBEnableDDL.Load()
+	if startMode == Upgrade {
+		if !campaignOwner {
+			return errors.New("DDL must be enabled when upgrading")
+		}
+
+		logutil.DDLLogger().Info("DDL is in upgrade mode, force to be owner")
+		if err := d.ownerManager.ForceToBeOwner(d.ctx); err != nil {
+			return errors.Trace(err)
+		}
+	}
 	logutil.DDLLogger().Info("start DDL", zap.String("ID", d.uuid),
-		zap.Bool("runWorker", config.GetGlobalConfig().Instance.TiDBEnableDDL.Load()),
+		zap.Bool("runWorker", campaignOwner),
 		zap.Stringer("jobVersion", model.GetJobVerInUse()))
 
 	d.sessPool = sess.NewSessionPool(ctxPool)
@@ -786,7 +812,7 @@ func (d *ddl) Start(ctxPool *pools.ResourcePool) error {
 
 	// If tidb_enable_ddl is true, we need campaign owner and do DDL jobs. Besides, we also can do backfill jobs.
 	// Otherwise, we needn't do that.
-	if config.GetGlobalConfig().Instance.TiDBEnableDDL.Load() {
+	if campaignOwner {
 		if err := d.EnableDDL(); err != nil {
 			return err
 		}
@@ -980,7 +1006,10 @@ func (d *ddl) close() {
 	startTime := time.Now()
 	d.cancel()
 	d.wg.Wait()
-	d.ownerManager.Cancel()
+	// when run with real-tikv, the lifecycle of ownerManager is managed by globalOwnerManager,
+	// when run with uni-store BreakCampaignLoop is same as Close.
+	// hope we can unify it after refactor to let some components only start once.
+	d.ownerManager.BreakCampaignLoop()
 	d.schemaVerSyncer.Close()
 
 	// d.delRangeMgr using sessions from d.sessPool.

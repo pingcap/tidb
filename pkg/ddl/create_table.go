@@ -205,13 +205,20 @@ func (w *worker) createTableWithForeignKeys(jobCtx *jobContext, job *model.Job, 
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
-		tbInfo.State = model.StateWriteOnly
+		tbInfo.State = model.StateDeleteOnly
 		ver, err = updateVersionAndTableInfo(jobCtx, job, tbInfo, true)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
-		job.SchemaState = model.StateWriteOnly
-	case model.StateWriteOnly:
+		job.SchemaState = model.StateDeleteOnly
+	// The `tblInfo.State` should be transformed from `None/Public` to `DeleteOnly`. In the `DeleteOnly` state, the table cannot be used explicitly
+	// in any SQL statement, but if this table has a `ON DELETE CASCADE` or `ON UPDATE CASCADE`, it'll still be deleted/updated automatically to keep
+	// consistency.
+	//
+	// This branch handles both `StateDeleteOnly` and `StateWriteOnly` to avoid compatibility issues. If the TiDB is upgraded from an old version,
+	// there may be a DDL job in the `StateWriteOnly` state. Now, we handle it in the same way as the `StateDeleteOnly` state. When we believe it's
+	// impossible to upgrade from a too old version to the current version, we can remove the `StateWriteOnly` branch.
+	case model.StateDeleteOnly, model.StateWriteOnly:
 		tbInfo.State = model.StatePublic
 		ver, err = updateVersionAndTableInfo(jobCtx, job, tbInfo, true)
 		if err != nil {
