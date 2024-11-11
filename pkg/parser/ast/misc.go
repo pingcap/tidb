@@ -2571,7 +2571,7 @@ func (l *AlterJobOption) Restore(ctx *format.RestoreCtx) error {
 	} else {
 		ctx.WritePlain(l.Name + " = ")
 		if err := l.Value.Restore(ctx); err != nil {
-			return errors.Annotatef(err, "An error occurred while restore AlterJobOpt")
+			return errors.Annotatef(err, "An error occurred while restore AlterJobOption")
 		}
 	}
 	return nil
@@ -2767,7 +2767,7 @@ func (n *AdminStmt) Restore(ctx *format.RestoreCtx) error {
 			}
 			ctx.WritePlain(" ")
 			if err := option.Restore(ctx); err != nil {
-				return errors.Annotatef(err, "An error occurred while restore AlterJobStmt.Options")
+				return errors.Annotatef(err, "An error occurred while restore AdminStmt.AlterJobOptions[%d]", i)
 			}
 		}
 	default:
