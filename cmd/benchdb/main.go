@@ -25,6 +25,7 @@ import (
 
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/session"
 	sessiontypes "github.com/pingcap/tidb/pkg/session/types"
@@ -97,11 +98,16 @@ func newBenchDB() *benchDB {
 	// Create TiKV store and disable GC as we will trigger GC manually.
 	store, err := store.New("tikv://" + *addr + "?disableGC=true")
 	terror.MustNil(err)
+	// maybe close below components, but it's for test anyway.
+	ctx := context.Background()
+	config.GetGlobalConfig().Store = config.StoreTypeTiKV
+	err = ddl.StartOwnerManager(ctx, store)
+	terror.MustNil(err)
 	_, err = session.BootstrapSession(store)
 	terror.MustNil(err)
 	se, err := session.CreateSession(store)
 	terror.MustNil(err)
-	_, err = se.ExecuteInternal(context.Background(), "use test")
+	_, err = se.ExecuteInternal(ctx, "use test")
 	terror.MustNil(err)
 
 	return &benchDB{
