@@ -2470,6 +2470,9 @@ func userExistsInternal(ctx context.Context, sqlExecutor sqlexec.SQLExecutor, na
 		}
 	}
 	if rows == 1 {
+		// rows can only be 0 or 1
+		// When user + host does not exist, the rows is 0
+		// When user + host exists, the rows is 1 because user + host is primary key of the table.
 		row := req.GetRow(0)
 		authPlugin = row.GetString(colIdx)
 	}

@@ -2846,18 +2846,9 @@ func (do *Domain) NotifyUpdatePrivilege(userList []string) error {
 	// Because we need to tell other TiDB instances to update privilege data, say, we're changing the
 	// password using a special TiDB instance and want the new password to take effect.
 	if do.etcdClient != nil {
-		var notifyList strings.Builder
-		for _, user := range userList {
-			if notifyList.Len() == 0 {
-				notifyList.WriteString(user)
-			} else {
-				notifyList.WriteString(",")
-				notifyList.WriteString(user)
-			}
-		}
-
+		notifyList := strings.Join(userList, ", ")
 		row := do.etcdClient.KV
-		_, err := row.Put(context.Background(), privilegeKey, notifyList.String())
+		_, err := row.Put(do.ctx, privilegeKey, notifyList)
 		if err != nil {
 			logutil.BgLogger().Warn("notify update privilege failed", zap.Error(err))
 		}
