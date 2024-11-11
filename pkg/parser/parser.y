@@ -1093,8 +1093,8 @@ import (
 	AdminStmtLimitOpt                      "Admin show ddl jobs limit option"
 	AllOrPartitionNameList                 "All or partition name list"
 	AlgorithmClause                        "Alter table algorithm"
-	AlterJobOptionList 				       "Alter job option list"
-	AlterJobOption 				           "Alter job option"
+	AlterJobOptionList                     "Alter job option list"
+	AlterJobOption                         "Alter job option"
 	AlterTableSpecSingleOpt                "Alter table single option"
 	AlterTableSpec                         "Alter table specification"
 	AlterTableSpecList                     "Alter table specification list"
@@ -2537,8 +2537,8 @@ AlterTableSpec:
 |	"DROP" "FOREIGN" "KEY" Symbol
 	{
 		$$ = &ast.AlterTableSpec{
-			Tp:       ast.AlterTableDropForeignKey,
-			Name:     $4,
+			Tp:   ast.AlterTableDropForeignKey,
+			Name: $4,
 		}
 	}
 |	"ORDER" "BY" AlterOrderList %prec lowerThenOrder
@@ -11376,18 +11376,18 @@ AdminStmt:
 |	"ADMIN" "ALTER" "DDL" "JOBS" Int64Num AlterJobOptionList
 	{
 		$$ = &ast.AdminStmt{
-			Tp:        ast.AdminAlterDDLJob,
-			JobNumber: $5.(int64),
+			Tp:              ast.AdminAlterDDLJob,
+			JobNumber:       $5.(int64),
 			AlterJobOptions: $6.([]*ast.AlterJobOption),
 		}
 	}
 
 AlterJobOptionList:
- 	AlterJobOption
+	AlterJobOption
 	{
 		$$ = []*ast.AlterJobOption{$1.(*ast.AlterJobOption)}
 	}
-| AlterJobOptionList ',' AlterJobOption
+|	AlterJobOptionList ',' AlterJobOption
 	{
 		$$ = append($1.([]*ast.AlterJobOption), $3.(*ast.AlterJobOption))
 	}
@@ -11396,7 +11396,7 @@ AlterJobOption:
 	identifier "=" SignedLiteral
 	{
 		$$ = &ast.AlterJobOption{
-			Name: strings.ToLower($1),
+			Name:  strings.ToLower($1),
 			Value: $3.(ast.ExprNode),
 		}
 	}
