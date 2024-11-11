@@ -18,24 +18,12 @@ import (
 	"crypto/tls"
 	"sync"
 
-<<<<<<< HEAD:testkit/mocksessionmanager.go
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/session/txninfo"
-	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util"
-=======
-	"github.com/pingcap/tidb/pkg/domain"
-	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/auth"
-	"github.com/pingcap/tidb/pkg/planner/core"
-	"github.com/pingcap/tidb/pkg/session"
-	"github.com/pingcap/tidb/pkg/session/txninfo"
-	sessiontypes "github.com/pingcap/tidb/pkg/session/types"
-	"github.com/pingcap/tidb/pkg/util"
->>>>>>> 865213c94e2 (session: make `TxnInfo()` return even if process info is empty (#57044)):pkg/testkit/mocksessionmanager.go
 )
 
 // MockSessionManager is a mocked session manager which is used for test.
@@ -154,14 +142,6 @@ func (msm *MockSessionManager) GetInternalSessionStartTSList() []uint64 {
 	defer msm.mu.Unlock()
 	ret := make([]uint64, 0, len(msm.internalSessions))
 	for internalSess := range msm.internalSessions {
-<<<<<<< HEAD:testkit/mocksessionmanager.go
-		se := internalSess.(sessionctx.Context)
-		sessVars := se.GetSessionVars()
-		sessVars.TxnCtxMu.Lock()
-		startTS := sessVars.TxnCtx.StartTS
-		sessVars.TxnCtxMu.Unlock()
-		ret = append(ret, startTS)
-=======
 		// Ref the implementation of `GetInternalSessionStartTSList` on the real session manager. The `TxnInfo` is more
 		// accurate, because if a session is pending, the `StartTS` in `sessVars.TxnCtx` will not be updated. For example,
 		// if there is not DDL for a long time, the minimal internal session start ts will not have any progress.
@@ -172,7 +152,6 @@ func (msm *MockSessionManager) GetInternalSessionStartTSList() []uint64 {
 			}
 			continue
 		}
->>>>>>> 865213c94e2 (session: make `TxnInfo()` return even if process info is empty (#57044)):pkg/testkit/mocksessionmanager.go
 	}
 	return ret
 }

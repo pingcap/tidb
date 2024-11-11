@@ -552,17 +552,8 @@ func (s *session) TxnInfo() *txninfo.TxnInfo {
 		CurrentDB:       processInfo.DB,
 		RelatedTableIDs: make(map[int64]struct{}),
 	}
-<<<<<<< HEAD:session/session.go
-	txnInfo.ConnectionID = processInfo.ID
-	txnInfo.Username = processInfo.User
-	txnInfo.CurrentDB = processInfo.DB
-	txnInfo.RelatedTableIDs = make(map[int64]struct{})
 	s.GetSessionVars().GetRelatedTableForMDL().Range(func(key, value interface{}) bool {
-		txnInfo.RelatedTableIDs[key.(int64)] = struct{}{}
-=======
-	s.GetSessionVars().GetRelatedTableForMDL().Range(func(key, _ any) bool {
 		txnInfo.ProcessInfo.RelatedTableIDs[key.(int64)] = struct{}{}
->>>>>>> 865213c94e2 (session: make `TxnInfo()` return even if process info is empty (#57044)):pkg/session/session.go
 		return true
 	})
 	return &txnInfo

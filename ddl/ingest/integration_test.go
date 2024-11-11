@@ -164,6 +164,36 @@ func TestAddIndexIngestClientError(t *testing.T) {
 	tk.MustGetErrCode("create index i1 on t1((cast(f1 as unsigned array)));", errno.ErrInvalidJSONValueForFuncIndex)
 }
 
+func TestAddIndexSetInternalSessions(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test;")
+	defer injectMockBackendMgr(t, store)()
+
+	tk.MustExec("set global tidb_enable_dist_task = 0;")
+	tk.MustExec("set @@tidb_ddl_reorg_worker_cnt = 1;")
+	tk.MustExec("create table t (a int);")
+	tk.MustExec("insert into t values (1);")
+	expectInternalTS := []uint64{}
+	actualInternalTS := []uint64{}
+	err := failpoint.EnableCall("github.com/pingcap/tidb/ddl/wrapInBeginRollbackStartTS", func(startTS uint64) {
+		expectInternalTS = append(expectInternalTS, startTS)
+	})
+	require.NoError(t, err)
+	defer failpoint.Disable("github.com/pingcap/tidb/ddl/wrapInBeginRollbackStartTS")
+	err = failpoint.EnableCall("github.com/pingcap/tidb/ddl/scanRecordExec", func() {
+		mgr := tk.Session().GetSessionManager()
+		actualInternalTS = mgr.GetInternalSessionStartTSList()
+	})
+	defer failpoint.Disable("github.com/pingcap/tidb/ddl/scanRecordExec")
+	require.NoError(t, err)
+	tk.MustExec("alter table t add index idx(a);")
+	require.Len(t, expectInternalTS, 1)
+	for _, ts := range expectInternalTS {
+		require.Contains(t, actualInternalTS, ts)
+	}
+}
+
 func TestAddIndexCancelOnNoneState(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
