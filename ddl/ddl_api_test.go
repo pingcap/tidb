@@ -15,10 +15,8 @@
 package ddl_test
 
 import (
-	"cmp"
 	"context"
 	"fmt"
-	"slices"
 	"sync"
 	"testing"
 
@@ -33,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/cmp"
 	"github.com/stretchr/testify/require"
+	"golang.org/x/exp/slices"
 	"golang.org/x/sync/errgroup"
 )
 
