@@ -2558,14 +2558,14 @@ type LimitSimple struct {
 	Offset uint64
 }
 
-type AlterJobOpt struct {
+type AlterJobOption struct {
 	// Name is the name of the option, will be converted to lower case during parse.
 	Name string
 	// only literal is allowed, we use ExprNode to support negative number
 	Value ExprNode
 }
 
-func (l *AlterJobOpt) Restore(ctx *format.RestoreCtx) error {
+func (l *AlterJobOption) Restore(ctx *format.RestoreCtx) error {
 	if l.Value == nil {
 		ctx.WritePlain(l.Name)
 	} else {
@@ -2594,7 +2594,7 @@ type AdminStmt struct {
 	StatementScope  StatementScope
 	LimitSimple     LimitSimple
 	BDRRole         BDRRole
-	AlterJobOptions []*AlterJobOpt
+	AlterJobOptions []*AlterJobOption
 }
 
 // Restore implements Node interface.

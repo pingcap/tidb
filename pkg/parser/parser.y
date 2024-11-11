@@ -11378,24 +11378,24 @@ AdminStmt:
 		$$ = &ast.AdminStmt{
 			Tp:        ast.AdminAlterDDLJob,
 			JobNumber: $5.(int64),
-			AlterJobOptions: $6.([]*ast.AlterJobOpt),
+			AlterJobOptions: $6.([]*ast.AlterJobOption),
 		}
 	}
 
 AlterJobOptionList:
  	AlterJobOption
 	{
-		$$ = []*ast.AlterJobOpt{$1.(*ast.AlterJobOpt)}
+		$$ = []*ast.AlterJobOption{$1.(*ast.AlterJobOption)}
 	}
 | AlterJobOptionList ',' AlterJobOption
 	{
-		$$ = append($1.([]*ast.AlterJobOpt), $3.(*ast.AlterJobOpt))
+		$$ = append($1.([]*ast.AlterJobOption), $3.(*ast.AlterJobOption))
 	}
 
 AlterJobOption:
 	identifier "=" SignedLiteral
 	{
-		$$ = &ast.AlterJobOpt{
+		$$ = &ast.AlterJobOption{
 			Name: strings.ToLower($1),
 			Value: $3.(ast.ExprNode),
 		}
