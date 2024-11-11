@@ -16,7 +16,6 @@ package planner
 
 import (
 	"context"
-	"github.com/pingcap/tidb/pkg/planner/cascades/old"
 	"math"
 	"math/rand"
 	"sync"
@@ -31,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/planner/cascades/old"
 	"github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"

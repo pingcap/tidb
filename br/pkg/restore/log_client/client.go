@@ -46,7 +46,6 @@ import (
 	"github.com/pingcap/tidb/br/pkg/restore"
 	"github.com/pingcap/tidb/br/pkg/restore/ingestrec"
 	importclient "github.com/pingcap/tidb/br/pkg/restore/internal/import_client"
-	logsplit "github.com/pingcap/tidb/br/pkg/restore/internal/log_split"
 	"github.com/pingcap/tidb/br/pkg/restore/internal/rawkv"
 	"github.com/pingcap/tidb/br/pkg/restore/split"
 	"github.com/pingcap/tidb/br/pkg/restore/tiflashrec"
@@ -1719,7 +1718,7 @@ func (rc *LogClient) FailpointDoChecksumForLogRestore(
 
 type LogFilesIterWithSplitHelper struct {
 	iter   LogIter
-	helper *logsplit.LogSplitHelper
+	helper *split.LogSplitHelper
 	buffer []*LogDataFileInfo
 	next   int
 }
@@ -1729,7 +1728,7 @@ const SplitFilesBufferSize = 4096
 func NewLogFilesIterWithSplitHelper(iter LogIter, rules map[int64]*restoreutils.RewriteRules, client split.SplitClient, splitSize uint64, splitKeys int64) LogIter {
 	return &LogFilesIterWithSplitHelper{
 		iter:   iter,
-		helper: logsplit.NewLogSplitHelper(rules, client, splitSize, splitKeys),
+		helper: split.NewLogSplitHelper(rules, client, splitSize, splitKeys),
 		buffer: nil,
 		next:   0,
 	}

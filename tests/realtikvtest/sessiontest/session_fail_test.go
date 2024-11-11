@@ -65,10 +65,13 @@ func TestGetTSFailDirtyState(t *testing.T) {
 	ctx := failpoint.WithHook(context.Background(), func(ctx context.Context, fpname string) bool {
 		return fpname == "github.com/pingcap/tidb/pkg/session/mockGetTSFail"
 	})
-	_, err := tk.Session().Execute(ctx, "select * from t")
+	rss, err := tk.Session().Execute(ctx, "select * from t")
 	if config.GetGlobalConfig().Store == "unistore" {
 		require.Error(t, err)
 	} else {
+		for _, rs := range rss {
+			rs.Close()
+		}
 		require.NoError(t, err)
 	}
 

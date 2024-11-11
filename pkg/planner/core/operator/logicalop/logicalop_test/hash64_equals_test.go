@@ -23,10 +23,143 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/cascades/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
+	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/stretchr/testify/require"
 )
+
+func TestLogicalLimitHash64Equals(t *testing.T) {
+	col1 := &expression.Column{
+		ID:      1,
+		Index:   0,
+		RetType: types.NewFieldType(mysql.TypeLonglong),
+	}
+	col2 := &expression.Column{
+		ID:      2,
+		Index:   0,
+		RetType: types.NewFieldType(mysql.TypeLonglong),
+	}
+	limit1 := &logicalop.LogicalLimit{
+		PartitionBy: []property.SortItem{{Col: col1, Desc: true}},
+		Offset:      1,
+		Count:       1,
+	}
+	limit2 := &logicalop.LogicalLimit{
+		PartitionBy: []property.SortItem{{Col: col1, Desc: true}},
+		Offset:      1,
+		Count:       1,
+	}
+	hasher1 := base.NewHashEqualer()
+	hasher2 := base.NewHashEqualer()
+	limit1.Hash64(hasher1)
+	limit2.Hash64(hasher2)
+	require.Equal(t, hasher1.Sum64(), hasher2.Sum64())
+
+	limit2.PartitionBy = []property.SortItem{{Col: col2, Desc: true}}
+	hasher2.Reset()
+	limit2.Hash64(hasher2)
+	require.NotEqual(t, hasher1.Sum64(), hasher2.Sum64())
+
+	limit2.PartitionBy = []property.SortItem{{Col: col1, Desc: true}}
+	limit2.Offset = 2
+	hasher2.Reset()
+	limit2.Hash64(hasher2)
+	require.NotEqual(t, hasher1.Sum64(), hasher2.Sum64())
+
+	limit2.Offset = 1
+	limit2.Count = 2
+	hasher2.Reset()
+	limit2.Hash64(hasher2)
+	require.NotEqual(t, hasher1.Sum64(), hasher2.Sum64())
+
+	limit2.Count = 1
+	hasher2.Reset()
+	limit2.Hash64(hasher2)
+	require.Equal(t, hasher1.Sum64(), hasher2.Sum64())
+}
+
+func TestLogicalExpandHash64Equals(t *testing.T) {
+	col1 := &expression.Column{
+		ID:      1,
+		Index:   0,
+		RetType: types.NewFieldType(mysql.TypeLonglong),
+	}
+	col2 := &expression.Column{
+		ID:      2,
+		Index:   0,
+		RetType: types.NewFieldType(mysql.TypeLonglong),
+	}
+	expand1 := &logicalop.LogicalExpand{
+		DistinctGroupByCol: []*expression.Column{col1},
+		DistinctGbyExprs:   []expression.Expression{col1},
+		DistinctSize:       1,
+		RollupGroupingSets: nil,
+		LevelExprs:         nil,
+		GID:                col1,
+		GPos:               col1,
+	}
+	expand2 := &logicalop.LogicalExpand{
+		DistinctGroupByCol: []*expression.Column{col1},
+		DistinctGbyExprs:   []expression.Expression{col1},
+		DistinctSize:       1,
+		RollupGroupingSets: nil,
+		LevelExprs:         nil,
+		GID:                col1,
+		GPos:               col1,
+	}
+	hasher1 := base.NewHashEqualer()
+	hasher2 := base.NewHashEqualer()
+	expand1.Hash64(hasher1)
+	expand2.Hash64(hasher2)
+	require.Equal(t, hasher1.Sum64(), hasher2.Sum64())
+
+	expand2.DistinctGroupByCol = []*expression.Column{col2}
+	hasher2.Reset()
+	expand2.Hash64(hasher2)
+	require.NotEqual(t, hasher1.Sum64(), hasher2.Sum64())
+
+	expand2.DistinctGroupByCol = []*expression.Column{col1}
+	expand2.DistinctGbyExprs = []expression.Expression{col2}
+	hasher2.Reset()
+	expand2.Hash64(hasher2)
+	require.NotEqual(t, hasher1.Sum64(), hasher2.Sum64())
+
+	expand2.DistinctGbyExprs = []expression.Expression{col1}
+	expand2.DistinctSize = 2
+	hasher2.Reset()
+	expand2.Hash64(hasher2)
+	require.NotEqual(t, hasher1.Sum64(), hasher2.Sum64())
+
+	expand2.DistinctSize = 1
+	expand2.RollupGroupingSets = expression.GroupingSets{expression.GroupingSet{expression.GroupingExprs{col1}}}
+	hasher2.Reset()
+	expand2.Hash64(hasher2)
+	require.NotEqual(t, hasher1.Sum64(), hasher2.Sum64())
+
+	expand2.RollupGroupingSets = nil
+	expand2.LevelExprs = [][]expression.Expression{{col1}}
+	hasher2.Reset()
+	expand2.Hash64(hasher2)
+	require.NotEqual(t, hasher1.Sum64(), hasher2.Sum64())
+
+	expand2.LevelExprs = nil
+	expand2.GID = col2
+	hasher2.Reset()
+	expand2.Hash64(hasher2)
+	require.NotEqual(t, hasher1.Sum64(), hasher2.Sum64())
+
+	expand2.GID = col1
+	expand2.GPos = col2
+	hasher2.Reset()
+	expand2.Hash64(hasher2)
+	require.NotEqual(t, hasher1.Sum64(), hasher2.Sum64())
+
+	expand2.GPos = col1
+	hasher2.Reset()
+	expand2.Hash64(hasher2)
+	require.Equal(t, hasher1.Sum64(), hasher2.Sum64())
+}
 
 func TestLogicalApplyHash64Equals(t *testing.T) {
 	col1 := &expression.Column{

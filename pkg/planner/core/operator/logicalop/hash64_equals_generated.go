@@ -155,8 +155,8 @@ func (op *LogicalAggregation) Hash64(h base.Hasher) {
 		h.HashInt(len(op.PossibleProperties))
 		for _, one := range op.PossibleProperties {
 			h.HashInt(len(one))
-			for _, one := range one {
-				one.Hash64(h)
+			for _, onee := range one {
+				onee.Hash64(h)
 			}
 		}
 	}
@@ -194,8 +194,8 @@ func (op *LogicalAggregation) Equals(other any) bool {
 		if len(one) != len(op2.PossibleProperties[i]) {
 			return false
 		}
-		for ii, one := range one {
-			if !one.Equals(op2.PossibleProperties[i][ii]) {
+		for ii, onee := range one {
+			if !onee.Equals(op2.PossibleProperties[i][ii]) {
 				return false
 			}
 		}
@@ -240,6 +240,179 @@ func (op *LogicalApply) Equals(other any) bool {
 		}
 	}
 	if op.NoDecorrelate != op2.NoDecorrelate {
+		return false
+	}
+	return true
+}
+
+// Hash64 implements the Hash64Equals interface.
+func (op *LogicalExpand) Hash64(h base.Hasher) {
+	h.HashString(plancodec.TypeExpand)
+	if op.DistinctGroupByCol == nil {
+		h.HashByte(base.NilFlag)
+	} else {
+		h.HashByte(base.NotNilFlag)
+		h.HashInt(len(op.DistinctGroupByCol))
+		for _, one := range op.DistinctGroupByCol {
+			one.Hash64(h)
+		}
+	}
+	if op.DistinctGbyExprs == nil {
+		h.HashByte(base.NilFlag)
+	} else {
+		h.HashByte(base.NotNilFlag)
+		h.HashInt(len(op.DistinctGbyExprs))
+		for _, one := range op.DistinctGbyExprs {
+			one.Hash64(h)
+		}
+	}
+	h.HashInt64(int64(op.DistinctSize))
+	if op.RollupGroupingSets == nil {
+		h.HashByte(base.NilFlag)
+	} else {
+		h.HashByte(base.NotNilFlag)
+		h.HashInt(len(op.RollupGroupingSets))
+		for _, one := range op.RollupGroupingSets {
+			h.HashInt(len(one))
+			for _, onee := range one {
+				h.HashInt(len(onee))
+				for _, oneee := range onee {
+					oneee.Hash64(h)
+				}
+			}
+		}
+	}
+	if op.LevelExprs == nil {
+		h.HashByte(base.NilFlag)
+	} else {
+		h.HashByte(base.NotNilFlag)
+		h.HashInt(len(op.LevelExprs))
+		for _, one := range op.LevelExprs {
+			h.HashInt(len(one))
+			for _, onee := range one {
+				onee.Hash64(h)
+			}
+		}
+	}
+	if op.GID == nil {
+		h.HashByte(base.NilFlag)
+	} else {
+		h.HashByte(base.NotNilFlag)
+		op.GID.Hash64(h)
+	}
+	if op.GPos == nil {
+		h.HashByte(base.NilFlag)
+	} else {
+		h.HashByte(base.NotNilFlag)
+		op.GPos.Hash64(h)
+	}
+}
+
+// Equals implements the Hash64Equals interface, only receive *LogicalExpand pointer.
+func (op *LogicalExpand) Equals(other any) bool {
+	if other == nil {
+		return false
+	}
+	op2, ok := other.(*LogicalExpand)
+	if !ok {
+		return false
+	}
+	if len(op.DistinctGroupByCol) != len(op2.DistinctGroupByCol) {
+		return false
+	}
+	for i, one := range op.DistinctGroupByCol {
+		if !one.Equals(op2.DistinctGroupByCol[i]) {
+			return false
+		}
+	}
+	if len(op.DistinctGbyExprs) != len(op2.DistinctGbyExprs) {
+		return false
+	}
+	for i, one := range op.DistinctGbyExprs {
+		if !one.Equals(op2.DistinctGbyExprs[i]) {
+			return false
+		}
+	}
+	if op.DistinctSize != op2.DistinctSize {
+		return false
+	}
+	if len(op.RollupGroupingSets) != len(op2.RollupGroupingSets) {
+		return false
+	}
+	for i, one := range op.RollupGroupingSets {
+		if len(one) != len(op2.RollupGroupingSets[i]) {
+			return false
+		}
+		for ii, onee := range one {
+			if len(onee) != len(op2.RollupGroupingSets[i][ii]) {
+				return false
+			}
+			for iii, oneee := range onee {
+				if !oneee.Equals(op2.RollupGroupingSets[i][ii][iii]) {
+					return false
+				}
+			}
+		}
+	}
+	if len(op.LevelExprs) != len(op2.LevelExprs) {
+		return false
+	}
+	for i, one := range op.LevelExprs {
+		if len(one) != len(op2.LevelExprs[i]) {
+			return false
+		}
+		for ii, onee := range one {
+			if !onee.Equals(op2.LevelExprs[i][ii]) {
+				return false
+			}
+		}
+	}
+	if !op.GID.Equals(op2.GID) {
+		return false
+	}
+	if !op.GPos.Equals(op2.GPos) {
+		return false
+	}
+	return true
+}
+
+// Hash64 implements the Hash64Equals interface.
+func (op *LogicalLimit) Hash64(h base.Hasher) {
+	h.HashString(plancodec.TypeLimit)
+	if op.PartitionBy == nil {
+		h.HashByte(base.NilFlag)
+	} else {
+		h.HashByte(base.NotNilFlag)
+		h.HashInt(len(op.PartitionBy))
+		for _, one := range op.PartitionBy {
+			one.Hash64(h)
+		}
+	}
+	h.HashUint64(uint64(op.Offset))
+	h.HashUint64(uint64(op.Count))
+}
+
+// Equals implements the Hash64Equals interface, only receive *LogicalLimit pointer.
+func (op *LogicalLimit) Equals(other any) bool {
+	if other == nil {
+		return false
+	}
+	op2, ok := other.(*LogicalLimit)
+	if !ok {
+		return false
+	}
+	if len(op.PartitionBy) != len(op2.PartitionBy) {
+		return false
+	}
+	for i, one := range op.PartitionBy {
+		if !one.Equals(&op2.PartitionBy[i]) {
+			return false
+		}
+	}
+	if op.Offset != op2.Offset {
+		return false
+	}
+	if op.Count != op2.Count {
 		return false
 	}
 	return true

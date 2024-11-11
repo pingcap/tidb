@@ -46,6 +46,7 @@ go_test(
         "stringer_test.go",
         "transformation_rules_test.go",
     ],
+    data = glob(["testdata/**"]),
     embed = [":old"],
     flaky = True,
     shard_count = 25,

@@ -2021,9 +2021,9 @@
       },
       {
         "SQL": "select /*+ USE_INDEX_MERGE(t1, c_d_e, f_g) */ * from t where c < 1 or f > 2",
-        "Best": "TableReader(Table(t)->Sel([or(lt(test.t.c, 1), gt(test.t.f, 2))]))",
+        "Best": "IndexMergeReader(PartialPlans->[Index(t.c_d_e)[[-inf,1)], Index(t.f)[(2,+inf]]], TablePlan->Table(t))",
         "HasWarn": true,
-        "Hints": "use_index(@`sel_1` `test`.`t` ), no_order_index(@`sel_1` `test`.`t` `primary`)"
+        "Hints": "use_index_merge(@`sel_1` `t` `c_d_e`, `f`)"
       },
       {
         "SQL": "select /*+ NO_INDEX_MERGE(), USE_INDEX_MERGE(t, primary, f_g, c_d_e) */ * from t where a < 1 or f > 2",
@@ -2039,15 +2039,15 @@
       },
       {
         "SQL": "select /*+ USE_INDEX_MERGE(db2.t) */ * from t where c < 1 or f > 2",
-        "Best": "TableReader(Table(t)->Sel([or(lt(test.t.c, 1), gt(test.t.f, 2))]))",
+        "Best": "IndexMergeReader(PartialPlans->[Index(t.c_d_e)[[-inf,1)], Index(t.f)[(2,+inf]]], TablePlan->Table(t))",
         "HasWarn": true,
-        "Hints": "use_index(@`sel_1` `test`.`t` ), no_order_index(@`sel_1` `test`.`t` `primary`)"
+        "Hints": "use_index_merge(@`sel_1` `t` `c_d_e`, `f`)"
       },
       {
         "SQL": "select /*+ USE_INDEX_MERGE(db2.t, c_d_e, f_g) */ * from t where c < 1 or f > 2",
-        "Best": "TableReader(Table(t)->Sel([or(lt(test.t.c, 1), gt(test.t.f, 2))]))",
+        "Best": "IndexMergeReader(PartialPlans->[Index(t.c_d_e)[[-inf,1)], Index(t.f)[(2,+inf]]], TablePlan->Table(t))",
         "HasWarn": true,
-        "Hints": "use_index(@`sel_1` `test`.`t` ), no_order_index(@`sel_1` `test`.`t` `primary`)"
+        "Hints": "use_index_merge(@`sel_1` `t` `c_d_e`, `f`)"
       }
     ]
   },
@@ -2257,11 +2257,11 @@
     "Cases": [
       {
         "SQL": "select max(a) from t;",
-        "Best": "TableReader(Table(t)->Limit)->Limit->StreamAgg"
+        "Best": "IndexReader(Index(t.f)[[NULL,+inf]]->TopN([test.t.a true],0,1))->TopN([test.t.a true],0,1)->StreamAgg"
       },
       {
         "SQL": "select min(a) from t;",
-        "Best": "TableReader(Table(t)->Limit)->Limit->StreamAgg"
+        "Best": "IndexReader(Index(t.f)[[NULL,+inf]]->TopN([test.t.a],0,1))->TopN([test.t.a],0,1)->StreamAgg"
       },
       {
         "SQL": "select min(c_str) from t;",
@@ -2277,7 +2277,7 @@
       },
       {
         "SQL": "select max(a), min(a) from t;",
-        "Best": "LeftHashJoin{TableReader(Table(t)->Limit)->Limit->StreamAgg->TableReader(Table(t)->Limit)->Limit->StreamAgg}"
+        "Best": "LeftHashJoin{IndexReader(Index(t.f)[[NULL,+inf]]->TopN([test.t.a true],0,1))->TopN([test.t.a true],0,1)->StreamAgg->IndexReader(Index(t.f)[[NULL,+inf]]->TopN([test.t.a],0,1))->TopN([test.t.a],0,1)->StreamAgg}"
       },
       {
         "SQL": "select max(a), min(a) from t where a > 10",
@@ -2289,7 +2289,7 @@
       },
       {
         "SQL": "select max(a), max(c), min(f) from t",
-        "Best": "LeftHashJoin{LeftHashJoin{TableReader(Table(t)->Limit)->Limit->StreamAgg->IndexReader(Index(t.c_d_e)[[NULL,+inf]]->Limit)->Limit->StreamAgg}->IndexReader(Index(t.f)[[NULL,+inf]]->Limit)->Limit->StreamAgg}"
+        "Best": "LeftHashJoin{LeftHashJoin{IndexReader(Index(t.f)[[NULL,+inf]]->TopN([test.t.a true],0,1))->TopN([test.t.a true],0,1)->StreamAgg->IndexReader(Index(t.c_d_e)[[NULL,+inf]]->Limit)->Limit->StreamAgg}->IndexReader(Index(t.f)[[NULL,+inf]]->Limit)->Limit->StreamAgg}"
       },
       {
         "SQL": "select max(a), max(b) from t",
