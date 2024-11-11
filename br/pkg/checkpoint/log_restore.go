@@ -299,7 +299,7 @@ func TryToGetCheckpointTaskInfo(
 			return nil, errors.Trace(err)
 		}
 	}
-	hasSnapshotMetadata := ExistsSnapshotRestoreCheckpoint(ctx, dom)
+	hasSnapshotMetadata := ExistsSstRestoreCheckpoint(ctx, dom, SnapshotRestoreCheckpointDatabaseName)
 
 	return &CheckpointTaskInfoForLogRestore{
 		Metadata:            metadata,

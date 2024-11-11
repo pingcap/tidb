@@ -54,7 +54,7 @@ func RunRestoreTxn(c context.Context, g glue.Glue, cmdName string, cfg *Config) 
 		return errors.Trace(err)
 	}
 	reader := metautil.NewMetaReader(backupMeta, s, &cfg.CipherInfo)
-	if err = client.InitBackupMeta(c, backupMeta, u, reader, true); err != nil {
+	if err = client.InitBackupMeta(c, backupMeta, u, reader, true, nil, nil); err != nil {
 		return errors.Trace(err)
 	}
 
@@ -86,8 +86,10 @@ func RunRestoreTxn(c context.Context, g glue.Glue, cmdName string, cfg *Config) 
 		int64(len(ranges)+len(files)),
 		!cfg.LogProgress)
 
+	onProgress := func(i int64) { updateCh.IncBy(i) }
 	// RawKV restore does not need to rewrite keys.
-	err = client.SplitPoints(ctx, getEndKeys(ranges), updateCh, false)
+	// err = client.GetRestorer().SplitRanges(ctx, ranges, onProgress)
+	err = client.SplitPoints(ctx, getEndKeys(ranges), onProgress, false)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -99,11 +101,14 @@ func RunRestoreTxn(c context.Context, g glue.Glue, cmdName string, cfg *Config) 
 	}
 	defer restore.RestorePostWork(ctx, importModeSwitcher, restoreSchedulers, false)
 
-	err = client.WaitForFilesRestored(ctx, files, updateCh)
+	err = client.GetRestorer().Restore(onProgress, restore.NewEmptyRuleSSTFilesInfos(files))
 	if err != nil {
 		return errors.Trace(err)
 	}
-
+	err = client.GetRestorer().WaitUnitilFinish()
+	if err != nil {
+		return errors.Trace(err)
+	}
 	// Restore has finished.
 	updateCh.Close()
 
