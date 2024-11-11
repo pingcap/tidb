@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/streamhelper"
 	"github.com/pingcap/tidb/br/pkg/streamhelper/spans"
 	"github.com/pingcap/tidb/br/pkg/utils"
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/tikv/client-go/v2/oracle"
