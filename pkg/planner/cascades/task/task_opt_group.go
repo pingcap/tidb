@@ -51,7 +51,9 @@ func (g *OptGroupTask) Execute() error {
 
 // Desc implements the task.Desc interface.
 func (g *OptGroupTask) Desc(w io.StringWriter) {
+	// nolint:errcheck
 	w.WriteString("OptGroupTask{group:")
 	g.group.String(w)
+	// nolint:errcheck
 	w.WriteString("}")
 }

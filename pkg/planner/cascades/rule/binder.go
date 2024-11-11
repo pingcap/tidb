@@ -293,11 +293,13 @@ func (b *Binder) traceIn(p *pattern.Pattern, g *memo.Group) {
 func (b *Binder) printStackInfo(sw io.StringWriter) {
 	for i, one := range b.stackInfo {
 		if i != 0 {
+			// nolint:errcheck
 			sw.WriteString(" -> ")
 		}
 		one.Value.(*memo.GroupExpression).String(sw)
 	}
 	if len(b.stackInfo) != 0 {
+		// nolint:errcheck
 		sw.WriteString("\n")
 	}
 }

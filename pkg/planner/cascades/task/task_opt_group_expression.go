@@ -57,8 +57,10 @@ func (ge *OptGroupExpressionTask) Execute() error {
 
 // Desc implements the task.Desc interface.
 func (ge *OptGroupExpressionTask) Desc(w io.StringWriter) {
+	// nolint:errcheck
 	w.WriteString("OptGroupExpressionTask{ge:")
 	ge.groupExpression.String(w)
+	// nolint:errcheck
 	w.WriteString("}")
 }
 

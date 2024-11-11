@@ -149,6 +149,7 @@ func (g *Group) SetExplored() {
 
 // String implements fmt.Stringer interface.
 func (g *Group) String(w io.StringWriter) {
+	// nolint:errcheck
 	w.WriteString(strconv.Itoa(int(g.groupID)))
 }
 

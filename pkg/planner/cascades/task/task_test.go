@@ -33,6 +33,7 @@ func (t *TestTaskImpl) Execute() error {
 	return nil
 }
 func (t *TestTaskImpl) Desc(w io.StringWriter) {
+	// nolint:errcheck
 	w.WriteString(strconv.Itoa(int(t.a)))
 }
 

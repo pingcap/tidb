@@ -129,9 +129,12 @@ func (a *ApplyRuleTask) Execute() error {
 
 // Desc implements the task.Desc interface.
 func (a *ApplyRuleTask) Desc(w io.StringWriter) {
+	// nolint:errcheck
 	w.WriteString("ApplyRuleTask{gE:")
 	a.gE.String(w)
+	// nolint:errcheck
 	w.WriteString(", rule:")
 	a.rule.String(w)
+	// nolint:errcheck
 	w.WriteString("}")
 }

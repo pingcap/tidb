@@ -73,6 +73,7 @@ func (r *BaseRule) Promise() int {
 
 // String implements Rule interface
 func (r *BaseRule) String(w io.StringWriter) {
+	// nolint:errcheck
 	w.WriteString(r.tp.String())
 }
 

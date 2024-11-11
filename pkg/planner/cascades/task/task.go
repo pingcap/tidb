@@ -51,6 +51,7 @@ func (ts *TaskStack) Destroy() {
 func (ts *TaskStack) Desc(w io.StringWriter) {
 	for _, one := range ts.tasks {
 		one.Desc(w)
+		// nolint:errcheck
 		w.WriteString("\n")
 	}
 }

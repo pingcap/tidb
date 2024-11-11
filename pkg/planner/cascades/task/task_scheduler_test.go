@@ -39,6 +39,7 @@ func (t *TestTaskImpl2) Execute() error {
 
 // Desc implements the base.Task interface.
 func (t *TestTaskImpl2) Desc(writer io.StringWriter) {
+	// nolint:errcheck
 	writer.WriteString(strconv.Itoa(int(t.a)))
 }
 
