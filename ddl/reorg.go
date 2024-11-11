@@ -78,10 +78,6 @@ type reorgCtx struct {
 	references atomicutil.Int32
 }
 
-<<<<<<< HEAD:ddl/reorg.go
-// newContext gets a context. It is only used for adding column in reorganization state.
-func newContext(store kv.Storage) sessionctx.Context {
-=======
 // reorgFnResult records the DDL owner TS before executing reorg function, in order to help
 // receiver determine if the result is from reorg function of previous DDL owner in this instance.
 type reorgFnResult struct {
@@ -89,50 +85,8 @@ type reorgFnResult struct {
 	err     error
 }
 
-func newReorgExprCtx() exprctx.ExprContext {
-	evalCtx := contextstatic.NewStaticEvalContext(
-		contextstatic.WithSQLMode(mysql.ModeNone),
-		contextstatic.WithTypeFlags(types.DefaultStmtFlags),
-		contextstatic.WithErrLevelMap(stmtctx.DefaultStmtErrLevels),
-	)
-
-	planCacheTracker := contextutil.NewPlanCacheTracker(contextutil.IgnoreWarn)
-
-	return contextstatic.NewStaticExprContext(
-		contextstatic.WithEvalCtx(evalCtx),
-		contextstatic.WithPlanCacheTracker(&planCacheTracker),
-	)
-}
-
-func reorgTypeFlagsWithSQLMode(mode mysql.SQLMode) types.Flags {
-	return types.StrictFlags.
-		WithTruncateAsWarning(!mode.HasStrictMode()).
-		WithIgnoreInvalidDateErr(mode.HasAllowInvalidDatesMode()).
-		WithIgnoreZeroInDate(!mode.HasStrictMode() || mode.HasAllowInvalidDatesMode()).
-		WithCastTimeToYearThroughConcat(true)
-}
-
-func reorgErrLevelsWithSQLMode(mode mysql.SQLMode) errctx.LevelMap {
-	return errctx.LevelMap{
-		errctx.ErrGroupTruncate: errctx.ResolveErrLevel(false, !mode.HasStrictMode()),
-		errctx.ErrGroupBadNull:  errctx.ResolveErrLevel(false, !mode.HasStrictMode()),
-		errctx.ErrGroupDividedByZero: errctx.ResolveErrLevel(
-			!mode.HasErrorForDivisionByZeroMode(),
-			!mode.HasStrictMode(),
-		),
-	}
-}
-
-func reorgTimeZoneWithTzLoc(tzLoc *model.TimeZoneLocation) (*time.Location, error) {
-	if tzLoc == nil {
-		// It is set to SystemLocation to be compatible with nil LocationInfo.
-		return timeutil.SystemLocation(), nil
-	}
-	return tzLoc.GetLocation()
-}
-
-func newReorgSessCtx(store kv.Storage) sessionctx.Context {
->>>>>>> aaca081cec3 (ddl: record get owner TS and compare it before runReorgJob quit (#55049)):pkg/ddl/reorg.go
+// newContext gets a context. It is only used for adding column in reorganization state.
+func newContext(store kv.Storage) sessionctx.Context {
 	c := mock.NewContext()
 	c.Store = store
 	c.GetSessionVars().SetStatusFlag(mysql.ServerStatusAutocommit, false)
@@ -304,12 +258,8 @@ func (w *worker) runReorgJob(rh *reorgHandler, reorgInfo *reorgInfo, tblInfo *mo
 		w.wg.Add(1)
 		go func() {
 			defer w.wg.Done()
-<<<<<<< HEAD:ddl/reorg.go
-			rc.doneCh <- f()
-=======
-			err := reorgFn()
+			err := f()
 			rc.doneCh <- reorgFnResult{ownerTS: beOwnerTS, err: err}
->>>>>>> aaca081cec3 (ddl: record get owner TS and compare it before runReorgJob quit (#55049)):pkg/ddl/reorg.go
 		}()
 	}
 
@@ -330,7 +280,7 @@ func (w *worker) runReorgJob(rh *reorgHandler, reorgInfo *reorgInfo, tblInfo *mo
 		curTS := w.ddlCtx.reorgCtx.getOwnerTS()
 		if res.ownerTS != curTS {
 			d.removeReorgCtx(job.ID)
-			logutil.DDLLogger().Warn("owner ts mismatch, return timeout error and retry",
+			logutil.BgLogger().Warn("owner ts mismatch, return timeout error and retry",
 				zap.Int64("prevTS", res.ownerTS),
 				zap.Int64("curTS", curTS))
 			return dbterror.ErrWaitReorgTimeout
