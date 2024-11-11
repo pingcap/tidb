@@ -335,6 +335,75 @@ func TestInstancePlanCacheTableIndexScan(t *testing.T) {
 	wg.Wait()
 }
 
+func TestInstancePlanCacheConcurrencyPointPartitioning(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`use test`)
+	tk.MustExec(`create table t1 (a int, primary key(a)) partition by hash(a) partitions 10`)
+	tk.MustExec(`create table t2 (a int, primary key(a)) partition by range(a) (
+    		partition p0 values less than (10),
+    		partition p1 values less than (20),
+    		partition p2 values less than (30),
+    		partition p3 values less than (40),
+    		partition p4 values less than (50),
+    		partition p5 values less than (60),
+    		partition p6 values less than (70),
+    		partition p7 values less than (80),
+    		partition p8 values less than (90),
+    		partition p9 values less than (100))`)
+	tk.MustExec(`set global tidb_enable_instance_plan_cache=1`)
+	for i := 0; i < 100; i++ {
+		tk.MustExec(fmt.Sprintf("insert into t1 values (%v)", i))
+		tk.MustExec(fmt.Sprintf("insert into t2 values (%v)", i))
+	}
+
+	var wg sync.WaitGroup
+	for i := 0; i < 10; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			tki := testkit.NewTestKit(t, store)
+			tki.MustExec(`use test`)
+			for k := 0; k < 100; k++ {
+				tName := fmt.Sprintf("t%v", rand.Intn(2)+1)
+				tki.MustExec(fmt.Sprintf("prepare st from 'select * from %v where a=?'", tName))
+				a := rand.Intn(100)
+				tki.MustExec("set @a = ?", a)
+				tki.MustQuery("execute st using @a").Check(testkit.Rows(fmt.Sprintf("%v", a)))
+			}
+		}()
+	}
+	wg.Wait()
+}
+
+func TestInstancePlanCacheConcurrencyPointMultipleColPKNoTxn(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`use test`)
+	tk.MustExec(`create table t (a int, b int, primary key(a, b))`)
+	tk.MustExec(`set global tidb_enable_instance_plan_cache=1`)
+	for i := 0; i < 100; i++ {
+		tk.MustExec(fmt.Sprintf("insert into t values (%v, %v)", i, i))
+	}
+
+	var wg sync.WaitGroup
+	for i := 0; i < 10; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			tki := testkit.NewTestKit(t, store)
+			tki.MustExec(`use test`)
+			tki.MustExec(`prepare st from 'select * from t where a=? and b=?'`)
+			for k := 0; k < 100; k++ {
+				a := rand.Intn(100)
+				tki.MustExec("set @a = ?, @b = ?", a, a)
+				tki.MustQuery("execute st using @a, @b").Check(testkit.Rows(fmt.Sprintf("%v %v", a, a)))
+			}
+		}()
+	}
+	wg.Wait()
+}
+
 func TestInstancePlanCacheConcurrencyPointNoTxn(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)

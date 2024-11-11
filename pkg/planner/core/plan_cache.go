@@ -245,6 +245,9 @@ func GetPlanFromPlanCache(ctx context.Context, sctx sessionctx.Context,
 	if stmtCtx.UseCache() {
 		plan, outputCols, stmtHints, hit := lookupPlanCache(ctx, sctx, cacheKey, paramTypes)
 		skipPrivCheck := stmt.PointGet.Executor != nil || variable.EnableFastPath.Load() // this case is specially handled
+		if hit && instancePlanCacheEnabled(ctx) {
+			plan, hit = clonePlanForInstancePlanCache(ctx, sctx, stmt, plan)
+		}
 		if hit {
 			if plan, ok, err := AdjustCachedPlan(ctx, sctx, plan, stmtHints, isNonPrepared, skipPrivCheck, binding, is, stmt); err != nil || ok {
 				switch v := plan.(type) {
@@ -257,6 +260,29 @@ func GetPlanFromPlanCache(ctx context.Context, sctx sessionctx.Context,
 	}
 
 	return generateNewPlan(ctx, sctx, isNonPrepared, is, stmt, cacheKey, paramTypes)
+}
+
+func clonePlanForInstancePlanCache(ctx context.Context, sctx sessionctx.Context,
+	stmt *PlanCacheStmt, plan base.Plan) (clonedPlan base.Plan, ok bool) {
+	// TODO: add metrics to record the time cost of this clone operation.
+	fastPoint := stmt.PointGet.Executor != nil // this case is specially handled
+	pointPlan, isPoint := plan.(*PointGetPlan)
+	if fastPoint && isPoint { // special optimization for fast point plans
+		if stmt.PointGet.FastPlan == nil {
+			stmt.PointGet.FastPlan = new(PointGetPlan)
+		}
+		FastClonePointGetForPlanCache(sctx.GetPlanCtx(), pointPlan, stmt.PointGet.FastPlan)
+		clonedPlan = stmt.PointGet.FastPlan
+	} else {
+		clonedPlan, ok = plan.CloneForPlanCache(sctx.GetPlanCtx())
+		if !ok { // clone the value to solve concurrency problem
+			return nil, false
+		}
+	}
+	if intest.InTest && ctx.Value(PlanCacheKeyTestClone{}) != nil {
+		ctx.Value(PlanCacheKeyTestClone{}).(func(plan, cloned base.Plan))(plan, clonedPlan)
+	}
+	return clonedPlan, true
 }
 
 func instancePlanCacheEnabled(ctx context.Context) bool {
@@ -275,25 +301,17 @@ func lookupPlanCache(ctx context.Context, sctx sessionctx.Context, cacheKey stri
 			core_metrics.GetPlanCacheLookupDuration(useInstanceCache).Observe(time.Since(begin).Seconds())
 		}
 	}(time.Now())
+	var v any
 	if useInstanceCache {
-		if v, hit := domain.GetDomain(sctx).GetInstancePlanCache().Get(cacheKey, paramTypes); hit {
-			pcv := v.(*PlanCacheValue)
-			clonedPlan, ok := pcv.Plan.CloneForPlanCache(sctx.GetPlanCtx())
-			if !ok { // clone the value to solve concurrency problem
-				return nil, nil, nil, false
-			}
-			if intest.InTest && ctx.Value(PlanCacheKeyTestClone{}) != nil {
-				ctx.Value(PlanCacheKeyTestClone{}).(func(plan, cloned base.Plan))(pcv.Plan, clonedPlan)
-			}
-			return clonedPlan, pcv.OutputColumns, pcv.stmtHints, true
-		}
+		v, hit = domain.GetDomain(sctx).GetInstancePlanCache().Get(cacheKey, paramTypes)
 	} else {
-		if v, hit := sctx.GetSessionPlanCache().Get(cacheKey, paramTypes); hit {
-			pcv := v.(*PlanCacheValue)
-			return pcv.Plan, pcv.OutputColumns, pcv.stmtHints, true
-		}
+		v, hit = sctx.GetSessionPlanCache().Get(cacheKey, paramTypes)
 	}
-	return nil, nil, nil, false
+	if !hit {
+		return nil, nil, nil, false
+	}
+	pcv := v.(*PlanCacheValue)
+	return pcv.Plan, pcv.OutputColumns, pcv.stmtHints, true
 }
 
 // AdjustCachedPlan adjusts the cached plan.

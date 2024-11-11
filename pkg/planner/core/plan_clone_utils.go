@@ -17,6 +17,7 @@ package core
 import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/types"
 )
 
 func clonePhysicalPlansForPlanCache(newCtx base.PlanContext, plans []base.PhysicalPlan) ([]base.PhysicalPlan, bool) {
@@ -171,4 +172,52 @@ func cloneConstant2DForPlanCache(constants [][]*expression.Constant) [][]*expres
 		cloned = append(cloned, cloneConstantsForPlanCache(c, nil))
 	}
 	return cloned
+}
+
+// FastClonePointGetForPlanCache is a fast path to clone a PointGetPlan for plan cache.
+func FastClonePointGetForPlanCache(newCtx base.PlanContext, src, dst *PointGetPlan) *PointGetPlan {
+	if dst == nil {
+		dst = new(PointGetPlan)
+	}
+	dst.Plan = src.Plan
+	dst.Plan.SetSCtx(newCtx)
+	dst.probeParents = src.probeParents
+	dst.PartitionNames = src.PartitionNames
+	dst.dbName = src.dbName
+	dst.schema = src.schema
+	dst.TblInfo = src.TblInfo
+	dst.IndexInfo = src.IndexInfo
+	dst.PartitionIdx = nil // partition prune will be triggered during execution phase
+	dst.Handle = nil       // handle will be set during rebuild phase
+	if src.HandleConstant == nil {
+		dst.HandleConstant = nil
+	} else {
+		if src.HandleConstant.SafeToShareAcrossSession() {
+			dst.HandleConstant = src.HandleConstant
+		} else {
+			dst.HandleConstant = src.HandleConstant.Clone().(*expression.Constant)
+		}
+	}
+	dst.handleFieldType = src.handleFieldType
+	dst.HandleColOffset = src.HandleColOffset
+	if len(dst.IndexValues) < len(src.IndexValues) { // actually set during rebuild phase
+		dst.IndexValues = make([]types.Datum, len(src.IndexValues))
+	} else {
+		dst.IndexValues = dst.IndexValues[:len(src.IndexValues)]
+	}
+	dst.IndexConstants = cloneConstantsForPlanCache(src.IndexConstants, dst.IndexConstants)
+	dst.ColsFieldType = src.ColsFieldType
+	dst.IdxCols = cloneColumnsForPlanCache(src.IdxCols, dst.IdxCols)
+	dst.IdxColLens = src.IdxColLens
+	dst.AccessConditions = cloneExpressionsForPlanCache(src.AccessConditions, dst.AccessConditions)
+	dst.UnsignedHandle = src.UnsignedHandle
+	dst.IsTableDual = src.IsTableDual
+	dst.Lock = src.Lock
+	dst.outputNames = src.outputNames
+	dst.LockWaitTime = src.LockWaitTime
+	dst.Columns = src.Columns
+
+	// remaining fields are unnecessary to clone:
+	// cost, planCostInit, planCost, planCostVer2, accessCols
+	return dst
 }
