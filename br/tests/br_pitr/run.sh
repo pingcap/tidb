@@ -29,6 +29,7 @@ restart_services
 # prepare the data
 echo "prepare the data"
 run_sql_file $CUR/prepare_data/delete_range.sql
+run_sql_file $CUR/prepare_data/ingest_repair.sql
 # ...
 
 # check something after prepare the data
@@ -46,6 +47,7 @@ run_br --pd $PD_ADDR backup full -s "local://$TEST_DIR/$PREFIX/full"
 # load the incremental data
 echo "load the incremental data"
 run_sql_file $CUR/incremental_data/delete_range.sql
+run_sql_file $CUR/incremental_data/ingest_repair.sql
 # ...
 
 # check something after load the incremental data
@@ -101,9 +103,65 @@ run_br --pd $PD_ADDR restore point -s "local://$TEST_DIR/$PREFIX/log" --full-bac
 # check something in downstream cluster
 echo "check br log"
 check_contains "restore log success summary"
+## check feature history ddl delete range
 check_not_contains "rewrite delete range"
 echo "" > $res_file
 echo "check sql result"
-run_sql "select count(*) DELETE_RANGE_CNT from (select * from mysql.gc_delete_range union all select * from mysql.gc_delete_range_done) del_range group by ts order by DELETE_RANGE_CNT desc limit 1;"
+run_sql "select * from mysql.gc_delete_range"
+run_sql "select * from mysql.gc_delete_range_done"
+run_sql "select count(*) DELETE_RANGE_CNT from (select distinct start_key, end_key, ts from (select * from mysql.gc_delete_range union all select * from mysql.gc_delete_range_done)) del_range group by ts order by DELETE_RANGE_CNT desc limit 1;"
 expect_delete_range=$(($incremental_delete_range_count-$prepare_delete_range_count))
 check_contains "DELETE_RANGE_CNT: $expect_delete_range"
+## check feature compatibility between PITR and accelerate indexing
+bash $CUR/check/check_ingest_repair.sh
+
+# start a new cluster for corruption
+echo "restart a services"
+restart_services
+
+file_corruption() {
+    echo "corrupt the whole log files"
+    for filename in $(find $TEST_DIR/$PREFIX/log -regex ".*\.log" | grep -v "schema-meta"); do
+        echo "corrupt the log file $filename"
+        filename_temp=$filename"_temp"
+        echo "corruption" > $filename_temp
+        cat $filename >> $filename_temp
+        mv $filename_temp $filename
+        truncate -s -11 $filename
+    done
+}
+
+# file corruption
+file_corruption
+export GO_FAILPOINTS="github.com/pingcap/tidb/br/pkg/utils/set-import-attempt-to-one=return(true)"
+restore_fail=0
+run_br --pd $PD_ADDR restore point -s "local://$TEST_DIR/$PREFIX/log" --full-backup-storage "local://$TEST_DIR/$PREFIX/full" || restore_fail=1
+export GO_FAILPOINTS=""
+if [ $restore_fail -ne 1 ]; then
+    echo 'pitr success on file corruption'
+    exit 1
+fi
+
+# start a new cluster for corruption
+echo "restart a services"
+restart_services
+
+file_lost() {
+    echo "lost the whole log files"
+    for filename in $(find $TEST_DIR/$PREFIX/log -regex ".*\.log" | grep -v "schema-meta"); do
+        echo "lost the log file $filename"
+        filename_temp=$filename"_temp"
+        mv $filename $filename_temp
+    done
+}
+
+# file lost
+file_lost
+export GO_FAILPOINTS="github.com/pingcap/tidb/br/pkg/utils/set-import-attempt-to-one=return(true)"
+restore_fail=0
+run_br --pd $PD_ADDR restore point -s "local://$TEST_DIR/$PREFIX/log" --full-backup-storage "local://$TEST_DIR/$PREFIX/full" || restore_fail=1
+export GO_FAILPOINTS=""
+if [ $restore_fail -ne 1 ]; then
+    echo 'pitr success on file lost'
+    exit 1
+fi

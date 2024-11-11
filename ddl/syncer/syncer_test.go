@@ -18,6 +18,8 @@ import (
 	"context"
 	"fmt"
 	"runtime"
+	"strconv"
+	"sync"
 	"testing"
 	"time"
 
@@ -35,6 +37,7 @@ import (
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.etcd.io/etcd/server/v3/etcdserver"
 	"go.etcd.io/etcd/tests/v3/integration"
+	"go.uber.org/atomic"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
@@ -181,4 +184,52 @@ func checkRespKV(t *testing.T, kvCount int, key, val string, kvs ...*mvccpb.KeyV
 	kv := kvs[0]
 	require.Equal(t, key, string(kv.Key))
 	require.Equal(t, val, string(kv.Value))
+}
+
+func TestPutKVToEtcdMono(t *testing.T) {
+	integration.BeforeTestExternal(t)
+
+	cluster := integration.NewClusterV3(t, &integration.ClusterConfig{Size: 1})
+	defer cluster.Terminate(t)
+	cli := cluster.RandClient()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	err := util2.PutKVToEtcdMono(ctx, cli, 3, "testKey", strconv.Itoa(1))
+	require.NoError(t, err)
+
+	err = util2.PutKVToEtcdMono(ctx, cli, 3, "testKey", strconv.Itoa(2))
+	require.NoError(t, err)
+
+	err = util2.PutKVToEtcdMono(ctx, cli, 3, "testKey", strconv.Itoa(3))
+	require.NoError(t, err)
+
+	eg := sync.WaitGroup{}
+	var aerr atomic.Error
+	for i := 0; i < 30; i++ {
+		eg.Add(1)
+		go func() {
+			err := util2.PutKVToEtcdMono(ctx, cli, 1, "testKey", strconv.Itoa(5))
+			aerr.Store(err)
+			eg.Done()
+		}()
+	}
+	// PutKVToEtcdMono should be conflicted and get errors.
+	eg.Wait()
+	require.Error(t, aerr.Load())
+
+	aerr.Store(nil)
+	for i := 0; i < 30; i++ {
+		eg.Add(1)
+		go func() {
+			err := util2.PutKVToEtcd(ctx, cli, 1, "testKey", strconv.Itoa(5))
+			aerr.Store(err)
+			eg.Done()
+		}()
+	}
+	eg.Wait()
+	require.NoError(t, aerr.Load())
+
+	err = util2.PutKVToEtcdMono(ctx, cli, 3, "testKey", strconv.Itoa(1))
+	require.NoError(t, err)
 }

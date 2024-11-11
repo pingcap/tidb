@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/parser/charset"
+	"github.com/pingcap/tidb/parser/duration"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/types"
 	"github.com/stretchr/testify/require"
@@ -817,4 +818,11 @@ func TestTTLJobInterval(t *testing.T) {
 	interval, err = ttlInfo.GetJobInterval()
 	require.NoError(t, err)
 	require.Equal(t, time.Hour*200, interval)
+}
+
+func TestTTLDefaultJobInterval(t *testing.T) {
+	// test const `DefaultJobIntervalStr` and `DefaultJobInterval` are consistent.
+	d, err := duration.ParseDuration(DefaultJobIntervalStr)
+	require.NoError(t, err)
+	require.Equal(t, DefaultJobInterval, d)
 }

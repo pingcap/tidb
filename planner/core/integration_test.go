@@ -3843,6 +3843,38 @@ func TestAggPushToCopForCachedTable(t *testing.T) {
 	tk.MustExec("drop table if exists t31202")
 }
 
+func TestIssue51873(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`create database if not exists test1`)
+	tk.MustExec(`use test1`)
+	tk.MustExec(`CREATE TABLE h1 (
+  id bigint(20) NOT NULL AUTO_INCREMENT,
+  position_date date NOT NULL,
+  asset_id varchar(32) DEFAULT NULL,
+  portfolio_code varchar(50) DEFAULT NULL,
+  PRIMARY KEY (id,position_date) /*T![clustered_index] NONCLUSTERED */,
+  UNIQUE KEY uidx_posi_asset_balance_key (position_date,portfolio_code,asset_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin AUTO_INCREMENT=30002
+PARTITION BY RANGE COLUMNS(position_date)
+(PARTITION p202401 VALUES LESS THAN ('2024-02-01'))`)
+	tk.MustExec(`create table h2 like h1`)
+	tk.MustExec(`insert into h1 values(1,'2024-01-01',1,1)`)
+	tk.MustExec(`insert into h2 values(1,'2024-01-01',1,1)`)
+	tk.MustExec(`analyze table h1`)
+	tk.MustQuery(`with assetBalance AS
+    (SELECT asset_id, portfolio_code FROM h1 pab WHERE pab.position_date = '2024-01-01' ),
+cashBalance AS (SELECT portfolio_code, asset_id
+    FROM h2 pcb WHERE pcb.position_date = '2024-01-01' ),
+assetIdList AS (SELECT DISTINCT asset_id AS assetId
+    FROM assetBalance )
+SELECT main.portfolioCode
+FROM (SELECT DISTINCT balance.portfolio_code AS portfolioCode
+    FROM assetBalance balance
+    LEFT JOIN assetIdList
+        ON balance.asset_id = assetIdList.assetId ) main`).Check(testkit.Rows("1"))
+}
+
 func TestTiFlashFineGrainedShuffleWithMaxTiFlashThreads(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
@@ -3911,6 +3943,31 @@ func TestTiFlashFineGrainedShuffleWithMaxTiFlashThreads(t *testing.T) {
 	streamCount = getStreamCountFromExplain(rows)
 	// require.Equal(t, len(streamCount), 1)
 	require.Equal(t, uint64(16), streamCount[0])
+}
+
+func TestIssue37986(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	tk.MustExec(`drop table if exists t3`)
+	tk.MustExec(`CREATE TABLE t3(c0 INT, primary key(c0))`)
+	tk.MustExec(`insert into t3 values(1), (2), (3), (4), (5), (6), (7), (8), (9), (10)`)
+	rs := tk.MustQuery(`SELECT v2.c0 FROM (select rand() as c0 from t3) v2 order by v2.c0 limit 10`).Rows()
+	lastVal := -1.0
+	for _, r := range rs {
+		v := r[0].(string)
+		val, err := strconv.ParseFloat(v, 64)
+		require.NoError(t, err)
+		require.True(t, val >= lastVal)
+		lastVal = val
+	}
+
+	tk.MustQuery(`explain format='brief' SELECT v2.c0 FROM (select rand() as c0 from t3) v2 order by v2.c0 limit 10`).
+		Check(testkit.Rows(`TopN 10.00 root  Column#2, offset:0, count:10`,
+			`└─Projection 10000.00 root  rand()->Column#2`,
+			`  └─TableReader 10000.00 root  data:TableFullScan`,
+			`    └─TableFullScan 10000.00 cop[tikv] table:t3 keep order:false, stats:pseudo`))
 }
 
 func TestIssue33175(t *testing.T) {
@@ -4139,6 +4196,15 @@ func TestRepeatPushDownToTiFlash(t *testing.T) {
 		{"    └─TableFullScan_7", "mpp[tiflash]", "keep order:false, stats:pseudo"},
 	}
 	tk.MustQuery("explain select repeat(a,b) from t;").CheckAt([]int{0, 2, 4}, rows)
+}
+
+func TestIssue50235(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`use test`)
+	tk.MustExec(`create table tt (c year(4) NOT NULL DEFAULT '2016', primary key(c));`)
+	tk.MustExec(`insert into tt values (2016);`)
+	tk.MustQuery(`select * from tt where c < 16212511333665770580`).Check(testkit.Rows("2016"))
 }
 
 func TestIssue36194(t *testing.T) {
@@ -5342,7 +5408,7 @@ func TestIssue41458(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec(`create table t (a int, b int, c int, index ia(a));`)
 	tk.MustExec("select  * from t t1 join t t2 on t1.b = t2.b join t t3 on t2.b=t3.b join t t4 on t3.b=t4.b where t3.a=1 and t2.a=2;")
-	rawRows := tk.MustQuery("select plan from information_schema.statements_summary where SCHEMA_NAME = 'test' and STMT_TYPE = 'Select';").Sort().Rows()
+	rawRows := tk.MustQuery("select plan from information_schema.statements_summary where SCHEMA_NAME = 'test' and STMT_TYPE = 'Select' and DIGEST_TEXT LIKE '%t3%';").Sort().Rows()
 	plan := rawRows[0][0].(string)
 	rows := strings.Split(plan, "\n")
 	rows = rows[1:]
@@ -5434,4 +5500,21 @@ func TestIssue45033(t *testing.T) {
 				                from   (select distinct alias3.c4 as c2
 				                        from   t3 alias3) alias4
 				                where  alias4.c2 = alias2.alias_col1);`).Check(testkit.Rows("0"))
+}
+
+func TestNestedVirtualGeneratedColumnUpdate(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	tk.MustExec("CREATE TABLE test1 (\ncol1 bigint(20) NOT NULL ,\ncol2 varchar(36) NOT NULL ,\ncol3 int(11) DEFAULT NULL ,\ncol4 varchar(36) NOT NULL ,\ncol5 varchar(255) DEFAULT NULL ,\nmodify_time bigint(20) DEFAULT NULL,\ncreate_time bigint(20) DEFAULT NULL,\ncol6 json DEFAULT NULL ,\n" +
+		"col7 json DEFAULT NULL ," +
+		"col8 json GENERATED ALWAYS AS (json_merge_patch(ifnull(col6, _utf8mb4\"{}\"), ifnull(col7, _utf8mb4\"{}\"))) STORED," +
+		"col9 varchar(36) GENERATED ALWAYS AS (left(json_unquote(json_extract(col8, _utf8mb4\"$.col9[0]\")), 36)) VIRTUAL," +
+		"col10 varchar(30) GENERATED ALWAYS AS (left(json_unquote(json_extract(col8, _utf8mb4\"$.col10\")), 30)) VIRTUAL," +
+		"KEY dev_idx1 (col10)) " +
+		"ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin;")
+	tk.MustExec("INSERT INTO test1 VALUES (-100000000, \"123459789332\", 1, \"123459789332\", \"BBBBB\", 1675871896, 1675871896, '{\"col10\": \"CCCCC\",\"col9\": [\"ABCDEFG\"]}', NULL, DEFAULT, DEFAULT, DEFAULT);\n")
+	tk.MustExec("UPDATE test1 SET col7 = '{\"col10\":\"DDDDD\",\"col9\":[\"abcdefg\"]}';\n")
+	tk.MustExec("DELETE FROM test1 WHERE col1 < 0;\n")
 }

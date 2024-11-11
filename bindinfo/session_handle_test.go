@@ -16,6 +16,7 @@ package bindinfo_test
 
 import (
 	"context"
+	"fmt"
 	"strconv"
 	"testing"
 	"time"
@@ -413,6 +414,29 @@ func TestLocalTemporaryTable(t *testing.T) {
 	tk.MustGetErrCode("create binding for replace into tmp2 select * from t2 where t2.b = 1 and t2.c > 1 using replace into t select /*+ use_index(t2,c) */ * from t2 where t2.b = 1 and t2.c > 1", errno.ErrOptOnTemporaryTable)
 	tk.MustGetErrCode("create binding for update tmp2 set a = 1 where b = 1 and c > 1 using update /*+ use_index(t, c) */ t set a = 1 where b = 1 and c > 1", errno.ErrOptOnTemporaryTable)
 	tk.MustGetErrCode("create binding for delete from tmp2 where b = 1 and c > 1 using delete /*+ use_index(t, c) */ from t where b = 1 and c > 1", errno.ErrOptOnTemporaryTable)
+}
+
+func TestIssue53834(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`use test`)
+	tk.MustExec(`create table t (a varchar(1024))`)
+	tk.MustExec(`insert into t values (space(1024))`)
+	for i := 0; i < 12; i++ {
+		tk.MustExec(`insert into t select * from t`)
+	}
+	oomAction := tk.MustQuery(`select @@tidb_mem_oom_action`).Rows()[0][0].(string)
+	defer func() {
+		tk.MustExec(fmt.Sprintf(`set global tidb_mem_oom_action='%v'`, oomAction))
+	}()
+
+	tk.MustExec(`set global tidb_mem_oom_action='cancel'`)
+	err := tk.ExecToErr(`replace into t select /*+ memory_quota(1 mb) */ * from t`)
+	require.ErrorContains(t, err, "cancelled due to exceeding the allowed memory limit")
+
+	tk.MustExec(`create binding for replace into t select * from t using replace into t select /*+ memory_quota(1 mb) */ * from t`)
+	err = tk.ExecToErr(`replace into t select * from t`)
+	require.ErrorContains(t, err, "cancelled due to exceeding the allowed memory limit")
 }
 
 func TestDropSingleBindings(t *testing.T) {

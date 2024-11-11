@@ -18,6 +18,7 @@ import (
 	"context"
 	"fmt"
 	"math/rand"
+	"os"
 	"strconv"
 	"sync"
 	"sync/atomic"
@@ -423,7 +424,6 @@ func (w *worker) handleUpdateJobError(t *meta.Meta, job *model.Job, err error) e
 		}
 		// Reduce this txn entry size.
 		job.BinlogInfo.Clean()
-		job.InvolvingSchemaInfo = nil
 		job.Error = toTError(err)
 		job.ErrorCount++
 		job.SchemaState = model.StateNone
@@ -471,7 +471,7 @@ func (w *worker) registerMDLInfo(job *model.Job, ver int64) error {
 }
 
 // cleanMDLInfo cleans metadata lock info.
-func cleanMDLInfo(pool *sess.Pool, jobID int64, ec *clientv3.Client) {
+func cleanMDLInfo(pool *sess.Pool, jobID int64, ec *clientv3.Client, cleanETCD bool) {
 	if !variable.EnableMDL.Load() {
 		return
 	}
@@ -485,7 +485,7 @@ func cleanMDLInfo(pool *sess.Pool, jobID int64, ec *clientv3.Client) {
 		logutil.BgLogger().Warn("unexpected error when clean mdl info", zap.Int64("job ID", jobID), zap.Error(err))
 		return
 	}
-	if ec != nil {
+	if cleanETCD && ec != nil {
 		path := fmt.Sprintf("%s/%d/", util.DDLAllSchemaVersionsByJob, jobID)
 		_, err = ec.Delete(context.Background(), path, clientv3.WithPrefix())
 		if err != nil {
@@ -705,6 +705,9 @@ func (w *JobContext) setDDLLabelForDiagnosis(jobType model.ActionType) {
 }
 
 func (w *worker) HandleJobDone(d *ddlCtx, job *model.Job, t *meta.Meta) error {
+	if err := w.checkBeforeCommit(); err != nil {
+		return err
+	}
 	err := w.finishDDLJob(t, job)
 	if err != nil {
 		w.sess.Rollback()
@@ -759,6 +762,21 @@ func (w *worker) HandleDDLJobTable(d *ddlCtx, job *model.Job) (int64, error) {
 		if job.IsDone() {
 			job.State = model.JobStateSynced
 		}
+		// Inject the failpoint to prevent the progress of index creation.
+		failpoint.Inject("create-index-stuck-before-ddlhistory", func(v failpoint.Value) {
+			if sigFile, ok := v.(string); ok && job.Type == model.ActionAddIndex {
+				for {
+					time.Sleep(1 * time.Second)
+					if _, err := os.Stat(sigFile); err != nil {
+						if os.IsNotExist(err) {
+							continue
+						}
+						failpoint.Return(0, errors.Trace(err))
+					}
+					break
+				}
+			}
+		})
 		err = w.HandleJobDone(d, job, t)
 		return 0, err
 	}
@@ -781,6 +799,11 @@ func (w *worker) HandleDDLJobTable(d *ddlCtx, job *model.Job) (int64, error) {
 		defer d.unlockSchemaVersion(job.ID)
 		w.sess.Reset()
 		err = w.HandleJobDone(d, job, t)
+		return 0, err
+	}
+
+	if err = w.checkBeforeCommit(); err != nil {
+		d.unlockSchemaVersion(job.ID)
 		return 0, err
 	}
 
@@ -835,6 +858,21 @@ func (w *worker) HandleDDLJobTable(d *ddlCtx, job *model.Job) (int64, error) {
 	}
 
 	return schemaVer, nil
+}
+
+func (w *worker) checkBeforeCommit() error {
+	if !w.ddlCtx.isOwner() {
+		// Since this TiDB instance is not a DDL owner anymore,
+		// it should not commit any transaction.
+		w.sess.Rollback()
+		return dbterror.ErrNotOwner
+	}
+
+	if err := w.ctx.Err(); err != nil {
+		// The worker context is canceled, it should not commit any transaction.
+		return err
+	}
+	return nil
 }
 
 func (w *JobContext) getResourceGroupTaggerForTopSQL() tikvrpc.ResourceGroupTagger {

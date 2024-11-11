@@ -1405,7 +1405,7 @@ func TestStmtSummaryEvictedPointGet(t *testing.T) {
 		tk.MustExec(fmt.Sprintf("select p from th%v where p=2333;", i%6))
 	}
 	tk.MustQuery("select EVICTED_COUNT from information_schema.statements_summary_evicted;").
-		Check(testkit.Rows("7"))
+		Check(testkit.Rows("996"))
 
 	tk.MustExec("set @@global.tidb_enable_stmt_summary=0;")
 	tk.MustQuery("select count(*) from information_schema.statements_summary_evicted;").
@@ -1564,6 +1564,8 @@ func TestTiDBTrx(t *testing.T) {
 	memDBTracker := memory.NewTracker(memory.LabelForMemDB, -1)
 	memDBTracker.Consume(19)
 	tk.Session().GetSessionVars().MemDBFootprint = memDBTracker
+	t1 := time.Date(2021, 5, 7, 4, 56, 48, 1000000, time.UTC)
+	t2 := time.Date(2021, 5, 20, 13, 16, 35, 778000000, time.UTC)
 	sm.TxnInfo[0] = &txninfo.TxnInfo{
 		StartTS:          424768545227014155,
 		CurrentSQLDigest: digest.String(),
@@ -1588,9 +1590,27 @@ func TestTiDBTrx(t *testing.T) {
 	sm.TxnInfo[1].BlockStartTime.Time = blockTime2
 	tk.Session().SetSessionManager(sm)
 
-	tk.MustQuery("select * from information_schema.TIDB_TRX;").Check(testkit.Rows(
-		"424768545227014155 2021-05-07 12:56:48.001000 "+digest.String()+" update `test_tidb_trx` set `i` = `i` + ? Idle <nil> 1 19 2 root test [] ",
-		"425070846483628033 2021-05-20 21:16:35.778000 <nil> <nil> LockWaiting 2021-05-20 13:18:30.123456 0 19 10 user1 db1 [\"sql1\",\"sql2\",\""+digest.String()+"\"] "))
+	tk.MustQuery(`select ID,
+	START_TIME,
+	CURRENT_SQL_DIGEST,
+	CURRENT_SQL_DIGEST_TEXT,
+	STATE,
+	WAITING_START_TIME,
+	MEM_BUFFER_KEYS,
+	MEM_BUFFER_BYTES,
+	SESSION_ID,
+	USER,
+	DB,
+	ALL_SQL_DIGESTS,
+	RELATED_TABLE_IDS
+	from information_schema.TIDB_TRX`).Check(testkit.Rows(
+		"424768545227014155 "+t1.Local().Format(types.TimeFSPFormat)+" "+digest.String()+" update `test_tidb_trx` set `i` = `i` + ? Idle <nil> 1 19 2 root test [] ",
+		"425070846483628033 "+t2.Local().Format(types.TimeFSPFormat)+" <nil> <nil> LockWaiting "+
+			// `WAITING_START_TIME` will not be affected by time_zone, it is in memory and we assume that the system time zone will not change.
+			blockTime2.Format(types.TimeFSPFormat)+
+			" 0 19 10 user1 db1 [\"sql1\",\"sql2\",\""+digest.String()+"\"] "))
+	tk.MustQuery(`select state from information_schema.tidb_trx as trx  union select state from information_schema.tidb_trx as trx`).Sort().
+		Check(testkit.Rows(txninfo.TxnRunningStateStrs[txninfo.TxnIdle], txninfo.TxnRunningStateStrs[txninfo.TxnLockAcquiring]))
 
 	// Test the all_sql_digests column can be directly passed to the tidb_decode_sql_digests function.
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/expression/sqlDigestRetrieverSkipRetrieveGlobal", "return"))

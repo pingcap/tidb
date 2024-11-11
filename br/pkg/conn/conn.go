@@ -7,6 +7,7 @@ import (
 	"crypto/tls"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"net/url"
@@ -82,16 +83,20 @@ func GetAllTiKVStoresWithRetry(ctx context.Context,
 		func() error {
 			stores, err = util.GetAllTiKVStores(ctx, pdClient, storeBehavior)
 			failpoint.Inject("hint-GetAllTiKVStores-error", func(val failpoint.Value) {
+				logutil.CL(ctx).Debug("failpoint hint-GetAllTiKVStores-error injected.")
 				if val.(bool) {
-					logutil.CL(ctx).Debug("failpoint hint-GetAllTiKVStores-error injected.")
 					err = status.Error(codes.Unknown, "Retryable error")
+				} else {
+					err = context.Canceled
 				}
 			})
 
 			failpoint.Inject("hint-GetAllTiKVStores-cancel", func(val failpoint.Value) {
+				logutil.CL(ctx).Debug("failpoint hint-GetAllTiKVStores-cancel injected.")
 				if val.(bool) {
-					logutil.CL(ctx).Debug("failpoint hint-GetAllTiKVStores-cancel injected.")
 					err = status.Error(codes.Canceled, "Cancel Retry")
+				} else {
+					err = context.Canceled
 				}
 			})
 
@@ -323,6 +328,33 @@ func (mgr *Mgr) GetMergeRegionSizeAndCount(ctx context.Context, client *http.Cli
 		return DefaultMergeRegionSizeBytes, DefaultMergeRegionKeyCount
 	}
 	return regionSplitSize, regionSplitKeys
+}
+
+// IsLogBackupEnabled is used for br to check whether tikv has enabled log backup.
+func (mgr *Mgr) IsLogBackupEnabled(ctx context.Context, client *http.Client) (bool, error) {
+	logbackupEnable := true
+	type logbackup struct {
+		Enable bool `json:"enable"`
+	}
+	type config struct {
+		LogBackup logbackup `json:"log-backup"`
+	}
+	err := mgr.GetConfigFromTiKV(ctx, client, func(resp *http.Response) error {
+		respBytes, err := io.ReadAll(resp.Body)
+		if err != nil {
+			return err
+		}
+
+		var c config
+		err = json.Unmarshal(respBytes, &c)
+		if err != nil {
+			log.Warn("Failed to parse log-backup enable from config", logutil.ShortError(err))
+			return err
+		}
+		logbackupEnable = logbackupEnable && c.LogBackup.Enable
+		return nil
+	})
+	return logbackupEnable, errors.Trace(err)
 }
 
 // GetConfigFromTiKV get configs from all alive tikv stores.

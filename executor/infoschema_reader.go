@@ -87,6 +87,7 @@ type memtableRetriever struct {
 	retrieved   bool
 	initialized bool
 	extractor   plannercore.MemTablePredicateExtractor
+	memTracker  *memory.Tracker
 }
 
 // retrieve implements the infoschemaRetriever interface
@@ -190,6 +191,9 @@ func (e *memtableRetriever) retrieve(ctx context.Context, sctx sessionctx.Contex
 			return nil, err
 		}
 		e.initialized = true
+		if e.memTracker != nil {
+			e.memTracker.Consume(calculateDatumsSize(e.rows))
+		}
 	}
 
 	// Adjust the amount of each return
@@ -584,6 +588,11 @@ func (e *memtableRetriever) setDataForStatisticsInTable(schema *model.DBInfo, ta
 				expression = tblCol.GeneratedExprString
 			}
 
+			var subPart any
+			if key.Length != types.UnspecifiedLength {
+				subPart = key.Length
+			}
+
 			record := types.MakeDatums(
 				infoschema.CatalogVal, // TABLE_CATALOG
 				schema.Name.O,         // TABLE_SCHEMA
@@ -595,7 +604,7 @@ func (e *memtableRetriever) setDataForStatisticsInTable(schema *model.DBInfo, ta
 				colName,               // COLUMN_NAME
 				"A",                   // COLLATION
 				0,                     // CARDINALITY
-				nil,                   // SUB_PART
+				subPart,               // SUB_PART
 				nil,                   // PACKED
 				nullable,              // NULLABLE
 				"BTREE",               // INDEX_TYPE
@@ -825,7 +834,6 @@ func (e *hugeMemTableRetriever) setDataForColumns(ctx context.Context, sctx sess
 }
 
 func (e *hugeMemTableRetriever) dataForColumnsInTable(ctx context.Context, sctx sessionctx.Context, schema *model.DBInfo, tbl *model.TableInfo, priv mysql.PrivilegeType, extractor *plannercore.ColumnsTableExtractor) {
-	is := sessiontxn.GetTxnManager(sctx).GetTxnInfoSchema()
 	if tbl.IsView() {
 		e.viewMu.Lock()
 		_, ok := e.viewSchemaMap[tbl.ID]
@@ -834,6 +842,7 @@ func (e *hugeMemTableRetriever) dataForColumnsInTable(ctx context.Context, sctx 
 			internalCtx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnOthers)
 			// Build plan is not thread safe, there will be concurrency on sessionctx.
 			if err := runWithSystemSession(internalCtx, sctx, func(s sessionctx.Context) error {
+				is := sessiontxn.GetTxnManager(s).GetTxnInfoSchema()
 				planBuilder, _ := plannercore.NewPlanBuilder().Init(s, is, &hint.BlockHintProcessor{})
 				var err error
 				viewLogicalPlan, err = planBuilder.BuildDataSourceFromView(ctx, schema.Name, tbl, nil, nil)
@@ -1864,11 +1873,11 @@ func (e *memtableRetriever) setDataForTiDBHotRegions(ctx sessionctx.Context) err
 	if !ok {
 		return errors.New("Information about hot region can be gotten only when the storage is TiKV")
 	}
-	allSchemas := ctx.GetInfoSchema().(infoschema.InfoSchema).AllSchemas()
 	tikvHelper := &helper.Helper{
 		Store:       tikvStore,
 		RegionCache: tikvStore.GetRegionCache(),
 	}
+	allSchemas := tikvHelper.FilterMemDBs(ctx.GetInfoSchema().(infoschema.InfoSchema).AllSchemas())
 	metrics, err := tikvHelper.ScrapeHotInfo(pdapi.HotRead, allSchemas)
 	if err != nil {
 		return err
@@ -2962,8 +2971,8 @@ func (e *hugeMemTableRetriever) retrieve(ctx context.Context, sctx sessionctx.Co
 	if !e.initialized {
 		is := sctx.GetInfoSchema().(infoschema.InfoSchema)
 		dbs := is.AllSchemas()
-		slices.SortFunc(dbs, func(i, j *model.DBInfo) bool {
-			return i.Name.L < j.Name.L
+		slices.SortFunc(dbs, func(i, j *model.DBInfo) int {
+			return strings.Compare(i.Name.L, j.Name.L)
 		})
 		e.dbs = dbs
 		e.initialized = true

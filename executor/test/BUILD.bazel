@@ -4,6 +4,7 @@ go_test(
     name = "test_test",
     timeout = "short",
     srcs = [
+        "executor_issue_test.go",
         "explain_test.go",
         "main_test.go",
     ],

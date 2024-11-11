@@ -56,6 +56,7 @@ import (
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/engine"
+	"github.com/pingcap/tidb/util/intest"
 	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/tikv/client-go/v2/oracle"
 	tikvclient "github.com/tikv/client-go/v2/tikv"
@@ -76,9 +77,6 @@ const (
 	dialTimeout             = 5 * time.Minute
 	maxRetryTimes           = 5
 	defaultRetryBackoffTime = 3 * time.Second
-	// maxWriteAndIngestRetryTimes is the max retry times for write and ingest.
-	// A large retry times is for tolerating tikv cluster failures.
-	maxWriteAndIngestRetryTimes = 30
 
 	gRPCKeepAliveTime    = 10 * time.Minute
 	gRPCKeepAliveTimeout = 5 * time.Minute
@@ -111,6 +109,13 @@ var (
 
 	errorEngineClosed     = errors.New("engine is closed")
 	maxRetryBackoffSecond = 30
+
+	// MaxWriteAndIngestRetryTimes is the max retry times for write and ingest.
+	// A large retry times is for tolerating tikv cluster failures.
+	MaxWriteAndIngestRetryTimes = 30
+
+	// Unlimited RPC receive message size for TiKV importer
+	unlimitedRPCRecvMsgSize = math.MaxInt32
 )
 
 // ImportClientFactory is factory to create new import client for specific store.
@@ -164,6 +169,7 @@ func (f *importClientFactoryImpl) makeConn(ctx context.Context, storeID uint64) 
 		addr = store.GetAddress()
 	}
 	opts = append(opts,
+		grpc.WithDefaultCallOptions(grpc.MaxCallRecvMsgSize(unlimitedRPCRecvMsgSize)),
 		grpc.WithConnectParams(grpc.ConnectParams{Backoff: bfConf}),
 		grpc.WithKeepaliveParams(keepalive.ClientParameters{
 			Time:                gRPCKeepAliveTime,
@@ -1086,6 +1092,8 @@ func (local *Backend) prepareAndSendJob(
 		needSplit = true
 	})
 	logger := log.FromContext(ctx).With(zap.Stringer("uuid", engine.UUID)).Begin(zap.InfoLevel, "split and scatter ranges")
+	backOffTime := 10 * time.Second
+	maxbackoffTime := 120 * time.Second
 	for i := 0; i < maxRetryTimes; i++ {
 		failpoint.Inject("skipSplitAndScatter", func() {
 			failpoint.Break()
@@ -1098,6 +1106,15 @@ func (local *Backend) prepareAndSendJob(
 
 		log.FromContext(ctx).Warn("split and scatter failed in retry", zap.Stringer("uuid", engine.UUID),
 			log.ShortError(err), zap.Int("retry", i))
+		select {
+		case <-time.After(backOffTime):
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+		backOffTime *= 2
+		if backOffTime > maxbackoffTime {
+			backOffTime = maxbackoffTime
+		}
 	}
 	logger.End(zap.ErrorLevel, err)
 	if err != nil {
@@ -1373,7 +1390,6 @@ func (local *Backend) executeJob(
 			// if it's retryable error, we retry from scanning region
 			log.FromContext(ctx).Warn("meet retryable error when writing to TiKV",
 				log.ShortError(err), zap.Stringer("job stage", job.stage))
-			job.convertStageTo(needRescan)
 			job.lastRetryableErr = err
 			return nil
 		}
@@ -1523,8 +1539,21 @@ func (local *Backend) doImport(ctx context.Context, engine *Engine, regionRanges
 			switch job.stage {
 			case regionScanned, wrote:
 				job.retryCount++
-				if job.retryCount > maxWriteAndIngestRetryTimes {
-					firstErr.Set(job.lastRetryableErr)
+				if job.retryCount > MaxWriteAndIngestRetryTimes {
+					lastErr := job.lastRetryableErr
+					if lastErr == nil {
+						if intest.InTest {
+							panic("lastRetryableErr should not be nil")
+						}
+						lastErr = errors.New("retry limit exceeded")
+						log.FromContext(ctx).Error(
+							"lastRetryableErr should not be nil",
+							logutil.Key("startKey", job.keyRange.start),
+							logutil.Key("endKey", job.keyRange.end),
+							zap.Stringer("stage", job.stage),
+							zap.Error(lastErr))
+					}
+					firstErr.Set(lastErr)
 					workerCancel()
 					jobWg.Done()
 					continue

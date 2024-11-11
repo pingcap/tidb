@@ -39,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/cmp"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/logutil"
@@ -400,7 +401,7 @@ var (
 	// DumpStatsDeltaRatio is the lower bound of `Modify Count / Table Count` for stats delta to be dumped.
 	DumpStatsDeltaRatio = 1 / 10000.0
 	// dumpStatsMaxDuration is the max duration since last update.
-	dumpStatsMaxDuration = time.Hour
+	dumpStatsMaxDuration = 5 * time.Minute
 )
 
 // needDumpStatsDelta checks whether to dump stats delta.
@@ -427,7 +428,7 @@ func (h *Handle) needDumpStatsDelta(is infoschema.InfoSchema, mode dumpMode, id 
 		item.InitTime = currentTime
 	}
 	if currentTime.Sub(item.InitTime) > dumpStatsMaxDuration {
-		// Dump the stats to kv at least once an hour.
+		// Dump the stats to kv at least once 5 minutes.
 		return true
 	}
 	statsTbl := h.GetPartitionStats(tbl.Meta(), id)
@@ -621,7 +622,7 @@ func (h *Handle) dumpTableStatColSizeToKV(id int64, delta variable.TableDelta) e
 	}
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
 	sql := fmt.Sprintf("insert into mysql.stats_histograms (table_id, is_index, hist_id, distinct_count, tot_col_size) "+
-		"values %s on duplicate key update tot_col_size = tot_col_size + values(tot_col_size)", strings.Join(values, ","))
+		"values %s on duplicate key update tot_col_size = GREATEST(0, tot_col_size + values(tot_col_size))", strings.Join(values, ","))
 	_, _, err := h.execRestrictedSQL(ctx, sql)
 	return errors.Trace(err)
 }
@@ -947,11 +948,11 @@ func (h *Handle) DumpColStatsUsageToKV() error {
 	for id, t := range colMap {
 		pairs = append(pairs, pair{tblColID: id, lastUsedAt: t.UTC().Format(types.TimeFormat)})
 	}
-	slices.SortFunc(pairs, func(i, j pair) bool {
+	slices.SortFunc(pairs, func(i, j pair) int {
 		if i.tblColID.TableID == j.tblColID.TableID {
-			return i.tblColID.ID < j.tblColID.ID
+			return cmp.Compare(i.tblColID.ID, j.tblColID.ID)
 		}
-		return i.tblColID.TableID < j.tblColID.TableID
+		return cmp.Compare(i.tblColID.TableID, j.tblColID.TableID)
 	})
 	// Use batch insert to reduce cost.
 	for i := 0; i < len(pairs); i += batchInsertSize {
@@ -1124,6 +1125,11 @@ func (h *Handle) HandleAutoAnalyze(is infoschema.InfoSchema) (analyzed bool) {
 			tbls[i], tbls[j] = tbls[j], tbls[i]
 		})
 		for _, tbl := range tbls {
+			// Sometimes the tables are too many. Auto-analyze will take too much time on it.
+			// so we need to check the available time.
+			if !timeutil.WithinDayTimePeriod(start, end, time.Now()) {
+				return false
+			}
 			//if table locked, skip analyze
 			if h.IsTableLocked(tbl.Meta().ID) {
 				continue

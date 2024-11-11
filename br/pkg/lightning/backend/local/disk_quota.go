@@ -17,6 +17,7 @@ package local
 import (
 	"github.com/google/uuid"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend"
+	"github.com/pingcap/tidb/util/cmp"
 	"golang.org/x/exp/slices"
 )
 
@@ -38,11 +39,14 @@ func CheckDiskQuota(mgr DiskUsage, quota int64) (
 	totalMemSize int64,
 ) {
 	sizes := mgr.EngineFileSizes()
-	slices.SortFunc(sizes, func(i, j backend.EngineFileSize) bool {
+	slices.SortFunc(sizes, func(i, j backend.EngineFileSize) int {
 		if i.IsImporting != j.IsImporting {
-			return i.IsImporting
+			if i.IsImporting {
+				return -1
+			}
+			return 1
 		}
-		return i.DiskSize+i.MemSize < j.DiskSize+j.MemSize
+		return cmp.Compare(i.DiskSize+i.MemSize, j.DiskSize+j.MemSize)
 	})
 	for _, size := range sizes {
 		totalDiskSize += size.DiskSize
