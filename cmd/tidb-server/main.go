@@ -317,7 +317,7 @@ func main() {
 	keyspaceName := keyspace.GetKeyspaceNameBySettings()
 	executor.Start()
 	resourcemanager.InstanceResourceManager.Start()
-	storage, dom := createStoreAndDomain(keyspaceName)
+	storage, dom := createStoreDDLOwnerMgrAndDomain(keyspaceName)
 	svr := createServer(storage, dom)
 
 	exited := make(chan struct{})
@@ -397,7 +397,7 @@ func registerStores() {
 	terror.MustNil(err)
 }
 
-func createStoreAndDomain(keyspaceName string) (kv.Storage, *domain.Domain) {
+func createStoreDDLOwnerMgrAndDomain(keyspaceName string) (kv.Storage, *domain.Domain) {
 	cfg := config.GetGlobalConfig()
 	var fullPath string
 	if keyspaceName == "" {
@@ -411,6 +411,8 @@ func createStoreAndDomain(keyspaceName string) (kv.Storage, *domain.Domain) {
 	copr.GlobalMPPFailedStoreProber.Run()
 	mppcoordmanager.InstanceMPPCoordinatorManager.Run()
 	// Bootstrap a session to load information schema.
+	err = ddl.StartOwnerManager(context.Background(), storage)
+	terror.MustNil(err)
 	dom, err := session.BootstrapSession(storage)
 	terror.MustNil(err)
 	return storage, dom
@@ -859,7 +861,7 @@ func createServer(storage kv.Storage, dom *domain.Domain) *server.Server {
 	svr, err := server.NewServer(cfg, driver)
 	// Both domain and storage have started, so we have to clean them before exiting.
 	if err != nil {
-		closeDomainAndStorage(storage, dom)
+		closeDDLOwnerMgrDomainAndStorage(storage, dom)
 		log.Fatal("failed to create the server", zap.Error(err), zap.Stack("stack"))
 	}
 	svr.SetDomain(dom)
@@ -893,9 +895,10 @@ func setupTracing() {
 	opentracing.SetGlobalTracer(tracer)
 }
 
-func closeDomainAndStorage(storage kv.Storage, dom *domain.Domain) {
+func closeDDLOwnerMgrDomainAndStorage(storage kv.Storage, dom *domain.Domain) {
 	tikv.StoreShuttingDown(1)
 	dom.Close()
+	ddl.CloseOwnerManager()
 	copr.GlobalMPPFailedStoreProber.Stop()
 	mppcoordmanager.InstanceMPPCoordinatorManager.Stop()
 	err := storage.Close()
@@ -918,7 +921,7 @@ func cleanup(svr *server.Server, storage kv.Storage, dom *domain.Domain) {
 	// See https://github.com/pingcap/tidb/issues/40038 for details.
 	svr.KillSysProcesses()
 	plugin.Shutdown(context.Background())
-	closeDomainAndStorage(storage, dom)
+	closeDDLOwnerMgrDomainAndStorage(storage, dom)
 	disk.CleanUp()
 	closeStmtSummary()
 	topsql.Close()
