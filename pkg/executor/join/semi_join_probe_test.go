@@ -361,7 +361,6 @@ func TestSemiJoinDuplicateKeys(t *testing.T) {
 	testSemiJoin(t, true, true, true)   // Right side build with other condition
 }
 
-// Here is just a simple spill test, more complicated semi and anti semi join tests are placed in endless
 func TestSemiAndAntiSemiJoinSpill(t *testing.T) {
 	var leftCols = []*expression.Column{
 		{Index: 0, RetType: types.NewFieldType(mysql.TypeLonglong)},
