@@ -137,7 +137,8 @@ func encodeShortValue4SST(value []byte, ts uint64) []byte {
 	// value layout in this case:
 	// P{varint-encoded TS}v{value length}{value}
 	actualValue := make([]byte, 0, 1+binary.MaxVarintLen64+1+1+len(value))
-	// below logic can be found at `WriteRef.to_bytes` [6].
+	// below logic can be found at `WriteRef.to_bytes` [6]. This function is called
+	// at `TxnSstWriter.put` [2].
 	//
 	// [6] https://github.com/tikv/tikv/blob/7793f1d5dc40206fe406ca001be1e0d7f1b83a8f/components/txn_types/src/write.rs#L362
 	actualValue = append(actualValue, 'P')
