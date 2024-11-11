@@ -376,12 +376,12 @@ func ExtractColumnsAndCorColumnsFromExpressions(result []*Column, list []Express
 func ExtractColumnSet(exprs ...Expression) intset.FastIntSet {
 	set := intset.NewFastIntSet()
 	for _, expr := range exprs {
-		extractColumnSet(expr, set)
+		extractColumnSet(expr, &set)
 	}
 	return set
 }
 
-func extractColumnSet(expr Expression, set intset.FastIntSet) {
+func extractColumnSet(expr Expression, set *intset.FastIntSet) {
 	switch v := expr.(type) {
 	case *Column:
 		set.Insert(int(v.UniqueID))
