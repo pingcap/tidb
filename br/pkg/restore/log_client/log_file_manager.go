@@ -98,7 +98,7 @@ type LogFileManager struct {
 	storage storage.ExternalStorage
 	helper  streamMetadataHelper
 
-	withmigrations *WithMigrations
+	withmigrations WithMigrations
 
 	metadataDownloadBatchSize uint
 }
@@ -109,7 +109,7 @@ type LogFileManagerInit struct {
 	RestoreTS uint64
 	Storage   storage.ExternalStorage
 
-	Migrations                *WithMigrations
+	Migrations                WithMigrations
 	MetadataDownloadBatchSize uint
 	EncryptionManager         *encryption.Manager
 }
@@ -123,10 +123,11 @@ type DDLMetaGroup struct {
 // Generally the config cannot be changed during its lifetime.
 func CreateLogFileManager(ctx context.Context, init LogFileManagerInit) (*LogFileManager, error) {
 	fm := &LogFileManager{
-		startTS:   init.StartTS,
-		restoreTS: init.RestoreTS,
-		storage:   init.Storage,
-		helper:    stream.NewMetadataHelper(stream.WithEncryptionManager(init.EncryptionManager)),
+		startTS:        init.StartTS,
+		restoreTS:      init.RestoreTS,
+		storage:        init.Storage,
+		helper:         stream.NewMetadataHelper(stream.WithEncryptionManager(init.EncryptionManager)),
+		withmigrations: init.Migrations,
 
 		metadataDownloadBatchSize: init.MetadataDownloadBatchSize,
 	}
