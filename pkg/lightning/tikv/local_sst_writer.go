@@ -79,7 +79,6 @@ func newWriteCFWriter(
 // newDefaultCFWriter creates a new defaultCFWriter.
 func newDefaultCFWriter(
 	sstPath string,
-	ts uint64,
 ) (*rockssst.Writer, error) {
 	f, err := vfs.Default.Create(sstPath)
 	if err != nil {
@@ -182,7 +181,7 @@ func newLocalSSTWriter(
 	ret.defaultPath = path.Join(workDir, u+"-default.sst")
 	ret.writePath = path.Join(workDir, u+"-write.sst")
 
-	ret.defaultCF, err = newDefaultCFWriter(ret.defaultPath, ts)
+	ret.defaultCF, err = newDefaultCFWriter(ret.defaultPath)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
