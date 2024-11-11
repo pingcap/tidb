@@ -38,7 +38,6 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/planner/cascades"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
@@ -266,11 +265,11 @@ func doOptimize(
 		return nil, nil, 0, errors.Trace(plannererrors.ErrCartesianProductUnsupported)
 	}
 
-	yams := cascades.NewYams(cascades.NewYamsContext(sctx))
-	defer yams.Destroy()
-	if err := yams.Execute(); err != nil {
-		return nil, nil, 0, err
-	}
+	// yams := cascades.NewYams(cascades.NewYamsContext(sctx))
+	// defer yams.Destroy()
+	// if err := yams.Execute(); err != nil {
+	//	return nil, nil, 0, err
+	// }
 
 	planCounter := base.PlanCounterTp(sessVars.StmtCtx.StmtHints.ForceNthPlan)
 	if planCounter == 0 {
