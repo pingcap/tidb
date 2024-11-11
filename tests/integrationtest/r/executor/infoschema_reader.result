@@ -330,3 +330,9 @@ sleep(1)
 select table_rows, avg_row_length, data_length, index_length from information_schema.tables where table_name='t' AND TABLE_SCHEMA='executor__infoschema_reader';
 table_rows	avg_row_length	data_length	index_length
 3	18	54	6
+drop table if exists t;
+create table t (c text);
+alter table t add index idx_t (c(16));
+select SUB_PART from information_schema.statistics where TABLE_SCHEMA = 'executor__infoschema_reader' and TABLE_NAME = 't';
+SUB_PART
+16

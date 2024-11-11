@@ -264,3 +264,9 @@ insert into t(a, b, c) values(1, 2, 'c'), (7, 3, 'd'), (12, 4, 'e');
 analyze table t;
 select sleep(1);
 select table_rows, avg_row_length, data_length, index_length from information_schema.tables where table_name='t' AND TABLE_SCHEMA='executor__infoschema_reader';
+
+
+drop table if exists t;
+create table t (c text);
+alter table t add index idx_t (c(16));
+select SUB_PART from information_schema.statistics where TABLE_SCHEMA = 'executor__infoschema_reader' and TABLE_NAME = 't';
