@@ -139,7 +139,8 @@ func (e *CTEExec) Close() (firstErr error) {
 	func() {
 		e.producer.resTbl.Lock()
 		defer e.producer.resTbl.Unlock()
-		if !e.producer.closed {
+		// if producer is opened, close it.
+		if e.producer.opened && !e.producer.closed {
 			failpoint.Inject("mock_cte_exec_panic_avoid_deadlock", func(v failpoint.Value) {
 				ok := v.(bool)
 				if ok {
