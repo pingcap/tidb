@@ -15,6 +15,7 @@
 package handle_test
 
 import (
+	"fmt"
 	"testing"
 	"time"
 
@@ -390,7 +391,7 @@ SELECT * FROM EmployeeGenerator;
 `)
 	tk.MustExec("analyze table employees3")
 	for i := 0; i <= 12; i++ {
-		tk.MustExec("analyze table employees3 partition p" + string(i))
+		tk.MustExec(fmt.Sprintf("analyze table employees3 partition p%d", i))
 		tk.MustQuery("show stats_histograms where table_name='employees3' and Column_name='PRIMARY' and Partition_name='global'").CheckContain("19958")
 	}
 }
