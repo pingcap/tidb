@@ -27,6 +27,7 @@ import (
 )
 
 var (
+	// NumOfRuleSet is the total rule-set num.
 	NumOfRuleSet int
 	_            base.LogicalPlan = &GroupExpression{}
 )
@@ -170,8 +171,8 @@ func (e *GroupExpression) DeriveLogicalProp() error {
 	if e.GetGroup().GetLogicalProperty() != nil {
 		return nil
 	}
-	childStats := make([]*property.StatsInfo, len(e.Inputs))
-	childSchema := make([]*expression.Schema, len(e.Inputs))
+	childStats := make([]*property.StatsInfo, 0, len(e.Inputs))
+	childSchema := make([]*expression.Schema, 0, len(e.Inputs))
 	for _, childG := range e.Inputs {
 		childStats = append(childStats, childG.GetLogicalProperty().Stats)
 		childSchema = append(childSchema, childG.GetLogicalProperty().Schema)

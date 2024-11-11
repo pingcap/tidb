@@ -74,9 +74,9 @@ func NewMemo() *Memo {
 }
 
 // GetHasher gets a hasher from the memo that ready to use.
-func (m *Memo) GetHasher() base2.Hasher {
-	m.hasher.Reset()
-	return m.hasher
+func (mm *Memo) GetHasher() base2.Hasher {
+	mm.hasher.Reset()
+	return mm.hasher
 }
 
 // CopyIn copies a MemoExpression representation into the memo with format as GroupExpression inside.
@@ -100,7 +100,7 @@ func (m *Memo) GetHasher() base2.Hasher {
 //	     |                        │   /  \   │
 //	    GE                        │  G    G  │
 //	                              └──────────┘
-func (m *Memo) CopyIn(target *Group, lp base.LogicalPlan) (*GroupExpression, error) {
+func (mm *Memo) CopyIn(target *Group, lp base.LogicalPlan) (*GroupExpression, error) {
 	// Group the children first.
 	childGroups := make([]*Group, 0, len(lp.Children()))
 	for _, child := range lp.Children() {
@@ -112,7 +112,7 @@ func (m *Memo) CopyIn(target *Group, lp base.LogicalPlan) (*GroupExpression, err
 			currentChildG = ge.GetGroup()
 		} else {
 			// here means it's a raw logical op, downward to get its input groups.
-			ge, err := m.CopyIn(nil, child)
+			ge, err := mm.CopyIn(nil, child)
 			if err != nil {
 				return nil, err
 			}
@@ -125,10 +125,10 @@ func (m *Memo) CopyIn(target *Group, lp base.LogicalPlan) (*GroupExpression, err
 
 	// lp's original children is useless since now, prepare it as nil for later appending as group expressions if any.
 	lp.ResetChild()
-	hasher := m.GetHasher()
+	hasher := mm.GetHasher()
 	groupExpr := NewGroupExpression(lp, childGroups)
 	groupExpr.Init(hasher)
-	if m.InsertGroupExpression(groupExpr, target) && target == nil {
+	if mm.InsertGroupExpression(groupExpr, target) && target == nil {
 		// derive logical property for new group.
 		err := groupExpr.DeriveLogicalProp()
 		if err != nil {
@@ -139,49 +139,49 @@ func (m *Memo) CopyIn(target *Group, lp base.LogicalPlan) (*GroupExpression, err
 }
 
 // GetGroups gets all groups in the memo.
-func (m *Memo) GetGroups() *list.List {
-	return m.groups
+func (mm *Memo) GetGroups() *list.List {
+	return mm.groups
 }
 
 // GetGroupID2Group gets the map from group id to group.
-func (m *Memo) GetGroupID2Group() map[GroupID]*list.Element {
-	return m.groupID2Group
+func (mm *Memo) GetGroupID2Group() map[GroupID]*list.Element {
+	return mm.groupID2Group
 }
 
 // GetRootGroup gets the root group of the memo.
-func (m *Memo) GetRootGroup() *Group {
-	return m.rootGroup
+func (mm *Memo) GetRootGroup() *Group {
+	return mm.rootGroup
 }
 
 // InsertGroupExpression indicates whether the groupExpr is inserted to a new group.
-func (m *Memo) InsertGroupExpression(groupExpr *GroupExpression, target *Group) bool {
+func (mm *Memo) InsertGroupExpression(groupExpr *GroupExpression, target *Group) bool {
 	// for group merge, here groupExpr is the new groupExpr with undetermined belonged group.
 	// we need to use groupExpr hash to find whether there is same groupExpr existed before.
 	// if existed and the existed groupExpr.Group is not same with target, we should merge them up.
 	// todo: merge group
 	if target == nil {
-		target = m.NewGroup()
-		m.groups.PushBack(target)
-		m.groupID2Group[target.groupID] = m.groups.Back()
+		target = mm.NewGroup()
+		mm.groups.PushBack(target)
+		mm.groupID2Group[target.groupID] = mm.groups.Back()
 	}
 	target.Insert(groupExpr)
 	return true
 }
 
 // NewGroup creates a new group.
-func (m *Memo) NewGroup() *Group {
+func (mm *Memo) NewGroup() *Group {
 	group := NewGroup(nil)
-	group.groupID = m.groupIDGen.NextGroupID()
+	group.groupID = mm.groupIDGen.NextGroupID()
 	return group
 }
 
 // Init initializes the memo with a logical plan, converting logical plan tree format into group tree.
-func (m *Memo) Init(plan base.LogicalPlan) (*GroupExpression, error) {
-	intest.Assert(m.groups.Len() == 0)
-	gE, err := m.CopyIn(nil, plan)
+func (mm *Memo) Init(plan base.LogicalPlan) (*GroupExpression, error) {
+	intest.Assert(mm.groups.Len() == 0)
+	gE, err := mm.CopyIn(nil, plan)
 	if err != nil {
 		return nil, err
 	}
-	m.rootGroup = gE.GetGroup()
+	mm.rootGroup = gE.GetGroup()
 	return gE, nil
 }
