@@ -1006,3 +1006,6 @@ select from_unixtime( if(col2 >9999999999, col2/1000, col2), '%Y-%m-%d %H:%i:%s'
 result
 2024-09-03 00:00:00
 2024-09-03 00:00:00
+select ((exists (select 1)) * -5) as c1;
+c1
+-5
