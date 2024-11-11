@@ -11398,7 +11398,6 @@ AlterJobOption:
 		$$ = &ast.AlterJobOpt{
 			Name: strings.ToLower($1),
 			Value: $3.(ast.ExprNode),
-			V1: ast.NewValueExpr($3, parser.charset, parser.collation),
 		}
 	}
 
