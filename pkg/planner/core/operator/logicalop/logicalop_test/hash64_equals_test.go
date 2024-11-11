@@ -23,10 +23,61 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/cascades/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
+	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/stretchr/testify/require"
 )
+
+func TestLogicalLimitHash64Equals(t *testing.T) {
+	col1 := &expression.Column{
+		ID:      1,
+		Index:   0,
+		RetType: types.NewFieldType(mysql.TypeLonglong),
+	}
+	col2 := &expression.Column{
+		ID:      2,
+		Index:   0,
+		RetType: types.NewFieldType(mysql.TypeLonglong),
+	}
+	limit1 := &logicalop.LogicalLimit{
+		PartitionBy: []property.SortItem{{Col: col1, Desc: true}},
+		Offset:      1,
+		Count:       1,
+	}
+	limit2 := &logicalop.LogicalLimit{
+		PartitionBy: []property.SortItem{{Col: col1, Desc: true}},
+		Offset:      1,
+		Count:       1,
+	}
+	hasher1 := base.NewHashEqualer()
+	hasher2 := base.NewHashEqualer()
+	limit1.Hash64(hasher1)
+	limit2.Hash64(hasher2)
+	require.Equal(t, hasher1.Sum64(), hasher2.Sum64())
+
+	limit2.PartitionBy = []property.SortItem{{Col: col2, Desc: true}}
+	hasher2.Reset()
+	limit2.Hash64(hasher2)
+	require.NotEqual(t, hasher1.Sum64(), hasher2.Sum64())
+
+	limit2.PartitionBy = []property.SortItem{{Col: col1, Desc: true}}
+	limit2.Offset = 2
+	hasher2.Reset()
+	limit2.Hash64(hasher2)
+	require.NotEqual(t, hasher1.Sum64(), hasher2.Sum64())
+
+	limit2.Offset = 1
+	limit2.Count = 2
+	hasher2.Reset()
+	limit2.Hash64(hasher2)
+	require.NotEqual(t, hasher1.Sum64(), hasher2.Sum64())
+
+	limit2.Count = 1
+	hasher2.Reset()
+	limit2.Hash64(hasher2)
+	require.Equal(t, hasher1.Sum64(), hasher2.Sum64())
+}
 
 func TestLogicalExpandHash64Equals(t *testing.T) {
 	col1 := &expression.Column{

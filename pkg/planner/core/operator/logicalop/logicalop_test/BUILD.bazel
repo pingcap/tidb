@@ -8,7 +8,7 @@ go_test(
         "logical_mem_table_predicate_extractor_test.go",
     ],
     flaky = True,
-    shard_count = 17,
+    shard_count = 18,
     deps = [
         "//pkg/domain",
         "//pkg/expression",
@@ -22,6 +22,7 @@ go_test(
         "//pkg/planner/core/base",
         "//pkg/planner/core/operator/logicalop",
         "//pkg/planner/core/resolve",
+        "//pkg/planner/property",
         "//pkg/planner/util",
         "//pkg/session",
         "//pkg/session/types",

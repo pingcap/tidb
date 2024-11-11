@@ -748,7 +748,7 @@ func UnlockTables(ctx context.Context, db *sql.Conn) error {
 }
 
 // ShowMasterStatus get SHOW MASTER STATUS result from database
-func ShowMasterStatus(db *sql.Conn) ([]string, error) {
+func ShowMasterStatus(db *sql.Conn, serverInfo version.ServerInfo) ([]string, error) {
 	var oneRow []string
 	handleOneRow := func(rows *sql.Rows) error {
 		cols, err := rows.Columns()
@@ -763,7 +763,17 @@ func ShowMasterStatus(db *sql.Conn) ([]string, error) {
 		}
 		return rows.Scan(addr...)
 	}
-	const showMasterStatusQuery = "SHOW MASTER STATUS"
+
+	// MySQL 8.4.0 and newer: SHOW BINARY LOG STATUS
+	// TiDB, MariaDB, Old MySQL: SHOW MASTER STATUS
+	showMasterStatusQuery := "SHOW MASTER STATUS"
+	if serverInfo.ServerVersion != nil {
+		if serverInfo.ServerType == version.ServerTypeMySQL &&
+			!serverInfo.ServerVersion.LessThan(*minNewTerminologyMySQL) {
+			showMasterStatusQuery = "SHOW BINARY LOG STATUS"
+		}
+	}
+
 	err := simpleQuery(db, showMasterStatusQuery, handleOneRow)
 	if err != nil {
 		return nil, errors.Annotatef(err, "sql: %s", showMasterStatusQuery)
@@ -935,7 +945,10 @@ func CheckTiDBEnableTableLock(db *sql.Conn) (bool, error) {
 }
 
 func getSnapshot(db *sql.Conn) (string, error) {
-	str, err := ShowMasterStatus(db)
+	serverInfo := version.ServerInfo{
+		ServerType: version.ServerTypeTiDB,
+	}
+	str, err := ShowMasterStatus(db, serverInfo)
 	if err != nil {
 		return "", err
 	}

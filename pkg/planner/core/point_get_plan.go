@@ -80,14 +80,14 @@ type PointGetPlan struct {
 
 	// probeParents records the IndexJoins and Applys with this operator in their inner children.
 	// Please see comments in PhysicalPlan for details.
-	probeParents []base.PhysicalPlan
+	probeParents []base.PhysicalPlan `plan-cache-clone:"shallow"`
 	// explicit partition selection
-	PartitionNames []pmodel.CIStr
+	PartitionNames []pmodel.CIStr `plan-cache-clone:"shallow"`
 
 	dbName           string
-	schema           *expression.Schema
-	TblInfo          *model.TableInfo `plan-cache-clone:"shallow"`
-	IndexInfo        *model.IndexInfo `plan-cache-clone:"shallow"`
+	schema           *expression.Schema `plan-cache-clone:"shallow"`
+	TblInfo          *model.TableInfo   `plan-cache-clone:"shallow"`
+	IndexInfo        *model.IndexInfo   `plan-cache-clone:"shallow"`
 	PartitionIdx     *int
 	Handle           kv.Handle
 	HandleConstant   *expression.Constant
@@ -99,7 +99,6 @@ type PointGetPlan struct {
 	IdxCols          []*expression.Column
 	IdxColLens       []int
 	AccessConditions []expression.Expression
-	ctx              base.PlanContext
 	UnsignedHandle   bool
 	IsTableDual      bool
 	Lock             bool
@@ -420,7 +419,7 @@ type BatchPointGetPlan struct {
 	// Please see comments in PhysicalPlan for details.
 	probeParents []base.PhysicalPlan
 	// explicit partition selection
-	PartitionNames []pmodel.CIStr
+	PartitionNames []pmodel.CIStr `plan-cache-clone:"shallow"`
 
 	ctx              base.PlanContext
 	dbName           string
