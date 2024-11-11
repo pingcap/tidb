@@ -447,7 +447,7 @@ func (c *Column) AvgColSizeChunkFormat(count int64) float64 {
 		return 0
 	}
 	fixedLen := chunk.GetFixedLen(c.Histogram.Tp)
-	if fixedLen > 0 {
+	if fixedLen >= 0 {
 		return float64(fixedLen)
 	}
 	// Keep two decimal place.
@@ -472,7 +472,7 @@ func (c *Column) AvgColSizeListInDisk(count int64) float64 {
 		notNullRatio = math.Max(1.0-float64(c.NullCount)/histCount, 0)
 	}
 	size := chunk.GetFixedLen(c.Histogram.Tp)
-	if size > 0 {
+	if size >= 0 {
 		return float64(size) * notNullRatio
 	}
 	// Keep two decimal place.
