@@ -162,7 +162,6 @@ func TestCreateViewConcurrently(t *testing.T) {
 	tk.MustExec("create table t (a int);")
 	tk.MustExec("create view v as select * from t;")
 	tk.MustExec("set global tidb_enable_metadata_lock = 1;")
-	tk.MustExec("set global tidb_enable_concurrent_ddl = 1;")
 	var (
 		counterErr error
 		counter    int
