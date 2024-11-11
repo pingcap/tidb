@@ -40,6 +40,7 @@ go_library(
         "plan_cache_utils.go",
         "plan_cacheable_checker.go",
         "plan_clone_generated.go",
+        "plan_clone_utils.go",
         "plan_cost_detail.go",
         "plan_cost_ver1.go",
         "plan_cost_ver2.go",

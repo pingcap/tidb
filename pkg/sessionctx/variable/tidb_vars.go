@@ -1441,7 +1441,7 @@ const (
 	DefTiDBEnablePrepPlanCacheMemoryMonitor           = true
 	DefTiDBPrepPlanCacheMemoryGuardRatio              = 0.1
 	DefTiDBEnableDistTask                             = true
-	DefTiDBEnableFastCreateTable                      = false
+	DefTiDBEnableFastCreateTable                      = true
 	DefTiDBSimplifiedMetrics                          = false
 	DefTiDBEnablePaging                               = true
 	DefTiFlashFineGrainedShuffleStreamCount           = 0

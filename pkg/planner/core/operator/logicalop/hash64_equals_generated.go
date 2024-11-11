@@ -375,3 +375,45 @@ func (op *LogicalExpand) Equals(other any) bool {
 	}
 	return true
 }
+
+// Hash64 implements the Hash64Equals interface.
+func (op *LogicalLimit) Hash64(h base.Hasher) {
+	h.HashString(plancodec.TypeLimit)
+	if op.PartitionBy == nil {
+		h.HashByte(base.NilFlag)
+	} else {
+		h.HashByte(base.NotNilFlag)
+		h.HashInt(len(op.PartitionBy))
+		for _, one := range op.PartitionBy {
+			one.Hash64(h)
+		}
+	}
+	h.HashUint64(uint64(op.Offset))
+	h.HashUint64(uint64(op.Count))
+}
+
+// Equals implements the Hash64Equals interface, only receive *LogicalLimit pointer.
+func (op *LogicalLimit) Equals(other any) bool {
+	if other == nil {
+		return false
+	}
+	op2, ok := other.(*LogicalLimit)
+	if !ok {
+		return false
+	}
+	if len(op.PartitionBy) != len(op2.PartitionBy) {
+		return false
+	}
+	for i, one := range op.PartitionBy {
+		if !one.Equals(&op2.PartitionBy[i]) {
+			return false
+		}
+	}
+	if op.Offset != op2.Offset {
+		return false
+	}
+	if op.Count != op2.Count {
+		return false
+	}
+	return true
+}

@@ -73,7 +73,8 @@ const (
 	ddlSchemaVersionKeyLock = "/tidb/ddl/schema_version_lock"
 	// addingDDLJobPrefix is the path prefix used to record the newly added DDL job, and it's saved to etcd.
 	addingDDLJobPrefix = "/tidb/ddl/add_ddl_job_"
-	ddlPrompt          = "ddl"
+	// Prompt is the prompt for ddl owner manager.
+	Prompt = "ddl"
 
 	batchAddingJobs = 100
 
@@ -638,19 +639,21 @@ func newDDL(ctx context.Context, options ...Option) (*ddl, *executor) {
 		o(opt)
 	}
 
-	id := uuid.New().String()
+	var id string
 	var manager owner.Manager
 	var schemaVerSyncer schemaver.Syncer
 	var serverStateSyncer serverstate.Syncer
 	var deadLockCkr util.DeadTableLockChecker
 	if etcdCli := opt.EtcdCli; etcdCli == nil {
+		id = uuid.New().String()
 		// The etcdCli is nil if the store is localstore which is only used for testing.
 		// So we use mockOwnerManager and memSyncer.
 		manager = owner.NewMockManager(ctx, id, opt.Store, DDLOwnerKey)
 		schemaVerSyncer = schemaver.NewMemSyncer()
 		serverStateSyncer = serverstate.NewMemSyncer()
 	} else {
-		manager = owner.NewOwnerManager(ctx, etcdCli, ddlPrompt, id, DDLOwnerKey)
+		id = globalOwnerManager.ID()
+		manager = globalOwnerManager.OwnerManager()
 		schemaVerSyncer = schemaver.NewEtcdSyncer(etcdCli, id)
 		serverStateSyncer = serverstate.NewEtcdSyncer(etcdCli, util.ServerGlobalState)
 		deadLockCkr = util.NewDeadTableLockChecker(etcdCli)
@@ -1003,7 +1006,10 @@ func (d *ddl) close() {
 	startTime := time.Now()
 	d.cancel()
 	d.wg.Wait()
-	d.ownerManager.Cancel()
+	// when run with real-tikv, the lifecycle of ownerManager is managed by globalOwnerManager,
+	// when run with uni-store BreakCampaignLoop is same as Close.
+	// hope we can unify it after refactor to let some components only start once.
+	d.ownerManager.BreakCampaignLoop()
 	d.schemaVerSyncer.Close()
 
 	// d.delRangeMgr using sessions from d.sessPool.

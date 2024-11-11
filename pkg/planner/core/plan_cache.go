@@ -37,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	contextutil "github.com/pingcap/tidb/pkg/util/context"
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
+	"github.com/pingcap/tidb/pkg/util/hint"
 	"github.com/pingcap/tidb/pkg/util/intest"
 )
 
@@ -223,11 +224,11 @@ func GetPlanFromPlanCache(ctx context.Context, sctx sessionctx.Context,
 
 	paramTypes := parseParamTypes(sctx, params)
 	if stmtCtx.UseCache() {
-		cachedVal, hit := lookupPlanCache(ctx, sctx, cacheKey, paramTypes)
+		plan, outputCols, stmtHints, hit := lookupPlanCache(ctx, sctx, cacheKey, paramTypes)
 		skipPrivCheck := stmt.PointGet.Executor != nil // this case is specially handled
 		if hit {
-			if plan, names, ok, err := adjustCachedPlan(ctx, sctx, cachedVal, isNonPrepared, skipPrivCheck, binding, is, stmt); err != nil || ok {
-				return plan, names, err
+			if plan, ok, err := adjustCachedPlan(ctx, sctx, plan, stmtHints, isNonPrepared, skipPrivCheck, binding, is, stmt); err != nil || ok {
+				return plan, outputCols, err
 			}
 		}
 	}
@@ -243,7 +244,8 @@ func instancePlanCacheEnabled(ctx context.Context) bool {
 	return enableInstancePlanCache
 }
 
-func lookupPlanCache(ctx context.Context, sctx sessionctx.Context, cacheKey string, paramTypes []*types.FieldType) (cachedVal *PlanCacheValue, hit bool) {
+func lookupPlanCache(ctx context.Context, sctx sessionctx.Context, cacheKey string,
+	paramTypes []*types.FieldType) (plan base.Plan, outputCols types.NameSlice, stmtHints *hint.StmtHints, hit bool) {
 	useInstanceCache := instancePlanCacheEnabled(ctx)
 	defer func(begin time.Time) {
 		if hit {
@@ -252,29 +254,38 @@ func lookupPlanCache(ctx context.Context, sctx sessionctx.Context, cacheKey stri
 	}(time.Now())
 	if useInstanceCache {
 		if v, hit := domain.GetDomain(sctx).GetInstancePlanCache().Get(cacheKey, paramTypes); hit {
-			cachedVal = v.(*PlanCacheValue)
-			return cachedVal.CloneForInstancePlanCache(ctx, sctx.GetPlanCtx()) // clone the value to solve concurrency problem
+			pcv := v.(*PlanCacheValue)
+			clonedPlan, ok := pcv.Plan.CloneForPlanCache(sctx.GetPlanCtx())
+			if !ok { // clone the value to solve concurrency problem
+				return nil, nil, nil, false
+			}
+			if intest.InTest && ctx.Value(PlanCacheKeyTestClone{}) != nil {
+				ctx.Value(PlanCacheKeyTestClone{}).(func(plan, cloned base.Plan))(pcv.Plan, clonedPlan)
+			}
+			return clonedPlan, pcv.OutputColumns, pcv.stmtHints, true
 		}
 	} else {
 		if v, hit := sctx.GetSessionPlanCache().Get(cacheKey, paramTypes); hit {
-			return v.(*PlanCacheValue), true
+			pcv := v.(*PlanCacheValue)
+			return pcv.Plan, pcv.OutputColumns, pcv.stmtHints, true
 		}
 	}
-	return nil, false
+	return nil, nil, nil, false
 }
 
-func adjustCachedPlan(ctx context.Context, sctx sessionctx.Context, cachedVal *PlanCacheValue, isNonPrepared, skipPrivCheck bool,
-	bindSQL string, is infoschema.InfoSchema, stmt *PlanCacheStmt) (base.Plan,
-	[]*types.FieldName, bool, error) {
+func adjustCachedPlan(ctx context.Context, sctx sessionctx.Context,
+	plan base.Plan, stmtHints *hint.StmtHints, isNonPrepared, skipPrivCheck bool,
+	bindSQL string, is infoschema.InfoSchema, stmt *PlanCacheStmt) (
+	base.Plan, bool, error) {
 	sessVars := sctx.GetSessionVars()
 	stmtCtx := sessVars.StmtCtx
 	if !skipPrivCheck { // keep the prior behavior
 		if err := checkPreparedPriv(ctx, sctx, stmt, is); err != nil {
-			return nil, nil, false, err
+			return nil, false, err
 		}
 	}
-	if !RebuildPlan4CachedPlan(cachedVal.Plan) {
-		return nil, nil, false, nil
+	if !RebuildPlan4CachedPlan(plan) {
+		return nil, false, nil
 	}
 	sessVars.FoundInPlanCache = true
 	if len(bindSQL) > 0 { // We're using binding, set this to true.
@@ -286,8 +297,8 @@ func adjustCachedPlan(ctx context.Context, sctx sessionctx.Context, cachedVal *P
 		core_metrics.GetPlanCacheHitCounter(isNonPrepared).Inc()
 	}
 	stmtCtx.SetPlanDigest(stmt.NormalizedPlan, stmt.PlanDigest)
-	stmtCtx.StmtHints = *cachedVal.stmtHints
-	return cachedVal.Plan, cachedVal.OutputColumns, true, nil
+	stmtCtx.StmtHints = *stmtHints
+	return plan, true, nil
 }
 
 // generateNewPlan call the optimizer to generate a new plan for current statement
