@@ -88,12 +88,6 @@ func (t *take[T]) TryNext(ctx context.Context) IterResult[T] {
 	return t.inner.TryNext(ctx)
 }
 
-type join[T any] struct {
-	inner TryNextor[TryNextor[T]]
-
-	current TryNextor[T]
-}
-
 type pureMap[T, R any] struct {
 	inner TryNextor[T]
 
@@ -107,6 +101,33 @@ func (p pureMap[T, R]) TryNext(ctx context.Context) IterResult[R] {
 		return DoneBy[R](r)
 	}
 	return Emit(p.mapper(r.Item))
+}
+
+type filterMap[T, R any] struct {
+	inner TryNextor[T]
+
+	mapper func(T) (R, bool)
+}
+
+func (f filterMap[T, R]) TryNext(ctx context.Context) IterResult[R] {
+	for {
+		r := f.inner.TryNext(ctx)
+
+		if r.FinishedOrError() {
+			return DoneBy[R](r)
+		}
+
+		res, skip := f.mapper(r.Item)
+		if !skip {
+			return Emit(res)
+		}
+	}
+}
+
+type join[T any] struct {
+	inner TryNextor[TryNextor[T]]
+
+	current TryNextor[T]
 }
 
 func (j *join[T]) TryNext(ctx context.Context) IterResult[T] {
