@@ -15,7 +15,6 @@
 package expression
 
 import (
-	"slices"
 	"testing"
 	"time"
 
