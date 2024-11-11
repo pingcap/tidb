@@ -111,6 +111,12 @@ func (e *CTEExec) Next(ctx context.Context, req *chunk.Chunk) (err error) {
 	e.producer.resTbl.Lock()
 	defer e.producer.resTbl.Unlock()
 	if !e.producer.resTbl.Done() {
+		// in case that another CTEExec call close without calling Next().
+		if !e.producer.opened {
+			if err = e.producer.openProducer(ctx, e); err != nil {
+				return err
+			}
+		}
 		if err = e.producer.produce(ctx); err != nil {
 			return err
 		}
@@ -147,6 +153,10 @@ func (e *CTEExec) Close() (firstErr error) {
 			// Separating these three function calls is only to follow the abstraction of the volcano model.
 			err := e.producer.closeProducer()
 			firstErr = setFirstErr(firstErr, err, "close cte producer error")
+			if !e.producer.resTbl.Done() {
+				// `produce` is never called, in this case, we reset it
+				e.producer.reset()
+			}
 		}
 	}()
 	err := e.BaseExecutor.Close()
