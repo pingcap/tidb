@@ -26,13 +26,14 @@ import (
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/planner/util"
+	"golang.org/x/exp/slices"
 )
 
 type columnPruner struct {
 }
 
 func (*columnPruner) optimize(_ context.Context, lp LogicalPlan, opt *logicalOptimizeOp) (LogicalPlan, error) {
-	lp, err := lp.PruneColumns(lp.Schema().Columns, opt)
+	lp, err := lp.PruneColumns(slices.Clone(lp.Schema().Columns), opt)
 	if err != nil {
 		return nil, err
 	}
