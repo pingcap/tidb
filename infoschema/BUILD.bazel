@@ -68,6 +68,7 @@ go_test(
     name = "infoschema_test",
     timeout = "short",
     srcs = [
+        "builder_test.go",
         "cache_test.go",
         "cluster_tables_test.go",
         "infoschema_test.go",

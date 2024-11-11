@@ -1834,7 +1834,7 @@ func (b *PlanBuilder) buildProjection4Union(_ context.Context, u *LogicalUnionAl
 			}
 		}
 		b.optFlag |= flagEliminateProjection
-		proj := LogicalProjection{Exprs: exprs, AvoidColumnEvaluator: true}.Init(b.ctx, b.getSelectOffset())
+		proj := LogicalProjection{Exprs: exprs}.Init(b.ctx, b.getSelectOffset())
 		proj.SetSchema(u.schema.Clone())
 		// reset the schema type to make the "not null" flag right.
 		for i, expr := range exprs {
@@ -6035,7 +6035,7 @@ func (b *PlanBuilder) buildUpdateLists(ctx context.Context, tableList []*ast.Tab
 			if expr := extractDefaultExpr(assign.Expr); expr != nil {
 				expr.Name = assign.Column
 			}
-			newExpr, np, err = b.rewrite(ctx, assign.Expr, p, nil, false)
+			newExpr, np, err = b.rewrite(ctx, assign.Expr, p, nil, true)
 			if err != nil {
 				return nil, nil, false, err
 			}
@@ -6059,7 +6059,7 @@ func (b *PlanBuilder) buildUpdateLists(ctx context.Context, tableList []*ast.Tab
 
 			o := b.allowBuildCastArray
 			b.allowBuildCastArray = true
-			newExpr, np, err = b.rewriteWithPreprocess(ctx, assign.Expr, p, nil, nil, false, rewritePreprocess(assign))
+			newExpr, np, err = b.rewriteWithPreprocess(ctx, assign.Expr, p, nil, nil, true, rewritePreprocess(assign))
 			b.allowBuildCastArray = o
 			if err != nil {
 				return nil, nil, false, err
@@ -7690,7 +7690,7 @@ func (b *PlanBuilder) buildProjection4CTEUnion(_ context.Context, seed LogicalPl
 		}
 	}
 	b.optFlag |= flagEliminateProjection
-	proj := LogicalProjection{Exprs: exprs, AvoidColumnEvaluator: true}.Init(b.ctx, b.getSelectOffset())
+	proj := LogicalProjection{Exprs: exprs}.Init(b.ctx, b.getSelectOffset())
 	proj.SetSchema(resSchema)
 	proj.SetChildren(recur)
 	return proj, nil

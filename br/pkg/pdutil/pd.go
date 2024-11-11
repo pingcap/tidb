@@ -177,6 +177,10 @@ func pdRequestWithCode(
 		if err != nil {
 			return 0, nil, errors.Trace(err)
 		}
+		failpoint.Inject("DNSError", func() {
+			req.Host = "nosuchhost"
+			req.URL.Host = "nosuchhost"
+		})
 		resp, err = cli.Do(req) //nolint:bodyclose
 		count++
 		failpoint.Inject("InjectClosed", func(v failpoint.Value) {
