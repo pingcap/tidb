@@ -208,12 +208,14 @@ func (w *localSSTWriter) set(key, value []byte) error {
 // close flushes the SST files to disk and return the SST file paths that can be
 // ingested into default / write column family.
 // TODO(lance6716): need to decide how to express that no default CF is needed.
-func (w *localSSTWriter) close() (defaultCFSSTPath, writeCFSSTPath string, err error) {
-	if err = w.defaultCF.Close(); err != nil {
+func (w *localSSTWriter) close() (defaultCFSSTPath, writeCFSSTPath string, errRet error) {
+	err := w.defaultCF.Close()
+	err2 := w.writeCF.Close()
+	if err != nil {
 		return "", "", errors.Trace(err)
 	}
-	if err = w.writeCF.Close(); err != nil {
-		return "", "", errors.Trace(err)
+	if err2 != nil {
+		return "", "", errors.Trace(err2)
 	}
 	return w.defaultPath, w.writePath, nil
 }
