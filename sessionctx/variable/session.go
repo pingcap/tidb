@@ -1716,6 +1716,13 @@ func (s *SessionVars) AllocNewPlanID() int {
 	return int(s.PlanID.Add(1))
 }
 
+func (s *SessionVars) GetMaxExecutionTime() uint64 {
+	if s.StmtCtx.HasMaxExecutionTime {
+		return s.StmtCtx.MaxExecutionTime
+	}
+	return s.MaxExecutionTime
+}
+
 const (
 	// PlacementModeStrict indicates all placement operations should be checked strictly in ddl
 	PlacementModeStrict string = "STRICT"
