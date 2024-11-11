@@ -18,6 +18,7 @@ import (
 	"context"
 	"fmt"
 	"math/rand"
+	"os"
 	"reflect"
 	"strings"
 	"testing"
@@ -443,6 +444,45 @@ type visit struct {
 	a1  unsafe.Pointer
 	a2  unsafe.Pointer
 	typ reflect.Type
+}
+
+func TestFastPointGetClone(t *testing.T) {
+	codeFile := "plan_clone_utils.go"
+	codeData, err := os.ReadFile(codeFile)
+	require.NoError(t, err)
+	codeLines := strings.Split(string(codeData), "\n")
+	beginPrefix := `func FastClonePointGetForPlanCache(`
+	endPrefix := `}`
+	beginIdx, endIdx := -1, -1
+	for i, line := range codeLines {
+		if strings.HasPrefix(line, beginPrefix) {
+			beginIdx = i
+		}
+		if beginIdx != -1 && strings.HasPrefix(line, endPrefix) {
+			endIdx = i
+			break
+		}
+	}
+	cloneFuncCode := strings.Join(codeLines[beginIdx:endIdx+1], "\n")
+	fieldNoNeedToClone := map[string]struct{}{
+		"cost":         {},
+		"planCostInit": {},
+		"planCost":     {},
+		"planCostVer2": {},
+		"accessCols":   {},
+	}
+
+	pointPlan := reflect.TypeOf(core.PointGetPlan{})
+	for i := 0; i < pointPlan.NumField(); i++ {
+		fieldName := pointPlan.Field(i).Name
+		if _, ok := fieldNoNeedToClone[fieldName]; ok {
+			continue
+		}
+		assignFieldCode := fmt.Sprintf("%v =", fieldName)
+		if !strings.Contains(cloneFuncCode, assignFieldCode) {
+			t.Fatal(fmt.Sprintf("field %v might not be set in FastClonePointGetForPlanCache correctly", fieldName))
+		}
+	}
 }
 
 func BenchmarkPointGetCloneFast(b *testing.B) {
