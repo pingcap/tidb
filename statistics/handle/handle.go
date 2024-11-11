@@ -654,24 +654,14 @@ func (h *Handle) UpdateSessionVar() error {
 // In the column statistics, the variable `num` is equal to the number of columns in the partition table.
 // In the index statistics, the variable `num` is always equal to one.
 type GlobalStats struct {
-<<<<<<< HEAD
-	Num         int
-	Count       int64
-	ModifyCount int64
-	Hg          []*statistics.Histogram
-	Cms         []*statistics.CMSketch
-	TopN        []*statistics.TopN
-	Fms         []*statistics.FMSketch
-=======
+	Num                   int
+	Count                 int64
+	ModifyCount           int64
 	Hg                    []*statistics.Histogram
 	Cms                   []*statistics.CMSketch
 	TopN                  []*statistics.TopN
 	Fms                   []*statistics.FMSketch
 	MissingPartitionStats []string
-	Num                   int
-	Count                 int64
-	ModifyCount           int64
->>>>>>> a492a371a74 (statistics: merge global stats even if some partition stats are missing (#41176))
 }
 
 // MergePartitionStats2GlobalStatsByTableID merge the partition-level stats to global-level stats based on the tableID.
@@ -887,17 +877,12 @@ func (h *Handle) mergePartitionStats2GlobalStats(sc sessionctx.Context,
 
 		// Update NDV of global-level stats
 		globalStats.Fms[i] = allFms[i][0].Copy()
-<<<<<<< HEAD
-		for j := 1; j < partitionNum; j++ {
+		for j := 1; j < len(allFms[i]); j++ {
 			if globalStats.Fms[i] == nil {
 				globalStats.Fms[i] = allFms[i][j].Copy()
 			} else {
 				globalStats.Fms[i].MergeFMSketch(allFms[i][j])
 			}
-=======
-		for j := 1; j < len(allFms[i]); j++ {
-			globalStats.Fms[i].MergeFMSketch(allFms[i][j])
->>>>>>> a492a371a74 (statistics: merge global stats even if some partition stats are missing (#41176))
 		}
 
 		// update the NDV

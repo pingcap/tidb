@@ -1484,17 +1484,11 @@ type SessionVars struct {
 	// Whether to lock duplicate keys in INSERT IGNORE and REPLACE statements,
 	// or unchanged unique keys in UPDATE statements, see PR #42210 and #42713
 	LockUnchangedKeys bool
-<<<<<<< HEAD
-=======
-
-	// AnalyzeSkipColumnTypes indicates the column types whose statistics would not be collected when executing the ANALYZE command.
-	AnalyzeSkipColumnTypes map[string]struct{}
 
 	// SkipMissingPartitionStats controls how to handle missing partition stats when merging partition stats to global stats.
 	// When set to true, skip missing partition stats and continue to merge other partition stats to global stats.
 	// When set to false, give up merging partition stats to global stats.
 	SkipMissingPartitionStats bool
->>>>>>> a492a371a74 (statistics: merge global stats even if some partition stats are missing (#41176))
 }
 
 var (
