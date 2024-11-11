@@ -14,6 +14,8 @@ go_library(
     importpath = "github.com/pingcap/tidb/pkg/testkit",
     visibility = ["//visibility:public"],
     deps = [
+        "//pkg/config",
+        "//pkg/ddl",
         "//pkg/ddl/schematracker",
         "//pkg/domain",
         "//pkg/expression",

@@ -47,6 +47,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	sessiontypes "github.com/pingcap/tidb/pkg/session/types"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	storepkg "github.com/pingcap/tidb/pkg/store"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	timertable "github.com/pingcap/tidb/pkg/timer/tablestore"
 	"github.com/pingcap/tidb/pkg/types"
@@ -1438,7 +1439,7 @@ var (
 )
 
 func acquireLock(store kv.Storage) (func(), error) {
-	etcdCli, err := domain.NewEtcdCli(store)
+	etcdCli, err := storepkg.NewEtcdCli(store)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}

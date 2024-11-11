@@ -25,6 +25,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/ddl/schematracker"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -53,11 +55,13 @@ func CreateMockStore(t testing.TB, opts ...mockstore.MockTiKVStoreOption) kv.Sto
 		var err error
 		store, err := d.Open("tikv://" + *WithTiKV)
 		require.NoError(t, err)
-
+		config.GetGlobalConfig().Store = "tikv"
+		require.NoError(t, ddl.StartOwnerManager(context.Background(), store))
 		var dom *domain.Domain
 		dom, err = session.BootstrapSession(store)
 		t.Cleanup(func() {
 			dom.Close()
+			ddl.CloseOwnerManager()
 			err := store.Close()
 			require.NoError(t, err)
 			view.Stop()
@@ -154,16 +158,6 @@ func (d *DistExecutionContext) TriggerOwnerChange() {
 	}
 }
 
-// AddDomain add 1 domain which is not ddl owner.
-func (d *DistExecutionContext) AddDomain() {
-	d.mu.Lock()
-	defer d.mu.Unlock()
-	dom := bootstrap4DistExecution(d.t, d.Store, 500*time.Millisecond)
-	dom.InfoSyncer().SetSessionManager(d.domains[0].InfoSyncer().GetSessionManager())
-	dom.DDL().OwnerManager().RetireOwner()
-	d.domains = append(d.domains, dom)
-}
-
 // Close cleanup running goroutines, release resources used.
 func (d *DistExecutionContext) Close() {
 	d.t.Cleanup(func() {
@@ -189,11 +183,6 @@ func (d *DistExecutionContext) Close() {
 // GetDomain get domain by index.
 func (d *DistExecutionContext) GetDomain(idx int) *domain.Domain {
 	return d.domains[idx]
-}
-
-// GetDomainCnt get domain count.
-func (d *DistExecutionContext) GetDomainCnt() int {
-	return len(d.domains)
 }
 
 // NewDistExecutionContext create DistExecutionContext for testing.
