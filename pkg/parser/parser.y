@@ -1093,6 +1093,8 @@ import (
 	AdminStmtLimitOpt                      "Admin show ddl jobs limit option"
 	AllOrPartitionNameList                 "All or partition name list"
 	AlgorithmClause                        "Alter table algorithm"
+	AlterJobOptionList 				       "Alter job option list"
+	AlterJobOption 				           "Alter job option"
 	AlterTableSpecSingleOpt                "Alter table single option"
 	AlterTableSpec                         "Alter table specification"
 	AlterTableSpecList                     "Alter table specification list"
@@ -11369,6 +11371,34 @@ AdminStmt:
 	{
 		$$ = &ast.AdminStmt{
 			Tp: ast.AdminUnsetBDRRole,
+		}
+	}
+|	"ADMIN" "ALTER" "DDL" "JOBS" Int64Num AlterJobOptionList
+	{
+		$$ = &ast.AdminStmt{
+			Tp:        ast.AdminAlterDDLJob,
+			JobNumber: $5.(int64),
+			AlterJobOptions: $6.([]*ast.AlterJobOpt),
+		}
+	}
+
+AlterJobOptionList:
+ 	AlterJobOption
+	{
+		$$ = []*ast.AlterJobOpt{$1.(*ast.AlterJobOpt)}
+	}
+| AlterJobOptionList ',' AlterJobOption
+	{
+		$$ = append($1.([]*ast.AlterJobOpt), $3.(*ast.AlterJobOpt))
+	}
+
+AlterJobOption:
+	identifier "=" SignedLiteral
+	{
+		$$ = &ast.AlterJobOpt{
+			Name: strings.ToLower($1),
+			Value: $3.(ast.ExprNode),
+			V1: ast.NewValueExpr($3, parser.charset, parser.collation),
 		}
 	}
 
