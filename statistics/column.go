@@ -426,7 +426,7 @@ func (c *Column) AvgColSize(count int64, isKey bool) float64 {
 	histCount := c.TotalRowCount()
 	notNullRatio := 1.0
 	if histCount > 0 {
-		notNullRatio = 1.0 - float64(c.NullCount)/histCount
+		notNullRatio = math.Max(1.0-float64(c.NullCount)/histCount, 0)
 	}
 	switch c.Histogram.Tp.GetType() {
 	case mysql.TypeFloat, mysql.TypeDouble, mysql.TypeDuration, mysql.TypeDate, mysql.TypeDatetime, mysql.TypeTimestamp:
@@ -447,13 +447,13 @@ func (c *Column) AvgColSizeChunkFormat(count int64) float64 {
 		return 0
 	}
 	fixedLen := chunk.GetFixedLen(c.Histogram.Tp)
-	if fixedLen != -1 {
+	if fixedLen > 0 {
 		return float64(fixedLen)
 	}
 	// Keep two decimal place.
 	// Add 8 bytes for unfixed-len type's offsets.
 	// Minus Log2(avgSize) for unfixed-len type LEN.
-	avgSize := float64(c.TotColSize) / float64(count)
+	avgSize := math.Max(float64(c.TotColSize)/float64(count), 0)
 	if avgSize < 1 {
 		return math.Round(avgSize*100)/100 + 8
 	}
@@ -469,15 +469,15 @@ func (c *Column) AvgColSizeListInDisk(count int64) float64 {
 	histCount := c.TotalRowCount()
 	notNullRatio := 1.0
 	if histCount > 0 {
-		notNullRatio = 1.0 - float64(c.NullCount)/histCount
+		notNullRatio = math.Max(1.0-float64(c.NullCount)/histCount, 0)
 	}
 	size := chunk.GetFixedLen(c.Histogram.Tp)
-	if size != -1 {
+	if size > 0 {
 		return float64(size) * notNullRatio
 	}
 	// Keep two decimal place.
 	// Minus Log2(avgSize) for unfixed-len type LEN.
-	avgSize := float64(c.TotColSize) / float64(count)
+	avgSize := math.Max(float64(c.TotColSize)/float64(count), 0)
 	if avgSize < 1 {
 		return math.Round((avgSize)*100) / 100
 	}

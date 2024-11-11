@@ -1267,20 +1267,13 @@ func getOperatorActRows(operator PhysicalPlan) float64 {
 	return actRows
 }
 
-<<<<<<< HEAD:planner/core/plan_cost_ver1.go
 func getCardinality(operator PhysicalPlan, costFlag uint64) float64 {
 	if hasCostFlag(costFlag, CostFlagUseTrueCardinality) {
 		actualProbeCnt := operator.getActualProbeCnt(operator.SCtx().GetSessionVars().StmtCtx.RuntimeStatsColl)
-		return getOperatorActRows(operator) / float64(actualProbeCnt)
-=======
-func getCardinality(operator base.PhysicalPlan, costFlag uint64) float64 {
-	if hasCostFlag(costFlag, costusage.CostFlagUseTrueCardinality) {
-		actualProbeCnt := operator.GetActualProbeCnt(operator.SCtx().GetSessionVars().StmtCtx.RuntimeStatsColl)
 		if actualProbeCnt == 0 {
 			return 0
 		}
-		return max(0, getOperatorActRows(operator)/float64(actualProbeCnt))
->>>>>>> 8fde2d6fa2b (planner: set min for high risk plan steps (#56631)):pkg/planner/core/plan_cost_ver1.go
+		return math.Max(0, getOperatorActRows(operator)/float64(actualProbeCnt))
 	}
 	rows := operator.StatsCount()
 	if rows <= 0 && operator.SCtx().GetSessionVars().CostModelVersion == modelVer2 {
