@@ -178,6 +178,7 @@ type StatementContext struct {
 	CacheType                     PlanCacheType
 	BatchCheck                    bool
 	InNullRejectCheck             bool
+	InConstantPropagateCheck      bool
 	AllowInvalidDate              bool
 	IgnoreNoPartition             bool
 	IgnoreExplainIDSuffix         bool

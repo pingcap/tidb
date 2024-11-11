@@ -358,6 +358,11 @@ func (s *propConstSolver) solve(conditions []Expression) []Expression {
 
 // PropagateConstant propagate constant values of deterministic predicates in a condition.
 func PropagateConstant(ctx sessionctx.Context, conditions []Expression) []Expression {
+	sc := ctx.GetSessionVars().StmtCtx
+	sc.InConstantPropagateCheck = true
+	defer func() {
+		sc.InConstantPropagateCheck = false
+	}()
 	return newPropConstSolver().PropagateConstant(ctx, conditions)
 }
 

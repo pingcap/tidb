@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/parser/charset"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
+	"github.com/pingcap/tidb/util/cmp"
 	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
@@ -255,8 +256,8 @@ func GetSupportedCollations() []*charset.Collation {
 				newSupportedCollations = append(newSupportedCollations, coll)
 			}
 		}
-		slices.SortFunc(newSupportedCollations, func(i, j *charset.Collation) bool {
-			return i.Name < j.Name
+		slices.SortFunc(newSupportedCollations, func(i, j *charset.Collation) int {
+			return cmp.Compare(i.Name, j.Name)
 		})
 		return newSupportedCollations
 	}

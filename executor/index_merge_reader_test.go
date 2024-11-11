@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/testkit/testutil"
 	"github.com/pingcap/tidb/util"
+	"github.com/pingcap/tidb/util/cmp"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/stretchr/testify/require"
 	"golang.org/x/exp/slices"
@@ -959,11 +960,11 @@ func getResult(values []*valueStruct, a int, b int, limit int, desc bool) []*val
 			ret = append(ret, value)
 		}
 	}
-	slices.SortFunc(ret, func(a, b *valueStruct) bool {
+	slices.SortFunc(ret, func(a, b *valueStruct) int {
 		if desc {
-			return a.c > b.c
+			return cmp.Compare(b.c, a.c)
 		}
-		return a.c < b.c
+		return cmp.Compare(a.c, b.c)
 	})
 	if len(ret) > limit {
 		return ret[:limit]
@@ -1091,19 +1092,18 @@ func TestIndexMergeIssue49605(t *testing.T) {
 		testkit.Rows("Projection 2666.67 root  istrue(or(not(ge(test.t.i, j筧8)), not(eq(test.t.i, 暈lH忧ll6))))->Column#11, Column#10, quote(test.t.i)->Column#12",
 			"└─StreamAgg 2666.67 root  group by:test.t.i, funcs:max(test.t.e)->Column#10, funcs:firstrow(test.t.i)->test.t.i",
 			"  └─Sort 3333.33 root  test.t.i",
-			"    └─IndexMerge 3333.33 root  type: union",
-			"      ├─TableRangeScan(Build) 3333.33 cop[tikv] table:t, partition:p0 range:(240817,+inf], keep order:false, stats:pseudo",
-			"      ├─IndexFullScan(Build) 0.00 cop[tikv] table:t, partition:p0, index:idx_25(h, i, e) keep order:false, stats:pseudo",
-			"      └─TableRowIDScan(Probe) 3333.33 cop[tikv] table:t, partition:p0 keep order:false, stats:pseudo"))
+			"    └─TableReader 3333.33 root  data:Selection",
+			"      └─Selection 3333.33 cop[tikv]  or(gt(test.t.h, 240817), and(ge(test.t.i, \"WVz\"), le(test.t.i, \"G#駧褉ZC領*lov\")))",
+			"        └─TableFullScan 10000.00 cop[tikv] table:t, partition:p0 keep order:false, stats:pseudo"))
 	tk.MustQuery("select count(*) from (SELECT /*+ AGG_TO_COP() STREAM_AGG()*/ (NOT (`t`.`i`>=_UTF8MB4'j筧8') OR NOT (`t`.`i`=_UTF8MB4'暈lH忧ll6')) IS TRUE,MAX(`t`.`e`) AS `r0`,QUOTE(`t`.`i`) AS `r1` FROM `t` WHERE `t`.`h`>240817 OR `t`.`i` BETWEEN _UTF8MB4'WVz' AND _UTF8MB4'G#駧褉ZC領*lov' GROUP BY `t`.`i`) derived;").Check(
 		testkit.Rows("16"))
 	tk.MustQuery("explain format='brief' SELECT /*+ AGG_TO_COP() */ (NOT (`t`.`i`>=_UTF8MB4'j筧8') OR NOT (`t`.`i`=_UTF8MB4'暈lH忧ll6')) IS TRUE,MAX(`t`.`e`) AS `r0`,QUOTE(`t`.`i`) AS `r1` FROM `t` WHERE `t`.`h`>240817 OR `t`.`i` BETWEEN _UTF8MB4'WVz' AND _UTF8MB4'G#駧褉ZC領*lov' GROUP BY `t`.`i`;").Check(
 		testkit.Rows("Projection 2666.67 root  istrue(or(not(ge(test.t.i, j筧8)), not(eq(test.t.i, 暈lH忧ll6))))->Column#11, Column#10, quote(test.t.i)->Column#12",
-			"└─HashAgg 2666.67 root  group by:test.t.i, funcs:max(test.t.e)->Column#10, funcs:firstrow(test.t.i)->test.t.i",
-			"  └─IndexMerge 3333.33 root  type: union",
-			"    ├─TableRangeScan(Build) 3333.33 cop[tikv] table:t, partition:p0 range:(240817,+inf], keep order:false, stats:pseudo",
-			"    ├─IndexFullScan(Build) 0.00 cop[tikv] table:t, partition:p0, index:idx_25(h, i, e) keep order:false, stats:pseudo",
-			"    └─TableRowIDScan(Probe) 3333.33 cop[tikv] table:t, partition:p0 keep order:false, stats:pseudo"))
+			"└─HashAgg 2666.67 root  group by:test.t.i, funcs:max(Column#15)->Column#10, funcs:firstrow(test.t.i)->test.t.i",
+			"  └─TableReader 2666.67 root  data:HashAgg",
+			"    └─HashAgg 2666.67 cop[tikv]  group by:test.t.i, funcs:max(test.t.e)->Column#15",
+			"      └─Selection 3333.33 cop[tikv]  or(gt(test.t.h, 240817), and(ge(test.t.i, \"WVz\"), le(test.t.i, \"G#駧褉ZC領*lov\")))",
+			"        └─TableFullScan 10000.00 cop[tikv] table:t, partition:p0 keep order:false, stats:pseudo"))
 	tk.MustQuery("select count(*) from (SELECT /*+ AGG_TO_COP() */ (NOT (`t`.`i`>=_UTF8MB4'j筧8') OR NOT (`t`.`i`=_UTF8MB4'暈lH忧ll6')) IS TRUE,MAX(`t`.`e`) AS `r0`,QUOTE(`t`.`i`) AS `r1` FROM `t` WHERE `t`.`h`>240817 OR `t`.`i` BETWEEN _UTF8MB4'WVz' AND _UTF8MB4'G#駧褉ZC領*lov' GROUP BY `t`.`i`) derived;").Check(
 		testkit.Rows("16"))
 }

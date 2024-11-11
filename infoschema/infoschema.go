@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/util"
+	"github.com/pingcap/tidb/util/cmp"
 	"github.com/pingcap/tidb/util/mock"
 	"golang.org/x/exp/slices"
 )
@@ -143,8 +144,8 @@ func MockInfoSchema(tbList []*model.TableInfo) InfoSchema {
 		result.sortedTablesBuckets[bucketIdx] = append(result.sortedTablesBuckets[bucketIdx], tbl)
 	}
 	for i := range result.sortedTablesBuckets {
-		slices.SortFunc(result.sortedTablesBuckets[i], func(i, j table.Table) bool {
-			return i.Meta().ID < j.Meta().ID
+		slices.SortFunc(result.sortedTablesBuckets[i], func(i, j table.Table) int {
+			return cmp.Compare(i.Meta().ID, j.Meta().ID)
 		})
 	}
 	return result
@@ -171,8 +172,8 @@ func MockInfoSchemaWithSchemaVer(tbList []*model.TableInfo, schemaVer int64) Inf
 		result.sortedTablesBuckets[bucketIdx] = append(result.sortedTablesBuckets[bucketIdx], tbl)
 	}
 	for i := range result.sortedTablesBuckets {
-		slices.SortFunc(result.sortedTablesBuckets[i], func(i, j table.Table) bool {
-			return i.Meta().ID < j.Meta().ID
+		slices.SortFunc(result.sortedTablesBuckets[i], func(i, j table.Table) int {
+			return cmp.Compare(i.Meta().ID, j.Meta().ID)
 		})
 	}
 	result.schemaMetaVersion = schemaVer
