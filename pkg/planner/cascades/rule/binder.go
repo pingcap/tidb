@@ -16,10 +16,10 @@ package rule
 
 import (
 	"container/list"
-	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"io"
 
 	"github.com/pingcap/tidb/pkg/planner/cascades/memo"
+	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/pattern"
 )
 

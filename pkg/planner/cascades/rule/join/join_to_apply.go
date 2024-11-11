@@ -15,10 +15,9 @@
 package join
 
 import (
-	"github.com/pingcap/tidb/pkg/planner/cascades/memo"
 	"github.com/pingcap/tidb/pkg/planner/cascades/rule"
+	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/pattern"
-	"github.com/pingcap/tidb/pkg/sessionctx"
 )
 
 // XFJoinToApply is a type of rule that aims to convert a join into apply mode,
@@ -36,14 +35,14 @@ func NewJoinToApply() *XFJoinToApply {
 		BaseRule: rule.NewBaseRule(rule.XFJoinToApply, pa),
 	}
 }
-
+F
 // Match implements the Rule interface.
-func (*XFJoinToApply) Match(_ *memo.MemoExpression, _ sessionctx.Context) bool {
+func (*XFJoinToApply) Match(_ base.LogicalPlan) bool {
 	return true
 }
 
 // XForm implements thr Rule interface.
-func (*XFJoinToApply) XForm(_ *memo.MemoExpression, _ sessionctx.Context) ([]*memo.MemoExpression, error) {
+func (*XFJoinToApply) XForm(_ base.LogicalPlan) ([]base.LogicalPlan, error) {
 	// Check whether the join can be converted to apply.
 	return nil, nil
 }
