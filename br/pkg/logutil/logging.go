@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"regexp"
 	"strings"
 
 	"github.com/google/uuid"
@@ -18,6 +19,15 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
+)
+
+var (
+	reAccessKey       = regexp.MustCompile(`access_key:\"[^\"]*\"`)
+	reSecretAccessKey = regexp.MustCompile(`secret_access_key:\"[^\"]*\"`)
+	reSharedKey       = regexp.MustCompile(`shared_key:\"[^\"]*\"`)
+	reCredentialsBlob = regexp.MustCompile(`credentials_blob:\"[^\"]*\"`)
+	reAccessSig       = regexp.MustCompile(`access_sig:\"[^\"]*\"`)
+	reEncryptKey      = regexp.MustCompile(`encryption_key:<.*?>`)
 )
 
 // AbbreviatedArrayMarshaler abbreviates an array of elements.
@@ -339,4 +349,26 @@ func (b HexBytes) String() string {
 // MarshalJSON implements json.Marshaler.
 func (b HexBytes) MarshalJSON() ([]byte, error) {
 	return json.Marshal(hex.EncodeToString(b))
+}
+
+// TaskInfoRedacted is a wrapper of backup.StreamBackupTaskInfo to redact sensitive information
+type TaskInfoRedacted struct {
+	Info *backuppb.StreamBackupTaskInfo
+}
+
+func (TaskInfoRedacted) redact(input string) string {
+	// Replace the matched fields with redacted versions
+	output := reAccessKey.ReplaceAllString(input, `access_key:"[REDACTED]"`)
+	output = reSecretAccessKey.ReplaceAllString(output, `secret_access_key:"[REDACTED]"`)
+	output = reSharedKey.ReplaceAllString(output, `shared_key:"[REDACTED]"`)
+	output = reCredentialsBlob.ReplaceAllString(output, `CredentialsBlob:"[REDACTED]"`)
+	output = reAccessSig.ReplaceAllString(output, `access_sig:"[REDACTED]"`)
+	output = reEncryptKey.ReplaceAllString(output, `encryption_key:<[REDACTED]>`)
+
+	return output
+}
+
+// String returns the redacted string of the task info
+func (t TaskInfoRedacted) String() string {
+	return t.redact(t.Info.String())
 }
