@@ -40,7 +40,7 @@ func TestIsRetryableError(t *testing.T) {
 	require.True(t, IsRetryableError(ErrWriteTooSlow))
 	require.False(t, IsRetryableError(io.EOF))
 	require.False(t, IsRetryableError(&net.AddrError{}))
-	require.False(t, IsRetryableError(&net.DNSError{}))
+	require.True(t, IsRetryableError(&net.DNSError{}))
 	require.True(t, IsRetryableError(&net.DNSError{IsTimeout: true}))
 
 	// kv errors

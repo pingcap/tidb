@@ -16,6 +16,7 @@ go_library(
         "//sessionctx/stmtctx",
         "//types",
         "//util/chunk",
+        "//util/cmp",
         "//util/execdetails",
         "//util/hack",
         "//util/kvcache",

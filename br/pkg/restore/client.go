@@ -55,6 +55,7 @@ import (
 	"github.com/pingcap/tidb/store/helper"
 	"github.com/pingcap/tidb/store/pdtypes"
 	"github.com/pingcap/tidb/tablecodec"
+	"github.com/pingcap/tidb/util/cmp"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/mathutil"
@@ -853,8 +854,8 @@ func (rc *Client) CreateTables(
 		newTables = append(newTables, et.Table)
 	}
 	// Let's ensure that it won't break the original order.
-	slices.SortFunc(newTables, func(i, j *model.TableInfo) bool {
-		return tbMapping[i.Name.String()] < tbMapping[j.Name.String()]
+	slices.SortFunc(newTables, func(i, j *model.TableInfo) int {
+		return cmp.Compare(tbMapping[i.Name.String()], tbMapping[j.Name.String()])
 	})
 
 	select {
@@ -1226,8 +1227,8 @@ func (rc *Client) CheckSysTableCompatibility(dom *domain.Domain, tables []*metau
 // ExecDDLs executes the queries of the ddl jobs.
 func (rc *Client) ExecDDLs(ctx context.Context, ddlJobs []*model.Job) error {
 	// Sort the ddl jobs by schema version in ascending order.
-	slices.SortFunc(ddlJobs, func(i, j *model.Job) bool {
-		return i.BinlogInfo.SchemaVersion < j.BinlogInfo.SchemaVersion
+	slices.SortFunc(ddlJobs, func(i, j *model.Job) int {
+		return cmp.Compare(i.BinlogInfo.SchemaVersion, j.BinlogInfo.SchemaVersion)
 	})
 
 	for _, job := range ddlJobs {
@@ -2855,26 +2856,14 @@ func (rc *Client) InitSchemasReplaceForDDL(
 }
 
 func SortMetaKVFiles(files []*backuppb.DataFileInfo) []*backuppb.DataFileInfo {
-	slices.SortFunc(files, func(i, j *backuppb.DataFileInfo) bool {
-		if i.GetMinTs() < j.GetMinTs() {
-			return true
-		} else if i.GetMinTs() > j.GetMinTs() {
-			return false
+	slices.SortFunc(files, func(i, j *backuppb.DataFileInfo) int {
+		if c := cmp.Compare(i.GetMinTs(), j.GetMinTs()); c != 0 {
+			return c
 		}
-
-		if i.GetMaxTs() < j.GetMaxTs() {
-			return true
-		} else if i.GetMaxTs() > j.GetMaxTs() {
-			return false
+		if c := cmp.Compare(i.GetMaxTs(), j.GetMaxTs()); c != 0 {
+			return c
 		}
-
-		if i.GetResolvedTs() < j.GetResolvedTs() {
-			return true
-		} else if i.GetResolvedTs() > j.GetResolvedTs() {
-			return false
-		}
-
-		return true
+		return cmp.Compare(i.GetResolvedTs(), j.GetResolvedTs())
 	})
 	return files
 }
@@ -3129,8 +3118,8 @@ func (rc *Client) RestoreBatchMetaKVFiles(
 	}
 
 	// sort these entries.
-	slices.SortFunc(curKvEntries, func(i, j *KvEntryWithTS) bool {
-		return i.ts < j.ts
+	slices.SortFunc(curKvEntries, func(i, j *KvEntryWithTS) int {
+		return cmp.Compare(i.ts, j.ts)
 	})
 
 	// restore these entries with rawPut() method.
