@@ -19,6 +19,7 @@ import (
 	"flag"
 	"fmt"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -39,7 +40,8 @@ type testCase struct {
 	sortedKVs [][2][]byte
 	ts        uint64
 
-	expectedFilePath string
+	expectedWriteCFPath   string
+	expectedDefaultCFPath string
 }
 
 var testCases []*testCase
@@ -47,14 +49,16 @@ var testCases []*testCase
 func init() {
 	testCases = make([]*testCase, 0, 2)
 
+	// case 0: single and short KV
 	testCases = append(testCases, &testCase{
 		sortedKVs: [][2][]byte{
 			{[]byte("a"), []byte("1")},
 		},
-		ts:               1,
-		expectedFilePath: "sst-examples/0.sst",
+		ts:                  1,
+		expectedWriteCFPath: "sst-examples/0.sst",
 	})
 
+	// case 1: many short KV
 	moreKeys := make([][2][]byte, 10000)
 	for i := range moreKeys {
 		moreKeys[i] = [2][]byte{
@@ -63,9 +67,19 @@ func init() {
 		}
 	}
 	testCases = append(testCases, &testCase{
-		sortedKVs:        moreKeys,
-		ts:               404411537129996288,
-		expectedFilePath: "sst-examples/1.sst",
+		sortedKVs:           moreKeys,
+		ts:                  404411537129996288,
+		expectedWriteCFPath: "sst-examples/1.sst",
+	})
+
+	// case 2: single long KV
+	testCases = append(testCases, &testCase{
+		sortedKVs: [][2][]byte{
+			{[]byte("key0000001"), []byte(strings.Repeat("long-value-", 100))},
+		},
+		ts:                    404411537129996288,
+		expectedDefaultCFPath: "sst-examples/2-default.sst",
+		expectedWriteCFPath:   "sst-examples/2-write.sst",
 	})
 }
 
@@ -191,7 +205,7 @@ func TestIntegrationTest(t *testing.T) {
 
 	sstPath := "/tmp/go-write-cf.sst"
 	now := time.Now()
-	pebbleWriteSST(t, sstPath, sortedKVs, ts)
+	pebbleWriteCFSST(t, sstPath, sortedKVs, ts)
 	t.Logf("write to SST takes %v", time.Since(now))
 
 	now = time.Now()
@@ -203,7 +217,7 @@ func TestIntegrationTest(t *testing.T) {
 	}
 }
 
-func pebbleWriteSST(
+func pebbleWriteCFSST(
 	t *testing.T,
 	path string,
 	sortedKVs [][2][]byte,
@@ -213,29 +227,51 @@ func pebbleWriteSST(
 	require.NoError(t, err)
 
 	for _, kv := range sortedKVs {
-		err = writer.set(kv[0], kv[1])
+		err = writer.Set(kv[0], kv[1])
 		require.NoError(t, err)
 	}
 
-	err = writer.close()
+	err = writer.Close()
 	require.NoError(t, err)
 }
 
 func TestPebbleWriteSST(t *testing.T) {
 	for i, c := range testCases {
 		t.Logf("start test case %d", i)
-		testPebbleWriteSST(t, c)
+		testPebbleSST(t, c)
 	}
 }
 
-func testPebbleWriteSST(
+func testPebbleSST(
 	t *testing.T,
 	c *testCase,
 ) {
-	sstPath := "/tmp/test-write.sst"
-	pebbleWriteSST(t, sstPath, c.sortedKVs, c.ts)
+	// for now I don't use t.TempDir() to avoid cleaning up the directory after test
+	// is failed.
+	workDir := "/tmp/test-pebble-sst"
+	writer, err := newLocalSSTWriter(workDir, c.ts)
+	require.NoError(t, err)
 
-	f, err := vfs.Default.Open(sstPath)
+	for _, kv := range c.sortedKVs {
+		err = writer.set(kv[0], kv[1])
+		require.NoError(t, err)
+	}
+
+	defaultCFSSTPath, writeCFSSTPath, err := writer.close()
+	require.NoError(t, err)
+	compareSST(t, c.expectedWriteCFPath, writeCFSSTPath, len(c.sortedKVs))
+	if c.expectedDefaultCFPath != "" {
+		compareSST(t, c.expectedDefaultCFPath, defaultCFSSTPath, len(c.sortedKVs))
+	}
+}
+
+func compareSST(
+	t *testing.T,
+	tikvSSTPath string,
+	goSSTPath string,
+	expectedKVCnt int,
+) {
+	f, err := vfs.Default.Open(goSSTPath)
 	require.NoError(t, err)
 	readable, err := rockssst.NewSimpleReadable(f)
 	require.NoError(t, err)
@@ -244,9 +280,9 @@ func testPebbleWriteSST(
 	defer reader.Close()
 
 	goSSTKVs, goSSTProperties := getData2Compare(t, reader)
-	require.Len(t, goSSTKVs, len(c.sortedKVs))
+	require.Len(t, goSSTKVs, expectedKVCnt)
 
-	f2, err := vfs.Default.Open(c.expectedFilePath)
+	f2, err := vfs.Default.Open(tikvSSTPath)
 	require.NoError(t, err)
 	readable2, err := rockssst.NewSimpleReadable(f2)
 	require.NoError(t, err)
@@ -323,9 +359,9 @@ func getData2Compare(
 }
 
 func TestDebugReadSST(t *testing.T) {
-	t.Skip("this is a manual test")
+	//t.Skip("this is a manual test")
 
-	sstPath := "/tmp/test.sst"
+	sstPath := "/tmp/default-cf.sst"
 	t.Logf("read sst: %s", sstPath)
 	f, err := vfs.Default.Open(sstPath)
 	require.NoError(t, err)
