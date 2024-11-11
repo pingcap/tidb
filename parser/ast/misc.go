@@ -3578,11 +3578,9 @@ type HintTable struct {
 }
 
 func (ht *HintTable) Restore(ctx *format.RestoreCtx) {
-	if !ctx.Flags.HasWithoutSchemaNameFlag() {
-		if ht.DBName.L != "" {
-			ctx.WriteName(ht.DBName.String())
-			ctx.WriteKeyWord(".")
-		}
+	if ht.DBName.L != "" {
+		ctx.WriteName(ht.DBName.String())
+		ctx.WriteKeyWord(".")
 	}
 	ctx.WriteName(ht.TableName.String())
 	if ht.QBName.L != "" {
