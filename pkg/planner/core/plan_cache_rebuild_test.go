@@ -480,7 +480,8 @@ func TestFastPointGetClone(t *testing.T) {
 		}
 		assignFieldCode := fmt.Sprintf("%v =", fieldName)
 		if !strings.Contains(cloneFuncCode, assignFieldCode) {
-			t.Fatal(fmt.Sprintf("field %v might not be set in FastClonePointGetForPlanCache correctly", fieldName))
+			errMsg := fmt.Sprintf("field %v might not be set in FastClonePointGetForPlanCache correctly", fieldName)
+			t.Fatal(errMsg)
 		}
 	}
 }
