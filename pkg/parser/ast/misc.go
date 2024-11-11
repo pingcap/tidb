@@ -2469,6 +2469,7 @@ const (
 	AdminSetBDRRole
 	AdminShowBDRRole
 	AdminUnsetBDRRole
+	AdminAlterDDLJob
 )
 
 // HandleRange represents a range where handle value >= Begin and < End.
@@ -2557,6 +2558,26 @@ type LimitSimple struct {
 	Offset uint64
 }
 
+type AlterJobOpt struct {
+	// Name is the name of the option, will be converted to lower case during parse.
+	Name string
+	// only literal is allowed, we use ExprNode to support negative number
+	Value ExprNode
+	V1    ValueExpr
+}
+
+func (l *AlterJobOpt) Restore(ctx *format.RestoreCtx) error {
+	if l.Value == nil {
+		ctx.WritePlain(l.Name)
+	} else {
+		ctx.WritePlain(l.Name + " = ")
+		if err := l.Value.Restore(ctx); err != nil {
+			return errors.Annotatef(err, "An error occurred while restore AlterJobOpt")
+		}
+	}
+	return nil
+}
+
 // AdminStmt is the struct for Admin statement.
 type AdminStmt struct {
 	stmtNode
@@ -2567,13 +2588,14 @@ type AdminStmt struct {
 	JobIDs    []int64
 	JobNumber int64
 
-	HandleRanges   []HandleRange
-	ShowSlow       *ShowSlow
-	Plugins        []string
-	Where          ExprNode
-	StatementScope StatementScope
-	LimitSimple    LimitSimple
-	BDRRole        BDRRole
+	HandleRanges    []HandleRange
+	ShowSlow        *ShowSlow
+	Plugins         []string
+	Where           ExprNode
+	StatementScope  StatementScope
+	LimitSimple     LimitSimple
+	BDRRole         BDRRole
+	AlterJobOptions []*AlterJobOpt
 }
 
 // Restore implements Node interface.
@@ -2737,6 +2759,18 @@ func (n *AdminStmt) Restore(ctx *format.RestoreCtx) error {
 		ctx.WriteKeyWord("SHOW BDR ROLE")
 	case AdminUnsetBDRRole:
 		ctx.WriteKeyWord("UNSET BDR ROLE")
+	case AdminAlterDDLJob:
+		ctx.WriteKeyWord("ALTER DDL JOBS ")
+		ctx.WritePlainf("%d", n.JobNumber)
+		for i, option := range n.AlterJobOptions {
+			if i != 0 {
+				ctx.WritePlain(",")
+			}
+			ctx.WritePlain(" ")
+			if err := option.Restore(ctx); err != nil {
+				return errors.Annotatef(err, "An error occurred while restore AlterJobStmt.Options")
+			}
+		}
 	default:
 		return errors.New("Unsupported AdminStmt type")
 	}
