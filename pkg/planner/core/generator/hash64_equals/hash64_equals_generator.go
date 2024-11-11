@@ -35,7 +35,8 @@ import (
 // If a field is tagged with `hash64-equals`, then it will be computed in hash64 and equals func.
 // If a field is not tagged, then it will be skipped.
 func GenHash64Equals4LogicalOps() ([]byte, error) {
-	var structures = []any{logicalop.LogicalJoin{}, logicalop.LogicalAggregation{}, logicalop.LogicalApply{}, logicalop.LogicalExpand{}, logicalop.LogicalLimit{}}
+	var structures = []any{logicalop.LogicalJoin{}, logicalop.LogicalAggregation{}, logicalop.LogicalApply{},
+		logicalop.LogicalExpand{}, logicalop.LogicalLimit{}, logicalop.LogicalMaxOneRow{}}
 	c := new(cc)
 	c.write(codeGenHash64EqualsPrefix)
 	for _, s := range structures {
@@ -80,14 +81,19 @@ func genHash64EqualsForLogicalOps(x any) ([]byte, error) {
 	c.write("if other == nil { return false }")
 	c.write("op2, ok := other.(*%v)", vType.Name())
 	c.write("if !ok { return false }")
+	hasValidField := false
 	for i := 0; i < vType.NumField(); i++ {
 		f := vType.Field(i)
 		if !isHash64EqualsField(f) {
 			continue
 		}
+		hasValidField = true
 		leftCallName := "op." + vType.Field(i).Name
 		rightCallName := "op2." + vType.Field(i).Name
 		c.EqualsElement(f.Type, leftCallName, rightCallName, "i")
+	}
+	if !hasValidField {
+		c.write("_ = op2")
 	}
 	c.write("return true")
 	c.write("}")
@@ -106,6 +112,8 @@ func logicalOpName2PlanCodecString(name string) string {
 		return "plancodec.TypeExpand"
 	case "LogicalLimit":
 		return "plancodec.TypeLimit"
+	case "LogicalMaxOneRow":
+		return "plancodec.TypeMaxOneRow"
 	default:
 		return ""
 	}
@@ -119,7 +127,7 @@ func isHash64EqualsField(fType reflect.StructField) bool {
 func (c *cc) EqualsElement(fType reflect.Type, lhs, rhs string, i string) {
 	switch fType.Kind() {
 	case reflect.Slice:
-		c.write("if len(%v) != len(%v) { return false }", lhs, rhs)
+		c.write("if (%v == nil && %v != nil) || (%v != nil && %v == nil) || len(%v) != len(%v) { return false }", lhs, rhs, lhs, rhs, lhs, rhs)
 		itemName := "one"
 		if strings.HasPrefix(lhs, "one") {
 			itemName = lhs + "e"
