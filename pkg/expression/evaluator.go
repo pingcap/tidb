@@ -19,7 +19,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/chunk"
 )
 
-
 type defaultEvaluator struct {
 	outputIdxes  []int
 	exprs        []Expression
@@ -85,8 +84,8 @@ func GetOptionalEvalPropsForExpr(expr Expression) exprctx.OptionalEvalPropKeySet
 // It separates them to "column" and "other" expressions and evaluates "other"
 // expressions before "column" expressions.
 type EvaluatorSuite struct {
-	ColumnSwapHelper *chunk.ColumnSwapHelper  // Evaluator for column expressions.
-	*defaultEvaluator // Evaluator for other expressions.
+	ColumnSwapHelper  *chunk.ColumnSwapHelper // Evaluator for column expressions.
+	*defaultEvaluator                         // Evaluator for other expressions.
 }
 
 // NewEvaluatorSuite creates an EvaluatorSuite to evaluate all the exprs.
