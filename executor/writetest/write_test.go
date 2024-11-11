@@ -1364,7 +1364,7 @@ func TestDelete(t *testing.T) {
 
 	tk.MustExec("create view v as select * from delete_test")
 	err = tk.ExecToErr("delete from v where name = 'aaa'")
-	require.EqualError(t, err, core.ErrViewInvalid.GenWithStackByArgs("test", "v").Error())
+	require.EqualError(t, err, core.ErrNotSupportedYet.GenWithStackByArgs("test", "v").Error())
 	tk.MustExec("drop view v")
 
 	tk.MustExec("create sequence seq")
