@@ -84,6 +84,13 @@ func Map[T, R any](it TryNextor[T], mapper func(T) R) TryNextor[R] {
 	}
 }
 
+func MapFilter[T, R any](it TryNextor[T], mapper func(T) (R, bool)) TryNextor[R] {
+	return filterMap[T, R]{
+		inner:  it,
+		mapper: mapper,
+	}
+}
+
 // ConcatAll concatenates all elements yields by the iterators.
 // In another word, it 'chains' all the input iterators.
 func ConcatAll[T any](items ...TryNextor[T]) TryNextor[T] {
