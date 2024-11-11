@@ -758,9 +758,9 @@ func TestIssue55881(t *testing.T) {
 	tk.MustExec("insert into bbb values(1,2),(2,3),(3,4)")
 	// set tidb_executor_concurrency to 1 to let the issue happens with high probability.
 	tk.MustExec("set tidb_executor_concurrency=1;")
-	// this is a random issue, so run it 20 times to increase the probability of the issue.
-	for i := 0; i < 20; i++ {
-		tk.MustQuery("with cte as (select * from aaa) select id, (select id from (select * from aaa where aaa.id != bbb.id union all select * from cte) d limit 1)," +
-			"(select max(value) from (select * from cte union all select * from aaa where aaa.id > bbb.id)) from bbb;")
+	// this is a random issue, so run it 100 times to increase the probability of the issue.
+	for i := 0; i < 100; i++ {
+		tk.MustQuery("with cte as (select * from aaa) select id, (select id from (select * from aaa where aaa.id != bbb.id union all select * from cte union all select * from cte) d limit 1)," +
+			"(select max(value) from (select * from cte union all select * from cte union all select * from aaa where aaa.id > bbb.id)) from bbb;")
 	}
 }
