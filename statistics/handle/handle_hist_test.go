@@ -389,8 +389,8 @@ WITH RECURSIVE EmployeeGenerator AS (
 SELECT * FROM EmployeeGenerator;
 `)
 	tk.MustExec("analyze table employees3")
-	tk.MustExec("analyze table employees3 partition p12")
-	tk.MustQuery("show stats_histograms where table_name='employees3' and Column_name='PRIMARY' and Partition_name='global'").CheckContain("19958")
-	tk.MustExec("analyze table employees3 partition p1")
-	tk.MustQuery("show stats_histograms where table_name='employees3' and Column_name='PRIMARY' and Partition_name='global'").CheckContain("19958")
+	for i := 0; i <= 12; i++ {
+		tk.MustExec("analyze table employees3 partition p" + string(i))
+		tk.MustQuery("show stats_histograms where table_name='employees3' and Column_name='PRIMARY' and Partition_name='global'").CheckContain("19958")
+	}
 }
