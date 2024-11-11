@@ -2563,7 +2563,6 @@ type AlterJobOpt struct {
 	Name string
 	// only literal is allowed, we use ExprNode to support negative number
 	Value ExprNode
-	V1    ValueExpr
 }
 
 func (l *AlterJobOpt) Restore(ctx *format.RestoreCtx) error {
