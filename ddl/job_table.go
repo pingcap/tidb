@@ -351,6 +351,9 @@ func (d *ddl) loadDDLJobAndRun(se *sess.Session, pool *workerPool, getJob func(*
 	d.delivery2worker(wk, pool, job)
 }
 
+// AfterDelivery2WorkerForTest is only used for test.
+var AfterDelivery2WorkerForTest func(*model.Job)
+
 // delivery2worker owns the worker, need to put it back to the pool in this function.
 func (d *ddl) delivery2worker(wk *worker, pool *workerPool, job *model.Job) {
 	injectFailPointForGetJob(job)
@@ -358,43 +361,13 @@ func (d *ddl) delivery2worker(wk *worker, pool *workerPool, job *model.Job) {
 	d.wg.Run(func() {
 		metrics.DDLRunningJobCount.WithLabelValues(pool.tp().String()).Inc()
 		defer func() {
+			failpoint.Inject("afterDelivery2Worker", func() {
+				AfterDelivery2WorkerForTest(job)
+			})
 			d.runningJobs.remove(job)
 			asyncNotify(d.ddlJobCh)
 			metrics.DDLRunningJobCount.WithLabelValues(pool.tp().String()).Dec()
 		}()
-<<<<<<< HEAD:ddl/job_table.go
-=======
-
-		err := wk.HandleLocalDDLJob(d.ddlCtx, job)
-		pool.put(wk)
-		if err != nil {
-			logutil.DDLLogger().Info("handle ddl job failed", zap.Error(err), zap.Stringer("job", job))
-		}
-		task.NotifyError(err)
-	})
-}
-
-// delivery2Worker owns the worker, need to put it back to the pool in this function.
-func (s *jobScheduler) delivery2Worker(wk *worker, pool *workerPool, job *model.Job) {
-	injectFailPointForGetJob(job)
-	s.runningJobs.add(job)
-	s.wg.Run(func() {
-		metrics.DDLRunningJobCount.WithLabelValues(pool.tp().String()).Inc()
-		defer func() {
-			failpoint.InjectCall("afterDelivery2Worker", job)
-			s.runningJobs.remove(job)
-			asyncNotify(s.ddlJobNotifyCh)
-			metrics.DDLRunningJobCount.WithLabelValues(pool.tp().String()).Dec()
-			if wk.ctx.Err() != nil && ingest.LitBackCtxMgr != nil {
-				// if ctx cancelled, i.e. owner changed, we need to Unregister the backend
-				// as litBackendCtx is holding this very 'ctx', and it cannot reuse now.
-				// TODO make LitBackCtxMgr a local value of the job scheduler, it makes
-				// it much harder to test multiple owners in 1 unit test.
-				ingest.LitBackCtxMgr.Unregister(job.ID)
-			}
-		}()
-		ownerID := s.ownerManager.ID()
->>>>>>> 44c9096efbc (ddl: get latest old table ID before replace view (#53720)):pkg/ddl/job_table.go
 		// check if this ddl job is synced to all servers.
 		if !job.NotStarted() && (!d.isSynced(job) || !d.maybeAlreadyRunOnce(job.ID)) {
 			if variable.EnableMDL.Load() {
