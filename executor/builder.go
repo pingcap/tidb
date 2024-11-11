@@ -2874,6 +2874,7 @@ func (b *executorBuilder) buildAnalyzePKIncremental(task plannercore.AnalyzeColu
 	if task.HandleCols == nil || !task.HandleCols.IsInt() {
 		return analyzeTask
 	}
+<<<<<<< HEAD:executor/builder.go
 	col, ok := statsTbl.Columns[task.HandleCols.GetCol(0).ID]
 	if !ok || col.Len() == 0 || col.LastAnalyzePos.IsNull() {
 		return analyzeTask
@@ -2883,6 +2884,27 @@ func (b *executorBuilder) buildAnalyzePKIncremental(task plannercore.AnalyzeColu
 		oldHist = col.Histogram.Copy()
 	} else {
 		d, err := col.LastAnalyzePos.ConvertTo(b.ctx.GetSessionVars().StmtCtx, col.Tp)
+=======
+	exprCtx := b.ctx.GetExprCtx()
+	for _, task := range v.ColTasks {
+		// ColumnInfos2ColumnsAndNames will use the `colInfos` to find the unique id for the column,
+		// so we need to make sure all the columns pass into it.
+		columns, _, err := expression.ColumnInfos2ColumnsAndNames(
+			exprCtx,
+			pmodel.NewCIStr(task.AnalyzeInfo.DBName),
+			task.TblInfo.Name,
+			append(task.ColsInfo, task.SkipColsInfo...),
+			task.TblInfo,
+		)
+		columns = slices.DeleteFunc(columns, func(expr *expression.Column) bool {
+			for _, col := range task.SkipColsInfo {
+				if col.ID == expr.ID {
+					return true
+				}
+			}
+			return false
+		})
+>>>>>>> 304732848c5 (planner: fix the problem of not finding the referenced column in the virtual column (#57084)):pkg/executor/builder.go
 		if err != nil {
 			b.err = err
 			return nil

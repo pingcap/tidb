@@ -2424,7 +2424,87 @@ func getModifiedIndexesInfoForAnalyze(sctx sessionctx.Context, tblInfo *model.Ta
 		}
 		idxsInfo = append(idxsInfo, idx)
 	}
+<<<<<<< HEAD:planner/core/planbuilder.go
 	return idxsInfo
+=======
+	return idxsInfo, independentIdxsInfo, specialGlobalIdxsInfo
+}
+
+// filterSkipColumnTypes filters out columns whose types are in the skipTypes list.
+func (b *PlanBuilder) filterSkipColumnTypes(origin []*model.ColumnInfo, tbl *resolve.TableNameW, mustAnalyzedCols *calcOnceMap) (result []*model.ColumnInfo, skipCol []*model.ColumnInfo) {
+	// If the session is in restricted SQL mode, it uses @@global.tidb_analyze_skip_column_types to get the skipTypes list.
+	skipTypes := b.ctx.GetSessionVars().AnalyzeSkipColumnTypes
+	if b.ctx.GetSessionVars().InRestrictedSQL {
+		// For auto analyze, we need to use @@global.tidb_analyze_skip_column_types.
+		val, err1 := b.ctx.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(variable.TiDBAnalyzeSkipColumnTypes)
+		if err1 != nil {
+			logutil.BgLogger().Error("loading tidb_analyze_skip_column_types failed", zap.Error(err1))
+			result = origin
+			return
+		}
+		skipTypes = variable.ParseAnalyzeSkipColumnTypes(val)
+	}
+	mustAnalyze, err1 := b.getMustAnalyzedColumns(tbl, mustAnalyzedCols)
+	if err1 != nil {
+		logutil.BgLogger().Error("getting must-analyzed columns failed", zap.Error(err1))
+		result = origin
+		return
+	}
+	// If one column's type is in the skipTypes list and it doesn't exist in mustAnalyzedCols, we will skip it.
+	for _, colInfo := range origin {
+		// Vector type is skip by hardcoded. Just because that collecting it is meanless for current TiDB.
+		if colInfo.FieldType.GetType() == mysql.TypeTiDBVectorFloat32 {
+			continue
+		}
+		_, skip := skipTypes[types.TypeToStr(colInfo.FieldType.GetType(), colInfo.FieldType.GetCharset())]
+		// Currently, if the column exists in some index(except MV Index), we need to bring the column's sample values
+		// into TiDB to build the index statistics.
+		_, keep := mustAnalyze[colInfo.ID]
+		if skip && !keep {
+			skipCol = append(skipCol, colInfo)
+			continue
+		}
+		result = append(result, colInfo)
+	}
+	return
+}
+
+// This function is to check whether all indexes is special global index or not.
+// A special global index is an index that is both a global index and an expression index or a prefix index.
+func checkIsAllSpecialGlobalIndex(as *ast.AnalyzeTableStmt, tbl *resolve.TableNameW) (bool, error) {
+	isAnalyzeTable := len(as.PartitionNames) == 0
+
+	// For `Analyze table t index`
+	if as.IndexFlag && len(as.IndexNames) == 0 {
+		for _, idx := range tbl.TableInfo.Indices {
+			if idx.State != model.StatePublic {
+				continue
+			}
+			if !handleutil.IsSpecialGlobalIndex(idx, tbl.TableInfo) {
+				return false, nil
+			}
+			// For `Analyze table t partition p0 index`
+			if !isAnalyzeTable {
+				return false, errors.NewNoStackErrorf("Analyze global index '%s' can't work with analyze specified partitions", idx.Name.O)
+			}
+		}
+	} else {
+		for _, idxName := range as.IndexNames {
+			idx := tbl.TableInfo.FindIndexByName(idxName.L)
+			if idx == nil || idx.State != model.StatePublic {
+				return false, plannererrors.ErrAnalyzeMissIndex.GenWithStackByArgs(idxName.O, tbl.Name.O)
+			}
+			if !handleutil.IsSpecialGlobalIndex(idx, tbl.TableInfo) {
+				return false, nil
+			}
+			// For `Analyze table t partition p0 index idx0`
+			if !isAnalyzeTable {
+				return false, errors.NewNoStackErrorf("Analyze global index '%s' can't work with analyze specified partitions", idx.Name.O)
+			}
+		}
+	}
+	return true, nil
+>>>>>>> 304732848c5 (planner: fix the problem of not finding the referenced column in the virtual column (#57084)):pkg/planner/core/planbuilder.go
 }
 
 func (b *PlanBuilder) buildAnalyzeFullSamplingTask(
@@ -2470,6 +2550,7 @@ func (b *PlanBuilder) buildAnalyzeFullSamplingTask(
 		if id == tbl.TableInfo.ID {
 			id = -1
 		}
+<<<<<<< HEAD:planner/core/planbuilder.go
 		info := AnalyzeInfo{
 			DBName:        tbl.Schema.O,
 			TableName:     tbl.Name.O,
@@ -2477,6 +2558,56 @@ func (b *PlanBuilder) buildAnalyzeFullSamplingTask(
 			TableID:       statistics.AnalyzeTableID{TableID: tbl.TableInfo.ID, PartitionID: id},
 			Incremental:   false,
 			StatsVersion:  version,
+=======
+		// Build tasks for each partition.
+		for i, id := range physicalIDs {
+			physicalID := id
+			if id == tbl.TableInfo.ID {
+				id = statistics.NonPartitionTableID
+			}
+			info := AnalyzeInfo{
+				DBName:        tbl.Schema.O,
+				TableName:     tbl.Name.O,
+				PartitionName: partitionNames[i],
+				TableID:       statistics.AnalyzeTableID{TableID: tbl.TableInfo.ID, PartitionID: id},
+				StatsVersion:  version,
+			}
+			if optsV2, ok := optionsMap[physicalID]; ok {
+				info.V2Options = &optsV2
+			}
+			execColsInfo := astColsInfo
+			if colsInfo, ok := colsInfoMap[physicalID]; ok {
+				execColsInfo = colsInfo
+			}
+			var skipColsInfo []*model.ColumnInfo
+			execColsInfo, skipColsInfo = b.filterSkipColumnTypes(execColsInfo, tbl, &mustAnalyzedCols)
+			allColumns := len(tbl.TableInfo.Columns) == len(execColsInfo)
+			indexes, independentIndexes, specialGlobalIndexes = getModifiedIndexesInfoForAnalyze(b.ctx.GetSessionVars().StmtCtx, tbl.TableInfo, allColumns, execColsInfo)
+			handleCols := BuildHandleColsForAnalyze(b.ctx, tbl.TableInfo, allColumns, execColsInfo)
+			newTask := AnalyzeColumnsTask{
+				HandleCols:   handleCols,
+				ColsInfo:     execColsInfo,
+				AnalyzeInfo:  info,
+				TblInfo:      tbl.TableInfo,
+				Indexes:      indexes,
+				SkipColsInfo: skipColsInfo,
+			}
+			if newTask.HandleCols == nil {
+				extraCol := model.NewExtraHandleColInfo()
+				// Always place _tidb_rowid at the end of colsInfo, this is corresponding to logics in `analyzeColumnsPushdown`.
+				newTask.ColsInfo = append(newTask.ColsInfo, extraCol)
+				newTask.HandleCols = util.NewIntHandleCols(colInfoToColumn(extraCol, len(newTask.ColsInfo)-1))
+			}
+			analyzePlan.ColTasks = append(analyzePlan.ColTasks, newTask)
+			for _, indexInfo := range independentIndexes {
+				newIdxTask := AnalyzeIndexTask{
+					IndexInfo:   indexInfo,
+					TblInfo:     tbl.TableInfo,
+					AnalyzeInfo: info,
+				}
+				analyzePlan.IdxTasks = append(analyzePlan.IdxTasks, newIdxTask)
+			}
+>>>>>>> 304732848c5 (planner: fix the problem of not finding the referenced column in the virtual column (#57084)):pkg/planner/core/planbuilder.go
 		}
 		if optsV2, ok := optionsMap[physicalID]; ok {
 			info.V2Options = &optsV2
