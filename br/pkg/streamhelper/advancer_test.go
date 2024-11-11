@@ -15,15 +15,11 @@ import (
 	backup "github.com/pingcap/kvproto/pkg/brpb"
 	logbackup "github.com/pingcap/kvproto/pkg/logbackuppb"
 	"github.com/pingcap/log"
+	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/streamhelper"
 	"github.com/pingcap/tidb/br/pkg/streamhelper/config"
 	"github.com/pingcap/tidb/br/pkg/streamhelper/spans"
-<<<<<<< HEAD
 	"github.com/pingcap/tidb/kv"
-=======
-	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/util/redact"
->>>>>>> 51ffa22365f (br: redact ak/sk in logging (#55622))
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/oracle"
@@ -845,7 +841,7 @@ func TestRedactBackend(t *testing.T) {
 		},
 	}
 
-	redacted := redact.TaskInfoRedacted{Info: info}
+	redacted := logutil.TaskInfoRedacted{Info: info}
 	require.Equal(t, "storage:<s3:<endpoint:\"http://\" bucket:\"test\" prefix:\"test\" access_key:\"[REDACTED]\" secret_access_key:\"[REDACTED]\" > > name:\"test\" ", redacted.String())
 
 	info.Storage = &backup.StorageBackend{
@@ -858,7 +854,7 @@ func TestRedactBackend(t *testing.T) {
 			},
 		},
 	}
-	redacted = redact.TaskInfoRedacted{Info: info}
+	redacted = logutil.TaskInfoRedacted{Info: info}
 	require.Equal(t, "storage:<gcs:<endpoint:\"http://\" bucket:\"test\" prefix:\"test\" CredentialsBlob:\"[REDACTED]\" > > name:\"test\" ", redacted.String())
 
 	info.Storage = &backup.StorageBackend{
@@ -868,14 +864,9 @@ func TestRedactBackend(t *testing.T) {
 				Bucket:    "test",
 				Prefix:    "test",
 				SharedKey: "12abCD!@#[]{}?/\\",
-				AccessSig: "12abCD!@#[]{}?/\\",
-				EncryptionKey: &backup.AzureCustomerKey{
-					EncryptionKey:       "12abCD!@#[]{}?/\\",
-					EncryptionKeySha256: "12abCD!@#[]{}?/\\",
-				},
 			},
 		},
 	}
-	redacted = redact.TaskInfoRedacted{Info: info}
-	require.Equal(t, "storage:<azure_blob_storage:<endpoint:\"http://\" bucket:\"test\" prefix:\"test\" shared_key:\"[REDACTED]\" access_sig:\"[REDACTED]\" encryption_key:<[REDACTED]> > > name:\"test\" ", redacted.String())
+	redacted = logutil.TaskInfoRedacted{Info: info}
+	require.Equal(t, "storage:<azure_blob_storage:<endpoint:\"http://\" bucket:\"test\" prefix:\"test\" shared_key:\"[REDACTED]\" > > name:\"test\" ", redacted.String())
 }
