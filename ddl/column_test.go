@@ -960,6 +960,19 @@ func TestGetDefaultValueOfColumn(t *testing.T) {
 		"1962-03-03 1962-03-03 00:00:00 12:23:23 2020-10-13 2020-03-27"))
 }
 
+func TestIssue53779(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a decimal(0,0), b decimal(0));")
+	tk.MustQuery("show create table t;").Check(
+		testkit.Rows(
+			"t CREATE TABLE `t` (\n" +
+				"  `a` decimal(10,0) DEFAULT NULL,\n" +
+				"  `b` decimal(10,0) DEFAULT NULL\n" +
+				") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+}
+
 func TestIssue39080(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
