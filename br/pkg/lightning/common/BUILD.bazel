@@ -103,6 +103,7 @@ go_test(
     flaky = True,
     shard_count = 21,
     deps = [
+        "//autoid_service",
         "//br/pkg/errors",
         "//br/pkg/lightning/log",
         "//ddl",

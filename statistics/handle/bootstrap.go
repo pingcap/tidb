@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
@@ -369,6 +370,12 @@ func (h *Handle) initStatsFMSketch(cache *statsCache) error {
 }
 
 func (h *Handle) initStatsBuckets4Chunk(cache *statsCache, iter *chunk.Iterator4Chunk) {
+	unspecifiedLengthTp := types.NewFieldType(mysql.TypeBlob)
+	var (
+		hasErr        bool
+		failedTableID int64
+		failedHistID  int64
+	)
 	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
 		tableID, isIndex, histID := row.GetInt64(0), row.GetInt64(1), row.GetInt64(2)
 		table, ok := cache.Get(tableID)
@@ -398,21 +405,50 @@ func (h *Handle) initStatsBuckets4Chunk(cache *statsCache, iter *chunk.Iterator4
 			// TODO: do the correct time zone conversion for timestamp-type columns' upper/lower bounds.
 			sc := &stmtctx.StatementContext{TimeZone: time.UTC, AllowInvalidDate: true, IgnoreZeroInDate: true}
 			var err error
-			lower, err = d.ConvertTo(sc, &column.Info.FieldType)
+			if column.Info.FieldType.EvalType() == types.ETString && column.Info.FieldType.GetType() != mysql.TypeEnum && column.Info.FieldType.GetType() != mysql.TypeSet {
+				// For new collation data, when storing the bounds of the histogram, we store the collate key instead of the
+				// original value.
+				// But there's additional conversion logic for new collation data, and the collate key might be longer than
+				// the FieldType.flen.
+				// If we use the original FieldType here, there might be errors like "Invalid utf8mb4 character string"
+				// or "Data too long".
+				// So we change it to TypeBlob to bypass those logics here.
+				lower, err = d.ConvertTo(sc, unspecifiedLengthTp)
+			} else {
+				lower, err = d.ConvertTo(sc, &column.Info.FieldType)
+			}
 			if err != nil {
-				logutil.BgLogger().Debug("decode bucket lower bound failed", zap.Error(err))
+				hasErr = true
+				failedTableID = tableID
+				failedHistID = histID
 				delete(table.Columns, histID)
 				continue
 			}
 			d = types.NewBytesDatum(row.GetBytes(6))
-			upper, err = d.ConvertTo(sc, &column.Info.FieldType)
+			if column.Info.FieldType.EvalType() == types.ETString && column.Info.FieldType.GetType() != mysql.TypeEnum && column.Info.FieldType.GetType() != mysql.TypeSet {
+				// For new collation data, when storing the bounds of the histogram, we store the collate key instead of the
+				// original value.
+				// But there's additional conversion logic for new collation data, and the collate key might be longer than
+				// the FieldType.flen.
+				// If we use the original FieldType here, there might be errors like "Invalid utf8mb4 character string"
+				// or "Data too long".
+				// So we change it to TypeBlob to bypass those logics here.
+				upper, err = d.ConvertTo(sc, unspecifiedLengthTp)
+			} else {
+				upper, err = d.ConvertTo(sc, &column.Info.FieldType)
+			}
 			if err != nil {
-				logutil.BgLogger().Debug("decode bucket upper bound failed", zap.Error(err))
+				hasErr = true
+				failedTableID = tableID
+				failedHistID = histID
 				delete(table.Columns, histID)
 				continue
 			}
 		}
 		hist.AppendBucketWithNDV(&lower, &upper, row.GetInt64(3), row.GetInt64(4), row.GetInt64(7))
+	}
+	if hasErr {
+		logutil.BgLogger().Error("failed to convert datum for at least one histogram bucket", zap.Int64("table ID", failedTableID), zap.Int64("column ID", failedHistID))
 	}
 }
 
@@ -470,6 +506,7 @@ func (h *Handle) InitStatsLite(is infoschema.InfoSchema) (err error) {
 	if err != nil {
 		return err
 	}
+	failpoint.Inject("beforeInitStatsLite", func() {})
 	cache, err := h.initStatsMeta(is)
 	if err != nil {
 		return errors.Trace(err)
@@ -504,6 +541,7 @@ func (h *Handle) InitStats(is infoschema.InfoSchema) (err error) {
 	if err != nil {
 		return err
 	}
+	failpoint.Inject("beforeInitStats", func() {})
 	cache, err := h.initStatsMeta(is)
 	if err != nil {
 		return errors.Trace(err)
@@ -530,11 +568,8 @@ func (h *Handle) InitStats(is infoschema.InfoSchema) (err error) {
 	for _, table := range cache.Values() {
 		for _, col := range table.Columns {
 			if col.StatsAvailable() {
-				if mysql.HasPriKeyFlag(col.Info.GetFlag()) {
-					col.StatsLoadedStatus = statistics.NewStatsFullLoadStatus()
-				} else {
-					col.StatsLoadedStatus = statistics.NewStatsAllEvictedStatus()
-				}
+				// primary key column has no stats info, because primary key's is_index is false. so it cannot load the topn
+				col.StatsLoadedStatus = statistics.NewStatsAllEvictedStatus()
 			}
 		}
 	}

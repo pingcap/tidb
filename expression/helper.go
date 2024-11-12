@@ -94,14 +94,22 @@ func GetTimeValue(ctx sessionctx.Context, v interface{}, tp byte, fsp int, expli
 	switch x := v.(type) {
 	case string:
 		lowerX := strings.ToLower(x)
-		if lowerX == ast.CurrentTimestamp || lowerX == ast.CurrentDate {
+		switch lowerX {
+		case ast.CurrentTimestamp:
 			if value, err = getTimeCurrentTimeStamp(ctx, tp, fsp); err != nil {
 				return d, err
 			}
-		} else if lowerX == types.ZeroDatetimeStr {
+		case ast.CurrentDate:
+			if value, err = getTimeCurrentTimeStamp(ctx, tp, fsp); err != nil {
+				return d, err
+			}
+			yy, mm, dd := value.Year(), value.Month(), value.Day()
+			truncated := types.FromDate(yy, mm, dd, 0, 0, 0, 0)
+			value.SetCoreTime(truncated)
+		case types.ZeroDatetimeStr:
 			value, err = types.ParseTimeFromNum(sc, 0, tp, fsp)
 			terror.Log(err)
-		} else {
+		default:
 			value, err = types.ParseTime(sc, x, tp, fsp, explicitTz)
 			if err != nil {
 				return d, err

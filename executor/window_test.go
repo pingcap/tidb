@@ -498,3 +498,12 @@ func TestIssue29947(t *testing.T) {
 	result.Check(testkit.Rows("2", "3"))
 	tk.MustExec("commit")
 }
+
+func TestVarSampAsAWindowFunction(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t1 (c1 int)")
+	tk.MustExec("select var_samp(c1) from t1")
+	tk.MustExec("select c1, var_samp(c1) over (partition by c1) from t1")
+}

@@ -282,7 +282,7 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 			}
 			metrics.BindUsageCounter.WithLabelValues(scope).Inc()
 			hint.BindHint(stmtNode, binding.Hint)
-			curStmtHints, _, curWarns := handleStmtHints(binding.Hint.GetFirstTableHints())
+			curStmtHints, _, curWarns := handleStmtHints(binding.Hint.GetStmtHints())
 			sessVars.StmtCtx.StmtHints = curStmtHints
 			// update session var by hint /set_var/
 			for name, val := range sessVars.StmtCtx.StmtHints.SetVars {

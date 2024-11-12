@@ -68,7 +68,7 @@ go_test(
     ],
     flaky = True,
     race = "on",
-    shard_count = 27,
+    shard_count = 33,
     deps = [
         ":streamhelper",
         "//br/pkg/errors",
@@ -81,6 +81,7 @@ go_test(
         "//kv",
         "//tablecodec",
         "//util/codec",
+        "//util/mathutil",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_failpoint//:failpoint",
         "@com_github_pingcap_kvproto//pkg/brpb",
