@@ -2224,14 +2224,12 @@ func TestAutoIncrementForceAutoIDCache(t *testing.T) {
 	tk.MustExec("insert into t values (100000000, 1);")
 	tk.MustExec("delete from t where a = 100000000;")
 	tk.MustQuery("show table t next_row_id").Check(testkit.Rows(
-		"auto_inc_force t a 1 _TIDB_ROWID",
 		"auto_inc_force t a 100000001 AUTO_INCREMENT",
 	))
 	// Cannot set next global ID to 0.
 	tk.MustGetErrCode("alter table t /*T![force_inc] force */ auto_increment = 0;", errno.ErrAutoincReadFailed)
 	tk.MustExec("alter table t /*T![force_inc] force */ auto_increment = 2;")
 	tk.MustQuery("show table t next_row_id").Check(testkit.Rows(
-		"auto_inc_force t a 1 _TIDB_ROWID",
 		"auto_inc_force t a 2 AUTO_INCREMENT",
 	))
 
@@ -2263,7 +2261,6 @@ func TestAutoIncrementForceAutoIDCache(t *testing.T) {
 		fmt.Println("execute alter table force increment to ==", b)
 		tk.MustExec(fmt.Sprintf("alter table t force auto_increment = %d;", b))
 		tk.MustQuery("show table t next_row_id").Check(testkit.Rows(
-			"auto_inc_force t a 1 _TIDB_ROWID",
 			fmt.Sprintf("auto_inc_force t a %d AUTO_INCREMENT", b),
 		))
 	}
@@ -2275,7 +2272,6 @@ func TestAutoIncrementForceAutoIDCache(t *testing.T) {
 	for _, b := range bases {
 		tk.MustExec(fmt.Sprintf("alter table t force auto_increment = %d;", b))
 		tk.MustQuery("show table t next_row_id").Check(testkit.Rows(
-			"auto_inc_force t a 1 _TIDB_ROWID",
 			fmt.Sprintf("auto_inc_force t a %d AUTO_INCREMENT", b),
 		))
 		tk.MustExec("insert into t values ();")
