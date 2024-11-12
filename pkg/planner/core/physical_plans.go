@@ -179,9 +179,9 @@ func (pi *PhysPlanPartInfo) cloneForPlanCache() *PhysPlanPartInfo {
 		return nil
 	}
 	cloned := new(PhysPlanPartInfo)
-	cloned.PruningConds = cloneExpressionsForPlanCache(pi.PruningConds)
+	cloned.PruningConds = cloneExpressionsForPlanCache(pi.PruningConds, nil)
 	cloned.PartitionNames = pi.PartitionNames
-	cloned.Columns = cloneColumnsForPlanCache(pi.Columns)
+	cloned.Columns = cloneColumnsForPlanCache(pi.Columns, nil)
 	cloned.ColumnNames = pi.ColumnNames
 	return cloned
 }
@@ -1353,21 +1353,21 @@ func (p *basePhysicalJoin) cloneForPlanCacheWithSelf(newCtx base.PlanContext, ne
 	}
 	cloned.physicalSchemaProducer = *base
 	cloned.JoinType = p.JoinType
-	cloned.LeftConditions = cloneExpressionsForPlanCache(p.LeftConditions)
-	cloned.RightConditions = cloneExpressionsForPlanCache(p.RightConditions)
-	cloned.OtherConditions = cloneExpressionsForPlanCache(p.OtherConditions)
+	cloned.LeftConditions = cloneExpressionsForPlanCache(p.LeftConditions, nil)
+	cloned.RightConditions = cloneExpressionsForPlanCache(p.RightConditions, nil)
+	cloned.OtherConditions = cloneExpressionsForPlanCache(p.OtherConditions, nil)
 	cloned.InnerChildIdx = p.InnerChildIdx
-	cloned.OuterJoinKeys = cloneColumnsForPlanCache(p.OuterJoinKeys)
-	cloned.InnerJoinKeys = cloneColumnsForPlanCache(p.InnerJoinKeys)
-	cloned.LeftJoinKeys = cloneColumnsForPlanCache(p.LeftJoinKeys)
-	cloned.RightJoinKeys = cloneColumnsForPlanCache(p.RightJoinKeys)
+	cloned.OuterJoinKeys = cloneColumnsForPlanCache(p.OuterJoinKeys, nil)
+	cloned.InnerJoinKeys = cloneColumnsForPlanCache(p.InnerJoinKeys, nil)
+	cloned.LeftJoinKeys = cloneColumnsForPlanCache(p.LeftJoinKeys, nil)
+	cloned.RightJoinKeys = cloneColumnsForPlanCache(p.RightJoinKeys, nil)
 	cloned.IsNullEQ = make([]bool, len(p.IsNullEQ))
 	copy(cloned.IsNullEQ, p.IsNullEQ)
 	for _, d := range p.DefaultValues {
 		cloned.DefaultValues = append(cloned.DefaultValues, *d.Clone())
 	}
-	cloned.LeftNAJoinKeys = cloneColumnsForPlanCache(p.LeftNAJoinKeys)
-	cloned.RightNAJoinKeys = cloneColumnsForPlanCache(p.RightNAJoinKeys)
+	cloned.LeftNAJoinKeys = cloneColumnsForPlanCache(p.LeftNAJoinKeys, nil)
+	cloned.RightNAJoinKeys = cloneColumnsForPlanCache(p.RightNAJoinKeys, nil)
 	return cloned, true
 }
 

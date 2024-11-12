@@ -376,7 +376,7 @@ func (pq *AnalysisPriorityQueue) ProcessDMLChanges() {
 
 		// Only update if we've seen a newer version
 		if newMaxVersion > lastFetchTimestamp {
-			statslogutil.StatsLogger().Info("Updating last fetch timestamp", zap.Uint64("new_max_version", newMaxVersion))
+			queueSamplerLogger().Info("Updating last fetch timestamp", zap.Uint64("new_max_version", newMaxVersion))
 			pq.syncFields.lastDMLUpdateFetchTimestamp = newMaxVersion
 		}
 		return nil
@@ -404,12 +404,6 @@ func (pq *AnalysisPriorityQueue) processTableStats(
 		return errors.Trace(err)
 	}
 	jobFactory := NewAnalysisJobFactory(sctx, autoAnalyzeRatio, currentTs)
-	// Check if the table is needed to be analyzed.
-	// Note: Unanalyzed tables will also be considered.
-	changePercent := jobFactory.CalculateChangePercentage(stats)
-	if changePercent == 0 {
-		return nil
-	}
 	is := sctx.GetDomainInfoSchema().(infoschema.InfoSchema)
 	pruneMode := variable.PartitionPruneMode(sctx.GetSessionVars().PartitionPruneMode.Load())
 
@@ -455,7 +449,6 @@ func (pq *AnalysisPriorityQueue) tryCreateJob(
 	}
 
 	tableInfo, ok := pq.statsHandle.TableInfoByID(is, stats.PhysicalID)
-	tableMeta := tableInfo.Meta()
 	if !ok {
 		statslogutil.StatsLogger().Warn(
 			"Table info not found for table id",
@@ -463,6 +456,7 @@ func (pq *AnalysisPriorityQueue) tryCreateJob(
 		)
 		return nil
 	}
+	tableMeta := tableInfo.Meta()
 	schemaName, ok := is.SchemaNameByTableID(tableMeta.ID)
 	if !ok {
 		statslogutil.StatsLogger().Warn(
