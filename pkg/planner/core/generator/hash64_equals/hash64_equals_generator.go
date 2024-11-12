@@ -17,13 +17,13 @@ package main
 import (
 	"bytes"
 	"fmt"
-	"github.com/pingcap/tidb/pkg/parser/types"
 	"go/format"
 	"log"
 	"os"
 	"reflect"
 	"strings"
 
+	"github.com/pingcap/tidb/pkg/parser/types"
 	"github.com/pingcap/tidb/pkg/planner/cascades/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 )
@@ -88,8 +88,8 @@ func genHash64EqualsForLogicalOps(x any) ([]byte, error) {
 	c.write("func (op *%v) Equals(other any) bool {", vType.Name())
 	c.write("op2, ok := other.(*%v)", vType.Name())
 	c.write("if !ok { return false }")
-	c.write("if op == nil { return other == nil }")
-	c.write("if other == nil { return false }")
+	c.write("if op == nil { return op2 == nil }")
+	c.write("if op2 == nil { return false }")
 	hasValidField := false
 	for i := 0; i < vType.NumField(); i++ {
 		f := vType.Field(i)

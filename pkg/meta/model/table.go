@@ -212,7 +212,7 @@ func (t *TableInfo) Equals(other any) bool {
 	if t == nil {
 		return t2 == nil
 	}
-	if other == nil {
+	if t2 == nil {
 		return false
 	}
 	return t.ID == t2.ID

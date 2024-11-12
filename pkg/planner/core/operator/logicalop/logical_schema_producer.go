@@ -57,7 +57,7 @@ func (s *LogicalSchemaProducer) Equals(other any) bool {
 	if s == nil {
 		return s2 == nil
 	}
-	if other == nil {
+	if s2 == nil {
 		return false
 	}
 	for i, col := range s.schema.Columns {

@@ -24,6 +24,7 @@ import (
 // Hash64 implements the Hash64Equals interface.
 func (op *LogicalJoin) Hash64(h base.Hasher) {
 	h.HashString(plancodec.TypeJoin)
+	op.LogicalSchemaProducer.Hash64(h)
 	h.HashInt64(int64(op.JoinType))
 	if op.EqualConditions == nil {
 		h.HashByte(base.NilFlag)
@@ -79,9 +80,12 @@ func (op *LogicalJoin) Equals(other any) bool {
 		return false
 	}
 	if op == nil {
-		return other == nil
+		return op2 == nil
 	}
-	if other == nil {
+	if op2 == nil {
+		return false
+	}
+	if !op.LogicalSchemaProducer.Equals(&op2.LogicalSchemaProducer) {
 		return false
 	}
 	if op.JoinType != op2.JoinType {
@@ -133,6 +137,7 @@ func (op *LogicalJoin) Equals(other any) bool {
 // Hash64 implements the Hash64Equals interface.
 func (op *LogicalAggregation) Hash64(h base.Hasher) {
 	h.HashString(plancodec.TypeAgg)
+	op.LogicalSchemaProducer.Hash64(h)
 	if op.AggFuncs == nil {
 		h.HashByte(base.NilFlag)
 	} else {
@@ -172,9 +177,12 @@ func (op *LogicalAggregation) Equals(other any) bool {
 		return false
 	}
 	if op == nil {
-		return other == nil
+		return op2 == nil
 	}
-	if other == nil {
+	if op2 == nil {
+		return false
+	}
+	if !op.LogicalSchemaProducer.Equals(&op2.LogicalSchemaProducer) {
 		return false
 	}
 	if (op.AggFuncs == nil && op2.AggFuncs != nil) || (op.AggFuncs != nil && op2.AggFuncs == nil) || len(op.AggFuncs) != len(op2.AggFuncs) {
@@ -232,9 +240,9 @@ func (op *LogicalApply) Equals(other any) bool {
 		return false
 	}
 	if op == nil {
-		return other == nil
+		return op2 == nil
 	}
-	if other == nil {
+	if op2 == nil {
 		return false
 	}
 	if !op.LogicalJoin.Equals(&op2.LogicalJoin) {
@@ -257,6 +265,7 @@ func (op *LogicalApply) Equals(other any) bool {
 // Hash64 implements the Hash64Equals interface.
 func (op *LogicalExpand) Hash64(h base.Hasher) {
 	h.HashString(plancodec.TypeExpand)
+	op.LogicalSchemaProducer.Hash64(h)
 	if op.DistinctGroupByCol == nil {
 		h.HashByte(base.NilFlag)
 	} else {
@@ -324,9 +333,12 @@ func (op *LogicalExpand) Equals(other any) bool {
 		return false
 	}
 	if op == nil {
-		return other == nil
+		return op2 == nil
 	}
-	if other == nil {
+	if op2 == nil {
+		return false
+	}
+	if !op.LogicalSchemaProducer.Equals(&op2.LogicalSchemaProducer) {
 		return false
 	}
 	if (op.DistinctGroupByCol == nil && op2.DistinctGroupByCol != nil) || (op.DistinctGroupByCol != nil && op2.DistinctGroupByCol == nil) || len(op.DistinctGroupByCol) != len(op2.DistinctGroupByCol) {
@@ -411,9 +423,9 @@ func (op *LogicalLimit) Equals(other any) bool {
 		return false
 	}
 	if op == nil {
-		return other == nil
+		return op2 == nil
 	}
-	if other == nil {
+	if op2 == nil {
 		return false
 	}
 	if (op.PartitionBy == nil && op2.PartitionBy != nil) || (op.PartitionBy != nil && op2.PartitionBy == nil) || len(op.PartitionBy) != len(op2.PartitionBy) {
@@ -445,9 +457,9 @@ func (op *LogicalMaxOneRow) Equals(other any) bool {
 		return false
 	}
 	if op == nil {
-		return other == nil
+		return op2 == nil
 	}
-	if other == nil {
+	if op2 == nil {
 		return false
 	}
 	_ = op2
@@ -499,9 +511,9 @@ func (op *DataSource) Equals(other any) bool {
 		return false
 	}
 	if op == nil {
-		return other == nil
+		return op2 == nil
 	}
-	if other == nil {
+	if op2 == nil {
 		return false
 	}
 	if !op.LogicalSchemaProducer.Equals(&op2.LogicalSchemaProducer) {
