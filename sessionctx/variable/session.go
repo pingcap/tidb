@@ -1484,6 +1484,11 @@ type SessionVars struct {
 	// Whether to lock duplicate keys in INSERT IGNORE and REPLACE statements,
 	// or unchanged unique keys in UPDATE statements, see PR #42210 and #42713
 	LockUnchangedKeys bool
+
+	// SkipMissingPartitionStats controls how to handle missing partition stats when merging partition stats to global stats.
+	// When set to true, skip missing partition stats and continue to merge other partition stats to global stats.
+	// When set to false, give up merging partition stats to global stats.
+	SkipMissingPartitionStats bool
 }
 
 var (
@@ -1714,6 +1719,14 @@ func (s *SessionVars) BuildParserConfig() parser.ParserConfig {
 // AllocNewPlanID alloc new ID
 func (s *SessionVars) AllocNewPlanID() int {
 	return int(s.PlanID.Add(1))
+}
+
+// GetMaxExecutionTime returns the max execution time of the current session. If it's hinted, return the hinted value.
+func (s *SessionVars) GetMaxExecutionTime() uint64 {
+	if s.StmtCtx.HasMaxExecutionTime {
+		return s.StmtCtx.MaxExecutionTime
+	}
+	return s.MaxExecutionTime
 }
 
 const (

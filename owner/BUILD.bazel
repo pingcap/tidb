@@ -35,7 +35,7 @@ go_test(
     ],
     embed = [":owner"],
     flaky = True,
-    shard_count = 6,
+    shard_count = 7,
     deps = [
         "//ddl",
         "//infoschema",

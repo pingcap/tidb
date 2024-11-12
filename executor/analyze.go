@@ -284,7 +284,17 @@ func (e *AnalyzeExec) handleResultsError(
 	resultsCh <-chan *statistics.AnalyzeResults,
 	taskNum int,
 ) error {
-	partitionStatsConcurrency := e.ctx.GetSessionVars().AnalyzePartitionConcurrency
+	oriPartitionStatsConcurrency, err := e.ctx.GetSessionVars().GetSessionOrGlobalSystemVar(
+		ctx,
+		variable.TiDBAnalyzePartitionConcurrency,
+	)
+	if err != nil {
+		return err
+	}
+	partitionStatsConcurrency, err := strconv.Atoi(oriPartitionStatsConcurrency)
+	if err != nil {
+		return err
+	}
 	// the concurrency of handleResultsError cannot be more than partitionStatsConcurrency
 	partitionStatsConcurrency = mathutil.Min(taskNum, partitionStatsConcurrency)
 	// If partitionStatsConcurrency > 1, we will try to demand extra session from Domain to save Analyze results in concurrency.
@@ -307,7 +317,6 @@ func (e *AnalyzeExec) handleResultsError(
 	// save analyze results in single-thread.
 	statsHandle := domain.GetDomain(e.ctx).StatsHandle()
 	panicCnt := 0
-	var err error
 	for panicCnt < concurrency {
 		results, ok := <-resultsCh
 		if !ok {
