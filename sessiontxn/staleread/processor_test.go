@@ -60,7 +60,7 @@ func (p *staleReadPoint) checkMatchProcessor(t *testing.T, processor staleread.P
 	evaluator := processor.GetStalenessTSEvaluatorForPrepare()
 	if hasEvaluator {
 		require.NotNil(t, evaluator)
-		ts, err := evaluator(p.tk.Session())
+		ts, err := evaluator(context.Background(), p.tk.Session())
 		require.NoError(t, err)
 		require.Equal(t, processor.GetStalenessReadTS(), ts)
 	} else {
@@ -110,6 +110,7 @@ func TestStaleReadProcessorWithSelectTable(t *testing.T) {
 	tn := astTableWithAsOf(t, "")
 	p1 := genStaleReadPoint(t, tk)
 	p2 := genStaleReadPoint(t, tk)
+	ctx := context.Background()
 
 	// create local temporary table to check processor's infoschema will consider temporary table
 	tk.MustExec("create temporary table test.t2(a int)")
@@ -159,28 +160,50 @@ func TestStaleReadProcessorWithSelectTable(t *testing.T) {
 	err = processor.OnSelectTable(tn)
 	require.True(t, processor.IsStaleness())
 	require.Equal(t, int64(0), processor.GetStalenessInfoSchema().SchemaMetaVersion())
+<<<<<<< HEAD:sessiontxn/staleread/processor_test.go
 	expectedTS, err := staleread.CalculateTsWithReadStaleness(tk.Session(), -5*time.Second)
+=======
+	expectedTS, err := staleread.CalculateTsWithReadStaleness(ctx, tk.Session(), -100*time.Second)
+>>>>>>> 3578b1da095 (*: Use strict validation for stale read ts & flashback ts (#57050)):pkg/sessiontxn/staleread/processor_test.go
 	require.NoError(t, err)
 	require.Equal(t, expectedTS, processor.GetStalenessReadTS())
 	evaluator := processor.GetStalenessTSEvaluatorForPrepare()
-	evaluatorTS, err := evaluator(tk.Session())
+	evaluatorTS, err := evaluator(ctx, tk.Session())
 	require.NoError(t, err)
 	require.Equal(t, expectedTS, evaluatorTS)
 	tk.MustExec("set @@tidb_read_staleness=''")
 
 	tk.MustExec("do sleep(0.01)")
-	evaluatorTS, err = evaluator(tk.Session())
+	evaluatorTS, err = evaluator(ctx, tk.Session())
 	require.NoError(t, err)
+<<<<<<< HEAD:sessiontxn/staleread/processor_test.go
 	expectedTS2, err := staleread.CalculateTsWithReadStaleness(tk.Session(), -5*time.Second)
+=======
+	expectedTS2, err := staleread.CalculateTsWithReadStaleness(ctx, tk.Session(), -100*time.Second)
+>>>>>>> 3578b1da095 (*: Use strict validation for stale read ts & flashback ts (#57050)):pkg/sessiontxn/staleread/processor_test.go
 	require.NoError(t, err)
 	require.Equal(t, expectedTS2, evaluatorTS)
 
 	// `@@tidb_read_staleness` will be ignored when `as of` or `@@tx_read_ts`
 	tk.MustExec("set @@tidb_read_staleness=-5")
 	processor = createProcessor(t, tk.Session())
+<<<<<<< HEAD:sessiontxn/staleread/processor_test.go
 	err = processor.OnSelectTable(p1.tn)
 	require.NoError(t, err)
 	p1.checkMatchProcessor(t, processor, true)
+=======
+	err = processor.OnSelectTable(tn)
+	require.True(t, processor.IsStaleness())
+	require.Equal(t, int64(0), processor.GetStalenessInfoSchema().SchemaMetaVersion())
+	expectedTS, err = staleread.CalculateTsWithReadStaleness(ctx, tk.Session(), -5*time.Second)
+	require.NoError(t, err)
+	require.Equal(t, expectedTS, processor.GetStalenessReadTS())
+	evaluator = processor.GetStalenessTSEvaluatorForPrepare()
+	evaluatorTS, err = evaluator(ctx, tk.Session())
+	require.NoError(t, err)
+	require.Equal(t, expectedTS, evaluatorTS)
+	tk.MustExec("set @@tidb_read_staleness=''")
+>>>>>>> 3578b1da095 (*: Use strict validation for stale read ts & flashback ts (#57050)):pkg/sessiontxn/staleread/processor_test.go
 
 	tk.MustExec(fmt.Sprintf("SET TRANSACTION READ ONLY AS OF TIMESTAMP '%s'", p1.dt))
 	processor = createProcessor(t, tk.Session())
@@ -196,13 +219,14 @@ func TestStaleReadProcessorWithExecutePreparedStmt(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	p1 := genStaleReadPoint(t, tk)
 	//p2 := genStaleReadPoint(t, tk)
+	ctx := context.Background()
 
 	// create local temporary table to check processor's infoschema will consider temporary table
 	tk.MustExec("create temporary table test.t2(a int)")
 
 	// execute prepared stmt with ts evaluator
 	processor := createProcessor(t, tk.Session())
-	err := processor.OnExecutePreparedStmt(func(sctx sessionctx.Context) (uint64, error) {
+	err := processor.OnExecutePreparedStmt(func(_ctx context.Context, sctx sessionctx.Context) (uint64, error) {
 		return p1.ts, nil
 	})
 	require.NoError(t, err)
@@ -210,7 +234,7 @@ func TestStaleReadProcessorWithExecutePreparedStmt(t *testing.T) {
 
 	// will get an error when ts evaluator fails
 	processor = createProcessor(t, tk.Session())
-	err = processor.OnExecutePreparedStmt(func(sctx sessionctx.Context) (uint64, error) {
+	err = processor.OnExecutePreparedStmt(func(_ctx context.Context, sctx sessionctx.Context) (uint64, error) {
 		return 0, errors.New("mock error")
 	})
 	require.Error(t, err)
@@ -235,7 +259,7 @@ func TestStaleReadProcessorWithExecutePreparedStmt(t *testing.T) {
 	// prepared ts is not allowed when @@txn_read_ts is set
 	tk.MustExec(fmt.Sprintf("SET TRANSACTION READ ONLY AS OF TIMESTAMP '%s'", p1.dt))
 	processor = createProcessor(t, tk.Session())
-	err = processor.OnExecutePreparedStmt(func(sctx sessionctx.Context) (uint64, error) {
+	err = processor.OnExecutePreparedStmt(func(_ctx context.Context, sctx sessionctx.Context) (uint64, error) {
 		return p1.ts, nil
 	})
 	require.Error(t, err)
@@ -248,7 +272,11 @@ func TestStaleReadProcessorWithExecutePreparedStmt(t *testing.T) {
 	err = processor.OnExecutePreparedStmt(nil)
 	require.True(t, processor.IsStaleness())
 	require.Equal(t, int64(0), processor.GetStalenessInfoSchema().SchemaMetaVersion())
+<<<<<<< HEAD:sessiontxn/staleread/processor_test.go
 	expectedTS, err := staleread.CalculateTsWithReadStaleness(tk.Session(), -5*time.Second)
+=======
+	expectedTS, err := staleread.CalculateTsWithReadStaleness(ctx, tk.Session(), -100*time.Second)
+>>>>>>> 3578b1da095 (*: Use strict validation for stale read ts & flashback ts (#57050)):pkg/sessiontxn/staleread/processor_test.go
 	require.NoError(t, err)
 	require.Equal(t, expectedTS, processor.GetStalenessReadTS())
 	tk.MustExec("set @@tidb_read_staleness=''")
@@ -256,7 +284,7 @@ func TestStaleReadProcessorWithExecutePreparedStmt(t *testing.T) {
 	// `@@tidb_read_staleness` will be ignored when `as of` or `@@tx_read_ts`
 	tk.MustExec("set @@tidb_read_staleness=-5")
 	processor = createProcessor(t, tk.Session())
-	err = processor.OnExecutePreparedStmt(func(sctx sessionctx.Context) (uint64, error) {
+	err = processor.OnExecutePreparedStmt(func(_ctx context.Context, sctx sessionctx.Context) (uint64, error) {
 		return p1.ts, nil
 	})
 	require.NoError(t, err)
@@ -268,6 +296,46 @@ func TestStaleReadProcessorWithExecutePreparedStmt(t *testing.T) {
 	require.NoError(t, err)
 	p1.checkMatchProcessor(t, processor, true)
 	tk.MustExec("set @@tidb_read_staleness=''")
+<<<<<<< HEAD:sessiontxn/staleread/processor_test.go
+=======
+
+	// `@@tidb_external_ts`
+	tk.MustExec("start transaction;set global tidb_external_ts=@@tidb_current_ts;commit")
+	tk.MustExec("set tidb_enable_external_ts_read=ON")
+	processor = createProcessor(t, tk.Session())
+	err = processor.OnExecutePreparedStmt(nil)
+	require.True(t, processor.IsStaleness())
+	expectedTS = getCurrentExternalTimestamp(t, tk)
+	require.Equal(t, expectedTS, processor.GetStalenessReadTS())
+	tk.MustExec("set tidb_enable_external_ts_read=OFF")
+
+	// `@@tidb_external_ts` will be ignored when `as of`, `@@tx_read_ts` or `@@tidb_read_staleness`
+	tk.MustExec("start transaction;set global tidb_external_ts=@@tidb_current_ts;commit")
+	tk.MustExec("set tidb_enable_external_ts_read=ON")
+
+	processor = createProcessor(t, tk.Session())
+	err = processor.OnSelectTable(p1.tn)
+	require.NoError(t, err)
+	p1.checkMatchProcessor(t, processor, true)
+
+	tk.MustExec(fmt.Sprintf("SET TRANSACTION READ ONLY AS OF TIMESTAMP '%s'", p1.dt))
+	processor = createProcessor(t, tk.Session())
+	err = processor.OnExecutePreparedStmt(nil)
+	require.NoError(t, err)
+	p1.checkMatchProcessor(t, processor, true)
+
+	tk.MustExec("set @@tidb_read_staleness=-5")
+	processor = createProcessor(t, tk.Session())
+	err = processor.OnExecutePreparedStmt(nil)
+	require.True(t, processor.IsStaleness())
+	require.Equal(t, int64(0), processor.GetStalenessInfoSchema().SchemaMetaVersion())
+	expectedTS, err = staleread.CalculateTsWithReadStaleness(ctx, tk.Session(), -5*time.Second)
+	require.NoError(t, err)
+	require.Equal(t, expectedTS, processor.GetStalenessReadTS())
+	tk.MustExec("set @@tidb_read_staleness=''")
+
+	tk.MustExec("set tidb_enable_external_ts_read=OFF")
+>>>>>>> 3578b1da095 (*: Use strict validation for stale read ts & flashback ts (#57050)):pkg/sessiontxn/staleread/processor_test.go
 }
 
 func TestStaleReadProcessorInTxn(t *testing.T) {
@@ -303,7 +371,7 @@ func TestStaleReadProcessorInTxn(t *testing.T) {
 
 	// return an error when execute prepared stmt with ts evaluator
 	processor = createProcessor(t, tk.Session())
-	err = processor.OnExecutePreparedStmt(func(sctx sessionctx.Context) (uint64, error) {
+	err = processor.OnExecutePreparedStmt(func(_ctx context.Context, sctx sessionctx.Context) (uint64, error) {
 		return p1.ts, nil
 	})
 	require.Error(t, err)

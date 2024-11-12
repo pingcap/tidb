@@ -63,9 +63,17 @@ require (
 	github.com/spf13/pflag v1.0.5
 	github.com/stretchr/testify v1.7.2-0.20220504104629-106ec21d14df
 	github.com/tiancaiamao/appdash v0.0.0-20181126055449-889f96f722a2
+<<<<<<< HEAD
 	github.com/tikv/client-go/v2 v2.0.1-0.20240510070227-19a4b786ff17
 	github.com/tikv/pd/client v0.0.0-20220307081149-841fa61e9710
 	github.com/twmb/murmur3 v1.1.3
+=======
+	github.com/tidwall/btree v1.7.0
+	github.com/tikv/client-go/v2 v2.0.8-0.20241111090227-70049ae310bf
+	github.com/tikv/pd/client v0.0.0-20241111073742-238d4d79ea31
+	github.com/timakin/bodyclose v0.0.0-20240125160201-f835fa56326a
+	github.com/twmb/murmur3 v1.1.6
+>>>>>>> 3578b1da095 (*: Use strict validation for stale read ts & flashback ts (#57050))
 	github.com/uber/jaeger-client-go v2.22.1+incompatible
 	github.com/wangjohn/quickselect v0.0.0-20161129230411-ed8402a42d5f
 	github.com/xitongsys/parquet-go v1.5.5-0.20201110004701-b09c49d6d457

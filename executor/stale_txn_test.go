@@ -17,6 +17,7 @@ package executor_test
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"testing"
 	"time"
 
@@ -1398,9 +1399,86 @@ func TestPlanCacheWithStaleReadByBinaryProto(t *testing.T) {
 	tk.ResultSetToResult(rs, fmt.Sprintf("%v", rs)).Check(testkit.Rows("1 10"))
 }
 
+<<<<<<< HEAD:executor/stale_txn_test.go
 func TestIssue30872(t *testing.T) {
 	store, _, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
+=======
+func TestStalePrepare(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	defer tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (id int)")
+
+	stmtID, _, _, err := tk.Session().PrepareStmt("select * from t as of timestamp now(3) - interval 1000 microsecond order by id asc")
+	require.Nil(t, err)
+	tk.MustExec("prepare stmt from \"select * from t as of timestamp now(3) - interval 1000 microsecond order by id asc\"")
+
+	var expected [][]any
+	for i := 0; i < 20; i++ {
+		tk.MustExec("insert into t values(?)", i)
+		time.Sleep(2 * time.Millisecond) // sleep 2ms to ensure staleread_ts > commit_ts.
+
+		expected = append(expected, testkit.Rows(fmt.Sprintf("%d", i))...)
+		rs, err := tk.Session().ExecutePreparedStmt(context.Background(), stmtID, nil)
+		require.Nil(t, err)
+		tk.ResultSetToResult(rs, fmt.Sprintf("%v", rs)).Check(expected)
+		rs.Close()
+		tk.MustQuery("execute stmt").Check(expected)
+	}
+}
+
+func TestStaleTSO(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	defer tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (id int)")
+
+	tk.MustExec("insert into t values(1)")
+	ts1, err := strconv.ParseUint(tk.MustQuery("select json_extract(@@tidb_last_txn_info, '$.commit_ts')").Rows()[0][0].(string), 10, 64)
+	require.NoError(t, err)
+
+	// Wait until the physical advances for 1s
+	var currentTS uint64
+	for {
+		tk.MustExec("begin")
+		currentTS, err = strconv.ParseUint(tk.MustQuery("select @@tidb_current_ts").Rows()[0][0].(string), 10, 64)
+		require.NoError(t, err)
+		tk.MustExec("rollback")
+		if oracle.GetTimeFromTS(currentTS).After(oracle.GetTimeFromTS(ts1).Add(time.Second)) {
+			break
+		}
+		time.Sleep(time.Millisecond * 100)
+	}
+
+	asOfExprs := []string{
+		"now(3) - interval 10 second",
+		"current_time() - interval 10 second",
+		"curtime() - interval 10 second",
+	}
+
+	nextPhysical := oracle.GetPhysical(oracle.GetTimeFromTS(currentTS).Add(10 * time.Second))
+	nextTSO := oracle.ComposeTS(nextPhysical, oracle.ExtractLogical(currentTS))
+	require.Nil(t, failpoint.Enable("github.com/pingcap/tidb/pkg/sessiontxn/staleread/mockStaleReadTSO", fmt.Sprintf("return(%d)", nextTSO)))
+	defer failpoint.Disable("github.com/pingcap/tidb/pkg/sessiontxn/staleread/mockStaleReadTSO")
+	for _, expr := range asOfExprs {
+		// Make sure the now() expr is evaluated from the stale ts provider.
+		tk.MustQuery("select * from t as of timestamp " + expr + " order by id asc").Check(testkit.Rows("1"))
+	}
+}
+
+func TestStaleReadNoBackoff(t *testing.T) {
+	cfg := config.GetGlobalConfig()
+	cfg.Labels = map[string]string{"zone": "us-east-1a"}
+	config.StoreGlobalConfig(cfg)
+	require.Equal(t, "us-east-1a", config.GetGlobalConfig().GetTiKVConfig().TxnScope)
+
+	store := testkit.CreateMockStore(t)
+>>>>>>> 3578b1da095 (*: Use strict validation for stale read ts & flashback ts (#57050)):pkg/executor/stale_txn_test.go
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
