@@ -94,16 +94,9 @@ require (
 	github.com/stretchr/testify v1.8.2
 	github.com/tdakkota/asciicheck v0.2.0
 	github.com/tiancaiamao/appdash v0.0.0-20181126055449-889f96f722a2
-<<<<<<< HEAD
-	github.com/tikv/client-go/v2 v2.0.8-0.20241108115434-4aab367743bf
+	github.com/tikv/client-go/v2 v2.0.8-0.20241111142004-e10335846244
 	github.com/tikv/pd/client v0.0.0-20240725070735-fb162bf0aa3f
 	github.com/timakin/bodyclose v0.0.0-20221125081123-e39cf3fc478e
-=======
-	github.com/tidwall/btree v1.7.0
-	github.com/tikv/client-go/v2 v2.0.8-0.20241111090227-70049ae310bf
-	github.com/tikv/pd/client v0.0.0-20241111073742-238d4d79ea31
-	github.com/timakin/bodyclose v0.0.0-20240125160201-f835fa56326a
->>>>>>> 3578b1da095 (*: Use strict validation for stale read ts & flashback ts (#57050))
 	github.com/twmb/murmur3 v1.1.6
 	github.com/uber/jaeger-client-go v2.22.1+incompatible
 	github.com/vbauerster/mpb/v7 v7.5.3

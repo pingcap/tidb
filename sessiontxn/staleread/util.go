@@ -71,23 +71,13 @@ func CalculateAsOfTsExpr(ctx context.Context, sctx sessionctx.Context, tsExpr as
 }
 
 // CalculateTsWithReadStaleness calculates the TsExpr for readStaleness duration
-<<<<<<< HEAD:sessiontxn/staleread/util.go
-func CalculateTsWithReadStaleness(sctx sessionctx.Context, readStaleness time.Duration) (uint64, error) {
-	nowVal, err := expression.GetStmtTimestamp(sctx)
-=======
 func CalculateTsWithReadStaleness(ctx context.Context, sctx sessionctx.Context, readStaleness time.Duration) (uint64, error) {
-	nowVal, err := expression.GetStmtTimestamp(sctx.GetExprCtx().GetEvalCtx())
->>>>>>> 3578b1da095 (*: Use strict validation for stale read ts & flashback ts (#57050)):pkg/sessiontxn/staleread/util.go
+	nowVal, err := expression.GetStmtTimestamp(sctx)
 	if err != nil {
 		return 0, err
 	}
 	tsVal := nowVal.Add(readStaleness)
-<<<<<<< HEAD:sessiontxn/staleread/util.go
-	minTsVal := expression.GetMinSafeTime(sctx)
-	return oracle.GoTimeToTS(expression.CalAppropriateTime(tsVal, nowVal, minTsVal)), nil
-=======
-	sc := sctx.GetSessionVars().StmtCtx
-	minSafeTSVal := expression.GetStmtMinSafeTime(sc, sctx.GetStore(), sc.TimeZone())
+	minSafeTSVal := expression.GetMinSafeTime(sctx)
 	calculatedTime := expression.CalAppropriateTime(tsVal, nowVal, minSafeTSVal)
 	readTS := oracle.GoTimeToTS(calculatedTime)
 	if calculatedTime.After(minSafeTSVal) {
@@ -100,7 +90,6 @@ func CalculateTsWithReadStaleness(ctx context.Context, sctx sessionctx.Context, 
 		}
 	}
 	return readTS, nil
->>>>>>> 3578b1da095 (*: Use strict validation for stale read ts & flashback ts (#57050)):pkg/sessiontxn/staleread/util.go
 }
 
 // IsStmtStaleness indicates whether the current statement is staleness or not

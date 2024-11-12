@@ -1423,11 +1423,6 @@ func TestStaleTSO(t *testing.T) {
 		time.Sleep(time.Millisecond * 100)
 	}
 
-<<<<<<< HEAD:executor/stale_txn_test.go
-	nextTSO := oracle.GoTimeToTS(time.Now().Add(2 * time.Second))
-	require.Nil(t, failpoint.Enable("github.com/pingcap/tidb/sessiontxn/staleread/mockStaleReadTSO", fmt.Sprintf("return(%d)", nextTSO)))
-	defer failpoint.Disable("github.com/pingcap/tidb/sessiontxn/staleread/mockStaleReadTSO")
-=======
 	asOfExprs := []string{
 		"now(3) - interval 10 second",
 		"current_time() - interval 10 second",
@@ -1436,9 +1431,8 @@ func TestStaleTSO(t *testing.T) {
 
 	nextPhysical := oracle.GetPhysical(oracle.GetTimeFromTS(currentTS).Add(10 * time.Second))
 	nextTSO := oracle.ComposeTS(nextPhysical, oracle.ExtractLogical(currentTS))
-	require.Nil(t, failpoint.Enable("github.com/pingcap/tidb/pkg/sessiontxn/staleread/mockStaleReadTSO", fmt.Sprintf("return(%d)", nextTSO)))
-	defer failpoint.Disable("github.com/pingcap/tidb/pkg/sessiontxn/staleread/mockStaleReadTSO")
->>>>>>> 3578b1da095 (*: Use strict validation for stale read ts & flashback ts (#57050)):pkg/executor/stale_txn_test.go
+	require.Nil(t, failpoint.Enable("github.com/pingcap/tidb/sessiontxn/staleread/mockStaleReadTSO", fmt.Sprintf("return(%d)", nextTSO)))
+	defer failpoint.Disable("github.com/pingcap/tidb/sessiontxn/staleread/mockStaleReadTSO")
 	for _, expr := range asOfExprs {
 		// Make sure the now() expr is evaluated from the stale ts provider.
 		tk.MustQuery("select * from t as of timestamp " + expr + " order by id asc").Check(testkit.Rows("1"))

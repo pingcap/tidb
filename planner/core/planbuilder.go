@@ -3568,11 +3568,7 @@ func (b *PlanBuilder) buildSimple(ctx context.Context, node ast.StmtNode) (Plan,
 			if err != nil {
 				return nil, err
 			}
-<<<<<<< HEAD:planner/core/planbuilder.go
-			if err := sessionctx.ValidateStaleReadTS(ctx, b.ctx, startTS); err != nil {
-=======
 			if err := sessionctx.ValidateSnapshotReadTS(ctx, b.ctx.GetStore(), startTS); err != nil {
->>>>>>> 3578b1da095 (*: Use strict validation for stale read ts & flashback ts (#57050)):pkg/planner/core/planbuilder.go
 				return nil, err
 			}
 			p.StaleTxnStartTS = startTS
@@ -3586,11 +3582,7 @@ func (b *PlanBuilder) buildSimple(ctx context.Context, node ast.StmtNode) (Plan,
 			if err != nil {
 				return nil, err
 			}
-<<<<<<< HEAD:planner/core/planbuilder.go
-			if err := sessionctx.ValidateStaleReadTS(ctx, b.ctx, startTS); err != nil {
-=======
 			if err := sessionctx.ValidateSnapshotReadTS(ctx, b.ctx.GetStore(), startTS); err != nil {
->>>>>>> 3578b1da095 (*: Use strict validation for stale read ts & flashback ts (#57050)):pkg/planner/core/planbuilder.go
 				return nil, err
 			}
 			p.StaleTxnStartTS = startTS

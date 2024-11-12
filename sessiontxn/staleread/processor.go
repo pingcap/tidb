@@ -285,11 +285,7 @@ func parseAndValidateAsOf(ctx context.Context, sctx sessionctx.Context, asOf *as
 		return 0, err
 	}
 
-<<<<<<< HEAD:sessiontxn/staleread/processor.go
-	if err = sessionctx.ValidateStaleReadTS(ctx, sctx, ts); err != nil {
-=======
 	if err = sessionctx.ValidateSnapshotReadTS(ctx, sctx.GetStore(), ts); err != nil {
->>>>>>> 3578b1da095 (*: Use strict validation for stale read ts & flashback ts (#57050)):pkg/sessiontxn/staleread/processor.go
 		return 0, err
 	}
 
