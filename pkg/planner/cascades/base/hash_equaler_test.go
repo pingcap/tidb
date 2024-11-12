@@ -15,6 +15,8 @@
 package base
 
 import (
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
+	"reflect"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -28,6 +30,13 @@ type TmpStr struct {
 func (ts *TmpStr) Hash64(h Hasher) {
 	h.HashString(ts.str1)
 	h.HashString(ts.str2)
+}
+
+func TestMirrorHasher(t *testing.T) {
+	var _ HashEquals = &pmodel.CIStr{}
+	vType := reflect.TypeOf(pmodel.CIStr{})
+	var hashEqualsType = reflect.TypeOf((*HashEquals)(nil)).Elem()
+	require.True(t, vType.Implements(hashEqualsType) || reflect.PtrTo(vType).Implements(hashEqualsType))
 }
 
 func TestStringLen(t *testing.T) {
