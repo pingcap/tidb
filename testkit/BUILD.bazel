@@ -24,7 +24,6 @@ go_library(
         "//resourcemanager",
         "//session",
         "//session/txninfo",
-        "//sessionctx",
         "//sessionctx/variable",
         "//store/driver",
         "//store/mockstore",
