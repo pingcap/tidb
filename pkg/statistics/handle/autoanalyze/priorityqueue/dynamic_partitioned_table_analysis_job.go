@@ -244,8 +244,10 @@ func (j *DynamicPartitionedTableAnalysisJob) analyzePartitionIndexes(
 	sysProcTracker sysproctrack.Tracker,
 ) (success bool) {
 	analyzePartitionBatchSize := int(variable.AutoAnalyzePartitionBatchSize.Load())
+	// For version 2, analyze one index will analyze all other indexes and columns.
+	// For version 1, analyze one index will only analyze the specified index.
+	analyzeVersion := sctx.GetSessionVars().AnalyzeVersion
 
-OnlyPickOneIndex:
 	for indexName, partitionNames := range j.PartitionIndexes {
 		needAnalyzePartitionNames := make([]any, 0, len(partitionNames))
 		for _, partition := range partitionNames {
@@ -262,10 +264,16 @@ OnlyPickOneIndex:
 			params := append([]any{j.TableSchema, j.GlobalTableName}, needAnalyzePartitionNames[start:end]...)
 			params = append(params, indexName)
 			success = exec.AutoAnalyze(sctx, statsHandle, sysProcTracker, j.TableStatsVer, sql, params...)
+			if !success {
+				return false
+			}
+		}
+		// For version 1, we need to analyze all indexes.
+		if analyzeVersion != 1 {
 			// Halt execution after analyzing one index.
 			// This is because analyzing a single index also analyzes all other indexes and columns.
 			// Therefore, to avoid redundancy, we prevent multiple analyses of the same partition.
-			break OnlyPickOneIndex
+			break
 		}
 	}
 	return

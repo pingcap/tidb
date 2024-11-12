@@ -781,7 +781,7 @@ func (l *listPartitionPruner) findUsedListPartitions(conds []expression.Expressi
 	used := make(map[int]struct{}, len(ranges))
 	tc := l.ctx.GetSessionVars().StmtCtx.TypeCtx()
 	for _, r := range ranges {
-		if len(r.HighVal) != len(exprCols) {
+		if len(r.HighVal) != len(exprCols) || r.IsFullRange(false) {
 			return l.fullRange, nil
 		}
 		var idxs map[int]struct{}

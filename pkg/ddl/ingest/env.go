@@ -56,10 +56,10 @@ const defaultMemoryQuota = 2 * size.GB
 func InitGlobalLightningEnv(path string) (ok bool) {
 	log.SetAppLogger(logutil.DDLIngestLogger())
 	globalCfg := config.GetGlobalConfig()
-	if globalCfg.Store != "tikv" {
+	if globalCfg.Store != config.StoreTypeTiKV {
 		logutil.DDLIngestLogger().Warn(LitWarnEnvInitFail,
 			zap.String("storage limitation", "only support TiKV storage"),
-			zap.String("current storage", globalCfg.Store),
+			zap.Stringer("current storage", globalCfg.Store),
 			zap.Bool("lightning is initialized", LitInitialized))
 		return false
 	}

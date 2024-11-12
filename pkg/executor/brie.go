@@ -315,9 +315,9 @@ func (b *executorBuilder) buildBRIE(s *ast.BRIEStmt, schema *expression.Schema) 
 
 	store := tidbCfg.Store
 	failpoint.Inject("modifyStore", func(v failpoint.Value) {
-		store = v.(string)
+		store = config.StoreType(v.(string))
 	})
-	if store != "tikv" {
+	if store != config.StoreTypeTiKV {
 		b.err = errors.Errorf("%s requires tikv store, not %s", s.Kind, store)
 		return nil
 	}

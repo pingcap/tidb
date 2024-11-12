@@ -1,7 +1,7 @@
 load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 
 go_library(
-    name = "cascades",
+    name = "old",
     srcs = [
         "enforcer_rules.go",
         "implementation_rules.go",
@@ -9,7 +9,7 @@ go_library(
         "stringer.go",
         "transformation_rules.go",
     ],
-    importpath = "github.com/pingcap/tidb/pkg/planner/cascades",
+    importpath = "github.com/pingcap/tidb/pkg/planner/cascades/old",
     visibility = ["//visibility:public"],
     deps = [
         "//pkg/expression",
@@ -37,7 +37,7 @@ go_library(
 )
 
 go_test(
-    name = "cascades_test",
+    name = "old_test",
     timeout = "short",
     srcs = [
         "enforcer_rules_test.go",
@@ -47,7 +47,7 @@ go_test(
         "transformation_rules_test.go",
     ],
     data = glob(["testdata/**"]),
-    embed = [":cascades"],
+    embed = [":old"],
     flaky = True,
     shard_count = 25,
     deps = [

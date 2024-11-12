@@ -12,18 +12,23 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package logsplit
+package analyze
 
-import restoreutils "github.com/pingcap/tidb/br/pkg/restore/utils"
+import (
+	"flag"
+	"testing"
 
-func NewSplitHelperIteratorForTest(helper *SplitHelper, tableID int64, rule *restoreutils.RewriteRules) *splitHelperIterator {
-	return &splitHelperIterator{
-		tableSplitters: []*rewriteSplitter{
-			{
-				tableID:  tableID,
-				rule:     rule,
-				splitter: helper,
-			},
-		},
+	"github.com/pingcap/tidb/pkg/testkit/testsetup"
+	"go.uber.org/goleak"
+)
+
+func TestMain(m *testing.M) {
+	testsetup.SetupForCommonTest()
+	flag.Parse()
+	opts := []goleak.Option{
+		goleak.IgnoreTopFunction("github.com/golang/glog.(*fileSink).flushDaemon"),
+		goleak.IgnoreTopFunction("github.com/bazelbuild/rules_go/go/tools/bzltestutil.RegisterTimeoutHandler.func1"),
+		goleak.IgnoreTopFunction("github.com/lestrrat-go/httprc.runFetchWorker"),
 	}
+	goleak.VerifyTestMain(m, opts...)
 }
