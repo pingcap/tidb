@@ -152,7 +152,9 @@ func (r *row) fromBytes(rowData []byte) error {
 		r.checksumHeader = rowData[cursor]
 		checksumVersion := r.ChecksumVersion()
 		// make sure it can be read previous version checksum to support backward compatibility.
-		if checksumVersion != 0 && checksumVersion != 1 {
+		switch checksumVersion {
+		case 0, 1, 2:
+		default:
 			return errInvalidChecksumVer
 		}
 		cursor++
@@ -303,12 +305,8 @@ func (r *row) initOffsets32() {
 // CalculateRawChecksum calculates the bytes-level checksum by using the given elements.
 // this is mainly used by the TiCDC to implement E2E checksum functionality.
 func (r *row) CalculateRawChecksum(
-	loc *time.Location, colIDs []int64, values []*types.Datum, handle kv.Handle, buf []byte,
+	loc *time.Location, colIDs []int64, values []*types.Datum, key kv.Key, handle kv.Handle, buf []byte,
 ) (uint32, error) {
-	r.flags |= rowFlagChecksum
-	r.checksumHeader &^= checksumFlagExtra   // revert extra checksum flag
-	r.checksumHeader &^= checksumMaskVersion // revert checksum version
-	r.checksumHeader |= checksumVersionRaw   // set checksum version
 	for idx, colID := range colIDs {
 		data, err := encodeValueDatum(loc, values[idx], nil)
 		if err != nil {
@@ -325,6 +323,11 @@ func (r *row) CalculateRawChecksum(
 	buf = r.toBytes(buf)
 	buf = append(buf, r.checksumHeader)
 	rawChecksum := crc32.Checksum(buf, crc32.IEEETable)
-	rawChecksum = crc32.Update(rawChecksum, crc32.IEEETable, handle.Encoded())
+	// keep backward compatibility to v8.3.0
+	if r.ChecksumVersion() == int(checksumVersionRawKey) {
+		rawChecksum = crc32.Update(rawChecksum, crc32.IEEETable, key)
+	} else {
+		rawChecksum = crc32.Update(rawChecksum, crc32.IEEETable, handle.Encoded())
+	}
 	return rawChecksum, nil
 }

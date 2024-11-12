@@ -20,6 +20,7 @@ import (
 	"strings"
 
 	"github.com/pingcap/tidb/pkg/meta/model"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/util/intest"
 )
 
@@ -426,15 +427,79 @@ func NewFlashbackClusterEvent() *SchemaChangeEvent {
 	}
 }
 
+// NewDropSchemaEvent creates a schema change event whose type is ActionDropSchema.
+func NewDropSchemaEvent(dbInfo *model.DBInfo, tables []*model.TableInfo) *SchemaChangeEvent {
+	miniTables := make([]*MiniTableInfoForSchemaEvent, len(tables))
+	for i, table := range tables {
+		miniTables[i] = &MiniTableInfoForSchemaEvent{
+			ID:   table.ID,
+			Name: table.Name,
+		}
+		if table.Partition != nil {
+			partLen := len(table.Partition.Definitions)
+			miniTables[i].Partitions = make([]*MiniPartitionInfoForSchemaEvent, partLen)
+			for j, part := range table.Partition.Definitions {
+				miniTables[i].Partitions[j] = &MiniPartitionInfoForSchemaEvent{
+					ID:   part.ID,
+					Name: part.Name,
+				}
+			}
+		}
+	}
+	return &SchemaChangeEvent{
+		inner: &jsonSchemaChangeEvent{
+			Tp: model.ActionDropSchema,
+			MiniDBInfo: &MiniDBInfoForSchemaEvent{
+				ID:     dbInfo.ID,
+				Name:   dbInfo.Name,
+				Tables: miniTables,
+			},
+		},
+	}
+}
+
+// GetDropSchemaInfo returns the database info and tables of the SchemaChangeEvent whose type is ActionDropSchema.
+func (s *SchemaChangeEvent) GetDropSchemaInfo() (miniDBInfo *MiniDBInfoForSchemaEvent) {
+	intest.Assert(s.inner.Tp == model.ActionDropSchema)
+	return s.inner.MiniDBInfo
+}
+
+// MiniDBInfoForSchemaEvent is a mini version of DBInfo for DropSchemaEvent only.
+type MiniDBInfoForSchemaEvent struct {
+	ID     int64                          `json:"id"`
+	Name   pmodel.CIStr                   `json:"name"`
+	Tables []*MiniTableInfoForSchemaEvent `json:"tables,omitempty"`
+}
+
+// MiniTableInfoForSchemaEvent is a mini version of TableInfo for DropSchemaEvent only.
+// Note: Usually we encourage to use TableInfo instead of this mini version, but for
+// DropSchemaEvent, it's more efficient to use this mini version.
+// So please do not use this mini version in other places.
+type MiniTableInfoForSchemaEvent struct {
+	ID         int64                              `json:"id"`
+	Name       pmodel.CIStr                       `json:"name"`
+	Partitions []*MiniPartitionInfoForSchemaEvent `json:"partitions,omitempty"`
+}
+
+// MiniPartitionInfoForSchemaEvent is a mini version of PartitionInfo for DropSchemaEvent only.
+// Note: Usually we encourage to use PartitionInfo instead of this mini version, but for
+// DropSchemaEvent, it's more efficient to use this mini version.
+// So please do not use this mini version in other places.
+type MiniPartitionInfoForSchemaEvent struct {
+	ID   int64        `json:"id"`
+	Name pmodel.CIStr `json:"name"`
+}
+
 // jsonSchemaChangeEvent is used by SchemaChangeEvent when needed to (un)marshal data,
 // we want to hide the details to subscribers, so SchemaChangeEvent contain this struct.
 type jsonSchemaChangeEvent struct {
-	TableInfo       *model.TableInfo     `json:"table_info,omitempty"`
-	OldTableInfo    *model.TableInfo     `json:"old_table_info,omitempty"`
-	AddedPartInfo   *model.PartitionInfo `json:"added_partition_info,omitempty"`
-	DroppedPartInfo *model.PartitionInfo `json:"dropped_partition_info,omitempty"`
-	Columns         []*model.ColumnInfo  `json:"columns,omitempty"`
-	Indexes         []*model.IndexInfo   `json:"indexes,omitempty"`
+	MiniDBInfo      *MiniDBInfoForSchemaEvent `json:"mini_db_info,omitempty"`
+	TableInfo       *model.TableInfo          `json:"table_info,omitempty"`
+	OldTableInfo    *model.TableInfo          `json:"old_table_info,omitempty"`
+	AddedPartInfo   *model.PartitionInfo      `json:"added_partition_info,omitempty"`
+	DroppedPartInfo *model.PartitionInfo      `json:"dropped_partition_info,omitempty"`
+	Columns         []*model.ColumnInfo       `json:"columns,omitempty"`
+	Indexes         []*model.IndexInfo        `json:"indexes,omitempty"`
 	// OldTableID4Partition is used to store the table ID when a table transitions from being partitioned to non-partitioned,
 	// or vice versa.
 	OldTableID4Partition int64 `json:"old_table_id_for_partition,omitempty"`

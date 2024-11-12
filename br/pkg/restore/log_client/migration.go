@@ -34,13 +34,13 @@ type physicalFileSkipMap struct {
 }
 type metaSkipMap map[string]*physicalFileSkipMap
 
-func (skipmap metaSkipMap) SkipMeta(metaPath string) {
+func (skipmap metaSkipMap) skipMeta(metaPath string) {
 	skipmap[metaPath] = &physicalFileSkipMap{
 		skip: true,
 	}
 }
 
-func (skipmap metaSkipMap) SkipPhysical(metaPath, physicalPath string) {
+func (skipmap metaSkipMap) skipPhysical(metaPath, physicalPath string) {
 	metaMap, exists := skipmap[metaPath]
 	if !exists {
 		metaMap = &physicalFileSkipMap{
@@ -55,7 +55,7 @@ func (skipmap metaSkipMap) SkipPhysical(metaPath, physicalPath string) {
 	}
 }
 
-func (skipmap metaSkipMap) SkipLogical(metaPath, physicalPath string, offset uint64) {
+func (skipmap metaSkipMap) skipLogical(metaPath, physicalPath string, offset uint64) {
 	metaMap, exists := skipmap[metaPath]
 	if !exists {
 		metaMap = &physicalFileSkipMap{
@@ -109,15 +109,15 @@ func (builder *WithMigrationsBuilder) SetShiftStartTS(ts uint64) {
 func (builder *WithMigrationsBuilder) updateSkipMap(skipmap metaSkipMap, metas []*backuppb.MetaEdit) {
 	for _, meta := range metas {
 		if meta.DestructSelf {
-			skipmap.SkipMeta(meta.Path)
+			skipmap.skipMeta(meta.Path)
 			continue
 		}
 		for _, path := range meta.DeletePhysicalFiles {
-			skipmap.SkipPhysical(meta.Path, path)
+			skipmap.skipPhysical(meta.Path, path)
 		}
 		for _, filesInPhysical := range meta.DeleteLogicalFiles {
 			for _, span := range filesInPhysical.Spans {
-				skipmap.SkipLogical(meta.Path, filesInPhysical.Path, span.Offset)
+				skipmap.skipLogical(meta.Path, filesInPhysical.Path, span.Offset)
 			}
 		}
 	}
@@ -212,7 +212,7 @@ type WithMigrations struct {
 	compactionDirs []string
 }
 
-func (wm WithMigrations) Metas(metaNameIter MetaNameIter) MetaMigrationsIter {
+func (wm *WithMigrations) Metas(metaNameIter MetaNameIter) MetaMigrationsIter {
 	return iter.MapFilter(metaNameIter, func(mname *MetaName) (*MetaWithMigrations, bool) {
 		var phySkipmap physicalSkipMap = nil
 		if wm.skipmap != nil {
@@ -231,7 +231,7 @@ func (wm WithMigrations) Metas(metaNameIter MetaNameIter) MetaMigrationsIter {
 	})
 }
 
-func (wm WithMigrations) Compactions(ctx context.Context, s storage.ExternalStorage) iter.TryNextor[*backuppb.LogFileSubcompaction] {
+func (wm *WithMigrations) Compactions(ctx context.Context, s storage.ExternalStorage) iter.TryNextor[*backuppb.LogFileSubcompaction] {
 	compactionDirIter := iter.FromSlice(wm.compactionDirs)
 	return iter.FlatMap(compactionDirIter, func(name string) iter.TryNextor[*backuppb.LogFileSubcompaction] {
 		// name is the absolute path in external storage.

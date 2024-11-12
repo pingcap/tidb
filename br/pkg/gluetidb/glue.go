@@ -107,6 +107,9 @@ func (g Glue) startDomainAsNeeded(store kv.Storage) error {
 	if existDom != nil {
 		return nil
 	}
+	if err := ddl.StartOwnerManager(context.Background(), store); err != nil {
+		return errors.Trace(err)
+	}
 	dom, err := session.GetDomain(store)
 	if err != nil {
 		return err

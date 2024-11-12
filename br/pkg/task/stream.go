@@ -920,7 +920,11 @@ func RunStreamAdvancer(c context.Context, g glue.Glue, cmdName string, cfg *Stre
 	env := streamhelper.CliEnv(mgr.StoreManager, mgr.GetStore(), etcdCLI)
 	advancer := streamhelper.NewCheckpointAdvancer(env)
 	advancer.UpdateConfig(cfg.AdvancerCfg)
-	advancerd := daemon.New(advancer, streamhelper.OwnerManagerForLogBackup(ctx, etcdCLI), cfg.AdvancerCfg.TickDuration)
+	ownerMgr := streamhelper.OwnerManagerForLogBackup(ctx, etcdCLI)
+	defer func() {
+		ownerMgr.Close()
+	}()
+	advancerd := daemon.New(advancer, ownerMgr, cfg.AdvancerCfg.TickDuration)
 	loop, err := advancerd.Begin(ctx)
 	if err != nil {
 		return err
