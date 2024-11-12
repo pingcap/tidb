@@ -6,7 +6,6 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"math"
 	"slices"
 	"strings"
 	"sync"
