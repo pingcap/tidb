@@ -97,15 +97,17 @@ func (*CollectPredicateColumnsPoint) markAtLeastOneFullStatsLoadForEachTable(
 	histNeeded bool,
 ) {
 	statsHandle := domain.GetDomain(sctx).StatsHandle()
+	if statsHandle == nil {
+		// If there's no stats handler, it's abnormal status. Return directly.
+		return
+	}
 	physTblIDsWithNeededCols := intset.NewFastIntSet()
 	for neededCol, fullLoad := range predicateCols {
 		if !fullLoad {
 			continue
 		}
-		if statsHandle == nil {
-			continue
-		}
 		tblInfo := tblID2TblInfo[neededCol.TableID]
+		// If we don't find its table info, it might be deleted. Skip.
 		if tblInfo == nil {
 			continue
 		}
@@ -126,11 +128,9 @@ func (*CollectPredicateColumnsPoint) markAtLeastOneFullStatsLoadForEachTable(
 		}
 
 		// 2. get the stats table
-
-		// If we already collected some columns that need trigger sync laoding on this table, we don't need to
+		// If we already collected some columns that need trigger sync loading on this table, we don't need to
 		// additionally do anything for determinate mode.
-		if physTblIDsWithNeededCols.Has(physicalTblID) ||
-			statsHandle == nil {
+		if physTblIDsWithNeededCols.Has(physicalTblID) {
 			return
 		}
 		tblStats := statsHandle.GetTableStats(tbl)
@@ -139,6 +139,10 @@ func (*CollectPredicateColumnsPoint) markAtLeastOneFullStatsLoadForEachTable(
 		}
 		var colToTriggerLoad *model.TableItemID
 		for _, col := range tbl.Columns {
+			// Skip the column that satisfies any of the following conditions:
+			// 1. not in public state.
+			// 2. virtual generated column.
+			// 3. unanalyzed column.
 			if col.State != model.StatePublic || (col.IsGenerated() && !col.GeneratedStored) || !tblStats.ColAndIdxExistenceMap.HasAnalyzed(col.ID, false) {
 				continue
 			}
@@ -150,9 +154,8 @@ func (*CollectPredicateColumnsPoint) markAtLeastOneFullStatsLoadForEachTable(
 				}
 			}
 			// Choose the first column we meet to trigger stats loading.
-			if colToTriggerLoad == nil {
-				colToTriggerLoad = &model.TableItemID{TableID: int64(physicalTblID), ID: col.ID, IsIndex: false}
-			}
+			colToTriggerLoad = &model.TableItemID{TableID: int64(physicalTblID), ID: col.ID, IsIndex: false}
+			break
 		}
 		if colToTriggerLoad == nil {
 			return
