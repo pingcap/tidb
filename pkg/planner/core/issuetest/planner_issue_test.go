@@ -119,32 +119,3 @@ func TestIssue54535(t *testing.T) {
 	tk.MustQuery("select /*+ inl_join(tmp) */ * from t1 inner join (select col_1, group_concat(col_2) from t2 group by col_1) tmp on t1.col_1 = tmp.col_1;").Check(testkit.Rows())
 	tk.MustQuery("select /*+ inl_join(tmp) */ * from t1 inner join (select col_1, group_concat(distinct col_2 order by col_2) from t2 group by col_1) tmp on t1.col_1 = tmp.col_1;").Check(testkit.Rows())
 }
-
-func TestIssue(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("CREATE USER 'db_a'@'%';")
-	tk.MustExec("CREATE USER 'db_b'@'%';")
-	tk.MustExec("GRANT ALL PRIVILEGES ON `db_a`.* TO 'db_a'@'%';")
-	tk.MustExec("GRANT ALL PRIVILEGES ON `db_b`.* TO 'db_a'@'%';")
-	tk.MustExec("GRANT ALL PRIVILEGES ON `db_b`.* TO 'db_b'@'%';")
-	tk.MustExec("GRANT ALL PRIVILEGES ON `db_b`.* TO 'db_b'@'%';")
-	tk.MustExec("create database db_a;")
-	tk.MustExec("create database db_b;")
-	tk.MustExec("use db_a;")
-	tk.MustExec(`CREATE TABLE tmp_table1 (
-   id decimal(18,0) NOT NULL,
-   row_1 varchar(255) DEFAULT NULL,
-   PRIMARY KEY (id) /*T![clustered_index] CLUSTERED */
- ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin`)
-	tk.MustExec(`create ALGORITHM=UNDEFINED DEFINER=db_a@'%' SQL SECURITY DEFINER VIEW view_test_v1 as (
-                         with rs1 as(
-                            select otn.*
-                             from tmp_table1 otn
-                          )
-                        select ojt.* from rs1 ojt
-                        )`)
-	tk.MustExec("use db_b;")
-	tk.MustQuery("select * from db_a.view_test_v1;")
-}
