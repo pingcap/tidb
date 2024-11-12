@@ -531,9 +531,15 @@ type PlanCacheStmt struct {
 	SQLDigest           *parser.Digest
 	PlanDigest          *parser.Digest
 	ForUpdateRead       bool
+<<<<<<< HEAD:planner/core/plan_cache_utils.go
 	SnapshotTSEvaluator func(sessionctx.Context) (uint64, error)
 	NormalizedSQL4PC    string
 	SQLDigest4PC        string
+=======
+	SnapshotTSEvaluator func(context.Context, sessionctx.Context) (uint64, error)
+
+	BindingInfo bindinfo.BindingMatchInfo
+>>>>>>> 3578b1da095 (*: Use strict validation for stale read ts & flashback ts (#57050)):pkg/planner/core/plan_cache_utils.go
 
 	// the different between NormalizedSQL, NormalizedSQL4PC and StmtText:
 	//  for the query `select * from t where a>1 and b<?`, then

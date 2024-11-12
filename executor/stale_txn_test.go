@@ -17,6 +17,7 @@ package executor_test
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"testing"
 	"time"
 
@@ -1406,16 +1407,38 @@ func TestStaleTSO(t *testing.T) {
 	tk.MustExec("create table t (id int)")
 
 	tk.MustExec("insert into t values(1)")
+	ts1, err := strconv.ParseUint(tk.MustQuery("select json_extract(@@tidb_last_txn_info, '$.commit_ts')").Rows()[0][0].(string), 10, 64)
+	require.NoError(t, err)
 
-	asOfExprs := []string{
-		"now(3) - interval 1 second",
-		"current_time() - interval 1 second",
-		"curtime() - interval 1 second",
+	// Wait until the physical advances for 1s
+	var currentTS uint64
+	for {
+		tk.MustExec("begin")
+		currentTS, err = strconv.ParseUint(tk.MustQuery("select @@tidb_current_ts").Rows()[0][0].(string), 10, 64)
+		require.NoError(t, err)
+		tk.MustExec("rollback")
+		if oracle.GetTimeFromTS(currentTS).After(oracle.GetTimeFromTS(ts1).Add(time.Second)) {
+			break
+		}
+		time.Sleep(time.Millisecond * 100)
 	}
 
+<<<<<<< HEAD:executor/stale_txn_test.go
 	nextTSO := oracle.GoTimeToTS(time.Now().Add(2 * time.Second))
 	require.Nil(t, failpoint.Enable("github.com/pingcap/tidb/sessiontxn/staleread/mockStaleReadTSO", fmt.Sprintf("return(%d)", nextTSO)))
 	defer failpoint.Disable("github.com/pingcap/tidb/sessiontxn/staleread/mockStaleReadTSO")
+=======
+	asOfExprs := []string{
+		"now(3) - interval 10 second",
+		"current_time() - interval 10 second",
+		"curtime() - interval 10 second",
+	}
+
+	nextPhysical := oracle.GetPhysical(oracle.GetTimeFromTS(currentTS).Add(10 * time.Second))
+	nextTSO := oracle.ComposeTS(nextPhysical, oracle.ExtractLogical(currentTS))
+	require.Nil(t, failpoint.Enable("github.com/pingcap/tidb/pkg/sessiontxn/staleread/mockStaleReadTSO", fmt.Sprintf("return(%d)", nextTSO)))
+	defer failpoint.Disable("github.com/pingcap/tidb/pkg/sessiontxn/staleread/mockStaleReadTSO")
+>>>>>>> 3578b1da095 (*: Use strict validation for stale read ts & flashback ts (#57050)):pkg/executor/stale_txn_test.go
 	for _, expr := range asOfExprs {
 		// Make sure the now() expr is evaluated from the stale ts provider.
 		tk.MustQuery("select * from t as of timestamp " + expr + " order by id asc").Check(testkit.Rows("1"))
