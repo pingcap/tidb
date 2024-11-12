@@ -6,6 +6,8 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"math"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -233,7 +235,7 @@ func (c *CheckpointAdvancer) tryAdvance(ctx context.Context, length int,
 		defer c.checkpointsMu.Unlock()
 		c.checkpoints.Merge(spans.Valued{Key: kr, Value: u})
 	})
-	clampedRanges := utils.IntersectAll(ranges, utils.CloneSlice(c.taskRange))
+	clampedRanges := utils.IntersectAll(ranges, slices.Clone(c.taskRange))
 	for _, r := range clampedRanges {
 		workers.ApplyOnErrorGroup(eg, func() (e error) {
 			defer c.recordTimeCost("get regions in range")()
