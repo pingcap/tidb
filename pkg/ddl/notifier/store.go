@@ -33,12 +33,9 @@ type Store interface {
 		multiSchemaChangeID int64,
 		processedBy uint64,
 	) error
-	Delete(ctx context.Context, se *sess.Session, ddlJobID int64, multiSchemaChangeID int) error
+	DeleteAndCommit(ctx context.Context, se *sess.Session, ddlJobID int64, multiSchemaChangeID int) error
 	List(ctx context.Context, se *sess.Session) ([]*schemaChange, error)
 }
-
-// DefaultStore is the system table store. Still WIP now.
-var DefaultStore Store
 
 type tableStore struct {
 	db    string
@@ -53,14 +50,16 @@ func (t *tableStore) Insert(ctx context.Context, s *sess.Session, change *schema
 	sql := fmt.Sprintf(`
 		INSERT INTO %s.%s (
 			ddl_job_id,
-			multi_schema_change_seq,
+			sub_job_id,
 			schema_change,
 			processed_by_flag
-		) VALUES (%d, %d, '%s', 0)`,
+		) VALUES (%%?, %%?, %%?, 0)`,
 		t.db, t.table,
+	)
+	_, err = s.Execute(
+		ctx, sql, "ddl_notifier",
 		change.ddlJobID, change.multiSchemaChangeSeq, event,
 	)
-	_, err = s.Execute(ctx, sql, "ddl_notifier")
 	return err
 }
 
@@ -74,7 +73,7 @@ func (t *tableStore) UpdateProcessed(
 	sql := fmt.Sprintf(`
 		UPDATE %s.%s
 		SET processed_by_flag = %d
-		WHERE ddl_job_id = %d AND multi_schema_change_seq = %d`,
+		WHERE ddl_job_id = %d AND sub_job_id = %d`,
 		t.db, t.table,
 		processedBy,
 		ddlJobID, multiSchemaChangeID)
@@ -82,23 +81,39 @@ func (t *tableStore) UpdateProcessed(
 	return err
 }
 
-//revive:disable
-
-func (t *tableStore) Delete(ctx context.Context, se *sess.Session, ddlJobID int64, multiSchemaChangeID int) error {
-	//TODO implement me
-	panic("implement me")
+func (t *tableStore) DeleteAndCommit(
+	ctx context.Context,
+	se *sess.Session,
+	ddlJobID int64,
+	multiSchemaChangeID int,
+) (err error) {
+	if err = se.Begin(ctx); err != nil {
+		return errors.Trace(err)
+	}
+	defer func() {
+		if err == nil {
+			err = errors.Trace(se.Commit(ctx))
+		} else {
+			se.Rollback()
+		}
+	}()
+	sql := fmt.Sprintf(`
+		DELETE FROM %s.%s
+		WHERE ddl_job_id = %d AND sub_job_id = %d`,
+		t.db, t.table,
+		ddlJobID, multiSchemaChangeID)
+	_, err = se.Execute(ctx, sql, "ddl_notifier")
+	return errors.Trace(err)
 }
-
-//revive:enable
 
 func (t *tableStore) List(ctx context.Context, se *sess.Session) ([]*schemaChange, error) {
 	sql := fmt.Sprintf(`
 		SELECT
 			ddl_job_id,
-			multi_schema_change_seq,
+			sub_job_id,
 			schema_change,
 			processed_by_flag
-		FROM %s.%s ORDER BY ddl_job_id, multi_schema_change_seq`,
+		FROM %s.%s ORDER BY ddl_job_id, sub_job_id`,
 		t.db, t.table)
 	rows, err := se.Execute(ctx, sql, "ddl_notifier")
 	if err != nil {
@@ -125,7 +140,7 @@ func (t *tableStore) List(ctx context.Context, se *sess.Session) ([]*schemaChang
 // be created with the table structure:
 //
 //	ddl_job_id BIGINT,
-//	multi_schema_change_seq BIGINT COMMENT '-1 if the schema change does not belong to a multi-schema change DDL. 0 or positive numbers representing the sub-job index of a multi-schema change DDL',
+//	sub_job_id BIGINT COMMENT '-1 if the schema change does not belong to a multi-schema change DDL or a merged DDL. 0 or positive numbers representing the sub-job index of a multi-schema change DDL or a merged DDL',
 //	schema_change JSON COMMENT 'SchemaChange at rest',
 //	processed_by_flag BIGINT UNSIGNED DEFAULT 0 COMMENT 'flag to mark which subscriber has processed the event',
 //	PRIMARY KEY(ddl_job_id, multi_schema_change_id)

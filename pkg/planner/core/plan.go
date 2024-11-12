@@ -21,7 +21,6 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/planner/cardinality"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
-	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -240,29 +239,4 @@ func getActualProbeCntFromProbeParents(pps []base.PhysicalPlan, statsColl *execd
 		}
 	}
 	return res
-}
-
-// HasMaxOneRow returns if the LogicalPlan will output at most one row.
-func HasMaxOneRow(p base.LogicalPlan, childMaxOneRow []bool) bool {
-	if len(childMaxOneRow) == 0 {
-		// The reason why we use this check is that, this function
-		// is used both in planner/core and planner/cascades.
-		// In cascades planner, LogicalPlan may have no `children`.
-		return false
-	}
-	switch x := p.(type) {
-	case *logicalop.LogicalLock, *logicalop.LogicalLimit, *logicalop.LogicalSort, *logicalop.LogicalSelection,
-		*logicalop.LogicalApply, *logicalop.LogicalProjection, *logicalop.LogicalWindow, *logicalop.LogicalAggregation:
-		return childMaxOneRow[0]
-	case *logicalop.LogicalMaxOneRow:
-		return true
-	case *logicalop.LogicalJoin:
-		switch x.JoinType {
-		case logicalop.SemiJoin, logicalop.AntiSemiJoin, logicalop.LeftOuterSemiJoin, logicalop.AntiLeftOuterSemiJoin:
-			return childMaxOneRow[0]
-		default:
-			return childMaxOneRow[0] && childMaxOneRow[1]
-		}
-	}
-	return false
 }

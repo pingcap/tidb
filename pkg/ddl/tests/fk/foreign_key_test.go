@@ -1500,7 +1500,7 @@ func getLatestSchemaDiff(t *testing.T, tk *testkit.TestKit) *model.SchemaDiff {
 	require.NoError(t, err)
 	txn, err := ctx.Txn(true)
 	require.NoError(t, err)
-	m := meta.NewMeta(txn)
+	m := meta.NewMutator(txn)
 	ver, err := m.GetSchemaVersion()
 	require.NoError(t, err)
 	diff, err := m.GetSchemaDiff(ver)

@@ -16,6 +16,7 @@ package importer
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"math"
 	"net/url"
@@ -810,13 +811,14 @@ func (p *Plan) initParameters(plan *plannercore.ImportInto) error {
 		setClause = sb.String()
 	}
 	optionMap := make(map[string]any, len(plan.Options))
-	var evalCtx expression.EvalContext
-	if plan.SCtx() != nil {
-		evalCtx = plan.SCtx().GetExprCtx().GetEvalCtx()
-	}
 	for _, opt := range plan.Options {
 		if opt.Value != nil {
-			val := opt.Value.StringWithCtx(evalCtx, errors.RedactLogDisable)
+			// The option attached to the import statement here are all
+			// parameters entered by the user. TiDB will process the
+			// parameters entered by the user as constant. so we can
+			// directly convert it to constant.
+			cons := opt.Value.(*expression.Constant)
+			val := fmt.Sprintf("%v", cons.Value.GetValue())
 			if opt.Name == cloudStorageURIOption {
 				val = ast.RedactURL(val)
 			}

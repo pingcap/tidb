@@ -80,13 +80,16 @@ id
 DROP TABLE t_sel_in_share;
 set @@tidb_enable_noop_functions = default;
 set tidb_enable_table_partition=off;
+show warnings;
+Level	Code	Message
+Warning	1105	tidb_enable_table_partition is always turned on. This variable has been deprecated and will be removed in the future releases
+set global tidb_enable_table_partition=off;
+show warnings;
+Level	Code	Message
+Warning	1105	tidb_enable_table_partition is always turned on. This variable has been deprecated and will be removed in the future releases
 show variables like 'tidb_enable_table_partition';
 Variable_name	Value
-tidb_enable_table_partition	OFF
-set global tidb_enable_table_partition = on;
-show variables like 'tidb_enable_table_partition';
-Variable_name	Value
-tidb_enable_table_partition	OFF
+tidb_enable_table_partition	ON
 show global variables like 'tidb_enable_table_partition';
 Variable_name	Value
 tidb_enable_table_partition	ON
@@ -111,10 +114,6 @@ set tidb_enable_list_partition=1;
 show variables like 'tidb_enable_list_partition';
 Variable_name	Value
 tidb_enable_list_partition	ON
-show variables like 'tidb_enable_table_partition';
-Variable_name	Value
-tidb_enable_table_partition	ON
-set global tidb_enable_table_partition = default;
 set @@foreign_key_checks=0;
 CREATE TABLE address (
 id bigint(20) NOT NULL AUTO_INCREMENT,

@@ -95,7 +95,7 @@ func (tp JoinType) String() string {
 type LogicalJoin struct {
 	LogicalSchemaProducer
 
-	JoinType      JoinType
+	JoinType      JoinType `hash64-equals:"true"`
 	Reordered     bool
 	CartesianJoin bool
 	StraightJoin  bool
@@ -107,12 +107,12 @@ type LogicalJoin struct {
 	LeftPreferJoinType  uint
 	RightPreferJoinType uint
 
-	EqualConditions []*expression.ScalarFunction
+	EqualConditions []*expression.ScalarFunction `hash64-equals:"true"`
 	// NAEQConditions means null aware equal conditions, which is used for null aware semi joins.
-	NAEQConditions  []*expression.ScalarFunction
-	LeftConditions  expression.CNFExprs
-	RightConditions expression.CNFExprs
-	OtherConditions expression.CNFExprs
+	NAEQConditions  []*expression.ScalarFunction `hash64-equals:"true"`
+	LeftConditions  expression.CNFExprs          `hash64-equals:"true"`
+	RightConditions expression.CNFExprs          `hash64-equals:"true"`
+	OtherConditions expression.CNFExprs          `hash64-equals:"true"`
 
 	LeftProperties  [][]*expression.Column
 	RightProperties [][]*expression.Column
@@ -284,8 +284,8 @@ func (p *LogicalJoin) PredicatePushDown(predicates []expression.Expression, opt 
 	rightCond = expression.RemoveDupExprs(rightCond)
 	leftRet, lCh := p.Children()[0].PredicatePushDown(leftCond, opt)
 	rightRet, rCh := p.Children()[1].PredicatePushDown(rightCond, opt)
-	utilfuncp.AddSelection(p, lCh, leftRet, 0, opt)
-	utilfuncp.AddSelection(p, rCh, rightRet, 1, opt)
+	addSelection(p, lCh, leftRet, 0, opt)
+	addSelection(p, rCh, rightRet, 1, opt)
 	p.updateEQCond()
 	ruleutil.BuildKeyInfoPortal(p)
 	return ret, p.Self()
@@ -1047,10 +1047,25 @@ func (p *LogicalJoin) ExtractUsedCols(parentUsedCols []*expression.Column) (left
 	}
 	lChild := p.Children()[0]
 	rChild := p.Children()[1]
+	lSchema := lChild.Schema()
+	rSchema := rChild.Schema()
+	// parentused col = t2.a
+	// leftChild schema = t1.a(t2.a) + and others
+	// rightChild schema = t3 related + and others
+	if join, ok := lChild.(*LogicalJoin); ok {
+		if join.FullSchema != nil {
+			lSchema = join.FullSchema
+		}
+	}
+	if join, ok := rChild.(*LogicalJoin); ok {
+		if join.FullSchema != nil {
+			rSchema = join.FullSchema
+		}
+	}
 	for _, col := range parentUsedCols {
-		if lChild.Schema().Contains(col) {
+		if lSchema != nil && lSchema.Contains(col) {
 			leftCols = append(leftCols, col)
-		} else if rChild.Schema().Contains(col) {
+		} else if rSchema != nil && rSchema.Contains(col) {
 			rightCols = append(rightCols, col)
 		}
 	}

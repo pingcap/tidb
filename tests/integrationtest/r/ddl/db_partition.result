@@ -1,64 +1,3 @@
-set @@session.tidb_enable_table_partition = 'ON';
-drop table if exists t;
-create table t (id int) partition by list  (id) (
-partition p0 values in (1,2),partition p1 values in (3,4));
-show create table t;
-Table	Create Table
-t	CREATE TABLE `t` (
-  `id` int(11) DEFAULT NULL
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
-PARTITION BY LIST (`id`)
-(PARTITION `p0` VALUES IN (1,2),
- PARTITION `p1` VALUES IN (3,4))
-alter table t add partition (
-partition p4 values in (7),
-partition p5 values in (8,9));
-insert into t values (1),(3),(7),(9);
-set @@session.tidb_enable_table_partition = 'OFF';
-drop table if exists t;
-create table t (id int) partition by list  (id) (
-partition p0 values in (1,2),partition p1 values in (3,4));
-show create table t;
-Table	Create Table
-t	CREATE TABLE `t` (
-  `id` int(11) DEFAULT NULL
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
-alter table t add partition (
-partition p4 values in (7),
-partition p5 values in (8,9));
-Error 1505 (HY000): Partition management on a not partitioned table is not possible
-insert into t values (1),(3),(7),(9);
-set @@session.tidb_enable_table_partition = 0;
-drop table if exists t;
-create table t (id int) partition by list  (id) (
-partition p0 values in (1,2),partition p1 values in (3,4));
-show create table t;
-Table	Create Table
-t	CREATE TABLE `t` (
-  `id` int(11) DEFAULT NULL
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
-alter table t add partition (
-partition p4 values in (7),
-partition p5 values in (8,9));
-Error 1505 (HY000): Partition management on a not partitioned table is not possible
-insert into t values (1),(3),(7),(9);
-set @@session.tidb_enable_table_partition = 'ON';
-drop table if exists t;
-create table t (id int) partition by list  (id) (
-partition p0 values in (1,2),partition p1 values in (3,4));
-show create table t;
-Table	Create Table
-t	CREATE TABLE `t` (
-  `id` int(11) DEFAULT NULL
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
-PARTITION BY LIST (`id`)
-(PARTITION `p0` VALUES IN (1,2),
- PARTITION `p1` VALUES IN (3,4))
-alter table t add partition (
-partition p4 values in (7),
-partition p5 values in (8,9));
-insert into t values (1),(3),(7),(9);
-set @@session.tidb_enable_table_partition = default;
 drop table if exists t;
 create table t (a varchar(255) charset utf8mb4 collate utf8mb4_bin) partition by range columns (a)
 (partition p0A values less than ("A"),
@@ -302,7 +241,7 @@ Error 8200 (HY000): Unsupported ADD List partition, already contains DEFAULT par
 show create table t;
 Table	Create Table
 t	CREATE TABLE `t` (
-  `id` int(11) DEFAULT NULL
+  `id` int DEFAULT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 PARTITION BY LIST (`id`)
 (PARTITION `p0` VALUES IN (1,2),
@@ -420,7 +359,7 @@ Error 1064 (42000): You have an error in your SQL syntax; check the manual that 
 show create table t;
 Table	Create Table
 t	CREATE TABLE `t` (
-  `id` int(11) DEFAULT NULL,
+  `id` int DEFAULT NULL,
   `name` varchar(10) DEFAULT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 PARTITION BY LIST COLUMNS(`id`,`name`)
@@ -441,7 +380,7 @@ pDef	6	LIST COLUMNS	`id`,`name`	(9,'d'),DEFAULT,(10,'d')		NULL
 show create table t;
 Table	Create Table
 t	CREATE TABLE `t` (
-  `id` int(11) DEFAULT NULL,
+  `id` int DEFAULT NULL,
   `name` varchar(10) DEFAULT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 PARTITION BY LIST COLUMNS(`id`,`name`)
@@ -513,7 +452,7 @@ p2	LIST	`a`	2,7,10	1
 show create table t;
 Table	Create Table
 t	CREATE TABLE `t` (
-  `a` int(11) DEFAULT NULL,
+  `a` int DEFAULT NULL,
   `b` varchar(255) DEFAULT NULL,
   UNIQUE KEY `a` (`a`),
   KEY `b` (`b`)
@@ -574,7 +513,7 @@ create table t (b int, a varchar(255)) partition by list columns (a) (partition 
 show create table t;
 Table	Create Table
 t	CREATE TABLE `t` (
-  `b` int(11) DEFAULT NULL,
+  `b` int DEFAULT NULL,
   `a` varchar(255) DEFAULT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 PARTITION BY LIST COLUMNS(`a`)
@@ -611,7 +550,7 @@ b	a
 4	4
 explain format = 'brief' select * from t where a = 4;
 id	estRows	task	access object	operator info
-TableReader	4.80	root	partition:p0,p1,p2	data:Selection
+TableReader	4.80	root	partition:all	data:Selection
 └─Selection	4.80	cop[tikv]		eq(cast(ddl__db_partition.t.a, double BINARY), 4)
   └─TableFullScan	6.00	cop[tikv]	table:t	keep order:false
 select * from t where a = 3;
@@ -619,7 +558,7 @@ b	a
 3	3
 explain format = 'brief' select * from t where a = 3;
 id	estRows	task	access object	operator info
-TableReader	4.80	root	partition:p0,p1,p2	data:Selection
+TableReader	4.80	root	partition:all	data:Selection
 └─Selection	4.80	cop[tikv]		eq(cast(ddl__db_partition.t.a, double BINARY), 3)
   └─TableFullScan	6.00	cop[tikv]	table:t	keep order:false
 explain format = 'brief' select * from t where a = "3";
@@ -742,7 +681,7 @@ insert into t values (2);
 show create table t;
 Table	Create Table
 t	CREATE TABLE `t` (
-  `a` int(11) DEFAULT NULL
+  `a` int DEFAULT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 PARTITION BY LIST (`a`)
 (PARTITION `p0` DEFAULT)
@@ -765,7 +704,7 @@ NULL
 show create table t;
 Table	Create Table
 t	CREATE TABLE `t` (
-  `id` int(11) DEFAULT NULL
+  `id` int DEFAULT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 PARTITION BY LIST (`id`)
 (PARTITION `p0` VALUES IN (1,2),
@@ -796,7 +735,7 @@ NULL	NULL
 show create table t;
 Table	Create Table
 t	CREATE TABLE `t` (
-  `id` int(11) DEFAULT NULL,
+  `id` int DEFAULT NULL,
   `name` varchar(10) DEFAULT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 PARTITION BY LIST COLUMNS(`id`,`name`)
@@ -827,7 +766,7 @@ partition p5 values less than MAXVALUE
 show create table employees;
 Table	Create Table
 employees	CREATE TABLE `employees` (
-  `id` int(11) NOT NULL,
+  `id` int NOT NULL,
   `hired` date NOT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 PARTITION BY RANGE (YEAR(`hired`))
@@ -938,8 +877,8 @@ alter table employees drop partition p3;
 show create table employees;
 Table	Create Table
 employees	CREATE TABLE `employees` (
-  `id` int(11) NOT NULL,
-  `hired` int(11) NOT NULL
+  `id` int NOT NULL,
+  `hired` int NOT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 PARTITION BY RANGE (`hired`)
 (PARTITION `p1` VALUES LESS THAN (1991),
@@ -982,7 +921,7 @@ alter table table4 drop partition p2;
 show create table table4;
 Table	Create Table
 table4	CREATE TABLE `table4` (
-  `id` int(11) NOT NULL
+  `id` int NOT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 PARTITION BY RANGE (`id`)
 (PARTITION `p1` VALUES LESS THAN (10),
@@ -1533,7 +1472,7 @@ alter table t coalesce partition 4;
 show create table t;
 Table	Create Table
 t	CREATE TABLE `t` (
-  `id` int(11) DEFAULT NULL,
+  `id` int DEFAULT NULL,
   `fname` varchar(30) DEFAULT NULL,
   `lname` varchar(30) DEFAULT NULL,
   `signed` date DEFAULT NULL
@@ -1574,7 +1513,7 @@ alter table t coalesce partition 4;
 show create table t;
 Table	Create Table
 t	CREATE TABLE `t` (
-  `id` int(11) DEFAULT NULL,
+  `id` int DEFAULT NULL,
   `fname` varchar(30) DEFAULT NULL,
   `lname` varchar(30) DEFAULT NULL,
   `signed` date DEFAULT NULL
@@ -1636,13 +1575,13 @@ alter table t add partition partitions 8;
 show create table t;
 Table	Create Table
 t	CREATE TABLE `t` (
-  `id` int(11) NOT NULL,
+  `id` int NOT NULL,
   `fname` varchar(30) DEFAULT NULL,
   `lname` varchar(30) DEFAULT NULL,
   `hired` date NOT NULL DEFAULT '1970-01-01',
   `separated` date DEFAULT NULL,
-  `job_code` int(11) DEFAULT NULL,
-  `store_id` int(11) DEFAULT NULL
+  `job_code` int DEFAULT NULL,
+  `store_id` int DEFAULT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 PARTITION BY HASH (`store_id`) PARTITIONS 12
 alter table t coalesce partition 0;
@@ -1658,13 +1597,13 @@ alter table t coalesce partition 1;
 show create table t;
 Table	Create Table
 t	CREATE TABLE `t` (
-  `id` int(11) NOT NULL,
+  `id` int NOT NULL,
   `fname` varchar(30) DEFAULT NULL,
   `lname` varchar(30) DEFAULT NULL,
   `hired` date NOT NULL DEFAULT '1970-01-01',
   `separated` date DEFAULT NULL,
-  `job_code` int(11) DEFAULT NULL,
-  `store_id` int(11) DEFAULT NULL
+  `job_code` int DEFAULT NULL,
+  `store_id` int DEFAULT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 PARTITION BY HASH (`store_id`)
 (PARTITION `p0`,
@@ -1686,13 +1625,13 @@ alter table t coalesce partition 2;
 show create table t;
 Table	Create Table
 t	CREATE TABLE `t` (
-  `id` int(11) NOT NULL,
+  `id` int NOT NULL,
   `fname` varchar(30) DEFAULT NULL,
   `lname` varchar(30) DEFAULT NULL,
   `hired` date NOT NULL DEFAULT '1970-01-01',
   `separated` date DEFAULT NULL,
-  `job_code` int(11) DEFAULT NULL,
-  `store_id` int(11) DEFAULT NULL
+  `job_code` int DEFAULT NULL,
+  `store_id` int DEFAULT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 PARTITION BY HASH (`store_id`)
 (PARTITION `p0`,
@@ -1716,13 +1655,13 @@ alter table t coalesce partition 1;
 show create table t;
 Table	Create Table
 t	CREATE TABLE `t` (
-  `id` int(11) NOT NULL,
+  `id` int NOT NULL,
   `fname` varchar(30) DEFAULT NULL,
   `lname` varchar(30) DEFAULT NULL,
   `hired` date NOT NULL DEFAULT '1970-01-01',
   `separated` date DEFAULT NULL,
-  `job_code` int(11) DEFAULT NULL,
-  `store_id` int(11) DEFAULT NULL
+  `job_code` int DEFAULT NULL,
+  `store_id` int DEFAULT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 PARTITION BY HASH (`store_id`) PARTITIONS 12
 alter table t add partition (partition p12 comment 'p12' placement policy tworeplicas);
@@ -1731,13 +1670,13 @@ alter table t add partition partitions 1;
 show create table t;
 Table	Create Table
 t	CREATE TABLE `t` (
-  `id` int(11) NOT NULL,
+  `id` int NOT NULL,
   `fname` varchar(30) DEFAULT NULL,
   `lname` varchar(30) DEFAULT NULL,
   `hired` date NOT NULL DEFAULT '1970-01-01',
   `separated` date DEFAULT NULL,
-  `job_code` int(11) DEFAULT NULL,
-  `store_id` int(11) DEFAULT NULL
+  `job_code` int DEFAULT NULL,
+  `store_id` int DEFAULT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![placement] PLACEMENT POLICY=`fourreplicas` */
 PARTITION BY HASH (`store_id`)
 (PARTITION `p0`,
@@ -1758,13 +1697,13 @@ alter table t remove partitioning;
 show create table t;
 Table	Create Table
 t	CREATE TABLE `t` (
-  `id` int(11) NOT NULL,
+  `id` int NOT NULL,
   `fname` varchar(30) DEFAULT NULL,
   `lname` varchar(30) DEFAULT NULL,
   `hired` date NOT NULL DEFAULT '1970-01-01',
   `separated` date DEFAULT NULL,
-  `job_code` int(11) DEFAULT NULL,
-  `store_id` int(11) DEFAULT NULL
+  `job_code` int DEFAULT NULL,
+  `store_id` int DEFAULT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![placement] PLACEMENT POLICY=`fourreplicas` */
 select sum(store_id), avg(store_id), max(store_id), min(store_id), sum(id) from t;
 sum(store_id)	avg(store_id)	max(store_id)	min(store_id)	sum(id)
@@ -1790,13 +1729,13 @@ alter table t add partition partitions 8;
 show create table t;
 Table	Create Table
 t	CREATE TABLE `t` (
-  `id` int(11) NOT NULL,
+  `id` int NOT NULL,
   `fname` varchar(30) DEFAULT NULL,
   `lname` varchar(30) DEFAULT NULL,
   `hired` date NOT NULL DEFAULT '1970-01-01',
   `separated` date DEFAULT NULL,
-  `job_code` int(11) DEFAULT NULL,
-  `store_id` int(11) DEFAULT NULL
+  `job_code` int DEFAULT NULL,
+  `store_id` int DEFAULT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 PARTITION BY KEY (`hired`) PARTITIONS 12
 alter table t add partition (partition p13);
@@ -1805,13 +1744,13 @@ Error 1517 (HY000): Duplicate partition name p13
 show create table t;
 Table	Create Table
 t	CREATE TABLE `t` (
-  `id` int(11) NOT NULL,
+  `id` int NOT NULL,
   `fname` varchar(30) DEFAULT NULL,
   `lname` varchar(30) DEFAULT NULL,
   `hired` date NOT NULL DEFAULT '1970-01-01',
   `separated` date DEFAULT NULL,
-  `job_code` int(11) DEFAULT NULL,
-  `store_id` int(11) DEFAULT NULL
+  `job_code` int DEFAULT NULL,
+  `store_id` int DEFAULT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 PARTITION BY KEY (`hired`)
 (PARTITION `p0`,
@@ -1831,16 +1770,15 @@ alter table t coalesce partition 2;
 show create table t;
 Table	Create Table
 t	CREATE TABLE `t` (
-  `id` int(11) NOT NULL,
+  `id` int NOT NULL,
   `fname` varchar(30) DEFAULT NULL,
   `lname` varchar(30) DEFAULT NULL,
   `hired` date NOT NULL DEFAULT '1970-01-01',
   `separated` date DEFAULT NULL,
-  `job_code` int(11) DEFAULT NULL,
-  `store_id` int(11) DEFAULT NULL
+  `job_code` int DEFAULT NULL,
+  `store_id` int DEFAULT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 PARTITION BY KEY (`hired`) PARTITIONS 11
-set @@session.tidb_enable_table_partition = 1;
 drop database if exists test_db_with_partition_const;
 create database test_db_with_partition_const;
 use test_db_with_partition_const;
@@ -1909,7 +1847,6 @@ partition by range(day(time_recorded)) (
 partition p0 values less than (1)
 );
 Error 1486 (HY000): Constant, random or timezone-dependent expressions in (sub)partitioning function are not allowed
-set @@session.tidb_enable_table_partition = default;
 drop table if exists test_1465;
 create table test_1465 (a int)
 partition by range(a) (
@@ -1936,7 +1873,7 @@ alter table test_1465 partition by hash(a);
 show create table test_1465;
 Table	Create Table
 test_1465	CREATE TABLE `test_1465` (
-  `a` int(11) DEFAULT NULL
+  `a` int DEFAULT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 PARTITION BY HASH (`a`) PARTITIONS 1
 alter table test_1465 drop partition p0;
@@ -2108,7 +2045,7 @@ a
 Show create table t1;
 Table	Create Table
 t1	CREATE TABLE `t1` (
-  `a` int(11) DEFAULT NULL
+  `a` int DEFAULT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 PARTITION BY LIST (`a`)
 (PARTITION `p2` VALUES IN (2),
@@ -2133,7 +2070,7 @@ PARTITION `p_Maxvalue` VALUES LESS THAN (MAXVALUE));
 show create table t;
 Table	Create Table
 t	CREATE TABLE `t` (
-  `id` int(11) DEFAULT NULL
+  `id` int DEFAULT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 PARTITION BY RANGE (`id`)
 (PARTITION `pNull` VALUES LESS THAN (-9223372036854775808),
@@ -2168,7 +2105,7 @@ PARTITION `p_Maxvalue` VALUES LESS THAN (MAXVALUE));
 show create table t;
 Table	Create Table
 t	CREATE TABLE `t` (
-  `id` int(11) DEFAULT NULL
+  `id` int DEFAULT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 PARTITION BY RANGE (`id`)
 (PARTITION `pNull` VALUES LESS THAN (-9223372036854775808),
@@ -2203,7 +2140,7 @@ PARTITION `pMaxvalue` VALUES LESS THAN (MAXVALUE));
 show create table t;
 Table	Create Table
 t	CREATE TABLE `t` (
-  `id` int(11) DEFAULT NULL
+  `id` int DEFAULT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 PARTITION BY RANGE COLUMNS(`id`)
 (PARTITION `pNull` VALUES LESS THAN (-2147483648),
@@ -2238,7 +2175,7 @@ PARTITION `pMaxvalue` VALUES LESS THAN (MAXVALUE));
 show create table t;
 Table	Create Table
 t	CREATE TABLE `t` (
-  `id` int(11) DEFAULT NULL
+  `id` int DEFAULT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 PARTITION BY RANGE COLUMNS(`id`)
 (PARTITION `pNull` VALUES LESS THAN (-2147483648),
@@ -2258,7 +2195,7 @@ create table t (id int) partition by range (id) interval (10000000) first partit
 show create table t;
 Table	Create Table
 t	CREATE TABLE `t` (
-  `id` int(11) DEFAULT NULL
+  `id` int DEFAULT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 PARTITION BY RANGE (`id`)
 (PARTITION `P_NULL` VALUES LESS THAN (-9223372036854775808),
@@ -2293,7 +2230,7 @@ PARTITION `P_MAXVALUE` VALUES LESS THAN (MAXVALUE));
 show create table t;
 Table	Create Table
 t	CREATE TABLE `t` (
-  `id` int(11) DEFAULT NULL
+  `id` int DEFAULT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 PARTITION BY RANGE (`id`)
 (PARTITION `P_NULL` VALUES LESS THAN (-9223372036854775808),
@@ -2313,7 +2250,7 @@ create table t (id int) partition by range columns (id) interval (10000000) firs
 show create table t;
 Table	Create Table
 t	CREATE TABLE `t` (
-  `id` int(11) DEFAULT NULL
+  `id` int DEFAULT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 PARTITION BY RANGE COLUMNS(`id`)
 (PARTITION `P_NULL` VALUES LESS THAN (-2147483648),
@@ -2348,7 +2285,7 @@ PARTITION `P_MAXVALUE` VALUES LESS THAN (MAXVALUE));
 show create table t;
 Table	Create Table
 t	CREATE TABLE `t` (
-  `id` int(11) DEFAULT NULL
+  `id` int DEFAULT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 PARTITION BY RANGE COLUMNS(`id`)
 (PARTITION `P_NULL` VALUES LESS THAN (-2147483648),
@@ -2380,7 +2317,7 @@ insert into ipt select id + 100, concat('10', val) FROM ipt where id < 10;
 SHOW CREATE TABLE ipt;
 Table	Create Table
 ipt	CREATE TABLE `ipt` (
-  `id` bigint(20) unsigned NOT NULL,
+  `id` bigint unsigned NOT NULL,
   `val` varchar(255) DEFAULT NULL,
   PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */,
   KEY `val` (`val`)
@@ -2405,7 +2342,7 @@ count(*)
 SHOW CREATE TABLE ipt;
 Table	Create Table
 ipt	CREATE TABLE `ipt` (
-  `id` bigint(20) unsigned NOT NULL,
+  `id` bigint unsigned NOT NULL,
   `val` varchar(255) DEFAULT NULL,
   PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */,
   KEY `val` (`val`)
@@ -2506,7 +2443,7 @@ Error 8200 (HY000): Unsupported SPLIT LAST PARTITION
 show create table t2;
 Table	Create Table
 t2	CREATE TABLE `t2` (
-  `id` bigint(20) unsigned NOT NULL,
+  `id` bigint unsigned NOT NULL,
   `val` varchar(255) DEFAULT NULL,
   PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */,
   KEY `val` (`val`)
@@ -2576,7 +2513,7 @@ create table t (id tinyint, val varchar(255)) partition by range (id) interval (
 show create table t;
 Table	Create Table
 t	CREATE TABLE `t` (
-  `id` tinyint(4) DEFAULT NULL,
+  `id` tinyint DEFAULT NULL,
   `val` varchar(255) DEFAULT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 PARTITION BY RANGE (`id`)
@@ -2618,7 +2555,7 @@ create table t (id int, val varchar(255), comment varchar(255)) partition by ran
 show create table t;
 Table	Create Table
 t	CREATE TABLE `t` (
-  `id` int(11) DEFAULT NULL,
+  `id` int DEFAULT NULL,
   `val` varchar(255) DEFAULT NULL,
   `comment` varchar(255) DEFAULT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
@@ -2693,7 +2630,7 @@ PARTITION p1 VALUES IN ((10,'10'),(11,'11')));
 show create table t;
 Table	Create Table
 t	CREATE TABLE "t" (
-  "a" int(11) DEFAULT NULL,
+  "a" int DEFAULT NULL,
   "b" varchar(255) DEFAULT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 PARTITION BY LIST COLUMNS("a","b")
@@ -2848,7 +2785,7 @@ partition p1 values less than maxvalue);
 show create table t6;
 Table	Create Table
 t6	CREATE TABLE `t6` (
-  `colint` int(11) DEFAULT NULL,
+  `colint` int DEFAULT NULL,
   `col1` date DEFAULT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 PARTITION BY RANGE (`colint`)
@@ -2863,7 +2800,7 @@ insert into tRange values (0, "Zero"), (999999, "999999"), (1000000, "1000000"),
 show create table tRange;
 Table	Create Table
 tRange	CREATE TABLE `tRange` (
-  `a` int(10) unsigned NOT NULL,
+  `a` int unsigned NOT NULL,
   `b` varchar(255) DEFAULT NULL,
   PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
@@ -2874,7 +2811,7 @@ alter table tRange remove partitioning;
 show create table tRange;
 Table	Create Table
 tRange	CREATE TABLE `tRange` (
-  `a` int(10) unsigned NOT NULL,
+  `a` int unsigned NOT NULL,
   `b` varchar(255) DEFAULT NULL,
   PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
@@ -2887,7 +2824,7 @@ insert into tRange values (0, "Zero"), (999999, "999999"), (1000000, "1000000"),
 show create table tRange;
 Table	Create Table
 tRange	CREATE TABLE `tRange` (
-  `a` int(10) unsigned NOT NULL,
+  `a` int unsigned NOT NULL,
   `b` varchar(255) DEFAULT NULL,
   PRIMARY KEY (`a`) /*T![clustered_index] NONCLUSTERED */
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
@@ -2898,7 +2835,7 @@ alter table tRange remove partitioning;
 show create table tRange;
 Table	Create Table
 tRange	CREATE TABLE `tRange` (
-  `a` int(10) unsigned NOT NULL,
+  `a` int unsigned NOT NULL,
   `b` varchar(255) DEFAULT NULL,
   PRIMARY KEY (`a`) /*T![clustered_index] NONCLUSTERED */
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
@@ -2912,7 +2849,7 @@ insert into tRange values (0, "Zero"), (999999, "999999"), (1000000, "1000000"),
 show create table tRange;
 Table	Create Table
 tRange	CREATE TABLE `tRange` (
-  `a` int(10) unsigned NOT NULL,
+  `a` int unsigned NOT NULL,
   `b` varchar(255) DEFAULT NULL,
   PRIMARY KEY (`a`) /*T![clustered_index] NONCLUSTERED */
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
@@ -2923,7 +2860,7 @@ alter table tRange remove partitioning;
 show create table tRange;
 Table	Create Table
 tRange	CREATE TABLE `tRange` (
-  `a` int(10) unsigned NOT NULL,
+  `a` int unsigned NOT NULL,
   `b` varchar(255) DEFAULT NULL,
   PRIMARY KEY (`a`) /*T![clustered_index] NONCLUSTERED */
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
@@ -2995,7 +2932,7 @@ alter table t remove partitioning;
 show create table t;
 Table	Create Table
 t	CREATE TABLE `t` (
-  `a` int(11) DEFAULT NULL,
+  `a` int DEFAULT NULL,
   `b` varchar(255) DEFAULT NULL,
   KEY `a` (`a`,`b`),
   KEY `b` (`b`)
@@ -3100,7 +3037,6 @@ Error 1526 (HY000): Table has no partition for value from column_list
 insert into t values ('2023-08-31', 'c', "FAIL");
 alter table rcp EXCHANGE PARTITION p20230829 WITH TABLE t;
 Error 1737 (HY000): Found a row that does not match the partition
-set @@session.tidb_enable_table_partition = 1;
 drop table if exists t1, t2, t3, t4, t5;
 create table t1 ( time_recorded datetime )
 partition by range(TO_DAYS(time_recorded)) (
@@ -3118,7 +3054,6 @@ create table t5 ( time_recorded timestamp )
 partition by range(unix_timestamp(time_recorded)) (
 partition p1 values less than (1559192604)
 );
-set @@session.tidb_enable_table_partition = default;
 set @@tidb_enable_exchange_partition=1;
 drop table if exists pt1;
 create table pt1(a int, b int, c int) PARTITION BY hash (a) partitions 1;
@@ -3335,3 +3270,76 @@ id	store_id	_tidb_rowid
 0	18	30257
 1	1	30001
 drop table t, t1;
+drop table if exists aaa;
+prepare stmt from "\ncreate table aaa(id bigint primary key) partition by range (id) interval (100) first partition less than (100) last partition less than (500)";
+execute stmt;
+show create table aaa;
+Table	Create Table
+aaa	CREATE TABLE `aaa` (
+  `id` bigint NOT NULL,
+  PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+PARTITION BY RANGE (`id`)
+(PARTITION `P_LT_100` VALUES LESS THAN (100),
+ PARTITION `P_LT_200` VALUES LESS THAN (200),
+ PARTITION `P_LT_300` VALUES LESS THAN (300),
+ PARTITION `P_LT_400` VALUES LESS THAN (400),
+ PARTITION `P_LT_500` VALUES LESS THAN (500))
+prepare stmt2 from "\nalter table aaa last partition less than (600)";
+execute stmt2;
+show create table aaa;
+Table	Create Table
+aaa	CREATE TABLE `aaa` (
+  `id` bigint NOT NULL,
+  PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+PARTITION BY RANGE (`id`)
+(PARTITION `P_LT_100` VALUES LESS THAN (100),
+ PARTITION `P_LT_200` VALUES LESS THAN (200),
+ PARTITION `P_LT_300` VALUES LESS THAN (300),
+ PARTITION `P_LT_400` VALUES LESS THAN (400),
+ PARTITION `P_LT_500` VALUES LESS THAN (500),
+ PARTITION `P_LT_600` VALUES LESS THAN (600))
+prepare stmt3 from "\nalter table aaa first partition less than (300)";
+execute stmt3;
+show create table aaa;
+Table	Create Table
+aaa	CREATE TABLE `aaa` (
+  `id` bigint NOT NULL,
+  PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+PARTITION BY RANGE (`id`)
+(PARTITION `P_LT_300` VALUES LESS THAN (300),
+ PARTITION `P_LT_400` VALUES LESS THAN (400),
+ PARTITION `P_LT_500` VALUES LESS THAN (500),
+ PARTITION `P_LT_600` VALUES LESS THAN (600))
+drop table if exists aaa;
+prepare stmt from "create table aaa(id bigint primary key) partition by range (id)\n interval (100) first partition less than (100) last partition less than (500)";
+execute stmt;
+show create table aaa;
+Table	Create Table
+aaa	CREATE TABLE `aaa` (
+  `id` bigint NOT NULL,
+  PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+PARTITION BY RANGE (`id`)
+(PARTITION `P_LT_100` VALUES LESS THAN (100),
+ PARTITION `P_LT_200` VALUES LESS THAN (200),
+ PARTITION `P_LT_300` VALUES LESS THAN (300),
+ PARTITION `P_LT_400` VALUES LESS THAN (400),
+ PARTITION `P_LT_500` VALUES LESS THAN (500))
+drop table if exists aaa;
+prepare stmt from "create table aaa(id bigint primary key) partition by range (id) interval (100) first partition\n less than (100) last partition less than (500)";
+execute stmt;
+show create table aaa;
+Table	Create Table
+aaa	CREATE TABLE `aaa` (
+  `id` bigint NOT NULL,
+  PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+PARTITION BY RANGE (`id`)
+(PARTITION `P_LT_100` VALUES LESS THAN (100),
+ PARTITION `P_LT_200` VALUES LESS THAN (200),
+ PARTITION `P_LT_300` VALUES LESS THAN (300),
+ PARTITION `P_LT_400` VALUES LESS THAN (400),
+ PARTITION `P_LT_500` VALUES LESS THAN (500))

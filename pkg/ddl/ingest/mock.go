@@ -134,7 +134,7 @@ func (*MockBackendCtx) CollectRemoteDuplicateRows(indexID int64, _ table.Table) 
 }
 
 // Flush implements BackendCtx.Flush interface.
-func (*MockBackendCtx) Flush(mode FlushMode) (flushed, imported bool, err error) {
+func (*MockBackendCtx) Flush(context.Context, FlushMode) (flushed, imported bool, err error) {
 	return false, false, nil
 }
 

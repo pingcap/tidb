@@ -16,6 +16,7 @@ package sessionctx
 
 import (
 	"context"
+	"sync"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -207,6 +208,8 @@ type Context interface {
 	NewStmtIndexUsageCollector() *indexusage.StmtIndexUsageCollector
 	// GetCursorTracker returns the cursor tracker of the session
 	GetCursorTracker() cursor.Tracker
+	// GetCommitWaitGroup returns the wait group for async commit and secondary lock cleanup background goroutines
+	GetCommitWaitGroup() *sync.WaitGroup
 }
 
 // TxnFuture is an interface where implementations have a kv.Transaction field and after

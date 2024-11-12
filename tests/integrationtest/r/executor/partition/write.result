@@ -718,7 +718,6 @@ affected rows: 1
 info: 
 drop table t1;
 set tidb_opt_fix_control=default;
-set @@session.tidb_enable_table_partition = '1';
 drop table if exists replace_test;
 create table replace_test (id int PRIMARY KEY AUTO_INCREMENT, c1 int, c2 int, c3 int default 1)
 partition by hash(id) partitions 4;
@@ -807,7 +806,6 @@ replace into tIssue989(a, b) values (111, 2);
 select * from tIssue989;
 a	b
 111	2
-set @@session.tidb_enable_table_partition = default;
 drop table if exists insert_update_ignore_test;
 create table insert_update_ignore_test (a int) partition by range (a) (partition p0 values less than (100), partition p1 values less than (200));
 insert ignore into insert_update_ignore_test values(1000);

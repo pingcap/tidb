@@ -39,6 +39,7 @@ go_library(
         "@com_github_tikv_client_go_v2//error",
         "@com_github_tikv_client_go_v2//kv",
         "@com_github_tikv_client_go_v2//oracle",
+        "@com_github_tikv_client_go_v2//txnkv/transaction",
         "@org_uber_go_zap//:zap",
     ],
 )

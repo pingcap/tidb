@@ -64,7 +64,7 @@ func StartCheckpointBackupRunnerForTest(
 	runner := newCheckpointRunner[BackupKeyType, BackupValueType](
 		checkpointStorage, cipher, valueMarshalerForBackup)
 
-	runner.startCheckpointMainLoop(ctx, tick, tick, tick)
+	runner.startCheckpointMainLoop(ctx, tick, tick, tick, tick)
 	return runner, nil
 }
 
@@ -84,8 +84,9 @@ func StartCheckpointRunnerForBackup(
 	runner.startCheckpointMainLoop(
 		ctx,
 		defaultTickDurationForFlush,
-		defaultTckDurationForChecksum,
+		defaultTickDurationForChecksum,
 		defaultTickDurationForLock,
+		defaultRetryDuration,
 	)
 	return runner, nil
 }

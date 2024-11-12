@@ -1413,7 +1413,7 @@ Invalid storage current version: %d
 
 ["ddl:8210"]
 error = '''
-Invalid %!s(MISSING) state: %!v(MISSING)
+Invalid %s state: %v
 '''
 
 ["ddl:8211"]
@@ -1564,6 +1564,11 @@ Global Index is needed for index '%-.192s', since the unique index is not includ
 ["ddl:8265"]
 error = '''
 Auto analyze is not effective for index '%-.192s', need analyze manually
+'''
+
+["ddl:9014"]
+error = '''
+TiFlash backfill index failed: %s
 '''
 
 ["domain:8027"]
@@ -2013,7 +2018,7 @@ Division by 0
 
 ["expression:1426"]
 error = '''
-Too big precision %d specified for column '%-.192s'. Maximum is %d.
+Too-big precision %d specified for '%-.192s'. Maximum is %d.
 '''
 
 ["expression:1582"]
@@ -3283,7 +3288,7 @@ Too big scale %d specified for column '%-.192s'. Maximum is %d.
 
 ["types:1426"]
 error = '''
-Too big precision %d specified for column '%-.192s'. Maximum is %d.
+Too-big precision %d specified for '%-.192s'. Maximum is %d.
 '''
 
 ["types:1427"]

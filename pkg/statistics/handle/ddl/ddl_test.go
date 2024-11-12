@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/cardinality"
 	"github.com/pingcap/tidb/pkg/statistics/handle/ddl"
 	"github.com/pingcap/tidb/pkg/statistics/handle/storage"
+	statsutil "github.com/pingcap/tidb/pkg/statistics/handle/util"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
@@ -1334,7 +1335,7 @@ func TestExchangePartition(t *testing.T) {
 		})
 	}
 	wg.Wait()
-	count, modifyCount, isNull, err := storage.StatsMetaCountAndModifyCount(tk.Session(), tbl.Meta().ID)
+	count, modifyCount, isNull, err := storage.StatsMetaCountAndModifyCount(statsutil.StatsCtx, tk.Session(), tbl.Meta().ID)
 	require.NoError(t, err)
 	require.False(t, isNull)
 	require.Equal(t, int64(200), count)

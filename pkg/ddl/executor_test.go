@@ -49,6 +49,7 @@ func TestGetDDLJobs(t *testing.T) {
 
 	cnt := 10
 	jobs := make([]*model.Job, cnt)
+	ctx := context.Background()
 	var currJobs2 []*model.Job
 	for i := 0; i < cnt; i++ {
 		jobs[i] = &model.Job{
@@ -59,7 +60,7 @@ func TestGetDDLJobs(t *testing.T) {
 		err := addDDLJobs(sess, txn, jobs[i])
 		require.NoError(t, err)
 
-		currJobs, err := ddl.GetAllDDLJobs(sess)
+		currJobs, err := ddl.GetAllDDLJobs(ctx, sess)
 		require.NoError(t, err)
 		require.Len(t, currJobs, i+1)
 
@@ -77,7 +78,7 @@ func TestGetDDLJobs(t *testing.T) {
 		require.Len(t, currJobs2, i+1)
 	}
 
-	currJobs, err := ddl.GetAllDDLJobs(sess)
+	currJobs, err := ddl.GetAllDDLJobs(ctx, sess)
 	require.NoError(t, err)
 
 	for i, job := range jobs {
@@ -93,6 +94,7 @@ func TestGetDDLJobs(t *testing.T) {
 
 func TestGetDDLJobsIsSort(t *testing.T) {
 	store := testkit.CreateMockStore(t)
+	ctx := context.Background()
 
 	sess := testkit.NewTestKit(t, store).Session()
 	_, err := sess.Execute(context.Background(), "begin")
@@ -110,7 +112,7 @@ func TestGetDDLJobsIsSort(t *testing.T) {
 	// insert add index jobs to AddIndexJobListKey queue
 	enQueueDDLJobs(t, sess, txn, model.ActionAddIndex, 5, 10)
 
-	currJobs, err := ddl.GetAllDDLJobs(sess)
+	currJobs, err := ddl.GetAllDDLJobs(ctx, sess)
 	require.NoError(t, err)
 	require.Len(t, currJobs, 15)
 
@@ -210,7 +212,7 @@ func TestCreateDropCreateTable(t *testing.T) {
 	var createTable bool
 
 	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobUpdated", func(job *model.Job) {
-		if job.Type == model.ActionDropTable && job.SchemaState == model.StateWriteOnly && !createTable {
+		if job.Type == model.ActionDropTable && job.SchemaState == model.StateNone && !createTable {
 			fpErr = failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/schemaver/mockOwnerCheckAllVersionSlow", fmt.Sprintf("return(%d)", job.ID))
 			wg.Add(1)
 			go func() {
@@ -224,6 +226,7 @@ func TestCreateDropCreateTable(t *testing.T) {
 	testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/onJobUpdated")
 
 	wg.Wait()
+	require.True(t, createTable)
 	require.NoError(t, createErr)
 	require.NoError(t, fpErr)
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/schemaver/mockOwnerCheckAllVersionSlow"))

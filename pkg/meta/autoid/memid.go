@@ -79,7 +79,7 @@ func (alloc *inMemoryAllocator) NextGlobalAutoID() (int64, error) {
 	return alloc.base + 1, nil
 }
 
-func (alloc *inMemoryAllocator) Alloc(_ context.Context, n uint64, increment, offset int64) (min int64, max int64, err error) {
+func (alloc *inMemoryAllocator) Alloc(_ context.Context, n uint64, increment, offset int64) (minv int64, maxv int64, err error) {
 	if n == 0 {
 		return 0, 0, nil
 	}
@@ -116,7 +116,7 @@ func (alloc *inMemoryAllocator) ForceRebase(requiredBase int64) error {
 	return nil
 }
 
-func (alloc *inMemoryAllocator) alloc4Signed(n uint64, increment, offset int64) (min int64, max int64, err error) {
+func (alloc *inMemoryAllocator) alloc4Signed(n uint64, increment, offset int64) (minv, maxv int64, err error) {
 	// Check offset rebase if necessary.
 	if offset-1 > alloc.base {
 		alloc.base = offset - 1
@@ -129,12 +129,12 @@ func (alloc *inMemoryAllocator) alloc4Signed(n uint64, increment, offset int64) 
 		return 0, 0, ErrAutoincReadFailed
 	}
 
-	min = alloc.base
+	minv = alloc.base
 	alloc.base += n1
-	return min, alloc.base, nil
+	return minv, alloc.base, nil
 }
 
-func (alloc *inMemoryAllocator) alloc4Unsigned(n uint64, increment, offset int64) (min int64, max int64, err error) {
+func (alloc *inMemoryAllocator) alloc4Unsigned(n uint64, increment, offset int64) (minv int64, maxv int64, err error) {
 	// Check offset rebase if necessary.
 	if uint64(offset)-1 > uint64(alloc.base) {
 		alloc.base = int64(uint64(offset) - 1)
@@ -148,10 +148,10 @@ func (alloc *inMemoryAllocator) alloc4Unsigned(n uint64, increment, offset int64
 		return 0, 0, ErrAutoincReadFailed
 	}
 
-	min = alloc.base
+	minv = alloc.base
 	// Use uint64 n directly.
 	alloc.base = int64(uint64(alloc.base) + uint64(n1))
-	return min, alloc.base, nil
+	return minv, alloc.base, nil
 }
 
 func (*inMemoryAllocator) Transfer(_, _ int64) error {

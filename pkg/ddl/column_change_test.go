@@ -151,7 +151,7 @@ func TestModifyAutoRandColumnWithMetaKeyChanged(t *testing.T) {
 			atomic.AddInt32(&errCount, -1)
 			ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBackfillDDLPrefix+ddl.DDLBackfillers[model.ActionModifyColumn])
 			genAutoRandErr = kv.RunInNewTxn(ctx, store, false, func(ctx context.Context, txn kv.Transaction) error {
-				t := meta.NewMeta(txn)
+				t := meta.NewMutator(txn)
 				_, err1 := t.GetAutoIDAccessors(dbID, tID).RandomID().Inc(1)
 				return err1
 			})
@@ -166,7 +166,7 @@ func TestModifyAutoRandColumnWithMetaKeyChanged(t *testing.T) {
 	var newTbInfo *model.TableInfo
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
 	err := kv.RunInNewTxn(ctx, store, false, func(ctx context.Context, txn kv.Transaction) error {
-		t := meta.NewMeta(txn)
+		t := meta.NewMutator(txn)
 		var err error
 		newTbInfo, err = t.GetTable(dbID, tID)
 		if err != nil {
@@ -361,7 +361,7 @@ type historyJobArgs struct {
 func getSchemaVer(t *testing.T, ctx sessionctx.Context) int64 {
 	txn, err := newTxn(ctx)
 	require.NoError(t, err)
-	m := meta.NewMeta(txn)
+	m := meta.NewMutator(txn)
 	ver, err := m.GetSchemaVersion()
 	require.NoError(t, err)
 	return ver

@@ -30,13 +30,9 @@ go_test(
     flaky = True,
     deps = [
         ":serverstate",
-        "//pkg/ddl",
         "//pkg/ddl/schemaver",
         "//pkg/ddl/util",
-        "//pkg/infoschema",
-        "//pkg/session",
         "//pkg/sessionctx/variable",
-        "//pkg/store/mockstore",
         "//pkg/util",
         "@com_github_stretchr_testify//require",
         "@io_etcd_go_etcd_api_v3//mvccpb",

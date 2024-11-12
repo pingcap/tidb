@@ -38,6 +38,7 @@ import (
 	"github.com/tikv/client-go/v2/tikvrpc"
 	"github.com/tikv/client-go/v2/tikvrpc/interceptor"
 	"github.com/tikv/client-go/v2/txnkv"
+	"github.com/tikv/client-go/v2/txnkv/transaction"
 	"github.com/tikv/client-go/v2/txnkv/txnsnapshot"
 	"go.uber.org/zap"
 )
@@ -308,6 +309,8 @@ func (txn *tikvTxn) SetOption(opt int, val any) {
 		txn.KVTxn.GetUnionStore().SetEntrySizeLimit(limits.Entry, limits.Total)
 	case kv.SessionID:
 		txn.KVTxn.SetSessionID(val.(uint64))
+	case kv.BackgroundGoroutineLifecycleHooks:
+		txn.KVTxn.SetBackgroundGoroutineLifecycleHooks(val.(transaction.LifecycleHooks))
 	}
 }
 

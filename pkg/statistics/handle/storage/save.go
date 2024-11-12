@@ -15,13 +15,16 @@
 package storage
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"strings"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/statistics/handle/cache"
@@ -408,4 +411,142 @@ func SaveMetaToStorage(
 	statsVer = version
 	cache.TableRowStatsCache.Invalidate(tableID)
 	return
+}
+
+// InsertColStats2KV insert a record to stats_histograms with distinct_count 1
+// and insert a bucket to stats_buckets with default value. This operation also
+// updates version.
+func InsertColStats2KV(
+	ctx context.Context,
+	sctx sessionctx.Context,
+	physicalID int64,
+	colInfos []*model.ColumnInfo,
+) (uint64, error) {
+	startTS, err := util.GetStartTS(sctx)
+	if err != nil {
+		return 0, errors.Trace(err)
+	}
+
+	// First of all, we update the version.
+	_, err = util.ExecWithCtx(
+		ctx, sctx,
+		"update mysql.stats_meta set version = %? where table_id = %?",
+		startTS, physicalID,
+	)
+	if err != nil {
+		return 0, errors.Trace(err)
+	}
+	// If we didn't update anything by last SQL, it means the stats of this table does not exist.
+	if sctx.GetSessionVars().StmtCtx.AffectedRows() == 0 {
+		return startTS, nil
+	}
+
+	// By this step we can get the count of this table, then we can sure the count and repeats of bucket.
+	var rs sqlexec.RecordSet
+	rs, err = util.ExecWithCtx(
+		ctx, sctx,
+		"select count from mysql.stats_meta where table_id = %?",
+		physicalID,
+	)
+	if err != nil {
+		return 0, errors.Trace(err)
+	}
+	defer terror.Call(rs.Close)
+	req := rs.NewChunk(nil)
+	err = rs.Next(ctx, req)
+	if err != nil {
+		return 0, errors.Trace(err)
+	}
+	count := req.GetRow(0).GetInt64(0)
+	for _, colInfo := range colInfos {
+		value := types.NewDatum(colInfo.GetOriginDefaultValue())
+		value, err = value.ConvertTo(sctx.GetSessionVars().StmtCtx.TypeCtx(), &colInfo.FieldType)
+		if err != nil {
+			return 0, errors.Trace(err)
+		}
+		if value.IsNull() {
+			// If the adding column has default value null, all the existing rows have null value on the newly added column.
+			if _, err = util.ExecWithCtx(
+				ctx, sctx,
+				`insert into mysql.stats_histograms
+					(version, table_id, is_index, hist_id, distinct_count, null_count)
+				values (%?, %?, 0, %?, 0, %?)`,
+				startTS, physicalID, colInfo.ID, count,
+			); err != nil {
+				return 0, errors.Trace(err)
+			}
+			continue
+		}
+
+		// If this stats exists, we insert histogram meta first, the distinct_count will always be one.
+		if _, err = util.ExecWithCtx(
+			ctx, sctx,
+			`insert into mysql.stats_histograms
+				(version, table_id, is_index, hist_id, distinct_count, tot_col_size)
+			values (%?, %?, 0, %?, 1, GREATEST(%?, 0))`,
+			startTS, physicalID, colInfo.ID, int64(len(value.GetBytes()))*count,
+		); err != nil {
+			return 0, errors.Trace(err)
+		}
+		value, err = value.ConvertTo(sctx.GetSessionVars().StmtCtx.TypeCtx(), types.NewFieldType(mysql.TypeBlob))
+		if err != nil {
+			return 0, errors.Trace(err)
+		}
+		// There must be only one bucket for this new column and the value is the default value.
+		if _, err = util.ExecWithCtx(
+			ctx, sctx,
+			`insert into mysql.stats_buckets
+				(table_id, is_index, hist_id, bucket_id, repeats, count, lower_bound, upper_bound)
+			values (%?, 0, %?, 0, %?, %?, %?, %?)`,
+			physicalID, colInfo.ID, count, count, value.GetBytes(), value.GetBytes(),
+		); err != nil {
+			return 0, errors.Trace(err)
+		}
+	}
+	return startTS, nil
+}
+
+// InsertTableStats2KV inserts a record standing for a new table to stats_meta
+// and inserts some records standing for the new columns and indices which belong
+// to this table.
+func InsertTableStats2KV(
+	ctx context.Context,
+	sctx sessionctx.Context,
+	info *model.TableInfo,
+	physicalID int64,
+) (uint64, error) {
+	startTS, err := util.GetStartTS(sctx)
+	if err != nil {
+		return 0, errors.Trace(err)
+	}
+	if _, err = util.ExecWithCtx(
+		ctx, sctx,
+		"insert into mysql.stats_meta (version, table_id) values(%?, %?)",
+		startTS, physicalID,
+	); err != nil {
+		return 0, errors.Trace(err)
+	}
+	for _, col := range info.Columns {
+		if _, err = util.ExecWithCtx(
+			ctx, sctx,
+			`insert into mysql.stats_histograms
+				(table_id, is_index, hist_id, distinct_count, version)
+			values (%?, 0, %?, 0, %?)`,
+			physicalID, col.ID, startTS,
+		); err != nil {
+			return 0, errors.Trace(err)
+		}
+	}
+	for _, idx := range info.Indices {
+		if _, err = util.ExecWithCtx(
+			ctx, sctx,
+			`insert into mysql.stats_histograms
+				(table_id, is_index, hist_id, distinct_count, version)
+			values(%?, 1, %?, 0, %?)`,
+			physicalID, idx.ID, startTS,
+		); err != nil {
+			return 0, errors.Trace(err)
+		}
+	}
+	return startTS, nil
 }

@@ -43,6 +43,9 @@ type Indicators struct {
 	LastAnalysisDuration time.Duration
 }
 
+// JobHook is the successHook function that will be called after the job is completed.
+type JobHook func(job AnalysisJob)
+
 // AnalysisJob is the interface for the analysis job.
 type AnalysisJob interface {
 	// IsValidToAnalyze checks whether the table is valid to analyze.
@@ -76,6 +79,12 @@ type AnalysisJob interface {
 
 	// GetTableID gets the table ID of the job.
 	GetTableID() int64
+
+	// RegisterSuccessHook registers a successHook function that will be called after the job can be marked as successful.
+	RegisterSuccessHook(hook JobHook)
+
+	// RegisterFailureHook registers a successHook function that will be called after the job is marked as failed.
+	RegisterFailureHook(hook JobHook)
 
 	fmt.Stringer
 }

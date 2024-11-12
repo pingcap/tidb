@@ -85,6 +85,7 @@ go_test(
         "//pkg/lightning/backend/encode",
         "//pkg/lightning/backend/kv",
         "//pkg/meta/autoid",
+        "//pkg/meta/metabuild",
         "//pkg/meta/model",
         "//pkg/metrics",
         "//pkg/parser",

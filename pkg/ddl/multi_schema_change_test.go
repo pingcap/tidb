@@ -15,6 +15,7 @@
 package ddl_test
 
 import (
+	"context"
 	"strconv"
 	"testing"
 
@@ -809,7 +810,7 @@ func (c *cancelOnceHook) OnJobUpdated(job *model.Job) {
 		return
 	}
 	c.triggered = true
-	errs, err := ddl.CancelJobs(c.s, []int64{job.ID})
+	errs, err := ddl.CancelJobs(context.Background(), c.s, []int64{job.ID})
 	if len(errs) > 0 && errs[0] != nil {
 		c.cancelErr = errs[0]
 		return

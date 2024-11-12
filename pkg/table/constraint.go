@@ -17,13 +17,13 @@ package table
 import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/expression"
+	"github.com/pingcap/tidb/pkg/expression/exprstatic"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/logutil"
-	"github.com/pingcap/tidb/pkg/util/mock"
 	"go.uber.org/zap"
 )
 
@@ -69,9 +69,8 @@ func removeInvalidCheckConstraintsInfo(tblInfo *model.TableInfo) {
 
 // ToConstraint converts model.ConstraintInfo to Constraint
 func ToConstraint(constraintInfo *model.ConstraintInfo, tblInfo *model.TableInfo) (*Constraint, error) {
-	ctx := mock.NewContext()
-	dbName := ctx.GetSessionVars().CurrentDB
-	expr, err := buildConstraintExpression(ctx, constraintInfo.ExprString, dbName, tblInfo)
+	ctx := exprstatic.NewExprContext()
+	expr, err := buildConstraintExpression(ctx, constraintInfo.ExprString, "", tblInfo)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}

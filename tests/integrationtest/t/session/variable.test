@@ -68,8 +68,9 @@ set @@tidb_enable_noop_functions = default;
 
 # TestEnablePartition
 set tidb_enable_table_partition=off;
-show variables like 'tidb_enable_table_partition';
-set global tidb_enable_table_partition = on;
+show warnings;
+set global tidb_enable_table_partition=off;
+show warnings;
 show variables like 'tidb_enable_table_partition';
 show global variables like 'tidb_enable_table_partition';
 set tidb_enable_list_partition=on;
@@ -84,9 +85,7 @@ set tidb_enable_list_partition=1;
 show variables like 'tidb_enable_list_partition';
 connect (conn1, localhost, root,, session__variable);
 connection conn1;
-show variables like 'tidb_enable_table_partition';
 disconnect conn1;
-set global tidb_enable_table_partition = default;
 
 # TestIgnoreForeignKey
 set @@foreign_key_checks=0;

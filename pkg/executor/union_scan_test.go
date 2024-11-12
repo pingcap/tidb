@@ -260,7 +260,7 @@ func TestIssue28073(t *testing.T) {
 
 	tk.MustExec("begin")
 	tk.MustExec("insert into t2 (c_int, c_str) values (2, 'romantic grothendieck')")
-	tk.MustQuery("select * from t2 left join t1 on t1.c_int = t2.c_int for update").Sort().Check(
+	tk.MustQuery("select * from t2 use index(primary) left join t1  use index(primary) on t1.c_int = t2.c_int for update").Sort().Check(
 		testkit.Rows(
 			"1 flamboyant mcclintock 1 flamboyant mcclintock",
 			"2 romantic grothendieck <nil> <nil>",

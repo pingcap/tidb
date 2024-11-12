@@ -60,6 +60,7 @@ go_test(
         "//pkg/planner/core/base",
         "//pkg/planner/core/operator/logicalop",
         "//pkg/planner/core/resolve",
+        "//pkg/planner/util/utilfuncp",
         "//pkg/session",
         "//pkg/sessionctx",
         "//pkg/testkit",

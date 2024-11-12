@@ -750,6 +750,7 @@ import (
 	medium                "MEDIUM"
 	metadata              "METADATA"
 	min                   "MIN"
+	hnsw                  "HNSW"
 	next_row_id           "NEXT_ROW_ID"
 	now                   "NOW"
 	optRuleBlacklist      "OPT_RULE_BLACKLIST"
@@ -1092,6 +1093,8 @@ import (
 	AdminStmtLimitOpt                      "Admin show ddl jobs limit option"
 	AllOrPartitionNameList                 "All or partition name list"
 	AlgorithmClause                        "Alter table algorithm"
+	AlterJobOptionList                     "Alter job option list"
+	AlterJobOption                         "Alter job option"
 	AlterTableSpecSingleOpt                "Alter table single option"
 	AlterTableSpec                         "Alter table specification"
 	AlterTableSpecList                     "Alter table specification list"
@@ -1137,6 +1140,8 @@ import (
 	Constraint                             "table constraint"
 	ConstraintElem                         "table constraint element"
 	ConstraintKeywordOpt                   "Constraint Keyword or empty"
+	ConstraintVectorIndex                  "vector index"
+	ConstraintWithVectorIndex              "table constraint with vector index"
 	CreateSequenceOptionListOpt            "create sequence list opt"
 	CreateTableOptionListOpt               "create table option list opt"
 	CreateTableSelectOpt                   "Select/Union statement in CREATE TABLE ... SELECT"
@@ -1278,6 +1283,9 @@ import (
 	OnUpdate                               "ON UPDATE clause"
 	OnDeleteUpdateOpt                      "optional ON DELETE and UPDATE clause"
 	OptGConcatSeparator                    "optional GROUP_CONCAT SEPARATOR"
+	RecommendIndexOptionListOpt            "Optional recommend index option list"
+	RecommendIndexOptionList               "Recommend index option list"
+	RecommendIndexOption                   "Recommend index option"
 	ReferOpt                               "reference option"
 	ReorganizePartitionRuleOpt             "optional reorganize partition partition list and definitions"
 	RequireList                            "require list for tls options"
@@ -1635,6 +1643,8 @@ import (
 %precedence order
 %precedence lowerThanFunction
 %precedence function
+%precedence constraint
+%precedence vectorType
 
 /* A dummy token to force the priority of TableRef production in a join. */
 %left tableRefPriority
@@ -1978,7 +1988,6 @@ DirectResourceGroupBackgroundOption:
 		$$ = &ast.ResourceGroupBackgroundOption{Type: ast.BackgroundUtilizationLimit, UintValue: $3.(uint64)}
 	}
 
-
 PlacementOptionList:
 	DirectPlacementOption
 	{
@@ -2117,7 +2126,6 @@ AlterTableSpecSingleOpt:
 		startOffset := parser.yyVAL.offset
 		endOffset := parser.yylval.offset
 		partitionMethod.SetText(parser.lexer.client, parser.src[startOffset:endOffset])
-		partitionMethod.SetOriginTextPosition(startOffset)
 		$$ = &ast.AlterTableSpec{
 			Tp:        ast.AlterTableReorganizeLastPartition,
 			Partition: &ast.PartitionOptions{PartitionMethod: partitionMethod},
@@ -2129,8 +2137,6 @@ AlterTableSpecSingleOpt:
 		startOffset := parser.yyVAL.offset
 		endOffset := parser.yylval.offset
 		partitionMethod.SetText(parser.lexer.client, parser.src[startOffset:endOffset])
-		// Needed for replacing syntactic sugar with generated partitioning definition string
-		partitionMethod.SetOriginTextPosition(startOffset)
 		$$ = &ast.AlterTableSpec{
 			Tp:        ast.AlterTableReorganizeFirstPartition,
 			Partition: &ast.PartitionOptions{PartitionMethod: partitionMethod},
@@ -2260,6 +2266,14 @@ AlterTableSpec:
 			Constraint: constraint,
 		}
 	}
+|	"ADD" ConstraintVectorIndex
+	{
+		constraint := $2.(*ast.Constraint)
+		$$ = &ast.AlterTableSpec{
+			Tp:         ast.AlterTableAddConstraint,
+			Constraint: constraint,
+		}
+	}
 |	"ADD" "PARTITION" IfNotExists NoWriteToBinLogAliasOpt PartitionDefinitionListOpt
 	{
 		var defs []*ast.PartitionDefinition
@@ -2303,8 +2317,6 @@ AlterTableSpec:
 		startOffset := parser.yyVAL.offset
 		endOffset := parser.yylval.offset
 		partitionMethod.SetText(parser.lexer.client, parser.src[startOffset:endOffset])
-		// Needed for replacing syntactic sugar with generated partitioning definition string
-		partitionMethod.SetOriginTextPosition(startOffset)
 		$$ = &ast.AlterTableSpec{
 			NoWriteToBinlog: noWriteToBinlog,
 			Tp:              ast.AlterTableAddLastPartition,
@@ -2391,8 +2403,6 @@ AlterTableSpec:
 		startOffset := parser.yyVAL.offset
 		endOffset := parser.yylval.offset
 		partitionMethod.SetText(parser.lexer.client, parser.src[startOffset:endOffset])
-		// Needed for replacing syntactic sugar with generated partitioning definition string
-		partitionMethod.SetOriginTextPosition(startOffset)
 		$$ = &ast.AlterTableSpec{
 			IfExists:  $8.(bool),
 			Tp:        ast.AlterTableDropFirstPartition,
@@ -2524,12 +2534,11 @@ AlterTableSpec:
 			Name:     $4,
 		}
 	}
-|	"DROP" "FOREIGN" "KEY" IfExists Symbol
+|	"DROP" "FOREIGN" "KEY" Symbol
 	{
 		$$ = &ast.AlterTableSpec{
-			IfExists: $4.(bool),
-			Tp:       ast.AlterTableDropForeignKey,
-			Name:     $5,
+			Tp:   ast.AlterTableDropForeignKey,
+			Name: $4,
 		}
 	}
 |	"ORDER" "BY" AlterOrderList %prec lowerThenOrder
@@ -4219,11 +4228,29 @@ CreateIndexStmt:
 				indexLockAndAlgorithm = nil
 			}
 		}
+
+		keyType := $2.(ast.IndexKeyType)
+		isVectorIndex := keyType == ast.IndexKeyTypeVector
+		if isVectorIndex && indexOption.Tp == model.IndexTypeInvalid {
+			indexOption.Tp = model.IndexTypeHNSW
+		}
+		if (isVectorIndex && indexOption.Tp != model.IndexTypeHNSW) || (!isVectorIndex && indexOption.Tp == model.IndexTypeHNSW) {
+			yylex.AppendError(ErrSyntax)
+			return 1
+		}
+		partSpecs := $10.([]*ast.IndexPartSpecification)
+		if keyType == ast.IndexKeyTypeVector {
+			if len(partSpecs) != 1 || partSpecs[0].Expr == nil {
+				yylex.AppendError(ErrSyntax)
+				return 1
+			}
+		}
+
 		$$ = &ast.CreateIndexStmt{
 			IfNotExists:             $4.(bool),
 			IndexName:               $5,
 			Table:                   $8.(*ast.TableName),
-			IndexPartSpecifications: $10.([]*ast.IndexPartSpecification),
+			IndexPartSpecifications: partSpecs,
 			IndexOption:             indexOption,
 			KeyType:                 $2.(ast.IndexKeyType),
 			LockAlg:                 indexLockAndAlgorithm,
@@ -4307,6 +4334,10 @@ IndexKeyTypeOpt:
 |	"FULLTEXT"
 	{
 		$$ = ast.IndexKeyTypeFullText
+	}
+|	"VECTOR"
+	{
+		$$ = ast.IndexKeyTypeVector
 	}
 
 /**************************************AlterDatabaseStmt***************************************
@@ -4676,8 +4707,6 @@ PartitionIntervalOpt:
 		startOffset := parser.yyVAL.offset
 		endOffset := parser.yylval.offset
 		partitionInterval.SetText(parser.lexer.client, parser.src[startOffset:endOffset])
-		// Needed for replacing syntactic sugar with generated partitioning definition string
-		partitionInterval.SetOriginTextPosition(startOffset)
 		$$ = partitionInterval
 	}
 
@@ -6681,6 +6710,10 @@ IndexTypeName:
 	{
 		$$ = model.IndexTypeHypo
 	}
+|	"HNSW"
+	{
+		$$ = model.IndexTypeHNSW
+	}
 
 IndexInvisible:
 	"VISIBLE"
@@ -7147,6 +7180,7 @@ NotKeywordToken:
 |	"END_TIME"
 |	"GET_FORMAT"
 |	"GROUP_CONCAT"
+|	"HNSW"
 |	"INPLACE"
 |	"INSTANT"
 |	"INTERNAL"
@@ -11339,6 +11373,33 @@ AdminStmt:
 			Tp: ast.AdminUnsetBDRRole,
 		}
 	}
+|	"ADMIN" "ALTER" "DDL" "JOBS" Int64Num AlterJobOptionList
+	{
+		$$ = &ast.AdminStmt{
+			Tp:              ast.AdminAlterDDLJob,
+			JobNumber:       $5.(int64),
+			AlterJobOptions: $6.([]*ast.AlterJobOption),
+		}
+	}
+
+AlterJobOptionList:
+	AlterJobOption
+	{
+		$$ = []*ast.AlterJobOption{$1.(*ast.AlterJobOption)}
+	}
+|	AlterJobOptionList ',' AlterJobOption
+	{
+		$$ = append($1.([]*ast.AlterJobOption), $3.(*ast.AlterJobOption))
+	}
+
+AlterJobOption:
+	identifier "=" SignedLiteral
+	{
+		$$ = &ast.AlterJobOption{
+			Name:  strings.ToLower($1),
+			Value: $3.(ast.ExprNode),
+		}
+	}
 
 AdminShowSlow:
 	"RECENT" NUM
@@ -12327,13 +12388,66 @@ Constraint:
 		$$ = cst
 	}
 
+// ConstraintVectorIndex does not put in Constraint to resolve syntax conflicts.
+ConstraintVectorIndex:
+	"VECTOR" "INDEX" IfNotExists IndexNameAndTypeOpt '(' IndexPartSpecificationList ')' IndexOptionList
+	{
+		c := &ast.Constraint{
+			IfNotExists:  $3.(bool),
+			Tp:           ast.ConstraintVector,
+			Keys:         $6.([]*ast.IndexPartSpecification),
+			Name:         $4.([]interface{})[0].(*ast.NullString).String,
+			IsEmptyIndex: $4.([]interface{})[0].(*ast.NullString).Empty,
+		}
+
+		if $8 != nil {
+			c.Option = $8.(*ast.IndexOption)
+		}
+		if indexType := $4.([]interface{})[1]; indexType != nil {
+			if c.Option == nil {
+				c.Option = &ast.IndexOption{}
+			}
+			c.Option.Tp = indexType.(model.IndexType)
+		}
+		if c.Option == nil {
+			c.Option = &ast.IndexOption{Tp: model.IndexTypeHNSW}
+		} else if c.Option.Tp == model.IndexTypeInvalid {
+			c.Option.Tp = model.IndexTypeHNSW
+		}
+		if c.Option.Tp != model.IndexTypeHNSW {
+			yylex.AppendError(ErrSyntax)
+			return 1
+		}
+
+		if len(c.Keys) != 1 || c.Keys[0].Expr == nil {
+			yylex.AppendError(ErrSyntax)
+			return 1
+		}
+		$$ = c
+	}
+
+ConstraintWithVectorIndex:
+	ConstraintKeywordOpt ConstraintElem
+	{
+		cst := $2.(*ast.Constraint)
+		if $1 != nil {
+			cst.Name = $1.(string)
+			cst.IsEmptyIndex = len(cst.Name) == 0
+		}
+		$$ = cst
+	}
+|	ConstraintVectorIndex
+	{
+		$$ = $1.(*ast.Constraint)
+	}
+
 CheckConstraintKeyword:
 	"CHECK"
 |	"CONSTRAINT"
 
 TableElement:
 	ColumnDef
-|	Constraint
+|	ConstraintWithVectorIndex
 
 TableElementList:
 	TableElement
@@ -14148,19 +14262,21 @@ SetBindingStmt:
 	}
 
 RecommendIndexStmt:
-	"RECOMMEND" "INDEX" "RUN" "FOR" stringLit
+	"RECOMMEND" "INDEX" "RUN" "FOR" stringLit RecommendIndexOptionListOpt
 	{
 		x := &ast.RecommendIndexStmt{
-			Action: "run",
-			SQL:    $5,
+			Action:  "run",
+			SQL:     $5,
+			Options: $6.([]ast.RecommendIndexOption),
 		}
 
 		$$ = x
 	}
-|	"RECOMMEND" "INDEX" "RUN"
+|	"RECOMMEND" "INDEX" "RUN" RecommendIndexOptionListOpt
 	{
 		x := &ast.RecommendIndexStmt{
-			Action: "run",
+			Action:  "run",
+			Options: $4.([]ast.RecommendIndexOption),
 		}
 
 		$$ = x
@@ -14191,15 +14307,42 @@ RecommendIndexStmt:
 
 		$$ = x
 	}
-|	"RECOMMEND" "INDEX" "SET" Identifier "=" Literal
+|	"RECOMMEND" "INDEX" "SET" RecommendIndexOptionList
 	{
 		x := &ast.RecommendIndexStmt{
-			Action: "set",
-			Option: $4,
-			Value:  ast.NewValueExpr($6, parser.charset, parser.collation),
+			Action:  "set",
+			Options: $4.([]ast.RecommendIndexOption),
 		}
 
 		$$ = x
+	}
+
+RecommendIndexOptionListOpt:
+	{
+		$$ = []ast.RecommendIndexOption{}
+	}
+|	"WITH" RecommendIndexOptionList
+	{
+		$$ = $2.([]ast.RecommendIndexOption)
+	}
+
+RecommendIndexOptionList:
+	RecommendIndexOption
+	{
+		$$ = []ast.RecommendIndexOption{$1.(ast.RecommendIndexOption)}
+	}
+|	RecommendIndexOptionList ',' RecommendIndexOption
+	{
+		$$ = append($1.([]ast.RecommendIndexOption), $3.(ast.RecommendIndexOption))
+	}
+
+RecommendIndexOption:
+	Identifier "=" Literal
+	{
+		$$ = ast.RecommendIndexOption{
+			Option: $1,
+			Value:  ast.NewValueExpr($3, parser.charset, parser.collation),
+		}
 	}
 
 /*************************************************************************************

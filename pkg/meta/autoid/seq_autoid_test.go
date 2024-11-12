@@ -43,7 +43,7 @@ func TestSequenceAutoid(t *testing.T) {
 	var sequenceBase int64
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnMeta)
 	err = kv.RunInNewTxn(ctx, store, false, func(ctx context.Context, txn kv.Transaction) error {
-		m := meta.NewMeta(txn)
+		m := meta.NewMutator(txn)
 		err = m.CreateDatabase(&model.DBInfo{ID: 1, Name: pmodel.NewCIStr("a")})
 		require.NoError(t, err)
 		seq = &model.SequenceInfo{
@@ -168,7 +168,7 @@ func TestConcurrentAllocSequence(t *testing.T) {
 	var sequenceBase int64
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnMeta)
 	err = kv.RunInNewTxn(ctx, store, false, func(ctx context.Context, txn kv.Transaction) error {
-		m := meta.NewMeta(txn)
+		m := meta.NewMutator(txn)
 		err1 := m.CreateDatabase(&model.DBInfo{ID: 2, Name: pmodel.NewCIStr("a")})
 		require.NoError(t, err1)
 		seq = &model.SequenceInfo{

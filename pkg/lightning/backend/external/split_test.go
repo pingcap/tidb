@@ -398,7 +398,6 @@ func Test3KFilesRangeSplitter(t *testing.T) {
 	eg := errgroup.Group{}
 	eg.SetLimit(30)
 	for i := 0; i < fileNum; i++ {
-		i := i
 		eg.Go(func() error {
 			w := NewWriterBuilder().
 				SetMemorySizeLimit(DefaultMemSizeLimit).

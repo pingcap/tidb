@@ -17,6 +17,7 @@ go_library(
         "//pkg/infoschema",
         "//pkg/kv",
         "//pkg/meta/autoid",
+        "//pkg/meta/metabuild",
         "//pkg/meta/model",
         "//pkg/owner",
         "//pkg/parser/ast",

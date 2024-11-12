@@ -125,6 +125,8 @@ var (
 		domains: map[string]*domain.Domain{},
 	}
 	// store.UUID()-> IfBootstrapped
+	// TODO this memory flag is meaningless, a store is always bootstrapped once,
+	// we can always get the version from the store, remove it later.
 	storeBootstrapped     = make(map[string]bool)
 	storeBootstrappedLock sync.Mutex
 

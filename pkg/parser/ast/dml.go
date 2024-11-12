@@ -1273,7 +1273,7 @@ func (n *SelectStmt) Restore(ctx *format.RestoreCtx) error {
 			ctx.WriteKeyWord("SQL_CALC_FOUND_ROWS ")
 		}
 
-		if n.TableHints != nil && len(n.TableHints) != 0 {
+		if len(n.TableHints) != 0 {
 			ctx.WritePlain("/*+ ")
 			for i, tableHint := range n.TableHints {
 				if i != 0 {
@@ -1472,7 +1472,7 @@ func (n *SelectStmt) Accept(v Visitor) (Node, bool) {
 		n.With = node.(*WithClause)
 	}
 
-	if n.TableHints != nil && len(n.TableHints) != 0 {
+	if len(n.TableHints) != 0 {
 		newHints := make([]*TableOptimizerHint, len(n.TableHints))
 		for i, hint := range n.TableHints {
 			node, ok := hint.Accept(v)
@@ -2309,7 +2309,7 @@ func (n *InsertStmt) Restore(ctx *format.RestoreCtx) error {
 		ctx.WriteKeyWord("INSERT ")
 	}
 
-	if n.TableHints != nil && len(n.TableHints) != 0 {
+	if len(n.TableHints) != 0 {
 		ctx.WritePlain("/*+ ")
 		for i, tableHint := range n.TableHints {
 			if i != 0 {
@@ -2546,7 +2546,7 @@ func (n *DeleteStmt) Restore(ctx *format.RestoreCtx) error {
 
 	ctx.WriteKeyWord("DELETE ")
 
-	if n.TableHints != nil && len(n.TableHints) != 0 {
+	if len(n.TableHints) != 0 {
 		ctx.WritePlain("/*+ ")
 		for i, tableHint := range n.TableHints {
 			if i != 0 {
@@ -2798,7 +2798,7 @@ func (n *UpdateStmt) Restore(ctx *format.RestoreCtx) error {
 
 	ctx.WriteKeyWord("UPDATE ")
 
-	if n.TableHints != nil && len(n.TableHints) != 0 {
+	if len(n.TableHints) != 0 {
 		ctx.WritePlain("/*+ ")
 		for i, tableHint := range n.TableHints {
 			if i != 0 {

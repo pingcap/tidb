@@ -13,6 +13,7 @@ go_library(
         "//pkg/timer/api",
         "//pkg/timer/metrics",
         "//pkg/util",
+        "//pkg/util/intest",
         "//pkg/util/logutil",
         "//pkg/util/timeutil",
         "@com_github_google_uuid//:uuid",
@@ -34,7 +35,7 @@ go_test(
     embed = [":runtime"],
     flaky = True,
     race = "on",
-    shard_count = 23,
+    shard_count = 24,
     deps = [
         "//pkg/testkit/testsetup",
         "//pkg/timer/api",

@@ -131,7 +131,7 @@ func TestBuildKvRangesForIndexJoinWithoutCwcAndWithMemoryTracker(t *testing.T) {
 	}
 
 	require.Equal(t, 2*bytesConsumed1, bytesConsumed2)
-	require.Equal(t, int64(20760), bytesConsumed1)
+	require.Equal(t, int64(25560), bytesConsumed1)
 }
 
 func generateIndexRange(vals ...int64) *ranger.Range {
@@ -187,6 +187,8 @@ func TestAggPartialResultMapperB(t *testing.T) {
 	var cases []testCase
 	// https://github.com/golang/go/issues/63438
 	// in 1.21, the load factor of map is 6 rather than 6.5 and the go team refused to backport to 1.21.
+	// https://github.com/golang/go/issues/65706
+	// in 1.23, it has problem.
 	if strings.Contains(runtime.Version(), `go1.21`) {
 		cases = []testCase{
 			{

@@ -38,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/tracing"
 	tikvstore "github.com/tikv/client-go/v2/kv"
 	"github.com/tikv/client-go/v2/oracle"
+	"github.com/tikv/client-go/v2/txnkv/transaction"
 )
 
 // baseTxnContextProvider is a base class for the transaction context providers that implement `TxnContextProvider` in different isolation.
@@ -515,6 +516,19 @@ func (p *baseTxnContextProvider) SetOptionsOnTxnActive(txn kv.Transaction) {
 	}
 
 	txn.SetOption(kv.SessionID, p.sctx.GetSessionVars().ConnectionID)
+
+	// backgroundGoroutineWaitGroup is pre-initialized before the closure to avoid accessing `p.sctx` in the closure,
+	// which may cause unexpected race condition.
+	backgroundGoroutineWaitGroup := p.sctx.GetCommitWaitGroup()
+	lifecycleHooks := transaction.LifecycleHooks{
+		Pre: func() {
+			backgroundGoroutineWaitGroup.Add(1)
+		},
+		Post: func() {
+			backgroundGoroutineWaitGroup.Done()
+		},
+	}
+	txn.SetOption(kv.BackgroundGoroutineLifecycleHooks, lifecycleHooks)
 }
 
 func (p *baseTxnContextProvider) SetOptionsBeforeCommit(

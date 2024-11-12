@@ -75,7 +75,7 @@ const maxUserTablesNum = 10
 // AssertUserDBsEmpty check whether user dbs exist in the cluster
 func AssertUserDBsEmpty(dom *domain.Domain) error {
 	databases := dom.InfoSchema().AllSchemas()
-	m := meta.NewSnapshotMeta(dom.Store().GetSnapshot(kv.MaxVersion))
+	m := meta.NewReader(dom.Store().GetSnapshot(kv.MaxVersion))
 	userTables := make([]string, 0, maxUserTablesNum+1)
 	appendTables := func(dbName, tableName string) bool {
 		if len(userTables) >= maxUserTablesNum {

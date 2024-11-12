@@ -725,7 +725,7 @@ func BuildBackupRangeAndInitSchema(
 	buildRange bool,
 ) ([]rtree.Range, *Schemas, []*backuppb.PlacementPolicy, error) {
 	snapshot := storage.GetSnapshot(kv.NewVersion(backupTS))
-	m := meta.NewSnapshotMeta(snapshot)
+	m := meta.NewReader(snapshot)
 
 	var policies []*backuppb.PlacementPolicy
 	if isFullBackup {
@@ -821,7 +821,7 @@ func BuildBackupSchemas(
 	fn func(dbInfo *model.DBInfo, tableInfo *model.TableInfo),
 ) error {
 	snapshot := storage.GetSnapshot(kv.NewVersion(backupTS))
-	m := meta.NewSnapshotMeta(snapshot)
+	m := meta.NewReader(snapshot)
 
 	dbs, err := m.ListDatabases()
 	if err != nil {
@@ -936,37 +936,6 @@ func BuildBackupSchemas(
 	return nil
 }
 
-// BuildFullSchema builds a full backup schemas for databases and tables.
-func BuildFullSchema(storage kv.Storage, backupTS uint64, fn func(dbInfo *model.DBInfo, tableInfo *model.TableInfo)) error {
-	snapshot := storage.GetSnapshot(kv.NewVersion(backupTS))
-	m := meta.NewSnapshotMeta(snapshot)
-
-	dbs, err := m.ListDatabases()
-	if err != nil {
-		return errors.Trace(err)
-	}
-
-	for _, db := range dbs {
-		hasTable := false
-		err = m.IterTables(db.ID, func(table *model.TableInfo) error {
-			// add table
-			fn(db, table)
-			hasTable = true
-			return nil
-		})
-		if err != nil {
-			return errors.Trace(err)
-		}
-
-		// backup this empty db if this schema is empty.
-		if !hasTable {
-			fn(db, nil)
-		}
-	}
-
-	return nil
-}
-
 func skipUnsupportedDDLJob(job *model.Job) bool {
 	switch job.Type {
 	// TiDB V5.3.0 supports TableAttributes and TablePartitionAttributes.
@@ -988,9 +957,9 @@ func skipUnsupportedDDLJob(job *model.Job) bool {
 // WriteBackupDDLJobs sends the ddl jobs are done in (lastBackupTS, backupTS] to metaWriter.
 func WriteBackupDDLJobs(metaWriter *metautil.MetaWriter, g glue.Glue, store kv.Storage, lastBackupTS, backupTS uint64, needDomain bool) error {
 	snapshot := store.GetSnapshot(kv.NewVersion(backupTS))
-	snapMeta := meta.NewSnapshotMeta(snapshot)
+	snapMeta := meta.NewReader(snapshot)
 	lastSnapshot := store.GetSnapshot(kv.NewVersion(lastBackupTS))
-	lastSnapMeta := meta.NewSnapshotMeta(lastSnapshot)
+	lastSnapMeta := meta.NewReader(lastSnapshot)
 	lastSchemaVersion, err := lastSnapMeta.GetSchemaVersionWithNonEmptyDiff()
 	if err != nil {
 		return errors.Trace(err)
@@ -1033,10 +1002,10 @@ func WriteBackupDDLJobs(metaWriter *metautil.MetaWriter, g glue.Glue, store kv.S
 		return appendJobs, false
 	}
 
-	newestMeta := meta.NewSnapshotMeta(store.GetSnapshot(kv.NewVersion(version.Ver)))
+	newestMeta := meta.NewReader(store.GetSnapshot(kv.NewVersion(version.Ver)))
 	var allJobs []*model.Job
 	err = g.UseOneShotSession(store, !needDomain, func(se glue.Session) error {
-		allJobs, err = ddl.GetAllDDLJobs(se.GetSessionCtx())
+		allJobs, err = ddl.GetAllDDLJobs(context.Background(), se.GetSessionCtx())
 		if err != nil {
 			return errors.Trace(err)
 		}

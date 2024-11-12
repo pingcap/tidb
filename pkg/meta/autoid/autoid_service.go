@@ -124,7 +124,7 @@ func (d *ClientDiscover) GetClient(ctx context.Context) (autoid.AutoIDAllocClien
 // The returned range is (min, max]:
 // case increment=1 & offset=1: you can derive the ids like min+1, min+2... max.
 // case increment=x & offset=y: you firstly need to seek to firstID by `SeekToFirstAutoIDXXX`, then derive the IDs like firstID, firstID + increment * 2... in the caller.
-func (sp *singlePointAlloc) Alloc(ctx context.Context, n uint64, increment, offset int64) (min int64, max int64, _ error) {
+func (sp *singlePointAlloc) Alloc(ctx context.Context, n uint64, increment, offset int64) (minv, maxv int64, _ error) {
 	r, ctx := tracing.StartRegionEx(ctx, "autoid.Alloc")
 	defer r.End()
 
@@ -308,8 +308,8 @@ func (sp *singlePointAlloc) End() int64 {
 // NextGlobalAutoID returns the next global autoID.
 // Used by 'show create table', 'alter table auto_increment = xxx'
 func (sp *singlePointAlloc) NextGlobalAutoID() (int64, error) {
-	_, max, err := sp.Alloc(context.Background(), 0, 1, 1)
-	return max + 1, err
+	_, maxv, err := sp.Alloc(context.Background(), 0, 1, 1)
+	return maxv + 1, err
 }
 
 func (*singlePointAlloc) GetType() AllocatorType {

@@ -233,7 +233,7 @@ func (d *Checker) DropSchema(ctx sessionctx.Context, stmt *ast.DropDatabaseStmt)
 }
 
 // RecoverSchema implements the DDL interface.
-func (*Checker) RecoverSchema(_ sessionctx.Context, _ *ddl.RecoverSchemaInfo) (err error) {
+func (*Checker) RecoverSchema(_ sessionctx.Context, _ *model.RecoverSchemaInfo) (err error) {
 	return nil
 }
 
@@ -288,7 +288,7 @@ func (d *Checker) DropTable(ctx sessionctx.Context, stmt *ast.DropTableStmt) (er
 }
 
 // RecoverTable implements the DDL interface.
-func (*Checker) RecoverTable(_ sessionctx.Context, _ *ddl.RecoverInfo) (err error) {
+func (*Checker) RecoverTable(_ sessionctx.Context, _ *model.RecoverTableInfo) (err error) {
 	//TODO implement me
 	panic("implement me")
 }
@@ -502,8 +502,8 @@ func (*Checker) CreatePlacementPolicyWithInfo(_ sessionctx.Context, _ *model.Pol
 }
 
 // Start implements the DDL interface.
-func (d *Checker) Start(ctxPool *pools.ResourcePool) error {
-	return d.realDDL.Start(ctxPool)
+func (d *Checker) Start(startMode ddl.StartMode, ctxPool *pools.ResourcePool) error {
+	return d.realDDL.Start(startMode, ctxPool)
 }
 
 // Stats implements the DDL interface.

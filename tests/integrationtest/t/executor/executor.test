@@ -1424,7 +1424,6 @@ set sql_mode = default;
 
 # TestSelectHashPartitionTable
 drop table if exists th;
-set @@session.tidb_enable_table_partition = '1';
 create table th (a int, b int) partition by hash(a) partitions 3;
 insert into th values (0,0),(1,1),(2,2),(3,3),(4,4),(5,5),(6,6),(7,7),(8,8);
 insert into th values (-1,-1),(-2,-2),(-3,-3),(-4,-4),(-5,-5),(-6,-6),(-7,-7),(-8,-8);
@@ -1432,7 +1431,6 @@ select b from th order by a;
 select * from th where a=-2;
 select * from th where a=5;
 drop table if exists th;
-set @@session.tidb_enable_table_partition = default;
 
 # TestSelectView
 drop table if exists view_t;

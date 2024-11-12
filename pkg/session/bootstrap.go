@@ -36,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/infoschema"
+	infoschemacontext "github.com/pingcap/tidb/pkg/infoschema/context"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/owner"
@@ -46,6 +47,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	sessiontypes "github.com/pingcap/tidb/pkg/session/types"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	storepkg "github.com/pingcap/tidb/pkg/store"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	timertable "github.com/pingcap/tidb/pkg/timer/tablestore"
 	"github.com/pingcap/tidb/pkg/types"
@@ -61,6 +63,9 @@ import (
 	"go.etcd.io/etcd/client/v3/concurrency"
 	"go.uber.org/zap"
 )
+
+// bootstrapOwnerKey is the key used by ddl owner mutex during boostrap.
+var bootstrapOwnerKey = "/tidb/distributeDDLOwnerLock/"
 
 const (
 	// CreateUserTable is the SQL statement creates User table in system db.
@@ -1174,11 +1179,29 @@ const (
 
 	// If the TiDB upgrading from the a version before v7.0 to a newer version, we keep the tidb_enable_inl_join_inner_multi_pattern to 0.
 	version215 = 215
+
+	// version 216
+	//   changes variable `tidb_scatter_region` value from ON to "table" and OFF to "".
+	version216 = 216
+
+	// version 217
+	// Keep tidb_schema_cache_size to 0 if this variable does not exist (upgrading from old version pre 8.1).
+	version217 = 217
+
+	// version 218
+	// enable fast_create_table on default
+	version218 = 218
+
+	// ...
+	// [version219, version238] is the version range reserved for patches of 8.5.x
+	// ...
+
+	// next version should start with 239
 )
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-var currentBootstrapVersion int64 = version215
+var currentBootstrapVersion int64 = version218
 
 // DDL owner key's expired time is ManagerSessionTTL seconds, we should wait the time and give more time to have a chance to finish it.
 var internalSQLTimeout = owner.ManagerSessionTTL + 15
@@ -1349,6 +1372,9 @@ var (
 		upgradeToVer213,
 		upgradeToVer214,
 		upgradeToVer215,
+		upgradeToVer216,
+		upgradeToVer217,
+		upgradeToVer218,
 	}
 )
 
@@ -1412,6 +1438,33 @@ var (
 	SupportUpgradeHTTPOpVer int64 = version174
 )
 
+func acquireLock(store kv.Storage) (func(), error) {
+	etcdCli, err := storepkg.NewEtcdCli(store)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	if etcdCli == nil {
+		// Special handling for test.
+		logutil.BgLogger().Warn("skip acquire ddl owner lock for uni-store")
+		return func() {
+			// do nothing
+		}, nil
+	}
+	releaseFn, err := owner.AcquireDistributedLock(context.Background(), etcdCli, bootstrapOwnerKey, 10)
+	if err != nil {
+		if err2 := etcdCli.Close(); err2 != nil {
+			logutil.BgLogger().Error("failed to close etcd client", zap.Error(err2))
+		}
+		return nil, errors.Trace(err)
+	}
+	return func() {
+		releaseFn()
+		if err2 := etcdCli.Close(); err2 != nil {
+			logutil.BgLogger().Error("failed to close etcd client", zap.Error(err2))
+		}
+	}, nil
+}
+
 func checkDistTask(s sessiontypes.Session, ver int64) {
 	if ver > version195 {
 		// since version195 we enable dist task by default, no need to check
@@ -1461,7 +1514,14 @@ func checkDistTask(s sessiontypes.Session, ver int64) {
 // upgrade function  will do some upgrade works, when the system is bootstrapped by low version TiDB server
 // For example, add new system variables into mysql.global_variables table.
 func upgrade(s sessiontypes.Session) {
-	ver, err := getBootstrapVersion(s)
+	// Do upgrade works then update bootstrap version.
+	isNull, err := InitMDLVariableForUpgrade(s.GetStore())
+	if err != nil {
+		logutil.BgLogger().Fatal("[upgrade] init metadata lock failed", zap.Error(err))
+	}
+
+	var ver int64
+	ver, err = getBootstrapVersion(s)
 	terror.MustNil(err)
 	if ver >= currentBootstrapVersion {
 		// It is already bootstrapped/upgraded by a higher version TiDB server.
@@ -1470,25 +1530,6 @@ func upgrade(s sessiontypes.Session) {
 
 	checkDistTask(s, ver)
 	printClusterState(s, ver)
-
-	// Only upgrade from under version92 and this TiDB is not owner set.
-	// The owner in older tidb does not support concurrent DDL, we should add the internal DDL to job queue.
-	if ver < version92 {
-		useConcurrentDDL, err := checkOwnerVersion(context.Background(), domain.GetDomain(s))
-		if err != nil {
-			logutil.BgLogger().Fatal("[upgrade] upgrade failed", zap.Error(err))
-		}
-		if !useConcurrentDDL {
-			// Use another variable DDLForce2Queue but not EnableConcurrentDDL since in upgrade it may set global variable, the initial step will
-			// overwrite variable EnableConcurrentDDL.
-			variable.DDLForce2Queue.Store(true)
-		}
-	}
-	// Do upgrade works then update bootstrap version.
-	isNull, err := InitMDLVariableForUpgrade(s.GetStore())
-	if err != nil {
-		logutil.BgLogger().Fatal("[upgrade] init metadata lock failed", zap.Error(err))
-	}
 
 	// when upgrade from v6.4.0 or earlier, enables metadata lock automatically,
 	// but during upgrade we disable it.
@@ -1505,7 +1546,6 @@ func upgrade(s sessiontypes.Session) {
 		upgradeToVer99After(s)
 	}
 
-	variable.DDLForce2Queue.Store(false)
 	updateBootstrapVer(s)
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBootstrap)
 	_, err = s.ExecuteInternal(ctx, "COMMIT")
@@ -2621,7 +2661,7 @@ func upgradeToVer99After(s sessiontypes.Session) {
 		mysql.SystemDB, mysql.GlobalVariablesTable, variable.TiDBEnableMDL, 1)
 	mustExecute(s, sql)
 	err := kv.RunInNewTxn(kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL), s.GetStore(), true, func(_ context.Context, txn kv.Transaction) error {
-		t := meta.NewMeta(txn)
+		t := meta.NewMutator(txn)
 		return t.SetMetadataLock(true)
 	})
 	terror.MustNil(err)
@@ -2995,7 +3035,7 @@ func writeDDLTableVersion(s sessiontypes.Session) {
 	var err error
 	var ddlTableVersion meta.DDLTableVersion
 	err = kv.RunInNewTxn(kv.WithInternalSourceType(context.Background(), kv.InternalTxnBootstrap), s.GetStore(), true, func(_ context.Context, txn kv.Transaction) error {
-		t := meta.NewMeta(txn)
+		t := meta.NewMutator(txn)
 		ddlTableVersion, err = t.CheckDDLTableVersion()
 		return err
 	})
@@ -3169,9 +3209,9 @@ func upgradeToVer212(s sessiontypes.Session, ver int64) {
 	// add column `repeats`.
 	doReentrantDDL(s, "ALTER TABLE mysql.tidb_runaway_queries ADD COLUMN `repeats` int DEFAULT 1 AFTER `time`;", infoschema.ErrColumnExists)
 	// rename column name from `time` to `start_time`, will auto rebuild the index.
-	doReentrantDDL(s, "ALTER TABLE mysql.tidb_runaway_queries RENAME COLUMN `time` TO `start_time`")
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_runaway_queries RENAME COLUMN `time` TO `start_time`", infoschema.ErrColumnNotExists)
 	// rename column `original_sql` to `sample_sql`.
-	doReentrantDDL(s, "ALTER TABLE mysql.tidb_runaway_queries RENAME COLUMN `original_sql` TO `sample_sql`")
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_runaway_queries RENAME COLUMN `original_sql` TO `sample_sql`", infoschema.ErrColumnNotExists)
 	// modify column type of `plan_digest`.
 	doReentrantDDL(s, "ALTER TABLE mysql.tidb_runaway_queries MODIFY COLUMN `plan_digest` varchar(64) DEFAULT '';", infoschema.ErrColumnExists)
 	// 3. modify column length of `action`.
@@ -3205,6 +3245,31 @@ func upgradeToVer215(s sessiontypes.Session, ver int64) {
 	}
 
 	initGlobalVariableIfNotExists(s, variable.TiDBEnableINLJoinInnerMultiPattern, variable.Off)
+}
+
+func upgradeToVer216(s sessiontypes.Session, ver int64) {
+	if ver >= version216 {
+		return
+	}
+
+	mustExecute(s, "UPDATE mysql.global_variables SET VARIABLE_VALUE='' WHERE VARIABLE_NAME = 'tidb_scatter_region' AND VARIABLE_VALUE = 'OFF'")
+	mustExecute(s, "UPDATE mysql.global_variables SET VARIABLE_VALUE='table' WHERE VARIABLE_NAME = 'tidb_scatter_region' AND VARIABLE_VALUE = 'ON'")
+}
+
+func upgradeToVer217(s sessiontypes.Session, ver int64) {
+	if ver >= version217 {
+		return
+	}
+	// If tidb_schema_cache_size does not exist, insert a record and set the value to 0
+	// Otherwise do nothing.
+	mustExecute(s, "INSERT IGNORE INTO mysql.global_variables VALUES ('tidb_schema_cache_size', 0)")
+}
+
+func upgradeToVer218(_ sessiontypes.Session, ver int64) {
+	if ver >= version218 {
+		return
+	}
+	// empty, just make lint happy.
 }
 
 // initGlobalVariableIfNotExists initialize a global variable with specific val if it does not exist.
@@ -3501,21 +3566,21 @@ func oldPasswordUpgrade(pass string) (string, error) {
 }
 
 // rebuildAllPartitionValueMapAndSorted rebuilds all value map and sorted info for list column partitions with InfoSchema.
-func rebuildAllPartitionValueMapAndSorted(s *session) {
+func rebuildAllPartitionValueMapAndSorted(ctx context.Context, s *session) {
 	type partitionExpr interface {
 		PartitionExpr() *tables.PartitionExpr
 	}
 
 	p := parser.New()
 	is := s.GetInfoSchema().(infoschema.InfoSchema)
-	dbs := is.ListTablesWithSpecialAttribute(infoschema.PartitionAttribute)
+	dbs := is.ListTablesWithSpecialAttribute(infoschemacontext.PartitionAttribute)
 	for _, db := range dbs {
 		for _, t := range db.TableInfos {
 			pi := t.GetPartitionInfo()
 			if pi == nil || pi.Type != model.PartitionTypeList {
 				continue
 			}
-			tbl, ok := is.TableByID(s.currentCtx, t.ID)
+			tbl, ok := is.TableByID(ctx, t.ID)
 			intest.Assert(ok, "table not found in infoschema")
 			pe := tbl.(partitionExpr).PartitionExpr()
 			for _, cp := range pe.ColPrunes {

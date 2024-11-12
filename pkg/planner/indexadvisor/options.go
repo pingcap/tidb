@@ -42,10 +42,17 @@ var (
 	AllOptions = []string{OptMaxNumIndex, OptMaxIndexColumns, OptMaxNumQuery, OptTimeout}
 )
 
-func fillOption(sctx sessionctx.Context, opt *Option) error {
+func fillOption(sctx sessionctx.Context, opt *Option, userOptions []ast.RecommendIndexOption) error {
 	vals, _, err := GetOptions(sctx, AllOptions...)
 	if err != nil {
 		return err
+	}
+	for _, userOpt := range userOptions {
+		userVal, err := optionVal(userOpt.Option, userOpt.Value)
+		if err != nil {
+			return err
+		}
+		vals[userOpt.Option] = userVal
 	}
 	if opt.MaxNumIndexes == 0 {
 		i, _ := strconv.ParseInt(vals[OptMaxNumIndex], 10, 64)
@@ -69,34 +76,52 @@ func fillOption(sctx sessionctx.Context, opt *Option) error {
 	return nil
 }
 
-// SetOption sets the value of an option.
-func SetOption(sctx sessionctx.Context, opt string, val ast.ValueExpr) error {
+// SetOptions sets the values of options.
+func SetOptions(sctx sessionctx.Context, options ...ast.RecommendIndexOption) error {
+	for _, opt := range options {
+		if err := SetOption(sctx, opt.Option, opt.Value); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func optionVal(opt string, val ast.ValueExpr) (string, error) {
 	var v string
 	switch opt {
 	case OptMaxNumIndex, OptMaxIndexColumns, OptMaxNumQuery:
 		x, err := intVal(val)
 		if err != nil {
-			return err
+			return "", err
 		}
 		if x <= 0 {
-			return errors.Errorf("invalid value %v for %s", x, opt)
+			return "", errors.Errorf("invalid value %v for %s", x, opt)
 		}
 		v = strconv.Itoa(x)
 	case OptTimeout:
 		v = val.GetValue().(string)
 		d, err := time.ParseDuration(v)
 		if err != nil {
-			return err
+			return "", err
 		}
 		if d < 0 {
-			return errors.Errorf("invalid value %v for %s", d, opt)
+			return "", errors.Errorf("invalid value %v for %s", d, opt)
 		}
 	default:
-		return errors.Errorf("unknown option %s", opt)
+		return "", errors.Errorf("unknown option %s", opt)
+	}
+	return v, nil
+}
+
+// SetOption sets the value of an option.
+func SetOption(sctx sessionctx.Context, opt string, val ast.ValueExpr) error {
+	v, err := optionVal(opt, val)
+	if err != nil {
+		return err
 	}
 	template := `INSERT INTO mysql.tidb_kernel_options VALUES (%?, %?, %?, now(), 'valid', %?)
 		ON DUPLICATE KEY UPDATE value = %?, updated_at=now(), description = %?`
-	_, err := exec(sctx, template, OptModule, opt, v, description(opt), v, description(opt))
+	_, err = exec(sctx, template, OptModule, opt, v, description(opt), v, description(opt))
 	return err
 }
 

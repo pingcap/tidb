@@ -368,13 +368,18 @@ func TestSetVar(t *testing.T) {
 	tk.MustQuery(`select @@session.tidb_wait_split_region_finish;`).Check(testkit.Rows("0"))
 
 	// test for tidb_scatter_region
-	tk.MustQuery(`select @@global.tidb_scatter_region;`).Check(testkit.Rows("0"))
-	tk.MustExec("set global tidb_scatter_region = 1")
-	tk.MustQuery(`select @@global.tidb_scatter_region;`).Check(testkit.Rows("1"))
-	tk.MustExec("set global tidb_scatter_region = 0")
-	tk.MustQuery(`select @@global.tidb_scatter_region;`).Check(testkit.Rows("0"))
-	require.Error(t, tk.ExecToErr("set session tidb_scatter_region = 0"))
-	require.Error(t, tk.ExecToErr(`select @@session.tidb_scatter_region;`))
+	tk.MustQuery(`select @@global.tidb_scatter_region;`).Check(testkit.Rows(""))
+	tk.MustExec("set global tidb_scatter_region = 'table'")
+	tk.MustQuery(`select @@global.tidb_scatter_region;`).Check(testkit.Rows("table"))
+	tk.MustExec("set global tidb_scatter_region = 'global'")
+	tk.MustQuery(`select @@global.tidb_scatter_region;`).Check(testkit.Rows("global"))
+	tk.MustExec("set session tidb_scatter_region = ''")
+	tk.MustQuery(`select @@session.tidb_scatter_region;`).Check(testkit.Rows(""))
+	tk.MustExec("set session tidb_scatter_region = 'table'")
+	tk.MustQuery(`select @@session.tidb_scatter_region;`).Check(testkit.Rows("table"))
+	tk.MustExec("set session tidb_scatter_region = 'global'")
+	tk.MustQuery(`select @@session.tidb_scatter_region;`).Check(testkit.Rows("global"))
+	require.Error(t, tk.ExecToErr("set session tidb_scatter_region = 'test'"))
 
 	// test for tidb_wait_split_region_timeout
 	tk.MustQuery(`select @@session.tidb_wait_split_region_timeout;`).Check(testkit.Rows(strconv.Itoa(variable.DefWaitSplitRegionTimeout)))

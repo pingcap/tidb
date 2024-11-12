@@ -50,6 +50,7 @@ var (
 	PlanCacheMissCounter            *prometheus.CounterVec
 	PlanCacheInstanceMemoryUsage    *prometheus.GaugeVec
 	PlanCacheInstancePlanNumCounter *prometheus.GaugeVec
+	PlanCacheProcessDuration        *prometheus.HistogramVec
 	ReadFromTableCacheCounter       prometheus.Counter
 	HandShakeErrorCounter           prometheus.Counter
 	GetTokenDurationHistogram       prometheus.Histogram
@@ -72,6 +73,7 @@ var (
 	LoadTableCacheDurationHistogram prometheus.Histogram
 	RCCheckTSWriteConfilictCounter  *prometheus.CounterVec
 	MemoryLimit                     prometheus.Gauge
+	InternalSessions                prometheus.Gauge
 )
 
 // InitServerMetrics initializes server metrics.
@@ -204,6 +206,15 @@ func InitServerMetrics() {
 			Subsystem: "server",
 			Name:      "plan_cache_instance_plan_num_total",
 			Help:      "Counter of plan of all prepared plan cache in a instance",
+		}, []string{LblType})
+
+	PlanCacheProcessDuration = NewHistogramVec(
+		prometheus.HistogramOpts{
+			Namespace: "tidb",
+			Subsystem: "server",
+			Name:      "plan_cache_process_duration_seconds",
+			Help:      "Bucketed histogram of processing time (s) of plan cache operations.",
+			Buckets:   prometheus.ExponentialBuckets(0.001, 2, 28), // 1ms ~ 1.5days
 		}, []string{LblType})
 
 	ReadFromTableCacheCounter = NewCounter(
@@ -392,6 +403,14 @@ func InitServerMetrics() {
 			Subsystem: "server",
 			Name:      "memory_quota_bytes",
 			Help:      "The value of memory quota bytes.",
+		})
+
+	InternalSessions = prometheus.NewGauge(
+		prometheus.GaugeOpts{
+			Namespace: "tidb",
+			Subsystem: "server",
+			Name:      "internal_sessions",
+			Help:      "The total count of internal sessions.",
 		})
 }
 

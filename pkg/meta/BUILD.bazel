@@ -5,6 +5,7 @@ go_library(
     srcs = [
         "meta.go",
         "meta_autoid.go",
+        "reader.go",
     ],
     importpath = "github.com/pingcap/tidb/pkg/meta",
     visibility = ["//visibility:public"],
@@ -39,7 +40,7 @@ go_test(
     shard_count = 18,
     deps = [
         "//pkg/ddl",
-        "//pkg/infoschema",
+        "//pkg/infoschema/context",
         "//pkg/kv",
         "//pkg/meta/model",
         "//pkg/parser",

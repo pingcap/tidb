@@ -21,6 +21,7 @@ import (
 
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/expression"
+	"github.com/pingcap/tidb/pkg/planner/cascades/base"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/pkg/util/size"
@@ -35,6 +36,34 @@ var wholeTaskTypes = []TaskType{CopSingleReadTaskType, CopMultiReadTaskType, Roo
 type SortItem struct {
 	Col  *expression.Column
 	Desc bool
+}
+
+// Hash64 implements the HashEquals interface.
+func (s *SortItem) Hash64(h base.Hasher) {
+	if s.Col == nil {
+		h.HashByte(base.NilFlag)
+	} else {
+		h.HashByte(base.NotNilFlag)
+		s.Col.Hash64(h)
+	}
+	h.HashBool(s.Desc)
+}
+
+// Equals implements the HashEquals interface.
+func (s *SortItem) Equals(other any) bool {
+	if other == nil {
+		return false
+	}
+	var s2 *SortItem
+	switch x := other.(type) {
+	case *SortItem:
+		s2 = x
+	case SortItem:
+		s2 = &x
+	default:
+		return false
+	}
+	return s.Col.Equals(s2.Col) && s.Desc == s2.Desc
 }
 
 func (s *SortItem) String() string {
@@ -221,6 +250,11 @@ type PhysicalProperty struct {
 	RejectSort bool
 
 	CTEProducerStatus cteProducerStatus
+
+	VectorProp struct {
+		*expression.VectorHelper
+		TopK uint32
+	}
 }
 
 // NewPhysicalProperty builds property from columns.
@@ -348,6 +382,12 @@ func (p *PhysicalProperty) HashCode() []byte {
 		p.hashcode = codec.EncodeInt(p.hashcode, int64(p.MPPPartitionTp))
 		for _, col := range p.MPPPartitionCols {
 			p.hashcode = append(p.hashcode, col.hashCode()...)
+		}
+		if p.VectorProp.VectorHelper != nil {
+			// We only accpect the vector information from the TopN which is directly above the DataSource.
+			// So it's safe to not hash the vector constant.
+			p.hashcode = append(p.hashcode, p.VectorProp.Column.HashCode()...)
+			p.hashcode = codec.EncodeInt(p.hashcode, int64(p.VectorProp.FnPbCode))
 		}
 	}
 	p.hashcode = append(p.hashcode, codec.EncodeInt(nil, int64(p.CTEProducerStatus))...)

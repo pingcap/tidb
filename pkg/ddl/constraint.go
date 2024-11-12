@@ -15,6 +15,7 @@
 package ddl
 
 import (
+	"context"
 	"fmt"
 	"strings"
 
@@ -32,10 +33,10 @@ import (
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 )
 
-func (w *worker) onAddCheckConstraint(jobCtx *jobContext, t *meta.Meta, job *model.Job) (ver int64, err error) {
+func (w *worker) onAddCheckConstraint(jobCtx *jobContext, job *model.Job) (ver int64, err error) {
 	// Handle the rolling back job.
 	if job.IsRollingback() {
-		return rollingBackAddConstraint(jobCtx, t, job)
+		return rollingBackAddConstraint(jobCtx, job)
 	}
 
 	failpoint.Inject("errorBeforeDecodeArgs", func(val failpoint.Value) {
@@ -44,7 +45,7 @@ func (w *worker) onAddCheckConstraint(jobCtx *jobContext, t *meta.Meta, job *mod
 		}
 	})
 
-	dbInfo, tblInfo, constraintInfoInMeta, constraintInfoInJob, err := checkAddCheckConstraint(t, job)
+	dbInfo, tblInfo, constraintInfoInMeta, constraintInfoInJob, err := checkAddCheckConstraint(jobCtx.metaMut, job)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
@@ -81,7 +82,7 @@ func (w *worker) onAddCheckConstraint(jobCtx *jobContext, t *meta.Meta, job *mod
 	// If not enforced, add it directly.
 	if !constraintInfoInMeta.Enforced {
 		constraintInfoInMeta.State = model.StatePublic
-		ver, err = updateVersionAndTableInfo(jobCtx, t, job, tblInfo, true)
+		ver, err = updateVersionAndTableInfo(jobCtx, job, tblInfo, true)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
@@ -94,13 +95,13 @@ func (w *worker) onAddCheckConstraint(jobCtx *jobContext, t *meta.Meta, job *mod
 	case model.StateNone:
 		job.SchemaState = model.StateWriteOnly
 		constraintInfoInMeta.State = model.StateWriteOnly
-		ver, err = updateVersionAndTableInfoWithCheck(jobCtx, t, job, tblInfo, true)
+		ver, err = updateVersionAndTableInfoWithCheck(jobCtx, job, tblInfo, true)
 	case model.StateWriteOnly:
 		job.SchemaState = model.StateWriteReorganization
 		constraintInfoInMeta.State = model.StateWriteReorganization
-		ver, err = updateVersionAndTableInfoWithCheck(jobCtx, t, job, tblInfo, true)
+		ver, err = updateVersionAndTableInfoWithCheck(jobCtx, job, tblInfo, true)
 	case model.StateWriteReorganization:
-		err = w.verifyRemainRecordsForCheckConstraint(dbInfo, tblInfo, constraintInfoInMeta)
+		err = w.verifyRemainRecordsForCheckConstraint(jobCtx.stepCtx, dbInfo, tblInfo, constraintInfoInMeta)
 		if err != nil {
 			if dbterror.ErrCheckConstraintIsViolated.Equal(err) {
 				job.State = model.JobStateRollingback
@@ -108,7 +109,7 @@ func (w *worker) onAddCheckConstraint(jobCtx *jobContext, t *meta.Meta, job *mod
 			return ver, errors.Trace(err)
 		}
 		constraintInfoInMeta.State = model.StatePublic
-		ver, err = updateVersionAndTableInfo(jobCtx, t, job, tblInfo, true)
+		ver, err = updateVersionAndTableInfo(jobCtx, job, tblInfo, true)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
@@ -121,7 +122,7 @@ func (w *worker) onAddCheckConstraint(jobCtx *jobContext, t *meta.Meta, job *mod
 	return ver, errors.Trace(err)
 }
 
-func checkAddCheckConstraint(t *meta.Meta, job *model.Job) (*model.DBInfo, *model.TableInfo, *model.ConstraintInfo, *model.ConstraintInfo, error) {
+func checkAddCheckConstraint(t *meta.Mutator, job *model.Job) (*model.DBInfo, *model.TableInfo, *model.ConstraintInfo, *model.ConstraintInfo, error) {
 	schemaID := job.SchemaID
 	dbInfo, err := t.GetDatabase(job.SchemaID)
 	if err != nil {
@@ -162,8 +163,8 @@ func checkAddCheckConstraint(t *meta.Meta, job *model.Job) (*model.DBInfo, *mode
 // onDropCheckConstraint can be called from two case:
 // 1: rollback in add constraint.(in rollback function the job.args will be changed)
 // 2: user drop constraint ddl.
-func onDropCheckConstraint(jobCtx *jobContext, t *meta.Meta, job *model.Job) (ver int64, _ error) {
-	tblInfo, constraintInfo, err := checkDropCheckConstraint(t, job)
+func onDropCheckConstraint(jobCtx *jobContext, job *model.Job) (ver int64, _ error) {
+	tblInfo, constraintInfo, err := checkDropCheckConstraint(jobCtx.metaMut, job)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
@@ -172,7 +173,7 @@ func onDropCheckConstraint(jobCtx *jobContext, t *meta.Meta, job *model.Job) (ve
 	case model.StatePublic:
 		job.SchemaState = model.StateWriteOnly
 		constraintInfo.State = model.StateWriteOnly
-		ver, err = updateVersionAndTableInfoWithCheck(jobCtx, t, job, tblInfo, true)
+		ver, err = updateVersionAndTableInfoWithCheck(jobCtx, job, tblInfo, true)
 	case model.StateWriteOnly:
 		// write only state constraint will still take effect to check the newly inserted data.
 		// So the dependent column shouldn't be dropped even in this intermediate state.
@@ -183,7 +184,7 @@ func onDropCheckConstraint(jobCtx *jobContext, t *meta.Meta, job *model.Job) (ve
 				tblInfo.Constraints = append(tblInfo.Constraints[0:i], tblInfo.Constraints[i+1:]...)
 			}
 		}
-		ver, err = updateVersionAndTableInfo(jobCtx, t, job, tblInfo, true)
+		ver, err = updateVersionAndTableInfo(jobCtx, job, tblInfo, true)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
@@ -194,7 +195,7 @@ func onDropCheckConstraint(jobCtx *jobContext, t *meta.Meta, job *model.Job) (ve
 	return ver, errors.Trace(err)
 }
 
-func checkDropCheckConstraint(t *meta.Meta, job *model.Job) (*model.TableInfo, *model.ConstraintInfo, error) {
+func checkDropCheckConstraint(t *meta.Mutator, job *model.Job) (*model.TableInfo, *model.ConstraintInfo, error) {
 	schemaID := job.SchemaID
 	tblInfo, err := GetTableInfoAndCancelFaultJob(t, job, schemaID)
 	if err != nil {
@@ -216,14 +217,14 @@ func checkDropCheckConstraint(t *meta.Meta, job *model.Job) (*model.TableInfo, *
 	return tblInfo, constraintInfo, nil
 }
 
-func (w *worker) onAlterCheckConstraint(jobCtx *jobContext, t *meta.Meta, job *model.Job) (ver int64, err error) {
-	dbInfo, tblInfo, constraintInfo, enforced, err := checkAlterCheckConstraint(t, job)
+func (w *worker) onAlterCheckConstraint(jobCtx *jobContext, job *model.Job) (ver int64, err error) {
+	dbInfo, tblInfo, constraintInfo, enforced, err := checkAlterCheckConstraint(jobCtx.metaMut, job)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
 
 	if job.IsRollingback() {
-		return rollingBackAlterConstraint(jobCtx, t, job)
+		return rollingBackAlterConstraint(jobCtx, job)
 	}
 
 	// Current State is desired.
@@ -239,13 +240,13 @@ func (w *worker) onAlterCheckConstraint(jobCtx *jobContext, t *meta.Meta, job *m
 			job.SchemaState = model.StateWriteReorganization
 			constraintInfo.State = model.StateWriteReorganization
 			constraintInfo.Enforced = enforced
-			ver, err = updateVersionAndTableInfoWithCheck(jobCtx, t, job, tblInfo, true)
+			ver, err = updateVersionAndTableInfoWithCheck(jobCtx, job, tblInfo, true)
 		case model.StateWriteReorganization:
 			job.SchemaState = model.StateWriteOnly
 			constraintInfo.State = model.StateWriteOnly
-			ver, err = updateVersionAndTableInfoWithCheck(jobCtx, t, job, tblInfo, true)
+			ver, err = updateVersionAndTableInfoWithCheck(jobCtx, job, tblInfo, true)
 		case model.StateWriteOnly:
-			err = w.verifyRemainRecordsForCheckConstraint(dbInfo, tblInfo, constraintInfo)
+			err = w.verifyRemainRecordsForCheckConstraint(jobCtx.stepCtx, dbInfo, tblInfo, constraintInfo)
 			if err != nil {
 				if dbterror.ErrCheckConstraintIsViolated.Equal(err) {
 					job.State = model.JobStateRollingback
@@ -253,7 +254,7 @@ func (w *worker) onAlterCheckConstraint(jobCtx *jobContext, t *meta.Meta, job *m
 				return ver, errors.Trace(err)
 			}
 			constraintInfo.State = model.StatePublic
-			ver, err = updateVersionAndTableInfoWithCheck(jobCtx, t, job, tblInfo, true)
+			ver, err = updateVersionAndTableInfoWithCheck(jobCtx, job, tblInfo, true)
 			if err != nil {
 				return ver, errors.Trace(err)
 			}
@@ -261,7 +262,7 @@ func (w *worker) onAlterCheckConstraint(jobCtx *jobContext, t *meta.Meta, job *m
 		}
 	} else {
 		constraintInfo.Enforced = enforced
-		ver, err = updateVersionAndTableInfoWithCheck(jobCtx, t, job, tblInfo, true)
+		ver, err = updateVersionAndTableInfoWithCheck(jobCtx, job, tblInfo, true)
 		if err != nil {
 			// update version and tableInfo error will cause retry.
 			return ver, errors.Trace(err)
@@ -271,7 +272,7 @@ func (w *worker) onAlterCheckConstraint(jobCtx *jobContext, t *meta.Meta, job *m
 	return ver, err
 }
 
-func checkAlterCheckConstraint(t *meta.Meta, job *model.Job) (*model.DBInfo, *model.TableInfo, *model.ConstraintInfo, bool, error) {
+func checkAlterCheckConstraint(t *meta.Mutator, job *model.Job) (*model.DBInfo, *model.TableInfo, *model.ConstraintInfo, bool, error) {
 	schemaID := job.SchemaID
 	dbInfo, err := t.GetDatabase(job.SchemaID)
 	if err != nil {
@@ -351,7 +352,12 @@ func findDependentColsInExpr(expr ast.ExprNode) map[string]struct{} {
 	return colsMap
 }
 
-func (w *worker) verifyRemainRecordsForCheckConstraint(dbInfo *model.DBInfo, tableInfo *model.TableInfo, constr *model.ConstraintInfo) error {
+func (w *worker) verifyRemainRecordsForCheckConstraint(
+	ctx context.Context,
+	dbInfo *model.DBInfo,
+	tableInfo *model.TableInfo,
+	constr *model.ConstraintInfo,
+) error {
 	// Inject a fail-point to skip the remaining records check.
 	failpoint.Inject("mockVerifyRemainDataSuccess", func(val failpoint.Value) {
 		if val.(bool) {
@@ -371,7 +377,7 @@ func (w *worker) verifyRemainRecordsForCheckConstraint(dbInfo *model.DBInfo, tab
 	// can let the check expression restored string as the filter in where clause directly.
 	// Prepare internal SQL to fetch data from physical table under this filter.
 	sql := fmt.Sprintf("select 1 from `%s`.`%s` where not %s limit 1", dbInfo.Name.L, tableInfo.Name.L, constr.ExprString)
-	ctx := kv.WithInternalSourceType(w.ctx, kv.InternalTxnDDL)
+	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnDDL)
 	rows, _, err := sctx.GetRestrictedSQLExecutor().ExecRestrictedSQL(ctx, nil, sql)
 	if err != nil {
 		return errors.Trace(err)

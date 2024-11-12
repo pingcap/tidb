@@ -1533,12 +1533,13 @@ func TestExprPushDownToTiKV(t *testing.T) {
 	jsonColumn := genColumn(mysql.TypeJSON, 1)
 	intColumn := genColumn(mysql.TypeLonglong, 2)
 	realColumn := genColumn(mysql.TypeDouble, 3)
-	//decimalColumn := genColumn(mysql.TypeNewDecimal, 4)
+	decimalColumn := genColumn(mysql.TypeNewDecimal, 4)
 	stringColumn := genColumn(mysql.TypeString, 5)
-	//datetimeColumn := genColumn(mysql.TypeDatetime, 6)
+	datetimeColumn := genColumn(mysql.TypeDatetime, 6)
 	binaryStringColumn := genColumn(mysql.TypeString, 7)
 	dateColumn := genColumn(mysql.TypeDate, 8)
 	byteColumn := genColumn(mysql.TypeBit, 9)
+	durationColumn := genColumn(mysql.TypeDuration, 10)
 	binaryStringColumn.RetType.SetCollate(charset.CollationBin)
 
 	// Test exprs that cannot be pushed.
@@ -1754,6 +1755,66 @@ func TestExprPushDownToTiKV(t *testing.T) {
 			functionName: ast.JSONMergePatch,
 			retType:      types.NewFieldType(mysql.TypeJSON),
 			args:         []Expression{jsonColumn, jsonColumn, jsonColumn},
+		},
+		{
+			functionName: ast.DateAdd,
+			retType:      types.NewFieldType(mysql.TypeString),
+			args:         []Expression{stringColumn, stringColumn, NewStrConst("second")},
+		},
+		{
+			functionName: ast.DateAdd,
+			retType:      types.NewFieldType(mysql.TypeString),
+			args:         []Expression{decimalColumn, realColumn, NewStrConst("day")},
+		},
+		{
+			functionName: ast.DateAdd,
+			retType:      types.NewFieldType(mysql.TypeDatetime),
+			args:         []Expression{datetimeColumn, intColumn, NewStrConst("year")},
+		},
+		{
+			functionName: ast.DateAdd,
+			retType:      types.NewFieldType(mysql.TypeDuration),
+			args:         []Expression{durationColumn, stringColumn, NewStrConst("minute")},
+		},
+		{
+			functionName: ast.DateAdd,
+			retType:      types.NewFieldType(mysql.TypeDatetime),
+			args:         []Expression{durationColumn, stringColumn, NewStrConst("year_month")},
+		},
+		{
+			functionName: ast.DateSub,
+			retType:      types.NewFieldType(mysql.TypeString),
+			args:         []Expression{stringColumn, intColumn, NewStrConst("microsecond")},
+		},
+		{
+			functionName: ast.DateSub,
+			retType:      types.NewFieldType(mysql.TypeString),
+			args:         []Expression{intColumn, realColumn, NewStrConst("day")},
+		},
+		{
+			functionName: ast.DateSub,
+			retType:      types.NewFieldType(mysql.TypeDatetime),
+			args:         []Expression{datetimeColumn, intColumn, NewStrConst("quarter")},
+		},
+		{
+			functionName: ast.DateSub,
+			retType:      types.NewFieldType(mysql.TypeDuration),
+			args:         []Expression{durationColumn, stringColumn, NewStrConst("hour")},
+		},
+		{
+			functionName: ast.DateSub,
+			retType:      types.NewFieldType(mysql.TypeDatetime),
+			args:         []Expression{durationColumn, stringColumn, NewStrConst("year_month")},
+		},
+		{
+			functionName: ast.AddDate,
+			retType:      types.NewFieldType(mysql.TypeDatetime),
+			args:         []Expression{durationColumn, stringColumn, NewStrConst("WEEK")},
+		},
+		{
+			functionName: ast.SubDate,
+			retType:      types.NewFieldType(mysql.TypeString),
+			args:         []Expression{stringColumn, intColumn, NewStrConst("hour")},
 		},
 	}
 

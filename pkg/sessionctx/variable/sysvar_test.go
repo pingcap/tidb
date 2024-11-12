@@ -1648,12 +1648,12 @@ func TestTiDBSchemaCacheSize(t *testing.T) {
 	// Check default value
 	require.Equal(t, schemaCacheSize.Value, strconv.Itoa(DefTiDBSchemaCacheSize))
 
-	// MinValue is 512 MB
-	err = mock.SetGlobalSysVar(context.Background(), TiDBSchemaCacheSize, strconv.FormatUint(100*mb, 10))
+	// MinValue is 64 MB
+	err = mock.SetGlobalSysVar(context.Background(), TiDBSchemaCacheSize, strconv.FormatUint(63*mb, 10))
 	require.NoError(t, err)
 	val, err = mock.GetGlobalSysVar(TiDBSchemaCacheSize)
 	require.NoError(t, err)
-	require.Equal(t, "512MB", val)
+	require.Equal(t, "64MB", val)
 
 	// MaxValue is 9223372036854775807
 	err = mock.SetGlobalSysVar(context.Background(), TiDBSchemaCacheSize, strconv.FormatUint(maxValue, 10))
@@ -1663,11 +1663,11 @@ func TestTiDBSchemaCacheSize(t *testing.T) {
 	require.Equal(t, strconv.FormatUint(maxValue, 10), val)
 
 	// test MinValue-1
-	err = mock.SetGlobalSysVar(context.Background(), TiDBSchemaCacheSize, strconv.FormatUint(100*mb-1, 10))
+	err = mock.SetGlobalSysVar(context.Background(), TiDBSchemaCacheSize, strconv.FormatUint(64*mb-1, 10))
 	require.NoError(t, err)
 	val, err = mock.GetGlobalSysVar(TiDBSchemaCacheSize)
 	require.NoError(t, err)
-	require.Equal(t, "512MB", val)
+	require.Equal(t, "64MB", val)
 
 	// test MaxValue+1
 	err = mock.SetGlobalSysVar(context.Background(), TiDBSchemaCacheSize, strconv.FormatUint(maxValue+1, 10))
@@ -1702,8 +1702,8 @@ func TestTiDBSchemaCacheSize(t *testing.T) {
 	require.NoError(t, err)
 	val, err = mock.GetGlobalSysVar(TiDBSchemaCacheSize)
 	require.NoError(t, err)
-	require.Equal(t, SchemaCacheSize.Load(), uint64(512<<20))
-	require.Equal(t, "512MB", val)
+	require.Equal(t, SchemaCacheSize.Load(), uint64(64<<20))
+	require.Equal(t, "64MB", val)
 
 	err = mock.SetGlobalSysVar(context.Background(), TiDBSchemaCacheSize, "12345678KB")
 	require.NoError(t, err)

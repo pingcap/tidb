@@ -292,13 +292,26 @@ func NewPlanCacheKey(sctx sessionctx.Context, stmt *PlanCacheStmt) (key, binding
 	if vars.TimeZone != nil {
 		_, timezoneOffset = time.Now().In(vars.TimeZone).Zone()
 	}
-	_, connCollation := vars.GetCharsetInfo()
+	connCharset, connCollation := vars.GetCharsetInfo()
+
+	// not allow to share the same plan among different users for safety.
+	var userName, hostName string
+	if sctx.GetSessionVars().User != nil { // might be nil if in test
+		userName = sctx.GetSessionVars().User.AuthUsername
+		hostName = sctx.GetSessionVars().User.AuthHostname
+	}
+
+	// the user might switch the prune mode dynamically
+	pruneMode := sctx.GetSessionVars().PartitionPruneMode.Load()
 
 	hash := make([]byte, 0, len(stmt.StmtText)*2) // TODO: a Pool for this
+	hash = append(hash, hack.Slice(userName)...)
+	hash = append(hash, hack.Slice(hostName)...)
 	hash = append(hash, hack.Slice(stmtDB)...)
 	hash = append(hash, hack.Slice(stmt.StmtText)...)
 	hash = codec.EncodeInt(hash, stmt.SchemaVersion)
 	hash = hashInt64Uint64Map(hash, stmt.RelateVersion)
+	hash = append(hash, pruneMode...)
 	// Only be set in rc or for update read and leave it default otherwise.
 	// In Rc or ForUpdateRead, we should check whether the information schema has been changed when using plan cache.
 	// If it changed, we should rebuild the plan. lastUpdatedSchemaVersion help us to decide whether we should rebuild
@@ -317,6 +330,7 @@ func NewPlanCacheKey(sctx sessionctx.Context, stmt *PlanCacheStmt) (key, binding
 	}
 	hash = codec.EncodeInt(hash, int64(vars.SelectLimit))
 	hash = append(hash, hack.Slice(binding)...)
+	hash = append(hash, hack.Slice(connCharset)...)
 	hash = append(hash, hack.Slice(connCollation)...)
 	hash = append(hash, hack.Slice(strconv.FormatBool(vars.InRestrictedSQL))...)
 	hash = append(hash, hack.Slice(strconv.FormatBool(variable.RestrictedReadOnly.Load()))...)
@@ -416,23 +430,6 @@ type PlanCacheValue struct {
 	stmtHints     *hint.StmtHints    // read-only, hints which set session variables
 }
 
-// CloneForInstancePlanCache clones a PlanCacheValue for instance plan cache.
-// Since PlanCacheValue.Plan is not read-only, to solve the concurrency problem when sharing the same PlanCacheValue
-// across multiple sessions, we need to clone the PlanCacheValue for each session.
-func (v *PlanCacheValue) CloneForInstancePlanCache(ctx context.Context, newCtx base.PlanContext) (*PlanCacheValue, bool) {
-	clonedPlan, ok := v.Plan.CloneForPlanCache(newCtx)
-	if !ok {
-		return nil, false
-	}
-	if intest.InTest && ctx.Value(PlanCacheKeyTestClone{}) != nil {
-		ctx.Value(PlanCacheKeyTestClone{}).(func(plan, cloned base.Plan))(v.Plan, clonedPlan)
-	}
-	cloned := new(PlanCacheValue)
-	*cloned = *v
-	cloned.Plan = clonedPlan
-	return cloned, true
-}
-
 // unKnownMemoryUsage represent the memory usage of uncounted structure, maybe need implement later
 // 100 KiB is approximate consumption of a plan from our internal tests
 const unKnownMemoryUsage = int64(50 * size.KB)
@@ -526,6 +523,11 @@ type PointGetExecutorCache struct {
 	// Notice that we should only cache the PointGetExecutor that have a snapshot with MaxTS in it.
 	// If the current plan is not PointGet or does not use MaxTS optimization, this value should be nil here.
 	Executor any
+
+	// FastPlan is only used for instance plan cache.
+	// To ensure thread-safe, we have to clone each plan before reusing if using instance plan cache.
+	// To reduce the memory allocation and increase performance, we cache the FastPlan here.
+	FastPlan *PointGetPlan
 }
 
 // PlanCacheStmt store prepared ast from PrepareExec and other related fields

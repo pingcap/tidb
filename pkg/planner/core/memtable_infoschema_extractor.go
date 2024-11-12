@@ -198,9 +198,15 @@ func (e *InfoSchemaBaseExtractor) Extract(
 		}
 		var likePatterns []string
 		remained, likePatterns = e.extractLikePatternCol(ctx, schema, names, remained, colName, true, false)
+		if len(likePatterns) == 0 {
+			continue
+		}
 		regexp := make([]collate.WildcardPattern, len(likePatterns))
 		for i, pattern := range likePatterns {
-			regexp[i] = collate.GetCollatorByID(collate.CollationName2ID(mysql.UTF8MB4DefaultCollation)).Pattern()
+			// Because @@lower_case_table_names is always 2 in TiDB,
+			// schema object names comparison should be case insensitive.
+			ciCollateID := collate.CollationName2ID(mysql.UTF8MB4GeneralCICollation)
+			regexp[i] = collate.GetCollatorByID(ciCollateID).Pattern()
 			regexp[i].Compile(pattern, byte('\\'))
 		}
 		e.LikePatterns[colName] = likePatterns
@@ -248,6 +254,11 @@ func (e *InfoSchemaBaseExtractor) ExplainInfo(_ base.PhysicalPlan) string {
 func (e *InfoSchemaBaseExtractor) filter(colName string, val string) bool {
 	if e.SkipRequest {
 		return true
+	}
+	for _, re := range e.colsRegexp[colName] {
+		if !re.DoMatch(val) {
+			return true
+		}
 	}
 	predVals, ok := e.ColPredicates[colName]
 	if ok && len(predVals) > 0 {
@@ -661,6 +672,15 @@ func findTableAndSchemaByName(
 		schemaSlice = append(schemaSlice, st.schema)
 		tableSlice = append(tableSlice, st.table)
 	}
+	sort.Slice(schemaSlice, func(i, j int) bool {
+		iSchema, jSchema := schemaSlice[i].L, schemaSlice[j].L
+		less := iSchema < jSchema ||
+			(iSchema == jSchema && tableSlice[i].Name.L < tableSlice[j].Name.L)
+		if less {
+			tableSlice[i], tableSlice[j] = tableSlice[j], tableSlice[i]
+		}
+		return less
+	})
 	return schemaSlice, tableSlice, nil
 }
 
@@ -687,6 +707,9 @@ func listTablesForEachSchema(
 	return schemaSlice, tableSlice, nil
 }
 
+// findSchemasForTables finds a schema for each tableInfo, and it
+// returns a schema slice and a table slice that has the same length.
+// Note that input arg "tableSlice" will be changed in place.
 func findSchemasForTables(
 	ctx context.Context,
 	is infoschema.InfoSchema,
@@ -721,6 +744,15 @@ func findSchemasForTables(
 			remains = append(remains, tbl)
 		}
 	}
+	sort.Slice(schemaSlice, func(i, j int) bool {
+		iSchema, jSchema := schemaSlice[i].L, schemaSlice[j].L
+		less := iSchema < jSchema ||
+			(iSchema == jSchema && remains[i].Name.L < remains[j].Name.L)
+		if less {
+			remains[i], remains[j] = remains[j], remains[i]
+		}
+		return less
+	})
 	return schemaSlice, remains, nil
 }
 
