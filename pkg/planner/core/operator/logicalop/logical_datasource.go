@@ -56,7 +56,7 @@ type DataSource struct {
 	Columns       []*model.ColumnInfo
 	DBName        pmodel.CIStr
 
-	TableAsName *pmodel.CIStr
+	TableAsName *pmodel.CIStr `hash64-equals:"true"`
 	// IndexMergeHints are the hint for indexmerge.
 	IndexMergeHints []h.HintedIndex
 	// PushedDownConds are the conditions that will be pushed down to coprocessor.

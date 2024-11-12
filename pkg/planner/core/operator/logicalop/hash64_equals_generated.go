@@ -464,6 +464,12 @@ func (op *DataSource) Hash64(h base.Hasher) {
 		h.HashByte(base.NotNilFlag)
 		op.TableInfo.Hash64(h)
 	}
+	if op.TableAsName == nil {
+		h.HashByte(base.NilFlag)
+	} else {
+		h.HashByte(base.NotNilFlag)
+		op.TableAsName.Hash64(h)
+	}
 	if op.PushedDownConds == nil {
 		h.HashByte(base.NilFlag)
 	} else {
@@ -502,6 +508,9 @@ func (op *DataSource) Equals(other any) bool {
 		return false
 	}
 	if !op.TableInfo.Equals(op2.TableInfo) {
+		return false
+	}
+	if !op.TableAsName.Equals(op2.TableAsName) {
 		return false
 	}
 	if (op.PushedDownConds == nil && op2.PushedDownConds != nil) || (op.PushedDownConds != nil && op2.PushedDownConds == nil) || len(op.PushedDownConds) != len(op2.PushedDownConds) {

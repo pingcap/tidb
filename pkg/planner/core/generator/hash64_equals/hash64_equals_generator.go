@@ -17,6 +17,7 @@ package main
 import (
 	"bytes"
 	"fmt"
+	"github.com/pingcap/tidb/pkg/parser/types"
 	"go/format"
 	"log"
 	"os"
@@ -49,7 +50,14 @@ func GenHash64Equals4LogicalOps() ([]byte, error) {
 	return c.format()
 }
 
+// IHashEquals is the interface for hash64 and equals inside parser pkg.
+type IHashEquals interface {
+	Hash64(h types.IHasher)
+	Equals(other any) bool
+}
+
 var hashEqualsType = reflect.TypeOf((*base.HashEquals)(nil)).Elem()
+var iHashEqualsType = reflect.TypeOf((*IHashEquals)(nil)).Elem()
 
 func genHash64EqualsForLogicalOps(x any) ([]byte, error) {
 	c := new(cc)
@@ -152,7 +160,8 @@ func (c *cc) EqualsElement(fType reflect.Type, lhs, rhs string, i string) {
 		reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64, reflect.Float32, reflect.Float64:
 		c.write("if %v != %v {return false}", lhs, rhs)
 	default:
-		if fType.Implements(hashEqualsType) || reflect.PtrTo(fType).Implements(hashEqualsType) {
+		if fType.Implements(hashEqualsType) || fType.Implements(iHashEqualsType) ||
+			reflect.PtrTo(fType).Implements(hashEqualsType) || reflect.PtrTo(fType).Implements(iHashEqualsType) {
 			if fType.Kind() == reflect.Struct {
 				rhs = "&" + rhs
 			}
@@ -186,7 +195,8 @@ func (c *cc) Hash64Element(fType reflect.Type, callName string) {
 	case reflect.Float32, reflect.Float64:
 		c.write("h.HashFloat64(float64(%v))", callName)
 	default:
-		if fType.Implements(hashEqualsType) || reflect.PtrTo(fType).Implements(hashEqualsType) {
+		if fType.Implements(hashEqualsType) || fType.Implements(iHashEqualsType) ||
+			reflect.PtrTo(fType).Implements(hashEqualsType) || reflect.PtrTo(fType).Implements(iHashEqualsType) {
 			c.write("%v.Hash64(h)", callName)
 		} else {
 			panic("doesn't support element type" + fType.Kind().String())
