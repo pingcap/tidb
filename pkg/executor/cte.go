@@ -90,16 +90,16 @@ func (e *CTEExec) Open(ctx context.Context) (err error) {
 	defer e.producer.resTbl.Unlock()
 
 	if e.producer.checkAndUpdateCorColHashCode() {
-		e.producer.reset()
-		if err = e.producer.reopenTbls(); err != nil {
+		err = e.producer.reset()
+		if err != nil {
 			return err
 		}
 	}
 	if e.producer.openErr != nil {
 		return e.producer.openErr
 	}
-	if !e.producer.opened {
-		if err = e.producer.openProducer(ctx, e); err != nil {
+	if !e.producer.hasCTEResult() && !e.producer.executorOpened {
+		if err = e.producer.openProducerExecutor(ctx, e); err != nil {
 			return err
 		}
 	}
@@ -110,14 +110,14 @@ func (e *CTEExec) Open(ctx context.Context) (err error) {
 func (e *CTEExec) Next(ctx context.Context, req *chunk.Chunk) (err error) {
 	e.producer.resTbl.Lock()
 	defer e.producer.resTbl.Unlock()
-	if !e.producer.resTbl.Done() {
-		// in case that another CTEExec call close without calling Next().
-		if !e.producer.opened {
-			if err = e.producer.openProducer(ctx, e); err != nil {
+	if !e.producer.hasCTEResult() {
+		// in case that another CTEExec call close without generate CTE result.
+		if !e.producer.executorOpened {
+			if err = e.producer.openProducerExecutor(ctx, e); err != nil {
 				return err
 			}
 		}
-		if err = e.producer.produce(ctx); err != nil {
+		if err = e.producer.genCTEResult(ctx); err != nil {
 			return err
 		}
 	}
@@ -139,7 +139,7 @@ func (e *CTEExec) Close() (firstErr error) {
 	func() {
 		e.producer.resTbl.Lock()
 		defer e.producer.resTbl.Unlock()
-		if e.producer.opened {
+		if e.producer.executorOpened {
 			failpoint.Inject("mock_cte_exec_panic_avoid_deadlock", func(v failpoint.Value) {
 				ok := v.(bool)
 				if ok {
@@ -147,15 +147,16 @@ func (e *CTEExec) Close() (firstErr error) {
 					panic(exeerrors.ErrMemoryExceedForQuery)
 				}
 			})
-			// closeProducer() only close seedExec and recursiveExec, will not touch resTbl.
-			// It means you can still read resTbl after call closeProducer().
-			// You can even call all three functions(openProducer/produce/closeProducer) in CTEExec.Next().
+			// closeProducerExecutor() only close seedExec and recursiveExec, will not touch resTbl.
+			// It means you can still read resTbl after call closeProducerExecutor().
+			// You can even call all three functions(openProducerExecutor/genCTEResult/closeProducerExecutor) in CTEExec.Next().
 			// Separating these three function calls is only to follow the abstraction of the volcano model.
-			err := e.producer.closeProducer()
+			err := e.producer.closeProducerExecutor()
 			firstErr = setFirstErr(firstErr, err, "close cte producer error")
-			if !e.producer.resTbl.Done() {
-				// `produce` is not called, in this case, we reset it
-				e.producer.reset()
+			if !e.producer.hasCTEResult() {
+				// CTE result is not generated, in this case, we reset it
+				err = e.producer.reset()
+				firstErr = setFirstErr(firstErr, err, "close cte producer error")
 			}
 		}
 	}()
@@ -171,8 +172,10 @@ func (e *CTEExec) reset() {
 }
 
 type cteProducer struct {
-	// opened should be false when not open or open fail(a.k.a. openErr != nil)
-	opened bool
+	// executorOpened is used to indicate whether the executor(seedExec/recursiveExec) is opened.
+	// when executorOpened is true, the executor is opened, otherwise it means the executor is
+	// not opened or is already closed.
+	executorOpened bool
 
 	// cteProducer is shared by multiple operators, so if the first operator tries to open
 	// and got error, the second should return open error directly instead of open again.
@@ -211,10 +214,10 @@ type cteProducer struct {
 	corColHashCodes [][]byte
 }
 
-func (p *cteProducer) openProducer(ctx context.Context, cteExec *CTEExec) (err error) {
+func (p *cteProducer) openProducerExecutor(ctx context.Context, cteExec *CTEExec) (err error) {
 	defer func() {
 		p.openErr = err
-		p.opened = true
+		p.executorOpened = true
 	}()
 	if p.seedExec == nil {
 		return errors.New("seedExec for CTEExec is nil")
@@ -257,7 +260,7 @@ func (p *cteProducer) openProducer(ctx context.Context, cteExec *CTEExec) (err e
 	return nil
 }
 
-func (p *cteProducer) closeProducer() (firstErr error) {
+func (p *cteProducer) closeProducerExecutor() (firstErr error) {
 	err := exec.Close(p.seedExec)
 	firstErr = setFirstErr(firstErr, err, "close seedExec err")
 
@@ -276,6 +279,7 @@ func (p *cteProducer) closeProducer() (firstErr error) {
 	// because ExplainExec still needs tracker to get mem usage info.
 	p.memTracker = nil
 	p.diskTracker = nil
+	p.executorOpened = false
 	return
 }
 
@@ -342,7 +346,13 @@ func (p *cteProducer) nextChunkLimit(cteExec *CTEExec, req *chunk.Chunk) error {
 	return nil
 }
 
-func (p *cteProducer) produce(ctx context.Context) (err error) {
+func (p *cteProducer) hasCTEResult() bool {
+	return p.resTbl.Done()
+}
+
+// genCTEResult generates the result of CTE, and stores the result in resTbl.
+// This is a synchronous function, which means it will block until the result is generated.
+func (p *cteProducer) genCTEResult(ctx context.Context) (err error) {
 	if p.resTbl.Error() != nil {
 		return p.resTbl.Error()
 	}
@@ -535,12 +545,16 @@ func (p *cteProducer) setupTblsForNewIteration() (err error) {
 	return nil
 }
 
-func (p *cteProducer) reset() {
+func (p *cteProducer) reset() error {
 	p.curIter = 0
 	p.hashTbl = nil
-
-	p.opened = false
+	p.executorOpened = false
 	p.openErr = nil
+
+	if err := p.reopenTbls(); err != nil {
+		return err
+	}
+	return nil
 }
 
 func (p *cteProducer) resetTracker() {
@@ -559,7 +573,7 @@ func (p *cteProducer) reopenTbls() (err error) {
 		p.hashTbl = join.NewConcurrentMapHashTable()
 	}
 	// Normally we need to setup tracker after calling Reopen(),
-	// But reopen resTbl means we need to call produce() again, it will setup tracker.
+	// But reopen resTbl means we need to call genCTEResult() again, it will setup tracker.
 	if err := p.resTbl.Reopen(); err != nil {
 		return err
 	}
