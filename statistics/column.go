@@ -206,7 +206,24 @@ func (c *Column) equalRowCount(sctx sessionctx.Context, val types.Datum, encoded
 	// 3. use uniform distribution assumption for the rest (even when this value is not covered by the range of stats)
 	histNDV := float64(c.Histogram.NDV - int64(c.TopN.Num()))
 	if histNDV <= 0 {
-		return 0, nil
+		// If there has been no modifcations - return zero
+		modifiedRows := float64(realtimeRowCount) - c.TotalRowCount()
+		if modifiedRows == 0 {
+			return 0, nil
+		} else if modifiedRows < 0 {
+			modifiedRows = float64(realtimeRowCount)
+		}
+		// ELSE calculate an approximate estimate based upon newly inserted rows.
+		//
+		// Reset to the original NDV, or if no NDV - derive an NDV using sqrt
+		if c.Histogram.NDV > 0 {
+			histNDV = float64(c.Histogram.NDV)
+		} else {
+			histNDV = math.Sqrt(math.Min(c.TotalRowCount(), modifiedRows))
+		}
+		// As a conservative estimate - take the smaller of the orignal totalRows or the additions.
+		totalRowCount := math.Min(c.TotalRowCount(), modifiedRows)
+		return math.Max(1, totalRowCount/histNDV), nil
 	}
 	return c.Histogram.notNullCount() / histNDV, nil
 }
