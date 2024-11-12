@@ -1,6 +1,6 @@
 module github.com/pingcap/tidb
 
-go 1.19
+go 1.23
 
 require (
 	cloud.google.com/go/storage v1.30.1
