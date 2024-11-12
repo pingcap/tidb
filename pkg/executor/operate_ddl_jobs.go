@@ -171,7 +171,7 @@ func (e *AlterDDLJobExec) processAlterDDLJob(
 			continue
 		}
 		if !job.IsAlterable() {
-			return errors.New("job is not alterable")
+			return errors.New(fmt.Sprintf("DDL job %d is not alterable", e.jobID))
 		}
 		if err = e.updateReorgMeta(job, model.AdminCommandByEndUser); err != nil {
 			continue
@@ -211,7 +211,7 @@ func (e *AlterDDLJobExec) updateReorgMeta(job *model.Job, byWho model.AdminComma
 			}
 			job.AdminOperator = byWho
 		default:
-			return errors.Errorf("unsupported alter ddl jobs param: %s", opt.Name)
+			return errors.Errorf("Unsupported admin alter ddl jobs config: %s", opt.Name)
 		}
 	}
 	return nil
@@ -248,7 +248,7 @@ func (e *AlterDDLJobExec) appendResult(ctx context.Context, req *chunk.Chunk) er
 		case core.AlterDDLJobBatchSize:
 			req.AppendString(idx+1, fmt.Sprintf("%d", job.ReorgMeta.BatchSize))
 		default:
-			return errors.Errorf("unsupported alter ddl jobs param: %s", opt.Name)
+			return errors.Errorf("Unsupported admin alter ddl jobs config: %s", opt.Name)
 		}
 	}
 	return nil
