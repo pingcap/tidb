@@ -1560,7 +1560,6 @@ func createRestoreClient(ctx context.Context, g glue.Glue, cfg *RestoreConfig, m
 		return nil, errors.Trace(err)
 	}
 	client.SetCrypter(&cfg.CipherInfo)
-	client.SetConcurrencyPerStore(cfg.ConcurrencyPerStore.Value)
 	client.SetUpstreamClusterID(cfg.upstreamClusterID)
 
 	createCheckpointSessionFn := func() (glue.Session, error) {

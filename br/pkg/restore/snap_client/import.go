@@ -328,11 +328,6 @@ func (importer *SnapFileImporter) Import(
 	if err != nil {
 		return errors.Trace(err)
 	}
-	for _, f := range filesGroup {
-		for _, s := range f.SSTFiles {
-			log.Debug("file in one import", logutil.File(s), logutil.Key("start key", startKey), logutil.Key("end key", endKey))
-		}
-	}
 
 	err = utils.WithRetry(ctx, func() error {
 		// Scan regions covered by the file range
@@ -374,7 +369,7 @@ func (importer *SnapFileImporter) Import(
 		return nil
 	}, utils.NewImportSSTBackoffer())
 	if err != nil {
-		log.Error("import sst file failed after retry, stop the whole progress", zap.Error(err))
+		log.Error("import sst file failed after retry, stop the whole progress", zapFilesGroup(filesGroup), zap.Error(err))
 		return errors.Trace(err)
 	}
 	for _, files := range filesGroup {

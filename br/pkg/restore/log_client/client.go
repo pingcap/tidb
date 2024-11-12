@@ -81,22 +81,22 @@ const maxSplitKeysOnce = 10240
 // rawKVBatchCount specifies the count of entries that the rawkv client puts into TiKV.
 const rawKVBatchCount = 64
 
-// LogBackupManager holds all log-related fields
-type LogBackupManager struct {
+// LogRestoreManager holds all log-related fields
+type LogRestoreManager struct {
 	fileImporter     *LogFileImporter
 	workerPool       *tidbutil.WorkerPool
 	checkpointRunner *checkpoint.CheckpointRunner[checkpoint.LogRestoreKeyType, checkpoint.LogRestoreValueType]
 }
 
-func NewLogBackupManager(
+func NewLogRestoreManager(
 	ctx context.Context,
 	fileImporter *LogFileImporter,
 	poolSize uint,
 	createCheckpointSessionFn func() (glue.Session, error),
-) (*LogBackupManager, error) {
+) (*LogRestoreManager, error) {
 	// for compacted reason, user only set --concurrency for log file restore speed.
-	log.Info("log backup worker pool", zap.Uint("size", poolSize))
-	l := &LogBackupManager{
+	log.Info("log restore worker pool", zap.Uint("size", poolSize))
+	l := &LogRestoreManager{
 		fileImporter: fileImporter,
 		workerPool:   tidbutil.NewWorkerPool(poolSize, "log manager worker pool"),
 	}
@@ -114,7 +114,7 @@ func NewLogBackupManager(
 	return l, nil
 }
 
-func (l *LogBackupManager) Close(ctx context.Context) {
+func (l *LogRestoreManager) Close(ctx context.Context) {
 	if err := l.fileImporter.Close(); err != nil {
 		log.Warn("failed to close file importer")
 	}
@@ -123,14 +123,14 @@ func (l *LogBackupManager) Close(ctx context.Context) {
 	}
 }
 
-// SstBackupManager holds all SST-related fields
-type SstBackupManager struct {
+// SstRestoreManager holds all SST-related fields
+type SstRestoreManager struct {
 	restorer         restore.FileRestorer
 	workerPool       *tidbutil.WorkerPool
 	checkpointRunner *checkpoint.CheckpointRunner[checkpoint.RestoreKeyType, checkpoint.RestoreValueType]
 }
 
-func (s *SstBackupManager) Close(ctx context.Context) {
+func (s *SstRestoreManager) Close(ctx context.Context) {
 	if err := s.restorer.Close(); err != nil {
 		log.Warn("failed to close file restorer")
 	}
@@ -139,23 +139,20 @@ func (s *SstBackupManager) Close(ctx context.Context) {
 	}
 }
 
-func NewSstBackupManager(
+func NewSstRestoreManager(
 	ctx context.Context,
 	snapFileImporter *snapclient.SnapFileImporter,
 	concurrencyPerStore uint,
 	storeCount uint,
 	createCheckpointSessionFn func() (glue.Session, error),
-) (*SstBackupManager, error) {
-	// we believe 32 is large enough for download worker pool.
-	// it won't reach the limit if sst files distribute evenly.
-	// when restore memory usage is still too high, we should reduce concurrencyPerStore
-	// to sarifice some speed to reduce memory usage.
-	// This is similar to full restore, consider they are the same workflow
-	// the poolSize should be larger than concurrencyPerStore * then count of stores
+) (*SstRestoreManager, error) {
+	// This poolSize is similar to full restore, as both workflows are comparable.
+	// The poolSize should be greater than concurrencyPerStore multiplied by the number of stores.
 	poolSize := concurrencyPerStore * 32 * storeCount
-	log.Info("sst backup worker pool", zap.Uint("size", poolSize))
+	log.Info("sst restore worker pool", zap.Uint("size", poolSize))
 	sstWorkerPool := tidbutil.NewWorkerPool(poolSize, "sst file")
-	s := &SstBackupManager{
+
+	s := &SstRestoreManager{
 		workerPool: tidbutil.NewWorkerPool(poolSize, "log manager worker pool"),
 	}
 	se, err := createCheckpointSessionFn()
@@ -177,8 +174,8 @@ func NewSstBackupManager(
 
 type LogClient struct {
 	*LogFileManager
-	logBackupManager *LogBackupManager
-	sstBackupManager *SstBackupManager
+	logRestoreManager *LogRestoreManager
+	sstRestoreManager *SstRestoreManager
 
 	cipher              *backuppb.CipherInfo
 	pdClient            pd.Client
@@ -231,8 +228,8 @@ func NewRestoreClient(
 // Close a client.
 func (rc *LogClient) Close(ctx context.Context) {
 	defer func() {
-		rc.logBackupManager.Close(ctx)
-		rc.sstBackupManager.Close(ctx)
+		rc.logRestoreManager.Close(ctx)
+		rc.sstRestoreManager.Close(ctx)
 	}()
 
 	// close the connection, and it must be succeed when in SQL mode.
@@ -293,12 +290,12 @@ func (rc *LogClient) RestoreCompactedSstFiles(
 	// TODO: Future enhancements may explore the feasibility of reintroducing batch restoration
 	// while maintaining optimal performance and resource utilization.
 	for _, i := range restoreFilesInfos {
-		err := rc.sstBackupManager.restorer.Restore(onProgress, []restore.RestoreFilesInfo{i})
+		err := rc.sstRestoreManager.restorer.Restore(onProgress, []restore.RestoreFilesInfo{i})
 		if err != nil {
 			return errors.Trace(err)
 		}
 	}
-	return rc.sstBackupManager.restorer.WaitUnitilFinish()
+	return rc.sstRestoreManager.restorer.WaitUnitilFinish()
 }
 
 func (rc *LogClient) SetRawKVBatchClient(
@@ -317,16 +314,6 @@ func (rc *LogClient) SetRawKVBatchClient(
 
 func (rc *LogClient) SetCrypter(crypter *backuppb.CipherInfo) {
 	rc.cipher = crypter
-}
-
-func (rc *LogClient) SetConcurrency(c uint) {}
-
-func (rc *LogClient) SetConcurrencyPerStore(c uint) {
-	if c == 0 {
-		c = 128
-	}
-	log.Info("download worker pool per store", zap.Uint("size", c))
-	rc.concurrencyPerStore = c
 }
 
 func (rc *LogClient) SetUpstreamClusterID(upstreamClusterID uint64) {
@@ -368,7 +355,7 @@ func (rc *LogClient) CleanUpKVFiles(
 ) error {
 	// Current we only have v1 prefix.
 	// In the future, we can add more operation for this interface.
-	return rc.logBackupManager.fileImporter.ClearFiles(ctx, rc.pdClient, "v1")
+	return rc.logRestoreManager.fileImporter.ClearFiles(ctx, rc.pdClient, "v1")
 }
 
 // Init create db connection and domain for storage.
@@ -408,7 +395,7 @@ func (rc *LogClient) InitClients(
 	metaClient := split.NewClient(rc.pdClient, rc.pdHTTPClient, rc.tlsConf, maxSplitKeysOnce, len(stores)+1)
 	importCli := importclient.NewImportClient(metaClient, rc.tlsConf, rc.keepaliveConf)
 
-	rc.logBackupManager, err = NewLogBackupManager(
+	rc.logRestoreManager, err = NewLogRestoreManager(
 		ctx,
 		NewLogFileImporter(metaClient, importCli, backend),
 		concurrency,
@@ -429,7 +416,7 @@ func (rc *LogClient) InitClients(
 	if err != nil {
 		return errors.Trace(err)
 	}
-	rc.sstBackupManager, err = NewSstBackupManager(
+	rc.sstRestoreManager, err = NewSstRestoreManager(
 		ctx,
 		snapFileImporter,
 		concurrencyPerStore,
@@ -732,7 +719,7 @@ func (rc *LogClient) RestoreKVFiles(
 			skipFile += len(files)
 		} else {
 			applyWg.Add(1)
-			rc.logBackupManager.workerPool.ApplyOnErrorGroup(eg, func() (err error) {
+			rc.logRestoreManager.workerPool.ApplyOnErrorGroup(eg, func() (err error) {
 				fileStart := time.Now()
 				defer applyWg.Done()
 				defer func() {
@@ -744,8 +731,8 @@ func (rc *LogClient) RestoreKVFiles(
 						filenames := make([]string, 0, len(files))
 						for _, f := range files {
 							filenames = append(filenames, f.Path+", ")
-							if rc.logBackupManager.checkpointRunner != nil {
-								if e := checkpoint.AppendRangeForLogRestore(ectx, rc.logBackupManager.checkpointRunner, f.MetaDataGroupName, rule.NewTableID, f.OffsetInMetaGroup, f.OffsetInMergedGroup); e != nil {
+							if rc.logRestoreManager.checkpointRunner != nil {
+								if e := checkpoint.AppendRangeForLogRestore(ectx, rc.logRestoreManager.checkpointRunner, f.MetaDataGroupName, rule.NewTableID, f.OffsetInMetaGroup, f.OffsetInMergedGroup); e != nil {
 									err = errors.Annotate(e, "failed to append checkpoint data")
 									break
 								}
@@ -756,13 +743,13 @@ func (rc *LogClient) RestoreKVFiles(
 					}
 				}()
 
-				return rc.logBackupManager.fileImporter.ImportKVFiles(ectx, files, rule, rc.shiftStartTS, rc.startTS, rc.restoreTS,
+				return rc.logRestoreManager.fileImporter.ImportKVFiles(ectx, files, rule, rc.shiftStartTS, rc.startTS, rc.restoreTS,
 					supportBatch, cipherInfo, masterKeys)
 			})
 		}
 	}
 
-	rc.logBackupManager.workerPool.ApplyOnErrorGroup(eg, func() error {
+	rc.logRestoreManager.workerPool.ApplyOnErrorGroup(eg, func() error {
 		if supportBatch {
 			err = ApplyKVFilesWithBatchMethod(ectx, logIter, int(pitrBatchCount), uint64(pitrBatchSize), applyFunc, &applyWg)
 		} else {
