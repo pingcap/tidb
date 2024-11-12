@@ -402,6 +402,10 @@ const (
 	// Value set to `false` means never use mpp.
 	TiDBAllowMPPExecution = "tidb_allow_mpp"
 
+	// TiDBEnableCommitTSOrderCheck enables checking the order of commit_ts for transactions within a session.
+	// Default value is `false`, means not to check the order of commit_ts within a session.
+	TiDBEnableCommitTSOrderCheck = "tidb_enable_commit_ts_order_check"
+
 	// TiDBAllowTiFlashCop means we only use MPP mode to query data.
 	// Default value is `true`, means to be determined by the optimizer.
 	// Value set to `false` means we may fall back to TiFlash cop plan if possible.
@@ -1309,6 +1313,7 @@ const (
 	DefPreSplitRegions                      = 0
 	DefBlockEncryptionMode                  = "aes-128-ecb"
 	DefTiDBAllowMPPExecution                = true
+	DefTiDBEnableCommitTSOrderCheck         = false
 	DefTiDBAllowTiFlashCop                  = false
 	DefTiDBHashExchangeWithNewCollation     = true
 	DefTiDBEnforceMPPExecution              = false

@@ -791,6 +791,19 @@ func TestDefaultMemoryDebugModeValue(t *testing.T) {
 	require.Equal(t, val, "0")
 }
 
+func TestEnableCommitTSOrderCheck(t *testing.T) {
+	sv := GetSysVar(TiDBEnableCommitTSOrderCheck)
+	require.True(t, sv.HasSessionScope())
+	require.False(t, sv.HasGlobalScope())
+
+	vars := NewSessionVars(nil)
+	require.Equal(t, false, vars.EnableCommitTSOrderCheck)
+
+	err := sv.SetSession(vars, On)
+	require.NoError(t, err)
+	require.Equal(t, true, vars.EnableCommitTSOrderCheck)
+}
+
 func TestSetTIDBDistributeReorg(t *testing.T) {
 	vars := NewSessionVars(nil)
 	mock := NewMockGlobalAccessor4Tests()

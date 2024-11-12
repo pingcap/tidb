@@ -955,6 +955,9 @@ type SessionVars struct {
 	// Value set to `false` means never use mpp.
 	allowMPPExecution bool
 
+	// EnableCommitTSOrderCheck enables checking order of commit_ts for transactions within a session.
+	EnableCommitTSOrderCheck bool
+
 	// allowTiFlashCop means if we must use mpp way to execute query.
 	// Default value is `false`, means to be determined by the optimizer.
 	// Value set to `true` means we may fall back to TiFlash cop if possible.
@@ -2252,6 +2255,7 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 	vars.DMLBatchSize = DefDMLBatchSize
 	vars.AllowBatchCop = DefTiDBAllowBatchCop
 	vars.allowMPPExecution = DefTiDBAllowMPPExecution
+	vars.EnableCommitTSOrderCheck = DefTiDBEnableCommitTSOrderCheck
 	vars.HashExchangeWithNewCollation = DefTiDBHashExchangeWithNewCollation
 	vars.enforceMPPExecution = DefTiDBEnforceMPPExecution
 	vars.TiFlashMaxThreads = DefTiFlashMaxThreads

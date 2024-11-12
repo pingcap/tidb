@@ -1936,6 +1936,10 @@ var defaultSysVars = []*SysVar{
 		s.allowTiFlashCop = TiDBOptOn(val)
 		return nil
 	}},
+	{Scope: ScopeSession, Name: TiDBEnableCommitTSOrderCheck, Value: Off, Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
+		s.EnableCommitTSOrderCheck = TiDBOptOn(val)
+		return nil
+	}},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiFlashFastScan, Type: TypeBool, Value: BoolToOnOff(DefTiFlashFastScan), SetSession: func(s *SessionVars, val string) error {
 		s.TiFlashFastScan = TiDBOptOn(val)
 		return nil
