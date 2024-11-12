@@ -7617,7 +7617,13 @@ func (b *PlanBuilder) adjustCTEPlanOutputName(p LogicalPlan, def *ast.CommonTabl
 	outPutNames := p.OutputNames()
 	for _, name := range outPutNames {
 		name.TblName = def.Name
+<<<<<<< HEAD
 		name.DBName = model.NewCIStr(b.ctx.GetSessionVars().CurrentDB)
+=======
+		if name.DBName.String() == "" {
+			name.DBName = pmodel.NewCIStr(b.ctx.GetSessionVars().CurrentDB)
+		}
+>>>>>>> 2d70425ccc9 (planner: fix wrong schema when to solve the schema name in CTE (#57253))
 	}
 	if len(def.ColNameList) > 0 {
 		if len(def.ColNameList) != len(p.OutputNames()) {
