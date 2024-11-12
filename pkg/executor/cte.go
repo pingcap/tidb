@@ -569,9 +569,6 @@ func (p *cteProducer) resetTracker() {
 }
 
 func (p *cteProducer) reopenTbls() (err error) {
-	if p.isDistinct {
-		p.hashTbl = join.NewConcurrentMapHashTable()
-	}
 	// Normally we need to setup tracker after calling Reopen(),
 	// But reopen resTbl means we need to call genCTEResult() again, it will setup tracker.
 	if err := p.resTbl.Reopen(); err != nil {
