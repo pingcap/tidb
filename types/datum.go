@@ -1553,6 +1553,7 @@ func (d *Datum) ConvertToMysqlYear(sc *stmtctx.StatementContext, target *FieldTy
 	return ret, errors.Trace(err)
 }
 
+<<<<<<< HEAD:types/datum.go
 func (d *Datum) convertStringToMysqlBit(sc *stmtctx.StatementContext) (uint64, error) {
 	bitStr, err := ParseBitStr(BinaryLiteral(d.b).ToString())
 	if err != nil {
@@ -1563,10 +1564,14 @@ func (d *Datum) convertStringToMysqlBit(sc *stmtctx.StatementContext) (uint64, e
 }
 
 func (d *Datum) convertToMysqlBit(sc *stmtctx.StatementContext, target *FieldType) (Datum, error) {
+=======
+func (d *Datum) convertToMysqlBit(ctx Context, target *FieldType) (Datum, error) {
+>>>>>>> 95b04c76703 (table: fix the issue that the default value for `BIT` column is wrong (#57303)):pkg/types/datum.go
 	var ret Datum
 	var uintValue uint64
 	var err error
 	switch d.k {
+<<<<<<< HEAD:types/datum.go
 	case KindBytes:
 		uintValue, err = BinaryLiteral(d.b).ToInt(sc)
 	case KindString:
@@ -1585,6 +1590,10 @@ func (d *Datum) convertToMysqlBit(sc *stmtctx.StatementContext, target *FieldTyp
 		} else {
 			uintValue, err = d.convertStringToMysqlBit(sc)
 		}
+=======
+	case KindString, KindBytes:
+		uintValue, err = BinaryLiteral(d.b).ToInt(ctx)
+>>>>>>> 95b04c76703 (table: fix the issue that the default value for `BIT` column is wrong (#57303)):pkg/types/datum.go
 	case KindInt64:
 		// if input kind is int64 (signed), when trans to bit, we need to treat it as unsigned
 		d.k = KindUint64
