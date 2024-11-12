@@ -204,11 +204,15 @@ func (t *TableInfo) Hash64(h base.Hasher) {
 
 // Equals implements HashEquals interface.
 func (t *TableInfo) Equals(other any) bool {
-	if other == nil {
-		return false
-	}
+	// any(nil) can still be converted as (*TableInfo)(nil)
 	t2, ok := other.(*TableInfo)
 	if !ok {
+		return false
+	}
+	if t == nil {
+		return t2 == nil
+	}
+	if other == nil {
 		return false
 	}
 	return t.ID == t2.ID

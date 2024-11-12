@@ -78,9 +78,10 @@ func genHash64EqualsForLogicalOps(x any) ([]byte, error) {
 	// for Equals function.
 	c.write("// Equals implements the Hash64Equals interface, only receive *%v pointer.", vType.Name())
 	c.write("func (op *%v) Equals(other any) bool {", vType.Name())
-	c.write("if other == nil { return false }")
 	c.write("op2, ok := other.(*%v)", vType.Name())
 	c.write("if !ok { return false }")
+	c.write("if op == nil { return other == nil }")
+	c.write("if other == nil { return false }")
 	hasValidField := false
 	for i := 0; i < vType.NumField(); i++ {
 		f := vType.Field(i)
@@ -114,6 +115,8 @@ func logicalOpName2PlanCodecString(name string) string {
 		return "plancodec.TypeLimit"
 	case "LogicalMaxOneRow":
 		return "plancodec.TypeMaxOneRow"
+	case "DataSource":
+		return "plancodec.TypeDataSource"
 	default:
 		return ""
 	}
@@ -183,7 +186,6 @@ func (c *cc) Hash64Element(fType reflect.Type, callName string) {
 	case reflect.Float32, reflect.Float64:
 		c.write("h.HashFloat64(float64(%v))", callName)
 	default:
-		fmt.Println(fType.String())
 		if fType.Implements(hashEqualsType) || reflect.PtrTo(fType).Implements(hashEqualsType) {
 			c.write("%v.Hash64(h)", callName)
 		} else {
