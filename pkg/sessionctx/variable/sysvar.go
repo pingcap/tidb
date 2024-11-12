@@ -3432,7 +3432,7 @@ var defaultSysVars = []*SysVar{
 func GlobalSystemVariableInitialValue(varName, varVal string) string {
 	switch varName {
 	case TiDBEnableAsyncCommit, TiDBEnable1PC:
-		if config.GetGlobalConfig().Store == "tikv" {
+		if config.GetGlobalConfig().Store == config.StoreTypeTiKV {
 			varVal = On
 		}
 	case TiDBMemOOMAction:
