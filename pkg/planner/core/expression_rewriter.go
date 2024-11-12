@@ -2443,9 +2443,6 @@ func (er *expressionRewriter) clause() clauseCode {
 }
 
 func (er *expressionRewriter) toColumn(v *ast.ColumnName) {
-	if !er.planCtx.plan.SCtx().GetSessionVars().InRestrictedSQL {
-		fmt.Println("abc")
-	}
 	idx, err := expression.FindFieldName(er.names, v)
 	if err != nil {
 		er.err = plannererrors.ErrAmbiguous.GenWithStackByArgs(v.Name, clauseMsg[fieldList])
