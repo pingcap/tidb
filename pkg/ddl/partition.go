@@ -2517,6 +2517,8 @@ func (w *worker) onTruncateTablePartition(jobCtx *jobContext, job *model.Job) (i
 	switch job.SchemaState {
 	case model.StatePublic:
 		// This work as a flag to ignore Global Index entries from the new partitions!
+		// Used in IDsInDDLToIgnore() for filtering new partitions from
+		// the global index
 		pi.NewPartitionIDs = newIDs[:]
 		pi.DDLAction = model.ActionTruncateTablePartition
 
@@ -2530,6 +2532,8 @@ func (w *worker) onTruncateTablePartition(jobCtx *jobContext, job *model.Job) (i
 		}
 		preSplitAndScatter(w.sess.Context, jobCtx.store, tblInfo, newDefinitions)
 		// This work as a flag to ignore Global Index entries from the old partitions!
+		// Used in IDsInDDLToIgnore() for filtering old partitions from
+		// the global index
 		pi.DroppingDefinitions = oldDefinitions
 		// And we don't need to filter for new partitions any longer
 		job.SchemaState = model.StateDeleteOnly
