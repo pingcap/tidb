@@ -17,12 +17,18 @@ package executor
 import (
 	"context"
 	"fmt"
-	"strconv"
-
+	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/ddl"
+	sess "github.com/pingcap/tidb/pkg/ddl/session"
+	"github.com/pingcap/tidb/pkg/ddl/util"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
+	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/util/chunk"
+	"strconv"
 )
 
 // CommandDDLJobsExec is the general struct for Cancel/Pause/Resume commands on
@@ -84,4 +90,158 @@ type PauseDDLJobsExec struct {
 // ResumeDDLJobsExec indicates an Executor for Resume a DDL Job.
 type ResumeDDLJobsExec struct {
 	*CommandDDLJobsExec
+}
+
+// AlterDDLJobExec indicates an Executor for Resume a DDL Job.
+type AlterDDLJobExec struct {
+	exec.BaseExecutor
+	jobID     int64
+	cursor    int
+	AlterOpts []*core.AlterDDLJobOpt
+}
+
+func (e *AlterDDLJobExec) Open(ctx context.Context) error {
+	newSess, err := e.GetSysSession()
+	if err != nil {
+		return err
+	}
+	defer e.ReleaseSysSession(kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL), newSess)
+
+	return e.processAlterDDLJob(ctx, newSess)
+}
+
+func getJobByID(
+	ctx context.Context,
+	se *sess.Session,
+	jobID int64,
+) (*model.Job, error) {
+	sql := fmt.Sprintf("select job_meta from mysql.%s where job_id = %s",
+		ddl.JobTable, strconv.FormatInt(jobID, 10))
+	rows, err := se.Execute(ctx, sql, "get_job_by_id")
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	if len(rows) == 0 {
+		return nil, errors.New("job not found")
+	}
+	jobBinary := rows[0].GetBytes(0)
+	job := model.Job{}
+	err = job.Decode(jobBinary)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	return &job, nil
+}
+
+func updateDDLJob2Table(
+	ctx context.Context,
+	se *sess.Session,
+	job *model.Job,
+	updateRawArgs bool,
+) error {
+	b, err := job.Encode(updateRawArgs)
+	if err != nil {
+		return err
+	}
+	sql := fmt.Sprintf("update mysql.tidb_ddl_job set job_meta = %s where job_id = %d", util.WrapKey2String(b), job.ID)
+	_, err = se.Execute(ctx, sql, "update_job")
+	return errors.Trace(err)
+}
+
+const alterDDLJobsMaxRetryCnt = 3
+
+// processAlterDDLJob try to alter the ddl job configs.
+// In case of failure, it will retry alterDDLJobsMaxRetryCnt times.
+func (e *AlterDDLJobExec) processAlterDDLJob(
+	ctx context.Context,
+	sessCtx sessionctx.Context,
+) (err error) {
+	ns := sess.NewSession(sessCtx)
+	var job *model.Job
+	for tryN := uint(0); tryN < alterDDLJobsMaxRetryCnt; tryN++ {
+		// record the last unsuccessful error
+		err = nil
+		if err = ns.Begin(ctx); err != nil {
+			continue
+		}
+		job, err = getJobByID(ctx, ns, e.jobID)
+		if err != nil {
+			continue
+		}
+		if !job.IsJobParamsAlterable() {
+			return errors.New("job is not alterable")
+		}
+		if err = e.updateReorgMeta(job, model.AdminCommandByEndUser); err != nil {
+			continue
+		}
+		if err = updateDDLJob2Table(ctx, ns, job, false); err != nil {
+			continue
+		}
+
+		if err = ns.Commit(ctx); err != nil {
+			ns.Rollback()
+			continue
+		}
+		return nil
+	}
+	return err
+}
+
+func (e *AlterDDLJobExec) updateReorgMeta(job *model.Job, byWho model.AdminCommandOperator) error {
+	for _, opt := range e.AlterOpts {
+		switch opt.Name {
+		case core.AlterDDLJobThread:
+			if opt.Value != nil {
+				cons := opt.Value.(*expression.Constant)
+				job.ReorgMeta.Concurrency = int(cons.Value.GetInt64())
+			}
+			job.AdminOperator = byWho
+		case core.AlterDDLJobBatchSize:
+			if opt.Value != nil {
+				cons := opt.Value.(*expression.Constant)
+				job.ReorgMeta.BatchSize = int(cons.Value.GetInt64())
+			}
+			job.AdminOperator = byWho
+		default:
+			return errors.Errorf("unsupported alter ddl jobs param: %s", opt.Name)
+		}
+	}
+	return nil
+}
+
+// Next implements the Executor Next interface for AlterDDLJobExec
+func (e *AlterDDLJobExec) Next(ctx context.Context, req *chunk.Chunk) error {
+	req.GrowAndReset(e.MaxChunkSize())
+	if e.cursor >= 1 {
+		return nil
+	}
+	e.appendResult(ctx, req)
+	e.cursor += 1 // only one row result
+	return nil
+}
+
+// appendResult get the updated params from job meta and append to the result chunk.
+func (e *AlterDDLJobExec) appendResult(ctx context.Context, req *chunk.Chunk) error {
+	newSctx, err := e.GetSysSession()
+	if err != nil {
+		return err
+	}
+	defer e.ReleaseSysSession(kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL), newSctx)
+
+	job, err := getJobByID(ctx, sess.NewSession(newSctx), e.jobID)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	req.AppendString(0, strconv.FormatInt(e.jobID, 10))
+	for idx, opt := range e.AlterOpts {
+		switch opt.Name {
+		case core.AlterDDLJobThread:
+			req.AppendString(idx+1, fmt.Sprintf("%d", job.ReorgMeta.Concurrency))
+		case core.AlterDDLJobBatchSize:
+			req.AppendString(idx+1, fmt.Sprintf("%d", job.ReorgMeta.BatchSize))
+		default:
+			return errors.Errorf("unsupported alter ddl jobs param: %s", opt.Name)
+		}
+	}
+	return nil
 }
