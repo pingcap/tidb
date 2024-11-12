@@ -139,7 +139,7 @@ func (e *CTEExec) Close() (firstErr error) {
 	func() {
 		e.producer.resTbl.Lock()
 		defer e.producer.resTbl.Unlock()
-		if !e.producer.closed {
+		if e.producer.opened {
 			failpoint.Inject("mock_cte_exec_panic_avoid_deadlock", func(v failpoint.Value) {
 				ok := v.(bool)
 				if ok {
@@ -172,9 +172,7 @@ func (e *CTEExec) reset() {
 
 type cteProducer struct {
 	// opened should be false when not open or open fail(a.k.a. openErr != nil)
-	opened   bool
-	produced bool
-	closed   bool
+	opened bool
 
 	// cteProducer is shared by multiple operators, so if the first operator tries to open
 	// and got error, the second should return open error directly instead of open again.
@@ -216,11 +214,7 @@ type cteProducer struct {
 func (p *cteProducer) openProducer(ctx context.Context, cteExec *CTEExec) (err error) {
 	defer func() {
 		p.openErr = err
-		if err == nil {
-			p.opened = true
-		} else {
-			p.opened = false
-		}
+		p.opened = true
 	}()
 	if p.seedExec == nil {
 		return errors.New("seedExec for CTEExec is nil")
@@ -282,7 +276,6 @@ func (p *cteProducer) closeProducer() (firstErr error) {
 	// because ExplainExec still needs tracker to get mem usage info.
 	p.memTracker = nil
 	p.diskTracker = nil
-	p.closed = true
 	return
 }
 
@@ -548,8 +541,6 @@ func (p *cteProducer) reset() {
 
 	p.opened = false
 	p.openErr = nil
-	p.produced = false
-	p.closed = false
 }
 
 func (p *cteProducer) resetTracker() {
