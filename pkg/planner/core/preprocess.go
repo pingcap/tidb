@@ -180,7 +180,7 @@ var _ = PreprocessorReturn{}.initedLastSnapshotTS
 type PreprocessorReturn struct {
 	initedLastSnapshotTS bool
 	IsStaleness          bool
-	SnapshotTSEvaluator  func(sessionctx.Context) (uint64, error)
+	SnapshotTSEvaluator  func(context.Context, sessionctx.Context) (uint64, error)
 	// LastSnapshotTS is the last evaluated snapshotTS if any
 	// otherwise it defaults to zero
 	LastSnapshotTS uint64
