@@ -38,18 +38,26 @@ func (s *LogicalSchemaProducer) Hash64(h base.Hasher) {
 	// output columns should affect the logical operator's hash.
 	// since tidb doesn't maintain the names strictly, we should
 	// only use the schema unique id to distinguish them.
-	for _, col := range s.schema.Columns {
-		col.Hash64(h)
+	if s.schema != nil {
+		h.HashByte(base.NotNilFlag)
+		for _, col := range s.schema.Columns {
+			col.Hash64(h)
+		}
+	} else {
+		h.HashByte(base.NilFlag)
 	}
 }
 
 // Equals implement HashEquals interface.
 func (s *LogicalSchemaProducer) Equals(other any) bool {
-	if other == nil {
-		return false
-	}
 	s2, ok := other.(*LogicalSchemaProducer)
 	if !ok {
+		return false
+	}
+	if s == nil {
+		return s2 == nil
+	}
+	if other == nil {
 		return false
 	}
 	for i, col := range s.schema.Columns {
