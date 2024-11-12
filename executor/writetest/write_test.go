@@ -28,7 +28,6 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
-	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -3338,7 +3337,7 @@ func TestUpdate(t *testing.T) {
 
 	tk.MustExec("create view v as select * from t")
 	err = tk.ExecToErr("update v set a = '2000-11-11'")
-	require.EqualError(t, err, core.ErrViewInvalid.GenWithStackByArgs("test", "v").Error())
+	require.EqualError(t, err, "[planner:1288]The target table v of the UPDATE is not updatable")
 	tk.MustExec("drop view v")
 
 	tk.MustExec("create sequence seq")
