@@ -436,7 +436,7 @@ type BuildWorkerV2 struct {
 	HasNullableKey bool
 	WorkerID       uint
 	builder        *rowTableBuilder
-	restoredChk    *chunk.Chunk
+	restoredChkBuf *chunk.Chunk
 }
 
 func (b *BuildWorkerV2) getSegmentsInRowTable(partID int) []*rowTableSegment {
@@ -454,7 +454,7 @@ func (b *BuildWorkerV2) updatePartitionData(cost int64) {
 
 func (b *BuildWorkerV2) processOneRestoredChunk(cost *int64) error {
 	start := time.Now()
-	err := b.builder.processOneRestoredChunk(b.restoredChk, b.HashJoinCtx, int(b.WorkerID), int(b.HashJoinCtx.partitionNumber))
+	err := b.builder.processOneRestoredChunk(b.restoredChkBuf, b.HashJoinCtx, int(b.WorkerID), int(b.HashJoinCtx.partitionNumber))
 	if err != nil {
 		return err
 	}
@@ -479,7 +479,7 @@ func (b *BuildWorkerV2) splitPartitionAndAppendToRowTableForRestoreImpl(i int, i
 		return nil
 	}
 
-	err = inDisk.FillChunk(i, b.restoredChk)
+	err = inDisk.FillChunk(i, b.restoredChkBuf)
 	if err != nil {
 		return err
 	}

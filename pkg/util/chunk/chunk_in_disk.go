@@ -167,13 +167,13 @@ func (d *DataInDiskByChunks) GetChunk(chkIdx int) (*Chunk, error) {
 }
 
 // FillChunk fills a Chunk from the DataInDiskByChunks by chkIdx.
-func (d *DataInDiskByChunks) FillChunk(chkIdx int, chk *Chunk) error {
-	err := d.readFromFisk(chkIdx)
+func (d *DataInDiskByChunks) FillChunk(srcChkIdx int, destChk *Chunk) error {
+	err := d.readFromFisk(srcChkIdx)
 	if err != nil {
 		return err
 	}
 
-	d.deserializeDataToChunk(chk)
+	d.deserializeDataToChunk(destChk)
 	return nil
 }
 

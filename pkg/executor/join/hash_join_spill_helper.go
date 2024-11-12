@@ -376,8 +376,8 @@ func (h *hashJoinSpillHelper) init() {
 		h.probeRowsInDisk = make([][]*chunk.DataInDiskByChunks, h.hashJoinExec.Concurrency)
 
 		for _, worker := range h.hashJoinExec.BuildWorkers {
-			if worker.restoredChk == nil {
-				worker.restoredChk = chunk.NewEmptyChunk(h.buildSpillChkFieldTypes)
+			if worker.restoredChkBuf == nil {
+				worker.restoredChkBuf = chunk.NewEmptyChunk(h.buildSpillChkFieldTypes)
 			}
 		}
 
