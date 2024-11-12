@@ -21,27 +21,31 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/pdpb"
+	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
 )
 
-var stores = make(map[string]kv.Driver)
+var stores = make(map[config.StoreType]kv.Driver)
 var storesLock sync.RWMutex
 
 // Register registers a kv storage with unique name and its associated Driver.
-func Register(name string, driver kv.Driver) error {
+// TODO: remove this function and use driver directly, TiDB is not a SDK.
+func Register(tp config.StoreType, driver kv.Driver) error {
 	storesLock.Lock()
 	defer storesLock.Unlock()
 
-	name = strings.ToLower(name)
-
-	if _, ok := stores[name]; ok {
-		return errors.Errorf("%s is already registered", name)
+	if !tp.Valid() {
+		return errors.Errorf("invalid storage type %s", tp)
 	}
 
-	stores[name] = driver
+	if _, ok := stores[tp]; ok {
+		return errors.Errorf("%s is already registered", tp)
+	}
+
+	stores[tp] = driver
 	return nil
 }
 
@@ -66,7 +70,7 @@ func newStoreWithRetry(path string, maxRetries int) (kv.Storage, error) {
 	}
 
 	name := strings.ToLower(storeURL.Scheme)
-	d, ok := loadDriver(name)
+	d, ok := loadDriver(config.StoreType(name))
 	if !ok {
 		return nil, errors.Errorf("invalid uri format, storage %s is not registered", name)
 	}
@@ -86,10 +90,10 @@ func newStoreWithRetry(path string, maxRetries int) (kv.Storage, error) {
 	return s, errors.Trace(err)
 }
 
-func loadDriver(name string) (kv.Driver, bool) {
+func loadDriver(tp config.StoreType) (kv.Driver, bool) {
 	storesLock.RLock()
 	defer storesLock.RUnlock()
-	d, ok := stores[name]
+	d, ok := stores[tp]
 	return d, ok
 }
 
