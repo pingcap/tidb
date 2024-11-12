@@ -108,6 +108,10 @@ func isSingleRetryableError(err error) bool {
 
 	switch nerr := err.(type) {
 	case net.Error:
+		var dErr *net.DNSError
+		if goerrors.As(nerr, &dErr) {
+			return true
+		}
 		if nerr.Timeout() {
 			return true
 		}
@@ -148,6 +152,8 @@ func isSingleRetryableError(err error) bool {
 			// 2. in write TiKV: rpc error: code = Unknown desc = EngineTraits(Engine(Status { code: IoError, sub_code:
 			//    None, sev: NoError, state: \"IO error: No such file or directory: while stat a file for size:
 			//    /...../63992d9c-fbc8-4708-b963-32495b299027_32279707_325_5280_write.sst: No such file or directory\"
+			// 3. in write TiKV: rpc error: code = Unknown desc = Engine("request region 26 is staler than local region,
+			//    local epoch conf_ver: 5 version: 65, request epoch conf_ver: 5 version: 64, please rescan region later")
 			return true
 		default:
 			return false

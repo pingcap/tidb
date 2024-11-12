@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/cmp"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/logutil"
@@ -361,7 +362,7 @@ func (t *Table) String() string {
 	for _, col := range t.Columns {
 		cols = append(cols, col)
 	}
-	slices.SortFunc(cols, func(i, j *Column) bool { return i.ID < j.ID })
+	slices.SortFunc(cols, func(i, j *Column) int { return cmp.Compare(i.ID, j.ID) })
 	for _, col := range cols {
 		strs = append(strs, col.String())
 	}
@@ -369,7 +370,7 @@ func (t *Table) String() string {
 	for _, idx := range t.Indices {
 		idxs = append(idxs, idx)
 	}
-	slices.SortFunc(idxs, func(i, j *Index) bool { return i.ID < j.ID })
+	slices.SortFunc(idxs, func(i, j *Index) int { return cmp.Compare(i.ID, j.ID) })
 	for _, idx := range idxs {
 		strs = append(strs, idx.String())
 	}
@@ -1519,6 +1520,8 @@ func (coll *HistColl) GetAvgRowSizeListInDisk(cols []*expression.Column) (size f
 			size += colHist.AvgColSizeListInDisk(coll.RealtimeCount)
 		}
 	}
+	// Avoid errors related to size less than zero
+	size = math.Max(0, size)
 	// Add 8 byte for each column's size record. See `ListInDisk` for details.
 	return size + float64(8*len(cols))
 }
@@ -1536,6 +1539,8 @@ func (coll *HistColl) GetTableAvgRowSize(ctx sessionctx.Context, cols []*express
 			size += 8 /* row_id length */
 		}
 	}
+	// Avoid errors related to size less than zero
+	size = math.Max(0, size)
 	return
 }
 

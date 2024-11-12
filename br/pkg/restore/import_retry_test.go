@@ -245,7 +245,7 @@ func TestEpochNotMatch(t *testing.T) {
 				{Id: 43},
 			},
 		},
-		Leader: &metapb.Peer{Id: 43},
+		Leader: &metapb.Peer{Id: 43, StoreId: 1},
 	}
 	newRegion := pdtypes.NewRegionInfo(info.Region, info.Leader)
 	mergeRegion := func() {
@@ -304,7 +304,8 @@ func TestRegionSplit(t *testing.T) {
 				EndKey:   codec.EncodeBytes(nil, []byte("aayy")),
 			},
 			Leader: &metapb.Peer{
-				Id: 43,
+				Id:      43,
+				StoreId: 1,
 			},
 		},
 		{
@@ -314,7 +315,8 @@ func TestRegionSplit(t *testing.T) {
 				EndKey:   target.Region.EndKey,
 			},
 			Leader: &metapb.Peer{
-				Id: 45,
+				Id:      45,
+				StoreId: 1,
 			},
 		},
 	}
@@ -596,4 +598,26 @@ func TestFilterFilesByRegion(t *testing.T) {
 		require.Equal(t, err, c.err)
 		require.Equal(t, subfile, c.subfiles)
 	}
+}
+
+func TestRetryRecognizeErrCode(t *testing.T) {
+	waitTime := 1 * time.Millisecond
+	maxWaitTime := 16 * time.Millisecond
+	ctx := context.Background()
+	inner := 0
+	outer := 0
+	utils.WithRetry(ctx, func() error {
+		e := utils.WithRetry(ctx, func() error {
+			inner++
+			e := status.Error(codes.Unavailable, "the connection to TiKV has been cut by a neko, meow :3")
+			if e != nil {
+				return errors.Trace(e)
+			}
+			return nil
+		}, utils.NewBackoffer(10, waitTime, maxWaitTime, utils.NewErrorContext("download sst", 3)))
+		outer++
+		return errors.Trace(e)
+	}, utils.NewBackoffer(10, waitTime, maxWaitTime, utils.NewErrorContext("import sst", 3)))
+	require.Equal(t, 10, outer)
+	require.Equal(t, 100, inner)
 }

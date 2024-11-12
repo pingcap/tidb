@@ -244,21 +244,17 @@ func TestIssue50614(t *testing.T) {
 		testkit.Rows(
 			"Update N/A root  N/A",
 			"└─Projection 0.00 root  test.tt.a, test.tt.b, test.tt.c, test.tt.d, test.tt.e, Column#18, Column#19, Column#20, Column#21",
-			"  └─Projection 0.00 root  test.tt.a, test.tt.b, test.tt.c, test.tt.d, test.tt.e, Column#18, Column#19, Column#20, Column#21",
-			"    └─IndexJoin 0.00 root  inner join, inner:TableReader, outer key:Column#20, Column#21, inner key:test.tt.c, test.tt.d, equal cond:eq(Column#20, test.tt.c), eq(Column#21, test.tt.d), other cond:or(or(and(eq(Column#20, 11), eq(test.tt.d, 111)), and(eq(Column#20, 22), eq(test.tt.d, 222))), or(and(eq(Column#20, 33), eq(test.tt.d, 333)), and(eq(Column#20, 44), eq(test.tt.d, 444)))), or(or(and(eq(test.tt.c, 11), eq(Column#21, 111)), and(eq(test.tt.c, 22), eq(Column#21, 222))), or(and(eq(test.tt.c, 33), eq(Column#21, 333)), and(eq(test.tt.c, 44), eq(Column#21, 444))))",
-			"      ├─Union(Build) 0.00 root  ",
-			"      │ ├─Projection 0.00 root  Column#6, Column#7, Column#8, Column#9",
-			"      │ │ └─Projection 0.00 root  1->Column#6, 2->Column#7, 3->Column#8, 4->Column#9",
-			"      │ │   └─TableDual 0.00 root  rows:0",
-			"      │ ├─Projection 0.00 root  Column#10, Column#11, Column#12, Column#13",
-			"      │ │ └─Projection 0.00 root  2->Column#10, 3->Column#11, 4->Column#12, 5->Column#13",
-			"      │ │   └─TableDual 0.00 root  rows:0",
-			"      │ └─Projection 0.00 root  Column#14, Column#15, Column#16, Column#17",
-			"      │   └─Projection 0.00 root  3->Column#14, 4->Column#15, 5->Column#16, 6->Column#17",
-			"      │     └─TableDual 0.00 root  rows:0",
-			"      └─TableReader(Probe) 0.00 root  data:Selection",
-			"        └─Selection 0.00 cop[tikv]  or(or(and(eq(test.tt.c, 11), eq(test.tt.d, 111)), and(eq(test.tt.c, 22), eq(test.tt.d, 222))), or(and(eq(test.tt.c, 33), eq(test.tt.d, 333)), and(eq(test.tt.c, 44), eq(test.tt.d, 444)))), or(or(eq(test.tt.c, 11), eq(test.tt.c, 22)), or(eq(test.tt.c, 33), eq(test.tt.c, 44))), or(or(eq(test.tt.d, 111), eq(test.tt.d, 222)), or(eq(test.tt.d, 333), eq(test.tt.d, 444)))",
-			"          └─TableRangeScan 0.00 cop[tikv] table:tt range: decided by [eq(test.tt.c, Column#20) eq(test.tt.d, Column#21)], keep order:false, stats:pseudo",
+			"  └─IndexJoin 0.00 root  inner join, inner:TableReader, outer key:Column#20, Column#21, inner key:test.tt.c, test.tt.d, equal cond:eq(Column#20, test.tt.c), eq(Column#21, test.tt.d), other cond:or(or(and(eq(Column#20, 11), eq(test.tt.d, 111)), and(eq(Column#20, 22), eq(test.tt.d, 222))), or(and(eq(Column#20, 33), eq(test.tt.d, 333)), and(eq(Column#20, 44), eq(test.tt.d, 444)))), or(or(and(eq(test.tt.c, 11), eq(Column#21, 111)), and(eq(test.tt.c, 22), eq(Column#21, 222))), or(and(eq(test.tt.c, 33), eq(Column#21, 333)), and(eq(test.tt.c, 44), eq(Column#21, 444))))",
+			"    ├─Union(Build) 0.00 root  ",
+			"    │ ├─Projection 0.00 root  1->Column#18, 2->Column#19, 3->Column#20, 4->Column#21",
+			"    │ │ └─TableDual 0.00 root  rows:0",
+			"    │ ├─Projection 0.00 root  2->Column#18, 3->Column#19, 4->Column#20, 5->Column#21",
+			"    │ │ └─TableDual 0.00 root  rows:0",
+			"    │ └─Projection 0.00 root  3->Column#18, 4->Column#19, 5->Column#20, 6->Column#21",
+			"    │   └─TableDual 0.00 root  rows:0",
+			"    └─TableReader(Probe) 0.00 root  data:Selection",
+			"      └─Selection 0.00 cop[tikv]  or(or(and(eq(test.tt.c, 11), eq(test.tt.d, 111)), and(eq(test.tt.c, 22), eq(test.tt.d, 222))), or(and(eq(test.tt.c, 33), eq(test.tt.d, 333)), and(eq(test.tt.c, 44), eq(test.tt.d, 444)))), or(or(eq(test.tt.c, 11), eq(test.tt.c, 22)), or(eq(test.tt.c, 33), eq(test.tt.c, 44))), or(or(eq(test.tt.d, 111), eq(test.tt.d, 222)), or(eq(test.tt.d, 333), eq(test.tt.d, 444)))",
+			"        └─TableRangeScan 0.00 cop[tikv] table:tt range: decided by [eq(test.tt.c, Column#20) eq(test.tt.d, Column#21)], keep order:false, stats:pseudo",
 		),
 	)
 }
@@ -288,4 +284,251 @@ func TestQBHintHandlerDuplicateObjects(t *testing.T) {
 	// Explain statement
 	tk.MustQuery("EXPLAIN WITH t AS (SELECT /*+ inl_join(e) */ em.* FROM t_employees em JOIN t_employees e WHERE em.store_id = e.department_id) SELECT * FROM t;")
 	tk.MustQuery("show warnings").Check(testkit.Rows())
+}
+
+func TestCTETableInvaildTask(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("CREATE TABLE p ( groupid bigint(20) DEFAULT NULL, KEY k1 (groupid));")
+	tk.MustExec(`CREATE TABLE g (groupid bigint(20) DEFAULT NULL,parentid bigint(20) NOT NULL,KEY k1 (parentid),KEY k2 (groupid,parentid));`)
+	tk.MustExec(`set tidb_opt_enable_hash_join=off;`)
+	tk.MustQuery(`explain WITH RECURSIVE w(gid) AS (
+  SELECT
+    groupId
+  FROM
+    p
+  UNION
+  SELECT
+    g.groupId
+  FROM
+    g
+    JOIN w ON g.parentId = w.gid
+)
+SELECT
+  1
+FROM
+  g
+WHERE
+  g.groupId IN (
+    SELECT
+      gid
+    FROM
+      w
+  );`).Check(testkit.Rows(
+		"Projection_54 9990.00 root  1->Column#17",
+		"└─IndexJoin_59 9990.00 root  inner join, inner:IndexReader_58, outer key:test.p.groupid, inner key:test.g.groupid, equal cond:eq(test.p.groupid, test.g.groupid)",
+		"  ├─HashAgg_75(Build) 12800.00 root  group by:test.p.groupid, funcs:firstrow(test.p.groupid)->test.p.groupid",
+		"  │ └─Selection_72 12800.00 root  not(isnull(test.p.groupid))",
+		"  │   └─CTEFullScan_73 16000.00 root CTE:w data:CTE_0",
+		"  └─IndexReader_58(Probe) 9990.00 root  index:Selection_57",
+		"    └─Selection_57 9990.00 cop[tikv]  not(isnull(test.g.groupid))",
+		"      └─IndexRangeScan_56 10000.00 cop[tikv] table:g, index:k2(groupid, parentid) range: decided by [eq(test.g.groupid, test.p.groupid)], keep order:false, stats:pseudo",
+		"CTE_0 16000.00 root  Recursive CTE",
+		"├─IndexReader_24(Seed Part) 10000.00 root  index:IndexFullScan_23",
+		"│ └─IndexFullScan_23 10000.00 cop[tikv] table:p, index:k1(groupid) keep order:false, stats:pseudo",
+		"└─IndexHashJoin_34(Recursive Part) 10000.00 root  inner join, inner:IndexLookUp_31, outer key:test.p.groupid, inner key:test.g.parentid, equal cond:eq(test.p.groupid, test.g.parentid)",
+		"  ├─Selection_51(Build) 8000.00 root  not(isnull(test.p.groupid))",
+		"  │ └─CTETable_52 10000.00 root  Scan on CTE_0",
+		"  └─IndexLookUp_31(Probe) 10000.00 root  ",
+		"    ├─IndexRangeScan_29(Build) 10000.00 cop[tikv] table:g, index:k1(parentid) range: decided by [eq(test.g.parentid, test.p.groupid)], keep order:false, stats:pseudo",
+		"    └─TableRowIDScan_30(Probe) 10000.00 cop[tikv] table:g keep order:false, stats:pseudo"))
+	tk.MustQuery(`show warnings`).Check(testkit.Rows())
+}
+
+// https://github.com/pingcap/tidb/issues/53236
+func TestIssue53236(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("use test;")
+	tk.MustExec("create table t1(id int primary key, a varchar(128));")
+	tk.MustExec("create table t2(id int primary key, b varchar(128), c varchar(128));")
+	tk.MustExec(`UPDATE
+    t1
+SET
+    t1.a = IFNULL(
+            (
+                SELECT
+                    t2.c
+                FROM
+                    t2
+                WHERE
+                    t2.b = t1.a
+                ORDER BY
+                    t2.b DESC,
+                    t2.c DESC
+                LIMIT
+                    1
+            ), ''
+        )
+WHERE
+    t1.id = 1;`)
+}
+
+func TestIssue52687(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("use test")
+	tk.MustExec(`CREATE TABLE t_o9_7_f (
+  c_ob5k0 int(11) NOT NULL,
+  c_r5axbk tinyint(4) DEFAULT NULL,
+  c_fulsthp7e text DEFAULT NULL,
+  c_nylhnz double DEFAULT NULL,
+  c_fd7zeyfs49 int(11) NOT NULL,
+  c_wpmmiv tinyint(4) DEFAULT NULL,
+  PRIMARY KEY (c_fd7zeyfs49) /*T![clustered_index] CLUSTERED */,
+  UNIQUE KEY c_ob5k0 (c_ob5k0)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;`)
+	tk.MustExec(`CREATE TABLE t_q1 (
+  c__c_r38murv int(11) NOT NULL,
+  c_i93u7f2yma double NOT NULL,
+  c_v5mf4 double DEFAULT NULL,
+  c_gprkp int(11) DEFAULT NULL,
+  c_ru text NOT NULL,
+  c_nml tinyint(4) DEFAULT NULL,
+  c_z text DEFAULT NULL,
+  c_ok double DEFAULT NULL,
+  PRIMARY KEY (c__c_r38murv) /*T![clustered_index] CLUSTERED */,
+  UNIQUE KEY c__c_r38murv_2 (c__c_r38murv),
+  UNIQUE KEY c_nml (c_nml)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;`)
+	tk.MustExec(`CREATE TABLE t_yzyyqbo2u (
+  c_c4l int(11) DEFAULT NULL,
+  c_yb_ text DEFAULT NULL,
+  c_pq4c1la6cv int(11) NOT NULL,
+  c_kbcid int(11) DEFAULT NULL,
+  c_um double DEFAULT NULL,
+  c_zjmgh995_6 text DEFAULT NULL,
+  c_fujjmh8m2 double NOT NULL,
+  c_qkf4n double DEFAULT NULL,
+  c__x9cqrnb0 double NOT NULL,
+  c_b5qjz_jj0 double DEFAULT NULL,
+  PRIMARY KEY (c_pq4c1la6cv) /*T![clustered_index] NONCLUSTERED */,
+  UNIQUE KEY c__x9cqrnb0 (c__x9cqrnb0),
+  UNIQUE KEY c_b5qjz_jj0 (c_b5qjz_jj0)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T! SHARD_ROW_ID_BITS=4 PRE_SPLIT_REGIONS=2 */;`)
+	tk.MustExec(`CREATE TABLE t_kg74 (
+  c_a1tv2 int(11) NOT NULL,
+  c_eobbbypzbu tinyint(4) DEFAULT NULL,
+  c_g double NOT NULL,
+  c_ixy tinyint(4) DEFAULT NULL,
+  c_if text NOT NULL,
+  c_obnq8s7_s2 double DEFAULT NULL,
+  c_xrgd2snrop tinyint(4) DEFAULT NULL,
+  c_vqafa6o6 text DEFAULT NULL,
+  c_ku44klry7o double NOT NULL,
+  c_js835qkmjz tinyint(4) DEFAULT NULL,
+  PRIMARY KEY (c_a1tv2));`)
+	tk.MustExec(`update t_kg74 set 
+  c_eobbbypzbu = (t_kg74.c_js835qkmjz in (
+    select  
+          (ref_0.c_yb_ <> 'mlp40j') as c0
+        from 
+          t_yzyyqbo2u as ref_0
+        where (89.25 && ref_0.c_pq4c1la6cv)
+      union
+      (select  
+          ((cast(null as double) != 1382756095)) 
+            and ((1=1 <> (EXISTS (
+                  select distinct 
+                      ref_2.c_zjmgh995_6 as c0, 
+                      ref_2.c_zjmgh995_6 as c1, 
+                      ref_2.c_kbcid as c2, 
+                      ref_1.c_r5axbk as c3, 
+                      -633150135 as c4, 
+                      ref_2.c_c4l as c5, 
+                      ref_1.c_fd7zeyfs49 as c6, 
+                      ref_1.c_nylhnz as c7, 
+                      ref_2.c_um as c8, 
+                      ref_2.c_c4l as c9
+                    from 
+                      t_yzyyqbo2u as ref_2
+                    where ((ref_1.c_ob5k0 <= ref_2.c_qkf4n)) 
+                      and ((EXISTS (
+                        select  
+                            ref_3.c_qkf4n as c0, 
+                            ref_3.c_kbcid as c1, 
+                            ref_3.c_qkf4n as c2, 
+                            ref_1.c_wpmmiv as c3, 
+                            ref_1.c_fd7zeyfs49 as c4, 
+                            ref_3.c_c4l as c5, 
+                            ref_1.c_r5axbk as c6, 
+                            ref_3.c_kbcid as c7
+                          from 
+                            t_yzyyqbo2u as ref_3
+                          where ((ref_2.c_qkf4n >= ( 
+                              select distinct 
+                                    ref_4.c_b5qjz_jj0 as c0
+                                  from 
+                                    t_yzyyqbo2u as ref_4
+                                  where (ref_3.c__x9cqrnb0 not in (
+                                    select  
+                                          ref_5.c_ok as c0
+                                        from 
+                                          t_q1 as ref_5
+                                        where 1=1
+                                      union
+                                      (select  
+                                          ref_6.c_b5qjz_jj0 as c0
+                                        from 
+                                          t_yzyyqbo2u as ref_6
+                                        where (ref_6.c_qkf4n not in (
+                                          select  
+                                                ref_7.c_um as c0
+                                              from 
+                                                t_yzyyqbo2u as ref_7
+                                              where 1=1
+                                            union
+                                            (select  
+                                                ref_8.c_b5qjz_jj0 as c0
+                                              from 
+                                                t_yzyyqbo2u as ref_8
+                                              where (ref_8.c_yb_ not like 'nrry%m')))))))
+                                union
+                                (select  
+                                    ref_2.c_fujjmh8m2 as c0
+                                  from 
+                                    t_q1 as ref_9
+                                  where (ref_2.c_zjmgh995_6 like 'v8%3xn%_uc'))
+                                order by c0 limit 1))) 
+                            or ((ref_1.c_fulsthp7e in (
+                              select  
+                                    ref_10.c_ru as c0
+                                  from 
+                                    t_q1 as ref_10
+                                  where (55.34 >= 1580576276)
+                                union
+                                (select  
+                                    ref_11.c_ru as c0
+                                  from 
+                                    t_q1 as ref_11
+                                  where (ref_11.c_ru in (
+                                    select distinct 
+                                          ref_12.c_zjmgh995_6 as c0
+                                        from 
+                                          t_yzyyqbo2u as ref_12
+                                        where 0<>0
+                                      union
+                                      (select  
+                                          ref_13.c_zjmgh995_6 as c0
+                                        from 
+                                          t_yzyyqbo2u as ref_13
+                                        where ('q2chm8gfsa' = ref_13.c_yb_))))))))))))))) as c0
+        from 
+          t_o9_7_f as ref_1
+        where (-9186514464458010455 <> 62.67)))), 
+  c_if = 'u1ah7', 
+  c_vqafa6o6 = (t_kg74.c_a1tv2 + (((t_kg74.c_a1tv2 between t_kg74.c_a1tv2 and t_kg74.c_a1tv2)) 
+        or (1=1)) 
+      and ((1288561802 <= t_kg74.c_a1tv2))), 
+  c_js835qkmjz = (t_kg74.c_vqafa6o6 in (
+    select  
+        ref_14.c_z as c0
+      from 
+        t_q1 as ref_14
+      where (ref_14.c_z like 'o%fiah')))
+where (t_kg74.c_obnq8s7_s2 = case when (t_kg74.c_a1tv2 is NULL) then t_kg74.c_g else t_kg74.c_obnq8s7_s2 end
+      );`)
 }

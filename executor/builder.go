@@ -59,6 +59,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/cmp"
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/cteutil"
 	"github.com/pingcap/tidb/util/dbterror/exeerrors"
@@ -1360,9 +1361,14 @@ func (b *executorBuilder) buildUnionScanFromReader(reader Executor, v *plannerco
 		us.columns = x.columns
 		us.table = x.table
 		us.virtualColumnIndex = buildVirtualColumnIndex(us.Schema(), us.columns)
-	default:
-		// The mem table will not be written by sql directly, so we can omit the union scan to avoid err reporting.
+	case *PointGetExecutor, *BatchPointGetExec, // PointGet and BatchPoint can handle virtual columns and dirty txn data themselves.
+		*TableDualExec,       // If TableDual, the result must be empty, so we can skip UnionScan and use TableDual directly here.
+		*TableSampleExecutor: // TableSample only supports sampling from disk, don't need to consider in-memory txn data for simplicity.
 		return originReader
+	default:
+		// TODO: consider more operators like Projection.
+		b.err = errors.NewNoStackErrorf("unexpected operator %T under UnionScan", reader)
+		return nil
 	}
 	return us
 }
@@ -3080,8 +3086,8 @@ func markChildrenUsedCols(outputCols []*expression.Column, childSchemas ...*expr
 			}
 		}
 		// sort the used idxes according their original indexes derived after resolveIndex.
-		slices.SortFunc(usedIdxPair, func(a, b intPair) bool {
-			return a.first < b.first
+		slices.SortFunc(usedIdxPair, func(a, b intPair) int {
+			return cmp.Compare(a.first, b.first)
 		})
 		usedIdx := make([]int, 0, len(childSchema.Columns))
 		for _, one := range usedIdxPair {
@@ -3638,8 +3644,8 @@ func (b *executorBuilder) buildTableReader(v *plannercore.PhysicalTableReader) E
 	}
 
 	// Sort the partition is necessary to make the final multiple partition key ranges ordered.
-	slices.SortFunc(partitions, func(i, j table.PhysicalTable) bool {
-		return i.GetPhysicalID() < j.GetPhysicalID()
+	slices.SortFunc(partitions, func(i, j table.PhysicalTable) int {
+		return cmp.Compare(i.GetPhysicalID(), j.GetPhysicalID())
 	})
 	ret.kvRangeBuilder = kvRangeBuilderFromRangeAndPartition{
 		sctx:       b.ctx,
@@ -3762,8 +3768,8 @@ func (builder *dataReaderBuilder) prunePartitionForInnerExecutor(tbl table.Table
 	}
 
 	// To make the final key ranges involving multiple partitions ordered.
-	slices.SortFunc(usedPartition, func(i, j table.PhysicalTable) bool {
-		return i.GetPhysicalID() < j.GetPhysicalID()
+	slices.SortFunc(usedPartition, func(i, j table.PhysicalTable) int {
+		return cmp.Compare(i.GetPhysicalID(), j.GetPhysicalID())
 	})
 	return usedPartition, true, contentPos, nil
 }
@@ -4326,6 +4332,9 @@ func (builder *dataReaderBuilder) buildUnionScanForIndexJoin(ctx context.Context
 	}
 
 	ret := builder.buildUnionScanFromReader(reader, v)
+	if builder.err != nil {
+		return nil, builder.err
+	}
 	if us, ok := ret.(*UnionScanExec); ok {
 		err = us.open(ctx)
 	}
@@ -4415,8 +4424,8 @@ func (builder *dataReaderBuilder) buildTableReaderForIndexJoin(ctx context.Conte
 			}
 		}
 		// The key ranges should be ordered.
-		slices.SortFunc(kvRanges, func(i, j kv.KeyRange) bool {
-			return bytes.Compare(i.StartKey, j.StartKey) < 0
+		slices.SortFunc(kvRanges, func(i, j kv.KeyRange) int {
+			return bytes.Compare(i.StartKey, j.StartKey)
 		})
 		return builder.buildTableReaderFromKvRanges(ctx, e, kvRanges)
 	}
@@ -4453,8 +4462,8 @@ func (builder *dataReaderBuilder) buildTableReaderForIndexJoin(ctx context.Conte
 	}
 
 	// The key ranges should be ordered.
-	slices.SortFunc(kvRanges, func(i, j kv.KeyRange) bool {
-		return bytes.Compare(i.StartKey, j.StartKey) < 0
+	slices.SortFunc(kvRanges, func(i, j kv.KeyRange) int {
+		return bytes.Compare(i.StartKey, j.StartKey)
 	})
 	return builder.buildTableReaderFromKvRanges(ctx, e, kvRanges)
 }
@@ -4575,8 +4584,8 @@ func (builder *dataReaderBuilder) buildTableReaderBase(ctx context.Context, e *T
 
 func (builder *dataReaderBuilder) buildTableReaderFromHandles(ctx context.Context, e *TableReaderExecutor, handles []kv.Handle, canReorderHandles bool) (*TableReaderExecutor, error) {
 	if canReorderHandles {
-		slices.SortFunc(handles, func(i, j kv.Handle) bool {
-			return i.Compare(j) < 0
+		slices.SortFunc(handles, func(i, j kv.Handle) int {
+			return i.Compare(j)
 		})
 	}
 	var b distsql.RequestBuilder
@@ -4832,8 +4841,8 @@ func buildKvRangesForIndexJoin(ctx sessionctx.Context, tableID, indexID int64, l
 		memTracker.Consume(2 * types.EstimatedMemUsage(tmpDatumRanges[0].LowVal, len(tmpDatumRanges)))
 	}
 	if cwc == nil {
-		slices.SortFunc(kvRanges, func(i, j kv.KeyRange) bool {
-			return bytes.Compare(i.StartKey, j.StartKey) < 0
+		slices.SortFunc(kvRanges, func(i, j kv.KeyRange) int {
+			return bytes.Compare(i.StartKey, j.StartKey)
 		})
 		return kvRanges, nil
 	}
@@ -4886,10 +4895,15 @@ func (b *executorBuilder) buildWindow(v *plannercore.PhysicalWindow) Executor {
 			baseExecutor:   base,
 			groupChecker:   newVecGroupChecker(b.ctx, groupByItems),
 			numWindowFuncs: len(v.WindowFuncDescs),
+			windowFuncs:    windowFuncs,
+			partialResults: partialResults,
 		}
-
-		exec.windowFuncs = windowFuncs
-		exec.partialResults = partialResults
+		exec.slidingWindowFuncs = make([]aggfuncs.SlidingWindowAggFunc, len(exec.windowFuncs))
+		for i, windowFunc := range exec.windowFuncs {
+			if slidingWindowAggFunc, ok := windowFunc.(aggfuncs.SlidingWindowAggFunc); ok {
+				exec.slidingWindowFuncs[i] = slidingWindowAggFunc
+			}
+		}
 		if v.Frame == nil {
 			exec.start = &plannercore.FrameBound{
 				Type:      ast.Preceding,

@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/cmp"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/hack"
@@ -706,8 +707,8 @@ func (c *TopN) Sort() {
 	if c == nil {
 		return
 	}
-	slices.SortFunc(c.TopN, func(i, j TopNMeta) bool {
-		return bytes.Compare(i.Encoded, j.Encoded) < 0
+	slices.SortFunc(c.TopN, func(i, j TopNMeta) int {
+		return bytes.Compare(i.Encoded, j.Encoded)
 	})
 }
 
@@ -927,11 +928,11 @@ func CheckEmptyTopNs(topNs []*TopN) bool {
 
 // SortTopnMeta sort topnMeta
 func SortTopnMeta(topnMetas []TopNMeta) []TopNMeta {
-	slices.SortFunc(topnMetas, func(i, j TopNMeta) bool {
+	slices.SortFunc(topnMetas, func(i, j TopNMeta) int {
 		if i.Count != j.Count {
-			return i.Count > j.Count
+			return cmp.Compare(j.Count, i.Count)
 		}
-		return bytes.Compare(i.Encoded, j.Encoded) < 0
+		return bytes.Compare(i.Encoded, j.Encoded)
 	})
 	return topnMetas
 }
@@ -942,11 +943,11 @@ func GetMergedTopNFromSortedSlice(sorted []TopNMeta, n uint32) (*TopN, []TopNMet
 }
 
 func getMergedTopNFromSortedSlice(sorted []TopNMeta, n uint32) (*TopN, []TopNMeta) {
-	slices.SortFunc(sorted, func(i, j TopNMeta) bool {
+	slices.SortFunc(sorted, func(i, j TopNMeta) int {
 		if i.Count != j.Count {
-			return i.Count > j.Count
+			return cmp.Compare(j.Count, i.Count)
 		}
-		return bytes.Compare(i.Encoded, j.Encoded) < 0
+		return bytes.Compare(i.Encoded, j.Encoded)
 	})
 	n = mathutil.Min(uint32(len(sorted)), n)
 

@@ -568,8 +568,8 @@ func (h *Handle) Update(is infoschema.InfoSchema, opts ...TableStatsOpt) error {
 	// Consider the case that there are two tables A and B, their version and commit time is (A0, A1) and (B0, B1),
 	// and A0 < B0 < B1 < A1. We will first read the stats of B, and update the lastVersion to B0, but we cannot read
 	// the table stats of A0 if we read stats that greater than lastVersion which is B0.
-	// We can read the stats if the diff between commit time and version is less than three lease.
-	offset := DurationToTS(3 * h.Lease())
+	// We can read the stats if the diff between commit time and version is less than five lease.
+	offset := DurationToTS(5 * h.Lease()) // 5 lease is 15s.
 	if oldCache.version >= offset {
 		lastVersion = lastVersion - offset
 	} else {
@@ -654,13 +654,14 @@ func (h *Handle) UpdateSessionVar() error {
 // In the column statistics, the variable `num` is equal to the number of columns in the partition table.
 // In the index statistics, the variable `num` is always equal to one.
 type GlobalStats struct {
-	Num         int
-	Count       int64
-	ModifyCount int64
-	Hg          []*statistics.Histogram
-	Cms         []*statistics.CMSketch
-	TopN        []*statistics.TopN
-	Fms         []*statistics.FMSketch
+	Num                   int
+	Count                 int64
+	ModifyCount           int64
+	Hg                    []*statistics.Histogram
+	Cms                   []*statistics.CMSketch
+	TopN                  []*statistics.TopN
+	Fms                   []*statistics.FMSketch
+	MissingPartitionStats []string
 }
 
 // MergePartitionStats2GlobalStatsByTableID merge the partition-level stats to global-level stats based on the tableID.
@@ -675,7 +676,24 @@ func (h *Handle) MergePartitionStats2GlobalStatsByTableID(sc sessionctx.Context,
 		return
 	}
 	globalTableInfo := globalTable.Meta()
-	return h.mergePartitionStats2GlobalStats(sc, opts, is, globalTableInfo, isIndex, histIDs, tablePartitionStats)
+	globalStats, err = h.mergePartitionStats2GlobalStats(sc, opts, is, globalTableInfo, isIndex, histIDs, tablePartitionStats)
+	if err != nil {
+		return
+	}
+	if len(globalStats.MissingPartitionStats) > 0 {
+		var item string
+		if isIndex == 0 {
+			item = "columns"
+		} else {
+			item = "index"
+			if len(histIDs) > 0 {
+				item += " " + globalTableInfo.FindIndexNameByID(histIDs[0])
+			}
+		}
+		logutil.BgLogger().Warn("missing partition stats when merging global stats", zap.String("table", globalTableInfo.Name.L),
+			zap.String("item", item), zap.Strings("missing", globalStats.MissingPartitionStats))
+	}
+	return
 }
 
 func (h *Handle) loadTablePartitionStats(tableInfo *model.TableInfo, partitionDef *model.PartitionDefinition) (*statistics.Table, error) {
@@ -699,10 +717,6 @@ func (h *Handle) mergePartitionStats2GlobalStats(sc sessionctx.Context,
 	isIndex int, histIDs []int64,
 	allPartitionStats map[int64]*statistics.Table) (globalStats *GlobalStats, err error) {
 	partitionNum := len(globalTableInfo.Partition.Definitions)
-	partitionIDs := make([]int64, 0, partitionNum)
-	for i := 0; i < partitionNum; i++ {
-		partitionIDs = append(partitionIDs, globalTableInfo.Partition.Definitions[i].ID)
-	}
 
 	// initialized the globalStats
 	globalStats = new(GlobalStats)
@@ -737,6 +751,17 @@ func (h *Handle) mergePartitionStats2GlobalStats(sc sessionctx.Context,
 		allFms[i] = make([]*statistics.FMSketch, 0, partitionNum)
 	}
 
+	skipMissingPartitionStats := sc.GetSessionVars().SkipMissingPartitionStats
+	if sc.GetSessionVars().InRestrictedSQL {
+		// For AutoAnalyze and HandleDDLEvent(ActionDropTablePartition), we need to use @@global.tidb_skip_missing_partition_stats
+		val, err1 := sc.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(variable.TiDBSkipMissingPartitionStats)
+		if err1 != nil {
+			logutil.BgLogger().Error("loading tidb_skip_missing_partition_stats failed", zap.Error(err1))
+			err = err1
+			return
+		}
+		skipMissingPartitionStats = variable.TiDBOptOn(val)
+	}
 	for _, def := range globalTableInfo.Partition.Definitions {
 		partitionID := def.ID
 		partitionTable, ok := h.getTableByPhysicalID(is, partitionID)
@@ -751,8 +776,14 @@ func (h *Handle) mergePartitionStats2GlobalStats(sc sessionctx.Context,
 		}
 		// If pre-load partition stats isn't provided, then we load partition stats directly and set it into allPartitionStats
 		if allPartitionStats == nil || partitionStats == nil || !ok {
-			partitionStats, err = h.loadTablePartitionStats(tableInfo, &def)
-			if err != nil {
+			var err1 error
+			partitionStats, err1 = h.loadTablePartitionStats(tableInfo, &def)
+			if err1 != nil {
+				if skipMissingPartitionStats && types.ErrPartitionStatsMissing.Equal(err) {
+					globalStats.MissingPartitionStats = append(globalStats.MissingPartitionStats, fmt.Sprintf("partition `%s`", def.Name.L))
+					continue
+				}
+				err = err1
 				return
 			}
 			if allPartitionStats == nil {
@@ -762,45 +793,61 @@ func (h *Handle) mergePartitionStats2GlobalStats(sc sessionctx.Context,
 		}
 		for i := 0; i < globalStats.Num; i++ {
 			hg, cms, topN, fms, analyzed := partitionStats.GetStatsInfo(histIDs[i], isIndex == 1)
+			skipPartition := false
 			if !analyzed {
-				var errMsg string
+				var missingPart string
 				if isIndex == 0 {
-					errMsg = fmt.Sprintf("table `%s` partition `%s` column `%s`", tableInfo.Name.L, def.Name.L, tableInfo.FindColumnNameByID(histIDs[i]))
+					missingPart = fmt.Sprintf("partition `%s` column `%s`", def.Name.L, tableInfo.FindColumnNameByID(histIDs[i]))
 				} else {
-					errMsg = fmt.Sprintf("table `%s` partition `%s` index `%s`", tableInfo.Name.L, def.Name.L, tableInfo.FindIndexNameByID(histIDs[i]))
+					missingPart = fmt.Sprintf("partition `%s` index `%s`", def.Name.L, tableInfo.FindIndexNameByID(histIDs[i]))
 				}
-				err = types.ErrPartitionStatsMissing.GenWithStackByArgs(errMsg)
-				return
+				if !skipMissingPartitionStats {
+					err = types.ErrPartitionStatsMissing.GenWithStackByArgs(fmt.Sprintf("table `%s` %s", tableInfo.Name.L, missingPart))
+					return
+				}
+				globalStats.MissingPartitionStats = append(globalStats.MissingPartitionStats, missingPart)
+				skipPartition = true
 			}
 			// partition stats is not empty but column stats(hist, topn) is missing
 			if partitionStats.RealtimeCount > 0 && (hg == nil || hg.TotalRowCount() <= 0) && (topN == nil || topN.TotalCount() <= 0) {
-				var errMsg string
+				var missingPart string
 				if isIndex == 0 {
-					errMsg = fmt.Sprintf("table `%s` partition `%s` column `%s`", tableInfo.Name.L, def.Name.L, tableInfo.FindColumnNameByID(histIDs[i]))
+					missingPart = fmt.Sprintf("partition `%s` column `%s`", def.Name.L, tableInfo.FindColumnNameByID(histIDs[i]))
 				} else {
-					errMsg = fmt.Sprintf("table `%s` partition `%s` index `%s`", tableInfo.Name.L, def.Name.L, tableInfo.FindIndexNameByID(histIDs[i]))
+					missingPart = fmt.Sprintf("partition `%s` index `%s`", def.Name.L, tableInfo.FindIndexNameByID(histIDs[i]))
 				}
-				err = types.ErrPartitionColumnStatsMissing.GenWithStackByArgs(errMsg)
-				return
+				if !skipMissingPartitionStats {
+					err = types.ErrPartitionColumnStatsMissing.GenWithStackByArgs(fmt.Sprintf("table `%s` %s", tableInfo.Name.L, missingPart))
+					return
+				}
+				globalStats.MissingPartitionStats = append(globalStats.MissingPartitionStats, missingPart+" hist and topn")
+				skipPartition = true
 			}
 			if i == 0 {
 				// In a partition, we will only update globalStats.Count once
 				globalStats.Count += partitionStats.RealtimeCount
 				globalStats.ModifyCount += partitionStats.ModifyCount
 			}
-			allHg[i] = append(allHg[i], hg)
-			allCms[i] = append(allCms[i], cms)
-			allTopN[i] = append(allTopN[i], topN)
-			allFms[i] = append(allFms[i], fms)
+			if !skipPartition {
+				allHg[i] = append(allHg[i], hg)
+				allCms[i] = append(allCms[i], cms)
+				allTopN[i] = append(allTopN[i], topN)
+				allFms[i] = append(allFms[i], fms)
+			}
 		}
 	}
 
 	// After collect all of the statistics from the partition-level stats,
 	// we should merge them together.
 	for i := 0; i < globalStats.Num; i++ {
+		if len(allHg[i]) == 0 {
+			// If all partitions have no stats, we skip merging global stats because it may not handle the case `len(allHg[i]) == 0`
+			// correctly. It can avoid unexpected behaviors such as nil pointer panic.
+			continue
+		}
 		// Merge CMSketch
 		globalStats.Cms[i] = allCms[i][0].Copy()
-		for j := 1; j < partitionNum; j++ {
+		for j := 1; j < len(allCms[i]); j++ {
 			err = globalStats.Cms[i].MergeCMSketch(allCms[i][j])
 			if err != nil {
 				return
@@ -830,7 +877,7 @@ func (h *Handle) mergePartitionStats2GlobalStats(sc sessionctx.Context,
 
 		// Update NDV of global-level stats
 		globalStats.Fms[i] = allFms[i][0].Copy()
-		for j := 1; j < partitionNum; j++ {
+		for j := 1; j < len(allFms[i]); j++ {
 			if globalStats.Fms[i] == nil {
 				globalStats.Fms[i] = allFms[i][j].Copy()
 			} else {
@@ -1089,8 +1136,8 @@ func (h *Handle) loadNeededColumnHistograms(reader *statistics.StatsReader, col 
 		return errors.Trace(err)
 	}
 	if len(rows) == 0 {
-		logutil.BgLogger().Error("fail to get stats version for this histogram", zap.Int64("table_id", col.TableID), zap.Int64("hist_id", col.ID))
-		return errors.Trace(fmt.Errorf("fail to get stats version for this histogram, table_id:%v, hist_id:%v", col.TableID, col.ID))
+		logutil.BgLogger().Error("fail to get stats version for this histogram, normally this wouldn't happen, please check if this column or index has a histogram record in `mysql.stats_histogram`", zap.Int64("table_id", col.TableID), zap.Int64("column_id", col.ID))
+		return errors.Trace(fmt.Errorf("fail to get stats version for this histogram, normally this wouldn't happen, please check if this column or index has a histogram record in `mysql.stats_histogram`, table_id:%v, column_id:%v", col.TableID, col.ID))
 	}
 	statsVer := rows[0].GetInt64(0)
 	colHist := &statistics.Column{
@@ -1128,7 +1175,16 @@ func (h *Handle) loadNeededIndexHistograms(reader *statistics.StatsReader, idx m
 		return nil
 	}
 	index, ok := tbl.Indices[idx.ID]
-	if !ok {
+	// Double check if the index is really needed to load.
+	// If we don't do this it might cause a memory leak.
+	// See: https://github.com/pingcap/tidb/issues/54022
+	if !ok || !index.IsLoadNeeded() {
+		if !index.IsLoadNeeded() {
+			logutil.BgLogger().Warn(
+				"Although the index stats is not required to load, an attempt is still made to load it, skip it",
+				zap.Int64("table_id", idx.TableID), zap.Int64("hist_id", idx.ID),
+			)
+		}
 		statistics.HistogramNeededItems.Delete(idx)
 		return nil
 	}
@@ -1152,8 +1208,8 @@ func (h *Handle) loadNeededIndexHistograms(reader *statistics.StatsReader, idx m
 		return errors.Trace(err)
 	}
 	if len(rows) == 0 {
-		logutil.BgLogger().Error("fail to get stats version for this histogram", zap.Int64("table_id", idx.TableID), zap.Int64("hist_id", idx.ID))
-		return errors.Trace(fmt.Errorf("fail to get stats version for this histogram, table_id:%v, hist_id:%v", idx.TableID, idx.ID))
+		logutil.BgLogger().Error("fail to get stats version for this histogram, normally this wouldn't happen, please check if this column or index has a histogram record in `mysql.stats_histogram`", zap.Int64("table_id", idx.TableID), zap.Int64("index_id", idx.ID))
+		return errors.Trace(fmt.Errorf("fail to get stats version for this histogram, normally this wouldn't happen, please check if this column or index has a histogram record in `mysql.stats_histogram`, table_id:%v, index_id:%v", idx.TableID, idx.ID))
 	}
 	idxHist := &statistics.Index{Histogram: *hg, CMSketch: cms, TopN: topN, FMSketch: fms,
 		Info: index.Info, ErrorRate: index.ErrorRate, StatsVer: rows[0].GetInt64(0),
@@ -1479,7 +1535,7 @@ func SaveTableStatsToStorage(sctx sessionctx.Context, results *statistics.Analyz
 					return err
 				}
 			}
-			if _, err = exec.ExecuteInternal(ctx, "replace into mysql.stats_histograms (table_id, is_index, hist_id, distinct_count, version, null_count, cm_sketch, tot_col_size, stats_ver, flag, correlation) values (%?, %?, %?, %?, %?, %?, %?, %?, %?, %?, %?)",
+			if _, err = exec.ExecuteInternal(ctx, "replace into mysql.stats_histograms (table_id, is_index, hist_id, distinct_count, version, null_count, cm_sketch, tot_col_size, stats_ver, flag, correlation) values (%?, %?, %?, %?, %?, %?, %?, GREATEST(%?, 0), %?, %?, %?)",
 				tableID, result.IsIndex, hg.ID, hg.NDV, version, hg.NullCount, cmSketch, hg.TotColSize, results.StatsVer, statistics.AnalyzeFlag, hg.Correlation); err != nil {
 				return err
 			}
@@ -1587,7 +1643,7 @@ func (h *Handle) SaveStatsToStorage(tableID int64, count, modifyCount int64, isI
 	if isAnalyzed == 1 {
 		flag = statistics.AnalyzeFlag
 	}
-	if _, err = exec.ExecuteInternal(ctx, "replace into mysql.stats_histograms (table_id, is_index, hist_id, distinct_count, version, null_count, cm_sketch, tot_col_size, stats_ver, flag, correlation) values (%?, %?, %?, %?, %?, %?, %?, %?, %?, %?, %?)",
+	if _, err = exec.ExecuteInternal(ctx, "replace into mysql.stats_histograms (table_id, is_index, hist_id, distinct_count, version, null_count, cm_sketch, tot_col_size, stats_ver, flag, correlation) values (%?, %?, %?, %?, %?, %?, %?, GREATEST(%?, 0), %?, %?, %?)",
 		tableID, isIndex, hg.ID, hg.NDV, version, hg.NullCount, cmSketch, hg.TotColSize, statsVersion, flag, hg.Correlation); err != nil {
 		return err
 	}
