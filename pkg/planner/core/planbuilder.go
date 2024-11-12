@@ -5880,7 +5880,7 @@ func (b *PlanBuilder) buildAdminAlterDDLJobs(ctx context.Context, as *ast.AdminS
 	for _, opt := range as.AlterJobOptions {
 		_, ok := allowedAlterDDLJobParams[opt.Name]
 		if !ok {
-			return nil, errors.New(fmt.Sprintf("unsupported alter ddl jobs param: %v", opt.Name))
+			return nil, errors.New(fmt.Sprintf("Unsupported admin alter ddl jobs config: %v", opt.Name))
 		}
 		alterDDLJobOpt := AlterDDLJobOpt{Name: opt.Name}
 		if opt.Value != nil {
@@ -5909,15 +5909,15 @@ func checkAlterDDLJobOptValue(opt *AlterDDLJobOpt) error {
 	case AlterDDLJobThread:
 		thread := opt.Value.(*expression.Constant).Value.GetInt64()
 		if thread < 1 || thread > variable.MaxConfigurableConcurrency {
-			return errors.New(fmt.Sprintf("%s value %v out of range [1, %v]",
-				opt.Name, thread, variable.MaxConfigurableConcurrency))
+			return errors.New(fmt.Sprintf("The value %v for %s is out of range [1, %v]",
+				thread, opt.Name, variable.MaxConfigurableConcurrency))
 		}
 	case AlterDDLJobBatchSize:
 		batchSize := opt.Value.(*expression.Constant).Value.GetInt64()
 		bs := int32(batchSize)
 		if bs < variable.MinDDLReorgBatchSize || bs > variable.MaxDDLReorgBatchSize {
-			return errors.New(fmt.Sprintf("%s value %v out of range [%v, %v]",
-				opt.Name, bs, variable.MinDDLReorgBatchSize, variable.MaxDDLReorgBatchSize))
+			return errors.New(fmt.Sprintf("The value %v for %s is out of range [%v, %v]",
+				bs, opt.Name, variable.MinDDLReorgBatchSize, variable.MaxDDLReorgBatchSize))
 		}
 	}
 	return nil

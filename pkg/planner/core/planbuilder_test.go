@@ -951,5 +951,5 @@ func TestBuildAdminAlterDDLJobsPlan(t *testing.T) {
 	stmt, err = parser.ParseOneStmt("admin alter ddl jobs 4 aaa = 16", "", "")
 	require.NoError(t, err)
 	p, err = builder.Build(ctx, resolve.NewNodeW(stmt))
-	require.Equal(t, err.Error(), "unsupported alter ddl jobs param: aaa")
+	require.Equal(t, err.Error(), "Unsupported admin alter ddl jobs config: aaa")
 }
