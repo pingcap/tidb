@@ -1576,6 +1576,11 @@ func (b *PlanBuilder) buildAdmin(ctx context.Context, as *ast.AdminStmt) (base.P
 		p := &AdminShowBDRRole{}
 		p.setSchemaAndNames(buildAdminShowBDRRoleFields())
 		ret = p
+	case ast.AdminAlterDDLJob:
+		ret, err = b.buildAdminAlterDDLJobs(ctx, as)
+		if err != nil {
+			return nil, err
+		}
 	default:
 		return nil, plannererrors.ErrUnsupportedType.GenWithStack("Unsupported ast.AdminStmt(%T) for buildAdmin", as)
 	}
@@ -3246,6 +3251,15 @@ func buildResumeDDLJobsFields() (*expression.Schema, types.NameSlice) {
 func buildAdminShowBDRRoleFields() (*expression.Schema, types.NameSlice) {
 	schema := newColumnsWithNames(1)
 	schema.Append(buildColumnWithName("", "BDR_ROLE", mysql.TypeString, 1))
+	return schema.col2Schema(), schema.names
+}
+
+func buildAlterDDLJobFields(optNames []string) (*expression.Schema, types.NameSlice) {
+	schema := newColumnsWithNames(1 + len(optNames))
+	schema.Append(buildColumnWithName("", "JOB_ID", mysql.TypeVarchar, 64))
+	for _, optName := range optNames {
+		schema.Append(buildColumnWithName("", strings.ToUpper(optName), mysql.TypeVarchar, 128))
+	}
 	return schema.col2Schema(), schema.names
 }
 
@@ -5857,4 +5871,31 @@ func getTablePath(paths []*util.AccessPath) *util.AccessPath {
 		}
 	}
 	return nil
+}
+
+func (b *PlanBuilder) buildAdminAlterDDLJobs(ctx context.Context, as *ast.AdminStmt) (_ base.Plan, err error) {
+	options := make([]*AlterDDLJobOpt, 0, len(as.AlterJobOptions))
+	optionNames := make([]string, 0, len(as.AlterJobOptions))
+	mockTablePlan := logicalop.LogicalTableDual{}.Init(b.ctx, b.getSelectOffset())
+	for _, opt := range as.AlterJobOptions {
+		_, ok := allowedAlterDDLJobParams[opt.Name]
+		if !ok {
+			return nil, errors.New(fmt.Sprintf("unsupported alter ddl jobs param: %v", opt.Name))
+		}
+		alterDDLJobOpt := AlterDDLJobOpt{Name: opt.Name}
+		if opt.Value != nil {
+			alterDDLJobOpt.Value, _, err = b.rewrite(ctx, opt.Value, mockTablePlan, nil, true)
+			if err != nil {
+				return nil, err
+			}
+		}
+		options = append(options, &alterDDLJobOpt)
+		optionNames = append(optionNames, opt.Name)
+	}
+	p := &AlterDDLJob{
+		JobID:   as.JobNumber,
+		Options: options,
+	}
+	p.setSchemaAndNames(buildAlterDDLJobFields(optionNames))
+	return p, nil
 }

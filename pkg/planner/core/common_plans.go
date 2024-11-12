@@ -148,6 +148,32 @@ type ResumeDDLJobs struct {
 	JobIDs []int64
 }
 
+const (
+	AlterDDLJobThread        = "thread"
+	AlterDDLJobBatchSize     = "batch_size"
+	AlterDDLJobMaxWriteSpeed = "max_write_speed"
+)
+
+var allowedAlterDDLJobParams = map[string]struct{}{
+	AlterDDLJobThread:        {},
+	AlterDDLJobBatchSize:     {},
+	AlterDDLJobMaxWriteSpeed: {},
+}
+
+// AlterDDLJobOpt represents alter ddl job option.
+type AlterDDLJobOpt struct {
+	Name  string
+	Value expression.Expression
+}
+
+// AlterDDLJob is the plan of admin alter ddl jobs
+type AlterDDLJob struct {
+	baseSchemaProducer
+
+	JobID   int64
+	Options []*AlterDDLJobOpt
+}
+
 // ReloadExprPushdownBlacklist reloads the data from expr_pushdown_blacklist table.
 type ReloadExprPushdownBlacklist struct {
 	baseSchemaProducer

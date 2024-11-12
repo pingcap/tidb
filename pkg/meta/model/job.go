@@ -733,6 +733,14 @@ func (job *Job) IsPausable() bool {
 	return job.NotStarted() || (job.IsRunning() && job.IsRollbackable())
 }
 
+// IsJobParamsAlterable checks whether the job parameters can be altered.
+func (job *Job) IsJobParamsAlterable() bool {
+	if job.Type == ActionAddIndex || job.Type == ActionModifyColumn || job.Type == ActionReorganizePartition {
+		return true
+	}
+	return false
+}
+
 // IsResumable checks whether the job can be rollback.
 func (job *Job) IsResumable() bool {
 	return job.IsPaused()
