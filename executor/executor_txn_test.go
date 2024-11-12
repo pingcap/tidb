@@ -19,10 +19,13 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/ddl"
+	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/sessionctx/binloginfo"
 	"github.com/pingcap/tidb/testkit"
@@ -798,6 +801,51 @@ func (m mockPumpClient) WriteBinlog(ctx context.Context, in *binlog.WriteBinlogR
 
 func (m mockPumpClient) PullBinlogs(ctx context.Context, in *binlog.PullBinlogReq, opts ...grpc.CallOption) (binlog.Pump_PullBinlogsClient, error) {
 	return nil, nil
+}
+
+func TestColumnNotMatchError(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.Session().GetSessionVars().BinlogClient = binloginfo.MockPumpsClient(&mockPumpClient{})
+	tk.MustExec("set @@global.tidb_enable_metadata_lock=0")
+	tk.MustExec("use test")
+	tk2 := testkit.NewTestKit(t, store)
+	tk2.MustExec("use test")
+	tk.MustExec("create table t(id int primary key, a int)")
+	tk.MustExec("insert into t values(1, 2)")
+
+	ddl.OnAddColumnStateWriteReorgForTest = func() {
+		tk.MustExec("begin;")
+	}
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/onAddColumnStateWriteReorg", "return"))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/onAddColumnStateWriteReorg"))
+	}()
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		tk2.MustExec("alter table t add column wait_notify int")
+		wg.Done()
+	}()
+	wg.Wait()
+	tk.MustExec("delete from t where id=1")
+	tk.MustGetErrCode("commit", errno.ErrInfoSchemaChanged)
+
+	ddl.OnDropColumnStateWriteOnlyForTest = func() {
+		tk.MustExec("begin;")
+	}
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/onDropColumnStateWriteOnly", "return"))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/onDropColumnStateWriteOnly"))
+	}()
+	wg.Add(1)
+	go func() {
+		tk2.MustExec("alter table t drop column wait_notify")
+		wg.Done()
+	}()
+	wg.Wait()
+	tk.MustExec("delete from t where id=1")
+	tk.MustGetErrCode("commit", errno.ErrInfoSchemaChanged)
 }
 
 func TestInnodbLockWaitTimeout(t *testing.T) {
