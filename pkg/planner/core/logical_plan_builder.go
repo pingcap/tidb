@@ -3742,9 +3742,6 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p b
 			return nil, err
 		}
 	}
-	if !b.ctx.GetSessionVars().InRestrictedSQL {
-		fmt.Println("wwz")
-	}
 	p, err = b.buildTableRefs(ctx, sel.From)
 	if err != nil {
 		return nil, err
@@ -7147,9 +7144,6 @@ func (b *PlanBuilder) buildCte(ctx context.Context, cte *ast.CommonTableExpressi
 		}
 		b.buildingRecursivePartForCTE = saveCheck
 	} else {
-		if !b.ctx.GetSessionVars().InRestrictedSQL {
-			fmt.Println("bug")
-		}
 		p, err = b.buildResultSetNode(ctx, cte.Query.Query, true)
 		if err != nil {
 			return nil, err
