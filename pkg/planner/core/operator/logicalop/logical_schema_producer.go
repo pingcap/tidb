@@ -15,6 +15,7 @@
 package logicalop
 
 import (
+	"fmt"
 	"math"
 
 	"github.com/pingcap/tidb/pkg/expression"
@@ -56,6 +57,9 @@ func (s *LogicalSchemaProducer) OutputNames() types.NameSlice {
 
 // SetOutputNames sets the output names for the plan.
 func (s *LogicalSchemaProducer) SetOutputNames(names types.NameSlice) {
+	if !s.SCtx().GetSessionVars().InRestrictedSQL {
+		fmt.Println("LogicalSchemaProducer.SetOutputNames")
+	}
 	s.names = names
 }
 
