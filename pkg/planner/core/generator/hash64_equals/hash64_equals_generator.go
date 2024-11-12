@@ -36,7 +36,7 @@ import (
 // If a field is not tagged, then it will be skipped.
 func GenHash64Equals4LogicalOps() ([]byte, error) {
 	var structures = []any{logicalop.LogicalJoin{}, logicalop.LogicalAggregation{}, logicalop.LogicalApply{},
-		logicalop.LogicalExpand{}, logicalop.LogicalLimit{}, logicalop.LogicalMaxOneRow{}}
+		logicalop.LogicalExpand{}, logicalop.LogicalLimit{}, logicalop.LogicalMaxOneRow{}, logicalop.DataSource{}}
 	c := new(cc)
 	c.write(codeGenHash64EqualsPrefix)
 	for _, s := range structures {
@@ -183,6 +183,7 @@ func (c *cc) Hash64Element(fType reflect.Type, callName string) {
 	case reflect.Float32, reflect.Float64:
 		c.write("h.HashFloat64(float64(%v))", callName)
 	default:
+		fmt.Println(fType.String())
 		if fType.Implements(hashEqualsType) || reflect.PtrTo(fType).Implements(hashEqualsType) {
 			c.write("%v.Hash64(h)", callName)
 		} else {

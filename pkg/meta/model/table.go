@@ -17,6 +17,7 @@ package model
 import (
 	"bytes"
 	"fmt"
+	"github.com/pingcap/tidb/pkg/planner/cascades/base"
 	"strconv"
 	"strings"
 	"time"
@@ -194,6 +195,23 @@ type TableInfo struct {
 	Revision uint64 `json:"revision"`
 
 	DBID int64 `json:"-"`
+}
+
+// Hash64 implement HashEquals interface.
+func (t *TableInfo) Hash64(h base.Hasher) {
+	h.HashInt64(t.ID)
+}
+
+// Equals implements HashEquals interface.
+func (t *TableInfo) Equals(other any) bool {
+	if other == nil {
+		return false
+	}
+	t2, ok := other.(*TableInfo)
+	if !ok {
+		return false
+	}
+	return t.ID == t2.ID
 }
 
 // SepAutoInc decides whether _rowid and auto_increment id use separate allocator.

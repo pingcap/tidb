@@ -48,12 +48,12 @@ import (
 
 // DataSource represents a tableScan without condition push down.
 type DataSource struct {
-	LogicalSchemaProducer
+	LogicalSchemaProducer `hash64-equals:"true"`
 
 	AstIndexHints []*ast.IndexHint
 	IndexHints    []h.HintedIndex
 	Table         table.Table
-	TableInfo     *model.TableInfo
+	TableInfo     *model.TableInfo `hash64-equals:"true"`
 	Columns       []*model.ColumnInfo
 	DBName        pmodel.CIStr
 
@@ -61,10 +61,10 @@ type DataSource struct {
 	// IndexMergeHints are the hint for indexmerge.
 	IndexMergeHints []h.HintedIndex
 	// PushedDownConds are the conditions that will be pushed down to coprocessor.
-	PushedDownConds []expression.Expression
+	PushedDownConds []expression.Expression `hash64-equals:"true"`
 	// AllConds contains all the filters on this table. For now it's maintained
 	// in predicate push down and used in partition pruning/index merge.
-	AllConds []expression.Expression
+	AllConds []expression.Expression `hash64-equals:"true"`
 
 	StatisticTable *statistics.Table
 	TableStats     *property.StatsInfo
@@ -92,7 +92,7 @@ type DataSource struct {
 	// it is converted from StatisticTable, and used for IO/network cost estimating.
 	TblColHists *statistics.HistColl
 	// PreferStoreType means the DataSource is enforced to which storage.
-	PreferStoreType int
+	PreferStoreType int `hash64-equals:"true"`
 	// PreferPartitions store the map, the key represents store type, the value represents the partition name list.
 	PreferPartitions map[int][]pmodel.CIStr
 	SampleInfo       *tablesampler.TableSampleInfo
@@ -100,7 +100,7 @@ type DataSource struct {
 	// IsForUpdateRead should be true in either of the following situations
 	// 1. use `inside insert`, `update`, `delete` or `select for update` statement
 	// 2. isolation level is RC
-	IsForUpdateRead bool
+	IsForUpdateRead bool `hash64-equals:"true"`
 
 	// contain unique index and the first field is tidb_shard(),
 	// such as (tidb_shard(a), a ...), the fields are more than 2
