@@ -34,43 +34,42 @@ const (
 )
 
 // StaticPartitionedTableAnalysisJob is a job for analyzing a static partitioned table.
+//
+//nolint:fieldalignment
 type StaticPartitionedTableAnalysisJob struct {
-	successHook         JobHook
-	failureHook         JobHook
-	TableSchema         string
-	GlobalTableName     string
-	StaticPartitionName string
-	// This is only for newly added indexes.
-	Indexes []string
+	successHook SuccessJobHook
+	failureHook FailureJobHook
 
-	Indicators
 	GlobalTableID     int64
 	StaticPartitionID int64
+	IndexIDs          map[int64]struct{}
 
+	Indicators
 	TableStatsVer int
 	Weight        float64
+
+	// Lazy initialized.
+	SchemaName          string
+	GlobalTableName     string
+	StaticPartitionName string
+	IndexNames          []string
 }
 
 // NewStaticPartitionTableAnalysisJob creates a job for analyzing a static partitioned table.
 func NewStaticPartitionTableAnalysisJob(
-	schema, globalTableName string,
 	globalTableID int64,
-	partitionName string,
 	partitionID int64,
-	indexes []string,
+	indexIDs map[int64]struct{},
 	tableStatsVer int,
 	changePercentage float64,
 	tableSize float64,
 	lastAnalysisDuration time.Duration,
 ) *StaticPartitionedTableAnalysisJob {
 	return &StaticPartitionedTableAnalysisJob{
-		GlobalTableID:       globalTableID,
-		TableSchema:         schema,
-		GlobalTableName:     globalTableName,
-		StaticPartitionID:   partitionID,
-		StaticPartitionName: partitionName,
-		Indexes:             indexes,
-		TableStatsVer:       tableStatsVer,
+		GlobalTableID:     globalTableID,
+		StaticPartitionID: partitionID,
+		IndexIDs:          indexIDs,
+		TableStatsVer:     tableStatsVer,
 		Indicators: Indicators{
 			ChangePercentage:     changePercentage,
 			TableSize:            tableSize,
@@ -98,7 +97,7 @@ func (j *StaticPartitionedTableAnalysisJob) Analyze(
 			}
 		} else {
 			if j.failureHook != nil {
-				j.failureHook(j)
+				j.failureHook(j, true)
 			}
 		}
 	}()
@@ -115,12 +114,12 @@ func (j *StaticPartitionedTableAnalysisJob) Analyze(
 }
 
 // RegisterSuccessHook registers a successHook function that will be called after the job can be marked as successful.
-func (j *StaticPartitionedTableAnalysisJob) RegisterSuccessHook(hook JobHook) {
+func (j *StaticPartitionedTableAnalysisJob) RegisterSuccessHook(hook SuccessJobHook) {
 	j.successHook = hook
 }
 
 // RegisterFailureHook registers a failureHook function that will be called after the job can be marked as failed.
-func (j *StaticPartitionedTableAnalysisJob) RegisterFailureHook(hook JobHook) {
+func (j *StaticPartitionedTableAnalysisJob) RegisterFailureHook(hook FailureJobHook) {
 	j.failureHook = hook
 }
 
@@ -136,27 +135,74 @@ func (j *StaticPartitionedTableAnalysisJob) SetIndicators(indicators Indicators)
 
 // HasNewlyAddedIndex implements AnalysisJob.
 func (j *StaticPartitionedTableAnalysisJob) HasNewlyAddedIndex() bool {
-	return len(j.Indexes) > 0
+	return len(j.IndexIDs) > 0
 }
 
-// IsValidToAnalyze checks whether the partition is valid to analyze.
-// Only the specified static partition is checked.
-func (j *StaticPartitionedTableAnalysisJob) IsValidToAnalyze(
+// ValidateAndPrepare validates if the analysis job can run and prepares it for execution.
+// For static partitioned tables, it checks:
+// - Schema exists
+// - Table exists and is partitioned
+// - Specified partition exists
+// - No recent failed analysis to avoid queue blocking
+func (j *StaticPartitionedTableAnalysisJob) ValidateAndPrepare(
 	sctx sessionctx.Context,
 ) (bool, string) {
+	callFailureHook := func(needRetry bool) {
+		if j.failureHook != nil {
+			j.failureHook(j, needRetry)
+		}
+	}
+	is := sctx.GetDomainInfoSchema()
+	tableInfo, ok := is.TableInfoByID(j.GlobalTableID)
+	if !ok {
+		callFailureHook(false)
+		return false, tableNotExist
+	}
+	dbID := tableInfo.DBID
+	schema, ok := is.SchemaByID(dbID)
+	if !ok {
+		callFailureHook(false)
+		return false, schemaNotExist
+	}
+	partitionInfo := tableInfo.GetPartitionInfo()
+	if partitionInfo == nil {
+		callFailureHook(false)
+		return false, notPartitionedTable
+	}
+	partitionName := ""
+	for _, partition := range partitionInfo.Definitions {
+		if partition.ID == j.StaticPartitionID {
+			partitionName = partition.Name.O
+			break
+		}
+	}
+	if partitionName == "" {
+		callFailureHook(false)
+		return false, partitionNotExist
+	}
+	indexNames := make([]string, 0, len(j.IndexIDs))
+	for _, index := range tableInfo.Indices {
+		if _, ok := j.IndexIDs[index.ID]; ok {
+			indexNames = append(indexNames, index.Name.O)
+		}
+	}
+
+	j.SchemaName = schema.Name.O
+	j.GlobalTableName = tableInfo.Name.O
+	j.StaticPartitionName = partitionName
+	j.IndexNames = indexNames
+
 	// Check whether the partition is valid to analyze.
 	// For static partition table we only need to check the specified static partition.
 	if j.StaticPartitionName != "" {
 		partitionNames := []string{j.StaticPartitionName}
 		if valid, failReason := isValidToAnalyze(
 			sctx,
-			j.TableSchema,
+			j.SchemaName,
 			j.GlobalTableName,
 			partitionNames...,
 		); !valid {
-			if j.failureHook != nil {
-				j.failureHook(j)
-			}
+			callFailureHook(true)
 			return false, failReason
 		}
 	}
@@ -191,8 +237,8 @@ func (j *StaticPartitionedTableAnalysisJob) String() string {
 			"\tLastAnalysisDuration: %s\n"+
 			"\tWeight: %.6f\n",
 		j.getAnalyzeType(),
-		strings.Join(j.Indexes, ", "),
-		j.TableSchema, j.GlobalTableName, j.GlobalTableID,
+		strings.Join(j.IndexNames, ", "),
+		j.SchemaName, j.GlobalTableName, j.GlobalTableID,
 		j.StaticPartitionName, j.StaticPartitionID,
 		j.TableStatsVer, j.ChangePercentage, j.TableSize,
 		j.LastAnalysisDuration, j.Weight,
@@ -222,14 +268,14 @@ func (j *StaticPartitionedTableAnalysisJob) analyzeStaticPartitionIndexes(
 	statsHandle statstypes.StatsHandle,
 	sysProcTracker sysproctrack.Tracker,
 ) bool {
-	if len(j.Indexes) == 0 {
+	if len(j.IndexNames) == 0 {
 		return true
 	}
 	// For version 2, analyze one index will analyze all other indexes and columns.
 	// For version 1, analyze one index will only analyze the specified index.
 	analyzeVersion := sctx.GetSessionVars().AnalyzeVersion
 	if analyzeVersion == 1 {
-		for _, index := range j.Indexes {
+		for _, index := range j.IndexNames {
 			sql, params := j.GenSQLForAnalyzeStaticPartitionIndex(index)
 			if !exec.AutoAnalyze(sctx, statsHandle, sysProcTracker, j.TableStatsVer, sql, params...) {
 				return false
@@ -240,7 +286,7 @@ func (j *StaticPartitionedTableAnalysisJob) analyzeStaticPartitionIndexes(
 	// Only analyze the first index.
 	// This is because analyzing a single index also analyzes all other indexes and columns.
 	// Therefore, to avoid redundancy, we prevent multiple analyses of the same partition.
-	firstIndex := j.Indexes[0]
+	firstIndex := j.IndexNames[0]
 	sql, params := j.GenSQLForAnalyzeStaticPartitionIndex(firstIndex)
 	return exec.AutoAnalyze(sctx, statsHandle, sysProcTracker, j.TableStatsVer, sql, params...)
 }
@@ -248,7 +294,7 @@ func (j *StaticPartitionedTableAnalysisJob) analyzeStaticPartitionIndexes(
 // GenSQLForAnalyzeStaticPartition generates the SQL for analyzing the specified static partition.
 func (j *StaticPartitionedTableAnalysisJob) GenSQLForAnalyzeStaticPartition() (string, []any) {
 	sql := "analyze table %n.%n partition %n"
-	params := []any{j.TableSchema, j.GlobalTableName, j.StaticPartitionName}
+	params := []any{j.SchemaName, j.GlobalTableName, j.StaticPartitionName}
 
 	return sql, params
 }
@@ -256,7 +302,7 @@ func (j *StaticPartitionedTableAnalysisJob) GenSQLForAnalyzeStaticPartition() (s
 // GenSQLForAnalyzeStaticPartitionIndex generates the SQL for analyzing the specified static partition index.
 func (j *StaticPartitionedTableAnalysisJob) GenSQLForAnalyzeStaticPartitionIndex(index string) (string, []any) {
 	sql := "analyze table %n.%n partition %n index %n"
-	params := []any{j.TableSchema, j.GlobalTableName, j.StaticPartitionName, index}
+	params := []any{j.SchemaName, j.GlobalTableName, j.StaticPartitionName, index}
 
 	return sql, params
 }
