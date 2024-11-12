@@ -1190,7 +1190,13 @@ func TestAdminAlterDDLJobsFailedCases(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("create table t (a int);")
 
-	// can't find job
+	// invalid config value
+	tk.MustGetErrMsg("admin alter ddl jobs 1 thread = 0;", "thread value 0 out of range [1, 256]")
+	tk.MustGetErrMsg("admin alter ddl jobs 1 thread = 257;", "thread value 257 out of range [1, 256]")
+	tk.MustGetErrMsg("admin alter ddl jobs 1 batch_size = 31;", "batch_size value 31 out of range [32, 10240]")
+	tk.MustGetErrMsg("admin alter ddl jobs 1 batch_size = 10241;", "batch_size value 10241 out of range [32, 10240]")
+
+	// invalid job id
 	tk.MustGetErrMsg(fmt.Sprintf("admin alter ddl jobs %d thread = 8;", 1), "job not found")
 
 	job := model.Job{
@@ -1201,6 +1207,8 @@ func TestAdminAlterDDLJobsFailedCases(t *testing.T) {
 	// unsupported job type
 	tk.MustGetErrMsg(fmt.Sprintf("admin alter ddl jobs %d thread = 8;", job.ID), "job is not alterable")
 	deleteJobMetaByID(tk, 1)
+
+	tk.MustExec("set @@session.tidb_plan_cache_max_plan_size = 100")
 }
 
 func TestAdminAlterDDLJobsCommitFailed(t *testing.T) {
