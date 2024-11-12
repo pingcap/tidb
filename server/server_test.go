@@ -37,10 +37,12 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/log"
-<<<<<<< HEAD:server/server_test.go
 	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/ddl/util/callback"
+	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/parser/model"
 	tmysql "github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/testkit/testdata"
@@ -49,20 +51,6 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/replayer"
 	"github.com/pingcap/tidb/util/versioninfo"
-=======
-	"github.com/pingcap/tidb/pkg/ddl/util/callback"
-	"github.com/pingcap/tidb/pkg/domain"
-	"github.com/pingcap/tidb/pkg/errno"
-	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/metrics"
-	"github.com/pingcap/tidb/pkg/parser/model"
-	tmysql "github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/server"
-	"github.com/pingcap/tidb/pkg/testkit"
-	"github.com/pingcap/tidb/pkg/testkit/testenv"
-	"github.com/pingcap/tidb/pkg/util/versioninfo"
-	dto "github.com/prometheus/client_model/go"
->>>>>>> 9aeaa76c5cb (*: fix a bug that update statement uses point get and update plan with different tblInfo (#54183)):pkg/server/internal/testserverclient/server_client.go
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
 )
@@ -2671,7 +2659,6 @@ func (cli *testServerClient) RunTestStmtCountLimit(t *testing.T) {
 	})
 }
 
-<<<<<<< HEAD:server/server_test.go
 func TestSeverHealth(t *testing.T) {
 	RunInGoTestChan = make(chan struct{})
 	RunInGoTest = true
@@ -2693,9 +2680,9 @@ func TestSeverHealth(t *testing.T) {
 	}
 	require.True(t, server.health.Load(), "server should be healthy")
 }
-=======
-func (cli *TestServerClient) getNewDB(t *testing.T, overrider configOverrider) *testkit.DBTestKit {
-	db, err := sql.Open("mysql", cli.GetDSN(overrider))
+
+func (cli *testServerClient) getNewDB(t *testing.T, overrider configOverrider) *testkit.DBTestKit {
+	db, err := sql.Open("mysql", cli.getDSN(overrider))
 	require.NoError(t, err)
 
 	return testkit.NewDBTestKit(t, db)
@@ -2706,8 +2693,22 @@ func MustExec(ctx context.Context, t *testing.T, conn *sql.Conn, sql string) {
 	require.NoError(t, err)
 }
 
-func MustQuery(ctx context.Context, t *testing.T, cli *TestServerClient, conn *sql.Conn, sql string) {
-	rs, err := conn.QueryContext(ctx, sql)
+func MustQueryWithRetry(ctx context.Context, t *testing.T, cli *tidbTestSuite, conn *sql.Conn, stmt string) {
+	var rs *sql.Rows
+	var err error
+	retryCnt := 1
+	for i := 0; i < 20; i++ {
+		rs, err = conn.QueryContext(ctx, stmt)
+		if err == nil {
+			break
+		}
+		if !strings.Contains(err.Error(), "Information schema is changed") {
+			break
+		}
+		retryCnt++
+		time.Sleep(100 * time.Millisecond)
+	}
+	t.Logf("running test case retry count:%v, stmt:%v", retryCnt, stmt)
 	require.NoError(t, err)
 	if rs != nil {
 		cli.Rows(t, rs)
@@ -2725,10 +2726,10 @@ type expectQuery struct {
 	rows []string
 }
 
-func (cli *TestServerClient) RunTestIssue53634(t *testing.T, dom *domain.Domain) {
-	cli.RunTests(t, func(config *mysql.Config) {
+func (cli *testServerClient) runTestIssue53634(t *testing.T, ts *tidbTestSuite, dom *domain.Domain) {
+	cli.runTestsOnNewDB(t, func(config *mysql.Config) {
 		config.MaxAllowedPacket = 1024
-	}, func(dbt *testkit.DBTestKit) {
+	}, "MDL", func(dbt *testkit.DBTestKit) {
 		ctx := context.Background()
 
 		conn, err := dbt.GetDB().Conn(ctx)
@@ -2757,14 +2758,14 @@ func (cli *TestServerClient) RunTestIssue53634(t *testing.T, dom *domain.Domain)
 		sqls[4] = sqlWithErr{nil, "commit"}
 		dropColumnSQL := "alter table stock drop column cct_1"
 		query := &expectQuery{sql: "select * from stock;", rows: []string{"1 a 101 x <nil>\n2 b 102 z <nil>"}}
-		runTestInSchemaState(t, conn, cli, dom, model.StateWriteReorganization, true, dropColumnSQL, sqls, query)
+		runTestInSchemaState(t, conn, ts, dom, model.StateWriteReorganization, true, dropColumnSQL, sqls, query)
 	})
 }
 
 func runTestInSchemaState(
 	t *testing.T,
 	conn *sql.Conn,
-	cli *TestServerClient,
+	cli *tidbTestSuite,
 	dom *domain.Domain,
 	state model.SchemaState,
 	isOnJobUpdated bool,
@@ -2835,7 +2836,7 @@ func runTestInSchemaState(
 				_, err = sqlWithErr.stmt.ExecContext(ctx, 100+i, i)
 				require.NoError(t, err)
 			} else {
-				MustQuery(ctx, t, cli, conn1, sqlWithErr.sql)
+				MustQueryWithRetry(ctx, t, cli, conn1, sqlWithErr.sql)
 			}
 		}
 	}
@@ -2858,7 +2859,7 @@ func runTestInSchemaState(
 		if expectQuery.rows == nil {
 			require.Nil(t, rs)
 		} else {
-			cli.CheckRows(t, rs, expectQuery.rows[0])
+			cli.checkRows(t, rs, expectQuery.rows[0])
 		}
 	}
 	d.SetHook(originalCallback)
@@ -2873,4 +2874,3 @@ func jobStateOrLastSubJobState(job *model.Job) model.SchemaState {
 }
 
 //revive:enable:exported
->>>>>>> 9aeaa76c5cb (*: fix a bug that update statement uses point get and update plan with different tblInfo (#54183)):pkg/server/internal/testserverclient/server_client.go
