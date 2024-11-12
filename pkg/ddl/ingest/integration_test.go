@@ -30,11 +30,7 @@ import (
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/testkit"
-<<<<<<< HEAD
-	"github.com/pingcap/tidb/tests/realtikvtest"
-=======
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
->>>>>>> 865213c94e2 (session: make `TxnInfo()` return even if process info is empty (#57044))
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -156,8 +152,8 @@ func TestAddIndexSetInternalSessions(t *testing.T) {
 	tk.MustExec("use test;")
 	defer ingesttestutil.InjectMockBackendMgr(t, store)()
 
-	tk.MustExec("set global tidb_enable_dist_task = 0;")
-	tk.MustExec("set @@tidb_ddl_reorg_worker_cnt = 1;")
+	tk.MustExec("set global tidb_enable_dist_task = 1;")
+	tk.MustExec("set global tidb_ddl_reorg_worker_cnt = 1;")
 	tk.MustExec("create table t (a int);")
 	tk.MustExec("insert into t values (1);")
 	expectInternalTS := []uint64{}
@@ -165,10 +161,11 @@ func TestAddIndexSetInternalSessions(t *testing.T) {
 	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/wrapInBeginRollbackStartTS", func(startTS uint64) {
 		expectInternalTS = append(expectInternalTS, startTS)
 	})
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/scanRecordExec", func() {
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/scanRecordExec", "return")
+	ddl.OperatorCallBackForTest = func() {
 		mgr := tk.Session().GetSessionManager()
 		actualInternalTS = mgr.GetInternalSessionStartTSList()
-	})
+	}
 	tk.MustExec("alter table t add index idx(a);")
 	require.Len(t, expectInternalTS, 1)
 	for _, ts := range expectInternalTS {
