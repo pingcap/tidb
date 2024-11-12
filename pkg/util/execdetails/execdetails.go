@@ -1256,13 +1256,13 @@ func (waitSummary *TiFlashWaitSummary) String() string {
 	buf := bytes.NewBuffer(make([]byte, 0, 32))
 	buf.WriteString("tiflash_wait: {")
 	empty := true
-	if waitSummary.minTSOWaitTime > 0 {
+	if waitSummary.minTSOWaitTime >= uint64(time.Millisecond) {
 		buf.WriteString("minTSO_wait: ")
 		buf.WriteString(strconv.FormatInt(time.Duration(waitSummary.minTSOWaitTime).Milliseconds(), 10))
 		buf.WriteString("ms")
 		empty = false
 	}
-	if waitSummary.pipelineBreakerWaitTime > 0 {
+	if waitSummary.pipelineBreakerWaitTime >= uint64(time.Millisecond) {
 		if !empty {
 			buf.WriteString(", ")
 		}
@@ -1271,7 +1271,7 @@ func (waitSummary *TiFlashWaitSummary) String() string {
 		buf.WriteString("ms")
 		empty = false
 	}
-	if waitSummary.pipelineQueueWaitTime > 0 {
+	if waitSummary.pipelineQueueWaitTime >= uint64(time.Millisecond) {
 		if !empty {
 			buf.WriteString(", ")
 		}
@@ -1296,9 +1296,9 @@ func (waitSummary *TiFlashWaitSummary) Merge(other TiFlashWaitSummary) {
 
 // CanBeIgnored check whether TiFlashWaitSummary can be ignored, not all tidb executors have significant tiflash wait summary
 func (waitSummary *TiFlashWaitSummary) CanBeIgnored() bool {
-	res := waitSummary.minTSOWaitTime < 1e6 &&
-		waitSummary.pipelineBreakerWaitTime < 1e6 &&
-		waitSummary.pipelineQueueWaitTime < 1e6
+	res := waitSummary.minTSOWaitTime < uint64(time.Millisecond) &&
+		waitSummary.pipelineBreakerWaitTime < uint64(time.Millisecond) &&
+		waitSummary.pipelineQueueWaitTime < uint64(time.Millisecond)
 	return res
 }
 
