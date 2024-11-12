@@ -3742,6 +3742,7 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p b
 			return nil, err
 		}
 	}
+
 	p, err = b.buildTableRefs(ctx, sel.From)
 	if err != nil {
 		return nil, err
