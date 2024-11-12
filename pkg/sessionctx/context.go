@@ -16,6 +16,7 @@ package sessionctx
 
 import (
 	"context"
+	"iter"
 	"sync"
 
 	distsqlctx "github.com/pingcap/tidb/pkg/distsql/context"
@@ -150,7 +151,7 @@ type Context interface {
 	GetSessionPlanCache() SessionPlanCache
 
 	// UpdateColStatsUsage updates the column stats usage.
-	UpdateColStatsUsage(predicateColumns []model.TableItemID)
+	UpdateColStatsUsage(predicateColumns iter.Seq[model.TableItemID])
 
 	// HasDirtyContent checks whether there's dirty update on the given table.
 	HasDirtyContent(tid int64) bool
