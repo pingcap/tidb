@@ -127,12 +127,17 @@ func (c *copReqSender) run() {
 	}
 }
 
+// ScanRecordExecForTest is only used for test.
+var ScanRecordExecForTest func()
+
 func scanRecords(p *copReqSenderPool, task *reorgBackfillTask, se *sess.Session) error {
 	logutil.BgLogger().Info("[ddl-ingest] start a cop-request task",
 		zap.Int("id", task.id), zap.String("task", task.String()))
 
 	return wrapInBeginRollback(se, func(startTS uint64) error {
-		failpoint.InjectCall("scanRecordExec")
+		failpoint.Inject("scanRecordExec", func() {
+			ScanRecordExecForTest()
+		})
 		rs, err := p.copCtx.buildTableScan(p.ctx, startTS, task.startKey, task.excludedEndKey())
 		if err != nil {
 			return err
@@ -168,6 +173,9 @@ func scanRecords(p *copReqSenderPool, task *reorgBackfillTask, se *sess.Session)
 	})
 }
 
+// WrapInBeginRollbackStartTS is only used for test.
+var WrapInBeginRollbackStartTS func(startTS uint64)
+
 func wrapInBeginRollback(se *sess.Session, f func(startTS uint64) error) error {
 	err := se.Begin()
 	if err != nil {
@@ -179,7 +187,9 @@ func wrapInBeginRollback(se *sess.Session, f func(startTS uint64) error) error {
 		return err
 	}
 	startTS := txn.StartTS()
-	failpoint.InjectCall("wrapInBeginRollbackStartTS", startTS)
+	failpoint.Inject("wrapInBeginRollbackStartTS", func(startTS uint64) {
+		WrapInBeginRollbackStartTS(startTS)
+	})
 	return f(startTS)
 }
 
