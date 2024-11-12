@@ -551,10 +551,12 @@ func (p *cteProducer) reset() error {
 	p.executorOpened = false
 	p.openErr = nil
 
-	if err := p.reopenTbls(); err != nil {
+	// Normally we need to setup tracker after calling Reopen(),
+	// But reopen resTbl means we need to call genCTEResult() again, it will setup tracker.
+	if err := p.resTbl.Reopen(); err != nil {
 		return err
 	}
-	return nil
+	return p.iterInTbl.Reopen()
 }
 
 func (p *cteProducer) resetTracker() {
@@ -566,15 +568,6 @@ func (p *cteProducer) resetTracker() {
 		p.diskTracker.Reset()
 		p.diskTracker = nil
 	}
-}
-
-func (p *cteProducer) reopenTbls() (err error) {
-	// Normally we need to setup tracker after calling Reopen(),
-	// But reopen resTbl means we need to call genCTEResult() again, it will setup tracker.
-	if err := p.resTbl.Reopen(); err != nil {
-		return err
-	}
-	return p.iterInTbl.Reopen()
 }
 
 // Check if tbl meets the requirement of limit.
