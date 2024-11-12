@@ -5889,6 +5889,9 @@ func (b *PlanBuilder) buildAdminAlterDDLJobs(ctx context.Context, as *ast.AdminS
 				return nil, err
 			}
 		}
+		if err = checkAlterDDLJobOptValue(&alterDDLJobOpt); err != nil {
+			return nil, err
+		}
 		options = append(options, &alterDDLJobOpt)
 		optionNames = append(optionNames, opt.Name)
 	}
@@ -5898,4 +5901,24 @@ func (b *PlanBuilder) buildAdminAlterDDLJobs(ctx context.Context, as *ast.AdminS
 	}
 	p.setSchemaAndNames(buildAlterDDLJobFields(optionNames))
 	return p, nil
+}
+
+// check if the config value is valid.
+func checkAlterDDLJobOptValue(opt *AlterDDLJobOpt) error {
+	switch opt.Name {
+	case AlterDDLJobThread:
+		thread := opt.Value.(*expression.Constant).Value.GetInt64()
+		if thread < 1 || thread > variable.MaxConfigurableConcurrency {
+			return errors.New(fmt.Sprintf("%s value %v out of range [1, %v]",
+				opt.Name, thread, variable.MaxConfigurableConcurrency))
+		}
+	case AlterDDLJobBatchSize:
+		batchSize := opt.Value.(*expression.Constant).Value.GetInt64()
+		bs := int32(batchSize)
+		if bs < variable.MinDDLReorgBatchSize || bs > variable.MaxDDLReorgBatchSize {
+			return errors.New(fmt.Sprintf("%s value %v out of range [%v, %v]",
+				opt.Name, bs, variable.MinDDLReorgBatchSize, variable.MaxDDLReorgBatchSize))
+		}
+	}
+	return nil
 }
