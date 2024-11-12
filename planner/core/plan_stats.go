@@ -84,7 +84,7 @@ func RequestLoadStats(ctx sessionctx.Context, neededHistItems []model.TableItemI
 	if hintMaxExecutionTime <= 0 {
 		hintMaxExecutionTime = maxDuration
 	}
-	sessMaxExecutionTime := int64(ctx.GetSessionVars().MaxExecutionTime)
+	sessMaxExecutionTime := int64(ctx.GetSessionVars().GetMaxExecutionTime())
 	if sessMaxExecutionTime <= 0 {
 		sessMaxExecutionTime = maxDuration
 	}

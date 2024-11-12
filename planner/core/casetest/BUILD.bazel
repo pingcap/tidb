@@ -33,6 +33,7 @@ go_test(
     deps = [
         "//config",
         "//domain",
+        "//errno",
         "//executor",
         "//expression",
         "//expression/aggregation",

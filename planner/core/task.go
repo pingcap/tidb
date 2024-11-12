@@ -309,11 +309,11 @@ func (p *PhysicalIndexJoin) attach2Task(tasks ...task) task {
 
 func getAvgRowSize(stats *property.StatsInfo, cols []*expression.Column) (size float64) {
 	if stats.HistColl != nil {
-		size = stats.HistColl.GetAvgRowSizeListInDisk(cols)
+		size = math.Max(stats.HistColl.GetAvgRowSizeListInDisk(cols), 0)
 	} else {
 		// Estimate using just the type info.
 		for _, col := range cols {
-			size += float64(chunk.EstimateTypeWidth(col.GetType()))
+			size += math.Max(float64(chunk.EstimateTypeWidth(col.GetType())), 0)
 		}
 	}
 	return

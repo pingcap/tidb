@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/charset"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/opcode"
 	"github.com/pingcap/tidb/parser/terror"
@@ -35,10 +36,10 @@ import (
 	driver "github.com/pingcap/tidb/types/parser_driver"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/collate"
+	"github.com/pingcap/tidb/util/intset"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"go.uber.org/zap"
-	"golang.org/x/tools/container/intsets"
 )
 
 // cowExprRef is a copy-on-write slice ref util using in `ColumnSubstitute`
@@ -372,15 +373,15 @@ func ExtractColumnsAndCorColumnsFromExpressions(result []*Column, list []Express
 }
 
 // ExtractColumnSet extracts the different values of `UniqueId` for columns in expressions.
-func ExtractColumnSet(exprs ...Expression) *intsets.Sparse {
-	set := &intsets.Sparse{}
+func ExtractColumnSet(exprs ...Expression) intset.FastIntSet {
+	set := intset.NewFastIntSet()
 	for _, expr := range exprs {
-		extractColumnSet(expr, set)
+		extractColumnSet(expr, &set)
 	}
 	return set
 }
 
-func extractColumnSet(expr Expression, set *intsets.Sparse) {
+func extractColumnSet(expr Expression, set *intset.FastIntSet) {
 	switch v := expr.(type) {
 	case *Column:
 		set.Insert(int(v.UniqueID))
@@ -460,6 +461,28 @@ func ColumnSubstituteImpl(expr Expression, schema *Schema, newExprs []Expression
 				return true, false, e
 			}
 			return false, false, v
+		}
+		// If the collation of the column is PAD SPACE,
+		// we can't propagate the constant to the length function.
+		// For example, schema = ['name'], newExprs = ['a'], v = length(name).
+		// We can't substitute name with 'a' in length(name) because the collation of name is PAD SPACE.
+		// TODO: We will fix it here temporarily, and redesign the logic if we encounter more similar functions or situations later.
+		// Fixed issue #53730
+		if v.GetCtx().GetSessionVars().StmtCtx.InConstantPropagateCheck && v.FuncName.L == ast.Length {
+			arg0, isColumn := v.GetArgs()[0].(*Column)
+			if isColumn {
+				id := schema.ColumnIndex(arg0)
+				if id != -1 {
+					_, isConstant := newExprs[id].(*Constant)
+					if isConstant {
+						mappedNewColumnCollate := schema.Columns[id].GetType().GetCollate()
+						if mappedNewColumnCollate == charset.CollationUTF8MB4 ||
+							mappedNewColumnCollate == charset.CollationUTF8 {
+							return false, false, v
+						}
+					}
+				}
+			}
 		}
 		// cowExprRef is a copy-on-write util, args array allocation happens only
 		// when expr in args is changed

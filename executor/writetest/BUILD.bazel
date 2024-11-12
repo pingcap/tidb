@@ -17,7 +17,6 @@ go_test(
         "//meta/autoid",
         "//parser/model",
         "//parser/mysql",
-        "//planner/core",
         "//session",
         "//sessionctx",
         "//sessionctx/variable",

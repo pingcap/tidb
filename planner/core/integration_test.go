@@ -3945,6 +3945,31 @@ func TestTiFlashFineGrainedShuffleWithMaxTiFlashThreads(t *testing.T) {
 	require.Equal(t, uint64(16), streamCount[0])
 }
 
+func TestIssue37986(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	tk.MustExec(`drop table if exists t3`)
+	tk.MustExec(`CREATE TABLE t3(c0 INT, primary key(c0))`)
+	tk.MustExec(`insert into t3 values(1), (2), (3), (4), (5), (6), (7), (8), (9), (10)`)
+	rs := tk.MustQuery(`SELECT v2.c0 FROM (select rand() as c0 from t3) v2 order by v2.c0 limit 10`).Rows()
+	lastVal := -1.0
+	for _, r := range rs {
+		v := r[0].(string)
+		val, err := strconv.ParseFloat(v, 64)
+		require.NoError(t, err)
+		require.True(t, val >= lastVal)
+		lastVal = val
+	}
+
+	tk.MustQuery(`explain format='brief' SELECT v2.c0 FROM (select rand() as c0 from t3) v2 order by v2.c0 limit 10`).
+		Check(testkit.Rows(`TopN 10.00 root  Column#2, offset:0, count:10`,
+			`└─Projection 10000.00 root  rand()->Column#2`,
+			`  └─TableReader 10000.00 root  data:TableFullScan`,
+			`    └─TableFullScan 10000.00 cop[tikv] table:t3 keep order:false, stats:pseudo`))
+}
+
 func TestIssue33175(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -4171,6 +4196,15 @@ func TestRepeatPushDownToTiFlash(t *testing.T) {
 		{"    └─TableFullScan_7", "mpp[tiflash]", "keep order:false, stats:pseudo"},
 	}
 	tk.MustQuery("explain select repeat(a,b) from t;").CheckAt([]int{0, 2, 4}, rows)
+}
+
+func TestIssue50235(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`use test`)
+	tk.MustExec(`create table tt (c year(4) NOT NULL DEFAULT '2016', primary key(c));`)
+	tk.MustExec(`insert into tt values (2016);`)
+	tk.MustQuery(`select * from tt where c < 16212511333665770580`).Check(testkit.Rows("2016"))
 }
 
 func TestIssue36194(t *testing.T) {

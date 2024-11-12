@@ -12,6 +12,7 @@ import (
 	"io"
 	"math/rand"
 	"os"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -786,8 +787,37 @@ func WriteBackupDDLJobs(metaWriter *metautil.MetaWriter, g glue.Glue, store kv.S
 	if err != nil {
 		return errors.Trace(err)
 	}
+
+	// determine whether the jobs need to be append into `allJobs`
+	appendJobsFn := func(jobs []*model.Job) ([]*model.Job, bool) {
+		appendJobs := make([]*model.Job, 0, len(jobs))
+		for _, job := range jobs {
+			if skipUnsupportedDDLJob(job) {
+				continue
+			}
+			if job.BinlogInfo != nil && job.BinlogInfo.SchemaVersion <= lastSchemaVersion {
+				// early exits to stop unnecessary scan
+				return appendJobs, true
+			}
+
+			if (job.State == model.JobStateDone || job.State == model.JobStateSynced) &&
+				(job.BinlogInfo != nil && job.BinlogInfo.SchemaVersion > lastSchemaVersion && job.BinlogInfo.SchemaVersion <= backupSchemaVersion) {
+				if job.BinlogInfo.DBInfo != nil {
+					// ignore all placement policy info during incremental backup for now.
+					job.BinlogInfo.DBInfo.PlacementPolicyRef = nil
+				}
+				if job.BinlogInfo.TableInfo != nil {
+					// ignore all placement policy info during incremental backup for now.
+					job.BinlogInfo.TableInfo.ClearPlacement()
+				}
+				appendJobs = append(appendJobs, job)
+			}
+		}
+		return appendJobs, false
+	}
+
 	newestMeta := meta.NewSnapshotMeta(store.GetSnapshot(kv.NewVersion(version.Ver)))
-	allJobs := make([]*model.Job, 0)
+	var allJobs []*model.Job
 	err = g.UseOneShotSession(store, !needDomain, func(se glue.Session) error {
 		allJobs, err = ddl.GetAllDDLJobs(se.GetSessionCtx(), newestMeta)
 		if err != nil {
@@ -800,41 +830,49 @@ func WriteBackupDDLJobs(metaWriter *metautil.MetaWriter, g glue.Glue, store kv.S
 		return errors.Trace(err)
 	}
 
-	historyJobs, err := ddl.GetAllHistoryDDLJobs(newestMeta)
+	// filter out the jobs
+	allJobs, _ = appendJobsFn(allJobs)
+
+	historyJobsIter, err := ddl.GetLastHistoryDDLJobsIterator(newestMeta)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	log.Debug("get history jobs", zap.Int("jobs", len(historyJobs)))
-	allJobs = append(allJobs, historyJobs...)
 
-	count := 0
-	for _, job := range allJobs {
-		if skipUnsupportedDDLJob(job) {
-			continue
+	count := len(allJobs)
+
+	cacheJobs := make([]*model.Job, 0, ddl.DefNumHistoryJobs)
+	for {
+		cacheJobs, err = historyJobsIter.GetLastJobs(ddl.DefNumHistoryJobs, cacheJobs)
+		if err != nil {
+			return errors.Trace(err)
 		}
-
-		if (job.State == model.JobStateDone || job.State == model.JobStateSynced) &&
-			(job.BinlogInfo != nil && job.BinlogInfo.SchemaVersion > lastSchemaVersion && job.BinlogInfo.SchemaVersion <= backupSchemaVersion) {
-			if job.BinlogInfo.DBInfo != nil {
-				// ignore all placement policy info during incremental backup for now.
-				job.BinlogInfo.DBInfo.PlacementPolicyRef = nil
-			}
-			if job.BinlogInfo.TableInfo != nil {
-				// ignore all placement policy info during incremental backup for now.
-				job.BinlogInfo.TableInfo.ClearPlacement()
-			}
-			jobBytes, err := json.Marshal(job)
-			if err != nil {
-				return errors.Trace(err)
-			}
-			err = metaWriter.Send(jobBytes, metautil.AppendDDL)
-			if err != nil {
-				return errors.Trace(err)
-			}
-			count++
+		if len(cacheJobs) == 0 {
+			// no more jobs
+			break
+		}
+		jobs, finished := appendJobsFn(cacheJobs)
+		count += len(jobs)
+		allJobs = append(allJobs, jobs...)
+		if finished {
+			// no more jobs between [LastTS, ts]
+			break
 		}
 	}
-	log.Debug("get completed jobs", zap.Int("jobs", count))
+	log.Debug("get complete jobs", zap.Int("jobs", count))
+	// sort by job id with ascend order
+	sort.Slice(allJobs, func(i, j int) bool {
+		return allJobs[i].ID < allJobs[j].ID
+	})
+	for _, job := range allJobs {
+		jobBytes, err := json.Marshal(job)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		err = metaWriter.Send(jobBytes, metautil.AppendDDL)
+		if err != nil {
+			return errors.Trace(err)
+		}
+	}
 	return nil
 }
 
@@ -1296,12 +1334,74 @@ func (bc *Client) handleFineGrained(
 	return backoffMill, nil
 }
 
+// timeoutRecv cancel the context if `Refresh()` is not called within the specified time `timeout`.
+type timeoutRecv struct {
+	wg        sync.WaitGroup
+	parentCtx context.Context
+	cancel    context.CancelCauseFunc
+
+	refresh chan struct{}
+}
+
+// Refresh the timeout ticker
+func (trecv *timeoutRecv) Refresh() {
+	select {
+	case <-trecv.parentCtx.Done():
+	case trecv.refresh <- struct{}{}:
+	}
+}
+
+// Stop the timeout ticker
+func (trecv *timeoutRecv) Stop() {
+	close(trecv.refresh)
+	trecv.wg.Wait()
+	trecv.cancel(nil)
+}
+
+var TimeoutOneResponse = time.Hour
+
+func (trecv *timeoutRecv) loop(timeout time.Duration) {
+	defer trecv.wg.Done()
+	ticker := time.NewTicker(timeout)
+	defer ticker.Stop()
+	for {
+		ticker.Reset(timeout)
+		select {
+		case <-trecv.parentCtx.Done():
+			return
+		case _, ok := <-trecv.refresh:
+			if !ok {
+				return
+			}
+		case <-ticker.C:
+			log.Warn("receive a backup response timeout")
+			trecv.cancel(errors.Errorf("receive a backup response timeout"))
+		}
+	}
+}
+
+func StartTimeoutRecv(ctx context.Context, timeout time.Duration) (context.Context, *timeoutRecv) {
+	cctx, cancel := context.WithCancelCause(ctx)
+	trecv := &timeoutRecv{
+		parentCtx: ctx,
+		cancel:    cancel,
+		refresh:   make(chan struct{}),
+	}
+	trecv.wg.Add(1)
+	go trecv.loop(timeout)
+	return cctx, trecv
+}
+
 func doSendBackup(
-	ctx context.Context,
+	pctx context.Context,
 	client backuppb.BackupClient,
 	req backuppb.BackupRequest,
 	respFn func(*backuppb.BackupResponse) error,
 ) error {
+	// Backup might be stuck on GRPC `waitonHeader`, so start a timeout ticker to
+	// terminate the backup if it does not receive any new response for a long time.
+	ctx, timerecv := StartTimeoutRecv(pctx, TimeoutOneResponse)
+	defer timerecv.Stop()
 	failpoint.Inject("hint-backup-start", func(v failpoint.Value) {
 		logutil.CL(ctx).Info("failpoint hint-backup-start injected, " +
 			"process will notify the shell.")
@@ -1346,6 +1446,7 @@ func doSendBackup(
 
 	for {
 		resp, err := bCli.Recv()
+		timerecv.Refresh()
 		if err != nil {
 			if errors.Cause(err) == io.EOF { // nolint:errorlint
 				logutil.CL(ctx).Debug("backup streaming finish",

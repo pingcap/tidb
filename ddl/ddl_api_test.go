@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/util/cmp"
 	"github.com/stretchr/testify/require"
 	"golang.org/x/exp/slices"
+	"golang.org/x/sync/errgroup"
 )
 
 func TestGetDDLJobs(t *testing.T) {
@@ -151,6 +152,57 @@ func enQueueDDLJobs(t *testing.T, sess session.Session, txn kv.Transaction, jobT
 		err := addDDLJobs(sess, txn, job)
 		require.NoError(t, err)
 	}
+}
+
+func TestCreateViewConcurrently(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	tk.MustExec("create table t (a int);")
+	tk.MustExec("create view v as select * from t;")
+	tk.MustExec("set global tidb_enable_metadata_lock = 1;")
+	var (
+		counterErr error
+		counter    int
+	)
+	ddl.OnCreateViewForTest = func(job *model.Job) {
+		counter++
+		if counter > 1 {
+			counterErr = fmt.Errorf("create view job should not run concurrently")
+			return
+		}
+	}
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/onDDLCreateView", "return"))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/onDDLCreateView"))
+	}()
+
+	ddl.AfterDelivery2WorkerForTest = func(job *model.Job) {
+		if job.Type == model.ActionCreateView {
+			counter--
+		}
+	}
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/afterDelivery2Worker", "return"))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/afterDelivery2Worker"))
+	}()
+
+	var eg errgroup.Group
+	for i := 0; i < 5; i++ {
+		eg.Go(func() error {
+			newTk := testkit.NewTestKit(t, store)
+			_, err := newTk.Exec("use test")
+			if err != nil {
+				return err
+			}
+			_, err = newTk.Exec("create or replace view v as select * from t;")
+			return err
+		})
+	}
+	err := eg.Wait()
+	require.NoError(t, err)
+	require.NoError(t, counterErr)
 }
 
 func TestCreateDropCreateTable(t *testing.T) {

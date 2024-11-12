@@ -15,6 +15,7 @@
 package core
 
 import (
+	"bytes"
 	"context"
 
 	"github.com/pingcap/errors"
@@ -100,8 +101,33 @@ func planCachePreprocess(ctx context.Context, sctx sessionctx.Context, isNonPrep
 		return errors.Trace(err)
 	}
 
-	// step 3: check schema version
-	if stmtAst.SchemaVersion != is.SchemaMetaVersion() {
+	// step 3: add metadata lock and check each table's schema version
+	schemaNotMatch := false
+	for i := 0; i < len(stmt.dbName); i++ {
+		_, ok := is.TableByID(stmt.tbls[i].Meta().ID)
+		if !ok {
+			tblByName, err := is.TableByName(stmt.dbName[i], stmt.tbls[i].Meta().Name)
+			if err != nil {
+				return ErrSchemaChanged.GenWithStack("Schema change caused error: %s", err.Error())
+			}
+			delete(stmt.RelateVersion, stmt.tbls[i].Meta().ID)
+			stmt.tbls[i] = tblByName
+			stmt.RelateVersion[tblByName.Meta().ID] = tblByName.Meta().Revision
+		}
+		newTbl, err := tryLockMDLAndUpdateSchemaIfNecessary(sctx, stmt.dbName[i], stmt.tbls[i], is)
+		if err != nil {
+			schemaNotMatch = true
+			continue
+		}
+		if stmt.tbls[i].Meta().Revision != newTbl.Meta().Revision {
+			schemaNotMatch = true
+		}
+		stmt.tbls[i] = newTbl
+		stmt.RelateVersion[newTbl.Meta().ID] = newTbl.Meta().Revision
+	}
+
+	// step 4: check schema version
+	if schemaNotMatch || stmt.PreparedAst.SchemaVersion != is.SchemaMetaVersion() {
 		// In order to avoid some correctness issues, we have to clear the
 		// cached plan once the schema version is changed.
 		// Cached plan in prepared struct does NOT have a "cache key" with
@@ -109,6 +135,7 @@ func planCachePreprocess(ctx context.Context, sctx sessionctx.Context, isNonPrep
 		stmtAst.CachedPlan = nil
 		stmt.Executor = nil
 		stmt.ColumnInfos = nil
+		stmt.planCacheKey = nil
 		// If the schema version has changed we need to preprocess it again,
 		// if this time it failed, the real reason for the error is schema changed.
 		// Example:
@@ -123,7 +150,7 @@ func planCachePreprocess(ctx context.Context, sctx sessionctx.Context, isNonPrep
 		stmtAst.SchemaVersion = is.SchemaMetaVersion()
 	}
 
-	// step 4: handle expiration
+	// step 5: handle expiration
 	// If the lastUpdateTime less than expiredTimeStamp4PC,
 	// it means other sessions have executed 'admin flush instance plan_cache'.
 	// So we need to clear the current session's plan cache.
@@ -134,6 +161,7 @@ func planCachePreprocess(ctx context.Context, sctx sessionctx.Context, isNonPrep
 		stmtAst.CachedPlan = nil
 		vars.LastUpdateTime4PC = expiredTimeStamp4PC
 	}
+
 	return nil
 }
 
@@ -186,12 +214,12 @@ func GetPlanFromSessionPlanCache(ctx context.Context, sctx sessionctx.Context,
 			latestSchemaVersion = domain.GetDomain(sctx).InfoSchema().SchemaMetaVersion()
 		}
 		if cacheKey, err = NewPlanCacheKey(sctx.GetSessionVars(), stmt.StmtText,
-			stmt.StmtDB, stmtAst.SchemaVersion, latestSchemaVersion, bindSQL, expression.ExprPushDownBlackListReloadTimeStamp.Load()); err != nil {
+			stmt.StmtDB, stmtAst.SchemaVersion, latestSchemaVersion, bindSQL, expression.ExprPushDownBlackListReloadTimeStamp.Load(), stmt.RelateVersion); err != nil {
 			return nil, nil, err
 		}
 	}
 
-	if stmtCtx.UseCache && stmtAst.CachedPlan != nil { // special code path for fast point plan
+	if stmtCtx.UseCache && stmtAst.CachedPlan != nil && bytes.Equal(stmt.planCacheKey.Hash(), cacheKey.Hash()) { // special code path for fast point plan
 		if plan, names, ok, err := getCachedPointPlan(stmtAst, sessVars, stmtCtx); ok {
 			return plan, names, err
 		}
@@ -331,13 +359,14 @@ func generateNewPlan(ctx context.Context, sctx sessionctx.Context, isNonPrepared
 		if _, isolationReadContainTiFlash := sessVars.IsolationReadEngines[kv.TiFlash]; isolationReadContainTiFlash && !IsReadOnly(stmtAst.Stmt, sessVars) {
 			delete(sessVars.IsolationReadEngines, kv.TiFlash)
 			if cacheKey, err = NewPlanCacheKey(sessVars, stmt.StmtText, stmt.StmtDB,
-				stmtAst.SchemaVersion, latestSchemaVersion, bindSQL, expression.ExprPushDownBlackListReloadTimeStamp.Load()); err != nil {
+				stmtAst.SchemaVersion, latestSchemaVersion, bindSQL, expression.ExprPushDownBlackListReloadTimeStamp.Load(), stmt.RelateVersion); err != nil {
 				return nil, nil, err
 			}
 			sessVars.IsolationReadEngines[kv.TiFlash] = struct{}{}
 		}
 		cached := NewPlanCacheValue(p, names, stmtCtx.TblInfo2UnionScan, matchOpts, &stmtCtx.StmtHints)
 		stmt.NormalizedPlan, stmt.PlanDigest = NormalizePlan(p)
+		stmt.planCacheKey = cacheKey
 		stmtCtx.SetPlan(p)
 		stmtCtx.SetPlanDigest(stmt.NormalizedPlan, stmt.PlanDigest)
 		sctx.GetSessionPlanCache().Put(cacheKey, cached, matchOpts)
@@ -837,6 +866,7 @@ func IsPointPlanShortPathOK(sctx sessionctx.Context, is infoschema.InfoSchema, s
 	if stmtAst.SchemaVersion != is.SchemaMetaVersion() {
 		stmtAst.CachedPlan = nil
 		stmt.ColumnInfos = nil
+		stmt.planCacheKey = nil
 		return false, nil
 	}
 	// maybe we'd better check cached plan type here, current

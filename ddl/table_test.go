@@ -309,7 +309,8 @@ func TestCreateView(t *testing.T) {
 	}
 	ctx.SetValue(sessionctx.QueryString, "skip")
 	err = d.DoDDLJob(ctx, job)
-	require.Error(t, err)
+	// The non-existing table id in job args will not be considered anymore.
+	require.NoError(t, err)
 }
 
 func checkTableCacheTest(t *testing.T, store kv.Storage, dbInfo *model.DBInfo, tblInfo *model.TableInfo) {
