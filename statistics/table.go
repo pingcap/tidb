@@ -1519,6 +1519,8 @@ func (coll *HistColl) GetAvgRowSizeListInDisk(cols []*expression.Column) (size f
 			size += colHist.AvgColSizeListInDisk(coll.RealtimeCount)
 		}
 	}
+	// Avoid errors related to size less than zero
+	size = math.Max(0, size)
 	// Add 8 byte for each column's size record. See `ListInDisk` for details.
 	return size + float64(8*len(cols))
 }
@@ -1536,6 +1538,8 @@ func (coll *HistColl) GetTableAvgRowSize(ctx sessionctx.Context, cols []*express
 			size += 8 /* row_id length */
 		}
 	}
+	// Avoid errors related to size less than zero
+	size = math.Max(0, size)
 	return
 }
 
