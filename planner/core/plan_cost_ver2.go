@@ -759,7 +759,7 @@ func scanCostVer2(option *PlanCostOption, rows, rowSize float64, scanFactor cost
 	}
 	return newCostVer2(option, scanFactor,
 		// rows * log(row-size) * scanFactor, log2 from experiments
-		rows*math.Log2(rowSize)*scanFactor.Value,
+		rows*math.Max(math.Log2(rowSize), 0)*scanFactor.Value,
 		func() string { return fmt.Sprintf("scan(%v*logrowsize(%v)*%v)", rows, rowSize, scanFactor) })
 }
 
@@ -1046,7 +1046,7 @@ func sumCostVer2(costs ...costVer2) (ret costVer2) {
 		return
 	}
 	for i, c := range costs {
-		ret.cost += c.cost
+		ret.cost += math.Max(c.cost, 0)
 		if c.trace != nil {
 			if i == 0 { // init
 				ret.trace = &costTrace{make(map[string]float64), ""}
