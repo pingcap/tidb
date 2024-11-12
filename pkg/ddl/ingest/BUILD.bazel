@@ -67,11 +67,7 @@ go_test(
     embed = [":ingest"],
     flaky = True,
     race = "on",
-<<<<<<< HEAD
-    shard_count = 17,
-=======
     shard_count = 23,
->>>>>>> 865213c94e2 (session: make `TxnInfo()` return even if process info is empty (#57044))
     deps = [
         "//pkg/config",
         "//pkg/ddl",
@@ -83,11 +79,6 @@ go_test(
         "//pkg/errno",
         "//pkg/parser/model",
         "//pkg/testkit",
-<<<<<<< HEAD
-        "//tests/realtikvtest",
-=======
-        "//pkg/testkit/testfailpoint",
->>>>>>> 865213c94e2 (session: make `TxnInfo()` return even if process info is empty (#57044))
         "@com_github_ngaut_pools//:pools",
         "@com_github_pingcap_failpoint//:failpoint",
         "@com_github_stretchr_testify//assert",

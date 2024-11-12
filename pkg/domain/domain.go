@@ -1061,7 +1061,6 @@ const resourceIdleTimeout = 3 * time.Minute // resources in the ResourcePool wil
 func NewDomain(store kv.Storage, ddlLease time.Duration, statsLease time.Duration, idxUsageSyncLease time.Duration, dumpFileGcLease time.Duration, factory pools.Factory) *Domain {
 	capacity := 200 // capacity of the sysSessionPool size
 	do := &Domain{
-<<<<<<< HEAD
 		store:               store,
 		exit:                make(chan struct{}),
 		sysSessionPool:      newSessionPool(capacity, factory),
@@ -1070,31 +1069,6 @@ func NewDomain(store kv.Storage, ddlLease time.Duration, statsLease time.Duratio
 		slowQuery:           newTopNSlowQueries(config.GetGlobalConfig().InMemSlowQueryTopNNum, time.Hour*24*7, config.GetGlobalConfig().InMemSlowQueryRecentNum),
 		indexUsageSyncLease: idxUsageSyncLease,
 		dumpFileGcChecker:   &dumpFileGcChecker{gcLease: dumpFileGcLease, paths: []string{replayer.GetPlanReplayerDirName(), GetOptimizerTraceDirName(), GetExtractTaskDirName()}},
-=======
-		store: store,
-		exit:  make(chan struct{}),
-		sysSessionPool: util.NewSessionPool(
-			capacity, factory,
-			func(r pools.Resource) {
-				_, ok := r.(sessionctx.Context)
-				intest.Assert(ok)
-				infosync.StoreInternalSession(r)
-			},
-			func(r pools.Resource) {
-				sctx, ok := r.(sessionctx.Context)
-				intest.Assert(ok)
-				intest.AssertFunc(func() bool {
-					txn, _ := sctx.Txn(false)
-					return txn == nil || !txn.Valid()
-				})
-				infosync.DeleteInternalSession(r)
-			},
-		),
-		statsLease:        statsLease,
-		schemaLease:       schemaLease,
-		slowQuery:         newTopNSlowQueries(config.GetGlobalConfig().InMemSlowQueryTopNNum, time.Hour*24*7, config.GetGlobalConfig().InMemSlowQueryRecentNum),
-		dumpFileGcChecker: &dumpFileGcChecker{gcLease: dumpFileGcLease, paths: []string{replayer.GetPlanReplayerDirName(), GetOptimizerTraceDirName(), GetExtractTaskDirName()}},
->>>>>>> 865213c94e2 (session: make `TxnInfo()` return even if process info is empty (#57044))
 		mdlCheckTableInfo: &mdlCheckTableInfo{
 			mu:         sync.Mutex{},
 			jobsVerMap: make(map[int64]int64),

@@ -24,11 +24,6 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/session/txninfo"
-<<<<<<< HEAD
-	"github.com/pingcap/tidb/pkg/sessionctx"
-=======
-	sessiontypes "github.com/pingcap/tidb/pkg/session/types"
->>>>>>> 865213c94e2 (session: make `TxnInfo()` return even if process info is empty (#57044))
 	"github.com/pingcap/tidb/pkg/util"
 )
 
@@ -159,14 +154,6 @@ func (msm *MockSessionManager) GetInternalSessionStartTSList() []uint64 {
 	defer msm.mu.Unlock()
 	ret := make([]uint64, 0, len(msm.internalSessions))
 	for internalSess := range msm.internalSessions {
-<<<<<<< HEAD
-		se := internalSess.(sessionctx.Context)
-		sessVars := se.GetSessionVars()
-		sessVars.TxnCtxMu.Lock()
-		startTS := sessVars.TxnCtx.StartTS
-		sessVars.TxnCtxMu.Unlock()
-		ret = append(ret, startTS)
-=======
 		// Ref the implementation of `GetInternalSessionStartTSList` on the real session manager. The `TxnInfo` is more
 		// accurate, because if a session is pending, the `StartTS` in `sessVars.TxnCtx` will not be updated. For example,
 		// if there is not DDL for a long time, the minimal internal session start ts will not have any progress.
@@ -177,7 +164,6 @@ func (msm *MockSessionManager) GetInternalSessionStartTSList() []uint64 {
 			}
 			continue
 		}
->>>>>>> 865213c94e2 (session: make `TxnInfo()` return even if process info is empty (#57044))
 	}
 	return ret
 }

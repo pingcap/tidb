@@ -29,11 +29,6 @@ import (
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/testkit"
-<<<<<<< HEAD
-	"github.com/pingcap/tidb/tests/realtikvtest"
-=======
-	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
->>>>>>> 865213c94e2 (session: make `TxnInfo()` return even if process info is empty (#57044))
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -158,13 +153,18 @@ func TestAddIndexSetInternalSessions(t *testing.T) {
 	tk.MustExec("insert into t values (1);")
 	expectInternalTS := []uint64{}
 	actualInternalTS := []uint64{}
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/wrapInBeginRollbackStartTS", func(startTS uint64) {
+	err := failpoint.EnableCall("github.com/pingcap/tidb/pkg/ddl/wrapInBeginRollbackStartTS", func(startTS uint64) {
 		expectInternalTS = append(expectInternalTS, startTS)
 	})
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/scanRecordExec", func() {
+	require.NoError(t, err)
+	defer failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/wrapInBeginRollbackStartTS")
+	err = failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/scanRecordExec", "return")
+	require.NoError(t, err)
+	defer failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/scanRecordExec")
+	ddl.OperatorCallBackForTest = func() {
 		mgr := tk.Session().GetSessionManager()
 		actualInternalTS = mgr.GetInternalSessionStartTSList()
-	})
+	}
 	tk.MustExec("alter table t add index idx(a);")
 	require.Len(t, expectInternalTS, 1)
 	for _, ts := range expectInternalTS {
