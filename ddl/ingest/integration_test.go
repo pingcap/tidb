@@ -188,8 +188,8 @@ func TestAddIndexSetInternalSessions(t *testing.T) {
 		mgr := tk.Session().GetSessionManager()
 		actualInternalTS = mgr.GetInternalSessionStartTSList()
 	})
-	defer failpoint.Disable("github.com/pingcap/tidb/ddl/scanRecordExec")
 	require.NoError(t, err)
+	defer failpoint.Disable("github.com/pingcap/tidb/ddl/scanRecordExec")
 	tk.MustExec("alter table t add index idx(a);")
 	require.Len(t, expectInternalTS, 1)
 	for _, ts := range expectInternalTS {
