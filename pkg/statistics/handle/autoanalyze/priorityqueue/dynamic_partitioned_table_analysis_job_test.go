@@ -34,9 +34,9 @@ func TestAnalyzeDynamicPartitionedTable(t *testing.T) {
 	tk.MustExec("create table t (a int, b int, index idx(a)) partition by range (a) (partition p0 values less than (2), partition p1 values less than (4))")
 	tk.MustExec("insert into t values (1, 1), (2, 2), (3, 3)")
 	job := &priorityqueue.DynamicPartitionedTableAnalysisJob{
-		TableSchema:     "test",
+		SchemaName:      "test",
 		GlobalTableName: "t",
-		Partitions:      []string{"p0", "p1"},
+		PartitionNames:  []string{"p0", "p1"},
 		TableStatsVer:   2,
 	}
 
@@ -73,7 +73,7 @@ func TestAnalyzeDynamicPartitionedTableIndexes(t *testing.T) {
 	partitionInfo := tableInfo.Meta().GetPartitionInfo()
 	require.NotNil(t, partitionInfo)
 	job := &priorityqueue.DynamicPartitionedTableAnalysisJob{
-		TableSchema:   "test",
+		SchemaName:    "test",
 		GlobalTableID: tableInfo.Meta().ID,
 		PartitionIndexIDs: map[int64][]int64{
 			1: {partitionInfo.Definitions[0].ID, partitionInfo.Definitions[1].ID},
@@ -132,7 +132,7 @@ func TestValidateAndPrepareForDynamicPartitionedTable(t *testing.T) {
 	tableInfo, err := dom.InfoSchema().TableByName(context.Background(), model.NewCIStr("example_schema"), model.NewCIStr("example_table"))
 	require.NoError(t, err)
 	job := &priorityqueue.DynamicPartitionedTableAnalysisJob{
-		TableSchema:   "example_schema",
+		SchemaName:    "example_schema",
 		GlobalTableID: tableInfo.Meta().ID,
 		PartitionIDs: map[int64]struct{}{
 			113: {},
@@ -152,25 +152,25 @@ func TestValidateAndPrepareForDynamicPartitionedTable(t *testing.T) {
 	// Insert some failed jobs.
 	// Just failed.
 	now := tk.MustQuery("select now()").Rows()[0][0].(string)
-	insertFailedJobWithStartTime(tk, job.TableSchema, job.GlobalTableName, "p0", now)
+	insertFailedJobWithStartTime(tk, job.SchemaName, job.GlobalTableName, "p0", now)
 	// Note: The failure reason is not checked in this test because the time duration can sometimes be inaccurate.(not now)
 	valid, _ = job.ValidateAndPrepare(sctx)
 	require.False(t, valid)
 	// Failed 10 seconds ago.
 	startTime := tk.MustQuery("select now() - interval 10 second").Rows()[0][0].(string)
-	insertFailedJobWithStartTime(tk, job.TableSchema, job.GlobalTableName, "p0", startTime)
+	insertFailedJobWithStartTime(tk, job.SchemaName, job.GlobalTableName, "p0", startTime)
 	valid, failReason = job.ValidateAndPrepare(sctx)
 	require.False(t, valid)
 	require.Equal(t, "last failed analysis duration is less than 2 times the average analysis duration", failReason)
 	// Failed long long ago.
 	startTime = tk.MustQuery("select now() - interval 300 day").Rows()[0][0].(string)
-	insertFailedJobWithStartTime(tk, job.TableSchema, job.GlobalTableName, "p0", startTime)
+	insertFailedJobWithStartTime(tk, job.SchemaName, job.GlobalTableName, "p0", startTime)
 	valid, failReason = job.ValidateAndPrepare(sctx)
 	require.True(t, valid)
 	require.Equal(t, "", failReason)
 	// Smaller start time for p1.
 	startTime = tk.MustQuery("select now() - interval 1 second").Rows()[0][0].(string)
-	insertFailedJobWithStartTime(tk, job.TableSchema, job.GlobalTableName, "p1", startTime)
+	insertFailedJobWithStartTime(tk, job.SchemaName, job.GlobalTableName, "p1", startTime)
 	valid, failReason = job.ValidateAndPrepare(sctx)
 	require.False(t, valid)
 	require.Equal(t, "last failed analysis duration is less than 2 times the average analysis duration", failReason)

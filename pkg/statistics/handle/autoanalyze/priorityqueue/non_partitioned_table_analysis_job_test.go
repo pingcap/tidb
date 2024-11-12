@@ -28,8 +28,8 @@ import (
 
 func TestGenSQLForNonPartitionedTable(t *testing.T) {
 	job := &priorityqueue.NonPartitionedTableAnalysisJob{
-		TableSchema: "test_schema",
-		TableName:   "test_table",
+		SchemaName: "test_schema",
+		TableName:  "test_table",
 	}
 
 	expectedSQL := "analyze table %n.%n"
@@ -43,8 +43,8 @@ func TestGenSQLForNonPartitionedTable(t *testing.T) {
 
 func TestGenSQLForNonPartitionedTableIndex(t *testing.T) {
 	job := &priorityqueue.NonPartitionedTableAnalysisJob{
-		TableSchema: "test_schema",
-		TableName:   "test_table",
+		SchemaName: "test_schema",
+		TableName:  "test_table",
 	}
 
 	index := "test_index"
@@ -66,7 +66,7 @@ func TestAnalyzeNonPartitionedTable(t *testing.T) {
 	tk.MustExec("create table t (a int, b int, index idx(a))")
 	tk.MustExec("insert into t values (1, 1), (2, 2), (3, 3)")
 	job := &priorityqueue.NonPartitionedTableAnalysisJob{
-		TableSchema:   "test",
+		SchemaName:    "test",
 		TableName:     "t",
 		TableStatsVer: 2,
 	}
@@ -155,19 +155,19 @@ func TestNonPartitionedTableValidateAndPrepare(t *testing.T) {
 	// Insert some failed jobs.
 	// Just failed.
 	now := tk.MustQuery("select now()").Rows()[0][0].(string)
-	insertFailedJobWithStartTime(tk, job.TableSchema, job.TableName, "", now)
+	insertFailedJobWithStartTime(tk, job.SchemaName, job.TableName, "", now)
 	// Note: The failure reason is not checked in this test because the time duration can sometimes be inaccurate.(not now)
 	valid, _ = job.ValidateAndPrepare(sctx)
 	require.False(t, valid)
 	// Failed 10 seconds ago.
 	startTime := tk.MustQuery("select now() - interval 10 second").Rows()[0][0].(string)
-	insertFailedJobWithStartTime(tk, job.TableSchema, job.TableName, "", startTime)
+	insertFailedJobWithStartTime(tk, job.SchemaName, job.TableName, "", startTime)
 	valid, failReason = job.ValidateAndPrepare(sctx)
 	require.False(t, valid)
 	require.Equal(t, "last failed analysis duration is less than 2 times the average analysis duration", failReason)
 	// Failed long long ago.
 	startTime = tk.MustQuery("select now() - interval 300 day").Rows()[0][0].(string)
-	insertFailedJobWithStartTime(tk, job.TableSchema, job.TableName, "", startTime)
+	insertFailedJobWithStartTime(tk, job.SchemaName, job.TableName, "", startTime)
 	valid, failReason = job.ValidateAndPrepare(sctx)
 	require.True(t, valid)
 	require.Equal(t, "", failReason)
@@ -193,14 +193,14 @@ func TestValidateAndPrepareWhenOnlyHasFailedAnalysisRecords(t *testing.T) {
 	require.Equal(t, "", failReason)
 	// Failed long long ago.
 	startTime := tk.MustQuery("select now() - interval 30 day").Rows()[0][0].(string)
-	insertFailedJobWithStartTime(tk, job.TableSchema, job.TableName, "", startTime)
+	insertFailedJobWithStartTime(tk, job.SchemaName, job.TableName, "", startTime)
 	valid, failReason = job.ValidateAndPrepare(sctx)
 	require.True(t, valid)
 	require.Equal(t, "", failReason)
 
 	// Failed recently.
 	tenSecondsAgo := tk.MustQuery("select now() - interval 10 second").Rows()[0][0].(string)
-	insertFailedJobWithStartTime(tk, job.TableSchema, job.TableName, "", tenSecondsAgo)
+	insertFailedJobWithStartTime(tk, job.SchemaName, job.TableName, "", tenSecondsAgo)
 	valid, failReason = job.ValidateAndPrepare(sctx)
 	require.False(t, valid)
 	require.Equal(t, "last failed analysis duration is less than 30m0s", failReason)

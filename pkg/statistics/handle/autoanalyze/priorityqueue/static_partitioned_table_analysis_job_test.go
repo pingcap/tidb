@@ -28,7 +28,7 @@ import (
 
 func TestGenSQLForAnalyzeStaticPartitionedTable(t *testing.T) {
 	job := &priorityqueue.StaticPartitionedTableAnalysisJob{
-		TableSchema:         "test_schema",
+		SchemaName:          "test_schema",
 		GlobalTableName:     "test_table",
 		StaticPartitionName: "p0",
 	}
@@ -44,7 +44,7 @@ func TestGenSQLForAnalyzeStaticPartitionedTable(t *testing.T) {
 
 func TestGenSQLForAnalyzeStaticPartitionedTableIndex(t *testing.T) {
 	job := &priorityqueue.StaticPartitionedTableAnalysisJob{
-		TableSchema:         "test_schema",
+		SchemaName:          "test_schema",
 		GlobalTableName:     "test_table",
 		StaticPartitionName: "p0",
 	}
@@ -177,19 +177,19 @@ func TestStaticPartitionedTableValidateAndPrepare(t *testing.T) {
 	// Insert some failed jobs.
 	// Just failed.
 	now := tk.MustQuery("select now()").Rows()[0][0].(string)
-	insertFailedJobWithStartTime(tk, job.TableSchema, "example_table", "p0", now)
+	insertFailedJobWithStartTime(tk, job.SchemaName, "example_table", "p0", now)
 	// Note: The failure reason is not checked in this test because the time duration can sometimes be inaccurate.(not now)
 	valid, _ = job.ValidateAndPrepare(sctx)
 	require.False(t, valid)
 	// Failed 10 seconds ago.
 	startTime := tk.MustQuery("select now() - interval 10 second").Rows()[0][0].(string)
-	insertFailedJobWithStartTime(tk, job.TableSchema, "example_table", "p0", startTime)
+	insertFailedJobWithStartTime(tk, job.SchemaName, "example_table", "p0", startTime)
 	valid, failReason = job.ValidateAndPrepare(sctx)
 	require.False(t, valid)
 	require.Equal(t, "last failed analysis duration is less than 2 times the average analysis duration", failReason)
 	// Failed long long ago.
 	startTime = tk.MustQuery("select now() - interval 300 day").Rows()[0][0].(string)
-	insertFailedJobWithStartTime(tk, job.TableSchema, "example_table", "p0", startTime)
+	insertFailedJobWithStartTime(tk, job.SchemaName, "example_table", "p0", startTime)
 	valid, failReason = job.ValidateAndPrepare(sctx)
 	require.True(t, valid)
 	require.Equal(t, "", failReason)
