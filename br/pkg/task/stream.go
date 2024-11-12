@@ -1539,7 +1539,8 @@ func createRestoreClient(ctx context.Context, g glue.Glue, cfg *RestoreConfig, m
 	keepaliveCfg := GetKeepalive(&cfg.Config)
 	keepaliveCfg.PermitWithoutStream = true
 	client := logclient.NewRestoreClient(mgr.GetPDClient(), mgr.GetPDHTTPClient(), mgr.GetTLSConfig(), keepaliveCfg)
-	err = client.Init(ctx, g, mgr.GetStorage(), cfg.UseCheckpoint)
+
+	err = client.Init(ctx, g, mgr.GetStorage())
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -1559,10 +1560,21 @@ func createRestoreClient(ctx context.Context, g glue.Glue, cfg *RestoreConfig, m
 		return nil, errors.Trace(err)
 	}
 	client.SetCrypter(&cfg.CipherInfo)
-	client.SetConcurrency(uint(cfg.Concurrency))
 	client.SetConcurrencyPerStore(cfg.ConcurrencyPerStore.Value)
 	client.SetUpstreamClusterID(cfg.upstreamClusterID)
-	client.InitClients(ctx, u)
+
+	createCheckpointSessionFn := func() (glue.Session, error) {
+		// always create a new session for checkpoint runner
+		// because session is not thread safe
+		if cfg.UseCheckpoint {
+			return g.CreateSession(mgr.GetStorage())
+		}
+		return nil, nil
+	}
+	err = client.InitClients(ctx, u, createCheckpointSessionFn, uint(cfg.Concurrency), cfg.ConcurrencyPerStore.Value)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
 
 	err = client.SetRawKVBatchClient(ctx, cfg.PD, cfg.TLS.ToKVSecurity())
 	if err != nil {

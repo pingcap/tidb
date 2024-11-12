@@ -81,8 +81,105 @@ const maxSplitKeysOnce = 10240
 // rawKVBatchCount specifies the count of entries that the rawkv client puts into TiKV.
 const rawKVBatchCount = 64
 
+// LogBackupManager holds all log-related fields
+type LogBackupManager struct {
+	fileImporter     *LogFileImporter
+	workerPool       *tidbutil.WorkerPool
+	checkpointRunner *checkpoint.CheckpointRunner[checkpoint.LogRestoreKeyType, checkpoint.LogRestoreValueType]
+}
+
+func NewLogBackupManager(
+	ctx context.Context,
+	fileImporter *LogFileImporter,
+	poolSize uint,
+	createCheckpointSessionFn func() (glue.Session, error),
+) (*LogBackupManager, error) {
+	// for compacted reason, user only set --concurrency for log file restore speed.
+	log.Info("log backup worker pool", zap.Uint("size", poolSize))
+	l := &LogBackupManager{
+		fileImporter: fileImporter,
+		workerPool:   tidbutil.NewWorkerPool(poolSize, "log manager worker pool"),
+	}
+	se, err := createCheckpointSessionFn()
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	if se != nil {
+		l.checkpointRunner, err = checkpoint.StartCheckpointRunnerForLogRestore(ctx, se)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+	}
+	return l, nil
+}
+
+func (l *LogBackupManager) Close(ctx context.Context) {
+	if err := l.fileImporter.Close(); err != nil {
+		log.Warn("failed to close file importer")
+	}
+	if l.checkpointRunner != nil {
+		l.checkpointRunner.WaitForFinish(ctx, true)
+	}
+}
+
+// SstBackupManager holds all SST-related fields
+type SstBackupManager struct {
+	restorer         restore.FileRestorer
+	workerPool       *tidbutil.WorkerPool
+	checkpointRunner *checkpoint.CheckpointRunner[checkpoint.RestoreKeyType, checkpoint.RestoreValueType]
+}
+
+func (s *SstBackupManager) Close(ctx context.Context) {
+	if err := s.restorer.Close(); err != nil {
+		log.Warn("failed to close file restorer")
+	}
+	if s.checkpointRunner != nil {
+		s.checkpointRunner.WaitForFinish(ctx, true)
+	}
+}
+
+func NewSstBackupManager(
+	ctx context.Context,
+	snapFileImporter *snapclient.SnapFileImporter,
+	concurrencyPerStore uint,
+	storeCount uint,
+	createCheckpointSessionFn func() (glue.Session, error),
+) (*SstBackupManager, error) {
+	// we believe 32 is large enough for download worker pool.
+	// it won't reach the limit if sst files distribute evenly.
+	// when restore memory usage is still too high, we should reduce concurrencyPerStore
+	// to sarifice some speed to reduce memory usage.
+	// This is similar to full restore, consider they are the same workflow
+	// the poolSize should be larger than concurrencyPerStore * then count of stores
+	poolSize := concurrencyPerStore * 32 * storeCount
+	log.Info("sst backup worker pool", zap.Uint("size", poolSize))
+	sstWorkerPool := tidbutil.NewWorkerPool(poolSize, "sst file")
+	s := &SstBackupManager{
+		workerPool: tidbutil.NewWorkerPool(poolSize, "log manager worker pool"),
+	}
+	se, err := createCheckpointSessionFn()
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	if se != nil {
+		checkpointRunner, err := checkpoint.StartCheckpointRunnerForRestore(ctx, se)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		s.checkpointRunner = checkpointRunner
+	}
+	// TODO implement checkpoint
+	s.restorer = restore.NewSimpleFileRestorer(ctx, snapFileImporter, sstWorkerPool, nil)
+	return s, nil
+
+}
+
 type LogClient struct {
-	restorer            restore.FileRestorer
+	*LogFileManager
+	logBackupManager *LogBackupManager
+	sstBackupManager *SstBackupManager
+
 	cipher              *backuppb.CipherInfo
 	pdClient            pd.Client
 	pdHTTPClient        pdhttp.Client
@@ -92,27 +189,18 @@ type LogClient struct {
 	keepaliveConf       keepalive.ClientParameters
 	concurrencyPerStore uint
 
-	// checkpointRunner is used for log files backup
-	checkpointRunner *checkpoint.CheckpointRunner[checkpoint.LogRestoreKeyType, checkpoint.LogRestoreValueType]
-	// SstCheckpointRunner is used for compacted sst files backup
-	sstCheckpointRunner *checkpoint.CheckpointRunner[checkpoint.RestoreKeyType, checkpoint.RestoreValueType]
-
 	rawKVClient *rawkv.RawKVBatchClient
 	storage     storage.ExternalStorage
 
-	se glue.Session
+	// unsafeSession is not thread-safe.
+	// Currently, it is only utilized in some initialization and post-handle functions.
+	unsafeSession glue.Session
 
 	// currentTS is used for rewrite meta kv when restore stream.
 	// Can not use `restoreTS` directly, because schema created in `full backup` maybe is new than `restoreTS`.
 	currentTS uint64
 
 	upstreamClusterID uint64
-
-	*LogFileManager
-
-	workerPool    *tidbutil.WorkerPool
-	sstWorkerPool *tidbutil.WorkerPool
-	fileImporter  *LogFileImporter
 
 	// the query to insert rows into table `gc_delete_range`, lack of ts.
 	deleteRangeQuery          []*stream.PreDelRangeQuery
@@ -143,32 +231,18 @@ func NewRestoreClient(
 // Close a client.
 func (rc *LogClient) Close(ctx context.Context) {
 	defer func() {
-		log.Info("wait for flush checkpoint...")
-		if rc.checkpointRunner != nil {
-			rc.checkpointRunner.WaitForFinish(ctx, true)
-		}
-		if rc.sstCheckpointRunner != nil {
-			rc.sstCheckpointRunner.WaitForFinish(ctx, true)
-		}
+		rc.logBackupManager.Close(ctx)
+		rc.sstBackupManager.Close(ctx)
 	}()
 
 	// close the connection, and it must be succeed when in SQL mode.
-	if rc.se != nil {
-		rc.se.Close()
+	if rc.unsafeSession != nil {
+		rc.unsafeSession.Close()
 	}
 
 	if rc.rawKVClient != nil {
 		rc.rawKVClient.Close()
 	}
-
-	if err := rc.fileImporter.Close(); err != nil {
-		log.Warn("failed to close file improter")
-	}
-
-	if err := rc.restorer.Close(); err != nil {
-		log.Warn("failed to close file improter")
-	}
-
 	log.Info("Restore client closed")
 }
 
@@ -219,12 +293,12 @@ func (rc *LogClient) RestoreCompactedSstFiles(
 	// TODO: Future enhancements may explore the feasibility of reintroducing batch restoration
 	// while maintaining optimal performance and resource utilization.
 	for _, i := range restoreFilesInfos {
-		err := rc.restorer.Restore(onProgress, []restore.RestoreFilesInfo{i})
+		err := rc.sstBackupManager.restorer.Restore(onProgress, []restore.RestoreFilesInfo{i})
 		if err != nil {
 			return errors.Trace(err)
 		}
 	}
-	return rc.restorer.WaitUnitilFinish()
+	return rc.sstBackupManager.restorer.WaitUnitilFinish()
 }
 
 func (rc *LogClient) SetRawKVBatchClient(
@@ -245,10 +319,7 @@ func (rc *LogClient) SetCrypter(crypter *backuppb.CipherInfo) {
 	rc.cipher = crypter
 }
 
-func (rc *LogClient) SetConcurrency(c uint) {
-	log.Info("download worker pool", zap.Uint("size", c))
-	rc.workerPool = tidbutil.NewWorkerPool(c, "file")
-}
+func (rc *LogClient) SetConcurrency(c uint) {}
 
 func (rc *LogClient) SetConcurrencyPerStore(c uint) {
 	if c == 0 {
@@ -297,19 +368,19 @@ func (rc *LogClient) CleanUpKVFiles(
 ) error {
 	// Current we only have v1 prefix.
 	// In the future, we can add more operation for this interface.
-	return rc.fileImporter.ClearFiles(ctx, rc.pdClient, "v1")
+	return rc.logBackupManager.fileImporter.ClearFiles(ctx, rc.pdClient, "v1")
 }
 
 // Init create db connection and domain for storage.
-func (rc *LogClient) Init(ctx context.Context, g glue.Glue, store kv.Storage, useCheckpoint bool) error {
+func (rc *LogClient) Init(ctx context.Context, g glue.Glue, store kv.Storage) error {
 	var err error
-	rc.se, err = g.CreateSession(store)
+	rc.unsafeSession, err = g.CreateSession(store)
 	if err != nil {
 		return errors.Trace(err)
 	}
 
 	// Set SQL mode to None for avoiding SQL compatibility problem
-	err = rc.se.Execute(ctx, "set @@sql_mode=''")
+	err = rc.unsafeSession.Execute(ctx, "set @@sql_mode=''")
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -319,40 +390,16 @@ func (rc *LogClient) Init(ctx context.Context, g glue.Glue, store kv.Storage, us
 		return errors.Trace(err)
 	}
 
-	if useCheckpoint {
-		// session is not thread safe. so we need use different session here.
-		se, err := g.CreateSession(store)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		rc.checkpointRunner, err = checkpoint.StartCheckpointRunnerForLogRestore(ctx, se)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		sstSe, err := g.CreateSession(store)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		rc.sstCheckpointRunner, err = checkpoint.StartCheckpointRunnerForRestore(ctx, sstSe)
-		if err != nil {
-			return errors.Trace(err)
-		}
-	}
-
 	return nil
 }
 
-func (rc *LogClient) initSstWorkerPool() {
-	// we believe 32 is large enough for download worker pool.
-	// it won't reach the limit if sst files distribute evenly.
-	// when restore memory usage is still too high, we should reduce concurrencyPerStore
-	// to sarifice some speed to reduce memory usage.
-	count := rc.concurrencyPerStore * 32 * 6
-	log.Info("log file download coarse sst worker pool", zap.Uint("size", count))
-	rc.sstWorkerPool = tidbutil.NewWorkerPool(count, "sst file")
-}
-
-func (rc *LogClient) InitClients(ctx context.Context, backend *backuppb.StorageBackend) {
+func (rc *LogClient) InitClients(
+	ctx context.Context,
+	backend *backuppb.StorageBackend,
+	createSessionFn func() (glue.Session, error),
+	concurrency uint,
+	concurrencyPerStore uint,
+) error {
 	stores, err := conn.GetAllTiKVStoresWithRetry(ctx, rc.pdClient, util.SkipTiFlash)
 	if err != nil {
 		log.Fatal("failed to get stores", zap.Error(err))
@@ -360,22 +407,36 @@ func (rc *LogClient) InitClients(ctx context.Context, backend *backuppb.StorageB
 
 	metaClient := split.NewClient(rc.pdClient, rc.pdHTTPClient, rc.tlsConf, maxSplitKeysOnce, len(stores)+1)
 	importCli := importclient.NewImportClient(metaClient, rc.tlsConf, rc.keepaliveConf)
-	rc.fileImporter = NewLogFileImporter(metaClient, importCli, backend)
 
+	rc.logBackupManager, err = NewLogBackupManager(
+		ctx,
+		NewLogFileImporter(metaClient, importCli, backend),
+		concurrency,
+		createSessionFn,
+	)
+	if err != nil {
+		return errors.Trace(err)
+	}
 	var createCallBacks []func(*snapclient.SnapFileImporter) error
 	var closeCallBacks []func(*snapclient.SnapFileImporter) error
 	createCallBacks = append(createCallBacks, func(importer *snapclient.SnapFileImporter) error {
 		return importer.CheckMultiIngestSupport(ctx, stores)
 	})
-	log.Info("Initializing client.", zap.Stringer("api", rc.dom.Store().GetCodec().GetAPIVersion()))
+
 	snapFileImporter, err := snapclient.NewSnapFileImporter(
 		ctx, rc.cipher, rc.dom.Store().GetCodec().GetAPIVersion(), metaClient,
 		importCli, backend, snapclient.TiDBCompcated, stores, snapclient.RewriteModeKeyspace, rc.concurrencyPerStore, createCallBacks, closeCallBacks)
 	if err != nil {
-		log.Fatal("failed to init snap file importer", zap.Error(err))
+		return errors.Trace(err)
 	}
-	rc.initSstWorkerPool()
-	rc.restorer = restore.NewSimpleFileRestorer(ctx, snapFileImporter, rc.sstWorkerPool, rc.sstCheckpointRunner)
+	rc.sstBackupManager, err = NewSstBackupManager(
+		ctx,
+		snapFileImporter,
+		concurrencyPerStore,
+		uint(len(stores)),
+		createSessionFn,
+	)
+	return errors.Trace(err)
 }
 
 func (rc *LogClient) InitCheckpointMetadataForCompactedSstRestore(
@@ -399,7 +460,7 @@ func (rc *LogClient) InitCheckpointMetadataForLogRestore(
 	// for the first time.
 	if checkpoint.ExistsLogRestoreCheckpointMetadata(ctx, rc.dom) {
 		// load the checkpoint since this is not the first time to restore
-		meta, err := checkpoint.LoadCheckpointMetadataForLogRestore(ctx, rc.se.GetSessionCtx().GetRestrictedSQLExecutor())
+		meta, err := checkpoint.LoadCheckpointMetadataForLogRestore(ctx, rc.unsafeSession.GetSessionCtx().GetRestrictedSQLExecutor())
 		if err != nil {
 			return "", errors.Trace(err)
 		}
@@ -416,7 +477,7 @@ func (rc *LogClient) InitCheckpointMetadataForLogRestore(
 	log.Info("save gc ratio into checkpoint metadata",
 		zap.Uint64("start-ts", startTS), zap.Uint64("restored-ts", restoredTS), zap.Uint64("rewrite-ts", rc.currentTS),
 		zap.String("gc-ratio", gcRatio), zap.Int("tiflash-item-count", len(items)))
-	if err := checkpoint.SaveCheckpointMetadataForLogRestore(ctx, rc.se, &checkpoint.CheckpointMetadataForLogRestore{
+	if err := checkpoint.SaveCheckpointMetadataForLogRestore(ctx, rc.unsafeSession, &checkpoint.CheckpointMetadataForLogRestore{
 		UpstreamClusterID: rc.upstreamClusterID,
 		RestoredTS:        restoredTS,
 		StartTS:           startTS,
@@ -671,7 +732,7 @@ func (rc *LogClient) RestoreKVFiles(
 			skipFile += len(files)
 		} else {
 			applyWg.Add(1)
-			rc.workerPool.ApplyOnErrorGroup(eg, func() (err error) {
+			rc.logBackupManager.workerPool.ApplyOnErrorGroup(eg, func() (err error) {
 				fileStart := time.Now()
 				defer applyWg.Done()
 				defer func() {
@@ -683,8 +744,8 @@ func (rc *LogClient) RestoreKVFiles(
 						filenames := make([]string, 0, len(files))
 						for _, f := range files {
 							filenames = append(filenames, f.Path+", ")
-							if rc.checkpointRunner != nil {
-								if e := checkpoint.AppendRangeForLogRestore(ectx, rc.checkpointRunner, f.MetaDataGroupName, rule.NewTableID, f.OffsetInMetaGroup, f.OffsetInMergedGroup); e != nil {
+							if rc.logBackupManager.checkpointRunner != nil {
+								if e := checkpoint.AppendRangeForLogRestore(ectx, rc.logBackupManager.checkpointRunner, f.MetaDataGroupName, rule.NewTableID, f.OffsetInMetaGroup, f.OffsetInMergedGroup); e != nil {
 									err = errors.Annotate(e, "failed to append checkpoint data")
 									break
 								}
@@ -695,13 +756,13 @@ func (rc *LogClient) RestoreKVFiles(
 					}
 				}()
 
-				return rc.fileImporter.ImportKVFiles(ectx, files, rule, rc.shiftStartTS, rc.startTS, rc.restoreTS,
+				return rc.logBackupManager.fileImporter.ImportKVFiles(ectx, files, rule, rc.shiftStartTS, rc.startTS, rc.restoreTS,
 					supportBatch, cipherInfo, masterKeys)
 			})
 		}
 	}
 
-	rc.workerPool.ApplyOnErrorGroup(eg, func() error {
+	rc.logBackupManager.workerPool.ApplyOnErrorGroup(eg, func() error {
 		if supportBatch {
 			err = ApplyKVFilesWithBatchMethod(ectx, logIter, int(pitrBatchCount), uint64(pitrBatchSize), applyFunc, &applyWg)
 		} else {
@@ -728,7 +789,7 @@ func (rc *LogClient) initSchemasMap(
 	restoreTS uint64,
 ) ([]*backuppb.PitrDBMap, error) {
 	getPitrIDMapSQL := "SELECT segment_id, id_map FROM mysql.tidb_pitr_id_map WHERE restored_ts = %? and upstream_cluster_id = %? ORDER BY segment_id;"
-	execCtx := rc.se.GetSessionCtx().GetRestrictedSQLExecutor()
+	execCtx := rc.unsafeSession.GetSessionCtx().GetRestrictedSQLExecutor()
 	rows, _, errSQL := execCtx.ExecRestrictedSQL(
 		kv.WithInternalSourceType(ctx, kv.InternalTxnBR),
 		nil,
@@ -1465,7 +1526,7 @@ func (rc *LogClient) generateRepairIngestIndexSQLs(
 	var sqls []checkpoint.CheckpointIngestIndexRepairSQL
 	if rc.useCheckpoint {
 		if checkpoint.ExistsCheckpointIngestIndexRepairSQLs(ctx, rc.dom) {
-			checkpointSQLs, err := checkpoint.LoadCheckpointIngestIndexRepairSQLs(ctx, rc.se.GetSessionCtx().GetRestrictedSQLExecutor())
+			checkpointSQLs, err := checkpoint.LoadCheckpointIngestIndexRepairSQLs(ctx, rc.unsafeSession.GetSessionCtx().GetRestrictedSQLExecutor())
 			if err != nil {
 				return sqls, false, errors.Trace(err)
 			}
@@ -1530,7 +1591,7 @@ func (rc *LogClient) generateRepairIngestIndexSQLs(
 	}
 
 	if rc.useCheckpoint && len(sqls) > 0 {
-		if err := checkpoint.SaveCheckpointIngestIndexRepairSQLs(ctx, rc.se, &checkpoint.CheckpointIngestIndexRepairSQLs{
+		if err := checkpoint.SaveCheckpointIngestIndexRepairSQLs(ctx, rc.unsafeSession, &checkpoint.CheckpointIngestIndexRepairSQLs{
 			SQLs: sqls,
 		}); err != nil {
 			return sqls, false, errors.Trace(err)
@@ -1592,7 +1653,7 @@ NEXTSQL:
 
 			// only when first execution or old index id is not dropped
 			if !fromCheckpoint || oldIndexIDFound {
-				if err := rc.se.ExecuteInternal(ctx, alterTableDropIndexSQL, sql.SchemaName.O, sql.TableName.O, sql.IndexName); err != nil {
+				if err := rc.unsafeSession.ExecuteInternal(ctx, alterTableDropIndexSQL, sql.SchemaName.O, sql.TableName.O, sql.IndexName); err != nil {
 					return errors.Trace(err)
 				}
 			}
@@ -1602,7 +1663,7 @@ NEXTSQL:
 				}
 			})
 			// create the repaired index when first execution or not found it
-			if err := rc.se.ExecuteInternal(ctx, sql.AddSQL, sql.AddArgs...); err != nil {
+			if err := rc.unsafeSession.ExecuteInternal(ctx, sql.AddSQL, sql.AddArgs...); err != nil {
 				return errors.Trace(err)
 			}
 			w.Inc()
@@ -1675,7 +1736,7 @@ func (rc *LogClient) InsertGCRows(ctx context.Context) error {
 			// trim the ',' behind the query.Sql if exists
 			// that's when the rewrite rule of the last table id is not exist
 			sql := strings.TrimSuffix(query.Sql, ",")
-			if err := rc.se.ExecuteInternal(ctx, sql, paramsList...); err != nil {
+			if err := rc.unsafeSession.ExecuteInternal(ctx, sql, paramsList...); err != nil {
 				return errors.Trace(err)
 			}
 		}
@@ -1703,7 +1764,7 @@ func (rc *LogClient) saveIDMap(
 		return errors.Trace(err)
 	}
 	// clean the dirty id map at first
-	err = rc.se.ExecuteInternal(ctx, "DELETE FROM mysql.tidb_pitr_id_map WHERE restored_ts = %? and upstream_cluster_id = %?;", rc.restoreTS, rc.upstreamClusterID)
+	err = rc.unsafeSession.ExecuteInternal(ctx, "DELETE FROM mysql.tidb_pitr_id_map WHERE restored_ts = %? and upstream_cluster_id = %?;", rc.restoreTS, rc.upstreamClusterID)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -1713,7 +1774,7 @@ func (rc *LogClient) saveIDMap(
 		if endIdx > len(data) {
 			endIdx = len(data)
 		}
-		err := rc.se.ExecuteInternal(ctx, replacePitrIDMapSQL, rc.restoreTS, rc.upstreamClusterID, segmentId, data[startIdx:endIdx])
+		err := rc.unsafeSession.ExecuteInternal(ctx, replacePitrIDMapSQL, rc.restoreTS, rc.upstreamClusterID, segmentId, data[startIdx:endIdx])
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -1722,7 +1783,7 @@ func (rc *LogClient) saveIDMap(
 
 	if rc.useCheckpoint {
 		log.Info("save checkpoint task info with InLogRestoreAndIdMapPersist status")
-		if err := checkpoint.SaveCheckpointProgress(ctx, rc.se, &checkpoint.CheckpointProgress{
+		if err := checkpoint.SaveCheckpointProgress(ctx, rc.unsafeSession, &checkpoint.CheckpointProgress{
 			Progress: checkpoint.InLogRestoreAndIdMapPersist,
 		}); err != nil {
 			return errors.Trace(err)

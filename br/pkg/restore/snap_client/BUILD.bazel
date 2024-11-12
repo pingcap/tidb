@@ -9,7 +9,6 @@ go_library(
         "placement_rule_manager.go",
         "systable_restore.go",
         "tikv_sender.go",
-        "zap.go",
     ],
     importpath = "github.com/pingcap/tidb/br/pkg/restore/snap_client",
     visibility = ["//visibility:public"],
