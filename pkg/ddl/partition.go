@@ -2568,34 +2568,33 @@ func (w *worker) onTruncateTablePartition(jobCtx *jobContext, job *model.Job) (i
 		pi.NewPartitionIDs = nil
 		pi.DDLState = model.StateNone
 		pi.DDLAction = model.ActionNone
-		// Done, continue after the SchemaState switch!
+
+		// used by ApplyDiff in updateSchemaVersion
+		args.ShouldUpdateAffectedPartitions = true
+		ver, err = updateVersionAndTableInfo(jobCtx, job, tblInfo, true)
+		if err != nil {
+			return ver, errors.Trace(err)
+		}
+		// Finish this job.
+		job.FinishTableJob(model.JobStateDone, model.StateNone, ver, tblInfo)
+		truncatePartitionEvent := notifier.NewTruncatePartitionEvent(
+			tblInfo,
+			&model.PartitionInfo{Definitions: newDefinitions},
+			&model.PartitionInfo{Definitions: oldDefinitions},
+		)
+		err = asyncNotifyEvent(jobCtx, truncatePartitionEvent, job, noSubJob, w.sess)
+		if err != nil {
+			return ver, errors.Trace(err)
+		}
+		// Finish this job.
+		job.FinishTableJob(model.JobStateDone, model.StateNone, ver, tblInfo)
+		// A background job will be created to delete old partition data.
+		job.FillFinishedArgs(&model.TruncateTableArgs{
+			OldPartitionIDs: oldIDs,
+		})
 	default:
 		return ver, dbterror.ErrInvalidDDLState.GenWithStackByArgs("partition", job.SchemaState)
 	}
-
-	// used by ApplyDiff in updateSchemaVersion
-	args.ShouldUpdateAffectedPartitions = true
-	ver, err = updateVersionAndTableInfo(jobCtx, job, tblInfo, true)
-	if err != nil {
-		return ver, errors.Trace(err)
-	}
-	// Finish this job.
-	job.FinishTableJob(model.JobStateDone, model.StateNone, ver, tblInfo)
-	truncatePartitionEvent := notifier.NewTruncatePartitionEvent(
-		tblInfo,
-		&model.PartitionInfo{Definitions: newDefinitions},
-		&model.PartitionInfo{Definitions: oldDefinitions},
-	)
-	err = asyncNotifyEvent(jobCtx, truncatePartitionEvent, job, noSubJob, w.sess)
-	if err != nil {
-		return ver, errors.Trace(err)
-	}
-	// Finish this job.
-	job.FinishTableJob(model.JobStateDone, model.StateNone, ver, tblInfo)
-	// A background job will be created to delete old partition data.
-	job.FillFinishedArgs(&model.TruncateTableArgs{
-		OldPartitionIDs: oldIDs,
-	})
 	return ver, errors.Trace(err)
 }
 
