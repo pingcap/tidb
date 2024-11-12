@@ -46,5 +46,9 @@ func TestCTEWithDifferentSchema(t *testing.T) {
                         select ojt.* from rs1 ojt
                         )`)
 	tk.MustExec("use db_b;")
-	tk.MustQuery("select * from db_a.view_test_v1;")
+	tk.MustQuery("explain select * from db_a.view_test_v1;").Check(testkit.Rows(
+		"CTEFullScan_11 10000.00 root CTE:rs1 AS ojt data:CTE_0",
+		"CTE_0 10000.00 root  Non-Recursive CTE",
+		"└─TableReader_9(Seed Part) 10000.00 root  data:TableFullScan_8",
+		"  └─TableFullScan_8 10000.00 cop[tikv] table:otn keep order:false, stats:pseudo"))
 }
