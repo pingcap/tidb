@@ -121,8 +121,6 @@ func GenJSONTableFromStats(
 			return true
 		}
 		jsonTbl.Columns[col.Info.Name.L] = proto
-		col.FMSketch.DestroyAndPutToPool()
-		hist.DestroyAndPutToPool()
 		return false
 	})
 	if outerErr != nil {
