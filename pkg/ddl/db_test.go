@@ -18,6 +18,7 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -1123,4 +1124,105 @@ func TestDDLJobErrEntrySizeTooLarge(t *testing.T) {
 	tk.MustGetErrCode("rename table t to t1;", errno.ErrEntryTooLarge)
 	tk.MustExec("create table t1 (a int);")
 	tk.MustExec("alter table t add column b int;") // Should not block.
+}
+
+func insertMockJob2Table(tk *testkit.TestKit, job *model.Job) {
+	b, err := job.Encode(false)
+	tk.RequireNoError(err)
+	sql := fmt.Sprintf("insert into mysql.tidb_ddl_job(job_id, job_meta) values(%s, ?);",
+		strconv.FormatInt(job.ID, 10))
+	tk.MustExec(sql, b)
+}
+
+func getJobMetaByID(t *testing.T, tk *testkit.TestKit, jobID int64) *model.Job {
+	sql := fmt.Sprintf("select job_meta from mysql.tidb_ddl_job where job_id = %s",
+		strconv.FormatInt(jobID, 10))
+	rows := tk.MustQuery(sql)
+	res := rows.Rows()
+	require.Len(t, res, 1)
+	require.Len(t, res[0], 1)
+	jobBinary := []byte(res[0][0].(string))
+	job := model.Job{}
+	err := job.Decode(jobBinary)
+	require.NoError(t, err)
+	return &job
+}
+
+func deleteJobMetaByID(tk *testkit.TestKit, jobID int64) {
+	sql := fmt.Sprintf("delete from mysql.tidb_ddl_job where job_id = %s",
+		strconv.FormatInt(jobID, 10))
+	tk.MustExec(sql)
+}
+
+func TestAdminAlterDDLJobs(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (a int);")
+
+	job := model.Job{
+		ID:   1,
+		Type: model.ActionAddIndex,
+		ReorgMeta: &model.DDLReorgMeta{
+			Concurrency: 4,
+			BatchSize:   128,
+		},
+	}
+	insertMockJob2Table(tk, &job)
+	tk.MustExec(fmt.Sprintf("admin alter ddl jobs %d thread = 8;", job.ID))
+	j := getJobMetaByID(t, tk, job.ID)
+	require.Equal(t, j.ReorgMeta.Concurrency, 8)
+
+	tk.MustExec(fmt.Sprintf("admin alter ddl jobs %d batch_size = 256;", job.ID))
+	j = getJobMetaByID(t, tk, job.ID)
+	require.Equal(t, j.ReorgMeta.BatchSize, 256)
+
+	tk.MustExec(fmt.Sprintf("admin alter ddl jobs %d thread = 16, batch_size = 512;", job.ID))
+	j = getJobMetaByID(t, tk, job.ID)
+	require.Equal(t, j.ReorgMeta.Concurrency, 16)
+	require.Equal(t, j.ReorgMeta.BatchSize, 512)
+	deleteJobMetaByID(tk, job.ID)
+}
+
+func TestAdminAlterDDLJobsFailedCases(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (a int);")
+
+	// can't find job
+	tk.MustGetErrMsg(fmt.Sprintf("admin alter ddl jobs %d thread = 8;", 1), "job not found")
+
+	job := model.Job{
+		ID:   1,
+		Type: model.ActionAddColumn,
+	}
+	insertMockJob2Table(tk, &job)
+	// unsupported job type
+	tk.MustGetErrMsg(fmt.Sprintf("admin alter ddl jobs %d thread = 8;", job.ID), "job is not alterable")
+	deleteJobMetaByID(tk, 1)
+}
+
+func TestAdminAlterDDLJobsCommitFailed(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (a int);")
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/executor/mockAlterDDLJobCommitFailed", `return(true)`)
+	defer testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/executor/mockAlterDDLJobCommitFailed")
+
+	job := model.Job{
+		ID:   1,
+		Type: model.ActionAddIndex,
+		ReorgMeta: &model.DDLReorgMeta{
+			Concurrency: 4,
+			BatchSize:   128,
+		},
+	}
+	insertMockJob2Table(tk, &job)
+	tk.MustGetErrMsg(fmt.Sprintf("admin alter ddl jobs %d thread = 8, batch_size = 256;", job.ID),
+		"mock commit failed on admin alter ddl jobs")
+	j := getJobMetaByID(t, tk, job.ID)
+	require.Equal(t, j.ReorgMeta, job.ReorgMeta)
+	deleteJobMetaByID(tk, job.ID)
 }

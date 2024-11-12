@@ -18,6 +18,7 @@ import (
 	"context"
 	"fmt"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/ddl"
 	sess "github.com/pingcap/tidb/pkg/ddl/session"
 	"github.com/pingcap/tidb/pkg/ddl/util"
@@ -143,7 +144,8 @@ func updateDDLJob2Table(
 	if err != nil {
 		return err
 	}
-	sql := fmt.Sprintf("update mysql.tidb_ddl_job set job_meta = %s where job_id = %d", util.WrapKey2String(b), job.ID)
+	sql := fmt.Sprintf("update mysql.%s set job_meta = %s where job_id = %d",
+		ddl.JobTable, util.WrapKey2String(b), job.ID)
 	_, err = se.Execute(ctx, sql, "update_job")
 	return errors.Trace(err)
 }
@@ -168,7 +170,7 @@ func (e *AlterDDLJobExec) processAlterDDLJob(
 		if err != nil {
 			continue
 		}
-		if !job.IsJobParamsAlterable() {
+		if !job.IsAlterable() {
 			return errors.New("job is not alterable")
 		}
 		if err = e.updateReorgMeta(job, model.AdminCommandByEndUser); err != nil {
@@ -177,7 +179,13 @@ func (e *AlterDDLJobExec) processAlterDDLJob(
 		if err = updateDDLJob2Table(ctx, ns, job, false); err != nil {
 			continue
 		}
-
+		// inject error for test
+		failpoint.Inject("mockAlterDDLJobCommitFailed", func(val failpoint.Value) {
+			if val.(bool) {
+				ns.Rollback()
+				failpoint.Return(errors.New("mock commit failed on admin alter ddl jobs"))
+			}
+		})
 		if err = ns.Commit(ctx); err != nil {
 			ns.Rollback()
 			continue
