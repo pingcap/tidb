@@ -93,7 +93,7 @@ func TestInfoSchemaFieldValue(t *testing.T) {
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (c int auto_increment primary key, d int)")
 	tk.MustQuery("select auto_increment from information_schema.tables where table_name='t'").Check(
-		testkit.Rows("1"))
+		testkit.Rows("0"))
 	tk.MustExec("insert into t(c, d) values(1, 1)")
 	tk.MustQuery("select auto_increment from information_schema.tables where table_name='t'").Check(
 		testkit.Rows("2"))
