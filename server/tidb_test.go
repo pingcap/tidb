@@ -91,6 +91,18 @@ func createTidbTestSuite(t *testing.T) *tidbTestSuite {
 	return createTidbTestSuiteWithCfg(t, cfg)
 }
 
+// parseDuration parses lease argument string.
+func parseDuration(lease string) (time.Duration, error) {
+	dur, err := time.ParseDuration(lease)
+	if err != nil {
+		dur, err = time.ParseDuration(lease + "s")
+	}
+	if err != nil || dur < 0 {
+		return 0, errors.Errorf("invalid lease duration: %v", lease)
+	}
+	return dur, nil
+}
+
 func createTidbTestSuiteWithCfg(t *testing.T, cfg *config.Config) *tidbTestSuite {
 	ts := &tidbTestSuite{testServerClient: newTestServerClient()}
 
@@ -99,6 +111,9 @@ func createTidbTestSuiteWithCfg(t *testing.T, cfg *config.Config) *tidbTestSuite
 	ts.store, err = mockstore.NewMockStore()
 	session.DisableStats4Test()
 	require.NoError(t, err)
+	ddlLeaseDuration, err := parseDuration(cfg.Lease)
+	require.NoError(t, err)
+	session.SetSchemaLease(ddlLeaseDuration)
 	ts.domain, err = session.BootstrapSession(ts.store)
 	require.NoError(t, err)
 	ts.tidbdrv = NewTiDBDriver(ts.store)
@@ -3219,6 +3234,16 @@ func TestProxyProtocolWithIpNoFallbackable(t *testing.T) {
 	err = db.Ping()
 	require.NotNil(t, err)
 	db.Close()
+}
+
+func TestIssue53634(t *testing.T) {
+	cfg := newTestConfig()
+	cfg.Lease = "20s"
+	cfg.Port = 4123
+	cfg.Status.StatusPort = 10088
+	ts := createTidbTestSuiteWithCfg(t, cfg)
+
+	ts.runTestIssue53634(t, ts, ts.domain)
 }
 
 func TestAuthSocket(t *testing.T) {

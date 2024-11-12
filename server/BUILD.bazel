@@ -166,6 +166,7 @@ go_test(
         "//config",
         "//ddl",
         "//ddl/util",
+        "//ddl/util/callback",
         "//domain",
         "//domain/infosync",
         "//errno",
