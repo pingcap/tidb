@@ -32,16 +32,16 @@ import (
 	"github.com/pingcap/tidb/br/pkg/utils/iter"
 	"github.com/pingcap/tidb/pkg/util"
 	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
 	"golang.org/x/sync/errgroup"
 )
 
-// RestoreFilesInfo represents the batch files to be restored for a table. Current, we have 5 type files
+// BackupFileSet represents the batch files to be restored for a table. Current, we have 5 type files
 // 1. Raw KV(sst files)
 // 2. Txn KV(sst files)
 // 3. Databse KV backup(sst files)
-// 4. Log backup changes(dataFileInfo)
-// 5. Compacted Log backups(sst files)
-type RestoreFilesInfo struct {
+// 4. Compacted Log backups(sst files)
+type BackupFileSet struct {
 	// TableID only valid in 3.4.5.
 	// For Raw/Txn KV, table id is always 0
 	TableID int64
@@ -49,39 +49,70 @@ type RestoreFilesInfo struct {
 	// For log Backup Changes, this field is null.
 	SSTFiles []*backuppb.File
 
-	// Only used for log Backup Changes, for other types this field is null.
-	LogFiles []*backuppb.DataFileInfo
-
 	// RewriteRules is the rewrite rules for the specify table.
 	// because these rules belongs to the *one table*.
 	// we can hold them here.
 	RewriteRules *utils.RewriteRules
 }
 
-type BatchRestoreFilesInfo []RestoreFilesInfo
+type BatchBackupFileSet []BackupFileSet
 
-// NewEmptyRuleSSTFilesInfo is a wrapper of Raw/Txn non-tableID files.
-func NewEmptyRuleSSTFilesInfos(files []*backuppb.File) []RestoreFilesInfo {
-	return []RestoreFilesInfo{{
+type zapBatchBackupFileSetMarshaler BatchBackupFileSet
+
+// MarshalLogObjectForFiles is an internal util function to zap something having `Files` field.
+func MarshalLogObjectForFiles(batchFileSet BatchBackupFileSet, encoder zapcore.ObjectEncoder) error {
+	return zapBatchBackupFileSetMarshaler(batchFileSet).MarshalLogObject(encoder)
+}
+
+func (fgs zapBatchBackupFileSetMarshaler) MarshalLogObject(encoder zapcore.ObjectEncoder) error {
+	elements := make([]string, 0)
+	total := 0
+	totalKVs := uint64(0)
+	totalBytes := uint64(0)
+	totalSize := uint64(0)
+	for _, fg := range fgs {
+		for _, f := range fg.SSTFiles {
+			total += 1
+			elements = append(elements, f.GetName())
+			totalKVs += f.GetTotalKvs()
+			totalBytes += f.GetTotalBytes()
+			totalSize += f.GetSize_()
+		}
+	}
+	encoder.AddInt("total", total)
+	_ = encoder.AddArray("files", logutil.AbbreviatedArrayMarshaler(elements))
+	encoder.AddUint64("totalKVs", totalKVs)
+	encoder.AddUint64("totalBytes", totalBytes)
+	encoder.AddUint64("totalSize", totalSize)
+	return nil
+}
+
+func ZapBatchBackupFileSet(batchFileSet BatchBackupFileSet) zap.Field {
+	return zap.Object("fileset", zapBatchBackupFileSetMarshaler(batchFileSet))
+}
+
+// NewEmptyFileSet is a wrapper of Raw/Txn non-tableID files.
+func NewEmptyFileSet(files []*backuppb.File) []BackupFileSet {
+	return []BackupFileSet{{
 		SSTFiles: files,
 	}}
 }
 
-func NewSSTFilesInfo(files []*backuppb.File, rules *utils.RewriteRules) RestoreFilesInfo {
-	return RestoreFilesInfo{
+func NewFileSet(files []*backuppb.File, rules *utils.RewriteRules) BackupFileSet {
+	return BackupFileSet{
 		SSTFiles:     files,
 		RewriteRules: rules,
 	}
 }
 
-// FileRestorer is the minimal methods required for restoring sst, including
+// SstRestorer is the minimal methods required for restoring sst, including
 // 1. Raw backup ssts
 // 2. Txn backup ssts
 // 3. TiDB backup ssts
 // 4. Log Compacted ssts
-type FileRestorer interface {
+type SstRestorer interface {
 	// Restore import the files to the TiKV.
-	Restore(onProgress func(int64), files ...BatchRestoreFilesInfo) error
+	Restore(onProgress func(int64), batchFileSets ...BatchBackupFileSet) error
 	// WaitUnitilFinish wait for all pending restore files finished
 	WaitUnitilFinish() error
 	// Close release the resources.
@@ -89,7 +120,7 @@ type FileRestorer interface {
 }
 
 type FileImporter interface {
-	Import(ctx context.Context, filesGroup ...RestoreFilesInfo) error
+	Import(ctx context.Context, fileSets ...BackupFileSet) error
 
 	// Close release the resources.
 	Close() error
@@ -110,12 +141,12 @@ type SimpleRestorer struct {
 	checkpointRunner *checkpoint.CheckpointRunner[checkpoint.RestoreKeyType, checkpoint.RestoreValueType]
 }
 
-func NewSimpleFileRestorer(
+func NewSimpleSstRestorer(
 	ctx context.Context,
 	fileImporter FileImporter,
 	workerPool *util.WorkerPool,
 	checkpointRunner *checkpoint.CheckpointRunner[checkpoint.RestoreKeyType, checkpoint.RestoreValueType],
-) FileRestorer {
+) SstRestorer {
 	eg, ectx := errgroup.WithContext(ctx)
 	return &SimpleRestorer{
 		eg:               eg,
@@ -134,22 +165,22 @@ func (s *SimpleRestorer) WaitUnitilFinish() error {
 	return s.eg.Wait()
 }
 
-func (s *SimpleRestorer) Restore(onProgress func(int64), batchFilesInfo ...BatchRestoreFilesInfo) error {
-	for _, info := range batchFilesInfo {
-		for _, fileGroup := range info {
+func (s *SimpleRestorer) Restore(onProgress func(int64), batchFileSets ...BatchBackupFileSet) error {
+	for _, sets := range batchFileSets {
+		for _, set := range sets {
 			s.workerPool.ApplyOnErrorGroup(s.eg,
 				func() (restoreErr error) {
 					fileStart := time.Now()
 					defer func() {
 						if restoreErr == nil {
-							log.Info("import sst files done", logutil.Files(fileGroup.SSTFiles),
+							log.Info("import sst files done", logutil.Files(set.SSTFiles),
 								zap.Duration("take", time.Since(fileStart)))
-							for _, f := range fileGroup.SSTFiles {
+							for _, f := range set.SSTFiles {
 								onProgress(int64(f.TotalKvs))
 							}
 						}
 					}()
-					err := s.fileImporter.Import(s.ectx, fileGroup)
+					err := s.fileImporter.Import(s.ectx, set)
 					if err != nil {
 						return errors.Trace(err)
 					}
@@ -174,7 +205,7 @@ func NewMultiTablesRestorer(
 	fileImporter ConcurrentlFileImporter,
 	workerPool *util.WorkerPool,
 	checkpointRunner *checkpoint.CheckpointRunner[checkpoint.RestoreKeyType, checkpoint.RestoreValueType],
-) FileRestorer {
+) SstRestorer {
 	eg, ectx := errgroup.WithContext(ctx)
 	return &MultiTablesRestorer{
 		eg:               eg,
@@ -198,7 +229,7 @@ func (m *MultiTablesRestorer) WaitUnitilFinish() error {
 	return nil
 }
 
-func (m *MultiTablesRestorer) Restore(onProgress func(int64), batchFilesInfo ...BatchRestoreFilesInfo) (err error) {
+func (m *MultiTablesRestorer) Restore(onProgress func(int64), batchFileSets ...BatchBackupFileSet) (err error) {
 	start := time.Now()
 	fileCount := 0
 	defer func() {
@@ -217,7 +248,7 @@ func (m *MultiTablesRestorer) Restore(onProgress func(int64), batchFilesInfo ...
 		m.ectx = opentracing.ContextWithSpan(m.ectx, span1)
 	}
 
-	for _, tableIDWithFiles := range batchFilesInfo {
+	for _, batchFileSet := range batchFileSets {
 		if m.ectx.Err() != nil {
 			log.Warn("Restoring encountered error and already stopped, give up remained files.",
 				logutil.ShortError(m.ectx.Err()))
@@ -226,7 +257,7 @@ func (m *MultiTablesRestorer) Restore(onProgress func(int64), batchFilesInfo ...
 			// breaking here directly is also a reasonable behavior.
 			break
 		}
-		filesReplica := tableIDWithFiles
+		filesReplica := batchFileSet
 		m.fileImporter.WaitUntilUnblock()
 		m.workerPool.ApplyOnErrorGroup(m.eg, func() (restoreErr error) {
 			fileStart := time.Now()
@@ -278,13 +309,13 @@ func GetFileRangeKey(f string) string {
 	return f[:idx]
 }
 
-// PipelineFileRestorer will try to do the restore and split in pipeline
+// PipelineSstRestorer will try to do the restore and split in pipeline
 // used in log backup and compacted sst backup
 // because of unable to split all regions before restore these data.
 // we just can restore as well as split.
-type PipelineFileRestorer[T any] interface {
+type PipelineSstRestorer[T any] interface {
 	// Raw/Txn Restore, full Restore
-	FileRestorer
+	SstRestorer
 	split.MultiRegionsSplitter
 
 	// Log Restore, Compacted Restore
@@ -292,14 +323,14 @@ type PipelineFileRestorer[T any] interface {
 	WithSplit(iter.TryNextor[T], split.SplitStrategy[T]) iter.TryNextor[T]
 }
 
-type PipelineFileRestorerWrapper[T any] struct {
+type PipelineSstRestorerWrapper[T any] struct {
 	split.RegionsSplitter
 }
 
 // WithSplit processes items using a split strategy within a pipeline.
 // It iterates over items, accumulating them until a split condition is met.
 // When a split is required, it executes the split operation on the accumulated items.
-func (p *PipelineFileRestorerWrapper[T]) WithSplit(ctx context.Context, i iter.TryNextor[T], strategy split.SplitStrategy[T]) iter.TryNextor[T] {
+func (p *PipelineSstRestorerWrapper[T]) WithSplit(ctx context.Context, i iter.TryNextor[T], strategy split.SplitStrategy[T]) iter.TryNextor[T] {
 	return iter.MapFilter(i, func(item T) (T, bool) {
 		// Skip items based on the strategy's criteria.
 		if strategy.ShouldSkip(item) {
@@ -318,6 +349,7 @@ func (p *PipelineFileRestorerWrapper[T]) WithSplit(ctx context.Context, i iter.T
 			accumulations := strategy.AccumulationsIter()
 			err := p.ExecuteRegions(ctx, accumulations)
 			if err != nil {
+				// should we go on?
 				log.Error("Failed to split regions in pipeline; continuing with restore", zap.Error(err))
 			}
 

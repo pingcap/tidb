@@ -54,7 +54,7 @@ func (f *fakeRestorer) SplitRanges(ctx context.Context, ranges []rtree.Range, on
 	return nil
 }
 
-func (f *fakeRestorer) Restore(ctx context.Context, files []restore.RestoreFilesInfo, onProgress func()) error {
+func (f *fakeRestorer) Restore(ctx context.Context, files []restore.BackupFileSet, onProgress func()) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 

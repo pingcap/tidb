@@ -75,7 +75,7 @@ const (
 const minBatchDdlSize = 1
 
 type SnapClient struct {
-	restorer restore.FileRestorer
+	restorer restore.SstRestorer
 	// Tool clients used by SnapClient
 	pdClient     pd.Client
 	pdHTTPClient pdhttp.Client
@@ -168,7 +168,7 @@ func NewRestoreClient(
 	}
 }
 
-func (rc *SnapClient) GetRestorer() restore.FileRestorer {
+func (rc *SnapClient) GetRestorer() restore.SstRestorer {
 	return rc.restorer
 }
 
@@ -535,7 +535,7 @@ func (rc *SnapClient) initClients(ctx context.Context, backend *backuppb.Storage
 			return errors.Trace(err)
 		}
 		// Raw/Txn restore are not support checkpoint for now
-		rc.restorer = restore.NewSimpleFileRestorer(ctx, fileImporter, rc.workerPool, nil)
+		rc.restorer = restore.NewSimpleSstRestorer(ctx, fileImporter, rc.workerPool, nil)
 	} else {
 		// or create a fileImporter with the cluster API version
 		fileImporter, err = NewSnapFileImporter(

@@ -172,7 +172,7 @@ func TestSnapImporter(t *testing.T) {
 	files, rules := generateFiles()
 	for _, file := range files {
 		importer.WaitUntilUnblock()
-		err = importer.Import(ctx, restore.RestoreFilesInfo{SSTFiles: []*backuppb.File{file}, RewriteRules: rules})
+		err = importer.Import(ctx, restore.BackupFileSet{SSTFiles: []*backuppb.File{file}, RewriteRules: rules})
 		require.NoError(t, err)
 	}
 	err = importer.Close()
@@ -193,7 +193,7 @@ func TestSnapImporterRaw(t *testing.T) {
 	files, rules := generateFiles()
 	for _, file := range files {
 		importer.WaitUntilUnblock()
-		err = importer.Import(ctx, restore.RestoreFilesInfo{SSTFiles: []*backuppb.File{file}, RewriteRules: rules})
+		err = importer.Import(ctx, restore.BackupFileSet{SSTFiles: []*backuppb.File{file}, RewriteRules: rules})
 		require.NoError(t, err)
 	}
 	err = importer.Close()

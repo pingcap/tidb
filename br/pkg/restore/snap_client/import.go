@@ -290,7 +290,7 @@ func getKeyRangeByMode(mode KvMode) func(f *backuppb.File, rules *restoreutils.R
 
 // getKeyRangeForFiles gets the maximum range on files.
 func (importer *SnapFileImporter) getKeyRangeForFiles(
-	filesGroup []restore.RestoreFilesInfo,
+	filesGroup []restore.BackupFileSet,
 ) ([]byte, []byte, error) {
 	var (
 		startKey, endKey []byte
@@ -321,10 +321,10 @@ func (importer *SnapFileImporter) getKeyRangeForFiles(
 // Assert 2: len(filesGroup[any].Files) > 0.
 func (importer *SnapFileImporter) Import(
 	ctx context.Context,
-	filesGroup ...restore.RestoreFilesInfo,
+	backupFileSets ...restore.BackupFileSet,
 ) error {
 	// Rewrite the start key and end key of file to scan regions
-	startKey, endKey, err := importer.getKeyRangeForFiles(filesGroup)
+	startKey, endKey, err := importer.getKeyRangeForFiles(backupFileSets)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -343,7 +343,7 @@ func (importer *SnapFileImporter) Import(
 		for _, regionInfo := range regionInfos {
 			info := regionInfo
 			// Try to download file.
-			downloadMetas, errDownload := importer.download(ctx, info, filesGroup, importer.cipher, importer.apiVersion)
+			downloadMetas, errDownload := importer.download(ctx, info, backupFileSets, importer.cipher, importer.apiVersion)
 			if errDownload != nil {
 				log.Warn("download file failed, retry later",
 					logutil.Region(info.Region),
@@ -369,10 +369,10 @@ func (importer *SnapFileImporter) Import(
 		return nil
 	}, utils.NewImportSSTBackoffer())
 	if err != nil {
-		log.Error("import sst file failed after retry, stop the whole progress", zapFilesGroup(filesGroup), zap.Error(err))
+		log.Error("import sst file failed after retry, stop the whole progress", restore.ZapBatchBackupFileSet(backupFileSets), zap.Error(err))
 		return errors.Trace(err)
 	}
-	for _, files := range filesGroup {
+	for _, files := range backupFileSets {
 		for _, f := range files.SSTFiles {
 			summary.CollectSuccessUnit(summary.TotalKV, 1, f.TotalKvs)
 			summary.CollectSuccessUnit(summary.TotalBytes, 1, f.TotalBytes)
@@ -466,7 +466,7 @@ func getSSTMetaFromFile(
 func (importer *SnapFileImporter) download(
 	ctx context.Context,
 	regionInfo *split.RegionInfo,
-	filesGroup []restore.RestoreFilesInfo,
+	filesGroup []restore.BackupFileSet,
 	cipher *backuppb.CipherInfo,
 	apiVersion kvrpcpb.APIVersion,
 ) ([]*import_sstpb.SSTMeta, error) {
@@ -572,7 +572,7 @@ func (importer *SnapFileImporter) buildDownloadRequest(
 func (importer *SnapFileImporter) downloadSST(
 	ctx context.Context,
 	regionInfo *split.RegionInfo,
-	filesGroup []restore.RestoreFilesInfo,
+	filesGroup []restore.BackupFileSet,
 	cipher *backuppb.CipherInfo,
 	apiVersion kvrpcpb.APIVersion,
 ) ([]*import_sstpb.SSTMeta, error) {
@@ -664,7 +664,7 @@ func (importer *SnapFileImporter) downloadSST(
 func (importer *SnapFileImporter) downloadRawKVSST(
 	ctx context.Context,
 	regionInfo *split.RegionInfo,
-	filesGroup []restore.RestoreFilesInfo,
+	filesGroup []restore.BackupFileSet,
 	cipher *backuppb.CipherInfo,
 	apiVersion kvrpcpb.APIVersion,
 ) ([]*import_sstpb.SSTMeta, error) {

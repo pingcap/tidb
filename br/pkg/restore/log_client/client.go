@@ -125,7 +125,7 @@ func (l *LogRestoreManager) Close(ctx context.Context) {
 
 // SstRestoreManager holds all SST-related fields
 type SstRestoreManager struct {
-	restorer         restore.FileRestorer
+	restorer         restore.SstRestorer
 	workerPool       *tidbutil.WorkerPool
 	checkpointRunner *checkpoint.CheckpointRunner[checkpoint.RestoreKeyType, checkpoint.RestoreValueType]
 }
@@ -167,7 +167,7 @@ func NewSstRestoreManager(
 		s.checkpointRunner = checkpointRunner
 	}
 	// TODO implement checkpoint
-	s.restorer = restore.NewSimpleFileRestorer(ctx, snapFileImporter, sstWorkerPool, nil)
+	s.restorer = restore.NewSimpleSstRestorer(ctx, snapFileImporter, sstWorkerPool, nil)
 	return s, nil
 
 }
@@ -250,7 +250,7 @@ func (rc *LogClient) RestoreCompactedSstFiles(
 	importModeSwitcher *restore.ImportModeSwitcher,
 	onProgress func(int64),
 ) error {
-	restoreFilesInfos := make([]restore.RestoreFilesInfo, 0, 8)
+	backupFileSets := make([]restore.BackupFileSet, 0, 8)
 	// Collect all items from the iterator in advance to avoid blocking during restoration.
 	// This approach ensures that we have all necessary data ready for processing,
 	// preventing any potential delays caused by waiting for the iterator to yield more items.
@@ -264,14 +264,14 @@ func (rc *LogClient) RestoreCompactedSstFiles(
 			log.Warn("[Compacted SST Restore] Skipping excluded table during restore.", zap.Int64("table_id", i.Meta.TableId))
 			continue
 		}
-		info := restore.RestoreFilesInfo{
+		set := restore.BackupFileSet{
 			TableID:      i.Meta.TableId,
 			SSTFiles:     i.SstOutputs,
 			RewriteRules: rewriteRules,
 		}
-		restoreFilesInfos = append(restoreFilesInfos, info)
+		backupFileSets = append(backupFileSets, set)
 	}
-	if len(restoreFilesInfos) == 0 {
+	if len(backupFileSets) == 0 {
 		log.Info("[Compacted SST Restore] No SST files found for restoration.")
 		return nil
 	}
@@ -289,8 +289,8 @@ func (rc *LogClient) RestoreCompactedSstFiles(
 	// where batch processing may lead to increased complexity and potential inefficiencies.
 	// TODO: Future enhancements may explore the feasibility of reintroducing batch restoration
 	// while maintaining optimal performance and resource utilization.
-	for _, i := range restoreFilesInfos {
-		err := rc.sstRestoreManager.restorer.Restore(onProgress, []restore.RestoreFilesInfo{i})
+	for _, i := range backupFileSets {
+		err := rc.sstRestoreManager.restorer.Restore(onProgress, []restore.BackupFileSet{i})
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -1444,7 +1444,7 @@ func (rc *LogClient) WrapCompactedFilesIterWithSplitHelper(
 	splitKeys int64,
 ) (iter.TryNextor[*backuppb.LogFileSubcompaction], error) {
 	client := split.NewClient(rc.pdClient, rc.pdHTTPClient, rc.tlsConf, maxSplitKeysOnce, 3)
-	wrapper := restore.PipelineFileRestorerWrapper[*backuppb.LogFileSubcompaction]{
+	wrapper := restore.PipelineSstRestorerWrapper[*backuppb.LogFileSubcompaction]{
 		RegionsSplitter: split.NewRegionsSplitter(client, splitSize, splitKeys),
 	}
 	strategy := NewCompactedFileSplitStrategy(rules, checkpointSets, updateStatsFn)
@@ -1463,7 +1463,7 @@ func (rc *LogClient) WrapLogFilesIterWithSplitHelper(
 	splitKeys int64,
 ) (LogIter, error) {
 	client := split.NewClient(rc.pdClient, rc.pdHTTPClient, rc.tlsConf, maxSplitKeysOnce, 3)
-	wrapper := restore.PipelineFileRestorerWrapper[*LogDataFileInfo]{
+	wrapper := restore.PipelineSstRestorerWrapper[*LogDataFileInfo]{
 		RegionsSplitter: split.NewRegionsSplitter(client, splitSize, splitKeys),
 	}
 	strategy, err := NewLogSplitStrategy(ctx, rc.useCheckpoint, execCtx, rules, updateStatsFn)

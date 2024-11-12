@@ -1344,7 +1344,7 @@ func TestLogFilesIterWithSplitHelper(t *testing.T) {
 	}
 	mockIter := &mockLogIter{}
 	ctx := context.Background()
-	w := restore.PipelineFileRestorerWrapper[*logclient.LogDataFileInfo]{
+	w := restore.PipelineSstRestorerWrapper[*logclient.LogDataFileInfo]{
 		RegionsSplitter: split.NewRegionsSplitter(split.NewFakeSplitClient(), 144*1024*1024, 1440000),
 	}
 	s, err := logclient.NewLogSplitStrategy(ctx, false, nil, rewriteRulesMap, func(uint64, uint64) {})
@@ -1579,7 +1579,7 @@ func TestLogSplitStrategy(t *testing.T) {
 	logIter := toLogDataFileInfoIter(mockIter)
 
 	// Initialize a wrapper for the file restorer with a region splitter.
-	wrapper := restore.PipelineFileRestorerWrapper[*logclient.LogDataFileInfo]{
+	wrapper := restore.PipelineSstRestorerWrapper[*logclient.LogDataFileInfo]{
 		RegionsSplitter: split.NewRegionsSplitter(client, 4*units.MB, 400),
 	}
 
@@ -1723,7 +1723,7 @@ func TestCompactedSplitStrategy(t *testing.T) {
 		mockPDCli.SetRegions(oriRegions)
 
 		client := split.NewClient(mockPDCli, nil, nil, 100, 4)
-		wrapper := restore.PipelineFileRestorerWrapper[*backuppb.LogFileSubcompaction]{
+		wrapper := restore.PipelineSstRestorerWrapper[*backuppb.LogFileSubcompaction]{
 			RegionsSplitter: split.NewRegionsSplitter(client, 4*units.MB, 400),
 		}
 
@@ -1901,7 +1901,7 @@ func TestCompactedSplitStrategyWithCheckpoint(t *testing.T) {
 		mockPDCli.SetRegions(oriRegions)
 
 		client := split.NewClient(mockPDCli, nil, nil, 100, 4)
-		wrapper := restore.PipelineFileRestorerWrapper[*backuppb.LogFileSubcompaction]{
+		wrapper := restore.PipelineSstRestorerWrapper[*backuppb.LogFileSubcompaction]{
 			RegionsSplitter: split.NewRegionsSplitter(client, 4*units.MB, 400),
 		}
 		totalSize := 0
