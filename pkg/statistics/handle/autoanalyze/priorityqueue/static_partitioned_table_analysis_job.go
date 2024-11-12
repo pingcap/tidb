@@ -49,10 +49,10 @@ type StaticPartitionedTableAnalysisJob struct {
 	Weight        float64
 
 	// Lazy initialized.
-	TableSchema         string
+	SchemaName          string
 	GlobalTableName     string
 	StaticPartitionName string
-	Indexes             []string
+	IndexNames          []string
 }
 
 // NewStaticPartitionTableAnalysisJob creates a job for analyzing a static partitioned table.
@@ -180,17 +180,17 @@ func (j *StaticPartitionedTableAnalysisJob) ValidateAndPrepare(
 		callFailureHook(false)
 		return false, partitionNotExist
 	}
-	indexes := make([]string, 0, len(j.IndexIDs))
+	indexNames := make([]string, 0, len(j.IndexIDs))
 	for _, index := range tableInfo.Indices {
 		if _, ok := j.IndexIDs[index.ID]; ok {
-			indexes = append(indexes, index.Name.O)
+			indexNames = append(indexNames, index.Name.O)
 		}
 	}
 
-	j.TableSchema = schema.Name.O
+	j.SchemaName = schema.Name.O
 	j.GlobalTableName = tableInfo.Name.O
 	j.StaticPartitionName = partitionName
-	j.Indexes = indexes
+	j.IndexNames = indexNames
 
 	// Check whether the partition is valid to analyze.
 	// For static partition table we only need to check the specified static partition.
@@ -198,7 +198,7 @@ func (j *StaticPartitionedTableAnalysisJob) ValidateAndPrepare(
 		partitionNames := []string{j.StaticPartitionName}
 		if valid, failReason := isValidToAnalyze(
 			sctx,
-			j.TableSchema,
+			j.SchemaName,
 			j.GlobalTableName,
 			partitionNames...,
 		); !valid {
@@ -237,8 +237,8 @@ func (j *StaticPartitionedTableAnalysisJob) String() string {
 			"\tLastAnalysisDuration: %s\n"+
 			"\tWeight: %.6f\n",
 		j.getAnalyzeType(),
-		strings.Join(j.Indexes, ", "),
-		j.TableSchema, j.GlobalTableName, j.GlobalTableID,
+		strings.Join(j.IndexNames, ", "),
+		j.SchemaName, j.GlobalTableName, j.GlobalTableID,
 		j.StaticPartitionName, j.StaticPartitionID,
 		j.TableStatsVer, j.ChangePercentage, j.TableSize,
 		j.LastAnalysisDuration, j.Weight,
@@ -268,14 +268,14 @@ func (j *StaticPartitionedTableAnalysisJob) analyzeStaticPartitionIndexes(
 	statsHandle statstypes.StatsHandle,
 	sysProcTracker sysproctrack.Tracker,
 ) bool {
-	if len(j.Indexes) == 0 {
+	if len(j.IndexNames) == 0 {
 		return true
 	}
 	// For version 2, analyze one index will analyze all other indexes and columns.
 	// For version 1, analyze one index will only analyze the specified index.
 	analyzeVersion := sctx.GetSessionVars().AnalyzeVersion
 	if analyzeVersion == 1 {
-		for _, index := range j.Indexes {
+		for _, index := range j.IndexNames {
 			sql, params := j.GenSQLForAnalyzeStaticPartitionIndex(index)
 			if !exec.AutoAnalyze(sctx, statsHandle, sysProcTracker, j.TableStatsVer, sql, params...) {
 				return false
@@ -286,7 +286,7 @@ func (j *StaticPartitionedTableAnalysisJob) analyzeStaticPartitionIndexes(
 	// Only analyze the first index.
 	// This is because analyzing a single index also analyzes all other indexes and columns.
 	// Therefore, to avoid redundancy, we prevent multiple analyses of the same partition.
-	firstIndex := j.Indexes[0]
+	firstIndex := j.IndexNames[0]
 	sql, params := j.GenSQLForAnalyzeStaticPartitionIndex(firstIndex)
 	return exec.AutoAnalyze(sctx, statsHandle, sysProcTracker, j.TableStatsVer, sql, params...)
 }
@@ -294,7 +294,7 @@ func (j *StaticPartitionedTableAnalysisJob) analyzeStaticPartitionIndexes(
 // GenSQLForAnalyzeStaticPartition generates the SQL for analyzing the specified static partition.
 func (j *StaticPartitionedTableAnalysisJob) GenSQLForAnalyzeStaticPartition() (string, []any) {
 	sql := "analyze table %n.%n partition %n"
-	params := []any{j.TableSchema, j.GlobalTableName, j.StaticPartitionName}
+	params := []any{j.SchemaName, j.GlobalTableName, j.StaticPartitionName}
 
 	return sql, params
 }
@@ -302,7 +302,7 @@ func (j *StaticPartitionedTableAnalysisJob) GenSQLForAnalyzeStaticPartition() (s
 // GenSQLForAnalyzeStaticPartitionIndex generates the SQL for analyzing the specified static partition index.
 func (j *StaticPartitionedTableAnalysisJob) GenSQLForAnalyzeStaticPartitionIndex(index string) (string, []any) {
 	sql := "analyze table %n.%n partition %n index %n"
-	params := []any{j.TableSchema, j.GlobalTableName, j.StaticPartitionName, index}
+	params := []any{j.SchemaName, j.GlobalTableName, j.StaticPartitionName, index}
 
 	return sql, params
 }

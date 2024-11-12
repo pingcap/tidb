@@ -53,17 +53,17 @@ type DynamicPartitionedTableAnalysisJob struct {
 	Weight float64
 
 	// Lazy initialized.
-	TableSchema     string
+	SchemaName      string
 	GlobalTableName string
 	// This will analyze all indexes and columns of the specified partitions.
-	Partitions []string
+	PartitionNames []string
 	// Only set when partitions's indexes need to be analyzed.
 	// It looks like: {"indexName": ["partitionName1", "partitionName2"]}
 	// This is only for newly added indexes.
 	// The reason why we need to record the partition names is that we need to analyze partitions in batch mode
 	// and we don't want to analyze the same partition multiple times.
 	// For example, the user may analyze some partitions manually, and we don't want to analyze them again.
-	PartitionIndexes map[string][]string
+	PartitionIndexNames map[string][]string
 }
 
 // NewDynamicPartitionedTableAnalysisJob creates a new job for analyzing a dynamic partitioned table's partitions.
@@ -185,7 +185,7 @@ func (j *DynamicPartitionedTableAnalysisJob) ValidateAndPrepare(
 			partitionNames = append(partitionNames, partition.Name.O)
 		}
 	}
-	partitionIndexes := make(map[string][]string, len(j.PartitionIndexIDs))
+	partitionIndexNames := make(map[string][]string, len(j.PartitionIndexIDs))
 	partitionIDToName := make(map[int64]string, len(partitionInfo.Definitions))
 	for _, def := range partitionInfo.Definitions {
 		partitionIDToName[def.ID] = def.Name.O
@@ -199,24 +199,24 @@ func (j *DynamicPartitionedTableAnalysisJob) ValidateAndPrepare(
 				}
 			}
 			if len(indexPartitions) > 0 {
-				partitionIndexes[index.Name.O] = indexPartitions
+				partitionIndexNames[index.Name.O] = indexPartitions
 			}
 		}
 	}
 
-	j.TableSchema = schema.Name.O
+	j.SchemaName = schema.Name.O
 	j.GlobalTableName = tableInfo.Name.O
-	j.Partitions = partitionNames
-	j.PartitionIndexes = partitionIndexes
+	j.PartitionNames = partitionNames
+	j.PartitionIndexNames = partitionIndexNames
 
 	// Check whether the table or partition is valid to analyze.
-	if len(j.Partitions) > 0 || len(j.PartitionIndexes) > 0 {
+	if len(j.PartitionNames) > 0 || len(j.PartitionIndexNames) > 0 {
 		// Any partition is invalid to analyze, the whole table is invalid to analyze.
 		// Because we need to analyze partitions in batch mode.
-		partitions := append(j.Partitions, getPartitionNames(j.PartitionIndexes)...)
+		partitions := append(j.PartitionNames, getPartitionNames(j.PartitionIndexNames)...)
 		if valid, failReason := isValidToAnalyze(
 			sctx,
-			j.TableSchema,
+			j.SchemaName,
 			j.GlobalTableName,
 			partitions...,
 		); !valid {
@@ -254,9 +254,9 @@ func (j *DynamicPartitionedTableAnalysisJob) String() string {
 			"\tLastAnalysisDuration: %s\n"+
 			"\tWeight: %.6f\n",
 		j.getAnalyzeType(),
-		strings.Join(j.Partitions, ", "),
-		j.PartitionIndexes,
-		j.TableSchema, j.GlobalTableName,
+		strings.Join(j.PartitionNames, ", "),
+		j.PartitionIndexNames,
+		j.SchemaName, j.GlobalTableName,
 		j.GlobalTableID, j.TableStatsVer, j.ChangePercentage,
 		j.TableSize, j.LastAnalysisDuration, j.Weight,
 	)
@@ -272,8 +272,8 @@ func (j *DynamicPartitionedTableAnalysisJob) analyzePartitions(
 	sysProcTracker sysproctrack.Tracker,
 ) bool {
 	analyzePartitionBatchSize := int(variable.AutoAnalyzePartitionBatchSize.Load())
-	needAnalyzePartitionNames := make([]any, 0, len(j.Partitions))
-	for _, partition := range j.Partitions {
+	needAnalyzePartitionNames := make([]any, 0, len(j.PartitionNames))
+	for _, partition := range j.PartitionNames {
 		needAnalyzePartitionNames = append(needAnalyzePartitionNames, partition)
 	}
 	for i := 0; i < len(needAnalyzePartitionNames); i += analyzePartitionBatchSize {
@@ -284,7 +284,7 @@ func (j *DynamicPartitionedTableAnalysisJob) analyzePartitions(
 		}
 
 		sql := getPartitionSQL("analyze table %n.%n partition", "", end-start)
-		params := append([]any{j.TableSchema, j.GlobalTableName}, needAnalyzePartitionNames[start:end]...)
+		params := append([]any{j.SchemaName, j.GlobalTableName}, needAnalyzePartitionNames[start:end]...)
 		success := exec.AutoAnalyze(sctx, statsHandle, sysProcTracker, j.TableStatsVer, sql, params...)
 		if !success {
 			return false
@@ -304,7 +304,7 @@ func (j *DynamicPartitionedTableAnalysisJob) analyzePartitionIndexes(
 	// For version 1, analyze one index will only analyze the specified index.
 	analyzeVersion := sctx.GetSessionVars().AnalyzeVersion
 
-	for indexName, partitionNames := range j.PartitionIndexes {
+	for indexName, partitionNames := range j.PartitionIndexNames {
 		needAnalyzePartitionNames := make([]any, 0, len(partitionNames))
 		for _, partition := range partitionNames {
 			needAnalyzePartitionNames = append(needAnalyzePartitionNames, partition)
@@ -317,7 +317,7 @@ func (j *DynamicPartitionedTableAnalysisJob) analyzePartitionIndexes(
 			}
 
 			sql := getPartitionSQL("analyze table %n.%n partition", " index %n", end-start)
-			params := append([]any{j.TableSchema, j.GlobalTableName}, needAnalyzePartitionNames[start:end]...)
+			params := append([]any{j.SchemaName, j.GlobalTableName}, needAnalyzePartitionNames[start:end]...)
 			params = append(params, indexName)
 			success = exec.AutoAnalyze(sctx, statsHandle, sysProcTracker, j.TableStatsVer, sql, params...)
 			if !success {
