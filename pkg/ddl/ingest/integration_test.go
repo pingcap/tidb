@@ -147,8 +147,8 @@ func TestAddIndexSetInternalSessions(t *testing.T) {
 	tk.MustExec("use test;")
 	defer ingesttestutil.InjectMockBackendMgr(t, store)()
 
-	tk.MustExec("set global tidb_enable_dist_task = 0;")
-	tk.MustExec("set @@tidb_ddl_reorg_worker_cnt = 1;")
+	tk.MustExec("set global tidb_enable_dist_task = 1;")
+	tk.MustExec("set global tidb_ddl_reorg_worker_cnt = 1;")
 	tk.MustExec("create table t (a int);")
 	tk.MustExec("insert into t values (1);")
 	expectInternalTS := []uint64{}

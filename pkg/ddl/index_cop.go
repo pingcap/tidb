@@ -173,9 +173,6 @@ func scanRecords(p *copReqSenderPool, task *reorgBackfillTask, se *sess.Session)
 	})
 }
 
-// WrapBeginRollbackForTest is used for test.
-var WrapBeginRollbackForTest func()
-
 func wrapInBeginRollback(se *sess.Session, f func(startTS uint64) error) error {
 	err := se.Begin()
 	if err != nil {
