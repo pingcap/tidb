@@ -114,7 +114,7 @@ func TestMultipleWorker(t *testing.T) {
 	require.NoError(t, wrk2.setRepositoryDest(ctx, "table"))
 
 	require.Eventually(t, func() bool {
-		return wrk1.checkTablesExists() && wrk2.checkTablesExists()
+		return wrk1.checkTablesExists(ctx) && wrk2.checkTablesExists(ctx)
 	}, time.Minute, time.Second)
 
 	tk := testkit.NewTestKit(t, store)
@@ -137,7 +137,7 @@ func TestGlobalWorker(t *testing.T) {
 	tk.MustExec("set @@global.tidb_workload_repository_dest='table'")
 
 	require.Eventually(t, func() bool {
-		return wrk.checkTablesExists()
+		return wrk.checkTablesExists(ctx)
 	}, time.Minute, time.Second)
 
 	// sampling succeeded
