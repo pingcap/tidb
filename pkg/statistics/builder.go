@@ -156,6 +156,9 @@ func buildHist(
 	// ndvFactor is a ratio that represents the average number of times each distinct value (NDV) should appear in the dataset.
 	// It is calculated as the total number of rows divided by the number of distinct values.
 	ndvFactor := float64(count) / float64(ndv)
+	// origNdvFactor represents an upper bound (Ceil) of the orignal ndvFactor - such that "repeat" values greater
+	// than this value are considered to be skewed (well) above the average.
+	origNdvFactor := int64(ndvFactor * math.Max(sampleFactor, 1))
 	if ndvFactor > sampleFactor {
 		ndvFactor = sampleFactor
 	}
@@ -163,6 +166,7 @@ func buildHist(
 	// floor(valuesPerBucket/sampleFactor)*sampleFactor, which may less than valuesPerBucket,
 	// thus we need to add a sampleFactor to avoid building too many buckets.
 	valuesPerBucket := float64(count)/float64(numBuckets) + sampleFactor
+	ceilValuesPerBucket := max(math.Ceil(valuesPerBucket), 2)
 
 	bucketIdx := 0
 	var lastCount int64
@@ -198,6 +202,7 @@ func buildHist(
 			return 0, errors.Trace(err)
 		}
 		totalCount := float64(i+1) * sampleFactor
+		currentCount := totalCount - float64(lastCount)
 		if cmp == 0 {
 			// The new item has the same value as the current bucket value, to ensure that
 			// a same value only stored in a single bucket, we do not increase bucketIdx even if it exceeds
@@ -216,7 +221,8 @@ func buildHist(
 				// ...
 				hg.Buckets[bucketIdx].Repeat += int64(sampleFactor)
 			}
-		} else if totalCount-float64(lastCount) <= valuesPerBucket {
+		} else if (hg.Buckets[bucketIdx].Count <= origNdvFactor && currentCount <= ceilValuesPerBucket) ||
+			currentCount <= valuesPerBucket {
 			// The bucket still has room to store a new item, update the bucket.
 			hg.updateLastBucket(&samples[i].Value, int64(totalCount), int64(ndvFactor), false)
 		} else {
