@@ -100,11 +100,11 @@ func hasOneItem(idxID int64, columnList string, columnArgs []any) (iterateFunc, 
 	}, &count
 }
 
-func createMeta(t *testing.T, store kv.Storage, fn func(m *meta.Meta)) {
+func createMeta(t *testing.T, store kv.Storage, fn func(m *meta.Mutator)) {
 	txn, err := store.Begin()
 	require.NoError(t, err)
 
-	fn(meta.NewMeta(txn))
+	fn(meta.NewMutator(txn))
 
 	err = txn.Commit(context.Background())
 	require.NoError(t, err)
@@ -117,7 +117,7 @@ func TestAddIngestRecorder(t *testing.T) {
 		require.NoError(t, store.Close())
 	}()
 
-	createMeta(t, store, func(m *meta.Meta) {
+	createMeta(t, store, func(m *meta.Mutator) {
 		dbInfo := &model.DBInfo{
 			ID:    1,
 			Name:  pmodel.NewCIStr(SchemaName),
@@ -234,7 +234,7 @@ func TestAddIngestRecorder(t *testing.T) {
 			[]*model.IndexInfo{
 				getIndex(1, []string{"x", "y"}),
 			},
-			json.RawMessage(`[1, "a"]`),
+			json.RawMessage(`[1, false, [], false]`),
 		), false)
 		require.NoError(t, err)
 		f, cnt := hasOneItem(1, "%n,%n", []any{"x", "y"})
@@ -256,7 +256,7 @@ func TestAddIngestRecorder(t *testing.T) {
 			[]*model.IndexInfo{
 				getIndex(1, []string{"x", "y"}),
 			},
-			json.RawMessage(`[1, "a"]`),
+			json.RawMessage(`[1, false, [], false]`),
 		), false)
 		require.NoError(t, err)
 		f, cnt := hasOneItem(1, "%n,%n", []any{"x", "y"})
@@ -277,7 +277,7 @@ func TestAddIngestRecorder(t *testing.T) {
 			[]*model.IndexInfo{
 				getIndex(1, []string{"x", "y"}),
 			},
-			json.RawMessage(`[1, "a"]`),
+			json.RawMessage(`[1, false, [], false]`),
 		), true)
 		require.NoError(t, err)
 		f, cnt := hasOneItem(1, "%n,%n", []any{"x", "y"})
@@ -300,7 +300,7 @@ func TestIndexesKind(t *testing.T) {
 	require.NoError(t, err)
 	_, err := se.ExecuteInternal(ctx)
 	*/
-	createMeta(t, store, func(m *meta.Meta) {
+	createMeta(t, store, func(m *meta.Mutator) {
 		dbInfo := &model.DBInfo{
 			ID:    1,
 			Name:  pmodel.NewCIStr(SchemaName),
@@ -375,7 +375,7 @@ func TestIndexesKind(t *testing.T) {
 		[]*model.IndexInfo{
 			getIndex(1, []string{"x"}),
 		},
-		json.RawMessage(`[1, "a"]`),
+		json.RawMessage(`[1, false, [], false]`),
 	), false)
 	require.NoError(t, err)
 	err = recorder.UpdateIndexInfo(infoSchema)
@@ -409,7 +409,7 @@ func TestRewriteTableID(t *testing.T) {
 		require.NoError(t, store.Close())
 	}()
 
-	createMeta(t, store, func(m *meta.Meta) {
+	createMeta(t, store, func(m *meta.Mutator) {
 		dbInfo := &model.DBInfo{
 			ID:    1,
 			Name:  pmodel.NewCIStr(SchemaName),
@@ -472,7 +472,7 @@ func TestRewriteTableID(t *testing.T) {
 		[]*model.IndexInfo{
 			getIndex(1, []string{"x", "y"}),
 		},
-		json.RawMessage(`[1, "a"]`),
+		json.RawMessage(`[1, false, [], false]`),
 	), false)
 	require.NoError(t, err)
 	err = recorder.UpdateIndexInfo(infoSchema)

@@ -58,34 +58,37 @@ func testCreateForeignKey(t *testing.T, d ddl.ExecutorForTest, ctx sessionctx.Co
 	}
 
 	job := &model.Job{
+		Version:    model.GetJobVerInUse(),
 		SchemaID:   dbInfo.ID,
 		SchemaName: dbInfo.Name.L,
 		TableID:    tblInfo.ID,
 		TableName:  tblInfo.Name.L,
 		Type:       model.ActionAddForeignKey,
 		BinlogInfo: &model.HistoryInfo{},
-		Args:       []any{fkInfo},
 	}
 	err := sessiontxn.NewTxn(context.Background(), ctx)
 	require.NoError(t, err)
 	ctx.SetValue(sessionctx.QueryString, "skip")
-	err = d.DoDDLJobWrapper(ctx, ddl.NewJobWrapper(job, true))
+
+	args := &model.AddForeignKeyArgs{FkInfo: fkInfo}
+	err = d.DoDDLJobWrapper(ctx, ddl.NewJobWrapperWithArgs(job, args, true))
 	require.NoError(t, err)
 	return job
 }
 
 func testDropForeignKey(t *testing.T, ctx sessionctx.Context, d ddl.ExecutorForTest, dbInfo *model.DBInfo, tblInfo *model.TableInfo, foreignKeyName string) *model.Job {
 	job := &model.Job{
+		Version:    model.GetJobVerInUse(),
 		SchemaID:   dbInfo.ID,
 		SchemaName: dbInfo.Name.L,
 		TableID:    tblInfo.ID,
 		TableName:  tblInfo.Name.L,
 		Type:       model.ActionDropForeignKey,
 		BinlogInfo: &model.HistoryInfo{},
-		Args:       []any{pmodel.NewCIStr(foreignKeyName)},
 	}
 	ctx.SetValue(sessionctx.QueryString, "skip")
-	err := d.DoDDLJobWrapper(ctx, ddl.NewJobWrapper(job, true))
+	args := &model.DropForeignKeyArgs{FkName: pmodel.NewCIStr(foreignKeyName)}
+	err := d.DoDDLJobWrapper(ctx, ddl.NewJobWrapperWithArgs(job, args, true))
 	require.NoError(t, err)
 	v := getSchemaVer(t, ctx)
 	checkHistoryJobArgs(t, ctx, job.ID, &historyJobArgs{ver: v, tbl: tblInfo})
@@ -401,4 +404,42 @@ func TestAddForeignKey3(t *testing.T) {
 	}
 	tk.MustQuery("select * from t1 order by id").Check(testkit.Rows("1 1", "2 2", "3 3"))
 	tk.MustQuery("select * from t2 order by id").Check(testkit.Rows("1 1", "2 2", "3 3"))
+}
+
+func TestForeignKeyInWriteOnlyMode(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	tkDDL := testkit.NewTestKit(t, store)
+	tkDDL.MustExec("use test")
+	tkDDL.MustExec("create table parent (id int key)")
+	tkDDL.MustExec("insert into parent values(1)")
+
+	var notExistErrs []error
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunBefore", func(job *model.Job) {
+		if job.Type == model.ActionCreateTable && job.TableName == "child" {
+			if job.SchemaState == model.StateDeleteOnly {
+				// tk with the latest schema will insert data into child
+				_, err := tk.Exec("insert into child values (1, 1)")
+				notExistErrs = append(notExistErrs, err)
+				_, err = tk.Exec("update child set id = 2 where id = 1")
+				notExistErrs = append(notExistErrs, err)
+				_, err = tk.Exec("delete from child where id = 1")
+				notExistErrs = append(notExistErrs, err)
+				_, err = tk.Exec("delete child from child inner join parent where child.pid = parent.id")
+				notExistErrs = append(notExistErrs, err)
+				_, err = tk.Exec("delete parent from child inner join parent where child.pid = parent.id")
+				notExistErrs = append(notExistErrs, err)
+			}
+		}
+	})
+	tkDDL.MustExec("create table child (id int, pid int, index idx_pid(pid), foreign key (pid) references parent(id) on delete cascade);")
+
+	testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunBefore")
+
+	for _, err := range notExistErrs {
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "Table 'test.child' doesn't exist")
+	}
 }

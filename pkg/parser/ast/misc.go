@@ -72,9 +72,6 @@ const (
 	ReadUncommitted = "READ-UNCOMMITTED"
 	Serializable    = "SERIALIZABLE"
 	RepeatableRead  = "REPEATABLE-READ"
-
-	PumpType    = "PUMP"
-	DrainerType = "DRAINER"
 )
 
 // Transaction mode constants.
@@ -2005,15 +2002,20 @@ func (n *StringOrUserVar) Accept(v Visitor) (node Node, ok bool) {
 	return v.Leave(n)
 }
 
+// RecommendIndexOption is the option for recommend index.
+type RecommendIndexOption struct {
+	Option string
+	Value  ValueExpr
+}
+
 // RecommendIndexStmt is a statement to recommend index.
 type RecommendIndexStmt struct {
 	stmtNode
 
-	Action string
-	SQL    string
-	ID     int64
-	Option string
-	Value  ValueExpr
+	Action  string
+	SQL     string
+	ID      int64
+	Options []RecommendIndexOption
 }
 
 func (n *RecommendIndexStmt) Restore(ctx *format.RestoreCtx) error {
@@ -2025,6 +2027,19 @@ func (n *RecommendIndexStmt) Restore(ctx *format.RestoreCtx) error {
 			ctx.WriteKeyWord(" FOR ")
 			ctx.WriteString(n.SQL)
 		}
+		if len(n.Options) > 0 {
+			ctx.WriteKeyWord(" WITH ")
+			for i, opt := range n.Options {
+				if i != 0 {
+					ctx.WritePlain(", ")
+				}
+				ctx.WriteKeyWord(opt.Option)
+				ctx.WritePlain(" = ")
+				if err := opt.Value.Restore(ctx); err != nil {
+					return errors.Annotatef(err, "An error occurred while restore RecommendIndexStmt.Options[%d]", i)
+				}
+			}
+		}
 	case "show":
 		ctx.WriteKeyWord(" SHOW")
 	case "apply":
@@ -2035,10 +2050,15 @@ func (n *RecommendIndexStmt) Restore(ctx *format.RestoreCtx) error {
 		ctx.WriteKeyWord(fmt.Sprintf("%d", n.ID))
 	case "set":
 		ctx.WriteKeyWord(" SET ")
-		ctx.WriteKeyWord(n.Option)
-		ctx.WritePlain(" = ")
-		if err := n.Value.Restore(ctx); err != nil {
-			return errors.Annotate(err, "An error occurred while restore RecommendIndexStmt.Value")
+		for i, opt := range n.Options {
+			if i != 0 {
+				ctx.WritePlain(", ")
+			}
+			ctx.WriteKeyWord(opt.Option)
+			ctx.WritePlain(" = ")
+			if err := opt.Value.Restore(ctx); err != nil {
+				return errors.Annotatef(err, "An error occurred while restore RecommendIndexStmt.Options[%d]", i)
+			}
 		}
 	}
 	return nil
@@ -2449,6 +2469,7 @@ const (
 	AdminSetBDRRole
 	AdminShowBDRRole
 	AdminUnsetBDRRole
+	AdminAlterDDLJob
 )
 
 // HandleRange represents a range where handle value >= Begin and < End.
@@ -2537,6 +2558,25 @@ type LimitSimple struct {
 	Offset uint64
 }
 
+type AlterJobOption struct {
+	// Name is the name of the option, will be converted to lower case during parse.
+	Name string
+	// only literal is allowed, we use ExprNode to support negative number
+	Value ExprNode
+}
+
+func (l *AlterJobOption) Restore(ctx *format.RestoreCtx) error {
+	if l.Value == nil {
+		ctx.WritePlain(l.Name)
+	} else {
+		ctx.WritePlain(l.Name + " = ")
+		if err := l.Value.Restore(ctx); err != nil {
+			return errors.Annotatef(err, "An error occurred while restore AlterJobOption")
+		}
+	}
+	return nil
+}
+
 // AdminStmt is the struct for Admin statement.
 type AdminStmt struct {
 	stmtNode
@@ -2547,13 +2587,14 @@ type AdminStmt struct {
 	JobIDs    []int64
 	JobNumber int64
 
-	HandleRanges   []HandleRange
-	ShowSlow       *ShowSlow
-	Plugins        []string
-	Where          ExprNode
-	StatementScope StatementScope
-	LimitSimple    LimitSimple
-	BDRRole        BDRRole
+	HandleRanges    []HandleRange
+	ShowSlow        *ShowSlow
+	Plugins         []string
+	Where           ExprNode
+	StatementScope  StatementScope
+	LimitSimple     LimitSimple
+	BDRRole         BDRRole
+	AlterJobOptions []*AlterJobOption
 }
 
 // Restore implements Node interface.
@@ -2717,6 +2758,18 @@ func (n *AdminStmt) Restore(ctx *format.RestoreCtx) error {
 		ctx.WriteKeyWord("SHOW BDR ROLE")
 	case AdminUnsetBDRRole:
 		ctx.WriteKeyWord("UNSET BDR ROLE")
+	case AdminAlterDDLJob:
+		ctx.WriteKeyWord("ALTER DDL JOBS ")
+		ctx.WritePlainf("%d", n.JobNumber)
+		for i, option := range n.AlterJobOptions {
+			if i != 0 {
+				ctx.WritePlain(",")
+			}
+			ctx.WritePlain(" ")
+			if err := option.Restore(ctx); err != nil {
+				return errors.Annotatef(err, "An error occurred while restore AdminStmt.AlterJobOptions[%d]", i)
+			}
+		}
 	default:
 		return errors.New("Unsupported AdminStmt type")
 	}

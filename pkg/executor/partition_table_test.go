@@ -27,7 +27,6 @@ import (
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/parser/model"
-	"github.com/pingcap/tidb/pkg/planner/util/coretestsdk"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/external"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
@@ -317,18 +316,18 @@ func TestOrderByAndLimit(t *testing.T) {
 
 	// Create virtual tiflash replica info.
 	dom := domain.GetDomain(tk.Session())
-	coretestsdk.SetTiFlashReplica(t, dom, "test_orderby_limit", "trange")
-	coretestsdk.SetTiFlashReplica(t, dom, "test_orderby_limit", "thash")
-	coretestsdk.SetTiFlashReplica(t, dom, "test_orderby_limit", "tlist")
-	coretestsdk.SetTiFlashReplica(t, dom, "test_orderby_limit", "tregular")
-	coretestsdk.SetTiFlashReplica(t, dom, "test_orderby_limit", "trange_intpk")
-	coretestsdk.SetTiFlashReplica(t, dom, "test_orderby_limit", "thash_intpk")
-	coretestsdk.SetTiFlashReplica(t, dom, "test_orderby_limit", "tlist_intpk")
-	coretestsdk.SetTiFlashReplica(t, dom, "test_orderby_limit", "tregular_intpk")
-	coretestsdk.SetTiFlashReplica(t, dom, "test_orderby_limit", "trange_clustered")
-	coretestsdk.SetTiFlashReplica(t, dom, "test_orderby_limit", "thash_clustered")
-	coretestsdk.SetTiFlashReplica(t, dom, "test_orderby_limit", "tlist_clustered")
-	coretestsdk.SetTiFlashReplica(t, dom, "test_orderby_limit", "tregular_clustered")
+	testkit.SetTiFlashReplica(t, dom, "test_orderby_limit", "trange")
+	testkit.SetTiFlashReplica(t, dom, "test_orderby_limit", "thash")
+	testkit.SetTiFlashReplica(t, dom, "test_orderby_limit", "tlist")
+	testkit.SetTiFlashReplica(t, dom, "test_orderby_limit", "tregular")
+	testkit.SetTiFlashReplica(t, dom, "test_orderby_limit", "trange_intpk")
+	testkit.SetTiFlashReplica(t, dom, "test_orderby_limit", "thash_intpk")
+	testkit.SetTiFlashReplica(t, dom, "test_orderby_limit", "tlist_intpk")
+	testkit.SetTiFlashReplica(t, dom, "test_orderby_limit", "tregular_intpk")
+	testkit.SetTiFlashReplica(t, dom, "test_orderby_limit", "trange_clustered")
+	testkit.SetTiFlashReplica(t, dom, "test_orderby_limit", "thash_clustered")
+	testkit.SetTiFlashReplica(t, dom, "test_orderby_limit", "tlist_clustered")
+	testkit.SetTiFlashReplica(t, dom, "test_orderby_limit", "tregular_clustered")
 	tk.MustExec("set @@session.tidb_isolation_read_engines=\"tikv\"")
 
 	// test indexLookUp
@@ -935,7 +934,6 @@ func TestBatchGetforRangeandListPartitionTable(t *testing.T) {
 	tk.MustExec("create database test_pointget")
 	tk.MustExec("use test_pointget")
 	tk.MustExec("set @@tidb_partition_prune_mode = 'dynamic'")
-	tk.MustExec("set @@session.tidb_enable_list_partition = ON")
 
 	// list partition table
 	tk.MustExec(`create table tlist(a int, b int, unique index idx_a(a), index idx_b(b)) partition by list(a)(
@@ -2089,10 +2087,6 @@ func TestDropGlobalIndex(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("set tidb_enable_global_index=true")
-	defer func() {
-		tk.MustExec("set tidb_enable_global_index=default")
-	}()
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists p")
 	tk.MustExec(`create table p (id int, c int) partition by range (c) (
@@ -2410,7 +2404,6 @@ func TestGlobalIndexWithSelectLock(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 
 	tk1 := testkit.NewTestKit(t, store)
-	tk1.MustExec("set tidb_enable_global_index = true")
 	tk1.MustExec("use test")
 	tk1.MustExec("create table t(" +
 		"	a int, " +

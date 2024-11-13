@@ -164,7 +164,7 @@ func newTemporaryTableFromTableInfo(sctx sessionctx.Context, tbInfo *model.Table
 	// real table, and then we'll get into trouble.
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnCacheTable)
 	err := kv.RunInNewTxn(ctx, sctx.GetStore(), true, func(ctx context.Context, txn kv.Transaction) error {
-		m := meta.NewMeta(txn)
+		m := meta.NewMutator(txn)
 		tblID, err := m.GenGlobalID()
 		if err != nil {
 			return errors.Trace(err)

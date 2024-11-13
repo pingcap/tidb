@@ -103,7 +103,7 @@ func TestScanOnSmallTable(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec(`create table t (a int)`)
 	tk.MustExec("insert into t values (1), (2), (3), (4), (5)")
-	tk.MustExec("analyze table t")
+	tk.MustExec("analyze table t all columns")
 	tk.MustExec(`set @@tidb_cost_model_version=2`)
 
 	// Create virtual tiflash replica info.

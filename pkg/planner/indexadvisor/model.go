@@ -146,14 +146,19 @@ type WorkloadImpact struct {
 	WorkloadImprovement float64
 }
 
+// IndexDetail represents the detail of the index.
+type IndexDetail struct {
+	Reason    string // why recommend this index
+	IndexSize uint64 // byte
+}
+
 // Recommendation represents the result of the index advisor.
 type Recommendation struct {
 	Database           string
 	Table              string
 	IndexName          string
 	IndexColumns       []string
-	IndexSize          uint64
-	Reason             string
+	IndexDetail        *IndexDetail
 	WorkloadImpact     *WorkloadImpact
 	TopImpactedQueries []*ImpactedQuery
 }

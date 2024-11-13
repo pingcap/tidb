@@ -16,9 +16,9 @@ package sessionctx
 
 import (
 	"context"
-	"time"
+	"iter"
+	"sync"
 
-	"github.com/pingcap/errors"
 	distsqlctx "github.com/pingcap/tidb/pkg/distsql/context"
 	"github.com/pingcap/tidb/pkg/expression/exprctx"
 	"github.com/pingcap/tidb/pkg/extension"
@@ -26,11 +26,9 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	tablelock "github.com/pingcap/tidb/pkg/lock/context"
 	"github.com/pingcap/tidb/pkg/meta/model"
-	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/planner/planctx"
 	"github.com/pingcap/tidb/pkg/session/cursor"
 	"github.com/pingcap/tidb/pkg/sessionctx/sessionstates"
-	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/statistics/handle/usage/indexusage"
 	"github.com/pingcap/tidb/pkg/table/tblctx"
@@ -40,7 +38,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/sli"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/pingcap/tidb/pkg/util/topsql/stmtstats"
-	"github.com/pingcap/tipb/go-binlog"
 	"github.com/tikv/client-go/v2/oracle"
 )
 
@@ -71,7 +68,7 @@ type InstancePlanCache interface {
 	// Put puts the key and value into the cache.
 	Put(key string, value, paramTypes any) (succ bool)
 	// Evict evicts some cached values.
-	Evict() (detailInfo string, numEvicted int)
+	Evict(evictAll bool) (detailInfo string, numEvicted int)
 	// Size returns the number of cached values.
 	Size() int64
 	// MemUsage returns the total memory usage of this plan cache.
@@ -154,7 +151,7 @@ type Context interface {
 	GetSessionPlanCache() SessionPlanCache
 
 	// UpdateColStatsUsage updates the column stats usage.
-	UpdateColStatsUsage(predicateColumns []model.TableItemID)
+	UpdateColStatsUsage(predicateColumns iter.Seq[model.TableItemID])
 
 	// HasDirtyContent checks whether there's dirty update on the given table.
 	HasDirtyContent(tid int64) bool
@@ -172,8 +169,6 @@ type Context interface {
 	// before you start another batch, otherwise, the previous changes might be committed
 	// unexpectedly.
 	StmtRollback(ctx context.Context, isForPessimisticRetry bool)
-	// StmtGetMutation gets the binlog mutation for current statement.
-	StmtGetMutation(int64) *binlog.TableMutation
 	// IsDDLOwner checks whether this session is DDL owner.
 	IsDDLOwner() bool
 	// PrepareTSFuture uses to prepare timestamp by future.
@@ -210,6 +205,8 @@ type Context interface {
 	NewStmtIndexUsageCollector() *indexusage.StmtIndexUsageCollector
 	// GetCursorTracker returns the cursor tracker of the session
 	GetCursorTracker() cursor.Tracker
+	// GetCommitWaitGroup returns the wait group for async commit and secondary lock cleanup background goroutines
+	GetCommitWaitGroup() *sync.WaitGroup
 }
 
 // TxnFuture is an interface where implementations have a kv.Transaction field and after
@@ -244,42 +241,6 @@ const (
 )
 
 // ValidateSnapshotReadTS strictly validates that readTS does not exceed the PD timestamp
-func ValidateSnapshotReadTS(ctx context.Context, sctx Context, readTS uint64) error {
-	latestTS, err := sctx.GetStore().GetOracle().GetLowResolutionTimestamp(ctx, &oracle.Option{TxnScope: oracle.GlobalTxnScope})
-	// If we fail to get latestTS or the readTS exceeds it, get a timestamp from PD to double check
-	if err != nil || readTS > latestTS {
-		metrics.ValidateReadTSFromPDCount.Inc()
-		currentVer, err := sctx.GetStore().CurrentVersion(oracle.GlobalTxnScope)
-		if err != nil {
-			return errors.Errorf("fail to validate read timestamp: %v", err)
-		}
-		if readTS > currentVer.Ver {
-			return errors.Errorf("cannot set read timestamp to a future time")
-		}
-	}
-	return nil
-}
-
-// How far future from now ValidateStaleReadTS allows at most
-const allowedTimeFromNow = 100 * time.Millisecond
-
-// ValidateStaleReadTS validates that readTS does not exceed the current time not strictly.
-func ValidateStaleReadTS(ctx context.Context, sc *stmtctx.StatementContext, store kv.Storage, readTS uint64) error {
-	currentTS, err := sc.GetStaleTSO()
-	if currentTS == 0 || err != nil {
-		currentTS, err = store.GetOracle().GetStaleTimestamp(ctx, oracle.GlobalTxnScope, 0)
-	}
-	// If we fail to calculate currentTS from local time, fallback to get a timestamp from PD
-	if err != nil {
-		metrics.ValidateReadTSFromPDCount.Inc()
-		currentVer, err := store.CurrentVersion(oracle.GlobalTxnScope)
-		if err != nil {
-			return errors.Errorf("fail to validate read timestamp: %v", err)
-		}
-		currentTS = currentVer.Ver
-	}
-	if oracle.GetTimeFromTS(readTS).After(oracle.GetTimeFromTS(currentTS).Add(allowedTimeFromNow)) {
-		return errors.Errorf("cannot set read timestamp to a future time")
-	}
-	return nil
+func ValidateSnapshotReadTS(ctx context.Context, store kv.Storage, readTS uint64) error {
+	return store.GetOracle().ValidateSnapshotReadTS(ctx, readTS, &oracle.Option{TxnScope: oracle.GlobalTxnScope})
 }

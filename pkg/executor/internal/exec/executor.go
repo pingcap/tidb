@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
+	"github.com/pingcap/tidb/pkg/util/linter/constructor"
 	"github.com/pingcap/tidb/pkg/util/topsql"
 	topsqlstate "github.com/pingcap/tidb/pkg/util/topsql/state"
 	"github.com/pingcap/tidb/pkg/util/tracing"
@@ -276,6 +277,8 @@ func newExecutorKillerHandler(handler signalHandler) executorKillerHandler {
 
 // BaseExecutorV2 is a simplified version of `BaseExecutor`, which doesn't contain a full session context
 type BaseExecutorV2 struct {
+	_ constructor.Constructor `ctor:"NewBaseExecutorV2,BuildNewBaseExecutorV2"`
+
 	executorMeta
 	executorKillerHandler
 	executorStats
@@ -352,6 +355,8 @@ func (e *BaseExecutorV2) BuildNewBaseExecutorV2(stmtRuntimeStatsColl *execdetail
 
 // BaseExecutor holds common information for executors.
 type BaseExecutor struct {
+	_ constructor.Constructor `ctor:"NewBaseExecutor"`
+
 	ctx sessionctx.Context
 
 	BaseExecutorV2

@@ -15,8 +15,6 @@ go_library(
         "//pkg/sessionctx/variable",
         "//pkg/table/tblctx",
         "//pkg/util/intest",
-        "@com_github_pingcap_failpoint//:failpoint",
-        "@com_github_pingcap_tipb//go-binlog",
     ],
 )
 
@@ -27,13 +25,12 @@ go_test(
     flaky = True,
     deps = [
         ":tblsession",
+        "//pkg/infoschema",
         "//pkg/meta/model",
-        "//pkg/sessionctx/binloginfo",
         "//pkg/sessionctx/variable",
         "//pkg/table",
-        "//pkg/testkit",
+        "//pkg/table/tables",
         "//pkg/util/mock",
-        "@com_github_pingcap_tipb//go-binlog",
         "@com_github_stretchr_testify//require",
     ],
 )

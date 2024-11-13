@@ -64,4 +64,9 @@ header:
     - "pkg/lightning/mydump/bytes.go"
     - "pkg/lightning/mydump/examples/metadata"
     - "tests/_utils/config/"
+    - "**/tidb-slow.log"
+    - "**/tidb-slow-*.log"
+    - "**/metadata"
+    - "pkg/extension/_import/generated-enterprise.go"
+
   comment: on-failure

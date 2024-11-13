@@ -12,6 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+//go:build !codes
+
 package core
 
 import (
@@ -273,6 +275,7 @@ func MockSignedTable() *model.TableInfo {
 		Indices:    indices,
 		Name:       pmodel.NewCIStr("t"),
 		PKIsHandle: true,
+		State:      model.StatePublic,
 	}
 	return table
 }
@@ -343,6 +346,7 @@ func MockUnsignedTable() *model.TableInfo {
 		Indices:    indices,
 		Name:       pmodel.NewCIStr("t2"),
 		PKIsHandle: true,
+		State:      model.StatePublic,
 	}
 	return table
 }
@@ -372,6 +376,7 @@ func MockNoPKTable() *model.TableInfo {
 		Columns:    []*model.ColumnInfo{col0, col1},
 		Name:       pmodel.NewCIStr("t3"),
 		PKIsHandle: true,
+		State:      model.StatePublic,
 	}
 	return table
 }
@@ -403,6 +408,7 @@ func MockView() *model.TableInfo {
 		Name:    pmodel.NewCIStr("v"),
 		Columns: []*model.ColumnInfo{col0, col1, col2},
 		View:    view,
+		State:   model.StatePublic,
 	}
 	return table
 }
@@ -574,6 +580,103 @@ func MockListPartitionTable() *model.TableInfo {
 	return tableInfo
 }
 
+// MockGlobalIndexHashPartitionTable mocks a hash partition table with global index for test
+func MockGlobalIndexHashPartitionTable() *model.TableInfo {
+	definitions := []model.PartitionDefinition{
+		{
+			ID:   51,
+			Name: pmodel.NewCIStr("p1"),
+		},
+		{
+			ID:   52,
+			Name: pmodel.NewCIStr("p2"),
+		},
+	}
+	tableInfo := MockSignedTable()
+	tableInfo.Name = pmodel.NewCIStr("pt2_global_index")
+	cols := make([]*model.ColumnInfo, 0, len(tableInfo.Columns))
+	cols = append(cols, tableInfo.Columns...)
+	last := tableInfo.Columns[len(tableInfo.Columns)-1]
+	cols = append(cols, &model.ColumnInfo{
+		State:     model.StatePublic,
+		Offset:    last.Offset + 1,
+		Name:      pmodel.NewCIStr("ptn"),
+		FieldType: newLongType(),
+		ID:        last.ID + 1,
+	})
+	partition := &model.PartitionInfo{
+		Type:        pmodel.PartitionTypeHash,
+		Expr:        "ptn",
+		Enable:      true,
+		Definitions: definitions,
+		Num:         2,
+	}
+	tableInfo.Columns = cols
+	tableInfo.Partition = partition
+	// add a global index `b_global` and `b_c_global` and normal index `b` and `b_c`
+	tableInfo.Indices = append(tableInfo.Indices, []*model.IndexInfo{
+		{
+			Name: pmodel.NewCIStr("b"),
+			Columns: []*model.IndexColumn{
+				{
+					Name:   pmodel.NewCIStr("b"),
+					Length: types.UnspecifiedLength,
+					Offset: 1,
+				},
+			},
+			State: model.StatePublic,
+		},
+		{
+			Name: pmodel.NewCIStr("b_global"),
+			Columns: []*model.IndexColumn{
+				{
+					Name:   pmodel.NewCIStr("b"),
+					Length: types.UnspecifiedLength,
+					Offset: 1,
+				},
+			},
+			State:  model.StatePublic,
+			Unique: true,
+			Global: true,
+		},
+		{
+			Name: pmodel.NewCIStr("b_c"),
+			Columns: []*model.IndexColumn{
+				{
+					Name:   pmodel.NewCIStr("b"),
+					Length: types.UnspecifiedLength,
+					Offset: 1,
+				},
+				{
+					Name:   pmodel.NewCIStr("c"),
+					Length: types.UnspecifiedLength,
+					Offset: 2,
+				},
+			},
+			State: model.StatePublic,
+		},
+		{
+			Name: pmodel.NewCIStr("b_c_global"),
+			Columns: []*model.IndexColumn{
+				{
+					Name:   pmodel.NewCIStr("b"),
+					Length: types.UnspecifiedLength,
+					Offset: 1,
+				},
+				{
+					Name:   pmodel.NewCIStr("c"),
+					Length: types.UnspecifiedLength,
+					Offset: 2,
+				},
+			},
+			State:  model.StatePublic,
+			Unique: true,
+			Global: true,
+		},
+	}...)
+	return tableInfo
+}
+
 // MockStateNoneColumnTable is only used for plan related tests.
 func MockStateNoneColumnTable() *model.TableInfo {
 	// column: a, b
@@ -623,6 +726,7 @@ func MockStateNoneColumnTable() *model.TableInfo {
 		Indices:    indices,
 		Name:       pmodel.NewCIStr("T_StateNoneColumn"),
 		PKIsHandle: true,
+		State:      model.StatePublic,
 	}
 	return table
 }

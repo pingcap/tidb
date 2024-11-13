@@ -120,13 +120,13 @@ func TestGetTableLastAnalyzeDuration(t *testing.T) {
 
 func TestCheckIndexesNeedAnalyze(t *testing.T) {
 	analyzedMap := statistics.NewColAndIndexExistenceMap(1, 0)
-	analyzedMap.InsertCol(1, nil, true)
-	analyzedMap.InsertIndex(1, nil, false)
+	analyzedMap.InsertCol(1, true)
+	analyzedMap.InsertIndex(1, false)
 	tests := []struct {
 		name     string
 		tblInfo  *model.TableInfo
 		tblStats *statistics.Table
-		want     []string
+		want     map[int64]struct{}
 	}{
 		{
 			name: "Test Table not analyzed",
@@ -151,6 +151,12 @@ func TestCheckIndexesNeedAnalyze(t *testing.T) {
 						Name:  pmodel.NewCIStr("index1"),
 						State: model.StatePublic,
 					},
+					{
+						ID:         2,
+						Name:       pmodel.NewCIStr("vec_index1"),
+						State:      model.StatePublic,
+						VectorInfo: &model.VectorIndexInfo{},
+					},
 				},
 			},
 			tblStats: &statistics.Table{
@@ -162,7 +168,7 @@ func TestCheckIndexesNeedAnalyze(t *testing.T) {
 				ColAndIdxExistenceMap: analyzedMap,
 				LastAnalyzeVersion:    1,
 			},
-			want: []string{"index1"},
+			want: map[int64]struct{}{1: {}},
 		},
 	}
 
@@ -184,9 +190,9 @@ func TestCalculateIndicatorsForPartitions(t *testing.T) {
 	lastUpdateTs := oracle.GoTimeToTS(lastUpdateTime)
 	unanalyzedMap := statistics.NewColAndIndexExistenceMap(0, 0)
 	analyzedMap := statistics.NewColAndIndexExistenceMap(2, 1)
-	analyzedMap.InsertCol(1, nil, true)
-	analyzedMap.InsertCol(2, nil, true)
-	analyzedMap.InsertIndex(1, nil, true)
+	analyzedMap.InsertCol(1, true)
+	analyzedMap.InsertCol(2, true)
+	analyzedMap.InsertIndex(1, true)
 	tests := []struct {
 		name                       string
 		globalStats                *statistics.Table
@@ -197,7 +203,7 @@ func TestCalculateIndicatorsForPartitions(t *testing.T) {
 		wantAvgChangePercentage    float64
 		wantAvgSize                float64
 		wantAvgLastAnalyzeDuration time.Duration
-		wantPartitions             []string
+		wantPartitions             map[int64]struct{}
 	}{
 		{
 			name: "Test Table not analyzed",
@@ -235,7 +241,7 @@ func TestCalculateIndicatorsForPartitions(t *testing.T) {
 			wantAvgChangePercentage:    1,
 			wantAvgSize:                2002,
 			wantAvgLastAnalyzeDuration: 1800 * time.Second,
-			wantPartitions:             []string{"p0", "p1"},
+			wantPartitions:             map[int64]struct{}{1: {}, 2: {}},
 		},
 		{
 			name: "Test Table analyzed and only one partition meets the threshold",
@@ -297,7 +303,7 @@ func TestCalculateIndicatorsForPartitions(t *testing.T) {
 			wantAvgChangePercentage:    2,
 			wantAvgSize:                2002,
 			wantAvgLastAnalyzeDuration: 24 * time.Hour,
-			wantPartitions:             []string{"p0"},
+			wantPartitions:             map[int64]struct{}{1: {}},
 		},
 		{
 			name: "No partition meets the threshold",
@@ -359,7 +365,7 @@ func TestCalculateIndicatorsForPartitions(t *testing.T) {
 			wantAvgChangePercentage:    0,
 			wantAvgSize:                0,
 			wantAvgLastAnalyzeDuration: 0,
-			wantPartitions:             []string{},
+			wantPartitions:             map[int64]struct{}{},
 		},
 	}
 	for _, tt := range tests {
@@ -376,9 +382,6 @@ func TestCalculateIndicatorsForPartitions(t *testing.T) {
 			require.Equal(t, tt.wantAvgChangePercentage, gotAvgChangePercentage)
 			require.Equal(t, tt.wantAvgSize, gotAvgSize)
 			require.Equal(t, tt.wantAvgLastAnalyzeDuration, gotAvgLastAnalyzeDuration)
-			// Sort the partitions.
-			sort.Strings(tt.wantPartitions)
-			sort.Strings(gotPartitions)
 			require.Equal(t, tt.wantPartitions, gotPartitions)
 		})
 	}
@@ -396,6 +399,12 @@ func TestCheckNewlyAddedIndexesNeedAnalyzeForPartitionedTable(t *testing.T) {
 				ID:    2,
 				Name:  pmodel.NewCIStr("index2"),
 				State: model.StatePublic,
+			},
+			{
+				ID:         3,
+				Name:       pmodel.NewCIStr("index3"),
+				State:      model.StatePublic,
+				VectorInfo: &model.VectorIndexInfo{},
 			},
 		},
 		Columns: []*model.ColumnInfo{
@@ -424,16 +433,20 @@ func TestCheckNewlyAddedIndexesNeedAnalyzeForPartitionedTable(t *testing.T) {
 
 	factory := priorityqueue.NewAnalysisJobFactory(nil, 0, 0)
 	partitionIndexes := factory.CheckNewlyAddedIndexesNeedAnalyzeForPartitionedTable(&tblInfo, partitionStats)
-	expected := map[string][]string{"index1": {"p0", "p1"}, "index2": {"p0"}}
+	expected := map[int64][]int64{1: {1, 2}, 2: {1}}
 	require.Equal(t, len(expected), len(partitionIndexes))
 
 	for k, v := range expected {
-		sort.Strings(v)
 		if val, ok := partitionIndexes[k]; ok {
-			sort.Strings(val)
+			sort.Slice(val, func(i, j int) bool {
+				return val[i] > val[j]
+			})
+			sort.Slice(v, func(i, j int) bool {
+				return v[i] > v[j]
+			})
 			require.Equal(t, v, val)
 		} else {
-			require.Fail(t, "key not found in partitionIndexes: "+k)
+			require.Failf(t, "key not found in partitionIndexes", "key: %d", k)
 		}
 	}
 }

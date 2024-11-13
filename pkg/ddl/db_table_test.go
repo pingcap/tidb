@@ -324,7 +324,7 @@ func TestCreateTableWithInfo(t *testing.T) {
 
 	var id int64
 	err := kv.RunInNewTxn(ctx, store, true, func(_ context.Context, txn kv.Transaction) error {
-		m := meta.NewMeta(txn)
+		m := meta.NewMutator(txn)
 		var err error
 		id, err = m.GenGlobalID()
 		return err

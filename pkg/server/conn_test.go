@@ -819,6 +819,39 @@ func TestShutDown(t *testing.T) {
 	}
 }
 
+func TestCommitWaitGroup(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+
+	se, err := session.CreateSession4Test(store)
+	require.NoError(t, err)
+	tc := &TiDBContext{Session: se}
+
+	cfg := serverutil.NewTestConfig()
+	cfg.Port = 0
+	cfg.Status.StatusPort = 0
+	drv := NewTiDBDriver(store)
+	srv, err := NewServer(cfg, drv)
+	require.NoError(t, err)
+	srv.SetDomain(dom)
+
+	cc := &clientConn{server: srv}
+	cc.SetCtx(tc)
+	cc.CompareAndSwapStatus(cc.getStatus(), connStatusReading)
+	cc.getCtx().GetSessionVars().SetInTxn(false)
+	srv.clients[dom.NextConnID()] = cc
+
+	wg := cc.getCtx().GetCommitWaitGroup()
+	wg.Add(1)
+	go func() {
+		time.Sleep(100 * time.Millisecond)
+		wg.Done()
+	}()
+	begin := time.Now()
+	srv.DrainClients(time.Second, time.Second)
+	require.Greater(t, time.Since(begin), 100*time.Millisecond)
+	require.Less(t, time.Since(begin), time.Second)
+}
+
 type snapshotCache interface {
 	SnapCacheHitCount() int
 }

@@ -22,12 +22,12 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/checkpoint"
 	"github.com/pingcap/tidb/br/pkg/glue"
 	"github.com/pingcap/tidb/br/pkg/logutil"
-	snapsplit "github.com/pingcap/tidb/br/pkg/restore/internal/snap_split"
 	"github.com/pingcap/tidb/br/pkg/restore/split"
 	restoreutils "github.com/pingcap/tidb/br/pkg/restore/utils"
 	"github.com/pingcap/tidb/br/pkg/summary"
@@ -340,7 +340,7 @@ func (rc *SnapClient) SplitPoints(
 		splitClientOpts = append(splitClientOpts, split.WithRawKV())
 	}
 
-	splitter := snapsplit.NewRegionSplitter(split.NewClient(
+	splitter := split.NewRegionSplitter(split.NewClient(
 		rc.pdClient,
 		rc.pdHTTPClient,
 		rc.tlsConf,
@@ -349,7 +349,7 @@ func (rc *SnapClient) SplitPoints(
 		splitClientOpts...,
 	))
 
-	return splitter.ExecuteSplit(ctx, sortedSplitKeys)
+	return splitter.ExecuteSortedKeys(ctx, sortedSplitKeys)
 }
 
 func getFileRangeKey(f string) string {
@@ -363,16 +363,42 @@ func getFileRangeKey(f string) string {
 	return f[:idx]
 }
 
-// RestoreSSTFiles tries to restore the files.
+// RestoreSSTFiles tries to do something prepare work, such as set speed limit, and restore the files.
 func (rc *SnapClient) RestoreSSTFiles(
 	ctx context.Context,
 	tableIDWithFilesGroup [][]TableIDWithFiles,
 	updateCh glue.Progress,
-) error {
+) (retErr error) {
 	if err := rc.setSpeedLimit(ctx, rc.rateLimit); err != nil {
 		return errors.Trace(err)
 	}
 
+	failpoint.Inject("corrupt-files", func(v failpoint.Value) {
+		if cmd, ok := v.(string); ok {
+			switch cmd {
+			case "corrupt-last-table-files": // skip some files and eventually return an error to make the restore fail
+				tableIDWithFilesGroup = tableIDWithFilesGroup[:len(tableIDWithFilesGroup)-1]
+				defer func() { retErr = errors.Errorf("skip the last table files") }()
+			case "only-last-table-files": // check whether all the files, except last table files, are skipped by checkpoint
+				for _, tableIDWithFiless := range tableIDWithFilesGroup[:len(tableIDWithFilesGroup)-1] {
+					for _, tableIDWithFiles := range tableIDWithFiless {
+						if len(tableIDWithFiles.Files) > 0 {
+							log.Panic("has files but not the last table files")
+						}
+					}
+				}
+			}
+		}
+	})
+
+	return rc.restoreSSTFilesInternal(ctx, tableIDWithFilesGroup, updateCh)
+}
+
+func (rc *SnapClient) restoreSSTFilesInternal(
+	ctx context.Context,
+	tableIDWithFilesGroup [][]TableIDWithFiles,
+	updateCh glue.Progress,
+) error {
 	eg, ectx := errgroup.WithContext(ctx)
 	for _, tableIDWithFiles := range tableIDWithFilesGroup {
 		if ectx.Err() != nil {

@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/duration"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/planner/cascades/base"
 )
 
 // ExtraHandleID is the column ID of column which we need to append to schema to occupy the handle's position
@@ -196,6 +197,27 @@ type TableInfo struct {
 	DBID int64 `json:"-"`
 }
 
+// Hash64 implement HashEquals interface.
+func (t *TableInfo) Hash64(h base.Hasher) {
+	h.HashInt64(t.ID)
+}
+
+// Equals implements HashEquals interface.
+func (t *TableInfo) Equals(other any) bool {
+	// any(nil) can still be converted as (*TableInfo)(nil)
+	t2, ok := other.(*TableInfo)
+	if !ok {
+		return false
+	}
+	if t == nil {
+		return t2 == nil
+	}
+	if t2 == nil {
+		return false
+	}
+	return t.ID == t2.ID
+}
+
 // SepAutoInc decides whether _rowid and auto_increment id use separate allocator.
 func (t *TableInfo) SepAutoInc() bool {
 	return t.Version >= TableInfoVersion5 && t.AutoIDCache == 1
@@ -316,6 +338,26 @@ func (t *TableInfo) Cols() []*ColumnInfo {
 func (t *TableInfo) FindIndexByName(idxName string) *IndexInfo {
 	for _, idx := range t.Indices {
 		if idx.Name.L == idxName {
+			return idx
+		}
+	}
+	return nil
+}
+
+// FindColumnByID finds ColumnInfo by id.
+func (t *TableInfo) FindColumnByID(id int64) *ColumnInfo {
+	for _, col := range t.Columns {
+		if col.ID == id {
+			return col
+		}
+	}
+	return nil
+}
+
+// FindIndexByID finds index by id.
+func (t *TableInfo) FindIndexByID(id int64) *IndexInfo {
+	for _, idx := range t.Indices {
+		if idx.ID == id {
 			return idx
 		}
 	}
@@ -709,10 +751,15 @@ type PartitionInfo struct {
 	// DroppingDefinitions is filled when dropping/truncating partitions that is in the mid state.
 	DroppingDefinitions []PartitionDefinition `json:"dropping_definitions"`
 	// NewPartitionIDs is filled when truncating partitions that is in the mid state.
-	NewPartitionIDs []int64
+	NewPartitionIDs []int64 `json:"new_partition_ids,omitempty"`
+	// OriginalPartitionIDsOrder is only needed for rollback of Reorganize Partition for
+	// LIST partitions, since in StateDeleteReorganize we don't know the old order any longer.
+	OriginalPartitionIDsOrder []int64 `json:"original_partition_ids_order,omitempty"`
 
 	States []PartitionState `json:"states"`
 	Num    uint64           `json:"num"`
+	// Indicate which DDL Action is currently on going
+	DDLAction ActionType `json:"ddl_action,omitempty"`
 	// Only used during ReorganizePartition so far
 	DDLState SchemaState `json:"ddl_state"`
 	// Set during ALTER TABLE ... if the table id needs to change
@@ -825,6 +872,8 @@ func (pi *PartitionInfo) HasTruncatingPartitionID(pid int64) bool {
 
 // ClearReorgIntermediateInfo remove intermediate information used during reorganize partition.
 func (pi *PartitionInfo) ClearReorgIntermediateInfo() {
+	pi.DDLAction = ActionNone
+	pi.DDLState = StateNone
 	pi.DDLType = model.PartitionTypeNone
 	pi.DDLExpr = ""
 	pi.DDLColumns = nil
@@ -854,6 +903,195 @@ func (pi *PartitionInfo) GetPartitionIDByName(partitionDefinitionName string) in
 	return -1
 }
 
+// GetDefaultListPartition return the index of Definitions
+// that contains the LIST Default partition otherwise it returns -1
+func (pi *PartitionInfo) GetDefaultListPartition() int {
+	if pi.Type != model.PartitionTypeList {
+		return -1
+	}
+	defs := pi.Definitions
+	for i := range defs {
+		if len(defs[i].InValues) == 0 {
+			return i
+		}
+		for _, vs := range defs[i].InValues {
+			if len(vs) == 1 && vs[0] == "DEFAULT" {
+				return i
+			}
+		}
+	}
+
+	return -1
+}
+
+// CanHaveOverlappingDroppingPartition returns true if special handling
+// is needed during DDL of partitioned tables,
+// where range or list with default partition can have
+// overlapping partitions.
+// Example:
+// ... PARTITION BY RANGE (a)
+// (PARTITION p0 VALUES LESS THAN (10),
+// PARTITION p1 VALUES LESS THAN (20))
+// ALTER TABLE t DROP PARTITION p0;
+// When p0 is gone, then p1 can have values < 10,
+// so if p0 is visible for one session, while another session
+// have dropped p0, a value '9' will then be in p1, instead of p0,
+// i.e. an "overlapping" partition, that needs special handling.
+// Same can happen for LIST partitioning, if there is a DEFAULT partition.
+func (pi *PartitionInfo) CanHaveOverlappingDroppingPartition() bool {
+	if pi.DDLAction == ActionDropTablePartition &&
+		pi.DDLState == StateWriteOnly {
+		return true
+	}
+	return false
+}
+
+// ReplaceWithOverlappingPartitionIdx returns the overlapping partition
+// if there is one and a previous error.
+// Functions based on locatePartitionCommon, like GetPartitionIdxByRow
+// will return the found partition, with an error,
+// since it is being dropped.
+// This function will correct the partition index and error if it can.
+// For example of Overlapping partition,
+// see CanHaveOverlappingDroppingPartition
+// This function should not be used for writing, since we should block
+// writes to partitions that are being dropped.
+// But for read, we should replace the dropping partitions with
+// the overlapping partition if it exists, so we can read new data
+// from sessions one step ahead in the DDL State.
+func (pi *PartitionInfo) ReplaceWithOverlappingPartitionIdx(idx int, err error) (int, error) {
+	if err != nil && idx >= 0 {
+		idx = pi.GetOverlappingDroppingPartitionIdx(idx)
+		if idx >= 0 {
+			err = nil
+		}
+	}
+	return idx, err
+}
+
+// GetOverlappingDroppingPartitionIdx takes the index of Definitions
+// and returns possible overlapping partition to use instead.
+// Only used during DROP PARTITION!
+// For RANGE, DROP PARTITION must be a consecutive range of partitions.
+// For LIST, it only takes effect if there is default partition.
+// returns same idx if no overlapping partition
+// return -1 if the partition is being dropped, with no overlapping partition,
+// like for last range partition dropped or no default list partition.
+// See CanHaveOverlappingDroppingPartition() for more info about
+// Overlapping dropping partition.
+func (pi *PartitionInfo) GetOverlappingDroppingPartitionIdx(idx int) int {
+	if idx < 0 || idx >= len(pi.Definitions) {
+		return -1
+	}
+	if pi.CanHaveOverlappingDroppingPartition() {
+		switch pi.Type {
+		case model.PartitionTypeRange:
+			for i := idx; i < len(pi.Definitions); i++ {
+				if pi.IsDropping(i) {
+					continue
+				}
+				return i
+			}
+			// Last partition is also dropped!
+			return -1
+		case model.PartitionTypeList:
+			if pi.IsDropping(idx) {
+				defaultIdx := pi.GetDefaultListPartition()
+				if defaultIdx == idx {
+					return -1
+				}
+				return defaultIdx
+			}
+			return idx
+		}
+	}
+	return idx
+}
+
+// IsDropping returns true if the partition
+// is being dropped (i.e. in DroppingDefinitions)
+func (pi *PartitionInfo) IsDropping(idx int) bool {
+	for _, def := range pi.DroppingDefinitions {
+		if def.ID == pi.Definitions[idx].ID {
+			return true
+		}
+	}
+	return false
+}
+
+// SetOriginalPartitionIDs sets the order of the original partition IDs
+// in case it needs to be rolled back. LIST Partitioning would not know otherwise.
+func (pi *PartitionInfo) SetOriginalPartitionIDs() {
+	ids := make([]int64, 0, len(pi.Definitions))
+	for _, def := range pi.Definitions {
+		ids = append(ids, def.ID)
+	}
+	pi.OriginalPartitionIDsOrder = ids
+}
+
+// IDsInDDLToIgnore returns a list of IDs that the current
+// session should not see (may be duplicate errors on insert/update though)
+// For example during truncate or drop partition.
+func (pi *PartitionInfo) IDsInDDLToIgnore() []int64 {
+	// TODO:
+	// Truncate partition:
+	// write only => should not see NewPartitionIDs
+	// delete only => should not see DroppingPartitions
+	// Drop partition:
+	// TODO: Make similar changes as in Truncate Partition:
+	// Add a state blocking read and write in the partitions to be dropped,
+	// to avoid situations like https://github.com/pingcap/tidb/issues/55888
+	// Add partition:
+	// TODO: Add tests!
+	// Exchange Partition:
+	// Currently blocked for GlobalIndex
+	// Reorganize Partition:
+	// Nothing, since it will create a new copy of the global index.
+	// This is due to the global index needs to have two partitions for the same index key
+	// TODO: Should we extend the GlobalIndex to have multiple partitions?
+	// Maybe from PK/_tidb_rowid + Partition ID
+	// to PK/_tidb_rowid + Partition ID + Valid from Schema Version,
+	// with support for two entries?
+	// Then we could avoid having two copies of the same Global Index
+	// just for handling a single SchemaState.
+	// If so, could we then replace this?
+	switch pi.DDLAction {
+	case ActionTruncateTablePartition:
+		switch pi.DDLState {
+		case StateWriteOnly:
+			return pi.NewPartitionIDs
+		case StateDeleteOnly, StateDeleteReorganization:
+			if len(pi.DroppingDefinitions) == 0 {
+				return nil
+			}
+			ids := make([]int64, 0, len(pi.DroppingDefinitions))
+			for _, definition := range pi.DroppingDefinitions {
+				ids = append(ids, definition.ID)
+			}
+			return ids
+		}
+	case ActionDropTablePartition:
+		if len(pi.DroppingDefinitions) > 0 && pi.DDLState == StateDeleteOnly {
+			ids := make([]int64, 0, len(pi.DroppingDefinitions))
+			for _, def := range pi.DroppingDefinitions {
+				ids = append(ids, def.ID)
+			}
+			return ids
+		}
+	case ActionAddTablePartition:
+		// TODO: Add tests for ADD PARTITION multi-domain with Global Index!
+		if len(pi.AddingDefinitions) > 0 {
+			ids := make([]int64, 0, len(pi.DroppingDefinitions))
+			for _, def := range pi.AddingDefinitions {
+				ids = append(ids, def.ID)
+			}
+			return ids
+		}
+		// Not supporting Global Indexes: case ActionExchangeTablePartition
+	}
+	return nil
+}
+
 // PartitionState is the state of the partition.
 type PartitionState struct {
 	ID    int64       `json:"id"`
@@ -870,7 +1108,7 @@ type PartitionDefinition struct {
 	Comment            string         `json:"comment,omitempty"`
 }
 
-// Clone clones ConstraintInfo.
+// Clone clones PartitionDefinition.
 func (ci *PartitionDefinition) Clone() PartitionDefinition {
 	nci := *ci
 	nci.LessThan = make([]string, len(ci.LessThan))
@@ -1091,6 +1329,9 @@ func (s WindowRepeatType) String() string {
 
 // DefaultJobInterval sets the default interval between TTL jobs
 const DefaultJobInterval = time.Hour
+
+// DefaultJobIntervalStr is the string representation of DefaultJobInterval
+const DefaultJobIntervalStr = "1h"
 
 // TTLInfo records the TTL config
 type TTLInfo struct {

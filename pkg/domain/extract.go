@@ -290,7 +290,10 @@ func (w *extractWorker) handleIsView(ctx context.Context, p *extractPlanPackage)
 	if tne.err != nil {
 		return tne.err
 	}
-	r := tne.getTablesAndViews()
+	r, err := tne.getTablesAndViews()
+	if err != nil {
+		return err
+	}
 	for t := range r {
 		p.tables[t] = struct{}{}
 	}

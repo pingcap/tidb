@@ -555,7 +555,12 @@ func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 			return nil, err
 		}
 		if len(switchGroupName) > 0 {
-			stmtCtx.ResourceGroupName = switchGroupName
+			group, err := rm.ResourceGroupCtl.GetResourceGroup(switchGroupName)
+			if err != nil || group == nil {
+				logutil.BgLogger().Debug("invalid switch resource group", zap.String("switch-group-name", switchGroupName), zap.Error(err))
+			} else {
+				stmtCtx.ResourceGroupName = switchGroupName
+			}
 		}
 	}
 	ctx = a.observeStmtBeginForTopSQL(ctx)
@@ -593,6 +598,7 @@ func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 
 	if a.isSelectForUpdate {
 		if sctx.GetSessionVars().UseLowResolutionTSO() {
+			terror.Log(exec.Close(e))
 			return nil, errors.New("can not execute select for update statement when 'tidb_low_resolution_tso' is set")
 		}
 		// Special handle for "select for update statement" in pessimistic transaction.
@@ -609,6 +615,7 @@ func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 	var txnStartTS uint64
 	txn, err := sctx.Txn(false)
 	if err != nil {
+		terror.Log(exec.Close(e))
 		return nil, err
 	}
 	if txn.Valid() {

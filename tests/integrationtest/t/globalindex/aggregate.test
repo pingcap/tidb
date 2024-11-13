@@ -1,5 +1,3 @@
-set tidb_enable_global_index=true;
-
 drop table if exists p;
 create table p (id int, c int, unique index idx(id) global) partition by range (c) (
 partition p0 values less than (4),
@@ -21,4 +19,14 @@ select avg(id), max(id), min(id) from p use index(idx) group by c;
 --replace_regex /in\(_tidb_tid, [0-9]+\)/in(_tidb_tid, tid0)/
 explain format='brief' select avg(id), max(id), min(id) from p partition(p0) use index(idx) group by c;
 select avg(id), max(id), min(id) from p partition(p0) use index(idx) group by c;
+
+
+alter table p add unique index idx1(c, id) global;
+
+explain format='brief' select count(*), max(id), min(id) from p use index(idx1);
+select count(*), max(id), min(id) from p use index(idx1);
+
+explain format='brief' select avg(id), max(id), min(id) from p use index(idx1) group by c;
+--sorted_result
+select avg(id), max(id), min(id) from p use index(idx1) group by c;
 

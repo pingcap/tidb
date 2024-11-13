@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl/placement"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/infoschema"
+	infoschemacontext "github.com/pingcap/tidb/pkg/infoschema/context"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	pmodel "github.com/pingcap/tidb/pkg/parser/model"
@@ -361,19 +362,16 @@ func (e *ShowExec) fetchAllTablePlacements(ctx context.Context, scheduleState ma
 	dbs := e.is.AllSchemaNames()
 	slices.SortFunc(dbs, func(i, j pmodel.CIStr) int { return cmp.Compare(i.O, j.O) })
 
-	for _, dbName := range dbs {
+	tbls := e.is.ListTablesWithSpecialAttribute(infoschemacontext.AllSpecialAttribute)
+	for _, db := range tbls {
 		tableRowSets := make([]tableRowSet, 0)
-		tblInfos, err := e.is.SchemaTableInfos(ctx, dbName)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		for _, tblInfo := range tblInfos {
-			if checker != nil && !checker.RequestVerification(activeRoles, dbName.O, tblInfo.Name.O, "", mysql.AllPrivMask) {
+		for _, tblInfo := range db.TableInfos {
+			if checker != nil && !checker.RequestVerification(activeRoles, db.DBName.O, tblInfo.Name.O, "", mysql.AllPrivMask) {
 				continue
 			}
 
 			var rows [][]any
-			ident := ast.Ident{Schema: dbName, Name: tblInfo.Name}
+			ident := ast.Ident{Schema: db.DBName, Name: tblInfo.Name}
 			tblPlacement, err := e.getTablePlacement(tblInfo)
 			if err != nil {
 				return err

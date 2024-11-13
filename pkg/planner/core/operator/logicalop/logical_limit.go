@@ -32,9 +32,9 @@ import (
 type LogicalLimit struct {
 	LogicalSchemaProducer
 
-	PartitionBy      []property.SortItem // This is used for enhanced topN optimization
-	Offset           uint64
-	Count            uint64
+	PartitionBy      []property.SortItem `hash64-equals:"true"` // This is used for enhanced topN optimization
+	Offset           uint64              `hash64-equals:"true"`
+	Count            uint64              `hash64-equals:"true"`
 	PreferLimitToCop bool
 	IsPartial        bool
 }

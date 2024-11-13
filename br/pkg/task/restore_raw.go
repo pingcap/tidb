@@ -174,6 +174,9 @@ func RunRestoreRaw(c context.Context, g glue.Glue, cmdName string, cfg *RestoreR
 func getEndKeys(ranges []rtree.RangeStats) [][]byte {
 	endKeys := make([][]byte, 0, len(ranges))
 	for _, rg := range ranges {
+		if len(rg.EndKey) == 0 {
+			continue
+		}
 		endKeys = append(endKeys, rg.EndKey)
 	}
 	return endKeys

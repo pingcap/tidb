@@ -21,6 +21,7 @@ go_library(
     deps = [
         "//pkg/config",
         "//pkg/errno",
+        "//pkg/executor/join/joinversion",
         "//pkg/keyspace",
         "//pkg/kv",
         "//pkg/meta/model",
@@ -37,7 +38,6 @@ go_library(
         "//pkg/resourcegroup",
         "//pkg/sessionctx/sessionstates",
         "//pkg/sessionctx/stmtctx",
-        "//pkg/tidb-binlog/pump_client",
         "//pkg/types",
         "//pkg/types/parser_driver",
         "//pkg/util",

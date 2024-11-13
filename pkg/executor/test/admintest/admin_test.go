@@ -1786,7 +1786,6 @@ func TestAdminCleanUpGlobalIndex(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists admin_test")
 
-	tk.MustExec("set tidb_enable_global_index = true")
 	tk.MustExec("create table admin_test (a int, b int, c int, unique key uidx_a(a) global) partition by hash(c) partitions 5")
 	tk.MustExec("insert admin_test values (-10, -20, 1), (-1, -10, 2), (1, 11, 3), (2, 12, 0), (5, 15, -1), (10, 20, -2), (20, 30, -3)")
 	tk.MustExec("analyze table admin_test")
@@ -1831,7 +1830,6 @@ func TestAdminRecoverGlobalIndex(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists admin_test")
 
-	tk.MustExec("set tidb_enable_global_index = true")
 	tk.MustExec("create table admin_test (a int, b int, c int, unique key uidx_a(a) global) partition by hash(c) partitions 5")
 	tk.MustExec("insert admin_test values (-10, -20, 1), (-1, -10, 2), (1, 11, 3), (2, 12, 0), (5, 15, -1), (10, 20, -2), (20, 30, -3)")
 	tk.MustExec("analyze table admin_test")
@@ -1880,7 +1878,6 @@ func TestAdminCheckGlobalIndex(t *testing.T) {
 		tk.MustExec("use test")
 		tk.MustExec("drop table if exists admin_test")
 
-		tk.MustExec("set tidb_enable_global_index = true")
 		tk.MustExec(fmt.Sprintf("set tidb_enable_fast_table_check = %v", enabled))
 
 		tk.MustExec("create table admin_test (a int, b int, c int, unique key uidx_a(a) global) partition by hash(c) partitions 5")
@@ -1977,7 +1974,6 @@ func TestAdminCheckGlobalIndexWithClusterIndex(t *testing.T) {
 		tk.MustExec("use test")
 		tk.MustExec("drop table if exists admin_test")
 
-		tk.MustExec("set tidb_enable_global_index = true")
 		tk.MustExec(fmt.Sprintf("set tidb_enable_fast_table_check = %v", enabled))
 
 		tk.MustExec("create table admin_test (a int, b int, c int, unique key uidx_a(a) global, primary key(c)) partition by hash(c) partitions 5")
@@ -2081,7 +2077,6 @@ func TestAdminCheckGlobalIndexDuringDDL(t *testing.T) {
 		tk.MustExec("use test")
 		tk.MustExec("drop table if exists admin_test")
 
-		tk.MustExec("set tidb_enable_global_index = true")
 		tk.MustExec(fmt.Sprintf("set tidb_enable_fast_table_check = %v", enabled))
 
 		tk.MustExec("create table admin_test (a int, b int, c int, unique key uidx_a(a) global, primary key(c)) partition by hash(c) partitions 5")

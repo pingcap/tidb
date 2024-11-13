@@ -53,6 +53,6 @@ func (do *Domain) MustGetPartitionAt(t *testing.T, dbName, tableName string, idx
 }
 
 // FetchAllSchemasWithTables calls the internal function. Only used in unit tests.
-func (do *Domain) FetchAllSchemasWithTables(m *meta.Meta) ([]*model.DBInfo, error) {
+func (do *Domain) FetchAllSchemasWithTables(m meta.Reader) ([]*model.DBInfo, error) {
 	return do.fetchAllSchemasWithTables(m)
 }

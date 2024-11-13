@@ -848,6 +848,7 @@ const (
 	ConstraintForeignKey
 	ConstraintFulltext
 	ConstraintCheck
+	ConstraintVector
 )
 
 // Constraint is constraint for table definition.
@@ -920,6 +921,11 @@ func (n *Constraint) Restore(ctx *format.RestoreCtx) error {
 			ctx.WriteKeyWord("NOT ENFORCED")
 		}
 		return nil
+	case ConstraintVector:
+		ctx.WriteKeyWord("VECTOR INDEX")
+		if n.IfNotExists {
+			ctx.WriteKeyWord(" IF NOT EXISTS")
+		}
 	}
 
 	if n.Tp == ConstraintForeignKey {
@@ -1807,6 +1813,7 @@ const (
 	IndexKeyTypeUnique
 	IndexKeyTypeSpatial
 	IndexKeyTypeFullText
+	IndexKeyTypeVector
 )
 
 // CreateIndexStmt is a statement to create an index.
@@ -1836,6 +1843,8 @@ func (n *CreateIndexStmt) Restore(ctx *format.RestoreCtx) error {
 		ctx.WriteKeyWord("SPATIAL ")
 	case IndexKeyTypeFullText:
 		ctx.WriteKeyWord("FULLTEXT ")
+	case IndexKeyTypeVector:
+		ctx.WriteKeyWord("VECTOR ")
 	}
 	ctx.WriteKeyWord("INDEX ")
 	if n.IfNotExists {
@@ -2326,13 +2335,35 @@ func (n *ResourceGroupRunawayOption) Restore(ctx *format.RestoreCtx) error {
 
 // ResourceGroupRunawayRuleOption is used for parsing the resource group/query watch runaway rule.
 type ResourceGroupRunawayRuleOption struct {
-	ExecElapsed string
+	Tp            RunawayRuleOptionType
+	ExecElapsed   string
+	ProcessedKeys int64
+	RequestUnit   int64
 }
 
+type RunawayRuleOptionType int
+
+const (
+	RunawayRuleExecElapsed RunawayRuleOptionType = iota
+	RunawayRuleProcessedKeys
+	RunawayRuleRequestUnit
+)
+
 func (n *ResourceGroupRunawayRuleOption) restore(ctx *format.RestoreCtx) error {
-	ctx.WriteKeyWord("EXEC_ELAPSED ")
-	ctx.WritePlain("= ")
-	ctx.WriteString(n.ExecElapsed)
+	switch n.Tp {
+	case RunawayRuleExecElapsed:
+		ctx.WriteKeyWord("EXEC_ELAPSED ")
+		ctx.WritePlain("= ")
+		ctx.WriteString(n.ExecElapsed)
+	case RunawayRuleProcessedKeys:
+		ctx.WriteKeyWord("PROCESSED_KEYS ")
+		ctx.WritePlain("= ")
+		ctx.WritePlainf("%d", n.ProcessedKeys)
+	case RunawayRuleRequestUnit:
+		ctx.WriteKeyWord("RU ")
+		ctx.WritePlain("= ")
+		ctx.WritePlainf("%d", n.RequestUnit)
+	}
 	return nil
 }
 
@@ -2398,20 +2429,26 @@ type BackgroundOptionType int
 const (
 	BackgroundOptionNone BackgroundOptionType = iota
 	BackgroundOptionTaskNames
+	BackgroundUtilizationLimit
 )
 
 // ResourceGroupBackgroundOption is used to config background job settings.
 type ResourceGroupBackgroundOption struct {
-	Type     BackgroundOptionType
-	StrValue string
+	Type      BackgroundOptionType
+	StrValue  string
+	UintValue uint64
 }
 
 func (n *ResourceGroupBackgroundOption) Restore(ctx *format.RestoreCtx) error {
 	switch n.Type {
 	case BackgroundOptionTaskNames:
-		ctx.WriteKeyWord("TASK_TYPES ")
-		ctx.WritePlain("= ")
+		ctx.WriteKeyWord("TASK_TYPES")
+		ctx.WritePlain(" = ")
 		ctx.WriteString(n.StrValue)
+	case BackgroundUtilizationLimit:
+		ctx.WriteKeyWord("UTILIZATION_LIMIT")
+		ctx.WritePlain(" = ")
+		ctx.WritePlainf("%d", n.UintValue)
 	default:
 		return errors.Errorf("unknown ResourceGroupBackgroundOption: %d", n.Type)
 	}
@@ -4777,6 +4814,10 @@ func CheckAppend(ops []*ResourceGroupOption, newOp *ResourceGroupOption) bool {
 func CheckRunawayAppend(ops []*ResourceGroupRunawayOption, newOp *ResourceGroupRunawayOption) bool {
 	for _, op := range ops {
 		if op.Tp == newOp.Tp {
+			// support multiple runaway rules.
+			if op.Tp == model.RunawayRule {
+				continue
+			}
 			return false
 		}
 	}

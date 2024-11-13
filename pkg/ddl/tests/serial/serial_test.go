@@ -156,7 +156,7 @@ func TestCreateTableWithLike(t *testing.T) {
 	// Test create table like for partition table.
 	atomic.StoreUint32(&ddl.EnableSplitTableRegion, 1)
 	tk.MustExec("use test")
-	tk.MustExec("set @@global.tidb_scatter_region=1")
+	tk.MustExec("set @@session.tidb_scatter_region='table'")
 	tk.MustExec("drop table if exists partition_t")
 	tk.MustExec("create table partition_t (a int, b int,index(a)) partition by hash (a) partitions 3")
 	tk.MustExec("drop table if exists t1")
@@ -446,9 +446,6 @@ func TestCancelAddIndexPanic(t *testing.T) {
 		tk.MustExec("insert into t values (?, ?)", i, i)
 	}
 	var checkErr error
-	oldReorgWaitTimeout := ddl.ReorgWaitTimeout
-	ddl.ReorgWaitTimeout = 50 * time.Millisecond
-	defer func() { ddl.ReorgWaitTimeout = oldReorgWaitTimeout }()
 	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunBefore", func(job *model.Job) {
 		if job.Type == model.ActionAddIndex && job.State == model.JobStateRunning && job.SchemaState == model.StateWriteReorganization && job.SnapshotVer != 0 {
 			tkCancel.MustQuery(fmt.Sprintf("admin cancel ddl jobs %d", job.ID))
@@ -819,7 +816,7 @@ func TestCanceledJobTakeTime(t *testing.T) {
 		once.Do(func() {
 			ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
 			err := kv.RunInNewTxn(ctx, store, false, func(ctx context.Context, txn kv.Transaction) error {
-				m := meta.NewMeta(txn)
+				m := meta.NewMutator(txn)
 				err := m.GetAutoIDAccessors(job.SchemaID, job.TableID).Del()
 				if err != nil {
 					return err
@@ -1108,7 +1105,7 @@ func TestAutoRandomWithPreSplitRegion(t *testing.T) {
 	origin := atomic.LoadUint32(&ddl.EnableSplitTableRegion)
 	atomic.StoreUint32(&ddl.EnableSplitTableRegion, 1)
 	defer atomic.StoreUint32(&ddl.EnableSplitTableRegion, origin)
-	tk.MustExec("set @@global.tidb_scatter_region=1")
+	tk.MustExec("set @@session.tidb_scatter_region='table'")
 
 	// Test pre-split table region for auto_random table.
 	tk.MustExec("create table t (a bigint auto_random(2) primary key clustered, b int) pre_split_regions=2")

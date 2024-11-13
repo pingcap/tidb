@@ -539,7 +539,7 @@ func TestShardRowIDBits(t *testing.T) {
 
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
 	err = kv.RunInNewTxn(ctx, store, false, func(ctx context.Context, txn kv.Transaction) error {
-		m := meta.NewMeta(txn)
+		m := meta.NewMutator(txn)
 		_, err = m.GenSchemaVersion()
 		require.NoError(t, err)
 		require.Nil(t, m.UpdateTable(db.ID, tblInfo))

@@ -93,7 +93,7 @@ func TestInfoSchemaFieldValue(t *testing.T) {
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (c int auto_increment primary key, d int)")
 	tk.MustQuery("select auto_increment from information_schema.tables where table_name='t'").Check(
-		testkit.Rows("1"))
+		testkit.Rows("0"))
 	tk.MustExec("insert into t(c, d) values(1, 1)")
 	tk.MustQuery("select auto_increment from information_schema.tables where table_name='t'").Check(
 		testkit.Rows("2"))
@@ -658,7 +658,7 @@ func checkSystemSchemaTableID(t *testing.T, dom *domain.Domain, dbName string, d
 func updateTableMeta(t *testing.T, store kv.Storage, dbID int64, tableInfo *model.TableInfo) {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
 	err := kv.RunInNewTxn(ctx, store, true, func(ctx context.Context, txn kv.Transaction) error {
-		m := meta.NewMeta(txn)
+		m := meta.NewMutator(txn)
 		return m.UpdateTable(dbID, tableInfo)
 	})
 	require.NoError(t, err)
@@ -1157,7 +1157,7 @@ func TestStmtSummaryEvictedPointGet(t *testing.T) {
 		tk.MustExec(fmt.Sprintf("select p from th%v where p=2333;", i%6))
 	}
 	tk.MustQuery("select EVICTED_COUNT from information_schema.statements_summary_evicted;").
-		Check(testkit.Rows("7"))
+		Check(testkit.Rows("996"))
 
 	tk.MustExec("set @@global.tidb_enable_stmt_summary=0;")
 	tk.MustQuery("select count(*) from information_schema.statements_summary_evicted;").
@@ -1232,9 +1232,11 @@ func TestTiDBTrx(t *testing.T) {
 		CurrentSQLDigest: digest.String(),
 		State:            txninfo.TxnIdle,
 		EntriesCount:     1,
-		ConnectionID:     2,
-		Username:         "root",
-		CurrentDB:        "test",
+		ProcessInfo: &txninfo.ProcessInfo{
+			ConnectionID: 2,
+			Username:     "root",
+			CurrentDB:    "test",
+		},
 	}
 
 	blockTime2 := time.Date(2021, 05, 20, 13, 18, 30, 123456000, time.Local)
@@ -1243,9 +1245,11 @@ func TestTiDBTrx(t *testing.T) {
 		CurrentSQLDigest: "",
 		AllSQLDigests:    []string{"sql1", "sql2", digest.String()},
 		State:            txninfo.TxnLockAcquiring,
-		ConnectionID:     10,
-		Username:         "user1",
-		CurrentDB:        "db1",
+		ProcessInfo: &txninfo.ProcessInfo{
+			ConnectionID: 10,
+			Username:     "user1",
+			CurrentDB:    "db1",
+		},
 	}
 	sm.TxnInfo[1].BlockStartTime.Valid = true
 	sm.TxnInfo[1].BlockStartTime.Time = blockTime2

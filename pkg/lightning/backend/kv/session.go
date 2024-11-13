@@ -19,29 +19,20 @@ package kv
 import (
 	"context"
 	"errors"
-	"fmt"
-	"strconv"
 	"sync"
 
 	"github.com/docker/go-units"
-	"github.com/pingcap/tidb/pkg/errctx"
 	"github.com/pingcap/tidb/pkg/expression/exprctx"
-	"github.com/pingcap/tidb/pkg/expression/sessionexpr"
-	infoschema "github.com/pingcap/tidb/pkg/infoschema/context"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/backend/encode"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/lightning/manual"
 	"github.com/pingcap/tidb/pkg/meta/model"
-	planctx "github.com/pingcap/tidb/pkg/planner/planctx"
-	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/table/tblctx"
-	"github.com/pingcap/tidb/pkg/table/tblsession"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/mathutil"
-	"github.com/pingcap/tidb/pkg/util/topsql/stmtstats"
 	"go.uber.org/zap"
 )
 
@@ -279,160 +270,6 @@ func (*transaction) IsPipelined() bool {
 
 // MayFlush implements the kv.Transaction interface.
 func (*transaction) MayFlush() error {
-	return nil
-}
-
-// sessExprContext implements the ExprContext interface
-// It embedded an `ExprContext` and a `sessEvalContext` to provide no optional properties.
-type sessExprContext struct {
-	*sessionexpr.ExprContext
-	evalCtx *sessEvalContext
-}
-
-// GetEvalCtx implements the ExprContext.GetEvalCtx interface
-func (ctx *sessExprContext) GetEvalCtx() exprctx.EvalContext {
-	return ctx.evalCtx
-}
-
-// sessEvalContext implements the EvalContext interface
-// It embedded an `EvalContext` and provide no optional properties.
-type sessEvalContext struct {
-	exprctx.EvalContext
-}
-
-// GetOptionalPropSet returns the optional properties provided by this context.
-func (*sessEvalContext) GetOptionalPropSet() exprctx.OptionalEvalPropKeySet {
-	return 0
-}
-
-// GetOptionalPropProvider gets the optional property provider by key
-func (*sessEvalContext) GetOptionalPropProvider(exprctx.OptionalEvalPropKey) (exprctx.OptionalEvalPropProvider, bool) {
-	return nil, false
-}
-
-// Deprecated: `session` will be removed soon.
-// session is a trimmed down Session type which only wraps our own trimmed-down
-// transaction type and provides the session variables to the TiDB library
-// optimized for Lightning.
-// The `session` object is private to make sure it is only used by public `Session` struct to provide limited access.
-// TODO: remove `session` and build related context without a mocked `sessionctx.Context` instead.
-type session struct {
-	sessionctx.Context
-	planctx.EmptyPlanContextExtended
-	txn     transaction
-	Vars    *variable.SessionVars
-	exprCtx *sessExprContext
-	tblctx  *tblsession.MutateContext
-	// currently, we only set `CommonAddRecordCtx`
-	values map[fmt.Stringer]any
-}
-
-// Deprecated: this function will be removed soon.
-// newSession creates a new trimmed down Session matching the options.
-func newSession(options *encode.SessionOptions, logger log.Logger) *session {
-	s := &session{
-		values: make(map[fmt.Stringer]any, 1),
-	}
-	sqlMode := options.SQLMode
-	vars := variable.NewSessionVars(s)
-	vars.SkipUTF8Check = true
-	vars.StmtCtx.InInsertStmt = true
-	vars.SQLMode = sqlMode
-
-	typeFlags := vars.StmtCtx.TypeFlags().
-		WithTruncateAsWarning(!sqlMode.HasStrictMode()).
-		WithIgnoreInvalidDateErr(sqlMode.HasAllowInvalidDatesMode()).
-		WithIgnoreZeroInDate(!sqlMode.HasStrictMode() || sqlMode.HasAllowInvalidDatesMode() ||
-			!sqlMode.HasNoZeroInDateMode() || !sqlMode.HasNoZeroDateMode())
-	vars.StmtCtx.SetTypeFlags(typeFlags)
-
-	errLevels := vars.StmtCtx.ErrLevels()
-	errLevels[errctx.ErrGroupBadNull] = errctx.ResolveErrLevel(false, !sqlMode.HasStrictMode())
-	errLevels[errctx.ErrGroupDividedByZero] =
-		errctx.ResolveErrLevel(!sqlMode.HasErrorForDivisionByZeroMode(), !sqlMode.HasStrictMode())
-	vars.StmtCtx.SetErrLevels(errLevels)
-
-	if options.SysVars != nil {
-		for k, v := range options.SysVars {
-			// since 6.3(current master) tidb checks whether we can set a system variable
-			// lc_time_names is a read-only variable for now, but might be implemented later,
-			// so we not remove it from defaultImportantVariables and check it in below way.
-			if sv := variable.GetSysVar(k); sv == nil {
-				logger.DPanic("unknown system var", zap.String("key", k))
-				continue
-			} else if sv.ReadOnly {
-				logger.Debug("skip read-only variable", zap.String("key", k))
-				continue
-			}
-			if err := vars.SetSystemVar(k, v); err != nil {
-				logger.DPanic("new session: failed to set system var",
-					log.ShortError(err),
-					zap.String("key", k))
-			}
-		}
-	}
-	vars.StmtCtx.SetTimeZone(vars.Location())
-	if err := vars.SetSystemVar("timestamp", strconv.FormatInt(options.Timestamp, 10)); err != nil {
-		logger.Warn("new session: failed to set timestamp",
-			log.ShortError(err))
-	}
-	vars.TxnCtx = nil
-	s.Vars = vars
-	exprCtx := sessionexpr.NewExprContext(s)
-	// The exprCtx should be an expression context providing no optional properties in `EvalContext`.
-	// That is to make sure it only allows expressions that require basic context.
-	s.exprCtx = &sessExprContext{
-		ExprContext: exprCtx,
-		evalCtx: &sessEvalContext{
-			EvalContext: exprCtx.GetEvalCtx(),
-		},
-	}
-	s.tblctx = tblsession.NewMutateContext(s)
-	s.txn.kvPairs = &Pairs{}
-
-	return s
-}
-
-// Txn implements the sessionctx.Context interface
-func (se *session) Txn(_ bool) (kv.Transaction, error) {
-	return &se.txn, nil
-}
-
-// GetSessionVars implements the sessionctx.Context interface
-func (se *session) GetSessionVars() *variable.SessionVars {
-	return se.Vars
-}
-
-// GetExprCtx returns the expression context of the session.
-func (se *session) GetExprCtx() exprctx.ExprContext {
-	return se.exprCtx
-}
-
-// GetTableCtx returns the table.MutateContext
-func (se *session) GetTableCtx() tblctx.MutateContext {
-	return se.tblctx
-}
-
-// SetValue saves a value associated with this context for key.
-func (se *session) SetValue(key fmt.Stringer, value any) {
-	se.values[key] = value
-}
-
-// Value returns the value associated with this context for key.
-func (se *session) Value(key fmt.Stringer) any {
-	return se.values[key]
-}
-
-// StmtAddDirtyTableOP implements the sessionctx.Context interface
-func (*session) StmtAddDirtyTableOP(_ int, _ int64, _ kv.Handle) {}
-
-// GetInfoSchema implements the sessionctx.Context interface.
-func (*session) GetInfoSchema() infoschema.MetaOnlyInfoSchema {
-	return nil
-}
-
-// GetStmtStats implements the sessionctx.Context interface.
-func (*session) GetStmtStats() *stmtstats.StatementStats {
 	return nil
 }
 

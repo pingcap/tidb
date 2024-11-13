@@ -23,6 +23,7 @@ import (
 
 	"github.com/pingcap/errors"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
+	"github.com/pingcap/kvproto/pkg/encryptionpb"
 	"github.com/pingcap/kvproto/pkg/import_sstpb"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
@@ -101,6 +102,8 @@ func (importer *LogFileImporter) ImportKVFiles(
 	startTS uint64,
 	restoreTS uint64,
 	supportBatch bool,
+	cipherInfo *backuppb.CipherInfo,
+	masterKeys []*encryptionpb.MasterKey,
 ) error {
 	var (
 		startKey []byte
@@ -111,7 +114,7 @@ func (importer *LogFileImporter) ImportKVFiles(
 
 	if !supportBatch && len(files) > 1 {
 		return errors.Annotatef(berrors.ErrInvalidArgument,
-			"do not support batch apply but files count:%v > 1", len(files))
+			"do not support batch apply, file count: %v > 1", len(files))
 	}
 	log.Debug("import kv files", zap.Int("batch file count", len(files)))
 
@@ -143,7 +146,8 @@ func (importer *LogFileImporter) ImportKVFiles(
 		if len(subfiles) == 0 {
 			return RPCResultOK()
 		}
-		return importer.importKVFileForRegion(ctx, subfiles, rule, shiftStartTS, startTS, restoreTS, r, supportBatch)
+		return importer.importKVFileForRegion(ctx, subfiles, rule, shiftStartTS, startTS, restoreTS, r, supportBatch,
+			cipherInfo, masterKeys)
 	})
 	return errors.Trace(err)
 }
@@ -184,9 +188,11 @@ func (importer *LogFileImporter) importKVFileForRegion(
 	restoreTS uint64,
 	info *split.RegionInfo,
 	supportBatch bool,
+	cipherInfo *backuppb.CipherInfo,
+	masterKeys []*encryptionpb.MasterKey,
 ) RPCResult {
 	// Try to download file.
-	result := importer.downloadAndApplyKVFile(ctx, files, rule, info, shiftStartTS, startTS, restoreTS, supportBatch)
+	result := importer.downloadAndApplyKVFile(ctx, files, rule, info, shiftStartTS, startTS, restoreTS, supportBatch, cipherInfo, masterKeys)
 	if !result.OK() {
 		errDownload := result.Err
 		for _, e := range multierr.Errors(errDownload) {
@@ -216,7 +222,8 @@ func (importer *LogFileImporter) downloadAndApplyKVFile(
 	startTS uint64,
 	restoreTS uint64,
 	supportBatch bool,
-) RPCResult {
+	cipherInfo *backuppb.CipherInfo,
+	masterKeys []*encryptionpb.MasterKey) RPCResult {
 	leader := regionInfo.Leader
 	if leader == nil {
 		return RPCResultFromError(errors.Annotatef(berrors.ErrPDLeaderNotFound,
@@ -251,11 +258,12 @@ func (importer *LogFileImporter) downloadAndApplyKVFile(
 				}
 				return startTS
 			}(),
-			RestoreTs:       restoreTS,
-			StartKey:        regionInfo.Region.GetStartKey(),
-			EndKey:          regionInfo.Region.GetEndKey(),
-			Sha256:          file.GetSha256(),
-			CompressionType: file.CompressionType,
+			RestoreTs:          restoreTS,
+			StartKey:           regionInfo.Region.GetStartKey(),
+			EndKey:             regionInfo.Region.GetEndKey(),
+			Sha256:             file.GetSha256(),
+			CompressionType:    file.CompressionType,
+			FileEncryptionInfo: file.FileEncryptionInfo,
 		}
 
 		metas = append(metas, meta)
@@ -276,6 +284,8 @@ func (importer *LogFileImporter) downloadAndApplyKVFile(
 			RewriteRules:   rewriteRules,
 			Context:        reqCtx,
 			StorageCacheId: importer.cacheKey,
+			CipherInfo:     cipherInfo,
+			MasterKeys:     masterKeys,
 		}
 	} else {
 		req = &import_sstpb.ApplyRequest{
@@ -284,16 +294,18 @@ func (importer *LogFileImporter) downloadAndApplyKVFile(
 			RewriteRule:    *rewriteRules[0],
 			Context:        reqCtx,
 			StorageCacheId: importer.cacheKey,
+			CipherInfo:     cipherInfo,
+			MasterKeys:     masterKeys,
 		}
 	}
 
-	log.Debug("apply kv file", logutil.Leader(leader))
+	log.Debug("applying kv file", logutil.Leader(leader))
 	resp, err := importer.importClient.ApplyKVFile(ctx, leader.GetStoreId(), req)
 	if err != nil {
 		return RPCResultFromError(errors.Trace(err))
 	}
 	if resp.GetError() != nil {
-		logutil.CL(ctx).Warn("import meet error", zap.Stringer("error", resp.GetError()))
+		logutil.CL(ctx).Warn("import has error", zap.Stringer("error", resp.GetError()))
 		return RPCResultFromPBError(resp.GetError())
 	}
 	return RPCResultOK()

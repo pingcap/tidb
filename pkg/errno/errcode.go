@@ -1143,6 +1143,8 @@ const (
 
 	ErrGlobalIndexNotExplicitlySet = 8264
 
+	ErrWarnGlobalIndexNeedManuallyAnalyze = 8265
+
 	// Resource group errors.
 	ErrResourceGroupExists                    = 8248
 	ErrResourceGroupNotExists                 = 8249
@@ -1168,4 +1170,5 @@ const (
 	ErrTiKVMaxTimestampNotSynced = 9011
 	ErrTiFlashServerTimeout      = 9012
 	ErrTiFlashServerBusy         = 9013
+	ErrTiFlashBackfillIndex      = 9014
 )

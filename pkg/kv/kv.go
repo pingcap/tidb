@@ -346,17 +346,19 @@ const (
 	ReqSubTypeAnalyzeCol = 10005
 )
 
-// StoreType represents the type of a store.
+// StoreType represents the type of storage engine.
 type StoreType uint8
 
 const (
-	// TiKV means the type of a store is TiKV.
+	// TiKV means the type of store engine is TiKV.
 	TiKV StoreType = iota
-	// TiFlash means the type of a store is TiFlash.
+	// TiFlash means the type of store engine is TiFlash.
 	TiFlash
-	// TiDB means the type of a store is TiDB.
+	// TiDB means the type of store engine is TiDB.
+	// used to read memory data from other instances to have a global view of the
+	// data, such as for information_schema.cluster_slow_query.
 	TiDB
-	// UnSpecified means the store type is unknown
+	// UnSpecified means the store engine type is unknown
 	UnSpecified = 255
 )
 

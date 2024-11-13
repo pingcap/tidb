@@ -42,9 +42,14 @@ func (m *mockAnalysisJob) Analyze(h statstypes.StatsHandle, t sysproctrack.Track
 	time.Sleep(50 * time.Millisecond) // Simulate some work
 	return nil
 }
+func (m *mockAnalysisJob) RegisterSuccessHook(priorityqueue.SuccessJobHook) {
+	panic("not implemented")
+}
+func (m *mockAnalysisJob) RegisterFailureHook(priorityqueue.FailureJobHook) {
+	panic("not implemented")
+}
 func (m *mockAnalysisJob) String() string { return "mockAnalysisJob" }
-
-func (m *mockAnalysisJob) IsValidToAnalyze(sessionctx.Context) (bool, string) {
+func (m *mockAnalysisJob) ValidateAndPrepare(sessionctx.Context) (bool, string) {
 	panic("not implemented")
 }
 func (m *mockAnalysisJob) SetWeight(weight float64) {
@@ -57,6 +62,9 @@ func (m *mockAnalysisJob) HasNewlyAddedIndex() bool {
 	panic("not implemented")
 }
 func (m *mockAnalysisJob) GetIndicators() priorityqueue.Indicators {
+	panic("not implemented")
+}
+func (m *mockAnalysisJob) SetIndicators(indicators priorityqueue.Indicators) {
 	panic("not implemented")
 }
 

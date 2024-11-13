@@ -4,11 +4,19 @@ go_test(
     name = "instanceplancache_test",
     timeout = "short",
     srcs = [
+        "builtin_func_test.go",
+        "concurrency_test.go",
+        "concurrency_tpcc_test.go",
         "dml_test.go",
         "main_test.go",
         "others_test.go",
     ],
     flaky = True,
-    shard_count = 9,
-    deps = ["//pkg/testkit"],
+    shard_count = 34,
+    deps = [
+        "//pkg/parser/auth",
+        "//pkg/testkit",
+        "//pkg/util",
+        "@com_github_stretchr_testify//require",
+    ],
 )

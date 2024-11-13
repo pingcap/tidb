@@ -71,7 +71,7 @@ func TestNonsupportCharsetTable(t *testing.T) {
 	tk.MustExec("create table t(a int, b char(10) charset gbk collate gbk_bin)")
 	err := tk.ExecToErr("alter table t set tiflash replica 1")
 	require.Error(t, err)
-	require.Equal(t, "[ddl:8200]Unsupported ALTER TiFlash settings for tables not supported by TiFlash: table contains gbk charset", err.Error())
+	require.Equal(t, "[ddl:8200]Unsupported `set TiFlash replica` settings for table contains gbk charset", err.Error())
 
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a char(10) charset utf8)")
@@ -999,6 +999,24 @@ func TestTiFlashPartitionTableShuffledHashAggregation(t *testing.T) {
 			}
 		}
 	}
+}
+
+func TestIssue57149(t *testing.T) {
+	store := testkit.CreateMockStore(t, withMockTiFlash(1))
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t1 (pk int  NOT NULL PRIMARY KEY AUTO_INCREMENT, i INT, j JSON)")
+	tk.MustExec("alter table test.t1 set tiflash replica 1")
+	tb := external.GetTableByName(t, tk, "test", "t1")
+	err := domain.GetDomain(tk.Session()).DDLExecutor().UpdateTableReplicaInfo(tk.Session(), tb.Meta().ID, true)
+	require.NoError(t, err)
+	tk.MustExec("INSERT INTO t1(i, j) VALUES (1, '{\"a\": 2}')")
+	tk.MustExec("analyze table test.t1")
+	tk.MustExec("set @@tidb_isolation_read_engines = 'tiflash'")
+	tk.MustExec("set @@tidb_enforce_mpp = 1")
+	result := tk.MustQuery("SELECT i, (j = (SELECT j FROM t1 WHERE j = CAST('null' AS JSON))) AS c11, (j = (SELECT j FROM t1 WHERE 1<>1)) AS c13 from t1 ORDER BY i limit 1")
+	require.Len(t, result.Rows(), 1)
 }
 
 func TestTiFlashPartitionTableBroadcastJoin(t *testing.T) {
@@ -2116,4 +2134,36 @@ func TestMppTableReaderCacheForSingleSQL(t *testing.T) {
 		require.Equal(t, tc.expectHitNum, hitNum.Load())
 		require.Equal(t, tc.expectMissNum, missNum.Load())
 	}
+}
+
+func TestIndexMergeCarePreferTiflash(t *testing.T) {
+	store := testkit.CreateMockStore(t, withMockTiFlash(1))
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("CREATE TABLE `t` (" +
+		"`i` bigint(20) NOT NULL, " +
+		"`w` varchar(32) NOT NULL," +
+		"`l` varchar(32) NOT NULL," +
+		"`a` tinyint(4) NOT NULL DEFAULT '0'," +
+		"`m` int(11) NOT NULL DEFAULT '0'," +
+		"`s` int(11) NOT NULL DEFAULT '0'," +
+		"PRIMARY KEY (`i`) /*T![clustered_index] NONCLUSTERED */," +
+		"KEY `idx_win_user_site_code` (`w`,`m`)," +
+		"KEY `idx_lose_user_site_code` (`l`,`m`)," +
+		"KEY `idx_win_site_code_status` (`w`,`a`)," +
+		"KEY `idx_lose_site_code_status` (`l`,`a`)" +
+		")")
+	tk.MustExec("alter table t set tiflash replica 1")
+	tb := external.GetTableByName(t, tk, "test", "t")
+	err := domain.GetDomain(tk.Session()).DDLExecutor().UpdateTableReplicaInfo(tk.Session(), tb.Meta().ID, true)
+	require.NoError(t, err)
+	tk.MustQuery("explain format=\"brief\" SELECT" +
+		"      /*+ read_from_storage(tiflash[a]) */ a.i FROM t a WHERE a.s = 0 AND a.a NOT IN (-1, 0) AND m >= 1726910326 AND m <= 1726910391 AND ( a.w IN ('1123') OR a.l IN ('1123'))").Check(
+		testkit.Rows("TableReader 0.00 root  MppVersion: 2, data:ExchangeSender",
+			"└─ExchangeSender 0.00 mpp[tiflash]  ExchangeType: PassThrough",
+			"  └─Projection 0.00 mpp[tiflash]  test.t.i",
+			"    └─Selection 0.00 mpp[tiflash]  ge(test.t.m, 1726910326), le(test.t.m, 1726910391), not(in(test.t.a, -1, 0)), or(eq(test.t.w, \"1123\"), eq(test.t.l, \"1123\"))",
+			"      └─TableFullScan 10.00 mpp[tiflash] table:a pushed down filter:eq(test.t.s, 0), keep order:false, stats:pseudo"))
 }

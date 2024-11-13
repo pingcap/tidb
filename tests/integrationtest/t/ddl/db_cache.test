@@ -13,7 +13,6 @@ create table cache_partition_range_table (c1 smallint(6) not null, c2 char(5) de
 -- error 8242
 alter table cache_partition_range_table cache;
 drop table if exists partition_list_table;
-set @@session.tidb_enable_list_partition = ON;
 create table cache_partition_list_table (id int) partition by list  (id) (
     partition p0 values in (1,2),
     partition p1 values in (3,4),
@@ -24,7 +23,6 @@ alter table cache_partition_list_table cache;
 drop table if exists cache_partition_list_table;
 drop table if exists cache_partition_range_table;
 drop table if exists cache_partition_table;
-set @@session.tidb_enable_list_partition = default;
 
 # TestAlterViewTableCache
 drop table if exists cache_view_t;

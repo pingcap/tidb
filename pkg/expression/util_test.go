@@ -540,6 +540,10 @@ type MockExpr struct {
 	i   any
 }
 
+func (m *MockExpr) SafeToShareAcrossSession() bool {
+	return false
+}
+
 func (m *MockExpr) VecEvalInt(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	return nil
 }
@@ -563,6 +567,7 @@ func (m *MockExpr) VecEvalJSON(ctx EvalContext, input *chunk.Chunk, result *chun
 }
 
 func (m *MockExpr) StringWithCtx(ParamValues, string) string { return "" }
+
 func (m *MockExpr) Eval(ctx EvalContext, row chunk.Row) (types.Datum, error) {
 	return types.NewDatum(m.i), m.err
 }

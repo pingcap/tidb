@@ -23,7 +23,6 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/util/rowcodec"
 	"github.com/pingcap/tidb/pkg/util/tableutil"
-	"github.com/pingcap/tipb/go-binlog"
 )
 
 var _ AllocatorContext = MutateContext(nil)
@@ -34,12 +33,6 @@ type RowEncodingConfig struct {
 	IsRowLevelChecksumEnabled bool
 	// RowEncoder is used to encode a row
 	RowEncoder *rowcodec.Encoder
-}
-
-// BinlogSupport is used for binlog operations
-type BinlogSupport interface {
-	// GetBinlogMutation returns a `binlog.TableMutation` object for a table.
-	GetBinlogMutation(tblID int64) *binlog.TableMutation
 }
 
 // StatisticsSupport is used for statistics update operations.
@@ -134,9 +127,6 @@ type MutateContext interface {
 	GetRowIDShardGenerator() *variable.RowIDShardGenerator
 	// GetReservedRowIDAlloc returns the `ReservedRowIDAlloc` object to allocate row id from reservation.
 	GetReservedRowIDAlloc() (*stmtctx.ReservedRowIDAlloc, bool)
-	// GetBinlogSupport returns a `BinlogSupport` if the context supports it.
-	// If the context does not support binlog, the second return value will be false.
-	GetBinlogSupport() (BinlogSupport, bool)
 	// GetStatisticsSupport returns a `StatisticsSupport` if the context supports it.
 	// If the context does not support statistics update, the second return value will be false.
 	GetStatisticsSupport() (StatisticsSupport, bool)

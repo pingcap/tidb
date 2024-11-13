@@ -18,16 +18,63 @@ import (
 	"math"
 
 	"github.com/pingcap/tidb/pkg/expression"
+	"github.com/pingcap/tidb/pkg/planner/cascades/base"
 	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
 	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace/logicaltrace"
 	"github.com/pingcap/tidb/pkg/types"
 )
+
+var _ base.HashEquals = &LogicalSchemaProducer{}
 
 // LogicalSchemaProducer stores the schema for the logical plans who can produce schema directly.
 type LogicalSchemaProducer struct {
 	schema *expression.Schema
 	names  types.NameSlice
 	BaseLogicalPlan
+}
+
+// Hash64 implements HashEquals interface.
+func (s *LogicalSchemaProducer) Hash64(h base.Hasher) {
+	// output columns should affect the logical operator's hash.
+	// since tidb doesn't maintain the names strictly, we should
+	// only use the schema unique id to distinguish them.
+	if s.schema != nil {
+		h.HashByte(base.NotNilFlag)
+		for _, col := range s.schema.Columns {
+			col.Hash64(h)
+		}
+	} else {
+		h.HashByte(base.NilFlag)
+	}
+}
+
+// Equals implement HashEquals interface.
+func (s *LogicalSchemaProducer) Equals(other any) bool {
+	s2, ok := other.(*LogicalSchemaProducer)
+	if !ok {
+		return false
+	}
+	if s == nil {
+		return s2 == nil
+	}
+	if s2 == nil {
+		return false
+	}
+	if s.schema == nil {
+		return s2.schema == nil
+	}
+	if s2.schema == nil {
+		return false
+	}
+	if s.schema.Len() != s2.schema.Len() {
+		return false
+	}
+	for i, col := range s.schema.Columns {
+		if !col.Equals(s2.schema.Columns[i]) {
+			return false
+		}
+	}
+	return true
 }
 
 // Schema implements the Plan.Schema interface.
