@@ -1154,7 +1154,7 @@ func deleteJobMetaByID(tk *testkit.TestKit, jobID int64) {
 	tk.MustExec(sql)
 }
 
-func TestAdminAlterDDLJobsUpdateSysTable(t *testing.T) {
+func TestAdminAlterDDLJobUpdateSysTable(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -1184,7 +1184,7 @@ func TestAdminAlterDDLJobsUpdateSysTable(t *testing.T) {
 	deleteJobMetaByID(tk, job.ID)
 }
 
-func TestAdminAlterDDLJobsUnsupportedCases(t *testing.T) {
+func TestAdminAlterDDLJobUnsupportedCases(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -1210,7 +1210,7 @@ func TestAdminAlterDDLJobsUnsupportedCases(t *testing.T) {
 	deleteJobMetaByID(tk, 1)
 }
 
-func TestAdminAlterDDLJobsCommitFailed(t *testing.T) {
+func TestAdminAlterDDLJobCommitFailed(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")

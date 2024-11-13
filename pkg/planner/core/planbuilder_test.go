@@ -879,7 +879,7 @@ func TestImportIntoCollAssignmentChecker(t *testing.T) {
 	}
 }
 
-func TestBuildAdminAlterDDLJobsPlan(t *testing.T) {
+func TestBuildAdminAlterDDLJobPlan(t *testing.T) {
 	parser := parser.New()
 	sctx := MockContext()
 	ctx := context.TODO()

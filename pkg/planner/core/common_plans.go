@@ -166,7 +166,7 @@ type AlterDDLJobOpt struct {
 	Value expression.Expression
 }
 
-// AlterDDLJob is the plan of admin alter ddl jobs
+// AlterDDLJob is the plan of admin alter ddl job
 type AlterDDLJob struct {
 	baseSchemaProducer
 
