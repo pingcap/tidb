@@ -84,3 +84,7 @@ func TestWriteConflictPrettyFormat(t *testing.T) {
 		"key=‹›‹{metaKey=true, key=DB:56, field=TID:108}, originalKey=6d44423a3536000000fc00000000000000685449443a31303800fe, primary=›‹›‹{metaKey=true, key=DB:56, field=TID:108}, originalPrimaryKey=6d44423a3536000000fc00000000000000685449443a31303800fe›, reason=Optimistic " + kv.TxnRetryableMark
 	require.EqualError(t, newWriteConflictError(conflict), expectedStr)
 }
+
+func TestKeyValueOversize(t *testing.T) {
+	//key := make([]byte, math.MaxUint16+1)
+}
