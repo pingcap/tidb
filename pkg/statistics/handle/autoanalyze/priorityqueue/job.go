@@ -43,16 +43,21 @@ type Indicators struct {
 	LastAnalysisDuration time.Duration
 }
 
-// JobHook is the successHook function that will be called after the job is completed.
-type JobHook func(job AnalysisJob)
+// SuccessJobHook is the successHook function that will be called after the job is completed.
+type SuccessJobHook func(job AnalysisJob)
+
+// FailureJobHook is the failureHook function that will be called after the job is failed.
+type FailureJobHook func(job AnalysisJob, mustRetry bool)
 
 // AnalysisJob is the interface for the analysis job.
 type AnalysisJob interface {
-	// IsValidToAnalyze checks whether the table is valid to analyze.
-	// It checks the last failed analysis duration and the average analysis duration.
-	// If the last failed analysis duration is less than 2 times the average analysis duration,
-	// we skip this table to avoid too much failed analysis.
-	IsValidToAnalyze(
+	// ValidateAndPrepare validates if the analysis job can run and prepares it for execution.
+	// Returns (true, "") if the job is valid and ready to run.
+	// Returns (false, reason) if the job should be skipped, where reason explains why:
+	// - Schema/table/partition doesn't exist
+	// - Table is not partitioned (for partition jobs)
+	// - Recent failed analysis (within 2x avg duration) to avoid queue blocking
+	ValidateAndPrepare(
 		sctx sessionctx.Context,
 	) (bool, string)
 
@@ -81,13 +86,20 @@ type AnalysisJob interface {
 	GetTableID() int64
 
 	// RegisterSuccessHook registers a successHook function that will be called after the job can be marked as successful.
-	RegisterSuccessHook(hook JobHook)
+	RegisterSuccessHook(hook SuccessJobHook)
 
-	// RegisterFailureHook registers a successHook function that will be called after the job is marked as failed.
-	RegisterFailureHook(hook JobHook)
+	// RegisterFailureHook registers a failureHook function that will be called after the job is marked as failed.
+	RegisterFailureHook(hook FailureJobHook)
 
 	fmt.Stringer
 }
+
+const (
+	schemaNotExist      = "schema does not exist"
+	tableNotExist       = "table does not exist"
+	notPartitionedTable = "table is not a partitioned table"
+	partitionNotExist   = "partition does not exist"
+)
 
 // isValidToAnalyze checks whether the table is valid to analyze.
 // It checks the last failed analysis duration and the average analysis duration.

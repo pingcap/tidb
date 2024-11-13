@@ -37,7 +37,7 @@ type testHeapObject struct {
 	val     float64
 }
 
-func (t testHeapObject) IsValidToAnalyze(sctx sessionctx.Context) (bool, string) {
+func (t testHeapObject) ValidateAndPrepare(sctx sessionctx.Context) (bool, string) {
 	panic("implement me")
 }
 func (t testHeapObject) Analyze(statsHandle statstypes.StatsHandle, sysProcTracker sysproctrack.Tracker) error {
@@ -61,10 +61,10 @@ func (t testHeapObject) SetIndicators(indicators Indicators) {
 func (t testHeapObject) GetTableID() int64 {
 	return t.tableID
 }
-func (t testHeapObject) RegisterSuccessHook(hook JobHook) {
+func (t testHeapObject) RegisterSuccessHook(hook SuccessJobHook) {
 	panic("implement me")
 }
-func (t testHeapObject) RegisterFailureHook(hook JobHook) {
+func (t testHeapObject) RegisterFailureHook(hook FailureJobHook) {
 	panic("implement me")
 }
 func (t testHeapObject) String() string {

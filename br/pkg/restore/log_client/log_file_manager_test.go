@@ -244,7 +244,7 @@ func testReadMetaBetweenTSWithVersion(t *testing.T, m metaMaker) {
 		req.NoError(err)
 		actualStoreIDs := make([]int64, 0, len(metas))
 		for _, meta := range metas {
-			actualStoreIDs = append(actualStoreIDs, meta.StoreId)
+			actualStoreIDs = append(actualStoreIDs, meta.Meta().StoreId)
 		}
 		expectedStoreIDs := make([]int64, 0, len(c.expected))
 		for _, meta := range c.expected {
@@ -528,6 +528,7 @@ func TestFilterDataFiles(t *testing.T) {
 		RestoreTS: 10,
 		Storage:   loc,
 
+		Migrations:                emptyMigrations(),
 		MetadataDownloadBatchSize: 32,
 	})
 	req.NoError(err)
@@ -536,7 +537,9 @@ func TestFilterDataFiles(t *testing.T) {
 		m2(wr(1, 1, 1), wr(2, 2, 2), wr(3, 3, 3), wr(4, 4, 4), wr(5, 5, 5)),
 		m2(wr(1, 1, 1), wr(2, 2, 2)),
 	}
-	metaIter := iter.FromSlice(metas)
+	metaIter := iter.Map(iter.FromSlice(metas), func(meta logclient.Meta) *logclient.MetaName {
+		return logclient.NewMetaName(meta, "")
+	})
 	files := iter.CollectAll(ctx, fm.FilterDataFiles(metaIter)).Item
 	check := func(file *logclient.LogDataFileInfo, metaKey string, goff, foff int) {
 		req.Equal(file.MetaDataGroupName, metaKey)

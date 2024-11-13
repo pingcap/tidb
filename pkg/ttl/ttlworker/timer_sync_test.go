@@ -362,9 +362,24 @@ func TestTTLTimerSync(t *testing.T) {
 	time.Sleep(time.Second)
 	sync.SyncTimers(context.TODO(), do.InfoSchema())
 	require.Equal(t, syncCnt+8, syncTimerCounter.Val())
-	syncCnt = syncTimerCounter.Val()
 	checkTimerCnt(t, cli, 7)
 	checkTimersNotChange(t, cli, timer2, timer3, timer4, timer5, timerP10, timerP11, timerP12)
+
+	// https://github.com/pingcap/tidb/issues/57112
+	// table created and deleted but still in delay interval
+	timer3Key := timer3.Key
+	_, ok := sync.GetCachedTimerRecord(timer3Key)
+	require.True(t, ok)
+	sync.SetDelayDeleteInterval(time.Hour)
+	tk.MustExec("drop table t3")
+	tk.MustExec("delete from test.test_timers where ID = " + timer3.ID)
+	sync.SyncTimers(context.TODO(), do.InfoSchema())
+	require.Equal(t, syncCnt+9, syncTimerCounter.Val())
+	syncCnt = syncTimerCounter.Val()
+	// timer3 should be deleted from cache because the timer is deleted from storage.
+	_, ok = sync.GetCachedTimerRecord(timer3Key)
+	require.False(t, ok)
+	checkTimerCnt(t, cli, 6)
 
 	// reset timers
 	sync.Reset()
@@ -381,8 +396,8 @@ func TestTTLTimerSync(t *testing.T) {
 	lastSyncTime, lastSyncVer = sync.GetLastSyncInfo()
 	require.Equal(t, do.InfoSchema().SchemaMetaVersion(), lastSyncVer)
 	require.GreaterOrEqual(t, lastSyncTime.Unix(), now.Unix())
-	checkTimerCnt(t, cli, 7)
-	checkTimersNotChange(t, cli, timer2, timer3, timer4, timer5, timerP10, timerP11, timerP12)
+	checkTimerCnt(t, cli, 6)
+	checkTimersNotChange(t, cli, timer2, timer4, timer5, timerP10, timerP11, timerP12)
 }
 
 func insertTTLTableStatusWatermark(t *testing.T, do *domain.Domain, tk *testkit.TestKit, db, table, partition string, watermark time.Time, jobRunning bool) {

@@ -26,7 +26,6 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	base2 "github.com/pingcap/tidb/pkg/planner/cascades/base"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/constraint"
 	ruleutil "github.com/pingcap/tidb/pkg/planner/core/rule/util"
@@ -48,23 +47,23 @@ import (
 
 // DataSource represents a tableScan without condition push down.
 type DataSource struct {
-	LogicalSchemaProducer
+	LogicalSchemaProducer `hash64-equals:"true"`
 
 	AstIndexHints []*ast.IndexHint
 	IndexHints    []h.HintedIndex
 	Table         table.Table
-	TableInfo     *model.TableInfo
+	TableInfo     *model.TableInfo `hash64-equals:"true"`
 	Columns       []*model.ColumnInfo
 	DBName        pmodel.CIStr
 
-	TableAsName *pmodel.CIStr
+	TableAsName *pmodel.CIStr `hash64-equals:"true"`
 	// IndexMergeHints are the hint for indexmerge.
 	IndexMergeHints []h.HintedIndex
 	// PushedDownConds are the conditions that will be pushed down to coprocessor.
-	PushedDownConds []expression.Expression
+	PushedDownConds []expression.Expression `hash64-equals:"true"`
 	// AllConds contains all the filters on this table. For now it's maintained
 	// in predicate push down and used in partition pruning/index merge.
-	AllConds []expression.Expression
+	AllConds []expression.Expression `hash64-equals:"true"`
 
 	StatisticTable *statistics.Table
 	TableStats     *property.StatsInfo
@@ -92,7 +91,7 @@ type DataSource struct {
 	// it is converted from StatisticTable, and used for IO/network cost estimating.
 	TblColHists *statistics.HistColl
 	// PreferStoreType means the DataSource is enforced to which storage.
-	PreferStoreType int
+	PreferStoreType int `hash64-equals:"true"`
 	// PreferPartitions store the map, the key represents store type, the value represents the partition name list.
 	PreferPartitions map[int][]pmodel.CIStr
 	SampleInfo       *tablesampler.TableSampleInfo
@@ -100,7 +99,7 @@ type DataSource struct {
 	// IsForUpdateRead should be true in either of the following situations
 	// 1. use `inside insert`, `update`, `delete` or `select for update` statement
 	// 2. isolation level is RC
-	IsForUpdateRead bool
+	IsForUpdateRead bool `hash64-equals:"true"`
 
 	// contain unique index and the first field is tidb_shard(),
 	// such as (tidb_shard(a), a ...), the fields are more than 2
@@ -120,74 +119,6 @@ type DataSource struct {
 func (ds DataSource) Init(ctx base.PlanContext, offset int) *DataSource {
 	ds.BaseLogicalPlan = NewBaseLogicalPlan(ctx, plancodec.TypeDataSource, &ds, offset)
 	return &ds
-}
-
-// ************************ start implementation of HashEquals interface ************************
-
-// Hash64 implements base.HashEquals interface.
-func (ds *DataSource) Hash64(h base2.Hasher) {
-	// hash the key elements to identify this datasource.
-	h.HashString(plancodec.TypeDataSource)
-	// table related.
-	if ds.TableInfo == nil {
-		h.HashByte(base2.NilFlag)
-	} else {
-		h.HashByte(base2.NotNilFlag)
-		h.HashInt64(ds.TableInfo.ID)
-	}
-	// table alias related.
-	if ds.TableAsName == nil {
-		h.HashByte(base2.NilFlag)
-	} else {
-		h.HashByte(base2.NotNilFlag)
-		h.HashInt(len(ds.TableAsName.L))
-		h.HashString(ds.TableAsName.L)
-	}
-	// visible columns related.
-	h.HashInt(len(ds.Columns))
-	for _, oneCol := range ds.Columns {
-		h.HashInt64(oneCol.ID)
-	}
-	// conditions related.
-	h.HashInt(len(ds.PushedDownConds))
-	for _, oneCond := range ds.PushedDownConds {
-		oneCond.Hash64(h)
-	}
-	h.HashInt(len(ds.AllConds))
-	for _, oneCond := range ds.AllConds {
-		oneCond.Hash64(h)
-	}
-	// hint and update misc.
-	h.HashInt(ds.PreferStoreType)
-	h.HashBool(ds.IsForUpdateRead)
-}
-
-// Equals implements base.HashEquals interface.
-func (ds *DataSource) Equals(other any) bool {
-	if other == nil {
-		return false
-	}
-	var ds2 *DataSource
-	switch x := other.(type) {
-	case *DataSource:
-		ds2 = x
-	case DataSource:
-		ds2 = &x
-	default:
-		return false
-	}
-	ok := ds.TableInfo.ID == ds2.TableInfo.ID && ds.TableAsName.L == ds2.TableAsName.L && len(ds.PushedDownConds) == len(ds2.PushedDownConds) &&
-		len(ds.AllConds) == len(ds2.AllConds) && ds.PreferStoreType == ds2.PreferStoreType && ds.IsForUpdateRead == ds2.IsForUpdateRead
-	if !ok {
-		return false
-	}
-	for i, oneCond := range ds.PushedDownConds {
-		oneCond.Equals(ds2.PushedDownConds[i])
-	}
-	for i, oneCond := range ds.AllConds {
-		oneCond.Equals(ds2.AllConds[i])
-	}
-	return true
 }
 
 // *************************** start implementation of Plan interface ***************************

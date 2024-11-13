@@ -96,6 +96,9 @@ type jsonTypeFunctionClass struct {
 
 type builtinJSONTypeSig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinJSONTypeSig) Clone() builtinFunc {
@@ -137,6 +140,9 @@ type jsonExtractFunctionClass struct {
 
 type builtinJSONExtractSig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinJSONExtractSig) Clone() builtinFunc {
@@ -204,6 +210,9 @@ type jsonUnquoteFunctionClass struct {
 
 type builtinJSONUnquoteSig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinJSONUnquoteSig) Clone() builtinFunc {
@@ -259,6 +268,9 @@ type jsonSetFunctionClass struct {
 
 type builtinJSONSetSig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinJSONSetSig) Clone() builtinFunc {
@@ -302,6 +314,9 @@ type jsonInsertFunctionClass struct {
 
 type builtinJSONInsertSig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinJSONInsertSig) Clone() builtinFunc {
@@ -345,6 +360,9 @@ type jsonReplaceFunctionClass struct {
 
 type builtinJSONReplaceSig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinJSONReplaceSig) Clone() builtinFunc {
@@ -388,6 +406,9 @@ type jsonRemoveFunctionClass struct {
 
 type builtinJSONRemoveSig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinJSONRemoveSig) Clone() builtinFunc {
@@ -458,6 +479,9 @@ func (c *jsonMergeFunctionClass) verifyArgs(ctx EvalContext, args []Expression) 
 
 type builtinJSONMergeSig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinJSONMergeSig) Clone() builtinFunc {
@@ -509,6 +533,9 @@ type jsonObjectFunctionClass struct {
 
 type builtinJSONObjectSig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinJSONObjectSig) Clone() builtinFunc {
@@ -584,6 +611,9 @@ type jsonArrayFunctionClass struct {
 
 type builtinJSONArraySig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinJSONArraySig) Clone() builtinFunc {
@@ -637,6 +667,9 @@ type jsonContainsPathFunctionClass struct {
 
 type builtinJSONContainsPathSig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinJSONContainsPathSig) Clone() builtinFunc {
@@ -753,6 +786,9 @@ type jsonMemberOfFunctionClass struct {
 
 type builtinJSONMemberOfSig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinJSONMemberOfSig) Clone() builtinFunc {
@@ -816,6 +852,9 @@ type jsonContainsFunctionClass struct {
 
 type builtinJSONContainsSig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinJSONContainsSig) Clone() builtinFunc {
@@ -896,6 +935,9 @@ type jsonOverlapsFunctionClass struct {
 
 type builtinJSONOverlapsSig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinJSONOverlapsSig) Clone() builtinFunc {
@@ -985,6 +1027,9 @@ func (c *jsonValidFunctionClass) getFunction(ctx BuildContext, args []Expression
 
 type builtinJSONValidJSONSig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinJSONValidJSONSig) Clone() builtinFunc {
@@ -1002,6 +1047,9 @@ func (b *builtinJSONValidJSONSig) evalInt(ctx EvalContext, row chunk.Row) (val i
 
 type builtinJSONValidStringSig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinJSONValidStringSig) Clone() builtinFunc {
@@ -1027,6 +1075,9 @@ func (b *builtinJSONValidStringSig) evalInt(ctx EvalContext, row chunk.Row) (res
 
 type builtinJSONValidOthersSig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinJSONValidOthersSig) Clone() builtinFunc {
@@ -1047,6 +1098,9 @@ type jsonArrayAppendFunctionClass struct {
 
 type builtinJSONArrayAppendSig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (c *jsonArrayAppendFunctionClass) verifyArgs(ctx EvalContext, args []Expression) error {
@@ -1147,6 +1201,9 @@ type jsonArrayInsertFunctionClass struct {
 
 type builtinJSONArrayInsertSig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (c *jsonArrayInsertFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
@@ -1253,6 +1310,9 @@ func (c *jsonMergePatchFunctionClass) getFunction(ctx BuildContext, args []Expre
 
 type builtinJSONMergePatchSig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinJSONMergePatchSig) Clone() builtinFunc {
@@ -1326,6 +1386,9 @@ type jsonPrettyFunctionClass struct {
 
 type builtinJSONSPrettySig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinJSONSPrettySig) Clone() builtinFunc {
@@ -1373,6 +1436,9 @@ type jsonQuoteFunctionClass struct {
 
 type builtinJSONQuoteSig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinJSONQuoteSig) Clone() builtinFunc {
@@ -1428,6 +1494,9 @@ type jsonSearchFunctionClass struct {
 
 type builtinJSONSearchSig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinJSONSearchSig) Clone() builtinFunc {
@@ -1531,6 +1600,9 @@ type jsonStorageFreeFunctionClass struct {
 
 type builtinJSONStorageFreeSig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinJSONStorageFreeSig) Clone() builtinFunc {
@@ -1568,6 +1640,9 @@ type jsonStorageSizeFunctionClass struct {
 
 type builtinJSONStorageSizeSig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinJSONStorageSizeSig) Clone() builtinFunc {
@@ -1606,6 +1681,9 @@ type jsonDepthFunctionClass struct {
 
 type builtinJSONDepthSig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinJSONDepthSig) Clone() builtinFunc {
@@ -1681,6 +1759,9 @@ func (c *jsonKeysFunctionClass) getFunction(ctx BuildContext, args []Expression)
 
 type builtinJSONKeysSig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinJSONKeysSig) Clone() builtinFunc {
@@ -1702,6 +1783,9 @@ func (b *builtinJSONKeysSig) evalJSON(ctx EvalContext, row chunk.Row) (res types
 
 type builtinJSONKeys2ArgsSig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinJSONKeys2ArgsSig) Clone() builtinFunc {
@@ -1746,6 +1830,9 @@ type jsonLengthFunctionClass struct {
 
 type builtinJSONLengthSig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinJSONLengthSig) Clone() builtinFunc {

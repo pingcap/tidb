@@ -194,6 +194,9 @@ func getReturnTypes(joinType logicalop.JoinType, param spillTestParam) []*types.
 			resultTypes[len(resultTypes)-1].DelFlag(mysql.NotNullFlag)
 		}
 	}
+	if joinType == logicalop.LeftOuterSemiJoin {
+		resultTypes = append(resultTypes, types.NewFieldType(mysql.TypeTiny))
+	}
 	return resultTypes
 }
 

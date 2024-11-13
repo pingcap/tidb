@@ -811,12 +811,15 @@ func (b *executorBuilder) buildLimit(v *plannercore.PhysicalLimit) exec.Executor
 		end:          v.Offset + v.Count,
 	}
 
-	childUsedSchemaLen := v.Children()[0].Schema().Len()
+	childSchemaLen := v.Children()[0].Schema().Len()
 	childUsedSchema := markChildrenUsedCols(v.Schema().Columns, v.Children()[0].Schema())[0]
 	e.columnIdxsUsedByChild = make([]int, 0, len(childUsedSchema))
 	e.columnIdxsUsedByChild = append(e.columnIdxsUsedByChild, childUsedSchema...)
-	if len(e.columnIdxsUsedByChild) == childUsedSchemaLen {
+	if len(e.columnIdxsUsedByChild) == childSchemaLen {
 		e.columnIdxsUsedByChild = nil // indicates that all columns are used. LimitExec will improve performance for this condition.
+	} else {
+		// construct a project evaluator to do the inline projection
+		e.columnSwapHelper = chunk.NewColumnSwapHelper(e.columnIdxsUsedByChild)
 	}
 	return e
 }
@@ -3061,13 +3064,23 @@ func (b *executorBuilder) buildAnalyze(v *plannercore.Analyze) exec.Executor {
 	}
 	exprCtx := b.ctx.GetExprCtx()
 	for _, task := range v.ColTasks {
+		// ColumnInfos2ColumnsAndNames will use the `colInfos` to find the unique id for the column,
+		// so we need to make sure all the columns pass into it.
 		columns, _, err := expression.ColumnInfos2ColumnsAndNames(
 			exprCtx,
 			pmodel.NewCIStr(task.AnalyzeInfo.DBName),
 			task.TblInfo.Name,
-			task.ColsInfo,
+			append(task.ColsInfo, task.SkipColsInfo...),
 			task.TblInfo,
 		)
+		columns = slices.DeleteFunc(columns, func(expr *expression.Column) bool {
+			for _, col := range task.SkipColsInfo {
+				if col.ID == expr.ID {
+					return true
+				}
+			}
+			return false
+		})
 		if err != nil {
 			b.err = err
 			return nil

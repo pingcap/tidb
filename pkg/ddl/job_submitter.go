@@ -104,22 +104,16 @@ func (s *JobSubmitter) addBatchDDLJobs(jobWs []*JobWrapper) {
 		err   error
 		newWs []*JobWrapper
 	)
-	// DDLForce2Queue is a flag to tell DDL worker to always push the job to the DDL queue.
-	toTable := !variable.DDLForce2Queue.Load()
 	fastCreate := variable.EnableFastCreateTable.Load()
-	if toTable {
-		if fastCreate {
-			newWs, err = mergeCreateTableJobs(jobWs)
-			if err != nil {
-				logutil.DDLLogger().Warn("failed to merge create table jobs", zap.Error(err))
-			} else {
-				jobWs = newWs
-			}
+	if fastCreate {
+		newWs, err = mergeCreateTableJobs(jobWs)
+		if err != nil {
+			logutil.DDLLogger().Warn("failed to merge create table jobs", zap.Error(err))
+		} else {
+			jobWs = newWs
 		}
-		err = s.addBatchDDLJobs2Table(jobWs)
-	} else {
-		err = s.addBatchDDLJobs2Queue(jobWs)
 	}
+	err = s.addBatchDDLJobs2Table(jobWs)
 	var jobs string
 	for _, jobW := range jobWs {
 		if err == nil {
@@ -139,7 +133,6 @@ func (s *JobSubmitter) addBatchDDLJobs(jobWs []*JobWrapper) {
 	logutil.DDLLogger().Info("add DDL jobs",
 		zap.Int("batch count", len(jobWs)),
 		zap.String("jobs", jobs),
-		zap.Bool("table", toTable),
 		zap.Bool("fast_create", fastCreate))
 }
 
@@ -302,12 +295,6 @@ func (s *JobSubmitter) addBatchDDLJobs2Table(jobWs []*JobWrapper) error {
 		}
 		startTS = txn.StartTS()
 
-		if variable.DDLForce2Queue.Load() {
-			if err := s.checkFlashbackJobInQueue(t); err != nil {
-				return err
-			}
-		}
-
 		return nil
 	})
 	if err != nil {
@@ -352,64 +339,6 @@ func (s *JobSubmitter) addBatchDDLJobs2Table(jobWs []*JobWrapper) error {
 		return errors.Trace(err)
 	}
 
-	return nil
-}
-
-func (s *JobSubmitter) addBatchDDLJobs2Queue(jobWs []*JobWrapper) error {
-	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
-	return kv.RunInNewTxn(ctx, s.store, true, func(_ context.Context, txn kv.Transaction) error {
-		t := meta.NewMutator(txn)
-
-		for _, jobW := range jobWs {
-			intest.Assert(jobW.Version != 0, "Job version should not be zero")
-		}
-
-		count := getRequiredGIDCount(jobWs)
-		ids, err := t.GenGlobalIDs(count)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		assignGIDsForJobs(jobWs, ids)
-
-		if err := s.checkFlashbackJobInQueue(t); err != nil {
-			return errors.Trace(err)
-		}
-
-		for _, jobW := range jobWs {
-			jobW.FillArgsWithSubJobs()
-			job := jobW.Job
-			job.StartTS = txn.StartTS()
-			setJobStateToQueueing(job)
-			if err = buildJobDependence(t, job); err != nil {
-				return errors.Trace(err)
-			}
-			jobListKey := meta.DefaultJobListKey
-			if job.MayNeedReorg() {
-				jobListKey = meta.AddIndexJobListKey
-			}
-			if err = t.EnQueueDDLJob(job, jobListKey); err != nil {
-				return errors.Trace(err)
-			}
-		}
-		failpoint.Inject("mockAddBatchDDLJobsErr", func(val failpoint.Value) {
-			if val.(bool) {
-				failpoint.Return(errors.Errorf("mockAddBatchDDLJobsErr"))
-			}
-		})
-		return nil
-	})
-}
-
-func (*JobSubmitter) checkFlashbackJobInQueue(t *meta.Mutator) error {
-	jobs, err := t.GetAllDDLJobsInQueue(meta.DefaultJobListKey)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	for _, job := range jobs {
-		if job.Type == model.ActionFlashbackCluster {
-			return errors.Errorf("Can't add ddl job, have flashback cluster job")
-		}
-	}
 	return nil
 }
 
@@ -765,39 +694,6 @@ func setJobStateToQueueing(job *model.Job) {
 		}
 	}
 	job.State = model.JobStateQueueing
-}
-
-// buildJobDependence sets the curjob's dependency-ID.
-// The dependency-job's ID must less than the current job's ID, and we need the largest one in the list.
-func buildJobDependence(t *meta.Mutator, curJob *model.Job) error {
-	// Jobs in the same queue are ordered. If we want to find a job's dependency-job, we need to look for
-	// it from the other queue. So if the job is "ActionAddIndex" job, we need find its dependency-job from DefaultJobList.
-	jobListKey := meta.DefaultJobListKey
-	if !curJob.MayNeedReorg() {
-		jobListKey = meta.AddIndexJobListKey
-	}
-	jobs, err := t.GetAllDDLJobsInQueue(jobListKey)
-	if err != nil {
-		return errors.Trace(err)
-	}
-
-	for _, job := range jobs {
-		if curJob.ID < job.ID {
-			continue
-		}
-		isDependent, err := curJob.IsDependentOn(job)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		if isDependent {
-			logutil.DDLLogger().Info("current DDL job depends on other job",
-				zap.Stringer("currentJob", curJob),
-				zap.Stringer("dependentJob", job))
-			curJob.DependencyID = job.ID
-			break
-		}
-	}
-	return nil
 }
 
 func (s *JobSubmitter) notifyNewJobSubmitted() {
