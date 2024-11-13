@@ -735,10 +735,9 @@ func (job *Job) IsPausable() bool {
 
 // IsAlterable checks whether the job type can be altered.
 func (job *Job) IsAlterable() bool {
-	if job.Type == ActionAddIndex || job.Type == ActionModifyColumn || job.Type == ActionReorganizePartition {
-		return true
-	}
-	return false
+	return job.Type == ActionAddIndex ||
+		job.Type == ActionModifyColumn ||
+		job.Type == ActionReorganizePartition
 }
 
 // IsResumable checks whether the job can be rollback.

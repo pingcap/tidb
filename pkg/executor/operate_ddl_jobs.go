@@ -17,6 +17,8 @@ package executor
 import (
 	"context"
 	"fmt"
+	"strconv"
+
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/ddl"
@@ -29,7 +31,6 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/util/chunk"
-	"strconv"
 )
 
 // CommandDDLJobsExec is the general struct for Cancel/Pause/Resume commands on
@@ -93,7 +94,7 @@ type ResumeDDLJobsExec struct {
 	*CommandDDLJobsExec
 }
 
-// AlterDDLJobExec indicates an Executor for Resume a DDL Job.
+// AlterDDLJobExec indicates an Executor for alter config of a DDL Job.
 type AlterDDLJobExec struct {
 	exec.BaseExecutor
 	jobID     int64
@@ -101,6 +102,7 @@ type AlterDDLJobExec struct {
 	AlterOpts []*core.AlterDDLJobOpt
 }
 
+// Open implements the Executor Open interface.
 func (e *AlterDDLJobExec) Open(ctx context.Context) error {
 	newSess, err := e.GetSysSession()
 	if err != nil {
@@ -108,10 +110,10 @@ func (e *AlterDDLJobExec) Open(ctx context.Context) error {
 	}
 	defer e.ReleaseSysSession(kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL), newSess)
 
-	return e.processAlterDDLJob(ctx, newSess)
+	return e.processAlterDDLJobConfig(ctx, newSess)
 }
 
-func getJobByID(
+func getJobMetaFromTable(
 	ctx context.Context,
 	se *sess.Session,
 	jobID int64,
@@ -134,13 +136,12 @@ func getJobByID(
 	return &job, nil
 }
 
-func updateDDLJob2Table(
+func updateJobMeta2Table(
 	ctx context.Context,
 	se *sess.Session,
 	job *model.Job,
-	updateRawArgs bool,
 ) error {
-	b, err := job.Encode(updateRawArgs)
+	b, err := job.Encode(false)
 	if err != nil {
 		return err
 	}
@@ -152,9 +153,9 @@ func updateDDLJob2Table(
 
 const alterDDLJobsMaxRetryCnt = 3
 
-// processAlterDDLJob try to alter the ddl job configs.
+// processAlterDDLJobConfig try to alter the ddl job configs.
 // In case of failure, it will retry alterDDLJobsMaxRetryCnt times.
-func (e *AlterDDLJobExec) processAlterDDLJob(
+func (e *AlterDDLJobExec) processAlterDDLJobConfig(
 	ctx context.Context,
 	sessCtx sessionctx.Context,
 ) (err error) {
@@ -166,7 +167,7 @@ func (e *AlterDDLJobExec) processAlterDDLJob(
 		if err = ns.Begin(ctx); err != nil {
 			continue
 		}
-		job, err = getJobByID(ctx, ns, e.jobID)
+		job, err = getJobMetaFromTable(ctx, ns, e.jobID)
 		if err != nil {
 			continue
 		}
@@ -177,16 +178,17 @@ func (e *AlterDDLJobExec) processAlterDDLJob(
 		if err = e.updateReorgMeta(job, model.AdminCommandByEndUser); err != nil {
 			continue
 		}
-		if err = updateDDLJob2Table(ctx, ns, job, false); err != nil {
+		if err = updateJobMeta2Table(ctx, ns, job); err != nil {
 			continue
 		}
-		// inject error for test
+
 		failpoint.Inject("mockAlterDDLJobCommitFailed", func(val failpoint.Value) {
 			if val.(bool) {
 				ns.Rollback()
 				failpoint.Return(errors.New("mock commit failed on admin alter ddl jobs"))
 			}
 		})
+
 		if err = ns.Commit(ctx); err != nil {
 			ns.Rollback()
 			continue
