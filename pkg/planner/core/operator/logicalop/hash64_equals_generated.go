@@ -403,6 +403,7 @@ func (op *LogicalExpand) Equals(other any) bool {
 // Hash64 implements the Hash64Equals interface.
 func (op *LogicalLimit) Hash64(h base.Hasher) {
 	h.HashString(plancodec.TypeLimit)
+	op.LogicalSchemaProducer.Hash64(h)
 	if op.PartitionBy == nil {
 		h.HashByte(base.NilFlag)
 	} else {
@@ -426,6 +427,9 @@ func (op *LogicalLimit) Equals(other any) bool {
 		return op2 == nil
 	}
 	if op2 == nil {
+		return false
+	}
+	if !op.LogicalSchemaProducer.Equals(&op2.LogicalSchemaProducer) {
 		return false
 	}
 	if (op.PartitionBy == nil && op2.PartitionBy != nil) || (op.PartitionBy != nil && op2.PartitionBy == nil) || len(op.PartitionBy) != len(op2.PartitionBy) {
@@ -545,6 +549,91 @@ func (op *DataSource) Equals(other any) bool {
 		return false
 	}
 	if op.IsForUpdateRead != op2.IsForUpdateRead {
+		return false
+	}
+	return true
+}
+
+// Hash64 implements the Hash64Equals interface.
+func (op *LogicalMemTable) Hash64(h base.Hasher) {
+	h.HashString(plancodec.TypeMemTableScan)
+	op.LogicalSchemaProducer.Hash64(h)
+	op.DBName.Hash64(h)
+	if op.TableInfo == nil {
+		h.HashByte(base.NilFlag)
+	} else {
+		h.HashByte(base.NotNilFlag)
+		op.TableInfo.Hash64(h)
+	}
+}
+
+// Equals implements the Hash64Equals interface, only receive *LogicalMemTable pointer.
+func (op *LogicalMemTable) Equals(other any) bool {
+	op2, ok := other.(*LogicalMemTable)
+	if !ok {
+		return false
+	}
+	if op == nil {
+		return op2 == nil
+	}
+	if op2 == nil {
+		return false
+	}
+	if !op.LogicalSchemaProducer.Equals(&op2.LogicalSchemaProducer) {
+		return false
+	}
+	if !op.DBName.Equals(&op2.DBName) {
+		return false
+	}
+	if !op.TableInfo.Equals(op2.TableInfo) {
+		return false
+	}
+	return true
+}
+
+// Hash64 implements the Hash64Equals interface.
+func (op *LogicalUnionAll) Hash64(h base.Hasher) {
+	h.HashString(plancodec.TypeUnion)
+	op.LogicalSchemaProducer.Hash64(h)
+}
+
+// Equals implements the Hash64Equals interface, only receive *LogicalUnionAll pointer.
+func (op *LogicalUnionAll) Equals(other any) bool {
+	op2, ok := other.(*LogicalUnionAll)
+	if !ok {
+		return false
+	}
+	if op == nil {
+		return op2 == nil
+	}
+	if op2 == nil {
+		return false
+	}
+	if !op.LogicalSchemaProducer.Equals(&op2.LogicalSchemaProducer) {
+		return false
+	}
+	return true
+}
+
+// Hash64 implements the Hash64Equals interface.
+func (op *LogicalPartitionUnionAll) Hash64(h base.Hasher) {
+	h.HashString(plancodec.TypePartitionUnion)
+	op.LogicalUnionAll.Hash64(h)
+}
+
+// Equals implements the Hash64Equals interface, only receive *LogicalPartitionUnionAll pointer.
+func (op *LogicalPartitionUnionAll) Equals(other any) bool {
+	op2, ok := other.(*LogicalPartitionUnionAll)
+	if !ok {
+		return false
+	}
+	if op == nil {
+		return op2 == nil
+	}
+	if op2 == nil {
+		return false
+	}
+	if !op.LogicalUnionAll.Equals(&op2.LogicalUnionAll) {
 		return false
 	}
 	return true
