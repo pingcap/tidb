@@ -91,7 +91,11 @@ go_test(
     ],
     embed = [":utils"],
     flaky = True,
+<<<<<<< HEAD
     shard_count = 37,
+=======
+    shard_count = 34,
+>>>>>>> 6b72ec460d6 (br: fix debug decode backupmeta (#56627))
     deps = [
         "//br/pkg/errors",
         "//br/pkg/metautil",
