@@ -354,7 +354,6 @@ func (w *worker) stop() {
 	w.cancel = nil
 
 	w.wg.Wait()
-	return
 }
 
 func (w *worker) setRepositoryDest(_ context.Context, dst string) error {

@@ -91,7 +91,7 @@ func (w *worker) updateSnapID(ctx context.Context, oid, nid uint64) error {
 		strconv.FormatUint(nid, 10))
 }
 
-func (w *worker) upsertHistSnapshot(ctx context.Context, sctx sessionctx.Context, snapID uint64) error {
+func upsertHistSnapshot(ctx context.Context, sctx sessionctx.Context, snapID uint64) error {
 	// TODO: fill DB_VER, WR_VER
 	snapshotsInsert := sqlescape.MustEscapeSQL("INSERT INTO %n.%n (`BEGIN_TIME`, `SNAP_ID`) VALUES (now(), %%?) ON DUPLICATE KEY UPDATE `BEGIN_TIME` = now()",
 		WorkloadSchema, histSnapshotsTable)
@@ -99,7 +99,7 @@ func (w *worker) upsertHistSnapshot(ctx context.Context, sctx sessionctx.Context
 	return err
 }
 
-func (w *worker) updateHistSnapshot(ctx context.Context, sctx sessionctx.Context, snapID uint64, errs []error) error {
+func updateHistSnapshot(ctx context.Context, sctx sessionctx.Context, snapID uint64, errs []error) error {
 	var nerr any
 	if err := stderrors.Join(errs...); err != nil {
 		nerr = err.Error()
@@ -167,7 +167,7 @@ func (w *worker) startSnapshot(_ctx context.Context) func() {
 					// another owner won the etcd CAS loop.
 					// it is unwanted but acceptable. because two owners should share
 					// similar datetime, same cluster versions.
-					if err := w.upsertHistSnapshot(ctx, sess, snapID+1); err != nil {
+					if err := upsertHistSnapshot(ctx, sess, snapID+1); err != nil {
 						logutil.BgLogger().Info("repository could not insert into hist_snapshots", zap.NamedError("err", err))
 						continue
 					}
@@ -215,7 +215,7 @@ func (w *worker) startSnapshot(_ctx context.Context) func() {
 				}
 				wg.Wait()
 
-				if err := w.updateHistSnapshot(ctx, sess, snapID, errs); err != nil {
+				if err := updateHistSnapshot(ctx, sess, snapID, errs); err != nil {
 					logutil.BgLogger().Info("repository snapshot failed: could not update hist_snapshots", zap.NamedError("err", err))
 				}
 			}
