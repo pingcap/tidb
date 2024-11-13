@@ -59,15 +59,20 @@ func init() {
 	})
 
 	// case 1: many short KV
-	moreKeys := make([][2][]byte, 10000)
+	moreKeys := make([][]byte, 10000)
 	for i := range moreKeys {
-		moreKeys[i] = [2][]byte{
-			[]byte("key" + fmt.Sprintf("%09d", i)),
+		moreKeys[i] = []byte("key" + fmt.Sprintf("%09d", i))
+	}
+
+	case1 := make([][2][]byte, 10000)
+	for i := range case1 {
+		case1[i] = [2][]byte{
+			moreKeys[i],
 			[]byte("1"),
 		}
 	}
 	testCases = append(testCases, &testCase{
-		sortedKVs:           moreKeys,
+		sortedKVs:           case1,
 		ts:                  404411537129996288,
 		expectedWriteCFPath: "sst-examples/1.sst",
 	})
@@ -80,6 +85,26 @@ func init() {
 		ts:                    404411537129996288,
 		expectedDefaultCFPath: "sst-examples/2-default.sst",
 		expectedWriteCFPath:   "sst-examples/2-write.sst",
+	})
+
+	// case 3: many long and short KV
+	moreValues := make([][]byte, 10000)
+	for i := range moreValues {
+		moreValues[i] = []byte(strings.Repeat("long-value-", i%100))
+	}
+	case3 := make([][2][]byte, 10000)
+	for i := range case3 {
+		case3[i] = [2][]byte{
+			moreKeys[i],
+			moreValues[i],
+		}
+	}
+
+	testCases = append(testCases, &testCase{
+		sortedKVs:             case3,
+		ts:                    404411537129996288,
+		expectedWriteCFPath:   "sst-examples/3-write.sst",
+		expectedDefaultCFPath: "sst-examples/3-default.sst",
 	})
 }
 
@@ -259,9 +284,9 @@ func testPebbleSST(
 
 	defaultCFSSTPath, writeCFSSTPath, err := writer.close()
 	require.NoError(t, err)
-	compareSST(t, c.expectedWriteCFPath, writeCFSSTPath, len(c.sortedKVs))
+	compareSST(t, c.expectedWriteCFPath, writeCFSSTPath)
 	if c.expectedDefaultCFPath != "" {
-		compareSST(t, c.expectedDefaultCFPath, defaultCFSSTPath, len(c.sortedKVs))
+		compareSST(t, c.expectedDefaultCFPath, defaultCFSSTPath)
 	}
 }
 
@@ -269,7 +294,6 @@ func compareSST(
 	t *testing.T,
 	tikvSSTPath string,
 	goSSTPath string,
-	expectedKVCnt int,
 ) {
 	f, err := vfs.Default.Open(goSSTPath)
 	require.NoError(t, err)
@@ -280,7 +304,6 @@ func compareSST(
 	defer reader.Close()
 
 	goSSTKVs, goSSTProperties := getData2Compare(t, reader)
-	require.Len(t, goSSTKVs, expectedKVCnt)
 
 	f2, err := vfs.Default.Open(tikvSSTPath)
 	require.NoError(t, err)
@@ -361,7 +384,7 @@ func getData2Compare(
 func TestDebugReadSST(t *testing.T) {
 	t.Skip("this is a manual test")
 
-	sstPath := "/tmp/default-cf.sst"
+	sstPath := "/tmp/test-write.sst"
 	t.Logf("read sst: %s", sstPath)
 	f, err := vfs.Default.Open(sstPath)
 	require.NoError(t, err)
@@ -372,7 +395,6 @@ func TestDebugReadSST(t *testing.T) {
 	defer reader.Close()
 
 	t.Logf("properties:\n %s", reader.Properties.String())
-	t.SkipNow()
 
 	iter, err := reader.NewIter(nil, nil)
 	require.NoError(t, err)
@@ -388,6 +410,7 @@ func TestDebugReadSST(t *testing.T) {
 		return realV
 	}
 	t.Logf("key: %X\nvalue: %X", k.UserKey, getValue(v))
+	t.SkipNow()
 	for {
 		k, v = iter.Next()
 		if k == nil {
