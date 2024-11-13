@@ -1206,7 +1206,20 @@ func TestAdminAlterDDLJobUnsupportedCases(t *testing.T) {
 	insertMockJob2Table(tk, &job)
 	// unsupported job type
 	tk.MustGetErrMsg(fmt.Sprintf("admin alter ddl jobs %d thread = 8;", job.ID),
-		"unsupported DDL operation: add column, only support add index, modify column and alter table reorganize partition DDL job")
+		"unsupported DDL operation: add column, only support add index(tidb_enable_dist_task=off), modify column and alter table reorganize partition DDL job")
+	deleteJobMetaByID(tk, 1)
+
+	job = model.Job{
+		ID:   1,
+		Type: model.ActionAddIndex,
+		ReorgMeta: &model.DDLReorgMeta{
+			IsDistReorg: true,
+		},
+	}
+	insertMockJob2Table(tk, &job)
+	// unsupported job type
+	tk.MustGetErrMsg(fmt.Sprintf("admin alter ddl jobs %d thread = 8;", job.ID),
+		"unsupported DDL operation: add index, only support add index(tidb_enable_dist_task=off), modify column and alter table reorganize partition DDL job")
 	deleteJobMetaByID(tk, 1)
 }
 
