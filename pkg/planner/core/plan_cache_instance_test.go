@@ -84,7 +84,7 @@ func TestInstancePlanCacheBasic(t *testing.T) {
 	_hit(t, pc, 1, 0) // access 1-3 to refresh their last_used
 	_hit(t, pc, 2, 0)
 	_hit(t, pc, 3, 0)
-	_, numEvicted := pc.Evict()
+	_, numEvicted := pc.Evict(false)
 	require.Equal(t, numEvicted > 0, true)
 	require.Equal(t, pc.MemUsage(), int64(300))
 	_hit(t, pc, 1, 0) // access 1-3 to refresh their last_used
@@ -98,7 +98,7 @@ func TestInstancePlanCacheBasic(t *testing.T) {
 	_put(pc, 1, 100, 0)
 	_put(pc, 2, 100, 0)
 	_put(pc, 3, 100, 0)
-	_, numEvicted = pc.Evict()
+	_, numEvicted = pc.Evict(false)
 	require.Equal(t, numEvicted > 0, false)
 	require.Equal(t, pc.MemUsage(), int64(300))
 	_hit(t, pc, 1, 0)
@@ -115,7 +115,7 @@ func TestInstancePlanCacheBasic(t *testing.T) {
 	numHeads := 0
 	pcImpl.heads.Range(func(k, v any) bool { numHeads++; return true })
 	require.Equal(t, numHeads, 3)
-	_, numEvicted = pc.Evict()
+	_, numEvicted = pc.Evict(false)
 	require.Equal(t, numEvicted > 0, true)
 	require.Equal(t, pc.MemUsage(), int64(0))
 	numHeads = 0
@@ -177,7 +177,7 @@ func TestInstancePlanCacheWithMatchOpts(t *testing.T) {
 	_hit(t, pc, 1, 1) // refresh 1-3's last_used
 	_hit(t, pc, 1, 2)
 	_hit(t, pc, 1, 3)
-	_, numEvicted := pc.Evict()
+	_, numEvicted := pc.Evict(false)
 	require.True(t, numEvicted > 0)
 	require.Equal(t, pc.MemUsage(), int64(300))
 	_hit(t, pc, 1, 1)
@@ -185,6 +185,27 @@ func TestInstancePlanCacheWithMatchOpts(t *testing.T) {
 	_hit(t, pc, 1, 3)
 	_miss(t, pc, 1, 4)
 	_miss(t, pc, 1, 5)
+}
+
+func TestInstancePlanCacheEvictAll(t *testing.T) {
+	sctx := MockContext()
+	defer func() {
+		domain.GetDomain(sctx).StatsHandle().Close()
+	}()
+	sctx.GetSessionVars().PlanCacheInvalidationOnFreshStats = true
+
+	// same key with different statsHash
+	pc := NewInstancePlanCache(1000, 1000)
+	_put(pc, 1, 100, 1)
+	_put(pc, 1, 100, 2)
+	_put(pc, 1, 100, 3)
+	_, numEvicted := pc.Evict(true)
+	require.Equal(t, 3, numEvicted)
+	_miss(t, pc, 1, 1)
+	_miss(t, pc, 1, 2)
+	_miss(t, pc, 1, 3)
+	require.Equal(t, pc.MemUsage(), int64(0))
+	require.Equal(t, pc.Size(), int64(0))
 }
 
 func TestInstancePlanCacheConcurrentRead(t *testing.T) {
