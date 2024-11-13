@@ -2635,5 +2635,5 @@ func TestPruneColumnsForDelete(t *testing.T) {
 		require.Equal(t, outputs[i].PrunedOutput, outputNames, comment)
 		require.Equal(t, outputs[i].FullLayoutInfo, fullLayout, comment)
 		require.Equal(t, outputs[i].InsidePlan, ToString(deletePlan.SelectPlan), comment)
-  }
+	}
 }
