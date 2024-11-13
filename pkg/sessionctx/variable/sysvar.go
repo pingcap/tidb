@@ -931,25 +931,6 @@ var defaultSysVars = []*SysVar{
 		return nil
 	}},
 	{Scope: ScopeGlobal, Name: TiDBEnableHistoricalStats, Value: Off, Type: TypeBool, Depended: true},
-	{
-		Scope:    ScopeGlobal,
-		Name:     TiDBPipelinedFlushConcurrency,
-		Value:    strconv.Itoa(DefTiDBPipelinedFlushConcurrency),
-		Type:     TypeUnsigned,
-		MinValue: 1,
-		MaxValue: 65536,
-		SetGlobal: func(_ context.Context, _ *SessionVars, val string) error {
-			tikvcfg.PipelinedFlushConcurrency.Store(
-				uint32(
-					tidbOptPositiveInt32(
-						val,
-						DefTiDBPipelinedFlushConcurrency,
-					),
-				),
-			)
-			return nil
-		},
-	},
 	/* tikv gc metrics */
 	{Scope: ScopeGlobal, Name: TiDBGCEnable, Value: On, Type: TypeBool, GetGlobal: func(_ context.Context, s *SessionVars) (string, error) {
 		return getTiDBTableValue(s, "tikv_gc_enable", On)
@@ -3443,6 +3424,26 @@ var defaultSysVars = []*SysVar{
 	{Scope: ScopeGlobal, Name: TiDBTSOClientRPCMode, Value: DefTiDBTSOClientRPCMode, Type: TypeEnum, PossibleValues: []string{TSOClientRPCModeDefault, TSOClientRPCModeParallel, TSOClientRPCModeParallelFast},
 		SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
 			return (*SetPDClientDynamicOption.Load())(TiDBTSOClientRPCMode, val)
+		},
+	},
+	{
+		Scope:          ScopeGlobal | ScopeSession,
+		Name:           TiDBPipelinedDMLResourcePolicy,
+		Value:          DefTiDBPipelinedDmlResourcePolicy,
+		Type:           TypeEnum,
+		PossibleValues: []string{StrategyPerformance, StrategyConservation},
+		SetSession: func(s *SessionVars, val string) error {
+			switch val {
+			case StrategyPerformance:
+				s.PipelinedDMLConfig.PipelinedFlushConcurrency = 128
+				s.PipelinedDMLConfig.PipelinedResolveLockConcurrency = 8
+			case StrategyConservation:
+				s.PipelinedDMLConfig.PipelinedFlushConcurrency = 2
+				s.PipelinedDMLConfig.PipelinedResolveLockConcurrency = 2
+			default:
+				return ErrWrongValueForVar.FastGenByArgs(TiDBPipelinedDMLResourcePolicy, val)
+			}
+			return nil
 		},
 	},
 }

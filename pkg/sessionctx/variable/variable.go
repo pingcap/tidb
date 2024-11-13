@@ -95,6 +95,13 @@ const (
 	// keep approximately 4 batched TSO requests running in parallel. This option tries to reduce the batch-waiting time
 	// by 3/4, at the expense of about 4 times the amount of TSO RPC calls.
 	TSOClientRPCModeParallelFast = "PARALLEL-FAST"
+
+	// StrategyPerformance is a choice of variable TiDBPipelinedDMLResourcePolicy,
+	// the best performance policy
+	StrategyPerformance = "PERFORMANCE"
+	// StrategyConservation is a choice of variable TiDBPipelinedDMLResourcePolicy,
+	// a rather conservative policy
+	StrategyConservation = "CONSERVATION"
 )
 
 // Global config name list.

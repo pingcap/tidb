@@ -42,6 +42,22 @@ func TestVariable(t *testing.T) {
 	require.Equal(t, tk.Session().GetSessionVars().BulkDMLEnabled, false)
 	// not supported yet.
 	tk.MustExecToErr("set session tidb_dml_type = bulk(10)")
+
+	tk.MustQuery("select @@tidb_pipelined_dml_resource_policy").Check(testkit.Rows("PERFORMANCE"))
+	require.Equal(t, tk.Session().GetSessionVars().PipelinedFlushConcurrency, 128)
+	require.Equal(t, tk.Session().GetSessionVars().PipelinedResolveLockConcurrency, 8)
+	tk.MustExec("set @@tidb_pipelined_dml_resource_policy = 'conserVation'")
+	tk.MustQuery("select @@tidb_pipelined_dml_resource_policy").Check(testkit.Rows("CONSERVATION"))
+	require.Equal(t, tk.Session().GetSessionVars().PipelinedFlushConcurrency, 2)
+	require.Equal(t, tk.Session().GetSessionVars().PipelinedResolveLockConcurrency, 2)
+	tk.MustExec("set @@tidb_pipelined_dml_resource_policy = 'Performance'")
+	tk.MustQuery("select @@tidb_pipelined_dml_resource_policy").Check(testkit.Rows("PERFORMANCE"))
+	require.Equal(t, tk.Session().GetSessionVars().PipelinedFlushConcurrency, 128)
+	require.Equal(t, tk.Session().GetSessionVars().PipelinedResolveLockConcurrency, 8)
+
+	tk.MustExec("set global tidb_pipelined_dml_resource_policy = 'conservation'")
+	tk2 := testkit.NewTestKit(t, store)
+	tk2.MustQuery("select @@global.tidb_pipelined_dml_resource_policy").Check(testkit.Rows("CONSERVATION"))
 }
 
 // We limit this feature only for cases meet all the following conditions:
