@@ -1102,12 +1102,11 @@ func (p *LogicalJoin) pushDownTopNToChild(topN *LogicalTopN, idx int, opt *optim
 				isNullEQ = true
 			}
 		}
-		if !isNullEQ && (innerChild.Schema().IsUniqueKey(innerJoinKey...) || innerChild.Schema().IsUnique(innerJoinKey...)) {
-			// If the inner side is unique key, whatever they are nullable or not, we can push the offset down.
-			// This is because that if there's nulls in the inner side, they will not  match any row from outer side.
-			count, offset = topN.Count, topN.Offset
-		} else if isNullEQ && innerChild.Schema().IsUnique(innerJoinKey...) {
-			// But if there's nulleq, we must check unique && not null.
+		// If it's unique key(unique with not null), we can push the offset down safely whatever the join key is normal eq or nulleq.
+		// If the join key is nulleq, then we can only push the offset down when the inner side is unique key.
+		// Only when the join key is normal eq, we can push the offset down when the inner side is unique(could be null).
+		if innerChild.Schema().IsUnique(false, innerJoinKey...) ||
+			(innerChild.Schema().IsUnique(true, innerJoinKey...) && !isNullEQ) {
 			count, offset = topN.Count, topN.Offset
 		}
 	} else if p.JoinType == RightOuterJoin {
@@ -1120,9 +1119,8 @@ func (p *LogicalJoin) pushDownTopNToChild(topN *LogicalTopN, idx int, opt *optim
 				isNullEQ = true
 			}
 		}
-		if !isNullEQ && (innerChild.Schema().IsUniqueKey(innerJoinKey...) || innerChild.Schema().IsUnique(innerJoinKey...)) {
-			count, offset = topN.Count, topN.Offset
-		} else if isNullEQ && innerChild.Schema().IsUnique(innerJoinKey...) {
+		if innerChild.Schema().IsUnique(false, innerJoinKey...) ||
+			(!isNullEQ && innerChild.Schema().IsUnique(true, innerJoinKey...)) {
 			count, offset = topN.Count, topN.Offset
 		}
 	}
