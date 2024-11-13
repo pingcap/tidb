@@ -806,7 +806,7 @@ func (cc *clientConn) openSessionAndDoAuth(ctx context.Context, authData []byte,
 	}
 
 	userIdentity := &auth.UserIdentity{Username: cc.user, Hostname: host, AuthPlugin: authPlugin}
-	if err = cc.ctx.Auth(ctx, userIdentity, authData, cc.salt, cc); err != nil {
+	if err = cc.ctx.Auth(userIdentity, authData, cc.salt, cc); err != nil {
 		return err
 	}
 	cc.ctx.SetPort(port)
