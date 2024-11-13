@@ -4738,7 +4738,7 @@ func getBf4TimeAddSub(ctx BuildContext, funcName string, args []Expression) (tp1
 	case mysql.TypeDuration:
 		argTp1, retTp = types.ETDuration, types.ETDuration
 	case mysql.TypeDate:
-		argTp1, retTp = types.ETDuration, types.ETString
+		argTp1, retTp = types.ETDatetime, types.ETString
 	default:
 		argTp1, retTp = types.ETString, types.ETString
 	}
