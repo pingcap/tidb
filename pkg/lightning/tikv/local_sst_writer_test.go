@@ -274,15 +274,15 @@ func testPebbleSST(
 	// for now I don't use t.TempDir() to avoid cleaning up the directory after test
 	// is failed.
 	workDir := "/tmp/test-pebble-sst"
-	writer, err := newLocalSSTWriter(workDir, c.ts)
+	writer, err := NewLocalSSTWriter(workDir, c.ts)
 	require.NoError(t, err)
 
 	for _, kv := range c.sortedKVs {
-		err = writer.set(kv[0], kv[1])
+		err = writer.Set(kv[0], kv[1])
 		require.NoError(t, err)
 	}
 
-	defaultCFSSTPath, writeCFSSTPath, err := writer.close()
+	defaultCFSSTPath, writeCFSSTPath, err := writer.Close()
 	require.NoError(t, err)
 	compareSST(t, c.expectedWriteCFPath, writeCFSSTPath)
 	if c.expectedDefaultCFPath != "" {

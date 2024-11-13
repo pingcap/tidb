@@ -158,7 +158,7 @@ func encodeLongValue4SST(ts uint64) []byte {
 	return actualValue
 }
 
-type localSSTWriter struct {
+type LocalSSTWriter struct {
 	ts          uint64
 	defaultPath string
 	defaultCF   *rockssst.Writer
@@ -166,17 +166,17 @@ type localSSTWriter struct {
 	writeCF     *rockssst.Writer
 }
 
-func newLocalSSTWriter(
+func NewLocalSSTWriter(
 	workDir string,
 	ts uint64,
-) (*localSSTWriter, error) {
+) (*LocalSSTWriter, error) {
 	err := os.MkdirAll(workDir, 0o750)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 
 	u := uuid.NewString()
-	ret := &localSSTWriter{ts: ts}
+	ret := &LocalSSTWriter{ts: ts}
 
 	ret.defaultPath = path.Join(workDir, u+"-default.sst")
 	ret.writePath = path.Join(workDir, u+"-write.sst")
@@ -192,7 +192,7 @@ func newLocalSSTWriter(
 	return ret, nil
 }
 
-func (w *localSSTWriter) set(key, value []byte) error {
+func (w *LocalSSTWriter) Set(key, value []byte) error {
 	actualKey := encodeKey4SST(key, w.ts)
 	if isShortValue(value) {
 		actualValue := encodeShortValue4SST(value, w.ts)
@@ -205,10 +205,10 @@ func (w *localSSTWriter) set(key, value []byte) error {
 	return errors.Trace(w.writeCF.Set(actualKey, encodeLongValue4SST(w.ts)))
 }
 
-// close flushes the SST files to disk and return the SST file paths that can be
+// Close flushes the SST files to disk and return the SST file paths that can be
 // ingested into default / write column family.
 // TODO(lance6716): need to decide how to express that no default CF is needed.
-func (w *localSSTWriter) close() (defaultCFSSTPath, writeCFSSTPath string, errRet error) {
+func (w *LocalSSTWriter) Close() (defaultCFSSTPath, writeCFSSTPath string, errRet error) {
 	err := w.defaultCF.Close()
 	err2 := w.writeCF.Close()
 	if err != nil {
