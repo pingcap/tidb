@@ -8,7 +8,11 @@ go_test(
         "main_test.go",
     ],
     flaky = True,
+<<<<<<< HEAD
     shard_count = 21,
+=======
+    shard_count = 24,
+>>>>>>> 738adb9934c (executor: fix random cte error under apply (#57294))
     deps = [
         "//pkg/autoid_service",
         "//pkg/config",
