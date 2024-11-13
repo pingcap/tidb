@@ -346,7 +346,7 @@ func (w *worker) stop() {
 	}
 
 	if w.owner != nil {
-		w.owner.Cancel()
+		w.owner.Close()
 		w.owner = nil
 	}
 
