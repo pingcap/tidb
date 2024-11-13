@@ -24,6 +24,7 @@ import (
 // Hash64 implements the Hash64Equals interface.
 func (op *LogicalJoin) Hash64(h base.Hasher) {
 	h.HashString(plancodec.TypeJoin)
+	op.LogicalSchemaProducer.Hash64(h)
 	h.HashInt64(int64(op.JoinType))
 	if op.EqualConditions == nil {
 		h.HashByte(base.NilFlag)
@@ -74,11 +75,17 @@ func (op *LogicalJoin) Hash64(h base.Hasher) {
 
 // Equals implements the Hash64Equals interface, only receive *LogicalJoin pointer.
 func (op *LogicalJoin) Equals(other any) bool {
-	if other == nil {
-		return false
-	}
 	op2, ok := other.(*LogicalJoin)
 	if !ok {
+		return false
+	}
+	if op == nil {
+		return op2 == nil
+	}
+	if op2 == nil {
+		return false
+	}
+	if !op.LogicalSchemaProducer.Equals(&op2.LogicalSchemaProducer) {
 		return false
 	}
 	if op.JoinType != op2.JoinType {
@@ -130,6 +137,7 @@ func (op *LogicalJoin) Equals(other any) bool {
 // Hash64 implements the Hash64Equals interface.
 func (op *LogicalAggregation) Hash64(h base.Hasher) {
 	h.HashString(plancodec.TypeAgg)
+	op.LogicalSchemaProducer.Hash64(h)
 	if op.AggFuncs == nil {
 		h.HashByte(base.NilFlag)
 	} else {
@@ -164,11 +172,17 @@ func (op *LogicalAggregation) Hash64(h base.Hasher) {
 
 // Equals implements the Hash64Equals interface, only receive *LogicalAggregation pointer.
 func (op *LogicalAggregation) Equals(other any) bool {
-	if other == nil {
-		return false
-	}
 	op2, ok := other.(*LogicalAggregation)
 	if !ok {
+		return false
+	}
+	if op == nil {
+		return op2 == nil
+	}
+	if op2 == nil {
+		return false
+	}
+	if !op.LogicalSchemaProducer.Equals(&op2.LogicalSchemaProducer) {
 		return false
 	}
 	if (op.AggFuncs == nil && op2.AggFuncs != nil) || (op.AggFuncs != nil && op2.AggFuncs == nil) || len(op.AggFuncs) != len(op2.AggFuncs) {
@@ -221,11 +235,14 @@ func (op *LogicalApply) Hash64(h base.Hasher) {
 
 // Equals implements the Hash64Equals interface, only receive *LogicalApply pointer.
 func (op *LogicalApply) Equals(other any) bool {
-	if other == nil {
-		return false
-	}
 	op2, ok := other.(*LogicalApply)
 	if !ok {
+		return false
+	}
+	if op == nil {
+		return op2 == nil
+	}
+	if op2 == nil {
 		return false
 	}
 	if !op.LogicalJoin.Equals(&op2.LogicalJoin) {
@@ -248,6 +265,7 @@ func (op *LogicalApply) Equals(other any) bool {
 // Hash64 implements the Hash64Equals interface.
 func (op *LogicalExpand) Hash64(h base.Hasher) {
 	h.HashString(plancodec.TypeExpand)
+	op.LogicalSchemaProducer.Hash64(h)
 	if op.DistinctGroupByCol == nil {
 		h.HashByte(base.NilFlag)
 	} else {
@@ -310,11 +328,17 @@ func (op *LogicalExpand) Hash64(h base.Hasher) {
 
 // Equals implements the Hash64Equals interface, only receive *LogicalExpand pointer.
 func (op *LogicalExpand) Equals(other any) bool {
-	if other == nil {
-		return false
-	}
 	op2, ok := other.(*LogicalExpand)
 	if !ok {
+		return false
+	}
+	if op == nil {
+		return op2 == nil
+	}
+	if op2 == nil {
+		return false
+	}
+	if !op.LogicalSchemaProducer.Equals(&op2.LogicalSchemaProducer) {
 		return false
 	}
 	if (op.DistinctGroupByCol == nil && op2.DistinctGroupByCol != nil) || (op.DistinctGroupByCol != nil && op2.DistinctGroupByCol == nil) || len(op.DistinctGroupByCol) != len(op2.DistinctGroupByCol) {
@@ -394,11 +418,14 @@ func (op *LogicalLimit) Hash64(h base.Hasher) {
 
 // Equals implements the Hash64Equals interface, only receive *LogicalLimit pointer.
 func (op *LogicalLimit) Equals(other any) bool {
-	if other == nil {
-		return false
-	}
 	op2, ok := other.(*LogicalLimit)
 	if !ok {
+		return false
+	}
+	if op == nil {
+		return op2 == nil
+	}
+	if op2 == nil {
 		return false
 	}
 	if (op.PartitionBy == nil && op2.PartitionBy != nil) || (op.PartitionBy != nil && op2.PartitionBy == nil) || len(op.PartitionBy) != len(op2.PartitionBy) {
@@ -425,13 +452,100 @@ func (op *LogicalMaxOneRow) Hash64(h base.Hasher) {
 
 // Equals implements the Hash64Equals interface, only receive *LogicalMaxOneRow pointer.
 func (op *LogicalMaxOneRow) Equals(other any) bool {
-	if other == nil {
-		return false
-	}
 	op2, ok := other.(*LogicalMaxOneRow)
 	if !ok {
 		return false
 	}
+	if op == nil {
+		return op2 == nil
+	}
+	if op2 == nil {
+		return false
+	}
 	_ = op2
+	return true
+}
+
+// Hash64 implements the Hash64Equals interface.
+func (op *DataSource) Hash64(h base.Hasher) {
+	h.HashString(plancodec.TypeDataSource)
+	op.LogicalSchemaProducer.Hash64(h)
+	if op.TableInfo == nil {
+		h.HashByte(base.NilFlag)
+	} else {
+		h.HashByte(base.NotNilFlag)
+		op.TableInfo.Hash64(h)
+	}
+	if op.TableAsName == nil {
+		h.HashByte(base.NilFlag)
+	} else {
+		h.HashByte(base.NotNilFlag)
+		op.TableAsName.Hash64(h)
+	}
+	if op.PushedDownConds == nil {
+		h.HashByte(base.NilFlag)
+	} else {
+		h.HashByte(base.NotNilFlag)
+		h.HashInt(len(op.PushedDownConds))
+		for _, one := range op.PushedDownConds {
+			one.Hash64(h)
+		}
+	}
+	if op.AllConds == nil {
+		h.HashByte(base.NilFlag)
+	} else {
+		h.HashByte(base.NotNilFlag)
+		h.HashInt(len(op.AllConds))
+		for _, one := range op.AllConds {
+			one.Hash64(h)
+		}
+	}
+	h.HashInt64(int64(op.PreferStoreType))
+	h.HashBool(op.IsForUpdateRead)
+}
+
+// Equals implements the Hash64Equals interface, only receive *DataSource pointer.
+func (op *DataSource) Equals(other any) bool {
+	op2, ok := other.(*DataSource)
+	if !ok {
+		return false
+	}
+	if op == nil {
+		return op2 == nil
+	}
+	if op2 == nil {
+		return false
+	}
+	if !op.LogicalSchemaProducer.Equals(&op2.LogicalSchemaProducer) {
+		return false
+	}
+	if !op.TableInfo.Equals(op2.TableInfo) {
+		return false
+	}
+	if !op.TableAsName.Equals(op2.TableAsName) {
+		return false
+	}
+	if (op.PushedDownConds == nil && op2.PushedDownConds != nil) || (op.PushedDownConds != nil && op2.PushedDownConds == nil) || len(op.PushedDownConds) != len(op2.PushedDownConds) {
+		return false
+	}
+	for i, one := range op.PushedDownConds {
+		if !one.Equals(op2.PushedDownConds[i]) {
+			return false
+		}
+	}
+	if (op.AllConds == nil && op2.AllConds != nil) || (op.AllConds != nil && op2.AllConds == nil) || len(op.AllConds) != len(op2.AllConds) {
+		return false
+	}
+	for i, one := range op.AllConds {
+		if !one.Equals(op2.AllConds[i]) {
+			return false
+		}
+	}
+	if op.PreferStoreType != op2.PreferStoreType {
+		return false
+	}
+	if op.IsForUpdateRead != op2.IsForUpdateRead {
+		return false
+	}
 	return true
 }

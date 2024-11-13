@@ -29,6 +29,37 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestLogicalSchemaProducerHash64Equals(t *testing.T) {
+	col1 := &expression.Column{
+		ID:      1,
+		Index:   0,
+		RetType: types.NewFieldType(mysql.TypeLonglong),
+	}
+	col2 := &expression.Column{
+		ID:      2,
+		Index:   0,
+		RetType: types.NewFieldType(mysql.TypeLonglong),
+	}
+	ctx := mock.NewContext()
+	d1 := logicalop.DataSource{}.Init(ctx, 1)
+	d1.LogicalSchemaProducer.SetSchema(&expression.Schema{Columns: []*expression.Column{col1}})
+	d2 := logicalop.DataSource{}.Init(ctx, 1)
+	d2.LogicalSchemaProducer.SetSchema(&expression.Schema{Columns: []*expression.Column{col1}})
+
+	hasher1 := base.NewHashEqualer()
+	hasher2 := base.NewHashEqualer()
+	d1.Hash64(hasher1)
+	d2.Hash64(hasher2)
+	require.Equal(t, hasher1.Sum64(), hasher2.Sum64())
+	require.True(t, d1.Equals(d2))
+
+	d2.LogicalSchemaProducer.SetSchema(&expression.Schema{Columns: []*expression.Column{col2}})
+	hasher2.Reset()
+	d2.Hash64(hasher2)
+	require.NotEqual(t, hasher1.Sum64(), hasher2.Sum64())
+	require.False(t, d1.Equals(d2))
+}
+
 func TestLogicalMaxOneRowHash64Equals(t *testing.T) {
 	m1 := &logicalop.LogicalMaxOneRow{}
 	m2 := &logicalop.LogicalMaxOneRow{}
