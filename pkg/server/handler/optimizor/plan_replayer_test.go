@@ -186,7 +186,7 @@ func TestDumpPlanReplayerAPI(t *testing.T) {
 	tk.MustExec(fmt.Sprintf(`plan replayer load "%s"`, path))
 
 	// 3-3. assert that the count and modify count in the stats is as expected
-	rows := tk.MustQuery("show stats_meta")
+	rows := tk.MustQuery(`show stats_meta where table_name="t"`)
 	require.True(t, rows.Next(), "unexpected data")
 	var dbName, tableName string
 	var modifyCount, count int64
@@ -217,6 +217,7 @@ func prepareData4PlanReplayer(t *testing.T, client *testserverclient.TestServerC
 	tk.MustExec("create table t(a int)")
 	tk.MustExec("CREATE TABLE authors (id INT PRIMARY KEY AUTO_INCREMENT,name VARCHAR(100) NOT NULL,email VARCHAR(100) UNIQUE NOT NULL);")
 	tk.MustExec("CREATE TABLE books (id INT PRIMARY KEY AUTO_INCREMENT,title VARCHAR(200) NOT NULL,publication_date DATE NOT NULL,author_id INT,FOREIGN KEY (author_id) REFERENCES authors(id) ON DELETE CASCADE);")
+	tk.MustExec("create table tt(a int, b varchar(10)) PARTITION BY HASH(a) PARTITIONS 4;")
 	err = h.HandleDDLEvent(<-h.DDLEventCh())
 	require.NoError(t, err)
 	tk.MustExec("insert into t values(1), (2), (3), (4)")
@@ -224,6 +225,9 @@ func prepareData4PlanReplayer(t *testing.T, client *testserverclient.TestServerC
 	tk.MustExec("analyze table t")
 	tk.MustExec("insert into t values(5), (6), (7), (8)")
 	require.NoError(t, h.DumpStatsDeltaToKV(true))
+	tk.MustExec("INSERT INTO tt (a, b) VALUES (1, 'str1'), (2, 'str2'), (3, 'str3'), (4, 'str4'),(5, 'str5'), (6, 'str6'), (7, 'str7'), (8, 'str8'),(9, 'str9'), (10, 'str10'), (11, 'str11'), (12, 'str12'),(13, 'str13'), (14, 'str14'), (15, 'str15'), (16, 'str16'),(17, 'str17'), (18, 'str18'), (19, 'str19'), (20, 'str20'),(21, 'str21'), (22, 'str22'), (23, 'str23'), (24, 'str24'),(25, 'str25'), (26, 'str26'), (27, 'str27'), (28, 'str28'),(29, 'str29'), (30, 'str30'), (31, 'str31'), (32, 'str32'),(33, 'str33'), (34, 'str34'), (35, 'str35'), (36, 'str36'),(37, 'str37'), (38, 'str38'), (39, 'str39'), (40, 'str40'),(41, 'str41'), (42, 'str42'), (43, 'str43'), (44, 'str44'),(45, 'str45'), (46, 'str46'), (47, 'str47'), (48, 'str48'),(49, 'str49'), (50, 'str50'), (51, 'str51'), (52, 'str52'),(53, 'str53'), (54, 'str54'), (55, 'str55'), (56, 'str56'),(57, 'str57'), (58, 'str58'), (59, 'str59'), (60, 'str60'),(61, 'str61'), (62, 'str62'), (63, 'str63'), (64, 'str64'),(65, 'str65'), (66, 'str66'), (67, 'str67'), (68, 'str68'),(69, 'str69'), (70, 'str70'), (71, 'str71'), (72, 'str72'),(73, 'str73'), (74, 'str74'), (75, 'str75'), (76, 'str76'),(77, 'str77'), (78, 'str78'), (79, 'str79'), (80, 'str80'),(81, 'str81'), (82, 'str82'), (83, 'str83'), (84, 'str84'),(85, 'str85'), (86, 'str86'), (87, 'str87'), (88, 'str88'),(89, 'str89'), (90, 'str90'), (91, 'str91'), (92, 'str92'),(93, 'str93'), (94, 'str94'), (95, 'str95'), (96, 'str96'),(97, 'str97'), (98, 'str98'), (99, 'str99'), (100, 'str100');")
+	require.NoError(t, h.DumpStatsDeltaToKV(true))
+	tk.MustExec("analyze table tt")
 	rows := tk.MustQuery("plan replayer dump explain select * from t")
 	require.True(t, rows.Next(), "unexpected data")
 	var filename string
