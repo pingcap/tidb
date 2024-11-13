@@ -17,6 +17,7 @@ package repository
 import (
 	"context"
 	"errors"
+	"strconv"
 	"sync"
 	"time"
 
@@ -109,26 +110,23 @@ type worker struct {
 	newOwner   func(string, string) owner.Manager
 	owner      owner.Manager
 	wg         *util.WaitGroupEnhancedWrapper
-	instanceID string
 	enabled    bool
+	instanceID string
 
 	samplingInterval int32
 	samplingTicker   *time.Ticker
 	snapshotInterval int32
 	snapshotTicker   *time.Ticker
+	retentionDays    int32
 }
 
 var workerCtx = worker{
-	samplingInterval: -1,
-	snapshotInterval: -1,
+	samplingInterval: defSamplingInterval,
+	snapshotInterval: defSnapshotInterval,
+	retentionDays:    defRententionDays,
 }
 
 func init() {
-	workerCtx.samplingTicker = time.NewTicker(time.Second)
-	workerCtx.snapshotTicker = time.NewTicker(time.Second)
-	workerCtx.samplingTicker.Stop()
-	workerCtx.snapshotTicker.Stop()
-
 	variable.RegisterSysVar(&variable.SysVar{
 		Scope: variable.ScopeGlobal,
 		Name:  repositoryDest,
@@ -145,20 +143,20 @@ func init() {
 		Scope:    variable.ScopeGlobal,
 		Name:     repositoryRetentionDays,
 		Type:     variable.TypeInt,
-		Value:    "7",
+		Value:    strconv.Itoa(defRententionDays),
 		MinValue: 0,
 		MaxValue: 365,
 		SetGlobal: func(ctx context.Context, _ *variable.SessionVars, val string) error {
-			return setRetentionDays(ctx, val)
+			return workerCtx.setRetentionDays(ctx, val)
 		},
 	})
 	variable.RegisterSysVar(&variable.SysVar{
 		Scope:    variable.ScopeGlobal,
 		Name:     repositorySamplingInterval,
 		Type:     variable.TypeInt,
-		Value:    "5",
+		Value:    strconv.Itoa(defSamplingInterval),
 		MinValue: 0,
-		MaxValue: 365,
+		MaxValue: 600,
 		SetGlobal: func(ctx context.Context, _ *variable.SessionVars, val string) error {
 			return workerCtx.changeSamplingInterval(ctx, val)
 		},
@@ -167,7 +165,7 @@ func init() {
 		Scope:    variable.ScopeGlobal,
 		Name:     repositorySnapshotInterval,
 		Type:     variable.TypeInt,
-		Value:    "3600",
+		Value:    strconv.Itoa(defSnapshotInterval),
 		MinValue: 900,
 		MaxValue: 7200,
 		SetGlobal: func(ctx context.Context, _ *variable.SessionVars, val string) error {
@@ -176,15 +174,19 @@ func init() {
 	})
 }
 
+func initializeWorker(w *worker, etcdCli *clientv3.Client, newOwner func(string, string) owner.Manager, sesspool sessionPool) {
+	w.etcdClient = etcdCli
+	w.sesspool = sesspool
+	w.newOwner = newOwner
+	w.wg = util.NewWaitGroupEnhancedWrapper("repository", nil, false)
+}
+
 // SetupRepository finishes the initialization of the workload repository.
-func SetupRepository(d *domain.Domain) {
+func SetupRepository(dom *domain.Domain) {
 	workerCtx.Lock()
 	defer workerCtx.Unlock()
 
-	workerCtx.etcdClient = d.GetEtcdClient()
-	workerCtx.sesspool = d.SysSessionPool()
-	workerCtx.newOwner = d.NewOwnerManager
-	workerCtx.wg = util.NewWaitGroupEnhancedWrapper("repository", nil, false)
+	initializeWorker(&workerCtx, dom.GetEtcdClient(), dom.NewOwnerManager, dom.SysSessionPool())
 
 	if workerCtx.enabled {
 		if err := workerCtx.start(); err != nil {
@@ -197,13 +199,11 @@ func SetupRepository(d *domain.Domain) {
 // StopRepository stops any the go routines for the repository.
 func StopRepository() {
 	workerCtx.Lock()
-	workerCtx.stop()
-	workerCtx.sesspool = nil // prevent the repository from being restarted
-	workerCtx.Unlock()
-}
+	defer workerCtx.Unlock()
 
-func (w *worker) initialized() bool {
-	return w.sesspool != nil
+	workerCtx.stop()
+	// prevent the repository from being restarted
+	workerCtx.sesspool = nil
 }
 
 func runQuery(ctx context.Context, sctx sessionctx.Context, sql string, args ...any) (v []chunk.Row, e error) {
@@ -248,6 +248,10 @@ func (w *worker) getSessionWithRetry() pools.Resource {
 }
 
 func (w *worker) readInstanceID() error {
+	if w.instanceID != "" {
+		return nil
+	}
+
 	serverInfo, err := infosync.GetServerInfo()
 	if err != nil {
 		return err
@@ -316,11 +320,12 @@ func (w *worker) startRepository(ctx context.Context) func() {
 
 func (w *worker) start() error {
 	if w.cancel != nil {
+		// prevent enable twice
 		return nil
 	}
 
 	w.enabled = true
-	if !w.initialized() {
+	if w.sesspool == nil {
 		// setup isn't finished, just set enabled and return
 		return nil
 	}
@@ -334,12 +339,12 @@ func (w *worker) start() error {
 	w.wg.RunWithRecover(w.startRepository(ctx), func(err any) {
 		logutil.BgLogger().Info("repository prestart panic", zap.Any("err", err), zap.Stack("stack"))
 	}, "prestart")
-
 	return nil
 }
 
 func (w *worker) stop() {
 	w.enabled = false
+
 	if w.cancel == nil {
 		// Worker was not started, just clear enabled and return
 		return

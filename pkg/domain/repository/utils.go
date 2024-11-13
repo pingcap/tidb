@@ -59,12 +59,14 @@ func generatePartitionRanges(sb *strings.Builder, tbInfo *model.TableInfo) bool 
 	return allExisted
 }
 
-func setRetentionDays(_ context.Context, d string) error {
+func (w *worker) setRetentionDays(_ context.Context, d string) error {
 	n, err := strconv.Atoi(d)
 	if err != nil {
 		return err
 	}
-	retentionDays.Store(int32(n))
+	w.Lock()
+	defer w.Unlock()
+	w.retentionDays = int32(n)
 	return nil
 }
 

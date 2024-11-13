@@ -1,4 +1,4 @@
-load("@io_bazel_rules_go//go:def.bzl", "go_library")
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 
 go_library(
     name = "repository",
@@ -33,7 +33,24 @@ go_library(
         "@com_github_ngaut_pools//:pools",
         "@com_github_pingcap_errors//:errors",
         "@io_etcd_go_etcd_client_v3//:client",
-        "@org_uber_go_atomic//:atomic",
         "@org_uber_go_zap//:zap",
+    ],
+)
+
+go_test(
+    name = "repository_test",
+    timeout = "short",
+    srcs = ["worker_test.go"],
+    embed = [":repository"],
+    flaky = True,
+    deps = [
+        "//pkg/domain",
+        "//pkg/kv",
+        "//pkg/owner",
+        "//pkg/parser/model",
+        "//pkg/testkit",
+        "@com_github_stretchr_testify//require",
+        "@io_etcd_go_etcd_client_v3//:client",
+        "@io_etcd_go_etcd_server_v3//embed",
     ],
 )

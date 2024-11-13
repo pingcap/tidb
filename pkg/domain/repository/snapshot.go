@@ -131,7 +131,7 @@ func (w *worker) snapshotTable(ctx context.Context, snapID uint64, rt *repositor
 func (w *worker) startSnapshot(_ctx context.Context) func() {
 	return func() {
 		w.Lock()
-		w.resetSnapshotInterval(w.snapshotInterval)
+		w.snapshotTicker = time.NewTicker(time.Duration(w.snapshotInterval) * time.Second)
 		w.Unlock()
 
 		_sessctx := w.getSessionWithRetry()
@@ -224,11 +224,9 @@ func (w *worker) startSnapshot(_ctx context.Context) func() {
 }
 
 func (w *worker) resetSnapshotInterval(newRate int32) {
-	if newRate == -1 {
-		panic("Variable " + repositorySnapshotInterval + " was not set before repository was started.")
+	if w.snapshotTicker != nil {
+		w.snapshotTicker.Reset(time.Duration(newRate) * time.Second)
 	}
-
-	w.snapshotTicker.Reset(time.Duration(newRate) * time.Second)
 }
 
 func (w *worker) changeSnapshotInterval(_ context.Context, d string) error {
@@ -242,9 +240,7 @@ func (w *worker) changeSnapshotInterval(_ context.Context, d string) error {
 
 	if int32(n) != w.snapshotInterval {
 		w.snapshotInterval = int32(n)
-		if w.cancel != nil {
-			w.resetSnapshotInterval(w.snapshotInterval)
-		}
+		w.resetSnapshotInterval(w.snapshotInterval)
 	}
 
 	return nil

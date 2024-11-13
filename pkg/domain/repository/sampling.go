@@ -45,7 +45,7 @@ func (w *worker) samplingTable(ctx context.Context, rt *repositoryTable) {
 func (w *worker) startSample(ctx context.Context) func() {
 	return func() {
 		w.Lock()
-		w.resetSamplingInterval(w.samplingInterval)
+		w.samplingTicker = time.NewTicker(time.Duration(w.samplingInterval) * time.Second)
 		w.Unlock()
 
 		for {
@@ -73,9 +73,11 @@ func (w *worker) startSample(ctx context.Context) func() {
 }
 
 func (w *worker) resetSamplingInterval(newRate int32) {
-	if newRate == -1 {
-		panic("Variable " + repositorySamplingInterval + " was not set before repository was started.")
-	} else if newRate == 0 {
+	if w.samplingTicker == nil {
+		return
+	}
+
+	if newRate == 0 {
 		w.samplingTicker.Stop()
 	} else {
 		w.samplingTicker.Reset(time.Duration(newRate) * time.Second)
@@ -93,9 +95,7 @@ func (w *worker) changeSamplingInterval(_ context.Context, d string) error {
 
 	if int32(n) != w.samplingInterval {
 		w.samplingInterval = int32(n)
-		if w.cancel != nil {
-			w.resetSamplingInterval(w.samplingInterval)
-		}
+		w.resetSamplingInterval(w.samplingInterval)
 	}
 
 	return nil

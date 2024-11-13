@@ -26,12 +26,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/sqlescape"
-	"go.uber.org/atomic"
 	"go.uber.org/zap"
-)
-
-var (
-	retentionDays = atomic.NewInt32(-1)
 )
 
 func calcNextTick(now time.Time) time.Duration {
@@ -67,11 +62,12 @@ func createAllPartitions(ctx context.Context, sess sessionctx.Context, is infosc
 	return nil
 }
 
-func dropOldPartitions(ctx context.Context, sess sessionctx.Context, is infoschema.InfoSchema, now time.Time) error {
-	retention := int(retentionDays.Load())
-	if retention == -1 {
-		panic("Variable " + repositoryRetentionDays + " was not set before repository was started.")
-	} else if retention == 0 {
+func (w *worker) dropOldPartitions(ctx context.Context, sess sessionctx.Context, is infoschema.InfoSchema, now time.Time) error {
+	w.Lock()
+	retention := int(w.retentionDays)
+	w.Unlock()
+
+	if retention == 0 {
 		// disabled housekeeping
 		return nil
 	}
@@ -134,7 +130,7 @@ func (w *worker) startHouseKeeper(ctx context.Context) func() {
 				}
 
 				// drop old partitions
-				if err := dropOldPartitions(ctx, sess, is, now); err != nil {
+				if err := w.dropOldPartitions(ctx, sess, is, now); err != nil {
 					continue
 				}
 

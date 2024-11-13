@@ -27,6 +27,10 @@ const (
 
 	etcdOpTimeout = 5 * time.Second
 
+	defSamplingInterval = 5
+	defSnapshotInterval = 3600
+	defRententionDays   = 7
+
 	// WorkloadSchema is the name of database for repository worker.
 	WorkloadSchema     = "WORKLOAD_SCHEMA"
 	histSnapshotsTable = "HIST_SNAPSHOTS"
