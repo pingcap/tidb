@@ -3207,7 +3207,8 @@ func (do *Domain) planCacheEvictTrigger() {
 		case <-ticker.C:
 			// trigger the eviction
 			begin := time.Now()
-			detailInfo, numEvicted := do.instancePlanCache.Evict()
+			enabled := variable.EnableInstancePlanCache.Load()
+			detailInfo, numEvicted := do.instancePlanCache.Evict(!enabled) // evict all if the plan cache is disabled
 			metrics2.GetPlanCacheInstanceEvict().Set(float64(numEvicted))
 			if numEvicted > 0 {
 				logutil.BgLogger().Info("instance plan eviction",
