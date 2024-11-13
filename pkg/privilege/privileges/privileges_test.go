@@ -59,7 +59,7 @@ func TestCheckDBPrivilege(t *testing.T) {
 
 	tk := testkit.NewTestKit(t, store)
 	activeRoles := make([]*auth.RoleIdentity, 0)
-	require.NoError(t, tk.Session().Auth(context.Background(), &auth.UserIdentity{Username: "testcheck", Hostname: "localhost"}, nil, nil, nil))
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "testcheck", Hostname: "localhost"}, nil, nil, nil))
 	pc := privilege.GetPrivilegeManager(tk.Session())
 	require.False(t, pc.RequestVerification(activeRoles, "test", "", "", mysql.SelectPriv))
 
@@ -73,7 +73,7 @@ func TestCheckDBPrivilege(t *testing.T) {
 	activeRoles = append(activeRoles, &auth.RoleIdentity{Username: "testcheck", Hostname: "localhost"})
 	rootTk.MustExec(`GRANT 'testcheck'@'localhost' TO 'testcheck_tmp'@'localhost';`)
 	tk2 := testkit.NewTestKit(t, store)
-	require.NoError(t, tk2.Session().Auth(context.Background(), &auth.UserIdentity{Username: "testcheck_tmp", Hostname: "localhost"}, nil, nil, nil))
+	require.NoError(t, tk2.Session().Auth(&auth.UserIdentity{Username: "testcheck_tmp", Hostname: "localhost"}, nil, nil, nil))
 	pc = privilege.GetPrivilegeManager(tk2.Session())
 	require.True(t, pc.RequestVerification(activeRoles, "test", "", "", mysql.SelectPriv))
 	require.True(t, pc.RequestVerification(activeRoles, "test", "", "", mysql.UpdatePriv))
@@ -88,7 +88,7 @@ func TestCheckTablePrivilege(t *testing.T) {
 
 	tk := testkit.NewTestKit(t, store)
 	activeRoles := make([]*auth.RoleIdentity, 0)
-	require.NoError(t, tk.Session().Auth(context.Background(), &auth.UserIdentity{Username: "test1", Hostname: "localhost"}, nil, nil, nil))
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "test1", Hostname: "localhost"}, nil, nil, nil))
 	pc := privilege.GetPrivilegeManager(tk.Session())
 	require.False(t, pc.RequestVerification(activeRoles, "test", "test", "", mysql.SelectPriv))
 
@@ -103,7 +103,7 @@ func TestCheckTablePrivilege(t *testing.T) {
 	activeRoles = append(activeRoles, &auth.RoleIdentity{Username: "test1", Hostname: "localhost"})
 	tk2 := testkit.NewTestKit(t, store)
 	rootTk.MustExec(`GRANT 'test1'@'localhost' TO 'test1_tmp'@'localhost';`)
-	require.NoError(t, tk2.Session().Auth(context.Background(), &auth.UserIdentity{Username: "test1_tmp", Hostname: "localhost"}, nil, nil, nil))
+	require.NoError(t, tk2.Session().Auth(&auth.UserIdentity{Username: "test1_tmp", Hostname: "localhost"}, nil, nil, nil))
 	pc2 := privilege.GetPrivilegeManager(tk2.Session())
 	require.True(t, pc2.RequestVerification(activeRoles, "test", "test", "", mysql.SelectPriv))
 	require.True(t, pc2.RequestVerification(activeRoles, "test", "test", "", mysql.UpdatePriv))
@@ -123,7 +123,7 @@ func TestCheckViewPrivilege(t *testing.T) {
 
 	tk := testkit.NewTestKit(t, store)
 	activeRoles := make([]*auth.RoleIdentity, 0)
-	require.NoError(t, tk.Session().Auth(context.Background(), &auth.UserIdentity{Username: "vuser", Hostname: "localhost"}, nil, nil, nil))
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "vuser", Hostname: "localhost"}, nil, nil, nil))
 	pc := privilege.GetPrivilegeManager(tk.Session())
 	require.False(t, pc.RequestVerification(activeRoles, "test", "v", "", mysql.SelectPriv))
 
@@ -144,7 +144,7 @@ func TestCheckPrivilegeWithRoles(t *testing.T) {
 	rootTk.MustExec(`GRANT r_1, r_2, r_3 TO 'test_role'@'localhost';`)
 
 	tk := testkit.NewTestKit(t, store)
-	require.NoError(t, tk.Session().Auth(context.Background(), &auth.UserIdentity{Username: "test_role", Hostname: "localhost"}, nil, nil, nil))
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "test_role", Hostname: "localhost"}, nil, nil, nil))
 	tk.MustExec(`SET ROLE r_1, r_2;`)
 	rootTk.MustExec(`SET DEFAULT ROLE r_1 TO 'test_role'@'localhost';`)
 	// test bogus role for current user.
@@ -186,11 +186,11 @@ func TestErrorMessage(t *testing.T) {
 
 	// The session.Auth() func will populate the AuthUsername and AuthHostname fields.
 	// We don't have to explicitly specify them.
-	require.NoError(t, wildTk.Session().Auth(context.Background(), &auth.UserIdentity{Username: "wildcard", Hostname: "192.168.1.1"}, nil, nil, nil))
+	require.NoError(t, wildTk.Session().Auth(&auth.UserIdentity{Username: "wildcard", Hostname: "192.168.1.1"}, nil, nil, nil))
 	require.EqualError(t, wildTk.ExecToErr("use mysql;"), "[executor:1044]Access denied for user 'wildcard'@'%' to database 'mysql'")
 
 	specificTk := testkit.NewTestKit(t, store)
-	require.NoError(t, specificTk.Session().Auth(context.Background(), &auth.UserIdentity{Username: "specifichost", Hostname: "192.168.1.1"}, nil, nil, nil))
+	require.NoError(t, specificTk.Session().Auth(&auth.UserIdentity{Username: "specifichost", Hostname: "192.168.1.1"}, nil, nil, nil))
 	require.EqualError(t, specificTk.ExecToErr("use mysql;"), "[executor:1044]Access denied for user 'specifichost'@'192.168.1.1' to database 'mysql'")
 }
 
@@ -202,12 +202,12 @@ func TestDropTablePrivileges(t *testing.T) {
 	ctx, _ := tk.Session().(sessionctx.Context)
 	tk.MustExec(`CREATE TABLE todrop(c int);`)
 	// ctx.GetSessionVars().User = "root@localhost"
-	require.NoError(t, tk.Session().Auth(context.Background(), &auth.UserIdentity{Username: "root", Hostname: "localhost"}, nil, nil, nil))
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "localhost"}, nil, nil, nil))
 	tk.MustExec(`CREATE USER 'drop'@'localhost';`)
 	tk.MustExec(`GRANT Select ON test.todrop TO  'drop'@'localhost';`)
 
 	// ctx.GetSessionVars().User = "drop@localhost"
-	require.NoError(t, tk.Session().Auth(context.Background(), &auth.UserIdentity{Username: "drop", Hostname: "localhost"}, nil, nil, nil))
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "drop", Hostname: "localhost"}, nil, nil, nil))
 	tk.MustExec(`SELECT * FROM todrop;`)
 	require.Error(t, tk.ExecToErr("DROP TABLE todrop;"))
 
@@ -245,17 +245,17 @@ func TestAlterUserStmt(t *testing.T) {
 	// any request for UpdatePriv on mysql.user even if the privilege exists in the internal mysql.user table.
 
 	// UpdatePriv on mysql.user
-	require.NoError(t, tk.Session().Auth(context.Background(), &auth.UserIdentity{Username: "nobodyuser5", Hostname: "localhost"}, nil, nil, nil))
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "nobodyuser5", Hostname: "localhost"}, nil, nil, nil))
 	err := tk.ExecToErr("ALTER USER 'nobodyuser2' IDENTIFIED BY 'newpassword'")
 	require.EqualError(t, err, "[planner:1227]Access denied; you need (at least one of) the CREATE USER privilege(s) for this operation")
 
 	// actual CreateUserPriv
-	require.NoError(t, tk.Session().Auth(context.Background(), &auth.UserIdentity{Username: "nobodyuser2", Hostname: "localhost"}, nil, nil, nil))
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "nobodyuser2", Hostname: "localhost"}, nil, nil, nil))
 	tk.MustExec("ALTER USER 'nobodyuser2' IDENTIFIED BY ''")
 	tk.MustExec("ALTER USER 'nobodyuser3' IDENTIFIED BY ''")
 
 	// UpdatePriv on mysql.user but also has RESTRICTED_TABLES_ADMIN
-	require.NoError(t, tk.Session().Auth(context.Background(), &auth.UserIdentity{Username: "semuser1", Hostname: "localhost"}, nil, nil, nil))
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "semuser1", Hostname: "localhost"}, nil, nil, nil))
 	tk.MustExec("ALTER USER 'nobodyuser2' IDENTIFIED BY ''")
 	tk.MustExec("ALTER USER 'nobodyuser3' IDENTIFIED BY ''")
 
@@ -265,10 +265,10 @@ func TestAlterUserStmt(t *testing.T) {
 	tk.MustExec("ALTER USER 'semuser2' IDENTIFIED BY ''")
 	tk.MustExec("ALTER USER 'semuser3' IDENTIFIED BY ''")
 
-	require.NoError(t, tk.Session().Auth(context.Background(), &auth.UserIdentity{Username: "superuser2", Hostname: "localhost"}, nil, nil, nil))
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "superuser2", Hostname: "localhost"}, nil, nil, nil))
 	err = tk.ExecToErr("ALTER USER 'semuser1' IDENTIFIED BY 'newpassword'")
 	require.EqualError(t, err, "[planner:1227]Access denied; you need (at least one of) the RESTRICTED_USER_ADMIN privilege(s) for this operation")
-	require.NoError(t, tk.Session().Auth(context.Background(), &auth.UserIdentity{Username: "semuser4", Hostname: "localhost"}, nil, nil, nil))
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "semuser4", Hostname: "localhost"}, nil, nil, nil))
 	// has restricted_user_admin but not CREATE USER or (update on mysql.user + RESTRICTED_TABLES_ADMIN)
 	tk.MustExec("ALTER USER 'semuser4' IDENTIFIED BY ''") // can modify self
 	err = tk.ExecToErr("ALTER USER 'nobodyuser3' IDENTIFIED BY 'newpassword'")
@@ -344,7 +344,7 @@ func TestShowViewPriv(t *testing.T) {
 	}
 
 	for _, test := range tests {
-		tk.Session().Auth(context.Background(), &auth.UserIdentity{Username: test.userName, Hostname: "localhost"}, nil, nil, nil)
+		tk.Session().Auth(&auth.UserIdentity{Username: test.userName, Hostname: "localhost"}, nil, nil, nil)
 		err := tk.ExecToErr("SHOW CREATE VIEW test.v")
 		if test.showViewErr != "" {
 			require.EqualError(t, err, test.showViewErr, test)
@@ -400,7 +400,7 @@ func TestCheckCertBasedAuth(t *testing.T) {
 	tk.MustExec(`CREATE USER 'r15_san_only_fail'@'localhost' require san 'URI:spiffe://mesh.pingcap.com/ns/timesh/sa/me2'`)
 
 	defer func() {
-		require.NoError(t, tk.Session().Auth(context.Background(), &auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil, nil))
+		require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil, nil))
 		tk.MustExec("drop user 'r1'@'localhost'")
 		tk.MustExec("drop user 'r2'@'localhost'")
 		tk.MustExec("drop user 'r3'@'localhost'")
@@ -419,27 +419,27 @@ func TestCheckCertBasedAuth(t *testing.T) {
 	}()
 
 	// test without ssl or ca
-	require.NoError(t, tk.Session().Auth(context.Background(), &auth.UserIdentity{Username: "r1", Hostname: "localhost"}, nil, nil, nil))
-	require.NoError(t, tk.Session().Auth(context.Background(), &auth.UserIdentity{Username: "r2", Hostname: "localhost"}, nil, nil, nil))
-	require.Error(t, tk.Session().Auth(context.Background(), &auth.UserIdentity{Username: "r3", Hostname: "localhost"}, nil, nil, nil))
-	require.Error(t, tk.Session().Auth(context.Background(), &auth.UserIdentity{Username: "r4", Hostname: "localhost"}, nil, nil, nil))
-	require.Error(t, tk.Session().Auth(context.Background(), &auth.UserIdentity{Username: "r5", Hostname: "localhost"}, nil, nil, nil))
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "r1", Hostname: "localhost"}, nil, nil, nil))
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "r2", Hostname: "localhost"}, nil, nil, nil))
+	require.Error(t, tk.Session().Auth(&auth.UserIdentity{Username: "r3", Hostname: "localhost"}, nil, nil, nil))
+	require.Error(t, tk.Session().Auth(&auth.UserIdentity{Username: "r4", Hostname: "localhost"}, nil, nil, nil))
+	require.Error(t, tk.Session().Auth(&auth.UserIdentity{Username: "r5", Hostname: "localhost"}, nil, nil, nil))
 
 	// test use ssl without ca
 	tk.Session().GetSessionVars().TLSConnectionState = &tls.ConnectionState{VerifiedChains: nil}
-	require.NoError(t, tk.Session().Auth(context.Background(), &auth.UserIdentity{Username: "r1", Hostname: "localhost"}, nil, nil, nil))
-	require.NoError(t, tk.Session().Auth(context.Background(), &auth.UserIdentity{Username: "r2", Hostname: "localhost"}, nil, nil, nil))
-	require.NoError(t, tk.Session().Auth(context.Background(), &auth.UserIdentity{Username: "r3", Hostname: "localhost"}, nil, nil, nil))
-	require.Error(t, tk.Session().Auth(context.Background(), &auth.UserIdentity{Username: "r4", Hostname: "localhost"}, nil, nil, nil))
-	require.Error(t, tk.Session().Auth(context.Background(), &auth.UserIdentity{Username: "r5", Hostname: "localhost"}, nil, nil, nil))
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "r1", Hostname: "localhost"}, nil, nil, nil))
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "r2", Hostname: "localhost"}, nil, nil, nil))
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "r3", Hostname: "localhost"}, nil, nil, nil))
+	require.Error(t, tk.Session().Auth(&auth.UserIdentity{Username: "r4", Hostname: "localhost"}, nil, nil, nil))
+	require.Error(t, tk.Session().Auth(&auth.UserIdentity{Username: "r5", Hostname: "localhost"}, nil, nil, nil))
 
 	// test use ssl with signed but info wrong ca.
 	tk.Session().GetSessionVars().TLSConnectionState = &tls.ConnectionState{VerifiedChains: [][]*x509.Certificate{{{}}}}
-	require.NoError(t, tk.Session().Auth(context.Background(), &auth.UserIdentity{Username: "r1", Hostname: "localhost"}, nil, nil, nil))
-	require.NoError(t, tk.Session().Auth(context.Background(), &auth.UserIdentity{Username: "r2", Hostname: "localhost"}, nil, nil, nil))
-	require.NoError(t, tk.Session().Auth(context.Background(), &auth.UserIdentity{Username: "r3", Hostname: "localhost"}, nil, nil, nil))
-	require.NoError(t, tk.Session().Auth(context.Background(), &auth.UserIdentity{Username: "r4", Hostname: "localhost"}, nil, nil, nil))
-	require.Error(t, tk.Session().Auth(context.Background(), &auth.UserIdentity{Username: "r5", Hostname: "localhost"}, nil, nil, nil))
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "r1", Hostname: "localhost"}, nil, nil, nil))
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "r2", Hostname: "localhost"}, nil, nil, nil))
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "r3", Hostname: "localhost"}, nil, nil, nil))
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "r4", Hostname: "localhost"}, nil, nil, nil))
+	require.Error(t, tk.Session().Auth(&auth.UserIdentity{Username: "r5", Hostname: "localhost"}, nil, nil, nil))
 
 	// test a all pass case
 	tk.Session().GetSessionVars().TLSConnectionState = connectionState(
@@ -469,16 +469,16 @@ func TestCheckCertBasedAuth(t *testing.T) {
 			require.NoError(t, err)
 			cert.URIs = append(cert.URIs, &url)
 		})
-	require.NoError(t, tk.Session().Auth(context.Background(), &auth.UserIdentity{Username: "r1", Hostname: "localhost"}, nil, nil, nil))
-	require.NoError(t, tk.Session().Auth(context.Background(), &auth.UserIdentity{Username: "r2", Hostname: "localhost"}, nil, nil, nil))
-	require.NoError(t, tk.Session().Auth(context.Background(), &auth.UserIdentity{Username: "r3", Hostname: "localhost"}, nil, nil, nil))
-	require.NoError(t, tk.Session().Auth(context.Background(), &auth.UserIdentity{Username: "r4", Hostname: "localhost"}, nil, nil, nil))
-	require.NoError(t, tk.Session().Auth(context.Background(), &auth.UserIdentity{Username: "r5", Hostname: "localhost"}, nil, nil, nil))
-	require.NoError(t, tk.Session().Auth(context.Background(), &auth.UserIdentity{Username: "r14_san_only_pass", Hostname: "localhost"}, nil, nil, nil))
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "r1", Hostname: "localhost"}, nil, nil, nil))
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "r2", Hostname: "localhost"}, nil, nil, nil))
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "r3", Hostname: "localhost"}, nil, nil, nil))
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "r4", Hostname: "localhost"}, nil, nil, nil))
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "r5", Hostname: "localhost"}, nil, nil, nil))
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "r14_san_only_pass", Hostname: "localhost"}, nil, nil, nil))
 
 	// test require but give nothing
 	tk.Session().GetSessionVars().TLSConnectionState = nil
-	require.Error(t, tk.Session().Auth(context.Background(), &auth.UserIdentity{Username: "r5", Hostname: "localhost"}, nil, nil, nil))
+	require.Error(t, tk.Session().Auth(&auth.UserIdentity{Username: "r5", Hostname: "localhost"}, nil, nil, nil))
 
 	// test mismatch cipher
 	tk.Session().GetSessionVars().TLSConnectionState = connectionState(
@@ -503,9 +503,9 @@ func TestCheckCertBasedAuth(t *testing.T) {
 			},
 		},
 		tls.TLS_AES_256_GCM_SHA384)
-	require.Error(t, tk.Session().Auth(context.Background(), &auth.UserIdentity{Username: "r5", Hostname: "localhost"}, nil, nil, nil))
-	require.NoError(t, tk.Session().Auth(context.Background(), &auth.UserIdentity{Username: "r6", Hostname: "localhost"}, nil, nil, nil)) // not require cipher
-	require.NoError(t, tk.Session().Auth(context.Background(), &auth.UserIdentity{Username: "r11_cipher_only", Hostname: "localhost"}, nil, nil, nil))
+	require.Error(t, tk.Session().Auth(&auth.UserIdentity{Username: "r5", Hostname: "localhost"}, nil, nil, nil))
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "r6", Hostname: "localhost"}, nil, nil, nil)) // not require cipher
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "r11_cipher_only", Hostname: "localhost"}, nil, nil, nil))
 
 	// test only subject or only issuer
 	tk.Session().GetSessionVars().TLSConnectionState = connectionState(
@@ -530,7 +530,7 @@ func TestCheckCertBasedAuth(t *testing.T) {
 			},
 		},
 		tls.TLS_AES_128_GCM_SHA256)
-	require.NoError(t, tk.Session().Auth(context.Background(), &auth.UserIdentity{Username: "r7_issuer_only", Hostname: "localhost"}, nil, nil, nil))
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "r7_issuer_only", Hostname: "localhost"}, nil, nil, nil))
 	tk.Session().GetSessionVars().TLSConnectionState = connectionState(
 		pkix.Name{
 			Names: []pkix.AttributeTypeAndValue{
@@ -553,7 +553,7 @@ func TestCheckCertBasedAuth(t *testing.T) {
 			},
 		},
 		tls.TLS_AES_128_GCM_SHA256)
-	require.NoError(t, tk.Session().Auth(context.Background(), &auth.UserIdentity{Username: "r8_subject_only", Hostname: "localhost"}, nil, nil, nil))
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "r8_subject_only", Hostname: "localhost"}, nil, nil, nil))
 
 	// test disorder issuer or subject
 	tk.Session().GetSessionVars().TLSConnectionState = connectionState(
@@ -571,7 +571,7 @@ func TestCheckCertBasedAuth(t *testing.T) {
 			},
 		},
 		tls.TLS_AES_128_GCM_SHA256)
-	require.Error(t, tk.Session().Auth(context.Background(), &auth.UserIdentity{Username: "r9_subject_disorder", Hostname: "localhost"}, nil, nil, nil))
+	require.Error(t, tk.Session().Auth(&auth.UserIdentity{Username: "r9_subject_disorder", Hostname: "localhost"}, nil, nil, nil))
 	tk.Session().GetSessionVars().TLSConnectionState = connectionState(
 		pkix.Name{
 			Names: []pkix.AttributeTypeAndValue{
@@ -587,14 +587,14 @@ func TestCheckCertBasedAuth(t *testing.T) {
 			Names: []pkix.AttributeTypeAndValue{},
 		},
 		tls.TLS_AES_128_GCM_SHA256)
-	require.Error(t, tk.Session().Auth(context.Background(), &auth.UserIdentity{Username: "r10_issuer_disorder", Hostname: "localhost"}, nil, nil, nil))
+	require.Error(t, tk.Session().Auth(&auth.UserIdentity{Username: "r10_issuer_disorder", Hostname: "localhost"}, nil, nil, nil))
 
 	// test mismatch san
-	require.Error(t, tk.Session().Auth(context.Background(), &auth.UserIdentity{Username: "r15_san_only_fail", Hostname: "localhost"}, nil, nil, nil))
+	require.Error(t, tk.Session().Auth(&auth.UserIdentity{Username: "r15_san_only_fail", Hostname: "localhost"}, nil, nil, nil))
 
 	// test old data and broken data
-	require.NoError(t, tk.Session().Auth(context.Background(), &auth.UserIdentity{Username: "r12_old_tidb_user", Hostname: "localhost"}, nil, nil, nil))
-	require.Error(t, tk.Session().Auth(context.Background(), &auth.UserIdentity{Username: "r13_broken_user", Hostname: "localhost"}, nil, nil, nil))
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "r12_old_tidb_user", Hostname: "localhost"}, nil, nil, nil))
+	require.Error(t, tk.Session().Auth(&auth.UserIdentity{Username: "r13_broken_user", Hostname: "localhost"}, nil, nil, nil))
 }
 
 func connectionState(issuer, subject pkix.Name, cipher uint16, opt ...func(c *x509.Certificate)) *tls.ConnectionState {
@@ -617,13 +617,13 @@ func TestCheckAuthenticate(t *testing.T) {
 	tk.MustExec(`CREATE USER 'u3@example.com'@'localhost';`)
 	tk.MustExec(`CREATE USER u4@localhost;`)
 
-	require.NoError(t, tk.Session().Auth(context.Background(), &auth.UserIdentity{Username: "u1", Hostname: "localhost"}, nil, nil, nil))
-	require.Error(t, tk.Session().Auth(context.Background(), &auth.UserIdentity{Username: "u2", Hostname: "localhost"}, nil, nil, nil))
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "u1", Hostname: "localhost"}, nil, nil, nil))
+	require.Error(t, tk.Session().Auth(&auth.UserIdentity{Username: "u2", Hostname: "localhost"}, nil, nil, nil))
 	salt := []byte{85, 92, 45, 22, 58, 79, 107, 6, 122, 125, 58, 80, 12, 90, 103, 32, 90, 10, 74, 82}
 	authentication := []byte{24, 180, 183, 225, 166, 6, 81, 102, 70, 248, 199, 143, 91, 204, 169, 9, 161, 171, 203, 33}
-	require.NoError(t, tk.Session().Auth(context.Background(), &auth.UserIdentity{Username: "u2", Hostname: "localhost"}, authentication, salt, nil))
-	require.NoError(t, tk.Session().Auth(context.Background(), &auth.UserIdentity{Username: "u3@example.com", Hostname: "localhost"}, nil, nil, nil))
-	require.NoError(t, tk.Session().Auth(context.Background(), &auth.UserIdentity{Username: "u4", Hostname: "localhost"}, nil, nil, nil))
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "u2", Hostname: "localhost"}, authentication, salt, nil))
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "u3@example.com", Hostname: "localhost"}, nil, nil, nil))
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "u4", Hostname: "localhost"}, nil, nil, nil))
 
 	tk1 := testkit.NewTestKit(t, store)
 	tk1.MustExec("drop user 'u1'@'localhost'")
@@ -631,18 +631,18 @@ func TestCheckAuthenticate(t *testing.T) {
 	tk1.MustExec("drop user 'u3@example.com'@'localhost'")
 	tk1.MustExec("drop user u4@localhost")
 
-	require.Error(t, tk.Session().Auth(context.Background(), &auth.UserIdentity{Username: "u1", Hostname: "localhost"}, nil, nil, nil))
-	require.Error(t, tk.Session().Auth(context.Background(), &auth.UserIdentity{Username: "u2", Hostname: "localhost"}, nil, nil, nil))
-	require.Error(t, tk.Session().Auth(context.Background(), &auth.UserIdentity{Username: "u3@example.com", Hostname: "localhost"}, nil, nil, nil))
-	require.Error(t, tk.Session().Auth(context.Background(), &auth.UserIdentity{Username: "u4", Hostname: "localhost"}, nil, nil, nil))
+	require.Error(t, tk.Session().Auth(&auth.UserIdentity{Username: "u1", Hostname: "localhost"}, nil, nil, nil))
+	require.Error(t, tk.Session().Auth(&auth.UserIdentity{Username: "u2", Hostname: "localhost"}, nil, nil, nil))
+	require.Error(t, tk.Session().Auth(&auth.UserIdentity{Username: "u3@example.com", Hostname: "localhost"}, nil, nil, nil))
+	require.Error(t, tk.Session().Auth(&auth.UserIdentity{Username: "u4", Hostname: "localhost"}, nil, nil, nil))
 
 	tk2 := testkit.NewTestKit(t, store)
 	tk2.MustExec("create role 'r1'@'localhost'")
 	tk2.MustExec("create role 'r2'@'localhost'")
 	tk2.MustExec("create role 'r3@example.com'@'localhost'")
-	require.Error(t, tk.Session().Auth(context.Background(), &auth.UserIdentity{Username: "r1", Hostname: "localhost"}, nil, nil, nil))
-	require.Error(t, tk.Session().Auth(context.Background(), &auth.UserIdentity{Username: "r2", Hostname: "localhost"}, nil, nil, nil))
-	require.Error(t, tk.Session().Auth(context.Background(), &auth.UserIdentity{Username: "r3@example.com", Hostname: "localhost"}, nil, nil, nil))
+	require.Error(t, tk.Session().Auth(&auth.UserIdentity{Username: "r1", Hostname: "localhost"}, nil, nil, nil))
+	require.Error(t, tk.Session().Auth(&auth.UserIdentity{Username: "r2", Hostname: "localhost"}, nil, nil, nil))
+	require.Error(t, tk.Session().Auth(&auth.UserIdentity{Username: "r3@example.com", Hostname: "localhost"}, nil, nil, nil))
 
 	tk1.MustExec("drop user 'r1'@'localhost'")
 	tk1.MustExec("drop user 'r2'@'localhost'")
@@ -658,34 +658,34 @@ func TestUseDB(t *testing.T) {
 	tk.MustExec("CREATE USER 'usenobody'")
 	tk.MustExec("GRANT ALL ON *.* TO 'usesuper'")
 	// without grant option
-	require.NoError(t, tk.Session().Auth(context.Background(), &auth.UserIdentity{Username: "usesuper", Hostname: "localhost", AuthUsername: "usesuper", AuthHostname: "%"}, nil, nil, nil))
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "usesuper", Hostname: "localhost", AuthUsername: "usesuper", AuthHostname: "%"}, nil, nil, nil))
 	require.Error(t, tk.ExecToErr("GRANT SELECT ON mysql.* TO 'usenobody'"))
 	// with grant option
 	tk = testkit.NewTestKit(t, store)
 	// high privileged user
 	tk.MustExec("GRANT ALL ON *.* TO 'usesuper' WITH GRANT OPTION")
-	require.NoError(t, tk.Session().Auth(context.Background(), &auth.UserIdentity{Username: "usesuper", Hostname: "localhost", AuthUsername: "usesuper", AuthHostname: "%"}, nil, nil, nil))
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "usesuper", Hostname: "localhost", AuthUsername: "usesuper", AuthHostname: "%"}, nil, nil, nil))
 	tk.MustExec("use mysql")
 	// low privileged user
-	require.NoError(t, tk.Session().Auth(context.Background(), &auth.UserIdentity{Username: "usenobody", Hostname: "localhost", AuthUsername: "usenobody", AuthHostname: "%"}, nil, nil, nil))
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "usenobody", Hostname: "localhost", AuthUsername: "usenobody", AuthHostname: "%"}, nil, nil, nil))
 	err := tk.ExecToErr("use mysql")
 	require.Error(t, err)
 
 	// try again after privilege granted
-	require.NoError(t, tk.Session().Auth(context.Background(), &auth.UserIdentity{Username: "usesuper", Hostname: "localhost", AuthUsername: "usesuper", AuthHostname: "%"}, nil, nil, nil))
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "usesuper", Hostname: "localhost", AuthUsername: "usesuper", AuthHostname: "%"}, nil, nil, nil))
 	tk.MustExec("GRANT SELECT ON mysql.* TO 'usenobody'")
-	require.NoError(t, tk.Session().Auth(context.Background(), &auth.UserIdentity{Username: "usenobody", Hostname: "localhost", AuthUsername: "usenobody", AuthHostname: "%"}, nil, nil, nil))
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "usenobody", Hostname: "localhost", AuthUsername: "usenobody", AuthHostname: "%"}, nil, nil, nil))
 	tk.MustExec("use mysql")
 
 	// test `use db` for role.
-	require.NoError(t, tk.Session().Auth(context.Background(), &auth.UserIdentity{Username: "usesuper", Hostname: "localhost", AuthUsername: "usesuper", AuthHostname: "%"}, nil, nil, nil))
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "usesuper", Hostname: "localhost", AuthUsername: "usesuper", AuthHostname: "%"}, nil, nil, nil))
 	tk.MustExec(`CREATE DATABASE app_db`)
 	tk.MustExec(`CREATE ROLE 'app_developer'`)
 	tk.MustExec(`GRANT ALL ON app_db.* TO 'app_developer'`)
 	tk.MustExec(`CREATE USER 'dev'@'localhost'`)
 	tk.MustExec(`GRANT 'app_developer' TO 'dev'@'localhost'`)
 	tk.MustExec(`SET DEFAULT ROLE 'app_developer' TO 'dev'@'localhost'`)
-	require.NoError(t, tk.Session().Auth(context.Background(), &auth.UserIdentity{Username: "dev", Hostname: "localhost", AuthUsername: "dev", AuthHostname: "localhost"}, nil, nil, nil))
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "dev", Hostname: "localhost", AuthUsername: "dev", AuthHostname: "localhost"}, nil, nil, nil))
 	tk.MustExec("use app_db")
 	err = tk.ExecToErr("use mysql")
 	require.Error(t, err)
@@ -703,10 +703,10 @@ func TestConfigPrivilege(t *testing.T) {
 	tk.MustExec(`GRANT ALL ON *.* to tcd2`)
 	tk.MustExec(`REVOKE CONFIG ON *.* FROM tcd2`)
 
-	require.NoError(t, tk.Session().Auth(context.Background(), &auth.UserIdentity{Username: "tcd1", Hostname: "localhost", AuthHostname: "tcd1", AuthUsername: "%"}, nil, nil, nil))
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "tcd1", Hostname: "localhost", AuthHostname: "tcd1", AuthUsername: "%"}, nil, nil, nil))
 	tk.MustExec(`SHOW CONFIG`)
 	tk.MustExec(`SET CONFIG TIKV testkey="testval"`)
-	require.NoError(t, tk.Session().Auth(context.Background(), &auth.UserIdentity{Username: "tcd2", Hostname: "localhost", AuthHostname: "tcd2", AuthUsername: "%"}, nil, nil, nil))
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "tcd2", Hostname: "localhost", AuthHostname: "tcd2", AuthUsername: "%"}, nil, nil, nil))
 	err := tk.ExecToErr(`SHOW CONFIG`)
 	require.Error(t, err)
 	require.Regexp(t, "you need \\(at least one of\\) the CONFIG privilege\\(s\\) for this operation$", err.Error())
@@ -724,12 +724,12 @@ func TestShowCreateTable(t *testing.T) {
 	tk.MustExec(`GRANT select ON mysql.* to tsct2`)
 
 	// should fail
-	require.NoError(t, tk.Session().Auth(context.Background(), &auth.UserIdentity{Username: "tsct1", Hostname: "localhost", AuthUsername: "tsct1", AuthHostname: "%"}, nil, nil, nil))
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "tsct1", Hostname: "localhost", AuthUsername: "tsct1", AuthHostname: "%"}, nil, nil, nil))
 	err := tk.ExecToErr(`SHOW CREATE TABLE mysql.user`)
 	require.True(t, terror.ErrorEqual(err, plannererrors.ErrTableaccessDenied))
 
 	// should pass
-	require.NoError(t, tk.Session().Auth(context.Background(), &auth.UserIdentity{Username: "tsct2", Hostname: "localhost", AuthUsername: "tsct2", AuthHostname: "%"}, nil, nil, nil))
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "tsct2", Hostname: "localhost", AuthUsername: "tsct2", AuthHostname: "%"}, nil, nil, nil))
 	tk.MustExec(`SHOW CREATE TABLE mysql.user`)
 }
 
@@ -745,10 +745,10 @@ func TestAnalyzeTable(t *testing.T) {
 	tk.MustExec("use atest")
 	tk.MustExec("CREATE TABLE t1 (a int)")
 
-	require.NoError(t, tk.Session().Auth(context.Background(), &auth.UserIdentity{Username: "asuper", Hostname: "localhost", AuthUsername: "asuper", AuthHostname: "%"}, nil, nil, nil))
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "asuper", Hostname: "localhost", AuthUsername: "asuper", AuthHostname: "%"}, nil, nil, nil))
 	tk.MustExec("analyze table mysql.user")
 	// low privileged user
-	require.NoError(t, tk.Session().Auth(context.Background(), &auth.UserIdentity{Username: "anobody", Hostname: "localhost", AuthUsername: "anobody", AuthHostname: "%"}, nil, nil, nil))
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "anobody", Hostname: "localhost", AuthUsername: "anobody", AuthHostname: "%"}, nil, nil, nil))
 	err := tk.ExecToErr("analyze table t1")
 	require.True(t, terror.ErrorEqual(err, plannererrors.ErrTableaccessDenied))
 	require.EqualError(t, err, "[planner:1142]INSERT command denied to user 'anobody'@'%' for table 't1'")
@@ -757,16 +757,16 @@ func TestAnalyzeTable(t *testing.T) {
 	require.EqualError(t, err, "[planner:1142]SELECT command denied to user 'anobody'@'%' for table 't1'")
 
 	// try again after SELECT privilege granted
-	require.NoError(t, tk.Session().Auth(context.Background(), &auth.UserIdentity{Username: "asuper", Hostname: "localhost", AuthUsername: "asuper", AuthHostname: "%"}, nil, nil, nil))
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "asuper", Hostname: "localhost", AuthUsername: "asuper", AuthHostname: "%"}, nil, nil, nil))
 	tk.MustExec("GRANT SELECT ON atest.* TO 'anobody'")
-	require.NoError(t, tk.Session().Auth(context.Background(), &auth.UserIdentity{Username: "anobody", Hostname: "localhost", AuthUsername: "anobody", AuthHostname: "%"}, nil, nil, nil))
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "anobody", Hostname: "localhost", AuthUsername: "anobody", AuthHostname: "%"}, nil, nil, nil))
 	err = tk.ExecToErr("analyze table t1")
 	require.True(t, terror.ErrorEqual(err, plannererrors.ErrTableaccessDenied))
 	require.EqualError(t, err, "[planner:1142]INSERT command denied to user 'anobody'@'%' for table 't1'")
 	// Add INSERT privilege and it should work.
-	require.NoError(t, tk.Session().Auth(context.Background(), &auth.UserIdentity{Username: "asuper", Hostname: "localhost", AuthUsername: "asuper", AuthHostname: "%"}, nil, nil, nil))
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "asuper", Hostname: "localhost", AuthUsername: "asuper", AuthHostname: "%"}, nil, nil, nil))
 	tk.MustExec("GRANT INSERT ON atest.* TO 'anobody'")
-	require.NoError(t, tk.Session().Auth(context.Background(), &auth.UserIdentity{Username: "anobody", Hostname: "localhost", AuthUsername: "anobody", AuthHostname: "%"}, nil, nil, nil))
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "anobody", Hostname: "localhost", AuthUsername: "anobody", AuthHostname: "%"}, nil, nil, nil))
 	tk.MustExec("analyze table t1")
 }
 
@@ -777,7 +777,7 @@ func TestSystemSchema(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec(`CREATE USER 'u1'@'localhost';`)
 	tk.MustExec(`GRANT SELECT ON *.* TO 'u1'@'localhost';`)
-	require.NoError(t, tk.Session().Auth(context.Background(), &auth.UserIdentity{Username: "u1", Hostname: "localhost"}, nil, nil, nil))
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "u1", Hostname: "localhost"}, nil, nil, nil))
 	tk.MustExec(`select * from information_schema.tables`)
 	tk.MustExec(`select * from information_schema.key_column_usage`)
 	err := tk.ExecToErr("create table information_schema.t(a int)")
@@ -816,15 +816,15 @@ func TestPerformanceSchema(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec(`CREATE USER 'u1'@'localhost';`)
 
-	require.NoError(t, tk.Session().Auth(context.Background(), &auth.UserIdentity{Username: "u1", Hostname: "localhost"}, nil, nil, nil))
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "u1", Hostname: "localhost"}, nil, nil, nil))
 	err := tk.ExecToErr("select * from performance_schema.events_statements_summary_by_digest where schema_name = 'tst'")
 	require.Error(t, err)
 	require.True(t, terror.ErrorEqual(err, plannererrors.ErrTableaccessDenied))
 
-	require.NoError(t, tk.Session().Auth(context.Background(), &auth.UserIdentity{Username: "root", Hostname: "localhost"}, nil, nil, nil))
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "localhost"}, nil, nil, nil))
 	tk.MustExec(`GRANT SELECT ON *.* TO 'u1'@'localhost';`)
 
-	require.NoError(t, tk.Session().Auth(context.Background(), &auth.UserIdentity{Username: "u1", Hostname: "localhost"}, nil, nil, nil))
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "u1", Hostname: "localhost"}, nil, nil, nil))
 	tk.MustExec("select * from performance_schema.events_statements_summary_by_digest where schema_name = 'tst'")
 	tk.MustExec(`select * from performance_schema.events_statements_summary_by_digest`)
 	err = tk.ExecToErr("drop table performance_schema.events_statements_summary_by_digest")
@@ -935,7 +935,7 @@ func TestMetricsSchema(t *testing.T) {
 	}
 
 	for _, test := range tests {
-		tk.Session().Auth(context.Background(), &auth.UserIdentity{
+		tk.Session().Auth(&auth.UserIdentity{
 			Username: test.user,
 			Hostname: "localhost",
 		}, nil, nil, nil)
@@ -957,11 +957,11 @@ func TestAdminCommand(t *testing.T) {
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	require.NoError(t, tk.Session().Auth(context.Background(), &auth.UserIdentity{Username: "root", Hostname: "localhost"}, nil, nil, nil))
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "localhost"}, nil, nil, nil))
 	tk.MustExec(`CREATE USER 'test_admin'@'localhost';`)
 	tk.MustExec(`CREATE TABLE t(a int)`)
 
-	require.NoError(t, tk.Session().Auth(context.Background(), &auth.UserIdentity{Username: "test_admin", Hostname: "localhost"}, nil, nil, nil))
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "test_admin", Hostname: "localhost"}, nil, nil, nil))
 	err := tk.ExecToErr("ADMIN SHOW DDL JOBS")
 	require.Error(t, err)
 	require.True(t, terror.ErrorEqual(err, plannererrors.ErrPrivilegeCheckFail))
@@ -969,7 +969,7 @@ func TestAdminCommand(t *testing.T) {
 	require.Error(t, err)
 	require.True(t, terror.ErrorEqual(err, plannererrors.ErrPrivilegeCheckFail))
 
-	require.NoError(t, tk.Session().Auth(context.Background(), &auth.UserIdentity{Username: "root", Hostname: "localhost"}, nil, nil, nil))
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "localhost"}, nil, nil, nil))
 	tk.MustExec("ADMIN SHOW DDL JOBS")
 }
 
@@ -990,25 +990,25 @@ func TestLoadDataPrivilege(t *testing.T) {
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	require.NoError(t, tk.Session().Auth(context.Background(), &auth.UserIdentity{Username: "root", Hostname: "localhost"}, nil, nil, nil))
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "localhost"}, nil, nil, nil))
 	tk.MustExec(`CREATE USER 'test_load'@'localhost';`)
 	tk.MustExec(`CREATE TABLE t_load(a int)`)
 
 	tk.MustExec(`GRANT SELECT on *.* to 'test_load'@'localhost'`)
-	require.NoError(t, tk.Session().Auth(context.Background(), &auth.UserIdentity{Username: "test_load", Hostname: "localhost"}, nil, nil, nil))
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "test_load", Hostname: "localhost"}, nil, nil, nil))
 	err = tk.ExecToErr("LOAD DATA LOCAL INFILE '/tmp/load_data_priv.csv' INTO TABLE t_load")
 	require.Error(t, err)
 	require.True(t, terror.ErrorEqual(err, plannererrors.ErrTableaccessDenied))
 
-	require.NoError(t, tk.Session().Auth(context.Background(), &auth.UserIdentity{Username: "root", Hostname: "localhost"}, nil, nil, nil))
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "localhost"}, nil, nil, nil))
 	tk.MustExec(`GRANT INSERT on *.* to 'test_load'@'localhost'`)
-	require.NoError(t, tk.Session().Auth(context.Background(), &auth.UserIdentity{Username: "test_load", Hostname: "localhost"}, nil, nil, nil))
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "test_load", Hostname: "localhost"}, nil, nil, nil))
 	err = tk.ExecToErr("LOAD DATA LOCAL INFILE '/tmp/load_data_priv.csv' INTO TABLE t_load")
 	require.ErrorContains(t, err, "reader is nil")
 
-	require.NoError(t, tk.Session().Auth(context.Background(), &auth.UserIdentity{Username: "root", Hostname: "localhost"}, nil, nil, nil))
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "localhost"}, nil, nil, nil))
 	tk.MustExec(`GRANT INSERT on *.* to 'test_load'@'localhost'`)
-	require.NoError(t, tk.Session().Auth(context.Background(), &auth.UserIdentity{Username: "test_load", Hostname: "localhost"}, nil, nil, nil))
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "test_load", Hostname: "localhost"}, nil, nil, nil))
 	err = tk.ExecToErr("LOAD DATA LOCAL INFILE '/tmp/load_data_priv.csv' REPLACE INTO TABLE t_load")
 	require.Error(t, err)
 	require.True(t, terror.ErrorEqual(err, plannererrors.ErrTableaccessDenied))
@@ -1022,11 +1022,11 @@ func TestAuthHost(t *testing.T) {
 	rootTk.MustExec(`CREATE USER 'test_auth_host'@'%';`)
 	rootTk.MustExec(`GRANT ALL ON *.* TO 'test_auth_host'@'%' WITH GRANT OPTION;`)
 
-	require.NoError(t, tk.Session().Auth(context.Background(), &auth.UserIdentity{Username: "test_auth_host", Hostname: "192.168.0.10"}, nil, nil, nil))
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "test_auth_host", Hostname: "192.168.0.10"}, nil, nil, nil))
 	tk.MustExec("CREATE USER 'test_auth_host'@'192.168.%';")
 	tk.MustExec("GRANT SELECT ON *.* TO 'test_auth_host'@'192.168.%';")
 
-	require.NoError(t, tk.Session().Auth(context.Background(), &auth.UserIdentity{Username: "test_auth_host", Hostname: "192.168.0.10"}, nil, nil, nil))
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "test_auth_host", Hostname: "192.168.0.10"}, nil, nil, nil))
 	err := tk.ExecToErr("create user test_auth_host_a")
 	require.Error(t, err)
 
@@ -1094,7 +1094,7 @@ func TestDynamicPrivs(t *testing.T) {
 	rootTk.MustExec("CREATE ROLE anyrolename")
 
 	tk := testkit.NewTestKit(t, store)
-	require.NoError(t, tk.Session().Auth(context.Background(), &auth.UserIdentity{Username: "notsuper", Hostname: "%"}, nil, nil, nil))
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "notsuper", Hostname: "%"}, nil, nil, nil))
 
 	// test SYSTEM_VARIABLES_ADMIN
 	err := tk.ExecToErr("SET GLOBAL wait_timeout = 86400")
@@ -1142,12 +1142,12 @@ func TestDynamicGrantOption(t *testing.T) {
 	rootTk.MustExec("GRANT SYSTEM_VARIABLES_ADMIN ON *.* TO varuser2 WITH GRANT OPTION")
 
 	tk1 := testkit.NewTestKit(t, store)
-	require.NoError(t, tk1.Session().Auth(context.Background(), &auth.UserIdentity{Username: "varuser1", Hostname: "%"}, nil, nil, nil))
+	require.NoError(t, tk1.Session().Auth(&auth.UserIdentity{Username: "varuser1", Hostname: "%"}, nil, nil, nil))
 	err := tk1.ExecToErr("GRANT SYSTEM_VARIABLES_ADMIN ON *.* TO varuser3")
 	require.EqualError(t, err, "[planner:1227]Access denied; you need (at least one of) the GRANT OPTION privilege(s) for this operation")
 
 	tk2 := testkit.NewTestKit(t, store)
-	require.NoError(t, tk2.Session().Auth(context.Background(), &auth.UserIdentity{Username: "varuser2", Hostname: "%"}, nil, nil, nil))
+	require.NoError(t, tk2.Session().Auth(&auth.UserIdentity{Username: "varuser2", Hostname: "%"}, nil, nil, nil))
 	tk2.MustExec("GRANT SYSTEM_VARIABLES_ADMIN ON *.* TO varuser3")
 }
 
@@ -1161,9 +1161,9 @@ func TestSecurityEnhancedModeRestrictedTables(t *testing.T) {
 	cloudAdminTK.MustExec("GRANT CREATE ON mysql.* to cloudadmin")
 	cloudAdminTK.MustExec("CREATE USER uroot")
 	cloudAdminTK.MustExec("GRANT ALL ON *.* to uroot WITH GRANT OPTION") // A "MySQL" all powerful user.
-	require.NoError(t, cloudAdminTK.Session().Auth(context.Background(), &auth.UserIdentity{Username: "cloudadmin", Hostname: "%"}, nil, nil, nil))
+	require.NoError(t, cloudAdminTK.Session().Auth(&auth.UserIdentity{Username: "cloudadmin", Hostname: "%"}, nil, nil, nil))
 	urootTk := testkit.NewTestKit(t, store)
-	require.NoError(t, urootTk.Session().Auth(context.Background(), &auth.UserIdentity{Username: "uroot", Hostname: "%"}, nil, nil, nil))
+	require.NoError(t, urootTk.Session().Auth(&auth.UserIdentity{Username: "uroot", Hostname: "%"}, nil, nil, nil))
 
 	sem.Enable()
 	defer sem.Disable()
@@ -1189,7 +1189,7 @@ func TestSecurityEnhancedModeInfoschema(t *testing.T) {
 	tk.MustExec("CREATE USER uroot1, uroot2, uroot3")
 	tk.MustExec("GRANT SUPER ON *.* to uroot1 WITH GRANT OPTION") // super not process
 	tk.MustExec("GRANT SUPER, PROCESS, RESTRICTED_TABLES_ADMIN ON *.* to uroot2 WITH GRANT OPTION")
-	tk.Session().Auth(context.Background(), &auth.UserIdentity{
+	tk.Session().Auth(&auth.UserIdentity{
 		Username: "uroot1",
 		Hostname: "localhost",
 	}, nil, nil, nil)
@@ -1204,7 +1204,7 @@ func TestSecurityEnhancedModeInfoschema(t *testing.T) {
 	require.EqualError(t, err, "[planner:1227]Access denied; you need (at least one of) the PROCESS privilege(s) for this operation")
 
 	// That is unless we have the RESTRICTED_TABLES_ADMIN privilege
-	tk.Session().Auth(context.Background(), &auth.UserIdentity{
+	tk.Session().Auth(&auth.UserIdentity{
 		Username: "uroot2",
 		Hostname: "localhost",
 	}, nil, nil, nil)
@@ -1220,7 +1220,7 @@ func TestSecurityEnhancedLocalBackupRestore(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("CREATE USER backuprestore")
 	tk.MustExec("GRANT BACKUP_ADMIN,RESTORE_ADMIN ON *.* to backuprestore")
-	tk.Session().Auth(context.Background(), &auth.UserIdentity{
+	tk.Session().Auth(&auth.UserIdentity{
 		Username: "backuprestore",
 		Hostname: "localhost",
 	}, nil, nil, nil)
@@ -1270,7 +1270,7 @@ func TestSecurityEnhancedModeSysVars(t *testing.T) {
 	defer sem.Disable()
 
 	// svroot1 has SUPER but in SEM will be restricted
-	tk.Session().Auth(context.Background(), &auth.UserIdentity{
+	tk.Session().Auth(&auth.UserIdentity{
 		Username:     "svroot1",
 		Hostname:     "localhost",
 		AuthUsername: "uroot",
@@ -1304,7 +1304,7 @@ func TestSecurityEnhancedModeSysVars(t *testing.T) {
 	_, err = tk.Exec("SELECT @@global.tidb_top_sql_max_time_series_count")
 	require.EqualError(t, err, "[planner:1227]Access denied; you need (at least one of) the RESTRICTED_VARIABLES_ADMIN privilege(s) for this operation")
 
-	tk.Session().Auth(context.Background(), &auth.UserIdentity{
+	tk.Session().Auth(&auth.UserIdentity{
 		Username:     "svroot2",
 		Hostname:     "localhost",
 		AuthUsername: "uroot",
@@ -1384,7 +1384,7 @@ func TestSecurityEnhancedModeRestrictedUsers(t *testing.T) {
 	}
 
 	// ruroot1 has SUPER but in SEM will be restricted
-	tk.Session().Auth(context.Background(), &auth.UserIdentity{
+	tk.Session().Auth(&auth.UserIdentity{
 		Username:     "ruroot1",
 		Hostname:     "localhost",
 		AuthUsername: "uroot",
@@ -1397,7 +1397,7 @@ func TestSecurityEnhancedModeRestrictedUsers(t *testing.T) {
 	}
 
 	// Switch to ruroot2, it should be permitted
-	tk.Session().Auth(context.Background(), &auth.UserIdentity{
+	tk.Session().Auth(&auth.UserIdentity{
 		Username:     "ruroot2",
 		Hostname:     "localhost",
 		AuthUsername: "uroot",
@@ -1460,7 +1460,7 @@ func TestInfoSchemaUserPrivileges(t *testing.T) {
 	tk.MustExec("GRANT SELECT ON mysql.* TO isselectonmysql")
 
 	// First as Nobody
-	tk.Session().Auth(context.Background(), &auth.UserIdentity{
+	tk.Session().Auth(&auth.UserIdentity{
 		Username: "isnobody",
 		Hostname: "localhost",
 	}, nil, nil, nil)
@@ -1471,7 +1471,7 @@ func TestInfoSchemaUserPrivileges(t *testing.T) {
 	tk.MustQuery(`SELECT * FROM information_schema.user_privileges WHERE grantee = "'isselectonmysqluser'@'%'"`).Check(testkit.Rows())
 
 	// Basically the same result as as isselectonmysqluser
-	tk.Session().Auth(context.Background(), &auth.UserIdentity{
+	tk.Session().Auth(&auth.UserIdentity{
 		Username: "isselectonmysqluser",
 		Hostname: "localhost",
 	}, nil, nil, nil)
@@ -1484,7 +1484,7 @@ func TestInfoSchemaUserPrivileges(t *testing.T) {
 	tk.MustQuery(`SELECT * FROM information_schema.user_privileges WHERE grantee = "'isselectonmysql'@'%'"`).Check(testkit.Rows())
 
 	// Now as root
-	tk.Session().Auth(context.Background(), &auth.UserIdentity{
+	tk.Session().Auth(&auth.UserIdentity{
 		Username: "isroot",
 		Hostname: "localhost",
 	}, nil, nil, nil)
@@ -1495,7 +1495,7 @@ func TestInfoSchemaUserPrivileges(t *testing.T) {
 	tk.MustQuery(`SELECT * FROM information_schema.user_privileges WHERE grantee = "'isselectonmysqluser'@'%'"`).Check(testkit.Rows())
 
 	// Now as isselectonmysqluser
-	tk.Session().Auth(context.Background(), &auth.UserIdentity{
+	tk.Session().Auth(&auth.UserIdentity{
 		Username: "isselectonmysql",
 		Hostname: "localhost",
 	}, nil, nil, nil)
@@ -1517,7 +1517,7 @@ func TestGrantOptionAndRevoke(t *testing.T) {
 	tk.MustExec("GRANT SELECT ON *.* TO u1 WITH GRANT OPTION")
 	tk.MustExec("GRANT UPDATE, DELETE on db.* TO u1")
 
-	tk.Session().Auth(context.Background(), &auth.UserIdentity{
+	tk.Session().Auth(&auth.UserIdentity{
 		Username: "ruser",
 		Hostname: "localhost",
 	}, nil, nil, nil)
@@ -1581,7 +1581,7 @@ func TestDashboardClientDynamicPriv(t *testing.T) {
 	tk.MustExec("SET DEFAULT ROLE dc_r1 TO dc_u1")
 
 	tk1 := testkit.NewTestKit(t, store)
-	tk1.Session().Auth(context.Background(), &auth.UserIdentity{
+	tk1.Session().Auth(&auth.UserIdentity{
 		Username: "dc_u1",
 		Hostname: "localhost",
 	}, nil, nil, nil)
@@ -1625,7 +1625,7 @@ func TestGrantCreateTmpTables(t *testing.T) {
 	tk.MustExec("GRANT CREATE TEMPORARY TABLES on *.* to u1")
 	tk.MustGetErrCode("GRANT CREATE TEMPORARY TABLES on create_tmp_table_db.tmp to u1", mysql.ErrIllegalGrantForTable)
 	// Must set a session user to avoid null pointer dereference
-	tk.Session().Auth(context.Background(), &auth.UserIdentity{
+	tk.Session().Auth(&auth.UserIdentity{
 		Username: "root",
 		Hostname: "localhost",
 	}, nil, nil, nil)
@@ -1651,13 +1651,13 @@ func TestCreateTmpTablesPriv(t *testing.T) {
 	tk.MustExec("GRANT CREATE TEMPORARY TABLES, USAGE ON test.* TO vcreate_tmp")
 	tk.MustExec("GRANT CREATE TEMPORARY TABLES, USAGE ON *.* TO vcreate_tmp_all")
 
-	tk.Session().Auth(context.Background(), &auth.UserIdentity{Username: "vcreate", Hostname: "localhost"}, nil, nil, nil)
+	tk.Session().Auth(&auth.UserIdentity{Username: "vcreate", Hostname: "localhost"}, nil, nil, nil)
 	err := tk.ExecToErr(createStmt)
 	require.EqualError(t, err, "[planner:1044]Access denied for user 'vcreate'@'%' to database 'test'")
-	tk.Session().Auth(context.Background(), &auth.UserIdentity{Username: "vcreate_tmp", Hostname: "localhost"}, nil, nil, nil)
+	tk.Session().Auth(&auth.UserIdentity{Username: "vcreate_tmp", Hostname: "localhost"}, nil, nil, nil)
 	tk.MustExec(createStmt)
 	tk.MustExec(dropStmt)
-	tk.Session().Auth(context.Background(), &auth.UserIdentity{Username: "vcreate_tmp_all", Hostname: "localhost"}, nil, nil, nil)
+	tk.Session().Auth(&auth.UserIdentity{Username: "vcreate_tmp_all", Hostname: "localhost"}, nil, nil, nil)
 	// TODO: issue #29280 to be fixed.
 	//err = tk.ExecToErr(createStmt)
 	//require.EqualError(t, err, "[planner:1044]Access denied for user 'vcreate_tmp_all'@'%' to database 'test'")
@@ -1768,7 +1768,7 @@ func TestCreateTmpTablesPriv(t *testing.T) {
 		},
 	}
 
-	tk.Session().Auth(context.Background(), &auth.UserIdentity{Username: "vcreate_tmp", Hostname: "localhost"}, nil, nil, nil)
+	tk.Session().Auth(&auth.UserIdentity{Username: "vcreate_tmp", Hostname: "localhost"}, nil, nil, nil)
 	tk.MustExec("use test")
 	tk.MustExec(dropStmt)
 	for _, test := range tests {
@@ -1806,7 +1806,7 @@ func TestGrantEvent(t *testing.T) {
 	tk.MustExec("GRANT EVENT on event_db.* to u1")
 	tk.MustExec("GRANT EVENT on *.* to u1")
 	// Must set a session user to avoid null pointer dereferencing
-	tk.Session().Auth(context.Background(), &auth.UserIdentity{
+	tk.Session().Auth(&auth.UserIdentity{
 		Username: "root",
 		Hostname: "localhost",
 	}, nil, nil, nil)
@@ -1870,7 +1870,7 @@ func TestIssue29823(t *testing.T) {
 	tk.MustExec("grant r1 to u1")
 
 	tk2 := testkit.NewTestKit(t, store)
-	require.NoError(t, tk2.Session().Auth(context.Background(), &auth.UserIdentity{Username: "u1", Hostname: "%"}, nil, nil, nil))
+	require.NoError(t, tk2.Session().Auth(&auth.UserIdentity{Username: "u1", Hostname: "%"}, nil, nil, nil))
 	tk2.MustExec("set role all")
 	tk2.MustQuery("select current_role()").Check(testkit.Rows("`r1`@`%`"))
 	tk2.MustQuery("select * from test.t1").Check(testkit.Rows())
@@ -1895,7 +1895,7 @@ func TestIssue37488(t *testing.T) {
 	tk.MustExec("CREATE USER dba_test@'192.168.%';")
 	tk.MustExec("GRANT SELECT,INSERT,UPDATE,DELETE,CREATE,DROP,ALTER ON test.* TO 'dba_test'@'192.168.%';")
 
-	require.NoError(t, tk.Session().Auth(context.Background(), &auth.UserIdentity{Username: "dba_test", Hostname: "192.168.13.15"}, nil, nil, nil))
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "dba_test", Hostname: "192.168.13.15"}, nil, nil, nil))
 	tk.MustQuery("select current_user()").Check(testkit.Rows("dba_test@192.168.%"))
 	tk.MustExec("DROP TABLE IF EXISTS a;") // succ
 }
@@ -1948,33 +1948,33 @@ func TestPasswordExpireWithoutSandBoxMode(t *testing.T) {
 	// PASSWORD EXPIRE
 	user := &auth.UserIdentity{Username: "testuser", Hostname: "localhost"}
 	tk := testkit.NewTestKit(t, store)
-	err := tk.Session().Auth(context.Background(), user, nil, nil, nil)
+	err := tk.Session().Auth(user, nil, nil, nil)
 	require.ErrorContains(t, err, "Your password has expired")
 
 	// PASSWORD EXPIRE NEVER
 	rootTk.MustExec(`ALTER USER 'testuser'@'localhost' IDENTIFIED BY '' PASSWORD EXPIRE NEVER`)
-	err = tk.Session().Auth(context.Background(), user, nil, nil, nil)
+	err = tk.Session().Auth(user, nil, nil, nil)
 	require.NoError(t, err)
 
 	// PASSWORD EXPIRE INTERVAL N DAY
 	rootTk.MustExec(`ALTER USER 'testuser'@'localhost' PASSWORD EXPIRE INTERVAL 2 DAY`)
 	rootTk.MustExec(`UPDATE mysql.user SET password_last_changed = (now() - INTERVAL 1 DAY) where user='testuser'`)
 	rootTk.MustExec(`FLUSH PRIVILEGES`)
-	err = tk.Session().Auth(context.Background(), user, nil, nil, nil)
+	err = tk.Session().Auth(user, nil, nil, nil)
 	require.NoError(t, err)
 	rootTk.MustExec(`UPDATE mysql.user SET password_last_changed = (now() - INTERVAL 2 DAY) where user='testuser'`)
 	rootTk.MustExec(`FLUSH PRIVILEGES`)
 	time.Sleep(2 * time.Second)
-	err = tk.Session().Auth(context.Background(), user, nil, nil, nil)
+	err = tk.Session().Auth(user, nil, nil, nil)
 	require.ErrorContains(t, err, "Your password has expired")
 
 	// PASSWORD EXPIRE DEFAULT
 	rootTk.MustExec(`ALTER USER 'testuser'@'localhost' PASSWORD EXPIRE DEFAULT`)
 	rootTk.MustExec(`SET GLOBAL default_password_lifetime = 2`)
-	err = tk.Session().Auth(context.Background(), user, nil, nil, nil)
+	err = tk.Session().Auth(user, nil, nil, nil)
 	require.ErrorContains(t, err, "Your password has expired")
 	rootTk.MustExec(`SET GLOBAL default_password_lifetime = 3`)
-	err = tk.Session().Auth(context.Background(), user, nil, nil, nil)
+	err = tk.Session().Auth(user, nil, nil, nil)
 	require.NoError(t, err)
 }
 
@@ -1987,14 +1987,14 @@ func TestPasswordExpireWithSandBoxMode(t *testing.T) {
 	// PASSWORD EXPIRE
 	user := &auth.UserIdentity{Username: "testuser", Hostname: "localhost"}
 	tk := testkit.NewTestKit(t, store)
-	err := tk.Session().Auth(context.Background(), user, nil, nil, nil)
+	err := tk.Session().Auth(user, nil, nil, nil)
 	require.NoError(t, err)
 	require.True(t, tk.Session().InSandBoxMode())
 	tk.Session().DisableSandBoxMode()
 
 	// PASSWORD EXPIRE NEVER
 	rootTk.MustExec(`ALTER USER 'testuser'@'localhost' IDENTIFIED BY '' PASSWORD EXPIRE NEVER`)
-	err = tk.Session().Auth(context.Background(), user, nil, nil, nil)
+	err = tk.Session().Auth(user, nil, nil, nil)
 	require.NoError(t, err)
 	require.False(t, tk.Session().InSandBoxMode())
 
@@ -2002,13 +2002,13 @@ func TestPasswordExpireWithSandBoxMode(t *testing.T) {
 	rootTk.MustExec(`ALTER USER 'testuser'@'localhost' PASSWORD EXPIRE INTERVAL 2 DAY`)
 	rootTk.MustExec(`UPDATE mysql.user SET password_last_changed = (now() - INTERVAL 1 DAY) where user='testuser'`)
 	rootTk.MustExec(`FLUSH PRIVILEGES`)
-	err = tk.Session().Auth(context.Background(), user, nil, nil, nil)
+	err = tk.Session().Auth(user, nil, nil, nil)
 	require.NoError(t, err)
 	require.False(t, tk.Session().InSandBoxMode())
 	rootTk.MustExec(`UPDATE mysql.user SET password_last_changed = (now() - INTERVAL 2 DAY) where user='testuser'`)
 	rootTk.MustExec(`FLUSH PRIVILEGES`)
 	time.Sleep(2 * time.Second)
-	err = tk.Session().Auth(context.Background(), user, nil, nil, nil)
+	err = tk.Session().Auth(user, nil, nil, nil)
 	require.NoError(t, err)
 	require.True(t, tk.Session().InSandBoxMode())
 	tk.Session().DisableSandBoxMode()
@@ -2016,12 +2016,12 @@ func TestPasswordExpireWithSandBoxMode(t *testing.T) {
 	// PASSWORD EXPIRE DEFAULT
 	rootTk.MustExec(`ALTER USER 'testuser'@'localhost' PASSWORD EXPIRE DEFAULT`)
 	rootTk.MustExec(`SET GLOBAL default_password_lifetime = 2`)
-	err = tk.Session().Auth(context.Background(), user, nil, nil, nil)
+	err = tk.Session().Auth(user, nil, nil, nil)
 	require.NoError(t, err)
 	require.True(t, tk.Session().InSandBoxMode())
 	tk.Session().DisableSandBoxMode()
 	rootTk.MustExec(`SET GLOBAL default_password_lifetime = 3`)
-	err = tk.Session().Auth(context.Background(), user, nil, nil, nil)
+	err = tk.Session().Auth(user, nil, nil, nil)
 	require.NoError(t, err)
 	require.False(t, tk.Session().InSandBoxMode())
 }
@@ -2049,31 +2049,31 @@ func TestVerificationInfoWithSessionTokenPlugin(t *testing.T) {
 	// Test password expiration without sandbox.
 	user := &auth.UserIdentity{Username: "testuser", Hostname: "localhost", AuthPlugin: mysql.AuthTiDBSessionToken}
 	tk := testkit.NewTestKit(t, store)
-	err = tk.Session().Auth(context.Background(), user, tokenBytes, nil, nil)
+	err = tk.Session().Auth(user, tokenBytes, nil, nil)
 	require.NoError(t, err)
 	require.False(t, tk.Session().InSandBoxMode())
 
 	// Test password expiration with sandbox.
 	variable.IsSandBoxModeEnabled.Store(true)
-	err = tk.Session().Auth(context.Background(), user, tokenBytes, nil, nil)
+	err = tk.Session().Auth(user, tokenBytes, nil, nil)
 	require.NoError(t, err)
 	require.False(t, tk.Session().InSandBoxMode())
 
 	// Enable resource group.
 	variable.EnableResourceControl.Store(true)
-	err = tk.Session().Auth(context.Background(), user, tokenBytes, nil, nil)
+	err = tk.Session().Auth(user, tokenBytes, nil, nil)
 	require.NoError(t, err)
 	require.Equal(t, "default", tk.Session().GetSessionVars().ResourceGroupName)
 
 	// Non-default resource group.
 	rootTk.MustExec("CREATE RESOURCE GROUP rg1 RU_PER_SEC = 999")
 	rootTk.MustExec(`ALTER USER 'testuser'@'localhost' RESOURCE GROUP rg1`)
-	err = tk.Session().Auth(context.Background(), user, tokenBytes, nil, nil)
+	err = tk.Session().Auth(user, tokenBytes, nil, nil)
 	require.NoError(t, err)
 	require.Equal(t, "rg1", tk.Session().GetSessionVars().ResourceGroupName)
 
 	// Wrong token
-	err = tk.Session().Auth(context.Background(), user, nil, nil, nil)
+	err = tk.Session().Auth(user, nil, nil, nil)
 	require.ErrorContains(t, err, "Access denied")
 }
 
@@ -2086,7 +2086,7 @@ func TestNilHandleInConnectionVerification(t *testing.T) {
 	}()
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
-	require.NoError(t, tk.Session().Auth(context.Background(), &auth.UserIdentity{Username: "root", Hostname: `%`}, nil, nil, nil))
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: `%`}, nil, nil, nil))
 }
 
 func testShowGrantsSQLMode(t *testing.T, tk *testkit.TestKit, expected []string) {
@@ -2121,7 +2121,7 @@ func TestEnsureActiveUserCoverage(t *testing.T) {
 	store := createStoreAndPrepareDB(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create user 'test'")
-	tk.Session().Auth(context.Background(), &auth.UserIdentity{Username: "root", Hostname: "localhost"}, nil, nil, nil)
+	tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "localhost"}, nil, nil, nil)
 
 	cases := []struct {
 		sql     string

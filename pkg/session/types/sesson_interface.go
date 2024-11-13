@@ -69,7 +69,7 @@ type Session interface {
 	SetCollation(coID int) error
 	SetSessionManager(util.SessionManager)
 	Close()
-	Auth(ctx context.Context, user *auth.UserIdentity, auth, salt []byte, authConn conn.AuthConn) error
+	Auth(user *auth.UserIdentity, auth, salt []byte, authConn conn.AuthConn) error
 	AuthWithoutVerification(ctx context.Context, user *auth.UserIdentity) bool
 	AuthPluginForUser(ctx context.Context, user *auth.UserIdentity) (string, error)
 	MatchIdentity(ctx context.Context, username, remoteHost string) (*auth.UserIdentity, error)
