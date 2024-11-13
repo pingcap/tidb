@@ -718,6 +718,7 @@ func (b *executorBuilder) buildLimit(v *plannercore.PhysicalLimit) Executor {
 		end:          v.Offset + v.Count,
 	}
 
+<<<<<<< HEAD:executor/builder.go
 	childUsedSchema := markChildrenUsedCols(v.Schema().Columns, v.Children()[0].Schema())[0]
 	e.columnIdxsUsedByChild = make([]int, 0, len(childUsedSchema))
 	for i, used := range childUsedSchema {
@@ -726,7 +727,17 @@ func (b *executorBuilder) buildLimit(v *plannercore.PhysicalLimit) Executor {
 		}
 	}
 	if len(e.columnIdxsUsedByChild) == len(childUsedSchema) {
+=======
+	childSchemaLen := v.Children()[0].Schema().Len()
+	childUsedSchema := markChildrenUsedCols(v.Schema().Columns, v.Children()[0].Schema())[0]
+	e.columnIdxsUsedByChild = make([]int, 0, len(childUsedSchema))
+	e.columnIdxsUsedByChild = append(e.columnIdxsUsedByChild, childUsedSchema...)
+	if len(e.columnIdxsUsedByChild) == childSchemaLen {
+>>>>>>> 65281ad3073 (*: make `chunk.SwapColumn` private (#57274)):pkg/executor/builder.go
 		e.columnIdxsUsedByChild = nil // indicates that all columns are used. LimitExec will improve performance for this condition.
+	} else {
+		// construct a project evaluator to do the inline projection
+		e.columnSwapHelper = chunk.NewColumnSwapHelper(e.columnIdxsUsedByChild)
 	}
 	return e
 }

@@ -17,9 +17,15 @@ package chunk
 import (
 	"math/rand"
 	"reflect"
+	"slices"
 	"testing"
 
+<<<<<<< HEAD:util/chunk/chunk_util_test.go
 	"github.com/pingcap/tidb/types"
+=======
+	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/types"
+>>>>>>> 65281ad3073 (*: make `chunk.SwapColumn` private (#57274)):pkg/util/chunk/chunk_util_test.go
 	"github.com/stretchr/testify/require"
 )
 
@@ -218,4 +224,42 @@ func BenchmarkAppendSelectedRow(b *testing.B) {
 			dstChk.AppendRow(srcChk.GetRow(j))
 		}
 	}
+}
+
+func TestMergeInputIdxToOutputIdxes(t *testing.T) {
+	inputIdxToOutputIdxes := make(map[int][]int)
+	// input 0th should be column referred as 0th and 1st in output columns.
+	inputIdxToOutputIdxes[0] = []int{0, 1}
+	// input 1th should be column referred as 2nd and 3rd in output columns.
+	inputIdxToOutputIdxes[1] = []int{2, 3}
+	columnEval := ColumnSwapHelper{InputIdxToOutputIdxes: inputIdxToOutputIdxes}
+
+	input := NewEmptyChunk([]*types.FieldType{types.NewFieldType(mysql.TypeLonglong), types.NewFieldType(mysql.TypeLonglong)})
+	input.AppendInt64(0, 99)
+	// input chunk's 0th and 1st are column referred itself.
+	input.MakeRef(0, 1)
+
+	// chunk:     col1 <---(ref) col2
+	// ____________/ \___________/  \___
+	// proj:  col1   col2     col3   col4
+	//
+	// original case after inputIdxToOutputIdxes[0], the original col2 will be nil pointer
+	// cause consecutive col3,col4 ref projection are invalid.
+	//
+	// after fix, the new inputIdxToOutputIdxes should be: inputIdxToOutputIdxes[0]: {0, 1, 2, 3}
+
+	output := NewEmptyChunk([]*types.FieldType{types.NewFieldType(mysql.TypeLonglong), types.NewFieldType(mysql.TypeLonglong),
+		types.NewFieldType(mysql.TypeLonglong), types.NewFieldType(mysql.TypeLonglong)})
+
+	err := columnEval.SwapColumns(input, output)
+	require.NoError(t, err)
+	// all four columns are column-referred, pointing to the first one.
+	require.Equal(t, output.Column(0), output.Column(1))
+	require.Equal(t, output.Column(1), output.Column(2))
+	require.Equal(t, output.Column(2), output.Column(3))
+	require.Equal(t, output.GetRow(0).GetInt64(0), int64(99))
+
+	require.Equal(t, len(*columnEval.mergedInputIdxToOutputIdxes.Load()), 1)
+	slices.Sort((*columnEval.mergedInputIdxToOutputIdxes.Load())[0])
+	require.Equal(t, (*columnEval.mergedInputIdxToOutputIdxes.Load())[0], []int{0, 1, 2, 3})
 }

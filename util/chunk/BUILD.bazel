@@ -21,6 +21,7 @@ go_library(
     importpath = "github.com/pingcap/tidb/util/chunk",
     visibility = ["//visibility:public"],
     deps = [
+<<<<<<< HEAD:util/chunk/BUILD.bazel
         "//config",
         "//parser/mysql",
         "//parser/terror",
@@ -32,6 +33,21 @@ go_library(
         "//util/logutil",
         "//util/mathutil",
         "//util/memory",
+=======
+        "//pkg/config",
+        "//pkg/parser/mysql",
+        "//pkg/parser/terror",
+        "//pkg/types",
+        "//pkg/util/checksum",
+        "//pkg/util/disjointset",
+        "//pkg/util/disk",
+        "//pkg/util/encrypt",
+        "//pkg/util/hack",
+        "//pkg/util/intest",
+        "//pkg/util/logutil",
+        "//pkg/util/memory",
+        "//pkg/util/syncutil",
+>>>>>>> 65281ad3073 (*: make `chunk.SwapColumn` private (#57274)):pkg/util/chunk/BUILD.bazel
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_failpoint//:failpoint",
         "@org_golang_x_sys//cpu",
