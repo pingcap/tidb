@@ -169,7 +169,6 @@ func NewSstRestoreManager(
 	// TODO implement checkpoint
 	s.restorer = restore.NewSimpleSstRestorer(ctx, snapFileImporter, sstWorkerPool, nil)
 	return s, nil
-
 }
 
 type LogClient struct {

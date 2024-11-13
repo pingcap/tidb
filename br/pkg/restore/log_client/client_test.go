@@ -97,7 +97,7 @@ func TestDeleteRangeQueryExec(t *testing.T) {
 	g := gluetidb.New()
 	client := logclient.NewRestoreClient(
 		split.NewFakePDClient(nil, false, nil), nil, nil, keepalive.ClientParameters{})
-	err := client.Init(ctx, g, m.Storage, false)
+	err := client.Init(ctx, g, m.Storage)
 	require.NoError(t, err)
 
 	client.RunGCRowsLoader(ctx)
@@ -116,7 +116,7 @@ func TestDeleteRangeQuery(t *testing.T) {
 	g := gluetidb.New()
 	client := logclient.NewRestoreClient(
 		split.NewFakePDClient(nil, false, nil), nil, nil, keepalive.ClientParameters{})
-	err := client.Init(ctx, g, m.Storage, false)
+	err := client.Init(ctx, g, m.Storage)
 	require.NoError(t, err)
 
 	client.RunGCRowsLoader(ctx)
