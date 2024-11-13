@@ -1191,13 +1191,13 @@ func TestAdminAlterDDLJobUnsupportedCases(t *testing.T) {
 	tk.MustExec("create table t (a int);")
 
 	// invalid config value
-	tk.MustGetErrMsg("admin alter ddl jobs 1 thread = 0;", "The value 0 for thread is out of range [1, 256]")
-	tk.MustGetErrMsg("admin alter ddl jobs 1 thread = 257;", "The value 257 for thread is out of range [1, 256]")
-	tk.MustGetErrMsg("admin alter ddl jobs 1 batch_size = 31;", "The value 31 for batch_size is out of range [32, 10240]")
-	tk.MustGetErrMsg("admin alter ddl jobs 1 batch_size = 10241;", "The value 10241 for batch_size is out of range [32, 10240]")
+	tk.MustGetErrMsg("admin alter ddl jobs 1 thread = 0;", "the value 0 for thread is out of range [1, 256]")
+	tk.MustGetErrMsg("admin alter ddl jobs 1 thread = 257;", "the value 257 for thread is out of range [1, 256]")
+	tk.MustGetErrMsg("admin alter ddl jobs 1 batch_size = 31;", "the value 31 for batch_size is out of range [32, 10240]")
+	tk.MustGetErrMsg("admin alter ddl jobs 1 batch_size = 10241;", "the value 10241 for batch_size is out of range [32, 10240]")
 
 	// invalid job id
-	tk.MustGetErrMsg("admin alter ddl jobs 1 thread = 8;", "DDL job 1 not found")
+	tk.MustGetErrMsg("admin alter ddl jobs 1 thread = 8;", "ddl job 1 not found")
 
 	job := model.Job{
 		ID:   1,
@@ -1206,7 +1206,7 @@ func TestAdminAlterDDLJobUnsupportedCases(t *testing.T) {
 	insertMockJob2Table(tk, &job)
 	// unsupported job type
 	tk.MustGetErrMsg(fmt.Sprintf("admin alter ddl jobs %d thread = 8;", job.ID),
-		"Unsupported DDL operation: add column, only support add index, modify column and alter table reorganize partition DDL job.")
+		"unsupported DDL operation: add column, only support add index, modify column and alter table reorganize partition DDL job")
 	deleteJobMetaByID(tk, 1)
 }
 
