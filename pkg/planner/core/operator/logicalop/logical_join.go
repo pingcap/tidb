@@ -1105,8 +1105,8 @@ func (p *LogicalJoin) pushDownTopNToChild(topN *LogicalTopN, idx int, opt *optim
 		// If it's unique key(unique with not null), we can push the offset down safely whatever the join key is normal eq or nulleq.
 		// If the join key is nulleq, then we can only push the offset down when the inner side is unique key.
 		// Only when the join key is normal eq, we can push the offset down when the inner side is unique(could be null).
-		if innerChild.Schema().IsUnique(false, innerJoinKey...) ||
-			(innerChild.Schema().IsUnique(true, innerJoinKey...) && !isNullEQ) {
+		if innerChild.Schema().IsUnique(true, innerJoinKey...) ||
+			(!isNullEQ && innerChild.Schema().IsUnique(false, innerJoinKey...)) {
 			count, offset = topN.Count, topN.Offset
 		}
 	} else if p.JoinType == RightOuterJoin {
@@ -1119,8 +1119,8 @@ func (p *LogicalJoin) pushDownTopNToChild(topN *LogicalTopN, idx int, opt *optim
 				isNullEQ = true
 			}
 		}
-		if innerChild.Schema().IsUnique(false, innerJoinKey...) ||
-			(!isNullEQ && innerChild.Schema().IsUnique(true, innerJoinKey...)) {
+		if innerChild.Schema().IsUnique(true, innerJoinKey...) ||
+			(!isNullEQ && innerChild.Schema().IsUnique(false, innerJoinKey...)) {
 			count, offset = topN.Count, topN.Offset
 		}
 	}

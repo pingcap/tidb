@@ -128,11 +128,13 @@ func (s *Schema) RetrieveColumn(col *Column) *Column {
 	return nil
 }
 
-// IsUnique checks if the column is unique key. Use nullable to determine whether to use uniqueKeys.
-func (s *Schema) IsUnique(nullable bool, cols ...*Column) bool {
-	slicesToBeIterated := s.Keys
-	if nullable {
-		slicesToBeIterated = s.UniqueKeys
+// IsUnique checks if the column is unique key.
+// Pass strong=true to check strong contraint: unique && notnull.
+// Pass strong=false to check weak contraint: unique && nullable.
+func (s *Schema) IsUnique(strong bool, cols ...*Column) bool {
+	slicesToBeIterated := s.UniqueKeys
+	if strong {
+		slicesToBeIterated = s.Keys
 	}
 	for _, key := range slicesToBeIterated {
 		if len(key) > len(cols) {

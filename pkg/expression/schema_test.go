@@ -77,12 +77,12 @@ func TestSchemaIsUniqueKey(t *testing.T) {
 	}
 	for i, col := range schema.Columns {
 		if i < len(schema.Columns)-1 {
-			require.Equal(t, true, schema.IsUnique(false, col))
+			require.Equal(t, true, schema.IsUnique(true, col))
 		} else {
-			require.Equal(t, false, schema.IsUnique(false, col))
+			require.Equal(t, false, schema.IsUnique(true, col))
 		}
 	}
-	require.Equal(t, false, schema.IsUnique(false, colOutSchema))
+	require.Equal(t, false, schema.IsUnique(true, colOutSchema))
 }
 
 func TestSchemaContains(t *testing.T) {
