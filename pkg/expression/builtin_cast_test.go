@@ -21,6 +21,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
@@ -1393,7 +1394,7 @@ func TestWrapWithCastAsString(t *testing.T) {
 
 	cases := []struct {
 		expr Expression
-		err  bool
+		warn bool
 		ret  string
 	}{
 		{
@@ -1432,18 +1433,21 @@ func TestWrapWithCastAsString(t *testing.T) {
 			"-127",
 		},
 	}
+	lastWarningLen := 0
 	for _, c := range cases {
 		expr := BuildCastFunction(ctx, c.expr, types.NewFieldType(mysql.TypeVarString))
-		res, _, err := expr.EvalString(ctx, chunk.Row{})
-		if c.err {
-			require.Error(t, err)
+		res, _, _ := expr.EvalString(ctx, chunk.Row{})
+		if c.warn {
+			warns := ctx.GetSessionVars().StmtCtx.GetWarnings()
+			require.Greater(t, len(warns), lastWarningLen)
+			lastWarningLen = len(warns)
 		} else {
 			require.Equal(t, c.ret, res)
 		}
 	}
 
 	expr := BuildCastFunction(ctx, &Constant{RetType: types.NewFieldType(mysql.TypeEnum)}, types.NewFieldType(mysql.TypeVarString))
-	require.NotContains(t, expr.String(), "to_binary")
+	require.NotContains(t, expr.StringWithCtx(errors.RedactLogDisable), "to_binary")
 }
 
 func TestWrapWithCastAsJSON(t *testing.T) {

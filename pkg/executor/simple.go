@@ -42,7 +42,6 @@ import (
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
-	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/model"
@@ -1081,6 +1080,9 @@ func (e *SimpleExec) executeCreateUser(ctx context.Context, s *ast.CreateUserStm
 		if !variable.EnableResourceControl.Load() {
 			return infoschema.ErrResourceGroupSupportDisabled
 		}
+		if s.IsCreateRole {
+			return infoschema.ErrResourceGroupInvalidForRole
+		}
 
 		resourceGroupName := strings.ToLower(s.ResourceGroupNameOption.Value)
 
@@ -1268,6 +1270,26 @@ func (e *SimpleExec) executeCreateUser(ctx context.Context, s *ast.CreateUserStm
 		return errors.Trace(err)
 	}
 	return domain.GetDomain(e.Ctx()).NotifyUpdatePrivilege()
+}
+
+func isRole(ctx context.Context, sqlExecutor sqlexec.SQLExecutor, name, host string) (bool, error) {
+	sql := new(strings.Builder)
+	sqlescape.MustFormatSQL(sql, `SELECT 1 FROM %n.%n WHERE User=%? AND Host=%? AND Account_locked="Y" AND Password_expired="Y";`,
+		mysql.SystemDB, mysql.UserTable, name, strings.ToLower(host))
+	recordSet, err := sqlExecutor.ExecuteInternal(ctx, sql.String())
+	if err != nil {
+		return false, err
+	}
+	defer func() {
+		if closeErr := recordSet.Close(); closeErr != nil {
+			err = closeErr
+		}
+	}()
+	rows, err := sqlexec.DrainRecordSet(ctx, recordSet, 1)
+	if err != nil {
+		return false, err
+	}
+	return len(rows) > 0, nil
 }
 
 func getUserPasswordLimit(ctx context.Context, sqlExecutor sqlexec.SQLExecutor, name string, host string, plOptions *passwordOrLockOptionsInfo) (pRI *passwordReuseInfo, err error) {
@@ -1891,6 +1913,13 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 		if s.ResourceGroupNameOption != nil {
 			if !variable.EnableResourceControl.Load() {
 				return infoschema.ErrResourceGroupSupportDisabled
+			}
+			is, err := isRole(ctx, sqlExecutor, spec.User.Username, spec.User.Hostname)
+			if err != nil {
+				return err
+			}
+			if is {
+				return infoschema.ErrResourceGroupInvalidForRole
 			}
 
 			// check if specified resource group exists
@@ -2851,20 +2880,16 @@ func (e *SimpleExec) executeAdminUnsetBDRRole() error {
 }
 
 func (e *SimpleExec) executeSetResourceGroupName(s *ast.SetResourceGroupStmt) error {
-	originalResourceGroup := e.Ctx().GetSessionVars().ResourceGroupName
+	var name string
 	if s.Name.L != "" {
 		if _, ok := e.is.ResourceGroupByName(s.Name); !ok {
 			return infoschema.ErrResourceGroupNotExists.GenWithStackByArgs(s.Name.O)
 		}
-		e.Ctx().GetSessionVars().ResourceGroupName = s.Name.L
+		name = s.Name.L
 	} else {
-		e.Ctx().GetSessionVars().ResourceGroupName = resourcegroup.DefaultResourceGroupName
+		name = resourcegroup.DefaultResourceGroupName
 	}
-	newResourceGroup := e.Ctx().GetSessionVars().ResourceGroupName
-	if originalResourceGroup != newResourceGroup {
-		metrics.ConnGauge.WithLabelValues(originalResourceGroup).Dec()
-		metrics.ConnGauge.WithLabelValues(newResourceGroup).Inc()
-	}
+	e.Ctx().GetSessionVars().SetResourceGroupName(name)
 	return nil
 }
 

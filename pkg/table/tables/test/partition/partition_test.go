@@ -23,6 +23,7 @@ import (
 	"testing"
 	gotime "time"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -260,7 +261,7 @@ func TestGeneratePartitionExpr(t *testing.T) {
 		"1",
 	}
 	for i, expr := range pe.UpperBounds {
-		require.Equal(t, upperBounds[i], expr.String())
+		require.Equal(t, upperBounds[i], expr.StringWithCtx(errors.RedactLogDisable))
 	}
 }
 

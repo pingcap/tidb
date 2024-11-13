@@ -424,8 +424,17 @@ func (c *CheckpointAdvancer) onTaskEvent(ctx context.Context, e TaskEvent) error
 		c.task = e.Info
 		c.taskRange = spans.Collapse(len(e.Ranges), func(i int) kv.KeyRange { return e.Ranges[i] })
 		c.setCheckpoints(spans.Sorted(spans.NewFullWith(e.Ranges, 0)))
-		c.lastCheckpoint = newCheckpointWithTS(e.Info.StartTs)
-		p, err := c.env.BlockGCUntil(ctx, c.task.StartTs)
+		globalCheckpointTs, err := c.env.GetGlobalCheckpointForTask(ctx, e.Name)
+		if err != nil {
+			log.Error("failed to get global checkpoint, skipping.", logutil.ShortError(err))
+			return err
+		}
+		if globalCheckpointTs < c.task.StartTs {
+			globalCheckpointTs = c.task.StartTs
+		}
+		log.Info("get global checkpoint", zap.Uint64("checkpoint", globalCheckpointTs))
+		c.lastCheckpoint = newCheckpointWithTS(globalCheckpointTs)
+		p, err := c.env.BlockGCUntil(ctx, globalCheckpointTs)
 		if err != nil {
 			log.Warn("failed to upload service GC safepoint, skipping.", logutil.ShortError(err))
 		}
@@ -434,6 +443,7 @@ func (c *CheckpointAdvancer) onTaskEvent(ctx context.Context, e TaskEvent) error
 	case EventDel:
 		utils.LogBackupTaskCountDec()
 		c.task = nil
+		c.isPaused.Store(false)
 		c.taskRange = nil
 		// This would be synced by `taskMu`, perhaps we'd better rename that to `tickMu`.
 		// Do the null check because some of test cases won't equip the advancer with subscriber.
@@ -450,11 +460,11 @@ func (c *CheckpointAdvancer) onTaskEvent(ctx context.Context, e TaskEvent) error
 		metrics.LastCheckpoint.DeleteLabelValues(e.Name)
 	case EventPause:
 		if c.task.GetName() == e.Name {
-			c.isPaused.CompareAndSwap(false, true)
+			c.isPaused.Store(true)
 		}
 	case EventResume:
 		if c.task.GetName() == e.Name {
-			c.isPaused.CompareAndSwap(true, false)
+			c.isPaused.Store(false)
 		}
 	case EventErr:
 		return e.Err
@@ -713,4 +723,13 @@ func (c *CheckpointAdvancer) asyncResolveLocksForRanges(ctx context.Context, tar
 		c.lastCheckpointMu.Unlock()
 		c.inResolvingLock.Store(false)
 	}()
+}
+
+func (c *CheckpointAdvancer) TEST_registerCallbackForSubscriptions(f func()) int {
+	cnt := 0
+	for _, sub := range c.subscriber.subscriptions {
+		sub.onDaemonExit = f
+		cnt += 1
+	}
+	return cnt
 }

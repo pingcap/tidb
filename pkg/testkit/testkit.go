@@ -476,7 +476,7 @@ func (tk *TestKit) MustGetDBError(sql string, dberr *terror.Error) {
 // MustContainErrMsg executes a sql statement and assert its error message containing errStr.
 func (tk *TestKit) MustContainErrMsg(sql string, errStr any) {
 	err := tk.ExecToErr(sql)
-	tk.require.Error(err)
+	tk.require.Error(err, "sql: %s", sql)
 	tk.require.Contains(err.Error(), errStr)
 }
 

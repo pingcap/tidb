@@ -337,17 +337,24 @@ func TestTiFlashFineGrainedShuffle(t *testing.T) {
 	tbl1.Meta().TiFlashReplica = &model.TiFlashReplicaInfo{Count: 1, Available: true}
 	var input []string
 	var output []struct {
-		SQL  string
-		Plan []string
+		SQL    string
+		Plan   []string
+		Redact []string
 	}
 	integrationSuiteData := GetIntegrationSuiteData()
 	integrationSuiteData.LoadTestCases(t, &input, &output)
 	for i, tt := range input {
 		testdata.OnRecord(func() {
 			output[i].SQL = tt
+			tk.MustExec("set session tidb_redact_log=off")
 			output[i].Plan = testdata.ConvertRowsToStrings(tk.MustQuery(tt).Rows())
+			tk.MustExec("set session tidb_redact_log=on")
+			output[i].Redact = testdata.ConvertRowsToStrings(tk.MustQuery(tt).Rows())
 		})
+		tk.MustExec("set session tidb_redact_log=off")
 		tk.MustQuery(tt).Check(testkit.Rows(output[i].Plan...))
+		tk.MustExec("set session tidb_redact_log=on")
+		tk.MustQuery(tt).Check(testkit.Rows(output[i].Redact...))
 	}
 }
 

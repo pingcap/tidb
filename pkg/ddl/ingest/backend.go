@@ -41,7 +41,10 @@ import (
 	"go.uber.org/zap"
 )
 
-// BackendCtx is the backend context for add index reorg task.
+// MockDMLExecutionStateBeforeImport is a failpoint to mock the DML execution state before import.
+var MockDMLExecutionStateBeforeImport func()
+
+// BackendCtx is the backend context for one add index reorg task.
 type BackendCtx interface {
 	Register(jobID, indexID int64, schemaName, tableName string) (Engine, error)
 	Unregister(jobID, indexID int64)
@@ -63,14 +66,14 @@ type BackendCtx interface {
 type FlushMode byte
 
 const (
-	// FlushModeAuto means flush when the memory table size reaches the threshold.
+	// FlushModeAuto means caller does not enforce any flush, the implementation can
+	// decide it.
 	FlushModeAuto FlushMode = iota
-	// FlushModeForceLocal means flush all data to local storage.
-	FlushModeForceLocal
-	// FlushModeForceLocalAndCheckDiskQuota means flush all data to local storage and check disk quota.
-	FlushModeForceLocalAndCheckDiskQuota
-	// FlushModeForceGlobal means import all data in local storage to global storage.
-	FlushModeForceGlobal
+	// FlushModeForceFlushNoImport means flush all data to local storage, but don't
+	// import the data to TiKV.
+	FlushModeForceFlushNoImport
+	// FlushModeForceFlushAndImport means flush and import all data to TiKV.
+	FlushModeForceFlushAndImport
 )
 
 // litBackendCtx store a backend info for add index reorg task.
@@ -183,7 +186,7 @@ func (bc *litBackendCtx) Flush(indexID int64, mode FlushMode) (flushed, imported
 		return false, false, dbterror.ErrIngestFailed.FastGenByArgs("ingest engine not found")
 	}
 
-	shouldFlush, shouldImport := bc.ShouldSync(mode)
+	shouldFlush, shouldImport := bc.checkFlush(mode)
 	if !shouldFlush {
 		return false, false, nil
 	}
@@ -226,10 +229,16 @@ func (bc *litBackendCtx) Flush(indexID int64, mode FlushMode) (flushed, imported
 			}
 		}()
 	}
+	failpoint.Inject("mockDMLExecutionStateBeforeImport", func(_ failpoint.Value) {
+		if MockDMLExecutionStateBeforeImport != nil {
+			MockDMLExecutionStateBeforeImport()
+		}
+	})
 	err = bc.unsafeImportAndReset(ei)
 	if err != nil {
 		return true, false, err
 	}
+
 	return true, true, nil
 }
 
@@ -250,7 +259,17 @@ func (bc *litBackendCtx) unsafeImportAndReset(ei *engineInfo) error {
 		return err
 	}
 
-	err := bc.backend.ResetEngine(bc.ctx, ei.uuid)
+	resetFn := bc.backend.ResetEngineSkipAllocTS
+	mgr := bc.GetCheckpointManager()
+	if mgr == nil {
+		// disttask case, no need to refresh TS.
+		//
+		// TODO(lance6716): for disttask local sort case, we need to use a fixed TS. But
+		// it doesn't have checkpoint, so we need to find a way to save TS.
+		resetFn = bc.backend.ResetEngine
+	}
+
+	err := resetFn(bc.ctx, ei.uuid)
 	if err != nil {
 		logutil.Logger(bc.ctx).Error(LitErrResetEngineFail, zap.Int64("index ID", ei.indexID))
 		err1 := ei.closedEngine.Cleanup(bc.ctx)
@@ -262,34 +281,50 @@ func (bc *litBackendCtx) unsafeImportAndReset(ei *engineInfo) error {
 		ei.closedEngine = nil
 		return err
 	}
+
+	if mgr == nil {
+		return nil
+	}
+
+	// for local disk case, we need to refresh TS because duplicate detection
+	// requires each ingest to have a unique TS.
+	//
+	// TODO(lance6716): there's still a chance that data is imported but because of
+	// checkpoint is low-watermark, the data will still be imported again with
+	// another TS after failover. Need to refine the checkpoint mechanism.
+	newTS, err := mgr.refreshTSAndUpdateCP()
+	if err != nil {
+		return errors.Trace(err)
+	}
+	ei.openedEngine.SetTS(newTS)
 	return nil
 }
 
 // ForceSyncFlagForTest is a flag to force sync only for test.
 var ForceSyncFlagForTest = false
 
-func (bc *litBackendCtx) ShouldSync(mode FlushMode) (shouldFlush bool, shouldImport bool) {
-	if mode == FlushModeForceGlobal || ForceSyncFlagForTest {
+func (bc *litBackendCtx) checkFlush(mode FlushMode) (shouldFlush bool, shouldImport bool) {
+	failpoint.Inject("forceSyncFlagForTest", func() {
+		// used in a manual test
+		ForceSyncFlagForTest = true
+	})
+	if mode == FlushModeForceFlushAndImport || ForceSyncFlagForTest {
 		return true, true
 	}
-	if mode == FlushModeForceLocal {
+	if mode == FlushModeForceFlushNoImport {
 		return true, false
 	}
 	bc.diskRoot.UpdateUsage()
 	shouldImport = bc.diskRoot.ShouldImport()
-	if mode == FlushModeForceLocalAndCheckDiskQuota {
-		shouldFlush = true
-	} else {
-		interval := bc.updateInterval
-		// This failpoint will be manually set through HTTP status port.
-		failpoint.Inject("mockSyncIntervalMs", func(val failpoint.Value) {
-			if v, ok := val.(int); ok {
-				interval = time.Duration(v) * time.Millisecond
-			}
-		})
-		shouldFlush = shouldImport ||
-			time.Since(bc.timeOfLastFlush.Load()) >= interval
-	}
+	interval := bc.updateInterval
+	// This failpoint will be manually set through HTTP status port.
+	failpoint.Inject("mockSyncIntervalMs", func(val failpoint.Value) {
+		if v, ok := val.(int); ok {
+			interval = time.Duration(v) * time.Millisecond
+		}
+	})
+	shouldFlush = shouldImport ||
+		time.Since(bc.timeOfLastFlush.Load()) >= interval
 	return shouldFlush, shouldImport
 }
 

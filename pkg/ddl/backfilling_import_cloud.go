@@ -95,6 +95,7 @@ func (m *cloudImportExecutor) RunSubtask(ctx context.Context, subtask *proto.Sub
 			TotalKVCount:  0,
 			CheckHotspot:  true,
 		},
+		TS: sm.TS,
 	}, engineUUID)
 	if err != nil {
 		return err

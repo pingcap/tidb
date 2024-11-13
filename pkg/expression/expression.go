@@ -17,6 +17,7 @@ package expression
 import (
 	goJSON "encoding/json"
 	"fmt"
+	"strings"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -27,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/generatedexpr"
+	"github.com/pingcap/tidb/pkg/util/mathutil"
 	"github.com/pingcap/tidb/pkg/util/size"
 	"github.com/pingcap/tidb/pkg/util/zeropool"
 )
@@ -249,6 +251,9 @@ type Expression interface {
 
 	// MemoryUsage return the memory usage of Expression
 	MemoryUsage() int64
+
+	// StringWithCtx returns the string representation of the expression with context.
+	StringWithCtx(redact string) string
 }
 
 // CNFExprs stands for a CNF expression.
@@ -863,7 +868,7 @@ func SplitDNFItems(onExpr Expression) []Expression {
 // If the Expression is a non-constant value, it means the result is unknown.
 func EvaluateExprWithNull(ctx BuildContext, schema *Schema, expr Expression) Expression {
 	if MaybeOverOptimized4PlanCache(ctx, []Expression{expr}) {
-		ctx.SetSkipPlanCache(errors.NewNoStackError("%v affects null check"))
+		ctx.SetSkipPlanCache(errors.NewNoStackErrorf("%v affects null check", expr.StringWithCtx(errors.RedactLogDisable)))
 	}
 	if ctx.GetSessionVars().StmtCtx.InNullRejectCheck {
 		expr, _ = evaluateExprWithNullInNullRejectCheck(ctx, schema, expr)
@@ -1175,6 +1180,21 @@ func PropagateType(evalType types.EvalType, args ...Expression) {
 				if newDecimal > mysql.MaxDecimalScale {
 					newDecimal = mysql.MaxDecimalScale
 				}
+				if oldFlen-oldDecimal > newFlen-newDecimal {
+					// the input data should never be overflow under the new type
+					if newDecimal > oldDecimal {
+						// if the target decimal part is larger than the original decimal part, we try to extend
+						// the decimal part as much as possible while keeping the integer part big enough to hold
+						// the original data. For example, original type is Decimal(50, 0), new type is Decimal(48,30), then
+						// incDecimal = min(30-0, mysql.MaxDecimalWidth-50) = 15
+						// the new target Decimal will be Decimal(50+15, 0+15) = Decimal(65, 15)
+						incDecimal := mathutil.Min(newDecimal-oldDecimal, mysql.MaxDecimalWidth-oldFlen)
+						newFlen = oldFlen + incDecimal
+						newDecimal = oldDecimal + incDecimal
+					} else {
+						newFlen, newDecimal = oldFlen, oldDecimal
+					}
+				}
 			}
 			args[0].GetType().SetFlenUnderLimit(newFlen)
 			args[0].GetType().SetDecimalUnderLimit(newDecimal)
@@ -1212,4 +1232,19 @@ func Args2Expressions4Test(args ...any) []Expression {
 		exprs[i] = &Constant{Value: d, RetType: ft}
 	}
 	return exprs
+}
+
+// StringifyExpressionsWithCtx turns a slice of expressions into string
+func StringifyExpressionsWithCtx(ctx EvalContext, exprs []Expression) string {
+	var sb strings.Builder
+	sb.WriteString("[")
+	for i, expr := range exprs {
+		sb.WriteString(expr.StringWithCtx(errors.RedactLogDisable))
+
+		if i != len(exprs)-1 {
+			sb.WriteString(" ")
+		}
+	}
+	sb.WriteString("]")
+	return sb.String()
 }

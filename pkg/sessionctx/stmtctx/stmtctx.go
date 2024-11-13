@@ -43,6 +43,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/execdetails"
 	"github.com/pingcap/tidb/pkg/util/hint"
 	"github.com/pingcap/tidb/pkg/util/intest"
+	"github.com/pingcap/tidb/pkg/util/intset"
 	"github.com/pingcap/tidb/pkg/util/linter/constructor"
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/pingcap/tidb/pkg/util/nocopy"
@@ -52,6 +53,7 @@ import (
 	"github.com/tikv/client-go/v2/tikvrpc"
 	atomic2 "go.uber.org/atomic"
 	"golang.org/x/exp/maps"
+	"golang.org/x/sync/singleflight"
 )
 
 const (
@@ -180,27 +182,28 @@ type StatementContext struct {
 
 	// IsDDLJobInQueue is used to mark whether the DDL job is put into the queue.
 	// If IsDDLJobInQueue is true, it means the DDL job is in the queue of storage, and it can be handled by the DDL worker.
-	IsDDLJobInQueue        bool
-	DDLJobID               int64
-	InInsertStmt           bool
-	InUpdateStmt           bool
-	InDeleteStmt           bool
-	InSelectStmt           bool
-	InLoadDataStmt         bool
-	InExplainStmt          bool
-	InExplainAnalyzeStmt   bool
-	ExplainFormat          string
-	InCreateOrAlterStmt    bool
-	InSetSessionStatesStmt bool
-	InPreparedPlanBuilding bool
-	InShowWarning          bool
-	UseCache               bool
-	ForcePlanCache         bool // force the optimizer to use plan cache even if there is risky optimization, see #49736.
-	CacheType              PlanCacheType
-	BatchCheck             bool
-	InNullRejectCheck      bool
-	IgnoreExplainIDSuffix  bool
-	MultiSchemaInfo        *model.MultiSchemaInfo
+	IsDDLJobInQueue          bool
+	DDLJobID                 int64
+	InInsertStmt             bool
+	InUpdateStmt             bool
+	InDeleteStmt             bool
+	InSelectStmt             bool
+	InLoadDataStmt           bool
+	InExplainStmt            bool
+	InExplainAnalyzeStmt     bool
+	ExplainFormat            string
+	InCreateOrAlterStmt      bool
+	InSetSessionStatesStmt   bool
+	InPreparedPlanBuilding   bool
+	InShowWarning            bool
+	UseCache                 bool
+	ForcePlanCache           bool // force the optimizer to use plan cache even if there is risky optimization, see #49736.
+	CacheType                PlanCacheType
+	BatchCheck               bool
+	InNullRejectCheck        bool
+	InConstantPropagateCheck bool
+	IgnoreExplainIDSuffix    bool
+	MultiSchemaInfo          *model.MultiSchemaInfo
 	// If the select statement was like 'select * from t as of timestamp ...' or in a stale read transaction
 	// or is affected by the tidb_read_staleness session variable, then the statement will be makred as isStaleness
 	// in stmtCtx
@@ -369,7 +372,7 @@ type StatementContext struct {
 		// NeededItems stores the columns/indices whose stats are needed for planner.
 		NeededItems []model.StatsLoadItem
 		// ResultCh to receive stats loading results
-		ResultCh chan StatsLoadResult
+		ResultCh []<-chan singleflight.Result
 		// LoadStartTime is to record the load start time to calculate latency
 		LoadStartTime time.Time
 	}
@@ -394,7 +397,7 @@ type StatementContext struct {
 	// UseDynamicPruneMode indicates whether use UseDynamicPruneMode in query stmt
 	UseDynamicPruneMode bool
 	// ColRefFromPlan mark the column ref used by assignment in update statement.
-	ColRefFromUpdatePlan []int64
+	ColRefFromUpdatePlan intset.FastIntSet
 
 	// RangeFallback indicates that building complete ranges exceeds the memory limit so it falls back to less accurate ranges such as full range.
 	RangeFallback bool
@@ -433,6 +436,9 @@ type StatementContext struct {
 		value *uint64
 		eval  func() (uint64, error)
 	}
+
+	// MDLRelatedTableIDs is used to store the table IDs that are related to the current MDL lock.
+	MDLRelatedTableIDs map[int64]struct{}
 }
 
 var defaultErrLevels = func() (l errctx.LevelMap) {

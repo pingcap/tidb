@@ -287,21 +287,11 @@ func HandleAutoAnalyze(
 
 	parameters := exec.GetAutoAnalyzeParameters(sctx)
 	autoAnalyzeRatio := exec.ParseAutoAnalyzeRatio(parameters[variable.TiDBAutoAnalyzeRatio])
-	// Determine the time window for auto-analysis and verify if the current time falls within this range.
-	start, end, err := exec.ParseAutoAnalysisWindow(
-		parameters[variable.TiDBAutoAnalyzeStartTime],
-		parameters[variable.TiDBAutoAnalyzeEndTime],
-	)
-	if err != nil {
-		statslogutil.StatsLogger().Error(
-			"parse auto analyze period failed",
-			zap.Error(err),
-		)
+	start, end, ok := checkAutoAnalyzeWindow(parameters)
+	if !ok {
 		return false
 	}
-	if !timeutil.WithinDayTimePeriod(start, end, time.Now()) {
-		return false
-	}
+
 	pruneMode := variable.PartitionPruneMode(sctx.GetSessionVars().PartitionPruneMode.Load())
 
 	return RandomPickOneTableAndTryAutoAnalyze(
@@ -313,6 +303,32 @@ func HandleAutoAnalyze(
 		start,
 		end,
 	)
+}
+
+// CheckAutoAnalyzeWindow determine the time window for auto-analysis and verify if the current time falls within this range.
+// parameters is a map of auto analyze parameters. it is from GetAutoAnalyzeParameters.
+func CheckAutoAnalyzeWindow(sctx sessionctx.Context) bool {
+	parameters := exec.GetAutoAnalyzeParameters(sctx)
+	_, _, ok := checkAutoAnalyzeWindow(parameters)
+	return ok
+}
+
+func checkAutoAnalyzeWindow(parameters map[string]string) (time.Time, time.Time, bool) {
+	start, end, err := exec.ParseAutoAnalysisWindow(
+		parameters[variable.TiDBAutoAnalyzeStartTime],
+		parameters[variable.TiDBAutoAnalyzeEndTime],
+	)
+	if err != nil {
+		statslogutil.StatsLogger().Error(
+			"parse auto analyze period failed",
+			zap.Error(err),
+		)
+		return start, end, false
+	}
+	if !timeutil.WithinDayTimePeriod(start, end, time.Now()) {
+		return start, end, false
+	}
+	return start, end, true
 }
 
 // RandomPickOneTableAndTryAutoAnalyze randomly picks one table and tries to analyze it.
@@ -460,7 +476,7 @@ func tryAutoAnalyzeTable(
 	//    Pseudo statistics can be created by the optimizer, so we need to double check it.
 	// 2. If the table is too small, we don't want to waste time to analyze it.
 	//    Leave the opportunity to other bigger tables.
-	if statsTbl == nil || statsTbl.Pseudo || statsTbl.RealtimeCount < exec.AutoAnalyzeMinCnt {
+	if statsTbl == nil || statsTbl.Pseudo || statsTbl.RealtimeCount < statistics.AutoAnalyzeMinCnt {
 		return false
 	}
 
@@ -557,7 +573,7 @@ func tryAutoAnalyzePartitionTableInDynamicMode(
 		//	  Pseudo statistics can be created by the optimizer, so we need to double check it.
 		// 2. If the table is too small, we don't want to waste time to analyze it.
 		//    Leave the opportunity to other bigger tables.
-		if partitionStats == nil || partitionStats.Pseudo || partitionStats.RealtimeCount < exec.AutoAnalyzeMinCnt {
+		if partitionStats == nil || partitionStats.Pseudo || partitionStats.RealtimeCount < statistics.AutoAnalyzeMinCnt {
 			continue
 		}
 		if needAnalyze, reason := NeedAnalyzeTable(

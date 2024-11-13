@@ -25,6 +25,7 @@ import (
 	"strconv"
 	"strings"
 
+	perrors "github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/types"
@@ -1189,7 +1190,11 @@ func (b *builtinConvSig) evalString(ctx EvalContext, row chunk.Row) (res string,
 	switch x := b.args[0].(type) {
 	case *Constant:
 		if x.Value.Kind() == types.KindBinaryLiteral {
-			str = x.Value.GetBinaryLiteral().ToBitLiteralString(true)
+			datum, err := x.Eval(ctx, row)
+			if err != nil {
+				return "", false, err
+			}
+			str = datum.GetBinaryLiteral().ToBitLiteralString(true)
 		}
 	case *ScalarFunction:
 		if x.FuncName.L == ast.Cast {
@@ -1735,7 +1740,7 @@ func (b *builtinExpSig) evalReal(ctx EvalContext, row chunk.Row) (float64, bool,
 	}
 	exp := math.Exp(val)
 	if math.IsInf(exp, 0) || math.IsNaN(exp) {
-		s := fmt.Sprintf("exp(%s)", b.args[0].String())
+		s := fmt.Sprintf("exp(%s)", b.args[0].StringWithCtx(perrors.RedactLogDisable))
 		return 0, false, types.ErrOverflow.GenWithStackByArgs("DOUBLE", s)
 	}
 	return exp, false, nil

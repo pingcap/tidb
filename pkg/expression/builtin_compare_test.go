@@ -73,7 +73,7 @@ func TestCompareFunctionWithRefine(t *testing.T) {
 	for _, test := range tests {
 		f, err := ParseSimpleExpr(ctx, test.exprStr, WithTableInfo("", tblInfo))
 		require.NoError(t, err)
-		require.Equal(t, test.result, f.String())
+		require.Equal(t, test.result, f.StringWithCtx(errors.RedactLogDisable))
 	}
 }
 

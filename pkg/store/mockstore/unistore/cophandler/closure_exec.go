@@ -1185,7 +1185,7 @@ func safeCopy(b []byte) []byte {
 }
 
 func checkLock(lock mvcc.Lock, key []byte, startTS uint64, resolved []uint64) error {
-	if isResolved(startTS, resolved) {
+	if isResolved(lock.StartTS, resolved) {
 		return nil
 	}
 	lockVisible := lock.StartTS < startTS

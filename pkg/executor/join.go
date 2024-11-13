@@ -176,6 +176,7 @@ func (e *HashJoinExec) Close() error {
 		}
 		e.probeSideTupleFetcher.probeChkResourceCh = nil
 		terror.Call(e.rowContainer.Close)
+		e.hashJoinCtx.sessCtx.GetSessionVars().MemTracker.UnbindActionFromHardLimit(e.rowContainer.ActionSpill())
 		e.waiterWg.Wait()
 	}
 	e.outerMatchedStatus = e.outerMatchedStatus[:0]
@@ -214,8 +215,12 @@ func (e *HashJoinExec) Open(ctx context.Context) error {
 	}
 	e.hashJoinCtx.memTracker.AttachTo(e.Ctx().GetSessionVars().StmtCtx.MemTracker)
 
-	e.diskTracker = disk.NewTracker(e.ID(), -1)
-	e.diskTracker.AttachTo(e.Ctx().GetSessionVars().StmtCtx.DiskTracker)
+	if e.hashJoinCtx.diskTracker != nil {
+		e.hashJoinCtx.diskTracker.Reset()
+	} else {
+		e.hashJoinCtx.diskTracker = disk.NewTracker(e.ID(), -1)
+	}
+	e.hashJoinCtx.diskTracker.AttachTo(e.Ctx().GetSessionVars().StmtCtx.DiskTracker)
 
 	e.workerWg = util.WaitGroupWrapper{}
 	e.waiterWg = util.WaitGroupWrapper{}
@@ -268,9 +273,6 @@ func (fetcher *probeSideTupleFetcher) fetchProbeSideChunks(ctx context.Context, 
 					probeSideResult.Reset()
 				}
 			})
-			if probeSideResult.NumRows() == 0 && !fetcher.useOuterToBuild {
-				fetcher.finished.Store(true)
-			}
 			emptyBuild, buildErr := fetcher.wait4BuildSide()
 			if buildErr != nil {
 				fetcher.joinResultCh <- &hashjoinWorkerResult{
@@ -328,12 +330,22 @@ func (w *buildWorker) fetchBuildSideRows(ctx context.Context, chkCh chan<- *chun
 		}
 	})
 	sessVars := w.hashJoinCtx.sessCtx.GetSessionVars()
+	failpoint.Inject("issue51998", func(val failpoint.Value) {
+		if val.(bool) {
+			time.Sleep(2 * time.Second)
+		}
+	})
 	for {
 		if w.hashJoinCtx.finished.Load() {
 			return
 		}
 		chk := w.hashJoinCtx.allocPool.Alloc(w.buildSideExec.RetFieldTypes(), sessVars.MaxChunkSize, sessVars.MaxChunkSize)
 		err = exec.Next(ctx, w.buildSideExec, chk)
+		failpoint.Inject("issue51998", func(val failpoint.Value) {
+			if val.(bool) {
+				err = errors.Errorf("issue51998 build return error")
+			}
+		})
 		if err != nil {
 			errCh <- errors.Trace(err)
 			return
@@ -1461,7 +1473,7 @@ func (e *NestedLoopApplyExec) fetchAllInners(ctx context.Context) error {
 
 	if e.canUseCache {
 		// create a new one since it may be in the cache
-		e.innerList = chunk.NewList(exec.RetTypes(e.innerExec), e.InitCap(), e.MaxChunkSize())
+		e.innerList = chunk.NewListWithMemTracker(exec.RetTypes(e.innerExec), e.InitCap(), e.MaxChunkSize(), e.innerList.GetMemTracker())
 	} else {
 		e.innerList.Reset()
 	}

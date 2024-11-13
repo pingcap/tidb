@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"unsafe"
 
+	perrors "github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/types"
@@ -142,13 +143,23 @@ func (d *ParamMarker) GetUserVar() types.Datum {
 
 // String implements fmt.Stringer interface.
 func (c *Constant) String() string {
+	return c.StringWithCtx(perrors.RedactLogDisable)
+}
+
+// StringWithCtx implements Expression interface.
+func (c *Constant) StringWithCtx(redact string) string {
 	if c.ParamMarker != nil {
 		dt := c.ParamMarker.GetUserVar()
 		c.Value.SetValue(dt.GetValue(), c.RetType)
 	} else if c.DeferredExpr != nil {
 		return c.DeferredExpr.String()
 	}
-	return fmt.Sprintf("%v", c.Value.GetValue())
+	if redact == perrors.RedactLogDisable {
+		return fmt.Sprintf("%v", c.Value.GetValue())
+	} else if redact == perrors.RedactLogMarker {
+		return fmt.Sprintf("‹%v›", c.Value.GetValue())
+	}
+	return "?"
 }
 
 // MarshalJSON implements json.Marshaler interface.

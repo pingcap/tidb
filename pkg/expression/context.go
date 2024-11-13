@@ -121,3 +121,10 @@ func (ctx *assertionEvalContext) GetOptionalPropProvider(key OptionalEvalPropKey
 	)
 	return ctx.EvalContext.GetOptionalPropProvider(key)
 }
+
+// StringerWithCtx is the interface for expressions that can be stringified with context.
+type StringerWithCtx interface {
+	// StringWithCtx returns the string representation of the expression with context.
+	// NOTE: any implementation of `StringWithCtx` should not panic if the context is nil.
+	StringWithCtx(redact string) string
+}

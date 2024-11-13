@@ -166,7 +166,7 @@ func ColumnStatsIsInvalid(colStats *Column, sctx context.PlanContext, histColl *
 				ID:               cid,
 				IsIndex:          false,
 				IsSyncLoadFailed: sctx.GetSessionVars().StmtCtx.StatsLoad.Timeout > 0,
-			})
+			}, true)
 		}
 	}
 	if histColl.Pseudo {

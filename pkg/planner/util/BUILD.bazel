@@ -22,6 +22,7 @@ go_library(
         "//pkg/util/ranger",
         "//pkg/util/size",
         "//pkg/util/tracing",
+        "@com_github_pingcap_errors//:errors",
     ],
 )
 

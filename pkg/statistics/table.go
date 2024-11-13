@@ -42,6 +42,10 @@ const (
 	PseudoRowCount = 10000
 )
 
+// AutoAnalyzeMinCnt means if the count of table is less than this value, we don't need to do auto analyze.
+// Exported for testing.
+var AutoAnalyzeMinCnt int64 = 1000
+
 var (
 	// Below functions are used to solve cycle import problem.
 	// Note: all functions below will be removed after finishing moving all estimation functions into the cardinality package.
@@ -61,7 +65,6 @@ type Table struct {
 	ExtendedStats *ExtendedStatsColl
 
 	ColAndIdxExistenceMap *ColAndIdxExistenceMap
-	Name                  string
 	HistColl
 	Version uint64
 	// It's the timestamp of the last analyze time.
@@ -427,7 +430,6 @@ func (t *Table) Copy() *Table {
 	nt := &Table{
 		HistColl:           newHistColl,
 		Version:            t.Version,
-		Name:               t.Name,
 		TblInfoUpdateTS:    t.TblInfoUpdateTS,
 		IsPkIsHandle:       t.IsPkIsHandle,
 		LastAnalyzeVersion: t.LastAnalyzeVersion,
@@ -465,7 +467,6 @@ func (t *Table) ShallowCopy() *Table {
 	nt := &Table{
 		HistColl:              newHistColl,
 		Version:               t.Version,
-		Name:                  t.Name,
 		TblInfoUpdateTS:       t.TblInfoUpdateTS,
 		ExtendedStats:         t.ExtendedStats,
 		ColAndIdxExistenceMap: t.ColAndIdxExistenceMap,
@@ -552,6 +553,19 @@ func (t *Table) IsAnalyzed() bool {
 	return t.LastAnalyzeVersion > 0
 }
 
+// IsEligibleForAnalysis checks whether the table is eligible for analysis.
+func (t *Table) IsEligibleForAnalysis() bool {
+	// 1. If the statistics are either not loaded or are classified as pseudo, there is no need for analyze.
+	//    Pseudo statistics can be created by the optimizer, so we need to double check it.
+	// 2. If the table is too small, we don't want to waste time to analyze it.
+	//    Leave the opportunity to other bigger tables.
+	if t == nil || t.Pseudo || t.RealtimeCount < AutoAnalyzeMinCnt {
+		return false
+	}
+
+	return true
+}
+
 // GetAnalyzeRowCount tries to get the row count of a column or an index if possible.
 // This method is useful because this row count doesn't consider the modify count.
 func (coll *HistColl) GetAnalyzeRowCount() float64 {
@@ -599,7 +613,11 @@ func (coll *HistColl) GetScaledRealtimeAndModifyCnt(idxStats *Index) (realtimeCn
 	if analyzeRowCount <= 0 {
 		return coll.RealtimeCount, coll.ModifyCount
 	}
-	scale := idxStats.TotalRowCount() / analyzeRowCount
+	idxTotalRowCount := idxStats.TotalRowCount()
+	if idxTotalRowCount <= 0 {
+		return coll.RealtimeCount, coll.ModifyCount
+	}
+	scale := idxTotalRowCount / analyzeRowCount
 	return int64(float64(coll.RealtimeCount) * scale), int64(float64(coll.ModifyCount) * scale)
 }
 
@@ -629,13 +647,25 @@ func (t *Table) GetStatsHealthy() (int64, bool) {
 // The Column should be visible in the table and really has analyzed statistics in the stroage.
 // Also, if the stats has been loaded into the memory, we also don't need to load it.
 // We return the Column together with the checking result, to avoid accessing the map multiple times.
-func (t *Table) ColumnIsLoadNeeded(id int64, fullLoad bool) (*Column, bool) {
+// The first bool is whether we have it in memory. The second bool is whether this column has stats in the system table or not.
+func (t *Table) ColumnIsLoadNeeded(id int64, fullLoad bool) (*Column, bool, bool) {
+	if t.Pseudo {
+		return nil, false, false
+	}
 	col, ok := t.Columns[id]
 	hasAnalyzed := t.ColAndIdxExistenceMap.HasAnalyzed(id, false)
 
-	// If it's not analyzed yet. Don't need to load it.
+	// If it's not analyzed yet.
 	if !hasAnalyzed {
-		return nil, false
+		// If we don't have it in memory, we create a fake hist for pseudo estimation (see handleOneItemTask()).
+		if !ok {
+			// If we don't have this column. We skip it.
+			// It's something ridiculous. But it's possible that the stats don't have some ColumnInfo.
+			// We need to find a way to maintain it more correctly.
+			return nil, t.ColAndIdxExistenceMap.Has(id, false), false
+		}
+		// Otherwise we don't need to load it.
+		return nil, false, false
 	}
 
 	// Restore the condition from the simplified form:
@@ -643,11 +673,11 @@ func (t *Table) ColumnIsLoadNeeded(id int64, fullLoad bool) (*Column, bool) {
 	// 2. ok && hasAnalyzed && fullLoad && !col.IsFullLoad => need load
 	// 3. ok && hasAnalyzed && !fullLoad && !col.statsInitialized => need load
 	if !ok || (fullLoad && !col.IsFullLoad()) || (!fullLoad && !col.statsInitialized) {
-		return col, true
+		return col, true, true
 	}
 
 	// Otherwise don't need load it.
-	return col, false
+	return col, false, true
 }
 
 // IndexIsLoadNeeded checks whether the index needs trigger the async/sync load.
@@ -668,23 +698,34 @@ func (t *Table) IndexIsLoadNeeded(id int64) (*Index, bool) {
 }
 
 type neededStatsInternalMap struct {
-	items map[model.TableItemID]struct{}
+	// the bool value indicates whether is a full load or not.
+	items map[model.TableItemID]bool
 	m     sync.RWMutex
 }
 
-func (n *neededStatsInternalMap) AllItems() []model.TableItemID {
+func (n *neededStatsInternalMap) AllItems() []model.StatsLoadItem {
 	n.m.RLock()
-	keys := make([]model.TableItemID, 0, len(n.items))
-	for key := range n.items {
-		keys = append(keys, key)
+	keys := make([]model.StatsLoadItem, 0, len(n.items))
+	for key, val := range n.items {
+		keys = append(keys, model.StatsLoadItem{
+			TableItemID: key,
+			FullLoad:    val,
+		})
 	}
 	n.m.RUnlock()
 	return keys
 }
 
-func (n *neededStatsInternalMap) Insert(col model.TableItemID) {
+func (n *neededStatsInternalMap) Insert(col model.TableItemID, fullLoad bool) {
 	n.m.Lock()
-	n.items[col] = struct{}{}
+	cur := n.items[col]
+	if cur {
+		// If the existing one is full load. We don't need to update it.
+		n.m.Unlock()
+		return
+	}
+	n.items[col] = fullLoad
+	// Otherwise, we could safely update it.
 	n.m.Unlock()
 }
 
@@ -720,14 +761,14 @@ func newNeededStatsMap() *neededStatsMap {
 	result := neededStatsMap{}
 	for i := 0; i < shardCnt; i++ {
 		result.items[i] = neededStatsInternalMap{
-			items: make(map[model.TableItemID]struct{}),
+			items: make(map[model.TableItemID]bool),
 		}
 	}
 	return &result
 }
 
-func (n *neededStatsMap) AllItems() []model.TableItemID {
-	var result []model.TableItemID
+func (n *neededStatsMap) AllItems() []model.StatsLoadItem {
+	var result []model.StatsLoadItem
 	for i := 0; i < shardCnt; i++ {
 		keys := n.items[i].AllItems()
 		result = append(result, keys...)
@@ -735,8 +776,8 @@ func (n *neededStatsMap) AllItems() []model.TableItemID {
 	return result
 }
 
-func (n *neededStatsMap) Insert(col model.TableItemID) {
-	n.items[getIdx(col)].Insert(col)
+func (n *neededStatsMap) Insert(col model.TableItemID, fullLoad bool) {
+	n.items[getIdx(col)].Insert(col, fullLoad)
 }
 
 func (n *neededStatsMap) Delete(col model.TableItemID) {

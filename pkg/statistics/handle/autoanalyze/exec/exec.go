@@ -35,10 +35,6 @@ import (
 	"go.uber.org/zap"
 )
 
-// AutoAnalyzeMinCnt means if the count of table is less than this value, we don't need to do auto analyze.
-// Exported for testing.
-var AutoAnalyzeMinCnt int64 = 1000
-
 var execOptionForAnalyze = map[int]sqlexec.OptionFuncAlias{
 	statistics.Version0: sqlexec.ExecOptionAnalyzeVer1,
 	statistics.Version1: sqlexec.ExecOptionAnalyzeVer1,
@@ -55,7 +51,7 @@ func AutoAnalyze(
 	params ...any,
 ) {
 	startTime := time.Now()
-	_, _, err := execAnalyzeStmt(sctx, statsHandle, sysProcTracker, statsVer, sql, params...)
+	_, _, err := RunAnalyzeStmt(sctx, statsHandle, sysProcTracker, statsVer, sql, params...)
 	dur := time.Since(startTime)
 	metrics.AutoAnalyzeHistogram.Observe(dur.Seconds())
 	if err != nil {
@@ -75,7 +71,8 @@ func AutoAnalyze(
 	}
 }
 
-func execAnalyzeStmt(
+// RunAnalyzeStmt executes the analyze statement.
+func RunAnalyzeStmt(
 	sctx sessionctx.Context,
 	statsHandle statstypes.StatsHandle,
 	sysProcTracker sysproctrack.Tracker,

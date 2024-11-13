@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"math"
 
+	perrors "github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/expression/aggregation"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -130,28 +131,24 @@ func ExtractCorrelatedCols4PhysicalPlan(p PhysicalPlan) []*expression.Correlated
 //	     |_ outerSide
 //	     |_ innerSide(cor_col_3)
 func ExtractOuterApplyCorrelatedCols(p PhysicalPlan) []*expression.CorrelatedColumn {
-	return extractOuterApplyCorrelatedColsHelper(p, []*expression.Schema{})
+	corCols, _ := extractOuterApplyCorrelatedColsHelper(p)
+	return corCols
 }
 
-func extractOuterApplyCorrelatedColsHelper(p PhysicalPlan, outerSchemas []*expression.Schema) []*expression.CorrelatedColumn {
+func extractOuterApplyCorrelatedColsHelper(p PhysicalPlan) ([]*expression.CorrelatedColumn, []*expression.Schema) {
 	if p == nil {
-		return nil
+		return nil, nil
 	}
-	curCorCols := p.ExtractCorrelatedCols()
-	newCorCols := make([]*expression.CorrelatedColumn, 0, len(curCorCols))
 
-	// If a corresponding Apply is found inside this PhysicalPlan, ignore it.
-	for _, corCol := range curCorCols {
-		var found bool
-		for _, outerSchema := range outerSchemas {
-			if outerSchema.ColumnIndex(&corCol.Column) != -1 {
-				found = true
-				break
-			}
-		}
-		if !found {
-			newCorCols = append(newCorCols, corCol)
-		}
+	// allCorCols store all sub plan's correlated columns.
+	// allOuterSchemas store all child Apply's outer side schemas.
+	allCorCols := p.ExtractCorrelatedCols()
+	allOuterSchemas := []*expression.Schema{}
+
+	handler := func(child PhysicalPlan) {
+		childCorCols, childOuterSchemas := extractOuterApplyCorrelatedColsHelper(child)
+		allCorCols = append(allCorCols, childCorCols...)
+		allOuterSchemas = append(allOuterSchemas, childOuterSchemas...)
 	}
 
 	switch v := p.(type) {
@@ -162,19 +159,35 @@ func extractOuterApplyCorrelatedColsHelper(p PhysicalPlan, outerSchemas []*expre
 		} else {
 			outerPlan = v.Children()[0]
 		}
-		outerSchemas = append(outerSchemas, outerPlan.Schema())
-		newCorCols = append(newCorCols, extractOuterApplyCorrelatedColsHelper(v.Children()[0], outerSchemas)...)
-		newCorCols = append(newCorCols, extractOuterApplyCorrelatedColsHelper(v.Children()[1], outerSchemas)...)
+		allOuterSchemas = append(allOuterSchemas, outerPlan.Schema())
+		handler(v.Children()[0])
+		handler(v.Children()[1])
 	case *PhysicalCTE:
-		newCorCols = append(newCorCols, extractOuterApplyCorrelatedColsHelper(v.SeedPlan, outerSchemas)...)
-		newCorCols = append(newCorCols, extractOuterApplyCorrelatedColsHelper(v.RecurPlan, outerSchemas)...)
+		handler(v.SeedPlan)
+		handler(v.RecurPlan)
 	default:
 		for _, child := range p.Children() {
-			newCorCols = append(newCorCols, extractOuterApplyCorrelatedColsHelper(child, outerSchemas)...)
+			handler(child)
 		}
 	}
 
-	return newCorCols
+	resCorCols := make([]*expression.CorrelatedColumn, 0, len(allCorCols))
+
+	// If one correlated column is found in allOuterSchemas, it means this correlated column is corresponding to an Apply inside `p`.
+	// However, we only need the correlated columns that correspond to the Apply of the parent node of `p`.
+	for _, corCol := range allCorCols {
+		var found bool
+		for _, outerSchema := range allOuterSchemas {
+			if outerSchema.ColumnIndex(&corCol.Column) != -1 {
+				found = true
+				break
+			}
+		}
+		if !found {
+			resCorCols = append(resCorCols, corCol)
+		}
+	}
+	return resCorCols, allOuterSchemas
 }
 
 // decorrelateSolver tries to convert apply plan to join plan.
@@ -565,21 +578,21 @@ func appendModifyAggTraceStep(outerPlan LogicalPlan, p *LogicalApply, agg *Logic
 			if i > 0 {
 				buffer.WriteString(",")
 			}
-			buffer.WriteString(col.String())
+			buffer.WriteString(col.StringWithCtx(perrors.RedactLogDisable))
 		}
 		buffer.WriteString("], and functions added [")
 		for i, f := range appendedAggFuncs {
 			if i > 0 {
 				buffer.WriteString(",")
 			}
-			buffer.WriteString(f.String())
+			buffer.WriteString(f.StringWithCtx(perrors.RedactLogDisable))
 		}
 		fmt.Fprintf(buffer, "], and %v_%v's conditions added [", p.TP(), p.ID())
 		for i, cond := range eqCondWithCorCol {
 			if i > 0 {
 				buffer.WriteString(",")
 			}
-			buffer.WriteString(cond.String())
+			buffer.WriteString(cond.StringWithCtx(perrors.RedactLogDisable))
 		}
 		buffer.WriteString("]")
 		return buffer.String()
@@ -590,7 +603,7 @@ func appendModifyAggTraceStep(outerPlan LogicalPlan, p *LogicalApply, agg *Logic
 			if i > 0 {
 				buffer.WriteString(",")
 			}
-			buffer.WriteString(cond.String())
+			buffer.WriteString(cond.StringWithCtx(perrors.RedactLogDisable))
 		}
 		fmt.Fprintf(buffer, "] are correlated to %v_%v and pulled up as %v_%v's join key",
 			outerPlan.TP(), outerPlan.ID(), p.TP(), p.ID())

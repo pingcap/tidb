@@ -18,14 +18,12 @@ import (
 	"bytes"
 	"encoding/json"
 	"io"
-	"time"
 
 	"github.com/klauspost/compress/gzip"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/statistics/handle/util"
 	"github.com/pingcap/tidb/pkg/types"
@@ -103,8 +101,7 @@ func GenJSONTableFromStats(sctx sessionctx.Context, dbName string, tableInfo *mo
 		Version:      tbl.Version,
 	}
 	for _, col := range tbl.Columns {
-		sc := stmtctx.NewStmtCtxWithTimeZone(time.UTC)
-		hist, err := col.ConvertTo(sc, types.NewFieldType(mysql.TypeBlob))
+		hist, err := col.ConvertTo(statistics.UTCWithAllowInvalidDateCtx, types.NewFieldType(mysql.TypeBlob))
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -183,7 +180,6 @@ func TableStatsFromJSON(tableInfo *model.TableInfo, physicalID int64, jsonTbl *u
 				continue
 			}
 			hist := statistics.HistogramFromProto(jsonCol.Histogram)
-			sc := stmtctx.NewStmtCtxWithTimeZone(time.UTC)
 			tmpFT := colInfo.FieldType
 			// For new collation data, when storing the bounds of the histogram, we store the collate key instead of the
 			// original value.
@@ -195,7 +191,7 @@ func TableStatsFromJSON(tableInfo *model.TableInfo, physicalID int64, jsonTbl *u
 			if colInfo.FieldType.EvalType() == types.ETString && colInfo.FieldType.GetType() != mysql.TypeEnum && colInfo.FieldType.GetType() != mysql.TypeSet {
 				tmpFT = *types.NewFieldType(mysql.TypeBlob)
 			}
-			hist, err := hist.ConvertTo(sc, &tmpFT)
+			hist, err := hist.ConvertTo(statistics.UTCWithAllowInvalidDateCtx, &tmpFT)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}

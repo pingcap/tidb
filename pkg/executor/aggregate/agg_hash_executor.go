@@ -273,7 +273,11 @@ func (e *HashAggExec) initForUnparallelExec() {
 
 	e.tmpChkForSpill = exec.TryNewCacheChunk(e.Children(0))
 	if vars := e.Ctx().GetSessionVars(); vars.TrackAggregateMemoryUsage && variable.EnableTmpStorageOnOOM.Load() {
-		e.diskTracker = disk.NewTracker(e.ID(), -1)
+		if e.diskTracker != nil {
+			e.diskTracker.Reset()
+		} else {
+			e.diskTracker = disk.NewTracker(e.ID(), -1)
+		}
 		e.diskTracker.AttachTo(vars.StmtCtx.DiskTracker)
 		e.dataInDisk.GetDiskTracker().AttachTo(e.diskTracker)
 		vars.MemTracker.FallbackOldAndSetNewActionForSoftLimit(e.ActionSpill())
@@ -391,12 +395,21 @@ func (e *HashAggExec) initForParallelExec(ctx sessionctx.Context) error {
 		spillChunkFieldTypes[i] = types.NewFieldType(mysql.TypeVarString)
 	}
 	spillChunkFieldTypes[baseRetTypeNum] = types.NewFieldType(mysql.TypeString)
-	e.spillHelper = newSpillHelper(e.memTracker, e.PartialAggFuncs, func() *chunk.Chunk {
+
+	var err error
+	e.spillHelper, err = newSpillHelper(e.memTracker, e.PartialAggFuncs, e.FinalAggFuncs, func() *chunk.Chunk {
 		return chunk.New(spillChunkFieldTypes, e.InitCap(), e.MaxChunkSize())
 	}, spillChunkFieldTypes)
+	if err != nil {
+		return err
+	}
 
 	if isTrackerEnabled && isParallelHashAggSpillEnabled {
-		e.diskTracker = disk.NewTracker(e.ID(), -1)
+		if e.diskTracker != nil {
+			e.diskTracker.Reset()
+		} else {
+			e.diskTracker = disk.NewTracker(e.ID(), -1)
+		}
 		e.diskTracker.AttachTo(sessionVars.StmtCtx.DiskTracker)
 		e.spillHelper.diskTracker = e.diskTracker
 		sessionVars.MemTracker.FallbackOldAndSetNewActionForSoftLimit(e.ActionSpill())

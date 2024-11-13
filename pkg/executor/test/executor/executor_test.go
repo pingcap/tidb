@@ -18,6 +18,7 @@ import (
 	"archive/zip"
 	"context"
 	"fmt"
+	"math/rand"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -2928,4 +2929,101 @@ func TestDecimalDivPrecisionIncrement(t *testing.T) {
 
 	tk.MustExec("set div_precision_increment = 10")
 	tk.MustQuery("select avg(a/b) from t").Check(testkit.Rows("1.21428571428571428550"))
+}
+
+func TestIssue48756(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("CREATE TABLE t (id INT, a VARBINARY(20), b BIGINT)")
+	tk.MustExec(`INSERT INTO t VALUES(1, _binary '2012-05-19 09:06:07', 20120519090607),
+(1, _binary '2012-05-19 09:06:07', 20120519090607),
+(2, _binary '12012-05-19 09:06:07', 120120519090607),
+(2, _binary '12012-05-19 09:06:07', 120120519090607)`)
+	tk.MustQuery("SELECT SUBTIME(BIT_OR(b), '1 1:1:1.000002') FROM t GROUP BY id").Sort().Check(testkit.Rows(
+		"2012-05-18 08:05:05.999998",
+		"<nil>",
+	))
+	tk.MustQuery("show warnings").Check(testkit.Rows(
+		"Warning 1292 Incorrect time value: '120120519090607'",
+		"Warning 1105 ",
+	))
+}
+
+func TestQueryWithKill(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test;")
+	tk.MustExec("drop table if exists tkq;")
+	tk.MustExec("create table tkq (a int key, b int, index idx_b(b));")
+	tk.MustExec("insert into tkq values (1,1);")
+	var wg sync.WaitGroup
+	ch := make(chan context.CancelFunc, 1024)
+	testDuration := time.Second * 10
+	for i := 0; i < 10; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			tk := testkit.NewTestKit(t, store)
+			tk.MustExec("use test;")
+			start := time.Now()
+			for {
+				ctx, cancel := context.WithCancel(context.Background())
+				ch <- cancel
+				rs, err := tk.ExecWithContext(ctx, "select a from tkq where b = 1;")
+				if err == nil {
+					require.NotNil(t, rs)
+					rows, err := session.ResultSetToStringSlice(ctx, tk.Session(), rs)
+					if err == nil {
+						require.Equal(t, 1, len(rows))
+						require.Equal(t, 1, len(rows[0]))
+						require.Equal(t, "1", fmt.Sprintf("%v", rows[0][0]))
+					}
+				}
+				if err != nil {
+					require.Equal(t, context.Canceled, err)
+				}
+				if rs != nil {
+					rs.Close()
+				}
+				if time.Since(start) > testDuration {
+					return
+				}
+			}
+		}()
+	}
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for {
+			select {
+			case cancel := <-ch:
+				// mock for random kill query
+				if len(ch) < 5 {
+					time.Sleep(time.Duration(rand.Intn(1000)) * time.Nanosecond)
+				}
+				cancel()
+			case <-time.After(time.Second):
+				return
+			}
+		}
+	}()
+	wg.Wait()
+}
+
+func TestIssue55957(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a int)")
+	for i := 0; i < 20; i++ {
+		tk.MustExec(fmt.Sprintf("insert into t values(%d)", i))
+	}
+	tk.Session().GetSessionVars().ConnectionID = 123456
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/store/copr/SplitRangesHangCausedKill", `return(true)`))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/store/copr/SplitRangesHangCausedKill"))
+	}()
+	err := tk.QueryToErr("select /*+ MAX_EXECUTION_TIME(1000) */ * from t where a < 30 and a > 3 order by a")
+	require.True(t, exeerrors.ErrMaxExecTimeExceeded.Equal(err))
 }

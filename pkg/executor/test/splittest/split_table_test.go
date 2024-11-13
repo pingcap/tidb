@@ -601,7 +601,7 @@ func BenchmarkLocateRegion(t *testing.B) {
 
 	t.ResetTimer()
 	for i := 0; i < t.N; i++ {
-		_, err := cache.SplitKeyRangesByBuckets(bo, ranges)
+		_, err := cache.SplitKeyRangesByBuckets(bo, ranges, nil)
 		if err != nil {
 			t.Fatal(err)
 		}

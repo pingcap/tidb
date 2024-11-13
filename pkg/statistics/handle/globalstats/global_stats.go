@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/statistics"
+	statslogutil "github.com/pingcap/tidb/pkg/statistics/handle/logutil"
 	statstypes "github.com/pingcap/tidb/pkg/statistics/handle/types"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -94,6 +95,10 @@ func MergePartitionStats2GlobalStats(
 	histIDs []int64,
 ) (globalStats *GlobalStats, err error) {
 	if sc.GetSessionVars().EnableAsyncMergeGlobalStats {
+		statslogutil.SingletonStatsSamplerLogger().Info("use async merge global stats",
+			zap.Int64("tableID", globalTableInfo.ID),
+			zap.String("table", globalTableInfo.Name.L),
+		)
 		worker, err := NewAsyncMergePartitionStats2GlobalStats(statsHandle, globalTableInfo, histIDs, is)
 		if err != nil {
 			return nil, errors.Trace(err)
@@ -104,6 +109,10 @@ func MergePartitionStats2GlobalStats(
 		}
 		return worker.Result(), nil
 	}
+	statslogutil.SingletonStatsSamplerLogger().Info("use blocking merge global stats",
+		zap.Int64("tableID", globalTableInfo.ID),
+		zap.String("table", globalTableInfo.Name.L),
+	)
 	return blockingMergePartitionStats2GlobalStats(sc, statsHandle.GPool(), opts, is, globalTableInfo, isIndex, histIDs, nil, statsHandle)
 }
 
@@ -296,10 +305,15 @@ func blockingMergePartitionStats2GlobalStats(
 		}
 		// FMSketch use many memory, so we first deal with it and then destroy it.
 		// Merge FMSketch.
+		// NOTE: allFms maybe contain empty.
 		globalStats.Fms[i] = allFms[i][0]
 		for j := 1; j < len(allFms[i]); j++ {
-			globalStats.Fms[i].MergeFMSketch(allFms[i][j])
-			allFms[i][j].DestroyAndPutToPool()
+			if globalStats.Fms[i] == nil {
+				globalStats.Fms[i] = allFms[i][j]
+			} else {
+				globalStats.Fms[i].MergeFMSketch(allFms[i][j])
+				allFms[i][j].DestroyAndPutToPool()
+			}
 		}
 
 		// Update the global NDV.

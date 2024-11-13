@@ -146,7 +146,7 @@ func (c *jsonExtractFunctionClass) verifyArgs(args []Expression) error {
 		return err
 	}
 	if evalType := args[0].GetType().EvalType(); evalType != types.ETString && evalType != types.ETJson {
-		return ErrInvalidTypeForJSON.GenWithStackByArgs(0, "json_extract")
+		return ErrInvalidTypeForJSON.GenWithStackByArgs(1, "json_extract")
 	}
 	return nil
 }
@@ -446,7 +446,7 @@ func (c *jsonMergeFunctionClass) verifyArgs(args []Expression) error {
 	}
 	for i, arg := range args {
 		if evalType := arg.GetType().EvalType(); evalType != types.ETString && evalType != types.ETJson {
-			return ErrInvalidTypeForJSON.GenWithStackByArgs(i, "json_merge")
+			return ErrInvalidTypeForJSON.GenWithStackByArgs(i+1, "json_merge")
 		}
 	}
 	return nil
@@ -554,8 +554,7 @@ func (b *builtinJSONObjectSig) evalJSON(ctx EvalContext, row chunk.Row) (res typ
 				return res, true, err
 			}
 			if isNull {
-				err = errors.New("JSON documents may not contain NULL member names")
-				return res, true, err
+				return res, true, types.ErrJSONDocumentNULLKey
 			}
 		} else {
 			value, isNull, err = arg.EvalJSON(ctx, row)
@@ -647,7 +646,7 @@ func (c *jsonContainsPathFunctionClass) verifyArgs(args []Expression) error {
 		return err
 	}
 	if evalType := args[0].GetType().EvalType(); evalType != types.ETString && evalType != types.ETJson {
-		return ErrInvalidTypeForJSON.GenWithStackByArgs(0, "json_contains_path")
+		return ErrInvalidTypeForJSON.GenWithStackByArgs(1, "json_contains_path")
 	}
 	return nil
 }
@@ -680,7 +679,7 @@ func (b *builtinJSONContainsPathSig) evalInt(ctx EvalContext, row chunk.Row) (re
 	}
 	containType = strings.ToLower(containType)
 	if containType != types.JSONContainsPathAll && containType != types.JSONContainsPathOne {
-		return res, true, types.ErrInvalidJSONContainsPathType
+		return res, true, types.ErrJSONBadOneOrAllArg.GenWithStackByArgs("json_contains_path")
 	}
 	var pathExpr types.JSONPathExpression
 	contains := int64(1)
@@ -763,7 +762,7 @@ func (c *jsonMemberOfFunctionClass) verifyArgs(args []Expression) error {
 		return err
 	}
 	if evalType := args[1].GetType().EvalType(); evalType != types.ETJson && evalType != types.ETString {
-		return types.ErrInvalidJSONData.GenWithStackByArgs(2, "member of")
+		return ErrInvalidTypeForJSON.GenWithStackByArgs(2, "member of")
 	}
 	return nil
 }
@@ -826,10 +825,10 @@ func (c *jsonContainsFunctionClass) verifyArgs(args []Expression) error {
 		return err
 	}
 	if evalType := args[0].GetType().EvalType(); evalType != types.ETJson && evalType != types.ETString {
-		return types.ErrInvalidJSONData.GenWithStackByArgs(1, "json_contains")
+		return ErrInvalidTypeForJSON.GenWithStackByArgs(1, "json_contains")
 	}
 	if evalType := args[1].GetType().EvalType(); evalType != types.ETJson && evalType != types.ETString {
-		return types.ErrInvalidJSONData.GenWithStackByArgs(2, "json_contains")
+		return ErrInvalidTypeForJSON.GenWithStackByArgs(2, "json_contains")
 	}
 	return nil
 }
@@ -906,10 +905,10 @@ func (c *jsonOverlapsFunctionClass) verifyArgs(args []Expression) error {
 		return err
 	}
 	if evalType := args[0].GetType().EvalType(); evalType != types.ETJson && evalType != types.ETString {
-		return types.ErrInvalidJSONData.GenWithStackByArgs(1, "json_overlaps")
+		return ErrInvalidTypeForJSON.GenWithStackByArgs(1, "json_overlaps")
 	}
 	if evalType := args[1].GetType().EvalType(); evalType != types.ETJson && evalType != types.ETString {
-		return types.ErrInvalidJSONData.GenWithStackByArgs(2, "json_overlaps")
+		return ErrInvalidTypeForJSON.GenWithStackByArgs(2, "json_overlaps")
 	}
 	return nil
 }
@@ -1111,7 +1110,7 @@ func (b *builtinJSONArrayAppendSig) appendJSONArray(res types.BinaryJSON, p stri
 	// We should do the following checks to get correct values in res.Extract
 	pathExpr, err := types.ParseJSONPathExpr(p)
 	if err != nil {
-		return res, true, types.ErrInvalidJSONPath.GenWithStackByArgs(p)
+		return res, true, err
 	}
 	if pathExpr.CouldMatchMultipleValues() {
 		return res, true, types.ErrInvalidJSONPathMultipleSelection
@@ -1192,7 +1191,7 @@ func (b *builtinJSONArrayInsertSig) evalJSON(ctx EvalContext, row chunk.Row) (re
 
 		pathExpr, err := types.ParseJSONPathExpr(s)
 		if err != nil {
-			return res, true, types.ErrInvalidJSONPath.GenWithStackByArgs(s)
+			return res, true, err
 		}
 		if pathExpr.CouldMatchMultipleValues() {
 			return res, true, types.ErrInvalidJSONPathMultipleSelection
@@ -1225,7 +1224,7 @@ func (c *jsonMergePatchFunctionClass) verifyArgs(args []Expression) error {
 	}
 	for i, arg := range args {
 		if evalType := arg.GetType().EvalType(); evalType != types.ETString && evalType != types.ETJson {
-			return ErrInvalidTypeForJSON.GenWithStackByArgs(i, "json_merge_patch")
+			return ErrInvalidTypeForJSON.GenWithStackByArgs(i+1, "json_merge_patch")
 		}
 	}
 	return nil
@@ -1294,7 +1293,7 @@ func (c *jsonMergePreserveFunctionClass) verifyArgs(args []Expression) error {
 	}
 	for i, arg := range args {
 		if evalType := arg.GetType().EvalType(); evalType != types.ETString && evalType != types.ETJson {
-			return ErrInvalidTypeForJSON.GenWithStackByArgs(i, "json_merge_preserve")
+			return ErrInvalidTypeForJSON.GenWithStackByArgs(i+1, "json_merge_preserve")
 		}
 	}
 	return nil
@@ -1431,7 +1430,7 @@ func (c *jsonSearchFunctionClass) verifyArgs(args []Expression) error {
 		return err
 	}
 	if evalType := args[0].GetType().EvalType(); evalType != types.ETString && evalType != types.ETJson {
-		return ErrInvalidTypeForJSON.GenWithStackByArgs(0, "json_search")
+		return ErrInvalidTypeForJSON.GenWithStackByArgs(1, "json_search")
 	}
 	return nil
 }
@@ -1640,7 +1639,7 @@ func (c *jsonKeysFunctionClass) verifyArgs(args []Expression) error {
 		return err
 	}
 	if evalType := args[0].GetType().EvalType(); evalType != types.ETString && evalType != types.ETJson {
-		return ErrInvalidTypeForJSON.GenWithStackByArgs(0, "json_keys")
+		return ErrInvalidTypeForJSON.GenWithStackByArgs(1, "json_keys")
 	}
 	return nil
 }

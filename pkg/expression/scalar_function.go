@@ -120,18 +120,23 @@ func (sf *ScalarFunction) Vectorized() bool {
 
 // String implements fmt.Stringer interface.
 func (sf *ScalarFunction) String() string {
+	return sf.StringWithCtx(errors.RedactLogDisable)
+}
+
+// StringWithCtx implements Expression interface.
+func (sf *ScalarFunction) StringWithCtx(redact string) string {
 	var buffer bytes.Buffer
 	fmt.Fprintf(&buffer, "%s(", sf.FuncName.L)
 	switch sf.FuncName.L {
 	case ast.Cast:
 		for _, arg := range sf.GetArgs() {
-			buffer.WriteString(arg.String())
+			buffer.WriteString(arg.StringWithCtx(redact))
 			buffer.WriteString(", ")
 			buffer.WriteString(sf.RetType.String())
 		}
 	default:
 		for i, arg := range sf.GetArgs() {
-			buffer.WriteString(arg.String())
+			buffer.WriteString(arg.StringWithCtx(redact))
 			if i+1 != len(sf.GetArgs()) {
 				buffer.WriteString(", ")
 			}
@@ -201,7 +206,7 @@ func newFunctionImpl(ctx BuildContext, fold int, funcName string, retType *types
 	case ast.GetVar:
 		return BuildGetVarFunction(ctx, args[0], retType)
 	case InternalFuncFromBinary:
-		return BuildFromBinaryFunction(ctx, args[0], retType), nil
+		return BuildFromBinaryFunction(ctx, args[0], retType, false), nil
 	case InternalFuncToBinary:
 		return BuildToBinaryFunction(ctx, args[0]), nil
 	case ast.Sysdate:
@@ -358,6 +363,9 @@ func (sf *ScalarFunction) Equal(ctx EvalContext, e Expression) bool {
 		return false
 	}
 	if sf.FuncName.L != fun.FuncName.L {
+		return false
+	}
+	if !sf.RetType.Equal(fun.RetType) {
 		return false
 	}
 	return sf.Function.equal(ctx, fun.Function)

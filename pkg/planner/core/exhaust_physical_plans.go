@@ -876,7 +876,7 @@ func (p *LogicalJoin) buildIndexJoinInner2TableScan(
 			if i != 0 {
 				buffer.WriteString(" ")
 			}
-			buffer.WriteString(key.String())
+			buffer.WriteString(key.StringWithCtx(errors.RedactLogDisable))
 		}
 		buffer.WriteString("]")
 		rangeInfo := buffer.String()
@@ -1003,13 +1003,16 @@ func (ijHelper *indexJoinBuildHelper) buildRangeDecidedByInformation(idxCols []*
 		}
 		fmt.Fprintf(buffer, "eq(%v, %v)", idxCols[idxOff], outerJoinKeys[keyOff])
 	}
+	// It is to build the range info which is used in explain. It is necessary to redact the range info.
+	ectx := ijHelper.join.SCtx().GetExprCtx().GetEvalCtx()
+	redact := ectx.GetTiDBRedactLog()
 	for _, access := range ijHelper.chosenAccess {
 		if !isFirst {
 			buffer.WriteString(" ")
 		} else {
 			isFirst = false
 		}
-		fmt.Fprintf(buffer, "%v", access)
+		fmt.Fprintf(buffer, "%v", access.StringWithCtx(redact))
 	}
 	buffer.WriteString("]")
 	return buffer.String()
@@ -3226,6 +3229,22 @@ func (la *LogicalAggregation) tryToGetMppHashAggs(prop *property.PhysicalPropert
 			}
 		}
 	}
+	// ref: https://github.com/pingcap/tiflash/blob/3ebb102fba17dce3d990d824a9df93d93f1ab
+	// 766/dbms/src/Flash/Coprocessor/AggregationInterpreterHelper.cpp#L26
+	validMppAgg := func(mppAgg *PhysicalHashAgg) bool {
+		isFinalAgg := true
+		if mppAgg.AggFuncs[0].Mode != aggregation.FinalMode && mppAgg.AggFuncs[0].Mode != aggregation.CompleteMode {
+			isFinalAgg = false
+		}
+		for _, one := range mppAgg.AggFuncs[1:] {
+			otherIsFinalAgg := one.Mode == aggregation.FinalMode || one.Mode == aggregation.CompleteMode
+			if isFinalAgg != otherIsFinalAgg {
+				// different agg mode detected in mpp side.
+				return false
+			}
+		}
+		return true
+	}
 
 	if len(la.GroupByItems) > 0 {
 		partitionCols := la.GetPotentialPartitionKeys()
@@ -3259,7 +3278,9 @@ func (la *LogicalAggregation) tryToGetMppHashAggs(prop *property.PhysicalPropert
 			agg.SetSchema(la.schema.Clone())
 			agg.MppRunMode = Mpp1Phase
 			finalAggAdjust(agg.AggFuncs)
-			hashAggs = append(hashAggs, agg)
+			if validMppAgg(agg) {
+				hashAggs = append(hashAggs, agg)
+			}
 		}
 
 		// Final agg can't be split into multi-stage aggregate, so exit early
@@ -3274,7 +3295,9 @@ func (la *LogicalAggregation) tryToGetMppHashAggs(prop *property.PhysicalPropert
 		agg.SetSchema(la.schema.Clone())
 		agg.MppRunMode = Mpp2Phase
 		agg.MppPartitionCols = partitionCols
-		hashAggs = append(hashAggs, agg)
+		if validMppAgg(agg) {
+			hashAggs = append(hashAggs, agg)
+		}
 
 		// agg runs on TiDB with a partial agg on TiFlash if possible
 		if prop.TaskTp == property.RootTaskType {

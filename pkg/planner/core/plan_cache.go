@@ -15,6 +15,7 @@
 package core
 
 import (
+	"bytes"
 	"context"
 
 	"github.com/pingcap/errors"
@@ -104,8 +105,38 @@ func planCachePreprocess(ctx context.Context, sctx sessionctx.Context, isNonPrep
 		return errors.Trace(err)
 	}
 
-	// step 3: check schema version
-	if stmt.SchemaVersion != is.SchemaMetaVersion() {
+	// step 3: add metadata lock and check each table's schema version
+	schemaNotMatch := false
+	for i := 0; i < len(stmt.dbName); i++ {
+		tbl, ok := is.TableByID(stmt.tbls[i].Meta().ID)
+		if !ok {
+			tblByName, err := is.TableByName(stmt.dbName[i], stmt.tbls[i].Meta().Name)
+			if err != nil {
+				return plannererrors.ErrSchemaChanged.GenWithStack("Schema change caused error: %s", err.Error())
+			}
+			delete(stmt.RelateVersion, stmt.tbls[i].Meta().ID)
+			stmt.tbls[i] = tblByName
+			stmt.RelateVersion[tblByName.Meta().ID] = tblByName.Meta().Revision
+		}
+		newTbl, err := tryLockMDLAndUpdateSchemaIfNecessary(sctx.GetPlanCtx(), stmt.dbName[i], stmt.tbls[i], is)
+		if err != nil {
+			schemaNotMatch = true
+			continue
+		}
+		// The revision of tbl and newTbl may not be the same.
+		// Example:
+		// The version of stmt.tbls[i] is taken from the prepare statement and is revision v1.
+		// When stmt.tbls[i] is locked in MDL, the revision of newTbl is also v1.
+		// The revision of tbl is v2. The reason may have other statements trigger "tryLockMDLAndUpdateSchemaIfNecessary" before, leading to tbl revision update.
+		if stmt.tbls[i].Meta().Revision != newTbl.Meta().Revision || (tbl != nil && tbl.Meta().Revision != newTbl.Meta().Revision) {
+			schemaNotMatch = true
+		}
+		stmt.tbls[i] = newTbl
+		stmt.RelateVersion[newTbl.Meta().ID] = newTbl.Meta().Revision
+	}
+
+	// step 4: check schema version
+	if schemaNotMatch || stmt.SchemaVersion != is.SchemaMetaVersion() {
 		// In order to avoid some correctness issues, we have to clear the
 		// cached plan once the schema version is changed.
 		// Cached plan in prepared struct does NOT have a "cache key" with
@@ -113,6 +144,7 @@ func planCachePreprocess(ctx context.Context, sctx sessionctx.Context, isNonPrep
 		stmt.PointGet.Plan = nil
 		stmt.PointGet.Executor = nil
 		stmt.PointGet.ColumnInfos = nil
+		stmt.PointGet.planCacheKey = nil
 		// If the schema version has changed we need to preprocess it again,
 		// if this time it failed, the real reason for the error is schema changed.
 		// Example:
@@ -127,7 +159,7 @@ func planCachePreprocess(ctx context.Context, sctx sessionctx.Context, isNonPrep
 		stmt.SchemaVersion = is.SchemaMetaVersion()
 	}
 
-	// step 4: handle expiration
+	// step 5: handle expiration
 	// If the lastUpdateTime less than expiredTimeStamp4PC,
 	// it means other sessions have executed 'admin flush instance plan_cache'.
 	// So we need to clear the current session's plan cache.
@@ -138,6 +170,7 @@ func planCachePreprocess(ctx context.Context, sctx sessionctx.Context, isNonPrep
 		stmt.PointGet.Plan = nil
 		vars.LastUpdateTime4PC = expiredTimeStamp4PC
 	}
+
 	return nil
 }
 
@@ -189,12 +222,12 @@ func GetPlanFromSessionPlanCache(ctx context.Context, sctx sessionctx.Context,
 			latestSchemaVersion = domain.GetDomain(sctx).InfoSchema().SchemaMetaVersion()
 		}
 		if cacheKey, err = NewPlanCacheKey(sctx.GetSessionVars(), stmt.StmtText,
-			stmt.StmtDB, stmt.SchemaVersion, latestSchemaVersion, bindSQL, expression.ExprPushDownBlackListReloadTimeStamp.Load()); err != nil {
+			stmt.StmtDB, stmt.SchemaVersion, latestSchemaVersion, bindSQL, expression.ExprPushDownBlackListReloadTimeStamp.Load(), stmt.RelateVersion); err != nil {
 			return nil, nil, err
 		}
 	}
 
-	if stmtCtx.UseCache && stmt.PointGet.Plan != nil { // special code path for fast point plan
+	if stmtCtx.UseCache && stmt.PointGet.Plan != nil && bytes.Equal(stmt.PointGet.planCacheKey.Hash(), cacheKey.Hash()) { // special code path for fast point plan
 		if plan, names, ok, err := getCachedPointPlan(stmt, sessVars, stmtCtx); ok {
 			return plan, names, err
 		}
@@ -316,7 +349,7 @@ func generateNewPlan(ctx context.Context, sctx sessionctx.Context, isNonPrepared
 	if err != nil {
 		return nil, nil, err
 	}
-	err = tryCachePointPlan(ctx, sctx.GetPlanCtx(), stmt, p, names)
+	err = tryCachePointPlan(ctx, sctx.GetPlanCtx(), stmt, p, names, cacheKey)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -334,7 +367,7 @@ func generateNewPlan(ctx context.Context, sctx sessionctx.Context, isNonPrepared
 		if _, isolationReadContainTiFlash := sessVars.IsolationReadEngines[kv.TiFlash]; isolationReadContainTiFlash && !IsReadOnly(stmtAst.Stmt, sessVars) {
 			delete(sessVars.IsolationReadEngines, kv.TiFlash)
 			if cacheKey, err = NewPlanCacheKey(sessVars, stmt.StmtText, stmt.StmtDB,
-				stmt.SchemaVersion, latestSchemaVersion, bindSQL, expression.ExprPushDownBlackListReloadTimeStamp.Load()); err != nil {
+				stmt.SchemaVersion, latestSchemaVersion, bindSQL, expression.ExprPushDownBlackListReloadTimeStamp.Load(), stmt.RelateVersion); err != nil {
 				return nil, nil, err
 			}
 			sessVars.IsolationReadEngines[kv.TiFlash] = struct{}{}
@@ -771,7 +804,7 @@ func CheckPreparedPriv(sctx sessionctx.Context, stmt *PlanCacheStmt, is infosche
 // tryCachePointPlan will try to cache point execution plan, there may be some
 // short paths for these executions, currently "point select" and "point update"
 func tryCachePointPlan(_ context.Context, sctx PlanContext,
-	stmt *PlanCacheStmt, p Plan, names types.NameSlice) error {
+	stmt *PlanCacheStmt, p Plan, names types.NameSlice, cacheKey kvcache.Key) error {
 	if !sctx.GetSessionVars().StmtCtx.UseCache {
 		return nil
 	}
@@ -794,6 +827,7 @@ func tryCachePointPlan(_ context.Context, sctx PlanContext,
 		// just cache point plan now
 		stmt.PointGet.Plan = p
 		stmt.PointGet.ColumnNames = names
+		stmt.PointGet.planCacheKey = cacheKey
 		stmt.NormalizedPlan, stmt.PlanDigest = NormalizePlan(p)
 		sctx.GetSessionVars().StmtCtx.SetPlan(p)
 		sctx.GetSessionVars().StmtCtx.SetPlanDigest(stmt.NormalizedPlan, stmt.PlanDigest)
@@ -815,6 +849,7 @@ func IsPointGetPlanShortPathOK(sctx sessionctx.Context, is infoschema.InfoSchema
 	if stmt.SchemaVersion != is.SchemaMetaVersion() {
 		stmt.PointGet.Plan = nil
 		stmt.PointGet.ColumnInfos = nil
+		stmt.PointGet.planCacheKey = nil
 		return false, nil
 	}
 	// maybe we'd better check cached plan type here, current

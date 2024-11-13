@@ -19,6 +19,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -124,10 +125,22 @@ func (p *LogicalSelection) PredicatePushDown(predicates []expression.Expression,
 
 // PredicatePushDown implements LogicalPlan PredicatePushDown interface.
 func (p *LogicalUnionScan) PredicatePushDown(predicates []expression.Expression, opt *util.LogicalOptimizeOp) ([]expression.Expression, LogicalPlan) {
+	var predicatesWithVCol, predicatesWithoutVCol []expression.Expression
+	// predicates with virtual columns can't be pushed down to TiKV/TiFlash so they'll be put into a Projection
+	// below the UnionScan, but the current UnionScan doesn't support placing Projection below it, see #53951.
+	for _, expr := range predicates {
+		if expression.ContainVirtualColumn([]expression.Expression{expr}) {
+			predicatesWithVCol = append(predicatesWithVCol, expr)
+		} else {
+			predicatesWithoutVCol = append(predicatesWithoutVCol, expr)
+		}
+	}
+	predicates = predicatesWithoutVCol
 	retainedPredicates, _ := p.children[0].PredicatePushDown(predicates, opt)
 	p.conditions = make([]expression.Expression, 0, len(predicates))
 	p.conditions = append(p.conditions, predicates...)
 	// The conditions in UnionScan is only used for added rows, so parent Selection should not be removed.
+	retainedPredicates = append(retainedPredicates, predicatesWithVCol...)
 	return retainedPredicates, p
 }
 
@@ -848,7 +861,7 @@ func appendTableDualTraceStep(replaced LogicalPlan, dual LogicalPlan, conditions
 			if i > 0 {
 				buffer.WriteString(",")
 			}
-			buffer.WriteString(cond.String())
+			buffer.WriteString(cond.StringWithCtx(errors.RedactLogDisable))
 		}
 		buffer.WriteString("] are constant false or null")
 		return buffer.String()
@@ -870,7 +883,7 @@ func appendSelectionPredicatePushDownTraceStep(p *LogicalSelection, conditions [
 				if i > 0 {
 					buffer.WriteString(",")
 				}
-				buffer.WriteString(cond.String())
+				buffer.WriteString(cond.StringWithCtx(errors.RedactLogDisable))
 			}
 			fmt.Fprintf(buffer, "] in %v_%v are pushed down", p.TP(), p.ID())
 			return buffer.String()
@@ -892,7 +905,7 @@ func appendDataSourcePredicatePushDownTraceStep(ds *DataSource, opt *util.Logica
 			if i > 0 {
 				buffer.WriteString(",")
 			}
-			buffer.WriteString(cond.String())
+			buffer.WriteString(cond.StringWithCtx(errors.RedactLogDisable))
 		}
 		fmt.Fprintf(buffer, "] are pushed down across %v_%v", ds.TP(), ds.ID())
 		return buffer.String()
