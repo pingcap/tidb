@@ -258,8 +258,7 @@ func (e *GrantExec) Next(ctx context.Context, _ *chunk.Chunk) error {
 		return err
 	}
 	isCommit = true
-	users := userSpecToUserList(e.Users)
-	return domain.GetDomain(e.Ctx()).NotifyUpdatePrivilege(users)
+	return domain.GetDomain(e.Ctx()).NotifyUpdatePrivilege()
 }
 
 func containsNonDynamicPriv(privList []*ast.PrivElem) bool {

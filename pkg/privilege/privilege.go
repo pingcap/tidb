@@ -23,7 +23,6 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/types"
-	"github.com/pingcap/tidb/pkg/util/sqlexec"
 )
 
 type keyType int
@@ -92,7 +91,7 @@ type Manager interface {
 	MatchIdentity(user, host string, skipNameResolve bool) (string, string, bool)
 
 	// MatchUserResourceGroupName matches a user with specified resource group name
-	MatchUserResourceGroupName(exec sqlexec.RestrictedSQLExecutor, resourceGroupName string) (string, bool)
+	MatchUserResourceGroupName(resourceGroupName string) (string, bool)
 
 	// DBIsVisible returns true is the database is visible to current user.
 	DBIsVisible(activeRole []*auth.RoleIdentity, db string) bool
