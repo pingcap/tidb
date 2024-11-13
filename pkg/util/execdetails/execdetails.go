@@ -555,7 +555,7 @@ type basicCopRuntimeStats struct {
 	procTimes  Percentile[Duration]
 	// executor extra infos
 	tiflashScanContext TiFlashScanContext
-	tiFlashWaitSummary TiFlashWaitSummary
+	tiflashWaitSummary TiFlashWaitSummary
 }
 
 type canGetFloat64 interface {
@@ -683,10 +683,10 @@ func (p *Percentile[valueType]) Sum() float64 {
 // String implements the RuntimeStats interface.
 func (e *basicCopRuntimeStats) String() string {
 	if e.storeType == "tiflash" {
-		if e.tiFlashWaitSummary.CanBeIgnored() {
+		if e.tiflashWaitSummary.CanBeIgnored() {
 			return fmt.Sprintf("time:%v, loops:%d, threads:%d, %s", FormatDuration(time.Duration(e.consume.Load())), e.loop.Load(), e.threads, e.tiflashScanContext.String())
 		}
-		return fmt.Sprintf("time:%v, loops:%d, threads:%d, %s, %s", FormatDuration(time.Duration(e.consume.Load())), e.loop.Load(), e.threads, e.tiflashScanContext.String(), e.tiFlashWaitSummary.String())
+		return fmt.Sprintf("time:%v, loops:%d, threads:%d, %s, %s", FormatDuration(time.Duration(e.consume.Load())), e.loop.Load(), e.threads, e.tiflashWaitSummary.String(), e.tiflashScanContext.String())
 	}
 	return fmt.Sprintf("time:%v, loops:%d", FormatDuration(time.Duration(e.consume.Load())), e.loop.Load())
 }
@@ -704,7 +704,7 @@ func (e *basicCopRuntimeStats) Clone() RuntimeStats {
 	stats.consume.Store(e.consume.Load())
 	stats.rows.Store(e.rows.Load())
 	stats.tiflashScanContext = e.tiflashScanContext.Clone()
-	stats.tiFlashWaitSummary = e.tiFlashWaitSummary.Clone()
+	stats.tiflashWaitSummary = e.tiflashWaitSummary.Clone()
 	return stats
 }
 
@@ -725,7 +725,7 @@ func (e *basicCopRuntimeStats) Merge(rs RuntimeStats) {
 		e.procTimes.MergePercentile(&tmp.procTimes)
 	}
 	e.tiflashScanContext.Merge(tmp.tiflashScanContext)
-	e.tiFlashWaitSummary.Merge(tmp.tiFlashWaitSummary)
+	e.tiflashWaitSummary.Merge(tmp.tiflashWaitSummary)
 }
 
 // Tp implements the RuntimeStats interface.
@@ -805,7 +805,7 @@ func (crs *CopRuntimeStats) RecordOneCopTask(address string, summary *tipb.Execu
 			totalVectorIdxReadVecTimeMs:        summary.GetTiflashScanContext().GetTotalVectorIdxReadVecTimeMs(),
 			totalVectorIdxReadOthersTimeMs:     summary.GetTiflashScanContext().GetTotalVectorIdxReadOthersTimeMs(),
 		},
-		tiFlashWaitSummary: TiFlashWaitSummary{
+		tiflashWaitSummary: TiFlashWaitSummary{
 			executionTime:           *summary.TimeProcessedNs,
 			minTSOWaitTime:          summary.GetTiflashWaitSummary().GetMinTSOWaitNs(),
 			pipelineBreakerWaitTime: summary.GetTiflashWaitSummary().GetPipelineBreakerWaitNs(),
@@ -849,7 +849,7 @@ func (crs *CopRuntimeStats) MergeBasicStats() (procTimes Percentile[Duration], t
 		totalLoops += instanceStats.loop.Load()
 		totalThreads += instanceStats.threads
 		totalTiFlashScanContext.Merge(instanceStats.tiflashScanContext)
-		totalTiFlashWaitSummary.Merge(instanceStats.tiFlashWaitSummary)
+		totalTiFlashWaitSummary.Merge(instanceStats.tiflashWaitSummary)
 		totalTasks += instanceStats.totalTasks
 	}
 	return
@@ -869,11 +869,11 @@ func (crs *CopRuntimeStats) String() string {
 		printTiFlashSpecificInfo := func() {
 			if isTiFlashCop {
 				fmt.Fprintf(buf, ", threads:%d}", totalThreads)
-				if !totalTiFlashScanContext.Empty() {
-					buf.WriteString(", " + totalTiFlashScanContext.String())
-				}
 				if !totalTiFlashWaitSummary.CanBeIgnored() {
 					buf.WriteString(", " + totalTiFlashWaitSummary.String())
+				}
+				if !totalTiFlashScanContext.Empty() {
+					buf.WriteString(", " + totalTiFlashScanContext.String())
 				}
 			} else {
 				buf.WriteString("}")
@@ -1285,8 +1285,7 @@ func (waitSummary *TiFlashWaitSummary) String() string {
 
 // Merge make sum to merge the information in TiFlashWaitSummary
 func (waitSummary *TiFlashWaitSummary) Merge(other TiFlashWaitSummary) {
-	updated := waitSummary.executionTime < other.executionTime
-	if updated {
+	if waitSummary.executionTime < other.executionTime {
 		waitSummary.executionTime = other.executionTime
 		waitSummary.minTSOWaitTime = other.minTSOWaitTime
 		waitSummary.pipelineBreakerWaitTime = other.pipelineBreakerWaitTime
