@@ -124,7 +124,7 @@ func getJobMetaFromTable(
 		return nil, errors.Trace(err)
 	}
 	if len(rows) == 0 {
-		return nil, errors.New(fmt.Sprintf("DDL job %d not found", jobID))
+		return nil, fmt.Errorf("ddl job %d not found", jobID)
 	}
 	jobBinary := rows[0].GetBytes(0)
 	job := model.Job{}
@@ -171,8 +171,8 @@ func (e *AlterDDLJobExec) processAlterDDLJobConfig(
 			continue
 		}
 		if !job.IsAlterable() {
-			return errors.New(fmt.Sprintf("Unsupported DDL operation: %s, "+
-				"only support add index, modify column and alter table reorganize partition DDL job.", job.Type.String()))
+			return fmt.Errorf("unsupported DDL operation: %s, "+
+				"only support add index, modify column and alter table reorganize partition DDL job", job.Type.String())
 		}
 		if err = e.updateReorgMeta(job, model.AdminCommandByEndUser); err != nil {
 			continue
@@ -213,7 +213,7 @@ func (e *AlterDDLJobExec) updateReorgMeta(job *model.Job, byWho model.AdminComma
 			}
 			job.AdminOperator = byWho
 		default:
-			return errors.Errorf("Unsupported admin alter ddl jobs config: %s", opt.Name)
+			return errors.Errorf("unsupported admin alter ddl jobs config: %s", opt.Name)
 		}
 	}
 	return nil
