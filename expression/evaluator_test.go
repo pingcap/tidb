@@ -15,7 +15,10 @@
 package expression
 
 import (
+<<<<<<< HEAD:expression/evaluator_test.go
 	"sync/atomic"
+=======
+>>>>>>> 65281ad3073 (*: make `chunk.SwapColumn` private (#57274)):pkg/expression/evaluator_test.go
 	"testing"
 	"time"
 
@@ -599,3 +602,56 @@ func TestMod(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, types.NewDatum(1.5), r)
 }
+<<<<<<< HEAD:expression/evaluator_test.go
+=======
+
+func TestOptionalProp(t *testing.T) {
+	ctx := createContext(t)
+
+	fc := funcs[ast.Plus]
+	arg1fc := funcs[ast.CurrentUser]
+	arg1f, err := arg1fc.getFunction(ctx, nil)
+	require.NoError(t, err)
+	arg1 := &ScalarFunction{
+		FuncName: model.NewCIStr(ast.CurrentUser),
+		Function: arg1f,
+		RetType:  arg1f.getRetTp(),
+	}
+	arg2fc := funcs[ast.TiDBIsDDLOwner]
+	arg2f, err := arg2fc.getFunction(ctx, nil)
+	require.NoError(t, err)
+	arg2 := &ScalarFunction{
+		FuncName: model.NewCIStr(ast.TiDBIsDDLOwner),
+		Function: arg2f,
+		RetType:  arg2f.getRetTp(),
+	}
+
+	f, err := fc.getFunction(ctx, []Expression{arg1, arg2})
+	require.NoError(t, err)
+	fe := &ScalarFunction{
+		FuncName: model.NewCIStr(ast.Plus),
+		Function: f,
+		RetType:  f.getRetTp(),
+	}
+
+	fc2 := funcs[ast.GetLock]
+	f2, err := fc2.getFunction(ctx, datumsToConstants(types.MakeDatums("tidb_distsql_scan_concurrency", 10)))
+	require.NoError(t, err)
+	fe2 := &ScalarFunction{
+		FuncName: model.NewCIStr(ast.GetLock),
+		Function: f2,
+		RetType:  f2.getRetTp(),
+	}
+
+	require.Equal(t, exprctx.OptionalEvalPropKeySet(0), f.RequiredOptionalEvalProps())
+	require.Equal(t, exprctx.OptPropCurrentUser.AsPropKeySet()|exprctx.OptPropDDLOwnerInfo.AsPropKeySet(),
+		GetOptionalEvalPropsForExpr(fe))
+	require.Equal(t, exprctx.OptPropCurrentUser.AsPropKeySet()|exprctx.OptPropDDLOwnerInfo.AsPropKeySet()|
+		exprctx.OptPropAdvisoryLock.AsPropKeySet(),
+		GetOptionalEvalPropsForExpr(fe)|GetOptionalEvalPropsForExpr(fe2))
+
+	evalSuit := NewEvaluatorSuite([]Expression{fe, fe2}, false)
+	require.Equal(t, exprctx.OptPropCurrentUser.AsPropKeySet()|exprctx.OptPropDDLOwnerInfo.AsPropKeySet()|
+		exprctx.OptPropAdvisoryLock.AsPropKeySet(), evalSuit.RequiredOptionalEvalProps())
+}
+>>>>>>> 65281ad3073 (*: make `chunk.SwapColumn` private (#57274)):pkg/expression/evaluator_test.go
