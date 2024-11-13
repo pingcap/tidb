@@ -60,6 +60,15 @@ func (s *LogicalSchemaProducer) Equals(other any) bool {
 	if s2 == nil {
 		return false
 	}
+	if s.schema == nil {
+		return s2.schema == nil
+	}
+	if s2.schema == nil {
+		return false
+	}
+	if s.schema.Len() != s2.schema.Len() {
+		return false
+	}
 	for i, col := range s.schema.Columns {
 		if !col.Equals(s2.schema.Columns[i]) {
 			return false
