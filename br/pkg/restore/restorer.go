@@ -309,22 +309,8 @@ func GetFileRangeKey(f string) string {
 	return f[:idx]
 }
 
-// PipelineSstRestorer will try to do the restore and split in pipeline
-// used in log backup and compacted sst backup
-// because of unable to split all regions before restore these data.
-// we just can restore as well as split.
-type PipelineSstRestorer[T any] interface {
-	// Raw/Txn Restore, full Restore
-	SstRestorer
-	split.MultiRegionsSplitter
-
-	// Log Restore, Compacted Restore
-	// split when Iter until condition satified
-	WithSplit(iter.TryNextor[T], split.SplitStrategy[T]) iter.TryNextor[T]
-}
-
 type PipelineSstRestorerWrapper[T any] struct {
-	split.RegionsSplitter
+	split.PipelineRegionsSplitter
 }
 
 // WithSplit processes items using a split strategy within a pipeline.
@@ -346,7 +332,7 @@ func (p *PipelineSstRestorerWrapper[T]) WithSplit(ctx context.Context, i iter.Tr
 			startTime := time.Now()
 
 			// Execute the split operation on the accumulated items.
-			accumulations := strategy.AccumulationsIter()
+			accumulations := strategy.GetAccumulations()
 			err := p.ExecuteRegions(ctx, accumulations)
 			if err != nil {
 				// should we go on?

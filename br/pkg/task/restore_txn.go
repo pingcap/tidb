@@ -88,7 +88,6 @@ func RunRestoreTxn(c context.Context, g glue.Glue, cmdName string, cfg *Config) 
 
 	onProgress := func(i int64) { updateCh.IncBy(i) }
 	// RawKV restore does not need to rewrite keys.
-	// err = client.GetRestorer().SplitRanges(ctx, ranges, onProgress)
 	err = client.SplitPoints(ctx, getEndKeys(ranges), onProgress, false)
 	if err != nil {
 		return errors.Trace(err)

@@ -32,7 +32,7 @@ type Splitter interface {
 
 	// WaitForScatterRegionsTimeout blocks until all regions have finished scattering,
 	// or until the specified timeout duration has elapsed.
-	WaitForScatterRegionsTimeout(ctx context.Context, regionInfos []*RegionInfo, timeout time.Duration) error
+	WaitForScatterRegionsTimeout(ctx context.Context, regionInfos []*RegionInfo, timeout time.Duration) int
 }
 
 // SplitStrategy defines how values should be accumulated and when to trigger a split.
@@ -44,8 +44,8 @@ type SplitStrategy[T any] interface {
 	ShouldSplit() bool
 	// Skip the file by checkpoints or invalid files
 	ShouldSkip(T) bool
-	// AccumulationsIter returns an iterator for the accumulated values.
-	AccumulationsIter() *SplitHelperIterator
+	// GetAccumulations returns an iterator for the accumulated values.
+	GetAccumulations() *SplitHelperIterator
 	// Reset the buffer for next round
 	ResetAccumulations()
 }
@@ -64,7 +64,7 @@ func NewBaseSplitStrategy(rules map[int64]*restoreutils.RewriteRules) *BaseSplit
 	}
 }
 
-func (b *BaseSplitStrategy) AccumulationsIter() *SplitHelperIterator {
+func (b *BaseSplitStrategy) GetAccumulations() *SplitHelperIterator {
 	tableSplitters := make([]*RewriteSplitter, 0, len(b.TableSplitter))
 	for tableID, splitter := range b.TableSplitter {
 		rewriteRule, exists := b.Rules[tableID]
@@ -77,6 +77,7 @@ func (b *BaseSplitStrategy) AccumulationsIter() *SplitHelperIterator {
 			continue
 		}
 		tableSplitters = append(tableSplitters, NewRewriteSpliter(
+			// TODO remove this field. sort by newTableID
 			codec.EncodeBytes([]byte{}, tablecodec.EncodeTablePrefix(newTableID)),
 			newTableID,
 			rewriteRule,
@@ -136,16 +137,16 @@ func (iter *SplitHelperIterator) Traverse(fn func(v Valued, endKey []byte, rule 
 	}
 }
 
-// PipelineSplitter defines the interface for advanced (pipeline) splitting strategies.
+// PipelineRegionsSplitter defines the interface for advanced (pipeline) splitting strategies.
 // log / compacted sst files restore need to use this to split after full restore.
 // and the splitter must perform with a control.
 // so we choose to split and restore in a continuous flow.
-type MultiRegionsSplitter interface {
+type PipelineRegionsSplitter interface {
 	Splitter
-	ExecuteRegions(ctx context.Context) error // Method for executing pipeline-based splitting
+	ExecuteRegions(ctx context.Context, splitHelper *SplitHelperIterator) error // Method for executing pipeline-based splitting
 }
 
-type RegionsSplitter struct {
+type PipelineRegionsSplitterImpl struct {
 	*RegionSplitter
 	pool               *util.WorkerPool
 	splitThreSholdSize uint64
@@ -155,13 +156,13 @@ type RegionsSplitter struct {
 	regionsCh chan []*RegionInfo
 }
 
-func NewRegionsSplitter(
+func NewPipelineRegionsSplitter(
 	client SplitClient,
 	splitSize uint64,
 	splitKeys int64,
-) RegionsSplitter {
+) PipelineRegionsSplitter {
 	pool := util.NewWorkerPool(128, "split")
-	return RegionsSplitter{
+	return &PipelineRegionsSplitterImpl{
 		pool:               pool,
 		RegionSplitter:     NewRegionSplitter(client),
 		splitThreSholdSize: splitSize,
@@ -169,7 +170,7 @@ func NewRegionsSplitter(
 	}
 }
 
-func (r *RegionsSplitter) ExecuteRegions(ctx context.Context, splitHelper *SplitHelperIterator) error {
+func (r *PipelineRegionsSplitterImpl) ExecuteRegions(ctx context.Context, splitHelper *SplitHelperIterator) error {
 	var ectx context.Context
 	var wg sync.WaitGroup
 	r.eg, ectx = errgroup.WithContext(ctx)
@@ -349,7 +350,7 @@ func SplitPoint(
 	return nil
 }
 
-func (r *RegionsSplitter) splitRegionByPoints(
+func (r *PipelineRegionsSplitterImpl) splitRegionByPoints(
 	ctx context.Context,
 	initialLength uint64,
 	initialNumber int64,
