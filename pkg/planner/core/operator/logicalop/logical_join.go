@@ -93,7 +93,7 @@ func (tp JoinType) String() string {
 
 // LogicalJoin is the logical join plan.
 type LogicalJoin struct {
-	LogicalSchemaProducer
+	LogicalSchemaProducer `hash64-equals:"true"`
 
 	JoinType      JoinType `hash64-equals:"true"`
 	Reordered     bool

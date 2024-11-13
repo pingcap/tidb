@@ -96,19 +96,17 @@ func (ft *FieldType) Hash64(h IHasher) {
 
 // Equals implements the cascades/base.Hasher.<1th> interface.
 func (ft *FieldType) Equals(other any) bool {
+	ft2, ok := other.(*FieldType)
+	if !ok {
+		return false
+	}
+	if ft == nil {
+		return ft2 == nil
+	}
 	if other == nil {
 		return false
 	}
-	var ft2 *FieldType
-	switch x := other.(type) {
-	case *FieldType:
-		ft2 = x
-	case FieldType:
-		ft2 = &x
-	default:
-		return false
-	}
-	ok := ft.tp == ft2.tp &&
+	ok = ft.tp == ft2.tp &&
 		ft.flag == ft2.flag &&
 		ft.flen == ft2.flen &&
 		ft.decimal == ft2.decimal &&
