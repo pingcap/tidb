@@ -71,7 +71,7 @@ const WholeTableEngineID = math.MaxInt32
 // remember to increase the version number in case of incompatible change.
 const (
 	CheckpointTableNameTask   = "task_v2"
-	CheckpointTableNameTable  = "table_v9"
+	CheckpointTableNameTable  = "table_v10"
 	CheckpointTableNameEngine = "engine_v5"
 	CheckpointTableNameChunk  = "chunk_v5"
 )
@@ -113,6 +113,9 @@ const (
 			kv_bytes bigint unsigned NOT NULL DEFAULT 0,
 			kv_kvs bigint unsigned NOT NULL DEFAULT 0,
 			kv_checksum bigint unsigned NOT NULL DEFAULT 0,
+			auto_rand_base bigint NOT NULL DEFAULT 0,
+			auto_incr_base bigint NOT NULL DEFAULT 0,
+			auto_row_id_base bigint NOT NULL DEFAULT 0,
 			INDEX(task_id)
 		);`
 	CreateEngineTableTemplate = `
@@ -168,7 +171,8 @@ const (
 		FROM %s.%s WHERE table_name = ?
 		ORDER BY engine_id, path, offset;`
 	ReadTableRemainTemplate = `
-		SELECT status, alloc_base, table_id, table_info, kv_bytes, kv_kvs, kv_checksum FROM %s.%s WHERE table_name = ?;`
+		SELECT status, alloc_base, table_id, table_info, kv_bytes, kv_kvs, kv_checksum, auto_rand_base, auto_incr_base, auto_row_id_base
+		FROM %s.%s WHERE table_name = ?;`
 	ReplaceEngineTemplate = `
 		REPLACE INTO %s.%s (table_name, engine_id, status) VALUES (?, ?, ?);`
 	ReplaceChunkTemplate = `
@@ -187,7 +191,12 @@ const (
 		UPDATE %s.%s SET pos = ?, prev_rowid_max = ?, kvc_bytes = ?, kvc_kvs = ?, kvc_checksum = ?, columns = ?
 		WHERE (table_name, engine_id, path, offset) = (?, ?, ?, ?);`
 	UpdateTableRebaseTemplate = `
-		UPDATE %s.%s SET alloc_base = GREATEST(?, alloc_base) WHERE table_name = ?;`
+		UPDATE %s.%s
+		SET alloc_base = GREATEST(?, alloc_base),
+		    auto_rand_base = GREATEST(?, auto_rand_base),
+		    auto_incr_base = GREATEST(?, auto_incr_base),
+		    auto_row_id_base = GREATEST(?, auto_row_id_base)
+		WHERE table_name = ?;`
 	UpdateTableStatusTemplate = `
 		UPDATE %s.%s SET status = ? WHERE table_name = ?;`
 	UpdateTableChecksumTemplate = `UPDATE %s.%s SET kv_bytes = ?, kv_kvs = ?, kv_checksum = ? WHERE table_name = ?;`
@@ -348,6 +357,12 @@ type TableCheckpoint struct {
 	TableInfo *model.TableInfo
 	// remote checksum before restore
 	Checksum verify.KVChecksum
+	// used to record the max auto random ID without the sharding bits that has been used.
+	AutoRandBase int64
+	// used to record the max auto increment ID that has been used.
+	AutoIncrBase int64
+	// used to record the max auto row ID that has been used.
+	AutoRowIDBase int64
 }
 
 // DeepCopy returns a deep copy of the table checkpoint.
@@ -362,6 +377,10 @@ func (cp *TableCheckpoint) DeepCopy() *TableCheckpoint {
 		Engines:   engines,
 		TableID:   cp.TableID,
 		Checksum:  cp.Checksum,
+
+		AutoRandBase:  cp.AutoRandBase,
+		AutoIncrBase:  cp.AutoIncrBase,
+		AutoRowIDBase: cp.AutoRowIDBase,
 	}
 }
 
@@ -389,13 +408,17 @@ type engineCheckpointDiff struct {
 
 // TableCheckpointDiff is the difference between two table checkpoints.
 type TableCheckpointDiff struct {
-	hasStatus   bool
-	hasRebase   bool
-	hasChecksum bool
-	status      CheckpointStatus
-	allocBase   int64
-	engines     map[int32]engineCheckpointDiff
-	checksum    verify.KVChecksum
+	hasStatus bool
+	// it means some XXXBase fields has been updated.
+	hasRebase     bool
+	hasChecksum   bool
+	status        CheckpointStatus
+	allocBase     int64
+	engines       map[int32]engineCheckpointDiff
+	checksum      verify.KVChecksum
+	autoRandBase  int64
+	autoIncrBase  int64
+	autoRowIDBase int64
 }
 
 // NewTableCheckpointDiff returns a new TableCheckpointDiff.
@@ -433,7 +456,10 @@ func (cp *TableCheckpoint) Apply(cpd *TableCheckpointDiff) {
 		cp.Status = cpd.status
 	}
 	if cpd.hasRebase {
-		cp.AllocBase = cpd.allocBase
+		cp.AllocBase = max(cp.AllocBase, cpd.allocBase)
+		cp.AutoRandBase = max(cp.AutoRandBase, cpd.autoRandBase)
+		cp.AutoIncrBase = max(cp.AutoIncrBase, cpd.autoIncrBase)
+		cp.AutoRowIDBase = max(cp.AutoRowIDBase, cpd.autoRowIDBase)
 	}
 	for engineID, engineDiff := range cpd.engines {
 		engine := cp.Engines[engineID]
@@ -932,7 +958,10 @@ func (cpdb *MySQLCheckpointsDB) Get(ctx context.Context, tableName string) (*Tab
 		var status uint8
 		var kvs, bytes, checksum uint64
 		var rawTableInfo []byte
-		if err := tableRow.Scan(&status, &cp.AllocBase, &cp.TableID, &rawTableInfo, &bytes, &kvs, &checksum); err != nil {
+		if err := tableRow.Scan(
+			&status, &cp.AllocBase, &cp.TableID, &rawTableInfo, &bytes, &kvs, &checksum,
+			&cp.AutoRandBase, &cp.AutoIncrBase, &cp.AutoRowIDBase,
+		); err != nil {
 			if err == sql.ErrNoRows {
 				return errors.NotFoundf("checkpoint for table %s", tableName)
 			}
@@ -954,7 +983,8 @@ func (cpdb *MySQLCheckpointsDB) Get(ctx context.Context, tableName string) (*Tab
 }
 
 // InsertEngineCheckpoints implements the DB interface.
-func (cpdb *MySQLCheckpointsDB) InsertEngineCheckpoints(ctx context.Context, tableName string, checkpoints map[int32]*EngineCheckpoint) error {
+func (cpdb *MySQLCheckpointsDB) InsertEngineCheckpoints(ctx context.Context,
+	tableName string, checkpoints map[int32]*EngineCheckpoint) error {
 	s := common.SQLWithRetry{
 		DB:     cpdb.db,
 		Logger: log.FromContext(ctx).With(zap.String("table", tableName)),
@@ -1052,7 +1082,7 @@ func (cpdb *MySQLCheckpointsDB) Update(taskCtx context.Context, checkpointDiffs 
 				}
 			}
 			if cpd.hasRebase {
-				if _, e := rebaseStmt.ExecContext(c, cpd.allocBase, tableName); e != nil {
+				if _, e := rebaseStmt.ExecContext(c, cpd.allocBase, cpd.autoRandBase, cpd.autoIncrBase, cpd.autoRowIDBase, tableName); e != nil {
 					return errors.Trace(e)
 				}
 			}
@@ -1330,12 +1360,15 @@ func (cpdb *FileCheckpointsDB) Get(_ context.Context, tableName string) (*TableC
 	}
 
 	cp := &TableCheckpoint{
-		Status:    CheckpointStatus(tableModel.Status),
-		AllocBase: tableModel.AllocBase,
-		Engines:   make(map[int32]*EngineCheckpoint, len(tableModel.Engines)),
-		TableID:   tableModel.TableID,
-		TableInfo: tableInfo,
-		Checksum:  verify.MakeKVChecksum(tableModel.KvBytes, tableModel.KvKvs, tableModel.KvChecksum),
+		Status:        CheckpointStatus(tableModel.Status),
+		AllocBase:     tableModel.AllocBase,
+		Engines:       make(map[int32]*EngineCheckpoint, len(tableModel.Engines)),
+		TableID:       tableModel.TableID,
+		TableInfo:     tableInfo,
+		Checksum:      verify.MakeKVChecksum(tableModel.KvBytes, tableModel.KvKvs, tableModel.KvChecksum),
+		AutoRandBase:  tableModel.AutoRandBase,
+		AutoIncrBase:  tableModel.AutoIncrBase,
+		AutoRowIDBase: tableModel.AutoRowIDBase,
 	}
 
 	for engineID, engineModel := range tableModel.Engines {
@@ -1434,7 +1467,10 @@ func (cpdb *FileCheckpointsDB) Update(_ context.Context, checkpointDiffs map[str
 			tableModel.Status = uint32(cpd.status)
 		}
 		if cpd.hasRebase {
-			tableModel.AllocBase = cpd.allocBase
+			tableModel.AllocBase = max(tableModel.AllocBase, cpd.allocBase)
+			tableModel.AutoRandBase = max(tableModel.AutoRandBase, cpd.autoRandBase)
+			tableModel.AutoIncrBase = max(tableModel.AutoIncrBase, cpd.autoIncrBase)
+			tableModel.AutoRowIDBase = max(tableModel.AutoRowIDBase, cpd.autoRowIDBase)
 		}
 		if cpd.hasChecksum {
 			tableModel.KvBytes = cpd.checksum.SumSize()
@@ -1751,7 +1787,10 @@ func (cpdb *MySQLCheckpointsDB) DumpTables(ctx context.Context, writer io.Writer
 			status,
 			alloc_base,
 			create_time,
-			update_time
+			update_time,
+			auto_rand_base,
+			auto_incr_base,
+			auto_row_id_base,
 		FROM %s.%s;
 	`, cpdb.schema, CheckpointTableNameTable))
 	if err != nil {
