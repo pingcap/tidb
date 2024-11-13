@@ -54,7 +54,7 @@ go_test(
     ],
     embed = [":txn"],
     flaky = True,
-    shard_count = 5,
+    shard_count = 6,
     deps = [
         "//pkg/kv",
         "//pkg/testkit/testsetup",
