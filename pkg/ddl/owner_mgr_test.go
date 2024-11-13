@@ -31,7 +31,7 @@ func TestOwnerManager(t *testing.T) {
 		config.GetGlobalConfig().Store = bak
 		globalOwnerManager = &ownerManager{}
 	})
-	config.GetGlobalConfig().Store = "unistore"
+	config.GetGlobalConfig().Store = config.StoreTypeUniStore
 	globalOwnerManager = &ownerManager{}
 	ctx := context.Background()
 	require.NoError(t, StartOwnerManager(ctx, nil))
@@ -47,7 +47,7 @@ func TestOwnerManager(t *testing.T) {
 	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/injectEtcdClient", func(cliP **clientv3.Client) {
 		*cliP = cli
 	})
-	config.GetGlobalConfig().Store = "tikv"
+	config.GetGlobalConfig().Store = config.StoreTypeTiKV
 	require.NoError(t, StartOwnerManager(ctx, nil))
 	require.Same(t, cli, globalOwnerManager.etcdCli)
 	require.NotEmpty(t, globalOwnerManager.id)

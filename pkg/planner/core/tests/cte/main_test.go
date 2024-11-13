@@ -1,4 +1,4 @@
-// Copyright 2021 PingCAP, Inc.
+// Copyright 2024 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -12,49 +12,23 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package cascades
+package cte
 
 import (
 	"flag"
-	"fmt"
-	"os"
 	"testing"
 
-	"github.com/pingcap/tidb/pkg/testkit/testdata"
 	"github.com/pingcap/tidb/pkg/testkit/testsetup"
 	"go.uber.org/goleak"
 )
 
-var testDataMap = make(testdata.BookKeeper, 2)
-var stringerSuiteData testdata.TestData
-var transformationRulesSuiteData testdata.TestData
-
 func TestMain(m *testing.M) {
 	testsetup.SetupForCommonTest()
-
 	flag.Parse()
-
-	testDataMap.LoadTestSuiteData("testdata", "stringer_suite")
-	testDataMap.LoadTestSuiteData("testdata", "transformation_rules_suite")
-	stringerSuiteData = testDataMap["stringer_suite"]
-	transformationRulesSuiteData = testDataMap["transformation_rules_suite"]
-
-	if exitCode := m.Run(); exitCode != 0 {
-		os.Exit(exitCode)
-	}
-
-	testDataMap.GenerateOutputIfNeeded()
-
 	opts := []goleak.Option{
 		goleak.IgnoreTopFunction("github.com/golang/glog.(*fileSink).flushDaemon"),
 		goleak.IgnoreTopFunction("github.com/bazelbuild/rules_go/go/tools/bzltestutil.RegisterTimeoutHandler.func1"),
 		goleak.IgnoreTopFunction("github.com/lestrrat-go/httprc.runFetchWorker"),
-		goleak.IgnoreTopFunction("go.etcd.io/etcd/client/pkg/v3/logutil.(*MergeLogger).outputLoop"),
-		goleak.IgnoreTopFunction("go.opencensus.io/stats/view.(*worker).start"),
 	}
-
-	if err := goleak.Find(opts...); err != nil {
-		_, _ = fmt.Fprintf(os.Stderr, "goleak: Errors on successful test run: %v\n", err)
-		os.Exit(1)
-	}
+	goleak.VerifyTestMain(m, opts...)
 }
