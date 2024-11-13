@@ -3254,15 +3254,6 @@ func buildAdminShowBDRRoleFields() (*expression.Schema, types.NameSlice) {
 	return schema.col2Schema(), schema.names
 }
 
-func buildAlterDDLJobFields(optNames []string) (*expression.Schema, types.NameSlice) {
-	schema := newColumnsWithNames(1 + len(optNames))
-	schema.Append(buildColumnWithName("", "JOB_ID", mysql.TypeVarchar, 64))
-	for _, optName := range optNames {
-		schema.Append(buildColumnWithName("", strings.ToUpper(optName), mysql.TypeVarchar, 128))
-	}
-	return schema.col2Schema(), schema.names
-}
-
 func buildShowBackupMetaSchema() (*expression.Schema, types.NameSlice) {
 	names := []string{"Database", "Table", "Total_kvs", "Total_bytes", "Time_range_start", "Time_range_end"}
 	ftypes := []byte{mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeLonglong, mysql.TypeLonglong, mysql.TypeDatetime, mysql.TypeDatetime}
@@ -5899,7 +5890,6 @@ func (b *PlanBuilder) buildAdminAlterDDLJobs(ctx context.Context, as *ast.AdminS
 		JobID:   as.JobNumber,
 		Options: options,
 	}
-	p.setSchemaAndNames(buildAlterDDLJobFields(optionNames))
 	return p, nil
 }
 
