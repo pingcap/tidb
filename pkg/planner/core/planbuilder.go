@@ -1577,7 +1577,7 @@ func (b *PlanBuilder) buildAdmin(ctx context.Context, as *ast.AdminStmt) (base.P
 		p.setSchemaAndNames(buildAdminShowBDRRoleFields())
 		ret = p
 	case ast.AdminAlterDDLJob:
-		ret, err = b.buildAdminAlterDDLJobs(ctx, as)
+		ret, err = b.buildAdminAlterDDLJob(ctx, as)
 		if err != nil {
 			return nil, err
 		}
@@ -5864,7 +5864,7 @@ func getTablePath(paths []*util.AccessPath) *util.AccessPath {
 	return nil
 }
 
-func (b *PlanBuilder) buildAdminAlterDDLJobs(ctx context.Context, as *ast.AdminStmt) (_ base.Plan, err error) {
+func (b *PlanBuilder) buildAdminAlterDDLJob(ctx context.Context, as *ast.AdminStmt) (_ base.Plan, err error) {
 	options := make([]*AlterDDLJobOpt, 0, len(as.AlterJobOptions))
 	optionNames := make([]string, 0, len(as.AlterJobOptions))
 	mockTablePlan := logicalop.LogicalTableDual{}.Init(b.ctx, b.getSelectOffset())

@@ -150,17 +150,17 @@ func updateJobMeta2Table(
 	return errors.Trace(err)
 }
 
-const alterDDLJobsMaxRetryCnt = 3
+const alterDDLJobMaxRetryCnt = 3
 
 // processAlterDDLJobConfig try to alter the ddl job configs.
-// In case of failure, it will retry alterDDLJobsMaxRetryCnt times.
+// In case of failure, it will retry alterDDLJobMaxRetryCnt times.
 func (e *AlterDDLJobExec) processAlterDDLJobConfig(
 	ctx context.Context,
 	sessCtx sessionctx.Context,
 ) (err error) {
 	ns := sess.NewSession(sessCtx)
 	var job *model.Job
-	for tryN := uint(0); tryN < alterDDLJobsMaxRetryCnt; tryN++ {
+	for tryN := uint(0); tryN < alterDDLJobMaxRetryCnt; tryN++ {
 		// record the last unsuccessful error
 		err = nil
 		if err = ns.Begin(ctx); err != nil {
