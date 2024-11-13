@@ -3606,11 +3606,11 @@ func (b *PlanBuilder) buildSimple(ctx context.Context, node ast.StmtNode) (base.
 		b.visitInfo = appendDynamicVisitInfo(b.visitInfo, []string{"ROLE_ADMIN"}, false, err)
 		// Check if any of the users are RESTRICTED
 		for _, user := range raw.Users {
-			b.visitInfo = appendVisitInfoIsRestrictedUser(b.visitInfo, b.ctx, user, "RESTRICTED_USER_ADMIN")
+			b.visitInfo = appendVisitInfoIsRestrictedUser(ctx, b.visitInfo, b.ctx, user, "RESTRICTED_USER_ADMIN")
 		}
 	case *ast.RevokeStmt:
 		var err error
-		b.visitInfo, err = collectVisitInfoFromRevokeStmt(b.ctx, b.visitInfo, raw)
+		b.visitInfo, err = collectVisitInfoFromRevokeStmt(ctx, b.ctx, b.visitInfo, raw)
 		if err != nil {
 			return nil, err
 		}
@@ -3625,7 +3625,7 @@ func (b *PlanBuilder) buildSimple(ctx context.Context, node ast.StmtNode) (base.
 				if pi.User != loginUser.Username {
 					err := plannererrors.ErrSpecificAccessDenied.GenWithStackByArgs("SUPER or CONNECTION_ADMIN")
 					b.visitInfo = appendDynamicVisitInfo(b.visitInfo, []string{"CONNECTION_ADMIN"}, false, err)
-					b.visitInfo = appendVisitInfoIsRestrictedUser(b.visitInfo, b.ctx, &auth.UserIdentity{Username: pi.User, Hostname: pi.Host}, "RESTRICTED_CONNECTION_ADMIN")
+					b.visitInfo = appendVisitInfoIsRestrictedUser(ctx, b.visitInfo, b.ctx, &auth.UserIdentity{Username: pi.User, Hostname: pi.Host}, "RESTRICTED_CONNECTION_ADMIN")
 				}
 			} else if handleutil.GlobalAutoAnalyzeProcessList.Contains(raw.ConnectionID) {
 				// Only the users with SUPER or CONNECTION_ADMIN privilege can kill auto analyze.
@@ -3641,11 +3641,11 @@ func (b *PlanBuilder) buildSimple(ctx context.Context, node ast.StmtNode) (base.
 		// The main privilege checks for DROP USER are currently performed in executor/simple.go
 		// because they use complex OR conditions (not supported by visitInfo).
 		for _, user := range raw.UserList {
-			b.visitInfo = appendVisitInfoIsRestrictedUser(b.visitInfo, b.ctx, user, "RESTRICTED_USER_ADMIN")
+			b.visitInfo = appendVisitInfoIsRestrictedUser(ctx, b.visitInfo, b.ctx, user, "RESTRICTED_USER_ADMIN")
 		}
 	case *ast.SetPwdStmt:
 		if raw.User != nil {
-			b.visitInfo = appendVisitInfoIsRestrictedUser(b.visitInfo, b.ctx, raw.User, "RESTRICTED_USER_ADMIN")
+			b.visitInfo = appendVisitInfoIsRestrictedUser(ctx, b.visitInfo, b.ctx, raw.User, "RESTRICTED_USER_ADMIN")
 		}
 	case *ast.ShutdownStmt:
 		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.ShutdownPriv, "", "", "", nil)
@@ -3684,7 +3684,7 @@ func (b *PlanBuilder) buildSimple(ctx context.Context, node ast.StmtNode) (base.
 	return p, nil
 }
 
-func collectVisitInfoFromRevokeStmt(sctx base.PlanContext, vi []visitInfo, stmt *ast.RevokeStmt) ([]visitInfo, error) {
+func collectVisitInfoFromRevokeStmt(ctx context.Context, sctx base.PlanContext, vi []visitInfo, stmt *ast.RevokeStmt) ([]visitInfo, error) {
 	// To use REVOKE, you must have the GRANT OPTION privilege,
 	// and you must have the privileges that you are granting.
 	dbName := stmt.Level.DBName
@@ -3724,7 +3724,7 @@ func collectVisitInfoFromRevokeStmt(sctx base.PlanContext, vi []visitInfo, stmt 
 	}
 	for _, u := range stmt.Users {
 		// For SEM, make sure the users are not restricted
-		vi = appendVisitInfoIsRestrictedUser(vi, sctx, u.User, "RESTRICTED_USER_ADMIN")
+		vi = appendVisitInfoIsRestrictedUser(ctx, vi, sctx, u.User, "RESTRICTED_USER_ADMIN")
 	}
 	if nonDynamicPrivilege {
 		// Dynamic privileges use their own GRANT OPTION. If there were any non-dynamic privilege requests,
@@ -3736,12 +3736,12 @@ func collectVisitInfoFromRevokeStmt(sctx base.PlanContext, vi []visitInfo, stmt 
 
 // appendVisitInfoIsRestrictedUser appends additional visitInfo if the user has a
 // special privilege called "RESTRICTED_USER_ADMIN". It only applies when SEM is enabled.
-func appendVisitInfoIsRestrictedUser(visitInfo []visitInfo, sctx base.PlanContext, user *auth.UserIdentity, priv string) []visitInfo {
+func appendVisitInfoIsRestrictedUser(ctx context.Context, visitInfo []visitInfo, sctx base.PlanContext, user *auth.UserIdentity, priv string) []visitInfo {
 	if !sem.IsEnabled() {
 		return visitInfo
 	}
 	checker := privilege.GetPrivilegeManager(sctx)
-	if checker != nil && checker.RequestDynamicVerificationWithUser("RESTRICTED_USER_ADMIN", false, user) {
+	if checker != nil && checker.RequestDynamicVerificationWithUser(ctx, "RESTRICTED_USER_ADMIN", false, user) {
 		err := plannererrors.ErrSpecificAccessDenied.GenWithStackByArgs(priv)
 		visitInfo = appendDynamicVisitInfo(visitInfo, []string{priv}, false, err)
 	}

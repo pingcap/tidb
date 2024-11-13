@@ -2703,9 +2703,9 @@ func (s *session) GetBuildPBCtx() *planctx.BuildPBContext {
 	return bctx.(*planctx.BuildPBContext)
 }
 
-func (s *session) AuthPluginForUser(user *auth.UserIdentity) (string, error) {
+func (s *session) AuthPluginForUser(ctx context.Context, user *auth.UserIdentity) (string, error) {
 	pm := privilege.GetPrivilegeManager(s)
-	authplugin, err := pm.GetAuthPluginForConnection(user.Username, user.Hostname)
+	authplugin, err := pm.GetAuthPluginForConnection(ctx, user.Username, user.Hostname)
 	if err != nil {
 		return "", err
 	}
@@ -2715,13 +2715,13 @@ func (s *session) AuthPluginForUser(user *auth.UserIdentity) (string, error) {
 // Auth validates a user using an authentication string and salt.
 // If the password fails, it will keep trying other users until exhausted.
 // This means it can not be refactored to use MatchIdentity yet.
-func (s *session) Auth(user *auth.UserIdentity, authentication, salt []byte, authConn conn.AuthConn) error {
+func (s *session) Auth(ctx context.Context, user *auth.UserIdentity, authentication, salt []byte, authConn conn.AuthConn) error {
 	hasPassword := "YES"
 	if len(authentication) == 0 {
 		hasPassword = "NO"
 	}
 	pm := privilege.GetPrivilegeManager(s)
-	authUser, err := s.MatchIdentity(user.Username, user.Hostname)
+	authUser, err := s.MatchIdentity(ctx, user.Username, user.Hostname)
 	if err != nil {
 		return privileges.ErrAccessDenied.FastGenByArgs(user.Username, user.Hostname, hasPassword)
 	}
@@ -2826,7 +2826,7 @@ func (s *session) Auth(user *auth.UserIdentity, authentication, salt []byte, aut
 	user.AuthUsername = authUser.Username
 	user.AuthHostname = authUser.Hostname
 	s.sessionVars.User = user
-	s.sessionVars.ActiveRoles = pm.GetDefaultRoles(user.AuthUsername, user.AuthHostname)
+	s.sessionVars.ActiveRoles = pm.GetDefaultRoles(ctx, user.AuthUsername, user.AuthHostname)
 	return nil
 }
 
@@ -3042,7 +3042,7 @@ func userAutoAccountLocked(s *session, user string, host string, pl *privileges.
 
 // MatchIdentity finds the matching username + password in the MySQL privilege tables
 // for a username + hostname, since MySQL can have wildcards.
-func (s *session) MatchIdentity(username, remoteHost string) (*auth.UserIdentity, error) {
+func (s *session) MatchIdentity(ctx context.Context, username, remoteHost string) (*auth.UserIdentity, error) {
 	pm := privilege.GetPrivilegeManager(s)
 	var success bool
 	var skipNameResolve bool
@@ -3051,7 +3051,7 @@ func (s *session) MatchIdentity(username, remoteHost string) (*auth.UserIdentity
 	if err == nil && variable.TiDBOptOn(varVal) {
 		skipNameResolve = true
 	}
-	user.Username, user.Hostname, success = pm.MatchIdentity(username, remoteHost, skipNameResolve)
+	user.Username, user.Hostname, success = pm.MatchIdentity(ctx, username, remoteHost, skipNameResolve)
 	if success {
 		return user, nil
 	}
@@ -3060,9 +3060,9 @@ func (s *session) MatchIdentity(username, remoteHost string) (*auth.UserIdentity
 }
 
 // AuthWithoutVerification is required by the ResetConnection RPC
-func (s *session) AuthWithoutVerification(user *auth.UserIdentity) bool {
+func (s *session) AuthWithoutVerification(ctx context.Context, user *auth.UserIdentity) bool {
 	pm := privilege.GetPrivilegeManager(s)
-	authUser, err := s.MatchIdentity(user.Username, user.Hostname)
+	authUser, err := s.MatchIdentity(ctx, user.Username, user.Hostname)
 	if err != nil {
 		return false
 	}
@@ -3070,7 +3070,7 @@ func (s *session) AuthWithoutVerification(user *auth.UserIdentity) bool {
 		user.AuthUsername = authUser.Username
 		user.AuthHostname = authUser.Hostname
 		s.sessionVars.User = user
-		s.sessionVars.ActiveRoles = pm.GetDefaultRoles(user.AuthUsername, user.AuthHostname)
+		s.sessionVars.ActiveRoles = pm.GetDefaultRoles(ctx, user.AuthUsername, user.AuthHostname)
 		return true
 	}
 	return false
