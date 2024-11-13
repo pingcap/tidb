@@ -637,7 +637,7 @@ func (cc *clientConn) readOptionalSSLRequestAndHandshakeResponse(ctx context.Con
 		}
 	}
 
-	err = cc.openSessionAndDoAuth(ctx, resp.Auth, resp.AuthPlugin, resp.ZstdLevel)
+	err = cc.openSessionAndDoAuth(resp.Auth, resp.AuthPlugin, resp.ZstdLevel)
 	if err != nil {
 		logutil.Logger(ctx).Warn("open new session or authentication failure", zap.Error(err))
 	}
@@ -782,7 +782,7 @@ func (cc *clientConn) openSession() error {
 	return nil
 }
 
-func (cc *clientConn) openSessionAndDoAuth(ctx context.Context, authData []byte, authPlugin string, zstdLevel int) error {
+func (cc *clientConn) openSessionAndDoAuth(authData []byte, authPlugin string, zstdLevel int) error {
 	// Open a context unless this was done before.
 	if ctx := cc.getCtx(); ctx == nil {
 		err := cc.openSession()
@@ -2525,7 +2525,7 @@ func (cc *clientConn) handleChangeUser(ctx context.Context, data []byte) error {
 			fakeResp.Auth = newpass
 		}
 	}
-	if err := cc.openSessionAndDoAuth(ctx, fakeResp.Auth, fakeResp.AuthPlugin, fakeResp.ZstdLevel); err != nil {
+	if err := cc.openSessionAndDoAuth(fakeResp.Auth, fakeResp.AuthPlugin, fakeResp.ZstdLevel); err != nil {
 		return err
 	}
 	return cc.handleCommonConnectionReset(ctx)
