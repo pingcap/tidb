@@ -149,8 +149,11 @@ type ResumeDDLJobs struct {
 }
 
 const (
-	AlterDDLJobThread        = "thread"
-	AlterDDLJobBatchSize     = "batch_size"
+	// AlterDDLJobThread alter reorg worker count
+	AlterDDLJobThread = "thread"
+	// AlterDDLJobBatchSize alter reorg batch size
+	AlterDDLJobBatchSize = "batch_size"
+	// AlterDDLJobMaxWriteSpeed alter reorg max write speed
 	AlterDDLJobMaxWriteSpeed = "max_write_speed"
 )
 
