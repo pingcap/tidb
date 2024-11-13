@@ -453,7 +453,7 @@ func getSSTMetaFromFile(
 	}
 
 	// Get the column family of the file by the file name.
-	var cfName string
+	cfName := file.GetCf()
 	if strings.Contains(file.GetName(), restoreutils.DefaultCFName) {
 		cfName = restoreutils.DefaultCFName
 	} else if strings.Contains(file.GetName(), restoreutils.WriteCFName) {

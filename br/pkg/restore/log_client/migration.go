@@ -144,6 +144,7 @@ func (builder *WithMigrationsBuilder) coarseGrainedFilter(mig *backuppb.Migratio
 func (builder *WithMigrationsBuilder) Build(migs []*backuppb.Migration) WithMigrations {
 	skipmap := make(metaSkipMap)
 	compactionDirs := make([]string, 0, 8)
+	fullBackups := make([]*backuppb.ExtraFullBackup, 0, 8)
 
 	for _, mig := range migs {
 		// TODO: deal with TruncatedTo and DestructPrefix
@@ -155,10 +156,15 @@ func (builder *WithMigrationsBuilder) Build(migs []*backuppb.Migration) WithMigr
 		for _, c := range mig.Compactions {
 			compactionDirs = append(compactionDirs, c.Artifacts)
 		}
+
+		for _, fullBackup := range mig.ExtraFullBackups {
+			fullBackups = append(fullBackups, fullBackup)
+		}
 	}
 	withMigrations := WithMigrations{
 		skipmap:        skipmap,
 		compactionDirs: compactionDirs,
+		fullBackups:    fullBackups,
 	}
 	return withMigrations
 }
@@ -210,6 +216,7 @@ func (mwm *MetaWithMigrations) Physicals(groupIndexIter GroupIndexIter) Physical
 type WithMigrations struct {
 	skipmap        metaSkipMap
 	compactionDirs []string
+	fullBackups    []*backuppb.ExtraFullBackup
 }
 
 func (wm *WithMigrations) Metas(metaNameIter MetaNameIter) MetaMigrationsIter {
@@ -237,4 +244,8 @@ func (wm *WithMigrations) Compactions(ctx context.Context, s storage.ExternalSto
 		// name is the absolute path in external storage.
 		return Subcompactions(ctx, name, s)
 	})
+}
+
+func (wm *WithMigrations) ExtraFullBackups(ctx context.Context, s storage.ExternalStorage) iter.TryNextor[*backuppb.ExtraFullBackup] {
+	return iter.FromSlice(wm.fullBackups)
 }

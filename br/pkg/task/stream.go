@@ -54,6 +54,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/streamhelper/daemon"
 	"github.com/pingcap/tidb/br/pkg/summary"
 	"github.com/pingcap/tidb/br/pkg/utils"
+	"github.com/pingcap/tidb/br/pkg/utils/iter"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/util/cdcutil"
@@ -1437,7 +1438,9 @@ func restoreStream(
 		return errors.Trace(err)
 	}
 
+	addedSSTsIter := client.LogFileManager.GetExtraFullBackupSSTs(ctx)
 	compactionIter := client.LogFileManager.GetCompactionIter(ctx)
+	sstsIter := iter.ConcatAll(addedSSTsIter, compactionIter)
 
 	se, err := g.CreateSession(mgr.GetStorage())
 	if err != nil {
@@ -1460,7 +1463,7 @@ func restoreStream(
 			p.IncBy(int64(kvCount))
 		}
 		compactedSplitIter, err := client.WrapCompactedFilesIterWithSplitHelper(
-			ctx, compactionIter, rewriteRules, sstCheckpointSets,
+			ctx, sstsIter, rewriteRules, sstCheckpointSets,
 			updateStatsWithCheckpoint, splitSize, splitKeys,
 		)
 		if err != nil {

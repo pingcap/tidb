@@ -374,6 +374,9 @@ func AddMigrationToTable(m *pb.Migration, table *glue.Table) {
 	for i, c := range m.DestructPrefix {
 		table.Add(fmt.Sprintf("destruct-prefix[%02d]", i), rd(c))
 	}
+	for i, c := range m.ExtraFullBackups {
+		table.Add(fmt.Sprintf("extra_full_backups[%02d]", i), rd(c.FilesPrefixHint))
+	}
 	table.Add("truncate-to", rd(m.TruncatedTo))
 }
 

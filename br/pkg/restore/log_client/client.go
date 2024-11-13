@@ -254,7 +254,7 @@ func (rc *LogClient) Close(ctx context.Context) {
 
 func (rc *LogClient) RestoreCompactedSstFiles(
 	ctx context.Context,
-	compactionsIter iter.TryNextor[*backuppb.LogFileSubcompaction],
+	compactionsIter iter.TryNextor[SSTs],
 	rules map[int64]*restoreutils.RewriteRules,
 	importModeSwitcher *restore.ImportModeSwitcher,
 	onProgress func(int64),
@@ -268,14 +268,14 @@ func (rc *LogClient) RestoreCompactedSstFiles(
 			return r.Err
 		}
 		i := r.Item
-		rewriteRules, ok := rules[i.Meta.TableId]
+		rewriteRules, ok := rules[i.TableID()]
 		if !ok {
-			log.Warn("[Compacted SST Restore] Skipping excluded table during restore.", zap.Int64("table_id", i.Meta.TableId))
+			log.Warn("[Compacted SST Restore] Skipping excluded table during restore.", zap.Int64("table_id", i.TableID()))
 			continue
 		}
 		set := restore.BackupFileSet{
-			TableID:      i.Meta.TableId,
-			SSTFiles:     i.SstOutputs,
+			TableID:      i.TableID(),
+			SSTFiles:     i.GetSSTs(),
 			RewriteRules: rewriteRules,
 		}
 		backupFileSets = append(backupFileSets, set)
@@ -421,7 +421,7 @@ func (rc *LogClient) InitClients(
 
 	opt := snapclient.NewSnapFileImporterOptions(
 		rc.cipher, metaClient, importCli, backend,
-		snapclient.RewriteModeKeyspace, stores, rc.concurrencyPerStore, createCallBacks, closeCallBacks,
+		snapclient.RewriteModeKeyspace, stores, 8, createCallBacks, closeCallBacks,
 	)
 	snapFileImporter, err := snapclient.NewSnapFileImporter(
 		ctx, rc.dom.Store().GetCodec().GetAPIVersion(), snapclient.TiDBCompcated, opt)
@@ -1448,15 +1448,15 @@ func (rc *LogClient) UpdateSchemaVersion(ctx context.Context) error {
 // It uses a region splitter to handle the splitting logic based on the provided rules and checkpoint sets.
 func (rc *LogClient) WrapCompactedFilesIterWithSplitHelper(
 	ctx context.Context,
-	compactedIter iter.TryNextor[*backuppb.LogFileSubcompaction],
+	compactedIter iter.TryNextor[SSTs],
 	rules map[int64]*restoreutils.RewriteRules,
 	checkpointSets map[string]struct{},
 	updateStatsFn func(uint64, uint64),
 	splitSize uint64,
 	splitKeys int64,
-) (iter.TryNextor[*backuppb.LogFileSubcompaction], error) {
+) (iter.TryNextor[SSTs], error) {
 	client := split.NewClient(rc.pdClient, rc.pdHTTPClient, rc.tlsConf, maxSplitKeysOnce, 3)
-	wrapper := restore.PipelineRestorerWrapper[*backuppb.LogFileSubcompaction]{
+	wrapper := restore.PipelineRestorerWrapper[SSTs]{
 		PipelineRegionsSplitter: split.NewPipelineRegionsSplitter(client, splitSize, splitKeys),
 	}
 	strategy := NewCompactedFileSplitStrategy(rules, checkpointSets, updateStatsFn)
