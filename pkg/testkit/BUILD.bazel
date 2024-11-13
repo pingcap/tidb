@@ -26,7 +26,6 @@ go_library(
         "//pkg/resourcemanager",
         "//pkg/session",
         "//pkg/session/txninfo",
-        "//pkg/sessionctx",
         "//pkg/sessionctx/variable",
         "//pkg/store/driver",
         "//pkg/store/mockstore",
