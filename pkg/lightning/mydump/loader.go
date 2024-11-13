@@ -554,12 +554,11 @@ func (s *mdLoaderSetup) constructFileInfo(ctx context.Context, path string, size
 					zap.String("schema", res.Schema), zap.String("table", res.Name),
 					zap.Stringer("type", res.Type), zap.Error(err))
 				return errors.Trace(err)
-			} else {
-				info.FileMeta.RealSize = int64(float64(totalRowCount) * s.sampledParquetRowSizes[tableName])
-				info.FileMeta.Rows = totalRowCount
-				if m, ok := metric.FromContext(ctx); ok {
-					m.RowsCounter.WithLabelValues(metric.StateTotalRestore, tableName).Add(float64(totalRowCount))
-				}
+			}
+			info.FileMeta.RealSize = int64(float64(totalRowCount) * s.sampledParquetRowSizes[tableName])
+			info.FileMeta.Rows = totalRowCount
+			if m, ok := metric.FromContext(ctx); ok {
+				m.RowsCounter.WithLabelValues(metric.StateTotalRestore, tableName).Add(float64(totalRowCount))
 			}
 		}
 		s.tableDatas = append(s.tableDatas, info)
