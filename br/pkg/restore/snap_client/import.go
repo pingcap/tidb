@@ -154,37 +154,83 @@ type SnapFileImporter struct {
 	cond     *sync.Cond
 }
 
-func NewSnapFileImporter(
-	ctx context.Context,
+type SnapFileImporterOptions struct {
+	cipher       *backuppb.CipherInfo
+	metaClient   split.SplitClient
+	importClient importclient.ImporterClient
+	backend      *backuppb.StorageBackend
+	rewriteMode  RewriteMode
+	tikvStores   []*metapb.Store
+
+	concurrencyPerStore uint
+	createCallBacks     []func(*SnapFileImporter) error
+	closeCallbacks      []func(*SnapFileImporter) error
+}
+
+func NewSnapFileImporterOptions(
 	cipher *backuppb.CipherInfo,
-	apiVersion kvrpcpb.APIVersion,
 	metaClient split.SplitClient,
 	importClient importclient.ImporterClient,
 	backend *backuppb.StorageBackend,
-	kvMode KvMode,
+	rewriteMode RewriteMode,
+	tikvStores []*metapb.Store,
+	concurrencyPerStore uint,
+	createCallbacks []func(*SnapFileImporter) error,
+	closeCallbacks []func(*SnapFileImporter) error,
+) *SnapFileImporterOptions {
+	return &SnapFileImporterOptions{
+		cipher:              cipher,
+		metaClient:          metaClient,
+		importClient:        importClient,
+		backend:             backend,
+		rewriteMode:         rewriteMode,
+		tikvStores:          tikvStores,
+		concurrencyPerStore: concurrencyPerStore,
+		createCallBacks:     createCallbacks,
+		closeCallbacks:      closeCallbacks,
+	}
+}
+
+func NewSnapFileImporterOptionsForTest(
+	splitClient split.SplitClient,
+	importClient importclient.ImporterClient,
 	tikvStores []*metapb.Store,
 	rewriteMode RewriteMode,
 	concurrencyPerStore uint,
-	createCallBacks []func(*SnapFileImporter) error,
-	closeCallbacks []func(*SnapFileImporter) error,
+) *SnapFileImporterOptions {
+	return &SnapFileImporterOptions{
+		metaClient:          splitClient,
+		importClient:        importClient,
+		tikvStores:          tikvStores,
+		rewriteMode:         rewriteMode,
+		concurrencyPerStore: concurrencyPerStore,
+	}
+}
+
+func NewSnapFileImporter(
+	ctx context.Context,
+	apiVersion kvrpcpb.APIVersion,
+	kvMode KvMode,
+	options *SnapFileImporterOptions,
 ) (*SnapFileImporter, error) {
 	fileImporter := &SnapFileImporter{
-		cipher:              cipher,
-		apiVersion:          apiVersion,
-		metaClient:          metaClient,
-		backend:             backend,
-		importClient:        importClient,
-		downloadTokensMap:   newStoreTokenChannelMap(tikvStores, concurrencyPerStore),
-		ingestTokensMap:     newStoreTokenChannelMap(tikvStores, concurrencyPerStore),
-		kvMode:              kvMode,
-		rewriteMode:         rewriteMode,
+		apiVersion: apiVersion,
+		kvMode:     kvMode,
+
+		cipher:              options.cipher,
+		metaClient:          options.metaClient,
+		backend:             options.backend,
+		importClient:        options.importClient,
+		downloadTokensMap:   newStoreTokenChannelMap(options.tikvStores, options.concurrencyPerStore),
+		ingestTokensMap:     newStoreTokenChannelMap(options.tikvStores, options.concurrencyPerStore),
+		rewriteMode:         options.rewriteMode,
 		cacheKey:            fmt.Sprintf("BR-%s-%d", time.Now().Format("20060102150405"), rand.Int63()),
-		concurrencyPerStore: concurrencyPerStore,
+		concurrencyPerStore: options.concurrencyPerStore,
 		cond:                sync.NewCond(new(sync.Mutex)),
-		closeCallbacks:      closeCallbacks,
+		closeCallbacks:      options.closeCallbacks,
 	}
 
-	for _, f := range createCallBacks {
+	for _, f := range options.createCallBacks {
 		err := f(fileImporter)
 		if err != nil {
 			return nil, errors.Trace(err)

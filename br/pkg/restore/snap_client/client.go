@@ -522,15 +522,17 @@ func (rc *SnapClient) initClients(ctx context.Context, backend *backuppb.Storage
 	importCli := importclient.NewImportClient(metaClient, rc.tlsConf, rc.keepaliveConf)
 
 	var fileImporter *SnapFileImporter
+	opt := NewSnapFileImporterOptions(
+		rc.cipher, metaClient, importCli, backend,
+		rc.rewriteMode, stores, rc.concurrencyPerStore, createCallBacks, closeCallBacks,
+	)
 	if isRawKvMode || isTxnKvMode {
 		mode := Raw
 		if isTxnKvMode {
 			mode = Txn
 		}
 		// for raw/txn mode. use backupMeta.ApiVersion to create fileImporter
-		fileImporter, err = NewSnapFileImporter(
-			ctx, rc.cipher, rc.backupMeta.ApiVersion, metaClient,
-			importCli, backend, mode, stores, rc.rewriteMode, rc.concurrencyPerStore, createCallBacks, closeCallBacks)
+		fileImporter, err = NewSnapFileImporter(ctx, rc.backupMeta.ApiVersion, mode, opt)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -539,8 +541,7 @@ func (rc *SnapClient) initClients(ctx context.Context, backend *backuppb.Storage
 	} else {
 		// or create a fileImporter with the cluster API version
 		fileImporter, err = NewSnapFileImporter(
-			ctx, rc.cipher, rc.dom.Store().GetCodec().GetAPIVersion(), metaClient,
-			importCli, backend, TiDBFull, stores, rc.rewriteMode, rc.concurrencyPerStore, createCallBacks, closeCallBacks)
+			ctx, rc.dom.Store().GetCodec().GetAPIVersion(), TiDBFull, opt)
 		if err != nil {
 			return errors.Trace(err)
 		}

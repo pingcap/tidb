@@ -81,7 +81,8 @@ const maxSplitKeysOnce = 10240
 // rawKVBatchCount specifies the count of entries that the rawkv client puts into TiKV.
 const rawKVBatchCount = 64
 
-// LogRestoreManager holds all log-related fields
+// LogRestoreManager is a comprehensive wrapper that encapsulates all logic related to log restoration,
+// including concurrency management, checkpoint handling, and file importing for efficient log processing.
 type LogRestoreManager struct {
 	fileImporter     *LogFileImporter
 	workerPool       *tidbutil.WorkerPool
@@ -123,7 +124,8 @@ func (l *LogRestoreManager) Close(ctx context.Context) {
 	}
 }
 
-// SstRestoreManager holds all SST-related fields
+// SstRestoreManager is a comprehensive wrapper that encapsulates all logic related to sst restoration,
+// including concurrency management, checkpoint handling, and file importing(splitting) for efficient log processing.
 type SstRestoreManager struct {
 	restorer         restore.SstRestorer
 	workerPool       *tidbutil.WorkerPool
@@ -409,9 +411,12 @@ func (rc *LogClient) InitClients(
 		return importer.CheckMultiIngestSupport(ctx, stores)
 	})
 
+	opt := snapclient.NewSnapFileImporterOptions(
+		rc.cipher, metaClient, importCli, backend,
+		snapclient.RewriteModeKeyspace, stores, rc.concurrencyPerStore, createCallBacks, closeCallBacks,
+	)
 	snapFileImporter, err := snapclient.NewSnapFileImporter(
-		ctx, rc.cipher, rc.dom.Store().GetCodec().GetAPIVersion(), metaClient,
-		importCli, backend, snapclient.TiDBCompcated, stores, snapclient.RewriteModeKeyspace, rc.concurrencyPerStore, createCallBacks, closeCallBacks)
+		ctx, rc.dom.Store().GetCodec().GetAPIVersion(), snapclient.TiDBCompcated, opt)
 	if err != nil {
 		return errors.Trace(err)
 	}
