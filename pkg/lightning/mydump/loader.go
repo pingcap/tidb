@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/config"
 	"github.com/pingcap/tidb/pkg/lightning/log"
+	"github.com/pingcap/tidb/pkg/lightning/metric"
 	regexprrouter "github.com/pingcap/tidb/pkg/util/regexpr-router"
 	filter "github.com/pingcap/tidb/pkg/util/table-filter"
 	"go.uber.org/zap"
@@ -556,6 +557,9 @@ func (s *mdLoaderSetup) constructFileInfo(ctx context.Context, path string, size
 			} else {
 				info.FileMeta.RealSize = int64(float64(totalRowCount) * s.sampledParquetRowSizes[tableName])
 				info.FileMeta.Rows = totalRowCount
+				if m, ok := metric.FromContext(ctx); ok {
+					m.RowsCounter.WithLabelValues(metric.StateTotalRestore, tableName).Add(float64(totalRowCount))
+				}
 			}
 		}
 		s.tableDatas = append(s.tableDatas, info)
