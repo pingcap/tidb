@@ -243,10 +243,7 @@ func getAutoIncrementID(
 	tblInfo *model.TableInfo,
 ) int64 {
 	if raw, ok := is.(*infoschema.SessionExtendedInfoSchema); ok {
-		v2, ok := raw.InfoSchema.(interface {
-			TableIsCached(id int64) bool
-		})
-		if ok {
+		if ok, v2 := infoschema.IsV2(raw.InfoSchema); ok {
 			isCached := v2.TableIsCached(tblInfo.ID)
 			if !isCached {
 				// Loading table info from kv storage invalidates the cached auto_increment id.
