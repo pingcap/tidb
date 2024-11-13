@@ -306,6 +306,8 @@ func (s *statsSyncLoad) handleOneItemTask(task *statstypes.NeededItemTask) (err 
 			s.statsHandle.SPool().Destroy(se)
 		}
 	}()
+
+	skipTypes := sctx.GetSessionVars().AnalyzeSkipColumnTypes
 	item := task.Item.TableItemID
 	statsTbl, ok := s.statsHandle.Get(item.TableID)
 
@@ -342,6 +344,10 @@ func (s *statsSyncLoad) handleOneItemTask(task *statstypes.NeededItemTask) (err 
 			// so we have to get the column info from the domain.
 			wrapper.colInfo = tblInfo.GetColumnByID(item.ID)
 		}
+		_, skip := skipTypes[types.TypeToStr(col.Info.FieldType.GetType(), col.Info.FieldType.GetCharset())]
+		if skip {
+			return nil
+		}
 		// If this column is not analyzed yet and we don't have it in memory.
 		// We create a fake one for the pseudo estimation.
 		// Otherwise, it will trigger the sync/async load again, even if the column has not been analyzed.
@@ -351,6 +357,7 @@ func (s *statsSyncLoad) handleOneItemTask(task *statstypes.NeededItemTask) (err 
 			return nil
 		}
 	}
+	failpoint.Inject("handleOneItemTaskPanic", nil)
 	t := time.Now()
 	needUpdate := false
 	wrapper, err = s.readStatsForOneItem(sctx, item, wrapper, isPkIsHandle, task.Item.FullLoad)
