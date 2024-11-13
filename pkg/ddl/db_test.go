@@ -1197,7 +1197,7 @@ func TestAdminAlterDDLJobsUnsupportedCases(t *testing.T) {
 	tk.MustGetErrMsg("admin alter ddl jobs 1 batch_size = 10241;", "The value 10241 for batch_size is out of range [32, 10240]")
 
 	// invalid job id
-	tk.MustGetErrMsg(fmt.Sprintf("admin alter ddl jobs %d thread = 8;", 1), "job not found")
+	tk.MustGetErrMsg("admin alter ddl jobs 1 thread = 8;", "DDL job 1 not found")
 
 	job := model.Job{
 		ID:   1,
@@ -1208,8 +1208,6 @@ func TestAdminAlterDDLJobsUnsupportedCases(t *testing.T) {
 	tk.MustGetErrMsg(fmt.Sprintf("admin alter ddl jobs %d thread = 8;", job.ID),
 		"Unsupported DDL operation: add column, only support add index, modify column and alter table reorganize partition DDL job.")
 	deleteJobMetaByID(tk, 1)
-
-	tk.MustExec("set @@session.tidb_plan_cache_max_plan_size = 100")
 }
 
 func TestAdminAlterDDLJobsCommitFailed(t *testing.T) {

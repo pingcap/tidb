@@ -98,7 +98,6 @@ type ResumeDDLJobsExec struct {
 type AlterDDLJobExec struct {
 	exec.BaseExecutor
 	jobID     int64
-	cursor    int
 	AlterOpts []*core.AlterDDLJobOpt
 }
 
@@ -125,7 +124,7 @@ func getJobMetaFromTable(
 		return nil, errors.Trace(err)
 	}
 	if len(rows) == 0 {
-		return nil, errors.New("job not found")
+		return nil, errors.New(fmt.Sprintf("DDL job %d not found", jobID))
 	}
 	jobBinary := rows[0].GetBytes(0)
 	job := model.Job{}
