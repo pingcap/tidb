@@ -161,8 +161,6 @@ func (e *AlterDDLJobExec) processAlterDDLJobConfig(
 	ns := sess.NewSession(sessCtx)
 	var job *model.Job
 	for tryN := uint(0); tryN < alterDDLJobMaxRetryCnt; tryN++ {
-		// record the last unsuccessful error
-		err = nil
 		if err = ns.Begin(ctx); err != nil {
 			continue
 		}
