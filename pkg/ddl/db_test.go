@@ -1205,7 +1205,8 @@ func TestAdminAlterDDLJobsFailedCases(t *testing.T) {
 	}
 	insertMockJob2Table(tk, &job)
 	// unsupported job type
-	tk.MustGetErrMsg(fmt.Sprintf("admin alter ddl jobs %d thread = 8;", job.ID), "DDL job 1 is not alterable")
+	tk.MustGetErrMsg(fmt.Sprintf("admin alter ddl jobs %d thread = 8;", job.ID),
+		"Unsupported DDL operation: add column, only support add index, modify column and alter table reorganize partition DDL job.")
 	deleteJobMetaByID(tk, 1)
 
 	tk.MustExec("set @@session.tidb_plan_cache_max_plan_size = 100")

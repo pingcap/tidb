@@ -171,7 +171,8 @@ func (e *AlterDDLJobExec) processAlterDDLJob(
 			continue
 		}
 		if !job.IsAlterable() {
-			return errors.New(fmt.Sprintf("DDL job %d is not alterable", e.jobID))
+			return errors.New(fmt.Sprintf("Unsupported DDL operation: %s, "+
+				"only support add index, modify column and alter table reorganize partition DDL job.", job.Type.String()))
 		}
 		if err = e.updateReorgMeta(job, model.AdminCommandByEndUser); err != nil {
 			continue
