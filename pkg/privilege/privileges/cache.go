@@ -1833,7 +1833,12 @@ func NewHandle(sctx sqlexec.RestrictedSQLExecutor) *Handle {
 }
 
 // ensureActiveUser ensure that the specific user data is loaded in-memory.
-func (h *Handle) ensureActiveUser(user string) error {
+func (h *Handle) ensureActiveUser(ctx context.Context, user string) error {
+	if p := ctx.Value("mock"); p != nil {
+		visited := p.(*bool)
+		*visited = true
+	}
+
 	_, exist := h.activeUsers.Load(user)
 	if exist {
 		return nil
