@@ -1423,8 +1423,8 @@ def go_deps():
         name = "com_github_elazarl_goproxy",
         build_file_proto_mode = "disable",
         importpath = "github.com/elazarl/goproxy",
-        sum = "h1:RIB4cRk+lBqKK3Oy0r2gRX4ui7tuhiZq2SuTtTCi0/0=",
-        version = "v0.0.0-20221015165544-a0805db90819",
+        sum = "h1:yUdfgN0XgIJw7foRItutHYUIhlcKzcSf5vDpdhQAKTc=",
+        version = "v0.0.0-20180725130230-947c36da3153",
     )
     go_repository(
         name = "com_github_emicklei_go_restful",
@@ -5280,8 +5280,8 @@ def go_deps():
         name = "com_github_sergi_go_diff",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/sergi/go-diff",
-        sum = "h1:xkr+Oxo4BOQKmkn/B9eMK0g5Kg/983T9DqqPHwYqD+8=",
-        version = "v1.3.1",
+        sum = "h1:we8PVUC3FE2uYfodKH/nBHMSetSfHDR6scGdBi+erh0=",
+        version = "v1.1.0",
     )
     go_repository(
         name = "com_github_shabbyrobe_gocovmerge",
