@@ -8,7 +8,11 @@ go_test(
         "main_test.go",
     ],
     flaky = True,
+<<<<<<< HEAD
     shard_count = 27,
+=======
+    shard_count = 21,
+>>>>>>> 50dcee7cd51 (ddl: introduce a new system variable to control the `store-write-bwlimit` when ingesting (#57145))
     deps = [
         "//pkg/config",
         "//pkg/ddl/schematracker",
@@ -35,7 +39,12 @@ go_test(
         "//pkg/types",
         "//pkg/util/chunk",
         "//pkg/util/dbterror",
+<<<<<<< HEAD
         "//pkg/util/dbterror/exeerrors",
+=======
+        "//pkg/util/dbterror/plannererrors",
+        "@com_github_docker_go_units//:go-units",
+>>>>>>> 50dcee7cd51 (ddl: introduce a new system variable to control the `store-write-bwlimit` when ingesting (#57145))
         "@com_github_pingcap_failpoint//:failpoint",
         "@com_github_stretchr_testify//require",
         "@com_github_tikv_client_go_v2//tikv",

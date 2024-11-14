@@ -42,10 +42,28 @@ type Config struct {
 	IsRaftKV2    bool
 }
 
+<<<<<<< HEAD
 func genConfig(ctx context.Context, memRoot MemRoot, jobID int64, unique bool) (*Config, error) {
 	tidbCfg := tidb.GetGlobalConfig()
 	cfg := lightning.NewConfig()
 	cfg.TikvImporter.Backend = lightning.BackendLocal
+=======
+		// lighting default values
+		CheckpointEnabled:           true,
+		BlockSize:                   lightning.DefaultBlockSize,
+		KVWriteBatchSize:            lightning.KVWriteBatchSize,
+		RegionSplitBatchSize:        lightning.DefaultRegionSplitBatchSize,
+		RegionSplitConcurrency:      runtime.GOMAXPROCS(0),
+		MemTableSize:                lightning.DefaultEngineMemCacheSize,
+		LocalWriterMemCacheSize:     lightning.DefaultLocalWriterMemCacheSize,
+		ShouldCheckTiKV:             true,
+		MaxOpenFiles:                int(litRLimit),
+		PausePDSchedulerScope:       lightning.PausePDSchedulerScopeTable,
+		TaskType:                    kvutil.ExplicitTypeDDL,
+		DisableAutomaticCompactions: true,
+		StoreWriteBWLimit:           int(variable.DDLReorgMaxWriteSpeed.Load()),
+	}
+>>>>>>> 50dcee7cd51 (ddl: introduce a new system variable to control the `store-write-bwlimit` when ingesting (#57145))
 	// Each backend will build a single dir in lightning dir.
 	cfg.TikvImporter.SortedKVDir = filepath.Join(LitSortPath, EncodeBackendTag(jobID))
 	if ImporterRangeConcurrencyForTest != nil {
