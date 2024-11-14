@@ -549,7 +549,18 @@ func LoadTLSCertificates(ca, key, cert string, autoTLS bool, rsaKeySize int) (tl
 // IsTLSExpiredError checks error is caused by TLS expired.
 func IsTLSExpiredError(err error) bool {
 	err = errors.Cause(err)
-	if inval, ok := err.(x509.CertificateInvalidError); !ok || inval.Reason != x509.Expired {
+	switch inval := err.(type) {
+	case x509.CertificateInvalidError:
+		if inval.Reason != x509.Expired {
+			return false
+		}
+	case *tls.CertificateVerificationError:
+		invalid, ok := inval.Err.(x509.CertificateInvalidError)
+		if !ok || invalid.Reason != x509.Expired {
+			return false
+		}
+		return true
+	default:
 		return false
 	}
 	return true
