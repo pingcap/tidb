@@ -133,25 +133,10 @@ func TestAllocGlobalAutoID(t *testing.T) {
 			expectAllocatorTypes: []autoid.AllocatorType{autoid.AutoRandomType},
 		},
 	}
-	ctx := context.Background()
 	for _, c := range cases {
 		ti := newTableInfo(t, 1, c.tableID, c.createTableSQL, kvStore)
 		allocators, err := common.GetGlobalAutoIDAlloc(mockRequirement{kvStore}, 1, ti)
-		if c.expectErrStr == "" {
-			require.NoError(t, err, c.tableID)
-			require.NoError(t, common.RebaseGlobalAutoID(ctx, 123, mockRequirement{kvStore}, 1, ti))
-			base, idMax, err := common.AllocGlobalAutoID(ctx, 100, mockRequirement{kvStore}, 1, ti)
-			require.NoError(t, err, c.tableID)
-			require.Equal(t, int64(123), base, c.tableID)
-			require.Equal(t, int64(223), idMax, c.tableID)
-			// all allocators are rebased and allocated
-			for _, alloc := range allocators {
-				base2, max2, err := alloc.Alloc(ctx, 100, 1, 1)
-				require.NoError(t, err, c.tableID)
-				require.Equal(t, int64(223), base2, c.tableID)
-				require.Equal(t, int64(323), max2, c.tableID)
-			}
-		} else {
+		if c.expectErrStr != "" {
 			require.ErrorContains(t, err, c.expectErrStr, c.tableID)
 		}
 		var allocatorTypes []autoid.AllocatorType

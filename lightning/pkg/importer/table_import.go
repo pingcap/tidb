@@ -149,6 +149,9 @@ func (tr *TableImporter) importTable(
 				requiredRowIDCnt = engine.Chunks[len(engine.Chunks)-1].Chunk.RowIDMax
 			}
 		}
+		tr.logger.Info("estimated required row id count",
+			zap.String("table", tr.tableName),
+			zap.Int64("count", requiredRowIDCnt))
 		versionStr, err := version.FetchVersion(ctx, rc.db)
 		if err != nil {
 			return false, errors.Trace(err)
