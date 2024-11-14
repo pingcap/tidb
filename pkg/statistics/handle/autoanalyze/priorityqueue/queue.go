@@ -187,9 +187,7 @@ func (pq *AnalysisPriorityQueue) rebuildWithoutLock() error {
 	// This will guarantee that we will not miss any DML changes. But it may cause some DML changes to be processed twice.
 	// It is acceptable since the DML changes operation is idempotent.
 	nextCheckVersionWithOffset := pq.statsHandle.GetNextCheckVersionWithOffset()
-	err := fetchAllTablesAndBuildAnalysisJobs(pq.statsHandle, func(job AnalysisJob) error {
-		return pq.pushWithoutLock(job)
-	})
+	err := pq.fetchAllTablesAndBuildAnalysisJobs()
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -201,8 +199,8 @@ func (pq *AnalysisPriorityQueue) rebuildWithoutLock() error {
 
 // fetchAllTablesAndBuildAnalysisJobs builds analysis jobs for all eligible tables and partitions.
 // Note: Please hold the lock before calling this function.
-func fetchAllTablesAndBuildAnalysisJobs(statsHandle statstypes.StatsHandle, push func(job AnalysisJob) error) error {
-	return statsutil.CallWithSCtx(statsHandle.SPool(), func(sctx sessionctx.Context) error {
+func (pq *AnalysisPriorityQueue) fetchAllTablesAndBuildAnalysisJobs() error {
+	return statsutil.CallWithSCtx(pq.statsHandle.SPool(), func(sctx sessionctx.Context) error {
 		parameters := exec.GetAutoAnalyzeParameters(sctx)
 		autoAnalyzeRatio := exec.ParseAutoAnalyzeRatio(parameters[variable.TiDBAutoAnalyzeRatio])
 		pruneMode := variable.PartitionPruneMode(sctx.GetSessionVars().PartitionPruneMode.Load())
@@ -248,9 +246,9 @@ func fetchAllTablesAndBuildAnalysisJobs(statsHandle statstypes.StatsHandle, push
 				if pi == nil {
 					job := jobFactory.CreateNonPartitionedTableAnalysisJob(
 						tblInfo,
-						statsHandle.GetTableStatsForAutoAnalyze(tblInfo),
+						pq.statsHandle.GetTableStatsForAutoAnalyze(tblInfo),
 					)
-					err := push(job)
+					err := pq.pushWithoutLock(job)
 					if err != nil {
 						return err
 					}
@@ -264,7 +262,7 @@ func fetchAllTablesAndBuildAnalysisJobs(statsHandle statstypes.StatsHandle, push
 						partitionDefs = append(partitionDefs, def)
 					}
 				}
-				partitionStats := GetPartitionStats(statsHandle, tblInfo, partitionDefs)
+				partitionStats := GetPartitionStats(pq.statsHandle, tblInfo, partitionDefs)
 				// If the prune mode is static, we need to analyze every partition as a separate table.
 				if pruneMode == variable.Static {
 					for pIDAndName, stats := range partitionStats {
@@ -273,7 +271,7 @@ func fetchAllTablesAndBuildAnalysisJobs(statsHandle statstypes.StatsHandle, push
 							pIDAndName.ID,
 							stats,
 						)
-						err := push(job)
+						err := pq.pushWithoutLock(job)
 						if err != nil {
 							return err
 						}
@@ -281,10 +279,10 @@ func fetchAllTablesAndBuildAnalysisJobs(statsHandle statstypes.StatsHandle, push
 				} else {
 					job := jobFactory.CreateDynamicPartitionedTableAnalysisJob(
 						tblInfo,
-						statsHandle.GetPartitionStatsForAutoAnalyze(tblInfo, tblInfo.ID),
+						pq.statsHandle.GetPartitionStatsForAutoAnalyze(tblInfo, tblInfo.ID),
 						partitionStats,
 					)
-					err := push(job)
+					err := pq.pushWithoutLock(job)
 					if err != nil {
 						return err
 					}
