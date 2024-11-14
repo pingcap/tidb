@@ -231,7 +231,7 @@ func (e *DDLJobRetriever) appendJobToChunk(req *chunk.Chunk, job *model.Job, che
 	req.AppendInt64(0, job.ID)
 	req.AppendString(1, schemaName)
 	req.AppendString(2, tableName)
-	req.AppendString(3, job.Type.String()+showAddIdxReorgTp(job))
+	req.AppendString(3, job.Type.String())
 	req.AppendString(4, job.SchemaState.String())
 	req.AppendInt64(5, job.SchemaID)
 	req.AppendInt64(6, job.TableID)
@@ -249,12 +249,16 @@ func (e *DDLJobRetriever) appendJobToChunk(req *chunk.Chunk, job *model.Job, che
 	}
 	req.AppendString(11, job.State.String())
 	if job.Type == model.ActionMultiSchemaChange {
-		isDistTask := job.ReorgMeta != nil && job.ReorgMeta.IsDistReorg
+		var useDXF, isCloud bool
+		if job.ReorgMeta != nil {
+			useDXF = job.ReorgMeta.IsDistReorg
+			isCloud = job.ReorgMeta.UseCloudStorage
+		}
 		for _, subJob := range job.MultiSchemaInfo.SubJobs {
 			req.AppendInt64(0, job.ID)
 			req.AppendString(1, schemaName)
 			req.AppendString(2, tableName)
-			req.AppendString(3, subJob.Type.String()+" /* subjob */"+showAddIdxReorgTpInSubJob(subJob, isDistTask))
+			req.AppendString(3, subJob.Type.String()+" /* subjob */")
 			req.AppendString(4, subJob.SchemaState.String())
 			req.AppendInt64(5, job.SchemaID)
 			req.AppendInt64(6, job.TableID)
@@ -272,46 +276,10 @@ func (e *DDLJobRetriever) appendJobToChunk(req *chunk.Chunk, job *model.Job, che
 				req.AppendNull(10)
 			}
 			req.AppendString(11, subJob.State.String())
+			req.AppendString(12, subJob.Comments(useDXF, isCloud))
 		}
 	}
-}
-
-func showAddIdxReorgTp(job *model.Job) string {
-	if job.Type == model.ActionAddIndex || job.Type == model.ActionAddPrimaryKey {
-		if job.ReorgMeta != nil {
-			sb := strings.Builder{}
-			tp := job.ReorgMeta.ReorgTp.String()
-			if len(tp) > 0 {
-				sb.WriteString(" /* ")
-				sb.WriteString(tp)
-				if job.ReorgMeta.ReorgTp == model.ReorgTypeLitMerge &&
-					job.ReorgMeta.IsDistReorg &&
-					job.ReorgMeta.UseCloudStorage {
-					sb.WriteString(" cloud")
-				}
-				sb.WriteString(" */")
-			}
-			return sb.String()
-		}
-	}
-	return ""
-}
-
-func showAddIdxReorgTpInSubJob(subJob *model.SubJob, useDistTask bool) string {
-	if subJob.Type == model.ActionAddIndex || subJob.Type == model.ActionAddPrimaryKey {
-		sb := strings.Builder{}
-		tp := subJob.ReorgTp.String()
-		if len(tp) > 0 {
-			sb.WriteString(" /* ")
-			sb.WriteString(tp)
-			if subJob.ReorgTp == model.ReorgTypeLitMerge && useDistTask && subJob.UseCloud {
-				sb.WriteString(" cloud")
-			}
-			sb.WriteString(" */")
-		}
-		return sb.String()
-	}
-	return ""
+	req.AppendString(12, job.Comments())
 }
 
 func ts2Time(timestamp uint64, loc *time.Location) types.Time {
