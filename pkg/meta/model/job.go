@@ -517,7 +517,7 @@ func (job *Job) Comments() string {
 		}
 	}
 	if job.MayNeedReorg() {
-		labels = append(labels, fmt.Sprintf("concurrency=%d", m.Concurrency))
+		labels = append(labels, fmt.Sprintf("thread=%d", m.Concurrency))
 		labels = append(labels, fmt.Sprintf("batch_size=%d", m.BatchSize))
 	}
 	return strings.Join(labels, ", ")
