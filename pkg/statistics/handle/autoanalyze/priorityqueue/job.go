@@ -91,6 +91,9 @@ type AnalysisJob interface {
 	// RegisterFailureHook registers a failureHook function that will be called after the job is marked as failed.
 	RegisterFailureHook(hook FailureJobHook)
 
+	// ToJSON converts the job to a JSON format.
+	ToJSON() statstypes.AnalysisJobJSON
+
 	fmt.Stringer
 }
 

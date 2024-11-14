@@ -317,6 +317,11 @@ func (sa *statsAnalyze) CheckAnalyzeVersion(tblInfo *model.TableInfo, physicalID
 	return statistics.CheckAnalyzeVerOnTable(tbl, version)
 }
 
+// GetStatsPriorityQueue returns the stats priority queue.
+func (sa *statsAnalyze) GetStatsPriorityQueue() ([]statstypes.AnalysisJobJSON, error) {
+	return sa.refresher.GetStatsPriorityQueue()
+}
+
 func (sa *statsAnalyze) handleAutoAnalyze(sctx sessionctx.Context) bool {
 	defer func() {
 		if r := recover(); r != nil {

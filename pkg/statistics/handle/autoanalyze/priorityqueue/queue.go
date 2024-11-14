@@ -800,6 +800,17 @@ func (pq *AnalysisPriorityQueue) Len() (int, error) {
 	return pq.syncFields.inner.len(), nil
 }
 
+// List returns all the jobs in the priority queue.
+func (pq *AnalysisPriorityQueue) List() ([]AnalysisJob, error) {
+	pq.syncFields.mu.RLock()
+	defer pq.syncFields.mu.RUnlock()
+	if !pq.syncFields.initialized {
+		return nil, errors.New(notInitializedErrMsg)
+	}
+
+	return pq.syncFields.inner.list(), nil
+}
+
 // Close closes the priority queue.
 // Note: This function is thread-safe.
 func (pq *AnalysisPriorityQueue) Close() {

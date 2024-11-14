@@ -306,3 +306,17 @@ func (j *StaticPartitionedTableAnalysisJob) GenSQLForAnalyzeStaticPartitionIndex
 
 	return sql, params
 }
+
+func (j *StaticPartitionedTableAnalysisJob) ToJSON() statstypes.AnalysisJobJSON {
+	return statstypes.AnalysisJobJSON{
+		Type:    string(j.getAnalyzeType()),
+		TableID: j.StaticPartitionID,
+		Weight:  j.Weight,
+		Indicators: statstypes.IndicatorsJSON{
+			ChangePercentage:     j.ChangePercentage,
+			TableSize:            j.TableSize,
+			LastAnalysisDuration: j.LastAnalysisDuration,
+		},
+		HasNewlyAddedIndex: j.HasNewlyAddedIndex(),
+	}
+}

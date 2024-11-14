@@ -289,3 +289,7 @@ func (j *TestJob) SetIndicators(indicators priorityqueue.Indicators) {
 func (j *TestJob) HasNewlyAddedIndex() bool {
 	return false
 }
+
+func (j *TestJob) ToJSON() types.AnalysisJobJSON {
+	panic("unimplemented")
+}
