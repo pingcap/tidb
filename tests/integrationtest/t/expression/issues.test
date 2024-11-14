@@ -2184,7 +2184,7 @@ INSERT INTO test.t VALUES (1234567890123456);
 SELECT IFNULL(id, 'abcdef') FROM test.t;
 
 # TestIssue41878
-DROP TABLE IF EXISTS test.t1;
-CREATE TABLE test.t1 (c0 decimal(10,0));
-INSERT INTO test.t1 VALUES (0);
-SELECT c0 FROM test.t1 WHERE CAST(ATAN2(((t1.c0) IS NULL), (- (''))) AS TIME);
+DROP TABLE IF EXISTS test.t;
+CREATE TABLE test.t (c0 decimal(10,0));
+INSERT INTO test.t VALUES (0);
+SELECT c0 FROM test.t WHERE CAST(ATAN2(((t.c0) IS NULL), (- (''))) AS TIME);
