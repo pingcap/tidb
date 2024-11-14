@@ -16,6 +16,7 @@ package refresher
 
 import (
 	stderrors "errors"
+	"sort"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -186,6 +187,22 @@ func (r *Refresher) AnalyzeHighestPriorityTables(sctx sessionctx.Context) bool {
 
 	statslogutil.SingletonStatsSamplerLogger().Info("No tables to analyze")
 	return false
+}
+
+func (r *Refresher) GetStatsPriorityQueue() ([]statstypes.AnalysisJobJSON, error) {
+	jobs, err := r.jobs.List()
+	if err != nil {
+		return nil, err
+	}
+	jsonJobs := make([]statstypes.AnalysisJobJSON, len(jobs))
+	for i, job := range jobs {
+		jsonJobs[i] = job.ToJSON()
+	}
+	// Sort by the weight in descending order.
+	sort.Slice(jsonJobs, func(i, j int) bool {
+		return jsonJobs[i].Weight > jsonJobs[j].Weight
+	})
+	return jsonJobs, nil
 }
 
 func (r *Refresher) setAutoAnalysisTimeWindow(

@@ -144,3 +144,23 @@ func getSnapshotTableInfo(dom *domain.Domain, snapshot uint64, dbName, tblName s
 	}
 	return is.TableByName(context.Background(), model.NewCIStr(dbName), model.NewCIStr(tblName))
 }
+
+type StatsPriorityQueueHandler struct {
+	do *domain.Domain
+}
+
+func NewStatsPriorityQueueHandler(do *domain.Domain) *StatsPriorityQueueHandler {
+	return &StatsPriorityQueueHandler{do: do}
+}
+
+func (sh StatsPriorityQueueHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+
+	h := sh.do.StatsHandle()
+	tables, err := h.GetStatsPriorityQueue()
+	if err != nil {
+		handler.WriteError(w, err)
+	} else {
+		handler.WriteData(w, tables)
+	}
+}

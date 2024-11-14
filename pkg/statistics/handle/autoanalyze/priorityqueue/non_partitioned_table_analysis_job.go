@@ -270,3 +270,17 @@ func (j *NonPartitionedTableAnalysisJob) GenSQLForAnalyzeIndex(index string) (st
 
 	return sql, params
 }
+
+func (j *NonPartitionedTableAnalysisJob) ToJSON() statstypes.AnalysisJobJSON {
+	return statstypes.AnalysisJobJSON{
+		Type:    string(j.getAnalyzeType()),
+		TableID: j.TableID,
+		Weight:  j.Weight,
+		Indicators: statstypes.IndicatorsJSON{
+			ChangePercentage:     j.ChangePercentage,
+			TableSize:            j.TableSize,
+			LastAnalysisDuration: j.LastAnalysisDuration,
+		},
+		HasNewlyAddedIndex: j.HasNewlyAddedIndex(),
+	}
+}
