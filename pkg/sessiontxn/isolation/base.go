@@ -613,6 +613,16 @@ func (p *baseTxnContextProvider) SetOptionsBeforeCommit(
 	if commitTSChecker != nil {
 		txn.SetOption(kv.CommitTSUpperBoundCheck, commitTSChecker)
 	}
+
+	prewriteEncounterLockPolicy := transaction.TryResolvePolicy
+	if sessVars.TxnCtx.CouldRetry &&
+		sessVars.IsAutocommit() &&
+		!sessVars.InTxn() &&
+		!sessVars.TxnCtx.IsPessimistic {
+		prewriteEncounterLockPolicy = transaction.NoResolvePolicy
+	}
+	txn.SetOption(kv.PrewriteEncounterLockPolicy, prewriteEncounterLockPolicy)
+	
 	return nil
 }
 
