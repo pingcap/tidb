@@ -48,42 +48,6 @@ var DefaultImportVariablesTiDB = map[string]string{
 	"tidb_row_format_version": "1",
 }
 
-// AllocGlobalAutoID allocs N consecutive autoIDs from TiDB.
-func AllocGlobalAutoID(ctx context.Context, n int64, r autoid.Requirement, dbID int64,
-	tblInfo *model.TableInfo) (autoIDBase, autoIDMax int64, err error) {
-	allocators, err := GetGlobalAutoIDAlloc(r, dbID, tblInfo)
-	if err != nil {
-		return 0, 0, err
-	}
-	// there might be 2 allocators when tblInfo.SepAutoInc is true, and in this case
-	// RowIDAllocType will be the last one.
-	// we return the value of last Alloc as autoIDBase and autoIDMax, i.e. the value
-	// either comes from RowIDAllocType or AutoRandomType.
-	for _, alloc := range allocators {
-		autoIDBase, autoIDMax, err = alloc.Alloc(ctx, uint64(n), 1, 1)
-		if err != nil {
-			return 0, 0, err
-		}
-	}
-	return
-}
-
-// RebaseGlobalAutoID rebase the autoID base to newBase.
-func RebaseGlobalAutoID(ctx context.Context, newBase int64, r autoid.Requirement, dbID int64,
-	tblInfo *model.TableInfo) error {
-	allocators, err := GetGlobalAutoIDAlloc(r, dbID, tblInfo)
-	if err != nil {
-		return err
-	}
-	for _, alloc := range allocators {
-		err = alloc.Rebase(ctx, newBase, false)
-		if err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
 // RebaseTableAllocators rebase the allocators of a table.
 // This function only rebase a table allocator when its new base is given in
 // `bases` param, else it will be skipped.
