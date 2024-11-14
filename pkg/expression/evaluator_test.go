@@ -15,7 +15,6 @@
 package expression
 
 import (
-	"slices"
 	"sync/atomic"
 	"testing"
 	"time"
