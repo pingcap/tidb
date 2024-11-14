@@ -1197,7 +1197,7 @@ func TestAdminAlterDDLJobUnsupportedCases(t *testing.T) {
 	tk.MustGetErrMsg("admin alter ddl jobs 1 batch_size = 10241;", "the value 10241 for batch_size is out of range [32, 10240]")
 
 	// invalid job id
-	tk.MustGetErrMsg("admin alter ddl jobs 1 thread = 8;", "ddl job 1 not found")
+	tk.MustGetErrMsg("admin alter ddl jobs 1 thread = 8;", "ddl job 1 is not running")
 
 	job := model.Job{
 		ID:   1,
