@@ -370,6 +370,11 @@ func (ow *indexHashJoinOuterWorker) run(ctx context.Context) {
 		failpoint.Inject("testIndexHashJoinOuterWorkerErr", func() {
 			err = errors.New("mockIndexHashJoinOuterWorkerErr")
 		})
+		failpoint.Inject("testIssue54055_1", func(val failpoint.Value) {
+			if val.(bool) {
+				err = errors.New("testIssue54055_1")
+			}
+		})
 		if err != nil {
 			task = &indexHashJoinTask{err: err}
 			if ow.keepOuterOrder {
@@ -674,6 +679,12 @@ func (iw *indexHashJoinInnerWorker) handleTask(ctx context.Context, task *indexH
 			close(resultCh)
 		}
 	}()
+	failpoint.Inject("testIssue54055_2", func(val failpoint.Value) {
+		if val.(bool) {
+			time.Sleep(10 * time.Millisecond)
+			panic("testIssue54055_2")
+		}
+	})
 	var joinStartTime time.Time
 	if iw.stats != nil {
 		start := time.Now()
