@@ -40,7 +40,9 @@ message TaskCheckpointModel {
 message TableCheckpointModel {
     bytes hash = 1;
     uint32 status = 3;
-    int64 alloc_base = 4 [deprecated=true];
+    // previously we use 4 to store alloc_base, but now it's deleted, reverse 4
+    // to avoid reusing it.
+    reserved 4;
     map<sint32, EngineCheckpointModel> engines = 8;
     int64 tableID = 9;
     uint64 kv_bytes = 10;
