@@ -1448,7 +1448,7 @@ func (rc *LogClient) WrapCompactedFilesIterWithSplitHelper(
 	splitKeys int64,
 ) (iter.TryNextor[*backuppb.LogFileSubcompaction], error) {
 	client := split.NewClient(rc.pdClient, rc.pdHTTPClient, rc.tlsConf, maxSplitKeysOnce, 3)
-	wrapper := restore.PipelineSstRestorerWrapper[*backuppb.LogFileSubcompaction]{
+	wrapper := restore.PipelineRestorerWrapper[*backuppb.LogFileSubcompaction]{
 		PipelineRegionsSplitter: split.NewPipelineRegionsSplitter(client, splitSize, splitKeys),
 	}
 	strategy := NewCompactedFileSplitStrategy(rules, checkpointSets, updateStatsFn)
@@ -1467,7 +1467,7 @@ func (rc *LogClient) WrapLogFilesIterWithSplitHelper(
 	splitKeys int64,
 ) (LogIter, error) {
 	client := split.NewClient(rc.pdClient, rc.pdHTTPClient, rc.tlsConf, maxSplitKeysOnce, 3)
-	wrapper := restore.PipelineSstRestorerWrapper[*LogDataFileInfo]{
+	wrapper := restore.PipelineRestorerWrapper[*LogDataFileInfo]{
 		PipelineRegionsSplitter: split.NewPipelineRegionsSplitter(client, splitSize, splitKeys),
 	}
 	strategy, err := NewLogSplitStrategy(ctx, rc.useCheckpoint, execCtx, rules, updateStatsFn)

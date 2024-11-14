@@ -238,7 +238,7 @@ func TestWithSplitWithoutTriggersSplit(t *testing.T) {
 		executedSplitsCount: 0,
 	}
 	strategy := &FakeSplitStrategy[string]{shouldSplit: false}
-	wrapper := &restore.PipelineSstRestorerWrapper[string]{PipelineRegionsSplitter: fakeSplitter}
+	wrapper := &restore.PipelineRestorerWrapper[string]{PipelineRegionsSplitter: fakeSplitter}
 
 	items := iter.FromSlice([]string{"item1", "item2", "item3"})
 	splitIter := wrapper.WithSplit(ctx, items, strategy)
@@ -252,7 +252,7 @@ func TestWithSplitAccumulateAndReset(t *testing.T) {
 	ctx := context.Background()
 	fakeSplitter := &FakeRegionsSplitter{}
 	strategy := &FakeSplitStrategy[*split.RewriteSplitter]{shouldSplit: true}
-	wrapper := &restore.PipelineSstRestorerWrapper[*split.RewriteSplitter]{PipelineRegionsSplitter: fakeSplitter}
+	wrapper := &restore.PipelineRestorerWrapper[*split.RewriteSplitter]{PipelineRegionsSplitter: fakeSplitter}
 
 	// Create RewriteSplitter items
 	items := iter.FromSlice([]*split.RewriteSplitter{

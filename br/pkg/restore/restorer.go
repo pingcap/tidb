@@ -309,41 +309,40 @@ func GetFileRangeKey(f string) string {
 	return f[:idx]
 }
 
-type PipelineSstRestorerWrapper[T any] struct {
+type PipelineRestorerWrapper[T any] struct {
 	split.PipelineRegionsSplitter
 }
 
 // WithSplit processes items using a split strategy within a pipeline.
 // It iterates over items, accumulating them until a split condition is met.
 // When a split is required, it executes the split operation on the accumulated items.
-func (p *PipelineSstRestorerWrapper[T]) WithSplit(ctx context.Context, i iter.TryNextor[T], strategy split.SplitStrategy[T]) iter.TryNextor[T] {
-	return iter.MapFilter(i, func(item T) (T, bool) {
-		// Skip items based on the strategy's criteria.
-		if strategy.ShouldSkip(item) {
-			return item, true
-		}
+func (p *PipelineRestorerWrapper[T]) WithSplit(ctx context.Context, i iter.TryNextor[T], strategy split.SplitStrategy[T]) iter.TryNextor[T] {
+	return iter.TryMap(
+		iter.FilterOut(i, func(item T) bool {
+			// Skip items based on the strategy's criteria.
+			// Non-skip iterms should be filter out.
+			return !strategy.ShouldSkip(item)
+		}), func(item T) (T, error) {
+			// Accumulate the item for potential splitting.
+			strategy.Accumulate(item)
 
-		// Accumulate the item for potential splitting.
-		strategy.Accumulate(item)
+			// Check if the accumulated items meet the criteria for splitting.
+			if strategy.ShouldSplit() {
+				log.Info("Trying to start region split with accumulations")
+				startTime := time.Now()
 
-		// Check if the accumulated items meet the criteria for splitting.
-		if strategy.ShouldSplit() {
-			log.Info("Trying to start region split with accumulations")
-			startTime := time.Now()
-
-			// Execute the split operation on the accumulated items.
-			accumulations := strategy.GetAccumulations()
-			err := p.ExecuteRegions(ctx, accumulations)
-			if err != nil {
-				// should we go on?
-				log.Error("Failed to split regions in pipeline; continuing with restore", zap.Error(err))
+				// Execute the split operation on the accumulated items.
+				accumulations := strategy.GetAccumulations()
+				err := p.ExecuteRegions(ctx, accumulations)
+				if err != nil {
+					log.Error("Failed to split regions in pipeline; exit restore", zap.Error(err), zap.Duration("duration", time.Since(startTime)))
+					return item, errors.Annotate(err, "Execute region split on accmulated files failed")
+				}
+				// Reset accumulations after the split operation.
+				strategy.ResetAccumulations()
+				log.Info("Completed region split in pipeline", zap.Duration("duration", time.Since(startTime)))
 			}
-
-			// Reset accumulations after the split operation.
-			strategy.ResetAccumulations()
-			log.Info("Completed region split in pipeline", zap.Duration("duration", time.Since(startTime)))
-		}
-		// Return the item without filtering it out.
-		return item, false
-	})
+			// Return the item without filtering it out.
+			return item, nil
+		})
 }
