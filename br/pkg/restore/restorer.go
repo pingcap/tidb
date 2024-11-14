@@ -39,7 +39,7 @@ import (
 // BackupFileSet represents the batch files to be restored for a table. Current, we have 5 type files
 // 1. Raw KV(sst files)
 // 2. Txn KV(sst files)
-// 3. Databse KV backup(sst files)
+// 3. Database KV backup(sst files)
 // 4. Compacted Log backups(sst files)
 type BackupFileSet struct {
 	// TableID only valid in 3.4.5.
@@ -105,31 +105,46 @@ func NewFileSet(files []*backuppb.File, rules *utils.RewriteRules) BackupFileSet
 	}
 }
 
-// SstRestorer is the minimal methods required for restoring sst, including
-// 1. Raw backup ssts
-// 2. Txn backup ssts
-// 3. TiDB backup ssts
-// 4. Log Compacted ssts
+// SstRestorer defines the essential methods required for restoring SST files in various backup formats:
+// 1. Raw backup SST files
+// 2. Transactional (Txn) backup SST files
+// 3. TiDB backup SST files
+// 4. Log-compacted SST files
+//
+// It serves as a high-level interface for restoration, supporting implementations such as simpleRestorer
+// and MultiRestorer. SstRestorer includes FileImporter for handling raw, transactional, and compacted SSTs,
+// and MultiRestorer for TiDB-specific backups.
 type SstRestorer interface {
-	// Restore import the files to the TiKV.
+	// Restore imports the specified backup file sets into TiKV.
+	// The onProgress function is called with progress updates as files are processed.
 	Restore(onProgress func(int64), batchFileSets ...BatchBackupFileSet) error
-	// WaitUnitilFinish wait for all pending restore files finished
-	WaitUnitilFinish() error
-	// Close release the resources.
+
+	// WaitUntilFinish blocks until all pending restore files have completed processing.
+	WaitUntilFinish() error
+
+	// Close releases any resources associated with the restoration process.
 	Close() error
 }
 
+// FileImporter is a low-level interface for handling the import of backup files into storage (e.g., TiKV).
+// It is primarily used by the importer client to manage raw and transactional SST file imports.
 type FileImporter interface {
+	// Import uploads and imports the provided backup file sets into storage.
+	// The ctx parameter provides context for managing request scope.
 	Import(ctx context.Context, fileSets ...BackupFileSet) error
 
-	// Close release the resources.
+	// Close releases any resources used by the importer client.
 	Close() error
 }
 
-type ConcurrentlFileImporter interface {
+// ConcurrentFileImporter is a wrapper around FileImporter that adds concurrency controls.
+// It ensures that file imports are balanced across storage nodes, which is particularly useful
+// in MultiRestorer scenarios where concurrency management is critical for efficiency.
+type ConcurrentFileImporter interface {
 	FileImporter
-	// control the concurrency of importer
-	// to make the restore balance on every store.
+
+	// WaitUntilUnblock manages concurrency by controlling when imports can proceed,
+	// ensuring load is distributed evenly across storage nodes.
 	WaitUntilUnblock()
 }
 
@@ -161,7 +176,7 @@ func (s *SimpleRestorer) Close() error {
 	return s.fileImporter.Close()
 }
 
-func (s *SimpleRestorer) WaitUnitilFinish() error {
+func (s *SimpleRestorer) WaitUntilFinish() error {
 	return s.eg.Wait()
 }
 
@@ -196,13 +211,13 @@ type MultiTablesRestorer struct {
 	eg               *errgroup.Group
 	ectx             context.Context
 	workerPool       *util.WorkerPool
-	fileImporter     ConcurrentlFileImporter
+	fileImporter     ConcurrentFileImporter
 	checkpointRunner *checkpoint.CheckpointRunner[checkpoint.RestoreKeyType, checkpoint.RestoreValueType]
 }
 
 func NewMultiTablesRestorer(
 	ctx context.Context,
-	fileImporter ConcurrentlFileImporter,
+	fileImporter ConcurrentFileImporter,
 	workerPool *util.WorkerPool,
 	checkpointRunner *checkpoint.CheckpointRunner[checkpoint.RestoreKeyType, checkpoint.RestoreValueType],
 ) SstRestorer {
@@ -220,7 +235,7 @@ func (m *MultiTablesRestorer) Close() error {
 	return m.fileImporter.Close()
 }
 
-func (m *MultiTablesRestorer) WaitUnitilFinish() error {
+func (m *MultiTablesRestorer) WaitUntilFinish() error {
 	if err := m.eg.Wait(); err != nil {
 		summary.CollectFailureUnit("file", err)
 		log.Error("restore files failed", zap.Error(err))

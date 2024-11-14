@@ -304,7 +304,7 @@ func (rc *LogClient) RestoreCompactedSstFiles(
 			return errors.Trace(err)
 		}
 	}
-	return rc.sstRestoreManager.restorer.WaitUnitilFinish()
+	return rc.sstRestoreManager.restorer.WaitUntilFinish()
 }
 
 func (rc *LogClient) SetRawKVBatchClient(

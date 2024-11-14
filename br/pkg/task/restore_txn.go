@@ -104,7 +104,7 @@ func RunRestoreTxn(c context.Context, g glue.Glue, cmdName string, cfg *Config) 
 	if err != nil {
 		return errors.Trace(err)
 	}
-	err = client.GetRestorer().WaitUnitilFinish()
+	err = client.GetRestorer().WaitUntilFinish()
 	if err != nil {
 		return errors.Trace(err)
 	}

@@ -56,7 +56,7 @@ func TestSimpleRestorerImportAndProgress(t *testing.T) {
 		progressCount += progress
 	}, fileSet)
 	require.NoError(t, err)
-	err = restorer.WaitUnitilFinish()
+	err = restorer.WaitUntilFinish()
 	require.Equal(t, int64(30), progressCount)
 	require.NoError(t, err)
 
@@ -69,7 +69,7 @@ func TestSimpleRestorerImportAndProgress(t *testing.T) {
 		progressCount += progress
 	}, batchFileSet)
 	require.NoError(t, err)
-	err = restorer.WaitUnitilFinish()
+	err = restorer.WaitUntilFinish()
 	require.NoError(t, err)
 	require.Equal(t, int64(60), progressCount)
 }

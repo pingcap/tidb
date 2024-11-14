@@ -26,8 +26,7 @@ type Splitter interface {
 	ExecuteSortedKeysOnRegion(ctx context.Context, region *RegionInfo, keys [][]byte) ([]*RegionInfo, error)
 
 	// ExecuteSortedKeys splits all provided keys while ensuring that the newly created
-	// regions are balanced. It first applies the rewrite rules, then splits regions
-	// based on the end key of each range. Note: all ranges and rewrite rules must have raw keys.
+	// regions are balanced.
 	ExecuteSortedKeys(ctx context.Context, keys [][]byte) error
 
 	// WaitForScatterRegionsTimeout blocks until all regions have finished scattering,
@@ -149,8 +148,8 @@ type PipelineRegionsSplitter interface {
 type PipelineRegionsSplitterImpl struct {
 	*RegionSplitter
 	pool               *util.WorkerPool
-	splitThreSholdSize uint64
-	splitThreSholdKeys int64
+	splitThresholdSize uint64
+	splitThresholdKeys int64
 
 	eg        *errgroup.Group
 	regionsCh chan []*RegionInfo
@@ -165,8 +164,8 @@ func NewPipelineRegionsSplitter(
 	return &PipelineRegionsSplitterImpl{
 		pool:               pool,
 		RegionSplitter:     NewRegionSplitter(client),
-		splitThreSholdSize: splitSize,
-		splitThreSholdKeys: splitKeys,
+		splitThresholdSize: splitSize,
+		splitThresholdKeys: splitKeys,
 	}
 }
 
@@ -238,7 +237,7 @@ func SplitPoint(
 		regionValueds []Valued = nil
 		// regionInfo is the region to be split
 		regionInfo *RegionInfo = nil
-		// intialLength is the length of the part of the first range overlapped with the region
+		// initialLength is the length of the part of the first range overlapped with the region
 		initialLength uint64 = 0
 		initialNumber int64  = 0
 	)
@@ -365,7 +364,7 @@ func (r *PipelineRegionsSplitterImpl) splitRegionByPoints(
 	)
 	for _, v := range valueds {
 		// decode will discard ts behind the key, which results in the same key for consecutive ranges
-		if !bytes.Equal(lastKey, v.GetStartKey()) && (v.Value.Size+length > r.splitThreSholdSize || v.Value.Number+number > r.splitThreSholdKeys) {
+		if !bytes.Equal(lastKey, v.GetStartKey()) && (v.Value.Size+length > r.splitThresholdSize || v.Value.Number+number > r.splitThresholdKeys) {
 			_, rawKey, _ := codec.DecodeBytes(v.GetStartKey(), nil)
 			splitPoints = append(splitPoints, rawKey)
 			length = 0

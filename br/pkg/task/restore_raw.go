@@ -167,7 +167,7 @@ func RunRestoreRaw(c context.Context, g glue.Glue, cmdName string, cfg *RestoreR
 	if err != nil {
 		return errors.Trace(err)
 	}
-	err = client.GetRestorer().WaitUnitilFinish()
+	err = client.GetRestorer().WaitUntilFinish()
 	if err != nil {
 		return errors.Trace(err)
 	}
