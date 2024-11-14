@@ -15,6 +15,7 @@
 package ddl_test
 
 import (
+	"cmp"
 	"context"
 	"fmt"
 	"sync"
@@ -110,8 +111,8 @@ func TestGetDDLJobsIsSort(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, currJobs, 15)
 
-	isSort := slices.IsSortedFunc(currJobs, func(i, j *model.Job) bool {
-		return i.ID <= j.ID
+	isSort := slices.IsSortedFunc(currJobs, func(i, j *model.Job) int {
+		return cmp.Compare(i.ID, j.ID)
 	})
 	require.True(t, isSort)
 
