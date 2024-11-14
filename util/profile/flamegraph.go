@@ -15,6 +15,7 @@
 package profile
 
 import (
+	"cmp"
 	"fmt"
 	"math"
 
@@ -93,11 +94,11 @@ func (n *flamegraphNode) sortedChildren() []flamegraphNodeWithLocation {
 			locID:          locID,
 		})
 	}
-	slices.SortFunc(children, func(i, j flamegraphNodeWithLocation) bool {
+	slices.SortFunc(children, func(i, j flamegraphNodeWithLocation) int {
 		if i.cumValue != j.cumValue {
-			return i.cumValue > j.cumValue
+			return cmp.Compare(j.cumValue, i.cumValue)
 		}
-		return i.locID < j.locID
+		return cmp.Compare(i.locID, j.locID)
 	})
 
 	return children

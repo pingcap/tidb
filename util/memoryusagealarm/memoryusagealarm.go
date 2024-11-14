@@ -263,7 +263,7 @@ func (record *memoryUsageAlarm) printTop10SqlInfo(pinfo []*util.ProcessInfo, f *
 	}
 }
 
-func (record *memoryUsageAlarm) getTop10SqlInfo(cmp func(i, j *util.ProcessInfo) bool, pinfo []*util.ProcessInfo) strings.Builder {
+func (record *memoryUsageAlarm) getTop10SqlInfo(cmp func(i, j *util.ProcessInfo) int, pinfo []*util.ProcessInfo) strings.Builder {
 	slices.SortFunc(pinfo, cmp)
 	list := pinfo
 	var buf strings.Builder
