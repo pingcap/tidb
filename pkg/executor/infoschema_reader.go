@@ -669,7 +669,101 @@ func (e *memtableRetriever) setDataFromCheckConstraints(sctx sessionctx.Context,
 	return nil
 }
 
+<<<<<<< HEAD
 func (e *hugeMemTableRetriever) setDataForColumns(ctx context.Context, sctx sessionctx.Context, extractor *plannercore.ColumnsTableExtractor) error {
+=======
+// Data for inforation_schema.TIDB_CHECK_CONSTRAINTS
+// This has non-standard TiDB specific extensions.
+func (e *memtableRetriever) setDataFromTiDBCheckConstraints(ctx context.Context, sctx sessionctx.Context) error {
+	var rows [][]types.Datum
+	checker := privilege.GetPrivilegeManager(sctx)
+	ex, ok := e.extractor.(*plannercore.InfoSchemaTiDBCheckConstraintsExtractor)
+	if !ok {
+		return errors.Errorf("wrong extractor type: %T, expected InfoSchemaTiDBCheckConstraintsExtractor", e.extractor)
+	}
+	if ex.SkipRequest {
+		return nil
+	}
+	schemas, tables, err := ex.ListSchemasAndTables(ctx, e.is)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	for i, table := range tables {
+		schema := schemas[i]
+		if len(table.Constraints) > 0 {
+			if checker != nil && !checker.RequestVerification(sctx.GetSessionVars().ActiveRoles, schema.L, table.Name.L, "", mysql.SelectPriv) {
+				continue
+			}
+			for _, constraint := range table.Constraints {
+				if constraint.State != model.StatePublic {
+					continue
+				}
+				if ok && !ex.HasConstraint(constraint.Name.L) {
+					continue
+				}
+				record := types.MakeDatums(
+					infoschema.CatalogVal, // CONSTRAINT_CATALOG
+					schema.O,              // CONSTRAINT_SCHEMA
+					constraint.Name.O,     // CONSTRAINT_NAME
+					fmt.Sprintf("(%s)", constraint.ExprString), // CHECK_CLAUSE
+					table.Name.O, // TABLE_NAME
+					table.ID,     // TABLE_ID
+				)
+				rows = append(rows, record)
+			}
+		}
+	}
+	e.rows = rows
+	return nil
+}
+
+type hugeMemTableRetriever struct {
+	dummyCloser
+	extractor          *plannercore.InfoSchemaColumnsExtractor
+	table              *model.TableInfo
+	columns            []*model.ColumnInfo
+	retrieved          bool
+	initialized        bool
+	rows               [][]types.Datum
+	dbs                []pmodel.CIStr
+	curTables          []*model.TableInfo
+	dbsIdx             int
+	tblIdx             int
+	viewMu             syncutil.RWMutex
+	viewSchemaMap      map[int64]*expression.Schema // table id to view schema
+	viewOutputNamesMap map[int64]types.NameSlice    // table id to view output names
+	batch              int
+	is                 infoschema.InfoSchema
+}
+
+// retrieve implements the infoschemaRetriever interface
+func (e *hugeMemTableRetriever) retrieve(ctx context.Context, sctx sessionctx.Context) ([][]types.Datum, error) {
+	if e.extractor.SkipRequest || e.retrieved {
+		return nil, nil
+	}
+
+	if !e.initialized {
+		e.is = sessiontxn.GetTxnManager(sctx).GetTxnInfoSchema()
+		e.dbs = e.extractor.ListSchemas(e.is)
+		e.initialized = true
+		e.rows = make([][]types.Datum, 0, 1024)
+		e.batch = 1024
+	}
+
+	var err error
+	if e.table.Name.O == infoschema.TableColumns {
+		err = e.setDataForColumns(ctx, sctx)
+	}
+	if err != nil {
+		return nil, err
+	}
+	e.retrieved = len(e.rows) == 0
+
+	return adjustColumns(e.rows, e.columns, e.table), nil
+}
+
+func (e *hugeMemTableRetriever) setDataForColumns(ctx context.Context, sctx sessionctx.Context) error {
+>>>>>>> f27b3c25b26 (executor: improve retrieval logic in hugeMemTableRetriever and add tests (#57370))
 	checker := privilege.GetPrivilegeManager(sctx)
 	e.rows = e.rows[:0]
 	batch := 1024
