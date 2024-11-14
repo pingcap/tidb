@@ -17,7 +17,7 @@
       "external/": "no need to vet third party code",
       ".*_generated\\.go$": "ignore generated code",
       ".*mock.go$": "ignore generated code",
-      "lightning/pkg/web/res_vfsdata.go": "ignore code"
+      "br/pkg/lightning/web/res_vfsdata.go": "ignore code"
     }
   },
   "asmdecl": {
