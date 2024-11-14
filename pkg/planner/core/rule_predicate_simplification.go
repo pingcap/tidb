@@ -55,6 +55,9 @@ func findPredicateType(expr expression.Expression) (*expression.Column, predicat
 			return nil, orPredicate
 		}
 		args := v.GetArgs()
+		if len(args) == 0 {
+			return nil, otherPredicate
+		}
 		col, colOk := args[0].(*expression.Column)
 		if !colOk {
 			return nil, otherPredicate
