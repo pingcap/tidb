@@ -304,8 +304,10 @@
   },
   "misspell": {
     "exclude_files": {
+      "pkg/parser/parser.go": "parser/parser.go code",
       "/cgo/": "ignore cgo code",
-      "/external/": "no need to vet third party code",
+      "external/": "no need to vet third party code",
+      "$GOROOT/": "ignore GOROOT code",
       ".*_generated\\.go$": "ignore generated code"
     }
   },
