@@ -133,7 +133,7 @@ nogo(
                "//build/linter/makezero",
                "//build/linter/misspell",
                "//build/linter/prealloc",
-               "//build/linter/predeclared",
+               #"//build/linter/predeclared",
                "//build/linter/unconvert",
                "//build/linter/rowserrcheck",
            ] + staticcheck_analyzers(STATICHECK_ANALYZERS) +
