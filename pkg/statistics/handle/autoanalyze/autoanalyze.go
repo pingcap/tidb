@@ -317,7 +317,7 @@ func (sa *statsAnalyze) CheckAnalyzeVersion(tblInfo *model.TableInfo, physicalID
 	return statistics.CheckAnalyzeVerOnTable(tbl, version)
 }
 
-// GetPriorityQueueSnapshot returns the stats priority queue.
+// GetPriorityQueueSnapshot returns the stats priority queue snapshot.
 func (sa *statsAnalyze) GetPriorityQueueSnapshot() (statstypes.PriorityQueueSnapshot, error) {
 	return sa.refresher.GetPriorityQueueSnapshot()
 }

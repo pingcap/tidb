@@ -145,14 +145,17 @@ func getSnapshotTableInfo(dom *domain.Domain, snapshot uint64, dbName, tblName s
 	return is.TableByName(context.Background(), model.NewCIStr(dbName), model.NewCIStr(tblName))
 }
 
+// StatsPriorityQueueHandler is the handler for dumping the stats priority queue snapshot.
 type StatsPriorityQueueHandler struct {
 	do *domain.Domain
 }
 
+// NewStatsPriorityQueueHandler creates a new StatsPriorityQueueHandler.
 func NewStatsPriorityQueueHandler(do *domain.Domain) *StatsPriorityQueueHandler {
 	return &StatsPriorityQueueHandler{do: do}
 }
 
+// ServeHTTP dumps the stats priority queue snapshot to json.
 func (sh StatsPriorityQueueHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 
