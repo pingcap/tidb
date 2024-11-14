@@ -15,6 +15,7 @@ package restore
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -332,8 +333,8 @@ func (ci *regionDistributionCheckItem) Check(ctx context.Context) (*CheckResult,
 	if len(stores) <= 1 {
 		return theResult, nil
 	}
-	slices.SortFunc(stores, func(i, j *pdtypes.StoreInfo) bool {
-		return i.Status.RegionCount < j.Status.RegionCount
+	slices.SortFunc(stores, func(i, j *pdtypes.StoreInfo) int {
+		return cmp.Compare(i.Status.RegionCount, j.Status.RegionCount)
 	})
 	minStore := stores[0]
 	maxStore := stores[len(stores)-1]
