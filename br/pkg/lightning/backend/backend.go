@@ -305,8 +305,11 @@ func (be Backend) CheckDiskQuota(quota int64) (
 ) {
 	sizes := be.abstract.EngineFileSizes()
 	slices.SortFunc(sizes, func(i, j EngineFileSize) int {
-		if i.IsImporting != j.IsImporting && i.IsImporting {
-			return -1
+		if i.IsImporting != j.IsImporting {
+			if i.IsImporting {
+				return -1
+			}
+			return 1
 		}
 		return cmp.Compare(i.DiskSize+i.MemSize, j.DiskSize+j.MemSize)
 	})
