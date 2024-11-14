@@ -1733,13 +1733,7 @@ func resumePausedJob(job *model.Job,
 }
 
 // processJobs command on the Job according to the process
-<<<<<<< HEAD
-func processJobs(process func(*sess.Session, *model.Job, model.AdminCommandOperator) (err error),
-=======
-func processJobs(
-	ctx context.Context,
-	process func(*model.Job, model.AdminCommandOperator) (err error),
->>>>>>> 50dcee7cd51 (ddl: introduce a new system variable to control the `store-write-bwlimit` when ingesting (#57145))
+func processJobs(process func(*model.Job, model.AdminCommandOperator) (err error),
 	sessCtx sessionctx.Context,
 	ids []int64,
 	byWho model.AdminCommandOperator) (jobErrs []error, err error) {
@@ -1850,17 +1844,10 @@ func ResumeJobsBySystem(se sessionctx.Context, ids []int64) (errs []error, err e
 }
 
 // pprocessAllJobs processes all the jobs in the job table, 100 jobs at a time in case of high memory usage.
-<<<<<<< HEAD
-func processAllJobs(process func(*sess.Session, *model.Job, model.AdminCommandOperator) (err error),
-	se sessionctx.Context, byWho model.AdminCommandOperator) (map[int64]error, error) {
-=======
-func processAllJobs(
-	ctx context.Context,
-	process func(*model.Job, model.AdminCommandOperator) (err error),
+func processAllJobs(process func(*model.Job, model.AdminCommandOperator) (err error),
 	se sessionctx.Context,
 	byWho model.AdminCommandOperator,
 ) (map[int64]error, error) {
->>>>>>> 50dcee7cd51 (ddl: introduce a new system variable to control the `store-write-bwlimit` when ingesting (#57145))
 	var err error
 	var jobErrs = make(map[int64]error)
 

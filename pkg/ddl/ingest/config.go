@@ -48,40 +48,12 @@ func genConfig(
 	memRoot MemRoot,
 	unique bool,
 	resourceGroup string,
-<<<<<<< HEAD
 ) (*litConfig, error) {
 	tidbCfg := tidb.GetGlobalConfig()
 	cfg := lightning.NewConfig()
 	cfg.TikvImporter.Backend = lightning.BackendLocal
-=======
-	concurrency int,
-) (*local.BackendConfig, error) {
-	cfg := &local.BackendConfig{
-		LocalStoreDir:     jobSortPath,
-		ResourceGroupName: resourceGroup,
-		MaxConnPerStore:   concurrency,
-		WorkerConcurrency: concurrency * 2,
-		KeyspaceName:      tidb.GetGlobalKeyspaceName(),
-		// We disable the switch TiKV mode feature for now, because the impact is not
-		// fully tested.
-		ShouldCheckWriteStall: true,
+	cfg.TikvImporter.StoreWriteBWLimit = lightning.ByteSize(variable.DDLReorgMaxWriteSpeed.Load())
 
-		// lighting default values
-		CheckpointEnabled:           true,
-		BlockSize:                   lightning.DefaultBlockSize,
-		KVWriteBatchSize:            lightning.KVWriteBatchSize,
-		RegionSplitBatchSize:        lightning.DefaultRegionSplitBatchSize,
-		RegionSplitConcurrency:      runtime.GOMAXPROCS(0),
-		MemTableSize:                lightning.DefaultEngineMemCacheSize,
-		LocalWriterMemCacheSize:     lightning.DefaultLocalWriterMemCacheSize,
-		ShouldCheckTiKV:             true,
-		MaxOpenFiles:                int(litRLimit),
-		PausePDSchedulerScope:       lightning.PausePDSchedulerScopeTable,
-		TaskType:                    kvutil.ExplicitTypeDDL,
-		DisableAutomaticCompactions: true,
-		StoreWriteBWLimit:           int(variable.DDLReorgMaxWriteSpeed.Load()),
-	}
->>>>>>> 50dcee7cd51 (ddl: introduce a new system variable to control the `store-write-bwlimit` when ingesting (#57145))
 	// Each backend will build a single dir in lightning dir.
 	cfg.TikvImporter.SortedKVDir = jobSortPath
 	if ImporterRangeConcurrencyForTest != nil {

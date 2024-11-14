@@ -196,12 +196,11 @@ func LoadDDLVars(ctx sessionctx.Context) error {
 // loadGlobalVars loads global variable from mysql.global_variables.
 func loadGlobalVars(ctx context.Context, sctx sessionctx.Context, varNames []string) error {
 	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnDDL)
-<<<<<<< HEAD
 	// *mock.Context does not support SQL execution. Only do it when sctx is not `mock.Context`
 	if _, ok := sctx.(*mock.Context); !ok {
 		e := sctx.GetRestrictedSQLExecutor()
 		var buf strings.Builder
-		buf.WriteString(loadGlobalVars)
+		buf.WriteString(loadGlobalVarsSQL)
 		paramNames := make([]any, 0, len(varNames))
 		for i, name := range varNames {
 			if i > 0 {
@@ -209,15 +208,6 @@ func loadGlobalVars(ctx context.Context, sctx sessionctx.Context, varNames []str
 			}
 			buf.WriteString("%?")
 			paramNames = append(paramNames, name)
-=======
-	e := sctx.GetRestrictedSQLExecutor()
-	var buf strings.Builder
-	buf.WriteString(loadGlobalVarsSQL)
-	paramNames := make([]any, 0, len(varNames))
-	for i, name := range varNames {
-		if i > 0 {
-			buf.WriteString(", ")
->>>>>>> 50dcee7cd51 (ddl: introduce a new system variable to control the `store-write-bwlimit` when ingesting (#57145))
 		}
 		buf.WriteString(")")
 		rows, _, err := e.ExecRestrictedSQL(ctx, nil, buf.String(), paramNames...)
