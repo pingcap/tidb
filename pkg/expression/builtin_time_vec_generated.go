@@ -572,7 +572,9 @@ func (b *builtinAddDateAndStringSig) vecEvalString(ctx EvalContext, input *chunk
 		arg0.SetType(mysql.TypeDatetime)
 		res, err := arg0.Add(tc, arg1Duration)
 		if err != nil {
-			return err
+			tc.AppendWarning(err)
+			result.AppendNull()
+			continue
 		}
 
 		result.AppendString(res.String())
@@ -1173,7 +1175,9 @@ func (b *builtinSubDateAndStringSig) vecEvalString(ctx EvalContext, input *chunk
 		arg0.SetType(mysql.TypeDatetime)
 		res, err := arg0.Add(tc, arg1Duration.Neg())
 		if err != nil {
-			return err
+			tc.AppendWarning(err)
+			result.AppendNull()
+			continue
 		}
 
 		result.AppendString(res.String())

@@ -326,3 +326,13 @@ insert into t2 values('18446744073709551616',  "1000-01-01 00:00:00" + INTERVAL 
 insert into t2 values('-9223372036854775809', "1000-01-01 00:00:00" + INTERVAL -9223372036854775809 YEAR);
 select a, d from t2 order by a ASC;
 drop table if exists t1;
+
+drop table if exists t;
+create table t(col0 date);
+insert into t values('2024-11-01'), ('2024-11-01'), ('1000-01-01'), ('9999-12-31'), (null), ('2020-11-01');
+select addtime(col0, '12:00:01.341300') from t order by col0 asc;
+select subtime(col0, '12:00:01.341300') from t order by col0 asc;
+select addtime(col0, '1 12:00:01.341300') from t order by col0 asc;
+select subtime(col0, '1 12:00:01.341300') from t order by col0 asc;
+select addtime(col0, '-1 12:00:01.341300') from t order by col0 asc;
+select subtime(col0, '-1 12:00:01.341300') from t order by col0 asc;
