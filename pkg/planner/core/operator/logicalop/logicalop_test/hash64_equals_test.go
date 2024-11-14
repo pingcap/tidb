@@ -19,7 +19,9 @@ import (
 
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/expression/aggregation"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/cascades/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
@@ -28,6 +30,117 @@ import (
 	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/stretchr/testify/require"
 )
+
+func TestLogicalUnionAllHash64Equals(t *testing.T) {
+	col1 := &expression.Column{
+		ID:      1,
+		Index:   0,
+		RetType: types.NewFieldType(mysql.TypeLonglong),
+	}
+	col2 := &expression.Column{
+		ID:      2,
+		Index:   0,
+		RetType: types.NewFieldType(mysql.TypeLonglong),
+	}
+	// test schema producer.
+	ctx := mock.NewContext()
+	u1 := logicalop.LogicalUnionAll{}.Init(ctx, 1)
+	u1.LogicalSchemaProducer.SetSchema(&expression.Schema{Columns: []*expression.Column{col1}})
+	u2 := logicalop.LogicalUnionAll{}.Init(ctx, 1)
+	u2.LogicalSchemaProducer.SetSchema(&expression.Schema{Columns: []*expression.Column{col1}})
+	hasher1 := base.NewHashEqualer()
+	hasher2 := base.NewHashEqualer()
+	u1.Hash64(hasher1)
+	u2.Hash64(hasher2)
+	require.Equal(t, hasher1.Sum64(), hasher2.Sum64())
+	require.True(t, u1.Equals(u2))
+
+	u2.LogicalSchemaProducer.SetSchema(&expression.Schema{Columns: []*expression.Column{col2}})
+	hasher2.Reset()
+	u2.Hash64(hasher2)
+	require.NotEqual(t, hasher1.Sum64(), hasher2.Sum64())
+	require.False(t, u1.Equals(u2))
+
+	pu1 := logicalop.LogicalPartitionUnionAll{}.Init(ctx, 1)
+	pu1.LogicalSchemaProducer.SetSchema(&expression.Schema{Columns: []*expression.Column{col1}})
+	pu2 := logicalop.LogicalPartitionUnionAll{}.Init(ctx, 1)
+	pu2.LogicalSchemaProducer.SetSchema(&expression.Schema{Columns: []*expression.Column{col1}})
+	hasher1.Reset()
+	hasher2.Reset()
+	pu1.Hash64(hasher1)
+	pu2.Hash64(hasher2)
+	require.Equal(t, hasher1.Sum64(), hasher2.Sum64())
+	require.True(t, pu1.Equals(pu2))
+
+	pu2.LogicalSchemaProducer.SetSchema(&expression.Schema{Columns: []*expression.Column{col2}})
+	hasher2.Reset()
+	pu2.Hash64(hasher2)
+	require.NotEqual(t, hasher1.Sum64(), hasher2.Sum64())
+	require.False(t, pu1.Equals(pu2))
+}
+
+func TestLogicalMemTableHash64Equals(t *testing.T) {
+	col1 := &expression.Column{
+		ID:      1,
+		Index:   0,
+		RetType: types.NewFieldType(mysql.TypeLonglong),
+	}
+	col2 := &expression.Column{
+		ID:      2,
+		Index:   0,
+		RetType: types.NewFieldType(mysql.TypeLonglong),
+	}
+	// test schema producer.
+	ctx := mock.NewContext()
+	m1 := logicalop.LogicalMemTable{}.Init(ctx, 1)
+	m1.LogicalSchemaProducer.SetSchema(&expression.Schema{Columns: []*expression.Column{col1}})
+	m2 := logicalop.LogicalMemTable{}.Init(ctx, 1)
+	m2.LogicalSchemaProducer.SetSchema(&expression.Schema{Columns: []*expression.Column{col1}})
+	hasher1 := base.NewHashEqualer()
+	hasher2 := base.NewHashEqualer()
+	m1.Hash64(hasher1)
+	m2.Hash64(hasher2)
+	require.Equal(t, hasher1.Sum64(), hasher2.Sum64())
+	require.True(t, m1.Equals(m2))
+
+	m2.LogicalSchemaProducer.SetSchema(&expression.Schema{Columns: []*expression.Column{col2}})
+	hasher2.Reset()
+	m2.Hash64(hasher2)
+	require.NotEqual(t, hasher1.Sum64(), hasher2.Sum64())
+	require.False(t, m1.Equals(m2))
+
+	m2.LogicalSchemaProducer.SetSchema(&expression.Schema{Columns: []*expression.Column{col1}})
+	m2.DBName = pmodel.NewCIStr("d1")
+	hasher2.Reset()
+	m2.Hash64(hasher2)
+	require.NotEqual(t, hasher1.Sum64(), hasher2.Sum64())
+	require.False(t, m1.Equals(m2))
+
+	m2.DBName = pmodel.NewCIStr("")
+	m2.TableInfo = &model.TableInfo{ID: 1}
+	hasher2.Reset()
+	m2.Hash64(hasher2)
+	require.NotEqual(t, hasher1.Sum64(), hasher2.Sum64())
+	require.False(t, m1.Equals(m2))
+
+	m2.TableInfo = &model.TableInfo{}
+	hasher2.Reset()
+	m2.Hash64(hasher2)
+	require.NotEqual(t, hasher1.Sum64(), hasher2.Sum64())
+	require.False(t, m1.Equals(m2))
+
+	m2.TableInfo = nil
+	hasher2.Reset()
+	m2.Hash64(hasher2)
+	require.Equal(t, hasher1.Sum64(), hasher2.Sum64())
+	require.True(t, m1.Equals(m2))
+
+	m1.TableInfo = &model.TableInfo{ID: 1}
+	hasher1.Reset()
+	m1.Hash64(hasher2)
+	require.NotEqual(t, hasher1.Sum64(), hasher2.Sum64())
+	require.False(t, m1.Equals(m2))
+}
 
 func TestLogicalSchemaProducerHash64Equals(t *testing.T) {
 	col1 := &expression.Column{
