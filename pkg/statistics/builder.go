@@ -221,9 +221,9 @@ func buildHist(
 				// ...
 				hg.Buckets[bucketIdx].Repeat += int64(sampleFactor)
 			}
-		} else if (hg.Buckets[bucketIdx].Count <= origNdvFactor && currentCount <= ceilValuesPerBucket) ||
+		} else if (bucketIdx > 0 && hg.Buckets[bucketIdx-1].Repeat <= origNdvFactor && currentCount <= ceilValuesPerBucket) ||
 			currentCount <= valuesPerBucket {
-			// The bucket still has room to store a new item, update the bucket.
+			// The last value in the bucket is NOT skewed, and the bucket still has room to store a new item, update the bucket.
 			hg.updateLastBucket(&samples[i].Value, int64(totalCount), int64(ndvFactor), false)
 		} else {
 			lastCount = hg.Buckets[bucketIdx].Count
