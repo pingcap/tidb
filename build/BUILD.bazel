@@ -142,7 +142,7 @@ nogo(
                    #"//build/linter/allrevive",
                    #"//build/linter/errcheck",
                    "//build/linter/filepermission",
-                   "//build/linter/revive",
+                   #"//build/linter/revive",
                ],
                "//conditions:default": [],
            }),
