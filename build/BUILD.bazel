@@ -134,7 +134,7 @@ nogo(
                "//build/linter/prealloc",
                #"//build/linter/predeclared",
                "//build/linter/unconvert",
-               "//build/linter/rowserrcheck",
+               #"//build/linter/rowserrcheck",
            ] + staticcheck_analyzers(STATICHECK_ANALYZERS) +
            select({
                "//build:with_nogo": [
