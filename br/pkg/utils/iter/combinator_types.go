@@ -131,20 +131,17 @@ type tryMap[T, R any] struct {
 }
 
 func (t tryMap[T, R]) TryNext(ctx context.Context) IterResult[R] {
-	for {
-		r := t.inner.TryNext(ctx)
+	r := t.inner.TryNext(ctx)
 
-		if r.FinishedOrError() {
-			return DoneBy[R](r)
-		}
-
-		res, err := t.mapper(r.Item)
-		if err != nil {
-			return Throw[R](err)
-		} else {
-			return Emit(res)
-		}
+	if r.FinishedOrError() {
+		return DoneBy[R](r)
 	}
+
+	res, err := t.mapper(r.Item)
+	if err != nil {
+		return Throw[R](err)
+	}
+	return Emit(res)
 }
 
 type join[T any] struct {
