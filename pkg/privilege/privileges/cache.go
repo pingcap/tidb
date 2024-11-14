@@ -925,11 +925,7 @@ func (p *immutable) decodeUserTableRow(row chunk.Row, fs []*resolve.ResultField)
 				value.AccountLocked = true
 			}
 		case f.ColumnAsName.L == "plugin":
-			if row.GetString(i) != "" {
-				value.AuthPlugin = row.GetString(i)
-			} else {
-				value.AuthPlugin = mysql.AuthNativePassword
-			}
+			value.AuthPlugin = row.GetString(i)
 		case f.ColumnAsName.L == "token_issuer":
 			value.AuthTokenIssuer = row.GetString(i)
 		case f.ColumnAsName.L == "user_attributes":

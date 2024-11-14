@@ -1494,6 +1494,7 @@ type UserSpec struct {
 	AuthOpt *AuthOption
 	IsRole  bool
 
+	// DefaultAuthPlugin is used to store the values of default_authentication_plugin
 	DefaultAuthPlugin string
 }
 
