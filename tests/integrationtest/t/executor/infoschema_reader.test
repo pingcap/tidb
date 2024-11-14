@@ -320,3 +320,16 @@ drop table if exists t;
 create table t (c text);
 alter table t add index idx_t (c(16));
 select SUB_PART from information_schema.statistics where TABLE_SCHEMA = 'executor__infoschema_reader' and TABLE_NAME = 't';
+
+# Query should return nothing when WHERE clauses are always false.
+# https://github.com/pingcap/tidb/issues/57345
+select table_name from information_schema.columns where table_name = 'a' and table_name = 'b';
+select table_name from information_schema.columns where table_schema = 'a' and table_schema = 'b';
+select table_name from information_schema.tables where table_name = 'a' and table_name = 'b';
+select table_name from information_schema.tables where table_schema = 'a' and table_schema = 'b';
+select table_name from information_schema.partitions where table_name = 'a' and table_name = 'b';
+select table_name from information_schema.partitions where table_schema = 'a' and table_schema = 'b';
+select table_name from information_schema.statistics where table_name = 'a' and table_name = 'b';
+select table_name from information_schema.statistics where table_schema = 'a' and table_schema = 'b';
+select table_name from information_schema.referential_constraints where table_name = 'a' and table_name = 'b';
+select table_name from information_schema.referential_constraints where constraint_schema = 'a' and constraint_schema = 'b';
