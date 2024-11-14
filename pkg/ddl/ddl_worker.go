@@ -397,7 +397,7 @@ func (d *ddl) addBatchDDLJobs2Table(tasks []*limitJobTask) error {
 		setJobStateToQueueing(job)
 
 		if d.stateSyncer.IsUpgradingState() && !hasSysDB(job) {
-			if err = pauseRunningJob(sess.NewSession(se), job, model.AdminCommandBySystem); err != nil {
+			if err = pauseRunningJob(job, model.AdminCommandBySystem); err != nil {
 				logutil.BgLogger().Warn("pause user DDL by system failed", zap.String("category", "ddl-upgrading"), zap.Stringer("job", job), zap.Error(err))
 				task.cacheErr = err
 				continue
