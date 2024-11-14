@@ -1234,8 +1234,8 @@ func (w *GCWorker) checkLockObservers(ctx context.Context, safePoint uint64, sto
 			for i, lockInfo := range respInner.Locks {
 				locks[i] = txnlock.NewLock(lockInfo)
 			}
-			slices.SortFunc(locks, func(i, j *txnlock.Lock) bool {
-				return bytes.Compare(i.Key, j.Key) < 0
+			slices.SortFunc(locks, func(i, j *txnlock.Lock) int {
+				return bytes.Compare(i.Key, j.Key)
 			})
 			err = w.resolveLocksAcrossRegions(ctx, locks)
 

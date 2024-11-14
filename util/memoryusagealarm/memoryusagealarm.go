@@ -15,6 +15,7 @@
 package memoryusagealarm
 
 import (
+	"cmp"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -302,14 +303,14 @@ func (record *memoryUsageAlarm) getTop10SqlInfo(cmp func(i, j *util.ProcessInfo)
 }
 
 func (record *memoryUsageAlarm) getTop10SqlInfoByMemoryUsage(pinfo []*util.ProcessInfo) strings.Builder {
-	return record.getTop10SqlInfo(func(i, j *util.ProcessInfo) bool {
-		return i.MemTracker.MaxConsumed() > j.MemTracker.MaxConsumed()
+	return record.getTop10SqlInfo(func(i, j *util.ProcessInfo) int {
+		return cmp.Compare(j.MemTracker.MaxConsumed(), i.MemTracker.MaxConsumed())
 	}, pinfo)
 }
 
 func (record *memoryUsageAlarm) getTop10SqlInfoByCostTime(pinfo []*util.ProcessInfo) strings.Builder {
-	return record.getTop10SqlInfo(func(i, j *util.ProcessInfo) bool {
-		return i.Time.Before(j.Time)
+	return record.getTop10SqlInfo(func(i, j *util.ProcessInfo) int {
+		return i.Time.Compare(j.Time)
 	}, pinfo)
 }
 

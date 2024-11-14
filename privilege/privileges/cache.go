@@ -16,6 +16,7 @@ package privileges
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -444,21 +445,17 @@ func (p *MySQLPrivilege) buildUserMap() {
 	p.UserMap = userMap
 }
 
-func compareBaseRecord(x, y *baseRecord) bool {
+func compareBaseRecord(x, y *baseRecord) int {
 	// Compare two item by user's host first.
 	c1 := compareHost(x.Host, y.Host)
-	if c1 < 0 {
-		return true
+	if c1 != 0 {
+		return c1
 	}
-	if c1 > 0 {
-		return false
-	}
-
 	// Then, compare item by user's name value.
-	return x.User < y.User
+	return cmp.Compare(x.User, y.User)
 }
 
-func compareUserRecord(x, y UserRecord) bool {
+func compareUserRecord(x, y UserRecord) int {
 	return compareBaseRecord(&x.baseRecord, &y.baseRecord)
 }
 
@@ -536,7 +533,7 @@ func (p *MySQLPrivilege) LoadDBTable(ctx sessionctx.Context) error {
 	return nil
 }
 
-func compareDBRecord(x, y dbRecord) bool {
+func compareDBRecord(x, y dbRecord) int {
 	return compareBaseRecord(&x.baseRecord, &y.baseRecord)
 }
 

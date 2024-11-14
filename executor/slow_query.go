@@ -962,8 +962,8 @@ func (e *slowQueryRetriever) getAllFiles(ctx context.Context, sctx sessionctx.Co
 		}
 	}
 	// Sort by start time
-	slices.SortFunc(logFiles, func(i, j logFile) bool {
-		return i.start.Before(j.start)
+	slices.SortFunc(logFiles, func(i, j logFile) int {
+		return i.start.Compare(j.start)
 	})
 	return logFiles, err
 }

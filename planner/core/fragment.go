@@ -15,6 +15,7 @@
 package core
 
 import (
+	"cmp"
 	"context"
 	"time"
 	"unsafe"
@@ -392,8 +393,8 @@ func (e *mppTaskGenerator) constructMPPTasksImpl(ctx context.Context, ts *Physic
 }
 
 func (e *mppTaskGenerator) constructMPPBuildTaskReqForPartitionedTable(ts *PhysicalTableScan, splitedRanges []*ranger.Range, partitions []table.PhysicalTable) (*kv.MPPBuildTasksRequest, []int64, error) {
-	slices.SortFunc(partitions, func(i, j table.PhysicalTable) bool {
-		return i.GetPhysicalID() < j.GetPhysicalID()
+	slices.SortFunc(partitions, func(i, j table.PhysicalTable) int {
+		return cmp.Compare(i.GetPhysicalID(), j.GetPhysicalID())
 	})
 	partitionIDAndRanges := make([]kv.PartitionIDAndRanges, len(partitions))
 	allPartitionsIDs := make([]int64, len(partitions))

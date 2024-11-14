@@ -16,6 +16,7 @@ package ddl
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"encoding/hex"
 	"fmt"
@@ -274,8 +275,8 @@ func GetFlashbackKeyRanges(sess sessionctx.Context) ([]kv.KeyRange, error) {
 		}
 	}
 
-	slices.SortFunc(flashbackIDs, func(a, b flashbackID) bool {
-		return a.id < b.id
+	slices.SortFunc(flashbackIDs, func(a, b flashbackID) int {
+		return cmp.Compare(a.id, b.id)
 	})
 
 	lastExcludeIdx := -1

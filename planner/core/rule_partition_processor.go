@@ -16,6 +16,7 @@ package core
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"fmt"
 	gomath "math"
@@ -1824,8 +1825,8 @@ func appendMakeUnionAllChildrenTranceStep(origin *DataSource, usedMap map[int64]
 	for _, def := range usedMap {
 		used = append(used, def)
 	}
-	slices.SortFunc(used, func(i, j model.PartitionDefinition) bool {
-		return i.ID < j.ID
+	slices.SortFunc(used, func(i, j model.PartitionDefinition) int {
+		return cmp.Compare(i.ID, j.ID)
 	})
 	if len(children) == 1 {
 		newDS := plan.(*DataSource)

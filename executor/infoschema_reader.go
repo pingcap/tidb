@@ -16,6 +16,7 @@ package executor
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"encoding/hex"
 	"encoding/json"
@@ -3009,8 +3010,8 @@ func (e *hugeMemTableRetriever) retrieve(ctx context.Context, sctx sessionctx.Co
 	if !e.initialized {
 		is := sctx.GetInfoSchema().(infoschema.InfoSchema)
 		dbs := is.AllSchemas()
-		slices.SortFunc(dbs, func(i, j *model.DBInfo) bool {
-			return i.Name.L < j.Name.L
+		slices.SortFunc(dbs, func(i, j *model.DBInfo) int {
+			return cmp.Compare(i.Name.L, j.Name.L)
 		})
 		e.dbs = dbs
 		e.initialized = true
