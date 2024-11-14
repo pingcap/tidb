@@ -189,3 +189,12 @@ func IsDynamicPartitionedTableAnalysisJob(job AnalysisJob) bool {
 	_, ok := job.(*DynamicPartitionedTableAnalysisJob)
 	return ok
 }
+
+// toJSONIndicators converts the indicators to a JSON format.
+func toJSONIndicators(indicators Indicators) statstypes.IndicatorsJSON {
+	return statstypes.IndicatorsJSON{
+		ChangePercentage:     fmt.Sprintf("%.2f%%", indicators.ChangePercentage*100),
+		TableSize:            fmt.Sprintf("%.2frows", indicators.TableSize),
+		LastAnalysisDuration: fmt.Sprintf("%.2fs", indicators.LastAnalysisDuration.Seconds()),
+	}
+}
