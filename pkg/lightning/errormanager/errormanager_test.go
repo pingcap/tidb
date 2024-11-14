@@ -218,7 +218,7 @@ func TestReplaceConflictOneKey(t *testing.T) {
 		State:      model.StatePublic,
 	}
 
-	tbl, err := tables.TableFromMeta(tidbkv.NewPanickingAllocators(table.SepAutoInc(), 0), table)
+	tbl, err := tables.TableFromMeta(tidbkv.NewPanickingAllocators(table.SepAutoInc()), table)
 	require.NoError(t, err)
 
 	sessionOpts := encode.SessionOptions{
@@ -407,7 +407,7 @@ func TestReplaceConflictOneUniqueKey(t *testing.T) {
 		State:      model.StatePublic,
 	}
 
-	tbl, err := tables.TableFromMeta(tidbkv.NewPanickingAllocators(table.SepAutoInc(), 0), table)
+	tbl, err := tables.TableFromMeta(tidbkv.NewPanickingAllocators(table.SepAutoInc()), table)
 	require.NoError(t, err)
 
 	sessionOpts := encode.SessionOptions{

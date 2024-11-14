@@ -52,7 +52,7 @@ func TestReplaceConflictMultipleKeysNonclusteredPk(t *testing.T) {
 	require.NoError(t, err)
 	info.State = model.StatePublic
 	require.False(t, info.PKIsHandle)
-	tbl, err := tables.TableFromMeta(tidbkv.NewPanickingAllocators(info.SepAutoInc(), 0), info)
+	tbl, err := tables.TableFromMeta(tidbkv.NewPanickingAllocators(info.SepAutoInc()), info)
 	require.NoError(t, err)
 	require.False(t, tbl.Meta().HasClusteredIndex())
 
@@ -273,7 +273,7 @@ func TestReplaceConflictOneKeyNonclusteredPk(t *testing.T) {
 	require.NoError(t, err)
 	info.State = model.StatePublic
 	require.False(t, info.PKIsHandle)
-	tbl, err := tables.TableFromMeta(tidbkv.NewPanickingAllocators(info.SepAutoInc(), 0), info)
+	tbl, err := tables.TableFromMeta(tidbkv.NewPanickingAllocators(info.SepAutoInc()), info)
 	require.NoError(t, err)
 	require.False(t, tbl.Meta().HasClusteredIndex())
 
@@ -441,7 +441,7 @@ func TestReplaceConflictOneUniqueKeyNonclusteredPk(t *testing.T) {
 	require.NoError(t, err)
 	info.State = model.StatePublic
 	require.False(t, info.PKIsHandle)
-	tbl, err := tables.TableFromMeta(tidbkv.NewPanickingAllocators(info.SepAutoInc(), 0), info)
+	tbl, err := tables.TableFromMeta(tidbkv.NewPanickingAllocators(info.SepAutoInc()), info)
 	require.NoError(t, err)
 	require.False(t, tbl.Meta().HasClusteredIndex())
 
@@ -647,7 +647,7 @@ func TestReplaceConflictOneUniqueKeyNonclusteredVarcharPk(t *testing.T) {
 	require.NoError(t, err)
 	info.State = model.StatePublic
 	require.False(t, info.PKIsHandle)
-	tbl, err := tables.TableFromMeta(tidbkv.NewPanickingAllocators(info.SepAutoInc(), 0), info)
+	tbl, err := tables.TableFromMeta(tidbkv.NewPanickingAllocators(info.SepAutoInc()), info)
 	require.NoError(t, err)
 	require.False(t, tbl.Meta().HasClusteredIndex())
 
