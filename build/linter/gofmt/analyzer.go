@@ -45,10 +45,7 @@ func run(pass *analysis.Pass) (any, error) {
 			fileNames = append(fileNames, pos.Filename)
 		}
 	}
-	rules := []gofmt.RewriteRule{{
-		Pattern:     "interface{}",
-		Replacement: "any",
-	}}
+	rules := []gofmt.RewriteRule{}
 	for _, f := range fileNames {
 		diff, err := gofmt.RunRewrite(f, needSimplify, rules)
 		if err != nil {
