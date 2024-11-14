@@ -185,20 +185,38 @@ func TestMergeChunkCheckpoint(t *testing.T) {
 func TestRebaseCheckpoint(t *testing.T) {
 	cpd := NewTableCheckpointDiff()
 
-	m := RebaseCheckpointMerger{AllocBase: 10000}
+	m := RebaseCheckpointMerger{
+		AutoRandBase:  132861,
+		AutoIncrBase:  132862,
+		AutoRowIDBase: 132863,
+	}
 	m.MergeInto(cpd)
 
-	require.Equal(t, &TableCheckpointDiff{
-		hasRebase: true,
-		allocBase: 10000,
-		engines:   make(map[int32]engineCheckpointDiff),
-	}, cpd)
+	expected := &TableCheckpointDiff{
+		hasRebase:     true,
+		autoRandBase:  132861,
+		autoIncrBase:  132862,
+		autoRowIDBase: 132863,
+		engines:       make(map[int32]engineCheckpointDiff),
+	}
+	require.Equal(t, expected, cpd)
+
+	// shouldn't go backwards
+	m2 := RebaseCheckpointMerger{
+		AutoRandBase:  131,
+		AutoIncrBase:  132,
+		AutoRowIDBase: 133,
+	}
+	m2.MergeInto(cpd)
+	require.Equal(t, expected, cpd)
 }
 
 func TestApplyDiff(t *testing.T) {
 	cp := TableCheckpoint{
-		Status:    CheckpointStatusLoaded,
-		AllocBase: 123,
+		Status:        CheckpointStatusLoaded,
+		AutoRandBase:  131,
+		AutoIncrBase:  132,
+		AutoRowIDBase: 133,
 		Engines: map[int32]*EngineCheckpoint{
 			-1: {
 				Status: CheckpointStatusLoaded,
@@ -233,7 +251,11 @@ func TestApplyDiff(t *testing.T) {
 	(&StatusCheckpointMerger{EngineID: -1, Status: CheckpointStatusImported}).MergeInto(cpd)
 	(&StatusCheckpointMerger{EngineID: WholeTableEngineID, Status: CheckpointStatusAllWritten}).MergeInto(cpd)
 	(&StatusCheckpointMerger{EngineID: 1234, Status: CheckpointStatusAnalyzeSkipped}).MergeInto(cpd)
-	(&RebaseCheckpointMerger{AllocBase: 11111}).MergeInto(cpd)
+	(&RebaseCheckpointMerger{
+		AutoRandBase:  1131,
+		AutoIncrBase:  1132,
+		AutoRowIDBase: 1133,
+	}).MergeInto(cpd)
 	(&ChunkCheckpointMerger{
 		EngineID: 0,
 		Key:      ChunkCheckpointKey{Path: "/tmp/01.sql"},
@@ -263,8 +285,10 @@ func TestApplyDiff(t *testing.T) {
 	cp.Apply(cpd)
 
 	require.Equal(t, TableCheckpoint{
-		Status:    CheckpointStatusAllWritten,
-		AllocBase: 11111,
+		Status:        CheckpointStatusAllWritten,
+		AutoRandBase:  1131,
+		AutoIncrBase:  1132,
+		AutoRowIDBase: 1133,
 		Engines: map[int32]*EngineCheckpoint{
 			-1: {
 				Status: CheckpointStatusImported,
@@ -351,4 +375,21 @@ func TestSeparateCompletePath(t *testing.T) {
 		require.Equal(t, testCase.expectFileName, fileName)
 		require.Equal(t, testCase.expectPath, newPath)
 	}
+}
+
+func TestTableCheckpointApplyBases(t *testing.T) {
+	tblCP := TableCheckpoint{
+		AutoRowIDBase: 11,
+		AutoIncrBase:  12,
+		AutoRandBase:  13,
+	}
+	tblCP.Apply(&TableCheckpointDiff{
+		hasRebase:     true,
+		autoRowIDBase: 1,
+		autoIncrBase:  2,
+		autoRandBase:  3,
+	})
+	require.EqualValues(t, 11, tblCP.AutoRowIDBase)
+	require.EqualValues(t, 12, tblCP.AutoIncrBase)
+	require.EqualValues(t, 13, tblCP.AutoRandBase)
 }
