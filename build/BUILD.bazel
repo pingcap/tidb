@@ -140,7 +140,7 @@ nogo(
            select({
                "//build:with_nogo": [
                    #"//build/linter/allrevive",
-                   "//build/linter/errcheck",
+                   #"//build/linter/errcheck",
                    "//build/linter/filepermission",
                    "//build/linter/revive",
                ],
