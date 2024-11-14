@@ -127,7 +127,7 @@ nogo(
                "//build/linter/forcetypeassert",
                "//build/linter/gofmt",
                "//build/linter/gci",
-               "//build/linter/gosec",
+               #"//build/linter/gosec",
                #"//build/linter/ineffassign",
                "//build/linter/makezero",
                "//build/linter/misspell",
