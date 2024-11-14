@@ -58,6 +58,7 @@ go_library(
         "//util/tls",
         "//util/topsql/state",
         "//util/versioninfo",
+        "@com_github_docker_go_units//:go-units",
         "@com_github_pingcap_errors//:errors",
         "@com_github_tikv_client_go_v2//config",
         "@com_github_tikv_client_go_v2//kv",
