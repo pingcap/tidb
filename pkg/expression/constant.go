@@ -32,7 +32,7 @@ import (
 
 var _ base.HashEquals = &Constant{}
 
-// NewOne stands for a number 1.
+// NewOne stands for an unsigned number 1.
 func NewOne() *Constant {
 	retT := types.NewFieldType(mysql.TypeTiny)
 	retT.AddFlag(mysql.UnsignedFlag) // shrink range to avoid integral promotion
@@ -44,10 +44,32 @@ func NewOne() *Constant {
 	}
 }
 
-// NewZero stands for a number 0.
+// NewSignedOne stands for a signed number 1.
+func NewSignedOne() *Constant {
+	retT := types.NewFieldType(mysql.TypeTiny)
+	retT.SetFlen(1)
+	retT.SetDecimal(0)
+	return &Constant{
+		Value:   types.NewDatum(1),
+		RetType: retT,
+	}
+}
+
+// NewZero stands for an unsigned number 0.
 func NewZero() *Constant {
 	retT := types.NewFieldType(mysql.TypeTiny)
 	retT.AddFlag(mysql.UnsignedFlag) // shrink range to avoid integral promotion
+	retT.SetFlen(1)
+	retT.SetDecimal(0)
+	return &Constant{
+		Value:   types.NewDatum(0),
+		RetType: retT,
+	}
+}
+
+// NewSignedZero stands for a signed number 0.
+func NewSignedZero() *Constant {
+	retT := types.NewFieldType(mysql.TypeTiny)
 	retT.SetFlen(1)
 	retT.SetDecimal(0)
 	return &Constant{
