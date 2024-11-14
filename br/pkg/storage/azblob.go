@@ -35,8 +35,6 @@ const (
 	azblobAccountName      = "azblob.account-name"
 	azblobAccountKey       = "azblob.account-key"
 	azblobSASToken         = "azblob.sas-token"
-	azblobEncryptionScope  = "azblob.encryption-scope"
-	azblobEncryptionKey    = "azblob.encryption-key"
 )
 
 const azblobRetryTimes int32 = 5
@@ -53,13 +51,11 @@ func getDefaultClientOptions() *azblob.ClientOptions {
 
 // AzblobBackendOptions is the options for Azure Blob storage.
 type AzblobBackendOptions struct {
-	Endpoint        string `json:"endpoint" toml:"endpoint"`
-	AccountName     string `json:"account-name" toml:"account-name"`
-	AccountKey      string `json:"account-key" toml:"account-key"`
-	AccessTier      string `json:"access-tier" toml:"access-tier"`
-	SASToken        string `json:"sas-token" toml:"sas-token"`
-	EncryptionScope string `json:"encryption-scope" toml:"encryption-scope"`
-	EncryptionKey   string `json:"encryption-key" toml:"encryption-key"`
+	Endpoint    string `json:"endpoint" toml:"endpoint"`
+	AccountName string `json:"account-name" toml:"account-name"`
+	AccountKey  string `json:"account-key" toml:"account-key"`
+	AccessTier  string `json:"access-tier" toml:"access-tier"`
+	SASToken    string `json:"sas-token" toml:"sas-token"`
 }
 
 func (options *AzblobBackendOptions) apply(azblob *backuppb.AzureBlobStorage) error {
@@ -67,10 +63,6 @@ func (options *AzblobBackendOptions) apply(azblob *backuppb.AzureBlobStorage) er
 	azblob.StorageClass = options.AccessTier
 	azblob.AccountName = options.AccountName
 	azblob.SharedKey = options.AccountKey
-
-	if len(options.EncryptionKey) == 0 {
-		options.EncryptionKey = os.Getenv("AZURE_ENCRYPTION_KEY")
-	}
 
 	return nil
 }
@@ -89,8 +81,6 @@ func hiddenAzblobFlags(flags *pflag.FlagSet) {
 	_ = flags.MarkHidden(azblobAccountName)
 	_ = flags.MarkHidden(azblobAccountKey)
 	_ = flags.MarkHidden(azblobSASToken)
-	_ = flags.MarkHidden(azblobEncryptionScope)
-	_ = flags.MarkHidden(azblobEncryptionKey)
 }
 
 func (options *AzblobBackendOptions) parseFromFlags(flags *pflag.FlagSet) error {
@@ -120,15 +110,6 @@ func (options *AzblobBackendOptions) parseFromFlags(flags *pflag.FlagSet) error 
 		return errors.Trace(err)
 	}
 
-	options.EncryptionScope, err = flags.GetString(azblobEncryptionScope)
-	if err != nil {
-		return errors.Trace(err)
-	}
-
-	options.EncryptionKey, err = flags.GetString(azblobEncryptionKey)
-	if err != nil {
-		return errors.Trace(err)
-	}
 	return nil
 }
 
