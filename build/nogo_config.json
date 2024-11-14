@@ -453,12 +453,12 @@
   },
   "unconvert": {
     "exclude_files": {
-      "/external/": "no need to vet third party code",
+      "external/": "no need to vet third party code",
       ".*\\.pb\\.go$": "generated code",
-      "parser/parser.go": "generated code",
+      "pkg/parser/parser.go": "generated code",
       "/cgo/": "no need to vet third party code for cgo",
-      "br/pkg/lightning/common/conn.go": "ignore: to fix it",
-      "br/pkg/lightning/common/storage_unix.go": "ignore: to fix it",
+      "pkg/lightning/common/conn.go": "ignore: to fix it",
+      "pkg/lightning/common/storage_unix.go": "ignore: to fix it",
       "br/pkg/task/common.go": "ignore: to fix it",
       ".*_generated\\.go$": "ignore generated code"
     }
@@ -497,410 +497,521 @@
   },
   "S1000": {
     "exclude_files": {
-      "/external/": "no need to vet third party code",
+      "pkg/parser/parser.go": "parser/parser.go code",
+      "external/": "no need to vet third party code",
       ".*_generated\\.go$": "ignore generated code"
     }
   },
   "S1001": {
     "exclude_files": {
-      "/external/": "no need to vet third party code",
+      "pkg/parser/parser.go": "parser/parser.go code",
+      "external/": "no need to vet third party code",
       ".*_generated\\.go$": "ignore generated code"
     }
   },
   "S1002": {
     "exclude_files": {
-      "/external/": "no need to vet third party code",
+      "pkg/parser/parser.go": "parser/parser.go code",
+      "external/": "no need to vet third party code",
       ".*_generated\\.go$": "ignore generated code"
     }
   },
   "S1003": {
     "exclude_files": {
-      "/external/": "no need to vet third party code",
+      "pkg/parser/parser.go": "parser/parser.go code",
+      "external/": "no need to vet third party code",
       ".*_generated\\.go$": "ignore generated code"
     }
   },
   "S1004": {
     "exclude_files": {
-      "/external/": "no need to vet third party code",
+      "pkg/parser/parser.go": "parser/parser.go code",
+      "external/": "no need to vet third party code",
       ".*_generated\\.go$": "ignore generated code"
     }
   },
   "S1005": {
     "exclude_files": {
-      "/external/": "no need to vet third party code",
+      "pkg/parser/parser.go": "parser/parser.go code",
+      "external/": "no need to vet third party code",
       ".*_generated\\.go$": "ignore generated code"
     }
   },
   "S1006": {
     "exclude_files": {
-      "/external/": "no need to vet third party code",
+      "pkg/parser/parser.go": "parser/parser.go code",
+      "external/": "no need to vet third party code",
       ".*_generated\\.go$": "ignore generated code"
     }
   },
   "S1007": {
     "exclude_files": {
-      "/external/": "no need to vet third party code",
+      "pkg/parser/parser.go": "parser/parser.go code",
+      "external/": "no need to vet third party code",
       ".*_generated\\.go$": "ignore generated code"
     }
   },
   "S1008": {
     "exclude_files": {
-      "/external/": "no need to vet third party code",
+      "pkg/parser/parser.go": "parser/parser.go code",
+      "external/": "no need to vet third party code",
       ".*_generated\\.go$": "ignore generated code"
     }
   },
   "S1009": {
     "exclude_files": {
-      "/external/": "no need to vet third party code",
+      "pkg/parser/parser.go": "parser/parser.go code",
+      "external/": "no need to vet third party code",
       ".*_generated\\.go$": "ignore generated code"
     }
   },
   "S1010": {
     "exclude_files": {
-      "/external/": "no need to vet third party code",
+      "pkg/parser/parser.go": "parser/parser.go code",
+      "external/": "no need to vet third party code",
       ".*_generated\\.go$": "ignore generated code"
     }
   },
   "S1011": {
     "exclude_files": {
-      "/external/": "no need to vet third party code",
+      "pkg/parser/parser.go": "parser/parser.go code",
+      "external/": "no need to vet third party code",
       ".*_generated\\.go$": "ignore generated code"
     }
   },
   "S1012": {
     "exclude_files": {
-      "/external/": "no need to vet third party code",
+      "pkg/parser/parser.go": "parser/parser.go code",
+      "external/": "no need to vet third party code",
       ".*_generated\\.go$": "ignore generated code"
     }
   },
   "S1013": {
     "exclude_files": {
-      "/external/": "no need to vet third party code",
+      "pkg/parser/parser.go": "parser/parser.go code",
+      "external/": "no need to vet third party code",
       ".*_generated\\.go$": "ignore generated code"
     }
   },
   "S1014": {
     "exclude_files": {
-      "/external/": "no need to vet third party code",
+      "pkg/parser/parser.go": "parser/parser.go code",
+      "external/": "no need to vet third party code",
       ".*_generated\\.go$": "ignore generated code"
     }
   },
   "S1015": {
     "exclude_files": {
-      "/external/": "no need to vet third party code",
+      "pkg/parser/parser.go": "parser/parser.go code",
+      "external/": "no need to vet third party code",
       ".*_generated\\.go$": "ignore generated code"
     }
   },
   "S1016": {
     "exclude_files": {
-      "/external/": "no need to vet third party code",
+      "pkg/parser/parser.go": "parser/parser.go code",
+      "external/": "no need to vet third party code",
       ".*_generated\\.go$": "ignore generated code"
     }
   },
   "S1017": {
     "exclude_files": {
-      "/external/": "no need to vet third party code",
+      "pkg/parser/parser.go": "parser/parser.go code",
+      "external/": "no need to vet third party code",
       ".*_generated\\.go$": "ignore generated code"
     }
   },
   "S1018": {
     "exclude_files": {
-      "/external/": "no need to vet third party code",
+      "pkg/parser/parser.go": "parser/parser.go code",
+      "external/": "no need to vet third party code",
       ".*_generated\\.go$": "ignore generated code"
     }
   },
   "S1019": {
     "exclude_files": {
-      "/external/": "no need to vet third party code",
+      "external/": "no need to vet third party code",
       ".*_generated\\.go$": "ignore generated code",
-      "parser/parser.go": "ignore code"
+      ".*mock.go$": "ignore generated code",
+      "pkg/parser/parser.go": "ignore code"
     }
   },
   "S1020": {
     "exclude_files": {
-      "/external/": "no need to vet third party code",
+      "pkg/parser/parser.go": "parser/parser.go code",
+      "external/": "no need to vet third party code",
       ".*_generated\\.go$": "ignore generated code"
     }
   },
   "S1021": {
     "exclude_files": {
-      "/external/": "no need to vet third party code",
+      "pkg/parser/parser.go": "parser/parser.go code",
+      "external/": "no need to vet third party code",
       ".*_generated\\.go$": "ignore generated code",
+      ".*mock.go$": "ignore generated code",
       "tools/check/ut.go": "ignore code"
     }
   },
   "S1022": {
     "exclude_files": {
-      "/external/": "no need to vet third party code",
+      "pkg/parser/parser.go": "parser/parser.go code",
+      "external/": "no need to vet third party code",
       ".*_generated\\.go$": "ignore generated code"
     }
   },
   "S1023": {
     "exclude_files": {
-      "/external/": "no need to vet third party code",
+      "external/": "no need to vet third party code",
       ".*_generated\\.go$": "ignore generated code",
-      "parser/parser.go": "ignore code"
+      ".*mock.go$": "ignore generated code",
+      "pkg/parser/parser.go": "ignore code"
     }
   },
   "S1024": {
     "exclude_files": {
-      "/external/": "no need to vet third party code",
+      "pkg/parser/parser.go": "parser/parser.go code",
+      "external/": "no need to vet third party code",
       ".*_generated\\.go$": "ignore generated code"
     }
   },
   "S1025": {
     "exclude_files": {
-      "/external/": "no need to vet third party code",
+      "pkg/parser/parser.go": "parser/parser.go code",
+      "external/": "no need to vet third party code",
       ".*_generated\\.go$": "ignore generated code"
     }
   },
   "S1026": {
     "exclude_files": {
-      "/external/": "no need to vet third party code",
+      "pkg/parser/parser.go": "parser/parser.go code",
+      "external/": "no need to vet third party code",
       ".*_generated\\.go$": "ignore generated code"
     }
   },
   "S1027": {
     "exclude_files": {
-      "/external/": "no need to vet third party code",
+      "pkg/parser/parser.go": "parser/parser.go code",
+      "external/": "no need to vet third party code",
       ".*_generated\\.go$": "ignore generated code"
     }
   },
   "S1028": {
     "exclude_files": {
-      "/external/": "no need to vet third party code",
+      "pkg/parser/parser.go": "parser/parser.go code",
+      "external/": "no need to vet third party code",
       ".*_generated\\.go$": "ignore generated code"
     }
   },
   "S1029": {
     "exclude_files": {
-      "/external/": "no need to vet third party code",
+      "pkg/parser/parser.go": "parser/parser.go code",
+      "external/": "no need to vet third party code",
       ".*_generated\\.go$": "ignore generated code"
     }
   },
   "S1030": {
     "exclude_files": {
-      "/external/": "no need to vet third party code",
+      "pkg/parser/parser.go": "parser/parser.go code",
+      "external/": "no need to vet third party code",
       ".*_generated\\.go$": "ignore generated code"
     }
   },
   "S1031": {
     "exclude_files": {
-      "/external/": "no need to vet third party code",
+      "pkg/parser/parser.go": "parser/parser.go code",
+      "external/": "no need to vet third party code",
       ".*_generated\\.go$": "ignore generated code"
     }
   },
   "S1032": {
     "exclude_files": {
-      "/external/": "no need to vet third party code",
+      "pkg/parser/parser.go": "parser/parser.go code",
+      "external/": "no need to vet third party code",
       ".*_generated\\.go$": "ignore generated code"
     }
   },
   "S1033": {
     "exclude_files": {
-      "/external/": "no need to vet third party code",
+      "pkg/parser/parser.go": "parser/parser.go code",
+      "external/": "no need to vet third party code",
       ".*_generated\\.go$": "ignore generated code"
     }
   },
   "S1034": {
     "exclude_files": {
-      "/external/": "no need to vet third party code",
+      "pkg/parser/parser.go": "parser/parser.go code",
+      "external/": "no need to vet third party code",
       ".*_generated\\.go$": "ignore generated code"
     }
   },
   "S1035": {
     "exclude_files": {
-      "/external/": "no need to vet third party code",
+      "pkg/parser/parser.go": "parser/parser.go code",
+      "external/": "no need to vet third party code",
       ".*_generated\\.go$": "ignore generated code"
     }
   },
   "S1036": {
     "exclude_files": {
-      "/external/": "no need to vet third party code",
+      "pkg/parser/parser.go": "parser/parser.go code",
+      "external/": "no need to vet third party code",
       ".*_generated\\.go$": "ignore generated code"
     }
   },
   "S1037": {
     "exclude_files": {
-      "/external/": "no need to vet third party code",
+      "pkg/parser/parser.go": "parser/parser.go code",
+      "external/": "no need to vet third party code",
       ".*_generated\\.go$": "ignore generated code"
     }
   },
   "S1038": {
     "exclude_files": {
-      "/external/": "no need to vet third party code",
+      "pkg/parser/parser.go": "parser/parser.go code",
+      "external/": "no need to vet third party code",
       ".*_generated\\.go$": "ignore generated code"
     }
   },
   "S1039": {
     "exclude_files": {
-      "/external/": "no need to vet third party code",
+      "pkg/parser/parser.go": "parser/parser.go code",
+      "external/": "no need to vet third party code",
       ".*_generated\\.go$": "ignore generated code"
     }
   },
   "S1040": {
     "exclude_files": {
-      "/external/": "no need to vet third party code",
+      "external/": "no need to vet third party code",
       ".*_generated\\.go$": "ignore generated code",
-      "parser/parser.go": "ignore generated code"
+      ".*mock.go$": "ignore generated code",
+      "pkg/parser/parser.go": "ignore generated code"
     }
   },
   "SA1019": {
     "exclude_files": {
+      "pkg/parser/parser.go": "parser/parser.go code",
       "/build/": "no need to linter code",
-      "/external/": "no need to vet third party code",
+      "external/": "no need to vet third party code",
       ".*_generated\\.go$": "ignore generated code",
-      ".*_test\\.go$": "ignore test code"
+      ".*mock.go$": "ignore generated code",
+      ".*_test\\.go$": "ignore test code",
+      "br/pkg/restore/split/client.go": "github.com/golang/protobuf deprecated",
+      "br/pkg/streamhelper/advancer_cliext.go": "github.com/golang/protobuf deprecated",
+      "pkg/lightning/checkpoints/checkpoints.go": "cfg.TikvImporter.Addr is deprecated",
+      "pkg/lightning/checkpoints/glue_checkpoint.go": "cfg.TikvImporter.Addr is deprecated",
+      "pkg/lightning/backend/local/local.go": "grpc Compressor/Decompressor is deprecated",
+      "pkg/lightning/backend/local/compress.go": "grpc Compressor/Decompressor is deprecated",
+      "pkg/domain/infosync/resource_manager_client.go": "github.com/golang/protobuf deprecated"
     },
     "only_files": {
-      "util/gctuner": "util/gctuner",
-      "util/cgroup": "util/cgroup code",
-      "util/watcher": "util/watcher",
-      "br/pkg/lightning/restore/": "br/pkg/lightning/restore/",
-      "br/pkg/lightning/mydump/": "br/pkg/lightning/mydump/",
-      "executor/aggregate.go": "executor/aggregate.go",
-      "types/json_binary_functions.go": "types/json_binary_functions.go",
-      "types/json_binary_test.go": "types/json_binary_test.go",
-      "ddl/": "enable to ddl",
-      "expression/builtin_cast.go": "enable expression/builtin_cast.go",
-      "planner/core/plan.go": "planner/core/plan.go",
-      "server/conn.go": "server/conn.go",
-      "server/conn_stmt.go": "server/conn_stmt.go",
-      "server/conn_test.go": "server/conn_test.go",
-      "extension/": "extension code"
+      "pkg/expression/bench_test.go": "expression/bench_test.go",
+      "pkg/domain/": "domain code",
+      "pkg/util/gctuner": "util/gctuner",
+      "pkg/util/cgroup": "util/cgroup code",
+      "pkg/util/watcher": "util/watcher",
+      "pkg/br/pkg/": "br/pkg",
+      "pkg/executor/aggregate.go": "executor/aggregate.go",
+      "pkg/types/": "types",
+      "pkg/ddl/": "enable to ddl",
+      "pkg/expression/builtin_cast.go": "enable expression/builtin_cast.go",
+      "pkg/planner/core/plan.go": "planner/core/plan.go",
+      "pkg/extension/": "extension code",
+      "pkg/resourcemanager/": "resourcemanager code",
+      "pkg/keyspace/": "keyspace code",
+      "pkg/server/": "server code",
+      "pkg/owner/": "owner code",
+      "pkg/meta": "meta code",
+      "pkg/timer/": "timer code",
+      "pkg/statistics/": "statistics code"
+    }
+  },
+  "SA1029": {
+    "exclude_files": {
+      "pkg/parser/parser.go": "parser/parser.go code",
+      "external/": "no need to vet third party code",
+      ".*_generated\\.go$": "ignore generated code",
+      ".*mock.go$": "ignore generated code",
+      ".*_test\\.go$": "ignore test code"
     }
   },
   "SA2000": {
     "exclude_files": {
-      "/external/": "no need to vet third party code",
+      "pkg/parser/parser.go": "parser/parser.go code",
+      "external/": "no need to vet third party code",
       ".*_generated\\.go$": "ignore generated code"
     }
   },
   "SA2001": {
     "exclude_files": {
-      "/external/": "no need to vet third party code",
+      "pkg/parser/parser.go": "parser/parser.go code",
+      "external/": "no need to vet third party code",
       ".*_generated\\.go$": "ignore generated code"
     }
   },
   "SA2003": {
     "exclude_files": {
-      "/external/": "no need to vet third party code",
+      "pkg/parser/parser.go": "parser/parser.go code",
+      "external/": "no need to vet third party code",
       ".*_generated\\.go$": "ignore generated code"
     }
   },
   "SA3000": {
     "exclude_files": {
-      "/external/": "no need to vet third party code",
+      "pkg/parser/parser.go": "parser/parser.go code",
+      "external/": "no need to vet third party code",
       ".*_generated\\.go$": "ignore generated code"
     }
   },
   "SA3001": {
     "exclude_files": {
-      "/external/": "no need to vet third party code",
+      "pkg/parser/parser.go": "parser/parser.go code",
+      "external/": "no need to vet third party code",
+      ".*_generated\\.go$": "ignore generated code"
+    }
+  },
+  "SA4004": {
+    "exclude_files": {
+      "pkg/parser/parser.go": "parser/parser.go code",
+      "server/http_status.go": "ignore server/http_status.go",
+      "external/": "no need to vet third party code",
       ".*_generated\\.go$": "ignore generated code"
     }
   },
   "SA4009": {
     "exclude_files": {
-      "/external/": "no need to vet third party code",
+      "pkg/parser/parser.go": "parser/parser.go code",
+      "external/": "no need to vet third party code",
+      ".*_generated\\.go$": "ignore generated code"
+    }
+  },
+  "SA4018": {
+    "exclude_files": {
+      "pkg/parser/parser.go": "parser/parser.go code",
+      "external/": "no need to vet third party code",
       ".*_generated\\.go$": "ignore generated code"
     }
   },
   "SA5000": {
     "exclude_files": {
-      "/external/": "no need to vet third party code",
+      "pkg/parser/parser.go": "parser/parser.go code",
+      "external/": "no need to vet third party code",
       ".*_generated\\.go$": "ignore generated code"
     }
   },
   "SA5001": {
     "exclude_files": {
-      "/external/": "no need to vet third party code",
+      "pkg/parser/parser.go": "parser/parser.go code",
+      "external/": "no need to vet third party code",
       ".*_generated\\.go$": "ignore generated code"
     }
   },
   "SA5002": {
     "exclude_files": {
-      "/external/": "no need to vet third party code",
+      "pkg/parser/parser.go": "parser/parser.go code",
+      "external/": "no need to vet third party code",
       ".*_generated\\.go$": "ignore generated code"
     }
   },
   "SA5003": {
     "exclude_files": {
-      "/external/": "no need to vet third party code",
+      "pkg/parser/parser.go": "parser/parser.go code",
+      "external/": "no need to vet third party code",
       ".*_generated\\.go$": "ignore generated code"
     }
   },
   "SA5004": {
     "exclude_files": {
-      "/external/": "no need to vet third party code",
+      "pkg/parser/parser.go": "parser/parser.go code",
+      "external/": "no need to vet third party code",
       ".*_generated\\.go$": "ignore generated code"
     }
   },
   "SA5005": {
     "exclude_files": {
-      "/external/": "no need to vet third party code",
+      "pkg/parser/parser.go": "parser/parser.go code",
+      "external/": "no need to vet third party code",
       ".*_generated\\.go$": "ignore generated code"
     }
   },
   "SA5007": {
     "exclude_files": {
-      "/external/": "no need to vet third party code",
+      "pkg/parser/parser.go": "parser/parser.go code",
+      "external/": "no need to vet third party code",
       ".*_generated\\.go$": "ignore generated code"
     }
   },
   "SA5008": {
     "exclude_files": {
-      "/external/": "no need to vet third party code",
+      "pkg/parser/parser.go": "parser/parser.go code",
+      "external/": "no need to vet third party code",
       ".*_generated\\.go$": "ignore generated code"
     }
   },
   "SA5009": {
     "exclude_files": {
-      "/external/": "no need to vet third party code",
+      "pkg/parser/parser.go": "parser/parser.go code",
+      "external/": "no need to vet third party code",
       ".*_generated\\.go$": "ignore generated code"
     }
   },
   "SA5010": {
     "exclude_files": {
-      "/external/": "no need to vet third party code",
+      "pkg/parser/parser.go": "parser/parser.go code",
+      "external/": "no need to vet third party code",
       ".*_generated\\.go$": "ignore generated code"
     }
   },
   "SA5011": {
     "exclude_files": {
-      "/external/": "no need to vet third party code",
+      "pkg/parser/parser.go": "parser/parser.go code",
+      "external/": "no need to vet third party code",
       ".*_generated\\.go$": "ignore generated code"
     }
   },
   "SA5012": {
     "exclude_files": {
-      "/external/": "no need to vet third party code",
+      "pkg/parser/parser.go": "parser/parser.go code",
+      "external/": "no need to vet third party code",
       ".*_generated\\.go$": "ignore generated code"
     }
   },
   "SA6000": {
     "exclude_files": {
-      "/external/": "no need to vet third party code",
+      "pkg/parser/parser.go": "parser/parser.go code",
+      "external/": "no need to vet third party code",
       ".*_generated\\.go$": "ignore generated code"
     }
   },
   "SA6001": {
     "exclude_files": {
-      "/external/": "no need to vet third party code",
+      "pkg/parser/parser.go": "parser/parser.go code",
+      "external/": "no need to vet third party code",
+      ".*_generated\\.go$": "ignore generated code"
+    }
+  },
+  "SA6002": {
+    "exclude_files": {
+      "pkg/parser/parser.go": "parser/parser.go code",
+      "external/": "no need to vet third party code",
+      "pkg/util/zeropool/pool_test.go": "util/zeropool/pool_test.go",
       ".*_generated\\.go$": "ignore generated code"
     }
   },
   "SA6005": {
     "exclude_files": {
-      "/external/": "no need to vet third party code",
+      "pkg/parser/parser.go": "parser/parser.go code",
+      "external/": "no need to vet third party code",
       ".*_generated\\.go$": "ignore generated code"
     }
   },
   "prealloc": {
     "exclude_files": {
-      "/external/": "no need to vet third party code",
+      "pkg/parser/parser.go": "parser/parser.go code",
+      "cmd/mirror": "cmd/mirror code",
+      "external/": "no need to vet third party code",
       ".*_generated\\.go$": "ignore generated code",
-      "parser/yy_parser.go": "ignore generated code",
+      ".*mock.go$": "ignore generated code",
+      "pkg/parser/yy_parser.go": "ignore generated code",
       "/cgo/": "no need to vet third party code for cgo"
     }
   },
@@ -917,15 +1028,84 @@
   },
   "U1000": {
     "exclude_files": {
-      "/external/": "no need to vet third party code",
+      "pkg/parser/parser.go": "parser/parser.go code",
+      "external/": "no need to vet third party code",
       ".*_generated\\.go$": "ignore generated code"
     }
   },
   "etcdconfig": {
     "exclude_files": {
-      "parser/parser.go": "parser/parser.go code",
+      "pkg/parser/parser.go": "parser/parser.go code",
       ".*_test.go": "ignore test code",
+      ".*_generated\\.go$": "ignore generated code",
+      ".*mock.go$": "ignore generated code",
       "external/": "no need to vet third party code"
+    }
+  },
+  "constructor": {
+    "exclude_files": {
+      "parser/parser.go": "parser/parser.go code",
+      ".*_generated\\.go$": "ignore generated code",
+      ".*mock.go$": "ignore generated code",
+      "external/": "no need to vet third party code",
+      "build/linter/constructor/testdata/": "no need to vet the test inside the linter"
+    }
+  },
+  "deferrecover": {
+    "exclude_files": {
+      "pkg/parser/parser.go": "parser/parser.go code",
+      ".*_test.go": "ignore test code",
+      ".*_generated\\.go$": "ignore generated code",
+      ".*mock.go$": "ignore generated code",
+      "external/": "no need to vet third party code"
+    }
+  },
+  "QF1002": {
+    "exclude_files": {
+      "pkg/parser/parser.go": "parser/parser.go code",
+      ".*_test.go": "ignore test code",
+      ".*_generated\\.go$": "ignore generated code",
+      ".*mock.go$": "ignore generated code",
+      "external/": "no need to vet third party code"
+    }
+  },
+  "QF1004": {
+    "exclude_files": {
+      "pkg/parser/parser.go": "parser/parser.go code",
+      ".*_test.go": "ignore test code",
+      "external/": "no need to vet third party code",
+      ".*_generated\\.go$": "ignore generated code",
+      ".*mock.go$": "ignore generated code",
+      "/cgo/": "no need to vet third party code for cgo"
+    }
+  },
+  "QF1012": {
+    "exclude_files": {
+      "pkg/parser/parser.go": "parser/parser.go code",
+      ".*_test.go": "ignore test code",
+      "external/": "no need to vet third party code",
+      ".*_generated\\.go$": "ignore generated code",
+      ".*mock.go$": "ignore generated code",
+      "/cgo/": "no need to vet third party code for cgo"
+    }
+  },
+  "bootstrap": {
+    "only_files": {
+      "pkg/session/": "bootstrap code"
+    }
+  },
+  "appends": {
+    "exclude_files": {
+      "pkg/parser/parser.go": "parser/parser.go code",
+      "external/": "no need to vet third party code",
+      ".*_generated\\.go$": "ignore generated code"
+    }
+  },
+  "unusedwrite": {
+    "exclude_files": {
+      "pkg/parser/parser.go": "parser/parser.go code",
+      "external/": "no need to vet third party code",
+      ".*_generated\\.go$": "ignore generated code"
     }
   }
 }
