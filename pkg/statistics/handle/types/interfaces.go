@@ -118,6 +118,7 @@ type StatsHistory interface {
 	RecordHistoricalStatsToStorage(dbName string, tableInfo *model.TableInfo, physicalID int64, isPartition bool) (uint64, error)
 }
 
+// PriorityQueueSnapshot is the snapshot of the stats priority queue.
 type PriorityQueueSnapshot struct {
 	CurrentJobs     []AnalysisJobJSON `json:"current_jobs"`
 	MustRetryTables []int64           `json:"must_retry_tables"`
