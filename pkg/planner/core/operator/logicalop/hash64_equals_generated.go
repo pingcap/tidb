@@ -638,3 +638,174 @@ func (op *LogicalPartitionUnionAll) Equals(other any) bool {
 	}
 	return true
 }
+
+// Hash64 implements the Hash64Equals interface.
+func (op *LogicalProjection) Hash64(h base.Hasher) {
+	h.HashString(plancodec.TypeProj)
+	op.LogicalSchemaProducer.Hash64(h)
+	if op.Exprs == nil {
+		h.HashByte(base.NilFlag)
+	} else {
+		h.HashByte(base.NotNilFlag)
+		h.HashInt(len(op.Exprs))
+		for _, one := range op.Exprs {
+			one.Hash64(h)
+		}
+	}
+	h.HashBool(op.CalculateNoDelay)
+	h.HashBool(op.Proj4Expand)
+}
+
+// Equals implements the Hash64Equals interface, only receive *LogicalProjection pointer.
+func (op *LogicalProjection) Equals(other any) bool {
+	op2, ok := other.(*LogicalProjection)
+	if !ok {
+		return false
+	}
+	if op == nil {
+		return op2 == nil
+	}
+	if op2 == nil {
+		return false
+	}
+	if !op.LogicalSchemaProducer.Equals(&op2.LogicalSchemaProducer) {
+		return false
+	}
+	if (op.Exprs == nil && op2.Exprs != nil) || (op.Exprs != nil && op2.Exprs == nil) || len(op.Exprs) != len(op2.Exprs) {
+		return false
+	}
+	for i, one := range op.Exprs {
+		if !one.Equals(op2.Exprs[i]) {
+			return false
+		}
+	}
+	if op.CalculateNoDelay != op2.CalculateNoDelay {
+		return false
+	}
+	if op.Proj4Expand != op2.Proj4Expand {
+		return false
+	}
+	return true
+}
+
+// Hash64 implements the Hash64Equals interface.
+func (op *LogicalSelection) Hash64(h base.Hasher) {
+	h.HashString(plancodec.TypeSel)
+	if op.Conditions == nil {
+		h.HashByte(base.NilFlag)
+	} else {
+		h.HashByte(base.NotNilFlag)
+		h.HashInt(len(op.Conditions))
+		for _, one := range op.Conditions {
+			one.Hash64(h)
+		}
+	}
+}
+
+// Equals implements the Hash64Equals interface, only receive *LogicalSelection pointer.
+func (op *LogicalSelection) Equals(other any) bool {
+	op2, ok := other.(*LogicalSelection)
+	if !ok {
+		return false
+	}
+	if op == nil {
+		return op2 == nil
+	}
+	if op2 == nil {
+		return false
+	}
+	if (op.Conditions == nil && op2.Conditions != nil) || (op.Conditions != nil && op2.Conditions == nil) || len(op.Conditions) != len(op2.Conditions) {
+		return false
+	}
+	for i, one := range op.Conditions {
+		if !one.Equals(op2.Conditions[i]) {
+			return false
+		}
+	}
+	return true
+}
+
+// Hash64 implements the Hash64Equals interface.
+func (op *LogicalShow) Hash64(h base.Hasher) {
+	h.HashString(plancodec.TypeShow)
+	op.LogicalSchemaProducer.Hash64(h)
+}
+
+// Equals implements the Hash64Equals interface, only receive *LogicalShow pointer.
+func (op *LogicalShow) Equals(other any) bool {
+	op2, ok := other.(*LogicalShow)
+	if !ok {
+		return false
+	}
+	if op == nil {
+		return op2 == nil
+	}
+	if op2 == nil {
+		return false
+	}
+	if !op.LogicalSchemaProducer.Equals(&op2.LogicalSchemaProducer) {
+		return false
+	}
+	return true
+}
+
+// Hash64 implements the Hash64Equals interface.
+func (op *LogicalShowDDLJobs) Hash64(h base.Hasher) {
+	h.HashString(plancodec.TypeShowDDLJobs)
+	op.LogicalSchemaProducer.Hash64(h)
+}
+
+// Equals implements the Hash64Equals interface, only receive *LogicalShowDDLJobs pointer.
+func (op *LogicalShowDDLJobs) Equals(other any) bool {
+	op2, ok := other.(*LogicalShowDDLJobs)
+	if !ok {
+		return false
+	}
+	if op == nil {
+		return op2 == nil
+	}
+	if op2 == nil {
+		return false
+	}
+	if !op.LogicalSchemaProducer.Equals(&op2.LogicalSchemaProducer) {
+		return false
+	}
+	return true
+}
+
+// Hash64 implements the Hash64Equals interface.
+func (op *LogicalSort) Hash64(h base.Hasher) {
+	h.HashString(plancodec.TypeSort)
+	if op.ByItems == nil {
+		h.HashByte(base.NilFlag)
+	} else {
+		h.HashByte(base.NotNilFlag)
+		h.HashInt(len(op.ByItems))
+		for _, one := range op.ByItems {
+			one.Hash64(h)
+		}
+	}
+}
+
+// Equals implements the Hash64Equals interface, only receive *LogicalSort pointer.
+func (op *LogicalSort) Equals(other any) bool {
+	op2, ok := other.(*LogicalSort)
+	if !ok {
+		return false
+	}
+	if op == nil {
+		return op2 == nil
+	}
+	if op2 == nil {
+		return false
+	}
+	if (op.ByItems == nil && op2.ByItems != nil) || (op.ByItems != nil && op2.ByItems == nil) || len(op.ByItems) != len(op2.ByItems) {
+		return false
+	}
+	for i, one := range op.ByItems {
+		if !one.Equals(op2.ByItems[i]) {
+			return false
+		}
+	}
+	return true
+}
