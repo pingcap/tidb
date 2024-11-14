@@ -187,8 +187,10 @@ func (rc *SnapClient) Close() {
 	// close the connection, and it must be succeed when in SQL mode.
 	rc.closeConn()
 
-	if err := rc.restorer.Close(); err != nil {
-		log.Warn("failed to close file restorer")
+	if rc.restorer != nil {
+		if err := rc.restorer.Close(); err != nil {
+			log.Warn("failed to close file restorer")
+		}
 	}
 
 	log.Info("Restore client closed")

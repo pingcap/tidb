@@ -116,8 +116,10 @@ func NewLogRestoreManager(
 }
 
 func (l *LogRestoreManager) Close(ctx context.Context) {
-	if err := l.fileImporter.Close(); err != nil {
-		log.Warn("failed to close file importer")
+	if l.fileImporter != nil {
+		if err := l.fileImporter.Close(); err != nil {
+			log.Warn("failed to close file importer")
+		}
 	}
 	if l.checkpointRunner != nil {
 		l.checkpointRunner.WaitForFinish(ctx, true)
@@ -133,8 +135,10 @@ type SstRestoreManager struct {
 }
 
 func (s *SstRestoreManager) Close(ctx context.Context) {
-	if err := s.restorer.Close(); err != nil {
-		log.Warn("failed to close file restorer")
+	if s.restorer != nil {
+		if err := s.restorer.Close(); err != nil {
+			log.Warn("failed to close file restorer")
+		}
 	}
 	if s.checkpointRunner != nil {
 		s.checkpointRunner.WaitForFinish(ctx, true)
@@ -229,8 +233,12 @@ func NewRestoreClient(
 // Close a client.
 func (rc *LogClient) Close(ctx context.Context) {
 	defer func() {
-		rc.logRestoreManager.Close(ctx)
-		rc.sstRestoreManager.Close(ctx)
+		if rc.logRestoreManager != nil {
+			rc.logRestoreManager.Close(ctx)
+		}
+		if rc.sstRestoreManager != nil {
+			rc.sstRestoreManager.Close(ctx)
+		}
 	}()
 
 	// close the connection, and it must be succeed when in SQL mode.
