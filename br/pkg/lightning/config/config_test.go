@@ -690,7 +690,7 @@ func TestTomlPostRestore(t *testing.T) {
 		[post-restore]
 		checksum = "req"
 	`))
-	require.EqualError(t, err, "invalid op level 'req', please choose valid option between ['off', 'optional', 'required']")
+	require.EqualError(t, err, "toml: line 3 (last key \"post-restore.checksum\"): invalid op level 'req', please choose valid option between ['off', 'optional', 'required']")
 
 	err = cfg.LoadFromTOML([]byte(`
 		[post-restore]
