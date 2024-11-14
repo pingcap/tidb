@@ -374,7 +374,7 @@ func (j *DynamicPartitionedTableAnalysisJob) ToJSON() statstypes.AnalysisJobJSON
 		Indicators: statstypes.IndicatorsJSON{
 			ChangePercentage:     j.ChangePercentage,
 			TableSize:            j.TableSize,
-			LastAnalysisDuration: j.LastAnalysisDuration,
+			LastAnalysisDuration: fmt.Sprintf("%.2fs", j.LastAnalysisDuration.Seconds()),
 		},
 		HasNewlyAddedIndex: j.HasNewlyAddedIndex(),
 	}

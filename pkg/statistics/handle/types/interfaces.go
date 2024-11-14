@@ -135,9 +135,9 @@ type AnalysisJobJSON struct {
 
 // IndicatorsJSON represents the JSON format of Indicators.
 type IndicatorsJSON struct {
-	ChangePercentage     float64       `json:"change_percentage"`
-	TableSize            float64       `json:"table_size"`
-	LastAnalysisDuration time.Duration `json:"last_analysis_duration"`
+	ChangePercentage     float64 `json:"change_percentage"`
+	TableSize            float64 `json:"table_size"`
+	LastAnalysisDuration string  `json:"last_analysis_duration"`
 }
 
 // StatsAnalyze is used to handle auto-analyze and manage analyze jobs.
