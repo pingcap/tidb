@@ -157,7 +157,7 @@ func (sh StatsPriorityQueueHandler) ServeHTTP(w http.ResponseWriter, req *http.R
 	w.Header().Set("Content-Type", "application/json")
 
 	h := sh.do.StatsHandle()
-	tables, err := h.GetStatsPriorityQueue()
+	tables, err := h.GetPriorityQueueSnapshot()
 	if err != nil {
 		handler.WriteError(w, err)
 	} else {

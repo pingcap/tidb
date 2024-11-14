@@ -118,6 +118,11 @@ type StatsHistory interface {
 	RecordHistoricalStatsToStorage(dbName string, tableInfo *model.TableInfo, physicalID int64, isPartition bool) (uint64, error)
 }
 
+type PriorityQueueSnapshot struct {
+	CurrentJobs     []AnalysisJobJSON `json:"current_jobs"`
+	MustRetryTables []int64           `json:"must_retry_tables"`
+}
+
 // AnalysisJobJSON represents the JSON format of an AnalysisJob.
 type AnalysisJobJSON struct {
 	Type               string         `json:"type"`
@@ -177,8 +182,8 @@ type StatsAnalyze interface {
 	// CheckAnalyzeVersion checks whether all the statistics versions of this table's columns and indexes are the same.
 	CheckAnalyzeVersion(tblInfo *model.TableInfo, physicalIDs []int64, version *int) bool
 
-	// GetStatsPriorityQueue returns the stats priority queue.
-	GetStatsPriorityQueue() ([]AnalysisJobJSON, error)
+	// GetPriorityQueueSnapshot returns the stats priority queue.
+	GetPriorityQueueSnapshot() (PriorityQueueSnapshot, error)
 
 	// Close closes the analyze worker.
 	Close()

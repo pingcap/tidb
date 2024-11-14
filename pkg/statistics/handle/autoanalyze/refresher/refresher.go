@@ -189,20 +189,25 @@ func (r *Refresher) AnalyzeHighestPriorityTables(sctx sessionctx.Context) bool {
 	return false
 }
 
-func (r *Refresher) GetStatsPriorityQueue() ([]statstypes.AnalysisJobJSON, error) {
-	jobs, err := r.jobs.List()
+// GetPriorityQueueSnapshot returns the stats priority queue.
+func (r *Refresher) GetPriorityQueueSnapshot() (statstypes.PriorityQueueSnapshot, error) {
+	currentJobs, mustTables, err := r.jobs.Snapshot()
 	if err != nil {
-		return nil, err
+		return statstypes.PriorityQueueSnapshot{}, err
 	}
-	jsonJobs := make([]statstypes.AnalysisJobJSON, len(jobs))
-	for i, job := range jobs {
+	jsonJobs := make([]statstypes.AnalysisJobJSON, len(currentJobs))
+	for i, job := range currentJobs {
 		jsonJobs[i] = job.ToJSON()
 	}
 	// Sort by the weight in descending order.
 	sort.Slice(jsonJobs, func(i, j int) bool {
 		return jsonJobs[i].Weight > jsonJobs[j].Weight
 	})
-	return jsonJobs, nil
+
+	return statstypes.PriorityQueueSnapshot{
+		CurrentJobs:     jsonJobs,
+		MustRetryTables: mustTables,
+	}, nil
 }
 
 func (r *Refresher) setAutoAnalysisTimeWindow(
