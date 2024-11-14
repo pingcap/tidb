@@ -803,7 +803,7 @@ func (pq *AnalysisPriorityQueue) Len() (int, error) {
 // Snapshot returns a snapshot of all the jobs in the priority queue.
 func (pq *AnalysisPriorityQueue) Snapshot() (
 	currentJobs []AnalysisJob,
-	mustTables []int64,
+	mustRetryTables []int64,
 	err error) {
 	pq.syncFields.mu.RLock()
 	defer pq.syncFields.mu.RUnlock()
@@ -812,12 +812,12 @@ func (pq *AnalysisPriorityQueue) Snapshot() (
 	}
 
 	currentJobs = pq.syncFields.inner.list()
-	mustTables = make([]int64, 0, len(pq.syncFields.mustRetryJobs))
+	mustRetryTables = make([]int64, 0, len(pq.syncFields.mustRetryJobs))
 	for tableID := range pq.syncFields.mustRetryJobs {
-		mustTables = append(mustTables, tableID)
+		mustRetryTables = append(mustRetryTables, tableID)
 	}
 
-	return currentJobs, mustTables, nil
+	return currentJobs, mustRetryTables, nil
 }
 
 // Close closes the priority queue.
