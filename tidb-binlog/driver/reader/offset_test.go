@@ -19,7 +19,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Shopify/sarama"
+	"github.com/IBM/sarama"
 	pb "github.com/pingcap/tidb/tidb-binlog/proto/go-binlog"
 	"github.com/stretchr/testify/require"
 )

@@ -19,7 +19,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/Shopify/sarama"
+	"github.com/IBM/sarama"
 	_ "github.com/go-sql-driver/mysql"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/parser"

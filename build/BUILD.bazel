@@ -132,7 +132,6 @@ nogo(
                "//build/linter/ineffassign",
                "//build/linter/makezero",
                "//build/linter/misspell",
-               "//build/linter/noloopclosure",
                "//build/linter/prealloc",
                "//build/linter/predeclared",
                "//build/linter/unconvert",

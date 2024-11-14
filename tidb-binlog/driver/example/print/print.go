@@ -16,7 +16,7 @@ package main
 import (
 	"flag"
 
-	"github.com/Shopify/sarama"
+	"github.com/IBM/sarama"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/tidb-binlog/driver/reader"
 	"go.uber.org/zap"
