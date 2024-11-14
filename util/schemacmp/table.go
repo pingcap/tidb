@@ -15,6 +15,7 @@
 package schemacmp
 
 import (
+	"cmp"
 	"strings"
 
 	"github.com/pingcap/tidb/parser/format"
@@ -294,8 +295,8 @@ func sortedMap(input map[string]interface{}) []kvPair {
 		res = append(res, kvPair{key: key, value: value})
 	}
 
-	slices.SortFunc(res, func(a, b kvPair) bool {
-		return a.key < b.key
+	slices.SortFunc(res, func(a, b kvPair) int {
+		return cmp.Compare(a.key, b.key)
 	})
 	return res
 }

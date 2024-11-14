@@ -15,7 +15,6 @@ require (
 	github.com/aliyun/alibaba-cloud-sdk-go v1.61.1581
 	github.com/ashanbrown/makezero v1.1.1
 	github.com/aws/aws-sdk-go v1.44.259
-	github.com/bazelbuild/rules_go v0.50.1
 	github.com/blacktear23/go-proxyprotocol v1.0.6
 	github.com/carlmjohnson/flagext v0.21.0
 	github.com/charithe/durationcheck v0.0.10
@@ -46,7 +45,6 @@ require (
 	github.com/golangci/prealloc v0.0.0-20180630174525-215b22d4de21
 	github.com/google/btree v1.1.2
 	github.com/google/pprof v0.0.0-20211122183932-1daafda22083
-	github.com/google/skylark v0.0.0-20181101142754-a5f7082aabed
 	github.com/google/uuid v1.6.0
 	github.com/gordonklaus/ineffassign v0.1.0
 	github.com/gorilla/mux v1.8.0
@@ -184,6 +182,7 @@ require (
 	github.com/hashicorp/errwrap v1.0.0 // indirect
 	github.com/hashicorp/go-multierror v1.1.1 // indirect
 	github.com/hashicorp/go-uuid v1.0.3 // indirect
+	github.com/hashicorp/go-version v1.7.0 // indirect
 	github.com/hexops/gotextdiff v1.0.3 // indirect
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect
 	github.com/jcmturner/aescts/v2 v2.0.0 // indirect
@@ -228,6 +227,7 @@ require (
 	github.com/rivo/uniseg v0.4.7 // indirect
 	github.com/rogpeppe/go-internal v1.13.1 // indirect
 	github.com/segmentio/asm v1.2.0 // indirect
+	github.com/shoenig/go-m1cpu v0.1.6 // indirect
 	github.com/shurcooL/httpfs v0.0.0-20190707220628-8d4bc4ba7749 // indirect
 	github.com/shurcooL/vfsgen v0.0.0-20181202132449-6a9ea43bcacd // indirect
 	github.com/sirupsen/logrus v1.9.3 // indirect

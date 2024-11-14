@@ -16,10 +16,10 @@ package allrevive
 
 import (
 	"encoding/json"
-	"fmt"
 	"go/token"
 	"os"
 
+	goversion "github.com/hashicorp/go-version"
 	"github.com/mgechev/revive/config"
 	"github.com/mgechev/revive/lint"
 	"github.com/mgechev/revive/rule"
@@ -37,6 +37,7 @@ var Analyzer = &analysis.Analyzer{
 }
 
 func init() {
+	util.SkipAnalyzerByConfig(Analyzer)
 	util.SkipAnalyzer(Analyzer)
 }
 
@@ -88,11 +89,11 @@ var allRules = append([]lint.Rule{
 	&rule.ConstantLogicalExprRule{},
 	&rule.BoolLiteralRule{},
 	//&rule.RedefinesBuiltinIDRule{},
-	&rule.ImportsBlacklistRule{},
+	&rule.BlankImportsRule{},
 	//&rule.FunctionResultsLimitRule{},
 	//&rule.MaxPublicStructsRule{},
-	&rule.RangeValInClosureRule{},
-	&rule.RangeValAddress{},
+	//&rule.RangeValInClosureRule{},
+	//&rule.RangeValAddress{},
 	&rule.WaitGroupByValueRule{},
 	&rule.AtomicRule{},
 	&rule.EmptyLinesRule{},
@@ -106,7 +107,7 @@ var allRules = append([]lint.Rule{
 	//&rule.CognitiveComplexityRule{},
 	&rule.StringOfIntRule{},
 	&rule.StringFormatRule{},
-	//&rule.EarlyReturnRule{},
+	&rule.EarlyReturnRule{},
 	&rule.UnconditionalRecursionRule{},
 	&rule.IdenticalBranchesRule{},
 	&rule.DeferRule{},
@@ -126,9 +127,13 @@ func run(pass *analysis.Pass) (any, error) {
 		files = append(files, pass.Fset.PositionFor(file.Pos(), false).Filename)
 	}
 	packages := [][]string{files}
-
+	gv, err := goversion.NewVersion("1.21")
+	if err != nil {
+		panic(err)
+	}
 	revive := lint.New(os.ReadFile, 1024)
 	conf := lint.Config{
+		GoVersion:             gv,
 		IgnoreGeneratedHeader: false,
 		Confidence:            0.8,
 		Severity:              "error",
@@ -140,7 +145,7 @@ func run(pass *analysis.Pass) (any, error) {
 		conf.Rules[r.Name()] = lint.RuleConfig{}
 	}
 	conf.Rules["defer"] = lint.RuleConfig{
-		Arguments: []interface{}{[]interface{}{"loop", "method-call", "immediate-recover", "return"}},
+		Arguments: []any{[]any{"loop", "method-call", "immediate-recover", "return"}},
 	}
 
 	lintingRules, err := config.GetLintingRules(&conf, []lint.Rule{})
@@ -187,12 +192,12 @@ func run(pass *analysis.Pass) (any, error) {
 	}
 	for i := range results {
 		res := &results[i]
-		text := fmt.Sprintf("%s: %s", res.RuleName, res.Failure.Failure)
 		fileContent, tf, err := util.ReadFile(pass.Fset, res.Position.Start.Filename)
 		if err != nil {
 			panic(err)
 		}
-		pass.Reportf(token.Pos(tf.Base()+util.FindOffset(string(fileContent), res.Position.Start.Line, res.Position.Start.Column)), text)
+		pass.Reportf(token.Pos(tf.Base()+util.FindOffset(string(fileContent), res.Position.Start.Line, res.Position.Start.Column)),
+			"%s: %s", res.RuleName, res.Failure.Failure)
 	}
 	return nil, nil
 }
