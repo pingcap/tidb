@@ -594,3 +594,10 @@ explain format = brief select tmp4.b
   left join
     (select a, b, c, (row_number() over (partition by b order by e asc)) from t4) tmp4 on tmp4.b = t2.c and tmp4.c = t3.c
   join t5 on t5.a = t1.e;
+
+# TestIssue56270
+drop table if exists t0, v0;
+drop view if exists v0;
+CREATE  TABLE  t0(c0 INTEGER);
+CREATE VIEW v0(c0) AS SELECT 'a' FROM t0 WHERE (CASE t0.c0 WHEN t0.c0 THEN false END );
+SELECT t0.c0 FROM v0, t0 WHERE RAND();
