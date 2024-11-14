@@ -906,10 +906,12 @@
   },
   "predeclared": {
     "exclude_files": {
-      "/external/": "no need to vet third party code",
+      "external/": "no need to vet third party code",
+      "cmd/mirror": "no need to mirror",
       ".*_generated\\.go$": "ignore generated code",
-      "parser/yy_parser.go": "ignore generated code",
-      "parser/parser.go": "ignore generated code",
+      ".*mock.go$": "ignore generated code",
+      "pkg/parser/yy_parser.go": "ignore generated code",
+      "pkg/parser/parser.go": "ignore generated code",
       "/cgo/": "no need to vet third party code for cgo"
     }
   },
