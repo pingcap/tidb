@@ -143,10 +143,10 @@ func (tr *TableImporter) importTable(
 		}
 
 		// fetch the max chunk row_id max value as the global max row_id
-		rowIDMax := int64(0)
+		requiredRowIDCnt := int64(0)
 		for _, engine := range cp.Engines {
-			if len(engine.Chunks) > 0 && engine.Chunks[len(engine.Chunks)-1].Chunk.RowIDMax > rowIDMax {
-				rowIDMax = engine.Chunks[len(engine.Chunks)-1].Chunk.RowIDMax
+			if len(engine.Chunks) > 0 && engine.Chunks[len(engine.Chunks)-1].Chunk.RowIDMax > requiredRowIDCnt {
+				requiredRowIDCnt = engine.Chunks[len(engine.Chunks)-1].Chunk.RowIDMax
 			}
 		}
 		versionStr, err := version.FetchVersion(ctx, rc.db)
@@ -163,7 +163,7 @@ func (tr *TableImporter) importTable(
 				return false, err
 			}
 
-			checksum, rowIDBase, err := metaMgr.AllocTableRowIDs(ctx, rowIDMax)
+			checksum, rowIDBase, err := metaMgr.AllocTableRowIDs(ctx, requiredRowIDCnt)
 			if err != nil {
 				return false, err
 			}
