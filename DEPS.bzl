@@ -263,8 +263,8 @@ def go_deps():
         name = "com_github_apache_skywalking_eyes",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/apache/skywalking-eyes",
-        sum = "h1:qlEE8Wgy6fKXusxAOrI7ANNdO9vKfiGNczI6kygMR4o=",
-        version = "v0.6.0",
+        sum = "h1:O13kdRU6FCEZevfD01mdhTgCZLLfPZIQ0GXZrLl7FpQ=",
+        version = "v0.4.0",
     )
     go_repository(
         name = "com_github_apache_thrift",
@@ -811,7 +811,6 @@ def go_deps():
         sum = "h1:fE/Qz0QdIGqeWfnwq0RE0R7MI51s0M2E4Ga9kq5AEMs=",
         version = "v1.3.3",
     )
-
     go_repository(
         name = "com_github_cloudfoundry_gosigar",
         build_file_proto_mode = "disable_global",
