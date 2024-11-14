@@ -1025,6 +1025,83 @@ func TestAddTimeSig(t *testing.T) {
 		require.Equal(t, i+1+beforeWarnCnt, len(warnings))
 		require.Truef(t, terror.ErrorEqual(c.warning, warnings[i].Err), "err %v", warnings[i].Err)
 	}
+
+	// Test for issue 56861
+	testCases := []struct {
+		arg0   types.Time
+		arg1   string
+		expect string
+		err    error
+	}{
+		{types.NewTime(types.FromDate(2024, 11, 1, 0, 0, 0, 0), mysql.TypeDate, 0), "12:00:01.341300", "2024-11-01 12:00:01.341300", nil},
+		{types.NewTime(types.FromDate(2024, 11, 1, 0, 0, 0, 0), mysql.TypeDate, 0), "-12:00:01.341300", "2024-10-31 11:59:58.658700", nil},
+		{types.NewTime(types.FromDate(2024, 11, 1, 0, 0, 0, 0), mysql.TypeDate, 0), "1 12:00:01.341300", "2024-11-02 12:00:01.341300", nil},
+		{types.NewTime(types.FromDate(2024, 11, 1, 0, 0, 0, 0), mysql.TypeDate, 0), "-1 12:00:01.341300", "2024-10-30 11:59:58.658700", nil},
+		{types.NewTime(types.FromDate(1000, 1, 1, 0, 0, 0, 0), mysql.TypeDate, 0), "12:00:01.341300", "1000-01-01 12:00:01.341300", nil},
+		{types.NewTime(types.FromDate(1000, 1, 1, 0, 0, 0, 0), mysql.TypeDate, 0), "-12:00:01.341300", "0999-12-31 11:59:58.658700", nil},
+		{types.NewTime(types.FromDate(9999, 12, 31, 0, 0, 0, 0), mysql.TypeDate, 0), "12:00:01.341300", "9999-12-31 12:00:01.341300", nil},
+		{types.NewTime(types.FromDate(9999, 12, 31, 0, 0, 0, 0), mysql.TypeDate, 0), "-12:00:01.341300", "9999-12-30 11:59:58.658700", nil},
+		{types.NewTime(types.FromDate(9999, 12, 31, 0, 0, 0, 0), mysql.TypeDate, 0), "1 12:00:01.341300", "", errors.NewNoStackError("")},
+	}
+
+	for _, c := range testCases {
+		exprs := make([]Expression, 2)
+		arg0Datum := types.NewTimeDatum(c.arg0)
+		arg1Datum := types.NewStringDatum(c.arg1)
+		exprs[0] = &Constant{Value: arg0Datum, RetType: types.NewFieldType(mysql.TypeDate)}
+		exprs[1] = &Constant{Value: arg1Datum, RetType: types.NewFieldType(mysql.TypeVarString)}
+		f, err := fc.getFunction(ctx, exprs)
+		require.NoError(t, err)
+		d, err := evalBuiltinFunc(f, ctx, chunk.Row{})
+		if c.err != nil {
+			require.True(t, err != nil)
+			continue
+		}
+		require.NoError(t, err)
+		result, _ := d.ToString()
+		require.Equal(t, c.expect, result)
+	}
+}
+
+func TestTmp(t *testing.T) {
+	ctx := createContext(t)
+	fc := funcs[ast.SubTime]
+
+	// Test for issue 56861
+	testCases := []struct {
+		arg0   types.Time
+		arg1   string
+		expect string
+		err    error
+	}{
+		{types.NewTime(types.FromDate(2024, 11, 1, 0, 0, 0, 0), mysql.TypeDate, 0), "12:00:01.341300", "2024-10-31 11:59:58.658700", nil},
+		{types.NewTime(types.FromDate(2024, 11, 1, 0, 0, 0, 0), mysql.TypeDate, 0), "-12:00:01.341300", "2024-11-01 12:00:01.341300", nil},
+		{types.NewTime(types.FromDate(2024, 11, 1, 0, 0, 0, 0), mysql.TypeDate, 0), "1 12:00:01.341300", "2024-10-30 11:59:58.658700", nil},
+		{types.NewTime(types.FromDate(2024, 11, 1, 0, 0, 0, 0), mysql.TypeDate, 0), "-1 12:00:01.341300", "2024-11-02 12:00:01.341300", nil},
+		{types.NewTime(types.FromDate(1000, 1, 1, 0, 0, 0, 0), mysql.TypeDate, 0), "12:00:01.341300", "0999-12-31 11:59:58.658700", nil},
+		{types.NewTime(types.FromDate(1000, 1, 1, 0, 0, 0, 0), mysql.TypeDate, 0), "-12:00:01.341300", "1000-01-01 12:00:01.341300", nil},
+		{types.NewTime(types.FromDate(9999, 12, 31, 0, 0, 0, 0), mysql.TypeDate, 0), "12:00:01.341300", "9999-12-30 11:59:58.658700", nil},
+		{types.NewTime(types.FromDate(9999, 12, 31, 0, 0, 0, 0), mysql.TypeDate, 0), "-12:00:01.341300", "9999-12-31 12:00:01.341300", nil},
+		{types.NewTime(types.FromDate(9999, 12, 31, 0, 0, 0, 0), mysql.TypeDate, 0), "-1 12:00:01.341300", "", errors.NewNoStackError("")},
+	}
+
+	for _, c := range testCases {
+		exprs := make([]Expression, 2)
+		arg0Datum := types.NewTimeDatum(c.arg0)
+		arg1Datum := types.NewStringDatum(c.arg1)
+		exprs[0] = &Constant{Value: arg0Datum, RetType: types.NewFieldType(mysql.TypeDate)}
+		exprs[1] = &Constant{Value: arg1Datum, RetType: types.NewFieldType(mysql.TypeVarString)}
+		f, err := fc.getFunction(ctx, exprs)
+		require.NoError(t, err)
+		d, err := evalBuiltinFunc(f, ctx, chunk.Row{})
+		if c.err != nil {
+			require.True(t, err != nil)
+			continue
+		}
+		require.NoError(t, err)
+		result, _ := d.ToString()
+		require.Equal(t, c.expect, result)
+	}
 }
 
 func TestSubTimeSig(t *testing.T) {
@@ -1124,6 +1201,42 @@ func TestSubTimeSig(t *testing.T) {
 		warnings := ctx.GetSessionVars().StmtCtx.GetWarnings()
 		require.Equal(t, i+1+beforeWarnCnt, len(warnings))
 		require.Truef(t, terror.ErrorEqual(c.warning, warnings[i].Err), "err %v", warnings[i].Err)
+	}
+
+	// Test for issue 56861
+	testCases := []struct {
+		arg0   types.Time
+		arg1   string
+		expect string
+		err    error
+	}{
+		{types.NewTime(types.FromDate(2024, 11, 1, 0, 0, 0, 0), mysql.TypeDate, 0), "12:00:01.341300", "2024-10-31 11:59:58.658700", nil},
+		{types.NewTime(types.FromDate(2024, 11, 1, 0, 0, 0, 0), mysql.TypeDate, 0), "-12:00:01.341300", "2024-11-01 12:00:01.341300", nil},
+		{types.NewTime(types.FromDate(2024, 11, 1, 0, 0, 0, 0), mysql.TypeDate, 0), "1 12:00:01.341300", "2024-10-30 11:59:58.658700", nil},
+		{types.NewTime(types.FromDate(2024, 11, 1, 0, 0, 0, 0), mysql.TypeDate, 0), "-1 12:00:01.341300", "2024-11-02 12:00:01.341300", nil},
+		{types.NewTime(types.FromDate(1000, 1, 1, 0, 0, 0, 0), mysql.TypeDate, 0), "12:00:01.341300", "0999-12-31 11:59:58.658700", nil},
+		{types.NewTime(types.FromDate(1000, 1, 1, 0, 0, 0, 0), mysql.TypeDate, 0), "-12:00:01.341300", "1000-01-01 12:00:01.341300", nil},
+		{types.NewTime(types.FromDate(9999, 12, 31, 0, 0, 0, 0), mysql.TypeDate, 0), "12:00:01.341300", "9999-12-30 11:59:58.658700", nil},
+		{types.NewTime(types.FromDate(9999, 12, 31, 0, 0, 0, 0), mysql.TypeDate, 0), "-12:00:01.341300", "9999-12-31 12:00:01.341300", nil},
+		{types.NewTime(types.FromDate(9999, 12, 31, 0, 0, 0, 0), mysql.TypeDate, 0), "-1 12:00:01.341300", "", errors.NewNoStackError("")},
+	}
+
+	for _, c := range testCases {
+		exprs := make([]Expression, 2)
+		arg0Datum := types.NewTimeDatum(c.arg0)
+		arg1Datum := types.NewStringDatum(c.arg1)
+		exprs[0] = &Constant{Value: arg0Datum, RetType: types.NewFieldType(mysql.TypeDate)}
+		exprs[1] = &Constant{Value: arg1Datum, RetType: types.NewFieldType(mysql.TypeVarString)}
+		f, err := fc.getFunction(ctx, exprs)
+		require.NoError(t, err)
+		d, err := evalBuiltinFunc(f, ctx, chunk.Row{})
+		if c.err != nil {
+			require.True(t, err != nil)
+			continue
+		}
+		require.NoError(t, err)
+		result, _ := d.ToString()
+		require.Equal(t, c.expect, result)
 	}
 }
 
