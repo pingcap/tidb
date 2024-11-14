@@ -365,6 +365,7 @@ func getPartitionNames(partitionIndexes map[string][]string) []string {
 	return names
 }
 
+// ToJSON converts the job to a JSON object.
 func (j *DynamicPartitionedTableAnalysisJob) ToJSON() statstypes.AnalysisJobJSON {
 	return statstypes.AnalysisJobJSON{
 		Type:    string(j.getAnalyzeType()),

@@ -307,6 +307,7 @@ func (j *StaticPartitionedTableAnalysisJob) GenSQLForAnalyzeStaticPartitionIndex
 	return sql, params
 }
 
+// ToJSON converts the job to a JSON object.
 func (j *StaticPartitionedTableAnalysisJob) ToJSON() statstypes.AnalysisJobJSON {
 	return statstypes.AnalysisJobJSON{
 		Type:    string(j.getAnalyzeType()),
