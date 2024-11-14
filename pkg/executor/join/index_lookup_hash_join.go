@@ -209,14 +209,14 @@ func (e *IndexNestedLoopHashJoin) finishJoinWorkers(r any) {
 			e.panicErr.Unlock()
 		}
 
+		if e.cancelFunc != nil {
+			e.cancelFunc()
+		}
 		if !e.KeepOuterOrder {
 			e.resultCh <- &indexHashJoinResult{err: err}
 		} else {
 			task := &indexHashJoinTask{err: err}
 			e.taskCh <- task
-		}
-		if e.cancelFunc != nil {
-			e.cancelFunc()
 		}
 	}
 	e.WorkerWg.Done()
