@@ -16,6 +16,7 @@ package domain
 
 import (
 	"context"
+	"encoding/base64"
 	"fmt"
 	"math"
 	"math/rand"
@@ -1830,15 +1831,12 @@ func (do *Domain) GetPDHTTPClient() pdhttp.Client {
 }
 
 func decodePrivilegeEvent(resp clientv3.WatchResponse) []string {
-	var userList []string
-	if len(resp.Events) > 0 {
-		for _, event := range resp.Events {
-			if event.Kv != nil {
-				val := event.Kv.Value
-				if len(val) > 0 {
-					users := strings.Split(string(val), ",")
-					userList = append(userList, users...)
-				}
+	userList := make([]string, 0, len(resp.Events))
+	for _, event := range resp.Events {
+		if event.Kv != nil {
+			val := event.Kv.Value
+			if len(val) > 0 {
+				userList = decodeUserList(userList, string(val))
 			}
 		}
 	}
@@ -2839,6 +2837,27 @@ const (
 	tiflashComputeNodeKey = "/tiflash/new_tiflash_compute_nodes"
 )
 
+func encodeUserList(userList []string) string {
+		// use base64 encoding for the user and use ',' to separate them.
+		// Because the user name itself may contains special char like ','
+		encoded := make([]string, 0, len(userList))
+		for _, user := range userList {
+			encoded = append(encoded, base64.StdEncoding.EncodeToString([]byte(user)))
+		}
+		return strings.Join(encoded, ",")
+}
+
+func decodeUserList(userList []string, val string) []string {
+	users := strings.Split(string(val), ",")
+	for _, userRaw := range users {
+		user, err := base64.StdEncoding.DecodeString(userRaw)
+		if err == nil {
+			userList = append(userList, string(user))
+		}
+	}
+	return userList
+}
+
 // NotifyUpdatePrivilege updates privilege key in etcd, TiDB client that watches
 // the key will get notification.
 func (do *Domain) NotifyUpdatePrivilege(userList []string) error {
@@ -2846,7 +2865,7 @@ func (do *Domain) NotifyUpdatePrivilege(userList []string) error {
 	// Because we need to tell other TiDB instances to update privilege data, say, we're changing the
 	// password using a special TiDB instance and want the new password to take effect.
 	if do.etcdClient != nil {
-		notifyList := strings.Join(userList, ", ")
+		notifyList := encodeUserList(userList)
 		row := do.etcdClient.KV
 		_, err := row.Put(do.ctx, privilegeKey, notifyList)
 		if err != nil {

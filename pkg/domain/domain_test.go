@@ -486,3 +486,12 @@ func TestDeferFn(t *testing.T) {
 	require.True(t, d)
 	require.Len(t, df.data, 1)
 }
+
+func TestEncodeUserList(t *testing.T) {
+	userList := []string{"test", "aa66", "root", "b,s%#&\\"}
+	encoded := encodeUserList(userList)
+
+	expected := make([]string, 0, len(userList))
+	expected = decodeUserList(expected, encoded)
+	require.Equal(t, userList, expected)
+}
