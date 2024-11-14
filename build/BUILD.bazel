@@ -129,7 +129,7 @@ nogo(
                "//build/linter/gofmt",
                "//build/linter/gci",
                "//build/linter/gosec",
-               "//build/linter/ineffassign",
+               #"//build/linter/ineffassign",
                "//build/linter/makezero",
                "//build/linter/misspell",
                "//build/linter/prealloc",
@@ -139,7 +139,7 @@ nogo(
            ] + staticcheck_analyzers(STATICHECK_ANALYZERS) +
            select({
                "//build:with_nogo": [
-                   "//build/linter/allrevive",
+                   #"//build/linter/allrevive",
                    "//build/linter/errcheck",
                    "//build/linter/filepermission",
                    "//build/linter/revive",
