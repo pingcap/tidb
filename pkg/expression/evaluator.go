@@ -15,12 +15,8 @@
 package expression
 
 import (
-<<<<<<< HEAD
-=======
 	"sync/atomic"
 
-	"github.com/pingcap/tidb/pkg/expression/context"
->>>>>>> 801d5d6829f (planner: fix column evaluator can not detect input's column-ref and thus swapping and destroying later column ref projection logic (#53794))
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/disjointset"
 	"github.com/pingcap/tidb/pkg/util/intest"
