@@ -158,7 +158,7 @@ func buildHist(
 	ndvFactor := float64(count) / float64(ndv)
 	// origNdvFactor represents an upper bound (Ceil) of the orignal ndvFactor - such that "repeat" values greater
 	// than this value are considered to be skewed (well) above the average.
-	origNdvFactor := int64(ndvFactor * math.Max(sampleFactor, 1))
+	origNdvFactor := int64(ndvFactor * max(sampleFactor, 1))
 	if ndvFactor > sampleFactor {
 		ndvFactor = sampleFactor
 	}
