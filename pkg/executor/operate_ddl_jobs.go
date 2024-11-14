@@ -124,7 +124,7 @@ func getJobMetaFromTable(
 		return nil, errors.Trace(err)
 	}
 	if len(rows) == 0 {
-		return nil, fmt.Errorf("ddl job %d not found", jobID)
+		return nil, fmt.Errorf("ddl job %d is not running", jobID)
 	}
 	jobBinary := rows[0].GetBytes(0)
 	job := model.Job{}
