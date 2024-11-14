@@ -1184,7 +1184,7 @@ func (e *SimpleExec) executeCreateUser(ctx context.Context, s *ast.CreateUserStm
 			}
 		}
 
-		pwd, ok := encodePassword(spec, pluginImpl)
+		pwd, ok := encodePassword(*spec, pluginImpl, defaultAuthPlugin)
 		if !ok {
 			return errors.Trace(exeerrors.ErrPasswordFormat)
 		}
@@ -1856,7 +1856,7 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 					return err
 				}
 			}
-			pwd, ok := encodePassword(spec, authPluginImpl)
+			pwd, ok := encodePassword(*spec, authPluginImpl, "")
 			if !ok {
 				return errors.Trace(exeerrors.ErrPasswordFormat)
 			}
@@ -2550,6 +2550,7 @@ func (e *SimpleExec) executeSetPwd(ctx context.Context, s *ast.SetPwdStmt) error
 	}
 	authPlugins := extensions.GetAuthPlugins()
 	var pwd string
+	// FIXME
 	switch authplugin {
 	case mysql.AuthCachingSha2Password, mysql.AuthTiDBSM3Password:
 		pwd = auth.NewHashPassword(s.Password, authplugin)

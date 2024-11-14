@@ -165,17 +165,17 @@ func TestEncodePasswordWithPlugin(t *testing.T) {
 	}
 
 	u.AuthOpt.ByAuthString = false
-	_, ok := encodePassword(u, p)
+	_, ok := encodePassword(*u, p, "")
 	require.False(t, ok)
 
 	u.AuthOpt.AuthString = "xxx"
 	u.AuthOpt.ByAuthString = true
-	pwd, ok := encodePassword(u, p)
+	pwd, ok := encodePassword(*u, p, "")
 	require.True(t, ok)
 	require.Equal(t, "xxxxxxx", pwd)
 
 	u.AuthOpt = nil
-	pwd, ok = encodePassword(u, p)
+	pwd, ok = encodePassword(*u, p, "")
 	require.True(t, ok)
 	require.Equal(t, "", pwd)
 }

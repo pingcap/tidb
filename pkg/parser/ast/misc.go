@@ -1493,6 +1493,8 @@ type UserSpec struct {
 	User    *auth.UserIdentity
 	AuthOpt *AuthOption
 	IsRole  bool
+
+	DefaultAuthPlugin string
 }
 
 // Restore implements Node interface.
@@ -1531,10 +1533,14 @@ func (n *UserSpec) EncodedPassword() (string, bool) {
 	}
 
 	opt := n.AuthOpt
+	authPlugin := opt.AuthPlugin
+	if authPlugin == "" {
+		authPlugin = n.DefaultAuthPlugin
+	}
 	if opt.ByAuthString {
-		switch opt.AuthPlugin {
+		switch authPlugin {
 		case mysql.AuthCachingSha2Password, mysql.AuthTiDBSM3Password:
-			return auth.NewHashPassword(opt.AuthString, opt.AuthPlugin), true
+			return auth.NewHashPassword(opt.AuthString, authPlugin), true
 		case mysql.AuthSocket:
 			return "", true
 		default:
@@ -1543,7 +1549,7 @@ func (n *UserSpec) EncodedPassword() (string, bool) {
 	}
 
 	// store the LDAP dn directly in the password field
-	switch opt.AuthPlugin {
+	switch authPlugin {
 	case mysql.AuthLDAPSimple, mysql.AuthLDAPSASL:
 		// TODO: validate the HashString to be a `dn` for LDAP
 		// It seems fine to not validate here, and LDAP server will give an error when the client'll try to login this user.
@@ -1558,7 +1564,7 @@ func (n *UserSpec) EncodedPassword() (string, bool) {
 	}
 
 	// Not a legal password string.
-	switch opt.AuthPlugin {
+	switch authPlugin {
 	case mysql.AuthCachingSha2Password:
 		if len(opt.HashString) != mysql.SHAPWDHashLen {
 			return "", false

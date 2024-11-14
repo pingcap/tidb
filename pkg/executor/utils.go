@@ -104,7 +104,7 @@ func (b *batchRetrieverHelper) nextBatch(retrieveRange func(start, end int) erro
 }
 
 // encodePassword encodes the password for the user. It invokes the auth plugin if it is available.
-func encodePassword(u *ast.UserSpec, authPlugin *extension.AuthPlugin) (string, bool) {
+func encodePassword(u ast.UserSpec, authPlugin *extension.AuthPlugin, defaultPlugin string) (string, bool) {
 	if u.AuthOpt == nil {
 		return "", true
 	}
@@ -119,6 +119,7 @@ func encodePassword(u *ast.UserSpec, authPlugin *extension.AuthPlugin) (string, 
 		}
 		return "", false
 	}
+	u.DefaultAuthPlugin = defaultPlugin
 	return u.EncodedPassword()
 }
 
