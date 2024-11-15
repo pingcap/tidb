@@ -529,7 +529,7 @@ func (b *builtinAddDateAndStringSig) vecEvalString(ctx EvalContext, input *chunk
 		return err
 	}
 	defer b.bufAllocator.put(buf0)
-	if err := b.args[0].VecEvalTime(ctx, input, buf0); err != nil {
+	if err := b.args[0].VecEvalDuration(ctx, input, buf0); err != nil {
 		return err
 	}
 
@@ -543,16 +543,23 @@ func (b *builtinAddDateAndStringSig) vecEvalString(ctx EvalContext, input *chunk
 	}
 
 	result.ReserveString(n)
-	arg0s := buf0.Times()
+
+	arg0s := buf0.GoDurations()
 
 	for i := 0; i < n; i++ {
+
 		if buf0.IsNull(i) || buf1.IsNull(i) {
 			result.AppendNull()
 			continue
 		}
 
+		// get arg0 & arg1
+
 		arg0 := arg0s[i]
+
 		arg1 := buf1.GetString(i)
+
+		// calculate
 
 		if !isDuration(arg1) {
 			result.AppendNull() // fixed: false
@@ -569,15 +576,19 @@ func (b *builtinAddDateAndStringSig) vecEvalString(ctx EvalContext, input *chunk
 			return err
 		}
 
-		arg0.SetType(mysql.TypeDatetime)
-		res, err := arg0.Add(tc, arg1Duration)
-		if err != nil {
-			tc.AppendWarning(err)
-			result.AppendNull()
-			continue
-		}
+		fsp0 := b.args[0].GetType(ctx).GetDecimal()
 
-		result.AppendString(res.String())
+		sum, err := types.Duration{Duration: arg0, Fsp: fsp0}.Add(arg1Duration)
+
+		if err != nil {
+			return err
+		}
+		output := sum.String()
+
+		// commit result
+
+		result.AppendString(output)
+
 	}
 	return nil
 }
@@ -1132,7 +1143,7 @@ func (b *builtinSubDateAndStringSig) vecEvalString(ctx EvalContext, input *chunk
 		return err
 	}
 	defer b.bufAllocator.put(buf0)
-	if err := b.args[0].VecEvalTime(ctx, input, buf0); err != nil {
+	if err := b.args[0].VecEvalDuration(ctx, input, buf0); err != nil {
 		return err
 	}
 
@@ -1146,16 +1157,23 @@ func (b *builtinSubDateAndStringSig) vecEvalString(ctx EvalContext, input *chunk
 	}
 
 	result.ReserveString(n)
-	arg0s := buf0.Times()
+
+	arg0s := buf0.GoDurations()
 
 	for i := 0; i < n; i++ {
+
 		if buf0.IsNull(i) || buf1.IsNull(i) {
 			result.AppendNull()
 			continue
 		}
 
+		// get arg0 & arg1
+
 		arg0 := arg0s[i]
+
 		arg1 := buf1.GetString(i)
+
+		// calculate
 
 		if !isDuration(arg1) {
 			result.AppendNull() // fixed: false
@@ -1172,15 +1190,19 @@ func (b *builtinSubDateAndStringSig) vecEvalString(ctx EvalContext, input *chunk
 			return err
 		}
 
-		arg0.SetType(mysql.TypeDatetime)
-		res, err := arg0.Add(tc, arg1Duration.Neg())
-		if err != nil {
-			tc.AppendWarning(err)
-			result.AppendNull()
-			continue
-		}
+		fsp0 := b.args[0].GetType(ctx).GetDecimal()
 
-		result.AppendString(res.String())
+		sum, err := types.Duration{Duration: arg0, Fsp: fsp0}.Sub(arg1Duration)
+
+		if err != nil {
+			return err
+		}
+		output := sum.String()
+
+		// commit result
+
+		result.AppendString(output)
+
 	}
 	return nil
 }
