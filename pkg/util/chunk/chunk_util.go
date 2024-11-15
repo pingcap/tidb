@@ -327,7 +327,7 @@ func (helper *ColumnSwapHelper) mergeInputIdxToOutputIdxes(input *Chunk, inputId
 	originalDJSet := disjointset.NewSet[int](4)
 	flag := make([]bool, input.NumCols())
 	// Detect self column-references inside the input chunk by comparing column addresses
-	for i := range input.NumCols() {
+	for i := 0; i < input.NumCols(); i++ {
 		if flag[i] {
 			continue
 		}

@@ -15,7 +15,6 @@
 package expression
 
 import (
-	"github.com/pingcap/tidb/pkg/expression/exprctx"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 )
 
