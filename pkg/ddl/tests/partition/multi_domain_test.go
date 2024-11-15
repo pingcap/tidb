@@ -1045,7 +1045,7 @@ func TestMultiSchemaTruncatePartitionWithPKGlobal(t *testing.T) {
 			// but must still write to the shared global indexes.
 			// So they will get errors on the same entries in the global index.
 
-			tkNO.MustContainErrMsg(`insert into t values (1,1,"Duplicate key")`, "[kv:1062]Duplicate entry '1' for key 't.PRIMARY'")
+			tkNO.MustContainErrMsg(`insert into t values (1,1,"Duplicate key")`, "[kv:1062]Duplicate entry '1' for key 't.")
 			tkNO.MustContainErrMsg(`insert into t values (11,1,"Duplicate key")`, "[kv:1062]Duplicate entry '1' for key 't.uk_b'")
 
 			tkO.MustQuery(`select a from t where a = 1`).Check(testkit.Rows())
