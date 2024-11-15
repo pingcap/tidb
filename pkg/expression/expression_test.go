@@ -49,13 +49,15 @@ func TestEvaluateExprWithNull(t *testing.T) {
 	outerIfNull, err := newFunctionForTest(ctx, ast.Ifnull, col0, innerIfNull)
 	require.NoError(t, err)
 
-	res := EvaluateExprWithNull(ctx, schema, outerIfNull)
+	res, err := EvaluateExprWithNull(ctx, schema, outerIfNull)
+	require.Nil(t, err)
 	require.Equal(t, "ifnull(Column#1, 1)", res.StringWithCtx(ctx, errors.RedactLogDisable))
 	require.Equal(t, "ifnull(Column#1, ?)", res.StringWithCtx(ctx, errors.RedactLogEnable))
 	require.Equal(t, "ifnull(Column#1, ‹1›)", res.StringWithCtx(ctx, errors.RedactLogMarker))
 	schema.Columns = append(schema.Columns, col1)
 	// ifnull(null, ifnull(null, 1))
-	res = EvaluateExprWithNull(ctx, schema, outerIfNull)
+	res, err = EvaluateExprWithNull(ctx, schema, outerIfNull)
+	require.Nil(t, err)
 	require.True(t, res.Equal(ctx, NewOne()))
 }
 
@@ -70,14 +72,16 @@ func TestEvaluateExprWithNullAndParameters(t *testing.T) {
 	// cases for parameters
 	ltWithoutParam, err := newFunctionForTest(ctx, ast.LT, col0, NewOne())
 	require.NoError(t, err)
-	res := EvaluateExprWithNull(ctx, schema, ltWithoutParam)
+	res, err := EvaluateExprWithNull(ctx, schema, ltWithoutParam)
+	require.Nil(t, err)
 	require.True(t, res.Equal(ctx, NewNull())) // the expression is evaluated to null
 	param := NewOne()
 	param.ParamMarker = &ParamMarker{order: 0}
 	ctx.GetSessionVars().PlanCacheParams.Append(types.NewIntDatum(10))
 	ltWithParam, err := newFunctionForTest(ctx, ast.LT, col0, param)
 	require.NoError(t, err)
-	res = EvaluateExprWithNull(ctx, schema, ltWithParam)
+	res, err = EvaluateExprWithNull(ctx, schema, ltWithParam)
+	require.Nil(t, err)
 	_, isConst := res.(*Constant)
 	require.True(t, isConst) // this expression is evaluated and skip-plan cache flag is set.
 	require.True(t, !ctx.GetSessionVars().StmtCtx.UseCache())
