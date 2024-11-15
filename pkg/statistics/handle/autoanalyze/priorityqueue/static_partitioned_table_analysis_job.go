@@ -316,7 +316,6 @@ func (j *StaticPartitionedTableAnalysisJob) AsJSON() statstypes.AnalysisJobJSON 
 	return statstypes.AnalysisJobJSON{
 		Type:               string(j.getAnalyzeType()),
 		TableID:            j.StaticPartitionID,
-		PartitionIDs:       []int64{j.StaticPartitionID},
 		IndexIDs:           indexes,
 		Weight:             j.Weight,
 		Indicators:         asJSONIndicators(j.Indicators),
