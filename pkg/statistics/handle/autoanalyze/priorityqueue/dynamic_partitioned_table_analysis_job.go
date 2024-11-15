@@ -367,9 +367,15 @@ func getPartitionNames(partitionIndexes map[string][]string) []string {
 
 // ToJSON converts the job to a JSON object.
 func (j *DynamicPartitionedTableAnalysisJob) ToJSON() statstypes.AnalysisJobJSON {
+	partitionIDs := make([]int64, 0, len(j.PartitionIDs))
+	for partition := range j.PartitionIDs {
+		partitionIDs = append(partitionIDs, partition)
+	}
 	return statstypes.AnalysisJobJSON{
 		Type:               string(j.getAnalyzeType()),
 		TableID:            j.GlobalTableID,
+		PartitionIDs:       partitionIDs,
+		PartitionIndexIDs:  j.PartitionIndexIDs,
 		Weight:             j.Weight,
 		Indicators:         toJSONIndicators(j.Indicators),
 		HasNewlyAddedIndex: j.HasNewlyAddedIndex(),
