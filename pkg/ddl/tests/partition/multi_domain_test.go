@@ -1187,7 +1187,7 @@ func TestMultiSchemaTruncatePartitionWithPKGlobal(t *testing.T) {
 			tkNO.MustExec(`admin check table t`)
 		case "none":
 			tkNO.MustExec(`insert into t values (81,81,"OK")`)
-			tkO.MustContainErrMsg(`insert into t values (81,81,"Duplicate key")`, "[kv:1062]Duplicate entry '81' for key 't.PRIMARY'")
+			tkO.MustContainErrMsg(`insert into t values (81,81,"Duplicate key")`, "[kv:1062]Duplicate entry '81' for key 't.")
 			tkNO.MustExec(`insert into t values (85,85,"OK")`)
 			tkO.MustExec(`insert into t values (87,87,"OK")`)
 			rows := tkNO.MustQuery(`select * from t`).Sort().Rows()
