@@ -1956,6 +1956,7 @@ func TestTruncateTablePartitionWithPlacement(t *testing.T) {
 		" PARTITION `p1` VALUES LESS THAN (1000) /*T![placement] PLACEMENT POLICY=`p2` */,\n" +
 		" PARTITION `p2` VALUES LESS THAN (10000) /*T![placement] PLACEMENT POLICY=`p3` */,\n" +
 		" PARTITION `p3` VALUES LESS THAN (100000))"))
+	dom.Reload()
 	checkExistTableBundlesInPD(t, dom, "test", "tp")
 	checkWaitingGCPartitionBundlesInPD(t, dom, checkOldPartitions)
 
