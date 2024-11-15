@@ -178,9 +178,8 @@ type Option func(m *Mutator)
 
 // Mutator is for handling meta information in a transaction.
 type Mutator struct {
-	txn        *structure.TxStructure
-	StartTS    uint64 // StartTS is the txn's start TS.
-	jobListKey JobListKeyType
+	txn     *structure.TxStructure
+	StartTS uint64 // StartTS is the txn's start TS.
 }
 
 var _ Reader = (*Mutator)(nil)
@@ -192,8 +191,7 @@ func NewMutator(txn kv.Transaction, options ...Option) *Mutator {
 	txn.SetDiskFullOpt(kvrpcpb.DiskFullOpt_AllowedOnAlmostFull)
 	t := structure.NewStructure(txn, txn, mMetaPrefix)
 	m := &Mutator{txn: t,
-		StartTS:    txn.StartTS(),
-		jobListKey: DefaultJobListKey,
+		StartTS: txn.StartTS(),
 	}
 	for _, opt := range options {
 		opt(m)
@@ -1446,33 +1444,6 @@ var (
 	mDDLJobHistoryKey = []byte("DDLJobHistory")
 )
 
-var (
-	// DefaultJobListKey keeps all actions of DDL jobs except "add index".
-	// this and below list are always appended, so the order is the same as the
-	// job's creation order.
-	DefaultJobListKey JobListKeyType = mDDLJobListKey
-	// AddIndexJobListKey only keeps the action of adding index.
-	AddIndexJobListKey JobListKeyType = mDDLJobAddIdxList
-)
-
-func (m *Mutator) enQueueDDLJob(key []byte, job *model.Job) error {
-	b, err := job.Encode(true)
-	if err == nil {
-		err = m.txn.RPush(key, b)
-	}
-	return errors.Trace(err)
-}
-
-// EnQueueDDLJob adds a DDL job to the list.
-func (m *Mutator) EnQueueDDLJob(job *model.Job, jobListKeys ...JobListKeyType) error {
-	listKey := m.jobListKey
-	if len(jobListKeys) != 0 {
-		listKey = jobListKeys[0]
-	}
-
-	return m.enQueueDDLJob(listKey, job)
-}
-
 // JobListKeyType is a key type of the DDL job queue.
 type JobListKeyType []byte
 
@@ -1493,34 +1464,6 @@ func (m *Mutator) getDDLJob(key []byte, index int64) (*model.Job, error) {
 		job.Priority = kv.PriorityLow
 	}
 	return job, errors.Trace(err)
-}
-
-// GetAllDDLJobsInQueue gets all DDL Jobs in the current queue.
-// The length of jobListKeys can only be 1 or 0.
-// If its length is 1, we need to replace m.jobListKey with jobListKeys[0].
-// Otherwise, we use m.jobListKey directly.
-func (m *Mutator) GetAllDDLJobsInQueue(jobListKeys ...JobListKeyType) ([]*model.Job, error) {
-	listKey := m.jobListKey
-	if len(jobListKeys) != 0 {
-		listKey = jobListKeys[0]
-	}
-
-	values, err := m.txn.LGetAll(listKey)
-	if err != nil || values == nil {
-		return nil, errors.Trace(err)
-	}
-
-	jobs := make([]*model.Job, 0, len(values))
-	for _, val := range values {
-		job := &model.Job{}
-		err = job.Decode(val)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		jobs = append(jobs, job)
-	}
-
-	return jobs, nil
 }
 
 func (*Mutator) jobIDKey(id int64) []byte {

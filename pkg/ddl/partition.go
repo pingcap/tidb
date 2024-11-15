@@ -2156,9 +2156,7 @@ func (w *worker) rollbackLikeDropPartition(jobCtx *jobContext, job *model.Job) (
 
 	var dropIndices []*model.IndexInfo
 	for _, indexInfo := range tblInfo.Indices {
-		if indexInfo.Unique &&
-			indexInfo.State == model.StateDeleteReorganization &&
-			tblInfo.Partition.DDLState == model.StateDeleteReorganization {
+		if indexInfo.State == model.StateWriteOnly {
 			dropIndices = append(dropIndices, indexInfo)
 		}
 	}
@@ -2529,6 +2527,8 @@ func (w *worker) onTruncateTablePartition(jobCtx *jobContext, job *model.Job) (i
 	switch job.SchemaState {
 	case model.StatePublic:
 		// This work as a flag to ignore Global Index entries from the new partitions!
+		// Used in IDsInDDLToIgnore() for filtering new partitions from
+		// the global index
 		pi.NewPartitionIDs = newIDs[:]
 		pi.DDLAction = model.ActionTruncateTablePartition
 
@@ -2550,6 +2550,8 @@ func (w *worker) onTruncateTablePartition(jobCtx *jobContext, job *model.Job) (i
 			}
 		})
 		// This work as a flag to ignore Global Index entries from the old partitions!
+		// Used in IDsInDDLToIgnore() for filtering old partitions from
+		// the global index
 		pi.DroppingDefinitions = oldDefinitions
 		// And we don't need to filter for new partitions any longer
 		job.SchemaState = model.StateDeleteOnly
@@ -2594,7 +2596,30 @@ func (w *worker) onTruncateTablePartition(jobCtx *jobContext, job *model.Job) (i
 		pi.NewPartitionIDs = nil
 		pi.DDLState = model.StateNone
 		pi.DDLAction = model.ActionNone
-		// Done, continue after the SchemaState switch!
+
+		// used by ApplyDiff in updateSchemaVersion
+		args.ShouldUpdateAffectedPartitions = true
+		ver, err = updateVersionAndTableInfo(jobCtx, job, tblInfo, true)
+		if err != nil {
+			return ver, errors.Trace(err)
+		}
+		// Finish this job.
+		job.FinishTableJob(model.JobStateDone, model.StateNone, ver, tblInfo)
+		truncatePartitionEvent := notifier.NewTruncatePartitionEvent(
+			tblInfo,
+			&model.PartitionInfo{Definitions: newDefinitions},
+			&model.PartitionInfo{Definitions: oldDefinitions},
+		)
+		err = asyncNotifyEvent(jobCtx, truncatePartitionEvent, job, noSubJob, w.sess)
+		if err != nil {
+			return ver, errors.Trace(err)
+		}
+		// Finish this job.
+		job.FinishTableJob(model.JobStateDone, model.StateNone, ver, tblInfo)
+		// A background job will be created to delete old partition data.
+		job.FillFinishedArgs(&model.TruncateTableArgs{
+			OldPartitionIDs: oldIDs,
+		})
 	default:
 		return ver, dbterror.ErrInvalidDDLState.GenWithStackByArgs("partition", job.SchemaState)
 	}
@@ -3012,9 +3037,6 @@ func (w *worker) onExchangeTablePartition(jobCtx *jobContext, job *model.Job) (v
 }
 
 func getNewGlobal(partInfo *model.PartitionInfo, idx *model.IndexInfo) bool {
-	if len(partInfo.DDLUpdateIndexes) == 0 {
-		return idx.Global
-	}
 	for _, newIdx := range partInfo.DDLUpdateIndexes {
 		if strings.EqualFold(idx.Name.L, newIdx.IndexName) {
 			return newIdx.Global
@@ -3120,6 +3142,9 @@ func getReorgPartitionInfo(t *meta.Mutator, job *model.Job, args *model.TablePar
 //
 //	Everything now looks as it should, no memory of old partitions/indexes,
 //	and no more double writing, since the previous state is only reading the new partitions/indexes.
+//
+// Note: Special handling is also required in tables.newPartitionedTable(),
+// to get per partition indexes in the right state.
 func (w *worker) onReorganizePartition(jobCtx *jobContext, job *model.Job) (ver int64, _ error) {
 	args, err := model.GetTablePartitionArgs(job)
 	if err != nil {
@@ -3231,39 +3256,33 @@ func (w *worker) onReorganizePartition(jobCtx *jobContext, job *model.Job) (ver 
 			if err != nil {
 				return ver, errors.Trace(err)
 			}
-			if !inAllPartitionColumns {
-				// Currently only support Explicit Global indexes.
-				if !newGlobal {
-					job.State = model.JobStateCancelled
-					return ver, dbterror.ErrGlobalIndexNotExplicitlySet.GenWithStackByArgs(index.Name.O)
-				}
-				// Duplicate the unique indexes with new index ids.
-				// If previously was Global or will be Global:
-				// it must be recreated with new index ID
-				// TODO: Could we allow that session in StateWriteReorganization, when StateDeleteReorganization
-				// has started, may not find changes through the global index that sessions in StateDeleteReorganization made?
-				// If so, then we could avoid copying the full Global Index if it has not changed from LOCAL!
-				// It might be possible to use the new, not yet public partitions to access those rows?!
-				// Just that it would not work with explicit partition select SELECT FROM t PARTITION (p,...)
-				newIndex := index.Clone()
-				newIndex.State = model.StateDeleteOnly
-				newIndex.ID = AllocateIndexID(tblInfo)
-				newIndex.Global = true
-				tblInfo.Indices = append(tblInfo.Indices, newIndex)
-			} else {
-				if newGlobal {
-					// TODO: For the future loosen this restriction and allow global indexes for unique keys also including all partitioning columns
-					return ver, dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs(fmt.Sprintf("PARTITION BY, index '%v' is unique and contains all partitioning columns, but has Global Index set", index.Name.O))
-				}
-				if index.Global {
-					// Index was previously Global, now it needs to be duplicated and become a local index.
-					newIndex := index.Clone()
-					newIndex.State = model.StateDeleteOnly
-					newIndex.ID = AllocateIndexID(tblInfo)
-					newIndex.Global = false
-					tblInfo.Indices = append(tblInfo.Indices, newIndex)
-				}
+			// Currently only support Explicit Global indexes.
+			if !inAllPartitionColumns && !newGlobal {
+				job.State = model.JobStateCancelled
+				return ver, dbterror.ErrGlobalIndexNotExplicitlySet.GenWithStackByArgs(index.Name.O)
 			}
+			if !index.Global && !newGlobal {
+				// still local index, no need to duplicate index.
+				continue
+			}
+			if tblInfo.Partition.DDLChangedIndex == nil {
+				tblInfo.Partition.DDLChangedIndex = make(map[int64]bool)
+			}
+			// Duplicate the unique indexes with new index ids.
+			// If previously was Global or will be Global:
+			// it must be recreated with new index ID
+			// TODO: Could we allow that session in StateWriteReorganization, when StateDeleteReorganization
+			// has started, may not find changes through the global index that sessions in StateDeleteReorganization made?
+			// If so, then we could avoid copying the full Global Index if it has not changed from LOCAL!
+			// It might be possible to use the new, not yet public partitions to access those rows?!
+			// Just that it would not work with explicit partition select SELECT FROM t PARTITION (p,...)
+			newIndex := index.Clone()
+			newIndex.State = model.StateDeleteOnly
+			newIndex.ID = AllocateIndexID(tblInfo)
+			tblInfo.Partition.DDLChangedIndex[index.ID] = false
+			tblInfo.Partition.DDLChangedIndex[newIndex.ID] = true
+			newIndex.Global = newGlobal
+			tblInfo.Indices = append(tblInfo.Indices, newIndex)
 		}
 		failpoint.Inject("reorgPartCancel1", func(val failpoint.Value) {
 			if val.(bool) {
@@ -3456,26 +3475,18 @@ func (w *worker) onReorganizePartition(jobCtx *jobContext, job *model.Job) (ver 
 			if !index.Unique {
 				continue
 			}
-			switch index.State {
-			case model.StateWriteReorganization:
+			isNew, ok := tblInfo.Partition.DDLChangedIndex[index.ID]
+			if !ok {
+				continue
+			}
+			if isNew {
 				// Newly created index, replacing old unique/global index
 				index.State = model.StatePublic
-			case model.StatePublic:
-				if index.Global {
-					// Mark the old global index as non-readable, and to be dropped
-					index.State = model.StateDeleteReorganization
-				} else {
-					inAllPartitionColumns, err := checkPartitionKeysConstraint(partInfo, index.Columns, tblInfo)
-					if err != nil {
-						return rollbackReorganizePartitionWithErr(jobCtx, job, err)
-					}
-					if !inAllPartitionColumns {
-						// Mark the old unique index as non-readable, and to be dropped,
-						// since it is replaced by a global index
-						index.State = model.StateDeleteReorganization
-					}
-				}
+				continue
 			}
+			// Old index, should not be visible any longer,
+			// but needs to be kept up-to-date in case rollback happens.
+			index.State = model.StateWriteOnly
 		}
 		firstPartIdx, lastPartIdx, idMap, err2 := getReplacedPartitionIDs(partNames, tblInfo.Partition)
 		if err2 != nil {
@@ -3532,7 +3543,7 @@ func (w *worker) onReorganizePartition(jobCtx *jobContext, job *model.Job) (ver 
 
 		var dropIndices []*model.IndexInfo
 		for _, indexInfo := range tblInfo.Indices {
-			if indexInfo.Unique && indexInfo.State == model.StateDeleteReorganization {
+			if indexInfo.Unique && indexInfo.State == model.StateWriteOnly {
 				// Drop the old unique (possible global) index, see onDropIndex
 				indexInfo.State = model.StateNone
 				DropIndexColumnFlag(tblInfo, indexInfo)
@@ -3540,6 +3551,10 @@ func (w *worker) onReorganizePartition(jobCtx *jobContext, job *model.Job) (ver 
 				dropIndices = append(dropIndices, indexInfo)
 			}
 		}
+		// TODO: verify that the indexes are dropped,
+		// and that StateDeleteOnly+StateDeleteReorganization is not needed.
+		// local indexes is not an issue, since they will be gone with the dropped
+		// partitions, but replaced global indexes should be checked!
 		for _, indexInfo := range dropIndices {
 			removeIndexInfo(tblInfo, indexInfo)
 		}
@@ -3600,6 +3615,9 @@ func (w *worker) onReorganizePartition(jobCtx *jobContext, job *model.Job) (ver 
 				job.ErrorCount += variable.GetDDLErrorCountLimit() / 2
 				failpoint.Return(ver, errors.New("Injected error by reorgPartFail5"))
 			}
+		})
+		failpoint.Inject("updateVersionAndTableInfoErrInStateDeleteReorganization", func() {
+			failpoint.Return(ver, errors.New("Injected error in StateDeleteReorganization"))
 		})
 		args.OldPhysicalTblIDs = physicalTableIDs
 		args.NewPartitionIDs = newIDs

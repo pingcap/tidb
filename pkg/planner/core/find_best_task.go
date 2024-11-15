@@ -2681,7 +2681,6 @@ func convertToPointGet(ds *logicalop.DataSource, prop *property.PhysicalProperty
 
 	accessCnt := math.Min(candidate.path.CountAfterAccess, float64(1))
 	pointGetPlan := PointGetPlan{
-		ctx:              ds.SCtx(),
 		AccessConditions: candidate.path.AccessConds,
 		schema:           ds.Schema().Clone(),
 		dbName:           ds.DBName.L,

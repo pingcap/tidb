@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	infoschemacontext "github.com/pingcap/tidb/pkg/infoschema/context"
+	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
@@ -533,4 +534,27 @@ func TestSnapshotInfoschemaReader(t *testing.T) {
 	tk.MustQuery(sql).Check(testkit.Rows("0"))
 	sql = fmt.Sprintf("select * from INFORMATION_SCHEMA.TABLES as of timestamp '%s' where table_schema = 'issue55827'", timeStr)
 	tk.MustQuery(sql).Check(testkit.Rows())
+}
+
+func TestInfoSchemaCachedAutoIncrement(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	autoid.SetStep(1)
+	tk.MustExec("set @@global.tidb_schema_cache_size = 0;")
+	tk.MustExec("create table t (a int primary key auto_increment);")
+	autoIncQuery := "select auto_increment from information_schema.tables where table_name = 't' and table_schema = 'test';"
+
+	tk.MustQuery(autoIncQuery).Check(testkit.Rows("0"))
+	tk.MustExec("insert into t values (),(),();")
+	tk.MustQuery(autoIncQuery).Check(testkit.Rows("4"))
+
+	tk.MustExec("set @@global.tidb_schema_cache_size = 1024 * 1024 * 1024;")
+	tk.MustExec("create table t1 (a int);") // trigger infoschema cache reload
+	tk.MustQuery(autoIncQuery).Check(testkit.Rows("0"))
+	tk.MustExec("insert into t values ();")
+	tk.MustQuery(autoIncQuery).Check(testkit.Rows("5"))
+	tk.MustExec("set @@global.tidb_schema_cache_size = 0;")
+	tk.MustExec("drop table t1;") // trigger infoschema cache reload
+	tk.MustQuery(autoIncQuery).Check(testkit.Rows("0"))
 }

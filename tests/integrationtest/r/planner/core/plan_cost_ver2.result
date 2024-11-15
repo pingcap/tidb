@@ -254,7 +254,7 @@ explain format='true_card_cost' select * from t;
 Error 1105 (HY000): 'explain format=true_card_cost' cannot work without 'analyze', please use 'explain analyze format=true_card_cost'
 explain analyze format='true_card_cost' select * from t where a<3;
 id	estRows	estCost	costFormula	actRows	task	access object	execution info	operator info	memory	disk
-TableReader_7	3323.33	13580.23	(((cpu(0*filters(1)*tikv_cpu_factor(49.9))) + ((scan(1*logrowsize(32)*tikv_scan_factor(40.7))) + (scan(1000*logrowsize(32)*tikv_scan_factor(40.7))))) + (net(0*rowsize(16)*tidb_kv_net_factor(3.96))))/15.00	0	root		<execution_info>	<operator_info>	<memory>	<disk>
-└─Selection_6	3323.33	203703.50	(cpu(0*filters(1)*tikv_cpu_factor(49.9))) + ((scan(1*logrowsize(32)*tikv_scan_factor(40.7))) + (scan(1000*logrowsize(32)*tikv_scan_factor(40.7))))	0	cop[tikv]		<execution_info>	<operator_info>	<memory>	<disk>
-  └─TableFullScan_5	10000.00	203703.50	(scan(1*logrowsize(32)*tikv_scan_factor(40.7))) + (scan(1000*logrowsize(32)*tikv_scan_factor(40.7)))	0	cop[tikv]	table:t	<execution_info>	<operator_info>	<memory>	<disk>
+TableReader_7	3323.33	135680.23	(((cpu(0*filters(1)*tikv_cpu_factor(49.9))) + ((scan(1*logrowsize(32)*tikv_scan_factor(40.7))) + (scan(10000*logrowsize(32)*tikv_scan_factor(40.7))))) + (net(0*rowsize(16)*tidb_kv_net_factor(3.96))))/15.00	0	root		<execution_info>	<operator_info>	<memory>	<disk>
+└─Selection_6	3323.33	2035203.50	(cpu(0*filters(1)*tikv_cpu_factor(49.9))) + ((scan(1*logrowsize(32)*tikv_scan_factor(40.7))) + (scan(10000*logrowsize(32)*tikv_scan_factor(40.7))))	0	cop[tikv]		<execution_info>	<operator_info>	<memory>	<disk>
+  └─TableFullScan_5	10000.00	2035203.50	(scan(1*logrowsize(32)*tikv_scan_factor(40.7))) + (scan(10000*logrowsize(32)*tikv_scan_factor(40.7)))	0	cop[tikv]	table:t	<execution_info>	<operator_info>	<memory>	<disk>
 set @@tidb_cost_model_version=DEFAULT;

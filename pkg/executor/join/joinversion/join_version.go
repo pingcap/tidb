@@ -25,6 +25,20 @@ const (
 	HashJoinVersionOptimized = "optimized"
 )
 
+var (
+	// UseHashJoinV2ForNonGAJoin is added because Hash join contains a lots of types(like inner join, outer join, semi join, nullaware semi join, etc)
+	// we want to GA these different kind of joins step by step, but don't want to add a new session variable for each of the join,
+	// so we add this variable to control whether to use hash join v2 for nonGA joins(enable it for test, disable it in a release version).
+	// PhysicalHashJoin.isGAForHashJoinV2() defines whether the join is GA for hash join v2, we can make each join GA separately by updating
+	// this function one by one
+	UseHashJoinV2ForNonGAJoin = false
+)
+
+func init() {
+	// This variable is set to true for test, need to be set back to false in release version
+	UseHashJoinV2ForNonGAJoin = true
+}
+
 // IsOptimizedVersion returns true if hashJoinVersion equals to HashJoinVersionOptimized
 func IsOptimizedVersion(hashJoinVersion string) bool {
 	return strings.ToLower(hashJoinVersion) == HashJoinVersionOptimized
