@@ -1785,7 +1785,7 @@ func (cpdb *MySQLCheckpointsDB) DumpTables(ctx context.Context, writer io.Writer
 			update_time,
 			auto_rand_base,
 			auto_incr_base,
-			auto_row_id_base,
+			auto_row_id_base
 		FROM %s.%s;
 	`, cpdb.schema, CheckpointTableNameTable))
 	if err != nil {
