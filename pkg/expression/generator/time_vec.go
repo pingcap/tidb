@@ -301,13 +301,16 @@ func (b *{{.SigName}}) vecEval{{ .Output.TypeName }}(ctx EvalContext, input *chu
 	{{ else if or (eq .SigName "builtinAddDateAndDurationSig") (eq .SigName "builtinSubDateAndDurationSig") }}
 		fsp1 := b.args[1].GetType(ctx).GetDecimal()
 		arg1Duration := types.Duration{Duration: arg1, Fsp: fsp1}
+		tc := typeCtx(ctx)
 		{{ if eq $.FuncName "AddTime" }}
-		res, err := arg0.Add(typeCtx(ctx), arg1Duration)
+		res, err := arg0.Add(tc, arg1Duration)
 		{{ else }}
-		res, err := arg0.Add(typeCtx(ctx), arg1Duration.Neg())
+		res, err := arg0.Add(tc, arg1Duration.Neg())
 		{{ end }}
 		if err != nil {
-			return err
+			tc.AppendWarning(err)
+			result.SetNull(i, true)
+			continue
 		}
 		output := res.String()
 	{{ else if or (eq .SigName "builtinAddDateAndStringSig") (eq .SigName "builtinSubDateAndStringSig") }}
@@ -318,7 +321,9 @@ func (b *{{.SigName}}) vecEval{{ .Output.TypeName }}(ctx EvalContext, input *chu
 		res, err := arg0.Add(tc, arg1Duration.Neg())
 		{{ end }}
 		if err != nil {
-			return err
+			tc.AppendWarning(err)
+			result.SetNull(i, true)
+			continue
 		}
 
 		output := res.String()

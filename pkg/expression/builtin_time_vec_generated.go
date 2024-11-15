@@ -500,11 +500,14 @@ func (b *builtinAddDateAndDurationSig) vecEvalString(ctx EvalContext, input *chu
 
 		fsp1 := b.args[1].GetType(ctx).GetDecimal()
 		arg1Duration := types.Duration{Duration: arg1, Fsp: fsp1}
+		tc := typeCtx(ctx)
 
-		res, err := arg0.Add(typeCtx(ctx), arg1Duration)
+		res, err := arg0.Add(tc, arg1Duration)
 
 		if err != nil {
-			return err
+			tc.AppendWarning(err)
+			result.SetNull(i, true)
+			continue
 		}
 		output := res.String()
 
@@ -578,7 +581,9 @@ func (b *builtinAddDateAndStringSig) vecEvalString(ctx EvalContext, input *chunk
 		res, err := arg0.Add(tc, arg1Duration)
 
 		if err != nil {
-			return err
+			tc.AppendWarning(err)
+			result.SetNull(i, true)
+			continue
 		}
 
 		output := res.String()
@@ -1112,11 +1117,14 @@ func (b *builtinSubDateAndDurationSig) vecEvalString(ctx EvalContext, input *chu
 
 		fsp1 := b.args[1].GetType(ctx).GetDecimal()
 		arg1Duration := types.Duration{Duration: arg1, Fsp: fsp1}
+		tc := typeCtx(ctx)
 
-		res, err := arg0.Add(typeCtx(ctx), arg1Duration.Neg())
+		res, err := arg0.Add(tc, arg1Duration.Neg())
 
 		if err != nil {
-			return err
+			tc.AppendWarning(err)
+			result.SetNull(i, true)
+			continue
 		}
 		output := res.String()
 
@@ -1190,7 +1198,9 @@ func (b *builtinSubDateAndStringSig) vecEvalString(ctx EvalContext, input *chunk
 		res, err := arg0.Add(tc, arg1Duration.Neg())
 
 		if err != nil {
-			return err
+			tc.AppendWarning(err)
+			result.SetNull(i, true)
+			continue
 		}
 
 		output := res.String()
