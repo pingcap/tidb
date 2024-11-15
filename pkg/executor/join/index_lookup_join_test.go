@@ -191,6 +191,10 @@ func TestIssue54055(t *testing.T) {
 
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/executor/join/testIssue54055_1", "2*return(false)->1*return(true)"))
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/executor/join/testIssue54055_2", "return(true)"))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/executor/join/testIssue54055_1"))
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/executor/join/testIssue54055_2"))
+	}()
 	rs, err := tk.Exec("select /*+ INL_HASH_JOIN(s) */ * from t join s on t.a=s.a order by t.a;")
 	require.NoError(t, err)
 	_, err = session.GetRows4Test(context.Background(), nil, rs)
