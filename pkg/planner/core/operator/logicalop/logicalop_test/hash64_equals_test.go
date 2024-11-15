@@ -26,7 +26,9 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/cascades/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/property"
+	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/stretchr/testify/require"
 )
@@ -497,4 +499,215 @@ func TestLogicalAggregationHash64Equals(t *testing.T) {
 	la2.Hash64(hasher2)
 	require.NotEqual(t, hasher1.Sum64(), hasher2.Sum64())
 	require.False(t, la1.Equals(la2))
+}
+
+func MockFunc(sctx expression.EvalContext, lhsArg, rhsArg expression.Expression, lhsRow, rhsRow chunk.Row) (int64, bool, error) {
+	return 0, false, nil
+}
+func MockFunc2(sctx expression.EvalContext, lhsArg, rhsArg expression.Expression, lhsRow, rhsRow chunk.Row) (int64, bool, error) {
+	return 0, false, nil
+}
+
+func TestFrameBoundHash64Equals(t *testing.T) {
+	col := &expression.Column{
+		Index:   0,
+		RetType: types.NewFieldType(mysql.TypeLonglong),
+	}
+	col2 := &expression.Column{
+		Index:    1,
+		UniqueID: 1,
+		RetType:  types.NewFieldType(mysql.TypeLonglong),
+	}
+	fb1 := &logicalop.FrameBound{
+		Type:            ast.Preceding,
+		UnBounded:       true,
+		Num:             1,
+		CalcFuncs:       []expression.Expression{col},
+		CompareCols:     []expression.Expression{col},
+		CmpFuncs:        []expression.CompareFunc{MockFunc},
+		CmpDataType:     1,
+		IsExplicitRange: false,
+	}
+	fb2 := &logicalop.FrameBound{
+		Type:            ast.Preceding,
+		UnBounded:       true,
+		Num:             1,
+		CalcFuncs:       []expression.Expression{col},
+		CompareCols:     []expression.Expression{col},
+		CmpFuncs:        []expression.CompareFunc{MockFunc},
+		CmpDataType:     1,
+		IsExplicitRange: false,
+	}
+	hasher1 := base.NewHashEqualer()
+	hasher2 := base.NewHashEqualer()
+	fb1.Hash64(hasher1)
+	fb2.Hash64(hasher2)
+	require.Equal(t, hasher1.Sum64(), hasher2.Sum64())
+	require.True(t, fb1.Equals(fb2))
+
+	fb2.Type = ast.CurrentRow
+	hasher2.Reset()
+	fb2.Hash64(hasher2)
+	require.NotEqual(t, hasher1.Sum64(), hasher2.Sum64())
+	require.False(t, fb1.Equals(fb2))
+
+	fb2.Type = ast.Preceding
+	fb2.UnBounded = false
+	hasher2.Reset()
+	fb2.Hash64(hasher2)
+	require.NotEqual(t, hasher1.Sum64(), hasher2.Sum64())
+	require.False(t, fb1.Equals(fb2))
+
+	fb2.UnBounded = true
+	fb2.Num = 2
+	hasher2.Reset()
+	fb2.Hash64(hasher2)
+	require.NotEqual(t, hasher1.Sum64(), hasher2.Sum64())
+	require.False(t, fb1.Equals(fb2))
+
+	fb2.Num = 1
+	fb2.CalcFuncs = []expression.Expression{col2}
+	hasher2.Reset()
+	fb2.Hash64(hasher2)
+	require.NotEqual(t, hasher1.Sum64(), hasher2.Sum64())
+	require.False(t, fb1.Equals(fb2))
+
+	fb2.CalcFuncs = []expression.Expression{col}
+	fb2.CompareCols = []expression.Expression{col2}
+	hasher2.Reset()
+	fb2.Hash64(hasher2)
+	require.NotEqual(t, hasher1.Sum64(), hasher2.Sum64())
+	require.False(t, fb1.Equals(fb2))
+
+	fb2.CompareCols = []expression.Expression{col}
+	fb2.CmpFuncs = []expression.CompareFunc{MockFunc2}
+	hasher2.Reset()
+	fb2.Hash64(hasher2)
+	require.NotEqual(t, hasher1.Sum64(), hasher2.Sum64())
+	require.False(t, fb1.Equals(fb2))
+
+	fb2.CmpFuncs = []expression.CompareFunc{MockFunc}
+	hasher2.Reset()
+	fb2.Hash64(hasher2)
+	require.True(t, fb1.Equals(fb2))
+	require.Equal(t, hasher1.Sum64(), hasher2.Sum64())
+
+	fb2.CmpDataType = 2
+	hasher2.Reset()
+	fb2.Hash64(hasher2)
+	require.NotEqual(t, hasher1.Sum64(), hasher2.Sum64())
+	require.False(t, fb1.Equals(fb2))
+
+	fb2.CmpDataType = 1
+	fb2.IsExplicitRange = true
+	hasher2.Reset()
+	fb2.Hash64(hasher2)
+	require.NotEqual(t, hasher1.Sum64(), hasher2.Sum64())
+	require.False(t, fb1.Equals(fb2))
+}
+
+func TestWindowFrameHash64Equals(t *testing.T) {
+	col := &expression.Column{
+		Index:   0,
+		RetType: types.NewFieldType(mysql.TypeLonglong),
+	}
+	start := &logicalop.FrameBound{
+		Type:            ast.Preceding,
+		UnBounded:       true,
+		Num:             1,
+		CalcFuncs:       []expression.Expression{col},
+		CompareCols:     []expression.Expression{col},
+		CmpFuncs:        []expression.CompareFunc{MockFunc},
+		CmpDataType:     1,
+		IsExplicitRange: false,
+	}
+	end := start
+	wf1 := &logicalop.WindowFrame{
+		Type:  1,
+		Start: start,
+		End:   end,
+	}
+	wf2 := &logicalop.WindowFrame{
+		Type:  1,
+		Start: start,
+		End:   end,
+	}
+	hasher1 := base.NewHashEqualer()
+	hasher2 := base.NewHashEqualer()
+	wf1.Hash64(hasher1)
+	wf2.Hash64(hasher2)
+	require.Equal(t, hasher1.Sum64(), hasher2.Sum64())
+	require.True(t, wf1.Equals(wf2))
+
+	wf2.Type = 2
+	hasher2.Reset()
+	wf2.Hash64(hasher2)
+	require.NotEqual(t, hasher1.Sum64(), hasher2.Sum64())
+	require.False(t, wf1.Equals(wf2))
+}
+
+func TestHandleColsHash64Equals(t *testing.T) {
+	col1 := &expression.Column{
+		UniqueID: 1,
+		RetType:  types.NewFieldType(mysql.TypeLonglong),
+	}
+	col2 := &expression.Column{
+		UniqueID: 2,
+		RetType:  types.NewFieldType(mysql.TypeLonglong),
+	}
+	ctx := mock.NewContext()
+	handles1 := util.NewCommonHandlesColsWithoutColsAlign(ctx.GetSessionVars().StmtCtx, &model.TableInfo{ID: 1}, &model.IndexInfo{ID: 1}, []*expression.Column{col1, col2})
+	handles2 := util.NewCommonHandlesColsWithoutColsAlign(ctx.GetSessionVars().StmtCtx, &model.TableInfo{ID: 1}, &model.IndexInfo{ID: 1}, []*expression.Column{col1, col2})
+
+	hasher1 := base.NewHashEqualer()
+	hasher2 := base.NewHashEqualer()
+	handles1.Hash64(hasher1)
+	handles2.Hash64(hasher2)
+	require.Equal(t, hasher1.Sum64(), hasher2.Sum64())
+	require.True(t, handles1.Equals(handles2))
+
+	handles2 = util.NewCommonHandlesColsWithoutColsAlign(ctx.GetSessionVars().StmtCtx, &model.TableInfo{ID: 2}, &model.IndexInfo{ID: 1}, []*expression.Column{col1, col2})
+	hasher2.Reset()
+	handles2.Hash64(hasher2)
+	require.NotEqual(t, hasher1.Sum64(), hasher2.Sum64())
+	require.False(t, handles1.Equals(handles2))
+
+	handles2 = util.NewCommonHandlesColsWithoutColsAlign(ctx.GetSessionVars().StmtCtx, &model.TableInfo{ID: 1}, &model.IndexInfo{ID: 2}, []*expression.Column{col1, col2})
+	hasher2.Reset()
+	handles2.Hash64(hasher2)
+	require.NotEqual(t, hasher1.Sum64(), hasher2.Sum64())
+	require.False(t, handles1.Equals(handles2))
+
+	handles2 = util.NewCommonHandlesColsWithoutColsAlign(ctx.GetSessionVars().StmtCtx, &model.TableInfo{ID: 1}, &model.IndexInfo{ID: 1}, []*expression.Column{col2, col2})
+	hasher2.Reset()
+	handles2.Hash64(hasher2)
+	require.NotEqual(t, hasher1.Sum64(), hasher2.Sum64())
+	require.False(t, handles1.Equals(handles2))
+
+	handles2 = util.NewCommonHandlesColsWithoutColsAlign(ctx.GetSessionVars().StmtCtx, &model.TableInfo{ID: 1}, &model.IndexInfo{ID: 1}, []*expression.Column{col2, col1})
+	hasher2.Reset()
+	handles2.Hash64(hasher2)
+	require.NotEqual(t, hasher1.Sum64(), hasher2.Sum64())
+	require.False(t, handles1.Equals(handles2))
+
+	handles2 = util.NewCommonHandlesColsWithoutColsAlign(ctx.GetSessionVars().StmtCtx, &model.TableInfo{ID: 1}, &model.IndexInfo{ID: 1}, []*expression.Column{col1, col2})
+	hasher2.Reset()
+	handles2.Hash64(hasher2)
+	require.Equal(t, hasher1.Sum64(), hasher2.Sum64())
+	require.True(t, handles1.Equals(handles2))
+
+	intH1 := util.NewIntHandleCols(col1)
+	intH2 := util.NewIntHandleCols(col1)
+	hasher1.Reset()
+	hasher2.Reset()
+	intH1.Hash64(hasher1)
+	intH2.Hash64(hasher2)
+	require.Equal(t, hasher1.Sum64(), hasher2.Sum64())
+	require.True(t, handles1.Equals(handles2))
+
+	intH2 = util.NewIntHandleCols(col2)
+	hasher2.Reset()
+	intH2.Hash64(hasher2)
+	require.NotEqual(t, hasher1.Sum64(), hasher2.Sum64())
+	require.False(t, intH1.Equals(intH2))
 }
