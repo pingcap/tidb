@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/privilege"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
@@ -276,10 +277,62 @@ func (e *DDLJobRetriever) appendJobToChunk(req *chunk.Chunk, job *model.Job, che
 				req.AppendNull(10)
 			}
 			req.AppendString(11, subJob.State.String())
-			req.AppendString(12, subJob.Comments(useDXF, isCloud))
+			req.AppendString(12, showCommentsFromSubjob(subJob, useDXF, isCloud))
 		}
 	}
-	req.AppendString(12, job.Comments())
+	req.AppendString(12, showCommentsFromJob(job))
+}
+
+func showCommentsFromJob(job *model.Job) string {
+	m := job.ReorgMeta
+	if m == nil {
+		return ""
+	}
+	var labels []string
+	if job.Type == model.ActionAddIndex ||
+		job.Type == model.ActionAddPrimaryKey {
+		switch m.ReorgTp {
+		case model.ReorgTypeTxn:
+			labels = append(labels, model.ReorgTypeTxn.String())
+		case model.ReorgTypeLitMerge:
+			labels = append(labels, model.ReorgTypeLitMerge.String())
+			if m.IsDistReorg {
+				labels = append(labels, "DXF")
+			}
+			if m.UseCloudStorage {
+				labels = append(labels, "cloud")
+			}
+		case model.ReorgTypeTxnMerge:
+			labels = append(labels, model.ReorgTypeTxnMerge.String())
+		}
+	}
+	if job.MayNeedReorg() {
+		if m.Concurrency != variable.DefTiDBDDLReorgWorkerCount {
+			labels = append(labels, fmt.Sprintf("thread=%d", m.Concurrency))
+		}
+		if m.BatchSize != variable.DefTiDBDDLReorgBatchSize {
+			labels = append(labels, fmt.Sprintf("batch_size=%d", m.BatchSize))
+		}
+		if m.TargetScope != "" {
+			labels = append(labels, fmt.Sprintf("target_scope=%s", m.TargetScope))
+		}
+	}
+	return strings.Join(labels, ", ")
+}
+
+func showCommentsFromSubjob(sub *model.SubJob, useDXF, useCloud bool) string {
+	var labels []string
+	if sub.ReorgTp == model.ReorgTypeNone {
+		return ""
+	}
+	labels = append(labels, sub.ReorgTp.String())
+	if useDXF {
+		labels = append(labels, "DXF")
+	}
+	if useCloud {
+		labels = append(labels, "cloud")
+	}
+	return strings.Join(labels, ", ")
 }
 
 func ts2Time(timestamp uint64, loc *time.Location) types.Time {

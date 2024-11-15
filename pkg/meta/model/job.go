@@ -17,7 +17,6 @@ package model
 import (
 	"encoding/json"
 	"fmt"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -493,36 +492,6 @@ func (job *Job) FillFinishedArgs(args FinishedJobArgs) {
 	job.args = []any{args}
 }
 
-func (job *Job) Comments() string {
-	m := job.ReorgMeta
-	if m == nil {
-		return ""
-	}
-	var labels []string
-	if job.Type == ActionAddIndex ||
-		job.Type == ActionAddPrimaryKey {
-		switch m.ReorgTp {
-		case ReorgTypeTxn:
-			labels = append(labels, ReorgTypeTxn.String())
-		case ReorgTypeLitMerge:
-			labels = append(labels, ReorgTypeLitMerge.String())
-			if m.IsDistReorg {
-				labels = append(labels, "dxf")
-			}
-			if m.UseCloudStorage {
-				labels = append(labels, "cloud")
-			}
-		case ReorgTypeTxnMerge:
-			labels = append(labels, ReorgTypeTxnMerge.String())
-		}
-	}
-	if job.MayNeedReorg() {
-		labels = append(labels, fmt.Sprintf("concurrency=%d", m.Concurrency))
-		labels = append(labels, fmt.Sprintf("batch_size=%d", m.BatchSize))
-	}
-	return strings.Join(labels, ", ")
-}
-
 func marshalArgs(jobVer JobVersion, args []any) (json.RawMessage, error) {
 	if jobVer <= JobVersion1 {
 		rawArgs, err := json.Marshal(args)
@@ -900,22 +869,6 @@ func (sub *SubJob) Clone() *SubJob {
 	clonedSubJob := *sub
 	clonedSubJob.args = nil
 	return &clonedSubJob
-}
-
-// Comments returns pre-execute info in a subjob.
-func (sub *SubJob) Comments(useDXF, useCloud bool) string {
-	var labels []string
-	if sub.ReorgTp == ReorgTypeNone {
-		return ""
-	}
-	labels = append(labels, sub.ReorgTp.String())
-	if useDXF {
-		labels = append(labels, "dxf")
-	}
-	if useCloud {
-		labels = append(labels, "cloud")
-	}
-	return strings.Join(labels, ", ")
 }
 
 // MultiSchemaInfo keeps some information for multi schema change.
