@@ -290,6 +290,6 @@ func (j *TestJob) HasNewlyAddedIndex() bool {
 	return false
 }
 
-func (j *TestJob) ToJSON() types.AnalysisJobJSON {
+func (j *TestJob) AsJSON() types.AnalysisJobJSON {
 	panic("unimplemented")
 }

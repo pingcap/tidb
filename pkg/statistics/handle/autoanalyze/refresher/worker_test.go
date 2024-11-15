@@ -67,7 +67,7 @@ func (m *mockAnalysisJob) GetIndicators() priorityqueue.Indicators {
 func (m *mockAnalysisJob) SetIndicators(indicators priorityqueue.Indicators) {
 	panic("not implemented")
 }
-func (m *mockAnalysisJob) ToJSON() statstypes.AnalysisJobJSON {
+func (m *mockAnalysisJob) AsJSON() statstypes.AnalysisJobJSON {
 	panic("not implemented")
 }
 
