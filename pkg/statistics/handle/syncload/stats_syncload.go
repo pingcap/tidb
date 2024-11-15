@@ -344,7 +344,7 @@ func (s *statsSyncLoad) handleOneItemTask(task *statstypes.NeededItemTask) (err 
 			// so we have to get the column info from the domain.
 			wrapper.colInfo = tblInfo.GetColumnByID(item.ID)
 		}
-		_, skip := skipTypes[types.TypeToStr(col.Info.FieldType.GetType(), col.Info.FieldType.GetCharset())]
+		_, skip := skipTypes[types.TypeToStr(wrapper.colInfo.FieldType.GetType(), wrapper.colInfo.FieldType.GetCharset())]
 		if skip {
 			return nil
 		}
