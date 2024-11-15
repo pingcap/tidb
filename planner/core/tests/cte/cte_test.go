@@ -17,7 +17,7 @@ package cte
 import (
 	"testing"
 
-	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/testkit"
 )
 
 func TestCTEWithDifferentSchema(t *testing.T) {
