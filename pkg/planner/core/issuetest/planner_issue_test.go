@@ -177,3 +177,80 @@ func TestIssue58476(t *testing.T) {
 			`      ├─TableRangeScan(Build) 3333.33 cop[tikv] table:t3 range:(0,+inf], keep order:false, stats:pseudo`,
 			`      └─TableRowIDScan(Probe) 9990.00 cop[tikv] table:t3 keep order:false, stats:pseudo`))
 }
+
+func TestIssue(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(`CREATE TABLE customer (
+    C_CUSTKEY bigint NOT NULL,
+    C_NAME varchar(25) NOT NULL,
+    C_ADDRESS varchar(40) NOT NULL,
+    C_NATIONKEY bigint NOT NULL,
+    C_PHONE char(15) NOT NULL,
+    C_ACCTBAL decimal(15,2) NOT NULL,
+    C_MKTSEGMENT char(10) NOT NULL,
+    C_COMMENT varchar(117) NOT NULL,
+    PRIMARY KEY (C_CUSTKEY) /*T![clustered_index] CLUSTERED */
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;`)
+	tk.MustExec(`
+CREATE TABLE orders (
+    O_ORDERKEY bigint NOT NULL,
+    O_CUSTKEY bigint NOT NULL,
+    O_ORDERSTATUS char(1) NOT NULL,
+    O_TOTALPRICE decimal(15,2) NOT NULL,
+    O_ORDERDATE date NOT NULL,
+    O_ORDERPRIORITY char(15) NOT NULL,
+    O_CLERK char(15) NOT NULL,
+    O_SHIPPRIORITY bigint NOT NULL,
+    O_COMMENT varchar(79) NOT NULL,
+    PRIMARY KEY (O_ORDERKEY) /*T![clustered_index] CLUSTERED */
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;`)
+	tk.MustExec(`
+CREATE TABLE lineitem (
+    L_ORDERKEY bigint NOT NULL,
+    L_PARTKEY bigint NOT NULL,
+    L_SUPPKEY bigint NOT NULL,
+    L_LINENUMBER bigint NOT NULL,
+    L_QUANTITY decimal(15,2) NOT NULL,
+    L_EXTENDEDPRICE decimal(15,2) NOT NULL,
+    L_DISCOUNT decimal(15,2) NOT NULL,
+    L_TAX decimal(15,2) NOT NULL,
+    L_RETURNFLAG char(1) NOT NULL,
+    L_LINESTATUS char(1) NOT NULL,
+    L_SHIPDATE date NOT NULL,
+    L_COMMITDATE date NOT NULL,
+    L_RECEIPTDATE date NOT NULL,
+    L_SHIPINSTRUCT char(25) NOT NULL,
+    L_SHIPMODE char(10) NOT NULL,
+    L_COMMENT varchar(44) NOT NULL,
+    PRIMARY KEY (L_ORDERKEY, L_LINENUMBER) /*T![clustered_index] CLUSTERED */
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
+`)
+	testkit.SetTiFlashReplica(t, dom, "test", "customer")
+	testkit.SetTiFlashReplica(t, dom, "test", "orders")
+	testkit.SetTiFlashReplica(t, dom, "test", "lineitem")
+	tk.MustQuery(`explain select l_orderkey, sum(l_extendedprice * (1 - l_discount)) as revenue, o_orderdate, o_shippriority
+from customer, orders, lineitem
+where c_mktsegment = 'AUTOMOBILE' and c_custkey = o_custkey and l_orderkey = o_orderkey and o_orderdate < '1995-03-13' and l_shipdate > '1995-03-13'
+group by l_orderkey, o_orderdate, o_shippriority
+order by revenue desc, o_orderdate
+limit 10;`).Check(testkit.Rows(
+		"Projection_14 10.00 root  test.lineitem.l_orderkey, Column#34, test.orders.o_orderdate, test.orders.o_shippriority",
+		"└─TopN_17 10.00 root  Column#34:desc, test.orders.o_orderdate, offset:0, count:10",
+		"  └─HashAgg_24 15.62 root  group by:Column#48, Column#49, Column#50, funcs:sum(Column#47)->Column#34, funcs:firstrow(Column#48)->test.orders.o_orderdate, funcs:firstrow(Column#49)->test.orders.o_shippriority, funcs:firstrow(Column#50)->test.lineitem.l_orderkey",
+		"    └─Projection_143 15.62 root  mul(test.lineitem.l_extendedprice, minus(1, test.lineitem.l_discount))->Column#47, test.orders.o_orderdate->Column#48, test.orders.o_shippriority->Column#49, test.lineitem.l_orderkey->Column#50",
+		"      └─IndexJoin_37 15.62 root  inner join, inner:TableReader_33, outer key:test.orders.o_orderkey, inner key:test.lineitem.l_orderkey, equal cond:eq(test.orders.o_orderkey, test.lineitem.l_orderkey)",
+		"        ├─TableReader_93(Build) 12.50 root  MppVersion: 2, data:ExchangeSender_92",
+		"        │ └─ExchangeSender_92 12.50 mpp[tiflash]  ExchangeType: PassThrough",
+		"        │   └─Projection_91 12.50 mpp[tiflash]  test.orders.o_orderkey, test.orders.o_orderdate, test.orders.o_shippriority",
+		"        │     └─HashJoin_77 12.50 mpp[tiflash]  inner join, equal:[eq(test.customer.c_custkey, test.orders.o_custkey)]",
+		"        │       ├─ExchangeReceiver_48(Build) 10.00 mpp[tiflash]  ",
+		"        │       │ └─ExchangeSender_47 10.00 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
+		"        │       │   └─TableFullScan_45 10.00 mpp[tiflash] table:customer pushed down filter:eq(test.customer.c_mktsegment, \"AUTOMOBILE\"), keep order:false, stats:pseudo",
+		"        │       └─Selection_50(Probe) 3323.33 mpp[tiflash]  lt(test.orders.o_orderdate, 1995-03-13 00:00:00.000000)",
+		"        │         └─TableFullScan_49 10000.00 mpp[tiflash] table:orders pushed down filter:empty, keep order:false, stats:pseudo",
+		"        └─TableReader_33(Probe) 4.17 root  data:Selection_32",
+		"          └─Selection_32 4.17 cop[tikv]  gt(test.lineitem.l_shipdate, 1995-03-13 00:00:00.000000)",
+		"            └─TableRangeScan_31 12.50 cop[tikv] table:lineitem range: decided by [eq(test.lineitem.l_orderkey, test.orders.o_orderkey)], keep order:false, stats:pseudo"))
+}
