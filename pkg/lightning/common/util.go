@@ -51,9 +51,7 @@ import (
 const (
 	retryTimeout = 3 * time.Second
 
-	// we are using optimistic txn all the time, we need retry more because we
-	// might face more write conflicts during parallel import.
-	defaultMaxRetry = 10
+	defaultMaxRetry = 3
 )
 
 // MySQLConnectParam records the parameters needed to connect to a MySQL database.
