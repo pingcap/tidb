@@ -22,25 +22,17 @@ import (
 )
 
 type leftOuterSemiJoinProbe struct {
-	baseJoinProbe
+	baseSemiJoin
 
-	// isMatchedRows marks whether the left side row is matched
-	isMatchedRows []bool
 	// isNullRows marks whether the left side row matched result is null
 	isNullRows []bool
-
-	// buffer isNull for other condition evaluation
-	isNulls []bool
-
-	// used in other condition to record which rows need to be processed
-	unFinishedProbeRowIdxQueue *queue.Queue[int]
 }
 
 var _ ProbeV2 = &leftOuterSemiJoinProbe{}
 
 func newLeftOuterSemiJoinProbe(base baseJoinProbe) *leftOuterSemiJoinProbe {
 	probe := &leftOuterSemiJoinProbe{
-		baseJoinProbe: base,
+		baseSemiJoin:             *newBaseSemiJoin(base, false),
 	}
 	if base.ctx.hasOtherCondition() {
 		probe.unFinishedProbeRowIdxQueue = queue.NewQueue[int](32)
@@ -229,8 +221,6 @@ func (j *leftOuterSemiJoinProbe) buildResult(chk *chunk.Chunk, startProbeRow int
 	}
 	chk.SetNumVirtualRows(chk.NumRows())
 }
-
-var maxMatchedRowNum = 4
 
 func (j *leftOuterSemiJoinProbe) matchMultiBuildRows(joinedChk *chunk.Chunk, joinedChkRemainCap *int) {
 	tagHelper := j.ctx.hashTableContext.tagHelper

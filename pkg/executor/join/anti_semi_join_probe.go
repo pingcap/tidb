@@ -25,8 +25,6 @@ import (
 type antiSemiJoinProbe struct {
 	baseSemiJoin
 	matchedProbeRowIdx map[int]struct{}
-
-	isNulls []bool
 }
 
 func newAntiSemiJoinProbe(base baseJoinProbe, isLeftSideBuild bool) *antiSemiJoinProbe {
@@ -37,7 +35,6 @@ func newAntiSemiJoinProbe(base baseJoinProbe, isLeftSideBuild bool) *antiSemiJoi
 	if ret.ctx.hasOtherCondition() {
 		ret.isNulls = make([]bool, 0, ret.ctx.SessCtx.GetSessionVars().MaxChunkSize)
 		if !ret.isLeftSideBuild {
-			ret.groupMark = make([]int, 0, ret.ctx.SessCtx.GetSessionVars().MaxChunkSize)
 			ret.matchedProbeRowIdx = make(map[int]struct{})
 		}
 	}
@@ -246,13 +243,13 @@ func (a *antiSemiJoinProbe) probeForRightSideBuildHasOtherCondition(chk, joinedC
 		length := len(a.selected)
 		for i := range length {
 			if a.selected[i] {
-				a.matchedProbeRowIdx[a.groupMark[i]] = struct{}{}
-				delete(a.undeterminedProbeRowsIdx, a.groupMark[i])
+				a.matchedProbeRowIdx[a.rowIndexInfos[i].probeRowIndex] = struct{}{}
+				delete(a.undeterminedProbeRowsIdx, a.rowIndexInfos[i].probeRowIndex)
 			}
 
 			if a.isNulls[i] {
-				a.matchedProbeRowIdx[a.groupMark[i]] = struct{}{}
-				delete(a.undeterminedProbeRowsIdx, a.groupMark[i])
+				a.matchedProbeRowIdx[a.rowIndexInfos[i].probeRowIndex] = struct{}{}
+				delete(a.undeterminedProbeRowsIdx, a.rowIndexInfos[i].probeRowIndex)
 			}
 		}
 	}

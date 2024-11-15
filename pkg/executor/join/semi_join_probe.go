@@ -22,17 +22,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/sqlkiller"
 )
 
-// The following described case has other condition.
-// During the probe, when a probe matches one build row, we need to put the probe and build rows
-// together and generate a new row. If one probe row could match n build row, then we will get
-// n new rows. If n is very big, there will generate too much rows. In order to avoid this case
-// we need to limit the max generated row number. This variable describe this max number.
-// NOTE: Suppose probe chunk has n rows and n*maxMatchedRowNum << chunkRemainingCapacity.
-// We will keep on join probe rows that have been matched before with build rows, though
-// probe row with idx i may have produced `maxMatchedRowNum` number rows before. So that
-// we can process as many rows as possible.
-const maxMatchedRowNum = 4
-
 type semiJoinProbe struct {
 	baseSemiJoin
 
@@ -168,7 +157,7 @@ func (s *semiJoinProbe) Probe(joinResult *hashjoinWorkerResult, sqlKiller *sqlki
 func (s *semiJoinProbe) removeMatchedProbeRow() {
 	for idx, selected := range s.selected {
 		if selected {
-			delete(s.undeterminedProbeRowsIdx, s.groupMark[idx])
+			delete(s.undeterminedProbeRowsIdx, s.rowIndexInfos[idx].probeRowIndex)
 		}
 	}
 }
@@ -181,7 +170,7 @@ func (s *semiJoinProbe) truncateSelect() {
 			continue
 		}
 
-		groupID := s.groupMark[i]
+		groupID := s.rowIndexInfos[i].probeRowIndex
 		s.otherConditionSuccessSet[groupID] = append(s.otherConditionSuccessSet[groupID], i)
 	}
 
