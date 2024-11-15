@@ -38,7 +38,6 @@ type writeCFWriter struct {
 func newWriteCFWriter(
 	sstPath string,
 	ts uint64,
-	identity *rockssst.Identity,
 ) (*writeCFWriter, error) {
 	f, err := vfs.Default.Create(sstPath)
 	if err != nil {
@@ -46,7 +45,8 @@ func newWriteCFWriter(
 	}
 	writable := objstorageprovider.NewFileWritable(f)
 	writer := rockssst.NewWriter(writable, rockssst.WriterOptions{
-		// TODO(lance6716): should read TiKV config to know compression algorithm.
+		// TODO(lance6716): should read TiKV config to know these values.
+		BlockSize:   32 * 1024,
 		Compression: rocks.ZstdCompression,
 		// TODO(lance6716): should check the behaviour is the exactly same.
 		FilterPolicy: rocksbloom.FilterPolicy(10),
@@ -63,7 +63,7 @@ func newWriteCFWriter(
 				return mockCollector{name: "BlobFileSizeCollector"}
 			},
 		},
-	}, identity)
+	})
 	return &writeCFWriter{sstWriter: writer, ts: ts}, nil
 }
 

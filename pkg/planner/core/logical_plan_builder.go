@@ -7347,7 +7347,9 @@ func (b *PlanBuilder) adjustCTEPlanOutputName(p base.LogicalPlan, def *ast.Commo
 	outPutNames := p.OutputNames()
 	for _, name := range outPutNames {
 		name.TblName = def.Name
-		name.DBName = pmodel.NewCIStr(b.ctx.GetSessionVars().CurrentDB)
+		if name.DBName.String() == "" {
+			name.DBName = pmodel.NewCIStr(b.ctx.GetSessionVars().CurrentDB)
+		}
 	}
 	if len(def.ColNameList) > 0 {
 		if len(def.ColNameList) != len(p.OutputNames()) {

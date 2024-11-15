@@ -17,7 +17,6 @@ package metricsutil
 import (
 	"context"
 	"fmt"
-	"strings"
 	"time"
 
 	"github.com/pingcap/kvproto/pkg/keyspacepb"
@@ -46,7 +45,7 @@ import (
 // RegisterMetrics register metrics with const label 'keyspace_id' if keyspaceName set.
 func RegisterMetrics() error {
 	cfg := config.GetGlobalConfig()
-	if keyspace.IsKeyspaceNameEmpty(cfg.KeyspaceName) || strings.ToLower(cfg.Store) != "tikv" {
+	if keyspace.IsKeyspaceNameEmpty(cfg.KeyspaceName) || cfg.Store != config.StoreTypeTiKV {
 		return registerMetrics(nil) // register metrics without label 'keyspace_id'.
 	}
 
@@ -117,7 +116,7 @@ func registerMetrics(keyspaceMeta *keyspacepb.KeyspaceMeta) error {
 	ttlmetrics.InitMetricsVars()
 	txninfo.InitMetricsVars()
 
-	if config.GetGlobalConfig().Store == "unistore" {
+	if config.GetGlobalConfig().Store == config.StoreTypeUniStore {
 		unimetrics.RegisterMetrics()
 	}
 	return nil
