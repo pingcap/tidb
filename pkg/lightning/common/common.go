@@ -54,7 +54,8 @@ func GetMaxAutoIDBase(r autoid.Requirement, dbID int64, tblInfo *model.TableInfo
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
-	maxNextID := int64(0)
+	// all next auto id starts from 1.
+	maxNextID := int64(1)
 	for _, alloc := range allocators {
 		nextID, err := alloc.NextGlobalAutoID()
 		if err != nil {
