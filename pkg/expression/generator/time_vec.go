@@ -302,6 +302,7 @@ func (b *{{.SigName}}) vecEval{{ .Output.TypeName }}(ctx EvalContext, input *chu
 		fsp1 := b.args[1].GetType(ctx).GetDecimal()
 		arg1Duration := types.Duration{Duration: arg1, Fsp: fsp1}
 		tc := typeCtx(ctx)
+		arg0.SetType(mysql.TypeDatetime)
 		{{ if eq $.FuncName "AddTime" }}
 		res, err := arg0.Add(tc, arg1Duration)
 		{{ else }}
@@ -315,6 +316,7 @@ func (b *{{.SigName}}) vecEval{{ .Output.TypeName }}(ctx EvalContext, input *chu
 		output := res.String()
 	{{ else if or (eq .SigName "builtinAddDateAndStringSig") (eq .SigName "builtinSubDateAndStringSig") }}
 		{{ template "ConvertStringToDuration" . }}
+		 arg0.SetType(mysql.TypeDatetime)
 		{{ if eq $.FuncName "AddTime" }}
 		res, err := arg0.Add(tc, arg1Duration)
 		{{ else }}
