@@ -1937,7 +1937,7 @@ func (p *preprocessor) skipLockMDL() bool {
 // aliasChecker is used to check the alias of the table in delete statement.
 //
 //	for example: delete tt1 from t1 tt1,(select max(id) id from t2)tt2 where tt1.id<=tt2.id
-//	  `delete tt1```` will be transfer to `delete current_database.t1` in default.
+//	  `delete tt1` will be transformed to `delete current_database.t1` by default.
 //	   because `tt1` cannot be used as alias in delete statement.
 //	   so we have to set `tt1` as alias by aliasChecker.
 type aliasChecker struct{}
