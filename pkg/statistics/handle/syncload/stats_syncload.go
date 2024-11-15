@@ -310,7 +310,7 @@ func (s *statsSyncLoad) handleOneItemTask(task *statstypes.NeededItemTask) (err 
 		} else {
 			wrapper.colInfo = tbl.ColAndIdxExistenceMap.GetCol(item.ID)
 		}
-		_, skip := skipTypes[types.TypeToStr(col.Info.FieldType.GetType(), col.Info.FieldType.GetCharset())]
+		_, skip := skipTypes[types.TypeToStr(wrapper.colInfo.FieldType.GetType(), wrapper.colInfo.FieldType.GetCharset())]
 		if skip {
 			return nil
 		}
