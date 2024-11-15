@@ -1428,12 +1428,10 @@ func TestAddIndex(t *testing.T) {
 	tkVar := testkit.NewTestKit(t, store)
 	tkVar.MustExec("set @@global.tidb_ddl_enable_fast_reorg = 1")
 	tkVar.MustExec("set @@global.tidb_enable_dist_task=0")
-
 	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("create table t (col1 int, col2 int, unique index i1(col2) /*T![global_index] GLOBAL */) PARTITION BY HASH (col1) PARTITIONS 2")
-
 	tk2 := testkit.NewTestKit(t, store)
+
+	tk.MustExec("use test")
 	tk2.MustExec("use test")
 
 	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/BeforeBackfillMerge", func(job *model.Job) {
@@ -1441,6 +1439,13 @@ func TestAddIndex(t *testing.T) {
 	})
 	defer testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/BeforeBackfillMerge")
 
-	tk.MustExec("alter table t add unique index i(col1, col2)")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (col1 int, col2 int, unique index i1(col2) /*T![global_index] GLOBAL */) PARTITION BY HASH (col1) PARTITIONS 2")
+	tk.MustExec("alter table t add unique index i2(col1, col2)")
+	tk.MustExec("admin check table t")
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (col1 int, col2 int, unique index i1(col1, col2)) PARTITION BY HASH (col1) PARTITIONS 2")
+	tk.MustExec("alter table t add unique index i2(col2) /*T![global_index] GLOBAL */")
 	tk.MustExec("admin check table t")
 }

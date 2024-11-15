@@ -387,10 +387,14 @@ func needPresumeKeyNotExistsFlag(ctx context.Context, txn kv.Transaction, key, t
 }
 
 func handleEqual(dupHandle, prevHandle kv.Handle) bool {
-	if partitionHandle, ok := dupHandle.(kv.PartitionHandle); ok {
-		return partitionHandle.Handle.Equal(prevHandle)
+	dup, prev := dupHandle, prevHandle
+	if dupPartition, ok := dupHandle.(kv.PartitionHandle); ok {
+		dup = dupPartition.Handle
 	}
-	return dupHandle.Equal(prevHandle)
+	if prevPartition, ok := prevHandle.(kv.PartitionHandle); ok {
+		prev = prevPartition.Handle
+	}
+	return dup.Equal(prev)
 }
 
 // Delete removes the entry for handle h and indexedValues from KV index.
