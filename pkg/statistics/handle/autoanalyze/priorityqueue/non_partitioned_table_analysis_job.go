@@ -271,8 +271,8 @@ func (j *NonPartitionedTableAnalysisJob) GenSQLForAnalyzeIndex(index string) (st
 	return sql, params
 }
 
-// ToJSON converts the job to a JSON object.
-func (j *NonPartitionedTableAnalysisJob) ToJSON() statstypes.AnalysisJobJSON {
+// AsJSON converts the job to a JSON object.
+func (j *NonPartitionedTableAnalysisJob) AsJSON() statstypes.AnalysisJobJSON {
 	indexes := make([]int64, 0, len(j.IndexIDs))
 	for index := range j.IndexIDs {
 		indexes = append(indexes, index)
@@ -282,7 +282,7 @@ func (j *NonPartitionedTableAnalysisJob) ToJSON() statstypes.AnalysisJobJSON {
 		TableID:            j.TableID,
 		IndexIDs:           indexes,
 		Weight:             j.Weight,
-		Indicators:         toJSONIndicators(j.Indicators),
+		Indicators:         asJSONIndicators(j.Indicators),
 		HasNewlyAddedIndex: j.HasNewlyAddedIndex(),
 	}
 }

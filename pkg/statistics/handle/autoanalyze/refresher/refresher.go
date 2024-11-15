@@ -197,7 +197,7 @@ func (r *Refresher) GetPriorityQueueSnapshot() (statstypes.PriorityQueueSnapshot
 	}
 	jsonJobs := make([]statstypes.AnalysisJobJSON, len(currentJobs))
 	for i, job := range currentJobs {
-		jsonJobs[i] = job.ToJSON()
+		jsonJobs[i] = job.AsJSON()
 	}
 	// Sort by the weight in descending order.
 	sort.Slice(jsonJobs, func(i, j int) bool {
