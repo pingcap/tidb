@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/duration"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/planner/cascades/base"
 )
 
 // ExtraHandleID is the column ID of column which we need to append to schema to occupy the handle's position
@@ -194,6 +195,27 @@ type TableInfo struct {
 	Revision uint64 `json:"revision"`
 
 	DBID int64 `json:"-"`
+}
+
+// Hash64 implement HashEquals interface.
+func (t *TableInfo) Hash64(h base.Hasher) {
+	h.HashInt64(t.ID)
+}
+
+// Equals implements HashEquals interface.
+func (t *TableInfo) Equals(other any) bool {
+	// any(nil) can still be converted as (*TableInfo)(nil)
+	t2, ok := other.(*TableInfo)
+	if !ok {
+		return false
+	}
+	if t == nil {
+		return t2 == nil
+	}
+	if t2 == nil {
+		return false
+	}
+	return t.ID == t2.ID
 }
 
 // SepAutoInc decides whether _rowid and auto_increment id use separate allocator.

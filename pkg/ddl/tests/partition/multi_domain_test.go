@@ -582,8 +582,7 @@ func TestMultiSchemaReorganizePartition(t *testing.T) {
 //}
 
 func runMultiSchemaTest(t *testing.T, createSQL, alterSQL string, initFn func(*testkit.TestKit), postFn func(*testkit.TestKit, kv.Storage), loopFn func(tO, tNO *testkit.TestKit)) {
-	//distCtx := testkit.NewDistExecutionContextWithLease(t, 2, 15*time.Second)
-	distCtx := testkit.NewDistExecutionContextWithLease(t, 2, 1500*time.Second)
+	distCtx := testkit.NewDistExecutionContextWithLease(t, 2, 15*time.Second)
 	store := distCtx.Store
 	domOwner := distCtx.GetDomain(0)
 	domNonOwner := distCtx.GetDomain(1)

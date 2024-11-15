@@ -28,6 +28,24 @@ import (
 	"strings"
 )
 
+var (
+	specialSafeFuncs = map[string]struct{}{
+		"builtinInIntSig":          {},
+		"builtinInStringSig":       {},
+		"builtinInRealSig":         {},
+		"builtinInDecimalSig":      {},
+		"builtinInTimeSig":         {},
+		"builtinInDurationSig":     {},
+		"builtinRealIsTrueSig":     {},
+		"builtinDecimalIsTrueSig":  {},
+		"builtinIntIsTrueSig":      {},
+		"builtinRealIsFalseSig":    {},
+		"builtinDecimalIsFalseSig": {},
+		"builtinIntIsFalseSig":     {},
+		// NOTE: please make sure there are test cases for all functions here.
+	}
+)
+
 func collectThreadSafeBuiltinFuncs(file string) (safeFuncNames, unsafeFuncNames []string) {
 	fset := token.NewFileSet()
 	f, err := parser.ParseFile(fset, file, nil, 0)
@@ -54,6 +72,10 @@ func collectThreadSafeBuiltinFuncs(file string) (safeFuncNames, unsafeFuncNames 
 			return true
 		}
 		allFuncNames = append(allFuncNames, typeName)
+		if _, ok := specialSafeFuncs[typeName]; ok {
+			safeFuncNames = append(safeFuncNames, typeName)
+			return true
+		}
 		if len(structType.Fields.List) != 1 { // this structure only has 1 field
 			return true
 		}

@@ -89,7 +89,7 @@ func (a *AggFuncDesc) Equals(other any) bool {
 			return false
 		}
 	}
-	return a.baseFuncDesc.Equals(otherAgg.baseFuncDesc)
+	return a.baseFuncDesc.Equals(&otherAgg.baseFuncDesc)
 }
 
 // StringWithCtx returns the string representation within given ctx.

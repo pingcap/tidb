@@ -517,3 +517,10 @@ SELECT t2.a,t2.b,t3.a,t3.b,t4.a,t4.b
        ON t3.a=1 AND t3.b=t2.b AND t2.b=t4.b order by 1, 2, 3, 4, 5;
 show warnings;
 drop table if exists t1, t2, t3, t4;
+
+# TestIssue56270
+drop table if exists t0, v0;
+drop view if exists v0;
+CREATE  TABLE  t0(c0 INTEGER);
+CREATE VIEW v0(c0) AS SELECT 'a' FROM t0 WHERE (CASE t0.c0 WHEN t0.c0 THEN false END );
+SELECT t0.c0 FROM v0, t0 WHERE RAND();

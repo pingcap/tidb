@@ -142,9 +142,13 @@ type TargetInfoGetter interface {
 	// the database name is filled.
 	FetchRemoteDBModels(ctx context.Context) ([]*model.DBInfo, error)
 
-	// FetchRemoteTableModels obtains the models of all tables given the schema
-	// name. The returned table info does not need to be precise if the encoder,
-	// is not requiring them, but must at least fill in the following fields for
+	// FetchRemoteTableModels obtains the TableInfo of given tables under the schema
+	// name. It returns a map whose key is the table name in lower case and value is
+	// the TableInfo. If the table does not exist, it will not be included in the
+	// map.
+	//
+	// The returned table info does not need to be precise if the encoder, is not
+	// requiring them, but must at least fill in the following fields for
 	// TablesFromMeta to succeed:
 	//  - Name
 	//  - State (must be model.StatePublic)
@@ -154,7 +158,7 @@ type TargetInfoGetter interface {
 	//     * State (must be model.StatePublic)
 	//     * Offset (must be 0, 1, 2, ...)
 	//  - PKIsHandle (true = do not generate _tidb_rowid)
-	FetchRemoteTableModels(ctx context.Context, schemaName string) ([]*model.TableInfo, error)
+	FetchRemoteTableModels(ctx context.Context, schemaName string, tableNames []string) (map[string]*model.TableInfo, error)
 
 	// CheckRequirements performs the check whether the backend satisfies the version requirements
 	CheckRequirements(ctx context.Context, checkCtx *CheckCtx) error

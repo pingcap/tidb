@@ -344,6 +344,14 @@ func TestPartitionByNonPartitionedTable(t *testing.T) {
 	testReorganizePartitionFailures(t, create, alter, nil, beforeResult, nil, afterResult)
 }
 
+func TestPartitionByNonPartitionedTable(t *testing.T) {
+	create := `create table t (a int)`
+	alter := `alter table t partition by range (a) (partition p0 values less than (20))`
+	beforeResult := testkit.Rows()
+	afterResult := testkit.Rows()
+	testReorganizePartitionFailures(t, create, alter, nil, beforeResult, nil, afterResult, "Fail4")
+}
+
 func testReorganizePartitionFailures(t *testing.T, createSQL, alterSQL string, beforeDML []string, beforeResult [][]any, afterDML []string, afterResult [][]any, skipTests ...string) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -1005,4 +1013,16 @@ func TestPartitionByColumnChecks(t *testing.T) {
 	tk.MustExec(`insert into rb64 values ` + vals)
 	tk.MustExec(`alter table rb64 partition by range(b64) (partition pMax values less than (MAXVALUE))`)
 	tk.MustExec(`insert into rb64 values ` + vals)
+}
+
+func TestPartitionIssue56634(t *testing.T) {
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/updateVersionAndTableInfoErrInStateDeleteReorganization", `return(1)`)
+
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set global tidb_ddl_error_count_limit = 3")
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a int)")
+	tk.MustContainErrMsg("alter table t partition by range(a) (partition p1 values less than (20))", "[ddl:-1]DDL job rollback, error msg: Injected error in StateDeleteReorganization") // should NOT panic
 }

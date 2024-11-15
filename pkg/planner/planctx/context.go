@@ -15,6 +15,8 @@
 package planctx
 
 import (
+	"iter"
+
 	"github.com/pingcap/tidb/pkg/expression/exprctx"
 	infoschema "github.com/pingcap/tidb/pkg/infoschema/context"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -50,7 +52,7 @@ type PlanContext interface {
 	// GetInfoSchema returns the current infoschema
 	GetInfoSchema() infoschema.MetaOnlyInfoSchema
 	// UpdateColStatsUsage updates the column stats usage.
-	UpdateColStatsUsage(predicateColumns []model.TableItemID)
+	UpdateColStatsUsage(predicateColumns iter.Seq[model.TableItemID])
 	// GetClient gets a kv.Client.
 	GetClient() kv.Client
 	// GetMPPClient gets a kv.MPPClient.
