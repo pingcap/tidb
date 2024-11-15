@@ -640,6 +640,14 @@ func (job *Job) IsPausable() bool {
 	return job.NotStarted() || (job.IsRunning() && job.IsRollbackable())
 }
 
+// IsAlterable checks whether the job type can be altered.
+func (job *Job) IsAlterable() bool {
+	// Currently, only non-distributed add index reorg task can be altered
+	return job.Type == ActionAddIndex && !job.ReorgMeta.IsDistReorg ||
+		job.Type == ActionModifyColumn ||
+		job.Type == ActionReorganizePartition
+}
+
 // IsResumable checks whether the job can be rollback.
 func (job *Job) IsResumable() bool {
 	return job.IsPaused()

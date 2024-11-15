@@ -57,16 +57,23 @@ type Manager interface {
 	GetOwnerID(ctx context.Context) (string, error)
 	// SetOwnerOpValue updates the owner op value.
 	SetOwnerOpValue(ctx context.Context, op OpType) error
-	// CampaignOwner campaigns the owner.
+	// CampaignOwner campaigns the owner. It will start a background goroutine to
+	// campaign owner in a loop, and when become or retire owner, it will call methods
+	// of the listener.
 	CampaignOwner(...int) error
-	// ResignOwner lets the owner start a new election.
-	ResignOwner(ctx context.Context) error
-	// Cancel cancels this etcd ownerManager.
-	Cancel()
-	// RequireOwner requires the ownerManager is owner.
-	RequireOwner(ctx context.Context) error
-	// CampaignCancel cancels one etcd campaign
+	// CampaignCancel cancels one etcd campaign, it will also close the underlying
+	// etcd session. After this method is called, the manager can be used to campaign
+	// owner again.
 	CampaignCancel()
+	// BreakCampaignLoop breaks the campaign loop, related listener methods will
+	// be called. The underlying etcd session the related campaign key will remain,
+	// so if some instance is the owner before, after break and campaign again, it
+	// will still be the owner.
+	BreakCampaignLoop()
+	// ResignOwner will resign and start a new election if it's the owner.
+	ResignOwner(ctx context.Context) error
+	// Close closes the manager, after close, no methods can be called.
+	Close()
 	// SetListener sets the listener, set before CampaignOwner.
 	SetListener(listener Listener)
 	// ForceToBeOwner restart the owner election and trying to be the new owner by
@@ -129,27 +136,24 @@ type ownerManager struct {
 	logPrefix      string
 	logCtx         context.Context
 	etcdCli        *clientv3.Client
-	cancel         context.CancelFunc
 	elec           atomic.Pointer[concurrency.Election]
 	sessionLease   *atomicutil.Int64
 	wg             sync.WaitGroup
 	campaignCancel context.CancelFunc
 
-	listener          Listener
-	forceOwnerSession *concurrency.Session
+	listener Listener
+	etcdSes  *concurrency.Session
 }
 
 // NewOwnerManager creates a new Manager.
 func NewOwnerManager(ctx context.Context, etcdCli *clientv3.Client, prompt, id, key string) Manager {
 	logPrefix := fmt.Sprintf("[%s] %s ownerManager %s", prompt, key, id)
-	ctx, cancelFunc := context.WithCancel(ctx)
 	return &ownerManager{
 		etcdCli:      etcdCli,
 		id:           id,
 		key:          key,
 		ctx:          ctx,
 		prompt:       prompt,
-		cancel:       cancelFunc,
 		logPrefix:    logPrefix,
 		logCtx:       logutil.WithKeyValue(context.Background(), "owner info", logPrefix),
 		sessionLease: atomicutil.NewInt64(0),
@@ -166,15 +170,10 @@ func (m *ownerManager) IsOwner() bool {
 	return m.elec.Load() != nil
 }
 
-// Cancel implements Manager.Cancel interface.
-func (m *ownerManager) Cancel() {
-	m.cancel()
-	m.wg.Wait()
-}
-
-// RequireOwner implements Manager.RequireOwner interface.
-func (*ownerManager) RequireOwner(_ context.Context) error {
-	return nil
+// Close implements Manager.Close interface.
+func (m *ownerManager) Close() {
+	// same as CampaignCancel
+	m.CampaignCancel()
 }
 
 func (m *ownerManager) SetListener(listener Listener) {
@@ -184,12 +183,9 @@ func (m *ownerManager) SetListener(listener Listener) {
 func (m *ownerManager) ForceToBeOwner(context.Context) error {
 	logPrefix := fmt.Sprintf("[%s] %s", m.prompt, m.key)
 	logutil.BgLogger().Info("force to be owner", zap.String("ownerInfo", logPrefix))
-	session, err := util2.NewSession(m.ctx, logPrefix, m.etcdCli, util2.NewSessionDefaultRetryCnt, ManagerSessionTTL)
-	if err != nil {
+	if err := m.refreshSession(util2.NewSessionDefaultRetryCnt, ManagerSessionTTL); err != nil {
 		return errors.Trace(err)
 	}
-	m.forceOwnerSession = session
-	m.sessionLease.Store(int64(m.forceOwnerSession.Lease()))
 
 	// due to issue https://github.com/pingcap/tidb/issues/54689, if the cluster
 	// version before upgrade don't have fix, when retire owners runs on older version
@@ -209,7 +205,7 @@ func (m *ownerManager) ForceToBeOwner(context.Context) error {
 		// we need to sleep in every retry, as other TiDB nodes will start campaign
 		// immediately after we delete their key.
 		time.Sleep(WaitTimeOnForceOwner)
-		if err = m.tryToBeOwnerOnce(); err != nil {
+		if err := m.tryToBeOwnerOnce(); err != nil {
 			logutil.Logger(m.logCtx).Warn("failed to retire owner on older version", zap.Error(err))
 			continue
 		}
@@ -219,7 +215,7 @@ func (m *ownerManager) ForceToBeOwner(context.Context) error {
 }
 
 func (m *ownerManager) tryToBeOwnerOnce() error {
-	lease := m.forceOwnerSession.Lease()
+	lease := m.etcdSes.Lease()
 	keyPrefix := m.key + "/"
 
 	getResp, err := m.etcdCli.Get(m.ctx, keyPrefix, clientv3.WithPrefix())
@@ -257,7 +253,7 @@ func (m *ownerManager) tryToBeOwnerOnce() error {
 	// the owner, so we add a timeout to avoid blocking.
 	ctx, cancel := context.WithTimeout(m.ctx, keyOpDefaultTimeout)
 	defer cancel()
-	elec := concurrency.NewElection(m.forceOwnerSession, m.key)
+	elec := concurrency.NewElection(m.etcdSes, m.key)
 	if err = elec.Campaign(ctx, m.id); err != nil {
 		return errors.Trace(err)
 	}
@@ -295,20 +291,20 @@ func (m *ownerManager) CampaignOwner(withTTL ...int) error {
 		ttl = withTTL[0]
 	}
 	logPrefix := fmt.Sprintf("[%s] %s", m.prompt, m.key)
-	logutil.BgLogger().Info("start campaign owner", zap.String("ownerInfo", logPrefix))
-	campaignSession := m.forceOwnerSession
-	if campaignSession == nil {
-		session, err := util2.NewSession(m.ctx, logPrefix, m.etcdCli, util2.NewSessionDefaultRetryCnt, ttl)
-		if err != nil {
+	if m.etcdSes == nil {
+		logutil.BgLogger().Info("start campaign owner", zap.String("ownerInfo", logPrefix))
+		if err := m.refreshSession(util2.NewSessionDefaultRetryCnt, ttl); err != nil {
 			return errors.Trace(err)
 		}
-		m.sessionLease.Store(int64(session.Lease()))
-		campaignSession = session
+	} else {
+		logutil.BgLogger().Info("start campaign owner with existing session",
+			zap.String("ownerInfo", logPrefix),
+			zap.String("lease", util2.FormatLeaseID(m.etcdSes.Lease())))
 	}
 	m.wg.Add(1)
 	var campaignContext context.Context
 	campaignContext, m.campaignCancel = context.WithCancel(m.ctx)
-	go m.campaignLoop(campaignContext, campaignSession)
+	go m.campaignLoop(campaignContext)
 	return nil
 }
 
@@ -349,11 +345,18 @@ func (m *ownerManager) RetireOwner() {
 
 // CampaignCancel implements Manager.CampaignCancel interface.
 func (m *ownerManager) CampaignCancel() {
-	m.campaignCancel()
+	m.BreakCampaignLoop()
+	m.closeSession()
+}
+
+func (m *ownerManager) BreakCampaignLoop() {
+	if m.campaignCancel != nil {
+		m.campaignCancel()
+	}
 	m.wg.Wait()
 }
 
-func (m *ownerManager) campaignLoop(campaignContext context.Context, etcdSession *concurrency.Session) {
+func (m *ownerManager) campaignLoop(campaignContext context.Context) {
 	defer func() {
 		m.campaignCancel()
 		if r := recover(); r != nil {
@@ -363,25 +366,28 @@ func (m *ownerManager) campaignLoop(campaignContext context.Context, etcdSession
 		m.wg.Done()
 	}()
 
-	logPrefix := m.logPrefix
 	logCtx := m.logCtx
 	var err error
+	leaseNotFoundCh := make(chan struct{})
 	for {
 		if err != nil {
 			metrics.CampaignOwnerCounter.WithLabelValues(m.prompt, err.Error()).Inc()
 		}
 
 		select {
-		case <-etcdSession.Done():
-			logutil.Logger(logCtx).Info("etcd session is done, creates a new one")
-			leaseID := etcdSession.Lease()
-			etcdSession, err = util2.NewSession(campaignContext, logPrefix, m.etcdCli, util2.NewSessionRetryUnlimited, ManagerSessionTTL)
-			if err != nil {
-				logutil.Logger(logCtx).Info("break campaign loop, NewSession failed", zap.Error(err))
-				m.revokeSession(logPrefix, leaseID)
+		case <-m.etcdSes.Done():
+			logutil.Logger(logCtx).Info("etcd session done, refresh it")
+			if err2 := m.refreshSession(util2.NewSessionRetryUnlimited, ManagerSessionTTL); err2 != nil {
+				logutil.Logger(logCtx).Info("break campaign loop, refresh session failed", zap.Error(err2))
 				return
 			}
-			m.sessionLease.Store(int64(etcdSession.Lease()))
+		case <-leaseNotFoundCh:
+			logutil.Logger(logCtx).Info("meet lease not found error, refresh session")
+			if err2 := m.refreshSession(util2.NewSessionRetryUnlimited, ManagerSessionTTL); err2 != nil {
+				logutil.Logger(logCtx).Info("break campaign loop, refresh session failed", zap.Error(err2))
+				return
+			}
+			leaseNotFoundCh = make(chan struct{})
 		case <-campaignContext.Done():
 			failpoint.Inject("MockDelOwnerKey", func(v failpoint.Value) {
 				if v.(string) == "delOwnerKeyAndNotOwner" {
@@ -390,7 +396,6 @@ func (m *ownerManager) campaignLoop(campaignContext context.Context, etcdSession
 				}
 			})
 			logutil.Logger(logCtx).Info("break campaign loop, context is done")
-			m.revokeSession(logPrefix, etcdSession.Lease())
 			return
 		default:
 		}
@@ -398,14 +403,11 @@ func (m *ownerManager) campaignLoop(campaignContext context.Context, etcdSession
 		// The etcd server deletes this session's lease ID, but etcd session doesn't find it.
 		// In this time if we do the campaign operation, the etcd server will return ErrLeaseNotFound.
 		if terror.ErrorEqual(err, rpctypes.ErrLeaseNotFound) {
-			if etcdSession != nil {
-				err = etcdSession.Close()
-				logutil.Logger(logCtx).Info("etcd session encounters the error of lease not found, closes it", zap.Error(err))
-			}
+			close(leaseNotFoundCh)
 			continue
 		}
 
-		elec := concurrency.NewElection(etcdSession, m.key)
+		elec := concurrency.NewElection(m.etcdSes, m.key)
 		err = elec.Campaign(campaignContext, m.id)
 		if err != nil {
 			logutil.Logger(logCtx).Info("failed to campaign", zap.Error(err))
@@ -418,16 +420,42 @@ func (m *ownerManager) campaignLoop(campaignContext context.Context, etcdSession
 		}
 
 		m.toBeOwner(elec)
-		err = m.watchOwner(campaignContext, etcdSession, ownerKey, currRev)
+		err = m.watchOwner(campaignContext, m.etcdSes, ownerKey, currRev)
 		logutil.Logger(logCtx).Info("watch owner finished", zap.Error(err))
 		m.RetireOwner()
 
 		metrics.CampaignOwnerCounter.WithLabelValues(m.prompt, metrics.NoLongerOwner).Inc()
-		logutil.Logger(logCtx).Warn("is not the owner")
+		logutil.Logger(logCtx).Info("is not the owner")
 	}
 }
 
-func (m *ownerManager) revokeSession(_ string, leaseID clientv3.LeaseID) {
+func (m *ownerManager) closeSession() {
+	if m.etcdSes != nil {
+		if err := m.etcdSes.Close(); err != nil {
+			logutil.Logger(m.logCtx).Info("etcd session close failed", zap.Error(err))
+		}
+		m.etcdSes = nil
+	}
+}
+
+func (m *ownerManager) refreshSession(retryCnt, ttl int) error {
+	m.closeSession()
+	// Note: we must use manager's context to create session. If we use campaign
+	// context and the context is cancelled, the created session cannot be closed
+	// as session close depends on the context.
+	// One drawback is that when you want to break the campaign loop, and the campaign
+	// loop is refreshing the session, it might wait for a long time to return, it
+	// should be fine as long as network is ok, and acceptable to wait when not.
+	sess, err2 := util2.NewSession(m.ctx, m.logPrefix, m.etcdCli, retryCnt, ttl)
+	if err2 != nil {
+		return errors.Trace(err2)
+	}
+	m.etcdSes = sess
+	m.sessionLease.Store(int64(m.etcdSes.Lease()))
+	return nil
+}
+
+func (m *ownerManager) revokeSession(leaseID clientv3.LeaseID) {
 	// Revoke the session lease.
 	// If revoke takes longer than the ttl, lease is expired anyway.
 	cancelCtx, cancel := context.WithTimeout(context.Background(),

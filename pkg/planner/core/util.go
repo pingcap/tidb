@@ -103,7 +103,7 @@ type physicalSchemaProducer struct {
 
 func (s *physicalSchemaProducer) cloneForPlanCacheWithSelf(newCtx base.PlanContext, newSelf base.PhysicalPlan) (*physicalSchemaProducer, bool) {
 	cloned := new(physicalSchemaProducer)
-	cloned.schema = s.Schema().Clone()
+	cloned.schema = s.schema
 	base, ok := s.BasePhysicalPlan.CloneForPlanCacheWithSelf(newCtx, newSelf)
 	if !ok {
 		return nil, false
@@ -159,11 +159,10 @@ type baseSchemaProducer struct {
 	baseimpl.Plan
 }
 
-// CloneWithNewCtx clones the baseSchemaProducer with new context.
-func (s *baseSchemaProducer) CloneWithNewCtx(newCtx base.PlanContext) *baseSchemaProducer {
+func (s *baseSchemaProducer) cloneForPlanCache(newCtx base.PlanContext) *baseSchemaProducer {
 	cloned := new(baseSchemaProducer)
 	cloned.Plan = *s.Plan.CloneWithNewCtx(newCtx)
-	cloned.schema = s.schema.Clone()
+	cloned.schema = s.schema
 	cloned.names = s.names
 	return cloned
 }

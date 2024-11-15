@@ -33,7 +33,7 @@ go_test(
         "worker_test.go",
     ],
     flaky = True,
-    shard_count = 9,
+    shard_count = 10,
     deps = [
         ":refresher",
         "//pkg/parser/model",

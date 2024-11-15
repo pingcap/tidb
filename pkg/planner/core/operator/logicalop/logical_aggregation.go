@@ -38,7 +38,7 @@ import (
 
 // LogicalAggregation represents an aggregate plan.
 type LogicalAggregation struct {
-	LogicalSchemaProducer
+	LogicalSchemaProducer `hash64-equals:"true"`
 
 	AggFuncs     []*aggregation.AggFuncDesc `hash64-equals:"true"`
 	GroupByItems []expression.Expression    `hash64-equals:"true"`

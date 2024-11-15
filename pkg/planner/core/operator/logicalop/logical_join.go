@@ -93,7 +93,7 @@ func (tp JoinType) String() string {
 
 // LogicalJoin is the logical join plan.
 type LogicalJoin struct {
-	LogicalSchemaProducer
+	LogicalSchemaProducer `hash64-equals:"true"`
 
 	JoinType      JoinType `hash64-equals:"true"`
 	Reordered     bool
@@ -1091,9 +1091,43 @@ func (p *LogicalJoin) pushDownTopNToChild(topN *LogicalTopN, idx int, opt *optim
 			}
 		}
 	}
+	count, offset := topN.Count+topN.Offset, uint64(0)
+	if p.JoinType == LeftOuterJoin {
+		innerChild := p.Children()[1]
+		innerJoinKey := make([]*expression.Column, 0, len(p.EqualConditions))
+		isNullEQ := false
+		for _, eqCond := range p.EqualConditions {
+			innerJoinKey = append(innerJoinKey, eqCond.GetArgs()[1].(*expression.Column))
+			if eqCond.FuncName.L == ast.NullEQ {
+				isNullEQ = true
+			}
+		}
+		// If it's unique key(unique with not null), we can push the offset down safely whatever the join key is normal eq or nulleq.
+		// If the join key is nulleq, then we can only push the offset down when the inner side is unique key.
+		// Only when the join key is normal eq, we can push the offset down when the inner side is unique(could be null).
+		if innerChild.Schema().IsUnique(true, innerJoinKey...) ||
+			(!isNullEQ && innerChild.Schema().IsUnique(false, innerJoinKey...)) {
+			count, offset = topN.Count, topN.Offset
+		}
+	} else if p.JoinType == RightOuterJoin {
+		innerChild := p.Children()[0]
+		innerJoinKey := make([]*expression.Column, 0, len(p.EqualConditions))
+		isNullEQ := false
+		for _, eqCond := range p.EqualConditions {
+			innerJoinKey = append(innerJoinKey, eqCond.GetArgs()[0].(*expression.Column))
+			if eqCond.FuncName.L == ast.NullEQ {
+				isNullEQ = true
+			}
+		}
+		if innerChild.Schema().IsUnique(true, innerJoinKey...) ||
+			(!isNullEQ && innerChild.Schema().IsUnique(false, innerJoinKey...)) {
+			count, offset = topN.Count, topN.Offset
+		}
+	}
 
 	newTopN := LogicalTopN{
-		Count:            topN.Count + topN.Offset,
+		Count:            count,
+		Offset:           offset,
 		ByItems:          make([]*util.ByItems, len(topN.ByItems)),
 		PreferLimitToCop: topN.PreferLimitToCop,
 	}.Init(topN.SCtx(), topN.QueryBlockOffset())
