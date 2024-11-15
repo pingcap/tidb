@@ -273,13 +273,11 @@ FROM %s.%s WHERE table_id = ? FOR UPDATE`, m.schemaName, m.tableName),
 
 			// no enough info are available, fetch row_id max for table
 			if myStatus == metaStatusInitial {
-				if !hasAutoID {
-					// we still guarantee that the row ID is unique across all
-					// lightning instances even if the table don't have auto id.
-					myStartRowID = maxRowIDMax
-				} else if maxRowIDMax > 0 {
-					// someone have already allocated the auto id, we can continue
-					// allocating from previous maxRowIDMax.
+				// if the table don't have auto id, we still guarantee that the
+				// row ID is unique across all lightning instances.
+				// or if someone have already allocated the auto id, we can continue
+				// allocating from previous maxRowIDMax.
+				if !hasAutoID || maxRowIDMax > 0 {
 					myStartRowID = maxRowIDMax
 				} else {
 					// we are the first one to allocate the auto id, we need to
