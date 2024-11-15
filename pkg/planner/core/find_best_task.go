@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/cost"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
+	fd "github.com/pingcap/tidb/pkg/planner/funcdep"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/fixcontrol"
@@ -186,7 +187,12 @@ func enumeratePhysicalPlans4Task(
 	if _, ok := p.Self().(*logicalop.LogicalSequence); ok {
 		iteration = iterateChildPlan4LogicalSequence
 	}
-
+	var fd *fd.FDSet
+	if joinP, ok := p.Self().(*logicalop.LogicalJoin); ok {
+		if joinP.JoinType == logicalop.InnerJoin {
+			fd = joinP.ExtractFD()
+		}
+	}
 	for _, pp := range physicalPlans {
 		timeStampNow := p.GetLogicalTS4TaskMap()
 		savedPlanID := p.SCtx().GetSessionVars().PlanID.Load()
@@ -224,7 +230,7 @@ func enumeratePhysicalPlans4Task(
 
 		// Enforce curTask property
 		if addEnforcer {
-			curTask = enforceProperty(prop, curTask, p.Plan.SCtx())
+			curTask = enforceProperty(prop, curTask, p.Plan.SCtx(), fd)
 		}
 
 		// Optimize by shuffle executor to running in parallel manner.
@@ -629,7 +635,7 @@ func findBestTask4LogicalMemTable(lp base.LogicalPlan, prop *property.PhysicalPr
 		}
 		if prop.CanAddEnforcer {
 			*prop = *oldProp
-			t = enforceProperty(prop, t, p.Plan.SCtx())
+			t = enforceProperty(prop, t, p.Plan.SCtx(), nil)
 			prop.CanAddEnforcer = true
 		}
 	}()
@@ -1421,7 +1427,7 @@ func findBestTask4LogicalDataSource(lp base.LogicalPlan, prop *property.Physical
 		}
 		if prop.CanAddEnforcer {
 			*prop = *oldProp
-			t = enforceProperty(prop, t, ds.Plan.SCtx())
+			t = enforceProperty(prop, t, ds.Plan.SCtx(), nil)
 			prop.CanAddEnforcer = true
 		}
 
@@ -3085,7 +3091,7 @@ func findBestTask4LogicalCTE(lp base.LogicalPlan, prop *property.PhysicalPropert
 		t = rt
 	}
 	if prop.CanAddEnforcer {
-		t = enforceProperty(prop, t, p.Plan.SCtx())
+		t = enforceProperty(prop, t, p.Plan.SCtx(), nil)
 	}
 	return t, 1, nil
 }

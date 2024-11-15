@@ -17,6 +17,7 @@ go_library(
         "//pkg/statistics",
         "//pkg/util/codec",
         "//pkg/util/collate",
+        "//pkg/util/intset",
         "//pkg/util/size",
         "@com_github_pingcap_log//:log",
         "@com_github_pingcap_tipb//go-tipb",
