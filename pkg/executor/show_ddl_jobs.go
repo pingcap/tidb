@@ -91,7 +91,7 @@ func (e *ShowDDLJobsExec) Next(_ context.Context, req *chunk.Chunk) error {
 	if e.cursor < len(e.runningJobs) {
 		numCurBatch := min(req.Capacity(), len(e.runningJobs)-e.cursor)
 		for i := e.cursor; i < e.cursor+numCurBatch; i++ {
-			e.appendJobToChunk(req, e.runningJobs[i], nil)
+			e.appendJobToChunk(req, e.runningJobs[i], nil, true)
 		}
 		e.cursor += numCurBatch
 		count += numCurBatch
@@ -108,7 +108,7 @@ func (e *ShowDDLJobsExec) Next(_ context.Context, req *chunk.Chunk) error {
 			return err
 		}
 		for _, job := range e.cacheJobs {
-			e.appendJobToChunk(req, job, nil)
+			e.appendJobToChunk(req, job, nil, true)
 		}
 		e.cursor += len(e.cacheJobs)
 	}
@@ -186,7 +186,7 @@ func (e *DDLJobRetriever) initial(txn kv.Transaction, sess sessionctx.Context) e
 	return nil
 }
 
-func (e *DDLJobRetriever) appendJobToChunk(req *chunk.Chunk, job *model.Job, checker privilege.Manager) {
+func (e *DDLJobRetriever) appendJobToChunk(req *chunk.Chunk, job *model.Job, checker privilege.Manager, inShowStmt bool) {
 	schemaName := job.SchemaName
 	tableName := ""
 	finishTS := uint64(0)
@@ -277,10 +277,18 @@ func (e *DDLJobRetriever) appendJobToChunk(req *chunk.Chunk, job *model.Job, che
 				req.AppendNull(10)
 			}
 			req.AppendString(11, subJob.State.String())
-			req.AppendString(12, showCommentsFromSubjob(subJob, useDXF, isCloud))
+			if inShowStmt {
+				req.AppendString(12, showCommentsFromSubjob(subJob, useDXF, isCloud))
+			} else {
+				req.AppendString(12, job.Query)
+			}
 		}
 	}
-	req.AppendString(12, showCommentsFromJob(job))
+	if inShowStmt {
+		req.AppendString(12, showCommentsFromJob(job))
+	} else {
+		req.AppendString(12, job.Query)
+	}
 }
 
 func showCommentsFromJob(job *model.Job) string {

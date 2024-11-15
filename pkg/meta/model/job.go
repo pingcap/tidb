@@ -850,7 +850,9 @@ func (sub *SubJob) FromProxyJob(proxyJob *Job, ver int64) {
 	sub.Warning = proxyJob.Warning
 	sub.RowCount = proxyJob.RowCount
 	sub.SchemaVer = ver
-	sub.ReorgTp = proxyJob.ReorgMeta.ReorgTp
+	if proxyJob.ReorgMeta != nil {
+		sub.ReorgTp = proxyJob.ReorgMeta.ReorgTp
+	}
 }
 
 // FillArgs fills args.
