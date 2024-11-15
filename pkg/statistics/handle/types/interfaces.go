@@ -126,13 +126,13 @@ type PriorityQueueSnapshot struct {
 
 // AnalysisJobJSON represents the JSON format of an AnalysisJob.
 type AnalysisJobJSON struct {
+	PartitionIndexIDs  map[int64][]int64 `json:"partition_index_ids"`
+	Indicators         IndicatorsJSON    `json:"indicators"`
 	Type               string            `json:"type"`
-	TableID            int64             `json:"table_id"`
 	PartitionIDs       []int64           `json:"partition_ids"`
 	IndexIDs           []int64           `json:"index_ids"`
-	PartitionIndexIDs  map[int64][]int64 `json:"partition_index_ids"`
+	TableID            int64             `json:"table_id"`
 	Weight             float64           `json:"weight"`
-	Indicators         IndicatorsJSON    `json:"indicators"`
 	HasNewlyAddedIndex bool              `json:"has_newly_added_index"`
 }
 
