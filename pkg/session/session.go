@@ -937,6 +937,28 @@ func (s *session) CommitTxn(ctx context.Context) error {
 			failpoint.Return(err)
 		}
 	})
+
+	s.GetSessionVars().GetRelatedTableForMDL().Range(func(key, _ any) bool {
+		txnTbl, ok := s.GetInfoSchema().(infoschema.InfoSchema).TableByID(ctx, key.(int64))
+		if !ok {
+			logutil.Logger(ctx).Error("get table failed", zap.Int("id", int(key.(int64))))
+			return false
+		}
+		domainTbl, ok := domain.GetDomain(s).InfoSchema().TableByID(ctx, key.(int64))
+		if !ok {
+			logutil.Logger(ctx).Error("get domain table failed", zap.Int("id", int(key.(int64))))
+			return false
+		}
+		if int64(domainTbl.Meta().Revision)-int64(txnTbl.Meta().Revision) > 1 {
+			logutil.Logger(ctx).Error("unexpected table revision",
+				zap.String("table", txnTbl.Meta().Name.O),
+				zap.Int64("id", txnTbl.Meta().ID),
+				zap.Uint64("txn revision", txnTbl.Meta().Revision),
+				zap.Uint64("domain revision", domainTbl.Meta().Revision))
+		}
+		return true
+	})
+
 	s.sessionVars.TxnCtx.Cleanup()
 	s.sessionVars.CleanupTxnReadTSIfUsed()
 	return err
@@ -4139,18 +4161,34 @@ func logGeneralQuery(execStmt *executor.ExecStmt, s *session, isPrepared bool) {
 		if vars.EnableRedactLog != errors.RedactLogEnable {
 			query += redact.String(vars.EnableRedactLog, vars.PlanCacheParams.String())
 		}
-		logutil.GeneralLogger.Info("GENERAL_LOG",
-			zap.Uint64("conn", vars.ConnectionID),
-			zap.String("session_alias", vars.SessionAlias),
-			zap.String("user", vars.User.LoginString()),
-			zap.Int64("schemaVersion", s.GetInfoSchema().SchemaMetaVersion()),
-			zap.Uint64("txnStartTS", vars.TxnCtx.StartTS),
-			zap.Uint64("forUpdateTS", vars.TxnCtx.GetForUpdateTS()),
-			zap.Bool("isReadConsistency", vars.IsIsolation(ast.ReadCommitted)),
-			zap.String("currentDB", vars.CurrentDB),
-			zap.Bool("isPessimistic", vars.TxnCtx.IsPessimistic),
-			zap.String("sessionTxnMode", vars.GetReadableTxnMode()),
-			zap.String("sql", query))
+		log := false
+		indexInfo := ""
+		for id := range s.GetSessionVars().StmtCtx.MDLRelatedTableIDs {
+			if tbl, ok := s.GetInfoSchema().TableInfoByID(id); ok {
+				for _, idx := range tbl.Indices {
+					if idx.State != model.StatePublic {
+						log = true
+						indexInfo = fmt.Sprintf("index name : %s, state : %s, backfill state: %s", idx.Name.O, idx.State.String(), idx.BackfillState.String())
+						break
+					}
+				}
+			}
+		}
+		if log {
+			logutil.GeneralLogger.Info("GENERAL_LOG",
+				zap.Uint64("conn", vars.ConnectionID),
+				zap.String("session_alias", vars.SessionAlias),
+				zap.String("user", vars.User.LoginString()),
+				zap.Int64("schemaVersion", s.GetInfoSchema().SchemaMetaVersion()),
+				zap.Uint64("txnStartTS", vars.TxnCtx.StartTS),
+				zap.Uint64("forUpdateTS", vars.TxnCtx.GetForUpdateTS()),
+				zap.Bool("isReadConsistency", vars.IsIsolation(ast.ReadCommitted)),
+				zap.String("currentDB", vars.CurrentDB),
+				zap.Bool("isPessimistic", vars.TxnCtx.IsPessimistic),
+				zap.String("sessionTxnMode", vars.GetReadableTxnMode()),
+				zap.String("sql", query),
+				zap.String("indexInfo", indexInfo))
+		}
 	}
 }
 
@@ -4623,9 +4661,11 @@ func RemoveLockDDLJobs(s types.Session, job2ver map[int64]int64, job2ids map[int
 	if sv.TxnCtx == nil {
 		return
 	}
+	idAndVer := ""
 	sv.GetRelatedTableForMDL().Range(func(tblID, value any) bool {
 		for jobID, ver := range job2ver {
 			ids := util.Str2Int64Map(job2ids[jobID])
+			idAndVer += fmt.Sprintf(", tableID: %d, lockVer %d, ver: %d", tblID.(int64), value.(int64), ver)
 			if _, ok := ids[tblID.(int64)]; ok && value.(int64) < ver {
 				delete(job2ver, jobID)
 				elapsedTime := time.Since(oracle.GetTimeFromTS(sv.TxnCtx.StartTS))
@@ -4638,6 +4678,7 @@ func RemoveLockDDLJobs(s types.Session, job2ver map[int64]int64, job2ids map[int
 		}
 		return true
 	})
+	logutil.Logger(context.Background()).Warn("session info", zap.Any("id", s.GetSessionVars().ConnectionID), zap.String("mdl info", idAndVer))
 }
 
 // GetDBNames gets the sql layer database names from the session.

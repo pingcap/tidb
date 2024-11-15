@@ -87,6 +87,7 @@ func convertAddIdxJob2RollbackJob(
 	job.FillFinishedArgs(dropArgs)
 
 	job.SchemaState = model.StateDeleteOnly
+	tblInfo.Revision -= 2
 	ver, err1 := updateVersionAndTableInfo(jobCtx, job, tblInfo, originalState != model.StateDeleteOnly)
 	if err1 != nil {
 		return ver, errors.Trace(err1)
