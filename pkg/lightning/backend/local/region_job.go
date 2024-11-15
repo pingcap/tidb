@@ -433,7 +433,7 @@ func (local *Backend) doWrite(ctx context.Context, j *regionJob) error {
 	dataCommitTS := j.ingestData.GetTS()
 	req.Chunk = &sst.WriteRequest_Batch{
 		Batch: &sst.WriteBatch{
-			CommitTs: dataCommitTS,
+			CommitTs: 0,
 		},
 	}
 
