@@ -3654,6 +3654,7 @@ func (w *worker) onReorganizePartition(jobCtx *jobContext, job *model.Job) (ver 
 		job.SchemaState = model.StateNone
 		ver, err = updateVersionAndTableInfo(jobCtx, job, tblInfo, true)
 		if err != nil {
+			job.ErrorCount += variable.GetDDLErrorCountLimit() / 2
 			return ver, errors.Trace(err)
 		}
 		// How to handle this?
