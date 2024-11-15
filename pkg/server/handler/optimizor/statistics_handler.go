@@ -156,7 +156,7 @@ func NewStatsPriorityQueueHandler(do *domain.Domain) *StatsPriorityQueueHandler 
 }
 
 // ServeHTTP dumps the stats priority queue snapshot to json.
-func (sh StatsPriorityQueueHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
+func (sh StatsPriorityQueueHandler) ServeHTTP(w http.ResponseWriter, _ *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 
 	h := sh.do.StatsHandle()
