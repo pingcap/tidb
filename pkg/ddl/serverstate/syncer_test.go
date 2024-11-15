@@ -20,14 +20,10 @@ import (
 	"testing"
 	"time"
 
-	. "github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/ddl/schemaver"
 	"github.com/pingcap/tidb/pkg/ddl/serverstate"
 	util2 "github.com/pingcap/tidb/pkg/ddl/util"
-	"github.com/pingcap/tidb/pkg/infoschema"
-	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
-	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/stretchr/testify/require"
 	"go.etcd.io/etcd/api/v3/mvccpb"
@@ -59,42 +55,23 @@ func TestStateSyncerSimple(t *testing.T) {
 		schemaver.CheckVersFirstWaitTime = origin
 	}()
 
-	store, err := mockstore.NewMockStore()
-	require.NoError(t, err)
-	defer func() { require.NoError(t, store.Close()) }()
-	domain, err := session.GetDomain(store)
-	require.NoError(t, err)
-
 	cluster := integration.NewClusterV3(t, &integration.ClusterConfig{Size: 1})
 	defer cluster.Terminate(t)
 	cli := cluster.RandClient()
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	ic := infoschema.NewCache(nil, 2)
-	ic.Insert(infoschema.MockInfoSchemaWithSchemaVer(nil, 0), 0)
-	d, _ := NewDDL(
-		ctx,
-		WithEtcdClient(cli),
-		WithStore(store),
-		WithLease(5*time.Millisecond),
-		WithInfoCache(ic),
-		WithSchemaLoader(domain),
-	)
 	var wg util.WaitGroupWrapper
-	wg.Run(func() {
-		require.NoError(t, d.OwnerManager().CampaignOwner())
-	})
-	defer d.OwnerManager().Cancel()
+	serverStateSyncer := serverstate.NewEtcdSyncer(cli, util2.ServerGlobalState)
 	// TODO: We can remove it when we call it in newDDL.
-	require.NoError(t, d.StateSyncer().Init(ctx))
+	require.NoError(t, serverStateSyncer.Init(ctx))
 
 	// for GetGlobalState
 	// for the initial state
 	stateInfo := &serverstate.StateInfo{State: serverstate.StateNormalRunning}
-	respState, err := d.StateSyncer().GetGlobalState(ctx)
+	respState, err := serverStateSyncer.GetGlobalState(ctx)
 	require.Nil(t, err)
 	require.Equal(t, stateInfo, respState)
-	require.False(t, d.StateSyncer().IsUpgradingState())
+	require.False(t, serverStateSyncer.IsUpgradingState())
 	// for watchCh
 	var checkErr string
 	stateInfo.State = serverstate.StateUpgrading
@@ -102,25 +79,25 @@ func TestStateSyncerSimple(t *testing.T) {
 	require.Nil(t, err)
 	checkValue := func() {
 		select {
-		case resp := <-d.StateSyncer().WatchChan():
+		case resp := <-serverStateSyncer.WatchChan():
 			if len(resp.Events) < 1 {
 				checkErr = "get chan events count less than 1"
 				return
 			}
 			checkRespKV(t, 1, util2.ServerGlobalState, string(stateInfoByte), resp.Events[0].Kv)
 			if stateInfo.State == serverstate.StateUpgrading {
-				require.False(t, d.StateSyncer().IsUpgradingState())
+				require.False(t, serverStateSyncer.IsUpgradingState())
 			} else {
-				require.True(t, d.StateSyncer().IsUpgradingState())
+				require.True(t, serverStateSyncer.IsUpgradingState())
 			}
 			// for GetGlobalState
-			respState, err := d.StateSyncer().GetGlobalState(ctx)
+			respState, err := serverStateSyncer.GetGlobalState(ctx)
 			require.Nil(t, err)
 			require.Equal(t, stateInfo, respState)
 			if stateInfo.State == serverstate.StateUpgrading {
-				require.True(t, d.StateSyncer().IsUpgradingState())
+				require.True(t, serverStateSyncer.IsUpgradingState())
 			} else {
-				require.False(t, d.StateSyncer().IsUpgradingState())
+				require.False(t, serverStateSyncer.IsUpgradingState())
 			}
 		case <-time.After(3 * time.Second):
 			checkErr = "get update state failed"
@@ -131,7 +108,7 @@ func TestStateSyncerSimple(t *testing.T) {
 	// for update UpdateGlobalState
 	// for StateUpgrading
 	wg.Run(checkValue)
-	require.NoError(t, d.StateSyncer().UpdateGlobalState(ctx, &serverstate.StateInfo{State: serverstate.StateUpgrading}))
+	require.NoError(t, serverStateSyncer.UpdateGlobalState(ctx, &serverstate.StateInfo{State: serverstate.StateUpgrading}))
 	wg.Wait()
 	require.Equal(t, "", checkErr)
 	// for StateNormalRunning
@@ -139,7 +116,7 @@ func TestStateSyncerSimple(t *testing.T) {
 	stateInfoByte, err = stateInfo.Marshal()
 	require.Nil(t, err)
 	wg.Run(checkValue)
-	require.NoError(t, d.StateSyncer().UpdateGlobalState(ctx, &serverstate.StateInfo{State: serverstate.StateNormalRunning}))
+	require.NoError(t, serverStateSyncer.UpdateGlobalState(ctx, &serverstate.StateInfo{State: serverstate.StateNormalRunning}))
 	wg.Wait()
 	require.Equal(t, "", checkErr)
 }

@@ -14,7 +14,9 @@ go_test(
     race = "on",
     shard_count = 6,
     deps = [
+        "//dumpling/context",
         "//pkg/config",
+        "//pkg/ddl",
         "//pkg/domain",
         "//pkg/kv",
         "//pkg/parser/model",

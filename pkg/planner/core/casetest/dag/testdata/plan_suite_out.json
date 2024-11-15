@@ -48,7 +48,7 @@
       },
       {
         "SQL": "select c from t order by t.a limit 1",
-        "Best": "TableReader(Table(t)->Limit)->Limit->Projection"
+        "Best": "IndexReader(Index(t.c_d_e)[[NULL,+inf]]->TopN([test.t.a],0,1))->TopN([test.t.a],0,1)->Projection"
       },
       {
         "SQL": "select c from t order by t.a + t.b limit 1",
@@ -508,7 +508,7 @@
       },
       {
         "SQL": "select a from t union all (select c from t) order by a limit 1",
-        "Best": "UnionAll{TableReader(Table(t)->Limit)->Limit->IndexReader(Index(t.c_d_e)[[NULL,+inf]]->Limit)->Limit}->TopN([Column#25],0,1)"
+        "Best": "UnionAll{IndexReader(Index(t.f)[[NULL,+inf]]->TopN([test.t.a],0,1))->TopN([test.t.a],0,1)->IndexReader(Index(t.c_d_e)[[NULL,+inf]]->Limit)->Limit}->TopN([Column#25],0,1)"
       }
     ]
   },

@@ -217,6 +217,10 @@ func testProcessDMLChanges(t *testing.T, partitioned bool) {
 	job2, err := pq.Pop()
 	require.NoError(t, err)
 	require.Equal(t, tbl2.Meta().ID, job2.GetTableID())
+	valid, _ := job1.ValidateAndPrepare(tk.Session())
+	require.True(t, valid)
+	valid, _ = job2.ValidateAndPrepare(tk.Session())
+	require.True(t, valid)
 	require.NoError(t, job1.Analyze(handle, dom.SysProcTracker()))
 	require.NoError(t, job2.Analyze(handle, dom.SysProcTracker()))
 	require.NoError(t, handle.Update(ctx, dom.InfoSchema()))
@@ -330,6 +334,8 @@ func TestProcessDMLChangesWithRunningJobs(t *testing.T) {
 	require.Equal(t, tbl2.Meta().ID, job2.GetTableID(), "t1 should not be in the queue since it's a running job")
 
 	// Analyze the job.
+	valid, _ := job1.ValidateAndPrepare(tk.Session())
+	require.True(t, valid)
 	require.NoError(t, job1.Analyze(handle, dom.SysProcTracker()))
 
 	// Add more rows to t1.
@@ -348,7 +354,7 @@ func TestProcessDMLChangesWithRunningJobs(t *testing.T) {
 	require.Equal(t, tbl1.Meta().ID, job1.GetTableID(), "t1 has been removed from running jobs and should be in the queue")
 }
 
-func TestRequeueFailedJobs(t *testing.T) {
+func TestRequeueMustRetryJobs(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	handle := dom.StatsHandle()
 	tk := testkit.NewTestKit(t, store)
@@ -380,7 +386,7 @@ func TestRequeueFailedJobs(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, job)
 	sctx := tk.Session().(sessionctx.Context)
-	ok, _ := job.IsValidToAnalyze(sctx)
+	ok, _ := job.ValidateAndPrepare(sctx)
 	require.False(t, ok)
 
 	// Insert more rows.
@@ -395,7 +401,7 @@ func TestRequeueFailedJobs(t *testing.T) {
 	require.Equal(t, 0, l)
 
 	// Requeue the failed jobs.
-	pq.RequeueFailedJobs()
+	pq.RequeueMustRetryJobs()
 	l, err = pq.Len()
 	require.NoError(t, err)
 	require.Equal(t, 1, l)
@@ -581,4 +587,24 @@ func TestProcessDMLChangesWithLockedPartitionsAndStaticPruneMode(t *testing.T) {
 	require.NoError(t, err)
 	pid = tbl.Meta().Partition.Definitions[0].ID
 	require.Equal(t, pid, job.GetTableID())
+}
+
+func TestPQCanBeClosedAndReInitialized(t *testing.T) {
+	_, dom := testkit.CreateMockStoreAndDomain(t)
+	handle := dom.StatsHandle()
+	pq := priorityqueue.NewAnalysisPriorityQueue(handle)
+	defer pq.Close()
+	require.NoError(t, pq.Initialize())
+
+	// Close the priority queue.
+	pq.Close()
+
+	// Check if the priority queue is closed.
+	require.False(t, pq.IsInitialized())
+
+	// Re-initialize the priority queue.
+	require.NoError(t, pq.Initialize())
+
+	// Check if the priority queue is initialized.
+	require.True(t, pq.IsInitialized())
 }
