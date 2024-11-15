@@ -72,8 +72,10 @@ func TestIssue24210(t *testing.T) {
 func TestUnionIssue(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
-	// Issue25506
+	// Issue56640
 	tk.MustExec("use test")
+	tk.MustQuery("(select cast('abcdefghijklmnopqrstuvwxyz' as char) as c1) union all (select 1 where false)").Check(testkit.Rows("abcdefghijklmnopqrstuvwxyz"))
+	// Issue25506
 	tk.MustExec("drop table if exists tbl_3, tbl_23")
 	tk.MustExec("create table tbl_3 (col_15 bit(20))")
 	tk.MustExec("insert into tbl_3 values (0xFFFF)")
@@ -124,6 +126,7 @@ func TestUnionIssue(t *testing.T) {
 	tk.MustQuery("(select 'a' as c, id, v from t1) union all (select 'b', id, v from t1 for update) order by c").Check(testkit.Rows("a 1 10", "b 1 11"))
 	tk.MustQuery("(select 'a' as c, id, v from t1 where id=1 for update) union all (select 'b', id, v from t1 where id=1) order by c").Check(testkit.Rows("a 1 11", "b 1 10"))
 	tk.MustQuery("(select 'a' as c, id, v from t1 where id=1) union all (select 'b', id, v from t1 where id=1 for update) order by c").Check(testkit.Rows("a 1 10", "b 1 11"))
+
 	tk.MustExec("rollback")
 }
 
