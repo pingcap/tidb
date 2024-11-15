@@ -54,7 +54,6 @@ func NewAnalysisJobFactory(sctx sessionctx.Context, autoAnalyzeRatio float64, cu
 
 // CreateNonPartitionedTableAnalysisJob creates a job for non-partitioned tables.
 func (f *AnalysisJobFactory) CreateNonPartitionedTableAnalysisJob(
-	tableSchema string,
 	tblInfo *model.TableInfo,
 	tblStats *statistics.Table,
 ) AnalysisJob {
@@ -78,8 +77,6 @@ func (f *AnalysisJobFactory) CreateNonPartitionedTableAnalysisJob(
 	}
 
 	return NewNonPartitionedTableAnalysisJob(
-		tableSchema,
-		tblInfo.Name.O,
 		tblInfo.ID,
 		indexes,
 		tableStatsVer,
@@ -91,10 +88,8 @@ func (f *AnalysisJobFactory) CreateNonPartitionedTableAnalysisJob(
 
 // CreateStaticPartitionAnalysisJob creates a job for static partitions.
 func (f *AnalysisJobFactory) CreateStaticPartitionAnalysisJob(
-	tableSchema string,
 	globalTblInfo *model.TableInfo,
 	partitionID int64,
-	partitionName string,
 	partitionStats *statistics.Table,
 ) AnalysisJob {
 	if !partitionStats.IsEligibleForAnalysis() {
@@ -117,10 +112,7 @@ func (f *AnalysisJobFactory) CreateStaticPartitionAnalysisJob(
 	}
 
 	return NewStaticPartitionTableAnalysisJob(
-		tableSchema,
-		globalTblInfo.Name.O,
 		globalTblInfo.ID,
-		partitionName,
 		partitionID,
 		indexes,
 		tableStatsVer,
@@ -132,7 +124,6 @@ func (f *AnalysisJobFactory) CreateStaticPartitionAnalysisJob(
 
 // CreateDynamicPartitionedTableAnalysisJob creates a job for dynamic partitioned tables.
 func (f *AnalysisJobFactory) CreateDynamicPartitionedTableAnalysisJob(
-	tableSchema string,
 	globalTblInfo *model.TableInfo,
 	globalTblStats *statistics.Table,
 	partitionStats map[PartitionIDAndName]*statistics.Table,
@@ -145,21 +136,19 @@ func (f *AnalysisJobFactory) CreateDynamicPartitionedTableAnalysisJob(
 	tableStatsVer := f.sctx.GetSessionVars().AnalyzeVersion
 	statistics.CheckAnalyzeVerOnTable(globalTblStats, &tableStatsVer)
 
-	avgChange, avgSize, minLastAnalyzeDuration, partitionNames := f.CalculateIndicatorsForPartitions(globalTblStats, partitionStats)
+	avgChange, avgSize, minLastAnalyzeDuration, partitionIDs := f.CalculateIndicatorsForPartitions(globalTblStats, partitionStats)
 	partitionIndexes := f.CheckNewlyAddedIndexesNeedAnalyzeForPartitionedTable(globalTblInfo, partitionStats)
 
 	// No need to analyze.
 	// We perform a separate check because users may set the auto analyze ratio to 0,
 	// yet still wish to analyze newly added indexes and tables that have not been analyzed.
-	if len(partitionNames) == 0 && len(partitionIndexes) == 0 {
+	if len(partitionIDs) == 0 && len(partitionIndexes) == 0 {
 		return nil
 	}
 
 	return NewDynamicPartitionedTableAnalysisJob(
-		tableSchema,
-		globalTblInfo.Name.O,
 		globalTblInfo.ID,
-		partitionNames,
+		partitionIDs,
 		partitionIndexes,
 		tableStatsVer,
 		avgChange,
@@ -225,14 +214,14 @@ func (f *AnalysisJobFactory) FindLastAnalyzeTime(tblStats *statistics.Table) tim
 }
 
 // CheckIndexesNeedAnalyze checks if the indexes need to be analyzed.
-func (*AnalysisJobFactory) CheckIndexesNeedAnalyze(tblInfo *model.TableInfo, tblStats *statistics.Table) []string {
+func (*AnalysisJobFactory) CheckIndexesNeedAnalyze(tblInfo *model.TableInfo, tblStats *statistics.Table) map[int64]struct{} {
 	// If table is not analyzed, we need to analyze whole table.
 	// So we don't need to check indexes.
 	if !tblStats.IsAnalyzed() {
 		return nil
 	}
 
-	indexes := make([]string, 0, len(tblInfo.Indices))
+	indexIDs := make(map[int64]struct{}, len(tblInfo.Indices))
 	// Check if missing index stats.
 	for _, idx := range tblInfo.Indices {
 		if idxStats := tblStats.GetIdx(idx.ID); idxStats == nil && !tblStats.ColAndIdxExistenceMap.HasAnalyzed(idx.ID, true) && idx.State == model.StatePublic {
@@ -240,11 +229,11 @@ func (*AnalysisJobFactory) CheckIndexesNeedAnalyze(tblInfo *model.TableInfo, tbl
 			if idx.VectorInfo != nil {
 				continue
 			}
-			indexes = append(indexes, idx.Name.O)
+			indexIDs[idx.ID] = struct{}{}
 		}
 	}
 
-	return indexes
+	return indexIDs
 }
 
 // CalculateIndicatorsForPartitions calculates the average change percentage,
@@ -259,12 +248,12 @@ func (f *AnalysisJobFactory) CalculateIndicatorsForPartitions(
 	avgChange float64,
 	avgSize float64,
 	avgLastAnalyzeDuration time.Duration,
-	partitionNames []string,
+	partitionIDs map[int64]struct{},
 ) {
 	totalChangePercent := 0.0
 	totalSize := 0.0
 	count := 0.0
-	partitionNames = make([]string, 0, len(partitionStats))
+	partitionIDs = make(map[int64]struct{}, len(partitionStats))
 	cols := float64(globalStats.ColAndIdxExistenceMap.ColNum())
 	intest.Assert(cols != 0, "Column count should not be 0")
 	totalLastAnalyzeDuration := time.Duration(0)
@@ -282,18 +271,18 @@ func (f *AnalysisJobFactory) CalculateIndicatorsForPartitions(
 		totalSize += float64(tblStats.RealtimeCount) * cols
 		lastAnalyzeDuration := f.GetTableLastAnalyzeDuration(tblStats)
 		totalLastAnalyzeDuration += lastAnalyzeDuration
-		partitionNames = append(partitionNames, pIDAndName.Name)
+		partitionIDs[pIDAndName.ID] = struct{}{}
 		count++
 	}
-	if len(partitionNames) == 0 {
-		return 0, 0, 0, partitionNames
+	if len(partitionIDs) == 0 {
+		return 0, 0, 0, partitionIDs
 	}
 
 	avgChange = totalChangePercent / count
 	avgSize = totalSize / count
 	avgLastAnalyzeDuration = totalLastAnalyzeDuration / time.Duration(count)
 
-	return avgChange, avgSize, avgLastAnalyzeDuration, partitionNames
+	return avgChange, avgSize, avgLastAnalyzeDuration, partitionIDs
 }
 
 // CheckNewlyAddedIndexesNeedAnalyzeForPartitionedTable checks if the indexes of the partitioned table need to be analyzed.
@@ -302,8 +291,8 @@ func (f *AnalysisJobFactory) CalculateIndicatorsForPartitions(
 func (*AnalysisJobFactory) CheckNewlyAddedIndexesNeedAnalyzeForPartitionedTable(
 	tblInfo *model.TableInfo,
 	partitionStats map[PartitionIDAndName]*statistics.Table,
-) map[string][]string {
-	partitionIndexes := make(map[string][]string, len(tblInfo.Indices))
+) map[int64][]int64 {
+	partitionIndexes := make(map[int64][]int64, len(tblInfo.Indices))
 
 	for _, idx := range tblInfo.Indices {
 		// No need to analyze the index if it's not public.
@@ -317,15 +306,15 @@ func (*AnalysisJobFactory) CheckNewlyAddedIndexesNeedAnalyzeForPartitionedTable(
 		}
 
 		// Find all the partitions that need to analyze this index.
-		names := make([]string, 0, len(partitionStats))
+		ids := make([]int64, 0, len(partitionStats))
 		for pIDAndName, tblStats := range partitionStats {
 			if idxStats := tblStats.GetIdx(idx.ID); idxStats == nil && !tblStats.ColAndIdxExistenceMap.HasAnalyzed(idx.ID, true) {
-				names = append(names, pIDAndName.Name)
+				ids = append(ids, pIDAndName.ID)
 			}
 		}
 
-		if len(names) > 0 {
-			partitionIndexes[idx.Name.O] = names
+		if len(ids) > 0 {
+			partitionIndexes[idx.ID] = ids
 		}
 	}
 

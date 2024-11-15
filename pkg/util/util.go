@@ -179,7 +179,7 @@ func PrintableASCII(b byte) bool {
 func FmtNonASCIIPrintableCharToHex(str string) string {
 	var b bytes.Buffer
 	b.Grow(len(str) * 2)
-	for i := 0; i < len(str); i++ {
+	for i := range len(str) {
 		if PrintableASCII(str[i]) {
 			b.WriteByte(str[i])
 			continue
@@ -255,7 +255,7 @@ func ReadLine(reader *bufio.Reader, maxLineSize int) ([]byte, error) {
 // maxLineSize specifies the maximum size of a single line.
 func ReadLines(reader *bufio.Reader, count int, maxLineSize int) ([][]byte, error) {
 	lines := make([][]byte, 0, count)
-	for i := 0; i < count; i++ {
+	for range count {
 		line, err := ReadLine(reader, maxLineSize)
 		if err == io.EOF && len(lines) > 0 {
 			return lines, nil

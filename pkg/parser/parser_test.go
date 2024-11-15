@@ -538,6 +538,17 @@ func TestAdminStmt(t *testing.T) {
 		{"admin set bdr role secondary", true, "ADMIN SET BDR ROLE SECONDARY"},
 		{"admin unset bdr role", true, "ADMIN UNSET BDR ROLE"},
 		{"admin show bdr role", true, "ADMIN SHOW BDR ROLE"},
+		// for alter job
+		{"admin alter ddl jobs 1 thread = 2", true, "ADMIN ALTER DDL JOBS 1 thread = 2"},
+		{"admin alter ddl jobs 1 thread = ", false, ""},
+		{"admin alter ddl jobs 1 thread", false, ""},
+		{"admin alter ddl jobs 1 batch_size = 3", true, "ADMIN ALTER DDL JOBS 1 batch_size = 3"},
+		{"admin alter ddl jobs 1 batch_size = ", false, ""},
+		{"admin alter ddl jobs 1 batch_size", false, ""},
+		{"admin alter ddl jobs 1 max_write_speed = 4", true, "ADMIN ALTER DDL JOBS 1 max_write_speed = 4"},
+		{"admin alter ddl jobs 1 max_write_speed = _UTF8MB4'4MiB'", true, "ADMIN ALTER DDL JOBS 1 max_write_speed = _UTF8MB4'4MiB'"},
+		{"admin alter ddl jobs 1 max_write_speed = ", false, ""},
+		{"admin alter ddl jobs 1 max_write_speed", false, ""},
 	}
 	RunTest(t, table, false)
 }
@@ -3240,7 +3251,6 @@ func TestDDL(t *testing.T) {
 		{"ALTER TABLE t ALTER INDEX a VISIBLE", true, "ALTER TABLE `t` ALTER INDEX `a` VISIBLE"},
 
 		{"ALTER TABLE t DROP FOREIGN KEY a", true, "ALTER TABLE `t` DROP FOREIGN KEY `a`"},
-		{"ALTER TABLE t DROP FOREIGN KEY IF EXISTS a", true, "ALTER TABLE `t` DROP FOREIGN KEY IF EXISTS `a`"},
 		{"ALTER TABLE t DROP COLUMN a CASCADE", true, "ALTER TABLE `t` DROP COLUMN `a`"},
 		{"ALTER TABLE t DROP COLUMN IF EXISTS a CASCADE", true, "ALTER TABLE `t` DROP COLUMN IF EXISTS `a`"},
 		{`ALTER TABLE testTableCompression COMPRESSION="LZ4";`, true, "ALTER TABLE `testTableCompression` COMPRESSION = 'LZ4'"},

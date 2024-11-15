@@ -781,25 +781,37 @@ func (l *listPartitionPruner) findUsedListPartitions(conds []expression.Expressi
 	used := make(map[int]struct{}, len(ranges))
 	tc := l.ctx.GetSessionVars().StmtCtx.TypeCtx()
 	for _, r := range ranges {
+		if len(r.HighVal) != len(exprCols) || r.IsFullRange(false) {
+			return l.fullRange, nil
+		}
+		var idxs map[int]struct{}
 		if !r.IsPointNullable(tc) {
-			return l.fullRange, nil
+			// Only support `pruneExpr` is a Column
+			if _, ok := pruneExpr.(*expression.Column); !ok {
+				return l.fullRange, nil
+			}
+			idxs, err = l.listPrune.LocatePartitionByRange(l.ctx.GetExprCtx().GetEvalCtx(), r)
+			if err != nil {
+				return nil, err
+			}
+		} else {
+			value, isNull, err := pruneExpr.EvalInt(l.ctx.GetExprCtx().GetEvalCtx(), chunk.MutRowFromDatums(r.HighVal).ToRow())
+			if err != nil {
+				return nil, err
+			}
+			idxs = make(map[int]struct{})
+			idxs[l.listPrune.LocatePartition(l.ctx.GetExprCtx().GetEvalCtx(), value, isNull)] = struct{}{}
 		}
-		if len(r.HighVal) != len(exprCols) {
-			return l.fullRange, nil
+		for idx := range idxs {
+			idx = l.pi.GetOverlappingDroppingPartitionIdx(idx)
+			if idx == -1 {
+				continue
+			}
+			if len(l.partitionNames) > 0 && !l.findByName(l.partitionNames, l.pi.Definitions[idx].Name.L) {
+				continue
+			}
+			used[idx] = struct{}{}
 		}
-		value, isNull, err := pruneExpr.EvalInt(l.ctx.GetExprCtx().GetEvalCtx(), chunk.MutRowFromDatums(r.HighVal).ToRow())
-		if err != nil {
-			return nil, err
-		}
-		partitionIdx := l.listPrune.LocatePartition(value, isNull)
-		partitionIdx = l.pi.GetOverlappingDroppingPartitionIdx(partitionIdx)
-		if partitionIdx == -1 {
-			continue
-		}
-		if len(l.partitionNames) > 0 && !l.findByName(l.partitionNames, l.pi.Definitions[partitionIdx].Name.L) {
-			continue
-		}
-		used[partitionIdx] = struct{}{}
 	}
 	return used, nil
 }

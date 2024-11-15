@@ -240,12 +240,12 @@ func (j *TestJob) Analyze(statsHandle types.StatsHandle, sysProcTracker sysproct
 }
 
 // RegisterSuccessHook implements AnalysisJob.
-func (j *TestJob) RegisterSuccessHook(hook priorityqueue.JobHook) {
+func (j *TestJob) RegisterSuccessHook(hook priorityqueue.SuccessJobHook) {
 	panic("unimplemented")
 }
 
 // RegisterFailureHook implements AnalysisJob.
-func (j *TestJob) RegisterFailureHook(hook priorityqueue.JobHook) {
+func (j *TestJob) RegisterFailureHook(hook priorityqueue.FailureJobHook) {
 	panic("unimplemented")
 }
 
@@ -254,8 +254,8 @@ func (j *TestJob) GetWeight() float64 {
 	panic("unimplemented")
 }
 
-// IsValidToAnalyze implements AnalysisJob.
-func (j *TestJob) IsValidToAnalyze(sctx sessionctx.Context) (bool, string) {
+// ValidateAndPrepare implements AnalysisJob.
+func (j *TestJob) ValidateAndPrepare(sctx sessionctx.Context) (bool, string) {
 	panic("unimplemented")
 }
 

@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/pkg/ddl/logutil"
+	"github.com/pingcap/tidb/pkg/ddl/notifier"
 	"github.com/pingcap/tidb/pkg/ddl/schemaver"
 	sess "github.com/pingcap/tidb/pkg/ddl/session"
 	"github.com/pingcap/tidb/pkg/ddl/systable"
@@ -81,11 +82,12 @@ type jobContext struct {
 	*schemaVersionManager
 	// ctx is the context of job scheduler. When worker is running the job, it should
 	// use stepCtx instead.
-	ctx             context.Context
-	infoCache       *infoschema.InfoCache
-	autoidCli       *autoid.ClientDiscover
-	store           kv.Storage
-	schemaVerSyncer schemaver.Syncer
+	ctx               context.Context
+	infoCache         *infoschema.InfoCache
+	autoidCli         *autoid.ClientDiscover
+	store             kv.Storage
+	schemaVerSyncer   schemaver.Syncer
+	eventPublishStore notifier.Store
 
 	// per job fields, they are not changed in the life cycle of this context.
 
@@ -881,7 +883,7 @@ func (w *worker) runOneJobStep(
 	case model.ActionModifySchemaCharsetAndCollate:
 		ver, err = onModifySchemaCharsetAndCollate(jobCtx, job)
 	case model.ActionDropSchema:
-		ver, err = onDropSchema(jobCtx, job)
+		ver, err = w.onDropSchema(jobCtx, job)
 	case model.ActionRecoverSchema:
 		ver, err = w.onRecoverSchema(jobCtx, job)
 	case model.ActionModifySchemaDefaultPlacement:

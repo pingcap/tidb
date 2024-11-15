@@ -285,6 +285,19 @@ func decodeBackupMetaCommand() *cobra.Command {
 
 			fieldName, _ := cmd.Flags().GetString("field")
 			if fieldName == "" {
+				if err := metautil.DecodeMetaFile(ctx, s, &cfg.CipherInfo, backupMeta.FileIndex); err != nil {
+					return errors.Trace(err)
+				}
+				if err := metautil.DecodeMetaFile(ctx, s, &cfg.CipherInfo, backupMeta.RawRangeIndex); err != nil {
+					return errors.Trace(err)
+				}
+				if err := metautil.DecodeMetaFile(ctx, s, &cfg.CipherInfo, backupMeta.SchemaIndex); err != nil {
+					return errors.Trace(err)
+				}
+				if err := metautil.DecodeStatsFile(ctx, s, &cfg.CipherInfo, backupMeta.Schemas); err != nil {
+					return errors.Trace(err)
+				}
+
 				// No field flag, write backupmeta to external storage in JSON format.
 				backupMetaJSON, err := utils.MarshalBackupMeta(backupMeta)
 				if err != nil {
@@ -294,7 +307,7 @@ func decodeBackupMetaCommand() *cobra.Command {
 				if err != nil {
 					return errors.Trace(err)
 				}
-				cmd.Printf("backupmeta decoded at %s\n", path.Join(cfg.Storage, metautil.MetaJSONFile))
+				cmd.Printf("backupmeta decoded at %s\n", path.Join(s.URI(), metautil.MetaJSONFile))
 				return nil
 			}
 
@@ -352,6 +365,9 @@ func encodeBackupMetaCommand() *cobra.Command {
 			backupMetaJSON, err := utils.UnmarshalBackupMeta(metaData)
 			if err != nil {
 				return errors.Trace(err)
+			}
+			if backupMetaJSON.Version == metautil.MetaV2 {
+				return errors.Errorf("encoding backupmeta v2 is unimplemented")
 			}
 			backupMeta, err := proto.Marshal(backupMetaJSON)
 			if err != nil {

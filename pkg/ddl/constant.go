@@ -120,8 +120,11 @@ const (
 		key idx_task_key(task_key),
 		key idx_state_update_time(state_update_time))`
 
+	// NotifierTableName is `tidb_ddl_notifier`.
+	NotifierTableName = "tidb_ddl_notifier"
+
 	// NotifierTableSQL is the CREATE TABLE SQL of `tidb_ddl_notifier`.
-	NotifierTableSQL = `CREATE TABLE tidb_ddl_notifier (
+	NotifierTableSQL = `CREATE TABLE ` + NotifierTableName + ` (
 		ddl_job_id BIGINT,
 		sub_job_id BIGINT COMMENT '-1 if the schema change does not belong to a multi-schema change DDL or a merged DDL. 0 or positive numbers representing the sub-job index of a multi-schema change DDL or a merged DDL',
 		schema_change LONGBLOB COMMENT 'SchemaChangeEvent at rest',

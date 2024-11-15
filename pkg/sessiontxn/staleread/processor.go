@@ -31,7 +31,7 @@ import (
 var _ Processor = &staleReadProcessor{}
 
 // StalenessTSEvaluator is a function to get staleness ts
-type StalenessTSEvaluator func(sctx sessionctx.Context) (uint64, error)
+type StalenessTSEvaluator func(ctx context.Context, sctx sessionctx.Context) (uint64, error)
 
 // Processor is an interface used to process stale read
 type Processor interface {
@@ -101,7 +101,7 @@ func (p *baseProcessor) setEvaluatedTS(ts uint64) (err error) {
 		return err
 	}
 
-	return p.setEvaluatedValues(ts, is, func(sctx sessionctx.Context) (uint64, error) {
+	return p.setEvaluatedValues(ts, is, func(_ context.Context, sctx sessionctx.Context) (uint64, error) {
 		return ts, nil
 	})
 }
@@ -117,7 +117,7 @@ func (p *baseProcessor) setEvaluatedTSWithoutEvaluator(ts uint64) (err error) {
 }
 
 func (p *baseProcessor) setEvaluatedEvaluator(evaluator StalenessTSEvaluator) error {
-	ts, err := evaluator(p.sctx)
+	ts, err := evaluator(p.ctx, p.sctx)
 	if err != nil {
 		return err
 	}
@@ -168,10 +168,10 @@ func (p *staleReadProcessor) OnSelectTable(tn *ast.TableName) error {
 	}
 
 	// If `stmtAsOfTS` is not 0, it means we use 'select ... from xxx as of timestamp ...'
-	evaluateTS := func(sctx sessionctx.Context) (uint64, error) {
-		return parseAndValidateAsOf(context.Background(), p.sctx, tn.AsOf)
+	evaluateTS := func(ctx context.Context, sctx sessionctx.Context) (uint64, error) {
+		return parseAndValidateAsOf(ctx, p.sctx, tn.AsOf)
 	}
-	stmtAsOfTS, err := evaluateTS(p.sctx)
+	stmtAsOfTS, err := evaluateTS(p.ctx, p.sctx)
 	if err != nil {
 		return err
 	}
@@ -201,7 +201,7 @@ func (p *staleReadProcessor) OnExecutePreparedStmt(preparedTSEvaluator Staleness
 	var stmtTS uint64
 	if preparedTSEvaluator != nil {
 		// If the `preparedTSEvaluator` is not nil, it means the prepared statement is stale read
-		if stmtTS, err = preparedTSEvaluator(p.sctx); err != nil {
+		if stmtTS, err = preparedTSEvaluator(p.ctx, p.sctx); err != nil {
 			return err
 		}
 	}
@@ -286,7 +286,7 @@ func parseAndValidateAsOf(ctx context.Context, sctx sessionctx.Context, asOf *as
 		return 0, err
 	}
 
-	if err = sessionctx.ValidateStaleReadTS(ctx, sctx.GetSessionVars().StmtCtx, sctx.GetStore(), ts); err != nil {
+	if err = sessionctx.ValidateSnapshotReadTS(ctx, sctx.GetStore(), ts); err != nil {
 		return 0, err
 	}
 
@@ -299,8 +299,8 @@ func getTsEvaluatorFromReadStaleness(sctx sessionctx.Context) StalenessTSEvaluat
 		return nil
 	}
 
-	return func(sctx sessionctx.Context) (uint64, error) {
-		return CalculateTsWithReadStaleness(sctx, readStaleness)
+	return func(ctx context.Context, sctx sessionctx.Context) (uint64, error) {
+		return CalculateTsWithReadStaleness(ctx, sctx, readStaleness)
 	}
 }
 
