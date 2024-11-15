@@ -48,6 +48,23 @@ var DefaultImportVariablesTiDB = map[string]string{
 	"tidb_row_format_version": "1",
 }
 
+// GetMaxAutoIDBase returns the max auto ID base for a table.
+func GetMaxAutoIDBase(r autoid.Requirement, dbID int64, tblInfo *model.TableInfo) (int64, error) {
+	allocators, err := GetGlobalAutoIDAlloc(r, dbID, tblInfo)
+	if err != nil {
+		return 0, errors.Trace(err)
+	}
+	maxNextID := int64(0)
+	for _, alloc := range allocators {
+		nextID, err := alloc.NextGlobalAutoID()
+		if err != nil {
+			return 0, errors.Trace(err)
+		}
+		maxNextID = max(maxNextID, nextID)
+	}
+	return maxNextID - 1, nil
+}
+
 // RebaseTableAllocators rebase the allocators of a table.
 // This function only rebase a table allocator when its new base is given in
 // `bases` param, else it will be skipped.

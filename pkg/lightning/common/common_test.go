@@ -176,6 +176,10 @@ func TestRebaseTableAllocators(t *testing.T) {
 		require.NoError(t, err)
 		require.Equal(t, int64(1), id)
 	}
+	maxAutoIDBase, err := common.GetMaxAutoIDBase(mockRequirement{kvStore}, 1, ti)
+	require.NoError(t, err)
+	require.Equal(t, int64(0), maxAutoIDBase)
+
 	ctx := context.Background()
 	allocatorTypes := make([]autoid.AllocatorType, 0, len(allocators))
 	// rebase to 123
@@ -191,6 +195,9 @@ func TestRebaseTableAllocators(t *testing.T) {
 		require.NoError(t, err)
 		require.Equal(t, int64(124), nextID)
 	}
+	maxAutoIDBase, err = common.GetMaxAutoIDBase(mockRequirement{kvStore}, 1, ti)
+	require.NoError(t, err)
+	require.Equal(t, int64(123), maxAutoIDBase)
 	// this call rebase AutoIncrementType allocator to 223
 	require.NoError(t, common.RebaseTableAllocators(ctx, map[autoid.AllocatorType]int64{
 		autoid.AutoIncrementType: 223,
@@ -201,6 +208,9 @@ func TestRebaseTableAllocators(t *testing.T) {
 	next, err = allocators[1].NextGlobalAutoID()
 	require.NoError(t, err)
 	require.Equal(t, int64(124), next)
+	maxAutoIDBase, err = common.GetMaxAutoIDBase(mockRequirement{kvStore}, 1, ti)
+	require.NoError(t, err)
+	require.Equal(t, int64(223), maxAutoIDBase)
 	// this call rebase AutoIncrementType allocator to 323, RowIDAllocType allocator to 423
 	require.NoError(t, common.RebaseTableAllocators(ctx, map[autoid.AllocatorType]int64{
 		autoid.AutoIncrementType: 323,
@@ -212,4 +222,7 @@ func TestRebaseTableAllocators(t *testing.T) {
 	next, err = allocators[1].NextGlobalAutoID()
 	require.NoError(t, err)
 	require.Equal(t, int64(424), next)
+	maxAutoIDBase, err = common.GetMaxAutoIDBase(mockRequirement{kvStore}, 1, ti)
+	require.NoError(t, err)
+	require.Equal(t, int64(423), maxAutoIDBase)
 }
