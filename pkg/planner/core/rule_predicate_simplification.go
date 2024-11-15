@@ -224,19 +224,6 @@ func unsatisfiable(ctx base.PlanContext, p1, p2 expression.Expression) bool {
 	// Copy constant from equal predicate into other predicate.
 	equalValue := equalPred.(*expression.ScalarFunction)
 	otherValue := otherPred.(*expression.ScalarFunction)
-	// If equalValue's arg[1] and otherValue's arg[1] are string, we should get the right collation.
-	// See details at https://github.com/pingcap/tidb/issues/56479.
-	evalCtx := ctx.GetExprCtx().GetEvalCtx()
-	if equalValue.GetArgs()[1].GetType(evalCtx).EvalType() == types.ETString && otherValue.GetArgs()[1].GetType(evalCtx).EvalType() == types.ETString {
-		_, equalValueCollation := equalValue.CharsetAndCollation()
-		_, otherValueCollation := otherValue.CharsetAndCollation()
-		// If these two scalar functions have different collations, we don't want to compare them.
-		if equalValueCollation != otherValueCollation {
-			return false
-		}
-		equalValue.GetArgs()[1].GetType(evalCtx).SetCollate(equalValueCollation)
-		otherValue.GetArgs()[1].GetType(evalCtx).SetCollate(equalValueCollation)
-	}
 	newPred, err := expression.NewFunction(ctx.GetExprCtx(), otherValue.FuncName.L, otherValue.RetType, equalValue.GetArgs()[1], otherValue.GetArgs()[1])
 	if err != nil {
 		return false
