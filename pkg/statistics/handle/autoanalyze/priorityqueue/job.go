@@ -91,7 +91,7 @@ type AnalysisJob interface {
 	// RegisterFailureHook registers a failureHook function that will be called after the job is marked as failed.
 	RegisterFailureHook(hook FailureJobHook)
 
-	// AsJSON converts the job to a JSON format.
+	// AsJSON converts the job to a JSON object.
 	AsJSON() statstypes.AnalysisJobJSON
 
 	fmt.Stringer
@@ -190,7 +190,7 @@ func IsDynamicPartitionedTableAnalysisJob(job AnalysisJob) bool {
 	return ok
 }
 
-// asJSONIndicators converts the indicators to a JSON format.
+// asJSONIndicators converts the indicators to a JSON object.
 func asJSONIndicators(indicators Indicators) statstypes.IndicatorsJSON {
 	return statstypes.IndicatorsJSON{
 		ChangePercentage:     fmt.Sprintf("%.2f%%", indicators.ChangePercentage*100),
