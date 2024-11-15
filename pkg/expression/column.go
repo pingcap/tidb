@@ -511,16 +511,24 @@ func (col *Column) Hash64(h base.Hasher) {
 
 // Equals implements HashEquals.<1st> interface.
 func (col *Column) Equals(other any) bool {
-	if other == nil {
-		return false
+	// If col itself is nil, check whether other is also nil
+	if col == nil {
+		// Use type assertion to check if other is of type *Column and nil
+		col2, ok := other.(*Column)
+		return ok && col2 == nil
 	}
+	// Attempt to convert other to *Column
 	var col2 *Column
 	switch x := other.(type) {
 	case Column:
-		col2 = &x
+		col2 = &x // Convert value type to pointer
 	case *Column:
 		col2 = x
 	default:
+		return false
+	}
+	// If col2 is nil, return false
+	if col2 == nil {
 		return false
 	}
 	// when step into here, we could ensure that col1.RetType and col2.RetType are same type.
