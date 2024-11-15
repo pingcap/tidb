@@ -1387,7 +1387,7 @@ func partitionRangeForExpr(sctx base.PlanContext, expr expression.Expression,
 				newRange := partitionRangeForInExpr(sctx, op.GetArgs(), p)
 				return result.intersection(newRange)
 			} else if _, ok := pruner.(*rangeColumnsPruner); ok {
-				// Should covered by `multiColumnRangeColumnsPruner` function
+				// Should covered by `rangeColumnsPrune` function
 				intest.Assert(false, "Shouldn't enter this branch")
 				terror.Log(fmt.Errorf("interal error, Shouldn't enter this branch"))
 			}
