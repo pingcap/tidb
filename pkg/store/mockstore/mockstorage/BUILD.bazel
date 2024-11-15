@@ -7,6 +7,7 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//pkg/kv",
+        "//pkg/resourcemanager/gpool",
         "//pkg/store/copr",
         "//pkg/store/driver/txn",
         "//pkg/store/helper",
