@@ -143,13 +143,6 @@ func clampInOneRange(rng kv.KeyRange, clampIn kv.KeyRange) (kv.KeyRange, failedT
 	return rng, successClamp
 }
 
-// CloneSlice sallowly clones a slice.
-func CloneSlice[T any](s []T) []T {
-	r := make([]T, len(s))
-	copy(r, s)
-	return r
-}
-
 // IntersectAll returns the intersect of two set of segments.
 // OWNERSHIP INFORMATION:
 // For running faster, this function would MUTATE the input slice. (i.e. takes its ownership.)

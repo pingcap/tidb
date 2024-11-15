@@ -8902,22 +8902,6 @@
               "legendFormat": "avg-{{type}}",
               "refId": "A",
               "step": 30
-            },
-            {
-              "exemplar": true,
-              "expr": "histogram_quantile(0.99, sum(rate(tidb_server_plan_cache_process_duration_seconds_bucket{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\", sql_type!=\"internal\"}[1m])) by (le, type))",
-              "hide": false,
-              "interval": "",
-              "legendFormat": "p99-{{type}}",
-              "refId": "B"
-            },
-            {
-              "exemplar": true,
-              "expr": "histogram_quantile(0.80, sum(rate(tidb_server_plan_cache_process_duration_seconds_bucket{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\", sql_type!=\"internal\"}[1m])) by (le, type))",
-              "hide": false,
-              "interval": "",
-              "legendFormat": "p80-{{type}}",
-              "refId": "C"
             }
           ],
           "thresholds": [],

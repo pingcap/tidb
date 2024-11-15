@@ -34,34 +34,37 @@ const (
 )
 
 // NonPartitionedTableAnalysisJob is a TableAnalysisJob for analyzing the physical table.
+//
+//nolint:fieldalignment
 type NonPartitionedTableAnalysisJob struct {
-	successHook JobHook
-	failureHook JobHook
-	TableSchema string
-	TableName   string
-	// This is only for newly added indexes.
-	Indexes []string
+	successHook SuccessJobHook
+	failureHook FailureJobHook
+
+	TableID  int64
+	IndexIDs map[int64]struct{}
+
 	Indicators
-	TableID       int64
 	TableStatsVer int
 	Weight        float64
+
+	// Lazy initialized.
+	SchemaName string
+	TableName  string
+	IndexNames []string
 }
 
 // NewNonPartitionedTableAnalysisJob creates a new TableAnalysisJob for analyzing the physical table.
 func NewNonPartitionedTableAnalysisJob(
-	schema, tableName string,
 	tableID int64,
-	indexes []string,
+	indexIDs map[int64]struct{},
 	tableStatsVer int,
 	changePercentage float64,
 	tableSize float64,
 	lastAnalysisDuration time.Duration,
 ) *NonPartitionedTableAnalysisJob {
 	return &NonPartitionedTableAnalysisJob{
-		TableSchema:   schema,
-		TableName:     tableName,
 		TableID:       tableID,
-		Indexes:       indexes,
+		IndexIDs:      indexIDs,
 		TableStatsVer: tableStatsVer,
 		Indicators: Indicators{
 			ChangePercentage:     changePercentage,
@@ -89,7 +92,7 @@ func (j *NonPartitionedTableAnalysisJob) Analyze(
 			}
 		} else {
 			if j.failureHook != nil {
-				j.failureHook(j)
+				j.failureHook(j, true)
 			}
 		}
 	}()
@@ -106,34 +109,62 @@ func (j *NonPartitionedTableAnalysisJob) Analyze(
 }
 
 // RegisterSuccessHook registers a successHook function that will be called after the job can be marked as successful.
-func (j *NonPartitionedTableAnalysisJob) RegisterSuccessHook(hook JobHook) {
+func (j *NonPartitionedTableAnalysisJob) RegisterSuccessHook(hook SuccessJobHook) {
 	j.successHook = hook
 }
 
 // RegisterFailureHook registers a failureHook function that will be called after the job can be marked as failed.
-func (j *NonPartitionedTableAnalysisJob) RegisterFailureHook(hook JobHook) {
+func (j *NonPartitionedTableAnalysisJob) RegisterFailureHook(hook FailureJobHook) {
 	j.failureHook = hook
 }
 
 // HasNewlyAddedIndex checks whether the table has newly added indexes.
 func (j *NonPartitionedTableAnalysisJob) HasNewlyAddedIndex() bool {
-	return len(j.Indexes) > 0
+	return len(j.IndexIDs) > 0
 }
 
-// IsValidToAnalyze checks whether the table is valid to analyze.
-// We will check the last failed job and average analyze duration to determine whether the table is valid to analyze.
-func (j *NonPartitionedTableAnalysisJob) IsValidToAnalyze(
+// ValidateAndPrepare validates if the analysis job can run and prepares it for execution.
+// For non-partitioned tables, it checks:
+// - Schema exists
+// - Table exists
+// - No recent failed analysis to avoid queue blocking
+func (j *NonPartitionedTableAnalysisJob) ValidateAndPrepare(
 	sctx sessionctx.Context,
 ) (bool, string) {
+	callFailureHook := func(needRetry bool) {
+		if j.failureHook != nil {
+			j.failureHook(j, needRetry)
+		}
+	}
+	is := sctx.GetDomainInfoSchema()
+	tableInfo, ok := is.TableInfoByID(j.TableID)
+	if !ok {
+		callFailureHook(false)
+		return false, tableNotExist
+	}
+	dbID := tableInfo.DBID
+	schema, ok := is.SchemaByID(dbID)
+	if !ok {
+		callFailureHook(false)
+		return false, schemaNotExist
+	}
+	tableName := tableInfo.Name.O
+	indexNames := make([]string, 0, len(j.IndexIDs))
+	for _, index := range tableInfo.Indices {
+		if _, ok := j.IndexIDs[index.ID]; ok {
+			indexNames = append(indexNames, index.Name.O)
+		}
+	}
+
+	j.SchemaName = schema.Name.O
+	j.TableName = tableName
+	j.IndexNames = indexNames
 	if valid, failReason := isValidToAnalyze(
 		sctx,
-		j.TableSchema,
+		j.SchemaName,
 		j.TableName,
 	); !valid {
-		if j.failureHook != nil {
-			j.failureHook(j)
-		}
-
+		callFailureHook(true)
 		return false, failReason
 	}
 
@@ -175,8 +206,8 @@ func (j *NonPartitionedTableAnalysisJob) String() string {
 			"\tLastAnalysisDuration: %v\n"+
 			"\tWeight: %.6f\n",
 		j.getAnalyzeType(),
-		strings.Join(j.Indexes, ", "),
-		j.TableSchema, j.TableName, j.TableID, j.TableStatsVer,
+		strings.Join(j.IndexNames, ", "),
+		j.SchemaName, j.TableName, j.TableID, j.TableStatsVer,
 		j.ChangePercentage, j.TableSize, j.LastAnalysisDuration, j.Weight,
 	)
 }
@@ -199,7 +230,7 @@ func (j *NonPartitionedTableAnalysisJob) analyzeTable(
 // GenSQLForAnalyzeTable generates the SQL for analyzing the specified table.
 func (j *NonPartitionedTableAnalysisJob) GenSQLForAnalyzeTable() (string, []any) {
 	sql := "analyze table %n.%n"
-	params := []any{j.TableSchema, j.TableName}
+	params := []any{j.SchemaName, j.TableName}
 
 	return sql, params
 }
@@ -209,14 +240,14 @@ func (j *NonPartitionedTableAnalysisJob) analyzeIndexes(
 	statsHandle statstypes.StatsHandle,
 	sysProcTracker sysproctrack.Tracker,
 ) bool {
-	if len(j.Indexes) == 0 {
+	if len(j.IndexNames) == 0 {
 		return true
 	}
 	// For version 2, analyze one index will analyze all other indexes and columns.
 	// For version 1, analyze one index will only analyze the specified index.
 	analyzeVersion := sctx.GetSessionVars().AnalyzeVersion
 	if analyzeVersion == 1 {
-		for _, index := range j.Indexes {
+		for _, index := range j.IndexNames {
 			sql, params := j.GenSQLForAnalyzeIndex(index)
 			if !exec.AutoAnalyze(sctx, statsHandle, sysProcTracker, j.TableStatsVer, sql, params...) {
 				return false
@@ -227,7 +258,7 @@ func (j *NonPartitionedTableAnalysisJob) analyzeIndexes(
 	// Only analyze the first index.
 	// This is because analyzing a single index also analyzes all other indexes and columns.
 	// Therefore, to avoid redundancy, we prevent multiple analyses of the same table.
-	firstIndex := j.Indexes[0]
+	firstIndex := j.IndexNames[0]
 	sql, params := j.GenSQLForAnalyzeIndex(firstIndex)
 	return exec.AutoAnalyze(sctx, statsHandle, sysProcTracker, j.TableStatsVer, sql, params...)
 }
@@ -235,7 +266,7 @@ func (j *NonPartitionedTableAnalysisJob) analyzeIndexes(
 // GenSQLForAnalyzeIndex generates the SQL for analyzing the specified index.
 func (j *NonPartitionedTableAnalysisJob) GenSQLForAnalyzeIndex(index string) (string, []any) {
 	sql := "analyze table %n.%n index %n"
-	params := []any{j.TableSchema, j.TableName, index}
+	params := []any{j.SchemaName, j.TableName, index}
 
 	return sql, params
 }
