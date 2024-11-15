@@ -17,6 +17,7 @@ package variable
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -440,4 +441,42 @@ func TestGeneralLogNonzeroTxnStartTS(t *testing.T) {
 	ts, ok := getTxnStartTS()
 	require.True(t, ts > 0)
 	require.True(t, ok)
+}
+
+func TestGeneralLogBinaryText(t *testing.T) {
+	oldGL := logutil.GeneralLogger
+	mzc := mockZapCore{Core: zapcore.NewNopCore()}
+	logutil.GeneralLogger = zap.New(&mzc)
+	defer func() { logutil.GeneralLogger = oldGL }()
+
+	store := testkit.CreateMockStore(t)
+
+	b := []byte{0x41, 0xf6, 0xec, 0x9a}
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set session tidb_general_log = 1")
+	tk.MustExec("select * /*+ no_quoted */ from mysql.user")
+	tk.MustExec(fmt.Sprintf("select * /*+ yes_quoted */ from mysql.user where User = _binary '%s'", b))
+
+	getSQLFields := func(s string) (sql zapcore.Field, sqlQuoted zapcore.Field, ok bool) {
+		for _, fields := range mzc.fields {
+			if sql, ok := fields["sql"]; ok && strings.Contains(sql.String, s) {
+				return sql, fields["sqlQuoted"], true
+			}
+		}
+		return zapcore.Field{}, zapcore.Field{}, false
+	}
+
+	sql, sqlQuoted, ok := getSQLFields("no_quoted")
+	require.True(t, ok)
+	require.NotEmpty(t, sql.String)
+	require.Empty(t, sqlQuoted.String)
+
+	sql, sqlQuoted, ok = getSQLFields("yes_quote")
+	require.True(t, ok)
+	require.NotEmpty(t, sql.String)
+	require.True(t, strings.Contains(sql.String, string(b)))
+	require.NotEmpty(t, sqlQuoted.String)
+	s, err := strconv.Unquote(sqlQuoted.String)
+	require.NoError(t, err)
+	require.Equal(t, sql.String, s)
 }

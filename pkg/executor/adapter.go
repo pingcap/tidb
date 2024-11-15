@@ -378,7 +378,7 @@ func (a *ExecStmt) PointGet(ctx context.Context) (*recordSet, error) {
 
 // OriginText returns original statement as a string.
 func (a *ExecStmt) OriginText() string {
-	return a.Text
+	return a.StmtNode.OriginalText()
 }
 
 // IsPrepared returns true if stmt is a prepare statement.
@@ -2067,7 +2067,7 @@ func (a *ExecStmt) GetTextToLog(keepHint bool) string {
 	} else if sensitiveStmt, ok := a.StmtNode.(ast.SensitiveStmtNode); ok {
 		sql = sensitiveStmt.SecureText()
 	} else {
-		sql = redact.String(rmode, sessVars.StmtCtx.OriginalSQL+sessVars.PlanCacheParams.String())
+		sql = redact.String(rmode, a.OriginText()+sessVars.PlanCacheParams.String())
 	}
 	return sql
 }
