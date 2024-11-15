@@ -199,7 +199,7 @@ func (m *dbTableMetaMgr) AllocTableRowIDs(ctx context.Context, requiredRowIDCnt 
 		return nil, 0, errors.Annotate(err, "enable pessimistic transaction failed")
 	}
 
-	needAutoID := common.TableHasAutoID(m.tr.tableInfo.Core)
+	hasAutoID := common.TableHasAutoID(m.tr.tableInfo.Core)
 	tableChecksumingMsg := "Target table is calculating checksum. Please wait until the checksum is finished and try again."
 	doAllocTableRowIDsFn := func() error {
 		return exec.Transact(ctx, "init table allocator base", func(ctx context.Context, tx *sql.Tx) error {
@@ -273,10 +273,34 @@ FROM %s.%s WHERE table_id = ? FOR UPDATE`, m.schemaName, m.tableName),
 
 			// no enough info are available, fetch row_id max for table
 			if myStatus == metaStatusInitial {
-				myStartRowID = maxRowIDMax
+				if !hasAutoID {
+					// we still guarantee that the row ID is unique across all
+					// lightning instances even if the table don't have auto id.
+					myStartRowID = maxRowIDMax
+				} else if maxRowIDMax > 0 {
+					// someone have already allocated the auto id, we can continue
+					// allocating from previous maxRowIDMax.
+					myStartRowID = maxRowIDMax
+				} else {
+					// we are the first one to allocate the auto id, we need to
+					// fetch the max auto id base from the table, and allocate
+					// from there.
+					// as we only have one estimated requiredRowIDCount, but the
+					// table might have multiple allocators, so we use the max
+					// of them.
+					maxAutoIDBase, err := common.GetMaxAutoIDBase(m.tr, m.tr.dbInfo.ID, m.tr.tableInfo.Core)
+					if err != nil {
+						return errors.Trace(err)
+					}
+					myStartRowID = maxAutoIDBase
+				}
 				myEndRowID = myStartRowID + requiredRowIDCnt
 
-				if needAutoID && myStartRowID == 0 && newStatus < metaStatusRestoreStarted {
+				// if we are the first one to allocate, the table has auto-id,
+				// and our start is 0, it means the table is empty, so we move
+				// the state to next one directly without going through below
+				// checksum branch.
+				if hasAutoID && myStartRowID == 0 && newStatus < metaStatusRestoreStarted {
 					newStatus = metaStatusRestoreStarted
 				}
 
@@ -320,7 +344,9 @@ FROM %s.%s WHERE table_id = ? FOR UPDATE`, m.schemaName, m.tableName),
 	var checksum *verify.KVChecksum
 	// need to do checksum and update checksum meta since we are the first one.
 	if myStatus < metaStatusRestoreStarted {
-		if m.needChecksum && baseTotalKvs == 0 {
+		// the table might have data if our StartRowID is not 0, or if the table
+		// don't have any auto id.
+		if (myStartRowID > 0 || !hasAutoID) && m.needChecksum && baseTotalKvs == 0 {
 			// if another instance finished import before below checksum logic,
 			// it will cause checksum mismatch, but it's very rare.
 			remoteCk, err := DoChecksum(ctx, m.tr.tableInfo)
