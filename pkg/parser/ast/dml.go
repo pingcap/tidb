@@ -281,7 +281,11 @@ type TableName struct {
 	PartitionNames []model.CIStr
 	TableSample    *TableSample
 	// AS OF is used to see the data as it was at a specific point in time.
-	AsOf    *AsOfClause
+	AsOf *AsOfClause
+	// IsAlias is true if this table name is an alias.
+	//  sometime, we need to distinguish the table name is an alias or not.
+	//   for example ```delete tt1 from t1 tt1,(select max(id) id from t2)tt2 where tt1.id<=tt2.id```
+	//   ```tt1``` is a alias name. so we need to set IsAlias to true and restore the table name without database name.
 	IsAlias bool
 }
 
