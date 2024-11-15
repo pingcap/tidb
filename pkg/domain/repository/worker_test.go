@@ -83,12 +83,10 @@ func setupWorker(ctx context.Context, t *testing.T, addr string, dom *domain.Dom
 	if !testWorker {
 		wrk = &workerCtx
 	}
+	owner.ManagerSessionTTL = 3
 	initializeWorker(wrk,
 		etcdCli, func(s1, s2 string) owner.Manager {
-			mgr := owner.NewOwnerManager(ctx, etcdCli, s1, id, s2)
-			// use a short lease to speed up owner selection
-			require.NoError(t, mgr.CampaignOwner(3))
-			return mgr
+			return owner.NewOwnerManager(ctx, etcdCli, s1, id, s2)
 		},
 		dom.SysSessionPool(),
 	)
