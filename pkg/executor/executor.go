@@ -1332,7 +1332,7 @@ type LimitExec struct {
 
 	// columnIdxsUsedByChild keep column indexes of child executor used for inline projection
 	columnIdxsUsedByChild []int
-	columnSwapHelper *chunk.ColumnSwapHelper
+	columnSwapHelper      *chunk.ColumnSwapHelper
 
 	// Log the close time when opentracing is enabled.
 	span opentracing.Span
