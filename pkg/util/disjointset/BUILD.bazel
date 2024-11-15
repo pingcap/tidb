@@ -2,7 +2,10 @@ load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 
 go_library(
     name = "disjointset",
-    srcs = ["int_set.go"],
+    srcs = [
+        "int_set.go",
+        "set.go",
+    ],
     importpath = "github.com/pingcap/tidb/pkg/util/disjointset",
     visibility = ["//visibility:public"],
 )
