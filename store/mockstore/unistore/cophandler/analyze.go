@@ -112,14 +112,7 @@ func handleAnalyzeIndexReq(dbReader *dbreader.DBReader, rans []kv.KeyRange, anal
 		if processor.topNCurValuePair.Count != 0 {
 			processor.topNValuePairs = append(processor.topNValuePairs, processor.topNCurValuePair)
 		}
-		slices.SortFunc(processor.topNValuePairs, func(i, j statistics.TopNMeta) bool {
-			if i.Count > j.Count {
-				return true
-			} else if i.Count < j.Count {
-				return false
-			}
-			return bytes.Compare(i.Encoded, j.Encoded) < 0
-		})
+		slices.SortFunc(processor.topNValuePairs, statistics.TopnMetaCompare)
 		if len(processor.topNValuePairs) > int(processor.topNCount) {
 			processor.topNValuePairs = processor.topNValuePairs[:processor.topNCount]
 		}
@@ -564,14 +557,7 @@ func handleAnalyzeMixedReq(dbReader *dbreader.DBReader, rans []kv.KeyRange, anal
 		if e.topNCurValuePair.Count != 0 {
 			e.topNValuePairs = append(e.topNValuePairs, e.topNCurValuePair)
 		}
-		slices.SortFunc(e.topNValuePairs, func(i, j statistics.TopNMeta) bool {
-			if i.Count > j.Count {
-				return true
-			} else if i.Count < j.Count {
-				return false
-			}
-			return bytes.Compare(i.Encoded, j.Encoded) < 0
-		})
+		slices.SortFunc(e.topNValuePairs, statistics.TopnMetaCompare)
 		if len(e.topNValuePairs) > int(e.topNCount) {
 			e.topNValuePairs = e.topNValuePairs[:e.topNCount]
 		}

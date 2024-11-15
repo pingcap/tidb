@@ -228,12 +228,12 @@ func splitIntoMultiRanges(store kv.Storage, startKey, endKey kv.Key) ([]kv.KeyRa
 }
 
 func sortRanges(ranges []kv.KeyRange, isDesc bool) {
-	slices.SortFunc(ranges, func(i, j kv.KeyRange) bool {
+	slices.SortFunc(ranges, func(i, j kv.KeyRange) int {
 		ir, jr := i.StartKey, j.StartKey
 		if !isDesc {
-			return ir.Cmp(jr) < 0
+			return ir.Cmp(jr)
 		}
-		return ir.Cmp(jr) > 0
+		return jr.Cmp(ir)
 	})
 }
 

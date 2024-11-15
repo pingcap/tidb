@@ -12,9 +12,14 @@ import (
 	"path"
 	"strings"
 
+	"github.com/Azure/azure-sdk-for-go/sdk/azcore"
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore/policy"
 	"github.com/Azure/azure-sdk-for-go/sdk/azidentity"
 	"github.com/Azure/azure-sdk-for-go/sdk/storage/azblob"
+	"github.com/Azure/azure-sdk-for-go/sdk/storage/azblob/blob"
+	"github.com/Azure/azure-sdk-for-go/sdk/storage/azblob/bloberror"
+	"github.com/Azure/azure-sdk-for-go/sdk/storage/azblob/blockblob"
+	"github.com/Azure/azure-sdk-for-go/sdk/storage/azblob/container"
 	"github.com/google/uuid"
 	"github.com/pingcap/errors"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
@@ -29,14 +34,17 @@ const (
 	azblobAccessTierOption = "azblob.access-tier"
 	azblobAccountName      = "azblob.account-name"
 	azblobAccountKey       = "azblob.account-key"
+	azblobSASToken         = "azblob.sas-token"
 )
 
 const azblobRetryTimes int32 = 5
 
 func getDefaultClientOptions() *azblob.ClientOptions {
 	return &azblob.ClientOptions{
-		Retry: policy.RetryOptions{
-			MaxRetries: azblobRetryTimes,
+		ClientOptions: azcore.ClientOptions{
+			Retry: policy.RetryOptions{
+				MaxRetries: azblobRetryTimes,
+			},
 		},
 	}
 }
@@ -47,6 +55,7 @@ type AzblobBackendOptions struct {
 	AccountName string `json:"account-name" toml:"account-name"`
 	AccountKey  string `json:"account-key" toml:"account-key"`
 	AccessTier  string `json:"access-tier" toml:"access-tier"`
+	SASToken    string `json:"sas-token" toml:"sas-token"`
 }
 
 func (options *AzblobBackendOptions) apply(azblob *backuppb.AzureBlobStorage) error {
@@ -54,6 +63,7 @@ func (options *AzblobBackendOptions) apply(azblob *backuppb.AzureBlobStorage) er
 	azblob.StorageClass = options.AccessTier
 	azblob.AccountName = options.AccountName
 	azblob.SharedKey = options.AccountKey
+
 	return nil
 }
 
@@ -62,6 +72,7 @@ func defineAzblobFlags(flags *pflag.FlagSet) {
 	flags.String(azblobAccessTierOption, "", "Specify the storage class for azblob")
 	flags.String(azblobAccountName, "", "Specify the account name for azblob")
 	flags.String(azblobAccountKey, "", "Specify the account key for azblob")
+	flags.String(azblobSASToken, "", "Specify the SAS (shared access signatures) for azblob")
 }
 
 func hiddenAzblobFlags(flags *pflag.FlagSet) {
@@ -69,6 +80,7 @@ func hiddenAzblobFlags(flags *pflag.FlagSet) {
 	_ = flags.MarkHidden(azblobAccessTierOption)
 	_ = flags.MarkHidden(azblobAccountName)
 	_ = flags.MarkHidden(azblobAccountKey)
+	_ = flags.MarkHidden(azblobSASToken)
 }
 
 func (options *AzblobBackendOptions) parseFromFlags(flags *pflag.FlagSet) error {
@@ -92,13 +104,19 @@ func (options *AzblobBackendOptions) parseFromFlags(flags *pflag.FlagSet) error 
 	if err != nil {
 		return errors.Trace(err)
 	}
+
+	options.SASToken, err = flags.GetString(azblobSASToken)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
 	return nil
 }
 
 // ClientBuilder provides common method to build a service client.
 type ClientBuilder interface {
 	// Example of serviceURL: https://<your_storage_account>.blob.core.windows.net
-	GetServiceClient() (azblob.ServiceClient, error)
+	GetServiceClient() (*azblob.Client, error)
 	GetAccountName() string
 }
 
@@ -111,11 +129,28 @@ type sharedKeyClientBuilder struct {
 	clientOptions *azblob.ClientOptions
 }
 
-func (b *sharedKeyClientBuilder) GetServiceClient() (azblob.ServiceClient, error) {
-	return azblob.NewServiceClientWithSharedKey(b.serviceURL, b.cred, b.clientOptions)
+func (b *sharedKeyClientBuilder) GetServiceClient() (*azblob.Client, error) {
+	return azblob.NewClientWithSharedKeyCredential(b.serviceURL, b.cred, b.clientOptions)
 }
 
 func (b *sharedKeyClientBuilder) GetAccountName() string {
+	return b.accountName
+}
+
+// use SAS to access azure blob storage
+type sasClientBuilder struct {
+	accountName string
+	// Example of serviceURL: https://<account>.blob.core.windows.net/?<sas token>
+	serviceURL string
+
+	clientOptions *azblob.ClientOptions
+}
+
+func (b *sasClientBuilder) GetServiceClient() (*azblob.Client, error) {
+	return azblob.NewClientWithNoCredential(b.serviceURL, b.clientOptions)
+}
+
+func (b *sasClientBuilder) GetAccountName() string {
 	return b.accountName
 }
 
@@ -128,8 +163,8 @@ type tokenClientBuilder struct {
 	clientOptions *azblob.ClientOptions
 }
 
-func (b *tokenClientBuilder) GetServiceClient() (azblob.ServiceClient, error) {
-	return azblob.NewServiceClient(b.serviceURL, b.cred, b.clientOptions)
+func (b *tokenClientBuilder) GetServiceClient() (*azblob.Client, error) {
+	return azblob.NewClient(b.serviceURL, b.cred, b.clientOptions)
 }
 
 func (b *tokenClientBuilder) GetAccountName() string {
@@ -150,7 +185,7 @@ func getAzureServiceClientBuilder(options *backuppb.AzureBlobStorage, opts *Exte
 
 	clientOptions := getDefaultClientOptions()
 	if opts != nil && opts.HTTPClient != nil {
-		clientOptions.Transporter = opts.HTTPClient
+		clientOptions.Transport = opts.HTTPClient
 	}
 
 	if len(options.AccountName) > 0 && len(options.SharedKey) > 0 {
@@ -234,9 +269,12 @@ func getAzureServiceClientBuilder(options *backuppb.AzureBlobStorage, opts *Exte
 type AzureBlobStorage struct {
 	options *backuppb.AzureBlobStorage
 
-	containerClient azblob.ContainerClient
+	containerClient *container.Client
 
-	accessTier azblob.AccessTier
+	accessTier blob.AccessTier
+
+	cpkScope *blob.CPKScopeInfo
+	cpkInfo  *blob.CPKInfo
 }
 
 func newAzureBlobStorage(ctx context.Context, options *backuppb.AzureBlobStorage, opts *ExternalStorageOptions) (*AzureBlobStorage, error) {
@@ -254,29 +292,24 @@ func newAzureBlobStorageWithClientBuilder(ctx context.Context, options *backuppb
 		return nil, errors.Annotate(err, "Failed to create azure service client")
 	}
 
-	containerClient := serviceClient.NewContainerClient(options.Bucket)
-	_, err = containerClient.Create(ctx, nil)
-	if err != nil {
-		var errResp *azblob.StorageError
-		if internalErr, ok := err.(*azblob.InternalError); !(ok && internalErr.As(&errResp)) {
-			return nil, errors.Annotate(err, "Failed to create the container: error can not be parsed")
-		}
-		if errResp.ErrorCode != azblob.StorageErrorCodeContainerAlreadyExists {
-			return nil, errors.Annotate(err, fmt.Sprintf("Failed to create the container: %s", errResp.ErrorCode))
-		}
+	containerClient := serviceClient.ServiceClient().NewContainerClient(options.Bucket)
+	if _, err = containerClient.GetProperties(ctx, &container.GetPropertiesOptions{}); err != nil {
+		return nil, errors.Trace(err)
 	}
+	var cpkScope *blob.CPKScopeInfo = nil
+	var cpkInfo *blob.CPKInfo = nil
 
 	// parse storage access-tier
-	var accessTier azblob.AccessTier
+	var accessTier blob.AccessTier
 	switch options.StorageClass {
 	case "Archive", "archive":
-		accessTier = azblob.AccessTierArchive
+		accessTier = blob.AccessTierArchive
 	case "Cool", "cool":
-		accessTier = azblob.AccessTierCool
+		accessTier = blob.AccessTierCool
 	case "Hot", "hot":
-		accessTier = azblob.AccessTierHot
+		accessTier = blob.AccessTierHot
 	default:
-		accessTier = azblob.AccessTier(options.StorageClass)
+		accessTier = blob.AccessTier(options.StorageClass)
 	}
 
 	log.Debug("select accessTier", zap.String("accessTier", string(accessTier)))
@@ -285,6 +318,8 @@ func newAzureBlobStorageWithClientBuilder(ctx context.Context, options *backuppb
 		options,
 		containerClient,
 		accessTier,
+		cpkScope,
+		cpkInfo,
 	}, nil
 }
 
@@ -295,29 +330,39 @@ func (s *AzureBlobStorage) withPrefix(name string) string {
 // WriteFile writes a file to Azure Blob Storage.
 func (s *AzureBlobStorage) WriteFile(ctx context.Context, name string, data []byte) error {
 	client := s.containerClient.NewBlockBlobClient(s.withPrefix(name))
-	resp, err := client.UploadBufferToBlockBlob(ctx, data, azblob.HighLevelUploadToBlockBlobOption{AccessTier: &s.accessTier})
+	// the encryption scope/key and the access tier can not be both in the HTTP headers
+	options := &blockblob.UploadBufferOptions{
+		CPKScopeInfo: s.cpkScope,
+		CPKInfo:      s.cpkInfo,
+	}
+
+	if len(s.accessTier) > 0 {
+		options.AccessTier = &s.accessTier
+	}
+	_, err := client.UploadBuffer(ctx, data, options)
 	if err != nil {
 		return errors.Annotatef(err, "Failed to write azure blob file, file info: bucket(container)='%s', key='%s'", s.options.Bucket, s.withPrefix(name))
 	}
-	defer resp.Body.Close()
 	return nil
 }
 
 // ReadFile reads a file from Azure Blob Storage.
 func (s *AzureBlobStorage) ReadFile(ctx context.Context, name string) ([]byte, error) {
 	client := s.containerClient.NewBlockBlobClient(s.withPrefix(name))
-	resp, err := client.Download(ctx, nil)
+	resp, err := client.DownloadStream(ctx, &blob.DownloadStreamOptions{
+		CPKInfo: s.cpkInfo,
+	})
 	if err != nil {
 		return nil, errors.Annotatef(err, "Failed to download azure blob file, file info: bucket(container)='%s', key='%s'", s.options.Bucket, s.withPrefix(name))
 	}
-	defer resp.RawResponse.Body.Close()
-	data, err := io.ReadAll(resp.Body(azblob.RetryReaderOptions{
-		MaxRetryRequests: int(azblobRetryTimes),
-	}))
+	body := resp.NewRetryReader(ctx, &blob.RetryReaderOptions{
+		MaxRetries: azblobRetryTimes,
+	})
+	data, err := io.ReadAll(body)
 	if err != nil {
 		return nil, errors.Annotatef(err, "Failed to read azure blob file, file info: bucket(container)='%s', key='%s'", s.options.Bucket, s.withPrefix(name))
 	}
-	return data, err
+	return data, body.Close()
 }
 
 // FileExists checks if a file exists in Azure Blob Storage.
@@ -325,11 +370,8 @@ func (s *AzureBlobStorage) FileExists(ctx context.Context, name string) (bool, e
 	client := s.containerClient.NewBlockBlobClient(s.withPrefix(name))
 	_, err := client.GetProperties(ctx, nil)
 	if err != nil {
-		var errResp *azblob.StorageError
-		if internalErr, ok := err.(*azblob.InternalError); ok && internalErr.As(&errResp) {
-			if errResp.ErrorCode == azblob.StorageErrorCodeBlobNotFound {
-				return false, nil
-			}
+		if bloberror.HasCode(err, bloberror.BlobNotFound) {
+			return false, nil
 		}
 		return false, errors.Trace(err)
 	}
@@ -346,15 +388,39 @@ func (s *AzureBlobStorage) DeleteFile(ctx context.Context, name string) error {
 	return nil
 }
 
+// DeleteFile deletes the files with the given names.
+func (s *AzureBlobStorage) DeleteFiles(ctx context.Context, names []string) error {
+	for _, name := range names {
+		err := s.DeleteFile(ctx, name)
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // Open implements the StorageReader interface.
 func (s *AzureBlobStorage) Open(ctx context.Context, name string) (ExternalFileReader, error) {
 	client := s.containerClient.NewBlockBlobClient(s.withPrefix(name))
+	resp, err := client.GetProperties(ctx, nil)
+	if err != nil {
+		return nil, errors.Annotate(err, "Failed to get properties from the azure blob")
+	}
+
+	pos := int64(0)
+	totalSize := *resp.ContentLength
+	endPos := totalSize
+
 	return &azblobObjectReader{
 		blobClient: client,
 
-		pos: 0,
+		pos:       pos,
+		endPos:    endPos,
+		totalSize: totalSize,
 
 		ctx: ctx,
+
+		cpkInfo: s.cpkInfo,
 	}, nil
 }
 
@@ -363,32 +429,24 @@ func (s *AzureBlobStorage) WalkDir(ctx context.Context, opt *WalkOption, fn func
 	if opt == nil {
 		opt = &WalkOption{}
 	}
-	if len(opt.ObjPrefix) != 0 {
-		return errors.New("azure storage not support ObjPrefix for now")
-	}
 	prefix := path.Join(s.options.Prefix, opt.SubDir)
 	if len(prefix) > 0 && !strings.HasSuffix(prefix, "/") {
 		prefix += "/"
 	}
+	if len(opt.ObjPrefix) != 0 {
+		prefix += opt.ObjPrefix
+	}
 
-	listOption := &azblob.ContainerListBlobFlatSegmentOptions{Prefix: &prefix}
-	for {
-		respIter := s.containerClient.ListBlobsFlat(listOption)
-
-		err := respIter.Err()
+	pager := s.containerClient.NewListBlobsFlatPager(&container.ListBlobsFlatOptions{
+		Prefix: &prefix,
+	})
+	for pager.More() {
+		page, err := pager.NextPage(ctx)
 		if err != nil {
 			return errors.Annotatef(err, "Failed to list azure blobs, bucket(container)='%s'", s.options.Bucket)
 		}
 
-		if !respIter.NextPage(ctx) {
-			err := respIter.Err()
-			if err != nil {
-				return errors.Annotatef(err, "Failed to list azure blobs, bucket(container)='%s'", s.options.Bucket)
-			}
-			break
-		}
-
-		for _, blob := range respIter.PageResponse().Segment.BlobItems {
+		for _, blob := range page.Segment.BlobItems {
 			// when walk on specify directory, the result include storage.Prefix,
 			// which can not be reuse in other API(Open/Read) directly.
 			// so we use TrimPrefix to filter Prefix for next Open/Read.
@@ -398,11 +456,6 @@ func (s *AzureBlobStorage) WalkDir(ctx context.Context, opt *WalkOption, fn func
 			if err := fn(path, *blob.Properties.ContentLength); err != nil {
 				return errors.Trace(err)
 			}
-		}
-
-		listOption.Marker = respIter.PageResponse().NextMarker
-		if len(*listOption.Marker) == 0 {
-			break
 		}
 	}
 
@@ -414,6 +467,8 @@ func (s *AzureBlobStorage) URI() string {
 	return "azure://" + s.options.Bucket + "/" + s.options.Prefix
 }
 
+const azblobChunkSize = 64 * 1024 * 1024
+
 // Create implements the StorageWriter interface.
 func (s *AzureBlobStorage) Create(_ context.Context, name string, _ *WriterOption) (ExternalFileWriter, error) {
 	client := s.containerClient.NewBlockBlobClient(s.withPrefix(name))
@@ -423,9 +478,12 @@ func (s *AzureBlobStorage) Create(_ context.Context, name string, _ *WriterOptio
 		blockIDList: make([]string, 0, 4),
 
 		accessTier: s.accessTier,
+
+		cpkScope: s.cpkScope,
+		cpkInfo:  s.cpkInfo,
 	}
 
-	uploaderWriter := newBufferedWriter(uploader, azblob.BlockBlobMaxUploadBlobBytes, NoCompression)
+	uploaderWriter := newBufferedWriter(uploader, azblobChunkSize, NoCompression)
 	return uploaderWriter, nil
 }
 
@@ -442,31 +500,53 @@ func (s *AzureBlobStorage) Rename(ctx context.Context, oldFileName, newFileName 
 	return s.DeleteFile(ctx, oldFileName)
 }
 
-type azblobObjectReader struct {
-	blobClient azblob.BlockBlobClient
+// Close implements the ExternalStorage interface.
+func (*AzureBlobStorage) Close() {}
 
-	pos int64
+type azblobObjectReader struct {
+	blobClient *blockblob.Client
+
+	pos       int64
+	endPos    int64
+	totalSize int64
 
 	ctx context.Context
+
+	cpkInfo *blob.CPKInfo
+	// opened lazily
+	reader io.ReadCloser
 }
 
 // Read implement the io.Reader interface.
 func (r *azblobObjectReader) Read(p []byte) (n int, err error) {
-	count := int64(len(p))
-	resp, err := r.blobClient.Download(r.ctx, &azblob.DownloadBlobOptions{Offset: &r.pos, Count: &count})
-	if err != nil {
-		return 0, errors.Annotatef(err, "Failed to read data from azure blob, data info: pos='%d', count='%d'", r.pos, count)
+	maxCnt := r.endPos - r.pos
+	if maxCnt > int64(len(p)) {
+		maxCnt = int64(len(p))
 	}
-	n, err = resp.Body(azblob.RetryReaderOptions{}).Read(p)
+	if maxCnt == 0 {
+		return 0, io.EOF
+	}
+	if r.reader == nil {
+		if err2 := r.reopenReader(); err2 != nil {
+			return 0, err2
+		}
+	}
+	buf := p[:maxCnt]
+	n, err = r.reader.Read(buf)
 	if err != nil && err != io.EOF {
-		return 0, errors.Annotatef(err, "Failed to read data from azure blob response, data info: pos='%d', count='%d'", r.pos, count)
+		return 0, errors.Annotatef(err, "Failed to read data from azure blob response, data info: pos='%d', count='%d'", r.pos, maxCnt)
 	}
 	r.pos += int64(n)
 	return n, nil
 }
 
 // Close implement the io.Closer interface.
-func (*azblobObjectReader) Close() error {
+func (r *azblobObjectReader) Close() error {
+	if r.reader != nil {
+		err := errors.Trace(r.reader.Close())
+		r.reader = nil
+		return err
+	}
 	return nil
 }
 
@@ -484,29 +564,54 @@ func (r *azblobObjectReader) Seek(offset int64, whence int) (int64, error) {
 			return 0, errors.Annotatef(berrors.ErrInvalidArgument, "Seek: offset '%v' out of range. current pos is '%v'.", offset, r.pos)
 		}
 	case io.SeekEnd:
-		if offset >= 0 {
+		if offset > 0 {
 			return 0, errors.Annotatef(berrors.ErrInvalidArgument, "Seek: offset '%v' should be negative.", offset)
 		}
-		realOffset = offset
+		realOffset = offset + r.totalSize
 	default:
 		return 0, errors.Annotatef(berrors.ErrStorageUnknown, "Seek: invalid whence '%d'", whence)
 	}
 
-	if realOffset < 0 {
-		resp, err := r.blobClient.GetProperties(r.ctx, nil)
-		if err != nil {
-			return 0, errors.Annotate(err, "Failed to get properties from the azure blob")
-		}
-
-		contentLength := *resp.ContentLength
-		r.pos = contentLength + realOffset
-		if r.pos < 0 {
-			return 0, errors.Annotatef(err, "Seek: offset is %d, but length of content is only %d", realOffset, contentLength)
-		}
-	} else {
-		r.pos = realOffset
+	if realOffset < 0 || realOffset > r.totalSize {
+		return 0, errors.Annotatef(berrors.ErrInvalidArgument, "Seek: offset is %d, but length of content is only %d", realOffset, r.totalSize)
+	}
+	if realOffset == r.pos {
+		return r.pos, nil
+	}
+	r.pos = realOffset
+	// azblob reader can only read forward, so we need to reopen the reader
+	if err := r.reopenReader(); err != nil {
+		return 0, err
 	}
 	return r.pos, nil
+}
+
+func (r *azblobObjectReader) reopenReader() error {
+	if r.reader != nil {
+		err := errors.Trace(r.reader.Close())
+		if err != nil {
+			log.Warn("failed to close azblob reader", zap.Error(err))
+		}
+	}
+
+	resp, err := r.blobClient.DownloadStream(r.ctx, &blob.DownloadStreamOptions{
+		Range: blob.HTTPRange{
+			Offset: r.pos,
+		},
+		CPKInfo: r.cpkInfo,
+	})
+	if err != nil {
+		return errors.Annotatef(err, "Failed to read data from azure blob, data info: pos='%d'", r.pos)
+	}
+	body := resp.NewRetryReader(r.ctx, &blob.RetryReaderOptions{
+		MaxRetries: azblobRetryTimes,
+	})
+	r.reader = body
+	return nil
+}
+
+func (r *azblobObjectReader) GetFileSize() (int64, error) {
+	return r.totalSize, nil
 }
 
 type nopCloser struct {
@@ -522,11 +627,14 @@ func (nopCloser) Close() error {
 }
 
 type azblobUploader struct {
-	blobClient azblob.BlockBlobClient
+	blobClient *blockblob.Client
 
 	blockIDList []string
 
-	accessTier azblob.AccessTier
+	accessTier blob.AccessTier
+
+	cpkScope *blob.CPKScopeInfo
+	cpkInfo  *blob.CPKInfo
 }
 
 func (u *azblobUploader) Write(ctx context.Context, data []byte) (int, error) {
@@ -536,7 +644,10 @@ func (u *azblobUploader) Write(ctx context.Context, data []byte) (int, error) {
 	}
 	blockID := base64.StdEncoding.EncodeToString([]byte(generatedUUID.String()))
 
-	_, err = u.blobClient.StageBlock(ctx, blockID, newNopCloser(bytes.NewReader(data)), nil)
+	_, err = u.blobClient.StageBlock(ctx, blockID, newNopCloser(bytes.NewReader(data)), &blockblob.StageBlockOptions{
+		CPKScopeInfo: u.cpkScope,
+		CPKInfo:      u.cpkInfo,
+	})
 	if err != nil {
 		return 0, errors.Annotate(err, "Failed to upload block to azure blob")
 	}
@@ -546,6 +657,15 @@ func (u *azblobUploader) Write(ctx context.Context, data []byte) (int, error) {
 }
 
 func (u *azblobUploader) Close(ctx context.Context) error {
-	_, err := u.blobClient.CommitBlockList(ctx, u.blockIDList, &azblob.CommitBlockListOptions{Tier: &u.accessTier})
+	// the encryption scope and the access tier can not be both in the HTTP headers
+	options := &blockblob.CommitBlockListOptions{
+		CPKScopeInfo: u.cpkScope,
+		CPKInfo:      u.cpkInfo,
+	}
+
+	if len(u.accessTier) > 0 {
+		options.Tier = &u.accessTier
+	}
+	_, err := u.blobClient.CommitBlockList(ctx, u.blockIDList, options)
 	return errors.Trace(err)
 }

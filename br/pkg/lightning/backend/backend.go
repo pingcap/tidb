@@ -15,6 +15,7 @@
 package backend
 
 import (
+	"cmp"
 	"context"
 	"fmt"
 	"time"
@@ -303,11 +304,14 @@ func (be Backend) CheckDiskQuota(quota int64) (
 	totalMemSize int64,
 ) {
 	sizes := be.abstract.EngineFileSizes()
-	slices.SortFunc(sizes, func(i, j EngineFileSize) bool {
+	slices.SortFunc(sizes, func(i, j EngineFileSize) int {
 		if i.IsImporting != j.IsImporting {
-			return i.IsImporting
+			if i.IsImporting {
+				return -1
+			}
+			return 1
 		}
-		return i.DiskSize+i.MemSize < j.DiskSize+j.MemSize
+		return cmp.Compare(i.DiskSize+i.MemSize, j.DiskSize+j.MemSize)
 	})
 	for _, size := range sizes {
 		totalDiskSize += size.DiskSize

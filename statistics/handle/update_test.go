@@ -2029,7 +2029,7 @@ func TestFeedbackCounter(t *testing.T) {
 	newNum := &dto.Metric{}
 	err = metrics.StoreQueryFeedbackCounter.WithLabelValues(metrics.LblOK).Write(newNum)
 	require.NoError(t, err)
-	require.Equal(t, 20, subtraction(newNum, oldNum))
+	require.Equal(t, 20.0, *newNum.Counter.Value-*oldNum.Counter.Value)
 }
 
 func TestMergeTopN(t *testing.T) {

@@ -16,6 +16,7 @@ package statistics
 
 import (
 	"bytes"
+	"cmp"
 	"math"
 	"math/bits"
 
@@ -534,11 +535,11 @@ func getMaskAndRanges(ctx sessionctx.Context, exprs []expression.Expression, ran
 
 // GetUsableSetsByGreedy will select the indices and pk used for calculate selectivity by greedy algorithm.
 func GetUsableSetsByGreedy(nodes []*StatsNode) (newBlocks []*StatsNode) {
-	slices.SortFunc(nodes, func(i, j *StatsNode) bool {
+	slices.SortFunc(nodes, func(i, j *StatsNode) int {
 		if r := compareType(i.Tp, j.Tp); r != 0 {
-			return r < 0
+			return r
 		}
-		return i.ID < j.ID
+		return cmp.Compare(i.ID, j.ID)
 	})
 	marked := make([]bool, len(nodes))
 	mask := int64(math.MaxInt64)

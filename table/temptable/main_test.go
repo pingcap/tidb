@@ -38,7 +38,7 @@ func TestMain(m *testing.M) {
 	opts := []goleak.Option{
 		goleak.IgnoreTopFunction("go.etcd.io/etcd/client/pkg/v3/logutil.(*MergeLogger).outputLoop"),
 		goleak.IgnoreTopFunction("go.opencensus.io/stats/view.(*worker).start"),
-		goleak.IgnoreTopFunction("github.com/golang/glog.(*loggingT).flushDaemon"),
+		goleak.IgnoreTopFunction("github.com/golang/glog.(*fileSink).flushDaemon"),
 		goleak.IgnoreTopFunction("github.com/lestrrat-go/httprc.runFetchWorker"),
 	}
 	testsetup.SetupForCommonTest()
@@ -126,7 +126,7 @@ func newMockedRetriever(t *testing.T) *mockedRetriever {
 }
 
 func (r *mockedRetriever) SetData(data []*kv.Entry) *mockedRetriever {
-	lessFunc := func(i, j *kv.Entry) bool { return bytes.Compare(i.Key, j.Key) < 0 }
+	lessFunc := func(i, j *kv.Entry) int { return bytes.Compare(i.Key, j.Key) }
 	if !slices.IsSortedFunc(data, lessFunc) {
 		data = append([]*kv.Entry{}, data...)
 		slices.SortFunc(data, lessFunc)

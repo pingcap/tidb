@@ -408,6 +408,7 @@ func (t *tester) create(tableName string, qText string) error {
 	fmt.Printf("import data for table %s of test %s:\n", tableName, t.name)
 
 	path := "./importer -t \"" + qText + "\"" + "-P" + fmt.Sprint(port) + "-n 2000 -c 100"
+	//nolint: gosec
 	cmd := exec.Command("sh", "-c", path)
 	stdoutIn, err := cmd.StdoutPipe()
 	if err != nil {

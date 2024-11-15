@@ -15,6 +15,7 @@
 package infoschema
 
 import (
+	"cmp"
 	"context"
 	"fmt"
 	"strings"
@@ -786,8 +787,8 @@ func (b *Builder) applyCreateTable(m *meta.Meta, dbInfo *model.DBInfo, tableID i
 	bucketIdx := tableBucketIdx(tableID)
 	sortedTbls := b.is.sortedTablesBuckets[bucketIdx]
 	sortedTbls = append(sortedTbls, tbl)
-	slices.SortFunc(sortedTbls, func(i, j table.Table) bool {
-		return i.Meta().ID < j.Meta().ID
+	slices.SortFunc(sortedTbls, func(i, j table.Table) int {
+		return cmp.Compare(i.Meta().ID, j.Meta().ID)
 	})
 	b.is.sortedTablesBuckets[bucketIdx] = sortedTbls
 
@@ -981,8 +982,8 @@ func (b *Builder) InitWithDBInfos(dbInfos []*model.DBInfo, policies []*model.Pol
 
 	// Sort all tables by `ID`
 	for _, v := range info.sortedTablesBuckets {
-		slices.SortFunc(v, func(a, b table.Table) bool {
-			return a.Meta().ID < b.Meta().ID
+		slices.SortFunc(v, func(a, b table.Table) int {
+			return cmp.Compare(a.Meta().ID, b.Meta().ID)
 		})
 	}
 	return b, nil

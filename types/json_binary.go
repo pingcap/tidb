@@ -16,6 +16,7 @@ package types
 
 import (
 	"bytes"
+	"cmp"
 	"encoding/base64"
 	"encoding/binary"
 	"encoding/json"
@@ -812,8 +813,8 @@ func appendBinaryObject(buf []byte, x map[string]interface{}) ([]byte, error) {
 	for key, val := range x {
 		fields = append(fields, field{key: key, val: val})
 	}
-	slices.SortFunc(fields, func(i, j field) bool {
-		return i.key < j.key
+	slices.SortFunc(fields, func(i, j field) int {
+		return cmp.Compare(i.key, j.key)
 	})
 	for i, field := range fields {
 		keyEntryOff := keyEntryBegin + i*keyEntrySize

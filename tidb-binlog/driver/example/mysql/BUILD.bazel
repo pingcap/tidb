@@ -13,8 +13,8 @@ go_library(
         "//types/parser_driver",
         "//util/dbutil",
         "@com_github_go_sql_driver_mysql//:mysql",
+        "@com_github_ibm_sarama//:sarama",
         "@com_github_pingcap_log//:log",
-        "@com_github_shopify_sarama//:sarama",
         "@org_uber_go_zap//:zap",
     ],
 )

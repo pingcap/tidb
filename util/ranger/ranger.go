@@ -587,8 +587,8 @@ func UnionRanges(sctx sessionctx.Context, ranges Ranges, mergeConsecutive bool) 
 		}
 		objects = append(objects, &sortRange{originalValue: ran, encodedStart: left, encodedEnd: right})
 	}
-	slices.SortFunc(objects, func(i, j *sortRange) bool {
-		return bytes.Compare(i.encodedStart, j.encodedStart) < 0
+	slices.SortFunc(objects, func(i, j *sortRange) int {
+		return bytes.Compare(i.encodedStart, j.encodedStart)
 	})
 	ranges = ranges[:0]
 	lastRange := objects[0]

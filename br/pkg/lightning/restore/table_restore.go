@@ -15,6 +15,7 @@
 package restore
 
 import (
+	"cmp"
 	"context"
 	"strings"
 	"sync"
@@ -309,8 +310,9 @@ func (tr *TableRestore) restoreEngines(pCtx context.Context, rc *Controller, cp 
 		for engineID, engine := range cp.Engines {
 			allEngines = append(allEngines, engineCheckpoint{engineID: engineID, checkpoint: engine})
 		}
-		slices.SortFunc(allEngines, func(i, j engineCheckpoint) bool { return i.engineID < j.engineID })
-
+		slices.SortFunc(allEngines, func(i, j engineCheckpoint) int {
+			return cmp.Compare(i.engineID, j.engineID)
+		})
 		for _, ecp := range allEngines {
 			engineID := ecp.engineID
 			engine := ecp.checkpoint

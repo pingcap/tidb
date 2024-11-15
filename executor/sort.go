@@ -275,6 +275,20 @@ func (e *SortExec) lessRow(rowI, rowJ chunk.Row) bool {
 	return false
 }
 
+func (e *SortExec) compressRow(rowI, rowJ chunk.Row) int {
+	for i, colIdx := range e.keyColumns {
+		cmpFunc := e.keyCmpFuncs[i]
+		cmp := cmpFunc(rowI, colIdx, rowJ, colIdx)
+		if e.ByItems[i].Desc {
+			cmp = -cmp
+		}
+		if cmp != 0 {
+			return cmp
+		}
+	}
+	return 0
+}
+
 type partitionPointer struct {
 	row         chunk.Row
 	partitionID int
@@ -376,6 +390,12 @@ func (e *TopNExec) keyColumnsLess(i, j chunk.RowPtr) bool {
 	rowI := e.rowChunks.GetRow(i)
 	rowJ := e.rowChunks.GetRow(j)
 	return e.lessRow(rowI, rowJ)
+}
+
+func (e *TopNExec) keyColumnsCompare(i, j chunk.RowPtr) int {
+	rowI := e.rowChunks.GetRow(i)
+	rowJ := e.rowChunks.GetRow(j)
+	return e.compressRow(rowI, rowJ)
 }
 
 func (e *TopNExec) initPointers() {
@@ -483,7 +503,7 @@ func (e *TopNExec) executeTopN(ctx context.Context) error {
 			}
 		}
 	}
-	slices.SortFunc(e.rowPtrs, e.keyColumnsLess)
+	slices.SortFunc(e.rowPtrs, e.keyColumnsCompare)
 	return nil
 }
 

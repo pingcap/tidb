@@ -933,8 +933,8 @@ func mergePatchBinaryJSON(target, patch *BinaryJSON) (result *BinaryJSON, err er
 		for key := range keyValMap {
 			keys = append(keys, []byte(key))
 		}
-		slices.SortFunc(keys, func(i, j []byte) bool {
-			return bytes.Compare(i, j) < 0
+		slices.SortFunc(keys, func(i, j []byte) int {
+			return bytes.Compare(i, j)
 		})
 		length = len(keys)
 		values := make([]BinaryJSON, 0, len(keys))
@@ -1016,8 +1016,8 @@ func mergeBinaryObject(objects []BinaryJSON) BinaryJSON {
 			}
 		}
 	}
-	slices.SortFunc(keys, func(i, j []byte) bool {
-		return bytes.Compare(i, j) < 0
+	slices.SortFunc(keys, func(i, j []byte) int {
+		return bytes.Compare(i, j)
 	})
 	values := make([]BinaryJSON, len(keys))
 	for i, key := range keys {

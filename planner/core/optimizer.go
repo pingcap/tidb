@@ -15,6 +15,7 @@
 package core
 
 import (
+	"cmp"
 	"context"
 	"fmt"
 	"math"
@@ -319,24 +320,24 @@ func DoOptimize(ctx context.Context, sctx sessionctx.Context, flag uint64, logic
 func refineCETrace(sctx sessionctx.Context) {
 	stmtCtx := sctx.GetSessionVars().StmtCtx
 	stmtCtx.OptimizerCETrace = tracing.DedupCETrace(stmtCtx.OptimizerCETrace)
-	slices.SortFunc(stmtCtx.OptimizerCETrace, func(i, j *tracing.CETraceRecord) bool {
+	slices.SortFunc(stmtCtx.OptimizerCETrace, func(i, j *tracing.CETraceRecord) int {
 		if i == nil && j != nil {
-			return true
+			return -1
 		}
 		if i == nil || j == nil {
-			return false
+			return 1
 		}
 
-		if i.TableID != j.TableID {
-			return i.TableID < j.TableID
+		if c := cmp.Compare(i.TableID, j.TableID); c != 0 {
+			return c
 		}
-		if i.Type != j.Type {
-			return i.Type < j.Type
+		if c := cmp.Compare(i.Type, j.Type); c != 0 {
+			return c
 		}
-		if i.Expr != j.Expr {
-			return i.Expr < j.Expr
+		if c := cmp.Compare(i.Expr, j.Expr); c != 0 {
+			return c
 		}
-		return i.RowCount < j.RowCount
+		return cmp.Compare(i.RowCount, j.RowCount)
 	})
 	traceRecords := stmtCtx.OptimizerCETrace
 	is := sctx.GetDomainInfoSchema().(infoschema.InfoSchema)
