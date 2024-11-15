@@ -569,21 +569,6 @@ func (p *cteProducer) resetTracker() {
 	}
 }
 
-<<<<<<< HEAD
-func (p *cteProducer) reopenTbls() (err error) {
-	if p.isDistinct {
-		p.hashTbl = newConcurrentMapHashTable()
-	}
-	// Normally we need to setup tracker after calling Reopen(),
-	// But reopen resTbl means we need to call produce() again, it will setup tracker.
-	if err := p.resTbl.Reopen(); err != nil {
-		return err
-	}
-	return p.iterInTbl.Reopen()
-}
-
-=======
->>>>>>> 738adb9934c (executor: fix random cte error under apply (#57294))
 // Check if tbl meets the requirement of limit.
 func (p *cteProducer) limitDone(tbl cteutil.Storage) bool {
 	return p.hasLimit && uint64(tbl.NumRows()) >= p.limitEnd
