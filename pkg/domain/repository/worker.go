@@ -350,15 +350,15 @@ func (w *worker) stop() {
 		return
 	}
 
+	w.cancel()
+	w.wg.Wait()
+
 	if w.owner != nil {
 		w.owner.Close()
 		w.owner = nil
 	}
 
-	w.cancel()
 	w.cancel = nil
-
-	w.wg.Wait()
 }
 
 func (w *worker) setRepositoryDest(_ context.Context, dst string) error {
