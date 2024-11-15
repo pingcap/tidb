@@ -17,11 +17,14 @@ package chunk
 import (
 	"io"
 	"os"
+	"sync/atomic"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/util/checksum"
+	"github.com/pingcap/tidb/pkg/util/disjointset"
 	"github.com/pingcap/tidb/pkg/util/encrypt"
+	"github.com/pingcap/tidb/pkg/util/intest"
 )
 
 // CopySelectedJoinRowsDirect directly copies the selected joined rows from the source Chunk
@@ -250,4 +253,126 @@ func (l *diskFileReaderWriter) write(writeData []byte) (n int, err error) {
 	writeNum, err := l.writer.Write(writeData)
 	l.offWrite += int64(writeNum)
 	return writeNum, err
+}
+
+// ColumnSwapHelper is used to help swap columns in a chunk.
+type ColumnSwapHelper struct {
+	// InputIdxToOutputIdxes maps the input column index to the output column indexes.
+	InputIdxToOutputIdxes map[int][]int
+	// mergedInputIdxToOutputIdxes is only determined in runtime when saw the input chunk.
+	mergedInputIdxToOutputIdxes atomic.Pointer[map[int][]int]
+}
+
+// SwapColumns evaluates "Column" expressions.
+// it will change the content of the input Chunk.
+func (helper *ColumnSwapHelper) SwapColumns(input, output *Chunk) error {
+	// mergedInputIdxToOutputIdxes only can be determined in runtime when we saw the input chunk structure.
+	if helper.mergedInputIdxToOutputIdxes.Load() == nil {
+		helper.mergeInputIdxToOutputIdxes(input, helper.InputIdxToOutputIdxes)
+	}
+	for inputIdx, outputIdxes := range *helper.mergedInputIdxToOutputIdxes.Load() {
+		if err := output.swapColumn(outputIdxes[0], input, inputIdx); err != nil {
+			return err
+		}
+		for i, length := 1, len(outputIdxes); i < length; i++ {
+			output.MakeRef(outputIdxes[0], outputIdxes[i])
+		}
+	}
+	return nil
+}
+
+// mergeInputIdxToOutputIdxes merges separate inputIdxToOutputIdxes entries when column references
+// are detected within the input chunk. This process ensures consistent handling of columns derived
+// from the same original source.
+//
+// Consider the following scenario:
+//
+// Initial scan operation produces a column 'a':
+//
+// scan:                       a (addr: ???)
+//
+// This column 'a' is used in the first projection (proj1) to create two columns a1 and a2, both referencing 'a':
+//
+//	                      proj1
+//	                     /     \
+//	                    /       \
+//	                   /         \
+//	     a1 (addr: 0xe)           a2 (addr: 0xe)
+//	     /                         \
+//	    /                           \
+//	   /                             \
+//	  proj2                          proj2
+//	  /     \                       /     \
+//	 /       \                     /       \
+//	a3        a4                  a5        a6
+//
+// (addr: 0xe) (addr: 0xe)      (addr: 0xe) (addr: 0xe)
+//
+// Here, a1 and a2 share the same address (0xe), indicating they reference the same data from the original 'a'.
+//
+// When moving to the second projection (proj2), the system tries to project these columns further:
+// - The first set (left side) consists of a3 and a4, derived from a1, both retaining the address (0xe).
+// - The second set (right side) consists of a5 and a6, derived from a2, also starting with address (0xe).
+//
+// When proj1 is complete, the output chunk contains two columns [a1, a2], both derived from the single column 'a' from the scan.
+// Since both a1 and a2 are column references with the same address (0xe), they are treated as referencing the same data.
+//
+// In proj2, two separate <inputIdx, []outputIdxes> items are created:
+// - <0, [0,1]>: This means the 0th input column (a1) is projected twice, into the 0th and 1st columns of the output chunk.
+// - <1, [2,3]>: This means the 1st input column (a2) is projected twice, into the 2nd and 3rd columns of the output chunk.
+//
+// Due to the column swapping logic in each projection, after applying the <0, [0,1]> projection,
+// the addresses for a1 and a2 may become swapped or invalid:
+//
+// proj1:          a1 (addr: invalid)             a2 (addr: invalid)
+//
+// This can lead to issues in proj2, where further operations on these columns may be unsafe:
+//
+// proj2:   a3 (addr: 0xe) a4 (addr: 0xe)   a5 (addr: ???) a6 (addr: ???)
+//
+// Therefore, it's crucial to identify and merge the original column references early, ensuring
+// the final inputIdxToOutputIdxes mapping accurately reflects the shared origins of the data.
+// For instance, <0, [0,1,2,3]> indicates that the 0th input column (original 'a') is referenced
+// by all four output columns in the final output.
+//
+// mergeInputIdxToOutputIdxes merges inputIdxToOutputIdxes based on detected column references.
+// This ensures that columns with the same reference are correctly handled in the output chunk.
+func (helper *ColumnSwapHelper) mergeInputIdxToOutputIdxes(input *Chunk, inputIdxToOutputIdxes map[int][]int) {
+	originalDJSet := disjointset.NewSet[int](4)
+	flag := make([]bool, input.NumCols())
+	// Detect self column-references inside the input chunk by comparing column addresses
+	for i := range input.NumCols() {
+		if flag[i] {
+			continue
+		}
+		for j := i + 1; j < input.NumCols(); j++ {
+			if input.Column(i) == input.Column(j) {
+				flag[j] = true
+				originalDJSet.Union(i, j)
+			}
+		}
+	}
+	// Merge inputIdxToOutputIdxes based on the detected column references.
+	newInputIdxToOutputIdxes := make(map[int][]int, len(inputIdxToOutputIdxes))
+	for inputIdx := range inputIdxToOutputIdxes {
+		// Root idx is internal offset, not the right column index.
+		originalRootIdx := originalDJSet.FindRoot(inputIdx)
+		originalVal, ok := originalDJSet.FindVal(originalRootIdx)
+		intest.Assert(ok)
+		mergedOutputIdxes := newInputIdxToOutputIdxes[originalVal]
+		mergedOutputIdxes = append(mergedOutputIdxes, inputIdxToOutputIdxes[inputIdx]...)
+		newInputIdxToOutputIdxes[originalVal] = mergedOutputIdxes
+	}
+	// Update the merged inputIdxToOutputIdxes automatically.
+	// Once failed, it means other worker has done this job at meantime.
+	helper.mergedInputIdxToOutputIdxes.CompareAndSwap(nil, &newInputIdxToOutputIdxes)
+}
+
+// NewColumnSwapHelper creates a new ColumnSwapHelper.
+func NewColumnSwapHelper(usedColumnIndex []int) *ColumnSwapHelper {
+	helper := &ColumnSwapHelper{InputIdxToOutputIdxes: make(map[int][]int)}
+	for outputIndex, inputIndex := range usedColumnIndex {
+		helper.InputIdxToOutputIdxes[inputIndex] = append(helper.InputIdxToOutputIdxes[inputIndex], outputIndex)
+	}
+	return helper
 }

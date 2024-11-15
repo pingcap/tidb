@@ -48,7 +48,7 @@ func TestSyncLoadSkipUnAnalyzedItems(t *testing.T) {
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/statistics/handle/syncload/assertSyncLoadItems", `return(0)`))
 	tk.MustQuery("trace plan select * from t where a > 10")
 	failpoint.Disable("github.com/pingcap/tidb/pkg/statistics/handle/syncload/assertSyncLoadItems")
-	tk.MustExec("analyze table t1")
+	tk.MustExec("analyze table t1 all columns")
 	// one column would be loaded
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/statistics/handle/syncload/assertSyncLoadItems", `return(1)`))
 	tk.MustQuery("trace plan select * from t1 where a > 10")

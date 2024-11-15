@@ -26,6 +26,7 @@ go_library(
         "//pkg/parser/mysql",
         "//pkg/parser/terror",
         "//pkg/parser/types",
+        "//pkg/planner/cascades/base",
         "//pkg/util/intest",
         "@com_github_pingcap_errors//:errors",
         "@com_github_tikv_pd_client//http",
