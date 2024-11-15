@@ -299,30 +299,29 @@ func (b *{{.SigName}}) vecEval{{ .Output.TypeName }}(ctx EvalContext, input *chu
 			}
 		}
 	{{ else if or (eq .SigName "builtinAddDateAndDurationSig") (eq .SigName "builtinSubDateAndDurationSig") }}
-		fsp0 := b.args[0].GetType(ctx).GetDecimal()
 		fsp1 := b.args[1].GetType(ctx).GetDecimal()
 		arg1Duration := types.Duration{Duration: arg1, Fsp: fsp1}
 		{{ if eq $.FuncName "AddTime" }}
-		sum, err := types.Duration{Duration: arg0, Fsp: fsp0}.Add(arg1Duration)
+		res, err := arg0.Add(typeCtx(ctx), arg1Duration)
 		{{ else }}
-		sum, err := types.Duration{Duration: arg0, Fsp: fsp0}.Sub(arg1Duration)
+		res, err := arg0.Add(typeCtx(ctx), arg1Duration.Neg())
 		{{ end }}
 		if err != nil {
 			return err
 		}
-		output := sum.String()
+		output := res.String()
 	{{ else if or (eq .SigName "builtinAddDateAndStringSig") (eq .SigName "builtinSubDateAndStringSig") }}
 		{{ template "ConvertStringToDuration" . }}
-		fsp0 := b.args[0].GetType(ctx).GetDecimal()
 		{{ if eq $.FuncName "AddTime" }}
-		sum, err := types.Duration{Duration: arg0, Fsp: fsp0}.Add(arg1Duration)
+		res, err := arg0.Add(tc, arg1Duration)
 		{{ else }}
-		sum, err := types.Duration{Duration: arg0, Fsp: fsp0}.Sub(arg1Duration)
+		res, err := arg0.Add(tc, arg1Duration.Neg())
 		{{ end }}
 		if err != nil {
 			return err
 		}
-		output := sum.String()
+
+		output := res.String()
 	{{ end }}
 
 		// commit result
@@ -785,8 +784,8 @@ var addTimeSigsTmpl = []sig{
 	{SigName: "builtinAddDurationAndStringSig", TypeA: TypeDuration, TypeB: TypeString, Output: TypeDuration},
 	{SigName: "builtinAddStringAndDurationSig", TypeA: TypeString, TypeB: TypeDuration, Output: TypeString},
 	{SigName: "builtinAddStringAndStringSig", TypeA: TypeString, TypeB: TypeString, Output: TypeString},
-	{SigName: "builtinAddDateAndDurationSig", TypeA: TypeDuration, TypeB: TypeDuration, Output: TypeString, FieldTypeA: "Date", FieldTypeB: "Duration", TestTypeA: "Datetime", TestTypeB: "Duration"},
-	{SigName: "builtinAddDateAndStringSig", TypeA: TypeDuration, TypeB: TypeString, Output: TypeString, FieldTypeA: "Date", FieldTypeB: "String", TestTypeA: "Datetime", TestTypeB: "String"},
+	{SigName: "builtinAddDateAndDurationSig", TypeA: TypeDatetime, TypeB: TypeDuration, Output: TypeString, FieldTypeA: "Date", FieldTypeB: "Duration", TestTypeA: "Datetime", TestTypeB: "Duration"},
+	{SigName: "builtinAddDateAndStringSig", TypeA: TypeDatetime, TypeB: TypeString, Output: TypeString, FieldTypeA: "Date", FieldTypeB: "String", TestTypeA: "Datetime", TestTypeB: "String"},
 
 	{SigName: "builtinAddTimeDateTimeNullSig", TypeA: TypeDatetime, TypeB: TypeDatetime, Output: TypeDatetime, AllNull: true},
 	{SigName: "builtinAddTimeStringNullSig", TypeA: TypeDatetime, TypeB: TypeDatetime, Output: TypeString, AllNull: true, FieldTypeA: "Date", FieldTypeB: "Datetime"},
@@ -800,8 +799,8 @@ var subTimeSigsTmpl = []sig{
 	{SigName: "builtinSubDurationAndStringSig", TypeA: TypeDuration, TypeB: TypeString, Output: TypeDuration},
 	{SigName: "builtinSubStringAndDurationSig", TypeA: TypeString, TypeB: TypeDuration, Output: TypeString},
 	{SigName: "builtinSubStringAndStringSig", TypeA: TypeString, TypeB: TypeString, Output: TypeString},
-	{SigName: "builtinSubDateAndDurationSig", TypeA: TypeDuration, TypeB: TypeDuration, Output: TypeString, FieldTypeA: "Date", FieldTypeB: "Duration", TestTypeA: "Datetime", TestTypeB: "Duration"},
-	{SigName: "builtinSubDateAndStringSig", TypeA: TypeDuration, TypeB: TypeString, Output: TypeString, FieldTypeA: "Date", FieldTypeB: "String", TestTypeA: "Datetime", TestTypeB: "String"},
+	{SigName: "builtinSubDateAndDurationSig", TypeA: TypeDatetime, TypeB: TypeDuration, Output: TypeString, FieldTypeA: "Date", FieldTypeB: "Duration", TestTypeA: "Datetime", TestTypeB: "Duration"},
+	{SigName: "builtinSubDateAndStringSig", TypeA: TypeDatetime, TypeB: TypeString, Output: TypeString, FieldTypeA: "Date", FieldTypeB: "String", TestTypeA: "Datetime", TestTypeB: "String"},
 
 	{SigName: "builtinSubTimeDateTimeNullSig", TypeA: TypeDatetime, TypeB: TypeDatetime, Output: TypeDatetime, AllNull: true},
 	{SigName: "builtinSubTimeStringNullSig", TypeA: TypeDatetime, TypeB: TypeDatetime, Output: TypeString, AllNull: true, FieldTypeA: "Date", FieldTypeB: "Datetime"},

@@ -464,7 +464,7 @@ func (b *builtinAddDateAndDurationSig) vecEvalString(ctx EvalContext, input *chu
 		return err
 	}
 	defer b.bufAllocator.put(buf0)
-	if err := b.args[0].VecEvalDuration(ctx, input, buf0); err != nil {
+	if err := b.args[0].VecEvalTime(ctx, input, buf0); err != nil {
 		return err
 	}
 
@@ -479,7 +479,7 @@ func (b *builtinAddDateAndDurationSig) vecEvalString(ctx EvalContext, input *chu
 
 	result.ReserveString(n)
 
-	arg0s := buf0.GoDurations()
+	arg0s := buf0.Times()
 
 	arg1s := buf1.GoDurations()
 
@@ -498,16 +498,15 @@ func (b *builtinAddDateAndDurationSig) vecEvalString(ctx EvalContext, input *chu
 
 		// calculate
 
-		fsp0 := b.args[0].GetType(ctx).GetDecimal()
 		fsp1 := b.args[1].GetType(ctx).GetDecimal()
 		arg1Duration := types.Duration{Duration: arg1, Fsp: fsp1}
 
-		sum, err := types.Duration{Duration: arg0, Fsp: fsp0}.Add(arg1Duration)
+		res, err := arg0.Add(typeCtx(ctx), arg1Duration)
 
 		if err != nil {
 			return err
 		}
-		output := sum.String()
+		output := res.String()
 
 		// commit result
 
@@ -529,7 +528,7 @@ func (b *builtinAddDateAndStringSig) vecEvalString(ctx EvalContext, input *chunk
 		return err
 	}
 	defer b.bufAllocator.put(buf0)
-	if err := b.args[0].VecEvalDuration(ctx, input, buf0); err != nil {
+	if err := b.args[0].VecEvalTime(ctx, input, buf0); err != nil {
 		return err
 	}
 
@@ -544,7 +543,7 @@ func (b *builtinAddDateAndStringSig) vecEvalString(ctx EvalContext, input *chunk
 
 	result.ReserveString(n)
 
-	arg0s := buf0.GoDurations()
+	arg0s := buf0.Times()
 
 	for i := 0; i < n; i++ {
 
@@ -576,14 +575,13 @@ func (b *builtinAddDateAndStringSig) vecEvalString(ctx EvalContext, input *chunk
 			return err
 		}
 
-		fsp0 := b.args[0].GetType(ctx).GetDecimal()
-
-		sum, err := types.Duration{Duration: arg0, Fsp: fsp0}.Add(arg1Duration)
+		res, err := arg0.Add(tc, arg1Duration)
 
 		if err != nil {
 			return err
 		}
-		output := sum.String()
+
+		output := res.String()
 
 		// commit result
 
@@ -1078,7 +1076,7 @@ func (b *builtinSubDateAndDurationSig) vecEvalString(ctx EvalContext, input *chu
 		return err
 	}
 	defer b.bufAllocator.put(buf0)
-	if err := b.args[0].VecEvalDuration(ctx, input, buf0); err != nil {
+	if err := b.args[0].VecEvalTime(ctx, input, buf0); err != nil {
 		return err
 	}
 
@@ -1093,7 +1091,7 @@ func (b *builtinSubDateAndDurationSig) vecEvalString(ctx EvalContext, input *chu
 
 	result.ReserveString(n)
 
-	arg0s := buf0.GoDurations()
+	arg0s := buf0.Times()
 
 	arg1s := buf1.GoDurations()
 
@@ -1112,16 +1110,15 @@ func (b *builtinSubDateAndDurationSig) vecEvalString(ctx EvalContext, input *chu
 
 		// calculate
 
-		fsp0 := b.args[0].GetType(ctx).GetDecimal()
 		fsp1 := b.args[1].GetType(ctx).GetDecimal()
 		arg1Duration := types.Duration{Duration: arg1, Fsp: fsp1}
 
-		sum, err := types.Duration{Duration: arg0, Fsp: fsp0}.Sub(arg1Duration)
+		res, err := arg0.Add(typeCtx(ctx), arg1Duration.Neg())
 
 		if err != nil {
 			return err
 		}
-		output := sum.String()
+		output := res.String()
 
 		// commit result
 
@@ -1143,7 +1140,7 @@ func (b *builtinSubDateAndStringSig) vecEvalString(ctx EvalContext, input *chunk
 		return err
 	}
 	defer b.bufAllocator.put(buf0)
-	if err := b.args[0].VecEvalDuration(ctx, input, buf0); err != nil {
+	if err := b.args[0].VecEvalTime(ctx, input, buf0); err != nil {
 		return err
 	}
 
@@ -1158,7 +1155,7 @@ func (b *builtinSubDateAndStringSig) vecEvalString(ctx EvalContext, input *chunk
 
 	result.ReserveString(n)
 
-	arg0s := buf0.GoDurations()
+	arg0s := buf0.Times()
 
 	for i := 0; i < n; i++ {
 
@@ -1190,14 +1187,13 @@ func (b *builtinSubDateAndStringSig) vecEvalString(ctx EvalContext, input *chunk
 			return err
 		}
 
-		fsp0 := b.args[0].GetType(ctx).GetDecimal()
-
-		sum, err := types.Duration{Duration: arg0, Fsp: fsp0}.Sub(arg1Duration)
+		res, err := arg0.Add(tc, arg1Duration.Neg())
 
 		if err != nil {
 			return err
 		}
-		output := sum.String()
+
+		output := res.String()
 
 		// commit result
 
