@@ -239,7 +239,7 @@ func NewSnapFileImporter(
 	return fileImporter, nil
 }
 
-func (importer *SnapFileImporter) WaitUntilUnblock() {
+func (importer *SnapFileImporter) PauseForBackpressure() {
 	importer.cond.L.Lock()
 	for importer.ShouldBlock() {
 		// wait for download worker notified

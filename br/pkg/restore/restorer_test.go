@@ -113,30 +113,30 @@ func createSampleBatchFileSets() restore.BatchBackupFileSet {
 	}
 }
 
-// FakeConcurrentFileImporter is a minimal implementation for testing
-type FakeConcurrentFileImporter struct {
+// FakeBalancedFileImporteris a minimal implementation for testing
+type FakeBalancedFileImporter struct {
 	hasError     bool
 	unblockCount int
 }
 
-func (f *FakeConcurrentFileImporter) Import(ctx context.Context, fileSets ...restore.BackupFileSet) error {
+func (f *FakeBalancedFileImporter) Import(ctx context.Context, fileSets ...restore.BackupFileSet) error {
 	if f.hasError {
 		return errors.New("import error")
 	}
 	return nil
 }
 
-func (f *FakeConcurrentFileImporter) WaitUntilUnblock() {
+func (f *FakeBalancedFileImporter) PauseForBackpressure() {
 	f.unblockCount++
 }
 
-func (f *FakeConcurrentFileImporter) Close() error {
+func (f *FakeBalancedFileImporter) Close() error {
 	return nil
 }
 
 func TestMultiTablesRestorerRestoreSuccess(t *testing.T) {
 	ctx := context.Background()
-	importer := &FakeConcurrentFileImporter{}
+	importer := &FakeBalancedFileImporter{}
 	workerPool := util.NewWorkerPool(2, "multi-tables-restorer")
 
 	restorer := restore.NewMultiTablesRestorer(ctx, importer, workerPool, nil)
@@ -154,7 +154,7 @@ func TestMultiTablesRestorerRestoreSuccess(t *testing.T) {
 
 func TestMultiTablesRestorerRestoreWithImportError(t *testing.T) {
 	ctx := context.Background()
-	importer := &FakeConcurrentFileImporter{hasError: true}
+	importer := &FakeBalancedFileImporter{hasError: true}
 	workerPool := util.NewWorkerPool(2, "multi-tables-restorer")
 
 	restorer := restore.NewMultiTablesRestorer(ctx, importer, workerPool, nil)
@@ -168,7 +168,7 @@ func TestMultiTablesRestorerRestoreWithImportError(t *testing.T) {
 func TestMultiTablesRestorerRestoreWithContextCancel(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	importer := &FakeConcurrentFileImporter{}
+	importer := &FakeBalancedFileImporter{}
 	workerPool := util.NewWorkerPool(2, "multi-tables-restorer")
 
 	restorer := restore.NewMultiTablesRestorer(ctx, importer, workerPool, nil)

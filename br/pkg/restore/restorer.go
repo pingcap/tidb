@@ -112,8 +112,8 @@ func NewFileSet(files []*backuppb.File, rules *utils.RewriteRules) BackupFileSet
 // 4. Log-compacted SST files
 //
 // It serves as a high-level interface for restoration, supporting implementations such as simpleRestorer
-// and MultiRestorer. SstRestorer includes FileImporter for handling raw, transactional, and compacted SSTs,
-// and MultiRestorer for TiDB-specific backups.
+// and MultiTablesRestorer. SstRestorer includes FileImporter for handling raw, transactional, and compacted SSTs,
+// and MultiTablesRestorer for TiDB-specific backups.
 type SstRestorer interface {
 	// Restore imports the specified backup file sets into TiKV.
 	// The onProgress function is called with progress updates as files are processed.
@@ -137,15 +137,15 @@ type FileImporter interface {
 	Close() error
 }
 
-// ConcurrentFileImporter is a wrapper around FileImporter that adds concurrency controls.
+// BalancedFileImporter is a wrapper around FileImporter that adds concurrency controls.
 // It ensures that file imports are balanced across storage nodes, which is particularly useful
-// in MultiRestorer scenarios where concurrency management is critical for efficiency.
-type ConcurrentFileImporter interface {
+// in MultiTablesRestorer scenarios where concurrency management is critical for efficiency.
+type BalancedFileImporter interface {
 	FileImporter
 
-	// WaitUntilUnblock manages concurrency by controlling when imports can proceed,
+	// PauseForBackpressure manages concurrency by controlling when imports can proceed,
 	// ensuring load is distributed evenly across storage nodes.
-	WaitUntilUnblock()
+	PauseForBackpressure()
 }
 
 type SimpleRestorer struct {
@@ -211,13 +211,13 @@ type MultiTablesRestorer struct {
 	eg               *errgroup.Group
 	ectx             context.Context
 	workerPool       *util.WorkerPool
-	fileImporter     ConcurrentFileImporter
+	fileImporter     BalancedFileImporter
 	checkpointRunner *checkpoint.CheckpointRunner[checkpoint.RestoreKeyType, checkpoint.RestoreValueType]
 }
 
 func NewMultiTablesRestorer(
 	ctx context.Context,
-	fileImporter ConcurrentFileImporter,
+	fileImporter BalancedFileImporter,
 	workerPool *util.WorkerPool,
 	checkpointRunner *checkpoint.CheckpointRunner[checkpoint.RestoreKeyType, checkpoint.RestoreValueType],
 ) SstRestorer {
@@ -273,7 +273,7 @@ func (m *MultiTablesRestorer) Restore(onProgress func(int64), batchFileSets ...B
 			break
 		}
 		filesReplica := batchFileSet
-		m.fileImporter.WaitUntilUnblock()
+		m.fileImporter.PauseForBackpressure()
 		m.workerPool.ApplyOnErrorGroup(m.eg, func() (restoreErr error) {
 			fileStart := time.Now()
 			defer func() {
@@ -336,7 +336,7 @@ func (p *PipelineRestorerWrapper[T]) WithSplit(ctx context.Context, i iter.TryNe
 		iter.FilterOut(i, func(item T) bool {
 			// Skip items based on the strategy's criteria.
 			// Non-skip iterms should be filter out.
-			return !strategy.ShouldSkip(item)
+			return strategy.ShouldSkip(item)
 		}), func(item T) (T, error) {
 			// Accumulate the item for potential splitting.
 			strategy.Accumulate(item)
