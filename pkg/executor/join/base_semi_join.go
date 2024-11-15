@@ -43,26 +43,36 @@ type baseSemiJoin struct {
 	// used when left side is build side
 	rowIter *rowIter
 
-	undeterminedProbeRowsIdx map[int]struct{}
-
 	// used in other condition to record which rows need to be processed
 	unFinishedProbeRowIdxQueue *queue.Queue[int]
 }
 
 func newBaseSemiJoin(base baseJoinProbe, isLeftSideBuild bool) *baseSemiJoin {
 	return &baseSemiJoin{
-		baseJoinProbe:            base,
-		isLeftSideBuild:          isLeftSideBuild,
-		isMatchedRows:            make([]bool, 0),
-		isNulls:                  make([]bool, 0),
-		undeterminedProbeRowsIdx: make(map[int]struct{}),
+		baseJoinProbe:   base,
+		isLeftSideBuild: isLeftSideBuild,
+		isMatchedRows:   make([]bool, 0),
+		isNulls:         make([]bool, 0),
 	}
 }
 
-func (b *baseSemiJoin) initProbe(probeRowNum int) {
-	clear(b.undeterminedProbeRowsIdx)
-	for i := 0; i < probeRowNum; i++ {
-		b.undeterminedProbeRowsIdx[i] = struct{}{}
+func (b *baseSemiJoin) resetProbeState() {
+	b.isMatchedRows = b.isMatchedRows[:0]
+	for i := 0; i < b.chunkRows; i++ {
+		b.isMatchedRows = append(b.isMatchedRows, false)
+	}
+
+	if b.ctx.hasOtherCondition() {
+		if b.unFinishedProbeRowIdxQueue == nil {
+			b.unFinishedProbeRowIdxQueue = queue.NewQueue[int](256)
+		} else {
+			b.unFinishedProbeRowIdxQueue.Clear()
+		}
+		for i := 0; i < b.chunkRows; i++ {
+			if b.matchedRowsHeaders[i] != 0 {
+				b.unFinishedProbeRowIdxQueue.Push(i)
+			}
+		}
 	}
 }
 
@@ -99,19 +109,20 @@ func (b *baseSemiJoin) matchMultiBuildRows(joinedChk *chunk.Chunk, joinedChkRema
 func (b *baseSemiJoin) concatenateProbeAndBuildRows(joinedChk *chunk.Chunk, sqlKiller *sqlkiller.SQLKiller, isRightSideBuild bool) error {
 	joinedChkRemainCap := joinedChk.Capacity()
 
-	for joinedChkRemainCap > 0 && len(b.undeterminedProbeRowsIdx) != 0 {
-		for probeRowIdx := range b.undeterminedProbeRowsIdx {
-			b.currentProbeRow = probeRowIdx
-			b.matchMultiBuildRows(joinedChk, &joinedChkRemainCap, isRightSideBuild)
-
-			if b.matchedRowsHeaders[probeRowIdx] == 0 {
-				delete(b.undeterminedProbeRowsIdx, probeRowIdx)
-			}
-
-			if joinedChkRemainCap == 0 {
-				break
-			}
+	for joinedChkRemainCap > 0 && !b.unFinishedProbeRowIdxQueue.IsEmpty() {
+		probeRowIdx := b.unFinishedProbeRowIdxQueue.Pop()
+		if b.isMatchedRows[probeRowIdx] {
+			continue
 		}
+
+		b.currentProbeRow = probeRowIdx
+		b.matchMultiBuildRows(joinedChk, &joinedChkRemainCap, isRightSideBuild)
+
+		if b.matchedRowsHeaders[probeRowIdx] == 0 {
+			continue
+		}
+
+		b.unFinishedProbeRowIdxQueue.Push(probeRowIdx)
 	}
 
 	err := checkSQLKiller(sqlKiller, "killedDuringProbe")

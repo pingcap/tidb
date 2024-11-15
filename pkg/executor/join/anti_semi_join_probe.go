@@ -24,7 +24,6 @@ import (
 
 type antiSemiJoinProbe struct {
 	baseSemiJoin
-	matchedProbeRowIdx map[int]struct{}
 }
 
 func newAntiSemiJoinProbe(base baseJoinProbe, isLeftSideBuild bool) *antiSemiJoinProbe {
@@ -34,9 +33,6 @@ func newAntiSemiJoinProbe(base baseJoinProbe, isLeftSideBuild bool) *antiSemiJoi
 
 	if ret.ctx.hasOtherCondition() {
 		ret.isNulls = make([]bool, 0, ret.ctx.SessCtx.GetSessionVars().MaxChunkSize)
-		if !ret.isLeftSideBuild {
-			ret.matchedProbeRowIdx = make(map[int]struct{})
-		}
 	}
 
 	return ret
@@ -99,18 +95,13 @@ func (a *antiSemiJoinProbe) ResetProbe() {
 	a.baseJoinProbe.ResetProbe()
 }
 
-func (a *antiSemiJoinProbe) initProbe(probeRowNum int) {
-	a.baseSemiJoin.initProbe(probeRowNum)
-	clear(a.matchedProbeRowIdx)
-}
-
 func (a *antiSemiJoinProbe) SetChunkForProbe(chk *chunk.Chunk) (err error) {
 	err = a.baseJoinProbe.SetChunkForProbe(chk)
 	if err != nil {
 		return err
 	}
 
-	a.initProbe(chk.NumRows())
+	a.resetProbeState()
 	return nil
 }
 
@@ -120,7 +111,7 @@ func (a *antiSemiJoinProbe) SetRestoredChunkForProbe(chk *chunk.Chunk) error {
 		return err
 	}
 
-	a.initProbe(chk.NumRows())
+	a.resetProbeState()
 	return nil
 }
 
@@ -174,7 +165,7 @@ func (a *antiSemiJoinProbe) probeForLeftSideBuildHasOtherCondition(joinedChk *ch
 		return err
 	}
 
-	if len(a.undeterminedProbeRowsIdx) == 0 {
+	if a.unFinishedProbeRowIdxQueue.IsEmpty() {
 		// To avoid `Previous chunk is not probed yet` error
 		a.currentProbeRow = a.chunkRows
 	}
@@ -223,8 +214,7 @@ func (a *antiSemiJoinProbe) probeForRightSideBuildHasOtherCondition(chk, joinedC
 		for i := range a.chunkRows {
 			if a.isProbeRowSpilled(i) {
 				// We see rows that have be spilled as matched rows
-				a.matchedProbeRowIdx[i] = struct{}{}
-				delete(a.undeterminedProbeRowsIdx, i)
+				a.isMatchedRows[i] = true
 			}
 		}
 	}
@@ -243,28 +233,29 @@ func (a *antiSemiJoinProbe) probeForRightSideBuildHasOtherCondition(chk, joinedC
 		length := len(a.selected)
 		for i := range length {
 			if a.selected[i] {
-				a.matchedProbeRowIdx[a.rowIndexInfos[i].probeRowIndex] = struct{}{}
-				delete(a.undeterminedProbeRowsIdx, a.rowIndexInfos[i].probeRowIndex)
+				probeRowIdx := a.rowIndexInfos[i].probeRowIndex
+				a.isMatchedRows[probeRowIdx] = true
 			}
 
 			if a.isNulls[i] {
-				a.matchedProbeRowIdx[a.rowIndexInfos[i].probeRowIndex] = struct{}{}
-				delete(a.undeterminedProbeRowsIdx, a.rowIndexInfos[i].probeRowIndex)
+				probeRowIdx := a.rowIndexInfos[i].probeRowIndex
+				a.isMatchedRows[probeRowIdx] = true
 			}
 		}
 	}
 
-	if len(a.undeterminedProbeRowsIdx) == 0 {
+	if a.unFinishedProbeRowIdxQueue.IsEmpty() {
 		if cap(a.selected) < a.chunkRows {
 			a.selected = make([]bool, a.chunkRows)
 		} else {
 			a.selected = a.selected[:a.chunkRows]
 		}
 
-		a.currentProbeRow = 0
-		for ; a.currentProbeRow < a.chunkRows; a.currentProbeRow++ {
-			_, ok := a.matchedProbeRowIdx[a.currentProbeRow]
-			a.selected[a.currentProbeRow] = !ok
+		// To avoid `Previous chunk is not probed yet` error
+		a.currentProbeRow = a.chunkRows
+
+		for i, matched := range a.isMatchedRows {
+			a.selected[i] = !matched
 		}
 
 		for index, usedColIdx := range a.lUsed {

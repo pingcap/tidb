@@ -24,16 +24,11 @@ import (
 
 type semiJoinProbe struct {
 	baseSemiJoin
-
-	// One probe row may match several build rows and generate result rows which consists of probe row and build row.
-	// This struct records which rows are success.
-	otherConditionSuccessSet map[int][]int
 }
 
 func newSemiJoinProbe(base baseJoinProbe, isLeftSideBuild bool) *semiJoinProbe {
 	ret := &semiJoinProbe{
 		baseSemiJoin:             *newBaseSemiJoin(base, isLeftSideBuild),
-		otherConditionSuccessSet: make(map[int][]int),
 	}
 	return ret
 }
@@ -51,7 +46,7 @@ func (s *semiJoinProbe) SetChunkForProbe(chk *chunk.Chunk) (err error) {
 		return err
 	}
 
-	s.initProbe(chk.NumRows())
+	s.resetProbeState()
 	return nil
 }
 
@@ -61,7 +56,7 @@ func (s *semiJoinProbe) SetRestoredChunkForProbe(chk *chunk.Chunk) error {
 		return err
 	}
 
-	s.initProbe(chk.NumRows())
+	s.resetProbeState()
 	return nil
 }
 
@@ -154,35 +149,13 @@ func (s *semiJoinProbe) Probe(joinResult *hashjoinWorkerResult, sqlKiller *sqlki
 	return true, joinResult
 }
 
-func (s *semiJoinProbe) removeMatchedProbeRow() {
-	for idx, selected := range s.selected {
-		if selected {
-			delete(s.undeterminedProbeRowsIdx, s.rowIndexInfos[idx].probeRowIndex)
-		}
-	}
-}
-
-func (s *semiJoinProbe) truncateSelect() {
-	clear(s.otherConditionSuccessSet)
-
+func (s *semiJoinProbe) setIsMatchedRows() {
 	for i, res := range s.selected {
 		if !res {
 			continue
 		}
 
-		groupID := s.rowIndexInfos[i].probeRowIndex
-		s.otherConditionSuccessSet[groupID] = append(s.otherConditionSuccessSet[groupID], i)
-	}
-
-	for _, idxs := range s.otherConditionSuccessSet {
-		idxsLen := len(idxs)
-		if idxsLen <= 1 {
-			continue
-		}
-
-		for i := 1; i < idxsLen; i++ {
-			s.selected[idxs[i]] = false
-		}
+		s.isMatchedRows[s.rowIndexInfos[i].probeRowIndex] = true
 	}
 }
 
@@ -192,7 +165,7 @@ func (s *semiJoinProbe) probeForLeftSideBuildHasOtherCondition(joinedChk *chunk.
 		return err
 	}
 
-	if len(s.undeterminedProbeRowsIdx) == 0 {
+	if s.unFinishedProbeRowIdxQueue.IsEmpty() {
 		// To avoid `Previous chunk is not probed yet` error
 		s.currentProbeRow = s.chunkRows
 	}
@@ -257,7 +230,7 @@ func (s *semiJoinProbe) probeForRightSideBuildHasOtherCondition(chk, joinedChk *
 	}
 
 	defer func() {
-		if len(s.undeterminedProbeRowsIdx) == 0 {
+		if s.unFinishedProbeRowIdxQueue.IsEmpty() {
 			// To avoid `Previous chunk is not probed yet` error
 			s.currentProbeRow = s.chunkRows
 		}
@@ -270,9 +243,23 @@ func (s *semiJoinProbe) probeForRightSideBuildHasOtherCondition(chk, joinedChk *
 			return err
 		}
 
-		s.truncateSelect()
-		s.removeMatchedProbeRow()
-		return s.buildResultAfterOtherCondition(chk, joinedChk)
+		s.setIsMatchedRows()
+	}
+
+	if s.unFinishedProbeRowIdxQueue.IsEmpty() {
+		if cap(s.selected) < s.chunkRows {
+			s.selected = make([]bool, s.chunkRows)
+		} else {
+			s.selected = s.selected[:s.chunkRows]
+		}
+
+		copy(s.selected, s.isMatchedRows)
+
+		for index, usedColIdx := range s.lUsed {
+			dstCol := chk.Column(index)
+			srcCol := s.currentChunk.Column(usedColIdx)
+			chunk.CopySelectedRows(dstCol, srcCol, s.selected)
+		}
 	}
 	return
 }
