@@ -268,7 +268,7 @@ func mergeTwoCNFRanges(sctx *rangerctx.RangerContext, cond expression.Expression
 	tryHeuristic := false
 	mergedResult := rangeResult
 	if otherRangeResult != nil && mergedResult.rangeResult != nil {
-		if fixcontrol.GetBoolWithDefault(sctx.OptimizerFixControl, fixcontrol.Fix54337, false) {
+		if fixcontrol.GetBoolWithDefault(sctx.OptimizerFixControl, fixcontrol.Fix54337, true) {
 			mergedResultIsSubset := mergedResult.rangeResult.Ranges.Subset(sctx.TypeCtx, otherRangeResult.rangeResult.Ranges)
 			// if mergedResult is a subset then do nothing
 			if !mergedResultIsSubset {

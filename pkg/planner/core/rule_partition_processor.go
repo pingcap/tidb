@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
@@ -39,6 +40,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/collate"
 	h "github.com/pingcap/tidb/pkg/util/hint"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/mathutil"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
 	"github.com/pingcap/tidb/pkg/util/ranger"
@@ -1313,7 +1315,7 @@ func maxCmp(ctx base.PlanContext, hiVal []types.Datum, columnsPruner *rangeColum
 	}
 }
 
-func multiColumnRangeColumnsPruner(sctx base.PlanContext, exprs []expression.Expression,
+func rangeColumnsPrune(sctx base.PlanContext, exprs []expression.Expression,
 	columnsPruner *rangeColumnsPruner, result partitionRangeOR) partitionRangeOR {
 	lens := make([]int, 0, len(columnsPruner.partCols))
 	for i := range columnsPruner.partCols {
@@ -1360,10 +1362,8 @@ func multiColumnRangeColumnsPruner(sctx base.PlanContext, exprs []expression.Exp
 
 func partitionRangeForCNFExpr(sctx base.PlanContext, exprs []expression.Expression,
 	pruner partitionRangePruner, result partitionRangeOR) partitionRangeOR {
-	// TODO: When the ranger/detacher handles varchar_col_general_ci cmp constant bin collation
-	// remove the check for single column RANGE COLUMNS and remove the single column implementation
-	if columnsPruner, ok := pruner.(*rangeColumnsPruner); ok && len(columnsPruner.partCols) > 1 {
-		return multiColumnRangeColumnsPruner(sctx, exprs, columnsPruner, result)
+	if columnsPruner, ok := pruner.(*rangeColumnsPruner); ok {
+		return rangeColumnsPrune(sctx, exprs, columnsPruner, result)
 	}
 	for i := 0; i < len(exprs); i++ {
 		result = partitionRangeForExpr(sctx, exprs[i], pruner, result)
@@ -1386,9 +1386,10 @@ func partitionRangeForExpr(sctx base.PlanContext, expr expression.Expression,
 			if p, ok := pruner.(*rangePruner); ok {
 				newRange := partitionRangeForInExpr(sctx, op.GetArgs(), p)
 				return result.intersection(newRange)
-			} else if p, ok := pruner.(*rangeColumnsPruner); ok {
-				newRange := partitionRangeColumnForInExpr(sctx, op.GetArgs(), p)
-				return result.intersection(newRange)
+			} else if _, ok := pruner.(*rangeColumnsPruner); ok {
+				// Should covered by `multiColumnRangeColumnsPruner` function
+				intest.Assert(false, "Shouldn't enter this branch")
+				terror.Log(fmt.Errorf("interal error, Shouldn't enter this branch"))
 			}
 			return result
 		}
@@ -1446,43 +1447,6 @@ func partitionRangeForOrExpr(sctx base.PlanContext, expr1, expr2 expression.Expr
 	tmp1 := partitionRangeForExpr(sctx, expr1, pruner, pruner.fullRange())
 	tmp2 := partitionRangeForExpr(sctx, expr2, pruner, pruner.fullRange())
 	return tmp1.union(tmp2)
-}
-
-func partitionRangeColumnForInExpr(sctx base.PlanContext, args []expression.Expression,
-	pruner *rangeColumnsPruner) partitionRangeOR {
-	col, ok := args[0].(*expression.Column)
-	if !ok || col.ID != pruner.partCols[0].ID {
-		return pruner.fullRange()
-	}
-
-	var result partitionRangeOR
-	for i := 1; i < len(args); i++ {
-		constExpr, ok := args[i].(*expression.Constant)
-		if !ok {
-			return pruner.fullRange()
-		}
-		switch constExpr.Value.Kind() {
-		case types.KindInt64, types.KindUint64, types.KindMysqlTime, types.KindString: // for safety, only support string,int and datetime now
-		case types.KindNull:
-			result = append(result, partitionRange{0, 1})
-			continue
-		default:
-			return pruner.fullRange()
-		}
-
-		// convert all elements to EQ-exprs and prune them one by one
-		sf, err := expression.NewFunction(sctx.GetExprCtx(), ast.EQ, types.NewFieldType(types.KindInt64), []expression.Expression{col, args[i]}...)
-		if err != nil {
-			return pruner.fullRange()
-		}
-		start, end, ok := pruner.partitionRangeForExpr(sctx, sf)
-		if !ok {
-			return pruner.fullRange()
-		}
-		result = append(result, partitionRange{start, end})
-	}
-
-	return result.simplify()
 }
 
 func partitionRangeForInExpr(sctx base.PlanContext, args []expression.Expression,
