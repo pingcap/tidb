@@ -709,6 +709,21 @@ func (job *Job) MayNeedReorg() bool {
 	}
 }
 
+// SupportDistTaskExecution indicates whether this job supports dist task execution.
+func (job *Job) SupportDistTaskExecution() bool {
+	if job.Type == ActionAddIndex || job.Type == ActionAddPrimaryKey {
+		return true
+	}
+	if job.Type == ActionMultiSchemaChange {
+		for _, sub := range job.MultiSchemaInfo.SubJobs {
+			if sub.Type == ActionAddIndex || sub.Type == ActionAddPrimaryKey {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // IsRollbackable checks whether the job can be rollback.
 // TODO(lance6716): should make sure it's the same as convertJob2RollbackJob
 func (job *Job) IsRollbackable() bool {

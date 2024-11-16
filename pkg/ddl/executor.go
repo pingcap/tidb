@@ -4946,8 +4946,7 @@ func initJobReorgMetaFromVariables(job *model.Job, sctx sessionctx.Context) erro
 		return nil
 	}
 
-	if job.Type == model.ActionAddIndex ||
-		job.Type == model.ActionAddPrimaryKey {
+	if job.SupportDistTaskExecution() {
 		setReorgParam()
 		err := setDistTaskParam()
 		if err != nil {
