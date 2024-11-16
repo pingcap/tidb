@@ -3887,10 +3887,8 @@ func mustGetStoreBootstrapVersion(store kv.Storage) int64 {
 }
 
 func getStoreBootstrapVersionWithCache(store kv.Storage) int64 {
-	storeBootstrappedLock.Lock()
-	defer storeBootstrappedLock.Unlock()
 	// check in memory
-	_, ok := storeBootstrapped[store.UUID()]
+	_, ok := store.GetOption(StoreBootstrappedKey)
 	if ok {
 		return currentBootstrapVersion
 	}
@@ -3899,7 +3897,7 @@ func getStoreBootstrapVersionWithCache(store kv.Storage) int64 {
 
 	if ver > notBootstrapped {
 		// here mean memory is not ok, but other server has already finished it
-		storeBootstrapped[store.UUID()] = true
+		store.SetOption(StoreBootstrappedKey, true)
 	}
 
 	modifyBootstrapVersionForTest(ver)
@@ -3907,7 +3905,7 @@ func getStoreBootstrapVersionWithCache(store kv.Storage) int64 {
 }
 
 func finishBootstrap(store kv.Storage) {
-	setStoreBootstrapped(store.UUID())
+	store.SetOption(StoreBootstrappedKey, true)
 
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBootstrap)
 	err := kv.RunInNewTxn(ctx, store, true, func(_ context.Context, txn kv.Transaction) error {
