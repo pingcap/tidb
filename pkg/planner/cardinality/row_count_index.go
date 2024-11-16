@@ -264,7 +264,7 @@ func getIndexRowCountForStatsV2(sctx planctx.PlanContext, idx *statistics.Index,
 					}
 					continue
 				}
-				count = equalRowCountOnIndex(sctx, idx, lb, realtimeRowCount, modifyCount)
+				count = equalRowCountOnIndex(sctx, idx, lb, realtimeRowCount)
 				// If the current table row count has changed, we should scale the row count accordingly.
 				count *= idx.GetIncreaseFactor(realtimeRowCount)
 				if debugTrace {
@@ -374,7 +374,7 @@ func getIndexRowCountForStatsV2(sctx planctx.PlanContext, idx *statistics.Index,
 
 var nullKeyBytes, _ = codec.EncodeKey(time.UTC, nil, types.NewDatum(nil))
 
-func equalRowCountOnIndex(sctx planctx.PlanContext, idx *statistics.Index, b []byte, realtimeRowCount, modifyCount int64) (result float64) {
+func equalRowCountOnIndex(sctx planctx.PlanContext, idx *statistics.Index, b []byte, realtimeRowCount int64) (result float64) {
 	if sctx.GetSessionVars().StmtCtx.EnableOptimizerDebugTrace {
 		debugtrace.EnterContextCommon(sctx)
 		debugtrace.RecordAnyValuesWithNames(sctx, "Encoded Value", b)
@@ -419,8 +419,11 @@ func equalRowCountOnIndex(sctx planctx.PlanContext, idx *statistics.Index, b []b
 		// idx.TotalRowCount rather than idx.Histogram.NotNullCount() since the histograms are empty.
 		//
 		// If the table hasn't been modified, it's safe to return 0.
-		if modifyCount == 0 {
+		insertRows := float64(realtimeRowCount) - idx.TotalRowCount()
+		if insertRows == 0 {
 			return 0
+		} else if insertRows < 0 {
+			insertRows = float64(realtimeRowCount)
 		}
 		// ELSE calculate an approximate estimate based upon newly inserted rows.
 		//
@@ -432,7 +435,7 @@ func equalRowCountOnIndex(sctx planctx.PlanContext, idx *statistics.Index, b []b
 		}
 		// As a conservative estimate - take the smaller of the orignal totalRows or the additions.
 		// "realtimeRowCount - original count" is a better measure of inserts than modifyCount
-		totalRowCount := min(idx.TotalRowCount(), float64(realtimeRowCount)-idx.TotalRowCount())
+		totalRowCount := min(idx.TotalRowCount(), insertRows)
 		return max(1, totalRowCount/histNDV)
 	}
 	// return the average histogram rows (which excludes topN) and NDV that excluded topN
