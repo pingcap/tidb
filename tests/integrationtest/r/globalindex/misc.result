@@ -205,7 +205,8 @@ t	CREATE TABLE `t` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 PARTITION BY HASH (`a`) PARTITIONS 3
 alter table t partition by key (b) partitions 3;
-Error 8200 (HY000): DDL job rollback, error msg: Unsupported PARTITION BY, index 'idx_b' is unique and contains all partitioning columns, but has Global Index set
+alter table t partition by key (b) partitions 3 update indexes (idx_b GLOBAL);
+alter table t partition by key (b) partitions 3 update indexes (idx_b LOCAL);
 alter table t partition by hash (a) partitions 3 update indexes (idx_b LOCAL);
 Error 8264 (HY000): Global Index is needed for index 'idx_b', since the unique index is not including all partitioning columns, and GLOBAL is not given as IndexOption
 alter table t partition by hash (a) partitions 3 update indexes (idx_b GLOBAL);
@@ -218,7 +219,6 @@ t	CREATE TABLE `t` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 PARTITION BY HASH (`a`) PARTITIONS 3
 alter table t partition by hash (b) partitions 3 update indexes(idx_b global);
-Error 8200 (HY000): DDL job rollback, error msg: Unsupported PARTITION BY, index 'idx_b' is unique and contains all partitioning columns, but has Global Index set
 alter table t partition by hash (b) partitions 3 update indexes(idx_b local);
 show create table t;
 Table	Create Table
