@@ -419,11 +419,11 @@ func equalRowCountOnIndex(sctx planctx.PlanContext, idx *statistics.Index, b []b
 		// idx.TotalRowCount rather than idx.Histogram.NotNullCount() since the histograms are empty.
 		//
 		// If the table hasn't been modified, it's safe to return 0.
-		insertRows := float64(realtimeRowCount) - idx.TotalRowCount()
-		if insertRows == 0 {
+		newRows := float64(realtimeRowCount) - idx.TotalRowCount()
+		if newRows == 0 {
 			return 0
-		} else if insertRows < 0 {
-			insertRows = float64(realtimeRowCount)
+		} else if newRows < 0 {
+			newRows = float64(realtimeRowCount)
 		}
 		// ELSE calculate an approximate estimate based upon newly inserted rows.
 		//
@@ -435,7 +435,7 @@ func equalRowCountOnIndex(sctx planctx.PlanContext, idx *statistics.Index, b []b
 		}
 		// As a conservative estimate - take the smaller of the orignal totalRows or the additions.
 		// "realtimeRowCount - original count" is a better measure of inserts than modifyCount
-		totalRowCount := min(idx.TotalRowCount(), insertRows)
+		totalRowCount := min(idx.TotalRowCount(), newRows)
 		return max(1, totalRowCount/histNDV)
 	}
 	// return the average histogram rows (which excludes topN) and NDV that excluded topN
