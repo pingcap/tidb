@@ -246,7 +246,7 @@ func TestWithSplitWithoutTriggersSplit(t *testing.T) {
 	for i := splitIter.TryNext(ctx); !i.Finished; i = splitIter.TryNext(ctx) {
 	}
 
-	require.Len(t, fakeSplitter.executedSplitsCount, 0)
+	require.Equal(t, fakeSplitter.executedSplitsCount, 0)
 }
 func TestWithSplitAccumulateAndReset(t *testing.T) {
 	ctx := context.Background()
