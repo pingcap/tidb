@@ -44,7 +44,7 @@ func TestAddIndexIngestGeneratedColumns(t *testing.T) {
 		require.Len(t, rows, n)
 		for i := 0; i < n; i++ {
 			//nolint: forcetypeassert
-			jobTp := rows[i][3].(string)
+			jobTp := rows[i][12].(string)
 			require.True(t, strings.Contains(jobTp, "ingest"), jobTp)
 		}
 	}
