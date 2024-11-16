@@ -314,10 +314,6 @@ func GetColumnRowCount(sctx planctx.PlanContext, c *statistics.Column, ranges []
 
 		cnt = mathutil.Clamp(cnt, 0, c.TotalRowCount())
 
-		// If the current table row count has changed, we should scale the row count accordingly.
-		increaseFactor := c.GetIncreaseFactor(realtimeRowCount)
-		cnt *= increaseFactor
-
 		// handling the out-of-range part
 		if (c.OutOfRange(lowVal) && !lowVal.IsNull()) || c.OutOfRange(highVal) {
 			histNDV := c.NDV
@@ -325,8 +321,12 @@ func GetColumnRowCount(sctx planctx.PlanContext, c *statistics.Column, ranges []
 			if c.StatsVer == statistics.Version2 {
 				histNDV -= int64(c.TopN.Num())
 			}
-			cnt += c.Histogram.OutOfRangeRowCount(sctx, &lowVal, &highVal, modifyCount, histNDV, increaseFactor)
+			cnt += c.Histogram.OutOfRangeRowCount(sctx, &lowVal, &highVal, realtimeRowCount, histNDV)
 		}
+
+		// If the current table row count has changed, we should scale the row count accordingly.
+		increaseFactor := c.GetIncreaseFactor(realtimeRowCount)
+		cnt *= increaseFactor
 
 		if debugTrace {
 			debugTraceEndEstimateRange(sctx, cnt, debugTraceRange)

@@ -921,7 +921,7 @@ func (hg *Histogram) OutOfRange(val types.Datum) bool {
 func (hg *Histogram) OutOfRangeRowCount(
 	sctx planctx.PlanContext,
 	lDatum, rDatum *types.Datum,
-	modifyCount, histNDV int64, increaseFactor float64,
+	realtimeRowCount, histNDV int64,
 ) (result float64) {
 	debugTrace := sctx.GetSessionVars().StmtCtx.EnableOptimizerDebugTrace
 	if debugTrace {
@@ -929,7 +929,7 @@ func (hg *Histogram) OutOfRangeRowCount(
 		debugtrace.RecordAnyValuesWithNames(sctx,
 			"lDatum", lDatum.String(),
 			"rDatum", rDatum.String(),
-			"modifyCount", modifyCount,
+			"realtimeRowCount", realtimeRowCount,
 		)
 		defer func() {
 			debugtrace.RecordAnyValuesWithNames(sctx, "Result", result)
@@ -1058,17 +1058,19 @@ func (hg *Histogram) OutOfRangeRowCount(
 		return min(rowCount, upperBound)
 	}
 
-	// If the modifyCount is large (compared to original table rows), then any out of range estimate is unreliable.
+	// If the realtimeRowCount is larger than the original table rows, then any out of range estimate is unreliable.
 	// Assume at least 1/NDV is returned
-	if float64(modifyCount) > hg.NotNullCount() && rowCount < upperBound {
-		rowCount = upperBound
-	} else if rowCount < upperBound {
-		// Adjust by increaseFactor if our estimate is low
-		rowCount *= increaseFactor
+	addedRows := float64(realtimeRowCount)
+	if float64(realtimeRowCount) > hg.NotNullCount() {
+		addedRows = float64(realtimeRowCount) - hg.NotNullCount()
+		rowCount = totalPercent * float64(realtimeRowCount)
+		if rowCount < upperBound {
+			rowCount = upperBound
+		}
 	}
 
-	// Use modifyCount as a final bound
-	return min(rowCount, float64(modifyCount))
+	// Use the number of additions as a final bound
+	return min(rowCount, addedRows)
 }
 
 // Copy deep copies the histogram.
