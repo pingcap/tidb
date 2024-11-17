@@ -457,26 +457,26 @@ func TestGeneralLogBinaryText(t *testing.T) {
 	tk.MustExec("select * /*+ no_quoted */ from mysql.user")
 	tk.MustExec(fmt.Sprintf("select * /*+ yes_quoted */ from mysql.user where User = _binary '%s'", b))
 
-	getSQLFields := func(s string) (sql zapcore.Field, sqlQuoted zapcore.Field, ok bool) {
+	getSQLFields := func(s string) (sql zapcore.Field, originText zapcore.Field, ok bool) {
 		for _, fields := range mzc.fields {
 			if sql, ok := fields["sql"]; ok && strings.Contains(sql.String, s) {
-				return sql, fields["sqlQuoted"], true
+				return sql, fields["originText"], true
 			}
 		}
 		return zapcore.Field{}, zapcore.Field{}, false
 	}
 
-	sql, sqlQuoted, ok := getSQLFields("no_quoted")
+	sql, originText, ok := getSQLFields("no_quoted")
 	require.True(t, ok)
 	require.NotEmpty(t, sql.String)
-	require.Empty(t, sqlQuoted.String)
+	require.Empty(t, originText.String)
 
-	sql, sqlQuoted, ok = getSQLFields("yes_quote")
+	sql, originText, ok = getSQLFields("yes_quote")
 	require.True(t, ok)
 	require.NotEmpty(t, sql.String)
 	require.True(t, strings.Contains(sql.String, string(b)))
-	require.NotEmpty(t, sqlQuoted.String)
-	s, err := strconv.Unquote(sqlQuoted.String)
+	require.NotEmpty(t, originText.String)
+	s, err := strconv.Unquote(originText.String)
 	require.NoError(t, err)
 	require.Equal(t, sql.String, s)
 }

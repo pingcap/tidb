@@ -4147,8 +4147,8 @@ func logGeneralQuery(execStmt *executor.ExecStmt, s *session, isPrepared bool) {
 			zap.String("sessionTxnMode", vars.GetReadableTxnMode()),
 			zap.String("sql", query),
 		}
-		if execStmt.OriginText() != execStmt.Text {
-			fields = append(fields, zap.String("sqlQuoted", strconv.Quote(query)))
+		if ot := execStmt.OriginText(); ot != execStmt.Text {
+			fields = append(fields, zap.String("originText", strconv.Quote(ot)))
 		}
 		logutil.GeneralLogger.Info("GENERAL_LOG", fields...)
 	}

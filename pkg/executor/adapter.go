@@ -2067,7 +2067,7 @@ func (a *ExecStmt) GetTextToLog(keepHint bool) string {
 	} else if sensitiveStmt, ok := a.StmtNode.(ast.SensitiveStmtNode); ok {
 		sql = sensitiveStmt.SecureText()
 	} else {
-		sql = redact.String(rmode, a.OriginText()+sessVars.PlanCacheParams.String())
+		sql = redact.String(rmode, sessVars.StmtCtx.OriginalSQL+sessVars.PlanCacheParams.String())
 	}
 	return sql
 }
