@@ -75,7 +75,7 @@ func RunRestoreTxn(c context.Context, g glue.Glue, cmdName string, cfg *Config) 
 
 	log.Info("restore files", zap.Int("count", len(files)))
 	ranges, _, err := restoreutils.MergeAndRewriteFileRanges(
-		files, nil, 0, 0)
+		files, nil, conn.DefaultMergeRegionSizeBytes, conn.DefaultMergeRegionKeyCount)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -102,7 +102,7 @@ func RunRestoreTxn(c context.Context, g glue.Glue, cmdName string, cfg *Config) 
 	}
 	defer restore.RestorePostWork(ctx, importModeSwitcher, restoreSchedulers, false)
 
-	err = client.GetRestorer().Restore(onProgress, restore.NewEmptyFileSet(files))
+	err = client.GetRestorer().Restore(onProgress, restore.NewSplitFileSet(files))
 	if err != nil {
 		return errors.Trace(err)
 	}
