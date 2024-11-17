@@ -432,7 +432,13 @@ func (w *backfillWorker) run(d *ddlCtx, bf backfiller, job *model.Job) {
 
 		// Change the batch size dynamically.
 		newBatchCnt := job.ReorgMeta.GetBatchSizeOrDefault(int(variable.GetDDLReorgBatchSize()))
+		oldBatchCnt := w.GetCtx().batchCnt
 		w.GetCtx().batchCnt = newBatchCnt
+		if w.GetCtx().batchCnt != oldBatchCnt {
+			logger.Info("adjust backfill batch size success",
+				zap.Int("current batch size", w.GetCtx().batchCnt),
+				zap.Int64("job ID", job.ID))
+		}
 		result := w.handleBackfillTask(d, task, bf)
 		w.sendResult(result)
 
@@ -977,6 +983,33 @@ func (dc *ddlCtx) writePhysicalTableRecord(
 		scheduler.close(false)
 		return nil
 	})
+
+	// update the worker cnt goroutine
+	go func() {
+		t := time.NewTicker(1 * time.Second)
+		defer t.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-t.C:
+				currWorkerCnt := scheduler.currentWorkerSize()
+				newWorkerCnt := reorgInfo.ReorgMeta.GetConcurrencyOrDefault(int(variable.GetDDLReorgWorkerCounter()))
+				if currWorkerCnt != newWorkerCnt {
+					err := scheduler.adjustWorkerSize()
+					if err != nil {
+						logutil.DDLLogger().Warn("cannot adjust backfill worker count",
+							zap.Int64("job ID", reorgInfo.ID),
+							zap.Error(err))
+					} else {
+						logutil.DDLLogger().Info("adjust backfill worker count success",
+							zap.Int("current worker count", scheduler.currentWorkerSize()),
+							zap.Int64("job ID", reorgInfo.ID))
+					}
+				}
+			}
+		}
+	}()
 
 	return eg.Wait()
 }
