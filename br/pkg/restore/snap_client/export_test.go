@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/import_sstpb"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
+	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/br/pkg/metautil"
 	"github.com/pingcap/tidb/br/pkg/restore"
 	importclient "github.com/pingcap/tidb/br/pkg/restore/internal/import_client"
@@ -48,10 +49,10 @@ func MockClient(dbs map[string]*metautil.Database) *SnapClient {
 }
 
 // Mock the call of setSpeedLimit function
-func MockCallSetSpeedLimit(ctx context.Context, fakeImportClient importclient.ImporterClient, rc *SnapClient, concurrency uint) (err error) {
+func MockCallSetSpeedLimit(ctx context.Context, stores []*metapb.Store, fakeImportClient importclient.ImporterClient, rc *SnapClient, concurrency uint) (err error) {
 	rc.SetRateLimit(42)
 	rc.workerPool = tidbutil.NewWorkerPool(128, "set-speed-limit")
-	setFn := SetSpeedLimitFn(ctx, nil, rc.workerPool)
+	setFn := SetSpeedLimitFn(ctx, stores, rc.workerPool)
 	var createCallBacks []func(*SnapFileImporter) error
 	var closeCallBacks []func(*SnapFileImporter) error
 
@@ -59,7 +60,7 @@ func MockCallSetSpeedLimit(ctx context.Context, fakeImportClient importclient.Im
 		return setFn(importer, rc.rateLimit)
 	})
 	closeCallBacks = append(createCallBacks, func(importer *SnapFileImporter) error {
-		return setFn(importer, rc.rateLimit)
+		return setFn(importer, 0)
 	})
 	opt := NewSnapFileImporterOptions(nil, nil, fakeImportClient, nil, rc.rewriteMode, nil, 128, createCallBacks, closeCallBacks)
 	fileImporter, err := NewSnapFileImporter(ctx, kvrpcpb.APIVersion(0), TiDBFull, opt)
