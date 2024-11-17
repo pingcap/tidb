@@ -1471,17 +1471,18 @@ func restoreStream(
 			return errors.Trace(err)
 		}
 
-		if cfg.UseCheckpoint {
-			failpoint.Inject("corrupt-files", func(v failpoint.Value) {
-				var retErr error
-				logFilesIter, retErr = logclient.WrapLogFilesIterWithCheckpointFailpoint(v, logFilesIter, rewriteRules)
-				defer func() { pErr = retErr }()
-			})
-		}
-
 		logFilesIterWithSplit, err := client.WrapLogFilesIterWithSplitHelper(ctx, logFilesIter, execCtx, rewriteRules, updateStatsWithCheckpoint, splitSize, splitKeys)
 		if err != nil {
 			return errors.Trace(err)
+		}
+
+		if cfg.UseCheckpoint {
+			// TODO make a failpoint iter inside the logclient.
+			failpoint.Inject("corrupt-files", func(v failpoint.Value) {
+				var retErr error
+				logFilesIterWithSplit, retErr = logclient.WrapLogFilesIterWithCheckpointFailpoint(v, logFilesIterWithSplit, rewriteRules)
+				defer func() { pErr = retErr }()
+			})
 		}
 
 		return client.RestoreKVFiles(ctx, rewriteRules, logFilesIterWithSplit,
