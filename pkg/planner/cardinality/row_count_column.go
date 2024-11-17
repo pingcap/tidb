@@ -179,7 +179,7 @@ func equalRowCountOnColumn(sctx planctx.PlanContext, c *statistics.Column, val t
 		// c.NotNullCount rather than c.Histogram.NotNullCount() since the histograms are empty.
 		//
 		// If the table hasn't been modified, it's safe to return 0.
-		newRows := float64(realtimeRowCount) - c.NotNullCount()
+		newRows := float64(realtimeRowCount) - c.TotalRowCount()
 		if newRows == 0 {
 			return 0, nil
 		} else if newRows < 0 {
@@ -314,6 +314,8 @@ func GetColumnRowCount(sctx planctx.PlanContext, c *statistics.Column, ranges []
 
 		cnt = mathutil.Clamp(cnt, 0, c.TotalRowCount())
 
+		increaseFactor := c.GetIncreaseFactor(realtimeRowCount)
+
 		// handling the out-of-range part
 		if (c.OutOfRange(lowVal) && !lowVal.IsNull()) || c.OutOfRange(highVal) {
 			histNDV := c.NDV
@@ -321,11 +323,10 @@ func GetColumnRowCount(sctx planctx.PlanContext, c *statistics.Column, ranges []
 			if c.StatsVer == statistics.Version2 {
 				histNDV -= int64(c.TopN.Num())
 			}
-			cnt += c.Histogram.OutOfRangeRowCount(sctx, &lowVal, &highVal, realtimeRowCount, histNDV)
+			cnt += c.Histogram.OutOfRangeRowCount(sctx, &lowVal, &highVal, realtimeRowCount, histNDV, increaseFactor)
 		}
 
 		// If the current table row count has changed, we should scale the row count accordingly.
-		increaseFactor := c.GetIncreaseFactor(realtimeRowCount)
 		cnt *= increaseFactor
 
 		if debugTrace {
