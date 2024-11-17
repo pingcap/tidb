@@ -15,6 +15,7 @@ import (
 	snapclient "github.com/pingcap/tidb/br/pkg/restore/snap_client"
 	restoreutils "github.com/pingcap/tidb/br/pkg/restore/utils"
 	"github.com/pingcap/tidb/br/pkg/summary"
+	"go.uber.org/zap"
 )
 
 // RunRestoreTxn starts a txn kv restore task inside the current goroutine.
@@ -72,8 +73,9 @@ func RunRestoreTxn(c context.Context, g glue.Glue, cmdName string, cfg *Config) 
 	}
 	summary.CollectInt("restore files", len(files))
 
+	log.Info("restore files", zap.Int("count", len(files)))
 	ranges, _, err := restoreutils.MergeAndRewriteFileRanges(
-		files, nil, conn.DefaultMergeRegionSizeBytes, conn.DefaultMergeRegionKeyCount)
+		files, nil, 0, 0)
 	if err != nil {
 		return errors.Trace(err)
 	}

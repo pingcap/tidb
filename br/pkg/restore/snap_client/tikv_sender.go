@@ -333,6 +333,7 @@ func (rc *SnapClient) SplitPoints(
 	splitClientOpts = append(splitClientOpts, split.WithOnSplit(func(keys [][]byte) {
 		onProgress(int64(len(keys)))
 	}))
+	// TODO seems duplicate with metaClient.
 	if isRawKv {
 		splitClientOpts = append(splitClientOpts, split.WithRawKV())
 	}
