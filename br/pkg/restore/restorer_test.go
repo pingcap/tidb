@@ -89,7 +89,8 @@ func TestSimpleRestorerWithErrorInImport(t *testing.T) {
 
 	// Run restore and expect an error
 	progressCount := int64(0)
-	err := restorer.GoRestore(func(progress int64) {}, fileSet)
+	restorer.GoRestore(func(progress int64) {}, fileSet)
+	err := restorer.WaitUntilFinish()
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "import error")
 	require.Equal(t, int64(0), progressCount)
