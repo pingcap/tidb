@@ -159,11 +159,12 @@ func encodeLongValue4SST(ts uint64) []byte {
 }
 
 type LocalSSTWriter struct {
-	ts          uint64
-	defaultPath string
-	defaultCF   *rockssst.Writer
-	writePath   string
-	writeCF     *rockssst.Writer
+	ts             uint64
+	defaultPath    string
+	defaultCF      *rockssst.Writer
+	defaultCFHasKV bool
+	writePath      string
+	writeCF        *rockssst.Writer
 }
 
 func NewLocalSSTWriter(
@@ -202,20 +203,24 @@ func (w *LocalSSTWriter) Set(key, value []byte) error {
 	if err := w.defaultCF.Set(actualKey, value); err != nil {
 		return errors.Trace(err)
 	}
+	w.defaultCFHasKV = true
 	return errors.Trace(w.writeCF.Set(actualKey, encodeLongValue4SST(w.ts)))
 }
 
 // Close flushes the SST files to disk and return the SST file paths that can be
 // ingested into default / write column family.
-// TODO(lance6716): need to decide how to express that no default CF is needed.
-func (w *LocalSSTWriter) Close() (defaultCFSSTPath, writeCFSSTPath string, errRet error) {
+func (w *LocalSSTWriter) Close() (
+	defaultCFSSTPath, writeCFSSTPath string,
+	defaultCFHasData bool,
+	errRet error,
+) {
 	err := w.defaultCF.Close()
 	err2 := w.writeCF.Close()
 	if err != nil {
-		return "", "", errors.Trace(err)
+		return "", "", false, errors.Trace(err)
 	}
 	if err2 != nil {
-		return "", "", errors.Trace(err2)
+		return "", "", false, errors.Trace(err2)
 	}
-	return w.defaultPath, w.writePath, nil
+	return w.defaultPath, w.writePath, w.defaultCFHasKV, nil
 }

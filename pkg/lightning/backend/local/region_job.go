@@ -500,7 +500,7 @@ func (local *Backend) doWrite(ctx context.Context, j *regionJob) error {
 		return errors.Trace(iter.Error())
 	}
 
-	defaultCF, writeCF, err := localSSTWriter.Close()
+	defaultCF, writeCF, defaultCFHasKV, err := localSSTWriter.Close()
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -513,7 +513,7 @@ func (local *Backend) doWrite(ctx context.Context, j *regionJob) error {
 	if err != nil && !os.IsNotExist(err) {
 		return errors.Trace(err)
 	}
-	defaultCFHasData, writeCFHasData := defaultCFFile != nil, writeCFFile != nil
+	defaultCFHasData, writeCFHasData := defaultCFHasKV, writeCFFile != nil
 
 	batch := req.Chunk.(*sst.WriteRequest_Batch).Batch
 	batch.Pairs = make([]*sst.Pair, 0, 100)

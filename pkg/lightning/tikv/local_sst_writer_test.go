@@ -282,7 +282,7 @@ func testPebbleSST(
 		require.NoError(t, err)
 	}
 
-	defaultCFSSTPath, writeCFSSTPath, err := writer.Close()
+	defaultCFSSTPath, writeCFSSTPath, _, err := writer.Close()
 	require.NoError(t, err)
 	compareSST(t, c.expectedWriteCFPath, writeCFSSTPath)
 	if c.expectedDefaultCFPath != "" {
