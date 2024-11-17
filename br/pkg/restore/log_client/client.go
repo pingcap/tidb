@@ -299,7 +299,7 @@ func (rc *LogClient) RestoreCompactedSstFiles(
 	// TODO: Future enhancements may explore the feasibility of reintroducing batch restoration
 	// while maintaining optimal performance and resource utilization.
 	for _, i := range backupFileSets {
-		err := rc.sstRestoreManager.restorer.Restore(onProgress, []restore.BackupFileSet{i})
+		err := rc.sstRestoreManager.restorer.GoRestore(onProgress, []restore.BackupFileSet{i})
 		if err != nil {
 			return errors.Trace(err)
 		}

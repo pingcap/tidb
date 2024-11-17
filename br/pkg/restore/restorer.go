@@ -119,9 +119,9 @@ func NewFileSet(files []*backuppb.File, rules *utils.RewriteRules) BackupFileSet
 // and MultiTablesRestorer. SstRestorer includes FileImporter for handling raw, transactional, and compacted SSTs,
 // and MultiTablesRestorer for TiDB-specific backups.
 type SstRestorer interface {
-	// Restore imports the specified backup file sets into TiKV.
+	// GoRestore imports the specified backup file sets into TiKV asynchronously.
 	// The onProgress function is called with progress updates as files are processed.
-	Restore(onProgress func(int64), batchFileSets ...BatchBackupFileSet) error
+	GoRestore(onProgress func(int64), batchFileSets ...BatchBackupFileSet) error
 
 	// WaitUntilFinish blocks until all pending restore files have completed processing.
 	WaitUntilFinish() error
@@ -184,7 +184,7 @@ func (s *SimpleRestorer) WaitUntilFinish() error {
 	return s.eg.Wait()
 }
 
-func (s *SimpleRestorer) Restore(onProgress func(int64), batchFileSets ...BatchBackupFileSet) error {
+func (s *SimpleRestorer) GoRestore(onProgress func(int64), batchFileSets ...BatchBackupFileSet) error {
 	for _, sets := range batchFileSets {
 		for _, set := range sets {
 			s.workerPool.ApplyOnErrorGroup(s.eg,
@@ -248,7 +248,7 @@ func (m *MultiTablesRestorer) WaitUntilFinish() error {
 	return nil
 }
 
-func (m *MultiTablesRestorer) Restore(onProgress func(int64), batchFileSets ...BatchBackupFileSet) (err error) {
+func (m *MultiTablesRestorer) GoRestore(onProgress func(int64), batchFileSets ...BatchBackupFileSet) (err error) {
 	start := time.Now()
 	fileCount := 0
 	defer func() {

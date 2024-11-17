@@ -52,7 +52,7 @@ func TestSimpleRestorerImportAndProgress(t *testing.T) {
 	fileSet := restore.BatchBackupFileSet{
 		{SSTFiles: files},
 	}
-	err := restorer.Restore(func(progress int64) {
+	err := restorer.GoRestore(func(progress int64) {
 		progressCount += progress
 	}, fileSet)
 	require.NoError(t, err)
@@ -65,7 +65,7 @@ func TestSimpleRestorerImportAndProgress(t *testing.T) {
 		{SSTFiles: files},
 	}
 	progressCount = int64(0)
-	err = restorer.Restore(func(progress int64) {
+	err = restorer.GoRestore(func(progress int64) {
 		progressCount += progress
 	}, batchFileSet)
 	require.NoError(t, err)
@@ -89,7 +89,7 @@ func TestSimpleRestorerWithErrorInImport(t *testing.T) {
 
 	// Run restore and expect an error
 	progressCount := int64(0)
-	err := restorer.Restore(func(progress int64) {}, fileSet)
+	err := restorer.GoRestore(func(progress int64) {}, fileSet)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "import error")
 	require.Equal(t, int64(0), progressCount)
@@ -144,7 +144,8 @@ func TestMultiTablesRestorerRestoreSuccess(t *testing.T) {
 	var progress int64
 	fileSets := createSampleBatchFileSets()
 
-	err := restorer.Restore(func(p int64) { progress += p }, fileSets)
+	restorer.GoRestore(func(p int64) { progress += p }, fileSets)
+	err := restorer.WaitUntilFinish()
 	require.NoError(t, err)
 
 	// Ensure progress was tracked correctly
@@ -160,7 +161,7 @@ func TestMultiTablesRestorerRestoreWithImportError(t *testing.T) {
 	restorer := restore.NewMultiTablesRestorer(ctx, importer, workerPool, nil)
 	fileSets := createSampleBatchFileSets()
 
-	restorer.Restore(func(int64) {}, fileSets)
+	restorer.GoRestore(func(int64) {}, fileSets)
 	err := restorer.WaitUntilFinish()
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "import error")
@@ -178,7 +179,7 @@ func TestMultiTablesRestorerRestoreWithContextCancel(t *testing.T) {
 
 	// Cancel context before restore completes
 	cancel()
-	err := restorer.Restore(func(int64) {}, fileSets)
+	err := restorer.GoRestore(func(int64) {}, fileSets)
 	require.ErrorIs(t, err, context.Canceled)
 }
 

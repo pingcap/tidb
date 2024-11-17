@@ -385,7 +385,7 @@ func (rc *SnapClient) RestoreSSTFiles(
 		}
 	})
 
-	retErr = rc.restorer.Restore(onProgress, tableIDWithFilesGroup...)
+	retErr = rc.restorer.GoRestore(onProgress, tableIDWithFilesGroup...)
 	if retErr != nil {
 		return retErr
 	}
