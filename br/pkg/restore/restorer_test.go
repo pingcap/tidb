@@ -160,7 +160,8 @@ func TestMultiTablesRestorerRestoreWithImportError(t *testing.T) {
 	restorer := restore.NewMultiTablesRestorer(ctx, importer, workerPool, nil)
 	fileSets := createSampleBatchFileSets()
 
-	err := restorer.Restore(func(int64) {}, fileSets)
+	restorer.Restore(func(int64) {}, fileSets)
+	err := restorer.WaitUntilFinish()
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "import error")
 }

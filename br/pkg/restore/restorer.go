@@ -91,9 +91,10 @@ func ZapBatchBackupFileSet(batchFileSet BatchBackupFileSet) zap.Field {
 	return zap.Object("fileset", zapBatchBackupFileSetMarshaler(batchFileSet))
 }
 
-// NewSplitFileSet is a wrapper of Raw/Txn non-tableID files.
-// make one file in a uniqe set.
-func NewSplitFileSet(files []*backuppb.File) []BackupFileSet {
+// CreateUniqueFileSets used for Raw/Txn non-tableID files
+// converts a slice of files into a slice of unique BackupFileSets,
+// where each BackupFileSet contains a single file.
+func CreateUniqueFileSets(files []*backuppb.File) []BackupFileSet {
 	newSet := make([]BackupFileSet, len(files))
 	for i, f := range files {
 		newSet[i].SSTFiles = []*backuppb.File{f}
