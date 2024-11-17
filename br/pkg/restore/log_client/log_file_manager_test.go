@@ -521,6 +521,7 @@ func TestFilterDataFiles(t *testing.T) {
 		RestoreTS: 10,
 		Storage:   loc,
 
+		MigrationsBuilder:         logclient.NewMigrationBuilder(0, 0, 10),
 		Migrations:                emptyMigrations(),
 		MetadataDownloadBatchSize: 32,
 	})

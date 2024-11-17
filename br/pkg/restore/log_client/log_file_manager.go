@@ -103,8 +103,8 @@ type LogFileManager struct {
 	storage storage.ExternalStorage
 	helper  streamMetadataHelper
 
-	migraionBuilder *WithMigrationsBuilder
-	withMigrations  *WithMigrations
+	withMigraionBuilder *WithMigrationsBuilder
+	withMigrations      *WithMigrations
 
 	metadataDownloadBatchSize uint
 }
@@ -130,12 +130,12 @@ type DDLMetaGroup struct {
 // Generally the config cannot be changed during its lifetime.
 func CreateLogFileManager(ctx context.Context, init LogFileManagerInit) (*LogFileManager, error) {
 	fm := &LogFileManager{
-		startTS:         init.StartTS,
-		restoreTS:       init.RestoreTS,
-		storage:         init.Storage,
-		helper:          stream.NewMetadataHelper(stream.WithEncryptionManager(init.EncryptionManager)),
-		migraionBuilder: init.MigrationsBuilder,
-		withMigrations:  init.Migrations,
+		startTS:             init.StartTS,
+		restoreTS:           init.RestoreTS,
+		storage:             init.Storage,
+		helper:              stream.NewMetadataHelper(stream.WithEncryptionManager(init.EncryptionManager)),
+		withMigraionBuilder: init.MigrationsBuilder,
+		withMigrations:      init.Migrations,
 
 		metadataDownloadBatchSize: init.MetadataDownloadBatchSize,
 	}
@@ -147,7 +147,7 @@ func CreateLogFileManager(ctx context.Context, init LogFileManagerInit) (*LogFil
 }
 
 func (rc *LogFileManager) BuildMigrations(migs []*backuppb.Migration) {
-	w := rc.migraionBuilder.Build(migs)
+	w := rc.withMigraionBuilder.Build(migs)
 	rc.withMigrations = &w
 }
 
@@ -184,11 +184,11 @@ func (rc *LogFileManager) loadShiftTS(ctx context.Context) error {
 	}
 	if !shiftTS.exists {
 		rc.shiftStartTS = rc.startTS
-		rc.migraionBuilder.SetShiftStartTS(rc.shiftStartTS)
+		rc.withMigraionBuilder.SetShiftStartTS(rc.shiftStartTS)
 		return nil
 	}
 	rc.shiftStartTS = shiftTS.value
-	rc.migraionBuilder.SetShiftStartTS(rc.shiftStartTS)
+	rc.withMigraionBuilder.SetShiftStartTS(rc.shiftStartTS)
 	return nil
 }
 
