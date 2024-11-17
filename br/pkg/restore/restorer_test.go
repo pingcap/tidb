@@ -149,8 +149,8 @@ func TestMultiTablesRestorerRestoreSuccess(t *testing.T) {
 	require.NoError(t, err)
 
 	// Ensure progress was tracked correctly
-	require.Equal(t, int64(3), progress) // Total files: 3
-	require.Equal(t, 2, importer.unblockCount)
+	require.Equal(t, int64(2), progress) // Total files group: 2
+	require.Equal(t, 1, importer.unblockCount)
 }
 
 func TestMultiTablesRestorerRestoreWithImportError(t *testing.T) {
