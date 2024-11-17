@@ -28,7 +28,7 @@ type semiJoinProbe struct {
 
 func newSemiJoinProbe(base baseJoinProbe, isLeftSideBuild bool) *semiJoinProbe {
 	ret := &semiJoinProbe{
-		baseSemiJoin:             *newBaseSemiJoin(base, isLeftSideBuild),
+		baseSemiJoin: *newBaseSemiJoin(base, isLeftSideBuild),
 	}
 	return ret
 }
