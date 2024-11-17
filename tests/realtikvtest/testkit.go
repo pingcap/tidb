@@ -126,7 +126,7 @@ func CreateMockStoreAndDomainAndSetup(t *testing.T, opts ...mockstore.MockTiKVSt
 		config.UpdateGlobal(func(conf *config.Config) {
 			conf.TxnLocalLatches.Enabled = false
 			conf.KeyspaceName = *KeyspaceName
-			conf.Store = "tikv"
+			conf.Store = config.StoreTypeTiKV
 		})
 		store, err = d.Open(*TiKVPath)
 		require.NoError(t, err)

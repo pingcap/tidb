@@ -55,7 +55,7 @@ func CreateMockStore(t testing.TB, opts ...mockstore.MockTiKVStoreOption) kv.Sto
 		var err error
 		store, err := d.Open("tikv://" + *WithTiKV)
 		require.NoError(t, err)
-		config.GetGlobalConfig().Store = "tikv"
+		config.GetGlobalConfig().Store = config.StoreTypeTiKV
 		require.NoError(t, ddl.StartOwnerManager(context.Background(), store))
 		var dom *domain.Domain
 		dom, err = session.BootstrapSession(store)

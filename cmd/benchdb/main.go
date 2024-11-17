@@ -60,7 +60,7 @@ func main() {
 	flag.PrintDefaults()
 	err := logutil.InitLogger(logutil.NewLogConfig(*logLevel, logutil.DefaultLogFormat, "", "", logutil.EmptyFileLogConfig, false))
 	terror.MustNil(err)
-	err = store.Register("tikv", driver.TiKVDriver{})
+	err = store.Register(config.StoreTypeTiKV, driver.TiKVDriver{})
 	terror.MustNil(err)
 	ut := newBenchDB()
 	works := strings.Split(*runJobs, "|")
@@ -100,7 +100,7 @@ func newBenchDB() *benchDB {
 	terror.MustNil(err)
 	// maybe close below components, but it's for test anyway.
 	ctx := context.Background()
-	config.GetGlobalConfig().Store = "tikv"
+	config.GetGlobalConfig().Store = config.StoreTypeTiKV
 	err = ddl.StartOwnerManager(ctx, store)
 	terror.MustNil(err)
 	_, err = session.BootstrapSession(store)

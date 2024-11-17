@@ -245,7 +245,6 @@ func (pq *AnalysisPriorityQueue) fetchAllTablesAndBuildAnalysisJobs() error {
 				pi := tblInfo.GetPartitionInfo()
 				if pi == nil {
 					job := jobFactory.CreateNonPartitionedTableAnalysisJob(
-						db.O,
 						tblInfo,
 						pq.statsHandle.GetTableStatsForAutoAnalyze(tblInfo),
 					)
@@ -268,10 +267,8 @@ func (pq *AnalysisPriorityQueue) fetchAllTablesAndBuildAnalysisJobs() error {
 				if pruneMode == variable.Static {
 					for pIDAndName, stats := range partitionStats {
 						job := jobFactory.CreateStaticPartitionAnalysisJob(
-							db.O,
 							tblInfo,
 							pIDAndName.ID,
-							pIDAndName.Name,
 							stats,
 						)
 						err := pq.pushWithoutLock(job)
@@ -281,7 +278,6 @@ func (pq *AnalysisPriorityQueue) fetchAllTablesAndBuildAnalysisJobs() error {
 					}
 				} else {
 					job := jobFactory.CreateDynamicPartitionedTableAnalysisJob(
-						db.O,
 						tblInfo,
 						pq.statsHandle.GetPartitionStatsForAutoAnalyze(tblInfo, tblInfo.ID),
 						partitionStats,
@@ -457,14 +453,6 @@ func (pq *AnalysisPriorityQueue) tryCreateJob(
 		return nil
 	}
 	tableMeta := tableInfo.Meta()
-	schemaName, ok := is.SchemaNameByTableID(tableMeta.ID)
-	if !ok {
-		statslogutil.StatsLogger().Warn(
-			"Schema name not found for table id",
-			zap.Int64("tableID", stats.PhysicalID),
-		)
-		return nil
-	}
 	partitionedTable := tableMeta.GetPartitionInfo()
 	if partitionedTable == nil {
 		// If the table is locked, we do not analyze it.
@@ -472,7 +460,6 @@ func (pq *AnalysisPriorityQueue) tryCreateJob(
 			return nil
 		}
 		job = jobFactory.CreateNonPartitionedTableAnalysisJob(
-			schemaName.O,
 			tableMeta,
 			stats,
 		)
@@ -500,10 +487,8 @@ func (pq *AnalysisPriorityQueue) tryCreateJob(
 				return nil
 			}
 			job = jobFactory.CreateStaticPartitionAnalysisJob(
-				schemaName.O,
 				tableMeta,
 				partitionDef.ID,
-				partitionDef.Name.O,
 				stats,
 			)
 		} else {
@@ -534,7 +519,6 @@ func (pq *AnalysisPriorityQueue) tryCreateJob(
 			}
 			partitionStats := GetPartitionStats(pq.statsHandle, tableMeta, filteredPartitionDefs)
 			job = jobFactory.CreateDynamicPartitionedTableAnalysisJob(
-				schemaName.O,
 				tableMeta,
 				// Get global stats for dynamic partitioned table.
 				pq.statsHandle.GetTableStatsForAutoAnalyze(tableMeta),
@@ -572,17 +556,7 @@ func (pq *AnalysisPriorityQueue) tryUpdateJob(
 		partitionedTable := tableMeta.GetPartitionInfo()
 		partitionDefs := partitionedTable.Definitions
 		partitionStats := GetPartitionStats(pq.statsHandle, tableMeta, partitionDefs)
-		schemaName, ok := is.SchemaNameByTableID(tableMeta.ID)
-		if !ok {
-			statslogutil.StatsLogger().Warn(
-				"Schema name not found during updating job",
-				zap.Int64("tableID", stats.PhysicalID),
-				zap.String("job", oldJob.String()),
-			)
-			return nil
-		}
 		return jobFactory.CreateDynamicPartitionedTableAnalysisJob(
-			schemaName.O,
 			tableMeta,
 			stats,
 			partitionStats,
@@ -779,12 +753,14 @@ func (pq *AnalysisPriorityQueue) Pop() (AnalysisJob, error) {
 		defer pq.syncFields.mu.Unlock()
 		delete(pq.syncFields.runningJobs, j.GetTableID())
 	})
-	job.RegisterFailureHook(func(j AnalysisJob) {
+	job.RegisterFailureHook(func(j AnalysisJob, needRetry bool) {
 		pq.syncFields.mu.Lock()
 		defer pq.syncFields.mu.Unlock()
 		// Mark the job as failed and remove it from the running jobs.
 		delete(pq.syncFields.runningJobs, j.GetTableID())
-		pq.syncFields.mustRetryJobs[j.GetTableID()] = struct{}{}
+		if needRetry {
+			pq.syncFields.mustRetryJobs[j.GetTableID()] = struct{}{}
+		}
 	})
 	return job, nil
 }

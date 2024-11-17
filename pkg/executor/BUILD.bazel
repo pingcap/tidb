@@ -102,6 +102,8 @@ go_library(
         "//pkg/ddl/label",
         "//pkg/ddl/placement",
         "//pkg/ddl/schematracker",
+        "//pkg/ddl/session",
+        "//pkg/ddl/util",
         "//pkg/distsql",
         "//pkg/distsql/context",
         "//pkg/disttask/framework/handle",

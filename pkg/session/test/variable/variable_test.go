@@ -27,8 +27,11 @@ import (
 	"github.com/pingcap/tidb/pkg/store/copr"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/stretchr/testify/require"
+	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
 )
 
 func TestForbidSettingBothTSVariable(t *testing.T) {
@@ -368,4 +371,73 @@ func TestLastQueryInfo(t *testing.T) {
 	tk.MustExec("select a from t where a = 1")
 	tk.MustQuery("select @@tidb_last_query_info;").CheckWithFunc(testkit.Rows(`"ru_consumption":27`), checkMatch)
 	tk.MustQuery("select @@tidb_last_query_info;").CheckWithFunc(testkit.Rows(`"ru_consumption":30`), checkMatch)
+}
+
+type mockZapCore struct {
+	zapcore.Core
+	fields []map[string]zapcore.Field
+}
+
+func (mzc *mockZapCore) Enabled(zapcore.Level) bool { return true }
+
+func (mzc *mockZapCore) Check(ent zapcore.Entry, ce *zapcore.CheckedEntry) *zapcore.CheckedEntry {
+	return ce.AddCore(ent, mzc)
+}
+
+func (mzc *mockZapCore) Write(ent zapcore.Entry, fields []zapcore.Field) error {
+	if ent.Message == "GENERAL_LOG" {
+		m := make(map[string]zapcore.Field)
+		for _, field := range fields {
+			m[field.Key] = field
+		}
+		mzc.fields = append(mzc.fields, m)
+	}
+	return nil
+}
+
+func TestMockZapCore(t *testing.T) {
+	mzc := mockZapCore{Core: zapcore.NewNopCore()}
+	zl := zap.New(&mzc)
+	zl.Info("First", zap.String("name", "foo")) // ignored
+	zl.Info("GENERAL_LOG")                      // no fields
+	sql := zap.String("sql", "select 1111")     // 1 field
+	zl.Info("GENERAL_LOG", sql)
+	require.Len(t, mzc.fields, 2)
+	require.Len(t, mzc.fields[0], 0)
+	require.Len(t, mzc.fields[1], 1)
+	require.True(t, sql.Equals(mzc.fields[1]["sql"]))
+}
+
+func TestGeneralLogNonzeroTxnStartTS(t *testing.T) {
+	// mock logutil.GeneralLogger
+	oldGL := logutil.GeneralLogger
+	mzc := mockZapCore{Core: zapcore.NewNopCore()}
+	logutil.GeneralLogger = zap.New(&mzc)
+	defer func() { logutil.GeneralLogger = oldGL }()
+
+	// enable general log
+	oldVar := variable.ProcessGeneralLog.Swap(true)
+	defer variable.ProcessGeneralLog.Store(oldVar)
+
+	store := testkit.CreateMockStore(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t (id BIGINT PRIMARY KEY NOT NULL)")
+	sqlField := zap.String("sql", "insert t values (100)")
+	tk.MustExec(sqlField.String)
+
+	getTxnStartTS := func() (int64, bool) {
+		for _, fields := range mzc.fields {
+			if sql, ok := fields["sql"]; ok && sql.Equals(sqlField) {
+				return fields["txnStartTS"].Integer, true
+			}
+		}
+		return 0, false
+	}
+
+	ts, ok := getTxnStartTS()
+	require.True(t, ts > 0)
+	require.True(t, ok)
 }

@@ -57,7 +57,7 @@ func (om *ownerManager) Start(ctx context.Context, store kv.Storage) error {
 	if om.started {
 		return nil
 	}
-	if config.GetGlobalConfig().Store != "tikv" {
+	if config.GetGlobalConfig().Store != config.StoreTypeTiKV {
 		return nil
 	}
 	cli, err := storepkg.NewEtcdCli(store)
