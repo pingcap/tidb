@@ -21,11 +21,14 @@ import (
 
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/baseimpl"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
+	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/tablecodec"
@@ -95,16 +98,27 @@ func (a *WindowFuncExtractor) Leave(n ast.Node) (ast.Node, bool) {
 // physicalSchemaProducer stores the schema for the physical plans who can produce schema directly.
 type physicalSchemaProducer struct {
 	schema *expression.Schema
-	basePhysicalPlan
+	physicalop.BasePhysicalPlan
 }
 
-func (s *physicalSchemaProducer) cloneWithSelf(newSelf base.PhysicalPlan) (*physicalSchemaProducer, error) {
-	base, err := s.basePhysicalPlan.cloneWithSelf(newSelf)
+func (s *physicalSchemaProducer) cloneForPlanCacheWithSelf(newCtx base.PlanContext, newSelf base.PhysicalPlan) (*physicalSchemaProducer, bool) {
+	cloned := new(physicalSchemaProducer)
+	cloned.schema = s.schema
+	base, ok := s.BasePhysicalPlan.CloneForPlanCacheWithSelf(newCtx, newSelf)
+	if !ok {
+		return nil, false
+	}
+	cloned.BasePhysicalPlan = *base
+	return cloned, true
+}
+
+func (s *physicalSchemaProducer) cloneWithSelf(newCtx base.PlanContext, newSelf base.PhysicalPlan) (*physicalSchemaProducer, error) {
+	base, err := s.BasePhysicalPlan.CloneWithSelf(newCtx, newSelf)
 	if err != nil {
 		return nil, err
 	}
 	return &physicalSchemaProducer{
-		basePhysicalPlan: *base,
+		BasePhysicalPlan: *base,
 		schema:           s.Schema().Clone(),
 	}, nil
 }
@@ -134,15 +148,23 @@ func (s *physicalSchemaProducer) MemoryUsage() (sum int64) {
 		return
 	}
 
-	sum = s.basePhysicalPlan.MemoryUsage() + size.SizeOfPointer
+	sum = s.BasePhysicalPlan.MemoryUsage() + size.SizeOfPointer
 	return
 }
 
 // baseSchemaProducer stores the schema for the base plans who can produce schema directly.
 type baseSchemaProducer struct {
 	schema *expression.Schema
-	names  types.NameSlice
+	names  types.NameSlice `plan-cache-clone:"shallow"`
 	baseimpl.Plan
+}
+
+func (s *baseSchemaProducer) cloneForPlanCache(newCtx base.PlanContext) *baseSchemaProducer {
+	cloned := new(baseSchemaProducer)
+	cloned.Plan = *s.Plan.CloneWithNewCtx(newCtx)
+	cloned.schema = s.schema
+	cloned.names = s.names
+	return cloned
 }
 
 // OutputNames returns the outputting names of each column.
@@ -188,41 +210,22 @@ func (s *baseSchemaProducer) MemoryUsage() (sum int64) {
 	return
 }
 
-func buildLogicalJoinSchema(joinType JoinType, join base.LogicalPlan) *expression.Schema {
-	leftSchema := join.Children()[0].Schema()
-	switch joinType {
-	case SemiJoin, AntiSemiJoin:
-		return leftSchema.Clone()
-	case LeftOuterSemiJoin, AntiLeftOuterSemiJoin:
-		newSchema := leftSchema.Clone()
-		newSchema.Append(join.Schema().Columns[join.Schema().Len()-1])
-		return newSchema
-	}
-	newSchema := expression.MergeSchema(leftSchema, join.Children()[1].Schema())
-	if joinType == LeftOuterJoin {
-		resetNotNullFlag(newSchema, leftSchema.Len(), newSchema.Len())
-	} else if joinType == RightOuterJoin {
-		resetNotNullFlag(newSchema, 0, leftSchema.Len())
-	}
-	return newSchema
-}
-
 // BuildPhysicalJoinSchema builds the schema of PhysicalJoin from it's children's schema.
-func BuildPhysicalJoinSchema(joinType JoinType, join base.PhysicalPlan) *expression.Schema {
+func BuildPhysicalJoinSchema(joinType logicalop.JoinType, join base.PhysicalPlan) *expression.Schema {
 	leftSchema := join.Children()[0].Schema()
 	switch joinType {
-	case SemiJoin, AntiSemiJoin:
+	case logicalop.SemiJoin, logicalop.AntiSemiJoin:
 		return leftSchema.Clone()
-	case LeftOuterSemiJoin, AntiLeftOuterSemiJoin:
+	case logicalop.LeftOuterSemiJoin, logicalop.AntiLeftOuterSemiJoin:
 		newSchema := leftSchema.Clone()
 		newSchema.Append(join.Schema().Columns[join.Schema().Len()-1])
 		return newSchema
 	}
 	newSchema := expression.MergeSchema(leftSchema, join.Children()[1].Schema())
-	if joinType == LeftOuterJoin {
-		resetNotNullFlag(newSchema, leftSchema.Len(), newSchema.Len())
-	} else if joinType == RightOuterJoin {
-		resetNotNullFlag(newSchema, 0, leftSchema.Len())
+	if joinType == logicalop.LeftOuterJoin {
+		util.ResetNotNullFlag(newSchema, leftSchema.Len(), newSchema.Len())
+	} else if joinType == logicalop.RightOuterJoin {
+		util.ResetNotNullFlag(newSchema, 0, leftSchema.Len())
 	}
 	return newSchema
 }
@@ -338,10 +341,10 @@ func tableHasDirtyContent(ctx base.PlanContext, tableInfo *model.TableInfo) bool
 	return false
 }
 
-func clonePhysicalPlan(plans []base.PhysicalPlan) ([]base.PhysicalPlan, error) {
+func clonePhysicalPlan(sctx base.PlanContext, plans []base.PhysicalPlan) ([]base.PhysicalPlan, error) {
 	cloned := make([]base.PhysicalPlan, 0, len(plans))
 	for _, p := range plans {
-		c, err := p.Clone()
+		c, err := p.Clone(sctx)
 		if err != nil {
 			return nil, err
 		}
@@ -405,14 +408,4 @@ func EncodeUniqueIndexValuesForKey(ctx sessionctx.Context, tblInfo *model.TableI
 		return nil, err
 	}
 	return encodedIdxVals, nil
-}
-
-// GetPushDownCtx creates a PushDownContext from PlanContext
-func GetPushDownCtx(pctx base.PlanContext) expression.PushDownContext {
-	return GetPushDownCtxFromBuildPBContext(pctx.GetBuildPBCtx())
-}
-
-// GetPushDownCtxFromBuildPBContext creates a PushDownContext from BuildPBContext
-func GetPushDownCtxFromBuildPBContext(bctx *base.BuildPBContext) expression.PushDownContext {
-	return expression.NewPushDownContext(bctx.GetExprCtx().GetEvalCtx(), bctx.GetClient(), bctx.InExplainStmt, bctx.WarnHandler, bctx.ExtraWarnghandler, bctx.GroupConcatMaxLen)
 }

@@ -21,7 +21,8 @@ import (
 	"github.com/pingcap/tidb/dumpling/log"
 	dbconfig "github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/errno"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	pd "github.com/tikv/pd/client/http"
 	"go.uber.org/multierr"
 	"go.uber.org/zap"
@@ -747,7 +748,7 @@ func UnlockTables(ctx context.Context, db *sql.Conn) error {
 }
 
 // ShowMasterStatus get SHOW MASTER STATUS result from database
-func ShowMasterStatus(db *sql.Conn) ([]string, error) {
+func ShowMasterStatus(db *sql.Conn, serverInfo version.ServerInfo) ([]string, error) {
 	var oneRow []string
 	handleOneRow := func(rows *sql.Rows) error {
 		cols, err := rows.Columns()
@@ -762,7 +763,17 @@ func ShowMasterStatus(db *sql.Conn) ([]string, error) {
 		}
 		return rows.Scan(addr...)
 	}
-	const showMasterStatusQuery = "SHOW MASTER STATUS"
+
+	// MySQL 8.4.0 and newer: SHOW BINARY LOG STATUS
+	// TiDB, MariaDB, Old MySQL: SHOW MASTER STATUS
+	showMasterStatusQuery := "SHOW MASTER STATUS"
+	if serverInfo.ServerVersion != nil {
+		if serverInfo.ServerType == version.ServerTypeMySQL &&
+			!serverInfo.ServerVersion.LessThan(*minNewTerminologyMySQL) {
+			showMasterStatusQuery = "SHOW BINARY LOG STATUS"
+		}
+	}
+
 	err := simpleQuery(db, showMasterStatusQuery, handleOneRow)
 	if err != nil {
 		return nil, errors.Annotatef(err, "sql: %s", showMasterStatusQuery)
@@ -896,7 +907,7 @@ func CheckTiDBWithTiKV(db *sql.DB) (bool, error) {
 		}()
 		tidbConfig, err := getTiDBConfig(conn)
 		if err == nil {
-			return tidbConfig.Store == "tikv", nil
+			return tidbConfig.Store == dbconfig.StoreTypeTiKV, nil
 		}
 	}
 	var count int
@@ -934,7 +945,10 @@ func CheckTiDBEnableTableLock(db *sql.Conn) (bool, error) {
 }
 
 func getSnapshot(db *sql.Conn) (string, error) {
-	str, err := ShowMasterStatus(db)
+	serverInfo := version.ServerInfo{
+		ServerType: version.ServerTypeTiDB,
+	}
+	str, err := ShowMasterStatus(db, serverInfo)
 	if err != nil {
 		return "", err
 	}
@@ -1548,10 +1562,9 @@ func GetDBInfo(db *sql.Conn, tables map[string]map[string]struct{}) ([]*model.DB
 		}
 		last := len(schemas) - 1
 		if last < 0 || schemas[last].Name.O != tableSchema {
-			schemas = append(schemas, &model.DBInfo{
-				Name:   model.CIStr{O: tableSchema},
-				Tables: make([]*model.TableInfo, 0, len(tables[tableSchema])),
-			})
+			dbInfo := &model.DBInfo{Name: pmodel.CIStr{O: tableSchema}}
+			dbInfo.Deprecated.Tables = make([]*model.TableInfo, 0, len(tables[tableSchema]))
+			schemas = append(schemas, dbInfo)
 			last++
 		}
 		var partition *model.PartitionInfo
@@ -1561,14 +1574,14 @@ func GetDBInfo(db *sql.Conn, tables map[string]map[string]struct{}) ([]*model.DB
 				for partitionName, partitionID := range ptm {
 					partition.Definitions = append(partition.Definitions, model.PartitionDefinition{
 						ID:   partitionID,
-						Name: model.CIStr{O: partitionName},
+						Name: pmodel.CIStr{O: partitionName},
 					})
 				}
 			}
 		}
-		schemas[last].Tables = append(schemas[last].Tables, &model.TableInfo{
+		schemas[last].Deprecated.Tables = append(schemas[last].Deprecated.Tables, &model.TableInfo{
 			ID:        tidbTableID,
-			Name:      model.CIStr{O: tableName},
+			Name:      pmodel.CIStr{O: tableName},
 			Partition: partition,
 		})
 		return nil

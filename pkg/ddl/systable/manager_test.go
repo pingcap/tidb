@@ -16,13 +16,15 @@ package systable_test
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
 	"github.com/ngaut/pools"
-	"github.com/pingcap/tidb/pkg/ddl/internal/session"
+	"github.com/pingcap/tidb/pkg/ddl/session"
 	"github.com/pingcap/tidb/pkg/ddl/systable"
 	"github.com/pingcap/tidb/pkg/domain"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/stretchr/testify/require"
@@ -63,5 +65,41 @@ func TestManager(t *testing.T) {
 		ver, err := mgr.GetMDLVer(ctx, 9999)
 		require.NoError(t, err)
 		require.EqualValues(t, 123, ver)
+	})
+
+	t.Run("GetMinJobID", func(t *testing.T) {
+		tk.MustExec("delete from mysql.tidb_ddl_job")
+		id, err := mgr.GetMinJobID(ctx, 0)
+		require.NoError(t, err)
+		require.EqualValues(t, 0, id)
+		tk.MustExec(`insert into mysql.tidb_ddl_job(job_id, reorg, schema_ids, table_ids, job_meta, type, processing)
+					values(123456, 0, '1', '1', '{"id":9998}', 1, 0)`)
+		id, err = mgr.GetMinJobID(ctx, 0)
+		require.NoError(t, err)
+		require.EqualValues(t, 123456, id)
+		id, err = mgr.GetMinJobID(ctx, 123456)
+		require.NoError(t, err)
+		require.EqualValues(t, 123456, id)
+		id, err = mgr.GetMinJobID(ctx, 123457)
+		require.NoError(t, err)
+		require.EqualValues(t, 0, id)
+	})
+
+	t.Run("HasFlashbackClusterJob", func(t *testing.T) {
+		tk.MustExec("delete from mysql.tidb_ddl_job")
+		found, err := mgr.HasFlashbackClusterJob(ctx, 0)
+		require.NoError(t, err)
+		require.False(t, found)
+		tk.MustExec(fmt.Sprintf(`insert into mysql.tidb_ddl_job(job_id, reorg, schema_ids, table_ids, job_meta, type, processing)
+					values(123, 0, '1', '1', '{"id":9998}', %d, 0)`, model.ActionFlashbackCluster))
+		found, err = mgr.HasFlashbackClusterJob(ctx, 0)
+		require.NoError(t, err)
+		require.True(t, found)
+		found, err = mgr.HasFlashbackClusterJob(ctx, 123)
+		require.NoError(t, err)
+		require.True(t, found)
+		found, err = mgr.HasFlashbackClusterJob(ctx, 124)
+		require.NoError(t, err)
+		require.False(t, found)
 	})
 }

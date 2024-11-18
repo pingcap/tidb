@@ -1,0 +1,19 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_test")
+
+go_test(
+    name = "extractor_test",
+    timeout = "short",
+    srcs = [
+        "main_test.go",
+        "memtable_infoschema_extractor_test.go",
+    ],
+    flaky = True,
+    shard_count = 4,
+    deps = [
+        "//pkg/infoschema",
+        "//pkg/planner/core",
+        "//pkg/testkit",
+        "//pkg/testkit/testsetup",
+        "@org_uber_go_goleak//:goleak",
+    ],
+)

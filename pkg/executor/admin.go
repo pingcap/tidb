@@ -25,8 +25,9 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	plannercore "github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/table"
@@ -163,7 +164,7 @@ func (e *CheckIndexRangeExec) constructIndexScanPB() *tipb.Executor {
 	idxExec := &tipb.IndexScan{
 		TableId: e.table.ID,
 		IndexId: e.index.ID,
-		Columns: util.ColumnsToProto(e.cols, e.table.PKIsHandle, true),
+		Columns: util.ColumnsToProto(e.cols, e.table.PKIsHandle, true, false),
 	}
 	return &tipb.Executor{Tp: tipb.ExecType_TypeIndexScan, IdxScan: idxExec}
 }
@@ -228,7 +229,7 @@ func (e *RecoverIndexExec) Open(ctx context.Context) error {
 }
 
 func (e *RecoverIndexExec) constructTableScanPB(tblInfo *model.TableInfo, colInfos []*model.ColumnInfo) (*tipb.Executor, error) {
-	tblScan := tables.BuildTableScanFromInfos(tblInfo, colInfos)
+	tblScan := tables.BuildTableScanFromInfos(tblInfo, colInfos, false)
 	tblScan.TableId = e.physicalID
 	err := tables.SetPBColumnsDefaultValue(e.Ctx().GetExprCtx(), tblScan.Columns, colInfos)
 	return &tipb.Executor{Tp: tipb.ExecType_TypeTableScan, TblScan: tblScan}, err
@@ -405,7 +406,7 @@ func (e *RecoverIndexExec) buildIndexedValues(row chunk.Row, idxVals []types.Dat
 	}
 
 	if e.cols == nil {
-		columns, _, err := expression.ColumnInfos2ColumnsAndNames(e.Ctx().GetExprCtx(), model.NewCIStr("mock"), e.table.Meta().Name, e.table.Meta().Columns, e.table.Meta())
+		columns, _, err := expression.ColumnInfos2ColumnsAndNames(e.Ctx().GetExprCtx(), pmodel.NewCIStr("mock"), e.table.Meta().Name, e.table.Meta().Columns, e.table.Meta())
 		if err != nil {
 			return nil, err
 		}
@@ -513,8 +514,6 @@ func (e *RecoverIndexExec) backfillIndexInTxn(ctx context.Context, txn kv.Transa
 		return result, err
 	}
 
-	// Constrains is already checked.
-	e.Ctx().GetSessionVars().StmtCtx.BatchCheck = true
 	for _, row := range rows {
 		if row.skip {
 			continue
@@ -526,7 +525,11 @@ func (e *RecoverIndexExec) backfillIndexInTxn(ctx context.Context, txn kv.Transa
 			return result, err
 		}
 
-		_, err = e.index.Create(e.Ctx().GetTableCtx(), txn, row.idxVals, row.handle, row.rsData, table.WithIgnoreAssertion)
+		_, err = e.index.Create(e.Ctx().GetTableCtx(), txn, row.idxVals, row.handle, row.rsData,
+			table.WithIgnoreAssertion,
+			// Constrains have already been checked.
+			table.DupKeyCheckSkip,
+		)
 		if err != nil {
 			return result, err
 		}
@@ -878,7 +881,7 @@ func (e *CleanupIndexExec) constructIndexScanPB() *tipb.Executor {
 	idxExec := &tipb.IndexScan{
 		TableId:          e.physicalID,
 		IndexId:          e.index.Meta().ID,
-		Columns:          util.ColumnsToProto(e.columns, e.table.Meta().PKIsHandle, true),
+		Columns:          util.ColumnsToProto(e.columns, e.table.Meta().PKIsHandle, true, false),
 		PrimaryColumnIds: tables.TryGetCommonPkColumnIds(e.table.Meta()),
 	}
 	return &tipb.Executor{Tp: tipb.ExecType_TypeIndexScan, IdxScan: idxExec}

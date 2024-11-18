@@ -27,15 +27,16 @@ var (
 
 // Metrics
 var (
-	PacketIOCounter        *prometheus.CounterVec
-	QueryDurationHistogram *prometheus.HistogramVec
-	QueryTotalCounter      *prometheus.CounterVec
-	AffectedRowsCounter    *prometheus.CounterVec
-	ConnGauge              *prometheus.GaugeVec
-	DisconnectionCounter   *prometheus.CounterVec
-	PreparedStmtGauge      prometheus.Gauge
-	ExecuteErrorCounter    *prometheus.CounterVec
-	CriticalErrorCounter   prometheus.Counter
+	PacketIOCounter            *prometheus.CounterVec
+	QueryDurationHistogram     *prometheus.HistogramVec
+	QueryRPCHistogram          *prometheus.HistogramVec
+	QueryProcessedKeyHistogram *prometheus.HistogramVec
+	QueryTotalCounter          *prometheus.CounterVec
+	ConnGauge                  *prometheus.GaugeVec
+	DisconnectionCounter       *prometheus.CounterVec
+	PreparedStmtGauge          prometheus.Gauge
+	ExecuteErrorCounter        *prometheus.CounterVec
+	CriticalErrorCounter       prometheus.Counter
 
 	ServerStart = "server-start"
 	ServerStop  = "server-stop"
@@ -49,6 +50,7 @@ var (
 	PlanCacheMissCounter            *prometheus.CounterVec
 	PlanCacheInstanceMemoryUsage    *prometheus.GaugeVec
 	PlanCacheInstancePlanNumCounter *prometheus.GaugeVec
+	PlanCacheProcessDuration        *prometheus.HistogramVec
 	ReadFromTableCacheCounter       prometheus.Counter
 	HandShakeErrorCounter           prometheus.Counter
 	GetTokenDurationHistogram       prometheus.Histogram
@@ -71,6 +73,7 @@ var (
 	LoadTableCacheDurationHistogram prometheus.Histogram
 	RCCheckTSWriteConfilictCounter  *prometheus.CounterVec
 	MemoryLimit                     prometheus.Gauge
+	InternalSessions                prometheus.Gauge
 )
 
 // InitServerMetrics initializes server metrics.
@@ -92,6 +95,24 @@ func InitServerMetrics() {
 			Buckets:   prometheus.ExponentialBuckets(0.0005, 2, 29), // 0.5ms ~ 1.5days
 		}, []string{LblSQLType, LblDb, LblResourceGroup})
 
+	QueryRPCHistogram = NewHistogramVec(
+		prometheus.HistogramOpts{
+			Namespace: "tidb",
+			Subsystem: "server",
+			Name:      "query_statement_rpc_count",
+			Help:      "Bucketed histogram of execution rpc count of handled query statements.",
+			Buckets:   prometheus.ExponentialBuckets(1, 1.5, 23), // 1 ~ 8388608
+		}, []string{LblSQLType, LblDb})
+
+	QueryProcessedKeyHistogram = NewHistogramVec(
+		prometheus.HistogramOpts{
+			Namespace: "tidb",
+			Subsystem: "server",
+			Name:      "query_statement_processed_keys",
+			Help:      "Bucketed histogram of processed key count during the scan of handled query statements.",
+			Buckets:   prometheus.ExponentialBuckets(1, 2, 32),
+		}, []string{LblSQLType, LblDb})
+
 	QueryTotalCounter = NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: "tidb",
@@ -99,14 +120,6 @@ func InitServerMetrics() {
 			Name:      "query_total",
 			Help:      "Counter of queries.",
 		}, []string{LblType, LblResult, LblResourceGroup})
-
-	AffectedRowsCounter = NewCounterVec(
-		prometheus.CounterOpts{
-			Namespace: "tidb",
-			Subsystem: "server",
-			Name:      "affected_rows",
-			Help:      "Counters of server affected rows.",
-		}, []string{LblSQLType})
 
 	ConnGauge = NewGaugeVec(
 		prometheus.GaugeOpts{
@@ -193,6 +206,15 @@ func InitServerMetrics() {
 			Subsystem: "server",
 			Name:      "plan_cache_instance_plan_num_total",
 			Help:      "Counter of plan of all prepared plan cache in a instance",
+		}, []string{LblType})
+
+	PlanCacheProcessDuration = NewHistogramVec(
+		prometheus.HistogramOpts{
+			Namespace: "tidb",
+			Subsystem: "server",
+			Name:      "plan_cache_process_duration_seconds",
+			Help:      "Bucketed histogram of processing time (s) of plan cache operations.",
+			Buckets:   prometheus.ExponentialBuckets(0.001, 2, 28), // 1ms ~ 1.5days
 		}, []string{LblType})
 
 	ReadFromTableCacheCounter = NewCounter(
@@ -381,6 +403,14 @@ func InitServerMetrics() {
 			Subsystem: "server",
 			Name:      "memory_quota_bytes",
 			Help:      "The value of memory quota bytes.",
+		})
+
+	InternalSessions = prometheus.NewGauge(
+		prometheus.GaugeOpts{
+			Namespace: "tidb",
+			Subsystem: "server",
+			Name:      "internal_sessions",
+			Help:      "The total count of internal sessions.",
 		})
 }
 

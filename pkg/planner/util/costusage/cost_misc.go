@@ -59,7 +59,7 @@ type CostVer2 struct {
 
 // GetCost returns the cost value of the costVer2
 func (c *CostVer2) GetCost() float64 {
-	return c.cost
+	return max(c.cost, 0)
 }
 
 // GetTrace returns the trace of current costVer2
@@ -91,13 +91,14 @@ func NewZeroCostVer2(trace bool) (ret CostVer2) {
 	return
 }
 
-func hasCostFlag(costFlag, flag uint64) bool {
+// HasCostFlag indicates whether the costFlag has the flag.
+func HasCostFlag(costFlag, flag uint64) bool {
 	return (costFlag & flag) > 0
 }
 
 // TraceCost indicates whether to trace cost.
 func TraceCost(option *optimizetrace.PlanCostOption) bool {
-	if option != nil && hasCostFlag(option.CostFlag, CostFlagTrace) {
+	if option != nil && HasCostFlag(option.CostFlag, CostFlagTrace) {
 		return true
 	}
 	return false

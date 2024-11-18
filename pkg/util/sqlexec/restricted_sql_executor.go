@@ -20,6 +20,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/terror"
+	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/sessionctx/sysproctrack"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/util/chunk"
@@ -48,9 +49,9 @@ type RestrictedSQLExecutor interface {
 	// This function only saves you from processing potentially unsafe parameters.
 	ParseWithParams(ctx context.Context, sql string, args ...any) (ast.StmtNode, error)
 	// ExecRestrictedStmt run sql statement in ctx with some restrictions.
-	ExecRestrictedStmt(ctx context.Context, stmt ast.StmtNode, opts ...OptionFuncAlias) ([]chunk.Row, []*ast.ResultField, error)
+	ExecRestrictedStmt(ctx context.Context, stmt ast.StmtNode, opts ...OptionFuncAlias) ([]chunk.Row, []*resolve.ResultField, error)
 	// ExecRestrictedSQL run sql string in ctx with internal session.
-	ExecRestrictedSQL(ctx context.Context, opts []OptionFuncAlias, sql string, args ...any) ([]chunk.Row, []*ast.ResultField, error)
+	ExecRestrictedSQL(ctx context.Context, opts []OptionFuncAlias, sql string, args ...any) ([]chunk.Row, []*resolve.ResultField, error)
 }
 
 // ExecOption is a struct defined for ExecRestrictedStmt/SQL option.
@@ -186,7 +187,7 @@ type Statement interface {
 // RecordSet is an abstract result set interface to help get data from Plan.
 type RecordSet interface {
 	// Fields gets result fields.
-	Fields() []*ast.ResultField
+	Fields() []*resolve.ResultField
 
 	// Next reads records into chunk.
 	Next(ctx context.Context, req *chunk.Chunk) error

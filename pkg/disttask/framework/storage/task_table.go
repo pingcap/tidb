@@ -21,16 +21,16 @@ import (
 	"sync/atomic"
 
 	"github.com/docker/go-units"
-	"github.com/ngaut/pools"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
-	"github.com/tikv/client-go/v2/util"
+	clitutil "github.com/tikv/client-go/v2/util"
 )
 
 const (
@@ -99,12 +99,7 @@ type TaskHandle interface {
 
 // TaskManager is the manager of task and subtask.
 type TaskManager struct {
-	sePool sessionPool
-}
-
-type sessionPool interface {
-	Get() (pools.Resource, error)
-	Put(resource pools.Resource)
+	sePool util.SessionPool
 }
 
 var _ SessionExecutor = &TaskManager{}
@@ -117,7 +112,7 @@ var (
 )
 
 // NewTaskManager creates a new task manager.
-func NewTaskManager(sePool sessionPool) *TaskManager {
+func NewTaskManager(sePool util.SessionPool) *TaskManager {
 	return &TaskManager{
 		sePool: sePool,
 	}
@@ -149,7 +144,7 @@ func (mgr *TaskManager) WithNewSession(fn func(se sessionctx.Context) error) err
 
 // WithNewTxn executes the fn in a new transaction.
 func (mgr *TaskManager) WithNewTxn(ctx context.Context, fn func(se sessionctx.Context) error) error {
-	ctx = util.WithInternalSourceType(ctx, kv.InternalDistTask)
+	ctx = clitutil.WithInternalSourceType(ctx, kv.InternalDistTask)
 	return mgr.WithNewSession(func(se sessionctx.Context) (err error) {
 		_, err = sqlexec.ExecSQL(ctx, se.GetSQLExecutor(), "begin")
 		if err != nil {
@@ -480,8 +475,12 @@ func (mgr *TaskManager) GetAllSubtasksByStepAndState(ctx context.Context, taskID
 func (mgr *TaskManager) GetSubtaskRowCount(ctx context.Context, taskID int64, step proto.Step) (int64, error) {
 	rs, err := mgr.ExecuteSQLWithNewSession(ctx, `select
     	cast(sum(json_extract(summary, '$.row_count')) as signed) as row_count
-		from mysql.tidb_background_subtask where task_key = %? and step = %?`,
-		taskID, step)
+		from (
+			select summary from mysql.tidb_background_subtask where task_key = %? and step = %?
+			union all
+			select summary from mysql.tidb_background_subtask_history where task_key = %? and step = %?
+		) as combined`,
+		taskID, step, taskID, step)
 	if err != nil {
 		return 0, err
 	}

@@ -18,7 +18,7 @@ import (
 	"strings"
 	"unsafe"
 
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/util/size"
 )
 
@@ -67,6 +67,9 @@ func (s *Schema) String() string {
 
 // Clone copies the total schema.
 func (s *Schema) Clone() *Schema {
+	if s == nil {
+		return nil
+	}
 	cols := make([]*Column, 0, s.Len())
 	keys := make([]KeyInfo, 0, len(s.Keys))
 	for _, col := range s.Columns {
@@ -125,22 +128,34 @@ func (s *Schema) RetrieveColumn(col *Column) *Column {
 	return nil
 }
 
-// IsUniqueKey checks if this column is a unique key.
-func (s *Schema) IsUniqueKey(col *Column) bool {
-	for _, key := range s.Keys {
-		if len(key) == 1 && key[0].EqualColumn(col) {
-			return true
-		}
+// IsUnique checks if the column is unique key.
+// Pass strong=true to check strong contraint: unique && notnull.
+// Pass strong=false to check weak contraint: unique && nullable.
+func (s *Schema) IsUnique(strong bool, cols ...*Column) bool {
+	slicesToBeIterated := s.UniqueKeys
+	if strong {
+		slicesToBeIterated = s.Keys
 	}
-	return false
-}
-
-// IsUnique checks if this column is a unique key which may contain duplicate nulls .
-func (s *Schema) IsUnique(col *Column) bool {
-	for _, key := range s.UniqueKeys {
-		if len(key) == 1 && key[0].EqualColumn(col) {
-			return true
+	for _, key := range slicesToBeIterated {
+		if len(key) > len(cols) {
+			continue
 		}
+		allFound := true
+	nextKeyCol:
+
+		for _, keyCols := range key {
+			for _, col := range cols {
+				if keyCols.EqualColumn(col) {
+					continue nextKeyCol
+				}
+			}
+			allFound = false
+			break
+		}
+		if !allFound {
+			continue
+		}
+		return true
 	}
 	return false
 }

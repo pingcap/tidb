@@ -23,6 +23,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/log"
 	_ "github.com/pingcap/tidb/pkg/autoid_service"
 	"github.com/pingcap/tidb/pkg/config"
@@ -37,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
+	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 )
@@ -1949,6 +1951,8 @@ var batchNum = 100
 var batchSize = 100
 
 func BenchmarkPipelinedSimpleInsert(b *testing.B) {
+	require.NoError(b, failpoint.Enable("tikvclient/pipelinedSkipResolveLock", "return"))
+	defer require.NoError(b, failpoint.Disable("tikvclient/pipelinedSkipResolveLock"))
 	logutil.InitLogger(&logutil.LogConfig{Config: log.Config{Level: "fatal"}})
 	se, do, st := prepareBenchSession()
 	defer func() {
@@ -1977,6 +1981,8 @@ func BenchmarkPipelinedSimpleInsert(b *testing.B) {
 }
 
 func BenchmarkPipelinedInsertIgnoreNoDuplicates(b *testing.B) {
+	require.NoError(b, failpoint.Enable("tikvclient/pipelinedSkipResolveLock", "return"))
+	defer require.NoError(b, failpoint.Disable("tikvclient/pipelinedSkipResolveLock"))
 	logutil.InitLogger(&logutil.LogConfig{Config: log.Config{Level: "fatal"}})
 	se, do, st := prepareBenchSession()
 	defer func() {
@@ -2058,7 +2064,7 @@ func BenchmarkPipelinedDelete(b *testing.B) {
 	}
 
 	se.GetSessionVars().BulkDMLEnabled = true
-	se.GetSessionVars().StmtCtx.InInsertStmt = true
+	se.GetSessionVars().StmtCtx.InDeleteStmt = true
 	b.StopTimer()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
@@ -2072,6 +2078,8 @@ func BenchmarkPipelinedDelete(b *testing.B) {
 }
 
 func BenchmarkPipelinedReplaceNoDuplicates(b *testing.B) {
+	require.NoError(b, failpoint.Enable("tikvclient/pipelinedSkipResolveLock", "return"))
+	defer require.NoError(b, failpoint.Disable("tikvclient/pipelinedSkipResolveLock"))
 	logutil.InitLogger(&logutil.LogConfig{Config: log.Config{Level: "fatal"}})
 	se, do, st := prepareBenchSession()
 	defer func() {
@@ -2097,5 +2105,39 @@ func BenchmarkPipelinedReplaceNoDuplicates(b *testing.B) {
 		se.Execute(context.Background(), "replace into tmp select * from src")
 	}
 	b.StopTimer()
+	b.ReportMetric(float64(b.Elapsed().Nanoseconds()/int64(b.N*batchSize*batchNum)), "ns/row")
+}
+
+func BenchmarkPipelinedUpdate(b *testing.B) {
+	logutil.InitLogger(&logutil.LogConfig{Config: log.Config{Level: "fatal"}})
+	se, do, st := prepareBenchSession()
+	defer func() {
+		se.Close()
+		do.Close()
+		st.Close()
+	}()
+	mustExecute(se, `create table src (id int, dt varchar(128))`)
+	for i := 0; i < batchNum; i++ {
+		mustExecute(se, "begin")
+		for lines := 0; lines < batchSize; lines++ {
+			mustExecute(se, "insert into src values (42, repeat('x', 128))")
+		}
+		mustExecute(se, "commit")
+	}
+
+	se.GetSessionVars().BulkDMLEnabled = true
+	se.GetSessionVars().StmtCtx.InUpdateStmt = true
+
+	b.StopTimer()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		b.StartTimer()
+		if i%2 == 0 {
+			se.Execute(context.Background(), "update src set dt = left(concat('y', dt), 128)")
+		} else {
+			se.Execute(context.Background(), "update src set dt = left(concat('z', dt), 128)")
+		}
+		b.StopTimer()
+	}
 	b.ReportMetric(float64(b.Elapsed().Nanoseconds()/int64(b.N*batchSize*batchNum)), "ns/row")
 }

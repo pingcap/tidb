@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/summary"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	tidbconfig "github.com/pingcap/tidb/pkg/config"
+	infoschemacontext "github.com/pingcap/tidb/pkg/infoschema/context"
 	"github.com/pingcap/tidb/pkg/kv"
 	pd "github.com/tikv/pd/client"
 	"go.uber.org/zap"
@@ -176,14 +177,13 @@ func resetTiFlashReplicas(ctx context.Context, g glue.Glue, storage kv.Storage, 
 		return errors.Trace(err)
 	}
 	info := dom.InfoSchema()
-	allSchemaName := info.AllSchemaNames()
 	recorder := tiflashrec.New()
 
 	expectTiFlashStoreCount := uint64(0)
 	needTiFlash := false
-	for _, s := range allSchemaName {
-		for _, t := range info.SchemaTables(s) {
-			t := t.Meta()
+	tableInfoRes := info.ListTablesWithSpecialAttribute(infoschemacontext.TiFlashAttribute)
+	for _, s := range tableInfoRes {
+		for _, t := range s.TableInfos {
 			if t.TiFlashReplica != nil {
 				expectTiFlashStoreCount = max(expectTiFlashStoreCount, t.TiFlashReplica.Count)
 				recorder.AddTable(t.ID, *t.TiFlashReplica)

@@ -15,6 +15,7 @@
 package storage_test
 
 import (
+	"context"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/parser/model"
@@ -42,7 +43,7 @@ func TestLoadStats(t *testing.T) {
 	testKit.MustExec("analyze table t")
 
 	is := dom.InfoSchema()
-	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	tbl, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
 	tableInfo := tbl.Meta()
 	colAID := tableInfo.Columns[0].ID
@@ -70,7 +71,7 @@ func TestLoadStats(t *testing.T) {
 	require.NoError(t, err)
 	_, err = cardinality.ColumnEqualRowCount(testKit.Session().GetPlanCtx(), stat, types.NewIntDatum(1), colCID)
 	require.NoError(t, err)
-	require.NoError(t, h.LoadNeededHistograms())
+	require.NoError(t, h.LoadNeededHistograms(dom.InfoSchema()))
 	stat = h.GetTableStats(tableInfo)
 	require.True(t, stat.GetCol(colAID).IsFullLoad())
 	hg := stat.GetCol(colAID).Histogram
@@ -90,7 +91,7 @@ func TestLoadStats(t *testing.T) {
 	require.False(t, idx != nil && idx.IsEssentialStatsLoaded())
 	// IsInvalid adds the index to AsyncLoadHistogramNeededItems.
 	statistics.IndexStatsIsInvalid(testKit.Session().GetPlanCtx(), idx, &stat.HistColl, idxBID)
-	require.NoError(t, h.LoadNeededHistograms())
+	require.NoError(t, h.LoadNeededHistograms(dom.InfoSchema()))
 	stat = h.GetTableStats(tableInfo)
 	idx = stat.GetIdx(tableInfo.Indices[0].ID)
 	hg = idx.Histogram

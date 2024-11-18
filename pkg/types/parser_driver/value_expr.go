@@ -128,7 +128,8 @@ func (n *ValueExpr) Restore(ctx *format.RestoreCtx) error {
 	case types.KindMysqlEnum,
 		types.KindMysqlBit, types.KindMysqlSet,
 		types.KindInterface, types.KindMinNotNull, types.KindMaxValue,
-		types.KindRaw, types.KindMysqlJSON:
+		types.KindRaw, types.KindMysqlJSON,
+		types.KindVectorFloat32:
 		// TODO implement Restore function
 		return errors.New("Not implemented")
 	default:

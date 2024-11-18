@@ -21,12 +21,14 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/disttask/framework/mock"
-	"github.com/pingcap/tidb/pkg/disttask/framework/mock/execute"
+	mockexecute "github.com/pingcap/tidb/pkg/disttask/framework/mock/execute"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
 	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/execute"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/mock/gomock"
+	"go.uber.org/zap"
+	"go.uber.org/zap/zaptest/observer"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
@@ -545,4 +547,51 @@ func TestInject(t *testing.T) {
 	execute.SetFrameworkInfo(e, r)
 	got := e.GetResource()
 	require.Equal(t, r, got)
+}
+
+func throwError() error {
+	return errors.New("mock error")
+}
+
+func callOnError(taskExecutor *BaseTaskExecutor) {
+	taskExecutor.onError(throwError())
+}
+
+func throwErrorNoTrace() error {
+	return errors.NewNoStackError("mock error")
+}
+
+func callOnErrorNoTrace(taskExecutor *BaseTaskExecutor) {
+	taskExecutor.onError(throwErrorNoTrace())
+}
+
+func TestExecutorOnErrorLog(t *testing.T) {
+	taskExecutor := &BaseTaskExecutor{}
+
+	observedZapCore, observedLogs := observer.New(zap.ErrorLevel)
+	observedLogger := zap.New(observedZapCore)
+	taskExecutor.logger = observedLogger
+
+	{
+		callOnError(taskExecutor)
+		require.GreaterOrEqual(t, observedLogs.Len(), 1)
+		errLog := observedLogs.TakeAll()[0]
+		contextMap := errLog.ContextMap()
+		require.Contains(t, contextMap, "error stack")
+		errStack := contextMap["error stack"]
+		require.IsType(t, "", errStack)
+		errStackStr := errStack.(string)
+		require.Regexpf(t, `mock error[\n\t ]*`+
+			`github\.com/pingcap/tidb/pkg/disttask/framework/taskexecutor\.throwError`,
+			errStackStr,
+			"got err stack: %s", errStackStr)
+	}
+
+	{
+		callOnErrorNoTrace(taskExecutor)
+		require.GreaterOrEqual(t, observedLogs.Len(), 1)
+		errLog := observedLogs.TakeAll()[0]
+		contextMap := errLog.ContextMap()
+		require.NotContains(t, contextMap, "error stack")
+	}
 }

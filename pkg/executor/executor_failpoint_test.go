@@ -210,7 +210,7 @@ func TestSplitRegionTimeout(t *testing.T) {
 
 	// Test pre-split with timeout.
 	tk.MustExec("drop table if exists t")
-	tk.MustExec("set @@global.tidb_scatter_region=1;")
+	tk.MustExec("set @@session.tidb_scatter_region='table';")
 	require.NoError(t, failpoint.Enable("tikvclient/mockScatterRegionTimeout", `return(true)`))
 	atomic.StoreUint32(&ddl.EnableSplitTableRegion, 1)
 	start := time.Now()
@@ -358,6 +358,25 @@ func TestCoprocessorOOMTiCase(t *testing.T) {
 		require.NoError(t, err)
 
 	*/
+}
+
+func TestCoprocessorBlockIssues56916(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/store/copr/issue56916", `return`))
+	defer func() { require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/store/copr/issue56916")) }()
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t_cooldown")
+	tk.MustExec("create table t_cooldown (id int auto_increment, k int, unique index(id));")
+	tk.MustExec("insert into t_cooldown (k) values (1);")
+	tk.MustExec("insert into t_cooldown (k) select id from t_cooldown;")
+	tk.MustExec("insert into t_cooldown (k) select id from t_cooldown;")
+	tk.MustExec("insert into t_cooldown (k) select id from t_cooldown;")
+	tk.MustExec("insert into t_cooldown (k) select id from t_cooldown;")
+	tk.MustExec("split table t_cooldown by (1),(2),(3),(4),(5),(6),(7),(8),(9),(10);")
+	tk.MustQuery("select * from t_cooldown use index(id) where id > 0 and id < 10").CheckContain("1")
+	tk.MustQuery("select * from t_cooldown use index(id) where id between 1 and 10 or id between 124660 and 132790;").CheckContain("1")
 }
 
 func TestIssue21441(t *testing.T) {
@@ -636,7 +655,7 @@ func TestGetMvccByEncodedKeyRegionError(t *testing.T) {
 	h := helper.NewHelper(store.(helper.Storage))
 	txn, err := store.Begin()
 	require.NoError(t, err)
-	m := meta.NewMeta(txn)
+	m := meta.NewMutator(txn)
 	schemaVersion := tk.Session().GetDomainInfoSchema().SchemaMetaVersion()
 	key := m.EncodeSchemaDiffKey(schemaVersion)
 

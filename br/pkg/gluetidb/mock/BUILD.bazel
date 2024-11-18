@@ -10,6 +10,7 @@ go_library(
         "//pkg/ddl",
         "//pkg/domain",
         "//pkg/kv",
+        "//pkg/meta/model",
         "//pkg/parser/model",
         "//pkg/session/types",
         "//pkg/sessionctx",

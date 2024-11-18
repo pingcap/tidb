@@ -15,9 +15,11 @@
 package util
 
 import (
+	"context"
 	"sync"
 
 	"github.com/pingcap/tidb/pkg/infoschema"
+	infoschemacontext "github.com/pingcap/tidb/pkg/infoschema/context"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/util/intest"
 )
@@ -53,14 +55,14 @@ func (c *tableInfoGetterImpl) TableInfoByID(is infoschema.InfoSchema, physicalID
 		c.pid2tid = buildPartitionID2TableID(is)
 	}
 	if id, ok := c.pid2tid[physicalID]; ok {
-		return is.TableByID(id)
+		return is.TableByID(context.Background(), id)
 	}
-	return is.TableByID(physicalID)
+	return is.TableByID(context.Background(), physicalID)
 }
 
 func buildPartitionID2TableID(is infoschema.InfoSchema) map[int64]int64 {
 	mapper := make(map[int64]int64)
-	rs := is.ListTablesWithSpecialAttribute(infoschema.PartitionAttribute)
+	rs := is.ListTablesWithSpecialAttribute(infoschemacontext.PartitionAttribute)
 	for _, db := range rs {
 		for _, tbl := range db.TableInfos {
 			pi := tbl.GetPartitionInfo()

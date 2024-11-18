@@ -10,6 +10,7 @@ go_library(
         "//pkg/types",
         "//pkg/util/chunk",
         "//pkg/util/codec",
+        "@com_github_pingcap_errors//:errors",
     ],
 )
 

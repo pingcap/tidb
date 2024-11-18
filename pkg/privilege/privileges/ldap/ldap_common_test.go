@@ -22,6 +22,7 @@ import (
 	"fmt"
 	"math/rand"
 	"net"
+	"strconv"
 	"sync"
 	"testing"
 	"time"
@@ -52,7 +53,7 @@ func TestConnectThrough636(t *testing.T) {
 	startListen := make(chan struct{})
 
 	// this test only tests whether the LDAP with LTS enabled will fallback from StartTLS
-	randomTLSServicePort := rand.Int()%10000 + 10000
+	var randomTLSServiceAddress string
 	serverWg := &sync.WaitGroup{}
 	serverWg.Add(1)
 	go func() {
@@ -64,8 +65,11 @@ func TestConnectThrough636(t *testing.T) {
 		tlsConfig := &tls.Config{
 			Certificates: []tls.Certificate{cert},
 		}
-		ln, err = tls.Listen("tcp", fmt.Sprintf("localhost:%d", randomTLSServicePort), tlsConfig)
+		ln, err = tls.Listen("tcp", ":0", tlsConfig)
+
 		require.NoError(t, err)
+
+		randomTLSServiceAddress = ln.Addr().String()
 		startListen <- struct{}{}
 
 		for {
@@ -100,7 +104,11 @@ func TestConnectThrough636(t *testing.T) {
 	impl := &ldapAuthImpl{}
 	impl.SetEnableTLS(true)
 	impl.SetLDAPServerHost("localhost")
-	impl.SetLDAPServerPort(randomTLSServicePort)
+	_, port, err := net.SplitHostPort(randomTLSServiceAddress)
+	require.NoError(t, err)
+	p, err := strconv.Atoi(port)
+	require.NoError(t, err)
+	impl.SetLDAPServerPort(p)
 
 	impl.caPool = x509.NewCertPool()
 	require.True(t, impl.caPool.AppendCertsFromPEM(tlsCAStr))

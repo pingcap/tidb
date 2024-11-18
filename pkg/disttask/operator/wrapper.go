@@ -18,6 +18,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/pingcap/tidb/pkg/resourcemanager/pool/workerpool"
 	"golang.org/x/sync/errgroup"
 )
 
@@ -96,7 +97,7 @@ func (*simpleSink[R]) String() string {
 	return "simpleSink"
 }
 
-type simpleOperator[T, R any] struct {
+type simpleOperator[T workerpool.TaskMayPanic, R any] struct {
 	*AsyncOperator[T, R]
 }
 
@@ -104,7 +105,7 @@ func (s *simpleOperator[T, R]) String() string {
 	return fmt.Sprintf("simpleOperator(%s)", s.AsyncOperator.String())
 }
 
-func newSimpleOperator[T, R any](transform func(task T) R, concurrency int) *simpleOperator[T, R] {
+func newSimpleOperator[T workerpool.TaskMayPanic, R any](transform func(task T) R, concurrency int) *simpleOperator[T, R] {
 	asyncOp := NewAsyncOperatorWithTransform(context.Background(), "simple", concurrency, transform)
 	return &simpleOperator[T, R]{
 		AsyncOperator: asyncOp,

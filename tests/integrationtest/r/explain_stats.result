@@ -4,23 +4,23 @@ create table t (id int, c1 timestamp);
 load stats 's/explain_stats_t.json';
 show columns from t;
 Field	Type	Null	Key	Default	Extra
-id	int(11)	YES		NULL	
+id	int	YES		NULL	
 c1	timestamp	YES		NULL	
 explain t;
 Field	Type	Null	Key	Default	Extra
-id	int(11)	YES		NULL	
+id	int	YES		NULL	
 c1	timestamp	YES		NULL	
 describe t;
 Field	Type	Null	Key	Default	Extra
-id	int(11)	YES		NULL	
+id	int	YES		NULL	
 c1	timestamp	YES		NULL	
 desc t;
 Field	Type	Null	Key	Default	Extra
-id	int(11)	YES		NULL	
+id	int	YES		NULL	
 c1	timestamp	YES		NULL	
 desc t c1;
 Field	Type	Null	Key	Default	Extra
 c1	timestamp	YES		NULL	
 desc t id;
 Field	Type	Null	Key	Default	Extra
-id	int(11)	YES		NULL	
+id	int	YES		NULL	

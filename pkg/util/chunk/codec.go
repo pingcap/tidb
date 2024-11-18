@@ -99,7 +99,7 @@ func (c *Codec) Decode(buffer []byte) (*Chunk, []byte) {
 
 // DecodeToChunk decodes a Chunk from a byte slice, return the remained unused bytes.
 func (c *Codec) DecodeToChunk(buffer []byte, chk *Chunk) (remained []byte) {
-	for i := 0; i < len(chk.columns); i++ {
+	for i := range len(chk.columns) {
 		buffer = c.decodeColumn(buffer, chk.columns[i], i)
 	}
 	return buffer
@@ -225,7 +225,7 @@ func EstimateTypeWidth(colType *types.FieldType) int {
 }
 
 func init() {
-	for i := 0; i < 128; i++ {
+	for i := range 128 {
 		allNotNullBitmap[i] = 0xFF
 	}
 }
@@ -262,7 +262,7 @@ func (c *Decoder) Decode(chk *Chunk) {
 	if requiredRows > c.remainedRows {
 		requiredRows = c.remainedRows
 	}
-	for i := 0; i < chk.NumCols(); i++ {
+	for i := range chk.NumCols() {
 		c.decodeColumn(chk, i, requiredRows)
 	}
 	c.remainedRows -= requiredRows
@@ -332,7 +332,7 @@ func (c *Decoder) decodeColumn(chk *Chunk, ordinal int, requiredRows int) {
 		// bitOffset indicates the number of valid bits in destCol.nullBitmap's last byte.
 		bitOffset := destCol.length % 8
 		startIdx := (destCol.length - 1) >> 3
-		for i := 0; i < numNullBitmapBytes; i++ {
+		for i := range numNullBitmapBytes {
 			destCol.nullBitmap[startIdx+i] |= srcCol.nullBitmap[i] << bitOffset
 			// The high order 8-bitOffset bits in `srcCol.nullBitmap[i]` should be appended to the low order of the next slot.
 			if startIdx+i+1 < bitMapLen {

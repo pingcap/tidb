@@ -291,7 +291,7 @@ enable-telemetry = true
 
 # deprecate-integer-display-length is used to be compatible with MySQL 8.0 in which the integer declared with display length will be returned with
 # <snip>
-deprecate-integer-display-length = false
+deprecate-integer-display-length = true
 
 # enable-enum-length-limit is used to deal with compatibility issues. When true, the enum/set element length is limited.
 # According to MySQL 8.0 Refman:
@@ -609,24 +609,12 @@ resolve-lock-lite-threshold = 16
 # The capacity in MB of the cache. Zero means disable coprocessor cache.
 capacity-mb = 1000.0
 
-[binlog]
-# enable to write binlog.
-# NOTE: If binlog is enabled with Kafka (e.g. arbiter cluster),
-# txn-total-size-limit should be less than 1073741824(1G) because this is the maximum size that can be handled by Kafka.
-enable = false
-
-# WriteTimeout specifies how long it will wait for writing binlog to pump.
-write-timeout = "15s"
-
 # If IgnoreError is true, when writing binlog meets error, TiDB would stop writing binlog,
 # but still provide service.
 ignore-error = false
 
 # use socket file to write binlog, for compatible with kafka version tidb-binlog.
 binlog-socket = ""
-
-# the strategy for sending binlog to pump, value can be "range" or "hash" now.
-strategy = "range"
 
 [pessimistic-txn]
 # max retry count for a statement in a pessimistic transaction.
@@ -685,9 +673,6 @@ engines = ["tikv", "tiflash", "tidb"]
 func TestConfig(t *testing.T) {
 	conf := new(Config)
 	conf.TempStoragePath = tempStorageDirName
-	conf.Binlog.Enable = true
-	conf.Binlog.IgnoreError = true
-	conf.Binlog.Strategy = "hash"
 	conf.Performance.TxnTotalSizeLimit = 1000
 	conf.TiKVClient.CommitTimeout = "10s"
 	conf.TiKVClient.RegionCacheTTL = 600
@@ -754,6 +739,7 @@ store-limit=0
 ttl-refreshed-txn-size=8192
 resolve-lock-lite-threshold = 16
 copr-req-timeout = "120s"
+grpc-keepalive-timeout = 0.2
 [tikv-client.async-commit]
 keys-limit=123
 total-key-size-limit=1024
@@ -788,10 +774,6 @@ max_connections = 200
 
 	require.NoError(t, conf.Load(configFile))
 
-	// Test that the original value will not be clear by load the config file that does not contain the option.
-	require.True(t, conf.Binlog.Enable)
-	require.Equal(t, "hash", conf.Binlog.Strategy)
-
 	// Test that the value will be overwritten by the config file.
 	require.Equal(t, uint64(2000), conf.Performance.TxnTotalSizeLimit)
 	require.True(t, conf.AlterPrimaryKey)
@@ -804,6 +786,7 @@ max_connections = 200
 	require.Equal(t, uint(6000), conf.TiKVClient.RegionCacheTTL)
 	require.Equal(t, int64(0), conf.TiKVClient.StoreLimit)
 	require.Equal(t, int64(8192), conf.TiKVClient.TTLRefreshedTxnSize)
+	require.Equal(t, time.Millisecond*200, conf.TiKVClient.GetGrpcKeepAliveTimeout())
 	require.Equal(t, uint(1000), conf.TokenLimit)
 	require.True(t, conf.EnableTableLock)
 	require.Equal(t, uint64(5), conf.DelayCleanTableLock)
@@ -901,6 +884,35 @@ spilled-file-encryption-method = "aes128-ctr"
 
 	require.NoError(t, f.Sync())
 	require.NoError(t, conf.Load(configFile))
+
+	conf = NewConfig()
+	require.Equal(t, time.Second*3, conf.TiKVClient.GetGrpcKeepAliveTimeout())
+	err = f.Truncate(0)
+	require.NoError(t, err)
+	_, err = f.Seek(0, 0)
+	require.NoError(t, err)
+	_, err = f.WriteString(`
+[tikv-client]
+grpc-keepalive-timeout = 3
+`)
+	require.NoError(t, err)
+	require.NoError(t, f.Sync())
+	require.NoError(t, conf.Load(configFile))
+	require.Equal(t, time.Second*3, conf.TiKVClient.GetGrpcKeepAliveTimeout())
+
+	err = f.Truncate(0)
+	require.NoError(t, err)
+	_, err = f.Seek(0, 0)
+	require.NoError(t, err)
+	_, err = f.WriteString(`
+[tikv-client]
+grpc-keepalive-timeout = 0.01
+`)
+	require.NoError(t, err)
+	require.NoError(t, f.Sync())
+	require.NoError(t, conf.Load(configFile))
+	require.NotNil(t, conf.Valid())
+	require.Equal(t, "grpc-keepalive-timeout should be at least 0.05, but got 0.010000", conf.Valid().Error())
 
 	configFile = "config.toml.example"
 	require.NoError(t, conf.Load(configFile))
@@ -1054,7 +1066,7 @@ func TestConflictInstanceConfig(t *testing.T) {
 	_, err = f.WriteString("check-mb4-value-in-utf8 = true \nrun-ddl = true \n" +
 		"[log] \nenable-slow-log = true \n" +
 		"[performance] \nforce-priority = \"NO_PRIORITY\"\n" +
-		"[instance] \ntidb_check_mb4_value_in_utf8 = false \ntidb_enable_slow_log = false \ntidb_force_priority = \"LOW_PRIORITY\"\ntidb_enable_ddl = false")
+		"[instance] \ntidb_check_mb4_value_in_utf8 = false \ntidb_enable_slow_log = false \ntidb_force_priority = \"LOW_PRIORITY\"\ntidb_enable_ddl = false\ntidb_enable_stats_owner = false")
 	require.NoError(t, err)
 	require.NoError(t, f.Sync())
 	err = conf.Load(configFile)
@@ -1068,6 +1080,7 @@ func TestConflictInstanceConfig(t *testing.T) {
 	require.Equal(t, "LOW_PRIORITY", conf.Instance.ForcePriority)
 	require.Equal(t, true, conf.RunDDL)
 	require.Equal(t, false, conf.Instance.TiDBEnableDDL.Load())
+	require.Equal(t, false, conf.Instance.TiDBEnableStatsOwner.Load())
 	require.Equal(t, 0, len(DeprecatedOptions))
 	for _, conflictOption := range ConflictOptions {
 		expectedConflictOption, ok := expectedConflictOptions[conflictOption.SectionName]

@@ -56,7 +56,7 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/tikv"
 	"github.com/pingcap/tidb/pkg/lightning/worker"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/store/driver"
@@ -640,8 +640,10 @@ func (rc *Controller) initCheckpoint(ctx context.Context) error {
 		log.FromContext(ctx).Warn("exit triggered", zap.String("failpoint", "InitializeCheckpointExit"))
 		os.Exit(0)
 	})
-	if err := rc.loadDesiredTableInfos(ctx); err != nil {
-		return err
+	if rc.cfg.TikvImporter.AddIndexBySQL {
+		if err := rc.loadDesiredTableInfos(ctx); err != nil {
+			return err
+		}
 	}
 
 	rc.checkpointsWg.Add(1) // checkpointsWg will be done in `rc.listenCheckpointUpdates`
@@ -1354,7 +1356,7 @@ func (rc *Controller) importTables(ctx context.Context) (finalErr error) {
 		if err != nil {
 			return errors.Trace(err)
 		}
-		etcdCli, err := clientv3.New(clientv3.Config{
+		etcdCli, err = clientv3.New(clientv3.Config{
 			Endpoints:        urlsWithScheme,
 			AutoSyncInterval: 30 * time.Second,
 			TLS:              rc.tls.TLSConfig(),
@@ -1486,19 +1488,8 @@ func (rc *Controller) importTables(ctx context.Context) (finalErr error) {
 			allTasks = append(allTasks, task{tr: tr, cp: cp})
 
 			if len(cp.Engines) == 0 {
-				for i, fi := range tableMeta.DataFiles {
+				for _, fi := range tableMeta.DataFiles {
 					totalDataSizeToRestore += fi.FileMeta.FileSize
-					if fi.FileMeta.Type == mydump.SourceTypeParquet {
-						numberRows, err := mydump.ReadParquetFileRowCountByFile(ctx, rc.store, fi.FileMeta)
-						if err != nil {
-							return errors.Trace(err)
-						}
-						if m, ok := metric.FromContext(ctx); ok {
-							m.RowsCounter.WithLabelValues(metric.StateTotalRestore, tableName).Add(float64(numberRows))
-						}
-						fi.FileMeta.Rows = numberRows
-						tableMeta.DataFiles[i] = fi
-					}
 				}
 			} else {
 				for _, eng := range cp.Engines {
