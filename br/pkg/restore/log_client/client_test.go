@@ -1588,8 +1588,7 @@ func TestLogSplitStrategy(t *testing.T) {
 	require.NoError(t, err)
 
 	// Set up a mock strategy to control split behavior.
-	expectSplitCount := 3
-	nextSplitCount := 5
+	expectSplitCount := 2
 	mockStrategy := &mockLogStrategy{
 		LogSplitStrategy: strategy,
 		// fakeFile(3, 100, 10*units.MiB, 100000) will skipped due to no rewrite rule found.
@@ -1603,7 +1602,6 @@ func TestLogSplitStrategy(t *testing.T) {
 	count := 0
 	for i := helper.TryNext(ctx); !i.Finished; i = helper.TryNext(ctx) {
 		require.NoError(t, i.Err)
-		count += 1
 		if count == expectSplitCount {
 			// Verify that no split occurs initially due to insufficient data.
 			regions, err := mockPDCli.ScanRegions(ctx, []byte{}, []byte{}, 0)
@@ -1613,8 +1611,9 @@ func TestLogSplitStrategy(t *testing.T) {
 			require.Equal(t, codec.EncodeBytes(nil, tablecodec.EncodeTablePrefix(100)), regions[1].Meta.StartKey)
 			require.Equal(t, codec.EncodeBytes(nil, tablecodec.EncodeTablePrefix(200)), regions[2].Meta.StartKey)
 			require.Equal(t, codec.EncodeBytes(nil, tablecodec.EncodeTablePrefix(402)), regions[2].Meta.EndKey)
-			mockStrategy.expectSplitCount = nextSplitCount
 		}
+		// iter.Filterout execute first
+		count += 1
 	}
 
 	// Verify that a split occurs on the second region due to excess data.
