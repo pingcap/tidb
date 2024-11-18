@@ -17,7 +17,6 @@ package addindextest
 import (
 	"context"
 	"fmt"
-	"github.com/pingcap/tidb/pkg/table/tables"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -37,6 +36,7 @@ import (
 	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/table"
+	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/tests/realtikvtest"
