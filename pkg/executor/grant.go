@@ -33,7 +33,6 @@ import (
 	"github.com/pingcap/tidb/pkg/privilege"
 	"github.com/pingcap/tidb/pkg/privilege/privileges"
 	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/util"
@@ -161,18 +160,14 @@ func (e *GrantExec) Next(ctx context.Context, _ *chunk.Chunk) error {
 		if err != nil {
 			return err
 		}
-		if !exists {
-			if e.Ctx().GetSessionVars().SQLMode.HasNoAutoCreateUserMode() {
-				return exeerrors.ErrCantCreateUserWithGrant
-			}
+		if !exists && e.Ctx().GetSessionVars().SQLMode.HasNoAutoCreateUserMode() {
+			return exeerrors.ErrCantCreateUserWithGrant
+		} else if !exists {
 			// This code path only applies if mode NO_AUTO_CREATE_USER is unset.
 			// It is required for compatibility with 5.7 but removed from 8.0
 			// since it results in a massive security issue:
 			// spelling errors will create users with no passwords.
-			authPlugin, err := e.Ctx().GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(variable.DefaultAuthPlugin)
-			if err != nil {
-				return err
-			}
+			authPlugin := mysql.AuthNativePassword
 			if user.AuthOpt != nil && user.AuthOpt.AuthPlugin != "" {
 				authPlugin = user.AuthOpt.AuthPlugin
 			}
@@ -185,7 +180,7 @@ func (e *GrantExec) Next(ctx context.Context, _ *chunk.Chunk) error {
 			if !ok {
 				return errors.Trace(exeerrors.ErrPasswordFormat)
 			}
-			_, err = internalSession.GetSQLExecutor().ExecuteInternal(internalCtx,
+			_, err := internalSession.GetSQLExecutor().ExecuteInternal(internalCtx,
 				`INSERT INTO %n.%n (Host, User, authentication_string, plugin) VALUES (%?, %?, %?, %?);`,
 				mysql.SystemDB, mysql.UserTable, user.User.Hostname, user.User.Username, pwd, authPlugin)
 			if err != nil {
