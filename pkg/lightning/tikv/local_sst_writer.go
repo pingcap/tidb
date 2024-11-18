@@ -17,6 +17,7 @@ package tikv
 import (
 	"bytes"
 	"encoding/binary"
+	"slices"
 
 	rocks "github.com/lance6716/pebble"
 	rocksbloom "github.com/lance6716/pebble/bloom"
@@ -30,7 +31,7 @@ import (
 type WritableBytesChan chan []byte
 
 func (w WritableBytesChan) Write(p []byte) error {
-	w <- p
+	w <- slices.Clone(p)
 	// TODO(lance6716): add context to avoid blocking
 	return nil
 }
