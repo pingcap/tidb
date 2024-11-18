@@ -138,6 +138,14 @@ Questions:
 
 ### Physical / implementation design
 
+#### EXCHANGE PARTITION changes for UPDATE GLOBAL INDEXES
+
+Adding the restriction that the non-partitioned table t2, is not available during the ddl helps by not needing to keep its indexes up-to-date during the DDL. So the different job schema states would look like:
+
+StateNone:
+- Start of DDL
+- Do all checks as previous + handle Global Index differences (see logical design what we should allow or not).
+- 
 
 
 TODO: Fill in the rest of the design :)
