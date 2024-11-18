@@ -387,14 +387,10 @@ func needPresumeKeyNotExistsFlag(ctx context.Context, txn kv.Transaction, key, t
 }
 
 func handleEqual(dupHandle, prevHandle kv.Handle) bool {
-	dup, prev := dupHandle, prevHandle
 	if dupPartition, ok := dupHandle.(kv.PartitionHandle); ok {
-		dup = dupPartition.Handle
+		return dupPartition.Handle.Equal(prevHandle)
 	}
-	if prevPartition, ok := prevHandle.(kv.PartitionHandle); ok {
-		prev = prevPartition.Handle
-	}
-	return dup.Equal(prev)
+	return dupHandle.Equal(prevHandle)
 }
 
 // Delete removes the entry for handle h and indexedValues from KV index.
@@ -440,7 +436,7 @@ func (c *index) Delete(ctx table.MutateContext, txn kv.Transaction, indexedValue
 						}
 						// The handle passed in may be a `PartitionHandle`,
 						// so we can't directly compare it with the original handle.
-						if !handleEqual(h, oh) {
+						if !h.Equal(oh) {
 							okToDelete = false
 						}
 					}
