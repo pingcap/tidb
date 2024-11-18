@@ -269,9 +269,9 @@ func completeInsertErr(col *model.ColumnInfo, val *types.Datum, rowIdx int, err 
 		colName = col.Name.String()
 	}
 
-	if types.ErrDataTooLong.Equal(err) {
+	if types.ErrDataTooLong.Equal(err) { // added
 		err = resetErrDataTooLong(colName, rowIdx+1, err)
-	} else if types.ErrOverflow.Equal(err) {
+	} else if types.ErrOverflow.Equal(err) { //added
 		err = types.ErrWarnDataOutOfRange.FastGenByArgs(colName, rowIdx+1)
 	} else if types.ErrTruncated.Equal(err) {
 		err = types.ErrTruncated.FastGenByArgs(colName, rowIdx+1)
@@ -287,7 +287,7 @@ func completeInsertErr(col *model.ColumnInfo, val *types.Datum, rowIdx int, err 
 			logutil.BgLogger().Debug("truncated/wrong value error", zap.Error(err1))
 		}
 		err = table.ErrTruncatedWrongValueForField.FastGenByArgs(types.TypeStr(colTp), valStr, colName, rowIdx+1)
-	} else if types.ErrWarnDataOutOfRange.Equal(err) {
+	} else if types.ErrWarnDataOutOfRange.Equal(err) { // To add
 		err = types.ErrWarnDataOutOfRange.FastGenByArgs(colName, rowIdx+1)
 	}
 	return err

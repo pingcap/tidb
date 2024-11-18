@@ -19,7 +19,6 @@ import (
 	"encoding/hex"
 	"fmt"
 	"runtime/trace"
-	"strings"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -29,19 +28,17 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/meta/model"
-	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
-	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/memory"
-	"github.com/pingcap/tidb/pkg/util/set"
 	"github.com/pingcap/tidb/pkg/util/stringutil"
 	"github.com/pingcap/tidb/pkg/util/tracing"
 	"go.uber.org/zap"
@@ -442,6 +439,45 @@ func (e *InsertExec) initEvalBuffer4Dup() {
 	e.row4Update = make([]types.Datum, 0, len(evalBufferTypes))
 }
 
+func evaluateGeneratedInInsert(
+	sctx sessionctx.Context,
+	assign *expression.Assignment,
+	evalBuffer chunk.MutRow,
+	rowIdx int,
+) (types.Datum, error) {
+	var val types.Datum
+	evalCtx := sctx.GetExprCtx().GetEvalCtx()
+	sc := sctx.GetSessionVars().StmtCtx
+
+	if assign.LazyErr != nil {
+		return val, assign.LazyErr
+	}
+	val, err := assign.Expr.Eval(evalCtx, evalBuffer.ToRow())
+	if err != nil {
+		return val, err
+	}
+
+	c := assign.Col.ToInfo()
+	idx := assign.Col.Index
+	c.Name = assign.ColName
+	val, err = table.CastValue(sctx, val, c, false, false)
+	if err != nil {
+		return val, err
+	}
+
+	warnCnt := int(sc.WarningCount())
+	if newWarnings := sc.TruncateWarnings(warnCnt); len(newWarnings) > 0 {
+		for k := range newWarnings {
+			// Use `idxInBatch` here for simplicity, since the offset of the batch is unknown under the current context.
+			newWarnings[k].Err = completeInsertErr(c, &val, rowIdx, newWarnings[k].Err)
+		}
+		sc.AppendWarnings(newWarnings)
+		warnCnt += len(newWarnings)
+	}
+	evalBuffer.SetDatum(idx, val)
+	return val, nil
+}
+
 // doDupRowUpdate updates the duplicate row.
 func (e *InsertExec) doDupRowUpdate(
 	ctx context.Context,
@@ -465,10 +501,8 @@ func (e *InsertExec) doDupRowUpdate(
 	e.row4Update = append(e.row4Update, extraCols...)
 	e.row4Update = append(e.row4Update, newRow...)
 
-	// We need to evaluate columns in the following order:
-	// 1. non-generated columns
-	// 2. on-update-now columns if non-generated columns are changed
-	// 3. generated columns if non-generated columns are changed
+	// Only evaluate non-generated columns here,
+	// other fields will be evaluated in updateRecord.
 	var generated, nonGenerated []*expression.Assignment
 	cols := e.Table.Cols()
 	for _, assign := range assigns {
@@ -479,96 +513,35 @@ func (e *InsertExec) doDupRowUpdate(
 		}
 	}
 
-	// Update old row when the key is duplicated.
-	e.evalBuffer4Dup.SetDatums(e.row4Update...)
-	sctx := e.Ctx()
-	evalCtx := sctx.GetExprCtx().GetEvalCtx()
-	sc := sctx.GetSessionVars().StmtCtx
-	warnCnt := int(sc.WarningCount())
-
-	assignFunc := func(assign *expression.Assignment) error {
-		if assign.LazyErr != nil {
-			return assign.LazyErr
-		}
-		val, err1 := assign.Expr.Eval(evalCtx, e.evalBuffer4Dup.ToRow())
-		if err1 != nil {
-			return err1
-		}
-		c := assign.Col.ToInfo()
-		idx := assign.Col.Index
-		c.Name = assign.ColName
-		e.row4Update[idx], err1 = table.CastValue(sctx, val, c, false, false)
-		if err1 != nil {
-			return err1
-		}
-		if newWarnings := sc.TruncateWarnings(warnCnt); len(newWarnings) > 0 {
-			for k := range newWarnings {
-				// Use `idxInBatch` here for simplicity, since the offset of the batch is unknown under the current context.
-				newWarnings[k].Err = completeInsertErr(c, &val, idxInBatch, newWarnings[k].Err)
-			}
-			sc.AppendWarnings(newWarnings)
-			warnCnt += len(newWarnings)
-		}
-		e.evalBuffer4Dup.SetDatum(idx, e.row4Update[idx])
-		assignFlag[idx] = true
-		return nil
+	assignFunc := func(assign *expression.Assignment) (types.Datum, error) {
+		return evaluateGeneratedInInsert(e.Ctx(), assign, e.evalBuffer4Dup, idxInBatch)
 	}
 
-	// Update non-generated columns and check if columns are changed
-	changed := false
-	updatedCols := set.NewIntSet()
+	// Update old row when the key is duplicated.
+	e.evalBuffer4Dup.SetDatums(e.row4Update...)
 	for _, assign := range nonGenerated {
-		if err := assignFunc(assign); err != nil {
-			return errors.Trace(err)
-		}
-		idx := assign.Col.Index
-		cmp, err := e.row4Update[idx].Compare(sc.TypeCtx(), &oldRow[idx], collate.GetBinaryCollator())
+		val, err := assignFunc(assign)
 		if err != nil {
 			return errors.Trace(err)
 		}
-		if cmp != 0 {
-			changed = true
-		}
-		updatedCols.Insert(idx)
-	}
 
-	// Update on-update-now and generated columns if necessary
-	if changed {
-		for i, col := range e.Table.Cols() {
-			if mysql.HasOnUpdateNowFlag(col.GetFlag()) && !updatedCols.Exist(i) {
-				v, err := expression.GetTimeValue(sctx.GetExprCtx(), strings.ToUpper(ast.CurrentTimestamp), col.GetType(), col.GetDecimal(), nil)
-				if err != nil {
-					return errors.Trace(err)
-				}
-				e.row4Update[i] = v
-				e.evalBuffer4Dup.SetDatum(i, e.row4Update[i])
-				assignFlag[i] = true
-			}
-		}
-		for _, assign := range generated {
-			if err := assignFunc(assign); err != nil {
-				return errors.Trace(err)
-			}
-		}
+		e.row4Update[assign.Col.Index] = val
+		assignFlag[assign.Col.Index] = true
 	}
 
 	newData := e.row4Update[:len(oldRow)]
-	if e.ignoreErr {
-		ignored, err := checkFKIgnoreErr(ctx, e.Ctx(), e.fkChecks, newData)
-		if err != nil {
-			return err
-		}
+	_, err, ignored := updateRecord(
+		ctx, e.Ctx(),
+		handle, oldRow, newData,
+		generated, assignFunc,
+		assignFlag, e.Table,
+		true, e.memTracker, e.fkChecks, e.fkCascades, dupKeyMode, e.ignoreErr)
 
-		// meets an error, skip this row.
-		if ignored {
-			return nil
-		}
+	if ignored {
+		return nil
 	}
 
-	if _, err := updateRecord(
-		ctx, e.Ctx(), handle,
-		oldRow, newData, assignFlag, e.Table,
-		true, e.memTracker, e.fkChecks, e.fkCascades, dupKeyMode, e.ignoreErr); err != nil {
+	if err != nil {
 		return errors.Trace(err)
 	}
 
