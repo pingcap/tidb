@@ -1,0 +1,51 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "exprstatic",
+    srcs = [
+        "evalctx.go",
+        "exprctx.go",
+    ],
+    importpath = "github.com/pingcap/tidb/pkg/expression/exprstatic",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/errctx",
+        "//pkg/expression/exprctx",
+        "//pkg/expression/expropt",
+        "//pkg/parser/charset",
+        "//pkg/parser/mysql",
+        "//pkg/sessionctx/variable",
+        "//pkg/types",
+        "//pkg/util/context",
+        "//pkg/util/intest",
+        "//pkg/util/mathutil",
+    ],
+)
+
+go_test(
+    name = "exprstatic_test",
+    timeout = "short",
+    srcs = [
+        "evalctx_test.go",
+        "exprctx_test.go",
+    ],
+    embed = [":exprstatic"],
+    flaky = True,
+    shard_count = 13,
+    deps = [
+        "//pkg/errctx",
+        "//pkg/expression/exprctx",
+        "//pkg/expression/expropt",
+        "//pkg/infoschema/context",
+        "//pkg/parser/auth",
+        "//pkg/parser/charset",
+        "//pkg/parser/mysql",
+        "//pkg/sessionctx/variable",
+        "//pkg/types",
+        "//pkg/util/context",
+        "//pkg/util/deeptest",
+        "//pkg/util/mathutil",
+        "@com_github_pingcap_errors//:errors",
+        "@com_github_stretchr_testify//require",
+    ],
+)

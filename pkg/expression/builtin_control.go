@@ -15,11 +15,11 @@
 package expression
 
 import (
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
-	"github.com/pingcap/tidb/pkg/util/mathutil"
 	"github.com/pingcap/tipb/go-tipb"
 )
 
@@ -37,6 +37,7 @@ var (
 	_ builtinFunc = &builtinCaseWhenTimeSig{}
 	_ builtinFunc = &builtinCaseWhenDurationSig{}
 	_ builtinFunc = &builtinCaseWhenJSONSig{}
+	_ builtinFunc = &builtinCaseWhenVectorFloat32Sig{}
 	_ builtinFunc = &builtinIfNullIntSig{}
 	_ builtinFunc = &builtinIfNullRealSig{}
 	_ builtinFunc = &builtinIfNullDecimalSig{}
@@ -44,6 +45,7 @@ var (
 	_ builtinFunc = &builtinIfNullTimeSig{}
 	_ builtinFunc = &builtinIfNullDurationSig{}
 	_ builtinFunc = &builtinIfNullJSONSig{}
+	_ builtinFunc = &builtinIfNullVectorFloat32Sig{}
 	_ builtinFunc = &builtinIfIntSig{}
 	_ builtinFunc = &builtinIfRealSig{}
 	_ builtinFunc = &builtinIfDecimalSig{}
@@ -51,6 +53,7 @@ var (
 	_ builtinFunc = &builtinIfTimeSig{}
 	_ builtinFunc = &builtinIfDurationSig{}
 	_ builtinFunc = &builtinIfJSONSig{}
+	_ builtinFunc = &builtinIfVectorFloat32Sig{}
 )
 
 func maxlen(lhsFlen, rhsFlen int) int {
@@ -58,7 +61,7 @@ func maxlen(lhsFlen, rhsFlen int) int {
 	if lhsFlen < 0 || rhsFlen < 0 {
 		return mysql.MaxRealWidth
 	}
-	return mathutil.Max(lhsFlen, rhsFlen)
+	return max(lhsFlen, rhsFlen)
 }
 
 func setFlenFromArgs(evalType types.EvalType, resultFieldType *types.FieldType, argTps ...*types.FieldType) {
@@ -83,12 +86,25 @@ func setFlenFromArgs(evalType types.EvalType, resultFieldType *types.FieldType, 
 	} else if evalType == types.ETString {
 		maxLen := 0
 		for i := range argTps {
-			argFlen := argTps[i].GetFlen()
-			if argFlen == types.UnspecifiedLength {
-				resultFieldType.SetFlen(types.UnspecifiedLength)
-				return
+			switch argTps[i].GetType() {
+			case mysql.TypeTiny:
+				maxLen = maxlen(4, maxLen)
+			case mysql.TypeShort:
+				maxLen = maxlen(6, maxLen)
+			case mysql.TypeInt24:
+				maxLen = maxlen(9, maxLen)
+			case mysql.TypeLong:
+				maxLen = maxlen(11, maxLen)
+			case mysql.TypeLonglong:
+				maxLen = maxlen(20, maxLen)
+			default:
+				argFlen := argTps[i].GetFlen()
+				if argFlen == types.UnspecifiedLength {
+					resultFieldType.SetFlen(types.UnspecifiedLength)
+					return
+				}
+				maxLen = maxlen(argFlen, maxLen)
 			}
-			maxLen = maxlen(argFlen, maxLen)
 		}
 		resultFieldType.SetFlen(maxLen)
 	} else {
@@ -110,7 +126,7 @@ func setDecimalFromArgs(evalType types.EvalType, resultFieldType *types.FieldTyp
 				resultFieldType.SetDecimal(types.UnspecifiedLength)
 				return
 			}
-			maxDecimal = mathutil.Max(argTps[i].GetDecimal(), maxDecimal)
+			maxDecimal = max(argTps[i].GetDecimal(), maxDecimal)
 		}
 		resultFieldType.SetDecimalUnderLimit(maxDecimal)
 	}
@@ -142,7 +158,7 @@ func addCollateAndCharsetAndFlagFromArgs(ctx BuildContext, funcName string, eval
 			panic("unexpected length of args for if/ifnull/lead/lag")
 		}
 		lexp, rexp := args[0], args[1]
-		lhs, rhs := lexp.GetType(), rexp.GetType()
+		lhs, rhs := lexp.GetType(ctx.GetEvalCtx()), rexp.GetType(ctx.GetEvalCtx())
 		if types.IsNonBinaryStr(lhs) && !types.IsBinaryStr(rhs) {
 			ec, err := CheckAndDeriveCollationFromExprs(ctx, funcName, evalType, lexp, rexp)
 			if err != nil {
@@ -183,7 +199,7 @@ func addCollateAndCharsetAndFlagFromArgs(ctx BuildContext, funcName string, eval
 		resultFieldType.SetCollate(ec.Collation)
 		resultFieldType.SetCharset(ec.Charset)
 		for i := range args {
-			if mysql.HasBinaryFlag(args[i].GetType().GetFlag()) || !types.IsNonBinaryStr(args[i].GetType()) {
+			if mysql.HasBinaryFlag(args[i].GetType(ctx.GetEvalCtx()).GetFlag()) || !types.IsNonBinaryStr(args[i].GetType(ctx.GetEvalCtx())) {
 				resultFieldType.AddFlag(mysql.BinaryFlag)
 				break
 			}
@@ -191,7 +207,7 @@ func addCollateAndCharsetAndFlagFromArgs(ctx BuildContext, funcName string, eval
 	case ast.Coalesce: // TODO ast.Case and ast.Coalesce should be merged into the same branch
 		argTypes := make([]*types.FieldType, 0)
 		for _, arg := range args {
-			argTypes = append(argTypes, arg.GetType())
+			argTypes = append(argTypes, arg.GetType(ctx.GetEvalCtx()))
 		}
 
 		nonBinaryStrExist := hasNonBinaryStr(argTypes)
@@ -239,10 +255,10 @@ func InferType4ControlFuncs(ctx BuildContext, funcName string, args ...Expressio
 	nullFields := make([]*types.FieldType, 0, argsNum)
 	notNullFields := make([]*types.FieldType, 0, argsNum)
 	for i := range args {
-		if args[i].GetType().GetType() == mysql.TypeNull {
-			nullFields = append(nullFields, args[i].GetType())
+		if args[i].GetType(ctx.GetEvalCtx()).GetType() == mysql.TypeNull {
+			nullFields = append(nullFields, args[i].GetType(ctx.GetEvalCtx()))
 		} else {
-			notNullFields = append(notNullFields, args[i].GetType())
+			notNullFields = append(notNullFields, args[i].GetType(ctx.GetEvalCtx()))
 		}
 	}
 	resultFieldType := &types.FieldType{}
@@ -335,7 +351,7 @@ func (c *caseWhenFunctionClass) getFunction(ctx BuildContext, args []Expression)
 		if args[i], err = wrapWithIsTrue(ctx, true, args[i], false); err != nil {
 			return nil, err
 		}
-		argTps = append(argTps, args[i].GetType(), fieldTp.Clone())
+		argTps = append(argTps, args[i].GetType(ctx.GetEvalCtx()), fieldTp.Clone())
 	}
 	if l%2 == 1 {
 		argTps = append(argTps, fieldTp.Clone())
@@ -372,12 +388,20 @@ func (c *caseWhenFunctionClass) getFunction(ctx BuildContext, args []Expression)
 	case types.ETJson:
 		sig = &builtinCaseWhenJSONSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_CaseWhenJson)
+	case types.ETVectorFloat32:
+		sig = &builtinCaseWhenVectorFloat32Sig{bf}
+		// sig.setPbCode(tipb.ScalarFuncSig_CaseWhenVectorFloat32)
+	default:
+		return nil, errors.Errorf("%s is not supported for CASE WHEN", tp)
 	}
 	return sig, nil
 }
 
 type builtinCaseWhenIntSig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinCaseWhenIntSig) Clone() builtinFunc {
@@ -414,6 +438,9 @@ func (b *builtinCaseWhenIntSig) evalInt(ctx EvalContext, row chunk.Row) (ret int
 
 type builtinCaseWhenRealSig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinCaseWhenRealSig) Clone() builtinFunc {
@@ -450,6 +477,9 @@ func (b *builtinCaseWhenRealSig) evalReal(ctx EvalContext, row chunk.Row) (ret f
 
 type builtinCaseWhenDecimalSig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinCaseWhenDecimalSig) Clone() builtinFunc {
@@ -486,6 +516,9 @@ func (b *builtinCaseWhenDecimalSig) evalDecimal(ctx EvalContext, row chunk.Row) 
 
 type builtinCaseWhenStringSig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinCaseWhenStringSig) Clone() builtinFunc {
@@ -522,6 +555,9 @@ func (b *builtinCaseWhenStringSig) evalString(ctx EvalContext, row chunk.Row) (r
 
 type builtinCaseWhenTimeSig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinCaseWhenTimeSig) Clone() builtinFunc {
@@ -558,6 +594,9 @@ func (b *builtinCaseWhenTimeSig) evalTime(ctx EvalContext, row chunk.Row) (ret t
 
 type builtinCaseWhenDurationSig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinCaseWhenDurationSig) Clone() builtinFunc {
@@ -594,6 +633,9 @@ func (b *builtinCaseWhenDurationSig) evalDuration(ctx EvalContext, row chunk.Row
 
 type builtinCaseWhenJSONSig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinCaseWhenJSONSig) Clone() builtinFunc {
@@ -626,6 +668,43 @@ func (b *builtinCaseWhenJSONSig) evalJSON(ctx EvalContext, row chunk.Row) (ret t
 	return ret, true, nil
 }
 
+type builtinCaseWhenVectorFloat32Sig struct {
+	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
+}
+
+func (b *builtinCaseWhenVectorFloat32Sig) Clone() builtinFunc {
+	newSig := &builtinCaseWhenVectorFloat32Sig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
+// evalVectorFloat32 evals a builtinCaseWhenVectorFloat32Sig.
+// See https://dev.mysql.com/doc/refman/5.7/en/control-flow-functions.html#operator_case
+func (b *builtinCaseWhenVectorFloat32Sig) evalVectorFloat32(ctx EvalContext, row chunk.Row) (ret types.VectorFloat32, isNull bool, err error) {
+	var condition int64
+	args, l := b.getArgs(), len(b.getArgs())
+	for i := 0; i < l-1; i += 2 {
+		condition, isNull, err = args[i].EvalInt(ctx, row)
+		if err != nil {
+			return
+		}
+		if isNull || condition == 0 {
+			continue
+		}
+		return args[i+1].EvalVectorFloat32(ctx, row)
+	}
+	// when clause(condition, result) -> args[i], args[i+1]; (i >= 0 && i+1 < l-1)
+	// else clause -> args[l-1]
+	// If case clause has else clause, l%2 == 1.
+	if l%2 == 1 {
+		return args[l-1].EvalVectorFloat32(ctx, row)
+	}
+	return ret, true, nil
+}
+
 type ifFunctionClass struct {
 	baseFunctionClass
 }
@@ -645,7 +724,7 @@ func (c *ifFunctionClass) getFunction(ctx BuildContext, args []Expression) (sig 
 		return nil, err
 	}
 
-	bf, err := newBaseBuiltinFuncWithFieldTypes(ctx, c.funcName, args, evalTps, args[0].GetType().Clone(), retTp.Clone(), retTp.Clone())
+	bf, err := newBaseBuiltinFuncWithFieldTypes(ctx, c.funcName, args, evalTps, args[0].GetType(ctx.GetEvalCtx()).Clone(), retTp.Clone(), retTp.Clone())
 	if err != nil {
 		return nil, err
 	}
@@ -673,12 +752,20 @@ func (c *ifFunctionClass) getFunction(ctx BuildContext, args []Expression) (sig 
 	case types.ETJson:
 		sig = &builtinIfJSONSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_IfJson)
+	case types.ETVectorFloat32:
+		sig = &builtinIfVectorFloat32Sig{bf}
+		// sig.setPbCode(tipb.ScalarFuncSig_IfVectorFloat32)
+	default:
+		return nil, errors.Errorf("%s is not supported for IF()", evalTps)
 	}
 	return sig, nil
 }
 
 type builtinIfIntSig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinIfIntSig) Clone() builtinFunc {
@@ -700,6 +787,9 @@ func (b *builtinIfIntSig) evalInt(ctx EvalContext, row chunk.Row) (val int64, is
 
 type builtinIfRealSig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinIfRealSig) Clone() builtinFunc {
@@ -721,6 +811,9 @@ func (b *builtinIfRealSig) evalReal(ctx EvalContext, row chunk.Row) (val float64
 
 type builtinIfDecimalSig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinIfDecimalSig) Clone() builtinFunc {
@@ -742,6 +835,9 @@ func (b *builtinIfDecimalSig) evalDecimal(ctx EvalContext, row chunk.Row) (val *
 
 type builtinIfStringSig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinIfStringSig) Clone() builtinFunc {
@@ -763,6 +859,9 @@ func (b *builtinIfStringSig) evalString(ctx EvalContext, row chunk.Row) (val str
 
 type builtinIfTimeSig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinIfTimeSig) Clone() builtinFunc {
@@ -784,6 +883,9 @@ func (b *builtinIfTimeSig) evalTime(ctx EvalContext, row chunk.Row) (ret types.T
 
 type builtinIfDurationSig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinIfDurationSig) Clone() builtinFunc {
@@ -805,6 +907,9 @@ func (b *builtinIfDurationSig) evalDuration(ctx EvalContext, row chunk.Row) (ret
 
 type builtinIfJSONSig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinIfJSONSig) Clone() builtinFunc {
@@ -824,6 +929,30 @@ func (b *builtinIfJSONSig) evalJSON(ctx EvalContext, row chunk.Row) (ret types.B
 	return b.args[2].EvalJSON(ctx, row)
 }
 
+type builtinIfVectorFloat32Sig struct {
+	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
+}
+
+func (b *builtinIfVectorFloat32Sig) Clone() builtinFunc {
+	newSig := &builtinIfVectorFloat32Sig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
+func (b *builtinIfVectorFloat32Sig) evalVectorFloat32(ctx EvalContext, row chunk.Row) (ret types.VectorFloat32, isNull bool, err error) {
+	arg0, isNull0, err := b.args[0].EvalInt(ctx, row)
+	if err != nil {
+		return ret, true, err
+	}
+	if !isNull0 && arg0 != 0 {
+		return b.args[1].EvalVectorFloat32(ctx, row)
+	}
+	return b.args[2].EvalVectorFloat32(ctx, row)
+}
+
 type ifNullFunctionClass struct {
 	baseFunctionClass
 }
@@ -832,7 +961,7 @@ func (c *ifNullFunctionClass) getFunction(ctx BuildContext, args []Expression) (
 	if err = c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	lhs, rhs := args[0].GetType(), args[1].GetType()
+	lhs, rhs := args[0].GetType(ctx.GetEvalCtx()), args[1].GetType(ctx.GetEvalCtx())
 	retTp, err := InferType4ControlFuncs(ctx, c.funcName, args[0], args[1])
 	if err != nil {
 		return nil, err
@@ -873,12 +1002,20 @@ func (c *ifNullFunctionClass) getFunction(ctx BuildContext, args []Expression) (
 	case types.ETJson:
 		sig = &builtinIfNullJSONSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_IfNullJson)
+	case types.ETVectorFloat32:
+		sig = &builtinIfNullVectorFloat32Sig{bf}
+		// sig.setPbCode(tipb.ScalarFuncSig_IfNullVectorFloat32)
+	default:
+		return nil, errors.Errorf("%s is not supported for IFNULL()", evalTps)
 	}
 	return sig, nil
 }
 
 type builtinIfNullIntSig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinIfNullIntSig) Clone() builtinFunc {
@@ -898,6 +1035,9 @@ func (b *builtinIfNullIntSig) evalInt(ctx EvalContext, row chunk.Row) (int64, bo
 
 type builtinIfNullRealSig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinIfNullRealSig) Clone() builtinFunc {
@@ -917,6 +1057,9 @@ func (b *builtinIfNullRealSig) evalReal(ctx EvalContext, row chunk.Row) (float64
 
 type builtinIfNullDecimalSig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinIfNullDecimalSig) Clone() builtinFunc {
@@ -936,6 +1079,9 @@ func (b *builtinIfNullDecimalSig) evalDecimal(ctx EvalContext, row chunk.Row) (*
 
 type builtinIfNullStringSig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinIfNullStringSig) Clone() builtinFunc {
@@ -955,6 +1101,9 @@ func (b *builtinIfNullStringSig) evalString(ctx EvalContext, row chunk.Row) (str
 
 type builtinIfNullTimeSig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinIfNullTimeSig) Clone() builtinFunc {
@@ -974,6 +1123,9 @@ func (b *builtinIfNullTimeSig) evalTime(ctx EvalContext, row chunk.Row) (types.T
 
 type builtinIfNullDurationSig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinIfNullDurationSig) Clone() builtinFunc {
@@ -993,6 +1145,9 @@ func (b *builtinIfNullDurationSig) evalDuration(ctx EvalContext, row chunk.Row) 
 
 type builtinIfNullJSONSig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinIfNullJSONSig) Clone() builtinFunc {
@@ -1007,5 +1162,27 @@ func (b *builtinIfNullJSONSig) evalJSON(ctx EvalContext, row chunk.Row) (types.B
 		return arg0, err != nil, err
 	}
 	arg1, isNull, err := b.args[1].EvalJSON(ctx, row)
+	return arg1, isNull || err != nil, err
+}
+
+type builtinIfNullVectorFloat32Sig struct {
+	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
+}
+
+func (b *builtinIfNullVectorFloat32Sig) Clone() builtinFunc {
+	newSig := &builtinIfNullVectorFloat32Sig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
+func (b *builtinIfNullVectorFloat32Sig) evalVectorFloat32(ctx EvalContext, row chunk.Row) (types.VectorFloat32, bool, error) {
+	arg0, isNull, err := b.args[0].EvalVectorFloat32(ctx, row)
+	if !isNull {
+		return arg0, err != nil, err
+	}
+	arg1, isNull, err := b.args[1].EvalVectorFloat32(ctx, row)
 	return arg1, isNull || err != nil, err
 }

@@ -21,6 +21,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/disttask/framework/handle"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/scheduler"
@@ -32,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/store/driver"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/stretchr/testify/require"
 	"go.opencensus.io/stats/view"
 	"go.uber.org/mock/gomock"
@@ -106,17 +109,19 @@ func BenchmarkSchedulerOverhead(b *testing.B) {
 }
 
 func prepareForBenchTest(b *testing.B) {
-	testkit.EnableFailPoint(b, "github.com/pingcap/tidb/pkg/domain/MockDisableDistTask", "return(true)")
+	testfailpoint.Enable(b, "github.com/pingcap/tidb/pkg/domain/MockDisableDistTask", "return(true)")
 
 	var d driver.TiKVDriver
 	var err error
 	store, err := d.Open("tikv://" + *testkit.WithTiKV)
 	require.NoError(b, err)
-
+	config.GetGlobalConfig().Store = config.StoreTypeTiKV
+	require.NoError(b, ddl.StartOwnerManager(context.Background(), store))
 	var dom *domain.Domain
 	dom, err = session.BootstrapSession(store)
 	defer func() {
 		dom.Close()
+		ddl.CloseOwnerManager()
 		err := store.Close()
 		require.NoError(b, err)
 		view.Stop()

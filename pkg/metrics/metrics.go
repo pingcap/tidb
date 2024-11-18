@@ -94,6 +94,7 @@ func InitMetrics() {
 	InitDistTaskMetrics()
 	InitResourceGroupMetrics()
 	InitGlobalSortMetrics()
+	InitInfoSchemaV2Metrics()
 	timermetrics.InitTimerMetrics()
 
 	PanicCounter = NewCounterVec(
@@ -150,6 +151,7 @@ func RegisterMetrics() {
 	prometheus.MustRegister(HandleJobHistogram)
 	prometheus.MustRegister(SyncLoadCounter)
 	prometheus.MustRegister(SyncLoadTimeoutCounter)
+	prometheus.MustRegister(SyncLoadDedupCounter)
 	prometheus.MustRegister(SyncLoadHistogram)
 	prometheus.MustRegister(ReadStatsHistogram)
 	prometheus.MustRegister(JobsGauge)
@@ -166,9 +168,12 @@ func RegisterMetrics() {
 	prometheus.MustRegister(PlanCacheMissCounter)
 	prometheus.MustRegister(PlanCacheInstanceMemoryUsage)
 	prometheus.MustRegister(PlanCacheInstancePlanNumCounter)
+	prometheus.MustRegister(PlanCacheProcessDuration)
 	prometheus.MustRegister(PseudoEstimation)
 	prometheus.MustRegister(PacketIOCounter)
 	prometheus.MustRegister(QueryDurationHistogram)
+	prometheus.MustRegister(QueryRPCHistogram)
+	prometheus.MustRegister(QueryProcessedKeyHistogram)
 	prometheus.MustRegister(QueryTotalCounter)
 	prometheus.MustRegister(AffectedRowsCounter)
 	prometheus.MustRegister(SchemaLeaseErrorCounter)
@@ -279,11 +284,17 @@ func RegisterMetrics() {
 	prometheus.MustRegister(GlobalSortUploadWorkerCount)
 	prometheus.MustRegister(AddIndexScanRate)
 
+	prometheus.MustRegister(InfoSchemaV2CacheCounter)
+	prometheus.MustRegister(InfoSchemaV2CacheMemUsage)
+	prometheus.MustRegister(InfoSchemaV2CacheMemLimit)
+	prometheus.MustRegister(TableByNameDuration)
+
 	prometheus.MustRegister(BindingCacheHitCounter)
 	prometheus.MustRegister(BindingCacheMissCounter)
 	prometheus.MustRegister(BindingCacheMemUsage)
 	prometheus.MustRegister(BindingCacheMemLimit)
 	prometheus.MustRegister(BindingCacheNumBindings)
+	prometheus.MustRegister(InternalSessions)
 
 	tikvmetrics.InitMetrics(TiDB, TiKVClient)
 	tikvmetrics.RegisterMetrics()

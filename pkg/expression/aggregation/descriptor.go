@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/planner/cascades/base"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/collate"
@@ -59,15 +60,47 @@ func NewAggFuncDescForWindowFunc(ctx expression.BuildContext, desc *WindowFuncDe
 	return &AggFuncDesc{baseFuncDesc: baseFuncDesc{desc.Name, desc.Args, desc.RetTp}, HasDistinct: hasDistinct}, nil
 }
 
-// String implements the fmt.Stringer interface.
-func (a *AggFuncDesc) String() string {
+// Hash64 returns the hash64 for the aggregation function signature.
+func (a *AggFuncDesc) Hash64(h base.Hasher) {
+	a.baseFuncDesc.Hash64(h)
+	h.HashInt(int(a.Mode))
+	h.HashBool(a.HasDistinct)
+	h.HashInt(len(a.OrderByItems))
+	for _, item := range a.OrderByItems {
+		item.Hash64(h)
+	}
+	// groupingID will be deprecated soon.
+}
+
+// Equals checks whether two aggregation function signatures are equal.
+func (a *AggFuncDesc) Equals(other any) bool {
+	if other == nil {
+		return false
+	}
+	otherAgg, ok := other.(*AggFuncDesc)
+	if !ok {
+		return false
+	}
+	if a.Mode != otherAgg.Mode || a.HasDistinct != otherAgg.HasDistinct || len(a.OrderByItems) != len(otherAgg.OrderByItems) {
+		return false
+	}
+	for i := range a.OrderByItems {
+		if !a.OrderByItems[i].Equals(otherAgg.OrderByItems[i]) {
+			return false
+		}
+	}
+	return a.baseFuncDesc.Equals(&otherAgg.baseFuncDesc)
+}
+
+// StringWithCtx returns the string representation within given ctx.
+func (a *AggFuncDesc) StringWithCtx(ctx expression.ParamValues, redact string) string {
 	buffer := bytes.NewBufferString(a.Name)
 	buffer.WriteString("(")
 	if a.HasDistinct {
 		buffer.WriteString("distinct ")
 	}
 	for i, arg := range a.Args {
-		buffer.WriteString(arg.String())
+		buffer.WriteString(arg.StringWithCtx(ctx, redact))
 		if i+1 != len(a.Args) {
 			buffer.WriteString(", ")
 		}
@@ -76,7 +109,7 @@ func (a *AggFuncDesc) String() string {
 		buffer.WriteString(" order by ")
 	}
 	for i, arg := range a.OrderByItems {
-		buffer.WriteString(arg.String())
+		buffer.WriteString(arg.StringWithCtx(ctx, redact))
 		if i+1 != len(a.OrderByItems) {
 			buffer.WriteString(", ")
 		}
@@ -226,9 +259,9 @@ func (a *AggFuncDesc) GetAggFunc(ctx expression.AggFuncBuildContext) Aggregation
 	case ast.AggFuncGroupConcat:
 		return &concatFunction{aggFunction: aggFunc, maxLen: ctx.GetGroupConcatMaxLen()}
 	case ast.AggFuncMax:
-		return &maxMinFunction{aggFunction: aggFunc, isMax: true, ctor: collate.GetCollator(a.Args[0].GetType().GetCollate())}
+		return &maxMinFunction{aggFunction: aggFunc, isMax: true, ctor: collate.GetCollator(a.Args[0].GetType(ctx.GetEvalCtx()).GetCollate())}
 	case ast.AggFuncMin:
-		return &maxMinFunction{aggFunction: aggFunc, isMax: false, ctor: collate.GetCollator(a.Args[0].GetType().GetCollate())}
+		return &maxMinFunction{aggFunction: aggFunc, isMax: false, ctor: collate.GetCollator(a.Args[0].GetType(ctx.GetEvalCtx()).GetCollate())}
 	case ast.AggFuncFirstRow:
 		return &firstRowFunction{aggFunction: aggFunc}
 	case ast.AggFuncBitOr:

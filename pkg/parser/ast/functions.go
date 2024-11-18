@@ -348,6 +348,7 @@ const (
 	JSONMergePreserve = "json_merge_preserve"
 	JSONPretty        = "json_pretty"
 	JSONQuote         = "json_quote"
+	JSONSchemaValid   = "json_schema_valid"
 	JSONSearch        = "json_search"
 	JSONStorageFree   = "json_storage_free"
 	JSONStorageSize   = "json_storage_size"
@@ -355,8 +356,21 @@ const (
 	JSONKeys          = "json_keys"
 	JSONLength        = "json_length"
 
+	// vector functions (tidb extension)
+	VecDims                 = "vec_dims"
+	VecL1Distance           = "vec_l1_distance"
+	VecL2Distance           = "vec_l2_distance"
+	VecNegativeInnerProduct = "vec_negative_inner_product"
+	VecCosineDistance       = "vec_cosine_distance"
+	VecL2Norm               = "vec_l2_norm"
+	VecFromText             = "vec_from_text"
+	VecAsText               = "vec_as_text"
+
 	// TiDB internal function.
 	TiDBDecodeKey       = "tidb_decode_key"
+	TiDBMVCCInfo        = "tidb_mvcc_info"
+	TiDBEncodeRecordKey = "tidb_encode_record_key"
+	TiDBEncodeIndexKey  = "tidb_encode_index_key"
 	TiDBDecodeBase64Key = "tidb_decode_base64_key"
 
 	// MVCC information fetching function.

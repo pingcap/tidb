@@ -15,6 +15,7 @@
 package expression
 
 import (
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/types"
@@ -116,7 +117,7 @@ func VectorizedExecute(ctx EvalContext, exprs []Expression, iterator *chunk.Iter
 }
 
 func evalOneVec(ctx EvalContext, expr Expression, input *chunk.Chunk, output *chunk.Chunk, colIdx int) error {
-	ft := expr.GetType()
+	ft := expr.GetType(ctx)
 	result := output.Column(colIdx)
 	switch ft.EvalType() {
 	case types.ETInt:
@@ -168,6 +169,8 @@ func evalOneVec(ctx EvalContext, expr Expression, input *chunk.Chunk, output *ch
 		return expr.VecEvalDuration(ctx, input, result)
 	case types.ETJson:
 		return expr.VecEvalJSON(ctx, input, result)
+	case types.ETVectorFloat32:
+		return expr.VecEvalVectorFloat32(ctx, input, result)
 	case types.ETString:
 		if err := expr.VecEvalString(ctx, input, result); err != nil {
 			return err
@@ -213,12 +216,14 @@ func evalOneVec(ctx EvalContext, expr Expression, input *chunk.Chunk, output *ch
 			}
 			output.SetCol(colIdx, buf)
 		}
+	default:
+		return errors.Errorf("unsupported type %s during evaluation", ft.EvalType())
 	}
 	return nil
 }
 
 func evalOneColumn(ctx EvalContext, expr Expression, iterator *chunk.Iterator4Chunk, output *chunk.Chunk, colID int) (err error) {
-	switch fieldType, evalType := expr.GetType(), expr.GetType().EvalType(); evalType {
+	switch fieldType, evalType := expr.GetType(ctx), expr.GetType(ctx).EvalType(); evalType {
 	case types.ETInt:
 		for row := iterator.Begin(); err == nil && row != iterator.End(); row = iterator.Next() {
 			err = executeToInt(ctx, expr, fieldType, row, output, colID)
@@ -243,16 +248,22 @@ func evalOneColumn(ctx EvalContext, expr Expression, iterator *chunk.Iterator4Ch
 		for row := iterator.Begin(); err == nil && row != iterator.End(); row = iterator.Next() {
 			err = executeToJSON(ctx, expr, fieldType, row, output, colID)
 		}
+	case types.ETVectorFloat32:
+		for row := iterator.Begin(); err == nil && row != iterator.End(); row = iterator.Next() {
+			err = executeToVectorFloat32(ctx, expr, fieldType, row, output, colID)
+		}
 	case types.ETString:
 		for row := iterator.Begin(); err == nil && row != iterator.End(); row = iterator.Next() {
 			err = executeToString(ctx, expr, fieldType, row, output, colID)
 		}
+	default:
+		return errors.Errorf("unsupported type %s during evaluation", evalType)
 	}
 	return err
 }
 
 func evalOneCell(ctx EvalContext, expr Expression, row chunk.Row, output *chunk.Chunk, colID int) (err error) {
-	switch fieldType, evalType := expr.GetType(), expr.GetType().EvalType(); evalType {
+	switch fieldType, evalType := expr.GetType(ctx), expr.GetType(ctx).EvalType(); evalType {
 	case types.ETInt:
 		err = executeToInt(ctx, expr, fieldType, row, output, colID)
 	case types.ETReal:
@@ -265,8 +276,12 @@ func evalOneCell(ctx EvalContext, expr Expression, row chunk.Row, output *chunk.
 		err = executeToDuration(ctx, expr, fieldType, row, output, colID)
 	case types.ETJson:
 		err = executeToJSON(ctx, expr, fieldType, row, output, colID)
+	case types.ETVectorFloat32:
+		err = executeToVectorFloat32(ctx, expr, fieldType, row, output, colID)
 	case types.ETString:
 		err = executeToString(ctx, expr, fieldType, row, output, colID)
+	default:
+		return errors.Errorf("unsupported type %s during evaluation", evalType)
 	}
 	return err
 }
@@ -366,6 +381,19 @@ func executeToJSON(ctx EvalContext, expr Expression, fieldType *types.FieldType,
 		output.AppendNull(colID)
 	} else {
 		output.AppendJSON(colID, res)
+	}
+	return nil
+}
+
+func executeToVectorFloat32(ctx EvalContext, expr Expression, fieldType *types.FieldType, row chunk.Row, output *chunk.Chunk, colID int) error {
+	res, isNull, err := expr.EvalVectorFloat32(ctx, row)
+	if err != nil {
+		return err
+	}
+	if isNull {
+		output.AppendNull(colID)
+	} else {
+		output.AppendVectorFloat32(colID, res)
 	}
 	return nil
 }
@@ -472,7 +500,7 @@ func rowBasedFilter(ctx EvalContext, filters []Expression, iterator *chunk.Itera
 	)
 	for _, filter := range filters {
 		isIntType := true
-		if filter.GetType().EvalType() != types.ETInt {
+		if filter.GetType(ctx).EvalType() != types.ETInt {
 			isIntType = false
 		}
 		for row := iterator.Begin(); row != iterator.End(); row = iterator.Next() {

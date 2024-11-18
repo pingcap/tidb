@@ -19,6 +19,7 @@ import (
 
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/planner/cascades/base"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/mock"
@@ -98,9 +99,6 @@ func TestScalarFunction(t *testing.T) {
 	}
 
 	sf := newFunctionWithMockCtx(ast.LT, a, NewOne())
-	res, err := sf.MarshalJSON()
-	require.NoError(t, err)
-	require.EqualValues(t, []byte{0x22, 0x6c, 0x74, 0x28, 0x43, 0x6f, 0x6c, 0x75, 0x6d, 0x6e, 0x23, 0x31, 0x2c, 0x20, 0x31, 0x29, 0x22}, res)
 	require.False(t, sf.IsCorrelated())
 	require.Equal(t, ConstNone, sf.ConstLevel())
 	require.True(t, sf.Decorrelate(nil).Equal(ctx, sf))
@@ -130,7 +128,9 @@ func TestIssue23309(t *testing.T) {
 	v, err := sf.GetArgs()[1].Eval(mock.NewContext(), chunk.Row{})
 	require.NoError(t, err)
 	require.True(t, v.IsNull())
-	require.False(t, mysql.HasNotNullFlag(sf.GetArgs()[1].GetType().GetFlag()))
+
+	ctx := createContext(t)
+	require.False(t, mysql.HasNotNullFlag(sf.GetArgs()[1].GetType(ctx).GetFlag()))
 }
 
 func TestScalarFuncs2Exprs(t *testing.T) {
@@ -147,4 +147,41 @@ func TestScalarFuncs2Exprs(t *testing.T) {
 	for i := range exprs {
 		require.True(t, exprs[i].Equal(ctx, funcs[i]))
 	}
+}
+
+func TestScalarFunctionHash64Equals(t *testing.T) {
+	a := &Column{
+		UniqueID: 1,
+		RetType:  types.NewFieldType(mysql.TypeDouble),
+	}
+	sf0, _ := newFunctionWithMockCtx(ast.LT, a, NewZero()).(*ScalarFunction)
+	sf1, _ := newFunctionWithMockCtx(ast.LT, a, NewZero()).(*ScalarFunction)
+	hasher1 := base.NewHashEqualer()
+	hasher2 := base.NewHashEqualer()
+	sf0.Hash64(hasher1)
+	sf1.Hash64(hasher2)
+	require.Equal(t, hasher1.Sum64(), hasher2.Sum64())
+	require.True(t, sf0.Equals(sf1))
+
+	// change the func name
+	sf2, _ := newFunctionWithMockCtx(ast.GT, a, NewZero()).(*ScalarFunction)
+	hasher2.Reset()
+	sf2.Hash64(hasher2)
+	require.NotEqual(t, hasher1.Sum64(), hasher2.Sum64())
+	require.False(t, sf0.Equals(sf2))
+
+	// change the args
+	sf3, _ := newFunctionWithMockCtx(ast.LT, a, NewOne()).(*ScalarFunction)
+	hasher2.Reset()
+	sf3.Hash64(hasher2)
+	require.NotEqual(t, hasher1.Sum64(), hasher2.Sum64())
+	require.False(t, sf0.Equals(sf3))
+
+	// change the ret type
+	sf4, _ := newFunctionWithMockCtx(ast.LT, a, NewZero()).(*ScalarFunction)
+	sf4.RetType = types.NewFieldType(mysql.TypeLong)
+	hasher2.Reset()
+	sf4.Hash64(hasher2)
+	require.NotEqual(t, hasher1.Sum64(), hasher2.Sum64())
+	require.False(t, sf0.Equals(sf4))
 }

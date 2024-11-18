@@ -20,7 +20,6 @@ go_test(
     shard_count = 5,
     deps = [
         "@com_github_stretchr_testify//require",
-        "@org_golang_x_exp//maps",
         "@org_golang_x_tools//container/intsets",
     ],
 )

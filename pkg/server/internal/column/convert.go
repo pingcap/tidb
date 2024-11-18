@@ -15,14 +15,14 @@
 package column
 
 import (
-	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/types"
 )
 
 // ConvertColumnInfo converts `*ast.ResultField` to `*Info`
-func ConvertColumnInfo(fld *ast.ResultField) (ci *Info) {
+func ConvertColumnInfo(fld *resolve.ResultField) (ci *Info) {
 	ci = &Info{
 		Name:         fld.ColumnAsName.O,
 		OrgName:      fld.Column.Name.O,

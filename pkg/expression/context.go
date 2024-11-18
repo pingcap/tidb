@@ -18,33 +18,36 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/pkg/errctx"
-	"github.com/pingcap/tidb/pkg/expression/context"
+	"github.com/pingcap/tidb/pkg/expression/exprctx"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/types"
 	contextutil "github.com/pingcap/tidb/pkg/util/context"
 	"github.com/pingcap/tidb/pkg/util/intest"
 )
 
+// ParamValues is used to store the values of params in context
+type ParamValues = exprctx.ParamValues
+
 // EvalContext is used to evaluate an expression
-type EvalContext = context.EvalContext
+type EvalContext = exprctx.EvalContext
 
 // BuildContext is used to build an expression
-type BuildContext = context.BuildContext
+type BuildContext = exprctx.BuildContext
 
 // AggFuncBuildContext is used to build an aggregation expression
-type AggFuncBuildContext = context.ExprContext
+type AggFuncBuildContext = exprctx.ExprContext
 
 // OptionalEvalPropKey is an alias of context.OptionalEvalPropKey
-type OptionalEvalPropKey = context.OptionalEvalPropKey
+type OptionalEvalPropKey = exprctx.OptionalEvalPropKey
 
 // OptionalEvalPropProvider is an alias of context.OptionalEvalPropProvider
-type OptionalEvalPropProvider = context.OptionalEvalPropProvider
+type OptionalEvalPropProvider = exprctx.OptionalEvalPropProvider
 
 // OptionalEvalPropKeySet is an alias of context.OptionalEvalPropKeySet
-type OptionalEvalPropKeySet = context.OptionalEvalPropKeySet
+type OptionalEvalPropKeySet = exprctx.OptionalEvalPropKeySet
 
 // OptionalEvalPropDesc is an alias of context.OptionalEvalPropDesc
-type OptionalEvalPropDesc = context.OptionalEvalPropDesc
+type OptionalEvalPropDesc = exprctx.OptionalEvalPropDesc
 
 func sqlMode(ctx EvalContext) mysql.SQLMode {
 	return ctx.SQLMode()
@@ -112,4 +115,11 @@ func (ctx *assertionEvalContext) GetOptionalPropProvider(key OptionalEvalPropKey
 		key, ctx.fn,
 	)
 	return ctx.EvalContext.GetOptionalPropProvider(key)
+}
+
+// StringerWithCtx is the interface for expressions that can be stringified with context.
+type StringerWithCtx interface {
+	// StringWithCtx returns the string representation of the expression with context.
+	// NOTE: any implementation of `StringWithCtx` should not panic if the context is nil.
+	StringWithCtx(ctx ParamValues, redact string) string
 }

@@ -16,19 +16,22 @@ package analyze
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/testkit/analyzehelper"
 	"github.com/stretchr/testify/require"
 )
 
 // nolint:unused
 func checkForGlobalStatsWithOpts(t *testing.T, dom *domain.Domain, db, tt, pp string, topn, buckets int) {
-	tbl, err := dom.InfoSchema().TableByName(model.NewCIStr(db), model.NewCIStr(tt))
+	tbl, err := dom.InfoSchema().TableByName(context.Background(), model.NewCIStr(db), model.NewCIStr(tt))
 	require.NoError(t, err)
 
 	tblInfo := tbl.Meta()
@@ -44,9 +47,9 @@ func checkForGlobalStatsWithOpts(t *testing.T, dom *domain.Domain, db, tt, pp st
 	require.NoError(t, err)
 
 	delta := buckets/2 + 10
-	for _, idxStats := range tblStats.Indices {
+	tblStats.ForEachIndexImmutable(func(_ int64, idxStats *statistics.Index) bool {
 		if len(idxStats.Buckets) == 0 {
-			continue // it's not loaded
+			return false // it's not loaded
 		}
 		numTopN := idxStats.TopN.Num()
 		numBuckets := len(idxStats.Buckets)
@@ -55,17 +58,19 @@ func checkForGlobalStatsWithOpts(t *testing.T, dom *domain.Domain, db, tt, pp st
 		require.Equal(t, topn, numTopN)
 		require.GreaterOrEqual(t, numBuckets, buckets-delta)
 		require.LessOrEqual(t, numBuckets, buckets+delta)
-	}
-	for _, colStats := range tblStats.Columns {
+		return false
+	})
+	tblStats.ForEachColumnImmutable(func(_ int64, colStats *statistics.Column) bool {
 		if len(colStats.Buckets) == 0 {
-			continue // it's not loaded
+			return false // it's not loaded
 		}
 		numTopN := colStats.TopN.Num()
 		numBuckets := len(colStats.Buckets)
 		require.Equal(t, topn, numTopN)
 		require.GreaterOrEqual(t, numBuckets, buckets-delta)
 		require.LessOrEqual(t, numBuckets, buckets+delta)
-	}
+		return false
+	})
 }
 
 // nolint:unused
@@ -127,6 +132,7 @@ func TestAnalyzeVirtualCol(t *testing.T) {
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int, b int generated always as (-a) virtual, c int generated always as (-a) stored, index (c))")
 	tk.MustExec("insert into t(a) values(2),(1),(1),(3),(NULL)")
+	analyzehelper.TriggerPredicateColumnsCollection(t, tk, store, "t", "a", "b", "c")
 	tk.MustExec("set @@tidb_analyze_version = 2")
 	tk.MustExec("analyze table t")
 	require.Len(t, tk.MustQuery("show stats_histograms where table_name ='t'").Rows(), 3)
@@ -241,6 +247,7 @@ func TestFMSWithAnalyzePartition(t *testing.T) {
 	tk.MustQuery("show warnings").Sort().Check(testkit.Rows(
 		"Note 1105 Analyze use auto adjusted sample rate 1.000000 for table test.t's partition p0, reason to use this rate is \"use min(1, 110000/10000) as the sample-rate=1\"",
 		"Warning 1105 Ignore columns and options when analyze partition in dynamic mode",
+		"Warning 1105 No predicate column has been collected yet for table test.t, so only indexes and the columns composing the indexes will be analyzed",
 	))
 	tk.MustQuery("select count(*) from mysql.stats_fm_sketch").Check(testkit.Rows("2"))
 }

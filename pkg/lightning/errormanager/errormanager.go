@@ -119,7 +119,21 @@ const (
 		);
 	`
 
-	createConflictView = `
+	createConflictV1View = `
+    	CREATE OR REPLACE VIEW %s.` + ConflictViewName + `
+			AS SELECT 0 AS is_precheck_conflict, task_id, create_time, table_name, index_name, key_data, row_data,
+			raw_key, raw_value, raw_handle, raw_row, kv_type, NULL AS path, NULL AS offset, NULL AS error, NULL AS row_id
+			FROM %s.` + ConflictErrorTableName + `;
+	`
+
+	createConflictV2View = `
+    	CREATE OR REPLACE VIEW %s.` + ConflictViewName + `
+			AS SELECT 1 AS is_precheck_conflict, task_id, create_time, table_name, NULL AS index_name, NULL AS key_data,
+			row_data, NULL AS raw_key, NULL AS raw_value, NULL AS raw_handle, NULL AS raw_row, NULL AS kv_type, path,
+			offset, error, row_id FROM %s.` + DupRecordTableName + `;
+	`
+
+	createConflictV1V2View = `
     	CREATE OR REPLACE VIEW %s.` + ConflictViewName + `
 			AS SELECT 0 AS is_precheck_conflict, task_id, create_time, table_name, index_name, key_data, row_data,
 			raw_key, raw_value, raw_handle, raw_row, kv_type, NULL AS path, NULL AS offset, NULL AS error, NULL AS row_id
@@ -285,9 +299,18 @@ func (em *ErrorManager) Init(ctx context.Context) error {
 		}
 	}
 
-	// TODO: return VIEW to users regardless of the lightning configuration
 	if em.conflictV1Enabled && em.conflictV2Enabled {
-		err := exec.Exec(ctx, "create conflict view", strings.TrimSpace(common.SprintfWithIdentifiers(createConflictView, em.schema, em.schema, em.schema)))
+		err := exec.Exec(ctx, "create conflict view", strings.TrimSpace(common.SprintfWithIdentifiers(createConflictV1V2View, em.schema, em.schema, em.schema)))
+		if err != nil {
+			return err
+		}
+	} else if em.conflictV1Enabled {
+		err := exec.Exec(ctx, "create conflict view", strings.TrimSpace(common.SprintfWithIdentifiers(createConflictV1View, em.schema, em.schema)))
+		if err != nil {
+			return err
+		}
+	} else if em.conflictV2Enabled {
+		err := exec.Exec(ctx, "create conflict view", strings.TrimSpace(common.SprintfWithIdentifiers(createConflictV2View, em.schema, em.schema)))
 		if err != nil {
 			return err
 		}
@@ -588,7 +611,7 @@ func (em *ErrorManager) ReplaceConflictKeys(
 					if err != nil {
 						return errors.Trace(err)
 					}
-					decodedData, _, err := tables.DecodeRawRowData(encoder.SessionCtx,
+					decodedData, _, err := tables.DecodeRawRowData(encoder.SessionCtx.GetExprCtx(),
 						tbl.Meta(), overwrittenHandle, tbl.Cols(), overwritten)
 					if err != nil {
 						return errors.Trace(err)
@@ -597,7 +620,7 @@ func (em *ErrorManager) ReplaceConflictKeys(
 						// for nonclustered PK, need to append handle to decodedData for AddRecord
 						decodedData = append(decodedData, types.NewIntDatum(overwrittenHandle.IntValue()))
 					}
-					_, err = encoder.Table.AddRecord(encoder.SessionCtx.GetTableCtx(), decodedData)
+					_, err = encoder.AddRecord(decodedData)
 					if err != nil {
 						return errors.Trace(err)
 					}
@@ -768,7 +791,7 @@ func (em *ErrorManager) ReplaceConflictKeys(
 							if err != nil {
 								return errors.Trace(err)
 							}
-							decodedData, _, err := tables.DecodeRawRowData(encoder.SessionCtx,
+							decodedData, _, err := tables.DecodeRawRowData(encoder.SessionCtx.GetExprCtx(),
 								tbl.Meta(), handle, tbl.Cols(), latestValue)
 							if err != nil {
 								return errors.Trace(err)
@@ -777,7 +800,7 @@ func (em *ErrorManager) ReplaceConflictKeys(
 								// for nonclustered PK, need to append handle to decodedData for AddRecord
 								decodedData = append(decodedData, types.NewIntDatum(handle.IntValue()))
 							}
-							_, err = encoder.Table.AddRecord(encoder.SessionCtx.GetTableCtx(), decodedData)
+							_, err = encoder.AddRecord(decodedData)
 							if err != nil {
 								return errors.Trace(err)
 							}
@@ -797,7 +820,7 @@ func (em *ErrorManager) ReplaceConflictKeys(
 					if err != nil {
 						return errors.Trace(err)
 					}
-					decodedData, _, err := tables.DecodeRawRowData(encoder.SessionCtx,
+					decodedData, _, err := tables.DecodeRawRowData(encoder.SessionCtx.GetExprCtx(),
 						tbl.Meta(), handle, tbl.Cols(), rawValue)
 					if err != nil {
 						return errors.Trace(err)
@@ -806,7 +829,7 @@ func (em *ErrorManager) ReplaceConflictKeys(
 						// for nonclustered PK, need to append handle to decodedData for AddRecord
 						decodedData = append(decodedData, types.NewIntDatum(handle.IntValue()))
 					}
-					_, err = encoder.Table.AddRecord(encoder.SessionCtx.GetTableCtx(), decodedData)
+					_, err = encoder.AddRecord(decodedData)
 					if err != nil {
 						return errors.Trace(err)
 					}
@@ -1062,14 +1085,8 @@ func (em *ErrorManager) LogErrorDetails() {
 		em.logger.Warn(fmtErrMsg(errCnt, "data charset", ""))
 	}
 	errCnt := em.conflictError()
-	if errCnt > 0 {
-		if em.conflictV1Enabled && em.conflictV2Enabled {
-			em.logger.Warn(fmtErrMsg(errCnt, "conflict", ConflictViewName))
-		} else if em.conflictV1Enabled {
-			em.logger.Warn(fmtErrMsg(errCnt, "conflict", ConflictErrorTableName))
-		} else if em.conflictV2Enabled {
-			em.logger.Warn(fmtErrMsg(errCnt, "conflict", DupRecordTableName))
-		}
+	if errCnt > 0 && (em.conflictV1Enabled || em.conflictV2Enabled) {
+		em.logger.Warn(fmtErrMsg(errCnt, "conflict", ConflictViewName))
 	}
 }
 
@@ -1111,12 +1128,8 @@ func (em *ErrorManager) Output() string {
 	}
 	if errCnt := em.conflictError(); errCnt > 0 {
 		count++
-		if em.conflictV1Enabled && em.conflictV2Enabled {
+		if em.conflictV1Enabled || em.conflictV2Enabled {
 			t.AppendRow(table.Row{count, "Unique Key Conflict", errCnt, em.fmtTableName(ConflictViewName)})
-		} else if em.conflictV1Enabled {
-			t.AppendRow(table.Row{count, "Unique Key Conflict", errCnt, em.fmtTableName(ConflictErrorTableName)})
-		} else if em.conflictV2Enabled {
-			t.AppendRow(table.Row{count, "Unique Key Conflict", errCnt, em.fmtTableName(DupRecordTableName)})
 		}
 	}
 

@@ -109,9 +109,9 @@ create table t1 (id int key, leader int, leader2 int, index(leader), index(leade
 show create table t1;
 Table	Create Table
 t1	CREATE TABLE `t1` (
-  `id` int(11) NOT NULL,
-  `leader` int(11) DEFAULT NULL,
-  `leader2` int(11) DEFAULT NULL,
+  `id` int NOT NULL,
+  `leader` int DEFAULT NULL,
+  `leader2` int DEFAULT NULL,
   PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */,
   KEY `leader` (`leader`),
   KEY `leader2` (`leader2`),
@@ -122,9 +122,9 @@ alter table t1 add constraint fk2 foreign key (leader2) references t1 (id);
 show create table t1;
 Table	Create Table
 t1	CREATE TABLE `t1` (
-  `id` int(11) NOT NULL,
-  `leader` int(11) DEFAULT NULL,
-  `leader2` int(11) DEFAULT NULL,
+  `id` int NOT NULL,
+  `leader` int DEFAULT NULL,
+  `leader2` int DEFAULT NULL,
   PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */,
   KEY `leader` (`leader`),
   KEY `leader2` (`leader2`),
@@ -416,7 +416,7 @@ select sum(id) from t1;
 sum(id)
 32896
 SET GLOBAL tidb_mem_oom_action='CANCEL';
-set @@tidb_mem_quota_query=40960;
+set @@tidb_mem_quota_query=81920;
 update t1 set id=id+100000 where id=1;
 Error 8175 (HY000): Your query has been cancelled due to exceeding the allowed memory limit for a single SQL query. Please try narrowing your query scope or increase the tidb_mem_quota_query limit and try again.[conn=<num>]
 select id,pid from t1 where id = 1;
@@ -467,8 +467,8 @@ alter table orders modify user_id int null;
 show create table orders;
 Table	Create Table
 orders	CREATE TABLE `orders` (
-  `id` int(11) NOT NULL AUTO_INCREMENT,
-  `user_id` int(11) DEFAULT NULL,
+  `id` int NOT NULL AUTO_INCREMENT,
+  `user_id` int DEFAULT NULL,
   `doc` json DEFAULT NULL,
   PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */,
   KEY `fk_user_id` (`user_id`),

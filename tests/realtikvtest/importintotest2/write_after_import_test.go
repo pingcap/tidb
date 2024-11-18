@@ -15,6 +15,7 @@
 package importintotest
 
 import (
+	"context"
 	"fmt"
 	"slices"
 
@@ -209,6 +210,12 @@ func (s *mockGCSSuite) testWriteAfterImport(importSQL string, sourceType importe
 	})
 	for i, c := range cases {
 		s.Run(fmt.Sprintf("case-%d", i), func() {
+			if c.autoIDCache1 {
+				// after we add autoid.CustomAutoIncCacheOption(1), single point
+				// allocator is used, those tests will report "autoid service leader not found"
+				// as it lacks the necessary setup for real-tikv-test.
+				s.T().Skip("auto_id_cache=1 test is not supported in real-tikv-test now")
+			}
 			fmt.Println("current case ", c.createTableSQL)
 			s.tk.MustExec("drop table if exists t;")
 			s.tk.MustExec(c.createTableSQL)
@@ -223,7 +230,7 @@ func (s *mockGCSSuite) testWriteAfterImport(importSQL string, sourceType importe
 			is := s.tk.Session().GetDomainInfoSchema().(infoschema.InfoSchema)
 			dbInfo, ok := is.SchemaByName(model.NewCIStr("write_after_import"))
 			s.True(ok)
-			tableObj, err := is.TableByName(model.NewCIStr("write_after_import"), model.NewCIStr("t"))
+			tableObj, err := is.TableByName(context.Background(), model.NewCIStr("write_after_import"), model.NewCIStr("t"))
 			s.NoError(err)
 			if common.TableHasAutoID(tableObj.Meta()) {
 				allocators, err := common.GetGlobalAutoIDAlloc(domain.GetDomain(s.tk.Session()), dbInfo.ID, tableObj.Meta())

@@ -16,6 +16,7 @@ go_test(
         "//pkg/infoschema",
         "//pkg/meta",
         "//pkg/meta/autoid",
+        "//pkg/meta/model",
         "//pkg/parser/auth",
         "//pkg/parser/model",
         "//pkg/sessiontxn",

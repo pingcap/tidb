@@ -206,6 +206,18 @@ func TestEscapeGlobQuestionMark(t *testing.T) {
 	}
 }
 
+func TestMemoizeStr(t *testing.T) {
+	cnt := 0
+	slowStringFn := func() string {
+		cnt++
+		return "slow"
+	}
+	stringer := MemoizeStr(slowStringFn)
+	require.Equal(t, "slow", stringer.String())
+	require.Equal(t, "slow", stringer.String())
+	require.Equal(t, 1, cnt)
+}
+
 func BenchmarkDoMatch(b *testing.B) {
 	escape := byte('\\')
 	tbl := []struct {
@@ -221,7 +233,7 @@ func BenchmarkDoMatch(b *testing.B) {
 		b.Run(v.pattern, func(b *testing.B) {
 			patChars, patTypes := CompilePattern(v.pattern, escape)
 			b.ResetTimer()
-			for i := 0; i < b.N; i++ {
+			for range b.N {
 				match := DoMatch(v.target, patChars, patTypes)
 				if !match {
 					b.Fatal("Match expected.")
@@ -244,7 +256,7 @@ func BenchmarkDoMatchNegative(b *testing.B) {
 		b.Run(v.pattern, func(b *testing.B) {
 			patChars, patTypes := CompilePattern(v.pattern, escape)
 			b.ResetTimer()
-			for i := 0; i < b.N; i++ {
+			for range b.N {
 				match := DoMatch(v.target, patChars, patTypes)
 				if match {
 					b.Fatal("Unmatch expected.")

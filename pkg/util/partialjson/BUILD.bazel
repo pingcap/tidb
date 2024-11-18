@@ -1,0 +1,31 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "fastjson",
+    srcs = ["extract.go"],
+    importpath = "github.com/pingcap/tidb/pkg/util/fastjson",
+    visibility = ["//visibility:public"],
+)
+
+go_test(
+    name = "fastjson_test",
+    timeout = "short",
+    srcs = ["extract_test.go"],
+    embed = [":fastjson"],
+    flaky = True,
+    deps = ["@com_github_stretchr_testify//require"],
+)
+
+go_library(
+    name = "partialjson",
+    srcs = ["extract.go"],
+    importpath = "github.com/pingcap/tidb/pkg/util/partialjson",
+    visibility = ["//visibility:public"],
+)
+
+go_test(
+    name = "partialjson_test",
+    srcs = ["extract_test.go"],
+    embed = [":partialjson"],
+    deps = ["@com_github_stretchr_testify//require"],
+)

@@ -19,7 +19,7 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/types"
@@ -40,7 +40,7 @@ func BenchmarkChecksum(b *testing.B) {
 		{&model.ColumnInfo{ID: 3, FieldType: *tp3}, &datums[2]},
 	}
 	row := rowcodec.RowData{Cols: cols}
-	for i := 0; i < b.N; i++ {
+	for range b.N {
 		_, err := row.Checksum(time.Local)
 		if err != nil {
 			b.Fatal(err)
@@ -55,9 +55,9 @@ func BenchmarkEncode(b *testing.B) {
 	var buf []byte
 	colIDs := []int64{1, 2, 3}
 	var err error
-	for i := 0; i < b.N; i++ {
+	for range b.N {
 		buf = buf[:0]
-		buf, err = xb.Encode(nil, colIDs, oldRow, buf)
+		buf, err = xb.Encode(nil, colIDs, oldRow, nil, buf)
 		if err != nil {
 			b.Fatal(err)
 		}
@@ -73,7 +73,7 @@ func BenchmarkEncodeFromOldRow(b *testing.B) {
 	}
 	var xb rowcodec.Encoder
 	var buf []byte
-	for i := 0; i < b.N; i++ {
+	for range b.N {
 		buf, err = rowcodec.EncodeFromOldRow(&xb, nil, oldRowData, buf)
 		if err != nil {
 			b.Fatal(err)
@@ -91,7 +91,7 @@ func BenchmarkDecode(b *testing.B) {
 		types.NewFieldType(mysql.TypeDouble),
 	}
 	var xb rowcodec.Encoder
-	xRowData, err := xb.Encode(nil, colIDs, oldRow, nil)
+	xRowData, err := xb.Encode(nil, colIDs, oldRow, nil, nil)
 	if err != nil {
 		b.Fatal(err)
 	}
@@ -104,7 +104,7 @@ func BenchmarkDecode(b *testing.B) {
 	}
 	decoder := rowcodec.NewChunkDecoder(cols, []int64{-1}, nil, time.Local)
 	chk := chunk.NewChunkWithCapacity(tps, 1)
-	for i := 0; i < b.N; i++ {
+	for range b.N {
 		chk.Reset()
 		err = decoder.DecodeToChunk(xRowData, kv.IntHandle(1), chk)
 		if err != nil {

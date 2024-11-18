@@ -78,6 +78,7 @@ const (
 	DefaultRegionSplitBatchSize       = 4096
 	defaultLogicalImportBatchSize     = 96 * units.KiB
 	defaultLogicalImportBatchRows     = 65536
+	defaultLogicalImportPrepStmt      = false
 
 	// defaultMetaSchemaName is the default database name used to store lightning metadata
 	defaultMetaSchemaName           = "lightning_metadata"
@@ -104,7 +105,7 @@ const (
 )
 
 var (
-	supportedStorageTypes = []string{"file", "local", "s3", "noop", "gcs", "gs"}
+	supportedStorageTypes = []string{"file", "local", "s3", "noop", "gcs", "gs", "azure", "azblob"}
 
 	defaultFilter = []string{
 		"*.*",
@@ -175,11 +176,24 @@ func (d *DBStore) adjust(
 	}
 
 	if d.Security == nil {
-		d.Security = s
+		d.Security = &Security{
+			CAPath:                   s.CAPath,
+			CertPath:                 s.CertPath,
+			KeyPath:                  s.KeyPath,
+			CABytes:                  s.CABytes,
+			CertBytes:                s.CertBytes,
+			KeyBytes:                 s.KeyBytes,
+			RedactInfoLog:            s.RedactInfoLog,
+			TLSConfig:                s.TLSConfig,
+			AllowFallbackToPlaintext: s.AllowFallbackToPlaintext,
+		}
 	}
 
 	switch d.TLS {
-	case "skip-verify", "preferred":
+	case "preferred":
+		d.Security.AllowFallbackToPlaintext = true
+		fallthrough
+	case "skip-verify":
 		if d.Security.TLSConfig == nil {
 			/* #nosec G402 */
 			d.Security.TLSConfig = &tls.Config{
@@ -187,14 +201,22 @@ func (d *DBStore) adjust(
 				InsecureSkipVerify: true,
 				NextProtos:         []string{"h2", "http/1.1"}, // specify `h2` to let Go use HTTP/2.
 			}
-			d.Security.AllowFallbackToPlaintext = true
+		} else {
+			d.Security.TLSConfig.InsecureSkipVerify = true
 		}
 	case "cluster":
 		if len(s.CAPath) == 0 {
 			return common.ErrInvalidConfig.GenWithStack("cannot set `tidb.tls` to 'cluster' without a [security] section")
 		}
-	case "", "false":
-		d.TLS = "false"
+	case "":
+	case "false":
+		d.Security.TLSConfig = nil
+		d.Security.CAPath = ""
+		d.Security.CertPath = ""
+		d.Security.CABytes = nil
+		d.Security.CertBytes = nil
+		d.Security.KeyPath = ""
+		d.Security.KeyBytes = nil
 	default:
 		return common.ErrInvalidConfig.GenWithStack("unsupported `tidb.tls` config %s", d.TLS)
 	}
@@ -595,7 +617,7 @@ const (
 	// ReplaceOnDup indicates using REPLACE INTO to insert data for TiDB backend.
 	// ReplaceOnDup records all duplicate records, remove some rows with conflict
 	// and reserve other rows that can be kept and not cause conflict anymore for local backend.
-	// Users need to analyze the lightning_task_info.conflict_error_v3 table to check whether the reserved data
+	// Users need to analyze the lightning_task_info.conflict_view table to check whether the reserved data
 	// cater to their need and check whether they need to add back the correct rows.
 	ReplaceOnDup
 	// IgnoreOnDup indicates using INSERT IGNORE INTO to insert data for TiDB backend.
@@ -873,6 +895,11 @@ func (m *MydumperRuntime) adjust() error {
 	if err := m.CSV.adjust(); err != nil {
 		return err
 	}
+	if m.StrictFormat && len(m.CSV.Terminator) == 0 {
+		return common.ErrInvalidConfig.GenWithStack(
+			`mydumper.strict-format can not be used with empty mydumper.csv.terminator. Please set mydumper.csv.terminator to a non-empty value like "\r\n"`)
+	}
+
 	for _, rule := range m.FileRouters {
 		if filepath.IsAbs(rule.Path) {
 			relPath, err := filepath.Rel(m.SourceDir, rule.Path)
@@ -1075,6 +1102,7 @@ type TikvImporter struct {
 	StoreWriteBWLimit       ByteSize `toml:"store-write-bwlimit" json:"store-write-bwlimit"`
 	LogicalImportBatchSize  ByteSize `toml:"logical-import-batch-size" json:"logical-import-batch-size"`
 	LogicalImportBatchRows  int      `toml:"logical-import-batch-rows" json:"logical-import-batch-rows"`
+	LogicalImportPrepStmt   bool     `toml:"logical-import-prep-stmt" json:"logical-import-prep-stmt"`
 
 	// default is PausePDSchedulerScopeTable to compatible with previous version(>= 6.1)
 	PausePDSchedulerScope PausePDSchedulerScope `toml:"pause-pd-scheduler-scope" json:"pause-pd-scheduler-scope"`
@@ -1471,6 +1499,7 @@ func NewConfig() *Config {
 			BlockSize:               16 * 1024,
 			LogicalImportBatchSize:  ByteSize(defaultLogicalImportBatchSize),
 			LogicalImportBatchRows:  defaultLogicalImportBatchRows,
+			LogicalImportPrepStmt:   defaultLogicalImportPrepStmt,
 		},
 		PostRestore: PostRestore{
 			Checksum:          OpLevelRequired,
@@ -1606,14 +1635,4 @@ func (cfg *Config) Adjust(ctx context.Context) error {
 		return err
 	}
 	return cfg.Conflict.adjust(&cfg.TikvImporter)
-}
-
-// AdjustForDDL acts like Adjust, but DDL will not use some functionalities so
-// those members are skipped in adjusting.
-func (cfg *Config) AdjustForDDL() error {
-	if err := cfg.TikvImporter.adjust(); err != nil {
-		return err
-	}
-	cfg.App.adjust(&cfg.TikvImporter)
-	return nil
 }

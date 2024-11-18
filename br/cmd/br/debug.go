@@ -21,12 +21,13 @@ import (
 	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/metautil"
 	"github.com/pingcap/tidb/br/pkg/mock/mockid"
-	"github.com/pingcap/tidb/br/pkg/restore"
+	restoreutils "github.com/pingcap/tidb/br/pkg/restore/utils"
 	"github.com/pingcap/tidb/br/pkg/rtree"
+	"github.com/pingcap/tidb/br/pkg/stream"
 	"github.com/pingcap/tidb/br/pkg/task"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/br/pkg/version/build"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	tidblogutil "github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/spf13/cobra"
 	"go.uber.org/zap"
@@ -207,7 +208,7 @@ func newBackupMetaValidateCommand() *cobra.Command {
 			for offset := uint64(0); offset < tableIDOffset; offset++ {
 				_, _ = tableIDAllocator.Alloc() // Ignore error
 			}
-			rewriteRules := &restore.RewriteRules{
+			rewriteRules := &restoreutils.RewriteRules{
 				Data: make([]*import_sstpb.RewriteRule, 0),
 			}
 			tableIDMap := make(map[int64]int64)
@@ -245,13 +246,13 @@ func newBackupMetaValidateCommand() *cobra.Command {
 					}
 				}
 
-				rules := restore.GetRewriteRules(newTable, table.Info, 0, true)
+				rules := restoreutils.GetRewriteRules(newTable, table.Info, 0, true)
 				rewriteRules.Data = append(rewriteRules.Data, rules.Data...)
 				tableIDMap[table.Info.ID] = int64(tableID)
 			}
 			// Validate rewrite rules
 			for _, file := range files {
-				err = restore.ValidateFileRewriteRule(file, rewriteRules)
+				err = restoreutils.ValidateFileRewriteRule(file, rewriteRules)
 				if err != nil {
 					return errors.Trace(err)
 				}
@@ -284,6 +285,19 @@ func decodeBackupMetaCommand() *cobra.Command {
 
 			fieldName, _ := cmd.Flags().GetString("field")
 			if fieldName == "" {
+				if err := metautil.DecodeMetaFile(ctx, s, &cfg.CipherInfo, backupMeta.FileIndex); err != nil {
+					return errors.Trace(err)
+				}
+				if err := metautil.DecodeMetaFile(ctx, s, &cfg.CipherInfo, backupMeta.RawRangeIndex); err != nil {
+					return errors.Trace(err)
+				}
+				if err := metautil.DecodeMetaFile(ctx, s, &cfg.CipherInfo, backupMeta.SchemaIndex); err != nil {
+					return errors.Trace(err)
+				}
+				if err := metautil.DecodeStatsFile(ctx, s, &cfg.CipherInfo, backupMeta.Schemas); err != nil {
+					return errors.Trace(err)
+				}
+
 				// No field flag, write backupmeta to external storage in JSON format.
 				backupMetaJSON, err := utils.MarshalBackupMeta(backupMeta)
 				if err != nil {
@@ -293,7 +307,7 @@ func decodeBackupMetaCommand() *cobra.Command {
 				if err != nil {
 					return errors.Trace(err)
 				}
-				cmd.Printf("backupmeta decoded at %s\n", path.Join(cfg.Storage, metautil.MetaJSONFile))
+				cmd.Printf("backupmeta decoded at %s\n", path.Join(s.URI(), metautil.MetaJSONFile))
 				return nil
 			}
 
@@ -351,6 +365,9 @@ func encodeBackupMetaCommand() *cobra.Command {
 			backupMetaJSON, err := utils.UnmarshalBackupMeta(metaData)
 			if err != nil {
 				return errors.Trace(err)
+			}
+			if backupMetaJSON.Version == metautil.MetaV2 {
+				return errors.Errorf("encoding backupmeta v2 is unimplemented")
 			}
 			backupMeta, err := proto.Marshal(backupMetaJSON)
 			if err != nil {
@@ -447,8 +464,8 @@ func searchStreamBackupCommand() *cobra.Command {
 			if err != nil {
 				return errors.Trace(err)
 			}
-			comparator := restore.NewStartWithComparator()
-			bs := restore.NewStreamBackupSearch(s, comparator, keyBytes)
+			comparator := stream.NewStartWithComparator()
+			bs := stream.NewStreamBackupSearch(s, comparator, keyBytes)
 			bs.SetStartTS(startTs)
 			bs.SetEndTs(endTs)
 

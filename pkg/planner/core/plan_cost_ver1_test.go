@@ -15,12 +15,14 @@
 package core_test
 
 import (
+	"context"
 	"strconv"
 	"strings"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/domain"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/stretchr/testify/require"
 )
@@ -101,15 +103,17 @@ func TestScanOnSmallTable(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec(`create table t (a int)`)
 	tk.MustExec("insert into t values (1), (2), (3), (4), (5)")
-	tk.MustExec("analyze table t")
+	tk.MustExec("analyze table t all columns")
 	tk.MustExec(`set @@tidb_cost_model_version=2`)
 
 	// Create virtual tiflash replica info.
 	dom := domain.GetDomain(tk.Session())
 	is := dom.InfoSchema()
-	db, exists := is.SchemaByName(model.NewCIStr("test"))
+	db, exists := is.SchemaByName(pmodel.NewCIStr("test"))
 	require.True(t, exists)
-	for _, tblInfo := range db.Tables {
+	tblInfos, err := is.SchemaTableInfos(context.Background(), db.Name)
+	require.NoError(t, err)
+	for _, tblInfo := range tblInfos {
 		if tblInfo.Name.L == "t" {
 			tblInfo.TiFlashReplica = &model.TiFlashReplicaInfo{
 				Count:     1,
@@ -118,7 +122,9 @@ func TestScanOnSmallTable(t *testing.T) {
 		}
 	}
 
-	rs := tk.MustQuery("explain select * from t").Rows()
+	result := tk.MustQuery("explain select * from t")
+	resStr := result.String()
+	rs := result.Rows()
 	useTiKVScan := false
 	for _, r := range rs {
 		op := r[0].(string)
@@ -127,5 +133,5 @@ func TestScanOnSmallTable(t *testing.T) {
 			useTiKVScan = true
 		}
 	}
-	require.True(t, useTiKVScan)
+	require.True(t, useTiKVScan, "should use tikv scan, but got:\n%s", resStr)
 }

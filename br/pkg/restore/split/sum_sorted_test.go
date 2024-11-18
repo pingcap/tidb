@@ -2,9 +2,10 @@
 package split_test
 
 import (
+	"fmt"
 	"testing"
 
-	"github.com/pingcap/tidb/br/pkg/restore/split"
+	split "github.com/pingcap/tidb/br/pkg/restore/split"
 	"github.com/stretchr/testify/require"
 )
 
@@ -25,10 +26,15 @@ func mb(b uint64) split.Value {
 	}
 }
 
+func exportString(startKey, endKey, size string, number int) string {
+	return fmt.Sprintf("([%s, %s), %s MB, %d)", startKey, endKey, size, number)
+}
+
 func TestSumSorted(t *testing.T) {
 	cases := []struct {
 		values []split.Valued
 		result []uint64
+		strs   []string
 	}{
 		{
 			values: []split.Valued{
@@ -37,6 +43,11 @@ func TestSumSorted(t *testing.T) {
 				v("d", "g", mb(100)),
 			},
 			result: []uint64{0, 250, 25, 75, 50, 0},
+			strs: []string{
+				exportString("61", "66", "100.00", 100),
+				exportString("61", "63", "200.00", 200),
+				exportString("64", "67", "100.00", 100),
+			},
 		},
 		{
 			values: []split.Valued{
@@ -45,6 +56,11 @@ func TestSumSorted(t *testing.T) {
 				v("d", "f", mb(100)),
 			},
 			result: []uint64{0, 250, 25, 125, 0},
+			strs: []string{
+				exportString("61", "66", "100.00", 100),
+				exportString("61", "63", "200.00", 200),
+				exportString("64", "66", "100.00", 100),
+			},
 		},
 		{
 			values: []split.Valued{
@@ -53,6 +69,11 @@ func TestSumSorted(t *testing.T) {
 				v("c", "f", mb(100)),
 			},
 			result: []uint64{0, 250, 150, 0},
+			strs: []string{
+				exportString("61", "66", "100.00", 100),
+				exportString("61", "63", "200.00", 200),
+				exportString("63", "66", "100.00", 100),
+			},
 		},
 		{
 			values: []split.Valued{
@@ -62,6 +83,12 @@ func TestSumSorted(t *testing.T) {
 				v("da", "db", mb(100)),
 			},
 			result: []uint64{0, 250, 50, 150, 50, 0},
+			strs: []string{
+				exportString("61", "66", "100.00", 100),
+				exportString("61", "63", "200.00", 200),
+				exportString("63", "66", "100.00", 100),
+				exportString("6461", "6462", "100.00", 100),
+			},
 		},
 		{
 			values: []split.Valued{
@@ -72,6 +99,13 @@ func TestSumSorted(t *testing.T) {
 				v("cb", "db", mb(100)),
 			},
 			result: []uint64{0, 250, 25, 75, 200, 50, 0},
+			strs: []string{
+				exportString("61", "66", "100.00", 100),
+				exportString("61", "63", "200.00", 200),
+				exportString("63", "66", "100.00", 100),
+				exportString("6461", "6462", "100.00", 100),
+				exportString("6362", "6462", "100.00", 100),
+			},
 		},
 		{
 			values: []split.Valued{
@@ -82,6 +116,13 @@ func TestSumSorted(t *testing.T) {
 				v("cb", "f", mb(150)),
 			},
 			result: []uint64{0, 250, 25, 75, 200, 100, 0},
+			strs: []string{
+				exportString("61", "66", "100.00", 100),
+				exportString("61", "63", "200.00", 200),
+				exportString("63", "66", "100.00", 100),
+				exportString("6461", "6462", "100.00", 100),
+				exportString("6362", "66", "150.00", 150),
+			},
 		},
 		{
 			values: []split.Valued{
@@ -92,6 +133,13 @@ func TestSumSorted(t *testing.T) {
 				v("cb", "df", mb(150)),
 			},
 			result: []uint64{0, 250, 25, 75, 200, 75, 25, 0},
+			strs: []string{
+				exportString("61", "66", "100.00", 100),
+				exportString("61", "63", "200.00", 200),
+				exportString("63", "66", "100.00", 100),
+				exportString("6461", "6462", "100.00", 100),
+				exportString("6362", "6466", "150.00", 150),
+			},
 		},
 		{
 			values: []split.Valued{
@@ -102,6 +150,13 @@ func TestSumSorted(t *testing.T) {
 				v("cb", "df", mb(150)),
 			},
 			result: []uint64{0, 250, 25, 75, 200, 75, 25, 0},
+			strs: []string{
+				exportString("61", "66", "100.00", 100),
+				exportString("61", "63", "200.00", 200),
+				exportString("63", "66", "100.00", 100),
+				exportString("6461", "6462", "100.00", 100),
+				exportString("6362", "6466", "150.00", 150),
+			},
 		},
 		{
 			values: []split.Valued{
@@ -112,6 +167,13 @@ func TestSumSorted(t *testing.T) {
 				v("c", "df", mb(150)),
 			},
 			result: []uint64{0, 250, 100, 200, 75, 25, 0},
+			strs: []string{
+				exportString("61", "66", "100.00", 100),
+				exportString("61", "63", "200.00", 200),
+				exportString("63", "66", "100.00", 100),
+				exportString("6461", "6462", "100.00", 100),
+				exportString("63", "6466", "150.00", 150),
+			},
 		},
 		{
 			values: []split.Valued{
@@ -122,12 +184,20 @@ func TestSumSorted(t *testing.T) {
 				v("c", "f", mb(150)),
 			},
 			result: []uint64{0, 250, 100, 200, 100, 0},
+			strs: []string{
+				exportString("61", "66", "100.00", 100),
+				exportString("61", "63", "200.00", 200),
+				exportString("63", "66", "100.00", 100),
+				exportString("6461", "6462", "100.00", 100),
+				exportString("63", "66", "150.00", 150),
+			},
 		},
 	}
 
 	for _, ca := range cases {
 		full := split.NewSplitHelper()
-		for _, v := range ca.values {
+		for i, v := range ca.values {
+			require.Equal(t, ca.strs[i], v.String())
 			full.Merge(v)
 		}
 

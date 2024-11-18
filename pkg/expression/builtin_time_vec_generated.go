@@ -316,7 +316,7 @@ func (b *builtinAddStringAndDurationSig) vecEvalString(ctx EvalContext, input *c
 		// calculate
 
 		tc := typeCtx(ctx)
-		fsp1 := b.args[1].GetType().GetDecimal()
+		fsp1 := b.args[1].GetType(ctx).GetDecimal()
 		arg1Duration := types.Duration{Duration: arg1, Fsp: fsp1}
 		var output string
 		var isNull bool
@@ -370,7 +370,7 @@ func (b *builtinAddStringAndStringSig) vecEvalString(ctx EvalContext, input *chu
 		return err
 	}
 
-	arg1Type := b.args[1].GetType()
+	arg1Type := b.args[1].GetType(ctx)
 	if mysql.HasBinaryFlag(arg1Type.GetFlag()) {
 		result.ReserveString(n)
 		for i := 0; i < n; i++ {
@@ -498,8 +498,8 @@ func (b *builtinAddDateAndDurationSig) vecEvalString(ctx EvalContext, input *chu
 
 		// calculate
 
-		fsp0 := b.args[0].GetType().GetDecimal()
-		fsp1 := b.args[1].GetType().GetDecimal()
+		fsp0 := b.args[0].GetType(ctx).GetDecimal()
+		fsp1 := b.args[1].GetType(ctx).GetDecimal()
 		arg1Duration := types.Duration{Duration: arg1, Fsp: fsp1}
 
 		sum, err := types.Duration{Duration: arg0, Fsp: fsp0}.Add(arg1Duration)
@@ -576,7 +576,7 @@ func (b *builtinAddDateAndStringSig) vecEvalString(ctx EvalContext, input *chunk
 			return err
 		}
 
-		fsp0 := b.args[0].GetType().GetDecimal()
+		fsp0 := b.args[0].GetType(ctx).GetDecimal()
 
 		sum, err := types.Duration{Duration: arg0, Fsp: fsp0}.Add(arg1Duration)
 
@@ -930,7 +930,7 @@ func (b *builtinSubStringAndDurationSig) vecEvalString(ctx EvalContext, input *c
 		// calculate
 
 		tc := typeCtx(ctx)
-		fsp1 := b.args[1].GetType().GetDecimal()
+		fsp1 := b.args[1].GetType(ctx).GetDecimal()
 		arg1Duration := types.Duration{Duration: arg1, Fsp: fsp1}
 		var output string
 		var isNull bool
@@ -984,7 +984,7 @@ func (b *builtinSubStringAndStringSig) vecEvalString(ctx EvalContext, input *chu
 		return err
 	}
 
-	arg1Type := b.args[1].GetType()
+	arg1Type := b.args[1].GetType(ctx)
 	if mysql.HasBinaryFlag(arg1Type.GetFlag()) {
 		result.ReserveString(n)
 		for i := 0; i < n; i++ {
@@ -1112,8 +1112,8 @@ func (b *builtinSubDateAndDurationSig) vecEvalString(ctx EvalContext, input *chu
 
 		// calculate
 
-		fsp0 := b.args[0].GetType().GetDecimal()
-		fsp1 := b.args[1].GetType().GetDecimal()
+		fsp0 := b.args[0].GetType(ctx).GetDecimal()
+		fsp1 := b.args[1].GetType(ctx).GetDecimal()
 		arg1Duration := types.Duration{Duration: arg1, Fsp: fsp1}
 
 		sum, err := types.Duration{Duration: arg0, Fsp: fsp0}.Sub(arg1Duration)
@@ -1190,7 +1190,7 @@ func (b *builtinSubDateAndStringSig) vecEvalString(ctx EvalContext, input *chunk
 			return err
 		}
 
-		fsp0 := b.args[0].GetType().GetDecimal()
+		fsp0 := b.args[0].GetType(ctx).GetDecimal()
 
 		sum, err := types.Duration{Duration: arg0, Fsp: fsp0}.Sub(arg1Duration)
 

@@ -29,7 +29,6 @@ import (
 	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/util/backoff"
 	disttaskutil "github.com/pingcap/tidb/pkg/util/disttask"
@@ -89,9 +88,6 @@ type BaseScheduler struct {
 	// rand is for generating random selection of nodes.
 	rand *rand.Rand
 }
-
-// MockOwnerChange mock owner change in tests.
-var MockOwnerChange func()
 
 // NewBaseScheduler creates a new BaseScheduler.
 func NewBaseScheduler(ctx context.Context, task *proto.Task, param Param) *BaseScheduler {
@@ -173,6 +169,8 @@ func (s *BaseScheduler) scheduleTask() {
 				if errors.Cause(err) == storage.ErrTaskNotFound {
 					// this can happen when task is reverted/succeed, but before
 					// we reach here, cleanup routine move it to history.
+					s.logger.Debug("task not found, might be reverted/succeed/failed", zap.Int64("task_id", s.GetTask().ID),
+						zap.String("task_key", s.GetTask().Key))
 					return
 				}
 				s.logger.Error("refresh task failed", zap.Error(err))
@@ -264,10 +262,7 @@ func (s *BaseScheduler) scheduleTask() {
 				s.logger.Info("schedule task meet err, reschedule it", zap.Error(err))
 			}
 
-			failpoint.Inject("mockOwnerChange", func() {
-				MockOwnerChange()
-				time.Sleep(time.Second)
-			})
+			failpoint.InjectCall("mockOwnerChange")
 		}
 	}
 }
@@ -304,18 +299,11 @@ func (s *BaseScheduler) onPausing() error {
 	return nil
 }
 
-// MockDMLExecutionOnPausedState is used to mock DML execution when tasks pauses.
-var MockDMLExecutionOnPausedState func(task *proto.Task)
-
 // handle task in paused state.
 func (s *BaseScheduler) onPaused() error {
 	task := s.GetTask()
 	s.logger.Info("on paused state", zap.Stringer("state", task.State), zap.String("step", proto.Step2Str(task.Type, task.Step)))
-	failpoint.Inject("mockDMLExecutionOnPausedState", func(val failpoint.Value) {
-		if val.(bool) {
-			MockDMLExecutionOnPausedState(task)
-		}
-	})
+	failpoint.InjectCall("mockDMLExecutionOnPausedState")
 	return nil
 }
 
@@ -412,7 +400,6 @@ func (s *BaseScheduler) onRunning() error {
 
 func (s *BaseScheduler) onFinished() {
 	task := s.GetTask()
-	metrics.UpdateMetricsForFinishTask(task)
 	s.logger.Debug("schedule task, task is finished", zap.Stringer("state", task.State))
 }
 

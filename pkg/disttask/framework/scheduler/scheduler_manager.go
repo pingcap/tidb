@@ -285,8 +285,7 @@ func (sm *Manager) startSchedulers(schedulableTasks []*proto.TaskBase) error {
 				zap.Int64("task-id", task.ID), zap.Stringer("state", task.State))
 		}
 
-		metrics.DistTaskGauge.WithLabelValues(task.Type.String(), metrics.SchedulingStatus).Inc()
-		metrics.UpdateMetricsForScheduleTask(task.ID, task.Type)
+		metrics.UpdateMetricsForScheduleTask(task)
 		sm.startScheduler(task, allocateSlots, reservedExecID)
 	}
 	return nil
@@ -361,7 +360,7 @@ func (sm *Manager) startScheduler(basicTask *proto.TaskBase, allocateSlots bool,
 				sm.slotMgr.unReserve(basicTask, reservedExecID)
 			}
 			handle.NotifyTaskChange()
-			sm.logger.Info("task scheduler exist", zap.Int64("task-id", task.ID))
+			sm.logger.Info("task scheduler exit", zap.Int64("task-id", task.ID))
 		}()
 		metrics.UpdateMetricsForRunTask(task)
 		scheduler.ScheduleTask()
@@ -437,6 +436,7 @@ func (sm *Manager) cleanupFinishedTasks(tasks []*proto.Task) error {
 			// if task doesn't register cleanup function, mark it as cleaned.
 			cleanedTasks = append(cleanedTasks, task)
 		}
+		metrics.UpdateMetricsForFinishTask(task)
 	}
 	if firstErr != nil {
 		sm.logger.Warn("cleanup routine failed", zap.Error(errors.Trace(firstErr)))

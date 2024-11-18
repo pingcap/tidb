@@ -67,12 +67,12 @@ func TestTaskState(t *testing.T) {
 	id, err = gm.CreateTask(ctx, "key4", "test", 4, "", []byte("test"))
 	require.NoError(t, err)
 	// require.Equal(t, int64(4), id) TODO: unstable for infoschema v2
-	task, err = gm.GetTaskByID(ctx, 4)
+	task, err = gm.GetTaskByID(ctx, id)
 	require.NoError(t, err)
 	checkTaskStateStep(t, task, proto.TaskStatePending, proto.StepInit)
 	err = gm.RevertTask(ctx, task.ID, proto.TaskStatePending, nil)
 	require.NoError(t, err)
-	task, err = gm.GetTaskByID(ctx, 4)
+	task, err = gm.GetTaskByID(ctx, id)
 	require.NoError(t, err)
 	checkTaskStateStep(t, task, proto.TaskStateReverting, proto.StepInit)
 

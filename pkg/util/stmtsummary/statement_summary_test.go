@@ -22,20 +22,23 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/auth"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/types"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
+	"github.com/pingcap/tidb/pkg/util/ppcpuusage"
+	"github.com/pingcap/tidb/pkg/util/stringutil"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/util"
 )
 
-func emptyPlanGenerator() (string, string) {
-	return "", ""
+func emptyPlanGenerator() (string, string, any) {
+	return "", "", nil
 }
 
 func fakePlanDigestGenerator() string {
@@ -79,12 +82,12 @@ func TestAddStatement(t *testing.T) {
 		planDigest:        stmtExecInfo1.PlanDigest,
 		resourceGroupName: stmtExecInfo1.ResourceGroupName,
 	}
-	samplePlan, _ := stmtExecInfo1.PlanGenerator()
+	samplePlan, _, _ := stmtExecInfo1.PlanGenerator()
 	stmtExecInfo1.ExecDetail.CommitDetail.Mu.Lock()
 	expectedSummaryElement := stmtSummaryByDigestElement{
 		beginTime:            now + 60,
 		endTime:              now + 1860,
-		sampleSQL:            stmtExecInfo1.OriginalSQL,
+		sampleSQL:            stmtExecInfo1.OriginalSQL.String(),
 		samplePlan:           samplePlan,
 		indexNames:           stmtExecInfo1.StmtCtx.IndexNames,
 		execCount:            1,
@@ -169,7 +172,7 @@ func TestAddStatement(t *testing.T) {
 	// greater than that of the first statement.
 	stmtExecInfo2 := &StmtExecInfo{
 		SchemaName:     "schema_name",
-		OriginalSQL:    "original_sql2",
+		OriginalSQL:    stringutil.StringerStr("original_sql2"),
 		NormalizedSQL:  "normalized_sql",
 		Digest:         "digest",
 		PlanDigest:     "plan_digest",
@@ -312,7 +315,7 @@ func TestAddStatement(t *testing.T) {
 	// less than that of the first statement.
 	stmtExecInfo3 := &StmtExecInfo{
 		SchemaName:     "schema_name",
-		OriginalSQL:    "original_sql3",
+		OriginalSQL:    stringutil.StringerStr("original_sql3"),
 		NormalizedSQL:  "normalized_sql",
 		Digest:         "digest",
 		PlanDigest:     "plan_digest",
@@ -472,12 +475,12 @@ func TestAddStatement(t *testing.T) {
 	// Test for plan too large
 	stmtExecInfo7 := stmtExecInfo1
 	stmtExecInfo7.PlanDigest = "plan_digest7"
-	stmtExecInfo7.PlanGenerator = func() (string, string) {
+	stmtExecInfo7.PlanGenerator = func() (string, string, any) {
 		buf := make([]byte, MaxEncodedPlanSizeInBytes+1)
 		for i := range buf {
 			buf[i] = 'a'
 		}
-		return string(buf), ""
+		return string(buf), "", nil
 	}
 	key = &stmtSummaryByDigestKey{
 		schemaName:        stmtExecInfo7.SchemaName,
@@ -618,7 +621,7 @@ func generateAnyExecInfo() *StmtExecInfo {
 
 	stmtExecInfo := &StmtExecInfo{
 		SchemaName:     "schema_name",
-		OriginalSQL:    "original_sql1",
+		OriginalSQL:    stringutil.StringerStr("original_sql1"),
 		NormalizedSQL:  "normalized_sql",
 		Digest:         "digest",
 		PlanDigest:     "plan_digest",
@@ -692,6 +695,7 @@ func generateAnyExecInfo() *StmtExecInfo {
 		Succeed:           true,
 		ResourceGroupName: "rg1",
 		RUDetail:          util.NewRUDetailsWith(1.1, 2.5, 2*time.Millisecond),
+		CPUUsages:         ppcpuusage.CPUUsages{TidbCPUTime: time.Duration(20), TikvCPUTime: time.Duration(100)},
 	}
 	stmtExecInfo.StmtCtx.AddAffectedRows(10000)
 	return stmtExecInfo
@@ -797,12 +801,14 @@ func newStmtSummaryReaderForTest(ssMap *stmtSummaryByDigestMap) *stmtSummaryRead
 		AvgQueuedRcTimeStr,
 		MaxQueuedRcTimeStr,
 		ResourceGroupName,
+		AvgTidbCPUTimeStr,
+		AvgTikvCPUTimeStr,
 	}
 	cols := make([]*model.ColumnInfo, len(columnNames))
 	for i := range columnNames {
 		cols[i] = &model.ColumnInfo{
 			ID:     int64(i),
-			Name:   model.NewCIStr(columnNames[i]),
+			Name:   pmodel.NewCIStr(columnNames[i]),
 			Offset: i,
 		}
 	}
@@ -856,7 +862,7 @@ func TestToDatum(t *testing.T) {
 		0, 0, 0, 0, 0, 0, 0, 0, stmtExecInfo1.StmtCtx.AffectedRows(),
 		f, f, 0, 0, 0, stmtExecInfo1.OriginalSQL, stmtExecInfo1.PrevSQL, "plan_digest", "", stmtExecInfo1.RUDetail.RRU(), stmtExecInfo1.RUDetail.RRU(),
 		stmtExecInfo1.RUDetail.WRU(), stmtExecInfo1.RUDetail.WRU(), int64(stmtExecInfo1.RUDetail.RUWaitDuration()), int64(stmtExecInfo1.RUDetail.RUWaitDuration()),
-		stmtExecInfo1.ResourceGroupName}
+		stmtExecInfo1.ResourceGroupName, int64(stmtExecInfo1.CPUUsages.TidbCPUTime), int64(stmtExecInfo1.CPUUsages.TikvCPUTime)}
 	stmtExecInfo1.ExecDetail.CommitDetail.Mu.Unlock()
 	match(t, datums[0], expectedDatum...)
 	datums = reader.GetStmtSummaryHistoryRows()
@@ -906,7 +912,7 @@ func TestToDatum(t *testing.T) {
 		0, 0, 0, 0, 0, 0, 0, 0, stmtExecInfo1.StmtCtx.AffectedRows(),
 		f, f, 0, 0, 0, "", "", "", "", stmtExecInfo1.RUDetail.RRU(), stmtExecInfo1.RUDetail.RRU(),
 		stmtExecInfo1.RUDetail.WRU(), stmtExecInfo1.RUDetail.WRU(), int64(stmtExecInfo1.RUDetail.RUWaitDuration()), int64(stmtExecInfo1.RUDetail.RUWaitDuration()),
-		stmtExecInfo1.ResourceGroupName}
+		stmtExecInfo1.ResourceGroupName, int64(stmtExecInfo1.CPUUsages.TidbCPUTime), int64(stmtExecInfo1.CPUUsages.TikvCPUTime)}
 	expectedDatum[4] = stmtExecInfo2.Digest
 	match(t, datums[0], expectedDatum...)
 	match(t, datums[1], expectedEvictedDatum...)
@@ -930,7 +936,7 @@ func TestAddStatementParallel(t *testing.T) {
 		stmtExecInfo1 := generateAnyExecInfo()
 
 		// Add 32 times with different digest.
-		for i := 0; i < loops; i++ {
+		for i := range loops {
 			stmtExecInfo1.Digest = fmt.Sprintf("digest%d", i)
 			ssMap.AddStatement(stmtExecInfo1)
 		}
@@ -940,7 +946,7 @@ func TestAddStatementParallel(t *testing.T) {
 		require.Len(t, datums, loops)
 	}
 
-	for i := 0; i < threads; i++ {
+	for range threads {
 		go addStmtFunc()
 	}
 	wg.Wait()
@@ -969,7 +975,7 @@ func TestMaxStmtCount(t *testing.T) {
 	// 100 digests
 	stmtExecInfo1 := generateAnyExecInfo()
 	loops := 100
-	for i := 0; i < loops; i++ {
+	for i := range loops {
 		stmtExecInfo1.Digest = fmt.Sprintf("digest%d", i)
 		ssMap.AddStatement(stmtExecInfo1)
 	}
@@ -992,7 +998,7 @@ func TestMaxStmtCount(t *testing.T) {
 
 	// Change to a bigger value.
 	require.Nil(t, ssMap.SetMaxStmtCount(50))
-	for i := 0; i < loops; i++ {
+	for i := range loops {
 		stmtExecInfo1.Digest = fmt.Sprintf("digest%d", i)
 		ssMap.AddStatement(stmtExecInfo1)
 	}
@@ -1000,7 +1006,7 @@ func TestMaxStmtCount(t *testing.T) {
 
 	// Change to a smaller value.
 	require.Nil(t, ssMap.SetMaxStmtCount(10))
-	for i := 0; i < loops; i++ {
+	for i := range loops {
 		stmtExecInfo1.Digest = fmt.Sprintf("digest%d", i)
 		ssMap.AddStatement(stmtExecInfo1)
 	}
@@ -1023,7 +1029,7 @@ func TestMaxSQLLength(t *testing.T) {
 	str := strings.Repeat("a", length)
 
 	stmtExecInfo1 := generateAnyExecInfo()
-	stmtExecInfo1.OriginalSQL = str
+	stmtExecInfo1.OriginalSQL = stringutil.StringerStr(str)
 	stmtExecInfo1.NormalizedSQL = str
 	ssMap.AddStatement(stmtExecInfo1)
 
@@ -1066,12 +1072,12 @@ func TestSetMaxStmtCountParallel(t *testing.T) {
 		stmtExecInfo1 := generateAnyExecInfo()
 
 		// Add 32 times with different digest.
-		for i := 0; i < loops; i++ {
+		for i := range loops {
 			stmtExecInfo1.Digest = fmt.Sprintf("digest%d", i)
 			ssMap.AddStatement(stmtExecInfo1)
 		}
 	}
-	for i := 0; i < threads; i++ {
+	for range threads {
 		wg.Run(addStmtFunc)
 	}
 
@@ -1123,7 +1129,7 @@ func TestDisableStmtSummary(t *testing.T) {
 	ssMap.beginTimeForCurInterval = now + 60
 
 	stmtExecInfo2 := stmtExecInfo1
-	stmtExecInfo2.OriginalSQL = "original_sql2"
+	stmtExecInfo2.OriginalSQL = stringutil.StringerStr("original_sql2")
 	stmtExecInfo2.NormalizedSQL = "normalized_sql2"
 	stmtExecInfo2.Digest = "digest2"
 	ssMap.AddStatement(stmtExecInfo2)
@@ -1170,7 +1176,7 @@ func TestEnableSummaryParallel(t *testing.T) {
 		stmtExecInfo1 := generateAnyExecInfo()
 
 		// Add 32 times with same digest.
-		for i := 0; i < loops; i++ {
+		for i := range loops {
 			// Sometimes enable it and sometimes disable it.
 			err := ssMap.SetEnabled(i%2 == 0)
 			require.NoError(t, err)
@@ -1182,7 +1188,7 @@ func TestEnableSummaryParallel(t *testing.T) {
 		require.NoError(t, err)
 	}
 
-	for i := 0; i < threads; i++ {
+	for range threads {
 		go addStmtFunc()
 	}
 	// Ensure that there's no deadlocks.
@@ -1197,7 +1203,7 @@ func TestGetMoreThanCntBindableStmt(t *testing.T) {
 	ssMap := newStmtSummaryByDigestMap()
 
 	stmtExecInfo1 := generateAnyExecInfo()
-	stmtExecInfo1.OriginalSQL = "insert 1"
+	stmtExecInfo1.OriginalSQL = stringutil.StringerStr("insert 1")
 	stmtExecInfo1.NormalizedSQL = "insert ?"
 	stmtExecInfo1.StmtCtx.StmtType = "Insert"
 	ssMap.AddStatement(stmtExecInfo1)
@@ -1293,7 +1299,7 @@ func TestSummaryHistory(t *testing.T) {
 		planDigest:        stmtExecInfo1.PlanDigest,
 		resourceGroupName: stmtExecInfo1.ResourceGroupName,
 	}
-	for i := 0; i < 11; i++ {
+	for i := range 11 {
 		ssMap.beginTimeForCurInterval = now + int64(i+1)*10
 		ssMap.AddStatement(stmtExecInfo1)
 		require.Equal(t, 1, ssMap.summaryMap.Size())
@@ -1331,7 +1337,7 @@ func TestSummaryHistory(t *testing.T) {
 		require.NoError(t, err)
 	}()
 	// insert first digest
-	for i := 0; i < 6; i++ {
+	for i := range 6 {
 		ssMap.beginTimeForCurInterval = now + int64(i)*10
 		ssMap.AddStatement(stmtExecInfo1)
 		require.Equal(t, 1, ssMap.summaryMap.Size())
@@ -1466,7 +1472,7 @@ func TestAccessPrivilege(t *testing.T) {
 	loops := 32
 	stmtExecInfo1 := generateAnyExecInfo()
 
-	for i := 0; i < loops; i++ {
+	for i := range loops {
 		stmtExecInfo1.Digest = fmt.Sprintf("digest%d", i)
 		ssMap.AddStatement(stmtExecInfo1)
 	}

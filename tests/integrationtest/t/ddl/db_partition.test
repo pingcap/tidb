@@ -1,51 +1,3 @@
-# TestDisableTablePartition
-set @@session.tidb_enable_table_partition = 'AUTO';
-set @@session.tidb_enable_list_partition = OFF;
-drop table if exists t;
-create table t (id int) partition by list  (id) (
-	    partition p0 values in (1,2),partition p1 values in (3,4));
-show create table t;
--- error 1505
-alter table t add partition (
-		partition p4 values in (7),
-		partition p5 values in (8,9));
-insert into t values (1),(3),(5),(100),(null);
-set @@session.tidb_enable_table_partition = 'OFF';
-set @@session.tidb_enable_list_partition = OFF;
-drop table if exists t;
-create table t (id int) partition by list  (id) (
-	    partition p0 values in (1,2),partition p1 values in (3,4));
-show create table t;
--- error 1505
-alter table t add partition (
-		partition p4 values in (7),
-		partition p5 values in (8,9));
-insert into t values (1),(3),(5),(100),(null);
-set @@session.tidb_enable_table_partition = 0;
-set @@session.tidb_enable_list_partition = OFF;
-drop table if exists t;
-create table t (id int) partition by list  (id) (
-	    partition p0 values in (1,2),partition p1 values in (3,4));
-show create table t;
--- error 1505
-alter table t add partition (
-		partition p4 values in (7),
-		partition p5 values in (8,9));
-insert into t values (1),(3),(5),(100),(null);
-set @@session.tidb_enable_table_partition = 'ON';
-set @@session.tidb_enable_list_partition = OFF;
-drop table if exists t;
-create table t (id int) partition by list  (id) (
-	    partition p0 values in (1,2),partition p1 values in (3,4));
-show create table t;
--- error 1505
-alter table t add partition (
-		partition p4 values in (7),
-		partition p5 values in (8,9));
-insert into t values (1),(3),(5),(100),(null);
-set @@session.tidb_enable_table_partition = default;
-set @@session.tidb_enable_list_partition = default;
-
 # TestPartitionRangeColumnsCollate
 drop table if exists t;
 create table t (a varchar(255) charset utf8mb4 collate utf8mb4_bin) partition by range columns (a)
@@ -60,7 +12,7 @@ create table t (a varchar(255) charset utf8mb4 collate utf8mb4_bin) partition by
  partition p8bb values less than ("bb"),
  partition pMax values less than (MAXVALUE));
 insert into t values ("A"),("a"),("b"),("B"),("aa"),("AA"),("aA"),("Aa"),("BB"),("Bb"),("bB"),("bb"),("AB"),("BA"),("Ab"),("Ba"),("aB"),("bA"),("ab"),("ba");
-analyze table t;
+analyze table t all columns;
 explain format='brief' select * from t where a = "AA" collate utf8mb4_general_ci;
 --sorted_result
 select * from t where a = "AA" collate utf8mb4_general_ci;
@@ -89,7 +41,7 @@ create table t (a varchar(255) charset utf8mb4 collate utf8mb4_general_ci) parti
  partition p5 values less than ("bb"),
  partition pMax values less than (MAXVALUE));
 insert into t values ("A"),("a"),("b"),("B"),("aa"),("AA"),("aA"),("Aa"),("BB"),("Bb"),("bB"),("bb"),("AB"),("BA"),("Ab"),("Ba"),("aB"),("bA"),("ab"),("ba"),("ä"),("ÄÄÄ");
-analyze table t;
+analyze table t all columns;
 explain format='brief' select * from t where a = "aa" collate utf8mb4_general_ci;
 --sorted_result
 select * from t where a = "aa" collate utf8mb4_general_ci;
@@ -117,7 +69,6 @@ select * from t where a > "b" collate utf8mb4_bin;
 
 # TestAlterTableAddPartitionByList
 drop table if exists t;
-set @@session.tidb_enable_list_partition = ON;
 -- error 1495
 create table t (a int) partition by list (a) (partition p1 values in (null, 6), partition p2 values in (7,null));
 create table t (id int) partition by list  (id) (
@@ -175,11 +126,9 @@ drop table if exists t;
 create table t (a datetime) partition by list columns (a) (partition p0 values in ('2020-11-30 12:00:00'));
 -- error 1654
 alter table t add partition (partition p1 values in ('2020-11-31 12:00:00'));
-set @@session.tidb_enable_list_partition = default;
 
 # TestAlterTableAddPartitionByListColumns
 drop table if exists t;
-set @@session.tidb_enable_list_partition = ON;
 create table t (id int, name varchar(10)) partition by list columns (id,name) (
 	    partition p0 values in ((1,'a'),(2,'b')),
 	    partition p1 values in ((3,'a'),(4,'b')),
@@ -272,7 +221,6 @@ PARTITION BY LIST COLUMNS(`id`,`name`)
  PARTITION `pDef` VALUES IN ((9,'d'),DEFAULT,(10,'d')));
 --sorted_result
 select partition_name,partition_ordinal_position,partition_method,partition_expression,partition_description,partition_comment,tidb_placement_policy_name from information_schema.partitions where table_name = 't' and table_schema = 'ddl__db_partition';
-set @@session.tidb_enable_list_partition = OFF;
 alter table t drop partition pDef;
 -- error 1479
 alter table t add partition (partition pDef);
@@ -282,7 +230,6 @@ select partition_name,partition_ordinal_position,partition_method,partition_expr
 alter table t reorganize partition pDef into (partition pDef VALUES IN (DEFAULT,(9,'c')));
 --sorted_result
 select partition_name,partition_ordinal_position,partition_method,partition_expression,partition_description,partition_comment,tidb_placement_policy_name from information_schema.partitions where table_name = 't' and table_schema = 'ddl__db_partition';
-set @@session.tidb_enable_list_partition = default;
 
 # TestDefaultListPartition
 drop table if exists t;
@@ -318,7 +265,7 @@ drop table if exists t;
 create table t (b int, a varchar(255)) partition by list columns (a) (partition p0 values in (0,4), partition p1 values in (1, null, default), partition p2 values in (2,7,10));
 show create table t;
 insert into t values (1, "1"), (2, "2"), (3,'3'), (null, null), (4, "4"), (11, "11");
-analyze table t;
+analyze table t all columns;
 --sorted_result
 select * from t partition(p0);
 --sorted_result
@@ -398,7 +345,6 @@ create table t (a int) partition by list (a) (partition p0 values in ());
 
 # TestAlterTableDropPartitionByList
 drop table if exists t;
-set @@session.tidb_enable_list_partition = ON;
 create table t (id int) partition by list  (id) (
     partition p0 values in (1,2),
     partition p1 values in (3,4),
@@ -415,11 +361,9 @@ alter table t drop partition p3;
 select * from t;
 -- error 1508
 alter table t drop partition p0;
-set @@session.tidb_enable_list_partition = default;
 
 # TestAlterTableDropPartitionByListColumns
 drop table if exists t;
-set @@session.tidb_enable_list_partition = ON;
 create table t (id int, name varchar(10)) partition by list columns (id,name) (
     partition p0 values in ((1,'a'),(2,'b')),
     partition p1 values in ((3,'a'),(4,'b')),
@@ -438,7 +382,6 @@ alter table t drop partition p3;
 select * from t;
 -- error 1508
 alter table t drop partition p0;
-set @@session.tidb_enable_list_partition = default;
 
 # TestAlterTableAddPartition
 drop table if exists employees;
@@ -943,7 +886,7 @@ partition p1 values less than (11),
 partition p2 values less than (15)
 );
 drop table if exists Part1;
--- error 1503
+-- error 8264
 create table Part1 (
 	col1 int not null,
 	col2 date not null,
@@ -956,7 +899,7 @@ partition p1 values less than (11),
 partition p2 values less than (15)
 );
 drop table if exists Part1;
--- error 1503
+-- error 8264
 create table Part1 (
 	col1 int not null,
 	col2 date not null,
@@ -970,7 +913,7 @@ partition p1 values less than (11),
 partition p2 values less than (15)
 );
 drop table if exists Part1;
--- error 1503
+-- error 8264
 create table Part1 (
 	col1 int not null,
 	col2 date not null,
@@ -984,7 +927,7 @@ partition p1 values less than (11),
 partition p2 values less than (15)
 );
 drop table if exists Part1;
--- error 1503
+-- error 8264
 create table Part1 (
 	col1 int not null,
 	col2 date not null,
@@ -998,7 +941,7 @@ partition p1 values less than (11),
 partition p2 values less than (15)
 );
 drop table if exists Part1;
--- error 1503
+-- error 8264
 create table Part1 (
 	col1 int not null,
 	col2 date not null,
@@ -1011,7 +954,7 @@ partition p1 values less than (11),
 partition p2 values less than (15)
 );
 drop table if exists Part1;
--- error 1503
+-- error 8264
 create table Part1 (
 	col1 int not null,
 	col2 date not null,
@@ -1025,7 +968,7 @@ partition p1 values less than (11),
 partition p2 values less than (15)
 );
 drop table if exists Part1;
--- error 1503
+-- error 8264
 create table Part1 (
 	col1 int not null,
 	col2 date not null,
@@ -1039,7 +982,7 @@ partition p1 values less than (11),
 partition p2 values less than (15)
 );
 drop table if exists part6;
--- error 1503
+-- error 8264
 create table part6 (
 	col1 int not null,
 	col2 date not null,
@@ -1053,7 +996,7 @@ partition by range( col1 + col2 ) (
 partition p1 values less than (11),
 partition p2 values less than (15)
 );
--- error 1503
+-- error 8264
 create table part7 (
 	col1 int not null,
 	col2 int not null,
@@ -1064,7 +1007,7 @@ partition by range (col1 + col2) (
 partition p1 values less than (11),
 partition p2 values less than (15)
 );
--- error 1503
+-- error 8264
 create table part8 (
          a int not null,
          b int not null,
@@ -1079,7 +1022,7 @@ partition by range columns (b) (
        partition p1 values less than (7),
        partition p2 values less than (11)
 );
--- error 1503
+-- error 8264
 create table part9 (
          a int not null,
          b int not null,
@@ -1094,7 +1037,7 @@ partition by range columns (b, c) (
        partition p1 values less than (7, 9),
        partition p2 values less than (11, 22)
 );
--- error 1503
+-- error 8264
 create table part12 (a varchar(20), b binary, unique index (a(5))) partition by range columns (a) (
 			partition p0 values less than ('aaaaa'),
 			partition p1 values less than ('bbbbb'),
@@ -1103,7 +1046,7 @@ create table part12 (a varchar(20), b binary) partition by range columns (a) (
 			partition p0 values less than ('aaaaa'),
 			partition p1 values less than ('bbbbb'),
 			partition p2 values less than ('ccccc'));
--- error 1503
+-- error 8264
 alter table part12 add unique index (a(5));
 create table part13 (a varchar(20), b varchar(10), unique index (a(5),b)) partition by range columns (b) (
 			partition p0 values less than ('aaaaa'),
@@ -1120,36 +1063,7 @@ create table t (
 )
 partition by hash( month(signed) )
 partitions 12;
-insert into t values (0, "Joe", "Doe", from_days(738974 + 0));
-insert into t values (1, "Joe", "Doe", from_days(738974 + 3));
-insert into t values (2, "Joe", "Doe", from_days(738974 + 6));
-insert into t values (3, "Joe", "Doe", from_days(738974 + 9));
-insert into t values (4, "Joe", "Doe", from_days(738974 + 12));
-insert into t values (5, "Joe", "Doe", from_days(738974 + 15));
-insert into t values (6, "Joe", "Doe", from_days(738974 + 18));
-insert into t values (7, "Joe", "Doe", from_days(738974 + 21));
-insert into t values (8, "Joe", "Doe", from_days(738974 + 24));
-insert into t values (9, "Joe", "Doe", from_days(738974 + 27));
-insert into t values (10, "Joe", "Doe", from_days(738974 + 30));
-insert into t values (11, "Joe", "Doe", from_days(738974 + 33));
-insert into t values (12, "Joe", "Doe", from_days(738974 + 36));
-insert into t values (13, "Joe", "Doe", from_days(738974 + 39));
-insert into t values (14, "Joe", "Doe", from_days(738974 + 42));
-insert into t values (15, "Joe", "Doe", from_days(738974 + 45));
-insert into t values (16, "Joe", "Doe", from_days(738974 + 48));
-insert into t values (17, "Joe", "Doe", from_days(738974 + 51));
-insert into t values (18, "Joe", "Doe", from_days(738974 + 54));
-insert into t values (19, "Joe", "Doe", from_days(738974 + 57));
-insert into t values (20, "Joe", "Doe", from_days(738974 + 60));
-insert into t values (21, "Joe", "Doe", from_days(738974 + 63));
-insert into t values (22, "Joe", "Doe", from_days(738974 + 66));
-insert into t values (23, "Joe", "Doe", from_days(738974 + 69));
-insert into t values (24, "Joe", "Doe", from_days(738974 + 72));
-insert into t values (25, "Joe", "Doe", from_days(738974 + 75));
-insert into t values (26, "Joe", "Doe", from_days(738974 + 78));
-insert into t values (27, "Joe", "Doe", from_days(738974 + 81));
-insert into t values (28, "Joe", "Doe", from_days(738974 + 84));
-insert into t values (29, "Joe", "Doe", from_days(738974 + 87));
+insert into t values (0, "Joe", "Doe", from_days(738974 + 0)), (1, "Joe", "Doe", from_days(738974 + 3)), (2, "Joe", "Doe", from_days(738974 + 6)), (3, "Joe", "Doe", from_days(738974 + 9)), (4, "Joe", "Doe", from_days(738974 + 12)), (5, "Joe", "Doe", from_days(738974 + 15)), (6, "Joe", "Doe", from_days(738974 + 18)), (7, "Joe", "Doe", from_days(738974 + 21)), (8, "Joe", "Doe", from_days(738974 + 24)), (9, "Joe", "Doe", from_days(738974 + 27)), (10, "Joe", "Doe", from_days(738974 + 30)), (11, "Joe", "Doe", from_days(738974 + 33)), (12, "Joe", "Doe", from_days(738974 + 36)), (13, "Joe", "Doe", from_days(738974 + 39)), (14, "Joe", "Doe", from_days(738974 + 42)), (15, "Joe", "Doe", from_days(738974 + 45)), (16, "Joe", "Doe", from_days(738974 + 48)), (17, "Joe", "Doe", from_days(738974 + 51)), (18, "Joe", "Doe", from_days(738974 + 54)), (19, "Joe", "Doe", from_days(738974 + 57)), (20, "Joe", "Doe", from_days(738974 + 60)), (21, "Joe", "Doe", from_days(738974 + 63)), (22, "Joe", "Doe", from_days(738974 + 66)), (23, "Joe", "Doe", from_days(738974 + 69)), (24, "Joe", "Doe", from_days(738974 + 72)), (25, "Joe", "Doe", from_days(738974 + 75)), (26, "Joe", "Doe", from_days(738974 + 78)), (27, "Joe", "Doe", from_days(738974 + 81)), (28, "Joe", "Doe", from_days(738974 + 84)), (29, "Joe", "Doe", from_days(738974 + 87));
 alter table t coalesce partition 4;
 show create table t;
 analyze table t;
@@ -1165,36 +1079,7 @@ create table t (
 )
 partition by key(signed,fname)
 partitions 12;
-insert into t values (0, "Joe", "Doe", from_days(738974 + 0));
-insert into t values (1, "Joe", "Doe", from_days(738974 + 3));
-insert into t values (2, "Joe", "Doe", from_days(738974 + 6));
-insert into t values (3, "Joe", "Doe", from_days(738974 + 9));
-insert into t values (4, "Joe", "Doe", from_days(738974 + 12));
-insert into t values (5, "Joe", "Doe", from_days(738974 + 15));
-insert into t values (6, "Joe", "Doe", from_days(738974 + 18));
-insert into t values (7, "Joe", "Doe", from_days(738974 + 21));
-insert into t values (8, "Joe", "Doe", from_days(738974 + 24));
-insert into t values (9, "Joe", "Doe", from_days(738974 + 27));
-insert into t values (10, "Joe", "Doe", from_days(738974 + 30));
-insert into t values (11, "Joe", "Doe", from_days(738974 + 33));
-insert into t values (12, "Joe", "Doe", from_days(738974 + 36));
-insert into t values (13, "Joe", "Doe", from_days(738974 + 39));
-insert into t values (14, "Joe", "Doe", from_days(738974 + 42));
-insert into t values (15, "Joe", "Doe", from_days(738974 + 45));
-insert into t values (16, "Joe", "Doe", from_days(738974 + 48));
-insert into t values (17, "Joe", "Doe", from_days(738974 + 51));
-insert into t values (18, "Joe", "Doe", from_days(738974 + 54));
-insert into t values (19, "Joe", "Doe", from_days(738974 + 57));
-insert into t values (20, "Joe", "Doe", from_days(738974 + 60));
-insert into t values (21, "Joe", "Doe", from_days(738974 + 63));
-insert into t values (22, "Joe", "Doe", from_days(738974 + 66));
-insert into t values (23, "Joe", "Doe", from_days(738974 + 69));
-insert into t values (24, "Joe", "Doe", from_days(738974 + 72));
-insert into t values (25, "Joe", "Doe", from_days(738974 + 75));
-insert into t values (26, "Joe", "Doe", from_days(738974 + 78));
-insert into t values (27, "Joe", "Doe", from_days(738974 + 81));
-insert into t values (28, "Joe", "Doe", from_days(738974 + 84));
-insert into t values (29, "Joe", "Doe", from_days(738974 + 87));
+insert into t values (0, "Joe", "Doe", from_days(738974 + 0)), (1, "Joe", "Doe", from_days(738974 + 3)), (2, "Joe", "Doe", from_days(738974 + 6)), (3, "Joe", "Doe", from_days(738974 + 9)), (4, "Joe", "Doe", from_days(738974 + 12)), (5, "Joe", "Doe", from_days(738974 + 15)), (6, "Joe", "Doe", from_days(738974 + 18)), (7, "Joe", "Doe", from_days(738974 + 21)), (8, "Joe", "Doe", from_days(738974 + 24)), (9, "Joe", "Doe", from_days(738974 + 27)), (10, "Joe", "Doe", from_days(738974 + 30)), (11, "Joe", "Doe", from_days(738974 + 33)), (12, "Joe", "Doe", from_days(738974 + 36)), (13, "Joe", "Doe", from_days(738974 + 39)), (14, "Joe", "Doe", from_days(738974 + 42)), (15, "Joe", "Doe", from_days(738974 + 45)), (16, "Joe", "Doe", from_days(738974 + 48)), (17, "Joe", "Doe", from_days(738974 + 51)), (18, "Joe", "Doe", from_days(738974 + 54)), (19, "Joe", "Doe", from_days(738974 + 57)), (20, "Joe", "Doe", from_days(738974 + 60)), (21, "Joe", "Doe", from_days(738974 + 63)), (22, "Joe", "Doe", from_days(738974 + 66)), (23, "Joe", "Doe", from_days(738974 + 69)), (24, "Joe", "Doe", from_days(738974 + 72)), (25, "Joe", "Doe", from_days(738974 + 75)), (26, "Joe", "Doe", from_days(738974 + 78)), (27, "Joe", "Doe", from_days(738974 + 81)), (28, "Joe", "Doe", from_days(738974 + 84)), (29, "Joe", "Doe", from_days(738974 + 87));
 alter table t coalesce partition 4;
 show create table t;
 analyze table t;
@@ -1221,10 +1106,6 @@ insert into t select id + 4, fname, lname, hired, separated, job_code, store_id 
 insert into t select id + 8, fname, lname, hired, separated, job_code, store_id + 8 from t;
 insert into t select id + 16, fname, lname, hired, separated, job_code, store_id + 16 from t;
 insert into t select id + 32, fname, lname, hired, separated, job_code, store_id + 32 from t;
-insert into t select id + 64, fname, lname, hired, separated, job_code, store_id + 64 from t;
-insert into t select id + 128, fname, lname, hired, separated, job_code, store_id + 128 from t;
-insert into t select id + 256, fname, lname, hired, separated, job_code, store_id + 256 from t;
-insert into t select id + 512, fname, lname, hired, separated, job_code, store_id + 512 from t;
 select sum(store_id), avg(store_id), max(store_id), min(store_id), sum(id) from t;
 -- error 1480
 alter table t add partition (partition pHist history);
@@ -1292,7 +1173,6 @@ alter table t coalesce partition 2;
 show create table t;
 
 # TestConstAndTimezoneDepent
-set @@session.tidb_enable_table_partition = 1;
 drop database if exists test_db_with_partition_const;
 create database test_db_with_partition_const;
 use test_db_with_partition_const;
@@ -1361,7 +1241,6 @@ create table t2332 ( time_recorded timestamp )
          partition by range(day(time_recorded)) (
   		 partition p0 values less than (1)
 		);
-set @@session.tidb_enable_table_partition = default;
 
 # TestUnsupportedPartitionManagementDDLs
 drop table if exists test_1465;
@@ -1452,26 +1331,22 @@ alter table t_date add partition (partition p1 values less than (0x20));
 alter table t_date add partition (partition p1 values less than (20));
 
 # TestPartitionListWithTimeType
-set @@session.tidb_enable_list_partition = ON;
 drop table if exists t_list1;
 create table t_list1(a date) partition by list columns (a) (partition p0 values in ('2010-02-02', '20180203'), partition p1 values in ('20200202'));
 insert into t_list1(a) values (20180203);
 select * from t_list1 partition (p0);
-set @@session.tidb_enable_list_partition = default;
 
 # TestPartitionListWithNewCollation
 drop table if exists t;
-set @@session.tidb_enable_list_partition = ON;
 -- error 1495
 create table t (a char(10) collate utf8mb4_general_ci) partition by list columns (a) (partition p0 values in ('a', 'A'));
 create table t11(a char(10) collate utf8mb4_general_ci) partition by list columns (a) (partition p0 values in ('a', 'b'), partition p1 values in ('C', 'D'));
 insert into t11(a) values ('A'), ('c'), ('C'), ('d'), ('B');
-analyze table t11;
+analyze table t11 all columns;
 select * from t11 order by a;
 select * from t11 partition (p0);
 select * from t11 partition (p1);
 desc select * from t11 where a = 'b';
-set @@session.tidb_enable_list_partition = default;
 
 # TestAddTableWithPartition
 drop table if exists global_partition_table;
@@ -1491,7 +1366,6 @@ create global temporary table partition_range_table (c1 smallint(6) not null, c2
 ) ON COMMIT DELETE ROWS;
 drop table if exists partition_range_table;
 drop table if exists partition_list_table;
-set @@session.tidb_enable_list_partition = ON;
 -- error 1562
 create global temporary table partition_list_table (id int) partition by list  (id) (
     partition p0 values in (1,2),
@@ -1516,7 +1390,6 @@ create temporary table local_partition_range_table (c1 smallint(6) not null, c2 
 );
 drop table if exists local_partition_range_table;
 drop table if exists local_partition_list_table;
-set @@session.tidb_enable_list_partition = ON;
 -- error 1562
 create temporary table local_partition_list_table (id int) partition by list  (id) (
     partition p0 values in (1,2),
@@ -1524,11 +1397,9 @@ create temporary table local_partition_list_table (id int) partition by list  (i
     partition p3 values in (5,null)
 );
 drop table if exists local_partition_list_table;
-set @@session.tidb_enable_list_partition = default;
 
 # TestDuplicatePartitionNames
 drop table if exists t1;
-set @@tidb_enable_list_partition=on;
 create table t1 (a int) partition by list (a) (partition p1 values in (1), partition p2 values in (2), partition p3 values in (3));
 insert into t1 values (1),(2),(3);
 alter table t1 truncate partition p1,p1;
@@ -1549,7 +1420,6 @@ alter table t1 drop partition p1;
 --sorted_result
 select * from t1;
 Show create table t1;
-set @@tidb_enable_list_partition=default;
 
 # TestCreateIntervalPartitionSyntax
 drop table if exists t;
@@ -1982,101 +1852,7 @@ show create table tRange;
 # TestRemoveHashPartitioning
 drop table if exists t;
 create table t (a int, b varchar(255), key (a,b), key (b)) partition by hash (a) partitions 7;
-insert into t values (32,char(32,32,32,32));
-insert into t values (33,char(33,33,33,33));
-insert into t values (34,char(34,34,34,34));
-insert into t values (35,char(35,35,35,35));
-insert into t values (36,char(36,36,36,36));
-insert into t values (37,char(37,37,37,37));
-insert into t values (38,char(38,38,38,38));
-insert into t values (39,char(39,39,39,39));
-insert into t values (40,char(40,40,40,40));
-insert into t values (41,char(41,41,41,41));
-insert into t values (42,char(42,42,42,42));
-insert into t values (43,char(43,43,43,43));
-insert into t values (44,char(44,44,44,44));
-insert into t values (45,char(45,45,45,45));
-insert into t values (46,char(46,46,46,46));
-insert into t values (47,char(47,47,47,47));
-insert into t values (48,char(48,48,48,48));
-insert into t values (49,char(49,49,49,49));
-insert into t values (50,char(50,50,50,50));
-insert into t values (51,char(51,51,51,51));
-insert into t values (52,char(52,52,52,52));
-insert into t values (53,char(53,53,53,53));
-insert into t values (54,char(54,54,54,54));
-insert into t values (55,char(55,55,55,55));
-insert into t values (56,char(56,56,56,56));
-insert into t values (57,char(57,57,57,57));
-insert into t values (58,char(58,58,58,58));
-insert into t values (59,char(59,59,59,59));
-insert into t values (60,char(60,60,60,60));
-insert into t values (61,char(61,61,61,61));
-insert into t values (62,char(62,62,62,62));
-insert into t values (63,char(63,63,63,63));
-insert into t values (64,char(64,64,64,64));
-insert into t values (65,char(65,65,65,65));
-insert into t values (66,char(66,66,66,66));
-insert into t values (67,char(67,67,67,67));
-insert into t values (68,char(68,68,68,68));
-insert into t values (69,char(69,69,69,69));
-insert into t values (70,char(70,70,70,70));
-insert into t values (71,char(71,71,71,71));
-insert into t values (72,char(72,72,72,72));
-insert into t values (73,char(73,73,73,73));
-insert into t values (74,char(74,74,74,74));
-insert into t values (75,char(75,75,75,75));
-insert into t values (76,char(76,76,76,76));
-insert into t values (77,char(77,77,77,77));
-insert into t values (78,char(78,78,78,78));
-insert into t values (79,char(79,79,79,79));
-insert into t values (80,char(80,80,80,80));
-insert into t values (81,char(81,81,81,81));
-insert into t values (82,char(82,82,82,82));
-insert into t values (83,char(83,83,83,83));
-insert into t values (84,char(84,84,84,84));
-insert into t values (85,char(85,85,85,85));
-insert into t values (86,char(86,86,86,86));
-insert into t values (87,char(87,87,87,87));
-insert into t values (88,char(88,88,88,88));
-insert into t values (89,char(89,89,89,89));
-insert into t values (90,char(90,90,90,90));
-insert into t values (91,char(91,91,91,91));
-insert into t values (92,char(92,92,92,92));
-insert into t values (93,char(93,93,93,93));
-insert into t values (94,char(94,94,94,94));
-insert into t values (95,char(95,95,95,95));
-insert into t values (96,char(96,96,96,96));
-insert into t values (97,char(97,97,97,97));
-insert into t values (98,char(98,98,98,98));
-insert into t values (99,char(99,99,99,99));
-insert into t values (100,char(100,100,100,100));
-insert into t values (101,char(101,101,101,101));
-insert into t values (102,char(102,102,102,102));
-insert into t values (103,char(103,103,103,103));
-insert into t values (104,char(104,104,104,104));
-insert into t values (105,char(105,105,105,105));
-insert into t values (106,char(106,106,106,106));
-insert into t values (107,char(107,107,107,107));
-insert into t values (108,char(108,108,108,108));
-insert into t values (109,char(109,109,109,109));
-insert into t values (110,char(110,110,110,110));
-insert into t values (111,char(111,111,111,111));
-insert into t values (112,char(112,112,112,112));
-insert into t values (113,char(113,113,113,113));
-insert into t values (114,char(114,114,114,114));
-insert into t values (115,char(115,115,115,115));
-insert into t values (116,char(116,116,116,116));
-insert into t values (117,char(117,117,117,117));
-insert into t values (118,char(118,118,118,118));
-insert into t values (119,char(119,119,119,119));
-insert into t values (120,char(120,120,120,120));
-insert into t values (121,char(121,121,121,121));
-insert into t values (122,char(122,122,122,122));
-insert into t values (123,char(123,123,123,123));
-insert into t values (124,char(124,124,124,124));
-insert into t values (125,char(125,125,125,125));
-insert into t values (126,char(126,126,126,126));
+insert into t values (32,char(32,32,32,32)), (33,char(33,33,33,33)), (34,char(34,34,34,34)), (35,char(35,35,35,35)), (36,char(36,36,36,36)), (37,char(37,37,37,37)), (38,char(38,38,38,38)), (39,char(39,39,39,39)), (40,char(40,40,40,40)), (41,char(41,41,41,41)), (42,char(42,42,42,42)), (43,char(43,43,43,43)), (44,char(44,44,44,44)), (45,char(45,45,45,45)), (46,char(46,46,46,46)), (47,char(47,47,47,47)), (48,char(48,48,48,48)), (49,char(49,49,49,49)), (50,char(50,50,50,50)), (51,char(51,51,51,51)), (52,char(52,52,52,52)), (53,char(53,53,53,53)), (54,char(54,54,54,54)), (55,char(55,55,55,55)), (56,char(56,56,56,56)), (57,char(57,57,57,57)), (58,char(58,58,58,58)), (59,char(59,59,59,59)), (60,char(60,60,60,60)), (61,char(61,61,61,61)), (62,char(62,62,62,62)), (63,char(63,63,63,63)), (64,char(64,64,64,64)), (65,char(65,65,65,65)), (66,char(66,66,66,66)), (67,char(67,67,67,67)), (68,char(68,68,68,68)), (69,char(69,69,69,69)), (70,char(70,70,70,70)), (71,char(71,71,71,71)), (72,char(72,72,72,72)), (73,char(73,73,73,73)), (74,char(74,74,74,74)), (75,char(75,75,75,75)), (76,char(76,76,76,76)), (77,char(77,77,77,77)), (78,char(78,78,78,78)), (79,char(79,79,79,79)), (80,char(80,80,80,80)), (81,char(81,81,81,81)), (82,char(82,82,82,82)), (83,char(83,83,83,83)), (84,char(84,84,84,84)), (85,char(85,85,85,85)), (86,char(86,86,86,86)), (87,char(87,87,87,87)), (88,char(88,88,88,88)), (89,char(89,89,89,89)), (90,char(90,90,90,90)), (91,char(91,91,91,91)), (92,char(92,92,92,92)), (93,char(93,93,93,93)), (94,char(94,94,94,94)), (95,char(95,95,95,95)), (96,char(96,96,96,96)), (97,char(97,97,97,97)), (98,char(98,98,98,98)), (99,char(99,99,99,99)), (100,char(100,100,100,100)), (101,char(101,101,101,101)), (102,char(102,102,102,102)), (103,char(103,103,103,103)), (104,char(104,104,104,104)), (105,char(105,105,105,105)), (106,char(106,106,106,106)), (107,char(107,107,107,107)), (108,char(108,108,108,108)), (109,char(109,109,109,109)), (110,char(110,110,110,110)), (111,char(111,111,111,111)), (112,char(112,112,112,112)), (113,char(113,113,113,113)), (114,char(114,114,114,114)), (115,char(115,115,115,115)), (116,char(116,116,116,116)), (117,char(117,117,117,117)), (118,char(118,118,118,118)), (119,char(119,119,119,119)), (120,char(120,120,120,120)), (121,char(121,121,121,121)), (122,char(122,122,122,122)), (123,char(123,123,123,123)), (124,char(124,124,124,124)), (125,char(125,125,125,125)), (126,char(126,126,126,126));
 analyze table t;
 --sorted_result
 select partition_name, table_rows from information_schema.partitions where table_schema = 'ddl__db_partition' and table_name = 't';
@@ -2194,7 +1970,6 @@ alter table rcp EXCHANGE PARTITION p20230829 WITH TABLE t;
 # TODO: add test not in first partition (both last without maxvalue and also not last with/without maxvalue)
 
 # TestConstAndTimezoneDepent2
-set @@session.tidb_enable_table_partition = 1;
 drop table if exists t1, t2, t3, t4, t5;
 create table t1 ( time_recorded datetime )
 partition by range(TO_DAYS(time_recorded)) (
@@ -2212,7 +1987,6 @@ create table t5 ( time_recorded timestamp )
 partition by range(unix_timestamp(time_recorded)) (
 	partition p1 values less than (1559192604)
 );
-set @@session.tidb_enable_table_partition = default;
 
 
 # TestExchangePartitionExpressIndex
@@ -2249,7 +2023,6 @@ alter table pt1 exchange partition p0 with table nt2;
 
 
 # TestExchangePartitionTableCompatiable
-set tidb_enable_global_index=true;
 
 drop database if exists partition_exchange;
 create database partition_exchange;
@@ -2328,6 +2101,10 @@ create table pt15 (id int not null, unique index uk_id (id)) partition by hash(i
 create table nt15 (id int not null, index uk_id (id));
 -- error 1736
 alter table pt15 exchange partition p0 with table nt15;
+create table pt15b (id int not null, a int, unique index uk_id (a) global) partition by hash(id) partitions 1;
+create table nt15b (id int not null, a int, unique index uk_id (a));
+-- error 1731
+alter table pt15b exchange partition p0 with table nt15b;
 
 --echo ## auto_increment
 create table pt16 (id int not null primary key auto_increment) partition by hash(id) partitions 1;
@@ -2427,12 +2204,66 @@ create temporary table nt34 (id int);
 alter table pt34 exchange partition p0 with table nt34;
 
 --echo ## global index
-create table pt35 (a int, b int, unique index(b)) partition by hash(a) partitions 1;
+create table pt35 (a int, b int, unique index(b) global) partition by hash(a) partitions 1;
 create table nt35 (a int, b int, unique index(b));
 -- error 1731
 alter table pt35 exchange partition p0 with table nt35;
 
 drop database partition_exchange;
 use ddl__db_partition;
-set tidb_enable_global_index=default;
+
+--echo # 53385
+drop table if exists t,t1;
+create table t (id int not null, store_id int not null )  partition by range (store_id) (partition p0 values less than (6), partition p1 values less than (11), partition p2 values less than (16), partition p3 values less than (21));
+create table t1(id int not null, store_id int not null);
+insert into t values (1, 1);
+insert into t values (2, 17);
+insert into t1 values (0, 18);
+alter table t exchange partition p3 with table t1;
+alter table t remove partitioning;
+--sorted_result
+select * from t;
+--sorted_result
+select *,_tidb_rowid from t;
+drop table t, t1;
+create table t (id int not null, store_id int not null )  partition by range (store_id) (partition p0 values less than (6), partition p1 values less than (11), partition p2 values less than (16), partition p3 values less than (21));
+create table t1(id int not null, store_id int not null);
+insert into t values (1, 1);
+insert into t values (2, 17);
+insert into t1 values (0, 18);
+alter table t exchange partition p3 with table t1;
+--sorted_result
+select *, _tidb_rowid from t;
+--sorted_result
+select *, _tidb_rowid from t1;
+alter table t reorganize partition p0, p1, p2, p3 into (partition pMax values less than (maxvalue));
+--sorted_result
+select * from t;
+--sorted_result
+select *,_tidb_rowid from t;
+drop table t, t1;
+
+# TestCreateAndAlterIntervalPartitionWithPerpareStmt
+drop table if exists aaa;
+prepare stmt from "\ncreate table aaa(id bigint primary key) partition by range (id) interval (100) first partition less than (100) last partition less than (500)";
+execute stmt;
+show create table aaa;
+
+prepare stmt2 from "\nalter table aaa last partition less than (600)";
+execute stmt2;
+show create table aaa;
+
+prepare stmt3 from "\nalter table aaa first partition less than (300)";
+execute stmt3;
+show create table aaa;
+
+drop table if exists aaa;
+prepare stmt from "create table aaa(id bigint primary key) partition by range (id)\n interval (100) first partition less than (100) last partition less than (500)";
+execute stmt;
+show create table aaa;
+
+drop table if exists aaa;
+prepare stmt from "create table aaa(id bigint primary key) partition by range (id) interval (100) first partition\n less than (100) last partition less than (500)";
+execute stmt;
+show create table aaa;
 

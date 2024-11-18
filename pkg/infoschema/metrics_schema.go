@@ -21,9 +21,11 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/ngaut/pools"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/util"
@@ -39,27 +41,35 @@ const (
 func init() {
 	// Initialize the metric schema database and register the driver to `drivers`.
 	dbID := autoid.MetricSchemaDBID
-	tableID := dbID + 1
 	metricTables := make([]*model.TableInfo, 0, len(MetricTableMap))
 	for name, def := range MetricTableMap {
 		cols := def.genColumnInfos()
 		tableInfo := buildTableMeta(name, cols)
-		tableInfo.ID = tableID
 		tableInfo.Comment = def.Comment
 		tableInfo.DBID = dbID
-		tableID++
 		metricTables = append(metricTables, tableInfo)
 		tableInfo.MaxColumnID = int64(len(tableInfo.Columns))
 		tableInfo.MaxIndexID = int64(len(tableInfo.Indices))
 	}
+
+	// assign table IDs, sort by table name first to make the id stable across different TiDB instances.
+	slices.SortFunc(metricTables, func(a, b *model.TableInfo) int {
+		return strings.Compare(a.Name.L, b.Name.L)
+	})
+	tableID := dbID + 1
+	for _, tableInfo := range metricTables {
+		tableInfo.ID = tableID
+		tableID++
+	}
+
 	dbInfo := &model.DBInfo{
 		ID:      dbID,
-		Name:    model.NewCIStr(util.MetricSchemaName.O),
+		Name:    pmodel.NewCIStr(util.MetricSchemaName.O),
 		Charset: mysql.DefaultCharset,
 		Collate: mysql.DefaultCollationName,
-		Tables:  metricTables,
 	}
-	RegisterVirtualTable(dbInfo, tableFromMeta)
+	dbInfo.Deprecated.Tables = metricTables
+	RegisterVirtualTable(dbInfo, tableFromMetaForMetricsTable)
 }
 
 // MetricTableDef is the metric table define.
@@ -146,7 +156,7 @@ type metricSchemaTable struct {
 	infoschemaTable
 }
 
-func tableFromMeta(alloc autoid.Allocators, meta *model.TableInfo) (table.Table, error) {
+func tableFromMetaForMetricsTable(_ autoid.Allocators, _ func() (pools.Resource, error), meta *model.TableInfo) (table.Table, error) {
 	columns := make([]*table.Column, 0, len(meta.Columns))
 	for _, colInfo := range meta.Columns {
 		col := table.ToColumn(colInfo)

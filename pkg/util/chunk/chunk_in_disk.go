@@ -19,6 +19,7 @@ import (
 	"math/rand"
 	"os"
 	"strconv"
+	"time"
 	"unsafe"
 
 	errors2 "github.com/pingcap/errors"
@@ -163,6 +164,7 @@ func (d *DataInDiskByChunks) Close() {
 		d.diskTracker.Consume(-d.diskTracker.BytesConsumed())
 		terror.Call(d.dataFile.file.Close)
 		terror.Log(os.Remove(d.dataFile.file.Name()))
+		d.dataFile.file = nil
 	}
 }
 
@@ -192,7 +194,7 @@ func (d *DataInDiskByChunks) serializeChunkData(pos *int64, chk *Chunk, selSize 
 	d.buf = d.buf[:*pos+selSize]
 
 	selLen := len(chk.sel)
-	for i := 0; i < selLen; i++ {
+	for i := range selLen {
 		*(*int)(unsafe.Pointer(&d.buf[*pos])) = chk.sel[i]
 		*pos += intLen
 	}
@@ -263,7 +265,7 @@ func (d *DataInDiskByChunks) deserializeColMeta(pos *int64) (length int64, nullM
 func (d *DataInDiskByChunks) deserializeSel(chk *Chunk, pos *int64, selSize int) {
 	selLen := int64(selSize) / intLen
 	chk.sel = make([]int, selLen)
-	for i := int64(0); i < selLen; i++ {
+	for i := range selLen {
 		chk.sel[i] = *(*int)(unsafe.Pointer(&d.buf[*pos]))
 		*pos += intLen
 	}
@@ -288,7 +290,7 @@ func (d *DataInDiskByChunks) deserializeChunkData(chk *Chunk, pos *int64) {
 
 func (d *DataInDiskByChunks) deserializeOffsets(dst []int64, pos *int64) {
 	offsetNum := len(dst)
-	for i := 0; i < offsetNum; i++ {
+	for i := range offsetNum {
 		dst[i] = *(*int64)(unsafe.Pointer(&d.buf[*pos]))
 		*pos += int64Len
 	}
@@ -333,6 +335,9 @@ func injectChunkInDiskRandomError() error {
 			randNum := rand.Int31n(10000)
 			if randNum < 3 {
 				err = errors2.New("random error is triggered")
+			} else if randNum < 6 {
+				delayTime := rand.Int31n(10) + 5
+				time.Sleep(time.Duration(delayTime) * time.Millisecond)
 			}
 		}
 	})

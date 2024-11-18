@@ -24,7 +24,7 @@ import (
 // NewDistSQLContextForTest creates a new dist sql context for test
 func NewDistSQLContextForTest() *distsqlctx.DistSQLContext {
 	return &distsqlctx.DistSQLContext{
-		AppendWarning:                        func(error) {},
+		WarnHandler:                          contextutil.NewFuncWarnAppenderForTest(func(level string, err error) {}),
 		TiFlashMaxThreads:                    variable.DefTiFlashMaxThreads,
 		TiFlashMaxBytesBeforeExternalJoin:    variable.DefTiFlashMaxBytesBeforeExternalJoin,
 		TiFlashMaxBytesBeforeExternalGroupBy: variable.DefTiFlashMaxBytesBeforeExternalGroupBy,

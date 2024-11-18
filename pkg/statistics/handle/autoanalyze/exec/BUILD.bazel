@@ -7,7 +7,7 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//pkg/metrics",
-        "//pkg/parser/ast",
+        "//pkg/planner/core/resolve",
         "//pkg/sessionctx",
         "//pkg/sessionctx/sysproctrack",
         "//pkg/sessionctx/variable",
@@ -16,6 +16,7 @@ go_library(
         "//pkg/statistics/handle/types",
         "//pkg/statistics/handle/util",
         "//pkg/util/chunk",
+        "//pkg/util/logutil",
         "//pkg/util/sqlescape",
         "//pkg/util/sqlexec",
         "@com_github_pingcap_errors//:errors",
@@ -33,6 +34,7 @@ go_test(
         "//pkg/parser/model",
         "//pkg/sessionctx",
         "//pkg/testkit",
+        "//pkg/util",
         "@com_github_stretchr_testify//require",
     ],
 )

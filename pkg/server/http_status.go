@@ -50,6 +50,7 @@ import (
 	"github.com/pingcap/tidb/pkg/server/handler/ttlhandler"
 	util2 "github.com/pingcap/tidb/pkg/server/internal/util"
 	"github.com/pingcap/tidb/pkg/session"
+	"github.com/pingcap/tidb/pkg/statistics/handle/initstats"
 	"github.com/pingcap/tidb/pkg/store"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/cpuprofile"
@@ -224,7 +225,6 @@ func (s *Server) startHTTPServer() {
 
 	tikvHandlerTool := s.NewTikvHandlerTool()
 	router.Handle("/settings", tikvhandler.NewSettingsHandler(tikvHandlerTool)).Name("Settings")
-	router.Handle("/binlog/recover", tikvhandler.BinlogRecover{}).Name("BinlogRecover")
 
 	router.Handle("/schema", tikvhandler.NewSchemaHandler(tikvHandlerTool)).Name("Schema")
 	router.Handle("/schema/{db}", tikvhandler.NewSchemaHandler(tikvHandlerTool))
@@ -255,7 +255,7 @@ func (s *Server) startHTTPServer() {
 	// HTTP path for upgrade operations.
 	router.Handle("/upgrade/{op}", handler.NewClusterUpgradeHandler(tikvHandlerTool.Store.(kv.Storage))).Name("upgrade operations")
 
-	if s.cfg.Store == "tikv" {
+	if s.cfg.Store == config.StoreTypeTiKV {
 		// HTTP path for tikv.
 		router.Handle("/tables/{db}/{table}/regions", tikvhandler.NewTableHandler(tikvHandlerTool, tikvhandler.OpTableRegions))
 		router.Handle("/tables/{db}/{table}/ranges", tikvhandler.NewTableHandler(tikvHandlerTool, tikvhandler.OpTableRanges))
@@ -336,7 +336,7 @@ func (s *Server) startHTTPServer() {
 	})
 
 	router.HandleFunc("/debug/zip", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="tidb_debug"`+time.Now().Format("20060102150405")+".zip"))
+		w.Header().Set("Content-Disposition", `attachment; filename="tidb_debug"`+time.Now().Format("20060102150405")+".zip")
 
 		// dump goroutine/heap/mutex
 		items := []struct {
@@ -430,7 +430,7 @@ func (s *Server) startHTTPServer() {
 	})
 
 	// ddlHook is enabled only for tests so we can substitute the callback in the DDL.
-	router.Handle("/test/ddl/hook", tikvhandler.NewDDLHookHandler(tikvHandlerTool.Store.(kv.Storage)))
+	router.Handle("/test/ddl/hook", tikvhandler.DDLHookHandler{})
 
 	// ttlJobTriggerHandler is enabled only for tests, so we can accelerate the schedule of TTL job
 	router.Handle("/test/ttl/trigger/{db}/{table}", ttlhandler.NewTTLJobTriggerHandler(tikvHandlerTool.Store.(kv.Storage)))
@@ -481,7 +481,7 @@ func (s *Server) startStatusServerAndRPCServer(serverMux *http.ServeMux) {
 	statusServer := &http.Server{Addr: s.statusAddr, Handler: util2.NewCorsHandler(serverMux, s.cfg)}
 	grpcServer := NewRPCServer(s.cfg, s.dom, s)
 	service.RegisterChannelzServiceToServer(grpcServer)
-	if s.cfg.Store == "tikv" {
+	if s.cfg.Store == config.StoreTypeTiKV {
 		keyspaceName := config.GetGlobalKeyspaceName()
 		for {
 			var fullPath string
@@ -557,9 +557,15 @@ func (s *Server) SetCNChecker(tlsConfig *tls.Config) *tls.Config {
 
 // Status of TiDB.
 type Status struct {
-	Connections int    `json:"connections"`
-	Version     string `json:"version"`
-	GitHash     string `json:"git_hash"`
+	Connections int          `json:"connections"`
+	Version     string       `json:"version"`
+	GitHash     string       `json:"git_hash"`
+	Status      DetailStatus `json:"status"`
+}
+
+// DetailStatus is to show the detail status of TiDB. for example the init stats percentage.
+type DetailStatus struct {
+	InitStatsPercentage float64 `json:"init_stats_percentage"`
 }
 
 func (s *Server) handleStatus(w http.ResponseWriter, _ *http.Request) {
@@ -571,10 +577,14 @@ func (s *Server) handleStatus(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
 		return
 	}
+	initStatsPercentage := min(100, initstats.InitStatsPercentage.Load())
 	st := Status{
 		Connections: s.ConnectionCount(),
 		Version:     mysql.ServerVersion,
 		GitHash:     versioninfo.TiDBGitHash,
+		Status: DetailStatus{
+			InitStatsPercentage: initStatsPercentage,
+		},
 	}
 	js, err := json.Marshal(st)
 	if err != nil {

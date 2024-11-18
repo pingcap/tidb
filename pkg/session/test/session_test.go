@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/domain"
+	"github.com/pingcap/tidb/pkg/extension"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/format"
@@ -36,8 +37,10 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/session"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/testkit/testutil"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
@@ -149,7 +152,7 @@ func TestLoadSchemaFailed(t *testing.T) {
 	}()
 	require.Error(t, domain.GetDomain(tk.Session()).Reload())
 
-	lease := domain.GetDomain(tk.Session()).DDL().GetLease()
+	lease := domain.GetDomain(tk.Session()).GetSchemaLease()
 	time.Sleep(lease * 2)
 
 	// Make sure executing insert statement is failed when server is invalid.
@@ -287,7 +290,7 @@ func TestParseWithParams(t *testing.T) {
 	se := tk.Session()
 	exec := se.GetRestrictedSQLExecutor()
 
-	// test compatibility with ExcuteInternal
+	// test compatibility with ExecuteInternal
 	_, err := exec.ParseWithParams(context.TODO(), "SELECT 4")
 	require.NoError(t, err)
 
@@ -339,11 +342,12 @@ func TestDoDDLJobQuit(t *testing.T) {
 	require.NoError(t, err)
 	defer se.Close()
 
-	require.Nil(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/storeCloseInLoop", `return`))
-	defer func() { require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/storeCloseInLoop")) }()
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/storeCloseInLoop", func() {
+		_ = dom.DDL().Stop()
+	})
 
 	// this DDL call will enter deadloop before this fix
-	err = dom.DDL().CreateSchema(se, &ast.CreateDatabaseStmt{Name: model.NewCIStr("testschema")})
+	err = dom.DDLExecutor().CreateSchema(se, &ast.CreateDatabaseStmt{Name: model.NewCIStr("testschema")})
 	require.Equal(t, "context canceled", err.Error())
 }
 
@@ -399,7 +403,7 @@ func TestStmtHints(t *testing.T) {
 	require.Len(t, tk.Session().GetSessionVars().StmtCtx.GetWarnings(), 1)
 	require.True(t, tk.Session().GetSessionVars().MemTracker.CheckBytesLimit(val))
 	tk.MustExec("select /*+ MEMORY_QUOTA(0 GB) */ 1;")
-	val = int64(0)
+	val = int64(-1)
 	require.Len(t, tk.Session().GetSessionVars().StmtCtx.GetWarnings(), 1)
 	require.True(t, tk.Session().GetSessionVars().MemTracker.CheckBytesLimit(val))
 	require.EqualError(t, tk.Session().GetSessionVars().StmtCtx.GetWarnings()[0].Err, "Setting the MEMORY_QUOTA to 0 means no memory limit")
@@ -410,11 +414,11 @@ func TestStmtHints(t *testing.T) {
 	val = int64(1) * 1024 * 1024
 	require.True(t, tk.Session().GetSessionVars().MemTracker.CheckBytesLimit(val))
 
-	tk.MustExec("insert /*+ MEMORY_QUOTA(1 MB) */  into t1 select /*+ MEMORY_QUOTA(3 MB) */ * from t1;")
+	tk.MustExec("insert /*+ MEMORY_QUOTA(1 MB) */  into t1 select /*+ MEMORY_QUOTA(1 MB) */ * from t1;")
 	val = int64(1) * 1024 * 1024
 	require.True(t, tk.Session().GetSessionVars().MemTracker.CheckBytesLimit(val))
-	require.Len(t, tk.Session().GetSessionVars().StmtCtx.GetWarnings(), 1)
-	require.EqualError(t, tk.Session().GetSessionVars().StmtCtx.GetWarnings()[0].Err, "[planner:3126]Hint MEMORY_QUOTA(`3145728`) is ignored as conflicting/duplicated.")
+	require.Len(t, tk.Session().GetSessionVars().StmtCtx.GetWarnings(), 2)
+	require.EqualError(t, tk.Session().GetSessionVars().StmtCtx.GetWarnings()[0].Err, "[planner:3126]Hint MEMORY_QUOTA(`1048576`) is ignored as conflicting/duplicated.")
 
 	// Test NO_INDEX_MERGE hint
 	tk.Session().GetSessionVars().SetEnableIndexMerge(true)
@@ -889,6 +893,78 @@ DROP USER root;
 	require.Equal(t, 1, req.NumRows())
 	row = req.GetRow(0)
 	require.Equal(t, "cloud_admin", row.GetString(0))
+	require.NoError(t, r.Close())
+	dom.Close()
+}
+
+func TestBootstrapSQLWithExtension(t *testing.T) {
+	authChecks := []*extension.AuthPlugin{{
+		Name: "my_auth_plugin",
+		AuthenticateUser: func(request extension.AuthenticateRequest) error {
+			return nil
+		},
+		ValidateAuthString: func(pwdHash string) bool {
+			return pwdHash != ""
+		},
+		GenerateAuthString: func(pwd string) (string, bool) {
+			return pwd, pwd != ""
+		},
+		RequiredClientSidePlugin: mysql.AuthNativePassword,
+	}}
+
+	require.NoError(t, extension.Register(
+		"extension_authentication_plugin",
+		extension.WithCustomAuthPlugins(authChecks),
+		extension.WithCustomSysVariables([]*variable.SysVar{
+			{
+				Scope:          variable.ScopeGlobal,
+				Name:           "extension_authentication_plugin",
+				Value:          mysql.AuthNativePassword,
+				Type:           variable.TypeEnum,
+				PossibleValues: []string{authChecks[0].Name},
+			},
+		}),
+	))
+	require.NoError(t, extension.Setup())
+	ext, err := extension.GetExtensions()
+	require.NoError(t, err)
+
+	sqlFile, err := os.CreateTemp("", "TestBootstrapSQLWithExtension.sql")
+	require.NoError(t, err)
+	defer func() {
+		path := sqlFile.Name()
+		err = sqlFile.Close()
+		require.NoError(t, err)
+		err = os.Remove(path)
+		require.NoError(t, err)
+	}()
+	// Create a user with the custom auth plugin.
+	_, err = sqlFile.WriteString(`CREATE USER myuser IDENTIFIED WITH my_auth_plugin BY 'password';`)
+	require.NoError(t, err)
+
+	store, err := mockstore.NewMockStore(mockstore.WithStoreType(mockstore.EmbedUnistore))
+	require.NoError(t, err)
+	config.GetGlobalConfig().InitializeSQLFile = sqlFile.Name()
+	defer func() {
+		require.NoError(t, store.Close())
+		config.GetGlobalConfig().InitializeSQLFile = ""
+	}()
+
+	// Bootstrap with the sql file
+	dom, err := session.BootstrapSession(store)
+	require.NoError(t, err)
+	se := session.CreateSessionAndSetID(t, store)
+	se.SetExtensions(ext.NewSessionExtensions())
+	ctx := context.Background()
+	// 'myuser' has been created successfully
+	r := session.MustExecToRecodeSet(t, se, `select user from mysql.user where user = 'myuser'`)
+	require.NoError(t, err)
+	req := r.NewChunk(nil)
+	err = r.Next(ctx, req)
+	require.NoError(t, err)
+	require.Equal(t, 1, req.NumRows())
+	row := req.GetRow(0)
+	require.Equal(t, "myuser", row.GetString(0))
 	require.NoError(t, r.Close())
 	dom.Close()
 }

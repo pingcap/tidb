@@ -15,6 +15,7 @@
 package lockstats
 
 import (
+	"context"
 	"fmt"
 	"strconv"
 	"testing"
@@ -23,7 +24,9 @@ import (
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/stretchr/testify/require"
 )
@@ -33,9 +36,10 @@ func TestLockAndUnlockTableStats(t *testing.T) {
 
 	handle := dom.StatsHandle()
 	tblStats := handle.GetTableStats(tbl)
-	for _, col := range tblStats.Columns {
+	tblStats.ForEachColumnImmutable(func(_ int64, col *statistics.Column) bool {
 		require.True(t, col.IsStatsInitialized())
-	}
+		return false
+	})
 	tk.MustExec("lock stats t")
 
 	rows := tk.MustQuery(selectTableLockSQL).Rows()
@@ -71,9 +75,10 @@ func TestLockAndUnlockPartitionedTableStats(t *testing.T) {
 
 	handle := dom.StatsHandle()
 	tblStats := handle.GetTableStats(tbl)
-	for _, col := range tblStats.Columns {
+	tblStats.ForEachColumnImmutable(func(_ int64, col *statistics.Column) bool {
 		require.True(t, col.IsStatsInitialized())
-	}
+		return false
+	})
 
 	tk.MustExec("lock stats t")
 	rows := tk.MustQuery(selectTableLockSQL).Rows()
@@ -102,9 +107,10 @@ func TestLockTableAndUnlockTableStatsRepeatedly(t *testing.T) {
 
 	handle := dom.StatsHandle()
 	tblStats := handle.GetTableStats(tbl)
-	for _, col := range tblStats.Columns {
+	tblStats.ForEachColumnImmutable(func(_ int64, col *statistics.Column) bool {
 		require.True(t, col.IsStatsInitialized())
-	}
+		return false
+	})
 	tk.MustExec("lock stats t")
 
 	rows := tk.MustQuery(selectTableLockSQL).Rows()
@@ -162,24 +168,26 @@ func TestLockAndUnlockTablesStats(t *testing.T) {
 	tk.MustExec("create table t1(a int, b varchar(10), index idx_b (b))")
 	tk.MustExec("create table t2(a int, b varchar(10), index idx_b (b))")
 	tk.MustExec("analyze table test.t1, test.t2")
-	tbl1, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t1"))
+	tbl1, err := dom.InfoSchema().TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t1"))
 	require.Nil(t, err)
-	tbl2, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t2"))
+	tbl2, err := dom.InfoSchema().TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t2"))
 	require.Nil(t, err)
 
 	handle := domain.GetDomain(tk.Session()).StatsHandle()
 	tbl1Stats := handle.GetTableStats(tbl1.Meta())
-	for _, col := range tbl1Stats.Columns {
+	tbl1Stats.ForEachColumnImmutable(func(_ int64, col *statistics.Column) bool {
 		require.Eventually(t, func() bool {
 			return col.IsStatsInitialized()
 		}, 1*time.Second, 100*time.Millisecond)
-	}
+		return false
+	})
 	tbl2Stats := handle.GetTableStats(tbl2.Meta())
-	for _, col := range tbl2Stats.Columns {
+	tbl2Stats.ForEachColumnImmutable(func(_ int64, col *statistics.Column) bool {
 		require.Eventually(t, func() bool {
 			return col.IsStatsInitialized()
 		}, 1*time.Second, 100*time.Millisecond)
-	}
+		return false
+	})
 
 	tk.MustExec("lock stats t1, t2")
 	rows := tk.MustQuery(selectTableLockSQL).Rows()
@@ -222,9 +230,10 @@ func TestDropTableShouldCleanUpLockInfo(t *testing.T) {
 
 	handle := dom.StatsHandle()
 	tblStats := handle.GetTableStats(tbl)
-	for _, col := range tblStats.Columns {
+	tblStats.ForEachColumnImmutable(func(_ int64, col *statistics.Column) bool {
 		require.True(t, col.IsStatsInitialized())
-	}
+		return false
+	})
 	tk.MustExec("lock stats t")
 
 	rows := tk.MustQuery(selectTableLockSQL).Rows()
@@ -247,9 +256,10 @@ func TestTruncateTableShouldCleanUpLockInfo(t *testing.T) {
 
 	handle := dom.StatsHandle()
 	tblStats := handle.GetTableStats(tbl)
-	for _, col := range tblStats.Columns {
+	tblStats.ForEachColumnImmutable(func(_ int64, col *statistics.Column) bool {
 		require.True(t, col.IsStatsInitialized())
-	}
+		return false
+	})
 	tk.MustExec("lock stats t")
 
 	rows := tk.MustQuery(selectTableLockSQL).Rows()
@@ -351,7 +361,7 @@ func setupTestEnvironmentWithTableT(t *testing.T) (kv.Storage, *domain.Domain, *
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int, b varchar(10), index idx_b (b))")
 	tk.MustExec("analyze table test.t")
-	tbl, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	tbl, err := dom.InfoSchema().TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
 	require.Nil(t, err)
 
 	return store, dom, tk, tbl.Meta()
