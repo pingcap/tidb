@@ -125,32 +125,32 @@ func extractConstant(
 func extractColumn(
 	expr expression.Expression,
 	supportPushdown bool,
-) (*expression.Column, bool) {
+) *expression.Column {
 	if col, isCol := expr.(*expression.Column); isCol {
-		return col, true
+		return col
 	}
 	if !supportPushdown {
-		return nil, false
+		return nil
 	}
 
 	scalar, isScalar := expr.(*expression.ScalarFunction)
 	if !isScalar || scalar == nil {
-		return nil, false
+		return nil
 	}
 
 	args := scalar.GetArgs()
 	if len(args) != 1 {
-		return nil, false
+		return nil
 	}
 
 	col, isCol := args[0].(*expression.Column)
 	if !isCol {
-		return nil, false
+		return nil
 	}
 	if _, ok := supportedPushdownFuncs[scalar.FuncName.L]; !ok {
-		return nil, false
+		return nil
 	}
-	return col, true
+	return col
 }
 
 // extractHelper contains some common utililty functions for all extractor.
@@ -168,8 +168,8 @@ func (helper *extractHelper) extractFromInConsExpr(
 ) (string, []types.Datum) {
 	args := expr.GetArgs()
 
-	col, ok := extractColumn(args[0], helper.enableScalarPushDown)
-	if !ok {
+	col := extractColumn(args[0], helper.enableScalarPushDown)
+	if col == nil {
 		return "", nil
 	}
 	name, found := extractCols[col.UniqueID]
@@ -198,16 +198,14 @@ func (helper *extractHelper) extractFromBinaryOpConsExpr(
 	expr *expression.ScalarFunction,
 ) (string, []types.Datum) {
 	var (
-		scalarIdx = 1
-		ok        bool
-		col       *expression.Column
-		v         types.Datum
+		constIdx = 1
+		col      *expression.Column
 	)
 
 	args := expr.GetArgs()
-	if col, ok = extractColumn(args[0], helper.enableScalarPushDown); !ok {
-		scalarIdx = 0
-		if col, ok = extractColumn(args[1], helper.enableScalarPushDown); !ok {
+	if col = extractColumn(args[0], helper.enableScalarPushDown); col == nil {
+		constIdx = 0
+		if col = extractColumn(args[1], helper.enableScalarPushDown); col == nil {
 			return "", nil
 		}
 	}
@@ -217,7 +215,7 @@ func (helper *extractHelper) extractFromBinaryOpConsExpr(
 		return "", nil
 	}
 
-	v, ok = extractConstant(ctx, args[scalarIdx])
+	v, ok := extractConstant(ctx, args[constIdx])
 	if !ok {
 		return "", nil
 	}

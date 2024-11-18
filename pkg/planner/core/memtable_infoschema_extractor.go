@@ -212,12 +212,11 @@ func (e *InfoSchemaBaseExtractor) Extract(
 		e.LikePatterns[colName] = likePatterns
 		e.colsRegexp[colName] = regexp
 	}
-	rewrited := make([]expression.Expression, 0, len(remained))
-	for _, expr := range remained {
-		newExpr := e.convertToLowerInExpression(ctx, expr)
-		rewrited = append(rewrited, newExpr)
+
+	for i, expr := range remained {
+		remained[i] = e.convertToLowerInExpression(ctx, expr)
 	}
-	return rewrited
+	return
 }
 
 // ExplainInfo implements base.MemTablePredicateExtractor interface.
