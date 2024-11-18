@@ -195,7 +195,14 @@ func (e *IndexNestedLoopHashJoin) startWorkers(ctx context.Context) {
 
 func (e *IndexNestedLoopHashJoin) finishJoinWorkers(r interface{}) {
 	if r != nil {
+<<<<<<< HEAD:pkg/executor/index_lookup_hash_join.go
 		e.IndexLookUpJoin.finished.Store(true)
+=======
+		e.IndexLookUpJoin.Finished.Store(true)
+		if e.cancelFunc != nil {
+			e.cancelFunc()
+		}
+>>>>>>> 140525d026e (executor: fix inl_hash_join hang when abnormal exit (#57383)):pkg/executor/join/index_lookup_hash_join.go
 		err := fmt.Errorf("%v", r)
 
 		if !e.panicErr.Load() {
@@ -217,12 +224,15 @@ func (e *IndexNestedLoopHashJoin) finishJoinWorkers(r interface{}) {
 			task := &indexHashJoinTask{err: err}
 			e.taskCh <- task
 		}
+<<<<<<< HEAD:pkg/executor/index_lookup_hash_join.go
 
 		failpoint.Label("TestIssue49692End")
 
 		if e.cancelFunc != nil {
 			e.cancelFunc()
 		}
+=======
+>>>>>>> 140525d026e (executor: fix inl_hash_join hang when abnormal exit (#57383)):pkg/executor/join/index_lookup_hash_join.go
 	}
 	e.workerWg.Done()
 }
@@ -375,6 +385,11 @@ func (ow *indexHashJoinOuterWorker) run(ctx context.Context) {
 		task, err := ow.buildTask(ctx)
 		failpoint.Inject("testIndexHashJoinOuterWorkerErr", func() {
 			err = errors.New("mockIndexHashJoinOuterWorkerErr")
+		})
+		failpoint.Inject("testIssue54055_1", func(val failpoint.Value) {
+			if val.(bool) {
+				err = errors.New("testIssue54055_1")
+			}
 		})
 		if err != nil {
 			task = &indexHashJoinTask{err: err}
@@ -679,6 +694,12 @@ func (iw *indexHashJoinInnerWorker) handleTask(ctx context.Context, task *indexH
 			close(resultCh)
 		}
 	}()
+	failpoint.Inject("testIssue54055_2", func(val failpoint.Value) {
+		if val.(bool) {
+			time.Sleep(10 * time.Millisecond)
+			panic("testIssue54055_2")
+		}
+	})
 	var joinStartTime time.Time
 	if iw.stats != nil {
 		start := time.Now()
