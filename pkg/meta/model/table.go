@@ -766,14 +766,19 @@ type PartitionInfo struct {
 	// like if there is a global index or going between non-partitioned
 	// and partitioned table, to make the data dropping / range delete
 	// optimized.
-	NewTableID int64 `json:"new_table_id"`
+	NewTableID int64 `json:"new_table_id,omitempty"`
 	// Set during ALTER TABLE ... PARTITION BY ...
 	// First as the new partition scheme, then in StateDeleteReorg as the old
-	DDLType    model.PartitionType `json:"ddl_type"`
-	DDLExpr    string              `json:"ddl_expr"`
-	DDLColumns []model.CIStr       `json:"ddl_columns"`
+	DDLType    model.PartitionType `json:"ddl_type,omitempty"`
+	DDLExpr    string              `json:"ddl_expr,omitempty"`
+	DDLColumns []model.CIStr       `json:"ddl_columns,omitempty"`
 	// For ActionAlterTablePartitioning, UPDATE INDEXES
-	DDLUpdateIndexes []UpdateIndexInfo `json:"ddl_update_indexes"`
+	DDLUpdateIndexes []UpdateIndexInfo `json:"ddl_update_indexes,omitempty"`
+	// Simplified way to handle Global Index changes, instead of calculating
+	// it every time, keep track of the changes here.
+	// if index.ID exists in map, then it has changed, true for new copy,
+	// false for old copy (to be removed).
+	DDLChangedIndex map[int64]bool `json:"ddl_changed_index,omitempty"`
 }
 
 // Clone clones itself.
@@ -878,6 +883,7 @@ func (pi *PartitionInfo) ClearReorgIntermediateInfo() {
 	pi.DDLExpr = ""
 	pi.DDLColumns = nil
 	pi.NewTableID = 0
+	pi.DDLChangedIndex = nil
 }
 
 // FindPartitionDefinitionByName finds PartitionDefinition by name.

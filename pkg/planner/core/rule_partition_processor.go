@@ -1320,7 +1320,7 @@ func multiColumnRangeColumnsPruner(sctx base.PlanContext, exprs []expression.Exp
 		lens = append(lens, columnsPruner.partCols[i].RetType.GetFlen())
 	}
 
-	res, err := ranger.DetachCondAndBuildRangeForIndex(sctx.GetRangerCtx(), exprs, columnsPruner.partCols, lens, sctx.GetSessionVars().RangeMaxSize)
+	res, err := ranger.DetachCondAndBuildRangeForPartition(sctx.GetRangerCtx(), exprs, columnsPruner.partCols, lens, sctx.GetSessionVars().RangeMaxSize)
 	if err != nil {
 		return fullRange(len(columnsPruner.lessThan))
 	}
@@ -1335,16 +1335,12 @@ func multiColumnRangeColumnsPruner(sctx base.PlanContext, exprs []expression.Exp
 
 	rangeOr := make([]partitionRange, 0, len(res.Ranges))
 
-	comparer := make([]collate.Collator, 0, len(columnsPruner.partCols))
-	for i := range columnsPruner.partCols {
-		comparer = append(comparer, collate.GetCollator(columnsPruner.partCols[i].RetType.GetCollate()))
-	}
 	gotError := false
 	// Create a sort.Search where the compare loops over ColumnValues
 	// Loop over the different ranges and extend/include all the partitions found
 	for idx := range res.Ranges {
-		minComparer := minCmp(sctx, res.Ranges[idx].LowVal, columnsPruner, comparer, res.Ranges[idx].LowExclude, &gotError)
-		maxComparer := maxCmp(sctx, res.Ranges[idx].HighVal, columnsPruner, comparer, res.Ranges[idx].HighExclude, &gotError)
+		minComparer := minCmp(sctx, res.Ranges[idx].LowVal, columnsPruner, res.Ranges[idx].Collators, res.Ranges[idx].LowExclude, &gotError)
+		maxComparer := maxCmp(sctx, res.Ranges[idx].HighVal, columnsPruner, res.Ranges[idx].Collators, res.Ranges[idx].HighExclude, &gotError)
 		if gotError {
 			// the compare function returned error, use all partitions.
 			return fullRange(len(columnsPruner.lessThan))
@@ -1953,10 +1949,9 @@ func makeRangeColumnPruner(columns []*expression.Column, pi *model.PartitionInfo
 	if len(pi.Definitions) != len(from.LessThan) {
 		return nil, errors.Trace(fmt.Errorf("internal error len(pi.Definitions) != len(from.LessThan) %d != %d", len(pi.Definitions), len(from.LessThan)))
 	}
-	schema := expression.NewSchema(columns...)
 	partCols := make([]*expression.Column, len(offsets))
 	for i, offset := range offsets {
-		partCols[i] = schema.Columns[offset]
+		partCols[i] = columns[offset]
 	}
 	lessThan := make([][]*expression.Expression, 0, len(from.LessThan))
 	for i := range from.LessThan {

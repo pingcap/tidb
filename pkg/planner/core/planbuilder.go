@@ -1576,6 +1576,11 @@ func (b *PlanBuilder) buildAdmin(ctx context.Context, as *ast.AdminStmt) (base.P
 		p := &AdminShowBDRRole{}
 		p.setSchemaAndNames(buildAdminShowBDRRoleFields())
 		ret = p
+	case ast.AdminAlterDDLJob:
+		ret, err = b.buildAdminAlterDDLJob(ctx, as)
+		if err != nil {
+			return nil, err
+		}
 	default:
 		return nil, plannererrors.ErrUnsupportedType.GenWithStack("Unsupported ast.AdminStmt(%T) for buildAdmin", as)
 	}
@@ -5854,6 +5859,55 @@ func getTablePath(paths []*util.AccessPath) *util.AccessPath {
 	for _, path := range paths {
 		if path.IsTablePath() {
 			return path
+		}
+	}
+	return nil
+}
+
+func (b *PlanBuilder) buildAdminAlterDDLJob(ctx context.Context, as *ast.AdminStmt) (_ base.Plan, err error) {
+	options := make([]*AlterDDLJobOpt, 0, len(as.AlterJobOptions))
+	optionNames := make([]string, 0, len(as.AlterJobOptions))
+	mockTablePlan := logicalop.LogicalTableDual{}.Init(b.ctx, b.getSelectOffset())
+	for _, opt := range as.AlterJobOptions {
+		_, ok := allowedAlterDDLJobParams[opt.Name]
+		if !ok {
+			return nil, fmt.Errorf("unsupported admin alter ddl jobs config: %s", opt.Name)
+		}
+		alterDDLJobOpt := AlterDDLJobOpt{Name: opt.Name}
+		if opt.Value != nil {
+			alterDDLJobOpt.Value, _, err = b.rewrite(ctx, opt.Value, mockTablePlan, nil, true)
+			if err != nil {
+				return nil, err
+			}
+		}
+		if err = checkAlterDDLJobOptValue(&alterDDLJobOpt); err != nil {
+			return nil, err
+		}
+		options = append(options, &alterDDLJobOpt)
+		optionNames = append(optionNames, opt.Name)
+	}
+	p := &AlterDDLJob{
+		JobID:   as.JobNumber,
+		Options: options,
+	}
+	return p, nil
+}
+
+// check if the config value is valid.
+func checkAlterDDLJobOptValue(opt *AlterDDLJobOpt) error {
+	switch opt.Name {
+	case AlterDDLJobThread:
+		thread := opt.Value.(*expression.Constant).Value.GetInt64()
+		if thread < 1 || thread > variable.MaxConfigurableConcurrency {
+			return fmt.Errorf("the value %v for %s is out of range [1, %v]",
+				thread, opt.Name, variable.MaxConfigurableConcurrency)
+		}
+	case AlterDDLJobBatchSize:
+		batchSize := opt.Value.(*expression.Constant).Value.GetInt64()
+		bs := int32(batchSize)
+		if bs < variable.MinDDLReorgBatchSize || bs > variable.MaxDDLReorgBatchSize {
+			return fmt.Errorf("the value %v for %s is out of range [%v, %v]",
+				bs, opt.Name, variable.MinDDLReorgBatchSize, variable.MaxDDLReorgBatchSize)
 		}
 	}
 	return nil

@@ -32,9 +32,9 @@ import (
 type LogicalUnionScan struct {
 	BaseLogicalPlan
 
-	Conditions []expression.Expression
+	Conditions []expression.Expression `hash64-equals:"true"`
 
-	HandleCols util.HandleCols
+	HandleCols util.HandleCols `hash64-equals:"true"`
 }
 
 // Init initializes LogicalUnionScan.
