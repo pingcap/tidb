@@ -2838,17 +2838,17 @@ const (
 )
 
 func encodeUserList(userList []string) string {
-		// use base64 encoding for the user and use ',' to separate them.
-		// Because the user name itself may contains special char like ','
-		encoded := make([]string, 0, len(userList))
-		for _, user := range userList {
-			encoded = append(encoded, base64.StdEncoding.EncodeToString([]byte(user)))
-		}
-		return strings.Join(encoded, ",")
+	// use base64 encoding for the user and use ',' to separate them.
+	// Because the user name itself may contains special char like ','
+	encoded := make([]string, 0, len(userList))
+	for _, user := range userList {
+		encoded = append(encoded, base64.StdEncoding.EncodeToString([]byte(user)))
+	}
+	return strings.Join(encoded, ",")
 }
 
 func decodeUserList(userList []string, val string) []string {
-	users := strings.Split(string(val), ",")
+	users := strings.Split(val, ",")
 	for _, userRaw := range users {
 		user, err := base64.StdEncoding.DecodeString(userRaw)
 		if err == nil {
