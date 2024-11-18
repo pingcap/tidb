@@ -17,18 +17,30 @@ package tikv
 import (
 	"bytes"
 	"encoding/binary"
-	"os"
-	"path"
 
-	"github.com/google/uuid"
 	rocks "github.com/lance6716/pebble"
 	rocksbloom "github.com/lance6716/pebble/bloom"
-	"github.com/lance6716/pebble/objstorage/objstorageprovider"
 	rockssst "github.com/lance6716/pebble/sstable"
-	"github.com/lance6716/pebble/vfs"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/util/codec"
 )
+
+type WritableBytesChan chan []byte
+
+func (w WritableBytesChan) Write(p []byte) error {
+	w <- p
+	// TODO(lance6716): add context to avoid blocking
+	return nil
+}
+
+func (w WritableBytesChan) Finish() error {
+	close(w)
+	return nil
+}
+
+func (w WritableBytesChan) Abort() {
+	close(w)
+}
 
 var fixedSuffixSliceTransform = &rockssst.Comparer{
 	Name: "leveldb.BytewiseComparator",
@@ -43,14 +55,9 @@ var fixedSuffixSliceTransform = &rockssst.Comparer{
 
 // newWriteCFWriter creates a new writeCFWriter.
 func newWriteCFWriter(
-	sstPath string,
 	ts uint64,
-) (*rockssst.Writer, error) {
-	f, err := vfs.Default.Create(sstPath)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	writable := objstorageprovider.NewFileWritable(f)
+) (*rockssst.Writer, WritableBytesChan, error) {
+	writable := WritableBytesChan(make(chan []byte, 1))
 	writer := rockssst.NewWriter(writable, rockssst.WriterOptions{
 		// TODO(lance6716): should read TiKV config to know these values.
 		BlockSize:   32 * 1024,
@@ -73,18 +80,12 @@ func newWriteCFWriter(
 			},
 		},
 	})
-	return writer, nil
+	return writer, writable, nil
 }
 
 // newDefaultCFWriter creates a new defaultCFWriter.
-func newDefaultCFWriter(
-	sstPath string,
-) (*rockssst.Writer, error) {
-	f, err := vfs.Default.Create(sstPath)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	writable := objstorageprovider.NewFileWritable(f)
+func newDefaultCFWriter() (*rockssst.Writer, WritableBytesChan, error) {
+	writable := WritableBytesChan(make(chan []byte, 1))
 	writer := rockssst.NewWriter(writable, rockssst.WriterOptions{
 		// TODO(lance6716): should read TiKV config to know these values.
 		BlockSize:   32 * 1024,
@@ -102,7 +103,7 @@ func newDefaultCFWriter(
 			},
 		},
 	})
-	return writer, nil
+	return writer, writable, nil
 }
 
 func encodeKey4SST(key []byte, ts uint64) []byte {
@@ -160,37 +161,31 @@ func encodeLongValue4SST(ts uint64) []byte {
 
 type LocalSSTWriter struct {
 	ts             uint64
-	defaultPath    string
 	defaultCF      *rockssst.Writer
 	defaultCFHasKV bool
-	writePath      string
+	defaultCFChan  WritableBytesChan
 	writeCF        *rockssst.Writer
 }
 
 func NewLocalSSTWriter(
-	workDir string,
 	ts uint64,
-) (*LocalSSTWriter, error) {
-	err := os.MkdirAll(workDir, 0o750)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-
-	u := uuid.NewString()
+) (
+	sstWriter *LocalSSTWriter,
+	defaultCFChan WritableBytesChan,
+	writeCFChan WritableBytesChan,
+	err error,
+) {
 	ret := &LocalSSTWriter{ts: ts}
 
-	ret.defaultPath = path.Join(workDir, u+"-default.sst")
-	ret.writePath = path.Join(workDir, u+"-write.sst")
-
-	ret.defaultCF, err = newDefaultCFWriter(ret.defaultPath)
+	ret.defaultCF, defaultCFChan, err = newDefaultCFWriter()
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, nil, nil, errors.Trace(err)
 	}
-	ret.writeCF, err = newWriteCFWriter(ret.writePath, ts)
+	ret.writeCF, writeCFChan, err = newWriteCFWriter(ts)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, nil, nil, errors.Trace(err)
 	}
-	return ret, nil
+	return ret, defaultCFChan, writeCFChan, nil
 }
 
 func (w *LocalSSTWriter) Set(key, value []byte) error {
@@ -210,17 +205,20 @@ func (w *LocalSSTWriter) Set(key, value []byte) error {
 // Close flushes the SST files to disk and return the SST file paths that can be
 // ingested into default / write column family.
 func (w *LocalSSTWriter) Close() (
-	defaultCFSSTPath, writeCFSSTPath string,
-	defaultCFHasData bool,
 	errRet error,
 ) {
-	err := w.defaultCF.Close()
+	var err error
+	if w.defaultCFHasKV {
+		err = w.defaultCF.Close()
+	} else {
+		w.defaultCFChan.Abort()
+	}
 	err2 := w.writeCF.Close()
 	if err != nil {
-		return "", "", false, errors.Trace(err)
+		return errors.Trace(err)
 	}
 	if err2 != nil {
-		return "", "", false, errors.Trace(err2)
+		return errors.Trace(err2)
 	}
-	return w.defaultPath, w.writePath, w.defaultCFHasKV, nil
+	return nil
 }

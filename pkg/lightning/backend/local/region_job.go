@@ -21,7 +21,6 @@ import (
 	"fmt"
 	"io"
 	"math"
-	"os"
 	"strings"
 	"sync"
 	"time"
@@ -46,6 +45,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/tikv/client-go/v2/util"
 	"go.uber.org/zap"
+	"golang.org/x/sync/errgroup"
 	"google.golang.org/grpc"
 )
 
@@ -450,6 +450,7 @@ func (local *Backend) doWrite(ctx context.Context, j *regionJob) error {
 	//	regionMaxSize = j.regionSplitSize * 4 / 3
 	//}
 
+	flushKVMu := sync.Mutex{}
 	flushKVs := func() error {
 		preparedMsg := &grpc.PreparedMsg{}
 		// by reading the source code, Encode need to find codec and compression from the stream
@@ -481,10 +482,54 @@ func (local *Backend) doWrite(ctx context.Context, j *regionJob) error {
 	//nolint: errcheck
 	defer iter.Close()
 
-	localSSTWriter, err := tikv.NewLocalSSTWriter("/tmp/"+u.String(), dataCommitTS)
+	localSSTWriter, defaultCFChan, writeCFChan, err := tikv.NewLocalSSTWriter(dataCommitTS)
 	if err != nil {
 		return errors.Trace(err)
 	}
+
+	eg, egCtx := errgroup.WithContext(ctx)
+	eg.Go(func() error {
+		for {
+			select {
+			case data, ok := <-defaultCFChan:
+				if !ok {
+					return nil
+				}
+				flushKVMu.Lock()
+				batch := req.Chunk.(*sst.WriteRequest_Batch).Batch
+				batch.Pairs = []*sst.Pair{{Key: data}}
+				err2 := flushKVs()
+				flushKVMu.Unlock()
+				if err2 != nil {
+					return errors.Trace(err2)
+				}
+			case <-egCtx.Done():
+				return egCtx.Err()
+			}
+		}
+	})
+	eg.Go(func() error {
+		for {
+			select {
+			case data, ok := <-writeCFChan:
+				if !ok {
+					return nil
+				}
+				flushKVMu.Lock()
+				batch := req.Chunk.(*sst.WriteRequest_Batch).Batch
+				batch.Pairs = []*sst.Pair{{Value: data}}
+				err2 := flushKVs()
+				flushKVMu.Unlock()
+				if err2 != nil {
+					return errors.Trace(err2)
+				}
+			case <-egCtx.Done():
+				return egCtx.Err()
+			}
+		}
+	})
+	// TODO(lance6716): use errgroup to create 2 goroutine to drain defaultCFChan and writeCFChan
+	// and call flushKVs. Need to add a mutex to protect flushKVs.
 
 	var remainingStartKey []byte
 	for iter.First(); iter.Valid(); iter.Next() {
@@ -500,57 +545,14 @@ func (local *Backend) doWrite(ctx context.Context, j *regionJob) error {
 		return errors.Trace(iter.Error())
 	}
 
-	defaultCF, writeCF, defaultCFHasKV, err := localSSTWriter.Close()
+	err = localSSTWriter.Close()
 	if err != nil {
 		return errors.Trace(err)
 	}
 
-	defaultCFFile, err := os.Open(defaultCF)
-	if err != nil && !os.IsNotExist(err) {
+	err = eg.Wait()
+	if err != nil {
 		return errors.Trace(err)
-	}
-	writeCFFile, err := os.Open(writeCF)
-	if err != nil && !os.IsNotExist(err) {
-		return errors.Trace(err)
-	}
-	defaultCFHasData, writeCFHasData := defaultCFHasKV, writeCFFile != nil
-
-	batch := req.Chunk.(*sst.WriteRequest_Batch).Batch
-	batch.Pairs = make([]*sst.Pair, 0, 100)
-	for defaultCFHasData || writeCFHasData {
-		for (defaultCFHasData || writeCFHasData) && len(batch.Pairs) < 99 {
-			p := &sst.Pair{}
-			if defaultCFHasData {
-				p.Key = make([]byte, 4096)
-				n, err := defaultCFFile.Read(p.Key)
-				if err != nil {
-					if err == io.EOF {
-						defaultCFHasData = false
-					} else {
-						return errors.Trace(err)
-					}
-				}
-				p.Key = p.Key[:n]
-			}
-
-			if writeCFHasData {
-				p.Value = make([]byte, 4096)
-				n, err := writeCFFile.Read(p.Value)
-				if err != nil {
-					if err == io.EOF {
-						writeCFHasData = false
-					} else {
-						return errors.Trace(err)
-					}
-				}
-				p.Value = p.Value[:n]
-			}
-			batch.Pairs = append(batch.Pairs, p)
-		}
-		if err2 := flushKVs(); err2 != nil {
-			return errors.Trace(err2)
-		}
-		batch.Pairs = batch.Pairs[:0]
 	}
 
 	var leaderPeerMetas []*sst.SSTMeta
