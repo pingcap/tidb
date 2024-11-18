@@ -166,8 +166,6 @@ func (e *memtableRetriever) retrieve(ctx context.Context, sctx sessionctx.Contex
 			err = e.setDataForTiDBHotRegions(ctx, sctx)
 		case infoschema.TableConstraints:
 			err = e.setDataFromTableConstraints(ctx, sctx)
-		case infoschema.TableSessionVar:
-			e.rows, err = infoschema.GetDataFromSessionVariables(ctx, sctx)
 		case infoschema.TableTiDBServersInfo:
 			err = e.setDataForServersInfo(sctx)
 		case infoschema.TableTiFlashReplica:
