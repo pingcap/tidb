@@ -49,13 +49,18 @@ var (
 
 // updateRecord updates the row specified by the handle `h`, from `oldData` to `newData`.
 // `modified` means which columns are really modified. It's used for secondary indices.
-// Length of `oldData` and `newData` equals to length of `t.WritableCols()`.
+// Length of `oldData` and `newData` equals to length of `t.Cols()`.
+// It's used both in update/insert on duplicate statements.
+//
 // The return values:
-//  1. changed (bool) : does the update really change the row values. e.g. update set i = 1 where i = 1;
-//  2. err (error) : error in the update.
+//  1. changed (bool): does the update really change the row values. e.g. update set i = 1 where i = 1;
+//  2. ignored (bool): does the row is ignored during fkcheck
+//  3. err (error): error in the update.
 func updateRecord(
-	ctx context.Context, sctx sessionctx.Context, h kv.Handle,
-	oldData, newData []types.Datum,
+	ctx context.Context, sctx sessionctx.Context,
+	h kv.Handle, oldData, newData []types.Datum,
+	assignments []*expression.Assignment,
+	evalFunc func(assign *expression.Assignment) (types.Datum, error),
 	modified []bool,
 	t table.Table,
 	onDup bool,
@@ -64,79 +69,112 @@ func updateRecord(
 	fkCascades []*FKCascadeExec,
 	dupKeyMode table.DupKeyCheckMode,
 	ignoreErr bool,
-) (bool, error) {
+) (bool, error, bool) {
 	r, ctx := tracing.StartRegionEx(ctx, "executor.updateRecord")
 	defer r.End()
 
 	sessVars := sctx.GetSessionVars()
 	sc := sessVars.StmtCtx
+
+	// changed, handleChanged indicated whether row/handle is changed
 	changed, handleChanged := false, false
-	// onUpdateSpecified is for "UPDATE SET ts_field = old_value", the
-	// timestamp field is explicitly set, but not changed in fact.
-	onUpdateSpecified := make(map[int]bool)
+	// onUpdateNeedModify is for "UPDATE SET ts_field = old_value".
+	// The timestamp field is explicitly set and no need to update again.
+	onUpdateNeedModify := make(map[int]bool)
+
+	// Before update, We need to ensure that all columns are evaluated in the following order:
+	// 1. non-generated columns (already evaluated outside the function)
+	// 2. on-update-now columns if non-generated columns are changed
+	// 3. generated columns if non-generated columns are changed
 
 	// We can iterate on public columns not writable columns,
 	// because all of them are sorted by their `Offset`, which
 	// causes all writable columns are after public columns.
+	cols := t.Cols()
 
-	// Handle the bad null error.
-	for i, col := range t.Cols() {
-		var err error
-		if err = col.HandleBadNull(sc.ErrCtx(), &newData[i], 0); err != nil {
-			return false, err
+	checkColumnFunc := func(i int, skipGenerated bool) error {
+		col := cols[i]
+		if col.IsGenerated() && skipGenerated {
+			return nil
 		}
-	}
 
-	// Handle exchange partition
-	tbl := t.Meta()
-	if tbl.ExchangePartitionInfo != nil && tbl.GetPartitionInfo() == nil {
-		if err := checkRowForExchangePartition(sctx, newData, tbl); err != nil {
-			return false, err
+		if mysql.HasOnUpdateNowFlag(col.GetFlag()) {
+			onUpdateNeedModify[i] = !modified[i]
 		}
-	}
 
-	// Compare datum, then handle some flags.
-	for i, col := range t.Cols() {
 		// We should use binary collation to compare datum, otherwise the result will be incorrect.
 		cmp, err := newData[i].Compare(sc.TypeCtx(), &oldData[i], collate.GetBinaryCollator())
 		if err != nil {
-			return false, err
+			return err
 		}
+		modified[i] = cmp != 0
 		if cmp != 0 {
 			changed = true
-			modified[i] = true
 			// Rebase auto increment id if the field is changed.
 			if mysql.HasAutoIncrementFlag(col.GetFlag()) {
 				recordID, err := getAutoRecordID(newData[i], &col.FieldType, false)
 				if err != nil {
-					return false, err
+					return err
 				}
 				if err = t.Allocators(sctx.GetTableCtx()).Get(autoid.AutoIncrementType).Rebase(ctx, recordID, true); err != nil {
-					return false, err
+					return err
 				}
 			}
 			if col.IsPKHandleColumn(t.Meta()) {
 				handleChanged = true
 				// Rebase auto random id if the field is changed.
 				if err := rebaseAutoRandomValue(ctx, sctx, t, &newData[i], col); err != nil {
-					return false, err
+					return err
 				}
 			}
 			if col.IsCommonHandleColumn(t.Meta()) {
 				handleChanged = true
 			}
-		} else {
-			if mysql.HasOnUpdateNowFlag(col.GetFlag()) && modified[i] {
-				// It's for "UPDATE t SET ts = ts" and ts is a timestamp.
-				onUpdateSpecified[i] = true
-			}
-			modified[i] = false
+		}
+
+		return nil
+	}
+
+	// Step1: compare already evaluated columns and handle some flags.
+	for i := range cols {
+		if err := checkColumnFunc(i, true); err != nil {
+			return false, err, false
 		}
 	}
 
-	sc.AddTouchedRows(1)
-	// If no changes, nothing to do, return directly.
-	if !changed {
+	var err error
+	if changed {
+		// Step2: fill values into on-update-now fields.
+		for i, col := range t.Cols() {
+			if mysql.HasOnUpdateNowFlag(col.GetFlag()) && onUpdateNeedModify[i] {
+				newData[i], err = expression.GetTimeValue(sctx.GetExprCtx(), strings.ToUpper(ast.CurrentTimestamp), col.GetType(), col.GetDecimal(), nil)
+				if err != nil {
+					return false, err, false
+				}
+				// Only TIMESTAMP and DATETIME columns can be automatically updated, so it cannot be PKIsHandle.
+				// Ref: https://dev.mysql.com/doc/refman/8.0/en/timestamp-initialization.html
+				if col.IsPKHandleColumn(t.Meta()) {
+					return false, errors.Errorf("on-update-now column should never be pk-is-handle"), false
+				}
+				if col.IsCommonHandleColumn(t.Meta()) {
+					handleChanged = true
+				}
+			}
+		}
+		// Step3: fill auto generated columns
+		for _, assign := range assignments {
+			idx := assign.Col.Index
+			newData[idx], err = evalFunc(assign)
+			if err != nil {
+				return false, err, false
+			}
+			if err := checkColumnFunc(assign.Col.Index, false); err != nil {
+				return false, err, false
+			}
+		}
+	} else {
+		// If no changes, nothing to do, return directly.
+		sc.AddTouchedRows(1)
 		// See https://dev.mysql.com/doc/refman/5.7/en/mysql-real-connect.html  CLIENT_FOUND_ROWS
 		if sessVars.ClientCapability&mysql.ClientFoundRows > 0 {
 			sc.AddAffectedRows(1)
@@ -146,33 +184,43 @@ func updateRecord(
 			keySet |= lockUniqueKeys
 		}
 		_, err := addUnchangedKeysForLockByRow(sctx, t, h, oldData, keySet)
-		return false, err
+		return false, err, false
 	}
 
-	// Fill values into on-update-now fields, only if they are really changed.
-	for i, col := range t.Cols() {
-		if mysql.HasOnUpdateNowFlag(col.GetFlag()) && !modified[i] && !onUpdateSpecified[i] {
-			v, err := expression.GetTimeValue(sctx.GetExprCtx(), strings.ToUpper(ast.CurrentTimestamp), col.GetType(), col.GetDecimal(), nil)
-			if err != nil {
-				return false, err
-			}
-			newData[i] = v
-			modified[i] = true
-			// Only TIMESTAMP and DATETIME columns can be automatically updated, so it cannot be PKIsHandle.
-			// Ref: https://dev.mysql.com/doc/refman/8.0/en/timestamp-initialization.html
-			if col.IsPKHandleColumn(t.Meta()) {
-				return false, errors.Errorf("on-update-now column should never be pk-is-handle")
-			}
-			if col.IsCommonHandleColumn(t.Meta()) {
-				handleChanged = true
-			}
+	// Handle foreign key check.
+	if ignoreErr {
+		ignored, err := checkFKIgnoreErr(ctx, sctx, fkChecks, newData)
+		if err != nil {
+			return false, err, false
+		}
+
+		// meets an error, skip this row.
+		if ignored {
+			return false, nil, true
 		}
 	}
 
+	// Handle the bad null error.
+	for i, col := range t.Cols() {
+		var err error
+		if err = col.HandleBadNull(sc.ErrCtx(), &newData[i], 0); err != nil {
+			return false, err, false
+		}
+	}
+
+	// Handle exchange partition.
+	tbl := t.Meta()
+	if tbl.ExchangePartitionInfo != nil && tbl.GetPartitionInfo() == nil {
+		if err := checkRowForExchangePartition(sctx, newData, tbl); err != nil {
+			return false, err, false
+		}
+	}
+
+	sc.AddTouchedRows(1)
 	pessimisticLazyCheck := getPessimisticLazyCheckMode(sessVars)
 	txn, err := sctx.Txn(true)
 	if err != nil {
-		return false, err
+		return false, err, false
 	}
 	// If handle changed, remove the old then add the new record, otherwise update the record.
 	if handleChanged {
@@ -197,9 +245,9 @@ func updateRecord(
 		}(); err != nil {
 			if terr, ok := errors.Cause(err).(*terror.Error); ok && (terr.Code() == errno.ErrNoPartitionForGivenValue || terr.Code() == errno.ErrRowDoesNotMatchGivenPartitionSet) {
 				ec := sc.ErrCtx()
-				return false, ec.HandleError(err)
+				return false, ec.HandleError(err), false
 			}
-			return updated, err
+			return updated, err, false
 		}
 	} else {
 		var opts []table.UpdateRecordOption
@@ -217,14 +265,14 @@ func updateRecord(
 		if err := t.UpdateRecord(sctx.GetTableCtx(), txn, h, oldData, newData, modified, opts...); err != nil {
 			if terr, ok := errors.Cause(err).(*terror.Error); ok && (terr.Code() == errno.ErrNoPartitionForGivenValue || terr.Code() == errno.ErrRowDoesNotMatchGivenPartitionSet) {
 				ec := sc.ErrCtx()
-				return false, ec.HandleError(err)
+				return false, ec.HandleError(err), false
 			}
-			return false, err
+			return false, err, false
 		}
 		if sessVars.LockUnchangedKeys {
 			// Lock unique keys when handle unchanged
 			if _, err := addUnchangedKeysForLockByRow(sctx, t, h, oldData, lockUniqueKeys); err != nil {
-				return false, err
+				return false, err, false
 			}
 		}
 	}
@@ -232,14 +280,14 @@ func updateRecord(
 		for _, fkt := range fkChecks {
 			err := fkt.updateRowNeedToCheck(sc, oldData, newData)
 			if err != nil {
-				return false, err
+				return false, err, false
 			}
 		}
 	}
 	for _, fkc := range fkCascades {
 		err := fkc.onUpdateRow(sc, oldData, newData)
 		if err != nil {
-			return false, err
+			return false, err, false
 		}
 	}
 	if onDup {
@@ -250,7 +298,7 @@ func updateRecord(
 	sc.AddUpdatedRows(1)
 	sc.AddCopiedRows(1)
 
-	return true, nil
+	return true, nil, false
 }
 
 const (
