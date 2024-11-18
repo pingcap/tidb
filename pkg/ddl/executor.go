@@ -4946,15 +4946,36 @@ func initJobReorgMetaFromVariables(job *model.Job, sctx sessionctx.Context) erro
 		return nil
 	}
 
-	if job.SupportDistTaskExecution() {
+	switch job.Type {
+	case model.ActionAddIndex, model.ActionAddPrimaryKey:
 		setReorgParam()
 		err := setDistTaskParam()
 		if err != nil {
 			return err
 		}
-	} else if job.MayNeedReorg() {
+	case model.ActionReorganizePartition,
+		model.ActionRemovePartitioning,
+		model.ActionAlterTablePartitioning,
+		model.ActionModifyColumn:
 		setReorgParam()
-	} else {
+	case model.ActionMultiSchemaChange:
+		for _, sub := range job.MultiSchemaInfo.SubJobs {
+			switch sub.Type {
+			case model.ActionAddIndex, model.ActionAddPrimaryKey:
+				setReorgParam()
+				err := setDistTaskParam()
+				if err != nil {
+					return err
+				}
+			case model.ActionReorganizePartition,
+				model.ActionRemovePartitioning,
+				model.ActionAlterTablePartitioning,
+				model.ActionModifyColumn:
+				setReorgParam()
+				continue
+			}
+		}
+	default:
 		return nil
 	}
 	job.ReorgMeta = m
