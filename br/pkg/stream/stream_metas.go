@@ -38,6 +38,8 @@ const (
 	baseTmp           = "BASE_TMP"
 	metaSuffix        = ".meta"
 	migrationPrefix   = "v1/migrations"
+
+	SupportedMigVersion = pb.MigrationVersion_Base
 )
 
 type StreamMetadataSet struct {
@@ -563,6 +565,24 @@ type OrderedMigration struct {
 	Content pb.Migration `json:"content"`
 }
 
+func (o *OrderedMigration) unmarshalContent(b []byte) error {
+	err := o.Content.Unmarshal(b)
+	if err != nil {
+		return err
+	}
+	if o.Content.Version > SupportedMigVersion {
+		return errors.Annotatef(
+			berrors.ErrMigrationVersionNotSupported,
+			"the migration at %s has version %s(%d), the max version we support is %s(%d)",
+			o.Path,
+			o.Content.Version, o.Content.Version,
+			SupportedMigVersion, SupportedMigVersion,
+		)
+	}
+
+	return nil
+}
+
 // Load loads the current living migrations from the storage.
 func (m MigrationExt) Load(ctx context.Context) (Migrations, error) {
 	opt := &storage.WalkOption{
@@ -575,6 +595,11 @@ func (m MigrationExt) Load(ctx context.Context) (Migrations, error) {
 		if err != nil {
 			return errors.Trace(err)
 		}
+		err = t.unmarshalContent(b)
+		if err != nil {
+			return err
+		}
+
 		if t.SeqNum == baseMigrationSN {
 			// NOTE: the legacy truncating isn't implemented by appending a migration.
 			// We load their checkpoint here to be compatible with them.
@@ -585,7 +610,7 @@ func (m MigrationExt) Load(ctx context.Context) (Migrations, error) {
 			}
 			t.Content.TruncatedTo = max(truncatedTs, t.Content.TruncatedTo)
 		}
-		return t.Content.Unmarshal(b)
+		return nil
 	})
 	collected := iter.CollectAll(ctx, items)
 	if collected.Err != nil {
