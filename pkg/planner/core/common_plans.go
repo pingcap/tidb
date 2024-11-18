@@ -810,6 +810,9 @@ func GetExplainRowsForPlan(plan base.Plan) (rows [][]string) {
 		Format:     types.ExplainFormatROW,
 		Analyze:    false,
 	}
+	if plan != nil {
+		explain.SetSCtx(plan.SCtx())
+	}
 	if err := explain.RenderResult(); err != nil {
 		return rows
 	}
