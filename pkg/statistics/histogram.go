@@ -1086,7 +1086,7 @@ func (hg *Histogram) OutOfRangeRowCount(
 		// changes to the table since last Analyze - any out of range estimate is unreliable.
 		// if the histogram range is invalid (too small/large - histInvalid) - totalPercent is zero
 		// and we will set rowCount to min of upperbound and added rows
-		totalPercent = min(1, max(leftPercent, rightPercent))
+		totalPercent = min(0.5, max(leftPercent, rightPercent))
 		rowCount += totalPercent * addedRows
 		if rowCount < upperBound {
 			rowCount = min(upperBound, addedRows)
