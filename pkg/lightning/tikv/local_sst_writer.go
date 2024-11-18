@@ -23,9 +23,7 @@ import (
 	rocksbloom "github.com/lance6716/pebble/bloom"
 	rockssst "github.com/lance6716/pebble/sstable"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/util/codec"
-	"go.uber.org/zap"
 )
 
 type WritableBytesChan chan []byte
@@ -181,7 +179,6 @@ func NewLocalSSTWriter(
 	ret := &LocalSSTWriter{ts: ts}
 
 	ret.defaultCF, ret.defaultCFChan, err = newDefaultCFWriter()
-	log.L().Info("lance test", zap.Bool("ret.defaultCFChan == nil", ret.defaultCFChan == nil))
 	if err != nil {
 		return nil, nil, nil, errors.Trace(err)
 	}
@@ -193,7 +190,6 @@ func NewLocalSSTWriter(
 }
 
 func (w *LocalSSTWriter) Set(key, value []byte) error {
-	log.L().Info("lance test", zap.Bool("w.defaultCFChan == nil", w.defaultCFChan == nil))
 	actualKey := encodeKey4SST(key, w.ts)
 	if isShortValue(value) {
 		actualValue := encodeShortValue4SST(value, w.ts)
@@ -212,7 +208,6 @@ func (w *LocalSSTWriter) Set(key, value []byte) error {
 func (w *LocalSSTWriter) Close() (
 	errRet error,
 ) {
-	log.L().Info("lance test", zap.Bool("w.defaultCFChan == nil", w.defaultCFChan == nil))
 	var err error
 	if w.defaultCFHasKV {
 		err = w.defaultCF.Close()
