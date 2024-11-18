@@ -690,22 +690,13 @@ func (g gener) gen() any {
 		// {{ $sig.SigName }}
 			{
 				retEvalType: types.ET{{ .Output.ETName }},
-				{{- if eq .TestTypeA "" }}
 				childrenTypes: []types.EvalType{types.ET{{ .TypeA.ETName }}, types.ET{{ .TypeB.ETName }}},
-				{{- else }}
-				childrenTypes: []types.EvalType{types.ET{{ .TestTypeA }}, types.ET{{ .TestTypeB }}},
-				{{- end }}
 				{{- if ne .FieldTypeA "" }}
 				childrenFieldTypes: []*types.FieldType{types.NewFieldType(mysql.Type{{.FieldTypeA}}), types.NewFieldType(mysql.Type{{.FieldTypeB}})},
 				{{- end }}
 				geners: []dataGenerator{
-					{{- if eq .TestTypeA "" }}
 					gener{*newDefaultGener(0.2, types.ET{{.TypeA.ETName}})},
 					gener{*newDefaultGener(0.2, types.ET{{.TypeB.ETName}})},
-					{{- else }}
-					gener{*newDefaultGener(0.2, types.ET{{ .TestTypeA }})},
-					gener{*newDefaultGener(0.2, types.ET{{ .TestTypeB }})},
-					{{- end }}
 				},
 			},
 	{{- end }}
@@ -791,8 +782,8 @@ var addTimeSigsTmpl = []sig{
 	{SigName: "builtinAddDurationAndStringSig", TypeA: TypeDuration, TypeB: TypeString, Output: TypeDuration},
 	{SigName: "builtinAddStringAndDurationSig", TypeA: TypeString, TypeB: TypeDuration, Output: TypeString},
 	{SigName: "builtinAddStringAndStringSig", TypeA: TypeString, TypeB: TypeString, Output: TypeString},
-	{SigName: "builtinAddDateAndDurationSig", TypeA: TypeDatetime, TypeB: TypeDuration, Output: TypeString, FieldTypeA: "Date", FieldTypeB: "Duration", TestTypeA: "Datetime", TestTypeB: "Duration"},
-	{SigName: "builtinAddDateAndStringSig", TypeA: TypeDatetime, TypeB: TypeString, Output: TypeString, FieldTypeA: "Date", FieldTypeB: "String", TestTypeA: "Datetime", TestTypeB: "String"},
+	{SigName: "builtinAddDateAndDurationSig", TypeA: TypeDatetime, TypeB: TypeDuration, Output: TypeString, FieldTypeA: "Date", FieldTypeB: "Duration"},
+	{SigName: "builtinAddDateAndStringSig", TypeA: TypeDatetime, TypeB: TypeString, Output: TypeString, FieldTypeA: "Date", FieldTypeB: "String"},
 
 	{SigName: "builtinAddTimeDateTimeNullSig", TypeA: TypeDatetime, TypeB: TypeDatetime, Output: TypeDatetime, AllNull: true},
 	{SigName: "builtinAddTimeStringNullSig", TypeA: TypeDatetime, TypeB: TypeDatetime, Output: TypeString, AllNull: true, FieldTypeA: "Date", FieldTypeB: "Datetime"},
@@ -806,8 +797,8 @@ var subTimeSigsTmpl = []sig{
 	{SigName: "builtinSubDurationAndStringSig", TypeA: TypeDuration, TypeB: TypeString, Output: TypeDuration},
 	{SigName: "builtinSubStringAndDurationSig", TypeA: TypeString, TypeB: TypeDuration, Output: TypeString},
 	{SigName: "builtinSubStringAndStringSig", TypeA: TypeString, TypeB: TypeString, Output: TypeString},
-	{SigName: "builtinSubDateAndDurationSig", TypeA: TypeDatetime, TypeB: TypeDuration, Output: TypeString, FieldTypeA: "Date", FieldTypeB: "Duration", TestTypeA: "Datetime", TestTypeB: "Duration"},
-	{SigName: "builtinSubDateAndStringSig", TypeA: TypeDatetime, TypeB: TypeString, Output: TypeString, FieldTypeA: "Date", FieldTypeB: "String", TestTypeA: "Datetime", TestTypeB: "String"},
+	{SigName: "builtinSubDateAndDurationSig", TypeA: TypeDatetime, TypeB: TypeDuration, Output: TypeString, FieldTypeA: "Date", FieldTypeB: "Duration"},
+	{SigName: "builtinSubDateAndStringSig", TypeA: TypeDatetime, TypeB: TypeString, Output: TypeString, FieldTypeA: "Date", FieldTypeB: "String"},
 
 	{SigName: "builtinSubTimeDateTimeNullSig", TypeA: TypeDatetime, TypeB: TypeDatetime, Output: TypeDatetime, AllNull: true},
 	{SigName: "builtinSubTimeStringNullSig", TypeA: TypeDatetime, TypeB: TypeDatetime, Output: TypeString, AllNull: true, FieldTypeA: "Date", FieldTypeB: "Datetime"},
@@ -899,7 +890,6 @@ type sig struct {
 	SigName                string
 	TypeA, TypeB, Output   TypeContext
 	FieldTypeA, FieldTypeB string // Optional
-	TestTypeA, TestTypeB   string // Optional, specific Type for test in builtinAddDateAndDurationSig & builtinAddDateAndStringSig
 	AllNull                bool
 }
 
