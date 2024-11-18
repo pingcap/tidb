@@ -235,6 +235,7 @@ func testReadMetaBetweenTSWithVersion(t *testing.T, m metaMaker) {
 			RestoreTS: c.endTS,
 			Storage:   loc,
 
+			MigrationsBuilder:         logclient.NewMigrationBuilder(0, c.startTS, c.endTS),
 			MetadataDownloadBatchSize: 32,
 		}
 		cli, err := logclient.CreateLogFileManager(ctx, init)
@@ -469,6 +470,7 @@ func testFileManagerWithMeta(t *testing.T, m metaMaker) {
 			RestoreTS: end,
 			Storage:   loc,
 
+			MigrationsBuilder:         logclient.NewMigrationBuilder(0, start, end),
 			MetadataDownloadBatchSize: 32,
 		})
 		req.NoError(err)
