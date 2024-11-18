@@ -885,9 +885,8 @@ func (c *Column) ContainsVeryLargeElement() bool {
 	if c.offsets[c.length] <= math.MaxUint32 {
 		return false
 	}
-	for i := 0; i < c.length; i++ {
-		start, end := c.offsets[i], c.offsets[i+1]
-		if end-start > math.MaxUint32 {
+	for i := range c.length {
+		if c.offsets[i+1]-c.offsets[i] > math.MaxUint32 {
 			return true
 		}
 	}

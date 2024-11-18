@@ -85,7 +85,7 @@ func (b *rowTableBuilder) initHashValueAndPartIndexForOneChunk(partitionMaskOffs
 }
 
 func (b *rowTableBuilder) checkMaxElementSize(chk *chunk.Chunk, hashJoinCtx *HashJoinCtxV2) (bool, int) {
-	// both join key and the columns needed to be converted to row format need to be checked
+	// check both join keys and the columns needed to be converted to row format
 	for _, colIdx := range b.buildKeyIndex {
 		column := chk.Column(colIdx)
 		if column.ContainsVeryLargeElement() {
