@@ -1,0 +1,17 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "mockstorage",
+    srcs = ["storage.go"],
+    importpath = "github.com/pingcap/tidb/pkg/store/mockstore/mockstorage",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/kv",
+        "//pkg/store/copr",
+        "//pkg/store/driver/txn",
+        "//pkg/store/helper",
+        "@com_github_pingcap_kvproto//pkg/deadlock",
+        "@com_github_tikv_client_go_v2//config",
+        "@com_github_tikv_client_go_v2//tikv",
+    ],
+)

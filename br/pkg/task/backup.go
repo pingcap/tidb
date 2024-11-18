@@ -28,20 +28,21 @@ import (
 	"github.com/pingcap/tidb/br/pkg/glue"
 	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/metautil"
+	"github.com/pingcap/tidb/br/pkg/rtree"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/summary"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/br/pkg/version"
-	"github.com/pingcap/tidb/config"
-	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/parser/mysql"
-	"github.com/pingcap/tidb/sessionctx/stmtctx"
-	"github.com/pingcap/tidb/statistics/handle"
-	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/mathutil"
+	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/pkg/statistics/handle"
+	"github.com/pingcap/tidb/pkg/types"
 	"github.com/spf13/pflag"
 	"github.com/tikv/client-go/v2/oracle"
 	kvutil "github.com/tikv/client-go/v2/util"
+	"go.uber.org/multierr"
 	"go.uber.org/zap"
 )
 
@@ -57,6 +58,7 @@ const (
 	flagUseCheckpoint    = "use-checkpoint"
 	flagKeyspaceName     = "keyspace-name"
 	flagReplicaReadLabel = "replica-read-label"
+	flagTableConcurrency = "table-concurrency"
 
 	flagGCTTL = "gcttl"
 
@@ -70,7 +72,6 @@ const (
 	TableBackupCmd = "Table Backup"
 	RawBackupCmd   = "Raw Backup"
 	TxnBackupCmd   = "Txn Backup"
-	EBSBackupCmd   = "EBS Backup"
 )
 
 // CompressionConfig is the configuration for sst file compression.
@@ -92,6 +93,7 @@ type BackupConfig struct {
 	UseBackupMetaV2  bool              `json:"use-backupmeta-v2"`
 	UseCheckpoint    bool              `json:"use-checkpoint" toml:"use-checkpoint"`
 	ReplicaReadLabel map[string]string `json:"replica-read-label" toml:"replica-read-label"`
+	TableConcurrency uint              `json:"table-concurrency" toml:"table-concurrency"`
 	CompressionConfig
 
 	// for ebs-based backup
@@ -123,20 +125,19 @@ func DefineBackupFlags(flags *pflag.FlagSet) {
 		"One task represents one table range (or one index range) according to the backup schemas. If there is one table with one index."+
 		"there will be two tasks to back up this table. This value should increase if you need to back up lots of tables or indices.")
 
+	flags.Uint(flagTableConcurrency, backup.DefaultSchemaConcurrency, "The size of a BR thread pool used for backup table metas, "+
+		"including tableInfo/checksum and stats.")
+
 	flags.Bool(flagRemoveSchedulers, false,
 		"disable the balance, shuffle and region-merge schedulers in PD to speed up backup")
 	// This flag can impact the online cluster, so hide it in case of abuse.
 	_ = flags.MarkHidden(flagRemoveSchedulers)
 
-	// Disable stats by default. because of
-	// 1. DumpStatsToJson is not stable
-	// 2. It increases memory usage and might cause BR OOM.
+	// Disable stats by default.
 	// TODO: we need a better way to backup/restore stats.
-	flags.Bool(flagIgnoreStats, true, "ignore backup stats, used for test")
-	// This flag is used for test. we should backup stats all the time.
-	_ = flags.MarkHidden(flagIgnoreStats)
+	flags.Bool(flagIgnoreStats, true, "ignore backup stats")
 
-	flags.Bool(flagUseBackupMetaV2, false,
+	flags.Bool(flagUseBackupMetaV2, true,
 		"use backup meta v2 to store meta info")
 
 	flags.String(flagKeyspaceName, "", "keyspace name for backup")
@@ -147,7 +148,9 @@ func DefineBackupFlags(flags *pflag.FlagSet) {
 	// if we put this feature in v4.0.14, then v4.0.14 br can parse v2 meta
 	// but will generate v1 meta due to this flag is false. the behaviour is as same as v4.0.15, v4.0.16.
 	// finally v4.0.17 will set this flag to true, and generate v2 meta.
-	_ = flags.MarkHidden(flagUseBackupMetaV2)
+	//
+	// the version currently is v7.4.0, the flag can be set to true as default value.
+	// _ = flags.MarkHidden(flagUseBackupMetaV2)
 
 	flags.Bool(flagUseCheckpoint, true, "use checkpoint mode")
 	_ = flags.MarkHidden(flagUseCheckpoint)
@@ -197,6 +200,9 @@ func (cfg *BackupConfig) ParseFromFlags(flags *pflag.FlagSet) error {
 	cfg.GCTTL = gcTTL
 	cfg.Concurrency, err = flags.GetUint32(flagConcurrency)
 	if err != nil {
+		return errors.Trace(err)
+	}
+	if cfg.TableConcurrency, err = flags.GetUint(flagTableConcurrency); err != nil {
 		return errors.Trace(err)
 	}
 
@@ -612,51 +618,33 @@ func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig
 
 	summary.CollectInt("backup total ranges", len(ranges))
 
-	var updateCh glue.Progress
-	var unit backup.ProgressUnit
-	if len(ranges) < 100 {
-		unit = backup.RegionUnit
-		// The number of regions need to backup
-		approximateRegions := 0
-		for _, r := range ranges {
-			var regionCount int
-			regionCount, err = mgr.GetRegionCount(ctx, r.StartKey, r.EndKey)
-			if err != nil {
-				return errors.Trace(err)
-			}
-			approximateRegions += regionCount
-		}
-		// Redirect to log if there is no log file to avoid unreadable output.
-		updateCh = g.StartProgress(
-			ctx, cmdName, int64(approximateRegions), !cfg.LogProgress)
-		summary.CollectInt("backup total regions", approximateRegions)
-	} else {
-		unit = backup.RangeUnit
-		// To reduce the costs, we can use the range as unit of progress.
-		updateCh = g.StartProgress(
-			ctx, cmdName, int64(len(ranges)), !cfg.LogProgress)
+	approximateRegions, err := getRegionCountOfRanges(ctx, mgr, ranges)
+	if err != nil {
+		return errors.Trace(err)
 	}
+	// Redirect to log if there is no log file to avoid unreadable output.
+	updateCh := g.StartProgress(
+		ctx, cmdName, int64(approximateRegions), !cfg.LogProgress)
+	summary.CollectInt("backup total regions", approximateRegions)
 
 	progressCount := uint64(0)
-	progressCallBack := func(callBackUnit backup.ProgressUnit) {
-		if unit == callBackUnit {
-			updateCh.Inc()
+	progressCallBack := func() {
+		updateCh.Inc()
+		failpoint.Inject("progress-call-back", func(v failpoint.Value) {
+			log.Info("failpoint progress-call-back injected")
 			atomic.AddUint64(&progressCount, 1)
-			failpoint.Inject("progress-call-back", func(v failpoint.Value) {
-				log.Info("failpoint progress-call-back injected")
-				if fileName, ok := v.(string); ok {
-					f, osErr := os.OpenFile(fileName, os.O_CREATE|os.O_WRONLY, os.ModePerm)
-					if osErr != nil {
-						log.Warn("failed to create file", zap.Error(osErr))
-					}
-					msg := []byte(fmt.Sprintf("%s:%d\n", unit, atomic.LoadUint64(&progressCount)))
-					_, err = f.Write(msg)
-					if err != nil {
-						log.Warn("failed to write data to file", zap.Error(err))
-					}
+			if fileName, ok := v.(string); ok {
+				f, osErr := os.OpenFile(fileName, os.O_CREATE|os.O_WRONLY, os.ModePerm)
+				if osErr != nil {
+					log.Warn("failed to create file", zap.Error(osErr))
 				}
-			})
-		}
+				msg := []byte(fmt.Sprintf("region:%d\n", atomic.LoadUint64(&progressCount)))
+				_, err = f.Write(msg)
+				if err != nil {
+					log.Warn("failed to write data to file", zap.Error(err))
+				}
+			}
+		})
 	}
 
 	if cfg.UseCheckpoint {
@@ -720,7 +708,7 @@ func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig
 		}
 	}
 	updateCh = g.StartProgress(ctx, "Checksum", checksumProgress, !cfg.LogProgress)
-	schemasConcurrency := uint(mathutil.Min(backup.DefaultSchemaConcurrency, schemas.Len()))
+	schemasConcurrency := min(cfg.TableConcurrency, uint(schemas.Len()))
 
 	err = schemas.BackupSchemas(
 		ctx, metawriter, client.GetCheckpointRunner(), mgr.GetStorage(), statsHandle, backupTS, schemasConcurrency, cfg.ChecksumConcurrency, skipChecksum, updateCh)
@@ -755,6 +743,23 @@ func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig
 	return nil
 }
 
+func getRegionCountOfRanges(
+	ctx context.Context,
+	mgr *conn.Mgr,
+	ranges []rtree.Range,
+) (int, error) {
+	// The number of regions need to backup
+	approximateRegions := 0
+	for _, r := range ranges {
+		regionCount, err := mgr.GetRegionCount(ctx, r.StartKey, r.EndKey)
+		if err != nil {
+			return 0, errors.Trace(err)
+		}
+		approximateRegions += regionCount
+	}
+	return approximateRegions, nil
+}
+
 // ParseTSString port from tidb setSnapshotTS.
 func ParseTSString(ts string, tzCheck bool) (uint64, error) {
 	if len(ts) == 0 {
@@ -765,16 +770,14 @@ func ParseTSString(ts string, tzCheck bool) (uint64, error) {
 	}
 
 	loc := time.Local
-	sc := &stmtctx.StatementContext{
-		TimeZone: loc,
-	}
+	sc := stmtctx.NewStmtCtxWithTimeZone(loc)
 	if tzCheck {
 		tzIdx, _, _, _, _ := types.GetTimezone(ts)
 		if tzIdx < 0 {
 			return 0, errors.Errorf("must set timezone when using datetime format ts, e.g. '2018-05-11 01:42:23+0800'")
 		}
 	}
-	t, err := types.ParseTime(sc, ts, mysql.TypeTimestamp, types.MaxFsp, nil)
+	t, err := types.ParseTime(sc.TypeCtx(), ts, mysql.TypeTimestamp, types.MaxFsp)
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
@@ -783,6 +786,21 @@ func ParseTSString(ts string, tzCheck bool) (uint64, error) {
 		return 0, errors.Trace(err)
 	}
 	return oracle.GoTimeToTS(t1), nil
+}
+
+func DefaultBackupConfig() BackupConfig {
+	fs := pflag.NewFlagSet("dummy", pflag.ContinueOnError)
+	DefineCommonFlags(fs)
+	DefineBackupFlags(fs)
+	cfg := BackupConfig{}
+	err := multierr.Combine(
+		cfg.ParseFromFlags(fs),
+		cfg.Config.ParseFromFlags(fs),
+	)
+	if err != nil {
+		log.Panic("infallible operation failed.", zap.Error(err))
+	}
+	return cfg
 }
 
 func parseCompressionType(s string) (backuppb.CompressionType, error) {

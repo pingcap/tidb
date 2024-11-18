@@ -134,7 +134,7 @@ func (c *ConsistencyLockDumpingTables) Setup(tctx *tcontext.Context) error {
 			return errTiDBDisableTableLock
 		}
 	}
-	blockList := make(map[string]map[string]interface{})
+	blockList := make(map[string]map[string]any)
 	return utils.WithRetry(tctx, func() error {
 		lockTablesSQL := buildLockTablesSQL(c.conf.Tables, blockList)
 		var err error

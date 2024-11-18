@@ -1,0 +1,11 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "israce",
+    srcs = [
+        "israce.go",
+        "norace.go",
+    ],
+    importpath = "github.com/pingcap/tidb/pkg/util/israce",
+    visibility = ["//visibility:public"],
+)

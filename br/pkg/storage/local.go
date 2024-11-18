@@ -12,8 +12,8 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/log"
-	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"go.uber.org/zap"
 )
 
@@ -29,12 +29,30 @@ const (
 // export for using in tests.
 type LocalStorage struct {
 	base string
+	// Whether ignoring ENOINT while deleting.
+	// Don't fail when deleting an unexist file is more like
+	// a normal ExternalStorage implementation does.
+	IgnoreEnoentForDelete bool
+}
+
+// Base returns the base dir used by this local storage.
+func (l *LocalStorage) Base() string {
+	return l.base
 }
 
 // DeleteFile deletes the file.
 func (l *LocalStorage) DeleteFile(_ context.Context, name string) error {
+	failpoint.Inject("local_delete_file_err", func(v failpoint.Value) {
+		failpoint.Return(errors.New(v.(string)))
+	})
 	path := filepath.Join(l.base, name)
-	return os.Remove(path)
+	err := os.Remove(path)
+	if err != nil &&
+		l.IgnoreEnoentForDelete &&
+		os.IsNotExist(err) {
+		return nil
+	}
+	return err
 }
 
 // DeleteFiles deletes the files.
@@ -50,6 +68,10 @@ func (l *LocalStorage) DeleteFiles(ctx context.Context, names []string) error {
 
 // WriteFile writes data to a file to storage.
 func (l *LocalStorage) WriteFile(_ context.Context, name string, data []byte) error {
+	failpoint.Inject("local_write_file_err", func(v failpoint.Value) {
+		failpoint.Return(errors.New(v.(string)))
+	})
+
 	// because `os.WriteFile` is not atomic, directly write into it may reset the file
 	// to an empty file if write is not finished.
 	tmpPath := filepath.Join(l.base, name) + ".tmp." + uuid.NewString()
@@ -131,7 +153,11 @@ func (l *LocalStorage) WalkDir(_ context.Context, opt *WalkOption, fn func(strin
 		if !f.Mode().IsRegular() {
 			stat, err := os.Stat(filepath.Join(l.base, path))
 			if err != nil {
-				return errors.Trace(err)
+				// error may happen because of file deleted after walk started, or other errors
+				// like #49423. We just return 0 size and let the caller handle it in later
+				// logic.
+				log.Warn("failed to get file size", zap.String("path", path), zap.Error(err))
+				return fn(path, 0)
 			}
 			size = stat.Size()
 		}
@@ -141,7 +167,7 @@ func (l *LocalStorage) WalkDir(_ context.Context, opt *WalkOption, fn func(strin
 
 // URI returns the base path as an URI with a file:/// prefix.
 func (l *LocalStorage) URI() string {
-	return LocalURIPrefix + "/" + l.base
+	return LocalURIPrefix + l.base
 }
 
 // Open a Reader by file path, path is a relative path to base path.
@@ -151,27 +177,56 @@ func (l *LocalStorage) Open(_ context.Context, path string, o *ReaderOption) (Ex
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+	pos, endPos := int64(0), int64(-1)
 	if o != nil {
 		if o.EndOffset != nil {
-			return nil, errors.Annotatef(
-				berrors.ErrUnsupportedOperation,
-				"currently LocalStorage backend does not support EndOffset")
+			endPos = *o.EndOffset
 		}
 		if o.StartOffset != nil {
 			_, err = f.Seek(*o.StartOffset, io.SeekStart)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
+			pos = *o.StartOffset
 		}
 	}
-	return localFile{f}, nil
+	return &localFile{File: f, pos: pos, endPos: endPos}, nil
 }
 
 type localFile struct {
 	*os.File
+	pos    int64
+	endPos int64
 }
 
-func (f localFile) GetFileSize() (int64, error) {
+func (f *localFile) Read(p []byte) (n int, err error) {
+	if f.endPos == -1 {
+		return f.File.Read(p)
+	}
+
+	pEnd := f.endPos - f.pos
+	if pEnd <= 0 {
+		return 0, io.EOF
+	}
+	if pEnd > int64(len(p)) {
+		pEnd = int64(len(p))
+	}
+	p = p[:pEnd]
+	n, err = f.File.Read(p)
+	f.pos += int64(n)
+	return n, err
+}
+
+func (f *localFile) Seek(offset int64, whence int) (int64, error) {
+	n, err := f.File.Seek(offset, whence)
+	if err != nil {
+		return 0, errors.Trace(err)
+	}
+	f.pos, _ = f.File.Seek(0, io.SeekCurrent)
+	return n, nil
+}
+
+func (f *localFile) GetFileSize() (int64, error) {
 	stat, err := f.Stat()
 	if err != nil {
 		return 0, errors.Trace(err)
@@ -199,6 +254,9 @@ func (l *LocalStorage) Create(_ context.Context, name string, _ *WriterOption) (
 func (l *LocalStorage) Rename(_ context.Context, oldFileName, newFileName string) error {
 	return errors.Trace(os.Rename(filepath.Join(l.base, oldFileName), filepath.Join(l.base, newFileName)))
 }
+
+// Close implements ExternalStorage interface.
+func (*LocalStorage) Close() {}
 
 func pathExists(_path string) (bool, error) {
 	_, err := os.Stat(_path)

@@ -136,3 +136,6 @@ func (*HDFSStorage) Create(_ context.Context, _ string, _ *WriterOption) (Extern
 func (*HDFSStorage) Rename(_ context.Context, _, _ string) error {
 	return errors.Annotatef(berrors.ErrUnsupportedOperation, "currently HDFS backend only support rawkv backup")
 }
+
+// Close implements ExternalStorage interface.
+func (*HDFSStorage) Close() {}

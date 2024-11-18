@@ -13,7 +13,7 @@ import (
 	"github.com/pingcap/log"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/logutil"
-	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/pkg/kv"
 	"go.uber.org/zap"
 )
 
@@ -141,13 +141,6 @@ func clampInOneRange(rng kv.KeyRange, clampIn kv.KeyRange) (kv.KeyRange, failedT
 		return kv.KeyRange{}, possibleFailureReason
 	}
 	return rng, successClamp
-}
-
-// CloneSlice sallowly clones a slice.
-func CloneSlice[T any](s []T) []T {
-	r := make([]T, len(s))
-	copy(r, s)
-	return r
 }
 
 // IntersectAll returns the intersect of two set of segments.

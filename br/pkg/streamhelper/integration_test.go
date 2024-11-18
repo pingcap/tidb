@@ -21,7 +21,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/streamhelper"
-	"github.com/pingcap/tidb/tablecodec"
+	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/kv"
 	clientv3 "go.etcd.io/etcd/client/v3"
@@ -50,8 +50,8 @@ func runEtcd(t *testing.T) (*embed.Etcd, *clientv3.Client) {
 	cfg := embed.NewConfig()
 	cfg.Dir = t.TempDir()
 	clientURL := getRandomLocalAddr()
-	cfg.LCUrls = []url.URL{clientURL}
-	cfg.LPUrls = []url.URL{getRandomLocalAddr()}
+	cfg.ListenClientUrls = []url.URL{clientURL}
+	cfg.ListenPeerUrls = []url.URL{getRandomLocalAddr()}
 	cfg.LogLevel = "fatal"
 	etcd, err := embed.StartEtcd(cfg)
 	if err != nil {

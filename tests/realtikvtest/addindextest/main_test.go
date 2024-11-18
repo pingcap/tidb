@@ -18,7 +18,7 @@ import (
 	"flag"
 	"testing"
 
-	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/tests/realtikvtest"
 )
 
@@ -28,7 +28,7 @@ var FullMode = flag.Bool("full-mode", false, "whether tests run in full mode")
 
 func TestMain(m *testing.M) {
 	config.UpdateGlobal(func(conf *config.Config) {
-		conf.Store = "tikv"
+		conf.Store = config.StoreTypeTiKV
 	})
 	realtikvtest.RunTestMain(m)
 }

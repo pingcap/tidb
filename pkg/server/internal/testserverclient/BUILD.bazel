@@ -1,0 +1,31 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "testserverclient",
+    srcs = ["server_client.go"],
+    importpath = "github.com/pingcap/tidb/pkg/server/internal/testserverclient",
+    visibility = ["//pkg/server:__subpackages__"],
+    deps = [
+        "//pkg/errno",
+        "//pkg/kv",
+        "//pkg/meta/model",
+        "//pkg/metrics",
+        "//pkg/parser/mysql",
+        "//pkg/server",
+        "//pkg/sessionctx/sessionstates",
+        "//pkg/testkit",
+        "//pkg/testkit/testenv",
+        "//pkg/testkit/testfailpoint",
+        "//pkg/util",
+        "//pkg/util/versioninfo",
+        "@com_github_go_sql_driver_mysql//:mysql",
+        "@com_github_pingcap_errors//:errors",
+        "@com_github_pingcap_failpoint//:failpoint",
+        "@com_github_pingcap_log//:log",
+        "@com_github_prometheus_client_model//go",
+        "@com_github_stretchr_testify//require",
+        "@com_github_yangkeao_go_mysql_driver//:go-mysql-driver",
+        "@org_golang_x_text//encoding/simplifiedchinese",
+        "@org_uber_go_zap//:zap",
+    ],
+)

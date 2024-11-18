@@ -32,12 +32,12 @@ var Analyzer = &analysis.Analyzer{
 }
 
 const (
-	packagePath = "github.com/pingcap/tidb/util"
+	packagePath = "github.com/pingcap/tidb/pkg/util"
 	packageName = "util"
 	funcName    = "Recover"
 )
 
-func run(pass *analysis.Pass) (interface{}, error) {
+func run(pass *analysis.Pass) (any, error) {
 	for _, file := range pass.Files {
 		packageName := util.GetPackageName(file.Imports, packagePath, packageName)
 		if packageName == "" {
@@ -77,4 +77,8 @@ func run(pass *analysis.Pass) (interface{}, error) {
 		})
 	}
 	return nil, nil
+}
+
+func init() {
+	util.SkipAnalyzerByConfig(Analyzer)
 }

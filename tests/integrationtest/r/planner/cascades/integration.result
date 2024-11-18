@@ -124,8 +124,8 @@ create table t(a int primary key, b int);
 set session tidb_enable_cascades_planner = 1;
 desc t;
 Field	Type	Null	Key	Default	Extra
-a	int(11)	NO	PRI	NULL	
-b	int(11)	YES		NULL	
+a	int	NO	PRI	NULL	
+b	int	YES		NULL	
 drop table if exists t;
 create table t(a int primary key, b int);
 insert into t values (1, 11), (4, 44), (2, 22), (3, 33);
@@ -437,7 +437,7 @@ approx_count_distinct(case when a > 0 and a <= 1000 then b end)
 explain select count(b), sum(b), avg(b), b, max(b), min(b), bit_and(b), bit_or(b), bit_xor(b) from t group by a having sum(b) >= 0 and count(b) >= 0 order by b;
 id	estRows	task	access object	operator info
 Projection_13	8000.00	root		Column#3->Column#11, Column#4->Column#12, Column#5->Column#13, planner__cascades__integration.t.b, Column#6->Column#15, Column#7->Column#16, Column#8->Column#17, Column#9->Column#18, Column#10->Column#19
-└─Projection_15	8000.00	root		if(isnull(planner__cascades__integration.t.b), 0, 1)->Column#3, cast(planner__cascades__integration.t.b, decimal(32,0) BINARY)->Column#4, cast(planner__cascades__integration.t.b, decimal(15,4) BINARY)->Column#5, planner__cascades__integration.t.b, planner__cascades__integration.t.b->Column#6, planner__cascades__integration.t.b->Column#7, ifnull(cast(planner__cascades__integration.t.b, bigint(21) UNSIGNED BINARY), 18446744073709551615)->Column#8, ifnull(cast(planner__cascades__integration.t.b, bigint(21) UNSIGNED BINARY), 0)->Column#9, ifnull(cast(planner__cascades__integration.t.b, bigint(21) UNSIGNED BINARY), 0)->Column#10, cast(planner__cascades__integration.t.b, decimal(32,0) BINARY)->Column#4, if(isnull(planner__cascades__integration.t.b), 0, 1)->Column#3
+└─Projection_15	8000.00	root		if(isnull(planner__cascades__integration.t.b), 0, 1)->Column#3, cast(planner__cascades__integration.t.b, decimal(32,0) BINARY)->Column#4, cast(planner__cascades__integration.t.b, decimal(15,4) BINARY)->Column#5, planner__cascades__integration.t.b, planner__cascades__integration.t.b->Column#6, planner__cascades__integration.t.b->Column#7, ifnull(cast(planner__cascades__integration.t.b, bigint UNSIGNED BINARY), 18446744073709551615)->Column#8, ifnull(cast(planner__cascades__integration.t.b, bigint UNSIGNED BINARY), 0)->Column#9, ifnull(cast(planner__cascades__integration.t.b, bigint UNSIGNED BINARY), 0)->Column#10, cast(planner__cascades__integration.t.b, decimal(32,0) BINARY)->Column#4, if(isnull(planner__cascades__integration.t.b), 0, 1)->Column#3
   └─Sort_22	8000.00	root		planner__cascades__integration.t.b
     └─TableReader_19	8000.00	root		data:Selection_20
       └─Selection_20	8000.00	cop[tikv]		ge(cast(planner__cascades__integration.t.b, decimal(32,0) BINARY), 0), ge(if(isnull(planner__cascades__integration.t.b), 0, 1), 0)
@@ -890,13 +890,14 @@ a
 2
 3
 set session tidb_enable_cascades_planner = 1;
-explain select USER, DB, COMMAND, TIME, STATE, INFO, `DIGEST` from information_schema.processlist;
+explain select USER, DB, COMMAND, TIME, STATE, INFO, `DIGEST` from information_schema.processlist where DB = "planner__cascades__integration";
 id	estRows	task	access object	operator info
-Projection_3	10000.00	root		Column#2, Column#4, Column#5, Column#6, Column#7, Column#8, Column#9
-└─MemTableScan_4	10000.00	root	table:PROCESSLIST	
-select USER, DB, COMMAND, TIME, STATE, INFO, `DIGEST` from information_schema.processlist;
+Projection_4	8000.00	root		Column#2, Column#4, Column#5, Column#6, Column#7, Column#8, Column#9
+└─Selection_5	8000.00	root		eq(Column#4, "planner__cascades__integration")
+  └─MemTableScan_6	10000.00	root	table:PROCESSLIST	
+select USER, DB, COMMAND, TIME, STATE, INFO, `DIGEST` from information_schema.processlist where DB = "planner__cascades__integration";
 USER	DB	COMMAND	TIME	STATE	INFO	DIGEST
-root	planner__cascades__integration	Query	0	in transaction; autocommit	select USER, DB, COMMAND, TIME, STATE, INFO, `DIGEST` from information_schema.processlist	78f1c0b2fcd082b6504b8ba48706391f13aad730a9efb7ec295688010bfec477
+root	planner__cascades__integration	Query	0	autocommit	select USER, DB, COMMAND, TIME, STATE, INFO, `DIGEST` from information_schema.processlist where DB = "planner__cascades__integration"	769773ab56dd2977858c3c36e76e503323bbbc62257bb2e18e0e10cd9df43973
 drop table if exists t;
 create table t(a int primary key, b int);
 insert into t values (1, 11), (4, 44), (2, 22), (3, 33);
@@ -970,3 +971,26 @@ a	b
 1	11
 2	22
 3	33
+SET SESSION tidb_opt_fix_control = '44262:ON';
+drop table if exists pt1;
+create table pt1(a bigint, b bigint) partition by hash(a) partitions 4;
+insert into pt1 values(1,10);
+insert into pt1 values(2,20);
+insert into pt1 values(3,30);
+insert into pt1 values(4,40);
+insert into pt1 values(5,50);
+set @@tidb_enable_cascades_planner = 1;
+explain select * from pt1 order by a;
+id	estRows	task	access object	operator info
+Sort_11	10000.00	root		planner__cascades__integration.pt1.a
+└─TableReader_9	10000.00	root	partition:all	data:TableFullScan_10
+  └─TableFullScan_10	10000.00	cop[tikv]	table:pt1	keep order:false, stats:pseudo
+select * from pt1 order by a;
+a	b
+1	10
+2	20
+3	30
+4	40
+5	50
+set session tidb_opt_fix_control = default;
+set @@tidb_enable_cascades_planner = default;

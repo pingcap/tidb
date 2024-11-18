@@ -29,7 +29,7 @@ import (
 	_ "github.com/go-sql-driver/mysql"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
-	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/stretchr/testify/require"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.uber.org/zap"
@@ -58,8 +58,9 @@ var (
 )
 
 const (
-	waitToStartup   = 500 * time.Millisecond
-	msgErrConnectPD = "connect PD err: %v. Establish a cluster with PD & TiKV, and provide PD client path by `--pd=<ip:port>[,<ip:port>]"
+	waitToStartup    = 500 * time.Millisecond
+	msgErrConnectPD  = "connect PD err: %v. Establish a cluster with PD & TiKV, and provide PD client path by `--pd=<ip:port>[,<ip:port>]"
+	timeoutConnectDB = 20 * time.Second
 )
 
 // GlobalKillSuite is used for automated test of "Global Kill" feature.
@@ -170,8 +171,7 @@ func (s *GlobalKillSuite) startTiKV(dataDir string) (err error) {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	time.Sleep(500 * time.Millisecond)
-	return nil
+	return errors.Trace(checkTiKVStatus())
 }
 
 func (s *GlobalKillSuite) startPD(dataDir string) (err error) {
@@ -185,8 +185,7 @@ func (s *GlobalKillSuite) startPD(dataDir string) (err error) {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	time.Sleep(500 * time.Millisecond)
-	return nil
+	return errors.Trace(checkPDHealth(*pdClientPath))
 }
 
 func (s *GlobalKillSuite) startCluster() (err error) {
@@ -199,7 +198,6 @@ func (s *GlobalKillSuite) startCluster() (err error) {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	time.Sleep(10 * time.Second)
 	return nil
 }
 
@@ -266,8 +264,7 @@ func (s *GlobalKillSuite) startTiDBWithoutPD(port int, statusPort int) (cmd *exe
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	time.Sleep(500 * time.Millisecond)
-	return cmd, nil
+	return cmd, errors.Trace(checkTiDBStatus(statusPort))
 }
 
 func (s *GlobalKillSuite) startTiDBWithPD(port int, statusPort int, pdPath string) (cmd *exec.Cmd, err error) {
@@ -285,8 +282,7 @@ func (s *GlobalKillSuite) startTiDBWithPD(port int, statusPort int, pdPath strin
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	time.Sleep(500 * time.Millisecond)
-	return cmd, nil
+	return cmd, errors.Trace(checkTiDBStatus(statusPort))
 }
 
 func (s *GlobalKillSuite) mustStartTiDBWithPD(t *testing.T, port int, statusPort int, pdPath string) *exec.Cmd {
@@ -335,9 +331,8 @@ func (s *GlobalKillSuite) connectTiDB(port int) (db *sql.DB, err error) {
 	dsn := fmt.Sprintf("root@(%s)/test", addr)
 	sleepTime := 250 * time.Millisecond
 	sleepTimeLimit := 1 * time.Second
-	maxRetryDuration := 20 * time.Second
 	startTime := time.Now()
-	for i := 0; time.Since(startTime) < maxRetryDuration; i++ {
+	for i := 0; time.Since(startTime) < timeoutConnectDB; i++ {
 		db, err = sql.Open("mysql", dsn)
 		if err != nil {
 			log.Warn("open addr failed",
@@ -742,7 +737,7 @@ func TestServerIDUpgradeAndDowngrade(t *testing.T) {
 		return s.mustConnectTiDB(t, *tidbStartPort+idx)
 	}
 
-	// MaxTiDB32 is determined by `github.com/pingcap/tidb/util/globalconn.ldflagServerIDBits32`
+	// MaxTiDB32 is determined by `github.com/pingcap/tidb/pkg/util/globalconn.ldflagServerIDBits32`
 	// See the ldflags in `Makefile`.
 	// Also see `Domain.proposeServerID`.
 	const MaxTiDB32 = 2 // (3^2 -1) x 0.9
@@ -807,7 +802,7 @@ func TestConnIDUpgradeAndDowngrade(t *testing.T) {
 	tidb := s.mustStartTiDBWithPD(t, *tidbStartPort, *tidbStatusPort, *pdClientPath)
 	defer s.stopService("tidb0", tidb, true)
 
-	// MaxConn32 is determined by `github.com/pingcap/tidb/util/globalconn.ldflagLocalConnIDBits32`
+	// MaxConn32 is determined by `github.com/pingcap/tidb/pkg/util/globalconn.ldflagLocalConnIDBits32`
 	// See the ldflags in `Makefile`.
 	// Also see `LockFreeCircularPool.Cap`.
 	const MaxConn32 = 1<<4 - 1

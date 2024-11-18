@@ -30,13 +30,14 @@ import (
 	"github.com/pingcap/tidb/dumpling/cli"
 	tcontext "github.com/pingcap/tidb/dumpling/context"
 	"github.com/pingcap/tidb/dumpling/log"
-	"github.com/pingcap/tidb/parser"
-	"github.com/pingcap/tidb/parser/ast"
-	"github.com/pingcap/tidb/parser/format"
-	"github.com/pingcap/tidb/store/helper"
-	"github.com/pingcap/tidb/tablecodec"
-	"github.com/pingcap/tidb/util"
-	"github.com/pingcap/tidb/util/codec"
+	infoschema "github.com/pingcap/tidb/pkg/infoschema/context"
+	"github.com/pingcap/tidb/pkg/parser"
+	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/format"
+	"github.com/pingcap/tidb/pkg/store/helper"
+	"github.com/pingcap/tidb/pkg/tablecodec"
+	"github.com/pingcap/tidb/pkg/util"
+	"github.com/pingcap/tidb/pkg/util/codec"
 	pd "github.com/tikv/pd/client"
 	gatomic "go.uber.org/atomic"
 	"go.uber.org/zap"
@@ -199,9 +200,9 @@ func (d *Dumper) Dump() (dumpErr error) {
 	// for consistency flush, record snapshot after whole tables are locked. The recorded meta info is exactly the locked snapshot.
 	// for consistency snapshot, we should use the snapshot that we get/set at first in metadata. TiDB will assure the snapshot of TSO.
 	// for consistency none, the binlog pos in metadata might be earlier than dumped data. We need to enable safe-mode to assure data safety.
-	err = m.recordGlobalMetaData(metaConn, conf.ServerInfo.ServerType, false)
+	err = m.recordGlobalMetaData(metaConn, conf.ServerInfo, false)
 	if err != nil {
-		tctx.L().Info("get global metadata failed", log.ShortError(err))
+		tctx.L().Warn("get global metadata failed", log.ShortError(err))
 	}
 
 	if d.conf.CollationCompatible == StrictCollationCompatible {
@@ -225,7 +226,7 @@ func (d *Dumper) Dump() (dumpErr error) {
 	atomic.StoreInt64(&d.totalTables, int64(calculateTableCount(conf.Tables)))
 
 	rebuildMetaConn := func(conn *sql.Conn, updateMeta bool) (*sql.Conn, error) {
-		_ = conn.Raw(func(dc interface{}) error {
+		_ = conn.Raw(func(any) error {
 			// return an `ErrBadConn` to ensure close the connection, but do not put it back to the pool.
 			// if we choose to use `Close`, it will always put the connection back to the pool.
 			return driver.ErrBadConn
@@ -238,7 +239,7 @@ func (d *Dumper) Dump() (dumpErr error) {
 		conn = newConn
 		// renew the master status after connection. dm can't close safe-mode until dm reaches current pos
 		if updateMeta && conf.PosAfterConnect {
-			err1 = m.recordGlobalMetaData(conn, conf.ServerInfo.ServerType, true)
+			err1 = m.recordGlobalMetaData(conn, conf.ServerInfo, true)
 			if err1 != nil {
 				return conn, errors.Trace(err1)
 			}
@@ -283,7 +284,7 @@ func (d *Dumper) Dump() (dumpErr error) {
 
 	if conf.PosAfterConnect {
 		// record again, to provide a location to exit safe mode for DM
-		err = m.recordGlobalMetaData(metaConn, conf.ServerInfo.ServerType, true)
+		err = m.recordGlobalMetaData(metaConn, conf.ServerInfo, true)
 		if err != nil {
 			tctx.L().Info("get global metadata (after connection pool established) failed", log.ShortError(err))
 		}
@@ -772,24 +773,24 @@ func (d *Dumper) concurrentDumpTable(tctx *tcontext.Context, conn *BaseConn, met
 		return d.dumpWholeTableDirectly(tctx, meta, taskChan, "", orderByClause, 0, 1)
 	}
 
-	min, max, err := d.selectMinAndMaxIntValue(tctx, conn, db, tbl, field)
+	minv, maxv, err := d.selectMinAndMaxIntValue(tctx, conn, db, tbl, field)
 	if err != nil {
 		tctx.L().Info("fallback to sequential dump due to cannot get bounding values. This won't influence the whole dump process",
 			log.ShortError(err))
 		return d.dumpWholeTableDirectly(tctx, meta, taskChan, "", orderByClause, 0, 1)
 	}
 	tctx.L().Debug("get int bounding values",
-		zap.String("lower", min.String()),
-		zap.String("upper", max.String()))
+		zap.String("lower", minv.String()),
+		zap.String("upper", maxv.String()))
 
 	// every chunk would have eventual adjustments
 	estimatedChunks := count / conf.Rows
-	estimatedStep := new(big.Int).Sub(max, min).Uint64()/estimatedChunks + 1
+	estimatedStep := new(big.Int).Sub(maxv, minv).Uint64()/estimatedChunks + 1
 	bigEstimatedStep := new(big.Int).SetUint64(estimatedStep)
-	cutoff := new(big.Int).Set(min)
+	cutoff := new(big.Int).Set(minv)
 	totalChunks := estimatedChunks
 	if estimatedStep == 1 {
-		totalChunks = new(big.Int).Sub(max, min).Uint64() + 1
+		totalChunks = new(big.Int).Sub(maxv, minv).Uint64() + 1
 	}
 
 	selectField, selectLen := meta.SelectedField(), meta.SelectedLen()
@@ -799,7 +800,7 @@ func (d *Dumper) concurrentDumpTable(tctx *tcontext.Context, conn *BaseConn, met
 	if conf.Where == "" {
 		nullValueCondition = fmt.Sprintf("`%s` IS NULL OR ", escapeString(field))
 	}
-	for max.Cmp(cutoff) >= 0 {
+	for maxv.Cmp(cutoff) >= 0 {
 		nextCutOff := new(big.Int).Add(cutoff, bigEstimatedStep)
 		where := fmt.Sprintf("%s(`%s` >= %d AND `%s` < %d)", nullValueCondition, escapeString(field), cutoff, escapeString(field), nextCutOff)
 		query := buildSelectQuery(db, tbl, selectField, "", buildWhereCondition(conf, where), orderByClause)
@@ -853,16 +854,16 @@ func (d *Dumper) selectMinAndMaxIntValue(tctx *tcontext.Context, conn *BaseConn,
 		return zero, zero, errors.Errorf("no invalid min/max value found in query %s", query)
 	}
 
-	max := new(big.Int)
-	min := new(big.Int)
+	maxv := new(big.Int)
+	minv := new(big.Int)
 	var ok bool
-	if max, ok = max.SetString(smax.String, 10); !ok {
+	if maxv, ok = maxv.SetString(smax.String, 10); !ok {
 		return zero, zero, errors.Errorf("fail to convert max value %s in query %s", smax.String, query)
 	}
-	if min, ok = min.SetString(smin.String, 10); !ok {
+	if minv, ok = minv.SetString(smin.String, 10); !ok {
 		return zero, zero, errors.Errorf("fail to convert min value %s in query %s", smin.String, query)
 	}
-	return min, max, nil
+	return minv, maxv, nil
 }
 
 func (d *Dumper) concurrentDumpTiDBTables(tctx *tcontext.Context, conn *BaseConn, meta TableMeta, taskChan chan<- Task) error {
@@ -980,7 +981,7 @@ func selectTiDBTableSample(tctx *tcontext.Context, conn *BaseConn, meta TableMet
 		if iter == nil {
 			iter = &rowIter{
 				rows: rows,
-				args: make([]interface{}, pkValNum),
+				args: make([]any, pkValNum),
 			}
 		}
 		err = iter.Decode(rowRec)
@@ -1145,8 +1146,23 @@ func getListTableTypeByConf(conf *Config) listTableType {
 }
 
 func prepareTableListToDump(tctx *tcontext.Context, conf *Config, db *sql.Conn) error {
-	if conf.SpecifiedTables || conf.SQL != "" {
+	if conf.SQL != "" {
 		return nil
+	}
+
+	ifSeqExists, err := CheckIfSeqExists(db)
+	if err != nil {
+		return err
+	}
+	var listType listTableType
+	if ifSeqExists {
+		listType = listTableByShowFullTables
+	} else {
+		listType = getListTableTypeByConf(conf)
+	}
+
+	if conf.SpecifiedTables {
+		return updateSpecifiedTablesMeta(tctx, db, conf.Tables, listType)
 	}
 	databases, err := prepareDumpingDatabases(tctx, conf, db)
 	if err != nil {
@@ -1159,17 +1175,6 @@ func prepareTableListToDump(tctx *tcontext.Context, conf *Config, db *sql.Conn) 
 	}
 	if !conf.NoSequences {
 		tableTypes = append(tableTypes, TableTypeSequence)
-	}
-
-	ifSeqExists, err := CheckIfSeqExists(db)
-	if err != nil {
-		return err
-	}
-	var listType listTableType
-	if ifSeqExists {
-		listType = listTableByShowFullTables
-	} else {
-		listType = getListTableTypeByConf(conf)
 	}
 
 	conf.Tables, err = ListAllDatabasesTables(tctx, db, databases, listType, tableTypes...)
@@ -1542,8 +1547,8 @@ func updateServiceSafePoint(tctx *tcontext.Context, pdClient pd.Client, ttl int6
 }
 
 // setDefaultSessionParams is a step to set default params for session params.
-func setDefaultSessionParams(si version.ServerInfo, sessionParams map[string]interface{}) {
-	defaultSessionParams := map[string]interface{}{}
+func setDefaultSessionParams(si version.ServerInfo, sessionParams map[string]any) {
+	defaultSessionParams := map[string]any{}
 	if si.ServerType == version.ServerTypeTiDB && si.HasTiKV && si.ServerVersion.Compare(*enablePagingVersion) >= 0 {
 		defaultSessionParams["tidb_enable_paging"] = "ON"
 	}
@@ -1631,7 +1636,7 @@ func (d *Dumper) renewSelectTableRegionFuncForLowerTiDB(tctx *tcontext.Context) 
 		return errors.Trace(err)
 	}
 	tikvHelper := &helper.Helper{}
-	tableInfos := tikvHelper.GetRegionsTableInfo(regionsInfo, dbInfos)
+	tableInfos := tikvHelper.GetRegionsTableInfo(regionsInfo, infoschema.DBInfoAsInfoSchema(dbInfos), nil)
 
 	tableInfoMap := make(map[string]map[string][]int64, len(conf.Tables))
 	for _, region := range regionsInfo.Regions {

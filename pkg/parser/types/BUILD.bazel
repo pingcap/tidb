@@ -1,0 +1,38 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "types",
+    srcs = [
+        "etc.go",
+        "eval_type.go",
+        "field_type.go",
+    ],
+    importpath = "github.com/pingcap/tidb/pkg/parser/types",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/parser/charset",
+        "//pkg/parser/format",
+        "//pkg/parser/mysql",
+        "//pkg/parser/terror",
+    ],
+)
+
+go_test(
+    name = "types_test",
+    timeout = "short",
+    srcs = [
+        "etc_test.go",
+        "field_type_test.go",
+    ],
+    embed = [":types"],
+    flaky = True,
+    shard_count = 6,
+    deps = [
+        "//pkg/parser",
+        "//pkg/parser/ast",
+        "//pkg/parser/charset",
+        "//pkg/parser/mysql",
+        "//pkg/parser/test_driver",
+        "@com_github_stretchr_testify//require",
+    ],
+)

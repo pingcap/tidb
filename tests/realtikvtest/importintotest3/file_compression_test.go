@@ -23,8 +23,8 @@ import (
 	"github.com/fsouza/fake-gcs-server/fakestorage"
 	"github.com/golang/snappy"
 	"github.com/klauspost/compress/zstd"
-	"github.com/pingcap/tidb/br/pkg/lightning/mydump"
-	"github.com/pingcap/tidb/testkit"
+	"github.com/pingcap/tidb/pkg/lightning/mydump"
+	"github.com/pingcap/tidb/pkg/testkit"
 )
 
 func (s *mockGCSSuite) getCompressedData(compression mydump.Compression, data []byte) []byte {

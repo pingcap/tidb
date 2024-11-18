@@ -1,0 +1,707 @@
+drop table if exists t;
+drop table if exists t1;
+create table t(c1 int, c2 int);
+create table t1(c1 int, c2 int);
+insert into t values(1,1),(2,2);
+insert into t1 values(2,3),(4,4);
+explain format = 'brief' select /*+ TIDB_SMJ(t) */ * from t left outer join t1 on t.c1 = t1.c1 where t.c1 = 1 or t1.c2 > 20;
+id	estRows	task	access object	operator info
+Selection	8000.00	root		or(eq(executor__merge_join.t.c1, 1), gt(executor__merge_join.t1.c2, 20))
+└─MergeJoin	10000.00	root		left outer join, left key:executor__merge_join.t.c1, right key:executor__merge_join.t1.c1
+  ├─Sort(Build)	3336.66	root		executor__merge_join.t1.c1
+  │ └─TableReader	3336.66	root		data:Selection
+  │   └─Selection	3336.66	cop[tikv]		not(isnull(executor__merge_join.t1.c1)), or(eq(executor__merge_join.t1.c1, 1), gt(executor__merge_join.t1.c2, 20))
+  │     └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+  └─Sort(Probe)	10000.00	root		executor__merge_join.t.c1
+    └─TableReader	10000.00	root		data:TableFullScan
+      └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+select /*+ TIDB_SMJ(t) */ * from t left outer join t1 on t.c1 = t1.c1 where t.c1 = 1 or t1.c2 > 20;
+c1	c2	c1	c2
+1	1	NULL	NULL
+explain format = 'brief' select /*+ TIDB_SMJ(t) */ * from t1 right outer join t on t.c1 = t1.c1 where t.c1 = 1 or t1.c2 > 20;
+id	estRows	task	access object	operator info
+Selection	8000.00	root		or(eq(executor__merge_join.t.c1, 1), gt(executor__merge_join.t1.c2, 20))
+└─MergeJoin	10000.00	root		right outer join, left key:executor__merge_join.t1.c1, right key:executor__merge_join.t.c1
+  ├─Sort(Build)	3336.66	root		executor__merge_join.t1.c1
+  │ └─TableReader	3336.66	root		data:Selection
+  │   └─Selection	3336.66	cop[tikv]		not(isnull(executor__merge_join.t1.c1)), or(eq(executor__merge_join.t1.c1, 1), gt(executor__merge_join.t1.c2, 20))
+  │     └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+  └─Sort(Probe)	10000.00	root		executor__merge_join.t.c1
+    └─TableReader	10000.00	root		data:TableFullScan
+      └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+select /*+ TIDB_SMJ(t) */ * from t1 right outer join t on t.c1 = t1.c1 where t.c1 = 1 or t1.c2 > 20;
+c1	c2	c1	c2
+NULL	NULL	1	1
+explain format = 'brief' select /*+ TIDB_SMJ(t) */ * from t right outer join t1 on t.c1 = t1.c1 where t.c1 = 1 or t1.c2 > 20;
+id	estRows	task	access object	operator info
+Selection	9990.00	root		or(eq(executor__merge_join.t.c1, 1), gt(executor__merge_join.t1.c2, 20))
+└─MergeJoin	12487.50	root		right outer join, left key:executor__merge_join.t.c1, right key:executor__merge_join.t1.c1
+  ├─Sort(Build)	9990.00	root		executor__merge_join.t.c1
+  │ └─TableReader	9990.00	root		data:Selection
+  │   └─Selection	9990.00	cop[tikv]		not(isnull(executor__merge_join.t.c1))
+  │     └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+  └─Sort(Probe)	10000.00	root		executor__merge_join.t1.c1
+    └─TableReader	10000.00	root		data:TableFullScan
+      └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+select /*+ TIDB_SMJ(t) */ * from t right outer join t1 on t.c1 = t1.c1 where t.c1 = 1 or t1.c2 > 20;
+c1	c2	c1	c2
+explain format = 'brief' select /*+ TIDB_SMJ(t) */ * from t left outer join t1 on t.c1 = t1.c1 where t1.c1 = 3 or false;
+id	estRows	task	access object	operator info
+MergeJoin	12.50	root		inner join, left key:executor__merge_join.t.c1, right key:executor__merge_join.t1.c1
+├─Sort(Build)	10.00	root		executor__merge_join.t1.c1
+│ └─TableReader	10.00	root		data:Selection
+│   └─Selection	10.00	cop[tikv]		not(isnull(executor__merge_join.t1.c1)), or(eq(executor__merge_join.t1.c1, 3), 0)
+│     └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+└─Sort(Probe)	10.00	root		executor__merge_join.t.c1
+  └─TableReader	10.00	root		data:Selection
+    └─Selection	10.00	cop[tikv]		not(isnull(executor__merge_join.t.c1)), or(eq(executor__merge_join.t.c1, 3), 0)
+      └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+select /*+ TIDB_SMJ(t) */ * from t left outer join t1 on t.c1 = t1.c1 where t1.c1 = 3 or false;
+c1	c2	c1	c2
+explain format = 'brief' select /*+ TIDB_SMJ(t) */ * from t left outer join t1 on t.c1 = t1.c1 and t.c1 != 1 order by t1.c1;
+id	estRows	task	access object	operator info
+Sort	10000.00	root		executor__merge_join.t1.c1
+└─MergeJoin	10000.00	root		left outer join, left key:executor__merge_join.t.c1, right key:executor__merge_join.t1.c1, left cond:ne(executor__merge_join.t.c1, 1)
+  ├─Sort(Build)	6656.67	root		executor__merge_join.t1.c1
+  │ └─TableReader	6656.67	root		data:Selection
+  │   └─Selection	6656.67	cop[tikv]		ne(executor__merge_join.t1.c1, 1), not(isnull(executor__merge_join.t1.c1))
+  │     └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+  └─Sort(Probe)	10000.00	root		executor__merge_join.t.c1
+    └─TableReader	10000.00	root		data:TableFullScan
+      └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+select /*+ TIDB_SMJ(t) */ * from t left outer join t1 on t.c1 = t1.c1 and t.c1 != 1 order by t1.c1;
+c1	c2	c1	c2
+1	1	NULL	NULL
+2	2	2	3
+drop table if exists t1;
+drop table if exists t2;
+drop table if exists t3;
+create table t1 (c1 int, c2 int);
+create table t2 (c1 int, c2 int);
+create table t3 (c1 int, c2 int);
+insert into t1 values (1,1), (2,2), (3,3);
+insert into t2 values (1,1), (3,3), (5,5);
+insert into t3 values (1,1), (5,5), (9,9);
+select /*+ TIDB_SMJ(t1,t2,t3) */ * from t1 left join t2 on t1.c1 = t2.c1 right join t3 on t2.c1 = t3.c1 order by t1.c1, t1.c2, t2.c1, t2.c2, t3.c1, t3.c2;
+c1	c2	c1	c2	c1	c2
+NULL	NULL	NULL	NULL	5	5
+NULL	NULL	NULL	NULL	9	9
+1	1	1	1	1	1
+drop table if exists t1;
+create table t1 (c1 int);
+insert into t1 values (1), (1), (1);
+select/*+ TIDB_SMJ(t) */  * from t1 a join t1 b on a.c1 = b.c1;
+c1	c1
+1	1
+1	1
+1	1
+1	1
+1	1
+1	1
+1	1
+1	1
+1	1
+drop table if exists t;
+drop table if exists t1;
+create table t(c1 int, index k(c1));
+create table t1(c1 int);
+insert into t values (1),(2),(3),(4),(5),(6),(7);
+insert into t1 values (1),(2),(3),(4),(5),(6),(7);
+select /*+ TIDB_SMJ(a,b) */ a.c1 from t a , t1 b where a.c1 = b.c1 order by a.c1;
+c1
+1
+2
+3
+4
+5
+6
+7
+select /*+ TIDB_SMJ(a, b) */ a.c1 from t a , (select * from t1 limit 3) b where a.c1 = b.c1 order by b.c1;
+c1
+1
+2
+3
+select /*+ TIDB_SMJ(a, b) */ a.c1 from t a , (select * from t1 limit 3) b where a.c1 = b.c1 and b.c1 is not null order by b.c1;
+c1
+1
+2
+3
+begin;
+select /*+ TIDB_SMJ(a, b) */ a.c1 from t a , (select * from t1 for update) b where a.c1 = b.c1 order by a.c1;
+c1
+1
+2
+3
+4
+5
+6
+7
+insert into t1 values(8);
+select /*+ TIDB_SMJ(a, b) */ a.c1 from t a , t1 b where a.c1 = b.c1;
+c1
+1
+2
+3
+4
+5
+6
+7
+rollback;
+drop table if exists t;
+drop table if exists t1;
+create table t(c1 int);
+create table t1(c1 int unsigned);
+insert into t values (1);
+insert into t1 values (1);
+select /*+ TIDB_SMJ(t,t1) */ t.c1 from t , t1 where t.c1 = t1.c1;
+c1
+1
+drop table if exists t;
+create table t(a int, b int, index a(a), index b(b));
+insert into t values(1, 2);
+select /*+ TIDB_SMJ(t, t1) */ t.a, t1.b from t right join t t1 on t.a = t1.b order by t.a;
+a	b
+NULL	2
+drop table if exists t;
+drop table if exists s;
+create table t(a int, b int, primary key(a, b));
+insert into t value(1,1),(1,2),(1,3),(1,4);
+create table s(a int, primary key(a));
+insert into s value(1);
+select /*+ TIDB_SMJ(t, s) */ count(*) from t join s on t.a = s.a;
+count(*)
+4
+drop table if exists t;
+create table t(a int);
+insert into t value(1),(2);
+explain format = 'brief' select /*+ TIDB_SMJ(t1, t2) */ * from t t1 join t t2 order by t1.a, t2.a;
+id	estRows	task	access object	operator info
+Sort	100000000.00	root		executor__merge_join.t.a, executor__merge_join.t.a
+└─MergeJoin	100000000.00	root		inner join
+  ├─TableReader(Build)	10000.00	root		data:TableFullScan
+  │ └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
+  └─TableReader(Probe)	10000.00	root		data:TableFullScan
+    └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+select /*+ TIDB_SMJ(t1, t2) */ * from t t1 join t t2 order by t1.a, t2.a;
+a	a
+1	1
+1	2
+2	1
+2	2
+drop table if exists t;
+drop table if exists s;
+create table t(a int, b int);
+insert into t values(1,1),(1,2);
+create table s(a int, b int);
+insert into s values(1,1);
+explain format = 'brief' select /*+ TIDB_SMJ(t, s) */ a in (select a from s where s.b >= t.b) from t;
+id	estRows	task	access object	operator info
+MergeJoin	10000.00	root		left outer semi join, other cond:eq(executor__merge_join.t.a, executor__merge_join.s.a), ge(executor__merge_join.s.b, executor__merge_join.t.b)
+├─TableReader(Build)	10000.00	root		data:TableFullScan
+│ └─TableFullScan	10000.00	cop[tikv]	table:s	keep order:false, stats:pseudo
+└─TableReader(Probe)	10000.00	root		data:TableFullScan
+  └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+select /*+ TIDB_SMJ(t, s) */ a in (select a from s where s.b >= t.b) from t;
+a in (select a from s where s.b >= t.b)
+1
+0
+drop table if exists t;
+drop table if exists t1;
+create table t (a int, key(a));
+create table t1 (a int, key(a));
+insert into t values (1), (2), (3);
+insert into t1 values (1), (2), (3);
+select /*+ TIDB_SMJ(t1, t2) */ t.a from t, t1 where t.a = t1.a order by t1.a desc;
+a
+3
+2
+1
+drop table if exists t;
+create table t (a int, b int, key(a), key(b));
+insert into t values (1,1),(1,2),(1,3),(2,1),(2,2),(3,1),(3,2),(3,3);
+select /*+ TIDB_SMJ(t1, t2) */ t1.a from t t1, t t2 where t1.a = t2.b order by t1.a desc;
+a
+3
+3
+3
+3
+3
+3
+2
+2
+2
+2
+2
+2
+1
+1
+1
+1
+1
+1
+1
+1
+1
+drop table if exists s;
+create table s (a int);
+insert into s values (4), (1), (3), (2);
+explain format = 'brief' select s1.a1 from (select a as a1 from s order by s.a desc) as s1 join (select a as a2 from s order by s.a desc) as s2 on s1.a1 = s2.a2 order by s1.a1 desc;
+id	estRows	task	access object	operator info
+Sort	12487.50	root		executor__merge_join.s.a:desc
+└─HashJoin	12487.50	root		inner join, equal:[eq(executor__merge_join.s.a, executor__merge_join.s.a)]
+  ├─TableReader(Build)	9990.00	root		data:Selection
+  │ └─Selection	9990.00	cop[tikv]		not(isnull(executor__merge_join.s.a))
+  │   └─TableFullScan	10000.00	cop[tikv]	table:s	keep order:false, stats:pseudo
+  └─TableReader(Probe)	9990.00	root		data:Selection
+    └─Selection	9990.00	cop[tikv]		not(isnull(executor__merge_join.s.a))
+      └─TableFullScan	10000.00	cop[tikv]	table:s	keep order:false, stats:pseudo
+select s1.a1 from (select a as a1 from s order by s.a desc) as s1 join (select a as a2 from s order by s.a desc) as s2 on s1.a1 = s2.a2 order by s1.a1 desc;
+a1
+4
+3
+2
+1
+set @@session.tidb_merge_join_concurrency = 4;
+drop table if exists t;
+drop table if exists t1;
+create table t(c1 int, c2 int);
+create table t1(c1 int, c2 int);
+insert into t values(1,1),(2,2);
+insert into t1 values(2,3),(4,4);
+explain format = 'brief' select /*+ TIDB_SMJ(t) */ * from t left outer join t1 on t.c1 = t1.c1 where t.c1 = 1 or t1.c2 > 20;
+id	estRows	task	access object	operator info
+Selection	8000.00	root		or(eq(executor__merge_join.t.c1, 1), gt(executor__merge_join.t1.c2, 20))
+└─Shuffle	10000.00	root		execution info: concurrency:4, data sources:[TableReader TableReader]
+  └─MergeJoin	10000.00	root		left outer join, left key:executor__merge_join.t.c1, right key:executor__merge_join.t1.c1
+    ├─Sort(Build)	3336.66	root		executor__merge_join.t1.c1
+    │ └─ShuffleReceiver	3336.66	root		
+    │   └─TableReader	3336.66	root		data:Selection
+    │     └─Selection	3336.66	cop[tikv]		not(isnull(executor__merge_join.t1.c1)), or(eq(executor__merge_join.t1.c1, 1), gt(executor__merge_join.t1.c2, 20))
+    │       └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+    └─Sort(Probe)	10000.00	root		executor__merge_join.t.c1
+      └─ShuffleReceiver	10000.00	root		
+        └─TableReader	10000.00	root		data:TableFullScan
+          └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+select /*+ TIDB_SMJ(t) */ * from t left outer join t1 on t.c1 = t1.c1 where t.c1 = 1 or t1.c2 > 20;
+c1	c2	c1	c2
+1	1	NULL	NULL
+explain format = 'brief' select /*+ TIDB_SMJ(t) */ * from t1 right outer join t on t.c1 = t1.c1 where t.c1 = 1 or t1.c2 > 20;
+id	estRows	task	access object	operator info
+Selection	8000.00	root		or(eq(executor__merge_join.t.c1, 1), gt(executor__merge_join.t1.c2, 20))
+└─Shuffle	10000.00	root		execution info: concurrency:4, data sources:[TableReader TableReader]
+  └─MergeJoin	10000.00	root		right outer join, left key:executor__merge_join.t1.c1, right key:executor__merge_join.t.c1
+    ├─Sort(Build)	3336.66	root		executor__merge_join.t1.c1
+    │ └─ShuffleReceiver	3336.66	root		
+    │   └─TableReader	3336.66	root		data:Selection
+    │     └─Selection	3336.66	cop[tikv]		not(isnull(executor__merge_join.t1.c1)), or(eq(executor__merge_join.t1.c1, 1), gt(executor__merge_join.t1.c2, 20))
+    │       └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+    └─Sort(Probe)	10000.00	root		executor__merge_join.t.c1
+      └─ShuffleReceiver	10000.00	root		
+        └─TableReader	10000.00	root		data:TableFullScan
+          └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+select /*+ TIDB_SMJ(t) */ * from t1 right outer join t on t.c1 = t1.c1 where t.c1 = 1 or t1.c2 > 20;
+c1	c2	c1	c2
+NULL	NULL	1	1
+explain format = 'brief' select /*+ TIDB_SMJ(t) */ * from t right outer join t1 on t.c1 = t1.c1 where t.c1 = 1 or t1.c2 > 20;
+id	estRows	task	access object	operator info
+Selection	9990.00	root		or(eq(executor__merge_join.t.c1, 1), gt(executor__merge_join.t1.c2, 20))
+└─Shuffle	12487.50	root		execution info: concurrency:4, data sources:[TableReader TableReader]
+  └─MergeJoin	12487.50	root		right outer join, left key:executor__merge_join.t.c1, right key:executor__merge_join.t1.c1
+    ├─Sort(Build)	9990.00	root		executor__merge_join.t.c1
+    │ └─ShuffleReceiver	9990.00	root		
+    │   └─TableReader	9990.00	root		data:Selection
+    │     └─Selection	9990.00	cop[tikv]		not(isnull(executor__merge_join.t.c1))
+    │       └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+    └─Sort(Probe)	10000.00	root		executor__merge_join.t1.c1
+      └─ShuffleReceiver	10000.00	root		
+        └─TableReader	10000.00	root		data:TableFullScan
+          └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+select /*+ TIDB_SMJ(t) */ * from t right outer join t1 on t.c1 = t1.c1 where t.c1 = 1 or t1.c2 > 20;
+c1	c2	c1	c2
+explain format = 'brief' select /*+ TIDB_SMJ(t) */ * from t left outer join t1 on t.c1 = t1.c1 where t1.c1 = 3 or false;
+id	estRows	task	access object	operator info
+Shuffle	12.50	root		execution info: concurrency:4, data sources:[TableReader TableReader]
+└─MergeJoin	12.50	root		inner join, left key:executor__merge_join.t.c1, right key:executor__merge_join.t1.c1
+  ├─Sort(Build)	10.00	root		executor__merge_join.t1.c1
+  │ └─ShuffleReceiver	10.00	root		
+  │   └─TableReader	10.00	root		data:Selection
+  │     └─Selection	10.00	cop[tikv]		not(isnull(executor__merge_join.t1.c1)), or(eq(executor__merge_join.t1.c1, 3), 0)
+  │       └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+  └─Sort(Probe)	10.00	root		executor__merge_join.t.c1
+    └─ShuffleReceiver	10.00	root		
+      └─TableReader	10.00	root		data:Selection
+        └─Selection	10.00	cop[tikv]		not(isnull(executor__merge_join.t.c1)), or(eq(executor__merge_join.t.c1, 3), 0)
+          └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+select /*+ TIDB_SMJ(t) */ * from t left outer join t1 on t.c1 = t1.c1 where t1.c1 = 3 or false;
+c1	c2	c1	c2
+explain format = 'brief' select /*+ TIDB_SMJ(t) */ * from t left outer join t1 on t.c1 = t1.c1 and t.c1 != 1 order by t1.c1;
+id	estRows	task	access object	operator info
+Sort	10000.00	root		executor__merge_join.t1.c1
+└─Shuffle	10000.00	root		execution info: concurrency:4, data sources:[TableReader TableReader]
+  └─MergeJoin	10000.00	root		left outer join, left key:executor__merge_join.t.c1, right key:executor__merge_join.t1.c1, left cond:ne(executor__merge_join.t.c1, 1)
+    ├─Sort(Build)	6656.67	root		executor__merge_join.t1.c1
+    │ └─ShuffleReceiver	6656.67	root		
+    │   └─TableReader	6656.67	root		data:Selection
+    │     └─Selection	6656.67	cop[tikv]		ne(executor__merge_join.t1.c1, 1), not(isnull(executor__merge_join.t1.c1))
+    │       └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+    └─Sort(Probe)	10000.00	root		executor__merge_join.t.c1
+      └─ShuffleReceiver	10000.00	root		
+        └─TableReader	10000.00	root		data:TableFullScan
+          └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+select /*+ TIDB_SMJ(t) */ * from t left outer join t1 on t.c1 = t1.c1 and t.c1 != 1 order by t1.c1;
+c1	c2	c1	c2
+1	1	NULL	NULL
+2	2	2	3
+drop table if exists t1;
+drop table if exists t2;
+drop table if exists t3;
+create table t1 (c1 int, c2 int);
+create table t2 (c1 int, c2 int);
+create table t3 (c1 int, c2 int);
+insert into t1 values (1,1), (2,2), (3,3);
+insert into t2 values (1,1), (3,3), (5,5);
+insert into t3 values (1,1), (5,5), (9,9);
+select /*+ TIDB_SMJ(t1,t2,t3) */ * from t1 left join t2 on t1.c1 = t2.c1 right join t3 on t2.c1 = t3.c1 order by t1.c1, t1.c2, t2.c1, t2.c2, t3.c1, t3.c2;
+c1	c2	c1	c2	c1	c2
+NULL	NULL	NULL	NULL	5	5
+NULL	NULL	NULL	NULL	9	9
+1	1	1	1	1	1
+drop table if exists t1;
+create table t1 (c1 int);
+insert into t1 values (1), (1), (1);
+select/*+ TIDB_SMJ(t) */  * from t1 a join t1 b on a.c1 = b.c1;
+c1	c1
+1	1
+1	1
+1	1
+1	1
+1	1
+1	1
+1	1
+1	1
+1	1
+drop table if exists t;
+drop table if exists t1;
+create table t(c1 int, index k(c1));
+create table t1(c1 int);
+insert into t values (1),(2),(3),(4),(5),(6),(7);
+insert into t1 values (1),(2),(3),(4),(5),(6),(7);
+select /*+ TIDB_SMJ(a,b) */ a.c1 from t a , t1 b where a.c1 = b.c1 order by a.c1;
+c1
+1
+2
+3
+4
+5
+6
+7
+select /*+ TIDB_SMJ(a, b) */ a.c1 from t a , (select * from t1 limit 3) b where a.c1 = b.c1 order by b.c1;
+c1
+1
+2
+3
+select /*+ TIDB_SMJ(a, b) */ a.c1 from t a , (select * from t1 limit 3) b where a.c1 = b.c1 and b.c1 is not null order by b.c1;
+c1
+1
+2
+3
+begin;
+select /*+ TIDB_SMJ(a, b) */ a.c1 from t a , (select * from t1 for update) b where a.c1 = b.c1 order by a.c1;
+c1
+1
+2
+3
+4
+5
+6
+7
+insert into t1 values(8);
+select /*+ TIDB_SMJ(a, b) */ a.c1 from t a , t1 b where a.c1 = b.c1;
+c1
+1
+2
+3
+4
+5
+6
+7
+rollback;
+drop table if exists t;
+drop table if exists t1;
+create table t(c1 int);
+create table t1(c1 int unsigned);
+insert into t values (1);
+insert into t1 values (1);
+select /*+ TIDB_SMJ(t,t1) */ t.c1 from t , t1 where t.c1 = t1.c1;
+c1
+1
+drop table if exists t;
+create table t(a int, b int, index a(a), index b(b));
+insert into t values(1, 2);
+select /*+ TIDB_SMJ(t, t1) */ t.a, t1.b from t right join t t1 on t.a = t1.b order by t.a;
+a	b
+NULL	2
+drop table if exists t;
+drop table if exists s;
+create table t(a int, b int, primary key(a, b));
+insert into t value(1,1),(1,2),(1,3),(1,4);
+create table s(a int, primary key(a));
+insert into s value(1);
+select /*+ TIDB_SMJ(t, s) */ count(*) from t join s on t.a = s.a;
+count(*)
+4
+drop table if exists t;
+create table t(a int);
+insert into t value(1),(2);
+explain format = 'brief' select /*+ TIDB_SMJ(t1, t2) */ * from t t1 join t t2 order by t1.a, t2.a;
+id	estRows	task	access object	operator info
+Sort	100000000.00	root		executor__merge_join.t.a, executor__merge_join.t.a
+└─MergeJoin	100000000.00	root		inner join
+  ├─TableReader(Build)	10000.00	root		data:TableFullScan
+  │ └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
+  └─TableReader(Probe)	10000.00	root		data:TableFullScan
+    └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+select /*+ TIDB_SMJ(t1, t2) */ * from t t1 join t t2 order by t1.a, t2.a;
+a	a
+1	1
+1	2
+2	1
+2	2
+drop table if exists t;
+drop table if exists s;
+create table t(a int, b int);
+insert into t values(1,1),(1,2);
+create table s(a int, b int);
+insert into s values(1,1);
+explain format = 'brief' select /*+ TIDB_SMJ(t, s) */ a in (select a from s where s.b >= t.b) from t;
+id	estRows	task	access object	operator info
+MergeJoin	10000.00	root		left outer semi join, other cond:eq(executor__merge_join.t.a, executor__merge_join.s.a), ge(executor__merge_join.s.b, executor__merge_join.t.b)
+├─TableReader(Build)	10000.00	root		data:TableFullScan
+│ └─TableFullScan	10000.00	cop[tikv]	table:s	keep order:false, stats:pseudo
+└─TableReader(Probe)	10000.00	root		data:TableFullScan
+  └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+select /*+ TIDB_SMJ(t, s) */ a in (select a from s where s.b >= t.b) from t;
+a in (select a from s where s.b >= t.b)
+1
+0
+drop table if exists t;
+drop table if exists t1;
+create table t (a int, key(a));
+create table t1 (a int, key(a));
+insert into t values (1), (2), (3);
+insert into t1 values (1), (2), (3);
+select /*+ TIDB_SMJ(t1, t2) */ t.a from t, t1 where t.a = t1.a order by t1.a desc;
+a
+3
+2
+1
+drop table if exists t;
+create table t (a int, b int, key(a), key(b));
+insert into t values (1,1),(1,2),(1,3),(2,1),(2,2),(3,1),(3,2),(3,3);
+select /*+ TIDB_SMJ(t1, t2) */ t1.a from t t1, t t2 where t1.a = t2.b order by t1.a desc;
+a
+3
+3
+3
+3
+3
+3
+2
+2
+2
+2
+2
+2
+1
+1
+1
+1
+1
+1
+1
+1
+1
+drop table if exists s;
+create table s (a int);
+insert into s values (4), (1), (3), (2);
+explain format = 'brief' select s1.a1 from (select a as a1 from s order by s.a desc) as s1 join (select a as a2 from s order by s.a desc) as s2 on s1.a1 = s2.a2 order by s1.a1 desc;
+id	estRows	task	access object	operator info
+Sort	12487.50	root		executor__merge_join.s.a:desc
+└─HashJoin	12487.50	root		inner join, equal:[eq(executor__merge_join.s.a, executor__merge_join.s.a)]
+  ├─TableReader(Build)	9990.00	root		data:Selection
+  │ └─Selection	9990.00	cop[tikv]		not(isnull(executor__merge_join.s.a))
+  │   └─TableFullScan	10000.00	cop[tikv]	table:s	keep order:false, stats:pseudo
+  └─TableReader(Probe)	9990.00	root		data:Selection
+    └─Selection	9990.00	cop[tikv]		not(isnull(executor__merge_join.s.a))
+      └─TableFullScan	10000.00	cop[tikv]	table:s	keep order:false, stats:pseudo
+select s1.a1 from (select a as a1 from s order by s.a desc) as s1 join (select a as a2 from s order by s.a desc) as s2 on s1.a1 = s2.a2 order by s1.a1 desc;
+a1
+4
+3
+2
+1
+set @@session.tidb_merge_join_concurrency = default;
+drop table if exists t1;
+drop table if exists t2;
+drop table if exists t3;
+create table t1(c1 int, c2 int, PRIMARY KEY (c1));
+create table t2(c1 int, c2 int, PRIMARY KEY (c1));
+create table t3(c1 int, c2 int, PRIMARY KEY (c1));
+insert into t1 values(1,1),(2,2),(3,3);
+insert into t2 values(2,3),(3,4),(4,5);
+insert into t3 values(1,2),(2,4),(3,10);
+explain format = 'brief' select /*+ TIDB_SMJ(t1,t2,t3) */ * from t1 join t2 on t1.c1 = t2.c1 join t3 on t2.c1 = t3.c1 order by 1;
+id	estRows	task	access object	operator info
+Sort	15625.00	root		executor__merge_join.t1.c1
+└─MergeJoin	15625.00	root		inner join, left key:executor__merge_join.t2.c1, right key:executor__merge_join.t3.c1
+  ├─TableReader(Build)	10000.00	root		data:TableFullScan
+  │ └─TableFullScan	10000.00	cop[tikv]	table:t3	keep order:true, stats:pseudo
+  └─MergeJoin(Probe)	12500.00	root		inner join, left key:executor__merge_join.t1.c1, right key:executor__merge_join.t2.c1
+    ├─TableReader(Build)	10000.00	root		data:TableFullScan
+    │ └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:true, stats:pseudo
+    └─TableReader(Probe)	10000.00	root		data:TableFullScan
+      └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:true, stats:pseudo
+select /*+ TIDB_SMJ(t1,t2,t3) */ * from t1 join t2 on t1.c1 = t2.c1 join t3 on t2.c1 = t3.c1 order by 1;
+c1	c2	c1	c2	c1	c2
+2	2	2	3	2	4
+3	3	3	4	3	10
+explain format = 'brief' select /*+ TIDB_SMJ(t1,t2,t3) */ * from t1 right outer join t2 on t1.c1 = t2.c1 join t3 on t2.c1 = t3.c1 order by 1;
+id	estRows	task	access object	operator info
+Sort	15625.00	root		executor__merge_join.t1.c1
+└─MergeJoin	15625.00	root		inner join, left key:executor__merge_join.t2.c1, right key:executor__merge_join.t3.c1
+  ├─TableReader(Build)	10000.00	root		data:TableFullScan
+  │ └─TableFullScan	10000.00	cop[tikv]	table:t3	keep order:true, stats:pseudo
+  └─MergeJoin(Probe)	12500.00	root		right outer join, left key:executor__merge_join.t1.c1, right key:executor__merge_join.t2.c1
+    ├─TableReader(Build)	10000.00	root		data:TableFullScan
+    │ └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:true, stats:pseudo
+    └─TableReader(Probe)	10000.00	root		data:TableFullScan
+      └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:true, stats:pseudo
+select /*+ TIDB_SMJ(t1,t2,t3) */ * from t1 right outer join t2 on t1.c1 = t2.c1 join t3 on t2.c1 = t3.c1 order by 1;
+c1	c2	c1	c2	c1	c2
+2	2	2	3	2	4
+3	3	3	4	3	10
+explain format = 'brief' select /*+ TIDB_SMJ(t1,t2,t3) */ * from t1 right outer join t2 on t1.c1 = t2.c1 join t3 on t1.c1 = t3.c1 order by 1;
+id	estRows	task	access object	operator info
+MergeJoin	15625.00	root		inner join, left key:executor__merge_join.t1.c1, right key:executor__merge_join.t3.c1
+├─TableReader(Build)	10000.00	root		data:TableFullScan
+│ └─TableFullScan	10000.00	cop[tikv]	table:t3	keep order:true, stats:pseudo
+└─MergeJoin(Probe)	12500.00	root		inner join, left key:executor__merge_join.t1.c1, right key:executor__merge_join.t2.c1
+  ├─TableReader(Build)	10000.00	root		data:TableFullScan
+  │ └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:true, stats:pseudo
+  └─TableReader(Probe)	10000.00	root		data:TableFullScan
+    └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:true, stats:pseudo
+select /*+ TIDB_SMJ(t1,t2,t3) */ * from t1 right outer join t2 on t1.c1 = t2.c1 join t3 on t1.c1 = t3.c1 order by 1;
+c1	c2	c1	c2	c1	c2
+2	2	2	3	2	4
+3	3	3	4	3	10
+set @@session.tidb_merge_join_concurrency = 4;
+drop table if exists t1;
+drop table if exists t2;
+drop table if exists t3;
+create table t1(c1 int, c2 int, PRIMARY KEY (c1));
+create table t2(c1 int, c2 int, PRIMARY KEY (c1));
+create table t3(c1 int, c2 int, PRIMARY KEY (c1));
+insert into t1 values(1,1),(2,2),(3,3);
+insert into t2 values(2,3),(3,4),(4,5);
+insert into t3 values(1,2),(2,4),(3,10);
+explain format = 'brief' select /*+ TIDB_SMJ(t1,t2,t3) */ * from t1 join t2 on t1.c1 = t2.c1 join t3 on t2.c1 = t3.c1 order by 1;
+id	estRows	task	access object	operator info
+Sort	15625.00	root		executor__merge_join.t1.c1
+└─MergeJoin	15625.00	root		inner join, left key:executor__merge_join.t2.c1, right key:executor__merge_join.t3.c1
+  ├─TableReader(Build)	10000.00	root		data:TableFullScan
+  │ └─TableFullScan	10000.00	cop[tikv]	table:t3	keep order:true, stats:pseudo
+  └─MergeJoin(Probe)	12500.00	root		inner join, left key:executor__merge_join.t1.c1, right key:executor__merge_join.t2.c1
+    ├─TableReader(Build)	10000.00	root		data:TableFullScan
+    │ └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:true, stats:pseudo
+    └─TableReader(Probe)	10000.00	root		data:TableFullScan
+      └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:true, stats:pseudo
+select /*+ TIDB_SMJ(t1,t2,t3) */ * from t1 join t2 on t1.c1 = t2.c1 join t3 on t2.c1 = t3.c1 order by 1;
+c1	c2	c1	c2	c1	c2
+2	2	2	3	2	4
+3	3	3	4	3	10
+explain format = 'brief' select /*+ TIDB_SMJ(t1,t2,t3) */ * from t1 right outer join t2 on t1.c1 = t2.c1 join t3 on t2.c1 = t3.c1 order by 1;
+id	estRows	task	access object	operator info
+Sort	15625.00	root		executor__merge_join.t1.c1
+└─MergeJoin	15625.00	root		inner join, left key:executor__merge_join.t2.c1, right key:executor__merge_join.t3.c1
+  ├─TableReader(Build)	10000.00	root		data:TableFullScan
+  │ └─TableFullScan	10000.00	cop[tikv]	table:t3	keep order:true, stats:pseudo
+  └─MergeJoin(Probe)	12500.00	root		right outer join, left key:executor__merge_join.t1.c1, right key:executor__merge_join.t2.c1
+    ├─TableReader(Build)	10000.00	root		data:TableFullScan
+    │ └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:true, stats:pseudo
+    └─TableReader(Probe)	10000.00	root		data:TableFullScan
+      └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:true, stats:pseudo
+select /*+ TIDB_SMJ(t1,t2,t3) */ * from t1 right outer join t2 on t1.c1 = t2.c1 join t3 on t2.c1 = t3.c1 order by 1;
+c1	c2	c1	c2	c1	c2
+2	2	2	3	2	4
+3	3	3	4	3	10
+explain format = 'brief' select /*+ TIDB_SMJ(t1,t2,t3) */ * from t1 right outer join t2 on t1.c1 = t2.c1 join t3 on t1.c1 = t3.c1 order by 1;
+id	estRows	task	access object	operator info
+MergeJoin	15625.00	root		inner join, left key:executor__merge_join.t1.c1, right key:executor__merge_join.t3.c1
+├─TableReader(Build)	10000.00	root		data:TableFullScan
+│ └─TableFullScan	10000.00	cop[tikv]	table:t3	keep order:true, stats:pseudo
+└─MergeJoin(Probe)	12500.00	root		inner join, left key:executor__merge_join.t1.c1, right key:executor__merge_join.t2.c1
+  ├─TableReader(Build)	10000.00	root		data:TableFullScan
+  │ └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:true, stats:pseudo
+  └─TableReader(Probe)	10000.00	root		data:TableFullScan
+    └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:true, stats:pseudo
+select /*+ TIDB_SMJ(t1,t2,t3) */ * from t1 right outer join t2 on t1.c1 = t2.c1 join t3 on t1.c1 = t3.c1 order by 1;
+c1	c2	c1	c2	c1	c2
+2	2	2	3	2	4
+3	3	3	4	3	10
+set @@session.tidb_merge_join_concurrency = default;
+set @@session.tidb_executor_concurrency = 4;
+set @@session.tidb_hash_join_concurrency = 5;
+set @@session.tidb_distsql_scan_concurrency = 15;
+drop table if exists t1;
+drop table if exists t2;
+create table t1(a bigint, b bit(1), index idx_a(a));
+create table t2(a bit(1) not null, b bit(1), index idx_a(a));
+insert into t1 values(1, 1);
+insert into t2 values(1, 1);
+select hex(t1.a), hex(t2.a) from t1 inner join t2 on t1.a=t2.a;
+hex(t1.a)	hex(t2.a)
+1	1
+drop table if exists t1;
+drop table if exists t2;
+create table t1(a float, b double, index idx_a(a));
+create table t2(a double not null, b double, index idx_a(a));
+insert into t1 values(1, 1);
+insert into t2 values(1, 1);
+select t1.a, t2.a from t1 inner join t2 on t1.a=t2.a;
+a	a
+1	1
+drop table if exists t1;
+drop table if exists t2;
+create table t1(a bigint signed, b bigint, index idx_a(a));
+create table t2(a bigint unsigned, b bigint, index idx_a(a));
+insert into t1 values(-1, 0), (-1, 0), (0, 0), (0, 0), (pow(2, 63), 0), (pow(2, 63), 0);
+insert into t2 values(18446744073709551615, 0), (18446744073709551615, 0), (0, 0), (0, 0), (pow(2, 63), 0), (pow(2, 63), 0);
+select t1.a, t2.a from t1 join t2 on t1.a=t2.a order by t1.a;
+a	a
+0	0
+0	0
+0	0
+0	0
+set @@session.tidb_executor_concurrency = default;
+set @@session.tidb_hash_join_concurrency = default;
+set @@session.tidb_distsql_scan_concurrency = default;
+drop table if exists R;
+drop table if exists Y;
+create table Y (a int primary key, b int, index id_b(b));
+insert into Y values (0,2),(2,2);
+create table R (a int primary key, b int);
+insert into R values (2,2);
+select /*+tidb_smj(R)*/ max(Y.a) from R join Y  on R.a=Y.b where R.b <= Y.a;
+max(Y.a)
+2
+set @@session.tidb_merge_join_concurrency = 4;
+drop table if exists R;
+drop table if exists Y;
+create table Y (a int primary key, b int, index id_b(b));
+insert into Y values (0,2),(2,2);
+create table R (a int primary key, b int);
+insert into R values (2,2);
+select /*+tidb_smj(R)*/ max(Y.a) from R join Y  on R.a=Y.b where R.b <= Y.a;
+max(Y.a)
+2
+set @@session.tidb_merge_join_concurrency = default;

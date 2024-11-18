@@ -19,8 +19,6 @@ import (
 	"math/rand"
 	"sync"
 	"time"
-
-	"github.com/pingcap/tidb/util/mathutil"
 )
 
 type datum struct {
@@ -43,7 +41,7 @@ func newDatum() *datum {
 	return &datum{step: 1, repeats: 1, remains: 1, probability: 100}
 }
 
-func (d *datum) setInitInt64Value(min int64, max int64) {
+func (d *datum) setInitInt64Value(minv int64, maxv int64) {
 	d.Lock()
 	defer d.Unlock()
 
@@ -51,11 +49,11 @@ func (d *datum) setInitInt64Value(min int64, max int64) {
 		return
 	}
 
-	d.minIntValue = min
-	d.maxIntValue = max
+	d.minIntValue = minv
+	d.maxIntValue = maxv
 	d.useRange = true
 	if d.step < 0 {
-		d.intValue = (min + max) / 2
+		d.intValue = (minv + maxv) / 2
 	}
 
 	d.init = true
@@ -75,8 +73,8 @@ func (d *datum) nextInt64() int64 {
 	defer d.Unlock()
 
 	if d.useRange {
-		d.intValue = mathutil.Min(d.intValue, d.maxIntValue)
-		d.intValue = mathutil.Max(d.intValue, d.minIntValue)
+		d.intValue = min(d.intValue, d.maxIntValue)
+		d.intValue = max(d.intValue, d.minIntValue)
 	}
 	d.updateRemains()
 	return d.intValue

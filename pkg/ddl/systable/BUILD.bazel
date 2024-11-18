@@ -1,0 +1,41 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "systable",
+    srcs = [
+        "manager.go",
+        "min_job_id.go",
+    ],
+    importpath = "github.com/pingcap/tidb/pkg/ddl/systable",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/ddl/logutil",
+        "//pkg/ddl/session",
+        "//pkg/meta/model",
+        "@com_github_pingcap_errors//:errors",
+        "@org_uber_go_zap//:zap",
+    ],
+)
+
+go_test(
+    name = "systable_test",
+    timeout = "short",
+    srcs = [
+        "manager_test.go",
+        "min_job_id_test.go",
+    ],
+    embed = [":systable"],
+    flaky = True,
+    deps = [
+        "//pkg/ddl/mock",
+        "//pkg/ddl/session",
+        "//pkg/domain",
+        "//pkg/meta/model",
+        "//pkg/store/mockstore",
+        "//pkg/testkit",
+        "@com_github_ngaut_pools//:pools",
+        "@com_github_stretchr_testify//require",
+        "@com_github_tikv_client_go_v2//util",
+        "@org_uber_go_mock//gomock",
+    ],
+)

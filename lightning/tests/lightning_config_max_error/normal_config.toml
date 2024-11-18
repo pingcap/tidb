@@ -1,0 +1,6 @@
+[conflict]
+threshold = 20
+strategy = "replace"
+
+[mydumper.csv]
+header = true

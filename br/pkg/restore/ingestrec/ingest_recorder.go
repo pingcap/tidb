@@ -17,18 +17,23 @@ package ingestrec
 import (
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/parser/model"
-	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/log"
+	"github.com/pingcap/tidb/pkg/infoschema"
+	"github.com/pingcap/tidb/pkg/meta/model"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/types"
+	"go.uber.org/zap"
 )
 
 // IngestIndexInfo records the information used to generate index drop/re-add SQL.
 type IngestIndexInfo struct {
-	SchemaName model.CIStr
-	TableName  model.CIStr
+	SchemaName pmodel.CIStr
+	TableName  pmodel.CIStr
 	ColumnList string
-	ColumnArgs []interface{}
+	ColumnArgs []any
 	IsPrimary  bool
 	IndexInfo  *model.IndexInfo
 	Updated    bool
@@ -69,18 +74,28 @@ func notAddIndexJob(job *model.Job) bool {
 		job.Type != model.ActionAddPrimaryKey
 }
 
-func notSynced(job *model.Job) bool {
-	return job.State != model.JobStateSynced
+// the final state of the sub jobs is done instead of synced.
+// +-----+-------------------------------------+--------------+-----+--------+
+// | ... | JOB_TYPE                            | SCHEMA_STATE | ... | STATE  |
+// +-----+-------------------------------------+--------------+-----+--------+
+// | ... | add index /* ingest */              | public       | ... | synced |
+// +-----+-------------------------------------+--------------+-----+--------+
+// | ... | alter table multi-schema change     | none         | ... | synced |
+// +-----+-------------------------------------+--------------+-----+--------+
+// | ... | add index /* subjob */ /* ingest */ | public       | ... | done   |
+// +-----+-------------------------------------+--------------+-----+--------+
+func notSynced(job *model.Job, isSubJob bool) bool {
+	return (job.State != model.JobStateSynced) && !(isSubJob && job.State == model.JobStateDone)
 }
 
-// AddJob firstly filters the ingest index add operation job, and records it into IngestRecorder.
-func (i *IngestRecorder) AddJob(job *model.Job) error {
-	if job == nil || notIngestJob(job) || notAddIndexJob(job) || notSynced(job) {
+// TryAddJob firstly filters the ingest index add operation job, and records it into IngestRecorder.
+func (i *IngestRecorder) TryAddJob(job *model.Job, isSubJob bool) error {
+	if job == nil || notIngestJob(job) || notAddIndexJob(job) || notSynced(job, isSubJob) {
 		return nil
 	}
 
-	var indexID int64 = 0
-	if err := job.DecodeArgs(&indexID); err != nil {
+	args, err := model.GetFinishedModifyIndexArgs(job)
+	if err != nil {
 		return errors.Trace(err)
 	}
 
@@ -92,9 +107,11 @@ func (i *IngestRecorder) AddJob(job *model.Job) error {
 
 	// the current information of table/index might be modified by other ddl jobs,
 	// therefore update the index information at last
-	tableindexes[indexID] = &IngestIndexInfo{
-		IsPrimary: job.Type == model.ActionAddPrimaryKey,
-		Updated:   false,
+	for _, a := range args.IndexArgs {
+		tableindexes[a.IndexID] = &IngestIndexInfo{
+			IsPrimary: job.Type == model.ActionAddPrimaryKey,
+			Updated:   false,
+		}
 	}
 
 	return nil
@@ -118,53 +135,65 @@ func (i *IngestRecorder) RewriteTableID(rewriteFunc func(tableID int64) (int64, 
 }
 
 // UpdateIndexInfo uses the newest schemas to update the ingest index's information
-func (i *IngestRecorder) UpdateIndexInfo(dbInfos []*model.DBInfo) {
-	for _, dbInfo := range dbInfos {
-		for _, tblInfo := range dbInfo.Tables {
-			tableindexes, tblexists := i.items[tblInfo.ID]
-			if !tblexists {
+func (i *IngestRecorder) UpdateIndexInfo(infoSchema infoschema.InfoSchema) error {
+	log.Info("start to update index information for ingest index")
+	start := time.Now()
+	defer func() {
+		log.Info("finish updating index information for ingest index", zap.Duration("takes", time.Since(start)))
+	}()
+
+	for tableID, tableIndexes := range i.items {
+		tblInfo, tblexists := infoSchema.TableInfoByID(tableID)
+		if !tblexists || tblInfo == nil {
+			log.Info("skip repair ingest index, table is dropped", zap.Int64("table id", tableID))
+			continue
+		}
+		// TODO: here only need an interface function like `SchemaNameByID`
+		dbInfo, dbexists := infoSchema.SchemaByID(tblInfo.DBID)
+		if !dbexists || dbInfo == nil {
+			return errors.Errorf("failed to repair ingest index because table exists but cannot find database."+
+				"[table-id:%d][db-id:%d]", tableID, tblInfo.DBID)
+		}
+		for _, indexInfo := range tblInfo.Indices {
+			index, idxexists := tableIndexes[indexInfo.ID]
+			if !idxexists {
 				continue
 			}
-			for _, indexInfo := range tblInfo.Indices {
-				index, idxexists := tableindexes[indexInfo.ID]
-				if !idxexists {
-					continue
+			var columnListBuilder strings.Builder
+			var columnListArgs []any = make([]any, 0, len(indexInfo.Columns))
+			var isFirst bool = true
+			for _, column := range indexInfo.Columns {
+				if !isFirst {
+					columnListBuilder.WriteByte(',')
 				}
-				var columnListBuilder strings.Builder
-				var columnListArgs []interface{} = make([]interface{}, 0, len(indexInfo.Columns))
-				var isFirst bool = true
-				for _, column := range indexInfo.Columns {
-					if !isFirst {
-						columnListBuilder.WriteByte(',')
-					}
-					isFirst = false
+				isFirst = false
 
-					// expression / column
-					col := tblInfo.Columns[column.Offset]
-					if col.Hidden {
-						// (expression)
-						// the generated expression string can be directly add into sql
-						columnListBuilder.WriteByte('(')
-						columnListBuilder.WriteString(col.GeneratedExprString)
-						columnListBuilder.WriteByte(')')
-					} else {
-						// columnName
-						columnListBuilder.WriteString("%n")
-						columnListArgs = append(columnListArgs, column.Name.O)
-						if column.Length != types.UnspecifiedLength {
-							columnListBuilder.WriteString(fmt.Sprintf("(%d)", column.Length))
-						}
+				// expression / column
+				col := tblInfo.Columns[column.Offset]
+				if col.Hidden {
+					// (expression)
+					// the generated expression string can be directly add into sql
+					columnListBuilder.WriteByte('(')
+					columnListBuilder.WriteString(col.GeneratedExprString)
+					columnListBuilder.WriteByte(')')
+				} else {
+					// columnName
+					columnListBuilder.WriteString("%n")
+					columnListArgs = append(columnListArgs, column.Name.O)
+					if column.Length != types.UnspecifiedLength {
+						columnListBuilder.WriteString(fmt.Sprintf("(%d)", column.Length))
 					}
 				}
-				index.ColumnList = columnListBuilder.String()
-				index.ColumnArgs = columnListArgs
-				index.IndexInfo = indexInfo
-				index.SchemaName = dbInfo.Name
-				index.TableName = tblInfo.Name
-				index.Updated = true
 			}
+			index.ColumnList = columnListBuilder.String()
+			index.ColumnArgs = columnListArgs
+			index.IndexInfo = indexInfo
+			index.SchemaName = dbInfo.Name
+			index.TableName = tblInfo.Name
+			index.Updated = true
 		}
 	}
+	return nil
 }
 
 // Iterate iterates all the ingest index.

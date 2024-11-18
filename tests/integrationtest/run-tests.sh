@@ -40,7 +40,7 @@ function help_message()
 
     -d <y|Y|n|N|b|B>: \"y\" or \"Y\" for only enabling the new collation during test.
                       \"n\" or \"N\" for only disabling the new collation during test.
-                      \"b\" or \"B\" for both tests [default].
+                      \"b\" or \"B\" for tests the prefix is `collation`, enabling and disabling new collation during test, and for other tests, only enabling the new collation [default].
                       Enable/Disable the new collation during the integration test.
 
     -s <tidb-server-path>: Use tidb-server in <tidb-server-path> for testing.
@@ -58,19 +58,45 @@ function help_message()
                     This option will be ignored if \"-r <test-name>\" is provided.
                     Run all tests if this option is not provided.
 
-    -p <portgenerator-path>: Use port generator in <portgenerator-path> for generating port numbers.
-
 "
 }
 
-function build_portgenerator()
-{
-    portgenerator="./portgenerator"
-    echo "building portgenerator binary: $portgenerator"
-    rm -rf $portgenerator
-    GO111MODULE=on go build -o $portgenerator github.com/pingcap/tidb/cmd/portgenerator
+# Function to find an available port starting from a given port
+function find_available_port() {
+    local port=$1
+
+    while :; do
+        if [ "$port" -ge 65536 ]; then
+            echo "Error: No available ports found below 65536." >&2
+            exit 1
+        fi
+        if ! lsof -i :"$port" &> /dev/null; then
+            echo $port
+            return 0
+        fi
+        ((port++))
+    done
 }
 
+# Function to find multiple available ports starting from a given port
+function find_multiple_available_ports() {
+    local start_port=$1
+    local count=$2
+    local ports=()
+
+    while [ ${#ports[@]} -lt $count ]; do
+        local available_port=$(find_available_port $start_port)
+        if [ $? -eq 0 ]; then
+            ports+=($available_port)
+            ((start_port = available_port + 1))
+        else
+            echo "Error: Could not find an available port." >&2
+            exit 1
+        fi
+    done
+
+    echo "${ports[@]}"
+}
 
 function build_tidb_server()
 {
@@ -78,9 +104,9 @@ function build_tidb_server()
     echo "building tidb-server binary: $tidb_server"
     rm -rf $tidb_server
     if [ "${TIDB_TEST_STORE_NAME}" = "tikv" ]; then
-        GO111MODULE=on go build -o $tidb_server github.com/pingcap/tidb/tidb-server
+        GO111MODULE=on go build -o $tidb_server github.com/pingcap/tidb/cmd/tidb-server
     else
-        GO111MODULE=on go build -race -o $tidb_server github.com/pingcap/tidb/tidb-server
+        GO111MODULE=on go build -race -o $tidb_server github.com/pingcap/tidb/cmd/tidb-server
     fi
 }
 
@@ -88,7 +114,7 @@ function build_mysql_tester()
 {
     echo "building mysql-tester binary: $mysql_tester"
     rm -rf $mysql_tester
-    GOBIN=$PWD go install github.com/pingcap/mysql-tester/src@da61c204fac56696f171298126b40c9277119223
+    GOBIN=$PWD go install github.com/pingcap/mysql-tester/src@314107b26aa8fce86beb0dd48e75827fb269b365
     mv src mysql_tester
 }
 
@@ -99,7 +125,7 @@ function extract_stats()
     unzip -qq s.zip
 }
 
-while getopts "t:s:r:b:d:c:i:h:p" opt; do
+while getopts "t:s:r:b:d:c:i:h" opt; do
     case $opt in
         t)
             tests="$OPTARG"
@@ -120,7 +146,7 @@ while getopts "t:s:r:b:d:c:i:h:p" opt; do
                     build=0
                     ;;
                 *)
-                    help_messge 1>&2
+                    help_message 1>&2
                     exit 1
                     ;;
             esac
@@ -133,8 +159,11 @@ while getopts "t:s:r:b:d:c:i:h:p" opt; do
                 n|N)
                     collation_opt=0
                     ;;
+                b|B)
+                    collation_opt=2
+                    ;;
                 *)
-                    help_messge 1>&2
+                    help_message 1>&2
                     exit 1
                     ;;
             esac
@@ -142,9 +171,6 @@ while getopts "t:s:r:b:d:c:i:h:p" opt; do
         h)
             help_message
             exit 0
-            ;;
-        p)  
-            portgenerator="$OPTARG"
             ;;
         *)
             help_message 1>&2
@@ -160,11 +186,6 @@ if [ $build -eq 1 ]; then
         build_tidb_server
     else
         echo "skip building tidb-server, using existing binary: $tidb_server"
-    fi
-    if [[ -z "$portgenerator" ]]; then
-        build_portgenerator
-    else
-        echo "skip building portgenerator, using existing binary: $portgenerator"
     fi
     build_mysql_tester
 else
@@ -184,23 +205,11 @@ else
             echo "skip building mysql-tester, using existing binary: $mysql_tester"
         fi
     fi
-    if [ -z "$portgenerator" ]; then
-        portgenerator="./portgenerator"
-        if [[ ! -f "$portgenerator" ]]; then
-            build_portgenerator
-        else
-            echo "skip building portgenerator, using existing binary: $portgenerator"
-        fi
-    fi
 fi
 
 rm -rf $mysql_tester_log
 
-ports=()
-for port in $($portgenerator -count 2); do
-    ports+=("$port")
-done
-
+ports=($(find_multiple_available_ports 4000 2))
 port=${ports[0]}
 status=${ports[1]}
 
@@ -232,10 +241,10 @@ function run_mysql_tester()
     if [ $record -eq 1 ]; then
       if [ "$record_case" = 'all' ]; then
           echo "record all cases"
-          $mysql_tester -port "$port" --collation-disable=$coll_disabled --record
+          $mysql_tester -port "$port" --check-error=true --collation-disable=$coll_disabled --record
       else
           echo "record result for case: \"$record_case\""
-          $mysql_tester -port "$port" --collation-disable=$coll_disabled --record $record_case
+          $mysql_tester -port "$port" --check-error=true --collation-disable=$coll_disabled --record $record_case
       fi
     else
       if [ -z "$tests" ]; then
@@ -243,7 +252,7 @@ function run_mysql_tester()
       else
           echo "run integration test cases($coll_msg): $tests"
       fi
-      $mysql_tester -port "$port" --collation-disable=$coll_disabled $tests
+      $mysql_tester -port "$port" --check-error=true --collation-disable=$coll_disabled $tests
     fi
 }
 
@@ -260,11 +269,42 @@ function check_data_race() {
 }
 
 enabled_new_collation=""
+function check_case_name() {
+    if [ $collation_opt != 2 ]; then
+        return
+    fi
 
+    case=""
+
+    if [ $record -eq 0 ]; then
+        if [ -z "$tests" ]; then
+            return
+        fi
+        case=$tests
+    fi
+
+    if [ $record -eq 1 ]; then
+        if [ "$record_case" = 'all' ]; then
+            return
+        fi
+        case=$record_case
+    fi
+
+    IFS='/' read -ra parts <<< "$case"
+
+    last_part="${parts[${#parts[@]}-1]}"
+
+    if [[ $last_part == collation* || $tests == collation* ]]; then
+        collation_opt=2
+    else
+        collation_opt=1
+    fi
+}
+
+check_case_name
 if [[ $collation_opt = 0 || $collation_opt = 2 ]]; then
     enabled_new_collation=0
     start_tidb_server
-    sleep 5
     run_mysql_tester
     kill -15 $SERVER_PID
     while ps -p $SERVER_PID > /dev/null; do
@@ -276,7 +316,6 @@ fi
 if [[ $collation_opt = 1 || $collation_opt = 2 ]]; then
     enabled_new_collation=1
     start_tidb_server
-    sleep 5
     run_mysql_tester
     kill -15 $SERVER_PID
     while ps -p $SERVER_PID > /dev/null; do

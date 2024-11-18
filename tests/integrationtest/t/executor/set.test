@@ -1,0 +1,292 @@
+# TestMaxDeltaSchemaCount
+set @@global.tidb_max_delta_schema_count= -1;
+show warnings;
+select @@global.tidb_max_delta_schema_count;
+set @@global.tidb_max_delta_schema_count= 9223372036854775807;
+show warnings;
+select @@global.tidb_max_delta_schema_count;
+-- error 1232
+set @@global.tidb_max_delta_schema_count= invalid_val;
+set @@global.tidb_max_delta_schema_count= 2048;
+select @@global.tidb_max_delta_schema_count;
+set @@global.tidb_max_delta_schema_count= default;
+
+# TestGetSetNoopVars
+SELECT @@query_cache_type;
+SHOW VARIABLES LIKE 'query_cache_type';
+SET query_cache_type=2;
+SELECT @@query_cache_type;
+SET GLOBAL tidb_enable_noop_variables = OFF;
+SELECT @@global.tidb_enable_noop_variables;
+SELECT @@query_cache_type;
+SHOW WARNINGS;
+SHOW VARIABLES LIKE 'query_cache_type';
+SET query_cache_type = OFF;
+SHOW WARNINGS;
+SELECT @@query_cache_type;
+-- error 1231
+SET GLOBAL tidb_enable_noop_variables = 2;
+-- error 1231
+SET GLOBAL tidb_enable_noop_variables = 'warn';
+SET GLOBAL tidb_enable_noop_variables = ON;
+
+SET GLOBAL tidb_enable_noop_variables = default;
+SET query_cache_type = default;
+
+# TestSetCharset
+show VARIABLES like 'character_set_%';
+SET NAMES latin1;
+show VARIABLES like 'character_set_%';
+SET NAMES default;
+show VARIABLES like 'character_set_%';
+SET NAMES binary;
+show VARIABLES like 'character_set_%';
+SET NAMES utf8;
+show VARIABLES like 'character_set_%';
+SET CHARACTER SET latin1;
+show VARIABLES like 'character_set_%';
+SET CHARACTER SET default;
+show VARIABLES like 'character_set_%';
+
+set names default;
+
+# TestSelectGlobalVar
+select @@global.max_connections;
+select @@max_connections;
+set @@global.max_connections=100;
+select @@global.max_connections;
+select @@max_connections;
+set @@global.max_connections=0;
+-- error 1193
+select @@invalid;
+-- error 1193
+select @@global.invalid;
+
+set @@global.max_connections=default;
+
+# TestDefaultBehavior
+# https://github.com/pingcap/tidb/issues/29670
+SELECT @@default_storage_engine;
+SET GLOBAL default_storage_engine = 'somethingweird';
+SET default_storage_engine = 'MyISAM';
+SELECT @@default_storage_engine;
+SET default_storage_engine = DEFAULT;
+SELECT @@default_storage_engine;
+SET @@SESSION.default_storage_engine = @@GLOBAL.default_storage_engine;
+SELECT @@default_storage_engine;
+SET GLOBAL default_storage_engine = 'somethingweird2';
+SET default_storage_engine = @@GLOBAL.default_storage_engine;
+SELECT @@default_storage_engine;
+SET default_storage_engine = DEFAULT;
+SET GLOBAL default_storage_engine = DEFAULT;
+SELECT @@SESSION.default_storage_engine, @@GLOBAL.default_storage_engine;
+-- error 1105
+SET GLOBAL sql_mode = 'DEFAULT';
+SET GLOBAL sql_mode = DEFAULT;
+
+set @@SESSION.default_storage_engine=default;
+SET GLOBAL default_storage_engine=default;
+
+# TestTiDBReadOnly
+SET GLOBAL tidb_restricted_read_only = ON;
+SELECT @@GLOBAL.tidb_super_read_only;
+-- error 1105
+SET GLOBAL tidb_super_read_only = OFF;
+SET GLOBAL tidb_restricted_read_only = OFF;
+SELECT @@GLOBAL.tidb_restricted_read_only;
+SELECT @@GLOBAL.tidb_super_read_only;
+SET GLOBAL tidb_super_read_only = OFF;
+SELECT @@GLOBAL.tidb_super_read_only;
+
+SET GLOBAL tidb_super_read_only = default;
+SET GLOBAL tidb_restricted_read_only = default;
+
+# TestRemovedSysVars
+SET tidb_enable_global_temporary_table = 1;
+SET tidb_slow_log_masking = 1;
+SET GLOBAL tidb_enable_global_temporary_table = 1;
+SET GLOBAL tidb_slow_log_masking = 1;
+-- error 8136
+SELECT @@tidb_slow_log_masking;
+-- error 8136
+SELECT @@tidb_enable_global_temporary_table;
+
+SET tidb_enable_global_temporary_table = default;
+SET tidb_slow_log_masking = default;
+SET GLOBAL tidb_enable_global_temporary_table = default;
+SET GLOBAL tidb_slow_log_masking = default;
+
+# TestPreparePlanCacheValid
+select @@global.tidb_session_plan_cache_size;
+SET GLOBAL tidb_session_plan_cache_size = 0;
+show warnings;
+select @@global.tidb_session_plan_cache_size;
+SET GLOBAL tidb_session_plan_cache_size = 2;
+select @@global.tidb_session_plan_cache_size;
+select @@session.tidb_session_plan_cache_size;
+SET SESSION tidb_session_plan_cache_size = 0;
+show warnings;
+select @@session.tidb_session_plan_cache_size;
+SET SESSION tidb_session_plan_cache_size = 2;
+select @@session.tidb_session_plan_cache_size;
+SET GLOBAL tidb_prepared_plan_cache_memory_guard_ratio = -0.1;
+show warnings;
+select @@global.tidb_prepared_plan_cache_memory_guard_ratio;
+SET GLOBAL tidb_prepared_plan_cache_memory_guard_ratio = 2.2;
+show warnings;
+select @@global.tidb_prepared_plan_cache_memory_guard_ratio;
+SET GLOBAL tidb_prepared_plan_cache_memory_guard_ratio = 0.5;
+select @@global.tidb_prepared_plan_cache_memory_guard_ratio;
+SET GLOBAL tidb_enable_prepared_plan_cache = 0;
+select @@global.tidb_enable_prepared_plan_cache;
+SET GLOBAL tidb_enable_prepared_plan_cache = 1;
+select @@global.tidb_enable_prepared_plan_cache;
+SET GLOBAL tidb_enable_prepared_plan_cache = 0;
+select @@global.tidb_enable_prepared_plan_cache;
+
+SET GLOBAL tidb_enable_prepared_plan_cache = default;
+SET GLOBAL tidb_prepared_plan_cache_memory_guard_ratio = default;
+SET SESSION tidb_session_plan_cache_size = default;
+SET GLOBAL tidb_session_plan_cache_size = default;
+
+# TestInstanceScopeSwitching
+set tidb_enable_legacy_instance_scope = 1;
+set tidb_general_log = 1;
+show warnings;
+set tidb_enable_legacy_instance_scope = 0;
+-- error 1229
+set tidb_general_log = 1;
+
+set tidb_enable_legacy_instance_scope = default;
+set tidb_general_log = default;
+
+# TestGcMaxWaitTime
+set global tidb_gc_max_wait_time = 1000;
+set global tidb_gc_life_time = "72h";
+set global tidb_gc_life_time = "24h";
+set global tidb_gc_life_time = "10m";
+set global tidb_gc_max_wait_time = 86400;
+set global tidb_gc_life_time = "72h";
+set global tidb_gc_max_wait_time = 1000;
+
+set global tidb_gc_life_time = default;
+set global tidb_gc_max_wait_time = default;
+
+# TestTiFlashFineGrainedShuffle
+select @@tiflash_fine_grained_shuffle_stream_count;
+set @@tiflash_fine_grained_shuffle_stream_count = 0;
+select @@tiflash_fine_grained_shuffle_stream_count;
+set @@tiflash_fine_grained_shuffle_stream_count = -2;
+select @@tiflash_fine_grained_shuffle_stream_count;
+set @@tiflash_fine_grained_shuffle_stream_count = 0;
+select @@tiflash_fine_grained_shuffle_stream_count;
+set @@tiflash_fine_grained_shuffle_stream_count = 1024;
+select @@tiflash_fine_grained_shuffle_stream_count;
+set @@tiflash_fine_grained_shuffle_stream_count = 1025;
+select @@tiflash_fine_grained_shuffle_stream_count;
+select @@tiflash_fine_grained_shuffle_batch_size;
+set @@tiflash_fine_grained_shuffle_batch_size = 0;
+select @@tiflash_fine_grained_shuffle_batch_size;
+set @@tiflash_fine_grained_shuffle_batch_size = -1;
+select @@tiflash_fine_grained_shuffle_batch_size;
+set @@tiflash_fine_grained_shuffle_batch_size = 18446744073709551615;
+select @@tiflash_fine_grained_shuffle_batch_size;
+set global tiflash_fine_grained_shuffle_stream_count = -1;
+set global tiflash_fine_grained_shuffle_batch_size = 8192;
+
+set @@tiflash_fine_grained_shuffle_batch_size = default;
+set @@tiflash_fine_grained_shuffle_stream_count = default;
+set global tiflash_fine_grained_shuffle_stream_count = default;
+set global tiflash_fine_grained_shuffle_batch_size = default;
+
+# TestSetTiFlashFastScanVariable
+drop table if exists t;
+create table t(a int);
+insert into t values(1);
+select @@session.tiflash_fastscan;
+select @@global.tiflash_fastscan;
+set @@tiflash_fastscan=ON;
+select @@session.tiflash_fastscan;
+set global tiflash_fastscan=OFF;
+select @@global.tiflash_fastscan;
+
+set global tiflash_fastscan=default;
+set @@tiflash_fastscan=default;
+
+# TestSetPlanCacheMemoryMonitor
+select @@session.tidb_enable_prepared_plan_cache_memory_monitor;
+select @@global.tidb_enable_prepared_plan_cache_memory_monitor;
+set @@session.tidb_enable_prepared_plan_cache_memory_monitor=OFF;
+select @@session.tidb_enable_prepared_plan_cache_memory_monitor;
+set @@session.tidb_enable_prepared_plan_cache_memory_monitor=1;
+select @@session.tidb_enable_prepared_plan_cache_memory_monitor;
+set @@global.tidb_enable_prepared_plan_cache_memory_monitor=off;
+select @@global.tidb_enable_prepared_plan_cache_memory_monitor;
+
+set @@session.tidb_enable_prepared_plan_cache_memory_monitor=default;
+set @@global.tidb_enable_prepared_plan_cache_memory_monitor=default;
+
+# TestSetChunkReuseVariable
+set @@tidb_enable_reuse_chunk=ON;
+select @@session.tidb_enable_reuse_chunk;
+set GLOBAL tidb_enable_reuse_chunk=ON;
+select @@global.tidb_enable_reuse_chunk;
+set @@tidb_enable_reuse_chunk=OFF;
+select @@session.tidb_enable_reuse_chunk;
+set GLOBAL tidb_enable_reuse_chunk=OFF;
+select @@global.tidb_enable_reuse_chunk;
+-- error 1231
+set @@tidb_enable_reuse_chunk=s;
+
+set @@tidb_enable_reuse_chunk=default;
+set GLOBAL tidb_enable_reuse_chunk=default;
+
+# TestSetMppVersionVariable
+select @@session.mpp_version;
+SET SESSION mpp_version = -1;
+select @@session.mpp_version;
+SET SESSION mpp_version = 0;
+select @@session.mpp_version;
+SET SESSION mpp_version = 1;
+select @@session.mpp_version;
+SET SESSION mpp_version = 2;
+select @@session.mpp_version;
+SET SESSION mpp_version = unspecified;
+select @@session.mpp_version;
+-- error 1105
+SET SESSION mpp_version = 3;
+SET GLOBAL mpp_version = 1;
+select @@global.mpp_version;
+SET GLOBAL mpp_version = -1;
+select @@global.mpp_version;
+
+SET SESSION mpp_version = default;
+set global mpp_version = default;
+
+# TestSetMppExchangeCompressionModeVariable
+-- error 1105
+SET SESSION mpp_exchange_compression_mode = 123;
+select @@session.mpp_exchange_compression_mode;
+SET SESSION mpp_exchange_compression_mode = none;
+select @@session.mpp_exchange_compression_mode;
+SET SESSION mpp_exchange_compression_mode = fast;
+select @@session.mpp_exchange_compression_mode;
+SET SESSION mpp_exchange_compression_mode = HIGH_COMPRESSION;
+select @@session.mpp_exchange_compression_mode;
+SET GLOBAL mpp_exchange_compression_mode = none;
+select @@global.mpp_exchange_compression_mode;
+SET mpp_version = 0;
+SET mpp_exchange_compression_mode = unspecified;
+SET mpp_version = 0;
+SET mpp_exchange_compression_mode = HIGH_COMPRESSION;
+
+SET mpp_version = default;
+SET mpp_exchange_compression_mode = default;
+set @@global.mpp_exchange_compression_mode = default;
+
+# TestDeprecateEnableTiFlashPipelineModel
+set @@global.tidb_enable_tiflash_pipeline_model = 1;
+show warnings;
+
+set @@global.tidb_enable_tiflash_pipeline_model = default;
+

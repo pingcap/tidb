@@ -1,0 +1,9 @@
+[lightning]
+check-requirements=true
+
+[mydumper.csv]
+header = true
+header-schema-match = true
+
+[conflict]
+strategy = "replace"
