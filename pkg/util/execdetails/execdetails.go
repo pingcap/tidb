@@ -1424,11 +1424,11 @@ func (e *BasicRuntimeStats) String() string {
 	closeTime := e.close.Load()
 	str.WriteString("time:")
 	str.WriteString(FormatDuration(time.Duration(totalTime)))
-	if openTime >=  int64(time.Millisecond) {
+	if openTime >= int64(time.Millisecond) {
 		str.WriteString(", open:")
 		str.WriteString(FormatDuration(time.Duration(openTime)))
 	}
-	if closeTime >=  int64(time.Millisecond) {
+	if closeTime >= int64(time.Millisecond) {
 		str.WriteString(", close:")
 		str.WriteString(FormatDuration(time.Duration(closeTime)))
 	}
