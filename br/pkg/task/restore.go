@@ -327,7 +327,7 @@ func (cfg *RestoreConfig) ParseStreamRestoreFlags(flags *pflag.FlagSet) error {
 }
 
 // ParseFromFlags parses the restore-related flags from the flag set.
-func (cfg *RestoreConfig) ParseFromFlags(flags *pflag.FlagSet) error {
+func (cfg *RestoreConfig) ParseFromFlags(flags *pflag.FlagSet, skipCommonConfig bool) error {
 	var err error
 	cfg.NoSchema, err = flags.GetBool(flagNoSchema)
 	if err != nil {
@@ -337,10 +337,15 @@ func (cfg *RestoreConfig) ParseFromFlags(flags *pflag.FlagSet) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	err = cfg.Config.ParseFromFlags(flags)
-	if err != nil {
-		return errors.Trace(err)
+
+	// parse common config if needed
+	if !skipCommonConfig {
+		err = cfg.Config.ParseFromFlags(flags)
+		if err != nil {
+			return errors.Trace(err)
+		}
 	}
+
 	err = cfg.RestoreCommonConfig.ParseFromFlags(flags)
 	if err != nil {
 		return errors.Trace(err)
@@ -604,6 +609,7 @@ func registerTaskToPD(ctx context.Context, etcdCLI *clientv3.Client) (closeF fun
 	return register.Close, errors.Trace(err)
 }
 
+<<<<<<< HEAD
 func removeCheckpointDataForSnapshotRestore(ctx context.Context, storageName string, taskName string, config *Config) error {
 	_, s, err := GetStorage(ctx, storageName, config)
 	if err != nil {
@@ -621,19 +627,18 @@ func removeCheckpointDataForLogRestore(ctx context.Context, storageName string, 
 }
 
 func DefaultRestoreConfig() RestoreConfig {
+=======
+func DefaultRestoreConfig(commonConfig Config) RestoreConfig {
+>>>>>>> 4f047be191b (br: restore checksum shouldn't rely on backup checksum (#56712))
 	fs := pflag.NewFlagSet("dummy", pflag.ContinueOnError)
-	DefineCommonFlags(fs)
 	DefineRestoreFlags(fs)
 	cfg := RestoreConfig{}
-	err := multierr.Combine(
-		cfg.ParseFromFlags(fs),
-		cfg.RestoreCommonConfig.ParseFromFlags(fs),
-		cfg.Config.ParseFromFlags(fs),
-	)
+	err := cfg.ParseFromFlags(fs, true)
 	if err != nil {
-		log.Panic("infallible failed.", zap.Error(err))
+		log.Panic("failed to parse restore flags to config", zap.Error(err))
 	}
 
+	cfg.Config = commonConfig
 	return cfg
 }
 
@@ -770,7 +775,7 @@ func runRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 	}
 
 	reader := metautil.NewMetaReader(backupMeta, s, &cfg.CipherInfo)
-	if err = client.InitBackupMeta(c, backupMeta, u, reader, cfg.LoadStats); err != nil {
+	if err = client.LoadSchemaIfNeededAndInitClient(c, backupMeta, u, reader, cfg.LoadStats); err != nil {
 		return errors.Trace(err)
 	}
 
@@ -785,7 +790,17 @@ func runRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 		return errors.Annotate(berrors.ErrRestoreInvalidBackup, "contain tables but no databases")
 	}
 
+<<<<<<< HEAD
 	archiveSize := reader.ArchiveSize(ctx, files)
+=======
+	if cfg.CheckRequirements {
+		if err := checkDiskSpace(ctx, mgr, files, tables); err != nil {
+			return errors.Trace(err)
+		}
+	}
+
+	archiveSize := metautil.ArchiveSize(files)
+>>>>>>> 4f047be191b (br: restore checksum shouldn't rely on backup checksum (#56712))
 	g.Record(summary.RestoreDataSize, archiveSize)
 	//restore from tidb will fetch a general Size issue https://github.com/pingcap/tidb/issues/27247
 	g.Record("Size", archiveSize)
@@ -1077,8 +1092,9 @@ func runRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 	var finish <-chan struct{}
 	postHandleCh := afterTableRestoredCh
 
-	// pipeline checksum
-	if cfg.Checksum {
+	// pipeline checksum only when enabled and is not incremental snapshot repair mode cuz incremental doesn't have
+	// enough information in backup meta to validate checksum
+	if cfg.Checksum && !client.IsIncremental() {
 		postHandleCh = client.GoValidateChecksum(
 			ctx, postHandleCh, mgr.GetStorage().GetClient(), errCh, updateCh, cfg.ChecksumConcurrency)
 	}
@@ -1093,7 +1109,7 @@ func runRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 
 	finish = dropToBlackhole(ctx, postHandleCh, errCh)
 
-	// Reset speed limit. ResetSpeedLimit must be called after client.InitBackupMeta has been called.
+	// Reset speed limit. ResetSpeedLimit must be called after client.LoadSchemaIfNeededAndInitClient has been called.
 	defer func() {
 		var resetErr error
 		// In future we may need a mechanism to set speed limit in ttl. like what we do in switchmode. TODO
