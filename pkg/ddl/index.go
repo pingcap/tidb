@@ -1352,7 +1352,7 @@ func doReorgWorkForCreateIndex(
 				MockDMLExecutionStateBeforeMerge()
 			}
 		})
-		failpoint.InjectCall("BeforeBackfillMerge", job)
+		failpoint.InjectCall("BeforeBackfillMerge")
 		logutil.DDLLogger().Info("index backfill state ready to merge",
 			zap.Int64("job ID", job.ID),
 			zap.String("table", tbl.Meta().Name.O),

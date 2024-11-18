@@ -1433,10 +1433,10 @@ func TestInsertDuplicateBeforeIndexMerge(t *testing.T) {
 	tk.MustExec("use test")
 	tk2.MustExec("use test")
 
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/BeforeBackfillMerge", func(job *model.Job) {
+	// Test issue 57414.
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/BeforeBackfillMerge", func() {
 		tk2.MustExec("insert ignore into t values (1, 2), (1, 2) on duplicate key update col1 = 0, col2 = 0")
 	})
-	defer testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/BeforeBackfillMerge")
 
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (col1 int, col2 int, unique index i1(col2) /*T![global_index] GLOBAL */) PARTITION BY HASH (col1) PARTITIONS 2")
