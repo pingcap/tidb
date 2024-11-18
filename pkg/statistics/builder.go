@@ -16,6 +16,7 @@ package statistics
 
 import (
 	"bytes"
+	"fmt"
 	"math"
 
 	"github.com/pingcap/errors"
@@ -336,7 +337,20 @@ func BuildHistAndTopN(
 	}
 	curCnt := float64(0)
 	var corrXYSum float64
-
+	fmt.Println("check data")
+	for i := int64(0); i < sampleNum; i++ {
+		strstr, err := samples[i].Value.ToString()
+		if err != nil {
+			continue
+		}
+		fmt.Printf("str: %s\n", strstr)
+		sampleBytes, err := getComparedBytes(samples[i].Value)
+		if err != nil {
+			continue
+		}
+		fmt.Printf("% X\n", sampleBytes)
+	}
+	fmt.Println("start debug")
 	// Iterate through the samples
 	for i := int64(0); i < sampleNum; i++ {
 		if isColumn {
@@ -362,6 +376,9 @@ func BuildHistAndTopN(
 		}
 		// case 2-2, now topn is empty: append the "current" count directly
 		if len(topNList) == 0 {
+			fmt.Println("===== =======")
+			fmt.Printf("first: % X %d\n", cur)
+			fmt.Println("===== =======")
 			topNList = append(topNList, TopNMeta{Encoded: cur, Count: uint64(curCnt)})
 			cur, curCnt = sampleBytes, 1
 			continue
@@ -380,13 +397,28 @@ func BuildHistAndTopN(
 		}
 		topNList = append(topNList, TopNMeta{})
 		copy(topNList[j+1:], topNList[j:])
+		fmt.Println("===== =======")
+		fmt.Printf("insert: % X %d %d\n", cur, curCnt, j)
 		topNList[j] = TopNMeta{Encoded: cur, Count: uint64(curCnt)}
 		if len(topNList) > numTopN {
 			topNList = topNList[:numTopN]
 		}
+
+		for _, item := range topNList {
+			fmt.Printf("% X %d %d\n", item.Encoded, item.Count, j)
+		}
+		fmt.Println("===== =======")
 		cur, curCnt = sampleBytes, 1
 	}
-
+	checkMap := make(map[string]struct{}, len(samples))
+	for _, sample := range topNList {
+		_, ok := checkMap[string(sample.Encoded)]
+		if !ok {
+			checkMap[string(sample.Encoded)] = struct{}{}
+		} else {
+			fmt.Println("WTF")
+		}
+	}
 	// Calc the correlation of the column between the handle column.
 	if isColumn {
 		hg.Correlation = calcCorrelation(sampleNum, corrXYSum)
