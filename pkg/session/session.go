@@ -26,6 +26,7 @@ import (
 	"encoding/json"
 	stderrs "errors"
 	"fmt"
+	"iter"
 	"math"
 	"math/rand"
 	"runtime/pprof"
@@ -414,18 +415,12 @@ func (s *session) GetSessionManager() util.SessionManager {
 	return s.sessionManager
 }
 
-func (s *session) UpdateColStatsUsage(predicateColumns []model.TableItemID) {
+func (s *session) UpdateColStatsUsage(colStatsUsage iter.Seq[model.TableItemID]) {
 	if s.statsCollector == nil {
 		return
 	}
 	t := time.Now()
-	colMap := make(map[model.TableItemID]time.Time, len(predicateColumns))
-	for _, col := range predicateColumns {
-		// TODO: Remove this assertion once it has been confirmed to operate correctly over a period of time.
-		intest.Assert(!col.IsIndex, "predicate column should only be table column")
-		colMap[col] = t
-	}
-	s.statsCollector.UpdateColStatsUsage(colMap)
+	s.statsCollector.UpdateColStatsUsage(colStatsUsage, t)
 }
 
 // FieldList returns fields list of a table.
@@ -467,6 +462,7 @@ func (s *session) FieldList(tableName string) ([]*resolve.ResultField, error) {
 }
 
 // TxnInfo returns a pointer to a *copy* of the internal TxnInfo, thus is *read only*
+// Process field may not initialize if this is a session used internally.
 func (s *session) TxnInfo() *txninfo.TxnInfo {
 	s.txn.mu.RLock()
 	// Copy on read to get a snapshot, this API shouldn't be frequently called.
@@ -479,17 +475,18 @@ func (s *session) TxnInfo() *txninfo.TxnInfo {
 
 	processInfo := s.ShowProcess()
 	if processInfo == nil {
-		return nil
+		return &txnInfo
 	}
-	txnInfo.ConnectionID = processInfo.ID
-	txnInfo.Username = processInfo.User
-	txnInfo.CurrentDB = processInfo.DB
-	txnInfo.RelatedTableIDs = make(map[int64]struct{})
+	txnInfo.ProcessInfo = &txninfo.ProcessInfo{
+		ConnectionID:    processInfo.ID,
+		Username:        processInfo.User,
+		CurrentDB:       processInfo.DB,
+		RelatedTableIDs: make(map[int64]struct{}),
+	}
 	s.GetSessionVars().GetRelatedTableForMDL().Range(func(key, _ any) bool {
-		txnInfo.RelatedTableIDs[key.(int64)] = struct{}{}
+		txnInfo.ProcessInfo.RelatedTableIDs[key.(int64)] = struct{}{}
 		return true
 	})
-
 	return &txnInfo
 }
 
@@ -2143,7 +2140,7 @@ func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlex
 	}
 
 	// Execute the physical plan.
-	logStmt(stmt, s)
+	defer logStmt(stmt, s) // defer until txnStartTS is set
 
 	var recordSet sqlexec.RecordSet
 	if stmt.PsStmt != nil { // point plan short path
@@ -3456,11 +3453,9 @@ func bootstrapSessionImpl(ctx context.Context, store kv.Storage, createSessionsI
 	if err != nil {
 		return nil, err
 	}
-	ver := getStoreBootstrapVersion(store)
-	if ver == notBootstrapped {
-		runInBootstrapSession(store, bootstrap)
-	} else if ver < currentBootstrapVersion {
-		runInBootstrapSession(store, upgrade)
+	ver := getStoreBootstrapVersionWithCache(store)
+	if ver < currentBootstrapVersion {
+		runInBootstrapSession(store, ver)
 	} else {
 		err = InitMDLVariable(store)
 		if err != nil {
@@ -3513,7 +3508,7 @@ func bootstrapSessionImpl(ctx context.Context, store kv.Storage, createSessionsI
 
 	// only start the domain after we have initialized some global variables.
 	dom := domain.GetDomain(ses[0])
-	err = dom.Start()
+	err = dom.Start(ddl.Normal)
 	if err != nil {
 		return nil, err
 	}
@@ -3676,28 +3671,67 @@ func GetDomain(store kv.Storage) (*domain.Domain, error) {
 	return domap.Get(store)
 }
 
+func getStartMode(ver int64) ddl.StartMode {
+	if ver == notBootstrapped {
+		return ddl.Bootstrap
+	} else if ver < currentBootstrapVersion {
+		return ddl.Upgrade
+	}
+	return ddl.Normal
+}
+
 // runInBootstrapSession create a special session for bootstrap to run.
 // If no bootstrap and storage is remote, we must use a little lease time to
 // bootstrap quickly, after bootstrapped, we will reset the lease time.
 // TODO: Using a bootstrap tool for doing this may be better later.
-func runInBootstrapSession(store kv.Storage, bootstrap func(types.Session)) {
+func runInBootstrapSession(store kv.Storage, ver int64) {
+	startMode := getStartMode(ver)
+
+	if startMode == ddl.Upgrade {
+		// TODO at this time domain must not be created, else it will register server
+		// info, and cause deadlock, we need to make sure this in a clear way
+		logutil.BgLogger().Info("[upgrade] get owner lock to upgrade")
+		releaseFn, err := acquireLock(store)
+		if err != nil {
+			logutil.BgLogger().Fatal("[upgrade] get owner lock failed", zap.Error(err))
+		}
+		defer releaseFn()
+		currVer := mustGetStoreBootstrapVersion(store)
+		if currVer >= currentBootstrapVersion {
+			// It is already bootstrapped/upgraded by another TiDB instance, but
+			// we still need to go through the following domain Start/Close code
+			// right now as we have already initialized it when creating the session,
+			// so we switch to normal mode.
+			// TODO remove this after we can refactor below code out in this case.
+			logutil.BgLogger().Info("[upgrade] already upgraded by other nodes, switch to normal mode")
+			startMode = ddl.Normal
+		}
+	}
 	s, err := createSession(store)
 	if err != nil {
 		// Bootstrap fail will cause program exit.
 		logutil.BgLogger().Fatal("createSession error", zap.Error(err))
 	}
 	dom := domain.GetDomain(s)
-	err = dom.Start()
+	err = dom.Start(startMode)
 	if err != nil {
 		// Bootstrap fail will cause program exit.
 		logutil.BgLogger().Fatal("start domain error", zap.Error(err))
 	}
 
 	// For the bootstrap SQLs, the following variables should be compatible with old TiDB versions.
+	// TODO we should have a createBootstrapSession to init those special variables.
 	s.sessionVars.EnableClusteredIndex = variable.ClusteredIndexDefModeIntOnly
 
 	s.SetValue(sessionctx.Initing, true)
-	bootstrap(s)
+	if startMode == ddl.Bootstrap {
+		bootstrap(s)
+	} else if startMode == ddl.Upgrade {
+		// below sleep is used to mitigate https://github.com/pingcap/tidb/issues/57003,
+		// to let the older owner have time to notice that it's already retired.
+		time.Sleep(owner.WaitTimeOnForceOwner)
+		upgrade(s)
+	}
 	finishBootstrap(store)
 	s.ClearValue(sessionctx.Initing)
 
@@ -3836,32 +3870,34 @@ const (
 	notBootstrapped = 0
 )
 
-func getStoreBootstrapVersion(store kv.Storage) int64 {
-	storeBootstrappedLock.Lock()
-	defer storeBootstrappedLock.Unlock()
-	// check in memory
-	_, ok := storeBootstrapped[store.UUID()]
-	if ok {
-		return currentBootstrapVersion
-	}
-
+func mustGetStoreBootstrapVersion(store kv.Storage) int64 {
 	var ver int64
 	// check in kv store
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBootstrap)
 	err := kv.RunInNewTxn(ctx, store, false, func(_ context.Context, txn kv.Transaction) error {
 		var err error
-		t := meta.NewMutator(txn)
+		t := meta.NewReader(txn)
 		ver, err = t.GetBootstrapVersion()
 		return err
 	})
 	if err != nil {
-		logutil.BgLogger().Fatal("check bootstrapped failed",
-			zap.Error(err))
+		logutil.BgLogger().Fatal("get store bootstrap version failed", zap.Error(err))
 	}
+	return ver
+}
+
+func getStoreBootstrapVersionWithCache(store kv.Storage) int64 {
+	// check in memory
+	_, ok := store.GetOption(StoreBootstrappedKey)
+	if ok {
+		return currentBootstrapVersion
+	}
+
+	ver := mustGetStoreBootstrapVersion(store)
 
 	if ver > notBootstrapped {
 		// here mean memory is not ok, but other server has already finished it
-		storeBootstrapped[store.UUID()] = true
+		store.SetOption(StoreBootstrappedKey, true)
 	}
 
 	modifyBootstrapVersionForTest(ver)
@@ -3869,7 +3905,7 @@ func getStoreBootstrapVersion(store kv.Storage) int64 {
 }
 
 func finishBootstrap(store kv.Storage) {
-	setStoreBootstrapped(store.UUID())
+	store.SetOption(StoreBootstrappedKey, true)
 
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBootstrap)
 	err := kv.RunInNewTxn(ctx, store, true, func(_ context.Context, txn kv.Transaction) error {
@@ -4026,9 +4062,10 @@ func GetStartTSFromSession(se any) (startTS, processInfoID uint64) {
 	txnInfo := tmp.TxnInfo()
 	if txnInfo != nil {
 		startTS = txnInfo.StartTS
-		processInfoID = txnInfo.ConnectionID
+		if txnInfo.ProcessInfo != nil {
+			processInfoID = txnInfo.ProcessInfo.ConnectionID
+		}
 	}
-
 	logutil.BgLogger().Debug(
 		"GetStartTSFromSession getting startTS of internal session",
 		zap.Uint64("startTS", startTS), zap.Time("start time", oracle.GetTimeFromTS(startTS)))

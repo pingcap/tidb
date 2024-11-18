@@ -43,12 +43,12 @@ insert into t values (1);
 set tidb_cost_model_version=2;
 explain format='cost_trace' select * from t;
 id	estRows	estCost	costFormula	task	access object	operator info
-TableReader_5	10000.00	191473.33	(((scan(10000*logrowsize(32)*tikv_scan_factor(40.7))) + (scan(1000*logrowsize(32)*tikv_scan_factor(40.7)))) + (net(10000*rowsize(16)*tidb_kv_net_factor(3.96))))/15.00	root		data:TableFullScan_4
-└─TableFullScan_4	10000.00	2238500.00	(scan(10000*logrowsize(32)*tikv_scan_factor(40.7))) + (scan(1000*logrowsize(32)*tikv_scan_factor(40.7)))	cop[tikv]	table:t	keep order:false, stats:pseudo
+TableReader_5	10000.00	313573.33	(((scan(10000*logrowsize(32)*tikv_scan_factor(40.7))) + (scan(10000*logrowsize(32)*tikv_scan_factor(40.7)))) + (net(10000*rowsize(16)*tidb_kv_net_factor(3.96))))/15.00	root		data:TableFullScan_4
+└─TableFullScan_4	10000.00	4070000.00	(scan(10000*logrowsize(32)*tikv_scan_factor(40.7))) + (scan(10000*logrowsize(32)*tikv_scan_factor(40.7)))	cop[tikv]	table:t	keep order:false, stats:pseudo
 explain analyze format='cost_trace' select * from t;
 id	estRows	estCost	costFormula	actRows	task	access object	execution info	operator info	memory	disk
-TableReader_5	10000.00	191473.33	(((scan(10000*logrowsize(32)*tikv_scan_factor(40.7))) + (scan(1000*logrowsize(32)*tikv_scan_factor(40.7)))) + (net(10000*rowsize(16)*tidb_kv_net_factor(3.96))))/15.00	1	root		<execution_info>	<operator_info>	<memory>	<disk>
-└─TableFullScan_4	10000.00	2238500.00	(scan(10000*logrowsize(32)*tikv_scan_factor(40.7))) + (scan(1000*logrowsize(32)*tikv_scan_factor(40.7)))	1	cop[tikv]	table:t	<execution_info>	<operator_info>	<memory>	<disk>
+TableReader_5	10000.00	313573.33	(((scan(10000*logrowsize(32)*tikv_scan_factor(40.7))) + (scan(10000*logrowsize(32)*tikv_scan_factor(40.7)))) + (net(10000*rowsize(16)*tidb_kv_net_factor(3.96))))/15.00	1	root		<execution_info>	<operator_info>	<memory>	<disk>
+└─TableFullScan_4	10000.00	4070000.00	(scan(10000*logrowsize(32)*tikv_scan_factor(40.7))) + (scan(10000*logrowsize(32)*tikv_scan_factor(40.7)))	1	cop[tikv]	table:t	<execution_info>	<operator_info>	<memory>	<disk>
 set tidb_cost_model_version=1;
 explain format='cost_trace' select * from t;
 id	estRows	estCost	costFormula	task	access object	operator info

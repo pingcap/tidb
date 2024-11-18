@@ -772,14 +772,21 @@ func HistogramToProto(hg *Histogram) *tipb.Histogram {
 	for i := 0; i < hg.Len(); i++ {
 		bkt := &tipb.Bucket{
 			Count:      hg.Buckets[i].Count,
-			LowerBound: hg.GetLower(i).GetBytes(),
-			UpperBound: hg.GetUpper(i).GetBytes(),
+			LowerBound: DeepSlice(hg.GetLower(i).GetBytes()),
+			UpperBound: DeepSlice(hg.GetUpper(i).GetBytes()),
 			Repeats:    hg.Buckets[i].Repeat,
 			Ndv:        &hg.Buckets[i].NDV,
 		}
 		protoHg.Buckets = append(protoHg.Buckets, bkt)
 	}
 	return protoHg
+}
+
+// DeepSlice sallowly clones a slice.
+func DeepSlice[T any](s []T) []T {
+	r := make([]T, len(s))
+	copy(r, s)
+	return r
 }
 
 // HistogramFromProto converts Histogram from its protobuf representation.
