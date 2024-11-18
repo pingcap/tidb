@@ -58,7 +58,7 @@ var fixedSuffixSliceTransform = &rockssst.Comparer{
 func newWriteCFWriter(
 	ts uint64,
 ) (*rockssst.Writer, WritableBytesChan, error) {
-	writable := WritableBytesChan(make(chan []byte, 1))
+	writable := WritableBytesChan(make(chan []byte, 16))
 	writer := rockssst.NewWriter(writable, rockssst.WriterOptions{
 		// TODO(lance6716): should read TiKV config to know these values.
 		BlockSize:   32 * 1024,
@@ -86,7 +86,7 @@ func newWriteCFWriter(
 
 // newDefaultCFWriter creates a new defaultCFWriter.
 func newDefaultCFWriter() (*rockssst.Writer, WritableBytesChan, error) {
-	writable := WritableBytesChan(make(chan []byte, 1))
+	writable := WritableBytesChan(make(chan []byte, 16))
 	writer := rockssst.NewWriter(writable, rockssst.WriterOptions{
 		// TODO(lance6716): should read TiKV config to know these values.
 		BlockSize:   32 * 1024,

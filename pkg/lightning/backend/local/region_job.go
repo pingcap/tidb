@@ -450,7 +450,6 @@ func (local *Backend) doWrite(ctx context.Context, j *regionJob) error {
 	//	regionMaxSize = j.regionSplitSize * 4 / 3
 	//}
 
-	flushKVMu := sync.Mutex{}
 	flushKVs := func() error {
 		preparedMsg := &grpc.PreparedMsg{}
 		// by reading the source code, Encode need to find codec and compression from the stream
@@ -489,17 +488,71 @@ func (local *Backend) doWrite(ctx context.Context, j *regionJob) error {
 
 	eg, egCtx := errgroup.WithContext(ctx)
 	eg.Go(func() error {
+		defaultCFClosed := false
+		writeCFClosed := false
+
+		var (
+			ok            bool
+			defaultCFData []byte
+			writeCFData   []byte
+		)
+
 		for {
 			select {
-			case data, ok := <-defaultCFChan:
+			case defaultCFData, ok = <-defaultCFChan:
 				if !ok {
-					return nil
+					defaultCFClosed = true
+					defaultCFChan = nil
+					if writeCFClosed {
+						return nil
+					}
+					continue
 				}
-				flushKVMu.Lock()
+
+				defaultCount := len(defaultCFChan)
+				writeCount := len(writeCFChan)
 				batch := req.Chunk.(*sst.WriteRequest_Batch).Batch
-				batch.Pairs = []*sst.Pair{{Key: data}}
+				batch.Pairs = make([]*sst.Pair, 0, 1+defaultCount+writeCount)
+				batch.Pairs = append(batch.Pairs, &sst.Pair{Key: defaultCFData})
+				defaultCFData = nil
+				for i := 0; i < defaultCount; i++ {
+					defaultCFData = <-defaultCFChan
+					batch.Pairs = append(batch.Pairs, &sst.Pair{Key: defaultCFData})
+				}
+				for i := 0; i < writeCount; i++ {
+					writeCFData = <-writeCFChan
+					batch.Pairs = append(batch.Pairs, &sst.Pair{Value: writeCFData})
+				}
 				err2 := flushKVs()
-				flushKVMu.Unlock()
+				if err2 != nil {
+					return errors.Trace(err2)
+				}
+
+			case writeCFData, ok = <-writeCFChan:
+				if !ok {
+					writeCFClosed = true
+					writeCFChan = nil
+					if defaultCFClosed {
+						return nil
+					}
+					continue
+				}
+
+				defaultCount := len(defaultCFChan)
+				writeCount := len(writeCFChan)
+				batch := req.Chunk.(*sst.WriteRequest_Batch).Batch
+				batch.Pairs = make([]*sst.Pair, 0, 1+defaultCount+writeCount)
+				batch.Pairs = append(batch.Pairs, &sst.Pair{Value: writeCFData})
+				writeCFData = nil
+				for i := 0; i < defaultCount; i++ {
+					defaultCFData = <-defaultCFChan
+					batch.Pairs = append(batch.Pairs, &sst.Pair{Key: defaultCFData})
+				}
+				for i := 0; i < writeCount; i++ {
+					writeCFData = <-writeCFChan
+					batch.Pairs = append(batch.Pairs, &sst.Pair{Value: writeCFData})
+				}
+				err2 := flushKVs()
 				if err2 != nil {
 					return errors.Trace(err2)
 				}
@@ -508,28 +561,6 @@ func (local *Backend) doWrite(ctx context.Context, j *regionJob) error {
 			}
 		}
 	})
-	eg.Go(func() error {
-		for {
-			select {
-			case data, ok := <-writeCFChan:
-				if !ok {
-					return nil
-				}
-				flushKVMu.Lock()
-				batch := req.Chunk.(*sst.WriteRequest_Batch).Batch
-				batch.Pairs = []*sst.Pair{{Value: data}}
-				err2 := flushKVs()
-				flushKVMu.Unlock()
-				if err2 != nil {
-					return errors.Trace(err2)
-				}
-			case <-egCtx.Done():
-				return egCtx.Err()
-			}
-		}
-	})
-	// TODO(lance6716): use errgroup to create 2 goroutine to drain defaultCFChan and writeCFChan
-	// and call flushKVs. Need to add a mutex to protect flushKVs.
 
 	var remainingStartKey []byte
 	for iter.First(); iter.Valid(); iter.Next() {
