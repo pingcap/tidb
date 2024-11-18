@@ -84,30 +84,30 @@ func (b *rowTableBuilder) initHashValueAndPartIndexForOneChunk(partitionMaskOffs
 	}
 }
 
-func (b *rowTableBuilder) checkMaxLength(chk *chunk.Chunk, hashJoinCtx *HashJoinCtxV2) (bool, int) {
+func (b *rowTableBuilder) checkMaxElementSize(chk *chunk.Chunk, hashJoinCtx *HashJoinCtxV2) (bool, int) {
 	// both join key and the columns needed to be converted to row format need to be checked
 	for _, colIdx := range b.buildKeyIndex {
 		column := chk.Column(colIdx)
 		if column.ContainsVeryLargeElement() {
-			return false, colIdx
+			return true, colIdx
 		}
 	}
 	for _, colIdx := range hashJoinCtx.hashTableMeta.rowColumnsOrder {
 		column := chk.Column(colIdx)
 		if column.ContainsVeryLargeElement() {
-			return false, colIdx
+			return true, colIdx
 		}
 	}
-	return true, 0
+	return false, 0
 }
 
 func (b *rowTableBuilder) processOneChunk(chk *chunk.Chunk, typeCtx types.Context, hashJoinCtx *HashJoinCtxV2, workerID int) error {
-	b.ResetBuffer(chk)
-	columnSizeExceedLimit, colIdx := b.checkMaxLength(chk, hashJoinCtx)
-	if columnSizeExceedLimit {
-		// this is quite rare, since currently TiDB's max row size is 128MB, so just return an error
+	elementSizeExceedLimit, colIdx := b.checkMaxElementSize(chk, hashJoinCtx)
+	if elementSizeExceedLimit {
+		// TiDB's max row size is 128MB, so element size should never exceed limit
 		return errors.New("row table build failed: column contains element larger than 4GB, column index: " + strconv.Itoa(colIdx))
 	}
+	b.ResetBuffer(chk)
 
 	b.firstSegRowSizeHint = max(uint(1), uint(float64(len(b.usedRows))/float64(hashJoinCtx.partitionNumber)*float64(1.2)))
 	var err error
@@ -130,6 +130,7 @@ func (b *rowTableBuilder) processOneChunk(chk *chunk.Chunk, typeCtx types.Contex
 	}
 	for _, key := range b.serializedKeyVectorBuffer {
 		if len(key) > math.MaxUint32 {
+			// TiDB's max row size is 128MB, so key size should never exceed limit
 			return errors.New("row table build failed: join key contains element larger than 4GB")
 		}
 	}
@@ -296,8 +297,8 @@ func (b *rowTableBuilder) fillSerializedKeyAndKeyLengthIfNeeded(rowTableMeta *jo
 		} else {
 			length = 0
 		}
-		seg.rawData = append(seg.rawData, unsafe.Slice((*byte)(unsafe.Pointer(&length)), sizeOfLengthField)...)
-		appendRowLength += int64(sizeOfLengthField)
+		seg.rawData = append(seg.rawData, unsafe.Slice((*byte)(unsafe.Pointer(&length)), sizeOfElementSize)...)
+		appendRowLength += int64(sizeOfElementSize)
 	}
 	// 2. fill serialized key if needed
 	if !rowTableMeta.isJoinKeysInlined {
@@ -328,8 +329,8 @@ func fillRowData(rowTableMeta *joinTableMeta, row *chunk.Row, seg *rowTableSegme
 			// length, raw_data
 			raw := row.GetRaw(colIdx)
 			length := uint32(len(raw))
-			seg.rawData = append(seg.rawData, unsafe.Slice((*byte)(unsafe.Pointer(&length)), sizeOfLengthField)...)
-			appendRowLength += int64(sizeOfLengthField)
+			seg.rawData = append(seg.rawData, unsafe.Slice((*byte)(unsafe.Pointer(&length)), sizeOfElementSize)...)
+			appendRowLength += int64(sizeOfElementSize)
 			seg.rawData = append(seg.rawData, raw...)
 			appendRowLength += int64(length)
 		}
