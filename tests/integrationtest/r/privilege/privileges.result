@@ -645,3 +645,5 @@ ADMIN SHOW SLOW RECENT 3;
 Error 8121 (HY000): privilege check for 'Super' fail
 ADMIN SHOW SLOW TOP ALL 3;
 Error 8121 (HY000): privilege check for 'Super' fail
+ADMIN ALTER DDL JOBS 10 THREAD = 3, BATCH_SIZE = 100, MAX_WRITE_SPEED = '10MiB';
+Error 8121 (HY000): privilege check for 'Super' fail

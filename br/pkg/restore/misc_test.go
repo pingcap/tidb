@@ -23,7 +23,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/mock"
 	"github.com/pingcap/tidb/br/pkg/restore"
-	"github.com/pingcap/tidb/br/pkg/utiltest"
+	"github.com/pingcap/tidb/br/pkg/restore/split"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/session"
@@ -107,7 +107,7 @@ func TestAssertUserDBsEmpty(t *testing.T) {
 func TestGetTSWithRetry(t *testing.T) {
 	t.Run("PD leader is healthy:", func(t *testing.T) {
 		retryTimes := -1000
-		pDClient := utiltest.NewFakePDClient(nil, false, &retryTimes)
+		pDClient := split.NewFakePDClient(nil, false, &retryTimes)
 		_, err := restore.GetTSWithRetry(context.Background(), pDClient)
 		require.NoError(t, err)
 	})
@@ -118,14 +118,14 @@ func TestGetTSWithRetry(t *testing.T) {
 			require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/br/pkg/utils/set-attempt-to-one"))
 		}()
 		retryTimes := -1000
-		pDClient := utiltest.NewFakePDClient(nil, true, &retryTimes)
+		pDClient := split.NewFakePDClient(nil, true, &retryTimes)
 		_, err := restore.GetTSWithRetry(context.Background(), pDClient)
 		require.Error(t, err)
 	})
 
 	t.Run("PD leader switch successfully", func(t *testing.T) {
 		retryTimes := 0
-		pDClient := utiltest.NewFakePDClient(nil, true, &retryTimes)
+		pDClient := split.NewFakePDClient(nil, true, &retryTimes)
 		_, err := restore.GetTSWithRetry(context.Background(), pDClient)
 		require.NoError(t, err)
 	})
