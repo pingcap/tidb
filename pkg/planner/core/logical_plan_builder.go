@@ -2944,6 +2944,10 @@ func (b *PlanBuilder) tblInfoFromCol(from ast.ResultSetNode, name *types.FieldNa
 				return tnW.TableInfo
 			}
 			// when the Select is inside a view, it's not pre-processed, tnW is nil.
+			if b.isCreateView {
+				// Ignore during create
+				return nil
+			}
 			tblInfo, err := b.is.TableInfoByName(name.DBName, name.TblName)
 			if err != nil {
 				return nil
