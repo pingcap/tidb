@@ -43,7 +43,7 @@ func FetchChunk4Test(copCtx copr.CopContext, tbl table.PhysicalTable, startKey, 
 	}, 8, 8, 0)
 	sessPool := session.NewSessionPool(resPool)
 	srcChkPool := &sync.Pool{
-		New: func() interface{} {
+		New: func() any {
 			return chunk.NewChunkWithCapacity(copCtx.GetBase().FieldTypes,
 				batchSize)
 		},
