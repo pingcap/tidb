@@ -396,7 +396,7 @@ func nativeIntMap(size int, handles []Handle) int {
 }
 
 func BenchmarkMemAwareHandleMap(b *testing.B) {
-	var sc stmtctx.StatementContext
+	sc := stmtctx.NewStmtCtx()
 	for _, s := range inputs {
 		handles := make([]Handle, s.input)
 		for i := 0; i < s.input; i++ {
@@ -418,7 +418,7 @@ func BenchmarkMemAwareHandleMap(b *testing.B) {
 }
 
 func BenchmarkNativeHandleMap(b *testing.B) {
-	var sc stmtctx.StatementContext
+	sc := stmtctx.NewStmtCtx()
 	for _, s := range inputs {
 		handles := make([]Handle, s.input)
 		for i := 0; i < s.input; i++ {

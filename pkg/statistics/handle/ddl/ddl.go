@@ -15,6 +15,8 @@
 package ddl
 
 import (
+	"context"
+
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/ddl/notifier"
 	"github.com/pingcap/tidb/pkg/meta/model"
@@ -176,6 +178,10 @@ func (h *ddlHandlerImpl) HandleDDLEvent(s *notifier.SchemaChangeEvent) error {
 		}
 	case model.ActionFlashbackCluster:
 		return h.statsWriter.UpdateStatsVersion()
+	case model.ActionAddIndex:
+		// No need to update the stats meta for the adding index event.
+	case model.ActionDropSchema:
+		// TODO: handle the drop schema event.
 	default:
 		intest.Assert(false)
 		logutil.StatsLogger().Error("Unhandled schema change event", zap.Stringer("type", s))
@@ -189,18 +195,25 @@ func UpdateStatsWithCountDeltaAndModifyCountDeltaForTest(
 	tableID int64,
 	countDelta, modifyCountDelta int64,
 ) error {
-	return updateStatsWithCountDeltaAndModifyCountDelta(sctx, tableID, countDelta, modifyCountDelta)
+	return updateStatsWithCountDeltaAndModifyCountDelta(
+		util.StatsCtx,
+		sctx,
+		tableID,
+		countDelta,
+		modifyCountDelta,
+	)
 }
 
 // updateStatsWithCountDeltaAndModifyCountDelta updates
 // the global stats with the given count delta and modify count delta.
 // Only used by some special DDLs, such as exchange partition.
 func updateStatsWithCountDeltaAndModifyCountDelta(
+	ctx context.Context,
 	sctx sessionctx.Context,
 	tableID int64,
 	countDelta, modifyCountDelta int64,
 ) error {
-	lockedTables, err := lockstats.QueryLockedTables(sctx)
+	lockedTables, err := lockstats.QueryLockedTables(ctx, sctx)
 	if err != nil {
 		return errors.Trace(err)
 	}

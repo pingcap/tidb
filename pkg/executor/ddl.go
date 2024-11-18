@@ -414,7 +414,7 @@ func (e *DDLExec) executeRecoverTable(s *ast.RecoverTableStmt) error {
 	// Check the table ID was not exists.
 	tbl, ok := dom.InfoSchema().TableByID(context.Background(), tblInfo.ID)
 	if ok {
-		return infoschema.ErrTableExists.GenWithStack("Table '%-.192s' already been recover to '%-.192s', can't be recover repeatedly", s.Table.Name.O, tbl.Meta().Name.O)
+		return infoschema.ErrTableExists.GenWithStack("Table '%-.192s' already been recover to '%-.192s', can't be recover repeatedly", tblInfo.Name.O, tbl.Meta().Name.O)
 	}
 
 	m := domain.GetDomain(e.Ctx()).GetSnapshotMeta(job.StartTS)

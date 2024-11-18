@@ -156,7 +156,7 @@ func renewEmpty(chk *Chunk) *Chunk {
 }
 
 func (c *Chunk) resetForReuse() {
-	for i := 0; i < len(c.columns); i++ {
+	for i := range len(c.columns) {
 		c.columns[i] = nil
 	}
 	columns := c.columns[:0]
@@ -236,21 +236,23 @@ func (c *Chunk) MakeRefTo(dstColIdx int, src *Chunk, srcColIdx int) error {
 	return nil
 }
 
-// SwapColumn swaps Column "c.columns[colIdx]" with Column
+// swapColumn swaps Column "c.columns[colIdx]" with Column
 // "other.columns[otherIdx]". If there exists columns refer to the Column to be
 // swapped, we need to re-build the reference.
-func (c *Chunk) SwapColumn(colIdx int, other *Chunk, otherIdx int) error {
+// this function should not be used directly, if you wants to swap columns between two chunks,
+// use ColumnSwapHelper.SwapColumns instead.
+func (c *Chunk) swapColumn(colIdx int, other *Chunk, otherIdx int) error {
 	if c.sel != nil || other.sel != nil {
 		return errors.New(msgErrSelNotNil)
 	}
 	// Find the leftmost Column of the reference which is the actual Column to
 	// be swapped.
-	for i := 0; i < colIdx; i++ {
+	for i := range colIdx {
 		if c.columns[i] == c.columns[colIdx] {
 			colIdx = i
 		}
 	}
-	for i := 0; i < otherIdx; i++ {
+	for i := range otherIdx {
 		if other.columns[i] == other.columns[otherIdx] {
 			otherIdx = i
 		}
@@ -699,8 +701,8 @@ func (c *Chunk) Reconstruct() {
 
 // ToString returns all the values in a chunk.
 func (c *Chunk) ToString(ft []*types.FieldType) string {
-	var buf []byte
-	for rowIdx := 0; rowIdx < c.NumRows(); rowIdx++ {
+	buf := make([]byte, 0, c.NumRows()*2)
+	for rowIdx := range c.NumRows() {
 		row := c.GetRow(rowIdx)
 		buf = append(buf, row.ToString(ft)...)
 		buf = append(buf, '\n')

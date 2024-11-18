@@ -707,14 +707,27 @@ func (l *listPartitionPruner) locateColumnPartitionsByCondition(cond expression.
 			}
 		}
 		for _, location := range locations {
-			if len(l.partitionNames) > 0 {
-				for _, pg := range location {
+			for _, pg := range location {
+				idx := l.pi.GetOverlappingDroppingPartitionIdx(pg.PartIdx)
+				if idx == -1 {
+					// Skip dropping partitions
+					continue
+				}
+				if idx != pg.PartIdx {
+					pg = tables.ListPartitionGroup{
+						PartIdx: idx,
+						// TODO: Test this!!!
+						// How does it work with intersection for example?
+						GroupIdxs: []int{-1}, // Special group!
+					}
+				}
+				if len(l.partitionNames) > 0 {
 					if l.findByName(l.partitionNames, l.pi.Definitions[pg.PartIdx].Name.L) {
 						helper.UnionPartitionGroup(pg)
 					}
+				} else {
+					helper.UnionPartitionGroup(pg)
 				}
-			} else {
-				helper.Union(location)
 			}
 		}
 	}
@@ -768,24 +781,37 @@ func (l *listPartitionPruner) findUsedListPartitions(conds []expression.Expressi
 	used := make(map[int]struct{}, len(ranges))
 	tc := l.ctx.GetSessionVars().StmtCtx.TypeCtx()
 	for _, r := range ranges {
+		if len(r.HighVal) != len(exprCols) || r.IsFullRange(false) {
+			return l.fullRange, nil
+		}
+		var idxs map[int]struct{}
 		if !r.IsPointNullable(tc) {
-			return l.fullRange, nil
+			// Only support `pruneExpr` is a Column
+			if _, ok := pruneExpr.(*expression.Column); !ok {
+				return l.fullRange, nil
+			}
+			idxs, err = l.listPrune.LocatePartitionByRange(l.ctx.GetExprCtx().GetEvalCtx(), r)
+			if err != nil {
+				return nil, err
+			}
+		} else {
+			value, isNull, err := pruneExpr.EvalInt(l.ctx.GetExprCtx().GetEvalCtx(), chunk.MutRowFromDatums(r.HighVal).ToRow())
+			if err != nil {
+				return nil, err
+			}
+			idxs = make(map[int]struct{})
+			idxs[l.listPrune.LocatePartition(l.ctx.GetExprCtx().GetEvalCtx(), value, isNull)] = struct{}{}
 		}
-		if len(r.HighVal) != len(exprCols) {
-			return l.fullRange, nil
+		for idx := range idxs {
+			idx = l.pi.GetOverlappingDroppingPartitionIdx(idx)
+			if idx == -1 {
+				continue
+			}
+			if len(l.partitionNames) > 0 && !l.findByName(l.partitionNames, l.pi.Definitions[idx].Name.L) {
+				continue
+			}
+			used[idx] = struct{}{}
 		}
-		value, isNull, err := pruneExpr.EvalInt(l.ctx.GetExprCtx().GetEvalCtx(), chunk.MutRowFromDatums(r.HighVal).ToRow())
-		if err != nil {
-			return nil, err
-		}
-		partitionIdx := l.listPrune.LocatePartition(value, isNull)
-		if partitionIdx == -1 {
-			continue
-		}
-		if len(l.partitionNames) > 0 && !l.findByName(l.partitionNames, l.pi.Definitions[partitionIdx].Name.L) {
-			continue
-		}
-		used[partitionIdx] = struct{}{}
 	}
 	return used, nil
 }
@@ -807,8 +833,23 @@ func (s *PartitionProcessor) findUsedListPartitions(ctx base.PlanContext, tbl ta
 		return nil, err
 	}
 	if _, ok := used[FullRange]; ok {
-		or := partitionRangeOR{partitionRange{0, len(pi.Definitions)}}
-		return s.convertToIntSlice(or, pi, partitionNames), nil
+		ret := make([]int, 0, len(pi.Definitions))
+		for i := 0; i < len(pi.Definitions); i++ {
+			if len(partitionNames) > 0 && !listPruner.findByName(partitionNames, pi.Definitions[i].Name.L) {
+				continue
+			}
+			if i != pi.GetOverlappingDroppingPartitionIdx(i) {
+				continue
+			}
+			ret = append(ret, i)
+		}
+		if len(ret) == len(pi.Definitions) {
+			return []int{FullRange}, nil
+		}
+		return ret, nil
+	}
+	if len(used) == len(pi.Definitions) {
+		return []int{FullRange}, nil
 	}
 	ret := make([]int, 0, len(used))
 	for k := range used {
@@ -1279,7 +1320,7 @@ func multiColumnRangeColumnsPruner(sctx base.PlanContext, exprs []expression.Exp
 		lens = append(lens, columnsPruner.partCols[i].RetType.GetFlen())
 	}
 
-	res, err := ranger.DetachCondAndBuildRangeForIndex(sctx.GetRangerCtx(), exprs, columnsPruner.partCols, lens, sctx.GetSessionVars().RangeMaxSize)
+	res, err := ranger.DetachCondAndBuildRangeForPartition(sctx.GetRangerCtx(), exprs, columnsPruner.partCols, lens, sctx.GetSessionVars().RangeMaxSize)
 	if err != nil {
 		return fullRange(len(columnsPruner.lessThan))
 	}
@@ -1294,16 +1335,12 @@ func multiColumnRangeColumnsPruner(sctx base.PlanContext, exprs []expression.Exp
 
 	rangeOr := make([]partitionRange, 0, len(res.Ranges))
 
-	comparer := make([]collate.Collator, 0, len(columnsPruner.partCols))
-	for i := range columnsPruner.partCols {
-		comparer = append(comparer, collate.GetCollator(columnsPruner.partCols[i].RetType.GetCollate()))
-	}
 	gotError := false
 	// Create a sort.Search where the compare loops over ColumnValues
 	// Loop over the different ranges and extend/include all the partitions found
 	for idx := range res.Ranges {
-		minComparer := minCmp(sctx, res.Ranges[idx].LowVal, columnsPruner, comparer, res.Ranges[idx].LowExclude, &gotError)
-		maxComparer := maxCmp(sctx, res.Ranges[idx].HighVal, columnsPruner, comparer, res.Ranges[idx].HighExclude, &gotError)
+		minComparer := minCmp(sctx, res.Ranges[idx].LowVal, columnsPruner, res.Ranges[idx].Collators, res.Ranges[idx].LowExclude, &gotError)
+		maxComparer := maxCmp(sctx, res.Ranges[idx].HighVal, columnsPruner, res.Ranges[idx].Collators, res.Ranges[idx].HighExclude, &gotError)
 		if gotError {
 			// the compare function returned error, use all partitions.
 			return fullRange(len(columnsPruner.lessThan))
@@ -1828,11 +1865,19 @@ func (s *PartitionProcessor) makeUnionAllChildren(ds *logicalop.DataSource, pi *
 	usedDefinition := make(map[int64]model.PartitionDefinition)
 	for _, r := range or {
 		for i := r.start; i < r.end; i++ {
+			partIdx := pi.GetOverlappingDroppingPartitionIdx(i)
+			if partIdx < 0 {
+				continue
+			}
+
 			// This is for `table partition (p0,p1)` syntax, only union the specified partition if has specified partitions.
 			if len(ds.PartitionNames) != 0 {
-				if !s.findByName(ds.PartitionNames, pi.Definitions[i].Name.L) {
+				if !s.findByName(ds.PartitionNames, pi.Definitions[partIdx].Name.L) {
 					continue
 				}
+			}
+			if _, found := usedDefinition[pi.Definitions[partIdx].ID]; found {
+				continue
 			}
 			// Not a deep copy.
 			newDataSource := *ds
@@ -1840,21 +1885,20 @@ func (s *PartitionProcessor) makeUnionAllChildren(ds *logicalop.DataSource, pi *
 			newDataSource.SetSchema(ds.Schema().Clone())
 			newDataSource.Columns = make([]*model.ColumnInfo, len(ds.Columns))
 			copy(newDataSource.Columns, ds.Columns)
-			idx := i
-			newDataSource.PartitionDefIdx = &idx
-			newDataSource.PhysicalTableID = pi.Definitions[i].ID
+			newDataSource.PartitionDefIdx = &partIdx
+			newDataSource.PhysicalTableID = pi.Definitions[partIdx].ID
 
 			// There are many expression nodes in the plan tree use the original datasource
 			// id as FromID. So we set the id of the newDataSource with the original one to
 			// avoid traversing the whole plan tree to update the references.
 			newDataSource.SetID(ds.ID())
-			err := s.resolveOptimizeHint(&newDataSource, pi.Definitions[i].Name)
-			partitionNameSet.Insert(pi.Definitions[i].Name.L)
+			err := s.resolveOptimizeHint(&newDataSource, pi.Definitions[partIdx].Name)
+			partitionNameSet.Insert(pi.Definitions[partIdx].Name.L)
 			if err != nil {
 				return nil, err
 			}
 			children = append(children, &newDataSource)
-			usedDefinition[pi.Definitions[i].ID] = pi.Definitions[i]
+			usedDefinition[pi.Definitions[partIdx].ID] = pi.Definitions[partIdx]
 		}
 	}
 	s.checkHintsApplicable(ds, partitionNameSet)
@@ -1905,10 +1949,9 @@ func makeRangeColumnPruner(columns []*expression.Column, pi *model.PartitionInfo
 	if len(pi.Definitions) != len(from.LessThan) {
 		return nil, errors.Trace(fmt.Errorf("internal error len(pi.Definitions) != len(from.LessThan) %d != %d", len(pi.Definitions), len(from.LessThan)))
 	}
-	schema := expression.NewSchema(columns...)
 	partCols := make([]*expression.Column, len(offsets))
 	for i, offset := range offsets {
-		partCols[i] = schema.Columns[offset]
+		partCols[i] = columns[offset]
 	}
 	lessThan := make([][]*expression.Expression, 0, len(from.LessThan))
 	for i := range from.LessThan {

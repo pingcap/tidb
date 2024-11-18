@@ -183,7 +183,6 @@ func TestGlobalSortMultiSchemaChange(t *testing.T) {
 		{"ingest_dist_gs_backfill", "1", "1", cloudStorageURI},
 	}
 	for _, tc := range testCases {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			tk.MustExec("set @@global.tidb_ddl_enable_fast_reorg = " + tc.enableFastReorg + ";")
 			tk.MustExec("set @@global.tidb_enable_dist_task = " + tc.enableDistTask + ";")

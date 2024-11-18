@@ -764,3 +764,31 @@ func TestCreateSameTableOrDBOnOwnerChange(t *testing.T) {
 	finished.Store(true)
 	ownerWg.Wait()
 }
+
+func TestDropTableAccessibleInInfoSchema(t *testing.T) {
+	// The dropped table should always be accessible until the state reaches `StateNone`.
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	tkDDL := testkit.NewTestKit(t, store)
+	tkDDL.MustExec("use test")
+	tkDDL.MustExec("create table t (id int key)")
+
+	var errs []error
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunBefore", func(job *model.Job) {
+		if job.Type == model.ActionDropTable && job.TableName == "t" {
+			if job.SchemaState == model.StateDeleteOnly || job.SchemaState == model.StateWriteOnly {
+				_, err := dom.InfoSchema().TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
+				errs = append(errs, err)
+			}
+		}
+	})
+	tkDDL.MustExec("drop table t")
+
+	testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunBefore")
+	for _, err := range errs {
+		require.NoError(t, err)
+	}
+	require.True(t, len(errs) > 0)
+}

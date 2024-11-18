@@ -593,8 +593,6 @@ func TestRequestBuilder7(t *testing.T) {
 		{kv.ReplicaReadFollower, "Follower"},
 		{kv.ReplicaReadMixed, "Mixed"},
 	} {
-		// copy iterator variable into a new variable, see issue #27779
-		replicaRead := replicaRead
 		t.Run(replicaRead.src, func(t *testing.T) {
 			dctx := NewDistSQLContextForTest()
 			dctx.ReplicaReadType = replicaRead.replicaReadType
@@ -735,8 +733,6 @@ func TestScanLimitConcurrency(t *testing.T) {
 		{tipb.ExecType_TypeTableScan, 1000000, dctx.DistSQLConcurrency, "TblScan_SessionVars"},
 		{tipb.ExecType_TypeIndexScan, 1000000, dctx.DistSQLConcurrency, "IdxScan_SessionVars"},
 	} {
-		// copy iterator variable into a new variable, see issue #27779
-		tt := tt
 		t.Run(tt.src, func(t *testing.T) {
 			firstExec := &tipb.Executor{Tp: tt.tp}
 			switch tt.tp {

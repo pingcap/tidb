@@ -510,6 +510,7 @@ func loadTableRanges(
 		zap.String("range start", hex.EncodeToString(ranges[0].StartKey)),
 		zap.String("range end", hex.EncodeToString(ranges[len(ranges)-1].EndKey)),
 		zap.Int("range count", len(ranges)))
+	failpoint.InjectCall("afterLoadTableRanges", len(ranges))
 	return ranges, nil
 }
 
@@ -845,12 +846,17 @@ func (dc *ddlCtx) writePhysicalTableRecord(
 	t table.PhysicalTable,
 	bfWorkerType backfillerType,
 	reorgInfo *reorgInfo,
-) error {
+) (err error) {
 	startKey, endKey := reorgInfo.StartKey, reorgInfo.EndKey
 
 	if err := dc.isReorgRunnable(reorgInfo.Job.ID, false); err != nil {
 		return errors.Trace(err)
 	}
+	defer func() {
+		if err != nil && ctx.Err() != nil {
+			err = context.Cause(ctx)
+		}
+	}()
 
 	failpoint.Inject("MockCaseWhenParseFailure", func(val failpoint.Value) {
 		//nolint:forcetypeassert
@@ -931,6 +937,7 @@ func (dc *ddlCtx) writePhysicalTableRecord(
 							zap.Int64("job ID", reorgInfo.ID),
 							zap.Error(err2))
 					}
+					failpoint.InjectCall("afterUpdateReorgMeta")
 				}
 			}
 		}

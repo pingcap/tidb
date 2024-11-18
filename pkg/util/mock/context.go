@@ -18,6 +18,7 @@ package mock
 import (
 	"context"
 	"fmt"
+	"iter"
 	"sync"
 	"time"
 
@@ -467,7 +468,7 @@ func (c *Context) GoCtx() context.Context {
 }
 
 // UpdateColStatsUsage updates the column stats usage.
-func (*Context) UpdateColStatsUsage(_ []model.TableItemID) {}
+func (*Context) UpdateColStatsUsage(_ iter.Seq[model.TableItemID]) {}
 
 // StoreIndexUsage strores the index usage information.
 func (*Context) StoreIndexUsage(_ int64, _ int64, _ int64) {}
@@ -617,8 +618,15 @@ func (*Context) GetCommitWaitGroup() *sync.WaitGroup {
 	return nil
 }
 
-// NewContext creates a new mocked sessionctx.Context.
-func NewContext() *Context {
+// NewContextDeprecated creates a new mocked sessionctx.Context.
+// Deprecated: This method is only used for some legacy code.
+// DO NOT use mock.Context in new production code, and use the real Context instead.
+func NewContextDeprecated() *Context {
+	return newContext()
+}
+
+// newContext creates a new mocked sessionctx.Context.
+func newContext() *Context {
 	ctx, cancel := context.WithCancel(context.Background())
 	sctx := &Context{
 		values: make(map[fmt.Stringer]any),

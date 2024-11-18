@@ -555,8 +555,6 @@ func TestValidate(t *testing.T) {
 	}
 
 	for _, tc := range testCases {
-		// copy iterator variable into a new variable, see issue #27779
-		tc := tc
 		t.Run(tc.key, func(t *testing.T) {
 			_, err := GetSysVar(tc.key).Validate(v, tc.value, ScopeSession)
 			if tc.error {
@@ -597,8 +595,6 @@ func TestValidateStmtSummary(t *testing.T) {
 	}
 
 	for _, tc := range testCases {
-		// copy iterator variable into a new variable, see issue #27779
-		tc := tc
 		t.Run(tc.key, func(t *testing.T) {
 			_, err := GetSysVar(tc.key).Validate(v, tc.value, ScopeGlobal)
 			if tc.error {

@@ -72,8 +72,10 @@ func TestIssue24210(t *testing.T) {
 func TestUnionIssue(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
-	// Issue25506
+	// Issue56640
 	tk.MustExec("use test")
+	tk.MustQuery("(select cast('abcdefghijklmnopqrstuvwxyz' as char) as c1) union all (select 1 where false)").Check(testkit.Rows("abcdefghijklmnopqrstuvwxyz"))
+	// Issue25506
 	tk.MustExec("drop table if exists tbl_3, tbl_23")
 	tk.MustExec("create table tbl_3 (col_15 bit(20))")
 	tk.MustExec("insert into tbl_3 values (0xFFFF)")
@@ -744,4 +746,23 @@ func TestCalculateBatchSize(t *testing.T) {
 	require.Equal(t, 1024, executor.CalculateBatchSize(10, 1024, 20000))
 	require.Equal(t, 258, executor.CalculateBatchSize(10, 1024, 258))
 	require.Equal(t, 1024, executor.CalculateBatchSize(0, 1024, 20000))
+}
+
+func TestIssue55881(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test;")
+	tk.MustExec("drop table if exists aaa;")
+	tk.MustExec("drop table if exists bbb;")
+	tk.MustExec("create table aaa(id int, value int);")
+	tk.MustExec("create table bbb(id int, value int);")
+	tk.MustExec("insert into aaa values(1,2),(2,3)")
+	tk.MustExec("insert into bbb values(1,2),(2,3),(3,4)")
+	// set tidb_executor_concurrency to 1 to let the issue happens with high probability.
+	tk.MustExec("set tidb_executor_concurrency=1;")
+	// this is a random issue, so run it 100 times to increase the probability of the issue.
+	for i := 0; i < 100; i++ {
+		tk.MustQuery("with cte as (select * from aaa) select id, (select id from (select * from aaa where aaa.id != bbb.id union all select * from cte union all select * from cte) d limit 1)," +
+			"(select max(value) from (select * from cte union all select * from cte union all select * from aaa where aaa.id > bbb.id)) from bbb;")
+	}
 }
