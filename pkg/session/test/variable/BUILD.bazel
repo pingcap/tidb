@@ -8,7 +8,7 @@ go_test(
         "variable_test.go",
     ],
     flaky = True,
-    shard_count = 9,
+    shard_count = 11,
     deps = [
         "//pkg/config",
         "//pkg/kv",
@@ -19,10 +19,13 @@ go_test(
         "//pkg/testkit/testmain",
         "//pkg/testkit/testsetup",
         "//pkg/util/dbterror/exeerrors",
+        "//pkg/util/logutil",
         "//pkg/util/memory",
         "@com_github_pingcap_failpoint//:failpoint",
         "@com_github_stretchr_testify//require",
         "@com_github_tikv_client_go_v2//tikv",
         "@org_uber_go_goleak//:goleak",
+        "@org_uber_go_zap//:zap",
+        "@org_uber_go_zap//zapcore",
     ],
 )
