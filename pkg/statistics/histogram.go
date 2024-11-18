@@ -993,21 +993,21 @@ func (hg *Histogram) OutOfRangeRowCount(
 	histL := convertDatumToScalar(hg.GetLower(0), commonPrefix)
 	histR := convertDatumToScalar(hg.GetUpper(hg.Len()-1), commonPrefix)
 	histWidth := histR - histL
+	// If we find that the histogram width is too small or too large - we still may need to consider
+	// the impact of modifications to the table
 	histInvalid := false
 	if histWidth <= 0 {
 		if !allowUseModifyCount {
 			return 0
-		} else {
-			histInvalid = true
 		}
+		histInvalid = true
 	}
 	if math.IsInf(histWidth, 1) {
 		if !allowUseModifyCount {
 			// The histogram is too wide. As a quick fix, we return 0 to indicate that the overlap percentage is near 0.
 			return 0
-		} else {
-			histInvalid = true
 		}
+		histInvalid = true
 	}
 	boundL := histL - histWidth
 	boundR := histR + histWidth
