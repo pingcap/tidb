@@ -56,6 +56,7 @@ func TestOuter2Inner(t *testing.T) {
 	}
 }
 
+// can not add this test case to TestOuter2Inner because the collation_connection is different
 func TestOuter2InnerIssue55886(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -65,7 +66,6 @@ func TestOuter2InnerIssue55886(t *testing.T) {
 	tk.MustExec("drop table if exists t2")
 	tk.MustExec("create table t1(c_foveoe text, c_jbb text, c_cz text not null)")
 	tk.MustExec("create table t2(c_g7eofzlxn int)")
-	// can not add this test case to TestOuter2Inner because the collation_connection is different
 	tk.MustExec("set collation_connection = 'latin1_bin'")
 
 	var input Input
