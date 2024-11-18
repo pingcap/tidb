@@ -106,7 +106,11 @@ func RunRestoreRaw(c context.Context, g glue.Glue, cmdName string, cfg *RestoreR
 		return errors.Trace(err)
 	}
 	reader := metautil.NewMetaReader(backupMeta, s, &cfg.CipherInfo)
+<<<<<<< HEAD
 	if err = client.InitBackupMeta(c, backupMeta, u, reader); err != nil {
+=======
+	if err = client.LoadSchemaIfNeededAndInitClient(c, backupMeta, u, reader, true); err != nil {
+>>>>>>> 4f047be191b (br: restore checksum shouldn't rely on backup checksum (#56712))
 		return errors.Trace(err)
 	}
 
@@ -118,7 +122,7 @@ func RunRestoreRaw(c context.Context, g glue.Glue, cmdName string, cfg *RestoreR
 	if err != nil {
 		return errors.Trace(err)
 	}
-	archiveSize := reader.ArchiveSize(ctx, files)
+	archiveSize := metautil.ArchiveSize(files)
 	g.Record(summary.RestoreDataSize, archiveSize)
 
 	if len(files) == 0 {
