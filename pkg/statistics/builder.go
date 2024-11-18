@@ -16,7 +16,6 @@ package statistics
 
 import (
 	"bytes"
-	"fmt"
 	"math"
 
 	"github.com/pingcap/errors"
@@ -312,7 +311,7 @@ func BuildHistAndTopN(
 	} else {
 		samples = collector.Samples
 	}
-	err := sortSampleItems(sc, samples)
+	err := sortSampleItemsByBinary(sc, samples, getComparedBytes)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -337,20 +336,6 @@ func BuildHistAndTopN(
 	}
 	curCnt := float64(0)
 	var corrXYSum float64
-	fmt.Println("check data")
-	for i := int64(0); i < sampleNum; i++ {
-		strstr, err := samples[i].Value.ToString()
-		if err != nil {
-			continue
-		}
-		fmt.Printf("str: %s\n", strstr)
-		sampleBytes, err := getComparedBytes(samples[i].Value)
-		if err != nil {
-			continue
-		}
-		fmt.Printf("% X\n", sampleBytes)
-	}
-	fmt.Println("start debug")
 	// Iterate through the samples
 	for i := int64(0); i < sampleNum; i++ {
 		if isColumn {
@@ -376,9 +361,6 @@ func BuildHistAndTopN(
 		}
 		// case 2-2, now topn is empty: append the "current" count directly
 		if len(topNList) == 0 {
-			fmt.Println("===== =======")
-			fmt.Printf("first: % X %d\n", cur)
-			fmt.Println("===== =======")
 			topNList = append(topNList, TopNMeta{Encoded: cur, Count: uint64(curCnt)})
 			cur, curCnt = sampleBytes, 1
 			continue
@@ -397,27 +379,11 @@ func BuildHistAndTopN(
 		}
 		topNList = append(topNList, TopNMeta{})
 		copy(topNList[j+1:], topNList[j:])
-		fmt.Println("===== =======")
-		fmt.Printf("insert: % X %d %d\n", cur, curCnt, j)
 		topNList[j] = TopNMeta{Encoded: cur, Count: uint64(curCnt)}
 		if len(topNList) > numTopN {
 			topNList = topNList[:numTopN]
 		}
-
-		for _, item := range topNList {
-			fmt.Printf("% X %d %d\n", item.Encoded, item.Count, j)
-		}
-		fmt.Println("===== =======")
 		cur, curCnt = sampleBytes, 1
-	}
-	checkMap := make(map[string]struct{}, len(samples))
-	for _, sample := range topNList {
-		_, ok := checkMap[string(sample.Encoded)]
-		if !ok {
-			checkMap[string(sample.Encoded)] = struct{}{}
-		} else {
-			fmt.Println("WTF")
-		}
 	}
 	// Calc the correlation of the column between the handle column.
 	if isColumn {
@@ -467,6 +433,9 @@ func BuildHistAndTopN(
 				if bytes.Equal(sampleBytes, topNList[j].Encoded) {
 					// This should never happen, but we met this panic before, so we add this check here.
 					// See: https://github.com/pingcap/tidb/issues/35948
+					//
+					// it has been fixed at https://github.com/pingcap/tidb/pull/57464
+					// so it can remove this debug code after 2025-11-18
 					if foundTwice {
 						datumString, err := firstTimeSample.ToString()
 						if err != nil {
@@ -481,11 +450,6 @@ func BuildHistAndTopN(
 							zap.Binary("sampleBytes", sampleBytes),
 							zap.Binary("topNBytes", topNList[j].Encoded),
 						)
-						// NOTE: if we don't return here, we may meet panic in the following code.
-						// The i may decrease to a negative value.
-						// We haven't fix the issue here, because we don't know how to
-						// remove the invalid sample data from the samples.
-						break
 					}
 					// First time to find the same value in topN: need to record the sample data for debugging.
 					firstTimeSample = samples[i].Value

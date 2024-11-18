@@ -15,6 +15,7 @@
 package statistics
 
 import (
+	"bytes"
 	"context"
 	"slices"
 	"time"
@@ -70,6 +71,23 @@ func sortSampleItems(sc *stmtctx.StatementContext, items []*SampleItem) error {
 			return -1
 		}
 		return cmp
+	})
+	return err
+}
+
+func sortSampleItemsByBinary(sc *stmtctx.StatementContext, items []*SampleItem, getComparedBytes func(datum types.Datum) ([]byte, error)) error {
+	var err error
+	slices.SortStableFunc(items, func(i, j *SampleItem) int {
+		var ib, jb []byte
+		ib, err = getComparedBytes(i.Value)
+		if err != nil {
+			return 1
+		}
+		jb, err = getComparedBytes(j.Value)
+		if err != nil {
+			return -1
+		}
+		return bytes.Compare(ib, jb)
 	})
 	return err
 }
