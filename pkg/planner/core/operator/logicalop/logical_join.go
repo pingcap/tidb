@@ -383,7 +383,7 @@ func (p *LogicalJoin) PushDownTopN(topNLogicalPlan base.LogicalPlan, opt *optimi
 
 	// The LogicalJoin may be also a LogicalApply. So we must use self to set parents.
 	if topN != nil {
-		if topnEliminated {
+		if topnEliminated && len(topN.ByItems) > 0 {
 			sort := LogicalSort{ByItems: topN.ByItems}.Init(p.SCtx(), p.QueryBlockOffset())
 			sort.SetChildren(p.Self())
 			return sort
