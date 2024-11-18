@@ -530,7 +530,8 @@ func (s *mdLoaderSetup) constructFileInfo(ctx context.Context, path string, size
 			compressRatio, err2 := SampleFileCompressRatio(ctx, info.FileMeta, s.loader.GetStore())
 			if err2 != nil {
 				logger.Error("fail to calculate data file compress ratio", zap.String("category", "loader"),
-					zap.String("schema", res.Schema), zap.String("table", res.Name), zap.Stringer("type", res.Type))
+					zap.String("schema", res.Schema), zap.String("table", res.Name),
+					zap.Stringer("type", res.Type), zap.Error(err2))
 			} else {
 				info.FileMeta.RealSize = int64(compressRatio * float64(info.FileMeta.FileSize))
 			}
