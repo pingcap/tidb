@@ -75,7 +75,7 @@ func sortSampleItems(sc *stmtctx.StatementContext, items []*SampleItem) error {
 	return err
 }
 
-func sortSampleItemsByBinary(sc *stmtctx.StatementContext, items []*SampleItem, getComparedBytes func(datum types.Datum) ([]byte, error)) error {
+func sortSampleItemsByBinary(items []*SampleItem, getComparedBytes func(datum types.Datum) ([]byte, error)) error {
 	var err error
 	slices.SortStableFunc(items, func(i, j *SampleItem) int {
 		var ib, jb []byte

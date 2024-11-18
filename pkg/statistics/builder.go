@@ -311,7 +311,7 @@ func BuildHistAndTopN(
 	} else {
 		samples = collector.Samples
 	}
-	err := sortSampleItemsByBinary(sc, samples, getComparedBytes)
+	err := sortSampleItemsByBinary(samples, getComparedBytes)
 	if err != nil {
 		return nil, nil, err
 	}
