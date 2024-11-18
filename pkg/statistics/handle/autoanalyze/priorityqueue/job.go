@@ -194,7 +194,7 @@ func IsDynamicPartitionedTableAnalysisJob(job AnalysisJob) bool {
 func asJSONIndicators(indicators Indicators) statstypes.IndicatorsJSON {
 	return statstypes.IndicatorsJSON{
 		ChangePercentage:     fmt.Sprintf("%.2f%%", indicators.ChangePercentage*100),
-		TableSize:            fmt.Sprintf("%.2frows", indicators.TableSize),
+		TableSize:            fmt.Sprintf("%.2f", indicators.TableSize),
 		LastAnalysisDuration: fmt.Sprintf("%.2fs", indicators.LastAnalysisDuration.Seconds()),
 	}
 }
