@@ -18,6 +18,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/types"
+	"github.com/pingcap/tidb/pkg/planner/cascades/base"
 )
 
 // DistanceMetric is the distance metric used by the vector index.
@@ -76,6 +77,27 @@ type IndexInfo struct {
 	Global        bool             `json:"is_global"`    // Whether the index is global.
 	MVIndex       bool             `json:"mv_index"`     // Whether the index is multivalued index.
 	VectorInfo    *VectorIndexInfo `json:"vector_index"` // VectorInfo is the vector index information.
+}
+
+// Hash64 implement HashEquals interface.
+func (index *IndexInfo) Hash64(h base.Hasher) {
+	h.HashInt64(index.ID)
+}
+
+// Equals implements HashEquals interface.
+func (index *IndexInfo) Equals(other any) bool {
+	// any(nil) can still be converted as (*IndexInfo)(nil)
+	index2, ok := other.(*IndexInfo)
+	if !ok {
+		return false
+	}
+	if index == nil {
+		return index2 == nil
+	}
+	if index2 == nil {
+		return false
+	}
+	return index.ID == index2.ID
 }
 
 // Clone clones IndexInfo.
