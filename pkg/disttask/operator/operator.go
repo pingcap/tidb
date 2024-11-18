@@ -93,6 +93,11 @@ func (c *AsyncOperator[T, R]) SetSink(ch DataChannel[R]) {
 	c.pool.SetResultSender(ch.Channel())
 }
 
+// TuneWorkerPoolSize tunes the worker pool size.
+func (c *AsyncOperator[T, R]) TuneWorkerPoolSize(workerNum int32) {
+	c.pool.Tune(workerNum)
+}
+
 type asyncWorker[T, R any] struct {
 	transform func(T) R
 }

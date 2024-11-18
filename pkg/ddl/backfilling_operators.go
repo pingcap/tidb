@@ -41,6 +41,7 @@ import (
 	"github.com/pingcap/tidb/pkg/resourcemanager/pool/workerpool"
 	"github.com/pingcap/tidb/pkg/resourcemanager/util"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/tablecodec"
@@ -172,9 +173,13 @@ func NewAddIndexIngestPipeline(
 	}
 	srcChkPool := createChunkPool(copCtx, concurrency, reorgMeta.BatchSize)
 	readerCnt, writerCnt := expectedIngestWorkerCnt(concurrency, avgRowSize)
+	rm := reorgMeta
+	if rm.IsDistReorg {
+		rm = nil
+	}
 
 	srcOp := NewTableScanTaskSource(ctx, store, tbl, startKey, endKey, cpMgr)
-	scanOp := NewTableScanOperator(ctx, sessPool, copCtx, srcChkPool, readerCnt, cpMgr, reorgMeta.BatchSize)
+	scanOp := NewTableScanOperator(ctx, sessPool, copCtx, srcChkPool, readerCnt, cpMgr, reorgMeta.BatchSize, rm)
 	ingestOp := NewIndexIngestOperator(ctx, copCtx, backendCtx, sessPool,
 		tbl, indexes, engines, srcChkPool, writerCnt, reorgMeta, cpMgr, rowCntListener)
 	sinkOp := newIndexWriteResultSink(ctx, backendCtx, tbl, indexes, cpMgr, rowCntListener)
@@ -239,7 +244,7 @@ func NewWriteIndexToExternalStoragePipeline(
 	})
 
 	srcOp := NewTableScanTaskSource(ctx, store, tbl, startKey, endKey, nil)
-	scanOp := NewTableScanOperator(ctx, sessPool, copCtx, srcChkPool, readerCnt, nil, reorgMeta.BatchSize)
+	scanOp := NewTableScanOperator(ctx, sessPool, copCtx, srcChkPool, readerCnt, nil, reorgMeta.BatchSize, nil)
 	writeOp := NewWriteExternalStoreOperator(
 		ctx, copCtx, sessPool, jobID, subtaskID,
 		tbl, indexes, extStore, srcChkPool, writerCnt,
@@ -482,6 +487,7 @@ func NewTableScanOperator(
 	concurrency int,
 	cpMgr *ingest.CheckpointManager,
 	hintBatchSize int,
+	reorgMeta *model.DDLReorgMeta,
 ) *TableScanOperator {
 	totalCount := new(atomic.Int64)
 	pool := workerpool.NewWorkerPool(
@@ -498,6 +504,7 @@ func NewTableScanOperator(
 				cpMgr:         cpMgr,
 				hintBatchSize: hintBatchSize,
 				totalCount:    totalCount,
+				reorgMeta:     reorgMeta,
 			}
 		})
 	return &TableScanOperator{
@@ -521,6 +528,7 @@ type tableScanWorker struct {
 	srcChkPool chan *chunk.Chunk
 
 	cpMgr         *ingest.CheckpointManager
+	reorgMeta     *model.DDLReorgMeta
 	hintBatchSize int
 	totalCount    *atomic.Int64
 }
@@ -588,10 +596,14 @@ func (w *tableScanWorker) scanRecords(task TableScanTask, sender func(IndexRecor
 }
 
 func (w *tableScanWorker) getChunk() *chunk.Chunk {
+	targetCap := ingest.CopReadBatchSize(w.hintBatchSize)
+	if w.reorgMeta != nil {
+		targetCap = ingest.CopReadBatchSize(w.reorgMeta.GetBatchSizeOrDefault(int(variable.GetDDLReorgBatchSize())))
+	}
 	chk := <-w.srcChkPool
-	newCap := ingest.CopReadBatchSize(w.hintBatchSize)
-	if chk.Capacity() != newCap {
-		chk = chunk.NewChunkWithCapacity(w.copCtx.GetBase().FieldTypes, newCap)
+	if chk.Capacity() != targetCap {
+		chk = chunk.NewChunkWithCapacity(w.copCtx.GetBase().FieldTypes, targetCap)
+		logutil.Logger(w.ctx).Info("adjust backfill batch size success", zap.Int("current batch size", targetCap))
 	}
 	chk.Reset()
 	return chk
