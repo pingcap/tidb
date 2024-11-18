@@ -195,6 +195,6 @@ func asJSONIndicators(indicators Indicators) statstypes.IndicatorsJSON {
 	return statstypes.IndicatorsJSON{
 		ChangePercentage:     fmt.Sprintf("%.2f%%", indicators.ChangePercentage*100),
 		TableSize:            fmt.Sprintf("%.2f", indicators.TableSize),
-		LastAnalysisDuration: fmt.Sprintf("%.2fs", indicators.LastAnalysisDuration.Seconds()),
+		LastAnalysisDuration: fmt.Sprintf("%v", indicators.LastAnalysisDuration),
 	}
 }
