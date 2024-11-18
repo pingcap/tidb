@@ -1423,13 +1423,12 @@ func TestAddVectorIndexRollback(t *testing.T) {
 	testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/MockCheckVectorIndexProcess")
 }
 
-func TestAddIndex(t *testing.T) {
+func TestInsertDuplicateBeforeIndexMerge(t *testing.T) {
 	store := testkit.CreateMockStore(t)
-	tkVar := testkit.NewTestKit(t, store)
-	tkVar.MustExec("set @@global.tidb_ddl_enable_fast_reorg = 1")
-	tkVar.MustExec("set @@global.tidb_enable_dist_task=0")
 	tk := testkit.NewTestKit(t, store)
 	tk2 := testkit.NewTestKit(t, store)
+	tk2.MustExec("set @@global.tidb_ddl_enable_fast_reorg = 1")
+	tk2.MustExec("set @@global.tidb_enable_dist_task=0")
 
 	tk.MustExec("use test")
 	tk2.MustExec("use test")
