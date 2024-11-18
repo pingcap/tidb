@@ -1171,16 +1171,16 @@ func TestAdminAlterDDLJobUpdateSysTable(t *testing.T) {
 	insertMockJob2Table(tk, &job)
 	tk.MustExec(fmt.Sprintf("admin alter ddl jobs %d thread = 8;", job.ID))
 	j := getJobMetaByID(t, tk, job.ID)
-	require.Equal(t, j.ReorgMeta.Concurrency, 8)
+	require.Equal(t, j.ReorgMeta.GetConcurrency(), 8)
 
 	tk.MustExec(fmt.Sprintf("admin alter ddl jobs %d batch_size = 256;", job.ID))
 	j = getJobMetaByID(t, tk, job.ID)
-	require.Equal(t, j.ReorgMeta.BatchSize, 256)
+	require.Equal(t, j.ReorgMeta.GetBatchSize(), 256)
 
 	tk.MustExec(fmt.Sprintf("admin alter ddl jobs %d thread = 16, batch_size = 512;", job.ID))
 	j = getJobMetaByID(t, tk, job.ID)
-	require.Equal(t, j.ReorgMeta.Concurrency, 16)
-	require.Equal(t, j.ReorgMeta.BatchSize, 512)
+	require.Equal(t, j.ReorgMeta.GetConcurrency(), 16)
+	require.Equal(t, j.ReorgMeta.GetBatchSize(), 512)
 	deleteJobMetaByID(tk, job.ID)
 }
 

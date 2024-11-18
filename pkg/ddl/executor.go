@@ -4943,10 +4943,10 @@ func newReorgMetaFromVariables(job *model.Job, sctx sessionctx.Context) (*model.
 	reorgMeta.IsFastReorg = variable.EnableFastReorg.Load()
 	reorgMeta.TargetScope = variable.ServiceScope.Load()
 	if sv, ok := sctx.GetSessionVars().GetSystemVar(variable.TiDBDDLReorgWorkerCount); ok {
-		reorgMeta.Concurrency = variable.TidbOptInt(sv, 0)
+		reorgMeta.SetConcurrency(variable.TidbOptInt(sv, 0))
 	}
 	if sv, ok := sctx.GetSessionVars().GetSystemVar(variable.TiDBDDLReorgBatchSize); ok {
-		reorgMeta.BatchSize = variable.TidbOptInt(sv, 0)
+		reorgMeta.SetBatchSize(variable.TidbOptInt(sv, 0))
 	}
 
 	if reorgMeta.IsDistReorg && !reorgMeta.IsFastReorg {
@@ -4971,8 +4971,8 @@ func newReorgMetaFromVariables(job *model.Job, sctx sessionctx.Context) (*model.
 		zap.Bool("enableDistTask", reorgMeta.IsDistReorg),
 		zap.Bool("enableFastReorg", reorgMeta.IsFastReorg),
 		zap.String("targetScope", reorgMeta.TargetScope),
-		zap.Int("concurrency", reorgMeta.Concurrency),
-		zap.Int("batchSize", reorgMeta.BatchSize),
+		zap.Int("concurrency", reorgMeta.GetConcurrency()),
+		zap.Int("batchSize", reorgMeta.GetBatchSize()),
 	)
 	return reorgMeta, nil
 }

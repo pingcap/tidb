@@ -865,8 +865,8 @@ func (w *worker) runOneJobStep(
 							return
 						case model.JobStateRunning:
 							if latestJob.IsAlterable() {
-								job.ReorgMeta.Concurrency = latestJob.ReorgMeta.Concurrency
-								job.ReorgMeta.BatchSize = latestJob.ReorgMeta.BatchSize
+								job.ReorgMeta.SetConcurrency(latestJob.ReorgMeta.GetConcurrency())
+								job.ReorgMeta.SetBatchSize(latestJob.ReorgMeta.GetBatchSize())
 							}
 						}
 					}

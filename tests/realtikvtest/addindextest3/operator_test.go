@@ -17,7 +17,9 @@ package addindextest
 import (
 	"context"
 	"fmt"
+	"github.com/pingcap/tidb/pkg/table/tables"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 
@@ -35,7 +37,6 @@ import (
 	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/table"
-	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/tests/realtikvtest"
@@ -46,6 +47,12 @@ func init() {
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.Path = "127.0.0.1:2379"
 	})
+}
+
+func TestDd(t *testing.T) {
+	for i := 0; i < 1; i++ {
+		TestBackfillOperators(t)
+	}
 }
 
 func TestBackfillOperators(t *testing.T) {
@@ -88,9 +95,10 @@ func TestBackfillOperators(t *testing.T) {
 	var chunkResults []ddl.IndexRecordChunk
 	{
 		// Make sure the buffer is large enough since the chunks do not recycled.
-		srcChkPool := make(chan *chunk.Chunk, regionCnt*2)
-		for i := 0; i < regionCnt*2; i++ {
-			srcChkPool <- chunk.NewChunkWithCapacity(copCtx.GetBase().FieldTypes, 100)
+		srcChkPool := &sync.Pool{
+			New: func() interface{} {
+				return chunk.NewChunkWithCapacity(copCtx.GetBase().FieldTypes, 100)
+			},
 		}
 
 		ctx := context.Background()
@@ -134,7 +142,11 @@ func TestBackfillOperators(t *testing.T) {
 			values = append(values, val)
 		}
 
-		srcChkPool := make(chan *chunk.Chunk, regionCnt*2)
+		srcChkPool := &sync.Pool{
+			New: func() interface{} {
+				return chunk.NewChunkWithCapacity(copCtx.GetBase().FieldTypes, 100)
+			},
+		}
 		pTbl := tbl.(table.PhysicalTable)
 		index := tables.NewIndex(pTbl.GetPhysicalID(), tbl.Meta(), idxInfo)
 		mockBackendCtx := &ingest.MockBackendCtx{}

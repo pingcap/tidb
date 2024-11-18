@@ -194,7 +194,7 @@ func newBackfillCtx(id int, rInfo *reorgInfo,
 		id = int(backfillContextID.Add(1))
 	}
 
-	batchCnt := rInfo.ReorgMeta.GetBatchSizeOrDefault(int(variable.GetDDLReorgBatchSize()))
+	batchCnt := rInfo.ReorgMeta.GetBatchSize()
 	return &backfillCtx{
 		id:         id,
 		ddlCtx:     rInfo.jobCtx.oldDDLCtx,
@@ -432,7 +432,7 @@ func (w *backfillWorker) run(d *ddlCtx, bf backfiller, job *model.Job) {
 
 		// Change the batch size dynamically.
 		currentBatchCnt := w.GetCtx().batchCnt
-		targetBatchSize := job.ReorgMeta.GetBatchSizeOrDefault(int(variable.GetDDLReorgBatchSize()))
+		targetBatchSize := job.ReorgMeta.GetBatchSize()
 		if targetBatchSize != currentBatchCnt {
 			w.GetCtx().batchCnt = targetBatchSize
 			logger.Info("adjust backfill batch size success",
@@ -707,7 +707,7 @@ func (dc *ddlCtx) runAddIndexInLocalIngestMode(
 
 	//nolint: forcetypeassert
 	discovery := dc.store.(tikv.Storage).GetRegionCache().PDClient().GetServiceDiscovery()
-	importConc := job.ReorgMeta.GetConcurrencyOrDefault(int(variable.GetDDLReorgWorkerCounter()))
+	importConc := job.ReorgMeta.GetConcurrency()
 	bcCtx, err := ingest.LitBackCtxMgr.Register(
 		ctx, job.ID, hasUnique, nil, discovery, job.ReorgMeta.ResourceGroupName, importConc, job.RealStartTS)
 	if err != nil {
@@ -796,7 +796,7 @@ func (dc *ddlCtx) runAddIndexInLocalIngestMode(
 				return
 			case <-ticker.C:
 				newReaderCnt, newWriterCnt := expectedIngestWorkerCnt(
-					job.ReorgMeta.GetConcurrencyOrDefault(int(variable.GetDDLReorgWorkerCounter())),
+					job.ReorgMeta.GetConcurrency(),
 					avgRowSize)
 				reader.TuneWorkerPoolSize(int32(newReaderCnt))
 				writer.TuneWorkerPoolSize(int32(newWriterCnt))
@@ -1021,7 +1021,7 @@ func (dc *ddlCtx) writePhysicalTableRecord(
 				return
 			case <-ticker.C:
 				currentWorkerCnt := scheduler.currentWorkerSize()
-				targetWorkerCnt := reorgInfo.ReorgMeta.GetConcurrencyOrDefault(int(variable.GetDDLReorgWorkerCounter()))
+				targetWorkerCnt := reorgInfo.ReorgMeta.GetConcurrency()
 				if currentWorkerCnt != targetWorkerCnt {
 					err := scheduler.adjustWorkerSize()
 					if err != nil {

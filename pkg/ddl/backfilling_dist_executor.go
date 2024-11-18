@@ -27,7 +27,6 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/backend/external"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/meta/model"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/tikv/client-go/v2/tikv"
 	"go.uber.org/zap"
@@ -153,7 +152,7 @@ func (s *backfillDistExecutor) getBackendCtx() (ingest.BackendCtx, error) {
 		ddlObj.etcdCli,
 		discovery,
 		job.ReorgMeta.ResourceGroupName,
-		job.ReorgMeta.GetConcurrencyOrDefault(int(variable.GetDDLReorgWorkerCounter())),
+		job.ReorgMeta.GetConcurrency(),
 		job.RealStartTS,
 	)
 }

@@ -201,13 +201,13 @@ func (e *AlterDDLJobExec) updateReorgMeta(job *model.Job, byWho model.AdminComma
 		case core.AlterDDLJobThread:
 			if opt.Value != nil {
 				cons := opt.Value.(*expression.Constant)
-				job.ReorgMeta.Concurrency = int(cons.Value.GetInt64())
+				job.ReorgMeta.SetConcurrency(int(cons.Value.GetInt64()))
 			}
 			job.AdminOperator = byWho
 		case core.AlterDDLJobBatchSize:
 			if opt.Value != nil {
 				cons := opt.Value.(*expression.Constant)
-				job.ReorgMeta.BatchSize = int(cons.Value.GetInt64())
+				job.ReorgMeta.SetBatchSize(int(cons.Value.GetInt64()))
 			}
 			job.AdminOperator = byWho
 		default:

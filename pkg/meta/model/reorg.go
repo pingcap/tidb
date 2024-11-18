@@ -16,6 +16,7 @@ package model
 
 import (
 	"encoding/json"
+	"sync/atomic"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -71,26 +72,31 @@ type DDLReorgMeta struct {
 	ResourceGroupName string                           `json:"resource_group_name"`
 	Version           int64                            `json:"version"`
 	TargetScope       string                           `json:"target_scope"`
-	// These two variables are set when corresponding session variables are set explicitly. When they are set,
-	// user cannot change it by setting the global one. Otherwise, they can be adjusted dynamically through global var.
-	Concurrency int `json:"concurrency"`
-	BatchSize   int `json:"batch_size"`
+	// These two variables are used to control the concurrency and batch size of the reorganization process.
+	// They can be adjusted dynamically through `admin alter ddl jobs` command.
+	// Note: Don't get or set these two variables directly, use the functions instead.
+	Concurrency int64 `json:"concurrency"`
+	BatchSize   int64 `json:"batch_size"`
 }
 
-// GetConcurrencyOrDefault gets the concurrency from DDLReorgMeta or returns the default value.
-func (dm *DDLReorgMeta) GetConcurrencyOrDefault(defaultVal int) int {
-	if dm == nil || dm.Concurrency == 0 {
-		return defaultVal
-	}
-	return dm.Concurrency
+// GetConcurrency gets the concurrency from DDLReorgMeta.
+func (dm *DDLReorgMeta) GetConcurrency() int {
+	return int(atomic.LoadInt64(&dm.Concurrency))
 }
 
-// GetBatchSizeOrDefault gets the batch size from DDLReorgMeta or returns the default value.
-func (dm *DDLReorgMeta) GetBatchSizeOrDefault(defaultVal int) int {
-	if dm == nil || dm.BatchSize == 0 {
-		return defaultVal
-	}
-	return dm.BatchSize
+// SetConcurrency sets the concurrency in DDLReorgMeta.
+func (dm *DDLReorgMeta) SetConcurrency(concurrency int) {
+	atomic.StoreInt64(&dm.Concurrency, int64(concurrency))
+}
+
+// GetBatchSize gets the batch size from DDLReorgMeta.
+func (dm *DDLReorgMeta) GetBatchSize() int {
+	return int(atomic.LoadInt64(&dm.BatchSize))
+}
+
+// SetBatchSize sets the batch size in DDLReorgMeta.
+func (dm *DDLReorgMeta) SetBatchSize(batchSize int) {
+	atomic.StoreInt64(&dm.BatchSize, int64(batchSize))
 }
 
 const (
