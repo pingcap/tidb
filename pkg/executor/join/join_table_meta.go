@@ -66,8 +66,8 @@ type joinTableMeta struct {
 	fakeKeyByte []byte
 }
 
-func (meta *joinTableMeta) getSerializedKeyLength(rowStart unsafe.Pointer) uint64 {
-	return *(*uint64)(unsafe.Add(rowStart, sizeOfNextPtr+meta.nullMapLength))
+func (meta *joinTableMeta) getSerializedKeyLength(rowStart unsafe.Pointer) uint32 {
+	return *(*uint32)(unsafe.Add(rowStart, sizeOfNextPtr+meta.nullMapLength))
 }
 
 func (meta *joinTableMeta) isReadNullMapThreadSafe(columnIndex int) bool {

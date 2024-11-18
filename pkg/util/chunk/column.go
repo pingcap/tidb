@@ -16,6 +16,7 @@ package chunk
 
 import (
 	"fmt"
+	"math"
 	"math/bits"
 	"math/rand"
 	"reflect"
@@ -383,6 +384,7 @@ func (c *Column) AppendEnum(enum types.Enum) {
 const (
 	sizeInt64      = int(unsafe.Sizeof(int64(0)))
 	sizeUint64     = int(unsafe.Sizeof(uint64(0)))
+	sizeUint32     = int(unsafe.Sizeof(uint32(0)))
 	sizeFloat32    = int(unsafe.Sizeof(float32(0)))
 	sizeFloat64    = int(unsafe.Sizeof(float64(0)))
 	sizeMyDecimal  = int(unsafe.Sizeof(types.MyDecimal{}))
@@ -870,4 +872,24 @@ func (c *Column) DestroyDataForTest() {
 	for i := range dataByteNum {
 		c.data[i] = byte(rand.Intn(256))
 	}
+}
+
+// ContainsVeryLargeElement checks if the column contains element whose length is greater than math.MaxUint32.
+func (c *Column) ContainsVeryLargeElement() bool {
+	if c.length == 0 {
+		return false
+	}
+	if c.isFixed() {
+		return false
+	}
+	if c.offsets[c.length] <= math.MaxUint32 {	
+		return false
+	}
+	for i := 0; i < c.length; i++ {
+		start, end := c.offsets[i], c.offsets[i+1]
+		if end-start > math.MaxUint32 {
+			return true
+		}
+	}
+	return false
 }

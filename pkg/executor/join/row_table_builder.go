@@ -15,8 +15,11 @@
 package join
 
 import (
+	"errors"
 	"hash"
 	"hash/fnv"
+	"math"
+	"strconv"
 	"unsafe"
 
 	"github.com/pingcap/tidb/pkg/expression"
@@ -81,8 +84,31 @@ func (b *rowTableBuilder) initHashValueAndPartIndexForOneChunk(partitionMaskOffs
 	}
 }
 
+func (b *rowTableBuilder) checkMaxLength(chk *chunk.Chunk, hashJoinCtx *HashJoinCtxV2) (bool, int) {
+	// both join key and the columns needed to be converted to row format need to be checked
+	for _, colIdx := range b.buildKeyIndex {
+		column := chk.Column(colIdx)
+		if column.ContainsVeryLargeElement() {
+			return false, colIdx
+		}
+	}
+	for _, colIdx := range hashJoinCtx.hashTableMeta.rowColumnsOrder {
+		column := chk.Column(colIdx)
+		if column.ContainsVeryLargeElement() {
+			return false, colIdx
+		}
+	}
+	return true, 0
+}
+
 func (b *rowTableBuilder) processOneChunk(chk *chunk.Chunk, typeCtx types.Context, hashJoinCtx *HashJoinCtxV2, workerID int) error {
 	b.ResetBuffer(chk)
+	columnSizeExceedLimit, colIdx := b.checkMaxLength(chk, hashJoinCtx)
+	if columnSizeExceedLimit {
+		// this is quite rare, since currently TiDB's max row size is 128MB, so just return an error
+		return errors.New("row table build failed: column contains element larger than 4GB, column index: " + strconv.Itoa(colIdx))
+	}
+
 	b.firstSegRowSizeHint = max(uint(1), uint(float64(len(b.usedRows))/float64(hashJoinCtx.partitionNumber)*float64(1.2)))
 	var err error
 	if b.hasFilter {
@@ -100,6 +126,11 @@ func (b *rowTableBuilder) processOneChunk(chk *chunk.Chunk, typeCtx types.Contex
 		err := codec.SerializeKeys(typeCtx, chk, b.buildKeyTypes[index], colIdx, b.usedRows, b.filterVector, b.nullKeyVector, hashJoinCtx.hashTableMeta.serializeModes[index], b.serializedKeyVectorBuffer)
 		if err != nil {
 			return err
+		}
+	}
+	for _, key := range b.serializedKeyVectorBuffer {
+		if len(key) > math.MaxUint32 {
+			return errors.New("row table build failed: join key contains element larger than 4GB")
 		}
 	}
 	err = checkSQLKiller(&hashJoinCtx.SessCtx.GetSessionVars().SQLKiller, "killedDuringBuild")
@@ -251,34 +282,34 @@ func fillNextRowPtr(seg *rowTableSegment) int {
 	return sizeOfNextPtr
 }
 
-func (b *rowTableBuilder) fillSerializedKeyAndKeyLengthIfNeeded(rowTableMeta *joinTableMeta, hasValidKey bool, logicalRowIndex int, seg *rowTableSegment) int {
-	appendRowLength := 0
+func (b *rowTableBuilder) fillSerializedKeyAndKeyLengthIfNeeded(rowTableMeta *joinTableMeta, hasValidKey bool, logicalRowIndex int, seg *rowTableSegment) int64 {
+	appendRowLength := int64(0)
 	// 1. fill key length if needed
 	if !rowTableMeta.isJoinKeysFixedLength {
 		// if join_key is not fixed length: `key_length` need to be written in rawData
 		// even the join keys is inlined, for example if join key is 2 binary string
 		// then the inlined join key should be: col1_size + col1_data + col2_size + col2_data
 		// and len(col1_size + col1_data + col2_size + col2_data) need to be written before the inlined join key
-		length := uint64(0)
+		length := uint32(0)
 		if hasValidKey {
-			length = uint64(len(b.serializedKeyVectorBuffer[logicalRowIndex]))
+			length = uint32(len(b.serializedKeyVectorBuffer[logicalRowIndex]))
 		} else {
 			length = 0
 		}
 		seg.rawData = append(seg.rawData, unsafe.Slice((*byte)(unsafe.Pointer(&length)), sizeOfLengthField)...)
-		appendRowLength += sizeOfLengthField
+		appendRowLength += int64(sizeOfLengthField)
 	}
 	// 2. fill serialized key if needed
 	if !rowTableMeta.isJoinKeysInlined {
 		// if join_key is not inlined: `serialized_key` need to be written in rawData
 		if hasValidKey {
 			seg.rawData = append(seg.rawData, b.serializedKeyVectorBuffer[logicalRowIndex]...)
-			appendRowLength += len(b.serializedKeyVectorBuffer[logicalRowIndex])
+			appendRowLength += int64(len(b.serializedKeyVectorBuffer[logicalRowIndex]))
 		} else {
 			// if there is no valid key, and the key is fixed length, then write a fake key
 			if rowTableMeta.isJoinKeysFixedLength {
 				seg.rawData = append(seg.rawData, rowTableMeta.fakeKeyByte...)
-				appendRowLength += rowTableMeta.joinKeysLength
+				appendRowLength += int64(rowTableMeta.joinKeysLength)
 			}
 			// otherwise don't need to write since length is 0
 		}
@@ -286,21 +317,21 @@ func (b *rowTableBuilder) fillSerializedKeyAndKeyLengthIfNeeded(rowTableMeta *jo
 	return appendRowLength
 }
 
-func fillRowData(rowTableMeta *joinTableMeta, row *chunk.Row, seg *rowTableSegment) int {
-	appendRowLength := 0
+func fillRowData(rowTableMeta *joinTableMeta, row *chunk.Row, seg *rowTableSegment) int64 {
+	appendRowLength := int64(0)
 	for index, colIdx := range rowTableMeta.rowColumnsOrder {
 		if rowTableMeta.columnsSize[index] > 0 {
 			// fixed size
 			seg.rawData = append(seg.rawData, row.GetRaw(colIdx)...)
-			appendRowLength += rowTableMeta.columnsSize[index]
+			appendRowLength += int64(rowTableMeta.columnsSize[index])
 		} else {
 			// length, raw_data
 			raw := row.GetRaw(colIdx)
-			length := uint64(len(raw))
+			length := uint32(len(raw))
 			seg.rawData = append(seg.rawData, unsafe.Slice((*byte)(unsafe.Pointer(&length)), sizeOfLengthField)...)
-			appendRowLength += sizeOfLengthField
+			appendRowLength += int64(sizeOfLengthField)
 			seg.rawData = append(seg.rawData, raw...)
-			appendRowLength += int(length)
+			appendRowLength += int64(length)
 		}
 	}
 	return appendRowLength
@@ -337,11 +368,11 @@ func (b *rowTableBuilder) appendToRowTable(chk *chunk.Chunk, hashJoinCtx *HashJo
 		}
 		seg.hashValues = append(seg.hashValues, b.hashValue[logicalRowIndex])
 		seg.rowStartOffset = append(seg.rowStartOffset, uint64(len(seg.rawData)))
-		rowLength := 0
+		rowLength := int64(0)
 		// fill next_row_ptr field
-		rowLength += fillNextRowPtr(seg)
+		rowLength += int64(fillNextRowPtr(seg))
 		// fill null_map
-		rowLength += fillNullMap(rowTableMeta, &row, seg)
+		rowLength += int64(fillNullMap(rowTableMeta, &row, seg))
 		// fill serialized key and key length if needed
 		rowLength += b.fillSerializedKeyAndKeyLengthIfNeeded(rowTableMeta, hasValidKey, logicalRowIndex, seg)
 		// fill row data
