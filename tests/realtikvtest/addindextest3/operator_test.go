@@ -96,7 +96,7 @@ func TestBackfillOperators(t *testing.T) {
 	{
 		// Make sure the buffer is large enough since the chunks do not recycled.
 		srcChkPool := &sync.Pool{
-			New: func() interface{} {
+			New: func() any {
 				return chunk.NewChunkWithCapacity(copCtx.GetBase().FieldTypes, 100)
 			},
 		}
@@ -143,7 +143,7 @@ func TestBackfillOperators(t *testing.T) {
 		}
 
 		srcChkPool := &sync.Pool{
-			New: func() interface{} {
+			New: func() any {
 				return chunk.NewChunkWithCapacity(copCtx.GetBase().FieldTypes, 100)
 			},
 		}

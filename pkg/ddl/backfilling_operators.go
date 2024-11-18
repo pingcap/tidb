@@ -271,7 +271,7 @@ func NewWriteIndexToExternalStoragePipeline(
 
 func createChunkPool(copCtx copr.CopContext, reorgMeta *model.DDLReorgMeta) *sync.Pool {
 	return &sync.Pool{
-		New: func() interface{} {
+		New: func() any {
 			return chunk.NewChunkWithCapacity(copCtx.GetBase().FieldTypes,
 				reorgMeta.GetBatchSize())
 		},
