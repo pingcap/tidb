@@ -507,7 +507,7 @@ func (b *builtinAddDateAndDurationSig) vecEvalString(ctx EvalContext, input *chu
 
 		if err != nil {
 			tc.AppendWarning(err)
-			result.SetNull(i, true)
+			result.AppendNull()
 			continue
 		}
 		output := res.String()
@@ -585,7 +585,7 @@ func (b *builtinAddDateAndStringSig) vecEvalString(ctx EvalContext, input *chunk
 
 		if err != nil {
 			tc.AppendWarning(err)
-			result.SetNull(i, true)
+			result.AppendNull()
 			continue
 		}
 
@@ -1127,7 +1127,7 @@ func (b *builtinSubDateAndDurationSig) vecEvalString(ctx EvalContext, input *chu
 
 		if err != nil {
 			tc.AppendWarning(err)
-			result.SetNull(i, true)
+			result.AppendNull()
 			continue
 		}
 		output := res.String()
@@ -1205,7 +1205,7 @@ func (b *builtinSubDateAndStringSig) vecEvalString(ctx EvalContext, input *chunk
 
 		if err != nil {
 			tc.AppendWarning(err)
-			result.SetNull(i, true)
+			result.AppendNull()
 			continue
 		}
 

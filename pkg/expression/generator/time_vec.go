@@ -310,7 +310,7 @@ func (b *{{.SigName}}) vecEval{{ .Output.TypeName }}(ctx EvalContext, input *chu
 		{{ end }}
 		if err != nil {
 			tc.AppendWarning(err)
-			result.SetNull(i, true)
+			result.AppendNull()
 			continue
 		}
 		output := res.String()
@@ -324,7 +324,7 @@ func (b *{{.SigName}}) vecEval{{ .Output.TypeName }}(ctx EvalContext, input *chu
 		{{ end }}
 		if err != nil {
 			tc.AppendWarning(err)
-			result.SetNull(i, true)
+			result.AppendNull()
 			continue
 		}
 
