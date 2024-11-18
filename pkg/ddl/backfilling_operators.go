@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"path"
 	"strconv"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -171,7 +172,7 @@ func NewAddIndexIngestPipeline(
 	if err != nil {
 		return nil, err
 	}
-	srcChkPool := createChunkPool(copCtx, concurrency, reorgMeta.BatchSize)
+	srcChkPool := createChunkPool(copCtx, reorgMeta)
 	readerCnt, writerCnt := expectedIngestWorkerCnt(concurrency, avgRowSize)
 	rm := reorgMeta
 	if rm.IsDistReorg {
@@ -226,7 +227,7 @@ func NewWriteIndexToExternalStoragePipeline(
 	if err != nil {
 		return nil, err
 	}
-	srcChkPool := createChunkPool(copCtx, concurrency, reorgMeta.BatchSize)
+	srcChkPool := createChunkPool(copCtx, reorgMeta)
 	readerCnt, writerCnt := expectedIngestWorkerCnt(concurrency, avgRowSize)
 
 	backend, err := storage.ParseBackend(extStoreURI, nil)
@@ -269,14 +270,13 @@ func NewWriteIndexToExternalStoragePipeline(
 	), nil
 }
 
-func createChunkPool(copCtx copr.CopContext, hintConc, hintBatchSize int) chan *chunk.Chunk {
-	poolSize := ingest.CopReadChunkPoolSize(hintConc)
-	batchSize := ingest.CopReadBatchSize(hintBatchSize)
-	srcChkPool := make(chan *chunk.Chunk, poolSize)
-	for i := 0; i < poolSize; i++ {
-		srcChkPool <- chunk.NewChunkWithCapacity(copCtx.GetBase().FieldTypes, batchSize)
+func createChunkPool(copCtx copr.CopContext, reorgMeta *model.DDLReorgMeta) *sync.Pool {
+	return &sync.Pool{
+		New: func() interface{} {
+			return chunk.NewChunkWithCapacity(copCtx.GetBase().FieldTypes,
+				reorgMeta.GetBatchSizeOrDefault(int(variable.GetDDLReorgBatchSize())))
+		},
 	}
-	return srcChkPool
 }
 
 // TableScanTask contains the start key and the end key of a region.
@@ -483,7 +483,7 @@ func NewTableScanOperator(
 	ctx *OperatorCtx,
 	sessPool opSessPool,
 	copCtx copr.CopContext,
-	srcChkPool chan *chunk.Chunk,
+	srcChkPool *sync.Pool,
 	concurrency int,
 	cpMgr *ingest.CheckpointManager,
 	hintBatchSize int,
@@ -525,7 +525,7 @@ type tableScanWorker struct {
 	copCtx     copr.CopContext
 	sessPool   opSessPool
 	se         *session.Session
-	srcChkPool chan *chunk.Chunk
+	srcChkPool *sync.Pool
 
 	cpMgr         *ingest.CheckpointManager
 	reorgMeta     *model.DDLReorgMeta
@@ -600,7 +600,7 @@ func (w *tableScanWorker) getChunk() *chunk.Chunk {
 	if w.reorgMeta != nil {
 		targetCap = ingest.CopReadBatchSize(w.reorgMeta.GetBatchSizeOrDefault(int(variable.GetDDLReorgBatchSize())))
 	}
-	chk := <-w.srcChkPool
+	chk := w.srcChkPool.Get().(*chunk.Chunk)
 	if chk.Capacity() != targetCap {
 		chk = chunk.NewChunkWithCapacity(w.copCtx.GetBase().FieldTypes, targetCap)
 		logutil.Logger(w.ctx).Info("adjust backfill batch size success", zap.Int("current batch size", targetCap))
@@ -610,7 +610,7 @@ func (w *tableScanWorker) getChunk() *chunk.Chunk {
 }
 
 func (w *tableScanWorker) recycleChunk(chk *chunk.Chunk) {
-	w.srcChkPool <- chk
+	w.srcChkPool.Put(chk)
 }
 
 // WriteExternalStoreOperator writes index records to external storage.
@@ -630,7 +630,7 @@ func NewWriteExternalStoreOperator(
 	tbl table.PhysicalTable,
 	indexes []table.Index,
 	store storage.ExternalStorage,
-	srcChunkPool chan *chunk.Chunk,
+	srcChunkPool *sync.Pool,
 	concurrency int,
 	onClose external.OnCloseFunc,
 	memoryQuota uint64,
@@ -716,7 +716,7 @@ func NewIndexIngestOperator(
 	tbl table.PhysicalTable,
 	indexes []table.Index,
 	engines []ingest.Engine,
-	srcChunkPool chan *chunk.Chunk,
+	srcChunkPool *sync.Pool,
 	concurrency int,
 	reorgMeta *model.DDLReorgMeta,
 	cpMgr *ingest.CheckpointManager,
@@ -777,7 +777,7 @@ type indexIngestExternalWorker struct {
 func (w *indexIngestExternalWorker) HandleTask(ck IndexRecordChunk, send func(IndexWriteResult)) {
 	defer func() {
 		if ck.Chunk != nil {
-			w.srcChunkPool <- ck.Chunk
+			w.srcChunkPool.Put(ck.Chunk)
 		}
 	}()
 	rs, err := w.indexIngestBaseWorker.HandleTask(ck)
@@ -799,7 +799,7 @@ type indexIngestLocalWorker struct {
 func (w *indexIngestLocalWorker) HandleTask(ck IndexRecordChunk, send func(IndexWriteResult)) {
 	defer func() {
 		if ck.Chunk != nil {
-			w.srcChunkPool <- ck.Chunk
+			w.srcChunkPool.Put(ck.Chunk)
 		}
 	}()
 	rs, err := w.indexIngestBaseWorker.HandleTask(ck)
@@ -839,7 +839,7 @@ type indexIngestBaseWorker struct {
 	restore  func(sessionctx.Context)
 
 	writers      []ingest.Writer
-	srcChunkPool chan *chunk.Chunk
+	srcChunkPool *sync.Pool
 	// only available in global sort
 	totalCount *atomic.Int64
 }
