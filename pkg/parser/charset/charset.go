@@ -51,7 +51,7 @@ type Charset struct {
 // Collation is a collation.
 // Now we only support MySQL.
 type Collation struct {
-	ID           int
+	ID           uint16
 	CharsetName  string
 	Name         string
 	IsDefault    bool
