@@ -177,7 +177,7 @@ func NewLocalSSTWriter(
 ) {
 	ret := &LocalSSTWriter{ts: ts}
 
-	ret.defaultCF, defaultCFChan, err = newDefaultCFWriter()
+	ret.defaultCF, ret.defaultCFChan, err = newDefaultCFWriter()
 	if err != nil {
 		return nil, nil, nil, errors.Trace(err)
 	}
