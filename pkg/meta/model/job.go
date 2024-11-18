@@ -588,7 +588,6 @@ func (job *Job) InfoJSON() ([]byte, error) {
 		SchemaID          int64         `json:"schema_id"`
 		TableID           int64         `json:"table_id"`
 		RowCount          int64         `json:"row_count"`
-		Arglen            int           `json:"arg_len"`
 		StartTime         time.Time     `json:"start_time"`
 		Error             *terror.Error `json:"err"`
 		ErrorCount        int64         `json:"err_count"`
@@ -605,7 +604,6 @@ func (job *Job) InfoJSON() ([]byte, error) {
 		SchemaID:    job.SchemaID,
 		TableID:     job.TableID,
 		RowCount:    job.GetRowCount(),
-		Arglen:      len(job.Args),
 		StartTime:   TSConvert2Time(job.StartTS),
 		Error:       job.Error,
 		ErrorCount:  job.ErrorCount,
