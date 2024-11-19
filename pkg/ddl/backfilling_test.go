@@ -16,10 +16,10 @@ package ddl
 
 import (
 	"bytes"
+	"context"
 	"testing"
 	"time"
 
-	"github.com/pingcap/tidb/dumpling/context"
 	"github.com/pingcap/tidb/pkg/ddl/copr"
 	"github.com/pingcap/tidb/pkg/ddl/ingest"
 	distsqlctx "github.com/pingcap/tidb/pkg/distsql/context"
