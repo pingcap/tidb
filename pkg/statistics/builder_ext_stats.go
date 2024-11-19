@@ -98,9 +98,6 @@ func fillExtStatsCorrVals(sctx sessionctx.Context, item *ExtendedStatsItem, cols
 		item.ScalarVals = 0
 		return item
 	}
-
-	sc := sctx.GetSessionVars().StmtCtx
-
 	var err error
 	err = sortSampleItemsByBinary(samplesX, func(datum types.Datum) ([]byte, error) {
 		return getComparedBytesFromColumn(sctx, datum)
