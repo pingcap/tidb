@@ -1333,3 +1333,22 @@ func TestDatumHashEquals(t *testing.T) {
 	require.NotEqual(t, hasher1.Sum64(), hasher2.Sum64())
 	require.False(t, tests[len(tests)-1].d1.Equals(tests[len(tests)-1].d2))
 }
+
+func TestEncodeFloatForNegativeZero(t *testing.T) {
+	floatNum := 0.0
+	floatNum = -floatNum
+
+	b := EncodeFloat(nil, floatNum)
+	_, v, err := DecodeFloat(b)
+	require.NoError(t, err)
+	require.Equal(t, floatNum, v)
+	require.Equal(t, math.Signbit(floatNum), math.Signbit(v))
+	require.Equal(t, math.Atan2(0, v), math.Pi)
+
+	b = EncodeFloatDesc(nil, floatNum)
+	_, v, err = DecodeFloatDesc(b)
+	require.NoError(t, err)
+	require.Equal(t, floatNum, v)
+	require.Equal(t, math.Signbit(floatNum), math.Signbit(v))
+	require.Equal(t, math.Atan2(0, v), math.Pi)
+}
