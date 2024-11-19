@@ -63,7 +63,7 @@ const (
 
 	createSyntaxErrorTable = `
 		CREATE TABLE IF NOT EXISTS %s.` + syntaxErrorTableName + ` (
-			id 	    	bigint NOT NULL AUTO_INCREMENT PRIMARY KEY,
+			id 	    	bigint PRIMARY KEY AUTO_INCREMENT,
 			task_id     bigint NOT NULL,
 			create_time datetime(6) NOT NULL DEFAULT now(6),
 			table_name  varchar(261) NOT NULL,
@@ -170,17 +170,17 @@ const (
 	sqlValuesConflictErrorIndex = "(?,?,?,?,?,?,?,?,?,?)"
 
 	selectIndexConflictKeysReplace = `
-		SELECT _tidb_rowid, raw_key, index_name, raw_value, raw_handle
+		SELECT id, raw_key, index_name, raw_value, raw_handle
 		FROM %s.` + ConflictErrorTableName + `
-		WHERE table_name = ? AND kv_type = 0 AND _tidb_rowid >= ? and _tidb_rowid < ?
-		ORDER BY _tidb_rowid LIMIT ?;
+		WHERE table_name = ? AND kv_type = 0 AND id >= ? and id < ?
+		ORDER BY id LIMIT ?;
 	`
 
 	selectDataConflictKeysReplace = `
-		SELECT _tidb_rowid, raw_key, raw_value
+		SELECT id, raw_key, raw_value
 		FROM %s.` + ConflictErrorTableName + `
-		WHERE table_name = ? AND kv_type <> 0 AND _tidb_rowid >= ? and _tidb_rowid < ?
-		ORDER BY _tidb_rowid LIMIT ?;
+		WHERE table_name = ? AND kv_type <> 0 AND id >= ? and id < ?
+		ORDER BY id LIMIT ?;
 	`
 
 	deleteNullDataRow = `
