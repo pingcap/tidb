@@ -830,13 +830,13 @@ func BuildTableRanges(tbl *model.TableInfo) ([]kv.KeyRange, error) {
 	ranges := make([]kv.KeyRange, 0, len(pis.Definitions)*(len(tbl.Indices)+1)+1)
 	// Handle global index ranges
 	for _, idx := range tbl.Indices {
-		if idx.State == model.StatePublic && idx.Global {
-			idxRanges, err := IndexRangesToKVRanges(nil, tbl.ID, idx.ID, ranger.FullRange())
-			if err != nil {
-				return nil, err
-			}
-			ranges = idxRanges.AppendSelfTo(ranges)
+		if idx.State != model.StatePublic || !idx.Global {
 		}
+		idxRanges, err := IndexRangesToKVRanges(nil, tbl.ID, idx.ID, ranger.FullRange())
+		if err != nil {
+			return nil, err
+		}
+		ranges = idxRanges.AppendSelfTo(ranges)
 	}
 
 	for _, def := range pis.Definitions {
