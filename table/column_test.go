@@ -464,7 +464,19 @@ func TestGetDefaultValue(t *testing.T) {
 	}()
 
 	for _, tt := range tests {
+<<<<<<< HEAD:table/column_test.go
 		ctx.GetSessionVars().StmtCtx.BadNullAsWarning = !tt.strict
+=======
+		sc := ctx.GetSessionVars().StmtCtx
+		if tt.strict {
+			ctx.GetSessionVars().SQLMode = defaultMode
+		} else {
+			ctx.GetSessionVars().SQLMode = mysql.DelSQLMode(defaultMode, mysql.ModeStrictAllTables|mysql.ModeStrictTransTables)
+		}
+		levels := sc.ErrLevels()
+		levels[errctx.ErrGroupNoDefault] = errctx.ResolveErrLevel(false, !tt.strict)
+		sc.SetErrLevels(levels)
+>>>>>>> 91beef4bb14 (*: disable insert null to not-null column for single-row insertion in non-strict mode (#55477)):pkg/table/column_test.go
 		val, err := GetColDefaultValue(ctx, tt.colInfo)
 		if err != nil {
 			require.Errorf(t, tt.err, "%v", err)
@@ -478,7 +490,19 @@ func TestGetDefaultValue(t *testing.T) {
 	}
 
 	for _, tt := range tests {
+<<<<<<< HEAD:table/column_test.go
 		ctx.GetSessionVars().StmtCtx.BadNullAsWarning = !tt.strict
+=======
+		sc := ctx.GetSessionVars().StmtCtx
+		if tt.strict {
+			ctx.GetSessionVars().SQLMode = defaultMode
+		} else {
+			ctx.GetSessionVars().SQLMode = mysql.DelSQLMode(defaultMode, mysql.ModeStrictAllTables|mysql.ModeStrictTransTables)
+		}
+		levels := sc.ErrLevels()
+		levels[errctx.ErrGroupNoDefault] = errctx.ResolveErrLevel(false, !tt.strict)
+		sc.SetErrLevels(levels)
+>>>>>>> 91beef4bb14 (*: disable insert null to not-null column for single-row insertion in non-strict mode (#55477)):pkg/table/column_test.go
 		val, err := GetColOriginDefaultValue(ctx, tt.colInfo)
 		if err != nil {
 			require.Errorf(t, tt.err, "%v", err)
