@@ -20,7 +20,6 @@ import (
 
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/testkit/testdata"
 	"github.com/pingcap/tidb/pkg/testkit/testmain"
 	"github.com/pingcap/tidb/pkg/testkit/testsetup"
@@ -105,7 +104,6 @@ func createTestStatisticsSamples(t *testing.T) *testStatisticsSamples {
 	for i := start; i < len(samples); i += 5 {
 		samples[i].Value.SetInt64(samples[i].Value.GetInt64() + 2)
 	}
-	sc := stmtctx.NewStmtCtx()
 
 	err := sortSampleItemsByBinary(samples, func(datum types.Datum) ([]byte, error) {
 		ctx := mock.NewContext()
@@ -132,7 +130,10 @@ func createTestStatisticsSamples(t *testing.T) *testStatisticsSamples {
 	for i := start; i < rc.count; i += 5 {
 		rc.data[i].SetInt64(rc.data[i].GetInt64() + 2)
 	}
-	require.NoError(t, types.SortDatums(sc.TypeCtx(), rc.data))
+	require.NoError(t, sortDatumByBinary(rc.data, func(datum types.Datum) ([]byte, error) {
+		ctx := mock.NewContext()
+		return getComparedBytesFromColumn(ctx, datum)
+	}))
 
 	s.rc = rc
 

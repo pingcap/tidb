@@ -62,6 +62,23 @@ func CopySampleItems(items []*SampleItem) []*SampleItem {
 	return n
 }
 
+func sortDatumByBinary(items []types.Datum, getComparedBytes func(datum types.Datum) ([]byte, error)) error {
+	var err error
+	slices.SortStableFunc(items, func(i, j types.Datum) int {
+		var ib, jb []byte
+		ib, err = getComparedBytes(i)
+		if err != nil {
+			return 1
+		}
+		jb, err = getComparedBytes(j)
+		if err != nil {
+			return -1
+		}
+		return bytes.Compare(ib, jb)
+	})
+	return err
+}
+
 func sortSampleItemsByBinary(items []*SampleItem, getComparedBytes func(datum types.Datum) ([]byte, error)) error {
 	var err error
 	slices.SortStableFunc(items, func(i, j *SampleItem) int {
