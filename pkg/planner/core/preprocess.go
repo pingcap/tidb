@@ -1914,7 +1914,7 @@ func tryLockMDLAndUpdateSchemaIfNecessary(ctx context.Context, sctx base.PlanCon
 			return nil, err
 		}
 		if !skipLock {
-			logutil.BgLogger().Warn("try to lock table in MDL", zap.Uint64("session ID", sctx.GetSessionVars().ConnectionID), zap.String("table", tableInfo.Name.O), zap.Int64("id", tableInfo.ID), zap.Int64("ver", domainSchemaVer), zap.Any("newRev", tbl.Meta().Revision))
+			logutil.BgLogger().Warn("try to lock table in MDL", zap.Uint64("session ID", sctx.GetSessionVars().ConnectionID), zap.String("table", tableInfo.Name.O), zap.Int64("id", tableInfo.ID), zap.Int64("ver", domainSchemaVer), zap.Any("newRev", tbl.Meta().Revision), zap.Stack("stack"))
 			sctx.GetSessionVars().GetRelatedTableForMDL().Store(tbl.Meta().ID, domainSchemaVer)
 			lockedID = tbl.Meta().ID
 		}
