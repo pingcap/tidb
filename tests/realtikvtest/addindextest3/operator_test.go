@@ -374,3 +374,50 @@ func (p *sessPoolForTest) Get() (sessionctx.Context, error) {
 func (p *sessPoolForTest) Put(sctx sessionctx.Context) {
 	p.pool.Put(sctx.(pools.Resource))
 }
+
+func TestTuneWorkerPoolSize(t *testing.T) {
+	store, dom := realtikvtest.CreateMockStoreAndDomainAndSetup(t)
+	tk := testkit.NewTestKit(t, store)
+	tbl, idxInfo, _, _, copCtx := prepare(t, tk, dom, 10)
+	sessPool := newSessPoolForTest(t, store)
+
+	// Test TableScanOperator.
+	{
+		ctx := context.Background()
+		opCtx, cancel := ddl.NewDistTaskOperatorCtx(ctx, 1, 1)
+		scanOp := ddl.NewTableScanOperator(opCtx, sessPool, copCtx, nil, 2, nil, 0, nil)
+
+		scanOp.Open()
+		require.Equal(t, scanOp.GetWorkerPoolSize(), int32(2))
+		scanOp.TuneWorkerPoolSize(8)
+		require.Equal(t, scanOp.GetWorkerPoolSize(), int32(8))
+		scanOp.TuneWorkerPoolSize(1)
+		require.Equal(t, scanOp.GetWorkerPoolSize(), int32(1))
+
+		cancel()
+		require.NoError(t, opCtx.OperatorErr())
+	}
+
+	// Test IndexIngestOperator.
+	{
+		ctx := context.Background()
+		opCtx, cancel := ddl.NewDistTaskOperatorCtx(ctx, 1, 1)
+		pTbl := tbl.(table.PhysicalTable)
+		index := tables.NewIndex(pTbl.GetPhysicalID(), tbl.Meta(), idxInfo)
+		mockBackendCtx := &ingest.MockBackendCtx{}
+		mockEngine := ingest.NewMockEngineInfo(nil)
+		ingestOp := ddl.NewIndexIngestOperator(opCtx, copCtx, mockBackendCtx, sessPool, pTbl, []table.Index{index},
+			[]ingest.Engine{mockEngine}, nil, 2, nil,
+			nil, &ddl.EmptyRowCntListener{})
+
+		ingestOp.Open()
+		require.Equal(t, ingestOp.GetWorkerPoolSize(), int32(2))
+		ingestOp.TuneWorkerPoolSize(8)
+		require.Equal(t, ingestOp.GetWorkerPoolSize(), int32(8))
+		ingestOp.TuneWorkerPoolSize(1)
+		require.Equal(t, ingestOp.GetWorkerPoolSize(), int32(1))
+
+		cancel()
+		require.NoError(t, opCtx.OperatorErr())
+	}
+}
