@@ -1052,7 +1052,6 @@ func (b *builtinSubStringAndStringSig) vecEvalString(ctx EvalContext, input *chu
 				return err
 			}
 			if isNull {
-				tc.AppendWarning(err)
 				result.AppendNull() // fixed: false
 				continue
 			}

@@ -3002,7 +3002,6 @@ func TestIssue48756(t *testing.T) {
 	))
 	tk.MustQuery("show warnings").Check(testkit.Rows(
 		"Warning 1292 Incorrect time value: '120120519090607'",
-		"Warning 1105 ",
 	))
 }
 
