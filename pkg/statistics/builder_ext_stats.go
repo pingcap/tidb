@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
 )
@@ -101,7 +102,9 @@ func fillExtStatsCorrVals(sctx sessionctx.Context, item *ExtendedStatsItem, cols
 	sc := sctx.GetSessionVars().StmtCtx
 
 	var err error
-	err = sortSampleItems(sc, samplesX)
+	err = sortSampleItemsByBinary(samplesX, func(datum types.Datum) ([]byte, error) {
+		return getComparedBytesFromColumn(sctx, datum)
+	})
 	if err != nil {
 		return nil
 	}
@@ -116,7 +119,9 @@ func fillExtStatsCorrVals(sctx sessionctx.Context, item *ExtendedStatsItem, cols
 	}
 	samplesYInYOrder := make([]*SampleItem, len(samplesYInXOrder))
 	copy(samplesYInYOrder, samplesYInXOrder)
-	err = sortSampleItems(sc, samplesYInYOrder)
+	err = sortSampleItemsByBinary(samplesYInYOrder, func(datum types.Datum) ([]byte, error) {
+		return getComparedBytesFromColumn(sctx, datum)
+	})
 	if err != nil {
 		return nil
 	}
