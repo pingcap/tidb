@@ -47,9 +47,11 @@ func NewImportModeSwitcher(
 	}
 }
 
+var closeOnce sync.Once
+
 // switchToNormalMode switch tikv cluster to normal mode.
 func (switcher *ImportModeSwitcher) SwitchToNormalMode(ctx context.Context) error {
-	sync.OnceFunc(func() { close(switcher.switchCh) })
+	closeOnce.Do(func() { close(switcher.switchCh) })
 	return switcher.switchTiKVMode(ctx, import_sstpb.SwitchMode_Normal)
 }
 
