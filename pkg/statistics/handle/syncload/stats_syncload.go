@@ -301,11 +301,14 @@ func (s *statsSyncLoad) handleOneItemTask(task *statstypes.NeededItemTask) (err 
 			s.statsHandle.SPool().Put(se)
 		}
 	}()
+	var skipTypes map[string]struct{}
 	val, err := sctx.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(variable.TiDBAnalyzeSkipColumnTypes)
 	if err != nil {
 		logutil.BgLogger().Warn("failed to get global variable", zap.Error(err))
+	} else {
+		skipTypes = variable.ParseAnalyzeSkipColumnTypes(val)
 	}
-	skipTypes := variable.ParseAnalyzeSkipColumnTypes(val)
+
 	item := task.Item.TableItemID
 	tbl, ok := s.statsHandle.Get(item.TableID)
 
@@ -341,10 +344,13 @@ func (s *statsSyncLoad) handleOneItemTask(task *statstypes.NeededItemTask) (err 
 			// so we have to get the column info from the domain.
 			wrapper.colInfo = tblInfo.Meta().GetColumnByID(item.ID)
 		}
-		_, skip := skipTypes[types.TypeToStr(wrapper.colInfo.FieldType.GetType(), wrapper.colInfo.FieldType.GetCharset())]
-		if skip {
-			return nil
+		if skipTypes != nil {
+			_, skip := skipTypes[types.TypeToStr(wrapper.colInfo.FieldType.GetType(), wrapper.colInfo.FieldType.GetCharset())]
+			if skip {
+				return nil
+			}
 		}
+
 		// If this column is not analyzed yet and we don't have it in memory.
 		// We create a fake one for the pseudo estimation.
 		if loadNeeded && !analyzed {
