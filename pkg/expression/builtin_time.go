@@ -5259,6 +5259,17 @@ func (b *builtinAddDateAndDurationSig) evalString(ctx EvalContext, row chunk.Row
 	if isNull || err != nil {
 		return "", isNull, err
 	}
+
+	mode := sqlMode(ctx)
+	if (mode.HasNoZeroDateMode() && arg0.IsZero()) || (mode.HasNoZeroInDateMode() && arg0.InvalidZero()) {
+		return arg0.String(), true, types.ErrWrongValue.GenWithStackByArgs(types.DateStr, arg0.String())
+	}
+
+	err = arg0.Check(typeCtx(ctx))
+	if err != nil {
+		return arg0.String(), true, types.ErrWrongValue.GenWithStackByArgs(types.DateStr, arg0.String())
+	}
+
 	arg1, isNull, err := b.args[1].EvalDuration(ctx, row)
 	if isNull || err != nil {
 		return "", isNull, err
@@ -5289,6 +5300,17 @@ func (b *builtinAddDateAndStringSig) evalString(ctx EvalContext, row chunk.Row) 
 	if isNull || err != nil {
 		return "", isNull, err
 	}
+
+	mode := sqlMode(ctx)
+	if (mode.HasNoZeroDateMode() && arg0.IsZero()) || (mode.HasNoZeroInDateMode() && arg0.InvalidZero()) {
+		return arg0.String(), true, types.ErrWrongValue.GenWithStackByArgs(types.DateStr, arg0.String())
+	}
+
+	err = arg0.Check(typeCtx(ctx))
+	if err != nil {
+		return arg0.String(), true, types.ErrWrongValue.GenWithStackByArgs(types.DateStr, arg0.String())
+	}
+
 	s, isNull, err := b.args[1].EvalString(ctx, row)
 	if isNull || err != nil {
 		return "", isNull, err
@@ -6271,6 +6293,17 @@ func (b *builtinSubDateAndDurationSig) evalString(ctx EvalContext, row chunk.Row
 	if isNull || err != nil {
 		return "", isNull, err
 	}
+
+	mode := sqlMode(ctx)
+	if (mode.HasNoZeroDateMode() && arg0.IsZero()) || (mode.HasNoZeroInDateMode() && arg0.InvalidZero()) {
+		return arg0.String(), true, types.ErrWrongValue.GenWithStackByArgs(types.DateStr, arg0.String())
+	}
+
+	err = arg0.Check(typeCtx(ctx))
+	if err != nil {
+		return arg0.String(), true, types.ErrWrongValue.GenWithStackByArgs(types.DateStr, arg0.String())
+	}
+
 	arg1, isNull, err := b.args[1].EvalDuration(ctx, row)
 	if isNull || err != nil {
 		return "", isNull, err
@@ -6301,6 +6334,17 @@ func (b *builtinSubDateAndStringSig) evalString(ctx EvalContext, row chunk.Row) 
 	if isNull || err != nil {
 		return "", isNull, err
 	}
+
+	mode := sqlMode(ctx)
+	if (mode.HasNoZeroDateMode() && arg0.IsZero()) || (mode.HasNoZeroInDateMode() && arg0.InvalidZero()) {
+		return arg0.String(), true, types.ErrWrongValue.GenWithStackByArgs(types.DateStr, arg0.String())
+	}
+
+	err = arg0.Check(typeCtx(ctx))
+	if err != nil {
+		return arg0.String(), true, types.ErrWrongValue.GenWithStackByArgs(types.DateStr, arg0.String())
+	}
+
 	s, isNull, err := b.args[1].EvalString(ctx, row)
 	if isNull || err != nil {
 		return "", isNull, err
