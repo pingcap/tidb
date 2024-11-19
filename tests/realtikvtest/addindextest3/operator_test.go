@@ -49,12 +49,6 @@ func init() {
 	})
 }
 
-func TestDd(t *testing.T) {
-	for i := 0; i < 1; i++ {
-		TestBackfillOperators(t)
-	}
-}
-
 func TestBackfillOperators(t *testing.T) {
 	store, dom := realtikvtest.CreateMockStoreAndDomainAndSetup(t)
 	tk := testkit.NewTestKit(t, store)

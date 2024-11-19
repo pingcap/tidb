@@ -780,30 +780,39 @@ func (dc *ddlCtx) runAddIndexInLocalIngestMode(
 	// Adjust worker pool size dynamically.
 	go func() {
 		opR, opW := pipe.GetLocalIngestModeReaderAndWriter()
-		reader, ok := opR.(*TableScanOperator)
-		if !ok {
-			logutil.DDLIngestLogger().Error("unexpected operator type", zap.Int64("jobID", job.ID), zap.Error(err))
+		if opR == nil || opW == nil {
+			logutil.DDLIngestLogger().Error("failed to get local ingest mode reader or writer", zap.Int64("jobID", job.ID))
+			return
 		}
-		writer, ok := opW.(*IndexIngestOperator)
-		if !ok {
-			logutil.DDLIngestLogger().Error("unexpected operator type", zap.Int64("jobID", job.ID), zap.Error(err))
+		reader, readerOk := opR.(*TableScanOperator)
+		writer, writerOk := opW.(*IndexIngestOperator)
+		if !readerOk || !writerOk {
+			logutil.DDLIngestLogger().Error(
+				"unexpected operator types, config can't be adjusted",
+				zap.Int64("jobID", job.ID),
+				zap.Bool("isReaderValid", readerOk),
+				zap.Bool("isWriterValid", writerOk),
+			)
+			return
 		}
-		ticker := time.NewTicker(UpdateReorgCfgInterval)
+		ticker := time.NewTicker(UpdateDDLJobReorgCfgInterval)
 		defer ticker.Stop()
 		for {
 			select {
 			case <-ctx.Done():
 				return
 			case <-ticker.C:
-				newReaderCnt, newWriterCnt := expectedIngestWorkerCnt(
-					job.ReorgMeta.GetConcurrency(),
-					avgRowSize)
-				reader.TuneWorkerPoolSize(int32(newReaderCnt))
-				writer.TuneWorkerPoolSize(int32(newWriterCnt))
+				targetReaderCnt, targetWriterCnt := expectedIngestWorkerCnt(job.ReorgMeta.GetConcurrency(), avgRowSize)
+				currentReaderCnt, currentWriterCnt := reader.GetWorkerPoolSize(), writer.GetWorkerPoolSize()
+				if int32(targetReaderCnt) == currentReaderCnt && int32(targetWriterCnt) == currentWriterCnt {
+					continue
+				}
+				reader.TuneWorkerPoolSize(int32(targetReaderCnt))
+				writer.TuneWorkerPoolSize(int32(targetWriterCnt))
 				logutil.DDLIngestLogger().Info("adjust backfill worker count",
 					zap.Int64("jobID", job.ID),
-					zap.Int("table scan operator count", newReaderCnt),
-					zap.Int("index ingest operator count", newWriterCnt))
+					zap.Int("table scan operator count", targetReaderCnt),
+					zap.Int("index ingest operator count", targetWriterCnt))
 			}
 		}
 	}()
@@ -863,8 +872,8 @@ func (s *localRowCntListener) SetTotal(total int) {
 	s.reorgCtx.setRowCount(s.prevPhysicalRowCnt + int64(total))
 }
 
-// UpdateReorgCfgInterval is the interval to check and update reorg configuration.
-const UpdateReorgCfgInterval = 2 * time.Second
+// UpdateDDLJobReorgCfgInterval is the interval to check and update reorg configuration.
+const UpdateDDLJobReorgCfgInterval = 2 * time.Second
 
 // writePhysicalTableRecord handles the "add index" or "modify/change column" reorganization state for a non-partitioned table or a partition.
 // For a partitioned table, it should be handled partition by partition.
@@ -1013,7 +1022,7 @@ func (dc *ddlCtx) writePhysicalTableRecord(
 
 	// update the worker cnt goroutine
 	go func() {
-		ticker := time.NewTicker(UpdateReorgCfgInterval)
+		ticker := time.NewTicker(UpdateDDLJobReorgCfgInterval)
 		defer ticker.Stop()
 		for {
 			select {
