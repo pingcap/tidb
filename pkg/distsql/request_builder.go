@@ -831,6 +831,7 @@ func BuildTableRanges(tbl *model.TableInfo) ([]kv.KeyRange, error) {
 	// Handle global index ranges
 	for _, idx := range tbl.Indices {
 		if idx.State != model.StatePublic || !idx.Global {
+			continue
 		}
 		idxRanges, err := IndexRangesToKVRanges(nil, tbl.ID, idx.ID, ranger.FullRange())
 		if err != nil {
