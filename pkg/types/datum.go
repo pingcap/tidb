@@ -693,19 +693,17 @@ func (d *Datum) Hash64(h base.Hasher) {
 
 // Equals implements base.HashEquals.<1st> interface.
 func (d *Datum) Equals(other any) bool {
-	if other == nil {
+	d2, ok := other.(*Datum)
+	if !ok {
 		return false
 	}
-	var d2 *Datum
-	switch x := other.(type) {
-	case *Datum:
-		d2 = x
-	case Datum:
-		d2 = &x
-	default:
+	if d == nil {
+		return d2 == nil
+	}
+	if d2 == nil {
 		return false
 	}
-	ok := d.k == d2.k &&
+	ok = d.k == d2.k &&
 		d.decimal == d2.decimal &&
 		d.length == d2.length &&
 		d.i == d2.i &&

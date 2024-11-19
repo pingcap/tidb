@@ -74,11 +74,14 @@ func (a *AggFuncDesc) Hash64(h base.Hasher) {
 
 // Equals checks whether two aggregation function signatures are equal.
 func (a *AggFuncDesc) Equals(other any) bool {
-	if other == nil {
-		return false
-	}
 	otherAgg, ok := other.(*AggFuncDesc)
 	if !ok {
+		return false
+	}
+	if a == nil {
+		return otherAgg == nil
+	}
+	if otherAgg == nil {
 		return false
 	}
 	if a.Mode != otherAgg.Mode || a.HasDistinct != otherAgg.HasDistinct || len(a.OrderByItems) != len(otherAgg.OrderByItems) {
