@@ -42,7 +42,7 @@ func (d MockTiKVDriver) Open(path string) (kv.Storage, error) {
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	if !strings.EqualFold(u.Scheme, "mocktikv") {
+	if config.StoreType(strings.ToLower(u.Scheme)) != config.StoreTypeMockTiKV {
 		return nil, errors.Errorf("Uri scheme expected(mocktikv) but found (%s)", u.Scheme)
 	}
 
@@ -64,7 +64,7 @@ func (d EmbedUnistoreDriver) Open(path string) (kv.Storage, error) {
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	if !strings.EqualFold(u.Scheme, "unistore") {
+	if config.StoreType(strings.ToLower(u.Scheme)) != config.StoreTypeUniStore {
 		return nil, errors.Errorf("Uri scheme expected(unistore) but found (%s)", u.Scheme)
 	}
 

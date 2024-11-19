@@ -107,11 +107,14 @@ func (g Glue) startDomainAsNeeded(store kv.Storage) error {
 	if existDom != nil {
 		return nil
 	}
+	if err := ddl.StartOwnerManager(context.Background(), store); err != nil {
+		return errors.Trace(err)
+	}
 	dom, err := session.GetDomain(store)
 	if err != nil {
 		return err
 	}
-	return dom.Start()
+	return dom.Start(ddl.Normal)
 }
 
 func (g Glue) createTypesSession(store kv.Storage) (sessiontypes.Session, error) {

@@ -29,7 +29,6 @@ import (
 	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/util/backoff"
 	disttaskutil "github.com/pingcap/tidb/pkg/util/disttask"
@@ -170,6 +169,8 @@ func (s *BaseScheduler) scheduleTask() {
 				if errors.Cause(err) == storage.ErrTaskNotFound {
 					// this can happen when task is reverted/succeed, but before
 					// we reach here, cleanup routine move it to history.
+					s.logger.Debug("task not found, might be reverted/succeed/failed", zap.Int64("task_id", s.GetTask().ID),
+						zap.String("task_key", s.GetTask().Key))
 					return
 				}
 				s.logger.Error("refresh task failed", zap.Error(err))
@@ -399,7 +400,6 @@ func (s *BaseScheduler) onRunning() error {
 
 func (s *BaseScheduler) onFinished() {
 	task := s.GetTask()
-	metrics.UpdateMetricsForFinishTask(task)
 	s.logger.Debug("schedule task, task is finished", zap.Stringer("state", task.State))
 }
 

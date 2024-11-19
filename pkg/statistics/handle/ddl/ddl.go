@@ -180,6 +180,8 @@ func (h *ddlHandlerImpl) HandleDDLEvent(s *notifier.SchemaChangeEvent) error {
 		return h.statsWriter.UpdateStatsVersion()
 	case model.ActionAddIndex:
 		// No need to update the stats meta for the adding index event.
+	case model.ActionDropSchema:
+		// TODO: handle the drop schema event.
 	default:
 		intest.Assert(false)
 		logutil.StatsLogger().Error("Unhandled schema change event", zap.Stringer("type", s))

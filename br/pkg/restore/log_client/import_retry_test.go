@@ -22,7 +22,6 @@ import (
 	logclient "github.com/pingcap/tidb/br/pkg/restore/log_client"
 	"github.com/pingcap/tidb/br/pkg/restore/split"
 	"github.com/pingcap/tidb/br/pkg/utils"
-	"github.com/pingcap/tidb/br/pkg/utiltest"
 	"github.com/pingcap/tidb/pkg/store/pdtypes"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/stretchr/testify/require"
@@ -92,12 +91,12 @@ func (c *TestClient) GetAllRegions() map[uint64]*split.RegionInfo {
 	return c.regions
 }
 
-func (c *TestClient) GetPDClient() *utiltest.FakePDClient {
+func (c *TestClient) GetPDClient() *split.FakePDClient {
 	stores := make([]*metapb.Store, 0, len(c.stores))
 	for _, store := range c.stores {
 		stores = append(stores, store)
 	}
-	return utiltest.NewFakePDClient(stores, false, nil)
+	return split.NewFakePDClient(stores, false, nil)
 }
 
 func (c *TestClient) GetStore(ctx context.Context, storeID uint64) (*metapb.Store, error) {

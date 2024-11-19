@@ -35,7 +35,7 @@ func initTestKit(t *testing.T) *testkit.TestKit {
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 
 	cfg := config.GetGlobalConfig()
-	cfg.Store = "tikv"
+	cfg.Store = config.StoreTypeTiKV
 	cfg.Path = "127.0.0.1:2379"
 	config.StoreGlobalConfig(cfg)
 

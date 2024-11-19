@@ -73,7 +73,8 @@ const (
 	ddlSchemaVersionKeyLock = "/tidb/ddl/schema_version_lock"
 	// addingDDLJobPrefix is the path prefix used to record the newly added DDL job, and it's saved to etcd.
 	addingDDLJobPrefix = "/tidb/ddl/add_ddl_job_"
-	ddlPrompt          = "ddl"
+	// Prompt is the prompt for ddl owner manager.
+	Prompt = "ddl"
 
 	batchAddingJobs = 100
 
@@ -91,6 +92,20 @@ const (
 var (
 	jobV2FirstVer        = *semver.New("8.4.0")
 	detectJobVerInterval = 10 * time.Second
+)
+
+// StartMode is an enum type for the start mode of the DDL.
+type StartMode string
+
+const (
+	// Normal mode, cluster is in normal state.
+	Normal StartMode = "normal"
+	// Bootstrap mode, cluster is during bootstrap.
+	Bootstrap StartMode = "bootstrap"
+	// Upgrade mode, cluster is during upgrade, we will force current node to be
+	// the DDL owner, to make sure all upgrade related DDLs are run on new version
+	// TiDB instance.
+	Upgrade StartMode = "upgrade"
 )
 
 // OnExist specifies what to do when a new object has a name collision.
@@ -161,7 +176,7 @@ var (
 type DDL interface {
 	// Start campaigns the owner and starts workers.
 	// ctxPool is used for the worker's delRangeManager and creates sessions.
-	Start(ctxPool *pools.ResourcePool) error
+	Start(startMode StartMode, ctxPool *pools.ResourcePool) error
 	// Stats returns the DDL statistics.
 	Stats(vars *variable.SessionVars) (map[string]any, error)
 	// GetScope gets the status variables scope.
@@ -624,19 +639,21 @@ func newDDL(ctx context.Context, options ...Option) (*ddl, *executor) {
 		o(opt)
 	}
 
-	id := uuid.New().String()
+	var id string
 	var manager owner.Manager
 	var schemaVerSyncer schemaver.Syncer
 	var serverStateSyncer serverstate.Syncer
 	var deadLockCkr util.DeadTableLockChecker
 	if etcdCli := opt.EtcdCli; etcdCli == nil {
+		id = uuid.New().String()
 		// The etcdCli is nil if the store is localstore which is only used for testing.
 		// So we use mockOwnerManager and memSyncer.
 		manager = owner.NewMockManager(ctx, id, opt.Store, DDLOwnerKey)
 		schemaVerSyncer = schemaver.NewMemSyncer()
 		serverStateSyncer = serverstate.NewMemSyncer()
 	} else {
-		manager = owner.NewOwnerManager(ctx, etcdCli, ddlPrompt, id, DDLOwnerKey)
+		id = globalOwnerManager.ID()
+		manager = globalOwnerManager.OwnerManager()
 		schemaVerSyncer = schemaver.NewEtcdSyncer(etcdCli, id)
 		serverStateSyncer = serverstate.NewEtcdSyncer(etcdCli, util.ServerGlobalState)
 		deadLockCkr = util.NewDeadTableLockChecker(etcdCli)
@@ -746,10 +763,21 @@ func (d *ddl) newDeleteRangeManager(mock bool) delRangeManager {
 }
 
 // Start implements DDL.Start interface.
-func (d *ddl) Start(ctxPool *pools.ResourcePool) error {
+func (d *ddl) Start(startMode StartMode, ctxPool *pools.ResourcePool) error {
 	d.detectAndUpdateJobVersion()
+	campaignOwner := config.GetGlobalConfig().Instance.TiDBEnableDDL.Load()
+	if startMode == Upgrade {
+		if !campaignOwner {
+			return errors.New("DDL must be enabled when upgrading")
+		}
+
+		logutil.DDLLogger().Info("DDL is in upgrade mode, force to be owner")
+		if err := d.ownerManager.ForceToBeOwner(d.ctx); err != nil {
+			return errors.Trace(err)
+		}
+	}
 	logutil.DDLLogger().Info("start DDL", zap.String("ID", d.uuid),
-		zap.Bool("runWorker", config.GetGlobalConfig().Instance.TiDBEnableDDL.Load()),
+		zap.Bool("runWorker", campaignOwner),
 		zap.Stringer("jobVersion", model.GetJobVerInUse()))
 
 	d.sessPool = sess.NewSessionPool(ctxPool)
@@ -784,7 +812,7 @@ func (d *ddl) Start(ctxPool *pools.ResourcePool) error {
 
 	// If tidb_enable_ddl is true, we need campaign owner and do DDL jobs. Besides, we also can do backfill jobs.
 	// Otherwise, we needn't do that.
-	if config.GetGlobalConfig().Instance.TiDBEnableDDL.Load() {
+	if campaignOwner {
 		if err := d.EnableDDL(); err != nil {
 			return err
 		}
@@ -978,7 +1006,10 @@ func (d *ddl) close() {
 	startTime := time.Now()
 	d.cancel()
 	d.wg.Wait()
-	d.ownerManager.Cancel()
+	// when run with real-tikv, the lifecycle of ownerManager is managed by globalOwnerManager,
+	// when run with uni-store BreakCampaignLoop is same as Close.
+	// hope we can unify it after refactor to let some components only start once.
+	d.ownerManager.BreakCampaignLoop()
 	d.schemaVerSyncer.Close()
 
 	// d.delRangeMgr using sessions from d.sessPool.
@@ -1275,7 +1306,7 @@ func get2JobsFromTable(sess *sess.Session) (*model.Job, *model.Job, error) {
 }
 
 // cancelRunningJob cancel a DDL job that is in the concurrent state.
-func cancelRunningJob(_ *sess.Session, job *model.Job,
+func cancelRunningJob(job *model.Job,
 	byWho model.AdminCommandOperator) (err error) {
 	// These states can't be cancelled.
 	if job.IsDone() || job.IsSynced() {
@@ -1296,7 +1327,7 @@ func cancelRunningJob(_ *sess.Session, job *model.Job,
 }
 
 // pauseRunningJob check and pause the running Job
-func pauseRunningJob(_ *sess.Session, job *model.Job,
+func pauseRunningJob(job *model.Job,
 	byWho model.AdminCommandOperator) (err error) {
 	if job.IsPausing() || job.IsPaused() {
 		return dbterror.ErrPausedDDLJob.GenWithStackByArgs(job.ID)
@@ -1315,7 +1346,7 @@ func pauseRunningJob(_ *sess.Session, job *model.Job,
 }
 
 // resumePausedJob check and resume the Paused Job
-func resumePausedJob(_ *sess.Session, job *model.Job,
+func resumePausedJob(job *model.Job,
 	byWho model.AdminCommandOperator) (err error) {
 	if !job.IsResumable() {
 		errMsg := fmt.Sprintf("job has not been paused, job state:%s, schema state:%s",
@@ -1337,7 +1368,7 @@ func resumePausedJob(_ *sess.Session, job *model.Job,
 // processJobs command on the Job according to the process
 func processJobs(
 	ctx context.Context,
-	process func(*sess.Session, *model.Job, model.AdminCommandOperator) (err error),
+	process func(*model.Job, model.AdminCommandOperator) (err error),
 	sessCtx sessionctx.Context,
 	ids []int64,
 	byWho model.AdminCommandOperator,
@@ -1384,7 +1415,7 @@ func processJobs(
 			}
 			delete(jobMap, job.ID)
 
-			err = process(ns, job, byWho)
+			err = process(job, byWho)
 			if err != nil {
 				jobErrs[i] = err
 				continue
@@ -1456,7 +1487,7 @@ func ResumeJobsBySystem(se sessionctx.Context, ids []int64) (errs []error, err e
 // pprocessAllJobs processes all the jobs in the job table, 100 jobs at a time in case of high memory usage.
 func processAllJobs(
 	ctx context.Context,
-	process func(*sess.Session, *model.Job, model.AdminCommandOperator) (err error),
+	process func(*model.Job, model.AdminCommandOperator) (err error),
 	se sessionctx.Context,
 	byWho model.AdminCommandOperator,
 ) (map[int64]error, error) {
@@ -1484,7 +1515,7 @@ func processAllJobs(
 		}
 
 		for _, job := range jobs {
-			err = process(ns, job, byWho)
+			err = process(job, byWho)
 			if err != nil {
 				jobErrs[job.ID] = err
 				continue
