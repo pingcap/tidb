@@ -3643,7 +3643,7 @@ func (b *PlanBuilder) buildSimple(ctx context.Context, node ast.StmtNode) (base.
 			if err != nil {
 				return nil, err
 			}
-			if err := sessionctx.ValidateStaleReadTS(ctx, b.ctx.GetSessionVars().StmtCtx, b.ctx.GetStore(), startTS); err != nil {
+			if err := sessionctx.ValidateSnapshotReadTS(ctx, b.ctx.GetStore(), startTS); err != nil {
 				return nil, err
 			}
 			p.StaleTxnStartTS = startTS
@@ -3657,7 +3657,7 @@ func (b *PlanBuilder) buildSimple(ctx context.Context, node ast.StmtNode) (base.
 			if err != nil {
 				return nil, err
 			}
-			if err := sessionctx.ValidateStaleReadTS(ctx, b.ctx.GetSessionVars().StmtCtx, b.ctx.GetStore(), startTS); err != nil {
+			if err := sessionctx.ValidateSnapshotReadTS(ctx, b.ctx.GetStore(), startTS); err != nil {
 				return nil, err
 			}
 			p.StaleTxnStartTS = startTS
