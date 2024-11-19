@@ -533,3 +533,8 @@ SELECT JSON_SEARCH(b2, 'one', '1') FROM t1;
 SELECT JSON_KEYS(b2) FROM t1;
 -- error 3144
 SELECT JSON_SCHEMA_VALID(b2, '{}') FROM t1;
+
+# TestIssue54044
+prepare stmt from 'select json_object(?, ?)';
+set @a=1;
+execute stmt using @a, @a;
