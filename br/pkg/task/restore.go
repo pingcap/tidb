@@ -349,7 +349,7 @@ func (cfg *RestoreConfig) ParseStreamRestoreFlags(flags *pflag.FlagSet) error {
 }
 
 // ParseFromFlags parses the restore-related flags from the flag set.
-func (cfg *RestoreConfig) ParseFromFlags(flags *pflag.FlagSet) error {
+func (cfg *RestoreConfig) ParseFromFlags(flags *pflag.FlagSet, skipCommonConfig bool) error {
 	var err error
 	cfg.NoSchema, err = flags.GetBool(flagNoSchema)
 	if err != nil {
@@ -359,10 +359,15 @@ func (cfg *RestoreConfig) ParseFromFlags(flags *pflag.FlagSet) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	err = cfg.Config.ParseFromFlags(flags)
-	if err != nil {
-		return errors.Trace(err)
+
+	// parse common config if needed
+	if !skipCommonConfig {
+		err = cfg.Config.ParseFromFlags(flags)
+		if err != nil {
+			return errors.Trace(err)
+		}
 	}
+
 	err = cfg.RestoreCommonConfig.ParseFromFlags(flags)
 	if err != nil {
 		return errors.Trace(err)
@@ -647,20 +652,16 @@ func registerTaskToPD(ctx context.Context, etcdCLI *clientv3.Client) (closeF fun
 	return register.Close, errors.Trace(err)
 }
 
-func DefaultRestoreConfig() RestoreConfig {
+func DefaultRestoreConfig(commonConfig Config) RestoreConfig {
 	fs := pflag.NewFlagSet("dummy", pflag.ContinueOnError)
-	DefineCommonFlags(fs)
 	DefineRestoreFlags(fs)
 	cfg := RestoreConfig{}
-	err := multierr.Combine(
-		cfg.ParseFromFlags(fs),
-		cfg.RestoreCommonConfig.ParseFromFlags(fs),
-		cfg.Config.ParseFromFlags(fs),
-	)
+	err := cfg.ParseFromFlags(fs, true)
 	if err != nil {
-		log.Panic("infallible failed.", zap.Error(err))
+		log.Panic("failed to parse restore flags to config", zap.Error(err))
 	}
 
+	cfg.Config = commonConfig
 	return cfg
 }
 
@@ -809,7 +810,7 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 	}
 
 	reader := metautil.NewMetaReader(backupMeta, s, &cfg.CipherInfo)
-	if err = client.InitBackupMeta(c, backupMeta, u, reader, cfg.LoadStats, nil, nil); err != nil {
+	if err = client.LoadSchemaIfNeededAndInitClient(c, backupMeta, u, reader, cfg.LoadStats, nil, nil); err != nil {
 		return errors.Trace(err)
 	}
 
@@ -830,7 +831,7 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 		}
 	}
 
-	archiveSize := reader.ArchiveSize(ctx, files)
+	archiveSize := metautil.ArchiveSize(files)
 	g.Record(summary.RestoreDataSize, archiveSize)
 	//restore from tidb will fetch a general Size issue https://github.com/pingcap/tidb/issues/27247
 	g.Record("Size", archiveSize)
@@ -1123,8 +1124,9 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 	errCh := make(chan error, 32)
 	postHandleCh := afterTableRestoredCh(ctx, createdTables)
 
-	// pipeline checksum
-	if cfg.Checksum {
+	// pipeline checksum only when enabled and is not incremental snapshot repair mode cuz incremental doesn't have
+	// enough information in backup meta to validate checksum
+	if cfg.Checksum && !client.IsIncremental() {
 		postHandleCh = client.GoValidateChecksum(
 			ctx, postHandleCh, mgr.GetStorage().GetClient(), errCh, updateCh, cfg.ChecksumConcurrency)
 	}
