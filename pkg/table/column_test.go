@@ -484,7 +484,7 @@ func TestGetDefaultValue(t *testing.T) {
 			ctx.GetSessionVars().SQLMode = mysql.DelSQLMode(defaultMode, mysql.ModeStrictAllTables|mysql.ModeStrictTransTables)
 		}
 		levels := sc.ErrLevels()
-		levels[errctx.ErrGroupBadNull] = errctx.ResolveErrLevel(false, !tt.strict)
+		levels[errctx.ErrGroupNoDefault] = errctx.ResolveErrLevel(false, !tt.strict)
 		sc.SetErrLevels(levels)
 		val, err := GetColDefaultValue(ctx, tt.colInfo)
 		if err != nil {
@@ -506,7 +506,7 @@ func TestGetDefaultValue(t *testing.T) {
 			ctx.GetSessionVars().SQLMode = mysql.DelSQLMode(defaultMode, mysql.ModeStrictAllTables|mysql.ModeStrictTransTables)
 		}
 		levels := sc.ErrLevels()
-		levels[errctx.ErrGroupBadNull] = errctx.ResolveErrLevel(false, !tt.strict)
+		levels[errctx.ErrGroupNoDefault] = errctx.ResolveErrLevel(false, !tt.strict)
 		sc.SetErrLevels(levels)
 		val, err := GetColOriginDefaultValue(ctx, tt.colInfo)
 		if err != nil {
