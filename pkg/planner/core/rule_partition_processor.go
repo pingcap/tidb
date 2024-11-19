@@ -781,25 +781,37 @@ func (l *listPartitionPruner) findUsedListPartitions(conds []expression.Expressi
 	used := make(map[int]struct{}, len(ranges))
 	tc := l.ctx.GetSessionVars().StmtCtx.TypeCtx()
 	for _, r := range ranges {
+		if len(r.HighVal) != len(exprCols) || r.IsFullRange(false) {
+			return l.fullRange, nil
+		}
+		var idxs map[int]struct{}
 		if !r.IsPointNullable(tc) {
-			return l.fullRange, nil
+			// Only support `pruneExpr` is a Column
+			if _, ok := pruneExpr.(*expression.Column); !ok {
+				return l.fullRange, nil
+			}
+			idxs, err = l.listPrune.LocatePartitionByRange(l.ctx.GetExprCtx().GetEvalCtx(), r)
+			if err != nil {
+				return nil, err
+			}
+		} else {
+			value, isNull, err := pruneExpr.EvalInt(l.ctx.GetExprCtx().GetEvalCtx(), chunk.MutRowFromDatums(r.HighVal).ToRow())
+			if err != nil {
+				return nil, err
+			}
+			idxs = make(map[int]struct{})
+			idxs[l.listPrune.LocatePartition(l.ctx.GetExprCtx().GetEvalCtx(), value, isNull)] = struct{}{}
 		}
-		if len(r.HighVal) != len(exprCols) {
-			return l.fullRange, nil
+		for idx := range idxs {
+			idx = l.pi.GetOverlappingDroppingPartitionIdx(idx)
+			if idx == -1 {
+				continue
+			}
+			if len(l.partitionNames) > 0 && !l.findByName(l.partitionNames, l.pi.Definitions[idx].Name.L) {
+				continue
+			}
+			used[idx] = struct{}{}
 		}
-		value, isNull, err := pruneExpr.EvalInt(l.ctx.GetExprCtx().GetEvalCtx(), chunk.MutRowFromDatums(r.HighVal).ToRow())
-		if err != nil {
-			return nil, err
-		}
-		partitionIdx := l.listPrune.LocatePartition(value, isNull)
-		partitionIdx = l.pi.GetOverlappingDroppingPartitionIdx(partitionIdx)
-		if partitionIdx == -1 {
-			continue
-		}
-		if len(l.partitionNames) > 0 && !l.findByName(l.partitionNames, l.pi.Definitions[partitionIdx].Name.L) {
-			continue
-		}
-		used[partitionIdx] = struct{}{}
 	}
 	return used, nil
 }
@@ -1308,7 +1320,7 @@ func multiColumnRangeColumnsPruner(sctx base.PlanContext, exprs []expression.Exp
 		lens = append(lens, columnsPruner.partCols[i].RetType.GetFlen())
 	}
 
-	res, err := ranger.DetachCondAndBuildRangeForIndex(sctx.GetRangerCtx(), exprs, columnsPruner.partCols, lens, sctx.GetSessionVars().RangeMaxSize)
+	res, err := ranger.DetachCondAndBuildRangeForPartition(sctx.GetRangerCtx(), exprs, columnsPruner.partCols, lens, sctx.GetSessionVars().RangeMaxSize)
 	if err != nil {
 		return fullRange(len(columnsPruner.lessThan))
 	}
@@ -1323,16 +1335,12 @@ func multiColumnRangeColumnsPruner(sctx base.PlanContext, exprs []expression.Exp
 
 	rangeOr := make([]partitionRange, 0, len(res.Ranges))
 
-	comparer := make([]collate.Collator, 0, len(columnsPruner.partCols))
-	for i := range columnsPruner.partCols {
-		comparer = append(comparer, collate.GetCollator(columnsPruner.partCols[i].RetType.GetCollate()))
-	}
 	gotError := false
 	// Create a sort.Search where the compare loops over ColumnValues
 	// Loop over the different ranges and extend/include all the partitions found
 	for idx := range res.Ranges {
-		minComparer := minCmp(sctx, res.Ranges[idx].LowVal, columnsPruner, comparer, res.Ranges[idx].LowExclude, &gotError)
-		maxComparer := maxCmp(sctx, res.Ranges[idx].HighVal, columnsPruner, comparer, res.Ranges[idx].HighExclude, &gotError)
+		minComparer := minCmp(sctx, res.Ranges[idx].LowVal, columnsPruner, res.Ranges[idx].Collators, res.Ranges[idx].LowExclude, &gotError)
+		maxComparer := maxCmp(sctx, res.Ranges[idx].HighVal, columnsPruner, res.Ranges[idx].Collators, res.Ranges[idx].HighExclude, &gotError)
 		if gotError {
 			// the compare function returned error, use all partitions.
 			return fullRange(len(columnsPruner.lessThan))
@@ -1941,10 +1949,9 @@ func makeRangeColumnPruner(columns []*expression.Column, pi *model.PartitionInfo
 	if len(pi.Definitions) != len(from.LessThan) {
 		return nil, errors.Trace(fmt.Errorf("internal error len(pi.Definitions) != len(from.LessThan) %d != %d", len(pi.Definitions), len(from.LessThan)))
 	}
-	schema := expression.NewSchema(columns...)
 	partCols := make([]*expression.Column, len(offsets))
 	for i, offset := range offsets {
-		partCols[i] = schema.Columns[offset]
+		partCols[i] = columns[offset]
 	}
 	lessThan := make([][]*expression.Expression, 0, len(from.LessThan))
 	for i := range from.LessThan {

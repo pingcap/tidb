@@ -31,12 +31,12 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/bindinfo"
 	"github.com/pingcap/tidb/pkg/config"
-	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/infoschema"
+	infoschemacontext "github.com/pingcap/tidb/pkg/infoschema/context"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/owner"
@@ -47,6 +47,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	sessiontypes "github.com/pingcap/tidb/pkg/session/types"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	storepkg "github.com/pingcap/tidb/pkg/store"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	timertable "github.com/pingcap/tidb/pkg/timer/tablestore"
 	"github.com/pingcap/tidb/pkg/types"
@@ -1182,11 +1183,25 @@ const (
 	// version 216
 	//   changes variable `tidb_scatter_region` value from ON to "table" and OFF to "".
 	version216 = 216
+
+	// version 217
+	// Keep tidb_schema_cache_size to 0 if this variable does not exist (upgrading from old version pre 8.1).
+	version217 = 217
+
+	// version 218
+	// enable fast_create_table on default
+	version218 = 218
+
+	// ...
+	// [version219, version238] is the version range reserved for patches of 8.5.x
+	// ...
+
+	// next version should start with 239
 )
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-var currentBootstrapVersion int64 = version216
+var currentBootstrapVersion int64 = version218
 
 // DDL owner key's expired time is ManagerSessionTTL seconds, we should wait the time and give more time to have a chance to finish it.
 var internalSQLTimeout = owner.ManagerSessionTTL + 15
@@ -1358,6 +1373,8 @@ var (
 		upgradeToVer214,
 		upgradeToVer215,
 		upgradeToVer216,
+		upgradeToVer217,
+		upgradeToVer218,
 	}
 )
 
@@ -1421,47 +1438,31 @@ var (
 	SupportUpgradeHTTPOpVer int64 = version174
 )
 
-func acquireLock(s sessiontypes.Session) (func(), bool) {
-	dom := domain.GetDomain(s)
-	if dom == nil {
-		logutil.BgLogger().Warn("domain is nil")
-		return nil, false
+func acquireLock(store kv.Storage) (func(), error) {
+	etcdCli, err := storepkg.NewEtcdCli(store)
+	if err != nil {
+		return nil, errors.Trace(err)
 	}
-	cli := dom.GetEtcdClient()
-	if cli == nil {
-		logutil.BgLogger().Warn("etcd client is nil, force to acquire ddl owner lock")
+	if etcdCli == nil {
 		// Special handling for test.
+		logutil.BgLogger().Warn("skip acquire ddl owner lock for uni-store")
 		return func() {
 			// do nothing
-		}, true
+		}, nil
 	}
-	releaseFn, err := owner.AcquireDistributedLock(context.Background(), cli, bootstrapOwnerKey, 10)
+	releaseFn, err := owner.AcquireDistributedLock(context.Background(), etcdCli, bootstrapOwnerKey, 10)
 	if err != nil {
-		return nil, false
-	}
-	return releaseFn, true
-}
-
-func forceToLeader(ctx context.Context, s sessiontypes.Session) error {
-	dom := domain.GetDomain(s)
-	for !dom.DDL().OwnerManager().IsOwner() {
-		ownerID, err := dom.DDL().OwnerManager().GetOwnerID(ctx)
-		if err != nil && (errors.ErrorEqual(err, concurrency.ErrElectionNoLeader) || strings.Contains(err.Error(), "no owner")) {
-			logutil.BgLogger().Info("ddl owner not found", zap.Error(err))
-			time.Sleep(50 * time.Millisecond)
-			continue
-		} else if err != nil {
-			logutil.BgLogger().Error("unexpected error", zap.Error(err))
-			return err
+		if err2 := etcdCli.Close(); err2 != nil {
+			logutil.BgLogger().Error("failed to close etcd client", zap.Error(err2))
 		}
-		err = owner.DeleteLeader(ctx, dom.EtcdClient(), ddl.DDLOwnerKey)
-		if err != nil {
-			logutil.BgLogger().Error("unexpected error", zap.Error(err), zap.String("ownerID", ownerID))
-			return err
-		}
-		time.Sleep(50 * time.Millisecond)
+		return nil, errors.Trace(err)
 	}
-	return nil
+	return func() {
+		releaseFn()
+		if err2 := etcdCli.Close(); err2 != nil {
+			logutil.BgLogger().Error("failed to close etcd client", zap.Error(err2))
+		}
+	}, nil
 }
 
 func checkDistTask(s sessiontypes.Session, ver int64) {
@@ -1520,22 +1521,11 @@ func upgrade(s sessiontypes.Session) {
 	}
 
 	var ver int64
-	releaseFn, ok := acquireLock(s)
-	if !ok {
-		logutil.BgLogger().Fatal("[upgrade] get ddl owner distributed lock failed", zap.Error(err))
-	}
 	ver, err = getBootstrapVersion(s)
 	terror.MustNil(err)
 	if ver >= currentBootstrapVersion {
 		// It is already bootstrapped/upgraded by a higher version TiDB server.
-		releaseFn()
 		return
-	}
-	defer releaseFn()
-
-	err = forceToLeader(context.Background(), s)
-	if err != nil {
-		logutil.BgLogger().Fatal("[upgrade] force to owner failed", zap.Error(err))
 	}
 
 	checkDistTask(s, ver)
@@ -1556,7 +1546,6 @@ func upgrade(s sessiontypes.Session) {
 		upgradeToVer99After(s)
 	}
 
-	variable.DDLForce2Queue.Store(false)
 	updateBootstrapVer(s)
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBootstrap)
 	_, err = s.ExecuteInternal(ctx, "COMMIT")
@@ -3220,9 +3209,9 @@ func upgradeToVer212(s sessiontypes.Session, ver int64) {
 	// add column `repeats`.
 	doReentrantDDL(s, "ALTER TABLE mysql.tidb_runaway_queries ADD COLUMN `repeats` int DEFAULT 1 AFTER `time`;", infoschema.ErrColumnExists)
 	// rename column name from `time` to `start_time`, will auto rebuild the index.
-	doReentrantDDL(s, "ALTER TABLE mysql.tidb_runaway_queries RENAME COLUMN `time` TO `start_time`")
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_runaway_queries RENAME COLUMN `time` TO `start_time`", infoschema.ErrColumnNotExists)
 	// rename column `original_sql` to `sample_sql`.
-	doReentrantDDL(s, "ALTER TABLE mysql.tidb_runaway_queries RENAME COLUMN `original_sql` TO `sample_sql`")
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_runaway_queries RENAME COLUMN `original_sql` TO `sample_sql`", infoschema.ErrColumnNotExists)
 	// modify column type of `plan_digest`.
 	doReentrantDDL(s, "ALTER TABLE mysql.tidb_runaway_queries MODIFY COLUMN `plan_digest` varchar(64) DEFAULT '';", infoschema.ErrColumnExists)
 	// 3. modify column length of `action`.
@@ -3265,6 +3254,22 @@ func upgradeToVer216(s sessiontypes.Session, ver int64) {
 
 	mustExecute(s, "UPDATE mysql.global_variables SET VARIABLE_VALUE='' WHERE VARIABLE_NAME = 'tidb_scatter_region' AND VARIABLE_VALUE = 'OFF'")
 	mustExecute(s, "UPDATE mysql.global_variables SET VARIABLE_VALUE='table' WHERE VARIABLE_NAME = 'tidb_scatter_region' AND VARIABLE_VALUE = 'ON'")
+}
+
+func upgradeToVer217(s sessiontypes.Session, ver int64) {
+	if ver >= version217 {
+		return
+	}
+	// If tidb_schema_cache_size does not exist, insert a record and set the value to 0
+	// Otherwise do nothing.
+	mustExecute(s, "INSERT IGNORE INTO mysql.global_variables VALUES ('tidb_schema_cache_size', 0)")
+}
+
+func upgradeToVer218(_ sessiontypes.Session, ver int64) {
+	if ver >= version218 {
+		return
+	}
+	// empty, just make lint happy.
 }
 
 // initGlobalVariableIfNotExists initialize a global variable with specific val if it does not exist.
@@ -3568,7 +3573,7 @@ func rebuildAllPartitionValueMapAndSorted(ctx context.Context, s *session) {
 
 	p := parser.New()
 	is := s.GetInfoSchema().(infoschema.InfoSchema)
-	dbs := is.ListTablesWithSpecialAttribute(infoschema.PartitionAttribute)
+	dbs := is.ListTablesWithSpecialAttribute(infoschemacontext.PartitionAttribute)
 	for _, db := range dbs {
 		for _, t := range db.TableInfos {
 			pi := t.GetPartitionInfo()

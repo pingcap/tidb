@@ -31,7 +31,6 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/generatedexpr"
-	"github.com/pingcap/tidb/pkg/util/mathutil"
 	"github.com/pingcap/tidb/pkg/util/size"
 	"github.com/pingcap/tidb/pkg/util/zeropool"
 )
@@ -168,11 +167,19 @@ const (
 	ConstStrict
 )
 
+// SafeToShareAcrossSession indicates whether the expression can be shared across different sessions.
+// In Instance Plan Cache, we'll share the same Plan/Expression across different sessions, and this interface
+// is used to check whether the expression is safe to share without cloning.
+type SafeToShareAcrossSession interface {
+	SafeToShareAcrossSession() bool
+}
+
 // Expression represents all scalar expression in SQL.
 type Expression interface {
 	VecExpr
 	CollationInfo
 	base.HashEquals
+	SafeToShareAcrossSession
 
 	Traverse(TraverseAction) Expression
 
@@ -438,7 +445,7 @@ func VecEvalBool(ctx EvalContext, vecEnabled bool, exprList CNFExprs, input *chu
 		isEQCondFromIn := IsEQCondFromIn(expr)
 		for i := range sel {
 			if isZero[i] == -1 {
-				if eType != types.ETInt && !isEQCondFromIn {
+				if eType != types.ETInt || !isEQCondFromIn {
 					continue
 				}
 				// In this case, we set this row to null and let it pass this filter.
@@ -450,6 +457,7 @@ func VecEvalBool(ctx EvalContext, vecEnabled bool, exprList CNFExprs, input *chu
 			}
 
 			if isZero[i] == 0 {
+				nulls[sel[i]] = false
 				continue
 			}
 			sel[j] = sel[i] // this row passes this filter
@@ -1231,7 +1239,7 @@ func PropagateType(ctx EvalContext, evalType types.EvalType, args ...Expression)
 						// the original data. For example, original type is Decimal(50, 0), new type is Decimal(48,30), then
 						// incDecimal = min(30-0, mysql.MaxDecimalWidth-50) = 15
 						// the new target Decimal will be Decimal(50+15, 0+15) = Decimal(65, 15)
-						incDecimal := mathutil.Min(newDecimal-oldDecimal, mysql.MaxDecimalWidth-oldFlen)
+						incDecimal := min(newDecimal-oldDecimal, mysql.MaxDecimalWidth-oldFlen)
 						newFlen = oldFlen + incDecimal
 						newDecimal = oldDecimal + incDecimal
 					} else {

@@ -131,7 +131,8 @@ func (rts *rowTableSegment) initTaggedBits() {
 	rts.taggedBits = getTaggedBitsFromUintptr(endPtr | startPtr)
 }
 
-const maxRowTableSegmentSize = 1024
+// This variable should be const, but we need to modify it for test
+var maxRowTableSegmentSize = int64(1024)
 
 // 64 MB
 const maxRowTableSegmentByteSize = 64 * 1024 * 1024
@@ -153,6 +154,18 @@ func (rts *rowTableSegment) validKeyCount() uint64 {
 	return uint64(len(rts.validJoinKeyPos))
 }
 
+func (rts *rowTableSegment) getRowNum() int {
+	return len(rts.hashValues)
+}
+
+func (rts *rowTableSegment) getRowBytes(idx int) []byte {
+	rowNum := rts.getRowNum()
+	if idx == rowNum-1 {
+		return rts.rawData[rts.rowStartOffset[idx]:]
+	}
+	return rts.rawData[rts.rowStartOffset[idx]:rts.rowStartOffset[idx+1]]
+}
+
 func setNextRowAddress(rowStart unsafe.Pointer, nextRowAddress taggedPtr) {
 	*(*taggedPtr)(rowStart) = nextRowAddress
 }
@@ -167,8 +180,25 @@ func getNextRowAddress(rowStart unsafe.Pointer, tagHelper *tagPtrHelper, hashVal
 }
 
 type rowTable struct {
-	meta     *joinTableMeta
 	segments []*rowTableSegment
+}
+
+func (rt *rowTable) getTotalMemoryUsage() int64 {
+	totalMemoryUsage := int64(0)
+	for _, seg := range rt.segments {
+		if seg.finalized {
+			totalMemoryUsage += seg.totalUsedBytes()
+		}
+	}
+	return totalMemoryUsage
+}
+
+func (rt *rowTable) getSegments() []*rowTableSegment {
+	return rt.segments
+}
+
+func (rt *rowTable) clearSegments() {
+	rt.segments = nil
 }
 
 // used for test
@@ -194,9 +224,18 @@ func (rt *rowTable) getValidJoinKeyPos(rowIndex int) int {
 	return -1
 }
 
-func newRowTable(meta *joinTableMeta) *rowTable {
+func (rt *rowTable) getTotalUsedBytesInSegments() int64 {
+	totalUsedBytes := int64(0)
+	for _, seg := range rt.segments {
+		if seg.finalized {
+			totalUsedBytes += seg.totalUsedBytes()
+		}
+	}
+	return totalUsedBytes
+}
+
+func newRowTable() *rowTable {
 	return &rowTable{
-		meta:     meta,
 		segments: make([]*rowTableSegment, 0),
 	}
 }

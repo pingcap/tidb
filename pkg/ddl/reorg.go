@@ -15,6 +15,7 @@
 package ddl
 
 import (
+	"bytes"
 	"context"
 	"encoding/hex"
 	"fmt"
@@ -56,7 +57,6 @@ import (
 	contextutil "github.com/pingcap/tidb/pkg/util/context"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/intest"
-	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/pingcap/tidb/pkg/util/ranger"
 	"github.com/pingcap/tidb/pkg/util/rowcodec"
 	"github.com/pingcap/tidb/pkg/util/timeutil"
@@ -274,10 +274,6 @@ func reorgTimeZoneWithTzLoc(tzLoc *model.TimeZoneLocation) (*time.Location, erro
 	return tzLoc.GetLocation()
 }
 
-// ReorgWaitTimeout is the timeout that wait ddl in write reorganization stage.
-// make it a var for testing.
-var ReorgWaitTimeout = 5 * time.Second
-
 func (rc *reorgCtx) notifyJobState(state model.JobState) {
 	atomic.StoreInt32((*int32)(&rc.jobState), int32(state))
 }
@@ -392,69 +388,61 @@ func (w *worker) runReorgJob(
 
 		beOwnerTS := w.ddlCtx.reorgCtx.getOwnerTS()
 		rc = w.newReorgCtx(reorgInfo.Job.ID, reorgInfo.Job.GetRowCount())
-		w.wg.Add(1)
-		go func() {
-			defer w.wg.Done()
+		w.wg.Run(func() {
 			err := reorgFn()
 			rc.doneCh <- reorgFnResult{ownerTS: beOwnerTS, err: err}
-		}()
+		})
 	}
 
-	waitTimeout := ReorgWaitTimeout
-	// wait reorganization job done or timeout
-	select {
-	case res := <-rc.doneCh:
-		err := res.err
-		curTS := w.ddlCtx.reorgCtx.getOwnerTS()
-		if res.ownerTS != curTS {
+	updateProcessTicker := time.NewTicker(5 * time.Second)
+	defer updateProcessTicker.Stop()
+	for {
+		select {
+		case res := <-rc.doneCh:
+			err := res.err
+			curTS := w.ddlCtx.reorgCtx.getOwnerTS()
+			if res.ownerTS != curTS {
+				d.removeReorgCtx(job.ID)
+				logutil.DDLLogger().Warn("owner ts mismatch, return timeout error and retry",
+					zap.Int64("prevTS", res.ownerTS),
+					zap.Int64("curTS", curTS))
+				return dbterror.ErrWaitReorgTimeout
+			}
+			// Since job is cancelled，we don't care about its partial counts.
+			// TODO(lance6716): should we also do for paused job?
+			if terror.ErrorEqual(err, dbterror.ErrCancelledDDLJob) {
+				d.removeReorgCtx(job.ID)
+				return err
+			}
+			rowCount := rc.getRowCount()
+			job.SetRowCount(rowCount)
+			if err != nil {
+				logutil.DDLLogger().Warn("run reorg job done", zap.Int64("handled rows", rowCount), zap.Error(err))
+			} else {
+				logutil.DDLLogger().Info("run reorg job done", zap.Int64("handled rows", rowCount))
+			}
+
+			// Update a job's warnings.
+			w.mergeWarningsIntoJob(job)
+
 			d.removeReorgCtx(job.ID)
-			logutil.DDLLogger().Warn("owner ts mismatch, return timeout error and retry",
-				zap.Int64("prevTS", res.ownerTS),
-				zap.Int64("curTS", curTS))
-			return dbterror.ErrWaitReorgTimeout
-		}
-		// Since job is cancelled，we don't care about its partial counts.
-		if rc.isReorgCanceled() || terror.ErrorEqual(err, dbterror.ErrCancelledDDLJob) {
-			d.removeReorgCtx(job.ID)
-			return dbterror.ErrCancelledDDLJob
-		}
-		rowCount := rc.getRowCount()
-		job.SetRowCount(rowCount)
-		if err != nil {
-			logutil.DDLLogger().Warn("run reorg job done", zap.Int64("handled rows", rowCount), zap.Error(err))
-		} else {
-			logutil.DDLLogger().Info("run reorg job done", zap.Int64("handled rows", rowCount))
-		}
 
-		// Update a job's warnings.
-		w.mergeWarningsIntoJob(job)
+			updateBackfillProgress(w, reorgInfo, tblInfo, rowCount)
 
-		d.removeReorgCtx(job.ID)
-
-		updateBackfillProgress(w, reorgInfo, tblInfo, rowCount)
-
-		// For other errors, even err is not nil here, we still wait the partial counts to be collected.
-		// since in the next round, the startKey is brand new which is stored by last time.
-		if err != nil {
+			// For other errors, even err is not nil here, we still wait the partial counts to be collected.
+			// since in the next round, the startKey is brand new which is stored by last time.
 			return errors.Trace(err)
+		case <-updateProcessTicker.C:
+			rowCount := rc.getRowCount()
+			job.SetRowCount(rowCount)
+			updateBackfillProgress(w, reorgInfo, tblInfo, rowCount)
+
+			// Update a job's warnings.
+			w.mergeWarningsIntoJob(job)
+
+			rc.resetWarnings()
 		}
-	case <-time.After(waitTimeout):
-		rowCount := rc.getRowCount()
-		job.SetRowCount(rowCount)
-		updateBackfillProgress(w, reorgInfo, tblInfo, rowCount)
-
-		// Update a job's warnings.
-		w.mergeWarningsIntoJob(job)
-
-		rc.resetWarnings()
-
-		logutil.DDLLogger().Info("run reorg job wait timeout",
-			zap.Duration("wait time", waitTimeout),
-			zap.Int64("total added row count", rowCount))
-		// If timeout, we will return, check the owner and retry to wait job done again.
-		return dbterror.ErrWaitReorgTimeout
 	}
-	return nil
 }
 
 func overwriteReorgInfoFromGlobalCheckpoint(w *worker, sess *sess.Session, job *model.Job, reorgInfo *reorgInfo) error {
@@ -553,12 +541,6 @@ func getTableTotalCount(w *worker, tblInfo *model.TableInfo) int64 {
 		return statistics.PseudoRowCount
 	}
 	defer w.sessPool.Put(ctx)
-
-	// `mock.Context` is used in tests, which doesn't support sql exec
-	if _, ok := ctx.(*mock.Context); ok {
-		return statistics.PseudoRowCount
-	}
-
 	executor := ctx.GetRestrictedSQLExecutor()
 	var rows []chunk.Row
 	if tblInfo.Partition != nil && len(tblInfo.Partition.DroppingDefinitions) > 0 {
@@ -569,10 +551,10 @@ func getTableTotalCount(w *worker, tblInfo *model.TableInfo) int64 {
 			partIDs = append(partIDs, strconv.FormatInt(def.ID, 10))
 		}
 		sql := "select sum(table_rows) from information_schema.partitions where tidb_partition_id in (%?);"
-		rows, _, err = executor.ExecRestrictedSQL(w.ctx, nil, sql, strings.Join(partIDs, ","))
+		rows, _, err = executor.ExecRestrictedSQL(w.workCtx, nil, sql, strings.Join(partIDs, ","))
 	} else {
 		sql := "select table_rows from information_schema.tables where tidb_table_id=%?;"
-		rows, _, err = executor.ExecRestrictedSQL(w.ctx, nil, sql, tblInfo.ID)
+		rows, _, err = executor.ExecRestrictedSQL(w.workCtx, nil, sql, tblInfo.ID)
 	}
 	if err != nil {
 		return statistics.PseudoRowCount
@@ -596,6 +578,7 @@ func (dc *ddlCtx) isReorgRunnable(jobID int64, isDistReorg bool) error {
 		return dbterror.ErrInvalidWorker.GenWithStack("worker is closed")
 	}
 
+	// TODO(lance6716): check ctx.Err?
 	if dc.isReorgCancelled(jobID) {
 		// Job is cancelled. So it can't be done.
 		return dbterror.ErrCancelledDDLJob
@@ -654,10 +637,15 @@ func (r *reorgInfo) String() string {
 		"Ingest mode:" + strconv.FormatBool(isEnabled)
 }
 
-func constructDescTableScanPB(physicalTableID int64, tblInfo *model.TableInfo, handleCols []*model.ColumnInfo) *tipb.Executor {
+func constructOneRowTableScanPB(
+	physicalTableID int64,
+	tblInfo *model.TableInfo,
+	handleCols []*model.ColumnInfo,
+	desc bool,
+) *tipb.Executor {
 	tblScan := tables.BuildTableScanFromInfos(tblInfo, handleCols, false)
 	tblScan.TableId = physicalTableID
-	tblScan.Desc = true
+	tblScan.Desc = desc
 	return &tipb.Executor{Tp: tipb.ExecType_TypeTableScan, TblScan: tblScan}
 }
 
@@ -668,7 +656,13 @@ func constructLimitPB(count uint64) *tipb.Executor {
 	return &tipb.Executor{Tp: tipb.ExecType_TypeLimit, Limit: limitExec}
 }
 
-func buildDescTableScanDAG(distSQLCtx *distsqlctx.DistSQLContext, tbl table.PhysicalTable, handleCols []*model.ColumnInfo, limit uint64) (*tipb.DAGRequest, error) {
+func buildOneRowTableScanDAG(
+	distSQLCtx *distsqlctx.DistSQLContext,
+	tbl table.PhysicalTable,
+	handleCols []*model.ColumnInfo,
+	limit uint64,
+	desc bool,
+) (*tipb.DAGRequest, error) {
 	dagReq := &tipb.DAGRequest{}
 	_, timeZoneOffset := time.Now().In(time.UTC).Zone()
 	dagReq.TimeZoneOffset = int64(timeZoneOffset)
@@ -677,7 +671,7 @@ func buildDescTableScanDAG(distSQLCtx *distsqlctx.DistSQLContext, tbl table.Phys
 	}
 	dagReq.Flags |= model.FlagInSelectStmt
 
-	tblScanExec := constructDescTableScanPB(tbl.GetPhysicalID(), tbl.Meta(), handleCols)
+	tblScanExec := constructOneRowTableScanPB(tbl.GetPhysicalID(), tbl.Meta(), handleCols, desc)
 	dagReq.Executors = append(dagReq.Executors, tblScanExec)
 	dagReq.Executors = append(dagReq.Executors, constructLimitPB(limit))
 	distsql.SetEncodeType(distSQLCtx, dagReq)
@@ -692,11 +686,18 @@ func getColumnsTypes(columns []*model.ColumnInfo) []*types.FieldType {
 	return colTypes
 }
 
-// buildDescTableScan builds a desc table scan upon tblInfo.
-func buildDescTableScan(ctx *ReorgContext, store kv.Storage, startTS uint64, tbl table.PhysicalTable,
-	handleCols []*model.ColumnInfo, limit uint64) (distsql.SelectResult, error) {
+// buildOneRowTableScan builds a table scan that only return one row upon tblInfo.
+func buildOneRowTableScan(
+	ctx *ReorgContext,
+	store kv.Storage,
+	startTS uint64,
+	tbl table.PhysicalTable,
+	handleCols []*model.ColumnInfo,
+	limit uint64,
+	desc bool,
+) (distsql.SelectResult, error) {
 	distSQLCtx := newDefaultReorgDistSQLCtx(store.GetClient(), contextutil.NewStaticWarnHandler(0))
-	dagPB, err := buildDescTableScanDAG(distSQLCtx, tbl, handleCols, limit)
+	dagPB, err := buildOneRowTableScanDAG(distSQLCtx, tbl, handleCols, limit, desc)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -713,7 +714,7 @@ func buildDescTableScan(ctx *ReorgContext, store kv.Storage, startTS uint64, tbl
 		SetStartTS(startTS).
 		SetKeepOrder(true).
 		SetConcurrency(1).
-		SetDesc(true).
+		SetDesc(desc).
 		SetResourceGroupTagger(ctx.getResourceGroupTaggerForTopSQL()).
 		SetResourceGroupName(ctx.resourceGroupName)
 
@@ -736,6 +737,54 @@ func buildDescTableScan(ctx *ReorgContext, store kv.Storage, startTS uint64, tbl
 
 // GetTableMaxHandle gets the max handle of a PhysicalTable.
 func GetTableMaxHandle(ctx *ReorgContext, store kv.Storage, startTS uint64, tbl table.PhysicalTable) (maxHandle kv.Handle, emptyTable bool, err error) {
+	tblInfo := tbl.Meta()
+	handleCols := buildHandleCols(tbl)
+
+	// build a desc scan of tblInfo, which limit is 1, we can use it to retrieve the last handle of the table.
+	result, err := buildOneRowTableScan(ctx, store, startTS, tbl, handleCols, 1, true)
+	if err != nil {
+		return nil, false, errors.Trace(err)
+	}
+	defer terror.Call(result.Close)
+
+	chk := chunk.New(getColumnsTypes(handleCols), 1, 1)
+	err = result.Next(ctx.ddlJobCtx, chk)
+	if err != nil {
+		return nil, false, errors.Trace(err)
+	}
+
+	if chk.NumRows() == 0 {
+		// empty table
+		return nil, true, nil
+	}
+	row := chk.GetRow(0)
+	if tblInfo.IsCommonHandle {
+		pkIdx := tables.FindPrimaryIndex(tblInfo)
+		maxHandle, err = buildCommonHandleFromChunkRow(time.UTC, tblInfo, pkIdx, handleCols, row)
+		return maxHandle, false, err
+	}
+	return kv.IntHandle(row.GetInt64(0)), false, nil
+}
+
+// ExistsTableRow checks if there is at least one row in the specified table.
+// In case of an error during the operation, it returns false along with the error.
+func ExistsTableRow(ctx *ReorgContext, store kv.Storage, startTS uint64, tbl table.PhysicalTable) (bool, error) {
+	handleCols := buildHandleCols(tbl)
+	result, err := buildOneRowTableScan(ctx, store, startTS, tbl, handleCols, 1, false)
+	if err != nil {
+		return false, errors.Trace(err)
+	}
+	defer terror.Call(result.Close)
+
+	chk := chunk.New(getColumnsTypes(handleCols), 1, 1)
+	err = result.Next(ctx.ddlJobCtx, chk)
+	if err != nil {
+		return false, errors.Trace(err)
+	}
+	return chk.NumRows() != 0, nil
+}
+
+func buildHandleCols(tbl table.PhysicalTable) []*model.ColumnInfo {
 	var handleCols []*model.ColumnInfo
 	var pkIdx *model.IndexInfo
 	tblInfo := tbl.Meta()
@@ -756,30 +805,7 @@ func GetTableMaxHandle(ctx *ReorgContext, store kv.Storage, startTS uint64, tbl 
 	default:
 		handleCols = []*model.ColumnInfo{model.NewExtraHandleColInfo()}
 	}
-
-	// build a desc scan of tblInfo, which limit is 1, we can use it to retrieve the last handle of the table.
-	result, err := buildDescTableScan(ctx, store, startTS, tbl, handleCols, 1)
-	if err != nil {
-		return nil, false, errors.Trace(err)
-	}
-	defer terror.Call(result.Close)
-
-	chk := chunk.New(getColumnsTypes(handleCols), 1, 1)
-	err = result.Next(ctx.ddlJobCtx, chk)
-	if err != nil {
-		return nil, false, errors.Trace(err)
-	}
-
-	if chk.NumRows() == 0 {
-		// empty table
-		return nil, true, nil
-	}
-	row := chk.GetRow(0)
-	if tblInfo.IsCommonHandle {
-		maxHandle, err = buildCommonHandleFromChunkRow(time.UTC, tblInfo, pkIdx, handleCols, row)
-		return maxHandle, false, err
-	}
-	return kv.IntHandle(row.GetInt64(0)), false, nil
+	return handleCols
 }
 
 func buildCommonHandleFromChunkRow(loc *time.Location, tblInfo *model.TableInfo, idxInfo *model.IndexInfo,
@@ -882,10 +908,18 @@ func getReorgInfo(ctx *ReorgContext, jobCtx *jobContext, rh *reorgHandler, job *
 			tb = tbl.(table.PhysicalTable)
 		}
 		if mergingTmpIdx {
-			firstElemTempID := tablecodec.TempIndexPrefix | elements[0].ID
-			lastElemTempID := tablecodec.TempIndexPrefix | elements[len(elements)-1].ID
-			start = tablecodec.EncodeIndexSeekKey(pid, firstElemTempID, nil)
-			end = tablecodec.EncodeIndexSeekKey(pid, lastElemTempID, []byte{255})
+			for _, element := range elements {
+				if !bytes.Equal(element.TypeKey, meta.IndexElementKey) {
+					continue
+				}
+				// If has a global index in elements, need start process at `tblInfo.ID`
+				// because there are some temporary global indexes prefixed with table ID.
+				idxInfo := model.FindIndexInfoByID(tblInfo.Indices, element.ID)
+				if idxInfo.Global {
+					pid = tblInfo.ID
+				}
+			}
+			start, end = encodeTempIndexRange(pid, elements[0].ID, elements[len(elements)-1].ID)
 		} else {
 			start, end, err = getTableRange(ctx, jobCtx.store, tb, ver.Ver, job.Priority)
 			if err != nil {
@@ -946,6 +980,14 @@ func getReorgInfo(ctx *ReorgContext, jobCtx *jobContext, rh *reorgHandler, job *
 	info.dbInfo = dbInfo
 
 	return &info, nil
+}
+
+func encodeTempIndexRange(physicalID, firstIdxID, lastIdxID int64) (start kv.Key, end kv.Key) {
+	firstElemTempID := tablecodec.TempIndexPrefix | firstIdxID
+	lastElemTempID := tablecodec.TempIndexPrefix | lastIdxID
+	start = tablecodec.EncodeIndexSeekKey(physicalID, firstElemTempID, nil)
+	end = tablecodec.EncodeIndexSeekKey(physicalID, lastElemTempID, []byte{255})
+	return start, end
 }
 
 func getReorgInfoFromPartitions(ctx *ReorgContext, jobCtx *jobContext, rh *reorgHandler, job *model.Job, dbInfo *model.DBInfo, tbl table.PartitionedTable, partitionIDs []int64, elements []*meta.Element) (*reorgInfo, error) {

@@ -73,6 +73,56 @@ const (
 	OperandUnsupported
 )
 
+// String implements fmt.Stringer interface.
+func (o Operand) String() string {
+	switch o {
+	case OperandAny:
+		return "OperandAny"
+	case OperandJoin:
+		return "OperandJoin"
+	case OperandAggregation:
+		return "OperandAggregation"
+	case OperandProjection:
+		return "OperandProjection"
+	case OperandSelection:
+		return "OperandSelection"
+	case OperandApply:
+		return "OperandApply"
+	case OperandMaxOneRow:
+		return "OperandMaxOneRow"
+	case OperandTableDual:
+		return "OperandTableDual"
+	case OperandDataSource:
+		return "OperandDataSource"
+	case OperandUnionScan:
+		return "OperandUnionScan"
+	case OperandUnionAll:
+		return "OperandUnionAll"
+	case OperandSort:
+		return "OperandSort"
+	case OperandTopN:
+		return "OperandTopN"
+	case OperandLock:
+		return "OperandLock"
+	case OperandLimit:
+		return "OperandLimit"
+	case OperandTiKVSingleGather:
+		return "OperandTiKVSingleGather"
+	case OperandMemTableScan:
+		return "OperandMemTableScan"
+	case OperandTableScan:
+		return "OperandTableScan"
+	case OperandIndexScan:
+		return "OperandIndexScan"
+	case OperandShow:
+		return "OperandShow"
+	case OperandWindow:
+		return "OperandWindow"
+	default:
+		return "OperandUnsupported"
+	}
+}
+
 // GetOperand maps logical plan operator to Operand.
 func GetOperand(p base.LogicalPlan) Operand {
 	switch p.(type) {

@@ -73,7 +73,7 @@ func NewTestKit(t testing.TB, store kv.Storage) *TestKit {
 	if _, ok := t.(*testing.B); !ok {
 		// Don't check `intest.InTest` for benchmark. We should allow to run benchmarks without `intest` tag, because some assert may have significant performance
 		// impact.
-		require.True(t, intest.InTest, "you should add --tags=intest when to test, see https://pingcap.github.io/tidb-dev-guide/get-started/setup-an-ide.html for help")
+		require.True(t, intest.InTest && intest.EnableAssert, "you should add --tags=intest when to test, see https://pingcap.github.io/tidb-dev-guide/get-started/setup-an-ide.html for help")
 	}
 	testenv.SetGOMAXPROCSForTest()
 	tk := &TestKit{
@@ -530,7 +530,7 @@ func (tk *TestKit) MustGetDBError(sql string, dberr *terror.Error) {
 func (tk *TestKit) MustContainErrMsg(sql string, errStr any) {
 	err := tk.ExecToErr(sql)
 	tk.require.Error(err, "sql: %s", sql)
-	tk.require.Contains(err.Error(), errStr)
+	tk.require.Contains(err.Error(), errStr, "sql: %s", sql)
 }
 
 // MustMatchErrMsg executes a sql statement and assert its error message matching errRx.

@@ -901,6 +901,11 @@ error = '''
 View's SELECT contains a '%s' clause
 '''
 
+["ddl:1351"]
+error = '''
+View's SELECT contains a variable or parameter
+'''
+
 ["ddl:1353"]
 error = '''
 In definition of view, derived table or common table expression, SELECT list and column names list have different column counts
@@ -2018,7 +2023,7 @@ Division by 0
 
 ["expression:1426"]
 error = '''
-Too big precision %d specified for column '%-.192s'. Maximum is %d.
+Too-big precision %d specified for '%-.192s'. Maximum is %d.
 '''
 
 ["expression:1582"]
@@ -3288,7 +3293,7 @@ Too big scale %d specified for column '%-.192s'. Maximum is %d.
 
 ["types:1426"]
 error = '''
-Too big precision %d specified for column '%-.192s'. Maximum is %d.
+Too-big precision %d specified for '%-.192s'. Maximum is %d.
 '''
 
 ["types:1427"]

@@ -5,6 +5,7 @@ go_library(
     srcs = [
         "client.go",
         "context.go",
+        "fortest.go",
         "iter.go",
         "metrics.go",
         "store.go",
