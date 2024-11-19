@@ -35,11 +35,13 @@ import (
 	"github.com/pingcap/tidb/pkg/store/driver/txn"
 	"github.com/pingcap/tidb/pkg/table/temptable"
 	"github.com/pingcap/tidb/pkg/tablecodec"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/tableutil"
 	"github.com/pingcap/tidb/pkg/util/tracing"
 	tikvstore "github.com/tikv/client-go/v2/kv"
 	"github.com/tikv/client-go/v2/oracle"
 	"github.com/tikv/client-go/v2/txnkv/transaction"
+	"go.uber.org/zap"
 )
 
 // baseTxnContextProvider is a base class for the transaction context providers that implement `TxnContextProvider` in different isolation.
@@ -303,6 +305,15 @@ func (p *baseTxnContextProvider) ActivateTxn() (kv.Transaction, error) {
 
 	if p.enterNewTxnType == sessiontxn.EnterNewTxnBeforeStmt && !sessVars.IsAutocommit() && sessVars.SnapshotTS == 0 {
 		sessVars.SetInTxn(true)
+	}
+
+	// verify start_ts is later than any previous commit_ts in the session
+	if sessVars.LastCommitTS > 0 && sessVars.LastCommitTS > sessVars.TxnCtx.StartTS {
+		logutil.BgLogger().Fatal("check session lastCommitTS failed",
+			zap.Uint64("lastCommitTS", sessVars.LastCommitTS),
+			zap.Uint64("startTS", sessVars.TxnCtx.StartTS),
+			zap.String("sql", sessVars.StmtCtx.OriginalSQL),
+		)
 	}
 
 	txn.SetVars(sessVars.KVVars)
