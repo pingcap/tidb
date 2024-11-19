@@ -62,19 +62,6 @@ func CopySampleItems(items []*SampleItem) []*SampleItem {
 	return n
 }
 
-func sortSampleItems(sc *stmtctx.StatementContext, items []*SampleItem) error {
-	var err error
-	slices.SortStableFunc(items, func(i, j *SampleItem) int {
-		var cmp int
-		cmp, err = i.Value.Compare(sc.TypeCtx(), &j.Value, collate.GetBinaryCollator())
-		if err != nil {
-			return -1
-		}
-		return cmp
-	})
-	return err
-}
-
 func sortSampleItemsByBinary(items []*SampleItem, getComparedBytes func(datum types.Datum) ([]byte, error)) error {
 	var err error
 	slices.SortStableFunc(items, func(i, j *SampleItem) int {
