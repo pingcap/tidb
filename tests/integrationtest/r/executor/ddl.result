@@ -314,9 +314,9 @@ create view v7 (c,d,e) as select * from t1;
 Error 1353 (HY000): In definition of view, derived table or common table expression, SELECT list and column names list have different column counts
 drop view v1,v2,v3,v4,v5,v6;
 create view v1 (c,d) as select a,b+@@global.max_user_connections from t1;
+Error 1351 (HY000): View's SELECT contains a variable or parameter
 create view v1 (c,d) as select a,b from t1 where a = @@global.max_user_connections;
-Error 1050 (42S01): Table 'executor__ddl.v1' already exists
-drop view v1;
+Error 1351 (HY000): View's SELECT contains a variable or parameter
 create view v1 (c,d,e) as select a,b from t1 ;
 Error 1353 (HY000): In definition of view, derived table or common table expression, SELECT list and column names list have different column counts
 create view v1 (c) as select a,b from t1 ;

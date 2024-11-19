@@ -241,7 +241,11 @@ func GetPlanFromPlanCache(ctx context.Context, sctx sessionctx.Context,
 
 func clonePlanForInstancePlanCache(ctx context.Context, sctx sessionctx.Context,
 	stmt *PlanCacheStmt, plan base.Plan) (clonedPlan base.Plan, ok bool) {
-	// TODO: add metrics to record the time cost of this clone operation.
+	defer func(begin time.Time) {
+		if ok {
+			core_metrics.GetPlanCacheCloneDuration().Observe(time.Since(begin).Seconds())
+		}
+	}(time.Now())
 	fastPoint := stmt.PointGet.Executor != nil // this case is specially handled
 	pointPlan, isPoint := plan.(*PointGetPlan)
 	if fastPoint && isPoint { // special optimization for fast point plans
