@@ -3433,7 +3433,24 @@ func tblInfoFromCol(from ast.ResultSetNode, name *types.FieldName) *model.TableI
 	tableList := ExtractTableList(from, true)
 	for _, field := range tableList {
 		if field.Name.L == name.TblName.L {
+<<<<<<< HEAD
 			return field.TableInfo
+=======
+			tnW := b.resolveCtx.GetTableName(field)
+			if tnW != nil {
+				return tnW.TableInfo
+			}
+			// when the Select is inside a view, it's not pre-processed, tnW is nil.
+			if b.isCreateView {
+				// Ignore during create
+				return nil
+			}
+			tblInfo, err := b.is.TableInfoByName(name.DBName, name.TblName)
+			if err != nil {
+				return nil
+			}
+			return tblInfo
+>>>>>>> d0150c0a686 (planner: ONLY_FULL_GROUP_BY sql_mode was not working with VIEWs (#57473))
 		}
 	}
 	return nil
