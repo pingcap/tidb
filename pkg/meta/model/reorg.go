@@ -86,7 +86,10 @@ func (dm *DDLReorgMeta) GetConcurrency() int {
 
 // SetConcurrency sets the concurrency in DDLReorgMeta.
 func (dm *DDLReorgMeta) SetConcurrency(concurrency int) {
-	atomic.StoreInt64(&dm.Concurrency, int64(concurrency))
+	currentValue := atomic.LoadInt64(&dm.Concurrency)
+	if currentValue != int64(concurrency) {
+		atomic.StoreInt64(&dm.Concurrency, int64(concurrency))
+	}
 }
 
 // GetBatchSize gets the batch size from DDLReorgMeta.
@@ -96,7 +99,10 @@ func (dm *DDLReorgMeta) GetBatchSize() int {
 
 // SetBatchSize sets the batch size in DDLReorgMeta.
 func (dm *DDLReorgMeta) SetBatchSize(batchSize int) {
-	atomic.StoreInt64(&dm.BatchSize, int64(batchSize))
+	currentValue := atomic.LoadInt64(&dm.BatchSize)
+	if currentValue != int64(batchSize) {
+		atomic.StoreInt64(&dm.BatchSize, int64(batchSize))
+	}
 }
 
 const (
